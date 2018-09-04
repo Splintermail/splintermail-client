@@ -1,0 +1,171 @@
+# this will do some ZSH-style completion
+__splintermail_format_completion () {
+    local cmdtok curtok prevtok
+    local -a choices
+    cmdtok="$1"
+    curtok="$2"
+    prevtok="$3"
+    shift ; shift ; shift
+    choices=("$@")
+
+    # build an array of vars and descriptions
+    local i line maxvarlen
+    local -a vars descr
+    vars=()
+    descr=()
+    maxvarlen=0
+    local IFS=$'\n'
+    for line in "${choices[@]}"; do
+        # get fields from line
+        IFS=: read -ra f <<<"$line"
+        # check if this line matches our current token
+        if [ "${f[0]:0:${#curtok}}" = "$curtok" ] ; then
+            vars+=("${f[0]}")
+            descr+=("${f[1]}")
+            [ "${#f[0]}" -gt "$maxvarlen" ] && maxvarlen="${#f[0]}"
+        fi
+    done
+
+    # if the length of matches is 1, don't show description (it will complete)
+    if [ "${#vars[@]}" -eq 1 ] ; then
+        COMPREPLY=("${vars[0]}")
+    else
+        COMPREPLY=($(
+            for i in `seq 0 $((${#vars[@]}-1))` ; do
+                line=$(printf "%-*s -- %s" "$maxvarlen" "${vars[i]}" "${descr[i]}")
+                printf "%-*s\n" $COLUMNS $line
+            done
+            ))
+    fi
+}
+
+__splintermail () {
+    local cmdtok curtok prevtok skipnext
+    local -a prevwords prevargs switches opts_w_arg choices
+    # turn off complete-file-if-no-compreply and complete-only-dirs-for-files
+    compopt +o default +o dirnames
+    # example for explaining variables
+    ## splintermail --switch --opt optarg api_cmd api_arg --switch --opt optarg
+    ## should be splintermail
+    cmdtok=$1
+    # whatever current token is being typed
+    curtok=$2
+    # last completed token
+    prevtok=$3
+    # this array will include "api_cmd" and "api_arg"
+    prevargs=()
+    # this array will have "--switch" and "--opt" and "optarg" (twice each)
+    options=()
+    # for distinguishing switches from options
+    opts_w_arg=(QWER ["join", "\n                ", "opts_w_arg"]
+                REWQ QWER ["join", " ", ["for", "a", "opts_w_arg",
+                            ["zero?", ["get","opts","a","short"],
+                              null,
+                              ["get","opts","a","short"]]]] REWQ)
+    # separate args from switches and options
+    optargnext=""
+    for r in "${COMP_WORDS[@]:1:$COMP_CWORD-1}" ; do
+        # if last arg was an option with an argument, this arg goes with options
+        if [ -n "$optargnext" ] ; then
+            options+=("$r")
+            optargnext=""
+            continue
+        fi
+        if [[ "$r" = -* ]] ; then
+            options+=("$r")
+            for a in "${opts_w_arg[@]}" ; do
+                [ "$r" = "$a" ] && optargnext="y" && break
+            done
+        else
+            prevargs+=($r)
+        fi
+    done
+
+    #### Now, the actual completion logic
+
+    # always complete short options
+    if [[ "$curtok" =~ ^-[^-]$ ]] ; then
+        __splintermail_format_completion "$@" "$curtok"
+        return
+    fi
+
+
+    # complete option arguments based on prevtok
+QWER
+["prefix","    ",["join", "\n",["for", "o", "opts_w_arg",
+    ["printf","if [ \"$prevtok\" = \"%s\" ]%s ; then",
+              ["string", "o"],
+              ["zero?",["get","opts","o","short"],
+                       "",
+                       ["printf"," || [ \"$prevtok\" == \"%s\" ]",
+                                 ["get","opts","o","short"]]]],
+    ["null?",["get","opts","o","completion"],
+             null,
+             ["switch",["get","opts","o","completion"],
+                {"file":"    compopt -o default",
+                 "dir":"    compopt -o default -o dirnames"},
+                ["puke"]]],
+    ["string", "    return"],
+    ["string", "fi"]
+]]]
+REWQ
+
+
+    # complete api arguments based on prevargs
+QWER
+["prefix","    ",["join", "\n",["for", "a", "apis_w_arg",
+    ["printf","if [ \"${prevargs[*]}\" = \"%s\" ] ; then", ["string", "a"]],
+    ["string","    choices=("],
+    ["null?", ["get","apis","a","choices"],
+        null,
+        ["join","\n",["for", "c", ["get","apis","a","choices"],
+            ["printf","        \"%s:\"",["string","c"]]]]],
+    ["string","    )"],
+    ["string","    __splintermail_format_completion \"$@\" \"${choices[@]}\""],
+    ["string","    return"],
+    ["string","fi"]
+]]]
+REWQ
+
+
+    # otherwise check if there is an option to complete
+    if [[ "$curtok" =~ ^-.* ]] ; then
+        choices=(
+QWER
+["prefix", "            \"", ["postfix","\"",
+    ["join", "\n", ["for", "o", "opts_list",
+        ["printf", "%s:%s",
+                   ["string", "o"],
+                   ["get", "opts", "o", "summary"]]
+    ]]
+]]
+REWQ
+        )
+        __splintermail_format_completion "$@" "${choices[@]}"
+        return
+    fi
+
+    # if we have no arguments so far, offer an DITM or an API command
+    if [ "${#prevargs[@]}" -eq 0 ] ; then
+        choices=(
+            "ditm:Run the local decrypting email server"
+QWER
+["prefix", "            \"", ["postfix","\"",
+    ["join", "\n", ["for", "api", "apilist",
+        ["printf", "%s:%s",
+                   ["string", "api"],
+                   ["get", "apis", "api", "short"]]
+    ]]
+]]
+REWQ
+            )
+        __splintermail_format_completion "$@" "${choices[@]}"
+        return
+    fi
+
+    # otherwise there are no completions
+    return
+}
+
+
+complete -F __splintermail splintermail

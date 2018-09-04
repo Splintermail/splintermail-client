@@ -1,0 +1,90 @@
+#!/bin/sh
+
+set -e
+
+# useful variables
+share_dir="QWER share_dir REWQ"
+ditm_dir="QWER ditm_dir REWQ"
+ca_file="$ditm_dir/QWER ca_name REWQ"
+key_file="$ditm_dir/QWER key_name REWQ"
+cert_file="$ditm_dir/QWER cert_name REWQ"
+
+# get hash of original default config file
+orig_config="$share_dir/splintermail.conf.orig"
+if [ -f "$orig_config" ] ; then
+    old_config_hash=$(shasum -a 256 "$orig_config" | awk '{print($1)}')
+else
+    old_config_hash="-"
+fi
+
+# write the new default config file
+rm -f "$orig_config"
+cat > "$orig_config" << EOF
+QWER["strip", ["cat", ["filerel", "../splintermail.conf"]]]REWQ
+EOF
+
+# get the hash of the config file currently on the system
+if [ -f "QWER config_path REWQ" ] ; then
+    cur_config_hash=$(shasum -a 256 "QWER config_path REWQ" | awk '{print($1)}')
+else
+    cur_config_hash="-"
+fi
+
+# overwrite the current config file if it hasn't changed from the old one
+if [ "$old_config_hash" = "$cur_config_hash" ] ; then
+    # config file unchanged, copy the new default
+    cp "$orig_config" "QWER config_path REWQ"
+else
+    # this is where a UI warning *should* be generated
+    true
+fi
+
+# user should not be tempted to write into the original config file
+chmod -w "$orig_config"
+
+# make sure the _splintermail user exists
+if ! dscl . list /Users | grep -q '^_splintermail$' ; then
+    # get an open UID/GID pair
+    uid=$(dscl . list /Users UniqueID | awk '{if($2 > temp){temp = $2}} END{print(temp + 1)}')
+    gid=$(dscl . list /Groups PrimaryGroupID | awk '{if($2 > temp){temp = $2}} END{print(temp + 1)}')
+    # if they are not equal, take the higher one
+    [ "$uid" -lt "$gid" ] || uid="$gid"
+
+    # create the group
+    dscl . -create /Groups/_splintermail
+    dscl . -create /Groups/_splintermail PrimaryGroupID $uid
+    # create the user
+    dscl . -create /Users/_splintermail
+    dscl . -create /Users/_splintermail UserShell /usr/bin/false
+    dscl . -create /Users/_splintermail UniqueID $uid
+    dscl . -create /Users/_splintermail PrimaryGroupID $uid
+    dscl . -create /Users/_splintermail RealName "Splintermail DITM Daemon"
+fi
+
+# make the ditm directory
+if [ ! -d "$ditm_dir" ] ; then
+    mkdir -p "$ditm_dir"
+    chmod 700 "$ditm_dir"
+    chown -R _splintermail:_splintermail "$ditm_dir"
+fi
+
+# generate the SSL certificates, if they don't exist already
+if [ ! -f "$cert_file" ] || [ ! -f "$key_file" ] || [ ! -f "$ca_file" ] ; then
+    # before overwriting the old CA, attempt to untrust it
+    if [ -f "$ca_file" ] ; then
+        security remove-trusted-cert -d "$ca_file" || true
+    fi
+    # now generate the files
+    sh "$share_dir/keygen.sh" "$share_dir/openssl.cnf" "$ditm_dir"
+    # trust the generated certificate authority
+    security add-trusted-cert -d -r trustRoot \
+        -k "/Library/Keychains/System.keychain" \
+        "$ca_file"
+    # make sure splintermail can read them
+    chown _splintermail:_splintermail "$ca_file" "$key_file" "$cert_file"
+fi
+
+# enable/start the launchd service
+launchctl load -w "/Library/LaunchDaemons/com.splintermail.ditm.plist"
+
+exit 0

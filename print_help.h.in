@@ -1,0 +1,15 @@
+static void print_help(void){
+    printf(
+"splintermail: QWER pkgdescr_short REWQ\n"
+"\n"
+QWER ["prepost", "\"  ", "\\n\"",
+        ["regex", ["call", "pkgdescr_long", {"width":"78"}], "\"", "\\\""]
+     ] REWQ
+"\n"
+"usage: splintermail ditm [OPTIONS]\n"
+"       splintermail API_COMMAND [OPTIONS]\n"
+"\n"
+"\n"
+QWER["get","print_help","os_specific_body"]REWQ
+);
+}

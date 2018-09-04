@@ -1,0 +1,14 @@
+[Unit]
+Description=ditm downloads completely encrypted emails from the Splintermail.com server, decrypts them locally, and presents a local POP interface to an email client.
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/splintermail ditm
+StandardOutput=syslog
+StandardError=syslog
+Restart=on-failure
+User=splintermail
+Group=splintermail
+
+[Install]
+WantedBy=default.target

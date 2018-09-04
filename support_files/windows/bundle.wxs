@@ -1,0 +1,33 @@
+<?xml version="1.0"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi"
+     xmlns:bal="http://schemas.microsoft.com/wix/BalExtension">
+
+  <Bundle UpgradeCode='34a60b62-4080-421e-8912-30f149b07a62'
+          Version='QWER version REWQ'>
+    <BootstrapperApplicationRef Id='WixStandardBootstrapperApplication.RtfLicense'>
+      <bal:WixStandardBootstrapperApplication SuppressOptionsUI='yes'
+                                              SuppressRepair='yes'
+                                              ShowVersion='yes'
+                                              LicenseFile='static_link_license.rtf'
+                                              />
+    </BootstrapperApplicationRef>
+
+    <Chain>
+      <!-- windows 7 version: 6.1 -->
+      <!--https://docs.microsoft.com/en-us/windows/desktop/SysInfo/operating-system-version-->
+      <MsiPackage Id='Msi32'
+                  SourceFile='$(var.BUILD32_DIR)/installer/splintermail.msi'
+                  InstallCondition='NOT VersionNT64 AND VersionNT >= v6.1'
+                  Visible='yes'
+                  Vital='yes'
+                  />
+      <MsiPackage Id='Msi64'
+                  SourceFile='splintermail.msi'
+                  InstallCondition='VersionNT64 AND VersionNT >= v6.1'
+                  Visible='yes'
+                  Vital='yes'
+                  />
+    </Chain>
+  </Bundle>
+
+</Wix>

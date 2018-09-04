@@ -1,0 +1,54 @@
+post_install() {
+    newversion="$1"
+    # create service user
+    if ! getent passwd splintermail >/dev/null ; then
+        useradd --system --no-create-home --shel /bin/false splintermail || return 1
+    fi
+
+    # create default storage directory
+    if [ ! -d "QWER ditm_dir REWQ" ] ; then
+        mkdir -p "QWER ditm_dir REWQ" || return 2
+        chmod 700 "QWER ditm_dir REWQ" || return 3
+        chown -R splintermail:splintermail "QWER ditm_dir REWQ" || return 4
+    fi
+
+    # generate the SSL certificates, if they don't exist already
+    if [ ! -f "QWER ditm_dir REWQ/QWER cert_name REWQ" ] \
+            || [ ! -f "QWER ditm_dir REWQ/QWER key_name REWQ" ] \
+            || [ ! -f "QWER ditm_dir REWQ/QWER ca_name REWQ" ] ; then
+        # generate the files
+        sh "QWER share_dir REWQ/keygen.sh" "QWER share_dir REWQ/openssl.cnf" \
+                "QWER ditm_dir REWQ" || return 5
+        # trust the generated certificate authority
+        cp "QWER ditm_dir REWQ/QWER cert_name REWQ" "/etc/ca-certificates/trust-source/anchors/" \
+                || return 6
+        update-ca-trust extract || return 7
+        # make sure splintermail can read them
+        chown splintermail:splintermail \
+                "QWER ditm_dir REWQ/QWER cert_name REWQ" \
+                "QWER ditm_dir REWQ/QWER key_name REWQ" \
+                "QWER ditm_dir REWQ/QWER ca_name REWQ" || return 8
+    fi
+
+}
+
+post_upgrade() {
+    newversion="$1"
+    oldversion="$2"
+    # if splintermail.service is active, restart it
+    if systemctl is-active splintermail.service >/dev/null ; then
+        systemctl daemon-reload
+        systemctl restart splintermail.service
+    fi
+}
+
+post_remove() {
+    oldversion="$1"
+    # untrust the certificate generated at install
+    rm "/etc/ca-certificates/trust-source/anchors/QWER ca_name REWQ" \
+    && update-ca-trust extract || true
+    # delete files
+    rm -rf "QWER ditm_dir REWQ" || true
+    # delete service user
+    userdel --force splintermail > /dev/null || true
+}

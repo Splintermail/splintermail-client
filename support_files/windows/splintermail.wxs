@@ -1,0 +1,273 @@
+<?xml version='1.0' encoding='windows-1252'?>
+<Wix xmlns='http://schemas.microsoft.com/wix/2006/wi'>
+  <!-- if Product ID is fixed and version is fixed it is a "patch" update-->
+  <!-- if Product ID is fixed and version changes it is a "minor" update-->
+  <!-- if Product ID changes and version changes it is a "major" update-->
+  <!-- we will always do major updates, it will be simpler.  The version
+       should be updated manually in the CMake file for every release-->
+  <Product Name='QWER Pkg Name REWQ'
+           Id='*'
+           UpgradeCode='f04e8b4c-9fc0-4478-ba41-38d657549d38'
+           Language='1033'
+           Codepage='1252'
+           Version='QWER version REWQ'
+           Manufacturer='Splintermail LLC'>
+
+    <!-- Package ID should change every build, always always always -->
+    <Package Id='*'
+             Keywords='Installer'
+             Description='QWER Pkg Name REWQ Installer'
+             Comments='Splintermail is Awesome.'
+             Manufacturer='Splintermail LLC'
+             InstallScope='perMachine'
+             InstallerVersion='200'
+             Languages='1033'
+             Compressed='yes'
+             SummaryCodepage='1252'/>
+
+    <!--Only the latest version is supported... so we set ID here to the same
+        as Product.UpgradeCode, so any version can update any other version-->
+    <Upgrade Id='f04e8b4c-9fc0-4478-ba41-38d657549d38'>
+      <!--replace any pre-existing versions-->
+      <UpgradeVersion Property='PREVIOUSFOUND'
+                      OnlyDetect='no'
+                      Minimum='0.0.0' IncludeMinimum='yes'
+                      Maximum='QWER version REWQ' IncludeMaximum='no'/>
+      <!--don't replace a newer version-->
+      <!--Even if you allow it, the component updating rules make it so you
+          would just end up with the new versions of components anyway-->
+      <UpgradeVersion Property='NEWERFOUND'
+                      OnlyDetect='yes'
+                      Minimum='QWER version REWQ'
+                      IncludeMinimum='yes' />
+    </Upgrade>
+
+    <Media Id='1' Cabinet='Splintermail.cab' EmbedCab='yes' DiskPrompt='CD-ROM #1' />
+    <Property Id='DiskPrompt' Value="Splintermail Installation [1]" />
+
+    <!-- use the right Program Files folder -->
+    <?if $(sys.BUILDARCH) = x64 ?>
+      <?define ProgFiles = "ProgramFiles64Folder" ?>
+    <?else ?>
+      <?define ProgFiles = "ProgramFilesFolder" ?>
+    <?endif ?>
+
+    <!-- This seems to be "C:\", and requires that Name='SourceDir' -->
+    <Directory Id='TARGETDIR' Name='SourceDir'>
+      <!-- "Program Files" -->
+      <Directory Id='$(var.ProgFiles)'>
+        <!-- My comapany's folder -->
+        <Directory Id='Splintermail' Name='Splintermail'>
+          <!-- This software package -->
+          <Directory Id='INSTALLDIR' Name='QWER Pkg Name REWQ'>
+            <!-- The bin/ directory to add to the PATH -->
+            <Directory Id='bindir' Name='bin'>
+              <!--splintermail.exe-->
+              <!--this exectutable has the "master" version number, which is
+                  built into the executable using the CMake version.  It is
+                  important that version is always bumped because the windows
+                  installer needs to see a higher version to replace this
+                  component on update-->
+              <Component Id='splintermail_component' Guid='12a7aff6-a963-451f-bb3c-8e366524385d'>
+                <File Id='splintermail_file'
+                      Source='../splintermail.exe'
+                      Name='splintermail.exe'
+                      DiskId='1'
+                      KeyPath='yes'/>
+                <ServiceInstall Id='serviceinstall'
+                                Name='splintermail'
+                                DisplayName='Splintermail DITM'
+                                Description='Splintermail Decrypter-in-the-Middle'
+                                Start='auto'
+                                Vital='yes'
+                                ErrorControl='normal'
+                                Type='ownProcess'
+                                />
+                <ServiceControl Id="servicecontrol"
+                                Name='splintermail'
+                                Start='install'
+                                Stop="uninstall"
+                                Remove="uninstall"
+                                Wait="yes"
+                                />
+              </Component>
+            </Directory>
+
+            <!--splintermail.conf, readonly original version-->
+            <!--this is a CompanionFile to the splintermail executable meaning
+                that even though this file isn't versioned it will install
+                over old-versioned components as if it had the same version
+                as the splintermail exectuable-->
+            <Component Id='original_splintermail_conf_component'
+                       Guid='b356a7f6-0b0c-4406-a49a-8e947410ce9b'>
+              <File Id='original_splintermail_conf_file'
+                    Source='splintermail.conf'
+                    Name='original_splintermail.conf'
+                    CompanionFile='splintermail_file'
+                    ReadOnly='yes'
+                    DiskId='1'/>
+            </Component>
+
+            <!--splintermail.conf, user-editable version-->
+            <!--This is a KeyPath because its own presence determins if it
+                should be installed (not a companion file).  It is not
+                versioned, indicating that it might contain user data-->
+            <Component Id='splintermail_conf_component'
+                       Guid='2dfb5a27-abdd-42f3-9209-ee019fa5faff'>
+              <File Id='splintermail_conf_file'
+                    Source='splintermail.conf'
+                    Name='splintermail.conf'
+                    DiskId='1'
+                    KeyPath='yes'/>
+            </Component>
+
+            <!-- keygen.exe -->
+            <Component Id='keygen_component'
+                       Guid='41956d46-449c-4881-a3b7-bcefa6b9287a'>
+              <File Id='keygen_file'
+                    Source='../keygen.exe'
+                    Name='keygen.exe'
+                    CompanionFile='splintermail_file'
+                    DiskId='1'/>
+            </Component>
+
+            <!-- openssl.cnf -->
+            <Component Id='openssl_cnf_component'
+                       Guid='0c017e9d-54f7-4c7a-9d53-b248ac831b57'>
+              <File Id='openssl_cnf_file'
+                    Source='openssl.cnf'
+                    Name='openssl.cnf'
+                    CompanionFile='splintermail_file'
+                    DiskId='1'/>
+            </Component>
+
+            <!-- openssl.exe binary -->
+            <Component Id='openssl_component'
+                       Guid='16ff6837-9f6b-495b-bec8-38e0d731847c'>
+              <File Id='openssl_file'
+                    Source='$(var.OPENSSL_BIN)'
+                    Name='openssl.exe'
+                    CompanionFile='splintermail_file'
+                    DiskId='1'/>
+            </Component>
+
+            <!-- LICENSE.txt -->
+            <Component Id='license_component'
+                       Guid='02ee3892-e970-4933-a2b6-d6bf87a3d001'>
+              <File Id='license_file'
+                    Source='static_link_license.txt'
+                    Name='LICENSE.txt'
+                    CompanionFile='splintermail_file'
+                    DiskId='1'/>
+            </Component>
+
+          </Directory>
+        </Directory>
+      </Directory>
+
+      <!-- "ProgramData" -->
+      <Directory Id='CommonAppDataFolder'>
+        <!-- My comapany's folder -->
+        <Directory Id='splintermail_ditm_dir' Name='splintermail'>
+          <!--create the folder-->
+          <Component Id='splintermail_ditm_dir_component'
+                     Guid='7e787993-3803-4664-bdab-63bad30e1abc'>
+            <CreateFolder />
+          </Component>
+        </Directory>
+      </Directory>
+
+      <!-- useless registry component that goes to our PATH variable, necessary
+           because <Environment> can't be a KeyPath -->
+      <Component Id='PATH_reg_component' Guid='3e383da1-c73d-4052-a74b-50952535ae55'>
+        <RegistryKey Root='HKLM'
+                     Key='Software\Splintermail\QWER Pkg Name REWQ'>
+          <RegistryValue Type='integer'
+                         Name='PATH_installed'
+                         Value='1'
+                         KeyPath='yes'/>
+        </RegistryKey>
+        <Environment Id="PATH"
+                     Name="PATH"
+                     Value="[INSTALLDIR]\bin"
+                     Permanent="no"
+                     Part="last"
+                     Action="set"
+                     System="yes" />
+      </Component>
+    </Directory>
+
+    <!--generate/trust keys if they don't exist-->
+    <!--this exectutable also untrusts old keys before it creates new ones-->
+    <CustomAction Id='keygen_action'
+                  FileKey='keygen_file'
+                  ExeCommand='"[INSTALLDIR]openssl.exe" "[INSTALLDIR]openssl.cnf" "[splintermail_ditm_dir]\"'
+                  Execute='deferred'
+                  Return='check'
+                  HideTarget='no'
+                  Impersonate='no'/>
+
+    <!--untrust keys-->
+    <CustomAction Id='untrust_ca_action'
+                  Directory='TARGETDIR'
+                  ExeCommand='[SystemFolder]certutil -delstore Root "QWERca_common_nameREWQ"'
+                  Execute='deferred'
+                  Return='check'
+                  HideTarget='no'
+                  Impersonate='no'/>
+
+    <!--delete the ditm directory entirely-->
+    <Binary Id="rm_rf_binary" SourceFile="../rm_rf.exe"/>
+    <CustomAction Id='delete_data_action'
+                  BinaryKey='rm_rf_binary'
+                  ExeCommand='"[splintermail_ditm_dir]\"'
+                  Execute='deferred'
+                  Return='check'
+                  HideTarget='no'
+                  Impersonate='no'/>
+
+    <InstallExecuteSequence>
+      <!--make sure keys exist after every install/upgrade-->
+      <Custom Action='keygen_action' After="InstallFiles">
+        NOT REMOVE
+      </Custom>
+      <!--delete the ditm directory only on uninstall-->
+      <Custom Action='delete_data_action' Before="InstallFinalize">
+        (REMOVE="ALL") AND (NOT UPGRADINGPRODUCTCODE)
+      </Custom>
+      <!--untrust the local CA on uninstall-->
+      <Custom Action='untrust_ca_action' Before="InstallFinalize">
+        (REMOVE="ALL") AND (NOT UPGRADINGPRODUCTCODE)
+      </Custom>
+      <!--RemoveExistingProducts must come after InstallFinalize or components
+          containing user-editable config files will have their reference
+          counts decremented (to zero) and will get overwritten every time-->
+      <!--logically it just has to be after InstallFiles, but it throws a
+          a warning if you put it in certain other places-->
+      <RemoveExistingProducts After='InstallFinalize'/>
+
+      <!--The service is making the installer pause during InstallValidate,
+          but if I try to stop/delete the old service before InstallInitiailize,
+          the WiX compile pukes.  My service must be dropping some signal or
+          something, because this *has* to be able to work out-of-the-box.
+      <StopServices Sequence='26'/>
+      <DeleteServices Sequence='27'/>-->
+    </InstallExecuteSequence>
+
+    <Feature Id='Complete' Level='1'>
+      <ComponentRef Id='splintermail_component' />
+      <ComponentRef Id='splintermail_ditm_dir_component' />
+      <ComponentRef Id='original_splintermail_conf_component' />
+      <ComponentRef Id='splintermail_conf_component' />
+      <ComponentRef Id='keygen_component' />
+      <ComponentRef Id='openssl_cnf_component' />
+      <ComponentRef Id='openssl_component' />
+      <ComponentRef Id='license_component' />
+      <ComponentRef Id='PATH_reg_component' />
+      <!-- <ComponentRef Id='ProgramMenuDir' /> -->
+    </Feature>
+
+    <!--<Icon Id="Foobar10.exe" SourceFile="FoobarAppl10.exe" />-->
+
+  </Product>
+</Wix>

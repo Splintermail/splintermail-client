@@ -1,0 +1,10 @@
+{
+    "postinstall_action": "none",
+    "suppress_bundle_relocation": true,
+    "name": "uninstall_QWER pkg_name REWQ.pkg",
+    "distribution_style": false,
+    "install_location": "/",
+    "version": "0.0",
+    "ownership": "recommended",
+    "identifier": "QWER osx_pkg_id REWQ"
+}

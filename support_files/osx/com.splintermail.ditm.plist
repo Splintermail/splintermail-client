@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.splintermail.ditm</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/splintermail</string>
+    <string>ditm</string>
+  </array>
+  <!-- DITM has no launchd integration, it accepts its own connections -->
+  <key>KeepAlive</key>
+  <true/>
+  <!-- not a gui application -->
+  <key>ProcessType</key>
+  <string>Background</string>
+  <!-- run as the _splintermail user -->
+  <key>UserName</key>
+  <string>_splintermail</string>
+  <!-- <key>StandardErrorPath</key>
+  <string>HOME/.ditm/ditm_log.stderr</string> -->
+</dict>
+</plist>

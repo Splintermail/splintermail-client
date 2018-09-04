@@ -1,0 +1,36 @@
+# Maintainer: Splintermail Dev <dev@splintermail.com>
+pkgname=splintermail
+pkgver=QWER version REWQ
+pkgrel=1
+pkgdesc='client application for Splintermail.com users to decrypt email locally'
+arch=('x86_64')
+url='https://github.com/splintermail/splintermail-client'
+license=('custom:unlicense')
+depends=('openssl')
+makedepends=('cmake')
+backup=('etc/splintermail.conf')
+install='splintermail.install'
+changelog=
+source=("$pkgname-$pkgver::file://QWER["dynamic","BUILD_DIR"]REWQ/installer/splintermail-QWER version REWQ.tar.gz")
+md5sums=('SKIP')
+
+build() {
+    mkdir -p "$pkgname-$pkgver-build"
+    cd "$pkgname-$pkgver-build"
+    cmake "-DCMAKE_INSTALL_PREFIX=/usr" "-DPACKAGE_FOR=ARCH" "-DBUILD_TESTS=yes" "../../$pkgname-$pkgver"
+    make
+    strip -s splintermail
+}
+
+# check() {
+#     return 0
+#     cd "$pkgname-$pkgver-build"
+#     mkdir -p "test"
+#     ln -sf "../../$pkgname-$pkgver/test/files" "test"
+#     make test
+# }
+
+package() {
+    cd "$pkgname-$pkgver-build"
+    make DESTDIR="$pkgdir/" install
+}

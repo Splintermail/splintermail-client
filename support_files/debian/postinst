@@ -1,0 +1,35 @@
+#!/bin/sh
+set -e
+
+# useful variables
+share_dir="QWER share_dir REWQ"
+ditm_dir="QWER ditm_dir REWQ"
+ca_file="$ditm_dir/QWER ca_name REWQ"
+key_file="$ditm_dir/QWER key_name REWQ"
+cert_file="$ditm_dir/QWER cert_name REWQ"
+
+# create service user
+if ! getent passwd splintermail >/dev/null ; then
+    useradd --system --no-create-home --shell /bin/false splintermail
+fi
+
+# create the ditm directory
+if [ ! -d "$ditm_dir" ] ; then
+    mkdir -p "$ditm_dir"
+    chmod 700 "$ditm_dir"
+    chown -R splintermail:splintermail "$ditm_dir"
+fi
+
+# generate the SSL certificates, if they don't exist already
+if [ ! -f "$cert_file" ] || [ ! -f "$key_file" ] || [ ! -f "$ca_file" ] ; then
+    # generate the files
+    sh "$share_dir/keygen.sh" "$share_dir/openssl.cnf" "$ditm_dir"
+    # trust the generated certificate authority
+    cp "$ca_file" "/usr/local/share/ca-certificates"
+    update-ca-certificates
+    # make sure splintermail can read them
+    chown splintermail:splintermail "$ca_file" "$key_file" "$cert_file"
+fi
+
+# service should get started in stubs written by debhelper
+#DEBHELPER#

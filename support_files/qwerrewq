@@ -1,0 +1,421 @@
+#!/usr/bin/env python3
+
+from json import loads, dumps
+from sys import argv, exit, stdin, stdout, stderr
+from textwrap import wrap
+import os.path
+from os import chmod
+from hashlib import sha256
+from re import sub
+import copy
+
+def print_usage(file=stdout):
+    print("usage: qwerrewq CONFIG [infile [outfile]] [-- DYNAMIC_VALUES]", file=file)
+
+def do_subs(jelly, args):
+    if type(jelly) == str:
+        if jelly in args:
+            return args[jelly]
+    if type(jelly) == list:
+        return [ do_subs(i, args) for i in jelly ]
+    if type(jelly) == dict:
+        return {key:do_subs(val, args) for key,val in jelly.items()}
+    # other types get ignored
+    return jelly
+
+def read_jelly(jelly, filein, exp_val=False):
+    global conf, dynamics, g_filein, g_file_settings
+    # if jelly is a string, it is assumed to be a property name
+    if type(jelly) == str:
+        # if we are expecting the jelly to be a value, just return it
+        if exp_val == True:
+            return jelly
+        # otherwise read_jelly, expecting a value
+        else:
+            return read_jelly(conf[jelly], filein, exp_val=True)
+
+    # pass dictionaries, True/False/None along
+    if type(jelly) is dict or type(jelly) is bool or jelly is None:
+        return jelly
+
+    # otherwise it needs to be a list (that is, a function)
+    if type(jelly) != list:
+        raise ValueError("Jelly must be a string or a list: "+str(jelly))
+
+    # now interpret the list (that is, the function)
+
+    # NOT YET IMPLEMENTED
+
+        # ["exec", EXE[, ARG,...] ]
+
+    # ["puke"] -> just rasies an error
+    # ["list"[, ELEM...,] ] -> returns itself
+    # ["get", key] -> force a dereference where a string literal was expected
+    # ["get", dict[, dict, ...], key] -> dereference dictionaries
+    # ["string", STRING] -> no dereferencing
+    # ["printf", FMTSTR, JELLY[,...] ]
+    # ["sha256", FILEPATH ]
+    # ["cat", FILEPATH ] # automatically runs qwerrewq on the output
+    # ["file", DIRECTORY, FILENAME ] # absolute path or relative to qwerrewq CWD
+    # ["filerel", FILENAME ] # filename relative to file being read
+    # ["switch", JELLY, {CASE:VALUE}, default]
+    # ["dynamic", NAME]
+    # ["strip", JELLY]
+    # ["expand", LIST, FUNC_NAME[, FUNC_ARG,...] ]
+    # ["join", JOINER, LIST_OF_PROB_STRINGS ] (null values get skipped)
+    # ["regex", JELLY, {"in":"out"}[, {"in":"out"},...] ]
+    # ["lower", JELLY]
+    # ["chmod", STRING ]
+    # prefix/postfix is separated from wrap because it makes nested formatting simpler
+    # that is, only the innermost layer does wrap, and then you can prefix
+    # or postfix as necessary
+    # ["prefix", PREFIX, JELLY]
+    # ["postfix", POSTFIX, JELLY]
+    # ["prepost", PREFIX, POSTFIX, JELLY]
+    # ["wrap", WIDTH, INDENT, HANG, JELLY]
+    # ["table", LINE[, LINE, ...,]] -> every LINE is a ["list", ...]
+
+    # format of a user-defined function:
+    # [{args:defaults}, JELLY]
+    # calling the user-defined function:
+    # ["call", func, {args:values}]
+
+    # Looping:
+    # ["for", varname, LIST, JELLY] (null values get skipped)
+
+    # [BOOLEAN, TRUEJELLY, FALSEJELLY]
+    # ["null?", TEST_JELLY, IS_NULL_JELLY, NOT_NULL_JELLY]
+    # ["empty?", TEST_JELLY, IS_NULL_JELLY, NOT_NULL_JELLY]
+    # ["=", A, B, A=B_JELLY, A!=B_JELLY] (B is PROB_STRING)
+
+    cmd = read_jelly(jelly[0], filein, exp_val=True)
+
+    # if this is a user function, pass it along
+    if type(cmd) == dict:
+        return jelly
+
+    if cmd == 'puke':
+        raise ValueError("Puking, like you asked")
+    elif cmd == 'get':
+        dictionary = conf
+        idx = 1
+        # the "middle" arguments successive dictionary keys
+        for j in jelly[1:-1]:
+            key = read_jelly(j, filein, exp_val=True)
+            dictionary = read_jelly(dictionary[key], filein, exp_val=True)
+        # the last argument is always a key
+        key = read_jelly(jelly[-1], filein, exp_val=True)
+        return read_jelly(dictionary[key], filein, exp_val=True)
+    elif cmd == 'list':
+        return jelly
+    elif cmd == 'string':
+        return jelly[1]
+    elif cmd == 'printf':
+        fmtstr = jelly[1]
+        morejellies = [read_jelly(j, filein) for j in jelly[2:]]
+        return fmtstr%tuple(morejellies)
+    elif cmd == 'sha256':
+        filepath = read_jelly(jelly[1], filein, exp_val=True)
+        with open(filepath,'rb') as f:
+            out = sha256(f.read()).hexdigest()
+        return out
+    elif cmd == 'cat':
+        filepath = read_jelly(jelly[1], filein, exp_val=True)
+        return parse_file(filepath)
+    elif cmd == 'file':
+        directory = read_jelly(jelly[1], filein, exp_val=True)
+        filename = read_jelly(jelly[2], filein, exp_val=True)
+        filepath = os.path.join(directory,filename)
+        return filepath
+    elif cmd == 'filerel':
+        directory = os.path.dirname(filein)
+        filename = read_jelly(jelly[1], filein, exp_val=True)
+        filepath = os.path.join(directory,filename)
+        return filepath
+    elif cmd == 'switch':
+        value = read_jelly(jelly[1], filein)
+        cases = jelly[2]
+        default = jelly[3]
+        for case,out in cases.items():
+            if value == case:
+                return read_jelly(out, filein, exp_val=True)
+        # if we didn't match any cases, return the default
+        return read_jelly(default, filein, exp_val=True)
+    elif cmd == 'dynamic':
+        name = jelly[1]
+        if name in dynamics:
+            return dynamics[name]
+        return ""
+    elif cmd == 'strip':
+        stripme = read_jelly(jelly[1], filein)
+        return stripme.strip()
+    elif cmd == 'expand':
+        # get list from argument
+        l = read_jelly(jelly[1], filein)
+        if type(l) != list or l[0] != "list":
+            raise ValueError('%s does not appear to be a list'%l)
+        strings = [read_jelly(j, filein, exp_val=True) for j in l[1:]]
+        newjelly = jelly[2:] + strings
+        return read_jelly(newjelly, filein)
+    elif cmd == 'join':
+        joiner = read_jelly(jelly[1], filein, exp_val=True)
+        l = read_jelly(jelly[2], filein)
+        if type(l) is not list or l[0] != 'list':
+            raise ValueError("join needs a list argument")
+        # silently skip over null values
+        strings = []
+        for j in l[1:]:
+            string = read_jelly(j, filein, exp_val=True)
+            if string is not None:
+                strings.append(string)
+        return joiner.join(strings)
+    elif cmd == 'regex':
+        string = read_jelly(jelly[1], filein)
+        pairs = jelly[2:]
+        if len(pairs)%2 != 0:
+            raise ValueError("regex needs a matching number of in strings and out strings")
+        for i in range(int(len(pairs)/2)):
+            sin = read_jelly(pairs[i*2], filein, exp_val=True)
+            sout = read_jelly(pairs[i*2 + 1], filein, exp_val=True)
+            string = sub(sin, sout, string)
+        return string
+    elif cmd == 'lower':
+        string = read_jelly(jelly[1], filein)
+        return string.lower()
+    elif cmd == 'chmod':
+        # this command is ignored in nested files
+        if filein != g_filein:
+            return ''
+        # it should never be given twice
+        if 'chmod' in g_file_settings:
+            raise ValueError('chmod called twice in the same file')
+        g_file_settings['chmod'] = read_jelly(jelly[1], filein, exp_val=True)
+        return ''
+    elif cmd == 'prefix':
+        prefix = read_jelly(jelly[1], filein, exp_val=True)
+        lines = read_jelly(jelly[2], filein)
+        return '\n'.join([prefix + line for line in lines.split('\n')])
+    elif cmd == 'postfix':
+        postfix = read_jelly(jelly[1], filein, exp_val=True)
+        lines = read_jelly(jelly[2], filein)
+        return '\n'.join([line + postfix for line in lines.split('\n')])
+    elif cmd == 'prepost':
+        prefix = read_jelly(jelly[1], filein, exp_val=True)
+        postfix = read_jelly(jelly[2], filein, exp_val=True)
+        lines = read_jelly(jelly[3], filein)
+        return '\n'.join([prefix + line + postfix for line in lines.split('\n')])
+    elif cmd == 'wrap':
+        width = read_jelly(jelly[1], filein, exp_val=True)
+        indent = read_jelly(jelly[2], filein, exp_val=True)
+        hang = read_jelly(jelly[3], filein, exp_val=True)
+        jout = read_jelly(jelly[4], filein)
+        lines = wrap(jout,
+                     width=int(width),
+                     initial_indent=indent,
+                     subsequent_indent=hang)
+        return '\n'.join(lines)
+    elif cmd == 'table':
+        t = [[read_jelly(j, filein, exp_val=True)
+                for j in read_jelly(row, filein)[1:]] for row in jelly[1:]]
+        # now t should be a list of lists of strings
+        rows = len(t)
+        cols = len(t[0])
+        if any([cols != len(r) for r in t]):
+            raise ValueError('table requires matching-length rows')
+        # now for each column, get the max len
+        widths = []
+        for i in range(cols):
+            col = [r[i] for r in t]
+            # get the widest cell in this column
+            widths.append(max([max([len(l) for l in c.split('\n')]) for c in col]))
+        # now print the table, line by line
+        out = []
+        for row in t:
+            height = max([1 + cell.count('\n') for cell in row])
+            lines = [cell.split('\n') for cell in row]
+            for y in range(height):
+                out.append(' '.join(['%-*s'%(widths[x],l[y]) if len(l) > y else ' '*widths[x] for x,l in enumerate(lines)]))
+        return '\n'.join(out)
+    ### FUNCTIONS
+    elif cmd == 'call':
+        func = read_jelly(jelly[1], filein)
+        if type(func) != list or type(func[0]) != dict:
+            raise ValueError('%s does not appear to be a function'%fname)
+        # make a deep copy of the jelly from func, since we will edit it
+        j = copy.deepcopy(func[1])
+        # start with default values of args
+        args = copy.deepcopy(func[0])
+        # now set the args as defined by call
+        for arg,val in jelly[2].items():
+            if arg not in args:
+                raise ValueError('unrecognized argument %s in function %s'
+                                 %(arg, fname))
+            args[arg] = val
+        # make sure all values are set
+        for arg,val in args.items():
+            if val is None:
+                raise ValueError('argument %s in function %s not set'%(arg, fname))
+        # now walk the whole json structure making swaps (in a recursive function)
+        j = do_subs(j, args)
+        # finally, evaluate the result
+        return read_jelly(j, filein)
+    # FOR loops ["for", varname, LIST, JELLY]
+    elif cmd == "for":
+        # get the variable name
+        v = read_jelly(jelly[1], filein, exp_val=True)
+        # get the list
+        l = read_jelly(jelly[2], filein)
+        if type(l) != list or l[0] != "list":
+            raise ValueError('%s does not appear to be a list'%l)
+        outentries = jelly[3:]
+        # create the output list
+        out = ["list"]
+        for elem in l[1:]:
+            # first evaluate the elem
+            # make sure elem doesn't evaluate to null
+            temp = copy.deepcopy(elem)
+            telem = read_jelly(temp, filein, exp_val=True)
+            if telem is None:
+                continue
+            for o in outentries:
+                # make a deep copy of the output, since we will edit it
+                j = copy.deepcopy(o)
+                subs = {v:telem}
+                j = do_subs(j, subs)
+                # read jelly
+                temp = read_jelly(j, filein)
+                # skip null arguments
+                if temp is not None:
+                    out.append(read_jelly(j, filein))
+        return out
+    # IF-LIKE STATEMENTS
+    elif cmd == 'null?':
+        if read_jelly(jelly[1], filein) is None:
+            return read_jelly(jelly[2], filein, exp_val=True)
+        else:
+            return read_jelly(jelly[3], filein, exp_val=True)
+    elif cmd == 'zero?':
+        if len(read_jelly(jelly[1], filein)) == 0:
+            return read_jelly(jelly[2], filein, exp_val=True)
+        else:
+            return read_jelly(jelly[3], filein, exp_val=True)
+    elif cmd == '=':
+        a = read_jelly(jelly[1], filein)
+        b = read_jelly(jelly[2], filein, exp_val=True)
+        if a == b:
+            return read_jelly(jelly[3], filein, exp_val=True)
+        else:
+            return read_jelly(jelly[4], filein, exp_val=True)
+    else:
+        raise ValueError('invalid jelly function: '+cmd)
+
+def parse_file(filein):
+    # if filein is None, read from stdin
+    if filein is not None:
+        with open(filein,'rb') as f:
+            textin = f.read().decode('utf8')
+    else:
+        textin = stdin.read()
+
+    outputs = []
+
+    stok = 'QWER'
+    etok = 'REWQ'
+    used = 0
+    while textin.find(stok, used) != -1:
+        start = textin.index(stok, used)
+        # record everything up to stok
+        outputs.append(textin[used:start])
+        # get the "jelly" (stuff sandwiched by stok and etok)
+        end = textin.index(etok, used)
+        jelly = textin[start + len(stok) : end]
+        # update used
+        used = end + len(etok)
+        # prepare jelly for reading
+        jelly = jelly.strip()
+        # if the jelly starts with a '[' or '"' it must be parsable json
+        if jelly[0] == '[' or jelly[0] == '"':
+            try:
+                jelly = loads(jelly)
+            except:
+                raise ValueError("Jelly is not parsable json: "+jelly)
+        # read the jelly and record it
+        outputs.append(read_jelly(jelly, filein))
+
+    # record the rest
+    outputs.append(textin[used:])
+
+    return ''.join(outputs)
+
+if __name__ == '__main__':
+    # parse the command line options
+    dynamics = {}
+    firstargs = argv
+    if '--' in argv:
+        dashpos = argv.index('--')
+        firstargs = argv[:dashpos]
+        for dynamic in argv[dashpos+1:]:
+            eqidx = dynamic.index('=')
+            dname = dynamic[:eqidx]
+            dval = dynamic[eqidx+1:]
+            dynamics[dname] = dval
+
+    # get the json configuration file
+    if len(firstargs) < 2:
+        print_usage(file=stderr)
+        exit(1)
+    with open(firstargs[1],'rb') as f:
+        conf = loads(f.read().decode('utf8'))
+
+    # global variable g_filein important for chmod command
+    g_filein = None
+    g_file_settings = {}
+    if len(firstargs) > 2:
+        g_filein = firstargs[2]
+
+    output = parse_file(g_filein)
+
+    # if writing to stdout, always write output
+    if len(firstargs) < 4:
+        stdout.write(output)
+        # done!
+        exit(0)
+
+    # otherwise writing to a fileoutput
+    inarg = firstargs[2]
+    outarg = firstargs[3]
+    filepath = None
+
+    # check if we got the name of an existing file
+    if os.path.isfile(outarg):
+        filepath = outarg
+
+    # else check if we got the name of an existing directory:
+    elif os.path.isdir(outarg):
+        filepath = os.path.join(outarg, os.path.basename(inarg))
+
+    # else optimistically assume it will be a new file
+    else:
+        filepath = outarg
+
+    # # now, if the file already exists only overwrite if we have changes
+    # if os.path.exists(filepath):
+    #     with open(filepath, "r") as f:
+    #         oldtext = f.read()
+    #     oldmd5 = hashlib.md5(oldtext.encode('utf8')).hexdigest()
+    #     newmd5 = hashlib.md5(output.encode('utf8')).hexdigest()
+    #     if oldmd5 == newmd5:
+    #         #print("no changes, not overwriting",file=stderr)
+    #         exit(0)
+
+    # write the new file
+    with open(filepath, "wb") as f:
+        f.write(output.encode('utf8'))
+
+    # apply any file settings we got
+    for setting, value in g_file_settings.items():
+        if setting == 'chmod':
+            chmod(filepath, int(value, 8))
+        else:
+            raise ValueError('unknown file setting: %s'%setting)
+

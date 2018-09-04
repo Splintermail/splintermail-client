@@ -1,0 +1,128 @@
+.TH splintermail 1  "July 2018" "version QWER version REWQ" "User Commands"
+\"
+.SH NAME
+\"
+.B splintermail
+\- QWER pkgdescr_short REWQ
+\"
+.SH SYNOPSIS
+\"
+.B splintermail
+ditm [OPTIONS]
+.PP
+.B splintermail
+API_COMMAND [OPTIONS]
+.SH DESCRIPTION
+QWER ["call", "man_escapes",
+    {"t":["call", "pkgdescr_long", {"width":"10000", "joiner":"\n\n"}]}] REWQ
+\"
+.SH OPTIONS
+\"
+QWER ["regex",["join","\n",
+        ["for", "option", "opts_common", ["call", "manopt", {"o":"option"}]]
+     ], "-", "\\-"]REWQ
+.SS DITM-specific options:
+\d
+QWER ["regex",["join","\n",
+        ["for", "option", "opts_ditm", ["call", "manopt", {"o":"option"}]]
+     ], "-", "\\-"]REWQ
+.SS API_COMMAND-specific options:
+\d
+QWER ["regex",["join","\n",
+        ["for", "option", "opts_apis", ["call", "manopt", {"o":"option"}]]
+     ], "-", "\\-"]REWQ
+\"
+.SH API COMMANDS
+\fBsplintermail\fR can be used to control nearly all the aspects of your
+account from the command line, by making calls to the Splintermail.com API.
+\"
+.SS Alias Commands
+Splintermail supports two different types of aliases: Random Aliases and
+Primary Aliases.  Both sending and receiving are support for all aliases.
+\"
+Random Aliases are used to protect your online identity.  Whenever a new
+website asks for your email address, give them a new random alias!  If you then
+start to recieve spam on that address, you know exactly which website is
+guilty, and you can safely delete that alias without affecting your other
+web accounts.  Deleted random aliases are not reused and no log of the original
+owner is kept, so if you delete an address neither you nor any other
+Splintermail user will be able to use that alias in the future.  This ensures
+that nobody else can gain access to any web accounts you opened with that alias.
+\"
+Primary aliases are a convenience feature for users who wish to control
+multiple non-random email addresses with the ease of only checking one account.
+For example, a single user might want to recieve mail at
+"jdoe@splintermail.com" and "captain_danger@splintermail.com".  Primary
+aliases, like your account username, are offered on a first-come-first-serve
+basis, and can be reused after they are deleted (even by somebody else).
+\"
+QWER["join","\n",["for", "apicmd", "apis_aliases",
+        ["call","man_apicmd",{"a":"apicmd"}]]]REWQ
+\"
+.SS Device Commands
+Each device represents a computer where you are able to receive encrypted email.
+Deleting a device will cause new messages to be encrypted in a way that the
+corresponding computer will no longer be able to read them.  Note that if you
+have not changed your password and the deleted device is still trying to check
+email on your behalf, the deleted device may re-register itself.
+\"
+QWER["join","\n",["for", "apicmd", "apis_devices",
+        ["call","man_apicmd",{"a":"apicmd"}]]]REWQ
+\"
+.SS Token Commands
+Each API token represents a computer where you have authorized the automatic
+usage of the splintermail command-line tool.  You can remove authorization by
+deleting the corresponding token.
+\"
+QWER["join","\n",["for", "apicmd", "apis_tokens",
+        ["call","man_apicmd",{"a":"apicmd"}]]]REWQ
+\"
+\"
+.SS Account Commands
+\"
+QWER["join","\n",["for", "apicmd", "apis_account",
+        ["call","man_apicmd",{"a":"apicmd"}]]]REWQ
+\"
+.SH FILES
+\"
+.SS Config Files
+\"
+QWER ["call",["get","man","1bullets2"],{"s":"config"}] REWQ
+\"
+.SS DITM Email Storage
+\"
+QWER ["call",["get","man","1bullets2"],{"s":"ditm"}] REWQ
+\"
+.SS Per-User API Tokens
+\"
+QWER ["call",["get","man","1bullets2"],{"s":"accounts"}] REWQ
+\"
+.SH NOTES
+\"
+As soon as your email is received by the Splintermail.com email server, it is
+encrypted in a way that it can only be decrypted by one of your devices.
+\fBsplintermail\fR works by downloading the encrypted emails from the server,
+decrypting them on your computer, and creating a mini email "server" on your
+computer, to which your email client can connect.
+
+While TLS encryption is only meaningful when connecting two computers across a
+network, most email clients will insist on using encrypted connections for
+fetching email, even if the email client is fetching email from the
+\fBsplintermail\fR application running on the same computer.
+
+Therefore, upon installation, \fBsplintermail\fR will generate and trust an TLS certificate
+for the IP address "127.0.0.1" (127.0.0.1 is the special address for a computer
+to talk to itself).  This "dummy" TLS certificates is useless for any security
+purpose, but makes most email clients happier.
+
+Nonetheless, Thunderbird, will still complain about the dummy TLS certificate
+because Mozilla products maintain their own list of trusted certificates.
+\" see `man 7 man-pages` for official header list of style guide
+\" see "Macro Package", should be using the groff an.tmac package
+\"
+\" HEADERS
+\"
+\" NOTES
+\" BUGS
+\"
+\" COPYRIGHT

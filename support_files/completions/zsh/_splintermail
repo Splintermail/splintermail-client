@@ -1,0 +1,104 @@
+#compdef splintermail
+
+local -a prevwords prevargs options opts_w_arg
+local cmd optargnext
+
+# get command so we don't have to hard code it
+cmd="$words[1]"
+# get all non-command tokens on commandline, separate args from switches
+prevwords=($words[2,-2])
+prevargs=()
+options=()
+opts_w_arg=(QWER ["join", "\n                ", "opts_w_arg"]
+            REWQ QWER ["join", " ", ["for", "a", "opts_w_arg",
+                        ["zero?", ["get","opts","a","short"],
+                          null,
+                          ["get","opts","a","short"]]]] REWQ)
+optargnext=""
+for r in $prevwords ; do
+    # if last arg was an option with an argument, this arg goes with options
+    if [ -n "$optargnext" ] ; then
+        options+="$r"
+        optargnext=""
+        continue
+    fi
+    if [[ "$r" = -* ]] ; then
+        options+="$r"
+        for a in $opts_w_arg ; do
+            [ "$r" = "$a" ] && optargnext="y" && break
+        done
+    else
+        prevargs+="$r"
+    fi
+done
+
+# list of options common to all completions
+optspecs=(QWER
+["join","\n          ",["for","o","opts_list",
+    ["join","\n          ",["for","X",["list",
+                                        ["string","o"],
+                                        ["zero?",["get","opts","o","short"],
+                                                 null,
+                                                 ["get","opts","o","short"]]],
+        ["printf","'%s[%s]%s'",
+            ["string","X"],
+            ["get","opts","o","summary"],
+            ["zero?", ["get","opts","o","arg"],
+                "",
+                ["printf",":%s:%s",
+                    ["string","o"],
+                    ["null?",["get","opts","o","completion"],
+                        "",
+                        ["switch",["get","opts","o","completion"],
+                            {"file":"_files",
+                             "dir":"_files -/"},
+                             ["puke"]]
+                    ]
+                ]
+            ]
+        ]
+    ]]
+]]
+REWQ)
+
+case "$prevargs" in
+    "")
+    _arguments $optspecs \
+        '::device commands:(( \
+            QWER
+            ["call","zshcomp_apis", {"joiner":" \\\n            ",
+                                     "l":"apis_devices"}]
+         REWQ))' \
+        '::token commands:(( \
+            QWER
+            ["call","zshcomp_apis", {"joiner":" \\\n            ",
+                                     "l":"apis_tokens"}]
+         REWQ))' \
+        '::alias commands:(( \
+            QWER
+            ["call","zshcomp_apis", {"joiner":" \\\n            ",
+                                     "l":"apis_aliases"}]
+         REWQ))' \
+        '::account commands:(( \
+            QWER
+            ["call","zshcomp_apis", {"joiner":" \\\n            ",
+                                     "l":"apis_account"}]
+         REWQ))' \
+        ;;
+    QWER
+    ["join","\n    ",["for","a","apis_w_arg",
+        ["printf","\"%s\"*)",["string","a"]],
+        ["printf","    _arguments $optspecs \"::\" \":%s:%s\";;",
+            ["string","a"],
+            ["null?",["get","apis","a","choices"],
+                "",
+                ["printf","((%s))",["join"," ",
+                    ["for","c",["get","apis","a","choices"],["string","c"]]
+                ]]
+            ]
+        ]
+    ]]
+    REWQ
+    *)
+        _arguments $optspecs "::";;
+esac

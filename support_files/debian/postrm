@@ -1,0 +1,19 @@
+#!/bin/sh
+set -e
+
+action="$1"
+
+if [ "$action" = "purge" ] ; then
+    # untrust the certificate generated at install
+    rm "/usr/local/share/ca-certificates/QWER ca_name REWQ" \
+        && update-ca-certificates || true
+    # delete files
+    rm -rf "QWER ditm_dir REWQ"
+    # not deleting service user, I agree with Fedora's guidlines
+    # https://fedoraproject.org/wiki/Packaging:UsersAndGroups
+    # # delete service user
+    # userdel --force splintermail > /dev/null || true
+fi
+
+# service should get removed in stubs written by debhelper
+#DEBHELPER#
