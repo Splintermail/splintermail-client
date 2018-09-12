@@ -41,7 +41,7 @@ set(EXE_TGTS srvcli
              leak
              encrypt_msg
              decrypt_msg
-             path)
+             olt)
 
 set(TEST_OBJ_TGTS dummy_key_tool
                   dummy_ui_harness
@@ -170,7 +170,7 @@ target_link_libraries(splintermail ui console_input ditm key_tool opt_parse)
 target_link_libraries(leak networking)
 target_link_libraries(encrypt_msg crypto opt_parse)
 target_link_libraries(decrypt_msg crypto opt_parse)
-target_link_libraries(path common)
+target_link_libraries(olt common fileops opt_parse)
 
 # decide if we are building server code
 if("${BUILD_SERVER_CODE}")
