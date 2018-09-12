@@ -6,6 +6,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <errno.h>
+#include <stdlib.h>
+#include <string.h>
 #undef bool
 typedef _Bool bool;
 
@@ -105,6 +107,10 @@ void dstr_free(dstr_t* ds);
 #define LIST_NEW(type, list, num_items) list_ ## type ## _new(list, num_items)
 /*  throws : E_NOMEM */
 
+#define LIST_GROW(type, list, num_items) list_ ## type ## _grow(list, num_items)
+/*  throws : E_NOMEM
+             E_FIXEDSIZE */
+
 #define LIST_APPEND(type, list, elem) list_ ## type ## _append(list, elem)
 /*  throws : E_NOMEM
              E_FIXEDSIZE */
@@ -144,6 +150,7 @@ typedef struct { \
     bool fixed_size; \
 } LIST(type); \
 derr_t list_ ## type ## _new(LIST(type)* list, size_t num_items); \
+derr_t list_ ## type ## _grow(LIST(type)* list, size_t num_items); \
 derr_t list_ ## type ## _append(LIST(type)* list, type element); \
 void list_ ## type ## _delete(LIST(type)* list, size_t index); \
 void list_ ## type ## _free(LIST(type)* list);
@@ -187,9 +194,9 @@ derr_t list_ ## type ## _new(LIST(type)* list, size_t num_items){ \
     list->fixed_size = false; \
     return E_OK; \
 } \
-derr_t list_ ## type ## _append(LIST(type)* list, type element){ \
+derr_t list_ ## type ## _grow(LIST(type)* list, size_t num_items){ \
     /* check for reallocation */ \
-    size_t min_size = (list->len + 1) * sizeof(type); \
+    size_t min_size = num_items * sizeof(type); \
     if(list->size < min_size){ \
         /* don't try to realloc on a fixed-size list */ \
         if(list->fixed_size){ \
@@ -200,10 +207,15 @@ derr_t list_ ## type ## _append(LIST(type)* list, type element){ \
             newsize *= 2; \
         } \
         void* new = realloc(list->data, newsize); \
-        if(!new) ORIG(E_NOMEM, "unable to realloc list for append"); \
+        if(!new) ORIG(E_NOMEM, "unable to realloc list"); \
         list->data = new; \
         list->size = newsize; \
     } \
+    return E_OK; \
+} \
+derr_t list_ ## type ## _append(LIST(type)* list, type element){ \
+    /* grow the list */ \
+    PROP( list_ ## type ## _grow(list, list->len + 1) ); \
     /* append the element to the list */ \
     list->data[list->len++] = element; \
     return E_OK; \
@@ -454,7 +466,6 @@ derr_t hex2bin(const dstr_t* hex, dstr_t* bin);
            E_FIXEDSIZE (for *bin)
            E_NOMEM     (for *bin) */
 
-
 // String Formatting functions below //
 
 typedef enum {
@@ -552,5 +563,61 @@ static inline fmt_t FE(int* err){
     return (fmt_t){FMT_EXT, {.ext = {.arg = (const void*)err,
                                      .hook = fmthook_strerror} } };
 }
+
+// String Builder stuff below //
+
+typedef struct string_builder_t {
+    const struct string_builder_t* prev;
+    const struct string_builder_t* next;
+    fmt_t elem;
+} string_builder_t;
+
+static inline string_builder_t sb_append(const string_builder_t* sb, fmt_t elem){
+    return (string_builder_t){.prev=sb, .next=NULL, .elem=elem};
+}
+
+static inline string_builder_t sb_prepend(const string_builder_t* sb, fmt_t elem){
+    return (string_builder_t){.prev=NULL, .next=sb, .elem=elem};
+}
+
+// shortcut for literal string builder objects
+#define SB(fmt) ((string_builder_t){.prev=NULL, .next=NULL, .elem=fmt})
+
+derr_t sb_append_to_dstr(const string_builder_t* sb, const dstr_t* joiner, dstr_t* out);
+derr_t sb_to_dstr(const string_builder_t* sb, const dstr_t* joiner, dstr_t* out);
+derr_t sb_fwrite(FILE* f, size_t* written, const string_builder_t* sb,
+                 const dstr_t* joiner);
+
+/* this will attempt to expand the string_builder into a stack buffer, and then
+   into a heap buffer if that fails.  The "out" parameter is a pointer to
+   whichever buffer was successfully written to.  The result is always
+   null-terminated. */
+derr_t sb_expand(const string_builder_t* sb, const dstr_t* joiner,
+                 dstr_t* stack_dstr, dstr_t* heap_dstr, dstr_t** out);
+
+// FMT() support for string_builder
+derr_t fmthook_sb(dstr_t* out, FILE* f, size_t* written, const void* arg);
+
+// this is just for passing two args in one fmthook
+typedef struct {
+    const string_builder_t* sb;
+    const dstr_t* joiner;
+} string_builder_format_t;
+
+/* This needs to be a macro to put the intermediate struct in the proper scope.
+   Treat it as if it were the following prototype:
+
+    fmt_t FSB(const string_builder_t* arg, const dstr_t* joiner);
+*/
+#define FSB(_sb, _joiner) ((fmt_t){ \
+     FMT_EXT, { \
+        .ext = { \
+            .hook = fmthook_sb, \
+            .arg = (const void*)(&(const string_builder_format_t){ \
+                .sb = _sb, \
+                .joiner = _joiner, \
+            })\
+        }}})
+
 
 #endif //COMMON_H

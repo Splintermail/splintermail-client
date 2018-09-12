@@ -64,7 +64,6 @@ print_usage: \
     logger_add_fileptr(lvl, stdout); \
 }
 
-derr_t file_copy(const char* from, const char* to);
 derr_t file_cmp(const char* fa, const char* fb, int* result);
 derr_t file_cmp_dstr(const char* fa, const dstr_t* b, int* result);
 

@@ -1,5 +1,3 @@
-#include <stdlib.h>
-#include <string.h>
 #include <errno.h>
 #include <limits.h>
 #include <fcntl.h>
@@ -756,13 +754,13 @@ derr_t dstr_read(int fd, dstr_t* buffer, size_t count, size_t* amnt_read){
     if(count == 0){
         // 0 means "try to fill buffer"
         count = buffer->size - buffer->len;
+        // make sure the buffer isn't full
+        if(count == 0){
+            ORIG(E_FIXEDSIZE, "buffer is full");
+        }
     }else{
         // grow buffer to fit
         PROP( dstr_grow(buffer, buffer->len + count) );
-    }
-    // make sure the buffer isn't full
-    if(count == 0){
-        ORIG(E_FIXEDSIZE, "buffer is full");
     }
     ar = read(fd, buffer->data + buffer->len, count);
     if(ar < 0){
@@ -787,6 +785,14 @@ derr_t dstr_write(int fd, const dstr_t* buffer){
             LOG_ERROR("%x: %x\n", FS("write"), FE(&errno));
             ORIG(E_OS, "dstr_write failed");
         }
+        /* there is not a great way to handle this, since `man 2 write` says:
+           "if count is zero and fd referes to a non-regular file, results are
+           not specified", but we are going to to assume that the calling
+           function needs the whole buffer written, and throw an error if it
+           fails. TODO: a better way to handle this would be to only use
+           dstr_write() for regular files and have a separate dstr_send() for
+           the rest of the library... but that wouldn't help with writing to
+           stdout... */
         if(amnt_written == 0){
             if(zero_writes++ > 100){
                 ORIG(E_OS, "too many zero writes");
@@ -869,7 +875,7 @@ cleanup:
 
 derr_t dstr_write_file(const char* filename, const dstr_t* buffer){
     derr_t error;
-    int fd = open(filename, O_WRONLY | O_CREAT | O_TRUNC, 0660);
+    int fd = open(filename, O_WRONLY | O_CREAT | O_TRUNC, 0666);
     if(fd < 0){
         LOG_ERROR("%x: %x\n", FS(filename), FE(&errno));
         ORIG(E_OPEN, "unable to open file");
@@ -1076,7 +1082,10 @@ derr_t hex2bin(const dstr_t* hex, dstr_t* bin){
     return E_OK;
 }
 
-// some helper functions for a the printf-like functions
+///////////////////////////////
+// FMT()-related stuff below //
+///////////////////////////////
+
 static inline derr_t dstr_append_uint(dstr_t* dstr, unsigned int val){
     DSTR_VAR(buffer, 128);
     int len = snprintf(buffer.data, buffer.size, "%.3u", val);
@@ -1344,6 +1353,93 @@ derr_t fmthook_strerror(dstr_t* out, FILE* f, size_t* written, const void* arg){
         derr_t error;
         if((error = dstr_fwrite(f, &temp))) return error;
         written += temp.len;
+    }
+    return E_OK;
+}
+
+////////////////////////////////
+// String Builder stuff below //
+////////////////////////////////
+
+derr_t sb_append_to_dstr(const string_builder_t* sb, const dstr_t* joiner, dstr_t* out){
+    if(sb == NULL) return E_OK;
+    if(sb->prev != NULL){
+        PROP( sb_append_to_dstr(sb->prev, joiner, out) );
+        if(joiner){
+            PROP( dstr_append(out, joiner) );
+        }
+    }
+    PROP( fmt_arg(out, sb->elem) );
+    if(sb->next != NULL){
+        if(joiner){
+            PROP( dstr_append(out, joiner) );
+        }
+        PROP( sb_append_to_dstr(sb->next, joiner, out) );
+    }
+    return E_OK;
+}
+
+derr_t sb_to_dstr(const string_builder_t* sb, const dstr_t* joiner, dstr_t* out){
+    out->len = 0;
+    PROP( sb_append_to_dstr(sb, joiner, out) );
+    return E_OK;
+}
+
+derr_t sb_fwrite(FILE* f, size_t* written, const string_builder_t* sb,
+                 const dstr_t* joiner){
+    if(sb == NULL) return E_OK;
+    if(sb->prev != NULL){
+        PROP( sb_fwrite(f, written, sb->prev, joiner) );
+        if(joiner){
+            PROP( dstr_fwrite(f, joiner) );
+            *written += joiner->len;
+        }
+    }
+    PROP( ffmt_arg(f, written, sb->elem) );
+    if(sb->next != NULL){
+        if(joiner){
+            PROP( dstr_fwrite(f, joiner) );
+            *written += joiner->len;
+        }
+        PROP( sb_fwrite(f, written, sb->prev, joiner) );
+    }
+    return E_OK;
+}
+
+derr_t sb_expand(const string_builder_t* sb, const dstr_t* joiner,
+                 dstr_t* stack_dstr, dstr_t* heap_dstr, dstr_t** out){
+    derr_t error = sb_to_dstr(sb, joiner, stack_dstr);
+    CATCH(E_FIXEDSIZE){
+        // we will need to allocate the heap_dstr to be bigger than stack_dstr
+        PROP( dstr_new(heap_dstr, stack_dstr->size * 2) );
+        PROP_GO( sb_to_dstr(sb, joiner, heap_dstr), fail);
+        // path is contained in heap_dstr
+        *out = heap_dstr;
+    }else{
+        // catch any other errors
+        PROP(error);
+        // if we had no errors, path is contained in stack_dstr
+        *out = stack_dstr;
+    }
+    // this is often used for a path, so we're gonna need to null-terminate it
+    PROP( dstr_null_terminate(*out) );
+    return E_OK;
+
+fail:
+    dstr_free(heap_dstr);
+    return error;
+}
+
+derr_t fmthook_sb(dstr_t* out, FILE* f, size_t* written, const void* arg){
+    // cast the input
+    const string_builder_format_t* sbf = (const string_builder_format_t*) arg;
+    if(out != NULL){
+        // write to memory, just append everything to the output
+        PROP( sb_append_to_dstr(sbf->sb, sbf->joiner, out) );
+    }else{
+        // write to FILE*, can't use error macros
+        derr_t error;
+        if((error = sb_fwrite(f, written, sbf->sb, sbf->joiner))) return error;
     }
     return E_OK;
 }

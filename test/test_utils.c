@@ -1,7 +1,4 @@
 #include <string.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <fcntl.h>
 #include <errno.h>
 
 #include <logger.h>
@@ -10,20 +7,6 @@
 #include <win_compat.h>
 
 #include "test_utils.h"
-
-derr_t file_copy(const char* from, const char* to){
-    derr_t error;
-    // allocate memory
-    dstr_t buffer;
-    PROP( dstr_new(&buffer, 4096) );
-    // read file in
-    PROP_GO( dstr_read_file(from, &buffer), cleanup);
-    // write file out
-    PROP_GO( dstr_write_file(to, &buffer), cleanup);
-cleanup:
-    dstr_free(&buffer);
-    return error;
-}
 
 derr_t file_cmp(const char* fa, const char* fb, int* result){
     derr_t error;

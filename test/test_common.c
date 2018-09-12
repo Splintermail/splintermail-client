@@ -475,6 +475,43 @@ cleanup:
     return error;
 }
 
+static derr_t test_string_builder(void){
+    derr_t error;
+
+    string_builder_t sb0 = SB(FS("0"));
+    string_builder_t sb1 = sb_append(&sb0, FS("1"));
+    string_builder_t sb2 = sb_append(&sb1, FS("2"));
+    string_builder_t sb3 = sb_prepend(&sb2, FI(-1));
+    string_builder_t sb4 = sb_prepend(&sb3, FI(-2));
+    string_builder_t sb5 = sb_append(&sb4, FD(&DSTR_LIT("!")));
+
+    DSTR_VAR(temp, 4096);
+    {
+        DSTR_STATIC(exp, "-2, -1, 0, 1, 2, !");
+        PROP_GO( sb_to_dstr(&sb5, &DSTR_LIT(", "), &temp), cleanup);
+        EXP_VS_GOT(&exp, &temp);
+    }
+    {
+        DSTR_STATIC(exp, "-2-1012!");
+        PROP_GO( sb_to_dstr(&sb5, NULL, &temp), cleanup);
+        EXP_VS_GOT(&exp, &temp);
+    }
+    {
+        DSTR_STATIC(exp, "-2-1012!-2.-1.0.1.2.!");
+        PROP_GO( sb_append_to_dstr(&sb5, &DSTR_LIT("."), &temp), cleanup);
+        EXP_VS_GOT(&exp, &temp);
+    }
+    {
+        temp.len = 0;
+        DSTR_STATIC(exp, "with fmt(): -2 -1 0 1 2 !\n");
+        PROP_GO( FMT(&temp, "with fmt(): %x\n", FSB(&sb5, &DSTR_LIT(" "))), cleanup);
+        EXP_VS_GOT(&exp, &temp);
+    }
+
+cleanup:
+    return error;
+}
+
 int main(int argc, char** argv){
     derr_t error;
     // parse options and set default log level
@@ -492,6 +529,7 @@ int main(int argc, char** argv){
     PROP_GO( test_dstr_append(),          test_fail);
     PROP_GO( test_fmt(),                  test_fail);
     PROP_GO( test_list_append_with_mem(), test_fail);
+    PROP_GO( test_string_builder(),       test_fail);
 
     LOG_ERROR("PASS\n");
     return 0;

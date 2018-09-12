@@ -1,5 +1,6 @@
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <fcntl.h>
 #include <errno.h>
 #include <string.h>
 
@@ -8,13 +9,9 @@
 
 #include "win_compat.h"
 
-#ifndef _WIN32
-    #include <dirent.h>
-#endif
-
 static char* dot = ".";
 static char* dotdot = "..";
-
+DSTR_STATIC(slash, "/");
 
 static inline bool do_dir_access(const char* path, bool create, int flags){
     // check if path is a valid directory
@@ -247,4 +244,324 @@ derr_t rm_rf(const char* path){
         }
     }
     return E_OK;
+}
+
+
+// the string-builder-based version of for_each_file
+derr_t for_each_file_in_dir2(const string_builder_t* path,
+                             for_each_file_hook2_t hook, void* userdata){
+    derr_t error = E_OK;
+    DIR* d;
+    PROP( opendir_path(path, &d) );
+
+    while(1){
+        errno = 0;
+        struct dirent* entry = readdir(d);
+        if(!entry){
+            if(errno){
+                // this can only throw EBADF, which should never happen
+                LOG_ERROR("%x: %x\n", FS("readdir"), FE(&errno));
+                ORIG_GO(E_INTERNAL, "unable to readdir()", cleanup);
+            }else{
+                break;
+            }
+        }
+        bool isdir = (entry->d_type == DT_DIR);
+        if(isdir){
+            // make sure it is not . or ..
+            if(strncmp(entry->d_name, dot, 2) == 0) continue;
+            if(strncmp(entry->d_name, dotdot, 3) == 0) continue;
+        }
+        dstr_t dfile;
+        DSTR_WRAP(dfile, entry->d_name, strlen(entry->d_name), true);
+        PROP_GO( hook(path, &dfile, isdir, userdata), cleanup);
+    }
+cleanup:
+    closedir(d);
+    return error;
+}
+
+
+// String-Builder-enabled libc wrappers below //
+
+#ifndef _WIN32
+derr_t chown_path(const string_builder_t* sb, uid_t uid, gid_t gid){
+    derr_t error = E_OK;
+    DSTR_VAR(stack, 256);
+    dstr_t heap = {0};
+    dstr_t* path;
+    PROP( sb_expand(sb, &slash, &stack, &heap, &path) );
+
+    int ret = chown(path->data, uid, gid);
+    if(ret != 0){
+        if(errno == ENOMEM){
+            ORIG_GO(E_NOMEM, "No memory for chwon", cu);
+        }else{
+            LOG_ERROR("chown %x: %x\n", FD(path), FE(&errno));
+            ORIG_GO(E_OS, "chwon failed\n", cu);
+        }
+    }
+cu:
+    dstr_free(&heap);
+    return error;
+}
+
+derr_t opendir_path(const string_builder_t* sb, DIR** out){
+    derr_t error = E_OK;
+    DSTR_VAR(stack, 256);
+    dstr_t heap = {0};
+    dstr_t* path;
+    PROP( sb_expand(sb, &slash, &stack, &heap, &path) );
+
+    DIR* d = opendir(path->data);
+    if(!d){
+        LOG_ERROR("opendir(%x): %x\n", FS(path->data), FE(&errno));
+        if(errno == ENOMEM){
+            ORIG_GO(E_NOMEM, "unable to opendir()", cu);
+        }else if(errno == EMFILE || errno == ENFILE){
+            ORIG_GO(E_OS, "too many file descriptors open", cu);
+        }else{
+            ORIG_GO(E_FS, "unable to open directory", cu);
+        }
+    }
+    *out = d;
+
+cu:
+    dstr_free(&heap);
+    return error;
+}
+#endif // _WIN32
+
+derr_t chmod_path(const string_builder_t* sb, mode_t mode){
+    derr_t error = E_OK;
+    DSTR_VAR(stack, 256);
+    dstr_t heap = {0};
+    dstr_t* path;
+    PROP( sb_expand(sb, &slash, &stack, &heap, &path) );
+
+    int ret = chmod(path->data, mode);
+    if(ret != 0){
+        if(errno == ENOMEM){
+            ORIG_GO(E_NOMEM, "No memory for chmod", cu);
+        }else{
+            LOG_ERROR("chmod %x: %x\n", FD(path), FE(&errno));
+            ORIG_GO(E_OS, "chmod failed\n", cu);
+        }
+    }
+
+cu:
+    dstr_free(&heap);
+    return error;
+}
+
+derr_t dstr_fread_path(const string_builder_t* sb, dstr_t* buffer){
+    derr_t error = E_OK;
+    DSTR_VAR(stack, 256);
+    dstr_t heap = {0};
+    dstr_t* path;
+    PROP( sb_expand(sb, &slash, &stack, &heap, &path) );
+
+    PROP_GO( dstr_fread_file(path->data, buffer), cu);
+
+cu:
+    dstr_free(&heap);
+    return error;
+}
+
+derr_t stat_path(const string_builder_t* sb, struct stat* out, int* eno){
+    derr_t error = E_OK;
+    DSTR_VAR(stack, 256);
+    dstr_t heap = {0};
+    dstr_t* path;
+    PROP( sb_expand(sb, &slash, &stack, &heap, &path) );
+
+    errno = 0;
+    int ret = stat(path->data, out);
+    if(eno != NULL) *eno = errno;
+    if(ret != 0){
+        if(errno == ENOMEM){
+            ORIG_GO(E_NOMEM, "no memory for stat", cu);
+        // only throw E_FS if calling function doesn't check *eno
+        }else if(eno == NULL){
+            LOG_ERROR("unable to stat %x: %x\n", FD(path), FE(&errno));
+            ORIG_GO(E_FS, "unable to stat", cu);
+        }
+    }
+
+cu:
+    dstr_free(&heap);
+    return error;
+}
+
+derr_t mkdir_path(const string_builder_t* sb, mode_t mode, bool soft){
+    derr_t error = E_OK;
+    DSTR_VAR(stack, 256);
+    dstr_t heap = {0};
+    dstr_t* path;
+    PROP( sb_expand(sb, &slash, &stack, &heap, &path) );
+
+    int ret = mkdir(path->data, mode);
+    if(ret != 0){
+        if(errno == ENOMEM){
+            ORIG_GO(E_NOMEM, "no memory for mkdir", cu);
+        }else if(soft && errno == EEXIST){
+            // we might ignore this error, if what exists is a directory
+            struct stat s;
+            int ret = stat(path->data, &s);
+            if(ret == 0 && S_ISDIR(s.st_mode)){
+                // it's a directory!  we are fine.
+                goto cu;
+            }else if(errno == ENOMEM){
+                ORIG_GO(E_NOMEM, "no memory for stat", cu);
+            }else{
+                LOG_ERROR("mkdir %x failed: file already exists\n", FD(path));
+                ORIG_GO(E_FS, "unable to mkdir", cu);
+            }
+        }else{
+            LOG_ERROR("unable to mkdir %x: %x\n", FD(path), FE(&errno));
+            ORIG_GO(E_FS, "unable to mkdir", cu);
+        }
+    }
+
+cu:
+    dstr_free(&heap);
+    return error;
+}
+
+static inline derr_t do_dir_access_path(const string_builder_t* sb, bool create,
+                                        bool* ret, int flags){
+    DSTR_VAR(stack, 256);
+    dstr_t heap = {0};
+    dstr_t* path;
+    PROP( sb_expand(sb, &slash, &stack, &heap, &path) );
+
+    *ret = do_dir_access(path->data, create, flags);
+
+    dstr_free(&heap);
+    return E_OK;
+}
+derr_t dir_r_access_path(const string_builder_t* sb, bool create, bool* ret){
+    PROP( do_dir_access_path(sb, create, ret, X_OK | R_OK) );
+    return E_OK;
+}
+derr_t dir_w_access_path(const string_builder_t* sb, bool create, bool* ret){
+    PROP( do_dir_access_path(sb, create, ret, X_OK | W_OK) );
+    return E_OK;
+}
+derr_t dir_rw_access_path(const string_builder_t* sb, bool create, bool* ret){
+    PROP( do_dir_access_path(sb, create, ret, X_OK | R_OK | W_OK) );
+    return E_OK;
+}
+
+static inline derr_t do_file_access_path(const string_builder_t* sb, bool* ret, int flags){
+    DSTR_VAR(stack, 256);
+    dstr_t heap = {0};
+    dstr_t* path;
+    PROP( sb_expand(sb, &slash, &stack, &heap, &path) );
+
+    *ret = do_file_access(path->data, flags);
+
+    dstr_free(&heap);
+    return E_OK;
+}
+derr_t file_r_access_path(const string_builder_t* sb, bool* ret){
+    PROP( do_file_access_path(sb, ret, R_OK) );
+    return E_OK;
+}
+derr_t file_w_access_path(const string_builder_t* sb, bool* ret){
+    PROP( do_file_access_path(sb, ret, W_OK) );
+    return E_OK;
+}
+derr_t file_rw_access_path(const string_builder_t* sb, bool* ret){
+    PROP( do_file_access_path(sb, ret, R_OK | W_OK) );
+    return E_OK;
+}
+
+derr_t exists_path(const string_builder_t* sb, bool* ret){
+    DSTR_VAR(stack, 256);
+    dstr_t heap = {0};
+    dstr_t* path;
+    PROP( sb_expand(sb, &slash, &stack, &heap, &path) );
+
+    *ret = exists(path->data);
+
+    dstr_free(&heap);
+    return E_OK;
+}
+
+derr_t remove_path(const string_builder_t* sb){
+    derr_t error = E_OK;
+    DSTR_VAR(stack, 256);
+    dstr_t heap = {0};
+    dstr_t* path;
+    PROP( sb_expand(sb, &slash, &stack, &heap, &path) );
+
+    int ret = remove(path->data);
+    if(ret != 0){
+        if(errno == ENOMEM){
+            ORIG_GO(E_NOMEM, "no memory for remove", cu);
+        }else{
+            LOG_ERROR("unable to remove %x: %x\n", FD(path), FE(&errno));
+            ORIG_GO(E_FS, "unable to remove", cu);
+        }
+    }
+
+cu:
+    dstr_free(&heap);
+    return error;
+}
+
+derr_t file_copy(const char* from, const char* to, mode_t mode){
+    derr_t error;
+    DSTR_VAR(buffer, 4096);
+
+    int fdin = open(from, O_RDONLY);
+    if(fdin < 0){
+        LOG_ERROR("%x: %x\n", FS(from), FE(&errno));
+        ORIG(E_OPEN, "unable to open file");
+    }
+
+    int fdout = open(to, O_WRONLY | O_CREAT | O_TRUNC, mode);
+    if(fdout < 0){
+        LOG_ERROR("%x: %x\n", FS(to), FE(&errno));
+        ORIG_GO(E_OPEN, "unable to open file", cu_fdin);
+    }
+
+    // read and write chunks until we run out
+    while(true){
+        size_t amnt_read;
+        buffer.len = 0;
+        PROP_GO( dstr_read(fdin, &buffer, 0, &amnt_read), cu_fdout);
+        // break on a no-read
+        if(amnt_read == 0) break;
+        PROP_GO( dstr_write(fdout, &buffer), cu_fdout);
+    }
+
+cu_fdout:
+    close(fdout);
+cu_fdin:
+    close(fdin);
+    return error;
+}
+
+derr_t file_copy_path(const string_builder_t* sb_from,
+                      const string_builder_t* sb_to, mode_t mode){
+    derr_t error;
+    DSTR_VAR(stack_from, 256);
+    dstr_t heap_from = {0};
+    dstr_t* path_from;
+    PROP( sb_expand(sb_from, &slash, &stack_from, &heap_from, &path_from) );
+
+    DSTR_VAR(stack_to, 256);
+    dstr_t heap_to = {0};
+    dstr_t* path_to;
+    PROP_GO( sb_expand(sb_to, &slash, &stack_to, &heap_to, &path_to), cu_from);
+
+    PROP_GO( file_copy(path_from->data, path_to->data, mode), cu_to);
+
+cu_to:
+    dstr_free(&heap_to);
+cu_from:
+    dstr_free(&heap_from);
+    return error;
 }
