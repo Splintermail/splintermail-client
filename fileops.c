@@ -285,25 +285,39 @@ cleanup:
 // String-Builder-enabled libc wrappers below //
 
 #ifndef _WIN32
-derr_t chown_path(const string_builder_t* sb, uid_t uid, gid_t gid){
+static inline derr_t do_chown_path(const string_builder_t* sb, uid_t uid,
+                                   gid_t gid, bool l){
     derr_t error = E_OK;
     DSTR_VAR(stack, 256);
     dstr_t heap = {0};
     dstr_t* path;
     PROP( sb_expand(sb, &slash, &stack, &heap, &path) );
 
-    int ret = chown(path->data, uid, gid);
+    int ret;
+    if(l){
+        ret = lchown(path->data, uid, gid);
+    }else{
+        ret = chown(path->data, uid, gid);
+    }
     if(ret != 0){
         if(errno == ENOMEM){
-            ORIG_GO(E_NOMEM, "No memory for chwon", cu);
+            ORIG_GO(E_NOMEM, "No memory for chown", cu);
         }else{
             LOG_ERROR("chown %x: %x\n", FD(path), FE(&errno));
-            ORIG_GO(E_OS, "chwon failed\n", cu);
+            ORIG_GO(E_OS, "chown failed\n", cu);
         }
     }
 cu:
     dstr_free(&heap);
     return error;
+}
+derr_t chown_path(const string_builder_t* sb, uid_t uid, gid_t gid){
+    PROP( do_chown_path(sb, uid, gid, false) );
+    return E_OK;
+}
+derr_t lchown_path(const string_builder_t* sb, uid_t uid, gid_t gid){
+    PROP( do_chown_path(sb, uid, gid, true) );
+    return E_OK;
 }
 
 derr_t opendir_path(const string_builder_t* sb, DIR** out){
@@ -328,6 +342,93 @@ derr_t opendir_path(const string_builder_t* sb, DIR** out){
 
 cu:
     dstr_free(&heap);
+    return error;
+}
+
+derr_t readlink_path(const string_builder_t* sb, dstr_t* stack_out,
+                     dstr_t* heap_out, dstr_t** out){
+    // first expand the sb, so we know which link to read
+    derr_t error = E_OK;
+    DSTR_VAR(stack, 256);
+    dstr_t heap = {0};
+    dstr_t* path;
+    PROP( sb_expand(sb, &slash, &stack, &heap, &path) );
+
+    // now try and read
+    ssize_t len = readlink(path->data, stack_out->data, stack_out->size);
+    if(len < 0){
+        if(errno == ENOMEM){
+            ORIG_GO(E_NOMEM, "no memory for errno", cu_path);
+        }else{
+            LOG_ERROR("readlink %x: %x\n", FD(path), FE(&errno));
+            ORIG_GO(E_FS, "unable to readlink", cu_path);
+        }
+    }
+    // if link wasn't too long, we are done
+    if((size_t)len < stack_out->size){
+        stack_out->len = (size_t)len;
+        // this should never fail now
+        PROP_GO( dstr_null_terminate(stack_out), cu_path);
+        *out = stack_out;
+    }else{
+        // the stack_out wasn't big enough
+        PROP_GO( dstr_new(heap_out, stack_out->size * 2), cu_path);
+        while(true){
+            len = readlink(path->data, heap_out->data, heap_out->size);
+            if(len < 0){
+                if(errno == ENOMEM){
+                    ORIG_GO(E_NOMEM, "no memory for errno", cu_heap);
+                }else{
+                    LOG_ERROR("readlink %x: %x\n", FD(path), FE(&errno));
+                    ORIG_GO(E_FS, "unable to readlink", cu_heap);
+                }
+            }
+            // check if the heap_out was big enough
+            if((size_t)len < heap_out->size){
+                break;
+            }
+            // otherwise grow it and try again
+            PROP_GO( dstr_grow(heap_out, heap_out->size * 2), cu_heap);
+        }
+        PROP_GO( dstr_null_terminate(heap_out), cu_path);
+        *out = heap_out;
+    }
+
+cu_heap:
+    if(error) dstr_free(heap_out);
+cu_path:
+    dstr_free(&heap);
+    return error;
+}
+
+derr_t symlink_path(const string_builder_t* to, const string_builder_t* at){
+    derr_t error;
+    DSTR_VAR(stack_at, 256);
+    dstr_t heap_at = {0};
+    dstr_t* at_out;
+    PROP( sb_expand(at, &slash, &stack_at, &heap_at, &at_out) );
+
+    DSTR_VAR(stack_to, 256);
+    dstr_t heap_to = {0};
+    dstr_t* to_out;
+    PROP_GO( sb_expand(to, &slash, &stack_to, &heap_to,
+                       &to_out), cu_at);
+
+    int ret = symlink(to_out->data, at_out->data);
+    if(ret != 0){
+        if(errno == ENOMEM){
+            ORIG_GO(E_NOMEM, "no memory for symlink", cu_to);
+        }else{
+            LOG_ERROR("symlink %x -> %x: %x\n",
+                      FD(at_out), FD(to_out), FE(&errno));
+            ORIG_GO(E_FS, "unable to symlink", cu_to);
+        }
+    }
+
+cu_to:
+    dstr_free(&heap_to);
+cu_at:
+    dstr_free(&heap_at);
     return error;
 }
 #endif // _WIN32
@@ -368,7 +469,8 @@ cu:
     return error;
 }
 
-derr_t stat_path(const string_builder_t* sb, struct stat* out, int* eno){
+static inline derr_t do_stat_path(const string_builder_t* sb, struct stat* out,
+                                  int* eno, bool l){
     derr_t error = E_OK;
     DSTR_VAR(stack, 256);
     dstr_t heap = {0};
@@ -376,7 +478,12 @@ derr_t stat_path(const string_builder_t* sb, struct stat* out, int* eno){
     PROP( sb_expand(sb, &slash, &stack, &heap, &path) );
 
     errno = 0;
-    int ret = stat(path->data, out);
+    int ret;
+    if(l){
+        ret = lstat(path->data, out);
+    }else{
+        ret = stat(path->data, out);
+    }
     if(eno != NULL) *eno = errno;
     if(ret != 0){
         if(errno == ENOMEM){
@@ -391,6 +498,14 @@ derr_t stat_path(const string_builder_t* sb, struct stat* out, int* eno){
 cu:
     dstr_free(&heap);
     return error;
+}
+derr_t stat_path(const string_builder_t* sb, struct stat* out, int* eno){
+    PROP( do_stat_path(sb, out, eno, false) );
+    return E_OK;
+}
+derr_t lstat_path(const string_builder_t* sb, struct stat* out, int* eno){
+    PROP( do_stat_path(sb, out, eno, true) );
+    return E_OK;
 }
 
 derr_t mkdir_path(const string_builder_t* sb, mode_t mode, bool soft){

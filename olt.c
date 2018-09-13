@@ -262,12 +262,12 @@ static derr_t parse_perms(const dstr_t* perms, directory* root){
             // make sure the last line was a directory
             if(last_line_dir == NULL){
                 LOG_ERROR("can't increase indent here: %x\n", FD(&lines.data[i]));
-                ORIG_GO(E_INTERNAL, "can't increase indent here", cu_lines);
+                ORIG_GO(E_VALUE, "can't increase indent here", cu_lines);
             }
             // make sure the indentation increased by exactly 4
             if(indent - last_indent != 4){
                 LOG_ERROR("indent jump: %x\n", FD(&lines.data[i]));
-                ORIG_GO(E_INTERNAL, "indent jump", cu_lines);
+                ORIG_GO(E_VALUE, "indent jump", cu_lines);
             }
             // now push the last dir onto our dpstack
             PROP_GO( LIST_APPEND(directory_p, &dpstack, last_line_dir), cu_lines);
@@ -341,7 +341,7 @@ cu_lines:
 //     string_builder_t fullpath = sb_append(base, FD(file));
 //     // stat for the existing permissions
 //     struct stat s;
-//     PROP( stat_path(&fullpath, &s) );
+//     PROP( lstat_path(&fullpath, &s) );
 //
 //     // prepare for printing indent
 //     DSTR_PRESET(pre, "                                                   ");
@@ -417,6 +417,16 @@ static derr_t check_tree_hook(const string_builder_t* base, const dstr_t* file,
                      FSB(&fullpath, &slash));
            *data->ok = false;
         }else{
+            // make sure links have valid permissions (0777)
+            struct stat s;
+            PROP( lstat_path(&fullpath, &s, NULL) );
+            if(S_ISLNK(s.st_mode)){
+                if(data->perm_dir->file_modes.data[idx] != 0777){
+                    LOG_ERROR("%x: link needs 0777 permissions\n",
+                              FSB(&fullpath, &slash));
+                    *data->ok = false;
+                }
+            }
             // mark file as found
             data->files_found.data[idx] = true;
         }
@@ -682,6 +692,30 @@ static inline bool is_newer(struct stat* a, struct stat* b){
 }
 
 
+// separate function due to obnoxiousness of readlink() behavior
+static inline derr_t install_symlink(const string_builder_t* readlinkfrom,
+                                     const string_builder_t* link,
+                                     bool rm_first){
+    derr_t error;
+    if(rm_first){
+        PROP( remove_path(link) );
+    }
+    // now get the linkto from the original link, no matter how long it is
+    DSTR_VAR(stack, 256);
+    dstr_t heap = {0};
+    dstr_t* linkto;
+    PROP( readlink_path(readlinkfrom, &stack, &heap, &linkto) );
+
+    // now install the new readlink
+    LOG_DEBUG("    %x -> %x\n", FSB(link, &slash), FD(linkto));
+    PROP_GO( symlink_path(&SB(FD(linkto)), link), cu_heap);
+
+cu_heap:
+    dstr_free(&heap);
+    return error;
+}
+
+
 static derr_t handle_install(const directory* perms,
                              const string_builder_t* overlay,
                              const string_builder_t* dest){
@@ -697,45 +731,64 @@ static derr_t handle_install(const directory* perms,
         // check if file already exists
         struct stat s;
         int eno;
-        PROP( stat_path(&path, &s, &eno) );
+        PROP( lstat_path(&path, &s, &eno) );
+        // we will need info about the overlay file as well
+        struct stat overlay_s;
+        PROP( lstat_path(&overlay_path, &overlay_s, NULL) );
         if(eno == 0){
-            // someting exists, make sure it's a regular file
+            // someting exists, make sure it's not a directory
             if(S_ISDIR(s.st_mode)){
-                /* if it is not a regular file, and we didn't delete in during
-                   the deletion phase, just stop. */
+                /* if it is not a regular file, since we didn't delete it
+                   during the deletion phase, just stop. */
                 LOG_ERROR("a directory exists at %x, can't install file\n",
                           FSB(&path, &slash));
                 ORIG(E_FS, "a directory exists, can't install file");
             }
             // make sure file contents are up-to-date
-            struct stat overlay_s;
-            PROP( stat_path(&overlay_path, &overlay_s, NULL) );
             if(is_newer(&overlay_s, &s)){
-                // file copy (mode doesn't matter, file already exists)
-                LOG_DEBUG("instl %x from %x\n",
-                          FSB(&path, &slash), FSB(&overlay_path, &slash));
-                PROP( file_copy_path(&overlay_path, &path, 0000) );
+                if(S_ISREG(overlay_s.st_mode)){
+                    LOG_DEBUG("install %x from %x\n",
+                              FSB(&path, &slash), FSB(&overlay_path, &slash));
+                    // file copy (mode doesn't matter, file already exists)
+                    PROP( file_copy_path(&overlay_path, &path, 0000) );
+                }else if(S_ISLNK(overlay_s.st_mode)){
+                    LOG_DEBUG("update %x based on %x\n",
+                              FSB(&path, &slash), FSB(&overlay_path, &slash));
+                    PROP( install_symlink(&overlay_path, &path, true) );
+                }else{
+                    ORIG(E_INTERNAL, "invalid file type");
+                }
             }
             // make sure owner is correct
             if(s.st_uid != uid || s.st_gid != gid){
                 LOG_DEBUG("chown %x\n", FSB(&path, &slash));
-                PROP( chown_path(&path, uid, gid) );
+                PROP( lchown_path(&path, uid, gid) );
             }
-            // make sure mode is correct
-            if((s.st_mode & 0777) != mode){
+            // make sure mode is correct (except for links)
+            if(!S_ISLNK(overlay_s.st_mode) && (s.st_mode & 0777) != mode){
                 LOG_DEBUG("chmod %x from %x to %x\n", FSB(&path, &slash),
-                          FI(s.st_mode), FI(mode));
+                          FU(s.st_mode & 0777), FU(mode));
                 PROP( chmod_path(&path, mode) );
             }
         }else if(eno == ENOENT){
             // installing a file that hasn't been there before
-            LOG_DEBUG("new file: %x\n", FSB(&path, &slash));
-            // file does not exist, create it (with restrictive permissions)
-            PROP( file_copy_path(&overlay_path, &path, 0000) );
+            if(S_ISREG(overlay_s.st_mode)){
+                // file does not exist, create it (with restrictive permissions)
+                LOG_DEBUG("new file: %x\n", FSB(&path, &slash));
+                PROP( file_copy_path(&overlay_path, &path, 0000) );
+            }else if(S_ISLNK(overlay_s.st_mode)){
+                LOG_DEBUG("new link: %x\n", FSB(&path, &slash));
+                PROP( install_symlink(&overlay_path, &path, false) );
+            }else{
+                ORIG(E_INTERNAL, "invalid file type");
+            }
             // set mode with chmod (open() in file_copy() applies a umask)
-            PROP( chmod_path(&path, mode) );
+            // (except chmod() doesn't work on symlinks)
+            if(!S_ISLNK(overlay_s.st_mode)){
+                PROP( chmod_path(&path, mode) );
+            }
             // set owner
-            PROP( chown_path(&path, uid, gid) );
+            PROP( lchown_path(&path, uid, gid) );
         }else{
             // any other error from stat():
             LOG_ERROR("failed to stat %x: %x\n", FSB(&path, &slash), FE(&eno));
@@ -752,7 +805,7 @@ static derr_t handle_install(const directory* perms,
         // make sure the subdirectory exists and is a directory
         struct stat s;
         int eno;
-        PROP( stat_path(&path, &s, &eno) );
+        PROP( lstat_path(&path, &s, &eno) );
         if(eno == 0){
             // someting exists, make sure it's a directory
             if(!S_ISDIR(s.st_mode)){

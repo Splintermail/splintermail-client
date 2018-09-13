@@ -42,7 +42,13 @@ derr_t rm_rf(const char* root_path);
 
 #ifndef _WIN32
 derr_t chown_path(const string_builder_t* sb, uid_t uid, gid_t gid);
+derr_t lchown_path(const string_builder_t* sb, uid_t uid, gid_t gid);
 derr_t opendir_path(const string_builder_t* sb, DIR** out);
+
+// usage is similar to sb_expand().  This will always null-terminate *out.
+derr_t readlink_path(const string_builder_t* sb, dstr_t* stack_out,
+                     dstr_t* heap_out, dstr_t** out);
+derr_t symlink_path(const string_builder_t* to, const string_builder_t* at);
 #endif // _WIN32
 
 derr_t chmod_path(const string_builder_t* sb, mode_t mode);
@@ -50,6 +56,7 @@ derr_t dstr_fread_path(const string_builder_t* sb, dstr_t* buffer);
 
 /* If *eno!=NULL then stat_path can only throw E_NOMEM */
 derr_t stat_path(const string_builder_t* sb, struct stat* out, int* eno);
+derr_t lstat_path(const string_builder_t* sb, struct stat* out, int* eno);
 
 derr_t mkdir_path(const string_builder_t* sb, mode_t mode, bool soft);
 
