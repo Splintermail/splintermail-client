@@ -632,14 +632,22 @@ derr_t file_copy(const char* from, const char* to, mode_t mode){
 
     int fdin = open(from, O_RDONLY);
     if(fdin < 0){
-        LOG_ERROR("%x: %x\n", FS(from), FE(&errno));
-        ORIG(E_OPEN, "unable to open file");
+        if(errno == ENOMEM){
+            ORIG(E_NOMEM, "no memory for open");
+        }else{
+            LOG_ERROR("%x: %x\n", FS(from), FE(&errno));
+            ORIG(E_OPEN, "unable to open file");
+        }
     }
 
     int fdout = open(to, O_WRONLY | O_CREAT | O_TRUNC, mode);
     if(fdout < 0){
-        LOG_ERROR("%x: %x\n", FS(to), FE(&errno));
-        ORIG_GO(E_OPEN, "unable to open file", cu_fdin);
+        if(errno == ENOMEM){
+            ORIG_GO(E_NOMEM, "no memory for open", cu_fdin);
+        }else{
+            LOG_ERROR("%x: %x\n", FS(to), FE(&errno));
+            ORIG_GO(E_OPEN, "unable to open file", cu_fdin);
+        }
     }
 
     // read and write chunks until we run out
@@ -678,5 +686,40 @@ cu_to:
     dstr_free(&heap_to);
 cu_from:
     dstr_free(&heap_from);
+    return error;
+}
+
+derr_t touch(const char* path){
+    // create the file if necessary
+    int fd = open(path, O_WRONLY | O_CREAT | O_APPEND, 0666);
+    if(fd < 0){
+        if(errno == ENOMEM){
+            ORIG(E_NOMEM, "no memory for open");
+        }else{
+            LOG_ERROR("%x: %x\n", FS(path), FE(&errno));
+            ORIG(E_OPEN, "unable to open file");
+        }
+    }
+    close(fd);
+    // use uitme to update the file's timestamp
+    int ret = utime(path, NULL);
+    if(ret != 0){
+        LOG_ERROR("%x: %x\n", FS(path), FE(&errno));
+        ORIG(E_FS, "utime failed");
+    }
+    return E_OK;
+}
+
+derr_t touch_path(const string_builder_t* sb){
+    derr_t error = E_OK;
+    DSTR_VAR(stack, 256);
+    dstr_t heap = {0};
+    dstr_t* path;
+    PROP( sb_expand(sb, &slash, &stack, &heap, &path) );
+
+    PROP_GO( touch(path->data), cu);
+
+cu:
+    dstr_free(&heap);
     return error;
 }

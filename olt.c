@@ -333,48 +333,6 @@ cu_lines:
 }
 
 
-// static derr_t print_tree_hook(const string_builder_t* base, const dstr_t* file,
-//                             bool isdir, void* userdata){
-//     // dereference userdata
-//     size_t level = *((size_t*)userdata);
-//     // append filename to base
-//     string_builder_t fullpath = sb_append(base, FD(file));
-//     // stat for the existing permissions
-//     struct stat s;
-//     PROP( lstat_path(&fullpath, &s) );
-//
-//     // prepare for printing indent
-//     DSTR_PRESET(pre, "                                                   ");
-//     pre.len = level * 2;
-//     // handle regular files
-//     if(!isdir){
-//         PFMT("%x%x\n", FD(&pre), FD(file));
-//     }
-//     // handle directories
-//     else{
-//         PFMT("%x%x:\n", FD(&pre), FD(file));
-//         // recurse into this directory
-//         size_t newdata = level + 1;
-//         PROP( for_each_file_in_dir2(&fullpath, print_tree_hook, (void*)&newdata) );
-//     }
-//     return E_OK;
-// }
-//
-// static derr_t print_tree(const string_builder_t* path){
-//     size_t data = 0;
-//     PROP( for_each_file_in_dir2(path, print_tree_hook, (void*)&data) );
-//     return E_OK;
-// }
-//
-// static derr_t do_print_fs_tree(const dstr_t* base){
-//
-//     string_builder_t sb_base = sb_append(NULL, FD(base));
-//     PROP( print_tree(&sb_base) );
-//
-//     return E_OK;
-// }
-
-
 // like common.c's in_list() but with an additional level of dereference
 static inline bool in_dir_list(const dstr_t* val, const LIST(directory)* list,
                                size_t* idx){
@@ -501,20 +459,6 @@ cu_df:
 }
 
 
-// static derr_t mkdir_recurse(const directory* dir,
-//                             const string_builder_t* dest){
-//     // make sure all subdirectories exist
-//     for(size_t i = 0; i < dir->dirs.len; i++){
-//         directory* subdir = &dir->dirs.data[i];
-//         string_builder_t subpath = sb_append(dest, FD(&subdir->name));
-//         PROP( mkdir_path(&subpath, dir->dir_modes.data[i], true) );
-//         // then recurse into every subdirectory
-//         PROP( mkdir_recurse(subdir, &subpath) );
-//     }
-//     return E_OK;
-// }
-
-
 static derr_t read_perms_file(const string_builder_t* permsfile,
                               dstr_t* perms, directory* perm_dir){
     derr_t error;
@@ -535,37 +479,6 @@ fail_perms:
     dstr_free(perms);
     return error;
 }
-
-
-// static derr_t olt_preinstall(const char* permsfile, const char* overlay,
-//                              const char* dest, int* retval){
-//     derr_t error;
-//     // allocate memory and read/parse permissions file
-//     dstr_t perms;
-//     directory perm_dir;
-//     PROP( read_perms_file(&SB(FS(permsfile)), &perms, &perm_dir) );
-//
-//     // check the perms file against the actual file overlay
-//     bool ok = true;
-//     string_builder_t overlay_sb = sb_append(NULL, FS(overlay));
-//     PROP_GO( check_tree(&overlay_sb, &perm_dir, NULL, &ok), cu);
-//
-//     // make sure that we are OK up to here
-//     if(!ok){
-//         LOG_ERROR("RESULT: permissions/overlay mismatch\n");
-//         *retval = 2;
-//         goto cu;
-//     }
-//
-//     // then create the skeleton of directories, for the installer
-//     string_builder_t dest_sb = sb_append(NULL, FS(dest));
-//     PROP_GO( mkdir_recurse(&perm_dir, &dest_sb), cu);
-//
-// cu:
-//     directory_free(&perm_dir);
-//     dstr_free(&perms);
-//     return error;
-// }
 
 
 static derr_t dir_is_empty(const string_builder_t* path, bool* dir_empty){
@@ -598,7 +511,7 @@ cleanup:
 
 
 static derr_t delete_from_perms(const directory* del, const directory* keep,
-                                const string_builder_t* dest){
+                                const string_builder_t* dest, bool* update){
     // delete all files, unless they are in the keep directory
     for(size_t i = 0; i < del->files.len; i++){
         dstr_t* f = &del->files.data[i];
@@ -613,6 +526,7 @@ static derr_t delete_from_perms(const directory* del, const directory* keep,
         // if it exists, remove it
         if(fexists){
             LOG_DEBUG("deleting file %x\n", FSB(&fpath, &slash));
+            *update = true;
             PROP( remove_path(&fpath) );
         }
     }
@@ -630,15 +544,16 @@ static derr_t delete_from_perms(const directory* del, const directory* keep,
         // in_keep is false if keep == NULL
         bool in_keep = keep ? in_dir_list(&d->name, &keep->dirs, &idx) : false;
         if(in_keep){
-            delete_from_perms(d, &keep->dirs.data[idx], &dpath);
+            delete_from_perms(d, &keep->dirs.data[idx], &dpath, update);
         }else{
             // if subdir not in keep, delete everything in it
-            delete_from_perms(d, NULL, &dpath);
+            delete_from_perms(d, NULL, &dpath, update);
             // then trim empty directories
             bool dir_empty;
             PROP( dir_is_empty(&dpath, &dir_empty) );
             if(dir_empty){
                 LOG_DEBUG("triming empty dir %x\n", FSB(&dpath, &slash));
+                *update = true;
                 PROP( remove_path(&dpath) );
             }
         }
@@ -646,14 +561,26 @@ static derr_t delete_from_perms(const directory* del, const directory* keep,
     return E_OK;
 }
 
+static derr_t get_old_permissions_file(const char* permsfile, dstr_t* out){
+    // first append .old to the name
+    out->len = 0;
+    PROP( FMT(out, "%x.old", FS(permsfile)) );
+    // then convert all "/" to "_"
+    for(size_t i = 0; i < out->len; i++){
+        if(out->data[i] == '/'){
+            out->data[i] = '_';
+        }
+    }
+    return E_OK;
+}
 
 static derr_t handle_deletions(const char* permsfile, const directory* perms,
-                               const string_builder_t* dest){
+                               const string_builder_t* dest, bool* update){
     derr_t error;
     // get the name of the old permissions file
     dstr_t oldpf;
     PROP( dstr_new(&oldpf, strlen(permsfile) + 5) );
-    PROP_GO( FMT(&oldpf, "%x.old", FS(permsfile)), cu_oldpf);
+    PROP_GO( get_old_permissions_file(permsfile, &oldpf), cu_oldpf);
 
     // if old file exists, proceed with deleteions
     if(exists(oldpf.data)){
@@ -667,7 +594,7 @@ static derr_t handle_deletions(const char* permsfile, const directory* perms,
         PROP_GO( read_perms_file(&SB(FD(&oldpf)), &old_perms, &old_perm_dir), cu_oldpf);
 
         // delete from old_perms where not in perms, recursivley
-        PROP_GO( delete_from_perms(&old_perm_dir, perms, dest), cu_oldperms);
+        PROP_GO( delete_from_perms(&old_perm_dir, perms, dest, update), cu_oldperms);
 
     cu_oldperms:
         directory_free(&old_perm_dir);
@@ -718,7 +645,9 @@ cu_heap:
 
 static derr_t handle_install(const directory* perms,
                              const string_builder_t* overlay,
-                             const string_builder_t* dest){
+                             const string_builder_t* dest,
+                             bool* update,
+                             bool force_install){
     for(size_t i = 0; i < perms->files.len; i++){
         // get the information we need for this file
         dstr_t* f = &perms->files.data[i];
@@ -745,7 +674,8 @@ static derr_t handle_install(const directory* perms,
                 ORIG(E_FS, "a directory exists, can't install file");
             }
             // make sure file contents are up-to-date
-            if(is_newer(&overlay_s, &s)){
+            if(force_install || is_newer(&overlay_s, &s)){
+                *update = true;
                 if(S_ISREG(overlay_s.st_mode)){
                     LOG_DEBUG("install %x from %x\n",
                               FSB(&path, &slash), FSB(&overlay_path, &slash));
@@ -762,15 +692,18 @@ static derr_t handle_install(const directory* perms,
             // make sure owner is correct
             if(s.st_uid != uid || s.st_gid != gid){
                 LOG_DEBUG("chown %x\n", FSB(&path, &slash));
+                *update = true;
                 PROP( lchown_path(&path, uid, gid) );
             }
             // make sure mode is correct (except for links)
             if(!S_ISLNK(overlay_s.st_mode) && (s.st_mode & 0777) != mode){
                 LOG_DEBUG("chmod %x from %x to %x\n", FSB(&path, &slash),
                           FU(s.st_mode & 0777), FU(mode));
+                *update = true;
                 PROP( chmod_path(&path, mode) );
             }
         }else if(eno == ENOENT){
+            *update = true;
             // installing a file that hasn't been there before
             if(S_ISREG(overlay_s.st_mode)){
                 // file does not exist, create it (with restrictive permissions)
@@ -818,14 +751,17 @@ static derr_t handle_install(const directory* perms,
             // make sure owner is correct
             if(s.st_uid != uid || s.st_gid != gid){
                 LOG_DEBUG("chown %x/\n", FSB(&path, &slash));
+                *update = true;
                 PROP( chown_path(&path, uid, gid) );
             }
             // make sure mode is correct
             if((s.st_mode & 0777) != mode){
                 LOG_DEBUG("chmod %x/\n", FSB(&path, &slash));
+                *update = true;
                 PROP( chmod_path(&path, mode) );
             }
         }else if(eno == ENOENT){
+            *update = true;
             LOG_DEBUG("new directory: %x/\n", FSB(&path, &slash));
             // directory does not exist, create it
             PROP( mkdir_path(&path, mode, false) );
@@ -841,7 +777,7 @@ static derr_t handle_install(const directory* perms,
         // now, recurse into the directory
         string_builder_t overlay_sub = sb_append(overlay, FD(&d->name));
         string_builder_t dest_sub = sb_append(dest, FD(&d->name));
-        PROP( handle_install(d, &overlay_sub, &dest_sub) );
+        PROP( handle_install(d, &overlay_sub, &dest_sub, update, force_install) );
     }
     return E_OK;
 }
@@ -852,7 +788,7 @@ static derr_t save_permissions(const char* permsfile){
     // get the name of the old permissions file (which we will save to)
     dstr_t oldpf;
     PROP( dstr_new(&oldpf, strlen(permsfile) + 5) );
-    PROP_GO( FMT(&oldpf, "%x.old", FS(permsfile)), cu_oldpf);
+    PROP_GO( get_old_permissions_file(permsfile, &oldpf), cu_oldpf);
 
     // copy the permissions file to its new location
     PROP_GO( file_copy(permsfile, oldpf.data, 0644), cu_oldpf);
@@ -864,7 +800,8 @@ cu_oldpf:
 
 
 static derr_t do_olt(const char* permsfile, const char* overlay,
-                     const char* dest, bool check_mode, int* retval){
+                     const char* dest, const char* stamp, bool check_mode,
+                     int* retval){
     derr_t error;
     // allocate memory and read/parse permissions file
     dstr_t perms;
@@ -885,17 +822,31 @@ static derr_t do_olt(const char* permsfile, const char* overlay,
 
     if(check_mode) goto cu;
 
-    // make string_builder from destination
+    // prepare for installation steps
+    bool update = false;
     string_builder_t dest_sb = sb_append(NULL, FS(dest));
 
     // handle deletions
-    PROP_GO( handle_deletions(permsfile, &perm_dir, &dest_sb), cu);
+    PROP_GO( handle_deletions(permsfile, &perm_dir, &dest_sb, &update), cu);
+
+    // if a stamp was provided, but doesn't exist, install everything
+    bool force_install = false;;
+    if(stamp && !exists(stamp)){
+        force_install = true;
+    }
 
     // handle the install
-    PROP_GO( handle_install(&perm_dir, &overlay_sb, &dest_sb), cu);
+    PROP_GO( handle_install(&perm_dir, &overlay_sb, &dest_sb,
+                            &update, force_install), cu);
 
     // save the current permissions file so we can detect deletions next time
     PROP_GO( save_permissions(permsfile), cu);
+
+    // update the stamp, if necessary
+    if(stamp && update){
+        LOG_DEBUG("updating stamp\n");
+        PROP_GO( touch(stamp), cu);
+    }
 
 cu:
     directory_free(&perm_dir);
@@ -930,7 +881,8 @@ static void free_uid_gid_cache(void){
 static void print_help(void){
     LOG_ERROR("usage: olt [-d|--debug] PERMS OVERLAY      "
                                             "# check mode; takes no action\n");
-    LOG_ERROR("usage: olt [-d|--debug] PERMS OVERLAY DEST # install mode\n");
+    LOG_ERROR("usage: olt [-d|--debug] PERMS OVERLAY DEST [STAMP] "
+                                            "# install mode\n");
 }
 
 int main(int argc, char** argv){
@@ -948,24 +900,27 @@ int main(int argc, char** argv){
 
     logger_add_fileptr(o_debug.found ? LOG_LVL_DEBUG : LOG_LVL_INFO, stderr);
 
-    const char* permsarg;
-    const char* overlayarg;
-    const char* destarg;
+    const char* perms;
+    const char* overlay;
+    const char* dest;
+    const char* stamp;
     bool check_mode;
 
     int retval = 0;
 
     if(newargc == 3){
         // check mode
-        permsarg = argv[1];
-        overlayarg = argv[2];
-        destarg = NULL;
+        perms = argv[1];
+        overlay = argv[2];
+        dest = NULL;
+        stamp = NULL;
         check_mode = true;
-    }else if(newargc == 4){
+    }else if(newargc == 4 || newargc == 5){
         // install mode
-        permsarg = argv[1];
-        overlayarg = argv[2];
-        destarg = argv[3];
+        perms = argv[1];
+        overlay = argv[2];
+        dest = argv[3];
+        stamp = (newargc == 5) ? argv[4] : NULL;
         check_mode = false;
     }else{
         print_help();
@@ -976,7 +931,7 @@ int main(int argc, char** argv){
     PROP_GO( setup_uid_gid_cache(), exit);
 
     // take action
-    PROP_GO( do_olt(permsarg, overlayarg, destarg, check_mode, &retval), cu);
+    PROP_GO( do_olt(perms, overlay, dest, stamp, check_mode, &retval), cu);
 
 cu:
     free_uid_gid_cache();

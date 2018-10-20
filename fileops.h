@@ -5,9 +5,11 @@
 
 #ifdef _WIN32
     typedef unsigned int mode_t;
+    #include <sys/utime.h>
 #else
     #include <dirent.h>
     #include <sys/stat.h>
+    #include <utime.h>
 #endif
 
 // if (create == true), these functions will attempt to create the directory
@@ -76,5 +78,8 @@ derr_t remove_path(const string_builder_t* sb);
 derr_t file_copy(const char* from, const char* to, mode_t mode);
 derr_t file_copy_path(const string_builder_t* sb_from,
                       const string_builder_t* sb_to, mode_t mode);
+
+derr_t touch(const char* path);
+derr_t touch_path(const string_builder_t* sb);
 
 #endif // FILEOPS_H

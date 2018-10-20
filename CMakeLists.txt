@@ -40,8 +40,7 @@ set(EXE_TGTS srvcli
              splintermail
              leak
              encrypt_msg
-             decrypt_msg
-             olt)
+             decrypt_msg)
 
 set(TEST_OBJ_TGTS dummy_key_tool
                   dummy_ui_harness
@@ -68,6 +67,7 @@ set(TEST_EXE_TGTS test_common
 if("${BUILD_SERVER_CODE}")
     list(APPEND OBJ_TGTS badbadbad_alert)
     list(APPEND EXE_TGTS badbadbad)
+    list(APPEND EXE_TGTS olt)
 endif()
 
 
