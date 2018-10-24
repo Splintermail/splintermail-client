@@ -1,0 +1,68 @@
+# IMAP COMMANDS
+CAPABILITY
+NOOP
+LOGOUT
+--
+STARTTLS
+AUTHENTICATE <auth mechanism name> (server responds, and stuff continues)
+LOGIN username password
+--
+SELECT <mailbox name>
+EXAMINE
+CREATE
+DELETE
+RENAME
+SUBSCRIBE
+UNSUBSCRIBE
+LIST
+LSUB
+STATUS
+APPEND
+--
+CHECK
+CLOSE
+EXPUNGE
+SEARCH*
+FETCH*
+STORE
+COPY
+UID
+
+# * these will be hard
+
+
+# Networking / TLS / IMAP engines:
+
+     (libuv)           (OpenSSL)                           (thread pool)
+    _________          ________          ________           ___________
+   |         | rawin  |        | decin  |        | imapin  |           |
+   | NETWORK | -----> |  TLS   | -----> |  IMAP  | ------> |   IMAP    |
+   | ENGINE  | <----- | ENGINE | <----- | ENGINE | <------ | FUNCTIONS |
+   |_________| rawout |________| decout |________| imapout |___________|
+
+Memory contexts:
+    Per-client context: (PERCLI)
+      - allocated by network engine
+      - Commands in flight
+      - rawin, rawout, decin, decout (SSL memory buffer type)
+
+    Per-command context: (PERCOM)
+      - allocated by IMAP engine
+      - State of command, command-specific variables
+      - imapin, imapout buffers (dstr_t type)
+
+Application write:
+    Command lists its own PERCOM struct in the IMAP engine's queue
+    IMAP engine takes PERCOM and does whatever conversion, writing to PERCLI
+    IMAP engine lists PERCLI in TLS engine's queue
+    TLS engine takes PERCLI and does encryption
+    TLS engine lists PERCLI in libuv's queue
+    Network engine sends the packet when it can.
+
+Read from socket: (don't know which PERCOM it goes to yet)
+    Network engine reads from a socket, puts data in PERCLI struct
+    libuv puts PERCLI in TLS engine's queue, uv_read_stop()
+    TLS engine takes PERCLI and does decryption, uv_read_start() and kick loop
+    TLS engine puts PERCLI in IMAP Engine's queue
+    IMAP Engine decides which PERCOM needs this data, decodes into that PERCOM
+    Command handles the data that was read

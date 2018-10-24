@@ -40,7 +40,8 @@ set(EXE_TGTS srvcli
              splintermail
              leak
              encrypt_msg
-             decrypt_msg)
+             decrypt_msg
+             uv_test)
 
 set(TEST_OBJ_TGTS dummy_key_tool
                   dummy_ui_harness
@@ -99,6 +100,11 @@ if(APPLE OR WIN32)
     set(OPENSSL_USE_STATIC_LIBS TRUE)
 endif()
 find_package(OpenSSL REQUIRED)
+
+# include libuv
+add_library(uv_interface INTERFACE)
+# target_include_directories(libuv INTERFACE "${path/to/libuv/include}")
+target_link_libraries(uv_interface INTERFACE uv)
 
 # objects become OBJECT libraries, but are accessed through INTERFACE libraries
 foreach(tgt ${OBJ_TGTS})
@@ -171,6 +177,7 @@ target_link_libraries(leak networking)
 target_link_libraries(encrypt_msg crypto opt_parse)
 target_link_libraries(decrypt_msg crypto opt_parse)
 target_link_libraries(olt common fileops opt_parse)
+target_link_libraries(uv_test uv_interface)
 
 # decide if we are building server code
 if("${BUILD_SERVER_CODE}")
@@ -191,6 +198,9 @@ if("${BUILD_SERVER_CODE}")
 
     # badbadbad_alert needs non-strict aliasing due to sockaddr_info business
     target_compile_options(badbadbad_alert_o PRIVATE -fno-strict-aliasing)
+    # libuv needs non-strict aliasing as well
+    # see discussion here: https://github.com/libuv/libuv/issues/1230
+    target_compile_options(uv_test PRIVATE -fno-strict-aliasing)
 
     obj_depend_obj(badbadbad_alert common)
     target_link_libraries(encrypt_msg badbadbad_alert)
