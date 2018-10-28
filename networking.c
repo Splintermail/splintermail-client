@@ -42,7 +42,7 @@ void ssl_library_close(void){
 }
 
 derr_t connection_new(connection_t* conn,
-                        const char* addr, unsigned int port){
+                      const char* addr, unsigned int port){
     derr_t error;
     // combine address and port
     DSTR_VAR(addr_port, 256);
@@ -152,7 +152,6 @@ derr_t ssl_context_new_client(ssl_context_t* ctx){
         ORIG(E_NOMEM, "failed to create SSL context");
     }
 #endif
-
 
     // load SSL certificate location
     PROP_GO( ssl_context_load_from_os(ctx), cleanup);

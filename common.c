@@ -28,6 +28,8 @@ DSTR_STATIC(derr_param_dstr, "PARAM");
 DSTR_STATIC(derr_internal_dstr, "INTERNAL");
 DSTR_STATIC(derr_fs_dstr, "FILESYSTEM");
 DSTR_STATIC(derr_response_dstr, "RESPONSE");
+DSTR_STATIC(derr_nokeys_dstr, "NOKEYS");
+DSTR_STATIC(derr_uv_dstr, "UVERROR");
 DSTR_STATIC(derr_any_dstr, "ANY");
 
 dstr_t* error_to_dstr(derr_t error){
@@ -49,6 +51,8 @@ dstr_t* error_to_dstr(derr_t error){
         case E_INTERNAL: return &derr_internal_dstr;
         case E_FS: return &derr_fs_dstr;
         case E_RESPONSE: return &derr_response_dstr;
+        case E_NOKEYS: return &derr_nokeys_dstr;
+        case E_UV: return &derr_uv_dstr;
         case E_ANY: return &derr_any_dstr;
     }
     return &derr_unknown_dstr;

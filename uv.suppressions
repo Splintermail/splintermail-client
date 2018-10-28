@@ -1,0 +1,9 @@
+{
+   <epoll_copying_undefined_bytes_in_union_or_something>
+   Memcheck:Param
+   epoll_ctl(event)
+   fun:epoll_ctl
+   fun:uv__io_poll
+   fun:uv_run
+   ...
+}

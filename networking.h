@@ -10,7 +10,7 @@
 #endif
 
 // OpenSSL versions
-typedef struct {
+typedef struct ssl_context_t {
     SSL_CTX* ctx;
 } ssl_context_t;
 

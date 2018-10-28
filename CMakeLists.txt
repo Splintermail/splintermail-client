@@ -34,14 +34,16 @@ set(OBJ_TGTS api_client
              pop_server
              win_compat
              console_input
-             ui)
+             ui
+             ixs
+             loop)
 
 set(EXE_TGTS srvcli
              splintermail
              leak
              encrypt_msg
              decrypt_msg
-             uv_test)
+             imap)
 
 set(TEST_OBJ_TGTS dummy_key_tool
                   dummy_ui_harness
@@ -104,7 +106,10 @@ find_package(OpenSSL REQUIRED)
 # include libuv
 add_library(uv_interface INTERFACE)
 # target_include_directories(libuv INTERFACE "${path/to/libuv/include}")
-target_link_libraries(uv_interface INTERFACE uv)
+if("${LIBUV_LIB}" STREQUAL "")
+    set(LIBUV_LIB "uv")
+endif()
+target_link_libraries(uv_interface INTERFACE "${LIBUV_LIB}")
 
 # objects become OBJECT libraries, but are accessed through INTERFACE libraries
 foreach(tgt ${OBJ_TGTS})
@@ -152,6 +157,7 @@ endforeach()
 # some targets need OpenSSL headers
 obj_depend_lib(networking "${OPENSSL_INCLUDE_DIR}" "${OPENSSL_LIBRARIES}")
 obj_depend_lib(crypto "${OPENSSL_INCLUDE_DIR}" "${OPENSSL_LIBRARIES}")
+obj_depend_lib(ixs "${OPENSSL_INCLUDE_DIR}" "${OPENSSL_LIBRARIES}")
 # ui has a full test harness, so it can't use the normal obj_depend_obj
 target_include_directories(ui_o PRIVATE ${OPENSSL_INCLUDE_DIR})
 
@@ -169,6 +175,7 @@ obj_depend_obj(pop_server networking)
 obj_depend_obj(api_client networking crypto json)
 obj_depend_obj(key_tool api_client crypto)
 obj_depend_obj(ditm pop_client pop_server maildir json)
+obj_depend_obj(loop uv_interface common)
 
 # describe executables with dependencies
 target_link_libraries(srvcli networking)
@@ -177,7 +184,7 @@ target_link_libraries(leak networking)
 target_link_libraries(encrypt_msg crypto opt_parse)
 target_link_libraries(decrypt_msg crypto opt_parse)
 target_link_libraries(olt common fileops opt_parse)
-target_link_libraries(uv_test uv_interface)
+target_link_libraries(imap loop ixs networking)
 
 # decide if we are building server code
 if("${BUILD_SERVER_CODE}")
@@ -198,9 +205,6 @@ if("${BUILD_SERVER_CODE}")
 
     # badbadbad_alert needs non-strict aliasing due to sockaddr_info business
     target_compile_options(badbadbad_alert_o PRIVATE -fno-strict-aliasing)
-    # libuv needs non-strict aliasing as well
-    # see discussion here: https://github.com/libuv/libuv/issues/1230
-    target_compile_options(uv_test PRIVATE -fno-strict-aliasing)
 
     obj_depend_obj(badbadbad_alert common)
     target_link_libraries(encrypt_msg badbadbad_alert)
@@ -350,6 +354,9 @@ if("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU")
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wstrict-aliasing=2")
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-missing-field-initializers")
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fdiagnostics-color=always")
+    # libuv needs non-strict aliasing
+    # see discussion here: https://github.com/libuv/libuv/issues/1230
+    target_compile_options(loop_o PRIVATE -fno-strict-aliasing)
     # add some compiler hardening flags
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wformat -Wformat-security -Werror=format-security")
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fstack-protector-strong")
@@ -363,6 +370,7 @@ if("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU")
     # set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -z noexecheap")
     # for debug builds
     # set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=address")
+
 elseif("${CMAKE_C_COMPILER_ID}" MATCHES "Clang")
     # flags common to "AppleClang" and "Clang"
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fdiagnostics-color=always")
@@ -379,6 +387,9 @@ elseif("${CMAKE_C_COMPILER_ID}" MATCHES "Clang")
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-shadow")
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fstrict-aliasing")
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O2")
+    # libuv needs non-strict aliasing
+    # see discussion here: https://github.com/libuv/libuv/issues/1230
+    target_compile_options(loop_o PRIVATE -fno-strict-aliasing)
     # add some compiler hardening flags
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wformat -Wformat-security -Werror=format-security")
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -D_FORTIFY_SOURCE")

@@ -31,25 +31,33 @@ UID
 # * these will be hard
 
 
-# Networking / TLS / IMAP engines:
+# Socket / TLS / IMAP engines:
 
-     (libuv)           (OpenSSL)                           (thread pool)
-    _________          ________          ________           ___________
-   |         | rawin  |        | decin  |        | imapin  |           |
-   | NETWORK | -----> |  TLS   | -----> |  IMAP  | ------> |   IMAP    |
-   | ENGINE  | <----- | ENGINE | <----- | ENGINE | <------ | FUNCTIONS |
-   |_________| rawout |________| decout |________| imapout |___________|
+     (libuv)          (OpenSSL)                           (thread pool)
+    ________          ________          ________           ___________
+   |        | rawin  |        | decin  |        | imapin  |           |
+   | SOCKET | -----> |  TLS   | -----> |  IMAP  | ------> |   IMAP    |
+   | ENGINE | <----- | ENGINE | <----- | ENGINE | <------ | FUNCTIONS |
+   |________| rawout |________| decout |________| imapout |___________|
 
 Memory contexts:
-    Per-client context: (PERCLI)
-      - allocated by network engine
-      - Commands in flight
-      - rawin, rawout, decin, decout (SSL memory buffer type)
+    IMAP user context (ixu)
+      - for each user who is connected, run an IDLE session for key updates
+      - maintain a count of active connections, so we know when to disconnect
+      - allocated when a new user is identified
+      - cleaned up when the last of the user's sessions end
+      - has list of keys
 
-    Per-command context: (PERCOM)
+    IMAP session context: (ixs)
+      - allocated by socket engine on connection, or key-related IDLE session
+      - lists commands in flight
+      - has rawin, rawout buffers (SSL memory buffer type)
+      - has decin, decout (dstr_t type)
+
+    IMAP command context: (ixc)
       - allocated by IMAP engine
-      - State of command, command-specific variables
-      - imapin, imapout buffers (dstr_t type)
+      - tracks state of command / command-specific variables
+      - has imapin, imapout buffers (dstr_t type)
 
 Application write:
     Command lists its own PERCOM struct in the IMAP engine's queue
@@ -57,12 +65,61 @@ Application write:
     IMAP engine lists PERCLI in TLS engine's queue
     TLS engine takes PERCLI and does encryption
     TLS engine lists PERCLI in libuv's queue
-    Network engine sends the packet when it can.
+    Socket engine sends the packet when it can.
 
 Read from socket: (don't know which PERCOM it goes to yet)
-    Network engine reads from a socket, puts data in PERCLI struct
+    Socket engine reads from a socket, puts data in PERCLI struct
     libuv puts PERCLI in TLS engine's queue, uv_read_stop()
     TLS engine takes PERCLI and does decryption, uv_read_start() and kick loop
     TLS engine puts PERCLI in IMAP Engine's queue
     IMAP Engine decides which PERCOM needs this data, decodes into that PERCOM
     Command handles the data that was read
+
+cleaning of all resources:
+    Our pipeline is bidirectional (unavoidable, since libuv and openssl require
+    one thread to be in charge of reading and writing).  Therefore, our
+    shutdown protol needs to be bidirectional as well, and no node shuts down
+    until it has received a "quit" message in both directions:
+                              ______
+                     downin  |      | downout
+                     ------> | some | ------>
+                     <------ | node | <------
+                      upout  |______|   upin
+
+    One node's shutdown sequence:
+      - recieve "quit" message from upstream, on "downin"
+      - (downin queue now empty, since nothing more will be sent)
+      - pass "quit" downstream, via "downout"
+      - (downout queue gets emptied by next link in chain)
+      - wait for "quit" to come back up from downstream, via "upin"
+      - (upin queue now empty, downstream node has agreed to quit)
+      - pass "quit" back upstream via "upout"
+      - (upout queue now empty, and we can shutdown)
+
+    Overall sequence:
+      - libuv node initiates shutdown
+      - when libuv receives a "quit" again, that means everything else has
+        down_ref()'ed all relevant contexts, and libuv only has to close
+        sockets for any remaining contexts, down_ref() them, and exit the loop.
+
+Cleaning up of one connection, at any time:
+  - if you call uv_close, and free all associated contexts, you might have
+    (for instance) a read callback in the middle of writing to one of those
+    contexts.
+  - So what you need to do is have each engine promise to ignore the contexts,
+    and after each engine promises, then have a callback that frees the
+    contexts:
+      - socket engine stops reading, closes socket, (ongoing writes are
+        cancelled),
+      - TLS engine stops processing packets in either direction
+      - IMAP stops procesing packets or dispatching functions
+      - Wait for any ongoing IMAP functions to complete
+      - The last-engine-to-forget could be the one that does the cleanup
+      - Or there could be a separate cleaner-upper thread that handles that
+    Or:
+      - each engine could own the things that it reads from.  Actually, I don't
+        think this would solve anything.  It would just suck.
+    Or:
+      - we could try and do the whole thing on one single thread, possibly with
+        the IMAP functions still offloaded to a separate thread.  This might be
+        less complex than the multi-engine setup I was thinking of.
