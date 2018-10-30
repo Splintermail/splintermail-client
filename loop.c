@@ -8,22 +8,57 @@
 #include "ixs.h"
 #include "loop.h"
 
-LIST_FUNCTIONS(sock_p)
-
 static void uv_perror(const char *prefix, int code){
     fprintf(stderr, "%s: %s\n", prefix, uv_strerror(code));
+}
+
+
+static void remove_from_paused_socks(loop_t* loop, uv_tcp_t* delme){
+    // skip if the list is empty
+    if(loop->paused_socket == NULL) return;
+    // **prev is the address of the pointer we edit when we find our value
+    paused_socket_t **prev = &loop->paused_socket;
+    // *this is the struct we use for comparing
+    paused_socket_t *this = loop->paused_socket;
+    while(this != NULL){
+        if(this->sock == delme){
+            // fix the pointer that used to point to this structure
+            *prev = this->next;
+            // clear the pointer to the next structure
+            this->next = NULL;
+            break;
+        }
+        prev = &this->next;
+        this = this->next;
+    }
 }
 
 
 static void close_sockets_via_ixs(ixs_t* ixs){
     // close downwards socket (to email client)
     if(ixs->sock_dn_active){
-        uv_close((uv_handle_t*)&ixs->sock_dn, ixs_ref_down_cb);
+        // get this socket
+        uv_tcp_t* sock = &ixs->sock_dn;
+        // the socket has a pointer to a uv_loop_t
+        // the uv_loop_t has a pointer to our own loop-type ix_t
+        loop_t* loop = ((ix_t*)sock->loop->data)->data.loop;
+        // make sure that socket was not in the list of paused sockets
+        remove_from_paused_socks(loop, sock);
+        // close the socket
+        uv_close((uv_handle_t*)sock, ixs_ref_down_cb);
         ixs->sock_dn_active = false;
     }
     // close upwards socket (to mail server)
     if(ixs->sock_up_active){
-        uv_close((uv_handle_t*)&ixs->sock_up, ixs_ref_down_cb);
+        // get this socket
+        uv_tcp_t* sock = &ixs->sock_up;
+        // the socket has a pointer to a uv_loop_t
+        // the uv_loop_t has a pointer to our own loop-type ix_t
+        loop_t* loop = ((ix_t*)sock->loop->data)->data.loop;
+        // make sure that socket was not in the list of paused sockets
+        remove_from_paused_socks(loop, sock);
+        // close the socket
+        uv_close((uv_handle_t*)sock, ixs_ref_down_cb);
         ixs->sock_up_active = false;
     }
 }
@@ -74,7 +109,119 @@ cu_ai:
 }
 
 
-static void get_read_buf(uv_handle_t* handle, size_t suggest, uv_buf_t* buf){
+// if we have no read bufs, stop reading from this handle
+static void pause_reading(void *data){
+    // data is a tcp read handle
+    uv_stream_t *stream = (uv_stream_t*)data;
+    // stream should have an ixs pointer
+    ixs_t *ixs = ((ix_t*)stream->data)->data.ixs;
+    // the stream has a pointer to a uv_loop_t
+    // the uv_loop_t has a pointer to our own loop-type ix_t
+    loop_t* loop = ((ix_t*)stream->loop->data)->data.loop;
+
+    // determine if this is the server side or client side of the imap session
+    bool upwards;
+    if(ixs->sock_up_active && (uv_tcp_t*)stream == &ixs->sock_up){
+        upwards = true;
+    }else if(ixs->sock_dn_active && (uv_tcp_t*)stream == &ixs->sock_dn){
+        upwards = false;
+    }else{
+        LOG_ERROR("not sure if socket is upwards or downwards!!");
+        goto close_imap_session;
+    }
+
+    // disable further reading from this stream
+    int ret = uv_read_stop(stream);
+    if(ret < 0){
+        uv_perror("uv_read_stop", ret);
+        // not sure how to handle this error; just close this imap session
+        goto close_imap_session;
+    }
+
+    // get the last item in the paused_socket linked list
+    paused_socket_t *last_paused_socket = &loop->paused_socket;
+    while(last_paused_socket->next != NULL){
+        last_paused_socket = last_paused_socket->next;
+    }
+
+    // append this socket to the list of paused sockets
+    if(upwards){
+        last_paused_socket->next = &ixs->paused_sock_up;
+    }else{
+        last_paused_socket->next = &ixs->paused_sock_dn;
+    }
+    return;
+
+close_imap_session:
+    ixs->is_valid = false;
+    close_sockets_via_ixs(ixs);
+    return;
+}
+
+
+// public api, handles uv_async_send() in a safe way
+derr_t loop_unpause_socket(loop_t *loop){
+    derr_t error = E_OK;
+    // lock the mutex
+    uv_mutex_lock(loop->unpause_mutex);
+
+    // tell the loop to unpause a socket
+    int ret = uv_async_send(loop->socket_unpauser);
+    if(ret < 0){
+        uv_perror("uv_read_start", ret);
+        error = (ret == UV_ENOMEM) ? E_NOMEM : E_UV;
+        ORIG_GO(error, "unable to signal loop to unpause a socket\n", unlock);
+    }
+
+    // increment the number of times we have made this call
+    loop->num_sockets_to_unpause++;
+
+unlock:
+    uv_mutex_unlock(loop->unpause_mutex);
+
+    return error;
+}
+
+
+// this is a callback after uv_async_send() to unpause a socket
+void do_unpause(uv_handle_t *handle){
+    // the handle has a pointer to a uv_loop_t
+    // the uv_loop_t has a pointer to our own loop-type ix_t
+    loop_t* loop = ((ix_t*)handle->loop->data)->data.loop;
+
+    // once for each paused socket:
+    uv_mutex_lock(&loop->unpause_mutex);
+    size_t num_unpauses = loop->num_sockets_to_unpause;
+    loop->num_sockets_to_unpause = 0;
+    uv_mutex_unlock(&loop->unpause_mutex);
+
+    for(size_t i = 0; i < num_unpauses; i++){
+        /* it is possible that a socket has been closed since the call to
+           loop_unpause_socket(), meaning that we might find the end of the
+           linked list earlier than we might expect */
+        if(loop->paused_socket == NULL) break;
+        // pop the first element of the list
+        paused_socket_t *paused_socket = loop->paused_socket;
+        loop->paused_socket = paused_socket->next;
+        paused_socket->next = NULL;
+
+        // re-enable reading on that socket
+        int ret = uv_read_start((uv_stream_t*)paused_socket->sock,
+                                get_read_buf, read_cb);
+        if(ret < 0){
+            uv_perror("uv_read_start", ret);
+            LOG_ERROR("do_unpause failed, closing relevant imap session\n");
+            // stream should have an ixs pointer
+            ixs_t *ixs = ((ix_t*)paused_socket->sock->data)->data.ixs;
+            // close that imap session
+            ixs->is_valid = false;
+            close_sockets_via_ixs(ixs);
+        }
+    }
+}
+
+
+static void get_read_buf(uv_handle_t *handle, size_t suggest, uv_buf_t *buf){
     // don't care about suggested size
     (void)suggest;
 
@@ -83,52 +230,18 @@ static void get_read_buf(uv_handle_t* handle, size_t suggest, uv_buf_t* buf){
     loop_t* loop = ((ix_t*)handle->loop->data)->data.loop;
 
     // now get a pointer to an open read buffer
-    for(size_t i = 0; i < loop->bufs_in_use.len; i++){
-        if(loop->bufs_in_use.data[i] == false){
-            // found an open one
-            loop->bufs_in_use.data[i] = true;
-            buf->base = loop->read_bufs.data[i].data;
-            buf->len = loop->read_bufs.data[i].size;
-            return;
-        }
+    dstr_t *dbuf = bufp_get(&loop->read_pool, pause_reading, (void*)handle);
+    // if we weren't able to allocate anything, pass NULL to libuv
+    if(dbuf == NULL){
+        buf->base = NULL;
+        buf->len = 0;
+        return;
     }
 
-    // if we are here we are out of buffers, and should allocate more
-    LOG_DEBUG("out of buffers?\n");
-    dstr_t temp;
-    derr_t error = dstr_new(&temp, 4096);
-    CATCH(E_ANY){
-        LOG_ERROR("unable to allocate new read_buf\n");
-        goto fail;
-    }
+    // otherwise, return the buffer we just got
+    buf->base = dbuf->data;
+    buf->len = dbuf->size;
 
-    // append temp to read_bufs
-    error = LIST_APPEND(dstr_t, &loop->read_bufs, temp);
-    CATCH(E_ANY){
-        LOG_ERROR("unable to grow read_bufs\n");
-        goto fail_temp;
-    }
-
-    // append true to bufs_in_use
-    error = LIST_APPEND(bool, &loop->bufs_in_use, true);
-    CATCH(E_ANY){
-        LOG_ERROR("unable to grow bufs_in_use\n");
-        goto fail_read_bufs;
-    }
-
-    buf->base = temp.data;
-    buf->len = temp.size;
-
-    return;
-
-fail_read_bufs:
-    // just forget whatever we added to read_bufs
-    loop->read_bufs.len--;
-fail_temp:
-    dstr_free(&temp);
-fail:
-    buf->base = NULL;
-    buf->len = 0;
     return;
 }
 
@@ -139,7 +252,7 @@ static void release_read_buf(loop_t* loop, char* ptr){
         // compare each read_bufs' data pointer to the ptr parameter
         if(loop->read_bufs.data[i].data == ptr){
             // mark this read_buf as not in use
-            loop->bufs_in_use.data[i] = false;
+            loop->read_bufs_in_use.data[i] = false;
             return;
         }
     }
@@ -169,18 +282,10 @@ static void read_cb(uv_stream_t* stream, ssize_t ssize_read,
 
     // check for UV_ENOBUFS condition (basically the result of an ENOMEM issue)
     if(ssize_read == UV_ENOBUFS){
-        LOG_DEBUG("ENOBUFS; we are out of memory!\n");
-        // disable further reading from this buffer
-        int ret = uv_read_stop(stream);
-        if(ret < 0){
-            uv_perror("uv_read_stop", ret);
-            // not sure how to handle this error; just close this imap session
-            goto close_imap_session;
-        }
-
-        // TODO: there's not yet a way to trigger a uv_read_start again
-        exit(233);
-
+        /* disabling the reader is actually done in the allocator callback,
+           where it can be synchronized with the buffer pool's mutex.
+           Therefore, we can safely do nothing right now. */
+        return;
     }
 
     // check for error
@@ -208,10 +313,8 @@ static void read_cb(uv_stream_t* stream, ssize_t ssize_read,
     DSTR_WRAP(dbuf, buf->base, size_read, false);
 
     // now pass the buffer through the pipeline
-    LOG_DEBUG("passing to tls_decrypt: %x", FD(&dbuf));
-    (void) upwards;
-    (void) error;
-    // PROP_GO( tls_decrypt(ixs, &dbuf, upwards), close_imap_session);
+    // LOG_DEBUG("passing to tls_decrypt: %x", FD(&dbuf));
+    PROP_GO( tlse_decrypt(ixs, upwards, &dbuf), close_imap_session);
 
     // done with read_buf
     release_read_buf(loop, buf->base);
@@ -219,6 +322,7 @@ static void read_cb(uv_stream_t* stream, ssize_t ssize_read,
     return;
 
 close_imap_session:
+    ixs->is_valid = false;
     close_sockets_via_ixs(ixs);
     release_read_buf(loop, buf->base);
     return;
@@ -316,12 +420,15 @@ fail_accept:
     loop_abort(loop);
     return;
 
+/* failing before accept() should not be a critical error, but since there's no
+   real way to handle it in the API, we will have to treat it like one ... */
 fail_ixs:
     ixs_free(ixs);
 fail_ixs_ptr:
     free(ixs);
     if(exit_loop_on_fail == false) return;
 fail_listen:
+    // ... but a failing status from listen() is always a critical error
     loop_abort(loop);
     return;
 }
@@ -336,9 +443,6 @@ derr_t loop_add_listener(loop_t *loop, const char* addr, const char* svc,
     if(listener == NULL){
         ORIG(E_NOMEM, "error allocating for listener");
     }
-
-    // append to loop's list of listeners
-    PROP_GO( LIST_APPEND(sock_p, &loop->listeners, listener), fail_malloc);
 
     // init listener
     int ret = uv_tcp_init(&loop->uv_loop, listener);
@@ -381,14 +485,6 @@ static void listener_close_cb(uv_handle_t *handle){
     loop_t *loop = ((ix_t*)handle->loop->data)->data.loop;
 
     uv_tcp_t *listener = (uv_tcp_t*)handle;
-
-    // delete this pointer in the list of listeners
-    for(size_t i = 0; i < loop->listeners.len; i++){
-        if(loop->listeners.data[i] == listener){
-            LIST_DELETE(sock_p, &loop->listeners, i);
-            break;
-        }
-    }
 
     // free the pointer itself
     free(listener);
@@ -457,12 +553,8 @@ static void abort_everything(uv_async_t* handle){
     // (currently there are no other nodes in this pipeline) //
 
     /* Finally, now that we (the event loop thread) is the last thread with any
-       references, we ref_down() everything that hasn't already been freed...
-       after closing the relevant sockets, of course. */
-
-    /* (We are the last thread, so no need for a mutex.  And if we weren't the
-       last thread, this would fail for other reasons, like the event loop
-       ref_down()'ing an object it already ref_down()'ed before) */
+       references, we close all of the handles (which will ref_down() the
+       relevant contexts) and exit the loop. */
 
     // close all the handlers in the loop (async, sockets, listeners, whatever)
     uv_walk(handle->loop, close_any_handle, NULL);
@@ -483,7 +575,7 @@ derr_t loop_init(loop_t *loop){
         ORIG(error, "error initializing loop");
     }
 
-    // set loop.data to point to our loop_t
+    // set the uv's data pointer to our loop_t
     loop->uv_loop.data = loop;
 
     // init async objects
@@ -498,6 +590,12 @@ derr_t loop_init(loop_t *loop){
         uv_perror("uv_async_init", ret);
         error = (ret == UV_ENOMEM) ? E_NOMEM : E_UV;
         ORIG_GO(error, "error initializing loop_aborter", fail_loop);
+    }
+    ret = uv_async_init(&loop->uv_loop, &loop->socket_unpauser, do_unpause);
+    if(ret < 0){
+        uv_perror("uv_async_init", ret);
+        error = (ret == UV_ENOMEM) ? E_NOMEM : E_UV;
+        ORIG_GO(error, "error initializing socket_unpauser", fail_loop);
     }
 
     // allocate read buffer pool
@@ -517,28 +615,33 @@ derr_t loop_init(loop_t *loop){
         goto fail_read_bufs;
     }
 
-    // allocate bufs_in_use
-    PROP_GO( LIST_NEW(bool, &loop->bufs_in_use, max_bufs),
+    // allocate read_bufs_in_use
+    PROP_GO( LIST_NEW(bool, &loop->read_bufs_in_use, max_bufs),
              fail_read_bufs);
 
-    // initialize bufs_in_use to all false
+    // initialize read_bufs_in_use to all false
     for(size_t i = 0; i < max_bufs; i++){
         // This should not fail, since we won't grow the list
-        LIST_APPEND(bool, &loop->bufs_in_use, false);
+        LIST_APPEND(bool, &loop->read_bufs_in_use, false);
     }
 
-    // allocate listeners
-    PROP_GO( LIST_NEW(sock_p, &loop->listeners, 1), fail_bufs_in_use);
+    // no sockets paused yet
+    loop->paused_socket = NULL;
+    // no calls to unpause_socket() yet
+    loop->num_sockets_to_unpause = 0;
 
-    // allocate normal sockets
-    PROP_GO( LIST_NEW(sock_p, &loop->socks, 8), fail_listeners);
+    // init pause mutex
+    ret = uv_mutex_init(&loop->unpause_mutex);
+    if(ret < 0){
+        uv_perror("uv_mutex_init", ret);
+        error = (ret == UV_ENOMEM) ? E_NOMEM : E_UV;
+        ORIG_GO(error, "error initializing unpause_mutex", fail_bufs_in_use);
+    }
 
     return E_OK;
 
-fail_listeners:
-    LIST_FREE(sock_p, &loop->listeners);
 fail_bufs_in_use:
-    LIST_FREE(bool, &loop->bufs_in_use);
+    LIST_FREE(bool, &loop->read_bufs_in_use);
 fail_read_bufs:
     // free each buffer in read_bufs
     for(size_t i = 0; i < loop->read_bufs.len; i++){
@@ -552,9 +655,8 @@ fail_loop:
 
 
 void loop_free(loop_t *loop){
-    LIST_FREE(sock_p, &loop->socks);
-    LIST_FREE(sock_p, &loop->listeners);
-    LIST_FREE(bool, &loop->bufs_in_use);
+    uv_mutex_destory(&loop->unpause_mutex);
+    LIST_FREE(bool, &loop->read_bufs_in_use);
     // free each buffer in read_bufs
     for(size_t i = 0; i < loop->read_bufs.len; i++){
         dstr_free(&loop->read_bufs.data[i]);

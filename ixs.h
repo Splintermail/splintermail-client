@@ -12,6 +12,12 @@
 
 /* IMAP session context (or pair of sessions, for incoming connections) */
 
+// for forming linked lists of paused sockets
+typedef struct paused_socket_t {
+    uv_tcp_t *sock;
+    struct paused_socket_t *next;
+}
+
 typedef struct ixs_t {
     // a tagged-union-style self-pointer:
     ix_t ix;
@@ -20,11 +26,10 @@ typedef struct ixs_t {
     uv_tcp_t sock_dn;
     bool sock_up_active;
     bool sock_dn_active;
-    /* these are for tracking which sockets got turned off, if we run out of
-       read buffers.  "True" means "do nothing" and "false" means "reenable
-       when you open new buffers" */
-    bool sock_up_read_enabled;
-    bool sock_dn_read_enabled;
+    // for when buffers are full and we have to pause from reading
+    // (these become pointers in a linked list associated with the loop)
+    paused_socket_t paused_sock_up;
+    paused_socket_t paused_sock_dn;
     // for passing between TLS operators and the sockets
     BIO* rawin_up;
     BIO* rawout_up;

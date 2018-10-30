@@ -59,6 +59,34 @@ Memory contexts:
       - tracks state of command / command-specific variables
       - has imapin, imapout buffers (dstr_t type)
 
+Should the socket engine, the TLS engine, and the IMAP engine be separated?
+    Pros:
+      - Testability would be much better, as each section of the pipeline could
+        be tested individually.
+      - Nodes would be modular, and could potentially be strung together in
+        different orders (for non-TLS connections, or a STARTTLS variety, for
+        example)
+    Cons:
+      - each engine would need to be separated with a buffer pool, and some
+        sort of event queue for passing messages, with checks for freezing
+        inputs when a buffer pool is empty and callbacks for unfreezing it.
+        There would be a small explosion of callback functions due to lots of
+      - different situations arising (such as a allocate_before_accept()
+        callback and a cleanup_after_failed_accept() callback, just in the
+        libuv connection_cb function)
+      - There's not a forseeable need for the improved modularity
+      - Far greater complexity, primarily due to the distributed error handling
+    Conclusion:
+      - No, Socket Engine / TLS Engine / IMAP Engine should be one monolithic
+        block, because the improved modularity wouldn't actually be useful and
+        the improved testability argument is a wash compared to the massive
+        increase in complexity.
+
+buffer pool api
+    bufp_init() : allocates memory and sets bufp_empty_cb and bufp_avail_cb
+    bufp_get() : returns an available dstr_t*, or calls bufp_empty_cb with data
+    bufp_release() : might call bufp_avail_cb with same data
+
 Application write:
     Command lists its own PERCOM struct in the IMAP engine's queue
     IMAP engine takes PERCOM and does whatever conversion, writing to PERCLI
@@ -123,3 +151,44 @@ Cleaning up of one connection, at any time:
       - we could try and do the whole thing on one single thread, possibly with
         the IMAP functions still offloaded to a separate thread.  This might be
         less complex than the multi-engine setup I was thinking of.
+
+Buffer Pools:
+    buffer pools are necessary for overlapped IO, like using the Windows IOCP
+    API.  That is, on the read side, the kernel needs access to a new read
+    buffer *before* the application has a chance to use the read buffer that
+    just got filled.  This is good for network throughput, because if the
+    network is the slowest part of the system, the best thing you can do is
+    make sure that the slowest part runs as fast as possible.  The write side
+    is similar.
+
+    Buffer pools are also necessary in between separate nodes of a pipeline.
+    That is, if you have a thread pool handling IMAP functions, if you want to
+    avoid gratuitous read-stop and read-start operations on the socket, you
+    need a pool of buffers that the read pipeline can write to.
+
+    However, what if you have a single, slow, read-heavy IMAP function (such
+    as a large message decryption) in flight at the same time as a lot of fast,
+    chatty IMAP functions?  The read socket behind the IMAP function could fill
+    all of the read-side buffer pool with useless packets.
+
+    Basically, a mechanism that freezes the input to a node is not good enough,
+    you need to be able to freeze a whole pipeline upstream from a node, and
+    intelligently and efficiently unfreeze it at a later time.  Also, my
+    current model for unfreezing the sockets is a FIFO model, but you would
+    need a different model for unfreezing specific sockets at will.
+
+    Of course, if you went the select() route (meaning one thread for the whole
+    application) then you would avoid all of this, because every read would be
+    taken to completion and every write would be taken to completion, always,
+    by the single thread.  The single threaded libuv solution would similary
+    only require the read buffers and the write buffers, and one thread's slow
+    reading would never affect another thread's read-side buffering because
+    there would only be one thread.
+
+
+    OK, I am starting to think that the amount of extra complexity for having
+    a multi-threaded-capable event-loop-based function is not worth the extra
+    performance gain.
+
+    I think I will build off of libuv (or maybe even just select()??) and just
+    write a completely single-threaded application.

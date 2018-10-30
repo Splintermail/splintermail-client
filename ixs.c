@@ -76,9 +76,12 @@ static void log_ssl_errors(void){
 derr_t ixs_init(ixs_t *ixs){
     derr_t error;
     // the tagged-union-style self-pointer:
-    // the tagged-union-style self-pointer:
     ixs->ix.type = IX_TYPE_SESSION;
     ixs->ix.data.ixs = ixs;
+
+    // the linked list element for when sockets are paused
+    ixs->paused_sock_up = {.sock = &ixs->sock_up, .next = NULL };
+    ixs->paused_sock_dn = {.sock = &ixs->sock_dn, .next = NULL };
 
     // init SSL and BIO pointers to NULL
     ixs->ssl_dn = NULL;
