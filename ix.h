@@ -17,7 +17,8 @@ enum ix_type_e {
     IX_TYPE_LOOP,
     IX_TYPE_LISTENER,
     IX_TYPE_USER,
-    IX_TYPE_SESSION,
+    IX_TYPE_SESSION_UP,
+    IX_TYPE_SESSION_DN,
     IX_TYPE_COMMAND,
 };
 

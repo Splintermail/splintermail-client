@@ -37,7 +37,8 @@ set(OBJ_TGTS api_client
              ui
              ixs
              loop
-             tls_engine)
+             tls_engine
+             buffer_pool)
 
 set(EXE_TGTS srvcli
              splintermail
@@ -179,6 +180,7 @@ obj_depend_obj(ditm pop_client pop_server maildir json)
 obj_depend_obj(ixs uv_interface common)
 obj_depend_obj(loop uv_interface common)
 obj_depend_obj(tls_engine ixs common)
+obj_depend_obj(buffer_pool common)
 
 # describe executables with dependencies
 target_link_libraries(srvcli networking)
@@ -187,7 +189,7 @@ target_link_libraries(leak networking)
 target_link_libraries(encrypt_msg crypto opt_parse)
 target_link_libraries(decrypt_msg crypto opt_parse)
 target_link_libraries(olt common fileops opt_parse)
-target_link_libraries(imap loop ixs tls_engine networking)
+target_link_libraries(imap loop ixs tls_engine buffer_pool networking)
 
 # decide if we are building server code
 if("${BUILD_SERVER_CODE}")

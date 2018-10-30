@@ -12,24 +12,15 @@
 
 /* IMAP session context (or pair of sessions, for incoming connections) */
 
-// for forming linked lists of paused sockets
-typedef struct paused_socket_t {
-    uv_tcp_t *sock;
-    struct paused_socket_t *next;
-}
-
 typedef struct ixs_t {
-    // a tagged-union-style self-pointer:
-    ix_t ix;
+    // a pair of tagged-union-style self-pointers, one each for up and down:
+    ix_t ix_up;
+    ix_t ix_dn;
     // libuv sockets, "up" means mail server, "down" means email client
     uv_tcp_t sock_up;
     uv_tcp_t sock_dn;
     bool sock_up_active;
     bool sock_dn_active;
-    // for when buffers are full and we have to pause from reading
-    // (these become pointers in a linked list associated with the loop)
-    paused_socket_t paused_sock_up;
-    paused_socket_t paused_sock_dn;
     // for passing between TLS operators and the sockets
     BIO* rawin_up;
     BIO* rawout_up;
@@ -75,23 +66,4 @@ void ixs_ref_down(ixs_t *ixs); // might call ixs_unregister() and ixs_free()
 // same as above but as a callback, since the sockets are closed asynchronously
 void ixs_ref_down_cb(uv_handle_t* h);
 
-////////////////////////////////////////////////////////////////////
-
-// // for handling the global IMAP session context registry (a list of pointers):
-// // note that each pointer is the result of a malloc()
-// typedef ixs_t* ixs_p;
-// LIST_HEADERS(ixs_p)
-//
-// // the registry itself
-// extern LIST(ixs_p) ixs_reg;
-// extern uv_mutex_t ixs_reg_mutex;
-//
-// // for controlling the global registry of active IMAP session contexts:
-// derr_t ixs_reg_init(void);
-// // important: free all members before calling this function
-// void ixs_reg_free(void);
-//
-// derr_t ixs_register(ixs_t *ixs);
-// void ixs_unregister(ixs_t *ixs);
-//
 #endif // IXS_H
