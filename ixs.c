@@ -37,6 +37,9 @@ derr_t ixs_init(ixs_t *ixs){
     PROP_GO( dstr_new(&ixs->decin_up, 4096), fail_decout_dn);
     PROP_GO( dstr_new(&ixs->decout_up, 4096), fail_decin_up);
 
+    // init the list of read_bufs, with no callbacks
+    PROP_GO( llist_init(&ixs->read_bufs, NULL, NULL), fail_decout_up);
+
     // start with 0 reference
     ixs->refs = 0;
     // no open sockets yet
@@ -44,9 +47,20 @@ derr_t ixs_init(ixs_t *ixs){
     ixs->sock_up_active = false;
     // session starts as "valid"
     ixs->is_valid = true;
+    // no reads in flight
+    ixs->tls_reads_up = 0;
+    ixs->tls_reads_dn = 0;
+    ixs->raw_writes_up = 0;
+    ixs->raw_writes_dn = 0;
+
+    // llist_elem's for sock_up and sock_dn (even though socks aren't open yet)
+    ixs->sock_up_lle.data = &sock_up;
+    ixs->sock_dn_lle.data = &sock_dn;
 
     return E_OK;
 
+fail_decout_up:
+    dstr_free(&ixs->decout_up);
 fail_decin_up:
     dstr_free(&ixs->decin_up);
 fail_decout_dn:

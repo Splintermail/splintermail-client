@@ -9,6 +9,7 @@
 #include "common.h"
 #include "networking.h"
 #include "ix.h"
+#include "linked_list.h"
 
 /* IMAP session context (or pair of sessions, for incoming connections) */
 
@@ -21,6 +22,9 @@ typedef struct ixs_t {
     uv_tcp_t sock_dn;
     bool sock_up_active;
     bool sock_dn_active;
+    // for putting sock_up and sock_dn in linked lists
+    llist_elem_t sock_up_lle;
+    llist_elem_t sock_dn_lle;
     // for passing between TLS operators and the sockets
     BIO* rawin_up;
     BIO* rawout_up;
@@ -45,6 +49,16 @@ typedef struct ixs_t {
 
     // indicates whether the session should be immediately ref_down()'ed
     bool is_valid;
+
+    // reads and writes in flight
+    size_t tls_reads_up;
+    size_t tls_reads_dn;
+    size_t raw_writes_up;
+    size_t raw_writes_dn;
+
+    /* linked list of read buffers which have been handed to libuv to complete
+       a read but which have not yet been passed to a read callback */
+    llist_t read_bufs;
 
     // traceback context
 

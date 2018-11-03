@@ -7,13 +7,56 @@
 #include "logger.h"
 #include "ixs.h"
 #include "loop.h"
+#include "tls_engine.h"
 
 static void uv_perror(const char *prefix, int code){
     fprintf(stderr, "%s: %s\n", prefix, uv_strerror(code));
 }
 
 
-static void close_sockets_via_ixs(ixs_t* ixs){
+derr_t read_buf_init(read_buf_t *rb, size_t size){
+    // llist_elem is a self-pointer
+    rb->llist_elem.data = rb;
+
+    // allocate the buffer itself
+    PROP( dstr_new(&rb->dstr, size) );
+
+    return E_OK;
+}
+
+
+void read_buf_free(read_buf_t *rb){
+    dstr_free(&rb->dstr);
+}
+
+
+// a matcher for llist_pop_find
+static bool match_read_buf(void* data, void* ptr){
+    // cast *data
+    read_buf_t *rb = data;
+    // get the char* for the read buf
+    char *rb_ptr = rb->dstr.data;
+    return rb_ptr == ptr;
+}
+
+
+derr_t write_buf_init(write_buf_t *wb, size_t size){
+    // llist_elem is a self-pointer
+    wb->llist_elem.data = wb;
+
+    // allocate the buffer itself
+    PROP( dstr_new(&wb->dstr, size) );
+
+    return E_OK;
+}
+
+
+void write_buf_free(write_buf_t *wb){
+    dstr_free(&wb->dstr);
+}
+
+
+static void close_sockets_via_ixs(ixs_t *ixs){
     // close downwards socket (to email client)
     if(ixs->sock_dn_active){
         // close the socket
@@ -40,7 +83,7 @@ static derr_t bind_via_gai(uv_tcp_t *srv, const char *addr, const char *svc){
     hints.ai_flags = AI_PASSIVE;
 
     // get address of host
-    struct addrinfo* ai;
+    struct addrinfo *ai;
     int ret = getaddrinfo(addr, svc, &hints, &ai);
     if(ret != 0){
         LOG_ERROR("getaddrinfo: %s\n", FS(gai_strerror(ret)));
@@ -48,9 +91,9 @@ static derr_t bind_via_gai(uv_tcp_t *srv, const char *addr, const char *svc){
     }
 
     // bind to something
-    struct addrinfo* p;
+    struct addrinfo *p;
     for(p = ai; p != NULL; p = p->ai_next){
-        struct sockaddr_in* sin = (struct sockaddr_in*)p->ai_addr;
+        struct sockaddr_in *sin = (struct sockaddr_in*)p->ai_addr;
         LOG_DEBUG("binding to ip addr %x\n", FS(inet_ntoa(sin->sin_addr)));
 
         ret = uv_tcp_bind(srv, p->ai_addr, 0);
@@ -74,19 +117,26 @@ cu_ai:
 }
 
 
-static void get_read_buf(uv_handle_t *handle, size_t suggest, uv_buf_t *buf){
+static void allocator(uv_handle_t *handle, size_t suggest, uv_buf_t *buf){
     // don't care about suggested size
     (void)suggest;
 
     // the handle has a pointer to a uv_loop_t
-    // the uv_loop_t has a pointer to our own loop-type ix_t
-    loop_t* loop = ((ix_t*)handle->loop->data)->data.loop;
+    // the uv_loop_t has a pointer to our own loop_t
+    loop_t *loop = ((ix_t*)handle->loop->data)->data.loop;
+
+    // get the generic imap context
+    ix_t *ix = (ix_t*)handle->data;
+    bool upwards = (IX_TYPE_SESSION_UP == ix->type);
+    // get the imap session context from the handle
+    ixs_t *ixs = ix->data.ixs;
 
     // now get a pointer to an open read buffer
-    dstr_t dbuf;
-    derr_t error = bufp_get(&loop->read_bufp, &dbuf);
-    // if we weren't able to allocate anything, pass NULL to libuv
-    CATCH(E_FIXEDSIZE){
+    llist_elem_t *cb_data = upwards ? &ixs->sock_dn_lle : &ixs->sock_up_lle;
+    read_buf_t *rb = llist_pop_first(&loop->read_bufs, cb_data);
+
+    // if nothing is available, pass NULL to libuv
+    if(rb == NULL){
         // TODO: handle this instead of crashing:
         LOG_ERROR("ENOBUFS, we don't handle this yet\n");
         exit(243);
@@ -97,24 +147,47 @@ static void get_read_buf(uv_handle_t *handle, size_t suggest, uv_buf_t *buf){
     }
 
     // otherwise, return the buffer we just got
-    buf->base = dbuf.data;
-    buf->len = dbuf.size;
+    buf->base = rb->dstr.data;
+    buf->len = rb->dstr.size;
+
+    // store a pointer to this read buffer, so we can "release" it later
+    llist_append(&ixs->read_bufs, &rb->llist_elem);
+
+    /* TODO: ref_up the ixs or not?  It depends on how allocated-but-unused
+       read_buf_t's are handled after a uv_close(sock) call. */
 
     return;
 }
 
 
-static void read_cb(uv_stream_t* stream, ssize_t ssize_read,
-                    const uv_buf_t* buf){
+static void read_cb(uv_stream_t *stream, ssize_t ssize_read,
+                    const uv_buf_t *buf){
     derr_t error;
-
+    // get the generic imap context
+    ix_t *ix = (ix_t*)stream->data;
     // get the imap session context from the stream
-    ixs_t *ixs = ((ix_t*)stream->data)->data.ixs;
-    // is the the upwards socket?
-    bool upwards = (IX_TYPE_SESSION_UP == ((ix_t*)stream->data)->type);
+    ixs_t *ixs = ix->data.ixs;
     // the stream has a pointer to a uv_loop_t
-    // the uv_loop_t has a pointer to our own loop-type ix_t
-    loop_t* loop = ((ix_t*)stream->loop->data)->data.loop;
+    // the uv_loop_t has a pointer to our own loop_t
+    loop_t *loop = ((ix_t*)stream->loop->data)->data.loop;
+
+    // check for UV_ENOBUFS condition, the only case where we have no read buf
+    if(ssize_read == UV_ENOBUFS){
+        /* disabling the reader is actually done in the allocator callback,
+           where it can be synchronized with the mutex controlling the list of
+           read bufs.  Therefore, we can safely do nothing right now. */
+        return;
+    }
+
+    // get the read_buf_t* associated with this *buf
+    read_buf_t *rb = llist_pop_find(&ixs->read_bufs, match_read_buf, buf->base);
+    if(rb == NULL){
+        /* this should never, ever happen, and would violate a lot of the
+           assumptions we rely on for proper cleanup, so we are not going to
+           alter the architecture to make proper cleanup possible here */
+        LOG_ERROR("Unable to find read_buf in read_cb, hard exit now.\n");
+        exit(215);
+    }
 
     // if session not valid, delete it
     if(ixs->is_valid == false){
@@ -127,14 +200,6 @@ static void read_cb(uv_stream_t* stream, ssize_t ssize_read,
         goto close_imap_session;
     }
 
-    // check for UV_ENOBUFS condition (basically the result of an ENOMEM issue)
-    if(ssize_read == UV_ENOBUFS){
-        /* disabling the reader is actually done in the allocator callback,
-           where it can be synchronized with the buffer pool's mutex.
-           Therefore, we can safely do nothing right now. */
-        return;
-    }
-
     // check for error
     if(ssize_read < 0){
         fprintf(stderr, "error from read\n");
@@ -144,30 +209,33 @@ static void read_cb(uv_stream_t* stream, ssize_t ssize_read,
     // now safe to cast
     size_t size_read = (size_t)ssize_read;
 
-    // wrap buf in a dstr_t
-    dstr_t dbuf;
-    DSTR_WRAP(dbuf, buf->base, size_read, false);
+    // store the length read in the read_buf's dstr_t
+    rb->dstr.len = size_read;
 
     // now pass the buffer through the pipeline
-    (void) upwards;
-    (void) error;
-    LOG_DEBUG("passing to tls_decrypt: %x", FD(&dbuf));
-    //PROP_GO( tlse_decrypt(ixs, upwards, &dbuf), close_imap_session);
-
-    // done with read_buf
-    bufp_release(&loop->read_bufp, buf->base);
+    PROP_GO( tlse_raw_read(ix, rb), close_imap_session);
 
     return;
 
 close_imap_session:
+    // put the read_buf back in the list of free read bufs
+    llist_append(&loop->read_bufs, &rb->llist_elem);
     ixs->is_valid = false;
     close_sockets_via_ixs(ixs);
-    bufp_release(&loop->read_bufp, buf->base);
     return;
 }
 
 
-static void connection_cb(uv_stream_t* listener, int status){
+derr_t loop_read_done(loop_t* loop, ix_t *ix){
+    (void)ix;
+    (void)loop;
+    // buffer should have been returned independently of this call
+    // TODO: downref ixs? see note in allocator
+    return E_OK;
+}
+
+
+static void connection_cb(uv_stream_t *listener, int status){
     // TODO: handle UV_ECANCELLED
 
     // some of these errors are critical and will trigger application shutdown
@@ -177,8 +245,8 @@ static void connection_cb(uv_stream_t* listener, int status){
     ssl_context_t *ssl_ctx = ((ix_t*)listener->data)->data.ssl_ctx;
 
     // the listener has a pointer to a uv_loop_t
-    // the uv_loop_t has a pointer to our own loop-type ix_t
-    loop_t* loop = ((ix_t*)listener->loop->data)->data.loop;
+    // the uv_loop_t has a pointer to our own loop_t
+    loop_t *loop = ((ix_t*)listener->loop->data)->data.loop;
 
     if(status < 0){
         uv_perror("uv_listen", status);
@@ -241,7 +309,7 @@ static void connection_cb(uv_stream_t* listener, int status){
     exit_loop_on_fail = false;
 
     // now we can set up the read callback
-    ret = uv_read_start((uv_stream_t*)&ixs->sock_dn, get_read_buf, read_cb);
+    ret = uv_read_start((uv_stream_t*)&ixs->sock_dn, allocator, read_cb);
     if(ret < 0){
         uv_perror("uv_read_start", ret);
         goto fail_post_accept;
@@ -278,7 +346,7 @@ static void listener_close_cb(uv_handle_t *handle){
 }
 
 
-derr_t loop_add_listener(loop_t *loop, const char* addr, const char* svc,
+derr_t loop_add_listener(loop_t *loop, const char *addr, const char *svc,
                          ix_t *ix){
     derr_t error;
     // allocate uv_tcp_t struct
@@ -323,7 +391,7 @@ fail_malloc:
 }
 
 
-static void close_any_handle(uv_handle_t *handle, void* arg){
+static void close_any_handle(uv_handle_t *handle, void *arg){
     (void)arg;
 
     // if handle->data is NULL, close with no callback
@@ -365,7 +433,7 @@ static void close_any_handle(uv_handle_t *handle, void* arg){
 }
 
 
-static void abort_everything(uv_async_t* handle){
+static void abort_everything(uv_async_t *handle){
     // the handle has a pointer to a uv_loop_t
     // the uv_loop_t has a pointer to our own loop_t
     // loop_t *loop = (loop_t*)handle->loop->data;
@@ -425,14 +493,77 @@ derr_t loop_init(loop_t *loop){
         ORIG_GO(error, "error initializing loop_aborter", fail_loop);
     }
 
-    // allocate buffer pools
-    PROP_GO( bufp_init(&loop->read_bufp, 16, 4096), fail_loop);
-    PROP_GO( bufp_init(&loop->write_bufp, 16, 4096), fail_read_bufp);
+    // init read buffer list
+    /* TODO: We need a way to read_stop and read_start when there's no
+       read_bufs available */
+    PROP_GO( llist_init(&loop->read_bufs, NULL, NULL), fail_loop);
+
+    // allocate a pool of read buffers
+    // TODO: figure out a better way to know how many buffers we need
+    for(size_t i = 0; i < 20; i++){
+        // allocate the read_buf_t struct
+        read_buf_t *rb;
+        rb = malloc(sizeof(*rb));
+        if(rb == NULL){
+            ORIG_GO(E_NOMEM, "unable to alloc read buf", fail_read_bufs);
+        }
+        // allocate the buffer inside the read_buf_t
+        PROP_GO( read_buf_init(rb, 4096), fail_rb);
+        // append the buffer to the list (does no allocation; can't fail)
+        llist_append(&loop->read_bufs, &rb->llist_elem);
+        continue;
+    fail_rb:
+        free(rb);
+        // continue cleanup
+        goto fail_read_bufs;
+    }
+
+    // init write buffer list
+    /* TODO: we need callbacks to handle write_bufs properly */
+    PROP_GO( llist_init(&loop->write_bufs, NULL, NULL), fail_read_bufs);
+
+    // allocate a pool of write buffers
+    // TODO: figure out a better way to know how many buffers we need
+    for(size_t i = 0; i < 20; i++){
+        // allocate the write_buf_t struct
+        write_buf_t *wb;
+        wb = malloc(sizeof(*wb));
+        if(wb == NULL){
+            ORIG_GO(E_NOMEM, "unable to alloc write buf", fail_write_bufs);
+        }
+        // allocate the buffer inside the write_buf_t
+        PROP_GO( write_buf_init(wb, 4096), fail_wb);
+        // append the buffer to the list (does no allocation; can't fail)
+        llist_append(&loop->write_bufs, &wb->llist_elem);
+        continue;
+    fail_wb:
+        free(wb);
+        // continue cleanup
+        goto fail_write_bufs;
+    }
 
     return E_OK;
 
-fail_read_bufp:
-    bufp_free(&loop->read_bufp);
+fail_write_bufs:
+    // free all of the buffers
+    while(&loop->read_bufs.first != NULL){
+        read_buf_t *rb = llist_pop_first(&loop->read_bufs, NULL);
+        // free the buffer inside the struct
+        read_buf_free(rb);
+        // free the struct pointer
+        free(rb);
+    }
+    llist_free(&loop->read_bufs);
+fail_read_bufs:
+    // free all of the buffers
+    while(&loop->read_bufs.first != NULL){
+        read_buf_t *rb = llist_pop_first(&loop->read_bufs, NULL);
+        // free the buffer inside the struct
+        read_buf_free(rb);
+        // free the struct pointer
+        free(rb);
+    }
+    llist_free(&loop->read_bufs);
 fail_loop:
     uv_loop_close(&loop->uv_loop);
     return error;
@@ -440,8 +571,24 @@ fail_loop:
 
 
 void loop_free(loop_t *loop){
-    bufp_free(&loop->write_bufp);
-    bufp_free(&loop->read_bufp);
+    // free all of the write buffers
+    while(&loop->read_bufs.first != NULL){
+        read_buf_t *rb = llist_pop_first(&loop->read_bufs, NULL);
+        // free the buffer inside the struct
+        read_buf_free(rb);
+        // free the struct pointer
+        free(rb);
+    }
+    llist_free(&loop->read_bufs);
+    // free all of the read buffers
+    while(&loop->read_bufs.first != NULL){
+        read_buf_t *rb = llist_pop_first(&loop->read_bufs, NULL);
+        // free the buffer inside the struct
+        read_buf_free(rb);
+        // free the struct pointer
+        free(rb);
+    }
+    llist_free(&loop->read_bufs);
     int ret = uv_loop_close(&loop->uv_loop);
     if(ret != 0){
         uv_perror("uv_loop_close", ret);
