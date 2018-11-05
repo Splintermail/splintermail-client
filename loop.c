@@ -6,6 +6,7 @@
 
 #include "logger.h"
 #include "ixs.h"
+#include "ixt.h"
 #include "loop.h"
 #include "tls_engine.h"
 
@@ -53,22 +54,6 @@ derr_t write_buf_init(write_buf_t *wb, size_t size){
 
 void write_buf_free(write_buf_t *wb){
     dstr_free(&wb->dstr);
-}
-
-
-static void close_sockets_via_ixs(ixs_t *ixs){
-    // close downwards socket (to email client)
-    if(ixs->sock_dn_active){
-        // close the socket
-        uv_close((uv_handle_t*)&ixs->sock_dn, ixs_ref_down_cb);
-        ixs->sock_dn_active = false;
-    }
-    // close upwards socket (to mail server)
-    if(ixs->sock_up_active){
-        // close the socket
-        uv_close((uv_handle_t*)&ixs->sock_up, ixs_ref_down_cb);
-        ixs->sock_up_active = false;
-    }
 }
 
 
@@ -127,13 +112,10 @@ static void allocator(uv_handle_t *handle, size_t suggest, uv_buf_t *buf){
 
     // get the generic imap context
     ix_t *ix = (ix_t*)handle->data;
-    bool upwards = (IX_TYPE_SESSION_UP == ix->type);
-    // get the imap session context from the handle
-    ixs_t *ixs = ix->data.ixs;
+    ixt_t *ixt = ix->data.ixt;
 
     // now get a pointer to an open read buffer
-    llist_elem_t *cb_data = upwards ? &ixs->sock_dn_lle : &ixs->sock_up_lle;
-    read_buf_t *rb = llist_pop_first(&loop->read_bufs, cb_data);
+    read_buf_t *rb = llist_pop_first(&loop->read_bufs, &ixt->wait_for_buf_lle);
 
     // if nothing is available, pass NULL to libuv
     if(rb == NULL){
@@ -150,11 +132,19 @@ static void allocator(uv_handle_t *handle, size_t suggest, uv_buf_t *buf){
     buf->base = rb->dstr.data;
     buf->len = rb->dstr.size;
 
-    // store a pointer to this read buffer, so we can "release" it later
-    llist_append(&ixs->read_bufs, &rb->llist_elem);
+    // store a pointer to this read buffer, so we can release it later
+    /* this is a workaround since we can only pass the allocated char* (and not
+       the allocated read_buf_t*) using this allocator callback.  If we do not
+       keep track of the read_buf_t via this side-channel, libuv would only
+       give us back a char* in the read_cb and we would have lost the pointer
+       to the rest of the read_buf_t object) */
+    llist_append(&ixt->read_bufs, &rb->llist_elem);
 
-    /* TODO: ref_up the ixs or not?  It depends on how allocated-but-unused
-       read_buf_t's are handled after a uv_close(sock) call. */
+    // upref the underlying ixs object, since this is the start of the pipeline
+    ixs_ref_up(ixt->ixs);
+
+    /* TODO: how are allocated-but-unused read_buf_t's handled after a call to
+       uv_close(sock)?  Where would those trigger a down-ref? */
 
     return;
 }
@@ -165,8 +155,9 @@ static void read_cb(uv_stream_t *stream, ssize_t ssize_read,
     derr_t error;
     // get the generic imap context
     ix_t *ix = (ix_t*)stream->data;
-    // get the imap session context from the stream
-    ixs_t *ixs = ix->data.ixs;
+    // get the imap tls context and imap session context
+    ixt_t *ixt = ix->data.ixt;
+    ixs_t *ixs = ixt->ixs;
     // the stream has a pointer to a uv_loop_t
     // the uv_loop_t has a pointer to our own loop_t
     loop_t *loop = ((ix_t*)stream->loop->data)->data.loop;
@@ -180,7 +171,7 @@ static void read_cb(uv_stream_t *stream, ssize_t ssize_read,
     }
 
     // get the read_buf_t* associated with this *buf
-    read_buf_t *rb = llist_pop_find(&ixs->read_bufs, match_read_buf, buf->base);
+    read_buf_t *rb = llist_pop_find(&ixt->read_bufs, match_read_buf, buf->base);
     if(rb == NULL){
         /* this should never, ever happen, and would violate a lot of the
            assumptions we rely on for proper cleanup, so we are not going to
@@ -189,7 +180,7 @@ static void read_cb(uv_stream_t *stream, ssize_t ssize_read,
         exit(215);
     }
 
-    // if session not valid, delete it
+    // if session not valid, close it
     if(ixs->is_valid == false){
         goto close_imap_session;
     }
@@ -209,28 +200,30 @@ static void read_cb(uv_stream_t *stream, ssize_t ssize_read,
     // now safe to cast
     size_t size_read = (size_t)ssize_read;
 
-    // store the length read in the read_buf's dstr_t
+    // store the amount read in the read_buf's dstr_t
     rb->dstr.len = size_read;
 
     // now pass the buffer through the pipeline
-    PROP_GO( tlse_raw_read(ix, rb), close_imap_session);
+    // (no need to refup/refdown because this is the last step of the function)
+    PROP_GO( tlse_raw_read(ixt, rb), close_imap_session);
 
     return;
 
 close_imap_session:
     // put the read_buf back in the list of free read bufs
     llist_append(&loop->read_bufs, &rb->llist_elem);
-    ixs->is_valid = false;
-    close_sockets_via_ixs(ixs);
+    // release the ixs reference that we received (implied by the read_buf)
+    ixs_ref_down(ixs);
+    // shut down this session
+    ixs_abort(ixs);
     return;
 }
 
 
-derr_t loop_read_done(loop_t* loop, ix_t *ix){
-    (void)ix;
+derr_t loop_read_done(loop_t* loop, ixt_t *ixt){
+    (void)ixt;
     (void)loop;
     // buffer should have been returned independently of this call
-    // TODO: downref ixs? see note in allocator
     return E_OK;
 }
 
@@ -254,8 +247,9 @@ static void connection_cb(uv_stream_t *listener, int status){
     }
 
     // allocate a new session context
-    ixs_t *ixs = (ixs_t*)malloc(sizeof(ixs_t));
-    if(!ixs){
+    ixs_t *ixs;
+    ixs = malloc(sizeof(*ixs));
+    if(ixs == NULL){
         LOG_ERROR("failed to malloc imap session context\n");
         // don't need to exit on failed allocation
         exit_loop_on_fail = false;
@@ -263,43 +257,38 @@ static void connection_cb(uv_stream_t *listener, int status){
     }
 
     // initialize the session context
-    derr_t error = ixs_init(ixs);
+    derr_t error = ixs_init(ixs, loop);
     CATCH(E_ANY){
         // don't need to exit on failed allocation
         if(error == E_NOMEM) exit_loop_on_fail = false;
         goto fail_ixs_ptr;
     }
 
-    // allocate the client-side SSL object
-    error = ixs_add_ssl(ixs, ssl_ctx, true);
+    // allocate a new imap tls context
+    ixt_t *ixt;
+    ixt = malloc(sizeof(*ixt));
+    if(ixt == NULL){
+        LOG_ERROR("failed to malloc imap tls context\n");
+        // don't need to exit on failed allocation
+        exit_loop_on_fail=false;
+        goto fail_ixs;
+    }
+
+    // initialize the imap tls context (including uv_tcp_t) for this connection
+    error = ixt_init(ixt, ixs, listener->loop, ssl_ctx, false);
     CATCH(E_ANY){
         // don't need to exit on failed allocation
         if(error == E_NOMEM) exit_loop_on_fail = false;
-        goto fail_ixs;
-    }
-
-    // prepare new connection
-    int ret = uv_tcp_init(listener->loop, &ixs->sock_dn);
-    if(ret < 0){
-        uv_perror("uv_tcp_init", ret);
-        // don't need to exit on failed allocation
-        if(ret == UV_ENOMEM) exit_loop_on_fail = false;
-        goto fail_ixs;
+        goto fail_ixt_ptr;
     }
 
     /* At this point, clean up can only be done asynchronously, because the
-       socket handle is actually embedded in the imap session context, so we
-       can't free the session context until after the socket is closed, but
-       libuv only does asynchronous socket closing. */
-
-    // point sock_dn->data to the imap session's tagged-union-self-pointer
-    ixs->sock_dn.data = &ixs->ix_dn;
-    ixs_ref_up(ixs);
-    // mark sock_dn as active
-    ixs->sock_dn_active = true;
+       socket handle is actually embedded in the imap tls context, so we can't
+       free the context until after the socket is closed, and libuv only does
+       asynchronous socket closing. */
 
     // accept the connection
-    ret = uv_accept(listener, (uv_stream_t*)&ixs->sock_dn);
+    int ret = uv_accept(listener, (uv_stream_t*)&ixt->sock);
     if(ret < 0){
         uv_perror("uv_accept", ret);
         goto fail_accept;
@@ -309,7 +298,7 @@ static void connection_cb(uv_stream_t *listener, int status){
     exit_loop_on_fail = false;
 
     // now we can set up the read callback
-    ret = uv_read_start((uv_stream_t*)&ixs->sock_dn, allocator, read_cb);
+    ret = uv_read_start((uv_stream_t*)&ixt->sock, allocator, read_cb);
     if(ret < 0){
         uv_perror("uv_read_start", ret);
         goto fail_post_accept;
@@ -318,7 +307,8 @@ static void connection_cb(uv_stream_t *listener, int status){
 
 // failing after accept() is never a critical (application-ending) error
 fail_post_accept:
-    close_sockets_via_ixs(ixs);
+    // abort session
+    ixs_abort(ixs);
     return;
 
 // failing in accept() is always a critical error
@@ -328,6 +318,8 @@ fail_accept:
 
 /* failing before accept() should not be a critical error, but since there's no
    real way to handle it in the API, we will have to treat it like one ... */
+fail_ixt_ptr:
+    free(ixt);
 fail_ixs:
     ixs_free(ixs);
 fail_ixs_ptr:
@@ -341,7 +333,8 @@ fail_listen:
 
 
 static void listener_close_cb(uv_handle_t *handle){
-    // free the uv_tcp_t pointer itself
+    /* the SSL* in handle->data is application-wide and needs no cleanup here
+       so just free the uv_tcp_t pointer itself */
     free(handle);
 }
 
@@ -361,7 +354,7 @@ derr_t loop_add_listener(loop_t *loop, const char *addr, const char *svc,
     if(ret < 0){
         uv_perror("uv_tcp_init", ret);
         error = (ret == UV_ENOMEM) ? E_NOMEM : E_UV;
-        ORIG_GO(error, "error initializing async", fail_malloc);
+        ORIG_GO(error, "error initializing listener", fail_malloc);
     }
 
     // bind TCP listener
@@ -404,10 +397,12 @@ static void close_any_handle(uv_handle_t *handle, void *arg){
     // get the tagged-union-style imap context from the handle
     ix_t *ix = handle->data;
     switch(ix->type){
-        case IX_TYPE_SESSION_UP:
-        case IX_TYPE_SESSION_DN:
-            LOG_ERROR("closing SESSION type\n");
-            uv_close(handle, ixs_ref_down_cb);
+        case IX_TYPE_SESSION:
+            LOG_ERROR("IXS SHOULD NOT BE ASSOCIATED WITH A LIBUV HANDLE\n");
+            break;
+        case IX_TYPE_TLS:
+            LOG_ERROR("closing TLS type\n");
+            uv_close(handle, ixt_close_cb);
             break;
         case IX_TYPE_LISTENER:
             LOG_ERROR("closing LISTENER type\n");
@@ -433,10 +428,30 @@ static void close_any_handle(uv_handle_t *handle, void *arg){
 }
 
 
+static void invalidate_all_sessions(uv_handle_t *handle, void* arg){
+    (void)arg;
+
+    // ignore handles with NULL *data elements
+    if(handle->data == NULL) return;
+
+    // get generic imap context
+    ix_t *ix = handle->data;
+
+    // ignore non-ixt handles
+    if(ix->type != IX_TYPE_TLS) return;
+
+    // invalidate the imap session context associated with the imap tls context
+    ixs_invalidate(ix->data.ixt->ixs);
+}
+
+
 static void abort_everything(uv_async_t *handle){
     // the handle has a pointer to a uv_loop_t
     // the uv_loop_t has a pointer to our own loop_t
-    // loop_t *loop = (loop_t*)handle->loop->data;
+    // loop_t *loop = ((ix_t*)handle->loop->data)->data.loop;
+
+    // first invalidate all IMAP sessions, so other threads exit faster
+    uv_walk(handle->loop, invalidate_all_sessions, NULL);
 
     /* since this is called on the event loop thread, there are no more reads
        to or writes from the sockets (although closing the sockets is the last
@@ -459,6 +474,30 @@ static void abort_everything(uv_async_t *handle){
 
     // close all the handlers in the loop (async, sockets, listeners, whatever)
     uv_walk(handle->loop, close_any_handle, NULL);
+}
+
+
+static void ixs_aborter_cb(uv_async_t *handle){
+    // the handle has a pointer to a uv_loop_t
+    // the uv_loop_t has a pointer to our own loop_t
+    loop_t *loop = ((ix_t*)handle->loop->data)->data.loop;
+
+    // go through the list of ixs objects to be aborted
+    while(loop->close_list.first != NULL){
+        ixs_t *ixs = llist_pop_first(&loop->close_list, NULL);
+        // call uv_close on any not-closed sockets
+        // no mutex because uv_close is only called from the libuv thread
+        if(ixs->ixt_up != NULL && ixs->ixt_up->closed == false){
+            ixs->ixt_up->closed = true;
+            uv_close((uv_handle_t*)&ixs->ixt_up->sock, ixt_close_cb);
+        }
+        if(ixs->ixt_dn != NULL && ixs->ixt_dn->closed == false){
+            ixs->ixt_dn->closed = true;
+            uv_close((uv_handle_t*)&ixs->ixt_dn->sock, ixt_close_cb);
+        }
+        // reference no longer in use by close_list
+        ixs_ref_down(ixs);
+    }
 }
 
 
@@ -491,6 +530,12 @@ derr_t loop_init(loop_t *loop){
         uv_perror("uv_async_init", ret);
         error = (ret == UV_ENOMEM) ? E_NOMEM : E_UV;
         ORIG_GO(error, "error initializing loop_aborter", fail_loop);
+    }
+    ret = uv_async_init(&loop->uv_loop, &loop->ixs_aborter, ixs_aborter_cb);
+    if(ret < 0){
+        uv_perror("uv_async_init", ret);
+        error = (ret == UV_ENOMEM) ? E_NOMEM : E_UV;
+        ORIG_GO(error, "error initializing ixs_aborter", fail_loop);
     }
 
     // init read buffer list
@@ -542,6 +587,9 @@ derr_t loop_init(loop_t *loop){
         goto fail_write_bufs;
     }
 
+    // init close_list
+    PROP_GO( llist_init(&loop->close_list, NULL, NULL), fail_write_bufs);
+
     return E_OK;
 
 fail_write_bufs:
@@ -571,6 +619,7 @@ fail_loop:
 
 
 void loop_free(loop_t *loop){
+    llist_free(&loop->close_list);
     // free all of the write buffers
     while(&loop->read_bufs.first != NULL){
         read_buf_t *rb = llist_pop_first(&loop->read_bufs, NULL);
@@ -608,23 +657,46 @@ derr_t loop_run(loop_t *loop){
 }
 
 
-derr_t loop_kick(loop_t *loop){
+void loop_kick(loop_t *loop){
     int ret = uv_async_send(&loop->loop_kicker);
     if(ret < 0){
+        /* ret != 0 is only possible under some specific circumstances:
+             - if the async handle is not an async type (should never happen)
+             - if uv_close was called on the async handle (should never happen
+               because we don't close uv_handles until all other nodes in the
+               pipeline have closed down, so no threads would be alive to call
+               the async-related functions)
+
+           Therefore, it is safe to not "properly" handle this error.  But, we
+           will at least log it since we are relying on undocumented behavior.
+        */
         uv_perror("uv_async_send", ret);
-        derr_t error = (ret == UV_ENOMEM) ? E_NOMEM : E_UV;
-        ORIG(error, "unable to kick loop");
+        LOG_ERROR("uv_async_send should never fail!\n");
     }
-    return E_OK;
 }
 
 
-derr_t loop_abort(loop_t *loop){
+void loop_abort(loop_t *loop){
     int ret = uv_async_send(&loop->loop_aborter);
     if(ret < 0){
+        // not possible, see note in loop_kick()
         uv_perror("uv_async_send", ret);
-        derr_t error = (ret == UV_ENOMEM) ? E_NOMEM : E_UV;
-        ORIG(error, "unable to abort loop");
+        LOG_ERROR("uv_async_send should never fail!\n");
     }
-    return E_OK;
+}
+
+
+// ixs_abort() will make sure to only call this once for any ixs
+void loop_abort_ixs(loop_t *loop, ixs_t *ixs){
+    // mark ixs for closing
+    llist_append(&loop->close_list, &ixs->close_lle);
+    // that's a reference!
+    ixs_ref_up(ixs);
+    // then trigger the libuv thread to actually close it
+    int ret = uv_async_send(&loop->ixs_aborter);
+    if(ret < 0){
+        // not possible, see note in loop_kick()
+        uv_perror("uv_async_send", ret);
+        LOG_ERROR("uv_async_send should never fail!\n");
+    }
 }

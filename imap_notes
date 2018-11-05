@@ -232,56 +232,9 @@ New bugs:
         might be a per-connection component to it, if you know that every
         connection is always going to have at least one buffer being written to
         in the kernel, for instance.
-    what do I do with the read_buf_t's that are leftover when an ixs_t gets
-    ref_down()'ed completely?
-        I think the answer is I have to have a dirty solution, because the
-        problem is fundamentally an API limitation with libuv.  In all other
-        cases the read_buf_t equivalent would be passed as an element in an
-        event queue, and the node would discard them manually.
-
-        But I think what I can do is when I append a read_buf_t I can cheat
-        and ref_up() the *ixs, and when I handle the read event I can
-        ref_down() it, similar to how it might be in other situations.
-
-        Basically, there are resources (read_buf_t, write_buf_t) which don't
-        have reference counts because they are passed between threads but never
-        used by two threads at one time.  There are also contexts, which do
-        have reference counts, because they are intended to be used by multiple
-        threads simultaneously, and it will not otherwise be clear which thread
-        would be the last thread to use one (and therefore the thread to clean
-        it up).
-
-        So I guess ref_up()'ing *ixs when I associate *ixs with a read_buf is
-        actually not a dirty solution; it is the most natural thing to do.
-
-    SHIT! What do we do about the memory allocator, which is not ref_up()'ing
-    the *ixs but which is associating read buffers with it?
-
-    What if we modeled the async reads and async writes as separate nodes?
-
-        _______             ______                ______
-       |       | ----> buf |      | ---> read_cb |      |
-       | ALLOC |           | NET- |              | READ |
-       |       |           | WORK |              |  CB  |
-       |_______|           |______|              |______|
-
-    I don't think this is clarifying anything.  I think it is making things
-    harder to understand.  I think the allocator associates a read buffer with
-    the imap session context, and it simply ref_up()'s the ixs.  The read cb
-    then ref_down()'s the ixs if the read goes wrong.
-
-    Basically, you ref_up() the ixs for the associated
 
     Wait... if the socket is closed all of the buffers allocated for cancelled
     reads will be passed to the read callback, right?
         I dunno.  The documentation seems to say no but I don't see how else
         you would free allocated buffers.  Smells like a recipie for a memory
         leak.
-
-
-
-
-
-imap session context session
-imap command context command
-imap tls context

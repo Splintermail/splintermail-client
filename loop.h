@@ -35,31 +35,40 @@ typedef struct write_buf_t {
 derr_t write_buf_init(write_buf_t *wb, size_t size);
 void write_buf_free(write_buf_t *wb);
 
-typedef struct loop_t {
+struct loop_t {
     // a tagged-union-style self-pointer:
     ix_t ix;
     uv_loop_t uv_loop;
     uv_async_t loop_kicker;
     uv_async_t loop_aborter;
+    uv_async_t ixs_aborter;
 
     // read buffers
     llist_t read_bufs;
 
     // write buffers
     llist_t write_bufs;
-} loop_t;
+
+    // a list of ixs objects to close (which must be done on the libuv thread)
+    llist_t close_list;
+};
 
 derr_t loop_init(loop_t *loop);
 void loop_free(loop_t *loop);
 
 derr_t loop_run(loop_t *loop);
-derr_t loop_kick(loop_t *loop);
-derr_t loop_abort(loop_t *loop);
+
+void loop_kick(loop_t *loop);
+void loop_abort(loop_t *loop);
+void loop_abort_ixs(loop_t *loop, ixs_t *ixs);
 
 derr_t loop_add_listener(loop_t *loop, const char *addr, const char *svc,
                          ix_t *ix);
 
 derr_t loop_add_write(loop_t *loop, uv_tcp_t *sock, write_buf_t *wb);
-derr_t loop_read_done(loop_t *loop, ixs_t *ixs, read_buf_t* rb);
+derr_t loop_read_done(loop_t *loop, ixt_t *ixt);
+
+// only meant to be called from ixs_abort(), which handles thread-safety
+void loop_abort_ixs(loop_t *loop, ixs_t *ixs);
 
 #endif // LOOP_H

@@ -36,6 +36,7 @@ set(OBJ_TGTS api_client
              console_input
              ui
              ixs
+             ixt
              loop
              tls_engine
              linked_list)
@@ -159,7 +160,7 @@ endforeach()
 # some targets need OpenSSL headers
 obj_depend_lib(networking "${OPENSSL_INCLUDE_DIR}" "${OPENSSL_LIBRARIES}")
 obj_depend_lib(crypto "${OPENSSL_INCLUDE_DIR}" "${OPENSSL_LIBRARIES}")
-obj_depend_lib(ixs "${OPENSSL_INCLUDE_DIR}" "${OPENSSL_LIBRARIES}")
+obj_depend_lib(ixt "${OPENSSL_INCLUDE_DIR}" "${OPENSSL_LIBRARIES}")
 # ui has a full test harness, so it can't use the normal obj_depend_obj
 target_include_directories(ui_o PRIVATE ${OPENSSL_INCLUDE_DIR})
 
@@ -178,8 +179,9 @@ obj_depend_obj(api_client networking crypto json)
 obj_depend_obj(key_tool api_client crypto)
 obj_depend_obj(ditm pop_client pop_server maildir json)
 obj_depend_obj(ixs uv_interface common)
+obj_depend_obj(ixt uv_interface common)
 obj_depend_obj(loop uv_interface tls_engine common)
-obj_depend_obj(tls_engine ixs common)
+obj_depend_obj(tls_engine ixs ixt common)
 obj_depend_obj(linked_list uv_interface common)
 
 # describe executables with dependencies
@@ -362,6 +364,7 @@ if("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU")
     # libuv needs non-strict aliasing
     # see discussion here: https://github.com/libuv/libuv/issues/1230
     target_compile_options(loop_o PRIVATE -fno-strict-aliasing)
+    target_compile_options(ixs_o PRIVATE -fno-strict-aliasing)
     # add some compiler hardening flags
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wformat -Wformat-security -Werror=format-security")
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fstack-protector-strong")
@@ -395,6 +398,7 @@ elseif("${CMAKE_C_COMPILER_ID}" MATCHES "Clang")
     # libuv needs non-strict aliasing
     # see discussion here: https://github.com/libuv/libuv/issues/1230
     target_compile_options(loop_o PRIVATE -fno-strict-aliasing)
+    target_compile_options(ixs_o PRIVATE -fno-strict-aliasing)
     # add some compiler hardening flags
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wformat -Wformat-security -Werror=format-security")
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -D_FORTIFY_SOURCE")

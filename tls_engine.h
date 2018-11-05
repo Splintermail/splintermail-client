@@ -21,12 +21,12 @@
 */
 
 // (1):
-derr_t tlse_raw_read(ix_t *ix, read_buf_t *rb);
+derr_t tlse_raw_read(ixt_t *ixt, read_buf_t *rb);
 // (2):
-derr_t tlse_raw_write_done(ix_t *ix);
+derr_t tlse_raw_write_done(ixt_t *ixt);
 // (3):
-derr_t tlse_dec_read_done(ix_t *ix);
+derr_t tlse_dec_read_done(ixt_t *ixt);
 // (4):
-derr_t tlse_dec_write(ix_t *ix);
+derr_t tlse_dec_write(ixt_t *ixt);
 
 #endif // TLS_ENGINE_H
