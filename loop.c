@@ -115,7 +115,8 @@ static void allocator(uv_handle_t *handle, size_t suggest, uv_buf_t *buf){
     ixt_t *ixt = ix->data.ixt;
 
     // now get a pointer to an open read buffer
-    read_buf_t *rb = llist_pop_first(&loop->read_bufs, &ixt->wait_for_buf_lle);
+    llist_elem_t *wait_lle = &ixt->wait_for_read_buf_lle;
+    read_buf_t *rb = llist_pop_first(&loop->read_bufs, wait_lle);
 
     // if nothing is available, pass NULL to libuv
     if(rb == NULL){
@@ -138,7 +139,7 @@ static void allocator(uv_handle_t *handle, size_t suggest, uv_buf_t *buf){
        keep track of the read_buf_t via this side-channel, libuv would only
        give us back a char* in the read_cb and we would have lost the pointer
        to the rest of the read_buf_t object) */
-    llist_append(&ixt->read_bufs, &rb->llist_elem);
+    llist_append(&ixt->pending_reads, &rb->llist_elem);
 
     // upref the underlying ixs object, since this is the start of the pipeline
     ixs_ref_up(ixt->ixs);
@@ -152,7 +153,6 @@ static void allocator(uv_handle_t *handle, size_t suggest, uv_buf_t *buf){
 
 static void read_cb(uv_stream_t *stream, ssize_t ssize_read,
                     const uv_buf_t *buf){
-    derr_t error;
     // get the generic imap context
     ix_t *ix = (ix_t*)stream->data;
     // get the imap tls context and imap session context
@@ -171,7 +171,7 @@ static void read_cb(uv_stream_t *stream, ssize_t ssize_read,
     }
 
     // get the read_buf_t* associated with this *buf
-    read_buf_t *rb = llist_pop_find(&ixt->read_bufs, match_read_buf, buf->base);
+    read_buf_t *rb = llist_pop_find(&ixt->pending_reads, match_read_buf, buf->base);
     if(rb == NULL){
         /* this should never, ever happen, and would violate a lot of the
            assumptions we rely on for proper cleanup, so we are not going to
@@ -203,9 +203,14 @@ static void read_cb(uv_stream_t *stream, ssize_t ssize_read,
     // store the amount read in the read_buf's dstr_t
     rb->dstr.len = size_read;
 
+    // increment the number of reads pushed to the TLS engine
+    ixt->tls_reads++;
+
     // now pass the buffer through the pipeline
-    // (no need to refup/refdown because this is the last step of the function)
-    PROP_GO( tlse_raw_read(ixt, rb), close_imap_session);
+    tlse_raw_read(ixt, rb, E_OK);
+
+    // done with this event
+    ixs_ref_down(ixs);
 
     return;
 
@@ -220,11 +225,92 @@ close_imap_session:
 }
 
 
-derr_t loop_read_done(loop_t* loop, ixt_t *ixt){
-    (void)ixt;
+void loop_read_done(loop_t* loop, ixt_t *ixt, read_buf_t *rb){
+    // upref session before queueing event
+    ixs_ref_up(ixt->ixs);
+
+    // queue the event here
+
+    // this would be run on the libuv thread as an event handler
+    {
+        // decrement reads in flight
+        ixt->tls_reads--;
+
+        // Here, a socket frozen due to a backed-up pipeline is re-enabled
+        // TODO: check tls_reads -> mark socket for unfreezing
+
+        // put the buffer back in the pool
+        /* If there was a socket frozen due to a global shortage of read bufs, it
+           would be unfrozen by a callback during this operation. */
+        llist_append(&loop->read_bufs, &rb->llist_elem);
+
+        // done with event
+        ixs_ref_down(ixt->ixs);
+    }
+}
+
+
+static void write_cb(uv_write_t *write_req, int status){
+    // TODO: handle UV_ECANCELLED or things like that
+
+    derr_t error = E_OK;
+    // get our write_buf_t from the write_req
+    write_buf_t *wb = write_req->data;
+    // get the imap tls session from the wb
+    ixt_t *ixt = wb->ixt;
+
+    // check the result of the write request
+    if(status < 0){
+        uv_perror("uv_write callback", status);
+        error = (status == UV_ENOMEM) ? E_NOMEM : E_UV;
+        ORIG_GO(error, "uv_write returned error via callback", release_buf);
+    }
+
+release_buf:
+    // return error through write_done
+    tlse_raw_write_done(wb->ixt, wb, error);
+
+    // release the ref held on behalf of the pending write request
+    ixs_ref_down(ixt->ixs);
+}
+
+
+static void handle_add_write(loop_t *loop, ixt_t *ixt, write_buf_t *wb){
+    derr_t error;
     (void)loop;
-    // buffer should have been returned independently of this call
-    return E_OK;
+
+    int ret = uv_write(&wb->write_req, (uv_stream_t*)&ixt->sock,
+                       &wb->buf, 1, write_cb);
+    if(ret < 0){
+        uv_perror("uv_write", ret);
+        error = (ret == UV_ENOMEM) ? E_NOMEM : E_UV;
+        ORIG_GO(error, "error adding write", fail);
+    }
+
+    // add a reference for the write_buf we just stored inside libuv
+    ixs_ref_up(ixt->ixs);
+
+    // the write buf is held until the write_cb is completed
+
+    return;
+
+fail:
+    // release the buf
+    tlse_raw_write_done(ixt, wb, error);
+}
+
+
+void loop_add_write(loop_t *loop, ixt_t *ixt, write_buf_t *wb){
+    // upref session before queueing event
+    ixs_ref_up(ixt->ixs);
+
+    // queue the event here
+
+    // this would be run on the libuv thread as an event handler
+    handle_add_write(loop, ixt, wb);
+
+    // then after the event was handled we would ref_down the session
+    ixs_ref_down(ixt->ixs);
 }
 
 

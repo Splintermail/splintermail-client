@@ -80,13 +80,13 @@ static void *do_pop_last(llist_elem_t **first, llist_elem_t **last){
 }
 
 static void *do_pop_this(llist_elem_t *this, llist_elem_t **first,
-                         llist_elemt_t **last){
+                         llist_elem_t **last){
     // is this the first element?
     if(this->prev == NULL){
         *first = this->next;
     }else{
         // fix the previous element's "next"
-        this->prev->next = this->next
+        this->prev->next = this->next;
     }
     // is that the last element?
     if(this->next == NULL){
@@ -144,7 +144,7 @@ void *llist_pop_first(llist_t *llist, llist_elem_t *cb_data){
         // ref_up the pointer in cb_data (if a ref_up_cb was defined)
         if(llist->ref_up_cb){
             // if cb_data is not NULL, pass the pointer inside of it
-            llist->ref_up_cb( cb_data ? cb->data->data : NULL );
+            llist->ref_up_cb( cb_data ? cb_data->data : NULL );
         }
         // append cb_data to our list of things that are awaiting data
         do_append(&llist->awaiting_first, &llist->awaiting_last, cb_data);

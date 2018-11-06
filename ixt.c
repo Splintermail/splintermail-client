@@ -46,8 +46,8 @@ derr_t ixt_init(ixt_t *ixt, ixs_t *ixs, uv_loop_t *uv_loop, ssl_context_t *ctx,
     }
     SSL_set0_wbio(ixt->ssl, ixt->rawout);
 
-    // init the list of read_bufs, with no callbacks
-    PROP_GO( llist_init(&ixt->read_bufs, NULL, NULL), fail_ssl);
+    // init the list of pending_reads, with no callbacks
+    PROP_GO( llist_init(&ixt->pending_reads, NULL, NULL), fail_ssl);
 
     // init decrypted buffers
     PROP_GO( dstr_new(&ixt->decin, 4096), fail_llist);
@@ -66,8 +66,9 @@ derr_t ixt_init(ixt_t *ixt, ixs_t *ixs, uv_loop_t *uv_loop, ssl_context_t *ctx,
     // set up ix_t self-pointer
     ixt->ix.type = IX_TYPE_TLS;
     ixt->ix.data.ixt = ixt;
-    // set up llist_elem_t self-pointer
-    ixt->wait_for_buf_lle.data = ixt;
+    // set up llist_elem_t self-pointers
+    ixt->wait_for_read_buf_lle.data = ixt;
+    ixt->wait_for_write_buf_lle.data = ixt;
     // set up uv_tcp_t.data to point to ix
     ixt->sock.data = &ixt->ix;
     // store direction
@@ -84,7 +85,10 @@ derr_t ixt_init(ixt_t *ixt, ixs_t *ixs, uv_loop_t *uv_loop, ssl_context_t *ctx,
     ixs_ref_up(ixs);
     // no reads/writes in flight yet
     ixt->tls_reads = 0;
+    ixt->imap_reads = 0;
     ixt->raw_writes = 0;
+    ixt->tls_writes = 0;
+    ixt->dec_writes_pending = 0;
 
     // not closed yet (obviously)
     ixt->closed = false;
@@ -96,7 +100,7 @@ fail_decout:
 fail_decin:
     dstr_free(&ixt->decin);
 fail_llist:
-    llist_free(&ixt->read_bufs);
+    llist_free(&ixt->pending_reads);
 fail_ssl:
     // this will free any associated BIOs
     SSL_free(ixt->ssl);
@@ -115,7 +119,7 @@ void ixt_free(ixt_t *ixt){
     }
     dstr_free(&ixt->decout);
     dstr_free(&ixt->decin);
-    llist_free(&ixt->read_bufs);
+    llist_free(&ixt->pending_reads);
     SSL_free(ixt->ssl);
 
     /* TODO: how are allocated-but-unused read_buf_t's handled after a call to

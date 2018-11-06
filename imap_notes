@@ -213,9 +213,9 @@ New and improved modular pipelining:
         just means it doesn't process any more operations until it receives the
         relevant READ_DONE/WRITE_DONE trigger.
 
-        After sending a READ or a WRITE, it is appropriate to send a READ_DONE
+        After handling a READ or a WRITE, it is appropriate to send a READ_DONE
         or WRITE_DONE to the previous node.  These indicate that the read or
-        write was processed, not that they have exited the node.
+        write was processed, and another read or write is possible.
 
         When a node receives a WRITE_DONE/READ_DONE, it should try and generate
         another WRITE/READ right away, if possible.
@@ -223,6 +223,20 @@ New and improved modular pipelining:
     Additional abstractions needed:
         there needs to be a buf_get and a buf_release trigger for nodes to
         get/release buffers from their neighbor nodes
+
+
+Error handling in the pipeline:
+    the node furthest from the network is the node most capable of gracefully
+    handling errors, therefore errors should be passed in that direction, and
+    not the other way (IE, along read paths and write_done paths, but not
+    read_done paths or write paths).
+
+    An example:
+      - read error talking to server, but only IMAP engine knows how to send
+        a useful message via the other socket to the email client
+    A contrapositive example:
+      - IMAP engine decides there is an inconsitency and wants to abandon the
+        connections.  The libuv thread doesn't give a fuck what the error was.
 
 New bugs:
     how exactly do I determine the "ideal" number of buffers in a pool?

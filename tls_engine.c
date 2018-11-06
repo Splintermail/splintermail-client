@@ -1,3 +1,7 @@
+#include <openssl/ssl.h>
+#include <openssl/bio.h>
+#include <openssl/err.h>
+
 #include "tls_engine.h"
 #include "ixs.h"
 #include "common.h"
@@ -13,27 +17,28 @@ static void log_ssl_errors(void){
 }
 
 /*
-void tlse_raw_read(ix_t *ix){
+void tlse_raw_read(){
     // put packet in rawin
     // try_ssl_read()
 }
 
-void tlse_raw_write_done(ix_t *ix){
+void tlse_raw_write_done(){
     // decrement writes_in_flight
     // try_raw_write()
 }
 
-void tlse_dec_read_done(ix_t *ix){
+void tlse_dec_read_done(){
     // reads_in_flight = 0
     // try_ssl_read()
 }
 
-void tlse_dec_write(ix_t *ix){
-    // store buffer as ssl_write_buffer
+void tlse_dec_write(){
+    // store buffer as decin
+    // dec_writes_pending = 1
     // try_ssl_write()
 }
 
-static void try_ssl_read(ix_t *ix){
+static void try_ssl_read(){
     // if reads_in_flight == 0 and rawin not empty:
     //     attempt SSL_read()
     //     if success:
@@ -42,105 +47,211 @@ static void try_ssl_read(ix_t *ix){
     //     libuv_read_done()
     //     try_raw_write()
 }
-static void try_ssl_write(ix_t *ix){
-    // if ssl_write_buffer NOT empty and rawout IS empty:
+static void try_ssl_write(){
+    // if dec_writes_pending == 1 and rawout IS empty:
     //     attempt SSL_write()
     //     try_raw_write()
     //     if SSL_write success:
+    //         dec_writes_pending = 0;
     //         release ssl_write_buffer
     //         imape_write_done()
 }
-static void try_raw_write(ix_t *ix){
-    // if rawout not empty and writes_in_flight < 2:
+static void try_raw_write(){
     //     add write with uv_write
-    //     try_ssl_write
+    //     try_ssl_write()
 }
 */
 
 
 // internal, between the two subnodes
 
-static void try_raw_write(ix_t *ix);
-static void try_ssl_write(ix_t *ix);
-static void try_ssl_read(ix_t *ix);
+static derr_t try_raw_write(ixt_t *ixt);
+static derr_t try_ssl_write(ixt_t *ixt);
+static derr_t try_ssl_read(ixt_t *ixt);
 
-derr_t tlse_raw_read(ix_t *ix, read_buf_t *rb){
-    derr_t error = E_OK;
-    ixs_t* ixs = ix->data.ixs;
-    bool upwards = (IX_TYPE_SESSION_UP == ix->type);
-    BIO *rawin = upwards ? ixs->rawin_up : ixs->rawin_dn;
+static void handle_raw_read(ixt_t *ixt, read_buf_t *rb, derr_t status){
+    /* TODO: if rawin is too full, we should store the read_buf for later,
+       because every time we empty read_buf into rawin, we need to call
+       loop_read_done, which will allow libuv to send us another packet (which
+       might not be what we want) */
+
+    derr_t error;
+
+    // pass errors immediately
+    PROP_GO(status, pass_error);
+
+    // if the session is invalid, just release the buffer
+    if(ixt->ixs->is_valid == false){
+        loop_read_done(ixt->ixs->loop, ixt, rb);
+        return;
+    }
 
     // do a sanity check before casting size_t to int
     if(rb->dstr.size > INT_MAX){
         ORIG_GO(E_INTERNAL, "buffer is WAY too big", release_buf);
     }
-    int len = (int)rb->dstr.len;
 
     // write input buffer to rawin
-    int ret = BIO_write(rawin, rb->dstr.data, len);
-    if(ret != len){
-        ORIG_GO(E_INTERNAL, "writing to memory buffer failed", release_buf);
+    size_t written;
+    int ret = BIO_write_ex(ixt->rawin, rb->dstr.data, rb->dstr.len, &written);
+    if(ret != 1){
+        log_ssl_errors();
+        ORIG_GO(E_SSL, "writing to memory buffer failed", release_buf);
+    }
+    if(written != rb->dstr.len){
+        ORIG_GO(E_INTERNAL, "BIO rejected some bytes!", release_buf);
     }
 
+    // release the buffer
+    loop_read_done(ixt->ixs->loop, ixt, rb);
+
+    // attempt an SSL read, which may trigger further action
+    PROP_GO( try_ssl_read(ixt), pass_error);
+
+    return;
+
 release_buf:
-    // TODO: devise a better way to get the buffer pool pointer
-    loop_t* loop = upwards ? ixs->sock_up.loop : ixs->sock_dn.loop;
-    // release read_buf (this is separate from the read_done callback)
-    llist_append(loop->read_bufs, &rb->llist_elem);
-    if(error) return error;
+    loop_read_done(ixt->ixs->loop, ixt, rb);
+pass_error:
+    // TODO: don't drop these errors; pass them as an event to IMAP engine
+    return;
+}
 
-    // attempt to push the SSL read through, which will trigger further action
-    PROP( try_ssl_read(ix_t *ix) );
+void tlse_raw_read(ixt_t *ixt, read_buf_t *rb, derr_t status){
+    // upref session before queueing event
+    ixs_ref_up(ixt->ixs);
 
-    return E_OK;
+    // queue event here
+
+    // this would be run on the TLS engine thread as an event handler
+    handle_raw_read(ixt, rb, status);
+
+    // done with event
+    ixs_ref_down(ixt->ixs);
 }
 
 
-derr_t tlse_raw_write_done(ix_t *ix){
-    ixs_t* ixs = ix->data.ixs;
-    bool upwards = (IX_TYPE_SESSION_UP == ix->type);
-    // decrement writes_in_flight
-    // try_raw_write()
+static void handle_raw_write_done(ixt_t *ixt, write_buf_t *wb, derr_t status){
+    derr_t error;
+
+    // decrement raw_writes
+    ixt->raw_writes--;
+
+    // return write buffer to pool
+    loop_t *loop = ixt->ixs->loop;
+    llist_append(&loop->write_bufs, &wb->llist_elem);
+
+    /* TODO: skipping straight to pass_error here does not let us attempt any
+       "pull" operations to try to clean out buffers.  Right now that is OK but
+       it might not always be ok */
+    // now, check the error
+    PROP_GO(status, pass_error);
+
+    // session valid check
+    if(ixt->ixs->is_valid == false) return;
+
+    // try and push another raw write
+    PROP_GO( try_raw_write(ixt), pass_error);
+
+    return;
+
+pass_error:
+    // TODO: pass this error to the next node
+    return;
+}
+
+void tlse_raw_write_done(ixt_t *ixt, write_buf_t *wb, derr_t status){
+    // upref session before queueing event
+    ixs_ref_up(ixt->ixs);
+
+    // queue event here
+
+    // this would be run on the TLS engine thread as an event handler
+    handle_raw_write_done(ixt, wb, status);
+
+    // TLS engine done with event
+    ixs_ref_down(ixt->ixs);
 }
 
 
-derr_t tlse_dec_read_done(ix_t *ix){
-    ixs_t* ixs = ix->data.ixs;
-    bool upwards = (IX_TYPE_SESSION_UP == ix->type);
-    // reads_in_flight = 0
-    // try_ssl_read()
+static void handle_dec_read_done(ixt_t *ixt){
+    derr_t error;
+    // one less read in flight
+    ixt->imap_reads--;
+
+    if(ixt->ixs->is_valid == false){
+        return;
+    }
+
+    // try and push another ssl read
+    PROP_GO( try_ssl_read(ixt), pass_error);
+
+    return;
+
+pass_error:
+    // TODO: actually pass the error
+    return;
+}
+
+void tlse_dec_read_done(ixt_t *ixt){
+    // upref session before queueing event
+    ixs_ref_up(ixt->ixs);
+
+    // queue event here
+
+    // this would be run on the TLS engine thread as an event handler
+    handle_dec_read_done(ixt);
+
+    // TLS engine done with event
+    ixs_ref_down(ixt->ixs);
 }
 
 
-derr_t tlse_dec_write(ix_t *ix){
-    ixs_t* ixs = ix->data.ixs;
-    bool upwards = (IX_TYPE_SESSION_UP == ix->type);
-    // store buffer as ssl_write_buffer
-    // try_ssl_write()
+static void handle_dec_write(ixt_t *ixt){
+    derr_t error;
+
+    // we are using the buffer directly, no need to copy anything
+
+    ixt->dec_writes_pending++;
+
+    if(ixt->ixs->is_valid == false){
+        return;
+    }
+
+    PROP_GO( try_ssl_write(ixt), pass_error);
+
+pass_error:
+    // TODO: pass the error
+    return;
 }
 
 
-static derr_t try_ssl_read(ix_t *ix){
-    ixs_t* ixs = ix->data.ixs;
-    bool upwards = (IX_TYPE_SESSION_UP == ix->type);
-    size_t *tls_reads = upwards ? ixs->tls_reads_up : ixs->tls_reads_dn;
-    BIO *rawin = upwards ? ixs->rawin_up : ixs->rawin_dn;
-    SSL *ssl = upwards ? ixs->ssl_up : ixs->ssl_dn;
+void tlse_dec_write(ixt_t *ixt){
+    // upref session before queueing event
+    ixs_ref_up(ixt->ixs);
 
+    // queue event here
+
+    // this would be run on the TLS engine thread as an event handler
+    handle_dec_write(ixt);
+
+    // TLS engine done with event
+    ixs_ref_down(ixt->ixs);
+}
+
+
+static derr_t try_ssl_read(ixt_t *ixt){
     // don't read if rawin is empty or if we already have a read in flight
-    if(*tls_reads != 0 || BIO_eof(rawin)){
+    if(ixt->imap_reads != 0 || BIO_eof(ixt->rawin)){
         return E_OK;
     }
 
-    // get a buffer to write into
-    // TODO: abstract this somehow
-    dstr_t *buf = upwards ? &ixs->decout_up : &ixs->decout_dn;
-
     // attempt an SSL_read()
     size_t amnt_read;
-    int ret = SSL_read(ssl, buf->data, buf.size, &amnt_read);
+    int ret = SSL_read_ex(ixt->ssl, ixt->decout.data, ixt->decout.size,
+                          &amnt_read);
     if(ret != 1){
-        switch(SSL_get_error(ssl, ret)){
+        switch(SSL_get_error(ixt->ssl, ret)){
             case SSL_ERROR_WANT_READ:
                 // this is fine, just break
                 break;
@@ -150,65 +261,146 @@ static derr_t try_ssl_read(ix_t *ix){
                 break;
             default:
                 log_ssl_errors();
-                ORIG_GO(E_SSL, "error in SSL_read", fail);
+                ORIG(E_SSL, "error in SSL_read");
         }
-    }else{
-        // only if SSL_read succeeded:
-        buf->len = amnt_read;
-        *tls_reads++;
-        // simulate imape_read()
-        LOG_ERROR("imape_read(): %x", FD(buf));
-        tlse_dec_read_done(ix);
+    }
+    // only if SSL_read succeeded, take these steps:
+    else{
+        // store amnt_read
+        ixt->decout.len = amnt_read;
+        // increment the number of reads pushed to IMAP engine
+        ixt->imap_reads++;
+        // simulate imape_read():
+        {
+            LOG_ERROR("imape_read(): %x", FD(&ixt->decout));
+            tlse_dec_read_done(ixt);
+        }
+
+        /* if there is more data to be read in the SSL buffer, that will be
+           checked when IMAP engine calls tlse_dec_read_done(), not here */
     }
 
-    /* TODO: wait, what if there is extra data to be read in the SSL buffer?
-       We definitely need to do something to check for it. */
+    /* whether or not the SSL_read succeeded, we may have generated TLS data
+       to write to the socket */
 
-    // TODO: libuv doesn't have a read_done yet, but we would call it here
-    /* the reason we call it here and not right after we put data into the
-       rawin memory BIO is because we don't want data to stack up
-       forever in the rawin BIO.  However, whether or not the SSL read
-       succeeded, at this point we want to signal to the libuv thread that we
-       are definitely ready for another packet. */
+    PROP( try_raw_write(ixt) );
 
-    PROP( try_raw_write(ix_t *ix) );
+    return E_OK;
 }
 
 
-static derr_t try_ssl_write(ix_t *ix){
-    ixs_t* ixs = ix->data.ixs;
-    bool upwards = (IX_TYPE_SESSION_UP == ix->type);
-    // if ssl_write_buffer NOT empty and rawout IS empty:
-    //     attempt SSL_write()
-    //     try_raw_write()
-    //     if SSL_write success:
-    //         release ssl_write_buffer
-    //         imape_write_done()
-}
-
-
-static derr_t try_raw_write(ix_t *ix){
-    ixs_t* ixs = ix->data.ixs;
-    bool upwards = (IX_TYPE_SESSION_UP == ix->type);
-    size_t *raw_writes = upwards ? ixs->raw_writes_up : ixs->raw_writes_dn;
-    BIO *rawout = upwards ? ixs->rawout_up : ixs->rawout_dn;
-
-    // do nothing if we have multiple writes in flight or if rawout is empty
-    if(*raw_writes > 1 || BIO_eof(rawout)){
+static derr_t try_ssl_write(ixt_t *ixt){
+    derr_t error;
+    // do nothing if dec_writes_pending is 0 or rawout is not empty
+    if(ixt->dec_writes_pending == 0 || !BIO_eof(ixt->rawout)){
         return E_OK;
     }
 
-    // add a write to libuv's
-    // TODO: abstract this whole section
-    uv_tcp_t *sock = upwards? &ixs->sock_up : &ixs->sock_dn;
-    uv_write_t req;
-    int ret = uv_write(&req, (uv_stream_t*)sock, write_cb);
-    if(ret < 0){
-
+    // attempt SSL_write
+    size_t written;
+    int ret = SSL_write_ex(ixt->ssl, ixt->decin.data, ixt->decin.len, &written);
+    if(ret != 1){
+        switch(SSL_get_error(ixt->ssl, ret)){
+            case SSL_ERROR_WANT_READ:
+                // this is fine, just break
+                break;
+            case SSL_ERROR_WANT_WRITE:
+                // we are not going to try again with this buffer
+                ixt->dec_writes_pending--;
+                // this should never happen
+                ORIG_GO(E_INTERNAL, "got SSL_ERROR_WANT_WRITE", release_buf);
+                break;
+            default:
+                // we are not going to try again with this buffer
+                ixt->dec_writes_pending--;
+                log_ssl_errors();
+                ORIG_GO(E_SSL, "error in SSL_read", release_buf);
+        }
     }
 
+    // in case of a successful write:
+    if(ret == 1){
+        /* indicate decin is empty, before attempting to push data via
+           try_raw_write, since try_raw_write will attempt to call this
+           function again (which would not be useful in this case) */
+        ixt->dec_writes_pending--;
+    }
 
-    // if rawout not empty and writes_in_flight < 2:
-    //     add write with uv_write
-    //     try_ssl_write
+    /* regardless of whether write was successful, attempt to push anything in
+       rawout (might be a handshake, for instance) to the socket */
+    PROP_GO( try_raw_write(ixt), release_buf);
+
+    // only in case of a successful write:
+    if(ret == 1){
+        // alert IMAP engine that write was successful
+        {
+            // TODO: call the real function
+            LOG_ERROR("imap_write_done()\n");
+        }
+    }
+
+    return E_OK;
+
+release_buf:
+    // in an error situation, be sure to release the buffer
+
+    // alert IMAP engine that write was unsuccessful
+    /* TODO: Uh-oh, looks like I have a forking error here, it's being returned
+       in two places. */
+    {
+        // TODO: call the real function
+        LOG_ERROR("imap_write_done()\n");
+    }
+
+    return error;
+}
+
+
+static derr_t try_raw_write(ixt_t *ixt){
+    derr_t error;
+    // do nothing if we have multiple writes in flight or if rawout is empty
+    if(ixt->raw_writes > 1 || BIO_eof(ixt->rawout)){
+        return E_OK;
+    }
+
+    // get a write_buf
+    loop_t *loop = ixt->ixs->loop;
+    llist_elem_t *wait_lle = &ixt->wait_for_write_buf_lle;
+    write_buf_t *wb = llist_pop_first(&loop->write_bufs, wait_lle);
+
+    // if there's no buffer available, then just exit now
+    if(wb == NULL){
+        return E_OK;
+    }
+
+    // read from rawout into the write buffer
+    size_t amnt_read;
+    int ret = BIO_read_ex(ixt->rawout, wb->dstr.data, wb->dstr.size, &amnt_read);
+    if(ret != 1 || amnt_read == 0){
+        log_ssl_errors();
+        ORIG_GO(E_SSL, "reading from memory buffer failed", release_buf);
+    }
+
+    // store the length read from rawout
+    wb->dstr.len = amnt_read;
+
+    // also store the result into the uv_buf_t
+    wb->buf.base = wb->dstr.data;
+    wb->buf.len = wb->dstr.len;
+
+    // also associate this ixt with the write_buf
+    wb->ixt = ixt;
+
+    // add a write to libuv
+    ixt->raw_writes++;
+
+    // errors will be returned via write_done
+    loop_add_write(loop, ixt, wb);
+
+    return E_OK;
+
+release_buf:
+    // just put the buffer back in the pool, we could not use it
+    llist_append(&loop->write_bufs, &wb->llist_elem);
+    return error;
 }
