@@ -42,13 +42,18 @@ void ixs_free(ixs_t *ixs){
     // destroy the mutex
     uv_mutex_destroy(&ixs->mutex);
     // destroy any child structures
+    LOG_ERROR("ixs_free\n");
     if(ixs->ixt_up){
-        ixt_free(ixs->ixt_up);
-        free(ixs->ixt_up);
+        // ixt_free will erase its own pointer in ixs, so we keep track of it
+        ixt_t *ixt = ixs->ixt_up;
+        ixt_free(ixt);
+        free(ixt);
     }
     if(ixs->ixt_dn){
-        ixt_free(ixs->ixt_dn);
-        free(ixs->ixt_dn);
+        // ixt_free will erase its own pointer in ixs, so we keep track of it
+        ixt_t *ixt = ixs->ixt_dn;
+        ixt_free(ixt);
+        free(ixt);
     }
 }
 

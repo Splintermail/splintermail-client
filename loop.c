@@ -680,17 +680,17 @@ derr_t loop_init(loop_t *loop){
 
 fail_write_bufs:
     // free all of the buffers
-    while(&loop->read_bufs.first != NULL){
-        read_buf_t *rb = llist_pop_first(&loop->read_bufs, NULL);
+    while(loop->write_bufs.first != NULL){
+        write_buf_t *wb = llist_pop_first(&loop->write_bufs, NULL);
         // free the buffer inside the struct
-        read_buf_free(rb);
+        write_buf_free(wb);
         // free the struct pointer
-        free(rb);
+        free(wb);
     }
-    llist_free(&loop->read_bufs);
+    llist_free(&loop->write_bufs);
 fail_read_bufs:
     // free all of the buffers
-    while(&loop->read_bufs.first != NULL){
+    while(loop->read_bufs.first != NULL){
         read_buf_t *rb = llist_pop_first(&loop->read_bufs, NULL);
         // free the buffer inside the struct
         read_buf_free(rb);
@@ -707,16 +707,16 @@ fail_loop:
 void loop_free(loop_t *loop){
     llist_free(&loop->close_list);
     // free all of the write buffers
-    while(&loop->read_bufs.first != NULL){
-        read_buf_t *rb = llist_pop_first(&loop->read_bufs, NULL);
+    while(loop->write_bufs.first != NULL){
+        write_buf_t *wb = llist_pop_first(&loop->write_bufs, NULL);
         // free the buffer inside the struct
-        read_buf_free(rb);
+        write_buf_free(wb);
         // free the struct pointer
-        free(rb);
+        free(wb);
     }
-    llist_free(&loop->read_bufs);
+    llist_free(&loop->write_bufs);
     // free all of the read buffers
-    while(&loop->read_bufs.first != NULL){
+    while(loop->read_bufs.first != NULL){
         read_buf_t *rb = llist_pop_first(&loop->read_bufs, NULL);
         // free the buffer inside the struct
         read_buf_free(rb);
