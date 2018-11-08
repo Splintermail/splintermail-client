@@ -45,6 +45,9 @@ derr_t write_buf_init(write_buf_t *wb, size_t size){
     // llist_elem is a self-pointer
     wb->llist_elem.data = wb;
 
+    // the uv_req_t.data is also a self-pointer
+    wb->write_req.data = wb;
+
     // allocate the buffer itself
     PROP( dstr_new(&wb->dstr, size) );
 

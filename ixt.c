@@ -46,6 +46,15 @@ derr_t ixt_init(ixt_t *ixt, ixs_t *ixs, uv_loop_t *uv_loop, ssl_context_t *ctx,
     }
     SSL_set0_wbio(ixt->ssl, ixt->rawout);
 
+    // set the SSL mode (server or client) appropriately
+    if(upwards){
+        // upwards means we are the client
+        SSL_set_connect_state(ixt->ssl);
+    }else{
+        // downwards means we are the server
+        SSL_set_accept_state(ixt->ssl);
+    }
+
     // init the list of pending_reads, with no callbacks
     PROP_GO( llist_init(&ixt->pending_reads, NULL, NULL), fail_ssl);
 
@@ -63,6 +72,8 @@ derr_t ixt_init(ixt_t *ixt, ixs_t *ixs, uv_loop_t *uv_loop, ssl_context_t *ctx,
 
     // no more failure possible
 
+    // no handshake yet
+    ixt->handshake_completed = false;
     // set up ix_t self-pointer
     ixt->ix.type = IX_TYPE_TLS;
     ixt->ix.data.ixt = ixt;

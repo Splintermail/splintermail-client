@@ -29,6 +29,7 @@ struct ixt_t {
     BIO* rawin;
     BIO* rawout;
     SSL* ssl;
+    bool handshake_completed;
     // buffers for passing between TLS engine and the IMAP engine
     // "dec" for "decrypted"
     dstr_t decin;

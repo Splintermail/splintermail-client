@@ -19,7 +19,10 @@ static void log_ssl_errors(void){
 /*
 void tlse_raw_read(){
     // put packet in rawin
-    // try_ssl_read()
+    // if handshake_completed == false:
+    //     try_ssl_handshake()
+    // if handshake_completed:
+    //     try_ssl_read()
 }
 
 void tlse_raw_write_done(){
@@ -35,12 +38,17 @@ void tlse_dec_read_done(){
 void tlse_dec_write(){
     // store buffer as decin
     // dec_writes_pending = 1
-    // try_ssl_write()
+    // if handshake_completed == false:
+    //     try_ssl_handshake()
+    // if handshake_completed:
+    //     try_ssl_write()
 }
 
 static void try_ssl_read(){
+    // if handshake_completed == false and rawin not empty:
+    //     try_ssl_completed()
     // if reads_in_flight == 0 and rawin not empty:
-    //     attempt SSL_read()
+    //     attempt SSL_read() (or SSL_connect(), as appropriate)
     //     if success:
     //         imape_read()
     //         reads_in_flight = 1
@@ -49,7 +57,7 @@ static void try_ssl_read(){
 }
 static void try_ssl_write(){
     // if dec_writes_pending == 1 and rawout IS empty:
-    //     attempt SSL_write()
+    //     attempt SSL_write() (or SSL_connect(), as appropriate)
     //     try_raw_write()
     //     if SSL_write success:
     //         dec_writes_pending = 0;
@@ -60,6 +68,9 @@ static void try_raw_write(){
     //     add write with uv_write
     //     try_ssl_write()
 }
+static void try_ssl_handshake(){
+
+}
 */
 
 
@@ -68,6 +79,7 @@ static void try_raw_write(){
 static derr_t try_raw_write(ixt_t *ixt);
 static derr_t try_ssl_write(ixt_t *ixt);
 static derr_t try_ssl_read(ixt_t *ixt);
+static derr_t try_ssl_handshake(ixt_t *ixt);
 
 static void handle_raw_read(ixt_t *ixt, read_buf_t *rb, derr_t status){
     /* TODO: if rawin is too full, we should store the read_buf for later,
@@ -105,8 +117,15 @@ static void handle_raw_read(ixt_t *ixt, read_buf_t *rb, derr_t status){
     // release the buffer
     loop_read_done(ixt->ixs->loop, ixt, rb);
 
+    // do we need to try to connect before we can try to read?
+    if(ixt->handshake_completed == false){
+        PROP_GO( try_ssl_handshake(ixt), pass_error);
+    }
+
     // attempt an SSL read, which may trigger further action
-    PROP_GO( try_ssl_read(ixt), pass_error);
+    if(ixt->handshake_completed == true){
+        PROP_GO( try_ssl_read(ixt), pass_error);
+    }
 
     return;
 
@@ -218,7 +237,14 @@ static void handle_dec_write(ixt_t *ixt){
         return;
     }
 
-    PROP_GO( try_ssl_write(ixt), pass_error);
+    // do we need to try to connect before we can try to write?
+    if(ixt->handshake_completed == false){
+        PROP_GO( try_ssl_handshake(ixt), pass_error);
+    }
+
+    if(ixt->handshake_completed == true){
+        PROP_GO( try_ssl_write(ixt), pass_error);
+    }
 
 pass_error:
     // TODO: pass the error
@@ -353,6 +379,35 @@ release_buf:
     }
 
     return error;
+}
+
+
+static derr_t try_ssl_handshake(ixt_t *ixt){
+    // attempt SSL_connect
+    int ret = SSL_do_handshake(ixt->ssl);
+    if(ret != 1){
+        switch(SSL_get_error(ixt->ssl, ret)){
+            case SSL_ERROR_WANT_READ:
+                // this is fine, just break
+                break;
+            case SSL_ERROR_WANT_WRITE:
+                // this should never happen
+                ORIG(E_INTERNAL, "got SSL_ERROR_WANT_WRITE");
+                break;
+            default:
+                log_ssl_errors();
+                ORIG(E_SSL, "error in SSL_read");
+        }
+    }else{
+        // in case of a successful connect:
+        ixt->handshake_completed = true;
+    }
+
+    /* regardless of whether handshake was completed, attempt to push anything
+       in rawout to the socket */
+    PROP( try_raw_write(ixt) );
+
+    return E_OK;
 }
 
 
