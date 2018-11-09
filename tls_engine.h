@@ -33,12 +33,12 @@
 */
 
 // (1):
-void tlse_raw_read(ixt_t *ixt, read_buf_t *rb, derr_t status);
+void tlse_raw_read(ixs_t *ixs, read_buf_t *rb, derr_t status);
 // (2):
-void tlse_raw_write_done(ixt_t *ixt, write_buf_t *wb, derr_t status);
+void tlse_raw_write_done(ixs_t *ixs, write_buf_t *wb, derr_t status);
 // (3):
-void tlse_dec_read_done(ixt_t *ixt);
+void tlse_dec_read_done(ixs_t *ixs);
 // (4):
-void tlse_dec_write(ixt_t *ixt);
+void tlse_dec_write(ixs_t *ixs);
 
 #endif // TLS_ENGINE_H

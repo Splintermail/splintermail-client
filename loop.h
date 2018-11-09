@@ -31,7 +31,7 @@ typedef struct write_buf_t {
     // libuv-style buffer (pointer to above)
     uv_buf_t buf;
     // pointer to the current imap tls session
-    ixt_t *ixt;
+    ixs_t *ixs;
 } write_buf_t;
 
 derr_t write_buf_init(write_buf_t *wb, size_t size);
@@ -67,8 +67,8 @@ void loop_abort_ixs(loop_t *loop, ixs_t *ixs);
 derr_t loop_add_listener(loop_t *loop, const char *addr, const char *svc,
                          ix_t *ix);
 
-void loop_add_write(loop_t *loop, ixt_t *ixt, write_buf_t *wb);
-void loop_read_done(loop_t *loop, ixt_t *ixt, read_buf_t *rb);
+void loop_add_write(loop_t *loop, ixs_t *ixs, write_buf_t *wb);
+void loop_read_done(loop_t *loop, ixs_t *ixs, read_buf_t *rb);
 
 // only meant to be called from ixs_abort(), which handles thread-safety
 void loop_abort_ixs(loop_t *loop, ixs_t *ixs);

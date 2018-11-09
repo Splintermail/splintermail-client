@@ -36,7 +36,6 @@ set(OBJ_TGTS api_client
              console_input
              ui
              ixs
-             ixt
              loop
              tls_engine
              linked_list)
@@ -160,7 +159,7 @@ endforeach()
 # some targets need OpenSSL headers
 obj_depend_lib(networking "${OPENSSL_INCLUDE_DIR}" "${OPENSSL_LIBRARIES}")
 obj_depend_lib(crypto "${OPENSSL_INCLUDE_DIR}" "${OPENSSL_LIBRARIES}")
-obj_depend_lib(ixt "${OPENSSL_INCLUDE_DIR}" "${OPENSSL_LIBRARIES}")
+obj_depend_lib(ixs "${OPENSSL_INCLUDE_DIR}" "${OPENSSL_LIBRARIES}")
 # ui has a full test harness, so it can't use the normal obj_depend_obj
 target_include_directories(ui_o PRIVATE ${OPENSSL_INCLUDE_DIR})
 
@@ -179,9 +178,8 @@ obj_depend_obj(api_client networking crypto json)
 obj_depend_obj(key_tool api_client crypto)
 obj_depend_obj(ditm pop_client pop_server maildir json)
 obj_depend_obj(ixs uv_interface common)
-obj_depend_obj(ixt uv_interface common)
 obj_depend_obj(loop uv_interface tls_engine common)
-obj_depend_obj(tls_engine ixs ixt common)
+obj_depend_obj(tls_engine ixs common)
 obj_depend_obj(linked_list uv_interface common)
 
 # describe executables with dependencies
