@@ -30,6 +30,92 @@ UID
 
 # * these will be hard
 
+# IMAP RESPONSES
+
+Status responses:
+    OK          tagged      untagged
+    NO          tagged      untagged
+    BAD         tagged      untagged
+    PREAUTH                 untagged
+    BYE                     untagged
+
+Status response codes (optional):
+    ALERT:
+        human readable text, that should be passed to the user
+    BADCHARSET
+        optionally followed by a parenthesized list of charsets.  A SEARCH
+        failed because the given charset is not supported
+    CAPABILITY
+    PARSE:
+        human readable error after trying to parse a message
+    PERMANENTFLAGS:
+        a list of flags that can be changed permananently (that is, that
+        changes persist across sessions)
+    READ-ONLY
+        A mailbox is selected read-only
+    READ-WRITE
+    TRYCREATE
+        An append or copy attempt is failing because the target maailbox does
+        not exist
+    UIDNEXT
+        indicates the next unique identifier value
+    UIDVALIDITY
+        indicates the unique identifier validity value
+    UNSEEN
+
+OK [response code] human-readable text
+  - if tagged, indicates successful completion of a command
+  - if untagged, indicates information-only message
+
+NO [response code] human-readable text
+  - if tagged, indicates unsuccessful completion of a command
+  - if untagged, indicates a warning-only message
+
+BAD [response code] human-readable text
+  - if tagged, indicates protocol-level error in client command
+  - if untagged, indicates protocol-level error or server error, for which the
+    associated client command cannot be determined.
+
+PREAUTH [response code] human-readable text
+  - always untagged, possible greeting, indicates no LOGIN is necessary
+
+BYE [response code] human-readable text:
+  - may occur as part of the normal logout process, or
+  - as a panic shutdown announcement, or
+  - as an announcement of an inactivity autologout, or
+  - as a greeting, indicating the server is not willing to accept a connection
+    from this client
+  - In the normal logout case, a client should continue to process commands
+    because it is possible the server has not finished processing all commands
+
+(1 = command generates 1 response, * = command generates many responses)
+
+1 CAPABILITY
+* LIST (might be multiple)
+1 LSUB
+1 STATUS
+1 SEARCH
+1 FLAGS (after SELECT or EXAMINE)
+
+* EXISTS (SELECT, EXAMINE, or size change)
+* RECENT (SELECT, EXAMINE, or size change)
+
+* EXPUNGE
+    Cannot be sent when no command is in progress nor while responding to a
+    FEATCH, STORE, or SEARCH command, because client and server would enter a
+    race condition where synchronization of message sequence numbers would be
+    ambiguous.  If a UID command is in progress, EXPUNGE *can* be sent.
+
+* FETCH
+    can be response to a command or a unilater server data (flag update)
+
+Unilateral data:
+    Bye
+    exists
+    recent
+    expunge
+    fetch
+
 
 # Socket / TLS / IMAP engines:
 
@@ -235,7 +321,7 @@ Error handling in the pipeline:
       - read error talking to server, but only IMAP engine knows how to send
         a useful message via the other socket to the email client
     A contrapositive example:
-      - IMAP engine decides there is an inconsitency and wants to abandon the
+      - IMAP engine decides there is an inconsistency and wants to abandon the
         connections.  The libuv thread doesn't give a fuck what the error was.
 
 New bugs:
