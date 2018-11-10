@@ -336,5 +336,5 @@ New bugs:
     Wait... if the socket is closed all of the buffers allocated for cancelled
     reads will be passed to the read callback, right?
         I dunno.  The documentation seems to say no but I don't see how else
-        you would free allocated buffers.  Smells like a recipie for a memory
+        you would free allocated buffers.  Smells like a recipe for a memory
         leak.
