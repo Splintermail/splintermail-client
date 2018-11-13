@@ -1,4 +1,5 @@
 #include <fcntl.h>
+#include <limits.h>
 
 #include <common.h>
 #include <logger.h>
@@ -149,13 +150,16 @@ static derr_t test_maildir(void){
 static derr_t test_mod_hostname(void){
     // build input
     DSTR_VAR(in, 256);
-    for(size_t i = 0; i < 256; i++){
+    /* since char might be signed or unsigned on a platform, and casting to
+       a signed data type can result in undefined behavior, we will use
+       the explicit CHAR_MIN and CHAR_MAX values here */
+    for(int i = CHAR_MIN; i < CHAR_MAX + 1; i++){
         in.data[in.len++] = (char)i;
     }
     // build expected output
     DSTR_VAR(exp, 1024);
     exp.len = 0;
-    for(size_t i = 0; i < 256; i++){
+    for(int i = CHAR_MIN; i < CHAR_MAX + 1; i++){
         switch((char)i){
             case '/': PROP( dstr_append(&exp, &DSTR_LIT("\\057")) ); break;
             case ':': PROP( dstr_append(&exp, &DSTR_LIT("\\072")) ); break;

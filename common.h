@@ -467,6 +467,23 @@ derr_t hex2bin(const dstr_t* hex, dstr_t* bin);
            E_FIXEDSIZE (for *bin)
            E_NOMEM     (for *bin) */
 
+/* casting to an signed type when the original value does not fit in the bounds
+   of the new type is undefined behavior.  Therefore, to guarantee proper
+   behavior we will have a function that manually does the conversion how we
+   want it done */
+static inline char uchar_to_char(unsigned char u){
+#if CHAR_MIN == 0
+    // char is unsigned, cast is safe
+    return (char)u;
+#else
+    // char is signed, cast is not safe
+    // convert to int
+    int i = u;
+    // if i will not fit in the positive half of a signed char, subtract 256
+    return (i > CHAR_MAX) ? (char)(i - (UCHAR_MAX + 1)) : (char)i;
+#endif
+}
+
 // String Formatting functions below //
 
 typedef enum {

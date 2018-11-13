@@ -142,6 +142,8 @@ void dstr_upper(dstr_t* text){
     for(size_t i = 0; i < text->len; i++){
         char c = text->data[i];
         if(c >= 'a' && c <= 'z'){
+            /* because of the range check, this int->signed char cast
+               cannot be undefined behavior */
             text->data[i] = (char)(text->data[i] - 32);
         }
     }
@@ -151,6 +153,8 @@ void dstr_lower(dstr_t* text){
     for(size_t i = 0; i < text->len; i++){
         char c = text->data[i];
         if(c >= 'A' && c <= 'Z'){
+            /* because of the range check, this int->signed char cast
+               cannot be undefined behavior */
             text->data[i] = (char)(text->data[i]+ 32);
         }
     }
@@ -966,6 +970,8 @@ derr_t bin2b64(dstr_t* bin, dstr_t* b64, size_t line_width, bool force_end){
                     case 2: val = (unsigned char)((0x3c & (ch[1] << 2)) | (0x03 & (ch[2] >> 6))); break;
                     case 3: val = 0x3f & ch[2]; break;
                 }
+                /* due to the range checks, these casts cannot result in
+                   undefined behavior */
                 if(val < 26){
                     buff.data[buff.len++] = (char)('A' + val);
                 }else if(val < 52){
@@ -1005,6 +1011,8 @@ derr_t b642bin(dstr_t* b64, dstr_t* bin){
 
     for(size_t i = 0; i < b64->len; i++){
         char c = b64->data[i];
+        /* due to the range checks, these casts cannot result in undefined
+           behavior */
         if(c >= 'A' && c <= 'Z'){
             ch[ch_idx++] = (unsigned char)(c - 'A');
         }else if(c >= 'a' && c <= 'z'){
@@ -1022,11 +1030,16 @@ derr_t b642bin(dstr_t* b64, dstr_t* bin){
         // check if we should flush
         if(ch_idx == 4){
             DSTR_VAR(buffer, 3);
-            buffer.data[buffer.len++] = (char)(ch[0] << 2 | ch[1] >> 4);
-            if(skip < 2)
-                buffer.data[buffer.len++] = (char)(ch[1] << 4 | ch[2] >> 2);
-            if(skip < 1)
-                buffer.data[buffer.len++] = (char)(ch[2] << 6 | ch[3]);
+            unsigned char u = (unsigned char)(ch[0] << 2 | ch[1] >> 4);
+            buffer.data[buffer.len++] = uchar_to_char(u);
+            if(skip < 2){
+                u = (unsigned char)(ch[1] << 4 | ch[2] >> 2);
+                buffer.data[buffer.len++] = uchar_to_char(u);
+            }
+            if(skip < 1){
+                u = (unsigned char)(ch[2] << 6 | ch[3]);
+                buffer.data[buffer.len++] = uchar_to_char(u);
+            }
             PROP( dstr_append(bin, &buffer) );
             ch_idx = 0;
             total_read = i + 1;
