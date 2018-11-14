@@ -10,6 +10,7 @@
 #include "networking.h"
 #include "ix.h"
 #include "linked_list.h"
+#include "imap_parse.h"
 
 /* IMAP session context (or pair of sessions, for incoming connections) */
 
@@ -56,6 +57,8 @@ struct ixs_t {
     uv_mutex_t mutex;
     int refs;
     bool is_valid;
+    // the parser context (upwards or downwards)
+    ixp_t ixp;
 };
 
 derr_t ixs_init(ixs_t *ixs, loop_t *loop, ssl_context_t *ctx, bool upwards);

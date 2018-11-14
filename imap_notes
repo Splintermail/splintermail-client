@@ -55,7 +55,7 @@ Status response codes (optional):
         A mailbox is selected read-only
     READ-WRITE
     TRYCREATE
-        An append or copy attempt is failing because the target maailbox does
+        An append or copy attempt is failing because the target mailbox does
         not exist
     UIDNEXT
         indicates the next unique identifier value
@@ -92,7 +92,7 @@ BYE [response code] human-readable text:
 
 1 CAPABILITY
 * LIST (might be multiple)
-1 LSUB
+* LSUB
 1 STATUS
 1 SEARCH
 1 FLAGS (after SELECT or EXAMINE)
@@ -111,11 +111,81 @@ BYE [response code] human-readable text:
 
 Unilateral data:
     Bye
+    untagged OK or NO
     exists
     recent
     expunge
     fetch
 
+
+# general DITM architecture for IMAP:
+
+IMAP is not designed to be a request-response architecture but rather a fully
+bidirectional pipeline of synchronization information.  Many server "responses"
+are not strictly "responses" but rather synchronization info that might be sent
+as a response to a client request or unilaterally.  Other "responses" truly are
+responses and would have no meaning if sent unilaterally.
+
+Responses which *must* be handled whether or not we requested them (also, it is
+probably not worth handling them any other way):
+
+  - Any untagged status response
+  - EXISTS
+  - RECENT
+  - EXPUNGE
+  - FETCH (in some cases)
+
+Responses which make no sense if sent unilaterally:
+  - Any tagged status response
+  - LIST
+  - LSUB
+  - SEARCH
+  - STATUS
+
+Responses which could be treated either way:
+  - CAPABILITY
+  - SEARCH
+  - FLAGS
+
+Therefore, our general architecture will be the following:
+
+                Server                Client
+     ________  connections  _______  connections  ________
+    |        | <---------- |       | <---------- |        |
+    |  MAIL  | <---------- | LOCAL | <---------- | EMAIL  |
+    | SERVER | <---------- | STORE |             | CLIENT |
+    |________|             |_______|             |________|
+
+With the following details:
+  - There is one "unselected" server connection per user, through which all
+    LIST and LSUB requests are passed.
+  - There is one "selected" server connection per opened LOCAL STORE mailbox.
+    If multiple email clients are accessing the same LOCAL STORE's INBOX, only
+    one server connection has INBOX "selected".
+  - There is one server connection per user which selects the DITM_KEYS mailbox
+    DITM uses this box directly and does not let email clients see the box via
+    LIST or LSUB or let them SELECT it or CREATE it or anything like that.
+  - When a client connection calls an IMAP command, DITM first checks that
+    the corresponding server connection has brought the relevant part of the
+    LOCAL STORE up-to-date, and then the response is generated locally, not
+    bounced off of the mail server, like is generally the case with POP.
+  - Exceptions to the "response generated locally" include the LIST, LSUB,
+    and (under some circumstances) STATUS commands, as well as any commands
+    which alter the server state such as CREATE, DELETE, SUBSCRIBE, and
+    UNSUBSCRIBE.
+  - There is also another special mailbox, with a user-facing name, perhaps
+    "DITM Alerts", which exists only on the LOCAL STORE, through which DITM
+    can communicate security alerts or critical failures or whatnot.
+
+
+Order of work is:
+    Make IMAP client capable of logging in
+    Make IMAP client capable of mirroring a folder layout
+    Make IMAP client capable of syncing a folder
+    Make IMAP server, and all that entails...
+
+Right now I'm going to work on:
+    Parsing server responses correctly
 
 # Socket / TLS / IMAP engines:
 
