@@ -308,7 +308,7 @@ static derr_t parse_perms(const dstr_t* perms, directory* root){
             ORIG_GO(E_VALUE, "Invalid mode in permissions file", cu_lines);
         }
         mode_t mode;
-        PROP_GO( dstr_tou(&entries.data[3], &mode), cu_lines);
+        PROP_GO( dstr_tou(&entries.data[3], &mode, 8), cu_lines);
 
         // decide if it is a file or a directory
         size_t namelen = entries.data[0].len;

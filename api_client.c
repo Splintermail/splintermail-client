@@ -158,7 +158,7 @@ static derr_t native_api_call(const char* host, unsigned int port,
     // populate *code
     sub = dstr_sub(&temp, (uintptr_t)(codepos - temp.data) + 1,
                    (uintptr_t)(reasonpos - temp.data));
-    error = dstr_toi(&sub, code);
+    error = dstr_toi(&sub, code, 10);
     CATCH(E_PARAM){
         RETHROW_GO(E_RESPONSE, cleanup_2);
     }else PROP_GO(error, cleanup_2);

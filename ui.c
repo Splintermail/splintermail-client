@@ -491,12 +491,12 @@ int do_main(int argc, char* argv[], bool windows_service){
 
     unsigned int api_port = 443;
     if(o_r_api_port.found){
-        PROP_GO( dstr_tou(&o_r_api_port.val, &api_port), cu);
+        PROP_GO( dstr_tou(&o_r_api_port.val, &api_port, 10), cu);
     }
 
     unsigned int pop_port = 995;
     if(o_r_pop_port.found){
-        PROP_GO( dstr_tou(&o_r_pop_port.val, &pop_port), cu);
+        PROP_GO( dstr_tou(&o_r_pop_port.val, &pop_port, 10), cu);
     }
 #else
     const char* rhost = "splintermail.com";
@@ -512,7 +512,7 @@ int do_main(int argc, char* argv[], bool windows_service){
         unsigned int port = 1995;
         if(o_port.found){
             // intelligently convert port to a number
-            derr_t e = dstr_tou(&o_port.val, &port);
+            derr_t e = dstr_tou(&o_port.val, &port, 10);
             if(e || port < 1 || port > 65535){
                 fprintf(stderr, "invalid port number\n");
                 fprintf(stderr, "try `%s --help` for usage\n", argv[0]);

@@ -11,7 +11,7 @@ static derr_t connect_tls(const char* addr, char* port){
     unsigned int uport;
     dstr_t dport;
     DSTR_WRAP(dport, port, strlen(port), true);
-    PROP( dstr_tou(&dport, &uport) );
+    PROP( dstr_tou(&dport, &uport, 10) );
 
     // create ssl context
     ssl_context_t ctx;
@@ -48,7 +48,7 @@ static derr_t host_tls(const char* addr, char* port,
     unsigned int uport;
     dstr_t dport;
     DSTR_WRAP(dport, port, strlen(port), true);
-    PROP( dstr_tou(&dport, &uport) );
+    PROP( dstr_tou(&dport, &uport, 10) );
 
     // create ssl context
     ssl_context_t ctx;

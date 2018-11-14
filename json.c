@@ -743,7 +743,7 @@ derr_t j_to_dstr(json_t json, dstr_t* out){
 
 derr_t jtoi(json_t json, int* out){
     NUMBER_CHECK;
-    derr_t error = dstr_toi(&json.token, out);
+    derr_t error = dstr_toi(&json.token, out, 10);
     // if we already validated the number, E_PARAM is our internal failure
     CATCH(E_PARAM){
         RETHROW(E_INTERNAL);
@@ -752,7 +752,7 @@ derr_t jtoi(json_t json, int* out){
 }
 derr_t jtou(json_t json, unsigned int* out){
     NUMBER_CHECK;
-    derr_t error = dstr_tou(&json.token, out);
+    derr_t error = dstr_tou(&json.token, out, 10);
     // if we already validated the number, E_PARAM is our internal failure
     CATCH(E_PARAM){
         RETHROW(E_INTERNAL);
@@ -761,7 +761,7 @@ derr_t jtou(json_t json, unsigned int* out){
 }
 derr_t jtol(json_t json, long* out){
     NUMBER_CHECK;
-    derr_t error = dstr_tol(&json.token, out);
+    derr_t error = dstr_tol(&json.token, out, 10);
     // if we already validated the number, E_PARAM is our internal failure
     CATCH(E_PARAM){
         RETHROW(E_INTERNAL);
@@ -770,7 +770,7 @@ derr_t jtol(json_t json, long* out){
 }
 derr_t jtoul(json_t json, unsigned long* out){
     NUMBER_CHECK;
-    derr_t error = dstr_toul(&json.token, out);
+    derr_t error = dstr_toul(&json.token, out, 10);
     // if we already validated the number, E_PARAM is our internal failure
     CATCH(E_PARAM){
         RETHROW(E_INTERNAL);
@@ -779,7 +779,7 @@ derr_t jtoul(json_t json, unsigned long* out){
 }
 derr_t jtoll(json_t json, long long* out){
     NUMBER_CHECK;
-    derr_t error = dstr_toll(&json.token, out);
+    derr_t error = dstr_toll(&json.token, out, 10);
     // if we already validated the number, E_PARAM is our internal failure
     CATCH(E_PARAM){
         RETHROW(E_INTERNAL);
@@ -788,7 +788,7 @@ derr_t jtoll(json_t json, long long* out){
 }
 derr_t jtoull(json_t json, unsigned long long* out){
     NUMBER_CHECK;
-    derr_t error = dstr_toull(&json.token, out);
+    derr_t error = dstr_toull(&json.token, out, 10);
     // if we already validated the number, E_PARAM is our internal failure
     CATCH(E_PARAM){
         RETHROW(E_INTERNAL);

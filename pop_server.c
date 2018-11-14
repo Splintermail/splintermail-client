@@ -250,7 +250,7 @@ derr_t pop_server_loop(pop_server_t* ps, void* arg){
             }
             if(nargs == 1){
                 int index;
-                error = dstr_toi(&tokens.data[1], &index);
+                error = dstr_toi(&tokens.data[1], &index, 10);
                 CATCH(E_ANY){
                     PROP( pop_server_send_dstr(ps, &resp_bad_arg) );
                     continue;
@@ -279,7 +279,7 @@ derr_t pop_server_loop(pop_server_t* ps, void* arg){
                 continue;
             }
             unsigned int index;
-            error = dstr_tou(&tokens.data[1], &index);
+            error = dstr_tou(&tokens.data[1], &index, 10);
             CATCH(E_ANY){
                 PROP( pop_server_send_dstr(ps, &resp_bad_arg) );
                 continue;
@@ -304,7 +304,7 @@ derr_t pop_server_loop(pop_server_t* ps, void* arg){
                 continue;
             }
             unsigned int index;
-            error = dstr_tou(&tokens.data[1], &index);
+            error = dstr_tou(&tokens.data[1], &index, 10);
             CATCH(E_ANY){
                 PROP( pop_server_send_dstr(ps, &resp_bad_arg) );
                 continue;
@@ -355,7 +355,7 @@ derr_t pop_server_loop(pop_server_t* ps, void* arg){
             }
             // convert first arg to integer
             unsigned int index;
-            error = dstr_tou(&tokens.data[1], &index);
+            error = dstr_tou(&tokens.data[1], &index, 10);
             CATCH(E_ANY){
                 PROP( pop_server_send_dstr(ps, &resp_bad_arg) );
                 continue;
@@ -366,7 +366,7 @@ derr_t pop_server_loop(pop_server_t* ps, void* arg){
             }
             // convert second arg to integer
             unsigned int lines;
-            error = dstr_tou(&tokens.data[2], &lines);
+            error = dstr_tou(&tokens.data[2], &lines, 10);
             CATCH(E_ANY){
                 PROP( pop_server_send_dstr(ps, &resp_bad_arg) );
                 continue;
@@ -388,7 +388,7 @@ derr_t pop_server_loop(pop_server_t* ps, void* arg){
             }
             if(nargs == 1){
                 int index;
-                error = dstr_toi(&tokens.data[1], &index);
+                error = dstr_toi(&tokens.data[1], &index, 10);
                 CATCH(E_ANY){
                     PROP( pop_server_send_dstr(ps, &resp_bad_arg) );
                     continue;

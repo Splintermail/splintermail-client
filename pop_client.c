@@ -157,7 +157,7 @@ derr_t pop_client_uidl(pop_client_t* pc, bool* status_ok, dstr_t* message){
 
         // get index from token
         unsigned int index;
-        PROP_GO( dstr_tou(index_token, &index), cleanup);
+        PROP_GO( dstr_tou(index_token, &index, 10), cleanup);
 
         // add index to the list
         PROP_GO( LIST_APPEND(size_t, &pc->idxs, index), cleanup);

@@ -231,8 +231,8 @@ static derr_t parse_and_register(const char* base, const dstr_t* fname,
 
 
     // the first field is the length, the second field is the UID
-    long long length;
-    error = dstr_toll(&fields.data[0], &length);
+    size_t length;
+    error = dstr_toul(&fields.data[0], &length, 10);
     CATCH(E_PARAM){
         // not a number string
         return E_OK;
@@ -241,7 +241,7 @@ static derr_t parse_and_register(const char* base, const dstr_t* fname,
     // the second field is the uid
     dstr_t* uid = &fields.data[1];
 
-    PROP( maildir_register(mdir, subdir, fname, uid, (size_t)length) );
+    PROP( maildir_register(mdir, subdir, fname, uid, length) );
 
     return E_OK;
 }

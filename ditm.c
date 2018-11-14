@@ -704,15 +704,15 @@ static derr_t ditm_parse_minversion(dstr_t* msg, unsigned int* maj,
     }else PROP(error);
 
     // convert each element to an integer
-    PROP( dstr_tou(&majminbld.data[0], maj) );
+    PROP( dstr_tou(&majminbld.data[0], maj, 10) );
     // for minor and build, assume 0 if not present
     if(majminbld.len > 1){
-        PROP( dstr_tou(&majminbld.data[1], min) );
+        PROP( dstr_tou(&majminbld.data[1], min, 10) );
     }else{
         *min = 0;
     }
     if(majminbld.len > 2){
-        PROP( dstr_tou(&majminbld.data[2], bld) );
+        PROP( dstr_tou(&majminbld.data[2], bld, 10) );
     }else{
         *bld = 0;
     }

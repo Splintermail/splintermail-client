@@ -628,7 +628,7 @@ static derr_t decrypter_parse_metadata(decrypter_t* dc){
                 sub = dstr_sub(&leftover, 0, (uintptr_t)(pos - leftover.data));
                 unsigned int version;
                 // this already returns E_PARAM on error:
-                PROP( dstr_tou(&sub, &version) );
+                PROP( dstr_tou(&sub, &version, 10) );
                 if(version != 1){
                     ORIG(E_PARAM, "unsupported message version" );
                 }
@@ -652,7 +652,7 @@ static derr_t decrypter_parse_metadata(decrypter_t* dc){
                 sub = dstr_sub(&leftover, 0, (uintptr_t)(pos - leftover.data));
                 unsigned int hash_len;
                 // this already returns E_PARAM on error:
-                PROP( dstr_tou(&sub, &hash_len) );
+                PROP( dstr_tou(&sub, &hash_len, 10) );
                 // update the leftover string
                 leftover = dstr_sub(&leftover, (uintptr_t)(pos - leftover.data) + 1, 0);
                 // make sure we have enough bytes left (including separator)
@@ -683,7 +683,7 @@ static derr_t decrypter_parse_metadata(decrypter_t* dc){
                 sub = dstr_sub(&leftover, 0, (uintptr_t)(pos - leftover.data));
                 unsigned int key_len;
                 // this already returns E_PARAM on error:
-                PROP( dstr_tou(&sub, &key_len) );
+                PROP( dstr_tou(&sub, &key_len, 10) );
                 // update the leftover string
                 leftover = dstr_sub(&leftover, (uintptr_t)(pos - leftover.data) + 1, 0);
                 // make sure we have enough bytes left (including separator)
@@ -730,7 +730,7 @@ static derr_t decrypter_parse_metadata(decrypter_t* dc){
                 sub = dstr_sub(&leftover, 0, (uintptr_t)(pos - leftover.data));
                 unsigned int iv_len;
                 // this already returns E_PARAM on error:
-                PROP( dstr_tou(&sub, &iv_len) );
+                PROP( dstr_tou(&sub, &iv_len, 10) );
                 // update the leftover string
                 leftover = dstr_sub(&leftover, (uintptr_t)(pos - leftover.data) + 1, 0);
                 // make sure we have enough bytes left (including separator)

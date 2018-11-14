@@ -82,7 +82,7 @@ static derr_t fas_recieve_request(connection_t* conn, dstr_t* recv,
         // interpret the content length
         sub = dstr_sub(recv, cl_start, cl_end);
         unsigned int cl;
-        PROP( dstr_tou(&sub, &cl) );
+        PROP( dstr_tou(&sub, &cl, 10) );
 
         // now find the end of the headers
         LIST_PRESET(dstr_t, header_end, DSTR_LIT("\r\n\r\n"), DSTR_LIT("\n\n"));

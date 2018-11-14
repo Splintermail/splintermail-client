@@ -265,12 +265,12 @@ void dstr_lower(dstr_t* text);
    Additionally, they result in an error if any part of *in is not part of the
    parsed number.  The idea is that you should know exactly what part of your
    string is a number and you should know what sort of number it is. */
-derr_t dstr_toi(const dstr_t* in, int* out);
-derr_t dstr_tou(const dstr_t* in, unsigned int* out);
-derr_t dstr_tol(const dstr_t* in, long* out);
-derr_t dstr_toul(const dstr_t* in, unsigned long* out);
-derr_t dstr_toll(const dstr_t* in, long long* out);
-derr_t dstr_toull(const dstr_t* in, unsigned long long* out);
+derr_t dstr_toi(const dstr_t* in, int* out, int base);
+derr_t dstr_tou(const dstr_t* in, unsigned int* out, int base);
+derr_t dstr_tol(const dstr_t* in, long* out, int base);
+derr_t dstr_toul(const dstr_t* in, unsigned long* out, int base);
+derr_t dstr_toll(const dstr_t* in, long long* out, int base);
+derr_t dstr_toull(const dstr_t* in, unsigned long long* out, int base);
 derr_t dstr_tof(const dstr_t* in, float* out);
 derr_t dstr_tod(const dstr_t* in, double* out);
 derr_t dstr_told(const dstr_t* in, long double* out);
@@ -382,8 +382,8 @@ derr_t dstr_split(const dstr_t* text, const dstr_t* pattern,
 void dstr_leftshift(dstr_t* buffer, size_t count);
 
 /* will append a '\0' to the end of a dstr without changing its length, or
-   raise a FIXEDSIZE error if it can't.  It will work always work on dstr_t's
-   created with DSTR_STATIC(). */
+   raise an error if it can't.  It will work always work on dstr_t's created
+   with DSTR_STATIC(). */
 derr_t dstr_null_terminate(dstr_t* ds);
 /*  throws : E_NOMEM
              E_FIXEDSIZE */

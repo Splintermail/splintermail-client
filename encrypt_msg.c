@@ -164,19 +164,8 @@ static derr_t get_user_id(MYSQL* sql, const char* email, unsigned int* uid){
         // wrap uid in a dstr
         dstr_t uidstr;
         DSTR_WRAP(uidstr, row[0], lens[0], 0);
-        // count leading zeros
-        size_t zeros = 0;
-        for(size_t i = 0 ; i < uidstr.len; i++){
-            if(uidstr.data[i] == '0'){
-                zeros++;
-            }else{
-                break;
-            }
-        }
-        // get no-leading zeros substring of uidstr
-        dstr_t nlz = dstr_sub(&uidstr, zeros, 0);
         // convert to number
-        PROP_GO( dstr_tou(&nlz, uid), cleanup_res);
+        PROP_GO( dstr_tou(&uidstr, uid, 10), cleanup_res);
     }
     // make sure we exited the loop without an error
     if(*mysql_error(sql)){

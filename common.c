@@ -161,7 +161,7 @@ void dstr_lower(dstr_t* text){
 }
 
 /* behaves differently than atoi; it will err out if it sees a non-number
-   character and it doesn't handle whitespace the idea is that you should know
+   character and it doesn't handle whitespace; the idea is that you should know
    what you think is a number and there should be built-in error handling if it
    is not a number */
 /*  features I want:
@@ -173,7 +173,7 @@ void dstr_lower(dstr_t* text){
                      or: inf or nan (case insensitive)
        int: [+|-] [0|0x] d* [.d*] (last part is either ignored or rejected)
    */
-derr_t dstr_toi(const dstr_t* in, int* out){
+derr_t dstr_toi(const dstr_t* in, int* out, int base){
     // copy the version into a null-terminated string to read into atof()
     DSTR_VAR(temp, 128);
     derr_t error = dstr_copy(in, &temp);
@@ -186,7 +186,7 @@ derr_t dstr_toi(const dstr_t* in, int* out){
     }
     // now parse
     char* endptr;
-    errno = 0; long result = strtol(temp.data, &endptr, 0);
+    errno = 0; long result = strtol(temp.data, &endptr, base);
     // check for error
     if(errno){
         LOG_ERROR("%x: %x\n", FS("srtol"), FE(&errno));
@@ -204,7 +204,7 @@ derr_t dstr_toi(const dstr_t* in, int* out){
     *out = (int)result;
     return E_OK;
 }
-derr_t dstr_tou(const dstr_t* in, unsigned int* out){
+derr_t dstr_tou(const dstr_t* in, unsigned int* out, int base){
     // copy the version into a null-terminated string to read into atof()
     DSTR_VAR(temp, 128);
     derr_t error = dstr_copy(in, &temp);
@@ -218,7 +218,7 @@ derr_t dstr_tou(const dstr_t* in, unsigned int* out){
     // now parse
     char* endptr;
     errno = 0;
-    unsigned long result = strtoul(temp.data, &endptr, 0);
+    unsigned long result = strtoul(temp.data, &endptr, base);
     // check for error
     if(errno){
         LOG_ERROR("%x: %x\n", FS("srtoul"), FE(&errno));
@@ -235,7 +235,7 @@ derr_t dstr_tou(const dstr_t* in, unsigned int* out){
     // return value
     *out = (unsigned int)result; return E_OK;
 }
-derr_t dstr_tol(const dstr_t* in, long* out){
+derr_t dstr_tol(const dstr_t* in, long* out, int base){
     // copy the version into a null-terminated string to read into atof()
     DSTR_VAR(temp, 128);
     derr_t error = dstr_copy(in, &temp);
@@ -249,7 +249,7 @@ derr_t dstr_tol(const dstr_t* in, long* out){
     // now parse
     char* endptr;
     errno = 0;
-    long result = strtol(temp.data, &endptr, 0);
+    long result = strtol(temp.data, &endptr, base);
     // check for error
     if(errno){
         LOG_ERROR("%x: %x\n", FS("srtol"), FE(&errno));
@@ -263,7 +263,7 @@ derr_t dstr_tol(const dstr_t* in, long* out){
     *out = result;
     return E_OK;
 }
-derr_t dstr_toul(const dstr_t* in, unsigned long* out){
+derr_t dstr_toul(const dstr_t* in, unsigned long* out, int base){
     // copy the version into a null-terminated string to read into atof()
     DSTR_VAR(temp, 128);
     derr_t error = dstr_copy(in, &temp);
@@ -277,7 +277,7 @@ derr_t dstr_toul(const dstr_t* in, unsigned long* out){
     // now parse
     char* endptr;
     errno = 0;
-    unsigned long result = strtoul(temp.data, &endptr, 0);
+    unsigned long result = strtoul(temp.data, &endptr, base);
     // check for error
     if(errno){
         LOG_ERROR("%x: %x\n", FS("srtoul"), FE(&errno));
@@ -291,7 +291,7 @@ derr_t dstr_toul(const dstr_t* in, unsigned long* out){
     *out = result;
     return E_OK;
 }
-derr_t dstr_toll(const dstr_t* in, long long* out){
+derr_t dstr_toll(const dstr_t* in, long long* out, int base){
     // copy the version into a null-terminated string to read into atof()
     DSTR_VAR(temp, 128);
     derr_t error = dstr_copy(in, &temp);
@@ -305,7 +305,7 @@ derr_t dstr_toll(const dstr_t* in, long long* out){
     // now parse
     char* endptr;
     errno = 0;
-    long long result = strtoll(temp.data, &endptr, 0);
+    long long result = strtoll(temp.data, &endptr, base);
     // check for error
     if(errno){
         LOG_ERROR("%x: %x\n", FS("srtoll"), FE(&errno));
@@ -319,7 +319,7 @@ derr_t dstr_toll(const dstr_t* in, long long* out){
     *out = result;
     return E_OK;
 }
-derr_t dstr_toull(const dstr_t* in, unsigned long long* out){
+derr_t dstr_toull(const dstr_t* in, unsigned long long* out, int base){
     // copy the version into a null-terminated string to read into atof()
     DSTR_VAR(temp, 128);
     derr_t error = dstr_copy(in, &temp);
@@ -333,7 +333,7 @@ derr_t dstr_toull(const dstr_t* in, unsigned long long* out){
     // now parse
     char* endptr;
     errno = 0;
-    unsigned long long result = strtoull(temp.data, &endptr, 0);
+    unsigned long long result = strtoull(temp.data, &endptr, base);
     // check for error
     if(errno){
         LOG_ERROR("%x: %x\n", FS("srtoull"), FE(&errno));
