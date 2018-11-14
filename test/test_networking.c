@@ -1,4 +1,5 @@
 #define HAVE_STRUCT_TIMESPEC
+#include <signal.h>
 #include <pthread.h>
 
 #include <openssl/ssl.h>
@@ -645,6 +646,11 @@ cleanup_1:
 
 
 int main(int argc, char** argv){
+
+#ifndef _WIN32
+    signal(SIGPIPE, SIG_IGN);
+#endif
+
     derr_t error;
     // parse options and set default log level
     PARSE_TEST_OPTIONS(argc, argv, &g_test_files, LOG_LVL_INFO);
