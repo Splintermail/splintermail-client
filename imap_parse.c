@@ -125,6 +125,8 @@ static derr_t get_response_type(const dstr_t *in, imap_response_type_t *type){
     return E_OK;
 }
 
+derr_t parse_status_type(ixpu_t *ixpu, const dstr_t *in);
+
 derr_t imap_parse_response(ixpu_t *ixpu, const dstr_t *in){
     // set unused to be all of *in
     dstr_t unused = dstr_sub(in, 0, 0);
@@ -174,7 +176,7 @@ derr_t imap_parse_response(ixpu_t *ixpu, const dstr_t *in){
             case IMAP_RESP_TYPE_BAD:
             case IMAP_RESP_TYPE_PREAUTH:
             case IMAP_RESP_TYPE_BYE:
-                //PROP( parse_status_type(&unused) );
+                PROP( parse_status_type(&unused) );
                 break;
 
             case IMAP_RESP_TYPE_CAPABILITY:

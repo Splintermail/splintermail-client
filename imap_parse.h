@@ -95,6 +95,12 @@ typedef enum {
     IMAP_RESP_TYPE_FETCH,
 } imap_response_type_t;
 
+// sub-parser contexts
+typedef struct {
+    // substrings of the ixpu_t's buffer
+    dstr_t ;
+} ixpu_status_type_t;
+
 // imap parse context (upwards)
 typedef struct {
     // the tag
