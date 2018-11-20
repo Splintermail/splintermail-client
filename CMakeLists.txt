@@ -19,6 +19,11 @@ if("${CMAKE_BUILD_TYPE}" STREQUAL "debug")
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DBUILD_DEBUG")
 endif()
 
+# always include the source directory (for compiling generated .c files)
+include_directories("${PROJECT_SOURCE_DIR}")
+# always include the binary directory (for including generated .h files)
+include_directories("${PROJECT_BINARY_DIR}")
+
 set(OBJ_TGTS api_client
              common
              crypto
@@ -38,8 +43,7 @@ set(OBJ_TGTS api_client
              ixs
              loop
              tls_engine
-             linked_list
-             imap_parse)
+             linked_list)
 
 set(EXE_TGTS srvcli
              splintermail
@@ -100,6 +104,16 @@ if("${PYTHON_3_CMD}" STREQUAL "")
     set(PYTHON_3_CMD "python3")
 endif()
 
+# re2c is needed for the IMAP scanner
+if("${RE2C}" STREQUAL "")
+    set(RE2C "re2c")
+endif()
+
+# bison is needed for the IMAP scanner
+if("${BISON}" STREQUAL "")
+    set(BISON "bison")
+endif()
+
 # inlcude OpenSSL
 if(APPLE OR WIN32)
     set(OPENSSL_USE_STATIC_LIBS TRUE)
@@ -113,16 +127,6 @@ if("${LIBUV_LIB}" STREQUAL "")
     set(LIBUV_LIB "uv")
 endif()
 target_link_libraries(uv_interface INTERFACE "${LIBUV_LIB}")
-
-# objects become OBJECT libraries, but are accessed through INTERFACE libraries
-foreach(tgt ${OBJ_TGTS})
-    # create the object library itself
-    add_library("${tgt}_o" OBJECT "${tgt}.c")
-    define_file_basename_for_sources("${tgt}_o")
-    # create an interface library whose dependents will link against the object
-    add_library("${tgt}" INTERFACE)
-    target_sources("${tgt}" INTERFACE $<TARGET_OBJECTS:${tgt}_o>)
-endforeach()
 
 # tgt object depends on external library (propagate linking and includes)
 function(obj_depend_lib tgt includes libs)
@@ -150,6 +154,45 @@ function(obj_depend_obj tgt)
     endforeach()
     target_link_libraries("${tgt}" INTERFACE ${ARGN})
 endfunction()
+
+# for adding an interface library, which might be generated
+# extra arguments become extra file dependencies
+function(add_obj_tgt file tgt)
+    message("---- ${tgt}:${file}")
+    # create the object library itself
+    add_library("${tgt}_o" OBJECT "${file}")
+    define_file_basename_for_sources("${tgt}_o")
+    # create an interface library whose dependents will link against the object
+    add_library("${tgt}" INTERFACE)
+    target_sources("${tgt}" INTERFACE $<TARGET_OBJECTS:${tgt}_o> ${ARGN})
+endfunction()
+
+# generate the imap scanner
+set(input "${PROJECT_SOURCE_DIR}/imap_scan.c")
+set(output "${PROJECT_BINARY_DIR}/imap_scan.gen.c")
+add_custom_command(
+    OUTPUT "${output}"
+    COMMAND "${RE2C}" -W -Werror --storable-state -o "${output}" "${input}"
+    DEPENDS "${input}"
+    COMMENT "generating scanner" VERBATIM
+    )
+add_obj_tgt("${output}" "imap_scan")
+
+# generate the imap parser
+set(input "${PROJECT_SOURCE_DIR}/imap_parse.y")
+set(output "${PROJECT_BINARY_DIR}/imap_parse.tab.c")
+add_custom_command(
+    OUTPUT "${output}"
+    COMMAND "${BISON}" -d -o "${output}" "${input}"
+    DEPENDS "${input}"
+    COMMENT "generating parser" VERBATIM
+    )
+add_obj_tgt("${output}" "imap_parse")
+
+# objects become OBJECT libraries, but are accessed through INTERFACE libraries
+foreach(tgt ${OBJ_TGTS})
+    add_obj_tgt("${tgt}.c" "${tgt}")
+endforeach()
 
 # add executables
 foreach(tgt ${EXE_TGTS})
@@ -268,7 +311,6 @@ if("${BUILD_TESTS}")
     # OBJECT FILES (so they aren't being recompiled over and over)
     foreach(tgt ${TEST_OBJ_TGTS})
         add_library("${tgt}_o" OBJECT "test/${tgt}.c")
-        target_include_directories("${tgt}_o" PRIVATE "${PROJECT_SOURCE_DIR}")
         define_file_basename_for_sources("${tgt}_o")
         add_library("${tgt}" INTERFACE)
         target_sources("${tgt}" INTERFACE $<TARGET_OBJECTS:${tgt}_o>)
@@ -296,8 +338,6 @@ if("${BUILD_TESTS}")
     foreach(tgt ${TEST_EXE_TGTS})
         add_executable("${tgt}" "test/${tgt}.c")
         define_file_basename_for_sources("${tgt}")
-        # add the source directory as an include
-        target_include_directories("${tgt}" PRIVATE "${PROJECT_SOURCE_DIR}")
         # all exectuables use opt_parse
         target_link_libraries("${tgt}" opt_parse)
         # add test
@@ -854,14 +894,12 @@ elseif(WIN32)
     preprocessed_copy("${keygen_src_in}" "${keygen_src_out}")
     add_executable(keygen "${keygen_src_out}")
     define_file_basename_for_sources(keygen)
-    target_include_directories(keygen PRIVATE "${PROJECT_SOURCE_DIR}")
     target_link_libraries(keygen fileops)
     list(APPEND tgt_deps keygen)
 
     # rm_rf.exe (will be embedded in installer for uninstallation)
     add_executable(rm_rf "${supp_dir}/windows/rm_rf.c")
     define_file_basename_for_sources(rm_rf)
-    target_include_directories(rm_rf PRIVATE "${PROJECT_SOURCE_DIR}")
     target_link_libraries(rm_rf fileops)
     list(APPEND tgt_deps rm_rf)
 

@@ -2,6 +2,11 @@
 #define IMAP_PARSE_H
 
 #include "common.h"
+#include <imap_parse.tab.h>
+
+typedef struct {
+    int meh;
+} ixp_t;
 
 /*
 Response        EBNF
@@ -75,58 +80,6 @@ HANDLE_EXPUNGE
 SEND_LITERAL
 */
 
-typedef enum {
-    IMAP_RESP_TYPE_PRETAG, // we haven't even parsed the tag yet
-    IMAP_RESP_TYPE_UNKNOWN, // for when we haven't parsed the type yet
-    IMAP_RESP_TYPE_OK,
-    IMAP_RESP_TYPE_NO,
-    IMAP_RESP_TYPE_BAD,
-    IMAP_RESP_TYPE_PREAUTH,
-    IMAP_RESP_TYPE_BYE,
-    IMAP_RESP_TYPE_CAPABILITY,
-    IMAP_RESP_TYPE_LIST,
-    IMAP_RESP_TYPE_LSUB,
-    IMAP_RESP_TYPE_STATUS,
-    IMAP_RESP_TYPE_FLAGS,
-    IMAP_RESP_TYPE_SEARCH,
-    IMAP_RESP_TYPE_EXISTS,
-    IMAP_RESP_TYPE_RECENT,
-    IMAP_RESP_TYPE_EXPUNGE,
-    IMAP_RESP_TYPE_FETCH,
-} imap_response_type_t;
 
-// sub-parser contexts
-typedef struct {
-    // substrings of the ixpu_t's buffer
-    dstr_t ;
-} ixpu_status_type_t;
-
-// imap parse context (upwards)
-typedef struct {
-    // the tag
-    dstr_t tag;
-    // a general purpose buffer
-    dstr_t buffer;
-    // detected command type
-    imap_response_type_t response_type;
-    // the number associated with the response (IMAP specifies 32-bit unsigned)
-    unsigned int num;
-    // is num set?
-    bool has_num;
-} ixpu_t;
-
-// imap parse context (downwards)
-typedef struct {
-    int TODO;
-} ixpd_t;
-
-// u for "up", d for "down"
-typedef union {
-    ixpu_t u;
-    ixpd_t d;
-} ixp_t;
-
-// the session context will keep track of the current parsing state
-derr_t imap_parse_response(ixpu_t *ixpu, const dstr_t *in);
 
 #endif // IMAP_PARSE_H
