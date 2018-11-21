@@ -10,7 +10,7 @@
 #include "win_compat.h"
 
 // static strings for the error_to_dstr function
-DSTR_STATIC(derr_ok_dstr, "E_OK");
+DSTR_STATIC(derr_ok_dstr, "OK");
 DSTR_STATIC(derr_unknown_dstr, "UNKNOWN_ERROR_CODE");
 DSTR_STATIC(derr_io_dstr, "IOERROR");
 DSTR_STATIC(derr_nomem_dstr, "NOMEM");

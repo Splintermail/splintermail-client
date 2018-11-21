@@ -43,7 +43,8 @@ set(OBJ_TGTS api_client
              ixs
              loop
              tls_engine
-             linked_list)
+             linked_list
+             imap_parse)
 
 set(EXE_TGTS srvcli
              splintermail
@@ -71,7 +72,9 @@ set(TEST_EXE_TGTS test_common
                   test_networking
                   test_json
                   test_ui
-                  test_key_tool)
+                  test_key_tool
+                  test_imap_scan
+                  test_imap_parse)
 
 # additional TGTS if we are building server code
 if("${BUILD_SERVER_CODE}")
@@ -158,7 +161,6 @@ endfunction()
 # for adding an interface library, which might be generated
 # extra arguments become extra file dependencies
 function(add_obj_tgt file tgt)
-    message("---- ${tgt}:${file}")
     # create the object library itself
     add_library("${tgt}_o" OBJECT "${file}")
     define_file_basename_for_sources("${tgt}_o")
@@ -181,13 +183,16 @@ add_obj_tgt("${output}" "imap_scan")
 # generate the imap parser
 set(input "${PROJECT_SOURCE_DIR}/imap_parse.y")
 set(output "${PROJECT_BINARY_DIR}/imap_parse.tab.c")
+set(bison_header "${PROJECT_BINARY_DIR}/imap_parse.tab.h")
 add_custom_command(
-    OUTPUT "${output}"
-    COMMAND "${BISON}" -d -o "${output}" "${input}"
+    OUTPUT "${output}" "${bison_header}"
+    COMMAND "${BISON}" -d -o "${output}" "${input}" --report=state
     DEPENDS "${input}"
     COMMENT "generating parser" VERBATIM
     )
-add_obj_tgt("${output}" "imap_parse")
+add_obj_tgt("${output}" "imap_parse_tab")
+# add a custom target just for depending on the generated header
+add_custom_target(bison_header DEPENDS "${bison_header}")
 
 # objects become OBJECT libraries, but are accessed through INTERFACE libraries
 foreach(tgt ${OBJ_TGTS})
@@ -225,7 +230,10 @@ obj_depend_obj(ixs uv_interface common)
 obj_depend_obj(loop uv_interface tls_engine common)
 obj_depend_obj(tls_engine ixs common)
 obj_depend_obj(linked_list uv_interface common)
-obj_depend_obj(imap_parse common)
+obj_depend_obj(imap_parse imap_parse_tab common)
+add_dependencies(imap_parse_o bison_header)
+obj_depend_obj(imap_scan common)
+add_dependencies(imap_scan_o bison_header)
 
 # describe executables with dependencies
 target_link_libraries(srvcli networking)
@@ -359,6 +367,9 @@ if("${BUILD_TESTS}")
     target_link_libraries(test_json json)
     target_link_libraries(test_key_tool key_tool test_utils fake_api_server)
     target_link_libraries(test_ui ui dummy_ui_harness json)
+    target_link_libraries(test_imap_scan imap_scan)
+    target_link_libraries(test_imap_parse imap_scan imap_parse)
+    add_dependencies(test_imap_parse bison_header)
 
     if(WIN32)
         # make sure the user provided the location of Pthreads
@@ -405,6 +416,8 @@ if("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU")
     # see discussion here: https://github.com/libuv/libuv/issues/1230
     target_compile_options(loop_o PRIVATE -fno-strict-aliasing)
     target_compile_options(ixs_o PRIVATE -fno-strict-aliasing)
+    target_compile_options(imap_parse_tab_o PRIVATE -Wno-sign-conversion)
+    target_compile_options(imap_parse_tab_o PRIVATE -Wno-conversion)
     # add some compiler hardening flags
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wformat -Wformat-security -Werror=format-security")
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fstack-protector-strong")
@@ -439,6 +452,8 @@ elseif("${CMAKE_C_COMPILER_ID}" MATCHES "Clang")
     # see discussion here: https://github.com/libuv/libuv/issues/1230
     target_compile_options(loop_o PRIVATE -fno-strict-aliasing)
     target_compile_options(ixs_o PRIVATE -fno-strict-aliasing)
+    target_compile_options(imap_parse_tab_o PRIVATE -Wno-sign-conversion)
+    target_compile_options(imap_parse_tab_o PRIVATE -Wno-conversion)
     # add some compiler hardening flags
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wformat -Wformat-security -Werror=format-security")
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -D_FORTIFY_SOURCE")

@@ -2,13 +2,10 @@
 #define IMAP_SCAN_H
 
 #include "common.h"
+#include "imap_parse.h"
 
-// the scanner can only return these values
-typedef enum {
-    SCAN_STATUS_OK,
-    SCAN_STATUS_ERROR,
-    SCAN_STATUS_MORE,
-} scan_status_t;
+#define TRUE FLAG
+#define FALSE ATOM
 
 typedef struct {
     dstr_t bytes;
@@ -22,8 +19,6 @@ typedef struct {
     const char* start;
     // previous scanner start position (start of the last token)
     const char* old_start;
-    // type of last token
-    int num;
     // part of continued scan state
     int state;
     bool accept;
@@ -32,6 +27,19 @@ typedef struct {
     bool continuing;
 } imap_scanner_t;
 
-scan_status_t imap_scan(imap_scanner_t *scanner);
+derr_t imap_scanner_init(imap_scanner_t *scanner);
+void imap_scanner_free(imap_scanner_t *scanner);
+
+// utility function, returns substring from *start to the end of the buffer
+dstr_t get_scannable(imap_scanner_t *scanner);
+
+/* utility function, returns substring from *old_start to *start.  Only valid
+   after imap_scan returns SCAN_STATUS_OK. */
+dstr_t get_token(imap_scanner_t *scanner);
+
+// *more is set to true if more input is needed, otherwise *type is set
+derr_t imap_scan(imap_scanner_t *scanner, scan_mode_t mode, bool *more,
+                 int *type);
+/*  throws : E_PARAM (invalid input) */
 
 #endif // IMAP_SCAN_H

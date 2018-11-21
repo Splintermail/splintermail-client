@@ -117,6 +117,23 @@ Unilateral data:
     expunge
     fetch
 
+# parsing issue:
+
+ALERT can be an atom.  So in bison's grammar it is impossible to distinguish
+between between an ALERT or an atom, when atom might consist of a single ATOM.
+
+Solutions:
+  - add more states to scanner so that only specific keywords are passed at
+    specific times
+        I dislike this because it would complicate the scanner, and it would
+        require a lot more states, and there would have to be synchronization
+        between which states are possible in the grammar and in the scanner.
+  - add an extra "mask-literal" step after the scanner, where illegal literals
+    get turned into ATOMS or ASTR_ATOMS, according to the parser state
+        This has the same synchronization problem but it does not complicate
+        the scanner.  Also, this is a "whitelist" strategy, not a "blacklist"
+        strategy, which should make this less error prone.
+
 
 # general DITM architecture for IMAP:
 
