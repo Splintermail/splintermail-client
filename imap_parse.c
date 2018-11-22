@@ -36,6 +36,10 @@ dstr_t* scan_mode_to_dstr(scan_mode_t mode){
 
 derr_t imap_parser_init(imap_parser_t *parser, imap_parse_hooks_up_t hooks_up,
                         void *hook_data){
+    // init dstr_t temp to zeros
+    parser->temp = (dstr_t){0};
+    parser->keep = false;
+
     // init the bison parser
     parser->yyps = yypstate_new();
     if(parser->yyps == NULL){
@@ -56,8 +60,9 @@ void imap_parser_free(imap_parser_t *parser){
     yypstate_delete(parser->yyps);
 }
 
-derr_t imap_parse(imap_parser_t *parser, int token){
-    int yyret = yypush_parse(parser->yyps, token, NULL, parser);
+derr_t imap_parse(imap_parser_t *parser, int type, const dstr_t *token){
+    parser->token = token;
+    int yyret = yypush_parse(parser->yyps, type, NULL, parser);
     switch(yyret){
         case 0:             // parsing completed successful; parser is reset
             return E_OK;
@@ -71,4 +76,48 @@ derr_t imap_parse(imap_parser_t *parser, int token){
             LOG_ERROR("yypush_parse() returned %x\n", FI(yyret));
             ORIG(E_INTERNAL, "unexpected yypush_parse() return value");
     }
+}
+
+derr_t keep_init(void *data, keep_type_t type){
+    // dereference the scanner, so we can read the token
+    imap_parser_t *parser = data;
+    parser->keep_type = type;
+    // allocate the temp dstr_t
+    PROP( dstr_new(&parser->temp, 64) );
+    return E_OK;
+}
+
+derr_t keep(imap_parser_t *parser){
+    // patterns for recoding the quoted strings
+    LIST_STATIC(dstr_t, find, DSTR_LIT("\\\\"), DSTR_LIT("\\\""));
+    LIST_STATIC(dstr_t, repl, DSTR_LIT("\\"),   DSTR_LIT("\""));
+    switch(parser->keep_type){
+        case KEEP_ATOM:
+        case KEEP_ASTR_ATOM:
+        case KEEP_TAG:
+        case KEEP_TEXT:
+            // no escapes or fancy shit necessary, just append
+            PROP( dstr_append(&parser->temp, parser->token) );
+            break;
+        case KEEP_QSTRING:
+            // unescape \" and \\ sequences
+            PROP( dstr_recode(parser->token, &parser->temp, &find, &repl, true) );
+            break;
+        case KEEP_LITERAL:
+            ORIG(E_INTERNAL, "KEEP should not be called for a LITERAL");
+    }
+    return E_OK;
+}
+
+dstr_t keep_ref(imap_parser_t *parser){
+    // just pass the token we built to the parser
+    dstr_t retval = parser->temp;
+    // never allow a double free
+    parser->temp = (dstr_t){0};
+    return retval;
+}
+
+void keep_cancel(imap_parser_t *parser){
+    // free memory (it does nothing if temp.data == NULL)
+    dstr_free(&parser->temp);
 }

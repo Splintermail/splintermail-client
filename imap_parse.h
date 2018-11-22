@@ -1,6 +1,7 @@
 #ifndef IMAP_PARSE_H
 #define IMAP_PARSE_H
 
+#include "imap_expression.h"
 #include "common.h"
 
 // control scanner modes based on what state the parser is in
@@ -39,39 +40,18 @@ typedef enum {
     KEEP_ASTR_ATOM,
     KEEP_TAG,
     KEEP_TEXT,
-    KEEP_NUM,
 } keep_type_t;
-
-typedef void* keep_ref_t;
-
-union imap_token_value_t {
-    /* literals are stored by their literal value */
-    unsigned int uint;
-    dstr_t *keep;
-};
-
-typedef struct {
-    int type;
-    union imap_token_value_t val;
-} imap_token_t;
 
 // a list of hooks that are called when communicating with the mail server
 typedef struct {
-    // prepare memory to keep something
-    derr_t (*keep_init)(void* data, keep_type_t type);
-    // add the current token to the thing we are keeping
-    derr_t (*keep)(void* data);
-    /* no more chunks, but return a reference to the thing we are keeping.  No
-       errors allowed here; allocations should have been done ahead of time. */
-    imap_token_t (*keep_ref)(void* data);
-    // called on parser error; cancel a keep operation (if there is one)
-    void (*keep_cancel)(void* data);
+    // for status_type messages
+    void (*status_type)(void* data, const dstr_t *tag, status_type_t status,
+                        status_code_t code, unsigned int code_extra,
+                        const dstr_t *text);
 } imap_parse_hooks_up_t;
 
 typedef struct {
     void *yyps;
-    // should we keep the next thing we run across?
-    bool keep;
     // a pointer that gets handed back with each hook
     void *hook_data;
     // hooks for talking to upstream (mail server)
@@ -82,6 +62,17 @@ typedef struct {
     scan_mode_t scan_mode;
     // was this most recent line tagged?
     bool tagged;
+    dstr_t *tag;
+    // for building status_type calls
+    status_type_t status_type;
+    status_code_t status_code;
+    // the current token as a dstr_t, used in some cases by the parser
+    const dstr_t *token;
+    // should we keep the next thing we run across?
+    bool keep;
+    // for building long strings from multiple fixed-length tokens
+    keep_type_t keep_type;
+    dstr_t temp;
 } imap_parser_t ;
 
 void yyerror(imap_parser_t *parser, char const *s);
@@ -90,7 +81,13 @@ derr_t imap_parser_init(imap_parser_t *parser, imap_parse_hooks_up_t hooks_up,
                         void *hook_data);
 void imap_parser_free(imap_parser_t *parser);
 
-derr_t imap_parse(imap_parser_t *parser, int token);
+derr_t imap_parse(imap_parser_t *parser, int type, const dstr_t *token);
+
+// the keep api, used internally by the bison parser
+derr_t keep_init(void *data, keep_type_t type);
+derr_t keep(imap_parser_t *parser);
+dstr_t keep_ref(imap_parser_t *parser);
+void keep_cancel(imap_parser_t *parser);
 
 /*
 Response        EBNF

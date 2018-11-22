@@ -31,7 +31,6 @@ dstr_t get_token(imap_scanner_t *scanner){
     size_t start_offset = (size_t)(scanner->old_start - scanner->bytes.data);
     size_t end_offset = (size_t)(scanner->start - scanner->bytes.data);
     return dstr_sub(&scanner->bytes, start_offset, end_offset);
-
 }
 
 derr_t imap_scan(imap_scanner_t *scanner, scan_mode_t mode, bool *more,
@@ -161,7 +160,7 @@ command_mode:
         'bad'           { *type = BAD; goto done; }
         'preauth'       { *type = PREAUTH; goto done; }
         'bye'           { *type = BYE; goto done; }
-        'capability'    { *type = CAPABILITY; goto done; }
+        'capability'    { *type = CAPA; goto done; }
         'list'          { *type = LIST; goto done; }
         'lsub'          { *type = LSUB; goto done; }
         'status'        { *type = STATUS; goto done; }
@@ -222,15 +221,15 @@ status_code_mode:
         atom_spec       { *type = yych; goto done; }
         eol             { *type = EOL; goto done; }
 
-        'ALERT'         { *type = ALERT; goto done; }
-        'capability'    { *type = CAPABILITY; goto done; }
+        'alert'         { *type = ALERT; goto done; }
+        'capability'    { *type = CAPA; goto done; }
         'parse'         { *type = PARSE; goto done; }
-        'permanentflags'{ *type = PERMANENTFLAGS; goto done; }
+        'permanentflags'{ *type = PERMFLAGS; goto done; }
         'read_only'     { *type = READ_ONLY; goto done; }
         'read_write'    { *type = READ_WRITE; goto done; }
         'trycreate'     { *type = TRYCREATE; goto done; }
         'uidnext'       { *type = UIDNEXT; goto done; }
-        'uidvalidity'   { *type = UIDVALIDITY; goto done; }
+        'uidvalidity'   { *type = UIDVLD; goto done; }
         'unseen'        { *type = UNSEEN; goto done; }
 
         atom            { *type = ATOM; goto done; }

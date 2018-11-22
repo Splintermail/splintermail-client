@@ -2,21 +2,55 @@
     #include <stdio.h>
     #include <imap_parse.h>
     #include <logger.h>
+    #include <imap_expression.h>
 
-    /* a shorthand for setting the scan mode */
+    /* When you have a dstr-type token but there's nothing there */
+    #define NULTOK (dstr_t){0}
+
+    // when this is called, only the status is known
+    #define STTOK_STATUS(st) \
+        (ie_resp_status_type_t){ \
+                .status = STATUS_TYPE_ ## st, \
+            }
+    // when this is called, only the status code and code_extra are known
+    #define ST_CODE(_code, _extra) \
+        (ie_resp_status_type_t){ \
+                .code = STATUS_CODE_ ## _code, \
+                .code_extra = _extra, \
+            }
+    /* when this is called, the code/extra token is fused with the text.
+       Note that code/extra might be NULL, if no code was given */
+    static inline ie_resp_status_type_t STTOK_TEXT(ie_resp_status_type_t *c_e,
+                                                   dstr_t _text){
+        return (ie_resp_status_type_t){
+                .code = c_e ? c_e->code : STATUS_CODE_NONE,
+                .code_extra = c_e ? c_e->code_extra : 0,
+                .text = _text,
+            };
+    }
+    // this fuses all the components of the STTOK together
+    static inline ie_resp_status_type_t STTOK_FUSE(ie_resp_status_type_t st,
+                                                   ie_resp_status_type_t c_e_t){
+        return (ie_resp_status_type_t){
+                .status = st.status,
+                .code = c_e_t.code,
+                .code_extra = c_e_t.code_extra,
+                .text = c_e_t.text,
+            };
+    }
+
     #define MODE(m) parser->scan_mode = SCAN_MODE_ ## m
 
     /* a YYACCEPT wrapper that resets some custom parser details  */
     #define ACCEPT \
         MODE(TAG); \
-        parser->hooks_up.keep_cancel(parser->hook_data); \
+        keep_cancel(parser); \
         parser->keep = false; \
         YYACCEPT
 
     /* if parser->keep is set, get ready to keep chunks of whatever-it-is */
     #define KEEP_INIT(type) if(parser->keep){ \
-        derr_t error = parser->hooks_up.keep_init(parser->hook_data, \
-                                                   KEEP_ ## type); \
+        derr_t error = keep_init(parser, KEEP_ ## type); \
         CATCH(E_ANY){ \
             /* store error, reset parser */ \
             parser->error = error; \
@@ -26,7 +60,7 @@
 
     /* if parser->keep is set, store another chunk of whatever-it-is */
     #define KEEP if(parser->keep){ \
-        derr_t error = parser->hooks_up.keep(parser->hook_data); \
+        derr_t error = keep(parser); \
         CATCH(E_ANY){ \
             /* store error, reset parser */ \
             parser->error = error; \
@@ -34,22 +68,31 @@
         } \
     }
 
-    /* if parser->keep is set, fetch a reference to whatever we just kept */
-    static inline imap_token_t keep_ref(imap_parser_t *parser){
+    // if parser->keep is set, fetch a reference to whatever we just kept
+    // (not a macro because we need to set parser->keep and return a value)
+    static inline dstr_t do_keep_ref(imap_parser_t *parser){
         if(parser->keep){
             parser->keep = false;
-            return parser->hooks_up.keep_ref(parser->hook_data);
+            return keep_ref(parser);
         }else{
-            return (imap_token_t){0};
+            return NULTOK;
         }
     }
 
     /* fetch a reference to whatever we just kept */
-    #define KEEP_REF keep_ref(parser)
+    #define KEEP_REF do_keep_ref(parser)
+
+    /* the *_HOOK macros are for calling a hook, then freeing memory */
+    #define ST_HOOK(tag, st){ \
+        parser->hooks_up.status_type(parser->hook_data, &tag, st.status, \
+                                     st.code, st.code_extra, &st.text ); \
+        dstr_free(&tag); \
+        dstr_free(&st.text); \
+    }
 %}
 
 /* this defines the type of yylval, which is the semantic value of a token */
-%define api.value.type {imap_token_t}
+%define api.value.type {imap_expr_t}
 /* reentrant */
 %define api.pure full
 /* push parser */
@@ -64,7 +107,7 @@
 %token ASTR_ATOM
 %token FLAG
 %token NIL
-%token NUM
+%token <num> NUM
 %token QCHAR
 %token QSTRING
 %token LITERAL
@@ -79,7 +122,7 @@
 %token BAD
 %token PREAUTH
 %token BYE
-%token CAPABILITY
+%token CAPA
 %token LIST
 %token LSUB
 %token STATUS
@@ -97,14 +140,14 @@
 %token NO_STATUS_CODE
 %token ALERT
 /*     BADCHARSET (response to search, we aren't going to search) */
-/*     CAPABILITY (listed above) */
+/*     CAPA (listed above) */
 %token PARSE
-%token PERMANENTFLAGS
+%token PERMFLAGS
 %token READ_ONLY
 %token READ_WRITE
 %token TRYCREATE
 %token UIDNEXT
-%token UIDVALIDITY
+%token UIDVLD
 %token UNSEEN
 /*     ATOM (listed above) */
 
@@ -112,7 +155,7 @@
 %token MESSAGES
 /*     RECENT (listed above) */
 /*     UIDNEXT (listed above) */
-/*     UIDVALIDITY (listed above) */
+/*     UIDVLD (listed above) */
 /*     UNSEEN (listed above) */
 
 /* FETCH state */
@@ -133,28 +176,43 @@
 %token TEXT
 %token EOL
 
+/* non-terminals with semantic values */
+/*
+%type <dstr> keep_atom
+%type <dstr> keep_qstring
+%type <dstr> keep_string
+%type <dstr> keep_astr_atom
+*/
+%type <dstr> tag
+%type <dstr> st_txt_0
+%type <dstr> st_txt_1
+%destructor { dstr_free(& $$); } <dstr>
+
+%type <num> sc_num
+
+%type <status_type> status_type_resp
+%type <status_type> status_type
+%type <status_type> status_type_
+%type <status_type> status_code
+%type <status_type> status_code_
+%type <status_type> status_extra
+
+
 %% /********** Grammar Section **********/
 
-response: tag_or_not SP post_tag EOL { printf("response!\n"); ACCEPT; };
+response: tagged EOL { printf("response!\n"); ACCEPT; };
+        | untagged EOL { printf("response!\n"); ACCEPT; };
 
-tag_or_not: tag     { MODE(COMMAND); parser->tagged = true; }
-          | '*'     { MODE(COMMAND); parser->tagged = false; }
-;
+tagged: tag SP status_type_resp[s]   { ST_HOOK($tag, $s); };
 
-post_tag: status_type_resp
-        | CAPABILITY SP atom_list_1
-             { printf("capability!\n"); }
-        | LIST SP post_list
-             { printf("list!\n"); }
-        | LSUB SP post_list
-             { printf("lsub!\n"); }
-        | STATUS SP mailbox '(' status_att_list ')'
-             { printf("status!\n"); }
-        | FLAGS SP '(' flag_list ')'
-             { printf("flags!\n"); }
-        | SEARCH SP num_list
-             { printf("search!\n"); }
-        | NUM SP post_num
+untagged: '*' SP status_type_resp[s] { ST_HOOK(NULTOK, $s); }
+        | '*' SP CAPA SP atom_list_1
+        | '*' SP LIST SP post_list
+        | '*' SP LSUB SP post_list
+        | '*' SP STATUS SP mailbox '(' status_att_list ')'
+        | '*' SP FLAGS SP '(' flag_list ')'
+        | '*' SP SEARCH SP num_list
+        | '*' SP NUM SP post_num
 ;
 
 post_list: '(' flag_list ')' nqchar mailbox
@@ -172,7 +230,7 @@ status_att_list: %empty
 status_att: MESSAGES
           | RECENT
           | UIDNEXT
-          | UIDVALIDITY
+          | UIDVLD
           | UNSEEN
 ;
 
@@ -215,8 +273,6 @@ address: '(' nstring   nstring  nstring      nstring   ')'
 addr_list: %empty
          | addr_list address
 ;
-
-keep_num: NUM   { KEEP_INIT(NUM); KEEP; $$ = KEEP_REF; };
 
 /* post_body: '(' body ')'
 /*          | '[' body_section ']' post_body_section
@@ -272,19 +328,20 @@ keep_num: NUM   { KEEP_INIT(NUM); KEEP; $$ = KEEP_REF; };
 
 /*** status-type handling.  Thanks the the shitty grammar, IMAP4rev1 ***/
 
-status_type_resp: status_type status_extra;
+status_type_resp: status_type[s] status_extra[e] { $$ = STTOK_FUSE($s, $e); };
 
 status_type: status_type_ SP { MODE(STATUS_CODE_CHECK); }
 
-status_type_: OK { printf("ok!\n"); }
-            | NO { printf("no!\n"); }
-            | BAD { printf("bad!\n"); }
-            | PREAUTH { printf("preauth!\n"); }
-            | BYE { printf("bye!\n"); }
+status_type_: OK        { $$ = STTOK_STATUS(OK); }
+            | NO        { $$ = STTOK_STATUS(NO); }
+            | BAD       { $$ = STTOK_STATUS(BAD); }
+            | PREAUTH   { $$ = STTOK_STATUS(PREAUTH); }
+            | BYE       { $$ = STTOK_STATUS(BYE); }
 ;
 
-status_extra: yes_st_code status_code st_txt_1
-            | no_st_code st_txt_0
+status_extra:
+  yes_st_code status_code[c] st_txt_1[t]    { $$ = STTOK_TEXT(& $c, $t); }
+| no_st_code st_txt_0[t]                    { $$ = STTOK_TEXT(NULL, $t); }
 ;
 
 /* YES_STATUS_CODE means we got a '[' */
@@ -293,37 +350,32 @@ yes_st_code: YES_STATUS_CODE    { MODE(STATUS_CODE); };
 /* NO_STATUS_CODE means we got the start of the text; keep it. */
 no_st_code: NO_STATUS_CODE      { MODE(STATUS_TEXT); KEEP_INIT(TEXT); KEEP; };
 
-status_code: status_code_       { MODE(STATUS_TEXT); };
+status_code: status_code_       { MODE(STATUS_TEXT); $$ = $1; };
 
-status_code_: ALERT ']' SP                                   { printf("ALERT!\n"); }
-            | st_code_capa atom_list_1 ']' SP                { printf("capa (code)!\n"); }
-            | PARSE ']' SP                                   { printf("parse!\n"); }
-            | st_code_permflags '(' flag_list ')' ']' SP     { printf("perm-flags!\n"); }
-            | READ_ONLY ']' SP                               { printf("readonly!\n"); }
-            | READ_WRITE ']' SP                              { printf("readwrite!\n"); }
-            | TRYCREATE ']' SP                               { printf("trycreate!\n"); }
-            | st_code_uidnext SP st_code_keep_num ']' SP     { printf("uidnext!\n"); }
-            | st_code_uidvalidity SP st_code_keep_num ']' SP { printf("uid_validity!\n"); }
-            | st_code_unseen SP st_code_keep_num ']' SP      { printf("unseen!\n"); }
-            | st_code_atom st_txt_inner_0 ']' SP             { printf("atom!\n"); }
+status_code_: sc_alert ']' SP           { $$ = ST_CODE(ALERT,      0); }
+| sc_capa atom_list_1 ']' SP            { $$ = ST_CODE(CAPA,       0); }
+| PARSE ']' SP                          { $$ = ST_CODE(PARSE,      0); }
+| sc_permflags '(' flag_list ')' ']' SP { $$ = ST_CODE(PERMFLAGS,  0); }
+| READ_ONLY ']' SP                      { $$ = ST_CODE(READ_ONLY,  0); }
+| READ_WRITE ']' SP                     { $$ = ST_CODE(READ_WRITE, 0); }
+| TRYCREATE ']' SP                      { $$ = ST_CODE(TRYCREATE,  0); }
+| sc_uidnext SP sc_num[n] ']' SP        { $$ = ST_CODE(UIDNEXT,    $n); }
+| sc_uidvld SP sc_num[n] ']' SP         { $$ = ST_CODE(UIDVLD,     $n); }
+| sc_unseen SP sc_num[n] ']' SP         { $$ = ST_CODE(UNSEEN,     $n); }
+| sc_atom st_txt_inner_0 ']' SP         { $$ = ST_CODE(ATOM,       0); }
 ;
 
-st_code_capa: CAPABILITY;
-st_code_permflags: PERMANENTFLAGS;
+sc_alert: ALERT { parser->keep = true; }
+sc_capa: CAPA;
+sc_permflags: PERMFLAGS;
 
-st_code_uidnext: UIDNEXT            { MODE(NUM); };
-st_code_uidvalidity: UIDVALIDITY    { MODE(NUM); };
-st_code_unseen: UNSEEN              { MODE(NUM); };
+sc_uidnext: UIDNEXT            { MODE(NUM); };
+sc_uidvld: UIDVLD              { MODE(NUM); };
+sc_unseen: UNSEEN              { MODE(NUM); };
 
-st_code_atom: atom                  { printf("atoma!\n"); MODE(STATUS_TEXT); };
+sc_atom: atom                  { MODE(STATUS_TEXT); };
 
-/*
-atom2: ATOM { printf("here\n"); }
-     | atom2 ATOM
-;
-*/
-
-st_code_keep_num: keep_num          { MODE(STATUS_CODE); };
+sc_num: NUM          { MODE(STATUS_CODE); $$ = $1; };
 
 st_txt_inner_0: %empty
               | st_txt_inner_0 st_txt_inner_char
@@ -341,7 +393,7 @@ st_txt_0: %empty                    { KEEP_INIT(TEXT); $$ = KEEP_REF; }
 st_txt_1: st_txt_1_                 { $$ = KEEP_REF; };
 
 st_txt_1_: st_txt_char              { KEEP_INIT(TEXT); KEEP; }
-         | st_txt_1 st_txt_char     { KEEP; }
+         | st_txt_1_ st_txt_char     { KEEP; }
 ;
 
 st_txt_char: st_txt_inner_char
@@ -356,7 +408,7 @@ keyword: OK
        | BAD
        | PREAUTH
        | BYE
-       | CAPABILITY
+       | CAPA
        | LIST
        | LSUB
        | STATUS
@@ -368,12 +420,12 @@ keyword: OK
        | FETCH
        | ALERT
        | PARSE
-       | PERMANENTFLAGS
+       | PERMFLAGS
        | READ_ONLY
        | READ_WRITE
        | TRYCREATE
        | UIDNEXT
-       | UIDVALIDITY
+       | UIDVLD
        | UNSEEN
        | MESSAGES
        | NIL
@@ -384,7 +436,7 @@ keyword: OK
    though a keyword is a proper subclass of an atom.  Therefore additional
    guards will be in place to make sure only keywords we care about are passed
    into the scanner. */
-atom: atom_body                 { $$ = KEEP_REF; };
+atom: atom_body
 
 atom_body: ATOM                 { KEEP_INIT(ATOM); KEEP; }
          | atom_body atom_like  { KEEP; }
@@ -399,9 +451,7 @@ string: qstring
       | literal
 ;
 
-qstring: qstring_start qstring_body '"' { $$ = KEEP_REF; };
-
-qstring_start: '"'                      { KEEP_INIT(QSTRING); };
+qstring: '"' { KEEP_INIT(QSTRING); } qstring_body '"';
 
 qstring_body: %empty
             | qstring_body QSTRING      { KEEP; }
@@ -409,7 +459,7 @@ qstring_body: %empty
 
 /* note that LITERAL_END is passed by the application after it finishes reading
    the literal from the stream; it is never returned by the scanner */
-literal: literal_start LITERAL_END  { $$ = KEEP_REF; };
+literal: literal_start LITERAL_END;
 
 literal_start: LITERAL              { KEEP_INIT(LITERAL) };
 
@@ -419,10 +469,8 @@ astring: astr_atom
        | string
 ;
 
-astr_atom: astr_atom_body                       { $$ = KEEP_REF; };
-
-astr_atom_body: ASTR_ATOM                       { KEEP_INIT(ASTR_ATOM); KEEP; }
-              | astr_atom_body astr_atom_like   { KEEP; }
+astr_atom: ASTR_ATOM                  { KEEP_INIT(ASTR_ATOM); KEEP; }
+         | astr_atom astr_atom_like   { KEEP; }
 ;
 
 astr_atom_like: ASTR_ATOM
@@ -430,15 +478,23 @@ astr_atom_like: ASTR_ATOM
               | keyword
 ;
 
-tag: tag_body           { $$ = KEEP_REF; };
+tag: tag_body      { $$ = KEEP_REF; MODE(COMMAND); };
 
-tag_body: TAG           { KEEP_INIT(TAG); KEEP; }
+tag_body: TAG           { parser->keep = true; KEEP_INIT(TAG); KEEP; }
         | tag_body TAG  { KEEP; }
 ;
 
 nstring: NIL
        | string
 ;
+
+/* the "keep" variations of the above (except tag, which is always kept) */
+/*
+keep_atom: { parser->keep = true; } atom { $$ = KEEP_REF; };
+keep_astr_atom: { parser->keep = true; } astr_atom { $$ = KEEP_REF; };
+keep_qstring: { parser->keep = true; } qstring { $$ = KEEP_REF; };
+keep_string: { parser->keep = true; } string { $$ = KEEP_REF; };
+*/
 
 /* lists */
 
