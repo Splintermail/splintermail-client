@@ -10,6 +10,8 @@
     - every branch of the grammer gets passed through
         (this will verify the scanner modes are correct)
     - every %destructor gets called (i.e., HOOK_END always gets called)
+
+    Wait, why does the scanner in FLAG mode test another character after the \ ?
 */
 
 // the struct for the parse hooks' *data memeber

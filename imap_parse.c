@@ -42,7 +42,6 @@ derr_t imap_parser_init(imap_parser_t *parser, imap_parse_hooks_up_t hooks_up,
                         void *hook_data){
     // init dstr_t temp to zeros
     parser->temp = (dstr_t){0};
-    parser->keep = false;
 
     // init the bison parser
     parser->yyps = yypstate_new();
@@ -53,6 +52,9 @@ derr_t imap_parser_init(imap_parser_t *parser, imap_parse_hooks_up_t hooks_up,
     // initial state details
     parser->scan_mode = SCAN_MODE_TAG;
     parser->error = E_OK;
+    parser->keep = false;
+    parser->keep_init = false;
+    parser->keep_st_text = false;
 
     parser->hooks_up = hooks_up;
     parser->hook_data = hook_data;
@@ -82,20 +84,19 @@ derr_t imap_parse(imap_parser_t *parser, int type, const dstr_t *token){
     }
 }
 
-derr_t keep_init(void *data, keep_type_t type){
+derr_t keep_init(void *data){
     // dereference the scanner, so we can read the token
     imap_parser_t *parser = data;
-    parser->keep_type = type;
     // allocate the temp dstr_t
     PROP( dstr_new(&parser->temp, 64) );
     return E_OK;
 }
 
-derr_t keep(imap_parser_t *parser){
+derr_t keep(imap_parser_t *parser, keep_type_t type){
     // patterns for recoding the quoted strings
     LIST_STATIC(dstr_t, find, DSTR_LIT("\\\\"), DSTR_LIT("\\\""));
     LIST_STATIC(dstr_t, repl, DSTR_LIT("\\"),   DSTR_LIT("\""));
-    switch(parser->keep_type){
+    switch(type){
         case KEEP_ATOM:
         case KEEP_ASTR_ATOM:
         case KEEP_TAG:
@@ -119,11 +120,4 @@ dstr_t keep_ref(imap_parser_t *parser){
     // never allow a double free, nor pass the same dstr twice
     parser->temp = (dstr_t){0};
     return retval;
-}
-
-void keep_cancel(imap_parser_t *parser){
-    // free memory (it does nothing if temp.data == NULL)
-    dstr_free(&parser->temp);
-    // if keep_ref is called, pass the null dstr_t
-    parser->temp = (dstr_t){0};
 }

@@ -7,7 +7,6 @@
     // a YYACCEPT wrapper that resets some custom parser details
     #define ACCEPT \
         MODE(TAG); \
-        keep_cancel(parser); \
         parser->keep = false; \
         YYACCEPT
 
@@ -56,29 +55,91 @@
 
     #define MODE(m) parser->scan_mode = SCAN_MODE_ ## m
 
-    // if parser->keep is set, get ready to keep chunks of whatever-it-is
-    #define KEEP_INIT(type) \
-        if(parser->keep){ DOCATCH( keep_init(parser, KEEP_ ## type) ); }
+/* KEEP API summary:
 
-    // if parser->keep is set, store another chunk of whatever-it-is
-    #define KEEP \
-        if(parser->keep){ DOCATCH( keep(parser) ); }
+(purpose: only allocate memory for tokens you actually need)
 
-    // if parser->keep is set, fetch a reference to whatever we just kept
-    // (not a macro because we need to set parser->keep AND return a value)
-    static inline dstr_t do_keep_ref(imap_parser_t *parser){
-        if(parser->keep){
-            parser->keep = false;
-            return keep_ref(parser);
-        }else{
-            return NUL_DSTR;
+// this happens in KEEP_START
+keep = true
+keep_init = false
+
+try:
+    // possibly called by some other hook
+    {
+        if(keep){
+            KEEP_INIT
+            keep_init = true
+        }
+
+        // possibly called be even more hooks, maybe multiple times
+        {
+            if(keep){
+                KEEP
+            }
         }
     }
 
-    /* fetch a reference to whatever we just kept */
-    #define KEEP_REF do_keep_ref(parser)
+    // successful handling
+    KEEP_REF
+    keep_init = false
+    keep = false
 
-    /* the *HOOK* macros are for calling a hooks, then freeing memory */
+catch:
+    // this is in the %destructor
+    if(keep_init):
+        x = KEEP_REF
+        dstr_free(x)
+    keep_init = false
+    keep = false
+
+// the reason KEEP_INIT is separated from KEEP_START is that there are times
+// in the grammar where you want to keep "what's next", but "what's next" might
+// be an atom or a number, and you don't want to do useless allocations.  For
+// example, you might want to keep a flag but that flag might be \Answered,
+// which is represented by IE_FLAG_ANSWERED, and needs no memory allocation.
+
+*/
+
+    // indicate we are going to try to keep something
+    #define KEEP_START { parser->keep = true; }
+
+    // if parser->keep is set, get ready to keep chunks of whatever-it-is
+    #define KEEP_INIT \
+        if(parser->keep) DOCATCH( keep_init(parser) ); \
+        parser->keep_init = true \
+
+    // if parser->keep is set, store another chunk of whatever-it-is
+    #define KEEP(type) \
+        if(parser->keep) DOCATCH( keep(parser, KEEP_ ## type) );
+
+    // fetch a reference to whatever we just kept
+    #define KEEP_REF(prekeep) do_keep_ref(parser, prekeep)
+
+    // (not a macro because we need to set variables AND return a value)
+    // (prekeep argument enforces that KEEP_REF corresponds to a KEEP_START)
+    static inline dstr_t do_keep_ref(imap_parser_t *parser, void *prekeep){
+        (void)prekeep;
+        // decide what to return
+        dstr_t retval = NUL_DSTR;
+        if(parser->keep_init){
+            retval = keep_ref(parser);
+        }
+        // reset state
+        parser->keep = false;
+        parser->keep_init = false;
+        return retval;
+    }
+
+    // called in the %destructor for prekeep
+    #define KEEP_CANCEL \
+        if(parser->keep_init){ \
+            dstr_t freeme = keep_ref(parser); \
+            dstr_free(&freeme); \
+        } \
+        parser->keep = false; \
+        parser->keep_init = false
+
+    // the *HOOK* macros are for calling a hooks, then freeing memory
     #define ST_HOOK(tag, st){ \
         parser->hooks_up.status_type(parser->hook_data, &tag, st.status, \
                                      st.code, st.code_extra, &st.text ); \
@@ -223,6 +284,9 @@
 %type <status_type> status_code_
 %type <status_type> status_extra
 
+%type <prekeep> prekeep
+%type <prekeep> sc_prekeep
+%destructor { KEEP_CANCEL; } <prekeep>
 %type <capa> capa_start
 %destructor { CAPA_HOOK_END(false); } <capa>
 %type <permflag> pflag_start
@@ -381,7 +445,7 @@ status_extra:
 yes_st_code: YES_STATUS_CODE    { MODE(STATUS_CODE); };
 
 /* NO_STATUS_CODE means we got the start of the text; keep it. */
-no_st_code: NO_STATUS_CODE      { MODE(STATUS_TEXT); KEEP_INIT(TEXT); KEEP; };
+no_st_code: NO_STATUS_CODE      { MODE(STATUS_TEXT); KEEP_INIT; KEEP(TEXT); };
 
 status_code: status_code_ ']' SP    { MODE(STATUS_TEXT); $$ = $1; };
 
@@ -398,7 +462,7 @@ status_code_: sc_alert           { $$ = ST_CODE(ALERT,      0); }
 | sc_atom st_txt_inner_0         { $$ = ST_CODE(ATOM,       0); }
 ;
 
-sc_alert: ALERT { parser->keep = true; };
+sc_alert: ALERT { parser->keep_st_text = true; };
 
 sc_uidnext: UIDNEXT            { MODE(NUM); };
 sc_uidvld: UIDVLD              { MODE(NUM); };
@@ -407,6 +471,9 @@ sc_unseen: UNSEEN              { MODE(NUM); };
 sc_atom: atom                  { MODE(STATUS_TEXT); };
 
 sc_num: NUM          { MODE(STATUS_CODE); $$ = $1; };
+
+/* there are several conditions under which we keep the text at the end */
+sc_prekeep: %empty      { if(parser->keep_st_text){ KEEP_START; } $$ = NULL; };
 
 st_txt_inner_0: %empty
               | st_txt_inner_0 st_txt_inner_char
@@ -417,14 +484,14 @@ st_txt_inner_char: ' '
                  | TEXT
 ;
 
-st_txt_0: %empty                    { KEEP_INIT(TEXT); $$ = KEEP_REF; }
-        | st_txt_1_                 { $$ = KEEP_REF; }
+st_txt_0: %empty                    { $$ = NUL_DSTR; }
+        | sc_prekeep st_txt_1_      { $$ = KEEP_REF($sc_prekeep); }
 ;
 
-st_txt_1: st_txt_1_                 { $$ = KEEP_REF; };
+st_txt_1: sc_prekeep st_txt_1_      { $$ = KEEP_REF($sc_prekeep); };
 
-st_txt_1_: st_txt_char              { KEEP_INIT(TEXT); KEEP; }
-         | st_txt_1_ st_txt_char     { KEEP; }
+st_txt_1_: st_txt_char              { KEEP_INIT; KEEP(TEXT); }
+         | st_txt_1_ st_txt_char     { KEEP(TEXT); }
 ;
 
 st_txt_char: st_txt_inner_char
@@ -494,8 +561,8 @@ keyword: OK
    into the scanner at any given moment. */
 atom: atom_body
 
-atom_body: ATOM                 { KEEP_INIT(ATOM); KEEP; }
-         | atom_body atom_like  { KEEP; }
+atom_body: ATOM                 { KEEP_INIT; KEEP(ATOM); }
+         | atom_body atom_like  { KEEP(ATOM); }
 ;
 
 atom_like: ATOM
@@ -507,17 +574,17 @@ string: qstring
       | literal
 ;
 
-qstring: '"' { KEEP_INIT(QSTRING); } qstring_body '"';
+qstring: '"' { KEEP_INIT; } qstring_body '"';
 
 qstring_body: %empty
-            | qstring_body QSTRING      { KEEP; }
+            | qstring_body QSTRING      { KEEP(QSTRING); }
 ;
 
 /* note that LITERAL_END is passed by the application after it finishes reading
    the literal from the stream; it is never returned by the scanner */
 literal: literal_start LITERAL_END;
 
-literal_start: LITERAL              { KEEP_INIT(LITERAL) };
+literal_start: LITERAL              { /* TODO: handle literals */ };
 
 /* like with atoms, an number or keword are technically astr_atoms but that
    introduces grammatical ambiguities */
@@ -525,8 +592,8 @@ astring: astr_atom
        | string
 ;
 
-astr_atom: ASTR_ATOM                  { KEEP_INIT(ASTR_ATOM); KEEP; }
-         | astr_atom astr_atom_like   { KEEP; }
+astr_atom: ASTR_ATOM                  { KEEP_INIT; KEEP(ASTR_ATOM); }
+         | astr_atom astr_atom_like   { KEEP(ASTR_ATOM); }
 ;
 
 astr_atom_like: ASTR_ATOM
@@ -534,10 +601,10 @@ astr_atom_like: ASTR_ATOM
               | keyword
 ;
 
-tag: tag_body      { $$ = KEEP_REF; MODE(COMMAND); };
+tag: prekeep tag_body      { $$ = KEEP_REF($prekeep); MODE(COMMAND); };
 
-tag_body: TAG           { parser->keep = true; KEEP_INIT(TAG); KEEP; }
-        | tag_body TAG  { KEEP; }
+tag_body: TAG           { KEEP_INIT; KEEP(TAG); }
+        | tag_body TAG  { KEEP(TAG); }
 ;
 
 nstring: NIL
@@ -580,9 +647,12 @@ pflag: flag
      | ASTERISK_FLAG    { $$ = IE_FLAG_ASTERISK; }
 ;
 
+/* dummy grammar to make sure KEEP_CANCEL gets called in error handling */
+prekeep: %empty { KEEP_START; $$ = NULL; };
+
 /* the "keep" variations of the above (except tag, which is always kept) */
-keep_atom: { parser->keep = true; } atom { $$ = KEEP_REF; };
-keep_pflag: { parser->keep = true; } pflag { $$ = (ie_flag_t){$pflag, KEEP_REF}; };
+keep_atom: prekeep atom { $$ = KEEP_REF($prekeep); };
+keep_pflag: prekeep pflag { $$ = (ie_flag_t){$pflag, KEEP_REF($prekeep)}; };
 /*
 keep_astr_atom: { parser->keep = true; } astr_atom { $$ = KEEP_REF; };
 keep_qstring: { parser->keep = true; } qstring { $$ = KEEP_REF; };

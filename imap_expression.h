@@ -64,6 +64,7 @@ union imap_expr_t {
     // dummy types to trigger %destructor actions
     void *capa;
     void *permflag;
+    void *prekeep;
 };
 
 #endif // IMAP_EXPR_H

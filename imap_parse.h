@@ -81,9 +81,12 @@ typedef struct {
     const dstr_t *token;
     // should we keep the next thing we run across?
     bool keep;
+    // have we called keep_init?
+    bool keep_init;
     // for building long strings from multiple fixed-length tokens
-    keep_type_t keep_type;
     dstr_t temp;
+    // should we keep the text at the end of the status-type response?
+    bool keep_st_text;
 } imap_parser_t ;
 
 void yyerror(imap_parser_t *parser, char const *s);
@@ -95,10 +98,9 @@ void imap_parser_free(imap_parser_t *parser);
 derr_t imap_parse(imap_parser_t *parser, int type, const dstr_t *token);
 
 // the keep api, used internally by the bison parser
-derr_t keep_init(void *data, keep_type_t type);
-derr_t keep(imap_parser_t *parser);
+derr_t keep_init(void *data);
+derr_t keep(imap_parser_t *parser, keep_type_t type);
 dstr_t keep_ref(imap_parser_t *parser);
-void keep_cancel(imap_parser_t *parser);
 
 /*
 Response        EBNF
