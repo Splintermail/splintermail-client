@@ -82,6 +82,8 @@ derr_t imap_scan(imap_scanner_t *scanner, scan_mode_t mode, bool *more,
             case SCAN_MODE_TAG:                 goto tag_mode;
             case SCAN_MODE_DEFAULT:             goto default_mode;
             case SCAN_MODE_COMMAND:             goto command_mode;
+            case SCAN_MODE_ATOM:                goto atom_mode;
+            case SCAN_MODE_FLAG:                goto flag_mode;
             case SCAN_MODE_ASTRING:             goto astring_mode;
             case SCAN_MODE_QSTRING:             goto qstring_mode;
             case SCAN_MODE_NUM:                 goto num_mode;
@@ -121,14 +123,14 @@ tag_mode:
         *               { return E_PARAM; }
         eol             { *type = EOL; goto done; }
         tag             { *type = TAG; goto done; }
-        [ *]            { *type = yych; goto done; }
+        [ *]            { *type = *scanner->start; goto done; }
     */
 
 default_mode:
 
     /*!re2c
         *               { return E_PARAM; }
-        atom_spec       { *type = yych; goto done; }
+        atom_spec       { *type = *scanner->start; goto done; }
         literal         { *type = LITERAL; goto done; }
         eol             { *type = EOL; goto done; }
 
@@ -153,7 +155,7 @@ command_mode:
     /*!re2c
         *               { return E_PARAM; }
         eol             { *type = EOL; goto done; }
-        " "             { *type = yych; goto done; }
+        " "             { *type = *scanner->start; goto done; }
 
         'ok'            { *type = OK; goto done; }
         'no'            { *type = NO; goto done; }
@@ -174,17 +176,27 @@ command_mode:
         num             { *type = NUM; goto done; }
     */
 
+atom_mode:
+
+    /*!re2c
+        *               { return E_PARAM; }
+        atom_spec       { *type = *scanner->start; goto done; }
+        eol             { *type = EOL; goto done; }
+
+        atom            { *type = ATOM; goto done; }
+    */
+
 astring_mode:
 
     /*!re2c
         *               { return E_PARAM; }
-        astr_atom_spec  { *type = yych; goto done; }
+        astr_atom_spec  { *type = *scanner->start; goto done; }
         literal         { *type = LITERAL; goto done; }
         eol             { *type = EOL; goto done; }
 
         'inbox'         { *type = INBOX; goto done; }
 
-        astr_atom       { printf("hEY\n"); *type = ASTR_ATOM; goto done; }
+        astr_atom       { *type = ASTR_ATOM; goto done; }
     */
 
 qstring_mode:
@@ -204,6 +216,25 @@ num_mode:
         num             { *type = NUM; goto done; }
     */
 
+flag_mode:
+
+    /*!re2c
+        *               { return E_PARAM; }
+        atom_spec       { *type = *scanner->start; goto done; }
+        literal         { *type = LITERAL; goto done; }
+        eol             { *type = EOL; goto done; }
+
+        'answered'      { *type = ANSWERED; goto done; }
+        'flagged'       { *type = FLAGGED; goto done; }
+        'deleted'       { *type = DELETED; goto done; }
+        'seen'          { *type = SEEN; goto done; }
+        'draft'         { *type = DRAFT; goto done; }
+        'recent'        { *type = RECENT; goto done; }
+        "\\*"          { *type = ASTERISK_FLAG; goto done; }
+
+        atom            { *type = ATOM; goto done; }
+    */
+
 status_code_check_mode:
     /*!re2c
         "\x00"          { return E_PARAM; }
@@ -218,7 +249,7 @@ status_code_mode:
 
     /*!re2c
         *               { return E_PARAM; }
-        atom_spec       { *type = yych; goto done; }
+        atom_spec       { *type = *scanner->start; goto done; }
         eol             { *type = EOL; goto done; }
 
         'alert'         { *type = ALERT; goto done; }
@@ -240,7 +271,7 @@ status_text_mode:
     /*!re2c
         *               { return E_PARAM; }
         eol             { *type = EOL; goto done; }
-        text_spec       { *type = yych; goto done; }
+        text_spec       { *type = *scanner->start; goto done; }
         text_atom       { *type = TEXT; goto done; }
     */
 

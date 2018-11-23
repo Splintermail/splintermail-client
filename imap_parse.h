@@ -22,6 +22,10 @@ typedef enum {
     SCAN_MODE_NUM,
     // For right after the tag
     SCAN_MODE_COMMAND,
+    // For when we are just looking for atoms, or atom-specials
+    SCAN_MODE_ATOM,
+    // For flags (regular, fetch, or permanent)
+    SCAN_MODE_FLAG,
     // For just after the OK/BAD/NO/PREAUTH/BYE
     SCAN_MODE_STATUS_CODE_CHECK,
     // For the first character of the [status_code]
@@ -31,7 +35,6 @@ typedef enum {
 } scan_mode_t;
 
 dstr_t* scan_mode_to_dstr(scan_mode_t mode);
-
 
 typedef enum {
     KEEP_ATOM,
@@ -48,6 +51,14 @@ typedef struct {
     void (*status_type)(void* data, const dstr_t *tag, status_type_t status,
                         status_code_t code, unsigned int code_extra,
                         const dstr_t *text);
+    // for CAPABILITY responses (both normal responses and as status codes)
+    derr_t (*capa_start)(void* data);
+    derr_t (*capa)(void* data, const dstr_t *capability);
+    void (*capa_end)(void* data, bool success);
+    // for PERMANENTFLAG responses
+    derr_t (*pflag_start)(void* data);
+    derr_t (*pflag)(void* data, ie_flag_type_t type, const dstr_t *val);
+    void (*pflag_end)(void* data, bool success);
 } imap_parse_hooks_up_t;
 
 typedef struct {

@@ -4,8 +4,25 @@
     #include <logger.h>
     #include <imap_expression.h>
 
-    /* When you have a dstr-type token but there's nothing there */
-    #define NULTOK (dstr_t){0}
+    // a YYACCEPT wrapper that resets some custom parser details
+    #define ACCEPT \
+        MODE(TAG); \
+        keep_cancel(parser); \
+        parser->keep = false; \
+        YYACCEPT
+
+    // for checking an error, but propagating it through non-standard means
+    #define DOCATCH(_code) { \
+        derr_t error = _code; \
+        CATCH(E_ANY){ \
+            /* store error and reset parser */ \
+            parser->error = error; \
+            ACCEPT; \
+        } \
+    }
+
+    // When you have a dstr-type token but there's nothing there
+    #define NUL_DSTR (dstr_t){0}
 
     // when this is called, only the status is known
     #define STTOK_STATUS(st) \
@@ -18,8 +35,8 @@
                 .code = STATUS_CODE_ ## _code, \
                 .code_extra = _extra, \
             }
-    /* when this is called, the code/extra token is fused with the text.
-       Note that code/extra might be NULL, if no code was given */
+    // when this is called, the code/extra token is fused with the text
+    // (not a macro so that c_e can be a NULL)
     static inline ie_resp_status_type_t STTOK_TEXT(ie_resp_status_type_t *c_e,
                                                    dstr_t _text){
         return (ie_resp_status_type_t){
@@ -29,66 +46,61 @@
             };
     }
     // this fuses all the components of the STTOK together
-    static inline ie_resp_status_type_t STTOK_FUSE(ie_resp_status_type_t st,
-                                                   ie_resp_status_type_t c_e_t){
-        return (ie_resp_status_type_t){
-                .status = st.status,
-                .code = c_e_t.code,
-                .code_extra = c_e_t.code_extra,
-                .text = c_e_t.text,
-            };
-    }
+    #define STTOK_FUSE(st, c_e_t) \
+        (ie_resp_status_type_t){ \
+            .status = st.status, \
+            .code = c_e_t.code, \
+            .code_extra = c_e_t.code_extra, \
+            .text = c_e_t.text, \
+        }
 
     #define MODE(m) parser->scan_mode = SCAN_MODE_ ## m
 
-    /* a YYACCEPT wrapper that resets some custom parser details  */
-    #define ACCEPT \
-        MODE(TAG); \
-        keep_cancel(parser); \
-        parser->keep = false; \
-        YYACCEPT
+    // if parser->keep is set, get ready to keep chunks of whatever-it-is
+    #define KEEP_INIT(type) \
+        if(parser->keep){ DOCATCH( keep_init(parser, KEEP_ ## type) ); }
 
-    /* if parser->keep is set, get ready to keep chunks of whatever-it-is */
-    #define KEEP_INIT(type) if(parser->keep){ \
-        derr_t error = keep_init(parser, KEEP_ ## type); \
-        CATCH(E_ANY){ \
-            /* store error, reset parser */ \
-            parser->error = error; \
-            ACCEPT; \
-        } \
-    }
-
-    /* if parser->keep is set, store another chunk of whatever-it-is */
-    #define KEEP if(parser->keep){ \
-        derr_t error = keep(parser); \
-        CATCH(E_ANY){ \
-            /* store error, reset parser */ \
-            parser->error = error; \
-            ACCEPT; \
-        } \
-    }
+    // if parser->keep is set, store another chunk of whatever-it-is
+    #define KEEP \
+        if(parser->keep){ DOCATCH( keep(parser) ); }
 
     // if parser->keep is set, fetch a reference to whatever we just kept
-    // (not a macro because we need to set parser->keep and return a value)
+    // (not a macro because we need to set parser->keep AND return a value)
     static inline dstr_t do_keep_ref(imap_parser_t *parser){
         if(parser->keep){
             parser->keep = false;
             return keep_ref(parser);
         }else{
-            return NULTOK;
+            return NUL_DSTR;
         }
     }
 
     /* fetch a reference to whatever we just kept */
     #define KEEP_REF do_keep_ref(parser)
 
-    /* the *_HOOK macros are for calling a hook, then freeing memory */
+    /* the *HOOK* macros are for calling a hooks, then freeing memory */
     #define ST_HOOK(tag, st){ \
         parser->hooks_up.status_type(parser->hook_data, &tag, st.status, \
                                      st.code, st.code_extra, &st.text ); \
         dstr_free(&tag); \
         dstr_free(&st.text); \
     }
+
+    #define CAPA_HOOK_START \
+        DOCATCH( parser->hooks_up.capa_start(parser->hook_data) );
+    #define CAPA_HOOK(c) \
+        DOCATCH( parser->hooks_up.capa(parser->hook_data, &c) ); \
+        dstr_free(&c);
+    #define CAPA_HOOK_END(success) \
+        parser->hooks_up.capa_end(parser->hook_data, success);
+
+    #define PFLAG_HOOK_START \
+        DOCATCH( parser->hooks_up.pflag_start(parser->hook_data) );
+    #define PFLAG_HOOK(f) \
+        DOCATCH( parser->hooks_up.pflag(parser->hook_data, f.type, &f.dstr) ); \
+        dstr_free(&f.dstr);
+    #define PFLAG_HOOK_END(success) \
+        parser->hooks_up.pflag_end(parser->hook_data, success);
 %}
 
 /* this defines the type of yylval, which is the semantic value of a token */
@@ -105,7 +117,6 @@
 /* some generic types */
 %token ATOM
 %token ASTR_ATOM
-%token FLAG
 %token NIL
 %token <num> NUM
 %token QCHAR
@@ -171,14 +182,23 @@
 %token UID
 %token STRUCTURE
 
+/* FLAGS */
+%token ANSWERED
+%token FLAGGED
+%token DELETED
+%token SEEN
+%token DRAFT
+/*     RECENT (listed above) */
+%token ASTERISK_FLAG
+
 /* miscellaneous */
 %token INBOX
 %token TEXT
 %token EOL
 
 /* non-terminals with semantic values */
-/*
 %type <dstr> keep_atom
+/*
 %type <dstr> keep_qstring
 %type <dstr> keep_string
 %type <dstr> keep_astr_atom
@@ -187,6 +207,12 @@
 %type <dstr> st_txt_0
 %type <dstr> st_txt_1
 %destructor { dstr_free(& $$); } <dstr>
+
+%type <flag_type> flag
+/* %type <flag_type> fflag */
+%type <flag_type> pflag
+%type <flag> keep_pflag
+%destructor { dstr_free(& $$.dstr); } <flag>
 
 %type <num> sc_num
 
@@ -197,6 +223,11 @@
 %type <status_type> status_code_
 %type <status_type> status_extra
 
+%type <capa> capa_start
+%destructor { CAPA_HOOK_END(false); } <capa>
+%type <permflag> pflag_start
+%destructor { PFLAG_HOOK_END(false); } <permflag>
+
 
 %% /********** Grammar Section **********/
 
@@ -205,17 +236,19 @@ response: tagged EOL { printf("response!\n"); ACCEPT; };
 
 tagged: tag SP status_type_resp[s]   { ST_HOOK($tag, $s); };
 
-untagged: '*' SP status_type_resp[s] { ST_HOOK(NULTOK, $s); }
-        | '*' SP CAPA SP atom_list_1
-        | '*' SP LIST SP post_list
-        | '*' SP LSUB SP post_list
-        | '*' SP STATUS SP mailbox '(' status_att_list ')'
-        | '*' SP FLAGS SP '(' flag_list ')'
-        | '*' SP SEARCH SP num_list
-        | '*' SP NUM SP post_num
+untagged: untag SP status_type_resp[s] { ST_HOOK(NUL_DSTR, $s); }
+        | untag SP CAPA SP capa_resp
+        | untag SP LIST SP post_list
+        | untag SP LSUB SP post_list
+        | untag SP STATUS SP mailbox '(' status_att_list ')'
+        | untag SP FLAGS SP '(' /* TODO: flag_list */ ')'
+        | untag SP SEARCH SP num_list
+        | untag SP NUM SP post_num
 ;
 
-post_list: '(' flag_list ')' nqchar mailbox
+untag: '*' { MODE(COMMAND); };
+
+post_list: '(' /* TODO: flag_list */ ')' nqchar mailbox
 ;
 
 /* either the literal NIL or a DQUOTE QUOTED-CHAR DQUOTE */
@@ -244,7 +277,7 @@ msg_att_list: %empty
             | msg_att_list msg_att
 ;
 
-msg_att: FLAGS '(' flag_list ')'
+msg_att: FLAGS '(' /* TODO: flag_list */ ')'
        | ENVELOPE '(' envelope ')'
        | INTERNALDATE QSTRING
        | RFC822 nstring /* read this */
@@ -350,24 +383,22 @@ yes_st_code: YES_STATUS_CODE    { MODE(STATUS_CODE); };
 /* NO_STATUS_CODE means we got the start of the text; keep it. */
 no_st_code: NO_STATUS_CODE      { MODE(STATUS_TEXT); KEEP_INIT(TEXT); KEEP; };
 
-status_code: status_code_       { MODE(STATUS_TEXT); $$ = $1; };
+status_code: status_code_ ']' SP    { MODE(STATUS_TEXT); $$ = $1; };
 
-status_code_: sc_alert ']' SP           { $$ = ST_CODE(ALERT,      0); }
-| sc_capa atom_list_1 ']' SP            { $$ = ST_CODE(CAPA,       0); }
-| PARSE ']' SP                          { $$ = ST_CODE(PARSE,      0); }
-| sc_permflags '(' flag_list ')' ']' SP { $$ = ST_CODE(PERMFLAGS,  0); }
-| READ_ONLY ']' SP                      { $$ = ST_CODE(READ_ONLY,  0); }
-| READ_WRITE ']' SP                     { $$ = ST_CODE(READ_WRITE, 0); }
-| TRYCREATE ']' SP                      { $$ = ST_CODE(TRYCREATE,  0); }
-| sc_uidnext SP sc_num[n] ']' SP        { $$ = ST_CODE(UIDNEXT,    $n); }
-| sc_uidvld SP sc_num[n] ']' SP         { $$ = ST_CODE(UIDVLD,     $n); }
-| sc_unseen SP sc_num[n] ']' SP         { $$ = ST_CODE(UNSEEN,     $n); }
-| sc_atom st_txt_inner_0 ']' SP         { $$ = ST_CODE(ATOM,       0); }
+status_code_: sc_alert           { $$ = ST_CODE(ALERT,      0); }
+| CAPA SP capa_resp              { $$ = ST_CODE(CAPA,       0); }
+| PARSE                          { $$ = ST_CODE(PARSE,      0); }
+| PERMFLAGS SP pflag_resp        { $$ = ST_CODE(PERMFLAGS,  0); }
+| READ_ONLY                      { $$ = ST_CODE(READ_ONLY,  0); }
+| READ_WRITE                     { $$ = ST_CODE(READ_WRITE, 0); }
+| TRYCREATE                      { $$ = ST_CODE(TRYCREATE,  0); }
+| sc_uidnext SP sc_num[n]        { $$ = ST_CODE(UIDNEXT,    $n); }
+| sc_uidvld SP sc_num[n]         { $$ = ST_CODE(UIDVLD,     $n); }
+| sc_unseen SP sc_num[n]         { $$ = ST_CODE(UNSEEN,     $n); }
+| sc_atom st_txt_inner_0         { $$ = ST_CODE(ATOM,       0); }
 ;
 
-sc_alert: ALERT { parser->keep = true; }
-sc_capa: CAPA;
-sc_permflags: PERMFLAGS;
+sc_alert: ALERT { parser->keep = true; };
 
 sc_uidnext: UIDNEXT            { MODE(NUM); };
 sc_uidvld: UIDVLD              { MODE(NUM); };
@@ -398,6 +429,31 @@ st_txt_1_: st_txt_char              { KEEP_INIT(TEXT); KEEP; }
 
 st_txt_char: st_txt_inner_char
            | ']'
+;
+
+/*** CAPABILITY handling ***/
+/* note the (void)$1 is because if there's an error in capa_list, we need to
+   be able to trigger CAPA_HOOK_END via the %destructor, therefore capa_start
+   has a semantic value we need to explicitly ignore to avoid warnings */
+capa_resp: capa_start capa_list { CAPA_HOOK_END(true); (void)$1; };
+
+capa_start: %empty { CAPA_HOOK_START; MODE(ATOM); $$ = NULL; };
+
+capa_list: keep_atom               { CAPA_HOOK($keep_atom); }
+         | capa_list SP keep_atom  { CAPA_HOOK($keep_atom); }
+;
+
+/*** PERMANENTFLAG handling ***/
+/* %destructor is used to guarantee HOOK_END gets called, as with CAPABILITY */
+pflag_resp: pflag_start '(' pflag_list_0 ')' { PFLAG_HOOK_END(true); (void)$1; };
+
+pflag_start: %empty { PFLAG_HOOK_START; MODE(FLAG); $$ = NULL; };
+
+pflag_list_0: %empty
+             | pflag_list_1
+;
+pflag_list_1: keep_pflag                     { PFLAG_HOOK($keep_pflag); }
+             | pflag_list_1 SP keep_pflag    { PFLAG_HOOK($keep_pflag); }
 ;
 
 
@@ -435,7 +491,7 @@ keyword: OK
 /* due to grammar ambiguities, an atom cannot consist of a keyword, even
    though a keyword is a proper subclass of an atom.  Therefore additional
    guards will be in place to make sure only keywords we care about are passed
-   into the scanner. */
+   into the scanner at any given moment. */
 atom: atom_body
 
 atom_body: ATOM                 { KEEP_INIT(ATOM); KEEP; }
@@ -463,8 +519,8 @@ literal: literal_start LITERAL_END;
 
 literal_start: LITERAL              { KEEP_INIT(LITERAL) };
 
-/* like with atoms, an number or literal are technically astr_atoms but that
-   introduces grammatical ambiguities*/
+/* like with atoms, an number or keword are technically astr_atoms but that
+   introduces grammatical ambiguities */
 astring: astr_atom
        | string
 ;
@@ -488,9 +544,46 @@ nstring: NIL
        | string
 ;
 
+/*!re2c
+    *               { return E_PARAM; }
+    atom_spec       { *type = yych; goto done; }
+    literal         { *type = LITERAL; goto done; }
+    eol             { *type = EOL; goto done; }
+
+    'answered'      { *type = ANSWERED; goto done; }
+    'flagged'       { *type = FLAGGED; goto done; }
+    'deleted'       { *type = DELETED; goto done; }
+    'seen'          { *type = SEEN; goto done; }
+    'draft'         { *type = DRAFT; goto done; }
+    'recent'        { *type = RECENT; goto done; }
+    "\\\*"          { *type = ASTERISK_FLAG; goto done; }
+
+    atom            { *type = ATOM; goto done; }
+*/
+
+flag: '\\' ANSWERED      { $$ = IE_FLAG_ANSWERED; }
+    | '\\' FLAGGED       { $$ = IE_FLAG_FLAGGED; }
+    | '\\' DELETED       { $$ = IE_FLAG_DELETED; }
+    | '\\' SEEN          { $$ = IE_FLAG_SEEN; }
+    | '\\' DRAFT         { $$ = IE_FLAG_DRAFT; }
+    | '\\' atom          { $$ = IE_FLAG_EXTENSION; }
+    | atom              { $$ = IE_FLAG_KEYWORD; }
+;
+
+/* "fflag" for "fetch flag"
+fflag: flag
+     | '\\' RECENT       { $$ = IE_FLAG_RECENT; }
+; */
+
+/* "pflag" for "permanent flag" */
+pflag: flag
+     | ASTERISK_FLAG    { $$ = IE_FLAG_ASTERISK; }
+;
+
 /* the "keep" variations of the above (except tag, which is always kept) */
-/*
 keep_atom: { parser->keep = true; } atom { $$ = KEEP_REF; };
+keep_pflag: { parser->keep = true; } pflag { $$ = (ie_flag_t){$pflag, KEEP_REF}; };
+/*
 keep_astr_atom: { parser->keep = true; } astr_atom { $$ = KEEP_REF; };
 keep_qstring: { parser->keep = true; } qstring { $$ = KEEP_REF; };
 keep_string: { parser->keep = true; } string { $$ = KEEP_REF; };
@@ -498,16 +591,8 @@ keep_string: { parser->keep = true; } string { $$ = KEEP_REF; };
 
 /* lists */
 
-atom_list_1: atom
-           | atom_list_1 SP atom
-;
-
 mailbox: astring
        | INBOX
-;
-
-flag_list: %empty
-         | flag_list FLAG
 ;
 
 num_list: %empty

@@ -30,14 +30,6 @@ typedef enum {
     STATUS_CODE_ATOM,
 } status_code_t;
 
-// // each type has ies own struct
-// typedef enum {
-//     // tokens, for passing things up through the grammar
-//     IET_TOKEN = 0,
-//     // expressions, for building in the parser
-//     IET_RESP_STATUS_TYPE,
-// } imap_expr_type_t;
-
 typedef struct {
     status_type_t status;
     status_code_t code;
@@ -45,35 +37,33 @@ typedef struct {
     dstr_t text;
 } ie_resp_status_type_t;
 
+typedef enum {
+    IE_FLAG_ANSWERED,
+    IE_FLAG_FLAGGED,
+    IE_FLAG_DELETED,
+    IE_FLAG_SEEN,
+    IE_FLAG_DRAFT,
+    IE_FLAG_RECENT,
+    IE_FLAG_ASTERISK,
+    IE_FLAG_KEYWORD,
+    IE_FLAG_EXTENSION,
+} ie_flag_type_t;
+
+typedef struct {
+    ie_flag_type_t type;
+    // dstr is only non-null if type is KEYWORD or EXTENSION
+    dstr_t dstr;
+} ie_flag_t;
+
 union imap_expr_t {
     unsigned int num;
     dstr_t dstr;
+    ie_flag_type_t flag_type;
+    ie_flag_t flag;
     ie_resp_status_type_t status_type;
+    // dummy types to trigger %destructor actions
+    void *capa;
+    void *permflag;
 };
-
-// struct imap_expr_t{
-//     imap_expr_type_t type;
-//     imap_expr_value_t val;
-// };
-
-/*
-  - response
-      - status-type
-          - OK
-          - NO
-          - BAD
-          - PREAUTH
-          - BYE
-      - CAPABILITY
-      - LIST
-      - LSUB
-      - STATUS
-      - FLAGS
-      - SEARCH
-      - NUM
-      - EXISTS
-      - FETCH
-  - command
-*/
 
 #endif // IMAP_EXPR_H

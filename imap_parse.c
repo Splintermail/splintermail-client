@@ -14,6 +14,8 @@ DSTR_STATIC(scan_mode_astring_dstr, "SCAN_MODE_ASTRING");
 DSTR_STATIC(scan_mode_qstring_dstr, "SCAN_MODE_QSTRING");
 DSTR_STATIC(scan_mode_num_dstr, "SCAN_MODE_NUM");
 DSTR_STATIC(scan_mode_command_dstr, "SCAN_MODE_COMMAND");
+DSTR_STATIC(scan_mode_atom_dstr, "SCAN_MODE_ATOM");
+DSTR_STATIC(scan_mode_flag_dstr, "SCAN_MODE_FLAG");
 DSTR_STATIC(scan_mode_status_code_check_dstr, "SCAN_MODE_STATUS_CODE_CHECK");
 DSTR_STATIC(scan_mode_status_code_dstr, "SCAN_MODE_STATUS_CODE");
 DSTR_STATIC(scan_mode_status_text_dstr, "SCAN_MODE_STATUS_TEXT");
@@ -27,6 +29,8 @@ dstr_t* scan_mode_to_dstr(scan_mode_t mode){
         case SCAN_MODE_QSTRING: return &scan_mode_qstring_dstr;
         case SCAN_MODE_NUM: return &scan_mode_num_dstr;
         case SCAN_MODE_COMMAND: return &scan_mode_command_dstr;
+        case SCAN_MODE_ATOM: return &scan_mode_atom_dstr;
+        case SCAN_MODE_FLAG: return &scan_mode_flag_dstr;
         case SCAN_MODE_STATUS_CODE_CHECK: return &scan_mode_status_code_check_dstr;
         case SCAN_MODE_STATUS_CODE: return &scan_mode_status_code_dstr;
         case SCAN_MODE_STATUS_TEXT: return &scan_mode_status_text_dstr;
@@ -112,7 +116,7 @@ derr_t keep(imap_parser_t *parser){
 dstr_t keep_ref(imap_parser_t *parser){
     // just pass the token we built to the parser
     dstr_t retval = parser->temp;
-    // never allow a double free
+    // never allow a double free, nor pass the same dstr twice
     parser->temp = (dstr_t){0};
     return retval;
 }
@@ -120,4 +124,6 @@ dstr_t keep_ref(imap_parser_t *parser){
 void keep_cancel(imap_parser_t *parser){
     // free memory (it does nothing if temp.data == NULL)
     dstr_free(&parser->temp);
+    // if keep_ref is called, pass the null dstr_t
+    parser->temp = (dstr_t){0};
 }
