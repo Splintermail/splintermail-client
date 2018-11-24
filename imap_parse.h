@@ -14,8 +14,6 @@ typedef enum {
        In particular, DEFAULT cannot handle astring tokens.
     */
     SCAN_MODE_DEFAULT,
-    // For handing astring-type tokens
-    SCAN_MODE_ASTRING,
     // For handling the body of a quoted string
     SCAN_MODE_QSTRING,
     // For numbers
@@ -32,6 +30,8 @@ typedef enum {
     SCAN_MODE_STATUS_CODE,
     // For the freeform text part of a status-type response
     SCAN_MODE_STATUS_TEXT,
+    SCAN_MODE_MAILBOX,
+    SCAN_MODE_NQCHAR,
 } scan_mode_t;
 
 dstr_t* scan_mode_to_dstr(scan_mode_t mode);
@@ -59,6 +59,11 @@ typedef struct {
     derr_t (*pflag_start)(void* data);
     derr_t (*pflag)(void* data, ie_flag_type_t type, const dstr_t *val);
     void (*pflag_end)(void* data, bool success);
+    // for LIST responses
+    derr_t (*list_start)(void* data);
+    derr_t (*list_flag)(void* data, ie_flag_type_t type, const dstr_t *val);
+    void (*list_end)(void* data, char sep, bool inbox, const dstr_t *mbx,
+                     bool success);
 } imap_parse_hooks_up_t;
 
 typedef struct {

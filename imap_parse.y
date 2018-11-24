@@ -55,6 +55,12 @@
 
     #define MODE(m) parser->scan_mode = SCAN_MODE_ ## m
 
+    // the scanner only returns QCHAR with 1- or 2-char matches
+    #define qchar_to_char \
+        (parser->token->len == 1) \
+            ? parser->token->data[0] \
+            : parser->token->data[1] \
+
 /* KEEP API summary:
 
 (purpose: only allocate memory for tokens you actually need)
@@ -162,6 +168,14 @@ catch:
         dstr_free(&f.dstr);
     #define PFLAG_HOOK_END(success) \
         parser->hooks_up.pflag_end(parser->hook_data, success);
+
+    #define LIST_HOOK_START \
+        DOCATCH( parser->hooks_up.list_start(parser->hook_data) );
+    #define LIST_HOOK_FLAG(f) \
+        DOCATCH( parser->hooks_up.list_flag(parser->hook_data, f.type, &f.dstr) ); \
+        dstr_free(&f.dstr);
+    #define LIST_HOOK_END(sep, inbox, mbx, success) \
+        parser->hooks_up.list_end(parser->hook_data, sep, inbox, mbx, success);
 %}
 
 /* this defines the type of yylval, which is the semantic value of a token */
@@ -249,6 +263,9 @@ catch:
 %token DELETED
 %token SEEN
 %token DRAFT
+%token NOSELECT
+%token MARKED
+%token UNMARKED
 /*     RECENT (listed above) */
 %token ASTERISK_FLAG
 
@@ -271,11 +288,19 @@ catch:
 
 %type <flag_type> flag
 /* %type <flag_type> fflag */
+%type <flag_type> mflag
 %type <flag_type> pflag
+%type <flag> keep_mflag
 %type <flag> keep_pflag
 %destructor { dstr_free(& $$.dstr); } <flag>
 
 %type <num> sc_num
+
+%type <boolean> mailbox
+%type <mailbox> keep_mailbox
+%destructor { dstr_free(& $$.dstr); } <mailbox>
+
+%type <ch> nqchar
 
 %type <status_type> status_type_resp
 %type <status_type> status_type
@@ -284,13 +309,20 @@ catch:
 %type <status_type> status_code_
 %type <status_type> status_extra
 
+/* dummy types, to take advantage of %destructor to call hooks */
+
 %type <prekeep> prekeep
 %type <prekeep> sc_prekeep
 %destructor { KEEP_CANCEL; } <prekeep>
+
 %type <capa> capa_start
 %destructor { CAPA_HOOK_END(false); } <capa>
+
 %type <permflag> pflag_start
 %destructor { PFLAG_HOOK_END(false); } <permflag>
+
+%type <listresp> pre_list_resp
+%destructor { LIST_HOOK_END(0, false, NULL, false); } <listresp>
 
 
 %% /********** Grammar Section **********/
@@ -302,8 +334,8 @@ tagged: tag SP status_type_resp[s]   { ST_HOOK($tag, $s); };
 
 untagged: untag SP status_type_resp[s] { ST_HOOK(NUL_DSTR, $s); }
         | untag SP CAPA SP capa_resp
-        | untag SP LIST SP post_list
-        | untag SP LSUB SP post_list
+        | untag SP LIST SP list_resp
+        | untag SP LSUB SP list_resp
         | untag SP STATUS SP mailbox '(' status_att_list ')'
         | untag SP FLAGS SP '(' /* TODO: flag_list */ ')'
         | untag SP SEARCH SP num_list
@@ -312,12 +344,22 @@ untagged: untag SP status_type_resp[s] { ST_HOOK(NUL_DSTR, $s); }
 
 untag: '*' { MODE(COMMAND); };
 
-post_list: '(' /* TODO: flag_list */ ')' nqchar mailbox
+/*** LIST responses ***/
+list_resp: pre_list_resp '(' list_flags ')' SP
+           { MODE(NQCHAR); } nqchar
+           { MODE(MAILBOX); } SP keep_mailbox[m]
+           { LIST_HOOK_END($nqchar, $m.inbox, & $m.dstr, true); (void)$1; };
+
+pre_list_resp: %empty { LIST_HOOK_START; MODE(FLAG); $$ = NULL; };
+
+list_flags: keep_mflag                  { LIST_HOOK_FLAG($keep_mflag); }
+          | list_flags SP keep_mflag    { LIST_HOOK_FLAG($keep_mflag); }
 ;
 
+
 /* either the literal NIL or a DQUOTE QUOTED-CHAR DQUOTE */
-nqchar: NIL
-      | QCHAR
+nqchar: NIL             { $$ = 0; }
+      | '"' QCHAR '"'   { $$ = qchar_to_char; }
 ;
 
 status_att_list: %empty
@@ -634,7 +676,7 @@ flag: '\\' ANSWERED      { $$ = IE_FLAG_ANSWERED; }
     | '\\' SEEN          { $$ = IE_FLAG_SEEN; }
     | '\\' DRAFT         { $$ = IE_FLAG_DRAFT; }
     | '\\' atom          { $$ = IE_FLAG_EXTENSION; }
-    | atom              { $$ = IE_FLAG_KEYWORD; }
+    | atom               { $$ = IE_FLAG_KEYWORD; }
 ;
 
 /* "fflag" for "fetch flag"
@@ -642,9 +684,21 @@ fflag: flag
      | '\\' RECENT       { $$ = IE_FLAG_RECENT; }
 ; */
 
+/* 'mflag" for "mailbox flag" */
+mflag: flag
+     | NOSELECT         { $$ = IE_FLAG_NOSELECT; }
+     | MARKED           { $$ = IE_FLAG_MARKED; }
+     | UNMARKED         { $$ = IE_FLAG_UNMARKED; }
+;
+
 /* "pflag" for "permanent flag" */
 pflag: flag
      | ASTERISK_FLAG    { $$ = IE_FLAG_ASTERISK; }
+;
+
+mailbox: astring        { $$ = false; /* not an INBOX */ }
+       | INBOX          { $$ = true;  /* is an INBOX */ }
+
 ;
 
 /* dummy grammar to make sure KEEP_CANCEL gets called in error handling */
@@ -653,6 +707,8 @@ prekeep: %empty { KEEP_START; $$ = NULL; };
 /* the "keep" variations of the above (except tag, which is always kept) */
 keep_atom: prekeep atom { $$ = KEEP_REF($prekeep); };
 keep_pflag: prekeep pflag { $$ = (ie_flag_t){$pflag, KEEP_REF($prekeep)}; };
+keep_mflag: prekeep mflag { $$ = (ie_flag_t){$mflag, KEEP_REF($prekeep)}; };
+keep_mailbox: prekeep mailbox { $$ = (ie_mailbox_t){$mailbox, KEEP_REF($prekeep)}; };
 /*
 keep_astr_atom: { parser->keep = true; } astr_atom { $$ = KEEP_REF; };
 keep_qstring: { parser->keep = true; } qstring { $$ = KEEP_REF; };
@@ -660,10 +716,6 @@ keep_string: { parser->keep = true; } string { $$ = KEEP_REF; };
 */
 
 /* lists */
-
-mailbox: astring
-       | INBOX
-;
 
 num_list: %empty
         | num_list NUM

@@ -60,6 +60,8 @@ static void capa_end(void *data, bool success){
     LOG_ERROR("CAPABILITY END (%x)\n", FU(success));
 }
 
+//
+
 static derr_t pflag_start(void *data){
     (void)data;
     LOG_ERROR("PERMANENTFLAG START\n");
@@ -68,13 +70,33 @@ static derr_t pflag_start(void *data){
 
 static derr_t pflag(void *data, ie_flag_type_t type, const dstr_t *val){
     (void)data;
-    LOG_ERROR("PERMANENTFLAG: %x %x\n", FU(type), FD(val));
+    LOG_ERROR("PERMANENTFLAG: %x '%x'\n", FU(type), FD(val));
     return E_OK;
 }
 
 static void pflag_end(void *data, bool success){
     (void)data;
     LOG_ERROR("PERMANENTFLAG END (%x)\n", FU(success));
+}
+
+//
+
+static derr_t list_start(void* data){
+    (void)data;
+    LOG_ERROR("LIST START\n");
+    return E_OK;
+}
+
+static derr_t list_flag(void* data, ie_flag_type_t type, const dstr_t *val){
+    (void)data;
+    LOG_ERROR("LIST_FLAG: %x '%x'\n", FU(type), FD(val));
+    return E_OK;
+}
+static void list_end(void* data, char sep, bool inbox, const dstr_t *mbx,
+                     bool success){
+    (void)data;
+    LOG_ERROR("LIST_FLAG END '%x' '%x'(%x) (%x)\n",
+              FC(sep), FD(mbx), FU(inbox), FU(success));
 }
 
 
@@ -109,6 +131,7 @@ static derr_t do_test_scanner_and_parser(LIST(dstr_t) *inputs){
     imap_parse_hooks_up_t hooks_up = { st_hook,
                                        capa_start, capa, capa_end,
                                        pflag_start, pflag, pflag_end,
+                                       list_start, list_flag, list_end,
                                        };
     imap_parser_t parser;
     PROP_GO( imap_parser_init(&parser, hooks_up, &locals), cu_scanner);

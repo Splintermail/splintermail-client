@@ -44,6 +44,9 @@ typedef enum {
     IE_FLAG_SEEN,
     IE_FLAG_DRAFT,
     IE_FLAG_RECENT,
+    IE_FLAG_NOSELECT,
+    IE_FLAG_MARKED,
+    IE_FLAG_UNMARKED,
     IE_FLAG_ASTERISK,
     IE_FLAG_KEYWORD,
     IE_FLAG_EXTENSION,
@@ -55,15 +58,25 @@ typedef struct {
     dstr_t dstr;
 } ie_flag_t;
 
+typedef struct {
+    bool inbox;
+    // dstr is only non-null if inbox is false
+    dstr_t dstr;
+} ie_mailbox_t;
+
 union imap_expr_t {
+    bool boolean;
+    char ch;
     unsigned int num;
     dstr_t dstr;
     ie_flag_type_t flag_type;
     ie_flag_t flag;
+    ie_mailbox_t mailbox;
     ie_resp_status_type_t status_type;
     // dummy types to trigger %destructor actions
     void *capa;
     void *permflag;
+    void *listresp;
     void *prekeep;
 };
 

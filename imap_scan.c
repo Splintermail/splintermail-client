@@ -84,12 +84,13 @@ derr_t imap_scan(imap_scanner_t *scanner, scan_mode_t mode, bool *more,
             case SCAN_MODE_COMMAND:             goto command_mode;
             case SCAN_MODE_ATOM:                goto atom_mode;
             case SCAN_MODE_FLAG:                goto flag_mode;
-            case SCAN_MODE_ASTRING:             goto astring_mode;
             case SCAN_MODE_QSTRING:             goto qstring_mode;
             case SCAN_MODE_NUM:                 goto num_mode;
             case SCAN_MODE_STATUS_CODE_CHECK:   goto status_code_check_mode;
             case SCAN_MODE_STATUS_CODE:         goto status_code_mode;
             case SCAN_MODE_STATUS_TEXT:         goto status_text_mode;
+            case SCAN_MODE_MAILBOX:             goto mailbox_mode;
+            case SCAN_MODE_NQCHAR:              goto nqchar_mode;
         }
     }
 
@@ -115,6 +116,7 @@ derr_t imap_scan(imap_scanner_t *scanner, scan_mode_t mode, bool *more,
         qstring         = ( [^"\x00\r\n\\] | ("\\"[\\"]) ){1,32};
         text_spec       = [ [\]];
         text_atom       = [^\x00\r\n [\]]+;
+        qchar           = [^"\x00\r\n\\] | "\\\\" | "\\\"";
     */
 
 tag_mode:
@@ -184,19 +186,6 @@ atom_mode:
         eol             { *type = EOL; goto done; }
 
         atom            { *type = ATOM; goto done; }
-    */
-
-astring_mode:
-
-    /*!re2c
-        *               { return E_PARAM; }
-        astr_atom_spec  { *type = *scanner->start; goto done; }
-        literal         { *type = LITERAL; goto done; }
-        eol             { *type = EOL; goto done; }
-
-        'inbox'         { *type = INBOX; goto done; }
-
-        astr_atom       { *type = ASTR_ATOM; goto done; }
     */
 
 qstring_mode:
@@ -273,6 +262,29 @@ status_text_mode:
         eol             { *type = EOL; goto done; }
         text_spec       { *type = *scanner->start; goto done; }
         text_atom       { *type = TEXT; goto done; }
+    */
+
+mailbox_mode:
+
+    /*!re2c
+        *               { return E_PARAM; }
+        astr_atom_spec  { *type = *scanner->start; goto done; }
+        literal         { *type = LITERAL; goto done; }
+        eol             { *type = EOL; goto done; }
+
+        'inbox'         { *type = INBOX; goto done; }
+
+        astr_atom       { *type = ASTR_ATOM; goto done; }
+    */
+
+nqchar_mode:
+
+    /*!re2c
+        *               { return E_PARAM; }
+        "\""            { *type = *scanner->start; goto done; }
+        qchar           { *type = QCHAR; goto done; }
+        'nil'           { *type = NIL; goto done; }
+        eol             { *type = EOL; goto done; }
     */
 
 
