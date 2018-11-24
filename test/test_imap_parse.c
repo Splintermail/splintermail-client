@@ -12,6 +12,12 @@
     - every %destructor gets called (i.e., HOOK_END always gets called)
 
     Wait, why does the scanner in FLAG mode test another character after the \ ?
+
+    is it ok that:
+        inbox
+      is OK but
+        "inbox"
+      is not?
 */
 
 // the struct for the parse hooks' *data memeber
@@ -89,14 +95,15 @@ static derr_t list_start(void* data){
 
 static derr_t list_flag(void* data, ie_flag_type_t type, const dstr_t *val){
     (void)data;
-    LOG_ERROR("LIST_FLAG: %x '%x'\n", FU(type), FD(val));
+    LOG_ERROR("LIST_FLAG: %x '%x'\n", FD(flag_type_to_dstr(type)), FD(val));
     return E_OK;
 }
 static void list_end(void* data, char sep, bool inbox, const dstr_t *mbx,
                      bool success){
     (void)data;
-    LOG_ERROR("LIST_FLAG END '%x' '%x'(%x) (%x)\n",
-              FC(sep), FD(mbx), FU(inbox), FU(success));
+    LOG_ERROR("LIST END '%x' '%x' (%x) (%x)\n",
+              FC(sep), FD(mbx ? mbx : &DSTR_LIT("(nul)")),
+              FU(inbox), FU(success));
 }
 
 
@@ -179,21 +186,28 @@ cu_scanner:
 
 
 static derr_t test_scanner_and_parser(void){
+    // {
+    //     LIST_PRESET(dstr_t, inputs,
+    //         DSTR_LIT("taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaag "
+    //                  "OK [ALERT] alert text\r\n"),
+    //         DSTR_LIT("taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaag "
+    //                  "OK [ALERTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT"
+    //                  "TTTTTTTT] alert text \r\n"),
+    //         DSTR_LIT("* capability 1 2 3 4\r\n"),
+    //         DSTR_LIT("* OK [capability 1 2 3 4] ready\r\n"),
+    //     );
+    //     PROP( do_test_scanner_and_parser(&inputs) );
+    // }
+    // {
+    //     LIST_PRESET(dstr_t, inputs,
+    //         DSTR_LIT("* OK [PERMANENTFLAGS (\\answered \\2 a 1)] hi!\r\n")
+    //     );
+    //     PROP( do_test_scanner_and_parser(&inputs) );
+    // }
     {
         LIST_PRESET(dstr_t, inputs,
-            DSTR_LIT("taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaag "
-                     "OK [ALERT] alert text\r\n"),
-            DSTR_LIT("taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaag "
-                     "OK [ALERTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT"
-                     "TTTTTTTT] alert text \r\n"),
-            DSTR_LIT("* capability 1 2 3 4\r\n"),
-            DSTR_LIT("* OK [capability 1 2 3 4] ready\r\n"),
-        );
-        PROP( do_test_scanner_and_parser(&inputs) );
-    }
-    {
-        LIST_PRESET(dstr_t, inputs,
-            DSTR_LIT("* OK [PERMANENTFLAGS (\\answered \\2 a 1)] hi!\r\n")
+            DSTR_LIT("* LIST (\\ext \\answered) \"/\" inbox\r\n"),
+            DSTR_LIT("* LIST (\\selected) \"/\" \"other\"\r\n"),
         );
         PROP( do_test_scanner_and_parser(&inputs) );
     }

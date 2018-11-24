@@ -52,6 +52,8 @@ typedef enum {
     IE_FLAG_EXTENSION,
 } ie_flag_type_t;
 
+const dstr_t *flag_type_to_dstr(ie_flag_type_t f);
+
 typedef struct {
     ie_flag_type_t type;
     // dstr is only non-null if type is KEYWORD or EXTENSION

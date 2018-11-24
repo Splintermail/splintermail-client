@@ -59,7 +59,7 @@
     #define qchar_to_char \
         (parser->token->len == 1) \
             ? parser->token->data[0] \
-            : parser->token->data[1] \
+            : parser->token->data[1]
 
 /* KEEP API summary:
 
@@ -301,6 +301,7 @@ catch:
 %destructor { dstr_free(& $$.dstr); } <mailbox>
 
 %type <ch> nqchar
+%type <ch> keep_qchar
 
 %type <status_type> status_type_resp
 %type <status_type> status_type
@@ -358,9 +359,11 @@ list_flags: keep_mflag                  { LIST_HOOK_FLAG($keep_mflag); }
 
 
 /* either the literal NIL or a DQUOTE QUOTED-CHAR DQUOTE */
-nqchar: NIL             { $$ = 0; }
-      | '"' QCHAR '"'   { $$ = qchar_to_char; }
+nqchar: NIL                 { $$ = 0; }
+      | '"' keep_qchar '"'  { $$ = $keep_qchar; };
 ;
+
+keep_qchar: QCHAR   { $$ = qchar_to_char; }
 
 status_att_list: %empty
                | status_att_list status_att NUM

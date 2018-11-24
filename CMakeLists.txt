@@ -44,7 +44,8 @@ set(OBJ_TGTS api_client
              loop
              tls_engine
              linked_list
-             imap_parse)
+             imap_parse
+             imap_expression)
 
 set(EXE_TGTS srvcli
              splintermail
@@ -230,6 +231,7 @@ obj_depend_obj(ixs uv_interface common)
 obj_depend_obj(loop uv_interface tls_engine common)
 obj_depend_obj(tls_engine ixs common)
 obj_depend_obj(linked_list uv_interface common)
+obj_depend_obj(imap_parse_tab imap_expression common)
 obj_depend_obj(imap_parse imap_parse_tab common)
 add_dependencies(imap_parse_o bison_header)
 obj_depend_obj(imap_scan common)
