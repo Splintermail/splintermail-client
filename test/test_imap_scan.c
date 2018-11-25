@@ -66,7 +66,7 @@ static derr_t test_imap_scan(void){
 
     // "tag O" -> TAG
     error = imap_scan(&scanner, SCAN_MODE_TAG, &more, &type);
-    EXPECT(E_OK, false, TAG);
+    EXPECT(E_OK, false, RAW);
 
     // " O" -> ' '
     error = imap_scan(&scanner, SCAN_MODE_DEFAULT, &more, &type);

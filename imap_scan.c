@@ -91,6 +91,7 @@ derr_t imap_scan(imap_scanner_t *scanner, scan_mode_t mode, bool *more,
             case SCAN_MODE_STATUS_TEXT:         goto status_text_mode;
             case SCAN_MODE_MAILBOX:             goto mailbox_mode;
             case SCAN_MODE_NQCHAR:              goto nqchar_mode;
+            case SCAN_MODE_ST_ATTR:             goto st_attr_mode;
         }
     }
 
@@ -124,7 +125,7 @@ tag_mode:
     /*!re2c
         *               { return E_PARAM; }
         eol             { *type = EOL; goto done; }
-        tag             { *type = TAG; goto done; }
+        tag             { *type = RAW; goto done; }
         [ *]            { *type = *scanner->start; goto done; }
     */
 
@@ -149,7 +150,7 @@ default_mode:
         'uid'           { *type = UID; goto done; }
         'structure'     { *type = STRUCTURE; goto done; }
 
-        atom            { *type = ATOM; goto done; }
+        atom            { *type = RAW; goto done; }
     */
 
 command_mode:
@@ -185,7 +186,7 @@ atom_mode:
         atom_spec       { *type = *scanner->start; goto done; }
         eol             { *type = EOL; goto done; }
 
-        atom            { *type = ATOM; goto done; }
+        atom            { *type = RAW; goto done; }
     */
 
 qstring_mode:
@@ -194,7 +195,7 @@ qstring_mode:
         *               { return E_PARAM; }
         eol             { *type = EOL; goto done; }
         "\""            { *type = '"'; goto done; }
-        qstring         { *type = QSTRING; goto done; }
+        qstring         { *type = RAW; goto done; }
     */
 
 num_mode:
@@ -221,7 +222,7 @@ flag_mode:
         'recent'        { *type = RECENT; goto done; }
         "\\*"          { *type = ASTERISK_FLAG; goto done; }
 
-        atom            { *type = ATOM; goto done; }
+        atom            { *type = RAW; goto done; }
     */
 
 status_code_check_mode:
@@ -252,7 +253,7 @@ status_code_mode:
         'uidvalidity'   { *type = UIDVLD; goto done; }
         'unseen'        { *type = UNSEEN; goto done; }
 
-        atom            { *type = ATOM; goto done; }
+        atom            { *type = RAW; goto done; }
     */
 
 status_text_mode:
@@ -261,7 +262,7 @@ status_text_mode:
         *               { return E_PARAM; }
         eol             { *type = EOL; goto done; }
         text_spec       { *type = *scanner->start; goto done; }
-        text_atom       { *type = TEXT; goto done; }
+        text_atom       { *type = RAW; goto done; }
     */
 
 mailbox_mode:
@@ -274,7 +275,7 @@ mailbox_mode:
 
         'inbox'         { *type = INBOX; goto done; }
 
-        astr_atom       { *type = ASTR_ATOM; goto done; }
+        astr_atom       { *type = RAW; goto done; }
     */
 
 nqchar_mode:
@@ -285,6 +286,22 @@ nqchar_mode:
         qchar           { *type = QCHAR; goto done; }
         'nil'           { *type = NIL; goto done; }
         eol             { *type = EOL; goto done; }
+    */
+
+st_attr_mode:
+
+    /*!re2c
+        *               { return E_PARAM; }
+        [() ]           { *type = *scanner->start; goto done; }
+        eol             { *type = EOL; goto done; }
+
+        num             { *type = NUM; goto done; }
+
+        'messages'      { *type = MESSAGES; goto done; }
+        'recent'        { *type = RECENT; goto done; }
+        'uidnext'       { *type = UIDNEXT; goto done; }
+        'uidvalidity'   { *type = UIDVLD; goto done; }
+        'unseen'        { *type = UNSEEN; goto done; }
     */
 
 

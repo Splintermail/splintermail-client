@@ -20,6 +20,7 @@ DSTR_STATIC(scan_mode_status_code_dstr, "SCAN_MODE_STATUS_CODE");
 DSTR_STATIC(scan_mode_status_text_dstr, "SCAN_MODE_STATUS_TEXT");
 DSTR_STATIC(scan_mode_mailbox_dstr, "SCAN_MODE_MAILBOX");
 DSTR_STATIC(scan_mode_nqchar_dstr, "SCAN_MODE_NQCHAR");
+DSTR_STATIC(scan_mode_st_attr_dstr, "SCAN_MODE_ST_ATTR");
 DSTR_STATIC(scan_mode_unk_dstr, "unknown scan mode");
 
 dstr_t* scan_mode_to_dstr(scan_mode_t mode){
@@ -36,6 +37,7 @@ dstr_t* scan_mode_to_dstr(scan_mode_t mode){
         case SCAN_MODE_STATUS_TEXT: return &scan_mode_status_text_dstr;
         case SCAN_MODE_MAILBOX: return &scan_mode_mailbox_dstr;
         case SCAN_MODE_NQCHAR: return &scan_mode_nqchar_dstr;
+        case SCAN_MODE_ST_ATTR: return &scan_mode_st_attr_dstr;
         default: return &scan_mode_unk_dstr;
     }
 }
@@ -99,10 +101,7 @@ derr_t keep(imap_parser_t *parser, keep_type_t type){
     LIST_STATIC(dstr_t, find, DSTR_LIT("\\\\"), DSTR_LIT("\\\""));
     LIST_STATIC(dstr_t, repl, DSTR_LIT("\\"),   DSTR_LIT("\""));
     switch(type){
-        case KEEP_ATOM:
-        case KEEP_ASTR_ATOM:
-        case KEEP_TAG:
-        case KEEP_TEXT:
+        case KEEP_RAW:
             // no escapes or fancy shit necessary, just append
             PROP( dstr_append(&parser->temp, parser->token) );
             break;
@@ -110,8 +109,6 @@ derr_t keep(imap_parser_t *parser, keep_type_t type){
             // unescape \" and \\ sequences
             PROP( dstr_recode(parser->token, &parser->temp, &find, &repl, true) );
             break;
-        case KEEP_LITERAL:
-            ORIG(E_INTERNAL, "KEEP should not be called for a LITERAL");
     }
     return E_OK;
 }

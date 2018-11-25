@@ -18,6 +18,15 @@
       is OK but
         "inbox"
       is not?
+
+    if the parser doesn't make it to STATUS_HOOK_START, does the destructor
+    for pre_status_resp get called?  What should I do about that?
+
+    num, zone: no error handling for dstr_tou conversion
+
+    newlines are after the HOOKs, which is not actually OK
+
+    st_attr_list_0 is removable
 */
 
 // the struct for the parse hooks' *data memeber
@@ -55,7 +64,7 @@ static derr_t capa_start(void *data){
     return E_OK;
 }
 
-static derr_t capa(void *data, const dstr_t * capability){
+static derr_t capa(void *data, const dstr_t *capability){
     (void)data;
     LOG_ERROR("CAPABILITY: %x\n", FD(capability));
     return E_OK;
@@ -63,7 +72,7 @@ static derr_t capa(void *data, const dstr_t * capability){
 
 static void capa_end(void *data, bool success){
     (void)data;
-    LOG_ERROR("CAPABILITY END (%x)\n", FU(success));
+    LOG_ERROR("CAPABILITY END (%x)\n", FS(success ? "success" : "fail"));
 }
 
 //
@@ -82,29 +91,172 @@ static derr_t pflag(void *data, ie_flag_type_t type, const dstr_t *val){
 
 static void pflag_end(void *data, bool success){
     (void)data;
-    LOG_ERROR("PERMANENTFLAG END (%x)\n", FU(success));
+    LOG_ERROR("PERMANENTFLAG END (%x)\n", FS(success ? "success" : "fail"));
 }
 
 //
 
-static derr_t list_start(void* data){
+static derr_t list_start(void *data){
     (void)data;
     LOG_ERROR("LIST START\n");
     return E_OK;
 }
 
-static derr_t list_flag(void* data, ie_flag_type_t type, const dstr_t *val){
+static derr_t list_flag(void *data, ie_flag_type_t type, const dstr_t *val){
     (void)data;
     LOG_ERROR("LIST_FLAG: %x '%x'\n", FD(flag_type_to_dstr(type)), FD(val));
     return E_OK;
 }
-static void list_end(void* data, char sep, bool inbox, const dstr_t *mbx,
+static void list_end(void *data, char sep, bool inbox, const dstr_t *mbx,
                      bool success){
     (void)data;
     LOG_ERROR("LIST END '%x' '%x' (%x) (%x)\n",
               FC(sep), FD(mbx ? mbx : &DSTR_LIT("(nul)")),
-              FU(inbox), FU(success));
+              FU(inbox), FS(success ? "success" : "fail"));
 }
+
+//
+
+static derr_t lsub_start(void *data){
+    (void)data;
+    LOG_ERROR("LSUB START\n");
+    return E_OK;
+}
+
+static derr_t lsub_flag(void *data, ie_flag_type_t type, const dstr_t *val){
+    (void)data;
+    LOG_ERROR("LSUB_FLAG: %x '%x'\n", FD(flag_type_to_dstr(type)), FD(val));
+    return E_OK;
+}
+static void lsub_end(void *data, char sep, bool inbox, const dstr_t *mbx,
+                     bool success){
+    (void)data;
+    LOG_ERROR("LSUB END '%x' '%x' (%x) (%x)\n",
+              FC(sep), FD(mbx),
+              FU(inbox), FS(success ? "success" : "fail"));
+}
+
+//
+
+static derr_t status_start(void *data, bool inbox, const dstr_t *mbx){
+    (void)data;
+    LOG_ERROR("STATUS START, mailbox: '%x' (%x)\n", FD(mbx), FU(inbox));
+    return E_OK;
+}
+
+static derr_t status_attr(void *data, ie_st_attr_t attr, unsigned int num){
+    (void)data;
+    LOG_ERROR("STATUS attr: %x %x\n", FD(st_attr_to_dstr(attr)), FU(num));
+    return E_OK;
+}
+static void status_end(void *data, bool success){
+    (void)data;
+    LOG_ERROR("FLAGS END (%x)\n", FS(success ? "success" : "fail"));
+}
+
+//
+
+static derr_t flags_start(void *data){
+    (void)data;
+    LOG_ERROR("FLAGS START\n");
+    return E_OK;
+}
+
+static derr_t flags_flag(void *data, ie_flag_type_t type, const dstr_t *val){
+    (void)data;
+    LOG_ERROR("FLAGS_FLAG: %x '%x'\n", FD(flag_type_to_dstr(type)), FD(val));
+    return E_OK;
+}
+static void flags_end(bool success){
+    LOG_ERROR("FLAGS END (%x)\n", FS(success ? "success" : "fail"));
+}
+
+//
+
+static void exists_hook(void *data, unsigned int num){
+    (void)data;
+    LOG_ERROR("EXISTS %x\n", FU(num));
+}
+
+//
+
+static void recent_hook(void *data, unsigned int num){
+    (void)data;
+    LOG_ERROR("RECENT %x\n", FU(num));
+}
+
+//
+
+static void expunge_hook(void *data, unsigned int num){
+    (void)data;
+    LOG_ERROR("EXPUNGE %x\n", FU(num));
+}
+
+//
+
+static derr_t fetch_start(void *data){
+    (void)data;
+    LOG_ERROR("FETCH START\n");
+    return E_OK;
+}
+
+static derr_t f_flags_start(void *data){
+    (void)data;
+    LOG_ERROR("FETCH FLAGS START\n");
+    return E_OK;
+}
+
+static derr_t f_flags_flag(void *data, ie_flag_type_t type, const dstr_t *val){
+    (void)data;
+    LOG_ERROR("FETCH FLAGS FLAG: %x '%x'\n",
+              FD(flag_type_to_dstr(type)), FD(val));
+    return E_OK;
+}
+
+static void f_flags_end(bool success){
+    (void)data;
+    LOG_ERROR("FETCH FLAGS END (%x)\n", FS(success ? "success" : "fail"));
+}
+
+static derr_t f_rfc822_start(void *data){
+    (void)data;
+    LOG_ERROR("FETCH RFC822 START\n");
+    return E_OK;
+}
+
+static derr_t f_rfc822_literal(void *data, const dstr_t *literal){
+    (void)data;
+    LOG_ERROR("FETCH LITERAL (%x)\n", FD(literal));
+    return E_OK;
+}
+
+static derr_t f_rfc822_qstr(void *data, const dstr_t *qstr){
+    (void)data;
+    LOG_ERROR("FETCH QSTR '%x'\n", FD(qstr));
+    return E_OK;
+}
+
+static void f_rfc822_end(bool success){
+    (void)data;
+    LOG_ERROR("FETCH RFC822 END (%x)\n", FS(success ? "success" : "fail"));
+}
+
+static void f_uid(void *data, unsigned int num){
+    (void)data;
+    LOG_ERROR("FETCH UID %x\n", FU(num));
+}
+
+void f_intdate(void *data, imap_time_t imap_time){
+    (void)data;
+    LOG_ERROR("FETCH INTERNALDATE %x-%x-%x\n",
+              FI(imap_time.year), FI(imap_time.month), FI(imap_time.day));
+}
+
+static void fetch_end(bool success){
+    (void)data;
+    LOG_ERROR("FETCH END (%x)\n", FS(success ? "success" : "fail"));
+}
+
 
 
 // TODO: fix this test
@@ -135,11 +287,23 @@ static derr_t do_test_scanner_and_parser(LIST(dstr_t) *inputs){
 
 
     // prepare to init the parser
-    imap_parse_hooks_up_t hooks_up = { st_hook,
-                                       capa_start, capa, capa_end,
-                                       pflag_start, pflag, pflag_end,
-                                       list_start, list_flag, list_end,
-                                       };
+    imap_parse_hooks_up_t hooks_up = {
+        st_hook,
+        capa_start, capa, capa_end,
+        pflag_start, pflag, pflag_end,
+        list_start, list_flag, list_end,
+        lsub_start, lsub_flag, lsub_end,
+        status_start, status_attr, status_end,
+        flags_start, flags_flag, flags_end,
+        exists_hook,
+        recent_hook,
+        expunge_hook,
+        fetch_start,
+        f_flags_start, f_flags_flag, f_flags_end,
+        f_rfc822_start, f_rfc822_literal, f_rfc822_qstr, f_rfc822_end,
+        f_uid,
+        fetch_end,
+    };
     imap_parser_t parser;
     PROP_GO( imap_parser_init(&parser, hooks_up, &locals), cu_scanner);
 
@@ -160,6 +324,9 @@ static derr_t do_test_scanner_and_parser(LIST(dstr_t) *inputs){
             LOG_ERROR("---------------------\n"
                       "mode is %x\n",
                       FD(scan_mode_to_dstr(scan_mode)));
+
+            // dstr_t scannable = get_scannable(&scanner);
+            // LOG_ERROR("scannable is: '%x'\n", FD(&scannable));
 
             PROP_GO( imap_scan(&scanner, scan_mode, &more, &token_type),
                      cu_parser);
@@ -186,28 +353,66 @@ cu_scanner:
 
 
 static derr_t test_scanner_and_parser(void){
-    // {
-    //     LIST_PRESET(dstr_t, inputs,
-    //         DSTR_LIT("taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaag "
-    //                  "OK [ALERT] alert text\r\n"),
-    //         DSTR_LIT("taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaag "
-    //                  "OK [ALERTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT"
-    //                  "TTTTTTTT] alert text \r\n"),
-    //         DSTR_LIT("* capability 1 2 3 4\r\n"),
-    //         DSTR_LIT("* OK [capability 1 2 3 4] ready\r\n"),
-    //     );
-    //     PROP( do_test_scanner_and_parser(&inputs) );
-    // }
-    // {
-    //     LIST_PRESET(dstr_t, inputs,
-    //         DSTR_LIT("* OK [PERMANENTFLAGS (\\answered \\2 a 1)] hi!\r\n")
-    //     );
-    //     PROP( do_test_scanner_and_parser(&inputs) );
-    // }
+    {
+        LIST_PRESET(dstr_t, inputs,
+            DSTR_LIT("taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaag "
+                     "OK [ALERT] alert text\r\n"),
+            DSTR_LIT("taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaag "
+                     "OK [ALERTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT"
+                     "TTTTTTTT] alert text \r\n"),
+            DSTR_LIT("* capability 1 2 3 4\r\n"),
+            DSTR_LIT("* OK [capability 1 2 3 4] ready\r\n"),
+        );
+        PROP( do_test_scanner_and_parser(&inputs) );
+    }
+    {
+        LIST_PRESET(dstr_t, inputs,
+            DSTR_LIT("* OK [PERMANENTFLAGS (\\answered \\2 a 1)] hi!\r\n")
+        );
+        PROP( do_test_scanner_and_parser(&inputs) );
+    }
     {
         LIST_PRESET(dstr_t, inputs,
             DSTR_LIT("* LIST (\\ext \\answered) \"/\" inbox\r\n"),
             DSTR_LIT("* LIST (\\selected) \"/\" \"other\"\r\n"),
+        );
+        PROP( do_test_scanner_and_parser(&inputs) );
+    }
+    {
+        LIST_PRESET(dstr_t, inputs,
+            DSTR_LIT("* LSUB (\\ext \\answered) \"/\" inbox\r\n"),
+            DSTR_LIT("* LSUB (\\selected) \"/\" \"other\"\r\n"),
+        );
+        PROP( do_test_scanner_and_parser(&inputs) );
+    }
+    {
+        LIST_PRESET(dstr_t, inputs,
+            DSTR_LIT("* STATUS inbox (UNSEEN 2 RECENT 4)\r\n"),
+            DSTR_LIT("* STATUS not_inbox (UNSEEN 2 RECENT 4)\r\n"),
+        );
+        PROP( do_test_scanner_and_parser(&inputs) );
+    }
+    {
+        LIST_PRESET(dstr_t, inputs,
+            DSTR_LIT("* FLAGS (\\answered \\seen \\extra)\r\n"),
+        );
+        PROP( do_test_scanner_and_parser(&inputs) );
+    }
+    {
+        LIST_PRESET(dstr_t, inputs,
+            DSTR_LIT("* 45 EXISTS\r\n"),
+        );
+        PROP( do_test_scanner_and_parser(&inputs) );
+    }
+    {
+        LIST_PRESET(dstr_t, inputs,
+            DSTR_LIT("* 81 RECENT\r\n"),
+        );
+        PROP( do_test_scanner_and_parser(&inputs) );
+    }
+    {
+        LIST_PRESET(dstr_t, inputs,
+            DSTR_LIT("* 41 expunge\r\n"),
         );
         PROP( do_test_scanner_and_parser(&inputs) );
     }

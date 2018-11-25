@@ -66,20 +66,38 @@ typedef struct {
     dstr_t dstr;
 } ie_mailbox_t;
 
+typedef enum {
+    IE_ST_ATTR_MESSAGES,
+    IE_ST_ATTR_RECENT,
+    IE_ST_ATTR_UIDNEXT,
+    IE_ST_ATTR_UIDVLD,
+    IE_ST_ATTR_UNSEEN,
+} ie_st_attr_t;
+
+const dstr_t *st_attr_to_dstr(ie_st_attr_t attr);
+
 union imap_expr_t {
     bool boolean;
     char ch;
     unsigned int num;
+    int sign;
     dstr_t dstr;
     ie_flag_type_t flag_type;
     ie_flag_t flag;
     ie_mailbox_t mailbox;
+    ie_st_attr_t st_attr;
     ie_resp_status_type_t status_type;
     // dummy types to trigger %destructor actions
+    void *prekeep;
     void *capa;
     void *permflag;
     void *listresp;
-    void *prekeep;
+    void *lsubresp;
+    void *statusresp;
+    void *flagsresp;
+    void *fetchresp;
+    void *f_flagsresp;
+    void *f_rfc822resp;
 };
 
 #endif // IMAP_EXPR_H

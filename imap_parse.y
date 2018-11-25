@@ -175,7 +175,79 @@ catch:
         DOCATCH( parser->hooks_up.list_flag(parser->hook_data, f.type, &f.dstr) ); \
         dstr_free(&f.dstr);
     #define LIST_HOOK_END(sep, inbox, mbx, success) \
-        parser->hooks_up.list_end(parser->hook_data, sep, inbox, mbx, success);
+        parser->hooks_up.list_end(parser->hook_data, sep, inbox, &mbx, success); \
+        dstr_free(&mbx);
+
+    #define LSUB_HOOK_START \
+        DOCATCH( parser->hooks_up.lsub_start(parser->hook_data) );
+    #define LSUB_HOOK_FLAG(f) \
+        DOCATCH( parser->hooks_up.lsub_flag(parser->hook_data, f.type, &f.dstr) ); \
+        dstr_free(&f.dstr);
+    #define LSUB_HOOK_END(sep, inbox, mbx, success) \
+        parser->hooks_up.lsub_end(parser->hook_data, sep, inbox, &mbx, success); \
+        dstr_free(&mbx);
+
+    #define FLAGS_HOOK_START \
+        DOCATCH( parser->hooks_up.flags_start(parser->hook_data) );
+    #define FLAGS_HOOK_FLAG(f) \
+        DOCATCH( parser->hooks_up.flags_flag(parser->hook_data, f.type, &f.dstr) ); \
+        dstr_free(&f.dstr);
+    #define FLAGS_HOOK_END(success) \
+        parser->hooks_up.flags_end(success);
+
+    // the *dstr_t from status_start hook is valid until just after status_end
+    #define STATUS_HOOK_START(mbx) \
+        parser->status_mbx = mbx; \
+        DOCATCH( parser->hooks_up.status_start(parser->hook_data, \
+                                               parser->status_mbx.inbox, \
+                                               &parser->status_mbx.dstr) );
+    #define STATUS_HOOK(s, n) \
+        DOCATCH( parser->hooks_up.status_attr(parser->hook_data, s, n) );
+    #define STATUS_HOOK_END(success) \
+        parser->hooks_up.status_end(parser->hook_data, success); \
+        dstr_free(&parser->status_mbx.dstr);
+
+    #define EXISTS_HOOK(num) \
+        parser->hooks_up.exists(parser->hook_data, num);
+
+    #define RECENT_HOOK(num) \
+        parser->hooks_up.recent(parser->hook_data, num);
+
+    #define EXPUNGE_HOOK(num) \
+        parser->hooks_up.expunge(parser->hook_data, num);
+
+    // fetch-related hooks
+    #define FETCH_HOOK_START \
+        DOCATCH( parser->hooks_up.fetch_start(parser->hook_data) );
+
+    #define F_FLAGS_HOOK_START \
+        DOCATCH( parser->hooks_up.f_flags_start(parser->hook_data) );
+    #define F_FLAGS_HOOK_FLAG(f) \
+        DOCATCH( parser->hooks_up.f_flags_flag(parser->hook_data, \
+                                               f.type, &f.dstr) ); \
+    #define F_FLAGS_HOOK_END(success) \
+        parser->hooks_up.f_flags_end(parser->hook_data, success);
+
+    #define F_RFC822_HOOK_START \
+        DOCATCH( parser->hooks_up.f_rfc822_start(parser->hook_data) );
+    #define F_RFC822_HOOK_LITERAL \
+        DOCATCH( parser->hooks_up.f_rfc822_literal(parser->hook_data, \
+                                                   &parser->token) );
+    #define F_RFC822_HOOK_QSTR \
+        DOCATCH( parser->hooks_up.f_rfc822_literal(parser->hook_data, \
+                                                   &parser->token) );
+    #define F_RFC822_HOOK_END(success) \
+        parser->hooks_up.f_rfc822_end(parser->hook_data, success);
+
+    #define F_UID_HOOK(num) \
+        parser->hooks_up.f_uid(parser->hook_data, num);
+
+    #define F_INTDATE_HOOK(imap_time) \
+        parser->hooks_up.f_intdate(parser->hook_data, imap_time);
+
+    #define FETCH_HOOK_END(success) \
+        parser->hooks_up.fetch_end(parser->hook_data, success);
+
 %}
 
 /* this defines the type of yylval, which is the semantic value of a token */
@@ -190,17 +262,13 @@ catch:
 %expect 0
 
 /* some generic types */
-%token ATOM
-%token ASTR_ATOM
+%token RAW
 %token NIL
-%token <num> NUM
+%token DIGIT
+%token NUM
 %token QCHAR
-%token QSTRING
 %token LITERAL
 %token LITERAL_END
-
-/* INITIAL state */
-%token TAG
 
 /* POST_TAG state */
 %token OK
@@ -214,8 +282,6 @@ catch:
 %token STATUS
 %token FLAGS
 %token SEARCH
-
-/* POST_NUM state */
 %token EXISTS
 %token RECENT
 %token EXPUNGE
@@ -235,7 +301,6 @@ catch:
 %token UIDNEXT
 %token UIDVLD
 %token UNSEEN
-/*     ATOM (listed above) */
 
 /* status attributes */
 %token MESSAGES
@@ -269,9 +334,22 @@ catch:
 /*     RECENT (listed above) */
 %token ASTERISK_FLAG
 
+/* INTERNALDATE */
+%token JAN
+%token FEB
+%token MAR
+%token APR
+%token MAY
+%token JUN
+%token JUL
+%token AUG
+%token SEP
+%token OCT
+%token NOV
+%token DEC
+
 /* miscellaneous */
 %token INBOX
-%token TEXT
 %token EOL
 
 /* non-terminals with semantic values */
@@ -287,14 +365,24 @@ catch:
 %destructor { dstr_free(& $$); } <dstr>
 
 %type <flag_type> flag
-/* %type <flag_type> fflag */
+%type <flag_type> fflag
 %type <flag_type> mflag
 %type <flag_type> pflag
+%type <flag> keep_flag
+%type <flag> keep_fflag
 %type <flag> keep_mflag
 %type <flag> keep_pflag
 %destructor { dstr_free(& $$.dstr); } <flag>
 
+%type <num> num
+%type <num> digit
+%type <num> twodigit
+%type <num> fourdigit
 %type <num> sc_num
+%type <num> date_month
+%type <num> date_day_fixed
+
+%type <sign> sign
 
 %type <boolean> mailbox
 %type <mailbox> keep_mailbox
@@ -302,6 +390,8 @@ catch:
 
 %type <ch> nqchar
 %type <ch> keep_qchar
+
+%type <st_attr> st_attr
 
 %type <status_type> status_type_resp
 %type <status_type> status_type
@@ -323,8 +413,25 @@ catch:
 %destructor { PFLAG_HOOK_END(false); } <permflag>
 
 %type <listresp> pre_list_resp
-%destructor { LIST_HOOK_END(0, false, NULL, false); } <listresp>
+%destructor { LIST_HOOK_END(0, false, NUL_DSTR, false); } <listresp>
 
+%type <lsubresp> pre_lsub_resp
+%destructor { LSUB_HOOK_END(0, false, NUL_DSTR, false); } <lsubresp>
+
+%type <flagsresp> pre_flags_resp
+%destructor { FLAGS_HOOK_END(false); } <flagsresp>
+
+%type <statusresp> pre_status_resp
+%destructor { STATUS_HOOK_END(false); } <statusresp>
+
+%type <fetchresp> pre_fetch_resp
+%destructor { FETCH_HOOK_END(false); } <fetchresp>
+
+%type <f_flagsresp> pre_f_flags_resp
+%destructor { F_FLAGS_HOOK_END(false); } <f_flagsresp>
+
+%type <f_rfc822resp> pre_f_rfc822_resp
+%destructor { F_RFC822_HOOK_END(false); } <f_rfc822resp>
 
 %% /********** Grammar Section **********/
 
@@ -336,85 +443,17 @@ tagged: tag SP status_type_resp[s]   { ST_HOOK($tag, $s); };
 untagged: untag SP status_type_resp[s] { ST_HOOK(NUL_DSTR, $s); }
         | untag SP CAPA SP capa_resp
         | untag SP LIST SP list_resp
-        | untag SP LSUB SP list_resp
-        | untag SP STATUS SP mailbox '(' status_att_list ')'
-        | untag SP FLAGS SP '(' /* TODO: flag_list */ ')'
-        | untag SP SEARCH SP num_list
-        | untag SP NUM SP post_num
+        | untag SP LSUB SP lsub_resp
+        | untag SP STATUS SP status_resp
+        | untag SP FLAGS SP flags_resp
+        | untag SP SEARCH num_list_0 /* ignored; we will never issue a SEARCH */
+        | untag SP exists_resp
+        | untag SP recent_resp
+        | untag SP expunge_resp
+        | untag SP fetch_resp
 ;
 
 untag: '*' { MODE(COMMAND); };
-
-/*** LIST responses ***/
-list_resp: pre_list_resp '(' list_flags ')' SP
-           { MODE(NQCHAR); } nqchar
-           { MODE(MAILBOX); } SP keep_mailbox[m]
-           { LIST_HOOK_END($nqchar, $m.inbox, & $m.dstr, true); (void)$1; };
-
-pre_list_resp: %empty { LIST_HOOK_START; MODE(FLAG); $$ = NULL; };
-
-list_flags: keep_mflag                  { LIST_HOOK_FLAG($keep_mflag); }
-          | list_flags SP keep_mflag    { LIST_HOOK_FLAG($keep_mflag); }
-;
-
-
-/* either the literal NIL or a DQUOTE QUOTED-CHAR DQUOTE */
-nqchar: NIL                 { $$ = 0; }
-      | '"' keep_qchar '"'  { $$ = $keep_qchar; };
-;
-
-keep_qchar: QCHAR   { $$ = qchar_to_char; }
-
-status_att_list: %empty
-               | status_att_list status_att NUM
-;
-
-status_att: MESSAGES
-          | RECENT
-          | UIDNEXT
-          | UIDVLD
-          | UNSEEN
-;
-
-post_num: EXISTS { printf("exists!\n"); }
-        | RECENT { printf("recent!\n"); }
-        | EXPUNGE { printf("expunge!\n"); }
-        | FETCH '(' msg_att_list ')' { printf("fetch!\n"); }
-;
-
-msg_att_list: %empty
-            | msg_att_list msg_att
-;
-
-msg_att: FLAGS '(' /* TODO: flag_list */ ')'
-       | ENVELOPE '(' envelope ')'
-       | INTERNALDATE QSTRING
-       | RFC822 nstring /* read this */
-       | RFC822_TEXT nstring
-       | RFC822_HEADER nstring
-       | RFC822_SIZE NUM
-       | BODY_STRUCTURE /* PUKE! '(' body ')' */
-       | BODY /* PUKE! post_body */
-       | UID NUM
-;
-
-/*        date    subj    from       sender     reply-to */
-envelope: nstring nstring naddr_list naddr_list nstring
-/*        to         cc         bcc        in-reply-to message-id */
-          naddr_list naddr_list naddr_list naddr_list  nstring
-;
-
-naddr_list: NIL
-          | '(' addr_list ')'
-;
-
-/*           addr-name addr-adl addr-mailbox addr-host */
-address: '(' nstring   nstring  nstring      nstring   ')'
-;
-
-addr_list: %empty
-         | addr_list address
-;
 
 /* post_body: '(' body ')'
 /*          | '[' body_section ']' post_body_section
@@ -490,7 +529,7 @@ status_extra:
 yes_st_code: YES_STATUS_CODE    { MODE(STATUS_CODE); };
 
 /* NO_STATUS_CODE means we got the start of the text; keep it. */
-no_st_code: NO_STATUS_CODE      { MODE(STATUS_TEXT); KEEP_INIT; KEEP(TEXT); };
+no_st_code: NO_STATUS_CODE      { MODE(STATUS_TEXT); KEEP_INIT; KEEP(RAW); };
 
 status_code: status_code_ ']' SP    { MODE(STATUS_TEXT); $$ = $1; };
 
@@ -515,18 +554,22 @@ sc_unseen: UNSEEN              { MODE(NUM); };
 
 sc_atom: atom                  { MODE(STATUS_TEXT); };
 
-sc_num: NUM          { MODE(STATUS_CODE); $$ = $1; };
+sc_num: num          { MODE(STATUS_CODE); $$ = $1; };
 
 /* there are several conditions under which we keep the text at the end */
 sc_prekeep: %empty      { if(parser->keep_st_text){ KEEP_START; } $$ = NULL; };
 
 st_txt_inner_0: %empty
-              | st_txt_inner_0 st_txt_inner_char
+              | SP st_txt_inner_1
+;
+
+st_txt_inner_1: st_txt_inner_char
+              | st_txt_inner_1 st_txt_inner_char
 ;
 
 st_txt_inner_char: ' '
                  | '['
-                 | TEXT
+                 | RAW
 ;
 
 st_txt_0: %empty                    { $$ = NUL_DSTR; }
@@ -535,8 +578,8 @@ st_txt_0: %empty                    { $$ = NUL_DSTR; }
 
 st_txt_1: sc_prekeep st_txt_1_      { $$ = KEEP_REF($sc_prekeep); };
 
-st_txt_1_: st_txt_char              { KEEP_INIT; KEEP(TEXT); }
-         | st_txt_1_ st_txt_char     { KEEP(TEXT); }
+st_txt_1_: st_txt_char              { KEEP_INIT; KEEP(RAW); }
+         | st_txt_1_ st_txt_char    { KEEP(RAW); }
 ;
 
 st_txt_char: st_txt_inner_char
@@ -564,8 +607,194 @@ pflag_start: %empty { PFLAG_HOOK_START; MODE(FLAG); $$ = NULL; };
 pflag_list_0: %empty
              | pflag_list_1
 ;
+
 pflag_list_1: keep_pflag                     { PFLAG_HOOK($keep_pflag); }
              | pflag_list_1 SP keep_pflag    { PFLAG_HOOK($keep_pflag); }
+;
+
+/*** LIST responses ***/
+list_resp: pre_list_resp '(' list_flags ')' SP
+           { MODE(NQCHAR); } nqchar
+           { MODE(MAILBOX); } SP keep_mailbox[m]
+           { LIST_HOOK_END($nqchar, $m.inbox, $m.dstr, true); (void)$1; };
+
+pre_list_resp: %empty { LIST_HOOK_START; MODE(FLAG); $$ = NULL; };
+
+list_flags: keep_mflag                  { LIST_HOOK_FLAG($keep_mflag); }
+          | list_flags SP keep_mflag    { LIST_HOOK_FLAG($keep_mflag); }
+;
+
+nqchar: NIL                 { $$ = 0; }
+      | '"' keep_qchar '"'  { $$ = $keep_qchar; };
+;
+
+keep_qchar: QCHAR   { $$ = qchar_to_char; }
+
+/*** LSUB responses ***/
+lsub_resp: pre_lsub_resp '(' lsub_flags ')' SP
+           { MODE(NQCHAR); } nqchar
+           { MODE(MAILBOX); } SP keep_mailbox[m]
+           { LSUB_HOOK_END($nqchar, $m.inbox, $m.dstr, true); (void)$1; };
+
+pre_lsub_resp: %empty { LSUB_HOOK_START; MODE(FLAG); $$ = NULL; };
+
+lsub_flags: keep_mflag                  { LSUB_HOOK_FLAG($keep_mflag); }
+          | lsub_flags SP keep_mflag    { LSUB_HOOK_FLAG($keep_mflag); }
+;
+
+/*** STATUS responses ***/
+status_resp: pre_status_resp SP '(' st_attr_list_0 ')'
+             { STATUS_HOOK_END(true); (void)$1; };
+
+pre_status_resp: { MODE(MAILBOX); } keep_mailbox[m]
+                 { STATUS_HOOK_START($m); MODE(ST_ATTR); $$ = NULL; };
+
+st_attr_list_0: %empty
+              | st_attr_list_1
+;
+
+st_attr_list_1: st_attr[s] SP num[n]                   { STATUS_HOOK($s, $n); }
+              | st_attr_list_1 SP st_attr[s] SP num[n] { STATUS_HOOK($s, $n); }
+;
+
+st_attr: MESSAGES    { $$ = IE_ST_ATTR_MESSAGES; }
+       | RECENT      { $$ = IE_ST_ATTR_RECENT; }
+       | UIDNEXT     { $$ = IE_ST_ATTR_UIDNEXT; }
+       | UIDVLD      { $$ = IE_ST_ATTR_UIDVLD; }
+       | UNSEEN      { $$ = IE_ST_ATTR_UNSEEN; }
+;
+
+/*** FLAGS responses ***/
+flags_resp: pre_flags_resp '(' flags_flags ')'
+            { FLAGS_HOOK_END(true); (void)$1; };
+
+pre_flags_resp: %empty { FLAGS_HOOK_START; MODE(FLAG); $$ = NULL; };
+
+flags_flags: keep_flag                  { FLAGS_HOOK_FLAG($keep_flag); }
+           | flags_flags SP keep_flag   { FLAGS_HOOK_FLAG($keep_flag); }
+;
+
+/*** EXISTS responses ***/
+exists_resp: num SP EXISTS { EXISTS_HOOK($num); };
+
+/*** RECENT responses ***/
+recent_resp: num SP RECENT { RECENT_HOOK($num); };
+
+/*** EXPUNGE responses ***/
+expunge_resp: num SP EXPUNGE { EXPUNGE_HOOK($num); };
+
+/*** FETCH responses ***/
+
+fetch_resp: pre_fetch_resp SP '(' msg_attr_list_0 ')'
+            { FETCH_HOOK_END(true); (void)$1; }
+;
+
+pre_fetch_resp: num SP FETCH
+                { FETCH_HOOK_START($num); $$ = NULL; MODE(MSG_ATTR); };
+
+msg_attr_list_0: %empty
+               | msg_attr_list_1
+;
+
+msg_attr_list_1: msg_attr
+               | msg_attr_list_1 SP msg_attr
+;
+
+/* most of these get ignored completely, we only really need:
+     - FLAGS,
+     - UID,
+     - INTERNALDATE,
+     - the fully body text
+   Anything else is going to be encrypted anyway. */
+msg_attr: f_flags_resp
+        | f_uid_resp
+        | f_intdate_resp
+        | f_rfc822_resp
+        | ENVELOPE '(' envelope ')'
+        | RFC822_TEXT nstring
+        | RFC822_HEADER nstring
+        | RFC822_SIZE NUM
+        | BODY_STRUCTURE /* PUKE! '(' body ')' */
+        | BODY /* PUKE! post_body */
+;
+
+/*** FETCH FLAGS ***/
+f_flags_resp: pre_f_flags_resp '(' f_flags ')'
+              { F_FLAGS_HOOK_END(true); (void)$1; };
+
+pre_f_flags_resp: %empty { F_FLAGS_HOOK_START; MODE(FLAG); $$ = NULL; };
+
+f_flags: keep_fflag                  { F_FLAGS_HOOK_FLAG($keep_fflag); }
+       | flags_flags SP keep_fflag   { F_FLAGS_HOOK_FLAG($keep_fflag); }
+;
+
+/*** FETCH RFC822 ***/
+f_rfc822_resp: pre_f_rfc822_resp SP rfc822_nstring
+               { F_RFC822_HOOK_END; (void)$1; }
+
+pre_f_rfc822_resp: RFC822 { F_RFC822_HOOK_START; $$ = NULL; MODE(NSTRING); }
+
+rfc822_nstring: NIL
+              | LITERAL { F_RFC822_HOOK_LITERAL; }
+              | '"' rfc822_qstr_body '"'
+;
+
+rfc822_qstr_body: RAW                   { F_RFC822_HOOK_QSTR; }
+                | rfc822_qstr_body RAW  { F_RFC822_HOOK_QSTR; }
+;
+
+/*** FETCH UID ***/
+f_uid_resp: UID SP { MODE(NUM); } num { F_UID_HOOK($num); };
+
+/*** FETCH INTERNALDATE ***/
+f_intdate_resp: INTERNALDATE SP { MODE(internaldate); }
+                '"' date_day_fixed '-' date_month '-' fourdigit[y] SP
+                twodigit[h] ':' twodigit[m] ':' twodigit[s] SP
+                sign twodigit[zh] twodigit[zm] '"'
+                { F_INTDATE_HOOK((imap_time_t){.year   = $y,
+                                               .month  = $date_month,
+                                               .day    = $date_day_fixed,
+                                               .hour   = $h,
+                                               .min    = $m,
+                                               .sec    = $s,
+                                               .z_sign = $sign,
+                                               .z_hour = $zh,
+                                               .z_min  = $zm }); };
+
+date_day_fixed: ' ' digit       { $$ = $digit }
+              | digit digit     { $$ = 10*$1 + $2 }
+;
+
+date_month: JAN { $$ = 0; };
+          | FEB { $$ = 1; };
+          | MAR { $$ = 2; };
+          | APR { $$ = 3; };
+          | MAY { $$ = 4; };
+          | JUN { $$ = 5; };
+          | JUL { $$ = 6; };
+          | AUG { $$ = 7; };
+          | SEP { $$ = 8; };
+          | OCT { $$ = 9; };
+          | NOV { $$ = 10; };
+          | DEC { $$ = 11; };
+
+
+/*        date    subj    from       sender     reply-to */
+envelope: nstring nstring naddr_list naddr_list nstring
+/*        to         cc         bcc        in-reply-to message-id */
+          naddr_list naddr_list naddr_list naddr_list  nstring
+;
+
+naddr_list: NIL
+          | '(' addr_list ')'
+;
+
+/*           addr-name addr-adl addr-mailbox addr-host */
+address: '(' nstring   nstring  nstring      nstring   ')'
+;
+
+addr_list: %empty
+         | addr_list address
 ;
 
 
@@ -606,11 +835,11 @@ keyword: OK
    into the scanner at any given moment. */
 atom: atom_body
 
-atom_body: ATOM                 { KEEP_INIT; KEEP(ATOM); }
-         | atom_body atom_like  { KEEP(ATOM); }
+atom_body: RAW                  { KEEP_INIT; KEEP(RAW); }
+         | atom_body atom_like  { KEEP(RAW); }
 ;
 
-atom_like: ATOM
+atom_like: RAW
          | NUM
          | keyword
 ;
@@ -622,7 +851,7 @@ string: qstring
 qstring: '"' { KEEP_INIT; } qstring_body '"';
 
 qstring_body: %empty
-            | qstring_body QSTRING      { KEEP(QSTRING); }
+            | qstring_body atom_like    { KEEP(QSTRING); }
 ;
 
 /* note that LITERAL_END is passed by the application after it finishes reading
@@ -633,24 +862,11 @@ literal_start: LITERAL              { /* TODO: handle literals */ };
 
 /* like with atoms, an number or keword are technically astr_atoms but that
    introduces grammatical ambiguities */
-astring: astr_atom
+astring: atom
        | string
 ;
 
-astr_atom: ASTR_ATOM                  { KEEP_INIT; KEEP(ASTR_ATOM); }
-         | astr_atom astr_atom_like   { KEEP(ASTR_ATOM); }
-;
-
-astr_atom_like: ASTR_ATOM
-              | NUM
-              | keyword
-;
-
-tag: prekeep tag_body      { $$ = KEEP_REF($prekeep); MODE(COMMAND); };
-
-tag_body: TAG           { KEEP_INIT; KEEP(TAG); }
-        | tag_body TAG  { KEEP(TAG); }
-;
+tag: prekeep atom      { $$ = KEEP_REF($prekeep); MODE(COMMAND); };
 
 nstring: NIL
        | string
@@ -682,10 +898,10 @@ flag: '\\' ANSWERED      { $$ = IE_FLAG_ANSWERED; }
     | atom               { $$ = IE_FLAG_KEYWORD; }
 ;
 
-/* "fflag" for "fetch flag"
+/* "fflag" for "fetch flag" */
 fflag: flag
      | '\\' RECENT       { $$ = IE_FLAG_RECENT; }
-; */
+;
 
 /* 'mflag" for "mailbox flag" */
 mflag: flag
@@ -704,11 +920,45 @@ mailbox: astring        { $$ = false; /* not an INBOX */ }
 
 ;
 
+sign: '+' { $$ = 1; }
+    | '-' { $$ = 2; }
+;
+
+digit: DIGIT { switch(parser->token.data[0]){
+                   case '1': $$ = 1; break;
+                   case '2': $$ = 2; break;
+                   case '3': $$ = 3; break;
+                   case '4': $$ = 4; break;
+                   case '5': $$ = 5; break;
+                   case '6': $$ = 6; break;
+                   case '7': $$ = 7; break;
+                   case '8': $$ = 8; break;
+                   case '9': $$ = 9; break;
+                   default: $$ = 0;
+               }
+             };
+
+twodigit: digit digit { $$ = 10*$1 + $2 };
+
+fourdigit: digit digit digit digit { $$ = 1000*$1 + 100*$2 + 10*$3 + $4 };
+
+num: NUM { dstr_tou(parser->token, & $$, 10); };
+
+num_list_0: %empty
+          | num_list_1
+;
+
+num_list_1: NUM
+          | num_list_1 SP NUM
+;
+
 /* dummy grammar to make sure KEEP_CANCEL gets called in error handling */
 prekeep: %empty { KEEP_START; $$ = NULL; };
 
 /* the "keep" variations of the above (except tag, which is always kept) */
 keep_atom: prekeep atom { $$ = KEEP_REF($prekeep); };
+keep_flag: prekeep flag { $$ = (ie_flag_t){$flag, KEEP_REF($prekeep)}; };
+keep_fflag: prekeep fflag { $$ = (ie_flag_t){$fflag, KEEP_REF($prekeep)}; };
 keep_pflag: prekeep pflag { $$ = (ie_flag_t){$pflag, KEEP_REF($prekeep)}; };
 keep_mflag: prekeep mflag { $$ = (ie_flag_t){$mflag, KEEP_REF($prekeep)}; };
 keep_mailbox: prekeep mailbox { $$ = (ie_mailbox_t){$mailbox, KEEP_REF($prekeep)}; };
@@ -717,11 +967,5 @@ keep_astr_atom: { parser->keep = true; } astr_atom { $$ = KEEP_REF; };
 keep_qstring: { parser->keep = true; } qstring { $$ = KEEP_REF; };
 keep_string: { parser->keep = true; } string { $$ = KEEP_REF; };
 */
-
-/* lists */
-
-num_list: %empty
-        | num_list NUM
-;
 
 SP: ' ';

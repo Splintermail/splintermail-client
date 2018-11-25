@@ -32,38 +32,78 @@ typedef enum {
     SCAN_MODE_STATUS_TEXT,
     SCAN_MODE_MAILBOX,
     SCAN_MODE_NQCHAR,
+    SCAN_MODE_ST_ATTR,
 } scan_mode_t;
 
 dstr_t* scan_mode_to_dstr(scan_mode_t mode);
 
 typedef enum {
-    KEEP_ATOM,
-    KEEP_LITERAL,
+    KEEP_RAW,
     KEEP_QSTRING,
-    KEEP_ASTR_ATOM,
-    KEEP_TAG,
-    KEEP_TEXT,
 } keep_type_t;
+
+typedef struct {
+    int year;
+    int month;
+    int day;
+    int hour;
+    int min;
+    int sec;
+    int z_sign; /* -1 or + 1 */
+    int z_hour;
+    int z_min;
+} imap_time_t;
 
 // a list of hooks that are called when communicating with the mail server
 typedef struct {
     // for status_type messages
-    void (*status_type)(void* data, const dstr_t *tag, status_type_t status,
+    void (*status_type)(void *data, const dstr_t *tag, status_type_t status,
                         status_code_t code, unsigned int code_extra,
                         const dstr_t *text);
     // for CAPABILITY responses (both normal responses and as status codes)
-    derr_t (*capa_start)(void* data);
-    derr_t (*capa)(void* data, const dstr_t *capability);
-    void (*capa_end)(void* data, bool success);
+    derr_t (*capa_start)(void *data);
+    derr_t (*capa)(void *data, const dstr_t *capability);
+    void (*capa_end)(void *data, bool success);
     // for PERMANENTFLAG responses
-    derr_t (*pflag_start)(void* data);
-    derr_t (*pflag)(void* data, ie_flag_type_t type, const dstr_t *val);
-    void (*pflag_end)(void* data, bool success);
+    derr_t (*pflag_start)(void *data);
+    derr_t (*pflag)(void *data, ie_flag_type_t type, const dstr_t *val);
+    void (*pflag_end)(void *data, bool success);
     // for LIST responses
-    derr_t (*list_start)(void* data);
-    derr_t (*list_flag)(void* data, ie_flag_type_t type, const dstr_t *val);
-    void (*list_end)(void* data, char sep, bool inbox, const dstr_t *mbx,
+    derr_t (*list_start)(void *data);
+    derr_t (*list_flag)(void *data, ie_flag_type_t type, const dstr_t *val);
+    void (*list_end)(void *data, char sep, bool inbox, const dstr_t *mbx,
                      bool success);
+    // for LSUB responses
+    derr_t (*lsub_start)(void *data);
+    derr_t (*lsub_flag)(void *data, ie_flag_type_t type, const dstr_t *val);
+    void (*lsub_end)(void *data, char sep, bool inbox, const dstr_t *mbx,
+                     bool success);
+    // for STATUS responses
+    derr_t (*status_start)(void *data, bool inbox, const dstr_t *mbx);
+    derr_t (*status_attr)(void *data, ie_st_attr_t attr, unsigned int num);
+    void (*status_end)(void *data, bool success);
+    // for FLAGS responses
+    derr_t (*flags_start)(void *data);
+    derr_t (*flags_flag)(void *data, ie_flag_type_t type, const dstr_t *val);
+    void (*flags_end)(bool success);
+    // for EXISTS responses
+    void (*exists)(void *data, unsigned int num);
+    // for RECENT responses
+    void (*recent)(void *data, unsigned int num);
+    // for EXPUNGE responses
+    void (*expunge)(void *data, unsigned int num);
+    // for FETCH responses
+    derr_t (*fetch_start)(void *data);
+    derr_t (*f_flags_start)(void *data);
+    derr_t (*f_flags_flag)(void *data, ie_flag_type_t type, const dstr_t *val);
+    void (*f_flags_end)(bool success);
+    derr_t (*f_rfc822_start)(void *data);
+    derr_t (*f_rfc822_literal)(void *data, const dstr_t *literal);
+    derr_t (*f_rfc822_qstr)(void *data, const dstr_t *qstr);
+    void (*f_rfc822_end)(bool success);
+    void (*f_uid)(void *data, unsigned int num);
+    void (*f_intdate)(void *data, imap_time_t imap_time);
+    void (*fetch_end)(bool success);
 } imap_parse_hooks_up_t;
 
 typedef struct {
@@ -92,6 +132,8 @@ typedef struct {
     dstr_t temp;
     // should we keep the text at the end of the status-type response?
     bool keep_st_text;
+    // store the mailbox argument from the STATUS response
+    ie_mailbox_t status_mbx;
 } imap_parser_t ;
 
 void yyerror(imap_parser_t *parser, char const *s);
