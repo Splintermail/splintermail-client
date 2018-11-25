@@ -22,11 +22,15 @@
     if the parser doesn't make it to STATUS_HOOK_START, does the destructor
     for pre_status_resp get called?  What should I do about that?
 
-    num, zone: no error handling for dstr_tou conversion
+    num: no error handling for dstr_tou conversion
 
     newlines are after the HOOKs, which is not actually OK
 
     st_attr_list_0 is removable
+
+    parsing incomplete for FETCH "BODY[]"-like responses
+
+    where should I use YYABORT instead of YYACCEPT?
 */
 
 // the struct for the parse hooks' *data memeber
@@ -167,7 +171,8 @@ static derr_t flags_flag(void *data, ie_flag_type_t type, const dstr_t *val){
     LOG_ERROR("FLAGS_FLAG: %x '%x'\n", FD(flag_type_to_dstr(type)), FD(val));
     return E_OK;
 }
-static void flags_end(bool success){
+static void flags_end(void *data, bool success){
+    (void)data;
     LOG_ERROR("FLAGS END (%x)\n", FS(success ? "success" : "fail"));
 }
 
@@ -194,9 +199,9 @@ static void expunge_hook(void *data, unsigned int num){
 
 //
 
-static derr_t fetch_start(void *data){
+static derr_t fetch_start(void *data, unsigned int num){
     (void)data;
-    LOG_ERROR("FETCH START\n");
+    LOG_ERROR("FETCH START (%x)\n", FU(num));
     return E_OK;
 }
 
@@ -213,7 +218,7 @@ static derr_t f_flags_flag(void *data, ie_flag_type_t type, const dstr_t *val){
     return E_OK;
 }
 
-static void f_flags_end(bool success){
+static void f_flags_end(void *data, bool success){
     (void)data;
     LOG_ERROR("FETCH FLAGS END (%x)\n", FS(success ? "success" : "fail"));
 }
@@ -236,7 +241,7 @@ static derr_t f_rfc822_qstr(void *data, const dstr_t *qstr){
     return E_OK;
 }
 
-static void f_rfc822_end(bool success){
+static void f_rfc822_end(void *data, bool success){
     (void)data;
     LOG_ERROR("FETCH RFC822 END (%x)\n", FS(success ? "success" : "fail"));
 }
@@ -246,13 +251,13 @@ static void f_uid(void *data, unsigned int num){
     LOG_ERROR("FETCH UID %x\n", FU(num));
 }
 
-void f_intdate(void *data, imap_time_t imap_time){
+static void f_intdate(void *data, imap_time_t imap_time){
     (void)data;
     LOG_ERROR("FETCH INTERNALDATE %x-%x-%x\n",
               FI(imap_time.year), FI(imap_time.month), FI(imap_time.day));
 }
 
-static void fetch_end(bool success){
+static void fetch_end(void *data, bool success){
     (void)data;
     LOG_ERROR("FETCH END (%x)\n", FS(success ? "success" : "fail"));
 }
@@ -302,6 +307,7 @@ static derr_t do_test_scanner_and_parser(LIST(dstr_t) *inputs){
         f_flags_start, f_flags_flag, f_flags_end,
         f_rfc822_start, f_rfc822_literal, f_rfc822_qstr, f_rfc822_end,
         f_uid,
+        f_intdate,
         fetch_end,
     };
     imap_parser_t parser;
@@ -413,6 +419,17 @@ static derr_t test_scanner_and_parser(void){
     {
         LIST_PRESET(dstr_t, inputs,
             DSTR_LIT("* 41 expunge\r\n"),
+        );
+        PROP( do_test_scanner_and_parser(&inputs) );
+    }
+    {
+        LIST_PRESET(dstr_t, inputs,
+            DSTR_LIT("* 15 FETCH (UID 1234)\r\n"),
+            DSTR_LIT("* 15 FETCH (INTERNALDATE \"11-jan-1999 00:11:22 +5000\")\r\n"),
+            DSTR_LIT("* 15 FETCH (INTERNALDATE \" 2-jan-1999 00:11:22 +5000\")\r\n"),
+            DSTR_LIT("* 15 FETCH (UID 1 FLAGS (\\seen \\ext))\r\n"),
+            DSTR_LIT("* 15 FETCH (RFC822 NIL\r\n"),
+            DSTR_LIT("* 15 FETCH (RFC822 \"asdf asdf asdf\"\r\n"),
         );
         PROP( do_test_scanner_and_parser(&inputs) );
     }

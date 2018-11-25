@@ -69,33 +69,33 @@ static derr_t test_imap_scan(void){
     EXPECT(E_OK, false, RAW);
 
     // " O" -> ' '
-    error = imap_scan(&scanner, SCAN_MODE_DEFAULT, &more, &type);
+    error = imap_scan(&scanner, SCAN_MODE_COMMAND, &more, &type);
     EXPECT(E_OK, false, ' ');
 
     // "O" -> MORE
-    error = imap_scan(&scanner, SCAN_MODE_DEFAULT, &more, &type);
+    error = imap_scan(&scanner, SCAN_MODE_COMMAND, &more, &type);
     EXPECT(E_OK, true, 0);
 
     PROP_GO( FMT(&scanner.bytes, "K"), cu_scanner);
 
     // "OK" -> MORE
-    error = imap_scan(&scanner, SCAN_MODE_DEFAULT, &more, &type);
+    error = imap_scan(&scanner, SCAN_MODE_COMMAND, &more, &type);
     EXPECT(E_OK, true, 0);
 
     PROP_GO( FMT(&scanner.bytes, "\r"), cu_scanner);
 
     // "OK\r" -> OK
-    error = imap_scan(&scanner, SCAN_MODE_DEFAULT, &more, &type);
+    error = imap_scan(&scanner, SCAN_MODE_COMMAND, &more, &type);
     EXPECT(E_OK, false, OK);
 
     // "\r" -> MORE
-    error = imap_scan(&scanner, SCAN_MODE_DEFAULT, &more, &type);
+    error = imap_scan(&scanner, SCAN_MODE_COMMAND, &more, &type);
     EXPECT(E_OK, true, 0);
 
     PROP_GO( FMT(&scanner.bytes, "\n"), cu_scanner);
 
     // "\r\n" -> EOL
-    error = imap_scan(&scanner, SCAN_MODE_DEFAULT, &more, &type);
+    error = imap_scan(&scanner, SCAN_MODE_COMMAND, &more, &type);
     EXPECT(E_OK, false, EOL);
 
 cu_scanner:

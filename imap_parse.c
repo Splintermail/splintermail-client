@@ -8,36 +8,40 @@ void yyerror(imap_parser_t *parser, char const *s){
     printf("ERROR: %s\n", s);
 }
 
-DSTR_STATIC(scan_mode_tag_dstr, "SCAN_MODE_TAG");
-DSTR_STATIC(scan_mode_default_dstr, "SCAN_MODE_DEFAULT");
-DSTR_STATIC(scan_mode_qstring_dstr, "SCAN_MODE_QSTRING");
-DSTR_STATIC(scan_mode_num_dstr, "SCAN_MODE_NUM");
-DSTR_STATIC(scan_mode_command_dstr, "SCAN_MODE_COMMAND");
-DSTR_STATIC(scan_mode_atom_dstr, "SCAN_MODE_ATOM");
-DSTR_STATIC(scan_mode_flag_dstr, "SCAN_MODE_FLAG");
-DSTR_STATIC(scan_mode_status_code_check_dstr, "SCAN_MODE_STATUS_CODE_CHECK");
-DSTR_STATIC(scan_mode_status_code_dstr, "SCAN_MODE_STATUS_CODE");
-DSTR_STATIC(scan_mode_status_text_dstr, "SCAN_MODE_STATUS_TEXT");
-DSTR_STATIC(scan_mode_mailbox_dstr, "SCAN_MODE_MAILBOX");
-DSTR_STATIC(scan_mode_nqchar_dstr, "SCAN_MODE_NQCHAR");
-DSTR_STATIC(scan_mode_st_attr_dstr, "SCAN_MODE_ST_ATTR");
+DSTR_STATIC(scan_mode_TAG_dstr, "SCAN_MODE_TAG");
+DSTR_STATIC(scan_mode_QSTRING_dstr, "SCAN_MODE_QSTRING");
+DSTR_STATIC(scan_mode_NUM_dstr, "SCAN_MODE_NUM");
+DSTR_STATIC(scan_mode_COMMAND_dstr, "SCAN_MODE_COMMAND");
+DSTR_STATIC(scan_mode_ATOM_dstr, "SCAN_MODE_ATOM");
+DSTR_STATIC(scan_mode_FLAG_dstr, "SCAN_MODE_FLAG");
+DSTR_STATIC(scan_mode_STATUS_CODE_CHECK_dstr, "SCAN_MODE_STATUS_CODE_CHECK");
+DSTR_STATIC(scan_mode_STATUS_CODE_dstr, "SCAN_MODE_STATUS_CODE");
+DSTR_STATIC(scan_mode_STATUS_TEXT_dstr, "SCAN_MODE_STATUS_TEXT");
+DSTR_STATIC(scan_mode_MAILBOX_dstr, "SCAN_MODE_MAILBOX");
+DSTR_STATIC(scan_mode_NQCHAR_dstr, "SCAN_MODE_NQCHAR");
+DSTR_STATIC(scan_mode_NSTRING_dstr, "SCAN_MODE_NSTRING");
+DSTR_STATIC(scan_mode_ST_ATTR_dstr, "SCAN_MODE_ST_ATTR");
+DSTR_STATIC(scan_mode_MSG_ATTR_dstr, "SCAN_MODE_MSG_ATTR");
+DSTR_STATIC(scan_mode_INTDATE_dstr, "SCAN_MODE_INTDATE");
 DSTR_STATIC(scan_mode_unk_dstr, "unknown scan mode");
 
 dstr_t* scan_mode_to_dstr(scan_mode_t mode){
     switch(mode){
-        case SCAN_MODE_TAG: return &scan_mode_tag_dstr;
-        case SCAN_MODE_DEFAULT: return &scan_mode_default_dstr;
-        case SCAN_MODE_QSTRING: return &scan_mode_qstring_dstr;
-        case SCAN_MODE_NUM: return &scan_mode_num_dstr;
-        case SCAN_MODE_COMMAND: return &scan_mode_command_dstr;
-        case SCAN_MODE_ATOM: return &scan_mode_atom_dstr;
-        case SCAN_MODE_FLAG: return &scan_mode_flag_dstr;
-        case SCAN_MODE_STATUS_CODE_CHECK: return &scan_mode_status_code_check_dstr;
-        case SCAN_MODE_STATUS_CODE: return &scan_mode_status_code_dstr;
-        case SCAN_MODE_STATUS_TEXT: return &scan_mode_status_text_dstr;
-        case SCAN_MODE_MAILBOX: return &scan_mode_mailbox_dstr;
-        case SCAN_MODE_NQCHAR: return &scan_mode_nqchar_dstr;
-        case SCAN_MODE_ST_ATTR: return &scan_mode_st_attr_dstr;
+        case SCAN_MODE_TAG: return &scan_mode_TAG_dstr;
+        case SCAN_MODE_QSTRING: return &scan_mode_QSTRING_dstr;
+        case SCAN_MODE_NUM: return &scan_mode_NUM_dstr;
+        case SCAN_MODE_COMMAND: return &scan_mode_COMMAND_dstr;
+        case SCAN_MODE_ATOM: return &scan_mode_ATOM_dstr;
+        case SCAN_MODE_FLAG: return &scan_mode_FLAG_dstr;
+        case SCAN_MODE_STATUS_CODE_CHECK: return &scan_mode_STATUS_CODE_CHECK_dstr;
+        case SCAN_MODE_STATUS_CODE: return &scan_mode_STATUS_CODE_dstr;
+        case SCAN_MODE_STATUS_TEXT: return &scan_mode_STATUS_TEXT_dstr;
+        case SCAN_MODE_MAILBOX: return &scan_mode_MAILBOX_dstr;
+        case SCAN_MODE_NQCHAR: return &scan_mode_NQCHAR_dstr;
+        case SCAN_MODE_NSTRING: return &scan_mode_NSTRING_dstr;
+        case SCAN_MODE_ST_ATTR: return &scan_mode_ST_ATTR_dstr;
+        case SCAN_MODE_MSG_ATTR: return &scan_mode_MSG_ATTR_dstr;
+        case SCAN_MODE_INTDATE: return &scan_mode_INTDATE_dstr;
         default: return &scan_mode_unk_dstr;
     }
 }

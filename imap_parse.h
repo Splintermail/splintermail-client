@@ -8,12 +8,6 @@
 typedef enum {
     // TAG grabs either "*" or a tag
     SCAN_MODE_TAG,
-    /* DEFAULT knows SP, flag, atom, dquote, string literal, flags, number
-       or any non-quoted terminal from the IMAP formal syntax, or any of the
-       following characters (atom-specials): ( ) ] { SP CRLF * % \ "
-       In particular, DEFAULT cannot handle astring tokens.
-    */
-    SCAN_MODE_DEFAULT,
     // For handling the body of a quoted string
     SCAN_MODE_QSTRING,
     // For numbers
@@ -33,6 +27,10 @@ typedef enum {
     SCAN_MODE_MAILBOX,
     SCAN_MODE_NQCHAR,
     SCAN_MODE_ST_ATTR,
+    // FETCH-response-related modes
+    SCAN_MODE_NSTRING,
+    SCAN_MODE_MSG_ATTR,
+    SCAN_MODE_INTDATE,
 } scan_mode_t;
 
 dstr_t* scan_mode_to_dstr(scan_mode_t mode);
@@ -85,7 +83,7 @@ typedef struct {
     // for FLAGS responses
     derr_t (*flags_start)(void *data);
     derr_t (*flags_flag)(void *data, ie_flag_type_t type, const dstr_t *val);
-    void (*flags_end)(bool success);
+    void (*flags_end)(void *data, bool success);
     // for EXISTS responses
     void (*exists)(void *data, unsigned int num);
     // for RECENT responses
@@ -93,17 +91,17 @@ typedef struct {
     // for EXPUNGE responses
     void (*expunge)(void *data, unsigned int num);
     // for FETCH responses
-    derr_t (*fetch_start)(void *data);
+    derr_t (*fetch_start)(void *data, unsigned int num);
     derr_t (*f_flags_start)(void *data);
     derr_t (*f_flags_flag)(void *data, ie_flag_type_t type, const dstr_t *val);
-    void (*f_flags_end)(bool success);
+    void (*f_flags_end)(void *data, bool success);
     derr_t (*f_rfc822_start)(void *data);
     derr_t (*f_rfc822_literal)(void *data, const dstr_t *literal);
     derr_t (*f_rfc822_qstr)(void *data, const dstr_t *qstr);
-    void (*f_rfc822_end)(bool success);
+    void (*f_rfc822_end)(void *data, bool success);
     void (*f_uid)(void *data, unsigned int num);
     void (*f_intdate)(void *data, imap_time_t imap_time);
-    void (*fetch_end)(bool success);
+    void (*fetch_end)(void *data, bool success);
 } imap_parse_hooks_up_t;
 
 typedef struct {

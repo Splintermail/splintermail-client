@@ -193,7 +193,7 @@ catch:
         DOCATCH( parser->hooks_up.flags_flag(parser->hook_data, f.type, &f.dstr) ); \
         dstr_free(&f.dstr);
     #define FLAGS_HOOK_END(success) \
-        parser->hooks_up.flags_end(success);
+        parser->hooks_up.flags_end(parser->hook_data, success);
 
     // the *dstr_t from status_start hook is valid until just after status_end
     #define STATUS_HOOK_START(mbx) \
@@ -217,14 +217,15 @@ catch:
         parser->hooks_up.expunge(parser->hook_data, num);
 
     // fetch-related hooks
-    #define FETCH_HOOK_START \
-        DOCATCH( parser->hooks_up.fetch_start(parser->hook_data) );
+    #define FETCH_HOOK_START(num) \
+        DOCATCH( parser->hooks_up.fetch_start(parser->hook_data, num) );
 
     #define F_FLAGS_HOOK_START \
         DOCATCH( parser->hooks_up.f_flags_start(parser->hook_data) );
     #define F_FLAGS_HOOK_FLAG(f) \
         DOCATCH( parser->hooks_up.f_flags_flag(parser->hook_data, \
                                                f.type, &f.dstr) ); \
+        dstr_free(&f.dstr);
     #define F_FLAGS_HOOK_END(success) \
         parser->hooks_up.f_flags_end(parser->hook_data, success);
 
@@ -232,10 +233,10 @@ catch:
         DOCATCH( parser->hooks_up.f_rfc822_start(parser->hook_data) );
     #define F_RFC822_HOOK_LITERAL \
         DOCATCH( parser->hooks_up.f_rfc822_literal(parser->hook_data, \
-                                                   &parser->token) );
+                                                   parser->token) );
     #define F_RFC822_HOOK_QSTR \
         DOCATCH( parser->hooks_up.f_rfc822_literal(parser->hook_data, \
-                                                   &parser->token) );
+                                                   parser->token) );
     #define F_RFC822_HOOK_END(success) \
         parser->hooks_up.f_rfc822_end(parser->hook_data, success);
 
@@ -312,7 +313,7 @@ catch:
 /* FETCH state */
 /*     FLAGS (listed above */
 %token ENVELOPE
-%token INTERNALDATE
+%token INTDATE
 %token RFC822
 %token RFC822_TEXT
 %token RFC822_HEADER
@@ -509,6 +510,14 @@ untag: '*' { MODE(COMMAND); };
 
 /*** status-type handling.  Thanks the the shitty grammar, IMAP4rev1 ***/
 
+/* a valid status-type response with status code input could be two things:
+        * OK [ALERT] asdf
+             ^^^^^^^ ^^^^---> status code, followed by general text
+        * OK [ALERT] asdf
+             ^^^^^^^^^^^^---> no status code, followed by general text which
+                              just happens to look like general text...
+*/
+
 status_type_resp: status_type[s] status_extra[e] { $$ = STTOK_FUSE($s, $e); };
 
 status_type: status_type_ SP { MODE(STATUS_CODE_CHECK); }
@@ -528,7 +537,7 @@ status_extra:
 /* YES_STATUS_CODE means we got a '[' */
 yes_st_code: YES_STATUS_CODE    { MODE(STATUS_CODE); };
 
-/* NO_STATUS_CODE means we got the start of the text; keep it. */
+/* NO_STATUS_CODE means we got the start of the text */
 no_st_code: NO_STATUS_CODE      { MODE(STATUS_TEXT); KEEP_INIT; KEEP(RAW); };
 
 status_code: status_code_ ']' SP    { MODE(STATUS_TEXT); $$ = $1; };
@@ -706,33 +715,35 @@ msg_attr_list_1: msg_attr
      - INTERNALDATE,
      - the fully body text
    Anything else is going to be encrypted anyway. */
-msg_attr: f_flags_resp
-        | f_uid_resp
-        | f_intdate_resp
-        | f_rfc822_resp
-        | ENVELOPE '(' envelope ')'
-        | RFC822_TEXT nstring
-        | RFC822_HEADER nstring
-        | RFC822_SIZE NUM
-        | BODY_STRUCTURE /* PUKE! '(' body ')' */
-        | BODY /* PUKE! post_body */
+msg_attr: msg_attr_ { MODE(MSG_ATTR); };
+
+msg_attr_: f_flags_resp
+         | f_uid_resp
+         | f_intdate_resp
+         | f_rfc822_resp
+         | ENVELOPE SP '(' envelope ')'
+         | RFC822_TEXT SP nstring
+         | RFC822_HEADER SP nstring
+         | RFC822_SIZE SP NUM
+         | BODY_STRUCTURE { LOG_ERROR("found BODYSTRUCTURE\n"); ACCEPT; }
+         | BODY { LOG_ERROR("found BODYSTRUCTURE\n"); ACCEPT; }
 ;
 
 /*** FETCH FLAGS ***/
-f_flags_resp: pre_f_flags_resp '(' f_flags ')'
+f_flags_resp: pre_f_flags_resp SP '(' f_flags ')'
               { F_FLAGS_HOOK_END(true); (void)$1; };
 
-pre_f_flags_resp: %empty { F_FLAGS_HOOK_START; MODE(FLAG); $$ = NULL; };
+pre_f_flags_resp: FLAGS { F_FLAGS_HOOK_START; MODE(FLAG); $$ = NULL; };
 
 f_flags: keep_fflag                  { F_FLAGS_HOOK_FLAG($keep_fflag); }
        | flags_flags SP keep_fflag   { F_FLAGS_HOOK_FLAG($keep_fflag); }
 ;
 
 /*** FETCH RFC822 ***/
-f_rfc822_resp: pre_f_rfc822_resp SP rfc822_nstring
-               { F_RFC822_HOOK_END; (void)$1; }
+f_rfc822_resp: pre_f_rfc822_resp rfc822_nstring
+               { F_RFC822_HOOK_END(true); (void)$1; }
 
-pre_f_rfc822_resp: RFC822 { F_RFC822_HOOK_START; $$ = NULL; MODE(NSTRING); }
+pre_f_rfc822_resp: RFC822 SP { F_RFC822_HOOK_START; $$ = NULL; MODE(NSTRING); }
 
 rfc822_nstring: NIL
               | LITERAL { F_RFC822_HOOK_LITERAL; }
@@ -747,22 +758,22 @@ rfc822_qstr_body: RAW                   { F_RFC822_HOOK_QSTR; }
 f_uid_resp: UID SP { MODE(NUM); } num { F_UID_HOOK($num); };
 
 /*** FETCH INTERNALDATE ***/
-f_intdate_resp: INTERNALDATE SP { MODE(internaldate); }
+f_intdate_resp: INTDATE SP { MODE(INTDATE); }
                 '"' date_day_fixed '-' date_month '-' fourdigit[y] SP
                 twodigit[h] ':' twodigit[m] ':' twodigit[s] SP
                 sign twodigit[zh] twodigit[zm] '"'
-                { F_INTDATE_HOOK((imap_time_t){.year   = $y,
-                                               .month  = $date_month,
-                                               .day    = $date_day_fixed,
-                                               .hour   = $h,
-                                               .min    = $m,
-                                               .sec    = $s,
-                                               .z_sign = $sign,
-                                               .z_hour = $zh,
-                                               .z_min  = $zm }); };
+                { F_INTDATE_HOOK(((imap_time_t){.year   = $y,
+                                                .month  = $date_month,
+                                                .day    = $date_day_fixed,
+                                                .hour   = $h,
+                                                .min    = $m,
+                                                .sec    = $s,
+                                                .z_sign = $sign,
+                                                .z_hour = $zh,
+                                                .z_min  = $zm })); };
 
-date_day_fixed: ' ' digit       { $$ = $digit }
-              | digit digit     { $$ = 10*$1 + $2 }
+date_day_fixed: ' ' digit       { $$ = $digit; }
+              | digit digit     { $$ = 10*$1 + $2; }
 ;
 
 date_month: JAN { $$ = 0; };
@@ -924,7 +935,8 @@ sign: '+' { $$ = 1; }
     | '-' { $$ = 2; }
 ;
 
-digit: DIGIT { switch(parser->token.data[0]){
+digit: DIGIT { switch(parser->token->data[0]){
+                   case '0': $$ = 0; break;
                    case '1': $$ = 1; break;
                    case '2': $$ = 2; break;
                    case '3': $$ = 3; break;
@@ -934,13 +946,13 @@ digit: DIGIT { switch(parser->token.data[0]){
                    case '7': $$ = 7; break;
                    case '8': $$ = 8; break;
                    case '9': $$ = 9; break;
-                   default: $$ = 0;
+                   default: ACCEPT;
                }
              };
 
-twodigit: digit digit { $$ = 10*$1 + $2 };
+twodigit: digit digit { $$ = 10*$1 + $2; };
 
-fourdigit: digit digit digit digit { $$ = 1000*$1 + 100*$2 + 10*$3 + $4 };
+fourdigit: digit digit digit digit { $$ = 1000*$1 + 100*$2 + 10*$3 + $4; };
 
 num: NUM { dstr_tou(parser->token, & $$, 10); };
 

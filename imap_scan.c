@@ -80,7 +80,6 @@ derr_t imap_scan(imap_scanner_t *scanner, scan_mode_t mode, bool *more,
         cursor = scanner->start;
         switch(mode){
             case SCAN_MODE_TAG:                 goto tag_mode;
-            case SCAN_MODE_DEFAULT:             goto default_mode;
             case SCAN_MODE_COMMAND:             goto command_mode;
             case SCAN_MODE_ATOM:                goto atom_mode;
             case SCAN_MODE_FLAG:                goto flag_mode;
@@ -91,7 +90,10 @@ derr_t imap_scan(imap_scanner_t *scanner, scan_mode_t mode, bool *more,
             case SCAN_MODE_STATUS_TEXT:         goto status_text_mode;
             case SCAN_MODE_MAILBOX:             goto mailbox_mode;
             case SCAN_MODE_NQCHAR:              goto nqchar_mode;
+            case SCAN_MODE_NSTRING:             goto nstring_mode;
             case SCAN_MODE_ST_ATTR:             goto st_attr_mode;
+            case SCAN_MODE_MSG_ATTR:            goto msg_attr_mode;
+            case SCAN_MODE_INTDATE:             goto intdate_mode;
         }
     }
 
@@ -127,30 +129,6 @@ tag_mode:
         eol             { *type = EOL; goto done; }
         tag             { *type = RAW; goto done; }
         [ *]            { *type = *scanner->start; goto done; }
-    */
-
-default_mode:
-
-    /*!re2c
-        *               { return E_PARAM; }
-        atom_spec       { *type = *scanner->start; goto done; }
-        literal         { *type = LITERAL; goto done; }
-        eol             { *type = EOL; goto done; }
-
-        'nil'           { *type = NIL; goto done; }
-        'messages'      { *type = MESSAGES; goto done; }
-        'envelope'      { *type = ENVELOPE; goto done; }
-        'internaldate'  { *type = INTERNALDATE; goto done; }
-        'rfc822'        { *type = RFC822; goto done; }
-        'rfc822_text'   { *type = RFC822_TEXT; goto done; }
-        'rfc822_header' { *type = RFC822_HEADER; goto done; }
-        'rfc822_size'   { *type = RFC822_SIZE; goto done; }
-        'body_structure'{ *type = BODY_STRUCTURE; goto done; }
-        'body'          { *type = BODY; goto done; }
-        'uid'           { *type = UID; goto done; }
-        'structure'     { *type = STRUCTURE; goto done; }
-
-        atom            { *type = RAW; goto done; }
     */
 
 command_mode:
@@ -288,6 +266,19 @@ nqchar_mode:
         eol             { *type = EOL; goto done; }
     */
 
+nstring_mode:
+
+    /*!re2c
+        *               { return E_PARAM; }
+        eol             { *type = EOL; goto done; }
+        literal         { *type = LITERAL; goto done; }
+        "\""            { *type = '"'; goto done; }
+
+        'nil'           { *type = NIL; goto done; }
+
+        qstring         { *type = RAW; goto done; }
+    */
+
 st_attr_mode:
 
     /*!re2c
@@ -302,6 +293,49 @@ st_attr_mode:
         'uidnext'       { *type = UIDNEXT; goto done; }
         'uidvalidity'   { *type = UIDVLD; goto done; }
         'unseen'        { *type = UNSEEN; goto done; }
+    */
+
+msg_attr_mode:
+
+    /*!re2c
+        *               { return E_PARAM; }
+        [[\]() ]        { *type = *scanner->start; goto done; }
+        eol             { *type = EOL; goto done; }
+
+        num             { *type = NUM; goto done; }
+
+        'flags'         { *type = FLAGS; goto done; }
+        'uid'           { *type = UID; goto done; }
+        'internaldate'  { *type = INTDATE; goto done; }
+        'rfc822'        { *type = RFC822; goto done; }
+        'rfc822.text'   { *type = RFC822_TEXT; goto done; }
+        'rfc822.header' { *type = RFC822_HEADER; goto done; }
+        'rfc822.size'   { *type = RFC822_SIZE; goto done; }
+        'envelope'      { *type = ENVELOPE; goto done; }
+        'body'          { *type = BODY; goto done; }
+        'bodystructore' { *type = BODY_STRUCTURE; goto done; }
+    */
+
+intdate_mode:
+
+    /*!re2c
+        *               { return E_PARAM; }
+        ["() :+-]       { *type = *scanner->start; goto done; }
+        [0-9]           { *type = DIGIT; goto done; }
+        eol             { *type = EOL; goto done; }
+
+        'jan'           { *type = JAN; goto done; }
+        'feb'           { *type = FEB; goto done; }
+        'mar'           { *type = MAR; goto done; }
+        'apr'           { *type = APR; goto done; }
+        'may'           { *type = MAY; goto done; }
+        'jun'           { *type = JUN; goto done; }
+        'jul'           { *type = JUL; goto done; }
+        'aug'           { *type = AUG; goto done; }
+        'sep'           { *type = SEP; goto done; }
+        'oct'           { *type = OCT; goto done; }
+        'nov'           { *type = NOV; goto done; }
+        'dec'           { *type = DEC; goto done; }
     */
 
 
