@@ -231,12 +231,16 @@ catch:
 
     #define F_RFC822_HOOK_START \
         DOCATCH( parser->hooks_up.f_rfc822_start(parser->hook_data) );
-    #define F_RFC822_HOOK_LITERAL \
-        DOCATCH( parser->hooks_up.f_rfc822_literal(parser->hook_data, \
-                                                   parser->token) );
+    #define F_RFC822_HOOK_LITERAL { \
+        /* get the numbers from the literal, ex: {5}\r\nBYTES */ \
+        dstr_t sub = dstr_sub(parser->token, 1, parser->token->len - 3); \
+        size_t len; \
+        dstr_toul(&sub, &len, 10);\
+        DOCATCH( parser->hooks_up.f_rfc822_literal(parser->hook_data, len) ); \
+    }
     #define F_RFC822_HOOK_QSTR \
-        DOCATCH( parser->hooks_up.f_rfc822_literal(parser->hook_data, \
-                                                   parser->token) );
+        DOCATCH( parser->hooks_up.f_rfc822_qstr(parser->hook_data, \
+                                                parser->token) );
     #define F_RFC822_HOOK_END(success) \
         parser->hooks_up.f_rfc822_end(parser->hook_data, success);
 
@@ -747,7 +751,7 @@ pre_f_rfc822_resp: RFC822 SP { F_RFC822_HOOK_START; $$ = NULL; MODE(NSTRING); }
 
 rfc822_nstring: NIL
               | LITERAL { F_RFC822_HOOK_LITERAL; }
-              | '"' rfc822_qstr_body '"'
+              | '"' { MODE(QSTRING); } rfc822_qstr_body '"'
 ;
 
 rfc822_qstr_body: RAW                   { F_RFC822_HOOK_QSTR; }

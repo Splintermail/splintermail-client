@@ -22,7 +22,7 @@
     if the parser doesn't make it to STATUS_HOOK_START, does the destructor
     for pre_status_resp get called?  What should I do about that?
 
-    num: no error handling for dstr_tou conversion
+    num, F_RFC822_HOOK_LITERAL: no error handling for dstr_tou conversion
 
     newlines are after the HOOKs, which is not actually OK
 
@@ -38,6 +38,7 @@ typedef struct {
     imap_parser_t *parser;
     imap_scanner_t *scanner;
     scan_mode_t scan_mode;
+    size_t literal_len;
 } locals_t;
 
 #define EXPECT(e, cmd) { \
@@ -229,9 +230,10 @@ static derr_t f_rfc822_start(void *data){
     return E_OK;
 }
 
-static derr_t f_rfc822_literal(void *data, const dstr_t *literal){
-    (void)data;
-    LOG_ERROR("FETCH LITERAL (%x)\n", FD(literal));
+static derr_t f_rfc822_literal(void *data, size_t literal_len){
+    locals_t *locals = data;
+    locals->literal_len = literal_len;
+    LOG_ERROR("FETCH LITERAL (%x)\n", FU(literal_len));
     return E_OK;
 }
 
@@ -286,10 +288,10 @@ static derr_t do_test_scanner_and_parser(LIST(dstr_t) *inputs){
 
     // structs for configuring parser
     locals_t locals;
+    locals.literal_len = 0;
 
     imap_scanner_t scanner;
     PROP( imap_scanner_init(&scanner) );
-
 
     // prepare to init the parser
     imap_parse_hooks_up_t hooks_up = {
@@ -325,14 +327,25 @@ static derr_t do_test_scanner_and_parser(LIST(dstr_t) *inputs){
         bool more;
 
         while(true){
+            // check if we are in a literal
+            if(locals.literal_len > 0){
+                dstr_t stolen = steal_bytes(&scanner, locals.literal_len);
+                LOG_ERROR("literal bytes: '%x'\n", FD(&stolen));
+                locals.literal_len -= stolen.len;
+                // if we still need more literal, don't try to scan
+                if(locals.literal_len){
+                    break;
+                }
+            }
+
             // try to scan a token
             scan_mode_t scan_mode = parser.scan_mode;
             LOG_ERROR("---------------------\n"
                       "mode is %x\n",
                       FD(scan_mode_to_dstr(scan_mode)));
 
-            // dstr_t scannable = get_scannable(&scanner);
-            // LOG_ERROR("scannable is: '%x'\n", FD(&scannable));
+            dstr_t scannable = get_scannable(&scanner);
+            LOG_ERROR("scannable is: '%x'\n", FD(&scannable));
 
             PROP_GO( imap_scan(&scanner, scan_mode, &more, &token_type),
                      cu_parser);
@@ -428,8 +441,19 @@ static derr_t test_scanner_and_parser(void){
             DSTR_LIT("* 15 FETCH (INTERNALDATE \"11-jan-1999 00:11:22 +5000\")\r\n"),
             DSTR_LIT("* 15 FETCH (INTERNALDATE \" 2-jan-1999 00:11:22 +5000\")\r\n"),
             DSTR_LIT("* 15 FETCH (UID 1 FLAGS (\\seen \\ext))\r\n"),
-            DSTR_LIT("* 15 FETCH (RFC822 NIL\r\n"),
-            DSTR_LIT("* 15 FETCH (RFC822 \"asdf asdf asdf\"\r\n"),
+            DSTR_LIT("* 15 FETCH (RFC822 NIL)\r\n"),
+            DSTR_LIT("* 15 FETCH (RFC822 NI"),
+            DSTR_LIT("L)\r\n"),
+            DSTR_LIT("* 15 FETCH (RFC822 \"asdf asdf asdf\")\r\n"),
+            DSTR_LIT("* 15 FETCH (RFC822 {14}\r\nhello literal!)\r\n"),
+            DSTR_LIT("* 15 FETCH (RFC822 {14}\r\nhello"),
+            DSTR_LIT(" "),
+            DSTR_LIT("l"),
+            DSTR_LIT("i"),
+            DSTR_LIT("t"),
+            DSTR_LIT("e"),
+            DSTR_LIT("r"),
+            DSTR_LIT("al!)\r\n"),
         );
         PROP( do_test_scanner_and_parser(&inputs) );
     }

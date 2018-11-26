@@ -96,7 +96,7 @@ typedef struct {
     derr_t (*f_flags_flag)(void *data, ie_flag_type_t type, const dstr_t *val);
     void (*f_flags_end)(void *data, bool success);
     derr_t (*f_rfc822_start)(void *data);
-    derr_t (*f_rfc822_literal)(void *data, const dstr_t *literal);
+    derr_t (*f_rfc822_literal)(void *data, size_t literal_size);
     derr_t (*f_rfc822_qstr)(void *data, const dstr_t *qstr);
     void (*f_rfc822_end)(void *data, bool success);
     void (*f_uid)(void *data, unsigned int num);
@@ -146,79 +146,5 @@ derr_t imap_parse(imap_parser_t *parser, int type, const dstr_t *token);
 derr_t keep_init(void *data);
 derr_t keep(imap_parser_t *parser, keep_type_t type);
 dstr_t keep_ref(imap_parser_t *parser);
-
-/*
-Response        EBNF
----------------------------
-- OK
-- NO
-- BAD
-- PREAUTH
-- BYE
-
-                # see "response-data" and "capability-data"
-
-- CAPABILITY    "*" "CAPABILITY" capability-data
-
-                # see "reponse-data", "mailbox-data" and "message-data"
-
-- LIST          "*" "LIST" mailbox-list # not list-mailbox which is client-side
-- LSUB          "*" "LSUB" mailbox-list
-- STATUS        "*" "STATUS" mailbox "(" [status-att-list] ")"
-- FLAGS         "*" "FLAGS" flag-list
-- SEARCH        (we will never search on the server)
-- EXISTS        "*" number "EXISTS"
-- RECENT        "*" number "RECENT"
-- EXPUNGE       "*" nz-number "EXPUNGE"
-- FETCH         "*" nz-number "FETCH" <some complicated shit>
-
-
-START_PARSE:
-    read: ?
-        if tag is "+"
-            goto SEND_LITERAL
-    read: tag _ ?
-        if ? in [OK, NO, BAD]
-            goto PARSE_STATUS_TYPE
-        if tag is not "*"
-            throw an error, all other commands must be untagged
-        if ? in [BYE, PREAUTH]
-            goto PARSE_STATUS_TYPE
-        if ? is CAPABILITY
-            goto PARSE_CAPABILITY
-        if ? in [LIST, LSUB]:
-            goto PARSE_LIST
-        if ? is STATUS:
-            goto PARSE_STATUS
-        if ? is FLAGS:
-            goto PARSE_FLAGS
-        if ? is SEARCH:
-            puke, because we will never search the server (it's encrypted!)
-        if ? is a number:
-            read: tag _ number _ ?
-                if ? is EXISTS:
-                    goto HANDLE_EXISTS
-                if ? is RECENT:
-                    goto HANDLE_RECENT
-                if number == 0:
-                    puke, nothing else can have a zero number
-                if ? is EXPUNGE:
-                    goto HANDLE_EXPUNGE
-                if ? is FETCH:
-                    goto PARSE_FETCH
-                puke, nothing else should have a number here
-
-PARSE_STATUS_TYPE
-PARSE_CAPABILITY
-PARSE_LIST
-PARSE_STATUS
-PARSE_FETCH
-HANDLE_EXISTS
-HANDLE_RECENT
-HANDLE_EXPUNGE
-SEND_LITERAL
-*/
-
-
 
 #endif // IMAP_PARSE_H

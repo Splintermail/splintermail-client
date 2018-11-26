@@ -33,6 +33,26 @@ dstr_t get_token(imap_scanner_t *scanner){
     return dstr_sub(&scanner->bytes, start_offset, end_offset);
 }
 
+dstr_t steal_bytes(imap_scanner_t *scanner, size_t to_steal){
+    // if no bytes requested, return now to avoid dstr_sub's "0" behavior
+    // if no bytes available, return now to avoid underflow
+    if(to_steal == 0
+        || (uintptr_t)(scanner->start - scanner->bytes.data)
+            >= scanner->bytes.len){
+        return (dstr_t){0};
+    }
+    uintptr_t start = (uintptr_t)(scanner->start - scanner->bytes.data);
+    size_t bytes_left = scanner->bytes.len - start;
+    // check if the buffer has enough bytes already
+    if(bytes_left >= to_steal){
+        scanner->start += to_steal;
+        return dstr_sub(&scanner->bytes, start, start + to_steal);
+    }else{
+        scanner->start += bytes_left;
+        return dstr_sub(&scanner->bytes, start, start + bytes_left);
+    }
+}
+
 derr_t imap_scan(imap_scanner_t *scanner, scan_mode_t mode, bool *more,
                  int *type){
 #   define YYGETSTATE()  scanner->state
@@ -108,7 +128,7 @@ derr_t imap_scan(imap_scanner_t *scanner, scan_mode_t mode, bool *more,
 
         eol             = "\r\n";
         sp              = " ";
-        literal         = "{"[0-9]+"}";
+        literal         = "{"[0-9]+"}\r\n";
         tag             = [^(){%*+"\x00-\x1F\x7F\\ ]{1,32};
         atom_spec       = [(){%*"\]\\ ];
         atom            = [^(){%*"\x00-\x1F\x7F\]\\ ]{1,32};
@@ -272,11 +292,9 @@ nstring_mode:
         *               { return E_PARAM; }
         eol             { *type = EOL; goto done; }
         literal         { *type = LITERAL; goto done; }
-        "\""            { *type = '"'; goto done; }
+        atom_spec       { *type = *scanner->start; goto done; }
 
         'nil'           { *type = NIL; goto done; }
-
-        qstring         { *type = RAW; goto done; }
     */
 
 st_attr_mode:
