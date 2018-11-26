@@ -197,6 +197,17 @@ add_obj_tgt("${output}" "imap_parse_tab")
 # add a custom target just for depending on the generated header
 add_custom_target(bison_header DEPENDS "${bison_header}")
 
+# generate qwerrewq parser
+set(input "${PROJECT_SOURCE_DIR}/qwerrewq.y")
+set(output "${PROJECT_BINARY_DIR}/qwerrewq.c")
+add_custom_command(
+    OUTPUT "${output}"
+    COMMAND "${BISON}" -o "${output}" "${input}" --report=state
+    DEPENDS "${input}"
+    COMMENT "generating qwerrweq parser" VERBATIM
+    )
+add_custom_target(qwerrewq_parser DEPENDS "${output}")
+
 # objects become OBJECT libraries, but are accessed through INTERFACE libraries
 foreach(tgt ${OBJ_TGTS})
     add_obj_tgt("${tgt}.c" "${tgt}")
