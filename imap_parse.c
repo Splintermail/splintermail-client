@@ -124,3 +124,18 @@ dstr_t keep_ref(imap_parser_t *parser){
     parser->temp = (dstr_t){0};
     return retval;
 }
+
+derr_t imap_literal(imap_parser_t *parser, dstr_t literal){
+    // store the literal in the *parser object, so keep_ref() can use it
+    // note: if keep was false in the literal hook, this will be a (dstr_t){0}
+    parser->temp = literal;
+    if(parser->keep){
+        /* we may need to set a variable that is associated with the KEEP_INIT
+           macro in the bison scanner, so KEEP_REF works correctly */
+        parser->keep_init = true;
+    }
+    // feed LITERAL_END token to the parser, to trigger end-of-literal actions
+    dstr_t empty_token = (dstr_t){0};
+    PROP( imap_parse(parser, LITERAL_END, &empty_token) );
+    return E_OK;
+}

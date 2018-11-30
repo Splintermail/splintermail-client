@@ -4,6 +4,10 @@
     #include <logger.h>
     #include <imap_expression.h>
 
+    #define MODE(m) parser->scan_mode = SCAN_MODE_ ## m
+
+    #define UNQSTRING parser->scan_mode = parser->preqstr_mode;
+
     // a YYACCEPT wrapper that resets some custom parser details
     #define ACCEPT \
         MODE(TAG); \
@@ -52,8 +56,6 @@
             .code_extra = c_e_t.code_extra, \
             .text = c_e_t.text, \
         }
-
-    #define MODE(m) parser->scan_mode = SCAN_MODE_ ## m
 
     // the scanner only returns QCHAR with 1- or 2-char matches
     #define qchar_to_char \
@@ -253,6 +255,17 @@ catch:
     #define FETCH_HOOK_END(success) \
         parser->hooks_up.fetch_end(parser->hook_data, success);
 
+    // literal hook
+    #define LITERAL_HOOK { \
+        /* get the numbers from the literal, ex: {5}\r\nBYTES
+                                                 ^^^^^^^ -> LITERAL token */ \
+        dstr_t sub = dstr_sub(parser->token, 1, parser->token->len - 3); \
+        size_t len; \
+        dstr_toul(&sub, &len, 10);\
+        DOCATCH( parser->hooks_up.literal(parser->hook_data, len, \
+                                          parser->keep) ); \
+    }
+
 %}
 
 /* this defines the type of yylval, which is the semantic value of a token */
@@ -410,6 +423,9 @@ catch:
 %type <prekeep> prekeep
 %type <prekeep> sc_prekeep
 %destructor { KEEP_CANCEL; } <prekeep>
+
+%type <preqstring> preqstring
+%destructor { UNQSTRING; } <preqstring>
 
 %type <capa> capa_start
 %destructor { CAPA_HOOK_END(false); } <capa>
@@ -750,7 +766,7 @@ f_rfc822_resp: pre_f_rfc822_resp rfc822_nstring
 pre_f_rfc822_resp: RFC822 SP { F_RFC822_HOOK_START; $$ = NULL; MODE(NSTRING); }
 
 rfc822_nstring: NIL
-              | LITERAL { F_RFC822_HOOK_LITERAL; }
+              | LITERAL { F_RFC822_HOOK_LITERAL; } LITERAL_END
               | '"' { MODE(QSTRING); } rfc822_qstr_body '"'
 ;
 
@@ -863,7 +879,12 @@ string: qstring
       | literal
 ;
 
-qstring: '"' { KEEP_INIT; } qstring_body '"';
+qstring: '"' preqstring qstring_body '"' { UNQSTRING; (void)$preqstring; };
+
+preqstring: %empty { parser->preqstr_mode = parser->scan_mode;
+                     MODE(QSTRING);
+                     KEEP_INIT;
+                     $$ = NULL; }
 
 qstring_body: %empty
             | qstring_body atom_like    { KEEP(QSTRING); }
@@ -871,12 +892,8 @@ qstring_body: %empty
 
 /* note that LITERAL_END is passed by the application after it finishes reading
    the literal from the stream; it is never returned by the scanner */
-literal: literal_start LITERAL_END;
+literal: LITERAL { LITERAL_HOOK; } LITERAL_END;
 
-literal_start: LITERAL              { /* TODO: handle literals */ };
-
-/* like with atoms, an number or keword are technically astr_atoms but that
-   introduces grammatical ambiguities */
 astring: atom
        | string
 ;
@@ -886,23 +903,6 @@ tag: prekeep atom      { $$ = KEEP_REF($prekeep); MODE(COMMAND); };
 nstring: NIL
        | string
 ;
-
-/*!re2c
-    *               { return E_PARAM; }
-    atom_spec       { *type = yych; goto done; }
-    literal         { *type = LITERAL; goto done; }
-    eol             { *type = EOL; goto done; }
-
-    'answered'      { *type = ANSWERED; goto done; }
-    'flagged'       { *type = FLAGGED; goto done; }
-    'deleted'       { *type = DELETED; goto done; }
-    'seen'          { *type = SEEN; goto done; }
-    'draft'         { *type = DRAFT; goto done; }
-    'recent'        { *type = RECENT; goto done; }
-    "\\\*"          { *type = ASTERISK_FLAG; goto done; }
-
-    atom            { *type = ATOM; goto done; }
-*/
 
 flag: '\\' ANSWERED      { $$ = IE_FLAG_ANSWERED; }
     | '\\' FLAGGED       { $$ = IE_FLAG_FLAGGED; }

@@ -89,6 +89,7 @@ union imap_expr_t {
     ie_resp_status_type_t status_type;
     // dummy types to trigger %destructor actions
     void *prekeep;
+    void *preqstring;
     void *capa;
     void *permflag;
     void *listresp;

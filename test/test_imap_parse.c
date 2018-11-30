@@ -31,6 +31,10 @@
     parsing incomplete for FETCH "BODY[]"-like responses
 
     where should I use YYABORT instead of YYACCEPT?
+
+    is the handoff of a literal in imap_lateral fully safe from memory leaks?
+    Are there really no possible codepaths which don't call dstr_free exactly
+    one time?
 */
 
 // the struct for the parse hooks' *data memeber
@@ -38,7 +42,11 @@ typedef struct {
     imap_parser_t *parser;
     imap_scanner_t *scanner;
     scan_mode_t scan_mode;
+    bool in_literal;
+    bool keep_literal;
+    bool fetch_literal;
     size_t literal_len;
+    dstr_t literal_temp;
 } locals_t;
 
 #define EXPECT(e, cmd) { \
@@ -232,8 +240,9 @@ static derr_t f_rfc822_start(void *data){
 
 static derr_t f_rfc822_literal(void *data, size_t literal_len){
     locals_t *locals = data;
+    locals->in_literal = true;
+    locals->fetch_literal = true;
     locals->literal_len = literal_len;
-    LOG_ERROR("FETCH LITERAL (%x)\n", FU(literal_len));
     return E_OK;
 }
 
@@ -264,6 +273,17 @@ static void fetch_end(void *data, bool success){
     LOG_ERROR("FETCH END (%x)\n", FS(success ? "success" : "fail"));
 }
 
+static derr_t literal(void *data, size_t len, bool keep){
+    locals_t *locals = data;
+    locals->in_literal = true;
+    locals->literal_len = len;
+    locals->keep_literal = keep;
+    if(keep){
+        PROP( dstr_new(&locals->literal_temp, len) );
+    }
+    return E_OK;
+}
+
 
 
 // TODO: fix this test
@@ -288,6 +308,11 @@ static derr_t do_test_scanner_and_parser(LIST(dstr_t) *inputs){
 
     // structs for configuring parser
     locals_t locals;
+    locals.in_literal = false;
+    locals.keep_literal = false;
+    locals.fetch_literal = false;
+    locals.literal_len = 0;
+    locals.literal_temp = (dstr_t){0};
     locals.literal_len = 0;
 
     imap_scanner_t scanner;
@@ -311,6 +336,7 @@ static derr_t do_test_scanner_and_parser(LIST(dstr_t) *inputs){
         f_uid,
         f_intdate,
         fetch_end,
+        literal,
     };
     imap_parser_t parser;
     PROP_GO( imap_parser_init(&parser, hooks_up, &locals), cu_scanner);
@@ -328,14 +354,33 @@ static derr_t do_test_scanner_and_parser(LIST(dstr_t) *inputs){
 
         while(true){
             // check if we are in a literal
-            if(locals.literal_len > 0){
+            if(locals.in_literal){
                 dstr_t stolen = steal_bytes(&scanner, locals.literal_len);
                 LOG_ERROR("literal bytes: '%x'\n", FD(&stolen));
+                // are we building this literal to pass back to the parser?
+                if(locals.keep_literal){
+                    PROP_GO( dstr_append(&locals.literal_temp, &stolen),
+                             cu_scanner);
+                }
+                // are we passing this literal directly to the decrypter?
+                else if(locals.fetch_literal){
+                    LOG_ERROR("fetched: %x\n", FD(&stolen));
+                }
+                // remember how many bytes we have stolen from the stream
                 locals.literal_len -= stolen.len;
-                // if we still need more literal, don't try to scan
+                // if we still need more literal, break loop for more input
                 if(locals.literal_len){
                     break;
                 }
+                // otherwise, indicate to the parser that we are finished
+                PROP_GO( imap_literal(&parser, locals.literal_temp),
+                                      cu_scanner);
+                // reset the values associated with the literal
+                locals.in_literal = false;
+                locals.keep_literal = false;
+                locals.fetch_literal = false;
+                locals.literal_len = 0;
+                locals.literal_temp = (dstr_t){0};
             }
 
             // try to scan a token
@@ -344,8 +389,8 @@ static derr_t do_test_scanner_and_parser(LIST(dstr_t) *inputs){
                       "mode is %x\n",
                       FD(scan_mode_to_dstr(scan_mode)));
 
-            dstr_t scannable = get_scannable(&scanner);
-            LOG_ERROR("scannable is: '%x'\n", FD(&scannable));
+            // dstr_t scannable = get_scannable(&scanner);
+            // LOG_ERROR("scannable is: '%x'\n", FD(&scannable));
 
             PROP_GO( imap_scan(&scanner, scan_mode, &more, &token_type),
                      cu_parser);
@@ -408,6 +453,9 @@ static derr_t test_scanner_and_parser(void){
         LIST_PRESET(dstr_t, inputs,
             DSTR_LIT("* STATUS inbox (UNSEEN 2 RECENT 4)\r\n"),
             DSTR_LIT("* STATUS not_inbox (UNSEEN 2 RECENT 4)\r\n"),
+            DSTR_LIT("* STATUS \"qstring \\\" box\" (UNSEEN 2 RECENT 4)\r\n"),
+            DSTR_LIT("* STATUS {11}\r\nliteral box (UNSEEN 2 RECENT 4)\r\n"),
+            DSTR_LIT("* STATUS astring_box (UNSEEN 2 RECENT 4)\r\n"),
         );
         PROP( do_test_scanner_and_parser(&inputs) );
     }

@@ -96,12 +96,16 @@ typedef struct {
     derr_t (*f_flags_flag)(void *data, ie_flag_type_t type, const dstr_t *val);
     void (*f_flags_end)(void *data, bool success);
     derr_t (*f_rfc822_start)(void *data);
-    derr_t (*f_rfc822_literal)(void *data, size_t literal_size);
+    derr_t (*f_rfc822_literal)(void *data, size_t len);
     derr_t (*f_rfc822_qstr)(void *data, const dstr_t *qstr);
     void (*f_rfc822_end)(void *data, bool success);
     void (*f_uid)(void *data, unsigned int num);
     void (*f_intdate)(void *data, imap_time_t imap_time);
     void (*fetch_end)(void *data, bool success);
+    /* for handling literals.  After this hook is called, the application
+       should not make another call to imap_parse() until imap_literal() has
+       been called (or imap_reset(), of course). */
+    derr_t (*literal)(void *data, size_t len, bool keep);
 } imap_parse_hooks_up_t;
 
 typedef struct {
@@ -114,6 +118,8 @@ typedef struct {
     derr_t error;
     // the mode the scanner should be in while scanning the next token
     scan_mode_t scan_mode;
+    // the mode before the start of a qstring
+    scan_mode_t preqstr_mode;
     // was this most recent line tagged?
     bool tagged;
     dstr_t *tag;
@@ -141,6 +147,13 @@ derr_t imap_parser_init(imap_parser_t *parser, imap_parse_hooks_up_t hooks_up,
 void imap_parser_free(imap_parser_t *parser);
 
 derr_t imap_parse(imap_parser_t *parser, int type, const dstr_t *token);
+
+/* this should be called after the literal hook has been called.  The "literal"
+   argument should be either (dstr_t){0} if the literal hook was called with
+   keep == false, or a dstr_new()-allocated dstr if the literal hook was called
+   with keep == true.  In the keep == true case, the literal will be freed with
+   dstr_free() by the parser when it is no longer needed. */
+derr_t imap_literal(imap_parser_t *parser, dstr_t literal);
 
 // the keep api, used internally by the bison parser
 derr_t keep_init(void *data);
