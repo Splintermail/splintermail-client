@@ -30,6 +30,8 @@ typedef enum {
     STATUS_CODE_ATOM,
 } status_code_t;
 
+const dstr_t *st_code_to_dstr(status_code_t code);
+
 typedef struct {
     status_type_t status;
     status_code_t code;

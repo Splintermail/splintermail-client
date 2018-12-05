@@ -1,5 +1,37 @@
 #include "imap_expression.h"
 
+DSTR_STATIC(status_code_NONE_dstr, "STATUS_CODE_NONE");
+DSTR_STATIC(status_code_ALERT_dstr, "STATUS_CODE_ALERT");
+DSTR_STATIC(status_code_CAPA_dstr, "STATUS_CODE_CAPA");
+DSTR_STATIC(status_code_PARSE_dstr, "STATUS_CODE_PARSE");
+DSTR_STATIC(status_code_PERMFLAGS_dstr, "STATUS_CODE_PERMFLAGS");
+DSTR_STATIC(status_code_READ_ONLY_dstr, "STATUS_CODE_READ_ONLY");
+DSTR_STATIC(status_code_READ_WRITE_dstr, "STATUS_CODE_READ_WRITE");
+DSTR_STATIC(status_code_TRYCREATE_dstr, "STATUS_CODE_TRYCREATE");
+DSTR_STATIC(status_code_UIDNEXT_dstr, "STATUS_CODE_UIDNEXT");
+DSTR_STATIC(status_code_UIDVLD_dstr, "STATUS_CODE_UIDVLD");
+DSTR_STATIC(status_code_UNSEEN_dstr, "STATUS_CODE_UNSEEN");
+DSTR_STATIC(status_code_ATOM_dstr, "STATUS_CODE_ATOM");
+DSTR_STATIC(status_code_UNK_dstr, "unknown status code");
+
+const dstr_t *st_code_to_dstr(status_code_t code){
+    switch(code){
+    case STATUS_CODE_NONE: return &status_code_NONE_dstr;
+    case STATUS_CODE_ALERT: return &status_code_ALERT_dstr;
+    case STATUS_CODE_CAPA: return &status_code_CAPA_dstr;
+    case STATUS_CODE_PARSE: return &status_code_PARSE_dstr;
+    case STATUS_CODE_PERMFLAGS: return &status_code_PERMFLAGS_dstr;
+    case STATUS_CODE_READ_ONLY: return &status_code_READ_ONLY_dstr;
+    case STATUS_CODE_READ_WRITE: return &status_code_READ_WRITE_dstr;
+    case STATUS_CODE_TRYCREATE: return &status_code_TRYCREATE_dstr;
+    case STATUS_CODE_UIDNEXT: return &status_code_UIDNEXT_dstr;
+    case STATUS_CODE_UIDVLD: return &status_code_UIDVLD_dstr;
+    case STATUS_CODE_UNSEEN: return &status_code_UNSEEN_dstr;
+    case STATUS_CODE_ATOM: return &status_code_ATOM_dstr;
+    default: return &status_code_UNK_dstr;
+    }
+};
+
 DSTR_STATIC(flag_type_ANSWERED_dstr, "FLAG_ANSWERED");
 DSTR_STATIC(flag_type_FLAGGED_dstr, "FLAG_FLAGGED");
 DSTR_STATIC(flag_type_DELETED_dstr, "FLAG_DELETED");

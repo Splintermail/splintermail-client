@@ -32,7 +32,7 @@
 
     where should I use YYABORT instead of YYACCEPT?
 
-    is the handoff of a literal in imap_lateral fully safe from memory leaks?
+    is the handoff of a literal in imap_literal fully safe from memory leaks?
     Are there really no possible codepaths which don't call dstr_free exactly
     one time?
 */
@@ -49,15 +49,15 @@ typedef struct {
     dstr_t literal_temp;
 } locals_t;
 
-#define EXPECT(e, cmd) { \
-    error = cmd; \
-    CATCH(E_ANY){}; \
-    if(error != e){ \
-        LOG_ERROR("expected parser to return %x, but got %x\n", \
-                  FD(error_to_dstr(e)), \
-                  FD(error_to_dstr(error))); \
-        ORIG_GO(E_VALUE, "value mismatch", cu_parser); \
-    }\
+static derr_t literal(void *data, size_t len, bool keep){
+    locals_t *locals = data;
+    locals->in_literal = true;
+    locals->literal_len = len;
+    locals->keep_literal = keep;
+    if(keep){
+        PROP( dstr_new(&locals->literal_temp, len) );
+    }
+    return E_OK;
 }
 
 static void st_hook(void *data, const dstr_t *tag, status_type_t status,
@@ -67,8 +67,8 @@ static void st_hook(void *data, const dstr_t *tag, status_type_t status,
     (void)status;
     (void)code;
     (void)code_extra;
-    LOG_ERROR("status_type response with tag %x and text %x\n",
-              FD(tag), FD(text));
+    LOG_ERROR("status_type response with tag %x, code %x (%x), and text %x\n",
+              FD(tag), FD(st_code_to_dstr(code)), FU(code_extra), FD(text));
 }
 
 static derr_t capa_start(void *data){
@@ -273,18 +273,18 @@ static void fetch_end(void *data, bool success){
     LOG_ERROR("FETCH END (%x)\n", FS(success ? "success" : "fail"));
 }
 
-static derr_t literal(void *data, size_t len, bool keep){
-    locals_t *locals = data;
-    locals->in_literal = true;
-    locals->literal_len = len;
-    locals->keep_literal = keep;
-    if(keep){
-        PROP( dstr_new(&locals->literal_temp, len) );
-    }
-    return E_OK;
+
+
+#define EXPECT(e, cmd) { \
+    error = cmd; \
+    CATCH(E_ANY){}; \
+    if(error != e){ \
+        LOG_ERROR("expected parser to return %x, but got %x\n", \
+                  FD(error_to_dstr(e)), \
+                  FD(error_to_dstr(error))); \
+        ORIG_GO(E_VALUE, "value mismatch", cu_parser); \
+    }\
 }
-
-
 
 // TODO: fix this test
 
@@ -320,6 +320,7 @@ static derr_t do_test_scanner_and_parser(LIST(dstr_t) *inputs){
 
     // prepare to init the parser
     imap_parse_hooks_up_t hooks_up = {
+        literal,
         st_hook,
         capa_start, capa, capa_end,
         pflag_start, pflag, pflag_end,
@@ -336,7 +337,6 @@ static derr_t do_test_scanner_and_parser(LIST(dstr_t) *inputs){
         f_uid,
         f_intdate,
         fetch_end,
-        literal,
     };
     imap_parser_t parser;
     PROP_GO( imap_parser_init(&parser, hooks_up, &locals), cu_scanner);
@@ -502,6 +502,12 @@ static derr_t test_scanner_and_parser(void){
             DSTR_LIT("e"),
             DSTR_LIT("r"),
             DSTR_LIT("al!)\r\n"),
+        );
+        PROP( do_test_scanner_and_parser(&inputs) );
+    }
+    {
+        LIST_PRESET(dstr_t, inputs,
+            DSTR_LIT("* ok [parse] hi\r\n"),
         );
         PROP( do_test_scanner_and_parser(&inputs) );
     }

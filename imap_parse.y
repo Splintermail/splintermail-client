@@ -375,7 +375,6 @@ catch:
 /*
 %type <dstr> keep_qstring
 %type <dstr> keep_string
-%type <dstr> keep_astr_atom
 */
 %type <dstr> tag
 %type <dstr> st_txt_0
@@ -476,57 +475,6 @@ untagged: untag SP status_type_resp[s] { ST_HOOK(NUL_DSTR, $s); }
 
 untag: '*' { MODE(COMMAND); };
 
-/* post_body: '(' body ')'
-/*          | '[' body_section ']' post_body_section
-/* ;
-/*
-/* body_section: %empty
-/*             | section_msgtext
-/*             | section_part_and_msgtext
-/* ;
-/*
-/* section_part_and_text: section_part
-/*                      | section_part '.' section_msgtext
-/* ;
-/*
-/* section_msgtext: ATOM '(' astring_list ')'
-/*                | ATOM
-/* ;
-/*
-/* section_part: NUM
-/*             | section_part '.' NUM
-/* ;
-/*
-/* post_body_section: '<' NUM '>' nstring
-/*                  | nstring
-/* ;
-/*
-/* body: body_type_1part
-/*     | body_type_mpart
-/* ;
-/*
-/* body_type_1part: body_type_basic
-/*                | body_type_msg
-/*                | body_type_text
-/* ;
-/*
-/* /*               media_basic media_subtype */
-/* body_type_basic: string      string        body_fields
-/* ;
-/*
-/* /*                          body_fld_id body_fld_desc body_fld_enc body_fld_octets*/
-/* body_fields: body_fld_param nstring     nstring       string       NUM
-/* ;
-/*
-/* body_fld_param: '(' string_list ')'
-/*               | NIL
-/* ;
-/*
-/* /*             --media-message--                           body_fld_lines */
-/* body_type_msg: string     string body_fields envelope body NUM
-/* ;
-*/
-
 
 /*** status-type handling.  Thanks the the shitty grammar, IMAP4rev1 ***/
 
@@ -563,16 +511,16 @@ no_st_code: NO_STATUS_CODE      { MODE(STATUS_TEXT); KEEP_INIT; KEEP(RAW); };
 status_code: status_code_ ']' SP    { MODE(STATUS_TEXT); $$ = $1; };
 
 status_code_: sc_alert           { $$ = ST_CODE(ALERT,      0); }
-| CAPA SP capa_resp              { $$ = ST_CODE(CAPA,       0); }
-| PARSE                          { $$ = ST_CODE(PARSE,      0); }
-| PERMFLAGS SP pflag_resp        { $$ = ST_CODE(PERMFLAGS,  0); }
-| READ_ONLY                      { $$ = ST_CODE(READ_ONLY,  0); }
-| READ_WRITE                     { $$ = ST_CODE(READ_WRITE, 0); }
-| TRYCREATE                      { $$ = ST_CODE(TRYCREATE,  0); }
-| sc_uidnext SP sc_num[n]        { $$ = ST_CODE(UIDNEXT,    $n); }
-| sc_uidvld SP sc_num[n]         { $$ = ST_CODE(UIDVLD,     $n); }
-| sc_unseen SP sc_num[n]         { $$ = ST_CODE(UNSEEN,     $n); }
-| sc_atom st_txt_inner_0         { $$ = ST_CODE(ATOM,       0); }
+            | CAPA SP capa_resp              { $$ = ST_CODE(CAPA,       0); }
+            | PARSE                          { $$ = ST_CODE(PARSE,      0); }
+            | PERMFLAGS SP pflag_resp        { $$ = ST_CODE(PERMFLAGS,  0); }
+            | READ_ONLY                      { $$ = ST_CODE(READ_ONLY,  0); }
+            | READ_WRITE                     { $$ = ST_CODE(READ_WRITE, 0); }
+            | TRYCREATE                      { $$ = ST_CODE(TRYCREATE,  0); }
+            | sc_uidnext SP sc_num[n]        { $$ = ST_CODE(UIDNEXT,    $n); }
+            | sc_uidvld SP sc_num[n]         { $$ = ST_CODE(UIDVLD,     $n); }
+            | sc_unseen SP sc_num[n]         { $$ = ST_CODE(UNSEEN,     $n); }
+            | sc_atom st_txt_inner_0         { $$ = ST_CODE(ATOM,       0); }
 ;
 
 sc_alert: ALERT { parser->keep_st_text = true; };
@@ -820,12 +768,12 @@ naddr_list: NIL
           | '(' addr_list ')'
 ;
 
-/*           addr-name addr-adl addr-mailbox addr-host */
-address: '(' nstring   nstring  nstring      nstring   ')'
-;
-
 addr_list: %empty
          | addr_list address
+;
+
+/*           addr-name addr-adl addr-mailbox addr-host */
+address: '(' nstring   nstring  nstring      nstring   ')'
 ;
 
 
@@ -860,10 +808,6 @@ keyword: OK
        | INBOX
 ;
 
-/* due to grammar ambiguities, an atom cannot consist of a keyword, even
-   though a keyword is a proper subclass of an atom.  Therefore additional
-   guards will be in place to make sure only keywords we care about are passed
-   into the scanner at any given moment. */
 atom: atom_body
 
 atom_body: RAW                  { KEEP_INIT; KEEP(RAW); }
@@ -979,7 +923,6 @@ keep_pflag: prekeep pflag { $$ = (ie_flag_t){$pflag, KEEP_REF($prekeep)}; };
 keep_mflag: prekeep mflag { $$ = (ie_flag_t){$mflag, KEEP_REF($prekeep)}; };
 keep_mailbox: prekeep mailbox { $$ = (ie_mailbox_t){$mailbox, KEEP_REF($prekeep)}; };
 /*
-keep_astr_atom: { parser->keep = true; } astr_atom { $$ = KEEP_REF; };
 keep_qstring: { parser->keep = true; } qstring { $$ = KEEP_REF; };
 keep_string: { parser->keep = true; } string { $$ = KEEP_REF; };
 */

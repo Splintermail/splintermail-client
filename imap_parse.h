@@ -54,6 +54,10 @@ typedef struct {
 
 // a list of hooks that are called when communicating with the mail server
 typedef struct {
+    /* for handling literals.  After this hook is called, the application
+       should not make another call to imap_parse() until imap_literal() has
+       been called (or imap_reset(), of course). */
+    derr_t (*literal)(void *data, size_t len, bool keep);
     // for status_type messages
     void (*status_type)(void *data, const dstr_t *tag, status_type_t status,
                         status_code_t code, unsigned int code_extra,
@@ -102,10 +106,6 @@ typedef struct {
     void (*f_uid)(void *data, unsigned int num);
     void (*f_intdate)(void *data, imap_time_t imap_time);
     void (*fetch_end)(void *data, bool success);
-    /* for handling literals.  After this hook is called, the application
-       should not make another call to imap_parse() until imap_literal() has
-       been called (or imap_reset(), of course). */
-    derr_t (*literal)(void *data, size_t len, bool keep);
 } imap_parse_hooks_up_t;
 
 typedef struct {
