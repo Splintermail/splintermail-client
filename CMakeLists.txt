@@ -44,6 +44,7 @@ set(OBJ_TGTS api_client
              loop
              tls_engine
              linked_list
+             jsw_atree
              imap_parse
              imap_expression)
 
@@ -74,6 +75,7 @@ set(TEST_EXE_TGTS test_common
                   test_json
                   test_ui
                   test_key_tool
+                  test_atree
                   test_imap_scan
                   test_imap_parse)
 
@@ -231,6 +233,7 @@ obj_depend_obj(ixs uv_interface common)
 obj_depend_obj(loop uv_interface tls_engine common)
 obj_depend_obj(tls_engine ixs common)
 obj_depend_obj(linked_list uv_interface common)
+obj_depend_obj(jsw_atree common)
 obj_depend_obj(imap_parse_tab imap_expression common)
 obj_depend_obj(imap_parse imap_parse_tab common)
 add_dependencies(imap_parse_o bison_header)
@@ -369,6 +372,7 @@ if("${BUILD_TESTS}")
     target_link_libraries(test_json json)
     target_link_libraries(test_key_tool key_tool test_utils fake_api_server)
     target_link_libraries(test_ui ui dummy_ui_harness json)
+    target_link_libraries(test_atree jsw_atree)
     target_link_libraries(test_imap_scan imap_scan)
     target_link_libraries(test_imap_parse imap_scan imap_parse)
     add_dependencies(test_imap_parse bison_header)
