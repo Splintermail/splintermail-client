@@ -35,6 +35,8 @@
     is the handoff of a literal in imap_literal fully safe from memory leaks?
     Are there really no possible codepaths which don't call dstr_free exactly
     one time?
+
+    literals coming from email client need a '+' response
 */
 
 // the struct for the parse hooks' *data memeber
@@ -49,6 +51,168 @@ typedef struct {
     dstr_t literal_temp;
 } locals_t;
 
+static void login_cmd(void *data, dstr_t tag, dstr_t user, dstr_t pass){
+    (void)data;
+    LOG_ERROR("LOGIN (%x) u:%x p:%x\n", FD(&tag), FD(&user), FD(&pass));
+    dstr_free(&tag);
+    dstr_free(&user);
+    dstr_free(&pass);
+}
+
+//
+
+static void select_cmd(void *data, dstr_t tag, bool inbox, dstr_t mbx){
+    (void)data;
+    LOG_ERROR("SELECT (%x) mailbox: '%x' (%x)\n", FD(&tag), FD(&mbx), FU(inbox));
+    dstr_free(&tag);
+    dstr_free(&mbx);
+}
+
+//
+
+static void examine_cmd(void *data, dstr_t tag, bool inbox, dstr_t mbx){
+    (void)data;
+    LOG_ERROR("EXAMINE (%x) mailbox: '%x' (%x)\n", FD(&tag), FD(&mbx), FU(inbox));
+    dstr_free(&tag);
+    dstr_free(&mbx);
+}
+
+//
+
+static void create_cmd(void *data, dstr_t tag, bool inbox, dstr_t mbx){
+    (void)data;
+    LOG_ERROR("CREATE (%x) mailbox: '%x' (%x)\n", FD(&tag), FD(&mbx), FU(inbox));
+    dstr_free(&tag);
+    dstr_free(&mbx);
+}
+
+//
+
+static void delete_cmd(void *data, dstr_t tag, bool inbox, dstr_t mbx){
+    (void)data;
+    LOG_ERROR("DELETE (%x) mailbox: '%x' (%x)\n", FD(&tag), FD(&mbx), FU(inbox));
+    dstr_free(&tag);
+    dstr_free(&mbx);
+}
+
+//
+
+static void rename_cmd(void *data, dstr_t tag,
+                       bool inbox_old, dstr_t mbx_old,
+                       bool inbox_new, dstr_t mbx_new){
+    (void)data;
+    LOG_ERROR("RENAME (%x) from: '%x' (%x) to: '%x' (%x) \n",
+              FD(&tag), FD(&mbx_old), FU(inbox_old), FD(&mbx_new), FU(inbox_new));
+    dstr_free(&tag);
+    dstr_free(&mbx_old);
+    dstr_free(&mbx_new);
+
+}
+
+//
+
+static void subscribe_cmd(void *data, dstr_t tag, bool inbox, dstr_t mbx){
+    (void)data;
+    LOG_ERROR("SUBSCRIBE (%x) mailbox: '%x' (%x)\n", FD(&tag), FD(&mbx), FU(inbox));
+    dstr_free(&tag);
+    dstr_free(&mbx);
+}
+
+//
+
+static void unsubscribe_cmd(void *data, dstr_t tag, bool inbox, dstr_t mbx){
+    (void)data;
+    LOG_ERROR("UNSUBSCRIBE (%x) mailbox: '%x' (%x)\n", FD(&tag), FD(&mbx), FU(inbox));
+    dstr_free(&tag);
+    dstr_free(&mbx);
+}
+
+//
+
+static void list_cmd(void *data, dstr_t tag, bool inbox, dstr_t mbx, dstr_t pattern){
+    (void)data;
+    LOG_ERROR("LIST (%x) mailbox: '%x' (%x) pattern: '%x' \n",
+              FD(&tag), FD(&mbx), FU(inbox), FD(&pattern));
+    dstr_free(&tag);
+    dstr_free(&mbx);
+    dstr_free(&pattern);
+}
+
+//
+
+static void lsub_cmd(void *data, dstr_t tag, bool inbox, dstr_t mbx, dstr_t pattern){
+    (void)data;
+    LOG_ERROR("LSUB (%x) mailbox: '%x' (%x) pattern: '%x' \n",
+              FD(&tag), FD(&mbx), FU(inbox), FD(&pattern));
+    dstr_free(&tag);
+    dstr_free(&mbx);
+    dstr_free(&pattern);
+}
+
+//
+
+static void status_cmd(void *data, dstr_t tag, bool inbox,
+                       dstr_t mbx, bool messages, bool recent,
+                       bool uidnext, bool uidvld, bool unseen){
+    (void)data;
+    LOG_ERROR("STATUS (%x) '%x' (%x)", FD(&tag), FD(&mbx), FU(inbox));
+    if(messages) LOG_ERROR(" messages");
+    if(recent) LOG_ERROR(" recent");
+    if(uidnext) LOG_ERROR(" uidnext");
+    if(uidvld) LOG_ERROR(" uidvld");
+    if(unseen) LOG_ERROR(" unseen");
+    LOG_ERROR("\n");
+    dstr_free(&tag);
+    dstr_free(&mbx);
+}
+
+//
+
+static void check_cmd(void *data, dstr_t tag){
+    (void)data;
+    LOG_ERROR("CHECK (%x)\n", FD(&tag));
+    dstr_free(&tag);
+}
+
+//
+
+static void close_cmd(void *data, dstr_t tag){
+    (void)data;
+    LOG_ERROR("CLOSE (%x)\n", FD(&tag));
+    dstr_free(&tag);
+}
+
+//
+
+static void expunge_cmd(void *data, dstr_t tag){
+    (void)data;
+    LOG_ERROR("EXPUNGE (%x)\n", FD(&tag));
+    dstr_free(&tag);
+}
+
+//
+
+static derr_t store_start(void *data, dstr_t tag, ie_seq_set_t *seq_set,
+                          int sign, bool silent){
+    (void)data;
+    dstr_free(&tag);
+    ie_seq_set_free(seq_set);
+    return E_OK;
+}
+
+static derr_t store_flag(void *data, ie_flag_type_t type, dstr_t val){
+    (void)data;
+    free(&val);
+    return E_OK;
+}
+
+static void store_end(void *data, bool success){
+    (void)data;
+    return E_OK;
+}
+
+/////////////////////////////////////////////////////////
+
 static derr_t literal(void *data, size_t len, bool keep){
     locals_t *locals = data;
     locals->in_literal = true;
@@ -60,15 +224,19 @@ static derr_t literal(void *data, size_t len, bool keep){
     return E_OK;
 }
 
-static void st_hook(void *data, const dstr_t *tag, status_type_t status,
+//
+
+static void st_hook(void *data, dstr_t tag, status_type_t status,
                     status_code_t code, unsigned int code_extra,
-                    const dstr_t *text){
+                    dstr_t text){
     (void)data;
     (void)status;
     (void)code;
     (void)code_extra;
     LOG_ERROR("status_type response with tag %x, code %x (%x), and text %x\n",
-              FD(tag), FD(st_code_to_dstr(code)), FU(code_extra), FD(text));
+              FD(&tag), FD(st_code_to_dstr(code)), FU(code_extra), FD(&text));
+    dstr_free(&tag);
+    dstr_free(&text);
 }
 
 static derr_t capa_start(void *data){
@@ -77,9 +245,10 @@ static derr_t capa_start(void *data){
     return E_OK;
 }
 
-static derr_t capa(void *data, const dstr_t *capability){
+static derr_t capa(void *data, dstr_t capability){
     (void)data;
-    LOG_ERROR("CAPABILITY: %x\n", FD(capability));
+    LOG_ERROR("CAPABILITY: %x\n", FD(&capability));
+    dstr_free(&capability);
     return E_OK;
 }
 
@@ -96,9 +265,10 @@ static derr_t pflag_start(void *data){
     return E_OK;
 }
 
-static derr_t pflag(void *data, ie_flag_type_t type, const dstr_t *val){
+static derr_t pflag(void *data, ie_flag_type_t type, dstr_t val){
     (void)data;
-    LOG_ERROR("PERMANENTFLAG: %x '%x'\n", FU(type), FD(val));
+    LOG_ERROR("PERMANENTFLAG: %x '%x'\n", FU(type), FD(&val));
+    dstr_free(&val);
     return E_OK;
 }
 
@@ -115,17 +285,18 @@ static derr_t list_start(void *data){
     return E_OK;
 }
 
-static derr_t list_flag(void *data, ie_flag_type_t type, const dstr_t *val){
+static derr_t list_flag(void *data, ie_flag_type_t type, dstr_t val){
     (void)data;
-    LOG_ERROR("LIST_FLAG: %x '%x'\n", FD(flag_type_to_dstr(type)), FD(val));
+    LOG_ERROR("LIST_FLAG: %x '%x'\n", FD(flag_type_to_dstr(type)), FD(&val));
+    dstr_free(&val);
     return E_OK;
 }
-static void list_end(void *data, char sep, bool inbox, const dstr_t *mbx,
+static void list_end(void *data, char sep, bool inbox, dstr_t mbx,
                      bool success){
     (void)data;
     LOG_ERROR("LIST END '%x' '%x' (%x) (%x)\n",
-              FC(sep), FD(mbx ? mbx : &DSTR_LIT("(nul)")),
-              FU(inbox), FS(success ? "success" : "fail"));
+              FC(sep), FD(&mbx), FU(inbox), FS(success ? "success" : "fail"));
+    dstr_free(&mbx);
 }
 
 //
@@ -136,35 +307,38 @@ static derr_t lsub_start(void *data){
     return E_OK;
 }
 
-static derr_t lsub_flag(void *data, ie_flag_type_t type, const dstr_t *val){
+static derr_t lsub_flag(void *data, ie_flag_type_t type, dstr_t val){
     (void)data;
-    LOG_ERROR("LSUB_FLAG: %x '%x'\n", FD(flag_type_to_dstr(type)), FD(val));
+    LOG_ERROR("LSUB_FLAG: %x '%x'\n", FD(flag_type_to_dstr(type)), FD(&val));
+    dstr_free(&val);
     return E_OK;
 }
-static void lsub_end(void *data, char sep, bool inbox, const dstr_t *mbx,
+static void lsub_end(void *data, char sep, bool inbox, dstr_t mbx,
                      bool success){
     (void)data;
     LOG_ERROR("LSUB END '%x' '%x' (%x) (%x)\n",
-              FC(sep), FD(mbx),
+              FC(sep), FD(&mbx),
               FU(inbox), FS(success ? "success" : "fail"));
+    dstr_free(&mbx);
 }
 
 //
 
-static derr_t status_start(void *data, bool inbox, const dstr_t *mbx){
+static void status_resp(void *data, bool inbox, dstr_t mbx,
+                        bool found_messages, unsigned int messages,
+                        bool found_recent, unsigned int recent,
+                        bool found_uidnext, unsigned int uidnext,
+                        bool found_uidvld, unsigned int uidvld,
+                        bool found_unseen, unsigned int unseen){
     (void)data;
-    LOG_ERROR("STATUS START, mailbox: '%x' (%x)\n", FD(mbx), FU(inbox));
-    return E_OK;
-}
-
-static derr_t status_attr(void *data, ie_st_attr_t attr, unsigned int num){
-    (void)data;
-    LOG_ERROR("STATUS attr: %x %x\n", FD(st_attr_to_dstr(attr)), FU(num));
-    return E_OK;
-}
-static void status_end(void *data, bool success){
-    (void)data;
-    LOG_ERROR("FLAGS END (%x)\n", FS(success ? "success" : "fail"));
+    LOG_ERROR("STATUS '%x' (%x)", FD(&mbx), FU(inbox));
+    if(found_messages) LOG_ERROR(" messages: %x", FU(messages));
+    if(found_recent) LOG_ERROR(" recent: %x", FU(recent));
+    if(found_uidnext) LOG_ERROR(" uidnext: %x", FU(uidnext));
+    if(found_uidvld) LOG_ERROR(" uidvld: %x", FU(uidvld));
+    if(found_unseen) LOG_ERROR(" unseen: %x", FU(unseen));
+    LOG_ERROR("\n");
+    dstr_free(&mbx);
 }
 
 //
@@ -175,9 +349,10 @@ static derr_t flags_start(void *data){
     return E_OK;
 }
 
-static derr_t flags_flag(void *data, ie_flag_type_t type, const dstr_t *val){
+static derr_t flags_flag(void *data, ie_flag_type_t type, dstr_t val){
     (void)data;
-    LOG_ERROR("FLAGS_FLAG: %x '%x'\n", FD(flag_type_to_dstr(type)), FD(val));
+    LOG_ERROR("FLAGS_FLAG: %x '%x'\n", FD(flag_type_to_dstr(type)), FD(&val));
+    dstr_free(&val);
     return E_OK;
 }
 static void flags_end(void *data, bool success){
@@ -220,10 +395,11 @@ static derr_t f_flags_start(void *data){
     return E_OK;
 }
 
-static derr_t f_flags_flag(void *data, ie_flag_type_t type, const dstr_t *val){
+static derr_t f_flags_flag(void *data, ie_flag_type_t type, dstr_t val){
     (void)data;
     LOG_ERROR("FETCH FLAGS FLAG: %x '%x'\n",
-              FD(flag_type_to_dstr(type)), FD(val));
+              FD(flag_type_to_dstr(type)), FD(&val));
+    dstr_free(&val);
     return E_OK;
 }
 
@@ -319,6 +495,22 @@ static derr_t do_test_scanner_and_parser(LIST(dstr_t) *inputs){
     PROP( imap_scanner_init(&scanner) );
 
     // prepare to init the parser
+    imap_parse_hooks_dn_t hooks_dn = {
+        login_cmd,
+        select_cmd,
+        examine_cmd,
+        create_cmd,
+        delete_cmd,
+        rename_cmd,
+        subscribe_cmd,
+        unsubscribe_cmd,
+        list_cmd,
+        lsub_cmd,
+        status_cmd,
+        check_cmd,
+        close_cmd,
+        expunge_cmd,
+    };
     imap_parse_hooks_up_t hooks_up = {
         literal,
         st_hook,
@@ -326,7 +518,7 @@ static derr_t do_test_scanner_and_parser(LIST(dstr_t) *inputs){
         pflag_start, pflag, pflag_end,
         list_start, list_flag, list_end,
         lsub_start, lsub_flag, lsub_end,
-        status_start, status_attr, status_end,
+        status_resp,
         flags_start, flags_flag, flags_end,
         exists_hook,
         recent_hook,
@@ -339,7 +531,7 @@ static derr_t do_test_scanner_and_parser(LIST(dstr_t) *inputs){
         fetch_end,
     };
     imap_parser_t parser;
-    PROP_GO( imap_parser_init(&parser, hooks_up, &locals), cu_scanner);
+    PROP_GO( imap_parser_init(&parser, hooks_dn, hooks_up, &locals), cu_scanner);
 
     // store the scanner and the parser in the locals struct
     locals.scanner = &scanner;
@@ -452,9 +644,9 @@ static derr_t test_scanner_and_parser(void){
     {
         LIST_PRESET(dstr_t, inputs,
             DSTR_LIT("* STATUS inbox (UNSEEN 2 RECENT 4)\r\n"),
-            DSTR_LIT("* STATUS not_inbox (UNSEEN 2 RECENT 4)\r\n"),
-            DSTR_LIT("* STATUS \"qstring \\\" box\" (UNSEEN 2 RECENT 4)\r\n"),
-            DSTR_LIT("* STATUS {11}\r\nliteral box (UNSEEN 2 RECENT 4)\r\n"),
+            DSTR_LIT("* STATUS not_inbox (RECENT 4)\r\n"),
+            DSTR_LIT("* STATUS \"qstring \\\" box\" (MESSAGES 2)\r\n"),
+            DSTR_LIT("* STATUS {11}\r\nliteral box ()\r\n"),
             DSTR_LIT("* STATUS astring_box (UNSEEN 2 RECENT 4)\r\n"),
         );
         PROP( do_test_scanner_and_parser(&inputs) );
@@ -508,6 +700,30 @@ static derr_t test_scanner_and_parser(void){
     {
         LIST_PRESET(dstr_t, inputs,
             DSTR_LIT("* ok [parse] hi\r\n"),
+        );
+        PROP( do_test_scanner_and_parser(&inputs) );
+    }
+    ///////////////
+    {
+        LIST_PRESET(dstr_t, inputs,
+            DSTR_LIT("tag LOGIN asdf \"pass phrase\"\r\n"),
+            DSTR_LIT("tag LOGIN \"asdf\" \"pass phrase\"\r\n"),
+            DSTR_LIT("tag LOGIN \"asdf\" {11}\r\npass phrase\r\n"),
+            DSTR_LIT("tag SELECT inbox\r\n"),
+            DSTR_LIT("tag SELECT \"crAZY boX\"\r\n"),
+            DSTR_LIT("tag EXAMINE {10}\r\nexamine_me\r\n"),
+            DSTR_LIT("tag CREATE create_me\r\n"),
+            DSTR_LIT("tag DELETE delete_me\r\n"),
+            DSTR_LIT("tag RENAME old_name new_name\r\n"),
+            DSTR_LIT("tag SUBSCRIBE subscribe_me\r\n"),
+            DSTR_LIT("tag UNSUBSCRIBE unsubscribe_me\r\n"),
+            DSTR_LIT("tag LIST \"\" *\r\n"),
+            DSTR_LIT("tag LSUB \"\" *\r\n"),
+            DSTR_LIT("tag STATUS inbox (unseen)\r\n"),
+            DSTR_LIT("tag STATUS notinbox (unseen messages)\r\n"),
+            DSTR_LIT("tag CHECK\r\n"),
+            DSTR_LIT("tag CLOSE\r\n"),
+            DSTR_LIT("tag EXPUNGE\r\n"),
         );
         PROP( do_test_scanner_and_parser(&inputs) );
     }

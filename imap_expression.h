@@ -69,14 +69,33 @@ typedef struct {
 } ie_mailbox_t;
 
 typedef enum {
-    IE_ST_ATTR_MESSAGES,
-    IE_ST_ATTR_RECENT,
-    IE_ST_ATTR_UIDNEXT,
-    IE_ST_ATTR_UIDVLD,
-    IE_ST_ATTR_UNSEEN,
+    IE_ST_ATTR_MESSAGES = 1,
+    IE_ST_ATTR_RECENT = 2,
+    IE_ST_ATTR_UIDNEXT = 4,
+    IE_ST_ATTR_UIDVLD = 8,
+    IE_ST_ATTR_UNSEEN = 16,
 } ie_st_attr_t;
 
 const dstr_t *st_attr_to_dstr(ie_st_attr_t attr);
+
+typedef struct {
+    unsigned char attrs;
+    unsigned int messages;
+    unsigned int recent;
+    unsigned int uidnext;
+    unsigned int uidvld;
+    unsigned int unseen;
+} ie_st_attr_resp_t;
+
+typedef struct ie_seq_set_t {
+    // non-zero numbers, therefore "0" means "*" was passed
+    // also, not necessarily in order
+    unsigned int n1;
+    unsigned int n2;
+    struct ie_seq_set_t *next;
+} ie_seq_set_t;
+
+void ie_seq_set_free(ie_seq_set_t *s);
 
 union imap_expr_t {
     bool boolean;
@@ -87,16 +106,19 @@ union imap_expr_t {
     ie_flag_type_t flag_type;
     ie_flag_t flag;
     ie_mailbox_t mailbox;
-    ie_st_attr_t st_attr;
+    ie_st_attr_t st_attr; // a single status attribute
+    unsigned char st_attr_cmd; // logical OR of status attributes in command
+    ie_st_attr_resp_t st_attr_resp; // logical OR, and with response values
+    ie_seq_set_t *seq_set;
     ie_resp_status_type_t status_type;
     // dummy types to trigger %destructor actions
     void *prekeep;
     void *preqstring;
+    void *storecmd;
     void *capa;
     void *permflag;
     void *listresp;
     void *lsubresp;
-    void *statusresp;
     void *flagsresp;
     void *fetchresp;
     void *f_flagsresp;

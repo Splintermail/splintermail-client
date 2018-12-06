@@ -6,7 +6,8 @@
 
     #define MODE(m) parser->scan_mode = SCAN_MODE_ ## m
 
-    #define UNQSTRING parser->scan_mode = parser->preqstr_mode;
+    #define START_QSTR parser->preqstr_mode = parser->scan_mode; MODE(QSTRING);
+    #define END_QSTR parser->scan_mode = parser->preqstr_mode;
 
     // a YYACCEPT wrapper that resets some custom parser details
     #define ACCEPT \
@@ -147,116 +148,183 @@ catch:
         parser->keep = false; \
         parser->keep_init = false
 
-    // the *HOOK* macros are for calling a hooks, then freeing memory
-    #define ST_HOOK(tag, st){ \
-        parser->hooks_up.status_type(parser->hook_data, &tag, st.status, \
-                                     st.code, st.code_extra, &st.text ); \
-        dstr_free(&tag); \
-        dstr_free(&st.text); \
+    /* for building lists of status attributes.  Since status attributes do
+       not allow for extensions, it is easy to build the list of attributes in
+       the parser and only have single STATUS_CMD a STATUS_RESP hooks */
+    static inline ie_st_attr_resp_t add_resp_st_attr(ie_st_attr_resp_t *old,
+                                                     ie_st_attr_t attr,
+                                                     unsigned int num){
+        ie_st_attr_resp_t out = old ? *old : (ie_st_attr_resp_t){0};
+        // set the attribute
+        switch(attr){
+            case IE_ST_ATTR_MESSAGES:   out.messages = num; break;
+            case IE_ST_ATTR_RECENT:     out.recent = num;   break;
+            case IE_ST_ATTR_UIDNEXT:    out.uidnext = num;  break;
+            case IE_ST_ATTR_UIDVLD:     out.uidvld = num;   break;
+            case IE_ST_ATTR_UNSEEN:     out.unseen = num;   break;
+        }
+        // mark that attribute as "set"
+        out.attrs = out.attrs | attr;
+        return out;
     }
 
-    #define CAPA_HOOK_START \
+    // the *CMD* and *RESP* macros are for calling a hooks, then freeing memory
+    #define LOGIN_CMD(tag, u, p) \
+        parser->hooks_dn.login(parser->hook_data, tag, u, p);
+
+    #define SELECT_CMD(tag, mbx) \
+        parser->hooks_dn.select(parser->hook_data, tag, mbx.inbox, mbx.dstr);
+
+    #define EXAMINE_CMD(tag, mbx) \
+        parser->hooks_dn.examine(parser->hook_data, tag, mbx.inbox, mbx.dstr);
+
+    #define CREATE_CMD(tag, mbx) \
+        parser->hooks_dn.create(parser->hook_data, tag, mbx.inbox, mbx.dstr);
+
+    #define DELETE_CMD(tag, mbx) \
+        parser->hooks_dn.delete(parser->hook_data, tag, mbx.inbox, mbx.dstr);
+
+    #define RENAME_CMD(tag, old, new) \
+        parser->hooks_dn.rename(parser->hook_data, tag, old.inbox, old.dstr, \
+                                new.inbox, new.dstr);
+
+    #define SUBSCRIBE_CMD(tag, mbx) \
+        parser->hooks_dn.subscribe(parser->hook_data, tag, mbx.inbox, mbx.dstr);
+
+    #define UNSUBSCRIBE_CMD(tag, mbx) \
+        parser->hooks_dn.unsubscribe(parser->hook_data, tag, mbx.inbox, mbx.dstr);
+
+    #define LIST_CMD(tag, mbx, pat) \
+        parser->hooks_dn.list(parser->hook_data, tag, mbx.inbox, mbx.dstr, pat);
+
+    #define LSUB_CMD(tag, mbx, pat) \
+        parser->hooks_dn.lsub(parser->hook_data, tag, mbx.inbox, mbx.dstr, pat);
+
+    #define STATUS_CMD(tag, mbx, sa) \
+        parser->hooks_dn.status(parser->hook_data, tag,\
+            mbx.inbox, mbx.dstr, \
+            sa & IE_ST_ATTR_MESSAGES, \
+            sa & IE_ST_ATTR_RECENT, \
+            sa & IE_ST_ATTR_UIDNEXT, \
+            sa & IE_ST_ATTR_UIDVLD, \
+            sa & IE_ST_ATTR_UNSEEN);
+
+    #define CHECK_CMD(tag) \
+        parser->hooks_dn.check(parser->hook_data, tag);
+
+    #define CLOSE_CMD(tag) \
+        parser->hooks_dn.close(parser->hook_data, tag);
+
+    #define EXPUNGE_CMD(tag) \
+        parser->hooks_dn.expunge(parser->hook_data, tag);
+
+    /* the set will be released just after STORE_CMD_END */
+    #define STORE_CMD_START(tag, set, sign, silent) \
+        DOCATCH( parser->hooks_dn.store_start(parser->hook_data, tag, set, \
+                                              sign, silent) );
+    #define STORE_CMD_FLAG(f) \
+        DOCATCH( parser->hooks_dn.store_flag(parser->hook_data, f.type, \
+                                             f.dstr) );
+    #define STORE_CMD_END(success) \
+        parser->hooks_dn.store_end(parser->hook_data, success);
+
+    // Responses:
+
+    #define ST_RESP(tag, st) \
+        parser->hooks_up.status_type(parser->hook_data, tag, st.status, \
+                                     st.code, st.code_extra, st.text );
+
+    #define CAPA_RESP_START \
         DOCATCH( parser->hooks_up.capa_start(parser->hook_data) );
-    #define CAPA_HOOK(c) \
-        DOCATCH( parser->hooks_up.capa(parser->hook_data, &c) ); \
-        dstr_free(&c);
-    #define CAPA_HOOK_END(success) \
+    #define CAPA_RESP(c) \
+        DOCATCH( parser->hooks_up.capa(parser->hook_data, c) );
+    #define CAPA_RESP_END(success) \
         parser->hooks_up.capa_end(parser->hook_data, success);
 
-    #define PFLAG_HOOK_START \
+    #define PFLAG_RESP_START \
         DOCATCH( parser->hooks_up.pflag_start(parser->hook_data) );
-    #define PFLAG_HOOK(f) \
-        DOCATCH( parser->hooks_up.pflag(parser->hook_data, f.type, &f.dstr) ); \
-        dstr_free(&f.dstr);
-    #define PFLAG_HOOK_END(success) \
+    #define PFLAG_RESP(f) \
+        DOCATCH( parser->hooks_up.pflag(parser->hook_data, f.type, f.dstr) );
+    #define PFLAG_RESP_END(success) \
         parser->hooks_up.pflag_end(parser->hook_data, success);
 
-    #define LIST_HOOK_START \
+    #define LIST_RESP_START \
         DOCATCH( parser->hooks_up.list_start(parser->hook_data) );
-    #define LIST_HOOK_FLAG(f) \
-        DOCATCH( parser->hooks_up.list_flag(parser->hook_data, f.type, &f.dstr) ); \
-        dstr_free(&f.dstr);
-    #define LIST_HOOK_END(sep, inbox, mbx, success) \
-        parser->hooks_up.list_end(parser->hook_data, sep, inbox, &mbx, success); \
-        dstr_free(&mbx);
+    #define LIST_RESP_FLAG(f) \
+        DOCATCH( parser->hooks_up.list_flag(parser->hook_data, f.type, f.dstr) );
+    #define LIST_RESP_END(sep, inbox, mbx, success) \
+        parser->hooks_up.list_end(parser->hook_data, sep, inbox, mbx, success);
 
-    #define LSUB_HOOK_START \
+    #define LSUB_RESP_START \
         DOCATCH( parser->hooks_up.lsub_start(parser->hook_data) );
-    #define LSUB_HOOK_FLAG(f) \
-        DOCATCH( parser->hooks_up.lsub_flag(parser->hook_data, f.type, &f.dstr) ); \
-        dstr_free(&f.dstr);
-    #define LSUB_HOOK_END(sep, inbox, mbx, success) \
-        parser->hooks_up.lsub_end(parser->hook_data, sep, inbox, &mbx, success); \
-        dstr_free(&mbx);
+    #define LSUB_RESP_FLAG(f) \
+        DOCATCH( parser->hooks_up.lsub_flag(parser->hook_data, f.type, f.dstr) );
+    #define LSUB_RESP_END(sep, inbox, mbx, success) \
+        parser->hooks_up.lsub_end(parser->hook_data, sep, inbox, mbx, success);
 
-    #define FLAGS_HOOK_START \
+    #define FLAGS_RESP_START \
         DOCATCH( parser->hooks_up.flags_start(parser->hook_data) );
-    #define FLAGS_HOOK_FLAG(f) \
-        DOCATCH( parser->hooks_up.flags_flag(parser->hook_data, f.type, &f.dstr) ); \
-        dstr_free(&f.dstr);
-    #define FLAGS_HOOK_END(success) \
+    #define FLAGS_RESP_FLAG(f) \
+        DOCATCH( parser->hooks_up.flags_flag(parser->hook_data, f.type, f.dstr) );
+    #define FLAGS_RESP_END(success) \
         parser->hooks_up.flags_end(parser->hook_data, success);
 
-    // the *dstr_t from status_start hook is valid until just after status_end
-    #define STATUS_HOOK_START(mbx) \
-        parser->status_mbx = mbx; \
-        DOCATCH( parser->hooks_up.status_start(parser->hook_data, \
-                                               parser->status_mbx.inbox, \
-                                               &parser->status_mbx.dstr) );
-    #define STATUS_HOOK(s, n) \
-        DOCATCH( parser->hooks_up.status_attr(parser->hook_data, s, n) );
-    #define STATUS_HOOK_END(success) \
-        parser->hooks_up.status_end(parser->hook_data, success); \
-        dstr_free(&parser->status_mbx.dstr);
+    #define STATUS_RESP(mbx, sa) \
+        parser->hooks_up.status(parser->hook_data, \
+            mbx.inbox, mbx.dstr, \
+            sa.attrs & IE_ST_ATTR_MESSAGES, sa.messages, \
+            sa.attrs & IE_ST_ATTR_RECENT, sa.recent, \
+            sa.attrs & IE_ST_ATTR_UIDNEXT, sa.uidnext, \
+            sa.attrs & IE_ST_ATTR_UIDVLD, sa.uidvld, \
+            sa.attrs & IE_ST_ATTR_UNSEEN, sa.unseen);
 
-    #define EXISTS_HOOK(num) \
+    #define EXISTS_RESP(num) \
         parser->hooks_up.exists(parser->hook_data, num);
 
-    #define RECENT_HOOK(num) \
+    #define RECENT_RESP(num) \
         parser->hooks_up.recent(parser->hook_data, num);
 
-    #define EXPUNGE_HOOK(num) \
+    #define EXPUNGE_RESP(num) \
         parser->hooks_up.expunge(parser->hook_data, num);
 
     // fetch-related hooks
-    #define FETCH_HOOK_START(num) \
+    #define FETCH_RESP_START(num) \
         DOCATCH( parser->hooks_up.fetch_start(parser->hook_data, num) );
 
-    #define F_FLAGS_HOOK_START \
+    #define F_FLAGS_RESP_START \
         DOCATCH( parser->hooks_up.f_flags_start(parser->hook_data) );
-    #define F_FLAGS_HOOK_FLAG(f) \
+    #define F_FLAGS_RESP_FLAG(f) \
         DOCATCH( parser->hooks_up.f_flags_flag(parser->hook_data, \
-                                               f.type, &f.dstr) ); \
-        dstr_free(&f.dstr);
-    #define F_FLAGS_HOOK_END(success) \
+                                               f.type, f.dstr) );
+    #define F_FLAGS_RESP_END(success) \
         parser->hooks_up.f_flags_end(parser->hook_data, success);
 
-    #define F_RFC822_HOOK_START \
+    #define F_RFC822_RESP_START \
         DOCATCH( parser->hooks_up.f_rfc822_start(parser->hook_data) );
-    #define F_RFC822_HOOK_LITERAL { \
+    #define F_RFC822_RESP_LITERAL { \
         /* get the numbers from the literal, ex: {5}\r\nBYTES */ \
         dstr_t sub = dstr_sub(parser->token, 1, parser->token->len - 3); \
         size_t len; \
         dstr_toul(&sub, &len, 10);\
         DOCATCH( parser->hooks_up.f_rfc822_literal(parser->hook_data, len) ); \
     }
-    #define F_RFC822_HOOK_QSTR \
+    #define F_RFC822_RESP_QSTR \
         DOCATCH( parser->hooks_up.f_rfc822_qstr(parser->hook_data, \
                                                 parser->token) );
-    #define F_RFC822_HOOK_END(success) \
+    #define F_RFC822_RESP_END(success) \
         parser->hooks_up.f_rfc822_end(parser->hook_data, success);
 
-    #define F_UID_HOOK(num) \
+    #define F_UID_RESP(num) \
         parser->hooks_up.f_uid(parser->hook_data, num);
 
-    #define F_INTDATE_HOOK(imap_time) \
+    #define F_INTDATE_RESP(imap_time) \
         parser->hooks_up.f_intdate(parser->hook_data, imap_time);
 
-    #define FETCH_HOOK_END(success) \
+    #define FETCH_RESP_END(success) \
         parser->hooks_up.fetch_end(parser->hook_data, success);
 
     // literal hook
-    #define LITERAL_HOOK { \
+    #define LITERAL_RESP { \
         /* get the numbers from the literal, ex: {5}\r\nBYTES
                                                  ^^^^^^^ -> LITERAL token */ \
         dstr_t sub = dstr_sub(parser->token, 1, parser->token->len - 3); \
@@ -288,22 +356,46 @@ catch:
 %token LITERAL
 %token LITERAL_END
 
-/* POST_TAG state */
+/* commands */
+%token STARTTLS
+%token AUTHENTICATE
+%token LOGIN
+%token SELECT
+%token EXAMINE
+%token CREATE
+%token DELETE
+%token RENAME
+%token SUBSCRIBE
+%token UNSUBSCRIBE
+%token LIST
+%token LSUB
+%token STATUS
+%token APPEND
+%token CHECK
+%token CLOSE
+%token EXPUNGE
+%token SEARCH
+%token FETCH
+%token STORE
+%token COPY
+%token UID
+
+/* responses */
 %token OK
 %token NO
 %token BAD
 %token PREAUTH
 %token BYE
 %token CAPA
-%token LIST
-%token LSUB
-%token STATUS
+/*     LIST (listed above) */
+/*     LSUB (listed above) */
+/*     STATUS (listed above) */
 %token FLAGS
-%token SEARCH
+/*     SEARCH (listed above) */
 %token EXISTS
 %token RECENT
-%token EXPUNGE
-%token FETCH
+/*     EXPUNGE (listed above) */
+/*     FETCH (listed above) */
 
 /* status-code stuff */
 %token YES_STATUS_CODE
@@ -337,7 +429,7 @@ catch:
 %token RFC822_SIZE
 %token BODY_STRUCTURE
 %token BODY
-%token UID
+/*     UID (listed above) */
 %token STRUCTURE
 
 /* FLAGS */
@@ -369,9 +461,11 @@ catch:
 /* miscellaneous */
 %token INBOX
 %token EOL
+%token SILENT
 
 /* non-terminals with semantic values */
 %type <dstr> keep_atom
+%type <dstr> keep_astring
 /*
 %type <dstr> keep_qstring
 %type <dstr> keep_string
@@ -398,8 +492,10 @@ catch:
 %type <num> sc_num
 %type <num> date_month
 %type <num> date_day_fixed
+%type <num> seq_num
 
 %type <sign> sign
+%type <sign> store_sign
 
 %type <boolean> mailbox
 %type <mailbox> keep_mailbox
@@ -409,6 +505,15 @@ catch:
 %type <ch> keep_qchar
 
 %type <st_attr> st_attr
+%type <st_attr_cmd> st_attr_clist_1
+%type <st_attr_resp> st_attr_rlist_0
+%type <st_attr_resp> st_attr_rlist_1
+
+%type <seq_set> seq_set
+%type <seq_set> seq_spec
+%destructor { ie_seq_set_free($$); } <seq_set>
+
+%type <boolean> store_silent
 
 %type <status_type> status_type_resp
 %type <status_type> status_type
@@ -424,43 +529,67 @@ catch:
 %destructor { KEEP_CANCEL; } <prekeep>
 
 %type <preqstring> preqstring
-%destructor { UNQSTRING; } <preqstring>
+%destructor { END_QSTR; } <preqstring>
+
+%type <storecmd> pre_store_cmd
+%destructor { STORE_CMD_END(false); } <storecmd>
 
 %type <capa> capa_start
-%destructor { CAPA_HOOK_END(false); } <capa>
+%destructor { CAPA_RESP_END(false); } <capa>
 
 %type <permflag> pflag_start
-%destructor { PFLAG_HOOK_END(false); } <permflag>
+%destructor { PFLAG_RESP_END(false); } <permflag>
 
 %type <listresp> pre_list_resp
-%destructor { LIST_HOOK_END(0, false, NUL_DSTR, false); } <listresp>
+%destructor { LIST_RESP_END(0, false, NUL_DSTR, false); } <listresp>
 
 %type <lsubresp> pre_lsub_resp
-%destructor { LSUB_HOOK_END(0, false, NUL_DSTR, false); } <lsubresp>
+%destructor { LSUB_RESP_END(0, false, NUL_DSTR, false); } <lsubresp>
 
 %type <flagsresp> pre_flags_resp
-%destructor { FLAGS_HOOK_END(false); } <flagsresp>
-
-%type <statusresp> pre_status_resp
-%destructor { STATUS_HOOK_END(false); } <statusresp>
+%destructor { FLAGS_RESP_END(false); } <flagsresp>
 
 %type <fetchresp> pre_fetch_resp
-%destructor { FETCH_HOOK_END(false); } <fetchresp>
+%destructor { FETCH_RESP_END(false); } <fetchresp>
 
 %type <f_flagsresp> pre_f_flags_resp
-%destructor { F_FLAGS_HOOK_END(false); } <f_flagsresp>
+%destructor { F_FLAGS_RESP_END(false); } <f_flagsresp>
 
 %type <f_rfc822resp> pre_f_rfc822_resp
-%destructor { F_RFC822_HOOK_END(false); } <f_rfc822resp>
+%destructor { F_RFC822_RESP_END(false); } <f_rfc822resp>
 
 %% /********** Grammar Section **********/
 
 response: tagged EOL { printf("response!\n"); ACCEPT; };
         | untagged EOL { printf("response!\n"); ACCEPT; };
 
-tagged: tag SP status_type_resp[s]   { ST_HOOK($tag, $s); };
+tagged: tag SP status_type_resp[s]   { ST_RESP($tag, $s); };
+      | tag SP STARTTLS /* respond BAD, we expect to already be in TLS */
+      | tag SP AUTHENTICATE SP atom /* respond BAD, we only support LOGIN */
+      | login_cmd
+      | select_cmd
+      | examine_cmd
+      | create_cmd
+      | delete_cmd
+      | rename_cmd
+      | subscribe_cmd
+      | unsubscribe_cmd
+      | list_cmd
+      | lsub_cmd
+      | status_cmd
+      | tag SP APPEND
+      | tag SP CHECK { CHECK_CMD($tag); };
+      | tag SP CLOSE { CLOSE_CMD($tag); };
+      | tag SP EXPUNGE { EXPUNGE_CMD($tag); };
+      | tag SP SEARCH
+      | tag SP FETCH
+      | store_cmd
+      | tag SP COPY
+      | tag SP UID
+;
 
-untagged: untag SP status_type_resp[s] { ST_HOOK(NUL_DSTR, $s); }
+
+untagged: untag SP status_type_resp[s] { ST_RESP(NUL_DSTR, $s); }
         | untag SP CAPA SP capa_resp
         | untag SP LIST SP list_resp
         | untag SP LSUB SP lsub_resp
@@ -476,7 +605,133 @@ untagged: untag SP status_type_resp[s] { ST_HOOK(NUL_DSTR, $s); }
 untag: '*' { MODE(COMMAND); };
 
 
-/*** status-type handling.  Thanks the the shitty grammar, IMAP4rev1 ***/
+/*** LOGIN command ***/
+
+login_cmd: tag SP LOGIN { MODE(ASTRING); }
+           SP keep_astring[u] SP keep_astring[p] { LOGIN_CMD($tag, $u, $p); };
+
+/*** SELECT command ***/
+
+select_cmd: tag SP SELECT { MODE(MAILBOX); }
+            SP keep_mailbox[m] { SELECT_CMD($tag, $m); };
+
+/*** EXAMINE command ***/
+
+examine_cmd: tag SP EXAMINE { MODE(MAILBOX); }
+             SP keep_mailbox[m] { EXAMINE_CMD($tag, $m); };
+
+/*** CREATE command ***/
+
+create_cmd: tag SP CREATE { MODE(MAILBOX); }
+            SP keep_mailbox[m] { CREATE_CMD($tag, $m); };
+
+/*** DELETE command ***/
+
+delete_cmd: tag SP DELETE { MODE(MAILBOX); }
+            SP keep_mailbox[m] { DELETE_CMD($tag, $m); };
+
+/*** RENAME command ***/
+
+rename_cmd: tag SP RENAME { MODE(MAILBOX); }
+            SP keep_mailbox[o] SP keep_mailbox[n]
+            { RENAME_CMD($tag, $o, $n); };
+
+/*** SUBSCRIBE command ***/
+
+subscribe_cmd: tag SP SUBSCRIBE { MODE(MAILBOX); }
+               SP keep_mailbox[m] { SUBSCRIBE_CMD($tag, $m); };
+
+/*** UNSUBSCRIBE command ***/
+
+unsubscribe_cmd: tag SP UNSUBSCRIBE { MODE(MAILBOX); }
+                 SP keep_mailbox[m] { UNSUBSCRIBE_CMD($tag, $m); };
+
+/*** LIST command ***/
+
+list_cmd: tag SP LIST
+          { MODE(MAILBOX); } SP keep_mailbox[m]
+          { MODE(WILDCARD); } SP keep_astring[pattern]
+          { LIST_CMD($tag, $m, $pattern); };
+
+/*** LSUB command ***/
+
+lsub_cmd: tag SP LSUB
+          { MODE(MAILBOX); } SP keep_mailbox[m]
+          { MODE(WILDCARD); } SP keep_astring[pattern]
+          { LSUB_CMD($tag, $m, $pattern); };
+
+/*** STATUS command ***/
+
+status_cmd: tag SP STATUS
+            { MODE(MAILBOX); } SP keep_mailbox[m]
+            { MODE(ST_ATTR); } SP '(' st_attr_clist_1[sa] ')'
+            { STATUS_CMD($tag, $m, $sa); };
+
+st_attr_clist_1: st_attr[s]                         { $$ = $s; }
+               | st_attr_clist_1[old] SP st_attr[s] { $$ = $old | $s; }
+;
+
+/*** STORE command ***/
+
+store_cmd: pre_store_cmd
+           { MODE(FLAG); } store_flags
+           { STORE_CMD_END(true); (void)$pre_store_cmd; };
+
+pre_store_cmd: tag SP STORE SP
+             { MODE(SEQSET); } seq_set[set]
+             { MODE(STORE); } SP store_sign[sign] FLAGS store_silent[silent] SP
+             { STORE_CMD_START($tag, $set, $sign, $silent); $$ = NULL; };
+
+seq_set: seq_spec
+       | seq_set[s1] ',' seq_spec[s2] { $$ = $s2; $s2->next = $s1; }
+;
+
+seq_spec: seq_num[n]                  { $$ = malloc(sizeof(*$$));
+                                        if(!$$){
+                                            parser->error = E_NOMEM;
+                                            ACCEPT;
+                                        }
+                                        $$->n1 = $n;
+                                        $$->n2 = $n;
+                                        $$->next = NULL;
+                                      }
+        | seq_num[n1] ':' seq_num[n2] { $$ = malloc(sizeof(*$$));
+                                        if(!$$){
+                                            parser->error = E_NOMEM;
+                                            ACCEPT;
+                                        }
+                                        $$->n1 = $n1;
+                                        $$->n2 = $n2;
+                                        $$->next = NULL;
+                                      }
+;
+
+seq_num: '*'    { $$ = 0; }
+       | num
+;
+
+store_sign: %empty  { $$ = 0; }
+          | '-'     { $$ = -1; }
+          | '+'     { $$ = 1; }
+;
+
+store_silent: %empty    { $$ = false; }
+            | SILENT    { $$ = true; }
+;
+
+store_flags: '(' store_flag_list_0 ')'
+           | store_flag_list_1
+;
+
+store_flag_list_0: %empty
+                 | store_flag_list_1
+;
+
+store_flag_list_1: keep_flag[f]                         { STORE_CMD_FLAG($f); }
+                 | store_flag_list_1 SP keep_flag[f]    { STORE_CMD_FLAG($f); }
+;
+
+/*** status-type handling.  Thanks for the the shitty grammar, IMAP4rev1 ***/
 
 /* a valid status-type response with status code input could be two things:
         * OK [ALERT] asdf
@@ -565,40 +820,40 @@ st_txt_char: st_txt_inner_char
 
 /*** CAPABILITY handling ***/
 /* note the (void)$1 is because if there's an error in capa_list, we need to
-   be able to trigger CAPA_HOOK_END via the %destructor, therefore capa_start
+   be able to trigger CAPA_RESP_END via the %destructor, therefore capa_start
    has a semantic value we need to explicitly ignore to avoid warnings */
-capa_resp: capa_start capa_list { CAPA_HOOK_END(true); (void)$1; };
+capa_resp: capa_start capa_list { CAPA_RESP_END(true); (void)$1; };
 
-capa_start: %empty { CAPA_HOOK_START; MODE(ATOM); $$ = NULL; };
+capa_start: %empty { CAPA_RESP_START; MODE(ATOM); $$ = NULL; };
 
-capa_list: keep_atom               { CAPA_HOOK($keep_atom); }
-         | capa_list SP keep_atom  { CAPA_HOOK($keep_atom); }
+capa_list: keep_atom               { CAPA_RESP($keep_atom); }
+         | capa_list SP keep_atom  { CAPA_RESP($keep_atom); }
 ;
 
 /*** PERMANENTFLAG handling ***/
-/* %destructor is used to guarantee HOOK_END gets called, as with CAPABILITY */
-pflag_resp: pflag_start '(' pflag_list_0 ')' { PFLAG_HOOK_END(true); (void)$1; };
+/* %destructor is used to guarantee RESP_END gets called, as with CAPABILITY */
+pflag_resp: pflag_start '(' pflag_list_0 ')' { PFLAG_RESP_END(true); (void)$1; };
 
-pflag_start: %empty { PFLAG_HOOK_START; MODE(FLAG); $$ = NULL; };
+pflag_start: %empty { PFLAG_RESP_START; MODE(FLAG); $$ = NULL; };
 
 pflag_list_0: %empty
              | pflag_list_1
 ;
 
-pflag_list_1: keep_pflag                     { PFLAG_HOOK($keep_pflag); }
-             | pflag_list_1 SP keep_pflag    { PFLAG_HOOK($keep_pflag); }
+pflag_list_1: keep_pflag                     { PFLAG_RESP($keep_pflag); }
+             | pflag_list_1 SP keep_pflag    { PFLAG_RESP($keep_pflag); }
 ;
 
 /*** LIST responses ***/
 list_resp: pre_list_resp '(' list_flags ')' SP
            { MODE(NQCHAR); } nqchar
            { MODE(MAILBOX); } SP keep_mailbox[m]
-           { LIST_HOOK_END($nqchar, $m.inbox, $m.dstr, true); (void)$1; };
+           { LIST_RESP_END($nqchar, $m.inbox, $m.dstr, true); (void)$1; };
 
-pre_list_resp: %empty { LIST_HOOK_START; MODE(FLAG); $$ = NULL; };
+pre_list_resp: %empty { LIST_RESP_START; MODE(FLAG); $$ = NULL; };
 
-list_flags: keep_mflag                  { LIST_HOOK_FLAG($keep_mflag); }
-          | list_flags SP keep_mflag    { LIST_HOOK_FLAG($keep_mflag); }
+list_flags: keep_mflag                  { LIST_RESP_FLAG($keep_mflag); }
+          | list_flags SP keep_mflag    { LIST_RESP_FLAG($keep_mflag); }
 ;
 
 nqchar: NIL                 { $$ = 0; }
@@ -611,27 +866,27 @@ keep_qchar: QCHAR   { $$ = qchar_to_char; }
 lsub_resp: pre_lsub_resp '(' lsub_flags ')' SP
            { MODE(NQCHAR); } nqchar
            { MODE(MAILBOX); } SP keep_mailbox[m]
-           { LSUB_HOOK_END($nqchar, $m.inbox, $m.dstr, true); (void)$1; };
+           { LSUB_RESP_END($nqchar, $m.inbox, $m.dstr, true); (void)$1; };
 
-pre_lsub_resp: %empty { LSUB_HOOK_START; MODE(FLAG); $$ = NULL; };
+pre_lsub_resp: %empty { LSUB_RESP_START; MODE(FLAG); $$ = NULL; };
 
-lsub_flags: keep_mflag                  { LSUB_HOOK_FLAG($keep_mflag); }
-          | lsub_flags SP keep_mflag    { LSUB_HOOK_FLAG($keep_mflag); }
+lsub_flags: keep_mflag                  { LSUB_RESP_FLAG($keep_mflag); }
+          | lsub_flags SP keep_mflag    { LSUB_RESP_FLAG($keep_mflag); }
 ;
 
 /*** STATUS responses ***/
-status_resp: pre_status_resp SP '(' st_attr_list_0 ')'
-             { STATUS_HOOK_END(true); (void)$1; };
+status_resp: { MODE(MAILBOX); } keep_mailbox[m]
+             { MODE(ST_ATTR); } SP '(' st_attr_rlist_0[sa] ')'
+             { STATUS_RESP($m, $sa); };
 
-pre_status_resp: { MODE(MAILBOX); } keep_mailbox[m]
-                 { STATUS_HOOK_START($m); MODE(ST_ATTR); $$ = NULL; };
-
-st_attr_list_0: %empty
-              | st_attr_list_1
+st_attr_rlist_0: %empty          { $$ = (ie_st_attr_resp_t){0}; }
+              | st_attr_rlist_1
 ;
 
-st_attr_list_1: st_attr[s] SP num[n]                   { STATUS_HOOK($s, $n); }
-              | st_attr_list_1 SP st_attr[s] SP num[n] { STATUS_HOOK($s, $n); }
+st_attr_rlist_1: st_attr[s] SP num[n]
+                    { $$ = add_resp_st_attr(NULL, $s, $n); }
+               | st_attr_rlist_1[old] SP st_attr[s] SP num[n]
+                    { $$ = add_resp_st_attr(&$old, $s, $n); }
 ;
 
 st_attr: MESSAGES    { $$ = IE_ST_ATTR_MESSAGES; }
@@ -643,31 +898,31 @@ st_attr: MESSAGES    { $$ = IE_ST_ATTR_MESSAGES; }
 
 /*** FLAGS responses ***/
 flags_resp: pre_flags_resp '(' flags_flags ')'
-            { FLAGS_HOOK_END(true); (void)$1; };
+            { FLAGS_RESP_END(true); (void)$1; };
 
-pre_flags_resp: %empty { FLAGS_HOOK_START; MODE(FLAG); $$ = NULL; };
+pre_flags_resp: %empty { FLAGS_RESP_START; MODE(FLAG); $$ = NULL; };
 
-flags_flags: keep_flag                  { FLAGS_HOOK_FLAG($keep_flag); }
-           | flags_flags SP keep_flag   { FLAGS_HOOK_FLAG($keep_flag); }
+flags_flags: keep_flag                  { FLAGS_RESP_FLAG($keep_flag); }
+           | flags_flags SP keep_flag   { FLAGS_RESP_FLAG($keep_flag); }
 ;
 
 /*** EXISTS responses ***/
-exists_resp: num SP EXISTS { EXISTS_HOOK($num); };
+exists_resp: num SP EXISTS { EXISTS_RESP($num); };
 
 /*** RECENT responses ***/
-recent_resp: num SP RECENT { RECENT_HOOK($num); };
+recent_resp: num SP RECENT { RECENT_RESP($num); };
 
 /*** EXPUNGE responses ***/
-expunge_resp: num SP EXPUNGE { EXPUNGE_HOOK($num); };
+expunge_resp: num SP EXPUNGE { EXPUNGE_RESP($num); };
 
 /*** FETCH responses ***/
 
 fetch_resp: pre_fetch_resp SP '(' msg_attr_list_0 ')'
-            { FETCH_HOOK_END(true); (void)$1; }
+            { FETCH_RESP_END(true); (void)$1; }
 ;
 
 pre_fetch_resp: num SP FETCH
-                { FETCH_HOOK_START($num); $$ = NULL; MODE(MSG_ATTR); };
+                { FETCH_RESP_START($num); $$ = NULL; MODE(MSG_ATTR); };
 
 msg_attr_list_0: %empty
                | msg_attr_list_1
@@ -699,38 +954,38 @@ msg_attr_: f_flags_resp
 
 /*** FETCH FLAGS ***/
 f_flags_resp: pre_f_flags_resp SP '(' f_flags ')'
-              { F_FLAGS_HOOK_END(true); (void)$1; };
+              { F_FLAGS_RESP_END(true); (void)$1; };
 
-pre_f_flags_resp: FLAGS { F_FLAGS_HOOK_START; MODE(FLAG); $$ = NULL; };
+pre_f_flags_resp: FLAGS { F_FLAGS_RESP_START; MODE(FLAG); $$ = NULL; };
 
-f_flags: keep_fflag                  { F_FLAGS_HOOK_FLAG($keep_fflag); }
-       | flags_flags SP keep_fflag   { F_FLAGS_HOOK_FLAG($keep_fflag); }
+f_flags: keep_fflag                  { F_FLAGS_RESP_FLAG($keep_fflag); }
+       | flags_flags SP keep_fflag   { F_FLAGS_RESP_FLAG($keep_fflag); }
 ;
 
 /*** FETCH RFC822 ***/
 f_rfc822_resp: pre_f_rfc822_resp rfc822_nstring
-               { F_RFC822_HOOK_END(true); (void)$1; }
+               { F_RFC822_RESP_END(true); (void)$1; }
 
-pre_f_rfc822_resp: RFC822 SP { F_RFC822_HOOK_START; $$ = NULL; MODE(NSTRING); }
+pre_f_rfc822_resp: RFC822 SP { F_RFC822_RESP_START; $$ = NULL; MODE(NSTRING); }
 
 rfc822_nstring: NIL
-              | LITERAL { F_RFC822_HOOK_LITERAL; } LITERAL_END
-              | '"' { MODE(QSTRING); } rfc822_qstr_body '"'
+              | LITERAL { F_RFC822_RESP_LITERAL; } LITERAL_END
+              | '"' { START_QSTR; } rfc822_qstr_body '"' { END_QSTR; }
 ;
 
-rfc822_qstr_body: RAW                   { F_RFC822_HOOK_QSTR; }
-                | rfc822_qstr_body RAW  { F_RFC822_HOOK_QSTR; }
+rfc822_qstr_body: RAW                   { F_RFC822_RESP_QSTR; }
+                | rfc822_qstr_body RAW  { F_RFC822_RESP_QSTR; }
 ;
 
 /*** FETCH UID ***/
-f_uid_resp: UID SP { MODE(NUM); } num { F_UID_HOOK($num); };
+f_uid_resp: UID SP { MODE(NUM); } num { F_UID_RESP($num); };
 
 /*** FETCH INTERNALDATE ***/
 f_intdate_resp: INTDATE SP { MODE(INTDATE); }
                 '"' date_day_fixed '-' date_month '-' fourdigit[y] SP
                 twodigit[h] ':' twodigit[m] ':' twodigit[s] SP
                 sign twodigit[zh] twodigit[zm] '"'
-                { F_INTDATE_HOOK(((imap_time_t){.year   = $y,
+                { F_INTDATE_RESP(((imap_time_t){.year   = $y,
                                                 .month  = $date_month,
                                                 .day    = $date_day_fixed,
                                                 .hour   = $h,
@@ -823,12 +1078,9 @@ string: qstring
       | literal
 ;
 
-qstring: '"' preqstring qstring_body '"' { UNQSTRING; (void)$preqstring; };
+qstring: '"' preqstring qstring_body '"' { END_QSTR; (void)$preqstring; };
 
-preqstring: %empty { parser->preqstr_mode = parser->scan_mode;
-                     MODE(QSTRING);
-                     KEEP_INIT;
-                     $$ = NULL; }
+preqstring: %empty { START_QSTR; KEEP_INIT; $$ = NULL; }
 
 qstring_body: %empty
             | qstring_body atom_like    { KEEP(QSTRING); }
@@ -836,7 +1088,7 @@ qstring_body: %empty
 
 /* note that LITERAL_END is passed by the application after it finishes reading
    the literal from the stream; it is never returned by the scanner */
-literal: LITERAL { LITERAL_HOOK; } LITERAL_END;
+literal: LITERAL { LITERAL_RESP; } LITERAL_END;
 
 astring: atom
        | string
@@ -917,6 +1169,7 @@ prekeep: %empty { KEEP_START; $$ = NULL; };
 
 /* the "keep" variations of the above (except tag, which is always kept) */
 keep_atom: prekeep atom { $$ = KEEP_REF($prekeep); };
+keep_astring: prekeep astring { $$ = KEEP_REF($prekeep); }
 keep_flag: prekeep flag { $$ = (ie_flag_t){$flag, KEEP_REF($prekeep)}; };
 keep_fflag: prekeep fflag { $$ = (ie_flag_t){$fflag, KEEP_REF($prekeep)}; };
 keep_pflag: prekeep pflag { $$ = (ie_flag_t){$pflag, KEEP_REF($prekeep)}; };

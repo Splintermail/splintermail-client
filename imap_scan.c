@@ -109,11 +109,15 @@ derr_t imap_scan(imap_scanner_t *scanner, scan_mode_t mode, bool *more,
             case SCAN_MODE_STATUS_CODE:         goto status_code_mode;
             case SCAN_MODE_STATUS_TEXT:         goto status_text_mode;
             case SCAN_MODE_MAILBOX:             goto mailbox_mode;
+            case SCAN_MODE_ASTRING:             goto astring_mode;
             case SCAN_MODE_NQCHAR:              goto nqchar_mode;
             case SCAN_MODE_NSTRING:             goto nstring_mode;
             case SCAN_MODE_ST_ATTR:             goto st_attr_mode;
             case SCAN_MODE_MSG_ATTR:            goto msg_attr_mode;
             case SCAN_MODE_INTDATE:             goto intdate_mode;
+            case SCAN_MODE_WILDCARD:            goto wildcard_mode;
+            case SCAN_MODE_SEQSET:              goto seqset_mode;
+            case SCAN_MODE_STORE:               goto store_mode;
         }
     }
 
@@ -134,12 +138,15 @@ derr_t imap_scan(imap_scanner_t *scanner, scan_mode_t mode, bool *more,
         atom            = [^(){%*"\x00-\x1F\x7F\]\\ ]{1,32};
         astr_atom_spec  = [(){%*"\\ ];
         astr_atom       = [^(){%*"\x00-\x1F\x7F\]\]\\ ]{1,32};
+        wild_atom_spec  = [(){"\\ ];
+        wild_atom       = [^(){"\x00-\x1F\x7F\\ ]{1,32};
         flag            = "\\"[^(){%*"\x00-\x1F\x7F\]\\ ]+;
         num             = [0-9]+;
         qstring         = ( [^"\x00\r\n\\] | ("\\"[\\"]) ){1,32};
         text_spec       = [ [\]];
         text_atom       = [^\x00\r\n [\]]+;
         qchar           = [^"\x00\r\n\\] | "\\\\" | "\\\"";
+        nz_num          = [1-9][0-9]*;
     */
 
 tag_mode:
@@ -158,21 +165,38 @@ command_mode:
         eol             { *type = EOL; goto done; }
         " "             { *type = *scanner->start; goto done; }
 
+        'starttls'      { *type = STARTTLS; goto done; }
+        'authenticate'  { *type = AUTHENTICATE; goto done; }
+        'login'         { *type = LOGIN; goto done; }
+        'select'        { *type = SELECT; goto done; }
+        'examine'       { *type = EXAMINE; goto done; }
+        'create'        { *type = CREATE; goto done; }
+        'delete'        { *type = DELETE; goto done; }
+        'rename'        { *type = RENAME; goto done; }
+        'subscribe'     { *type = SUBSCRIBE; goto done; }
+        'unsubscribe'   { *type = UNSUBSCRIBE; goto done; }
+        'list'          { *type = LIST; goto done; }
+        'lsub'          { *type = LSUB; goto done; }
+        'status'        { *type = STATUS; goto done; }
+        'append'        { *type = APPEND; goto done; }
+        'check'         { *type = CHECK; goto done; }
+        'close'         { *type = CLOSE; goto done; }
+        'expunge'       { *type = EXPUNGE; goto done; }
+        'search'        { *type = SEARCH; goto done; }
+        'fetch'         { *type = FETCH; goto done; }
+        'store'         { *type = STORE; goto done; }
+        'copy'          { *type = COPY; goto done; }
+        'uid'           { *type = UID; goto done; }
+
         'ok'            { *type = OK; goto done; }
         'no'            { *type = NO; goto done; }
         'bad'           { *type = BAD; goto done; }
         'preauth'       { *type = PREAUTH; goto done; }
         'bye'           { *type = BYE; goto done; }
         'capability'    { *type = CAPA; goto done; }
-        'list'          { *type = LIST; goto done; }
-        'lsub'          { *type = LSUB; goto done; }
-        'status'        { *type = STATUS; goto done; }
         'flags'         { *type = FLAGS; goto done; }
-        'search'        { *type = SEARCH; goto done; }
         'exists'        { *type = EXISTS; goto done; }
         'recent'        { *type = RECENT; goto done; }
-        'expunge'       { *type = EXPUNGE; goto done; }
-        'fetch'         { *type = FETCH; goto done; }
 
         num             { *type = NUM; goto done; }
     */
@@ -218,7 +242,7 @@ flag_mode:
         'seen'          { *type = SEEN; goto done; }
         'draft'         { *type = DRAFT; goto done; }
         'recent'        { *type = RECENT; goto done; }
-        "\\*"          { *type = ASTERISK_FLAG; goto done; }
+        "\\*"           { *type = ASTERISK_FLAG; goto done; }
 
         atom            { *type = RAW; goto done; }
     */
@@ -272,6 +296,17 @@ mailbox_mode:
         eol             { *type = EOL; goto done; }
 
         'inbox'         { *type = INBOX; goto done; }
+
+        astr_atom       { *type = RAW; goto done; }
+    */
+
+astring_mode:
+
+    /*!re2c
+        *               { return E_PARAM; }
+        astr_atom_spec  { *type = *scanner->start; goto done; }
+        literal         { *type = LITERAL; goto done; }
+        eol             { *type = EOL; goto done; }
 
         astr_atom       { *type = RAW; goto done; }
     */
@@ -354,6 +389,38 @@ intdate_mode:
         'oct'           { *type = OCT; goto done; }
         'nov'           { *type = NOV; goto done; }
         'dec'           { *type = DEC; goto done; }
+    */
+
+wildcard_mode:
+
+    /*!re2c
+        *               { return E_PARAM; }
+        wild_atom_spec  { *type = *scanner->start; goto done; }
+        literal         { *type = LITERAL; goto done; }
+        eol             { *type = EOL; goto done; }
+
+        wild_atom       { *type = RAW; goto done; }
+    */
+
+seqset_mode:
+
+    /*!re2c
+        *               { return E_PARAM; }
+        [ *:,]          { *type = *scanner->start; goto done; }
+        eol             { *type = EOL; goto done; }
+
+        nz_num          { *type = NUM; goto done; }
+    */
+
+store_mode:
+
+    /*!re2c
+        *               { return E_PARAM; }
+        [ +-]           { *type = *scanner->start; goto done; }
+        eol             { *type = EOL; goto done; }
+
+        'flags'         { *type = FLAGS; goto done; }
+        '.silent'       { *type = SILENT; goto done; }
     */
 
 

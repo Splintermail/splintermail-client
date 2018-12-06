@@ -18,11 +18,15 @@ DSTR_STATIC(scan_mode_STATUS_CODE_CHECK_dstr, "SCAN_MODE_STATUS_CODE_CHECK");
 DSTR_STATIC(scan_mode_STATUS_CODE_dstr, "SCAN_MODE_STATUS_CODE");
 DSTR_STATIC(scan_mode_STATUS_TEXT_dstr, "SCAN_MODE_STATUS_TEXT");
 DSTR_STATIC(scan_mode_MAILBOX_dstr, "SCAN_MODE_MAILBOX");
+DSTR_STATIC(scan_mode_ASTRING_dstr, "SCAN_MODE_ASTRING");
 DSTR_STATIC(scan_mode_NQCHAR_dstr, "SCAN_MODE_NQCHAR");
 DSTR_STATIC(scan_mode_NSTRING_dstr, "SCAN_MODE_NSTRING");
 DSTR_STATIC(scan_mode_ST_ATTR_dstr, "SCAN_MODE_ST_ATTR");
 DSTR_STATIC(scan_mode_MSG_ATTR_dstr, "SCAN_MODE_MSG_ATTR");
 DSTR_STATIC(scan_mode_INTDATE_dstr, "SCAN_MODE_INTDATE");
+DSTR_STATIC(scan_mode_WILDCARD_dstr, "SCAN_MODE_WILDCARD");
+DSTR_STATIC(scan_mode_SEQSET_dstr, "SCAN_MODE_SEQSET");
+DSTR_STATIC(scan_mode_STORE_dstr, "SCAN_MODE_STORE");
 DSTR_STATIC(scan_mode_unk_dstr, "unknown scan mode");
 
 dstr_t* scan_mode_to_dstr(scan_mode_t mode){
@@ -37,16 +41,21 @@ dstr_t* scan_mode_to_dstr(scan_mode_t mode){
         case SCAN_MODE_STATUS_CODE: return &scan_mode_STATUS_CODE_dstr;
         case SCAN_MODE_STATUS_TEXT: return &scan_mode_STATUS_TEXT_dstr;
         case SCAN_MODE_MAILBOX: return &scan_mode_MAILBOX_dstr;
+        case SCAN_MODE_ASTRING: return &scan_mode_ASTRING_dstr;
         case SCAN_MODE_NQCHAR: return &scan_mode_NQCHAR_dstr;
         case SCAN_MODE_NSTRING: return &scan_mode_NSTRING_dstr;
         case SCAN_MODE_ST_ATTR: return &scan_mode_ST_ATTR_dstr;
         case SCAN_MODE_MSG_ATTR: return &scan_mode_MSG_ATTR_dstr;
         case SCAN_MODE_INTDATE: return &scan_mode_INTDATE_dstr;
+        case SCAN_MODE_WILDCARD: return &scan_mode_WILDCARD_dstr;
+        case SCAN_MODE_SEQSET: return &scan_mode_SEQSET_dstr;
+        case SCAN_MODE_STORE: return &scan_mode_STORE_dstr;
         default: return &scan_mode_unk_dstr;
     }
 }
 
-derr_t imap_parser_init(imap_parser_t *parser, imap_parse_hooks_up_t hooks_up,
+derr_t imap_parser_init(imap_parser_t *parser, imap_parse_hooks_dn_t hooks_dn,
+                        imap_parse_hooks_up_t hooks_up,
                         void *hook_data){
     // init dstr_t temp to zeros
     parser->temp = (dstr_t){0};
@@ -64,6 +73,7 @@ derr_t imap_parser_init(imap_parser_t *parser, imap_parse_hooks_up_t hooks_up,
     parser->keep_init = false;
     parser->keep_st_text = false;
 
+    parser->hooks_dn = hooks_dn;
     parser->hooks_up = hooks_up;
     parser->hook_data = hook_data;
 

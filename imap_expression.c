@@ -1,3 +1,5 @@
+#include <stdlib.h>
+
 #include "imap_expression.h"
 
 DSTR_STATIC(status_code_NONE_dstr, "STATUS_CODE_NONE");
@@ -79,5 +81,15 @@ const dstr_t *st_attr_to_dstr(ie_st_attr_t attr){
         case IE_ST_ATTR_UIDVLD: return &status_attr_UIDVLD_dstr;
         case IE_ST_ATTR_UNSEEN: return &status_attr_UNSEEN_dstr;
         default: return &status_attr_UNK_dstr;
+    }
+}
+
+void ie_seq_set_free(ie_seq_set_t *s){
+    ie_seq_set_t *ptr, *next;
+    ptr = s;
+    while(ptr){
+        next = ptr->next;
+        free(ptr);
+        ptr = next;
     }
 }
