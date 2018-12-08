@@ -82,6 +82,8 @@ typedef struct {
                           int sign, bool silent);
     derr_t (*store_flag)(void *data, ie_flag_type_t type, dstr_t val);
     void (*store_end)(void *data, bool success);
+    void (*copy)(void *data, dstr_t tag, ie_seq_set_t *seq_set, bool inbox,
+                 dstr_t mbx);
 } imap_parse_hooks_dn_t;
 
 // a list of hooks that are called when communicating with the mail server

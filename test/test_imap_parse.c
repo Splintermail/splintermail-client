@@ -195,6 +195,25 @@ static void expunge_cmd(void *data, dstr_t tag){
 static derr_t store_start(void *data, dstr_t tag, ie_seq_set_t *seq_set,
                           int sign, bool silent){
     (void)data;
+    // print tag
+    LOG_ERROR("STORE START (%x) ", FD(&tag));
+    // print sequence
+    ie_seq_set_t *p = seq_set;
+    do{
+        DSTR_VAR(buf, 32);
+        if(p->n1 == p->n2)
+            FMT(&buf, "%x", p->n1 ? FU(p->n1) : FS("*"));
+        else
+            FMT(&buf, "%x-%x", p->n1 ? FU(p->n1) : FS("*"),
+                               p->n2 ? FU(p->n2) : FS("*"));
+        // add comma if there will be another, or space otherwise
+        FMT(&buf, (p->next) ? "," : " ");
+        // flush buffer to stdout
+        LOG_ERROR("%x", FD(&buf));
+    }while( (p = p->next) );
+    // what to do with FLAGS to follow
+    LOG_ERROR("%xFLAGS%x\n", FC(sign == 0 ? ' ' : (sign > 0 ? '+' : '-')),
+                             FS(silent ? ".SILENT" : ""));
     dstr_free(&tag);
     ie_seq_set_free(seq_set);
     return E_OK;
@@ -202,13 +221,40 @@ static derr_t store_start(void *data, dstr_t tag, ie_seq_set_t *seq_set,
 
 static derr_t store_flag(void *data, ie_flag_type_t type, dstr_t val){
     (void)data;
-    free(&val);
+    LOG_ERROR("STORE FLAG: %x '%x'\n", FD(flag_type_to_dstr(type)), FD(&val));
+    dstr_free(&val);
     return E_OK;
 }
 
 static void store_end(void *data, bool success){
     (void)data;
-    return E_OK;
+    LOG_ERROR("STORE END (%x)\n", FS(success ? "success" : "fail"));
+}
+
+static void copy_cmd(void *data, dstr_t tag, ie_seq_set_t *seq_set, bool inbox,
+                     dstr_t mbx){
+    (void)data;
+    // print tag
+    LOG_ERROR("COPY (%x) ", FD(&tag));
+    // print sequence
+    ie_seq_set_t *p = seq_set;
+    do{
+        DSTR_VAR(buf, 32);
+        if(p->n1 == p->n2)
+            FMT(&buf, "%x", p->n1 ? FU(p->n1) : FS("*"));
+        else
+            FMT(&buf, "%x-%x", p->n1 ? FU(p->n1) : FS("*"),
+                               p->n2 ? FU(p->n2) : FS("*"));
+        // add comma if there will be another, or space otherwise
+        FMT(&buf, (p->next) ? "," : " ");
+        // flush buffer to stdout
+        LOG_ERROR("%x", FD(&buf));
+    }while( (p = p->next) );
+    // what to do with FLAGS to follow
+    LOG_ERROR("to '%x' (%x)\n", FD(&mbx), FU(inbox));
+    dstr_free(&tag);
+    dstr_free(&mbx);
+    ie_seq_set_free(seq_set);
 }
 
 /////////////////////////////////////////////////////////
@@ -510,6 +556,10 @@ static derr_t do_test_scanner_and_parser(LIST(dstr_t) *inputs){
         check_cmd,
         close_cmd,
         expunge_cmd,
+        store_start,
+        store_flag,
+        store_end,
+        copy_cmd,
     };
     imap_parse_hooks_up_t hooks_up = {
         literal,
@@ -724,6 +774,10 @@ static derr_t test_scanner_and_parser(void){
             DSTR_LIT("tag CHECK\r\n"),
             DSTR_LIT("tag CLOSE\r\n"),
             DSTR_LIT("tag EXPUNGE\r\n"),
+            DSTR_LIT("tag STORE 1:*,*:10 +FLAGS.SILENT ()\r\n"),
+            DSTR_LIT("tag STORE 5 +FLAGS \\Seen \\Extension\r\n"),
+            DSTR_LIT("tag COPY 5:* iNBoX\r\n"),
+            DSTR_LIT("tag COPY 5:7 NOt_iNBoX\r\n"),
         );
         PROP( do_test_scanner_and_parser(&inputs) );
     }

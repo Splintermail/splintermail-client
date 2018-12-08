@@ -218,7 +218,6 @@ catch:
     #define EXPUNGE_CMD(tag) \
         parser->hooks_dn.expunge(parser->hook_data, tag);
 
-    /* the set will be released just after STORE_CMD_END */
     #define STORE_CMD_START(tag, set, sign, silent) \
         DOCATCH( parser->hooks_dn.store_start(parser->hook_data, tag, set, \
                                               sign, silent) );
@@ -227,6 +226,9 @@ catch:
                                              f.dstr) );
     #define STORE_CMD_END(success) \
         parser->hooks_dn.store_end(parser->hook_data, success);
+
+    #define COPY_CMD(tag, set, mbx) \
+        parser->hooks_dn.copy(parser->hook_data, tag, set, mbx.inbox, mbx.dstr);
 
     // Responses:
 
@@ -584,7 +586,7 @@ tagged: tag SP status_type_resp[s]   { ST_RESP($tag, $s); };
       | tag SP SEARCH
       | tag SP FETCH
       | store_cmd
-      | tag SP COPY
+      | copy_cmd
       | tag SP UID
 ;
 
@@ -607,63 +609,55 @@ untag: '*' { MODE(COMMAND); };
 
 /*** LOGIN command ***/
 
-login_cmd: tag SP LOGIN { MODE(ASTRING); }
-           SP keep_astring[u] SP keep_astring[p] { LOGIN_CMD($tag, $u, $p); };
+login_cmd: tag SP LOGIN SP { MODE(ASTRING); } keep_astring[u] SP keep_astring[p]
+           { LOGIN_CMD($tag, $u, $p); };
 
 /*** SELECT command ***/
 
-select_cmd: tag SP SELECT { MODE(MAILBOX); }
-            SP keep_mailbox[m] { SELECT_CMD($tag, $m); };
+select_cmd: tag SP SELECT SP keep_mailbox[m] { SELECT_CMD($tag, $m); };
 
 /*** EXAMINE command ***/
 
-examine_cmd: tag SP EXAMINE { MODE(MAILBOX); }
-             SP keep_mailbox[m] { EXAMINE_CMD($tag, $m); };
+examine_cmd: tag SP EXAMINE SP keep_mailbox[m] { EXAMINE_CMD($tag, $m); };
 
 /*** CREATE command ***/
 
-create_cmd: tag SP CREATE { MODE(MAILBOX); }
-            SP keep_mailbox[m] { CREATE_CMD($tag, $m); };
+create_cmd: tag SP CREATE SP keep_mailbox[m] { CREATE_CMD($tag, $m); };
 
 /*** DELETE command ***/
 
-delete_cmd: tag SP DELETE { MODE(MAILBOX); }
-            SP keep_mailbox[m] { DELETE_CMD($tag, $m); };
+delete_cmd: tag SP DELETE SP keep_mailbox[m] { DELETE_CMD($tag, $m); };
 
 /*** RENAME command ***/
 
-rename_cmd: tag SP RENAME { MODE(MAILBOX); }
-            SP keep_mailbox[o] SP keep_mailbox[n]
+rename_cmd: tag SP RENAME SP keep_mailbox[o] SP keep_mailbox[n]
             { RENAME_CMD($tag, $o, $n); };
 
 /*** SUBSCRIBE command ***/
 
-subscribe_cmd: tag SP SUBSCRIBE { MODE(MAILBOX); }
-               SP keep_mailbox[m] { SUBSCRIBE_CMD($tag, $m); };
+subscribe_cmd: tag SP SUBSCRIBE SP keep_mailbox[m]
+               { SUBSCRIBE_CMD($tag, $m); };
 
 /*** UNSUBSCRIBE command ***/
 
-unsubscribe_cmd: tag SP UNSUBSCRIBE { MODE(MAILBOX); }
-                 SP keep_mailbox[m] { UNSUBSCRIBE_CMD($tag, $m); };
+unsubscribe_cmd: tag SP UNSUBSCRIBE SP keep_mailbox[m]
+                 { UNSUBSCRIBE_CMD($tag, $m); };
 
 /*** LIST command ***/
 
-list_cmd: tag SP LIST
-          { MODE(MAILBOX); } SP keep_mailbox[m]
+list_cmd: tag SP LIST SP keep_mailbox[m]
           { MODE(WILDCARD); } SP keep_astring[pattern]
           { LIST_CMD($tag, $m, $pattern); };
 
 /*** LSUB command ***/
 
-lsub_cmd: tag SP LSUB
-          { MODE(MAILBOX); } SP keep_mailbox[m]
+lsub_cmd: tag SP LSUB SP keep_mailbox[m]
           { MODE(WILDCARD); } SP keep_astring[pattern]
           { LSUB_CMD($tag, $m, $pattern); };
 
 /*** STATUS command ***/
 
-status_cmd: tag SP STATUS
-            { MODE(MAILBOX); } SP keep_mailbox[m]
+status_cmd: tag SP STATUS SP keep_mailbox[m]
             { MODE(ST_ATTR); } SP '(' st_attr_clist_1[sa] ')'
             { STATUS_CMD($tag, $m, $sa); };
 
@@ -677,38 +671,9 @@ store_cmd: pre_store_cmd
            { MODE(FLAG); } store_flags
            { STORE_CMD_END(true); (void)$pre_store_cmd; };
 
-pre_store_cmd: tag SP STORE SP
-             { MODE(SEQSET); } seq_set[set]
+pre_store_cmd: tag SP STORE SP seq_set[set]
              { MODE(STORE); } SP store_sign[sign] FLAGS store_silent[silent] SP
              { STORE_CMD_START($tag, $set, $sign, $silent); $$ = NULL; };
-
-seq_set: seq_spec
-       | seq_set[s1] ',' seq_spec[s2] { $$ = $s2; $s2->next = $s1; }
-;
-
-seq_spec: seq_num[n]                  { $$ = malloc(sizeof(*$$));
-                                        if(!$$){
-                                            parser->error = E_NOMEM;
-                                            ACCEPT;
-                                        }
-                                        $$->n1 = $n;
-                                        $$->n2 = $n;
-                                        $$->next = NULL;
-                                      }
-        | seq_num[n1] ':' seq_num[n2] { $$ = malloc(sizeof(*$$));
-                                        if(!$$){
-                                            parser->error = E_NOMEM;
-                                            ACCEPT;
-                                        }
-                                        $$->n1 = $n1;
-                                        $$->n2 = $n2;
-                                        $$->next = NULL;
-                                      }
-;
-
-seq_num: '*'    { $$ = 0; }
-       | num
-;
 
 store_sign: %empty  { $$ = 0; }
           | '-'     { $$ = -1; }
@@ -730,6 +695,11 @@ store_flag_list_0: %empty
 store_flag_list_1: keep_flag[f]                         { STORE_CMD_FLAG($f); }
                  | store_flag_list_1 SP keep_flag[f]    { STORE_CMD_FLAG($f); }
 ;
+
+/*** COPY command ***/
+
+copy_cmd: tag SP COPY SP seq_set[set] SP keep_mailbox[mbx]
+          { COPY_CMD($tag, $set, $mbx); };
 
 /*** status-type handling.  Thanks for the the shitty grammar, IMAP4rev1 ***/
 
@@ -780,9 +750,9 @@ status_code_: sc_alert           { $$ = ST_CODE(ALERT,      0); }
 
 sc_alert: ALERT { parser->keep_st_text = true; };
 
-sc_uidnext: UIDNEXT            { MODE(NUM); };
-sc_uidvld: UIDVLD              { MODE(NUM); };
-sc_unseen: UNSEEN              { MODE(NUM); };
+sc_uidnext: UIDNEXT { MODE(NUM); };
+sc_uidvld: UIDVLD   { MODE(NUM); };
+sc_unseen: UNSEEN   { MODE(NUM); };
 
 sc_atom: atom                  { MODE(STATUS_TEXT); };
 
@@ -845,9 +815,7 @@ pflag_list_1: keep_pflag                     { PFLAG_RESP($keep_pflag); }
 ;
 
 /*** LIST responses ***/
-list_resp: pre_list_resp '(' list_flags ')' SP
-           { MODE(NQCHAR); } nqchar
-           { MODE(MAILBOX); } SP keep_mailbox[m]
+list_resp: pre_list_resp '(' list_flags ')' SP nqchar SP keep_mailbox[m]
            { LIST_RESP_END($nqchar, $m.inbox, $m.dstr, true); (void)$1; };
 
 pre_list_resp: %empty { LIST_RESP_START; MODE(FLAG); $$ = NULL; };
@@ -856,16 +824,8 @@ list_flags: keep_mflag                  { LIST_RESP_FLAG($keep_mflag); }
           | list_flags SP keep_mflag    { LIST_RESP_FLAG($keep_mflag); }
 ;
 
-nqchar: NIL                 { $$ = 0; }
-      | '"' keep_qchar '"'  { $$ = $keep_qchar; };
-;
-
-keep_qchar: QCHAR   { $$ = qchar_to_char; }
-
 /*** LSUB responses ***/
-lsub_resp: pre_lsub_resp '(' lsub_flags ')' SP
-           { MODE(NQCHAR); } nqchar
-           { MODE(MAILBOX); } SP keep_mailbox[m]
+lsub_resp: pre_lsub_resp '(' lsub_flags ')' SP nqchar SP keep_mailbox[m]
            { LSUB_RESP_END($nqchar, $m.inbox, $m.dstr, true); (void)$1; };
 
 pre_lsub_resp: %empty { LSUB_RESP_START; MODE(FLAG); $$ = NULL; };
@@ -875,7 +835,7 @@ lsub_flags: keep_mflag                  { LSUB_RESP_FLAG($keep_mflag); }
 ;
 
 /*** STATUS responses ***/
-status_resp: { MODE(MAILBOX); } keep_mailbox[m]
+status_resp: keep_mailbox[m]
              { MODE(ST_ATTR); } SP '(' st_attr_rlist_0[sa] ')'
              { STATUS_RESP($m, $sa); };
 
@@ -1090,6 +1050,15 @@ qstring_body: %empty
    the literal from the stream; it is never returned by the scanner */
 literal: LITERAL { LITERAL_RESP; } LITERAL_END;
 
+/* nqchar can't handle spaces, so an post-nqchar MODE() call is required */
+nqchar: prenqchar NIL                 { $$ = 0; MODE(MAILBOX); }
+      | prenqchar '"' keep_qchar '"'  { $$ = $keep_qchar; MODE(MAILBOX); }
+;
+
+prenqchar: %empty { MODE(NQCHAR); };
+
+keep_qchar: QCHAR   { $$ = qchar_to_char; };
+
 astring: atom
        | string
 ;
@@ -1126,10 +1095,11 @@ pflag: flag
      | ASTERISK_FLAG    { $$ = IE_FLAG_ASTERISK; }
 ;
 
-mailbox: astring        { $$ = false; /* not an INBOX */ }
-       | INBOX          { $$ = true;  /* is an INBOX */ }
-
+mailbox: prembx astring        { $$ = false; /* not an INBOX */ }
+       | prembx INBOX          { $$ = true;  /* is an INBOX */ }
 ;
+
+prembx: %empty { MODE(MAILBOX); };
 
 sign: '+' { $$ = 1; }
     | '-' { $$ = 2; }
@@ -1162,6 +1132,36 @@ num_list_0: %empty
 
 num_list_1: NUM
           | num_list_1 SP NUM
+;
+
+seq_set: preseq seq_spec                     { $$ = $seq_spec; }
+       | seq_set[s1] ',' seq_spec[s2] { $$ = $s2; $s2->next = $s1; }
+;
+
+preseq: %empty { MODE(SEQSET); };
+
+seq_spec: seq_num[n]                  { $$ = malloc(sizeof(*$$));
+                                        if(!$$){
+                                            parser->error = E_NOMEM;
+                                            ACCEPT;
+                                        }
+                                        $$->n1 = $n;
+                                        $$->n2 = $n;
+                                        $$->next = NULL;
+                                      }
+        | seq_num[n1] ':' seq_num[n2] { $$ = malloc(sizeof(*$$));
+                                        if(!$$){
+                                            parser->error = E_NOMEM;
+                                            ACCEPT;
+                                        }
+                                        $$->n1 = $n1;
+                                        $$->n2 = $n2;
+                                        $$->next = NULL;
+                                      }
+;
+
+seq_num: '*'    { $$ = 0; }
+       | num
 ;
 
 /* dummy grammar to make sure KEEP_CANCEL gets called in error handling */
