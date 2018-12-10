@@ -31,7 +31,7 @@ typedef enum {
     // FETCH-response-related modes
     SCAN_MODE_NSTRING,
     SCAN_MODE_MSG_ATTR,
-    SCAN_MODE_INTDATE,
+    SCAN_MODE_DATETIME,
     // for wildcard patterns
     SCAN_MODE_WILDCARD,
     // for sequence sets, which are read by the parser as atoms
@@ -46,18 +46,6 @@ typedef enum {
     KEEP_RAW,
     KEEP_QSTRING,
 } keep_type_t;
-
-typedef struct {
-    int year;
-    int month;
-    int day;
-    int hour;
-    int min;
-    int sec;
-    int z_sign; /* -1 or + 1 */
-    int z_hour;
-    int z_min;
-} imap_time_t;
 
 // a list of hooks that are called when communicating with the email client
 typedef struct {
@@ -78,6 +66,10 @@ typedef struct {
     void (*check)(void *data, dstr_t tag);
     void (*close)(void *data, dstr_t tag);
     void (*expunge)(void *data, dstr_t tag);
+
+    derr_t (*append_start)(void *data, dstr_t tag, bool inbox, dstr_t mbx);
+    derr_t (*append_flag)(void *data, ie_flag_type_t type, dstr_t val);
+    void (*append_end)(void *data, imap_time_t time, size_t len, bool success);
     derr_t (*store_start)(void *data, dstr_t tag, ie_seq_set_t *seq_set,
                           int sign, bool silent);
     derr_t (*store_flag)(void *data, ie_flag_type_t type, dstr_t val);

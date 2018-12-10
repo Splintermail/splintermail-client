@@ -114,7 +114,7 @@ derr_t imap_scan(imap_scanner_t *scanner, scan_mode_t mode, bool *more,
             case SCAN_MODE_NSTRING:             goto nstring_mode;
             case SCAN_MODE_ST_ATTR:             goto st_attr_mode;
             case SCAN_MODE_MSG_ATTR:            goto msg_attr_mode;
-            case SCAN_MODE_INTDATE:             goto intdate_mode;
+            case SCAN_MODE_DATETIME:            goto datetime_mode;
             case SCAN_MODE_WILDCARD:            goto wildcard_mode;
             case SCAN_MODE_SEQSET:              goto seqset_mode;
             case SCAN_MODE_STORE:               goto store_mode;
@@ -369,10 +369,12 @@ msg_attr_mode:
         'bodystructore' { *type = BODY_STRUCTURE; goto done; }
     */
 
-intdate_mode:
+datetime_mode:
+    // literal allowed since APPEND has an optional date_time then a literal
 
     /*!re2c
         *               { return E_PARAM; }
+        literal         { *type = LITERAL; goto done; }
         ["() :+-]       { *type = *scanner->start; goto done; }
         [0-9]           { *type = DIGIT; goto done; }
         eol             { *type = EOL; goto done; }

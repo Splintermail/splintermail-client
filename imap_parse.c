@@ -23,7 +23,7 @@ DSTR_STATIC(scan_mode_NQCHAR_dstr, "SCAN_MODE_NQCHAR");
 DSTR_STATIC(scan_mode_NSTRING_dstr, "SCAN_MODE_NSTRING");
 DSTR_STATIC(scan_mode_ST_ATTR_dstr, "SCAN_MODE_ST_ATTR");
 DSTR_STATIC(scan_mode_MSG_ATTR_dstr, "SCAN_MODE_MSG_ATTR");
-DSTR_STATIC(scan_mode_INTDATE_dstr, "SCAN_MODE_INTDATE");
+DSTR_STATIC(scan_mode_DATETIME_dstr, "SCAN_MODE_DATETIME");
 DSTR_STATIC(scan_mode_WILDCARD_dstr, "SCAN_MODE_WILDCARD");
 DSTR_STATIC(scan_mode_SEQSET_dstr, "SCAN_MODE_SEQSET");
 DSTR_STATIC(scan_mode_STORE_dstr, "SCAN_MODE_STORE");
@@ -46,7 +46,7 @@ dstr_t* scan_mode_to_dstr(scan_mode_t mode){
         case SCAN_MODE_NSTRING: return &scan_mode_NSTRING_dstr;
         case SCAN_MODE_ST_ATTR: return &scan_mode_ST_ATTR_dstr;
         case SCAN_MODE_MSG_ATTR: return &scan_mode_MSG_ATTR_dstr;
-        case SCAN_MODE_INTDATE: return &scan_mode_INTDATE_dstr;
+        case SCAN_MODE_DATETIME: return &scan_mode_DATETIME_dstr;
         case SCAN_MODE_WILDCARD: return &scan_mode_WILDCARD_dstr;
         case SCAN_MODE_SEQSET: return &scan_mode_SEQSET_dstr;
         case SCAN_MODE_STORE: return &scan_mode_STORE_dstr;

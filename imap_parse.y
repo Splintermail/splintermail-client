@@ -218,6 +218,21 @@ catch:
     #define EXPUNGE_CMD(tag) \
         parser->hooks_dn.expunge(parser->hook_data, tag);
 
+    #define APPEND_CMD_START(tag, mbx) \
+        DOCATCH( parser->hooks_dn.append_start(parser->hook_data, tag, \
+                                               mbx.inbox, mbx.dstr) );
+    #define APPEND_CMD_FLAG(f) \
+        DOCATCH( parser->hooks_dn.append_flag(parser->hook_data, f.type, \
+                                              f.dstr) );
+    #define APPEND_CMD_END(date_time, success){ \
+        /* get the numbers from the literal, ex: {5}\r\nBYTES */ \
+        dstr_t sub = dstr_sub(parser->token, 1, parser->token->len - 3); \
+        size_t len; \
+        dstr_toul(&sub, &len, 10);\
+        parser->hooks_dn.append_end(parser->hook_data, date_time, len, \
+                                    success); \
+    }
+
     #define STORE_CMD_START(tag, set, sign, silent) \
         DOCATCH( parser->hooks_dn.store_start(parser->hook_data, tag, set, \
                                               sign, silent) );
@@ -506,6 +521,9 @@ catch:
 %type <ch> nqchar
 %type <ch> keep_qchar
 
+%type <time> date_time;
+%type <time> append_time;
+
 %type <st_attr> st_attr
 %type <st_attr_cmd> st_attr_clist_1
 %type <st_attr_resp> st_attr_rlist_0
@@ -532,6 +550,9 @@ catch:
 
 %type <preqstring> preqstring
 %destructor { END_QSTR; } <preqstring>
+
+%type <appendcmd> pre_append_cmd
+%destructor { APPEND_CMD_END((imap_time_t){0}, false); } <appendcmd>
 
 %type <storecmd> pre_store_cmd
 %destructor { STORE_CMD_END(false); } <storecmd>
@@ -579,7 +600,7 @@ tagged: tag SP status_type_resp[s]   { ST_RESP($tag, $s); };
       | list_cmd
       | lsub_cmd
       | status_cmd
-      | tag SP APPEND
+      | append_cmd
       | tag SP CHECK { CHECK_CMD($tag); };
       | tag SP CLOSE { CLOSE_CMD($tag); };
       | tag SP EXPUNGE { EXPUNGE_CMD($tag); };
@@ -663,6 +684,32 @@ status_cmd: tag SP STATUS SP keep_mailbox[m]
 
 st_attr_clist_1: st_attr[s]                         { $$ = $s; }
                | st_attr_clist_1[old] SP st_attr[s] { $$ = $old | $s; }
+;
+
+/*** APPEND command ***/
+/* the post-date_time mode just has to accept a literal, it's not specific */
+
+append_cmd: pre_append_cmd
+            { MODE(FLAG); } SP append_flags append_time[at]
+            { MODE(ASTRING); } LITERAL
+            { APPEND_CMD_END($at, true); (void)$pre_append_cmd; } LITERAL_END;
+
+pre_append_cmd: tag SP APPEND SP keep_mailbox[m]
+                { APPEND_CMD_START($tag, $m); $$ = NULL; };
+
+append_flags: %empty
+            | '(' append_flags_0 ')' SP;
+
+append_flags_0: %empty
+              | append_flags_1
+;
+
+append_flags_1: keep_flag[f]                    { APPEND_CMD_FLAG($f); }
+              | append_flags_1 SP keep_flag[f]  { APPEND_CMD_FLAG($f); }
+;
+
+append_time: %empty             { $$ = (imap_time_t){0}; }
+           | date_time[dt] SP   { $$ = $dt; }
 ;
 
 /*** STORE command ***/
@@ -941,36 +988,7 @@ rfc822_qstr_body: RAW                   { F_RFC822_RESP_QSTR; }
 f_uid_resp: UID SP { MODE(NUM); } num { F_UID_RESP($num); };
 
 /*** FETCH INTERNALDATE ***/
-f_intdate_resp: INTDATE SP { MODE(INTDATE); }
-                '"' date_day_fixed '-' date_month '-' fourdigit[y] SP
-                twodigit[h] ':' twodigit[m] ':' twodigit[s] SP
-                sign twodigit[zh] twodigit[zm] '"'
-                { F_INTDATE_RESP(((imap_time_t){.year   = $y,
-                                                .month  = $date_month,
-                                                .day    = $date_day_fixed,
-                                                .hour   = $h,
-                                                .min    = $m,
-                                                .sec    = $s,
-                                                .z_sign = $sign,
-                                                .z_hour = $zh,
-                                                .z_min  = $zm })); };
-
-date_day_fixed: ' ' digit       { $$ = $digit; }
-              | digit digit     { $$ = 10*$1 + $2; }
-;
-
-date_month: JAN { $$ = 0; };
-          | FEB { $$ = 1; };
-          | MAR { $$ = 2; };
-          | APR { $$ = 3; };
-          | MAY { $$ = 4; };
-          | JUN { $$ = 5; };
-          | JUL { $$ = 6; };
-          | AUG { $$ = 7; };
-          | SEP { $$ = 8; };
-          | OCT { $$ = 9; };
-          | NOV { $$ = 10; };
-          | DEC { $$ = 11; };
+f_intdate_resp: INTDATE SP date_time { F_INTDATE_RESP($date_time); };
 
 
 /*        date    subj    from       sender     reply-to */
@@ -1100,6 +1118,38 @@ mailbox: prembx astring        { $$ = false; /* not an INBOX */ }
 ;
 
 prembx: %empty { MODE(MAILBOX); };
+
+date_time: pre_date_time '"' date_day_fixed '-' date_month '-' fourdigit[y] SP
+           twodigit[h] ':' twodigit[m] ':' twodigit[s] SP
+           sign twodigit[zh] twodigit[zm] '"'
+           { $$ = (imap_time_t){.year   = $y,
+                                .month  = $date_month,
+                                .day    = $date_day_fixed,
+                                .hour   = $h,
+                                .min    = $m,
+                                .sec    = $s,
+                                .z_sign = $sign,
+                                .z_hour = $zh,
+                                .z_min  = $zm }; };
+
+pre_date_time: %empty { MODE(DATETIME); };
+
+date_day_fixed: ' ' digit       { $$ = $digit; }
+              | digit digit     { $$ = 10*$1 + $2; }
+;
+
+date_month: JAN { $$ = 0; };
+          | FEB { $$ = 1; };
+          | MAR { $$ = 2; };
+          | APR { $$ = 3; };
+          | MAY { $$ = 4; };
+          | JUN { $$ = 5; };
+          | JUL { $$ = 6; };
+          | AUG { $$ = 7; };
+          | SEP { $$ = 8; };
+          | OCT { $$ = 9; };
+          | NOV { $$ = 10; };
+          | DEC { $$ = 11; };
 
 sign: '+' { $$ = 1; }
     | '-' { $$ = 2; }

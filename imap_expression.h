@@ -7,6 +7,18 @@
 union imap_expr_t;
 typedef union imap_expr_t imap_expr_t;
 
+typedef struct {
+    int year;
+    int month;
+    int day;
+    int hour;
+    int min;
+    int sec;
+    int z_sign; /* -1 or + 1 */
+    int z_hour;
+    int z_min;
+} imap_time_t;
+
 typedef enum {
     STATUS_TYPE_OK,
     STATUS_TYPE_NO,
@@ -103,6 +115,7 @@ union imap_expr_t {
     unsigned int num;
     int sign;
     dstr_t dstr;
+    imap_time_t time;
     ie_flag_type_t flag_type;
     ie_flag_t flag;
     ie_mailbox_t mailbox;
@@ -114,6 +127,7 @@ union imap_expr_t {
     // dummy types to trigger %destructor actions
     void *prekeep;
     void *preqstring;
+    void *appendcmd;
     void *storecmd;
     void *capa;
     void *permflag;

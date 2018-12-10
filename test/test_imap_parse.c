@@ -192,6 +192,35 @@ static void expunge_cmd(void *data, dstr_t tag){
 
 //
 
+static derr_t append_start(void *data, dstr_t tag, bool inbox, dstr_t mbx){
+    (void)data;
+    LOG_ERROR("APPEND START (%x) '%x' (%x)\n", FD(&tag), FD(&mbx), FU(inbox));
+    dstr_free(&tag);
+    dstr_free(&mbx);
+    return E_OK;
+}
+
+static derr_t append_flag(void *data, ie_flag_type_t type, dstr_t val){
+    (void)data;
+    LOG_ERROR("APPEND FLAG: %x '%x'\n", FD(flag_type_to_dstr(type)), FD(&val));
+    dstr_free(&val);
+    return E_OK;
+}
+
+static void append_end(void *data, imap_time_t imap_time, size_t literal_len,
+                       bool success){
+    locals_t *locals = data;
+    locals->in_literal = true;
+    locals->fetch_literal = true;
+    locals->literal_len = literal_len;
+    LOG_ERROR("APPEND END len:%x date:%x-%x-%x (%x)\n",
+              FU(literal_len),
+              FI(imap_time.year), FI(imap_time.month), FI(imap_time.day),
+              FS(success ? "success" : "fail"));
+}
+
+//
+
 static derr_t store_start(void *data, dstr_t tag, ie_seq_set_t *seq_set,
                           int sign, bool silent){
     (void)data;
@@ -556,6 +585,9 @@ static derr_t do_test_scanner_and_parser(LIST(dstr_t) *inputs){
         check_cmd,
         close_cmd,
         expunge_cmd,
+        append_start,
+        append_flag,
+        append_end,
         store_start,
         store_flag,
         store_end,
@@ -627,12 +659,12 @@ static derr_t do_test_scanner_and_parser(LIST(dstr_t) *inputs){
 
             // try to scan a token
             scan_mode_t scan_mode = parser.scan_mode;
-            LOG_ERROR("---------------------\n"
+            LOG_INFO("---------------------\n"
                       "mode is %x\n",
                       FD(scan_mode_to_dstr(scan_mode)));
 
-            // dstr_t scannable = get_scannable(&scanner);
-            // LOG_ERROR("scannable is: '%x'\n", FD(&scannable));
+            dstr_t scannable = get_scannable(&scanner);
+            LOG_DEBUG("scannable is: '%x'\n", FD(&scannable));
 
             PROP_GO( imap_scan(&scanner, scan_mode, &more, &token_type),
                      cu_parser);
@@ -643,7 +675,7 @@ static derr_t do_test_scanner_and_parser(LIST(dstr_t) *inputs){
 
             // print the token
             dstr_t token = get_token(&scanner);
-            LOG_ERROR("token is '%x' (%x)\n",
+            LOG_INFO("token is '%x' (%x)\n",
                       FD_DBG(&token), FI(token_type));
 
             // call parser, which will call context-specific actions
@@ -774,6 +806,12 @@ static derr_t test_scanner_and_parser(void){
             DSTR_LIT("tag CHECK\r\n"),
             DSTR_LIT("tag CLOSE\r\n"),
             DSTR_LIT("tag EXPUNGE\r\n"),
+            DSTR_LIT("tag APPEND inbox (\\Seen) \"11-jan-1999 00:11:22 +5000\" "),
+            DSTR_LIT(            "{10}\r\nhello imap\r\n"),
+            DSTR_LIT("tag APPEND inbox \"11-jan-1999 00:11:22 +5000\" "),
+            DSTR_LIT(            "{10}\r\nhello imap\r\n"),
+            DSTR_LIT("tag APPEND inbox (\\Seen) "),
+            DSTR_LIT(            "{10}\r\nhello imap\r\n"),
             DSTR_LIT("tag STORE 1:*,*:10 +FLAGS.SILENT ()\r\n"),
             DSTR_LIT("tag STORE 5 +FLAGS \\Seen \\Extension\r\n"),
             DSTR_LIT("tag COPY 5:* iNBoX\r\n"),
@@ -788,7 +826,7 @@ static derr_t test_scanner_and_parser(void){
 int main(int argc, char **argv){
     derr_t error;
     // parse options and set default log level
-    PARSE_TEST_OPTIONS(argc, argv, NULL, LOG_LVL_DEBUG);
+    PARSE_TEST_OPTIONS(argc, argv, NULL, LOG_LVL_ERROR);
 
     // PROP_GO( test_just_parser(), test_fail);
     PROP_GO( test_scanner_and_parser(), test_fail);
