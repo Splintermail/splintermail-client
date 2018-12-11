@@ -233,6 +233,9 @@ catch:
                                     success); \
     }
 
+    #define FETCH_CMD(tag, seq_set, fetch_attr) \
+        parser->hooks_dn.fetch(parser->hook_data, tag, seq_set, fetch_attr);
+
     #define STORE_CMD_START(tag, set, sign, silent) \
         DOCATCH( parser->hooks_dn.store_start(parser->hook_data, tag, set, \
                                               sign, silent) );
@@ -351,6 +354,81 @@ catch:
                                           parser->keep) ); \
     }
 
+    // allocators
+    #define SECT_PART(out, list, num) \
+        ie_section_part_t *temp; \
+        temp = malloc(sizeof(*temp)); \
+        if(!temp){ \
+            parser->error = E_NOMEM; \
+            ACCEPT; \
+        } \
+        if(list){ \
+            /* append this struct to existing linked list */ \
+            ie_section_part_t *end = list; \
+            while(end->next) end = end->next; \
+            end->next = temp; \
+            out = list; \
+        }else{ \
+            /* this struct heads a new linked list */ \
+            out = temp; \
+        } \
+        temp->n = num
+
+    #define HEADER_LIST(out, list, header) \
+        ie_header_list_t *temp; \
+        temp = malloc(sizeof(*temp)); \
+        if(!temp){ \
+            parser->error = E_NOMEM; \
+            ACCEPT; \
+        } \
+        if(list){ \
+            /* append this struct to existing linked list */ \
+            ie_header_list_t *end = list; \
+            while(end->next) end = end->next; \
+            end->next = temp; \
+            out = list; \
+        } \
+        temp->name = header
+
+    #define SECT(out, sp, st) \
+        ie_fetch_extra_t *temp; \
+        temp = malloc(sizeof(*temp)); \
+        if(!temp){ \
+            parser->error = E_NOMEM; \
+            ACCEPT; \
+        } \
+        *temp = (ie_fetch_extra_t){ .sect_part = sp, .sect_txt = st }
+
+    #define FUSE_FETCH_ATTR(out, old, new) \
+        /* this macro not used with the FETCH shortcuts */ \
+        out.type = IE_FETCH_ATTR; \
+        /* logical OR of all boolean flags */ \
+        out.envelope      = old.envelope      || new.envelope; \
+        out.flags         = old.flags         || new.flags; \
+        out.intdate       = old.intdate       || new.intdate; \
+        out.uid           = old.uid           || new.uid; \
+        out.rfc822        = old.rfc822        || new.rfc822; \
+        out.rfc822_header = old.rfc822_header || new.rfc822_header; \
+        out.rfc822_size   = old.rfc822_size   || new.rfc822_size; \
+        out.rfc822_text   = old.rfc822_text   || new.rfc822_text; \
+        out.body          = old.body          || new.body; \
+        out.bodystruct    = old.bodystruct    || new.bodystruct; \
+        /* combine the linked lists of extras */ \
+        out.extra = old.extra; \
+        ie_fetch_extra_t **end = &out.extra; \
+        while(*end){ end = &((*end)->next); } \
+        *end = new.extra
+
+    #define SEQ_SPEC(out, _n1, _n2) \
+        out = malloc(sizeof(*out)); \
+        if(!out){ \
+            parser->error = E_NOMEM; \
+            ACCEPT; \
+        } \
+        out->n1 = _n1; \
+        out->n2 = _n2; \
+        out->next = NULL
+
 %}
 
 /* this defines the type of yylval, which is the semantic value of a token */
@@ -438,16 +516,26 @@ catch:
 
 /* FETCH state */
 /*     FLAGS (listed above */
+%token ALL
+%token FULL
+%token FAST
 %token ENVELOPE
 %token INTDATE
 %token RFC822
 %token RFC822_TEXT
 %token RFC822_HEADER
 %token RFC822_SIZE
-%token BODY_STRUCTURE
+%token BODYSTRUCT
 %token BODY
+%token BODY_PEEK
 /*     UID (listed above) */
-%token STRUCTURE
+
+/* BODY[] section stuff */
+%token MIME
+%token TEXT
+%token HEADER
+%token HDR_FLDS
+%token HDR_FLDS_NOT
 
 /* FLAGS */
 %token ANSWERED
@@ -535,6 +623,28 @@ catch:
 
 %type <boolean> store_silent
 
+%type <partial> partial
+
+%type <sect_part> sect_part
+%destructor { ie_section_part_free($$); } <sect_part>
+
+%type <sect_txt> sect_txt
+%type <sect_txt> sect_msgtxt
+%type <sect_txt> hdr_flds
+%type <sect_txt> hdr_flds_not
+%destructor { ie_header_list_free($$.headers); } <sect_txt>
+
+%type <header_list> header_list_1
+%destructor { ie_header_list_free($$); } <header_list>
+
+%type <fetch_extra> sect
+%destructor { ie_fetch_extra_free($$); } <fetch_extra>
+
+%type <fetch_attr> fetch_attr
+%type <fetch_attr> fetch_attrs
+%type <fetch_attr> fetch_attrs_1
+%destructor { ie_fetch_attr_free(&$$); } <fetch_attr>
+
 %type <status_type> status_type_resp
 %type <status_type> status_type
 %type <status_type> status_type_
@@ -605,7 +715,7 @@ tagged: tag SP status_type_resp[s]   { ST_RESP($tag, $s); };
       | tag SP CLOSE { CLOSE_CMD($tag); };
       | tag SP EXPUNGE { EXPUNGE_CMD($tag); };
       | tag SP SEARCH
-      | tag SP FETCH
+      | fetch_cmd
       | store_cmd
       | copy_cmd
       | tag SP UID
@@ -712,7 +822,79 @@ append_time: %empty             { $$ = (imap_time_t){0}; }
            | date_time[dt] SP   { $$ = $dt; }
 ;
 
+/*** FETCH command ***/
+
+fetch_cmd: tag SP FETCH SP seq_set[seq] SP fetch_attrs[attr]
+           { FETCH_CMD($tag, $seq, $attr); };
+
+fetch_attrs: ALL           { $$ = (ie_fetch_attr_t){ .type = IE_FETCH_ALL }; }
+           | FULL          { $$ = (ie_fetch_attr_t){ .type = IE_FETCH_FULL }; }
+           | FAST          { $$ = (ie_fetch_attr_t){ .type = IE_FETCH_FAST }; }
+           | fetch_attr
+           | '(' fetch_attrs_1 ')'  { $$ = $fetch_attrs_1; }
+;
+
+fetch_attrs_1: fetch_attr
+             | fetch_attrs_1[a] SP fetch_attr[b] { FUSE_FETCH_ATTR($$, $a, $b); }
+;
+
+fetch_attr: ENVELOPE      { $$ = (ie_fetch_attr_t){ .envelope = true }; }
+          | FLAGS         { $$ = (ie_fetch_attr_t){ .flags = true }; }
+          | INTDATE       { $$ = (ie_fetch_attr_t){ .intdate = true }; }
+          | UID           { $$ = (ie_fetch_attr_t){ .uid = true }; }
+          | RFC822        { $$ = (ie_fetch_attr_t){ .uid = true }; }
+          | RFC822_HEADER { $$ = (ie_fetch_attr_t){ .rfc822_header = true }; }
+          | RFC822_SIZE   { $$ = (ie_fetch_attr_t){ .rfc822_size = true }; }
+          | RFC822_TEXT   { $$ = (ie_fetch_attr_t){ .rfc822_text = true }; }
+          | BODYSTRUCT    { $$ = (ie_fetch_attr_t){ .bodystruct = true }; }
+          | BODY '[' sect ']' partial
+                          { $sect->peek = false;
+                            $sect->partial = $partial;
+                            $$ = (ie_fetch_attr_t){ .extra = $sect }; }
+          | BODY_PEEK '[' sect ']' partial
+                          { $sect->peek = true;
+                            $sect->partial = $partial;
+                            $$ = (ie_fetch_attr_t){ .extra = $sect }; }
+;
+
+sect: %empty                       { SECT($$, NULL, (ie_sect_txt_t){0}); }
+    | sect_msgtxt[t]               { SECT($$, NULL, $t); }
+    | sect_part[p] '.' sect_txt[t] { SECT($$, $p, $t); }
+;
+
+sect_part: num                  { SECT_PART($$, NULL, $num); }
+         | sect_part[s] '.' num { SECT_PART($$, $s, $num); }
+;
+
+sect_txt: sect_msgtxt
+        | MIME              { $$ = (ie_sect_txt_t){ .type = IE_SECT_MIME }; }
+;
+
+sect_msgtxt: HEADER         { $$ = (ie_sect_txt_t){ .type = IE_SECT_HEADER }; }
+           | TEXT           { $$ = (ie_sect_txt_t){ .type = IE_SECT_TEXT }; }
+           | hdr_flds
+           | hdr_flds_not
+;
+
+hdr_flds: HDR_FLDS SP { MODE(ASTRING); } '(' header_list_1[h] ')'
+          { $$ = (ie_sect_txt_t){ .type = IE_SECT_HDR_FLDS,
+                                  .headers = $h }; };
+
+hdr_flds_not: HDR_FLDS_NOT SP { MODE(ASTRING); } '(' header_list_1[h] ')'
+              { $$ = (ie_sect_txt_t){ .type = IE_SECT_HDR_FLDS_NOT,
+                                      .headers = $h }; };
+
+
+header_list_1: keep_astring[h]                   { HEADER_LIST($$, NULL, $h); }
+             | header_list_1[l] SP keep_astring[h] { HEADER_LIST($$, $l, $h); }
+;
+
+partial: %empty                     { $$ = (ie_partial_t){0}; }
+       | '<' num[a] '.' num[b] '>'  { $$.found = 1; $$.p1 = $a; $$.p2 = $b; }
+;
+
 /*** STORE command ***/
+
 
 store_cmd: pre_store_cmd
            { MODE(FLAG); } store_flags
@@ -955,7 +1137,7 @@ msg_attr_: f_flags_resp
          | RFC822_TEXT SP nstring
          | RFC822_HEADER SP nstring
          | RFC822_SIZE SP NUM
-         | BODY_STRUCTURE { LOG_ERROR("found BODYSTRUCTURE\n"); ACCEPT; }
+         | BODYSTRUCT { LOG_ERROR("found BODYSTRUCTURE\n"); ACCEPT; }
          | BODY { LOG_ERROR("found BODYSTRUCTURE\n"); ACCEPT; }
 ;
 
@@ -1184,30 +1366,14 @@ num_list_1: NUM
           | num_list_1 SP NUM
 ;
 
-seq_set: preseq seq_spec                     { $$ = $seq_spec; }
+seq_set: preseq seq_spec              { $$ = $seq_spec; }
        | seq_set[s1] ',' seq_spec[s2] { $$ = $s2; $s2->next = $s1; }
 ;
 
 preseq: %empty { MODE(SEQSET); };
 
-seq_spec: seq_num[n]                  { $$ = malloc(sizeof(*$$));
-                                        if(!$$){
-                                            parser->error = E_NOMEM;
-                                            ACCEPT;
-                                        }
-                                        $$->n1 = $n;
-                                        $$->n2 = $n;
-                                        $$->next = NULL;
-                                      }
-        | seq_num[n1] ':' seq_num[n2] { $$ = malloc(sizeof(*$$));
-                                        if(!$$){
-                                            parser->error = E_NOMEM;
-                                            ACCEPT;
-                                        }
-                                        $$->n1 = $n1;
-                                        $$->n2 = $n2;
-                                        $$->next = NULL;
-                                      }
+seq_spec: seq_num[n]                  { SEQ_SPEC($$, $n, $n); }
+        | seq_num[n1] ':' seq_num[n2] { SEQ_SPEC($$, $n1, $n2); }
 ;
 
 seq_num: '*'    { $$ = 0; }

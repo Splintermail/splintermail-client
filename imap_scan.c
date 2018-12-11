@@ -366,7 +366,8 @@ msg_attr_mode:
         'rfc822.size'   { *type = RFC822_SIZE; goto done; }
         'envelope'      { *type = ENVELOPE; goto done; }
         'body'          { *type = BODY; goto done; }
-        'bodystructore' { *type = BODY_STRUCTURE; goto done; }
+        'bodystructure' { *type = BODYSTRUCT; goto done; }
+        'body.peek'     { *type = BODY_PEEK; goto done; }
     */
 
 datetime_mode:

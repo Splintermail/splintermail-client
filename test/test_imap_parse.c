@@ -37,6 +37,10 @@
     one time?
 
     literals coming from email client need a '+' response
+
+    I am pretty sure that whenever I call YYACCEPT or use DOCATCH in an
+    end-of-rule code block I also need to free anything in that rule that has
+    a destructor (which wouldn't get called... I think)
 */
 
 // the struct for the parse hooks' *data memeber
@@ -217,6 +221,18 @@ static void append_end(void *data, imap_time_t imap_time, size_t literal_len,
               FU(literal_len),
               FI(imap_time.year), FI(imap_time.month), FI(imap_time.day),
               FS(success ? "success" : "fail"));
+}
+
+//
+
+
+static void fetch_cmd(void *data, dstr_t tag, ie_seq_set_t *seq_set,
+                      ie_fetch_attr_t attr){
+    (void)data;
+    LOG_ERROR("FETCH COMMAND\n");
+    dstr_free(&tag);
+    ie_seq_set_free(seq_set);
+    ie_fetch_attr_free(&attr);
 }
 
 //
@@ -588,6 +604,7 @@ static derr_t do_test_scanner_and_parser(LIST(dstr_t) *inputs){
         append_start,
         append_flag,
         append_end,
+        fetch_cmd,
         store_start,
         store_flag,
         store_end,

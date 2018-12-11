@@ -70,6 +70,8 @@ typedef struct {
     derr_t (*append_start)(void *data, dstr_t tag, bool inbox, dstr_t mbx);
     derr_t (*append_flag)(void *data, ie_flag_type_t type, dstr_t val);
     void (*append_end)(void *data, imap_time_t time, size_t len, bool success);
+    void (*fetch)(void *data, dstr_t tag, ie_seq_set_t *seq_set,
+                  ie_fetch_attr_t attr);
     derr_t (*store_start)(void *data, dstr_t tag, ie_seq_set_t *seq_set,
                           int sign, bool silent);
     derr_t (*store_flag)(void *data, ie_flag_type_t type, dstr_t val);
