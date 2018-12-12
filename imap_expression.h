@@ -123,12 +123,12 @@ typedef struct ie_section_part_t {
 
 void ie_section_part_free(ie_section_part_t *s);
 
-typedef struct ie_header_list_t {
+typedef struct ie_header_t {
     dstr_t name;
-    struct ie_header_list_t *next;
-} ie_header_list_t;
+    struct ie_header_t *next;
+} ie_header_t;
 
-void ie_header_list_free(ie_header_list_t *h);
+void ie_header_free(ie_header_t *h);
 
 typedef enum {
     IE_SECT_NONE = 0,
@@ -141,10 +141,10 @@ typedef enum {
 
 typedef struct ie_sect_txt_t {
     ie_sect_txt_type_t type;
-    ie_header_list_t *headers;
+    ie_header_t *headers;
 } ie_sect_txt_t;
 
-// a single BODY[]<> or BODY.PEEK[]<> in the FETCH cmd, there may be many
+// a BODY[]<> or BODY.PEEK[]<> in the FETCH cmd, there may be many
 typedef struct ie_fetch_extra_t {
     bool peek; // BODY or BODY.PEEK
     // section-part
@@ -158,15 +158,7 @@ typedef struct ie_fetch_extra_t {
 
 void ie_fetch_extra_free(ie_fetch_extra_t *extra);
 
-typedef enum {
-    IE_FETCH_ATTR = 0, // the not-shortcut type
-    IE_FETCH_ALL,
-    IE_FETCH_FULL,
-    IE_FETCH_FAST,
-} ie_fetch_type_t;
-
 typedef struct ie_fetch_attr_t {
-    ie_fetch_type_t type;
     bool envelope:1;
     bool flags:1;
     bool intdate:1;
@@ -199,7 +191,7 @@ union imap_expr_t {
     ie_partial_t partial;
     ie_section_part_t *sect_part;
     ie_sect_txt_t sect_txt;
-    ie_header_list_t *header_list;
+    ie_header_t *header_list;
     ie_fetch_extra_t *fetch_extra;
     ie_fetch_attr_t fetch_attr;
     ie_resp_status_type_t status_type;

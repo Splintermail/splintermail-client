@@ -229,7 +229,68 @@ static void append_end(void *data, imap_time_t imap_time, size_t literal_len,
 static void fetch_cmd(void *data, dstr_t tag, ie_seq_set_t *seq_set,
                       ie_fetch_attr_t attr){
     (void)data;
-    LOG_ERROR("FETCH COMMAND\n");
+    LOG_ERROR("FETCH command (%x) ", FD(&tag));
+    // print sequence
+    ie_seq_set_t *p = seq_set;
+    do{
+        DSTR_VAR(buf, 32);
+        if(p->n1 == p->n2)
+            FMT(&buf, "%x", p->n1 ? FU(p->n1) : FS("*"));
+        else
+            FMT(&buf, "%x-%x", p->n1 ? FU(p->n1) : FS("*"),
+                               p->n2 ? FU(p->n2) : FS("*"));
+        // add comma if there will be another, or space otherwise
+        if(p->next) FMT(&buf, ",");
+        // flush buffer to stdout
+        LOG_ERROR("%x", FD(&buf));
+    }while( (p = p->next) );
+    // print the "fixed" attributes
+    if(attr.envelope) LOG_ERROR(" ENVELOPE");
+    if(attr.flags) LOG_ERROR(" FLAGS");
+    if(attr.intdate) LOG_ERROR(" INTERNALDATE");
+    if(attr.uid) LOG_ERROR(" UID");
+    if(attr.rfc822) LOG_ERROR(" RFC822");
+    if(attr.rfc822_header) LOG_ERROR(" RFC822_HEADER");
+    if(attr.rfc822_size) LOG_ERROR(" RFC822_SIZE");
+    if(attr.rfc822_text) LOG_ERROR(" RFC822_TEXT");
+    if(attr.body) LOG_ERROR(" BODY");
+    if(attr.bodystruct) LOG_ERROR(" BODYSTRUCT");
+    // print the free-form attributes
+    for(ie_fetch_extra_t *ex = attr.extra; ex != NULL; ex = ex->next){
+        // BODY or BODY.PEEK
+        LOG_ERROR(" BODY%x[", FS(ex->peek ? ".PEEK" : ""));
+        // the section part, a '.'-separated set of numbers inside the []
+        for(ie_section_part_t *sp = ex->sect_part; sp != NULL; sp = sp->next){
+            LOG_ERROR("%x%x", FU(sp->n), FS(sp->next ? "." : ""));
+        }
+        // separator between section-part and section-text
+        if(ex->sect_part && ex->sect_txt.type) LOG_ERROR(".");
+        // the section text part
+        switch(ex->sect_txt.type){
+            case IE_SECT_NONE:      break;
+            case IE_SECT_MIME:      LOG_ERROR("MIME"); break;
+            case IE_SECT_TEXT:      LOG_ERROR("TEXT"); break;
+            case IE_SECT_HEADER:    LOG_ERROR("HEADER"); break;
+            case IE_SECT_HDR_FLDS:
+                LOG_ERROR("HEADER.FIELDS (");
+                for(ie_header_t *h = ex->sect_txt.headers; h; h = h->next)
+                    LOG_ERROR("%x%x", FD(&h->name), FS(h->next ? " " : ""));
+                LOG_ERROR(")");
+                break;
+            case IE_SECT_HDR_FLDS_NOT:
+                LOG_ERROR("HEADER.FIELDS.NOT (");
+                for(ie_header_t *h = ex->sect_txt.headers; h; h = h->next)
+                    LOG_ERROR("%x%x", FD(&h->name), FS(h->next ? " " : ""));
+                LOG_ERROR(")");
+                break;
+        }
+        LOG_ERROR("]");
+        // the partial at the end
+        if(ex->partial.found){
+            LOG_ERROR("<%x.%x>", FU(ex->partial.p1), FU(ex->partial.p2));
+        }
+    }
+    LOG_ERROR("\n");
     dstr_free(&tag);
     ie_seq_set_free(seq_set);
     ie_fetch_attr_free(&attr);
@@ -833,6 +894,25 @@ static derr_t test_scanner_and_parser(void){
             DSTR_LIT("tag STORE 5 +FLAGS \\Seen \\Extension\r\n"),
             DSTR_LIT("tag COPY 5:* iNBoX\r\n"),
             DSTR_LIT("tag COPY 5:7 NOt_iNBoX\r\n"),
+        );
+        PROP( do_test_scanner_and_parser(&inputs) );
+    }
+    {
+        LIST_PRESET(dstr_t, inputs,
+            DSTR_LIT("tag FETCH 1,2,3:4 INTERNALDATE\r\n"),
+            DSTR_LIT("tag FETCH 1,2 ALL\r\n"),
+            DSTR_LIT("tag FETCH * FAST\r\n"),
+            DSTR_LIT("tag FETCH * FULL\r\n"),
+            DSTR_LIT("tag FETCH * BODY\r\n"),
+            DSTR_LIT("tag FETCH * BODYSTRUCTURE\r\n"),
+            DSTR_LIT("tag FETCH * (INTERNALDATE BODY)\r\n"),
+            DSTR_LIT("tag FETCH * BODY[]\r\n"),
+            DSTR_LIT("tag FETCH * BODY[]<1.2>\r\n"),
+            DSTR_LIT("tag FETCH * BODY[1.2.3]\r\n"),
+            DSTR_LIT("tag FETCH * BODY[1.2.3.MIME]\r\n"),
+            DSTR_LIT("tag FETCH * BODY[TEXT]\r\n"),
+            DSTR_LIT("tag FETCH * BODY[HEADER.FIELDS (To From)]\r\n"),
+            DSTR_LIT("tag FETCH * BODY[HEADER.FIELDS.NOT (To From)]\r\n"),
         );
         PROP( do_test_scanner_and_parser(&inputs) );
     }

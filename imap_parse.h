@@ -30,7 +30,7 @@ typedef enum {
     SCAN_MODE_ST_ATTR,
     // FETCH-response-related modes
     SCAN_MODE_NSTRING,
-    SCAN_MODE_MSG_ATTR,
+    SCAN_MODE_FETCH,
     SCAN_MODE_DATETIME,
     // for wildcard patterns
     SCAN_MODE_WILDCARD,

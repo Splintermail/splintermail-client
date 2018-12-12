@@ -113,7 +113,7 @@ derr_t imap_scan(imap_scanner_t *scanner, scan_mode_t mode, bool *more,
             case SCAN_MODE_NQCHAR:              goto nqchar_mode;
             case SCAN_MODE_NSTRING:             goto nstring_mode;
             case SCAN_MODE_ST_ATTR:             goto st_attr_mode;
-            case SCAN_MODE_MSG_ATTR:            goto msg_attr_mode;
+            case SCAN_MODE_FETCH:               goto fetch_mode;
             case SCAN_MODE_DATETIME:            goto datetime_mode;
             case SCAN_MODE_WILDCARD:            goto wildcard_mode;
             case SCAN_MODE_SEQSET:              goto seqset_mode;
@@ -348,11 +348,11 @@ st_attr_mode:
         'unseen'        { *type = UNSEEN; goto done; }
     */
 
-msg_attr_mode:
+fetch_mode:
 
     /*!re2c
         *               { return E_PARAM; }
-        [[\]() ]        { *type = *scanner->start; goto done; }
+        [[\]()<>. ]     { *type = *scanner->start; goto done; }
         eol             { *type = EOL; goto done; }
 
         num             { *type = NUM; goto done; }
@@ -368,6 +368,14 @@ msg_attr_mode:
         'body'          { *type = BODY; goto done; }
         'bodystructure' { *type = BODYSTRUCT; goto done; }
         'body.peek'     { *type = BODY_PEEK; goto done; }
+        'all'           { *type = ALL; goto done; }
+        'full'          { *type = FULL; goto done; }
+        'fast'          { *type = FAST; goto done; }
+        'mime'          { *type = MIME; goto done; }
+        'text'          { *type = TEXT; goto done; }
+        'header'        { *type = HEADER; goto done; }
+        'header.fields' { *type = HDR_FLDS; goto done; }
+        'header.fields.not' { *type = HDR_FLDS_NOT; goto done; }
     */
 
 datetime_mode:

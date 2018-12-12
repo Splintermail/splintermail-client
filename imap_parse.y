@@ -362,46 +362,39 @@ catch:
             parser->error = E_NOMEM; \
             ACCEPT; \
         } \
-        if(list){ \
-            /* append this struct to existing linked list */ \
-            ie_section_part_t *end = list; \
-            while(end->next) end = end->next; \
-            end->next = temp; \
-            out = list; \
-        }else{ \
-            /* this struct heads a new linked list */ \
-            out = temp; \
-        } \
-        temp->n = num
+        /* append this struct to the end of the existing linked list */ \
+        out = list; \
+        ie_section_part_t **end = &out; \
+        while(*end) end = &(*end)->next; \
+        *end = temp; \
+        temp->n = num; \
+        temp->next = NULL
 
-    #define HEADER_LIST(out, list, header) \
-        ie_header_list_t *temp; \
+    #define HEADER(out, list, header) \
+        ie_header_t *temp; \
         temp = malloc(sizeof(*temp)); \
         if(!temp){ \
             parser->error = E_NOMEM; \
             ACCEPT; \
         } \
-        if(list){ \
-            /* append this struct to existing linked list */ \
-            ie_header_list_t *end = list; \
-            while(end->next) end = end->next; \
-            end->next = temp; \
-            out = list; \
-        } \
-        temp->name = header
+        /* append this struct to the end of the existing linked list */ \
+        out = list; \
+        ie_header_t **end = &out; \
+        while(*end) end = &(*end)->next; \
+        *end = temp; \
+        temp->name = header; \
+        temp->next = NULL
 
     #define SECT(out, sp, st) \
-        ie_fetch_extra_t *temp; \
-        temp = malloc(sizeof(*temp)); \
-        if(!temp){ \
+        out = malloc(sizeof(*out)); \
+        if(!out){ \
             parser->error = E_NOMEM; \
             ACCEPT; \
         } \
-        *temp = (ie_fetch_extra_t){ .sect_part = sp, .sect_txt = st }
+        *out = (ie_fetch_extra_t){ .sect_part = sp, .sect_txt = st }
+
 
     #define FUSE_FETCH_ATTR(out, old, new) \
-        /* this macro not used with the FETCH shortcuts */ \
-        out.type = IE_FETCH_ATTR; \
         /* logical OR of all boolean flags */ \
         out.envelope      = old.envelope      || new.envelope; \
         out.flags         = old.flags         || new.flags; \
@@ -632,10 +625,10 @@ catch:
 %type <sect_txt> sect_msgtxt
 %type <sect_txt> hdr_flds
 %type <sect_txt> hdr_flds_not
-%destructor { ie_header_list_free($$.headers); } <sect_txt>
+%destructor { ie_header_free($$.headers); } <sect_txt>
 
 %type <header_list> header_list_1
-%destructor { ie_header_list_free($$); } <header_list>
+%destructor { ie_header_free($$); } <header_list>
 
 %type <fetch_extra> sect
 %destructor { ie_fetch_extra_free($$); } <fetch_extra>
@@ -693,8 +686,8 @@ catch:
 
 %% /********** Grammar Section **********/
 
-response: tagged EOL { printf("response!\n"); ACCEPT; };
-        | untagged EOL { printf("response!\n"); ACCEPT; };
+response: tagged EOL { ACCEPT; };
+        | untagged EOL { ACCEPT; };
 
 tagged: tag SP status_type_resp[s]   { ST_RESP($tag, $s); };
       | tag SP STARTTLS /* respond BAD, we expect to already be in TLS */
@@ -824,12 +817,21 @@ append_time: %empty             { $$ = (imap_time_t){0}; }
 
 /*** FETCH command ***/
 
-fetch_cmd: tag SP FETCH SP seq_set[seq] SP fetch_attrs[attr]
+fetch_cmd: tag SP FETCH SP seq_set[seq] SP { MODE(FETCH); } fetch_attrs[attr]
            { FETCH_CMD($tag, $seq, $attr); };
 
-fetch_attrs: ALL           { $$ = (ie_fetch_attr_t){ .type = IE_FETCH_ALL }; }
-           | FULL          { $$ = (ie_fetch_attr_t){ .type = IE_FETCH_FULL }; }
-           | FAST          { $$ = (ie_fetch_attr_t){ .type = IE_FETCH_FAST }; }
+fetch_attrs: ALL           { $$ = (ie_fetch_attr_t){ .flags = true,
+                                                     .intdate = true,
+                                                     .rfc822_size = true,
+                                                     .envelope = true }; }
+           | FAST          { $$ = (ie_fetch_attr_t){ .flags = true,
+                                                     .intdate = true,
+                                                     .rfc822_size = true }; }
+           | FULL          { $$ = (ie_fetch_attr_t){ .flags = true,
+                                                     .intdate = true,
+                                                     .rfc822_size = true,
+                                                     .envelope = true,
+                                                     .body = true }; }
            | fetch_attr
            | '(' fetch_attrs_1 ')'  { $$ = $fetch_attrs_1; }
 ;
@@ -847,6 +849,7 @@ fetch_attr: ENVELOPE      { $$ = (ie_fetch_attr_t){ .envelope = true }; }
           | RFC822_SIZE   { $$ = (ie_fetch_attr_t){ .rfc822_size = true }; }
           | RFC822_TEXT   { $$ = (ie_fetch_attr_t){ .rfc822_text = true }; }
           | BODYSTRUCT    { $$ = (ie_fetch_attr_t){ .bodystruct = true }; }
+          | BODY          { $$ = (ie_fetch_attr_t){ .body = true }; }
           | BODY '[' sect ']' partial
                           { $sect->peek = false;
                             $sect->partial = $partial;
@@ -859,6 +862,7 @@ fetch_attr: ENVELOPE      { $$ = (ie_fetch_attr_t){ .envelope = true }; }
 
 sect: %empty                       { SECT($$, NULL, (ie_sect_txt_t){0}); }
     | sect_msgtxt[t]               { SECT($$, NULL, $t); }
+    | sect_part[p]                 { SECT($$, $p, (ie_sect_txt_t){0}); }
     | sect_part[p] '.' sect_txt[t] { SECT($$, $p, $t); }
 ;
 
@@ -872,8 +876,8 @@ sect_txt: sect_msgtxt
 
 sect_msgtxt: HEADER         { $$ = (ie_sect_txt_t){ .type = IE_SECT_HEADER }; }
            | TEXT           { $$ = (ie_sect_txt_t){ .type = IE_SECT_TEXT }; }
-           | hdr_flds
-           | hdr_flds_not
+           | hdr_flds       { MODE(FETCH); $$ = $hdr_flds; }
+           | hdr_flds_not   { MODE(FETCH); $$ = $hdr_flds_not; }
 ;
 
 hdr_flds: HDR_FLDS SP { MODE(ASTRING); } '(' header_list_1[h] ')'
@@ -884,9 +888,24 @@ hdr_flds_not: HDR_FLDS_NOT SP { MODE(ASTRING); } '(' header_list_1[h] ')'
               { $$ = (ie_sect_txt_t){ .type = IE_SECT_HDR_FLDS_NOT,
                                       .headers = $h }; };
 
-
-header_list_1: keep_astring[h]                   { HEADER_LIST($$, NULL, $h); }
-             | header_list_1[l] SP keep_astring[h] { HEADER_LIST($$, $l, $h); }
+header_list_1: keep_astring[h]                   { HEADER($$, NULL, $h); }
+             | header_list_1[l] SP keep_astring[h] {
+        ie_header_t *temp;
+        temp = malloc(sizeof(*temp));
+        if(!temp){
+            parser->error = E_NOMEM;
+            ACCEPT;
+        }
+        if($l){
+            /* append this struct to existing linked list */
+            ie_header_t *end = $l;
+            while(end->next) end = end->next;
+            end->next = temp;
+            $$ = $l;
+        }
+        temp->name = $h;
+        temp->next = NULL;
+    }
 ;
 
 partial: %empty                     { $$ = (ie_partial_t){0}; }
@@ -1111,7 +1130,7 @@ fetch_resp: pre_fetch_resp SP '(' msg_attr_list_0 ')'
 ;
 
 pre_fetch_resp: num SP FETCH
-                { FETCH_RESP_START($num); $$ = NULL; MODE(MSG_ATTR); };
+                { FETCH_RESP_START($num); $$ = NULL; MODE(FETCH); };
 
 msg_attr_list_0: %empty
                | msg_attr_list_1
@@ -1127,7 +1146,7 @@ msg_attr_list_1: msg_attr
      - INTERNALDATE,
      - the fully body text
    Anything else is going to be encrypted anyway. */
-msg_attr: msg_attr_ { MODE(MSG_ATTR); };
+msg_attr: msg_attr_ { MODE(FETCH); };
 
 msg_attr_: f_flags_resp
          | f_uid_resp

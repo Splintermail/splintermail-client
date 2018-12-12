@@ -104,8 +104,8 @@ void ie_section_part_free(ie_section_part_t *s){
     }
 }
 
-void ie_header_list_free(ie_header_list_t *h){
-    ie_header_list_t *ptr, *next;
+void ie_header_free(ie_header_t *h){
+    ie_header_t *ptr, *next;
     ptr = h;
     while(ptr){
         next = ptr->next;
@@ -121,7 +121,7 @@ void ie_fetch_extra_free(ie_fetch_extra_t *extra){
     while(ptr){
         next = ptr->next;
         ie_section_part_free(ptr->sect_part);
-        ie_header_list_free(ptr->sect_txt.headers);
+        ie_header_free(ptr->sect_txt.headers);
         free(ptr);
         ptr = next;
     }
