@@ -651,6 +651,7 @@ catch:
 %type <num> fourdigit
 %type <num> sc_num
 %type <num> date_month
+%type <num> date_day
 %type <num> date_day_fixed
 %type <num> seq_num
 
@@ -888,12 +889,12 @@ append_time: %empty             { $$ = (imap_time_t){0}; }
 /*** SEARCH command ***/
 
 search_cmd: tag SP SEARCH SP
-            { MODE(SEARCH); } search_charset[c] SP
+            { MODE(SEARCH); } search_charset[c]
             { MODE(SEARCH); } search_keys_1[k]
             { SEARCH_CMD($tag, $c, $k); };
 
 search_charset: %empty { $$ = (dstr_t){0}; }
-              | CHARSET SP { MODE(ASTRING); } keep_astring[a] { $$ = $a; MODE(SEARCH); }
+              | CHARSET SP search_astring[s] SP { $$ = $s; MODE(SEARCH); }
 ;
 
 search_keys_1: search_key[k]                     { $$ = $k; MODE(SEARCH); }
@@ -903,41 +904,41 @@ search_keys_1: search_key[k]                     { $$ = $k; MODE(SEARCH); }
 
 search_key: ALL                         { SEARCH($$, ALL); }
           | ANSWERED                    { SEARCH($$, ANSWERED); }
-          | BCC SP search_astring[s]    { SEARCH_1($$, BCC, dstr, $s); }
-          | BEFORE SP search_date[d]    { SEARCH_1($$, BEFORE, date, $d); }
-          | BODY SP search_astring[s]   { SEARCH_1($$, BODY, dstr, $s); }
-          | CC SP search_astring[s]     { SEARCH_1($$, CC, dstr, $s); }
           | DELETED                     { SEARCH($$, DELETED); }
           | FLAGGED                     { SEARCH($$, FLAGGED); }
-          | FROM SP search_astring[s]   { SEARCH_1($$, FROM, dstr, $s); }
-          | KEYWORD SP search_atom[s]   { SEARCH_1($$, KEYWORD, dstr, $s); }
           | NEW                         { SEARCH($$, NEW); }
           | OLD                         { SEARCH($$, OLD); }
-          | ON SP search_date[d]        { SEARCH_1($$, ON, date, $d); }
           | RECENT                      { SEARCH($$, RECENT); }
           | SEEN                        { SEARCH($$, SEEN); }
-          | SINCE SP search_date[d]     { SEARCH_1($$, SINCE, date, $d); }
-          | SUBJECT SP search_astring[s]{ SEARCH_1($$, SUBJECT, dstr, $s); }
-          | TEXT SP search_astring[s]   { SEARCH_1($$, TEXT, dstr, $s); }
-          | TO SP search_astring[s]     { SEARCH_1($$, TO, dstr, $s); }
           | UNANSWERED                  { SEARCH($$, UNANSWERED); }
           | UNDELETED                   { SEARCH($$, UNDELETED); }
           | UNFLAGGED                   { SEARCH($$, UNFLAGGED); }
-          | UNKEYWORD SP search_atom[s] { SEARCH_1($$, UNKEYWORD, dstr, $s); }
           | UNSEEN                      { SEARCH($$, UNSEEN); }
           | DRAFT                       { SEARCH($$, DRAFT); }
+          | UNDRAFT                     { SEARCH($$, UNDRAFT); }
+          | BCC SP search_astring[s]    { SEARCH_1($$, BCC, dstr, $s); }
+          | BODY SP search_astring[s]   { SEARCH_1($$, BODY, dstr, $s); }
+          | CC SP search_astring[s]     { SEARCH_1($$, CC, dstr, $s); }
+          | FROM SP search_astring[s]   { SEARCH_1($$, FROM, dstr, $s); }
+          | KEYWORD SP search_atom[s]   { SEARCH_1($$, KEYWORD, dstr, $s); }
+          | SUBJECT SP search_astring[s]{ SEARCH_1($$, SUBJECT, dstr, $s); }
+          | TEXT SP search_astring[s]   { SEARCH_1($$, TEXT, dstr, $s); }
+          | TO SP search_astring[s]     { SEARCH_1($$, TO, dstr, $s); }
+          | UNKEYWORD SP search_atom[s] { SEARCH_1($$, UNKEYWORD, dstr, $s); }
           | search_hdr
-          | LARGER SP num[n]            { SEARCH_1($$, LARGER, num, $n); }
-          | NOT SP search_key[k]        { SEARCH_1($$, NOT, search_key, $k); }
-          | search_or
+          | BEFORE SP search_date[d]    { SEARCH_1($$, BEFORE, date, $d); }
+          | ON SP search_date[d]        { SEARCH_1($$, ON, date, $d); }
+          | SINCE SP search_date[d]     { SEARCH_1($$, SINCE, date, $d); }
           | SENTBEFORE SP search_date[d]{ SEARCH_1($$, SENTBEFORE, date, $d); }
           | SENTON SP search_date[d]    { SEARCH_1($$, SENTON, date, $d); }
           | SENTSINCE SP search_date[d] { SEARCH_1($$, SENTSINCE, date, $d); }
+          | LARGER SP num[n]            { SEARCH_1($$, LARGER, num, $n); }
           | SMALLER SP num[n]           { SEARCH_1($$, SMALLER, num, $n); }
           | UID SP seq_set[s]           { SEARCH_1($$, UID, seq_set, $s); }
-          | UNDRAFT                     { SEARCH($$, UNDRAFT); }
           | seq_set[s]                  { SEARCH_1($$, SEQ_SET, seq_set, $s); }
+          | NOT SP search_key[k]        { SEARCH_1($$, NOT, search_key, $k); }
           | '(' search_keys_1[k] ')'    { SEARCH_1($$, GROUP, search_key, $k); }
+          | search_or
 ;
 
 search_hdr: HEADER SP { MODE(ASTRING); } keep_astring[s1] SP keep_astring[s2]
@@ -955,12 +956,16 @@ search_date: pre_date '"' date '"' { $$ = $date; }
            | pre_date date         { $$ = $date; }
 ;
 
+date_day: digit           { $$ = $digit; }
+        | digit digit     { $$ = 10*$1 + $2; }
+;
+
 pre_date: %empty { MODE(DATETIME); };
 
-date: date_day_fixed '-' date_month '-' fourdigit
+date: date_day '-' date_month '-' fourdigit
       { $$ = (imap_time_t){.year  = $fourdigit,
                            .month = $date_month,
-                           .day   = $date_day_fixed}; };
+                           .day   = $date_day}; };
 
 /*** FETCH command ***/
 

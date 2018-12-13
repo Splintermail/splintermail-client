@@ -55,6 +55,21 @@ typedef struct {
     dstr_t literal_temp;
 } locals_t;
 
+static void print_seq_set(ie_seq_set_t *seq_set){
+    for(ie_seq_set_t *p = seq_set; p != NULL; p = p->next){
+        DSTR_VAR(buf, 32);
+        if(p->n1 == p->n2)
+            FMT(&buf, "%x", p->n1 ? FU(p->n1) : FS("*"));
+        else
+            FMT(&buf, "%x-%x", p->n1 ? FU(p->n1) : FS("*"),
+                               p->n2 ? FU(p->n2) : FS("*"));
+        // add comma if there will be another
+        if(p->next) FMT(&buf, ",");
+        // flush buffer to stdout
+        LOG_ERROR("%x", FD(&buf));
+    }
+}
+
 static void login_cmd(void *data, dstr_t tag, dstr_t user, dstr_t pass){
     (void)data;
     LOG_ERROR("LOGIN (%x) u:%x p:%x\n", FD(&tag), FD(&user), FD(&pass));
@@ -224,9 +239,122 @@ static void append_end(void *data, imap_time_t imap_time, size_t literal_len,
 }
 
 //
+
+static void print_search_key(ie_search_key_t *search_key){
+    for(ie_search_key_t *key = search_key; key != NULL; key = key->next){
+        union ie_search_param_t p = key->param;
+        // after the first search key, print a space before each one
+        if(key != search_key) LOG_ERROR(" ");
+        switch(key->type){
+            // things without parameters
+            case IE_SEARCH_ALL: LOG_ERROR("ALL"); break;
+            case IE_SEARCH_ANSWERED: LOG_ERROR("ANSWERED"); break;
+            case IE_SEARCH_DELETED: LOG_ERROR("DELETED"); break;
+            case IE_SEARCH_FLAGGED: LOG_ERROR("FLAGGED"); break;
+            case IE_SEARCH_NEW: LOG_ERROR("NEW"); break;
+            case IE_SEARCH_OLD: LOG_ERROR("OLD"); break;
+            case IE_SEARCH_RECENT: LOG_ERROR("RECENT"); break;
+            case IE_SEARCH_SEEN: LOG_ERROR("SEEN"); break;
+            case IE_SEARCH_SUBJECT: LOG_ERROR("SUBJECT"); break;
+            case IE_SEARCH_UNANSWERED: LOG_ERROR("UNANSWERED"); break;
+            case IE_SEARCH_UNDELETED: LOG_ERROR("UNDELETED"); break;
+            case IE_SEARCH_UNFLAGGED: LOG_ERROR("UNFLAGGED"); break;
+            case IE_SEARCH_UNSEEN: LOG_ERROR("UNSEEN"); break;
+            case IE_SEARCH_DRAFT: LOG_ERROR("DRAFT"); break;
+            case IE_SEARCH_UNDRAFT: LOG_ERROR("UNDRAFT"); break;
+            // things using param.dstr
+            case IE_SEARCH_BCC:
+                LOG_ERROR("BCC '%x'", FD(&p.dstr));
+                break;
+            case IE_SEARCH_BODY:
+                LOG_ERROR("BODY '%x'", FD(&p.dstr));
+                break;
+            case IE_SEARCH_CC:
+                LOG_ERROR("CC '%x'", FD(&p.dstr));
+                break;
+            case IE_SEARCH_FROM:
+                LOG_ERROR("FROM '%x'", FD(&p.dstr));
+                break;
+            case IE_SEARCH_KEYWORD:
+                LOG_ERROR("KEYWORD '%x'", FD(&p.dstr));
+                break;
+            case IE_SEARCH_TEXT:
+                LOG_ERROR("TEXT '%x'", FD(&p.dstr));
+                break;
+            case IE_SEARCH_TO:
+                LOG_ERROR("TO '%x'", FD(&p.dstr));
+                break;
+            case IE_SEARCH_UNKEYWORD:
+                LOG_ERROR("UNKEYWORD '%x'", FD(&p.dstr));
+                break;
+            // things using param.header
+            case IE_SEARCH_HEADER:
+                LOG_ERROR("HEADER '%x' '%x'", FD(&p.header.name),
+                                              FD(&p.header.value));
+                break;
+            // things using param.date
+            case IE_SEARCH_BEFORE:
+                LOG_ERROR("BEFORE %x-%x-%x", FI(p.date.day),
+                          FI(p.date.month), FI(p.date.year));
+                break;
+            case IE_SEARCH_ON:
+                LOG_ERROR("ON %x-%x-%x", FI(p.date.day),
+                          FI(p.date.month), FI(p.date.year));
+                break;
+            case IE_SEARCH_SINCE:
+                LOG_ERROR("SINCE %x-%x-%x", FI(p.date.day),
+                          FI(p.date.month), FI(p.date.year));
+                break;
+            case IE_SEARCH_SENTBEFORE:
+                LOG_ERROR("SENTBEFORE %x-%x-%x", FI(p.date.day),
+                          FI(p.date.month), FI(p.date.year));
+                break;
+            case IE_SEARCH_SENTON:
+                LOG_ERROR("SENTON %x-%x-%x", FI(p.date.day),
+                          FI(p.date.month), FI(p.date.year));
+                break;
+            case IE_SEARCH_SENTSINCE:
+                LOG_ERROR("SENTSINCE %x-%x-%x", FI(p.date.day),
+                          FI(p.date.month), FI(p.date.year));
+                break;
+            // things using param.num
+            case IE_SEARCH_LARGER: LOG_ERROR("LARGER %x", FU(p.num)); break;
+            case IE_SEARCH_SMALLER: LOG_ERROR("SMALLER %x", FU(p.num)); break;
+            // things using param.seq_set
+            case IE_SEARCH_UID:
+                LOG_ERROR("UID "); print_seq_set(p.seq_set);
+                break;
+            case IE_SEARCH_SEQ_SET:
+                LOG_ERROR("SEQ_SET "); print_seq_set(p.seq_set);
+                break;
+            // things using param.search_key
+            case IE_SEARCH_NOT:
+                LOG_ERROR("NOT "); print_search_key(p.search_key);
+                break;
+            case IE_SEARCH_GROUP:
+                LOG_ERROR("(");
+                print_search_key(p.search_key);
+                LOG_ERROR(")");
+                break;
+            // things using param.search_or
+            case IE_SEARCH_OR:
+                LOG_ERROR("OR ");
+                print_search_key(p.search_or.a);
+                LOG_ERROR(" ");
+                print_search_key(p.search_or.b);
+                break;
+            default:
+                LOG_ERROR("unknown-search-key-type:%x", FU(key->type));
+        }
+    }
+}
+
 static void search_cmd(void *data, dstr_t tag, dstr_t charset,
                       ie_search_key_t *search_key){
     (void)data;
+    LOG_ERROR("SEARCH (%x) ", FD(&tag));
+    print_search_key(search_key);
+    LOG_ERROR("\n");
     dstr_free(&tag);
     dstr_free(&charset);
     ie_search_key_free(search_key);
@@ -239,19 +367,7 @@ static void fetch_cmd(void *data, dstr_t tag, ie_seq_set_t *seq_set,
     (void)data;
     LOG_ERROR("FETCH command (%x) ", FD(&tag));
     // print sequence
-    ie_seq_set_t *p = seq_set;
-    do{
-        DSTR_VAR(buf, 32);
-        if(p->n1 == p->n2)
-            FMT(&buf, "%x", p->n1 ? FU(p->n1) : FS("*"));
-        else
-            FMT(&buf, "%x-%x", p->n1 ? FU(p->n1) : FS("*"),
-                               p->n2 ? FU(p->n2) : FS("*"));
-        // add comma if there will be another, or space otherwise
-        if(p->next) FMT(&buf, ",");
-        // flush buffer to stdout
-        LOG_ERROR("%x", FD(&buf));
-    }while( (p = p->next) );
+    print_seq_set(seq_set);
     // print the "fixed" attributes
     if(attr.envelope) LOG_ERROR(" ENVELOPE");
     if(attr.flags) LOG_ERROR(" FLAGS");
@@ -312,22 +428,10 @@ static derr_t store_start(void *data, dstr_t tag, ie_seq_set_t *seq_set,
     // print tag
     LOG_ERROR("STORE START (%x) ", FD(&tag));
     // print sequence
-    ie_seq_set_t *p = seq_set;
-    do{
-        DSTR_VAR(buf, 32);
-        if(p->n1 == p->n2)
-            FMT(&buf, "%x", p->n1 ? FU(p->n1) : FS("*"));
-        else
-            FMT(&buf, "%x-%x", p->n1 ? FU(p->n1) : FS("*"),
-                               p->n2 ? FU(p->n2) : FS("*"));
-        // add comma if there will be another, or space otherwise
-        FMT(&buf, (p->next) ? "," : " ");
-        // flush buffer to stdout
-        LOG_ERROR("%x", FD(&buf));
-    }while( (p = p->next) );
+    print_seq_set(seq_set);
     // what to do with FLAGS to follow
-    LOG_ERROR("%xFLAGS%x\n", FC(sign == 0 ? ' ' : (sign > 0 ? '+' : '-')),
-                             FS(silent ? ".SILENT" : ""));
+    LOG_ERROR(" %xFLAGS%x\n", FC(sign == 0 ? ' ' : (sign > 0 ? '+' : '-')),
+                              FS(silent ? ".SILENT" : ""));
     dstr_free(&tag);
     ie_seq_set_free(seq_set);
     return E_OK;
@@ -351,21 +455,9 @@ static void copy_cmd(void *data, dstr_t tag, ie_seq_set_t *seq_set, bool inbox,
     // print tag
     LOG_ERROR("COPY (%x) ", FD(&tag));
     // print sequence
-    ie_seq_set_t *p = seq_set;
-    do{
-        DSTR_VAR(buf, 32);
-        if(p->n1 == p->n2)
-            FMT(&buf, "%x", p->n1 ? FU(p->n1) : FS("*"));
-        else
-            FMT(&buf, "%x-%x", p->n1 ? FU(p->n1) : FS("*"),
-                               p->n2 ? FU(p->n2) : FS("*"));
-        // add comma if there will be another, or space otherwise
-        FMT(&buf, (p->next) ? "," : " ");
-        // flush buffer to stdout
-        LOG_ERROR("%x", FD(&buf));
-    }while( (p = p->next) );
+    print_seq_set(seq_set);
     // what to do with FLAGS to follow
-    LOG_ERROR("to '%x' (%x)\n", FD(&mbx), FU(inbox));
+    LOG_ERROR(" to '%x' (%x)\n", FD(&mbx), FU(inbox));
     dstr_free(&tag);
     dstr_free(&mbx);
     ie_seq_set_free(seq_set);
@@ -903,6 +995,19 @@ static derr_t test_scanner_and_parser(void){
             DSTR_LIT("tag STORE 5 +FLAGS \\Seen \\Extension\r\n"),
             DSTR_LIT("tag COPY 5:* iNBoX\r\n"),
             DSTR_LIT("tag COPY 5:7 NOt_iNBoX\r\n"),
+        );
+        PROP( do_test_scanner_and_parser(&inputs) );
+    }
+    {
+        LIST_PRESET(dstr_t, inputs,
+            DSTR_LIT("tag SEARCH DRAFT\r\n"),
+            DSTR_LIT("tag SEARCH DRAFT UNDRAFT\r\n"),
+            DSTR_LIT("tag SEARCH OR DRAFT undraft\r\n"),
+            DSTR_LIT("tag SEARCH (DRAFT)\r\n"),
+            DSTR_LIT("tag SEARCH 1,2,3:4\r\n"),
+            DSTR_LIT("tag SEARCH UID 1,2\r\n"),
+            DSTR_LIT("tag SEARCH SENTON 4-jul-1776 LARGER 9000\r\n"),
+            DSTR_LIT("tag SEARCH OR (TO me FROM you) (FROM me TO you)\r\n"),
         );
         PROP( do_test_scanner_and_parser(&inputs) );
     }

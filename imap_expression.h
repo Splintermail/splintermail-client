@@ -112,43 +112,43 @@ void ie_seq_set_free(ie_seq_set_t *s);
 /*** SEARCH-related structs ***/
 
 typedef enum {
-    IE_SEARCH_ALL,         //
-    IE_SEARCH_ANSWERED,    //
-    IE_SEARCH_BCC,         // uses search_param.dstr
-    IE_SEARCH_BEFORE,      // uses search_param.date
-    IE_SEARCH_BODY,        // uses search_param.dstr
-    IE_SEARCH_CC,          // uses search_param.dstr
-    IE_SEARCH_DELETED,     //
-    IE_SEARCH_FLAGGED,     //
-    IE_SEARCH_FROM,        // uses search_param.dstr
-    IE_SEARCH_KEYWORD,     // uses search_param.dstr
-    IE_SEARCH_NEW,         //
-    IE_SEARCH_OLD,         //
-    IE_SEARCH_ON,          // uses search_param.date
-    IE_SEARCH_RECENT,      //
-    IE_SEARCH_SEEN,        //
-    IE_SEARCH_SINCE,       // uses search_param.date
-    IE_SEARCH_SUBJECT,     //
-    IE_SEARCH_TEXT,        // uses search_param.dstr
-    IE_SEARCH_TO,          // uses search_param.dstr
-    IE_SEARCH_UNANSWERED,  //
-    IE_SEARCH_UNDELETED,   //
-    IE_SEARCH_UNFLAGGED,   //
-    IE_SEARCH_UNKEYWORD,   // uses search_param.dstr
-    IE_SEARCH_UNSEEN,      //
-    IE_SEARCH_DRAFT,       //
-    IE_SEARCH_HEADER,      // uses search_param.header
-    IE_SEARCH_LARGER,      // uses search_param.num
-    IE_SEARCH_NOT,         // uses search_param.search_key
-    IE_SEARCH_OR,          // uses search_param.search_or
-    IE_SEARCH_SENTBEFORE,  // uses search_param.date
-    IE_SEARCH_SENTON,      // uses search_param.date
-    IE_SEARCH_SENTSINCE,   // uses search_param.date
-    IE_SEARCH_SMALLER,     // uses search_param.num
-    IE_SEARCH_UID,         // uses search_param.seq_set
-    IE_SEARCH_UNDRAFT,     //
-    IE_SEARCH_SEQ_SET,     // uses search_param.seq_set
-    IE_SEARCH_GROUP,       // uses search_param.search_key
+    IE_SEARCH_ALL,         // no parameter
+    IE_SEARCH_ANSWERED,    // no parameter
+    IE_SEARCH_DELETED,     // no parameter
+    IE_SEARCH_FLAGGED,     // no parameter
+    IE_SEARCH_NEW,         // no parameter
+    IE_SEARCH_OLD,         // no parameter
+    IE_SEARCH_RECENT,      // no parameter
+    IE_SEARCH_SEEN,        // no parameter
+    IE_SEARCH_SUBJECT,     // no parameter
+    IE_SEARCH_UNANSWERED,  // no parameter
+    IE_SEARCH_UNDELETED,   // no parameter
+    IE_SEARCH_UNFLAGGED,   // no parameter
+    IE_SEARCH_UNSEEN,      // no parameter
+    IE_SEARCH_DRAFT,       // no parameter
+    IE_SEARCH_UNDRAFT,     // no parameter
+    IE_SEARCH_BCC,         // uses param.dstr
+    IE_SEARCH_BODY,        // uses param.dstr
+    IE_SEARCH_CC,          // uses param.dstr
+    IE_SEARCH_FROM,        // uses param.dstr
+    IE_SEARCH_KEYWORD,     // uses param.dstr
+    IE_SEARCH_TEXT,        // uses param.dstr
+    IE_SEARCH_TO,          // uses param.dstr
+    IE_SEARCH_UNKEYWORD,   // uses param.dstr
+    IE_SEARCH_HEADER,      // uses param.header
+    IE_SEARCH_BEFORE,      // uses param.date
+    IE_SEARCH_ON,          // uses param.date
+    IE_SEARCH_SINCE,       // uses param.date
+    IE_SEARCH_SENTBEFORE,  // uses param.date
+    IE_SEARCH_SENTON,      // uses param.date
+    IE_SEARCH_SENTSINCE,   // uses param.date
+    IE_SEARCH_LARGER,      // uses param.num
+    IE_SEARCH_SMALLER,     // uses param.num
+    IE_SEARCH_UID,         // uses param.seq_set
+    IE_SEARCH_SEQ_SET,     // uses param.seq_set
+    IE_SEARCH_NOT,         // uses param.search_key
+    IE_SEARCH_GROUP,       // uses param.search_key
+    IE_SEARCH_OR,          // uses param.search_or
 } ie_search_key_type_t;
 
 // foward type declaration
