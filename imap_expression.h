@@ -109,6 +109,82 @@ typedef struct ie_seq_set_t {
 
 void ie_seq_set_free(ie_seq_set_t *s);
 
+/*** SEARCH-related structs ***/
+
+typedef enum {
+    IE_SEARCH_ALL,         //
+    IE_SEARCH_ANSWERED,    //
+    IE_SEARCH_BCC,         // uses search_param.dstr
+    IE_SEARCH_BEFORE,      // uses search_param.date
+    IE_SEARCH_BODY,        // uses search_param.dstr
+    IE_SEARCH_CC,          // uses search_param.dstr
+    IE_SEARCH_DELETED,     //
+    IE_SEARCH_FLAGGED,     //
+    IE_SEARCH_FROM,        // uses search_param.dstr
+    IE_SEARCH_KEYWORD,     // uses search_param.dstr
+    IE_SEARCH_NEW,         //
+    IE_SEARCH_OLD,         //
+    IE_SEARCH_ON,          // uses search_param.date
+    IE_SEARCH_RECENT,      //
+    IE_SEARCH_SEEN,        //
+    IE_SEARCH_SINCE,       // uses search_param.date
+    IE_SEARCH_SUBJECT,     //
+    IE_SEARCH_TEXT,        // uses search_param.dstr
+    IE_SEARCH_TO,          // uses search_param.dstr
+    IE_SEARCH_UNANSWERED,  //
+    IE_SEARCH_UNDELETED,   //
+    IE_SEARCH_UNFLAGGED,   //
+    IE_SEARCH_UNKEYWORD,   // uses search_param.dstr
+    IE_SEARCH_UNSEEN,      //
+    IE_SEARCH_DRAFT,       //
+    IE_SEARCH_HEADER,      // uses search_param.header
+    IE_SEARCH_LARGER,      // uses search_param.num
+    IE_SEARCH_NOT,         // uses search_param.search_key
+    IE_SEARCH_OR,          // uses search_param.search_or
+    IE_SEARCH_SENTBEFORE,  // uses search_param.date
+    IE_SEARCH_SENTON,      // uses search_param.date
+    IE_SEARCH_SENTSINCE,   // uses search_param.date
+    IE_SEARCH_SMALLER,     // uses search_param.num
+    IE_SEARCH_UID,         // uses search_param.seq_set
+    IE_SEARCH_UNDRAFT,     //
+    IE_SEARCH_SEQ_SET,     // uses search_param.seq_set
+    IE_SEARCH_GROUP,       // uses search_param.search_key
+} ie_search_key_type_t;
+
+// foward type declaration
+struct ie_search_key_t;
+typedef struct ie_search_key_t ie_search_key_t;
+
+typedef struct ie_search_header_t {
+    dstr_t name;
+    dstr_t value;
+} ie_search_header_t;
+
+// logical OR of two search keys
+typedef struct ie_search_or_t {
+    ie_search_key_t *a;
+    ie_search_key_t *b;
+} ie_search_or_t;
+
+union ie_search_param_t {
+    dstr_t dstr;
+    ie_search_header_t header; // just a pair of dstr_t's
+    unsigned int num;
+    imap_time_t date;
+    ie_seq_set_t *seq_set;
+    ie_search_key_t *search_key;
+    ie_search_or_t search_or;
+};
+
+struct ie_search_key_t {
+    ie_search_key_type_t type;
+    union ie_search_param_t param;
+    // there's always an implied logical AND with the *next element
+    ie_search_key_t *next;
+};
+
+void ie_search_key_free(ie_search_key_t *key);
+
 /* FETCH-related structs */
 typedef struct ie_partial_t {
     bool found;
@@ -191,6 +267,7 @@ union imap_expr_t {
     ie_partial_t partial;
     ie_section_part_t *sect_part;
     ie_sect_txt_t sect_txt;
+    ie_search_key_t *search_key;
     ie_header_t *header_list;
     ie_fetch_extra_t *fetch_extra;
     ie_fetch_attr_t fetch_attr;

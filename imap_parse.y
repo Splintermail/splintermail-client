@@ -233,6 +233,9 @@ catch:
                                     success); \
     }
 
+    #define SEARCH_CMD(tag, charset, search_key) \
+        parser->hooks_dn.search(parser->hook_data, tag, charset, search_key);
+
     #define FETCH_CMD(tag, seq_set, fetch_attr) \
         parser->hooks_dn.fetch(parser->hook_data, tag, seq_set, fetch_attr);
 
@@ -370,6 +373,23 @@ catch:
         temp->n = num; \
         temp->next = NULL
 
+    #define SEARCH(out, typ_) \
+        out = malloc(sizeof(*out)); \
+        if(!out){ \
+            parser->error = E_NOMEM; \
+            ACCEPT; \
+        } \
+        out->type = IE_SEARCH_ ## typ_; \
+        out->next = NULL
+
+    #define SEARCH_1(out, typ_, t1, v1) \
+        SEARCH(out, typ_); \
+        out->param.t1 = v1;
+
+    #define SEARCH_2(out, typ_, t1, v1, t2, v2) \
+        SEARCH_1(out, typ_, t1, v1); \
+        out->param.t2 = v2;
+
     #define HEADER(out, list, header) \
         ie_header_t *temp; \
         temp = malloc(sizeof(*temp)); \
@@ -393,6 +413,11 @@ catch:
         } \
         *out = (ie_fetch_extra_t){ .sect_part = sp, .sect_txt = st }
 
+    #define FUSE_SEARCH(out, list, key) \
+        out = list; \
+        ie_search_key_t **end = &out; \
+        while(*end) end = &(*end)->next; \
+        *end = key
 
     #define FUSE_FETCH_ATTR(out, old, new) \
         /* logical OR of all boolean flags */ \
@@ -507,9 +532,47 @@ catch:
 /*     UIDVLD (listed above) */
 /*     UNSEEN (listed above) */
 
+/* SEARCH state */
+%token CHARSET
+%token ALL
+%token ANSWERED
+%token BCC
+%token BEFORE
+%token BODY
+%token CC
+%token DELETED
+%token FLAGGED
+%token FROM
+%token KEYWORD
+%token NEW
+%token OLD
+%token ON
+/*     RECENT (listed above) */
+%token SEEN
+%token SINCE
+%token SUBJECT
+%token TEXT
+%token TO
+%token UNANSWERED
+%token UNDELETED
+%token UNFLAGGED
+%token UNKEYWORD
+/*     UNSEEN (listed above) */
+%token DRAFT
+%token HEADER
+%token LARGER
+%token NOT
+%token OR
+%token SENTBEFORE
+%token SENTON
+%token SENTSINCE
+%token SMALLER
+/*     UID (listed above) */
+%token UNDRAFT
+
 /* FETCH state */
 /*     FLAGS (listed above */
-%token ALL
+/*     ALL (listed above */
 %token FULL
 %token FAST
 %token ENVELOPE
@@ -519,23 +582,23 @@ catch:
 %token RFC822_HEADER
 %token RFC822_SIZE
 %token BODYSTRUCT
-%token BODY
+/*     BODY (listed above */
 %token BODY_PEEK
 /*     UID (listed above) */
 
 /* BODY[] section stuff */
 %token MIME
-%token TEXT
-%token HEADER
+/*     TEXT (listed above) */
+/*     HEADER (listed above) */
 %token HDR_FLDS
 %token HDR_FLDS_NOT
 
 /* FLAGS */
-%token ANSWERED
-%token FLAGGED
-%token DELETED
-%token SEEN
-%token DRAFT
+/*     ANSWERED (listed above) */
+/*     FLAGGED (listed above) */
+/*     DELETED (listed above) */
+/*     SEEN (listed above) */
+/*     DRAFT (listed above) */
 %token NOSELECT
 %token MARKED
 %token UNMARKED
@@ -564,13 +627,12 @@ catch:
 /* non-terminals with semantic values */
 %type <dstr> keep_atom
 %type <dstr> keep_astring
-/*
-%type <dstr> keep_qstring
-%type <dstr> keep_string
-*/
 %type <dstr> tag
 %type <dstr> st_txt_0
 %type <dstr> st_txt_1
+%type <dstr> search_charset
+%type <dstr> search_atom
+%type <dstr> search_astring
 %destructor { dstr_free(& $$); } <dstr>
 
 %type <flag_type> flag
@@ -604,6 +666,8 @@ catch:
 
 %type <time> date_time;
 %type <time> append_time;
+%type <time> search_date;
+%type <time> date;
 
 %type <st_attr> st_attr
 %type <st_attr_cmd> st_attr_clist_1
@@ -615,6 +679,12 @@ catch:
 %destructor { ie_seq_set_free($$); } <seq_set>
 
 %type <boolean> store_silent
+
+%type <search_key> search_key
+%type <search_key> search_keys_1
+%type <search_key> search_hdr
+%type <search_key> search_or
+%destructor { ie_search_key_free($$); } <search_key>
 
 %type <partial> partial
 
@@ -707,7 +777,7 @@ tagged: tag SP status_type_resp[s]   { ST_RESP($tag, $s); };
       | tag SP CHECK { CHECK_CMD($tag); };
       | tag SP CLOSE { CLOSE_CMD($tag); };
       | tag SP EXPUNGE { EXPUNGE_CMD($tag); };
-      | tag SP SEARCH
+      | search_cmd
       | fetch_cmd
       | store_cmd
       | copy_cmd
@@ -814,6 +884,83 @@ append_flags_1: keep_flag[f]                    { APPEND_CMD_FLAG($f); }
 append_time: %empty             { $$ = (imap_time_t){0}; }
            | date_time[dt] SP   { $$ = $dt; }
 ;
+
+/*** SEARCH command ***/
+
+search_cmd: tag SP SEARCH SP
+            { MODE(SEARCH); } search_charset[c] SP
+            { MODE(SEARCH); } search_keys_1[k]
+            { SEARCH_CMD($tag, $c, $k); };
+
+search_charset: %empty { $$ = (dstr_t){0}; }
+              | CHARSET SP { MODE(ASTRING); } keep_astring[a] { $$ = $a; MODE(SEARCH); }
+;
+
+search_keys_1: search_key[k]                     { $$ = $k; MODE(SEARCH); }
+             | search_keys_1[l] SP search_key[k] { FUSE_SEARCH($$, $l, $k);
+                                                   MODE(SEARCH); };
+;
+
+search_key: ALL                         { SEARCH($$, ALL); }
+          | ANSWERED                    { SEARCH($$, ANSWERED); }
+          | BCC SP search_astring[s]    { SEARCH_1($$, BCC, dstr, $s); }
+          | BEFORE SP search_date[d]    { SEARCH_1($$, BEFORE, date, $d); }
+          | BODY SP search_astring[s]   { SEARCH_1($$, BODY, dstr, $s); }
+          | CC SP search_astring[s]     { SEARCH_1($$, CC, dstr, $s); }
+          | DELETED                     { SEARCH($$, DELETED); }
+          | FLAGGED                     { SEARCH($$, FLAGGED); }
+          | FROM SP search_astring[s]   { SEARCH_1($$, FROM, dstr, $s); }
+          | KEYWORD SP search_atom[s]   { SEARCH_1($$, KEYWORD, dstr, $s); }
+          | NEW                         { SEARCH($$, NEW); }
+          | OLD                         { SEARCH($$, OLD); }
+          | ON SP search_date[d]        { SEARCH_1($$, ON, date, $d); }
+          | RECENT                      { SEARCH($$, RECENT); }
+          | SEEN                        { SEARCH($$, SEEN); }
+          | SINCE SP search_date[d]     { SEARCH_1($$, SINCE, date, $d); }
+          | SUBJECT SP search_astring[s]{ SEARCH_1($$, SUBJECT, dstr, $s); }
+          | TEXT SP search_astring[s]   { SEARCH_1($$, TEXT, dstr, $s); }
+          | TO SP search_astring[s]     { SEARCH_1($$, TO, dstr, $s); }
+          | UNANSWERED                  { SEARCH($$, UNANSWERED); }
+          | UNDELETED                   { SEARCH($$, UNDELETED); }
+          | UNFLAGGED                   { SEARCH($$, UNFLAGGED); }
+          | UNKEYWORD SP search_atom[s] { SEARCH_1($$, UNKEYWORD, dstr, $s); }
+          | UNSEEN                      { SEARCH($$, UNSEEN); }
+          | DRAFT                       { SEARCH($$, DRAFT); }
+          | search_hdr
+          | LARGER SP num[n]            { SEARCH_1($$, LARGER, num, $n); }
+          | NOT SP search_key[k]        { SEARCH_1($$, NOT, search_key, $k); }
+          | search_or
+          | SENTBEFORE SP search_date[d]{ SEARCH_1($$, SENTBEFORE, date, $d); }
+          | SENTON SP search_date[d]    { SEARCH_1($$, SENTON, date, $d); }
+          | SENTSINCE SP search_date[d] { SEARCH_1($$, SENTSINCE, date, $d); }
+          | SMALLER SP num[n]           { SEARCH_1($$, SMALLER, num, $n); }
+          | UID SP seq_set[s]           { SEARCH_1($$, UID, seq_set, $s); }
+          | UNDRAFT                     { SEARCH($$, UNDRAFT); }
+          | seq_set[s]                  { SEARCH_1($$, SEQ_SET, seq_set, $s); }
+          | '(' search_keys_1[k] ')'    { SEARCH_1($$, GROUP, search_key, $k); }
+;
+
+search_hdr: HEADER SP { MODE(ASTRING); } keep_astring[s1] SP keep_astring[s2]
+            { SEARCH_2($$, HEADER, header.name, $s1, header.value, $s2);
+              MODE(SEARCH); };
+
+search_or: OR SP search_key[k1] SP search_key[k2]
+           { SEARCH_2($$, OR, search_or.a, $k1, search_or.b, $k2); };
+
+search_astring: { MODE(ASTRING); } keep_astring[k] { $$ = $k; };
+
+search_atom: { MODE(ATOM); } keep_atom[k] { $$ = $k; };
+
+search_date: pre_date '"' date '"' { $$ = $date; }
+           | pre_date date         { $$ = $date; }
+;
+
+pre_date: %empty { MODE(DATETIME); };
+
+date: date_day_fixed '-' date_month '-' fourdigit
+      { $$ = (imap_time_t){.year  = $fourdigit,
+                           .month = $date_month,
+                           .day   = $date_day_fixed}; };
 
 /*** FETCH command ***/
 
@@ -1410,9 +1557,5 @@ keep_fflag: prekeep fflag { $$ = (ie_flag_t){$fflag, KEEP_REF($prekeep)}; };
 keep_pflag: prekeep pflag { $$ = (ie_flag_t){$pflag, KEEP_REF($prekeep)}; };
 keep_mflag: prekeep mflag { $$ = (ie_flag_t){$mflag, KEEP_REF($prekeep)}; };
 keep_mailbox: prekeep mailbox { $$ = (ie_mailbox_t){$mailbox, KEEP_REF($prekeep)}; };
-/*
-keep_qstring: { parser->keep = true; } qstring { $$ = KEEP_REF; };
-keep_string: { parser->keep = true; } string { $$ = KEEP_REF; };
-*/
 
 SP: ' ';

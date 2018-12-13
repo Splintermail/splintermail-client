@@ -224,7 +224,15 @@ static void append_end(void *data, imap_time_t imap_time, size_t literal_len,
 }
 
 //
+static void search_cmd(void *data, dstr_t tag, dstr_t charset,
+                      ie_search_key_t *search_key){
+    (void)data;
+    dstr_free(&tag);
+    dstr_free(&charset);
+    ie_search_key_free(search_key);
+}
 
+//
 
 static void fetch_cmd(void *data, dstr_t tag, ie_seq_set_t *seq_set,
                       ie_fetch_attr_t attr){
@@ -665,6 +673,7 @@ static derr_t do_test_scanner_and_parser(LIST(dstr_t) *inputs){
         append_start,
         append_flag,
         append_end,
+        search_cmd,
         fetch_cmd,
         store_start,
         store_flag,

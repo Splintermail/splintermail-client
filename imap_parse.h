@@ -38,6 +38,7 @@ typedef enum {
     SCAN_MODE_SEQSET,
     // for the [+-]?FLAGS(.SILENT)? part of the STORE command
     SCAN_MODE_STORE,
+    SCAN_MODE_SEARCH,
 } scan_mode_t;
 
 dstr_t* scan_mode_to_dstr(scan_mode_t mode);
@@ -70,6 +71,8 @@ typedef struct {
     derr_t (*append_start)(void *data, dstr_t tag, bool inbox, dstr_t mbx);
     derr_t (*append_flag)(void *data, ie_flag_type_t type, dstr_t val);
     void (*append_end)(void *data, imap_time_t time, size_t len, bool success);
+    void (*search)(void *data, dstr_t tag, dstr_t charset,
+                   ie_search_key_t *search_key);
     void (*fetch)(void *data, dstr_t tag, ie_seq_set_t *seq_set,
                   ie_fetch_attr_t attr);
     derr_t (*store_start)(void *data, dstr_t tag, ie_seq_set_t *seq_set,

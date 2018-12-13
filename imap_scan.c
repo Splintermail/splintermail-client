@@ -118,6 +118,7 @@ derr_t imap_scan(imap_scanner_t *scanner, scan_mode_t mode, bool *more,
             case SCAN_MODE_WILDCARD:            goto wildcard_mode;
             case SCAN_MODE_SEQSET:              goto seqset_mode;
             case SCAN_MODE_STORE:               goto store_mode;
+            case SCAN_MODE_SEARCH:              goto search_mode;
         }
     }
 
@@ -433,6 +434,55 @@ store_mode:
         'flags'         { *type = FLAGS; goto done; }
         '.silent'       { *type = SILENT; goto done; }
     */
+
+
+search_mode:
+
+    /*!re2c
+        *               { return E_PARAM; }
+        literal         { *type = LITERAL; goto done; }
+        num             { *type = NUM; goto done; }
+        eol             { *type = EOL; goto done; }
+        atom_spec       { *type = *scanner->start; goto done; }
+
+        'charset'       { *type = CHARSET; goto done; }
+        'all'           { *type = ALL; goto done; }
+        'answered'      { *type = ANSWERED; goto done; }
+        'bcc'           { *type = BCC; goto done; }
+        'before'        { *type = BEFORE; goto done; }
+        'body'          { *type = BODY; goto done; }
+        'cc'            { *type = CC; goto done; }
+        'deleted'       { *type = DELETED; goto done; }
+        'flagged'       { *type = FLAGGED; goto done; }
+        'from'          { *type = FROM; goto done; }
+        'keyword'       { *type = KEYWORD; goto done; }
+        'new'           { *type = NEW; goto done; }
+        'old'           { *type = OLD; goto done; }
+        'on'            { *type = ON; goto done; }
+        'recent'        { *type = RECENT; goto done; }
+        'seen'          { *type = SEEN; goto done; }
+        'since'         { *type = SINCE; goto done; }
+        'subject'       { *type = SUBJECT; goto done; }
+        'text'          { *type = TEXT; goto done; }
+        'to'            { *type = TO; goto done; }
+        'unanswered'    { *type = UNANSWERED; goto done; }
+        'undeleted'     { *type = UNDELETED; goto done; }
+        'unflagged'     { *type = UNFLAGGED; goto done; }
+        'unkeyword'     { *type = UNKEYWORD; goto done; }
+        'unseen'        { *type = UNSEEN; goto done; }
+        'draft'         { *type = DRAFT; goto done; }
+        'header'        { *type = HEADER; goto done; }
+        'larger'        { *type = LARGER; goto done; }
+        'not'           { *type = NOT; goto done; }
+        'or'            { *type = OR; goto done; }
+        'sentbefore'    { *type = SENTBEFORE; goto done; }
+        'senton'        { *type = SENTON; goto done; }
+        'sentsince'     { *type = SENTSINCE; goto done; }
+        'smaller'       { *type = SMALLER; goto done; }
+        'uid'           { *type = UID; goto done; }
+        'undraft'       { *type = UNDRAFT; goto done; }
+    */
+
 
 
 done:

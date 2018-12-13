@@ -27,6 +27,7 @@ DSTR_STATIC(scan_mode_DATETIME_dstr, "SCAN_MODE_DATETIME");
 DSTR_STATIC(scan_mode_WILDCARD_dstr, "SCAN_MODE_WILDCARD");
 DSTR_STATIC(scan_mode_SEQSET_dstr, "SCAN_MODE_SEQSET");
 DSTR_STATIC(scan_mode_STORE_dstr, "SCAN_MODE_STORE");
+DSTR_STATIC(scan_mode_SEARCH_dstr, "SCAN_MODE_SEARCH");
 DSTR_STATIC(scan_mode_unk_dstr, "unknown scan mode");
 
 dstr_t* scan_mode_to_dstr(scan_mode_t mode){
@@ -50,6 +51,7 @@ dstr_t* scan_mode_to_dstr(scan_mode_t mode){
         case SCAN_MODE_WILDCARD: return &scan_mode_WILDCARD_dstr;
         case SCAN_MODE_SEQSET: return &scan_mode_SEQSET_dstr;
         case SCAN_MODE_STORE: return &scan_mode_STORE_dstr;
+        case SCAN_MODE_SEARCH: return &scan_mode_SEARCH_dstr;
         default: return &scan_mode_unk_dstr;
     }
 }
