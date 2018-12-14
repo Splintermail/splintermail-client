@@ -43,6 +43,8 @@
     a destructor (which wouldn't get called... I think)
 
     parser should confirm that there was only one mbx-list-sflag given
+
+    partial <p1.p2> should enforce non-zeroness of p2
 */
 
 // the struct for the parse hooks' *data memeber
@@ -379,10 +381,10 @@ static void print_search_key(ie_search_key_t *search_key){
     }
 }
 
-static void search_cmd(void *data, dstr_t tag, dstr_t charset,
+static void search_cmd(void *data, dstr_t tag, bool uid_mode, dstr_t charset,
                       ie_search_key_t *search_key){
     (void)data;
-    LOG_ERROR("SEARCH (%x) ", FD(&tag));
+    LOG_ERROR("%xSEARCH (%x) ", FS(uid_mode ? "UID " : ""), FD(&tag));
     print_search_key(search_key);
     LOG_ERROR("\n");
     dstr_free(&tag);
@@ -392,10 +394,10 @@ static void search_cmd(void *data, dstr_t tag, dstr_t charset,
 
 //
 
-static void fetch_cmd(void *data, dstr_t tag, ie_seq_set_t *seq_set,
-                      ie_fetch_attr_t attr){
+static void fetch_cmd(void *data, dstr_t tag, bool uid_mode,
+                      ie_seq_set_t *seq_set, ie_fetch_attr_t attr){
     (void)data;
-    LOG_ERROR("FETCH command (%x) ", FD(&tag));
+    LOG_ERROR("%xFETCH command (%x) ", FS(uid_mode ? "UID " : ""), FD(&tag));
     // print sequence
     print_seq_set(seq_set);
     // print the "fixed" attributes
@@ -452,11 +454,12 @@ static void fetch_cmd(void *data, dstr_t tag, ie_seq_set_t *seq_set,
 
 //
 
-static void store_cmd(void *data, dstr_t tag, ie_seq_set_t *seq_set, int sign,
-                      bool silent, ie_flag_list_t flags){
+static void store_cmd(void *data, dstr_t tag, bool uid_mode,
+                      ie_seq_set_t *seq_set, int sign, bool silent,
+                      ie_flag_list_t flags){
     (void)data;
     // print tag
-    LOG_ERROR("STORE START (%x) ", FD(&tag));
+    LOG_ERROR("%xSTORE START (%x) ", FS(uid_mode ? "UID " : ""), FD(&tag));
     // print sequence
     print_seq_set(seq_set);
     // what to do with FLAGS to follow
@@ -471,11 +474,11 @@ static void store_cmd(void *data, dstr_t tag, ie_seq_set_t *seq_set, int sign,
 
 //
 
-static void copy_cmd(void *data, dstr_t tag, ie_seq_set_t *seq_set, bool inbox,
-                     dstr_t mbx){
+static void copy_cmd(void *data, dstr_t tag, bool uid_mode,
+                     ie_seq_set_t *seq_set, bool inbox, dstr_t mbx){
     (void)data;
     // print tag
-    LOG_ERROR("COPY (%x) ", FD(&tag));
+    LOG_ERROR("%xCOPY (%x) ", FS(uid_mode ? "UID " : ""), FD(&tag));
     // print sequence
     print_seq_set(seq_set);
     // what to do with FLAGS to follow
@@ -848,24 +851,10 @@ static derr_t test_scanner_and_parser(void){
                      "TTTTTTTT] alert text \r\n"),
             DSTR_LIT("* capability 1 2 3 4\r\n"),
             DSTR_LIT("* OK [capability 1 2 3 4] ready\r\n"),
-        );
-        PROP( do_test_scanner_and_parser(&inputs) );
-    }
-    {
-        LIST_PRESET(dstr_t, inputs,
-            DSTR_LIT("* OK [PERMANENTFLAGS (\\answered \\2 a 1)] hi!\r\n")
-        );
-        PROP( do_test_scanner_and_parser(&inputs) );
-    }
-    {
-        LIST_PRESET(dstr_t, inputs,
+            DSTR_LIT("* OK [PERMANENTFLAGS (\\answered \\2 a 1)] hi!\r\n"),
+            DSTR_LIT("* ok [parse] hi\r\n"),
             DSTR_LIT("* LIST (\\ext \\answered) \"/\" inbox\r\n"),
             DSTR_LIT("* LIST (\\selected) \"/\" \"other\"\r\n"),
-        );
-        PROP( do_test_scanner_and_parser(&inputs) );
-    }
-    {
-        LIST_PRESET(dstr_t, inputs,
             DSTR_LIT("* LSUB (\\ext \\answered) \"/\" inbox\r\n"),
             DSTR_LIT("* LSUB (\\selected) \"/\" \"other\"\r\n"),
         );
@@ -884,23 +873,8 @@ static derr_t test_scanner_and_parser(void){
     {
         LIST_PRESET(dstr_t, inputs,
             DSTR_LIT("* FLAGS (\\seen \\answered keyword \\extra)\r\n"),
-        );
-        PROP( do_test_scanner_and_parser(&inputs) );
-    }
-    {
-        LIST_PRESET(dstr_t, inputs,
             DSTR_LIT("* 45 EXISTS\r\n"),
-        );
-        PROP( do_test_scanner_and_parser(&inputs) );
-    }
-    {
-        LIST_PRESET(dstr_t, inputs,
             DSTR_LIT("* 81 RECENT\r\n"),
-        );
-        PROP( do_test_scanner_and_parser(&inputs) );
-    }
-    {
-        LIST_PRESET(dstr_t, inputs,
             DSTR_LIT("* 41 expunge\r\n"),
         );
         PROP( do_test_scanner_and_parser(&inputs) );
@@ -924,12 +898,6 @@ static derr_t test_scanner_and_parser(void){
             DSTR_LIT("e"),
             DSTR_LIT("r"),
             DSTR_LIT("al!)\r\n"),
-        );
-        PROP( do_test_scanner_and_parser(&inputs) );
-    }
-    {
-        LIST_PRESET(dstr_t, inputs,
-            DSTR_LIT("* ok [parse] hi\r\n"),
         );
         PROP( do_test_scanner_and_parser(&inputs) );
     }
@@ -996,6 +964,15 @@ static derr_t test_scanner_and_parser(void){
             DSTR_LIT("tag FETCH * BODY[TEXT]\r\n"),
             DSTR_LIT("tag FETCH * BODY[HEADER.FIELDS (To From)]\r\n"),
             DSTR_LIT("tag FETCH * BODY[HEADER.FIELDS.NOT (To From)]\r\n"),
+        );
+        PROP( do_test_scanner_and_parser(&inputs) );
+    }
+    {
+        LIST_PRESET(dstr_t, inputs,
+            DSTR_LIT("tag UID STORE 5 +FLAGS \\Seen \\Extension\r\n"),
+            DSTR_LIT("tag UID COPY 5:* iNBoX\r\n"),
+            DSTR_LIT("tag UID SEARCH DRAFT\r\n"),
+            DSTR_LIT("tag UID FETCH 1,2,3:4 INTERNALDATE\r\n"),
         );
         PROP( do_test_scanner_and_parser(&inputs) );
     }

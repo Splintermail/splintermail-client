@@ -69,14 +69,14 @@ typedef struct {
     void (*expunge)(void *data, dstr_t tag);
     void (*append)(void *data, dstr_t tag, bool inbox, dstr_t mbx,
                    ie_flag_list_t flags, imap_time_t time, size_t len);
-    void (*search)(void *data, dstr_t tag, dstr_t charset,
+    void (*search)(void *data, dstr_t tag, bool uid_mode, dstr_t charset,
                    ie_search_key_t *search_key);
-    void (*fetch)(void *data, dstr_t tag, ie_seq_set_t *seq_set,
+    void (*fetch)(void *data, dstr_t tag, bool uid_mode, ie_seq_set_t *seq_set,
                   ie_fetch_attr_t attr);
-    void (*store)(void *data, dstr_t tag, ie_seq_set_t *seq_set, int sign,
-                  bool silent, ie_flag_list_t flags);
-    void (*copy)(void *data, dstr_t tag, ie_seq_set_t *seq_set, bool inbox,
-                 dstr_t mbx);
+    void (*store)(void *data, dstr_t tag, bool uid_mode, ie_seq_set_t *seq_set,
+                  int sign, bool silent, ie_flag_list_t flags);
+    void (*copy)(void *data, dstr_t tag, bool uid_mode, ie_seq_set_t *seq_set,
+                 bool inbox, dstr_t mbx);
 } imap_parse_hooks_dn_t;
 
 // a list of hooks that are called when communicating with the mail server

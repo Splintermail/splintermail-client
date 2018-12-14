@@ -218,32 +218,30 @@ catch:
     #define EXPUNGE_CMD(tag) \
         parser->hooks_dn.expunge(parser->hook_data, tag);
 
-    #define APPEND_CMD_START(tag, mbx) \
-        DOCATCH( parser->hooks_dn.append_start(parser->hook_data, tag, \
-                                               mbx.inbox, mbx.dstr) );
-    #define APPEND_CMD_FLAG(f) \
-        DOCATCH( parser->hooks_dn.append_flag(parser->hook_data, f.type, \
-                                              f.dstr) );
     #define APPEND_CMD(tag, mbx, flags, date_time){ \
         /* get the numbers from the literal, ex: {5}\r\nBYTES */ \
         dstr_t sub = dstr_sub(parser->token, 1, parser->token->len - 3); \
         size_t len; \
         dstr_toul(&sub, &len, 10);\
-        parser->hooks_dn.append(parser->hook_data, tag, mbx.inbox, mbx.dstr, \
-                                flags, date_time, len); \
+        parser->hooks_dn.append(parser->hook_data, tag, mbx.inbox, \
+                                mbx.dstr, flags, date_time, len); \
     }
 
-    #define SEARCH_CMD(tag, charset, search_key) \
-        parser->hooks_dn.search(parser->hook_data, tag, charset, search_key);
+    #define SEARCH_CMD(tag, uid, charset, search_key) \
+        parser->hooks_dn.search(parser->hook_data, tag, uid, charset, \
+                                search_key);
 
-    #define FETCH_CMD(tag, seq_set, fetch_attr) \
-        parser->hooks_dn.fetch(parser->hook_data, tag, seq_set, fetch_attr);
+    #define FETCH_CMD(tag, uid, seq_set, fetch_attr) \
+        parser->hooks_dn.fetch(parser->hook_data, tag, uid, seq_set, \
+                               fetch_attr);
 
-    #define STORE_CMD(tag, seq, sign, silent, flgs) \
-        parser->hooks_dn.store(parser->hook_data, tag, seq, sign, silent, flgs);
+    #define STORE_CMD(tag, uid, seq, sign, silent, flgs) \
+        parser->hooks_dn.store(parser->hook_data, tag, uid, seq, sign, \
+                               silent, flgs);
 
-    #define COPY_CMD(tag, set, mbx) \
-        parser->hooks_dn.copy(parser->hook_data, tag, set, mbx.inbox, mbx.dstr);
+    #define COPY_CMD(tag, uid, set, mbx) \
+        parser->hooks_dn.copy(parser->hook_data, tag, uid, set, mbx.inbox, \
+                              mbx.dstr);
 
     // Responses:
 
@@ -704,6 +702,7 @@ catch:
 %destructor { ie_seq_set_free($$); } <seq_set>
 
 %type <boolean> store_silent
+%type <boolean> uid_mode
 
 %type <search_key> search_key
 %type <search_key> search_keys_1
@@ -890,12 +889,17 @@ append_time: %empty             { $$ = (imap_time_t){0}; }
            | date_time[dt] SP   { $$ = $dt; }
 ;
 
+/*** UID (modifier of other commands) ***/
+uid_mode: %empty { $$ = false; }
+        | UID SP { $$ = true; }
+;
+
 /*** SEARCH command ***/
 
-search_cmd: tag SP SEARCH SP
+search_cmd: tag SP uid_mode[u] SEARCH SP
             { MODE(SEARCH); } search_charset[c]
             { MODE(SEARCH); } search_keys_1[k]
-            { SEARCH_CMD($tag, $c, $k); };
+            { SEARCH_CMD($tag, $u, $c, $k); };
 
 search_charset: %empty { $$ = (dstr_t){0}; }
               | CHARSET SP search_astring[s] SP { $$ = $s; MODE(SEARCH); }
@@ -973,8 +977,9 @@ date: date_day '-' date_month '-' fourdigit
 
 /*** FETCH command ***/
 
-fetch_cmd: tag SP FETCH SP seq_set[seq] SP { MODE(FETCH); } fetch_attrs[attr]
-           { FETCH_CMD($tag, $seq, $attr); };
+fetch_cmd: tag SP uid_mode[u] FETCH SP seq_set[seq] SP
+           { MODE(FETCH); } fetch_attrs[attr]
+           { FETCH_CMD($tag, $u, $seq, $attr); };
 
 fetch_attrs: ALL           { $$ = (ie_fetch_attr_t){ .flags = true,
                                                      .intdate = true,
@@ -1054,10 +1059,10 @@ partial: %empty                     { $$ = (ie_partial_t){0}; }
 
 /*** STORE command ***/
 
-store_cmd: tag SP STORE SP seq_set[seq]
+store_cmd: tag SP uid_mode[u] STORE SP seq_set[seq]
            { MODE(STORE); } SP store_sign[sign] FLAGS store_silent[silent] SP
            { MODE(FLAG); } store_flags[f]
-           { STORE_CMD($tag, $seq, $sign, $silent, $f); };
+           { STORE_CMD($tag, $u, $seq, $sign, $silent, $f); };
 
 store_sign: %empty  { $$ = 0; }
           | '-'     { $$ = -1; }
@@ -1082,8 +1087,8 @@ store_flags_1: keep_flag[f]      { ADD_FLAG($$, (ie_flag_list_t){0}, $f); }
 
 /*** COPY command ***/
 
-copy_cmd: tag SP COPY SP seq_set[set] SP keep_mailbox[mbx]
-          { COPY_CMD($tag, $set, $mbx); };
+copy_cmd: tag SP uid_mode[u] COPY SP seq_set[set] SP keep_mailbox[mbx]
+          { COPY_CMD($tag, $u, $set, $mbx); };
 
 /*** status-type handling.  Thanks for the the shitty grammar, IMAP4rev1 ***/
 
@@ -1255,19 +1260,19 @@ expunge_resp: num SP EXPUNGE { EXPUNGE_RESP($num); };
 
 /*** FETCH responses ***/
 
-fetch_resp: pre_fetch_resp SP '(' msg_attr_list_0 ')'
+fetch_resp: pre_fetch_resp SP '(' msg_attrs_0 ')'
             { FETCH_RESP_END(true); (void)$1; }
 ;
 
 pre_fetch_resp: num SP FETCH
                 { FETCH_RESP_START($num); $$ = NULL; MODE(FETCH); };
 
-msg_attr_list_0: %empty
-               | msg_attr_list_1
+msg_attrs_0: %empty
+           | msg_attrs_1
 ;
 
-msg_attr_list_1: msg_attr
-               | msg_attr_list_1 SP msg_attr
+msg_attrs_1: msg_attr
+           | msg_attrs_1 SP msg_attr
 ;
 
 /* most of these get ignored completely, we only really need:
@@ -1286,8 +1291,7 @@ msg_attr_: f_flags_resp
          | RFC822_TEXT SP nstring
          | RFC822_HEADER SP nstring
          | RFC822_SIZE SP NUM
-         | BODYSTRUCT { LOG_ERROR("found BODYSTRUCTURE\n"); ACCEPT; }
-         | BODY { LOG_ERROR("found BODYSTRUCTURE\n"); ACCEPT; }
+         /* don't even parse anything that starts with BODY */
 ;
 
 /*** FETCH FLAGS ***/
