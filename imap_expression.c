@@ -84,6 +84,22 @@ const dstr_t *st_attr_to_dstr(ie_st_attr_t attr){
     }
 }
 
+void dstr_link_free(dstr_link_t *h){
+    dstr_link_t *ptr, *next;
+    ptr = h;
+    while(ptr){
+        next = ptr->next;
+        dstr_free(&ptr->dstr);
+        free(ptr);
+        ptr = next;
+    }
+}
+
+void ie_flag_list_free(ie_flag_list_t* fl){
+    dstr_link_free(fl->keywords);
+    dstr_link_free(fl->extensions);
+}
+
 void ie_seq_set_free(ie_seq_set_t *s){
     ie_seq_set_t *ptr, *next;
     ptr = s;
@@ -166,24 +182,13 @@ void ie_section_part_free(ie_section_part_t *s){
     }
 }
 
-void ie_header_free(ie_header_t *h){
-    ie_header_t *ptr, *next;
-    ptr = h;
-    while(ptr){
-        next = ptr->next;
-        dstr_free(&ptr->name);
-        free(ptr);
-        ptr = next;
-    }
-}
-
 void ie_fetch_extra_free(ie_fetch_extra_t *extra){
     ie_fetch_extra_t *ptr, *next;
     ptr = extra;
     while(ptr){
         next = ptr->next;
         ie_section_part_free(ptr->sect_part);
-        ie_header_free(ptr->sect_txt.headers);
+        dstr_link_free(ptr->sect_txt.headers);
         free(ptr);
         ptr = next;
     }

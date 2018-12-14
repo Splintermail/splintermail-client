@@ -51,6 +51,13 @@ typedef struct {
     dstr_t text;
 } ie_resp_status_type_t;
 
+typedef struct dstr_link_t {
+    dstr_t dstr;
+    struct dstr_link_t *next;
+} dstr_link_t;
+
+void dstr_link_free(dstr_link_t *h);
+
 typedef enum {
     IE_FLAG_ANSWERED,
     IE_FLAG_FLAGGED,
@@ -73,6 +80,23 @@ typedef struct {
     // dstr is only non-null if type is KEYWORD or EXTENSION
     dstr_t dstr;
 } ie_flag_t;
+
+typedef struct ie_flag_list_t {
+    bool answered:1;
+    bool flagged:1;
+    bool deleted:1;
+    bool seen:1;
+    bool draft:1;
+    bool recent:1;
+    bool noselect:1;
+    bool marked:1;
+    bool unmarked:1;
+    bool asterisk:1;
+    dstr_link_t *keywords;
+    dstr_link_t *extensions;
+} ie_flag_list_t;
+
+void ie_flag_list_free(ie_flag_list_t* fl);
 
 typedef struct {
     bool inbox;
@@ -199,13 +223,6 @@ typedef struct ie_section_part_t {
 
 void ie_section_part_free(ie_section_part_t *s);
 
-typedef struct ie_header_t {
-    dstr_t name;
-    struct ie_header_t *next;
-} ie_header_t;
-
-void ie_header_free(ie_header_t *h);
-
 typedef enum {
     IE_SECT_NONE = 0,
     IE_SECT_MIME,
@@ -217,7 +234,7 @@ typedef enum {
 
 typedef struct ie_sect_txt_t {
     ie_sect_txt_type_t type;
-    ie_header_t *headers;
+    dstr_link_t *headers;
 } ie_sect_txt_t;
 
 // a BODY[]<> or BODY.PEEK[]<> in the FETCH cmd, there may be many
@@ -264,19 +281,18 @@ union imap_expr_t {
     unsigned char st_attr_cmd; // logical OR of status attributes in command
     ie_st_attr_resp_t st_attr_resp; // logical OR, and with response values
     ie_seq_set_t *seq_set;
+    dstr_link_t *dstr_link;
+    ie_flag_list_t flag_list;
     ie_partial_t partial;
     ie_section_part_t *sect_part;
     ie_sect_txt_t sect_txt;
     ie_search_key_t *search_key;
-    ie_header_t *header_list;
     ie_fetch_extra_t *fetch_extra;
     ie_fetch_attr_t fetch_attr;
     ie_resp_status_type_t status_type;
     // dummy types to trigger %destructor actions
     void *prekeep;
     void *preqstring;
-    void *appendcmd;
-    void *storecmd;
     void *capa;
     void *permflag;
     void *listresp;

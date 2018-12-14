@@ -224,13 +224,13 @@ catch:
     #define APPEND_CMD_FLAG(f) \
         DOCATCH( parser->hooks_dn.append_flag(parser->hook_data, f.type, \
                                               f.dstr) );
-    #define APPEND_CMD_END(date_time, success){ \
+    #define APPEND_CMD(tag, mbx, flags, date_time){ \
         /* get the numbers from the literal, ex: {5}\r\nBYTES */ \
         dstr_t sub = dstr_sub(parser->token, 1, parser->token->len - 3); \
         size_t len; \
         dstr_toul(&sub, &len, 10);\
-        parser->hooks_dn.append_end(parser->hook_data, date_time, len, \
-                                    success); \
+        parser->hooks_dn.append(parser->hook_data, tag, mbx.inbox, mbx.dstr, \
+                                flags, date_time, len); \
     }
 
     #define SEARCH_CMD(tag, charset, search_key) \
@@ -239,14 +239,8 @@ catch:
     #define FETCH_CMD(tag, seq_set, fetch_attr) \
         parser->hooks_dn.fetch(parser->hook_data, tag, seq_set, fetch_attr);
 
-    #define STORE_CMD_START(tag, set, sign, silent) \
-        DOCATCH( parser->hooks_dn.store_start(parser->hook_data, tag, set, \
-                                              sign, silent) );
-    #define STORE_CMD_FLAG(f) \
-        DOCATCH( parser->hooks_dn.store_flag(parser->hook_data, f.type, \
-                                             f.dstr) );
-    #define STORE_CMD_END(success) \
-        parser->hooks_dn.store_end(parser->hook_data, success);
+    #define STORE_CMD(tag, seq, sign, silent, flgs) \
+        parser->hooks_dn.store(parser->hook_data, tag, seq, sign, silent, flgs);
 
     #define COPY_CMD(tag, set, mbx) \
         parser->hooks_dn.copy(parser->hook_data, tag, set, mbx.inbox, mbx.dstr);
@@ -391,7 +385,7 @@ catch:
         out->param.t2 = v2;
 
     #define HEADER(out, list, header) \
-        ie_header_t *temp; \
+        dstr_link_t *temp; \
         temp = malloc(sizeof(*temp)); \
         if(!temp){ \
             parser->error = E_NOMEM; \
@@ -399,10 +393,10 @@ catch:
         } \
         /* append this struct to the end of the existing linked list */ \
         out = list; \
-        ie_header_t **end = &out; \
+        dstr_link_t **end = &out; \
         while(*end) end = &(*end)->next; \
         *end = temp; \
-        temp->name = header; \
+        temp->dstr = header; \
         temp->next = NULL
 
     #define SECT(out, sp, st) \
@@ -412,6 +406,51 @@ catch:
             ACCEPT; \
         } \
         *out = (ie_fetch_extra_t){ .sect_part = sp, .sect_txt = st }
+
+    #define SEQ_SPEC(out, _n1, _n2) \
+        out = malloc(sizeof(*out)); \
+        if(!out){ \
+            parser->error = E_NOMEM; \
+            ACCEPT; \
+        } \
+        out->n1 = _n1; \
+        out->n2 = _n2; \
+        out->next = NULL
+
+    // fusers
+
+    #define ADD_FLAG(out, list, flag) \
+        out = list; \
+        dstr_link_t *temp, **end; \
+        switch(flag.type){ \
+            /* in standard cases, mark the flag as "set" */ \
+            case IE_FLAG_ANSWERED: out.answered = true; break; \
+            case IE_FLAG_FLAGGED: out.flagged = true; break; \
+            case IE_FLAG_DELETED: out.deleted = true; break; \
+            case IE_FLAG_SEEN: out.seen = true; break; \
+            case IE_FLAG_DRAFT: out.draft = true; break; \
+            case IE_FLAG_RECENT: out.recent = true; break; \
+            case IE_FLAG_NOSELECT: out.noselect = true; break; \
+            case IE_FLAG_MARKED: out.marked = true; break; \
+            case IE_FLAG_UNMARKED: out.unmarked = true; break; \
+            case IE_FLAG_ASTERISK: out.asterisk = true; break; \
+            /* in the other cases, allocate a dstr_link and append to list */ \
+            case IE_FLAG_KEYWORD: \
+            case IE_FLAG_EXTENSION: \
+                temp = malloc(sizeof(*temp)); \
+                if(!temp){ \
+                    parser->error = E_NOMEM; \
+                    ACCEPT; \
+                } \
+                temp->dstr = flag.dstr; \
+                temp->next = NULL; \
+                if(flag.type == IE_FLAG_KEYWORD) \
+                    end = &out.keywords; \
+                else \
+                    end = &out.extensions; \
+                while(*end) end = &(*end)->next; \
+                *end = temp; \
+        }
 
     #define FUSE_SEARCH(out, list, key) \
         out = list; \
@@ -436,16 +475,6 @@ catch:
         ie_fetch_extra_t **end = &out.extra; \
         while(*end){ end = &((*end)->next); } \
         *end = new.extra
-
-    #define SEQ_SPEC(out, _n1, _n2) \
-        out = malloc(sizeof(*out)); \
-        if(!out){ \
-            parser->error = E_NOMEM; \
-            ACCEPT; \
-        } \
-        out->n1 = _n1; \
-        out->n2 = _n2; \
-        out->next = NULL
 
 %}
 
@@ -645,6 +674,14 @@ catch:
 %type <flag> keep_pflag
 %destructor { dstr_free(& $$.dstr); } <flag>
 
+%type <flag_list> append_flags
+%type <flag_list> append_flags_0
+%type <flag_list> append_flags_1
+%type <flag_list> store_flags
+%type <flag_list> store_flags_0
+%type <flag_list> store_flags_1
+%destructor { ie_flag_list_free(& $$); } <flag_list>
+
 %type <num> num
 %type <num> digit
 %type <num> twodigit
@@ -696,10 +733,10 @@ catch:
 %type <sect_txt> sect_msgtxt
 %type <sect_txt> hdr_flds
 %type <sect_txt> hdr_flds_not
-%destructor { ie_header_free($$.headers); } <sect_txt>
+%destructor { dstr_link_free($$.headers); } <sect_txt>
 
-%type <header_list> header_list_1
-%destructor { ie_header_free($$); } <header_list>
+%type <dstr_link> header_list_1
+%destructor { dstr_link_free($$); } <dstr_link>
 
 %type <fetch_extra> sect
 %destructor { ie_fetch_extra_free($$); } <fetch_extra>
@@ -724,12 +761,6 @@ catch:
 
 %type <preqstring> preqstring
 %destructor { END_QSTR; } <preqstring>
-
-%type <appendcmd> pre_append_cmd
-%destructor { APPEND_CMD_END((imap_time_t){0}, false); } <appendcmd>
-
-%type <storecmd> pre_store_cmd
-%destructor { STORE_CMD_END(false); } <storecmd>
 
 %type <capa> capa_start
 %destructor { CAPA_RESP_END(false); } <capa>
@@ -861,25 +892,26 @@ st_attr_clist_1: st_attr[s]                         { $$ = $s; }
 ;
 
 /*** APPEND command ***/
-/* the post-date_time mode just has to accept a literal, it's not specific */
 
-append_cmd: pre_append_cmd
-            { MODE(FLAG); } SP append_flags append_time[at]
-            { MODE(ASTRING); } LITERAL
-            { APPEND_CMD_END($at, true); (void)$pre_append_cmd; } LITERAL_END;
+/* APPEND_CMD also marks a literal, hence the LITERAL_END after append_cmd_.
+   Otherwise, destructors would be called incorrectly. */
+append_cmd: append_cmd_ LITERAL_END
 
-pre_append_cmd: tag SP APPEND SP keep_mailbox[m]
-                { APPEND_CMD_START($tag, $m); $$ = NULL; };
+append_cmd_: tag SP APPEND SP keep_mailbox[m]
+             { MODE(FLAG); } SP append_flags[f] append_time[t]
+             { MODE(ASTRING); } LITERAL
+             { APPEND_CMD($tag, $m, $f, $t); };
 
-append_flags: %empty
-            | '(' append_flags_0 ')' SP;
+append_flags: %empty                            { $$ = (ie_flag_list_t){0}; }
+            | '(' append_flags_0[af] ')' SP     { $$ = $af; }
+;
 
-append_flags_0: %empty
+append_flags_0: %empty          { $$ = (ie_flag_list_t){0}; }
               | append_flags_1
 ;
 
-append_flags_1: keep_flag[f]                    { APPEND_CMD_FLAG($f); }
-              | append_flags_1 SP keep_flag[f]  { APPEND_CMD_FLAG($f); }
+append_flags_1: keep_flag[f]        { ADD_FLAG($$, (ie_flag_list_t){0}, $f); }
+              | append_flags_1[l] SP keep_flag[f]   { ADD_FLAG($$, $l, $f); }
 ;
 
 append_time: %empty             { $$ = (imap_time_t){0}; }
@@ -1041,23 +1073,7 @@ hdr_flds_not: HDR_FLDS_NOT SP { MODE(ASTRING); } '(' header_list_1[h] ')'
                                       .headers = $h }; };
 
 header_list_1: keep_astring[h]                   { HEADER($$, NULL, $h); }
-             | header_list_1[l] SP keep_astring[h] {
-        ie_header_t *temp;
-        temp = malloc(sizeof(*temp));
-        if(!temp){
-            parser->error = E_NOMEM;
-            ACCEPT;
-        }
-        if($l){
-            /* append this struct to existing linked list */
-            ie_header_t *end = $l;
-            while(end->next) end = end->next;
-            end->next = temp;
-            $$ = $l;
-        }
-        temp->name = $h;
-        temp->next = NULL;
-    }
+             | header_list_1[l] SP keep_astring[h] { HEADER($$, $l, $h); }
 ;
 
 partial: %empty                     { $$ = (ie_partial_t){0}; }
@@ -1066,14 +1082,10 @@ partial: %empty                     { $$ = (ie_partial_t){0}; }
 
 /*** STORE command ***/
 
-
-store_cmd: pre_store_cmd
-           { MODE(FLAG); } store_flags
-           { STORE_CMD_END(true); (void)$pre_store_cmd; };
-
-pre_store_cmd: tag SP STORE SP seq_set[set]
-             { MODE(STORE); } SP store_sign[sign] FLAGS store_silent[silent] SP
-             { STORE_CMD_START($tag, $set, $sign, $silent); $$ = NULL; };
+store_cmd: tag SP STORE SP seq_set[seq]
+           { MODE(STORE); } SP store_sign[sign] FLAGS store_silent[silent] SP
+           { MODE(FLAG); } store_flags[f]
+           { STORE_CMD($tag, $seq, $sign, $silent, $f); };
 
 store_sign: %empty  { $$ = 0; }
           | '-'     { $$ = -1; }
@@ -1084,16 +1096,16 @@ store_silent: %empty    { $$ = false; }
             | SILENT    { $$ = true; }
 ;
 
-store_flags: '(' store_flag_list_0 ')'
-           | store_flag_list_1
+store_flags: '(' store_flags_0[f] ')'   { $$ = $f; }
+           | store_flags_1
 ;
 
-store_flag_list_0: %empty
-                 | store_flag_list_1
+store_flags_0: %empty           { $$ = (ie_flag_list_t){0}; }
+             | store_flags_1
 ;
 
-store_flag_list_1: keep_flag[f]                         { STORE_CMD_FLAG($f); }
-                 | store_flag_list_1 SP keep_flag[f]    { STORE_CMD_FLAG($f); }
+store_flags_1: keep_flag[f]      { ADD_FLAG($$, (ie_flag_list_t){0}, $f); }
+             | store_flags_1[l] SP keep_flag[f]   { ADD_FLAG($$, $l, $f); }
 ;
 
 /*** COPY command ***/

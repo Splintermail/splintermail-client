@@ -483,8 +483,6 @@ search_mode:
         'undraft'       { *type = UNDRAFT; goto done; }
     */
 
-
-
 done:
     // mark everything done until here
     scanner->old_start = scanner->start;

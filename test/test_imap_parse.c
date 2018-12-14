@@ -55,6 +55,7 @@ typedef struct {
     dstr_t literal_temp;
 } locals_t;
 
+// does not print leading or trailing space
 static void print_seq_set(ie_seq_set_t *seq_set){
     for(ie_seq_set_t *p = seq_set; p != NULL; p = p->next){
         DSTR_VAR(buf, 32);
@@ -68,6 +69,35 @@ static void print_seq_set(ie_seq_set_t *seq_set){
         // flush buffer to stdout
         LOG_ERROR("%x", FD(&buf));
     }
+}
+
+// prints leading space, not trailing space
+static void print_flag_list(ie_flag_list_t flags){
+    if(flags.answered) LOG_ERROR(" \\Answered");
+    if(flags.flagged) LOG_ERROR(" \\Flagged");
+    if(flags.deleted) LOG_ERROR(" \\Deleted");
+    if(flags.seen) LOG_ERROR(" \\Seen");
+    if(flags.draft) LOG_ERROR(" \\Draft");
+    if(flags.recent) LOG_ERROR(" \\Recent");
+    if(flags.noselect) LOG_ERROR(" \\Noselect");
+    if(flags.marked) LOG_ERROR(" \\Marked");
+    if(flags.unmarked) LOG_ERROR(" \\Unmarked");
+    if(flags.asterisk) LOG_ERROR(" \\Asterisk");
+    for(dstr_link_t *d = flags.keywords; d != NULL; d = d->next){
+        LOG_ERROR(" %x", FD(&d->dstr));
+    }
+    for(dstr_link_t *d = flags.extensions; d != NULL; d = d->next){
+        LOG_ERROR(" %x", FD(&d->dstr));
+    }
+}
+
+// no leading or trailing space
+static void print_time(imap_time_t time){
+    if(!time.year) return;
+    LOG_ERROR("%x-%x-%x %x:%x:%x %x%x%x",
+              FI(time.day), FI(time.month), FI(time.year),
+              FI(time.hour), FI(time.min), FI(time.sec),
+              FS(time.z_sign ? "+" : "-"), FI(time.z_hour), FI(time.z_min));
 }
 
 static void login_cmd(void *data, dstr_t tag, dstr_t user, dstr_t pass){
@@ -211,31 +241,25 @@ static void expunge_cmd(void *data, dstr_t tag){
 
 //
 
-static derr_t append_start(void *data, dstr_t tag, bool inbox, dstr_t mbx){
+static void append_cmd(void *data, dstr_t tag, bool inbox, dstr_t mbx,
+                       ie_flag_list_t flags, imap_time_t time,
+                       size_t literal_len){
     (void)data;
-    LOG_ERROR("APPEND START (%x) '%x' (%x)\n", FD(&tag), FD(&mbx), FU(inbox));
+    LOG_ERROR("APPEND (%x) '%x' (%x)", FD(&tag), FD(&mbx), FU(inbox));
+    print_flag_list(flags);
+    if(time.year){
+        LOG_ERROR(" ");
+        print_time(time);
+    }
+    LOG_ERROR("\n");
     dstr_free(&tag);
     dstr_free(&mbx);
-    return E_OK;
-}
-
-static derr_t append_flag(void *data, ie_flag_type_t type, dstr_t val){
-    (void)data;
-    LOG_ERROR("APPEND FLAG: %x '%x'\n", FD(flag_type_to_dstr(type)), FD(&val));
-    dstr_free(&val);
-    return E_OK;
-}
-
-static void append_end(void *data, imap_time_t imap_time, size_t literal_len,
-                       bool success){
+    ie_flag_list_free(&flags);
+    // also mark out the literal
     locals_t *locals = data;
     locals->in_literal = true;
     locals->fetch_literal = true;
     locals->literal_len = literal_len;
-    LOG_ERROR("APPEND END len:%x date:%x-%x-%x (%x)\n",
-              FU(literal_len),
-              FI(imap_time.year), FI(imap_time.month), FI(imap_time.day),
-              FS(success ? "success" : "fail"));
 }
 
 //
@@ -397,14 +421,14 @@ static void fetch_cmd(void *data, dstr_t tag, ie_seq_set_t *seq_set,
             case IE_SECT_HEADER:    LOG_ERROR("HEADER"); break;
             case IE_SECT_HDR_FLDS:
                 LOG_ERROR("HEADER.FIELDS (");
-                for(ie_header_t *h = ex->sect_txt.headers; h; h = h->next)
-                    LOG_ERROR("%x%x", FD(&h->name), FS(h->next ? " " : ""));
+                for(dstr_link_t *h = ex->sect_txt.headers; h; h = h->next)
+                    LOG_ERROR("%x%x", FD(&h->dstr), FS(h->next ? " " : ""));
                 LOG_ERROR(")");
                 break;
             case IE_SECT_HDR_FLDS_NOT:
                 LOG_ERROR("HEADER.FIELDS.NOT (");
-                for(ie_header_t *h = ex->sect_txt.headers; h; h = h->next)
-                    LOG_ERROR("%x%x", FD(&h->name), FS(h->next ? " " : ""));
+                for(dstr_link_t *h = ex->sect_txt.headers; h; h = h->next)
+                    LOG_ERROR("%x%x", FD(&h->dstr), FS(h->next ? " " : ""));
                 LOG_ERROR(")");
                 break;
         }
@@ -422,32 +446,24 @@ static void fetch_cmd(void *data, dstr_t tag, ie_seq_set_t *seq_set,
 
 //
 
-static derr_t store_start(void *data, dstr_t tag, ie_seq_set_t *seq_set,
-                          int sign, bool silent){
+static void store_cmd(void *data, dstr_t tag, ie_seq_set_t *seq_set, int sign,
+                      bool silent, ie_flag_list_t flags){
     (void)data;
     // print tag
     LOG_ERROR("STORE START (%x) ", FD(&tag));
     // print sequence
     print_seq_set(seq_set);
     // what to do with FLAGS to follow
-    LOG_ERROR(" %xFLAGS%x\n", FC(sign == 0 ? ' ' : (sign > 0 ? '+' : '-')),
-                              FS(silent ? ".SILENT" : ""));
+    LOG_ERROR(" %xFLAGS%x", FC(sign == 0 ? ' ' : (sign > 0 ? '+' : '-')),
+                            FS(silent ? ".SILENT" : ""));
+    print_flag_list(flags);
+    LOG_ERROR("\n");
     dstr_free(&tag);
     ie_seq_set_free(seq_set);
-    return E_OK;
+    ie_flag_list_free(&flags);
 }
 
-static derr_t store_flag(void *data, ie_flag_type_t type, dstr_t val){
-    (void)data;
-    LOG_ERROR("STORE FLAG: %x '%x'\n", FD(flag_type_to_dstr(type)), FD(&val));
-    dstr_free(&val);
-    return E_OK;
-}
-
-static void store_end(void *data, bool success){
-    (void)data;
-    LOG_ERROR("STORE END (%x)\n", FS(success ? "success" : "fail"));
-}
+//
 
 static void copy_cmd(void *data, dstr_t tag, ie_seq_set_t *seq_set, bool inbox,
                      dstr_t mbx){
@@ -701,8 +717,6 @@ static void fetch_end(void *data, bool success){
     LOG_ERROR("FETCH END (%x)\n", FS(success ? "success" : "fail"));
 }
 
-
-
 #define EXPECT(e, cmd) { \
     error = cmd; \
     CATCH(E_ANY){}; \
@@ -762,14 +776,10 @@ static derr_t do_test_scanner_and_parser(LIST(dstr_t) *inputs){
         check_cmd,
         close_cmd,
         expunge_cmd,
-        append_start,
-        append_flag,
-        append_end,
+        append_cmd,
         search_cmd,
         fetch_cmd,
-        store_start,
-        store_flag,
-        store_end,
+        store_cmd,
         copy_cmd,
     };
     imap_parse_hooks_up_t hooks_up = {

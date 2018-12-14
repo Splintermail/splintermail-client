@@ -67,18 +67,14 @@ typedef struct {
     void (*check)(void *data, dstr_t tag);
     void (*close)(void *data, dstr_t tag);
     void (*expunge)(void *data, dstr_t tag);
-
-    derr_t (*append_start)(void *data, dstr_t tag, bool inbox, dstr_t mbx);
-    derr_t (*append_flag)(void *data, ie_flag_type_t type, dstr_t val);
-    void (*append_end)(void *data, imap_time_t time, size_t len, bool success);
+    void (*append)(void *data, dstr_t tag, bool inbox, dstr_t mbx,
+                   ie_flag_list_t flags, imap_time_t time, size_t len);
     void (*search)(void *data, dstr_t tag, dstr_t charset,
                    ie_search_key_t *search_key);
     void (*fetch)(void *data, dstr_t tag, ie_seq_set_t *seq_set,
                   ie_fetch_attr_t attr);
-    derr_t (*store_start)(void *data, dstr_t tag, ie_seq_set_t *seq_set,
-                          int sign, bool silent);
-    derr_t (*store_flag)(void *data, ie_flag_type_t type, dstr_t val);
-    void (*store_end)(void *data, bool success);
+    void (*store)(void *data, dstr_t tag, ie_seq_set_t *seq_set, int sign,
+                  bool silent, ie_flag_list_t flags);
     void (*copy)(void *data, dstr_t tag, ie_seq_set_t *seq_set, bool inbox,
                  dstr_t mbx);
 } imap_parse_hooks_dn_t;
