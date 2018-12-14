@@ -85,7 +85,6 @@ typedef struct {
        should not make another call to imap_parse() until imap_literal() has
        been called (or imap_reset(), of course). */
     derr_t (*literal)(void *data, size_t len, bool keep);
-    // for status_type messages
     void (*status_type)(void *data, dstr_t tag, status_type_t status,
                         status_code_t code, unsigned int code_extra,
                         dstr_t text);
@@ -93,42 +92,25 @@ typedef struct {
     derr_t (*capa_start)(void *data);
     derr_t (*capa)(void *data, dstr_t capability);
     void (*capa_end)(void *data, bool success);
-    // for PERMANENTFLAG responses
-    derr_t (*pflag_start)(void *data);
-    derr_t (*pflag)(void *data, ie_flag_type_t type, dstr_t val);
-    void (*pflag_end)(void *data, bool success);
-    // for LIST responses
-    derr_t (*list_start)(void *data);
-    derr_t (*list_flag)(void *data, ie_flag_type_t type, dstr_t val);
-    void (*list_end)(void *data, char sep, bool inbox, dstr_t mbx,
-                     bool success);
-    // for LSUB responses
-    derr_t (*lsub_start)(void *data);
-    derr_t (*lsub_flag)(void *data, ie_flag_type_t type, dstr_t val);
-    void (*lsub_end)(void *data, char sep, bool inbox, dstr_t mbx,
-                     bool success);
-    // for STATUS responses
+    //
+    void (*pflag)(void *data, ie_flag_list_t flags);
+    void (*list)(void *data, ie_flag_list_t flags, char sep, bool inbox,
+                 dstr_t mbx);
+    void (*lsub)(void *data, ie_flag_list_t flags, char sep, bool inbox,
+                 dstr_t mbx);
     void (*status)(void *data, bool inbox, dstr_t mbx,
                    bool found_messages, unsigned int messages,
                    bool found_recent, unsigned int recent,
                    bool found_uidnext, unsigned int uidnext,
                    bool found_uidvld, unsigned int uidvld,
                    bool found_unseen, unsigned int unseen);
-    // for FLAGS responses
-    derr_t (*flags_start)(void *data);
-    derr_t (*flags_flag)(void *data, ie_flag_type_t type, dstr_t val);
-    void (*flags_end)(void *data, bool success);
-    // for EXISTS responses
+    void (*flags)(void *data, ie_flag_list_t flags);
     void (*exists)(void *data, unsigned int num);
-    // for RECENT responses
     void (*recent)(void *data, unsigned int num);
-    // for EXPUNGE responses
     void (*expunge)(void *data, unsigned int num);
     // for FETCH responses
     derr_t (*fetch_start)(void *data, unsigned int num);
-    derr_t (*f_flags_start)(void *data);
-    derr_t (*f_flags_flag)(void *data, ie_flag_type_t type, dstr_t val);
-    void (*f_flags_end)(void *data, bool success);
+    derr_t (*f_flags)(void *data, ie_flag_list_t flags);
     derr_t (*f_rfc822_start)(void *data);
     derr_t (*f_rfc822_literal)(void *data, size_t len);
     derr_t (*f_rfc822_qstr)(void *data, const dstr_t *qstr); // don't free qstr

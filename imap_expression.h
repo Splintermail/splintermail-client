@@ -294,12 +294,7 @@ union imap_expr_t {
     void *prekeep;
     void *preqstring;
     void *capa;
-    void *permflag;
-    void *listresp;
-    void *lsubresp;
-    void *flagsresp;
     void *fetchresp;
-    void *f_flagsresp;
     void *f_rfc822resp;
 };
 

@@ -41,6 +41,8 @@
     I am pretty sure that whenever I call YYACCEPT or use DOCATCH in an
     end-of-rule code block I also need to free anything in that rule that has
     a destructor (which wouldn't get called... I think)
+
+    parser should confirm that there was only one mbx-list-sflag given
 */
 
 // the struct for the parse hooks' *data memeber
@@ -55,7 +57,7 @@ typedef struct {
     dstr_t literal_temp;
 } locals_t;
 
-// does not print leading or trailing space
+// no leading or trailing space
 static void print_seq_set(ie_seq_set_t *seq_set){
     for(ie_seq_set_t *p = seq_set; p != NULL; p = p->next){
         DSTR_VAR(buf, 32);
@@ -71,23 +73,26 @@ static void print_seq_set(ie_seq_set_t *seq_set){
     }
 }
 
-// prints leading space, not trailing space
+#define LEAD_SP if(sp) LOG_ERROR(" "); else sp = true
+
+// no leading or trailing space
 static void print_flag_list(ie_flag_list_t flags){
-    if(flags.answered) LOG_ERROR(" \\Answered");
-    if(flags.flagged) LOG_ERROR(" \\Flagged");
-    if(flags.deleted) LOG_ERROR(" \\Deleted");
-    if(flags.seen) LOG_ERROR(" \\Seen");
-    if(flags.draft) LOG_ERROR(" \\Draft");
-    if(flags.recent) LOG_ERROR(" \\Recent");
-    if(flags.noselect) LOG_ERROR(" \\Noselect");
-    if(flags.marked) LOG_ERROR(" \\Marked");
-    if(flags.unmarked) LOG_ERROR(" \\Unmarked");
-    if(flags.asterisk) LOG_ERROR(" \\Asterisk");
+    bool sp = false;
+    if(flags.answered){ LEAD_SP; LOG_ERROR("\\Answered"); };
+    if(flags.flagged){  LEAD_SP; LOG_ERROR("\\Flagged");  };
+    if(flags.deleted){  LEAD_SP; LOG_ERROR("\\Deleted");  };
+    if(flags.seen){     LEAD_SP; LOG_ERROR("\\Seen");     };
+    if(flags.draft){    LEAD_SP; LOG_ERROR("\\Draft");    };
+    if(flags.recent){   LEAD_SP; LOG_ERROR("\\Recent");   };
+    if(flags.noselect){ LEAD_SP; LOG_ERROR("\\Noselect"); };
+    if(flags.marked){   LEAD_SP; LOG_ERROR("\\Marked");   };
+    if(flags.unmarked){ LEAD_SP; LOG_ERROR("\\Unmarked"); };
+    if(flags.asterisk){ LEAD_SP; LOG_ERROR("\\Asterisk"); };
     for(dstr_link_t *d = flags.keywords; d != NULL; d = d->next){
-        LOG_ERROR(" %x", FD(&d->dstr));
+        LEAD_SP; LOG_ERROR("%x", FD(&d->dstr));
     }
     for(dstr_link_t *d = flags.extensions; d != NULL; d = d->next){
-        LOG_ERROR(" %x", FD(&d->dstr));
+        LEAD_SP; LOG_ERROR("\\%x", FD(&d->dstr));
     }
 }
 
@@ -245,8 +250,9 @@ static void append_cmd(void *data, dstr_t tag, bool inbox, dstr_t mbx,
                        ie_flag_list_t flags, imap_time_t time,
                        size_t literal_len){
     (void)data;
-    LOG_ERROR("APPEND (%x) '%x' (%x)", FD(&tag), FD(&mbx), FU(inbox));
+    LOG_ERROR("APPEND (%x) '%x' (%x) (", FD(&tag), FD(&mbx), FU(inbox));
     print_flag_list(flags);
+    LOG_ERROR(")");
     if(time.year){
         LOG_ERROR(" ");
         print_time(time);
@@ -454,7 +460,7 @@ static void store_cmd(void *data, dstr_t tag, ie_seq_set_t *seq_set, int sign,
     // print sequence
     print_seq_set(seq_set);
     // what to do with FLAGS to follow
-    LOG_ERROR(" %xFLAGS%x", FC(sign == 0 ? ' ' : (sign > 0 ? '+' : '-')),
+    LOG_ERROR(" %xFLAGS%x ", FC(sign == 0 ? ' ' : (sign > 0 ? '+' : '-')),
                             FS(silent ? ".SILENT" : ""));
     print_flag_list(flags);
     LOG_ERROR("\n");
@@ -527,66 +533,35 @@ static void capa_end(void *data, bool success){
 
 //
 
-static derr_t pflag_start(void *data){
+static void pflag_resp(void *data, ie_flag_list_t flags){
     (void)data;
-    LOG_ERROR("PERMANENTFLAG START\n");
-    return E_OK;
-}
-
-static derr_t pflag(void *data, ie_flag_type_t type, dstr_t val){
-    (void)data;
-    LOG_ERROR("PERMANENTFLAG: %x '%x'\n", FU(type), FD(&val));
-    dstr_free(&val);
-    return E_OK;
-}
-
-static void pflag_end(void *data, bool success){
-    (void)data;
-    LOG_ERROR("PERMANENTFLAG END (%x)\n", FS(success ? "success" : "fail"));
+    LOG_ERROR("PERMANENTFLAGS (");
+    print_flag_list(flags);
+    LOG_ERROR(")\n");
+    ie_flag_list_free(&flags);
 }
 
 //
 
-static derr_t list_start(void *data){
+static void list_resp(void *data, ie_flag_list_t flags, char sep, bool inbox,
+                      dstr_t mbx){
     (void)data;
-    LOG_ERROR("LIST START\n");
-    return E_OK;
-}
-
-static derr_t list_flag(void *data, ie_flag_type_t type, dstr_t val){
-    (void)data;
-    LOG_ERROR("LIST_FLAG: %x '%x'\n", FD(flag_type_to_dstr(type)), FD(&val));
-    dstr_free(&val);
-    return E_OK;
-}
-static void list_end(void *data, char sep, bool inbox, dstr_t mbx,
-                     bool success){
-    (void)data;
-    LOG_ERROR("LIST END '%x' '%x' (%x) (%x)\n",
-              FC(sep), FD(&mbx), FU(inbox), FS(success ? "success" : "fail"));
+    LOG_ERROR("LIST (");
+    print_flag_list(flags);
+    LOG_ERROR(") '%x' '%x' (%x)\n", FC(sep), FD(&mbx), FU(inbox));
+    ie_flag_list_free(&flags);
     dstr_free(&mbx);
 }
 
 //
 
-static derr_t lsub_start(void *data){
+static void lsub_resp(void *data, ie_flag_list_t flags, char sep, bool inbox,
+                      dstr_t mbx){
     (void)data;
-    LOG_ERROR("LSUB START\n");
-    return E_OK;
-}
-
-static derr_t lsub_flag(void *data, ie_flag_type_t type, dstr_t val){
-    (void)data;
-    LOG_ERROR("LSUB_FLAG: %x '%x'\n", FD(flag_type_to_dstr(type)), FD(&val));
-    dstr_free(&val);
-    return E_OK;
-}
-static void lsub_end(void *data, char sep, bool inbox, dstr_t mbx,
-                     bool success){
-    (void)data;
-    LOG_ERROR("LSUB END '%x' '%x' (%x) (%x)\n",
-              FC(sep), FD(&mbx),
-              FU(inbox), FS(success ? "success" : "fail"));
+    LOG_ERROR("LSUB (");
+    print_flag_list(flags);
+    LOG_ERROR(") '%x' '%x' (%x)\n", FC(sep), FD(&mbx), FU(inbox));
+    ie_flag_list_free(&flags);
     dstr_free(&mbx);
 }
 
@@ -611,21 +586,12 @@ static void status_resp(void *data, bool inbox, dstr_t mbx,
 
 //
 
-static derr_t flags_start(void *data){
+static void flags_resp(void *data, ie_flag_list_t flags){
     (void)data;
-    LOG_ERROR("FLAGS START\n");
-    return E_OK;
-}
-
-static derr_t flags_flag(void *data, ie_flag_type_t type, dstr_t val){
-    (void)data;
-    LOG_ERROR("FLAGS_FLAG: %x '%x'\n", FD(flag_type_to_dstr(type)), FD(&val));
-    dstr_free(&val);
-    return E_OK;
-}
-static void flags_end(void *data, bool success){
-    (void)data;
-    LOG_ERROR("FLAGS END (%x)\n", FS(success ? "success" : "fail"));
+    LOG_ERROR("FLAGS (");
+    print_flag_list(flags);
+    LOG_ERROR(")\n");
+    ie_flag_list_free(&flags);
 }
 
 //
@@ -657,23 +623,13 @@ static derr_t fetch_start(void *data, unsigned int num){
     return E_OK;
 }
 
-static derr_t f_flags_start(void *data){
+static derr_t f_flags(void *data, ie_flag_list_t flags){
     (void)data;
-    LOG_ERROR("FETCH FLAGS START\n");
+    LOG_ERROR("FETCH FLAGS (");
+    print_flag_list(flags);
+    LOG_ERROR(")\n");
+    ie_flag_list_free(&flags);
     return E_OK;
-}
-
-static derr_t f_flags_flag(void *data, ie_flag_type_t type, dstr_t val){
-    (void)data;
-    LOG_ERROR("FETCH FLAGS FLAG: %x '%x'\n",
-              FD(flag_type_to_dstr(type)), FD(&val));
-    dstr_free(&val);
-    return E_OK;
-}
-
-static void f_flags_end(void *data, bool success){
-    (void)data;
-    LOG_ERROR("FETCH FLAGS END (%x)\n", FS(success ? "success" : "fail"));
 }
 
 static derr_t f_rfc822_start(void *data){
@@ -786,19 +742,22 @@ static derr_t do_test_scanner_and_parser(LIST(dstr_t) *inputs){
         literal,
         st_hook,
         capa_start, capa, capa_end,
-        pflag_start, pflag, pflag_end,
-        list_start, list_flag, list_end,
-        lsub_start, lsub_flag, lsub_end,
+        pflag_resp,
+        list_resp,
+        lsub_resp,
         status_resp,
-        flags_start, flags_flag, flags_end,
+        flags_resp,
         exists_hook,
         recent_hook,
         expunge_hook,
         fetch_start,
-        f_flags_start, f_flags_flag, f_flags_end,
-        f_rfc822_start, f_rfc822_literal, f_rfc822_qstr, f_rfc822_end,
-        f_uid,
-        f_intdate,
+            f_flags,
+            f_rfc822_start,
+                f_rfc822_literal,
+                f_rfc822_qstr,
+            f_rfc822_end,
+            f_uid,
+            f_intdate,
         fetch_end,
     };
     imap_parser_t parser;
@@ -924,7 +883,7 @@ static derr_t test_scanner_and_parser(void){
     }
     {
         LIST_PRESET(dstr_t, inputs,
-            DSTR_LIT("* FLAGS (\\answered \\seen \\extra)\r\n"),
+            DSTR_LIT("* FLAGS (\\seen \\answered keyword \\extra)\r\n"),
         );
         PROP( do_test_scanner_and_parser(&inputs) );
     }

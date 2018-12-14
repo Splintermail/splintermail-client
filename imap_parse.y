@@ -258,33 +258,17 @@ catch:
     #define CAPA_RESP_END(success) \
         parser->hooks_up.capa_end(parser->hook_data, success);
 
-    #define PFLAG_RESP_START \
-        DOCATCH( parser->hooks_up.pflag_start(parser->hook_data) );
     #define PFLAG_RESP(f) \
-        DOCATCH( parser->hooks_up.pflag(parser->hook_data, f.type, f.dstr) );
-    #define PFLAG_RESP_END(success) \
-        parser->hooks_up.pflag_end(parser->hook_data, success);
+        parser->hooks_up.pflag(parser->hook_data, f);
 
-    #define LIST_RESP_START \
-        DOCATCH( parser->hooks_up.list_start(parser->hook_data) );
-    #define LIST_RESP_FLAG(f) \
-        DOCATCH( parser->hooks_up.list_flag(parser->hook_data, f.type, f.dstr) );
-    #define LIST_RESP_END(sep, inbox, mbx, success) \
-        parser->hooks_up.list_end(parser->hook_data, sep, inbox, mbx, success);
+    #define LIST_RESP(flg, sep, mbx) \
+        parser->hooks_up.list(parser->hook_data, flg, sep, mbx.inbox, mbx.dstr);
 
-    #define LSUB_RESP_START \
-        DOCATCH( parser->hooks_up.lsub_start(parser->hook_data) );
-    #define LSUB_RESP_FLAG(f) \
-        DOCATCH( parser->hooks_up.lsub_flag(parser->hook_data, f.type, f.dstr) );
-    #define LSUB_RESP_END(sep, inbox, mbx, success) \
-        parser->hooks_up.lsub_end(parser->hook_data, sep, inbox, mbx, success);
+    #define LSUB_RESP(flg, sep, mbx) \
+        parser->hooks_up.lsub(parser->hook_data, flg, sep, mbx.inbox, mbx.dstr);
 
-    #define FLAGS_RESP_START \
-        DOCATCH( parser->hooks_up.flags_start(parser->hook_data) );
-    #define FLAGS_RESP_FLAG(f) \
-        DOCATCH( parser->hooks_up.flags_flag(parser->hook_data, f.type, f.dstr) );
-    #define FLAGS_RESP_END(success) \
-        parser->hooks_up.flags_end(parser->hook_data, success);
+    #define FLAGS_RESP(flg) \
+        parser->hooks_up.flags(parser->hook_data, flg);
 
     #define STATUS_RESP(mbx, sa) \
         parser->hooks_up.status(parser->hook_data, \
@@ -308,13 +292,8 @@ catch:
     #define FETCH_RESP_START(num) \
         DOCATCH( parser->hooks_up.fetch_start(parser->hook_data, num) );
 
-    #define F_FLAGS_RESP_START \
-        DOCATCH( parser->hooks_up.f_flags_start(parser->hook_data) );
-    #define F_FLAGS_RESP_FLAG(f) \
-        DOCATCH( parser->hooks_up.f_flags_flag(parser->hook_data, \
-                                               f.type, f.dstr) );
-    #define F_FLAGS_RESP_END(success) \
-        parser->hooks_up.f_flags_end(parser->hook_data, success);
+    #define F_FLAGS_RESP(flags) \
+        DOCATCH( parser->hooks_up.f_flags(parser->hook_data, flags) );
 
     #define F_RFC822_RESP_START \
         DOCATCH( parser->hooks_up.f_rfc822_start(parser->hook_data) );
@@ -680,6 +659,14 @@ catch:
 %type <flag_list> store_flags
 %type <flag_list> store_flags_0
 %type <flag_list> store_flags_1
+%type <flag_list> pflags_0
+%type <flag_list> pflags_1
+%type <flag_list> mflags_0
+%type <flag_list> mflags_1
+%type <flag_list> flags_0
+%type <flag_list> flags_1
+%type <flag_list> f_flags_0
+%type <flag_list> f_flags_1
 %destructor { ie_flag_list_free(& $$); } <flag_list>
 
 %type <num> num
@@ -765,23 +752,8 @@ catch:
 %type <capa> capa_start
 %destructor { CAPA_RESP_END(false); } <capa>
 
-%type <permflag> pflag_start
-%destructor { PFLAG_RESP_END(false); } <permflag>
-
-%type <listresp> pre_list_resp
-%destructor { LIST_RESP_END(0, false, NUL_DSTR, false); } <listresp>
-
-%type <lsubresp> pre_lsub_resp
-%destructor { LSUB_RESP_END(0, false, NUL_DSTR, false); } <lsubresp>
-
-%type <flagsresp> pre_flags_resp
-%destructor { FLAGS_RESP_END(false); } <flagsresp>
-
 %type <fetchresp> pre_fetch_resp
 %destructor { FETCH_RESP_END(false); } <fetchresp>
-
-%type <f_flagsresp> pre_f_flags_resp
-%destructor { F_FLAGS_RESP_END(false); } <f_flagsresp>
 
 %type <f_rfc822resp> pre_f_rfc822_resp
 %destructor { F_RFC822_RESP_END(false); } <f_rfc822resp>
@@ -1214,36 +1186,29 @@ capa_list: keep_atom               { CAPA_RESP($keep_atom); }
 
 /*** PERMANENTFLAG handling ***/
 /* %destructor is used to guarantee RESP_END gets called, as with CAPABILITY */
-pflag_resp: pflag_start '(' pflag_list_0 ')' { PFLAG_RESP_END(true); (void)$1; };
+pflag_resp: { MODE(FLAG); } '(' pflags_0[f] ')' { PFLAG_RESP($f); };
 
-pflag_start: %empty { PFLAG_RESP_START; MODE(FLAG); $$ = NULL; };
-
-pflag_list_0: %empty
-             | pflag_list_1
+pflags_0: %empty    { $$ = (ie_flag_list_t){0}; }
+        | pflags_1
 ;
 
-pflag_list_1: keep_pflag                     { PFLAG_RESP($keep_pflag); }
-             | pflag_list_1 SP keep_pflag    { PFLAG_RESP($keep_pflag); }
+pflags_1: keep_pflag[f]              { ADD_FLAG($$, (ie_flag_list_t){0}, $f); }
+        | pflags_1[l] SP keep_pflag[f]                { ADD_FLAG($$, $l, $f); }
 ;
 
-/*** LIST responses ***/
-list_resp: pre_list_resp '(' list_flags ')' SP nqchar SP keep_mailbox[m]
-           { LIST_RESP_END($nqchar, $m.inbox, $m.dstr, true); (void)$1; };
+/*** LIST/LSUB responses ***/
+list_resp: { MODE(FLAG); } '(' mflags_0[f] ')' SP nqchar SP keep_mailbox[m]
+           { LIST_RESP($f, $nqchar, $m); };
 
-pre_list_resp: %empty { LIST_RESP_START; MODE(FLAG); $$ = NULL; };
+lsub_resp: { MODE(FLAG); } '(' mflags_0[f] ')' SP nqchar SP keep_mailbox[m]
+           { LSUB_RESP($f, $nqchar, $m); };
 
-list_flags: keep_mflag                  { LIST_RESP_FLAG($keep_mflag); }
-          | list_flags SP keep_mflag    { LIST_RESP_FLAG($keep_mflag); }
+mflags_0: %empty    { $$ = (ie_flag_list_t){0}; }
+        | mflags_1
 ;
 
-/*** LSUB responses ***/
-lsub_resp: pre_lsub_resp '(' lsub_flags ')' SP nqchar SP keep_mailbox[m]
-           { LSUB_RESP_END($nqchar, $m.inbox, $m.dstr, true); (void)$1; };
-
-pre_lsub_resp: %empty { LSUB_RESP_START; MODE(FLAG); $$ = NULL; };
-
-lsub_flags: keep_mflag                  { LSUB_RESP_FLAG($keep_mflag); }
-          | lsub_flags SP keep_mflag    { LSUB_RESP_FLAG($keep_mflag); }
+mflags_1: keep_mflag[f]              { ADD_FLAG($$, (ie_flag_list_t){0}, $f); }
+        | mflags_1[l] SP keep_mflag[f]                { ADD_FLAG($$, $l, $f); }
 ;
 
 /*** STATUS responses ***/
@@ -1269,13 +1234,14 @@ st_attr: MESSAGES    { $$ = IE_ST_ATTR_MESSAGES; }
 ;
 
 /*** FLAGS responses ***/
-flags_resp: pre_flags_resp '(' flags_flags ')'
-            { FLAGS_RESP_END(true); (void)$1; };
+flags_resp: { MODE(FLAG); } '(' flags_0[f] ')' { FLAGS_RESP($f); };
 
-pre_flags_resp: %empty { FLAGS_RESP_START; MODE(FLAG); $$ = NULL; };
+flags_0: %empty    { $$ = (ie_flag_list_t){0}; }
+       | flags_1
+;
 
-flags_flags: keep_flag                  { FLAGS_RESP_FLAG($keep_flag); }
-           | flags_flags SP keep_flag   { FLAGS_RESP_FLAG($keep_flag); }
+flags_1: keep_flag[f]                { ADD_FLAG($$, (ie_flag_list_t){0}, $f); }
+       | flags_1[l] SP keep_flag[f]  { ADD_FLAG($$, $l, $f); }
 ;
 
 /*** EXISTS responses ***/
@@ -1325,13 +1291,15 @@ msg_attr_: f_flags_resp
 ;
 
 /*** FETCH FLAGS ***/
-f_flags_resp: pre_f_flags_resp SP '(' f_flags ')'
-              { F_FLAGS_RESP_END(true); (void)$1; };
+f_flags_resp: FLAGS SP { MODE(FLAG); } '(' f_flags_0[f] ')'
+              { F_FLAGS_RESP($f); };
 
-pre_f_flags_resp: FLAGS { F_FLAGS_RESP_START; MODE(FLAG); $$ = NULL; };
+f_flags_0: %empty   { $$ = (ie_flag_list_t){0}; }
+         | f_flags_1
+;
 
-f_flags: keep_fflag                  { F_FLAGS_RESP_FLAG($keep_fflag); }
-       | flags_flags SP keep_fflag   { F_FLAGS_RESP_FLAG($keep_fflag); }
+f_flags_1: keep_fflag[f]             { ADD_FLAG($$, (ie_flag_list_t){0}, $f); }
+         | f_flags_1[l] SP keep_fflag[f]              { ADD_FLAG($$, $l, $f); }
 ;
 
 /*** FETCH RFC822 ***/
@@ -1405,11 +1373,8 @@ keyword: OK
        | NIL
        | INBOX
 ;
-
-atom: atom_body
-
-atom_body: RAW                  { KEEP_INIT; KEEP(RAW); }
-         | atom_body atom_like  { KEEP(RAW); }
+atom: RAW             { KEEP_INIT; KEEP(RAW); }
+    | atom atom_like  { KEEP(RAW); }
 ;
 
 atom_like: RAW
