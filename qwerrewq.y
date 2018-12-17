@@ -1,6 +1,22 @@
 %{
     #include <stdio.h>
+    #include <qwerrewq.h>
 %}
+
+/* this defines the type of yylval, which is the semantic value of a token */
+%define api.value.type {void *}
+/* reentrant */
+%define api.pure full
+/* push parser */
+%define api.push-pull push
+/* create a user-data pointer in the api */
+%parse-param { void *parser }
+/* compile error on parser generator conflicts */
+%expect 0
+
+/* start and end tags, ("QWER" and "REWQ" for now) */
+%token START
+%token END
 
 %token PUKE
 %token NUL
@@ -8,7 +24,8 @@
 %token TRUE
 %token FALSE
 %token NUM
-%token STRING
+%token SQSTRING
+%token DQSTRING
 %token VAR
 %token IF
 %token SWITCH
@@ -78,7 +95,7 @@ kvp_list_1: kvp
 ;
 
 /* literals */
-literal: func | dict | list | STRING | NUM | bool | PUKE | NUL;
+literal: func | dict | list | string | NUM | bool | PUKE | NUL;
 
 func: '{' var_list_1 kvp_list_0 ARROW expr '}';
 
@@ -96,6 +113,10 @@ list_elem_list_0: %empty
 
 list_elem_list_1: list_elem
                 | list_elem_list_1 list_elem
+;
+
+string: DQSTRING
+      | SQSTRING
 ;
 
 expand: '*' expr;

@@ -197,15 +197,30 @@ add_obj_tgt("${output}" "imap_parse_tab")
 # add a custom target just for depending on the generated header
 add_custom_target(bison_header DEPENDS "${bison_header}")
 
-# generate qwerrewq parser
-set(input "${PROJECT_SOURCE_DIR}/qwerrewq.y")
-set(output "${PROJECT_BINARY_DIR}/qwerrewq.c")
+# generate qwerrewq scanner
+set(input "${PROJECT_SOURCE_DIR}/qwerrewq.c")
+set(output "${PROJECT_BINARY_DIR}/qwerrewq.gen.c")
 add_custom_command(
     OUTPUT "${output}"
-    COMMAND "${BISON}" -o "${output}" "${input}" --report=state
+    COMMAND "${RE2C}" -W -Werror --tags -o "${output}" "${input}"
+    DEPENDS "${input}"
+    COMMENT "generating qwerrweq scanner" VERBATIM
+    )
+add_executable("qwerrewq" "${output}")
+define_file_basename_for_sources("qwerrewq")
+add_custom_target(qwerrewq_scanner DEPENDS "${output}")
+
+# generate qwerrewq parser
+set(input "${PROJECT_SOURCE_DIR}/qwerrewq.y")
+set(output "${PROJECT_BINARY_DIR}/qwerrewq.tab.c")
+set(qwerrewq_bison_header "${PROJECT_BINARY_DIR}/qwerrewq.tab.h")
+add_custom_command(
+    OUTPUT "${output}" "${qwerrewq_bison_header}"
+    COMMAND "${BISON}" -d -o "${output}" "${input}" --report=state
     DEPENDS "${input}"
     COMMENT "generating qwerrweq parser" VERBATIM
     )
+add_obj_tgt("${output}" "qwerrewq_tab")
 add_custom_target(qwerrewq_parser DEPENDS "${output}")
 
 # objects become OBJECT libraries, but are accessed through INTERFACE libraries
@@ -259,6 +274,7 @@ target_link_libraries(encrypt_msg crypto opt_parse)
 target_link_libraries(decrypt_msg crypto opt_parse)
 target_link_libraries(olt common fileops opt_parse)
 target_link_libraries(imap loop ixs tls_engine linked_list imap_parse networking)
+target_link_libraries(qwerrewq qwerrewq_tab common)
 
 # decide if we are building server code
 if("${BUILD_SERVER_CODE}")
