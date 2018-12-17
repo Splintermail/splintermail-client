@@ -1,7 +1,5 @@
 #include <stdio.h>
 
-#include <qwerrewq.tab.h>
-
 #include <qwerrewq.h>
 #include <common.h>
 #include <logger.h>
@@ -10,12 +8,13 @@
 /*!max:re2c
 */
 
-void yyerror(void *parser, char const *s){
+void yyerror(YYLTYPE *yyloc, void *parser, char const *s){
+    (void)yyloc;
     (void)parser;
-    printf("ERROR: %s\n", s);
+    PFMT("ERROR at %x:%x: %x\n", FI(yyloc->first_line), FI(yyloc->first_column), FS(s));
 }
 
-static char *toktyp_to_str(int type){
+char *toktyp_to_str(int type){
     if(type < 256) return "";
     switch(type){
         case START: return "START";
@@ -33,14 +32,58 @@ static char *toktyp_to_str(int type){
         case SWITCH: return "SWITCH";
         case FOR: return "FOR";
         case ARROW: return "ARROW";
-        case EQUALS: return "EQUALS";
-        case MATCH_EQUALS: return "MATCH_EQUALS";
+        case EQ: return "EQ";
+        case MATEQ: return "MATEQ";
         case AND: return "AND";
         case OR: return "OR";
         case F_PAREN: return "F_PAREN";
         case OOO_PAREN: return "OOO_PAREN";
         default: return "unknown";
     }
+}
+
+#define BINOP2STR(a,op,b);
+
+derr_t expr_tostr(expr_t *expr, dstr_t *out){
+    char *op = NULL;
+    switch(expr->t){
+        case EXP_IF: PROP( FMT(out, "EXP_IF") ); break;
+        case EXP_SWITCH: PROP( FMT(out, "EXP_SWITCH") ); break;
+        case EXP_FOR: PROP( FMT(out, "EXP_FOR") ); break;
+        case EXP_FUNC_CALL: PROP( FMT(out, "EXP_FUNC_CALL") ); break;
+        // binary operators
+        case EXP_DOT:       if(!op) op = ".";
+        case EXP_PERCENT:   if(!op) op = "%";
+        case EXP_CARET:     if(!op) op = "^";
+        case EXP_PLUS:      if(!op) op = "+";
+        case EXP_EQ:        if(!op) op = "==";
+        case EXP_MATEQ:     if(!op) op = "=~";
+        case EXP_AND:       if(!op) op = "&&";
+        case EXP_OR:        if(!op) op = "||";
+            PROP( FMT(out, "(") );
+            PROP( expr_tostr(expr->u.binop.lhs, out) );
+            PROP( FMT(out, " %x ", FS(op)) );
+            PROP( expr_tostr(expr->u.binop.rhs, out) );
+            PROP( FMT(out, ")") );
+            break;
+        // unary operators
+        case EXP_NOT: if(!op) op = "!";
+            PROP( FMT(out, "!(") );
+            PROP( expr_tostr(expr->u.expr, out) );
+            PROP( FMT(out, ")") );
+            break;
+        case EXP_FUNC: PROP( FMT(out, "EXP_FUNC") ); break;
+        case EXP_DICT: PROP( FMT(out, "EXP_DICT") ); break;
+        case EXP_LIST: PROP( FMT(out, "EXP_LIST") ); break;
+        case EXP_STRING: PROP( FMT(out, "%x", FD(&expr->u.string.raw)) ); break;
+        case EXP_NUM: PROP( FMT(out, "%x", FI(expr->u.num)) ); break;
+        case EXP_TRUE: PROP( FMT(out, "TRUE") ); break;
+        case EXP_FALSE: PROP( FMT(out, "FALSE") ); break;
+        case EXP_PUKE: PROP( FMT(out, "PUKE") ); break;
+        case EXP_NUL: PROP( FMT(out, "NULL") ); break;
+        case EXP_VAR: PROP( FMT(out, "VAR(%x)", FD(&expr->u.dstr)) ); break;
+    }
+    return E_OK;
 }
 
 typedef struct {
@@ -156,6 +199,7 @@ restart:
         sqstr = ([^'\\\n]|"\\'")+;
         var = [a-zA-Z_][a-zA-Z_0-9]*;
         comment = "#"[^\n]*;
+        paren = "(";
 
         *           { eot = s->cursor; TOKEN(s->buf.data[start]); }
         end @eot    { s->qmode = false; TOKEN(END); }
@@ -169,6 +213,18 @@ restart:
         var @eot    { TOKEN(VAR); }
         comment     { goto restart; }
         ws          { goto restart; }
+        "==" @eot   { TOKEN(EQ); }
+        "=~" @eot   { TOKEN(MATEQ); }
+        "&&" @eot   { TOKEN(AND); }
+        "||" @eot   { TOKEN(OR); }
+        paren       { eot = s->cursor;
+                      if(start == 0) TOKEN(OOO_PAREN);
+                      char pre = s->buf.data[start-1];
+                      if(pre >= 'a' && pre <= 'z') TOKEN(F_PAREN);
+                      if(pre >= 'A' && pre <= 'Z') TOKEN(F_PAREN);
+                      if(pre >= '0' && pre <= '9') TOKEN(F_PAREN);
+                      if(pre == '_') TOKEN(F_PAREN);
+                      TOKEN(OOO_PAREN); }
         nl @eot     { s->lineno++;
                       s->line_start = (size_t)(eot - s->buf.data);
                       goto restart; }
@@ -222,15 +278,54 @@ static derr_t do_qwerrewq(char *filename){
     scanner_t s;
     PROP( scanner_new(&s, &fname, true) );
 
+    // prep the parser
+    yypstate *yyps = yypstate_new();
+    if(yyps == NULL){
+        ORIG_GO(E_NOMEM, "unable to allocate yypstate", cu_scanner);
+    }
+
     // scan tokens
     bool done;
     while(true){
         token_t token = (token_t){0};
-        PROP_GO( scan(&s, &token, &done), cu_scanner);
+        PROP_GO( scan(&s, &token, &done), cu_parser);
         if(done) break;
-        PFMT("%x    (%x)\n", FD(&token.dstr), FS(toktyp_to_str(token.type)));
+        // PFMT("%x    (%x)\n", FD(&token.dstr), FS(toktyp_to_str(token.type)));
+
+        // allocate/initialize yyloc pointer
+        YYLTYPE *yyloc = malloc(sizeof(*yyloc));
+        if(!yyloc)
+            ORIG_GO(E_NOMEM, "unable to allocate yyloc", cu_parser);
+        *yyloc = (YYLTYPE){.first_line = (int)token.start_line,
+                           .first_column = (int)token.start_col,
+                           .last_line = (int)token.end_line,
+                           .last_column = (int)token.end_col};
+        // allocate/initialize yylval pointer
+        union expr_u *yylval = malloc(sizeof(*yylval));
+        if(!yylval){
+            free(yyloc);
+            ORIG_GO(E_NOMEM, "unable to allocate yylval", cu_parser);
+        }
+        yylval->dstr = token.dstr;
+        // push token through parser
+        int yyret = yypush_parse(yyps, token.type, (void*)yylval, yyloc, NULL);
+        switch(yyret){
+            case 0:             // parsing completed successful; parser is reset
+                break;
+            case YYPUSH_MORE:   // parsing incomplete, but valid; parser not reset
+                continue;
+            case 1:             // invalid; parser is reset
+                ORIG_GO(E_PARAM, "invalid input", cu_parser);
+            case 2:             // memory exhaustion; parser is reset
+                ORIG_GO(E_NOMEM, "memory exhaustion during yypush_parse", cu_parser);
+            default:            // this should never happen
+                LOG_ERROR("yypush_parse() returned %x\n", FI(yyret));
+                ORIG_GO(E_INTERNAL, "unexpected yypush_parse() return value", cu_parser);
+        }
     }
 
+cu_parser:
+    yypstate_delete(yyps);
 cu_scanner:
     scanner_free(&s);
     return error;

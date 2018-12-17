@@ -451,6 +451,7 @@ if("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU")
     target_compile_options(ixs_o PRIVATE -fno-strict-aliasing)
     target_compile_options(imap_parse_tab_o PRIVATE -Wno-sign-conversion)
     target_compile_options(imap_parse_tab_o PRIVATE -Wno-conversion)
+    target_compile_options(qwerrewq PRIVATE -Wno-implicit-fallthrough)
     # add some compiler hardening flags
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wformat -Wformat-security -Werror=format-security")
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fstack-protector-strong")
