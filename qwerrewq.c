@@ -11,7 +11,9 @@
 void yyerror(YYLTYPE *yyloc, void *parser, char const *s){
     (void)yyloc;
     (void)parser;
-    PFMT("ERROR at %x:%x: %x\n", FI(yyloc->first_line), FI(yyloc->first_column), FS(s));
+    PFMT("ERROR at %x:%x: %x\n", FI(yyloc->first_line),
+                                 FI(yyloc->first_column + 1),
+                                 FS(s));
 }
 
 char *toktyp_to_str(int type){
@@ -47,10 +49,54 @@ char *toktyp_to_str(int type){
 derr_t expr_tostr(expr_t *expr, dstr_t *out){
     char *op = NULL;
     switch(expr->t){
-        case EXP_IF: PROP( FMT(out, "EXP_IF") ); break;
-        case EXP_SWITCH: PROP( FMT(out, "EXP_SWITCH") ); break;
-        case EXP_FOR: PROP( FMT(out, "EXP_FOR") ); break;
-        case EXP_FUNC_CALL: PROP( FMT(out, "EXP_FUNC_CALL") ); break;
+        case EXP_IF:
+            PROP( FMT(out, "if(") );
+            for(expr_pair_list_t *p = expr->u.if_call.tests; p; p = p->next){
+                PROP( expr_tostr(p->lhs, out) );
+                PROP( FMT(out, ":") );
+                PROP( expr_tostr(p->rhs, out) );
+                PROP( FMT(out, " ") );
+            }
+            PROP( expr_tostr(expr->u.if_call.else_expr, out) );
+            PROP( FMT(out, ")") );
+            break;
+        case EXP_SWITCH:
+            PROP( FMT(out, "switch(") );
+            PROP( expr_tostr(expr->u.switch_call.value, out) );
+            PROP( FMT(out, "){") );
+            for(expr_pair_list_t *p = expr->u.switch_call.tests; p; p = p->next){
+                PROP( expr_tostr(p->lhs, out) );
+                PROP( FMT(out, ":") );
+                PROP( expr_tostr(p->rhs, out) );
+                PROP( FMT(out, " ") );
+            }
+            PROP( expr_tostr(expr->u.switch_call.default_expr, out) );
+            PROP( FMT(out, "}") );
+            break;
+        case EXP_FOR:
+            PROP( FMT(out, "[") );
+            PROP( expr_tostr(expr->u.for_call.out, out) );
+            PROP( FMT(out, " FOR") );
+            for(kvp_t *kvp = expr->u.for_call.kvps; kvp; kvp = kvp->next){
+                PROP( FMT(out, " %x=", FD(&kvp->key)) );
+                PROP( expr_tostr(kvp->value, out) );
+            }
+            PROP( FMT(out, "]") );
+            break;
+        case EXP_FUNC_CALL:
+            PROP( FMT(out, "(") );
+            PROP( expr_tostr(expr->u.func_call.func, out) );
+            PROP( FMT(out, " call ") );
+            for(expr_list_t *p = expr->u.func_call.params; p; p = p->next){
+                if(p != expr->u.func_call.params) PROP( FMT(out, " ") );
+                PROP( expr_tostr(p->expr, out) );
+            }
+            for(kvp_t *kvp = expr->u.func_call.kvps; kvp; kvp = kvp->next){
+                PROP( FMT(out, " %x=", FD(&kvp->key)) );
+                PROP( expr_tostr(kvp->value, out) );
+            }
+            PROP( FMT(out, ")") );
+            break;
         // binary operators
         case EXP_DOT:       if(!op) op = ".";
         case EXP_PERCENT:   if(!op) op = "%";
@@ -68,18 +114,48 @@ derr_t expr_tostr(expr_t *expr, dstr_t *out){
             break;
         // unary operators
         case EXP_NOT: if(!op) op = "!";
-            PROP( FMT(out, "!(") );
+        case EXP_EXPAND: if(!op) op = "*";
+            PROP( FMT(out, "*(") );
             PROP( expr_tostr(expr->u.expr, out) );
             PROP( FMT(out, ")") );
             break;
-        case EXP_FUNC: PROP( FMT(out, "EXP_FUNC") ); break;
-        case EXP_DICT: PROP( FMT(out, "EXP_DICT") ); break;
-        case EXP_LIST: PROP( FMT(out, "EXP_LIST") ); break;
+        case EXP_FUNC:
+            PROP( FMT(out, "{") );
+            for(dstr_list_t *dl = expr->u.func.vars; dl; dl = dl->next){
+                PROP( FMT(out, "%x ", FD(&dl->dstr)) );
+            }
+            for(kvp_t *kvp = expr->u.func.kvps; kvp; kvp = kvp->next){
+                PROP( FMT(out, "%x=", FD(&kvp->key)) );
+                PROP( expr_tostr(kvp->value, out) );
+                PROP( FMT(out, " ") );
+            }
+            PROP( FMT(out, "-> ") );
+            PROP( expr_tostr(expr->u.func.out, out) );
+            PROP( FMT(out, "}") );
+            break;
+        case EXP_DICT:
+            PROP( FMT(out, "<") );
+            for(kvp_t *kvp = expr->u.kvp; kvp; kvp = kvp->next){
+                PROP( FMT(out, "%x=", FD(&kvp->key)) );
+                PROP( expr_tostr(kvp->value, out) );
+                if(kvp->next) PROP( FMT(out, " ") );
+            }
+            PROP( FMT(out, ">") );
+            break;
+        case EXP_LIST:
+            PROP( FMT(out, "[") );
+            for(list_t *elem = expr->u.list; elem; elem = elem->next){
+                PROP( expr_tostr(elem->expr, out) );
+                if(elem->next) PROP( FMT(out, " ") );
+            }
+            PROP( FMT(out, "]") );
+            break;
         case EXP_STRING: PROP( FMT(out, "%x", FD(&expr->u.string.raw)) ); break;
         case EXP_NUM: PROP( FMT(out, "%x", FI(expr->u.num)) ); break;
         case EXP_TRUE: PROP( FMT(out, "TRUE") ); break;
         case EXP_FALSE: PROP( FMT(out, "FALSE") ); break;
         case EXP_PUKE: PROP( FMT(out, "PUKE") ); break;
+        case EXP_SKIP: PROP( FMT(out, "SKIP") ); break;
         case EXP_NUL: PROP( FMT(out, "NULL") ); break;
         case EXP_VAR: PROP( FMT(out, "VAR(%x)", FD(&expr->u.dstr)) ); break;
     }
@@ -159,13 +235,18 @@ typedef struct {
     return E_OK; \
 }
 
+#define YYFILL(n){ \
+    *done = true; \
+    eot = s->buf.data + s->buf.len; TOKEN(PARSE_END); \
+    token->type = PARSE_END; \
+    return E_OK; \
+}
+
 static derr_t scan(scanner_t *s, token_t *token, bool *done){
     *done = false;
 
     size_t start;
     const char *eot; // "end of token"
-
-#define YYFILL(n) { *done = true; return E_OK; }
 
 restart:
     /* save start-of-token info */
@@ -198,6 +279,7 @@ restart:
         dqstr = ([^"\\\n]|"\\\"")+;
         sqstr = ([^'\\\n]|"\\'")+;
         var = [a-zA-Z_][a-zA-Z_0-9]*;
+        num = [0-9]+;
         comment = "#"[^\n]*;
         paren = "(";
 
@@ -208,15 +290,20 @@ restart:
         skip @eot   { TOKEN(SKIP); }
         true @eot   { TOKEN(TRUE); }
         false @eot  { TOKEN(FALSE); }
+        num @eot    { TOKEN(NUM); }
         "\""        { goto dqstring_mode; }
         "'"         { goto sqstring_mode; }
-        var @eot    { TOKEN(VAR); }
         comment     { goto restart; }
         ws          { goto restart; }
         "==" @eot   { TOKEN(EQ); }
         "=~" @eot   { TOKEN(MATEQ); }
         "&&" @eot   { TOKEN(AND); }
         "||" @eot   { TOKEN(OR); }
+        "->" @eot   { TOKEN(ARROW); }
+        "if" @eot   { TOKEN(IF); }
+        "switch" @eot{TOKEN(SWITCH); }
+        "for" @eot  { TOKEN(FOR); }
+        var @eot    { TOKEN(VAR); }
         paren       { eot = s->cursor;
                       if(start == 0) TOKEN(OOO_PAREN);
                       char pre = s->buf.data[start-1];
@@ -286,16 +373,14 @@ static derr_t do_qwerrewq(char *filename){
 
     // scan tokens
     bool done;
-    while(true){
+    do{
         token_t token = (token_t){0};
         PROP_GO( scan(&s, &token, &done), cu_parser);
-        if(done) break;
         // PFMT("%x    (%x)\n", FD(&token.dstr), FS(toktyp_to_str(token.type)));
 
         // allocate/initialize yyloc pointer
         YYLTYPE *yyloc = malloc(sizeof(*yyloc));
-        if(!yyloc)
-            ORIG_GO(E_NOMEM, "unable to allocate yyloc", cu_parser);
+        if(!yyloc) ORIG_GO(E_NOMEM, "unable to allocate yyloc", cu_parser);
         *yyloc = (YYLTYPE){.first_line = (int)token.start_line,
                            .first_column = (int)token.start_col,
                            .last_line = (int)token.end_line,
@@ -322,7 +407,7 @@ static derr_t do_qwerrewq(char *filename){
                 LOG_ERROR("yypush_parse() returned %x\n", FI(yyret));
                 ORIG_GO(E_INTERNAL, "unexpected yypush_parse() return value", cu_parser);
         }
-    }
+    }while(!done);
 
 cu_parser:
     yypstate_delete(yyps);
