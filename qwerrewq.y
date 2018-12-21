@@ -4,12 +4,38 @@
     #include <common.h>
     #include <logger.h>
 
+    // location handling code
+    #define YYLTYPE loc_t
+    #define YYLLOC_DEFAULT(out, Rhs, N){ \
+        /* get the first and last elements of the matched rule */ \
+        loc_t *first = &(YYRHSLOC(Rhs, N ? 1 : 0)); \
+        loc_t *last = &(YYRHSLOC(Rhs, N ? N : 0)); \
+        if(!N) printf("not N\n"); \
+        /* get the first and last line/col of the matched rule */ \
+        (out).start_line = first->start_line; \
+        (out).start_col = first->start_col; \
+        (out).end_line = last->end_line; \
+        (out).end_col = last->end_col; \
+        /* get the substring of the matched rule */ \
+        size_t start = (size_t)(first->dstr.data - pv.file->buf.data); \
+        size_t end = (size_t)(last->dstr.data - pv.file->buf.data) \
+                     + last->dstr.len; \
+        (out).dstr = dstr_sub(&pv.file->buf, start, end); \
+    }
+
     #define DOCATCH(cmd){ \
         derr_t error = cmd; \
         CATCH(E_ANY){ \
             YYABORT; \
         } \
     }
+
+    #define PRINT_EXPR_MATCH \
+        PFMT("match type %x from %x:%x to %x:%x (%x)\n", \
+             FS(expr_type_to_cstr((yyval.expr)->t)), \
+             FU(yyloc.start_line), FU(yyloc.start_col), \
+             FU(yyloc.end_line), FU(yyloc.end_col), \
+             FD(&yyloc.dstr))
 
     #define EXPR(out, type, member, val){ \
         out = malloc(sizeof(*out)); \
@@ -18,6 +44,7 @@
             YYABORT; \
         } \
         *out = (expr_t){.t = EXP_ ## type, .u = {.member = val}}; \
+        PRINT_EXPR_MATCH; \
     }
 
     #define BINOP(out, type, a, b){ \
@@ -27,6 +54,7 @@
             YYABORT; \
         } \
         *out = (expr_t){.t = EXP_ ## type, .u = {.binop = {.lhs = a, .rhs = b}}}; \
+        PRINT_EXPR_MATCH; \
     }
 
     #define EXP_STRING(_out, _raw){ \
@@ -156,12 +184,14 @@
 %define api.pure full
 /* push parser */
 %define api.push-pull push
-/* create a user-data pointer in the api */
-%parse-param { void *parser }
+/* add user-defined pointer in the api */
+%parse-param { parser_vars_t pv }
 /* keep track of location info */
 %locations
 /* compile error on parser generator conflicts */
 %expect 0
+/* initialize the parser's on-stack loc_t object */
+/* %initial-action { @$ = (YYLTYPE){0}; } */
 
 %token PARSE_END
 
@@ -231,13 +261,7 @@
 
 %%
 
-input: exprs_1[l] PARSE_END
-       { for(expr_list_t *expr = $l; expr; expr = expr->next){
-             DSTR_VAR(out, 4096);
-             expr_tostr(expr->expr, &out);
-             PFMT("%x\n", FD(&out));
-         }
-       };
+input: exprs_1[l] PARSE_END { *pv.result = $l; };
 
 expr: OOO_PAREN expr[e] ')'     { $$ = $e; }
     | if[f]                     { EXPR($$, IF, if_call, $f); }

@@ -3,6 +3,22 @@
 
 #include <jsw_atree.h>
 
+typedef struct {
+    dstr_t name;
+    dstr_t buf;
+} file_t;
+
+LIST_HEADERS(file_t)
+
+typedef struct {
+    dstr_t dstr;
+    int type;
+    size_t start_line;
+    size_t start_col;
+    size_t end_line;
+    size_t end_col;
+} loc_t;
+
 // before including bison-generated header files, we need to define some types
 
 enum expr_type_t {
@@ -25,6 +41,7 @@ enum expr_type_t {
     EXP_FUNC,
     EXP_DICT,
     EXP_LIST,
+    // more literals, but also atoms
     EXP_STRING,
     EXP_NUM,
     EXP_TRUE,
@@ -34,6 +51,8 @@ enum expr_type_t {
     EXP_NUL,
     EXP_VAR,
 };
+
+char* expr_type_to_cstr(enum expr_type_t t);
 
 struct expr_t;
 typedef struct expr_t expr_t;
@@ -125,6 +144,8 @@ union expr_u {
 struct expr_t {
     enum expr_type_t t;
     union expr_u u;
+    dstr_t dstr;
+    loc_t loc;
 };
 
 // all possible types of tokens/expressions in bison parser
@@ -143,9 +164,16 @@ typedef union semtyp_t{
     expr_pair_list_t *expr_pair_list;
 } semtyp_t;
 
+// a struct of values the parser needs access to
+typedef struct {
+    file_t *file;
+    expr_list_t **result;
+} parser_vars_t;
+
+#define YYLTYPE loc_t
 #include <qwerrewq.tab.h>
 
-void yyerror(YYLTYPE *yyloc, void *parser, char const *s);
+void yyerror(YYLTYPE *yyloc, parser_vars_t pv, char const *s);
 char *toktyp_to_str(int type);
 
 derr_t expr_tostr(expr_t *expr, dstr_t *out);

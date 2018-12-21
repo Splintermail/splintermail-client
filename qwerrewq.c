@@ -8,12 +8,43 @@
 /*!max:re2c
 */
 
-void yyerror(YYLTYPE *yyloc, void *parser, char const *s){
+void yyerror(YYLTYPE *yyloc, parser_vars_t pv, char const *s){
     (void)yyloc;
-    (void)parser;
-    PFMT("ERROR at %x:%x: %x\n", FI(yyloc->first_line),
-                                 FI(yyloc->first_column + 1),
-                                 FS(s));
+    PFMT("ERROR in %x at %x:%x: %x\n", FD(&pv.file->name),
+                                       FU(yyloc->start_line),
+                                       FU(yyloc->start_col + 1),
+                                       FS(s));
+}
+
+char* expr_type_to_cstr(enum expr_type_t t){
+    switch(t){
+        case EXP_IF: return "EXP_IF";
+        case EXP_SWITCH: return "EXP_SWITCH";
+        case EXP_FOR: return "EXP_FOR";
+        case EXP_FUNC_CALL: return "EXP_FUNC_CALL";
+        case EXP_DOT: return "EXP_DOT";
+        case EXP_PERCENT: return "EXP_PERCENT";
+        case EXP_CARET: return "EXP_CARET";
+        case EXP_PLUS: return "EXP_PLUS";
+        case EXP_EQ: return "EXP_EQ";
+        case EXP_MATEQ: return "EXP_MATEQ";
+        case EXP_NOT: return "EXP_NOT";
+        case EXP_AND: return "EXP_AND";
+        case EXP_OR: return "EXP_OR";
+        case EXP_EXPAND: return "EXP_EXPAND";
+        case EXP_FUNC: return "EXP_FUNC";
+        case EXP_DICT: return "EXP_DICT";
+        case EXP_LIST: return "EXP_LIST";
+        case EXP_STRING: return "EXP_STRING";
+        case EXP_NUM: return "EXP_NUM";
+        case EXP_TRUE: return "EXP_TRUE";
+        case EXP_FALSE: return "EXP_FALSE";
+        case EXP_PUKE: return "EXP_PUKE";
+        case EXP_SKIP: return "EXP_SKIP";
+        case EXP_NUL: return "EXP_NUL";
+        case EXP_VAR: return "EXP_VAR";
+        default: return "unknown type";
+    }
 }
 
 char *toktyp_to_str(int type){
@@ -44,7 +75,39 @@ char *toktyp_to_str(int type){
     }
 }
 
-#define BINOP2STR(a,op,b);
+
+LIST_FUNCTIONS(file_t)
+
+static derr_t file_new(file_t *f, dstr_t *fname){
+    derr_t error;
+
+    // copy the filename into the struct and null-terminate
+    PROP( dstr_new(&f->name, fname->len + 1) );
+    PROP_GO( dstr_copy(fname, &f->name), cu_name);
+    PROP_GO( dstr_null_terminate(&f->name), cu_name);
+
+    // read the file into memory
+    PROP_GO( dstr_new(&f->buf, 4096), cu_name );
+    PROP_GO( dstr_read_file(f->name.data, &f->buf), cu_buf);
+
+    // avoid memory errors by padding YYMAXFILL null bytes at the end
+    PROP_GO( dstr_grow(&f->buf, f->buf.len + YYMAXFILL), cu_buf);
+    for(size_t i = 0; i < YYMAXFILL; i++)
+        f->buf.data[f->buf.len + i] = '\0';
+
+    return E_OK;
+
+cu_buf:
+    dstr_free(&f->buf);
+cu_name:
+    dstr_free(&f->name);
+    return error;
+}
+
+static void file_free(file_t *f){
+    dstr_free(&f->buf);
+    dstr_free(&f->name);
+}
 
 derr_t expr_tostr(expr_t *expr, dstr_t *out){
     char *op = NULL;
@@ -163,8 +226,6 @@ derr_t expr_tostr(expr_t *expr, dstr_t *out){
 }
 
 typedef struct {
-    dstr_t fname;
-    dstr_t buf;
     // betwen QWER-REWQ tags, or not?
     bool qmode;
     // location tracking information
@@ -177,72 +238,35 @@ typedef struct {
     char yych;
 } scanner_t;
 
-static derr_t scanner_new(scanner_t *s, const dstr_t *fname, bool config){
-    derr_t error;
-    // copy the filename into the struct and null-terminate
-    PROP( dstr_new(&s->fname, fname->len + 1) );
-    PROP_GO( dstr_copy(fname, &s->fname), cu_fname);
-    PROP_GO( dstr_null_terminate(&s->fname), cu_fname);
-
-    // read the file into memory
-    PROP_GO( dstr_new(&s->buf, 4096), cu_fname );
-    PROP_GO( dstr_read_file(s->fname.data, &s->buf), cu_buf);
-
-    // avoid memory errors by padding YYMAXFILL null bytes at the end
-    PROP_GO( dstr_grow(&s->buf, s->buf.len + YYMAXFILL), cu_buf);
-    for(size_t i = 0; i < YYMAXFILL; i++)
-        s->buf.data[s->buf.len + i] = '\0';
-
+static void scanner_init(scanner_t *s, file_t *f, bool config){
     // qmode starts as true for config files
     s->qmode = config;
 
     // init some values
     s->lineno = 1;
-    s->cursor = s->buf.data;
-    s->limit = s->buf.data + s->buf.len + YYMAXFILL - 1;
-
-    return E_OK;
-
-cu_buf:
-    dstr_free(&s->buf);
-cu_fname:
-    dstr_free(&s->fname);
-    return error;
+    s->line_start = 0;
+    s->cursor = f->buf.data;
+    s->limit = f->buf.data + f->buf.len + YYMAXFILL - 1;
 }
-
-static void scanner_free(scanner_t *s){
-    dstr_free(&s->fname);
-    dstr_free(&s->buf);
-}
-
-typedef struct {
-    dstr_t dstr;
-    int type;
-    size_t start_line;
-    size_t start_col;
-    size_t end_line;
-    size_t end_col;
-} token_t;
 
 #define TOKEN(_type) { \
-    token->type = _type; \
+    *type = _type; \
     /* get the end of the token substring */ \
-    size_t end = (size_t)(eot - s->buf.data); \
-    token->dstr = dstr_sub(&s->buf, start, end); \
+    size_t end = (size_t)(eot - f->buf.data); \
+    loc->dstr = dstr_sub(&f->buf, start, end); \
     /* get the end-location data */ \
-    token->end_line = s->lineno; \
-    token->end_col = end - s->line_start; \
+    loc->end_line = s->lineno; \
+    loc->end_col = end - s->line_start; \
     return E_OK; \
 }
 
 #define YYFILL(n){ \
     *done = true; \
-    eot = s->buf.data + s->buf.len; TOKEN(PARSE_END); \
-    token->type = PARSE_END; \
-    return E_OK; \
+    eot = f->buf.data + f->buf.len; \
+    TOKEN(PARSE_END); \
 }
 
-static derr_t scan(scanner_t *s, token_t *token, bool *done){
+static derr_t scan(scanner_t *s, file_t *f, loc_t *loc, int *type, bool *done){
     *done = false;
 
     size_t start;
@@ -250,9 +274,9 @@ static derr_t scan(scanner_t *s, token_t *token, bool *done){
 
 restart:
     /* save start-of-token info */
-    start = (size_t)(s->cursor - s->buf.data);
-    token->start_line = s->lineno;
-    token->start_col = start - s->line_start;
+    start = (size_t)(s->cursor - f->buf.data);
+    loc->start_line = s->lineno;
+    loc->start_col = start - s->line_start + 1;
 
     if(!s->qmode) goto skip_mode;
 
@@ -283,7 +307,7 @@ restart:
         comment = "#"[^\n]*;
         paren = "(";
 
-        *           { eot = s->cursor; TOKEN(s->buf.data[start]); }
+        *           { eot = s->cursor; TOKEN(f->buf.data[start]); }
         end @eot    { s->qmode = false; TOKEN(END); }
         puke @eot   { TOKEN(PUKE); }
         null @eot   { TOKEN(NUL); }
@@ -306,14 +330,14 @@ restart:
         var @eot    { TOKEN(VAR); }
         paren       { eot = s->cursor;
                       if(start == 0) TOKEN(OOO_PAREN);
-                      char pre = s->buf.data[start-1];
+                      char pre = f->buf.data[start-1];
                       if(pre >= 'a' && pre <= 'z') TOKEN(F_PAREN);
                       if(pre >= 'A' && pre <= 'Z') TOKEN(F_PAREN);
                       if(pre >= '0' && pre <= '9') TOKEN(F_PAREN);
                       if(pre == '_') TOKEN(F_PAREN);
                       TOKEN(OOO_PAREN); }
         nl @eot     { s->lineno++;
-                      s->line_start = (size_t)(eot - s->buf.data);
+                      s->line_start = (size_t)(eot - f->buf.data);
                       goto restart; }
     */
 
@@ -324,7 +348,7 @@ dqstring_mode:
         dqstr       { goto dqstring_mode; }
         "\"" @eot   { TOKEN(DQSTRING); }
         nl @eot     { s->lineno++;
-                      s->line_start = (size_t)(eot - s->buf.data);
+                      s->line_start = (size_t)(eot - f->buf.data);
                       goto dqstring_mode; }
     */
 
@@ -335,7 +359,7 @@ sqstring_mode:
         sqstr       { goto sqstring_mode; }
         "'" @eot    { TOKEN(SQSTRING); }
         nl          { s->lineno++;
-                      s->line_start = (size_t)(s->cursor - s->buf.data);
+                      s->line_start = (size_t)(s->cursor - f->buf.data);
                       goto sqstring_mode; }
     */
 
@@ -347,53 +371,53 @@ skip_mode:
         ignoreQ     { goto restart; }
         nullbyte    { goto restart; }
         nl @eot     { s->lineno++;
-                      s->line_start = (size_t)(eot - s->buf.data);
+                      s->line_start = (size_t)(eot - f->buf.data);
                       goto restart; }
     */
 
     return E_OK;
 }
 
-static derr_t do_qwerrewq(char *filename){
+static derr_t do_qwerrewq(file_t *f, bool config, expr_list_t **result){
     derr_t error;
-
-    // wrap filename in a dstr_t
-    dstr_t fname;
-    DSTR_WRAP(fname, filename, strlen(filename), true);
 
     // prep the scanner
     scanner_t s;
-    PROP( scanner_new(&s, &fname, true) );
+    scanner_init(&s, f, config);
 
     // prep the parser
     yypstate *yyps = yypstate_new();
     if(yyps == NULL){
-        ORIG_GO(E_NOMEM, "unable to allocate yypstate", cu_scanner);
+        ORIG(E_NOMEM, "unable to allocate yypstate");
     }
+
+    parser_vars_t pv = { .file = f, .result = result };
 
     // scan tokens
     bool done;
     do{
-        token_t token = (token_t){0};
-        PROP_GO( scan(&s, &token, &done), cu_parser);
-        // PFMT("%x    (%x)\n", FD(&token.dstr), FS(toktyp_to_str(token.type)));
+        int type;
+        loc_t loc = (loc_t){0};
+        PROP_GO( scan(&s, f, &loc, &type, &done), cu_parser);
+        // PFMT("%x    (%x)\n", FD(&loc.dstr), FS(toktyp_to_str(type)));
 
         // allocate/initialize yyloc pointer
         YYLTYPE *yyloc = malloc(sizeof(*yyloc));
         if(!yyloc) ORIG_GO(E_NOMEM, "unable to allocate yyloc", cu_parser);
-        *yyloc = (YYLTYPE){.first_line = (int)token.start_line,
-                           .first_column = (int)token.start_col,
-                           .last_line = (int)token.end_line,
-                           .last_column = (int)token.end_col};
+        *yyloc = loc;
+        // *yyloc = (YYLTYPE){.first_line = (int)loc.start_line,
+        //                    .first_column = (int)loc.start_col,
+        //                    .last_line = (int)loc.end_line,
+        //                    .last_column = (int)loc.end_col};
         // allocate/initialize yylval pointer
         union expr_u *yylval = malloc(sizeof(*yylval));
         if(!yylval){
             free(yyloc);
             ORIG_GO(E_NOMEM, "unable to allocate yylval", cu_parser);
         }
-        yylval->dstr = token.dstr;
+        yylval->dstr = loc.dstr;
         // push token through parser
-        int yyret = yypush_parse(yyps, token.type, (void*)yylval, yyloc, NULL);
+        int yyret = yypush_parse(yyps, type, (void*)yylval, yyloc, pv);
         switch(yyret){
             case 0:             // parsing completed successful; parser is reset
                 break;
@@ -411,18 +435,53 @@ static derr_t do_qwerrewq(char *filename){
 
 cu_parser:
     yypstate_delete(yyps);
-cu_scanner:
-    scanner_free(&s);
     return error;
 }
 
 int main(int argc, char **argv){
+    derr_t error;
+
     // make sure we got a file argument
     if(argc < 2){
         fprintf(stderr, "must specify a file\n");
         return 1;
     }
 
-    derr_t error = do_qwerrewq(argv[1]);
+    // list of files and filenames
+    LIST(file_t) files;
+    PROP_GO( LIST_NEW(file_t, &files, 4), fail);
+
+    // start by loading the first argument
+    dstr_t fname;
+    DSTR_WRAP(fname, argv[1], strlen(argv[1]), true);
+
+    file_t temp;
+    bool cleanup_temp = true;
+    PROP_GO( file_new(&temp, &fname), cu_files);
+
+    // add that file to the registry of files
+    PROP_GO( LIST_APPEND(file_t, &files, temp), cu_temp);
+    // no need to clean up temp, it will get cleaned with the rest of the files
+    cleanup_temp = false;
+
+    // do the parsing of that file
+    expr_list_t *result;
+    PROP_GO( do_qwerrewq(&files.data[0], true, &result), cu_files);
+
+    for(expr_list_t *expr = result; expr; expr = expr->next){
+        DSTR_VAR(out, 4096);
+        expr_tostr(expr->expr, &out);
+        PFMT("%x\n", FD(&out));
+    }
+
+cu_temp:
+    if(cleanup_temp) file_free(&temp);
+
+cu_files:
+    for(size_t i = 0; i < files.len; i++){
+        file_free(&files.data[i]);
+    }
+    LIST_FREE(file_t, &files);
+fail:
     return error != E_OK;
 }
