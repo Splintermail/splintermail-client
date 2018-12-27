@@ -8,18 +8,17 @@
     #define YYLTYPE loc_t
     #define YYLLOC_DEFAULT(out, Rhs, N){ \
         /* get the first and last elements of the matched rule */ \
-        loc_t *first = &(YYRHSLOC(Rhs, N ? 1 : 0)); \
-        loc_t *last = &(YYRHSLOC(Rhs, N ? N : 0)); \
-        if(!N) printf("not N\n"); \
+        loc_t first = YYRHSLOC(Rhs, N ? 1 : 0); \
+        loc_t last = YYRHSLOC(Rhs, N ? N : 0); \
         /* get the first and last line/col of the matched rule */ \
-        (out).start_line = first->start_line; \
-        (out).start_col = first->start_col; \
-        (out).end_line = last->end_line; \
-        (out).end_col = last->end_col; \
+        (out).start_line = first.start_line; \
+        (out).start_col = first.start_col; \
+        (out).end_line = last.end_line; \
+        (out).end_col = last.end_col; \
         /* get the substring of the matched rule */ \
-        size_t start = (size_t)(first->dstr.data - pv.file->buf.data); \
-        size_t end = (size_t)(last->dstr.data - pv.file->buf.data) \
-                     + last->dstr.len; \
+        size_t start = (size_t)(first.dstr.data - pv.file->buf.data); \
+        size_t end = (size_t)(last.dstr.data - pv.file->buf.data) \
+                     + last.dstr.len; \
         (out).dstr = dstr_sub(&pv.file->buf, start, end); \
     }
 
@@ -43,8 +42,10 @@
             FFMT(stderr, NULL, "out of memory\n"); \
             YYABORT; \
         } \
-        *out = (expr_t){.t = EXP_ ## type, .u = {.member = val}}; \
-        PRINT_EXPR_MATCH; \
+        *out = (expr_t){.t = EXP_ ## type, \
+                        .u = {.member = val}, \
+                        .loc = yyloc}; \
+        /*PRINT_EXPR_MATCH;*/ \
     }
 
     #define BINOP(out, type, a, b){ \
@@ -53,8 +54,10 @@
             FFMT(stderr, NULL, "out of memory\n"); \
             YYABORT; \
         } \
-        *out = (expr_t){.t = EXP_ ## type, .u = {.binop = {.lhs = a, .rhs = b}}}; \
-        PRINT_EXPR_MATCH; \
+        *out = (expr_t){.t = EXP_ ## type, \
+                        .u = {.binop = {.lhs = a, .rhs = b}}, \
+                        .loc = yyloc}; \
+        /*PRINT_EXPR_MATCH;*/ \
     }
 
     #define EXP_STRING(_out, _raw){ \
@@ -63,10 +66,15 @@
             FFMT(stderr, NULL, "out of memory\n"); \
             YYABORT; \
         } \
-        _out->t = EXP_STRING; \
-        _out->u.string.raw = _raw; \
+        *_out = (expr_t){.t = EXP_STRING, \
+                         .u = {.string = {.raw = _raw}}, \
+                        .loc = yyloc}; \
         /* remove escapes from string */ \
-        DOCATCH( dstr_new(&_out->u.string.out, _raw.len - 2) ); \
+        derr_t error = dstr_new(&_out->u.string.out, _raw.len - 2); \
+        CATCH(E_ANY){ \
+            free(_out); \
+            YYABORT; \
+        } \
         LIST_STATIC(dstr_t, find, DSTR_LIT("\\\\"), DSTR_LIT("\\\""), \
                                   DSTR_LIT("\\'"), DSTR_LIT("\\n"), \
                                   DSTR_LIT("\\r"), DSTR_LIT("\\t")); \
@@ -75,7 +83,12 @@
                                   DSTR_LIT("'"), DSTR_LIT("\n"), \
                                   DSTR_LIT("\\r"), DSTR_LIT("\\t")); \
         dstr_t in = dstr_sub(&_raw, 1, _raw.len - 1); \
-        DOCATCH( dstr_recode(&in, &_out->u.string.out, &find, &repl, false) ); \
+        error = dstr_recode(&in, &_out->u.string.out, &find, &repl, false); \
+        CATCH(E_ANY){ \
+            free(_out); \
+            dstr_free(&_out->u.string.out); \
+            YYABORT; \
+        } \
     }
 
     #define EXP_NUM(_out, _n){ \
@@ -84,10 +97,15 @@
             FFMT(stderr, NULL, "out of memory\n"); \
             YYABORT; \
         } \
-        _out->t = EXP_NUM; \
         long long temp; \
-        DOCATCH( dstr_toll(&_n, &temp, 0) ); \
-        _out->u.num = temp; \
+        derr_t error = dstr_toll(&_n, &temp, 0); \
+        CATCH(E_ANY){ \
+            free(_out); \
+            YYABORT; \
+        } \
+        *_out = (expr_t){.t = EXP_NUM, \
+                         .u = {.num = temp}, \
+                        .loc = yyloc} ; \
     }
 
     #define KVP(_out, _k, _v){ \
@@ -98,14 +116,15 @@
         } \
         _out->key = _k; \
         _out->value = _v; \
-        _out->next = NULL; \
+        _out->node.data = _out; \
     }
 
-    #define KVP_ADD(_out, _list, _elem){ \
-        _out = _list; \
-        kvp_t **end = &_out; \
-        while(*end) end = &(*end)->next; \
-        *end = _elem; \
+    #define TREE_INIT(_out){ \
+        DOCATCH( jsw_ainit(&_out, kvp_cmp, kvp_rel) ); \
+    }
+
+    #define TREE_INSERT(_tree, _kvp){ \
+        jsw_ainsert(&_tree, &_kvp->node); \
     }
 
     #define LIST_ELEM(_out, _expr){ \
@@ -190,8 +209,6 @@
 %locations
 /* compile error on parser generator conflicts */
 %expect 0
-/* initialize the parser's on-stack loc_t object */
-/* %initial-action { @$ = (YYLTYPE){0}; } */
 
 %token PARSE_END
 
@@ -238,10 +255,10 @@
 
 %type <func> func
 
-%type <kvp> dict
 %type <kvp> kvp
-%type <kvp> kvps_0
-%type <kvp> kvps_1
+%type <dict> kvps_0
+%type <dict> kvps_1
+%type <dict> dict
 
 %type <list> list
 %type <list> list_elem
@@ -278,7 +295,7 @@ expr: OOO_PAREN expr[e] ')'     { $$ = $e; }
     | expr[a] AND expr[b]       { BINOP($$, AND, $a, $b); }
     | expr[a] OR expr[b]        { BINOP($$, OR, $a, $b); }
     | func[f]                   { EXPR($$, FUNC, func, $f); }
-    | dict[d]                   { EXPR($$, DICT, kvp, $d); }
+    | dict[d]                   { EXPR($$, DICT, dict, $d); }
     | list[l]                   { EXPR($$, LIST, list, $l); }
     | DQSTRING[s]               { EXP_STRING($$, $s); }
     | SQSTRING[s]               { EXP_STRING($$, $s); }
@@ -316,12 +333,12 @@ expr_pairs_1: expr_pair
 
 kvp: VAR[k] '=' expr[v]         { KVP($$, $k, $v); };
 
-kvps_0: %empty                  { $$ = NULL; }
+kvps_0: %empty                  { TREE_INIT($$); }
       | kvps_1
 ;
 
-kvps_1: kvp
-      | kvps_1[l] kvp[k]        { KVP_ADD($$, $l, $k); }
+kvps_1: kvp[k]                  { TREE_INIT($$); TREE_INSERT($$, $k); }
+      | kvps_1[t] kvp[k]        { $$ = $t; TREE_INSERT($$, $k); }
 ;
 
 func: '{' vars_1[v] kvps_0[k] ARROW expr[o] '}'

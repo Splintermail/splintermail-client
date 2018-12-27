@@ -18,6 +18,7 @@ typedef struct {
     size_t end_line;
     size_t end_col;
 } loc_t;
+#define YYLTYPE loc_t
 
 // before including bison-generated header files, we need to define some types
 
@@ -72,8 +73,11 @@ typedef struct kvp_t {
     dstr_t key;
     expr_t *value;
     jsw_anode_t node;
-    struct kvp_t *next;
 } kvp_t;
+
+// andersson tree hooks
+int kvp_cmp(const void *p1, const void *p2);
+void kvp_rel(void *p);
 
 typedef struct list_t {
     expr_t *expr;
@@ -87,7 +91,7 @@ typedef struct dstr_list_t {
 
 typedef struct {
     dstr_list_t *vars;
-    kvp_t *kvps;
+    jsw_atree_t kvps;
     expr_t *out;
 } func_t;
 
@@ -115,15 +119,16 @@ typedef struct {
 
 typedef struct {
     expr_t *out;
-    kvp_t *kvps;
+    jsw_atree_t kvps;
 } for_t;
 
 typedef struct {
     expr_t *func;
     expr_list_t *params;
-    kvp_t *kvps;
+    jsw_atree_t kvps;
 } func_call_t;
 
+// semantic values of parsed expression
 union expr_u {
     intmax_t num;
     bool boolean;
@@ -134,6 +139,7 @@ union expr_u {
     string_t string;
     func_t func;
     kvp_t *kvp;
+    jsw_atree_t dict;
     list_t *list;
     if_t if_call;
     switch_t switch_call;
@@ -141,11 +147,46 @@ union expr_u {
     func_call_t func_call;
 };
 
+enum eval_type_t {
+    EVAL_UNEVALUATED = 0,
+    EVAL_STRING, // not necessarily a string literal, just textual data
+    EVAL_FUNC,
+    EVAL_DICT,
+    EVAL_LIST,
+    EVAL_EXPAND,
+    EVAL_NUM,
+    EVAL_BOOL,
+    EVAL_PUKE,
+    EVAL_SKIP,
+    EVAL_NUL,
+};
+
+char* eval_type_to_cstr(enum eval_type_t t);
+
+// semantic values of evaluated expression
+union eval_u {
+    dstr_t dstr;
+    func_t func;
+    jsw_atree_t dict;
+    list_t *list;
+    intmax_t num;
+    bool boolean;
+    expr_t *expr;
+};
+
+typedef struct {
+    enum eval_type_t t;
+    union eval_u u;
+} eval_t;
+
 struct expr_t {
+    // the expression, as script
+    loc_t loc;
+    // the expression, parsed
     enum expr_type_t t;
     union expr_u u;
-    dstr_t dstr;
-    loc_t loc;
+    // the expression, evaluated
+    eval_t eval;
 };
 
 // all possible types of tokens/expressions in bison parser
@@ -154,6 +195,7 @@ typedef union semtyp_t{
     dstr_t dstr;
     func_t func;
     kvp_t *kvp;
+    jsw_atree_t dict;
     list_t *list;
     dstr_list_t *dstr_list;
     if_t if_call;
@@ -170,13 +212,13 @@ typedef struct {
     expr_list_t **result;
 } parser_vars_t;
 
-#define YYLTYPE loc_t
-#include <qwerrewq.tab.h>
-
 void yyerror(YYLTYPE *yyloc, parser_vars_t pv, char const *s);
 char *toktyp_to_str(int type);
 
 derr_t expr_tostr(expr_t *expr, dstr_t *out);
+derr_t expr_eval(expr_t *expr, jsw_atree_t *config);
+expr_t *expr_deref(jsw_atree_t *dict, dstr_t key);
+derr_t eval_tostr(eval_t *eval, dstr_t *out);
 
 derr_t kvp_new(kvp_t **kvp);
 void kvp_free(kvp_t **kvp);

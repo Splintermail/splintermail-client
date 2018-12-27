@@ -1,6 +1,7 @@
 #include <stdio.h>
 
 #include <qwerrewq.h>
+#include <qwerrewq.tab.h>
 #include <common.h>
 #include <logger.h>
 
@@ -10,10 +11,33 @@
 
 void yyerror(YYLTYPE *yyloc, parser_vars_t pv, char const *s){
     (void)yyloc;
-    PFMT("ERROR in %x at %x:%x: %x\n", FD(&pv.file->name),
-                                       FU(yyloc->start_line),
-                                       FU(yyloc->start_col + 1),
-                                       FS(s));
+    PFMT("parse error in %x at line %x, column %x:\n\n",
+         FD(&pv.file->name),
+         FU(yyloc->start_line),
+         FU(yyloc->start_col));
+    // print the line up to here
+    size_t base = (size_t)(yyloc->dstr.data - pv.file->buf.data);
+    size_t start = base - (yyloc->start_col - 1);
+    size_t end = base + yyloc->dstr.len;
+    dstr_t temp = dstr_sub(&pv.file->buf, start, end);
+    PFMT("%x\n",FD(&temp));
+    // print the pointer to the above line
+    printf("%*s", (int)(yyloc->start_col - 1), "");
+    for(size_t i = 0; i < yyloc->dstr.len; i++){ PFMT("^"); }
+    PFMT("\n%x\n", FS(s));
+}
+
+int kvp_cmp(const void *p1, const void *p2){
+    kvp_t *kvp1 = (kvp_t*)p1;
+    kvp_t *kvp2 = (kvp_t*)p2;
+    return dstr_cmp(&kvp1->key, &kvp2->key);
+}
+
+void kvp_rel(void *p){
+    // TODO: release things here
+    (void)p;
+    LOG_ERROR("RELEASE A KVP\n");
+    return;
 }
 
 char* expr_type_to_cstr(enum expr_type_t t){
@@ -43,6 +67,23 @@ char* expr_type_to_cstr(enum expr_type_t t){
         case EXP_SKIP: return "EXP_SKIP";
         case EXP_NUL: return "EXP_NUL";
         case EXP_VAR: return "EXP_VAR";
+        default: return "unknown type";
+    }
+}
+
+char* eval_type_to_cstr(enum eval_type_t t){
+    switch(t){
+        case EVAL_UNEVALUATED: return "UNEVALUATED";
+        case EVAL_STRING: return "STRING";
+        case EVAL_FUNC: return "FUNC";
+        case EVAL_DICT: return "DICT";
+        case EVAL_EXPAND: return "EXPAND";
+        case EVAL_LIST: return "LIST";
+        case EVAL_NUM: return "NUM";
+        case EVAL_BOOL: return "BOOL";
+        case EVAL_PUKE: return "PUKE";
+        case EVAL_SKIP: return "SKIP";
+        case EVAL_NUL: return "NUL";
         default: return "unknown type";
     }
 }
@@ -109,6 +150,20 @@ static void file_free(file_t *f){
     dstr_free(&f->name);
 }
 
+static derr_t kvps_tostr(jsw_atree_t *kvps, bool prespace, dstr_t *out){
+    jsw_atrav_t trav;
+    for(kvp_t *kvp = jsw_atfirst(&trav, kvps); kvp; kvp = jsw_atnext(&trav)){
+        if(prespace){
+            PROP( FMT(out, " ") );
+        }else{
+            prespace = true;
+        }
+        PROP( FMT(out, "%x=", FD(&kvp->key)) );
+        PROP( expr_tostr(kvp->value, out) );
+    }
+    return E_OK;
+}
+
 derr_t expr_tostr(expr_t *expr, dstr_t *out){
     char *op = NULL;
     switch(expr->t){
@@ -140,10 +195,7 @@ derr_t expr_tostr(expr_t *expr, dstr_t *out){
             PROP( FMT(out, "[") );
             PROP( expr_tostr(expr->u.for_call.out, out) );
             PROP( FMT(out, " FOR") );
-            for(kvp_t *kvp = expr->u.for_call.kvps; kvp; kvp = kvp->next){
-                PROP( FMT(out, " %x=", FD(&kvp->key)) );
-                PROP( expr_tostr(kvp->value, out) );
-            }
+            PROP( kvps_tostr(&expr->u.for_call.kvps, true, out) );
             PROP( FMT(out, "]") );
             break;
         case EXP_FUNC_CALL:
@@ -154,10 +206,7 @@ derr_t expr_tostr(expr_t *expr, dstr_t *out){
                 if(p != expr->u.func_call.params) PROP( FMT(out, " ") );
                 PROP( expr_tostr(p->expr, out) );
             }
-            for(kvp_t *kvp = expr->u.func_call.kvps; kvp; kvp = kvp->next){
-                PROP( FMT(out, " %x=", FD(&kvp->key)) );
-                PROP( expr_tostr(kvp->value, out) );
-            }
+            PROP( kvps_tostr(&expr->u.func_call.kvps, true, out) );
             PROP( FMT(out, ")") );
             break;
         // binary operators
@@ -187,22 +236,14 @@ derr_t expr_tostr(expr_t *expr, dstr_t *out){
             for(dstr_list_t *dl = expr->u.func.vars; dl; dl = dl->next){
                 PROP( FMT(out, "%x ", FD(&dl->dstr)) );
             }
-            for(kvp_t *kvp = expr->u.func.kvps; kvp; kvp = kvp->next){
-                PROP( FMT(out, "%x=", FD(&kvp->key)) );
-                PROP( expr_tostr(kvp->value, out) );
-                PROP( FMT(out, " ") );
-            }
+            PROP( kvps_tostr(&expr->u.func.kvps, false, out) );
             PROP( FMT(out, "-> ") );
             PROP( expr_tostr(expr->u.func.out, out) );
             PROP( FMT(out, "}") );
             break;
         case EXP_DICT:
             PROP( FMT(out, "<") );
-            for(kvp_t *kvp = expr->u.kvp; kvp; kvp = kvp->next){
-                PROP( FMT(out, "%x=", FD(&kvp->key)) );
-                PROP( expr_tostr(kvp->value, out) );
-                if(kvp->next) PROP( FMT(out, " ") );
-            }
+            PROP( kvps_tostr(&expr->u.dict, false, out) );
             PROP( FMT(out, ">") );
             break;
         case EXP_LIST:
@@ -221,6 +262,194 @@ derr_t expr_tostr(expr_t *expr, dstr_t *out){
         case EXP_SKIP: PROP( FMT(out, "SKIP") ); break;
         case EXP_NUL: PROP( FMT(out, "NULL") ); break;
         case EXP_VAR: PROP( FMT(out, "VAR(%x)", FD(&expr->u.dstr)) ); break;
+    }
+    return E_OK;
+}
+
+derr_t expr_eval(expr_t *expr, jsw_atree_t *config){
+    // shortcut to expr's eval_t member
+    eval_t *eval = &expr->eval;
+    expr_t *temp, *lhs, *rhs;
+    list_t **end;
+    // check if the expression is already evaluated
+    if(eval->t != EVAL_UNEVALUATED) return E_OK;
+    // otherwise, evaluate based on expression type
+    switch(expr->t){
+        case EXP_IF:
+        case EXP_SWITCH:
+        case EXP_FOR:
+        case EXP_FUNC_CALL:
+        // binary operators
+        case EXP_DOT:
+            // evaluate the lhs
+            lhs = expr->u.binop.lhs;
+            rhs = expr->u.binop.rhs;
+            PROP( expr_eval(lhs, config) );
+            // option 1: lhs evaluates to EVAL_DICT, rhs is of type EXP_VAR
+            if(lhs->eval.t == EVAL_DICT && rhs->t == EXP_VAR){
+                // dereference rhs variable using lhs dictionary
+                temp = expr_deref(&lhs->eval.u.dict, rhs->u.dstr);
+                if(!temp){
+                    ORIG(E_VALUE, "dictionary missing key");
+                }
+                // evaluate that expression
+                PROP( expr_eval(temp, config) );
+                // steal its eval term
+                *eval = temp->eval;
+            }else{
+                ORIG(E_VALUE, "illegal arguments to dot operator");
+            }
+            break;
+        case EXP_PERCENT:
+        case EXP_CARET:
+            // evaluate the lhs and the rhs
+            lhs = expr->u.binop.lhs;
+            rhs = expr->u.binop.rhs;
+            PROP( expr_eval(lhs, config) );
+            PROP( expr_eval(rhs, config) );
+            // lhs must be string, rhs must be list
+            if(lhs->eval.t == EVAL_STRING && rhs->eval.t == EVAL_LIST){
+                dstr_t *out = &expr->eval.u.dstr;
+                PROP( dstr_new(out, 256) );
+                expr->eval.t = EVAL_STRING;
+                // build output
+                dstr_t *joiner = &lhs->eval.u.dstr;
+                for(list_t *l = rhs->eval.u.list; l; l = l->next){
+                    if(l->expr->eval.t != EVAL_STRING){
+                        ORIG(E_VALUE, "illegal non-string in caret rhs");
+                    }
+                    PROP( dstr_append(out, &l->expr->eval.u.dstr) );
+                    if(l->next) PROP( dstr_append(out, joiner) );
+                }
+            }else{
+                ORIG(E_VALUE, "illegal arguments to caret operator");
+            }
+            break;
+        case EXP_PLUS:
+            // evaluate the lhs and the rhs
+            lhs = expr->u.binop.lhs;
+            rhs = expr->u.binop.rhs;
+            PROP( expr_eval(lhs, config) );
+            PROP( expr_eval(rhs, config) );
+            // option 1: lhs and rhs both evaluate to EVAL_STRING
+            if(lhs->eval.t == EVAL_STRING && rhs->eval.t == EVAL_STRING){
+                expr->eval.t = EVAL_STRING;
+                // allocate the string we're about to build
+                PROP( dstr_new(&expr->eval.u.dstr, lhs->eval.u.dstr.len
+                                                   + rhs->eval.u.dstr.len) );
+                // build the string
+                PROP( dstr_append(&expr->eval.u.dstr, &lhs->eval.u.dstr) );
+                PROP( dstr_append(&expr->eval.u.dstr, &rhs->eval.u.dstr) );
+            }else{
+                ORIG(E_VALUE, "illegal arguments to plus operator");
+            }
+            break;
+        case EXP_EQ:
+        case EXP_MATEQ:
+        case EXP_AND:
+        case EXP_OR:
+            break;
+        // unary operators
+        case EXP_NOT:
+        case EXP_EXPAND:
+            // evaluate the arg
+            PROP( expr_eval(expr->u.expr, config) );
+            if(expr->u.expr->eval.t != EVAL_LIST){
+                ORIG(E_VALUE, "illegal argument to expand operator");
+            }
+            expr->eval.t = EVAL_EXPAND;
+            // store the argument's linked list
+            expr->eval.u.list = expr->u.expr->eval.u.list;
+            break;
+        // literals
+        case EXP_FUNC: break;
+        case EXP_DICT:
+            eval->t = EVAL_DICT;
+            eval->u.dict = expr->u.dict;
+            break;
+        case EXP_LIST:
+            eval->t = EVAL_LIST;
+            eval->u.list = NULL;
+            // keep track of the tail of the evaluated list
+            end = &eval->u.list;
+            // iterate through the expression list
+            for(list_t *l = expr->u.list; l; l = l->next){
+                // evaluate this list element
+                PROP( expr_eval(l->expr, config) );
+                switch(l->expr->eval.t){
+                    case EVAL_SKIP: break;
+                    case EVAL_EXPAND:
+                        // if element is an expand operator, connect head...
+                        *end = l->expr->eval.u.list;
+                        // ... and then find the tail
+                        while(*end) end = &(*end)->next;
+                        break;
+                    default:
+                        // "normal" elements just get added
+                        *end = malloc(sizeof(**end));
+                        if(!(*end)) ORIG(E_NOMEM, "no mem");
+                        (*end)->expr = l->expr;
+                        (*end)->next = NULL;
+                        end = &(*end)->next;
+                }
+            }
+            break;
+        case EXP_STRING:
+            eval->t = EVAL_STRING;
+            eval->u.dstr = expr->u.string.out;
+            // don't call dstr_free on this
+            eval->u.dstr.fixed_size = true;
+            break;
+        case EXP_NUM:
+            eval->t = EVAL_NUM;
+            eval->u.num = expr->u.num;
+            break;
+        case EXP_TRUE:
+        case EXP_FALSE:
+            eval->t = EVAL_BOOL;
+            eval->u.boolean = (expr->t == EXP_TRUE);
+            break;
+        case EXP_PUKE: ORIG(E_VALUE, "puking like you asked"); break;
+        case EXP_SKIP: eval->t = EVAL_SKIP; break;
+        case EXP_NUL: eval->t = EVAL_NUL; break;
+        case EXP_VAR:
+            // get the expression referenced by this variable
+            temp = expr_deref(config, expr->u.dstr);
+            if(!temp){
+                ORIG(E_VALUE, "dictionary missing key");
+            }
+            // evaluate that expression
+            PROP( expr_eval(temp, config) );
+            // steal it's eval term
+            *eval = temp->eval;
+            break;
+    }
+    return E_OK;
+}
+
+expr_t *expr_deref(jsw_atree_t *dict, dstr_t key){
+    kvp_t kvp_key = { .key=key };
+    kvp_t *kvp = jsw_afind(dict, (void*)&kvp_key);
+    return (kvp ? kvp->value : NULL);
+}
+
+derr_t eval_tostr(eval_t *eval, dstr_t *out){
+    switch(eval->t){
+        case EVAL_STRING:
+            PROP( dstr_append(out, &eval->u.dstr) );
+            break;
+        case EVAL_UNEVALUATED:
+        case EVAL_FUNC:
+        case EVAL_DICT:
+        case EVAL_EXPAND:
+        case EVAL_LIST:
+        case EVAL_NUM:
+        case EVAL_BOOL:
+        case EVAL_PUKE:
+        case EVAL_SKIP:
+        case EVAL_NUL:
+            PROP( FMT(out, "%x", FS(eval_type_to_cstr(eval->t))) );
+            break;
     }
     return E_OK;
 }
@@ -405,10 +634,6 @@ static derr_t do_qwerrewq(file_t *f, bool config, expr_list_t **result){
         YYLTYPE *yyloc = malloc(sizeof(*yyloc));
         if(!yyloc) ORIG_GO(E_NOMEM, "unable to allocate yyloc", cu_parser);
         *yyloc = loc;
-        // *yyloc = (YYLTYPE){.first_line = (int)loc.start_line,
-        //                    .first_column = (int)loc.start_col,
-        //                    .last_line = (int)loc.end_line,
-        //                    .last_column = (int)loc.end_col};
         // allocate/initialize yylval pointer
         union expr_u *yylval = malloc(sizeof(*yylval));
         if(!yylval){
@@ -441,41 +666,82 @@ cu_parser:
 int main(int argc, char **argv){
     derr_t error;
 
-    // make sure we got a file argument
+    logger_add_fileptr(LOG_LVL_DEBUG, stderr);
+
+    // make sure we got a config file argument
     if(argc < 2){
-        fprintf(stderr, "must specify a file\n");
+        fprintf(stderr, "must specify a config file\n");
         return 1;
     }
+    char *config_file = argv[1];
 
     // list of files and filenames
     LIST(file_t) files;
     PROP_GO( LIST_NEW(file_t, &files, 4), fail);
 
     // start by loading the first argument
-    dstr_t fname;
-    DSTR_WRAP(fname, argv[1], strlen(argv[1]), true);
+    dstr_t conf_fname;
+    DSTR_WRAP(conf_fname, config_file, strlen(config_file), true);
 
     file_t temp;
-    bool cleanup_temp = true;
-    PROP_GO( file_new(&temp, &fname), cu_files);
+    PROP_GO( file_new(&temp, &conf_fname), cu_files);
 
-    // add that file to the registry of files
+    // add config file to the registry of files
     PROP_GO( LIST_APPEND(file_t, &files, temp), cu_temp);
     // no need to clean up temp, it will get cleaned with the rest of the files
-    cleanup_temp = false;
 
-    // do the parsing of that file
-    expr_list_t *result;
-    PROP_GO( do_qwerrewq(&files.data[0], true, &result), cu_files);
+    // do the parsing of config file
+    expr_list_t *conf_result;
+    PROP_GO( do_qwerrewq(&files.data[0], true, &conf_result), cu_files);
 
-    for(expr_list_t *expr = result; expr; expr = expr->next){
+    // print the config file to show it was parsed correctly
+    for(expr_list_t *expr = conf_result; expr; expr = expr->next){
         DSTR_VAR(out, 4096);
         expr_tostr(expr->expr, &out);
         PFMT("%x\n", FD(&out));
     }
 
+    // make sure that the config file is the right format
+    if(conf_result->next != NULL || conf_result->expr->t != EXP_DICT){
+        ORIG_GO(E_VALUE, "config file must be a single dict object", cu_files);
+    }
+
+    jsw_atree_t config = conf_result->expr->u.dict;
+
+    PFMT("---------------------------------------\n");
+
+    // parse the regular file
+    if(argc < 3){
+        fprintf(stderr, "must specify an input file\n");
+        return 1;
+    }
+    char *input_file = argv[2];
+
+    dstr_t input_fname;
+    DSTR_WRAP(input_fname, input_file, strlen(input_file), true);
+
+    PROP_GO( file_new(&temp, &input_fname), cu_files);
+
+    PROP_GO( LIST_APPEND(file_t, &files, temp), cu_temp);
+
+    expr_list_t *result;
+    PROP_GO( do_qwerrewq(&files.data[1], true, &result), cu_files);
+
+    // print the config file to show it was parsed correctly
+    for(expr_list_t *el = result; el; el = el->next){
+        DSTR_VAR(out, 4096);
+        PROP_GO( expr_eval(el->expr, &config), cu_files);
+        expr_tostr(el->expr, &out);
+        FMT(&out, " | '");
+        eval_tostr(&el->expr->eval, &out);
+        PFMT("%x'\n", FD(&out));
+    }
+
+    // if we exit normally, there's no need to do cu_temp
+    goto cu_files;
+
 cu_temp:
-    if(cleanup_temp) file_free(&temp);
+    file_free(&temp);
 
 cu_files:
     for(size_t i = 0; i < files.len; i++){

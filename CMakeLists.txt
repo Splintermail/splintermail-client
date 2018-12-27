@@ -274,7 +274,7 @@ target_link_libraries(encrypt_msg crypto opt_parse)
 target_link_libraries(decrypt_msg crypto opt_parse)
 target_link_libraries(olt common fileops opt_parse)
 target_link_libraries(imap loop ixs tls_engine linked_list imap_parse networking)
-target_link_libraries(qwerrewq qwerrewq_tab common)
+target_link_libraries(qwerrewq qwerrewq_tab common jsw_atree)
 
 # decide if we are building server code
 if("${BUILD_SERVER_CODE}")
