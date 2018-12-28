@@ -191,7 +191,7 @@
 
     #define EXPR_PAIR_ADD(_out, _list, _ep){ \
         _out = _list; \
-        expr_pair_list_t **end = &_out; \
+        expr_pair_t **end = &_out; \
         while(*end) end = &(*end)->next; \
         *end = _ep; \
     }
@@ -242,8 +242,8 @@
 
 %type <expr_list> exprs_1
 
-%type <expr_pair_list> expr_pair
-%type <expr_pair_list> expr_pairs_1
+%type <expr_pair> expr_pair
+%type <expr_pair> expr_pairs_1
 
 %type <if_call> if
 

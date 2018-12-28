@@ -169,7 +169,7 @@ derr_t expr_tostr(expr_t *expr, dstr_t *out){
     switch(expr->t){
         case EXP_IF:
             PROP( FMT(out, "if(") );
-            for(expr_pair_list_t *p = expr->u.if_call.tests; p; p = p->next){
+            for(expr_pair_t *p = expr->u.if_call.tests; p; p = p->next){
                 PROP( expr_tostr(p->lhs, out) );
                 PROP( FMT(out, ":") );
                 PROP( expr_tostr(p->rhs, out) );
@@ -182,7 +182,7 @@ derr_t expr_tostr(expr_t *expr, dstr_t *out){
             PROP( FMT(out, "switch(") );
             PROP( expr_tostr(expr->u.switch_call.value, out) );
             PROP( FMT(out, "){") );
-            for(expr_pair_list_t *p = expr->u.switch_call.tests; p; p = p->next){
+            for(expr_pair_t *p = expr->u.switch_call.tests; p; p = p->next){
                 PROP( expr_tostr(p->lhs, out) );
                 PROP( FMT(out, ":") );
                 PROP( expr_tostr(p->rhs, out) );
@@ -271,11 +271,34 @@ derr_t expr_eval(expr_t *expr, jsw_atree_t *config){
     eval_t *eval = &expr->eval;
     expr_t *temp, *lhs, *rhs;
     list_t **end;
+    bool found = false;
     // check if the expression is already evaluated
     if(eval->t != EVAL_UNEVALUATED) return E_OK;
     // otherwise, evaluate based on expression type
     switch(expr->t){
         case EXP_IF:
+            // walk through the list of conditionals
+            for(expr_pair_t *ep = expr->u.if_call.tests; ep; ep = ep->next){
+                // evaluate the left and the right side
+                PROP( expr_eval(ep->lhs, config) );
+                PROP( expr_eval(ep->rhs, config) );
+                // lhs should evaluate to boolean
+                if(ep->lhs->eval.t != EVAL_BOOL){
+                    ORIG(E_VALUE, "illegal arguments to if statement");
+                }
+                // if lhs evaluates to true, set output to the rhs's eval_t
+                if(ep->lhs->eval.u.boolean){
+                    expr->eval = ep->rhs->eval;
+                    found = true;
+                    break;
+                }
+            }
+            // if we didn't find anything, return the "else" value
+            if(!found){
+                PROP( expr_eval(expr->u.if_call.else_expr, config) );
+                expr->eval = expr->u.if_call.else_expr->eval;
+            }
+            break;
         case EXP_SWITCH:
         case EXP_FOR:
         case EXP_FUNC_CALL:
@@ -301,6 +324,8 @@ derr_t expr_eval(expr_t *expr, jsw_atree_t *config){
             }
             break;
         case EXP_PERCENT:
+            ORIG(E_VALUE, "percent operator not implemented yet");
+            break;
         case EXP_CARET:
             // evaluate the lhs and the rhs
             lhs = expr->u.binop.lhs;
@@ -345,12 +370,72 @@ derr_t expr_eval(expr_t *expr, jsw_atree_t *config){
             }
             break;
         case EXP_EQ:
+            // evaluate the lhs and the rhs
+            lhs = expr->u.binop.lhs;
+            rhs = expr->u.binop.rhs;
+            PROP( expr_eval(lhs, config) );
+            PROP( expr_eval(rhs, config) );
+            // option 1: lhs and rhs both evaluate to EVAL_STRING
+            if(lhs->eval.t == EVAL_STRING && rhs->eval.t == EVAL_STRING){
+                expr->eval.t = EVAL_BOOL;
+                bool same = !dstr_cmp(&lhs->eval.u.dstr, &rhs->eval.u.dstr);
+                expr->eval.u.boolean = same;
+            }
+            break;
         case EXP_MATEQ:
         case EXP_AND:
+            // first evaluate the lhs
+            lhs = expr->u.binop.lhs;
+            PROP( expr_eval(lhs, config) );
+            if(lhs->eval.t != EVAL_BOOL){
+                ORIG(E_VALUE, "illegal argument to AND operator");
+            }
+            if(lhs->eval.u.boolean == false){
+                // no need to evaluate the rhs, return false
+                expr->eval = lhs->eval;
+            }else{
+                // now evaluate the rhs
+                rhs = expr->u.binop.rhs;
+                PROP( expr_eval(rhs, config) );
+                if(rhs->eval.t != EVAL_BOOL){
+                    ORIG(E_VALUE, "illegal argument to AND operator");
+                }
+                // return whatever the rhs is
+                expr->eval = rhs->eval;
+            }
+            break;
         case EXP_OR:
+            // first evaluate the lhs
+            lhs = expr->u.binop.lhs;
+            PROP( expr_eval(lhs, config) );
+            if(lhs->eval.t != EVAL_BOOL){
+                ORIG(E_VALUE, "illegal argument to OR operator");
+            }
+            if(lhs->eval.u.boolean == true){
+                // no need to evaluate the rhs, return true
+                expr->eval = lhs->eval;
+            }else{
+                // now evaluate the rhs
+                rhs = expr->u.binop.rhs;
+                PROP( expr_eval(rhs, config) );
+                if(rhs->eval.t != EVAL_BOOL){
+                    ORIG(E_VALUE, "illegal argument to OR operator");
+                }
+                // return whatever the rhs is
+                expr->eval = rhs->eval;
+            }
             break;
         // unary operators
         case EXP_NOT:
+            // evaluate the argument
+            PROP( expr_eval(expr->u.expr, config) );
+            if(expr->u.expr->eval.t != EVAL_BOOL){
+                ORIG(E_VALUE, "illegal argument to NOT operator");
+            }
+            // return the opposite of the argument
+            expr->eval.t = EVAL_BOOL;
+            expr->eval.u.boolean = !expr->u.expr->eval.u.boolean;
+            break;
         case EXP_EXPAND:
             // evaluate the arg
             PROP( expr_eval(expr->u.expr, config) );

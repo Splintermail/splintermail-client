@@ -100,20 +100,20 @@ typedef struct expr_list_t {
     struct expr_list_t *next;
 } expr_list_t;
 
-typedef struct expr_pair_list_t {
+typedef struct expr_pair_t {
     expr_t *lhs;
     expr_t *rhs;
-    struct expr_pair_list_t *next;
-} expr_pair_list_t;
+    struct expr_pair_t *next;
+} expr_pair_t;
 
 typedef struct {
-    expr_pair_list_t *tests;
+    expr_pair_t *tests;
     expr_t *else_expr;
 } if_t;
 
 typedef struct {
     expr_t *value;
-    expr_pair_list_t *tests;
+    expr_pair_t *tests;
     expr_t *default_expr;
 } switch_t;
 
@@ -203,7 +203,7 @@ typedef union semtyp_t{
     for_t for_call;
     func_call_t func_call;
     expr_list_t *expr_list;
-    expr_pair_list_t *expr_pair_list;
+    expr_pair_t *expr_pair;
 } semtyp_t;
 
 // a struct of values the parser needs access to
