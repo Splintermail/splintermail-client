@@ -1,0 +1,53 @@
+# qwerrewq development notes
+
+this was the config file I was using:
+    # comment
+    <
+      a="A"
+      b="B"
+      d=<
+        a="AA"
+        b="BB"
+        d=<
+          a="AAA"
+          b="BBB"
+        >
+      >
+      l=[a b d.a]
+      exp = [b *l a]
+    >
+
+this was the input file I was using:
+    a b d.a + " " + d.d.b
+
+    "--" ^ l
+    "|" ^ exp
+
+    if(false:"x" "A"=="A":"y" "z")
+    if("A"=="A" || puke:"true" "false")
+    if("A"=="A" && !a == "B":"true" "false")
+
+Project state:
+    Most of the core qwerrewq functionality is done.
+    I haven't done:
+        format string operator (%)
+            This will take some work.  Perhaps an external library would be
+            easiest.  Or maybe all I need to do is implement some really basic
+            subset of what printf supports?  Maybe just add field widths to
+            my common.c's FMT() functions?
+        regex match operator (=~)
+            This will take an external library to be portable to windows.
+            Perhaps the gnuwin32 version would be the easy route
+        function calls
+            this will require a substitute functionality
+        for statements
+            this will require a substitute functionality
+        switch statments
+            I noticed that the equals operator (==) needs to be more type-aware
+            than it currently is.  After implementing an `expr_equals(a,b)`
+            function the switch statement will be easy
+
+conclusion (28 dec 2018)
+    While it has been fun, I'm putting the qwerrewq code on hold for now
+    because it is turning out to be more trouble than it's worth.  I hope to
+    come back to it in the future.
