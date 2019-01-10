@@ -56,7 +56,9 @@ dstr_t* scan_mode_to_dstr(scan_mode_t mode){
     }
 }
 
-derr_t imap_parser_init(imap_parser_t *parser, imap_parse_hooks_dn_t hooks_dn,
+derr_t imap_parser_init(imap_parser_t *parser,
+                        struct imap_reader_t *reader,
+                        imap_parse_hooks_dn_t hooks_dn,
                         imap_parse_hooks_up_t hooks_up,
                         void *hook_data){
     // init dstr_t temp to zeros
@@ -78,6 +80,7 @@ derr_t imap_parser_init(imap_parser_t *parser, imap_parse_hooks_dn_t hooks_dn,
     parser->hooks_dn = hooks_dn;
     parser->hooks_up = hooks_up;
     parser->hook_data = hook_data;
+    parser->reader = reader;
 
     return E_OK;
 }

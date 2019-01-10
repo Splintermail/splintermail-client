@@ -67,8 +67,10 @@ typedef struct {
     void (*check)(void *data, dstr_t tag);
     void (*close)(void *data, dstr_t tag);
     void (*expunge)(void *data, dstr_t tag);
-    void (*append)(void *data, dstr_t tag, bool inbox, dstr_t mbx,
-                   ie_flag_list_t flags, imap_time_t time, size_t len);
+    derr_t (*append_start)(void *data, dstr_t tag, bool inbox, dstr_t mbx,
+                           ie_flag_list_t flags, imap_time_t time);
+    derr_t (*append_chunk)(void *data, dstr_t chunk);
+    derr_t (*append_end)(void *data);
     void (*search)(void *data, dstr_t tag, bool uid_mode, dstr_t charset,
                    ie_search_key_t *search_key);
     void (*fetch)(void *data, dstr_t tag, bool uid_mode, ie_seq_set_t *seq_set,
@@ -81,10 +83,6 @@ typedef struct {
 
 // a list of hooks that are called when communicating with the mail server
 typedef struct {
-    /* for handling literals.  After this hook is called, the application
-       should not make another call to imap_parse() until imap_literal() has
-       been called (or imap_reset(), of course). */
-    derr_t (*literal)(void *data, size_t len, bool keep);
     void (*status_type)(void *data, dstr_t tag, status_type_t status,
                         status_code_t code, unsigned int code_extra,
                         dstr_t text);
@@ -112,13 +110,16 @@ typedef struct {
     derr_t (*fetch_start)(void *data, unsigned int num);
     derr_t (*f_flags)(void *data, ie_flag_list_t flags);
     derr_t (*f_rfc822_start)(void *data);
-    derr_t (*f_rfc822_literal)(void *data, size_t len);
+    derr_t (*f_rfc822_literal)(void *data, const dstr_t *raw); // don't free raw
     derr_t (*f_rfc822_qstr)(void *data, const dstr_t *qstr); // don't free qstr
     void (*f_rfc822_end)(void *data, bool success);
     void (*f_uid)(void *data, unsigned int num);
     void (*f_intdate)(void *data, imap_time_t imap_time);
     void (*fetch_end)(void *data, bool success);
 } imap_parse_hooks_up_t;
+
+// forward declaration of imap_reader_t
+struct imap_reader_t;
 
 typedef struct {
     void *yyps;
@@ -128,6 +129,8 @@ typedef struct {
     imap_parse_hooks_dn_t hooks_dn;
     // hooks for talking to upstream (mail server)
     imap_parse_hooks_up_t hooks_up;
+    // for imap_reader's hooks (related to literals)
+    struct imap_reader_t *reader;
     // for tracking errors returned by hooks
     derr_t error;
     // the mode the scanner should be in while scanning the next token
@@ -154,7 +157,9 @@ typedef struct {
 
 void yyerror(imap_parser_t *parser, char const *s);
 
-derr_t imap_parser_init(imap_parser_t *parser, imap_parse_hooks_dn_t hooks_dn,
+derr_t imap_parser_init(imap_parser_t *parser,
+                        struct imap_reader_t *reader,
+                        imap_parse_hooks_dn_t hooks_dn,
                         imap_parse_hooks_up_t hooks_up,
                         void *hook_data);
 void imap_parser_free(imap_parser_t *parser);

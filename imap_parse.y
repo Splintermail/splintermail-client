@@ -3,6 +3,7 @@
     #include <imap_parse.h>
     #include <logger.h>
     #include <imap_expression.h>
+    #include <imap_read.h>
 
     #define MODE(m) parser->scan_mode = SCAN_MODE_ ## m
 
@@ -223,8 +224,11 @@ catch:
         dstr_t sub = dstr_sub(parser->token, 1, parser->token->len - 3); \
         size_t len; \
         dstr_toul(&sub, &len, 10);\
-        parser->hooks_dn.append(parser->hook_data, tag, mbx.inbox, \
-                                mbx.dstr, flags, date_time, len); \
+        DOCATCH( parser->hooks_dn.append_start(parser->hook_data, tag, \
+                                               mbx.inbox, mbx.dstr, flags, \
+                                               date_time) ); \
+        /* TODO: proper error handling here, in the second error check */ \
+        DOCATCH( imap_read_append_literal(parser->reader, len) ); \
     }
 
     #define SEARCH_CMD(tag, uid, charset, search_key) \
@@ -300,7 +304,7 @@ catch:
         dstr_t sub = dstr_sub(parser->token, 1, parser->token->len - 3); \
         size_t len; \
         dstr_toul(&sub, &len, 10);\
-        DOCATCH( parser->hooks_up.f_rfc822_literal(parser->hook_data, len) ); \
+        DOCATCH( imap_read_rfc822_literal(parser->reader, len) ); \
     }
     #define F_RFC822_RESP_QSTR \
         DOCATCH( parser->hooks_up.f_rfc822_qstr(parser->hook_data, \
@@ -318,14 +322,13 @@ catch:
         parser->hooks_up.fetch_end(parser->hook_data, success);
 
     // literal hook
-    #define LITERAL_RESP { \
+    #define LITERAL_HOOK { \
         /* get the numbers from the literal, ex: {5}\r\nBYTES
                                                  ^^^^^^^ -> LITERAL token */ \
         dstr_t sub = dstr_sub(parser->token, 1, parser->token->len - 3); \
         size_t len; \
         dstr_toul(&sub, &len, 10);\
-        DOCATCH( parser->hooks_up.literal(parser->hook_data, len, \
-                                          parser->keep) ); \
+        DOCATCH( imap_read_literal(parser->reader, len, parser->keep) ); \
     }
 
     // allocators
@@ -1400,7 +1403,7 @@ qstring_body: %empty
 
 /* note that LITERAL_END is passed by the application after it finishes reading
    the literal from the stream; it is never returned by the scanner */
-literal: LITERAL { LITERAL_RESP; } LITERAL_END;
+literal: LITERAL { LITERAL_HOOK; } LITERAL_END;
 
 /* nqchar can't handle spaces, so an post-nqchar MODE() call is required */
 nqchar: prenqchar NIL                 { $$ = 0; MODE(MAILBOX); }

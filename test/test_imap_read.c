@@ -3,6 +3,7 @@
 #include <imap_scan.h>
 #include <imap_parse.h>
 #include <imap_parse.tab.h>
+#include <imap_read.h>
 
 #include "test_utils.h"
 
@@ -10,8 +11,6 @@
     - every branch of the grammer gets passed through
         (this will verify the scanner modes are correct)
     - every %destructor gets called (i.e., HOOK_END always gets called)
-
-    Wait, why does the scanner in FLAG mode test another character after the \ ?
 
     is it ok that:
         inbox
@@ -46,18 +45,6 @@
 
     partial <p1.p2> should enforce non-zeroness of p2
 */
-
-// the struct for the parse hooks' *data memeber
-typedef struct {
-    imap_parser_t *parser;
-    imap_scanner_t *scanner;
-    scan_mode_t scan_mode;
-    bool in_literal;
-    bool keep_literal;
-    bool fetch_literal;
-    size_t literal_len;
-    dstr_t literal_temp;
-} locals_t;
 
 // no leading or trailing space
 static void print_seq_set(ie_seq_set_t *seq_set){
@@ -248,9 +235,8 @@ static void expunge_cmd(void *data, dstr_t tag){
 
 //
 
-static void append_cmd(void *data, dstr_t tag, bool inbox, dstr_t mbx,
-                       ie_flag_list_t flags, imap_time_t time,
-                       size_t literal_len){
+static derr_t append_start(void *data, dstr_t tag, bool inbox, dstr_t mbx,
+                           ie_flag_list_t flags, imap_time_t time){
     (void)data;
     LOG_ERROR("APPEND (%x) '%x' (%x) (", FD(&tag), FD(&mbx), FU(inbox));
     print_flag_list(flags);
@@ -263,11 +249,7 @@ static void append_cmd(void *data, dstr_t tag, bool inbox, dstr_t mbx,
     dstr_free(&tag);
     dstr_free(&mbx);
     ie_flag_list_free(&flags);
-    // also mark out the literal
-    locals_t *locals = data;
-    locals->in_literal = true;
-    locals->fetch_literal = true;
-    locals->literal_len = literal_len;
+    return E_OK;
 }
 
 //
@@ -490,19 +472,6 @@ static void copy_cmd(void *data, dstr_t tag, bool uid_mode,
 
 /////////////////////////////////////////////////////////
 
-static derr_t literal(void *data, size_t len, bool keep){
-    locals_t *locals = data;
-    locals->in_literal = true;
-    locals->literal_len = len;
-    locals->keep_literal = keep;
-    if(keep){
-        PROP( dstr_new(&locals->literal_temp, len) );
-    }
-    return E_OK;
-}
-
-//
-
 static void st_hook(void *data, dstr_t tag, status_type_t status,
                     status_code_t code, unsigned int code_extra,
                     dstr_t text){
@@ -641,14 +610,6 @@ static derr_t f_rfc822_start(void *data){
     return E_OK;
 }
 
-static derr_t f_rfc822_literal(void *data, size_t literal_len){
-    locals_t *locals = data;
-    locals->in_literal = true;
-    locals->fetch_literal = true;
-    locals->literal_len = literal_len;
-    return E_OK;
-}
-
 static derr_t f_rfc822_qstr(void *data, const dstr_t *qstr){
     (void)data;
     LOG_ERROR("FETCH QSTR '%x'\n", FD(qstr));
@@ -707,19 +668,7 @@ static void fetch_end(void *data, bool success){
 static derr_t do_test_scanner_and_parser(LIST(dstr_t) *inputs){
     derr_t error;
 
-    // structs for configuring parser
-    locals_t locals;
-    locals.in_literal = false;
-    locals.keep_literal = false;
-    locals.fetch_literal = false;
-    locals.literal_len = 0;
-    locals.literal_temp = (dstr_t){0};
-    locals.literal_len = 0;
-
-    imap_scanner_t scanner;
-    PROP( imap_scanner_init(&scanner) );
-
-    // prepare to init the parser
+    // prepare to init the reader
     imap_parse_hooks_dn_t hooks_dn = {
         login_cmd,
         select_cmd,
@@ -735,14 +684,15 @@ static derr_t do_test_scanner_and_parser(LIST(dstr_t) *inputs){
         check_cmd,
         close_cmd,
         expunge_cmd,
-        append_cmd,
+        append_start,
+        NULL,
+        NULL,
         search_cmd,
         fetch_cmd,
         store_cmd,
         copy_cmd,
     };
     imap_parse_hooks_up_t hooks_up = {
-        literal,
         st_hook,
         capa_start, capa, capa_end,
         pflag_resp,
@@ -756,87 +706,23 @@ static derr_t do_test_scanner_and_parser(LIST(dstr_t) *inputs){
         fetch_start,
             f_flags,
             f_rfc822_start,
-                f_rfc822_literal,
+                NULL,
                 f_rfc822_qstr,
             f_rfc822_end,
             f_uid,
             f_intdate,
         fetch_end,
     };
-    imap_parser_t parser;
-    PROP_GO( imap_parser_init(&parser, hooks_dn, hooks_up, &locals), cu_scanner);
 
-    // store the scanner and the parser in the locals struct
-    locals.scanner = &scanner;
-    locals.parser = &parser;
+    // init the reader
+    imap_reader_t reader;
+    PROP( imap_reader_init(&reader, hooks_dn, hooks_up, NULL) );
 
     for(size_t i = 0; i < inputs->len; i++){
-        // append the input to the scanner's buffer
-        PROP_GO( dstr_append(&scanner.bytes, &inputs->data[i]), cu_scanner);
-
-        int token_type;
-        bool more;
-
-        while(true){
-            // check if we are in a literal
-            if(locals.in_literal){
-                dstr_t stolen = steal_bytes(&scanner, locals.literal_len);
-                LOG_ERROR("literal bytes: '%x'\n", FD(&stolen));
-                // are we building this literal to pass back to the parser?
-                if(locals.keep_literal){
-                    PROP_GO( dstr_append(&locals.literal_temp, &stolen),
-                             cu_scanner);
-                }
-                // are we passing this literal directly to the decrypter?
-                else if(locals.fetch_literal){
-                    LOG_ERROR("fetched: %x\n", FD(&stolen));
-                }
-                // remember how many bytes we have stolen from the stream
-                locals.literal_len -= stolen.len;
-                // if we still need more literal, break loop for more input
-                if(locals.literal_len){
-                    break;
-                }
-                // otherwise, indicate to the parser that we are finished
-                PROP_GO( imap_literal(&parser, locals.literal_temp),
-                                      cu_scanner);
-                // reset the values associated with the literal
-                locals.in_literal = false;
-                locals.keep_literal = false;
-                locals.fetch_literal = false;
-                locals.literal_len = 0;
-                locals.literal_temp = (dstr_t){0};
-            }
-
-            // try to scan a token
-            scan_mode_t scan_mode = parser.scan_mode;
-            LOG_INFO("---------------------\n"
-                      "mode is %x\n",
-                      FD(scan_mode_to_dstr(scan_mode)));
-
-            dstr_t scannable = get_scannable(&scanner);
-            LOG_DEBUG("scannable is: '%x'\n", FD(&scannable));
-
-            PROP_GO( imap_scan(&scanner, scan_mode, &more, &token_type),
-                     cu_parser);
-            if(more == true){
-                // done with this input buffer
-                break;
-            }
-
-            // print the token
-            dstr_t token = get_token(&scanner);
-            LOG_INFO("token is '%x' (%x)\n",
-                      FD_DBG(&token), FI(token_type));
-
-            // call parser, which will call context-specific actions
-            PROP_GO( imap_parse(&parser, token_type, &token), cu_parser);
-        }
+        PROP_GO( imap_read(&reader, &inputs->data[i]), cu_reader);
     }
-cu_parser:
-    imap_parser_free(&parser);
-cu_scanner:
-    imap_scanner_free(&scanner);
+cu_reader:
+    imap_reader_free(&reader);
     return error;
 }
 
