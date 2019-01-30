@@ -43,11 +43,13 @@ set(OBJ_TGTS api_client
              ixs
              loop
              tls_engine
+             imap_engine
              linked_list
              jsw_atree
              imap_parse
              imap_expression
-             imap_read)
+             imap_read
+             hashmap)
 
 set(EXE_TGTS srvcli
              splintermail
@@ -78,7 +80,9 @@ set(TEST_EXE_TGTS test_common
                   test_key_tool
                   test_atree
                   test_imap_scan
-                  test_imap_read)
+                  test_imap_read
+                  test_imap_client
+                  test_hashmap)
 
 # additional TGTS if we are building server code
 if("${BUILD_SERVER_CODE}")
@@ -233,6 +237,7 @@ obj_depend_obj(ditm pop_client pop_server maildir json)
 obj_depend_obj(ixs uv_interface common)
 obj_depend_obj(loop uv_interface tls_engine common)
 obj_depend_obj(tls_engine ixs common)
+obj_depend_obj(imap_engine ixs imap_read_o common)
 obj_depend_obj(linked_list uv_interface common)
 obj_depend_obj(jsw_atree common)
 obj_depend_obj(imap_parse_tab imap_expression imap_read common)
@@ -242,6 +247,7 @@ obj_depend_obj(imap_scan common)
 add_dependencies(imap_scan_o bison_header)
 obj_depend_obj(imap_read imap_parse imap_scan common)
 add_dependencies(imap_read_o bison_header)
+obj_depend_obj(hashmap common)
 
 
 # describe executables with dependencies
@@ -251,7 +257,7 @@ target_link_libraries(leak networking)
 target_link_libraries(encrypt_msg crypto opt_parse)
 target_link_libraries(decrypt_msg crypto opt_parse)
 target_link_libraries(olt common fileops opt_parse)
-target_link_libraries(imap loop ixs tls_engine linked_list imap_parse networking)
+target_link_libraries(imap loop ixs tls_engine imap_engine linked_list imap_parse networking)
 
 # decide if we are building server code
 if("${BUILD_SERVER_CODE}")
@@ -379,7 +385,8 @@ if("${BUILD_TESTS}")
     target_link_libraries(test_atree jsw_atree)
     target_link_libraries(test_imap_scan imap_scan)
     target_link_libraries(test_imap_read imap_read)
-    add_dependencies(test_imap_read bison_header)
+    target_link_libraries(test_imap_client imap_read)
+    target_link_libraries(test_hashmap hashmap)
 
     if(WIN32)
         # make sure the user provided the location of Pthreads
