@@ -1,8 +1,5 @@
 #include <common.h>
 #include <logger.h>
-#include <imap_scan.h>
-#include <imap_parse.h>
-#include <imap_parse.tab.h>
 #include <imap_read.h>
 
 #include "test_utils.h"
@@ -73,14 +70,23 @@ static void print_flag_list(ie_flag_list_t flags){
     if(flags.seen){     LEAD_SP; LOG_ERROR("\\Seen");     };
     if(flags.draft){    LEAD_SP; LOG_ERROR("\\Draft");    };
     if(flags.recent){   LEAD_SP; LOG_ERROR("\\Recent");   };
-    if(flags.noselect){ LEAD_SP; LOG_ERROR("\\Noselect"); };
-    if(flags.marked){   LEAD_SP; LOG_ERROR("\\Marked");   };
-    if(flags.unmarked){ LEAD_SP; LOG_ERROR("\\Unmarked"); };
     if(flags.asterisk){ LEAD_SP; LOG_ERROR("\\Asterisk"); };
     for(dstr_link_t *d = flags.keywords; d != NULL; d = d->next){
         LEAD_SP; LOG_ERROR("%x", FD(&d->dstr));
     }
     for(dstr_link_t *d = flags.extensions; d != NULL; d = d->next){
+        LEAD_SP; LOG_ERROR("\\%x", FD(&d->dstr));
+    }
+}
+
+// no leading or trailing space
+static void print_mflag_list(ie_mflag_list_t mflags){
+    bool sp = false;
+    if(mflags.noinferiors){ LEAD_SP; LOG_ERROR("\\NoInferiors"); };
+    if(mflags.noselect){ LEAD_SP; LOG_ERROR("\\Noselect"); };
+    if(mflags.marked){   LEAD_SP; LOG_ERROR("\\Marked");   };
+    if(mflags.unmarked){ LEAD_SP; LOG_ERROR("\\Unmarked"); };
+    for(dstr_link_t *d = mflags.extensions; d != NULL; d = d->next){
         LEAD_SP; LOG_ERROR("\\%x", FD(&d->dstr));
     }
 }
@@ -515,25 +521,25 @@ static void pflag_resp(void *data, ie_flag_list_t flags){
 
 //
 
-static void list_resp(void *data, ie_flag_list_t flags, char sep, bool inbox,
+static void list_resp(void *data, ie_mflag_list_t mflags, char sep, bool inbox,
                       dstr_t mbx){
     (void)data;
     LOG_ERROR("LIST (");
-    print_flag_list(flags);
+    print_mflag_list(mflags);
     LOG_ERROR(") '%x' '%x' (%x)\n", FC(sep), FD(&mbx), FU(inbox));
-    ie_flag_list_free(&flags);
+    ie_mflag_list_free(&mflags);
     dstr_free(&mbx);
 }
 
 //
 
-static void lsub_resp(void *data, ie_flag_list_t flags, char sep, bool inbox,
+static void lsub_resp(void *data, ie_mflag_list_t mflags, char sep, bool inbox,
                       dstr_t mbx){
     (void)data;
     LOG_ERROR("LSUB (");
-    print_flag_list(flags);
+    print_mflag_list(mflags);
     LOG_ERROR(") '%x' '%x' (%x)\n", FC(sep), FD(&mbx), FU(inbox));
-    ie_flag_list_free(&flags);
+    ie_mflag_list_free(&mflags);
     dstr_free(&mbx);
 }
 
@@ -739,10 +745,10 @@ static derr_t test_scanner_and_parser(void){
             DSTR_LIT("* OK [capability 1 2 3 4] ready\r\n"),
             DSTR_LIT("* OK [PERMANENTFLAGS (\\answered \\2 a 1)] hi!\r\n"),
             DSTR_LIT("* ok [parse] hi\r\n"),
-            DSTR_LIT("* LIST (\\ext \\answered) \"/\" inbox\r\n"),
-            DSTR_LIT("* LIST (\\selected) \"/\" \"other\"\r\n"),
-            DSTR_LIT("* LSUB (\\ext \\answered) \"/\" inbox\r\n"),
-            DSTR_LIT("* LSUB (\\selected) \"/\" \"other\"\r\n"),
+            DSTR_LIT("* LIST (\\ext \\noselect) \"/\" inbox\r\n"),
+            DSTR_LIT("* LIST (\\marked) \"/\" \"other\"\r\n"),
+            DSTR_LIT("* LSUB (\\ext \\noinferiors) \"/\" inbox\r\n"),
+            DSTR_LIT("* LSUB (\\marked) \"/\" \"other\"\r\n"),
         );
         PROP( do_test_scanner_and_parser(&inputs) );
     }

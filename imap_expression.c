@@ -40,9 +40,6 @@ DSTR_STATIC(flag_type_DELETED_dstr, "FLAG_DELETED");
 DSTR_STATIC(flag_type_SEEN_dstr, "FLAG_SEEN");
 DSTR_STATIC(flag_type_DRAFT_dstr, "FLAG_DRAFT");
 DSTR_STATIC(flag_type_RECENT_dstr, "FLAG_RECENT");
-DSTR_STATIC(flag_type_NOSELECT_dstr, "FLAG_NOSELECT");
-DSTR_STATIC(flag_type_MARKED_dstr, "FLAG_MARKED");
-DSTR_STATIC(flag_type_UNMARKED_dstr, "FLAG_UNMARKED");
 DSTR_STATIC(flag_type_ASTERISK_dstr, "FLAG_ASTERISK");
 DSTR_STATIC(flag_type_KEYWORD_dstr, "FLAG_KEYWORD");
 DSTR_STATIC(flag_type_EXTENSION_dstr, "FLAG_EXTENSION");
@@ -56,13 +53,28 @@ const dstr_t *flag_type_to_dstr(ie_flag_type_t f){
         case IE_FLAG_SEEN: return &flag_type_SEEN_dstr;
         case IE_FLAG_DRAFT: return &flag_type_DRAFT_dstr;
         case IE_FLAG_RECENT: return &flag_type_RECENT_dstr;
-        case IE_FLAG_NOSELECT: return &flag_type_NOSELECT_dstr;
-        case IE_FLAG_MARKED: return &flag_type_MARKED_dstr;
-        case IE_FLAG_UNMARKED: return &flag_type_UNMARKED_dstr;
         case IE_FLAG_ASTERISK: return &flag_type_ASTERISK_dstr;
         case IE_FLAG_KEYWORD: return &flag_type_KEYWORD_dstr;
         case IE_FLAG_EXTENSION: return &flag_type_EXTENSION_dstr;
         default: return &flag_type_UNK_dstr;
+    }
+}
+
+DSTR_STATIC(mflag_type_NOINFERIORS_dstr, "MFLAG_NOINFERIORS");
+DSTR_STATIC(mflag_type_NOSELECT_dstr, "MFLAG_NOSELECT");
+DSTR_STATIC(mflag_type_MARKED_dstr, "MFLAG_MARKED");
+DSTR_STATIC(mflag_type_UNMARKED_dstr, "MFLAG_UNMARKED");
+DSTR_STATIC(mflag_type_EXTENSION_dstr, "MFLAG_EXTENSION");
+DSTR_STATIC(mflag_type_UNK_dstr, "UNKNOWN MFLAG");
+
+const dstr_t *mflag_type_to_dstr(ie_mflag_type_t f){
+    switch(f){
+        case IE_MFLAG_NOINFERIORS: return &mflag_type_NOINFERIORS_dstr;
+        case IE_MFLAG_NOSELECT: return &mflag_type_NOSELECT_dstr;
+        case IE_MFLAG_MARKED: return &mflag_type_MARKED_dstr;
+        case IE_MFLAG_UNMARKED: return &mflag_type_UNMARKED_dstr;
+        case IE_MFLAG_EXTENSION: return &mflag_type_EXTENSION_dstr;
+        default: return &mflag_type_UNK_dstr;
     }
 }
 
@@ -98,6 +110,10 @@ void dstr_link_free(dstr_link_t *h){
 void ie_flag_list_free(ie_flag_list_t* fl){
     dstr_link_free(fl->keywords);
     dstr_link_free(fl->extensions);
+}
+
+void ie_mflag_list_free(ie_mflag_list_t* mfl){
+    dstr_link_free(mfl->extensions);
 }
 
 void ie_seq_set_free(ie_seq_set_t *s){

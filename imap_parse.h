@@ -18,6 +18,8 @@ typedef enum {
     SCAN_MODE_ATOM,
     // For flags (regular, fetch, or permanent)
     SCAN_MODE_FLAG,
+    // for mailbox flags
+    SCAN_MODE_MFLAG,
     // For just after the OK/BAD/NO/PREAUTH/BYE
     SCAN_MODE_STATUS_CODE_CHECK,
     // For the first character of the [status_code]
@@ -92,9 +94,9 @@ typedef struct {
     void (*capa_end)(void *data, bool success);
     //
     void (*pflag)(void *data, ie_flag_list_t flags);
-    void (*list)(void *data, ie_flag_list_t flags, char sep, bool inbox,
+    void (*list)(void *data, ie_mflag_list_t mflags, char sep, bool inbox,
                  dstr_t mbx);
-    void (*lsub)(void *data, ie_flag_list_t flags, char sep, bool inbox,
+    void (*lsub)(void *data, ie_mflag_list_t mflags, char sep, bool inbox,
                  dstr_t mbx);
     void (*status)(void *data, bool inbox, dstr_t mbx,
                    bool found_messages, unsigned int messages,

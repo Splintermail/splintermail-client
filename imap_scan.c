@@ -103,6 +103,7 @@ derr_t imap_scan(imap_scanner_t *scanner, scan_mode_t mode, bool *more,
             case SCAN_MODE_COMMAND:             goto command_mode;
             case SCAN_MODE_ATOM:                goto atom_mode;
             case SCAN_MODE_FLAG:                goto flag_mode;
+            case SCAN_MODE_MFLAG:               goto mflag_mode;
             case SCAN_MODE_QSTRING:             goto qstring_mode;
             case SCAN_MODE_NUM:                 goto num_mode;
             case SCAN_MODE_STATUS_CODE_CHECK:   goto status_code_check_mode;
@@ -244,6 +245,22 @@ flag_mode:
         'draft'         { *type = DRAFT; goto done; }
         'recent'        { *type = RECENT; goto done; }
         "\\*"           { *type = ASTERISK_FLAG; goto done; }
+
+        atom            { *type = RAW; goto done; }
+    */
+
+mflag_mode:
+
+    /*!re2c
+        *               { return E_PARAM; }
+        atom_spec       { *type = *scanner->start; goto done; }
+        literal         { *type = LITERAL; goto done; }
+        eol             { *type = EOL; goto done; }
+
+        'noinferiors'   { *type = NOINFERIORS; goto done; }
+        'noselect'      { *type = NOSELECT; goto done; }
+        'marked'        { *type = MARKED; goto done; }
+        'unmarked'      { *type = UNMARKED; goto done; }
 
         atom            { *type = RAW; goto done; }
     */

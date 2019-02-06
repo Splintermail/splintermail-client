@@ -65,9 +65,6 @@ typedef enum {
     IE_FLAG_SEEN,
     IE_FLAG_DRAFT,
     IE_FLAG_RECENT,
-    IE_FLAG_NOSELECT,
-    IE_FLAG_MARKED,
-    IE_FLAG_UNMARKED,
     IE_FLAG_ASTERISK,
     IE_FLAG_KEYWORD,
     IE_FLAG_EXTENSION,
@@ -81,22 +78,45 @@ typedef struct {
     dstr_t dstr;
 } ie_flag_t;
 
-typedef struct ie_flag_list_t {
+typedef struct {
     bool answered:1;
     bool flagged:1;
     bool deleted:1;
     bool seen:1;
     bool draft:1;
     bool recent:1;
-    bool noselect:1;
-    bool marked:1;
-    bool unmarked:1;
     bool asterisk:1;
     dstr_link_t *keywords;
     dstr_link_t *extensions;
 } ie_flag_list_t;
 
 void ie_flag_list_free(ie_flag_list_t* fl);
+
+typedef enum {
+    IE_MFLAG_NOINFERIORS,
+    IE_MFLAG_NOSELECT,
+    IE_MFLAG_MARKED,
+    IE_MFLAG_UNMARKED,
+    IE_MFLAG_EXTENSION,
+} ie_mflag_type_t;
+
+const dstr_t *mflag_type_to_dstr(ie_mflag_type_t f);
+
+typedef struct {
+    ie_mflag_type_t type;
+    // dstr is only non-null if type is KEYWORD or EXTENSION
+    dstr_t dstr;
+} ie_mflag_t;
+
+typedef struct {
+    bool noinferiors:1;
+    bool noselect:1;
+    bool marked:1;
+    bool unmarked:1;
+    dstr_link_t *extensions;
+} ie_mflag_list_t;
+
+void ie_mflag_list_free(ie_mflag_list_t* mfl);
 
 typedef struct {
     bool inbox;
@@ -276,13 +296,16 @@ union imap_expr_t {
     imap_time_t time;
     ie_flag_type_t flag_type;
     ie_flag_t flag;
+    ie_flag_list_t flag_list;
+    ie_mflag_type_t mflag_type;
+    ie_mflag_t mflag;
+    ie_mflag_list_t mflag_list;
     ie_mailbox_t mailbox;
     ie_st_attr_t st_attr; // a single status attribute
     unsigned char st_attr_cmd; // logical OR of status attributes in command
     ie_st_attr_resp_t st_attr_resp; // logical OR, and with response values
     ie_seq_set_t *seq_set;
     dstr_link_t *dstr_link;
-    ie_flag_list_t flag_list;
     ie_partial_t partial;
     ie_section_part_t *sect_part;
     ie_sect_txt_t sect_txt;

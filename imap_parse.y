@@ -410,9 +410,6 @@ catch:
             case IE_FLAG_SEEN: out.seen = true; break; \
             case IE_FLAG_DRAFT: out.draft = true; break; \
             case IE_FLAG_RECENT: out.recent = true; break; \
-            case IE_FLAG_NOSELECT: out.noselect = true; break; \
-            case IE_FLAG_MARKED: out.marked = true; break; \
-            case IE_FLAG_UNMARKED: out.unmarked = true; break; \
             case IE_FLAG_ASTERISK: out.asterisk = true; break; \
             /* in the other cases, allocate a dstr_link and append to list */ \
             case IE_FLAG_KEYWORD: \
@@ -428,6 +425,29 @@ catch:
                     end = &out.keywords; \
                 else \
                     end = &out.extensions; \
+                while(*end) end = &(*end)->next; \
+                *end = temp; \
+        }
+
+    #define ADD_MFLAG(out, list, flag) \
+        out = list; \
+        dstr_link_t *temp, **end; \
+        switch(flag.type){ \
+            /* in standard cases, mark the flag as "set" */ \
+            case IE_MFLAG_NOINFERIORS: out.noinferiors = true; break; \
+            case IE_MFLAG_NOSELECT: out.noselect = true; break; \
+            case IE_MFLAG_MARKED: out.marked = true; break; \
+            case IE_MFLAG_UNMARKED: out.unmarked = true; break; \
+            /* in the other cases, allocate a dstr_link and append to list */ \
+            case IE_MFLAG_EXTENSION: \
+                temp = malloc(sizeof(*temp)); \
+                if(!temp){ \
+                    parser->error = E_NOMEM; \
+                    ACCEPT; \
+                } \
+                temp->dstr = flag.dstr; \
+                temp->next = NULL; \
+                end = &out.extensions; \
                 while(*end) end = &(*end)->next; \
                 *end = temp; \
         }
@@ -608,11 +628,14 @@ catch:
 /*     DELETED (listed above) */
 /*     SEEN (listed above) */
 /*     DRAFT (listed above) */
+/*     RECENT (listed above) */
+%token ASTERISK_FLAG
+
+/* mailbox-specific flags */
+%token NOINFERIORS
 %token NOSELECT
 %token MARKED
 %token UNMARKED
-/*     RECENT (listed above) */
-%token ASTERISK_FLAG
 
 /* INTERNALDATE */
 %token JAN
@@ -646,13 +669,15 @@ catch:
 
 %type <flag_type> flag
 %type <flag_type> fflag
-%type <flag_type> mflag
 %type <flag_type> pflag
 %type <flag> keep_flag
 %type <flag> keep_fflag
-%type <flag> keep_mflag
 %type <flag> keep_pflag
 %destructor { dstr_free(& $$.dstr); } <flag>
+
+%type <mflag_type> mflag
+%type <mflag> keep_mflag
+%destructor { dstr_free(& $$.dstr); } <mflag>
 
 %type <flag_list> append_flags
 %type <flag_list> append_flags_0
@@ -662,13 +687,15 @@ catch:
 %type <flag_list> store_flags_1
 %type <flag_list> pflags_0
 %type <flag_list> pflags_1
-%type <flag_list> mflags_0
-%type <flag_list> mflags_1
 %type <flag_list> flags_0
 %type <flag_list> flags_1
 %type <flag_list> f_flags_0
 %type <flag_list> f_flags_1
 %destructor { ie_flag_list_free(& $$); } <flag_list>
+
+%type <mflag_list> mflags_0
+%type <mflag_list> mflags_1
+%destructor { ie_mflag_list_free(& $$); } <mflag_list>
 
 %type <num> num
 %type <num> digit
@@ -1100,7 +1127,13 @@ copy_cmd: tag SP uid_mode[u] COPY SP seq_set[set] SP keep_mailbox[mbx]
              ^^^^^^^ ^^^^---> status code, followed by general text
         * OK [ALERT] asdf
              ^^^^^^^^^^^^---> no status code, followed by general text which
-                              just happens to look like general text...
+                              just happens to look like a status code...
+   We will resolve this by forcing any post-status text starting with a '['
+   to conform to the status code style, meaning that this valid input:
+
+        * OK [IMAP4rev1 has a shitty grammar ambiguity
+
+   will not be accepted.  This seems like an acceptable sacrifice.
 */
 
 status_type_resp: status_type[s] status_extra[e] { $$ = STTOK_FUSE($s, $e); };
@@ -1205,18 +1238,18 @@ pflags_1: keep_pflag[f]              { ADD_FLAG($$, (ie_flag_list_t){0}, $f); }
 ;
 
 /*** LIST/LSUB responses ***/
-list_resp: { MODE(FLAG); } '(' mflags_0[f] ')' SP nqchar SP keep_mailbox[m]
+list_resp: { MODE(MFLAG); } '(' mflags_0[f] ')' SP nqchar SP keep_mailbox[m]
            { LIST_RESP($f, $nqchar, $m); };
 
-lsub_resp: { MODE(FLAG); } '(' mflags_0[f] ')' SP nqchar SP keep_mailbox[m]
+lsub_resp: { MODE(MFLAG); } '(' mflags_0[f] ')' SP nqchar SP keep_mailbox[m]
            { LSUB_RESP($f, $nqchar, $m); };
 
-mflags_0: %empty    { $$ = (ie_flag_list_t){0}; }
+mflags_0: %empty    { $$ = (ie_mflag_list_t){0}; }
         | mflags_1
 ;
 
-mflags_1: keep_mflag[f]              { ADD_FLAG($$, (ie_flag_list_t){0}, $f); }
-        | mflags_1[l] SP keep_mflag[f]                { ADD_FLAG($$, $l, $f); }
+mflags_1: keep_mflag[f]            { ADD_MFLAG($$, (ie_mflag_list_t){0}, $f); }
+        | mflags_1[l] SP keep_mflag[f]               { ADD_MFLAG($$, $l, $f); }
 ;
 
 /*** STATUS responses ***/
@@ -1438,16 +1471,17 @@ fflag: flag
      | '\\' RECENT       { $$ = IE_FLAG_RECENT; }
 ;
 
-/* 'mflag" for "mailbox flag" */
-mflag: flag
-     | NOSELECT         { $$ = IE_FLAG_NOSELECT; }
-     | MARKED           { $$ = IE_FLAG_MARKED; }
-     | UNMARKED         { $$ = IE_FLAG_UNMARKED; }
-;
-
 /* "pflag" for "permanent flag" */
 pflag: flag
      | ASTERISK_FLAG    { $$ = IE_FLAG_ASTERISK; }
+;
+
+/* 'mflag" for "mailbox flag".  Actually a totally different flag list. */
+mflag: '\\' NOSELECT    { $$ = IE_MFLAG_NOSELECT; }
+     | '\\' MARKED      { $$ = IE_MFLAG_MARKED; }
+     | '\\' UNMARKED    { $$ = IE_MFLAG_UNMARKED; }
+     | '\\' NOINFERIORS { $$ = IE_MFLAG_NOINFERIORS; }
+     | '\\' atom        { $$ = IE_MFLAG_EXTENSION; }
 ;
 
 mailbox: prembx astring        { $$ = false; /* not an INBOX */ }
@@ -1544,7 +1578,7 @@ keep_astring: prekeep astring { $$ = KEEP_REF($prekeep); }
 keep_flag: prekeep flag { $$ = (ie_flag_t){$flag, KEEP_REF($prekeep)}; };
 keep_fflag: prekeep fflag { $$ = (ie_flag_t){$fflag, KEEP_REF($prekeep)}; };
 keep_pflag: prekeep pflag { $$ = (ie_flag_t){$pflag, KEEP_REF($prekeep)}; };
-keep_mflag: prekeep mflag { $$ = (ie_flag_t){$mflag, KEEP_REF($prekeep)}; };
+keep_mflag: prekeep mflag { $$ = (ie_mflag_t){$mflag, KEEP_REF($prekeep)}; };
 keep_mailbox: prekeep mailbox { $$ = (ie_mailbox_t){$mailbox, KEEP_REF($prekeep)}; };
 
 SP: ' ';
