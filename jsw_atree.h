@@ -9,7 +9,7 @@
 
     > Created (Julienne Walker): September 10, 2005
     > Corrections (James Bucanek): April 10, 2006
-    > API Modified: Ryan Beethe December 2, 2018
+    > API Modified (Splintermail Dev) December 2, 2018
 
   This code is in the public domain. Anyone may
   use it or change it in any way that they see
@@ -33,14 +33,15 @@ typedef struct jsw_anode {
   int               level;   /* Horizontal level for balance */
   void             *data;    /* User-defined content */
   struct jsw_anode *link[2]; /* Left (0) and right (1) links */
+  size_t count;              /* number of nodes in subtree */
 } jsw_anode_t;
 
 typedef struct jsw_atree {
   jsw_anode_t *root; /* Top of the tree */
   jsw_anode_t *nil;  /* End of tree sentinel */
-  cmp_f        cmp;  /* Compare two items */
+  cmp_f        cmp;  /* Compare two items (user-defined) */
   rel_f        rel;  /* Destroy an item (user-defined) */
-  size_t       size; /* Number of items (user-defined) */
+  size_t       size; /* Number of items */
 } jsw_atree_t;
 
 typedef struct jsw_atrav {
@@ -53,10 +54,12 @@ typedef struct jsw_atrav {
 /* Andersson tree functions */
 derr_t       jsw_ainit ( jsw_atree_t *tree, cmp_f cmp, rel_f rel );
 void         jsw_adelete ( jsw_atree_t *tree );
-void        *jsw_afind ( jsw_atree_t *tree, void *data );
+void        *jsw_afind ( jsw_atree_t *tree, void *data, size_t *idx );
 void         jsw_ainsert ( jsw_atree_t *tree, jsw_anode_t *node );
 int          jsw_aerase ( jsw_atree_t *tree, void *data );
 size_t       jsw_asize ( jsw_atree_t *tree );
+// index into tree
+void        *jsw_aindex ( jsw_atree_t *tree, size_t idx );
 
 /* Traversal functions */
 void        *jsw_atfirst ( jsw_atrav_t *trav, jsw_atree_t *tree );

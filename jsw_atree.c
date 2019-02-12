@@ -22,6 +22,10 @@
 /* Remove left horizontal links */
 #define skew(t) do {                                      \
   if ( t->link[0]->level == t->level && t->level != 0 ) { \
+    /* fix count */                                                \
+    t->link[0]->count = t->count;                                  \
+    t->count = t->link[0]->link[1]->count + t->link[1]->count + 1; \
+    /* continue with skew operation */                             \
     jsw_anode_t *save = t->link[0];                       \
     t->link[0] = save->link[1];                           \
     save->link[1] = t;                                    \
@@ -32,6 +36,10 @@
 /* Remove consecutive horizontal links */
 #define split(t) do {                                              \
   if ( t->link[1]->link[1]->level == t->level && t->level != 0 ) { \
+    /* fix count */                                                \
+    t->link[1]->count = t->count;                                  \
+    t->count = t->link[0]->count + t->link[1]->link[0]->count + 1; \
+    /* continue with split operation */                            \
     jsw_anode_t *save = t->link[1];                                \
     t->link[1] = save->link[0];                                    \
     save->link[0] = t;                                             \
@@ -44,6 +52,7 @@ static void place_node ( jsw_atree_t *tree, jsw_anode_t *node )
 {
   node->level = 1;
   node->link[0] = node->link[1] = tree->nil;
+  node->count = 1;
 }
 
 derr_t jsw_ainit ( jsw_atree_t *tree, cmp_f cmp, rel_f rel )
@@ -57,6 +66,7 @@ derr_t jsw_ainit ( jsw_atree_t *tree, cmp_f cmp, rel_f rel )
   tree->nil->data = NULL; /* Simplifies some ops */
   tree->nil->level = 0;
   tree->nil->link[0] = tree->nil->link[1] = tree->nil;
+  tree->nil->count = 0;
 
   /* Initialize tree */
   tree->root = tree->nil;
@@ -93,9 +103,10 @@ void jsw_adelete ( jsw_atree_t *tree )
   free ( tree->nil );
 }
 
-void *jsw_afind ( jsw_atree_t *tree, void *data )
+void *jsw_afind ( jsw_atree_t *tree, void *data, size_t *idx )
 {
   jsw_anode_t *it = tree->root;
+  size_t left_count = 0;
 
   while ( it != tree->nil ) {
     int cmp = tree->cmp ( it->data, data );
@@ -103,10 +114,13 @@ void *jsw_afind ( jsw_atree_t *tree, void *data )
     if ( cmp == 0 )
       break;
 
-    it = it->link[cmp < 0];
+    int dir = ( cmp < 0 );
+    if ( dir ) left_count += it->link[0]->count + 1;
+    it = it->link[dir];
   }
 
-  /* nil->data == NULL */
+  /* nil->data == NULL, nil->count = 0 */
+  if ( idx ) *idx = left_count + it->link[0]->count;
   return it->data;
 }
 
@@ -124,6 +138,7 @@ void jsw_ainsert ( jsw_atree_t *tree, jsw_anode_t *node )
 
     /* Find a spot and save the path */
     for ( ; ; ) {
+      it->count++;
       path[top++] = it;
       dir = tree->cmp ( it->data, node->data ) < 0;
 
@@ -216,6 +231,7 @@ int jsw_aerase ( jsw_atree_t *tree, void *data )
       heir->link[0] = it->link[0];
       heir->link[1] = it->link[1];
       heir->level = it->level;
+      heir->count = it->count;
       // fix pointer-to-the-deleted-element stored in the path
       path[top_upon_entry - 1] = heir;
       // fix pointer-to-the-deleted-element in the deleted element's parent
@@ -232,6 +248,7 @@ int jsw_aerase ( jsw_atree_t *tree, void *data )
     /* Walk back up and rebalance */
     while ( --top >= 0 ) {
       jsw_anode_t *up = path[top];
+      up->count--;
 
       if ( top != 0 )
         dir = path[top - 1]->link[1] == up;
@@ -347,4 +364,26 @@ void *jsw_atnext ( jsw_atrav_t *trav )
 void *jsw_atprev ( jsw_atrav_t *trav )
 {
   return move ( trav, 0 ); /* Toward smaller items */
+}
+
+void *jsw_aindex ( jsw_atree_t *tree, size_t idx )
+{
+    /* if count idx is too high, return NULL */
+    if(idx >= tree->size)
+        return NULL;
+
+    /* walk through tree making decisions based on counts */
+    jsw_anode_t *it = tree->root;
+    size_t left_count = 0;
+    while ( true ){
+        /* index of the current node */
+        size_t cur = left_count + it->link[0]->count;
+        if ( cur == idx )
+            return it->data;
+
+        int dir = ( cur < idx );
+        /* add to left_count only if we move right */
+        if ( dir ) left_count += it->link[0]->count + 1;
+        it = it->link[dir];
+    }
 }
