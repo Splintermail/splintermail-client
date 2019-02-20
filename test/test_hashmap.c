@@ -68,6 +68,12 @@ static derr_t test_hashmap(void){
         if(out->n != i) ORIG_GO(E_VALUE, "dereferenced wrong value", fail_hm);
     }
 
+    // iterate through everything
+    size_t count = 0;
+    for(hashmap_iter_t i = hashmap_first(&h); i.more; hashmap_next(&i)){
+        if(++count > num_elems)  ORIG(E_VALUE, "iterated too many elements");
+    }
+    if(count < num_elems) ORIG(E_VALUE, "iterated too few elements");
 
 fail_hm:
     hashmap_free(&h);

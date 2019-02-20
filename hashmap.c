@@ -1,7 +1,7 @@
 #include "hashmap.h"
 #include "logger.h"
 
-#define INIT_NUM_BUCKETS 32 /* power of 2 */
+#define INIT_NUM_BUCKETS 1 /* power of 2 */
 #define MAX_LOAD_FACTOR 5
 
 
@@ -399,33 +399,42 @@ void hashmap_delu(hashmap_t *h, unsigned int key, void **old, bool *found){
     hashmap_del(h, NULL, key, false, old, found);
 }
 
-void *hashmap_first(hashmap_t *h, hashmap_iter_t *i){
-    i->hashmap = h;
-    i->bucket_idx = 0;
+hashmap_iter_t hashmap_first(hashmap_t *h){
+    hashmap_iter_t i;
+    i.hashmap = h;
+    i.bucket_idx = 0;
+    i.more = true;
     // get the first non-empty bucket
-    for( ; i->bucket_idx < i->hashmap->num_buckets; i->bucket_idx++){
-        if(i->hashmap->buckets[i->bucket_idx]){
-            i->current = i->hashmap->buckets[i->bucket_idx];
-            return i->current->data;
+    for( ; i.bucket_idx < i.hashmap->num_buckets; i.bucket_idx++){
+        if(i.hashmap->buckets[i.bucket_idx]){
+            i.current = i.hashmap->buckets[i.bucket_idx];
+            i.data = i.current->data;
+            return i;
         }
     }
-    // found nothing, return NULL
-    return NULL;
+    // found nothing, set more to false
+    i.data = NULL;
+    i.more = false;
+    return i;
 }
 
-void *hashmap_next(hashmap_iter_t *i){
+void hashmap_next(hashmap_iter_t *i){
     // give the next item in this bucket's linked list, if any
     if(i->current->next){
         i->current = i->current->next;
-        return i->current->data;
+        i->data = i->current->data;
+        return;
     }
     // otherwise, find the next non-empty bucket
+    i->bucket_idx++;
     for( ; i->bucket_idx < i->hashmap->num_buckets; i->bucket_idx++){
         if(i->hashmap->buckets[i->bucket_idx]){
             i->current = i->hashmap->buckets[i->bucket_idx];
-            return i->current->data;
+            i->data = i->current->data;
+            return;
         }
     }
-    // found nothing, return NULL
-    return NULL;
+    // found nothing, set more to false
+    i->data = NULL;
+    i->more = false;
 }
