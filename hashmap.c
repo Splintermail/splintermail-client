@@ -399,42 +399,103 @@ void hashmap_delu(hashmap_t *h, unsigned int key, void **old, bool *found){
     hashmap_del(h, NULL, key, false, old, found);
 }
 
-hashmap_iter_t hashmap_first(hashmap_t *h){
-    hashmap_iter_t i;
-    i.hashmap = h;
-    i.bucket_idx = 0;
-    i.more = true;
+static inline void locate_first_elem(hashmap_iter_t *i){
     // get the first non-empty bucket
-    for( ; i.bucket_idx < i.hashmap->num_buckets; i.bucket_idx++){
-        if(i.hashmap->buckets[i.bucket_idx]){
-            i.current = i.hashmap->buckets[i.bucket_idx];
-            i.data = i.current->data;
-            return i;
+    i->bucket_idx = 0;
+    for( ; i->bucket_idx < i->hashmap->num_buckets; i->bucket_idx++){
+        if(i->hashmap->buckets[i->bucket_idx]){
+            // track the forward pointer to element
+            i->prevs_next = &i->hashmap->buckets[i->bucket_idx];
+            i->current = i->hashmap->buckets[i->bucket_idx];
+            return;
         }
     }
-    // found nothing, set more to false
-    i.data = NULL;
-    i.more = false;
-    return i;
+    // found nothing
+    i->current = NULL;
 }
-
-void hashmap_next(hashmap_iter_t *i){
+static inline void locate_next_elem(hashmap_iter_t *i){
+    if(!i->current) return;
     // give the next item in this bucket's linked list, if any
     if(i->current->next){
+        // track the forward pointer to element
+        i->prevs_next = &i->current->next;
         i->current = i->current->next;
-        i->data = i->current->data;
         return;
     }
     // otherwise, find the next non-empty bucket
     i->bucket_idx++;
     for( ; i->bucket_idx < i->hashmap->num_buckets; i->bucket_idx++){
         if(i->hashmap->buckets[i->bucket_idx]){
+            // track the forward pointer to element
+            i->prevs_next = &i->hashmap->buckets[i->bucket_idx];
             i->current = i->hashmap->buckets[i->bucket_idx];
-            i->data = i->current->data;
             return;
         }
     }
-    // found nothing, set more to false
-    i->data = NULL;
-    i->more = false;
+    // no more elements
+    i->current = NULL;
+}
+
+hashmap_iter_t hashmap_first(hashmap_t *h){
+    hashmap_iter_t i = {.hashmap = h};
+    locate_first_elem(&i);
+    if(i.current){
+        i.data = i.current->data;
+        i.more = true;
+    }else{
+        i.data = NULL;
+        i.more = false;
+    }
+    return i;
+}
+
+void hashmap_next(hashmap_iter_t *i){
+    locate_next_elem(i);
+    if(i->current){
+        i->data = i->current->data;
+        i->more = true;
+    }else{
+        i->data = NULL;
+        i->more = false;
+    }
+}
+
+hashmap_iter_t hashmap_pop_first(hashmap_t *h){
+    hashmap_iter_t i = {.hashmap = h};
+    locate_first_elem(&i);
+    if(i.current){
+        i.data = i.current->data;
+        i.more = true;
+    }else{
+        // zero-element hashmap case
+        i.data = NULL;
+        i.more = false;
+        return i;
+    }
+    // fix forward reference
+    i.prevs_next = &i.current->next;
+    // decrement element counter
+    i.hashmap->num_elems--;
+    // prepare the next "next" call before giving the memory back
+    locate_next_elem(&i);
+    return i;
+}
+
+void hashmap_pop_next(hashmap_iter_t *i){
+    // locate_next_elem() is already called from before
+    if(i->current){
+        i->data = i->current->data;
+        i->more = true;
+    }else{
+        i->data = NULL;
+        i->more = false;
+        // do nothing else
+        return;
+    }
+    // fix forward reference
+    *i->prevs_next = i->current->next;
+    // decrement element counter
+    i->hashmap->num_elems--;
+    // prepare the next "next" call before giving the memory back
+    locate_next_elem(i);
 }

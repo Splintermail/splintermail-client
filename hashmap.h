@@ -27,6 +27,7 @@ typedef struct {
     // internal state
     hashmap_t *hashmap;
     size_t bucket_idx;
+    hash_elem_t **prevs_next;
     hash_elem_t *current;
     // for application to read:
     void *data;
@@ -72,5 +73,9 @@ void hashmap_next(hashmap_iter_t *i);
 //    for(hashmap_iter_t i = hashmap_first(&h); i.more; hashmap_next(&i)){
 //        do_something(i.data);
 //    }
+
+// "pop"ing iterators, also remove objects from the hashmap
+hashmap_iter_t hashmap_pop_first(hashmap_t *h);
+void hashmap_pop_next(hashmap_iter_t *i);
 
 #endif // HASHMAP_H

@@ -43,39 +43,54 @@ static derr_t test_hashmap(void){
 
     // insert everything
     for(unsigned int i = 0; i < UINT_ELEMS; i++){
-        PROP_GO( hashmap_putu(&h, i, &elems[i].helem), fail_hm);
+        PROP_GO( hashmap_putu(&h, i, &elems[i].helem), fail_h);
     }
     for(size_t i = UINT_ELEMS; i < num_elems; i++){
         char cmaj = (char)('a' + (i%(26*26) - i%26)/26);
         char cmin = (char)('a' + (i%26));
-        PROP_GO( FMT(&elems[i].d, "%x%x", FC(cmaj), FC(cmin)), fail_hm);
-        PROP_GO( hashmap_puts(&h, &elems[i].d, &elems[i].helem), fail_hm);
+        PROP_GO( FMT(&elems[i].d, "%x%x", FC(cmaj), FC(cmin)), fail_h);
+        PROP_GO( hashmap_puts(&h, &elems[i].d, &elems[i].helem), fail_h);
     }
 
     // dereference everything
     for(unsigned int i = 0; i < UINT_ELEMS; i++){
         void *val;
-        PROP_GO( hashmap_getu(&h, i, &val, NULL), fail_hm);
+        PROP_GO( hashmap_getu(&h, i, &val, NULL), fail_h);
         // make sure we got the right value
         hashable_t *out = val;
-        if(out->n != i) ORIG_GO(E_VALUE, "dereferenced wrong value", fail_hm);
+        if(out->n != i) ORIG_GO(E_VALUE, "dereferenced wrong value", fail_h);
     }
     for(size_t i = UINT_ELEMS; i < num_elems; i++){
         void *val;
-        PROP_GO( hashmap_gets(&h, &elems[i].d, &val, NULL), fail_hm);
+        PROP_GO( hashmap_gets(&h, &elems[i].d, &val, NULL), fail_h);
         // make sure we got the right value
         hashable_t *out = val;
-        if(out->n != i) ORIG_GO(E_VALUE, "dereferenced wrong value", fail_hm);
+        if(out->n != i) ORIG_GO(E_VALUE, "dereferenced wrong value", fail_h);
     }
 
     // iterate through everything
+    hashmap_iter_t i;
     size_t count = 0;
-    for(hashmap_iter_t i = hashmap_first(&h); i.more; hashmap_next(&i)){
-        if(++count > num_elems)  ORIG(E_VALUE, "iterated too many elements");
+    for(i = hashmap_first(&h); i.more; hashmap_next(&i)){
+        if(++count > num_elems)
+            ORIG_GO(E_VALUE, "iterated too many elements", fail_h);
     }
-    if(count < num_elems) ORIG(E_VALUE, "iterated too few elements");
+    if(count < num_elems)
+        ORIG_GO(E_VALUE, "iterated too few elements", fail_h);
 
-fail_hm:
+    // again, but popping
+    count = 0;
+    for(i = hashmap_pop_first(&h); i.more; hashmap_pop_next(&i)){
+        if(++count > num_elems)
+            ORIG_GO(E_VALUE, "iterated too many elements", fail_h);
+    }
+    if(count < num_elems)
+        ORIG_GO(E_VALUE, "iterated too few elements", fail_h);
+    if(h.num_elems != 0)
+        ORIG_GO(E_VALUE, "hashmap should be empty", fail_h);
+
+
+fail_h:
     hashmap_free(&h);
 fail_elems:
     // free all of the dstr's
@@ -86,12 +101,25 @@ fail_elems:
     return error;
 }
 
+static derr_t test_empty_iter(void){
+    derr_t error = E_OK;
+    hashmap_t h;
+    PROP( hashmap_init(&h) );
+    for(hashmap_iter_t i = hashmap_first(&h); i.more; hashmap_next(&i)){
+        ORIG_GO(E_VALUE, "iterated too many elements", fail_h);
+    }
+fail_h:
+    hashmap_free(&h);
+    return error;
+}
+
 int main(int argc, char** argv){
     derr_t error;
     // parse options and set default log level
     PARSE_TEST_OPTIONS(argc, argv, NULL, LOG_LVL_WARN);
 
     PROP_GO( test_hashmap(), test_fail);
+    PROP_GO( test_empty_iter(), test_fail);
 
     LOG_ERROR("PASS\n");
     return 0;
