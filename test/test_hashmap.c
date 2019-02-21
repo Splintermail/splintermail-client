@@ -89,7 +89,6 @@ static derr_t test_hashmap(void){
     if(h.num_elems != 0)
         ORIG_GO(E_VALUE, "hashmap should be empty", fail_h);
 
-
 fail_h:
     hashmap_free(&h);
 fail_elems:

@@ -49,7 +49,8 @@ set(OBJ_TGTS api_client
              imap_parse
              imap_expression
              imap_read
-             hashmap)
+             hashmap
+             imap_maildir)
 
 set(EXE_TGTS srvcli
              splintermail
@@ -82,7 +83,8 @@ set(TEST_EXE_TGTS test_common
                   test_imap_scan
                   test_imap_read
                   test_imap_client
-                  test_hashmap)
+                  test_hashmap
+                  test_imap_maildir)
 
 # additional TGTS if we are building server code
 if("${BUILD_SERVER_CODE}")
@@ -248,6 +250,7 @@ add_dependencies(imap_scan_o bison_header)
 obj_depend_obj(imap_read imap_parse imap_scan common)
 add_dependencies(imap_read_o bison_header)
 obj_depend_obj(hashmap common)
+obj_depend_obj(imap_maildir hashmap fileops)
 
 
 # describe executables with dependencies
@@ -387,6 +390,7 @@ if("${BUILD_TESTS}")
     target_link_libraries(test_imap_read imap_read)
     target_link_libraries(test_imap_client imap_read)
     target_link_libraries(test_hashmap hashmap)
+    target_link_libraries(test_imap_maildir imap_maildir)
 
     if(WIN32)
         # make sure the user provided the location of Pthreads

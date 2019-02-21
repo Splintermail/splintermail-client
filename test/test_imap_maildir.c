@@ -1,0 +1,66 @@
+#include <common.h>
+#include <logger.h>
+#include <imap_maildir.h>
+
+#include "test_utils.h"
+
+// path to where the test files can be found
+const char* g_test_files;
+
+// prints a leading space
+static void print_mflag_list(ie_mflag_list_t mflags){
+    if(mflags.noinferiors){ LOG_ERROR(" \\NoInferiors"); };
+    if(mflags.noselect){ LOG_ERROR(" \\Noselect"); };
+    if(mflags.marked){ LOG_ERROR(" \\Marked");   };
+    if(mflags.unmarked){ LOG_ERROR(" \\Unmarked"); };
+    for(dstr_link_t *d = mflags.extensions; d != NULL; d = d->next){
+        LOG_ERROR(" \\%x", FD(&d->dstr));
+    }
+}
+
+static derr_t print_folders(imaildir_t *m, size_t indent){
+    DSTR_STATIC(spaces, "                                                   ");
+    dstr_t pre = dstr_sub(&spaces, 0, indent);
+    if(indent){
+        PROP( PFMT("%x%x", FD(&pre), FD(&m->name)) );
+    }else{
+        PROP( PFMT("%x%x", FD(&m->name)) );
+    }
+    print_mflag_list(m->mflags);
+    PROP( PFMT("\n") );
+    hashmap_iter_t i;
+    for(i = hashmap_first(&m->children); i.more; hashmap_next(&i)){
+        PROP( print_folders((imaildir_t*)i.data, indent + 2) );
+    }
+    return E_OK;
+}
+
+static derr_t test_imaildir_open(void){
+    derr_t error;
+    string_builder_t files = sb_append(NULL, FS(g_test_files));
+    string_builder_t path = sb_append(&files, FS("imap_maildir"));
+    // allocate new imaildir
+    imaildir_t *m;
+    PROP( imaildir_new(&m, &path, &DSTR_LIT("a")));
+
+    PROP_GO( print_folders(m, 0), cu_m);
+
+cu_m:
+    imaildir_free(m);
+    return error;
+}
+
+int main(int argc, char** argv){
+    derr_t error;
+    // parse options and set default log level
+    PARSE_TEST_OPTIONS(argc, argv, &g_test_files, LOG_LVL_WARN);
+
+    PROP_GO( test_imaildir_open(), test_fail);
+
+    LOG_ERROR("PASS\n");
+    return 0;
+
+test_fail:
+    LOG_ERROR("FAIL\n");
+    return 1;
+}
