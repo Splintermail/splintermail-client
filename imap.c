@@ -5,12 +5,55 @@
 #include "loop.h"
 #include "ixs.h"
 #include "ix.h"
+#include "imap_engine.h"
 
 #define KEY "../c/test/files/ssl/good-key.pem"
 #define CERT "../c/test/files/ssl/good-cert.pem"
 #define DH "../c/test/files/ssl/dh_4096.pem"
 
 static loop_t loop;
+// static imap_engine_t imape;
+
+// add a oneshot action to be run at the beginning of the loop
+static void oneshot_cb(uv_prepare_t *prep){
+    derr_t error = E_OK;
+
+    // Here is where something needs to happen if we are going to test imap
+    // PROP_GO( imape_conn_out(), done);
+
+    // this is a placeholder to avoid compiler warnings
+    PROP_GO( E_OK, done);
+
+    LOG_ERROR("oneshot\n");
+
+done:
+
+    // don't run this again
+    uv_prepare_stop(prep);
+    uv_close((uv_handle_t*)prep, NULL);
+
+    CATCH(E_ANY){
+        LOG_ERROR("failed to setup outgoing connection, aborting\n");
+        loop_abort(&loop);
+    }
+}
+
+static derr_t add_oneshot(loop_t *loop, uv_prepare_t *oneshot){
+    int ret = uv_prepare_init(&loop->uv_loop, oneshot);
+    if(ret < 0){
+        ORIG(E_UV, "error initing prepare handle");
+    }
+
+    // no user data needed
+    oneshot->data = NULL;
+
+    ret = uv_prepare_start(oneshot, oneshot_cb);
+    if(ret < 0){
+        ORIG(E_UV, "error initing prepare handle");
+    }
+
+    return E_OK;
+}
 
 
 static derr_t test_imap(void){
@@ -21,10 +64,16 @@ static derr_t test_imap(void){
     // initialize loop
     PROP_GO( loop_init(&loop), cu_ssl_lib);
 
+    // TLS engine doesn't need any starting
+
+    // IMAP engine needs initializing
+
+    PROP_GO( imape_init(), cu_loop);
+
     // initialize SSL contexts
     ssl_context_t ctx_srv;
     ssl_context_t ctx_cli;
-    PROP_GO( ssl_context_new_client(&ctx_cli), cu_loop);
+    PROP_GO( ssl_context_new_client(&ctx_cli), cu_imape);
     PROP_GO( ssl_context_new_server(&ctx_srv, CERT, KEY, DH), cu_ctx_cli);
 
     // for the listener sockets
@@ -33,6 +82,9 @@ static derr_t test_imap(void){
     // add listener to loop
     PROP_GO( loop_add_listener(&loop, "0.0.0.0", "12345", &ix_listener),
              cu_ctx_srv);
+
+    uv_prepare_t oneshot;
+    PROP_GO( add_oneshot(&loop, &oneshot), cu_ctx_srv );
 
     // run the loop
     PROP_GO( loop_run(&loop), cu_ctx_srv);
@@ -43,6 +95,8 @@ cu_ctx_srv:
     ssl_context_free(&ctx_srv);
 cu_ctx_cli:
     ssl_context_free(&ctx_cli);
+cu_imape:
+    imape_free();
 cu_loop:
     loop_free(&loop);
 cu_ssl_lib:

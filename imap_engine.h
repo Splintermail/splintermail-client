@@ -26,6 +26,9 @@
 
 */
 
+derr_t imape_init(void);
+void imape_free(void);
+
 void imape_read(ixs_t *ixs);
 void imape_write_done(ixs_t *ixs);
 
@@ -71,21 +74,28 @@ void resp_expunge(void);
 void resp_fetch(void); // at any time, basically
 
 /*
-IMAP Engine per-connection IMAP state:
+IMAP Engine state:
 */
 
-typedef enum imape_state_t {
-    IMAPE_STATE_NOAUTH,
-    IMAPE_STATE_AUTH,
-    IMAPE_STATE_SELECTED,
-    IMAPE_STATE_LOGOUT,
-};
-
 typedef struct {
-    dstr_t name;
-    string_builder_t path;
-    dstr_t name;
+    // where to place user folders
+    string_builder_t basepath;
+    // where to connect to
+    dstr_t url;
+    unsigned int port;
 } imape_t;
+
+/*
+IMAP connected user registry
+This per-application structure keeps track of:
+  - list of users connected to the application
+  - track one keybox-watcher imap connection per user
+  - track open folders, into which imap sessions have views
+*/
+
+// typedef struct {
+//
+// } imap_user_t;
 
 // add to the imap session context
 

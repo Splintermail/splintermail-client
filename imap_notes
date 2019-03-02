@@ -1,44 +1,4 @@
 # IMAP COMMANDS
-CAPABILITY
-NOOP
-LOGOUT
---
-STARTTLS
-AUTHENTICATE <auth mechanism name> (server responds, and stuff continues)
-LOGIN username password
---
-SELECT <mailbox name>
-EXAMINE
-CREATE
-DELETE
-RENAME
-SUBSCRIBE
-UNSUBSCRIBE
-LIST
-LSUB
-STATUS
-APPEND
---
-CHECK
-CLOSE
-EXPUNGE
-SEARCH*
-FETCH*
-STORE
-COPY
-UID
-
-# * these will be hard
-
-# IMAP RESPONSES
-
-Status responses:
-    OK          tagged      untagged
-    NO          tagged      untagged
-    BAD         tagged      untagged
-    PREAUTH                 untagged
-    BYE                     untagged
-
 Status response codes (optional):
     ALERT:
         human readable text, that should be passed to the user
@@ -107,15 +67,15 @@ BYE [response code] human-readable text:
     ambiguous.  If a UID command is in progress, EXPUNGE *can* be sent.
 
 * FETCH
-    can be response to a command or a unilater server data (flag update)
+    can be response to a command or a unilateral server data (flag update)
 
 Unilateral data:
     Bye
     untagged OK or NO
-    exists
-    recent
-    expunge
-    fetch
+    exists (indicates new message in the selected mailbox, even after APPEND)
+    recent (indicates new message, which is marked recent)
+    expunge (indicates a message has been deleted)
+    fetch (flag updates; nothing else is allowed to change in a message)
 
 # parsing issue:
 
@@ -193,6 +153,16 @@ With the following details:
   - There is also another special mailbox, with a user-facing name, perhaps
     "DITM Alerts", which exists only on the LOCAL STORE, through which DITM
     can communicate security alerts or critical failures or whatnot.
+
+data structures:
+  - Only one in-memory copy of a user's folder hierarchy, on a per-user basis.
+    A per-user data structure associated with a single imap connection keeps
+    track of the folders.  Each folder will have to be associated with things
+    like a list of pending deletions (which have to be coordinated between
+    multiple possible sessions) and a list of pending deletions, stuff like that
+  - A per-connection data structure keeps in memory the contents of a single
+    folder which that connection is associated with.
+  -
 
 
 Order of work is:
@@ -425,3 +395,109 @@ New bugs:
         I dunno.  The documentation seems to say no but I don't see how else
         you would free allocated buffers.  Smells like a recipe for a memory
         leak.
+
+Important hooks:
+  - msgs EXPUNGE or folder DELETE should check file permissions to make sure
+    command will succeed later
+  - we'll need some sort of transaction log to track pending file operations
+    in case of powerdown, so on reboot pending expunges,etc. are completed
+  - When a box is opened, the recent flags need to be grabbed and put in the
+    view of the box, but removed from the underlying box
+  - when a box is closed, that is a trigger to check for file-deleting any
+    expunged messages
+      - Actually, what should really happen is there should be a update_check()
+        hook called in several instances.  One such moment is after CHECK
+        command.  Also, after receiving certain commands but before responding
+        to them, it is allowed to change the message counts.  Those commands
+        are any command except (FETCH or STORE or SEARCH).
+  - on_message_file_deletion, queue EXPUNGE response for other sessions
+  - on_append, queue EXISTS resposne for other sessions
+  - on_flag_change queue FETCH responses for other sessions
+  - when generating EXISTS, RECENT, or FLAGS responses, the counts for each
+    should be calculated at resposne time by comparisons of real data
+
+Deletions:
+    I don't like how deletions are looking right now.  I dislike how there is
+    a per-message reference count, and how opening a mailbox could mean walking
+    through a hashmap of 10,000 or more messages to add references, and the
+    same process again to close the mailbox.
+
+    It makes more sense for the imap user session (ixu) to keep track of
+    deleted files, and with each deleted file, a list of sessions that may are
+    viewing it.  When a session closes the box, that triggers a garbage
+    collection of the deletion list, removing session references that the
+    deletion depends on.
+
+Updates:
+    I feel similarly about calculating updates as I do about deletions.  There
+    are scalability issues with the performance of calculating updates on large
+    boxes.  The number of updates is likely quite small compared to the size of
+    an inbox, and it makes sense to keep some sort of much smaller data
+    structure around to push short lists of messages-with-updates for each
+    session.
+
+    So a imap session (ixs) would have to keep a running count of recents, and
+    number of messages (for EXISTS).  Ok... that is pretty easy.
+
+    # exists (indicates new message in the selected mailbox, even after APPEND)
+    # recent (indicates new message, which is marked recent)
+    # expunge (indicates a message has been deleted)
+    # fetch (flag updates; nothing else is allowed to change in a message)
+
+Message sequences:
+    Message indicies are per-session, so should be stored in imap session (view
+    of a mailbox), and not in the user session (the "real" mailbox).
+
+    We need to be able to map UID->index numbers, (for generating EXPUNGE
+    response after messages are deleted by UID, and also able to dereference
+    messages by either index or by UID.  Storing a list of imsg_view pointers
+    which point to imsg_view's in a hashmap seems valid, but removing a message
+    is expensive (caveat: if message deletion is expensive, it's not the end
+    of the world).
+
+        deref msg from UID -> const time
+            hashmap lookup
+        deref msg from IDX -> const time
+            just index into array
+        get IDX from UID -> log(N) time (*see below)
+            binary search of our sorted UID array
+        get UID from IDX -> const time
+            hashmap lookup
+        delete message -> N time (memmove. *If you wanted to also update a lot
+                                  of cached seq numbers in the imsg_view_t's
+                                  you would make get-IDX-from-UID const time)
+
+
+    However, I see that if we modify our self-balancing binary tree to keep
+    per-node counts of child nodes, it would be possible to dereference either
+    by UID or by index, and easily go from one to the other.
+
+        deref msg from UID -> log(N) time (const time at cost of extra hashmap)
+            either walk the binary tree or look up via hashmap
+        deref msg from IDX -> log(N) time
+        get IDX from UID -> log(N) time
+        get UID from IDX -> log(N) time
+        delete message -> log(N) time
+
+    In order to optimize for both best-worst-case performance and general
+    coolness, I'm choosing option 2: modify jsw_atree to support indexing.
+
+Overall IMAP sequence:
+    init loop, tls engine, and imap engine
+    loop starts listening for connections
+    client A connects
+    imap session A initialized
+    outgoing connection for imap session (ixs) A created
+    client A passes login info for a@splintermail
+    login info validated
+    user context (ixu) A initialized for a@splintermail
+    outgoing connection for ixu A created (to watch the key box)
+    now just service commands as you recieve them
+    ...
+
+    user context A makes 1 outgoing connection:
+        which will watch for updates to the keys mailbox
+    client A
+        one will sit open watching for updates to the mailbox for syncing keys
+
+    user context A connects remotely, validates credentials

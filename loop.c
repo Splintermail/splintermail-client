@@ -15,6 +15,7 @@ static void uv_perror(const char *prefix, int code){
 
 
 derr_t read_buf_init(read_buf_t *rb, size_t size){
+
     // llist_elem is a self-pointer
     rb->llist_elem.data = rb;
 
@@ -474,7 +475,7 @@ static void close_any_handle(uv_handle_t *handle, void *arg){
             exit(9);
             break;
         case IX_TYPE_COMMAND:
-            LOG_ERROR("IXC CLOSENOT YET IMPLEMENTED\n");
+            LOG_ERROR("IXC CLOSE NOT YET IMPLEMENTED\n");
             exit(9);
             break;
         case IX_TYPE_LOOP:

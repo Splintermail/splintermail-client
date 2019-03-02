@@ -32,7 +32,8 @@ void maildir_free(maildir_t* mdir);
 // you have to close fd when you are done
 derr_t maildir_new_tmp_file(maildir_t* mdir, dstr_t* tempname, int* fd);
 /* throws: E_INTERNAL (from FMT, or unable to find new file)
-           E_FS (path too long or permissions error) */
+           E_FS (path too long or permissions error)
+           E_NOMEM */
 
 
 derr_t maildir_new_rename(maildir_t* mdir, const char* tempname,

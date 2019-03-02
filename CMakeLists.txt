@@ -64,7 +64,8 @@ set(TEST_OBJ_TGTS dummy_key_tool
                   fake_api_server
                   fake_pop_server
                   ditm_thread
-                  test_utils)
+                  test_utils
+                  fake_imap_client)
 
 set(TEST_EXE_TGTS test_common
                   test_pop_server
@@ -82,7 +83,6 @@ set(TEST_EXE_TGTS test_common
                   test_atree
                   test_imap_scan
                   test_imap_read
-                  test_imap_client
                   test_hashmap
                   test_imap_maildir)
 
@@ -348,6 +348,7 @@ if("${BUILD_TESTS}")
     obj_depend_obj(fake_pop_server pop_server pop_client)
     obj_depend_obj(ditm_thread ditm dummy_key_tool fileops)
     obj_depend_obj(dummy_key_tool crypto common)
+    obj_depend_obj(fake_imap_client uv_interface networking)
     # some dummy tools need openssl headers to compile... but not to link
     target_include_directories(dummy_key_tool_o PRIVATE ${OPENSSL_INCLUDE_DIR})
     target_include_directories(dummy_ui_harness_o PRIVATE ${OPENSSL_INCLUDE_DIR})
@@ -388,7 +389,6 @@ if("${BUILD_TESTS}")
     target_link_libraries(test_atree jsw_atree)
     target_link_libraries(test_imap_scan imap_scan)
     target_link_libraries(test_imap_read imap_read)
-    target_link_libraries(test_imap_client imap_read)
     target_link_libraries(test_hashmap hashmap)
     target_link_libraries(test_imap_maildir imap_maildir)
 

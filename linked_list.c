@@ -7,6 +7,7 @@ static void uv_perror(const char *prefix, int code){
 
 derr_t llist_init(llist_t *llist, llist_new_data_cb_t new_data_cb,
                   llist_ref_up_cb_t ref_up_cb){
+    derr_t error;
     // all pointers start as NULL
     llist->first = NULL;
     llist->last = NULL;
@@ -20,24 +21,37 @@ derr_t llist_init(llist_t *llist, llist_new_data_cb_t new_data_cb,
     int ret = uv_mutex_init(&llist->mutex);
     if(ret < 0){
         uv_perror("uv_mutex_init", ret);
-        derr_t error = (ret == UV_ENOMEM) ? E_NOMEM : E_UV;
+        error = (ret == UV_ENOMEM) ? E_NOMEM : E_UV;
         ORIG(error, "failed in uv_mutex_init");
     }
 
+    // init conditional variable
+    ret = uv_cond_init(&llist->cond);
+    if(ret < 0){
+        uv_perror("uv_cond_init", ret);
+        error = (ret == UV_ENOMEM) ? E_NOMEM : E_UV;
+        ORIG_GO(error, "failed in uv_cond_init", fail_mutex);
+    }
+
     return E_OK;
+
+fail_mutex:
+    uv_mutex_destroy(&llist->mutex);
+    return error;
 }
 
 void llist_free(llist_t *llist){
     uv_mutex_destroy(&llist->mutex);
+    uv_cond_destroy(&llist->cond);
 }
 
-static void *do_pop_first(llist_elem_t **first, llist_elem_t **last){
-    void *retval;
+static llist_elem_t *do_pop_first(llist_elem_t **first, llist_elem_t **last){
+    llist_elem_t *retval;
     if(*first == NULL){
         return NULL;
     }
     // get the data we are going to return
-    retval = (*first)->data;
+    retval = *first;
     // clean the struct before we release it from the list
     struct llist_elem_t *new_first = (*first)->next;
     (*first)->next = NULL;
@@ -55,13 +69,13 @@ static void *do_pop_first(llist_elem_t **first, llist_elem_t **last){
     return retval;
 }
 
-static void *do_pop_last(llist_elem_t **first, llist_elem_t **last){
-    void *retval;
+static llist_elem_t *do_pop_last(llist_elem_t **first, llist_elem_t **last){
+    llist_elem_t *retval;
     if(*last == NULL){
         return NULL;
     }
     // get the data we are going to return
-    retval = (*last)->data;
+    retval = *last;
     // clean the struct before we release it from the list
     struct llist_elem_t *new_last = (*last)->prev;
     (*last)->next = NULL;
@@ -79,8 +93,8 @@ static void *do_pop_last(llist_elem_t **first, llist_elem_t **last){
     return retval;
 }
 
-static void *do_pop_this(llist_elem_t *this, llist_elem_t **first,
-                         llist_elem_t **last){
+static void do_pop_this(llist_elem_t *this, llist_elem_t **first,
+                        llist_elem_t **last){
     // is this the first element?
     if(this->prev == NULL){
         *first = this->next;
@@ -95,7 +109,6 @@ static void *do_pop_this(llist_elem_t *this, llist_elem_t **first,
         // fix the next element's "prev"
         this->next->prev = this->prev;
     }
-    return this->data;
 }
 
 static void do_prepend(llist_elem_t **first, llist_elem_t **last,
@@ -136,11 +149,12 @@ static void do_append(llist_elem_t **first, llist_elem_t **last,
     (*last) = elem;
 }
 
+// event-loop based pop()s:
 void *llist_pop_first(llist_t *llist, llist_elem_t *cb_data){
     uv_mutex_lock(&llist->mutex);
-    void *retval = do_pop_first(&llist->first, &llist->last);
+    llist_elem_t *le = do_pop_first(&llist->first, &llist->last);
     // if list is empty remember cb_data for later (unless cb_data is NULL)
-    if(retval == NULL && cb_data != NULL){
+    if(le == NULL && cb_data != NULL){
         // ref_up the pointer in cb_data (if a ref_up_cb was defined)
         if(llist->ref_up_cb){
             // if cb_data is not NULL, pass the pointer inside of it
@@ -150,14 +164,14 @@ void *llist_pop_first(llist_t *llist, llist_elem_t *cb_data){
         do_append(&llist->awaiting_first, &llist->awaiting_last, cb_data);
     }
     uv_mutex_unlock(&llist->mutex);
-    return retval;
+    return le ? le->data : NULL;
 }
 
 void *llist_pop_last(llist_t *llist, llist_elem_t *cb_data){
     uv_mutex_lock(&llist->mutex);
-    void *retval = do_pop_last(&llist->first, &llist->last);
+    llist_elem_t *le = do_pop_last(&llist->first, &llist->last);
     // if list is empty remember cb_data for later
-    if(retval == NULL && cb_data != NULL){
+    if(le == NULL && cb_data != NULL){
         // ref_up the pointer in cb_data (if a ref_up_cb was defined)
         if(llist->ref_up_cb){
             llist->ref_up_cb(cb_data->data);
@@ -166,7 +180,31 @@ void *llist_pop_last(llist_t *llist, llist_elem_t *cb_data){
         do_append(&llist->awaiting_first, &llist->awaiting_last, cb_data);
     }
     uv_mutex_unlock(&llist->mutex);
-    return retval;
+    return le ? le->data : NULL;
+
+}
+
+// multi-threaded pop()s:
+void *llist_pop_first_thr(llist_t *llist){
+    uv_mutex_lock(&llist->mutex);
+    llist_elem_t *le;
+    while( (le = do_pop_first(&llist->first, &llist->last)) == NULL){
+        // wait for a signal
+        uv_cond_wait(&llist->cond, &llist->mutex);
+    }
+    uv_mutex_unlock(&llist->mutex);
+    return le->data;
+}
+
+void *llist_pop_last_thr(llist_t *llist){
+    uv_mutex_lock(&llist->mutex);
+    llist_elem_t *le;
+    while( (le = do_pop_last(&llist->first, &llist->last)) == NULL){
+        // wait for a signal
+        uv_cond_wait(&llist->cond, &llist->mutex);
+    }
+    uv_mutex_unlock(&llist->mutex);
+    return le->data;
 }
 
 void *llist_pop_find(llist_t *llist, llist_matcher_cb_t matcher, void *user){
@@ -175,7 +213,8 @@ void *llist_pop_find(llist_t *llist, llist_matcher_cb_t matcher, void *user){
     llist_elem_t *this = llist->first;
     while(this != NULL){
         if(matcher(this->data, user)){
-            retval = do_pop_this(this, &llist->first, &llist->last);
+            do_pop_this(this, &llist->first, &llist->last);
+            retval = this->data;
             break;
         }
         this = this->next;

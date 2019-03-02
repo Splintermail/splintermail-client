@@ -4,7 +4,6 @@
 #include <common.h>
 
 // a way for an external program to kill the server nicely
-// you have to set this to false before the server tries to accept()
 extern unsigned int fas_api_port;
 
 // path to where the test files can be found

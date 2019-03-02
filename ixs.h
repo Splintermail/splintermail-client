@@ -11,7 +11,14 @@
 #include "ix.h"
 #include "linked_list.h"
 
-/* IMAP session context (or pair of sessions, for incoming connections) */
+/* IMAP session context */
+
+typedef enum {
+    IMAP_STATE_NOAUTH,
+    IMAP_STATE_AUTH,
+    IMAP_STATE_SELECTED,
+    IMAP_STATE_LOGOUT,
+} imap_session_state_t;
 
 struct ixs_t {
     // a tagged-union-style self-pointer
@@ -56,6 +63,8 @@ struct ixs_t {
     uv_mutex_t mutex;
     int refs;
     bool is_valid;
+    // imap engine stuff
+    imap_session_state_t state;
 };
 
 derr_t ixs_init(ixs_t *ixs, loop_t *loop, ssl_context_t *ctx, bool upwards);
