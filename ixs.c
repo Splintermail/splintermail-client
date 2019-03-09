@@ -56,11 +56,11 @@ derr_t ixs_init(ixs_t *ixs, loop_t *loop, ssl_context_t *ctx, bool upwards){
         SSL_set_accept_state(ixs->ssl);
     }
 
-    // init the list of pending_reads, with no callbacks
-    PROP_GO( llist_init(&ixs->pending_reads, NULL, NULL), fail_ssl);
+    // init the list of pending_reads
+    PROP_GO( queue_init(&ixs->pending_reads), fail_ssl);
 
     // init decrypted buffers
-    PROP_GO( dstr_new(&ixs->decin, 4096), fail_llist);
+    PROP_GO( dstr_new(&ixs->decin, 4096), fail_queue);
     PROP_GO( dstr_new(&ixs->decout, 4096), fail_decin);
 
     // init the mutex and references
@@ -86,9 +86,9 @@ derr_t ixs_init(ixs_t *ixs, loop_t *loop, ssl_context_t *ctx, bool upwards){
     ixs->ix.type = IX_TYPE_SESSION;
     ixs->ix.data.ixs = ixs;
     // linked list element self-pointers
-    ixs->wait_for_read_buf_lle.data = ixs;
-    ixs->wait_for_write_buf_lle.data = ixs;
-    ixs->close_lle.data = ixs;
+    ixs->wait_for_read_buf_qcb.data = ixs;
+    ixs->wait_for_write_buf_qcb.data = ixs;
+    ixs->close_qcb.data = ixs;
     // no handshake yet
     ixs->handshake_completed = false;
     // set up uv_tcp_t.data to point to ix
@@ -118,8 +118,8 @@ fail_decout:
     dstr_free(&ixs->decout);
 fail_decin:
     dstr_free(&ixs->decin);
-fail_llist:
-    llist_free(&ixs->pending_reads);
+fail_queue:
+    queue_free(&ixs->pending_reads);
 fail_ssl:
     // this will free any associated BIOs
     SSL_free(ixs->ssl);
@@ -132,7 +132,7 @@ void ixs_free(ixs_t *ixs){
     uv_mutex_destroy(&ixs->mutex);
     dstr_free(&ixs->decout);
     dstr_free(&ixs->decin);
-    llist_free(&ixs->pending_reads);
+    queue_free(&ixs->pending_reads);
     // this will free any associated BIOs
     SSL_free(ixs->ssl);
 }

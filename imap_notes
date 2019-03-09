@@ -396,6 +396,33 @@ New bugs:
         you would free allocated buffers.  Smells like a recipe for a memory
         leak.
 
+    I would like to have a more modular interace between engines.  In
+    particular, there's no way to build out a fully-functional, TLS-capable
+    fake imap client without borrowing the socket engine and the TLS engine.
+    So I am going to just go ahead and engineer it the "right" way, meaning
+    that all of the engines operate entirely independent of each other.  This
+    will clean up a few parts of the code, such as:
+
+      - the enormous, unweildy imap session context struct
+      - poor testability of individual parts
+      - overly complicated header dependencies
+
+    READ_DONE and WRITE_DONE hooks are going away.  Instead, engines will
+    request generic buffers for writing to from neighboring nodes, and will
+    pass the buffers back in READ and WRITE
+
+The NEW new and improved modular pipelining:
+
+    __________                    _________                    ____________
+   |          | GET_READ_BUF --> |         | GET_READ_BUF --> |            |
+   |          | READ ----------> |  SOME   | READ ----------> |            |
+   | UPSTREAM |                  | GENERIC |                  | DOWNSTREAM |
+   |          | <- GET_WRITE_BUF |   NODE  | <- GET_WRITE_BUF |            |
+   |__________| <--------- WRITE |_________| <--------- WRITE |____________|
+
+    See more details in engine.h
+
+
 Important hooks:
   - msgs EXPUNGE or folder DELETE should check file permissions to make sure
     command will succeed later

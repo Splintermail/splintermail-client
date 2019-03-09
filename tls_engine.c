@@ -158,7 +158,7 @@ static void handle_raw_write_done(ixs_t *ixs, write_buf_t *wb, derr_t status){
 
     // return write buffer to pool
     loop_t *loop = ixs->loop;
-    llist_append(&loop->write_bufs, &wb->llist_elem);
+    queue_append(&loop->write_bufs, &wb->qe);
 
     /* TODO: skipping straight to pass_error here does not let us attempt any
        "pull" operations to try to clean out buffers.  Right now that is OK but
@@ -420,8 +420,8 @@ static derr_t try_raw_write(ixs_t *ixs){
 
     // get a write_buf
     loop_t *loop = ixs->loop;
-    llist_elem_t *wait_lle = &ixs->wait_for_write_buf_lle;
-    write_buf_t *wb = llist_pop_first(&loop->write_bufs, wait_lle);
+    queue_elem_t *wait_qcb = &ixs->wait_for_write_buf_qcb;
+    write_buf_t *wb = queue_pop_first(&loop->write_bufs, wait_qcb);
 
     // if there's no buffer available, then just exit now
     if(wb == NULL){
@@ -456,6 +456,6 @@ static derr_t try_raw_write(ixs_t *ixs){
 
 release_buf:
     // just put the buffer back in the pool, we could not use it
-    llist_append(&loop->write_bufs, &wb->llist_elem);
+    queue_append(&loop->write_bufs, &wb->qe);
     return error;
 }

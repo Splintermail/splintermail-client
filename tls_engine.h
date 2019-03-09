@@ -32,6 +32,45 @@
 
 */
 
+// typedef struct {
+//     // how do we ref_up and ref_down the tlse_data_t struct?
+//     void (*ref_up)(tlse_data_t*);
+//     void (*ref_dn)(tlse_data_t*);
+//     // request a buffers to pass data up/dn
+//     void *(*get_buf_up)(buf_t*);
+//     void *(*get_buf_dn)(buf_t*);
+//     // pass the written buffers up/dn
+//     void (*pass_buf_up)(buf_t*, void *data);
+//     void (*pass_buf_up)(buf_t*, void *data);
+//
+// } tlse_hooks_t;
+//
+//
+// typedef struct {
+//     // backreference to the parent struct
+//     void *data;
+//     loop_t *loop;
+//     SSL* ssl;
+//     BIO* rawin;
+//     BIO* rawout;
+//     bool handshake_completed;
+//     // for TLS operations
+//     // buffers for passing between TLS engine and the IMAP engine
+//     // "dec" for "decrypted"
+//     dstr_t decout;
+//
+//     // buffers for pushing data up and down
+//     queue_t bufs_up;
+//     queue_t bufs_dn;
+//
+// } tlse_data_t;
+//
+// derr_t tlse_data_init(tlse_data_t *t, loop_t loop, ssl_context_t *ssl_ctx,
+//                       size_t bufs_up, size_t bufs_dn, tlse_hooks_t hooks);
+// void tlse_data_free(tlse_data_t *t);
+
+
+
 // (1):
 void tlse_raw_read(ixs_t *ixs, read_buf_t *rb, derr_t status);
 // (2):

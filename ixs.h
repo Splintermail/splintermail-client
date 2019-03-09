@@ -9,7 +9,7 @@
 #include "common.h"
 #include "networking.h"
 #include "ix.h"
-#include "linked_list.h"
+#include "queue.h"
 
 /* IMAP session context */
 
@@ -23,10 +23,10 @@ typedef enum {
 struct ixs_t {
     // a tagged-union-style self-pointer
     ix_t ix;
-    // self-pointers for putting this struct in linked lists
-    llist_elem_t wait_for_read_buf_lle;
-    llist_elem_t wait_for_write_buf_lle;
-    llist_elem_t close_lle;
+    // self-pointers for putting this struct in queues
+    queue_cb_t wait_for_read_buf_qcb;
+    queue_cb_t wait_for_write_buf_qcb;
+    queue_cb_t close_qcb;
     // a pointer to loop_t parent struct
     loop_t *loop;
     // "up" means mail server, "down" means email client
@@ -56,7 +56,7 @@ struct ixs_t {
     size_t dec_writes_pending; // internal to TLS engine
     /* linked list of read buffers which have been handed to libuv to complete
        a read but which have not yet been passed to a read callback */
-    llist_t pending_reads;
+    queue_t pending_reads;
     // only call uv_close once
     bool closed;
     // keep track of references

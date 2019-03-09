@@ -16,8 +16,8 @@ static void uv_perror(const char *prefix, int code){
 
 derr_t read_buf_init(read_buf_t *rb, size_t size){
 
-    // llist_elem is a self-pointer
-    rb->llist_elem.data = rb;
+    // qe is a self-pointer
+    rb->qe.data = rb;
 
     // allocate the buffer itself
     PROP( dstr_new(&rb->dstr, size) );
@@ -31,7 +31,7 @@ void read_buf_free(read_buf_t *rb){
 }
 
 
-// a matcher for llist_pop_find
+// a matcher for queue_pop_find
 static bool match_read_buf(void* data, void* ptr){
     // cast *data
     read_buf_t *rb = data;
@@ -42,8 +42,8 @@ static bool match_read_buf(void* data, void* ptr){
 
 
 derr_t write_buf_init(write_buf_t *wb, size_t size){
-    // llist_elem is a self-pointer
-    wb->llist_elem.data = wb;
+    // qe is a self-pointer
+    wb->qe.data = wb;
 
     // the uv_req_t.data is also a self-pointer
     wb->write_req.data = wb;
@@ -118,8 +118,8 @@ static void allocator(uv_handle_t *handle, size_t suggest, uv_buf_t *buf){
     ixs_t *ixs = ix->data.ixs;
 
     // now get a pointer to an open read buffer
-    llist_elem_t *wait_lle = &ixs->wait_for_read_buf_lle;
-    read_buf_t *rb = llist_pop_first(&loop->read_bufs, wait_lle);
+    queue_cb_t *wait_qcb = &ixs->wait_for_read_buf_qcb;
+    read_buf_t *rb = queue_pop_first(&loop->read_bufs, wait_qcb);
 
     // if nothing is available, pass NULL to libuv
     if(rb == NULL){
@@ -142,7 +142,7 @@ static void allocator(uv_handle_t *handle, size_t suggest, uv_buf_t *buf){
        keep track of the read_buf_t via this side-channel, libuv would only
        give us back a char* in the read_cb and we would have lost the pointer
        to the rest of the read_buf_t object) */
-    llist_append(&ixs->pending_reads, &rb->llist_elem);
+    queue_append(&ixs->pending_reads, &rb->qe);
 
     // upref the underlying ixs object, since this is the start of the pipeline
     ixs_ref_up(ixs);
@@ -173,7 +173,8 @@ static void read_cb(uv_stream_t *stream, ssize_t ssize_read,
     }
 
     // get the read_buf_t* associated with this *buf
-    read_buf_t *rb = llist_pop_find(&ixs->pending_reads, match_read_buf, buf->base);
+    read_buf_t *rb = queue_pop_find(&ixs->pending_reads, match_read_buf,
+                                    buf->base);
     if(rb == NULL){
         /* this should never, ever happen, and would violate a lot of the
            assumptions we rely on for proper cleanup, so we are not going to
@@ -218,7 +219,7 @@ static void read_cb(uv_stream_t *stream, ssize_t ssize_read,
 
 close_imap_session:
     // put the read_buf back in the list of free read bufs
-    llist_append(&loop->read_bufs, &rb->llist_elem);
+    queue_append(&loop->read_bufs, &rb->qe);
     // release the ixs reference that we received (implied by the read_buf)
     ixs_ref_down(ixs);
     // shut down this session
@@ -242,9 +243,9 @@ void loop_read_done(loop_t* loop, ixs_t *ixs, read_buf_t *rb){
         // TODO: check tls_reads -> mark socket for unfreezing
 
         // put the buffer back in the pool
-        /* If there was a socket frozen due to a global shortage of read bufs, it
-           would be unfrozen by a callback during this operation. */
-        llist_append(&loop->read_bufs, &rb->llist_elem);
+        /* If there was a socket frozen due to a global shortage of read bufs,
+           it would be unfrozen by a callback during this operation. */
+        queue_append(&loop->read_bufs, &rb->qe);
 
         // done with event
         ixs_ref_down(ixs);
@@ -545,8 +546,8 @@ static void ixs_aborter_cb(uv_async_t *handle){
     loop_t *loop = ((ix_t*)handle->loop->data)->data.loop;
 
     // go through the list of ixs objects to be aborted
-    while(loop->close_list.first != NULL){
-        ixs_t *ixs = llist_pop_first(&loop->close_list, NULL);
+    ixs_t *ixs;
+    while(ixs = queue_pop_first(&loop->close_list, false)){
         // call uv_close on any not-closed sockets
         if(ixs->closed == false){
             ixs->closed = true;
@@ -596,9 +597,7 @@ derr_t loop_init(loop_t *loop){
     }
 
     // init read buffer list
-    /* TODO: We need a way to read_stop and read_start when there's no
-       read_bufs available */
-    PROP_GO( llist_init(&loop->read_bufs, NULL, NULL), fail_loop);
+    PROP_GO( queue_init(&loop->read_bufs), fail_loop);
 
     // allocate a pool of read buffers
     // TODO: figure out a better way to know how many buffers we need
@@ -609,10 +608,12 @@ derr_t loop_init(loop_t *loop){
         if(rb == NULL){
             ORIG_GO(E_NOMEM, "unable to alloc read buf", fail_read_bufs);
         }
+        // TODO: set pre_wait callback, which will call read_stop
+        // TODO: set new_data callback, which will call read_start
         // allocate the buffer inside the read_buf_t
         PROP_GO( read_buf_init(rb, 4096), fail_rb);
         // append the buffer to the list (does no allocation; can't fail)
-        llist_append(&loop->read_bufs, &rb->llist_elem);
+        queue_append(&loop->read_bufs, &rb->qe);
         continue;
     fail_rb:
         free(rb);
@@ -621,8 +622,7 @@ derr_t loop_init(loop_t *loop){
     }
 
     // init write buffer list
-    /* TODO: we need callbacks to handle write_bufs properly */
-    PROP_GO( llist_init(&loop->write_bufs, NULL, NULL), fail_read_bufs);
+    PROP_GO( queue_init(&loop->write_bufs), fail_read_bufs);
 
     // allocate a pool of write buffers
     // TODO: figure out a better way to know how many buffers we need
@@ -633,10 +633,11 @@ derr_t loop_init(loop_t *loop){
         if(wb == NULL){
             ORIG_GO(E_NOMEM, "unable to alloc write buf", fail_write_bufs);
         }
+        // TODO: set new_data callback
         // allocate the buffer inside the write_buf_t
         PROP_GO( write_buf_init(wb, 4096), fail_wb);
-        // append the buffer to the list (does no allocation; can't fail)
-        llist_append(&loop->write_bufs, &wb->llist_elem);
+        // append the buffer to the list
+        queue_append(&loop->write_bufs, &wb->qe);
         continue;
     fail_wb:
         free(wb);
@@ -645,30 +646,30 @@ derr_t loop_init(loop_t *loop){
     }
 
     // init close_list
-    PROP_GO( llist_init(&loop->close_list, NULL, NULL), fail_write_bufs);
+    PROP_GO( queue_init(&loop->close_list), fail_write_bufs);
 
     return E_OK;
 
+    write_buf_t *wb;
 fail_write_bufs:
     // free all of the buffers
-    while(loop->write_bufs.first != NULL){
-        write_buf_t *wb = llist_pop_first(&loop->write_bufs, NULL);
+    while(wb = queue_pop_first(&loop->write_bufs, false)){
         // free the buffer inside the struct
         write_buf_free(wb);
         // free the struct pointer
         free(wb);
     }
-    llist_free(&loop->write_bufs);
+    queue_free(&loop->write_bufs);
+    read_buf_t *rb;
 fail_read_bufs:
     // free all of the buffers
-    while(loop->read_bufs.first != NULL){
-        read_buf_t *rb = llist_pop_first(&loop->read_bufs, NULL);
+    while(rb = queue_pop_first(&loop->read_bufs, false)){
         // free the buffer inside the struct
         read_buf_free(rb);
         // free the struct pointer
         free(rb);
     }
-    llist_free(&loop->read_bufs);
+    queue_free(&loop->read_bufs);
 fail_loop:
     uv_loop_close(&loop->uv_loop);
     return error;
@@ -676,25 +677,25 @@ fail_loop:
 
 
 void loop_free(loop_t *loop){
-    llist_free(&loop->close_list);
+    queue_free(&loop->close_list);
     // free all of the write buffers
-    while(loop->write_bufs.first != NULL){
-        write_buf_t *wb = llist_pop_first(&loop->write_bufs, NULL);
+    write_buf_t *wb;
+    while(wb = queue_pop_first(&loop->write_bufs, NULL)){
         // free the buffer inside the struct
         write_buf_free(wb);
         // free the struct pointer
         free(wb);
     }
-    llist_free(&loop->write_bufs);
+    queue_free(&loop->write_bufs);
     // free all of the read buffers
     while(loop->read_bufs.first != NULL){
-        read_buf_t *rb = llist_pop_first(&loop->read_bufs, NULL);
+        read_buf_t *rb = queue_pop_first(&loop->read_bufs, NULL);
         // free the buffer inside the struct
         read_buf_free(rb);
         // free the struct pointer
         free(rb);
     }
-    llist_free(&loop->read_bufs);
+    queue_free(&loop->read_bufs);
     int ret = uv_loop_close(&loop->uv_loop);
     if(ret != 0){
         uv_perror("uv_loop_close", ret);
@@ -746,7 +747,7 @@ void loop_abort(loop_t *loop){
 // ixs_abort() will make sure to only call this once for any ixs
 void loop_abort_ixs(loop_t *loop, ixs_t *ixs){
     // mark ixs for closing
-    llist_append(&loop->close_list, &ixs->close_lle);
+    queue_append(&loop->close_list, &ixs->close_qcb);
     // that's a reference!
     ixs_ref_up(ixs);
     // then trigger the libuv thread to actually close it

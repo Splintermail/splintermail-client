@@ -44,7 +44,7 @@ set(OBJ_TGTS api_client
              loop
              tls_engine
              imap_engine
-             linked_list
+             queue
              jsw_atree
              imap_parse
              imap_expression
@@ -240,7 +240,7 @@ obj_depend_obj(ixs uv_interface common)
 obj_depend_obj(loop uv_interface tls_engine common)
 obj_depend_obj(tls_engine ixs common)
 obj_depend_obj(imap_engine ixs imap_read_o common)
-obj_depend_obj(linked_list uv_interface common)
+obj_depend_obj(queue uv_interface common)
 obj_depend_obj(jsw_atree common)
 obj_depend_obj(imap_parse_tab imap_expression imap_read common)
 obj_depend_obj(imap_parse imap_parse_tab common)
@@ -260,7 +260,7 @@ target_link_libraries(leak networking)
 target_link_libraries(encrypt_msg crypto opt_parse)
 target_link_libraries(decrypt_msg crypto opt_parse)
 target_link_libraries(olt common fileops opt_parse)
-target_link_libraries(imap loop ixs tls_engine imap_engine linked_list imap_parse networking)
+target_link_libraries(imap loop ixs tls_engine imap_engine queue imap_parse networking)
 
 # decide if we are building server code
 if("${BUILD_SERVER_CODE}")

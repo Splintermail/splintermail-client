@@ -4,7 +4,7 @@
 #include <uv.h>
 
 #include "common.h"
-#include "linked_list.h"
+#include "queue.h"
 #include "ix.h"
 #include "buffer_pool.h"
 #include "networking.h"
@@ -12,7 +12,7 @@
 // for a pool of pre-allocated read buffers
 typedef struct read_buf_t {
     // self-pointer struct for enqueing this struct
-    llist_elem_t llist_elem;
+    queue_elem_t qe;
     // the memory buffer
     dstr_t dstr;
 } read_buf_t;
@@ -23,7 +23,7 @@ void read_buf_free(read_buf_t *rb);
 // for a pool of pre-allocated write buffers
 typedef struct write_buf_t {
     // self-pointer struct for enqueing this struct
-    llist_elem_t llist_elem;
+    queue_elem_t qe;
     // libuv write request handle
     uv_write_t write_req;
     // the memory buffer
@@ -46,13 +46,13 @@ struct loop_t {
     uv_async_t ixs_aborter;
 
     // read buffers
-    llist_t read_bufs;
+    queue_t read_bufs;
 
     // write buffers
-    llist_t write_bufs;
+    queue_t write_bufs;
 
     // a list of ixs objects to close (which must be done on the libuv thread)
-    llist_t close_list;
+    queue_t close_list;
 };
 
 derr_t loop_init(loop_t *loop);

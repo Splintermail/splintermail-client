@@ -3,7 +3,7 @@
 
 #include "ix.h"
 #include "tls_engine.h"
-#include "linked_list.h"
+#include "queue.h"
 #include "common.h"
 
 /* The IMAP engine is the end of the libuv-tls-imap pipeline, but it interacts

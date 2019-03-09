@@ -26,7 +26,7 @@ derr_t fic_create(fic_t *fic, const dstr_t *url, unsigned short port){
     PROP_GO( dstr_new(&fic->resp_chunk, 4096), fail_resp);
 
     // command queue
-    PROP_GO( llist_init(&fic->cmd_q, NULL, NULL), fail_resp_chunk);
+    PROP_GO( queue_init(&fic->cmd_q, NULL, NULL), fail_resp_chunk);
 
     // SSL context
     PROP_GO( ssl_context_new_client(&fic->ssl), fail_q);
@@ -46,7 +46,7 @@ derr_t fic_create(fic_t *fic, const dstr_t *url, unsigned short port){
     return E_OK;
 
 fail_q:
-    llist_free(&fic->cmd_q);
+    queue_free(&fic->cmd_q);
 fail_resp_chunk:
     dstr_free(&fic->resp_chunk);
 fail_resp:
@@ -63,8 +63,8 @@ derr_t fic_destroy(fic_t *fic){
     derr_t any_error = E_OK;
     if(fic->threads_running){
         // pass a NULL pointer command to the writer thread
-        llist_elem_t n = {.data = NULL};
-        llist_append(&fic->cmd_q, &n);
+        queue_elem_t n = {.data = NULL};
+        queue_append(&fic->cmd_q, &n);
         // join writer
         int ret = uv_thread_join(&fic->writer);
         if(ret < 0){
@@ -102,7 +102,7 @@ derr_t fic_destroy(fic_t *fic){
         }
     }
     ssl_context_free(&fic->ssl);
-    llist_free(&fic->cmd_q);
+    queue_free(&fic->cmd_q);
     dstr_free(&fic->resp_chunk);
     dstr_free(&fic->resp);
     uv_cond_destroy(&fic->resp_cond);

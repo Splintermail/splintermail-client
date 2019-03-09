@@ -5,7 +5,7 @@
 
 #include <common.h>
 #include <networking.h>
-#include <linked_list.h>
+#include <queue.h>
 
 // path to where the test files can be found
 extern const char* g_test_files;
@@ -29,7 +29,7 @@ typedef struct {
     // a smaller, reader-owned buffer
     dstr_t resp_chunk;
     // issued but unexecuted commands
-    llist_t cmd_q;
+    queue_t cmd_q;
 } fic_t;
 
 derr_t fic_create(fic_t *fic, const dstr_t *url, unsigned short port);
