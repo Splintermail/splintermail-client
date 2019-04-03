@@ -85,6 +85,7 @@ set(TEST_EXE_TGTS test_common
                   test_imap_read
                   test_hashmap
                   test_imap_maildir
+                  test_loop
                   test_queue)
 
 # additional TGTS if we are building server code
@@ -238,9 +239,9 @@ obj_depend_obj(api_client networking crypto json)
 obj_depend_obj(key_tool api_client crypto)
 obj_depend_obj(ditm pop_client pop_server maildir json)
 obj_depend_obj(ixs uv_interface common)
-obj_depend_obj(loop uv_interface tls_engine common)
-obj_depend_obj(tls_engine ixs common)
-obj_depend_obj(imap_engine ixs imap_read_o common)
+obj_depend_obj(loop uv_interface common)
+obj_depend_obj(tls_engine common)
+obj_depend_obj(imap_engine imap_read_o common)
 obj_depend_obj(queue uv_interface common)
 obj_depend_obj(jsw_atree common)
 obj_depend_obj(imap_parse_tab imap_expression imap_read common)
@@ -392,6 +393,7 @@ if("${BUILD_TESTS}")
     target_link_libraries(test_imap_read imap_read)
     target_link_libraries(test_hashmap hashmap)
     target_link_libraries(test_imap_maildir imap_maildir)
+    target_link_libraries(test_loop loop networking queue common)
     target_link_libraries(test_queue queue common)
 
     if(WIN32)

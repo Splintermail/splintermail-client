@@ -343,30 +343,8 @@ write pipelines no matter what.  So here goes:
 
 
 New and improved modular pipelining:
-        __________                  _________                  ____________
-       |          | READ --------> |         | READ --------> |            |
-       |          | <--- READ_DONE |  SOME   | <--- READ_DONE |            |
-       | UPSTREAM |                | GENERIC |                | DOWNSTREAM |
-       |          | <------- WRITE |   NODE  | <------- WRITE |            |
-       |__________| WRITE_DONE --> |_________| WRITE_DONE --> |____________|
 
-    Details:
-        After a node sends a READ or a WRITE, it can decide if it needs to
-        freeze this context in this direction until further notice.  "Freeze"
-        just means it doesn't process any more operations until it receives the
-        relevant READ_DONE/WRITE_DONE trigger.
-
-        After handling a READ or a WRITE, it is appropriate to send a READ_DONE
-        or WRITE_DONE to the previous node.  These indicate that the read or
-        write was processed, and another read or write is possible.
-
-        When a node receives a WRITE_DONE/READ_DONE, it should try and generate
-        another WRITE/READ right away, if possible.
-
-    Additional abstractions needed:
-        there needs to be a buf_get and a buf_release trigger for nodes to
-        get/release buffers from their neighbor nodes
-
+    (see engine.h)
 
 Error handling in the pipeline:
     the node furthest from the network is the node most capable of gracefully
@@ -390,6 +368,11 @@ New bugs:
         connection is always going to have at least one buffer being written to
         in the kernel, for instance.
 
+        Answer: by making buffers belong to engines and not to sessions, the
+        answer is clearly a per-processor number; no number of extra sessions
+        will make any engine of the pipeline capable of processing more events
+        per second.
+
     Wait... if the socket is closed all of the buffers allocated for cancelled
     reads will be passed to the read callback, right?
         I dunno.  The documentation seems to say no but I don't see how else
@@ -399,7 +382,7 @@ New bugs:
     I would like to have a more modular interace between engines.  In
     particular, there's no way to build out a fully-functional, TLS-capable
     fake imap client without borrowing the socket engine and the TLS engine.
-    So I am going to just go ahead and engineer it the "right" way, meaning
+    So I am going to just go ahead and engineer it the *right* way, meaning
     that all of the engines operate entirely independent of each other.  This
     will clean up a few parts of the code, such as:
 
@@ -407,20 +390,115 @@ New bugs:
       - poor testability of individual parts
       - overly complicated header dependencies
 
-    READ_DONE and WRITE_DONE hooks are going away.  Instead, engines will
-    request generic buffers for writing to from neighboring nodes, and will
-    pass the buffers back in READ and WRITE
+Error handling during reads and writes:
 
-The NEW new and improved modular pipelining:
+    Principles of correct error handling:
 
-    __________                    _________                    ____________
-   |          | GET_READ_BUF --> |         | GET_READ_BUF --> |            |
-   |          | READ ----------> |  SOME   | READ ----------> |            |
-   | UPSTREAM |                  | GENERIC |                  | DOWNSTREAM |
-   |          | <- GET_WRITE_BUF |   NODE  | <- GET_WRITE_BUF |            |
-   |__________| <--------- WRITE |_________| <--------- WRITE |____________|
+      - Errors need to bubble to higher levels of the stack.  The IMAP engine
+        knows how to tell the user there is a broken socket but the socket
+        doesn't know shit about a broken IMAP session.
+      - Errors are not allowed to skip layers.  Intermediate layers of the
+        application should be capable to take corrective action, even if they
+        normally just pass the error along.
 
-    See more details in engine.h
+    Note that errors from the read side of the pipeline are passed in the the
+    READ step, but write errors are passed in the WRITE_DONE step.  As a
+    result, there are some additional aspects we need to enforce on writes
+    which happen automatically for reads:
+
+      - Synchronous writes should be possible.  An application should be able
+        to write, and not write again until it is sure that write succeeded.
+      - Synchronous write should not be necessary.  An application capable of
+        handling errors asynchronously should be able to write asynchronously.
+
+    As a consequence of those requirements, it becomes possible to pipeline
+    reads (each engine at each step can process it's data and pass that to the
+    next engine) but writes must be stacked (layer A which receives a WRITE
+    cannot respond with WRITE_DONE until *after* the layer below it passes back
+    a WRITE_DONE):
+
+        R = "read", RD = "read done", W = "write", WD = "write done"
+
+    Engine | Timeline of read and write.  Read is pipelined, write is stacked
+    -------+-----------------------------------------------------------------
+    Socket | R                      D
+    TLS    |   R D                W   D
+    IMAP   |     R D            W       D
+    ...    |       R D        W           D
+    ...    |         R D    W               D
+
+    Engine |  Correct error handling is maintained (E = "error")
+    -------+----------------------------------------------------
+    Socket | R                      E
+    TLS    |   R D                W   E
+    IMAP   |     R D            W       E
+    ...    |       E D        W           E
+    ...    |         E D    W               E
+
+    In order to achieve the same processing parallelism, the write side has to
+    contain many more buffers than the read side.  This requirement worsens the
+    longer the pipe becomes.  See this table of equivalent-parallelism buffer
+    counts:
+
+                  number or bufs,   number of bufs,
+        Engine:   pipeline case:    stack case:
+        -------------------------------------------------
+        socket:         0                 0
+        TLS:            5                 5
+        IMAP:           5                10
+        EngineX:        5                15
+        EngineY:        5                20
+
+    Essentially, for the EngineY to saturate the entire pipe in the pipeline
+    case, it would be able to write 20 times (the count of all buffers in all
+    engines of the pipeline).  In the stacked case, that would require 20
+    separate buffers at the EngineY level, 15 at the EngineY level, etc.
+
+    The clear alternative to this strategy is to separate returning the write
+    buffer from the error handling.  One easy way would be to allocate error
+    messages on the heap when they are detected and pass them via a different
+    channel.  However, I have gone through great lengths to avoid meta-error-
+    handling, and I am not going to abandon that now.
+
+    Another possibility would be to separate the write buffers and the write
+    error checking.  We would still need more and more error checking elements
+    as you went down the pipeline.  I think since we are realistically talking
+    about less than a MB of memory this is really just a non-issue, and the
+    stacked write buffers is acceptable.
+
+References:
+    The only thing that we count references for (right now) is a session.  A
+    session primarily unifies a group of reads/writes as belonging to each
+    other and stores data about them.  Each engine contributes its own
+    self-contained child struct to a session, on which only it can operate.
+    Since multiple engines might have references to the session at any time, a
+    reference count is a natural solution.
+
+    To keep things simple, we will consider that there are only mainly two
+    kinds of references: references associated with an event_t (like a read or
+    a write), and references associated with some engine specific data (like a
+    socket that belongs to a session).  In the first case, session counting
+    looks like this:
+
+        EV_READ, EV_WRITE: upref session before passing event
+        EV_READ_DONE: (carries no error) downref session after receiving event*
+        EV_WRITE_DONE: (carries error) downref session after receiving event
+        EV_QUIT_DOWN, EV_QUIT_UP: carries no session information
+
+    (*The reason that EV_READ_DONE has session information is to enable the
+    possibility of a per-session event limit.  For example, if at most two
+    reads were allowed to be associated with a given session then you would
+    need to know which session an EV_READ_DONE came from.  Otherwise it would
+    make more sense to drop the session information before passing back the
+    EV_READ_DONE event.)
+
+    In the second case, for references associated with some engine specific
+    data, a call to abort a session results in the session calling the
+    engine-data-specific mechanism for freeing the engine data, which should
+    eventually downref the session.  It may be a while before the session is
+    downref'd, such as with the socket engine, where closing the loop_data
+    triggers the event loop to close the socket on-thread, and then at a later
+    time in a close_cb the reference finally gets downref'd.
 
 
 Important hooks:
