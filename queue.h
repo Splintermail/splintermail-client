@@ -68,7 +68,7 @@ typedef struct {
     void *data;
     // call this before storing this callback to wait for data (NULL is OK)
     queue_pre_wait_cb_t pre_wait_cb;
-    // call after receiving new data (Must be non-NULL)
+    // call after receiving new data (Must be non-NULL if cb API is used)
     queue_new_data_cb_t new_data_cb;
     // don't touch this, it is managed automatically:
     queue_elem_t qe;
@@ -85,6 +85,17 @@ typedef struct {
     uv_cond_t cond;
 } queue_t;
 
+// helper function to set up a queue_elem_t
+void queue_elem_prep(queue_elem_t *qe, void *parent_struct);
+
+// helper function to set up a queue_cb_t
+void queue_cb_prep(queue_cb_t *qcb, void *parent_struct);
+
+// setter for the callback functions
+void queue_cb_set(queue_cb_t *qcb,
+                  queue_pre_wait_cb_t pre_wait_cb,
+                  queue_new_data_cb_t new_data_cb);
+
 derr_t queue_init(queue_t *q);
 void queue_free(queue_t *q);
 
@@ -92,8 +103,8 @@ void queue_free(queue_t *q);
    nothing" and "I found a NULL pointer" */
 void *queue_pop_first_cb(queue_t *q, queue_cb_t *cb);
 void *queue_pop_last_cb(queue_t *q, queue_cb_t *cb);
-/* with the normal API, there's still no way to distinguish between "I found
-   nothing" and "I found a NULL pointer" */
+/* with the normal API, blocking is the only way to distinguish between "I
+   found nothing" and "I found a NULL pointer" */
 void *queue_pop_first(queue_t *q, bool block);
 void *queue_pop_last(queue_t *q, bool block);
 /* pops the first element where matcher returns true, or if matcher is NULL,
@@ -101,5 +112,11 @@ void *queue_pop_last(queue_t *q, bool block);
 void *queue_pop_find(queue_t *list, queue_matcher_cb_t matcher, void *user);
 void queue_prepend(queue_t *q, queue_elem_t *elem);
 void queue_append(queue_t *q, queue_elem_t *elem);
+
+/* Does nothing if element is not in list.  q is needed for mutex.  Undefined
+   behavior if qe is actually in another list. */
+void queue_remove(queue_t *q, queue_elem_t *qe);
+// Similar to queue_remove, but for unregistering a queue_cb_t
+void queue_cb_remove(queue_t *q, queue_cb_t *qcb);
 
 #endif // QUEUE_H

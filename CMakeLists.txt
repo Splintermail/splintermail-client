@@ -84,7 +84,8 @@ set(TEST_EXE_TGTS test_common
                   test_imap_scan
                   test_imap_read
                   test_hashmap
-                  test_imap_maildir)
+                  test_imap_maildir
+                  test_queue)
 
 # additional TGTS if we are building server code
 if("${BUILD_SERVER_CODE}")
@@ -391,6 +392,7 @@ if("${BUILD_TESTS}")
     target_link_libraries(test_imap_read imap_read)
     target_link_libraries(test_hashmap hashmap)
     target_link_libraries(test_imap_maildir imap_maildir)
+    target_link_libraries(test_queue queue common)
 
     if(WIN32)
         # make sure the user provided the location of Pthreads

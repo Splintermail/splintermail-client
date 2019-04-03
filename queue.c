@@ -5,6 +5,25 @@ static void uv_perror(const char *prefix, int code){
     fprintf(stderr, "%s: %s\n", prefix, uv_strerror(code));
 }
 
+void queue_elem_prep(queue_elem_t *qe, void *parent_struct){
+    qe->data = parent_struct;
+    qe->next = NULL;
+    qe->prev = NULL;
+}
+
+void queue_cb_prep(queue_cb_t *qcb, void *parent_struct){
+    qcb->data = parent_struct;
+    queue_elem_prep(&qcb->qe, qcb);
+}
+
+void queue_cb_set(queue_cb_t *qcb,
+                  queue_pre_wait_cb_t pre_wait_cb,
+                  queue_new_data_cb_t new_data_cb){
+    qcb->pre_wait_cb = pre_wait_cb;
+    qcb->new_data_cb = new_data_cb;
+}
+
+
 derr_t queue_init(queue_t *q){
     derr_t error;
     // all pointers start as NULL
@@ -105,6 +124,9 @@ static void do_pop_this(queue_elem_t *this, queue_elem_t **first,
         // fix the next element's "prev"
         this->next->prev = this->prev;
     }
+    // clean the struct
+    this->next = NULL;
+    this->prev = NULL;
 }
 
 static void do_prepend(queue_elem_t **first, queue_elem_t **last,
@@ -240,9 +262,34 @@ void queue_append(queue_t *q, queue_elem_t *elem){
         uv_mutex_unlock(&q->mutex);
         // execute the callback
         cb->new_data_cb(cb->data, elem->data);
+        return;
     }
     // otherwise, add this element to the list
     do_append(&q->first, &q->last, elem);
     uv_cond_signal(&q->cond);
+    uv_mutex_unlock(&q->mutex);
+}
+
+/* Does nothing if element is not in list.  q is needed for mutex.  Undefined
+   behavior if qe is actually in another list. */
+void queue_remove(queue_t *q, queue_elem_t *qe){
+    uv_mutex_lock(&q->mutex);
+    // verify that the qe is in the list (assuming any list is the right list)
+    /* This check would be cleaner I used a sentinel at either end of the list,
+       but the API wouldn't change; you'd still need the mutex from the correct
+       list, so there would be no change in functionality. */
+    if(qe->prev != NULL || qe->next != NULL || q->first == qe){
+        do_pop_this(qe, &q->first, &q->last);
+    }
+    uv_mutex_unlock(&q->mutex);
+}
+
+// Similar to queue_remove, but for unregistering a queue_cb_t
+void queue_cb_remove(queue_t *q, queue_cb_t *qcb){
+    uv_mutex_lock(&q->mutex);
+    queue_elem_t *qe = &qcb->qe;
+    if(qe->prev != NULL || qe->next != NULL || q->first == qe){
+        do_pop_this(qe, &q->awaiting_first, &q->awaiting_last);
+    }
     uv_mutex_unlock(&q->mutex);
 }
