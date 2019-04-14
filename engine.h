@@ -120,7 +120,7 @@ typedef void *(*session_deref_t)(void*);
 typedef struct {
     void (*ref_up)(void*);
     void (*ref_down)(void*);
-    void (*abort)(void*);
+    void (*close)(void*, derr_t error);
     void (*lock)(void*);
     void (*unlock)(void*);
     // non-error events should not be processed for invalid sessions

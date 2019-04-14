@@ -295,7 +295,7 @@ static void handle_write(loop_t *loop, event_t *ev){
     write_wrapper_t *wr_wrap = queue_pop_first(&loop->write_wrappers, false);
     // make sure there was an open write_wrapper_t
     if(wr_wrap == NULL){
-        loop_abort(loop);
+        loop_close(loop, E_INTERNAL);
         ORIG_GO(E_INTERNAL, "not enough write_wrappers!", fail);
     }
 
@@ -340,7 +340,8 @@ static void connection_cb(uv_stream_t *listener, int status){
 
     if(status < 0){
         uv_perror("uv_listen", status);
-        goto fail_accept;
+        error = (status == UV_ENOMEM) ? E_NOMEM : E_UV;
+        ORIG_GO(error, "error pausing read", fail_accept);
     }
 
     // allocate a new session context
@@ -360,7 +361,8 @@ static void connection_cb(uv_stream_t *listener, int status){
     int ret = uv_accept(listener, (uv_stream_t*)&ld->sock);
     if(ret < 0){
         uv_perror("uv_accept", ret);
-        goto fail_accept;
+        error = (ret == UV_ENOMEM) ? E_NOMEM : E_UV;
+        ORIG_GO(error, "error pausing read", fail_accept);
     }
     ld->sock.data = &ld->uvp;
 
@@ -370,14 +372,15 @@ static void connection_cb(uv_stream_t *listener, int status){
     ret = uv_read_start((uv_stream_t*)&ld->sock, allocator, read_cb);
     if(ret < 0){
         uv_perror("uv_read_start", ret);
-        goto fail_post_accept;
+        error = (ret == UV_ENOMEM) ? E_NOMEM : E_UV;
+        ORIG_GO(error, "error pausing read", fail_post_accept);
     }
     return;
 
 // failing after accept() is never a critical (application-ending) error
 fail_post_accept:
-    // abort session
-    iface.abort(ld->session);
+    // close session
+    iface.close(ld->session, error);
     return;
 
 /* accept() is guaranteed to succeed once for each time that connection_cb()
@@ -385,7 +388,7 @@ fail_post_accept:
    leaves us in a state that is difficult or impossible to clean up, and we
    just close the application to ensure no weird states. */
 fail_accept:
-    loop_abort(loop);
+    loop_close(loop, error);
     return;
 }
 
@@ -470,7 +473,7 @@ static void close_sessions_and_listeners(uv_handle_t *handle, void* arg){
         loop_data_t *ld = uvp->data.loop_data;
         loop_t *loop = ld->loop;
         session_iface_t iface = loop->session_iface;
-        iface.abort(ld->session);
+        iface.close(ld->session, E_OK);
     }else if(uvp->type == LP_TYPE_LISTENER){
         uv_close(handle, listener_close_cb);
     }else{
@@ -479,12 +482,12 @@ static void close_sessions_and_listeners(uv_handle_t *handle, void* arg){
 }
 
 
-static void abort_everything_i(uv_async_t *handle){
+static void close_everything_i(uv_async_t *handle){
     // the handle has a pointer to a uv_loop_t
     // the uv_loop_t has a pointer to our own loop_t
     loop_t *loop = handle->loop->data;
 
-    // Aborts all sessions, which will call uv_close on all session sockets.
+    // Closes all sessions, which will call uv_close on all session sockets.
     uv_walk(handle->loop, close_sessions_and_listeners, NULL);
 
     /* since this is called on the event loop thread, there are no more reads
@@ -501,7 +504,7 @@ static void abort_everything_i(uv_async_t *handle){
     loop->quitting = true;
 }
 
-static void abort_everything_ii(loop_t *loop){
+static void close_everything_ii(loop_t *loop){
     /* Now we have received EV_QUIT_UP.  That means all downstream nodes have
        emptied their upwards and downwards queues and released all necessary
        references.  Now that we (the event loop thread) are the last thread
@@ -592,7 +595,7 @@ static void event_cb(uv_async_t *handle){
                 break;
             case EV_QUIT_UP:
                 // initiate second half of quit sequence
-                abort_everything_ii(loop);
+                close_everything_ii(loop);
                 break;
             case EV_SESSION_START:
                 // doesn't happen, since we launch session_allocate() on-thread
@@ -632,12 +635,12 @@ derr_t loop_init(loop_t *loop, size_t num_read_events,
         error = (ret == UV_ENOMEM) ? E_NOMEM : E_UV;
         ORIG_GO(error, "error initializing loop_event_passer", fail_loop);
     }
-    ret = uv_async_init(&loop->uv_loop, &loop->loop_aborter,
-                        abort_everything_i);
+    ret = uv_async_init(&loop->uv_loop, &loop->loop_closer,
+                        close_everything_i);
     if(ret < 0){
         uv_perror("uv_async_init", ret);
         error = (ret == UV_ENOMEM) ? E_NOMEM : E_UV;
-        ORIG_GO(error, "error initializing loop_aborter", fail_loop);
+        ORIG_GO(error, "error initializing loop_closer", fail_loop);
     }
     /* TODO: how would we handle premature closing of these items?  We would
              have to call uv_close() on them and execute the loop to let the
@@ -746,6 +749,9 @@ void loop_free(loop_t *loop){
 derr_t loop_run(loop_t *loop){
     // run loop
     int ret = uv_run(&loop->uv_loop, UV_RUN_DEFAULT);
+    // Did we exit with an error?
+    PROP(loop->error);
+    // did UV exit with an error?
     if(ret < 0){
         uv_perror("uv_run", ret);
         derr_t error = (ret == UV_ENOMEM) ? E_NOMEM : E_UV;
@@ -779,8 +785,9 @@ void loop_pass_event(void *loop_engine, event_t *event){
 }
 
 
-void loop_abort(loop_t *loop){
-    int ret = uv_async_send(&loop->loop_aborter);
+void loop_close(loop_t *loop, derr_t error){
+    loop->error = error;
+    int ret = uv_async_send(&loop->loop_closer);
     if(ret < 0){
         // not possible, see note in loop_pass_event()
         uv_perror("uv_async_send", ret);
@@ -824,8 +831,7 @@ void loop_data_start(loop_data_t *ld, loop_t *loop, void *session){
 
 fail:
     /* TODO: definitely need some intermediate cleanup steps here */
-    // TODO: pass the error right here
-    loop->session_iface.abort(session);
+    loop->session_iface.close(session, error);
     return;
 }
 

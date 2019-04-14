@@ -150,7 +150,8 @@ static derr_t session_alloc(void** sptr, void* data, loop_t *loop,
     return E_OK;
 }
 
-static void session_abort(void *session){
+static void session_close(void *session, derr_t error){
+    (void)error;
     session_t *s = session;
     pthread_mutex_lock(&s->mutex);
     bool do_close = !s->closed;
@@ -185,7 +186,7 @@ static bool session_is_complete(void *session){
 static session_iface_t iface = {
     .ref_up = session_ref_up,
     .ref_down = session_ref_down,
-    .abort = session_abort,
+    .close = session_close,
     .lock = session_lock,
     .unlock = session_unlock,
     .is_invalid = session_is_invalid,
@@ -315,10 +316,10 @@ static derr_t test_loop(void){
                 // check for EOF
                 else if(ev->buffer.len == 0){
                     // done with this session
-                    session_abort(ev->session);
+                    session_close(ev->session, E_OK);
                     // was that the last session?
                     if(++nEOF == NUM_THREADS){
-                        loop_abort(&loop_ctx.loop);
+                        loop_close(&loop_ctx.loop, E_OK);
                     }
                 }
                 // otherwise, echo back the message

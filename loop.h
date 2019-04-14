@@ -62,7 +62,7 @@ typedef derr_t (*session_allocator_t)(void**, void*, loop_t*, ssl_context_t*);
 struct loop_t {
     uv_loop_t uv_loop;
     uv_async_t loop_event_passer;
-    uv_async_t loop_aborter;
+    uv_async_t loop_closer;
     // for pushing reads to the next engine
     queue_t read_events;
     // write reqs, for wrapping incoming write event_t's with libuv stuff
@@ -77,6 +77,8 @@ struct loop_t {
     bool quitting;
     session_deref_t get_loop_data;
     session_iface_t session_iface;
+    // error passed by loop_close
+    derr_t error;
 };
 
 // per-session data struct
@@ -113,7 +115,7 @@ derr_t loop_run(loop_t *loop);
 // function is an event_passer_t
 void loop_pass_event(void *loop_engine, event_t *event);
 
-void loop_abort(loop_t *loop);
+void loop_close(loop_t *loop, derr_t error);
 
 derr_t loop_add_listener(loop_t *loop, const char *addr, const char *svc,
                          uv_ptr_t *uvp);
