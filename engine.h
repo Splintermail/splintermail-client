@@ -26,12 +26,16 @@ The NEW new and improved modular pipelining:
 typedef enum {
     // a filled buffer from upstream.  Might carry an error.
     EV_READ,
+
     // an empty buffer passed back from downstream
     EV_READ_DONE,
+
     // a filled buffer from downstream
     EV_WRITE,
+
     // an empty buffer passed back from upstream.  Might carry an error.
     EV_WRITE_DONE,
+
     /* First half of the quit sequence.  This must start with the upstream-most
        engine (the socket engine).
 
@@ -61,9 +65,30 @@ typedef enum {
            returned, and it has returned all other events to its upstream and
            downstream neighbor engines.
     */
-    EV_QUIT_DOWN,  // first half of quit sequence, abandon all buffers in queue
+    EV_QUIT_DOWN,
+
     // second half of the quit sequence.
-    EV_QUIT_UP,    // second half of quit sequence,
+    EV_QUIT_UP,
+
+    /* This is like a reminder, in case no normal events come in, to trigger
+       an engine to look at a session.  Things like starting TCP connections
+       or starting TLS handshakes might only work with this trigger, though if
+       any normal events for this session are received before this event,
+       those events should trigger the engine data initialization and this
+       event should be ignored.  Not all engine data init()s will generate a
+       SESSION_START, but any pipeline should have at least one node which
+       needs a SESSION_START event to guarantee correct behavior, because all
+       sessions either need a connection accept()'ed or they need somebody to
+       pass the first data packet.  Since those things likely have to happen
+       on-thread, SESSION_START is the trigger required. */
+    EV_SESSION_START,
+
+    /* Triggers an engine to mark the session as closed and to free all
+       resources this engine's data struct.  After the last ref_down the
+       whole session will be freed.  Normal events recieved after a
+       SESSION_CLOSE should not be processed (since the engine doesn't have
+       the state in memory required to process them anymore). */
+    EV_SESSION_CLOSE,
 } event_type_t;
 
 typedef struct {
@@ -103,6 +128,17 @@ typedef struct {
     // no events at all should be processed for complete sessions
     bool (*is_complete)(void*);
 } session_iface_t;
+
+
+/* This state will be initialized in the session allocator to PREINIT.  The
+   state can only move forward.  It is possible for an engine to recieve a
+   SESSION_CLOSE event before a SESSION_START event, in which case the
+   SESSION_START should be mostly ignored (likely downref, no more) */
+typedef enum {
+    DATA_STATE_PREINIT = 0,
+    DATA_STATE_STARTED,
+    DATA_STATE_CLOSED,
+} engine_data_state_t;
 
 /*
 Wait, we have too many data structs.  Where do they all go?

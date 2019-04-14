@@ -107,36 +107,7 @@ typedef struct session_t {
     int refs;
     bool closed;
     loop_data_t loop_data;
-    // global-scope linked list for using gdb watchpoints
-    struct session_t *next;
 }session_t;
-
-// to allocate new sessions (when loop.c only know about a single child struct)
-// (the void** sets the session pointer, the void* argument is sess_alloc_data)
-static derr_t session_alloc(void** sptr, void* data, loop_t *loop,
-                            ssl_context_t* ssl_ctx){
-    (void)data;
-    (void)ssl_ctx;
-    derr_t error;
-    // allocate the struct
-    session_t *s = malloc(sizeof(*s));
-    if(!s) ORIG(E_NOMEM, "no mem");
-    // prepare the refs
-    pthread_mutex_init(&s->mutex, NULL);
-    s->refs = 0;
-    s->closed = false;
-    // init the loop_data element
-    PROP_GO( loop_data_init(&s->loop_data, loop, s), fail);
-    s->next = NULL;
-    *sptr = s;
-    return E_OK;
-
-fail:
-    pthread_mutex_destroy(&s->mutex);
-    free(s);
-    *sptr = NULL;
-    return error;
-}
 
 static void session_ref_up(void *session){
     session_t *s = session;
@@ -148,7 +119,7 @@ static void session_ref_up(void *session){
 static void session_ref_down(void *session){
     session_t *s = session;
     pthread_mutex_lock(&s->mutex);
-    int refs = s->refs--;
+    int refs = --s->refs;
     pthread_mutex_unlock(&s->mutex);
 
     if(refs > 0) return;
@@ -156,6 +127,27 @@ static void session_ref_down(void *session){
     // free the session
     pthread_mutex_destroy(&s->mutex);
     free(s);
+}
+
+// to allocate new sessions (when loop.c only know about a single child struct)
+// (the void** sets the session pointer, the void* argument is sess_alloc_data)
+static derr_t session_alloc(void** sptr, void* data, loop_t *loop,
+                            ssl_context_t* ssl_ctx){
+    (void)data;
+    (void)ssl_ctx;
+    // allocate the struct
+    session_t *s = malloc(sizeof(*s));
+    if(!s) ORIG(E_NOMEM, "no mem");
+    *s = (session_t){0};
+    // prepare the refs
+    pthread_mutex_init(&s->mutex, NULL);
+    s->refs = 1;
+    s->closed = false;
+    // init the loop_data element
+    loop_data_start(&s->loop_data, loop, s);
+    *sptr = s;
+    session_ref_down(s);
+    return E_OK;
 }
 
 static void session_abort(void *session){
@@ -305,7 +297,7 @@ static derr_t test_loop(void){
                        reader_writer_thread, &threads[i]);
     }
 
-    // the main thread is the  process incoming events from the loop
+    // process incoming events from the loop
     event_t *ev;
     bool success = true;
     event_t *quit_ev = NULL;

@@ -500,6 +500,65 @@ References:
     triggers the event loop to close the socket on-thread, and then at a later
     time in a close_cb the reference finally gets downref'd.
 
+Life of a per-session data struct:
+
+    session_allocator()
+        The session is created, doesn't matter what thread.  All engine data
+        structs will be initialized with zeros, because it will be necessary
+        that they can check their own state from now on.  Each engine data
+        allocator can queue a SESSION_START event, though it's not required.
+
+    session_close()
+        Can be called anytime after session_allocator calls the first engine
+        data allocator.  This will queue a SESSION_CLOSE event on each engine
+        for that engine's session data.
+
+    normal events, associated with a session:
+        guaranteed to come after the engine data was initialized with zeros,
+        but *not* guaranteed to come before the SESSION_START event.  Also,
+        it is possible to receive more normal events *after* a SESSION_CLOSE.
+
+    SESSION_START event:
+        This is like a reminder, in case no normal events come in, to trigger
+        an engine to look at a session.  Things like starting TCP connections
+        or starting TLS handshakes might only work with this trigger, though if
+        any normal events for this session are received before this event,
+        those events should trigger the engine data initialization and this
+        event should be ignored.  Not all engine data init()s will generate a
+        SESSION_START, but any pipeline should have at least one node which
+        needs a SESSION_START event to guarantee correct behavior, because all
+        sessions either need a connection accept()'ed or they need somebody to
+        pass the first data packet.  Since those things likely have to happen
+        on-thread, SESSION_START is the trigger required.
+
+    SESSION_CLOSE event:
+        Triggers an engine to mark the session as closed and to free all
+        resources this engine's data struct.  After the last ref_down the
+        whole session will be freed.  Normal events recieved after a
+        SESSION_CLOSE should not be processed (since the engine doesn't have
+        the state in memory required to process them anymore).
+
+    Potential Gotcha:
+        Right now, I don't have a solution to guarantee that SESSION_START
+        doesn't triggers an eventual SESSION_CLOSE on a neighbor node before
+        the SESSION_START is even passed to that same neighbor (for example, if
+        a quick tlse_data_init() thread pushed a SESSION_QUIT to the IMAP
+        engine before imape_data_init pushes the SESSION_START).  That means
+        that you could actually recieve SESSION_CLOSE *before* you get
+        SESSION_START.  We should be careful to implement that correctly.
+
+    Error handling during session initialization:
+        How does the error get passed?
+            It makes a lot of sense to pass it through SESSION_CLOSE, since
+            there will already be a dedicated event for any engine that might
+            need to see the error.
+        Who needs to see the error?
+            Probably just always hand it to the highest application layer
+        How is the error handled?
+            Errors from incoming connections are just logged; no other user
+            session need to be bothered.  Errors from outgoing sessions should
+            be handled by whatever thing asked for the session to be created.
+
 
 Important hooks:
   - msgs EXPUNGE or folder DELETE should check file permissions to make sure

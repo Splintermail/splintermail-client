@@ -63,13 +63,10 @@ struct loop_t {
     uv_loop_t uv_loop;
     uv_async_t loop_event_passer;
     uv_async_t loop_aborter;
-    uv_async_t loop_data_closer;
     // for pushing reads to the next engine
     queue_t read_events;
     // write reqs, for wrapping incoming write event_t's with libuv stuff
     queue_t write_wrappers;
-    // a list of ixs objects to close (which must be done on the libuv thread)
-    queue_t close_list;
     queue_t event_q;
     session_allocator_t sess_alloc;
     void *sess_alloc_data;
@@ -89,7 +86,6 @@ struct loop_data_t {
     // a pointer to the parent session
     void *session;
     queue_cb_t read_pause_qcb;
-    queue_elem_t close_qe;
     // libuv socket
     uv_tcp_t sock;
     // the only way to pass an error from no_bufs__pause_reading():
@@ -97,6 +93,9 @@ struct loop_data_t {
     /* during the unpause hook, a buffer is stored here for the next call to
        the allocator */
     event_t *event_for_allocator;
+    // standard engine data items
+    engine_data_state_t state;
+    event_t close_ev;
 };
 
 // num_write_wrappers must match the downstream engine's num_write_events
@@ -119,7 +118,7 @@ void loop_abort(loop_t *loop);
 derr_t loop_add_listener(loop_t *loop, const char *addr, const char *svc,
                          uv_ptr_t *uvp);
 
-derr_t loop_data_init(loop_data_t *ld, loop_t *loop, void *session);
+void loop_data_start(loop_data_t *ld, loop_t *loop, void *session);
 /* Not thread safe, can be called exactly once per loop_data_t.  Thread safety
    should be handled at the session level */
 void loop_data_close(loop_data_t *ld);
