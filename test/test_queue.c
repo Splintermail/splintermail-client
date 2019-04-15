@@ -31,6 +31,7 @@ static derr_t test_queue_simple(void){
     // check append/pop_first
     for(size_t i = 0; i < NELEMS; i++)
         queue_append(&q, &qlist[i].qe);
+    if(q.len != NELEMS) ORIG_GO(E_VALUE, "wrong len of queue", cu_q);
     for(size_t i = 0; i < NELEMS; i++){
         resp = queue_pop_first(&q, false);
         if(resp == NULL)
@@ -38,13 +39,16 @@ static derr_t test_queue_simple(void){
         if(resp != &qlist[i])
             ORIG_GO(E_VALUE, "mismatched value\n", cu_q);
     }
+    if(q.len != 0) ORIG_GO(E_VALUE, "wrong len of queue", cu_q);
     resp = queue_pop_first(&q, false);
     if(resp != NULL)
         ORIG_GO(E_VALUE, "unexpected non-null\n", cu_q);
+    if(q.len != 0) ORIG_GO(E_VALUE, "wrong len of queue", cu_q);
 
     // check prepend/pop_first
     for(size_t i = 0; i < NELEMS; i++)
         queue_prepend(&q, &qlist[i].qe);
+    if(q.len != NELEMS) ORIG_GO(E_VALUE, "wrong len of queue", cu_q);
     for(size_t i = NELEMS-1; i < NELEMS; i--){
         resp = queue_pop_first(&q, false);
         if(resp == NULL)
@@ -52,13 +56,16 @@ static derr_t test_queue_simple(void){
         if(resp != &qlist[i])
             ORIG_GO(E_VALUE, "mismatched value\n", cu_q);
     }
+    if(q.len != 0) ORIG_GO(E_VALUE, "wrong len of queue", cu_q);
     resp = queue_pop_first(&q, false);
     if(resp != NULL)
         ORIG_GO(E_VALUE, "unexpected non-null\n", cu_q);
+    if(q.len != 0) ORIG_GO(E_VALUE, "wrong len of queue", cu_q);
 
     // check prepend/pop_last
     for(size_t i = 0; i < NELEMS; i++)
         queue_prepend(&q, &qlist[i].qe);
+    if(q.len != NELEMS) ORIG_GO(E_VALUE, "wrong len of queue", cu_q);
     for(size_t i = 0; i < NELEMS; i++){
         resp = queue_pop_last(&q, false);
         if(resp == NULL)
@@ -66,13 +73,16 @@ static derr_t test_queue_simple(void){
         if(resp != &qlist[i])
             ORIG_GO(E_VALUE, "mismatched value\n", cu_q);
     }
+    if(q.len != 0) ORIG_GO(E_VALUE, "wrong len of queue", cu_q);
     resp = queue_pop_first(&q, false);
     if(resp != NULL)
         ORIG_GO(E_VALUE, "unexpected non-null\n", cu_q);
+    if(q.len != 0) ORIG_GO(E_VALUE, "wrong len of queue", cu_q);
 
     // check append/pop_last
     for(size_t i = 0; i < NELEMS; i++)
         queue_append(&q, &qlist[i].qe);
+    if(q.len != NELEMS) ORIG_GO(E_VALUE, "wrong len of queue", cu_q);
     for(size_t i = NELEMS-1; i < NELEMS; i--){
         resp = queue_pop_last(&q, false);
         if(resp == NULL)
@@ -80,9 +90,11 @@ static derr_t test_queue_simple(void){
         if(resp != &qlist[i])
             ORIG_GO(E_VALUE, "mismatched value\n", cu_q);
     }
+    if(q.len != 0) ORIG_GO(E_VALUE, "wrong len of queue", cu_q);
     resp = queue_pop_first(&q, false);
     if(resp != NULL)
         ORIG_GO(E_VALUE, "unexpected non-null\n", cu_q);
+    if(q.len != 0) ORIG_GO(E_VALUE, "wrong len of queue", cu_q);
 
 cu_q:
     queue_free(&q);
@@ -124,15 +136,20 @@ static derr_t test_queue_cb(void){
     if(pre_wait_calls != 3) ORIG_GO(E_VALUE, "missed pre-wait hook", cu_q);
 
     // append/prepend some elements
+    if(q.len != 0) ORIG_GO(E_VALUE, "wrong len of queue", cu_q);
     queue_append(&q, &qlist[3].qe);
     if(new_data_calls != 1) ORIG_GO(E_VALUE, "missed new-data hook", cu_q);
+    if(q.len != 0) ORIG_GO(E_VALUE, "wrong len of queue", cu_q);
     queue_append(&q, &qlist[4].qe);
     if(new_data_calls != 2) ORIG_GO(E_VALUE, "missed new-data hook", cu_q);
+    if(q.len != 0) ORIG_GO(E_VALUE, "wrong len of queue", cu_q);
     queue_prepend(&q, &qlist[5].qe);
     if(new_data_calls != 3) ORIG_GO(E_VALUE, "missed new-data hook", cu_q);
+    if(q.len != 0) ORIG_GO(E_VALUE, "wrong len of queue", cu_q);
 
     queue_prepend(&q, &qlist[6].qe);
     if(new_data_calls != 3) ORIG_GO(E_VALUE, "unexpected new-data hook", cu_q);
+    if(q.len != 1) ORIG_GO(E_VALUE, "wrong len of queue", cu_q);
 
 cu_q:
     queue_free(&q);

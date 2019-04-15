@@ -78,6 +78,7 @@ typedef struct {
     // head and tail of the first list
     queue_elem_t *first;
     queue_elem_t *last;
+    size_t len;
     // head and tail of the list of things waiting for data
     queue_elem_t *awaiting_first;
     queue_elem_t *awaiting_last;

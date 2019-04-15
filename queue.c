@@ -48,6 +48,8 @@ derr_t queue_init(queue_t *q){
         ORIG_GO(error, "failed in uv_cond_init", fail_mutex);
     }
 
+    q->len = 0;
+
     return E_OK;
 
 fail_mutex:
@@ -182,6 +184,7 @@ static inline queue_elem_t *do_pop_cb(queue_t *q, queue_cb_t *cb,
         // append cb to our list of things that are awaiting data
         do_append(&q->awaiting_first, &q->awaiting_last, &cb->qe);
     }
+    if(qe) q->len--;
     uv_mutex_unlock(&q->mutex);
     return qe;
 }
@@ -203,6 +206,7 @@ void *queue_pop_first(queue_t *q, bool block){
         // wait for a signal
         uv_cond_wait(&q->cond, &q->mutex);
     }
+    if(qe) q->len--;
     uv_mutex_unlock(&q->mutex);
     return qe ? qe->data : NULL;
 }
@@ -214,6 +218,7 @@ void *queue_pop_last(queue_t *q, bool block){
         // wait for a signal
         uv_cond_wait(&q->cond, &q->mutex);
     }
+    if(qe) q->len--;
     uv_mutex_unlock(&q->mutex);
     return qe ? qe->data : NULL;
 }
@@ -230,6 +235,7 @@ void *queue_pop_find(queue_t *q, queue_matcher_cb_t matcher, void *user){
         }
         this = this->next;
     }
+    if(retval) q->len--;
     uv_mutex_unlock(&q->mutex);
     return retval;
 }
@@ -248,6 +254,7 @@ void queue_prepend(queue_t *q, queue_elem_t *elem){
     }
     // otherwise, add this element to the list
     do_prepend(&q->first, &q->last, elem);
+    q->len++;
     uv_cond_signal(&q->cond);
     uv_mutex_unlock(&q->mutex);
 }
@@ -266,6 +273,7 @@ void queue_append(queue_t *q, queue_elem_t *elem){
     }
     // otherwise, add this element to the list
     do_append(&q->first, &q->last, elem);
+    q->len++;
     uv_cond_signal(&q->cond);
     uv_mutex_unlock(&q->mutex);
 }
@@ -280,6 +288,7 @@ void queue_remove(queue_t *q, queue_elem_t *qe){
        list, so there would be no change in functionality. */
     if(qe->prev != NULL || qe->next != NULL || q->first == qe){
         do_pop_this(qe, &q->first, &q->last);
+        q->len--;
     }
     uv_mutex_unlock(&q->mutex);
 }
@@ -290,6 +299,7 @@ void queue_cb_remove(queue_t *q, queue_cb_t *qcb){
     queue_elem_t *qe = &qcb->qe;
     if(qe->prev != NULL || qe->next != NULL || q->first == qe){
         do_pop_this(qe, &q->awaiting_first, &q->awaiting_last);
+        q->len--;
     }
     uv_mutex_unlock(&q->mutex);
 }
