@@ -6,9 +6,12 @@
 #include "common.h"
 #include "engine.h"
 #include "queue.h"
-#include "ix.h"
-#include "buffer_pool.h"
 #include "networking.h"
+
+struct loop_t;
+typedef struct loop_t loop_t;
+struct loop_data_t;
+typedef struct loop_data_t loop_data_t;
 
 /* A tagged union of pointers, mostly important for uv_walk, to determine which
    type of handler we are looking at */
@@ -52,8 +55,6 @@ typedef struct {
     event_t event;
 } read_wrapper_t;
 
-struct loop_data_t;
-typedef struct loop_data_t loop_data_t;
 // to allocate new sessions (when loop.c only know about a single child struct)
 // (the void** sets the session pointer, the void* argument is sess_alloc_data)
 typedef derr_t (*session_allocator_t)(void**, void*, loop_t*, ssl_context_t*);

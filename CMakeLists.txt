@@ -40,7 +40,7 @@ set(OBJ_TGTS api_client
              win_compat
              console_input
              ui
-             ixs
+             engine
              loop
              tls_engine
              imap_engine
@@ -220,7 +220,6 @@ endforeach()
 # some targets need OpenSSL headers
 obj_depend_lib(networking "${OPENSSL_INCLUDE_DIR}" "${OPENSSL_LIBRARIES}")
 obj_depend_lib(crypto "${OPENSSL_INCLUDE_DIR}" "${OPENSSL_LIBRARIES}")
-obj_depend_lib(ixs "${OPENSSL_INCLUDE_DIR}" "${OPENSSL_LIBRARIES}")
 # ui has a full test harness, so it can't use the normal obj_depend_obj
 target_include_directories(ui_o PRIVATE ${OPENSSL_INCLUDE_DIR})
 
@@ -238,11 +237,11 @@ obj_depend_obj(pop_server networking)
 obj_depend_obj(api_client networking crypto json)
 obj_depend_obj(key_tool api_client crypto)
 obj_depend_obj(ditm pop_client pop_server maildir json)
-obj_depend_obj(ixs uv_interface common)
-obj_depend_obj(loop uv_interface common)
-obj_depend_obj(tls_engine common)
-obj_depend_obj(imap_engine imap_read_o common)
 obj_depend_obj(queue uv_interface common)
+obj_depend_obj(engine queue)
+obj_depend_obj(loop engine)
+obj_depend_obj(tls_engine engine networking)
+obj_depend_obj(imap_engine engine imap_read_o)
 obj_depend_obj(jsw_atree common)
 obj_depend_obj(imap_parse_tab imap_expression imap_read common)
 obj_depend_obj(imap_parse imap_parse_tab common)
@@ -262,7 +261,7 @@ target_link_libraries(leak networking)
 target_link_libraries(encrypt_msg crypto opt_parse)
 target_link_libraries(decrypt_msg crypto opt_parse)
 target_link_libraries(olt common fileops opt_parse)
-target_link_libraries(imap loop ixs tls_engine imap_engine queue imap_parse networking)
+target_link_libraries(imap loop tls_engine imap_engine imap_parse networking)
 
 # decide if we are building server code
 if("${BUILD_SERVER_CODE}")
@@ -440,7 +439,6 @@ if("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU")
     # libuv needs non-strict aliasing
     # see discussion here: https://github.com/libuv/libuv/issues/1230
     target_compile_options(loop_o PRIVATE -fno-strict-aliasing)
-    target_compile_options(ixs_o PRIVATE -fno-strict-aliasing)
     target_compile_options(imap_parse_tab_o PRIVATE -Wno-sign-conversion)
     target_compile_options(imap_parse_tab_o PRIVATE -Wno-conversion)
     # add some compiler hardening flags
@@ -476,7 +474,6 @@ elseif("${CMAKE_C_COMPILER_ID}" MATCHES "Clang")
     # libuv needs non-strict aliasing
     # see discussion here: https://github.com/libuv/libuv/issues/1230
     target_compile_options(loop_o PRIVATE -fno-strict-aliasing)
-    target_compile_options(ixs_o PRIVATE -fno-strict-aliasing)
     target_compile_options(imap_parse_tab_o PRIVATE -Wno-sign-conversion)
     target_compile_options(imap_parse_tab_o PRIVATE -Wno-conversion)
     # add some compiler hardening flags

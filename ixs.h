@@ -20,52 +20,27 @@ typedef enum {
     IMAP_STATE_LOGOUT,
 } imap_session_state_t;
 
-struct ixs_t {
-    // a tagged-union-style self-pointer
-    ix_t ix;
-    // self-pointers for putting this struct in queues
-    queue_cb_t wait_for_read_buf_qcb;
-    queue_cb_t wait_for_write_buf_qcb;
-    queue_cb_t close_qcb;
-    // a pointer to loop_t parent struct
-    loop_t *loop;
-    // "up" means mail server, "down" means email client
-    bool upwards;
-    // libuv socket
-    uv_tcp_t sock;
-    // for TLS operations
-    BIO* rawin;
-    BIO* rawout;
-    SSL* ssl;
-    bool handshake_completed;
-    // buffers for passing between TLS engine and the IMAP engine
-    // "dec" for "decrypted"
-    dstr_t decin;
-    dstr_t decout;
-    // reads and writes in flight
-    /* note that these values are not mutex protected because they should be
-       incremented and decremented only by a single engine.  For example, the
-       libuv loop thread increments tls_reads when it passes a buffer to the
-       TLS engine, and when the TLS engine calls loop_read_done(), it doesn't
-       decrement tls_reads, it just passes an event for the libuv loop thread
-       to handle (where tls_reads gets decremented) */
-    size_t tls_reads; // reads pushed from libuv to TLS engine
-    size_t imap_reads; // reads pushed from TLS engine to IMAP engine
-    size_t raw_writes; // writes pushed from TLS engine to libuv
-    size_t tls_writes; // writes pushed from IMAP engine to TLS engine
-    size_t dec_writes_pending; // internal to TLS engine
-    /* linked list of read buffers which have been handed to libuv to complete
-       a read but which have not yet been passed to a read callback */
-    queue_t pending_reads;
-    // only call uv_close once
-    bool closed;
-    // keep track of references
-    uv_mutex_t mutex;
-    int refs;
-    bool is_valid;
-    // imap engine stuff
-    imap_session_state_t state;
-};
+struct ixs_t;
+
+// struct ixs_t {
+//     // a tagged-union-style self-pointer
+//     ix_t ix;
+//     // pointers to engines
+//     loop_t *loop;
+//     tlse_t *tlse;
+//     // engine-specific session data
+//     loop_data_t loop_data;
+//     tlse_data_t tlse_data;
+//     // "up" means mail server, "down" means email client
+//     bool upwards;
+//     // keep track of references
+//     uv_mutex_t mutex;
+//     int refs;
+//     bool is_valid;
+//     bool is_complete;
+//     // imap engine stuff
+//     imap_session_state_t state;
+// };
 
 derr_t ixs_init(ixs_t *ixs, loop_t *loop, ssl_context_t *ctx, bool upwards);
 void ixs_free(ixs_t *ixs);
@@ -90,15 +65,7 @@ IMAP Session Context reference counting:
 void ixs_ref_up(ixs_t *ixs);
 void ixs_ref_down(ixs_t *ixs);
 
-// invalidates session, then requests libuv thread to close session's sockets
-// good for when you want to abandon one session but continue with the rest
+// invalidates session, and triggers outstanding reference-holders to close
 void ixs_abort(ixs_t *ixs);
-
-// just invalidates session
-// good for when you are about to close all uv_handles, like in loop_abort
-void ixs_invalidate(ixs_t *ixs);
-
-// just calls ixs_ref_down for a uv handle whose *data is an ixs_t
-void ixs_close_cb(uv_handle_t *h);
 
 #endif // IXS_H

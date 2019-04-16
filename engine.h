@@ -2,6 +2,7 @@
 #define ENGINE_H
 
 #include "queue.h"
+#include "common.h"
 
 /* This header defines some interfaces by which engines pass events to each
    other.  Hence the name "engine.h". */
@@ -56,14 +57,23 @@ typedef enum {
          - X passes EV_QUIT_DOWN to downstream ASAP, possibly immediately
          - X constantly pops events from its queue:
            - EV_READ should not happen
-           - EV_READ_DONE events may trigger sending the EV_QUIT_DOWN (once)
+           - EV_READ_DONE events are ignored (just return-to-pool)
            - EV_WRITE events trigger EV_WRITE_DONE immediately
-           - EV_WRITE_DONE events are ignored
-           - EV_QUIT_UP triggers an EV_QUIT_UP message.  EV_QUIT_UP should be
-             passed back via the buffer that EV_QUIT_DOWN was sent.
+           - EV_WRITE_DONE events are ignored (just return-to-pool)
+           - EV_QUIT_UP triggers an EV_QUIT_UP message, if all of X's write
+             events are accounted for (the downstream node sending QUIT_UP
+             will have sent back all of the read events already). If
+             EV_QUIT_UP cannot be sent yet it should be stored and sent after
+             the final READ_DONE event.  EV_QUIT_UP should be passed back via
+             the same buffer that EV_QUIT_DOWN was sent.
          - X exits.  It is now safe to free X: all of its own events have been
            returned, and it has returned all other events to its upstream and
            downstream neighbor engines.
+
+        Also, QUIT_DOWN is its own special event, that is allocated at the
+        beginning of the program, and it is passed along all the way down the
+        pipe and back up it (as a QUIT_UP).  That simplifies the quit sequence
+        a lot.
     */
     EV_QUIT_DOWN,
 
@@ -102,13 +112,7 @@ typedef struct {
 } event_t;
 
 // Does not init the dstr or set callbacks.
-static inline void event_prep(event_t *ev, void *parent_struct){
-    ev->error = E_OK;
-    ev->data = parent_struct;
-    ev->session = NULL;
-    queue_elem_prep(&ev->qe, ev);
-    queue_cb_prep(&ev->qcb, ev);
-}
+void event_prep(event_t *ev, void *parent_struct);
 
 // pass an event to an engine
 typedef void (*event_passer_t)(void*, event_t*);
@@ -140,45 +144,10 @@ typedef enum {
     DATA_STATE_CLOSED,
 } engine_data_state_t;
 
-/*
-Wait, we have too many data structs.  Where do they all go?
+// free all the events in a pool and then call queue_free
+void event_pool_free(queue_t *pool);
 
-    Engine structs:
-        loop_t
-        tlse_t
-        imape_t
-
-    Session structs:
-        ixs_t {
-            uv_conn_t; // which connection is ours
-            tlse_data_t; // state of the TLS session
-            imape_data_t; // state of the IMAP session
-            ...
-        }
-
-    Event structs:
-        event_t {
-            void *session; // points to a session associated with the event
-            ...
-            queue_elem_t qe; // each event is able to wait for the next step
-        }
-
-OK, passing an event touches all three:
-  - The event is an EVENT STRUCT
-  - The event.data is a SESSION STRUCT
-  - The event is passed into a queue within an ENGINE STRUCT
-
-What about buffer-freed-callbacks?  How will those work?
-  - The queue element for waiting is built into the session and so the callback
-    knows about the SESSION STRUCT
-  - The session has a pointer to the ENGINE STRUCT
-  - The callback itself returns the EVENT STRUCT as well
-
-Conclusion:
-  - Engines can be initialized with pointers to their neighboring engines
-  - Events carry *aux which points to a session
-  - event_t's do not need reference counts, only one engine owns them at a time
-  - The event_t's *session counts as a session reference
-*/
+// call queue_init(), allocate/append a bunch of events
+derr_t event_pool_init(queue_t *pool, size_t nevents);
 
 #endif // ENGINE_H

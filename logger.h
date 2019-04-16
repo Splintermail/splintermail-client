@@ -39,11 +39,21 @@ int pvt_do_log(log_level_t level, const char* format,
              (const fmt_t[]){FI(1), __VA_ARGS__}, \
              sizeof((const fmt_t[]){FI(1), __VA_ARGS__}) / sizeof(fmt_t))
 
+// needs to be an inline function to handle NULL pointers for err_ptr
+static inline void LOG_ORIG(derr_t *err_ptr, derr_t code, const char *message){
+    LOG_ERROR("ERROR: %x\noriginating %x from file %x: %x(), line %x\n",
+              FS(message), FD(error_to_dstr(code)), FS(FILE_BASENAME),
+              FS(__func__), FI(__LINE__) );
+    if(err_ptr) *err_ptr = code;
+}
+
+#define LOG_PROP(_error) \
+        LOG_ERROR("propagating %x from file %x: %x(), line %x\n",\
+                  FD(error_to_dstr(_error)), FS(FILE_BASENAME), \
+                  FS(__func__), FI(__LINE__) )
 
 #define ORIG(_code, _message) { \
-    LOG_ERROR("ERROR: %x\noriginating %x from file %x: %x(), line %x\n",\
-              FS(_message), FD(error_to_dstr(_code)), FS(FILE_BASENAME), \
-              FS(__func__), FI(__LINE__) ); \
+    LOG_ORIG(NULL, _code, _message); \
     return _code; \
 }
 
@@ -51,9 +61,7 @@ int pvt_do_log(log_level_t level, const char* format,
 #define PROP(_command) { \
     derr_t _derr = _command; \
     if(_derr){ \
-        LOG_ERROR("propagating %x from file %x: %x(), line %x\n",\
-                  FD(error_to_dstr(_derr)), FS(FILE_BASENAME), \
-                  FS(__func__), FI(__LINE__) ); \
+        LOG_PROP(_derr); \
         return _derr; \
     } \
 }
@@ -61,7 +69,7 @@ int pvt_do_log(log_level_t level, const char* format,
 #define LOG_CATCH(_error) \
     LOG_ERROR("catching %x in file %x: %x(), line %x\n", \
               FD(error_to_dstr(_error)), FS(FILE_BASENAME), \
-              FS(__func__), FI(__LINE__)) \
+              FS(__func__), FI(__LINE__))
 
 // to use the below macros, declare "derr_t error" beforehand
 
@@ -70,19 +78,14 @@ int pvt_do_log(log_level_t level, const char* format,
     if((error & (_error_mask)) && (LOG_CATCH(error)==0))
 
 #define ORIG_GO(_code, _message, _label) { \
-    error = _code; \
-    LOG_ERROR("ERROR: %x\noriginating %x from file %x: %x(), line %x\n",\
-              FS(_message), FD(error_to_dstr(_code)), FS(FILE_BASENAME), \
-              FS(__func__), FI(__LINE__) ); \
+    LOG_ORIG(&error, _code, _message); \
     goto _label; \
 }
 
 #define PROP_GO(_command, _label) {\
     error = _command; \
     if(error){ \
-        LOG_ERROR("propagating %x from file %x: %x(), line %x\n",\
-                  FD(error_to_dstr(error)), FS(FILE_BASENAME), \
-                  FS(__func__), FI(__LINE__) ); \
+        LOG_PROP(error); \
         goto _label; \
     } \
 }
@@ -103,17 +106,18 @@ int pvt_do_log(log_level_t level, const char* format,
     Now it is easier to handle errors from dstr_toi() in higher-level code
     because there is only one possible error it can throw.
     */
-#define RETHROW(_newerror) {\
+#define LOG_RETHROW(_newerror) \
     LOG_ERROR("rethrowing %x as %x in file %x: %x(), line %x\n", \
               FD(error_to_dstr(error)), FD(error_to_dstr(_newerror)), \
-              FS(FILE_BASENAME), FS(__func__), FI(__LINE__)); \
+              FS(FILE_BASENAME), FS(__func__), FI(__LINE__))
+
+#define RETHROW(_newerror) {\
+    LOG_RETHROW(_newerror); \
     return _newerror; \
 }
 
 #define RETHROW_GO(_newerror, label) {\
-    LOG_ERROR("rethrowing %x as %x in file %x: %x(), line %x\n", \
-              FD(error_to_dstr(error)), FD(error_to_dstr(_newerror)), \
-              FS(FILE_BASENAME), FS(__func__), FI(__LINE__)); \
+    LOG_RETHROW(_newerror); \
     error = _newerror; \
     goto label; \
 }

@@ -358,7 +358,7 @@ derr_t readlink_path(const string_builder_t* sb, dstr_t* stack_out,
     ssize_t len = readlink(path->data, stack_out->data, stack_out->size);
     if(len < 0){
         if(errno == ENOMEM){
-            ORIG_GO(E_NOMEM, "no memory for errno", cu_path);
+            ORIG_GO(E_NOMEM, "no memory for readlink", cu_path);
         }else{
             LOG_ERROR("readlink %x: %x\n", FD(path), FE(&errno));
             ORIG_GO(E_FS, "unable to readlink", cu_path);
@@ -377,7 +377,7 @@ derr_t readlink_path(const string_builder_t* sb, dstr_t* stack_out,
             len = readlink(path->data, heap_out->data, heap_out->size);
             if(len < 0){
                 if(errno == ENOMEM){
-                    ORIG_GO(E_NOMEM, "no memory for errno", cu_heap);
+                    ORIG_GO(E_NOMEM, "no memory for readlink", cu_heap);
                 }else{
                     LOG_ERROR("readlink %x: %x\n", FD(path), FE(&errno));
                     ORIG_GO(E_FS, "unable to readlink", cu_heap);

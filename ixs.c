@@ -88,7 +88,7 @@ derr_t ixs_init(ixs_t *ixs, loop_t *loop, ssl_context_t *ctx, bool upwards){
     // linked list element self-pointers
     ixs->wait_for_read_buf_qcb.data = ixs;
     ixs->wait_for_write_buf_qcb.data = ixs;
-    ixs->close_qcb.data = ixs;
+    ixs->close_qe.data = ixs;
     // no handshake yet
     ixs->handshake_completed = false;
     // set up uv_tcp_t.data to point to ix
@@ -104,8 +104,6 @@ derr_t ixs_init(ixs_t *ixs, loop_t *loop, ssl_context_t *ctx, bool upwards){
     ixs->tls_writes = 0;
     ixs->dec_writes_pending = 0;
 
-    // not closed yet (obviously)
-    ixs->closed = false;
     ixs->is_valid = true;
     // start with one reference (the socket)
     ixs->refs = 1;
@@ -162,28 +160,22 @@ void ixs_ref_down(ixs_t *ixs){
 
 
 void ixs_abort(ixs_t *ixs){
+    // this function must be idempotent and thread-safe
     bool did_invalidation = false;
-    // lock the mutex
     uv_mutex_lock(&ixs->mutex);
-    if(ixs->is_valid){
-        ixs->is_valid = false;
+    if(is_invalid){
+        is_invalid = false;
         did_invalidation = true;
     }
     uv_mutex_unlock(&ixs->mutex);
-
     if(did_invalidation){
-        loop_abort_ixs(ixs->loop, ixs);
+        /* Here, we trigger the closing of all standing references to the ixs.
+           For example, the socket engine has a socket that points to the
+           session.  We need to close that.  However, the TLS engine does not
+           keep standing references, only transient ones while it processes
+           packets; any references in the TLS engine will be dropped as they
+           are pulled out of queues.  When all of the references are released,
+           the final ixs_ref_down will free the memory behind the session. */
+        loop_close_loop_data(&ixs->loop_data);
     }
-}
-
-
-void ixs_invalidate(ixs_t *ixs){
-    uv_mutex_lock(&ixs->mutex);
-    ixs->is_valid = false;
-    uv_mutex_unlock(&ixs->mutex);
-}
-
-
-void ixs_close_cb(uv_handle_t* h){
-    ixs_ref_down(((ix_t*)h->data)->data.ixs);
 }

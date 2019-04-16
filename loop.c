@@ -487,6 +487,9 @@ static void close_everything_i(uv_async_t *handle){
     // the uv_loop_t has a pointer to our own loop_t
     loop_t *loop = handle->loop->data;
 
+    // only execute this once
+    if(loop->quitting) return;
+
     // Closes all sessions, which will call uv_close on all session sockets.
     uv_walk(handle->loop, close_sessions_and_listeners, NULL);
 
