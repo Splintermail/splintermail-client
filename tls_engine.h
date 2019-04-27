@@ -84,7 +84,8 @@ typedef struct {
     // generic engine stuff
     uv_work_t work_req;
     session_iface_t session_iface;
-    tlse_data_t *(*get_tlse_data)(void*);
+    tlse_data_t *(*session_get_tlse_data)(void*);
+    ssl_context_t *(*session_get_ssl_ctx)(void*);
     queue_t event_q;
     queue_t read_events;
     queue_t write_events;
@@ -114,10 +115,10 @@ struct tlse_data_t {
     tlse_t *tlse;
     // generic per-engine data stuff
     engine_data_state_t data_state;
+    event_t start_ev;
     event_t close_ev;
     // TLS-engine-specific stuff
     tls_state_t tls_state;
-    const ssl_context_t *ctx; // this pointer does not belong to us
     SSL *ssl;
     BIO *rawin;
     BIO *rawout;
@@ -150,7 +151,8 @@ struct tlse_data_t {
 
 derr_t tlse_init(tlse_t *tlse, size_t nread_events, size_t nwrite_events,
                  session_iface_t session_iface,
-                 tlse_data_t *(*get_tlse_data)(void*),
+                 tlse_data_t *(*session_get_tlse_data)(void*),
+                 ssl_context_t *(*session_get_ssl_ctx)(void*),
                  event_passer_t pass_up, void *upstream,
                  event_passer_t pass_down, void *downstream);
 
@@ -161,6 +163,7 @@ derr_t tlse_add_to_loop(tlse_t *tlse, uv_loop_t *loop);
 // function is an event_passer_t
 void tlse_pass_event(void *tlse_void, event_t *ev);
 
-void tlse_data_close(tlse_data_t *td);
+void tlse_data_start(tlse_data_t *td, tlse_t *tlse, void *session);
+void tlse_data_close(tlse_data_t *td, tlse_t *tlse, void *session);
 
 #endif // TLS_ENGINE_H

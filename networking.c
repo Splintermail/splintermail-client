@@ -15,6 +15,9 @@
 
 #include "win_compat.h"
 
+// forward declaration of function only exposed to tests
+derr_t ssl_context_load_from_os(ssl_context_t* ctx);
+
 static void log_errors(void){
     unsigned long e;
     while( (e = ERR_get_error()) ){

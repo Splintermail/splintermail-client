@@ -39,7 +39,6 @@ derr_t connection_new_ssl(connection_t* conn, ssl_context_t* ctx,
            E_SSL (server SSL certificate invalid) */
 
 derr_t ssl_context_new_client(ssl_context_t* ctx);
-derr_t ssl_context_load_from_os(ssl_context_t* ctx);
 
 // server side
 derr_t ssl_context_new_server(ssl_context_t* ctx, const char* certfile,

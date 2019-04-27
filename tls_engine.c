@@ -1,6 +1,7 @@
 #include <openssl/ssl.h>
 #include <openssl/bio.h>
 #include <openssl/err.h>
+#include <uv.h>
 
 #include "tls_engine.h"
 #include "common.h"
@@ -444,9 +445,12 @@ static void tlse_process_events(uv_work_t *req){
     bool should_continue = true;
     while(should_continue){
         event_t *ev = queue_pop_first(&tlse->event_q, true);
-        tlse_data_t *td = tlse->get_tlse_data(ev->session);
+        tlse_data_t *td;
+        td = ev->session ? tlse->session_get_tlse_data(ev->session) : NULL;
         // has this session been initialized?
-        if(td->data_state == DATA_STATE_PREINIT){
+        if(td && td->data_state == DATA_STATE_PREINIT
+                && ev->ev_type != EV_SESSION_CLOSE){
+            // TODO: client connections start the handshake
             tlse_data_onthread_start(td, tlse, ev->session);
         }
         switch(ev->ev_type){
@@ -504,8 +508,7 @@ static void tlse_process_events(uv_work_t *req){
                 }
                 break;
             case EV_SESSION_START:
-                /* Not implemented for this engine yet.  Will be necessary for
-                   client-side connections. */
+                iface.ref_down(ev->session);
                 break;
             case EV_SESSION_CLOSE:
                 tlse_data_onthread_close(td);
@@ -526,42 +529,16 @@ void tlse_pass_event(void *tlse_void, event_t *ev){
 }
 
 
-/* session_close() will call tlse_close() from any thread.  The session is
-   required to call this exactly one time for every session. */
-void tlse_data_close(tlse_data_t *td){
-    tlse_t *tlse = td->tlse;
-    // just pass a SESSION_CLOSE event to trigger tlse_data_onthread_close()
-    td->close_ev.error = E_OK;
-    td->close_ev.buffer = (dstr_t){0};
-    td->close_ev.session = td->session;
-    td->tlse->session_iface.ref_up(td->session);
-    tlse_pass_event(tlse, &td->close_ev);
+void tlse_data_start(tlse_data_t *td, tlse_t *tlse, void *session){
+    // pass the starting event
+    event_prep(&td->start_ev, td);
+    td->start_ev.error = E_OK;
+    td->start_ev.buffer = (dstr_t){0};
+    td->start_ev.session = session;
+    tlse->session_iface.ref_up(session);
+    tlse_pass_event(tlse, &td->start_ev);
 }
 
-// called from the tlse thread, after EV_SESSION_CLOSE is received
-/* note: it is important that this function is called from within some context
-   that holds a session reference, because advance_state() calls ref_down in
-   an otherwise unsafe fashion */
-static void tlse_data_onthread_close(tlse_data_t *td){
-    // no double closing.  This could happen if tlse_data_start failed.
-    if(td->data_state == DATA_STATE_CLOSED) return;
-    td->data_state = DATA_STATE_CLOSED;
-    // release/return all events
-    td->tls_state = TLS_STATE_CLOSED;
-    advance_state(td);
-
-    // free everything:
-
-    // this will free the BIOs
-    SSL_free(td->ssl);
-    queue_free(&td->pending_writes);
-    queue_free(&td->pending_reads);
-    // the ssl_context_t* does not belong to us.
-}
-
-
-/* Right now, there is no off-thread start function.  That will be necessary
-   for TLS clients (which need to initiate a handshake), but not just yet. */
 static void tlse_data_onthread_start(tlse_data_t *td, tlse_t *tlse,
                                      void *session){
     derr_t error;
@@ -590,7 +567,8 @@ static void tlse_data_onthread_start(tlse_data_t *td, tlse_t *tlse,
     PROP_GO( queue_init(&td->pending_writes), fail_pending_reads);
 
     // allocate SSL object
-    td->ssl = SSL_new(td->ctx->ctx);
+    ssl_context_t *ssl_ctx = tlse->session_get_ssl_ctx(session);
+    td->ssl = SSL_new(ssl_ctx->ctx);
     if(td->ssl == NULL){
         ORIG_GO(E_SSL, "unable to create SSL object", fail_pending_writes);
     }
@@ -643,9 +621,49 @@ fail:
 }
 
 
+/* session_close() will call tlse_close() from any thread.  The session is
+   required to call this exactly one time for every session. */
+void tlse_data_close(tlse_data_t *td, tlse_t *tlse, void *session){
+    // pass the closing event
+    event_prep(&td->close_ev, td);
+    td->close_ev.error = E_OK;
+    td->close_ev.buffer = (dstr_t){0};
+    td->close_ev.session = session;
+    tlse->session_iface.ref_up(session);
+    tlse_pass_event(tlse, &td->close_ev);
+}
+
+// called from the tlse thread, after EV_SESSION_CLOSE is received
+/* note: it is important that this function is called from within some context
+   that holds a session reference, because advance_state() calls ref_down in
+   an otherwise unsafe fashion */
+static void tlse_data_onthread_close(tlse_data_t *td){
+    // no double closing.  This could happen if tlse_data_start failed.
+    if(td->data_state == DATA_STATE_CLOSED) return;
+    // safe from PREINIT state
+    bool exit_early = (td->data_state == DATA_STATE_PREINIT);
+    // set states
+    td->data_state = DATA_STATE_CLOSED;
+    td->tls_state = TLS_STATE_CLOSED;
+    if(exit_early) return;
+
+    // release/return all events
+    advance_state(td);
+
+    // free everything:
+
+    // this will free the BIOs
+    SSL_free(td->ssl);
+    queue_free(&td->pending_writes);
+    queue_free(&td->pending_reads);
+    // the ssl_context_t* does not belong to us.
+}
+
+
 derr_t tlse_init(tlse_t *tlse, size_t nread_events, size_t nwrite_events,
                  session_iface_t session_iface,
-                 tlse_data_t *(*get_tlse_data)(void*),
+                 tlse_data_t *(*session_get_tlse_data)(void*),
+                 ssl_context_t *(*session_get_ssl_ctx)(void*),
                  event_passer_t pass_up, void *upstream,
                  event_passer_t pass_down, void *downstream){
     derr_t error;
@@ -656,7 +674,8 @@ derr_t tlse_init(tlse_t *tlse, size_t nread_events, size_t nwrite_events,
 
     tlse->work_req.data = tlse;
     tlse->session_iface = session_iface;
-    tlse->get_tlse_data = get_tlse_data;
+    tlse->session_get_tlse_data = session_get_tlse_data;
+    tlse->session_get_ssl_ctx = session_get_ssl_ctx;
     tlse->pass_up = pass_up;
     tlse->upstream = upstream;
     tlse->pass_down = pass_down;
