@@ -106,6 +106,7 @@ typedef struct session_t {
     pthread_mutex_t mutex;
     int refs;
     bool closed;
+    loop_t *loop;
     loop_data_t loop_data;
 }session_t;
 
@@ -130,10 +131,7 @@ static void session_ref_down(void *session){
 }
 
 // to allocate new sessions (when loop.c only know about a single child struct)
-// (the void** sets the session pointer, the void* argument is sess_alloc_data)
-static derr_t session_alloc(void** sptr, void* data, loop_t *loop,
-                            ssl_context_t* ssl_ctx){
-    (void)data;
+static derr_t session_alloc(void** sptr, void* vloop, ssl_context_t* ssl_ctx){
     (void)ssl_ctx;
     // allocate the struct
     session_t *s = malloc(sizeof(*s));
@@ -144,7 +142,8 @@ static derr_t session_alloc(void** sptr, void* data, loop_t *loop,
     s->refs = 1;
     s->closed = false;
     // init the loop_data element
-    loop_data_start(&s->loop_data, loop, s);
+    s->loop = vloop;
+    loop_data_start(&s->loop_data, s->loop, s);
     *sptr = s;
     session_ref_down(s);
     return E_OK;
@@ -160,42 +159,18 @@ static void session_close(void *session, derr_t error){
 
     if(!do_close) return;
 
-    loop_data_close(&s->loop_data);
-}
-
-static void session_lock(void *session){
-    session_t *s = session;
-    pthread_mutex_lock(&s->mutex);
-}
-
-static void session_unlock(void *session){
-    session_t *s = session;
-    pthread_mutex_unlock(&s->mutex);
-}
-
-static bool session_is_invalid(void *session){
-    session_t *s = session;
-    return s->closed;
-}
-
-static bool session_is_complete(void *session){
-    session_t *s = session;
-    return s->closed;
+    loop_data_close(&s->loop_data, s->loop, s);
 }
 
 static session_iface_t iface = {
     .ref_up = session_ref_up,
     .ref_down = session_ref_down,
     .close = session_close,
-    .lock = session_lock,
-    .unlock = session_unlock,
-    .is_invalid = session_is_invalid,
-    .is_complete = session_is_complete,
 };
 
-static void *session_get_loop_data(void *session){
+static loop_data_t *session_get_loop_data(void *session){
     session_t *s = session;
-    return (void*)&s->loop_data;
+    return &s->loop_data;
 }
 
 // an event passer that just passes directly into an event queue
@@ -208,16 +183,13 @@ typedef struct {
     pthread_t thread;
     loop_t loop;
     void *downstream;
-    session_deref_t get_loop_data;
-    session_allocator_t session_alloc;
     derr_t error;
-    void *session_alloc_data;
     pthread_mutex_t *mutex;
     pthread_cond_t *cond;
-} loop_context_t;
+} test_context_t;
 
 static void *loop_thread(void *arg){
-    loop_context_t *ctx = arg;
+    test_context_t *ctx = arg;
     derr_t error;
     size_t num_read_events = NUM_READ_EVENTS_PER_LOOP;
     /* we can have a lot of simultaneous writes, which is not realistic
@@ -227,9 +199,9 @@ static void *loop_thread(void *arg){
     PROP_GO( loop_init(&ctx->loop, num_read_events, num_write_wrappers,
                        ctx->downstream, queue_passer,
                        iface,
-                       ctx->get_loop_data,
-                       ctx->session_alloc,
-                       ctx->session_alloc_data), done);
+                       session_get_loop_data,
+                       session_alloc,
+                       &ctx->loop), done);
 
     // create the listener
     uv_ptr_t uvp = {.type = LP_TYPE_LISTENER};
@@ -248,11 +220,18 @@ cu_loop:
     loop_free(&ctx->loop);
 done:
     ctx->error = error;
+
+    // signal to the main thread, in case we are exiting early
+    pthread_mutex_lock(ctx->mutex);
+    pthread_cond_signal(ctx->cond);
+    pthread_mutex_unlock(ctx->mutex);
+
     return NULL;
 }
 
 static derr_t test_loop(void){
     derr_t error;
+    bool success = true;
     // get the conditional variable and mutex ready
     pthread_cond_t cond;
     pthread_cond_init(&cond, NULL);
@@ -267,20 +246,22 @@ static derr_t test_loop(void){
     // start the loop thread
     pthread_mutex_lock(&mutex);
     unlock_mutex_on_error = true;
-    loop_context_t loop_ctx = {
+    test_context_t test_ctx = {
         .downstream = &event_q,
-        .get_loop_data = session_get_loop_data,
-        .session_alloc = session_alloc,
-        .session_alloc_data = NULL,
         .mutex = &mutex,
         .cond = &cond,
     };
-    pthread_create(&loop_ctx.thread, NULL, loop_thread, &loop_ctx);
+    pthread_create(&test_ctx.thread, NULL, loop_thread, &test_ctx);
 
     // wait for loop to be set up
     pthread_cond_wait(&cond, &mutex);
     pthread_mutex_unlock(&mutex);
     unlock_mutex_on_error = false;
+
+    if(test_ctx.error){
+        // if the test thread signaled us from its exit stage, skip to the end
+        goto join_test_thread;
+    }
 
     // start up a few threads
     reader_writer_context_t threads[NUM_THREADS];
@@ -300,7 +281,6 @@ static derr_t test_loop(void){
 
     // process incoming events from the loop
     event_t *ev;
-    bool success = true;
     event_t *quit_ev = NULL;
     size_t nwrites = 0;
     size_t nEOF = 0;
@@ -319,7 +299,7 @@ static derr_t test_loop(void){
                     session_close(ev->session, E_OK);
                     // was that the last session?
                     if(++nEOF == NUM_THREADS){
-                        loop_close(&loop_ctx.loop, E_OK);
+                        loop_close(&test_ctx.loop, E_OK);
                     }
                 }
                 // otherwise, echo back the message
@@ -342,19 +322,19 @@ static derr_t test_loop(void){
                     session_ref_up(ev_new->session);
                     ev_new->ev_type = EV_WRITE;
                     // pass the write
-                    loop_pass_event(&loop_ctx.loop, ev_new);
+                    loop_pass_event(&test_ctx.loop, ev_new);
                     nwrites++;
                 }
             pass_back:
                 // return buffer
                 ev->ev_type = EV_READ_DONE;
-                loop_pass_event(&loop_ctx.loop, ev);
+                loop_pass_event(&test_ctx.loop, ev);
                 break;
             case EV_QUIT_DOWN:
                 // check if we need to wait for write events to be returned
                 if(nwrites == 0){
                     ev->ev_type = EV_QUIT_UP;
-                    loop_pass_event(&loop_ctx.loop, ev);
+                    loop_pass_event(&test_ctx.loop, ev);
                     goto done;
                 }else{
                     quit_ev = ev;
@@ -375,7 +355,7 @@ static derr_t test_loop(void){
                 // check for quitting condition
                 if(quit_ev && nwrites == 0){
                     quit_ev->ev_type = EV_QUIT_UP;
-                    loop_pass_event(&loop_ctx.loop, quit_ev);
+                    loop_pass_event(&test_ctx.loop, quit_ev);
                     goto done;
                 }
                 break;
@@ -394,15 +374,16 @@ done:
         pthread_join(threads[i].thread, NULL);
         // check for error
         if(threads[i].error != E_OK){
-            LOG_ERROR("thread %s returned %s\n", FU(i),
+            LOG_ERROR("thread %x returned %x\n", FU(i),
                       FD(error_to_dstr(threads[i].error)));
             success = false;
         }
     }
-    pthread_join(loop_ctx.thread, NULL);
-    if(loop_ctx.error){
-        LOG_ERROR("loop thread returned %s\n",
-                  FD(error_to_dstr(loop_ctx.error)));
+join_test_thread:
+    pthread_join(test_ctx.thread, NULL);
+    if(test_ctx.error){
+        LOG_ERROR("loop thread returned %x\n",
+                  FD(error_to_dstr(test_ctx.error)));
         success = false;
     }
 

@@ -502,16 +502,26 @@ References:
 
 Life of a per-session data struct:
 
-    session_allocator()
-        The session is created, doesn't matter what thread.  All engine data
-        structs will be initialized with zeros, because it will be necessary
-        that they can check their own state from now on.  Each engine data
-        allocator can queue a SESSION_START event, though it's not required.
+    session_allocator() -- called from any thread
+        The session is allocated.  All engine-specific getters (such as
+        session_get_ssl_ctx() for the tls engine) are prepared and all engine
+        data structs are zeroed before calling engine_data_start() for each
+        engine data struct.  The reason for that is that so that each engine
+        can lazily init its own engine data struct, as after the first
+        engine_data_start() call events for this session can be passed at any
+        time.  Each engine_data_start() can pass a SESSION_START message to
+        its engine as needed, enabling on-thread initialization.
 
-    session_close()
-        Can be called anytime after session_allocator calls the first engine
-        data allocator.  This will queue a SESSION_CLOSE event on each engine
-        for that engine's session data.
+        There should be at least one engine which opens a standing reference to
+        the session (otherwise there's not much point in having a session), so
+        generally the session_allocator() starts the session with one reference
+        but downrefs the session after each engine_data_start has been called.
+
+    session_close() -- called from any thread
+        Can be called anytime after session_allocator calls the first
+        engine_data_start().  This will queue a SESSION_CLOSE event on each
+        engine for that engine's session data, enable on-thread resource
+        cleanup.
 
     normal events, associated with a session:
         guaranteed to come after the engine data was initialized with zeros,

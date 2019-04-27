@@ -56,8 +56,8 @@ typedef struct {
 } read_wrapper_t;
 
 // to allocate new sessions (when loop.c only know about a single child struct)
-// (the void** sets the session pointer, the void* argument is sess_alloc_data)
-typedef derr_t (*session_allocator_t)(void**, void*, loop_t*, ssl_context_t*);
+// (the void** sets the session pointer, the void* argument is the pipeline)
+typedef derr_t (*session_allocator_t)(void**, void*, ssl_context_t*);
 
 // the socket_engine and event loop, one per pipeline
 struct loop_t {
@@ -76,7 +76,7 @@ struct loop_t {
     event_passer_t pass_down;
     event_t quitmsg;
     bool quitting;
-    session_deref_t get_loop_data;
+    loop_data_t *(*sess_get_loop_data)(void*);
     session_iface_t session_iface;
     // error passed by loop_close
     derr_t error;
@@ -90,7 +90,7 @@ struct loop_data_t {
     void *session;
     queue_cb_t read_pause_qcb;
     // libuv socket
-    uv_tcp_t sock;
+    uv_tcp_t *sock;
     // the only way to pass an error from no_bufs__pause_reading():
     derr_t pausing_error;
     /* during the unpause hook, a buffer is stored here for the next call to
@@ -98,6 +98,7 @@ struct loop_data_t {
     event_t *event_for_allocator;
     // standard engine data items
     engine_data_state_t state;
+    event_t start_ev;
     event_t close_ev;
 };
 
@@ -106,7 +107,7 @@ derr_t loop_init(loop_t *loop, size_t num_read_events,
                  size_t num_write_wrappers,
                  void *downstream, event_passer_t pass_down,
                  session_iface_t session_iface,
-                 session_deref_t get_loop_data,
+                 loop_data_t *(*sess_get_loop_data)(void*),
                  session_allocator_t sess_alloc,
                  void *sess_alloc_data);
 void loop_free(loop_t *loop);
@@ -123,8 +124,9 @@ derr_t loop_add_listener(loop_t *loop, const char *addr, const char *svc,
 
 void loop_data_start(loop_data_t *ld, loop_t *loop, void *session);
 /* Not thread safe, can be called exactly once per loop_data_t.  Thread safety
-   should be handled at the session level */
-void loop_data_close(loop_data_t *ld);
+   should be handled at the session level.  Might be called before
+   loop_data_onthread_start() is called. */
+void loop_data_close(loop_data_t *ld, loop_t *loop, void *session);
 /* Note that there is no loop_data_free().  This is intentional.  When a
    session is closed, it should call loop_data_close, which will trigger the
    libuv thread to close the libuv-related resources of the loop_data_t.  After

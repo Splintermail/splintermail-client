@@ -41,36 +41,28 @@ typedef enum {
        engine (the socket engine).
 
        After sending this event it is not allowed to push additional EV_READ or
-       EV_WRITE events.  Thus, after seeing this message, an engine can know it
-       will receive no more EV_READ events, and any EV_WRITE events can be
-       returned without processing.
+       EV_WRITE events.  Thus, after seeing QUIT_DOWN, an engine can know it
+       will receive no more EV_READ events.  After sending QUIT_DOWN, any
+       EV_WRITE events can be returned without processing.
 
-       It is possible for a deadlock to form in the following condition:
-         - An engine receiving the EV_QUIT_DOWN has all of its reads in flight
-         - All engines downstream also have all of thier reads in flight, as
-           well as all of their writes in flight
-         - The engine receiving the EV_QUIT_DOWN waits for a read buffer to be
-           but does not return any EV_WRITE_DONEs from its queue
-
-       Therefore, this should be the order of things:
+       This should be the order of things:
          - Engine X sees EV_QUIT_DOWN from upstream
-         - X passes EV_QUIT_DOWN to downstream ASAP, possibly immediately
+         - X passes EV_QUIT_DOWN to downstream, reusing the same event_t
          - X constantly pops events from its queue:
            - EV_READ should not happen
            - EV_READ_DONE events are ignored (just return-to-pool)
            - EV_WRITE events trigger EV_WRITE_DONE immediately
            - EV_WRITE_DONE events are ignored (just return-to-pool)
-           - EV_QUIT_UP triggers an EV_QUIT_UP message, if all of X's write
+           - EV_QUIT_UP triggers an EV_QUIT_UP message if all of X's write
              events are accounted for (the downstream node sending QUIT_UP
              will have sent back all of the read events already). If
              EV_QUIT_UP cannot be sent yet it should be stored and sent after
-             the final READ_DONE event.  EV_QUIT_UP should be passed back via
-             the same buffer that EV_QUIT_DOWN was sent.
+             the final READ_DONE event.
          - X exits.  It is now safe to free X: all of its own events have been
            returned, and it has returned all other events to its upstream and
            downstream neighbor engines.
 
-        Also, QUIT_DOWN is its own special event, that is allocated at the
+        Also, QUIT_DOWN is its own special event_t, which is allocated at the
         beginning of the program, and it is passed along all the way down the
         pipe and back up it (as a QUIT_UP).  That simplifies the quit sequence
         a lot.
@@ -99,6 +91,27 @@ typedef enum {
        SESSION_CLOSE should not be processed (since the engine doesn't have
        the state in memory required to process them anymore). */
     EV_SESSION_CLOSE,
+
+    /* SESSION_START and SESSION_CLOSE gotchas every engine should handle:
+        1. normal events trigger engine data initialization if they are
+           received by an engine data in DATA_STATE_PREINIT.
+        2. normal events are ignored if they are recieved by an engine data in
+           DATA_STATE_CLOSED
+        3. SESSION_START should be ignored if it is received by an engine data
+           in DATA_STATE_STARTED or DATA_STATE_CLOSED
+        4. An engine_data_onthread_close() should be almost a noop in the case
+           where the session is in the DATA_STATE_PREINIT when it is called.
+        5. An engine should not set its data to DATA_STATE_CLOSED during error
+           handling directly; it should typically make a call to its own
+           engine_data_onthread_close().  It should also make a call to the
+           session_close(), in which case engine_data_onthread_close() may be
+           called later, and it should be idempotent.  That means:
+            - engine_data_close() can be called from off-thread and the session
+              protects it from being double called, but
+            - engine_data_onthread_close() can not be called from off-thread
+              and it *must* be safe from double calls.
+
+    */
 } event_type_t;
 
 typedef struct {
@@ -111,26 +124,17 @@ typedef struct {
     queue_cb_t qcb; // for waiting on another buffer
 } event_t;
 
-// Does not init the dstr or set callbacks.
+// Does not set session, init the dstr, or set callbacks.
 void event_prep(event_t *ev, void *parent_struct);
 
 // pass an event to an engine
 typedef void (*event_passer_t)(void*, event_t*);
-
-// dereference engine-specific session data from an event->session
-typedef void *(*session_deref_t)(void*);
 
 // the generic session "interface", identical API for each engine
 typedef struct {
     void (*ref_up)(void*);
     void (*ref_down)(void*);
     void (*close)(void*, derr_t error);
-    void (*lock)(void*);
-    void (*unlock)(void*);
-    // non-error events should not be processed for invalid sessions
-    bool (*is_invalid)(void*);
-    // no events at all should be processed for complete sessions
-    bool (*is_complete)(void*);
 } session_iface_t;
 
 
