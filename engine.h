@@ -26,7 +26,7 @@ The NEW new and improved modular pipelining:
 
 typedef enum {
     // a filled buffer from upstream.  Might carry an error.
-    EV_READ,
+    EV_READ = 10,
 
     // an empty buffer passed back from downstream
     EV_READ_DONE,

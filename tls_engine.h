@@ -12,9 +12,9 @@
 
    Not illustrated below are:
     - READ_DONE events, which get put in the tlse_t's read_events pool
-    - read_events, from which the tlse_data_t's read_out is drawn
+    - read_events, a queue from which the tlse_data_t's read_out is drawn
     - WRITE_DONE events, which get put in the tlse_t's write_events pool
-    - write_events, from which the tlse_data_t's write_out is drawn
+    - write_events, a queue from which the tlse_data_t's write_out is drawn
               __________________________________________________
              |                TLS ENGINE                        |
              |               ________                           |
@@ -38,11 +38,11 @@
              |       |    |   TLS ENGINE DATA  |            |   |
              |       v    |             _____  |            |   |
  READ_DONE <--- read_in ---> rawin --> |     | | read_out --------> READ
-             |            |            | SSL | |            |   |
+             |            |   BIO      | SSL | |            |   |
              |            |            | OBJ | |            |   |
     WRITE <-- write_out <-- rawout <-- |_____| | write_in <-+   |
-             |            |____________________|    |           |
-             |                                      +--------------> WRITE_DONE
+             |            |  BIO               |    |           |
+             |            |____________________|    +--------------> WRITE_DONE
              |__________________________________________________|
 
    There are three SSL operations, SSL_read, SSL_write, and SSL_do_handshake.
@@ -147,6 +147,9 @@ struct tlse_data_t {
     queue_cb_t read_in_qcb;
     queue_cb_t write_out_qcb;
     queue_cb_t write_in_qcb;
+    bool eof_recvd;
+    bool eof_sent;
+    bool tls_eof_recvd;
 };
 
 derr_t tlse_init(tlse_t *tlse, size_t nread_events, size_t nwrite_events,

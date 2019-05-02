@@ -20,7 +20,6 @@ static void uv_perror(const char *prefix, int code){
     fprintf(stderr, "%s: %s\n", prefix, uv_strerror(code));
 }
 
-
 // forward declarations
 static void advance_state(tlse_data_t *td);
 static void tlse_data_onthread_start(tlse_data_t *td, tlse_t *tlse,
@@ -114,10 +113,14 @@ static void write_in_cb(void *cb_data, void *new_data){
     td->tlse->session_iface.ref_down(td->session);
 }
 
-
 static void do_ssl_read(tlse_data_t *td){
     derr_t error;
     tlse_t *tlse = td->tlse;
+    // don't try to read after a tls_eof
+    if(td->tls_eof_recvd){
+        ORIG_GO(E_SSL, "unable to read after the TLS close_notify alert",
+                close_session);
+    }
     // attempt an SSL_read()
     size_t amnt_read;
     int ret = SSL_read_ex(td->ssl, td->read_out->buffer.data,
@@ -131,23 +134,29 @@ static void do_ssl_read(tlse_data_t *td){
         td->read_out = NULL;
     }else{
         switch(SSL_get_error(td->ssl, ret)){
+            case SSL_ERROR_ZERO_RETURN:
+                // ORIG_GO(E_SSL, "test_exit", close_session);
+                // This is like a TLS-layer EOF
+                td->tls_eof_recvd = true;
+                break;
             case SSL_ERROR_WANT_READ:
+                // if we WANT_READ but we already got EOF that is an error
+                if(td->eof_recvd){
+                    ORIG_GO(E_CONN, "unexpected EOF from socket",
+                            close_session);
+                }
                 td->want_read = true;
                 break;
             case SSL_ERROR_WANT_WRITE:
                 // if we got WANT_WRITE with empty rawout, that is an E_NOMEM
-                if(BIO_eof(td->rawout))
-                    ORIG_GO(E_NOMEM, "got SSL_ERROR_WANT_WRITE "
-                            "with empty write buffer", close_session);
+                if(BIO_eof(td->rawout)){
+                    ORIG_GO(E_CONN, "got SSL_ERROR_WANT_WRITE "
+                             "with empty write buffer", close_session);
+                }
                 break;
             default:
                 log_ssl_errors();
                 ORIG_GO(E_SSL, "error in SSL_read", close_session);
-            close_session:
-                // this session is toast
-                tlse->session_iface.close(td->session, error);
-                // go into close mode
-                td->tls_state = TLS_STATE_CLOSED;
         }
     }
     // If we didn't read anything, return the buffer to the empty buffer list.
@@ -157,6 +166,11 @@ static void do_ssl_read(tlse_data_t *td){
         queue_append(&tlse->read_events, &td->read_out->qe);
         td->read_out = NULL;
     }
+    return;
+
+close_session:
+    tlse->session_iface.close(td->session, error);
+    td->tls_state = TLS_STATE_CLOSED;
 }
 
 
@@ -170,40 +184,50 @@ static void do_ssl_write(tlse_data_t *td){
     if(ret != 1){
         switch(SSL_get_error(td->ssl, ret)){
             case SSL_ERROR_WANT_READ:
+                // if we WANT_READ but we already got EOF that is an error
+                if(td->eof_recvd){
+                    ORIG_GO(E_CONN, "unexpected EOF from socket",
+                            close_session);
+                }
                 // don't try to SSL_write again without filling the read bio
                 td->want_read = true;
                 break;
             case SSL_ERROR_WANT_WRITE:
                 // if we got WANT_WRITE with empty rawout, that is an E_NOMEM
-                if(BIO_eof(td->rawout))
+                if(BIO_eof(td->rawout)){
                     ORIG_GO(E_NOMEM, "got SSL_ERROR_WANT_WRITE "
                             "with empty write buffer", close_session);
+                }
                 break;
             default:
                 log_ssl_errors();
-                ORIG_GO(E_SSL, "error in SSL_read", close_session);
-            close_session:
-                // this session is toast
-                tlse->session_iface.close(td->session, error);
-                // go into close mode
-                td->tls_state = TLS_STATE_CLOSED;
+                ORIG_GO(E_SSL, "error in SSL_write", close_session);
         }
     }
-    /* TODO: do something about write_in!  It should be hooked to the write_out
-             or something */
+    /* it is important we don't alter td->write_in after a retryable failure;
+       SSL_write() must be called with identical arguments.  For more details,
+       see `man ssl_write`. */
+    else{
+        // send WRITE_DONE after successful writes
+        td->write_in->ev_type = EV_WRITE_DONE;
+        td->write_in->error = E_OK;
+        tlse->pass_down(tlse->downstream, td->write_in);
+        td->write_in = NULL;
+    }
+    return;
+
+close_session:
+    // this session is toast
+    tlse->session_iface.close(td->session, error);
+    // go into close mode
+    td->tls_state = TLS_STATE_CLOSED;
 }
 
 
-/* This queue callback is different than read_out_cb in that the
-   "wait for empty write bio" state does not advance without this handle being
-   called, so we can do the SSL_write directly in vfewb_handle_write_buffer. */
 static void do_write_out(tlse_data_t *td){
     derr_t error;
     tlse_t *tlse = td->tlse;
     // prepare the write_out
-    td->write_out->session = td->session;
-    tlse->session_iface.ref_up(td->write_out->session);
-    td->write_out->buffer.len = 0;
     td->write_out->error = E_OK;
     // copy the bytes from the write BIO into the new write buffer
     size_t amnt_read;
@@ -231,32 +255,55 @@ static void do_write_out(tlse_data_t *td){
 }
 
 
-// this state has two purposes: pass an error if there is one
 static bool enter_close(tlse_data_t *td){
     tlse_t *tlse = td->tlse;
+
+    // unregsiter callbacks
+    if(td->awaiting_read_in){
+        queue_cb_remove(&td->pending_reads, &td->read_in_qcb);
+        td->awaiting_read_in = false;
+        tlse->session_iface.ref_down(td->session);
+    }
+    if(td->awaiting_read_out){
+        queue_cb_remove(&tlse->read_events, &td->read_out_qcb);
+        td->awaiting_read_out = false;
+        tlse->session_iface.ref_down(td->session);
+    }
+    if(td->awaiting_write_in){
+        queue_cb_remove(&td->pending_writes, &td->write_in_qcb);
+        td->awaiting_write_in = false;
+        tlse->session_iface.ref_down(td->session);
+    }
+    if(td->awaiting_write_out){
+        queue_cb_remove(&tlse->write_events, &td->write_out_qcb);
+        td->awaiting_write_out = false;
+        tlse->session_iface.ref_down(td->session);
+    }
 
     // release buffers we are holding
     if(td->read_in){
         td->read_in->ev_type = EV_READ_DONE;
         td->read_in->error = E_OK;
-        td->read_in->buffer = (dstr_t){0};
         tlse->pass_up(tlse->upstream, td->read_in);
+        td->read_in = NULL;
     }
     if(td->read_out){
         tlse->session_iface.ref_down(td->session);
-        td->session = NULL;
+        td->read_out->session = NULL;
         queue_append(&tlse->read_events, &td->read_out->qe);
+        td->read_out = NULL;
     }
     if(td->write_in){
         td->write_in->ev_type = EV_WRITE_DONE;
         td->write_in->error = E_OK;
-        td->write_in->buffer = (dstr_t){0};
         tlse->pass_down(tlse->downstream, td->write_in);
+        td->write_in = NULL;
     }
     if(td->write_out){
         tlse->session_iface.ref_down(td->session);
-        td->session = NULL;
+        td->write_out->session = NULL;
         queue_append(&tlse->write_events, &td->write_out->qe);
+        td->read_out = NULL;
     }
 
     // empty pending reads and pending writes
@@ -264,13 +311,11 @@ static bool enter_close(tlse_data_t *td){
     while((ev = queue_pop_first(&td->pending_reads, false))){
         ev->ev_type = EV_READ_DONE;
         ev->error = E_OK;
-        ev->buffer = (dstr_t){0};
         tlse->pass_up(tlse->upstream, ev);
     }
     while((ev = queue_pop_first(&td->pending_writes, false))){
         ev->ev_type = EV_WRITE_DONE;
         ev->error = E_OK;
-        ev->buffer = (dstr_t){0};
         tlse->pass_down(tlse->downstream, ev);
     }
 
@@ -282,6 +327,7 @@ static bool enter_close(tlse_data_t *td){
 }
 
 
+// "wait for empty write bio"
 static bool enter_wfewb(tlse_data_t *td){
     tlse_t *tlse = td->tlse;
     // try to get a write_out
@@ -316,7 +362,7 @@ static bool enter_idle(tlse_data_t *td){
         return true;
     }
 
-    // SSL_pending() means there is already-processed bytes for an SSL_read
+    // SSL_pending() means there are already-processed bytes for an SSL_read
     bool readable = (SSL_pending(td->ssl) > 0);
 
     /* A non-empty rawin doesn't matter if we haven't added anything
@@ -335,35 +381,59 @@ static bool enter_idle(tlse_data_t *td){
             // event session already belongs to session, no upref
         }
         if(td->read_in){
-            // write input buffer to rawin
-            size_t written;
-            int ret = BIO_write_ex(td->rawin, td->read_in->buffer.data,
-                                   td->read_in->buffer.len, &written);
-            readable = true;
-            td->want_read = false;
+            // check for the received-read-after-EOF error
+            if(td->eof_recvd){
+                LOG_ORIG(&error, E_INTERNAL, "received data after EOF");
+                tlse->session_iface.close(td->session, error);
+                td->tls_state = TLS_STATE_CLOSED;
+                return true;
+            }
+            if(td->read_in->buffer.len > 0){
+                // write input buffer to rawin
+                size_t written;
+                int ret = BIO_write_ex(td->rawin, td->read_in->buffer.data,
+                                       td->read_in->buffer.len, &written);
+                if(ret < 1){
+                    log_ssl_errors();
+                    LOG_ORIG(&error, E_SSL, "writing to BIO failed");
+                    tlse->session_iface.close(td->session, error);
+                    td->tls_state = TLS_STATE_CLOSED;
+                    return true;
+                }
+                if(written != td->read_in->buffer.len){
+                    log_ssl_errors();
+                    LOG_ORIG(&error, E_NOMEM, "BIO rejected some bytes!");
+                    tlse->session_iface.close(td->session, error);
+                    td->tls_state = TLS_STATE_CLOSED;
+                    return true;
+                }
+                readable = true;
+                td->want_read = false;
+            }else{
+                // handle EOF
+                if(td->want_read){
+                    // a write needed a packet but we got EOF instead
+                    LOG_ORIG(&error, E_CONN, "unexpected EOF from socket");
+                    tlse->session_iface.close(td->session, error);
+                    td->tls_state = TLS_STATE_CLOSED;
+                    return true;
+                }else{
+                    // after this we expect no more READs or WANT_READs
+                    td->eof_recvd = true;
+                    td->eof_sent = false;
+                }
+            }
             // return read buffer
             td->read_in->ev_type = EV_READ_DONE;
-            tlse->pass_up(td->session, td->read_in);
-            // now that we have returned EV_READ_DONE, check for errors
-            if(ret != 1){
-                log_ssl_errors();
-                LOG_ORIG(&error, E_SSL, "writing to BIO failed");
-                tlse->session_iface.close(td->session, error);
-                td->tls_state = TLS_STATE_CLOSED;
-                return true;
-            }
-            if(written != td->read_in->buffer.len){
-                log_ssl_errors();
-                LOG_ORIG(&error, E_NOMEM, "BIO rejected some bytes!");
-                tlse->session_iface.close(td->session, error);
-                td->tls_state = TLS_STATE_CLOSED;
-                return true;
-            }
+            tlse->pass_up(tlse->upstream, td->read_in);
+            td->read_in = NULL;
         }
     }
 
-    // is there something to read?
-    if(readable){
+    bool eof_unsent = (td->eof_recvd && !td->eof_sent);
+
+    // is there something to read?  Or an EOF to pass?
+    if(readable || eof_unsent){
         // try to get a read_out buffer
         if(!td->read_out && !td->awaiting_read_out){
             queue_cb_set(&td->read_out_qcb, set_awaiting_read_out,
@@ -378,11 +448,27 @@ static bool enter_idle(tlse_data_t *td){
         }
         // handle the SSL read immediately, if possible
         if(td->read_out){
-            do_ssl_read(td);
+            if(eof_unsent){
+                // TODO: if you kill the TLS session here, test_tls_engine hangs, why?
+                tlse->session_iface.close(td->session, E_INTERNAL);
+                td->tls_state = TLS_STATE_CLOSED;
+                return true;
+                // send the EOF
+                td->read_out->buffer.len = 0;
+                td->read_out->ev_type = EV_READ;
+                td->read_out->error = E_OK;
+                tlse->pass_down(tlse->downstream, td->read_out);
+                td->read_out = NULL;
+                // mark EOF as sent
+                td->eof_sent = true;
+            }else{
+                do_ssl_read(td);
+            }
             // the top of IDLE checks if the write BIO needs to be emptied
             return true;
         }
     }
+
     /* If there was nothing to SSL_read, but we have a read_buffer, return it.
        This should only occur in the rare situation that we had an incoming
        packet that turned out to be only a TLS handshake packet.  So we tried
@@ -390,12 +476,13 @@ static bool enter_idle(tlse_data_t *td){
        and we found our way back here.  Or, if we requested a read_out for the
        aforementioned TLS handshake packet and then went ahead with an
        SSL_write and the SSL_write consumed the previously readable data. */
-    else{
+    if(td->read_out){
         tlse->session_iface.ref_down(td->read_out->session);
         td->read_out->session = NULL;
         queue_append(&tlse->read_events, &td->read_out->qe);
         td->read_out = NULL;
     }
+
 
     // we can't write if the last write gave WANT_READ but we haven't read yet
     if(!td->want_read){
@@ -403,7 +490,7 @@ static bool enter_idle(tlse_data_t *td){
         if(!td->write_in && !td->awaiting_write_in){
             queue_cb_set(&td->write_in_qcb, set_awaiting_write_in,
                          write_in_cb);
-            td->write_in = queue_pop_first_cb(&tlse->write_events,
+            td->write_in = queue_pop_first_cb(&td->pending_writes,
                                               &td->write_in_qcb);
             // event session already belongs to session, no upref
         }
@@ -447,6 +534,12 @@ static void tlse_process_events(uv_work_t *req){
         event_t *ev = queue_pop_first(&tlse->event_q, true);
         tlse_data_t *td;
         td = ev->session ? tlse->session_get_tlse_data(ev->session) : NULL;
+        // are we quitting?
+        if(td && tlse->quitting){
+            /* TODO: wait, shouldn't this be handled by loop_close, when the
+                     loop engine closes all of the sessions? */
+            //tlse_data_onthread_close(td);
+        }
         // has this session been initialized?
         if(td && td->data_state == DATA_STATE_PREINIT
                 && ev->ev_type != EV_SESSION_CLOSE){
@@ -455,6 +548,7 @@ static void tlse_process_events(uv_work_t *req){
         }
         switch(ev->ev_type){
             case EV_READ:
+                // LOG_ERROR("tlse: READ\n");
                 if(tlse->quitting || td->tls_state == TLS_STATE_CLOSED){
                     ev->error = E_OK;
                     ev->ev_type = EV_READ_DONE;
@@ -464,6 +558,7 @@ static void tlse_process_events(uv_work_t *req){
                 }
                 break;
             case EV_READ_DONE:
+                // LOG_ERROR("tlse: READ_DONE\n");
                 // erase session reference
                 iface.ref_down(ev->session);
                 ev->session = NULL;
@@ -471,6 +566,7 @@ static void tlse_process_events(uv_work_t *req){
                 queue_append(&tlse->read_events, &ev->qe);
                 break;
             case EV_WRITE:
+                // LOG_ERROR("tlse: WRITE\n");
                 if(tlse->quitting || td->tls_state == TLS_STATE_CLOSED){
                     ev->error = E_OK;
                     ev->ev_type = EV_WRITE_DONE;
@@ -480,37 +576,44 @@ static void tlse_process_events(uv_work_t *req){
                 }
                 break;
             case EV_WRITE_DONE:
+                // LOG_ERROR("tlse: WRITE_DONE\n");
                 // erase session reference
                 iface.ref_down(ev->session);
                 ev->session = NULL;
                 // return event to read event list
                 queue_append(&tlse->write_events, &ev->qe);
                 // were we waiting for that WRITE_DONE before passing QUIT_UP?
-                if(tlse->quit_ev){
+                if(tlse->quit_ev
+                        && tlse->write_events.len < tlse->nwrite_events){
                     tlse->pass_up(tlse->upstream, tlse->quit_ev);
+                    tlse->quit_ev = NULL;
                     should_continue = false;
                 }
                 break;
             case EV_QUIT_DOWN:
+                // LOG_ERROR("tlse: QUIT_DOWN\n");
                 // enter quitting state
                 tlse->quitting = true;
                 // pass the QUIT_DOWN along
                 tlse->pass_down(tlse->downstream, ev);
                 break;
             case EV_QUIT_UP:
-                // Not done until all we have all of our write bufers back
+                // LOG_ERROR("tlse: QUIT_UP\n");
+                // Not done until all we have all of our write buffers back
                 if(tlse->write_events.len < tlse->nwrite_events){
                     // store this event for later
                     tlse->quit_ev = ev;
                 }else{
-                    tlse->pass_up(tlse->upstream, tlse->quit_ev);
+                    tlse->pass_up(tlse->upstream, ev);
                     should_continue = false;
                 }
                 break;
             case EV_SESSION_START:
+                // LOG_ERROR("tlse: SESSION_START\n");
                 iface.ref_down(ev->session);
                 break;
             case EV_SESSION_CLOSE:
+                LOG_ERROR("tlse: SESSION_CLOSE\n");
                 tlse_data_onthread_close(td);
                 /* Done with close event.  This ref_down must come after
                    tlse_data_onthread_close to prevent accidentally freeing
@@ -518,6 +621,9 @@ static void tlse_process_events(uv_work_t *req){
                    advance_session */
                 iface.ref_down(ev->session);
                 break;
+            default:
+                LOG_ERROR("unexpected event type in tls engine, ev = %x\n",
+                          FP(ev));
         }
     }
 }
@@ -532,6 +638,7 @@ void tlse_pass_event(void *tlse_void, event_t *ev){
 void tlse_data_start(tlse_data_t *td, tlse_t *tlse, void *session){
     // pass the starting event
     event_prep(&td->start_ev, td);
+    td->start_ev.ev_type = EV_SESSION_START;
     td->start_ev.error = E_OK;
     td->start_ev.buffer = (dstr_t){0};
     td->start_ev.session = session;
@@ -562,6 +669,7 @@ static void tlse_data_onthread_start(tlse_data_t *td, tlse_t *tlse,
     td->awaiting_write_in = false;
     td->awaiting_write_out = false;
     td->want_read = false;
+    td->eof_recvd = false;
 
     PROP_GO( queue_init(&td->pending_reads), fail);
     PROP_GO( queue_init(&td->pending_writes), fail_pending_reads);
@@ -604,6 +712,9 @@ static void tlse_data_onthread_start(tlse_data_t *td, tlse_t *tlse,
     td->data_state = DATA_STATE_STARTED;
     td->tls_state = TLS_STATE_IDLE;
 
+    // call advance_state so that tlse_data is for queue callbacks
+    advance_state(td);
+
     return;
 
 fail_ssl:
@@ -625,7 +736,9 @@ fail:
    required to call this exactly one time for every session. */
 void tlse_data_close(tlse_data_t *td, tlse_t *tlse, void *session){
     // pass the closing event
+    LOG_ERROR("tlse data close\n");
     event_prep(&td->close_ev, td);
+    td->close_ev.ev_type = EV_SESSION_CLOSE;
     td->close_ev.error = E_OK;
     td->close_ev.buffer = (dstr_t){0};
     td->close_ev.session = session;
@@ -656,7 +769,6 @@ static void tlse_data_onthread_close(tlse_data_t *td){
     SSL_free(td->ssl);
     queue_free(&td->pending_writes);
     queue_free(&td->pending_reads);
-    // the ssl_context_t* does not belong to us.
 }
 
 

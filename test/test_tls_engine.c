@@ -14,7 +14,7 @@
 
 #include "test_utils.h"
 
-#define NUM_THREADS 1
+#define NUM_THREADS 10
 #define WRITES_PER_THREAD 100
 #define NUM_READ_EVENTS_PER_LOOP 4
 
@@ -137,18 +137,22 @@ typedef struct {
 typedef struct session_t {
     pthread_mutex_t mutex;
     int refs;
+    int loop_refs;
+    int tlse_refs;
     bool closed;
     loop_t *loop;
     tlse_t *tlse;
     ssl_context_t *ssl_ctx;
     loop_data_t loop_data;
     tlse_data_t tlse_data;
-}session_t;
+} session_t;
 
 static void session_ref_up(void *session){
     session_t *s = session;
     pthread_mutex_lock(&s->mutex);
     s->refs++;
+    // LOG_ERROR("ref_up   (%x, %x, %x)\n", FI(s->refs), FI(s->loop_refs),
+    //                                      FI(s->tlse_refs));
     pthread_mutex_unlock(&s->mutex);
 }
 
@@ -156,13 +160,40 @@ static void session_ref_down(void *session){
     session_t *s = session;
     pthread_mutex_lock(&s->mutex);
     int refs = --s->refs;
+    // LOG_ERROR("ref_down (%x, %x, %x)\n", FI(s->refs), FI(s->loop_refs),
+    //                                      FI(s->tlse_refs));
     pthread_mutex_unlock(&s->mutex);
 
     if(refs > 0) return;
+    LOG_ERROR("freeing session\n");
 
     // free the session
     pthread_mutex_destroy(&s->mutex);
     free(s);
+}
+
+static void session_ref_up_loop(void *session){
+    session_t *s = session;
+    s->loop_refs++;
+    session_ref_up(s);
+}
+
+static void session_ref_down_loop(void *session){
+    session_t *s = session;
+    s->loop_refs--;
+    session_ref_down(s);
+}
+
+static void session_ref_up_tlse(void *session){
+    session_t *s = session;
+    s->tlse_refs++;
+    session_ref_up(s);
+}
+
+static void session_ref_down_tlse(void *session){
+    session_t *s = session;
+    s->tlse_refs--;
+    session_ref_down(s);
 }
 
 // to allocate new sessions (when loop.c only know about a single child struct)
@@ -200,11 +231,19 @@ static void session_close(void *session, derr_t error){
 
     loop_data_close(&s->loop_data, s->loop, s);
     tlse_data_close(&s->tlse_data, s->tlse, s);
+
+    if(error) loop_close(s->loop, error);
 }
 
-static session_iface_t iface = {
-    .ref_up = session_ref_up,
-    .ref_down = session_ref_down,
+static session_iface_t loop_iface = {
+    .ref_up = session_ref_up_loop,
+    .ref_down = session_ref_down_loop,
+    .close = session_close,
+};
+
+static session_iface_t tlse_iface = {
+    .ref_up = session_ref_up_tlse,
+    .ref_down = session_ref_down_tlse,
     .close = session_close,
 };
 
@@ -244,15 +283,15 @@ static void *loop_thread(void *arg){
                                     dh.data), done);
 
     PROP_GO( tlse_init(&ctx->tlse, 5, 5,
-                       iface,
+                       tlse_iface,
                        session_get_tlse_data,
                        session_get_ssl_ctx,
                        loop_pass_event, &ctx->loop,
-                       queue_passer, &ctx->downstream), cu_ssl_ctx);
+                       queue_passer, ctx->downstream), cu_ssl_ctx);
 
     PROP_GO( loop_init(&ctx->loop, 5, 5,
-                       ctx->downstream, queue_passer,
-                       iface,
+                       &ctx->tlse, tlse_pass_event,
+                       loop_iface,
                        session_get_loop_data,
                        session_alloc, ctx), cu_tlse);
 
@@ -359,7 +398,7 @@ static derr_t test_loop(void){
         if(!(ev = queue_pop_first(&event_q, true))) break;
         switch(ev->ev_type){
             case EV_READ:
-                //LOG_ERROR("got read\n");
+                // LOG_ERROR("echo: got READ\n");
                 // check for an error
                 if(ev->error){
                     success = false;
@@ -393,25 +432,26 @@ static derr_t test_loop(void){
                     session_ref_up(ev_new->session);
                     ev_new->ev_type = EV_WRITE;
                     // pass the write
-                    tlse_pass_event(&test_ctx.loop, ev_new);
+                    tlse_pass_event(&test_ctx.tlse, ev_new);
                     nwrites++;
                 }
             pass_back:
                 // return buffer
                 ev->ev_type = EV_READ_DONE;
-                tlse_pass_event(&test_ctx.loop, ev);
+                tlse_pass_event(&test_ctx.tlse, ev);
                 break;
             case EV_QUIT_DOWN:
                 // check if we need to wait for write events to be returned
                 if(nwrites == 0){
                     ev->ev_type = EV_QUIT_UP;
-                    tlse_pass_event(&test_ctx.loop, ev);
+                    tlse_pass_event(&test_ctx.tlse, ev);
                     goto done;
                 }else{
                     quit_ev = ev;
                 }
                 break;
             case EV_WRITE_DONE:
+                // LOG_ERROR("echo: got WRITE_DONE\n");
                 // check for error
                 if(ev->error){
                     LOG_ERROR("write error detected\n");
@@ -426,7 +466,7 @@ static derr_t test_loop(void){
                 // check for quitting condition
                 if(quit_ev && nwrites == 0){
                     quit_ev->ev_type = EV_QUIT_UP;
-                    tlse_pass_event(&test_ctx.loop, quit_ev);
+                    tlse_pass_event(&test_ctx.tlse, quit_ev);
                     goto done;
                 }
                 break;
@@ -435,7 +475,7 @@ static derr_t test_loop(void){
             case EV_WRITE:
             case EV_QUIT_UP:
             default:
-                LOG_ERROR("unexpected event type from loop engine\n");
+                LOG_ERROR("unexpected event type from tlse engine\n");
                 success = false;
         }
     }

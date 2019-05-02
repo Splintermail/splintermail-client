@@ -39,12 +39,12 @@ int pvt_do_log(log_level_t level, const char* format,
              (const fmt_t[]){FI(1), __VA_ARGS__}, \
              sizeof((const fmt_t[]){FI(1), __VA_ARGS__}) / sizeof(fmt_t))
 
-// needs to be an inline function to handle NULL pointers for err_ptr
-static inline void LOG_ORIG(derr_t *err_ptr, derr_t code, const char *message){
-    LOG_ERROR("ERROR: %x\noriginating %x from file %x: %x(), line %x\n",
-              FS(message), FD(error_to_dstr(code)), FS(FILE_BASENAME),
-              FS(__func__), FI(__LINE__) );
-    if(err_ptr) *err_ptr = code;
+// err_ptr can't be null, due to the behavior of macros
+#define LOG_ORIG(err_ptr, code, message){ \
+    LOG_ERROR("ERROR: %x\noriginating %x from file %x: %x(), line %x\n", \
+              FS(message), FD(error_to_dstr(code)), FS(FILE_BASENAME), \
+              FS(__func__), FI(__LINE__) ); \
+    *err_ptr = code; \
 }
 
 #define LOG_PROP(_error) \
@@ -53,7 +53,7 @@ static inline void LOG_ORIG(derr_t *err_ptr, derr_t code, const char *message){
                   FS(__func__), FI(__LINE__) )
 
 #define ORIG(_code, _message) { \
-    LOG_ORIG(NULL, _code, _message); \
+    LOG_ORIG(&(derr_t){0}, _code, _message); \
     return _code; \
 }
 

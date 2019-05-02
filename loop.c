@@ -542,9 +542,7 @@ static void close_sessions_and_listeners(uv_handle_t *handle, void* arg){
 
     if(uvp->type == LP_TYPE_LOOP_DATA){
         loop_data_t *ld = uvp->data.loop_data;
-        loop_t *loop = ld->loop;
-        session_iface_t iface = loop->session_iface;
-        iface.close(ld->session, E_OK);
+        ld->loop->session_iface.close(ld->session, E_OK);
     }else if(uvp->type == LP_TYPE_LISTENER){
         uv_close(handle, listener_close_cb);
     }else{
@@ -613,9 +611,7 @@ static void loop_data_onthread_close(loop_data_t *ld){
     // close the loop_data's socket
     uv_close((uv_handle_t*)ld->sock, loop_data_sock_close_cb);
 
-    /* Make sure the loop_data is not waiting for an incoming read buffer.
-       this is safe to call here because this function always executes on the
-       uv_loop thread. */
+    // Make sure the loop_data is not waiting for an incoming read buffer.
     queue_cb_remove(&loop->read_events, &ld->read_pause_qcb);
 
     // if there is a pre-allocated buffer, put it back in read_events

@@ -33,14 +33,17 @@ derr_t ssl_library_init(void){
     SSL_library_init();
     // load_error_strings depricated as well
     SSL_load_error_strings();
-#endif
+#else
     // calling the new OPENSSL_init_ssl() explicitly not strictly necessary
+#endif
     return E_OK;
 }
 
 void ssl_library_close(void){
 #if OPENSSL_VERSION_NUMBER < 0x10100000L
     ERR_free_strings();
+#else
+    OPENSSL_cleanup();
 #endif
 }
 
