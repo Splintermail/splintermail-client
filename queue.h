@@ -28,6 +28,9 @@
    behavior, probably you will have to approximate it with a sentinal.
 */
 
+struct queue_t;
+typedef struct queue_t queue_t;
+
 /* the intention is this struct queue_elem_t is a child struct of some other
    struct you part of some other struct you want to keep track of, and *data
    points to the parent struct.  That way there is no memory allocation
@@ -38,6 +41,7 @@ typedef struct queue_elem_t {
     void* data;
     struct queue_elem_t *next;
     struct queue_elem_t *prev;
+    struct queue_t *q;
 } queue_elem_t;
 
 /* Part of the callback API.  The callback will be called during a call to
@@ -74,7 +78,7 @@ typedef struct {
     queue_elem_t qe;
 } queue_cb_t;
 
-typedef struct {
+struct queue_t {
     // head and tail of the first list
     queue_elem_t *first;
     queue_elem_t *last;
@@ -84,7 +88,7 @@ typedef struct {
     queue_elem_t *awaiting_last;
     uv_mutex_t mutex;
     uv_cond_t cond;
-} queue_t;
+};
 
 // helper function to set up a queue_elem_t
 void queue_elem_prep(queue_elem_t *qe, void *parent_struct);
@@ -114,10 +118,9 @@ void *queue_pop_find(queue_t *list, queue_matcher_cb_t matcher, void *user);
 void queue_prepend(queue_t *q, queue_elem_t *elem);
 void queue_append(queue_t *q, queue_elem_t *elem);
 
-/* Does nothing if element is not in list.  q is needed for mutex.  Undefined
-   behavior if qe is actually in another list. */
-void queue_remove(queue_t *q, queue_elem_t *qe);
+// Does nothing if element is not in a list
+void queue_remove(queue_elem_t *qe);
 // Similar to queue_remove, but for unregistering a queue_cb_t
-void queue_cb_remove(queue_t *q, queue_cb_t *qcb);
+void queue_cb_remove(queue_cb_t *qcb);
 
 #endif // QUEUE_H

@@ -138,10 +138,6 @@ struct tlse_data_t {
        tlse->write_events, that session doesn't know which other session needs
        to claim the newly released write_event, and thus cannot call
        advance_state() correctly. */
-    bool awaiting_read_in;
-    bool awaiting_read_out;
-    bool awaiting_write_in;
-    bool awaiting_write_out;
     bool want_read;
     queue_cb_t read_out_qcb;
     queue_cb_t read_in_qcb;

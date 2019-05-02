@@ -26,34 +26,6 @@ static void tlse_data_onthread_start(tlse_data_t *td, tlse_t *tlse,
                                      void *session);
 static void tlse_data_onthread_close(tlse_data_t *td);
 
-static void set_awaiting_read_out(void *cb_data){
-    tlse_data_t *td = cb_data;
-    td->awaiting_read_out = true;
-    // upref the session
-    td->tlse->session_iface.ref_up(td->session);
-}
-
-static void set_awaiting_read_in(void *cb_data){
-    tlse_data_t *td = cb_data;
-    td->awaiting_read_in = true;
-    // upref the session
-    td->tlse->session_iface.ref_up(td->session);
-}
-
-static void set_awaiting_write_out(void *cb_data){
-    tlse_data_t *td = cb_data;
-    td->awaiting_write_out = true;
-    // upref the session
-    td->tlse->session_iface.ref_up(td->session);
-}
-
-static void set_awaiting_write_in(void *cb_data){
-    tlse_data_t *td = cb_data;
-    td->awaiting_write_in = true;
-    // upref the session
-    td->tlse->session_iface.ref_up(td->session);
-}
-
 
 /* Called after we decided we needed to do an SSL_read but we had nowhere to
    write into.  The callback is called when a READ_DONE is passed back from the
@@ -63,54 +35,38 @@ static void read_out_cb(void *cb_data, void *new_data){
     tlse_data_t *td = cb_data;
     event_t *ev = new_data;
     // store the event as this session's read_out
-    td->awaiting_read_out = false;
     td->read_out = ev;
-    td->read_out->session = td->session;
-    // upref the session to account for the event
-    td->tlse->session_iface.ref_up(td->session);
+    td->read_out->session = NULL;
     // re-evaluate the state machine
     advance_state(td);
-    // downref the session now that the queue_cb is complete
-    td->tlse->session_iface.ref_down(td->session);
 }
 
 static void write_out_cb(void *cb_data, void *new_data){
     tlse_data_t *td = cb_data;
     event_t *ev = new_data;
     // store the event as this session's write_out
-    td->awaiting_write_out = false;
     td->write_out = ev;
-    td->write_out->session = td->session;
-    // upref the session to account for the event
-    td->tlse->session_iface.ref_up(td->session);
+    td->write_out->session = NULL;
     // re-evaluate the state machine
     advance_state(td);
-    // downref the session now that the queue_cb is complete
-    td->tlse->session_iface.ref_down(td->session);
 }
 
 static void read_in_cb(void *cb_data, void *new_data){
     tlse_data_t *td = cb_data;
     event_t *ev = new_data;
     // store the event as this session's read_in
-    td->awaiting_read_in = false;
     td->read_in = ev;
     // re-evaluate the state machine
     advance_state(td);
-    // downref the session now that the queue_cb is complete
-    td->tlse->session_iface.ref_down(td->session);
 }
 
 static void write_in_cb(void *cb_data, void *new_data){
     tlse_data_t *td = cb_data;
     event_t *ev = new_data;
     // store the event as this session's write_in
-    td->awaiting_write_in = false;
     td->write_in = ev;
     // re-evaluate the state machine
     advance_state(td);
-    // downref the session now that the queue_cb is complete
-    td->tlse->session_iface.ref_down(td->session);
 }
 
 static void do_ssl_read(tlse_data_t *td){
@@ -130,6 +86,8 @@ static void do_ssl_read(tlse_data_t *td){
         td->read_out->buffer.len = amnt_read;
         td->read_out->ev_type = EV_READ;
         td->read_out->error = E_OK;
+        td->read_out->session = td->session;
+        tlse->session_iface.ref_up(td->session);
         tlse->pass_down(tlse->downstream, td->read_out);
         td->read_out = NULL;
     }else{
@@ -161,8 +119,6 @@ static void do_ssl_read(tlse_data_t *td){
     }
     // If we didn't read anything, return the buffer to the empty buffer list.
     if(td->read_out){
-        tlse->session_iface.ref_down(td->read_out->session);
-        td->read_out->session = NULL;
         queue_append(&tlse->read_events, &td->read_out->qe);
         td->read_out = NULL;
     }
@@ -237,17 +193,17 @@ static void do_write_out(tlse_data_t *td){
         log_ssl_errors();
         LOG_ORIG(&error, E_SSL, "reading from memory buffer failed");
         // done with the write buffer
-        tlse->session_iface.ref_down(td->write_out->session);
-        td->write_out->session = NULL;
         queue_append(&tlse->write_events, &td->write_out->qe);
         td->tls_state = TLS_STATE_IDLE;
         return;
     }
     // store the length read from rawout
-    td->write_out->ev_type = EV_WRITE;
     td->write_out->buffer.len = amnt_read;
-    td->write_out->error = E_OK;
     // pass the write buffer along
+    td->write_out->ev_type = EV_WRITE;
+    td->write_out->error = E_OK;
+    td->write_out->session = td->session;
+    tlse->session_iface.ref_up(td->session);
     tlse->pass_up(tlse->upstream, td->write_out);
     td->write_out = NULL;
     // optimistically return to idle state; it might kick us back to wfewb
@@ -255,91 +211,14 @@ static void do_write_out(tlse_data_t *td){
 }
 
 
-static bool enter_close(tlse_data_t *td){
-    tlse_t *tlse = td->tlse;
-
-    // unregsiter callbacks
-    if(td->awaiting_read_in){
-        queue_cb_remove(&td->pending_reads, &td->read_in_qcb);
-        td->awaiting_read_in = false;
-        tlse->session_iface.ref_down(td->session);
-    }
-    if(td->awaiting_read_out){
-        queue_cb_remove(&tlse->read_events, &td->read_out_qcb);
-        td->awaiting_read_out = false;
-        tlse->session_iface.ref_down(td->session);
-    }
-    if(td->awaiting_write_in){
-        queue_cb_remove(&td->pending_writes, &td->write_in_qcb);
-        td->awaiting_write_in = false;
-        tlse->session_iface.ref_down(td->session);
-    }
-    if(td->awaiting_write_out){
-        queue_cb_remove(&tlse->write_events, &td->write_out_qcb);
-        td->awaiting_write_out = false;
-        tlse->session_iface.ref_down(td->session);
-    }
-
-    // release buffers we are holding
-    if(td->read_in){
-        td->read_in->ev_type = EV_READ_DONE;
-        td->read_in->error = E_OK;
-        tlse->pass_up(tlse->upstream, td->read_in);
-        td->read_in = NULL;
-    }
-    if(td->read_out){
-        tlse->session_iface.ref_down(td->session);
-        td->read_out->session = NULL;
-        queue_append(&tlse->read_events, &td->read_out->qe);
-        td->read_out = NULL;
-    }
-    if(td->write_in){
-        td->write_in->ev_type = EV_WRITE_DONE;
-        td->write_in->error = E_OK;
-        tlse->pass_down(tlse->downstream, td->write_in);
-        td->write_in = NULL;
-    }
-    if(td->write_out){
-        tlse->session_iface.ref_down(td->session);
-        td->write_out->session = NULL;
-        queue_append(&tlse->write_events, &td->write_out->qe);
-        td->read_out = NULL;
-    }
-
-    // empty pending reads and pending writes
-    event_t *ev;
-    while((ev = queue_pop_first(&td->pending_reads, false))){
-        ev->ev_type = EV_READ_DONE;
-        ev->error = E_OK;
-        tlse->pass_up(tlse->upstream, ev);
-    }
-    while((ev = queue_pop_first(&td->pending_writes, false))){
-        ev->ev_type = EV_WRITE_DONE;
-        ev->error = E_OK;
-        tlse->pass_down(tlse->downstream, ev);
-    }
-
-    /* since we can't await pending reads or pending writes without incurring
-       additional session references, the engine's event handling code must
-       not pass READ or WRITE events to this session at all */
-
-    return false;
-}
-
-
 // "wait for empty write bio"
 static bool enter_wfewb(tlse_data_t *td){
     tlse_t *tlse = td->tlse;
     // try to get a write_out
-    if(!td->write_out && !td->awaiting_write_out){
-        queue_cb_set(&td->write_out_qcb, set_awaiting_write_out, write_out_cb);
+    if(!td->write_out){
+        queue_cb_set(&td->write_out_qcb, NULL, write_out_cb);
         td->write_out = queue_pop_first_cb(&tlse->write_events,
                                            &td->write_out_qcb);
-        // upref the session
-        if(td->write_out){
-            td->write_out->session = td->session;
-            tlse->session_iface.ref_up(td->session);
-        }
     }
 
     if(td->write_out){
@@ -374,8 +253,8 @@ static bool enter_idle(tlse_data_t *td){
     // check if we can push a pending read into the read BIO
     if(!readable){
         // try to get a read_in
-        if(!td->read_in && !td->awaiting_read_in){
-            queue_cb_set(&td->read_in_qcb, set_awaiting_read_in, read_in_cb);
+        if(!td->read_in){
+            queue_cb_set(&td->read_in_qcb, NULL, read_in_cb);
             td->read_in = queue_pop_first_cb(&td->pending_reads,
                                              &td->read_in_qcb);
             // event session already belongs to session, no upref
@@ -435,16 +314,10 @@ static bool enter_idle(tlse_data_t *td){
     // is there something to read?  Or an EOF to pass?
     if(readable || eof_unsent){
         // try to get a read_out buffer
-        if(!td->read_out && !td->awaiting_read_out){
-            queue_cb_set(&td->read_out_qcb, set_awaiting_read_out,
-                         read_out_cb);
+        if(!td->read_out){
+            queue_cb_set(&td->read_out_qcb, NULL, read_out_cb);
             td->read_out = queue_pop_first_cb(&tlse->read_events,
                                               &td->read_out_qcb);
-            // upref the session
-            if(td->read_out){
-                td->read_out->session = td->session;
-                tlse->session_iface.ref_up(td->session);
-            }
         }
         // handle the SSL read immediately, if possible
         if(td->read_out){
@@ -457,6 +330,8 @@ static bool enter_idle(tlse_data_t *td){
                 td->read_out->buffer.len = 0;
                 td->read_out->ev_type = EV_READ;
                 td->read_out->error = E_OK;
+                td->read_out->session = td->session;
+                tlse->session_iface.ref_up(td->session);
                 tlse->pass_down(tlse->downstream, td->read_out);
                 td->read_out = NULL;
                 // mark EOF as sent
@@ -477,8 +352,6 @@ static bool enter_idle(tlse_data_t *td){
        aforementioned TLS handshake packet and then went ahead with an
        SSL_write and the SSL_write consumed the previously readable data. */
     if(td->read_out){
-        tlse->session_iface.ref_down(td->read_out->session);
-        td->read_out->session = NULL;
         queue_append(&tlse->read_events, &td->read_out->qe);
         td->read_out = NULL;
     }
@@ -487,12 +360,10 @@ static bool enter_idle(tlse_data_t *td){
     // we can't write if the last write gave WANT_READ but we haven't read yet
     if(!td->want_read){
         // try to get something to write
-        if(!td->write_in && !td->awaiting_write_in){
-            queue_cb_set(&td->write_in_qcb, set_awaiting_write_in,
-                         write_in_cb);
+        if(!td->write_in){
+            queue_cb_set(&td->write_in_qcb, NULL, write_in_cb);
             td->write_in = queue_pop_first_cb(&td->pending_writes,
                                               &td->write_in_qcb);
-            // event session already belongs to session, no upref
         }
         if(td->write_in){
             do_ssl_write(td);
@@ -518,7 +389,7 @@ static void advance_state(tlse_data_t *td){
                 should_continue = enter_wfewb(td);
                 break;
             case TLS_STATE_CLOSED:
-                should_continue = enter_close(td);
+                should_continue = false;
                 break;
         }
     }
@@ -534,12 +405,6 @@ static void tlse_process_events(uv_work_t *req){
         event_t *ev = queue_pop_first(&tlse->event_q, true);
         tlse_data_t *td;
         td = ev->session ? tlse->session_get_tlse_data(ev->session) : NULL;
-        // are we quitting?
-        if(td && tlse->quitting){
-            /* TODO: wait, shouldn't this be handled by loop_close, when the
-                     loop engine closes all of the sessions? */
-            //tlse_data_onthread_close(td);
-        }
         // has this session been initialized?
         if(td && td->data_state == DATA_STATE_PREINIT
                 && ev->ev_type != EV_SESSION_CLOSE){
@@ -636,13 +501,23 @@ void tlse_pass_event(void *tlse_void, event_t *ev){
 
 
 void tlse_data_start(tlse_data_t *td, tlse_t *tlse, void *session){
-    // pass the starting event
+    // prepare the starting event
     event_prep(&td->start_ev, td);
     td->start_ev.ev_type = EV_SESSION_START;
     td->start_ev.error = E_OK;
     td->start_ev.buffer = (dstr_t){0};
     td->start_ev.session = session;
     tlse->session_iface.ref_up(session);
+
+    // prepare the closing event
+    event_prep(&td->close_ev, td);
+    td->close_ev.ev_type = EV_SESSION_CLOSE;
+    td->close_ev.error = E_OK;
+    td->close_ev.buffer = (dstr_t){0};
+    td->close_ev.session = session;
+    tlse->session_iface.ref_up(session);
+
+    // pass the starting event
     tlse_pass_event(tlse, &td->start_ev);
 }
 
@@ -653,7 +528,6 @@ static void tlse_data_onthread_start(tlse_data_t *td, tlse_t *tlse,
     // things which must be initialized, even in case of failure
     td->session = session;
     td->tlse = tlse;
-    event_prep(&td->close_ev, td);
     queue_cb_prep(&td->read_in_qcb, td);
     queue_cb_prep(&td->read_out_qcb, td);
     queue_cb_prep(&td->write_in_qcb, td);
@@ -664,10 +538,6 @@ static void tlse_data_onthread_start(tlse_data_t *td, tlse_t *tlse,
     td->read_out = NULL;
     td->write_in = NULL;
     td->write_out = NULL;
-    td->awaiting_read_in = false;
-    td->awaiting_read_out = false;
-    td->awaiting_write_in = false;
-    td->awaiting_write_out = false;
     td->want_read = false;
     td->eof_recvd = false;
 
@@ -735,14 +605,8 @@ fail:
 /* session_close() will call tlse_close() from any thread.  The session is
    required to call this exactly one time for every session. */
 void tlse_data_close(tlse_data_t *td, tlse_t *tlse, void *session){
-    // pass the closing event
-    LOG_ERROR("tlse data close\n");
-    event_prep(&td->close_ev, td);
-    td->close_ev.ev_type = EV_SESSION_CLOSE;
-    td->close_ev.error = E_OK;
-    td->close_ev.buffer = (dstr_t){0};
-    td->close_ev.session = session;
-    tlse->session_iface.ref_up(session);
+    (void)session;
+    // pass the closing event, it's already prepared
     tlse_pass_event(tlse, &td->close_ev);
 }
 
@@ -760,8 +624,48 @@ static void tlse_data_onthread_close(tlse_data_t *td){
     td->tls_state = TLS_STATE_CLOSED;
     if(exit_early) return;
 
-    // release/return all events
-    advance_state(td);
+    tlse_t *tlse = td->tlse;
+
+    // unregsiter callbacks
+    queue_cb_remove(&td->read_in_qcb);
+    queue_cb_remove(&td->read_out_qcb);
+    queue_cb_remove(&td->write_in_qcb);
+    queue_cb_remove(&td->write_out_qcb);
+
+    // release buffers we are holding
+    if(td->read_in){
+        td->read_in->ev_type = EV_READ_DONE;
+        td->read_in->error = E_OK;
+        tlse->pass_up(tlse->upstream, td->read_in);
+        td->read_in = NULL;
+    }
+    if(td->read_out){
+        queue_append(&tlse->read_events, &td->read_out->qe);
+        td->read_out = NULL;
+    }
+    if(td->write_in){
+        td->write_in->ev_type = EV_WRITE_DONE;
+        td->write_in->error = E_OK;
+        tlse->pass_down(tlse->downstream, td->write_in);
+        td->write_in = NULL;
+    }
+    if(td->write_out){
+        queue_append(&tlse->write_events, &td->write_out->qe);
+        td->read_out = NULL;
+    }
+
+    // empty pending reads and pending writes
+    event_t *ev;
+    while((ev = queue_pop_first(&td->pending_reads, false))){
+        ev->ev_type = EV_READ_DONE;
+        ev->error = E_OK;
+        tlse->pass_up(tlse->upstream, ev);
+    }
+    while((ev = queue_pop_first(&td->pending_writes, false))){
+        ev->ev_type = EV_WRITE_DONE;
+        ev->error = E_OK;
+        tlse->pass_down(tlse->downstream, ev);
+    }
 
     // free everything:
 

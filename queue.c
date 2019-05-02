@@ -9,6 +9,7 @@ void queue_elem_prep(queue_elem_t *qe, void *parent_struct){
     qe->data = parent_struct;
     qe->next = NULL;
     qe->prev = NULL;
+    qe->q = NULL;
 }
 
 void queue_cb_prep(queue_cb_t *qcb, void *parent_struct){
@@ -172,6 +173,13 @@ static void do_append(queue_elem_t **first, queue_elem_t **last,
 static inline queue_elem_t *do_pop_cb(queue_t *q, queue_cb_t *cb,
         queue_elem_t *(*pop_func)(queue_elem_t**, queue_elem_t**) ){
     uv_mutex_lock(&q->mutex);
+    // if this queue_cb is already awaiting this queue, do nothing
+    if(cb->qe.q == q) {
+        uv_mutex_unlock(&q->mutex);
+        return NULL;
+    }
+    // don't let the queue_cb be awaiting anywhere else
+    queue_cb_remove(cb);
     queue_elem_t *qe = pop_func(&q->first, &q->last);
     // if list is empty remember cb for later (unless cb is NULL)
     if(qe == NULL && cb != NULL){
@@ -184,7 +192,10 @@ static inline queue_elem_t *do_pop_cb(queue_t *q, queue_cb_t *cb,
         // append cb to our list of things that are awaiting data
         do_append(&q->awaiting_first, &q->awaiting_last, &cb->qe);
     }
-    if(qe) q->len--;
+    if(qe){
+        qe->q = NULL;
+        q->len--;
+    }
     uv_mutex_unlock(&q->mutex);
     return qe;
 }
@@ -206,7 +217,10 @@ void *queue_pop_first(queue_t *q, bool block){
         // wait for a signal
         uv_cond_wait(&q->cond, &q->mutex);
     }
-    if(qe) q->len--;
+    if(qe){
+        qe->q = NULL;
+        q->len--;
+    }
     uv_mutex_unlock(&q->mutex);
     return qe ? qe->data : NULL;
 }
@@ -218,7 +232,10 @@ void *queue_pop_last(queue_t *q, bool block){
         // wait for a signal
         uv_cond_wait(&q->cond, &q->mutex);
     }
-    if(qe) q->len--;
+    if(qe){
+        qe->q = NULL;
+        q->len--;
+    }
     uv_mutex_unlock(&q->mutex);
     return qe ? qe->data : NULL;
 }
@@ -230,6 +247,7 @@ void *queue_pop_find(queue_t *q, queue_matcher_cb_t matcher, void *user){
     while(this != NULL){
         if(matcher(this->data, user)){
             do_pop_this(this, &q->first, &q->last);
+            this->q = NULL;
             retval = this->data;
             break;
         }
@@ -254,6 +272,7 @@ void queue_prepend(queue_t *q, queue_elem_t *elem){
     }
     // otherwise, add this element to the list
     do_prepend(&q->first, &q->last, elem);
+    elem->q = q;
     q->len++;
     uv_cond_signal(&q->cond);
     uv_mutex_unlock(&q->mutex);
@@ -273,6 +292,7 @@ void queue_append(queue_t *q, queue_elem_t *elem){
     }
     // otherwise, add this element to the list
     do_append(&q->first, &q->last, elem);
+    elem->q = q;
     q->len++;
     uv_cond_signal(&q->cond);
     uv_mutex_unlock(&q->mutex);
@@ -280,7 +300,9 @@ void queue_append(queue_t *q, queue_elem_t *elem){
 
 /* Does nothing if element is not in list.  q is needed for mutex.  Undefined
    behavior if qe is actually in another list. */
-void queue_remove(queue_t *q, queue_elem_t *qe){
+void queue_remove(queue_elem_t *qe){
+    queue_t *q = qe->q;
+    if(!q) return;
     uv_mutex_lock(&q->mutex);
     // verify that the qe is in the list (assuming any list is the right list)
     /* This check would be cleaner I used a sentinel at either end of the list,
@@ -288,17 +310,21 @@ void queue_remove(queue_t *q, queue_elem_t *qe){
        list, so there would be no change in functionality. */
     if(qe->prev != NULL || qe->next != NULL || q->first == qe){
         do_pop_this(qe, &q->first, &q->last);
+        qe->q = NULL;
         q->len--;
     }
     uv_mutex_unlock(&q->mutex);
 }
 
 // Similar to queue_remove, but for unregistering a queue_cb_t
-void queue_cb_remove(queue_t *q, queue_cb_t *qcb){
-    uv_mutex_lock(&q->mutex);
+void queue_cb_remove(queue_cb_t *qcb){
     queue_elem_t *qe = &qcb->qe;
+    queue_t *q = qe->q;
+    if(!q) return;
+    uv_mutex_lock(&q->mutex);
     if(qe->prev != NULL || qe->next != NULL || q->first == qe){
         do_pop_this(qe, &q->awaiting_first, &q->awaiting_last);
+        qe->q = NULL;
         q->len--;
     }
     uv_mutex_unlock(&q->mutex);
