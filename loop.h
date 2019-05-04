@@ -65,6 +65,9 @@ struct loop_t {
     uv_async_t loop_event_passer;
     uv_async_t loop_closer;
     uv_mutex_t mutex;
+    // for outgoing connections
+    const char* remote_host;
+    const char* remote_service;
     // for pushing reads to the next engine
     queue_t read_events;
     // write reqs, for wrapping incoming write event_t's with libuv stuff
@@ -92,6 +95,8 @@ struct loop_data_t {
     queue_cb_t read_pause_qcb;
     // libuv socket
     uv_tcp_t *sock;
+    bool connected;
+    queue_t preconnected_writes;
     // the only way to pass an error from no_bufs__pause_reading():
     derr_t pausing_error;
     /* during the unpause hook, a buffer is stored here for the next call to
@@ -101,6 +106,12 @@ struct loop_data_t {
     engine_data_state_t state;
     event_t start_ev;
     event_t close_ev;
+    // for upwards connections
+    uv_getaddrinfo_t gai_req;
+    struct addrinfo hints;
+    struct addrinfo *gai_result;
+    struct addrinfo *gai_aiptr;
+    uv_connect_t connect_req;
 };
 
 // num_write_wrappers must match the downstream engine's num_write_events
@@ -110,7 +121,8 @@ derr_t loop_init(loop_t *loop, size_t num_read_events,
                  session_iface_t session_iface,
                  loop_data_t *(*sess_get_loop_data)(void*),
                  session_allocator_t sess_alloc,
-                 void *sess_alloc_data);
+                 void *sess_alloc_data,
+                 const char* remote_host, const char* remote_service);
 void loop_free(loop_t *loop);
 
 derr_t loop_run(loop_t *loop);

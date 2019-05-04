@@ -131,7 +131,7 @@ static void session_ref_down(void *session){
 }
 
 // to allocate new sessions (when loop.c only know about a single child struct)
-static derr_t session_alloc(void** sptr, void* vloop, ssl_context_t* ssl_ctx){
+static derr_t session_alloc(void **sptr, void *vloop, ssl_context_t* ssl_ctx){
     (void)ssl_ctx;
     // allocate the struct
     session_t *s = malloc(sizeof(*s));
@@ -201,7 +201,8 @@ static void *loop_thread(void *arg){
                        iface,
                        session_get_loop_data,
                        session_alloc,
-                       &ctx->loop), done);
+                       &ctx->loop,
+                       "127.0.0.1", "0"), done);
 
     // create the listener
     uv_ptr_t uvp = {.type = LP_TYPE_LISTENER};

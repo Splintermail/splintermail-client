@@ -80,6 +80,7 @@ typedef struct {
     session_iface_t session_iface;
     tlse_data_t *(*session_get_tlse_data)(void*);
     ssl_context_t *(*session_get_ssl_ctx)(void*);
+    bool (*session_get_upwards)(void*);
     queue_t event_q;
     queue_t read_events;
     queue_t write_events;
@@ -146,6 +147,7 @@ derr_t tlse_init(tlse_t *tlse, size_t nread_events, size_t nwrite_events,
                  session_iface_t session_iface,
                  tlse_data_t *(*session_get_tlse_data)(void*),
                  ssl_context_t *(*session_get_ssl_ctx)(void*),
+                 bool (*session_get_upwards)(void*),
                  event_passer_t pass_up, void *upstream,
                  event_passer_t pass_down, void *downstream);
 

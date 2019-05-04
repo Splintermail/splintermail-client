@@ -510,14 +510,6 @@ void tlse_data_start(tlse_data_t *td, tlse_t *tlse, void *session){
     td->start_ev.session = session;
     tlse->session_iface.ref_up(session);
 
-    // prepare the closing event
-    event_prep(&td->close_ev, td);
-    td->close_ev.ev_type = EV_SESSION_CLOSE;
-    td->close_ev.error = E_OK;
-    td->close_ev.buffer = (dstr_t){0};
-    td->close_ev.session = session;
-    tlse->session_iface.ref_up(session);
-
     // pass the starting event
     tlse_pass_event(tlse, &td->start_ev);
 }
@@ -568,15 +560,14 @@ static void tlse_data_onthread_start(tlse_data_t *td, tlse_t *tlse,
     }
     SSL_set0_wbio(td->ssl, td->rawout);
 
-    // TODO: support client and server connections
-    // // set the SSL mode (server or client) appropriately
-    // if(upwards){
-    //     // upwards means we are the client
-    //     SSL_set_connect_state(td->ssl);
-    // }else{
-    //     // downwards means we are the server
+    // set the SSL mode (server or client) appropriately
+    if(tlse->session_get_upwards(session)){
+        // upwards means we are the client
+        SSL_set_connect_state(td->ssl);
+    }else{
+        // downwards means we are the server
         SSL_set_accept_state(td->ssl);
-    // }
+    }
 
     // success!
 
@@ -607,7 +598,15 @@ fail:
    required to call this exactly one time for every session. */
 void tlse_data_close(tlse_data_t *td, tlse_t *tlse, void *session){
     (void)session;
-    // pass the closing event, it's already prepared
+    // prepare the closing event
+    event_prep(&td->close_ev, td);
+    td->close_ev.ev_type = EV_SESSION_CLOSE;
+    td->close_ev.error = E_OK;
+    td->close_ev.buffer = (dstr_t){0};
+    td->close_ev.session = session;
+    tlse->session_iface.ref_up(session);
+
+    // pass the closing event
     tlse_pass_event(tlse, &td->close_ev);
 }
 
@@ -678,6 +677,7 @@ derr_t tlse_init(tlse_t *tlse, size_t nread_events, size_t nwrite_events,
                  session_iface_t session_iface,
                  tlse_data_t *(*session_get_tlse_data)(void*),
                  ssl_context_t *(*session_get_ssl_ctx)(void*),
+                 bool (*session_get_upwards)(void*),
                  event_passer_t pass_up, void *upstream,
                  event_passer_t pass_down, void *downstream){
     derr_t error;
@@ -690,6 +690,7 @@ derr_t tlse_init(tlse_t *tlse, size_t nread_events, size_t nwrite_events,
     tlse->session_iface = session_iface;
     tlse->session_get_tlse_data = session_get_tlse_data;
     tlse->session_get_ssl_ctx = session_get_ssl_ctx;
+    tlse->session_get_upwards = session_get_upwards;
     tlse->pass_up = pass_up;
     tlse->upstream = upstream;
     tlse->pass_down = pass_down;

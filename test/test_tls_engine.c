@@ -197,7 +197,7 @@ static void session_ref_down_tlse(void *session){
 }
 
 // to allocate new sessions (when loop.c only know about a single child struct)
-static derr_t session_alloc(void** sptr, void* data, ssl_context_t *ssl_ctx){
+static derr_t session_alloc(void **sptr, void *data, ssl_context_t *ssl_ctx){
     // allocate the struct
     session_t *s = malloc(sizeof(*s));
     if(!s) ORIG(E_NOMEM, "no mem");
@@ -229,8 +229,12 @@ static void session_close(void *session, derr_t error){
 
     if(!do_close) return;
 
+    /* make sure every engine_data has a chance to pass a close event; a slow
+       session without standing references must be protected */
+    session_ref_up(session);
     loop_data_close(&s->loop_data, s->loop, s);
     tlse_data_close(&s->tlse_data, s->tlse, s);
+    session_ref_down(session);
 
     if(error) loop_close(s->loop, error);
 }
@@ -262,6 +266,12 @@ static ssl_context_t *session_get_ssl_ctx(void *session){
     return s->ssl_ctx;
 }
 
+static bool session_get_upwards(void *session){
+    // right now the test only accepts()
+    (void)session;
+    return false;
+}
+
 // an event passer that just passes directly into an event queue
 static void queue_passer(void *engine, event_t *ev){
     queue_t *q = engine;
@@ -286,6 +296,7 @@ static void *loop_thread(void *arg){
                        tlse_iface,
                        session_get_tlse_data,
                        session_get_ssl_ctx,
+                       session_get_upwards,
                        loop_pass_event, &ctx->loop,
                        queue_passer, ctx->downstream), cu_ssl_ctx);
 
@@ -293,7 +304,8 @@ static void *loop_thread(void *arg){
                        &ctx->tlse, tlse_pass_event,
                        loop_iface,
                        session_get_loop_data,
-                       session_alloc, ctx), cu_tlse);
+                       session_alloc, ctx,
+                       "127.0.0.1", "0"), cu_tlse);
 
     error = tlse_add_to_loop(&ctx->tlse, &ctx->loop.uv_loop);
     if(error){
