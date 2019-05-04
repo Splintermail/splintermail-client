@@ -1,4 +1,4 @@
-/* Sandwich the TLS engine in between the loop engine and the socket engine so
+/* Sandwich the TLS engine in between the loop engine and an echo engine so
    we can test it against our other SSL code.  A true unit test would be better
    but would require using the openssl binary and a fork/exec, which is not
    cross-platform. */
@@ -322,7 +322,8 @@ loop_handle_error:
     PROP_GO( loop_run(&ctx->loop), cu_loop);
 
 cu_loop:
-    loop_free(&ctx->loop);
+    // other threads may call loop_free at a later time, so we don't free here
+    // loop_free(&ctx->loop);
 cu_tlse:
     tlse_free(&ctx->tlse);
 cu_ssl_ctx:
@@ -497,6 +498,8 @@ join_test_thread:
                   FD(error_to_dstr(test_ctx.error)));
         success = false;
     }
+    // now that we know nobody will close the loop, we are safe to free it
+    loop_free(&test_ctx.loop);
 
     // clean up the queue
     queue_free(&event_q);

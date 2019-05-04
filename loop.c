@@ -288,6 +288,7 @@ static void handle_write(loop_t *loop, event_t *ev){
     write_wrapper_t *wr_wrap = queue_pop_first(&loop->write_wrappers, false);
     // make sure there was an open write_wrapper_t
     if(wr_wrap == NULL){
+        LOG_ERROR("not enough write_wrappers!\n");
         loop_close(loop, E_INTERNAL);
         ORIG_GO(E_INTERNAL, "not enough write_wrappers!", fail);
     }
@@ -518,6 +519,9 @@ fail_malloc:
 static void close_remaining_handles(uv_handle_t *handle, void *arg){
     (void)arg;
 
+    // no double-close
+    if(uv_is_closing(handle)) return;
+
     // close asyncs with no callback
     if(handle->type == UV_ASYNC){
         uv_close(handle, NULL);
@@ -532,6 +536,9 @@ static void close_remaining_handles(uv_handle_t *handle, void *arg){
 
 static void close_sessions_and_listeners(uv_handle_t *handle, void* arg){
     (void)arg;
+
+    // no double-close
+    if(uv_is_closing(handle)) return;
 
     // our listeners and our session connections are both tcp types
     if(handle->type != UV_TCP) return;
@@ -559,6 +566,11 @@ static void close_everything_i(uv_async_t *handle){
     // only execute this once
     if(loop->quitting) return;
 
+    // don't let loop_close send any more signals to the async
+    uv_mutex_lock(&loop->mutex);
+    loop->quitting = true;
+    uv_mutex_unlock(&loop->mutex);
+
     // Closes all sessions, which will call uv_close on all session sockets.
     uv_walk(handle->loop, close_sessions_and_listeners, NULL);
 
@@ -570,10 +582,9 @@ static void close_everything_i(uv_async_t *handle){
     loop->quitmsg.ev_type = EV_QUIT_DOWN;
     loop->pass_down(loop->downstream, &loop->quitmsg);
 
-    /* Then we discard messages until we get the "quit" message echoed back to
+    /* Now we discard messages until we get the "quit" message echoed back to
        us.  The discarding happens on the event queue handler, and we just need
        to set loop->quitting here */
-    loop->quitting = true;
 }
 
 static void close_everything_ii(loop_t *loop){
@@ -737,8 +748,15 @@ derr_t loop_init(loop_t *loop, size_t num_read_events,
              have to call uv_close() on them and execute the loop to let the
              close_cb's get called, and then we would return the error. */
 
+    ret = uv_mutex_init(&loop->mutex);
+    if(ret < 0){
+        uv_perror("uv_mutex_init", ret);
+        error = (ret == UV_ENOMEM) ? E_NOMEM : E_UV;
+        ORIG_GO(error, "error initializing mutex", fail_loop);
+    }
+
     // init read wrapper list
-    PROP_GO( queue_init(&loop->read_events), fail_loop);
+    PROP_GO( queue_init(&loop->read_events), fail_mutex);
 
     // allocate a pool of read buffers
     for(size_t i = 0; i < num_read_events; i++){
@@ -807,6 +825,8 @@ fail_rd_wraps:
         free(rd_wrap);
     }
     queue_free(&loop->read_events);
+fail_mutex:
+    uv_mutex_destroy(&loop->mutex);
 fail_loop:
     uv_loop_close(&loop->uv_loop);
     return error;
@@ -830,6 +850,7 @@ void loop_free(loop_t *loop){
         free(rd_wrap);
     }
     queue_free(&loop->read_events);
+    uv_mutex_destroy(&loop->mutex);
     int ret = uv_loop_close(&loop->uv_loop);
     if(ret != 0){
         uv_perror("uv_loop_close", ret);
@@ -877,13 +898,18 @@ void loop_pass_event(void *loop_engine, event_t *event){
 
 
 void loop_close(loop_t *loop, derr_t error){
+    uv_mutex_lock(&loop->mutex);
     // preserve the first-passed error
     if(!loop->error) loop->error = error;
+    // don't assume the async is intact after the loop has started quitting
+    if(loop->quitting) goto unlock;
     int ret = uv_async_send(&loop->loop_closer);
     if(ret < 0){
         // not possible, see note in loop_pass_event()
         uv_perror("uv_async_send", ret);
         LOG_ERROR("uv_async_send should never fail!\n");
     }
+unlock:
+    uv_mutex_unlock(&loop->mutex);
 }
 

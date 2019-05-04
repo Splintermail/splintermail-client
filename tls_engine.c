@@ -321,11 +321,6 @@ static bool enter_idle(tlse_data_t *td){
         // handle the SSL read immediately, if possible
         if(td->read_out){
             if(eof_unsent){
-                // TODO: if you kill the TLS session here, test_tls_engine hangs, why?
-                // tlse->session_iface.close(td->session, E_INTERNAL);
-                // td->tls_state = TLS_STATE_CLOSED;
-                // return true;
-                // LOG_ERROR("EOF!\n");
                 // send the EOF
                 td->read_out->buffer.len = 0;
                 td->read_out->ev_type = EV_READ;
@@ -617,9 +612,6 @@ void tlse_data_close(tlse_data_t *td, tlse_t *tlse, void *session){
 }
 
 // called from the tlse thread, after EV_SESSION_CLOSE is received
-/* note: it is important that this function is called from within some context
-   that holds a session reference, because advance_state() calls ref_down in
-   an otherwise unsafe fashion */
 static void tlse_data_onthread_close(tlse_data_t *td){
     // no double closing.  This could happen if tlse_data_start failed.
     if(td->data_state == DATA_STATE_CLOSED) return;
