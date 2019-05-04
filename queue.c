@@ -178,8 +178,6 @@ static inline queue_elem_t *do_pop_cb(queue_t *q, queue_cb_t *cb,
         uv_mutex_unlock(&q->mutex);
         return NULL;
     }
-    // don't let the queue_cb be awaiting anywhere else
-    queue_cb_remove(cb);
     queue_elem_t *qe = pop_func(&q->first, &q->last);
     // if list is empty remember cb for later (unless cb is NULL)
     if(qe == NULL && cb != NULL){
@@ -191,6 +189,7 @@ static inline queue_elem_t *do_pop_cb(queue_t *q, queue_cb_t *cb,
         cb->qe.data = cb;
         // append cb to our list of things that are awaiting data
         do_append(&q->awaiting_first, &q->awaiting_last, &cb->qe);
+        cb->qe.q = q;
     }
     if(qe){
         qe->q = NULL;
@@ -266,6 +265,7 @@ void queue_prepend(queue_t *q, queue_elem_t *elem){
                                       &q->awaiting_last)->data;
         // done modifying the q, unlock the mutex
         uv_mutex_unlock(&q->mutex);
+        cb->qe.q = NULL;
         // execute the callback
         cb->new_data_cb(cb->data, elem->data);
         return;
@@ -284,6 +284,7 @@ void queue_append(queue_t *q, queue_elem_t *elem){
     if(q->awaiting_first != NULL){
         queue_cb_t *cb = do_pop_first(&q->awaiting_first,
                                       &q->awaiting_last)->data;
+        cb->qe.q = NULL;
         // done modifying the q, unlock the mutex
         uv_mutex_unlock(&q->mutex);
         // execute the callback
@@ -298,34 +299,24 @@ void queue_append(queue_t *q, queue_elem_t *elem){
     uv_mutex_unlock(&q->mutex);
 }
 
-/* Does nothing if element is not in list.  q is needed for mutex.  Undefined
-   behavior if qe is actually in another list. */
-void queue_remove(queue_elem_t *qe){
-    queue_t *q = qe->q;
-    if(!q) return;
+/* Does nothing if element is not in the list.  Specifying the list is
+   necessary to prevent a race condition. */
+void queue_remove(queue_t *q, queue_elem_t *qe){
     uv_mutex_lock(&q->mutex);
-    // verify that the qe is in the list (assuming any list is the right list)
-    /* This check would be cleaner I used a sentinel at either end of the list,
-       but the API wouldn't change; you'd still need the mutex from the correct
-       list, so there would be no change in functionality. */
-    if(qe->prev != NULL || qe->next != NULL || q->first == qe){
-        do_pop_this(qe, &q->first, &q->last);
-        qe->q = NULL;
-        q->len--;
-    }
+    if(qe->q != q) goto unlock;
+    do_pop_this(qe, &q->first, &q->last);
+    qe->q = NULL;
+    q->len--;
+unlock:
     uv_mutex_unlock(&q->mutex);
 }
 
 // Similar to queue_remove, but for unregistering a queue_cb_t
-void queue_cb_remove(queue_cb_t *qcb){
-    queue_elem_t *qe = &qcb->qe;
-    queue_t *q = qe->q;
-    if(!q) return;
+void queue_remove_cb(queue_t *q, queue_cb_t *qcb){
     uv_mutex_lock(&q->mutex);
-    if(qe->prev != NULL || qe->next != NULL || q->first == qe){
-        do_pop_this(qe, &q->awaiting_first, &q->awaiting_last);
-        qe->q = NULL;
-        q->len--;
-    }
+    if(qcb->qe.q != q) goto unlock;
+    do_pop_this(&qcb->qe, &q->awaiting_first, &q->awaiting_last);
+    qcb->qe.q = NULL;
+unlock:
     uv_mutex_unlock(&q->mutex);
 }

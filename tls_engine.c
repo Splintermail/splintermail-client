@@ -129,7 +129,6 @@ close_session:
     td->tls_state = TLS_STATE_CLOSED;
 }
 
-
 static void do_ssl_write(tlse_data_t *td){
     derr_t error;
     tlse_t *tlse = td->tlse;
@@ -323,9 +322,10 @@ static bool enter_idle(tlse_data_t *td){
         if(td->read_out){
             if(eof_unsent){
                 // TODO: if you kill the TLS session here, test_tls_engine hangs, why?
-                tlse->session_iface.close(td->session, E_INTERNAL);
-                td->tls_state = TLS_STATE_CLOSED;
-                return true;
+                // tlse->session_iface.close(td->session, E_INTERNAL);
+                // td->tls_state = TLS_STATE_CLOSED;
+                // return true;
+                // LOG_ERROR("EOF!\n");
                 // send the EOF
                 td->read_out->buffer.len = 0;
                 td->read_out->ev_type = EV_READ;
@@ -393,8 +393,14 @@ static void advance_state(tlse_data_t *td){
                 break;
         }
     }
+    // Make sure that the tlse_data is waiting on something to prevent hangs.
+    if(!td->read_in_qcb.qe.q && !td->read_out_qcb.qe.q
+            && !td->write_in_qcb.qe.q && !td->write_out_qcb.qe.q){
+        derr_t error;
+        LOG_ORIG(&error, E_INTERNAL, "tlse_data is hung!  Killing session\n");
+        td->tlse->session_iface.close(td->session, error);
+    }
 }
-
 
 // the main engine thread, in uv_work_cb form
 static void tlse_process_events(uv_work_t *req){
@@ -478,7 +484,7 @@ static void tlse_process_events(uv_work_t *req){
                 iface.ref_down(ev->session);
                 break;
             case EV_SESSION_CLOSE:
-                LOG_ERROR("tlse: SESSION_CLOSE\n");
+                // LOG_ERROR("tlse: SESSION_CLOSE\n");
                 tlse_data_onthread_close(td);
                 /* Done with close event.  This ref_down must come after
                    tlse_data_onthread_close to prevent accidentally freeing
@@ -626,11 +632,11 @@ static void tlse_data_onthread_close(tlse_data_t *td){
 
     tlse_t *tlse = td->tlse;
 
-    // unregsiter callbacks
-    queue_cb_remove(&td->read_in_qcb);
-    queue_cb_remove(&td->read_out_qcb);
-    queue_cb_remove(&td->write_in_qcb);
-    queue_cb_remove(&td->write_out_qcb);
+    // unregister callbacks
+    queue_remove_cb(&td->pending_reads, &td->read_in_qcb);
+    queue_remove_cb(&tlse->read_events, &td->read_out_qcb);
+    queue_remove_cb(&td->pending_writes, &td->write_in_qcb);
+    queue_remove_cb(&tlse->write_events, &td->write_out_qcb);
 
     // release buffers we are holding
     if(td->read_in){

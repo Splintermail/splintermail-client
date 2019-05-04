@@ -612,7 +612,7 @@ static void loop_data_onthread_close(loop_data_t *ld){
     uv_close((uv_handle_t*)ld->sock, loop_data_sock_close_cb);
 
     // Make sure the loop_data is not waiting for an incoming read buffer.
-    queue_cb_remove(&ld->read_pause_qcb);
+    queue_remove_cb(&loop->read_events, &ld->read_pause_qcb);
 
     // if there is a pre-allocated buffer, put it back in read_events
     if(ld->event_for_allocator != NULL){

@@ -24,7 +24,7 @@
              |                |_|  queue |                      |
              |                  |________|                      |
              |          (READs)     /\     (WRITEs)             |
-             |      +--------------/  \--------------+          |
+             |       ______________/  \______________           |
  tlse_t      |      |                                |          | tlse_t
  - - - - - - - - - -|- - - - - - - - - - - - - - - - | - - - - -|- - - - - -
  tlse_data_t |      |                                |          | tlse_data_t
@@ -64,15 +64,9 @@
 
 
    Reference counting in the TLS engine happens in the following places:
-     - Events which reference the session but are sitting in queues
-     - If a tlse_data_t is awaiting one of:
-        - tlse_data.pending_reads
-        - tlse_data.pending_writes
-        - tlse.read_events
-        - tlse.write_events
-     - During the processing of a session advance_state(), a reference is
-       required to be held external to advance_state(), ensuring that the
-       session does not accidentally disappear in the middle of processing
+     - READ or WRITE events passed by this session
+     - The start events and close events, from tlse_data_start until each event
+       is handled by tls_process_events()
 */
 
 struct tlse_data_t;

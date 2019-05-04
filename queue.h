@@ -118,9 +118,10 @@ void *queue_pop_find(queue_t *list, queue_matcher_cb_t matcher, void *user);
 void queue_prepend(queue_t *q, queue_elem_t *elem);
 void queue_append(queue_t *q, queue_elem_t *elem);
 
-// Does nothing if element is not in a list
-void queue_remove(queue_elem_t *qe);
+/* Does nothing if element is not in the list.  Specifying the list is
+   necessary to prevent a race condition. */
+void queue_remove(queue_t *q, queue_elem_t *qe);
 // Similar to queue_remove, but for unregistering a queue_cb_t
-void queue_cb_remove(queue_cb_t *qcb);
+void queue_remove_cb(queue_t *q, queue_cb_t *qcb);
 
 #endif // QUEUE_H

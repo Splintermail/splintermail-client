@@ -14,9 +14,9 @@
 
 #include "test_utils.h"
 
-#define NUM_THREADS 5
-#define WRITES_PER_THREAD 10
-#define NUM_READ_EVENTS_PER_LOOP 4
+#define NUM_THREADS 10
+#define WRITES_PER_THREAD 1000
+#define NUM_READ_EVENTS_PER_LOOP 5
 
 // path to where the test files can be found
 static const char* g_test_files;
@@ -151,8 +151,8 @@ static void session_ref_up(void *session){
     session_t *s = session;
     pthread_mutex_lock(&s->mutex);
     s->refs++;
-    LOG_ERROR("ref_up   (%x, %x, %x)\n", FI(s->refs), FI(s->loop_refs),
-                                         FI(s->tlse_refs));
+    // LOG_ERROR("ref_up   (%x, %x, %x)\n", FI(s->refs), FI(s->loop_refs),
+    //                                      FI(s->tlse_refs));
     pthread_mutex_unlock(&s->mutex);
 }
 
@@ -160,12 +160,12 @@ static void session_ref_down(void *session){
     session_t *s = session;
     pthread_mutex_lock(&s->mutex);
     int refs = --s->refs;
-    LOG_ERROR("ref_down (%x, %x, %x)\n", FI(s->refs), FI(s->loop_refs),
-                                         FI(s->tlse_refs));
+    // LOG_ERROR("ref_down (%x, %x, %x)\n", FI(s->refs), FI(s->loop_refs),
+    //                                      FI(s->tlse_refs));
     pthread_mutex_unlock(&s->mutex);
 
     if(refs > 0) return;
-    LOG_ERROR("freeing session\n");
+    // LOG_ERROR("freeing session\n");
 
     // free the session
     pthread_mutex_destroy(&s->mutex);
