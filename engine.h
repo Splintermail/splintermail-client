@@ -132,8 +132,8 @@ typedef void (*event_passer_t)(void*, event_t*);
 
 // the generic session "interface", identical API for each engine
 typedef struct {
-    void (*ref_up)(void*);
-    void (*ref_down)(void*);
+    void (*ref_up)(void*, int reason);
+    void (*ref_down)(void*, int reason);
     void (*close)(void*, derr_t error);
 } session_iface_t;
 

@@ -7,6 +7,7 @@
 #include <loop.h>
 
 #include "test_utils.h"
+#include "fake_engine.h"
 
 #define NUM_THREADS 10
 #define WRITES_PER_THREAD 10000
@@ -14,170 +15,6 @@
 
 unsigned int listen_port = 12346;
 const char* port_str = "12346";
-
-typedef struct {
-    derr_t error;
-    size_t thread_id;
-    pthread_t thread;
-    pthread_mutex_t *mutex;
-    pthread_cond_t *cond;
-    size_t num_threads;
-    size_t *threads_ready;
-} reader_writer_context_t;
-
-static void *reader_writer_thread(void *arg){
-    reader_writer_context_t *ctx = arg;
-    derr_t error;
-
-    // generate all the buffers we are going to send
-    LIST(dstr_t) out_bufs;
-    PROP_GO( LIST_NEW(dstr_t, &out_bufs, WRITES_PER_THREAD), fail);
-    for(size_t i = 0; i < WRITES_PER_THREAD; i++){
-        dstr_t temp;
-        // allocate the dstr in the list
-        PROP_GO( dstr_new(&temp, 64), free_out_bufs);
-        // write something into the buffer
-        PROP_GO( FMT(&temp, "%x:%x\n", FU(ctx->thread_id), FU(i)), free_temp);
-        // add it to the list
-        PROP_GO( LIST_APPEND(dstr_t, &out_bufs, temp), free_temp);
-        continue;
-    free_temp:
-        dstr_free(&temp);
-        goto free_out_bufs;
-    }
-
-    // check if we are the last thread ready
-    pthread_mutex_lock(ctx->mutex);
-    (*ctx->threads_ready)++;
-    // last thread signals the others
-    if(*ctx->threads_ready == ctx->num_threads){
-        pthread_cond_broadcast(ctx->cond);
-    }
-    // other threads wait for the last one
-    else{
-        while(*ctx->threads_ready < ctx->num_threads){
-            pthread_cond_wait(ctx->cond, ctx->mutex);
-        }
-    }
-    pthread_mutex_unlock(ctx->mutex);
-
-    // open a connection
-    connection_t conn;
-    connection_new(&conn, "127.0.0.1", listen_port);
-    // write all of the buffers
-    for(size_t i = 0; i < out_bufs.len; i++){
-        PROP_GO( connection_write(&conn, &out_bufs.data[i]), close_conn);
-    }
-    // read all of the buffers into a single place
-    dstr_t recvd;
-    PROP_GO( dstr_new(&recvd, 8192), close_conn);
-    while( dstr_count(&recvd, &DSTR_LIT("\n")) < out_bufs.len){
-        PROP_GO( connection_read(&conn, &recvd, NULL), free_recvd);
-    }
-    // now compare the buffers
-    size_t compared = 0;
-    for(size_t i = 0; i < out_bufs.len; i++){
-        // cmp is the section of leftovers that
-        dstr_t cmp = dstr_sub(&recvd, compared,
-                              compared + out_bufs.data[i].len);
-        if(dstr_cmp(&cmp, &out_bufs.data[i]) != 0)
-            ORIG_GO(E_VALUE, "received bad response!", free_recvd);
-        compared += out_bufs.data[i].len;
-    }
-
-    // done!
-
-free_recvd:
-    dstr_free(&recvd);
-close_conn:
-    connection_close(&conn);
-free_out_bufs:
-    for(size_t i = 0; i < out_bufs.len; i++){
-        dstr_free(&out_bufs.data[i]);
-    }
-    LIST_FREE(dstr_t, &out_bufs);
-fail:
-    ctx->error = error;
-    return NULL;
-}
-
-// a simple session, with a session interface for the loop to interact with
-typedef struct session_t {
-    pthread_mutex_t mutex;
-    int refs;
-    bool closed;
-    loop_t *loop;
-    loop_data_t loop_data;
-}session_t;
-
-static void session_ref_up(void *session){
-    session_t *s = session;
-    pthread_mutex_lock(&s->mutex);
-    s->refs++;
-    pthread_mutex_unlock(&s->mutex);
-}
-
-static void session_ref_down(void *session){
-    session_t *s = session;
-    pthread_mutex_lock(&s->mutex);
-    int refs = --s->refs;
-    pthread_mutex_unlock(&s->mutex);
-
-    if(refs > 0) return;
-
-    // free the session
-    pthread_mutex_destroy(&s->mutex);
-    free(s);
-}
-
-// to allocate new sessions (when loop.c only know about a single child struct)
-static derr_t session_alloc(void **sptr, void *vloop, ssl_context_t* ssl_ctx){
-    (void)ssl_ctx;
-    // allocate the struct
-    session_t *s = malloc(sizeof(*s));
-    if(!s) ORIG(E_NOMEM, "no mem");
-    *s = (session_t){0};
-    // prepare the refs
-    pthread_mutex_init(&s->mutex, NULL);
-    s->refs = 1;
-    s->closed = false;
-    // init the loop_data element
-    s->loop = vloop;
-    loop_data_start(&s->loop_data, s->loop, s);
-    *sptr = s;
-    session_ref_down(s);
-    return E_OK;
-}
-
-static void session_close(void *session, derr_t error){
-    (void)error;
-    session_t *s = session;
-    pthread_mutex_lock(&s->mutex);
-    bool do_close = !s->closed;
-    s->closed = true;
-    pthread_mutex_unlock(&s->mutex);
-
-    if(!do_close) return;
-
-    loop_data_close(&s->loop_data, s->loop, s);
-}
-
-static session_iface_t iface = {
-    .ref_up = session_ref_up,
-    .ref_down = session_ref_down,
-    .close = session_close,
-};
-
-static loop_data_t *session_get_loop_data(void *session){
-    session_t *s = session;
-    return &s->loop_data;
-}
-
-// an event passer that just passes directly into an event queue
-static void queue_passer(void *engine, event_t *ev){
-    queue_t *q = engine;
-    queue_append(q, &ev->qe);
-}
 
 typedef struct {
     pthread_t thread;
@@ -192,16 +29,17 @@ static void *loop_thread(void *arg){
     test_context_t *ctx = arg;
     derr_t error;
     size_t num_read_events = NUM_READ_EVENTS_PER_LOOP;
+    fake_pipeline_t pipeline = {.loop=&ctx->loop};
     /* we can have a lot of simultaneous writes, which is not realistic
        compared to the real behavior of a pipeline, so we won't worry about
        testing that behavior */
     size_t num_write_wrappers = NUM_THREADS * WRITES_PER_THREAD;
     PROP_GO( loop_init(&ctx->loop, num_read_events, num_write_wrappers,
-                       ctx->downstream, queue_passer,
-                       iface,
-                       session_get_loop_data,
-                       session_alloc,
-                       &ctx->loop,
+                       ctx->downstream, fake_engine_pass_event,
+                       fake_session_iface_loop,
+                       fake_session_get_loop_data,
+                       fake_session_alloc,
+                       &pipeline,
                        "127.0.0.1", "0"), done);
 
     // create the listener
@@ -218,7 +56,8 @@ static void *loop_thread(void *arg){
     PROP_GO( loop_run(&ctx->loop), cu_loop);
 
 cu_loop:
-    loop_free(&ctx->loop);
+    // other threads may call loop_free at a later time, so we don't free here
+    // loop_free(&ctx->loop);
 done:
     ctx->error = error;
 
@@ -228,6 +67,65 @@ done:
     pthread_mutex_unlock(ctx->mutex);
 
     return NULL;
+}
+
+// callbacks from fake_engine
+
+typedef struct {
+    size_t nwrites ;
+    size_t nEOF;
+    test_context_t *test_ctx;
+    bool success;
+} session_cb_data_t;
+
+static void handle_read(void *data, event_t *ev){
+    session_cb_data_t *cb_data = data;
+    if(ev->buffer.len == 0){
+        // done with this session
+        fake_session_close(ev->session, E_OK);
+        // was that the last session?
+        if(++cb_data->nEOF == NUM_THREADS){
+            loop_close(&cb_data->test_ctx->loop, E_OK);
+        }
+    }
+    // otherwise, echo back the message
+    else{
+        event_t *ev_new = malloc(sizeof(*ev_new));
+        if(!ev_new){
+            LOG_ERROR("no memory!\n");
+            cb_data->success = false;
+            return;
+        }
+        event_prep(ev_new, NULL);
+        if(dstr_new(&ev_new->buffer, ev->buffer.len)){
+            LOG_ERROR("no memory!\n");
+            free(ev_new);
+            cb_data->success = false;
+            return;
+        }
+        dstr_copy(&ev->buffer, &ev_new->buffer);
+        ev_new->session = ev->session;
+        fake_session_ref_up_test(ev_new->session, FAKE_ENGINE_REF_WRITE);
+        ev_new->ev_type = EV_WRITE;
+        // pass the write
+        loop_pass_event(&cb_data->test_ctx->loop, ev_new);
+        cb_data->nwrites++;
+    }
+}
+
+static void handle_write_done(void *data, event_t *ev){
+    session_cb_data_t *cb_data = data;
+    // downref session
+    fake_session_ref_down_test(ev->session, FAKE_ENGINE_REF_WRITE);
+    // free event
+    dstr_free(&ev->buffer);
+    free(ev);
+    cb_data->nwrites--;
+}
+
+static bool quit_ready(void *data){
+    session_cb_data_t *cb_data = data;
+    return cb_data->nwrites == 0;
 }
 
 static derr_t test_loop(void){
@@ -241,14 +139,14 @@ static derr_t test_loop(void){
     pthread_mutex_init(&mutex, NULL);
 
     // get the event queue ready
-    queue_t event_q;
-    PROP_GO( queue_init(&event_q), cu_mutex);
+    fake_engine_t fake_engine;
+    PROP_GO( fake_engine_init(&fake_engine), cu_mutex);
 
     // start the loop thread
     pthread_mutex_lock(&mutex);
     unlock_mutex_on_error = true;
     test_context_t test_ctx = {
-        .downstream = &event_q,
+        .downstream = &fake_engine,
         .mutex = &mutex,
         .cond = &cond,
     };
@@ -274,102 +172,24 @@ static derr_t test_loop(void){
             .mutex = &mutex,
             .cond = &cond,
             .num_threads = NUM_THREADS,
+            .writes_per_thread = WRITES_PER_THREAD,
+            .listen_port = listen_port,
             .threads_ready = &threads_ready,
         };
         pthread_create(&threads[i].thread, NULL,
                        reader_writer_thread, &threads[i]);
     }
 
-    // process incoming events from the loop
-    event_t *ev;
-    event_t *quit_ev = NULL;
-    size_t nwrites = 0;
-    size_t nEOF = 0;
-    while(true){
-        if(!(ev = queue_pop_first(&event_q, true))) break;
-        switch(ev->ev_type){
-            case EV_READ:
-                //LOG_ERROR("got read\n");
-                // check for an error
-                if(ev->error){
-                    success = false;
-                }
-                // check for EOF
-                else if(ev->buffer.len == 0){
-                    // done with this session
-                    session_close(ev->session, E_OK);
-                    // was that the last session?
-                    if(++nEOF == NUM_THREADS){
-                        loop_close(&test_ctx.loop, E_OK);
-                    }
-                }
-                // otherwise, echo back the message
-                else{
-                    event_t *ev_new = malloc(sizeof(*ev_new));
-                    if(!ev_new){
-                        LOG_ERROR("no memory!\n");
-                        success = false;
-                        goto pass_back;
-                    }
-                    event_prep(ev_new, NULL);
-                    if(dstr_new(&ev_new->buffer, ev->buffer.len)){
-                        LOG_ERROR("no memory!\n");
-                        free(ev_new);
-                        success = false;
-                        goto pass_back;
-                    }
-                    dstr_copy(&ev->buffer, &ev_new->buffer);
-                    ev_new->session = ev->session;
-                    session_ref_up(ev_new->session);
-                    ev_new->ev_type = EV_WRITE;
-                    // pass the write
-                    loop_pass_event(&test_ctx.loop, ev_new);
-                    nwrites++;
-                }
-            pass_back:
-                // return buffer
-                ev->ev_type = EV_READ_DONE;
-                loop_pass_event(&test_ctx.loop, ev);
-                break;
-            case EV_QUIT_DOWN:
-                // check if we need to wait for write events to be returned
-                if(nwrites == 0){
-                    ev->ev_type = EV_QUIT_UP;
-                    loop_pass_event(&test_ctx.loop, ev);
-                    goto done;
-                }else{
-                    quit_ev = ev;
-                }
-                break;
-            case EV_WRITE_DONE:
-                // check for error
-                if(ev->error){
-                    LOG_ERROR("write error detected\n");
-                    success = false;
-                }
-                // downref session
-                session_ref_down(ev->session);
-                // free event
-                dstr_free(&ev->buffer);
-                free(ev);
-                nwrites--;
-                // check for quitting condition
-                if(quit_ev && nwrites == 0){
-                    quit_ev->ev_type = EV_QUIT_UP;
-                    loop_pass_event(&test_ctx.loop, quit_ev);
-                    goto done;
-                }
-                break;
-            // other events should not happen
-            case EV_READ_DONE:
-            case EV_WRITE:
-            case EV_QUIT_UP:
-            default:
-                LOG_ERROR("unexpected event type from loop engine\n");
-                success = false;
-        }
-    }
-done:
+    session_cb_data_t cb_data = {.test_ctx = &test_ctx, .success = true};
+
+    // catch error from fake_engine_run
+    success |= fake_engine_run(
+        &fake_engine, loop_pass_event, &test_ctx.loop,
+        handle_read, handle_write_done, quit_ready, &cb_data);
+
+    // catch error from callbacks
+    success |= cb_data.success;
+
     // join all the threads
     for(size_t i = 0; i < sizeof(threads) / sizeof(*threads); i++){
         pthread_join(threads[i].thread, NULL);
@@ -387,9 +207,11 @@ join_test_thread:
                   FD(error_to_dstr(test_ctx.error)));
         success = false;
     }
+    // now that we know nobody will close the loop, we are safe to free it
+    loop_free(&test_ctx.loop);
 
     // clean up the queue
-    queue_free(&event_q);
+    fake_engine_free(&fake_engine);
 cu_mutex:
     if(unlock_mutex_on_error) pthread_mutex_unlock(&mutex);
     pthread_mutex_destroy(&mutex);

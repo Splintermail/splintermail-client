@@ -130,7 +130,7 @@ static void allocator(uv_handle_t *handle, size_t suggest, uv_buf_t *buf){
     // store the session pointer and upref
     ev->error = E_OK;
     ev->session = ld->session;
-    loop->session_iface.ref_up(ev->session);
+    loop->session_iface.ref_up(ev->session, LOOP_REF_READ);
 
     return;
 }
@@ -184,8 +184,8 @@ static void read_cb(uv_stream_t *stream, ssize_t ssize_read,
         if(!buf->base){
             return;
         }else{
-            // equivalent to EAGAIN or EWOULDBLOCK.  Is this possible?
-            LOG_ERROR("got EAGAIN or EWOULDBLOCK equivalent!\n");
+            /* equivalent to EAGAIN or EWOULDBLOCK.  Not sure what causes it
+               but it is not harmful and it is easily handled. */
             goto return_buffer;
         }
     }
@@ -222,7 +222,7 @@ return_buffer:
     ev->error = E_OK;
     ev->session = NULL;
     queue_append(&loop->read_events, &ev->qe);
-    loop->session_iface.ref_down(ld->session);
+    loop->session_iface.ref_down(ld->session, LOOP_REF_READ);
     // if there was an error, close the session
     if(error){
         loop->session_iface.close(ld->session, error);
@@ -311,7 +311,7 @@ static void loop_data_connect_iii(uv_connect_t *req, int status){
         /* now that we set ld->connected, the loop_data_onthread_close will
            not clean up for us, meaning that we need to have careful error
            handling to make sure we always empty and free the queue. */
-        loop->session_iface.ref_up(ld->session);
+        loop->session_iface.ref_up(ld->session, LOOP_REF_CONNECT_PROTECT);
 
         // empty the preconnected_writes
         event_t *ev;
@@ -340,7 +340,7 @@ static void loop_data_connect_iii(uv_connect_t *req, int status){
         bool close_now = (ld->state == DATA_STATE_CLOSED);
 
         // now loop_data_onthread_close will work normally.
-        loop->session_iface.ref_down(ld->session);
+        loop->session_iface.ref_down(ld->session, LOOP_REF_CONNECT_PROTECT);
 
         if(close_now) return;
 
@@ -511,7 +511,7 @@ void loop_data_start(loop_data_t *ld, loop_t *loop, void *session){
     ld->start_ev.ev_type = EV_SESSION_START;
     ld->start_ev.buffer = (dstr_t){0};
     // ref up the starting event
-    loop->session_iface.ref_up(session);
+    loop->session_iface.ref_up(session, LOOP_REF_START_EVENT);
     loop_pass_event(loop, &ld->start_ev);
 }
 
@@ -530,7 +530,7 @@ static void loop_data_onthread_start(loop_data_t *ld, loop_t *loop,
     queue_cb_set(&ld->read_pause_qcb, NULL, new_buf__resume_reading);
 
     // ref up for the lifetime of the loop_data
-    loop->session_iface.ref_up(session);
+    loop->session_iface.ref_up(session, LOOP_REF_LIFETIME);
 
     // no error yet
     ld->event_for_allocator = NULL;
@@ -591,7 +591,7 @@ fail_preconnected_writes:
     queue_free(&ld->preconnected_writes);
 fail_ref:
     // lifetime reference
-    loop->session_iface.ref_down(session);
+    loop->session_iface.ref_down(session, LOOP_REF_LIFETIME);
     ld->state = DATA_STATE_CLOSED;
     loop->session_iface.close(session, error);
     return;
@@ -855,7 +855,7 @@ static void loop_data_onthread_close(loop_data_t *ld){
     }
 
     // loop_data now fully cleaned up, clean up loop_data's lifetime reference
-    loop->session_iface.ref_down(ld->session);
+    loop->session_iface.ref_down(ld->session, LOOP_REF_LIFETIME);
 }
 
 
@@ -868,7 +868,7 @@ void loop_data_close(loop_data_t *ld, loop_t *loop, void *session){
     ld->close_ev.ev_type = EV_SESSION_CLOSE;
     ld->close_ev.buffer = (dstr_t){0};
     // ref up for the close event
-    loop->session_iface.ref_up(session);
+    loop->session_iface.ref_up(session, LOOP_REF_CLOSE_EVENT);
     loop_pass_event(loop, &ld->close_ev);
 }
 
@@ -899,7 +899,7 @@ static void event_cb(uv_async_t *handle){
                 break;
             case EV_READ_DONE:
                 // erase session reference
-                iface.ref_down(ev->session);
+                iface.ref_down(ev->session, LOOP_REF_READ);
                 ev->session = NULL;
                 // return event to read event list
                 queue_append(&loop->read_events, &ev->qe);
@@ -920,7 +920,7 @@ static void event_cb(uv_async_t *handle){
                         ev->ev_type = EV_WRITE_DONE;
                         loop->pass_down(loop->downstream, ev);
                         // close session
-                        loop->session_iface.ref_down(ev->session);
+                        loop->session_iface.close(ev->session, error);
                         loop_data_onthread_close(ld);
                     }
                 }
@@ -936,11 +936,13 @@ static void event_cb(uv_async_t *handle){
                 close_everything_ii(loop);
                 break;
             case EV_SESSION_START:
-                loop->session_iface.ref_down(ev->session);
+                loop->session_iface.ref_down(ev->session,
+                                             LOOP_REF_START_EVENT);
                 break;
             case EV_SESSION_CLOSE:
-                loop->session_iface.ref_down(ev->session);
                 loop_data_onthread_close(ld);
+                loop->session_iface.ref_down(ev->session,
+                                             LOOP_REF_CLOSE_EVENT);
                 break;
         }
     }
@@ -1155,5 +1157,24 @@ void loop_close(loop_t *loop, derr_t error){
         // not possible, see note in loop_pass_event()
         uv_perror("uv_async_send", ret);
         LOG_ERROR("uv_async_send should never fail!\n");
+    }
+}
+
+
+DSTR_STATIC(loop_ref_read_dstr, "read");
+DSTR_STATIC(loop_ref_start_event_dstr, "start_event");
+DSTR_STATIC(loop_ref_close_event_dstr, "close_event");
+DSTR_STATIC(loop_ref_connect_dstr, "connect_protect");
+DSTR_STATIC(loop_ref_lifetime_dstr, "lifetime");
+DSTR_STATIC(loop_ref_unknown_dstr, "unknown");
+
+dstr_t *loop_ref_reason_to_dstr(enum loop_ref_reason_t reason){
+    switch(reason){
+        case LOOP_REF_READ: return &loop_ref_read_dstr; break;
+        case LOOP_REF_START_EVENT: return &loop_ref_start_event_dstr; break;
+        case LOOP_REF_CLOSE_EVENT: return &loop_ref_close_event_dstr; break;
+        case LOOP_REF_CONNECT_PROTECT: return &loop_ref_connect_dstr; break;
+        case LOOP_REF_LIFETIME: return &loop_ref_lifetime_dstr; break;
+        default: return &loop_ref_unknown_dstr;
     }
 }

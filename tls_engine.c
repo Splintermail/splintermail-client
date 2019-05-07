@@ -87,7 +87,7 @@ static void do_ssl_read(tlse_data_t *td){
         td->read_out->ev_type = EV_READ;
         td->read_out->error = E_OK;
         td->read_out->session = td->session;
-        tlse->session_iface.ref_up(td->session);
+        tlse->session_iface.ref_up(td->session, TLSE_REF_READ);
         tlse->pass_down(tlse->downstream, td->read_out);
         td->read_out = NULL;
     }else{
@@ -202,7 +202,7 @@ static void do_write_out(tlse_data_t *td){
     td->write_out->ev_type = EV_WRITE;
     td->write_out->error = E_OK;
     td->write_out->session = td->session;
-    tlse->session_iface.ref_up(td->session);
+    tlse->session_iface.ref_up(td->session, TLSE_REF_WRITE);
     tlse->pass_up(tlse->upstream, td->write_out);
     td->write_out = NULL;
     // optimistically return to idle state; it might kick us back to wfewb
@@ -326,7 +326,7 @@ static bool enter_idle(tlse_data_t *td){
                 td->read_out->ev_type = EV_READ;
                 td->read_out->error = E_OK;
                 td->read_out->session = td->session;
-                tlse->session_iface.ref_up(td->session);
+                tlse->session_iface.ref_up(td->session, TLSE_REF_READ);
                 tlse->pass_down(tlse->downstream, td->read_out);
                 td->read_out = NULL;
                 // mark EOF as sent
@@ -426,7 +426,7 @@ static void tlse_process_events(uv_work_t *req){
             case EV_READ_DONE:
                 // LOG_ERROR("tlse: READ_DONE\n");
                 // erase session reference
-                iface.ref_down(ev->session);
+                iface.ref_down(ev->session, TLSE_REF_READ);
                 ev->session = NULL;
                 // return event to read event list
                 queue_append(&tlse->read_events, &ev->qe);
@@ -444,7 +444,7 @@ static void tlse_process_events(uv_work_t *req){
             case EV_WRITE_DONE:
                 // LOG_ERROR("tlse: WRITE_DONE\n");
                 // erase session reference
-                iface.ref_down(ev->session);
+                iface.ref_down(ev->session, TLSE_REF_WRITE);
                 ev->session = NULL;
                 // return event to read event list
                 queue_append(&tlse->write_events, &ev->qe);
@@ -476,7 +476,7 @@ static void tlse_process_events(uv_work_t *req){
                 break;
             case EV_SESSION_START:
                 // LOG_ERROR("tlse: SESSION_START\n");
-                iface.ref_down(ev->session);
+                iface.ref_down(ev->session, TLSE_REF_START_EVENT);
                 break;
             case EV_SESSION_CLOSE:
                 // LOG_ERROR("tlse: SESSION_CLOSE\n");
@@ -485,7 +485,7 @@ static void tlse_process_events(uv_work_t *req){
                    tlse_data_onthread_close to prevent accidentally freeing
                    the entire session during a downref in the middle of
                    advance_session */
-                iface.ref_down(ev->session);
+                iface.ref_down(ev->session, TLSE_REF_CLOSE_EVENT);
                 break;
             default:
                 LOG_ERROR("unexpected event type in tls engine, ev = %x\n",
@@ -508,7 +508,7 @@ void tlse_data_start(tlse_data_t *td, tlse_t *tlse, void *session){
     td->start_ev.error = E_OK;
     td->start_ev.buffer = (dstr_t){0};
     td->start_ev.session = session;
-    tlse->session_iface.ref_up(session);
+    tlse->session_iface.ref_up(session, TLSE_REF_START_EVENT);
 
     // pass the starting event
     tlse_pass_event(tlse, &td->start_ev);
@@ -604,7 +604,7 @@ void tlse_data_close(tlse_data_t *td, tlse_t *tlse, void *session){
     td->close_ev.error = E_OK;
     td->close_ev.buffer = (dstr_t){0};
     td->close_ev.session = session;
-    tlse->session_iface.ref_up(session);
+    tlse->session_iface.ref_up(session, TLSE_REF_CLOSE_EVENT);
 
     // pass the closing event
     tlse_pass_event(tlse, &td->close_ev);
@@ -729,4 +729,21 @@ derr_t tlse_add_to_loop(tlse_t *tlse, uv_loop_t *loop){
         ORIG(error, "error initializing loop");
     }
     return E_OK;
+}
+
+
+DSTR_STATIC(tlse_ref_read_dstr, "read");
+DSTR_STATIC(tlse_ref_write_dstr, "write");
+DSTR_STATIC(tlse_ref_start_event_dstr, "start_event");
+DSTR_STATIC(tlse_ref_close_event_dstr, "close_event");
+DSTR_STATIC(tlse_ref_unknown_dstr, "unknown");
+
+dstr_t *tlse_ref_reason_to_dstr(enum tlse_ref_reason_t reason){
+    switch(reason){
+        case TLSE_REF_READ: return &tlse_ref_read_dstr; break;
+        case TLSE_REF_WRITE: return &tlse_ref_write_dstr; break;
+        case TLSE_REF_START_EVENT: return &tlse_ref_start_event_dstr; break;
+        case TLSE_REF_CLOSE_EVENT: return &tlse_ref_close_event_dstr; break;
+        default: return &tlse_ref_unknown_dstr;
+    }
 }

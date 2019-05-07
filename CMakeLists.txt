@@ -65,7 +65,8 @@ set(TEST_OBJ_TGTS dummy_key_tool
                   fake_pop_server
                   ditm_thread
                   test_utils
-                  fake_imap_client)
+                  fake_imap_client
+                  fake_engine)
 
 set(TEST_EXE_TGTS test_common
                   test_pop_server
@@ -351,6 +352,7 @@ if("${BUILD_TESTS}")
     obj_depend_obj(ditm_thread ditm dummy_key_tool fileops)
     obj_depend_obj(dummy_key_tool crypto common)
     obj_depend_obj(fake_imap_client uv_interface networking)
+    obj_depend_obj(fake_engine loop tls_engine queue networking)
     # some dummy tools need openssl headers to compile... but not to link
     target_include_directories(dummy_key_tool_o PRIVATE ${OPENSSL_INCLUDE_DIR})
     target_include_directories(dummy_ui_harness_o PRIVATE ${OPENSSL_INCLUDE_DIR})
@@ -393,9 +395,9 @@ if("${BUILD_TESTS}")
     target_link_libraries(test_imap_read imap_read)
     target_link_libraries(test_hashmap hashmap)
     target_link_libraries(test_imap_maildir imap_maildir)
-    target_link_libraries(test_loop loop networking)
+    target_link_libraries(test_loop fake_engine networking)
     target_link_libraries(test_queue queue)
-    target_link_libraries(test_tls_engine tls_engine loop)
+    target_link_libraries(test_tls_engine fake_engine)
 
     if(WIN32)
         # make sure the user provided the location of Pthreads

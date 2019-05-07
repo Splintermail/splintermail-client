@@ -161,4 +161,14 @@ void tlse_pass_event(void *tlse_void, event_t *ev);
 void tlse_data_start(tlse_data_t *td, tlse_t *tlse, void *session);
 void tlse_data_close(tlse_data_t *td, tlse_t *tlse, void *session);
 
+enum tlse_ref_reason_t {
+    TLSE_REF_READ = 0,
+    TLSE_REF_WRITE,
+    TLSE_REF_START_EVENT,
+    TLSE_REF_CLOSE_EVENT,
+    TLSE_REF_MAXIMUM
+};
+
+dstr_t *tlse_ref_reason_to_dstr(enum tlse_ref_reason_t reason);
+
 #endif // TLS_ENGINE_H

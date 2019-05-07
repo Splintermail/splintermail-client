@@ -147,5 +147,15 @@ void loop_data_close(loop_data_t *ld, loop_t *loop, void *session);
    libuv will downref the session.  In the session's down_ref handler, no
    further cleanup steps are necessary in relation to the loop_data_t. */
 
+enum loop_ref_reason_t {
+    LOOP_REF_READ = 0,
+    LOOP_REF_START_EVENT,
+    LOOP_REF_CLOSE_EVENT,
+    LOOP_REF_CONNECT_PROTECT,
+    LOOP_REF_LIFETIME,
+    LOOP_REF_MAXIMUM
+};
+
+dstr_t *loop_ref_reason_to_dstr(enum loop_ref_reason_t reason);
 
 #endif // LOOP_H
