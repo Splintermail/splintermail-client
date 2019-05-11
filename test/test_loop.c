@@ -55,7 +55,6 @@ static void *loop_thread(void *arg){
 
     fake_pipeline_t pipeline = {
         .loop = &ctx->loop,
-        .mutex = ctx->mutex,
         .fake_session_accepted = fake_session_accepted,
     };
 

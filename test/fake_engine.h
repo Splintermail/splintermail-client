@@ -67,9 +67,6 @@ typedef struct {
     // null engines are ignored during session hooks
     loop_t *loop;
     tlse_t *tlse;
-    // for setting session_ids
-    size_t nsessions;
-    pthread_mutex_t *mutex;
     // session manager hook, returns cb_data for future calls
     void (*fake_session_accepted)(fake_session_t*);
 } fake_pipeline_t;
@@ -82,6 +79,7 @@ struct fake_session_t {
     derr_t error;
     // stuff for getters
     ssl_context_t *ssl_ctx;
+    bool upwards;
     // engines
     fake_pipeline_t *pipeline;
     // engine_data elements

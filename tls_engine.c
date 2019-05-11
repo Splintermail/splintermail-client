@@ -103,7 +103,11 @@ static void do_ssl_read(tlse_data_t *td){
                     ORIG_GO(E_CONN, "unexpected EOF from socket",
                             close_session);
                 }
-                td->want_read = true;
+                /* We don't set want_read here because it can cause a hang;
+                   we might be unable to SSL_read without more input data (such
+                   as if we just decrypted part of a handshake but with no
+                   application data), but that doesn't stop us from attempting
+                   an SSL_write. */
                 break;
             case SSL_ERROR_WANT_WRITE:
                 // if we got WANT_WRITE with empty rawout, that is an E_NOMEM
@@ -481,10 +485,6 @@ static void tlse_process_events(uv_work_t *req){
             case EV_SESSION_CLOSE:
                 // LOG_ERROR("tlse: SESSION_CLOSE\n");
                 tlse_data_onthread_close(td);
-                /* Done with close event.  This ref_down must come after
-                   tlse_data_onthread_close to prevent accidentally freeing
-                   the entire session during a downref in the middle of
-                   advance_session */
                 iface.ref_down(ev->session, TLSE_REF_CLOSE_EVENT);
                 break;
             default:
@@ -564,6 +564,26 @@ static void tlse_data_onthread_start(tlse_data_t *td, tlse_t *tlse,
     if(tlse->session_get_upwards(session)){
         // upwards means we are the client
         SSL_set_connect_state(td->ssl);
+
+        // client starts the handshake to get the ball rolling
+        int ret = SSL_do_handshake(td->ssl);
+        // we should be initiating the contact, so we should never succeed here
+        switch(SSL_get_error(td->ssl, ret)){
+            case SSL_ERROR_WANT_READ:
+                td->want_read = true;
+                break;
+            case SSL_ERROR_WANT_WRITE:
+                // if we got WANT_WRITE with empty rawout, that is E_NOMEM
+                if(BIO_eof(td->rawout)){
+                    ORIG_GO(E_CONN, "got SSL_ERROR_WANT_WRITE "
+                             "with empty write buffer", fail_ssl);
+                }
+                break;
+            default:
+                log_ssl_errors();
+                ORIG_GO(E_SSL, "error in SSL_do_hanshake", fail_ssl);
+        }
+
     }else{
         // downwards means we are the server
         SSL_set_accept_state(td->ssl);
@@ -574,7 +594,7 @@ static void tlse_data_onthread_start(tlse_data_t *td, tlse_t *tlse,
     td->data_state = DATA_STATE_STARTED;
     td->tls_state = TLS_STATE_IDLE;
 
-    // call advance_state so that tlse_data is for queue callbacks
+    // call advance_state so that tlse_data is ready for queue callbacks
     advance_state(td);
 
     return;

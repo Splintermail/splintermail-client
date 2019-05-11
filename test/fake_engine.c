@@ -313,7 +313,7 @@ void fake_session_ref_down_test(void *session, int reason){
 
 // to allocate new sessions (when loop.c only know about a single child struct)
 static derr_t fake_session_do_alloc(void **sptr, void *fake_pipeline,
-                                    ssl_context_t* ssl_ctx){
+                                    ssl_context_t* ssl_ctx, bool upwards){
     // allocate the struct
     fake_session_t *s = malloc(sizeof(*s));
     if(!s) ORIG(E_NOMEM, "no mem");
@@ -328,11 +328,7 @@ static derr_t fake_session_do_alloc(void **sptr, void *fake_pipeline,
     // prepare the session callbacks and such
     s->pipeline = fake_pipeline;
     s->ssl_ctx = ssl_ctx;
-
-    // get an id
-    pthread_mutex_lock(s->pipeline->mutex);
-    s->id = s->pipeline->nsessions++;
-    pthread_mutex_unlock(s->pipeline->mutex);
+    s->upwards = upwards;
 
     // init the engine_data elements
     if(s->pipeline->loop){
@@ -350,7 +346,7 @@ static derr_t fake_session_do_alloc(void **sptr, void *fake_pipeline,
 // to allocate new sessions (when loop.c only know about a single child struct)
 derr_t fake_session_alloc_accept(void **sptr, void *fake_pipeline,
                                  ssl_context_t* ssl_ctx){
-    PROP( fake_session_do_alloc(sptr, fake_pipeline, ssl_ctx) );
+    PROP( fake_session_do_alloc(sptr, fake_pipeline, ssl_ctx, false) );
 
     // get the new session
     fake_session_t *s = *sptr;
@@ -365,7 +361,7 @@ derr_t fake_session_alloc_accept(void **sptr, void *fake_pipeline,
 
 derr_t fake_session_alloc_connect(void **sptr, void *fake_pipeline,
                                   ssl_context_t* ssl_ctx){
-    PROP( fake_session_do_alloc(sptr, fake_pipeline, ssl_ctx) );
+    PROP( fake_session_do_alloc(sptr, fake_pipeline, ssl_ctx, true) );
     return E_OK;
 }
 
@@ -409,8 +405,7 @@ ssl_context_t *fake_session_get_ssl_ctx(void *session){
 bool fake_session_get_upwards(void *session){
     fake_session_t *s = session;
     // right now the tests only accept()
-    (void)s;
-    return false;
+    return s->upwards;
 }
 
 /////// fake engine stuff

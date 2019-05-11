@@ -36,11 +36,38 @@ typedef struct {
     pthread_cond_t *cond;
 } test_context_t;
 
+static void fake_session_destroyed(fake_session_t *s, derr_t error){
+    // free the cb_reader_writer if there is one
+    if(s->mgr_data){
+        cb_reader_writer_t *cbrw = s->mgr_data;
+        // catch an error from the cbrw
+        if(!error) error = cbrw->error;
+        cb_reader_writer_free(cbrw);
+    }
+    CATCH(E_ANY){
+        loop_close(s->pipeline->loop, error);
+    }
+}
+
+/* In the first half of the test, we use reader-writer threads to connect to
+   the loop.  In the second half of the test, we use the loop to connect to
+   itself. */
+static bool test_mode_self_connect = false;
+
+static void fake_session_accepted(fake_session_t *s){
+    if(!test_mode_self_connect) return;
+    s->session_destroyed = fake_session_destroyed;
+}
+
 static void *loop_thread(void *arg){
     test_context_t *ctx = arg;
     derr_t error;
 
-    fake_pipeline_t pipeline = {.loop=&ctx->loop, .tlse=&ctx->tlse};
+    fake_pipeline_t pipeline = {
+        .loop=&ctx->loop,
+        .tlse=&ctx->tlse,
+        .fake_session_accepted = fake_session_accepted,
+    };
 
     // prepare the ssl context
     DSTR_VAR(cert, 4096);
@@ -64,8 +91,9 @@ static void *loop_thread(void *arg){
                        &ctx->tlse, tlse_pass_event,
                        fake_session_iface_loop,
                        fake_session_get_loop_data,
-                       fake_session_alloc, &pipeline,
-                       "127.0.0.1", "0"), cu_tlse);
+                       fake_session_alloc_accept,
+                       &pipeline,
+                       "127.0.0.1", port_str), cu_tlse);
 
     error = tlse_add_to_loop(&ctx->tlse, &ctx->loop.uv_loop);
     if(error){
@@ -114,11 +142,52 @@ done:
 // callbacks from fake_engine
 
 typedef struct {
-    size_t nwrites ;
+    size_t nwrites;
     size_t nEOF;
     test_context_t *test_ctx;
     bool success;
+    cb_reader_writer_t cb_reader_writers[NUM_THREADS];
+    ssl_context_t *ssl_ctx_client;
 } session_cb_data_t;
+
+static void launch_second_half_of_test(session_cb_data_t *cb_data,
+                                       fake_pipeline_t *fp){
+    // start the second half of the tests
+    test_mode_self_connect = true;
+    // make NUM_THREAD connections
+    for(size_t i = 0; i < NUM_THREADS; i++){
+        derr_t error;
+        // allocate a new connecting session
+        void* session;
+        PROP_GO( fake_session_alloc_connect(&session, fp,
+                    cb_data->ssl_ctx_client), fail);
+
+        // attach the destroy hook
+        fake_session_t *s = session;
+        s->session_destroyed = fake_session_destroyed;
+
+        // prepare a cb_reader_writer
+        cb_reader_writer_t *cbrw = &cb_data->cb_reader_writers[i];
+        event_t *ev_new = cb_reader_writer_init(cbrw, i, WRITES_PER_THREAD, s);
+        if(!ev_new){
+            LOG_ERROR("did not get event from cb_reader_writer\n");
+            goto fail;
+        }
+
+        // attach the cb_reader_writer to the destroy hook
+        s->mgr_data = cbrw;
+
+        // pass the write
+        tlse_pass_event(&cb_data->test_ctx->tlse, ev_new);
+        cb_data->nwrites++;
+
+        continue;
+
+    fail:
+        loop_close(&cb_data->test_ctx->loop, error);
+        break;
+    }
+}
 
 static void handle_read(void *data, event_t *ev){
     session_cb_data_t *cb_data = data;
@@ -126,8 +195,24 @@ static void handle_read(void *data, event_t *ev){
         // done with this session
         fake_session_close(ev->session, E_OK);
         // was that the last session?
-        if(++cb_data->nEOF == NUM_THREADS){
+        cb_data->nEOF++;
+        if(cb_data->nEOF == NUM_THREADS){
+            // reuse the fake_pipline
+            fake_pipeline_t *fp = ((fake_session_t*)ev->session)->pipeline;
+            launch_second_half_of_test(cb_data, fp);
+        }else if(cb_data->nEOF == NUM_THREADS*2){
+            // test is over
             loop_close(&cb_data->test_ctx->loop, E_OK);
+        }
+    }
+    // is this session a cb_reader_writer session?
+    else if(ev->session && ((fake_session_t*)ev->session)->mgr_data){
+        cb_reader_writer_t *cbrw = ((fake_session_t*)ev->session)->mgr_data;
+        event_t *ev_new = cb_reader_writer_read(cbrw, &ev->buffer);
+        if(ev_new){
+            // pass the write
+            tlse_pass_event(&cb_data->test_ctx->tlse, ev_new);
+            cb_data->nwrites++;
         }
     }
     // otherwise, echo back the message
@@ -173,12 +258,19 @@ static bool quit_ready(void *data){
 static derr_t test_tlse(void){
     derr_t error;
     bool success = true;
+    // prepare the client ssl context
+    ssl_context_t ssl_ctx_client;
+    PROP( ssl_context_new_client(&ssl_ctx_client) );
+
     // get the conditional variable and mutex ready
     pthread_cond_t cond;
     pthread_cond_init(&cond, NULL);
     pthread_mutex_t mutex;
     bool unlock_mutex_on_error = false;
-    pthread_mutex_init(&mutex, NULL);
+    if(pthread_mutex_init(&mutex, NULL)){
+        perror("mutex_init");
+        ORIG_GO(E_NOMEM, "failed to allocate mutex", cu_ssl_ctx_client);
+    }
 
     // get the event queue ready
     fake_engine_t fake_engine;
@@ -223,7 +315,11 @@ static derr_t test_tlse(void){
                        reader_writer_thread, &threads[i]);
     }
 
-    session_cb_data_t cb_data = {.test_ctx = &test_ctx, .success = true};
+    session_cb_data_t cb_data = {
+        .test_ctx = &test_ctx,
+        .success = true,
+        .ssl_ctx_client = &ssl_ctx_client,
+    };
 
     // catch error from fake_engine_run
     success |= fake_engine_run(
@@ -261,6 +357,8 @@ cu_mutex:
 
     if(error == E_OK && success == false)
         ORIG(E_VALUE, "failure detected, check log");
+cu_ssl_ctx_client:
+    ssl_context_free(&ssl_ctx_client);
     return error;
 }
 
