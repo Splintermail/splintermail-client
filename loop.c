@@ -574,8 +574,7 @@ static void loop_data_onthread_start(loop_data_t *ld, loop_t *loop,
         error = (ret == UV_ENOMEM) ? E_NOMEM : E_UV;
         ORIG_GO(error, "error initializing libuv socket", fail_malloc);
     }
-    ld->sock = sock;
-    sock->data = &ld->uvp;
+    ld->sock->data = &ld->uvp;
 
     // everything is ready for STATE_STARTED
     ld->state = DATA_STATE_STARTED;

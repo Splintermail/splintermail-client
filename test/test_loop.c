@@ -25,11 +25,40 @@ typedef struct {
     pthread_cond_t *cond;
 } test_context_t;
 
+static void fake_session_destroyed(fake_session_t *s, derr_t error){
+    // free the cb_reader_writer if there is one
+    if(s->mgr_data){
+        cb_reader_writer_t *cbrw = s->mgr_data;
+        // catch an error from the cbrw
+        if(!error) error = cbrw->error;
+        cb_reader_writer_free(cbrw);
+    }
+    CATCH(E_ANY){
+        loop_close(s->pipeline->loop, error);
+    }
+}
+
+/* In the first half of the test, we use reader-writer threads to connect to
+   the loop.  In the second half of the test, we use the loop to connect to
+   itself. */
+static bool test_mode_self_connect = false;
+
+static void fake_session_accepted(fake_session_t *s){
+    if(!test_mode_self_connect) return;
+    s->session_destroyed = fake_session_destroyed;
+}
+
 static void *loop_thread(void *arg){
     test_context_t *ctx = arg;
     derr_t error;
     size_t num_read_events = NUM_READ_EVENTS_PER_LOOP;
-    fake_pipeline_t pipeline = {.loop=&ctx->loop};
+
+    fake_pipeline_t pipeline = {
+        .loop = &ctx->loop,
+        .mutex = ctx->mutex,
+        .fake_session_accepted = fake_session_accepted,
+    };
+
     /* we can have a lot of simultaneous writes, which is not realistic
        compared to the real behavior of a pipeline, so we won't worry about
        testing that behavior */
@@ -38,9 +67,9 @@ static void *loop_thread(void *arg){
                        ctx->downstream, fake_engine_pass_event,
                        fake_session_iface_loop,
                        fake_session_get_loop_data,
-                       fake_session_alloc,
+                       fake_session_alloc_accept,
                        &pipeline,
-                       "127.0.0.1", "0"), done);
+                       "127.0.0.1", port_str), done);
 
     // create the listener
     uv_ptr_t uvp = {.type = LP_TYPE_LISTENER};
@@ -72,11 +101,50 @@ done:
 // callbacks from fake_engine
 
 typedef struct {
-    size_t nwrites ;
+    size_t nwrites;
     size_t nEOF;
     test_context_t *test_ctx;
     bool success;
+    cb_reader_writer_t cb_reader_writers[NUM_THREADS];
 } session_cb_data_t;
+
+static void launch_second_half_of_test(session_cb_data_t *cb_data,
+                                       fake_pipeline_t *fp){
+    // start the second half of the tests
+    test_mode_self_connect = true;
+    // make NUM_THREAD connections
+    for(size_t i = 0; i < NUM_THREADS; i++){
+        derr_t error;
+        // allocate a new connecting session
+        void* session;
+        PROP_GO( fake_session_alloc_connect(&session, fp, NULL), fail);
+
+        // attach the destroy hook
+        fake_session_t *s = session;
+        s->session_destroyed = fake_session_destroyed;
+
+        // prepare a cb_reader_writer
+        cb_reader_writer_t *cbrw = &cb_data->cb_reader_writers[i];
+        event_t *ev_new = cb_reader_writer_init(cbrw, i, WRITES_PER_THREAD, s);
+        if(!ev_new){
+            LOG_ERROR("did not get event from cb_reader_writer\n");
+            goto fail;
+        }
+
+        // attach the cb_reader_writer to the destroy hook
+        s->mgr_data = cbrw;
+
+        // pass the write
+        loop_pass_event(&cb_data->test_ctx->loop, ev_new);
+        cb_data->nwrites++;
+
+        continue;
+
+    fail:
+        loop_close(&cb_data->test_ctx->loop, error);
+        break;
+    }
+}
 
 static void handle_read(void *data, event_t *ev){
     session_cb_data_t *cb_data = data;
@@ -84,8 +152,24 @@ static void handle_read(void *data, event_t *ev){
         // done with this session
         fake_session_close(ev->session, E_OK);
         // was that the last session?
-        if(++cb_data->nEOF == NUM_THREADS){
+        cb_data->nEOF++;
+        if(cb_data->nEOF == NUM_THREADS){
+            // reuse the fake_pipline
+            fake_pipeline_t *fp = ((fake_session_t*)ev->session)->pipeline;
+            launch_second_half_of_test(cb_data, fp);
+        }else if(cb_data->nEOF == NUM_THREADS*2){
+            // test is over
             loop_close(&cb_data->test_ctx->loop, E_OK);
+        }
+    }
+    // is this session a cb_reader_writer session?
+    else if(ev->session && ((fake_session_t*)ev->session)->mgr_data){
+        cb_reader_writer_t *cbrw = ((fake_session_t*)ev->session)->mgr_data;
+        event_t *ev_new = cb_reader_writer_read(cbrw, &ev->buffer);
+        if(ev_new){
+            // pass the write
+            loop_pass_event(&cb_data->test_ctx->loop, ev_new);
+            cb_data->nwrites++;
         }
     }
     // otherwise, echo back the message

@@ -4,7 +4,6 @@
 #include <pthread.h>
 
 #include <common.h>
-#include <logger.h>
 #include <queue.h>
 #include <engine.h>
 #include <loop.h>
@@ -17,6 +16,9 @@ enum fake_engine_ref_reason_t {
     FAKE_ENGINE_REF_CLOSE_PROTECT,
     FAKE_ENGINE_REF_MAXIMUM
 };
+
+struct fake_session_t;
+typedef struct fake_session_t fake_session_t;
 
 /* reader-writer thread is an independent thread that just starts a connection,
    writes a bunch of shit, and tests that whatever was returned matches what
@@ -37,6 +39,27 @@ typedef struct {
 // a pthread function, always returns NULL
 void *reader_writer_thread(void *reader_writer_context);
 
+/* cb_reader_writer is just like reader_writer except it connects via the loop
+   to the listener in the loop. */
+
+typedef struct {
+    derr_t error;
+    size_t id;
+    dstr_t out;
+    dstr_t in;
+    size_t nwrites; // total writes, not a count of writes-so-far
+    size_t nrecvd;
+    fake_session_t *session;
+    event_passer_t passer;
+    void *passer_engine;
+} cb_reader_writer_t;
+
+// returns the first WRITE event, or NULL if there was an error
+event_t *cb_reader_writer_init(cb_reader_writer_t *cbrw, size_t id,
+                             size_t nwrites, fake_session_t *s);
+void cb_reader_writer_free(cb_reader_writer_t *cbrw);
+// returns the next WRITE event, if there is one
+event_t *cb_reader_writer_read(cb_reader_writer_t *cbrw, dstr_t *buffer);
 
 // the fake_session is meant to be useful in a variety of unit tests
 
@@ -44,12 +67,19 @@ typedef struct {
     // null engines are ignored during session hooks
     loop_t *loop;
     tlse_t *tlse;
+    // for setting session_ids
+    size_t nsessions;
+    pthread_mutex_t *mutex;
+    // session manager hook, returns cb_data for future calls
+    void (*fake_session_accepted)(fake_session_t*);
 } fake_pipeline_t;
 
-typedef struct {
+struct fake_session_t {
     pthread_mutex_t mutex;
     int refs;
     bool closed;
+    size_t id;
+    derr_t error;
     // stuff for getters
     ssl_context_t *ssl_ctx;
     // engines
@@ -57,14 +87,20 @@ typedef struct {
     // engine_data elements
     loop_data_t loop_data;
     tlse_data_t tlse_data;
-    // reference counts
+    // per-reason-per-engine reference counts
     int loop_refs[LOOP_REF_MAXIMUM];
     int tlse_refs[TLSE_REF_MAXIMUM];
     int test_refs[FAKE_ENGINE_REF_MAXIMUM];
-} fake_session_t;
+    // session manager hook
+    void *mgr_data;
+    void (*session_destroyed)(fake_session_t*, derr_t);
+};
 
-derr_t fake_session_alloc(void **sptr, void *fake_pipeline,
-                          ssl_context_t* ssl_ctx);
+derr_t fake_session_alloc_accept(void **sptr, void *fake_pipeline,
+                                 ssl_context_t* ssl_ctx);
+
+derr_t fake_session_alloc_connect(void **sptr, void *fake_pipeline,
+                                  ssl_context_t* ssl_ctx);
 
 // only for use on loop thread
 void fake_session_ref_up_loop(void *session, int reason);

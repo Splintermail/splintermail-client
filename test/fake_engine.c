@@ -1,4 +1,5 @@
 #include <networking.h>
+#include <logger.h>
 
 #include "fake_engine.h"
 
@@ -110,6 +111,110 @@ fail:
     return NULL;
 }
 
+/////// cb_reader_writer stuff
+
+static event_t *cb_reader_writer_send(cb_reader_writer_t *cbrw){
+    derr_t error;
+
+    // check for completion criteria
+    if(cbrw->nrecvd == cbrw->nwrites){
+        // TODO
+        fake_session_close(cbrw->session, E_OK);
+        return NULL;
+    }
+
+    // reset buffers
+    cbrw->out.len = 0;
+    cbrw->in.len = 0;
+
+    PROP_GO( FMT(&cbrw->out, "cbrw%x:%x/%x\n", FU(cbrw->id),
+                 FU(cbrw->nrecvd + 1), FU(cbrw->nwrites)), fail);
+
+    // copy out into a write event (which will be freed, but not by us)
+    event_t *ev = malloc(sizeof(*ev));
+    if(!ev) ORIG_GO(E_NOMEM, "no memory", fail);
+
+    event_prep(ev, NULL);
+    PROP_GO( dstr_new(&ev->buffer, cbrw->out.len), fail_ev);
+
+    dstr_copy(&cbrw->out, &ev->buffer);
+
+    ev->session = cbrw->session;
+    fake_session_ref_up_test(ev->session, FAKE_ENGINE_REF_WRITE);
+    ev->ev_type = EV_WRITE;
+    return ev;
+
+fail_ev:
+    free(ev);
+fail:
+    fake_session_close(cbrw->session, error);
+    cbrw->error = error;
+    return NULL;
+}
+
+event_t *cb_reader_writer_init(cb_reader_writer_t *cbrw, size_t id,
+                               size_t nwrites, fake_session_t *s){
+    derr_t error;
+    *cbrw = (cb_reader_writer_t){0};
+
+    // allocate the buffers
+    PROP_GO( dstr_new(&cbrw->out, 256), fail);
+    PROP_GO( dstr_new(&cbrw->in, 256), free_out);
+
+    cbrw->session = s;
+    cbrw->id = id;
+    cbrw->nwrites = nwrites;
+
+    // start sending the first message
+    event_t *ev = cb_reader_writer_send(cbrw);
+    if(!ev) goto free_in;
+    return ev;
+
+free_in:
+    dstr_free(&cbrw->in);
+free_out:
+    dstr_free(&cbrw->out);
+fail:
+    return NULL;
+}
+
+void cb_reader_writer_free(cb_reader_writer_t *cbrw){
+    dstr_free(&cbrw->in);
+    dstr_free(&cbrw->out);
+}
+
+event_t *cb_reader_writer_read(cb_reader_writer_t *cbrw, dstr_t *buffer){
+    // if we are exiting, just ignore this
+    if(cbrw->error) return NULL;
+
+    derr_t error;
+
+    // append the buffer to the input
+    PROP_GO( dstr_append(&cbrw->in, buffer), fail);
+
+    // make sure we have the full line
+    if(dstr_count(&cbrw->in, &DSTR_LIT("\n")) == 0){
+        return NULL;
+    }
+
+    // compare buffers
+    if(dstr_cmp(&cbrw->in, &cbrw->out) != 0){
+        LOG_ERROR("cbrw got a bad echo: \"%x\" (expected \"%x\")\n",
+                  FD(&cbrw->in), FD(&cbrw->out));
+        ORIG_GO(E_VALUE, "bad echo", fail);
+    }
+
+    cbrw->nrecvd++;
+
+    // send another
+    return cb_reader_writer_send(cbrw);
+
+fail:
+    fake_session_close(cbrw->session, error);
+    cbrw->error = error;
+    return NULL;
+}
+
 /////// fake session stuff
 
 session_iface_t fake_session_iface_tlse = {
@@ -140,6 +245,11 @@ static void fake_session_ref_down(void *session){
     pthread_mutex_unlock(&s->mutex);
 
     if(refs > 0) return;
+
+    // now the session is no longer in use, we call the session manager hook
+    if(s->session_destroyed){
+        s->session_destroyed(s, s->error);
+    }
 
     // free the session
     pthread_mutex_destroy(&s->mutex);
@@ -202,9 +312,8 @@ void fake_session_ref_down_test(void *session, int reason){
 
 
 // to allocate new sessions (when loop.c only know about a single child struct)
-derr_t fake_session_alloc(void **sptr, void *fake_pipeline,
-                          ssl_context_t* ssl_ctx){
-    (void)ssl_ctx;
+static derr_t fake_session_do_alloc(void **sptr, void *fake_pipeline,
+                                    ssl_context_t* ssl_ctx){
     // allocate the struct
     fake_session_t *s = malloc(sizeof(*s));
     if(!s) ORIG(E_NOMEM, "no mem");
@@ -220,6 +329,11 @@ derr_t fake_session_alloc(void **sptr, void *fake_pipeline,
     s->pipeline = fake_pipeline;
     s->ssl_ctx = ssl_ctx;
 
+    // get an id
+    pthread_mutex_lock(s->pipeline->mutex);
+    s->id = s->pipeline->nsessions++;
+    pthread_mutex_unlock(s->pipeline->mutex);
+
     // init the engine_data elements
     if(s->pipeline->loop){
         loop_data_start(&s->loop_data, s->pipeline->loop, s);
@@ -229,12 +343,35 @@ derr_t fake_session_alloc(void **sptr, void *fake_pipeline,
     }
     fake_session_ref_down_test(s, FAKE_ENGINE_REF_START_PROTECT);
     *sptr = s;
+
+    return E_OK;
+}
+
+// to allocate new sessions (when loop.c only know about a single child struct)
+derr_t fake_session_alloc_accept(void **sptr, void *fake_pipeline,
+                                 ssl_context_t* ssl_ctx){
+    PROP( fake_session_do_alloc(sptr, fake_pipeline, ssl_ctx) );
+
+    // get the new session
+    fake_session_t *s = *sptr;
+
+    // now the session is allocated, we call the session manager hook
+    if(s->pipeline->fake_session_accepted){
+        s->pipeline->fake_session_accepted(s);
+    }
+
+    return E_OK;
+}
+
+derr_t fake_session_alloc_connect(void **sptr, void *fake_pipeline,
+                                  ssl_context_t* ssl_ctx){
+    PROP( fake_session_do_alloc(sptr, fake_pipeline, ssl_ctx) );
     return E_OK;
 }
 
 void fake_session_close(void *session, derr_t error){
-    (void)error;
     fake_session_t *s = session;
+    if(!s->error) s->error = error;
     pthread_mutex_lock(&s->mutex);
     bool do_close = !s->closed;
     s->closed = true;
