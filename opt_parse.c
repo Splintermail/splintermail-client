@@ -28,8 +28,10 @@ static dstr_t null_val = {.data = NULL, .len = 0, .size=0, .fixed_size = true};
 
 // labels on the left like /*1*/ are labeled codepaths (to organize testing)
 
-int opt_parse(int argc, char* argv[], opt_spec_t* spec[], size_t speclen,
-              int* newargc){
+derr_t opt_parse(
+        int argc, char* argv[], opt_spec_t* spec[], size_t speclen,
+        int* newargc){
+    derr_t e = E_OK;
     // first initialize outpus into the opt_spec_t** spec
     for(size_t i = 0; i < speclen; i++){
         spec[i]->found = 0;
@@ -81,8 +83,8 @@ int opt_parse(int argc, char* argv[], opt_spec_t* spec[], size_t speclen,
 /*4*/                       goto next_arg;
                         }
                         // throw missing value error if there isn't another arg
-                        fprintf(stderr, "Option --%s missing value\n", optname);
-/*5*/                   return -1;
+                        TRACE(e,"Option --%x missing value\n", FS(optname));
+/*5*/                   ORIG(e, E_VALUE, "option missing value");
                     }
                     // or if the option doesn't need a value, just shift it:
                     to_end(argc, argv, idx, 1);
@@ -91,8 +93,8 @@ int opt_parse(int argc, char* argv[], opt_spec_t* spec[], size_t speclen,
                 }
             }
             // if we are here, we didn't find a match
-            fprintf(stderr, "Unrecongnized option: --%s\n", optname);
-/*7*/       return -2;
+            TRACE(e, "Unrecongnized option: --%x\n", FS(optname));
+/*7*/       ORIG(e, E_VALUE, "unrecognized option");
          }
         // if we are here, its a short option
         // parse through each character
@@ -127,8 +129,8 @@ int opt_parse(int argc, char* argv[], opt_spec_t* spec[], size_t speclen,
 /*9*/                       goto next_arg;
                         }
                         // throw missing value error if there isn't another arg
-                        fprintf(stderr, "Option -%c missing value\n", c);
-/*A*/                   return -3;
+                        TRACE(e, "Option -%x missing value\n", FC(c));
+/*A*/                   ORIG(e, E_VALUE, "option missing value");
                     }
                     // if no value is required, continue with next character
                     opt_found = 1;
@@ -137,8 +139,8 @@ int opt_parse(int argc, char* argv[], opt_spec_t* spec[], size_t speclen,
             }
             // make sure we found a match on the last character
             if(!opt_found){
-                fprintf(stderr, "Unrecognized option: -%c\n", c);
-/*C*/           return -4;
+                TRACE(e, "Unrecognized option: -%x\n", FC(c));
+/*C*/           ORIG(e, E_VALUE, "unrecognized option");
             }
         }
         // if we get here, it is after an arg with short options and no value
@@ -153,11 +155,12 @@ next_arg:
     }
     // before returning, set newargc
     *newargc = argc - num_shifted;
-    return 0;
+    return E_OK;
 }
 
 
 derr_t conf_parse(const dstr_t* text, opt_spec_t* spec[], size_t speclen){
+    derr_t e = E_OK;
     // the first non-space character
     bool have_first_nsp = false;
     char* first_nsp = NULL; // init this so clang doesn't complain falsely
@@ -225,18 +228,16 @@ derr_t conf_parse(const dstr_t* text, opt_spec_t* spec[], size_t speclen){
                     }
                 }
                 if(s == NULL){
-                    PROP( FFMT(stderr, NULL,
-                               "Unrecongnized option: %x\n", FD(&dopt)) );
-/*1*/               ORIG(E_VALUE, "error in config file");
+                    TRACE(e, "Unrecongnized option: %x\n", FD(&dopt));
+/*1*/               ORIG(e, E_VALUE, "error in config file");
                 }
 
                 if(have_first_nsp == true){
                     // option with a value
                     if(s->val_req == false){
-                        PROP( FFMT(stderr, NULL,
-                                   "Option \"%x\" does not require a value\n",
-                                   FD(&dopt)) );
-/*2*/                   ORIG(E_VALUE, "error in config file");
+                        TRACE(e, "Option \"%x\" does not require a value\n",
+                              FD(&dopt));
+/*2*/                   ORIG(e, E_VALUE, "error in config file");
                     }
                     // don't override any values
                     if(!s->found){
@@ -247,10 +248,9 @@ derr_t conf_parse(const dstr_t* text, opt_spec_t* spec[], size_t speclen){
                 }else if(have_first_nsp == false){
                     // option with no value
                     if(s->val_req == true){
-                        PROP( FFMT(stderr, NULL,
-                                   "Option \"%x\" requires a value\n",
-                                   FD(&dopt)) );
-/*3*/                   ORIG(E_VALUE, "error in config file");
+                        TRACE(e, "Option \"%x\" requires a value\n",
+                              FD(&dopt));
+/*3*/                   ORIG(e, E_VALUE, "error in config file");
                     }
                     s->found = true;
                     s->val = null_val;
@@ -267,13 +267,14 @@ derr_t conf_parse(const dstr_t* text, opt_spec_t* spec[], size_t speclen){
 
 
 derr_t opt_dump(opt_spec_t* spec[], size_t speclen, dstr_t* out){
+    derr_t e = E_OK;
     for(size_t i = 0; i < speclen; i ++){
         if(spec[i]->found){
             if(spec[i]->val_req){
-                PROP( FMT(out, "%x %x\n", FS(spec[i]->olong),
-                                          FD(&spec[i]->val)) );
+                PROP(e, FMT(out, "%x %x\n", FS(spec[i]->olong),
+                                            FD(&spec[i]->val)) );
             }else{
-                PROP( FMT(out, "%x\n", FS(spec[i]->olong)) );
+                PROP(e, FMT(out, "%x\n", FS(spec[i]->olong)) );
             }
         }
     }
@@ -281,13 +282,14 @@ derr_t opt_dump(opt_spec_t* spec[], size_t speclen, dstr_t* out){
 }
 
 derr_t opt_fdump(opt_spec_t* spec[], size_t speclen, FILE* f, size_t* len){
+    derr_t e = E_OK;
     for(size_t i = 0; i < speclen; i ++){
         if(spec[i]->found){
             if(spec[i]->val_req){
-                PROP( FFMT(f, len, "%x %x\n", FS(spec[i]->olong),
+                PROP(e, FFMT(f, len, "%x %x\n", FS(spec[i]->olong),
                                               FD(&spec[i]->val)) );
             }else{
-                PROP( FFMT(f, len, "%x\n", FS(spec[i]->olong)) );
+                PROP(e, FFMT(f, len, "%x\n", FS(spec[i]->olong)) );
             }
         }
     }

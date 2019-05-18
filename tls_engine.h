@@ -84,10 +84,10 @@ typedef struct {
     queue_t event_q;
     queue_t read_events;
     queue_t write_events;
-    // downstream engine, to which we pass read and write_done events
+    // upstream engine, to which we pass write and read_done events
     void *upstream;
     event_passer_t pass_up;
-    // upstream engine, to which we pass write and read_done events
+    // downstream engine, to which we pass read and write_done events
     void *downstream;
     event_passer_t pass_down;
     // for handling quitting state

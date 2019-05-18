@@ -151,6 +151,7 @@ static unsigned int hash_str(const dstr_t *skey){
 }
 
 derr_t hashmap_init(hashmap_t *h){
+    derr_t e = E_OK;
     size_t new_size = 32;
     // always allocate in powers of 2
     while( new_size < INIT_NUM_BUCKETS * sizeof(*(h->buckets)) ){
@@ -159,7 +160,7 @@ derr_t hashmap_init(hashmap_t *h){
     // allocate buckets
     h->buckets = malloc(new_size);
     if(!h->buckets){
-        ORIG(E_NOMEM, "unable to allocate hashmap");
+        ORIG(e, E_NOMEM, "unable to allocate hashmap");
     }
     // init all buckets to NULL
     for(size_t i = 0; i < INIT_NUM_BUCKETS; i++){
@@ -260,6 +261,7 @@ static bool hash_elem_match(hash_elem_t *a, hash_elem_t *b){
 
 static derr_t hashmap_put(hashmap_t *h, const dstr_t *skey, unsigned int ukey,
                           bool key_is_str, hash_elem_t *elem){
+    derr_t e = E_OK;
     hashmap_elem_init(elem, skey, ukey, key_is_str);
     // get bucket index
     size_t idx = elem->hash & h->mask;
@@ -267,7 +269,7 @@ static derr_t hashmap_put(hashmap_t *h, const dstr_t *skey, unsigned int ukey,
     hash_elem_t **eptr;
     for(eptr = &h->buckets[idx]; *eptr != NULL; eptr = &(*eptr)->next){
         if(hash_elem_match(elem, *eptr)){
-            ORIG(E_PARAM, "key already in hashmap");
+            ORIG(e, E_PARAM, "key already in hashmap");
         }
     }
     // set the eptr to this element
@@ -279,12 +281,14 @@ static derr_t hashmap_put(hashmap_t *h, const dstr_t *skey, unsigned int ukey,
 
 // putters, raise error if key already in hashmap
 derr_t hashmap_puts(hashmap_t *h, const dstr_t *key, hash_elem_t *elem){
-    PROP( hashmap_put(h, key, 0, true, elem) );
+    derr_t e = E_OK;
+    PROP(e, hashmap_put(h, key, 0, true, elem) );
     return E_OK;
 }
 
 derr_t hashmap_putu(hashmap_t *h, unsigned int key, hash_elem_t *elem){
-    PROP( hashmap_put(h, NULL, key, false, elem) );
+    derr_t e = E_OK;
+    PROP(e, hashmap_put(h, NULL, key, false, elem) );
     return E_OK;
 }
 
@@ -329,6 +333,7 @@ void hashmap_setu(hashmap_t *h, unsigned int key, hash_elem_t *elem,
 
 static derr_t hashmap_get(hashmap_t *h, const dstr_t *skey, unsigned int ukey,
                           bool key_is_str, void **data, bool *found){
+    derr_t e = E_OK;
     // build dummy element
     hash_elem_t elem;
     hashmap_elem_init(&elem, skey, ukey, key_is_str);
@@ -349,18 +354,20 @@ static derr_t hashmap_get(hashmap_t *h, const dstr_t *skey, unsigned int ukey,
     if(found){
         *found = false;
     }else{
-        ORIG(E_PARAM, "key not found in hashmap");
+        ORIG(e, E_PARAM, "key not found in hashmap");
     }
     return E_OK;
 }
 
 derr_t hashmap_gets(hashmap_t *h, const dstr_t *key, void **data, bool *found){
-    PROP( hashmap_get(h, key, 0, true, data, found) );
+    derr_t e = E_OK;
+    PROP(e, hashmap_get(h, key, 0, true, data, found) );
     return E_OK;
 }
 
 derr_t hashmap_getu(hashmap_t *h, unsigned int key, void **data, bool *found){
-    PROP( hashmap_get(h, NULL, key, false, data, found) );
+    derr_t e = E_OK;
+    PROP(e, hashmap_get(h, NULL, key, false, data, found) );
     return E_OK;
 }
 

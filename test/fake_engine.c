@@ -23,25 +23,25 @@ static dstr_t *fe_ref_reason_to_dstr(enum fake_engine_ref_reason_t reason){
 
 void *reader_writer_thread(void *arg){
     reader_writer_context_t *ctx = arg;
-    derr_t error;
+    derr_t e = E_OK;
 
     // allocate ssl context
     ssl_context_t ssl_ctx;
     if(ctx->use_tls){
-        PROP_GO( ssl_context_new_client(&ssl_ctx), fail);
+        PROP_GO(e, ssl_context_new_client(&ssl_ctx), fail);
     }
 
     // generate all the buffers we are going to send
     LIST(dstr_t) out_bufs;
-    PROP_GO( LIST_NEW(dstr_t, &out_bufs, ctx->writes_per_thread), fail_ssl);
+    PROP_GO(e, LIST_NEW(dstr_t, &out_bufs, ctx->writes_per_thread), fail_ssl);
     for(size_t i = 0; i < ctx->writes_per_thread; i++){
         dstr_t temp;
         // allocate the dstr in the list
-        PROP_GO( dstr_new(&temp, 64), free_out_bufs);
+        PROP_GO(e, dstr_new(&temp, 64), free_out_bufs);
         // write something into the buffer
-        PROP_GO( FMT(&temp, "%x:%x\n", FU(ctx->thread_id), FU(i)), free_temp);
+        PROP_GO(e, FMT(&temp, "%x:%x\n", FU(ctx->thread_id), FU(i)), free_temp);
         // add it to the list
-        PROP_GO( LIST_APPEND(dstr_t, &out_bufs, temp), free_temp);
+        PROP_GO(e, LIST_APPEND(dstr_t, &out_bufs, temp), free_temp);
         continue;
     free_temp:
         dstr_free(&temp);
@@ -72,13 +72,13 @@ void *reader_writer_thread(void *arg){
     }
     // write all of the buffers
     for(size_t i = 0; i < out_bufs.len; i++){
-        PROP_GO( connection_write(&conn, &out_bufs.data[i]), close_conn);
+        PROP_GO(e, connection_write(&conn, &out_bufs.data[i]), close_conn);
     }
     // read all of the buffers into a single place
     dstr_t recvd;
-    PROP_GO( dstr_new(&recvd, 8192), close_conn);
+    PROP_GO(e, dstr_new(&recvd, 8192), close_conn);
     while( dstr_count(&recvd, &DSTR_LIT("\n")) < out_bufs.len){
-        PROP_GO( connection_read(&conn, &recvd, NULL), free_recvd);
+        PROP_GO(e, connection_read(&conn, &recvd, NULL), free_recvd);
     }
     // now compare the buffers
     size_t compared = 0;
@@ -87,7 +87,7 @@ void *reader_writer_thread(void *arg){
         dstr_t cmp = dstr_sub(&recvd, compared,
                               compared + out_bufs.data[i].len);
         if(dstr_cmp(&cmp, &out_bufs.data[i]) != 0)
-            ORIG_GO(E_VALUE, "received bad response!", free_recvd);
+            ORIG_GO(e, E_VALUE, "received bad response!", free_recvd);
         compared += out_bufs.data[i].len;
     }
 
@@ -107,14 +107,14 @@ fail_ssl:
         ssl_context_free(&ssl_ctx);
     }
 fail:
-    ctx->error = error;
+    ctx->error = e;
     return NULL;
 }
 
 /////// cb_reader_writer stuff
 
 static event_t *cb_reader_writer_send(cb_reader_writer_t *cbrw){
-    derr_t error;
+    derr_t e = E_OK;
 
     // check for completion criteria
     if(cbrw->nrecvd == cbrw->nwrites){
@@ -127,15 +127,15 @@ static event_t *cb_reader_writer_send(cb_reader_writer_t *cbrw){
     cbrw->out.len = 0;
     cbrw->in.len = 0;
 
-    PROP_GO( FMT(&cbrw->out, "cbrw%x:%x/%x\n", FU(cbrw->id),
+    PROP_GO(e, FMT(&cbrw->out, "cbrw%x:%x/%x\n", FU(cbrw->id),
                  FU(cbrw->nrecvd + 1), FU(cbrw->nwrites)), fail);
 
     // copy out into a write event (which will be freed, but not by us)
     event_t *ev = malloc(sizeof(*ev));
-    if(!ev) ORIG_GO(E_NOMEM, "no memory", fail);
+    if(!ev) ORIG_GO(e, E_NOMEM, "no memory", fail);
 
     event_prep(ev, NULL);
-    PROP_GO( dstr_new(&ev->buffer, cbrw->out.len), fail_ev);
+    PROP_GO(e, dstr_new(&ev->buffer, cbrw->out.len), fail_ev);
 
     dstr_copy(&cbrw->out, &ev->buffer);
 
@@ -147,19 +147,19 @@ static event_t *cb_reader_writer_send(cb_reader_writer_t *cbrw){
 fail_ev:
     free(ev);
 fail:
-    fake_session_close(cbrw->session, error);
-    cbrw->error = error;
+    fake_session_close(cbrw->session, SPLIT(e));
+    cbrw->error = e;
     return NULL;
 }
 
 event_t *cb_reader_writer_init(cb_reader_writer_t *cbrw, size_t id,
                                size_t nwrites, fake_session_t *s){
-    derr_t error;
+    derr_t e = E_OK;
     *cbrw = (cb_reader_writer_t){0};
 
     // allocate the buffers
-    PROP_GO( dstr_new(&cbrw->out, 256), fail);
-    PROP_GO( dstr_new(&cbrw->in, 256), free_out);
+    PROP_GO(e, dstr_new(&cbrw->out, 256), fail);
+    PROP_GO(e, dstr_new(&cbrw->in, 256), free_out);
 
     cbrw->session = s;
     cbrw->id = id;
@@ -175,6 +175,7 @@ free_in:
 free_out:
     dstr_free(&cbrw->out);
 fail:
+    DROP(e);
     return NULL;
 }
 
@@ -185,12 +186,12 @@ void cb_reader_writer_free(cb_reader_writer_t *cbrw){
 
 event_t *cb_reader_writer_read(cb_reader_writer_t *cbrw, dstr_t *buffer){
     // if we are exiting, just ignore this
-    if(cbrw->error) return NULL;
+    if(cbrw->error.type != E_NONE) return NULL;
 
-    derr_t error;
+    derr_t e = E_OK;
 
     // append the buffer to the input
-    PROP_GO( dstr_append(&cbrw->in, buffer), fail);
+    PROP_GO(e, dstr_append(&cbrw->in, buffer), fail);
 
     // make sure we have the full line
     if(dstr_count(&cbrw->in, &DSTR_LIT("\n")) == 0){
@@ -199,9 +200,9 @@ event_t *cb_reader_writer_read(cb_reader_writer_t *cbrw, dstr_t *buffer){
 
     // compare buffers
     if(dstr_cmp(&cbrw->in, &cbrw->out) != 0){
-        LOG_ERROR("cbrw got a bad echo: \"%x\" (expected \"%x\")\n",
-                  FD(&cbrw->in), FD(&cbrw->out));
-        ORIG_GO(E_VALUE, "bad echo", fail);
+        TRACE(e, "cbrw got a bad echo: \"%x\" (expected \"%x\")\n",
+                FD(&cbrw->in), FD(&cbrw->out));
+        ORIG_GO(e, E_VALUE, "bad echo", fail);
     }
 
     cbrw->nrecvd++;
@@ -210,8 +211,8 @@ event_t *cb_reader_writer_read(cb_reader_writer_t *cbrw, dstr_t *buffer){
     return cb_reader_writer_send(cbrw);
 
 fail:
-    fake_session_close(cbrw->session, error);
-    cbrw->error = error;
+    fake_session_close(cbrw->session, SPLIT(e));
+    cbrw->error = e;
     return NULL;
 }
 
@@ -314,9 +315,10 @@ void fake_session_ref_down_test(void *session, int reason){
 // to allocate new sessions (when loop.c only know about a single child struct)
 static derr_t fake_session_do_alloc(void **sptr, void *fake_pipeline,
                                     ssl_context_t* ssl_ctx, bool upwards){
+    derr_t e = E_OK;
     // allocate the struct
     fake_session_t *s = malloc(sizeof(*s));
-    if(!s) ORIG(E_NOMEM, "no mem");
+    if(!s) ORIG(e, E_NOMEM, "no mem");
     *s = (fake_session_t){0};
 
     // prepare the refs
@@ -346,7 +348,8 @@ static derr_t fake_session_do_alloc(void **sptr, void *fake_pipeline,
 // to allocate new sessions (when loop.c only know about a single child struct)
 derr_t fake_session_alloc_accept(void **sptr, void *fake_pipeline,
                                  ssl_context_t* ssl_ctx){
-    PROP( fake_session_do_alloc(sptr, fake_pipeline, ssl_ctx, false) );
+    derr_t e = E_OK;
+    PROP(e, fake_session_do_alloc(sptr, fake_pipeline, ssl_ctx, false) );
 
     // get the new session
     fake_session_t *s = *sptr;
@@ -361,13 +364,14 @@ derr_t fake_session_alloc_accept(void **sptr, void *fake_pipeline,
 
 derr_t fake_session_alloc_connect(void **sptr, void *fake_pipeline,
                                   ssl_context_t* ssl_ctx){
-    PROP( fake_session_do_alloc(sptr, fake_pipeline, ssl_ctx, true) );
+    derr_t e = E_OK;
+    PROP(e, fake_session_do_alloc(sptr, fake_pipeline, ssl_ctx, true) );
     return E_OK;
 }
 
 void fake_session_close(void *session, derr_t error){
     fake_session_t *s = session;
-    if(!s->error) s->error = error;
+    MERGE_VAR(s->error, error, "session_close error");
     pthread_mutex_lock(&s->mutex);
     bool do_close = !s->closed;
     s->closed = true;
@@ -411,7 +415,8 @@ bool fake_session_get_upwards(void *session){
 /////// fake engine stuff
 
 derr_t fake_engine_init(fake_engine_t *fake_engine){
-    PROP( queue_init(&fake_engine->event_q) );
+    derr_t e = E_OK;
+    PROP(e, queue_init(&fake_engine->event_q) );
     return E_OK;
 }
 
@@ -424,12 +429,11 @@ void fake_engine_pass_event(void *engine, event_t *ev){
     queue_append(&fake_engine->event_q, &ev->qe);
 }
 
-bool fake_engine_run(fake_engine_t *fe,
-                     event_passer_t pass_up, void *upstream,
-                     void (*handle_read)(void*, event_t*),
-                     void (*handle_write_done)(void*, event_t*),
-                     bool (*quit_ready)(void*),
-                     void *cb_data){
+derr_t fake_engine_run(fake_engine_t *fe, event_passer_t pass_up,
+        void *upstream, void (*handle_read)(void*, event_t*),
+        void (*handle_write_done)(void*, event_t*), bool (*quit_ready)(void*),
+        void *cb_data){
+    derr_t e = E_OK;
     // process incoming events from the upstream engine
     event_t *ev;
     event_t *quit_ev = NULL;
@@ -449,7 +453,7 @@ bool fake_engine_run(fake_engine_t *fe,
                 if(quit_ready(cb_data)){
                     ev->ev_type = EV_QUIT_UP;
                     pass_up(upstream, ev);
-                    return true;
+                    return E_OK;
                 }else{
                     quit_ev = ev;
                 }
@@ -460,7 +464,7 @@ bool fake_engine_run(fake_engine_t *fe,
                 if(quit_ev && quit_ready(cb_data)){
                     quit_ev->ev_type = EV_QUIT_UP;
                     pass_up(upstream, quit_ev);
-                    return true;
+                    return E_OK;
                 }
                 break;
             // other events should not happen
@@ -468,12 +472,9 @@ bool fake_engine_run(fake_engine_t *fe,
             case EV_WRITE:
             case EV_QUIT_UP:
             default:
-                LOG_ERROR("unexpected event type from upstream engine\n");
-                return false;
+                ORIG(e, E_VALUE,
+                        "unexpected event type from upstream engine\n");
         }
     }
-    return true;
+    ORIG(e, E_VALUE, "unexpected \t from fake_engine");
 }
-
-
-

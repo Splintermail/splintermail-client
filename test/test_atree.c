@@ -52,6 +52,7 @@ static derr_t print_atree(const jsw_anode_t *node, size_t indent){
 // call this for every node in the tree
 static derr_t recursive_anode_assertions(const jsw_atree_t *tree,
                                          const jsw_anode_t *node){
+    derr_t e = E_OK;
     // skip tests on nil nodes
     if(node == tree->nil){
         return E_OK;
@@ -61,21 +62,21 @@ static derr_t recursive_anode_assertions(const jsw_atree_t *tree,
     jsw_anode_t *left = node->link[0];
     jsw_anode_t *right = node->link[1];
     if(left->level == node->level){
-        ORIG(E_VALUE, "left-horizontal link detected");
+        ORIG(e, E_VALUE, "left-horizontal link detected");
     }
 
     // no double right-horizontal links
     if(right->level == node->level){
         jsw_anode_t *rightright = right->link[1];
         if(rightright != tree->nil && rightright->level == right->level){
-            ORIG(E_VALUE, "double right-horizontal link detected" );
+            ORIG(e, E_VALUE, "double right-horizontal link detected" );
         }
     }
 
     // count is the sum of the counts of the children
     if(node->count != left->count + right->count + 1){
         print_atree(node, 0);
-        ORIG(E_VALUE, "invalid count detected" );
+        ORIG(e, E_VALUE, "invalid count detected" );
     }
 
     // link levels are valid (ensures same number of pseudo-nodes for any path)
@@ -84,19 +85,19 @@ static derr_t recursive_anode_assertions(const jsw_atree_t *tree,
     int rlvl = right->level;
     // left child nodes have level one-less-than node
     if(left != tree->nil && llvl != nlvl - 1){
-        ORIG(E_VALUE, "invalid node leveling (leftwards)");
+        ORIG(e, E_VALUE, "invalid node leveling (leftwards)");
     }
     // right child nodes have level equal or one-less-than node
     if(right != tree->nil && (rlvl > nlvl || rlvl < nlvl - 1)){
-        ORIG(E_VALUE, "invalid node leveling (rightwards)");
+        ORIG(e, E_VALUE, "invalid node leveling (rightwards)");
     }
     // anything with a null child is the bottom pseudonode (level of 1)
     if((left == tree->nil || right == tree->nil) && nlvl != 1){
-        ORIG(E_VALUE, "invalid node leveling (bottom)");
+        ORIG(e, E_VALUE, "invalid node leveling (bottom)");
     }
     // no double horizontal links
     if(nlvl == right->link[1]->level){
-        ORIG(E_VALUE, "double horizontal right links");
+        ORIG(e, E_VALUE, "double horizontal right links");
     }
 
     // links are well-ordered
@@ -104,42 +105,43 @@ static derr_t recursive_anode_assertions(const jsw_atree_t *tree,
     if(left != tree->nil){
         int lval = ((binsrch_int_t*)left->data)->value;
         if(lval > nval){
-            LOG_ERROR("lmagic %x nmagic %x\n",
-                      FU(((binsrch_int_t*)left->data)->magic),
-                      FU(((binsrch_int_t*)node->data)->magic));
-            LOG_ERROR("lval %x nval %x\n", FI(lval), FI(nval));
-            ORIG(E_VALUE, "invalid node ordering (leftwards)");
+            TRACE(e, "lmagic %x nmagic %x\n",
+                    FU(((binsrch_int_t*)left->data)->magic),
+                    FU(((binsrch_int_t*)node->data)->magic));
+            TRACE(e, "lval %x nval %x\n", FI(lval), FI(nval));
+            ORIG(e, E_VALUE, "invalid node ordering (leftwards)");
         }
     }
     if(right != tree->nil){
         int rval = ((binsrch_int_t*)right->data)->value;
         if(nval > rval){
-            ORIG(E_VALUE, "invalid node ordering (rightwards)");
+            ORIG(e, E_VALUE, "invalid node ordering (rightwards)");
         }
     }
 
     // apply test recursively
-    PROP( recursive_anode_assertions(tree, left) );
-    PROP( recursive_anode_assertions(tree, right) );
+    PROP(e, recursive_anode_assertions(tree, left) );
+    PROP(e, recursive_anode_assertions(tree, right) );
 
     return E_OK;
 }
 
 static derr_t atree_assertions(const jsw_atree_t *tree){
-    PROP( recursive_anode_assertions(tree, tree->root) );
+    derr_t e = E_OK;
+    PROP(e, recursive_anode_assertions(tree, tree->root) );
     return E_OK;
 }
 
 static derr_t do_test_atree(binsrch_int_t *ints, size_t num_ints){
-    derr_t error;
+    derr_t e = E_OK;
     // the andersson tree
     jsw_atree_t tree;
-    PROP( jsw_ainit(&tree, cmp_binsrch_ints, release_binsrch_int) );
+    PROP(e, jsw_ainit(&tree, cmp_binsrch_ints, release_binsrch_int) );
     // insert each element
     for(size_t i = 0; i < num_ints; i++){
         jsw_ainsert(&tree, &ints[i].anode);
         // make sure all the properties of the atree are met
-        PROP_GO( atree_assertions(&tree), cu_tree);
+        PROP_GO(e, atree_assertions(&tree), cu_tree);
     }
     // print tree
     print_atree(tree.root, 0);
@@ -147,20 +149,21 @@ static derr_t do_test_atree(binsrch_int_t *ints, size_t num_ints){
     for(size_t i = 0; i < num_ints; i++){
         jsw_aerase(&tree, &ints[i]);
         // make sure all the properties of the atree are met
-        PROP_GO( atree_assertions(&tree), cu_tree);
+        PROP_GO(e, atree_assertions(&tree), cu_tree);
     }
     // tree should be empty
     if(tree.size != 0){
-        ORIG_GO(E_VALUE, "tree should be empty", cu_tree);
+        ORIG_GO(e, E_VALUE, "tree should be empty", cu_tree);
     }
 
 cu_tree:
     // free the tree
     jsw_adelete(&tree);
-    return error;
+    return e;
 }
 
 static derr_t test_atree(void){
+    derr_t e = E_OK;
     // some values to be inserted and stuff
     binsrch_int_t ints[NUM_INTS];
     // prep all the binsrch_int_t's self-pointers
@@ -169,42 +172,42 @@ static derr_t test_atree(void){
         ints[i].magic = (unsigned char)0xAA;
     }
     // ascending values
-    LOG_ERROR("testing with ascending values\n");
+    LOG_DEBUG("testing with ascending values\n");
     {
         for(int i = 0; i < NUM_INTS; i++){
             ints[i].value = i;
         }
-        PROP( do_test_atree(ints, NUM_INTS) );
+        PROP(e, do_test_atree(ints, NUM_INTS) );
     }
     // descending values
-    LOG_ERROR("testing with descending values\n");
+    LOG_DEBUG("testing with descending values\n");
     {
         for(int i = 0; i < NUM_INTS; i++){
             ints[i].value = NUM_INTS - i;
         }
-        PROP( do_test_atree(ints, NUM_INTS) );
+        PROP(e, do_test_atree(ints, NUM_INTS) );
     }
     // identical values
-    LOG_ERROR("testing with identical values\n");
+    LOG_DEBUG("testing with identical values\n");
     {
         for(int i = 0; i < NUM_INTS; i++){
             ints[i].value = 0;
         }
-        PROP( do_test_atree(ints, NUM_INTS) );
+        PROP(e, do_test_atree(ints, NUM_INTS) );
     }
     // random values
-    LOG_ERROR("testing with random values\n");
+    LOG_DEBUG("testing with random values\n");
     {
         for(int i = 0; i < NUM_INTS; i++){
             ints[i].value = rand();
         }
-        PROP( do_test_atree(ints, 10) );
+        PROP(e, do_test_atree(ints, 10) );
     }
     return E_OK;
 }
 
 static derr_t test_indicies(void){
-    derr_t error;
+    derr_t e = E_OK;
     // elements
     binsrch_int_t ints[NUM_INTS];
     size_t num_ints = sizeof(ints) / sizeof(*ints);
@@ -214,7 +217,7 @@ static derr_t test_indicies(void){
     }
     // the andersson tree
     jsw_atree_t tree;
-    PROP( jsw_ainit(&tree, cmp_binsrch_ints, release_binsrch_int) );
+    PROP(e, jsw_ainit(&tree, cmp_binsrch_ints, release_binsrch_int) );
     // insert each element
     for(size_t i = 0; i < num_ints; i++){
         jsw_ainsert(&tree, &ints[i].anode);
@@ -224,34 +227,33 @@ static derr_t test_indicies(void){
         size_t idx_out;
         binsrch_int_t *ptr_out = jsw_afind(&tree, &ints[i], &idx_out);
         if(ptr_out == NULL)
-            ORIG_GO(E_VALUE, "failed to deref-by-value", cu_tree);
+            ORIG_GO(e, E_VALUE, "failed to deref-by-value", cu_tree);
         if(idx_out != i){
-            LOG_ERROR("expected %x got %x\n", FU(i), FU(idx_out));
-            ORIG_GO(E_VALUE, "deref-by-value returned wrong index", cu_tree);
+            TRACE(e, "expected %x got %x\n", FU(i), FU(idx_out));
+            ORIG_GO(e, E_VALUE, "deref-by-value returned wrong index", cu_tree);
         }
     }
     // check each value after deref-by-index
     for(size_t i = 0; i < num_ints; i++){
         binsrch_int_t *ptr_out = jsw_aindex(&tree, i);
         if(ptr_out == NULL)
-            ORIG_GO(E_VALUE, "failed to deref-by-index", cu_tree);
+            ORIG_GO(e, E_VALUE, "failed to deref-by-index", cu_tree);
         if(ptr_out->value != (int)i){
-            LOG_ERROR("expected %x got %x\n", FU(i), FI(ptr_out->value));
-            ORIG_GO(E_VALUE, "deref-by-index returned wrong value", cu_tree);
+            TRACE(e, "expected %x got %x\n", FU(i), FI(ptr_out->value));
+            ORIG_GO(e, E_VALUE, "deref-by-index returned wrong value", cu_tree);
         }
     }
-    return E_OK;
 
 cu_tree:
     // print for debugging
     print_atree(tree.root, 0);
     // free the tree
     jsw_adelete(&tree);
-    return error;
+    return e;
 }
 
 int main(int argc, char** argv){
-    derr_t error;
+    derr_t e = E_OK;
     // parse options and set default log level
     PARSE_TEST_OPTIONS(argc, argv, NULL, LOG_LVL_INFO);
 
@@ -260,13 +262,15 @@ int main(int argc, char** argv){
     srand(seed);
     LOG_ERROR("using seed: %x\n", FU(seed));
 
-    PROP_GO( test_atree(), test_fail);
-    PROP_GO( test_indicies(), test_fail);
+    PROP_GO(e, test_atree(), test_fail);
+    PROP_GO(e, test_indicies(), test_fail);
 
     LOG_ERROR("PASS\n");
     return 0;
 
 test_fail:
+    DUMP(e);
+    DROP(e);
     LOG_ERROR("FAIL\n");
     return 1;
 }

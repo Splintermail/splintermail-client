@@ -647,10 +647,10 @@ static void fetch_end(void *data, bool success){
     error = cmd; \
     CATCH(E_ANY){}; \
     if(error != e){ \
-        LOG_ERROR("expected parser to return %x, but got %x\n", \
-                  FD(error_to_dstr(e)), \
-                  FD(error_to_dstr(error))); \
-        ORIG_GO(E_VALUE, "value mismatch", cu_parser); \
+        TRACE(e, "expected parser to return %x, but got %x\n", \
+                FD(error_to_dstr(e)), \
+                FD(error_to_dstr(error))); \
+        ORIG_GO(e, E_VALUE, "value mismatch", cu_parser); \
     }\
 }
 
@@ -659,7 +659,7 @@ static void fetch_end(void *data, bool success){
 // static derr_t test_just_parser(void){
 //     derr_t error;
 //     imap_parser_t parser;
-//     PROP( imap_parser_init(&parser) );
+//     PROP(e, imap_parser_init(&parser) );
 //
 //     EXPECT(E_OK, imap_parse(&parser, TAG) );
 //     EXPECT(E_OK, imap_parse(&parser, OK) );
@@ -667,12 +667,12 @@ static void fetch_end(void *data, bool success){
 //
 // cu_parser:
 //     imap_parser_free(&parser);
-//     return error;
+//     return e;
 // }
 
 
 static derr_t do_test_scanner_and_parser(LIST(dstr_t) *inputs){
-    derr_t error;
+    derr_t e = E_OK;
 
     // prepare to init the reader
     imap_parse_hooks_dn_t hooks_dn = {
@@ -722,18 +722,19 @@ static derr_t do_test_scanner_and_parser(LIST(dstr_t) *inputs){
 
     // init the reader
     imap_reader_t reader;
-    PROP( imap_reader_init(&reader, hooks_dn, hooks_up, NULL) );
+    PROP(e, imap_reader_init(&reader, hooks_dn, hooks_up, NULL) );
 
     for(size_t i = 0; i < inputs->len; i++){
-        PROP_GO( imap_read(&reader, &inputs->data[i]), cu_reader);
+        PROP_GO(e, imap_read(&reader, &inputs->data[i]), cu_reader);
     }
 cu_reader:
     imap_reader_free(&reader);
-    return error;
+    return e;
 }
 
 
 static derr_t test_scanner_and_parser(void){
+    derr_t e = E_OK;
     {
         LIST_PRESET(dstr_t, inputs,
             DSTR_LIT("taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaag "
@@ -750,7 +751,7 @@ static derr_t test_scanner_and_parser(void){
             DSTR_LIT("* LSUB (\\ext \\noinferiors) \"/\" inbox\r\n"),
             DSTR_LIT("* LSUB (\\marked) \"/\" \"other\"\r\n"),
         );
-        PROP( do_test_scanner_and_parser(&inputs) );
+        PROP(e, do_test_scanner_and_parser(&inputs) );
     }
     {
         LIST_PRESET(dstr_t, inputs,
@@ -760,7 +761,7 @@ static derr_t test_scanner_and_parser(void){
             DSTR_LIT("* STATUS {11}\r\nliteral box ()\r\n"),
             DSTR_LIT("* STATUS astring_box (UNSEEN 2 RECENT 4)\r\n"),
         );
-        PROP( do_test_scanner_and_parser(&inputs) );
+        PROP(e, do_test_scanner_and_parser(&inputs) );
     }
     {
         LIST_PRESET(dstr_t, inputs,
@@ -769,7 +770,7 @@ static derr_t test_scanner_and_parser(void){
             DSTR_LIT("* 81 RECENT\r\n"),
             DSTR_LIT("* 41 expunge\r\n"),
         );
-        PROP( do_test_scanner_and_parser(&inputs) );
+        PROP(e, do_test_scanner_and_parser(&inputs) );
     }
     {
         LIST_PRESET(dstr_t, inputs,
@@ -791,7 +792,7 @@ static derr_t test_scanner_and_parser(void){
             DSTR_LIT("r"),
             DSTR_LIT("al!)\r\n"),
         );
-        PROP( do_test_scanner_and_parser(&inputs) );
+        PROP(e, do_test_scanner_and_parser(&inputs) );
     }
     ///////////////
     {
@@ -825,7 +826,7 @@ static derr_t test_scanner_and_parser(void){
             DSTR_LIT("tag COPY 5:* iNBoX\r\n"),
             DSTR_LIT("tag COPY 5:7 NOt_iNBoX\r\n"),
         );
-        PROP( do_test_scanner_and_parser(&inputs) );
+        PROP(e, do_test_scanner_and_parser(&inputs) );
     }
     {
         LIST_PRESET(dstr_t, inputs,
@@ -838,7 +839,7 @@ static derr_t test_scanner_and_parser(void){
             DSTR_LIT("tag SEARCH SENTON 4-jul-1776 LARGER 9000\r\n"),
             DSTR_LIT("tag SEARCH OR (TO me FROM you) (FROM me TO you)\r\n"),
         );
-        PROP( do_test_scanner_and_parser(&inputs) );
+        PROP(e, do_test_scanner_and_parser(&inputs) );
     }
     {
         LIST_PRESET(dstr_t, inputs,
@@ -857,7 +858,7 @@ static derr_t test_scanner_and_parser(void){
             DSTR_LIT("tag FETCH * BODY[HEADER.FIELDS (To From)]\r\n"),
             DSTR_LIT("tag FETCH * BODY[HEADER.FIELDS.NOT (To From)]\r\n"),
         );
-        PROP( do_test_scanner_and_parser(&inputs) );
+        PROP(e, do_test_scanner_and_parser(&inputs) );
     }
     {
         LIST_PRESET(dstr_t, inputs,
@@ -866,24 +867,26 @@ static derr_t test_scanner_and_parser(void){
             DSTR_LIT("tag UID SEARCH DRAFT\r\n"),
             DSTR_LIT("tag UID FETCH 1,2,3:4 INTERNALDATE\r\n"),
         );
-        PROP( do_test_scanner_and_parser(&inputs) );
+        PROP(e, do_test_scanner_and_parser(&inputs) );
     }
     return E_OK;
 }
 
 
 int main(int argc, char **argv){
-    derr_t error;
+    derr_t e = E_OK;
     // parse options and set default log level
     PARSE_TEST_OPTIONS(argc, argv, NULL, LOG_LVL_ERROR);
 
-    // PROP_GO( test_just_parser(), test_fail);
-    PROP_GO( test_scanner_and_parser(), test_fail);
+    // PROP_GO(e, test_just_parser(), test_fail);
+    PROP_GO(e, test_scanner_and_parser(), test_fail);
 
     LOG_ERROR("PASS\n");
     return 0;
 
 test_fail:
+    DUMP(e);
+    DROP(e);
     LOG_ERROR("FAIL\n");
     return 1;
 }

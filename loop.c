@@ -5,11 +5,7 @@
 
 #include "logger.h"
 #include "loop.h"
-
-static void uv_perror(const char *prefix, int code){
-    fprintf(stderr, "%s: %s\n", prefix, uv_strerror(code));
-}
-
+#include "uv_errors.h"
 
 static void loop_data_onthread_close(loop_data_t *ld);
 
@@ -45,8 +41,13 @@ void write_wrapper_prep(write_wrapper_t *wr_wrap, loop_t *loop){
 }
 
 
+static void simple_close_cb(uv_handle_t *handle){
+    free(handle);
+}
+
+
 static derr_t bind_via_gai(uv_tcp_t *srv, const char *addr, const char *svc){
-    derr_t error = E_OK;
+    derr_t e = E_OK;
 
     // prepare for getaddrinfo
     struct addrinfo hints;
@@ -59,8 +60,8 @@ static derr_t bind_via_gai(uv_tcp_t *srv, const char *addr, const char *svc){
     struct addrinfo *ai;
     int ret = getaddrinfo(addr, svc, &hints, &ai);
     if(ret != 0){
-        LOG_ERROR("getaddrinfo: %s\n", FS(gai_strerror(ret)));
-        ORIG(E_OS, "getaddrinfo failed");
+        TRACE(e, "getaddrinfo: %x\n", FS(gai_strerror(ret)));
+        ORIG(e, E_OS, "getaddrinfo failed");
     }
 
     // bind to something
@@ -71,22 +72,28 @@ static derr_t bind_via_gai(uv_tcp_t *srv, const char *addr, const char *svc){
 
         ret = uv_tcp_bind(srv, p->ai_addr, 0);
         if(ret < 0){
-            uv_perror("uv_tcp_bind", ret);
+            // build up an error log, although we might not keep it
+            TRACE(e, "failed to bind to %x: %x\n",
+                    FS(inet_ntoa(sin->sin_addr)), FUV(&ret));
             continue;
         }
 
         // if we made it here, bind succeeded
         break;
     }
+
     // make sure we found something
     if(p == NULL){
-        ORIG_GO(E_VALUE, "unable to bind", cu_ai);
+        ORIG_GO(e, E_OS, "unable to bind", cu_ai);
         goto cu_ai;
     }
 
+    // drop the trace we we building if we eventually found something.
+    DROP(e);
+
 cu_ai:
     freeaddrinfo(ai);
-    return error;
+    return e;
 }
 
 
@@ -138,7 +145,7 @@ static void allocator(uv_handle_t *handle, size_t suggest, uv_buf_t *buf){
 
 static void read_cb(uv_stream_t *stream, ssize_t ssize_read,
                     const uv_buf_t *buf){
-    derr_t error = E_OK;
+    derr_t e = E_OK;
     // get the loop_data from the socket
     uv_ptr_t *uvp = stream->data;
     loop_data_t *ld = uvp->data.loop_data;
@@ -168,11 +175,10 @@ static void read_cb(uv_stream_t *stream, ssize_t ssize_read,
         // pause reading
         int ret = uv_read_stop((uv_stream_t*)(ld->sock));
         if(ret < 0){
-            uv_perror("uv_read_stop", ret);
-            error = (ret == UV_ENOMEM) ? E_NOMEM : E_UV;
-            ORIG_GO(error, "error pausing read", pause_fail);
-        pause_fail:
-            loop->session_iface.close(ld->session, error);
+            TRACE(e, "uv_read_stop: %x\n", FUV(&ret));
+            TRACE_ORIG(e, uv_err_type(ret), "error pausing read");
+            loop->session_iface.close(ld->session, e);
+            PASSED(e);
             loop_data_onthread_close(ld);
         }
         return;
@@ -198,7 +204,7 @@ static void read_cb(uv_stream_t *stream, ssize_t ssize_read,
     // check for non-EOF read error
     if(ssize_read < 0 && ssize_read != UV_EOF){
         ev->buffer.len = 0;
-        ORIG_GO(E_CONN, "error from read_cb", return_buffer);
+        ORIG_GO(e, E_CONN, "error from read_cb", return_buffer);
     }
 
     // at this point, we are definitely going to pass the event downstream
@@ -224,8 +230,9 @@ return_buffer:
     queue_append(&loop->read_events, &ev->qe);
     loop->session_iface.ref_down(ld->session, LOOP_REF_READ);
     // if there was an error, close the session
-    if(error){
-        loop->session_iface.close(ld->session, error);
+    if(e.type){
+        loop->session_iface.close(ld->session, e);
+        PASSED(e);
         loop_data_onthread_close(ld);
     }
     return;
@@ -233,7 +240,7 @@ return_buffer:
 
 
 static void write_cb(uv_write_t *uv_write, int status){
-    derr_t error = E_OK;
+    derr_t e = E_OK;
     // get our write_wrapper_t from the uv_write_t
     write_wrapper_t *wr_wrap = uv_write->data;
     loop_t *loop = wr_wrap->loop;
@@ -248,9 +255,9 @@ static void write_cb(uv_write_t *uv_write, int status){
     }
     // check the result of the write request
     else if(status < 0){
-        uv_perror("uv_write callback", status);
-        error = (status == UV_ENOMEM) ? E_NOMEM : E_UV;
-        ORIG_GO(error, "uv_write returned error via callback", return_buf);
+        TRACE(e, "uv_write callback: %x\n", FUV(&status));
+        ORIG_GO(e, uv_err_type(status),
+                "uv_write returned error via callback", return_buf);
     }
 
 return_buf:
@@ -259,8 +266,9 @@ return_buf:
     ev->ev_type = EV_WRITE_DONE;
     loop->pass_down(loop->downstream, ev);
     // if there was an error, close the session
-    if(error){
-        loop->session_iface.close(ev->session, error);
+    if(e.type){
+        loop->session_iface.close(ev->session, e);
+        PASSED(e);
         loop_data_t *ld = loop->sess_get_loop_data(ev->session);
         loop_data_onthread_close(ld);
     }
@@ -268,14 +276,15 @@ return_buf:
 
 
 static derr_t handle_write(loop_t *loop, loop_data_t *ld, event_t *ev){
-    derr_t error;
+    derr_t e = E_OK;
     // wrap event_t in a write_wrapper_t
     write_wrapper_t *wr_wrap = queue_pop_first(&loop->write_wrappers, false);
     // make sure there was an open write_wrapper_t
     if(wr_wrap == NULL){
-        LOG_ERROR("not enough write_wrappers!\n");
-        loop_close(loop, E_INTERNAL);
-        ORIG(E_INTERNAL, "not enough write_wrappers!");
+        TRACE(e, "not enough write_wrappers!\n");
+        TRACE_ORIG(e, E_INTERNAL, "not enough write_wrappers!");
+        loop_close(loop, SPLIT(e));
+        return e;
     }
 
     // wrap the event
@@ -285,22 +294,87 @@ static derr_t handle_write(loop_t *loop, loop_data_t *ld, event_t *ev){
     int ret = uv_write(&wr_wrap->uv_write, (uv_stream_t*)ld->sock,
                        &wr_wrap->uv_buf, 1, write_cb);
     if(ret < 0){
-        uv_perror("uv_write", ret);
-        error = (ret == UV_ENOMEM) ? E_NOMEM : E_UV;
-        ORIG_GO(error, "error adding write", unwrap);
+        TRACE(e, "uv_write: %x\n", FUV(&ret));
+        ORIG_GO(e, uv_err_type(ret), "error adding write", unwrap);
     }
 
     return E_OK;;
 
 unwrap:
     unwrap_write(wr_wrap);
-    return error;
+    return e;
+}
+
+
+/* This was pulled out of loop_data_connect_iii() because it uses a different
+   error for error handling than the rest of connect_iii. */
+static void loop_data_connect_finish(loop_data_t *ld){
+    derr_t e = E_OK;
+    loop_t *loop = ld->loop;
+
+    /* now that we set ld->connected, the loop_data_onthread_close will
+       not clean up for us, meaning that we need to have careful error
+       handling to make sure we always empty and free the queue. */
+    loop->session_iface.ref_up(ld->session, LOOP_REF_CONNECT_PROTECT);
+
+    // empty the preconnected_writes
+    event_t *ev;
+    while((ev = queue_pop_first(&ld->preconnected_writes, false))){
+        // should we skip this?
+        if(ld->state == DATA_STATE_CLOSED){
+            ev->error = E_OK;
+            ev->ev_type = EV_WRITE_DONE;
+            loop->pass_down(loop->downstream, ev);
+        // or can we write it to the socket?
+        }else{
+            derr_t e = handle_write(loop, ld, ev);
+            if(e.type){
+                TRACE_PROP(e);
+                // just hand it back to the downstream
+                ev->error = E_OK;
+                ev->ev_type = EV_WRITE_DONE;
+                loop->pass_down(loop->downstream, ev);
+                // close the session
+                loop->session_iface.close(ld->session, e);
+                PASSED(e);
+                loop_data_onthread_close(ld);
+                /* since we already set ld->connected, we still have to
+                   continue popping writes and returning them, before
+                   cleaning up the preconnected_writes queue */
+            }
+        }
+    }
+
+    queue_free(&ld->preconnected_writes);
+    uv_freeaddrinfo(ld->gai_result);
+
+    /* Since onthread_close is *on-thread*, only in the case of
+       DATA_STATE_CLOSED being already set do we have to worry about ld
+       being freed during ref_down() */
+    bool close_now = (ld->state == DATA_STATE_CLOSED);
+
+    // now loop_data_onthread_close will work normally.
+    loop->session_iface.ref_down(ld->session, LOOP_REF_CONNECT_PROTECT);
+
+    if(close_now) return;
+
+    // start reading
+    int ret = uv_read_start((uv_stream_t*)(ld->sock), allocator, read_cb);
+    if(ret < 0){
+        TRACE(e, "uv_read_start: %x\n", FUV(&ret));
+        TRACE_ORIG(e, uv_err_type(ret), "error starting reading");
+        // close the session
+        loop->session_iface.close(ld->session, e);
+        PASSED(e);
+        loop_data_onthread_close(ld);
+        return;
+    }
 }
 
 
 // handle a connection attempt, maybe try again
 static void loop_data_connect_iii(uv_connect_t *req, int status){
-    derr_t error;
+    // don't define e; just use ld->connect_iii_error
     loop_data_t *ld = req->data;
     loop_t *loop = ld->loop;
 
@@ -308,72 +382,27 @@ static void loop_data_connect_iii(uv_connect_t *req, int status){
         // connection made!
         ld->connected = true;
 
-        /* now that we set ld->connected, the loop_data_onthread_close will
-           not clean up for us, meaning that we need to have careful error
-           handling to make sure we always empty and free the queue. */
-        loop->session_iface.ref_up(ld->session, LOOP_REF_CONNECT_PROTECT);
-
-        // empty the preconnected_writes
-        event_t *ev;
-        while((ev = queue_pop_first(&ld->preconnected_writes, false))){
-            // should we skip this?
-            if(ld->state == DATA_STATE_CLOSED){
-                ev->error = E_OK;
-                ev->ev_type = EV_WRITE_DONE;
-                loop->pass_down(loop->downstream, ev);
-            // or can we write it to the socket?
-            }else if((error = handle_write(loop, ld, ev))){
-                LOG_PROP(error);
-                // just hand it back to the downstream
-                ev->error = E_OK;
-                ev->ev_type = EV_WRITE_DONE;
-                loop->pass_down(loop->downstream, ev);
-                // close the session
-                loop->session_iface.close(ld->session, error);
-                loop_data_onthread_close(ld);
-            }
-        }
-
-        queue_free(&ld->preconnected_writes);
-        uv_freeaddrinfo(ld->gai_result);
-
-        bool close_now = (ld->state == DATA_STATE_CLOSED);
-
-        // now loop_data_onthread_close will work normally.
-        loop->session_iface.ref_down(ld->session, LOOP_REF_CONNECT_PROTECT);
-
-        if(close_now) return;
-
-        // start reading
-        int ret = uv_read_start((uv_stream_t*)(ld->sock), allocator, read_cb);
-        if(ret < 0){
-            uv_perror("uv_read_start", ret);
-            error = (ret == UV_ENOMEM) ? E_NOMEM : E_UV;
-            LOG_ORIG(&error, error, "error starting reading");
-            // close the session
-            loop->session_iface.close(ld->session, error);
-            loop_data_onthread_close(ld);
-            return;
-        }
+        // no need for any retry traces
+        DROP(ld->connect_iii_error);
+        /* done with connect_iii_error, handle the rest in a function with
+           normal error handling */
+        loop_data_connect_finish(ld);
         return;
     }
 
     if(status == UV_ECANCELED){
-        // no need for errors
-        error = E_OK;
+        // no need to close session with an error.
+        DROP(ld->connect_iii_error);
         goto fail;
     }
 
-    // TODO: don't log errors that we catch here.
     // TODO: better handling of the plethora of connection failure modes
-    uv_perror("uv_conect result", status);
-    error = (status == UV_ENOMEM) ? E_NOMEM : E_UV;
-    ORIG_GO(error, "error trying to connect", retry);
+    // TODO: log the address here too
+    TRACE(ld->connect_iii_error, "failed to uv_conect: %x\n", FUV(&status));
 
-retry:
+    // retry the connection:
     if(ld->gai_aiptr->ai_next != NULL){
-        CATCH(E_ANY){}
-        LOG_ERROR("trying next addrinfo\n");
+        TRACE(ld->connect_iii_error, "trying next addrinfo\n");
         // try again to connect
         ld->gai_aiptr = ld->gai_aiptr->ai_next;
         memset(&ld->connect_req, 0, sizeof(ld->connect_req));
@@ -382,16 +411,17 @@ retry:
                                  ld->gai_aiptr->ai_addr,
                                  loop_data_connect_iii);
         if(ret < 0){
-            uv_perror("uv_tcp_connect setup", ret);
-            error = (ret == UV_ENOMEM) ? E_NOMEM : E_UV;
-            ORIG_GO(error, "unable to connect", fail);
+            TRACE(ld->connect_iii_error, "uv_tcp_connect: %x\n", FUV(&ret));
+            ORIG_GO(ld->connect_iii_error, E_CONN, "unable to connect", fail);
         }
         return;
     }
-    LOG_ERROR("nothing left to connect to!\n");
+    ORIG_GO(ld->connect_iii_error, uv_err_type(status),
+            "failed all connection attempts", fail);
 fail:
     uv_freeaddrinfo(ld->gai_result);
-    loop->session_iface.close(ld->session, error);
+    loop->session_iface.close(ld->session, ld->connect_iii_error);
+    PASSED(ld->connect_iii_error);
     return;
 }
 
@@ -399,7 +429,7 @@ fail:
 // receive the addrinfo from getaddrinfo, start a connection
 static void loop_data_connect_ii(uv_getaddrinfo_t* req, int status,
                                  struct addrinfo* result){
-    derr_t error;
+    derr_t e = E_OK;
     loop_data_t *ld = req->data;
     loop_t *loop = ld->loop;
 
@@ -408,44 +438,43 @@ static void loop_data_connect_ii(uv_getaddrinfo_t* req, int status,
 
     if(status == UV_ECANCELED){
         // no need for errors
-        error = E_OK;
         goto fail;
     }
 
     if(status < 0){
-        uv_perror("uv_getaddrinfo result", status);
-        error = (status == UV_ENOMEM) ? E_NOMEM : E_UV;
-        ORIG_GO(error, "error in getaddrinfo", fail);
+        TRACE(e, "uv_getaddrinfo result: %x\n", FUV(&status));
+        ORIG_GO(e, uv_err_type(status), "error in getaddrinfo", fail);
     }
 
     if(!result){
-        ORIG_GO(E_CONN, "no hosts found for hostname", fail);
+        ORIG_GO(e, E_CONN, "no hosts found for hostname", fail);
     }
 
 
     // start trying to connect
     ld->gai_aiptr = result;
     ld->connect_req.data = ld;
+    ld->connect_iii_error = E_OK;
     int ret = uv_tcp_connect(&ld->connect_req, ld->sock,
                              ld->gai_aiptr->ai_addr, loop_data_connect_iii);
     if(ret < 0){
-        uv_perror("uv_tcp_connect setup", ret);
-        error = (ret == UV_ENOMEM) ? E_NOMEM : E_UV;
-        ORIG_GO(error, "unable to connect", fail);
+        TRACE(e, "uv_tcp_connect setup: %x\n", FUV(&ret));
+        ORIG_GO(e, uv_err_type(ret), "unable to connect", fail);
     }
 
     return;
 
 fail:
     uv_freeaddrinfo(ld->gai_result);
-    loop->session_iface.close(ld->session, error);
+    loop->session_iface.close(ld->session, e);
+    PASSED(e);
     return;
 }
 
 
 // make getaddrinfo request
 static void loop_data_connect_i(loop_data_t *ld){
-    derr_t error;
+    derr_t e = E_OK;
     loop_t *loop = ld->loop;
 
     // prepare for getaddrinfo
@@ -463,30 +492,29 @@ static void loop_data_connect_i(loop_data_t *ld){
                              loop->remote_service,
                              &ld->hints);
     if(ret < 0){
-        uv_perror("uv_getaddrinfo setup", ret);
-        error = (ret == UV_ENOMEM) ? E_NOMEM : E_UV;
-        ORIG_GO(error, "error in getaddrinfo", fail);
+        TRACE(e, "uv_getaddrinfo setup: %x\n", FUV(&ret));
+        ORIG_GO(e, uv_err_type(ret), "error in getaddrinfo", fail);
     }
     return;
 
 fail:
-    loop->session_iface.close(ld->session, error);
+    loop->session_iface.close(ld->session, e);
+    PASSED(e);
     return;
 }
 
 
 // called when the downstream engine passes back an event_t as a READ_DONE
 static void new_buf__resume_reading(void *cb_data, void *new_buf){
-    derr_t error;
+    derr_t e = E_OK;
     // dereference the loop_data_t
     loop_data_t *ld = cb_data;
     event_t *ev = new_buf;
     // resume reading
     int ret = uv_read_start((uv_stream_t*)(ld->sock), allocator, read_cb);
     if(ret < 0){
-        uv_perror("uv_read_start", ret);
-        error = (ret == UV_ENOMEM) ? E_NOMEM : E_UV;
-        ORIG_GO(error, "error resuming reading", fail_resume);
+        TRACE(e, "uv_read_start: %x\n", FUV(&ret));
+        ORIG_GO(e, uv_err_type(ret), "error resuming reading", fail_resume);
     }
     // store this buffer for this session's socket's next call to allocator
     ld->event_for_allocator = ev;
@@ -497,7 +525,8 @@ fail_resume:
     // return buffer to read events
     queue_append(&ld->loop->read_events, &ev->qe);
     // close session
-    ld->loop->session_iface.close(ld->session, error);
+    ld->loop->session_iface.close(ld->session, e);
+    PASSED(e);
     loop_data_onthread_close(ld);
     return;
 }
@@ -518,7 +547,7 @@ void loop_data_start(loop_data_t *ld, loop_t *loop, void *session){
 
 static void loop_data_onthread_start(loop_data_t *ld, loop_t *loop,
                                      void *session, uv_tcp_t *sock){
-    derr_t error;
+    derr_t e = E_OK;
     ld->loop = loop;
     // uvp is a self pointer
     ld->uvp.type = LP_TYPE_LOOP_DATA;
@@ -546,33 +575,35 @@ static void loop_data_onthread_start(loop_data_t *ld, loop_t *loop,
 
         int ret = uv_read_start((uv_stream_t*)ld->sock, allocator, read_cb);
         if(ret < 0){
-            uv_perror("uv_read_start", ret);
-            error = (ret == UV_ENOMEM) ? E_NOMEM : E_UV;
-            LOG_ORIG(&error, error, "error starting read");
+            TRACE(e, "uv_read_start: %x\n", FUV(&ret));
+            TRACE_ORIG(e, uv_err_type(ret), "error starting read");
             // since the session is totally set up, we can call just close
-            loop->session_iface.close(session, error);
+            loop->session_iface.close(session, e);
+            PASSED(e);
             loop_data_onthread_close(ld);
             return;
         }
         return;
     }
+
     // if the socket is not specified, we need to start a connection
+
     ld->connected = false;
 
-    PROP_GO( queue_init(&ld->preconnected_writes), fail_ref);
+    PROP_GO(e, queue_init(&ld->preconnected_writes), fail_ref);
 
     // allocate the socket
     ld->sock = malloc(sizeof(*ld->sock));
     if(!ld->sock){
-        ORIG_GO(E_NOMEM, "unable to malloc", fail_preconnected_writes);
+        ORIG_GO(e, E_NOMEM, "unable to malloc", fail_preconnected_writes);
     }
 
     // init the socket
     int ret = uv_tcp_init(&loop->uv_loop, ld->sock);
     if(ret < 0){
-        uv_perror("uv_tcp_init", ret);
-        error = (ret == UV_ENOMEM) ? E_NOMEM : E_UV;
-        ORIG_GO(error, "error initializing libuv socket", fail_malloc);
+        TRACE(e, "uv_tcp_init: %x\n", FUV(&ret));
+        ORIG_GO(e, uv_err_type(ret), "error initializing libuv socket",
+                fail_malloc);
     }
     ld->sock->data = &ld->uvp;
 
@@ -592,19 +623,14 @@ fail_ref:
     // lifetime reference
     loop->session_iface.ref_down(session, LOOP_REF_LIFETIME);
     ld->state = DATA_STATE_CLOSED;
-    loop->session_iface.close(session, error);
+    loop->session_iface.close(session, e);
+    PASSED(e);
     return;
 }
 
 
-static void tcp_for_failed_session_close_cb(uv_handle_t *handle){
-    // just free the handle
-    free(handle);
-}
-
-
 static void connection_cb(uv_stream_t *listener, int status){
-    derr_t error = E_OK;
+    derr_t e = E_OK;
     // the listener has a pointer to a uv_loop_t
     // the uv_loop_t has a pointer to our own loop_t
     loop_t *loop = listener->loop->data;
@@ -613,9 +639,8 @@ static void connection_cb(uv_stream_t *listener, int status){
 
     // TODO: handle UV_ECANCELED?
     if(status < 0){
-        uv_perror("uv_listen", status);
-        error = (status == UV_ENOMEM) ? E_NOMEM : E_UV;
-        ORIG_GO(error, "error pausing read", fail_listen);
+        TRACE(e, "uv_listen: %x\n", FUV(&status));
+        ORIG_GO(e, uv_err_type(status), "error pausing read", fail_listen);
     }
 
     /* accept() is guaranteed to succeed once for each time that
@@ -634,24 +659,23 @@ static void connection_cb(uv_stream_t *listener, int status){
     // init the libuv socket object
     int ret = uv_tcp_init(listener->loop, tcp);
     if(ret < 0){
-        uv_perror("uv_tcp_init", ret);
-        error = (ret == UV_ENOMEM) ? E_NOMEM : E_UV;
-        ORIG_GO(error, "error initializing libuv socket", fail_malloc);
+        TRACE(e, "uv_tcp_init: %x\n", FUV(&ret));
+        ORIG_GO(e, uv_err_type(ret), "error initializing libuv socket",
+                fail_malloc);
     }
 
     // accept the connection
     ret = uv_accept(listener, (uv_stream_t*)tcp);
     if(ret < 0){
-        uv_perror("uv_accept", ret);
-        error = (ret == UV_ENOMEM) ? E_NOMEM : E_UV;
-        ORIG_GO(error, "error accepting connection", fail_init);
+        TRACE(e, "uv_accept: %x\n", FUV(&ret));
+        ORIG_GO(e, uv_err_type(ret), "error accepting connection", fail_init);
     }
 
     // Now that accept() worked, no more critical errors are possible
 
     // allocate a session for this connection
     void *session;
-    PROP_GO( loop->sess_alloc(&session, loop->sess_alloc_data, ssl_ctx),
+    PROP_GO(e, loop->sess_alloc(&session, loop->sess_alloc_data, ssl_ctx),
              fail_tcp);
 
     // get the loop_data from the new session
@@ -663,8 +687,9 @@ static void connection_cb(uv_stream_t *listener, int status){
 
 fail_tcp:
     // we have to close the TCP asynchronously
-    uv_close((uv_handle_t*)tcp, tcp_for_failed_session_close_cb);
+    uv_close((uv_handle_t*)tcp, simple_close_cb);
     // this failure was not critical, continue with application
+    DROP(e);
     return;
 
 /* accept() is guaranteed to succeed once for each time that connection_cb()
@@ -673,44 +698,38 @@ fail_tcp:
    just close the application to ensure no weird states. */
 fail_init:
     // we have to close the TCP asynchronously
-    uv_close((uv_handle_t*)tcp, tcp_for_failed_session_close_cb);
+    uv_close((uv_handle_t*)tcp, simple_close_cb);
     // skip the free_malloc, which will happen in the close_cb
     goto fail_listen;
 fail_malloc:
     free(tcp);
 fail_listen:
-    loop_close(loop, error);
+    loop_close(loop, e);
+    PASSED(e);
     return;
-}
-
-
-static void listener_close_cb(uv_handle_t *handle){
-    /* the SSL* in handle->data is application-wide and needs no cleanup here
-       so just free the uv_tcp_t pointer itself */
-    free(handle);
 }
 
 
 derr_t loop_add_listener(loop_t *loop, const char *addr, const char *svc,
                          uv_ptr_t *uvp){
-    derr_t error;
+    derr_t e = E_OK;
     // allocate uv_tcp_t struct
     uv_tcp_t *listener;
     listener = malloc(sizeof(*listener));
     if(listener == NULL){
-        ORIG(E_NOMEM, "error allocating for listener");
+        ORIG(e, E_NOMEM, "error allocating for listener");
     }
 
     // init listener
     int ret = uv_tcp_init(&loop->uv_loop, listener);
     if(ret < 0){
-        uv_perror("uv_tcp_init", ret);
-        error = (ret == UV_ENOMEM) ? E_NOMEM : E_UV;
-        ORIG_GO(error, "error initializing listener", fail_malloc);
+        TRACE(e, "uv_tcp_init: %x\n", FUV(&ret));
+        ORIG_GO(e, uv_err_type(ret), "error initializing listener",
+                fail_malloc);
     }
 
     // bind TCP listener
-    PROP_GO( bind_via_gai(listener, addr, svc), fail_listener);
+    PROP_GO(e, bind_via_gai(listener, addr, svc), fail_listener);
 
     // add ssl context to listener as data, for handling new connections
     listener->data = uvp;
@@ -718,21 +737,20 @@ derr_t loop_add_listener(loop_t *loop, const char *addr, const char *svc,
     // start listener
     ret = uv_listen((uv_stream_t*)listener, 10, connection_cb);
     if(ret < 0){
-        uv_perror("uv_listen", ret);
-        error = (ret == UV_ENOMEM) ? E_NOMEM : E_UV;
-        ORIG_GO(error, "error starting listen", fail_listener);
+        TRACE(e, "uv_listen: %x\n", FUV(&ret));
+        ORIG_GO(e, uv_err_type(ret), "error starting listen", fail_listener);
     }
 
     return E_OK;
 
 fail_listener:
     // after uv_tcp_init, we can only close asynchronously
-    uv_close((uv_handle_t*)listener, listener_close_cb);
-    return error;
+    uv_close((uv_handle_t*)listener, simple_close_cb);
+    return e;
 
 fail_malloc:
     free(listener);
-    return error;
+    return e;
 }
 
 
@@ -771,7 +789,7 @@ static void close_sessions_and_listeners(uv_handle_t *handle, void* arg){
         loop_data_t *ld = uvp->data.loop_data;
         ld->loop->session_iface.close(ld->session, E_OK);
     }else if(uvp->type == LP_TYPE_LISTENER){
-        uv_close(handle, listener_close_cb);
+        uv_close(handle, simple_close_cb);
     }else{
         LOG_ERROR("close_sessions_and_listeners() got a bad tcp handle\n");
     }
@@ -811,11 +829,6 @@ static void close_everything_ii(loop_t *loop){
 }
 
 
-static void loop_data_sock_close_cb(uv_handle_t *handle){
-    free(handle);
-}
-
-
 static void loop_data_onthread_close(loop_data_t *ld){
     // safe from double calls
     if(ld->state == DATA_STATE_CLOSED) return;
@@ -838,7 +851,7 @@ static void loop_data_onthread_close(loop_data_t *ld){
     /* close the loop_data's socket, if there is one.  ld->connected doesn't
        matter since all we do in the close callback is free the handle */
     if(ld->sock != NULL){
-        uv_close((uv_handle_t*)ld->sock, loop_data_sock_close_cb);
+        uv_close((uv_handle_t*)ld->sock, simple_close_cb);
     }
 
     // if the socket is not yet connected, empty the preconnected_writes
@@ -873,7 +886,7 @@ void loop_data_close(loop_data_t *ld, loop_t *loop, void *session){
 
 
 static void event_cb(uv_async_t *handle){
-    derr_t error;
+    derr_t e = E_OK;
     // the handle has a pointer to a uv_loop_t
     // the uv_loop_t has a pointer to our own loop_t
     loop_t *loop = handle->loop->data;
@@ -911,15 +924,16 @@ static void event_cb(uv_async_t *handle){
                 }else if(ld->connected == false){
                     queue_append(&ld->preconnected_writes, &ev->qe);
                 }else{
-                    error = handle_write(loop, ld, ev);
-                    if(error){
-                        LOG_PROP(error);
+                    e = handle_write(loop, ld, ev);
+                    if(e.type){
+                        TRACE_PROP(e);
                         // return write buffer
                         ev->error = E_OK;
                         ev->ev_type = EV_WRITE_DONE;
                         loop->pass_down(loop->downstream, ev);
                         // close session
-                        loop->session_iface.close(ev->session, error);
+                        loop->session_iface.close(ev->session, e);
+                        PASSED(e);
                         loop_data_onthread_close(ld);
                     }
                 }
@@ -957,14 +971,13 @@ derr_t loop_init(loop_t *loop, size_t num_read_events,
                  void *sess_alloc_data,
                  const char* remote_host,
                  const char* remote_service){
-    derr_t error;
+    derr_t e = E_OK;
 
     // init loop
     int ret = uv_loop_init(&loop->uv_loop);
     if(ret < 0){
-        uv_perror("uv_loop_init", ret);
-        error = (ret == UV_ENOMEM) ? E_NOMEM : E_UV;
-        ORIG(error, "error initializing loop");
+        TRACE(e, "uv_loop_init: %x\n", FUV(&ret));
+        ORIG(e, uv_err_type(ret), "error initializing loop");
     }
 
     // set the uv's data pointer to our loop_t
@@ -973,16 +986,16 @@ derr_t loop_init(loop_t *loop, size_t num_read_events,
     // init async objects
     ret = uv_async_init(&loop->uv_loop, &loop->loop_event_passer, event_cb);
     if(ret < 0){
-        uv_perror("uv_async_init", ret);
-        error = (ret == UV_ENOMEM) ? E_NOMEM : E_UV;
-        ORIG_GO(error, "error initializing loop_event_passer", fail_loop);
+        TRACE(e, "uv_async_init: %x\n", FUV(&ret));
+        ORIG_GO(e, uv_err_type(ret), "error initializing loop_event_passer",
+                fail_loop);
     }
     ret = uv_async_init(&loop->uv_loop, &loop->loop_closer,
                         close_everything_i);
     if(ret < 0){
-        uv_perror("uv_async_init", ret);
-        error = (ret == UV_ENOMEM) ? E_NOMEM : E_UV;
-        ORIG_GO(error, "error initializing loop_closer", fail_loop);
+        TRACE(e, "uv_async_init: %x\n", FUV(&ret));
+        ORIG_GO(e, uv_err_type(ret), "error initializing loop_closer",
+                fail_loop);
     }
     /* TODO: how would we handle premature closing of these items?  We would
              have to call uv_close() on them and execute the loop to let the
@@ -990,20 +1003,19 @@ derr_t loop_init(loop_t *loop, size_t num_read_events,
 
     ret = uv_mutex_init(&loop->mutex);
     if(ret < 0){
-        uv_perror("uv_mutex_init", ret);
-        error = (ret == UV_ENOMEM) ? E_NOMEM : E_UV;
-        ORIG_GO(error, "error initializing mutex", fail_loop);
+        TRACE(e, "uv_mutex_init: %x\n", FUV(&ret));
+        ORIG_GO(e, uv_err_type(ret), "error initializing mutex", fail_loop);
     }
 
     // init read wrapper list
-    PROP_GO( queue_init(&loop->read_events), fail_mutex);
+    PROP_GO(e, queue_init(&loop->read_events), fail_mutex);
 
     // allocate a pool of read buffers
     for(size_t i = 0; i < num_read_events; i++){
         // allocate the struct
         read_wrapper_t *rd_wrap = malloc(sizeof(*rd_wrap));
         if(rd_wrap == NULL){
-            ORIG_GO(E_NOMEM, "unable to alloc read wrapper", fail_rd_wraps);
+            ORIG_GO(e, E_NOMEM, "unable to alloc read wrapper", fail_rd_wraps);
         }
         event_prep(&rd_wrap->event, rd_wrap);
         // set the event's dstr_t to be the buffer in the read_wrapper
@@ -1013,14 +1025,14 @@ derr_t loop_init(loop_t *loop, size_t num_read_events,
     }
 
     // init write wrapper list
-    PROP_GO( queue_init(&loop->write_wrappers), fail_rd_wraps);
+    PROP_GO(e, queue_init(&loop->write_wrappers), fail_rd_wraps);
 
     // allocate a pool of write buffers
     for(size_t i = 0; i < num_write_wrappers; i++){
         // allocate the write_buf_t struct
         write_wrapper_t *wr_wrap = malloc(sizeof(*wr_wrap));
         if(wr_wrap == NULL){
-            ORIG_GO(E_NOMEM, "unable to alloc write wrapper", fail_wr_wraps);
+            ORIG_GO(e, E_NOMEM, "unable to alloc write wrapper", fail_wr_wraps);
         }
         // set various backrefs
         write_wrapper_prep(wr_wrap, loop);
@@ -1029,7 +1041,7 @@ derr_t loop_init(loop_t *loop, size_t num_read_events,
     }
 
     // init event queue
-    PROP_GO( queue_init(&loop->event_q), fail_wr_wraps);
+    PROP_GO(e, queue_init(&loop->event_q), fail_wr_wraps);
 
     // store values
     loop->downstream = downstream;
@@ -1072,7 +1084,7 @@ fail_mutex:
     uv_mutex_destroy(&loop->mutex);
 fail_loop:
     uv_loop_close(&loop->uv_loop);
-    return error;
+    return e;
 }
 
 
@@ -1096,23 +1108,23 @@ void loop_free(loop_t *loop){
     uv_mutex_destroy(&loop->mutex);
     int ret = uv_loop_close(&loop->uv_loop);
     if(ret != 0){
-        uv_perror("uv_loop_close", ret);
+        LOG_ERROR("uv_loop_close: %x\n", FUV(&ret));
     }
 }
 
 
 derr_t loop_run(loop_t *loop){
+    derr_t e = E_OK;
     // run loop
     int ret = uv_run(&loop->uv_loop, UV_RUN_DEFAULT);
-    // Did we exit with an error?
-    PROP(loop->error);
     // did UV exit with an error?
     if(ret < 0){
-        uv_perror("uv_run", ret);
-        derr_t error = (ret == UV_ENOMEM) ? E_NOMEM : E_UV;
-        ORIG(error, "loop exited with error");
+        TRACE(e, "uv_run: %x\n", FUV(&ret));
+        TRACE_ORIG(e, uv_err_type(ret), "loop exited with error");
     }
-    return E_OK;
+    // Did our code exit with an error?
+    MERGE_VAR(e, loop->error, "loop internal closing error");
+    return e;
 }
 
 
@@ -1134,7 +1146,7 @@ void loop_pass_event(void *loop_engine, event_t *event){
            Therefore, it is safe to not "properly" handle this error.  But, we
            will at least log it since we are relying on undocumented behavior.
         */
-        uv_perror("uv_async_send", ret);
+        LOG_ERROR("uv_async_send: %x\n", FUV(&ret));
         LOG_ERROR("uv_async_send should never fail!\n");
     }
 }
@@ -1143,7 +1155,7 @@ void loop_pass_event(void *loop_engine, event_t *event){
 void loop_close(loop_t *loop, derr_t error){
     uv_mutex_lock(&loop->mutex);
     // preserve the first-passed error
-    if(!loop->error) loop->error = error;
+    MERGE_VAR(loop->error, error, "loop_close error");
     // only call async_send once
     bool do_quit = !loop->quitting;
     loop->quitting = true;
@@ -1154,7 +1166,7 @@ void loop_close(loop_t *loop, derr_t error){
     int ret = uv_async_send(&loop->loop_closer);
     if(ret < 0){
         // not possible, see note in loop_pass_event()
-        uv_perror("uv_async_send", ret);
+        LOG_ERROR("uv_async_send: %x\n", FUV(&ret));
         LOG_ERROR("uv_async_send should never fail!\n");
     }
 }

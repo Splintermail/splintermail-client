@@ -1,9 +1,6 @@
 #include "queue.h"
 #include "logger.h"
-
-static void uv_perror(const char *prefix, int code){
-    fprintf(stderr, "%s: %s\n", prefix, uv_strerror(code));
-}
+#include "uv_errors.h"
 
 void queue_elem_prep(queue_elem_t *qe, void *parent_struct){
     qe->data = parent_struct;
@@ -26,7 +23,7 @@ void queue_cb_set(queue_cb_t *qcb,
 
 
 derr_t queue_init(queue_t *q){
-    derr_t error;
+    derr_t e = E_OK;
     // all pointers start as NULL
     q->first = NULL;
     q->last = NULL;
@@ -36,17 +33,15 @@ derr_t queue_init(queue_t *q){
     // init mutex
     int ret = uv_mutex_init(&q->mutex);
     if(ret < 0){
-        uv_perror("uv_mutex_init", ret);
-        error = (ret == UV_ENOMEM) ? E_NOMEM : E_UV;
-        ORIG(error, "failed in uv_mutex_init");
+        TRACE(e, "uv_mutex_init: %x\n", FUV(&ret));
+        ORIG(e, uv_err_type(ret), "failed in uv_mutex_init");
     }
 
     // init conditional variable
     ret = uv_cond_init(&q->cond);
     if(ret < 0){
-        uv_perror("uv_cond_init", ret);
-        error = (ret == UV_ENOMEM) ? E_NOMEM : E_UV;
-        ORIG_GO(error, "failed in uv_cond_init", fail_mutex);
+        TRACE(e, "uv_cond_init: %x\n", FUV(&ret));
+        ORIG_GO(e, uv_err_type(ret), "failed in uv_cond_init", fail_mutex);
     }
 
     q->len = 0;
@@ -55,7 +50,7 @@ derr_t queue_init(queue_t *q){
 
 fail_mutex:
     uv_mutex_destroy(&q->mutex);
-    return error;
+    return e;
 }
 
 void queue_free(queue_t *q){

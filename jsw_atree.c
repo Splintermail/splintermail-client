@@ -57,10 +57,11 @@ static void place_node ( jsw_atree_t *tree, jsw_anode_t *node )
 
 derr_t jsw_ainit ( jsw_atree_t *tree, cmp_f cmp, rel_f rel )
 {
+  derr_t e = E_OK;
   /* Initialize sentinel */
   tree->nil = (jsw_anode_t *)malloc ( sizeof *tree->nil );
   if ( tree->nil == NULL ) {
-    ORIG(E_NOMEM, "unable to allocate sentinal node for andersson tree");
+    ORIG(e, E_NOMEM, "unable to allocate sentinal node for andersson tree");
   }
 
   tree->nil->data = NULL; /* Simplifies some ops */

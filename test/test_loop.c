@@ -30,11 +30,12 @@ static void fake_session_destroyed(fake_session_t *s, derr_t error){
     if(s->mgr_data){
         cb_reader_writer_t *cbrw = s->mgr_data;
         // catch an error from the cbrw
-        if(!error) error = cbrw->error;
+        MERGE_VAR(error, cbrw->error, "cb reader/writer");
         cb_reader_writer_free(cbrw);
     }
-    CATCH(E_ANY){
+    if(error.type != E_NONE){
         loop_close(s->pipeline->loop, error);
+        PASSED(error);
     }
 }
 
@@ -50,7 +51,7 @@ static void fake_session_accepted(fake_session_t *s){
 
 static void *loop_thread(void *arg){
     test_context_t *ctx = arg;
-    derr_t error;
+    derr_t e = E_OK;
     size_t num_read_events = NUM_READ_EVENTS_PER_LOOP;
 
     fake_pipeline_t pipeline = {
@@ -62,7 +63,7 @@ static void *loop_thread(void *arg){
        compared to the real behavior of a pipeline, so we won't worry about
        testing that behavior */
     size_t num_write_wrappers = NUM_THREADS * WRITES_PER_THREAD;
-    PROP_GO( loop_init(&ctx->loop, num_read_events, num_write_wrappers,
+    PROP_GO(e, loop_init(&ctx->loop, num_read_events, num_write_wrappers,
                        ctx->downstream, fake_engine_pass_event,
                        fake_session_iface_loop,
                        fake_session_get_loop_data,
@@ -72,7 +73,7 @@ static void *loop_thread(void *arg){
 
     // create the listener
     uv_ptr_t uvp = {.type = LP_TYPE_LISTENER};
-    PROP_GO( loop_add_listener(&ctx->loop, "127.0.0.1", port_str, &uvp),
+    PROP_GO(e, loop_add_listener(&ctx->loop, "127.0.0.1", port_str, &uvp),
              cu_loop);
 
     // signal to the main thread
@@ -81,13 +82,13 @@ static void *loop_thread(void *arg){
     pthread_mutex_unlock(ctx->mutex);
 
     // run the loop
-    PROP_GO( loop_run(&ctx->loop), cu_loop);
+    PROP_GO(e, loop_run(&ctx->loop), cu_loop);
 
 cu_loop:
     // other threads may call loop_free at a later time, so we don't free here
     // loop_free(&ctx->loop);
 done:
-    ctx->error = error;
+    MERGE_VAR(ctx->error, e, "test_loop:loop_thread");
 
     // signal to the main thread, in case we are exiting early
     pthread_mutex_lock(ctx->mutex);
@@ -103,7 +104,7 @@ typedef struct {
     size_t nwrites;
     size_t nEOF;
     test_context_t *test_ctx;
-    bool success;
+    derr_t error;
     cb_reader_writer_t cb_reader_writers[NUM_THREADS];
 } session_cb_data_t;
 
@@ -113,10 +114,10 @@ static void launch_second_half_of_test(session_cb_data_t *cb_data,
     test_mode_self_connect = true;
     // make NUM_THREAD connections
     for(size_t i = 0; i < NUM_THREADS; i++){
-        derr_t error;
+        derr_t e = E_OK;
         // allocate a new connecting session
         void* session;
-        PROP_GO( fake_session_alloc_connect(&session, fp, NULL), fail);
+        PROP_GO(e, fake_session_alloc_connect(&session, fp, NULL), fail);
 
         // attach the destroy hook
         fake_session_t *s = session;
@@ -126,8 +127,7 @@ static void launch_second_half_of_test(session_cb_data_t *cb_data,
         cb_reader_writer_t *cbrw = &cb_data->cb_reader_writers[i];
         event_t *ev_new = cb_reader_writer_init(cbrw, i, WRITES_PER_THREAD, s);
         if(!ev_new){
-            LOG_ERROR("did not get event from cb_reader_writer\n");
-            goto fail;
+            ORIG_GO(e, E_VALUE, "did not get event from cb_reader_writer", fail);
         }
 
         // attach the cb_reader_writer to the destroy hook
@@ -140,7 +140,8 @@ static void launch_second_half_of_test(session_cb_data_t *cb_data,
         continue;
 
     fail:
-        loop_close(&cb_data->test_ctx->loop, error);
+        loop_close(&cb_data->test_ctx->loop, e);
+        PASSED(e);
         break;
     }
 }
@@ -175,15 +176,17 @@ static void handle_read(void *data, event_t *ev){
     else{
         event_t *ev_new = malloc(sizeof(*ev_new));
         if(!ev_new){
-            LOG_ERROR("no memory!\n");
-            cb_data->success = false;
+            derr_t e = E_OK;
+            TRACE_ORIG(e, E_NOMEM, "no memory!");
+            MERGE_VAR(cb_data->error, e, "malloc");
             return;
         }
         event_prep(ev_new, NULL);
-        if(dstr_new(&ev_new->buffer, ev->buffer.len)){
-            LOG_ERROR("no memory!\n");
+        if(dstr_new_quiet(&ev_new->buffer, ev->buffer.len)){
+            derr_t e = E_OK;
+            TRACE_ORIG(e, E_NOMEM, "no memory!");
+            MERGE_VAR(cb_data->error, e, "malloc");
             free(ev_new);
-            cb_data->success = false;
             return;
         }
         dstr_copy(&ev->buffer, &ev_new->buffer);
@@ -212,8 +215,7 @@ static bool quit_ready(void *data){
 }
 
 static derr_t test_loop(void){
-    derr_t error;
-    bool success = true;
+    derr_t e = E_OK;
     // get the conditional variable and mutex ready
     pthread_cond_t cond;
     pthread_cond_init(&cond, NULL);
@@ -223,7 +225,7 @@ static derr_t test_loop(void){
 
     // get the event queue ready
     fake_engine_t fake_engine;
-    PROP_GO( fake_engine_init(&fake_engine), cu_mutex);
+    PROP_GO(e, fake_engine_init(&fake_engine), cu_mutex);
 
     // start the loop thread
     pthread_mutex_lock(&mutex);
@@ -240,7 +242,7 @@ static derr_t test_loop(void){
     pthread_mutex_unlock(&mutex);
     unlock_mutex_on_error = false;
 
-    if(test_ctx.error){
+    if(test_ctx.error.type != E_NONE){
         // if the test thread signaled us from its exit stage, skip to the end
         goto join_test_thread;
     }
@@ -263,33 +265,23 @@ static derr_t test_loop(void){
                        reader_writer_thread, &threads[i]);
     }
 
-    session_cb_data_t cb_data = {.test_ctx = &test_ctx, .success = true};
+    session_cb_data_t cb_data = {.test_ctx = &test_ctx, .error = E_OK};
 
     // catch error from fake_engine_run
-    success |= fake_engine_run(
-        &fake_engine, loop_pass_event, &test_ctx.loop,
-        handle_read, handle_write_done, quit_ready, &cb_data);
-
-    // catch error from callbacks
-    success |= cb_data.success;
+    MERGE(e, fake_engine_run(
+            &fake_engine, loop_pass_event, &test_ctx.loop,
+            handle_read, handle_write_done, quit_ready, &cb_data),
+            "fake_engine_run");
 
     // join all the threads
     for(size_t i = 0; i < sizeof(threads) / sizeof(*threads); i++){
         pthread_join(threads[i].thread, NULL);
         // check for error
-        if(threads[i].error != E_OK){
-            LOG_ERROR("thread %x returned %x\n", FU(i),
-                      FD(error_to_dstr(threads[i].error)));
-            success = false;
-        }
+        MERGE_VAR(e, threads[i].error, "test thread");
     }
 join_test_thread:
     pthread_join(test_ctx.thread, NULL);
-    if(test_ctx.error){
-        LOG_ERROR("loop thread returned %x\n",
-                  FD(error_to_dstr(test_ctx.error)));
-        success = false;
-    }
+    MERGE_VAR(e, test_ctx.error, "test context");
     // now that we know nobody will close the loop, we are safe to free it
     loop_free(&test_ctx.loop);
 
@@ -299,20 +291,20 @@ cu_mutex:
     if(unlock_mutex_on_error) pthread_mutex_unlock(&mutex);
     pthread_mutex_destroy(&mutex);
 
-    if(error == E_OK && success == false)
-        ORIG(E_VALUE, "failure detected, check log");
-    return error;
+    return e;
 }
 
 int main(int argc, char** argv){
-    derr_t error;
+    derr_t e = E_OK;
     // parse options and set default log level
     PARSE_TEST_OPTIONS(argc, argv, NULL, LOG_LVL_INFO);
 
-    PROP_GO( test_loop(), test_fail);
+    PROP_GO(e, test_loop(), test_fail);
 
 test_fail:
-    if(error){
+    if(e.type){
+        DUMP(e);
+        DROP(e);
         LOG_ERROR("FAIL\n");
         return 1;
     }

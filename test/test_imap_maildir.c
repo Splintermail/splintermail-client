@@ -19,48 +19,51 @@ static void print_mflag_list(ie_mflag_list_t mflags){
 }
 
 static derr_t print_folders(imaildir_t *m, size_t indent){
+    derr_t e = E_OK;
     DSTR_STATIC(spaces, "                                                   ");
     dstr_t pre = dstr_sub(&spaces, 0, indent);
     if(indent){
-        PROP( PFMT("%x%x", FD(&pre), FD(&m->name)) );
+        PROP(e, PFMT("%x%x", FD(&pre), FD(&m->name)) );
     }else{
-        PROP( PFMT("%x%x", FD(&m->name)) );
+        PROP(e, PFMT("%x%x", FD(&m->name)) );
     }
     print_mflag_list(m->mflags);
-    PROP( PFMT("\n") );
+    PROP(e, PFMT("\n") );
     hashmap_iter_t i;
     for(i = hashmap_first(&m->children); i.more; hashmap_next(&i)){
-        PROP( print_folders((imaildir_t*)i.data, indent + 2) );
+        PROP(e, print_folders((imaildir_t*)i.data, indent + 2) );
     }
     return E_OK;
 }
 
 static derr_t test_imaildir_open(void){
-    derr_t error;
+    derr_t e = E_OK;
     string_builder_t files = sb_append(NULL, FS(g_test_files));
     string_builder_t path = sb_append(&files, FS("imap_maildir"));
     // allocate new imaildir
     imaildir_t *m;
-    PROP( imaildir_new(&m, &path, &DSTR_LIT("a")));
+    PROP(e, imaildir_new(&m, &path, &DSTR_LIT("a")));
 
-    PROP_GO( print_folders(m, 0), cu_m);
+    PROP_GO(e, print_folders(m, 0), cu_m);
 
 cu_m:
     imaildir_free(m);
-    return error;
+    return e;
 }
 
 int main(int argc, char** argv){
-    derr_t error;
+    derr_t e = E_OK;
     // parse options and set default log level
     PARSE_TEST_OPTIONS(argc, argv, &g_test_files, LOG_LVL_WARN);
 
-    PROP_GO( test_imaildir_open(), test_fail);
+    PROP_GO(e, test_imaildir_open(), test_fail);
 
     LOG_ERROR("PASS\n");
     return 0;
 
 test_fail:
+    DUMP(e);
+    DROP(e);
     LOG_ERROR("FAIL\n");
     return 1;
 }

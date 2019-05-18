@@ -18,57 +18,62 @@ static int same_as(const char* a, const char* b){
 }
 
 #define EXPECT(r, fa, fb, fc, fd, vc, vd) { \
-    if(ret != r) { \
-        LOG_ERROR("return value: expected %x, got %x\n", FI(r), FI(ret)); \
-        ORIG(E_VALUE, "wrong return value"); \
+    if(ret.type != r) { \
+        TRACE(e, "return value: expected %x, got %x\n", \
+                FD(error_to_dstr(r)), FD(error_to_dstr(ret.type))); \
+        ORIG(e, E_VALUE, "wrong return value"); \
+    } \
+    if(ret.type != E_NONE) { \
+        DROP(ret); \
     } \
     if(r == 0){ \
         if(nargout != newargc) { \
-            LOG_ERROR("newargc: expected %x, got %x\n", FI(nargout), FI(newargc)); \
-            ORIG(E_VALUE, "wrong newargc"); \
+            TRACE(e, "newargc: expected %x, got %x\n", FI(nargout), FI(newargc)); \
+            ORIG(e, E_VALUE, "wrong newargc"); \
         } \
         for(int i = 0; i < nargout; i++){ \
             if(!same_as(argout[i], argv[i])){ \
-                LOG_ERROR("argv: expected %x, got %x\n", FS(argout[i]), FS(argv[i])); \
-                ORIG(E_VALUE, "wrong found"); \
+                TRACE(e, "argv: expected %x, got %x\n", FS(argout[i]), FS(argv[i])); \
+                ORIG(e, E_VALUE, "wrong found"); \
             } \
         }\
         if(fa != opt_a.found){ \
-            LOG_ERROR("opt_a.found: expected %x, got %x\n", FI(fa), FI(opt_a.found)); \
-            ORIG(E_VALUE, "wrong found"); \
+            TRACE(e, "opt_a.found: expected %x, got %x\n", FI(fa), FI(opt_a.found)); \
+            ORIG(e, E_VALUE, "wrong found"); \
         } \
         if(fb != opt_b.found){ \
-            LOG_ERROR("opt_b.found: expected %x, got %x\n", FI(fb), FI(opt_b.found)); \
-            ORIG(E_VALUE, "wrong found"); \
+            TRACE(e, "opt_b.found: expected %x, got %x\n", FI(fb), FI(opt_b.found)); \
+            ORIG(e, E_VALUE, "wrong found"); \
         } \
         if(fc != opt_c.found){ \
-            LOG_ERROR("opt_c.found: expected %x, got %x\n", FI(fc), FI(opt_c.found)); \
-            ORIG(E_VALUE, "wrong found"); \
+            TRACE(e, "opt_c.found: expected %x, got %x\n", FI(fc), FI(opt_c.found)); \
+            ORIG(e, E_VALUE, "wrong found"); \
         } \
         if(fd != opt_d.found){ \
-            LOG_ERROR("opt_d.found: expected %x, got %x\n", FI(fd), FI(opt_d.found)); \
-            ORIG(E_VALUE, "wrong found"); \
+            TRACE(e, "opt_d.found: expected %x, got %x\n", FI(fd), FI(opt_d.found)); \
+            ORIG(e, E_VALUE, "wrong found"); \
         } \
         if(opt_a.val.data != NULL){ \
-            LOG_ERROR("opt_a.val: expected %x, got %x\n", FS(NULL), FD(&opt_a.val)); \
-            ORIG(E_VALUE, "wrong option value"); \
+            TRACE(e, "opt_a.val: expected %x, got %x\n", FS(NULL), FD(&opt_a.val)); \
+            ORIG(e, E_VALUE, "wrong option value"); \
         } \
         if(opt_b.val.data != NULL){ \
-            LOG_ERROR("opt_b.val: expected %x, got %x\n", FS(NULL), FD(&opt_b.val)); \
-            ORIG(E_VALUE, "wrong option value"); \
+            TRACE(e, "opt_b.val: expected %x, got %x\n", FS(NULL), FD(&opt_b.val)); \
+            ORIG(e, E_VALUE, "wrong option value"); \
         } \
         if(!same_as(vc, opt_c.val.data)){ \
-            LOG_ERROR("opt_c.val: expected %x, got %x\n", FS(vc), FD(&opt_c.val)); \
-            ORIG(E_VALUE, "wrong option value"); \
+            TRACE(e, "opt_c.val: expected %x, got %x\n", FS(vc), FD(&opt_c.val)); \
+            ORIG(e, E_VALUE, "wrong option value"); \
         } \
         if(!same_as(vd, opt_d.val.data)){ \
-            LOG_ERROR("opt_d.val: expected %x, got %x\n", FS(vd), FD(&opt_d.val)); \
-            ORIG(E_VALUE, "wrong option value"); \
+            TRACE(e, "opt_d.val: expected %x, got %x\n", FS(vd), FD(&opt_d.val)); \
+            ORIG(e, E_VALUE, "wrong option value"); \
         } \
     } \
 }
 
 static derr_t test_opt_parse(void){
+    derr_t e = E_OK;
     // set up some standard options
     opt_spec_t opt_a = {'a', NULL, false, OPT_RETURN_INIT};
     opt_spec_t opt_b = {'b', "beta",  false, OPT_RETURN_INIT};
@@ -87,7 +92,7 @@ static derr_t test_opt_parse(void){
         int argc = sizeof(argv) / sizeof(*argv);
         int newargc;
 
-        int ret = opt_parse(argc, argv, spec, speclen, &newargc);
+        derr_t ret = opt_parse(argc, argv, spec, speclen, &newargc);
 
         char* argout[] = {"test", "1", "2", "3", "", "-"};
         int nargout = sizeof(argout)/sizeof(*argout);
@@ -100,7 +105,7 @@ static derr_t test_opt_parse(void){
         int argc = sizeof(argv) / sizeof(*argv);
         int newargc;
 
-        int ret = opt_parse(argc, argv, spec, speclen, &newargc);
+        derr_t ret = opt_parse(argc, argv, spec, speclen, &newargc);
 
         char* argout[] = {"test", "1", "2", "3", "-a", "--"};
         int nargout = sizeof(argout)/sizeof(*argout);
@@ -112,11 +117,11 @@ static derr_t test_opt_parse(void){
         int argc = sizeof(argv) / sizeof(*argv);
         int newargc;
 
-        int ret = opt_parse(argc, argv, spec, speclen, &newargc);
+        derr_t ret = opt_parse(argc, argv, spec, speclen, &newargc);
 
         char* argout[] = {"does not matter"};
         int nargout = sizeof(argout)/sizeof(*argout);
-        EXPECT(-1, 0,0,0,0, NULL,NULL);
+        EXPECT(E_VALUE, 0,0,0,0, NULL,NULL);
     }
     // test case: long option unrecognized (codepaths 1, 7);
     {
@@ -124,11 +129,11 @@ static derr_t test_opt_parse(void){
         int argc = sizeof(argv) / sizeof(*argv);
         int newargc;
 
-        int ret = opt_parse(argc, argv, spec, speclen, &newargc);
+        derr_t ret = opt_parse(argc, argv, spec, speclen, &newargc);
 
         char* argout[] = {"does not matter"};
         int nargout = sizeof(argout)/sizeof(*argout);
-        EXPECT(-2, 0,0,0,0, NULL,NULL);
+        EXPECT(E_VALUE, 0,0,0,0, NULL,NULL);
     }
     // test case: short options (codepaths 1, B, D);
     {
@@ -136,7 +141,7 @@ static derr_t test_opt_parse(void){
         int argc = sizeof(argv) / sizeof(*argv);
         int newargc;
 
-        int ret = opt_parse(argc, argv, spec, speclen, &newargc);
+        derr_t ret = opt_parse(argc, argv, spec, speclen, &newargc);
 
         char* argout[] = {"test", "1", "2", "3"};
         int nargout = sizeof(argout)/sizeof(*argout);
@@ -148,7 +153,7 @@ static derr_t test_opt_parse(void){
         int argc = sizeof(argv) / sizeof(*argv);
         int newargc;
 
-        int ret = opt_parse(argc, argv, spec, speclen, &newargc);
+        derr_t ret = opt_parse(argc, argv, spec, speclen, &newargc);
 
         char* argout[] = {"test", "1", "2", "3"};
         int nargout = sizeof(argout)/sizeof(*argout);
@@ -160,7 +165,7 @@ static derr_t test_opt_parse(void){
         int argc = sizeof(argv) / sizeof(*argv);
         int newargc;
 
-        int ret = opt_parse(argc, argv, spec, speclen, &newargc);
+        derr_t ret = opt_parse(argc, argv, spec, speclen, &newargc);
 
         char* argout[] = {"test", "1", "2", "3"};
         int nargout = sizeof(argout)/sizeof(*argout);
@@ -172,11 +177,11 @@ static derr_t test_opt_parse(void){
         int argc = sizeof(argv) / sizeof(*argv);
         int newargc;
 
-        int ret = opt_parse(argc, argv, spec, speclen, &newargc);
+        derr_t ret = opt_parse(argc, argv, spec, speclen, &newargc);
 
         char* argout[] = {"does not matter"};
         int nargout = sizeof(argout)/sizeof(*argout);
-        EXPECT(-3, 0,0,0,0, NULL,NULL);
+        EXPECT(E_VALUE, 0,0,0,0, NULL,NULL);
     }
     // test case: short options unrecognized (codepaths 1, A, B);
     {
@@ -184,11 +189,11 @@ static derr_t test_opt_parse(void){
         int argc = sizeof(argv) / sizeof(*argv);
         int newargc;
 
-        int ret = opt_parse(argc, argv, spec, speclen, &newargc);
+        derr_t ret = opt_parse(argc, argv, spec, speclen, &newargc);
 
         char* argout[] = {"does not matter"};
         int nargout = sizeof(argout)/sizeof(*argout);
-        EXPECT(-4, 0,0,0,0, NULL,NULL);
+        EXPECT(E_VALUE, 0,0,0,0, NULL,NULL);
     }
     // test case: double definition
     {
@@ -196,7 +201,7 @@ static derr_t test_opt_parse(void){
         int argc = sizeof(argv) / sizeof(*argv);
         int newargc;
 
-        int ret = opt_parse(argc, argv, spec, speclen, &newargc);
+        derr_t ret = opt_parse(argc, argv, spec, speclen, &newargc);
 
         char* argout[] = {"test", "1", "2", "3"};
         int nargout = sizeof(argout)/sizeof(*argout);
@@ -208,7 +213,7 @@ static derr_t test_opt_parse(void){
         int argc = 0;
         int newargc;
 
-        int ret = opt_parse(argc, argv, spec, speclen, &newargc);
+        derr_t ret = opt_parse(argc, argv, spec, speclen, &newargc);
 
         char** argout = NULL;
         int nargout = 0;
@@ -220,7 +225,7 @@ static derr_t test_opt_parse(void){
         int argc = sizeof(argv) / sizeof(*argv);
         int newargc;
 
-        int ret = opt_parse(argc, argv, spec, speclen, &newargc);
+        derr_t ret = opt_parse(argc, argv, spec, speclen, &newargc);
 
         char** argout = NULL;
         int nargout = 0;
@@ -234,16 +239,17 @@ static derr_t test_opt_parse(void){
 #define EXPECT(_exp) { \
     DSTR_STATIC(exp, _exp); \
     DSTR_VAR(out, 4096); \
-    PROP( opt_dump(spec, speclen, &out) ); \
+    PROP(e, opt_dump(spec, speclen, &out) ); \
     int result = dstr_cmp(&exp, &out); \
     if(result != 0){ \
-        LOG_ERROR("expected: %x\n" \
-                  "but got:  %x\n", FD(&exp), FD(&out)); \
-        ORIG(E_VALUE, "test fail"); \
+        TRACE(e, "expected: %x\n" \
+                 "but got:  %x\n", FD(&exp), FD(&out)); \
+        ORIG(e, E_VALUE, "test fail"); \
     } \
 }
 
 static derr_t test_conf_parse(void){
+    derr_t e = E_OK;
     opt_spec_t o_option1    = {'\0', "option1",    true,  OPT_RETURN_INIT};
     opt_spec_t o_option2    = {'\0', "option2",    true,  OPT_RETURN_INIT};
     opt_spec_t o_option3    = {'\0', "option3",    true,  OPT_RETURN_INIT};
@@ -264,24 +270,24 @@ static derr_t test_conf_parse(void){
     DSTR_VAR(badconf1, 4096);
     DSTR_VAR(badconf2, 4096);
     DSTR_VAR(badconf3, 4096);
-    PROP( FMT(&goodconf, "%x/opt_parse/goodconf", FS(g_test_files)) );
-    PROP( FMT(&goodconf2, "%x/opt_parse/goodconf2", FS(g_test_files)) );
-    PROP( FMT(&badconf1, "%x/opt_parse/badconf1", FS(g_test_files)) );
-    PROP( FMT(&badconf2, "%x/opt_parse/badconf2", FS(g_test_files)) );
-    PROP( FMT(&badconf3, "%x/opt_parse/badconf3", FS(g_test_files)) );
+    PROP(e, FMT(&goodconf, "%x/opt_parse/goodconf", FS(g_test_files)) );
+    PROP(e, FMT(&goodconf2, "%x/opt_parse/goodconf2", FS(g_test_files)) );
+    PROP(e, FMT(&badconf1, "%x/opt_parse/badconf1", FS(g_test_files)) );
+    PROP(e, FMT(&badconf2, "%x/opt_parse/badconf2", FS(g_test_files)) );
+    PROP(e, FMT(&badconf3, "%x/opt_parse/badconf3", FS(g_test_files)) );
 
     // read one config file to make sure we are parsing right
     DSTR_VAR(text1, 4096);
-    PROP( dstr_fread_file(goodconf.data, &text1) );
-    PROP( conf_parse(&text1, spec, speclen) );
+    PROP(e, dstr_fread_file(goodconf.data, &text1) );
+    PROP(e, conf_parse(&text1, spec, speclen) );
     EXPECT("option1 hey there buddy\n"
            "option2 white   space\t test\n"
            "flag1\n");
 
     // read another config file to make sure we don't overwrite existing values
     DSTR_VAR(text2, 4096);
-    PROP( dstr_fread_file(goodconf2.data, &text2) );
-    PROP( conf_parse(&text2, spec, speclen) );
+    PROP(e, dstr_fread_file(goodconf2.data, &text2) );
+    PROP(e, conf_parse(&text2, spec, speclen) );
     EXPECT("option1 hey there buddy\n"
            "option2 white   space\t test\n"
            "option3 is new\n"
@@ -291,35 +297,44 @@ static derr_t test_conf_parse(void){
     // now make sure that we can't read any bad config files
     {
         DSTR_VAR(text, 4096);
-        PROP( dstr_fread_file(badconf1.data, &text) );
-        derr_t error = conf_parse(&text, spec, speclen);
-        CATCH(E_VALUE){
+        PROP(e, dstr_fread_file(badconf1.data, &text) );
+        e = conf_parse(&text, spec, speclen);
+        CATCH(e, E_VALUE){
             // we are expecting to puke on this input; do nothing
+            DROP(e);
         }else{
-            LOG_ERROR("conf parse should have puked on: %x\n", FD(&text));
-            ORIG(E_VALUE, "conf parse did not puke when it should have");
+            TRACE(e, "conf parse should have puked on: %x\n", FD(&text));
+            DUMP(e);
+            DROP(e);
+            ORIG(e, E_VALUE, "conf parse did not puke when it should have");
         }
     }
     {
         DSTR_VAR(text, 4096);
-        PROP( dstr_fread_file(badconf2.data, &text) );
-        derr_t error = conf_parse(&text, spec, speclen);
-        CATCH(E_VALUE){
+        PROP(e, dstr_fread_file(badconf2.data, &text) );
+        e = conf_parse(&text, spec, speclen);
+        CATCH(e, E_VALUE){
             // we are expecting to puke on this input; do nothing
+            DROP(e);
         }else{
-            LOG_ERROR("conf parse should have puked on: %x\n", FD(&text));
-            ORIG(E_VALUE, "conf parse did not puke when it should have");
+            TRACE(e, "conf parse should have puked on: %x\n", FD(&text));
+            DUMP(e);
+            DROP(e);
+            ORIG(e, E_VALUE, "conf parse did not puke when it should have");
         }
     }
     {
         DSTR_VAR(text, 4096);
-        PROP( dstr_fread_file(badconf3.data, &text) );
-        derr_t error = conf_parse(&text, spec, speclen);
-        CATCH(E_VALUE){
+        PROP(e, dstr_fread_file(badconf3.data, &text) );
+        e = conf_parse(&text, spec, speclen);
+        CATCH(e, E_VALUE){
             // we are expecting to puke on this input; do nothing
+            DROP(e);
         }else{
-            LOG_ERROR("conf parse should have puked on: %x\n", FD(&text));
-            ORIG(E_VALUE, "conf parse did not puke when it should have");
+            TRACE(e, "conf parse should have puked on: %x\n", FD(&text));
+            DUMP(e);
+            DROP(e);
+            ORIG(e, E_VALUE, "conf parse did not puke when it should have");
         }
     }
 
@@ -328,7 +343,7 @@ static derr_t test_conf_parse(void){
 
 
 int main(int argc, char** argv){
-    derr_t error;
+    derr_t e = E_OK;
     // parse options and set default log level
     PARSE_TEST_OPTIONS(argc, argv, &g_test_files, LOG_LVL_INFO);
 
@@ -336,13 +351,15 @@ int main(int argc, char** argv){
     // TODO: figure out why uncommenting this causes test to crash in windows
     // fclose(stderr);
 
-    PROP_GO( test_opt_parse(), test_fail);
-    PROP_GO( test_conf_parse(), test_fail);
+    PROP_GO(e, test_opt_parse(), test_fail);
+    PROP_GO(e, test_conf_parse(), test_fail);
 
     LOG_ERROR("PASS\n");
     return 0;
 
 test_fail:
+    DUMP(e);
+    DROP(e);
     LOG_ERROR("FAIL\n");
     return 1;
 }

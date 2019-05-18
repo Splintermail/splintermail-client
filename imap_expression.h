@@ -27,6 +27,8 @@ typedef enum {
     STATUS_TYPE_BYE,
 } status_type_t;
 
+const dstr_t *st_type_to_dstr(status_type_t type);
+
 typedef enum {
     STATUS_CODE_NONE = 0,
     STATUS_CODE_ALERT,

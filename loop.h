@@ -97,6 +97,8 @@ struct loop_data_t {
     uv_tcp_t *sock;
     bool connected;
     queue_t preconnected_writes;
+    // a single error object is carried through multiple connection attempts
+    derr_t connect_iii_error;
     // the only way to pass an error from no_bufs__pause_reading():
     derr_t pausing_error;
     /* during the unpause hook, a buffer is stored here for the next call to

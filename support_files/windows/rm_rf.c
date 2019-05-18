@@ -8,6 +8,7 @@
 
 // deletes whatever is found in the first argument
 int main(int argc, char** argv) {
+    derr_t e = E_OK;
     // log to stdout
     logger_add_fileptr(LOG_LVL_DEBUG, stdout);
     // // also log to a log file
@@ -27,8 +28,12 @@ int main(int argc, char** argv) {
     }
 
     // do the deletion
-    rm_rf(argv[1]);
+    PROP_GO(e, rm_rf(argv[1]), fail);
 
-    // done!
     return 0;
+
+fail:
+    DUMP(e);
+    DROP(e);
+    return 1;
 }

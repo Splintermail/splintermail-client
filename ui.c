@@ -27,6 +27,7 @@ DSTR_STATIC(os_default_ditm_dir, "C:/ProgramData/splintermail");
 
 static derr_t load_os_config_files(dstr_t* config_text, opt_spec_t** spec,
                                    size_t speclen){
+    derr_t e = E_OK;
     /* it is useful to read all the config files first so we don't have to deal
        with obnoxious reallocations */
 
@@ -45,10 +46,10 @@ static derr_t load_os_config_files(dstr_t* config_text, opt_spec_t** spec,
     // try to read $XDG_CONFIG_HOME/splintermail.conf
     char* config_dir = getenv("XDG_CONFIG_HOME");
     if(config_dir){
-        PROP( FMT(&config_dir_conf, "%x/splintermail.conf", FS(config_dir)) );
+        PROP(e, FMT(&config_dir_conf, "%x/splintermail.conf", FS(config_dir)) );
         if(file_r_access(config_dir_conf.data)){
             config_dir_conf_start = config_text->len;
-            PROP( dstr_fread_file(config_dir_conf.data, config_text) );
+            PROP(e, dstr_fread_file(config_dir_conf.data, config_text) );
             config_dir_conf_end = config_text->len;
         }
     }
@@ -56,10 +57,10 @@ static derr_t load_os_config_files(dstr_t* config_text, opt_spec_t** spec,
     // try to read $HOME/.splintermail.conf
     char* home = getenv("HOME");
     if(home){
-        PROP( FMT(&home_dir_conf, "%x/.splintermail.conf", FS(home)) );
+        PROP(e, FMT(&home_dir_conf, "%x/.splintermail.conf", FS(home)) );
         if(file_r_access(home_dir_conf.data)){
             home_dir_conf_start = config_text->len;
-            PROP( dstr_fread_file(home_dir_conf.data, config_text) );
+            PROP(e, dstr_fread_file(home_dir_conf.data, config_text) );
             home_dir_conf_end = config_text->len;
         }
     }
@@ -67,7 +68,7 @@ static derr_t load_os_config_files(dstr_t* config_text, opt_spec_t** spec,
     // try to read /etc/splintermail.conf
     if(file_r_access(default_conf.data)){
         default_conf_start = config_text->len;
-        PROP( dstr_fread_file(default_conf.data, config_text) );
+        PROP(e, dstr_fread_file(default_conf.data, config_text) );
         default_conf_end = config_text->len;
     }
 
@@ -75,27 +76,30 @@ static derr_t load_os_config_files(dstr_t* config_text, opt_spec_t** spec,
 
     if(config_dir_conf_end - config_dir_conf_end > 0){
         dstr_t subconf = dstr_sub(config_text, config_dir_conf_start, config_dir_conf_end);
-        derr_t error = conf_parse(&subconf, spec, speclen);
-        if(error){
+        e = conf_parse(&subconf, spec, speclen);
+        CATCH(e, E_ANY){
+            DROP(e);
             fprintf(stderr, "error parsing \"%s\", exiting\n", config_dir_conf.data);
-            ORIG(E_VALUE, "unable to parse config file");
+            ORIG(e, E_VALUE, "unable to parse config file");
         }
     }
     if(home_dir_conf_end - home_dir_conf_start > 0){
         dstr_t subconf = dstr_sub(config_text, home_dir_conf_start, home_dir_conf_end);
-        derr_t error = conf_parse(&subconf, spec, speclen);
-        if(error){
+        e = conf_parse(&subconf, spec, speclen);
+        CATCH(e, E_ANY){
+            DROP(e);
             fprintf(stderr, "error parsing \"%s\", exiting\n", home_dir_conf.data);
-            ORIG(E_VALUE, "unable to parse config file");
+            ORIG(e, E_VALUE, "unable to parse config file");
         }
     }
 
     if(default_conf_end - default_conf_start > 0){
         dstr_t subconf = dstr_sub(config_text, default_conf_start, default_conf_end);
-        derr_t error = conf_parse(&subconf, spec, speclen);
-        if(error){
+        e = conf_parse(&subconf, spec, speclen);
+        CATCH(e, E_ANY){
+            DROP(e);
             fprintf(stderr, "error parsing \"%s\", exiting\n", default_conf.data);
-            ORIG(E_VALUE, "unable to parse config file");
+            ORIG(e, E_VALUE, "unable to parse config file");
         }
     }
 
@@ -118,10 +122,10 @@ static derr_t load_os_config_files(dstr_t* config_text, opt_spec_t** spec,
     // try to read %APPDATA%\splintermail\splintermail.conf
     char* app_data = getenv("APPDATA");
     if(app_data){
-        PROP( FMT(&user_conf, "%x/splintermail/splintermail.conf", FS(app_data)) );
+        PROP(e, FMT(&user_conf, "%x/splintermail/splintermail.conf", FS(app_data)) );
         if(file_r_access(user_conf.data)){
             user_conf_start = config_text->len;
-            PROP( dstr_fread_file(user_conf.data, config_text) );
+            PROP(e, dstr_fread_file(user_conf.data, config_text) );
             user_conf_end = config_text->len;
         }
     }
@@ -134,7 +138,7 @@ static derr_t load_os_config_files(dstr_t* config_text, opt_spec_t** spec,
     dret = GetModuleFileNameA(NULL, temp, sizeof(temp));
     if(dret == 0){
         fprintf(stderr, "unable to get name of executable\n");
-        ORIG(E_VALUE, "unable to get name of executable");
+        ORIG(e, E_VALUE, "unable to get name of executable");
     }
     // then get the path from that filename
     HRESULT hret;
@@ -143,19 +147,19 @@ static derr_t load_os_config_files(dstr_t* config_text, opt_spec_t** spec,
     if(hret == 0){
         // a 0 return value means nothing was removed, which shouldn't happen
         fprintf(stderr, "unable to get path of executable\n");
-        ORIG(E_VALUE, "unable to get path of executable");
+        ORIG(e, E_VALUE, "unable to get path of executable");
     }
     // get the parent directory from that path
     hret = PathRemoveFileSpecA(temp);
     if(hret == 0){
         // a 0 return value means nothing was removed, which shouldn't happen
         fprintf(stderr, "unable to get path of executable\n");
-        ORIG(E_VALUE, "unable to get path of executable");
+        ORIG(e, E_VALUE, "unable to get path of executable");
     }
-    PROP( FMT(&default_conf, "%x/splintermail.conf", FS(temp)) );
+    PROP(e, FMT(&default_conf, "%x/splintermail.conf", FS(temp)) );
     if(file_r_access(default_conf.data)){
         default_conf_start = config_text->len;
-        PROP( dstr_fread_file(default_conf.data, config_text) );
+        PROP(e, dstr_fread_file(default_conf.data, config_text) );
         default_conf_end = config_text->len;
     }
 
@@ -163,19 +167,21 @@ static derr_t load_os_config_files(dstr_t* config_text, opt_spec_t** spec,
 
     if(user_conf_end - user_conf_start > 0){
         dstr_t subconf = dstr_sub(config_text, user_conf_start, user_conf_end);
-        derr_t error = conf_parse(&subconf, spec, speclen);
-        if(error){
+        e = conf_parse(&subconf, spec, speclen);
+        CATCH(e, E_ANY){
+            DROP(e);
             fprintf(stderr, "error parsing \"%s\", exiting\n", user_conf.data);
-            ORIG(E_VALUE, "unable to parse config file");
+            ORIG(e, E_VALUE, "unable to parse config file");
         }
     }
 
     if(default_conf_end - default_conf_start > 0){
         dstr_t subconf = dstr_sub(config_text, default_conf_start, default_conf_end);
-        derr_t error = conf_parse(&subconf, spec, speclen);
-        if(error){
+        e = conf_parse(&subconf, spec, speclen);
+        CATCH(e, E_ANY){
+            DROP(e);
             fprintf(stderr, "error parsing \"%s\", exiting\n", default_conf.data);
-            ORIG(E_VALUE, "unable to parse config file");
+            ORIG(e, E_VALUE, "unable to parse config file");
         }
     }
     return E_OK;
@@ -185,11 +191,12 @@ static derr_t load_os_config_files(dstr_t* config_text, opt_spec_t** spec,
 
 
 static derr_t get_os_default_account_dir(dstr_t* account_dir, bool* account_dir_access){
+    derr_t e = E_OK;
 #ifdef _WIN32
     // Windows default accounts dir is %APPDATA%/splintermail/
     char* appdata = getenv("APPDATA");
     if(appdata){
-        PROP( FMT(account_dir, "%x/splintermail", FS(appdata)) );
+        PROP(e, FMT(account_dir, "%x/splintermail", FS(appdata)) );
         *account_dir_access = dir_rw_access(account_dir->data, true);
     }
 #else // not _WIN32
@@ -197,24 +204,24 @@ static derr_t get_os_default_account_dir(dstr_t* account_dir, bool* account_dir_
     // OSX always sets account_dir to in ~/Library/splintermail
     char* home = getenv("HOME");
     if(home){
-        PROP( FMT(account_dir, "%x/Library/splintermail", FS(home)) );
+        PROP(e, FMT(account_dir, "%x/Library/splintermail", FS(home)) );
         *account_dir_access = dir_rw_access(account_dir->data, true);
     }
 #else
     // Linux default account_dir is $XDG_CACHE_HOME/splintermail
     char* cache = getenv("XDG_CACHE_HOME");
     if(cache){
-        PROP( FMT(account_dir, "%x/splintermail", FS(cache)) );
+        PROP(e, FMT(account_dir, "%x/splintermail", FS(cache)) );
         *account_dir_access = dir_rw_access(account_dir->data, true);
     }else{
         // or $HOME/.cache/splintermail
         char* home = getenv("HOME");
         if(home){
             // first make sure there is a .cache directory
-            PROP( FMT(account_dir, "%x/.cache", FS(home)) );
+            PROP(e, FMT(account_dir, "%x/.cache", FS(home)) );
             if(dir_rw_access(account_dir->data, true)){
                 // then make sure there is a a splintermail subdir
-                PROP( FMT(account_dir, "/splintermail") );
+                PROP(e, FMT(account_dir, "/splintermail") );
                 *account_dir_access = dir_rw_access(account_dir->data, true);
             }
         }
@@ -232,6 +239,7 @@ struct user_search_data_t {
 static derr_t user_search_hook(const char* base, const dstr_t* file,
                                bool isdir, void* userdata){
     (void) base;
+    derr_t e = E_OK;
     struct user_search_data_t* search_data = userdata;
     // ignore regular files
     if(!isdir) return E_OK;
@@ -242,7 +250,7 @@ static derr_t user_search_hook(const char* base, const dstr_t* file,
     if(file->len > search_data->user->size) return E_OK;
     // store the name of the folder
     if(*search_data->nfolders == 0){
-        PROP( dstr_copy(file, search_data->user) );
+        PROP(e, dstr_copy(file, search_data->user) );
     }
     // this will be an error indication if we reach this more than once
     *search_data->nfolders += 1;
@@ -250,12 +258,13 @@ static derr_t user_search_hook(const char* base, const dstr_t* file,
 }
 
 static derr_t user_prompt(const char* prompt, dstr_t* resp, bool hide){
-    PROP( FFMT(stderr, NULL, prompt) );
+    derr_t e = E_OK;
+    PROP(e, FFMT(stderr, NULL, prompt) );
     fflush(stderr);
     if(hide){
-        PROP( get_password(resp) );
+        PROP(e, get_password(resp) );
     }else{
-        PROP( get_string(resp) );
+        PROP(e, get_string(resp) );
         // ignore the newline at the end of the string
         while(resp->len && (resp->data[resp->len-1] == '\r'
                             || resp->data[resp->len-1] == '\n'))
@@ -266,11 +275,12 @@ static derr_t user_prompt(const char* prompt, dstr_t* resp, bool hide){
 
 // multi-choice prompt, will enforce a valid response
 static derr_t prompt_one_of(const char* prompt, char* opts, size_t* ret){
+    derr_t e = E_OK;
     dstr_t dopts;
     DSTR_WRAP(dopts, opts, strlen(opts), true);
     DSTR_VAR(temp, 256);
     while(true){
-        PROP( user_prompt(prompt, &temp, false) );
+        PROP(e, user_prompt(prompt, &temp, false) );
         if(temp.len == 1){
             // check if the character we got in response is a valid option
             LIST_VAR(dstr_t, patterns, 1);
@@ -281,17 +291,18 @@ static derr_t prompt_one_of(const char* prompt, char* opts, size_t* ret){
                 break;
             }
         }
-        PROP( FFMT(stderr, NULL, "Response must be one of [%x]\n", FS(opts)) );
+        PROP(e, FFMT(stderr, NULL, "Response must be one of [%x]\n", FS(opts)) );
     }
     return E_OK;
 }
 
 static derr_t check_api_token_register(const dstr_t* account_dir,
                                        const dstr_t* user, bool* do_reg){
+    derr_t e = E_OK;
     *do_reg = false;
     // check if the user indicated they never want to register
     DSTR_VAR(temp, 4096);
-    PROP( FMT(&temp, "%x/%x/noregister", FD(account_dir), FD(user)) );
+    PROP(e, FMT(&temp, "%x/%x/noregister", FD(account_dir), FD(user)) );
     // if a noregister file exists, don't do anything
     if(file_r_access(temp.data)){
         LOG_DEBUG("found noregister for user %x, not registering\n", FD(user));
@@ -301,15 +312,14 @@ static derr_t check_api_token_register(const dstr_t* account_dir,
     static const char* prompt =
         "Register an API token for this device (for password-free access)?\n"
         "[y (yes) / n (not now) / e (not ever)]:";
-    size_t ret;
-    PROP( prompt_one_of(prompt, "yne", &ret) );
-    derr_t error;
+    size_t ret = 99;
+    PROP(e, prompt_one_of(prompt, "yne", &ret) );
     switch(ret){
         // "yes"
         case 0:
             // make sure the user directory exists
             temp.len = 0;
-            PROP( FMT(&temp, "%x/%x", FD(account_dir), FD(user)) );
+            PROP(e, FMT(&temp, "%x/%x", FD(account_dir), FD(user)) );
             if(!dir_w_access(temp.data, true)){
                 LOG_DEBUG("no write access to save API token; not registering\n");
                 return E_OK;
@@ -322,27 +332,30 @@ static derr_t check_api_token_register(const dstr_t* account_dir,
         case 2:
             // make sure the user directory exists
             temp.len = 0;
-            PROP( FMT(&temp, "%x/%x", FD(account_dir), FD(user)) );
+            PROP(e, FMT(&temp, "%x/%x", FD(account_dir), FD(user)) );
             if(!dir_w_access(temp.data, true)){
                 LOG_DEBUG("no write access to save noregister; doing nothing\n");
                 return E_OK;
             }
             // now write to the noregister file
-            PROP( FMT(&temp, "/noregister") );
+            PROP(e, FMT(&temp, "/noregister") );
             DSTR_STATIC(empty_dstr, "");
-            error = dstr_write_file(temp.data, &empty_dstr);
-            CATCH(E_ANY){
+            e = dstr_write_file(temp.data, &empty_dstr);
+            CATCH(e, E_ANY){
+                DROP(e);
                 LOG_DEBUG("failed to save noregister\n");
                 return E_OK;
             }
             break;
-        default: ORIG(E_INTERNAL, "unallowed response");
+        default: ORIG(e, E_INTERNAL, "unallowed response");
     }
     return E_OK;
 }
 
 // ugh... abstracting main() feels dirty.  Thanks, Windows.
 int do_main(int argc, char* argv[], bool windows_service){
+    derr_t e = E_OK;
+    int retval = 0;
     // ignore SIGPIPE, required to work with OpenSSL
     // see https://mta.openssl.org/pipermail/openssl-users/2017-May/005776.html
     // (but SIGPIPE doesnt exist in windows)
@@ -351,11 +364,9 @@ int do_main(int argc, char* argv[], bool windows_service){
 #endif
 
     // setup the ssl library (application-wide step)
-    PROP( ssl_library_init());
+    PROP_GO(e, ssl_library_init(), fail);
 
-    derr_t error = E_OK;
     DSTR_VAR(logfile_path, 4096);
-    int retval = 0;
     dstr_t config_text;
     memset(&config_text, 0, sizeof(config_text));
 
@@ -406,7 +417,9 @@ int do_main(int argc, char* argv[], bool windows_service){
     int newargc;
 
     // parse options
-    if(opt_parse(argc, argv, spec, speclen, &newargc)){
+    e = opt_parse(argc, argv, spec, speclen, &newargc);
+    CATCH(e, E_ANY){
+        DROP(e);
         fprintf(stderr, "try `%s --help` for usage\n", argv[0]);
         retval = 1;
         goto cu;
@@ -432,10 +445,10 @@ int do_main(int argc, char* argv[], bool windows_service){
     bool should_dump_config = (o_dump_conf.found != 0);
 
     // load up config files
-    PROP_GO( dstr_new(&config_text, 4096), cu);
+    PROP_GO(e, dstr_new(&config_text, 4096), cu);
     if(o_config.found){
         // this should never fail because o_config.val comes from argv
-        PROP_GO( dstr_null_terminate(&o_config.val), cu);
+        PROP_GO(e, dstr_null_terminate(&o_config.val), cu);
         // if `-c` or `--config` was specified, load that only
         if(file_r_access(o_config.val.data) == false){
             fprintf(stderr, "unable to access config file \"%s\"\n",
@@ -443,11 +456,11 @@ int do_main(int argc, char* argv[], bool windows_service){
             retval = 2;
             goto cu;
         }
-        PROP_GO( dstr_fread_file(o_config.val.data, &config_text), cu);
-        PROP_GO( conf_parse(&config_text, spec, speclen), cu);
+        PROP_GO(e, dstr_fread_file(o_config.val.data, &config_text), cu);
+        PROP_GO(e, conf_parse(&config_text, spec, speclen), cu);
     }else{
         // if no `-c` or `--config`, load the OS-specific file locations
-        PROP_GO( load_os_config_files(&config_text, spec, speclen), cu);
+        PROP_GO(e, load_os_config_files(&config_text, spec, speclen), cu);
     }
 
     // if we had --dump_conf on the command line, this is where we dump config
@@ -474,29 +487,29 @@ int do_main(int argc, char* argv[], bool windows_service){
     // ditm_dir option
     DSTR_VAR(ditm_dir, 4096);
     if(o_ditm_dir.found){
-        PROP_GO( FMT(&ditm_dir, "%x", FD(&o_ditm_dir.val)), cu);
+        PROP_GO(e, FMT(&ditm_dir, "%x", FD(&o_ditm_dir.val)), cu);
     }else{
-        PROP_GO( FMT(&ditm_dir, "%x", FD(&os_default_ditm_dir)), cu);
+        PROP_GO(e, FMT(&ditm_dir, "%x", FD(&os_default_ditm_dir)), cu);
     }
 
 #ifdef BUILD_DEBUG
     // debug options
     DSTR_VAR(r_host_d, 256);
     if(o_r_host.found){
-        PROP_GO( FMT(&r_host_d, "%x", FD(&o_r_host.val)), cu);
+        PROP_GO(e, FMT(&r_host_d, "%x", FD(&o_r_host.val)), cu);
     }else{
-        PROP_GO( FMT(&r_host_d, "splintermail.com"), cu);
+        PROP_GO(e, FMT(&r_host_d, "splintermail.com"), cu);
     }
     const char* rhost = r_host_d.data;
 
     unsigned int api_port = 443;
     if(o_r_api_port.found){
-        PROP_GO( dstr_tou(&o_r_api_port.val, &api_port, 10), cu);
+        PROP_GO(e, dstr_tou(&o_r_api_port.val, &api_port, 10), cu);
     }
 
     unsigned int pop_port = 995;
     if(o_r_pop_port.found){
-        PROP_GO( dstr_tou(&o_r_pop_port.val, &pop_port, 10), cu);
+        PROP_GO(e, dstr_tou(&o_r_pop_port.val, &pop_port, 10), cu);
     }
 #else
     const char* rhost = "splintermail.com";
@@ -512,8 +525,9 @@ int do_main(int argc, char* argv[], bool windows_service){
         unsigned int port = 1995;
         if(o_port.found){
             // intelligently convert port to a number
-            derr_t e = dstr_tou(&o_port.val, &port, 10);
-            if(e || port < 1 || port > 65535){
+            e = dstr_tou(&o_port.val, &port, 10);
+            if(e.type || port < 1 || port > 65535){
+                DROP(e);
                 fprintf(stderr, "invalid port number\n");
                 fprintf(stderr, "try `%s --help` for usage\n", argv[0]);
                 retval = 4;
@@ -523,12 +537,12 @@ int do_main(int argc, char* argv[], bool windows_service){
 
         // then print to a log file, unless --no-logfile is specifed
         if(o_logfile.found > o_no_logfile.found){
-            PROP_GO( FMT(&logfile_path, "%x", FD(&o_logfile.val)), cu);
+            PROP_GO(e, FMT(&logfile_path, "%x", FD(&o_logfile.val)), cu);
             logger_add_filename(log_level, logfile_path.data);
         }
         // log file defaults to on, in ${ditm_dir}/ditm_log
         else if(o_logfile.found == 0 && o_no_logfile.found == 0){
-            PROP_GO( FMT(&logfile_path, "%x/ditm_log", FD(&ditm_dir)), cu);
+            PROP_GO(e, FMT(&logfile_path, "%x/ditm_log", FD(&ditm_dir)), cu);
             logger_add_filename(log_level, logfile_path.data);
         }
 
@@ -536,7 +550,7 @@ int do_main(int argc, char* argv[], bool windows_service){
         DSTR_VAR(cert, 4096);
         char* cert_arg = NULL;
         if(o_cert.found){
-            PROP_GO( FMT(&cert, "%x", FD(&o_cert.val)), cu);
+            PROP_GO(e, FMT(&cert, "%x", FD(&o_cert.val)), cu);
             cert_arg = cert.data;
         }
 
@@ -544,7 +558,7 @@ int do_main(int argc, char* argv[], bool windows_service){
         DSTR_VAR(key, 4096);
         char* key_arg = NULL;
         if(o_key.found){
-            PROP_GO( FMT(&key, "%x", FD(&o_key.val)), cu);
+            PROP_GO(e, FMT(&key, "%x", FD(&o_key.val)), cu);
             key_arg = key.data;
         }
 
@@ -554,7 +568,7 @@ int do_main(int argc, char* argv[], bool windows_service){
         }
 #endif
 
-        PROP_GO(ditm_loop(rhost, pop_port, ditm_dir.data, port,
+        PROP_GO(e, ditm_loop(rhost, pop_port, ditm_dir.data, port,
                           rhost, api_port, cert_arg, key_arg), cu);
 
         retval = 0;
@@ -567,24 +581,25 @@ int do_main(int argc, char* argv[], bool windows_service){
     bool account_dir_access = false;
     DSTR_VAR(account_dir, 4096);
     if(o_account_dir.found){
-        PROP_GO( FMT(&account_dir, "%x", FD(&o_account_dir.val)), cu);
+        PROP_GO(e, FMT(&account_dir, "%x", FD(&o_account_dir.val)), cu);
         // make sure we can access the account_dir
         account_dir_access = dir_rw_access(account_dir.data, true);
     }else{
         // default is determined by OS and environment variables
-        PROP_GO( get_os_default_account_dir(&account_dir, &account_dir_access), cu);
+        PROP_GO(e, get_os_default_account_dir(&account_dir, &account_dir_access), cu);
     }
 
     if(!account_dir_access){
-        FFMT(stderr, NULL, "account directory %x not found or not accessible; "
+        e = FFMT(stderr, NULL, "account directory %x not found or not accessible; "
                            "API token access disabled\n", FD(&account_dir));
+        DROP(e);
     }
 
     // figure out who our user is
     DSTR_VAR(user, 256);
     bool user_found = false;
     if(o_user.found){
-        PROP_GO( FMT(&user, "%x", FD(&o_user.val)), cu);
+        PROP_GO(e, FMT(&user, "%x", FD(&o_user.val)), cu);
         user_found = true;
     }else if(account_dir_access){
         // verify that we can auto-decide who the user is
@@ -592,7 +607,7 @@ int do_main(int argc, char* argv[], bool windows_service){
         // wrap "user" and "nfolders" in struct for the "for_each_file" hook
         struct user_search_data_t search_data = {&nfolders, &user};
         // loop through files in the folder in a platform-independent way
-        PROP_GO( for_each_file_in_dir(account_dir.data, user_search_hook,
+        PROP_GO(e, for_each_file_in_dir(account_dir.data, user_search_hook,
                                       (void*)&search_data), cu);
         // make sure we got a username
         if(nfolders == 1){
@@ -615,7 +630,7 @@ int do_main(int argc, char* argv[], bool windows_service){
     bool can_register = false; // have permissions to save an token?
     if(account_dir_access){
         // start the creds_path
-        PROP_GO( FMT(&creds_path, "%x/%x", FD(&account_dir), FD(&user)), cu);
+        PROP_GO(e, FMT(&creds_path, "%x/%x", FD(&account_dir), FD(&user)), cu);
         // if the folder doesn't exist, we know we can make it
         if(!exists(creds_path.data)){
             user_dir_access = true;
@@ -624,8 +639,9 @@ int do_main(int argc, char* argv[], bool windows_service){
         }else if(dir_rw_access(creds_path.data, false)){
             user_dir_access = true;
         }else{
-            FFMT(stderr, NULL, "Insufficient permissions for user directory %x; "
+            e = FFMT(stderr, NULL, "Insufficient permissions for user directory %x; "
                                "API token access disabled\n", FD(&creds_path));
+            DROP(e);
         }
     }
 
@@ -634,7 +650,7 @@ int do_main(int argc, char* argv[], bool windows_service){
     bool creds_found = false;  // have good creds?
     if(user_dir_access){
         // complete the creds_path
-        PROP_GO( FMT(&creds_path, "/api_token.json"), cu);
+        PROP_GO(e, FMT(&creds_path, "/api_token.json"), cu);
         // check if the file already exists
         if(exists(creds_path.data)){
             // check if we have RW access to it
@@ -643,26 +659,32 @@ int do_main(int argc, char* argv[], bool windows_service){
                    auto-deleting (or overwriting) bad files here. */
                 // can_register = true;
                 // now see if we have a good token on file
-                error = api_token_read(creds_path.data, &token);
-                CATCH(E_PARAM | E_INTERNAL){
+                e = api_token_read(creds_path.data, &token);
+                CATCH(e, E_PARAM | E_INTERNAL){
+                    DROP(e);
                     // broken token, warn user
-                    FFMT(stderr, NULL,
+                    e = FFMT(stderr, NULL,
                          "api token at \"%x\" appears invalid; ignoring it.\n",
                          FD(&creds_path));
-                }else CATCH(E_ANY){
+                    DROP(e);
+                }else CATCH(e, E_ANY){
+                    DROP(e);
                     // NOMEM is about the only plausible error we could get here
-                    FFMT(stderr, NULL,
+                    e = FFMT(stderr, NULL,
                          "unexpected error reading api token at \"%x\"; "
                          "disabling API token access.\n", FD(&creds_path));
+                    DROP(e);
                     // either way, ignore this error
                 }else{
                     creds_found = true;
                 }
             }else{
+                DROP(e);
                 // file exists, but we have no access to it
-                FFMT(stderr, NULL,
+                e = FFMT(stderr, NULL,
                      "Insufficient permissions for %x; "
                      "API token access disabled\n", FD(&creds_path));
+                DROP(e);
                 /* no need to set can_register = false here, because it's
                    impossible to arrive here with can_register == true */
             }
@@ -680,7 +702,7 @@ int do_main(int argc, char* argv[], bool windows_service){
     if(newargc > 2){
         dstr_t argv2;
         DSTR_WRAP(argv2, argv[2], strlen(argv[2]), true);
-        PROP( json_encode(&argv2, &argument_var) );
+        PROP_GO(e, json_encode(&argv2, &argument_var), cu);
         argument = &argument_var;
     }
 
@@ -710,34 +732,37 @@ int do_main(int argc, char* argv[], bool windows_service){
         need_password = true;
         // prompt for passwords
         DSTR_VAR(confirm_password, 256);
-        PROP_GO( user_prompt("Old Splintermail.com Account Password:", &password, true), cu);
-        PROP_GO( user_prompt("New Password:", &new_password, true), cu);
-        PROP_GO( user_prompt("Confirm Password:", &confirm_password, true), cu);
+        PROP_GO(e, user_prompt("Old Splintermail.com Account Password:", &password, true), cu);
+        PROP_GO(e, user_prompt("New Password:", &new_password, true), cu);
+        PROP_GO(e, user_prompt("Confirm Password:", &confirm_password, true), cu);
         // make sure confirmation was valid
         if(dstr_cmp(&new_password, &confirm_password) != 0){
-            FFMT(stderr, NULL, "Password confirmation failed.\n");
+            e = FFMT(stderr, NULL, "Password confirmation failed.\n");
+            DROP(e);
             retval = 6;
             goto cu;
         }
         // set the argument for the API call
         argument_var.len = 0;
-        PROP( json_encode(&new_password, &argument_var) );
+        PROP_GO(e, json_encode(&new_password, &argument_var), cu);
         argument = &argument_var;
     }else if(need_password){
-        PROP_GO( user_prompt("Splintermail.com Account Password:", &password, true), cu);
+        PROP_GO(e, user_prompt("Splintermail.com Account Password:", &password, true), cu);
     }
 
     // now check if we should register for an API token:
     if(can_register && !creds_found){
         bool do_reg;
-        PROP_GO( check_api_token_register(&account_dir, &user, &do_reg), cu);
+        PROP_GO(e, check_api_token_register(&account_dir, &user, &do_reg), cu);
         if(do_reg){
             // do the registration
-            error = register_api_token(rhost, api_port, &user, &password,
+            e = register_api_token(rhost, api_port, &user, &password,
                                        creds_path.data);
-            CATCH(E_ANY){
+            CATCH(e, E_ANY){
+                DROP(e);
                 LOG_ERROR("failed to register API token with server\n");
-                return E_OK;
+                retval = 7;
+                goto cu;
             }
         }
     }
@@ -751,11 +776,12 @@ int do_main(int argc, char* argv[], bool windows_service){
     if(need_confirmation){
         // prompt for confirmation
         DSTR_STATIC(confirmation, "I really want to do this");
-        FFMT(stderr, NULL, "`%x` needs confirmation. Type the following text:\n"
+        e = FFMT(stderr, NULL, "`%x` needs confirmation. Type the following text:\n"
              "%x\n", FD(&command), FD(&confirmation));
+        DROP(e);
         // get confirmation
         DSTR_VAR(temp, 256);
-        PROP_GO( get_string(&temp), cu);
+        PROP_GO(e, get_string(&temp), cu);
         // ignore the newline at the end of the string
         while(temp.len && (temp.data[temp.len-1] == '\r'
                            || temp.data[temp.len-1] == '\n'))
@@ -763,7 +789,7 @@ int do_main(int argc, char* argv[], bool windows_service){
         // verify confirmation
         if(dstr_cmp(&temp, &confirmation) != 0){
             fprintf(stderr, "confirmation failed, aborting.\n");
-            retval = 7;
+            retval = 8;
             goto cu;
         }
     }
@@ -776,31 +802,34 @@ int do_main(int argc, char* argv[], bool windows_service){
     LIST_VAR(json_t, json, 256);
 
     if(need_password){
-        PROP_GO( api_password_call(rhost, api_port, &command, argument, &user,
+        PROP_GO(e, api_password_call(rhost, api_port, &command, argument, &user,
                                    &password, &code, &reason, &recv, &json), cu);
     }else{
         // update nonce
         token.nonce++;
-        PROP_GO( api_token_write(creds_path.data, &token), cu);
-        PROP_GO( api_token_call(rhost, api_port, &command, argument, &token,
+        PROP_GO(e, api_token_write(creds_path.data, &token), cu);
+        PROP_GO(e, api_token_call(rhost, api_port, &command, argument, &token,
                                 &code, &reason, &recv, &json), cu);
         // check for rejection of API token
         if(code == 401 || code == 403){
-            FFMT(stderr, NULL, "API Token rejected, deleting token.  Run this "
+            e = FFMT(stderr, NULL, "API Token rejected, deleting token.  Run this "
                                "command again to generate a new token.\n" );
+            DROP(e);
             int ret = remove(creds_path.data);
             if(ret != 0){
-                FFMT(stderr, NULL, "Error removing token: %x\n", FE(&errno));
+                e = FFMT(stderr, NULL, "Error removing token: %x\n", FE(&errno));
+                DROP(e);
             }
-            retval = 8;
+            retval = 9;
             goto cu;
         }
     }
 
 
     if(code < 200 || code > 299){
-        FFMT(stderr, NULL, "api request rejected: %x %x\n", FI(code), FD(&reason));
-        retval = 9;
+        e = FFMT(stderr, NULL, "api request rejected: %x %x\n", FI(code), FD(&reason));
+        DROP(e);
+        retval = 10;
         goto cu;
     }
 
@@ -808,24 +837,30 @@ int do_main(int argc, char* argv[], bool windows_service){
     dstr_t status;
 
     // check the status of the returned json
-    PROP_GO( j_to_dstr(jk(jroot, "status"), &status), cu);
+    PROP_GO(e, j_to_dstr(jk(jroot, "status"), &status), cu);
     DSTR_STATIC(okstr, "success");
     if(dstr_cmp(&status, &okstr) != 0){
         dstr_t contents;
-        PROP_GO( j_to_dstr(jk(jroot, "contents"), &contents), cu);
-        FFMT(stderr, NULL, "REST API call failed: \"%x\"\n", FD(&contents));
-        retval = 10;
+        PROP_GO(e, j_to_dstr(jk(jroot, "contents"), &contents), cu);
+        e = FFMT(stderr, NULL, "REST API call failed: \"%x\"\n", FD(&contents));
+        DROP(e);
+        retval = 11;
         goto cu;
     }
 
     // now dump the return json
-    PROP_GO( json_fdump(stdout, jk(jroot, "contents") ), cu);
+    PROP_GO(e, json_fdump(stdout, jk(jroot, "contents") ), cu);
 
 cu:
     dstr_free(&config_text);
     ssl_library_close();
+fail:
     // if we have an uncaught error return 255
-    if(error) return 255;
+    if(e.type != E_NONE){
+        DUMP(e);
+        DROP(e);
+        return 255;
+    }
     return retval;
 }
 

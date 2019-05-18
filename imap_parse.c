@@ -61,13 +61,14 @@ derr_t imap_parser_init(imap_parser_t *parser,
                         imap_parse_hooks_dn_t hooks_dn,
                         imap_parse_hooks_up_t hooks_up,
                         void *hook_data){
+    derr_t e = E_OK;
     // init dstr_t temp to zeros
     parser->temp = (dstr_t){0};
 
     // init the bison parser
     parser->yyps = yypstate_new();
     if(parser->yyps == NULL){
-        ORIG(E_NOMEM, "unable to allocate yypstate");
+        ORIG(e, E_NOMEM, "unable to allocate yypstate");
     }
 
     // initial state details
@@ -90,6 +91,7 @@ void imap_parser_free(imap_parser_t *parser){
 }
 
 derr_t imap_parse(imap_parser_t *parser, int type, const dstr_t *token){
+    derr_t e = E_OK;
     parser->token = token;
     int yyret = yypush_parse(parser->yyps, type, NULL, parser);
     switch(yyret){
@@ -98,35 +100,37 @@ derr_t imap_parse(imap_parser_t *parser, int type, const dstr_t *token){
         case YYPUSH_MORE:   // parsing incomplete, but valid; parser not reset
             return E_OK;
         case 1:             // invalid; parser is reset
-            ORIG(E_PARAM, "invalid input");
+            ORIG(e, E_PARAM, "invalid input");
         case 2:             // memory exhaustion; parser is reset
-            ORIG(E_NOMEM, "memory exhaustion during yypush_parse");
+            ORIG(e, E_NOMEM, "memory exhaustion during yypush_parse");
         default:            // this should never happen
-            LOG_ERROR("yypush_parse() returned %x\n", FI(yyret));
-            ORIG(E_INTERNAL, "unexpected yypush_parse() return value");
+            TRACE(e, "yypush_parse() returned %x\n", FI(yyret));
+            ORIG(e, E_INTERNAL, "unexpected yypush_parse() return value");
     }
 }
 
 derr_t keep_init(void *data){
+    derr_t e = E_OK;
     // dereference the scanner, so we can read the token
     imap_parser_t *parser = data;
     // allocate the temp dstr_t
-    PROP( dstr_new(&parser->temp, 64) );
+    PROP(e, dstr_new(&parser->temp, 64) );
     return E_OK;
 }
 
 derr_t keep(imap_parser_t *parser, keep_type_t type){
+    derr_t e = E_OK;
     // patterns for recoding the quoted strings
     LIST_STATIC(dstr_t, find, DSTR_LIT("\\\\"), DSTR_LIT("\\\""));
     LIST_STATIC(dstr_t, repl, DSTR_LIT("\\"),   DSTR_LIT("\""));
     switch(type){
         case KEEP_RAW:
             // no escapes or fancy shit necessary, just append
-            PROP( dstr_append(&parser->temp, parser->token) );
+            PROP(e, dstr_append(&parser->temp, parser->token) );
             break;
         case KEEP_QSTRING:
             // unescape \" and \\ sequences
-            PROP( dstr_recode(parser->token, &parser->temp, &find, &repl, true) );
+            PROP(e, dstr_recode(parser->token, &parser->temp, &find, &repl, true) );
             break;
     }
     return E_OK;
@@ -141,6 +145,7 @@ dstr_t keep_ref(imap_parser_t *parser){
 }
 
 derr_t imap_literal(imap_parser_t *parser, dstr_t literal){
+    derr_t e = E_OK;
     // store the literal in the *parser object, so keep_ref() can use it
     // note: if keep was false in the literal hook, this will be a (dstr_t){0}
     parser->temp = literal;
@@ -151,6 +156,6 @@ derr_t imap_literal(imap_parser_t *parser, dstr_t literal){
     }
     // feed LITERAL_END token to the parser, to trigger end-of-literal actions
     dstr_t empty_token = (dstr_t){0};
-    PROP( imap_parse(parser, LITERAL_END, &empty_token) );
+    PROP(e, imap_parse(parser, LITERAL_END, &empty_token) );
     return E_OK;
 }

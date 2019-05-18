@@ -21,8 +21,15 @@ typedef _Bool bool;
 #define ABS(a)   ((a) > 0 ? (a) : (-(a)))
 #endif
 
+typedef struct {
+    char* data;
+    size_t size;
+    size_t len;
+    bool fixed_size;
+} dstr_t;
+
 typedef enum {              // GENERAL DEFINITIONS:
-    E_OK        = 0,        // no error
+    E_NONE      = 0,        // no error
     E_IO        = 1 << 0,   // delete this
     E_NOMEM     = 1 << 1,   // some memory allocation failed
     E_SOCK      = 1 << 2,   // error in socket(), bind(), listen(), or accept()
@@ -42,24 +49,18 @@ typedef enum {              // GENERAL DEFINITIONS:
     E_NOKEYS    = 1 << 16,  // user has no keys, a non-critical error in encrypt_msg.c
     E_UV        = 1 << 17,  // an unidentified error from libuv
     E_ANY       = ~0, // for catching errors, never throw this error
+} derr_type_t;
+
+typedef struct {
+    derr_type_t type;
+    dstr_t msg;
 } derr_t;
 
-typedef struct {
-    char* data;
-    size_t size;
-    size_t len;
-    bool fixed_size;
-} dstr_t;
+/* for backwards compatibility with a LOT of code, E_OK is not part of the
+   derr_type_t enum but is actually a derr_t struct with an empty message. */
+#define E_OK ((derr_t){.type = E_NONE})
 
-// constant version
-typedef struct {
-    const char* data;
-    size_t size;
-    size_t len;
-    bool fixed_size;
-} dstr_const_t;
-
-dstr_t* error_to_dstr(derr_t error);
+dstr_t* error_to_dstr(derr_type_t error);
 
 // wrap an empty char[] with in a dstr_t
 #define DSTR_WRAP_ARRAY(dstr, buffer){ \
@@ -104,6 +105,7 @@ dstr_t* error_to_dstr(derr_t error);
                                 .fixed_size=true})
 
 // this allocates a new dstr on the heap
+derr_type_t dstr_new_quiet(dstr_t *ds, size_t size);
 derr_t dstr_new(dstr_t* ds, size_t size);
 /*  throws : E_NOMEM */
 
@@ -186,6 +188,7 @@ LIST_HEADERS(bool)
 
 #define LIST_FUNCTIONS(type) \
 derr_t list_ ## type ## _new(LIST(type)* list, size_t num_items){ \
+    derr_t e = E_OK; \
     /* only malloc in power of 2 */ \
     size_t min_size = num_items * sizeof(type); \
     size_t newsize = 2; \
@@ -194,7 +197,7 @@ derr_t list_ ## type ## _new(LIST(type)* list, size_t num_items){ \
     } \
     list->data = (type*)malloc(newsize); \
     if(!list->data){ \
-        ORIG(E_NOMEM, "unable to malloc list"); \
+        ORIG(e, E_NOMEM, "unable to malloc list"); \
     } \
     list->size = newsize; \
     list->len = 0; \
@@ -202,27 +205,29 @@ derr_t list_ ## type ## _new(LIST(type)* list, size_t num_items){ \
     return E_OK; \
 } \
 derr_t list_ ## type ## _grow(LIST(type)* list, size_t num_items){ \
+    derr_t e = E_OK; \
     /* check for reallocation */ \
     size_t min_size = num_items * sizeof(type); \
     if(list->size < min_size){ \
         /* don't try to realloc on a fixed-size list */ \
         if(list->fixed_size){ \
-            ORIG(E_FIXEDSIZE, "unable to grow a fixed-size list"); \
+            ORIG(e, E_FIXEDSIZE, "unable to grow a fixed-size list"); \
         } \
         size_t newsize = MIN(list->size, 2); \
         while(newsize < min_size){ \
             newsize *= 2; \
         } \
         void* new = realloc(list->data, newsize); \
-        if(!new) ORIG(E_NOMEM, "unable to realloc list"); \
+        if(!new) ORIG(e, E_NOMEM, "unable to realloc list"); \
         list->data = new; \
         list->size = newsize; \
     } \
     return E_OK; \
 } \
 derr_t list_ ## type ## _append(LIST(type)* list, type element){ \
+    derr_t e = E_OK; \
     /* grow the list */ \
-    PROP( list_ ## type ## _grow(list, list->len + 1) ); \
+    PROP(e, list_ ## type ## _grow(list, list->len + 1) ); \
     /* append the element to the list */ \
     list->data[list->len++] = element; \
     return E_OK; \
@@ -246,6 +251,7 @@ void list_ ## type ## _free(LIST(type)* list){ \
     } \
 }
 
+derr_type_t dstr_grow_quiet(dstr_t *ds, size_t min_size);
 derr_t dstr_grow(dstr_t* ds, size_t min_size);
 /* throws: E_FIXEDSIZE
            E_NOMEM */
@@ -372,6 +378,7 @@ out:    dstr to be copied/appended to
 derr_t dstr_copy(const dstr_t* in, dstr_t* out);
 /* throws: E_FIXEDSIZE
            E_NOMEM */
+derr_type_t dstr_append_quiet(dstr_t *dstr, const dstr_t *new_text);
 derr_t dstr_append(dstr_t* dstr, const dstr_t* new_text);
 /* throws: E_FIXEDSIZE
            E_NOMEM */
@@ -390,6 +397,7 @@ void dstr_leftshift(dstr_t* buffer, size_t count);
 /* will append a '\0' to the end of a dstr without changing its length, or
    raise an error if it can't.  It will work always work on dstr_t's created
    with DSTR_STATIC(). */
+derr_type_t dstr_null_terminate_quiet(dstr_t* ds);
 derr_t dstr_null_terminate(dstr_t* ds);
 /*  throws : E_NOMEM
              E_FIXEDSIZE */
@@ -428,6 +436,7 @@ derr_t dstr_fread(FILE* f, dstr_t* buffer, size_t count, size_t* amnt_read);
              E_FIXEDSIZE
              E_OS */
 
+derr_type_t dstr_fwrite_quiet(FILE* f, const dstr_t* buffer);
 derr_t dstr_fwrite(FILE* f, const dstr_t* buffer);
 /*  throws : E_OS */
 
@@ -505,7 +514,7 @@ typedef enum {
 
 typedef struct {
     const void* arg;
-    derr_t (*hook)(dstr_t* out, FILE* f, size_t* written, const void* arg);
+    derr_type_t (*hook)(dstr_t* out, const void* arg);
 } fmt_data_ext_t;
 
 typedef union {
@@ -528,13 +537,20 @@ typedef struct {
    because the it is *called* in the error-handling macros, and any error
    results in an immediate recurse-until-segfault operation. */
 // Also note: this function is meant to be called by the FFMT macro
-derr_t pvt_ffmt(FILE* f, size_t* written, const char* fstr, const fmt_t* args,
-                size_t nargs);
+derr_type_t pvt_ffmt_quiet(
+        FILE* f, size_t* written, const char* fstr, const fmt_t* args,
+        size_t nargs);
+derr_t pvt_ffmt(
+        FILE* f, size_t* written, const char* fstr, const fmt_t* args,
+        size_t nargs);
 /*  throws : E_OS (on the write part)
              If you use an extension, this could throw additional errors */
 
 // Note: this function is meant to be called by the FMT macro
-derr_t pvt_fmt(dstr_t* out, const char* fstr, const fmt_t* args, size_t nargs);
+derr_type_t pvt_fmt_quiet(
+        dstr_t* out, const char* fstr, const fmt_t* args, size_t nargs);
+derr_t pvt_fmt(
+        dstr_t* out, const char* fstr, const fmt_t* args, size_t nargs);
 /*  throws : E_NOMEM
              E_FIXEDSIZE
              E_INTERNAL
@@ -548,17 +564,17 @@ derr_t pvt_fmt(dstr_t* out, const char* fstr, const fmt_t* args, size_t nargs);
 // FMT is like sprintf
 #define FMT(out, fstr, ...) \
     pvt_fmt(out, \
-          fstr, \
-          (const fmt_t[]){FI(1), __VA_ARGS__}, \
-          sizeof((const fmt_t[]){FI(1), __VA_ARGS__})/sizeof(fmt_t))
+            fstr, \
+            (const fmt_t[]){FI(1), __VA_ARGS__}, \
+            sizeof((const fmt_t[]){FI(1), __VA_ARGS__})/sizeof(fmt_t))
 
 // FFMT is like fprintf
 #define FFMT(f, written, fstr, ...) \
     pvt_ffmt(f, \
-           written, \
-           fstr, \
-           (const fmt_t[]){FI(1), __VA_ARGS__}, \
-           sizeof((const fmt_t[]){FI(1), __VA_ARGS__})/sizeof(fmt_t))
+             written, \
+             fstr, \
+             (const fmt_t[]){FI(1), __VA_ARGS__}, \
+             sizeof((const fmt_t[]){FI(1), __VA_ARGS__})/sizeof(fmt_t))
 
 // PFMT is like printf
 #define PFMT(fstr, ...) FFMT(stdout, NULL, fstr, __VA_ARGS__)
@@ -573,7 +589,7 @@ static inline fmt_t FS(const char* arg){ return (fmt_t){FMT_CSTR, {.cstr = arg} 
 static inline fmt_t FD(const dstr_t* arg){ return (fmt_t){FMT_DSTR, {.dstr = arg} }; }
 static inline fmt_t FP(const void* arg){ return (fmt_t){FMT_PTR, {.ptr = arg} }; }
 
-derr_t fmthook_dstr_dbg(dstr_t* out, FILE* f, size_t* written, const void* arg);
+derr_type_t fmthook_dstr_dbg(dstr_t* out, const void* arg);
 
 static inline fmt_t FD_DBG(const dstr_t* arg){
     return (fmt_t){FMT_EXT, {.ext = {.arg = (const void*)arg,
@@ -581,7 +597,7 @@ static inline fmt_t FD_DBG(const dstr_t* arg){
 }
 
 // the FMT()-ready replacement of perror():
-derr_t fmthook_strerror(dstr_t* out, FILE* f, size_t* written, const void* arg);
+derr_type_t fmthook_strerror(dstr_t* out, const void* arg);
 
 static inline fmt_t FE(int* err){
     return (fmt_t){FMT_EXT, {.ext = {.arg = (const void*)err,
@@ -620,7 +636,7 @@ derr_t sb_expand(const string_builder_t* sb, const dstr_t* joiner,
                  dstr_t* stack_dstr, dstr_t* heap_dstr, dstr_t** out);
 
 // FMT() support for string_builder
-derr_t fmthook_sb(dstr_t* out, FILE* f, size_t* written, const void* arg);
+derr_type_t fmthook_sb(dstr_t* out, const void* arg);
 
 // this is just for passing two args in one fmthook
 typedef struct {

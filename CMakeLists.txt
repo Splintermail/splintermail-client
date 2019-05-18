@@ -41,6 +41,7 @@ set(OBJ_TGTS api_client
              console_input
              ui
              engine
+             uv_errors
              loop
              tls_engine
              imap_engine
@@ -239,7 +240,8 @@ obj_depend_obj(pop_server networking)
 obj_depend_obj(api_client networking crypto json)
 obj_depend_obj(key_tool api_client crypto)
 obj_depend_obj(ditm pop_client pop_server maildir json)
-obj_depend_obj(queue uv_interface common)
+obj_depend_obj(uv_errors common)
+obj_depend_obj(queue uv_interface uv_errors common)
 obj_depend_obj(engine queue)
 obj_depend_obj(loop engine)
 obj_depend_obj(tls_engine engine networking)

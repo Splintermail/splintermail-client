@@ -18,10 +18,10 @@
 
     // for checking an error, but propagating it through non-standard means
     #define DOCATCH(_code) { \
-        derr_t error = _code; \
-        CATCH(E_ANY){ \
+        derr_t e = (_code); \
+        if(e.type != E_NONE){ \
             /* store error and reset parser */ \
-            parser->error = error; \
+            MERGE_VAR(parser->error, e, "command"); \
             ACCEPT; \
         } \
     }
@@ -336,7 +336,7 @@ catch:
         ie_section_part_t *temp; \
         temp = malloc(sizeof(*temp)); \
         if(!temp){ \
-            parser->error = E_NOMEM; \
+            TRACE_ORIG(parser->error, E_NOMEM, "no memory"); \
             ACCEPT; \
         } \
         /* append this struct to the end of the existing linked list */ \
@@ -350,7 +350,7 @@ catch:
     #define SEARCH(out, typ_) \
         out = malloc(sizeof(*out)); \
         if(!out){ \
-            parser->error = E_NOMEM; \
+            TRACE_ORIG(parser->error, E_NOMEM, "no memory"); \
             ACCEPT; \
         } \
         out->type = IE_SEARCH_ ## typ_; \
@@ -368,7 +368,7 @@ catch:
         dstr_link_t *temp; \
         temp = malloc(sizeof(*temp)); \
         if(!temp){ \
-            parser->error = E_NOMEM; \
+            TRACE_ORIG(parser->error, E_NOMEM, "no memory"); \
             ACCEPT; \
         } \
         /* append this struct to the end of the existing linked list */ \
@@ -382,7 +382,7 @@ catch:
     #define SECT(out, sp, st) \
         out = malloc(sizeof(*out)); \
         if(!out){ \
-            parser->error = E_NOMEM; \
+            TRACE_ORIG(parser->error, E_NOMEM, "no memory"); \
             ACCEPT; \
         } \
         *out = (ie_fetch_extra_t){ .sect_part = sp, .sect_txt = st }
@@ -390,7 +390,7 @@ catch:
     #define SEQ_SPEC(out, _n1, _n2) \
         out = malloc(sizeof(*out)); \
         if(!out){ \
-            parser->error = E_NOMEM; \
+            TRACE_ORIG(parser->error, E_NOMEM, "no memory"); \
             ACCEPT; \
         } \
         out->n1 = _n1; \
@@ -416,7 +416,7 @@ catch:
             case IE_FLAG_EXTENSION: \
                 temp = malloc(sizeof(*temp)); \
                 if(!temp){ \
-                    parser->error = E_NOMEM; \
+                    TRACE_ORIG(parser->error, E_NOMEM, "no memory"); \
                     ACCEPT; \
                 } \
                 temp->dstr = flag.dstr; \
@@ -442,7 +442,7 @@ catch:
             case IE_MFLAG_EXTENSION: \
                 temp = malloc(sizeof(*temp)); \
                 if(!temp){ \
-                    parser->error = E_NOMEM; \
+                    TRACE_ORIG(parser->error, E_NOMEM, "no memory"); \
                     ACCEPT; \
                 } \
                 temp->dstr = flag.dstr; \

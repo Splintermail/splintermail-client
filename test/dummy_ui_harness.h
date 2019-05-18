@@ -9,13 +9,10 @@
     /* register that we recieved an error */ \
     looked_good = false; \
     /* previously was derr_t error = FMT(&reason_log, __VA_ARGS__); */ \
-    derr_t error = pvt_fmt(&reason_log, \
-                           fstr, \
-                           (const fmt_t[]){FI(1), __VA_ARGS__}, \
-                           sizeof((const fmt_t[]){FI(1), __VA_ARGS__})/sizeof(fmt_t)); \
-    CATCH(E_ANY){ \
-        LOG_ERROR("ignoring\n"); \
-    } \
+    pvt_fmt_quiet(&reason_log, \
+                  fstr, \
+                  (const fmt_t[]){FI(1), __VA_ARGS__}, \
+                  sizeof((const fmt_t[]){FI(1), __VA_ARGS__})/sizeof(fmt_t)); \
 }
 
 

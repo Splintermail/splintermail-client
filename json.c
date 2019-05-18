@@ -175,7 +175,7 @@ static inline const char* state_2_string(parse_state_t state){
                  "%x\n" \
                  "%x^", \
                  FC(c), FU(i), FD(&sub), FD(&subspace) );\
-    ORIG(E_PARAM, buffer.data); \
+    ORIG(e, E_PARAM, buffer.data); \
 }
 
 #define JSON_DEBUG_PRINTING false
@@ -191,12 +191,13 @@ LIST_FUNCTIONS(json_t)
            E_FIXEDSIZE */
 static derr_t jopen(LIST(json_t)* json, json_type_t type, dstr_t* text,
                     size_t i, json_t** current, parse_state_t *state){
+    derr_t e = E_OK;
     if(JSON_DEBUG_PRINTING){
         LOG_DEBUG("open  at %x = '%x' type %x\n", FU(i), FC(text->data[i]),
                   FS(type_2_string(type)));
     }
     json_t* oldp = json->data;
-    PROP( LIST_APPEND(json_t, json, empty_json) );
+    PROP(e, LIST_APPEND(json_t, json, empty_json) );
     json_t* newp = json->data;
     // fix pointers in old json_t's if there was a reallocation
     if(newp != oldp){
@@ -307,6 +308,7 @@ static parse_state_t jclose(dstr_t* text, size_t i, json_t** current){
 /* A tokenizer with strict JSON validation (although its utf8-stoopid).  You
    need to hand it a LIST(dstr_t) for backing memory to the json_t object. */
 derr_t json_parse(LIST(json_t)* json, dstr_t* text){
+    derr_t e = E_OK;
     // start with zero-length list
     json->len = 0;
     json_t* current = NULL;
@@ -325,25 +327,25 @@ derr_t json_parse(LIST(json_t)* json, dstr_t* text){
         case V1: S
             // true
             if( c == 't'){
-                PROP(jopen(json, JSON_TRUE, text, i, &current, &state));
+                PROP(e, jopen(json, JSON_TRUE, text, i, &current, &state));
             // false
             }else if(c == 'f'){
-                PROP(jopen(json, JSON_FALSE, text, i, &current, &state));
+                PROP(e, jopen(json, JSON_FALSE, text, i, &current, &state));
             // null
             }else if(c == 'n'){
-                PROP(jopen(json, JSON_NULL, text, i, &current, &state));
+                PROP(e, jopen(json, JSON_NULL, text, i, &current, &state));
             // string
             }else if(c == '"'){
-                PROP(jopen(json, JSON_STRING, text, i, &current, &state));
+                PROP(e, jopen(json, JSON_STRING, text, i, &current, &state));
             // number
             }else if(c == '-' || (c >= '0' && c <= '9')){
-                PROP(jopen(json, JSON_NUMBER, text, i, &current, &state));
+                PROP(e, jopen(json, JSON_NUMBER, text, i, &current, &state));
             // object
             }else if(c == '{'){
-                PROP(jopen(json, JSON_OBJECT, text, i, &current, &state));
+                PROP(e, jopen(json, JSON_OBJECT, text, i, &current, &state));
             // array
             }else if(c == '['){
-                PROP(jopen(json, JSON_ARRAY, text, i, &current, &state));
+                PROP(e, jopen(json, JSON_ARRAY, text, i, &current, &state));
             // skip whitespace
             }else if(is_whitespace(c)){ /* skip whitespace */ }
             // only for A2 state:
@@ -438,7 +440,7 @@ derr_t json_parse(LIST(json_t)* json, dstr_t* text){
         // object states
         case O2: S
             if(c == '"'){
-                PROP(jopen(json, JSON_STRING, text, i, &current, &state));
+                PROP(e, jopen(json, JSON_STRING, text, i, &current, &state));
             }else if(c == '}') state = jclose(text, i, &current);
             else if(is_whitespace(c)){ /* skip whitespace */ }
             else UNEXPECTED;
@@ -457,7 +459,7 @@ derr_t json_parse(LIST(json_t)* json, dstr_t* text){
             break;
         case O6: S
             if(c == '"'){
-                PROP(jopen(json, JSON_STRING, text, i, &current, &state));
+                PROP(e, jopen(json, JSON_STRING, text, i, &current, &state));
             }else if(is_whitespace(c)){ /* skip whitespace */ }
             else UNEXPECTED;
             break;
@@ -475,7 +477,7 @@ derr_t json_parse(LIST(json_t)* json, dstr_t* text){
             if(!is_whitespace(c)) UNEXPECTED;
             break;
         case JSON_BAD_STATE:
-            ORIG(E_INTERNAL, "JSON parser in a bad state");
+            ORIG(e, E_INTERNAL, "JSON parser in a bad state");
         }
     }
     /* exiting the loop in the the middle of parsing a number is legal, but
@@ -488,17 +490,18 @@ derr_t json_parse(LIST(json_t)* json, dstr_t* text){
     }
     // check for exit from bad state
     else if(state == JSON_BAD_STATE){
-        ORIG(E_INTERNAL, "json parse exited from a bad state");
+        ORIG(e, E_INTERNAL, "json parse exited from a bad state");
     }
     // otherwse exiting the loop with state != JSON_DONE is a parsing error
     else if(state != JSON_DONE){
-        ORIG(E_PARAM, "incomplete json string");
+        ORIG(e, E_PARAM, "incomplete json string");
     }
 
     return E_OK;
 }
 
 derr_t json_encode(const dstr_t* d, dstr_t* out){
+    derr_t e = E_OK;
     // list of patterns
     LIST_PRESET(dstr_t, search, DSTR_LIT("\""),
                                 DSTR_LIT("\b"),
@@ -515,12 +518,13 @@ derr_t json_encode(const dstr_t* d, dstr_t* out){
                                  DSTR_LIT("\\t"),
                                  DSTR_LIT("\\\\"));
 
-    PROP( dstr_recode(d, out, &search, &replace, false) );
+    PROP(e, dstr_recode(d, out, &search, &replace, false) );
 
     return E_OK;
 }
 
 derr_t json_decode(const dstr_t* j, dstr_t* out){
+    derr_t e = E_OK;
     // list of patterns
     LIST_PRESET(dstr_t, search, DSTR_LIT("\\\""),
                                 DSTR_LIT("\\b"),
@@ -539,21 +543,22 @@ derr_t json_decode(const dstr_t* j, dstr_t* out){
                                  DSTR_LIT("/"),
                                  DSTR_LIT("\\"));
 
-    PROP( dstr_recode(j, out, &search, &replace, false) );
+    PROP(e, dstr_recode(j, out, &search, &replace, false) );
 
     return E_OK;
 }
 
 #define DOINDENT \
     if(need_indent){ \
-        PROP( FFMT(f, NULL, "\n") ); \
+        PROP(e, FFMT(f, NULL, "\n") ); \
         for(int i = 0; i < indent; i++){ \
-            PROP( FFMT(f, NULL, " ") ); \
+            PROP(e, FFMT(f, NULL, " ") ); \
         } \
     } \
     need_indent = true;
 
 derr_t json_fdump(FILE* f, json_t j){
+    derr_t e = E_OK;
     json_t* this = &j;
     int indent = 0;
     int tries = 100;
@@ -563,26 +568,26 @@ derr_t json_fdump(FILE* f, json_t j){
         DOINDENT;
         switch(this->type){
             case JSON_ARRAY:
-                PROP( FFMT(f, NULL, "[ ") );
+                PROP(e, FFMT(f, NULL, "[ ") );
                 indent += 2;
                 need_indent = false;
                 next = this->first_child;
                 // catch emtpy array
                 if(!next){
-                    PROP( FFMT(f, NULL, "]") );
+                    PROP(e, FFMT(f, NULL, "]") );
                     indent -= 2;
                     need_indent = true;
                     next = this->next;
                 }
                 break;
             case JSON_OBJECT:
-                PROP( FFMT(f, NULL, "{ ") );
+                PROP(e, FFMT(f, NULL, "{ ") );
                 indent += 2;
                 need_indent = false;
                 next = this->first_child;
                 // catch emtpy object
                 if(!next){
-                    PROP( FFMT(f, NULL, "}") );
+                    PROP(e, FFMT(f, NULL, "}") );
                     indent -= 2;
                     need_indent = true;
                     next = this->next;
@@ -592,22 +597,22 @@ derr_t json_fdump(FILE* f, json_t j){
             case JSON_FALSE:
             case JSON_NULL:
             case JSON_NUMBER:
-                PROP( FFMT(f, NULL, "%x", FD(&this->token)) );
+                PROP(e, FFMT(f, NULL, "%x", FD(&this->token)) );
                 next = this->next;
                 // add comma if necessary
-                if(next) PROP( FFMT(f, NULL, ",") );
+                if(next) PROP(e, FFMT(f, NULL, ",") );
                 break;
             case JSON_STRING:
                 // if it is a regular string
                 if(this->first_child == NULL){
-                    PROP( FFMT(f, NULL, "\"%x\"", FD(&this->token)) );
+                    PROP(e, FFMT(f, NULL, "\"%x\"", FD(&this->token)) );
                     next = this->next;
                     // add comma if necessary
-                    if(next) PROP( FFMT(f, NULL, ",") );
+                    if(next) PROP(e, FFMT(f, NULL, ",") );
                 }
                 // if the string is the key of an object:
                 else{
-                    PROP( FFMT(f, NULL, "\"%x\" : ", FD(&this->token)) );
+                    PROP(e, FFMT(f, NULL, "\"%x\" : ", FD(&this->token)) );
                     indent += (int)MIN(INT_MAX, this->token.len + 5);
                     need_indent = false;
                     next = this->first_child;
@@ -624,11 +629,11 @@ derr_t json_fdump(FILE* f, json_t j){
             if(this->parent->type == JSON_ARRAY){
                 indent -= 2;
                 DOINDENT;
-                PROP( FFMT(f, NULL, "]") );
+                PROP(e, FFMT(f, NULL, "]") );
                 next = this->parent->next;
                 this = this->parent;
                 // add comma if necessary
-                if(next) PROP( FFMT(f, NULL, ",") );
+                if(next) PROP(e, FFMT(f, NULL, ",") );
             }
             // did we finish dumping a value?
             else if(this->parent->type == JSON_STRING){
@@ -637,18 +642,18 @@ derr_t json_fdump(FILE* f, json_t j){
                 if(this->parent->next != NULL){
                     next = this->parent->next;
                     this = this->parent->parent;
-                    if(next) PROP( FFMT(f, NULL, ",") );
+                    if(next) PROP(e, FFMT(f, NULL, ",") );
                 }
                 // if there is not another key:
                 else{
                     indent -= 2;
                     DOINDENT;
-                    PROP( FFMT(f, NULL, "}") );
+                    PROP(e, FFMT(f, NULL, "}") );
                     next = this->parent->parent->next;
                     this = this->parent->parent;
                 }
             }else{
-                ORIG(E_INTERNAL, "bad state in json_fdump");
+                ORIG(e, E_INTERNAL, "bad state in json_fdump");
             }
         }
         if(this) this = next;
@@ -656,7 +661,7 @@ derr_t json_fdump(FILE* f, json_t j){
             break;
         }
     }
-    PROP( FFMT(f, NULL, "\n") );
+    PROP(e, FFMT(f, NULL, "\n") );
     return E_OK;
 }
 
@@ -711,10 +716,11 @@ json_t ji(json_t json, size_t index){
 }
 
 derr_t j_to_bool(json_t json, bool* out){
+    derr_t e = E_OK;
     if(json.error){
-        ORIG(E_PARAM, json.error);
+        ORIG(e, E_PARAM, json.error);
     }else if(json.type != JSON_TRUE && json.type != JSON_FALSE){
-        ORIG(E_PARAM, "wrong type for to_bool()");
+        ORIG(e, E_PARAM, "wrong type for to_bool()");
     }
 
     *out = (json.type == JSON_TRUE);
@@ -723,10 +729,11 @@ derr_t j_to_bool(json_t json, bool* out){
 }
 
 derr_t j_to_dstr(json_t json, dstr_t* out){
+    derr_t e = E_OK;
     if(json.error){
-        ORIG(E_PARAM, json.error);
+        ORIG(e, E_PARAM, json.error);
     }else if(json.type != JSON_STRING){
-        ORIG(E_PARAM, "wrong type for to_dstr()");
+        ORIG(e, E_PARAM, "wrong type for to_dstr()");
     }
 
     *out = json.token;
@@ -736,81 +743,89 @@ derr_t j_to_dstr(json_t json, dstr_t* out){
 
 #define NUMBER_CHECK \
     if(json.error){ \
-        ORIG(E_PARAM, json.error); \
+        ORIG(e, E_PARAM, json.error); \
     }else if(json.type != JSON_NUMBER){ \
-        ORIG(E_PARAM, "not a number"); \
+        ORIG(e, E_PARAM, "not a number"); \
     }
 
 derr_t jtoi(json_t json, int* out){
+    derr_t e = E_OK;
     NUMBER_CHECK;
-    derr_t error = dstr_toi(&json.token, out, 10);
+    e = dstr_toi(&json.token, out, 10);
     // if we already validated the number, E_PARAM is our internal failure
-    CATCH(E_PARAM){
-        RETHROW(E_INTERNAL);
-    }else PROP(error);
+    CATCH(e, E_PARAM){
+        RETHROW(e, E_INTERNAL);
+    }else PROP(e, e);;
     return E_OK;
 }
 derr_t jtou(json_t json, unsigned int* out){
+    derr_t e = E_OK;
     NUMBER_CHECK;
-    derr_t error = dstr_tou(&json.token, out, 10);
+    e = dstr_tou(&json.token, out, 10);
     // if we already validated the number, E_PARAM is our internal failure
-    CATCH(E_PARAM){
-        RETHROW(E_INTERNAL);
-    }else PROP(error);
+    CATCH(e, E_PARAM){
+        RETHROW(e, E_INTERNAL);
+    }else PROP(e, e);;
     return E_OK;
 }
 derr_t jtol(json_t json, long* out){
+    derr_t e = E_OK;
     NUMBER_CHECK;
-    derr_t error = dstr_tol(&json.token, out, 10);
+    e = dstr_tol(&json.token, out, 10);
     // if we already validated the number, E_PARAM is our internal failure
-    CATCH(E_PARAM){
-        RETHROW(E_INTERNAL);
-    }else PROP(error);
+    CATCH(e, E_PARAM){
+        RETHROW(e, E_INTERNAL);
+    }else PROP(e, e);;
     return E_OK;
 }
 derr_t jtoul(json_t json, unsigned long* out){
+    derr_t e = E_OK;
     NUMBER_CHECK;
-    derr_t error = dstr_toul(&json.token, out, 10);
+    e = dstr_toul(&json.token, out, 10);
     // if we already validated the number, E_PARAM is our internal failure
-    CATCH(E_PARAM){
-        RETHROW(E_INTERNAL);
-    }else PROP(error);
+    CATCH(e, E_PARAM){
+        RETHROW(e, E_INTERNAL);
+    }else PROP(e, e);;
     return E_OK;
 }
 derr_t jtoll(json_t json, long long* out){
+    derr_t e = E_OK;
     NUMBER_CHECK;
-    derr_t error = dstr_toll(&json.token, out, 10);
+    e = dstr_toll(&json.token, out, 10);
     // if we already validated the number, E_PARAM is our internal failure
-    CATCH(E_PARAM){
-        RETHROW(E_INTERNAL);
-    }else PROP(error);
+    CATCH(e, E_PARAM){
+        RETHROW(e, E_INTERNAL);
+    }else PROP(e, e);;
     return E_OK;
 }
 derr_t jtoull(json_t json, unsigned long long* out){
+    derr_t e = E_OK;
     NUMBER_CHECK;
-    derr_t error = dstr_toull(&json.token, out, 10);
+    e = dstr_toull(&json.token, out, 10);
     // if we already validated the number, E_PARAM is our internal failure
-    CATCH(E_PARAM){
-        RETHROW(E_INTERNAL);
-    }else PROP(error);
+    CATCH(e, E_PARAM){
+        RETHROW(e, E_INTERNAL);
+    }else PROP(e, e);;
     return E_OK;
 }
 derr_t jtof(json_t json, float* out){
+    derr_t e = E_OK;
     NUMBER_CHECK;
-    derr_t error = dstr_tof(&json.token, out);
+    e = dstr_tof(&json.token, out);
     // if we already validated the number, E_PARAM is our internal failure
-    CATCH(E_PARAM){
-        RETHROW(E_INTERNAL);
-    }else PROP(error);
+    CATCH(e, E_PARAM){
+        RETHROW(e, E_INTERNAL);
+    }else PROP(e, e);;
     return E_OK;
 }
 derr_t jtod(json_t json, double* out){
+    derr_t e = E_OK;
     NUMBER_CHECK;
-    derr_t error = dstr_tod(&json.token, out);
+    e = dstr_tod(&json.token, out);
     // if we already validated the number, E_PARAM is our internal failure
-    CATCH(E_PARAM){
-        RETHROW(E_INTERNAL);
-    }else PROP(error);
+    CATCH(e, E_PARAM){
+        RETHROW(e, E_INTERNAL);
+    }else PROP(e, e);;
     return E_OK;
 }
 #undef NUMBER_CHECK

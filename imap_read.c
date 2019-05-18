@@ -4,11 +4,12 @@
 #include "imap_parse.tab.h"
 
 derr_t imap_read_literal(imap_reader_t *reader, size_t len, bool keep){
+    derr_t e = E_OK;
     reader->in_literal = true;
     reader->literal_len = len;
     reader->keep_literal = keep;
     if(keep){
-        PROP( dstr_new(&reader->literal_temp, len) );
+        PROP(e, dstr_new(&reader->literal_temp, len) );
     }
     return E_OK;
 }
@@ -31,12 +32,12 @@ derr_t imap_reader_init(imap_reader_t *reader,
                         imap_parse_hooks_dn_t hooks_dn,
                         imap_parse_hooks_up_t hooks_up,
                         void *hook_data){
-    derr_t error;
+    derr_t e = E_OK;
 
-    PROP( imap_scanner_init(&reader->scanner) );
+    PROP(e, imap_scanner_init(&reader->scanner) );
 
-    PROP_GO( imap_parser_init(&reader->parser, reader, hooks_dn, hooks_up,
-                              &hook_data), fail_scanner);
+    PROP_GO(e, imap_parser_init(&reader->parser, reader, hooks_dn, hooks_up,
+            &hook_data), fail_scanner);
 
     // init literal-tracking stuff
     reader->in_literal = false;
@@ -54,7 +55,7 @@ derr_t imap_reader_init(imap_reader_t *reader,
 
 fail_scanner:
     imap_scanner_free(&reader->scanner);
-    return error;
+    return e;
 }
 
 void imap_reader_free(imap_reader_t *reader){
@@ -64,10 +65,10 @@ void imap_reader_free(imap_reader_t *reader){
 }
 
 derr_t imap_read(imap_reader_t *reader, const dstr_t *input){
-    //for(size_t i = 0; i < inputs->len; i++){
+    derr_t e = E_OK;
 
     // append the input to the scanner's buffer
-    PROP( dstr_append(&reader->scanner.bytes, input) );
+    PROP(e, dstr_append(&reader->scanner.bytes, input) );
 
     int token_type;
     bool more;
@@ -76,14 +77,16 @@ derr_t imap_read(imap_reader_t *reader, const dstr_t *input){
         // check if we are in a literal
         if(reader->in_literal){
             dstr_t stolen = steal_bytes(&reader->scanner, reader->literal_len);
-            LOG_ERROR("literal bytes: '%x'\n", FD(&stolen));
+            // LOG_DEBUG("literal bytes: '%x'\n", FD(&stolen));
             // are we building this literal to pass back to the parser?
             if(reader->keep_literal){
-                PROP( dstr_append(&reader->literal_temp, &stolen) );
+                PROP(e, dstr_append(&reader->literal_temp, &stolen) );
             }
             // are we passing this literal directly to the decrypter?
             else if(reader->fetch_literal){
-                LOG_ERROR("fetched: %x\n", FD(&stolen));
+                // LOG_DEBUG("fetched: %x\n", FD(&stolen));
+                // TODO: do something useful with stolen bytes
+                // no need to free `stolen`, it is actually a substring
             }
             // remember how many bytes we have stolen from the stream
             reader->literal_len -= stolen.len;
@@ -92,7 +95,7 @@ derr_t imap_read(imap_reader_t *reader, const dstr_t *input){
                 return E_OK;
             }
             // otherwise, indicate to the parser that we are finished
-            PROP( imap_literal(&reader->parser, reader->literal_temp) );
+            PROP(e, imap_literal(&reader->parser, reader->literal_temp) );
             // reset the values associated with the literal
             reader->in_literal = false;
             reader->keep_literal = false;
@@ -110,7 +113,7 @@ derr_t imap_read(imap_reader_t *reader, const dstr_t *input){
         dstr_t scannable = get_scannable(&reader->scanner);
         LOG_DEBUG("scannable is: '%x'\n", FD(&scannable));
 
-        PROP( imap_scan(&reader->scanner, scan_mode, &more, &token_type) );
+        PROP(e, imap_scan(&reader->scanner, scan_mode, &more, &token_type) );
         if(more == true){
             // done with this input buffer
             break;
@@ -121,7 +124,7 @@ derr_t imap_read(imap_reader_t *reader, const dstr_t *input){
         LOG_INFO("token is '%x' (%x)\n", FD_DBG(&token), FI(token_type));
 
         // call parser, which will call context-specific actions
-        PROP( imap_parse(&reader->parser, token_type, &token) );
+        PROP(e, imap_parse(&reader->parser, token_type, &token) );
     }
     return E_OK;
 }

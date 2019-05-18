@@ -12,8 +12,9 @@ static size_t fplist_len = 0;
 static size_t fnlist_len = 0;
 
 derr_t logger_add_fileptr(log_level_t level, FILE* f){
+    derr_t e = E_OK;
     if(fplist_len == sizeof(fplist)/sizeof(*fplist)){
-        ORIG(E_FIXEDSIZE, "can't log to any more FILE*'s")
+        ORIG(e, E_FIXEDSIZE, "can't log to any more FILE*'s")
     }
 
     fplist[fplist_len] = f;
@@ -25,8 +26,9 @@ derr_t logger_add_fileptr(log_level_t level, FILE* f){
 }
 
 derr_t logger_add_filename(log_level_t level, const char* f){
+    derr_t e = E_OK;
     if(fnlist_len == sizeof(fnlist)/sizeof(*fnlist)){
-        ORIG(E_FIXEDSIZE, "can't log to any more file names")
+        ORIG(e, E_FIXEDSIZE, "can't log to any more file names")
     }
 
     fnlist[fnlist_len] = f;
@@ -56,7 +58,7 @@ int pvt_do_log(log_level_t level, const char* format,
     for(size_t i = 0; i < fplist_len; i++){
         // only print if this output is registered to see this level
         if(level >= fplevels[i]){
-            pvt_ffmt(fplist[i], NULL, format, args, nargs);
+            pvt_ffmt_quiet(fplist[i], NULL, format, args, nargs);
         }
     }
     // repeat with fnlist
@@ -66,9 +68,22 @@ int pvt_do_log(log_level_t level, const char* format,
             FILE* f = fopen(fnlist[i], "a");
             // there's no good way to report errors
             if(!f) continue;
-            pvt_ffmt(f, NULL, format, args, nargs);
+            pvt_ffmt_quiet(f, NULL, format, args, nargs);
             fclose(f);
         }
     }
     return 0;
+}
+
+// writing to the trace is usually best-effort and the error will be ignored.
+derr_type_t pvt_trace_quiet(
+        derr_t *e, const char* fstr, const fmt_t *args, size_t nargs){
+    derr_type_t type;
+    // if e is yet-unallocated, allocate it first
+    if(e->msg.data == NULL){
+        type = dstr_new_quiet(&e->msg, 1024);
+        if(type) return type;
+    }
+    // attempt to append to the trace
+    return pvt_fmt_quiet(&e->msg, fstr, args, nargs);
 }

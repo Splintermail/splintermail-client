@@ -133,11 +133,9 @@ derr_t fake_engine_init(fake_engine_t *fake_engine);
 void fake_engine_free(fake_engine_t *fake_engine);
 void fake_engine_pass_event(void *engine, event_t *ev);
 
-bool fake_engine_run(fake_engine_t *fe,
-                     event_passer_t pass_up, void *upstream,
-                     void (*handle_read)(void*, event_t*),
-                     void (*handle_write_done)(void*, event_t*),
-                     bool (*quit_ready)(void*),
-                     void *cb_data);
+derr_t fake_engine_run(fake_engine_t *fe, event_passer_t pass_up,
+        void *upstream, void (*handle_read)(void*, event_t*),
+        void (*handle_write_done)(void*, event_t*), bool (*quit_ready)(void*),
+        void *cb_data);
 
 #endif // FAKE_ENGINE_H

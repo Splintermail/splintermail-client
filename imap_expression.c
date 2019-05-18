@@ -2,6 +2,25 @@
 
 #include "imap_expression.h"
 
+DSTR_STATIC(status_type_OK_dstr, "OK");
+DSTR_STATIC(status_type_NO_dstr, "NO");
+DSTR_STATIC(status_type_BAD_dstr, "BAD");
+DSTR_STATIC(status_type_PREAUTH_dstr, "PREAUTH");
+DSTR_STATIC(status_type_BYE_dstr, "BYE");
+DSTR_STATIC(status_type_UNK_dstr, "unknown status code");
+
+const dstr_t *st_type_to_dstr(status_type_t type);
+const dstr_t *st_type_to_dstr(status_type_t type){
+    switch(type){
+    case STATUS_TYPE_OK: return &status_type_OK_dstr;
+    case STATUS_TYPE_NO: return &status_type_NO_dstr;
+    case STATUS_TYPE_BAD: return &status_type_BAD_dstr;
+    case STATUS_TYPE_PREAUTH: return &status_type_PREAUTH_dstr;
+    case STATUS_TYPE_BYE: return &status_type_BYE_dstr;
+    default: return &status_type_UNK_dstr;
+    }
+};
+
 DSTR_STATIC(status_code_NONE_dstr, "STATUS_CODE_NONE");
 DSTR_STATIC(status_code_ALERT_dstr, "STATUS_CODE_ALERT");
 DSTR_STATIC(status_code_CAPA_dstr, "STATUS_CODE_CAPA");

@@ -28,8 +28,9 @@ typedef struct {
     dstr_t val;
 } opt_spec_t;
 
-int opt_parse(int argc, char* argv[], opt_spec_t* spec[], size_t speclen,
-              int* newargc);
+derr_t opt_parse(
+        int argc, char* argv[], opt_spec_t* spec[], size_t speclen,
+        int* newargc);
 
 derr_t conf_parse(const dstr_t* text, opt_spec_t* spec[], size_t speclen);
 

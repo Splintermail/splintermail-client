@@ -94,6 +94,29 @@ Solutions:
         the scanner.  Also, this is a "whitelist" strategy, not a "blacklist"
         strategy, which should make this less error prone.
 
+What about error handling and parser callbacks?
+    Let's look at some different situations:
+      - bug or NOMEM in parser code: result in closing the imap session
+      - bug or NOMEM in a parser callback: result in closing the imap session
+      - unallowed input in parser code: server responds BAD
+      - unallowed action in parser callback: server responds NO or BAD
+
+    Let's approach it from categories of error results:
+      - Application-ending errors:
+          - our listener socket got closed on us maybe?
+          - out of sync between connection_cb() and uv_accept()
+      - Session-ending errors:
+          - Transient, don't notify the user:
+              - out-of-memory errors
+              - broken connections
+          - Non-transient, notify the user:
+              -
+      - Respondable errors:
+          - Invalid IMAP syntax
+          -
+
+
+
 
 # general DITM architecture for IMAP:
 
@@ -264,6 +287,7 @@ cleaning of all resources:
       - (downout queue gets emptied by next link in chain)
       - wait for "quit" to come back up from downstream, via "upin"
       - (upin queue now empty, downstream node has agreed to quit)
+      - wait for all writes to be returned from upstream
       - pass "quit" back upstream via "upout"
       - (upout queue now empty, and we can shutdown)
 
@@ -296,6 +320,10 @@ Cleaning up of one connection, at any time:
         less complex than the multi-engine setup I was thinking of.
 
 Buffer Pools:
+    Originally I thought I could use buffers in between nodes the way that I
+    did it with POP; the producer always appends to the buffer and the
+    consuming thread leaves unconsumed data in the buffer.
+
     buffer pools are necessary for overlapped IO, like using the Windows IOCP
     API.  That is, on the read side, the kernel needs access to a new read
     buffer *before* the application has a chance to use the read buffer that
@@ -675,3 +703,44 @@ Overall IMAP sequence:
         one will sit open watching for updates to the mailbox for syncing keys
 
     user context A connects remotely, validates credentials
+
+Separation between lower- and higher-level IMAP logic:
+
+    The IMAP engine deals with the full range of IMAP hooks, but it can
+    simplify the stream of events for a higher-level logic element.  A higher-
+    level element might be the mutt synchronizer, or the DITM server.
+
+    Low-level tasks that the IMAP engine can automate:
+      (for upwards connections)
+      - check for new folders
+            returns a list of new folders
+      - check folder for updates
+            returns updated flags and list of new message UIDs
+      - watch folder for updates (like check but blocking)
+      - download message X
+            returns updated flags and list of new message UIDs
+
+      (for downwards connections)
+      - just be an imap server
+            higher-level logic receives hooks that server can't handle alone
+      - deal with some updates in the folder you have selected
+            no return, server just alerts its client when appropriate
+
+Question:
+    should imap_engine be it's own thread and separated from the
+    higher-level logic?  Or should the higher level logic be on the same
+    thread?
+
+    Same thread pros:
+      - no synchronization issues
+      - no separate (complex) events for each high-level imap functionality
+
+    own thread pros:
+      - imap engine is free to choose to give more priority to surprise reads
+      - session becomes the proper interface between the two levels
+      - high-level logic doesn't need to integrate with session closing
+
+      I like the own-thread pros better.  I like the cleaner architecture and
+      the event passing between the two won't be a complete rewrite of the imap
+      hooks because the higher level logic only needs a few actions (I think).
+

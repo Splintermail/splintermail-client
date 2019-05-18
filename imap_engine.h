@@ -1,36 +1,75 @@
 #ifndef IMAP_ENGINE_H
 #define IMAP_ENGINE_H
 
-#include "ix.h"
-#include "tls_engine.h"
-#include "queue.h"
+#include "engine.h"
 #include "common.h"
+#include "imap_read.h"
 
-/* The IMAP engine is the end of the libuv-tls-imap pipeline, but it interacts
-   with other IMAP sessions.  Primarily, these interactions would be things
-   like a IMAP server session asking an IMAP client session if the local copy
-   of a folder is up-to-date or not.
+struct imape_t;
+typedef struct imape_t imape_t;
 
+// defined in imap_hooks_down.c
+extern imap_parse_hooks_dn_t imape_hooks_dn;
+// defined in imap_hooks_up.c
+extern imap_parse_hooks_up_t imape_hooks_up;
 
-    PIPELINE API       _____________   CROSS-SESSION "API"   _____________
-                      |             |                       |             |
-   (1) --------> READ |             |                       |             |
-       READ_DONE <--- |             | --------> REQUEST (4) |   ANOTHER   |
-                      | IMAP ENGINE | REQ_DONE <--- (3)     | IMAP ENGINE |
-       WRITE <------- |             |                       |             |
-   (2) --> WRITE_DONE |             |                       |             |
-                      |_____________|                       |_____________|
+typedef struct {
+    void *session;
+    imape_t *imape;
+    // generic per-engine data stuff
+    engine_data_state_t data_state;
+    event_t start_ev;
+    event_t close_ev;
+    // IMAP-engine-specific stuff
+    bool upwards;
+    imap_reader_t reader;
+    imap_reader_t reader;
+    queue_t pending_reads;
+    event_t *read_in;
+    queue_cb_t read_in_qcb;
 
-   Additional notes:
-     - none yet.
+    // imap-session-specific things
 
-*/
+} imape_data_t;
 
-derr_t imape_init(void);
-void imape_free(void);
+struct imape_t {
+    bool initialized;
+    // generic engine stuff
+    uv_work_t work_req;
+    session_iface_t session_iface;
+    imape_data_t *(*session_get_imape_data)(void*);
+    bool (*session_get_upwards)(void*);
+    queue_t event_q;
+    queue_t write_events;
+    // upstream engine, to which we pass write and read_done events
+    void *upstream;
+    event_passer_t pass_up;
+    // for handling quitting state
+    bool quitting;
+    event_t *quit_ev;
+    size_t nwrite_events;
+};
 
-void imape_read(ixs_t *ixs);
-void imape_write_done(ixs_t *ixs);
+derr_t imape_init(imape_t *imape, size_t nwrite_events,
+                  session_iface_t session_iface,
+                  imape_data_t *(*session_get_imape_data)(void*),
+                  bool (*session_get_upwards)(void*),
+                  event_passer_t pass_up, void *upstream);
+void imape_free(imape_t *imape);
+
+// function is an event_passer_t
+void imape_pass_event(void *imape_void, event_t *ev);
+
+void imape_data_start(imape_data_t *id, imape_t *imape, void *session);
+void imape_data_close(imape_data_t *id, imape_t *imape, void *session);
+
+enum imape_ref_reason_t {
+    IMAPE_REF_READ = 0,
+    IMAPE_REF_START_EVENT,
+    IMAPE_REF_CLOSE_EVENT,
+    IMAPE_REF_LIFETIME,
+    IMAPE_REF_MAXIMUM
+};
 
 // internal functions, but we will list them here for now
 void handle_read(void); // all reads pass through this hook
@@ -72,49 +111,5 @@ void resp_exists(void); // at any time, basically
 void resp_recent(void); // this will be ignored?  I think I only care about exists
 void resp_expunge(void);
 void resp_fetch(void); // at any time, basically
-
-/*
-IMAP Engine state:
-*/
-
-typedef struct {
-    // where to place user folders
-    string_builder_t basepath;
-    // where to connect to
-    dstr_t url;
-    unsigned int port;
-} imape_t;
-
-/*
-IMAP connected user registry
-This per-application structure keeps track of:
-  - list of users connected to the application
-  - track one keybox-watcher imap connection per user
-  - track open folders, into which imap sessions have views
-*/
-
-// typedef struct {
-//
-// } imap_user_t;
-
-// add to the imap session context
-
-    // SELECTED
-
-    /* things that need to be stored on the filesystem:
-         - MESSAGES, UIDS, FLAGS
-         - UIDVALIDITY
-    */
-
-    /* need to keep track of the messages that we have and the messages that
-       the server has.  Messages not yet downloaded will be given placeholders.
-       That makes the asynchronous handling of messages easy.
-
-       Where to put injected messages?  I suppose the only way to handle them
-       in an IMAP-cannonical way would be to give them their own folder, since
-       in all other cases every email client needs to see the same thing in
-       any other folder.
-    */
-
 
 #endif // IMAP_ENGINE_H

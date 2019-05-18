@@ -45,32 +45,33 @@ DSTR_STATIC(long_test,
 
 
 static derr_t test_json(void){
-    derr_t error;
+    derr_t e = E_OK;
 
     LIST(json_t) json;
     LIST_NEW(json_t, &json, 1);
 
-    PROP_GO( json_parse(&json, &long_test), cleanup);
+    PROP_GO(e, json_parse(&json, &long_test), cleanup);
 
     double f;
-    PROP_GO( jtod(ji(jk(jk(json.data[0], "tests"), "numbers"), 3), &f ), cleanup);
+    PROP_GO(e, jtod(ji(jk(jk(json.data[0], "tests"), "numbers"), 3), &f ), cleanup);
     // LOG_DEUBG("double = %x\n", FF(f));
 
 cleanup:
     LIST_FREE(json_t, &json);
-    return error;
+    return e;
 }
 
 #define EXP_VS_GOT(exp, got) { \
     int result = dstr_cmp(exp, got); \
     if(result != 0){ \
-        LOG_ERROR("expected: %x\n" \
-                  "but got:  %x\n", FD(exp), FD(got)); \
-        ORIG(E_VALUE, "test fail"); \
+        TRACE(e, "expected: %x\n" \
+                 "but got:  %x\n", FD(exp), FD(got)); \
+        ORIG(e, E_VALUE, "test fail"); \
     } \
 }
 
 static derr_t test_encode_decode(void){
+    derr_t e = E_OK;
     // raw and json-encoded strings
     DSTR_STATIC(raw, "abcd\nefgh\r\bijk\tlmno\"\\pqrs/tuv");
     DSTR_STATIC(json, "abcd\\nefgh\\r\\bijk\\tlmno\\\"\\\\pqrs/tuv");
@@ -78,30 +79,32 @@ static derr_t test_encode_decode(void){
     DSTR_VAR(in, 256);
     DSTR_VAR(out, 256);
     // test encode
-    PROP( dstr_copy(&raw, &in) );
+    PROP(e, dstr_copy(&raw, &in) );
     out.len = 0;
-    PROP( json_encode(&in, &out) );
+    PROP(e, json_encode(&in, &out) );
     EXP_VS_GOT(&json, &out);
     // test decode
-    PROP( dstr_copy(&json, &in) );
+    PROP(e, dstr_copy(&json, &in) );
     out.len = 0;
-    PROP( json_decode(&in, &out) );
+    PROP(e, json_decode(&in, &out) );
     EXP_VS_GOT(&raw, &out);
     return E_OK;
 }
 
 int main(int argc, char** argv){
-    derr_t error;
+    derr_t e = E_OK;
     // parse options and set default log level
     PARSE_TEST_OPTIONS(argc, argv, NULL, LOG_LVL_DEBUG);
 
-    PROP_GO( test_json(), test_fail);
-    PROP_GO( test_encode_decode(), test_fail);
+    PROP_GO(e, test_json(), test_fail);
+    PROP_GO(e, test_encode_decode(), test_fail);
 
     LOG_ERROR("PASS\n");
     return 0;
 
 test_fail:
+    DUMP(e);
+    DROP(e);
     LOG_ERROR("FAIL\n");
     return 1;
 }
