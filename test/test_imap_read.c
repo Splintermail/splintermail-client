@@ -27,6 +27,11 @@
     parsing incomplete for FETCH "BODY[]"-like responses
 
     where should I use YYABORT instead of YYACCEPT?
+    Answer:
+        The output of the parse is the same for syntax errors and for YYABORT,
+        so you should only use YYABORT for invalid syntax when the grammar
+        could not detect it.  Errors in hooks should generally result in some
+        side-channel error, and should not look like a syntax error.
 
     is the handoff of a literal in imap_literal fully safe from memory leaks?
     Are there really no possible codepaths which don't call dstr_free exactly
@@ -872,6 +877,69 @@ static derr_t test_scanner_and_parser(void){
     return E_OK;
 }
 
+static derr_t bad_capa(void *data, dstr_t capability){
+    (void)data;
+    LOG_ERROR("BAD CAPA %x\n", FD(&capability));
+    derr_t e = E_OK;
+    dstr_free(&capability);
+    ORIG(e, E_VALUE, "fake error");
+}
+
+
+static derr_t test_bison_destructors(void){
+    /* Question: when I induce the parser code to call YYACCEPT, do any
+       destructors get called? */
+    // Test: force such a situation with a handle that always fails.
+
+    derr_t e;
+    imap_parse_hooks_up_t hooks_up = {
+        st_hook,
+        // fail in capa
+        capa_start, bad_capa, capa_end,
+        pflag_resp,
+        list_resp,
+        lsub_resp,
+        status_resp,
+        flags_resp,
+        exists_hook,
+        recent_hook,
+        expunge_hook,
+        fetch_start,
+            f_flags,
+            f_rfc822_start,
+                NULL,
+                f_rfc822_qstr,
+            f_rfc822_end,
+            f_uid,
+            f_intdate,
+        fetch_end,
+    };
+    imap_parse_hooks_dn_t hooks_dn = {0};
+
+    // init the reader
+    imap_reader_t reader;
+    PROP(e, imap_reader_init(&reader, hooks_dn, hooks_up, NULL) );
+
+    /* problems:
+         - the "tag" does not get freed when I yypstate_delete() the parser if
+           I haven't finished out a command
+         - imap_parse() does not detect differences between parse errors and
+           hook errors.
+    */
+
+    // // leaks the tag due to not finish a command
+    // DSTR_STATIC(input, "* OK [CAPABILITY IMAP4rev1]");
+    // PROP_GO(e, imap_read(&reader, &input), cu_reader);
+
+    // leaks a keep_atom, but I'm not totally sure why... maybe a preallocated one?
+    DSTR_STATIC(input, "* OK [CAPABILITY IMAP4rev1]\r\n");
+    PROP_GO(e, imap_read(&reader, &input), cu_reader);
+
+cu_reader:
+    imap_reader_free(&reader);
+    return e;
+}
+
 
 int main(int argc, char **argv){
     derr_t e = E_OK;
@@ -880,6 +948,7 @@ int main(int argc, char **argv){
 
     // PROP_GO(e, test_just_parser(), test_fail);
     PROP_GO(e, test_scanner_and_parser(), test_fail);
+    PROP_GO(e, test_bison_destructors(), test_fail);
 
     LOG_ERROR("PASS\n");
     return 0;
