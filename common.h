@@ -8,6 +8,7 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stddef.h>
 #undef bool
 typedef _Bool bool;
 
@@ -20,6 +21,21 @@ typedef _Bool bool;
 #ifndef ABS
 #define ABS(a)   ((a) > 0 ? (a) : (-(a)))
 #endif
+
+/* DEF_CONTAINER_OF should be used right after struct definition to create an
+   inline function for dereferencing a struct via a member.  "member_type" is
+   required to avoid typeof, which windows doesn't have.  Also, unlike the
+   linux kernel version, multi-token types ("struct xyz") are not supported. */
+#define DEF_CONTAINER_OF(structure, member, member_type) \
+    static inline structure *structure ## _ ## member ## _container_of( \
+            member_type *ptr){ \
+        if(ptr == NULL) return NULL; \
+        uintptr_t offset = offsetof(structure, member); \
+        return (structure*)((uintptr_t)ptr - offset); \
+    }
+
+#define CONTAINER_OF(ptr, structure, member) \
+    structure ## _ ## member ## _container_of(ptr)
 
 typedef struct {
     char* data;

@@ -53,6 +53,7 @@ set(OBJ_TGTS
     imap_read
     hashmap
     imap_maildir
+    link
 )
 
 set(EXE_TGTS
@@ -97,6 +98,7 @@ set(TEST_EXE_TGTS
     test_loop
     test_queue
     test_tls_engine
+    test_link
 )
 
 # additional TGTS if we are building server code
@@ -408,6 +410,7 @@ if("${BUILD_TESTS}")
     target_link_libraries(test_loop fake_engine networking)
     target_link_libraries(test_queue queue)
     target_link_libraries(test_tls_engine fake_engine)
+    target_link_libraries(test_link link common)
 
     if(WIN32)
         # make sure the user provided the location of Pthreads
