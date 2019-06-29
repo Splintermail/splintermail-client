@@ -102,11 +102,11 @@ derr_t for_each_file_in_dir(const char* path, for_each_file_hook_t hook, void* u
 
     WIN32_FIND_DATA ffd;
     DSTR_VAR(search, 4096);
-    e = FMT(&search, "%x/*", FS(path));
-    CATCH(e, E_FIXEDSIZE){
-        TRACE(e, "path too long\n");
-        RETHROW(e, E_FS);
-    }else PROP(e, e);
+    derr_t e2 = FMT(&search, "%x/*", FS(path));
+    CATCH(e2, E_FIXEDSIZE){
+        TRACE(e2, "path too long\n");
+        RETHROW(e, e2 E_FS);
+    }else PROP(e, e2);
 
     HANDLE hFind = FindFirstFile(search.data, &ffd);
 
@@ -181,11 +181,13 @@ static derr_t rm_rf_hook(const char* base, const dstr_t* file,
                                 bool isdir, void* userdata){
     (void) userdata;
     DSTR_VAR(path, 4096);
-    derr_t e = FMT(&path, "%x/%x", FS(base), FD(file));
-    CATCH(e, E_FIXEDSIZE){
-        TRACE(e, "path too long\n");
-        RETHROW(e, E_FS);
-    }else PROP(e, e);
+    derr_t e = E_OK;
+    derr_t e2;
+    e2 = FMT(&path, "%x/%x", FS(base), FD(file));
+    CATCH(e2, E_FIXEDSIZE){
+        TRACE(e2, "path too long\n");
+        RETHROW(e, e2, E_FS);
+    }else PROP(e, e2);
 
     // base/file is a directory?
     if(isdir){

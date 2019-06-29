@@ -59,9 +59,81 @@ DSTR_STATIC(intrn_err_body,
     "This is definitely a bug.  Please let us know at help@splintermail.com so\r\n"
     " we can fix it.\r\n");
 
+static derr_t loginhook_error_sensitive_part(ditm_t *ditm, bool *status_ok,
+        dstr_t *userdir, const dstr_t* username, const dstr_t* password,
+        dstr_t *message){
+    derr_t e = E_OK;
+    derr_t e2;
+
+    // initialize the key_tool
+    key_tool_t kt;
+    PROP(e, key_tool_new(&kt, userdir, 4096) );
+
+    // load the ignore list
+    ignore_list_t il;
+    PROP_GO(e, ignore_list_load(&il, userdir), cu_kt);
+
+    // download new messages
+    LOG_DEBUG("DITM UID's before download (%x):\n", FU(ditm->maildir.uids.len));
+    for(size_t i = 0; i < ditm->maildir.uids.len; i++){
+        LOG_DEBUG("    %x\n", FD(&ditm->maildir.uids.data[i]));
+    }
+
+    // get UID list from remote server
+    e2 = pop_client_uidl(&ditm->pc, status_ok, message);
+    // E_FIXEDSIZE from filling *message means a bad server response
+    CATCH(e2, E_FIXEDSIZE){
+        RETHROW_GO(e, e2, E_RESPONSE, cu_il);
+    }else PROP_GO(e, e2, cu_il);
+
+    LOG_DEBUG("Remote server UID's (%x):\n", FU(ditm->pc.uids.len));
+    for(size_t i = 0; i < ditm->pc.uids.len; i++){
+        LOG_DEBUG("    %x\n", FD(&ditm->pc.uids.data[i]));
+    }
+
+    // make sure we have every message downloaded
+    for(size_t i = 0; i < ditm->pc.idxs.len; i++){
+        // get a pointer to the uid in question
+        dstr_t* uid = &ditm->pc.uids.data[i];
+        // don't do anything if it is on the ignore list
+        if(ignore_list_should_ignore(&il, uid)){
+            // this also registers a UID as "seen" in the ignore list
+            continue;
+        }
+        size_t index = ditm->pc.idxs.data[i];
+        // download the message
+        PROP_GO(e, ditm_download_new_message(ditm, &kt, &il, uid, index), cu_il);
+    }
+
+    LOG_DEBUG("DITM UID's after download (%x):\n", FU(ditm->maildir.uids.len));
+    for(size_t i = 0; i < ditm->maildir.uids.len; i++){
+        LOG_DEBUG("    %x\n", FD(&ditm->maildir.uids.data[i]));
+    }
+
+    // now prepare the deletions list
+    for(size_t i = 0; i < ditm->maildir.lengths.len; i++){
+        PROP_GO(e, LIST_APPEND(bool, &ditm->deletions, false), cu_il);
+    }
+
+    // update the ignore list
+    PROP_GO(e, ignore_list_write(&il, userdir), cu_il);
+
+    // update the key_tool
+    PROP_GO(e, key_tool_update(&kt, ditm->api_host, ditm->api_port,
+                            username, password), cu_il);
+
+cu_il:
+    ignore_list_free(&il);
+cu_kt:
+    key_tool_free(&kt);
+
+    return e;
+}
+
 static derr_t loginhook(void* arg, const dstr_t* username,
                         const dstr_t* password, bool* login_ok){
     derr_t e = E_OK;
+    derr_t e2;
     // cast arg to a ditm_t*
     ditm_t* ditm = (ditm_t*) arg;
 
@@ -123,113 +195,54 @@ static derr_t loginhook(void* arg, const dstr_t* username,
         return E_OK;
     }
 
-    // initialize the key_tool
-    key_tool_t kt;
-    PROP_GO(e, key_tool_new(&kt, &userdir, 4096), inj_msg);
-
-    // load the ignore list
-    ignore_list_t il;
-    PROP_GO(e, ignore_list_load(&il, &userdir), cu_kt);
-
-    // download new messages
-    LOG_DEBUG("DITM UID's before download (%x):\n", FU(ditm->maildir.uids.len));
-    for(size_t i = 0; i < ditm->maildir.uids.len; i++){
-        LOG_DEBUG("    %x\n", FD(&ditm->maildir.uids.data[i]));
-    }
-
-    // get UID list from remote server
-    e = pop_client_uidl(&ditm->pc, &status_ok, &message);
-    // E_FIXEDSIZE from filling *message means a bad server response
-    CATCH(e, E_FIXEDSIZE){
-        RETHROW_GO(e, E_RESPONSE, cu_il);
-    }else PROP_GO(e, e, cu_il);
-
-    LOG_DEBUG("Remote server UID's (%x):\n", FU(ditm->pc.uids.len));
-    for(size_t i = 0; i < ditm->pc.uids.len; i++){
-        LOG_DEBUG("    %x\n", FD(&ditm->pc.uids.data[i]));
-    }
-
-    // make sure we have every message downloaded
-    for(size_t i = 0; i < ditm->pc.idxs.len; i++){
-        // get a pointer to the uid in question
-        dstr_t* uid = &ditm->pc.uids.data[i];
-        // don't do anything if it is on the ignore list
-        if(ignore_list_should_ignore(&il, uid)){
-            // this also registers a UID as "seen" in the ignore list
-            continue;
-        }
-        size_t index = ditm->pc.idxs.data[i];
-        // download the message
-        PROP_GO(e, ditm_download_new_message(ditm, &kt, &il, uid, index), cu_il);
-    }
-
-    LOG_DEBUG("DITM UID's after download (%x):\n", FU(ditm->maildir.uids.len));
-    for(size_t i = 0; i < ditm->maildir.uids.len; i++){
-        LOG_DEBUG("    %x\n", FD(&ditm->maildir.uids.data[i]));
-    }
-
-    // now prepare the deletions list
-    for(size_t i = 0; i < ditm->maildir.lengths.len; i++){
-        PROP_GO(e, LIST_APPEND(bool, &ditm->deletions, false), cu_il);
-    }
-
-    // update the ignore list
-    PROP_GO(e, ignore_list_write(&il, &userdir), cu_il);
-
-    // update the key_tool
-    PROP_GO(e, key_tool_update(&kt, ditm->api_host, ditm->api_port,
-                            username, password), cu_il);
+    e2 = loginhook_error_sensitive_part(ditm, &status_ok, &userdir, username,
+            password, &message);
 
     // END OF VERY CAREFUL ERROR HANDLING
 
-cu_il:
-    ignore_list_free(&il);
-cu_kt:
-    key_tool_free(&kt);
-inj_msg:
     // silently disconnect from email client on temporary errors
-    CATCH(e, E_CONN | E_NOMEM | E_OS | E_SSL){
+    CATCH(e2, E_CONN | E_NOMEM | E_OS | E_SSL){
         // allow the error to propagate
-        TRACE(e, "temporary error detected, disconnecting\n");
-        RETHROW(e, e.type);
+        TRACE(e2, "temporary error detected, disconnecting\n");
+        RETHROW(e, e2, e2.type);
     }
 
-    CATCH(e, E_PARAM){
+    CATCH(e2, E_PARAM){
         /* E_PARAM comes from key_tool_update, and it means username, password,
            or host is too long, but we know username and password are valid...
            since we just checked with the server */
         /* this is really not a likely error to happen since the api_host is
            a hardcoded string in the user application */
-        TRACE(e, "configured api_server hostname is too long\n");
-        DUMP(e);
-        DROP(e);
+        TRACE(e2, "configured api_server hostname is too long\n");
+        DUMP(e2);
+        DROP(e2);
         // continue in offline mode
         ditm->conn_is_live = false;
     }
     // if the user has a filesystem issue, tell them now
-    else CATCH(e, E_FS){
-        DUMP(e);
-        DROP(e);
+    else CATCH(e2, E_FS){
+        DUMP(e2);
+        DROP(e2);
         // continue in offline mode
         ditm->conn_is_live = false;
         PROP(e, ditm_inject_message(ditm, &badfs_subj, &badfs_body) );
     }
     // if we got an invalid server response... have the user complain to us
-    else CATCH(e, E_RESPONSE){
-        DUMP(e);
-        DROP(e);
+    else CATCH(e2, E_RESPONSE){
+        DUMP(e2);
+        DROP(e2);
         // continue in offline mode
         ditm->conn_is_live = false;
         // TODO: include the trace in the message
         PROP(e, ditm_inject_message(ditm, &badsrv_subj, &badsrv_body) );
     }
     // if we caught an internal error... sorry, user.  Here's an apology
-    else CATCH(e, E_INTERNAL | E_ANY){
-        if(e.type != E_INTERNAL){
-            TRACE(e, "HEY! this error shouldn't be possible here\n");
+    else CATCH(e2, E_INTERNAL | E_ANY){
+        if(e2.type != E_INTERNAL){
+            TRACE(e2, "HEY! this error shouldn't be possible here\n");
         }
-        DUMP(e);
-        DROP(e);
+        DUMP(e2);
+        DROP(e2);
         // continue in offline mode
         ditm->conn_is_live = false;
         // TODO: include the trace in the message
@@ -711,13 +724,12 @@ static derr_t ditm_parse_minversion(dstr_t* msg, unsigned int* maj,
 
     // split version string (maj.min.bld) on decimalas
     LIST_VAR(dstr_t, majminbld, 3);
-    e = dstr_split(&vstring, &DSTR_LIT("."), &majminbld);
-    CATCH(e, E_FIXEDSIZE){
-        DROP(e);
+    derr_t e2 = dstr_split(&vstring, &DSTR_LIT("."), &majminbld);
+    CATCH(e2, E_FIXEDSIZE){
         // too many periods, version string is invalid
-        TRACE(e, "invalid minversion string was %x\n", FD(&vstring));
-        ORIG(e, E_VALUE, "invalid minversion string")
-    }else PROP(e, e);
+        TRACE(e2, "invalid minversion string: %x\n", FD(&vstring));
+        RETHROW(e, e2, E_VALUE);
+    }else PROP(e, e2);
 
     // convert each element to an integer
     PROP(e, dstr_tou(&majminbld.data[0], maj, 10) );
@@ -777,29 +789,28 @@ derr_t ditm_new(ditm_t* ditm, ssl_context_t* ctx, connection_t* conn,
     // get the server greeting
     bool status_ok;
     DSTR_VAR(message, 1024);
-    e = pop_client_connect(&ditm->pc, ctx, rhost, rport, &status_ok, &message);
-    // send response over pop_server before giving up
-    /* This response should be positive so that Thunderbird doesn't freak out
-       (it will handle the broken connection gracefully, but not -ERR) */
-    if(e.type != E_NONE){
+    IF_PROP(e, pop_client_connect(&ditm->pc, ctx, rhost, rport, &status_ok, &message) ){
+        // send response over pop_server before giving up
+        /* This response should be positive so that Thunderbird doesn't freak out
+           (it will handle the broken connection gracefully, but not -ERR) */
         DSTR_STATIC(response, "+OK error connecting to remote server\r\n");
         MERGE(e, pop_server_send_dstr(&ditm->ps, &response), "alerting client");
-        PROP_GO(e, e, cu_deletions);
+        goto cu_deletions;
     }
     // if we got a -ERR in the server greeting... that's weird. but whatever.
     if(status_ok == false){
+        TRACE_ORIG(e, E_VALUE, "server greeted with error message");
         DSTR_STATIC(response, "-ERR remote server greeted with error message\r\n");
-        PROP_GO(e, pop_server_send_dstr(&ditm->ps, &response), cu_deletions);
-        ORIG_GO(e, E_VALUE, "server greeted with error message", cu_deletions);
+        MERGE(e, pop_server_send_dstr(&ditm->ps, &response), "sending -ERR");
+        goto cu_deletions;
     }
 
     // now parse the minversion out of the message
     unsigned int maj, min, bld;
-    e = ditm_parse_minversion(&message, &maj, &min, &bld);
-    if(e.type != E_NONE){
+    IF_PROP(e, ditm_parse_minversion(&message, &maj, &min, &bld) ){
         DSTR_STATIC(response, "-ERR error parsing minimum version from server greeting\r\n");
         MERGE(e, pop_server_send_dstr(&ditm->ps, &response), "alerting client");
-        PROP_GO(e, e, cu_deletions);
+        goto cu_deletions;
     }
 
     // initalize the conn_is_live boolean
@@ -853,6 +864,7 @@ static derr_t ditm_download_new_message(ditm_t* ditm, key_tool_t* kt,
                                         ignore_list_t* il, const dstr_t* uid,
                                         size_t index){
     derr_t e = E_OK;
+    derr_t e2;
     DSTR_VAR(message, 1024);
     bool status_ok;
 
@@ -864,11 +876,11 @@ static derr_t ditm_download_new_message(ditm_t* ditm, key_tool_t* kt,
     }
 
     // send RETR N to pop_server
-    e = pop_client_retrieve(&ditm->pc, (unsigned int)index, &status_ok, &message);
+    e2 = pop_client_retrieve(&ditm->pc, (unsigned int)index, &status_ok, &message);
     // message too long means bad server response
-    CATCH(e, E_FIXEDSIZE){
-        RETHROW(e, E_RESPONSE);
-    }else PROP(e, e);
+    CATCH(e2, E_FIXEDSIZE){
+        RETHROW(e, e2, E_RESPONSE);
+    }else PROP(e, e2);
 
     // if status is ERR, quit here
     if(status_ok == false){
@@ -892,21 +904,21 @@ static derr_t ditm_download_new_message(ditm_t* ditm, key_tool_t* kt,
 
     // read the first chunk
     bool end;
-    e = pop_client_get_body(&ditm->pc, &buffer, true, &end);
+    e2 = pop_client_get_body(&ditm->pc, &buffer, true, &end);
     // a FIXEDSIZE error here indicates buffer is full; internal error
-    CATCH(e, E_FIXEDSIZE){
-        RETHROW_GO(e, E_INTERNAL, close_t2);
-    }else PROP_GO(e, e, close_t2);
+    CATCH(e2, E_FIXEDSIZE){
+        RETHROW_GO(e, e2, E_INTERNAL, close_t2);
+    }else PROP_GO(e, e2, close_t2);
 
     while(true){
         // fill up first_bytes if there's room
         size_t fb_left = first_bytes.size - first_bytes.len;
         if(fb_left > 0){
             dstr_t sub = dstr_sub(&buffer, 0, fb_left);
-            e = dstr_append(&first_bytes, &sub);
+            e2 = dstr_append(&first_bytes, &sub);
             // should never ever fail
-            CATCH(e, E_ANY){
-                RETHROW_GO(e, E_INTERNAL, close_t2);
+            CATCH(e2, E_ANY){
+                RETHROW_GO(e, e2, E_INTERNAL, close_t2);
             }
         }
 
@@ -919,12 +931,11 @@ static derr_t ditm_download_new_message(ditm_t* ditm, key_tool_t* kt,
         if(end) break;
 
         // read another chunk
-        PROP_GO(e, pop_client_get_body(&ditm->pc, &buffer, false, &end),
-                 close_t2);
+        e2 = pop_client_get_body(&ditm->pc, &buffer, false, &end);
         // a FIXEDSIZE error here indicates buffer is full; internal error
-        CATCH(e, E_FIXEDSIZE){
-            RETHROW_GO(e, E_INTERNAL, close_t2);
-        }else PROP_GO(e, e, close_t2);
+        CATCH(e2, E_FIXEDSIZE){
+            RETHROW_GO(e, e2, E_INTERNAL, close_t2);
+        }else PROP_GO(e, e2, close_t2);
     }
 
     // reset temp file 1 for reading
@@ -939,15 +950,15 @@ static derr_t ditm_download_new_message(ditm_t* ditm, key_tool_t* kt,
     bool encrypted = (dstr_cmp(&first_bytes, &enc_header) == 0);
     // handle encrypted mail
     if(encrypted){
-        e = key_tool_decrypt(kt, t1fd, t2fd, &t2len);
-        CATCH(e, E_NOT4ME){
+        e2 = key_tool_decrypt(kt, t1fd, t2fd, &t2len);
+        CATCH(e2, E_NOT4ME){
             // message encrypted but not for us, we'll have to ignore it
-            DROP(e);
+            DROP(e2);
             state = DITM_DS_NOT_FOR_ME;
             LOG_DEBUG("msg state: DITM_DS_NOT_FOR_ME\n");
             goto close_t2;
-        }else CATCH(e, E_PARAM){
-            DROP(e);
+        }else CATCH(e2, E_PARAM){
+            DROP(e2);
             // broken message, mangle the body and hand it to the user
             // reset temp file 1 and temp file 2, we're going to try again
             oret = lseek(t1fd, 0, SEEK_SET);
@@ -966,7 +977,7 @@ static derr_t ditm_download_new_message(ditm_t* ditm, key_tool_t* kt,
             state = DITM_DS_CORRUPTED;
             LOG_DEBUG("msg state: DITM_DS_CORRUPTED\n");
             goto close_t2;
-        }else PROP(e, e);
+        }else PROP(e, e2);
         // if we recieved no errors, then we are good
         state = DITM_DS_DECRYPTED;
         LOG_DEBUG("msg state: DITM_DS_DECRYPTED\n");
@@ -1002,7 +1013,7 @@ close_t1:
             LOG_ERROR("%x: %x\n", FS(t2path.data), FE(&errno));
             LOG_ERROR("failed to cleanup temporary file\n");
         }
-        PROP(e, e);
+        return e;
     }
 
     // now handle the various outcomes
@@ -1053,11 +1064,11 @@ derr_t ditm_mangle_unencrypted(int infd, int outfd, size_t* outlen){
     // we need to read until either the subject line or the body
     while(true){
         // read some stuff
-        e = dstr_read(infd, &buffer, 0, &amnt_read);
+        derr_t e2 = dstr_read(infd, &buffer, 0, &amnt_read);
         // E_FIXEDSIZE means we have an internal error
-        CATCH(e, E_FIXEDSIZE){
-            RETHROW(e, E_INTERNAL);
-        }else PROP(e, e);
+        CATCH(e2, E_FIXEDSIZE){
+            RETHROW(e, e2, E_INTERNAL);
+        }else PROP(e, e2);
         // break if necessary
         if(amnt_read == 0) break;
         // search for the patterns
@@ -1119,10 +1130,10 @@ derr_t ditm_mangle_unencrypted(int infd, int outfd, size_t* outlen){
     // now just dump the rest of infd into outfd
     while(amnt_read){
         // read something
-        e = dstr_read(infd, &buffer, 0, &amnt_read);
-        CATCH(e, E_FIXEDSIZE){
-            RETHROW(e, E_INTERNAL);
-        }else PROP(e, e);
+        derr_t e2 = dstr_read(infd, &buffer, 0, &amnt_read);
+        CATCH(e2, E_FIXEDSIZE){
+            RETHROW(e, e2, E_INTERNAL);
+        }else PROP(e, e2);
         // break if necessary
         if(amnt_read == 0) break;
         // write something
@@ -1156,17 +1167,17 @@ derr_t ditm_mangle_corrupted(int infd, int outfd, size_t* outlen){
     // build the headers
     DSTR_VAR(buffer, 4096);
     // this should never fail
-    e = FMT(&buffer, "From: DITM <ditm@localhost>\r\n"
-                         "To: Local User <email_user@localhost>\r\n"
-                         "Date: %x\r\n"
-                         "Subject: DITM failed to decrypt message\r\n"
-                         "\r\n"
-                         "The following message appears to be corrupted"
-                         " and cannot be decrypted:\r\n"
-                         "\r\n", FS(d));
-    CATCH(e, E_FIXEDSIZE){
-        RETHROW(e, E_INTERNAL);
-    }else PROP(e, e);
+    derr_t e2 = FMT(&buffer, "From: DITM <ditm@localhost>\r\n"
+                             "To: Local User <email_user@localhost>\r\n"
+                             "Date: %x\r\n"
+                             "Subject: DITM failed to decrypt message\r\n"
+                             "\r\n"
+                             "The following message appears to be corrupted"
+                             " and cannot be decrypted:\r\n"
+                             "\r\n", FS(d));
+    CATCH(e2, E_FIXEDSIZE){
+        RETHROW(e, e2, E_INTERNAL);
+    }else PROP(e, e2);
 
     // dump headers to message
     PROP(e, dstr_write(outfd, &buffer) );
@@ -1177,10 +1188,10 @@ derr_t ditm_mangle_corrupted(int infd, int outfd, size_t* outlen){
     while(true){
         size_t amnt_read;
         // read some stuff
-        e = dstr_read(infd, &buffer, 0, &amnt_read);
-        CATCH(e, E_FIXEDSIZE){
-            RETHROW(e, E_INTERNAL);
-        }else PROP(e, e);
+        e2 = dstr_read(infd, &buffer, 0, &amnt_read);
+        CATCH(e2, E_FIXEDSIZE){
+            RETHROW(e, e2, E_INTERNAL);
+        }else PROP(e, e2);
         // break if necessary
         if(amnt_read == 0) break;
         // write some stuff
@@ -1283,6 +1294,7 @@ derr_t ditm_loop(const char* rhost, unsigned int rport,
                  const char* api_host, unsigned int api_port,
                  const char* certpath, const char* keypath){
     derr_t e = E_OK;
+    derr_t e2;
 
     if(!dir_rw_access(ditm_dir, true)){
         ORIG(e, E_FS, "failure to either create or access the ditm_dir");
@@ -1295,31 +1307,31 @@ derr_t ditm_loop(const char* rhost, unsigned int rport,
         // grab default key and certificate if arguments weren't given
         DSTR_VAR(def_cert, 4096);
         if(!certpath){
-            e = FMT(&def_cert, "%x/ditm-127.0.0.1-cert.pem", FS(ditm_dir));
-            CATCH(e, E_FIXEDSIZE){
-                RETHROW(e, E_FS);
-            }else PROP(e, e);
+            e2 = FMT(&def_cert, "%x/ditm-127.0.0.1-cert.pem", FS(ditm_dir));
+            CATCH(e2, E_FIXEDSIZE){
+                RETHROW(e, e2, E_FS);
+            }else PROP(e, e2);
         }
         DSTR_VAR(def_key, 4096);
         if(!keypath){
-            e = FMT(&def_key, "%x/ditm-127.0.0.1-key.pem", FS(ditm_dir));
-            CATCH(e, E_FIXEDSIZE){
-                RETHROW(e, E_FS);
-            }else PROP(e, e);
+            e2 = FMT(&def_key, "%x/ditm-127.0.0.1-key.pem", FS(ditm_dir));
+            CATCH(e2, E_FIXEDSIZE){
+                RETHROW(e, e2, E_FS);
+            }else PROP(e, e2);
         }
-        e = ssl_context_new_server(&s_ctx, certpath ? certpath : def_cert.data,
-                                           keypath ? keypath : def_key.data,
-                                           NULL);
-        CATCH(e, E_FS){
+        e2 = ssl_context_new_server(&s_ctx,
+                certpath ? certpath : def_cert.data,
+                keypath ? keypath : def_key.data, NULL);
+        CATCH(e2, E_FS){
             // if the user manually specified cert or key, un-catch this error
             if(certpath || keypath){
-                TRACE(e, "failure to set up SSL context, and user specified cert or key\n");
-                RETHROW(e, e.type);
+                TRACE(e2, "failure to set up SSL context, and user specified cert or key\n");
+                RETHROW(e, e2, e2.type);
             }
-            DROP(e);
+            DROP(e2);
             server_ssl = false;
         }else{
-            PROP(e, e);
+            PROP(e, e2);
             server_ssl = true;
         }
     }
@@ -1350,19 +1362,16 @@ derr_t ditm_loop(const char* rhost, unsigned int rport,
     while(should_continue){
         connection_t conn;
         // accept a connection
-        e = listener_accept(&listener, &conn);
-        if(e.type != E_NONE){
-            break;
-        }
+        PROP_GO(e, listener_accept(&listener, &conn), cleanup_3);
 
         // create a ditm object for this connection
         ditm_t ditm;
-        e = ditm_new(&ditm, &c_ctx, &conn, rhost, rport, ditm_dir,
+        e2 = ditm_new(&ditm, &c_ctx, &conn, rhost, rport, ditm_dir,
                          api_host, api_port);
-        CATCH(e, E_ANY){
+        CATCH(e2, E_ANY){
             connection_close(&conn);
-            DUMP(e);
-            DROP(e);
+            DUMP(e2);
+            DROP(e2);
             continue;
         }
 
@@ -1370,12 +1379,12 @@ derr_t ditm_loop(const char* rhost, unsigned int rport,
         ditm.ps.conn = conn;
 
         // kick off server loop
-        e = pop_server_loop(&ditm.ps, (void*)(&ditm));
-        CATCH(e, E_ANY){
+        e2 = pop_server_loop(&ditm.ps, (void*)(&ditm));
+        CATCH(e2, E_ANY){
             ditm_free(&ditm);
             connection_close(&conn);
-            DUMP(e);
-            DROP(e);
+            DUMP(e2);
+            DROP(e2);
             continue;
         }
 
@@ -1384,6 +1393,7 @@ derr_t ditm_loop(const char* rhost, unsigned int rport,
         ditm_free(&ditm);
     }
 
+cleanup_3:
     listener_close(&listener);
 cleanup_2:
     ssl_context_free(&c_ctx);
@@ -1408,34 +1418,34 @@ derr_t ignore_list_load(ignore_list_t* il, const dstr_t* userdir){
 
     // get the filename
     DSTR_VAR(path, 4096);
-    e = FMT(&path, "%x/ignore.json", FD(userdir));
+    derr_t e2 = FMT(&path, "%x/ignore.json", FD(userdir));
     // failing to generate the filename is not a recoverable error
-    CATCH(e, E_FIXEDSIZE){
-        RETHROW_GO(e, E_FS, f_text);
-    }else PROP_GO(e, e, f_text);
+    CATCH(e2, E_FIXEDSIZE){
+        RETHROW_GO(e, e2, E_FS, f_text);
+    }else PROP_GO(e, e2, f_text);
 
     // read the file
-    e = dstr_fread_file(path.data, &text);
+    e2 = dstr_fread_file(path.data, &text);
     // we can recover from not being able to open the file
-    CATCH(e, E_OPEN | E_OS){
+    CATCH(e2, E_OPEN | E_OS){
         LOG_WARN("unable to load ignore.json\n");
-        DROP(e);
+        DROP(e2);
         goto cu;
     }else{
         // but we can't recover if something else went wrong
-        PROP_GO(e, e, f_text);
+        PROP_GO(e, e2, f_text);
     }
 
     // parse the text
-    e = json_parse(&json, &text);
+    e2 = json_parse(&json, &text);
     // we can recover from a bad json file
-    CATCH(e, E_PARAM){
+    CATCH(e2, E_PARAM){
         LOG_WARN("unable to parse ignore.json\n");
-        DROP(e);
+        DROP(e2);
         goto cu;
     }else{
         // but we can't recover if something else went wrong
-        PROP_GO(e, e, f_text);
+        PROP_GO(e, e2, f_text);
     }
 
     // now make sure json root object is an array

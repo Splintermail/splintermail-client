@@ -113,6 +113,7 @@ static derr_t do_test(test_func test, ssl_context_t* ctx,
                       bool need_fps, derr_type_t ditm_expect_exit,
                       derr_type_t fps_expect_exit){
     derr_t e = E_OK;
+    derr_t e2;
     dstr_t recv;
     PROP(e, dstr_new(&recv, 4096) );
     dstr_t buffer;
@@ -127,26 +128,26 @@ static derr_t do_test(test_func test, ssl_context_t* ctx,
     PROP_GO(e, test(&recv, &buffer, &conn), cu_conn);
 
     // make sure DITM exited how we expected
-    e = ditm_thread_end_test();
-    CATCH(e, ditm_expect_exit){
-        DROP(e);
-    }else CATCH(e, E_ANY){
-        TRACE(e, "Expected ditm error %x but got %x\n",
+    e2 = ditm_thread_end_test();
+    CATCH(e2, ditm_expect_exit){
+        DROP(e2);
+    }else CATCH(e2, E_ANY){
+        TRACE(e2, "Expected ditm error %x but got %x\n",
                  FD(error_to_dstr(ditm_expect_exit)),
                  FD(error_to_dstr(e.type)));
-        RETHROW_GO(e, E_VALUE, cu_conn);
+        RETHROW_GO(e, e2, E_VALUE, cu_conn);
     }
 
     // make sure FPS exited without error
     if(need_fps){
-        e = fps_end_test();
-        CATCH(e, fps_expect_exit){
-            DROP(e);
-        }else CATCH(e, E_ANY){
-            TRACE(e, "Expected fps error %x but got %x\n",
+        e2 = fps_end_test();
+        CATCH(e2, fps_expect_exit){
+            DROP(e2);
+        }else CATCH(e2, E_ANY){
+            TRACE(e2, "Expected fps error %x but got %x\n",
                      FD(error_to_dstr(fps_expect_exit)),
                      FD(error_to_dstr(e.type)));
-            RETHROW_GO(e, E_VALUE, cu_conn);
+            RETHROW_GO(e, e2, E_VALUE, cu_conn);
         }
     }
 
@@ -201,17 +202,15 @@ cu_recv:
 #define CONNECTION_SHOULD_BE_BROKEN { \
     /* well, first a write so in case of a failed test we don't hang */ \
     DSTR_STATIC(arbitrary_value, "LIST\r\n"); \
-    derr_t e = connection_write(conn, &arbitrary_value); \
-    if(!e.type){ \
-        e = connection_read(conn, recv, NULL); \
+    derr_t e2 = connection_write(conn, &arbitrary_value); \
+    if(!e2.type){ \
+        e2 = connection_read(conn, recv, NULL); \
     } \
-    CATCH(e, E_CONN){ \
-        DROP(e); \
+    CATCH(e2, E_CONN){ \
+        DROP(e2); \
     }else{ \
-        DUMP(e); \
-        DROP(e); \
-        TRACE(e, "Expected E_CONN but got %x\n", FD(error_to_dstr(e.type))); \
-        ORIG(e, E_VALUE, "Wrong error"); \
+        TRACE(e2, "Expected E_CONN but got %x\n", FD(error_to_dstr(e.type))); \
+        RETHROW(e, e2, E_VALUE); \
     } \
 }
 
@@ -231,24 +230,23 @@ static derr_t test_case_a(dstr_t* recv, dstr_t* buffer, connection_t* conn){
        be investigated further, it might be a bug in OpenSSL. */
     // try to read, to prove connection is closed
     // {
+    //     derr_t e2;
     //     // well, first a write so in case of a failed test we don't hang
     //     DSTR_STATIC(arbitrary_value, "LIST\r\n");
-    //     e = connection_write(conn, &arbitrary_value);
-    //     if(!e.type){
+    //     e2 = connection_write(conn, &arbitrary_value);
+    //     if(!e2.type){
     //         // write didn't fail, trying again
-    //         e = connection_write(conn, &arbitrary_value);
+    //         e2 = connection_write(conn, &arbitrary_value);
     //     }
-    //     if(!e.type){
+    //     if(!e2.type){
     //         // write didn't fail, trying read
-    //         e = connection_read(conn, recv, NULL);
+    //         e2 = connection_read(conn, recv, NULL);
     //     }
-    //     CATCH(e, e, E_CONN){
-    //         DROP(e);
+    //     CATCH(e2, E_CONN){
+    //         DROP(e2);
     //     }else{
-    //         DUMP(e);
-    //         DROP(e);
-    //         TRACE(e, "Expected E_CONN but got %x\n", FD(error_to_dstr(e.type)));
-    //         ORIG(e, E_VALUE, "Wrong error");
+    //         TRACE(e2, "Expected E_CONN but got %x\n", FD(error_to_dstr(e.type)));
+    //         RETHROW(e, e2, E_VALUE);
     //     }
     // }
     return E_OK;
@@ -372,8 +370,7 @@ static derr_t test_ditm_errors(void){
     // case E: error in maildir_new
     // first we need to set this up with a maildir that is invalid:
     // start clean
-    e = rm_rf(ditm_path);
-    DROP(e);
+    DROP_CMD( rm_rf(ditm_path) );
     // make ditm_dir
     if(!dir_rw_access(ditm_path, true)){
         ORIG_GO(e, E_FS, "FS setup failed", cu_ctx);
@@ -525,8 +522,7 @@ int main(int argc, char** argv){
     PROP_GO(e, ssl_library_init(), test_fail);
 
     PROP_GO(e, test_ditm_errors(), test_fail);
-    e = rm_rf(ditm_path);
-    DROP(e);
+    DROP_CMD( rm_rf(ditm_path) );
 
     LOG_ERROR("PASS\n");
     ssl_library_close();
@@ -536,8 +532,7 @@ test_fail:
     DUMP(e);
     DROP(e);
     LOG_ERROR("FAIL\n");
-//    e = rm_rf(ditm_path);
-//    DROP(e);
+//  DROP_CMD( rm_rf(ditm_path) );
     ssl_library_close();
     return 1;
 }

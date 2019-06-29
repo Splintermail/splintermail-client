@@ -286,6 +286,7 @@ static derr_t list_of_tests_2(LIST(dstr_t)* ans, dstr_t* recv,
 
 static derr_t test_ditm(void){
     derr_t e = E_OK;
+    derr_t e2;
 
     PROP(e, ditm_thread_start(fps_pop_port) );
 
@@ -315,11 +316,11 @@ static derr_t test_ditm(void){
         PROP_GO(e, dstr_new(&temp, 256), cu_ans);
         DSTR_VAR(path, 4096);
         PROP_GO(e, FMT(&path, "%x/%x", FS(g_test_files), FS(ansfiles[i])), cu_ans);
-        e = dstr_read_file(path.data, &temp);
-        if(!e.type) e = LIST_APPEND(dstr_t, &ans, temp);
-        if(e.type){
+        e2 = dstr_read_file(path.data, &temp);
+        if(!e2.type) e2 = LIST_APPEND(dstr_t, &ans, temp);
+        if(e2.type){
             dstr_free(&temp);
-            PROP_GO(e, e, cu_ans);
+            PROP_GO(e, e2, cu_ans);
         }
     }
 
@@ -386,10 +387,8 @@ cu_ditm:
 
 static void sig_handler(int signum){
     if(signum == SIGINT){
-        derr_t e = rm_rf(ditm_path);
-        DROP(e);
-        e = rm_rf("test_ignore_dir");
-        DROP(e);
+        DROP_CMD( rm_rf(ditm_path) );
+        DROP_CMD( rm_rf("test_ignore_dir") );
         exit(1);
     }
 }
@@ -626,8 +625,7 @@ static derr_t test_ignore_list(void){
 cu2:
     ignore_list_free(&il);
 cu1:
-    derr_t e2 = rm_rf("test_ignore_dir");
-    DROP(e2);
+    DROP_CMD( rm_rf("test_ignore_dir") );
     return e;
 }
 
@@ -659,10 +657,8 @@ test_fail:
     DUMP(e);
     DROP(e);
     LOG_ERROR("FAIL\n");
-    e = rm_rf(ditm_path);
-    DROP(e);
-    e = rm_rf("test_ignore_dir");
-    DROP(e);
+    DROP_CMD( rm_rf(ditm_path) );
+    DROP_CMD( rm_rf("test_ignore_dir") );
     ssl_library_close();
     return 1;
 }

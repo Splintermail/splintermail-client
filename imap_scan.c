@@ -3,6 +3,8 @@
 #include <imap_parse.tab.h>
 
 derr_t imap_scanner_init(imap_scanner_t *scanner){
+    derr_t e = E_OK;
+
     // wrap the buffer in a dstr
     DSTR_WRAP_ARRAY(scanner->bytes, scanner->bytes_buffer);
 

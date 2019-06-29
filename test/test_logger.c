@@ -163,7 +163,6 @@ int main(int argc, char **argv){
     PARSE_TEST_OPTIONS(argc, argv, NULL, LOG_LVL_WARN);
 
     PROP_GO(&e, test_trace(), test_fail);
-    PROP_GO(&e, test_list_append_with_mem(), test_fail);
     PROP_GO(&e, test_prop(), test_fail);
     PROP_GO(&e, test_sequential_prop(), test_fail);
     PROP_GO(&e, test_rethrow(), test_fail);

@@ -21,6 +21,7 @@ static derr_t ar_return = E_OK;
 static void* async_reader_thread(void* arg){
     int* fd = (int*)arg;
     derr_t e = E_OK;
+    derr_t e2;
     while(true){
         char c;
         // read just one character
@@ -28,15 +29,14 @@ static void* async_reader_thread(void* arg){
         if(amnt_read == 0){
             break;
         }else if(amnt_read < 0){
-            e = FFMT(stderr, NULL, "read failed: %x\n", FE(&errno) );
-            DROP(e);
+            DROP_CMD( FFMT(stderr, NULL, "read failed: %x\n", FE(&errno)) );
             ORIG_GO(e, E_OS, "read failed during test", done);
         }
         // add that one character to the buffer
         pthread_mutex_lock(&ar_mutex);
-        e = FMT(&ar_buffer, "%x", FC(c));
+        e2 = FMT(&ar_buffer, "%x", FC(c));
         pthread_mutex_unlock(&ar_mutex);
-        PROP_GO(e, e, done);
+        PROP_GO(e, e2, done);
     }
 done:
     ar_return = e;
@@ -154,8 +154,7 @@ static derr_t run_test_case(struct test_case_t test){
     fflush(stdout);
     close(1);
     dstr_t* out_buffer;
-    e = stop_async_reader(&out_buffer);
-    if(e.type){
+    IF_PROP(e, stop_async_reader(&out_buffer) ){
         UH_OH("error in stop_async_reader\n");
         out_buffer->len = 0;
         DROP(e);

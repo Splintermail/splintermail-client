@@ -17,6 +17,7 @@ derr_t pop_server_send_dstr(pop_server_t* ps, const dstr_t* buffer){
 
 derr_t pop_server_loop(pop_server_t* ps, void* arg){
     derr_t e = E_OK;
+    derr_t e2;
     // static strings for comparisons
     DSTR_STATIC(USER, "USER");
     DSTR_STATIC(PASS, "PASS");
@@ -100,14 +101,14 @@ derr_t pop_server_loop(pop_server_t* ps, void* arg){
         }else{
             // if this is not PASS command, just split the string normally
             DSTR_STATIC(space, " ");
-            e = dstr_split(&line, &space, &tokens);
+            e2 = dstr_split(&line, &space, &tokens);
             CATCH(e, E_FIXEDSIZE){
-                DROP(e);
+                DROP(e2);
                 // there should never be more than like 3 tokens in a line
                 DSTR_STATIC(response, "-ERR Too many tokens in command.\r\n");
                 PROP(e, pop_server_send_dstr(ps, &response) );
                 continue;
-            }else PROP(e, e);
+            }else PROP(e, e2);
         }
 
         // make sure we got at least one token
@@ -121,14 +122,14 @@ derr_t pop_server_loop(pop_server_t* ps, void* arg){
 
         // copy the command to a buffer for dstr_upper()
         DSTR_VAR(command, 128);
-        e = dstr_copy(&tokens.data[0], &command);
-        CATCH(e, E_FIXEDSIZE){
-            DROP(e);
+        e2 = dstr_copy(&tokens.data[0], &command);
+        CATCH(e2, E_FIXEDSIZE){
+            DROP(e2);
             // command should never even be longer than 4 characters
             DSTR_STATIC(response, "-ERR Command too long.\r\n");
             PROP(e, pop_server_send_dstr(ps, &response) );
             continue;
-        }else PROP(e, e);
+        }else PROP(e, e2);
 
         // change command to upper case
         dstr_upper(&command);
@@ -173,8 +174,7 @@ derr_t pop_server_loop(pop_server_t* ps, void* arg){
             pass_ready = false;
             // call hook
             bool login_ok;
-            e = ps->hooks.login(arg, &username, &tokens.data[1],
-                                           &login_ok);
+            e2 = ps->hooks.login(arg, &username, &tokens.data[1], &login_ok);
             /* even if we threw an error, we *always* want to let the email
                client know that the password was correct so that the user isn't
                bothered by password reset prompts */
@@ -185,7 +185,7 @@ derr_t pop_server_loop(pop_server_t* ps, void* arg){
                 state = POP_SERVER_STATE_TRANS;
             }
             // now we can propagate any errors
-            PROP(e, e);
+            PROP(e, e2);
             // if we didn't throw an error we know creds are bad
             if(login_ok == false){
                 DSTR_STATIC(response, "-ERR Bad login credentials.\r\n");
@@ -250,9 +250,9 @@ derr_t pop_server_loop(pop_server_t* ps, void* arg){
             }
             if(nargs == 1){
                 int index;
-                e = dstr_toi(&tokens.data[1], &index, 10);
-                CATCH(e, E_ANY){
-                    DROP(e);
+                e2 = dstr_toi(&tokens.data[1], &index, 10);
+                CATCH(e2, E_ANY){
+                    DROP(e2);
                     PROP(e, pop_server_send_dstr(ps, &resp_bad_arg) );
                     continue;
                 }
@@ -280,9 +280,9 @@ derr_t pop_server_loop(pop_server_t* ps, void* arg){
                 continue;
             }
             unsigned int index;
-            e = dstr_tou(&tokens.data[1], &index, 10);
-            CATCH(e, E_ANY){
-                DROP(e);
+            e2 = dstr_tou(&tokens.data[1], &index, 10);
+            CATCH(e2, E_ANY){
+                DROP(e2);
                 PROP(e, pop_server_send_dstr(ps, &resp_bad_arg) );
                 continue;
             }
@@ -306,9 +306,9 @@ derr_t pop_server_loop(pop_server_t* ps, void* arg){
                 continue;
             }
             unsigned int index;
-            e = dstr_tou(&tokens.data[1], &index, 10);
-            CATCH(e, E_ANY){
-                DROP(e);
+            e2 = dstr_tou(&tokens.data[1], &index, 10);
+            CATCH(e2, E_ANY){
+                DROP(e2);
                 PROP(e, pop_server_send_dstr(ps, &resp_bad_arg) );
                 continue;
             }
@@ -358,9 +358,9 @@ derr_t pop_server_loop(pop_server_t* ps, void* arg){
             }
             // convert first arg to integer
             unsigned int index;
-            e = dstr_tou(&tokens.data[1], &index, 10);
-            CATCH(e, E_ANY){
-                DROP(e);
+            e2 = dstr_tou(&tokens.data[1], &index, 10);
+            CATCH(e2, E_ANY){
+                DROP(e2);
                 PROP(e, pop_server_send_dstr(ps, &resp_bad_arg) );
                 continue;
             }
@@ -370,9 +370,9 @@ derr_t pop_server_loop(pop_server_t* ps, void* arg){
             }
             // convert second arg to integer
             unsigned int lines;
-            e = dstr_tou(&tokens.data[2], &lines, 10);
-            CATCH(e, E_ANY){
-                DROP(e);
+            e2 = dstr_tou(&tokens.data[2], &lines, 10);
+            CATCH(e2, E_ANY){
+                DROP(e2);
                 PROP(e, pop_server_send_dstr(ps, &resp_bad_arg) );
                 continue;
             }
@@ -393,9 +393,9 @@ derr_t pop_server_loop(pop_server_t* ps, void* arg){
             }
             if(nargs == 1){
                 int index;
-                e = dstr_toi(&tokens.data[1], &index, 10);
-                CATCH(e, E_ANY){
-                    DROP(e);
+                e2 = dstr_toi(&tokens.data[1], &index, 10);
+                CATCH(e2, E_ANY){
+                    DROP(e2);
                     PROP(e, pop_server_send_dstr(ps, &resp_bad_arg) );
                     continue;
                 }

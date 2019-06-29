@@ -65,6 +65,7 @@ DSTR_STATIC(msg_ok, "+OK\r\n");
 
 static derr_t loginhook(void* arg, const dstr_t* username,
                         const dstr_t* password, bool* login_ok){
+    derr_t e = E_OK;
     // suppress unused parameter warning
     (void) arg;
     *login_ok = true;
@@ -219,6 +220,7 @@ static derr_t uidlhook(void* arg, int index){
     return E_OK;
 }
 static derr_t quithook(void* arg, bool* update_ok){
+    derr_t e = E_OK;
     fake_pop_server_t* fps = (fake_pop_server_t*)arg;
     // only do "update" state actions we entered the transaction state
     if(fps->logged_in == true){
@@ -365,7 +367,7 @@ fail_early:
     pthread_cond_signal(&fps_cond);
     pthread_mutex_unlock(&fps_mutex);
     // return error if necessary
-    PROP_GO(e, e, cleanup_2);
+    PROP_GO(e, e, cleanup_1);
 
     while(keep_going){
         // wait for main thread to let us start
@@ -381,7 +383,7 @@ fail_early:
         connection_t conn;
         // accept a connection
         LOG_INFO("FPS about to accept()\n");
-        PROP_GO(e, listener_accept(&listener, &conn), cleanup_3);
+        PROP_GO(e, listener_accept(&listener, &conn), cleanup_2);
         LOG_INFO("FPS accepted()\n");
 
         // set the pop_server to talk over this connection
@@ -398,13 +400,13 @@ fail_early:
         // send server greeting
         DSTR_VAR(banner, 128);
         PROP_GO(e, FMT(&banner, "+OK Fake POP Server Ready DITMv%x.%x.%x\r\n",
-                     FU(fps_ver_maj), FU(fps_ver_min), FU(fps_ver_bld)), cleanup_4);
-        PROP_GO(e, pop_server_send_dstr(&fps->ps, &banner), cleanup_4);
+                     FU(fps_ver_maj), FU(fps_ver_min), FU(fps_ver_bld)), cleanup_3);
+        PROP_GO(e, pop_server_send_dstr(&fps->ps, &banner), cleanup_3);
 
         // kick off server loop
-        PROP_GO(e, pop_server_loop(&fps->ps, (void*)fps), cleanup_4);
+        PROP_GO(e, pop_server_loop(&fps->ps, (void*)fps), cleanup_3);
 
-cleanup_4:
+cleanup_3:
         connection_close(&conn);
         LOG_INFO("FPS connection closed\n");
 
@@ -418,11 +420,10 @@ cleanup_4:
         pthread_mutex_unlock(&fps_mutex);
     }
 
-cleanup_3:
-    listener_close(&listener);
 cleanup_2:
-    ssl_context_free(&ctx);
+    listener_close(&listener);
 cleanup_1:
+    ssl_context_free(&ctx);
     thread_error = e;
     LOG_INFO("fps exiting normally\n");
     return NULL;
@@ -431,6 +432,7 @@ cleanup_1:
 static pthread_t fps_thread;
 
 derr_t fake_pop_server_start(fake_pop_server_t* fps){
+    derr_t e = E_OK;
     // prepare for the cond_wait
     pthread_cond_init(&fps_cond, NULL);
     pthread_mutex_init(&fps_mutex, NULL);

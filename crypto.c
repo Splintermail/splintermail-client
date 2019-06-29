@@ -33,6 +33,7 @@ DSTR_STATIC(pem_header, "-----BEGIN SPLINTERMAIL MESSAGE-----");
 DSTR_STATIC(pem_footer, "-----END SPLINTERMAIL MESSAGE-----");
 
 derr_t crypto_library_init(void){
+    derr_t e = E_OK;
 #if OPENSSL_VERSION_NUMBER < 0x10100000L
     // SSL_library_init depricated in OpenSSL 1.1.0
     SSL_library_init();
@@ -54,32 +55,32 @@ derr_t gen_key(int bits, const char* keyfile){
     // make sure the PRNG is seeded
     int ret = RAND_status();
     if(ret != 1){
-        e = trace_ssl_errors(e);
+        trace_ssl_errors(&e);
         ORIG(e, E_SSL, "not enough randomness to gen key");
     }
 
     BIGNUM* exp = BN_new();
     if(!exp){
-        e = trace_ssl_errors(e);
+        trace_ssl_errors(&e);
         ORIG(e, E_NOMEM, "failed to allocate bignum");
     }
 
     // set the exponent argument to a safe value
     ret = BN_set_word(exp, RSA_F4);
     if(ret != 1){
-        e = trace_ssl_errors(e);
+        trace_ssl_errors(&e);
         ORIG_GO(e, E_SSL, "failed to set key exponent", cleanup_1);
     }
 
     // generate the key
     RSA* rsa = RSA_new();
     if(!rsa){
-        e = trace_ssl_errors(e);
+        trace_ssl_errors(&e);
         ORIG_GO(e, E_NOMEM, "failed to allocate rsa", cleanup_1);
     }
     ret = RSA_generate_key_ex(rsa, bits, exp, NULL);
     if(ret != 1){
-        e = trace_ssl_errors(e);
+        trace_ssl_errors(&e);
         ORIG_GO(e, E_SSL, "failed to generate key", cleanup_2);
     }
 
@@ -94,7 +95,7 @@ derr_t gen_key(int bits, const char* keyfile){
     ret = PEM_write_RSAPrivateKey(f, rsa, NULL, NULL, 0, NULL, NULL);
     fclose(f);
     if(!ret){
-        e = trace_ssl_errors(e);
+        trace_ssl_errors(&e);
         ORIG_GO(e, E_SSL, "failed to write private key", cleanup_2);
     }
 
@@ -110,7 +111,7 @@ derr_t keypair_load(keypair_t* kp, const char* keyfile){
     // try to allocate for the EVP_PKEY
     kp->pair = EVP_PKEY_new();
     if(!kp->pair){
-        e = trace_ssl_errors(e);
+        trace_ssl_errors(&e);
         ORIG(e, E_NOMEM, "EVP_PKEY_new failed");
     }
 
@@ -128,7 +129,7 @@ derr_t keypair_load(keypair_t* kp, const char* keyfile){
     temp = PEM_read_PrivateKey(f, &kp->pair, NULL, NULL);
     fclose(f);
     if(!temp){
-        e = trace_ssl_errors(e);
+        trace_ssl_errors(&e);
         ORIG_GO(e, E_SSL, "failed to read private key", cleanup_1);
     }
 
@@ -138,13 +139,13 @@ derr_t keypair_load(keypair_t* kp, const char* keyfile){
     // now get ready to get the fingerprint of the key
     X509* x = X509_new();
     if(!x){
-        e = trace_ssl_errors(e);
+        trace_ssl_errors(&e);
         ORIG_GO(e, E_NOMEM, "X509_new failed", cleanup_1);
     }
 
     int ret = X509_set_pubkey(x, kp->pair);
     if(ret != 1){
-        e = trace_ssl_errors(e);
+        trace_ssl_errors(&e);
         ORIG_GO(e, E_SSL, "X509_set_pubkey failed", cleanup_2);
     }
 
@@ -153,7 +154,7 @@ derr_t keypair_load(keypair_t* kp, const char* keyfile){
     const EVP_MD* type = EVP_sha256();
     ret = X509_pubkey_digest(x, type, (unsigned char*)kp->fingerprint.data, &fpr_len);
     if(ret != 1){
-        e = trace_ssl_errors(e);
+        trace_ssl_errors(&e);
         ORIG_GO(e, E_SSL, "X509_pubkey_digest failed", cleanup_2);
     }
     kp->fingerprint.len = fpr_len;
@@ -175,7 +176,7 @@ derr_t keypair_from_pem(keypair_t* kp, const dstr_t* pem){
     // try to allocate for the EVP_PKEY
     kp->pair = EVP_PKEY_new();
     if(!kp->pair){
-        e = trace_ssl_errors(e);
+        trace_ssl_errors(&e);
         ORIG(e, E_SSL, "EVP_PKEY_new failed");
     }
 
@@ -187,7 +188,7 @@ derr_t keypair_from_pem(keypair_t* kp, const dstr_t* pem){
     // wrap the pem-encoded key in an SSL memory BIO
     BIO* pembio = BIO_new_mem_buf((void*)pem->data, pemlen);
     if(!pembio){
-        e = trace_ssl_errors(e);
+        trace_ssl_errors(&e);
         ORIG_GO(e, E_SSL, "unable to create BIO", fail_1);
     }
 
@@ -196,7 +197,7 @@ derr_t keypair_from_pem(keypair_t* kp, const dstr_t* pem){
     temp = PEM_read_bio_PUBKEY(pembio, &kp->pair, NULL, NULL);
     BIO_free(pembio);
     if(!temp){
-        e = trace_ssl_errors(e);
+        trace_ssl_errors(&e);
         ORIG_GO(e, E_SSL, "failed to read public key", fail_1);
     }
 
@@ -206,13 +207,13 @@ derr_t keypair_from_pem(keypair_t* kp, const dstr_t* pem){
     // now get ready to get the fingerprint of the key
     X509* x = X509_new();
     if(!x){
-        e = trace_ssl_errors(e);
+        trace_ssl_errors(&e);
         ORIG_GO(e, E_SSL, "X509_new failed", fail_1);
     }
 
     int ret = X509_set_pubkey(x, kp->pair);
     if(ret != 1){
-        e = trace_ssl_errors(e);
+        trace_ssl_errors(&e);
         ORIG_GO(e, E_SSL, "X509_set_pubkey failed", fail_2);
     }
 
@@ -221,7 +222,7 @@ derr_t keypair_from_pem(keypair_t* kp, const dstr_t* pem){
     const EVP_MD* type = EVP_sha256();
     ret = X509_pubkey_digest(x, type, (unsigned char*)kp->fingerprint.data, &fpr_len);
     if(ret != 1){
-        e = trace_ssl_errors(e);
+        trace_ssl_errors(&e);
         ORIG_GO(e, E_SSL, "X509_pubkey_digest failed", fail_2);
     }
     kp->fingerprint.len = fpr_len;
@@ -250,14 +251,14 @@ derr_t keypair_get_public_pem(keypair_t* kp, dstr_t* out){
     // first create a memory BIO for writing the key to
     BIO* bio = BIO_new(BIO_s_mem());
     if(!bio){
-        e = trace_ssl_errors(e);
+        trace_ssl_errors(&e);
         ORIG(e, E_NOMEM, "unable to create memory BIO");
     }
 
     // now write the public key to memory
     int ret = PEM_write_bio_PUBKEY(bio, kp->pair);
     if(!ret){
-        e = trace_ssl_errors(e);
+        trace_ssl_errors(&e);
         ORIG_GO(e, E_NOMEM, "failed to write public key", cleanup);
     }
 
@@ -266,7 +267,7 @@ derr_t keypair_get_public_pem(keypair_t* kp, dstr_t* out){
     long bio_len = BIO_get_mem_data(bio, &ptr);
     // I don't see any indication on how to check for errors, so here's a guess
     if(bio_len < 1){
-        e = trace_ssl_errors(e);
+        trace_ssl_errors(&e);
         ORIG_GO(e, E_INTERNAL, "failed to read public key from memory", cleanup);
     }
 
@@ -285,7 +286,7 @@ derr_t encrypter_new(encrypter_t* ec){
     // allocate the context
     ec->ctx = EVP_CIPHER_CTX_new();
     if(!ec->ctx){
-        e = trace_ssl_errors(e);
+        trace_ssl_errors(&e);
         ORIG(e, E_SSL, "EVP_CIPHER_CTX_new failed");
     }
 
@@ -349,7 +350,7 @@ derr_t encrypter_start(encrypter_t* ec, EVP_PKEY** pkeys, size_t npkeys,
     int npkeys_i = (int)npkeys;
     int ret = EVP_SealInit(ec->ctx, type, eks, ek_len, iv, pkeys, npkeys_i);
     if(ret != npkeys_i){
-        e = trace_ssl_errors(e);
+        trace_ssl_errors(&e);
         ORIG_GO(e, E_SSL, "EVP_SealInit failed", cleanup_1);
     }
 
@@ -424,7 +425,7 @@ derr_t encrypter_update(encrypter_t* ec, dstr_t* in, dstr_t* out){
         // encrypt this chunk
         int ret = EVP_SealUpdate(ec->ctx, outptr, &outlen, inptr, inlen);
         if(ret != 1){
-            e = trace_ssl_errors(e);
+            trace_ssl_errors(&e);
             ORIG_GO(e, E_SSL, "EVP_SealUpdate failed", fail);
         }
         ec->pre64.len += (size_t)outlen;
@@ -457,7 +458,7 @@ derr_t encrypter_finish(encrypter_t* ec, dstr_t* out){
     // encrypt final chunk
     int ret = EVP_SealFinal(ec->ctx, outptr, &outlen);
     if(ret != 1){
-        e = trace_ssl_errors(e);
+        trace_ssl_errors(&e);
         ORIG_GO(e, E_SSL, "EVP_SealFinal failed", cleanup);
     }
     ec->pre64.len += (size_t)outlen;
@@ -471,7 +472,7 @@ derr_t encrypter_finish(encrypter_t* ec, dstr_t* out){
     ret = EVP_CIPHER_CTX_ctrl(ec->ctx, EVP_CTRL_GCM_GET_TAG, CIPHER_TAG_LEN,
                               (unsigned char*)tag.data);
     if(ret != 1){
-        e = trace_ssl_errors(e);
+        trace_ssl_errors(&e);
         ORIG_GO(e, E_SSL, "failed to get GCM tag", cleanup);
     }
     tag.len = tag.size;
@@ -521,7 +522,7 @@ derr_t decrypter_new(decrypter_t* dc){
     // allocate the context
     dc->ctx = EVP_CIPHER_CTX_new();
     if(!dc->ctx){
-        e = trace_ssl_errors(e);
+        trace_ssl_errors(&e);
         ORIG(e, E_NOMEM, "EVP_CIPHER_CTX_new failed");
     }
 
@@ -581,6 +582,7 @@ derr_t decrypter_start(decrypter_t* dc, keypair_t* kp, LIST(dstr_t)* recips,
            E_NOT4ME */
 static derr_t decrypter_parse_metadata(decrypter_t* dc){
     derr_t e = E_OK;
+    derr_t e2;
     // define some patterns
     LIST_PRESET(dstr_t, colon, DSTR_LIT(":"));
     LIST_PRESET(dstr_t, line_end, DSTR_LIT("\n"));
@@ -748,10 +750,10 @@ static derr_t decrypter_parse_metadata(decrypter_t* dc){
                 }
                 // store the iv
                 dc->iv_found = true;
-                e = dstr_copy(&iv, &dc->iv);
+                e2 = dstr_copy(&iv, &dc->iv);
                 // that should never error
-                CATCH(e, E_ANY){
-                    RETHROW(e, E_INTERNAL);
+                CATCH(e2, E_ANY){
+                    RETHROW(e, e2, E_INTERNAL);
                 }
                 // remove this line from the buffer
                 line_len = (uintptr_t)(leftover.data - dc->buffer.data) + iv_len + 1;
@@ -778,7 +780,7 @@ static derr_t decrypter_parse_metadata(decrypter_t* dc){
                 int ret = EVP_OpenInit(dc->ctx, type, bkey, ekeylen,
                                        biv, dc->kp->pair);
                 if(ret != 1){
-                    e = trace_ssl_errors(e);
+                    trace_ssl_errors(&e);
                     ORIG(e, E_SSL, "EVP_OpenInit failed" );
                 }
 
@@ -795,6 +797,7 @@ static derr_t decrypter_parse_metadata(decrypter_t* dc){
 
 derr_t decrypter_update(decrypter_t* dc, dstr_t* in, dstr_t* out){
     derr_t e = E_OK;
+    derr_t e2;
     int result;
     size_t read = 0;
 
@@ -855,29 +858,29 @@ derr_t decrypter_update(decrypter_t* dc, dstr_t* in, dstr_t* out){
             // get a substring of the part of this line we want to decode
             sub = dstr_sub(&sub, 1, 0);
             // base64 the tag
-            e = b642bin(&sub, &dc->tag);
+            e2 = b642bin(&sub, &dc->tag);
             // that should never error
-            CATCH(e, E_FIXEDSIZE){
-                RETHROW_GO(e, E_PARAM, fail);
-            }else PROP(e, e);
+            CATCH(e2, E_FIXEDSIZE){
+                RETHROW_GO(e, e2, E_PARAM, fail);
+            }else PROP(e, e2);
             // that's all for the whole encryption message;
             read = in->len;
             break;
         }
 
         // read from *in to *base64
-        e = dstr_append(&dc->base64, &sub);
+        e2 = dstr_append(&dc->base64, &sub);
         // that should never fail
         CATCH(e, E_FIXEDSIZE){
-            RETHROW_GO(e, E_INTERNAL, fail);
-        }else PROP(e, e);
+            RETHROW_GO(e, e2, E_INTERNAL, fail);
+        }else PROP(e, e2);
         read += sub.len;
 
         // now push *base64 through the decoder
-        e = b642bin(&dc->base64, &dc->buffer);
-        CATCH(e, E_FIXEDSIZE){
-            RETHROW_GO(e, E_INTERNAL, fail);
-        }else PROP(e, e);
+        e2 = b642bin(&dc->base64, &dc->buffer);
+        CATCH(e2, E_FIXEDSIZE){
+            RETHROW_GO(e, e2, E_INTERNAL, fail);
+        }else PROP(e, e2);
 
         // are we still parsing metadata?
         if(dc->message_started == false){
@@ -901,7 +904,7 @@ derr_t decrypter_update(decrypter_t* dc, dstr_t* in, dstr_t* out){
             // dc->buffer is fixed size, so this cast should be a safe cast
             int ret = EVP_OpenUpdate(dc->ctx, bout, &outl, bin, (int)inl);
             if(ret != 1){
-                e = trace_ssl_errors(e);
+                trace_ssl_errors(&e);
                 ORIG_GO(e, E_SSL, "EVP_OpenUpdate failed", fail);
             }
             // make sure no buffer overrun happened
@@ -939,7 +942,7 @@ derr_t decrypter_finish(decrypter_t* dc, dstr_t* out){
     int ret = EVP_CIPHER_CTX_ctrl(dc->ctx, EVP_CTRL_GCM_SET_TAG,
                                   taglen, (unsigned char*)dc->tag.data);
     if(ret != 1){
-        e = trace_ssl_errors(e);
+        trace_ssl_errors(&e);
         ORIG_GO(e, E_SSL, "Failed to set GCM tag", cleanup);
     }
 
@@ -952,7 +955,7 @@ derr_t decrypter_finish(decrypter_t* dc, dstr_t* out){
     int outl;
     ret = EVP_OpenFinal(dc->ctx, bout, &outl);
     if(ret != 1){
-        e = trace_ssl_errors(e);
+        trace_ssl_errors(&e);
         ORIG_GO(e, E_SSL, "EVP_OpenFinal failed", cleanup);
     }
     // make sure no buffer overrun happened
@@ -984,7 +987,7 @@ derr_t hmac(const dstr_t* secret, const dstr_t* payload, dstr_t* hmac){
                               (unsigned char*)payload->data, payload->len,
                               (unsigned char*)hmac->data, &hmaclen);
     if(!ret){
-        e = trace_ssl_errors(e);
+        trace_ssl_errors(&e);
         ORIG(e, E_INTERNAL, "HMAC() failed");
     }
     hmac->len = (size_t)hmaclen;
@@ -1005,7 +1008,7 @@ derr_t random_bytes(dstr_t* out, size_t nbytes){
     // get the random bytes
     int ret = RAND_bytes((unsigned char*)out->data, (int)nbytes);
     if(ret != 1){
-        e = trace_ssl_errors(e);
+        trace_ssl_errors(&e);
         ORIG(e, E_SSL, "RAND_bytes() failed");
     }
 

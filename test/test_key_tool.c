@@ -408,8 +408,7 @@ cu1:
 static derr_t do_test(unsigned int ctr){
     derr_t e = E_OK;
     // delete the temporary directory if it already exists
-    e = rm_rf("_tktdir");
-    DROP(e);
+    DROP_CMD( rm_rf("_tktdir") );
     // create the "test key tool directory"
     int ret = mkdir("_tktdir", 0770);
     if(ret != 0){
@@ -523,10 +522,9 @@ static derr_t test_key_tool(void){
     for(unsigned int counter = 0; counter < 2*K; counter++){
         PROP_GO(e, counter_to_dstr(counter, &mode), cu1);
         LOG_INFO("----- testing %x (%x) -----\n", FU(counter), FD(&mode));
-        e = do_test(counter);
-        if(e.type){
+        IF_PROP(e, do_test(counter) ){
             TRACE(e, "failed on %x (%x)\n", FU(counter), FD(&mode));
-            PROP_GO(e, e, cu1);
+            goto cu1;
         }
     }
 
@@ -538,8 +536,7 @@ cu1:
 static derr_t test_peer_list_read_write(void){
     derr_t e = E_OK;
     // remove the directory if there already is one
-    e = rm_rf("_tktdir");
-    DROP(e);
+    DROP_CMD( rm_rf("_tktdir") );
     // create the "test key tool directory"
     int ret = mkdir("_tktdir", 0770);
     if(ret != 0){
@@ -605,8 +602,7 @@ int main(int argc, char** argv){
 
     PROP_GO(e, test_peer_list_read_write(), test_fail);
     PROP_GO(e, test_key_tool(), test_fail);
-    e = rm_rf("_tktdir");
-    DROP(e);
+    DROP_CMD( rm_rf("_tktdir") );
 
     LOG_ERROR("PASS\n");
     ssl_library_close();

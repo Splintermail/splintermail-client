@@ -250,6 +250,7 @@ static derr_t test_opt_parse(void){
 
 static derr_t test_conf_parse(void){
     derr_t e = E_OK;
+    derr_t e2;
     opt_spec_t o_option1    = {'\0', "option1",    true,  OPT_RETURN_INIT};
     opt_spec_t o_option2    = {'\0', "option2",    true,  OPT_RETURN_INIT};
     opt_spec_t o_option3    = {'\0', "option3",    true,  OPT_RETURN_INIT};
@@ -298,43 +299,37 @@ static derr_t test_conf_parse(void){
     {
         DSTR_VAR(text, 4096);
         PROP(e, dstr_fread_file(badconf1.data, &text) );
-        e = conf_parse(&text, spec, speclen);
-        CATCH(e, E_VALUE){
+        e2 = conf_parse(&text, spec, speclen);
+        CATCH(e2, E_VALUE){
             // we are expecting to puke on this input; do nothing
-            DROP(e);
+            DROP(e2);
         }else{
-            TRACE(e, "conf parse should have puked on: %x\n", FD(&text));
-            DUMP(e);
-            DROP(e);
-            ORIG(e, E_VALUE, "conf parse did not puke when it should have");
+            TRACE(e2, "conf parse should have puked on: %x\n", FD(&text));
+            RETHROW(e, e2, E_VALUE);
         }
     }
     {
         DSTR_VAR(text, 4096);
         PROP(e, dstr_fread_file(badconf2.data, &text) );
-        e = conf_parse(&text, spec, speclen);
-        CATCH(e, E_VALUE){
+        e2 = conf_parse(&text, spec, speclen);
+        CATCH(e2, E_VALUE){
             // we are expecting to puke on this input; do nothing
-            DROP(e);
+            DROP(e2);
         }else{
-            TRACE(e, "conf parse should have puked on: %x\n", FD(&text));
-            DUMP(e);
-            DROP(e);
-            ORIG(e, E_VALUE, "conf parse did not puke when it should have");
+            TRACE(e2, "conf parse should have puked on: %x\n", FD(&text));
+            RETHROW(e, e2, E_VALUE);
         }
     }
     {
         DSTR_VAR(text, 4096);
         PROP(e, dstr_fread_file(badconf3.data, &text) );
-        e = conf_parse(&text, spec, speclen);
-        CATCH(e, E_VALUE){
+        e2 = conf_parse(&text, spec, speclen);
+        CATCH(e2, E_VALUE){
             // we are expecting to puke on this input; do nothing
-            DROP(e);
+            DROP(e2);
         }else{
-            TRACE(e, "conf parse should have puked on: %x\n", FD(&text));
-            DUMP(e);
-            DROP(e);
-            ORIG(e, E_VALUE, "conf parse did not puke when it should have");
+            TRACE(e2, "conf parse should have puked on: %x\n", FD(&text));
+            RETHROW(e, e2, E_VALUE);
         }
     }
 

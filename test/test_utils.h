@@ -19,10 +19,10 @@
     /* decide to print usage or continue */ \
     bool args_valid = true; \
     /* parse options */ \
-    e = opt_parse(argc, argv, spec, speclen, &newargc); \
-    CATCH(e, E_ANY){ \
+    derr_t e2 = opt_parse(argc, argv, spec, speclen, &newargc); \
+    CATCH(e2, E_ANY){ \
         args_valid = false; \
-        DROP(e); \
+        DROP_VAR(&e2); \
         goto print_usage; \
     } \
     /* set log level */ \

@@ -924,9 +924,7 @@ static void event_cb(uv_async_t *handle){
                 }else if(ld->connected == false){
                     queue_append(&ld->preconnected_writes, &ev->qe);
                 }else{
-                    e = handle_write(loop, ld, ev);
-                    if(e.type){
-                        TRACE_PROP(e);
+                    IF_PROP(e, handle_write(loop, ld, ev) ){
                         // return write buffer
                         ev->error = E_OK;
                         ev->ev_type = EV_WRITE_DONE;

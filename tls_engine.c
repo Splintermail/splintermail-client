@@ -106,7 +106,7 @@ static void do_ssl_read(tlse_data_t *td){
                 }
                 break;
             default:
-                trace_ssl_errors(e);
+                trace_ssl_errors(&e);
                 ORIG_GO(e, E_SSL, "error in SSL_read", close_session);
         }
     }
@@ -149,7 +149,7 @@ static void do_ssl_write(tlse_data_t *td){
                 }
                 break;
             default:
-                trace_ssl_errors(e);
+                trace_ssl_errors(&e);
                 ORIG_GO(e, E_SSL, "error in SSL_write", close_session);
         }
     }
@@ -184,7 +184,7 @@ static void do_write_out(tlse_data_t *td){
     int ret = BIO_read_ex(td->rawout, td->write_out->buffer.data,
                           td->write_out->buffer.size, &amnt_read);
     if(ret != 1 || amnt_read == 0){
-        trace_ssl_errors(e);
+        trace_ssl_errors(&e);
         TRACE_ORIG(e, E_SSL, "reading from memory buffer failed");
         tlse->session_iface.close(td->session, e);
         PASSED(e);
@@ -267,11 +267,11 @@ static bool enter_idle(tlse_data_t *td){
                 int ret = BIO_write_ex(td->rawin, td->read_in->buffer.data,
                                        td->read_in->buffer.len, &written);
                 if(ret < 1){
-                    trace_ssl_errors(e);
+                    trace_ssl_errors(&e);
                     ORIG_GO(e, E_SSL, "writing to BIO failed", fail);
                 }
                 if(written != td->read_in->buffer.len){
-                    trace_ssl_errors(e);
+                    trace_ssl_errors(&e);
                     ORIG_GO(e, E_NOMEM, "BIO rejected some bytes!", fail);
                 }
                 readable = true;
@@ -537,7 +537,7 @@ static void tlse_data_onthread_start(tlse_data_t *td, tlse_t *tlse,
     // allocate and asign BIO memory buffers
     td->rawin = BIO_new(BIO_s_mem());
     if(td->rawin == NULL){
-        trace_ssl_errors(e);
+        trace_ssl_errors(&e);
         ORIG_GO(e, E_NOMEM, "unable to create BIO", fail_ssl);
     }
     SSL_set0_rbio(td->ssl, td->rawin);
@@ -545,7 +545,7 @@ static void tlse_data_onthread_start(tlse_data_t *td, tlse_t *tlse,
     // allocate and asign BIO memory buffers
     td->rawout = BIO_new(BIO_s_mem());
     if(td->rawout == NULL){
-        trace_ssl_errors(e);
+        trace_ssl_errors(&e);
         ORIG_GO(e, E_NOMEM, "unable to create BIO", fail_ssl);
     }
     SSL_set0_wbio(td->ssl, td->rawout);
@@ -570,7 +570,7 @@ static void tlse_data_onthread_start(tlse_data_t *td, tlse_t *tlse,
                 }
                 break;
             default:
-                trace_ssl_errors(e);
+                trace_ssl_errors(&e);
                 ORIG_GO(e, E_SSL, "error in SSL_do_hanshake", fail_ssl);
         }
 

@@ -157,6 +157,7 @@ derr_t for_each_file_in_dir(const char* path, for_each_file_hook_t hook,
 
 // networking.h
 derr_t ssl_library_init(void){
+    derr_t e = E_OK;
     return E_OK;
 }
 
@@ -192,6 +193,7 @@ derr_t api_token_read(const char* path, api_token_t* token){
 derr_t api_token_write(const char* path, api_token_t* token){
     (void) path;
     (void) token;
+    derr_t e = E_OK;
     return E_OK;
 }
 

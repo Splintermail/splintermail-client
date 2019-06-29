@@ -53,6 +53,7 @@ static derr_t loginhook(void* arg, const dstr_t* username,
     (void)arg;
     (void)username;
     (void)password;
+    derr_t e = E_OK;
     last_called = called;
     called = LOGINHOOK;
     *login_ok = true;
@@ -122,6 +123,7 @@ static derr_t uidlhook(void* arg, int index){
 }
 static derr_t quithook(void* arg, bool* update_ok){
     (void)arg;
+    derr_t e = E_OK;
     last_called = called;
     called = QUITHOOK;
     *update_ok = true;

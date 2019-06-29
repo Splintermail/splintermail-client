@@ -96,8 +96,7 @@ static void *loop_thread(void *arg){
                        &pipeline,
                        "127.0.0.1", port_str), cu_tlse);
 
-    e = tlse_add_to_loop(&ctx->tlse, &ctx->loop.uv_loop);
-    if(e.type != E_NONE){
+    IF_PROP(e, tlse_add_to_loop(&ctx->tlse, &ctx->loop.uv_loop) ){
         // Loop can't run but can't close without running; shit's fucked
         LOG_ERROR("Failed to assemble pipeline, hard exiting\n");
         exit(13);

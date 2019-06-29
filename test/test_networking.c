@@ -47,27 +47,27 @@ static derr_t print_protocol_and_cipher(connection_t* conn){
     SSL* ssl = NULL;
     BIO_get_ssl(conn->bio, &ssl);
     if(!ssl){
-        e = trace_ssl_errors(e);
-        ORIG(e, E_SSL, "error getting ssl from bio");
+        trace_ssl_errors(&e);
+        ORIG(&e, E_SSL, "error getting ssl from bio");
     }
 
     // print the protocol
     const char* protocol = SSL_get_version(ssl);
     if(!protocol){
-        e = trace_ssl_errors(e);
-        ORIG(e, E_SSL, "error getting protocol from ssl");
+        trace_ssl_errors(&e);
+        ORIG(&e, E_SSL, "error getting protocol from ssl");
     }
     LOG_INFO("protocol: %x\n", FS(protocol));
 
     // print the cipher
     const char* cipher = SSL_get_cipher(ssl);
     if(!cipher){
-        e = trace_ssl_errors(e);
-        ORIG(e, E_SSL, "error getting cipher from ssl");
+        trace_ssl_errors(&e);
+        ORIG(&e, E_SSL, "error getting cipher from ssl");
     }
     LOG_INFO("cipher: %x\n", FS(cipher));
 
-    return E_OK;
+    return e;
 }
 
 typedef struct {
@@ -102,7 +102,7 @@ static void* ssl_server_thread(void* arg){
     server_spec_t* spec = arg;
     spec->error = E_OK;
 
-    derr_t e = spec->error;
+    derr_t *e = &spec->error;
 
     DSTR_VAR(certfile, 4096);
     DSTR_VAR(keyfile, 4096);
@@ -142,7 +142,7 @@ static void* ssl_server_thread(void* arg){
         ctx.ctx = NULL;
         ctx.ctx = SSL_CTX_new(meth);
         if(!ctx.ctx){
-            e = trace_ssl_errors(e);
+            trace_ssl_errors(e);
             ORIG_GO(e, E_NOMEM, "failed to create SSL context", signal_client);
         }
 
@@ -150,25 +150,25 @@ static void* ssl_server_thread(void* arg){
         unsigned long ssl_types = spec->ssl_types ? spec->ssl_types : NOSSL2 | NOSSL3;
         unsigned long ulret = SSL_CTX_set_options(ctx.ctx, ssl_types);
         if(!(ulret & spec->ssl_types)){
-            e = trace_ssl_errors(e);
+            trace_ssl_errors(e);
             ORIG_GO(e, E_SSL, "failed to limit SSL methods", ctx_fail);
         }
 
         // set key and cert
         int ret = SSL_CTX_use_certificate_chain_file(ctx.ctx, certfile.data);
         if(ret != 1){
-            e = trace_ssl_errors(e);
+            trace_ssl_errors(e);
             ORIG_GO(e, E_SSL, "could not set certificate", ctx_fail);
         }
         ret = SSL_CTX_use_PrivateKey_file(ctx.ctx, keyfile.data, SSL_FILETYPE_PEM);
         if(ret != 1){
-            e = trace_ssl_errors(e);
+            trace_ssl_errors(e);
             ORIG_GO(e, E_SSL, "could not set private key", ctx_fail);
         }
         // make sure the key matches the certificate
         ret = SSL_CTX_check_private_key(ctx.ctx);
         if(ret != 1){
-            e = trace_ssl_errors(e);
+            trace_ssl_errors(e);
             ORIG_GO(e, E_SSL, "private key does not match certificate", ctx_fail);
         }
 
@@ -182,13 +182,13 @@ static void* ssl_server_thread(void* arg){
         dh = PEM_read_DHparams(fp, NULL, NULL, NULL);
         fclose(fp);
         if(!dh){
-            e = trace_ssl_errors(e);
+            trace_ssl_errors(e);
             ORIG_GO(e, E_SSL, "failed to read dh params", ctx_fail);
         }
         long lret = SSL_CTX_set_tmp_dh(ctx.ctx, dh);
         if(lret != 1){
             DH_free(dh);
-            e = trace_ssl_errors(e);
+            trace_ssl_errors(e);
             ORIG_GO(e, E_SSL, "failed to set dh params", ctx_fail);
         }
         DH_free(dh);
@@ -196,25 +196,25 @@ static void* ssl_server_thread(void* arg){
         // make sure server sets cipher preference
         ulret = SSL_CTX_set_options(ctx.ctx, SSL_OP_CIPHER_SERVER_PREFERENCE);
         if( !(ulret & SSL_OP_CIPHER_SERVER_PREFERENCE) ){
-            e = trace_ssl_errors(e);
+            trace_ssl_errors(e);
             ORIG_GO(e, E_SSL, "failed to set server cipher preference ", ctx_fail);
         }
 
         ret = SSL_CTX_set_cipher_list(ctx.ctx, PREFERRED_CIPHERS);
         if(ret != 1){
-            e = trace_ssl_errors(e);
+            trace_ssl_errors(e);
             ORIG_GO(e, E_SSL, "could not set ciphers", ctx_fail);
         }
 
         // read/write operations should only return after handshake completed
         lret = SSL_CTX_set_mode(ctx.ctx, SSL_MODE_AUTO_RETRY);
         if(!(lret & SSL_MODE_AUTO_RETRY)){
-            e = trace_ssl_errors(e);
+            trace_ssl_errors(e);
             ORIG_GO(e, E_SSL, "error setting SSL mode", ctx_fail);
         }
 
-        if(e.type != E_NONE){
 ctx_fail:
+        if(is_error(*e)){
             SSL_CTX_free(ctx.ctx);
             ctx.ctx = NULL;
             goto signal_client;
@@ -223,18 +223,18 @@ ctx_fail:
 
     // create the listener with our context
     listener_t listener;
-    e = listener_new_ssl(&listener, &ctx, "127.0.0.1", spec->port);
+    PROP_GO(e, listener_new_ssl(&listener, &ctx, "127.0.0.1", spec->port),
+            signal_client);
 
 signal_client:
-    // before we signal the client, let it know if we are about to puke
-    spec->error = e;
-
     // no matter what, signal the main thread
     pthread_mutex_lock(&spec->mutex);
     pthread_cond_signal(&spec->cond);
     pthread_mutex_unlock(&spec->mutex);
     // return error if necessary
-    PROP_GO(e, e, c_ctx);
+    if(is_error(*e)){
+        goto c_ctx;
+    }
 
     connection_t conn;
     // accept a connection
@@ -255,7 +255,6 @@ c_listener:
 c_ctx:
     ssl_context_free(&ctx);
 exit:
-    spec->error = e;
     return NULL;
 }
 
@@ -271,6 +270,8 @@ static derr_t ssl_server_join(server_spec_t* spec){
 }
 
 static derr_t ssl_server_start(server_spec_t* spec){
+    derr_t e = E_OK;
+
     // prepare for the cond_wait
     pthread_cond_init(&spec->cond, NULL);
     pthread_mutex_init(&spec->mutex, NULL);
@@ -288,7 +289,7 @@ static derr_t ssl_server_start(server_spec_t* spec){
         return ssl_server_join(spec);
     }
 
-    return E_OK;
+    return e;
 }
 
 typedef struct {
@@ -308,7 +309,7 @@ static derr_pair_t do_ssl_test(server_spec_t* srv_spec, client_spec_t* cli_spec)
     ssl_context_t ctx;
     // vanilla client context for testing the client implementation
     if(cli_spec->vanilla == true){
-        PROP_GO(e, ssl_context_new_client(&ctx), c_server);
+        PROP_GO(&e, ssl_context_new_client(&ctx), c_server);
     }
     // custom client context for testing the server implementation
     else{
@@ -319,45 +320,45 @@ static derr_pair_t do_ssl_test(server_spec_t* srv_spec, client_spec_t* cli_spec)
         ctx.ctx = NULL;
         ctx.ctx = SSL_CTX_new(meth);
         if(!ctx.ctx){
-            e = trace_ssl_errors(e);
-            ORIG_GO(e, E_NOMEM, "failed to create SSL context", ctx_fail);
+            trace_ssl_errors(&e);
+            ORIG_GO(&e, E_NOMEM, "failed to create SSL context", ctx_fail);
         }
         // set protocol limits based on spec
         unsigned long ulret = SSL_CTX_set_options(ctx.ctx, cli_spec->ssl_types);
         if(!(ulret & cli_spec->ssl_types)){
-            e = trace_ssl_errors(e);
-            ORIG_GO(e, E_SSL, "failed to limit SSL methods", ctx_fail);
+            trace_ssl_errors(&e);
+            ORIG_GO(&e, E_SSL, "failed to limit SSL methods", ctx_fail);
         }
 
         // load SSL certificate location
         if(cli_spec->castorefile == NULL){
             // load the actual system store
-            PROP_GO(e, ssl_context_load_from_os(&ctx), ctx_fail);
+            PROP_GO(&e, ssl_context_load_from_os(&ctx), ctx_fail);
         }else{
             // load the ca store given in the client spec
             const char* location = cli_spec->castorefile;
             int ret = SSL_CTX_load_verify_locations(ctx.ctx, location, NULL);
             if(ret != 1){
-                e = trace_ssl_errors(e);
+                trace_ssl_errors(&e);
                 DSTR_VAR(msg, 1024);
-                PROP_GO(e, FMT(&msg, "failed to load verify_location: %x\n",
+                PROP_GO(&e, FMT(&msg, "failed to load verify_location: %x\n",
                                    FS(location)),
                          ctx_fail);
-                ORIG_GO(e, E_OS, msg.data, ctx_fail);
+                ORIG_GO(&e, E_OS, msg.data, ctx_fail);
             }
         }
 
         int ret = SSL_CTX_set_cipher_list(ctx.ctx, PREFERRED_CIPHERS);
         if(ret != 1){
-            e = trace_ssl_errors(e);
-            ORIG_GO(e, E_SSL, "could not set ciphers", ctx_fail);
+            trace_ssl_errors(&e);
+            ORIG_GO(&e, E_SSL, "could not set ciphers", ctx_fail);
         }
 
         // read/write operations should only return after handshake completed
         long lret = SSL_CTX_set_mode(ctx.ctx, SSL_MODE_AUTO_RETRY);
         if(!(lret & SSL_MODE_AUTO_RETRY)){
-            e = trace_ssl_errors(e);
-            ORIG_GO(e, E_SSL, "error setting SSL mode", ctx_fail);
+            trace_ssl_errors(&e);
+            ORIG_GO(&e, E_SSL, "error setting SSL mode", ctx_fail);
         }
 
 ctx_fail:
@@ -371,22 +372,22 @@ ctx_fail:
     // setup a connection
     connection_t conn;
     const char* hostname = cli_spec->hostname ? cli_spec->hostname : "127.0.0.1";
-    PROP_GO(e, connection_new_ssl(&conn, &ctx, hostname, srv_spec->port), c_ctx);
+    PROP_GO(&e, connection_new_ssl(&conn, &ctx, hostname, srv_spec->port), c_ctx);
 
     // if we made a connection, print the protocol and cipher
     print_protocol_and_cipher(&conn);
 
     // write something
     DSTR_STATIC(msg_out, "this is a test\n");
-    PROP_GO(e, connection_write(&conn, &msg_out), c_conn);
+    PROP_GO(&e, connection_write(&conn, &msg_out), c_conn);
 
     // read something
     DSTR_VAR(msg_in, 256);
-    PROP_GO(e, connection_read(&conn, &msg_in, NULL), c_conn);
+    PROP_GO(&e, connection_read(&conn, &msg_in, NULL), c_conn);
 
     // they should match (server is echoing)
     if(dstr_cmp(&msg_in, &msg_out) != 0){
-        ORIG_GO(e, E_VALUE, "msg_in did not match msg_out", c_conn);
+        ORIG_GO(&e, E_VALUE, "msg_in did not match msg_out", c_conn);
     }
 
 c_conn:
@@ -403,31 +404,31 @@ exit:
     { \
         bool keep_going = true; \
         if(eclient != errors.client.type){ \
-            TRACE(e, "expected client to return %x but got %x\n", \
+            TRACE(&e, "expected client to return %x but got %x\n", \
                       FD(error_to_dstr(eclient)), \
                       FD(error_to_dstr(errors.client.type))); \
             keep_going = false; \
             if(errors.client.type){ \
-                TRACE(e, "client trace:\n%x\n", FD(&errors.client.msg)); \
+                TRACE(&e, "client trace:\n%x\n", FD(&errors.client.msg)); \
             } \
         } \
         if(errors.client.type){ \
-            DROP(errors.client); \
+            DROP_VAR(&errors.client); \
         } \
         if(eserver != errors.server.type){ \
-            TRACE(e, "expected server to return %x but got %x\n", \
+            TRACE(&e, "expected server to return %x but got %x\n", \
                       FD(error_to_dstr(eserver)), \
                       FD(error_to_dstr(errors.server.type))); \
             keep_going = false; \
             if(errors.server.type){ \
-                TRACE(e, "server trace:\n%x\n", FD(&errors.server.msg)); \
+                TRACE(&e, "server trace:\n%x\n", FD(&errors.server.msg)); \
             } \
         } \
         if(errors.server.type){ \
-            DROP(errors.server); \
+            DROP_VAR(&errors.server); \
         } \
         if(keep_going == false){ \
-            ORIG(e, E_VALUE, "test failed: returned wrong values"); \
+            ORIG(&e, E_VALUE, "test failed: returned wrong values"); \
         } \
         LOG_INFO("-- test passed\n"); \
     }
@@ -576,30 +577,30 @@ static derr_t test_ssl_client(void){
         EXPECT_ERRORS(E_SSL, E_CONN);
     }
 
-    return E_OK;
+    return e;
 }
 
 /*static derr_t test_ssl_server(void){
     derr_t error;
     // setup the context (context-specific step)
     ssl_context_t ctx;
-    PROP( ssl_context_new_server(&ctx, "test/files/cert.pem",
+    PROP(& ssl_context_new_server(&ctx, "test/files/cert.pem",
                                        "test/files/key.pem",
                                        "test/files/dh_4096.pem") );
 
     // open an ssl listener
     listener_t listener;
-    PROP_GO(e, listener_new_ssl(&listener, &ctx, "0.0.0.0", 12345), cleanup_1);
+    PROP_GO(&e, listener_new_ssl(&listener, &ctx, "0.0.0.0", 12345), cleanup_1);
 
     // accept a connection
     connection_t conn;
-    PROP_GO(e, listener_accept(&listener, &conn), cleanup_2);
+    PROP_GO(&e, listener_accept(&listener, &conn), cleanup_2);
 
     DSTR_STATIC(writeme, "hello world!\n");
-    PROP_GO(e, connection_write(&conn, &writeme), cleanup_3 );
+    PROP_GO(&e, connection_write(&conn, &writeme), cleanup_3 );
 
     DSTR_VAR(buffer, 4096);
-    PROP_GO(e, connection_read(&conn, &buffer, NULL), cleanup_3 );
+    PROP_GO(&e, connection_read(&conn, &buffer, NULL), cleanup_3 );
     PFMT("read: %x", FD(&buffer));
 
 cleanup_3:
@@ -615,13 +616,13 @@ static derr_t test_server_repeatedly(void){
     derr_t error;
     // setup the context (context-specific step)
     ssl_context_t ctx;
-    PROP( ssl_context_new_server(&ctx, "test/files/cert.pem",
+    PROP(& ssl_context_new_server(&ctx, "test/files/cert.pem",
                                        "test/files/key.pem",
                                        "test/files/dh_4096.pem") );
 
     // open an ssl listener
     listener_t listener;
-    PROP_GO(e, listener_new_ssl(&listener, &ctx, "0.0.0.0", 12345), cleanup_1);
+    PROP_GO(&e, listener_new_ssl(&listener, &ctx, "0.0.0.0", 12345), cleanup_1);
 
     while(1){
         // accept a connection
@@ -661,11 +662,11 @@ int main(int argc, char** argv){
     PARSE_TEST_OPTIONS(argc, argv, &g_test_files, LOG_LVL_INFO);
 
     // setup the library (application-wide step)
-    PROP_GO(e, ssl_library_init(), test_fail);
+    PROP_GO(&e, ssl_library_init(), test_fail);
 
-    PROP_GO(e, test_ssl_client(), test_fail);
-    // PROP_GO(e, test_ssl_server(), test_fail);
-    // PROP_GO(e, test_server_repeatedly(), test_fail);
+    PROP_GO(&e, test_ssl_client(), test_fail);
+    // PROP_GO(&e, test_ssl_server(), test_fail);
+    // PROP_GO(&e, test_server_repeatedly(), test_fail);
 
     LOG_ERROR("PASS\n");
     ssl_library_close();
@@ -673,7 +674,7 @@ int main(int argc, char** argv){
 
 test_fail:
     DUMP(e);
-    DROP(e);
+    DROP_VAR(&e);
     LOG_ERROR("FAIL\n");
     ssl_library_close();
     return 1;

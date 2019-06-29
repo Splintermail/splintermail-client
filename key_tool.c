@@ -15,6 +15,7 @@ static derr_t key_tool_register_key(key_tool_t* kt,
                                     const dstr_t* user,
                                     const dstr_t* pass){
     derr_t e = E_OK;
+    derr_t e2;
     LOG_INFO("key tool attempting to register key\n");
     // get ready to recieve JSON
     LIST_VAR(json_t, json, 32);
@@ -22,21 +23,21 @@ static derr_t key_tool_register_key(key_tool_t* kt,
     // get ready for the api call
     DSTR_STATIC(command, "add_device");
     DSTR_VAR(argument, 4096);
-    e = keypair_get_public_pem(&kt->key, &argument);
-    CATCH(e, E_FIXEDSIZE){
-        RETHROW(e, E_INTERNAL);
-    }else PROP(e, e);
+    e2 = keypair_get_public_pem(&kt->key, &argument);
+    CATCH(e2, E_FIXEDSIZE){
+        RETHROW(e, e2, E_INTERNAL);
+    }else PROP(e, e2);
     int code;
     DSTR_VAR(reason, 1024);
     DSTR_VAR(recv, 4096);
 
     // do the api call
-    e = api_password_call(host, port, &command, &argument,
+    e2 = api_password_call(host, port, &command, &argument,
                               user, pass, &code, &reason, &recv, &json);
-    CATCH(e, E_FIXEDSIZE){
-        TRACE(e, "server response too long\n");
-        RETHROW(e, E_RESPONSE);
-    }else PROP(e, e);
+    CATCH(e2, E_FIXEDSIZE){
+        TRACE(e2, "server response too long\n");
+        RETHROW(e, e2, E_RESPONSE);
+    }else PROP(e, e2);
 
     // make sure the code was correct
     if(code < 200 || code > 299){
@@ -46,18 +47,18 @@ static derr_t key_tool_register_key(key_tool_t* kt,
 
     // dereference the status out of the json response
     dstr_t status;
-    e = j_to_dstr(jk(json.data[0], "status"), &status);
-    CATCH(e, E_PARAM){
-        RETHROW(e, E_RESPONSE);
-    }else PROP(e, e);
+    e2 = j_to_dstr(jk(json.data[0], "status"), &status);
+    CATCH(e2, E_PARAM){
+        RETHROW(e, e2, E_RESPONSE);
+    }else PROP(e, e2);
     // now make sure that the request was a success
     DSTR_STATIC(success, "success");
     int result = dstr_cmp(&success, &status);
     if(result != 0){
         dstr_t contents;
-        e = j_to_dstr(jk(json.data[0], "contents"), &contents);
-        CATCH(e, E_ANY){
-            DROP(e);
+        e2 = j_to_dstr(jk(json.data[0], "contents"), &contents);
+        CATCH(e2, E_ANY){
+            DROP(e2);
         }else{
             TRACE(e, "server said: %x\n", FD(&contents));
         }
@@ -67,13 +68,15 @@ static derr_t key_tool_register_key(key_tool_t* kt,
 }
 
 derr_t key_tool_peer_list_load(key_tool_t* kt, const char* filename){
+    derr_t e = E_OK;
+    derr_t e2;
     kt->json.len = 0;
     kt->json_block.len = 0;
     // read the peer list file
-    derr_t e = dstr_fread_file(filename, &kt->json_block);
-    CATCH(e, E_OPEN | E_OS){
-        RETHROW(e, E_FS);
-    }else PROP(e, e);
+    e2 = dstr_fread_file(filename, &kt->json_block);
+    CATCH(e2, E_OPEN | E_OS){
+        RETHROW(e, e2, E_FS);
+    }else PROP(e, e2);
 
     // parse the peer list
     PROP(e, json_parse(&kt->json, &kt->json_block) );
@@ -92,25 +95,23 @@ derr_t key_tool_peer_list_load(key_tool_t* kt, const char* filename){
         dstr_t fpr;
         PROP(e, dstr_new(&fpr, FL_FINGERPRINT) );
         // convert from binary
-        e = hex2bin(&hexfpr, &fpr);
-        if(e.type){
-            dstr_free(&fpr);
-            PROP(e, e);
-        }
+        PROP_GO(e, hex2bin(&hexfpr, &fpr), fail_fpr);
         // append to list
-        e = LIST_APPEND(dstr_t, &kt->peer_list, fpr);
-        if(e.type){
-            dstr_free(&fpr);
-            PROP(e, e);
-        }
+        PROP_GO(e, LIST_APPEND(dstr_t, &kt->peer_list, fpr), fail_fpr);
         // move on to the next json element
         jpeer = jpeer->next;
+        continue;
+
+    fail_fpr:
+        dstr_free(&fpr);
+        return e;
     }
     return E_OK;
 }
 
 derr_t key_tool_peer_list_write(key_tool_t* kt, const char* filename){
     derr_t e = E_OK;
+    derr_t e2;
     FILE* f = fopen(filename, "w");
     if(!f){
         TRACE(e, "%x: %x\n", FS(filename), FE(&errno));
@@ -127,11 +128,11 @@ derr_t key_tool_peer_list_write(key_tool_t* kt, const char* filename){
     for(size_t i = 0; i < kt->peer_list.len; i++){
         // get a hex of the fingerprint
         DSTR_VAR(hexfpr, FL_FINGERPRINT * 2);
-        e =  bin2hex(&kt->peer_list.data[i], &hexfpr);
+        e2 =  bin2hex(&kt->peer_list.data[i], &hexfpr);
         // an E_FIXEDSIZE represents an internal error
-        CATCH(e, E_FIXEDSIZE){
-            RETHROW_GO(e, E_INTERNAL, cleanup);
-        }else PROP_GO(e, e, cleanup);
+        CATCH(e2, E_FIXEDSIZE){
+            RETHROW_GO(e, e2, E_INTERNAL, cleanup);
+        }else PROP_GO(e, e2, cleanup);
         // write the hex fingerprint
         PROP_GO(e, dstr_fwrite(f, &hexfpr), cleanup);
         // write the separator if necessary
@@ -150,45 +151,46 @@ cleanup:
 
 derr_t key_tool_new(key_tool_t* kt, const dstr_t* dir, int def_key_bits){
     derr_t e = E_OK;
+    derr_t e2;
     // store the dir
     DSTR_WRAP_ARRAY(kt->dir, kt->dir_buffer);
-    e = dstr_copy(dir, &kt->dir);
+    e2 = dstr_copy(dir, &kt->dir);
     // fixed-size error here means file-system error to higher code
-    CATCH(e, E_FIXEDSIZE){
-        RETHROW(e, E_FS);
-    }else PROP(e, e);
+    CATCH(e2, E_FIXEDSIZE){
+        RETHROW(e, e2, E_FS);
+    }else PROP(e, e2);
 
     // try to load the key
     DSTR_VAR(temp_path, 4096);
     PROP(e, FMT(&temp_path, "%x/device.pem", FD(dir)) );
-    e = keypair_load(&kt->key, temp_path.data);
+    e2 = keypair_load(&kt->key, temp_path.data);
     // an E_OPEN means it is likely that the key doesn't exist
     // and an SSL error means we should just regenerate the key
-    CATCH(e, E_OPEN | E_SSL){
-        DROP(e);
+    CATCH(e2, E_OPEN | E_SSL){
+        DROP(e2);
         // if we can't load the key, gen_key now and register it later
         LOG_WARN("Unable to load key, generating a new one\n");
 
         // generate the key
-        e = gen_key(def_key_bits, temp_path.data);
+        e2 = gen_key(def_key_bits, temp_path.data);
         // E_OPEN here means E_FS to higher level code
-        CATCH(e, E_OPEN){
-            RETHROW(e, E_FS);
-        }else PROP(e, e);
+        CATCH(e2, E_OPEN){
+            RETHROW(e, e2, E_FS);
+        }else PROP(e, e2);
         LOG_WARN("key generated!\n");
 
         // now try and load the key
-        e = keypair_load(&kt->key, temp_path.data);
+        e2 = keypair_load(&kt->key, temp_path.data);
         // E_OPEN or E_SSL here represents an internal error
-        CATCH(e, E_OPEN | E_SSL){
-            RETHROW(e, E_INTERNAL);
-        }else PROP(e, e);
+        CATCH(e2, E_OPEN | E_SSL){
+            RETHROW(e, e2, E_INTERNAL);
+        }else PROP(e, e2);
 
         LOG_INFO("key tool generated a new key\n");
         kt->did_key_gen = true;
     }else{
         // propagate uncaught errors
-        PROP(e, e);
+        PROP(e, e2);
         // or continue
         LOG_DEBUG("key tool loaded an old key\n");
         kt->did_key_gen = false;
@@ -205,21 +207,21 @@ derr_t key_tool_new(key_tool_t* kt, const dstr_t* dir, int def_key_bits){
 
     // now attempt to load the peer list
     temp_path.len = 0;
-    e = FMT(&temp_path, "%x/peer_list.json", FD(dir));
+    e2 = FMT(&temp_path, "%x/peer_list.json", FD(dir));
     // E_FIXEDSIZE means a file system error
-    CATCH(e, E_FIXEDSIZE){
-        RETHROW_GO(e, E_FS, fail_4);
-    }else PROP_GO(e, e, fail_4);
+    CATCH(e2, E_FIXEDSIZE){
+        RETHROW_GO(e, e2, E_FS, fail_4);
+    }else PROP_GO(e, e2, fail_4);
 
-    e = key_tool_peer_list_load(kt, temp_path.data);
+    e2 = key_tool_peer_list_load(kt, temp_path.data);
     // the list might not exist or it might be corrupted
-    CATCH(e, E_FS | E_PARAM){
-        DROP(e);
+    CATCH(e2, E_FS | E_PARAM){
+        DROP(e2);
         // if we can't load the list, set state to new
         kt->peer_list.len = 0;
         kt->peer_list_state = KT_PL_NEW;
     }else{
-        PROP(e, e);
+        PROP(e, e2);
         kt->peer_list_state = KT_PL_OLD;
     }
 
@@ -283,6 +285,7 @@ static derr_t call_list_devices(key_tool_t* kt, const char* host,
                                 unsigned int port, const dstr_t* user,
                                 const dstr_t* pass){
     derr_t e = E_OK;
+    derr_t e2;
     LOG_INFO("calling list devices\n");
     // get ready to recieve JSON
     kt->json.len = 0;
@@ -295,12 +298,12 @@ static derr_t call_list_devices(key_tool_t* kt, const char* host,
     DSTR_STATIC(command, "list_devices");
 
     // do the api call
-    e = api_password_call(host, port, &command, NULL, user, pass,
+    e2 = api_password_call(host, port, &command, NULL, user, pass,
                               &code, &reason, &kt->json_block, &kt->json);
-    CATCH(e, E_FIXEDSIZE){
-        TRACE(e, "server response too long\n");
-        RETHROW(e, E_RESPONSE);
-    }else PROP(e, e);
+    CATCH(e2, E_FIXEDSIZE){
+        TRACE(e2, "server response too long\n");
+        RETHROW(e, e2, E_RESPONSE);
+    }else PROP(e, e2);
 
     // non-200-series responses are errors
     if(code < 200 || code > 299){
@@ -311,22 +314,22 @@ static derr_t call_list_devices(key_tool_t* kt, const char* host,
     // now make sure the api call returned success
     DSTR_STATIC(success, "success");
     dstr_t status;
-    e = j_to_dstr(jk(kt->json.data[0], "status"), &status);
-    CATCH(e, E_PARAM){
-        TRACE(e, "server response contained the wrong json\n");
-        RETHROW(e, E_RESPONSE);
-    }else PROP(e, e);
+    e2 = j_to_dstr(jk(kt->json.data[0], "status"), &status);
+    CATCH(e2, E_PARAM){
+        TRACE(e2, "server response contained the wrong json\n");
+        RETHROW(e, e2, E_RESPONSE);
+    }else PROP(e, e2);
 
     int match = dstr_cmp(&success, &status);
     if(match != 0){
         dstr_t contents;
-        e = j_to_dstr(jk(kt->json.data[0], "contents"), &contents);
-        CATCH(e, E_PARAM){
-            DROP(e);
+        e2 = j_to_dstr(jk(kt->json.data[0], "contents"), &contents);
+        CATCH(e2, E_PARAM){
+            DROP(e2);
             TRACE(e, "server response contained the wrong json\n");
             TRACE(e, "server said: %x\n", FD(&contents));
         }else{
-            PROP(e, e);
+            PROP(e, e2);
             TRACE(e, "server said: %x\n", FD(&kt->json_block));
         }
         ORIG(e, E_RESPONSE, "call to list_devices API endpoint failed");
@@ -337,6 +340,9 @@ static derr_t call_list_devices(key_tool_t* kt, const char* host,
 
 derr_t key_tool_update(key_tool_t* kt, const char* host, unsigned int port,
                        const dstr_t* user, const dstr_t* pass){
+    derr_t e = E_OK;
+    derr_t e2;
+
     // under some specific conditions we can skip all of this
     if(kt->peer_list_state == KT_PL_OLD
             && kt->new_peer_list.len == 0
@@ -345,8 +351,6 @@ derr_t key_tool_update(key_tool_t* kt, const char* host, unsigned int port,
         LOG_DEBUG("skipping key_tool_update()\n");
         return E_OK;
     }
-
-    derr_t e = E_OK;
 
     // get ready to pull fingerprints out of json format
     DSTR_VAR(fpr_block, FL_DEVICES * FL_FINGERPRINT);
@@ -374,34 +378,34 @@ derr_t key_tool_update(key_tool_t* kt, const char* host, unsigned int port,
         while(device){
             // get the hex fingerprint from json
             dstr_t hexfpr;
-            e = j_to_dstr(*device, &hexfpr);
-            CATCH(e, E_PARAM){
-                TRACE(e, "json response has an invalid device entry\n");
-                RETHROW(e, E_RESPONSE);
-            }else PROP(e, e);
+            e2 = j_to_dstr(*device, &hexfpr);
+            CATCH(e2, E_PARAM){
+                TRACE(e2, "json response has an invalid device entry\n");
+                RETHROW(e, e2, E_RESPONSE);
+            }else PROP(e, e2);
             // verify the length of the fingerprint
             if(hexfpr.len != 2 * FL_FINGERPRINT){
                 ORIG(e, E_RESPONSE, "response contained a wrong-sized fingerprint");
             }
             // convert to binary binary fingerprint and add to list
             size_t start = fpr_block.len;
-            e = hex2bin(&hexfpr, &fpr_block);
-            CATCH(e, E_PARAM){
+            e2 = hex2bin(&hexfpr, &fpr_block);
+            CATCH(e2, E_PARAM){
                 // this means that there was a bad hex string from the server
-                TRACE(e, "response contained bad hex string\n");
-                RETHROW(e, E_RESPONSE);
-            }else PROP(e, e);
+                TRACE(e2, "response contained bad hex string\n");
+                RETHROW(e, e2, E_RESPONSE);
+            }else PROP(e, e2);
             dstr_t binfpr = dstr_sub(&fpr_block, start, 0);
             // verify the length of the binary fingerprint
             if(binfpr.len != FL_FINGERPRINT){
                 ORIG(e, E_RESPONSE, "response contained a wrong-sized fingerprint");
             }
-            e = LIST_APPEND(dstr_t, &srv_fprs, binfpr);
-            CATCH(e, E_FIXEDSIZE){
+            e2 = LIST_APPEND(dstr_t, &srv_fprs, binfpr);
+            CATCH(e2, E_FIXEDSIZE){
                 // this means there were more entries than was allowed
-                TRACE(e, "too many fingerprints returned by list_devices\n");
-                RETHROW(e, E_RESPONSE);
-            }else PROP(e, e);
+                TRACE(e2, "too many fingerprints returned by list_devices\n");
+                RETHROW(e, e2, E_RESPONSE);
+            }else PROP(e, e2);
             // continue with next device in the json array
             device = device->next;
         }
@@ -421,17 +425,14 @@ derr_t key_tool_update(key_tool_t* kt, const char* host, unsigned int port,
                 dstr_t fpr;
                 PROP(e, dstr_new(&fpr, FL_FINGERPRINT) );
                 // copy the server's fingerprint to the new dstr_t
-                e = dstr_copy(&srv_fprs.data[i], &fpr);
-                if(e.type){
-                    dstr_free(&fpr);
-                    PROP(e, e);
-                }
+                PROP_GO(e, dstr_copy(&srv_fprs.data[i], &fpr), fail_fpr);
                 // append to list
-                e = LIST_APPEND(dstr_t, &kt->new_peer_list, fpr);
-                if(e.type){
-                    dstr_free(&fpr);
-                    PROP(e, e);
-                }
+                PROP_GO(e, LIST_APPEND(dstr_t, &kt->new_peer_list, fpr), fail_fpr);
+                continue;
+
+            fail_fpr:
+                dstr_free(&fpr);
+                return e;
             }
         }
 
@@ -454,17 +455,14 @@ derr_t key_tool_update(key_tool_t* kt, const char* host, unsigned int port,
             dstr_t fpr;
             PROP(e, dstr_new(&fpr, FL_FINGERPRINT) );
             // copy the server's fingerprint to the new dstr_t
-            e = dstr_copy(&srv_fprs.data[i], &fpr);
-            if(e.type){
-                dstr_free(&fpr);
-                PROP(e, e);
-            }
+            PROP_GO(e, dstr_copy(&srv_fprs.data[i], &fpr), fail_fpr2);
             // append to list
-            e = LIST_APPEND(dstr_t, &kt->peer_list, fpr);
-            if(e.type){
-                dstr_free(&fpr);
-                PROP(e, e);
-            }
+            PROP_GO(e, LIST_APPEND(dstr_t, &kt->peer_list, fpr), fail_fpr2);
+            continue;
+
+        fail_fpr2:
+            dstr_free(&fpr);
+            return e;
         }
     }
 
@@ -483,25 +481,25 @@ derr_t key_tool_update(key_tool_t* kt, const char* host, unsigned int port,
         // it has to be dynamically allocated for the kt->peer_list
         dstr_t fpr;
         PROP(e, dstr_new(&fpr, FL_FINGERPRINT) );
-        e = dstr_copy(&kt->key.fingerprint, &fpr);
-        if(e.type){
+        e2 = dstr_copy(&kt->key.fingerprint, &fpr);
+        if(e2.type){
             dstr_free(&fpr);
-            PROP(e, e);
+            PROP(e, e2);
         }
         // append to list
-        e = LIST_APPEND(dstr_t, &kt->peer_list, fpr);
-        if(e.type){
+        e2 = LIST_APPEND(dstr_t, &kt->peer_list, fpr);
+        if(e2.type){
             dstr_free(&fpr);
-            PROP(e, e);
+            PROP(e, e2);
         }
     }
 
     // get peer list filename
     DSTR_VAR(temp_path, 4096);
-    e = FMT(&temp_path, "%x/peer_list.json", FD(&kt->dir));
-    CATCH(e, E_FIXEDSIZE){
-        RETHROW(e, E_FS);
-    }else PROP(e, e);
+    e2 = FMT(&temp_path, "%x/peer_list.json", FD(&kt->dir));
+    CATCH(e2, E_FIXEDSIZE){
+        RETHROW(e, e2, E_FS);
+    }else PROP(e, e2);
 
     // and write peer list to file
     PROP(e, key_tool_peer_list_write(kt, temp_path.data) );
@@ -511,6 +509,7 @@ derr_t key_tool_update(key_tool_t* kt, const char* host, unsigned int port,
 
 derr_t key_tool_check_recips(key_tool_t* kt, LIST(dstr_t)* recips){
     derr_t e = E_OK;
+    derr_t e2;
 
     // do nothing if we had no peer list on file
     if(kt->peer_list_state == KT_PL_NEW) return E_OK;
@@ -550,10 +549,10 @@ derr_t key_tool_check_recips(key_tool_t* kt, LIST(dstr_t)* recips){
                     dstr_free(&new_peer);
                     PROP(e, e);
                 }
-                e = LIST_APPEND(dstr_t, &kt->new_peer_list, new_peer);
-                if(e.type){
+                e2 = LIST_APPEND(dstr_t, &kt->new_peer_list, new_peer);
+                if(e2.type){
                     dstr_free(&new_peer);
-                    PROP(e, e);
+                    PROP(e, e2);
                 }
             }
         }
@@ -564,6 +563,7 @@ derr_t key_tool_check_recips(key_tool_t* kt, LIST(dstr_t)* recips){
 
 derr_t key_tool_decrypt(key_tool_t* kt, int infd, int outfd, size_t* outlen){
     derr_t e = E_OK;
+    derr_t e2;
     DSTR_VAR(recips_block, FL_DEVICES * FL_FINGERPRINT);
     LIST_VAR(dstr_t, recips, FL_DEVICES);
     PROP(e, decrypter_start(&kt->dc, &kt->key, &recips, &recips_block) );
@@ -574,30 +574,30 @@ derr_t key_tool_decrypt(key_tool_t* kt, int infd, int outfd, size_t* outlen){
     *outlen = 0;
     while(true){
         // read from input
-        e = dstr_read(infd, &inbuf, 0, &amnt_read);
+        e2 = dstr_read(infd, &inbuf, 0, &amnt_read);
         // this should never result in E_FIXEDSIZE
-        CATCH(e, E_FIXEDSIZE){
-            RETHROW(e, E_INTERNAL);
-        }else PROP(e, e);
+        CATCH(e2, E_FIXEDSIZE){
+            RETHROW(e, e2, E_INTERNAL);
+        }else PROP(e, e2);
 
         // break if we are done
         if(amnt_read == 0) break;
 
         // decrypt a chunk
-        e = decrypter_update(&kt->dc, &inbuf, &outbuf);
+        e2 = decrypter_update(&kt->dc, &inbuf, &outbuf);
         /* in one special error case the decryption fails but we know we have
            a complete list of recipients */
-        if(e.type == E_NOT4ME){
-            MERGE(e, key_tool_check_recips(kt, &recips), "checking recips");
+        if(e2.type == E_NOT4ME){
+            MERGE(e2, key_tool_check_recips(kt, &recips), "checking recips");
         }
         // if there was a FIXEDSIZE error that is our fault
-        CATCH(e, E_FIXEDSIZE){
-            RETHROW(e, E_INTERNAL);
+        CATCH(e2, E_FIXEDSIZE){
+            RETHROW(e, e2, E_INTERNAL);
         }
         // An SSL error is just a bad message, as far as higher code cares
-        else CATCH(e, E_SSL){
-            RETHROW(e, E_PARAM);
-        }else PROP(e, e);
+        else CATCH(e2, E_SSL){
+            RETHROW(e, e2, E_PARAM);
+        }else PROP(e, e2);
 
         // write to buffer
         PROP(e, dstr_write(outfd, &outbuf) );
@@ -606,15 +606,15 @@ derr_t key_tool_decrypt(key_tool_t* kt, int infd, int outfd, size_t* outlen){
 
     }
     // decrypt the last chunk
-    e = decrypter_finish(&kt->dc, &outbuf);
+    e2 = decrypter_finish(&kt->dc, &outbuf);
     // if there was a FIXEDSIZE error that is our fault
-    CATCH(e, E_FIXEDSIZE){
-        RETHROW(e, E_INTERNAL);
+    CATCH(e2, E_FIXEDSIZE){
+        RETHROW(e, e2, E_INTERNAL);
     }
     // An SSL error is just a bad message, as far as higher code cares
-    else CATCH(e, E_SSL){
-        RETHROW(e, E_PARAM);
-    }else PROP(e, e);
+    else CATCH(e2, E_SSL){
+        RETHROW(e, e2, E_PARAM);
+    }else PROP(e, e2);
 
     // write the last chunk
     PROP(e, dstr_write(outfd, &outbuf) );

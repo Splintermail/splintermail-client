@@ -18,14 +18,15 @@
            E_INTERNAL*/
 static derr_t maildir_create(const dstr_t* path){
     derr_t e = E_OK;
+    derr_t e2;
 
     // null terminate path
     // TODO: this should not be necessary
     DSTR_VAR(root, 4096);
-    e = FMT(&root, "%x", FD(path));
-    CATCH(e, E_FIXEDSIZE){
-        RETHROW(e, E_FS);
-    }else PROP(e, e);
+    e2 = FMT(&root, "%x", FD(path));
+    CATCH(e2, E_FIXEDSIZE){
+        RETHROW(e, e2, E_FS);
+    }else PROP(e, e2);
 
     // create maildir
     int ret = mkdir(root.data, 0770);
@@ -36,10 +37,10 @@ static derr_t maildir_create(const dstr_t* path){
 
     // create maildir/cur
     DSTR_VAR(cur, 4096);
-    e = FMT(&cur, "%x/cur", FD(path));
-    CATCH(e, E_FIXEDSIZE){
-        RETHROW(e, E_FS);
-    }else PROP_GO(e, e, cleanup_1);
+    e2 = FMT(&cur, "%x/cur", FD(path));
+    CATCH(e2, E_FIXEDSIZE){
+        RETHROW(e, e2, E_FS);
+    }else PROP_GO(e, e2, cleanup_1);
 
     ret = mkdir(cur.data, 0770);
     if(ret && errno != EEXIST){
@@ -49,9 +50,9 @@ static derr_t maildir_create(const dstr_t* path){
 
     // create maildir/new
     DSTR_VAR(new, 4096);
-    e = FMT(&new, "%x/new", FD(path));
-    CATCH(e, E_FIXEDSIZE){
-        RETHROW(e, E_FS);
+    e2 = FMT(&new, "%x/new", FD(path));
+    CATCH(e2, E_FIXEDSIZE){
+        RETHROW(e, e2, E_FS);
     }else PROP_GO(e, e, cleanup_2);
 
     ret = mkdir(new.data, 0770);
@@ -62,10 +63,10 @@ static derr_t maildir_create(const dstr_t* path){
 
     // create maildir/tmp
     DSTR_VAR(tmp, 4096);
-    e = FMT(&tmp, "%x/tmp", FD(path));
-    CATCH(e, E_FIXEDSIZE){
-        RETHROW(e, E_FS);
-    }else PROP_GO(e, e, cleanup_3);
+    e2 = FMT(&tmp, "%x/tmp", FD(path));
+    CATCH(e2, E_FIXEDSIZE){
+        RETHROW(e, e2, E_FS);
+    }else PROP_GO(e, e2, cleanup_3);
 
     ret = mkdir(tmp.data, 0770);
     if(ret && errno != EEXIST){
@@ -169,6 +170,7 @@ struct parse_and_register_data_t {
 static derr_t parse_and_register(const char* base, const dstr_t* fname,
                                  bool isdir, void* userdata){
     derr_t e = E_OK;
+    derr_t e2;
     // always skip directories
     if(isdir) return E_OK;
     // don't need base
@@ -199,22 +201,22 @@ static derr_t parse_and_register(const char* base, const dstr_t* fname,
     // major tokens is either side of the ':'
     LIST_VAR(dstr_t, major_tokens, 2);
     DSTR_STATIC(colon, ":");
-    e = dstr_split(fname, &colon, &major_tokens);
-    CATCH(e, E_FIXEDSIZE){
+    e2 = dstr_split(fname, &colon, &major_tokens);
+    CATCH(e2, E_FIXEDSIZE){
         // this means there was more than 1 ':' -> invalid maildir name, skip it
-        DROP(e);
+        DROP(e2);
         return E_OK;
-    }else PROP(e, e);
+    }else PROP(e, e2);
 
 
     LIST_VAR(dstr_t, minor_tokens, 3);
     DSTR_STATIC(dot, ".");
-    e = dstr_split(&major_tokens.data[0], &dot, &minor_tokens);
-    CATCH(e, E_FIXEDSIZE){
+    e2 = dstr_split(&major_tokens.data[0], &dot, &minor_tokens);
+    CATCH(e2, E_FIXEDSIZE){
         // this means there was more than 1 '.' -> invalid maildir name, skip it
-        DROP(e);
+        DROP(e2);
         return E_OK;
-    }else PROP(e, e);
+    }else PROP(e, e2);
 
 
     if(minor_tokens.len < 3){
@@ -225,22 +227,22 @@ static derr_t parse_and_register(const char* base, const dstr_t* fname,
     // that's enough requirements, now lets parse out the data we need
     LIST_VAR(dstr_t, fields, 4);
     DSTR_STATIC(comma, ",");
-    e = dstr_split(&minor_tokens.data[1], &comma, &fields);
-    CATCH(e, E_FIXEDSIZE){
+    e2 = dstr_split(&minor_tokens.data[1], &comma, &fields);
+    CATCH(e2, E_FIXEDSIZE){
         // this means we put too many data fields in the unique string
-        DROP(e);
+        DROP(e2);
         return E_OK;
-    }else PROP(e, e);
+    }else PROP(e, e2);
 
 
     // the first field is the length, the second field is the UID
     size_t length;
-    e = dstr_toul(&fields.data[0], &length, 10);
-    CATCH(e, E_PARAM){
+    e2 = dstr_toul(&fields.data[0], &length, 10);
+    CATCH(e2, E_PARAM){
         // not a number string
-        DROP(e);
+        DROP(e2);
         return E_OK;
-    }else PROP(e, e);
+    }else PROP(e, e2);
 
     // the second field is the uid
     dstr_t* uid = &fields.data[1];
@@ -252,21 +254,22 @@ static derr_t parse_and_register(const char* base, const dstr_t* fname,
 
 derr_t maildir_new(maildir_t* mdir, dstr_t* mdir_path){
     derr_t e = E_OK;
+    derr_t e2;
     // wrap the path buffer
     DSTR_WRAP_ARRAY(mdir->path, mdir->path_buffer);
     // copy path over
-    e = dstr_copy(mdir_path, &mdir->path);
-    CATCH(e, E_FIXEDSIZE){
+    e2 = dstr_copy(mdir_path, &mdir->path);
+    CATCH(e2, E_FIXEDSIZE){
         // filename is too long
-        RETHROW(e, E_FS);
-    }else PROP(e, e);
+        RETHROW(e, e2, E_FS);
+    }else PROP(e, e2);
 
     // null terminate path
-    e = dstr_null_terminate(&mdir->path);
-    CATCH(e, E_FIXEDSIZE){
+    e2 = dstr_null_terminate(&mdir->path);
+    CATCH(e2, E_FIXEDSIZE){
         // filename is too long
-        RETHROW(e, E_FS);
-    }else PROP(e, e);
+        RETHROW(e, e2, E_FS);
+    }else PROP(e, e2);
 
     // create maildir if it doesnt exist yet
     PROP(e, maildir_create(mdir_path) );
@@ -289,10 +292,10 @@ derr_t maildir_new(maildir_t* mdir, dstr_t* mdir_path){
         dstr_t* subdir = subdirs[i];
         struct parse_and_register_data_t prdata = {mdir, subdir};
         DSTR_VAR(path, 4096);
-        e = FMT(&path, "%x%x", FD(mdir_path), FD(subdir));
-        CATCH(e, E_FIXEDSIZE){
-            RETHROW(e, E_FS);
-        }else PROP_GO(e, e, fail_5);
+        e2 = FMT(&path, "%x%x", FD(mdir_path), FD(subdir));
+        CATCH(e2, E_FIXEDSIZE){
+            RETHROW(e, e2, E_FS);
+        }else PROP_GO(e, e2, fail_5);
         // register all emails in that file
         PROP_GO(e, for_each_file_in_dir(path.data, parse_and_register,
                                       (void*)&prdata), fail_5);
@@ -346,10 +349,10 @@ derr_t maildir_new_tmp_file(maildir_t* mdir, dstr_t* tempname, int* fd){
     while(++i){
         // build the filename
         tempname->len = 0;
-        e = FMT(tempname, "%x/tmp/%x", FD(&mdir->path), FI(i));
-        CATCH(e, E_FIXEDSIZE){
-            RETHROW(e, E_FS);
-        }else PROP(e, e);
+        derr_t e2 = FMT(tempname, "%x/tmp/%x", FD(&mdir->path), FI(i));
+        CATCH(e2, E_FIXEDSIZE){
+            RETHROW(e, e2, E_FS);
+        }else PROP(e, e2);
 
         // make sure file does not exist
         errno = 0;
@@ -384,10 +387,10 @@ derr_t maildir_new_rename(maildir_t* mdir, const char* tempname,
 
     // modify the hostname (replace unallowed characters)
     DSTR_VAR(modname, 4*HOSTNAME_COMPONENT_MAX_LEN);
-    e = maildir_mod_hostname(&hostname, &modname);
+    derr_t e2 = maildir_mod_hostname(&hostname, &modname);
     // this should not error under any circumstances
-    CATCH(e, E_ANY){
-        RETHROW(e, E_INTERNAL);
+    CATCH(e2, E_ANY){
+        RETHROW(e, e2, E_INTERNAL);
     }
 
     // get the time
@@ -400,19 +403,19 @@ derr_t maildir_new_rename(maildir_t* mdir, const char* tempname,
 
     // get new filename
     DSTR_VAR(filename, 255);
-    e = FMT(&filename, "%x.%x,%x.%x",
+    e2 = FMT(&filename, "%x.%x,%x.%x",
                            FI(tloc), FU(length), FD(uid), FD(&modname));
-    CATCH(e, E_FIXEDSIZE){
-        RETHROW(e, E_FS);
-    }else PROP(e, e);
+    CATCH(e2, E_FIXEDSIZE){
+        RETHROW(e, e2, E_FS);
+    }else PROP(e, e2);
 
     // get the new file path
     DSTR_VAR(newpath, 4096);
     DSTR_STATIC(subdir, "/new/");
-    e = FMT(&newpath, "%x%x%x", FD(&mdir->path), FD(&subdir), FD(&filename));
-    CATCH(e, E_FIXEDSIZE){
-        RETHROW(e, E_FS);
-    }else PROP(e, e);
+    e2 = FMT(&newpath, "%x%x%x", FD(&mdir->path), FD(&subdir), FD(&filename));
+    CATCH(e2, E_FIXEDSIZE){
+        RETHROW(e, e2, E_FS);
+    }else PROP(e, e2);
 
     // rename the file
     int ret = rename(tempname, newpath.data);

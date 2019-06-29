@@ -28,6 +28,7 @@ DSTR_STATIC(os_default_ditm_dir, "C:/ProgramData/splintermail");
 static derr_t load_os_config_files(dstr_t* config_text, opt_spec_t** spec,
                                    size_t speclen){
     derr_t e = E_OK;
+    derr_t e2;
     /* it is useful to read all the config files first so we don't have to deal
        with obnoxious reallocations */
 
@@ -76,18 +77,18 @@ static derr_t load_os_config_files(dstr_t* config_text, opt_spec_t** spec,
 
     if(config_dir_conf_end - config_dir_conf_end > 0){
         dstr_t subconf = dstr_sub(config_text, config_dir_conf_start, config_dir_conf_end);
-        e = conf_parse(&subconf, spec, speclen);
-        CATCH(e, E_ANY){
-            DROP(e);
+        e2 = conf_parse(&subconf, spec, speclen);
+        CATCH(e2, E_ANY){
+            DROP(e2);
             fprintf(stderr, "error parsing \"%s\", exiting\n", config_dir_conf.data);
             ORIG(e, E_VALUE, "unable to parse config file");
         }
     }
     if(home_dir_conf_end - home_dir_conf_start > 0){
         dstr_t subconf = dstr_sub(config_text, home_dir_conf_start, home_dir_conf_end);
-        e = conf_parse(&subconf, spec, speclen);
-        CATCH(e, E_ANY){
-            DROP(e);
+        e2 = conf_parse(&subconf, spec, speclen);
+        CATCH(e2, E_ANY){
+            DROP(e2);
             fprintf(stderr, "error parsing \"%s\", exiting\n", home_dir_conf.data);
             ORIG(e, E_VALUE, "unable to parse config file");
         }
@@ -95,9 +96,9 @@ static derr_t load_os_config_files(dstr_t* config_text, opt_spec_t** spec,
 
     if(default_conf_end - default_conf_start > 0){
         dstr_t subconf = dstr_sub(config_text, default_conf_start, default_conf_end);
-        e = conf_parse(&subconf, spec, speclen);
-        CATCH(e, E_ANY){
-            DROP(e);
+        e2 = conf_parse(&subconf, spec, speclen);
+        CATCH(e2, E_ANY){
+            DROP(e2);
             fprintf(stderr, "error parsing \"%s\", exiting\n", default_conf.data);
             ORIG(e, E_VALUE, "unable to parse config file");
         }
@@ -167,9 +168,9 @@ static derr_t load_os_config_files(dstr_t* config_text, opt_spec_t** spec,
 
     if(user_conf_end - user_conf_start > 0){
         dstr_t subconf = dstr_sub(config_text, user_conf_start, user_conf_end);
-        e = conf_parse(&subconf, spec, speclen);
-        CATCH(e, E_ANY){
-            DROP(e);
+        e2 = conf_parse(&subconf, spec, speclen);
+        CATCH(e2, E_ANY){
+            DROP(e2);
             fprintf(stderr, "error parsing \"%s\", exiting\n", user_conf.data);
             ORIG(e, E_VALUE, "unable to parse config file");
         }
@@ -177,9 +178,9 @@ static derr_t load_os_config_files(dstr_t* config_text, opt_spec_t** spec,
 
     if(default_conf_end - default_conf_start > 0){
         dstr_t subconf = dstr_sub(config_text, default_conf_start, default_conf_end);
-        e = conf_parse(&subconf, spec, speclen);
-        CATCH(e, E_ANY){
-            DROP(e);
+        e2 = conf_parse(&subconf, spec, speclen);
+        CATCH(e2, E_ANY){
+            DROP(e2);
             fprintf(stderr, "error parsing \"%s\", exiting\n", default_conf.data);
             ORIG(e, E_VALUE, "unable to parse config file");
         }
@@ -299,6 +300,7 @@ static derr_t prompt_one_of(const char* prompt, char* opts, size_t* ret){
 static derr_t check_api_token_register(const dstr_t* account_dir,
                                        const dstr_t* user, bool* do_reg){
     derr_t e = E_OK;
+    derr_t e2;
     *do_reg = false;
     // check if the user indicated they never want to register
     DSTR_VAR(temp, 4096);
@@ -340,9 +342,9 @@ static derr_t check_api_token_register(const dstr_t* account_dir,
             // now write to the noregister file
             PROP(e, FMT(&temp, "/noregister") );
             DSTR_STATIC(empty_dstr, "");
-            e = dstr_write_file(temp.data, &empty_dstr);
-            CATCH(e, E_ANY){
-                DROP(e);
+            e2 = dstr_write_file(temp.data, &empty_dstr);
+            CATCH(e2, E_ANY){
+                DROP(e2);
                 LOG_DEBUG("failed to save noregister\n");
                 return E_OK;
             }
@@ -417,9 +419,9 @@ int do_main(int argc, char* argv[], bool windows_service){
     int newargc;
 
     // parse options
-    e = opt_parse(argc, argv, spec, speclen, &newargc);
-    CATCH(e, E_ANY){
-        DROP(e);
+    derr_t e2 = opt_parse(argc, argv, spec, speclen, &newargc);
+    CATCH(e2, E_ANY){
+        DROP(e2);
         fprintf(stderr, "try `%s --help` for usage\n", argv[0]);
         retval = 1;
         goto cu;
@@ -525,9 +527,9 @@ int do_main(int argc, char* argv[], bool windows_service){
         unsigned int port = 1995;
         if(o_port.found){
             // intelligently convert port to a number
-            e = dstr_tou(&o_port.val, &port, 10);
-            if(e.type || port < 1 || port > 65535){
-                DROP(e);
+            e2 = dstr_tou(&o_port.val, &port, 10);
+            if(is_error(e2) || port < 1 || port > 65535){
+                DROP(e2);
                 fprintf(stderr, "invalid port number\n");
                 fprintf(stderr, "try `%s --help` for usage\n", argv[0]);
                 retval = 4;
@@ -590,9 +592,9 @@ int do_main(int argc, char* argv[], bool windows_service){
     }
 
     if(!account_dir_access){
-        e = FFMT(stderr, NULL, "account directory %x not found or not accessible; "
-                           "API token access disabled\n", FD(&account_dir));
-        DROP(e);
+        e2 = FFMT(stderr, NULL, "account directory %x not found or not "
+                "accessible; API token access disabled\n", FD(&account_dir));
+        DROP(e2);
     }
 
     // figure out who our user is
@@ -639,9 +641,9 @@ int do_main(int argc, char* argv[], bool windows_service){
         }else if(dir_rw_access(creds_path.data, false)){
             user_dir_access = true;
         }else{
-            e = FFMT(stderr, NULL, "Insufficient permissions for user directory %x; "
+            e2 = FFMT(stderr, NULL, "Insufficient permissions for user directory %x; "
                                "API token access disabled\n", FD(&creds_path));
-            DROP(e);
+            DROP(e2);
         }
     }
 
@@ -659,32 +661,27 @@ int do_main(int argc, char* argv[], bool windows_service){
                    auto-deleting (or overwriting) bad files here. */
                 // can_register = true;
                 // now see if we have a good token on file
-                e = api_token_read(creds_path.data, &token);
-                CATCH(e, E_PARAM | E_INTERNAL){
-                    DROP(e);
+                e2 = api_token_read(creds_path.data, &token);
+                CATCH(e2, E_PARAM | E_INTERNAL){
+                    DROP(e2);
                     // broken token, warn user
-                    e = FFMT(stderr, NULL,
+                    DROP_CMD( FFMT(stderr, NULL,
                          "api token at \"%x\" appears invalid; ignoring it.\n",
-                         FD(&creds_path));
-                    DROP(e);
-                }else CATCH(e, E_ANY){
-                    DROP(e);
+                         FD(&creds_path)) );
+                }else CATCH(e2, E_ANY){
+                    DROP(e2);
                     // NOMEM is about the only plausible error we could get here
-                    e = FFMT(stderr, NULL,
+                    DROP_CMD( FFMT(stderr, NULL,
                          "unexpected error reading api token at \"%x\"; "
-                         "disabling API token access.\n", FD(&creds_path));
-                    DROP(e);
-                    // either way, ignore this error
+                         "disabling API token access.\n", FD(&creds_path)) );
                 }else{
                     creds_found = true;
                 }
             }else{
-                DROP(e);
                 // file exists, but we have no access to it
-                e = FFMT(stderr, NULL,
+                DROP_CMD( FFMT(stderr, NULL,
                      "Insufficient permissions for %x; "
-                     "API token access disabled\n", FD(&creds_path));
-                DROP(e);
+                     "API token access disabled\n", FD(&creds_path)) );
                 /* no need to set can_register = false here, because it's
                    impossible to arrive here with can_register == true */
             }
@@ -737,8 +734,7 @@ int do_main(int argc, char* argv[], bool windows_service){
         PROP_GO(e, user_prompt("Confirm Password:", &confirm_password, true), cu);
         // make sure confirmation was valid
         if(dstr_cmp(&new_password, &confirm_password) != 0){
-            e = FFMT(stderr, NULL, "Password confirmation failed.\n");
-            DROP(e);
+            DROP_CMD( FFMT(stderr, NULL, "Password confirmation failed.\n") );
             retval = 6;
             goto cu;
         }
@@ -756,10 +752,10 @@ int do_main(int argc, char* argv[], bool windows_service){
         PROP_GO(e, check_api_token_register(&account_dir, &user, &do_reg), cu);
         if(do_reg){
             // do the registration
-            e = register_api_token(rhost, api_port, &user, &password,
+            e2 = register_api_token(rhost, api_port, &user, &password,
                                        creds_path.data);
-            CATCH(e, E_ANY){
-                DROP(e);
+            CATCH(e2, E_ANY){
+                DROP(e2);
                 LOG_ERROR("failed to register API token with server\n");
                 retval = 7;
                 goto cu;
@@ -776,9 +772,8 @@ int do_main(int argc, char* argv[], bool windows_service){
     if(need_confirmation){
         // prompt for confirmation
         DSTR_STATIC(confirmation, "I really want to do this");
-        e = FFMT(stderr, NULL, "`%x` needs confirmation. Type the following text:\n"
-             "%x\n", FD(&command), FD(&confirmation));
-        DROP(e);
+        DROP_CMD( FFMT(stderr, NULL, "`%x` needs confirmation. Type the following text:\n"
+             "%x\n", FD(&command), FD(&confirmation)) );
         // get confirmation
         DSTR_VAR(temp, 256);
         PROP_GO(e, get_string(&temp), cu);
@@ -812,13 +807,11 @@ int do_main(int argc, char* argv[], bool windows_service){
                                 &code, &reason, &recv, &json), cu);
         // check for rejection of API token
         if(code == 401 || code == 403){
-            e = FFMT(stderr, NULL, "API Token rejected, deleting token.  Run this "
-                               "command again to generate a new token.\n" );
-            DROP(e);
+            DROP_CMD( FFMT(stderr, NULL, "API Token rejected, deleting token.  Run this "
+                               "command again to generate a new token.\n") );
             int ret = remove(creds_path.data);
             if(ret != 0){
-                e = FFMT(stderr, NULL, "Error removing token: %x\n", FE(&errno));
-                DROP(e);
+                DROP_CMD( FFMT(stderr, NULL, "Error removing token: %x\n", FE(&errno)) );
             }
             retval = 9;
             goto cu;
@@ -827,8 +820,7 @@ int do_main(int argc, char* argv[], bool windows_service){
 
 
     if(code < 200 || code > 299){
-        e = FFMT(stderr, NULL, "api request rejected: %x %x\n", FI(code), FD(&reason));
-        DROP(e);
+        DROP_CMD( FFMT(stderr, NULL, "api request rejected: %x %x\n", FI(code), FD(&reason)) );
         retval = 10;
         goto cu;
     }
@@ -842,7 +834,7 @@ int do_main(int argc, char* argv[], bool windows_service){
     if(dstr_cmp(&status, &okstr) != 0){
         dstr_t contents;
         PROP_GO(e, j_to_dstr(jk(jroot, "contents"), &contents), cu);
-        e = FFMT(stderr, NULL, "REST API call failed: \"%x\"\n", FD(&contents));
+        DROP_CMD( FFMT(stderr, NULL, "REST API call failed: \"%x\"\n", FD(&contents)) );
         DROP(e);
         retval = 11;
         goto cu;

@@ -264,6 +264,8 @@ cleanup_1:
 }
 
 derr_t fas_start(void){
+    derr_t e = E_OK;
+
     // zero all lists
     resp_codes.len = 0;
     responses.len = 0;

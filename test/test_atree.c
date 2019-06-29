@@ -32,6 +32,7 @@ static void release_binsrch_int(void *i){
 }
 
 static derr_t print_atree(const jsw_anode_t *node, size_t indent){
+    derr_t e = E_OK;
     // skip nil nodes
     if(!node->level) return E_OK;
     // build indent
