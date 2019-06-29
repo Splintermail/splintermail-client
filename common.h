@@ -197,12 +197,12 @@ derr_t list_ ## type ## _new(LIST(type)* list, size_t num_items){ \
     } \
     list->data = (type*)malloc(newsize); \
     if(!list->data){ \
-        ORIG(e, E_NOMEM, "unable to malloc list"); \
+        ORIG(&e, E_NOMEM, "unable to malloc list"); \
     } \
     list->size = newsize; \
     list->len = 0; \
     list->fixed_size = false; \
-    return E_OK; \
+    return e; \
 } \
 derr_t list_ ## type ## _grow(LIST(type)* list, size_t num_items){ \
     derr_t e = E_OK; \
@@ -211,26 +211,26 @@ derr_t list_ ## type ## _grow(LIST(type)* list, size_t num_items){ \
     if(list->size < min_size){ \
         /* don't try to realloc on a fixed-size list */ \
         if(list->fixed_size){ \
-            ORIG(e, E_FIXEDSIZE, "unable to grow a fixed-size list"); \
+            ORIG(&e, E_FIXEDSIZE, "unable to grow a fixed-size list"); \
         } \
         size_t newsize = MIN(list->size, 2); \
         while(newsize < min_size){ \
             newsize *= 2; \
         } \
         void* new = realloc(list->data, newsize); \
-        if(!new) ORIG(e, E_NOMEM, "unable to realloc list"); \
+        if(!new) ORIG(&e, E_NOMEM, "unable to realloc list"); \
         list->data = new; \
         list->size = newsize; \
     } \
-    return E_OK; \
+    return e; \
 } \
 derr_t list_ ## type ## _append(LIST(type)* list, type element){ \
     derr_t e = E_OK; \
     /* grow the list */ \
-    PROP(e, list_ ## type ## _grow(list, list->len + 1) ); \
+    PROP(&e, list_ ## type ## _grow(list, list->len + 1) ); \
     /* append the element to the list */ \
     list->data[list->len++] = element; \
-    return E_OK; \
+    return e; \
 } \
 void list_ ## type ## _delete(LIST(type)* list, size_t index){ \
     /* move everything to the right of our pointer to the left */ \

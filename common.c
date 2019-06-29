@@ -74,8 +74,8 @@ derr_type_t dstr_new_quiet(dstr_t *ds, size_t size){
 derr_t dstr_new(dstr_t *ds, size_t size){
     derr_t e = E_OK;
     derr_type_t type = dstr_new_quiet(ds, size);
-    if(type) ORIG(e, type, "unable to allocate dstr");
-    return E_OK;
+    if(type) ORIG(&e, type, "unable to allocate dstr");
+    return e;
 }
 
 void dstr_free(dstr_t* ds){
@@ -183,45 +183,45 @@ derr_t dstr_toi(const dstr_t* in, int* out, int base){
     derr_t e = E_OK;
     // copy the version into a null-terminated string to read into atof()
     DSTR_VAR(temp, 128);
-    e = dstr_copy(in, &temp);
-    CATCH(e, E_ANY){
-        RETHROW(e, E_PARAM)
+    derr_t e2 = dstr_copy(in, &temp);
+    CATCH(e2, E_ANY){
+        RETHROW(&e, &e2, E_PARAM)
     }
-    e = dstr_null_terminate(&temp);
-    CATCH(e, E_ANY){
-        RETHROW(e, E_PARAM)
+    e2 = dstr_null_terminate(&temp);
+    CATCH(e2, E_ANY){
+        RETHROW(&e, &e2, E_PARAM)
     }
     // now parse
     char* endptr;
     errno = 0; long result = strtol(temp.data, &endptr, base);
     // check for error
     if(errno){
-        TRACE(e, "%x: %x\n", FS("srtol"), FE(&errno));
-        ORIG(e, E_PARAM, "invalid number string");
+        TRACE(&e, "%x: %x\n", FS("srtol"), FE(&errno));
+        ORIG(&e, E_PARAM, "invalid number string");
     }
     // make sure everything was parsed
     if(endptr != &temp.data[temp.len]){
-        ORIG(e, E_PARAM, "invalid number string");
+        ORIG(&e, E_PARAM, "invalid number string");
     }
     // check bounds
     if(result > INT_MAX || result < INT_MIN){
-        ORIG(e, E_PARAM, "number out of range");
+        ORIG(&e, E_PARAM, "number out of range");
     }
     // return value
     *out = (int)result;
-    return E_OK;
+    return e;
 }
 derr_t dstr_tou(const dstr_t* in, unsigned int* out, int base){
     derr_t e = E_OK;
     // copy the version into a null-terminated string to read into atof()
     DSTR_VAR(temp, 128);
-    e = dstr_copy(in, &temp);
-    CATCH(e, E_ANY){
-        RETHROW(e, E_PARAM);
+    derr_t e2 = dstr_copy(in, &temp);
+    CATCH(e2, E_ANY){
+        RETHROW(&e, &e2, E_PARAM);
     }
-    e = dstr_null_terminate(&temp);
-    CATCH(e, E_ANY){
-        RETHROW(e, E_PARAM);
+    e2 = dstr_null_terminate(&temp);
+    CATCH(e2, E_ANY){
+        RETHROW(&e, &e2, E_PARAM);
     }
     // now parse
     char* endptr;
@@ -229,31 +229,31 @@ derr_t dstr_tou(const dstr_t* in, unsigned int* out, int base){
     unsigned long result = strtoul(temp.data, &endptr, base);
     // check for error
     if(errno){
-        TRACE(e, "%x: %x\n", FS("srtoul"), FE(&errno));
-        ORIG(e, E_PARAM, "invalid number string");
+        TRACE(&e, "%x: %x\n", FS("srtoul"), FE(&errno));
+        ORIG(&e, E_PARAM, "invalid number string");
     }
     // make sure everything was parsed
     if(endptr != &temp.data[temp.len]){
-        ORIG(e, E_PARAM, "invalid number string");
+        ORIG(&e, E_PARAM, "invalid number string");
     }
     // check bounds
     if(result > UINT_MAX){
-        ORIG(e, E_PARAM, "number out of range");
+        ORIG(&e, E_PARAM, "number out of range");
     }
     // return value
-    *out = (unsigned int)result; return E_OK;
+    *out = (unsigned int)result; return e;
 }
 derr_t dstr_tol(const dstr_t* in, long* out, int base){
     derr_t e = E_OK;
     // copy the version into a null-terminated string to read into atof()
     DSTR_VAR(temp, 128);
-    e = dstr_copy(in, &temp);
-    CATCH(e, E_ANY){
-        RETHROW(e, E_PARAM);
+    derr_t e2 = dstr_copy(in, &temp);
+    CATCH(e2, E_ANY){
+        RETHROW(&e, &e2, E_PARAM);
     }
-    e = dstr_null_terminate(&temp);
-    CATCH(e, E_ANY){
-        RETHROW(e, E_PARAM);
+    e2 = dstr_null_terminate(&temp);
+    CATCH(e2, E_ANY){
+        RETHROW(&e, &e2, E_PARAM);
     }
     // now parse
     char* endptr;
@@ -261,28 +261,28 @@ derr_t dstr_tol(const dstr_t* in, long* out, int base){
     long result = strtol(temp.data, &endptr, base);
     // check for error
     if(errno){
-        TRACE(e, "%x: %x\n", FS("srtol"), FE(&errno));
-        ORIG(e, E_PARAM, "invalid number string");
+        TRACE(&e, "%x: %x\n", FS("srtol"), FE(&errno));
+        ORIG(&e, E_PARAM, "invalid number string");
     }
     // make sure everything was parsed
     if(endptr != &temp.data[temp.len]){
-        ORIG(e, E_PARAM, "invalid number string");
+        ORIG(&e, E_PARAM, "invalid number string");
     }
     // return value
     *out = result;
-    return E_OK;
+    return e;
 }
 derr_t dstr_toul(const dstr_t* in, unsigned long* out, int base){
     derr_t e = E_OK;
     // copy the version into a null-terminated string to read into atof()
     DSTR_VAR(temp, 128);
-    e = dstr_copy(in, &temp);
-    CATCH(e, E_ANY){
-        RETHROW(e, E_PARAM);
+    derr_t e2 = dstr_copy(in, &temp);
+    CATCH(e2, E_ANY){
+        RETHROW(&e, &e2, E_PARAM);
     }
-    e = dstr_null_terminate(&temp);
-    CATCH(e, E_ANY){
-        RETHROW(e, E_PARAM);
+    e2 = dstr_null_terminate(&temp);
+    CATCH(e2, E_ANY){
+        RETHROW(&e, &e2, E_PARAM);
     }
     // now parse
     char* endptr;
@@ -290,28 +290,28 @@ derr_t dstr_toul(const dstr_t* in, unsigned long* out, int base){
     unsigned long result = strtoul(temp.data, &endptr, base);
     // check for error
     if(errno){
-        TRACE(e, "%x: %x\n", FS("srtoul"), FE(&errno));
-        ORIG(e, E_PARAM, "invalid number string");
+        TRACE(&e, "%x: %x\n", FS("srtoul"), FE(&errno));
+        ORIG(&e, E_PARAM, "invalid number string");
     }
     // make sure everything was parsed
     if(endptr != &temp.data[temp.len]){
-        ORIG(e, E_PARAM, "invalid number string");
+        ORIG(&e, E_PARAM, "invalid number string");
     }
     // return value
     *out = result;
-    return E_OK;
+    return e;
 }
 derr_t dstr_toll(const dstr_t* in, long long* out, int base){
     derr_t e = E_OK;
     // copy the version into a null-terminated string to read into atof()
     DSTR_VAR(temp, 128);
-    e = dstr_copy(in, &temp);
-    CATCH(e, E_ANY){
-        RETHROW(e, E_PARAM);
+    derr_t e2 = dstr_copy(in, &temp);
+    CATCH(e2, E_ANY){
+        RETHROW(&e, &e2, E_PARAM);
     }
-    e = dstr_null_terminate(&temp);
-    CATCH(e, E_ANY){
-        RETHROW(e, E_PARAM);
+    e2 = dstr_null_terminate(&temp);
+    CATCH(e2, E_ANY){
+        RETHROW(&e, &e2, E_PARAM);
     }
     // now parse
     char* endptr;
@@ -319,28 +319,28 @@ derr_t dstr_toll(const dstr_t* in, long long* out, int base){
     long long result = strtoll(temp.data, &endptr, base);
     // check for error
     if(errno){
-        TRACE(e, "%x: %x\n", FS("srtoll"), FE(&errno));
-        ORIG(e, E_PARAM, "invalid number string");
+        TRACE(&e, "%x: %x\n", FS("srtoll"), FE(&errno));
+        ORIG(&e, E_PARAM, "invalid number string");
     }
     // make sure everything was parsed
     if(endptr != &temp.data[temp.len]){
-        ORIG(e, E_PARAM, "invalid number string");
+        ORIG(&e, E_PARAM, "invalid number string");
     }
     // return value
     *out = result;
-    return E_OK;
+    return e;
 }
 derr_t dstr_toull(const dstr_t* in, unsigned long long* out, int base){
     derr_t e = E_OK;
     // copy the version into a null-terminated string to read into atof()
     DSTR_VAR(temp, 128);
-    e = dstr_copy(in, &temp);
-    CATCH(e, E_ANY){
-        RETHROW(e, E_PARAM);
+    derr_t e2 = dstr_copy(in, &temp);
+    CATCH(e2, E_ANY){
+        RETHROW(&e, &e2, E_PARAM);
     }
-    e = dstr_null_terminate(&temp);
-    CATCH(e, E_ANY){
-        RETHROW(e, E_PARAM);
+    e2 = dstr_null_terminate(&temp);
+    CATCH(e2, E_ANY){
+        RETHROW(&e, &e2, E_PARAM);
     }
     // now parse
     char* endptr;
@@ -348,28 +348,28 @@ derr_t dstr_toull(const dstr_t* in, unsigned long long* out, int base){
     unsigned long long result = strtoull(temp.data, &endptr, base);
     // check for error
     if(errno){
-        TRACE(e, "%x: %x\n", FS("srtoull"), FE(&errno));
-        ORIG(e, E_PARAM, "invalid number string");
+        TRACE(&e, "%x: %x\n", FS("srtoull"), FE(&errno));
+        ORIG(&e, E_PARAM, "invalid number string");
     }
     // make sure everything was parsed
     if(endptr != &temp.data[temp.len]){
-        ORIG(e, E_PARAM, "invalid number string");
+        ORIG(&e, E_PARAM, "invalid number string");
     }
     // return value
     *out = result;
-    return E_OK;
+    return e;
 }
 derr_t dstr_tof(const dstr_t* in, float* out){
     derr_t e = E_OK;
     // copy the version into a null-terminated string to read into atof()
     DSTR_VAR(temp, 128);
-    e = dstr_copy(in, &temp);
-    CATCH(e, E_ANY){
-        RETHROW(e, E_PARAM);
+    derr_t e2 = dstr_copy(in, &temp);
+    CATCH(e2, E_ANY){
+        RETHROW(&e, &e2, E_PARAM);
     }
-    e = dstr_null_terminate(&temp);
-    CATCH(e, E_ANY){
-        RETHROW(e, E_PARAM);
+    e2 = dstr_null_terminate(&temp);
+    CATCH(e2, E_ANY){
+        RETHROW(&e, &e2, E_PARAM);
     }
     // now parse
     char* endptr;
@@ -377,28 +377,28 @@ derr_t dstr_tof(const dstr_t* in, float* out){
     float result = strtof(temp.data, &endptr);
     // check for error
     if(errno){
-        TRACE(e, "%x: %x\n", FS("srtof"), FE(&errno));
-        ORIG(e, E_PARAM, "invalid number string");
+        TRACE(&e, "%x: %x\n", FS("srtof"), FE(&errno));
+        ORIG(&e, E_PARAM, "invalid number string");
     }
     // make sure everything was parsed
     if(endptr != &temp.data[temp.len]){
-        ORIG(e, E_PARAM, "invalid number string");
+        ORIG(&e, E_PARAM, "invalid number string");
     }
     // return value
     *out = result;
-    return E_OK;
+    return e;
 }
 derr_t dstr_tod(const dstr_t* in, double* out){
     derr_t e = E_OK;
     // copy the version into a null-terminated string to read into atof()
     DSTR_VAR(temp, 128);
-    e = dstr_copy(in, &temp);
-    CATCH(e, E_ANY){
-        RETHROW(e, E_PARAM);
+    derr_t e2 = dstr_copy(in, &temp);
+    CATCH(e2, E_ANY){
+        RETHROW(&e, &e2, E_PARAM);
     }
-    e = dstr_null_terminate(&temp);
-    CATCH(e, E_ANY){
-        RETHROW(e, E_PARAM);
+    e2 = dstr_null_terminate(&temp);
+    CATCH(e2, E_ANY){
+        RETHROW(&e, &e2, E_PARAM);
     }
     // now parse
     char* endptr;
@@ -406,28 +406,28 @@ derr_t dstr_tod(const dstr_t* in, double* out){
     double result = strtod(temp.data, &endptr);
     // check for error
     if(errno){
-        TRACE(e, "%x: %x\n", FS("srtod"), FE(&errno));
-        ORIG(e, E_PARAM, "invalid number string");
+        TRACE(&e, "%x: %x\n", FS("srtod"), FE(&errno));
+        ORIG(&e, E_PARAM, "invalid number string");
     }
     // make sure everything was parsed
     if(endptr != &temp.data[temp.len]){
-        ORIG(e, E_PARAM, "invalid number string");
+        ORIG(&e, E_PARAM, "invalid number string");
     }
     // return value
     *out = result;
-    return E_OK;
+    return e;
 }
 derr_t dstr_told(const dstr_t* in, long double* out){
     derr_t e = E_OK;
     // copy the version into a null-terminated string to read into atof()
     DSTR_VAR(temp, 128);
-    e = dstr_copy(in, &temp);
-    CATCH(e, E_ANY){
-        RETHROW(e, E_PARAM);
+    derr_t e2 = dstr_copy(in, &temp);
+    CATCH(e2, E_ANY){
+        RETHROW(&e, &e2, E_PARAM);
     }
-    e = dstr_null_terminate(&temp);
-    CATCH(e, E_ANY){
-        RETHROW(e, E_PARAM);
+    e2 = dstr_null_terminate(&temp);
+    CATCH(e2, E_ANY){
+        RETHROW(&e, &e2, E_PARAM);
     }
     // now parse
     char* endptr;
@@ -435,16 +435,16 @@ derr_t dstr_told(const dstr_t* in, long double* out){
     long double result = strtold(temp.data, &endptr);
     // check for error
     if(errno){
-        TRACE(e, "%x: %x\n", FS("srtod"), FE(&errno));
-        ORIG(e, E_PARAM, "invalid number string");
+        TRACE(&e, "%x: %x\n", FS("srtod"), FE(&errno));
+        ORIG(&e, E_PARAM, "invalid number string");
     }
     // make sure everything was parsed
     if(endptr != &temp.data[temp.len]){
-        ORIG(e, E_PARAM, "invalid number string");
+        ORIG(&e, E_PARAM, "invalid number string");
     }
     // return value
     *out = result;
-    return E_OK;
+    return e;
 }
 
 char* dstr_find(const dstr_t* text, const LIST(dstr_t)* patterns,
@@ -517,7 +517,7 @@ static derr_t do_dstr_recode(const dstr_t* in,
             if(cpy_until > cpy_from){
                 sub = dstr_sub(in, (uintptr_t)cpy_from - (uintptr_t)in->data,
                                (uintptr_t)cpy_until - (uintptr_t)in->data);
-                PROP(e, dstr_append(out, &sub) );
+                PROP(&e, dstr_append(out, &sub) );
             }
             // keep track of how much we have copied
             cpy_from = cpy_until;
@@ -528,10 +528,10 @@ static derr_t do_dstr_recode(const dstr_t* in,
             if(cpy_until > cpy_from){
                 sub = dstr_sub(in, (uintptr_t)cpy_from - (uintptr_t)in->data,
                                (uintptr_t)cpy_until - (uintptr_t)in->data);
-                PROP(e, dstr_append(out, &sub) );
+                PROP(&e, dstr_append(out, &sub) );
             }
             // then append the replacement for the pattern
-            PROP(e, dstr_append(out, &replace_strs->data[which_pattern]) );
+            PROP(&e, dstr_append(out, &replace_strs->data[which_pattern]) );
             // keep track of how much we have copied
             cpy_from = cpy_until + search_strs->data[which_pattern].len;
         }
@@ -544,7 +544,7 @@ static derr_t do_dstr_recode(const dstr_t* in,
     if(consumed){
         *consumed = (uintptr_t)cpy_from - (uintptr_t)in->data;
     }
-    return E_OK;
+    return e;
 }
 
 // primary difference here is *in is not const
@@ -557,10 +557,10 @@ derr_t dstr_recode_stream(dstr_t* in,
                           bool* found_stop){
     derr_t e = E_OK;
     size_t consumed;
-    PROP(e, do_dstr_recode(in, out, search_strs, replace_strs, ignore_partial,
+    PROP(&e, do_dstr_recode(in, out, search_strs, replace_strs, ignore_partial,
                          stop_str_index, found_stop, &consumed) );
     dstr_leftshift(in, consumed);
-    return E_OK;
+    return e;
 }
 
 // primary difference here is *in IS const
@@ -573,9 +573,9 @@ derr_t dstr_recode(const dstr_t* in,
     if(append == false){
         out->len = 0;
     }
-    PROP(e, do_dstr_recode(in, out, search_strs, replace_strs, false, 0, NULL,
+    PROP(&e, do_dstr_recode(in, out, search_strs, replace_strs, false, 0, NULL,
                          NULL) );
-    return E_OK;
+    return e;
 }
 
 size_t dstr_count(const dstr_t* text, const dstr_t* pattern){
@@ -620,8 +620,8 @@ derr_type_t dstr_grow_quiet(dstr_t *ds, size_t min_size){
 derr_t dstr_grow(dstr_t* ds, size_t min_size){
     derr_t e = E_OK;
     derr_type_t type = dstr_grow_quiet(ds, min_size);
-    if(type) ORIG(e, type, "unable to grow dstr");
-    return E_OK;
+    if(type) ORIG(&e, type, "unable to grow dstr");
+    return e;
 }
 
 // append one dstr to another
@@ -637,19 +637,19 @@ derr_type_t dstr_append_quiet(dstr_t *dstr, const dstr_t *new_text){
 derr_t dstr_append(dstr_t* dstr, const dstr_t* new_text){
     derr_t e = E_OK;
     derr_type_t type = dstr_append_quiet(dstr, new_text);
-    if(type) ORIG(e, type, "unable to append to dstr");
-    return E_OK;
+    if(type) ORIG(&e, type, "unable to append to dstr");
+    return e;
 }
 
 // copy one dstr to another
 derr_t dstr_copy(const dstr_t* in, dstr_t* out){
     derr_t e = E_OK;
-    PROP(e, dstr_grow(out, in->len) );
+    PROP(&e, dstr_grow(out, in->len) );
 
     memcpy(out->data, in->data, in->len);
     out->len = in->len;
 
-    return E_OK;
+    return e;
 }
 
 // the LIST(dstr_t) returned will have its elements point into the dstr_t text
@@ -691,17 +691,17 @@ derr_t dstr_split(const dstr_t* text, const dstr_t* pattern, LIST(dstr_t)* out){
             new.len = 0;
             new.size = 0;
             new.fixed_size = true;
-            PROP(e, LIST_APPEND(dstr_t, out, new) );
+            PROP(&e, LIST_APPEND(dstr_t, out, new) );
         }else{
             dstr_t new = dstr_sub(text, word_start, word_end);
-            PROP(e, LIST_APPEND(dstr_t, out, new) );
+            PROP(&e, LIST_APPEND(dstr_t, out, new) );
         }
 
         // get ready for the next dstr_find()
         word_start = word_end + pattern->len;
     }
 
-    return E_OK;
+    return e;
 }
 
 void dstr_leftshift(dstr_t* buffer, size_t count){
@@ -738,8 +738,8 @@ derr_type_t dstr_null_terminate_quiet(dstr_t* ds){
 derr_t dstr_null_terminate(dstr_t* ds){
     derr_t e = E_OK;
     derr_type_t type = dstr_null_terminate_quiet(ds);
-    if(type) ORIG(e, type, "unable to null terminate");
-    return E_OK;
+    if(type) ORIG(&e, type, "unable to null terminate");
+    return e;
 }
 
 derr_t list_append_with_mem(LIST(dstr_t)* list, dstr_t* mem, dstr_t in,
@@ -751,7 +751,7 @@ derr_t list_append_with_mem(LIST(dstr_t)* list, dstr_t* mem, dstr_t in,
     /* do the block memory allocation all at once (so there's only one chance
        for reallocation) */
     size_t to_grow = in.len + (null_term ? 1 : 0);
-    PROP(e, dstr_grow(mem, mem->len + to_grow) );
+    PROP(&e, dstr_grow(mem, mem->len + to_grow) );
     // now do the appending
     // append *in to the backing memory
     dstr_append(mem, &in);
@@ -772,8 +772,8 @@ derr_t list_append_with_mem(LIST(dstr_t)* list, dstr_t* mem, dstr_t in,
     }
     // append the new chunk of *mem to *list
     dstr_t sub = dstr_sub(mem, start, end);
-    PROP_GO(e, LIST_APPEND(dstr_t, list, sub), fail_1);
-    return E_OK;
+    PROP_GO(&e, LIST_APPEND(dstr_t, list, sub), fail_1);
+    return e;
 
 fail_1:
     // if we failed in the LIST_APPEND, remove stuff from the mem
@@ -802,26 +802,26 @@ derr_t dstr_read(int fd, dstr_t* buffer, size_t count, size_t* amnt_read){
         count = buffer->size - buffer->len;
         // make sure the buffer isn't full
         if(count == 0){
-            ORIG(e, E_FIXEDSIZE, "buffer is full");
+            ORIG(&e, E_FIXEDSIZE, "buffer is full");
         }
     }else{
         // grow buffer to fit
-        PROP(e, dstr_grow(buffer, buffer->len + count) );
+        PROP(&e, dstr_grow(buffer, buffer->len + count) );
     }
     ar = read(fd, buffer->data + buffer->len, count);
     if(ar < 0){
-        TRACE(e, "%x: %x\n", FS("read"), FE(&errno));
-        ORIG(e, E_OS, "error in read");
+        TRACE(&e, "%x: %x\n", FS("read"), FE(&errno));
+        ORIG(&e, E_OS, "error in read");
     }
     buffer->len += (size_t)ar;
     if(amnt_read) *amnt_read = (size_t)ar;
-    return E_OK;
+    return e;
 }
 
 derr_t dstr_write(int fd, const dstr_t* buffer){
     derr_t e = E_OK;
     // return early if buffer is empty
-    if(buffer->len == 0) return E_OK;
+    if(buffer->len == 0) return e;
     // repeatedly try to write until we write the whole buffer
     size_t total = 0;
     size_t zero_writes = 0;
@@ -829,8 +829,8 @@ derr_t dstr_write(int fd, const dstr_t* buffer){
         ssize_t amnt_written = write(fd, buffer->data + total, buffer->len - total);
         // writing zero bytes is a failure mode
         if(amnt_written < 0){
-            TRACE(e, "%x: %x\n", FS("write"), FE(&errno));
-            ORIG(e, E_OS, "dstr_write failed");
+            TRACE(&e, "%x: %x\n", FS("write"), FE(&errno));
+            ORIG(&e, E_OS, "dstr_write failed");
         }
         /* there is not a great way to handle this, since `man 2 write` says:
            "if count is zero and fd referes to a non-regular file, results are
@@ -842,13 +842,13 @@ derr_t dstr_write(int fd, const dstr_t* buffer){
            stdout... */
         if(amnt_written == 0){
             if(zero_writes++ > 100){
-                ORIG(e, E_OS, "too many zero writes");
+                ORIG(&e, E_OS, "too many zero writes");
             }
         }
         total += (size_t)amnt_written;
     }
 
-    return E_OK;
+    return e;
 }
 
 derr_t dstr_fread(FILE* f, dstr_t* buffer, size_t count, size_t* amnt_read){
@@ -860,21 +860,21 @@ derr_t dstr_fread(FILE* f, dstr_t* buffer, size_t count, size_t* amnt_read){
         count = buffer->size - buffer->len;
     }else{
         // grow buffer to fit
-        PROP(e, dstr_grow(buffer, buffer->len + count) );
+        PROP(&e, dstr_grow(buffer, buffer->len + count) );
     }
     // make sure the buffer isn't full
     if(count == 0){
-        ORIG(e, E_FIXEDSIZE, "buffer is full");
+        ORIG(&e, E_FIXEDSIZE, "buffer is full");
     }
     ar = fread(buffer->data + buffer->len, 1, count, f);
     if(ar > 0){
         buffer->len += ar;
     }else if(ferror(f)){
-        TRACE(e, "%x: %x\n", FS("fread"), FE(&errno));
-        ORIG(e, E_OS, "error in fread");
+        TRACE(&e, "%x: %x\n", FS("fread"), FE(&errno));
+        ORIG(&e, E_OS, "error in fread");
     }
     if(amnt_read) *amnt_read = ar;
-    return E_OK;
+    return e;
 }
 
 derr_type_t dstr_fwrite_quiet(FILE* f, const dstr_t* buffer){
@@ -892,20 +892,20 @@ derr_type_t dstr_fwrite_quiet(FILE* f, const dstr_t* buffer){
 derr_t dstr_fwrite(FILE* f, const dstr_t* buffer){
     derr_t e = E_OK;
     derr_type_t type = dstr_fwrite_quiet(f, buffer);
-    if(type) ORIG(e, type, "unable to write to FILE pointer");
-    return E_OK;
+    if(type) ORIG(&e, type, "unable to write to FILE pointer");
+    return e;
 }
 
 derr_t dstr_read_file(const char* filename, dstr_t* buffer){
     derr_t e = E_OK;
     int fd = open(filename, O_RDONLY);
     if(fd < 0){
-        TRACE(e, "%x: %x\n", FS(filename), FE(&errno));
-        ORIG(e, E_OPEN, "unable to open file");
+        TRACE(&e, "%x: %x\n", FS(filename), FE(&errno));
+        ORIG(&e, E_OPEN, "unable to open file");
     }
     while(true){
         size_t amnt_read;
-        PROP_GO(e, dstr_read(fd, buffer, 0, &amnt_read), cleanup);
+        PROP_GO(&e, dstr_read(fd, buffer, 0, &amnt_read), cleanup);
         // if we read nothing then we're done
         if(amnt_read == 0){
             break;
@@ -913,7 +913,7 @@ derr_t dstr_read_file(const char* filename, dstr_t* buffer){
         /* if we filled the buffer with text we should force the buffer to
            reallocate and try again */
         if(buffer->len == buffer->size){
-            PROP_GO(e, dstr_grow(buffer, buffer->size * 2), cleanup);
+            PROP_GO(&e, dstr_grow(buffer, buffer->size * 2), cleanup);
         }
     }
 cleanup:
@@ -925,10 +925,10 @@ derr_t dstr_write_file(const char* filename, const dstr_t* buffer){
     derr_t e = E_OK;
     int fd = open(filename, O_WRONLY | O_CREAT | O_TRUNC, 0666);
     if(fd < 0){
-        TRACE(e, "%x: %x\n", FS(filename), FE(&errno));
-        ORIG(e, E_OPEN, "unable to open file");
+        TRACE(&e, "%x: %x\n", FS(filename), FE(&errno));
+        ORIG(&e, E_OPEN, "unable to open file");
     }
-    PROP_GO(e, dstr_write(fd, buffer), cleanup);
+    PROP_GO(&e, dstr_write(fd, buffer), cleanup);
 cleanup:
     close(fd);
     return e;
@@ -938,12 +938,12 @@ derr_t dstr_fread_file(const char* filename, dstr_t* buffer){
     derr_t e = E_OK;
     FILE* f = fopen(filename, "r");
     if(!f){
-        TRACE(e, "%x: %x\n", FS(filename), FE(&errno));
-        ORIG(e, errno == ENOMEM ? E_NOMEM : E_OPEN, "unable to open file");
+        TRACE(&e, "%x: %x\n", FS(filename), FE(&errno));
+        ORIG(&e, errno == ENOMEM ? E_NOMEM : E_OPEN, "unable to open file");
     }
     while(true){
         size_t amnt_read;
-        PROP_GO(e, dstr_fread(f, buffer, 0, &amnt_read), cleanup);
+        PROP_GO(&e, dstr_fread(f, buffer, 0, &amnt_read), cleanup);
         // if we read nothing then we're done
         if(amnt_read == 0){
             break;
@@ -951,7 +951,7 @@ derr_t dstr_fread_file(const char* filename, dstr_t* buffer){
         /* if we filled the buffer with text we should force the buffer to
            reallocate and try again */
         if(buffer->len == buffer->size){
-            PROP_GO(e, dstr_grow(buffer, buffer->size * 2), cleanup);
+            PROP_GO(&e, dstr_grow(buffer, buffer->size * 2), cleanup);
         }
     }
 cleanup:
@@ -963,10 +963,10 @@ derr_t dstr_fwrite_file(const char* filename, const dstr_t* buffer){
     derr_t e = E_OK;
     FILE* f = fopen(filename, "w");
     if(!f){
-        TRACE(e, "%x: %x\n", FS(filename), FE(&errno));
-        ORIG(e, errno == ENOMEM ? E_NOMEM : E_OPEN, "unable to open file");
+        TRACE(&e, "%x: %x\n", FS(filename), FE(&errno));
+        ORIG(&e, errno == ENOMEM ? E_NOMEM : E_OPEN, "unable to open file");
     }
-    PROP_GO(e, dstr_fwrite(f, buffer), cleanup);
+    PROP_GO(&e, dstr_fwrite(f, buffer), cleanup);
 cleanup:
     fclose(f);
     return e;
@@ -1026,20 +1026,20 @@ derr_t bin2b64(dstr_t* bin, dstr_t* b64, size_t line_width, bool force_end){
                 }
             }
             // append buffer to dstr
-            PROP(e, dstr_append(b64, &buff) );
+            PROP(&e, dstr_append(b64, &buff) );
             // reset chunk
             memset(ch, 0, sizeof(ch));
             ch_idx = 0;
             // check to append line break
             if(line_width > 0){
                 if((i + 1) % chunk_size == 0 || i + 1 == bin->len){
-                    PROP(e, dstr_append(b64, &line_break) );
+                    PROP(&e, dstr_append(b64, &line_break) );
                 }
             }
         }
     }
     dstr_leftshift(bin, i);
-    return E_OK;
+    return e;
 }
 
 derr_t b642bin(dstr_t* b64, dstr_t* bin){
@@ -1082,14 +1082,14 @@ derr_t b642bin(dstr_t* b64, dstr_t* bin){
                 u = (unsigned char)(ch[2] << 6 | ch[3]);
                 buffer.data[buffer.len++] = uchar_to_char(u);
             }
-            PROP(e, dstr_append(bin, &buffer) );
+            PROP(&e, dstr_append(bin, &buffer) );
             ch_idx = 0;
             total_read = i + 1;
             if(skip > 0) break;
         }
     }
     dstr_leftshift(b64, total_read);
-    return E_OK;
+    return e;
 }
 
 derr_t bin2hex(const dstr_t* bin, dstr_t* hex){
@@ -1099,11 +1099,11 @@ derr_t bin2hex(const dstr_t* bin, dstr_t* hex){
     for(size_t i = 0; i < bin->len; i++){
         int ret = snprintf(temp.data, temp.size, "%.2x", (unsigned char)bin->data[i]);
         if(ret != 2){
-            ORIG(e, E_INTERNAL, "snprintf printed the wrong amount");
+            ORIG(&e, E_INTERNAL, "snprintf printed the wrong amount");
         }
-        PROP(e, dstr_append(hex, &temp) );
+        PROP(&e, dstr_append(hex, &temp) );
     }
-    return E_OK;
+    return e;
 }
 
 derr_t hex2bin(const dstr_t* hex, dstr_t* bin){
@@ -1130,17 +1130,17 @@ derr_t hex2bin(const dstr_t* hex, dstr_t* bin){
             // ignore whitespace
             continue;
         }else{
-            ORIG(e, E_PARAM, "bad hex input");
+            ORIG(&e, E_PARAM, "bad hex input");
         }
         shift = 1 - shift;
         *byte |= (unsigned char)(val << (4 * shift));
         if(!shift){
             // append byte to dstr
-            PROP(e, dstr_append(bin, &one_char) );
+            PROP(&e, dstr_append(bin, &one_char) );
             *byte = 0;
         }
     }
-    return E_OK;
+    return e;
 }
 
 ///////////////////////////////
@@ -1248,8 +1248,8 @@ derr_type_t pvt_fmt_quiet(
 derr_t pvt_fmt(dstr_t* out, const char* fstr, const fmt_t* args, size_t nargs){
     derr_t e = E_OK;
     derr_type_t type = pvt_fmt_quiet(out, fstr, args, nargs);
-    if(type) ORIG(e, type, "unable to format string");
-    return E_OK;
+    if(type) ORIG(&e, type, "unable to format string");
+    return e;
 }
 
 derr_type_t pvt_ffmt_quiet(
@@ -1277,8 +1277,8 @@ derr_t pvt_ffmt(
         size_t nargs){
     derr_t e = E_OK;
     derr_type_t type = pvt_ffmt_quiet(f, written, fstr, args, nargs);
-    if(type) ORIG(e, type, "unable to format string for FILE pointer");
-    return E_OK;
+    if(type) ORIG(&e, type, "unable to format string for FILE pointer");
+    return e;
 }
 
 derr_type_t fmthook_dstr_dbg(dstr_t* out, const void* arg){
@@ -1354,36 +1354,36 @@ derr_t sb_append_to_dstr(
         const string_builder_t* sb, const dstr_t* joiner, dstr_t* out){
     derr_t e = E_OK;
     derr_type_t type = sb_append_to_dstr_quiet(sb, joiner, out);
-    if(type) ORIG(e, type, "failed to append string builder to dstr");
-    return E_OK;
+    if(type) ORIG(&e, type, "failed to append string builder to dstr");
+    return e;
 }
 
 derr_t sb_to_dstr(const string_builder_t* sb, const dstr_t* joiner, dstr_t* out){
     derr_t e = E_OK;
     out->len = 0;
-    PROP(e, sb_append_to_dstr(sb, joiner, out) );
-    return E_OK;
+    PROP(&e, sb_append_to_dstr(sb, joiner, out) );
+    return e;
 }
 
 derr_t sb_expand(const string_builder_t* sb, const dstr_t* joiner,
                  dstr_t* stack_dstr, dstr_t* heap_dstr, dstr_t** out){
     derr_t e = E_OK;
     // try and expand into stack_dstr
-    PROP_GO(e, sb_to_dstr(sb, joiner, stack_dstr), use_heap);
+    PROP_GO(&e, sb_to_dstr(sb, joiner, stack_dstr), use_heap);
     // sb_expand is often for a path, so null-terminate it
-    PROP_GO(e, dstr_null_terminate(stack_dstr), use_heap);
+    PROP_GO(&e, dstr_null_terminate(stack_dstr), use_heap);
     // it worked, return stack_dstr as *out
     *out = stack_dstr;
-    return E_OK;
+    return e;
 
 use_heap:
-    DROP(e);
     // we will need to allocate the heap_dstr to be bigger than stack_dstr
-    PROP(e, dstr_new(heap_dstr, stack_dstr->size * 2) );
-    PROP_GO(e, sb_to_dstr(sb, joiner, heap_dstr), fail_heap);
+    PROP(&e, dstr_new(heap_dstr, stack_dstr->size * 2) );
+    PROP_GO(&e, sb_to_dstr(sb, joiner, heap_dstr), fail_heap);
     // sb_expand is often for a path, so null-terminate it
-    PROP_GO(e, dstr_null_terminate(heap_dstr), fail_heap);
-    return E_OK;
+    PROP_GO(&e, dstr_null_terminate(heap_dstr), fail_heap);
+    DROP_VAR(&e);
+    return e;
 
 fail_heap:
     dstr_free(heap_dstr);
