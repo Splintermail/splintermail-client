@@ -1162,21 +1162,19 @@ static inline derr_type_t dstr_append_char(dstr_t* dstr, char val){
 }
 
 #define SNPRINTF_WITH_RETRY(fmtstr, arg) \
-    ret = snprintf(buf, left, fmtstr, arg); \
+    ret = snprintf(out->data + out->len, out->size - out->len, fmtstr, arg); \
     if(ret < 0) return E_INTERNAL; \
     sret = (size_t) ret; \
-    if(sret + 1 > left){ \
+    if(sret + 1 > out->size - out->len){ \
         derr_type_t type = dstr_grow_quiet(out, out->len + sret + 1); \
         if(type) return type; \
-        snprintf(buf, left, fmtstr, arg); \
+        snprintf(out->data + out->len, out->size - out->len, fmtstr, arg); \
     } \
     out->len += sret
 
 static inline derr_type_t fmt_arg(dstr_t* out, fmt_t arg){
     int ret;
     size_t sret;
-    char* buf = out->data + out->len;
-    size_t left = out->size - out->len;
     switch(arg.type){
         case FMT_UINT: SNPRINTF_WITH_RETRY("%ju", arg.data.u); break;
         case FMT_INT: SNPRINTF_WITH_RETRY("%jd", arg.data.i); break;
