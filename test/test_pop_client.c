@@ -28,9 +28,9 @@ static derr_t do_tests(fake_pop_server_t* fps, pop_client_t* pc, dstr_t* buffer)
     username.len = strlen(g_username);
     username.size = username.len;
     username.fixed_size = true;
-    PROP(e, pop_client_username(pc, &username, &ok, &msg) );
+    PROP(&e, pop_client_username(pc, &username, &ok, &msg) );
     if(!ok){
-        ORIG(e, E_VALUE, "pop_client_username returned -ERR");
+        ORIG(&e, E_VALUE, "pop_client_username returned -ERR");
     }
 
     // PASS
@@ -39,111 +39,111 @@ static derr_t do_tests(fake_pop_server_t* fps, pop_client_t* pc, dstr_t* buffer)
     password.len = strlen(g_password);
     password.size = password.len;
     password.fixed_size = true;
-    PROP(e, pop_client_password(pc, &password, &ok, &msg) );
+    PROP(&e, pop_client_password(pc, &password, &ok, &msg) );
     if(!ok){
-        ORIG(e, E_VALUE, "pop_client_password returned -ERR");
+        ORIG(&e, E_VALUE, "pop_client_password returned -ERR");
     }
 
     // UIDL
-    PROP(e, pop_client_uidl(pc, &ok, &msg) );
+    PROP(&e, pop_client_uidl(pc, &ok, &msg) );
     if(!ok){
-        ORIG(e, E_VALUE, "pop_client_uidl returned -ERR");
+        ORIG(&e, E_VALUE, "pop_client_uidl returned -ERR");
     }
     for(size_t i = 0; i < pc->uids.len; i++){
         result = dstr_cmp(&pc->uids.data[i], &fps->uids.data[i]);
         if(result != 0){
-            ORIG(e, E_VALUE, "pop_client_uidl mismatch");
+            ORIG(&e, E_VALUE, "pop_client_uidl mismatch");
         }
     }
 
     // RETR
     for(unsigned int i = 0; i < pc->uids.len; i++){
-        PROP(e, pop_client_retrieve(pc, i + 1, &ok, &msg) );
+        PROP(&e, pop_client_retrieve(pc, i + 1, &ok, &msg) );
         if(!ok){
-            ORIG(e, E_VALUE, "pop_client_retrieve returned -ERR");
+            ORIG(&e, E_VALUE, "pop_client_retrieve returned -ERR");
         }
         buffer->len = 0;
         bool found_end;
-        PROP(e, pop_client_get_body(pc, buffer, true,  &found_end) );
+        PROP(&e, pop_client_get_body(pc, buffer, true,  &found_end) );
         while(found_end == false){
-            PROP(e, pop_client_get_body(pc, buffer, false, &found_end) );
+            PROP(&e, pop_client_get_body(pc, buffer, false, &found_end) );
         }
         result = dstr_cmp(buffer, &fps->messages.data[i]);
         if(result != 0){
-            ORIG(e, E_VALUE, "pop_client_retr mismatch");
+            ORIG(&e, E_VALUE, "pop_client_retr mismatch");
         }
     }
 
     // DELE
-    PROP(e, pop_client_delete(pc, 1, &ok, &msg) );
+    PROP(&e, pop_client_delete(pc, 1, &ok, &msg) );
     if(!ok){
-        ORIG(e, E_VALUE, "pop_client_delete returned -ERR");
+        ORIG(&e, E_VALUE, "pop_client_delete returned -ERR");
     }
 
     // UIDL (retrying after DELE)
-    PROP(e, pop_client_uidl(pc, &ok, &msg) );
+    PROP(&e, pop_client_uidl(pc, &ok, &msg) );
     if(!ok){
-        ORIG(e, E_VALUE, "pop_client_uidl after DELE returned -ERR");
+        ORIG(&e, E_VALUE, "pop_client_uidl after DELE returned -ERR");
     }
     for(size_t i = 0; i < pc->uids.len; i++){
         // note that we shouldn't compare against fps->uids.data[0]
         result = dstr_cmp(&pc->uids.data[i], &fps->uids.data[i+1]);
         if(result != 0){
-            ORIG(e, E_VALUE, "pop_client_uidl after DELE mismatch");
+            ORIG(&e, E_VALUE, "pop_client_uidl after DELE mismatch");
         }
     }
 
     // RSET
-    PROP(e, pop_client_reset(pc, &ok, &msg) );
+    PROP(&e, pop_client_reset(pc, &ok, &msg) );
     if(!ok){
-        ORIG(e, E_VALUE, "pop_client_reset returned -ERR");
+        ORIG(&e, E_VALUE, "pop_client_reset returned -ERR");
     }
 
     // UIDL (retrying again after RSET)
-    PROP(e, pop_client_uidl(pc, &ok, &msg) );
+    PROP(&e, pop_client_uidl(pc, &ok, &msg) );
     if(!ok){
-        ORIG(e, E_VALUE, "pop_client_uidl after RSET returned -ERR");
+        ORIG(&e, E_VALUE, "pop_client_uidl after RSET returned -ERR");
     }
     for(size_t i = 0; i < pc->uids.len; i++){
         result = dstr_cmp(&pc->uids.data[i], &fps->uids.data[i]);
         if(result != 0){
-            ORIG(e, E_VALUE, "pop_client_uidl after RSET mismatch");
+            ORIG(&e, E_VALUE, "pop_client_uidl after RSET mismatch");
         }
     }
 
     // DELE (deleting everything to check parsing of empty pop response body)
-    PROP(e, pop_client_delete(pc, 1, &ok, &msg) );
+    PROP(&e, pop_client_delete(pc, 1, &ok, &msg) );
     if(!ok){
-        ORIG(e, E_VALUE, "pop_client_delete (2.1) returned -ERR");
+        ORIG(&e, E_VALUE, "pop_client_delete (2.1) returned -ERR");
     }
-    PROP(e, pop_client_delete(pc, 2, &ok, &msg) );
+    PROP(&e, pop_client_delete(pc, 2, &ok, &msg) );
     if(!ok){
-        ORIG(e, E_VALUE, "pop_client_delete (2.2) returned -ERR");
+        ORIG(&e, E_VALUE, "pop_client_delete (2.2) returned -ERR");
     }
-    PROP(e, pop_client_delete(pc, 3, &ok, &msg) );
+    PROP(&e, pop_client_delete(pc, 3, &ok, &msg) );
     if(!ok){
-        ORIG(e, E_VALUE, "pop_client_delete (2.3) returned -ERR");
+        ORIG(&e, E_VALUE, "pop_client_delete (2.3) returned -ERR");
     }
-    PROP(e, pop_client_delete(pc, 4, &ok, &msg) );
+    PROP(&e, pop_client_delete(pc, 4, &ok, &msg) );
     if(!ok){
-        ORIG(e, E_VALUE, "pop_client_delete (2.4) returned -ERR");
+        ORIG(&e, E_VALUE, "pop_client_delete (2.4) returned -ERR");
     }
 
     // UIDL (with empty list)
-    PROP(e, pop_client_uidl(pc, &ok, &msg) );
+    PROP(&e, pop_client_uidl(pc, &ok, &msg) );
     if(!ok){
-        ORIG(e, E_VALUE, "pop_client_uidl after DELE all returned -ERR");
+        ORIG(&e, E_VALUE, "pop_client_uidl after DELE all returned -ERR");
     }
     if(pc->uids.len != 0){
-        ORIG(e, E_VALUE, "pop_client_uidl after DELE all found uids");
+        ORIG(&e, E_VALUE, "pop_client_uidl after DELE all found uids");
     }
 
-    PROP(e, pop_client_quit(pc, &ok, &msg) );
+    PROP(&e, pop_client_quit(pc, &ok, &msg) );
     if(!ok){
-        ORIG(e, E_VALUE, "pop_client_quit returned -ERR");
+        ORIG(&e, E_VALUE, "pop_client_quit returned -ERR");
     }
 
-    return E_OK;
+    return e;
 }
 
 static derr_t test_pop_client(void){
@@ -151,11 +151,11 @@ static derr_t test_pop_client(void){
 
     // preapre ssl context
     ssl_context_t ctx;
-    PROP(e, ssl_context_new_client(&ctx) );
+    PROP(&e, ssl_context_new_client(&ctx) );
 
     // miscelaneous use buffer
     dstr_t buffer;
-    PROP_GO(e, dstr_new(&buffer, 4096), cleanup_1 );
+    PROP_GO(&e, dstr_new(&buffer, 4096), cleanup_1 );
 
     fake_pop_server_t fps;
     const char* files[] = {"fps/mail_basic",
@@ -167,24 +167,24 @@ static derr_t test_pop_client(void){
                           "dots",
                           "basic_enc"};
     size_t nfiles = sizeof(files) / sizeof(*files);
-    PROP_GO(e, fake_pop_server_new(&fps, files, nfiles, uids), cleanup_2);
+    PROP_GO(&e, fake_pop_server_new(&fps, files, nfiles, uids), cleanup_2);
 
     // start fake_pop_server
-    PROP_GO(e, fake_pop_server_start(&fps), cleanup_3);
+    PROP_GO(&e, fake_pop_server_start(&fps), cleanup_3);
     fps_start_test();
 
     pop_client_t pc;
-    PROP_GO(e, pop_client_new(&pc), cleanup_3);
+    PROP_GO(&e, pop_client_new(&pc), cleanup_3);
 
     bool ok;
     DSTR_VAR(msg, 1024);
-    PROP_GO(e, pop_client_connect(&pc, &ctx, "127.0.0.1", fps_pop_port,
+    PROP_GO(&e, pop_client_connect(&pc, &ctx, "127.0.0.1", fps_pop_port,
                                 &ok, &msg), cleanup_4);
 
     // run the first set of tests
-    PROP_GO(e, do_tests(&fps, &pc, &buffer), cleanup_5);
+    PROP_GO(&e, do_tests(&fps, &pc, &buffer), cleanup_5);
 
-    PROP_GO(e, fps_end_test(), cleanup_5);
+    PROP_GO(&e, fps_end_test(), cleanup_5);
     fps_done();
 
 cleanup_5:
@@ -194,11 +194,11 @@ cleanup_5:
 cleanup_4:
     fps_error = fake_pop_server_join();
     CATCH(fps_error, E_ANY){
-        TRACE(e, "fake pop server exited with trace:\n%x", FD(&fps_error.msg));
+        TRACE(&e, "fake pop server exited with trace:\n%x", FD(&fps_error.msg));
         if(!e.type){
             e.type = fps_error.type;
         }
-        DROP(fps_error);
+        DROP_VAR(&fps_error);
     }
 cleanup_3:
     fake_pop_server_free(&fps);
@@ -228,11 +228,11 @@ static derr_t test_encode_decode(void){
                          "..\r\n"
                          "\r\n"
                          "this is a test.\r\n");
-        PROP(e, pop3_encode(&raw, &buffer, true) );
+        PROP(&e, pop3_encode(&raw, &buffer, true) );
         int result;
         result = dstr_cmp(&enc, &buffer);
         if(result != 0){
-            ORIG(e, E_VALUE, "pop3_encode test failed");
+            ORIG(&e, E_VALUE, "pop3_encode test failed");
         }
     }
     // decode test
@@ -252,17 +252,17 @@ static derr_t test_encode_decode(void){
                          "\r\n"
                          "this is a test.\r\n");
         bool found_end;
-        PROP(e, pop3_decode(&raw, &buffer, &found_end) );
+        PROP(&e, pop3_decode(&raw, &buffer, &found_end) );
         if(found_end != true){
-            ORIG(e, E_VALUE, "pop3_decode didn't find end");
+            ORIG(&e, E_VALUE, "pop3_decode didn't find end");
         }
         int result = 0;
         result = dstr_cmp(&dec, &buffer);
         if(result != 0){
-            ORIG(e, E_VALUE, "pop3_encode test failed");
+            ORIG(&e, E_VALUE, "pop3_encode test failed");
         }
     }
-    return E_OK;
+    return e;
 }
 
 int main(int argc, char** argv){
@@ -271,10 +271,10 @@ int main(int argc, char** argv){
     PARSE_TEST_OPTIONS(argc, argv, &g_test_files, LOG_LVL_WARN);
 
     // setup the library (application-wide step)
-    PROP_GO(e, ssl_library_init(), test_fail);
+    PROP_GO(&e, ssl_library_init(), test_fail);
 
-    PROP_GO(e, test_pop_client(), test_fail);
-    PROP_GO(e, test_encode_decode(), test_fail);
+    PROP_GO(&e, test_pop_client(), test_fail);
+    PROP_GO(&e, test_encode_decode(), test_fail);
 
     LOG_ERROR("PASS\n");
     ssl_library_close();
@@ -282,7 +282,7 @@ int main(int argc, char** argv){
 
 test_fail:
     DUMP(e);
-    DROP(e);
+    DROP_VAR(&e);
     LOG_ERROR("FAIL\n");
     ssl_library_close();
     return 1;

@@ -50,10 +50,10 @@ static derr_t test_json(void){
     LIST(json_t) json;
     LIST_NEW(json_t, &json, 1);
 
-    PROP_GO(e, json_parse(&json, &long_test), cleanup);
+    PROP_GO(&e, json_parse(&json, &long_test), cleanup);
 
     double f;
-    PROP_GO(e, jtod(ji(jk(jk(json.data[0], "tests"), "numbers"), 3), &f ), cleanup);
+    PROP_GO(&e, jtod(ji(jk(jk(json.data[0], "tests"), "numbers"), 3), &f ), cleanup);
     // LOG_DEUBG("double = %x\n", FF(f));
 
 cleanup:
@@ -64,9 +64,9 @@ cleanup:
 #define EXP_VS_GOT(exp, got) { \
     int result = dstr_cmp(exp, got); \
     if(result != 0){ \
-        TRACE(e, "expected: %x\n" \
+        TRACE(&e, "expected: %x\n" \
                  "but got:  %x\n", FD(exp), FD(got)); \
-        ORIG(e, E_VALUE, "test fail"); \
+        ORIG(&e, E_VALUE, "test fail"); \
     } \
 }
 
@@ -79,16 +79,16 @@ static derr_t test_encode_decode(void){
     DSTR_VAR(in, 256);
     DSTR_VAR(out, 256);
     // test encode
-    PROP(e, dstr_copy(&raw, &in) );
+    PROP(&e, dstr_copy(&raw, &in) );
     out.len = 0;
-    PROP(e, json_encode(&in, &out) );
+    PROP(&e, json_encode(&in, &out) );
     EXP_VS_GOT(&json, &out);
     // test decode
-    PROP(e, dstr_copy(&json, &in) );
+    PROP(&e, dstr_copy(&json, &in) );
     out.len = 0;
-    PROP(e, json_decode(&in, &out) );
+    PROP(&e, json_decode(&in, &out) );
     EXP_VS_GOT(&raw, &out);
-    return E_OK;
+    return e;
 }
 
 int main(int argc, char** argv){
@@ -96,15 +96,15 @@ int main(int argc, char** argv){
     // parse options and set default log level
     PARSE_TEST_OPTIONS(argc, argv, NULL, LOG_LVL_DEBUG);
 
-    PROP_GO(e, test_json(), test_fail);
-    PROP_GO(e, test_encode_decode(), test_fail);
+    PROP_GO(&e, test_json(), test_fail);
+    PROP_GO(&e, test_encode_decode(), test_fail);
 
     LOG_ERROR("PASS\n");
     return 0;
 
 test_fail:
     DUMP(e);
-    DROP(e);
+    DROP_VAR(&e);
     LOG_ERROR("FAIL\n");
     return 1;
 }

@@ -63,7 +63,7 @@ static void do_ssl_read(tlse_data_t *td){
     tlse_t *tlse = td->tlse;
     // don't try to read after a tls_eof
     if(td->tls_eof_recvd){
-        ORIG_GO(e, E_SSL, "unable to read after the TLS close_notify alert",
+        ORIG_GO(&e, E_SSL, "unable to read after the TLS close_notify alert",
                 close_session);
     }
     // attempt an SSL_read()
@@ -82,14 +82,14 @@ static void do_ssl_read(tlse_data_t *td){
     }else{
         switch(SSL_get_error(td->ssl, ret)){
             case SSL_ERROR_ZERO_RETURN:
-                // ORIG_GO(e, E_SSL, "test_exit", close_session);
+                // ORIG_GO(&e, E_SSL, "test_exit", close_session);
                 // This is like a TLS-layer EOF
                 td->tls_eof_recvd = true;
                 break;
             case SSL_ERROR_WANT_READ:
                 // if we WANT_READ but we already got EOF that is an error
                 if(td->eof_recvd){
-                    ORIG_GO(e, E_CONN, "unexpected EOF from socket",
+                    ORIG_GO(&e, E_CONN, "unexpected EOF from socket",
                             close_session);
                 }
                 /* We don't set want_read here because it can cause a hang;
@@ -101,13 +101,13 @@ static void do_ssl_read(tlse_data_t *td){
             case SSL_ERROR_WANT_WRITE:
                 // if we got WANT_WRITE with empty rawout, that is an E_NOMEM
                 if(BIO_eof(td->rawout)){
-                    ORIG_GO(e, E_CONN, "got SSL_ERROR_WANT_WRITE "
+                    ORIG_GO(&e, E_CONN, "got SSL_ERROR_WANT_WRITE "
                              "with empty write buffer", close_session);
                 }
                 break;
             default:
                 trace_ssl_errors(&e);
-                ORIG_GO(e, E_SSL, "error in SSL_read", close_session);
+                ORIG_GO(&e, E_SSL, "error in SSL_read", close_session);
         }
     }
     // If we didn't read anything, return the buffer to the empty buffer list.
@@ -135,7 +135,7 @@ static void do_ssl_write(tlse_data_t *td){
             case SSL_ERROR_WANT_READ:
                 // if we WANT_READ but we already got EOF that is an error
                 if(td->eof_recvd){
-                    ORIG_GO(e, E_CONN, "unexpected EOF from socket",
+                    ORIG_GO(&e, E_CONN, "unexpected EOF from socket",
                             close_session);
                 }
                 // don't try to SSL_write again without filling the read bio
@@ -144,13 +144,13 @@ static void do_ssl_write(tlse_data_t *td){
             case SSL_ERROR_WANT_WRITE:
                 // if we got WANT_WRITE with empty rawout, that is an E_NOMEM
                 if(BIO_eof(td->rawout)){
-                    ORIG_GO(e, E_NOMEM, "got SSL_ERROR_WANT_WRITE "
+                    ORIG_GO(&e, E_NOMEM, "got SSL_ERROR_WANT_WRITE "
                             "with empty write buffer", close_session);
                 }
                 break;
             default:
                 trace_ssl_errors(&e);
-                ORIG_GO(e, E_SSL, "error in SSL_write", close_session);
+                ORIG_GO(&e, E_SSL, "error in SSL_write", close_session);
         }
     }
     /* it is important we don't alter td->write_in after a retryable failure;
@@ -185,7 +185,7 @@ static void do_write_out(tlse_data_t *td){
                           td->write_out->buffer.size, &amnt_read);
     if(ret != 1 || amnt_read == 0){
         trace_ssl_errors(&e);
-        TRACE_ORIG(e, E_SSL, "reading from memory buffer failed");
+        TRACE_ORIG(&e, E_SSL, "reading from memory buffer failed");
         tlse->session_iface.close(td->session, e);
         PASSED(e);
         td->tls_state = TLS_STATE_CLOSED;
@@ -259,7 +259,7 @@ static bool enter_idle(tlse_data_t *td){
         if(td->read_in){
             // check for the received-read-after-EOF error
             if(td->eof_recvd){
-                ORIG_GO(e, E_INTERNAL, "received data after EOF", fail);
+                ORIG_GO(&e, E_INTERNAL, "received data after EOF", fail);
             }
             if(td->read_in->buffer.len > 0){
                 // write input buffer to rawin
@@ -268,11 +268,11 @@ static bool enter_idle(tlse_data_t *td){
                                        td->read_in->buffer.len, &written);
                 if(ret < 1){
                     trace_ssl_errors(&e);
-                    ORIG_GO(e, E_SSL, "writing to BIO failed", fail);
+                    ORIG_GO(&e, E_SSL, "writing to BIO failed", fail);
                 }
                 if(written != td->read_in->buffer.len){
                     trace_ssl_errors(&e);
-                    ORIG_GO(e, E_NOMEM, "BIO rejected some bytes!", fail);
+                    ORIG_GO(&e, E_NOMEM, "BIO rejected some bytes!", fail);
                 }
                 readable = true;
                 td->want_read = false;
@@ -280,7 +280,7 @@ static bool enter_idle(tlse_data_t *td){
                 // handle EOF
                 if(td->want_read){
                     // a write needed a packet but we got EOF instead
-                    ORIG_GO(e, E_CONN, "unexpected EOF from socket", fail);
+                    ORIG_GO(&e, E_CONN, "unexpected EOF from socket", fail);
                 }else{
                     // after this we expect no more READs or WANT_READs
                     td->eof_recvd = true;
@@ -384,7 +384,7 @@ static void advance_state(tlse_data_t *td){
     if(!td->read_in_qcb.qe.q && !td->read_out_qcb.qe.q
             && !td->write_in_qcb.qe.q && !td->write_out_qcb.qe.q){
         derr_t e = E_OK;
-        TRACE_ORIG(e, E_INTERNAL, "tlse_data is hung!  Killing session\n");
+        TRACE_ORIG(&e, E_INTERNAL, "tlse_data is hung!  Killing session\n");
         td->tlse->session_iface.close(td->session, e);
         PASSED(e);
         td->tls_state = TLS_STATE_CLOSED;
@@ -524,21 +524,21 @@ static void tlse_data_onthread_start(tlse_data_t *td, tlse_t *tlse,
     td->want_read = false;
     td->eof_recvd = false;
 
-    PROP_GO(e, queue_init(&td->pending_reads), fail);
-    PROP_GO(e, queue_init(&td->pending_writes), fail_pending_reads);
+    PROP_GO(&e, queue_init(&td->pending_reads), fail);
+    PROP_GO(&e, queue_init(&td->pending_writes), fail_pending_reads);
 
     // allocate SSL object
     ssl_context_t *ssl_ctx = tlse->session_get_ssl_ctx(session);
     td->ssl = SSL_new(ssl_ctx->ctx);
     if(td->ssl == NULL){
-        ORIG_GO(e, E_SSL, "unable to create SSL object", fail_pending_writes);
+        ORIG_GO(&e, E_SSL, "unable to create SSL object", fail_pending_writes);
     }
 
     // allocate and asign BIO memory buffers
     td->rawin = BIO_new(BIO_s_mem());
     if(td->rawin == NULL){
         trace_ssl_errors(&e);
-        ORIG_GO(e, E_NOMEM, "unable to create BIO", fail_ssl);
+        ORIG_GO(&e, E_NOMEM, "unable to create BIO", fail_ssl);
     }
     SSL_set0_rbio(td->ssl, td->rawin);
 
@@ -546,7 +546,7 @@ static void tlse_data_onthread_start(tlse_data_t *td, tlse_t *tlse,
     td->rawout = BIO_new(BIO_s_mem());
     if(td->rawout == NULL){
         trace_ssl_errors(&e);
-        ORIG_GO(e, E_NOMEM, "unable to create BIO", fail_ssl);
+        ORIG_GO(&e, E_NOMEM, "unable to create BIO", fail_ssl);
     }
     SSL_set0_wbio(td->ssl, td->rawout);
 
@@ -565,13 +565,13 @@ static void tlse_data_onthread_start(tlse_data_t *td, tlse_t *tlse,
             case SSL_ERROR_WANT_WRITE:
                 // if we got WANT_WRITE with empty rawout, that is E_NOMEM
                 if(BIO_eof(td->rawout)){
-                    ORIG_GO(e, E_CONN, "got SSL_ERROR_WANT_WRITE "
+                    ORIG_GO(&e, E_CONN, "got SSL_ERROR_WANT_WRITE "
                              "with empty write buffer", fail_ssl);
                 }
                 break;
             default:
                 trace_ssl_errors(&e);
-                ORIG_GO(e, E_SSL, "error in SSL_do_hanshake", fail_ssl);
+                ORIG_GO(&e, E_SSL, "error in SSL_do_hanshake", fail_ssl);
         }
 
     }else{
@@ -693,9 +693,9 @@ derr_t tlse_init(tlse_t *tlse, size_t nread_events, size_t nwrite_events,
                  event_passer_t pass_down, void *downstream){
     derr_t e = E_OK;
 
-    PROP_GO(e, queue_init(&tlse->event_q), fail);
-    PROP_GO(e, event_pool_init(&tlse->read_events, nread_events), fail_event_q);
-    PROP_GO(e, event_pool_init(&tlse->write_events, nwrite_events), fail_reads);
+    PROP_GO(&e, queue_init(&tlse->event_q), fail);
+    PROP_GO(&e, event_pool_init(&tlse->read_events, nread_events), fail_event_q);
+    PROP_GO(&e, event_pool_init(&tlse->write_events, nwrite_events), fail_reads);
 
     tlse->work_req.data = tlse;
     tlse->session_iface = session_iface;
@@ -712,7 +712,7 @@ derr_t tlse_init(tlse_t *tlse, size_t nread_events, size_t nwrite_events,
     tlse->quit_ev = NULL;
 
     tlse->initialized = true;
-    return E_OK;
+    return e;
 
 fail_reads:
     event_pool_free(&tlse->read_events);
@@ -736,10 +736,10 @@ derr_t tlse_add_to_loop(tlse_t *tlse, uv_loop_t *loop){
     derr_t e = E_OK;
     int ret = uv_queue_work(loop, &tlse->work_req, tlse_process_events, NULL);
     if(ret < 0){
-        TRACE(e, "uv_queue_work: %x\n", FUV(&ret));
-        ORIG(e, uv_err_type(ret), "error initializing loop");
+        TRACE(&e, "uv_queue_work: %x\n", FUV(&ret));
+        ORIG(&e, uv_err_type(ret), "error initializing loop");
     }
-    return E_OK;
+    return e;
 }
 
 

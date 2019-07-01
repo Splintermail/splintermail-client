@@ -35,7 +35,7 @@ derr_t ixs_init(ixs_t *ixs, loop_t *loop, ssl_context_t *ctx, bool upwards){
     ixs->rawin = BIO_new(BIO_s_mem());
     if(ixs->rawin == NULL){
         log_ssl_errors();
-        ORIG_GO(E_NOMEM, "unable to create BIO", fail_ssl);
+        ORIG_GO(&E_NOMEM, "unable to create BIO", fail_ssl);
     }
     SSL_set0_rbio(ixs->ssl, ixs->rawin);
 
@@ -43,7 +43,7 @@ derr_t ixs_init(ixs_t *ixs, loop_t *loop, ssl_context_t *ctx, bool upwards){
     ixs->rawout = BIO_new(BIO_s_mem());
     if(ixs->rawout == NULL){
         log_ssl_errors();
-        ORIG_GO(E_NOMEM, "unable to create BIO", fail_ssl);
+        ORIG_GO(&E_NOMEM, "unable to create BIO", fail_ssl);
     }
     SSL_set0_wbio(ixs->ssl, ixs->rawout);
 
@@ -57,18 +57,18 @@ derr_t ixs_init(ixs_t *ixs, loop_t *loop, ssl_context_t *ctx, bool upwards){
     }
 
     // init the list of pending_reads
-    PROP_GO( queue_init(&ixs->pending_reads), fail_ssl);
+    PROP_GO(& queue_init(&ixs->pending_reads), fail_ssl);
 
     // init decrypted buffers
-    PROP_GO( dstr_new(&ixs->decin, 4096), fail_queue);
-    PROP_GO( dstr_new(&ixs->decout, 4096), fail_decin);
+    PROP_GO(& dstr_new(&ixs->decin, 4096), fail_queue);
+    PROP_GO(& dstr_new(&ixs->decout, 4096), fail_decin);
 
     // init the mutex and references
     int ret = uv_mutex_init(&ixs->mutex);
     if(ret < 0){
         uv_perror("uv_mutex_init", ret);
         derr_t error = (ret == UV_ENOMEM) ? E_NOMEM : E_UV;
-        ORIG_GO(error, "error initializing mutex", fail_decout);
+        ORIG_GO(&error, "error initializing mutex", fail_decout);
     }
 
     // finally, init the libuv socket object
@@ -76,7 +76,7 @@ derr_t ixs_init(ixs_t *ixs, loop_t *loop, ssl_context_t *ctx, bool upwards){
     if(ret < 0){
         uv_perror("uv_tcp_init", ret);
         error = (ret == UV_ENOMEM) ? E_NOMEM : E_UV;
-        ORIG_GO(error, "error initializing libuv socket", fail_mutex);
+        ORIG_GO(&error, "error initializing libuv socket", fail_mutex);
     }
 
 
@@ -108,7 +108,7 @@ derr_t ixs_init(ixs_t *ixs, loop_t *loop, ssl_context_t *ctx, bool upwards){
     // start with one reference (the socket)
     ixs->refs = 1;
 
-    return E_OK;
+    return e;
 
 fail_mutex:
     uv_mutex_destroy(&ixs->mutex);

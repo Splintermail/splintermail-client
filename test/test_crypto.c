@@ -55,40 +55,40 @@ static derr_t test_b64_encoders(void){
 
     // prepare input to function
     DSTR_VAR(bin, 256);
-    PROP(e, dstr_copy(&orig, &bin) );
+    PROP(&e, dstr_copy(&orig, &bin) );
 
     // test bin2b64 without forcing the end output
     DSTR_VAR(encoded, 512);
-    PROP(e, bin2b64(&bin, &encoded, 64, false) );
+    PROP(&e, bin2b64(&bin, &encoded, 64, false) );
 
     // check the values
     if(bin.len != 16 || (unsigned char)bin.data[0] != 240){
-        ORIG(e, E_VALUE, "bad partial encode\n");
+        ORIG(&e, E_VALUE, "bad partial encode\n");
     }
     int result = dstr_cmp(&encoded, &base64_partial);
     if(result != 0){
-        ORIG(e, E_VALUE, "bad partial encode\n");
+        ORIG(&e, E_VALUE, "bad partial encode\n");
     }
 
     // test bin2b64 with forcing the end output
-    PROP(e, bin2b64(&bin, &encoded, 64, true) );
+    PROP(&e, bin2b64(&bin, &encoded, 64, true) );
 
     // check the values
     if(bin.len != 0){
-        ORIG(e, E_VALUE, "bad full encode\n");
+        ORIG(&e, E_VALUE, "bad full encode\n");
     }
     result = dstr_cmp(&encoded, &base64_complete);
     if(result != 0){
-        ORIG(e, E_VALUE, "bad full encode\n");
+        ORIG(&e, E_VALUE, "bad full encode\n");
     }
 
     // now decode the whole thing back to binary
     DSTR_VAR(decoded, 256);
-    PROP(e, b642bin(&encoded, &decoded) );
+    PROP(&e, b642bin(&encoded, &decoded) );
 
     result = dstr_cmp(&decoded, &orig);
     if(result != 0){
-        ORIG(e, E_VALUE, "bad decode\n");
+        ORIG(&e, E_VALUE, "bad decode\n");
     }
 
     // now do it again, this time one character at a time
@@ -97,36 +97,36 @@ static derr_t test_b64_encoders(void){
     bin.len = 0;
     for(size_t i = 0; i < orig.len; i++){
         dstr_t sub = dstr_sub(&orig, i, i+1);
-        PROP(e, dstr_append(&bin, &sub) );
-        PROP(e, bin2b64(&bin, &encoded, 64, i + 1 == orig.len) );
+        PROP(&e, dstr_append(&bin, &sub) );
+        PROP(&e, bin2b64(&bin, &encoded, 64, i + 1 == orig.len) );
     }
     result = dstr_cmp(&encoded, &base64_complete);
     if(result != 0){
-        ORIG(e, E_VALUE, "bad byte-by-byte encode\n");
+        ORIG(&e, E_VALUE, "bad byte-by-byte encode\n");
     }
 
     DSTR_VAR(base64, 512);
     for(size_t i = 0; i < encoded.len; i++){
         dstr_t sub = dstr_sub(&encoded, i, i+1);
-        PROP(e, dstr_append(&base64, &sub) );
-        PROP(e, b642bin(&base64, &decoded) );
+        PROP(&e, dstr_append(&base64, &sub) );
+        PROP(&e, b642bin(&base64, &decoded) );
     }
     result = dstr_cmp(&decoded, &orig);
     if(result != 0){
-        ORIG(e, E_VALUE, "bad byte-by-byte decode\n");
+        ORIG(&e, E_VALUE, "bad byte-by-byte decode\n");
     }
 
     // now one last time but on one line
     encoded.len = 0;
-    PROP(e, dstr_copy(&orig, &bin) );
-    PROP(e, bin2b64(&bin, &encoded, 0, true) );
+    PROP(&e, dstr_copy(&orig, &bin) );
+    PROP(&e, bin2b64(&bin, &encoded, 0, true) );
 
     result = dstr_cmp(&encoded, &base64_complete_oneline);
     if(result != 0){
-        ORIG(e, E_VALUE, "bad oneline encode\n");
+        ORIG(&e, E_VALUE, "bad oneline encode\n");
     }
 
-    return E_OK;
+    return e;
 }
 
 static derr_t test_hex_encoders(void){
@@ -138,46 +138,46 @@ static derr_t test_hex_encoders(void){
     DSTR_VAR(out, 256);
 
     // test encoder
-    PROP(e, dstr_copy(&bin, &in) );
-    PROP(e, bin2hex(&in, &out) );
+    PROP(&e, dstr_copy(&bin, &in) );
+    PROP(&e, bin2hex(&in, &out) );
     if(dstr_cmp(&out, &hex) != 0){
-        TRACE(e, "expected \"%x\"\n"
+        TRACE(&e, "expected \"%x\"\n"
                   "but got  \"%x\"\n", FD(&hex), FD(&out));
-        ORIG(e, E_VALUE, "bin2hex() failed test");
+        ORIG(&e, E_VALUE, "bin2hex() failed test");
     }
     out.len = 0;
 
     // test decoder
-    PROP(e, dstr_copy(&hex, &in) );
-    PROP(e, hex2bin(&in, &out) );
+    PROP(&e, dstr_copy(&hex, &in) );
+    PROP(&e, hex2bin(&in, &out) );
     if(dstr_cmp(&out, &bin) != 0){
-        TRACE(e, "expected \"%x\"\n"
+        TRACE(&e, "expected \"%x\"\n"
                   "but got  \"%x\"\n", FD(&bin), FD(&out));
-        ORIG(e, E_VALUE, "hex2bin() failed test");
+        ORIG(&e, E_VALUE, "hex2bin() failed test");
     }
-    return E_OK;
+    return e;
 }
 
 static derr_t test_crypto(void){
     derr_t e = E_OK;
 
     const char* keyfile = "_delete_me_if_you_see_me.pem";
-    PROP(e, gen_key(1024, keyfile) );
+    PROP(&e, gen_key(1024, keyfile) );
 
     // load the keys that are now written to a file
     keypair_t kp;
-    PROP(e, keypair_load(&kp, keyfile) );
+    PROP(&e, keypair_load(&kp, keyfile) );
     // delete the temporary file
     remove(keyfile);
 
     DSTR_VAR(pubkey_pem, 4096);
-    PROP(e, keypair_get_public_pem(&kp, &pubkey_pem) );
+    PROP(&e, keypair_get_public_pem(&kp, &pubkey_pem) );
     LOG_DEBUG("PEM-formatted public key: %x", FD(&pubkey_pem));
     LOG_DEBUG("fingerprint (%x) %x\n", FU(kp.fingerprint.len), FD_DBG(&kp.fingerprint));
 
     // allocate an encrypter
     encrypter_t ec;
-    PROP_GO(e, encrypter_new(&ec), cleanup_1);
+    PROP_GO(&e, encrypter_new(&ec), cleanup_1);
 
     DSTR_STATIC(plain, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567890987654321ZYXWUTSRQPONMLKJIHGFEDCBAzyxwutsrqponmlkjihgfedcba");
     DSTR_VAR(in, 4096);
@@ -186,16 +186,16 @@ static derr_t test_crypto(void){
     DSTR_VAR(decr, 4096);
     LIST_VAR(dstr_t, fprs, 1);
     LIST_APPEND(dstr_t, &fprs, kp.fingerprint);
-    PROP_GO(e, encrypter_start(&ec, &kp.pair, 1, &fprs, &enc), cleanup_2);
+    PROP_GO(&e, encrypter_start(&ec, &kp.pair, 1, &fprs, &enc), cleanup_2);
 
     dstr_t sub;
     while(in.len){
         sub = dstr_sub(&in, 0, 1);
-        PROP_GO(e, encrypter_update(&ec, &sub, &enc), cleanup_2);
+        PROP_GO(&e, encrypter_update(&ec, &sub, &enc), cleanup_2);
         dstr_leftshift(&in, 1);
     }
 
-    PROP_GO(e, encrypter_finish(&ec, &enc), cleanup_2);
+    PROP_GO(&e, encrypter_finish(&ec, &enc), cleanup_2);
 
     LOG_DEBUG("%x\n", FD(&enc));
 
@@ -205,27 +205,27 @@ static derr_t test_crypto(void){
     //enc.data[7 * 64 + 2] = 'J';
 
     decrypter_t dc;
-    PROP_GO(e, decrypter_new(&dc), cleanup_2);
+    PROP_GO(&e, decrypter_new(&dc), cleanup_2);
 
-    PROP_GO(e, decrypter_start(&dc, &kp, NULL, NULL), cleanup_3);
+    PROP_GO(&e, decrypter_start(&dc, &kp, NULL, NULL), cleanup_3);
 
-    //PROP_GO(e, decrypter_update(&dc, &enc, &decr), cleanup_3);
+    //PROP_GO(&e, decrypter_update(&dc, &enc, &decr), cleanup_3);
 
     // decrypt "byte-by-byte"
     DSTR_VAR(bbb_in, 4096);
     for(size_t i = 0; i < enc.len; i++){
         sub = dstr_sub(&enc, i, i+1);
-        PROP_GO(e, dstr_append(&bbb_in, &sub), cleanup_3);
-        PROP_GO(e, decrypter_update(&dc, &bbb_in, &decr), cleanup_3);
+        PROP_GO(&e, dstr_append(&bbb_in, &sub), cleanup_3);
+        PROP_GO(&e, decrypter_update(&dc, &bbb_in, &decr), cleanup_3);
     }
 
-    PROP_GO(e, decrypter_finish(&dc, &decr), cleanup_3);
+    PROP_GO(&e, decrypter_finish(&dc, &decr), cleanup_3);
 
     LOG_DEBUG("%x\n", FD_DBG(&decr));
 
     int result = dstr_cmp(&plain, &decr);
     if(result != 0){
-        ORIG_GO(e, E_VALUE, "bad decryption", cleanup_3);
+        ORIG_GO(&e, E_VALUE, "bad decryption", cleanup_3);
     }
 
 cleanup_3:
@@ -244,9 +244,9 @@ int main(int argc, char** argv){
 
     crypto_library_init();
 
-    PROP_GO(e, test_b64_encoders(), test_fail);
-    PROP_GO(e, test_hex_encoders(), test_fail);
-    PROP_GO(e, test_crypto(), test_fail);
+    PROP_GO(&e, test_b64_encoders(), test_fail);
+    PROP_GO(&e, test_hex_encoders(), test_fail);
+    PROP_GO(&e, test_crypto(), test_fail);
 
     LOG_ERROR("PASS\n");
     crypto_library_close();
@@ -254,7 +254,7 @@ int main(int argc, char** argv){
 
 test_fail:
     DUMP(e);
-    DROP(e);
+    DROP_VAR(&e);
     LOG_ERROR("FAIL\n");
     crypto_library_close();
     return 1;

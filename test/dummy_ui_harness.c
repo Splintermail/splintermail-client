@@ -22,7 +22,7 @@ derr_t ditm_loop(const char* rhost, unsigned int rport,
     derr_t e = E_OK;
     if(ditm_loop_args == NULL){
         UH_OH("ditm_loop called but nothing is prepared\n");
-        ORIG(e, E_INTERNAL, "bad ditm_loop");
+        ORIG(&e, E_INTERNAL, "bad ditm_loop");
     }
     // compare args against global "right answer" values:
     struct ditm_loop_args_t* DLA = ditm_loop_args;
@@ -145,20 +145,20 @@ derr_t for_each_file_in_dir(const char* path, for_each_file_hook_t hook,
     derr_t e = E_OK;
     if(users == NULL){
         UH_OH("unexpected call to for_each_file_in_dir\n");
-        ORIG(e, E_INTERNAL, "unexpected call to for_each_file_in_dir");
+        ORIG(&e, E_INTERNAL, "unexpected call to for_each_file_in_dir");
     }
     for(char** u = users; *u != NULL; u++){
         dstr_t temp;
         DSTR_WRAP(temp, *u, strlen(*u), true);
-        PROP(e, hook(NULL, &temp, true, userdata) );
+        PROP(&e, hook(NULL, &temp, true, userdata) );
     }
-    return E_OK;
+    return e;
 }
 
 // networking.h
 derr_t ssl_library_init(void){
     derr_t e = E_OK;
-    return E_OK;
+    return e;
 }
 
 void ssl_library_close(void){
@@ -181,20 +181,20 @@ derr_t api_token_read(const char* path, api_token_t* token){
     }
     if(token_to_read == NULL){
         UH_OH("unexpected call to api_token_read\n");
-        ORIG(e, E_INTERNAL, "unexpected call to api_token_read");
+        ORIG(&e, E_INTERNAL, "unexpected call to api_token_read");
     }
     token->key = token_to_read->key;
     DSTR_WRAP_ARRAY(token->secret, token->secret_buffer);
     dstr_copy(&token_to_read->secret, &token->secret);
     token->nonce = token_to_read->nonce;
-    return E_OK;
+    return e;
 }
 // never write anything
 derr_t api_token_write(const char* path, api_token_t* token){
     (void) path;
     (void) token;
     derr_t e = E_OK;
-    return E_OK;
+    return e;
 }
 
 struct register_token_args_t* register_token_args;
@@ -207,7 +207,7 @@ derr_t register_api_token(const char* host,
     derr_t e = E_OK;
     if(register_token_args == NULL){
         UH_OH("register_api_token called but nothing is prepared\n");
-        ORIG(e, E_INTERNAL, "bad register_api_token");
+        ORIG(&e, E_INTERNAL, "bad register_api_token");
     }
     struct register_token_args_t* RTA = register_token_args;
     if(RTA->host && strcmp(RTA->host, host) != 0)
@@ -233,7 +233,7 @@ derr_t api_password_call(const char* host, unsigned int port, dstr_t* command,
     derr_t e = E_OK;
     if(api_password_args == NULL){
         UH_OH("api_password_call called but nothing is prepared\n");
-        ORIG(e, E_INTERNAL, "bad api_password_call");
+        ORIG(&e, E_INTERNAL, "bad api_password_call");
     }
     (void)recv;
     struct api_password_args_t* APA = api_password_args;
@@ -261,13 +261,13 @@ derr_t api_password_call(const char* host, unsigned int port, dstr_t* command,
     }
     // load up the inputs from the arg struct
     *code = APA->code;
-    PROP(e, FMT(reason, "%x", FS(APA->reason)) );
+    PROP(&e, FMT(reason, "%x", FS(APA->reason)) );
     // wrap the json string in text and parse it
     dstr_t text;
     DSTR_WRAP(text, APA->json, strlen(APA->json), true);
     json_parse(json, &text);
     api_password_called = true;
-    return E_OK;
+    return e;
 }
 
 struct api_token_args_t* api_token_args;
@@ -278,7 +278,7 @@ derr_t api_token_call(const char* host, unsigned int port, dstr_t* command,
     derr_t e = E_OK;
     if(api_token_args == NULL){
         UH_OH("api_token_call called but nothing is prepared\n");
-        ORIG(e, E_INTERNAL, "bad api_token call");
+        ORIG(&e, E_INTERNAL, "bad api_token call");
     }
     (void)recv;
     struct api_token_args_t* ATA = api_token_args;
@@ -300,13 +300,13 @@ derr_t api_token_call(const char* host, unsigned int port, dstr_t* command,
         UH_OH("ATA tkn->nonce exp '%x' but got '%x'\n", FU(ATA->token.nonce), FU(token->nonce));
     // load up the inputs from the arg struct
     *code = ATA->code;
-    PROP(e, FMT(reason, "%x", FS(ATA->reason)) );
+    PROP(&e, FMT(reason, "%x", FS(ATA->reason)) );
     // wrap the json string in text and parse it
     dstr_t text;
     DSTR_WRAP(text, ATA->json, strlen(ATA->json), true);
     json_parse(json, &text);
     api_token_called = true;
-    return E_OK;
+    return e;
 }
 
 
@@ -317,15 +317,15 @@ derr_t get_password(dstr_t* password){
     password->len = 0;
     if(passwords == NULL || passwords[0] == NULL){
         UH_OH("unexpected call to get_password\n");
-        ORIG(e, E_INTERNAL, "unexpected call to get_password");
+        ORIG(&e, E_INTERNAL, "unexpected call to get_password");
     }
     // return the first password
-    PROP(e, FMT(password, "%x", FS(passwords[0])) );
+    PROP(&e, FMT(password, "%x", FS(passwords[0])) );
     // leftshift
     for(char** p = passwords; *p != NULL; p++){
         *p = *(p+1);
     }
-    return E_OK;
+    return e;
 }
 
 char** strings;
@@ -334,14 +334,14 @@ derr_t get_string(dstr_t* input){
     input->len = 0;
     if(strings == NULL || strings[0] == NULL){
         UH_OH("unexpected call to get_string\n");
-        PROP(e, FMT(input, "FAIL") );
-        ORIG(e, E_INTERNAL, "unexpected call to get_string");
+        PROP(&e, FMT(input, "FAIL") );
+        ORIG(&e, E_INTERNAL, "unexpected call to get_string");
     }
     // return the first input
-    PROP(e, FMT(input, "%x", FS(strings[0])) );
+    PROP(&e, FMT(input, "%x", FS(strings[0])) );
     // leftshift
     for(char** i = strings; *i != NULL; i++){
         *i = *(i+1);
     }
-    return E_OK;
+    return e;
 }

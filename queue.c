@@ -33,20 +33,20 @@ derr_t queue_init(queue_t *q){
     // init mutex
     int ret = uv_mutex_init(&q->mutex);
     if(ret < 0){
-        TRACE(e, "uv_mutex_init: %x\n", FUV(&ret));
-        ORIG(e, uv_err_type(ret), "failed in uv_mutex_init");
+        TRACE(&e, "uv_mutex_init: %x\n", FUV(&ret));
+        ORIG(&e, uv_err_type(ret), "failed in uv_mutex_init");
     }
 
     // init conditional variable
     ret = uv_cond_init(&q->cond);
     if(ret < 0){
-        TRACE(e, "uv_cond_init: %x\n", FUV(&ret));
-        ORIG_GO(e, uv_err_type(ret), "failed in uv_cond_init", fail_mutex);
+        TRACE(&e, "uv_cond_init: %x\n", FUV(&ret));
+        ORIG_GO(&e, uv_err_type(ret), "failed in uv_cond_init", fail_mutex);
     }
 
     q->len = 0;
 
-    return E_OK;
+    return e;
 
 fail_mutex:
     uv_mutex_destroy(&q->mutex);

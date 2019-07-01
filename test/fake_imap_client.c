@@ -19,17 +19,17 @@ derr_t fic_create(fic_t *fic, const dstr_t *url, unsigned short port){
     if(ret < 0){
         uv_perror("uv_cond_init", ret);
         error = (ret == UV_ENOMEM) ? E_NOMEM : E_UV;
-        ORIG_GO(error, "failed in uv_cond_init", fail_mutex);
+        ORIG_GO(&error, "failed in uv_cond_init", fail_mutex);
     }
     // allocate read buffers
-    PROP_GO( dstr_new(&fic->resp, 4096), fail_cond);
-    PROP_GO( dstr_new(&fic->resp_chunk, 4096), fail_resp);
+    PROP_GO(& dstr_new(&fic->resp, 4096), fail_cond);
+    PROP_GO(& dstr_new(&fic->resp_chunk, 4096), fail_resp);
 
     // command queue
-    PROP_GO( queue_init(&fic->cmd_q, NULL, NULL), fail_resp_chunk);
+    PROP_GO(& queue_init(&fic->cmd_q, NULL, NULL), fail_resp_chunk);
 
     // SSL context
-    PROP_GO( ssl_context_new_client(&fic->ssl), fail_q);
+    PROP_GO(& ssl_context_new_client(&fic->ssl), fail_q);
 
     // zero connection struct
     fic->conn = (connection_t){0};
@@ -43,7 +43,7 @@ derr_t fic_create(fic_t *fic, const dstr_t *url, unsigned short port){
     fic->reader_error = E_OK;
     fic->writer_error = E_OK;
 
-    return E_OK;
+    return e;
 
 fail_q:
     queue_free(&fic->cmd_q);

@@ -25,56 +25,56 @@ static derr_t maildir_create(const dstr_t* path){
     DSTR_VAR(root, 4096);
     e2 = FMT(&root, "%x", FD(path));
     CATCH(e2, E_FIXEDSIZE){
-        RETHROW(e, e2, E_FS);
-    }else PROP(e, e2);
+        RETHROW(&e, &e2, E_FS);
+    }else PROP(&e, e2);
 
     // create maildir
     int ret = mkdir(root.data, 0770);
     if(ret && errno != EEXIST){
-        TRACE(e, "%x: %x\n", FS(root.data), FE(&errno));
-        ORIG(e, E_OS, "unable to make maildir");
+        TRACE(&e, "%x: %x\n", FS(root.data), FE(&errno));
+        ORIG(&e, E_OS, "unable to make maildir");
     }
 
     // create maildir/cur
     DSTR_VAR(cur, 4096);
     e2 = FMT(&cur, "%x/cur", FD(path));
     CATCH(e2, E_FIXEDSIZE){
-        RETHROW(e, e2, E_FS);
-    }else PROP_GO(e, e2, cleanup_1);
+        RETHROW(&e, &e2, E_FS);
+    }else PROP_GO(&e, e2, cleanup_1);
 
     ret = mkdir(cur.data, 0770);
     if(ret && errno != EEXIST){
-        TRACE(e, "%x: %x\n", FS(cur.data), FE(&errno));
-        ORIG_GO(e, E_OS, "unable to make maildir/cur", cleanup_1);
+        TRACE(&e, "%x: %x\n", FS(cur.data), FE(&errno));
+        ORIG_GO(&e, E_OS, "unable to make maildir/cur", cleanup_1);
     }
 
     // create maildir/new
     DSTR_VAR(new, 4096);
     e2 = FMT(&new, "%x/new", FD(path));
     CATCH(e2, E_FIXEDSIZE){
-        RETHROW(e, e2, E_FS);
-    }else PROP_GO(e, e, cleanup_2);
+        RETHROW(&e, &e2, E_FS);
+    }else PROP_GO(&e, e, cleanup_2);
 
     ret = mkdir(new.data, 0770);
     if(ret && errno != EEXIST){
-        TRACE(e, "%x: %x\n", FS(new.data), FE(&errno));
-        ORIG_GO(e, E_OS, "unable to make maildir/new", cleanup_2);
+        TRACE(&e, "%x: %x\n", FS(new.data), FE(&errno));
+        ORIG_GO(&e, E_OS, "unable to make maildir/new", cleanup_2);
     }
 
     // create maildir/tmp
     DSTR_VAR(tmp, 4096);
     e2 = FMT(&tmp, "%x/tmp", FD(path));
     CATCH(e2, E_FIXEDSIZE){
-        RETHROW(e, e2, E_FS);
-    }else PROP_GO(e, e2, cleanup_3);
+        RETHROW(&e, &e2, E_FS);
+    }else PROP_GO(&e, e2, cleanup_3);
 
     ret = mkdir(tmp.data, 0770);
     if(ret && errno != EEXIST){
-        TRACE(e, "%x: %x\n", FS(tmp.data), FE(&errno));
-        ORIG_GO(e, E_OS, "unable to make maildir/tmp", cleanup_3);
+        TRACE(&e, "%x: %x\n", FS(tmp.data), FE(&errno));
+        ORIG_GO(&e, E_OS, "unable to make maildir/tmp", cleanup_3);
     }
 
-    return E_OK;
+    return e;
 
 cleanup_3:
     rmdir(new.data);
@@ -95,17 +95,17 @@ static derr_t maildir_register(maildir_t* mdir, const dstr_t* subdir,
     derr_t e = E_OK;
 
     // append the length to our list of lengths
-    PROP(e, LIST_APPEND(size_t, &mdir->lengths, length) );
+    PROP(&e, LIST_APPEND(size_t, &mdir->lengths, length) );
 
     // append the subdir/filename string to our block of filenames
     size_t orig_n_len = mdir->names_block.len;
     char* orig_ptr = mdir->names_block.data;
     // first the subdir string
-    PROP_GO(e, dstr_append(&mdir->names_block, subdir), cleanup_1);
+    PROP_GO(&e, dstr_append(&mdir->names_block, subdir), cleanup_1);
     // then the filename
-    PROP_GO(e, dstr_append(&mdir->names_block, filename), cleanup_2);
+    PROP_GO(&e, dstr_append(&mdir->names_block, filename), cleanup_2);
     // also make sure the filename can be used as a cstring later
-    PROP_GO(e, dstr_null_terminate(&mdir->names_block), cleanup_2);
+    PROP_GO(&e, dstr_null_terminate(&mdir->names_block), cleanup_2);
     // in case of a reallocated block pointer, we need to redirect a bunch of name pointers
     char* new_ptr = mdir->names_block.data;
     if(new_ptr != orig_ptr){
@@ -121,12 +121,12 @@ static derr_t maildir_register(maildir_t* mdir, const dstr_t* subdir,
     subdir_fname.len = subdir->len + filename->len;
     subdir_fname.size = subdir_fname.len;
     subdir_fname.fixed_size = true;
-    PROP_GO(e, LIST_APPEND(dstr_t, &mdir->filenames, subdir_fname), cleanup_2);
+    PROP_GO(&e, LIST_APPEND(dstr_t, &mdir->filenames, subdir_fname), cleanup_2);
 
     // append the UID string to the UID block
     size_t orig_u_len = mdir->uids_block.len;
     orig_ptr = mdir->uids_block.data;
-    PROP_GO(e, dstr_append(&mdir->uids_block, uid), cleanup_3);
+    PROP_GO(&e, dstr_append(&mdir->uids_block, uid), cleanup_3);
     // in case of a reallocated block pointer, we need to redirect a bunch of uid pointers
     new_ptr = mdir->uids_block.data;
     if(new_ptr != orig_ptr){
@@ -140,9 +140,9 @@ static derr_t maildir_register(maildir_t* mdir, const dstr_t* subdir,
     // modify the dstr_t uid to point to the uids_block, and append it to uids list
     // make a new dstr_t that points to uids_block and
     dstr_t uid2 = dstr_sub(&mdir->uids_block, orig_u_len, 0);
-    PROP_GO(e, LIST_APPEND(dstr_t, &mdir->uids, uid2), cleanup_4);
+    PROP_GO(&e, LIST_APPEND(dstr_t, &mdir->uids, uid2), cleanup_4);
 
-    return E_OK;
+    return e;
 
     // in case of error during appending, remove added items from other objects
 // cleanup_5:
@@ -172,7 +172,7 @@ static derr_t parse_and_register(const char* base, const dstr_t* fname,
     derr_t e = E_OK;
     derr_t e2;
     // always skip directories
-    if(isdir) return E_OK;
+    if(isdir) return e;
     // don't need base
     (void)base;
 
@@ -195,7 +195,7 @@ static derr_t parse_and_register(const char* base, const dstr_t* fname,
     // first just check to make sure we have met a minimum length
     if(fname->len < 16){
         // this filename is too short for an maildir name, just ignore it
-        return E_OK;
+        return e;
     }
 
     // major tokens is either side of the ':'
@@ -204,9 +204,9 @@ static derr_t parse_and_register(const char* base, const dstr_t* fname,
     e2 = dstr_split(fname, &colon, &major_tokens);
     CATCH(e2, E_FIXEDSIZE){
         // this means there was more than 1 ':' -> invalid maildir name, skip it
-        DROP(e2);
-        return E_OK;
-    }else PROP(e, e2);
+        DROP_VAR(&e2);
+        return e;
+    }else PROP(&e, e2);
 
 
     LIST_VAR(dstr_t, minor_tokens, 3);
@@ -214,14 +214,14 @@ static derr_t parse_and_register(const char* base, const dstr_t* fname,
     e2 = dstr_split(&major_tokens.data[0], &dot, &minor_tokens);
     CATCH(e2, E_FIXEDSIZE){
         // this means there was more than 1 '.' -> invalid maildir name, skip it
-        DROP(e2);
-        return E_OK;
-    }else PROP(e, e2);
+        DROP_VAR(&e2);
+        return e;
+    }else PROP(&e, e2);
 
 
     if(minor_tokens.len < 3){
         // this means we're missing a field in the maildir name definition
-        return E_OK;
+        return e;
     }
 
     // that's enough requirements, now lets parse out the data we need
@@ -230,9 +230,9 @@ static derr_t parse_and_register(const char* base, const dstr_t* fname,
     e2 = dstr_split(&minor_tokens.data[1], &comma, &fields);
     CATCH(e2, E_FIXEDSIZE){
         // this means we put too many data fields in the unique string
-        DROP(e2);
-        return E_OK;
-    }else PROP(e, e2);
+        DROP_VAR(&e2);
+        return e;
+    }else PROP(&e, e2);
 
 
     // the first field is the length, the second field is the UID
@@ -240,16 +240,16 @@ static derr_t parse_and_register(const char* base, const dstr_t* fname,
     e2 = dstr_toul(&fields.data[0], &length, 10);
     CATCH(e2, E_PARAM){
         // not a number string
-        DROP(e2);
-        return E_OK;
-    }else PROP(e, e2);
+        DROP_VAR(&e2);
+        return e;
+    }else PROP(&e, e2);
 
     // the second field is the uid
     dstr_t* uid = &fields.data[1];
 
-    PROP(e, maildir_register(mdir, subdir, fname, uid, length) );
+    PROP(&e, maildir_register(mdir, subdir, fname, uid, length) );
 
-    return E_OK;
+    return e;
 }
 
 derr_t maildir_new(maildir_t* mdir, dstr_t* mdir_path){
@@ -261,24 +261,24 @@ derr_t maildir_new(maildir_t* mdir, dstr_t* mdir_path){
     e2 = dstr_copy(mdir_path, &mdir->path);
     CATCH(e2, E_FIXEDSIZE){
         // filename is too long
-        RETHROW(e, e2, E_FS);
-    }else PROP(e, e2);
+        RETHROW(&e, &e2, E_FS);
+    }else PROP(&e, e2);
 
     // null terminate path
     e2 = dstr_null_terminate(&mdir->path);
     CATCH(e2, E_FIXEDSIZE){
         // filename is too long
-        RETHROW(e, e2, E_FS);
-    }else PROP(e, e2);
+        RETHROW(&e, &e2, E_FS);
+    }else PROP(&e, e2);
 
     // create maildir if it doesnt exist yet
-    PROP(e, maildir_create(mdir_path) );
+    PROP(&e, maildir_create(mdir_path) );
 
-    PROP(e, LIST_NEW(dstr_t, &mdir->filenames, 32) );
-    PROP_GO(e, dstr_new(&mdir->names_block, 4096), fail_1 );
-    PROP_GO(e, LIST_NEW(size_t, &mdir->lengths, 32), fail_2 );
-    PROP_GO(e, LIST_NEW(dstr_t, &mdir->uids, 32), fail_3 );
-    PROP_GO(e, dstr_new(&mdir->uids_block, 4096), fail_4 );
+    PROP(&e, LIST_NEW(dstr_t, &mdir->filenames, 32) );
+    PROP_GO(&e, dstr_new(&mdir->names_block, 4096), fail_1 );
+    PROP_GO(&e, LIST_NEW(size_t, &mdir->lengths, 32), fail_2 );
+    PROP_GO(&e, LIST_NEW(dstr_t, &mdir->uids, 32), fail_3 );
+    PROP_GO(&e, dstr_new(&mdir->uids_block, 4096), fail_4 );
 
 
     // get paths to cur, new folders (/tmp is things that might not be complete)
@@ -294,14 +294,14 @@ derr_t maildir_new(maildir_t* mdir, dstr_t* mdir_path){
         DSTR_VAR(path, 4096);
         e2 = FMT(&path, "%x%x", FD(mdir_path), FD(subdir));
         CATCH(e2, E_FIXEDSIZE){
-            RETHROW(e, e2, E_FS);
-        }else PROP_GO(e, e2, fail_5);
+            RETHROW(&e, &e2, E_FS);
+        }else PROP_GO(&e, e2, fail_5);
         // register all emails in that file
-        PROP_GO(e, for_each_file_in_dir(path.data, parse_and_register,
+        PROP_GO(&e, for_each_file_in_dir(path.data, parse_and_register,
                                       (void*)&prdata), fail_5);
     }
 
-    return E_OK;
+    return e;
 
 fail_5:
     dstr_free(&mdir->uids_block);
@@ -337,9 +337,9 @@ derr_t maildir_mod_hostname(const dstr_t* host, dstr_t* mod){
     LIST_PRESET(dstr_t, replace, DSTR_LIT("\\057"),
                               DSTR_LIT("\\072"),
                               DSTR_LIT("\\056"));
-    PROP(e, dstr_recode(host, mod, &search, &replace, false) );
+    PROP(&e, dstr_recode(host, mod, &search, &replace, false) );
 
-    return E_OK;
+    return e;
 }
 
 derr_t maildir_new_tmp_file(maildir_t* mdir, dstr_t* tempname, int* fd){
@@ -351,8 +351,8 @@ derr_t maildir_new_tmp_file(maildir_t* mdir, dstr_t* tempname, int* fd){
         tempname->len = 0;
         derr_t e2 = FMT(tempname, "%x/tmp/%x", FD(&mdir->path), FI(i));
         CATCH(e2, E_FIXEDSIZE){
-            RETHROW(e, e2, E_FS);
-        }else PROP(e, e2);
+            RETHROW(&e, &e2, E_FS);
+        }else PROP(&e, e2);
 
         // make sure file does not exist
         errno = 0;
@@ -364,17 +364,17 @@ derr_t maildir_new_tmp_file(maildir_t* mdir, dstr_t* tempname, int* fd){
         }
         // cut off after a reasonable amount of tries
         if(i > 1000){
-            ORIG(e, E_INTERNAL, "unable to find an unused file in maildir/tmp");
+            ORIG(&e, E_INTERNAL, "unable to find an unused file in maildir/tmp");
         }
     }
     *fd = open(tempname->data, O_CREAT | O_TRUNC | O_RDWR, 0660);
 
     if(*fd < 0){
-        TRACE(e, "%x: %x\n", FS("creating /tmp/ message"), FE(&errno));
-        ORIG(e, E_FS, "unable to create temp message in maildir");
+        TRACE(&e, "%x: %x\n", FS("creating /tmp/ message"), FE(&errno));
+        ORIG(&e, E_FS, "unable to create temp message in maildir");
     }
 
-    return E_OK;
+    return e;
 }
 
 derr_t maildir_new_rename(maildir_t* mdir, const char* tempname,
@@ -390,7 +390,7 @@ derr_t maildir_new_rename(maildir_t* mdir, const char* tempname,
     derr_t e2 = maildir_mod_hostname(&hostname, &modname);
     // this should not error under any circumstances
     CATCH(e2, E_ANY){
-        RETHROW(e, e2, E_INTERNAL);
+        RETHROW(&e, &e2, E_INTERNAL);
     }
 
     // get the time
@@ -406,28 +406,28 @@ derr_t maildir_new_rename(maildir_t* mdir, const char* tempname,
     e2 = FMT(&filename, "%x.%x,%x.%x",
                            FI(tloc), FU(length), FD(uid), FD(&modname));
     CATCH(e2, E_FIXEDSIZE){
-        RETHROW(e, e2, E_FS);
-    }else PROP(e, e2);
+        RETHROW(&e, &e2, E_FS);
+    }else PROP(&e, e2);
 
     // get the new file path
     DSTR_VAR(newpath, 4096);
     DSTR_STATIC(subdir, "/new/");
     e2 = FMT(&newpath, "%x%x%x", FD(&mdir->path), FD(&subdir), FD(&filename));
     CATCH(e2, E_FIXEDSIZE){
-        RETHROW(e, e2, E_FS);
-    }else PROP(e, e2);
+        RETHROW(&e, &e2, E_FS);
+    }else PROP(&e, e2);
 
     // rename the file
     int ret = rename(tempname, newpath.data);
     if(ret != 0){
-        TRACE(e, "rename %x to %x: %x\n", FS(tempname), FS(newpath.data), FE(&errno));
-        ORIG(e, E_FS, "unable to rename temporary file");
+        TRACE(&e, "rename %x to %x: %x\n", FS(tempname), FS(newpath.data), FE(&errno));
+        ORIG(&e, E_FS, "unable to rename temporary file");
     }
 
     // register the new email with the maildir
-    PROP(e, maildir_register(mdir, &subdir, &filename, uid, length) );
+    PROP(&e, maildir_register(mdir, &subdir, &filename, uid, length) );
 
-    return E_OK;
+    return e;
 }
 
 derr_t maildir_get_index_from_uid(const maildir_t* mdir, const dstr_t* uid,
@@ -438,51 +438,51 @@ derr_t maildir_get_index_from_uid(const maildir_t* mdir, const dstr_t* uid,
         int result = dstr_cmp(uid, &mdir->uids.data[i]);
         if(result == 0){
             *index = i;
-            return E_OK;
+            return e;
         }
     }
     // we are here if we found nothing
-    ORIG(e, E_INTERNAL, "did not find uid in the maildir");
+    ORIG(&e, E_INTERNAL, "did not find uid in the maildir");
 }
 
 derr_t maildir_open_message(const maildir_t* mdir, size_t index, int* fd){
     derr_t e = E_OK;
     // check inputs
     if(index >= mdir->uids.len)
-        ORIG(e, E_BADIDX, "index too high");
+        ORIG(&e, E_BADIDX, "index too high");
 
     // get filename
     dstr_t* filename = &mdir->filenames.data[index];
 
     // open file
     DSTR_VAR(path, 4096);
-    PROP(e, FMT(&path, "%x%x", FD(&mdir->path), FD(filename)) );
+    PROP(&e, FMT(&path, "%x%x", FD(&mdir->path), FD(filename)) );
 
     *fd = open(path.data, O_RDONLY);
 
     if(*fd < 0){
-        TRACE(e, "%x: %x\n", FS(path.data), FE(&errno));
-        ORIG(e, E_OS, "unable to open message for reading in maildir");
+        TRACE(&e, "%x: %x\n", FS(path.data), FE(&errno));
+        ORIG(&e, E_OS, "unable to open message for reading in maildir");
     }
 
-    return E_OK;
+    return e;
 }
 
 derr_t maildir_delete_message(maildir_t* mdir, size_t index){
     derr_t e = E_OK;
     if(index >= mdir->uids.len)
-        ORIG(e, E_VALUE, "index too high");
+        ORIG(&e, E_VALUE, "index too high");
 
     // get filename
     dstr_t* filename = &mdir->filenames.data[index];
 
     // delete the file
     DSTR_VAR(path, 4096);
-    PROP(e, FMT(&path, "%x%x", FD(&mdir->path), FD(filename)) );
+    PROP(&e, FMT(&path, "%x%x", FD(&mdir->path), FD(filename)) );
     int ret = remove(path.data);
     if(ret != 0){
-        TRACE(e, "%x: %x\n", FD(&path), FE(&errno));
-        ORIG(e, E_OS, "unable to delete message from maildir");
+        TRACE(&e, "%x: %x\n", FD(&path), FE(&errno));
+        ORIG(&e, E_OS, "unable to delete message from maildir");
     }
 
     // don't forget to eliminate things from the registry
@@ -490,5 +490,5 @@ derr_t maildir_delete_message(maildir_t* mdir, size_t index){
     LIST_DELETE(dstr_t, &mdir->uids, index);
     LIST_DELETE(size_t, &mdir->lengths, index);
 
-    return E_OK;
+    return e;
 }

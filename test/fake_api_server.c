@@ -59,7 +59,7 @@ static derr_t fas_recieve_request(connection_t* conn, dstr_t* recv,
     derr_t e = E_OK;
     recv->len = 0;
     while(true){
-        PROP(e, connection_read(conn, recv, NULL) );
+        PROP(&e, connection_read(conn, recv, NULL) );
         // assume you have the entire request already, or just continue:
 
         // first find the content length
@@ -83,7 +83,7 @@ static derr_t fas_recieve_request(connection_t* conn, dstr_t* recv,
         // interpret the content length
         sub = dstr_sub(recv, cl_start, cl_end);
         unsigned int cl;
-        PROP(e, dstr_tou(&sub, &cl, 10) );
+        PROP(&e, dstr_tou(&sub, &cl, 10) );
 
         // now find the end of the headers
         LIST_PRESET(dstr_t, header_end, DSTR_LIT("\r\n\r\n"), DSTR_LIT("\n\n"));
@@ -101,20 +101,20 @@ static derr_t fas_recieve_request(connection_t* conn, dstr_t* recv,
         // if we have the whole payload, we are done
         if(payload->len == cl) break;
     }
-    return E_OK;
+    return e;
 }
 
 static derr_t fas_respond(connection_t* conn, int code,
                                      const dstr_t* response){
     derr_t e = E_OK;
     DSTR_VAR(headers, 256);
-    PROP(e, FMT(&headers, "HTTP/1.0 %x fake api server gives no reason\r\n"
+    PROP(&e, FMT(&headers, "HTTP/1.0 %x fake api server gives no reason\r\n"
                         "Content-Length: %x\r\n"
                         "\r\n", FI(code), FU(response->len)) );
     //PFMT("RESPONDING:\n%x%x\n--------\n", FD(&headers), FD(response));
-    PROP(e, connection_write(conn, &headers) );
-    PROP(e, connection_write(conn, response) );
-    return E_OK;
+    PROP(&e, connection_write(conn, &headers) );
+    PROP(&e, connection_write(conn, response) );
+    return e;
 }
 
 static void* fas_thread(void* arg){
@@ -123,25 +123,25 @@ static void* fas_thread(void* arg){
 
     // allocate memory for reading into
     dstr_t recv;
-    PROP_GO(e, dstr_new(&recv, 4096), cleanup_1);
+    PROP_GO(&e, dstr_new(&recv, 4096), cleanup_1);
 
     // allocate memory for the response (easier error handling)
     dstr_t resp;
-    PROP_GO(e, dstr_new(&resp, 4096), cleanup_2);
+    PROP_GO(&e, dstr_new(&resp, 4096), cleanup_2);
 
     // prepare ssl context
     DSTR_VAR(certfile, 4096);
     DSTR_VAR(keyfile, 4096);
     DSTR_VAR(dhfile, 4096);
-    PROP_GO(e, FMT(&certfile, "%x/%x", FS(g_test_files), FS("ssl/good-cert.pem")), cleanup_3);
-    PROP_GO(e, FMT(&keyfile, "%x/%x", FS(g_test_files), FS("ssl/good-key.pem")), cleanup_3);
-    PROP_GO(e, FMT(&dhfile, "%x/%x", FS(g_test_files), FS("ssl/dh_4096.pem")), cleanup_3);
+    PROP_GO(&e, FMT(&certfile, "%x/%x", FS(g_test_files), FS("ssl/good-cert.pem")), cleanup_3);
+    PROP_GO(&e, FMT(&keyfile, "%x/%x", FS(g_test_files), FS("ssl/good-key.pem")), cleanup_3);
+    PROP_GO(&e, FMT(&dhfile, "%x/%x", FS(g_test_files), FS("ssl/dh_4096.pem")), cleanup_3);
     ssl_context_t ctx;
-    PROP_GO(e, ssl_context_new_server(&ctx, certfile.data,
+    PROP_GO(&e, ssl_context_new_server(&ctx, certfile.data,
             keyfile.data, dhfile.data), cleanup_3);
 
     listener_t listener;
-    PROP_GO(e, listener_new_ssl(&listener, &ctx, "127.0.0.1", fas_api_port), cleanup_4);
+    PROP_GO(&e, listener_new_ssl(&listener, &ctx, "127.0.0.1", fas_api_port), cleanup_4);
     LOG_INFO("Fake API Server ready for incoming connections\n");
 
     // signal the main thread
@@ -155,11 +155,11 @@ static void* fas_thread(void* arg){
         connection_t conn;
         // accept a connection
         LOG_INFO("Fake API Server about to accept()\n");
-        PROP_GO(e, listener_accept(&listener, &conn), cleanup_5);
+        PROP_GO(&e, listener_accept(&listener, &conn), cleanup_5);
 
         // read everything off the wire
         dstr_t payload;
-        PROP_GO(e, fas_recieve_request(&conn, &recv, &payload), cleanup_6);
+        PROP_GO(&e, fas_recieve_request(&conn, &recv, &payload), cleanup_6);
 
         // check if it is the exit command
         if(dstr_cmp(&exit_cmd, &payload) == 0){
@@ -170,9 +170,9 @@ static void* fas_thread(void* arg){
 
         // now decode the payload (destroys the recv buffer)
         DSTR_VAR(body, 4096);
-        PROP_GO(e, b642bin(&payload, &body), cleanup_6);
+        PROP_GO(&e, b642bin(&payload, &body), cleanup_6);
         if(payload.len > 0){
-            ORIG_GO(e, E_VALUE, "bad base64 decode", cleanup_6);
+            ORIG_GO(&e, E_VALUE, "bad base64 decode", cleanup_6);
         }
 
         // get the expected values for the path and arg
@@ -180,13 +180,13 @@ static void* fas_thread(void* arg){
         DSTR_VAR(exp_arg, 2048);
         exp_hook_t hook;
         unsigned int ctr;
-        PROP_GO(e, fas_expect_get(&exp_path, &exp_arg, &hook, &ctr), cleanup_6);
+        PROP_GO(&e, fas_expect_get(&exp_path, &exp_arg, &hook, &ctr), cleanup_6);
 
         //PFMT("expecting %x %x\nreceived:%x\n", FD(&exp_path), FD(&exp_arg), FD(&body));
 
         // now parse the body
         LIST_VAR(json_t, json, 32);
-        PROP_GO(e, json_parse(&json, &body), cleanup_6);
+        PROP_GO(&e, json_parse(&json, &body), cleanup_6);
 
         json_t j;
         DSTR_STATIC(wildcard, "*");
@@ -194,12 +194,12 @@ static void* fas_thread(void* arg){
         // check the path, unless exp_path is the wildcard
         dstr_t jpath;
         j = jk(json.data[0], "path");
-        PROP_GO(e, j_to_dstr(j, &jpath), cleanup_6);
+        PROP_GO(&e, j_to_dstr(j, &jpath), cleanup_6);
         if(dstr_cmp(&jpath, &exp_path) != 0){
-            TRACE(e, "expected path: %x\n"
+            TRACE(&e, "expected path: %x\n"
                      "         but got: %x\n",
                      FD(&exp_path), FD(&jpath));
-            ORIG_GO(e, E_VALUE, "wrong path", cleanup_6);
+            ORIG_GO(&e, E_VALUE, "wrong path", cleanup_6);
         }
 
         // pull out the argument
@@ -208,35 +208,35 @@ static void* fas_thread(void* arg){
         if(j.type == JSON_NULL){
             jarg = (dstr_t){NULL, 0, 0, true};
         }else{
-            PROP_GO(e, j_to_dstr(j, &jarg), cleanup_6);
+            PROP_GO(&e, j_to_dstr(j, &jarg), cleanup_6);
         }
         // check the argument, unless exp_arg is the wildcard
         if(dstr_cmp(&exp_arg, &wildcard) != 0){
             if(j.type == JSON_NULL){
                 if(exp_arg.data != NULL){
-                    TRACE(e, "expected argument: %x\n"
+                    TRACE(&e, "expected argument: %x\n"
                              "          but got null\n", FD(&exp_arg));
-                    ORIG_GO(e, E_VALUE, "wrong argument", cleanup_6);
+                    ORIG_GO(&e, E_VALUE, "wrong argument", cleanup_6);
                 }else if( dstr_cmp(&jarg, &exp_arg) != 0){
-                    TRACE(e, "expected argument: %x\n"
+                    TRACE(&e, "expected argument: %x\n"
                              "          but got: %x\n",
                              FD(&exp_arg), FD(&jarg));
-                    ORIG_GO(e, E_VALUE, "wrong argument", cleanup_6);
+                    ORIG_GO(&e, E_VALUE, "wrong argument", cleanup_6);
                 }
             }
         }
 
         // call hook if necessary
         if(hook){
-            PROP_GO(e, hook(&jpath, &jarg, ctr), cleanup_6);
+            PROP_GO(&e, hook(&jpath, &jarg, ctr), cleanup_6);
         }
 
         // now get the response
         int code;
-        PROP_GO(e, fas_response_get(&code, &resp), cleanup_6);
+        PROP_GO(&e, fas_response_get(&code, &resp), cleanup_6);
 
         // write the response to the wire
-        PROP_GO(e, fas_respond(&conn, code, &resp), cleanup_6);
+        PROP_GO(&e, fas_respond(&conn, code, &resp), cleanup_6);
 
 cleanup_6:
         connection_close(&conn);
@@ -290,18 +290,18 @@ derr_t fas_start(void){
     // unlock mutex
     pthread_mutex_unlock(&fas_mutex);
 
-    return E_OK;
+    return e;
 }
 
 static derr_t fas_send_exit_command(void){
     derr_t e = E_OK;
     // prepare to use SSL
     ssl_context_t ctx;
-    PROP(e, ssl_context_new_client(&ctx) );
+    PROP(&e, ssl_context_new_client(&ctx) );
     // connect
     connection_t conn;
-    PROP_GO(e, connection_new_ssl(&conn, &ctx, "127.0.0.1", fas_api_port), cu1);
-    PROP_GO(e, connection_write(&conn, &exit_msg), cu2);
+    PROP_GO(&e, connection_new_ssl(&conn, &ctx, "127.0.0.1", fas_api_port), cu1);
+    PROP_GO(&e, connection_write(&conn, &exit_msg), cu2);
     // wait for fas thread to exit
     pthread_join(g_thread, NULL);
 cu2:
@@ -318,7 +318,7 @@ derr_t fas_join(void){
         LOG_INFO("sending exit command to fake api server\n");
         e = fas_send_exit_command();
         if(e.type){
-            TRACE(e, "error shutting down fake_api_server nicely\n");
+            TRACE(&e, "error shutting down fake_api_server nicely\n");
             pthread_cancel(g_thread);
         }
     }
@@ -345,7 +345,7 @@ derr_t fas_join(void){
     }
     responses.len = 0;
     resp_codes.len = 0;
-    MERGE(e, thread_return, "fake api server")
+    MERGE_CMD(&e, thread_return, "fake api server")
     return e;
 }
 
@@ -357,29 +357,29 @@ derr_t fas_expect_put(const dstr_t* path, const dstr_t* arg,
 
     // copy the path
     dstr_t c;
-    PROP_GO(e, dstr_new(&c, path->len), fail_1);
-    PROP_GO(e, dstr_copy(path, &c), fail_2);
+    PROP_GO(&e, dstr_new(&c, path->len), fail_1);
+    PROP_GO(&e, dstr_copy(path, &c), fail_2);
 
     // copy the arg
     dstr_t a;
-    PROP_GO(e, dstr_new(&a, arg->len), fail_2);
-    PROP_GO(e, dstr_copy(arg, &a), fail_3);
+    PROP_GO(&e, dstr_new(&a, arg->len), fail_2);
+    PROP_GO(&e, dstr_copy(arg, &a), fail_3);
 
     // push the path
-    PROP_GO(e, LIST_APPEND(dstr_t, &exp_paths, c), fail_3);
+    PROP_GO(&e, LIST_APPEND(dstr_t, &exp_paths, c), fail_3);
 
     // push the arg
-    PROP_GO(e, LIST_APPEND(dstr_t, &exp_args, a), fail_4);
+    PROP_GO(&e, LIST_APPEND(dstr_t, &exp_args, a), fail_4);
 
     // push the hook
-    PROP_GO(e, LIST_APPEND(exp_hook_t, &exp_hooks, hook), fail_5);
+    PROP_GO(&e, LIST_APPEND(exp_hook_t, &exp_hooks, hook), fail_5);
 
     // push the hook
-    PROP_GO(e, LIST_APPEND(uint, &exp_ctrs, counter), fail_6);
+    PROP_GO(&e, LIST_APPEND(uint, &exp_ctrs, counter), fail_6);
 
 
     pthread_mutex_unlock(&exp_mutex);
-    return E_OK;
+    return e;
 
 fail_6:
     exp_hooks.len--;
@@ -403,16 +403,16 @@ derr_t fas_expect_get(dstr_t* path, dstr_t* arg,
     pthread_mutex_lock(&exp_mutex);
 
     if(exp_paths.len == 0){
-        ORIG_GO(e, E_VALUE, "no expect to pop", cleanup);
+        ORIG_GO(&e, E_VALUE, "no expect to pop", cleanup);
     }
 
     // copy into the path
     dstr_t* c = &exp_paths.data[0];
-    PROP_GO(e, dstr_copy(c, path), cleanup);
+    PROP_GO(&e, dstr_copy(c, path), cleanup);
 
     // copy into the arg
     dstr_t* a = &exp_args.data[0];
-    PROP_GO(e, dstr_copy(a, arg), cleanup);
+    PROP_GO(&e, dstr_copy(a, arg), cleanup);
 
     // set the hook
     *hook = exp_hooks.data[0];
@@ -439,20 +439,20 @@ derr_t fas_response_put(int code, const dstr_t* response){
     pthread_mutex_lock(&resp_mutex);
 
     // push the code
-    PROP_GO(e, LIST_APPEND(int, &resp_codes, code), fail_1);
+    PROP_GO(&e, LIST_APPEND(int, &resp_codes, code), fail_1);
 
     // allocate for the response
     dstr_t resp;
-    PROP_GO(e, dstr_new(&resp, response->len), fail_2);
+    PROP_GO(&e, dstr_new(&resp, response->len), fail_2);
 
     // copy the response
-    PROP_GO(e, dstr_copy(response, &resp), fail_3);
+    PROP_GO(&e, dstr_copy(response, &resp), fail_3);
 
     // push the response
-    PROP_GO(e, LIST_APPEND(dstr_t, &responses, resp), fail_3);
+    PROP_GO(&e, LIST_APPEND(dstr_t, &responses, resp), fail_3);
 
     pthread_mutex_unlock(&resp_mutex);
-    return E_OK;
+    return e;
 
 fail_3:
     dstr_free(&resp);
@@ -470,7 +470,7 @@ derr_t fas_response_get(int* code, dstr_t* response){
     pthread_mutex_lock(&resp_mutex);
 
     if(responses.len == 0){
-        ORIG_GO(e, E_VALUE, "no response to pop", cleanup);
+        ORIG_GO(&e, E_VALUE, "no response to pop", cleanup);
     }
 
     // set the code
@@ -478,7 +478,7 @@ derr_t fas_response_get(int* code, dstr_t* response){
 
     // copy the response into the arg
     dstr_t* r = &responses.data[0];
-    PROP_GO(e, dstr_copy(r, response), cleanup);
+    PROP_GO(&e, dstr_copy(r, response), cleanup);
 
     // shorten responses list
     dstr_free(r);
@@ -493,7 +493,7 @@ cleanup:
 derr_t fas_assert_done(void){
     derr_t e = E_OK;
     if(responses.len || exp_paths.len > 0){
-        ORIG(e, E_VALUE, "fake api server not called as many times as expected");
+        ORIG(&e, E_VALUE, "fake api server not called as many times as expected");
     }
-    return E_OK;
+    return e;
 }

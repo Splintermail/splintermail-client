@@ -69,20 +69,20 @@ static void* ditm_thread_func(void* arg){
     DSTR_VAR(certfile, 4096);
     DSTR_VAR(keyfile, 4096);
     DSTR_VAR(dhfile, 4096);
-    PROP_GO(e, FMT(&certfile, "%x/%x", FS(g_test_files), FS("ssl/good-cert.pem")), cleanup_1);
-    PROP_GO(e, FMT(&keyfile, "%x/%x", FS(g_test_files), FS("ssl/good-key.pem")), cleanup_1);
-    PROP_GO(e, FMT(&dhfile, "%x/%x", FS(g_test_files), FS("ssl/dh_4096.pem")), cleanup_1);
+    PROP_GO(&e, FMT(&certfile, "%x/%x", FS(g_test_files), FS("ssl/good-cert.pem")), cleanup_1);
+    PROP_GO(&e, FMT(&keyfile, "%x/%x", FS(g_test_files), FS("ssl/good-key.pem")), cleanup_1);
+    PROP_GO(&e, FMT(&dhfile, "%x/%x", FS(g_test_files), FS("ssl/dh_4096.pem")), cleanup_1);
     ssl_context_t s_ctx;
-    PROP_GO(e, ssl_context_new_server(&s_ctx, certfile.data,
+    PROP_GO(&e, ssl_context_new_server(&s_ctx, certfile.data,
                                             keyfile.data,
                                             dhfile.data), cleanup_1);
 
     // prepare client ssl context
     ssl_context_t c_ctx;
-    PROP_GO(e, ssl_context_new_client(&c_ctx), cleanup_2);
+    PROP_GO(&e, ssl_context_new_client(&c_ctx), cleanup_2);
 
     listener_t listener;
-    PROP_GO(e, listener_new_ssl(&listener, &s_ctx, "127.0.0.1", 1996), cleanup_3);
+    PROP_GO(&e, listener_new_ssl(&listener, &s_ctx, "127.0.0.1", 1996), cleanup_3);
     // signal the main thread
     pthread_mutex_lock(&ditm_mutex);
     pthread_cond_signal(&ditm_cond);
@@ -101,16 +101,16 @@ static void* ditm_thread_func(void* arg){
         connection_t conn;
         // accept a connection
         LOG_INFO("DITM about to accept()\n");
-        PROP_GO(e, listener_accept(&listener, &conn), cleanup_4);
+        PROP_GO(&e, listener_accept(&listener, &conn), cleanup_4);
         LOG_INFO("DITM accepted()\n");
 
         // create a ditm object for this connection
         ditm_t ditm;
 
-        PROP_GO(e, ditm_new(&ditm, &c_ctx, &conn, "127.0.0.1", ditm_thread_pop_port,
+        PROP_GO(&e, ditm_new(&ditm, &c_ctx, &conn, "127.0.0.1", ditm_thread_pop_port,
                           ditm_path, "127.0.0.1", 443), cleanup_5);
         // kick off server loop
-        PROP_GO(e, pop_server_loop(&ditm.ps, (void*)(&ditm)), cleanup_6);
+        PROP_GO(&e, pop_server_loop(&ditm.ps, (void*)(&ditm)), cleanup_6);
 
 cleanup_6:
         // done with ditm, cleanup
@@ -162,9 +162,9 @@ derr_t ditm_thread_start(unsigned int pop_port){
     pthread_mutex_unlock(&ditm_mutex);
     // if the server is about to fail, don't hang waiting to connect to it
     if(thread_error.type){
-        ORIG_GO(e, thread_error.type, "DITM thread failed to start", fail);
+        ORIG_GO(&e, thread_error.type, "DITM thread failed to start", fail);
     }
-    return E_OK;
+    return e;
 
 fail:
     pthread_join(ditm_thread, NULL);

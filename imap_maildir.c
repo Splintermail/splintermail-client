@@ -10,10 +10,10 @@ static derr_t ctn_check(const string_builder_t *path, bool *ret){
     for(size_t i = 0; i < 3; i++){
         string_builder_t subdir_path = sb_append(path, FS(ctn[i]));
         bool temp;
-        PROP(e, dir_rw_access_path(&subdir_path, false, &temp) );
+        PROP(&e, dir_rw_access_path(&subdir_path, false, &temp) );
         *ret &= temp;
     }
-    return E_OK;
+    return e;
 }
 
 // check each child directory
@@ -21,11 +21,11 @@ static derr_t find_children(const string_builder_t *base, const dstr_t *name,
                             bool isdir, void *data){
     derr_t e = E_OK;
     // don't care about any non-directories here
-    if(!isdir) return E_OK;
+    if(!isdir) return e;
     // also ignore subdirs named "cur", "tmp", and "new"
-    if(dstr_cmp(name, &DSTR_LIT("cur")) == 0) return E_OK;
-    if(dstr_cmp(name, &DSTR_LIT("tmp")) == 0) return E_OK;
-    if(dstr_cmp(name, &DSTR_LIT("new")) == 0) return E_OK;
+    if(dstr_cmp(name, &DSTR_LIT("cur")) == 0) return e;
+    if(dstr_cmp(name, &DSTR_LIT("tmp")) == 0) return e;
+    if(dstr_cmp(name, &DSTR_LIT("new")) == 0) return e;
     // dereference argument, the parent maildir
     imaildir_t *parent = data;
     // use parent->path explicitly, not via *base
@@ -34,11 +34,11 @@ static derr_t find_children(const string_builder_t *base, const dstr_t *name,
     parent->mflags.noinferiors = false;
     // open the maildir
     imaildir_t *m;
-    PROP_GO(e, imaildir_new(&m, &parent->path, name), fail_malloc);
+    PROP_GO(&e, imaildir_new(&m, &parent->path, name), fail_malloc);
     // put this child into the parent's hashmap
-    PROP_GO(e, hashmap_puts(&parent->children, &m->name, &m->h), fail_open);
+    PROP_GO(&e, hashmap_puts(&parent->children, &m->name, &m->h), fail_open);
 
-    return E_OK;
+    return e;
 
 fail_open:
     imaildir_free(m);
@@ -53,32 +53,32 @@ derr_t imaildir_new(imaildir_t **maildir, const string_builder_t *path,
     // allocate the pointer
     imaildir_t *m = malloc(sizeof(*m));
     *maildir = m;
-    if(!m) ORIG(e, E_NOMEM, "unable to malloc");
+    if(!m) ORIG(&e, E_NOMEM, "unable to malloc");
     // set self-references
     m->h.data = m;
     // copy the name
     m->name = (dstr_t){0};
-    PROP_GO(e, dstr_copy(name, &m->name), fail_malloc);
+    PROP_GO(&e, dstr_copy(name, &m->name), fail_malloc);
     // build path with name
     m->path = sb_append(path, FD(&m->name));
     // check for cur/new/tmp folders, and assign /NOSELECT accordingly
     bool ctn_present;
-    PROP_GO(e, ctn_check(&m->path, &ctn_present), fail_name);
+    PROP_GO(&e, ctn_check(&m->path, &ctn_present), fail_name);
     m->mflags = (ie_mflag_list_t){.noselect = !ctn_present};
     // init hashmap of messages (we will populate later, after SELECT command)
-    PROP_GO(e, hashmap_init(&m->msgs), fail_name);
+    PROP_GO(&e, hashmap_init(&m->msgs), fail_name);
     // init hashmap of children
-    PROP_GO(e, hashmap_init(&m->children), fail_msgs);
+    PROP_GO(&e, hashmap_init(&m->children), fail_msgs);
     // search for child folders
     m->mflags.noinferiors = true;
-    PROP_GO(e, for_each_file_in_dir2(&m->path, find_children, m), fail_chld);
+    PROP_GO(&e, for_each_file_in_dir2(&m->path, find_children, m), fail_chld);
     // set other initial values
     m->refs = 0;
     m->del_plan = IMDP_DONT_DELETE;
     // TODO: UID_VALIDITY
     // m->uid_validity = ???
 
-    return E_OK;
+    return e;
 
     hashmap_iter_t i;
 fail_chld:

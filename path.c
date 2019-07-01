@@ -13,12 +13,12 @@
 //         PFMT("%x", FD(&path.data[i]));
 //     }
 //     PFMT("\n");
-//     return E_OK;
+//     return e;
 // }
 
 /* resulting API is way too verbose:
 
-    PROP( print_path(PATH(DSTR_LIT("aaa"), DSTR_LIT("b"),
+    PROP(& print_path(PATH(DSTR_LIT("aaa"), DSTR_LIT("b"),
         DSTR_LIT("abc"),
         DSTR_LIT("b"))) );
 */
@@ -79,7 +79,7 @@ static derr_t print_path2(const path_elem_t* elems, size_t len){
         }
     }
     PFMT("\n");
-    return E_OK;
+    return e;
 }
 
 typedef struct {
@@ -105,7 +105,7 @@ static derr_t print_path3(const path_list_t path){
         }
     }
     PFMT("\n");
-    return E_OK;
+    return e;
 }
 
 /* ACTUALLY:
@@ -166,19 +166,19 @@ static inline string_builder_t sb_prepend(const string_builder_t* sb, fmt_t elem
 
 static derr_t sb_append_to_dstr(const string_builder_t* sb, dstr_t* out){
     if(sb->prev != NULL){
-        PROP( sb_append_to_dstr(sb->prev, out) );
+        PROP(& sb_append_to_dstr(sb->prev, out) );
     }
-    PROP( FMT(out, "%x", sb->elem) );
+    PROP(& FMT(out, "%x", sb->elem) );
     if(sb->next != NULL){
-        PROP( sb_append_to_dstr(sb->next, out) );
+        PROP(& sb_append_to_dstr(sb->next, out) );
     }
-    return E_OK;
+    return e;
 }
 
 static inline derr_t sb_to_dstr(const string_builder_t* sb, dstr_t* out){
     out->len = 0;
-    PROP( sb_append_to_dstr(sb, out) );
-    return E_OK;
+    PROP(& sb_append_to_dstr(sb, out) );
+    return e;
 }
 
 int main(int argc, char** argv){
@@ -203,7 +203,7 @@ int main(int argc, char** argv){
     string_builder_t sb2 = sb_prepend(&sb1, FS("b"));
     string_builder_t sb3 = sb_prepend(&sb2, FS("a"));
     string_builder_t sb4 = sb_append(&sb3, FS("e"));
-    PROP( sb_to_dstr(&sb4, &out) );
+    PROP(& sb_to_dstr(&sb4, &out) );
     PFMT("out: %x\n", FD(&out));
 
     return 0;

@@ -67,11 +67,11 @@ static derr_t loginhook_error_sensitive_part(ditm_t *ditm, bool *status_ok,
 
     // initialize the key_tool
     key_tool_t kt;
-    PROP(e, key_tool_new(&kt, userdir, 4096) );
+    PROP(&e, key_tool_new(&kt, userdir, 4096) );
 
     // load the ignore list
     ignore_list_t il;
-    PROP_GO(e, ignore_list_load(&il, userdir), cu_kt);
+    PROP_GO(&e, ignore_list_load(&il, userdir), cu_kt);
 
     // download new messages
     LOG_DEBUG("DITM UID's before download (%x):\n", FU(ditm->maildir.uids.len));
@@ -83,8 +83,8 @@ static derr_t loginhook_error_sensitive_part(ditm_t *ditm, bool *status_ok,
     e2 = pop_client_uidl(&ditm->pc, status_ok, message);
     // E_FIXEDSIZE from filling *message means a bad server response
     CATCH(e2, E_FIXEDSIZE){
-        RETHROW_GO(e, e2, E_RESPONSE, cu_il);
-    }else PROP_GO(e, e2, cu_il);
+        RETHROW_GO(&e, &e2, E_RESPONSE, cu_il);
+    }else PROP_GO(&e, e2, cu_il);
 
     LOG_DEBUG("Remote server UID's (%x):\n", FU(ditm->pc.uids.len));
     for(size_t i = 0; i < ditm->pc.uids.len; i++){
@@ -102,7 +102,7 @@ static derr_t loginhook_error_sensitive_part(ditm_t *ditm, bool *status_ok,
         }
         size_t index = ditm->pc.idxs.data[i];
         // download the message
-        PROP_GO(e, ditm_download_new_message(ditm, &kt, &il, uid, index), cu_il);
+        PROP_GO(&e, ditm_download_new_message(ditm, &kt, &il, uid, index), cu_il);
     }
 
     LOG_DEBUG("DITM UID's after download (%x):\n", FU(ditm->maildir.uids.len));
@@ -112,14 +112,14 @@ static derr_t loginhook_error_sensitive_part(ditm_t *ditm, bool *status_ok,
 
     // now prepare the deletions list
     for(size_t i = 0; i < ditm->maildir.lengths.len; i++){
-        PROP_GO(e, LIST_APPEND(bool, &ditm->deletions, false), cu_il);
+        PROP_GO(&e, LIST_APPEND(bool, &ditm->deletions, false), cu_il);
     }
 
     // update the ignore list
-    PROP_GO(e, ignore_list_write(&il, userdir), cu_il);
+    PROP_GO(&e, ignore_list_write(&il, userdir), cu_il);
 
     // update the key_tool
-    PROP_GO(e, key_tool_update(&kt, ditm->api_host, ditm->api_port,
+    PROP_GO(&e, key_tool_update(&kt, ditm->api_host, ditm->api_port,
                             username, password), cu_il);
 
 cu_il:
@@ -144,14 +144,14 @@ static derr_t loginhook(void* arg, const dstr_t* username,
     bool status_ok;
     DSTR_VAR(message, 1024);
     // USER
-    PROP(e, pop_client_username(&ditm->pc, username, &status_ok, &message) );
+    PROP(&e, pop_client_username(&ditm->pc, username, &status_ok, &message) );
     if(!status_ok){
-        return E_OK;
+        return e;
     }
     // PASS
-    PROP(e, pop_client_password(&ditm->pc, password, &status_ok, &message) );
+    PROP(&e, pop_client_password(&ditm->pc, password, &status_ok, &message) );
     if(!status_ok){
-        return E_OK;
+        return e;
     }
 
     *login_ok = true;
@@ -171,15 +171,15 @@ static derr_t loginhook(void* arg, const dstr_t* username,
 
     // path to user dir, such as: /var/lib/splintermail/user@splintermail.com
     DSTR_VAR(userdir, 4096);
-    PROP(e, FMT(&userdir, "%x/%x", FD(&ditm->dirpath), FD(username)) );
+    PROP(&e, FMT(&userdir, "%x/%x", FD(&ditm->dirpath), FD(username)) );
 
     // check if ditm_dir/username is a valid directory
     if(!dir_rw_access(userdir.data, true)){
-        ORIG(e, E_FS, "failure to either create or access the userdir");
+        ORIG(&e, E_FS, "failure to either create or access the userdir");
     }
 
     // open the maildir
-    PROP(e, maildir_new(&ditm->maildir, &userdir) );
+    PROP(&e, maildir_new(&ditm->maildir, &userdir) );
 
     // HERE BEGINS SOME VERY CAREFUL ERROR HANDLING
     /* now that we have stood up the maildir we can inject meaningful messages
@@ -191,8 +191,8 @@ static derr_t loginhook(void* arg, const dstr_t* username,
     // make sure we met the minimum version or go straight to the msg injection
     if(ditm->minversion_met == false){
         ditm->conn_is_live = false;
-        PROP(e, ditm_inject_message(ditm, &update_subj, &update_body) );
-        return E_OK;
+        PROP(&e, ditm_inject_message(ditm, &update_subj, &update_body) );
+        return e;
     }
 
     e2 = loginhook_error_sensitive_part(ditm, &status_ok, &userdir, username,
@@ -203,8 +203,8 @@ static derr_t loginhook(void* arg, const dstr_t* username,
     // silently disconnect from email client on temporary errors
     CATCH(e2, E_CONN | E_NOMEM | E_OS | E_SSL){
         // allow the error to propagate
-        TRACE(e2, "temporary error detected, disconnecting\n");
-        RETHROW(e, e2, e2.type);
+        TRACE(&e2, "temporary error detected, disconnecting\n");
+        RETHROW(&e, &e2, e2.type);
     }
 
     CATCH(e2, E_PARAM){
@@ -213,40 +213,40 @@ static derr_t loginhook(void* arg, const dstr_t* username,
            since we just checked with the server */
         /* this is really not a likely error to happen since the api_host is
            a hardcoded string in the user application */
-        TRACE(e2, "configured api_server hostname is too long\n");
+        TRACE(&e2, "configured api_server hostname is too long\n");
         DUMP(e2);
-        DROP(e2);
+        DROP_VAR(&e2);
         // continue in offline mode
         ditm->conn_is_live = false;
     }
     // if the user has a filesystem issue, tell them now
     else CATCH(e2, E_FS){
         DUMP(e2);
-        DROP(e2);
+        DROP_VAR(&e2);
         // continue in offline mode
         ditm->conn_is_live = false;
-        PROP(e, ditm_inject_message(ditm, &badfs_subj, &badfs_body) );
+        PROP(&e, ditm_inject_message(ditm, &badfs_subj, &badfs_body) );
     }
     // if we got an invalid server response... have the user complain to us
     else CATCH(e2, E_RESPONSE){
         DUMP(e2);
-        DROP(e2);
+        DROP_VAR(&e2);
         // continue in offline mode
         ditm->conn_is_live = false;
         // TODO: include the trace in the message
-        PROP(e, ditm_inject_message(ditm, &badsrv_subj, &badsrv_body) );
+        PROP(&e, ditm_inject_message(ditm, &badsrv_subj, &badsrv_body) );
     }
     // if we caught an internal error... sorry, user.  Here's an apology
     else CATCH(e2, E_INTERNAL | E_ANY){
         if(e2.type != E_INTERNAL){
-            TRACE(e2, "HEY! this error shouldn't be possible here\n");
+            TRACE(&e2, "HEY! this error shouldn't be possible here\n");
         }
         DUMP(e2);
-        DROP(e2);
+        DROP_VAR(&e2);
         // continue in offline mode
         ditm->conn_is_live = false;
         // TODO: include the trace in the message
-        PROP(e, ditm_inject_message(ditm, &intrn_err_subj, &intrn_err_body) );
+        PROP(&e, ditm_inject_message(ditm, &intrn_err_subj, &intrn_err_body) );
     }
 
     return e;
@@ -269,10 +269,10 @@ static derr_t stathook(void* arg){
         }
     }
     DSTR_VAR(response, 64);
-    PROP(e, FMT(&response, "+OK %x %x\r\n",
+    PROP(&e, FMT(&response, "+OK %x %x\r\n",
               FU(num_messages - num_deletions), FU(total_length)) );
-    PROP(e, pop_server_send_dstr(&ditm->ps, &response) );
-    return E_OK;
+    PROP(&e, pop_server_send_dstr(&ditm->ps, &response) );
+    return e;
 }
 
 static derr_t listhook(void* arg, int index){
@@ -288,20 +288,20 @@ static derr_t listhook(void* arg, int index){
         size_t internal_index = (size_t)index - 1;
         // make sure the index isn't too high
         if(internal_index >= ditm->deletions.len){
-            PROP(e, pop_server_send_dstr(&ditm->ps, &msg_dne) );
-            return E_OK;
+            PROP(&e, pop_server_send_dstr(&ditm->ps, &msg_dne) );
+            return e;
         }
         // make sure the email isn't deleted
         bool deleted = ditm->deletions.data[internal_index];
         if(deleted == true){
-            PROP(e, pop_server_send_dstr(&ditm->ps, &msg_dne) );
-            return E_OK;
+            PROP(&e, pop_server_send_dstr(&ditm->ps, &msg_dne) );
+            return e;
         }
         // now build a response
         size_t length = ditm->maildir.lengths.data[internal_index];
-        PROP(e, FMT(&response, "+OK %x %x\r\n", FI(index), FU(length)) );
-        PROP(e, pop_server_send_dstr(&ditm->ps, &response) );
-        return E_OK;
+        PROP(&e, FMT(&response, "+OK %x %x\r\n", FI(index), FU(length)) );
+        PROP(&e, pop_server_send_dstr(&ditm->ps, &response) );
+        return e;
     }
     //now we can handle the case where we need to list all messages
     // sum lengths and count how many deletions we have
@@ -317,7 +317,7 @@ static derr_t listhook(void* arg, int index){
         }
     }
     // get the first line of the response
-    PROP(e, FMT(&response, "+OK %x messages (%x octets)\r\n",
+    PROP(&e, FMT(&response, "+OK %x messages (%x octets)\r\n",
               FU(num_messages - num_deletions), FU(total_length)) );
     // now get all the other lines of the response
     for(size_t i = 0; i < num_messages; i++){
@@ -326,10 +326,10 @@ static derr_t listhook(void* arg, int index){
             // add one line to the response
             size_t index_show = i+1;
             size_t length = ditm->maildir.lengths.data[i];
-            PROP(e, FMT(&response, "%x %x\r\n", FU(index_show), FU(length)) );
+            PROP(&e, FMT(&response, "%x %x\r\n", FU(index_show), FU(length)) );
             // check if response should be flushed
             if(response.size - response.len < 64){
-                PROP(e, pop_server_send_dstr(&ditm->ps, &response) );
+                PROP(&e, pop_server_send_dstr(&ditm->ps, &response) );
                 response.len = 0;
             }
         }else{
@@ -337,10 +337,10 @@ static derr_t listhook(void* arg, int index){
         }
     }
     // now add the end of the multi-line response
-    PROP(e, dstr_append(&response, &multi_line_end) );
+    PROP(&e, dstr_append(&response, &multi_line_end) );
     // send the response
-    PROP(e, pop_server_send_dstr(&ditm->ps, &response) );
-    return E_OK;
+    PROP(&e, pop_server_send_dstr(&ditm->ps, &response) );
+    return e;
 }
 
 static derr_t retrhook(void* arg, unsigned int index){
@@ -354,47 +354,47 @@ static derr_t retrhook(void* arg, unsigned int index){
     size_t internal_index = index - 1;
     // make sure the index isn't too high
     if(internal_index >= ditm->deletions.len){
-        PROP(e, pop_server_send_dstr(&ditm->ps, &msg_dne) );
-        return E_OK;
+        PROP(&e, pop_server_send_dstr(&ditm->ps, &msg_dne) );
+        return e;
     }
     // make sure the email isn't deleted
     bool deleted = ditm->deletions.data[internal_index];
     if(deleted == true){
-        PROP(e, pop_server_send_dstr(&ditm->ps, &msg_dne) );
-        return E_OK;
+        PROP(&e, pop_server_send_dstr(&ditm->ps, &msg_dne) );
+        return e;
     }
     // open the message from the maildir
     int fd;
-    PROP(e, maildir_open_message(&ditm->maildir, internal_index, &fd) );
+    PROP(&e, maildir_open_message(&ditm->maildir, internal_index, &fd) );
 
     // now build a response
     size_t length = ditm->maildir.lengths.data[internal_index];
     // get the first line of the response
-    PROP_GO(e, FMT(&buffer, "+OK %x octets\r\n", FU(length)), cleanup);
+    PROP_GO(&e, FMT(&buffer, "+OK %x octets\r\n", FU(length)), cleanup);
 
     while(true){
         // read from the file
         size_t amnt_read;
-        PROP_GO(e, dstr_read(fd, &buffer, 0, &amnt_read), cleanup);
+        PROP_GO(&e, dstr_read(fd, &buffer, 0, &amnt_read), cleanup);
         if(amnt_read == 0){
             break;
         }
         // check if we should flush the response
         if(buffer.len > buffer.size / 2){
-            PROP_GO(e, pop3_encode(&buffer, &response, false), cleanup);
-            PROP_GO(e, pop_server_send_dstr(&ditm->ps, &response), cleanup);
+            PROP_GO(&e, pop3_encode(&buffer, &response, false), cleanup);
+            PROP_GO(&e, pop_server_send_dstr(&ditm->ps, &response), cleanup);
             response.len = 0;
         }
     }
     close(fd);
 
     // encode the last of the response
-    PROP(e, pop3_encode(&buffer, &response, true));
+    PROP(&e, pop3_encode(&buffer, &response, true));
     // now add the end of the multi-line response
-    PROP(e, dstr_append(&response, &multi_line_end) );
+    PROP(&e, dstr_append(&response, &multi_line_end) );
     // send the last of the response
-    PROP(e, pop_server_send_dstr(&ditm->ps, &response) );
-    return E_OK;
+    PROP(&e, pop_server_send_dstr(&ditm->ps, &response) );
+    return e;
 
 cleanup:
     close(fd);
@@ -413,14 +413,14 @@ static derr_t delehook(void* arg, unsigned int index){
     size_t internal_index = index - 1;
     // make sure the index isn't too high
     if(internal_index >= ditm->deletions.len){
-        PROP(e, pop_server_send_dstr(&ditm->ps, &msg_dne) );
-        return E_OK;
+        PROP(&e, pop_server_send_dstr(&ditm->ps, &msg_dne) );
+        return e;
     }
     // make sure the email isn't already deleted (thats an error)
     bool deleted = ditm->deletions.data[internal_index];
     if(deleted == true){
-        PROP(e, pop_server_send_dstr(&ditm->ps, &msg_dne) );
-        return E_OK;
+        PROP(&e, pop_server_send_dstr(&ditm->ps, &msg_dne) );
+        return e;
     }
     // check the local index to make sure that it's not a local-only message
     dstr_t* l_uid = &ditm->maildir.uids.data[internal_index];
@@ -430,9 +430,9 @@ static derr_t delehook(void* arg, unsigned int index){
     if(dstr_cmp(&sub, &l_only) != 0){
         // fail if trying to delete a remote message without minimum version
         if(ditm->conn_is_live == false){
-            PROP(e, FMT(&response, "-ERR not deleted; remote connection not live\r\n") );
-            PROP(e, pop_server_send_dstr(&ditm->ps, &response) );
-            return E_OK;
+            PROP(&e, FMT(&response, "-ERR not deleted; remote connection not live\r\n") );
+            PROP(&e, pop_server_send_dstr(&ditm->ps, &response) );
+            return e;
         }
         // get the index of the message on the remote server
         size_t r_idx = 0;
@@ -452,18 +452,18 @@ static derr_t delehook(void* arg, unsigned int index){
             // make sure we can delete the index from the remote server
             bool status_ok;
             DSTR_VAR(message, 1024);
-            PROP(e, pop_client_delete(&ditm->pc, (unsigned int)r_idx, &status_ok, &message) );
+            PROP(&e, pop_client_delete(&ditm->pc, (unsigned int)r_idx, &status_ok, &message) );
             if(status_ok == false){
-                ORIG(e, E_VALUE, "failed to delete on remote server");
+                ORIG(&e, E_VALUE, "failed to delete on remote server");
             }
         }
     }
     // mark message for deletion
     ditm->deletions.data[internal_index] = true;
     // now build a response
-    PROP(e, FMT(&response, "+OK %x deleted\r\n", FI(index)) );
-    PROP(e, pop_server_send_dstr(&ditm->ps, &response) );
-    return E_OK;
+    PROP(&e, FMT(&response, "+OK %x deleted\r\n", FI(index)) );
+    PROP(&e, pop_server_send_dstr(&ditm->ps, &response) );
+    return e;
 }
 
 static derr_t rsethook(void* arg){
@@ -474,15 +474,15 @@ static derr_t rsethook(void* arg){
     if(ditm->conn_is_live == true){
         bool status_ok;
         DSTR_VAR(message, 1024);
-        PROP(e, pop_client_reset(&ditm->pc, &status_ok, &message) );
+        PROP(&e, pop_client_reset(&ditm->pc, &status_ok, &message) );
         // if the server puked we just pass that message on
         if(!status_ok){
             DSTR_STATIC(error_prefix, "-ERR ");
             DSTR_STATIC(line_end, "\r\n");
-            PROP(e, pop_server_send_dstr(&ditm->ps, &error_prefix) );
-            PROP(e, pop_server_send_dstr(&ditm->ps, &message) );
-            PROP(e, pop_server_send_dstr(&ditm->ps, &line_end) );
-            return E_OK;
+            PROP(&e, pop_server_send_dstr(&ditm->ps, &error_prefix) );
+            PROP(&e, pop_server_send_dstr(&ditm->ps, &message) );
+            PROP(&e, pop_server_send_dstr(&ditm->ps, &line_end) );
+            return e;
         }
     }
     // mark all messages as not deleted
@@ -490,8 +490,8 @@ static derr_t rsethook(void* arg){
     for(size_t i = 0; i < num_messages; i++){
         ditm->deletions.data[i] = false;
     }
-    PROP(e, pop_server_send_dstr(&ditm->ps, &msg_ok) );
-    return E_OK;
+    PROP(&e, pop_server_send_dstr(&ditm->ps, &msg_ok) );
+    return e;
 }
 
 static derr_t tophook(void* arg, unsigned int index, unsigned int lines){
@@ -509,21 +509,21 @@ static derr_t tophook(void* arg, unsigned int index, unsigned int lines){
     size_t internal_index = index - 1;
     // make sure the index isn't too high
     if(internal_index >= ditm->deletions.len){
-        PROP(e, pop_server_send_dstr(&ditm->ps, &msg_dne) );
-        return E_OK;
+        PROP(&e, pop_server_send_dstr(&ditm->ps, &msg_dne) );
+        return e;
     }
     // make sure the email isn't deleted
     bool deleted = ditm->deletions.data[internal_index];
     if(deleted == true){
-        PROP(e, pop_server_send_dstr(&ditm->ps, &msg_dne) );
-        return E_OK;
+        PROP(&e, pop_server_send_dstr(&ditm->ps, &msg_dne) );
+        return e;
     }
     // open the message from the maildir
     int fd;
-    PROP(e, maildir_open_message(&ditm->maildir, internal_index, &fd) );
+    PROP(&e, maildir_open_message(&ditm->maildir, internal_index, &fd) );
 
     // now build a response
-    PROP_GO(e, dstr_append(&response, &msg_ok), fail );
+    PROP_GO(&e, dstr_append(&response, &msg_ok), fail );
 
     // count how many lines we are going to send after sending headers
     bool header_done = false;
@@ -531,7 +531,7 @@ static derr_t tophook(void* arg, unsigned int index, unsigned int lines){
     while(true){
         // read from the file
         size_t amnt_read;
-        PROP_GO(e, dstr_read(fd, &raw, 0, &amnt_read), fail);
+        PROP_GO(&e, dstr_read(fd, &raw, 0, &amnt_read), fail);
         // check if we need to cut off the message early
         if(header_done == false){
             // look for header end
@@ -541,7 +541,7 @@ static derr_t tophook(void* arg, unsigned int index, unsigned int lines){
             if(!pos){
                 /* in this case we still haven't found the end of the headers,
                    so copy over everything (excpet the partial match at end) */
-                PROP_GO(e, dstr_append(&checked, &raw), fail);
+                PROP_GO(&e, dstr_append(&checked, &raw), fail);
                 // remove the partial match from checked
                 checked.len -= partial;
                 // leftshift raw, leaving partial match in place
@@ -554,7 +554,7 @@ static derr_t tophook(void* arg, unsigned int index, unsigned int lines){
                 size_t hlen = (uintptr_t)(pos - raw.data)
                               + header_end_pat.data[0].len;
                 header = dstr_sub(&raw, 0, hlen);
-                PROP_GO(e, dstr_append(&checked, &header), fail);
+                PROP_GO(&e, dstr_append(&checked, &header), fail);
                 dstr_leftshift(&raw, hlen);
             }
         }
@@ -571,7 +571,7 @@ static derr_t tophook(void* arg, unsigned int index, unsigned int lines){
             size_t count = dstr_count(&raw, &line_end);
             if(count + lines_sent < lines){
                 // we don't have enough lines, copy over all of raw
-                PROP_GO(e, dstr_append(&checked, &raw), fail);
+                PROP_GO(&e, dstr_append(&checked, &raw), fail);
                 // if the last character is '\r' we will save it
                 size_t partial = raw.len > 0 && raw.data[raw.len - 1] == '\r';
                 checked.len -= partial;
@@ -595,7 +595,7 @@ static derr_t tophook(void* arg, unsigned int index, unsigned int lines){
                 }
                 // now let sub be all the lines we're about to send
                 sub = dstr_sub(&raw, 0, (uintptr_t)(pos - raw.data));
-                PROP_GO(e, dstr_append(&checked, &sub), fail);
+                PROP_GO(&e, dstr_append(&checked, &sub), fail);
                 // no more reading needs to be done
                 break;
             }
@@ -606,20 +606,20 @@ static derr_t tophook(void* arg, unsigned int index, unsigned int lines){
         }
         // check if we should flush the response
         if(checked.len >= checked.size / 2){
-            PROP_GO(e, pop3_encode(&checked, &response, false), fail);
-            PROP_GO(e, pop_server_send_dstr(&ditm->ps, &response), fail);
+            PROP_GO(&e, pop3_encode(&checked, &response, false), fail);
+            PROP_GO(&e, pop_server_send_dstr(&ditm->ps, &response), fail);
             response.len = 0;
         }
     }
     close(fd);
 
     // encode the last of the response
-    PROP(e, pop3_encode(&checked, &response, true));
+    PROP(&e, pop3_encode(&checked, &response, true));
     // now add the end of the multi-line response
-    PROP(e, dstr_append(&response, &multi_line_end) );
+    PROP(&e, dstr_append(&response, &multi_line_end) );
     // send the last of the response
-    PROP(e, pop_server_send_dstr(&ditm->ps, &response) );
-    return E_OK;
+    PROP(&e, pop_server_send_dstr(&ditm->ps, &response) );
+    return e;
 
 fail:
     close(fd);
@@ -639,24 +639,24 @@ static derr_t uidlhook(void* arg, int index){
         size_t internal_index = (size_t)index - 1;
         // make sure the index isn't too high
         if(internal_index >= ditm->deletions.len){
-            PROP(e, pop_server_send_dstr(&ditm->ps, &msg_dne) );
-            return E_OK;
+            PROP(&e, pop_server_send_dstr(&ditm->ps, &msg_dne) );
+            return e;
         }
         // make sure the email isn't deleted
         bool deleted = ditm->deletions.data[internal_index];
         if(deleted == true){
-            PROP(e, pop_server_send_dstr(&ditm->ps, &msg_dne) );
-            return E_OK;
+            PROP(&e, pop_server_send_dstr(&ditm->ps, &msg_dne) );
+            return e;
         }
         // now build a response
         dstr_t* uid = &ditm->maildir.uids.data[internal_index];
-        PROP(e, FMT(&response, "+OK %x %x\r\n", FI(index), FD(uid)) );
-        PROP(e, pop_server_send_dstr(&ditm->ps, &response) );
-        return E_OK;
+        PROP(&e, FMT(&response, "+OK %x %x\r\n", FI(index), FD(uid)) );
+        PROP(&e, pop_server_send_dstr(&ditm->ps, &response) );
+        return e;
     }
     //now we can handle the case where we need to list all messages
     // get the first line of the response
-    PROP(e, dstr_append(&response, &msg_ok) );
+    PROP(&e, dstr_append(&response, &msg_ok) );
     // now get all the other lines of the response
     size_t num_messages = ditm->maildir.uids.len;
     for(size_t i = 0; i < num_messages; i++){
@@ -665,19 +665,19 @@ static derr_t uidlhook(void* arg, int index){
             // add one line to the response
             size_t index_show = i+1;
             dstr_t* uid = &ditm->maildir.uids.data[i];
-            PROP(e, FMT(&response, "%x %x\r\n", FU(index_show), FD(uid)) );
+            PROP(&e, FMT(&response, "%x %x\r\n", FU(index_show), FD(uid)) );
             // check if response should be flushed
             if(response.size - response.len < 64){
-                PROP(e, pop_server_send_dstr(&ditm->ps, &response) );
+                PROP(&e, pop_server_send_dstr(&ditm->ps, &response) );
                 response.len = 0;
             }
         }
     }
     // now add the end of the multi-line response
-    PROP(e, dstr_append(&response, &multi_line_end) );
+    PROP(&e, dstr_append(&response, &multi_line_end) );
     // send the response
-    PROP(e, pop_server_send_dstr(&ditm->ps, &response) );
-    return E_OK;
+    PROP(&e, pop_server_send_dstr(&ditm->ps, &response) );
+    return e;
 }
 
 static derr_t quithook(void* arg, bool* update_ok){
@@ -686,7 +686,7 @@ static derr_t quithook(void* arg, bool* update_ok){
     ditm_t* ditm = (ditm_t*) arg;
     // make sure we can enter the update state on the server
     DSTR_VAR(message, 1024);
-    PROP(e, pop_client_quit(&ditm->pc, update_ok, &message) );
+    PROP(&e, pop_client_quit(&ditm->pc, update_ok, &message) );
     if(ditm->logged_in == true && *update_ok){
         // delete all messages marked for deletion
         size_t num_messages = ditm->deletions.len;
@@ -695,11 +695,11 @@ static derr_t quithook(void* arg, bool* update_ok){
             size_t idx = num_messages - 1 - i;
             bool deleted = ditm->deletions.data[idx];
             if(deleted == true){
-                PROP(e, maildir_delete_message(&ditm->maildir, idx) );
+                PROP(&e, maildir_delete_message(&ditm->maildir, idx) );
             }
         }
     }
-    return E_OK;
+    return e;
 }
 
 static derr_t ditm_parse_minversion(dstr_t* msg, unsigned int* maj,
@@ -709,7 +709,7 @@ static derr_t ditm_parse_minversion(dstr_t* msg, unsigned int* maj,
     LIST_PRESET(dstr_t, patterns, DSTR_LIT("DITMv"));
     char* position = dstr_find(msg, &patterns, NULL, NULL);
     if(!position){
-        ORIG(e, E_IO, "minimum version not found");
+        ORIG(&e, E_IO, "minimum version not found");
     }
 
     // find the end of the minversion string
@@ -727,25 +727,25 @@ static derr_t ditm_parse_minversion(dstr_t* msg, unsigned int* maj,
     derr_t e2 = dstr_split(&vstring, &DSTR_LIT("."), &majminbld);
     CATCH(e2, E_FIXEDSIZE){
         // too many periods, version string is invalid
-        TRACE(e2, "invalid minversion string: %x\n", FD(&vstring));
-        RETHROW(e, e2, E_VALUE);
-    }else PROP(e, e2);
+        TRACE(&e2, "invalid minversion string: %x\n", FD(&vstring));
+        RETHROW(&e, &e2, E_VALUE);
+    }else PROP(&e, e2);
 
     // convert each element to an integer
-    PROP(e, dstr_tou(&majminbld.data[0], maj, 10) );
+    PROP(&e, dstr_tou(&majminbld.data[0], maj, 10) );
     // for minor and build, assume 0 if not present
     if(majminbld.len > 1){
-        PROP(e, dstr_tou(&majminbld.data[1], min, 10) );
+        PROP(&e, dstr_tou(&majminbld.data[1], min, 10) );
     }else{
         *min = 0;
     }
     if(majminbld.len > 2){
-        PROP(e, dstr_tou(&majminbld.data[2], bld, 10) );
+        PROP(&e, dstr_tou(&majminbld.data[2], bld, 10) );
     }else{
         *bld = 0;
     }
 
-    return E_OK;
+    return e;
 }
 
 derr_t ditm_new(ditm_t* ditm, ssl_context_t* ctx, connection_t* conn,
@@ -764,7 +764,7 @@ derr_t ditm_new(ditm_t* ditm, ssl_context_t* ctx, connection_t* conn,
     ditm->api_port = api_port;
 
     // allocate pop_client
-    PROP(e, pop_client_new(&ditm->pc) );
+    PROP(&e, pop_client_new(&ditm->pc) );
 
     // set pop_server hooks
     pop_server_hooks_t hooks = { loginhook, stathook, listhook,
@@ -776,12 +776,12 @@ derr_t ditm_new(ditm_t* ditm, ssl_context_t* ctx, connection_t* conn,
     ditm->ps.hooks = hooks;
 
     // allocate deletions for the local store, controlled by ditm
-    PROP_GO(e, LIST_NEW(bool, &ditm->deletions, 256), cu_pc);
+    PROP_GO(&e, LIST_NEW(bool, &ditm->deletions, 256), cu_pc);
 
     // dirpath should wrap dirpath_buffer
     DSTR_WRAP_ARRAY(ditm->dirpath, ditm->dirpath_buffer);
     // copy the ditm_dir parameter to ditm struct
-    PROP_GO(e, FMT(&ditm->dirpath, "%x", FS(dirpath)), cu_deletions);
+    PROP_GO(&e, FMT(&ditm->dirpath, "%x", FS(dirpath)), cu_deletions);
 
     /* since ditm_new() is only called after a connection is made,
        we can start connecting the pop_client right away */
@@ -789,27 +789,27 @@ derr_t ditm_new(ditm_t* ditm, ssl_context_t* ctx, connection_t* conn,
     // get the server greeting
     bool status_ok;
     DSTR_VAR(message, 1024);
-    IF_PROP(e, pop_client_connect(&ditm->pc, ctx, rhost, rport, &status_ok, &message) ){
+    IF_PROP(&e, pop_client_connect(&ditm->pc, ctx, rhost, rport, &status_ok, &message) ){
         // send response over pop_server before giving up
         /* This response should be positive so that Thunderbird doesn't freak out
            (it will handle the broken connection gracefully, but not -ERR) */
         DSTR_STATIC(response, "+OK error connecting to remote server\r\n");
-        MERGE(e, pop_server_send_dstr(&ditm->ps, &response), "alerting client");
+        MERGE_CMD(&e, pop_server_send_dstr(&ditm->ps, &response), "alerting client");
         goto cu_deletions;
     }
     // if we got a -ERR in the server greeting... that's weird. but whatever.
     if(status_ok == false){
-        TRACE_ORIG(e, E_VALUE, "server greeted with error message");
+        TRACE_ORIG(&e, E_VALUE, "server greeted with error message");
         DSTR_STATIC(response, "-ERR remote server greeted with error message\r\n");
-        MERGE(e, pop_server_send_dstr(&ditm->ps, &response), "sending -ERR");
+        MERGE_CMD(&e, pop_server_send_dstr(&ditm->ps, &response), "sending -ERR");
         goto cu_deletions;
     }
 
     // now parse the minversion out of the message
     unsigned int maj, min, bld;
-    IF_PROP(e, ditm_parse_minversion(&message, &maj, &min, &bld) ){
+    IF_PROP(&e, ditm_parse_minversion(&message, &maj, &min, &bld) ){
         DSTR_STATIC(response, "-ERR error parsing minimum version from server greeting\r\n");
-        MERGE(e, pop_server_send_dstr(&ditm->ps, &response), "alerting client");
+        MERGE_CMD(&e, pop_server_send_dstr(&ditm->ps, &response), "alerting client");
         goto cu_deletions;
     }
 
@@ -823,11 +823,11 @@ derr_t ditm_new(ditm_t* ditm, ssl_context_t* ctx, connection_t* conn,
 
     // send the banner over the pop_server
     DSTR_STATIC(response, "+OK DITM ready.\r\n");
-    PROP_GO(e, pop_server_send_dstr(&ditm->ps, &response), cu_deletions);
+    PROP_GO(&e, pop_server_send_dstr(&ditm->ps, &response), cu_deletions);
 
     ditm->logged_in = false;
 
-    return E_OK;
+    return e;
 
 cu_deletions:
     LIST_FREE(bool, &ditm->deletions);
@@ -872,19 +872,19 @@ static derr_t ditm_download_new_message(ditm_t* ditm, key_tool_t* kt,
 
     // don't do anything if we already have it
     if(in_list(uid, &ditm->maildir.uids, NULL)){
-        return E_OK;
+        return e;
     }
 
     // send RETR N to pop_server
     e2 = pop_client_retrieve(&ditm->pc, (unsigned int)index, &status_ok, &message);
     // message too long means bad server response
     CATCH(e2, E_FIXEDSIZE){
-        RETHROW(e, e2, E_RESPONSE);
-    }else PROP(e, e2);
+        RETHROW(&e, &e2, E_RESPONSE);
+    }else PROP(&e, e2);
 
     // if status is ERR, quit here
     if(status_ok == false){
-        ORIG(e, E_RESPONSE, "RETR command failed");
+        ORIG(&e, E_RESPONSE, "RETR command failed");
     }
 
     /* open two temporary files.  One is for the raw file and the second
@@ -893,8 +893,8 @@ static derr_t ditm_download_new_message(ditm_t* ditm, key_tool_t* kt,
     size_t t1len = 0, t2len = 0;
     DSTR_VAR(t1path, 4096);
     DSTR_VAR(t2path, 4096);
-    PROP(e, maildir_new_tmp_file(&ditm->maildir, &t1path, &t1fd) );
-    PROP_GO(e, maildir_new_tmp_file(&ditm->maildir, &t2path, &t2fd), close_t1);
+    PROP(&e, maildir_new_tmp_file(&ditm->maildir, &t1path, &t1fd) );
+    PROP_GO(&e, maildir_new_tmp_file(&ditm->maildir, &t2path, &t2fd), close_t1);
 
     // store the first few bytes in memory so we know about encryption
     DSTR_STATIC(enc_header, "-----BEGIN SPLINTERMAIL MESSAGE-----");
@@ -907,8 +907,8 @@ static derr_t ditm_download_new_message(ditm_t* ditm, key_tool_t* kt,
     e2 = pop_client_get_body(&ditm->pc, &buffer, true, &end);
     // a FIXEDSIZE error here indicates buffer is full; internal error
     CATCH(e2, E_FIXEDSIZE){
-        RETHROW_GO(e, e2, E_INTERNAL, close_t2);
-    }else PROP_GO(e, e2, close_t2);
+        RETHROW_GO(&e, &e2, E_INTERNAL, close_t2);
+    }else PROP_GO(&e, e2, close_t2);
 
     while(true){
         // fill up first_bytes if there's room
@@ -918,12 +918,12 @@ static derr_t ditm_download_new_message(ditm_t* ditm, key_tool_t* kt,
             e2 = dstr_append(&first_bytes, &sub);
             // should never ever fail
             CATCH(e2, E_ANY){
-                RETHROW_GO(e, e2, E_INTERNAL, close_t2);
+                RETHROW_GO(&e, &e2, E_INTERNAL, close_t2);
             }
         }
 
         // write buffer to file
-        PROP_GO(e, dstr_write(t1fd, &buffer), close_t2);
+        PROP_GO(&e, dstr_write(t1fd, &buffer), close_t2);
         t1len += buffer.len;
         buffer.len = 0;
 
@@ -934,16 +934,16 @@ static derr_t ditm_download_new_message(ditm_t* ditm, key_tool_t* kt,
         e2 = pop_client_get_body(&ditm->pc, &buffer, false, &end);
         // a FIXEDSIZE error here indicates buffer is full; internal error
         CATCH(e2, E_FIXEDSIZE){
-            RETHROW_GO(e, e2, E_INTERNAL, close_t2);
-        }else PROP_GO(e, e2, close_t2);
+            RETHROW_GO(&e, &e2, E_INTERNAL, close_t2);
+        }else PROP_GO(&e, e2, close_t2);
     }
 
     // reset temp file 1 for reading
     off_t oret = lseek(t1fd, 0, SEEK_SET);
     if(oret == (off_t) -1){
-        TRACE(e, "%x: %x\n", FS("lseek"), FE(&errno));
+        TRACE(&e, "%x: %x\n", FS("lseek"), FE(&errno));
         // I don't see why this would ever fail
-        ORIG_GO(e, E_INTERNAL, "lseek failed", close_t2);
+        ORIG_GO(&e, E_INTERNAL, "lseek failed", close_t2);
     }
 
     // find out if the email was encrypted
@@ -953,31 +953,31 @@ static derr_t ditm_download_new_message(ditm_t* ditm, key_tool_t* kt,
         e2 = key_tool_decrypt(kt, t1fd, t2fd, &t2len);
         CATCH(e2, E_NOT4ME){
             // message encrypted but not for us, we'll have to ignore it
-            DROP(e2);
+            DROP_VAR(&e2);
             state = DITM_DS_NOT_FOR_ME;
             LOG_DEBUG("msg state: DITM_DS_NOT_FOR_ME\n");
             goto close_t2;
         }else CATCH(e2, E_PARAM){
-            DROP(e2);
+            DROP_VAR(&e2);
             // broken message, mangle the body and hand it to the user
             // reset temp file 1 and temp file 2, we're going to try again
             oret = lseek(t1fd, 0, SEEK_SET);
             if(oret == (off_t) -1){
-                TRACE(e, "%x: %x\n", FS("lseek"), FE(&errno));
+                TRACE(&e, "%x: %x\n", FS("lseek"), FE(&errno));
                 // I don't see why this would ever fail
-                ORIG_GO(e, E_INTERNAL, "lseek failed", close_t2);
+                ORIG_GO(&e, E_INTERNAL, "lseek failed", close_t2);
             }
             oret = lseek(t2fd, 0, SEEK_SET);
             if(oret == (off_t) -1){
-                TRACE(e, "%x: %x\n", FS("lseek"), FE(&errno));
+                TRACE(&e, "%x: %x\n", FS("lseek"), FE(&errno));
                 // I don't see why this would ever fail
-                ORIG_GO(e, E_INTERNAL, "lseek failed", close_t2);
+                ORIG_GO(&e, E_INTERNAL, "lseek failed", close_t2);
             }
-            PROP_GO(e, ditm_mangle_corrupted(t1fd, t2fd, &t2len), close_t2);
+            PROP_GO(&e, ditm_mangle_corrupted(t1fd, t2fd, &t2len), close_t2);
             state = DITM_DS_CORRUPTED;
             LOG_DEBUG("msg state: DITM_DS_CORRUPTED\n");
             goto close_t2;
-        }else PROP(e, e2);
+        }else PROP(&e, e2);
         // if we recieved no errors, then we are good
         state = DITM_DS_DECRYPTED;
         LOG_DEBUG("msg state: DITM_DS_DECRYPTED\n");
@@ -985,7 +985,7 @@ static derr_t ditm_download_new_message(ditm_t* ditm, key_tool_t* kt,
     }
     // handle unencrypted mail
     else{
-        PROP_GO(e, ditm_mangle_unencrypted(t1fd, t2fd, &t2len), close_t2);
+        PROP_GO(&e, ditm_mangle_unencrypted(t1fd, t2fd, &t2len), close_t2);
         state = DITM_DS_UNENCRYPTED;
         LOG_DEBUG("msg state: DITM_DS_UNENCRYPTED\n");
         // inform the key_tool we received something unencrypted
@@ -1019,24 +1019,24 @@ close_t1:
     // now handle the various outcomes
     switch(state){
     case DITM_DS_UNINITIALIZED:
-        ORIG(e, E_INTERNAL, "switching on state but state is not initialized");
+        ORIG(&e, E_INTERNAL, "switching on state but state is not initialized");
     case DITM_DS_UNENCRYPTED:
         // save t2 (subject-mangled) to maildir
-        PROP(e, maildir_new_rename(&ditm->maildir, t2path.data, uid, t2len) );
+        PROP(&e, maildir_new_rename(&ditm->maildir, t2path.data, uid, t2len) );
         // indicate that we need to sync peer list
         kt->found_expired_peer = true;
         break;
     case DITM_DS_DECRYPTED:
         // save t2 (decrypted) to maildir
-        PROP(e, maildir_new_rename(&ditm->maildir, t2path.data, uid, t2len) );
+        PROP(&e, maildir_new_rename(&ditm->maildir, t2path.data, uid, t2len) );
         break;
     case DITM_DS_CORRUPTED:
         // save t2 (body-mangled) to maildir
-        PROP(e, maildir_new_rename(&ditm->maildir, t2path.data, uid, t2len) );
+        PROP(&e, maildir_new_rename(&ditm->maildir, t2path.data, uid, t2len) );
         break;
     case DITM_DS_NOT_FOR_ME:
         // add to ignore list
-        PROP(e, ignore_list_add(il, uid) );
+        PROP(&e, ignore_list_add(il, uid) );
         // delete t2
         ret = remove(t2path.data);
         if(ret != 0){
@@ -1045,7 +1045,7 @@ close_t1:
         }
         break;
     }
-    return E_OK;
+    return e;
 }
 
 /* read an unencrypted email on infd and write it to outfd with "NOT ENCRYPTED"
@@ -1067,8 +1067,8 @@ derr_t ditm_mangle_unencrypted(int infd, int outfd, size_t* outlen){
         derr_t e2 = dstr_read(infd, &buffer, 0, &amnt_read);
         // E_FIXEDSIZE means we have an internal error
         CATCH(e2, E_FIXEDSIZE){
-            RETHROW(e, e2, E_INTERNAL);
-        }else PROP(e, e2);
+            RETHROW(&e, &e2, E_INTERNAL);
+        }else PROP(&e, e2);
         // break if necessary
         if(amnt_read == 0) break;
         // search for the patterns
@@ -1078,7 +1078,7 @@ derr_t ditm_mangle_unencrypted(int infd, int outfd, size_t* outlen){
         if(!pos){
             // if we found nothing, write all but the partial match
             dstr_t sub = dstr_sub(&buffer, 0, buffer.len - partial);
-            PROP(e, dstr_write(outfd, &sub) );
+            PROP(&e, dstr_write(outfd, &sub) );
             *outlen += sub.len;
             dstr_leftshift(&buffer, buffer.len - partial);
             continue;
@@ -1089,19 +1089,19 @@ derr_t ditm_mangle_unencrypted(int infd, int outfd, size_t* outlen){
             size_t headers_end = (uintptr_t)(pos - buffer.data);
             // write to the end of headers
             dstr_t pre = dstr_sub(&buffer, 0, headers_end);
-            PROP(e, dstr_write(outfd, &pre) );
+            PROP(&e, dstr_write(outfd, &pre) );
             *outlen += pre.len;
             // get the native len break
             dstr_t nlb = dstr_sub(&subj.data[which],
                                   0, subj.data[which].len / 2);
-            PROP(e, dstr_write(outfd, &nlb) );
+            PROP(&e, dstr_write(outfd, &nlb) );
             *outlen += nlb.len;
             // write the missing subject line
-            PROP(e, dstr_write(outfd, &subj_entire) );
+            PROP(&e, dstr_write(outfd, &subj_entire) );
             *outlen += subj_entire.len;
             // write the rest of the buffer
             dstr_t post = dstr_sub(&buffer, headers_end, 0);
-            PROP(e, dstr_write(outfd, &post) );
+            PROP(&e, dstr_write(outfd, &post) );
             *outlen += post.len;
             buffer.len = 0;
             // now just dump the rest
@@ -1112,15 +1112,15 @@ derr_t ditm_mangle_unencrypted(int infd, int outfd, size_t* outlen){
             size_t subj_end = (uintptr_t)(pos - buffer.data) + subj.data[which].len;
             // write to the end of "Subject:"
             dstr_t pre = dstr_sub(&buffer, 0, subj_end);
-            PROP(e, dstr_write(outfd, &pre) );
+            PROP(&e, dstr_write(outfd, &pre) );
             *outlen += pre.len;
             // write the warning
             DSTR_STATIC(mangle, " NOT ENCRYPTED:");
-            PROP(e, dstr_write(outfd, &mangle) );
+            PROP(&e, dstr_write(outfd, &mangle) );
             *outlen += mangle.len;
             // write the rest of the buffer
             dstr_t post = dstr_sub(&buffer, subj_end, 0);
-            PROP(e, dstr_write(outfd, &post) );
+            PROP(&e, dstr_write(outfd, &post) );
             *outlen += post.len;
             buffer.len = 0;
             // we only expect one subject line, so just dump the rest
@@ -1132,16 +1132,16 @@ derr_t ditm_mangle_unencrypted(int infd, int outfd, size_t* outlen){
         // read something
         derr_t e2 = dstr_read(infd, &buffer, 0, &amnt_read);
         CATCH(e2, E_FIXEDSIZE){
-            RETHROW(e, e2, E_INTERNAL);
-        }else PROP(e, e2);
+            RETHROW(&e, &e2, E_INTERNAL);
+        }else PROP(&e, e2);
         // break if necessary
         if(amnt_read == 0) break;
         // write something
-        PROP(e, dstr_write(outfd, &buffer) );
+        PROP(&e, dstr_write(outfd, &buffer) );
         *outlen += buffer.len;
         buffer.len = 0;
     }
-    return E_OK;
+    return e;
 }
 
 // take a corrupted message and prepend an explanation
@@ -1152,8 +1152,8 @@ derr_t ditm_mangle_corrupted(int infd, int outfd, size_t* outlen){
     // c99 doesn't allow for the rentrant localtime_r(), and its not a big deal
     struct tm* tret = localtime(&epoch);
     if(tret == NULL){
-        TRACE(e, "%x: %x\n", FS("localtime"), FE(&errno));
-        ORIG(e, E_INTERNAL, "error converting epoch time to time struct");
+        TRACE(&e, "%x: %x\n", FS("localtime"), FE(&errno));
+        ORIG(&e, E_INTERNAL, "error converting epoch time to time struct");
     }
     struct tm tnow = *tret;
     // print human-readable date to a buffer
@@ -1161,8 +1161,8 @@ derr_t ditm_mangle_corrupted(int infd, int outfd, size_t* outlen){
     size_t len;
     len = strftime(d, sizeof(d), "%a, %d %b %Y %H:%M:%S %z", &tnow);
     if(len == 0){
-        TRACE(e, "%x: %x\n", FS("strftime"), FE(&errno));
-        ORIG(e, E_INTERNAL, "error formatting time string");
+        TRACE(&e, "%x: %x\n", FS("strftime"), FE(&errno));
+        ORIG(&e, E_INTERNAL, "error formatting time string");
     }
     // build the headers
     DSTR_VAR(buffer, 4096);
@@ -1176,11 +1176,11 @@ derr_t ditm_mangle_corrupted(int infd, int outfd, size_t* outlen){
                              " and cannot be decrypted:\r\n"
                              "\r\n", FS(d));
     CATCH(e2, E_FIXEDSIZE){
-        RETHROW(e, e2, E_INTERNAL);
-    }else PROP(e, e2);
+        RETHROW(&e, &e2, E_INTERNAL);
+    }else PROP(&e, e2);
 
     // dump headers to message
-    PROP(e, dstr_write(outfd, &buffer) );
+    PROP(&e, dstr_write(outfd, &buffer) );
     *outlen = buffer.len;
     buffer.len = 0;
 
@@ -1190,16 +1190,16 @@ derr_t ditm_mangle_corrupted(int infd, int outfd, size_t* outlen){
         // read some stuff
         e2 = dstr_read(infd, &buffer, 0, &amnt_read);
         CATCH(e2, E_FIXEDSIZE){
-            RETHROW(e, e2, E_INTERNAL);
-        }else PROP(e, e2);
+            RETHROW(&e, &e2, E_INTERNAL);
+        }else PROP(&e, e2);
         // break if necessary
         if(amnt_read == 0) break;
         // write some stuff
-        PROP(e, dstr_write(outfd, &buffer) );
+        PROP(&e, dstr_write(outfd, &buffer) );
         *outlen += buffer.len;
         buffer.len = 0;
     }
-    return E_OK;
+    return e;
 }
 
 // inject a local-only message into the mailbox
@@ -1210,8 +1210,8 @@ derr_t ditm_inject_message(ditm_t* ditm, const dstr_t* subj, const dstr_t* msg){
     // c99 doesn't allow for the rentrant localtime_r(), and its not a big deal
     struct tm* tret = localtime(&epoch);
     if(tret == NULL){
-        TRACE(e, "%x: %x\n", FS("localtime"), FE(&errno));
-        ORIG(e, E_OS, "error converting epoch time to time struct");
+        TRACE(&e, "%x: %x\n", FS("localtime"), FE(&errno));
+        ORIG(&e, E_OS, "error converting epoch time to time struct");
     }
     struct tm tnow = *tret;
     // print human-readable date to a buffer
@@ -1219,12 +1219,12 @@ derr_t ditm_inject_message(ditm_t* ditm, const dstr_t* subj, const dstr_t* msg){
     size_t len;
     len = strftime(d, sizeof(d), "%a, %d %b %Y %H:%M:%S %z", &tnow);
     if(len == 0){
-        TRACE(e, "%x: %x\n", FS("strftime"), FE(&errno));
-        ORIG(e, E_OS, "error formatting time string");
+        TRACE(&e, "%x: %x\n", FS("strftime"), FE(&errno));
+        ORIG(&e, E_OS, "error formatting time string");
     }
     // build the headers
     DSTR_VAR(buffer, 4096);
-    PROP(e, FMT(&buffer, "From: DITM <ditm@localhost>\r\n"
+    PROP(&e, FMT(&buffer, "From: DITM <ditm@localhost>\r\n"
                        "To: Local User <email_user@localhost>\r\n"
                        "Date: %x\r\n"
                        "Subject: %x\r\n"
@@ -1234,22 +1234,22 @@ derr_t ditm_inject_message(ditm_t* ditm, const dstr_t* subj, const dstr_t* msg){
     DSTR_VAR(random, 16);
     DSTR_VAR(hex, 32);
     DSTR_VAR(uid, 40);
-    PROP(e, random_bytes(&random, random.size) );
-    PROP(e, bin2hex(&random, &hex) );
-    PROP(e, FMT(&uid, "LOCAL-%x", FD(&hex)) );
+    PROP(&e, random_bytes(&random, random.size) );
+    PROP(&e, bin2hex(&random, &hex) );
+    PROP(&e, FMT(&uid, "LOCAL-%x", FD(&hex)) );
 
     // open a temp file
     DSTR_VAR(temp, 4096);
     int tfd;
     size_t tlen = 0; // clang wrongly complains this might be unint'd
-    PROP(e, maildir_new_tmp_file(&ditm->maildir, &temp, &tfd) );
+    PROP(&e, maildir_new_tmp_file(&ditm->maildir, &temp, &tfd) );
 
     // dump headers to message
-    PROP_GO(e, dstr_write(tfd, &buffer), fail_tfd);
+    PROP_GO(&e, dstr_write(tfd, &buffer), fail_tfd);
     tlen = buffer.len;
 
     // now write the body
-    PROP_GO(e, dstr_write(tfd, msg), fail_tfd);
+    PROP_GO(&e, dstr_write(tfd, msg), fail_tfd);
     tlen += msg->len;
 
 fail_tfd:
@@ -1257,12 +1257,12 @@ fail_tfd:
     if(e.type) goto fail_temp;
 
     // make sure we can append to ditm->deletions
-    PROP_GO(e, LIST_APPEND(bool, &ditm->deletions, false), fail_temp);
+    PROP_GO(&e, LIST_APPEND(bool, &ditm->deletions, false), fail_temp);
 
     // save the message
-    PROP_GO(e, maildir_new_rename(&ditm->maildir, temp.data, &uid, tlen), fail_deletions);
+    PROP_GO(&e, maildir_new_rename(&ditm->maildir, temp.data, &uid, tlen), fail_deletions);
 
-    return E_OK;
+    return e;
 
 fail_deletions:
     ditm->deletions.len -= 1;
@@ -1297,7 +1297,7 @@ derr_t ditm_loop(const char* rhost, unsigned int rport,
     derr_t e2;
 
     if(!dir_rw_access(ditm_dir, true)){
-        ORIG(e, E_FS, "failure to either create or access the ditm_dir");
+        ORIG(&e, E_FS, "failure to either create or access the ditm_dir");
     }
 
     // prepare server ssl context
@@ -1309,15 +1309,15 @@ derr_t ditm_loop(const char* rhost, unsigned int rport,
         if(!certpath){
             e2 = FMT(&def_cert, "%x/ditm-127.0.0.1-cert.pem", FS(ditm_dir));
             CATCH(e2, E_FIXEDSIZE){
-                RETHROW(e, e2, E_FS);
-            }else PROP(e, e2);
+                RETHROW(&e, &e2, E_FS);
+            }else PROP(&e, e2);
         }
         DSTR_VAR(def_key, 4096);
         if(!keypath){
             e2 = FMT(&def_key, "%x/ditm-127.0.0.1-key.pem", FS(ditm_dir));
             CATCH(e2, E_FIXEDSIZE){
-                RETHROW(e, e2, E_FS);
-            }else PROP(e, e2);
+                RETHROW(&e, &e2, E_FS);
+            }else PROP(&e, e2);
         }
         e2 = ssl_context_new_server(&s_ctx,
                 certpath ? certpath : def_cert.data,
@@ -1325,26 +1325,26 @@ derr_t ditm_loop(const char* rhost, unsigned int rport,
         CATCH(e2, E_FS){
             // if the user manually specified cert or key, un-catch this error
             if(certpath || keypath){
-                TRACE(e2, "failure to set up SSL context, and user specified cert or key\n");
-                RETHROW(e, e2, e2.type);
+                TRACE(&e2, "failure to set up SSL context, and user specified cert or key\n");
+                RETHROW(&e, &e2, e2.type);
             }
-            DROP(e2);
+            DROP_VAR(&e2);
             server_ssl = false;
         }else{
-            PROP(e, e2);
+            PROP(&e, e2);
             server_ssl = true;
         }
     }
     // prepare client ssl context
     ssl_context_t c_ctx;
-    PROP_GO(e, ssl_context_new_client(&c_ctx), cleanup_1);
+    PROP_GO(&e, ssl_context_new_client(&c_ctx), cleanup_1);
 
     // this variable is global
     //listener_t listener;
     if(server_ssl){
-        PROP_GO(e, listener_new_ssl(&listener, &s_ctx, "127.0.0.1", port), cleanup_2);
+        PROP_GO(&e, listener_new_ssl(&listener, &s_ctx, "127.0.0.1", port), cleanup_2);
     }else{
-        PROP_GO(e, listener_new(&listener, "127.0.0.1", port), cleanup_2);
+        PROP_GO(&e, listener_new(&listener, "127.0.0.1", port), cleanup_2);
     }
 
     // prep the signal handler
@@ -1354,7 +1354,7 @@ derr_t ditm_loop(const char* rhost, unsigned int rport,
     // int ret = sigaction(SIGINT, &sa, NULL);
     // if(ret != 0){
     //     LOG_ERROR("%x: %x\n", FS("sigaction"), FE(&errno));
-    //     ORIG(e, E_OS, "unable to set signal handler");
+    //     ORIG(&e, E_OS, "unable to set signal handler");
     // }
     signal(SIGINT, ditm_signal_handler);
     signal(SIGTERM, ditm_signal_handler);
@@ -1362,7 +1362,7 @@ derr_t ditm_loop(const char* rhost, unsigned int rport,
     while(should_continue){
         connection_t conn;
         // accept a connection
-        PROP_GO(e, listener_accept(&listener, &conn), cleanup_3);
+        PROP_GO(&e, listener_accept(&listener, &conn), cleanup_3);
 
         // create a ditm object for this connection
         ditm_t ditm;
@@ -1371,7 +1371,7 @@ derr_t ditm_loop(const char* rhost, unsigned int rport,
         CATCH(e2, E_ANY){
             connection_close(&conn);
             DUMP(e2);
-            DROP(e2);
+            DROP_VAR(&e2);
             continue;
         }
 
@@ -1384,7 +1384,7 @@ derr_t ditm_loop(const char* rhost, unsigned int rport,
             ditm_free(&ditm);
             connection_close(&conn);
             DUMP(e2);
-            DROP(e2);
+            DROP_VAR(&e2);
             continue;
         }
 
@@ -1405,14 +1405,14 @@ cleanup_1:
 derr_t ignore_list_load(ignore_list_t* il, const dstr_t* userdir){
     derr_t e = E_OK;
     // allocate the list, the backing memory, and *seen list
-    PROP(e, LIST_NEW(dstr_t, &il->list, 64) );
-    PROP_GO(e, dstr_new(&il->mem, 64*32), f_list);
-    PROP_GO(e, LIST_NEW(bool, &il->seen, 64), f_mem);
+    PROP(&e, LIST_NEW(dstr_t, &il->list, 64) );
+    PROP_GO(&e, dstr_new(&il->mem, 64*32), f_list);
+    PROP_GO(&e, LIST_NEW(bool, &il->seen, 64), f_mem);
     // allocate to read a json file of unbounded length into memory
     dstr_t text;
-    PROP_GO(e, dstr_new(&text, 4096), f_seen);
+    PROP_GO(&e, dstr_new(&text, 4096), f_seen);
     LIST(json_t) json;
-    PROP_GO(e, LIST_NEW(json_t, &json, 128), f_text);
+    PROP_GO(&e, LIST_NEW(json_t, &json, 128), f_text);
 
     // after this point, failure mode means output an empty string
 
@@ -1421,19 +1421,19 @@ derr_t ignore_list_load(ignore_list_t* il, const dstr_t* userdir){
     derr_t e2 = FMT(&path, "%x/ignore.json", FD(userdir));
     // failing to generate the filename is not a recoverable error
     CATCH(e2, E_FIXEDSIZE){
-        RETHROW_GO(e, e2, E_FS, f_text);
-    }else PROP_GO(e, e2, f_text);
+        RETHROW_GO(&e, &e2, E_FS, f_text);
+    }else PROP_GO(&e, e2, f_text);
 
     // read the file
     e2 = dstr_fread_file(path.data, &text);
     // we can recover from not being able to open the file
     CATCH(e2, E_OPEN | E_OS){
         LOG_WARN("unable to load ignore.json\n");
-        DROP(e2);
+        DROP_VAR(&e2);
         goto cu;
     }else{
         // but we can't recover if something else went wrong
-        PROP_GO(e, e2, f_text);
+        PROP_GO(&e, e2, f_text);
     }
 
     // parse the text
@@ -1441,11 +1441,11 @@ derr_t ignore_list_load(ignore_list_t* il, const dstr_t* userdir){
     // we can recover from a bad json file
     CATCH(e2, E_PARAM){
         LOG_WARN("unable to parse ignore.json\n");
-        DROP(e2);
+        DROP_VAR(&e2);
         goto cu;
     }else{
         // but we can't recover if something else went wrong
-        PROP_GO(e, e2, f_text);
+        PROP_GO(&e, e2, f_text);
     }
 
     // now make sure json root object is an array
@@ -1461,12 +1461,12 @@ derr_t ignore_list_load(ignore_list_t* il, const dstr_t* userdir){
     while(elem){
         // pull the uid we should ignore out of json format
         dstr_t uid;
-        PROP_GO(e, j_to_dstr(*elem, &uid), cu);
+        PROP_GO(&e, j_to_dstr(*elem, &uid), cu);
         // and append it to ignore list
-        PROP_GO(e, list_append_with_mem(&il->list, &il->mem, uid, false),
+        PROP_GO(&e, list_append_with_mem(&il->list, &il->mem, uid, false),
                  f_text);
         // also append to *seen
-        PROP_GO(e, LIST_APPEND(bool, &il->seen, false), f_text);
+        PROP_GO(&e, LIST_APPEND(bool, &il->seen, false), f_text);
         // go to next element
         elem = elem->next;
     }
@@ -1478,9 +1478,9 @@ cu:
         il->list.len = 0;
         il->seen.len = 0;
         il->mem.len = 0;
-        DROP(e);
+        DROP_VAR(&e);
     }
-    return E_OK;
+    return e;
 
 f_text:
     dstr_free(&text);
@@ -1503,12 +1503,12 @@ derr_t ignore_list_write(ignore_list_t* il, const dstr_t* userdir){
     derr_t e = E_OK;
     // get the filename
     DSTR_VAR(path, 4096);
-    PROP(e, FMT(&path, "%x/ignore.json", FD(userdir)) );
+    PROP(&e, FMT(&path, "%x/ignore.json", FD(userdir)) );
     // open the file for reading
     FILE* f = fopen(path.data, "w");
     if(!f){
-        TRACE(e, "%x: %x\n", FS(path.data), FE(&errno));
-        ORIG(e, errno == ENOMEM ? E_NOMEM : E_FS, "unable to open ignore.json for writing");
+        TRACE(&e, "%x: %x\n", FS(path.data), FE(&errno));
+        ORIG(&e, errno == ENOMEM ? E_NOMEM : E_FS, "unable to open ignore.json for writing");
     }
 
     DSTR_STATIC(start, "[");
@@ -1517,7 +1517,7 @@ derr_t ignore_list_write(ignore_list_t* il, const dstr_t* userdir){
     DSTR_STATIC(end, "]\n");
 
     // start the json array
-    PROP_GO(e, dstr_fwrite(f, &start), cleanup);
+    PROP_GO(&e, dstr_fwrite(f, &start), cleanup);
 
     bool one_written = false;
 
@@ -1526,17 +1526,17 @@ derr_t ignore_list_write(ignore_list_t* il, const dstr_t* userdir){
         if(il->seen.data[i]){
             // if we already wrote an element, write the separator
             if(one_written)
-                PROP_GO(e, dstr_fwrite(f, &separator), cleanup);
+                PROP_GO(&e, dstr_fwrite(f, &separator), cleanup);
             // now write the UID to ignore
-            PROP_GO(e, dstr_fwrite(f, &quote), cleanup);
-            PROP_GO(e, dstr_fwrite(f, &il->list.data[i]), cleanup);
-            PROP_GO(e, dstr_fwrite(f, &quote), cleanup);
+            PROP_GO(&e, dstr_fwrite(f, &quote), cleanup);
+            PROP_GO(&e, dstr_fwrite(f, &il->list.data[i]), cleanup);
+            PROP_GO(&e, dstr_fwrite(f, &quote), cleanup);
             one_written = true;
         }
     }
 
     // finish the json array
-    PROP_GO(e, dstr_fwrite(f, &end), cleanup);
+    PROP_GO(&e, dstr_fwrite(f, &end), cleanup);
 
 cleanup:
     fclose(f);
@@ -1545,9 +1545,9 @@ cleanup:
 
 derr_t ignore_list_add(ignore_list_t* il, const dstr_t* uid){
     derr_t e = E_OK;
-    PROP(e, LIST_APPEND(bool, &il->seen, true) );
-    PROP_GO(e, list_append_with_mem(&il->list, &il->mem, *uid, false), fail);
-    return E_OK;
+    PROP(&e, LIST_APPEND(bool, &il->seen, true) );
+    PROP_GO(&e, list_append_with_mem(&il->list, &il->mem, *uid, false), fail);
+    return e;
 
 fail:
     il->seen.len--;

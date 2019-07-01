@@ -41,7 +41,7 @@ static void fake_session_destroyed(fake_session_t *s, derr_t error){
     if(s->mgr_data){
         cb_reader_writer_t *cbrw = s->mgr_data;
         // catch an error from the cbrw
-        MERGE_VAR(error, cbrw->error, "cb reader/writer");
+        MERGE_VAR(&error, &cbrw->error, "cb reader/writer");
         cb_reader_writer_free(cbrw);
     }
     if(error.type != E_NONE){
@@ -74,13 +74,13 @@ static void *loop_thread(void *arg){
     DSTR_VAR(cert, 4096);
     DSTR_VAR(key, 4096);
     DSTR_VAR(dh, 4096);
-    PROP_GO(e, FMT(&cert, "%x/ssl/good-cert.pem", FS(g_test_files)), done);
-    PROP_GO(e, FMT(&key, "%x/ssl/good-key.pem", FS(g_test_files)), done);
-    PROP_GO(e, FMT(&dh, "%x/ssl/dh_4096.pem", FS(g_test_files)), done);
-    PROP_GO(e, ssl_context_new_server(&ctx->ssl_ctx, cert.data, key.data,
+    PROP_GO(&e, FMT(&cert, "%x/ssl/good-cert.pem", FS(g_test_files)), done);
+    PROP_GO(&e, FMT(&key, "%x/ssl/good-key.pem", FS(g_test_files)), done);
+    PROP_GO(&e, FMT(&dh, "%x/ssl/dh_4096.pem", FS(g_test_files)), done);
+    PROP_GO(&e, ssl_context_new_server(&ctx->ssl_ctx, cert.data, key.data,
                                     dh.data), done);
 
-    PROP_GO(e, tlse_init(&ctx->tlse, 5, 5,
+    PROP_GO(&e, tlse_init(&ctx->tlse, 5, 5,
                        fake_session_iface_tlse,
                        fake_session_get_tlse_data,
                        fake_session_get_ssl_ctx,
@@ -88,7 +88,7 @@ static void *loop_thread(void *arg){
                        loop_pass_event, &ctx->loop,
                        fake_engine_pass_event, ctx->downstream), cu_ssl_ctx);
 
-    PROP_GO(e, loop_init(&ctx->loop, 5, 5,
+    PROP_GO(&e, loop_init(&ctx->loop, 5, 5,
                        &ctx->tlse, tlse_pass_event,
                        fake_session_iface_loop,
                        fake_session_get_loop_data,
@@ -96,7 +96,7 @@ static void *loop_thread(void *arg){
                        &pipeline,
                        "127.0.0.1", port_str), cu_tlse);
 
-    IF_PROP(e, tlse_add_to_loop(&ctx->tlse, &ctx->loop.uv_loop) ){
+    IF_PROP(&e, tlse_add_to_loop(&ctx->tlse, &ctx->loop.uv_loop) ){
         // Loop can't run but can't close without running; shit's fucked
         LOG_ERROR("Failed to assemble pipeline, hard exiting\n");
         exit(13);
@@ -104,7 +104,7 @@ static void *loop_thread(void *arg){
 
     // create the listener
     uv_ptr_t uvp = {.type = LP_TYPE_LISTENER, .data={.ssl_ctx=&ctx->ssl_ctx}};
-    PROP_GO(e, loop_add_listener(&ctx->loop, "127.0.0.1", port_str, &uvp),
+    PROP_GO(&e, loop_add_listener(&ctx->loop, "127.0.0.1", port_str, &uvp),
              loop_handle_error);
 
 loop_handle_error:
@@ -119,7 +119,7 @@ loop_handle_error:
     pthread_mutex_unlock(ctx->mutex);
 
     // run the loop
-    PROP_GO(e, loop_run(&ctx->loop), cu_loop);
+    PROP_GO(&e, loop_run(&ctx->loop), cu_loop);
 
 cu_loop:
     // other threads may call loop_free at a later time, so we don't free here
@@ -129,7 +129,7 @@ cu_tlse:
 cu_ssl_ctx:
     ssl_context_free(&ctx->ssl_ctx);
 done:
-    MERGE_VAR(ctx->error, e, "test_tls_engine:loop_thread");
+    MERGE_VAR(&ctx->error, &e, "test_tls_engine:loop_thread");
 
     // signal to the main thread, in case we are exiting early
     pthread_mutex_lock(ctx->mutex);
@@ -159,7 +159,7 @@ static void launch_second_half_of_test(session_cb_data_t *cb_data,
         derr_t e = E_OK;
         // allocate a new connecting session
         void* session;
-        PROP_GO(e, fake_session_alloc_connect(&session, fp,
+        PROP_GO(&e, fake_session_alloc_connect(&session, fp,
                     cb_data->ssl_ctx_client), fail);
 
         // attach the destroy hook
@@ -170,7 +170,7 @@ static void launch_second_half_of_test(session_cb_data_t *cb_data,
         cb_reader_writer_t *cbrw = &cb_data->cb_reader_writers[i];
         event_t *ev_new = cb_reader_writer_init(cbrw, i, WRITES_PER_THREAD, s);
         if(!ev_new){
-            ORIG_GO(e, E_VALUE, "did not get event from cb_reader_writer\n", fail);
+            ORIG_GO(&e, E_VALUE, "did not get event from cb_reader_writer\n", fail);
         }
 
         // attach the cb_reader_writer to the destroy hook
@@ -220,15 +220,15 @@ static void handle_read(void *data, event_t *ev){
         event_t *ev_new = malloc(sizeof(*ev_new));
         if(!ev_new){
             derr_t e = E_OK;
-            TRACE_ORIG(e, E_NOMEM, "no memory!");
-            MERGE_VAR(cb_data->error, e, "malloc");
+            TRACE_ORIG(&e, E_NOMEM, "no memory!");
+            MERGE_VAR(&cb_data->error, &e, "malloc");
             return;
         }
         event_prep(ev_new, NULL);
         if(dstr_new_quiet(&ev_new->buffer, ev->buffer.len)){
             derr_t e = E_OK;
-            TRACE_ORIG(e, E_NOMEM, "no memory!");
-            MERGE_VAR(cb_data->error, e, "malloc");
+            TRACE_ORIG(&e, E_NOMEM, "no memory!");
+            MERGE_VAR(&cb_data->error, &e, "malloc");
             free(ev_new);
             return;
         }
@@ -261,7 +261,7 @@ static derr_t test_tlse(void){
     derr_t e = E_OK;
     // prepare the client ssl context
     ssl_context_t ssl_ctx_client;
-    PROP(e, ssl_context_new_client(&ssl_ctx_client) );
+    PROP(&e, ssl_context_new_client(&ssl_ctx_client) );
 
     // get the conditional variable and mutex ready
     pthread_cond_t cond;
@@ -270,12 +270,12 @@ static derr_t test_tlse(void){
     bool unlock_mutex_on_error = false;
     if(pthread_mutex_init(&mutex, NULL)){
         perror("mutex_init");
-        ORIG_GO(e, E_NOMEM, "failed to allocate mutex", cu_ssl_ctx_client);
+        ORIG_GO(&e, E_NOMEM, "failed to allocate mutex", cu_ssl_ctx_client);
     }
 
     // get the event queue ready
     fake_engine_t fake_engine;
-    PROP_GO(e, fake_engine_init(&fake_engine), cu_mutex);
+    PROP_GO(&e, fake_engine_init(&fake_engine), cu_mutex);
 
     // start the loop thread
     pthread_mutex_lock(&mutex);
@@ -323,7 +323,7 @@ static derr_t test_tlse(void){
     };
 
     // catch error from fake_engine_run
-    MERGE(e, fake_engine_run(
+    MERGE_CMD(&e, fake_engine_run(
             &fake_engine, tlse_pass_event, &test_ctx.tlse,
             handle_read, handle_write_done, quit_ready, &cb_data),
             "fake_engine_run");
@@ -332,11 +332,11 @@ static derr_t test_tlse(void){
     for(size_t i = 0; i < sizeof(threads) / sizeof(*threads); i++){
         pthread_join(threads[i].thread, NULL);
         // check for error
-        MERGE_VAR(e, threads[i].error, "test thread");
+        MERGE_VAR(&e, &threads[i].error, "test thread");
     }
 join_test_thread:
     pthread_join(test_ctx.thread, NULL);
-    MERGE_VAR(e, test_ctx.error, "test context");
+    MERGE_VAR(&e, &test_ctx.error, "test context");
     // now that we know nobody will close the loop, we are safe to free it
     loop_free(&test_ctx.loop);
 
@@ -364,12 +364,12 @@ int main(int argc, char** argv){
     // parse options and set default log level
     PARSE_TEST_OPTIONS(argc, argv, &g_test_files, LOG_LVL_INFO);
 
-    PROP_GO(e, test_tlse(), test_fail);
+    PROP_GO(&e, test_tlse(), test_fail);
 
 test_fail:
     if(e.type){
         DUMP(e);
-        DROP(e);
+        DROP_VAR(&e);
         LOG_ERROR("FAIL\n");
         return 1;
     }

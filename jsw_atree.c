@@ -61,7 +61,7 @@ derr_t jsw_ainit ( jsw_atree_t *tree, cmp_f cmp, rel_f rel )
   /* Initialize sentinel */
   tree->nil = (jsw_anode_t *)malloc ( sizeof *tree->nil );
   if ( tree->nil == NULL ) {
-    ORIG(e, E_NOMEM, "unable to allocate sentinal node for andersson tree");
+    ORIG(&e, E_NOMEM, "unable to allocate sentinal node for andersson tree");
   }
 
   tree->nil->data = NULL; /* Simplifies some ops */
@@ -75,7 +75,7 @@ derr_t jsw_ainit ( jsw_atree_t *tree, cmp_f cmp, rel_f rel )
   tree->rel = rel;
   tree->size = 0;
 
-  return E_OK;
+  return e;
 }
 
 void jsw_adelete ( jsw_atree_t *tree )

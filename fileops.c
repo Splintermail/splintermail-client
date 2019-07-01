@@ -104,15 +104,15 @@ derr_t for_each_file_in_dir(const char* path, for_each_file_hook_t hook, void* u
     DSTR_VAR(search, 4096);
     derr_t e2 = FMT(&search, "%x/*", FS(path));
     CATCH(e2, E_FIXEDSIZE){
-        TRACE(e2, "path too long\n");
-        RETHROW(e, e2 E_FS);
-    }else PROP(e, e2);
+        TRACE(&e2, "path too long\n");
+        RETHROW(&e, &e2 E_FS);
+    }else PROP(&e, e2);
 
     HANDLE hFind = FindFirstFile(search.data, &ffd);
 
     if(hFind == INVALID_HANDLE_VALUE){
         win_perror();
-        ORIG(e, E_FS, "FindFirstFile() failed");
+        ORIG(&e, E_FS, "FindFirstFile() failed");
     }
 
     do{
@@ -125,7 +125,7 @@ derr_t for_each_file_in_dir(const char* path, for_each_file_hook_t hook, void* u
         // get dstr_t from the filename, it must be null-terminated
         dstr_t dfile;
         DSTR_WRAP(dfile, ffd.cFileName, strlen(ffd.cFileName), true);
-        PROP_GO(e, hook(path, &dfile, isdir, userdata), cleanup);
+        PROP_GO(&e, hook(path, &dfile, isdir, userdata), cleanup);
     } while(FindNextFile(hFind, &ffd) != 0);
 
 cleanup:
@@ -136,13 +136,13 @@ cleanup:
 
     DIR* d = opendir(path);
     if(!d){
-        TRACE(e, "%x: %x\n", FS(path), FE(&errno));
+        TRACE(&e, "%x: %x\n", FS(path), FE(&errno));
         if(errno == ENOMEM){
-            ORIG(e, E_NOMEM, "unable to opendir()");
+            ORIG(&e, E_NOMEM, "unable to opendir()");
         }else if(errno == EMFILE || errno == ENFILE){
-            ORIG(e, E_OS, "too many file descriptors open");
+            ORIG(&e, E_OS, "too many file descriptors open");
         }else{
-            ORIG(e, E_FS, "unable to open directory");
+            ORIG(&e, E_FS, "unable to open directory");
         }
     }
 
@@ -152,8 +152,8 @@ cleanup:
         if(!entry){
             if(errno){
                 // this can only throw EBADF, which should never happen
-                TRACE(e, "%x: %x\n", FS("readdir"), FE(&errno));
-                ORIG_GO(e, E_INTERNAL, "unable to readdir()", cleanup);
+                TRACE(&e, "%x: %x\n", FS("readdir"), FE(&errno));
+                ORIG_GO(&e, E_INTERNAL, "unable to readdir()", cleanup);
             }else{
                 break;
             }
@@ -167,7 +167,7 @@ cleanup:
         // get dstr_t from the filename, it must be null-terminated
         dstr_t dfile;
         DSTR_WRAP(dfile, entry->d_name, strlen(entry->d_name), true);
-        PROP_GO(e, hook(path, &dfile, isdir, userdata), cleanup);
+        PROP_GO(&e, hook(path, &dfile, isdir, userdata), cleanup);
     }
 cleanup:
     closedir(d);
@@ -185,36 +185,36 @@ static derr_t rm_rf_hook(const char* base, const dstr_t* file,
     derr_t e2;
     e2 = FMT(&path, "%x/%x", FS(base), FD(file));
     CATCH(e2, E_FIXEDSIZE){
-        TRACE(e2, "path too long\n");
-        RETHROW(e, e2, E_FS);
-    }else PROP(e, e2);
+        TRACE(&e2, "path too long\n");
+        RETHROW(&e, &e2, E_FS);
+    }else PROP(&e, e2);
 
     // base/file is a directory?
     if(isdir){
         // recursively delete everything in the directory
-        PROP(e, for_each_file_in_dir(path.data, rm_rf_hook, NULL) );
+        PROP(&e, for_each_file_in_dir(path.data, rm_rf_hook, NULL) );
         // now delete the directory itself
         int ret = rmdir(path.data);
         if(ret != 0){
-            TRACE(e, "%x: %x\n", FS(path.data), FE(&errno));
-            ORIG(e, E_OS, "failed to remove directory");
+            TRACE(&e, "%x: %x\n", FS(path.data), FE(&errno));
+            ORIG(&e, E_OS, "failed to remove directory");
         }
     }else{
         // make sure we have write permissions to delete the file
         int ret = chmod(path.data, 0600);
         if(ret != 0){
-            TRACE(e, "%x: %x\n", FS(path.data), FE(&errno));
-            ORIG(e, E_OS, "failed to remove file");
+            TRACE(&e, "%x: %x\n", FS(path.data), FE(&errno));
+            ORIG(&e, E_OS, "failed to remove file");
         }
         // now delete the file
         ret = remove(path.data);
         if(ret != 0){
-            TRACE(e, "%x: %x\n", FS(path.data), FE(&errno));
-            ORIG(e, E_OS, "failed to remove file");
+            TRACE(&e, "%x: %x\n", FS(path.data), FE(&errno));
+            ORIG(&e, E_OS, "failed to remove file");
         }
     }
 
-    return E_OK;
+    return e;
 }
 
 derr_t rm_rf(const char* path){
@@ -223,28 +223,28 @@ derr_t rm_rf(const char* path){
     struct stat s;
     int ret = stat(path, &s);
     if(ret != 0){
-        TRACE(e, "%x: %x\n", FS(path), FE(&errno));
-        ORIG(e, E_OS, "stat call failed");
+        TRACE(&e, "%x: %x\n", FS(path), FE(&errno));
+        ORIG(&e, E_OS, "stat call failed");
     }
     // is path a directory?
     if(S_ISDIR(s.st_mode)){
         // if so delete it recursivley
-        PROP(e, for_each_file_in_dir(path, rm_rf_hook, NULL) );
+        PROP(&e, for_each_file_in_dir(path, rm_rf_hook, NULL) );
         // now delete the directory itself
         ret = rmdir(path);
         if(ret != 0){
-            TRACE(e, "%x: %x\n", FS(path), FE(&errno));
-            ORIG(e, E_OS, "failed to remove directory");
+            TRACE(&e, "%x: %x\n", FS(path), FE(&errno));
+            ORIG(&e, E_OS, "failed to remove directory");
         }
     }else{
         // otherwise delete just this file
         ret = remove(path);
         if(ret != 0){
-            TRACE(e, "%x: %x\n", FS(path), FE(&errno));
-            ORIG(e, E_OS, "failed to remove file");
+            TRACE(&e, "%x: %x\n", FS(path), FE(&errno));
+            ORIG(&e, E_OS, "failed to remove file");
         }
     }
-    return E_OK;
+    return e;
 }
 
 
@@ -253,7 +253,7 @@ derr_t for_each_file_in_dir2(const string_builder_t* path,
                              for_each_file_hook2_t hook, void* userdata){
     derr_t e = E_OK;
     DIR* d;
-    PROP(e, opendir_path(path, &d) );
+    PROP(&e, opendir_path(path, &d) );
 
     while(1){
         errno = 0;
@@ -261,8 +261,8 @@ derr_t for_each_file_in_dir2(const string_builder_t* path,
         if(!entry){
             if(errno){
                 // this can only throw EBADF, which should never happen
-                TRACE(e, "%x: %x\n", FS("readdir"), FE(&errno));
-                ORIG_GO(e, E_INTERNAL, "unable to readdir()", cleanup);
+                TRACE(&e, "%x: %x\n", FS("readdir"), FE(&errno));
+                ORIG_GO(&e, E_INTERNAL, "unable to readdir()", cleanup);
             }else{
                 break;
             }
@@ -275,7 +275,7 @@ derr_t for_each_file_in_dir2(const string_builder_t* path,
         }
         dstr_t dfile;
         DSTR_WRAP(dfile, entry->d_name, strlen(entry->d_name), true);
-        PROP_GO(e, hook(path, &dfile, isdir, userdata), cleanup);
+        PROP_GO(&e, hook(path, &dfile, isdir, userdata), cleanup);
     }
 cleanup:
     closedir(d);
@@ -292,7 +292,7 @@ static inline derr_t do_chown_path(const string_builder_t* sb, uid_t uid,
     DSTR_VAR(stack, 256);
     dstr_t heap = {0};
     dstr_t* path;
-    PROP(e, sb_expand(sb, &slash, &stack, &heap, &path) );
+    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
 
     int ret;
     if(l){
@@ -302,10 +302,10 @@ static inline derr_t do_chown_path(const string_builder_t* sb, uid_t uid,
     }
     if(ret != 0){
         if(errno == ENOMEM){
-            ORIG_GO(e, E_NOMEM, "No memory for chown", cu);
+            ORIG_GO(&e, E_NOMEM, "No memory for chown", cu);
         }else{
-            TRACE(e, "chown %x: %x\n", FD(path), FE(&errno));
-            ORIG_GO(e, E_OS, "chown failed\n", cu);
+            TRACE(&e, "chown %x: %x\n", FD(path), FE(&errno));
+            ORIG_GO(&e, E_OS, "chown failed\n", cu);
         }
     }
 cu:
@@ -314,13 +314,13 @@ cu:
 }
 derr_t chown_path(const string_builder_t* sb, uid_t uid, gid_t gid){
     derr_t e = E_OK;
-    PROP(e, do_chown_path(sb, uid, gid, false) );
-    return E_OK;
+    PROP(&e, do_chown_path(sb, uid, gid, false) );
+    return e;
 }
 derr_t lchown_path(const string_builder_t* sb, uid_t uid, gid_t gid){
     derr_t e = E_OK;
-    PROP(e, do_chown_path(sb, uid, gid, true) );
-    return E_OK;
+    PROP(&e, do_chown_path(sb, uid, gid, true) );
+    return e;
 }
 
 derr_t opendir_path(const string_builder_t* sb, DIR** out){
@@ -328,17 +328,17 @@ derr_t opendir_path(const string_builder_t* sb, DIR** out){
     DSTR_VAR(stack, 256);
     dstr_t heap = {0};
     dstr_t* path;
-    PROP(e, sb_expand(sb, &slash, &stack, &heap, &path) );
+    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
 
     DIR* d = opendir(path->data);
     if(!d){
-        TRACE(e, "opendir(%x): %x\n", FS(path->data), FE(&errno));
+        TRACE(&e, "opendir(%x): %x\n", FS(path->data), FE(&errno));
         if(errno == ENOMEM){
-            ORIG_GO(e, E_NOMEM, "unable to opendir()", cu);
+            ORIG_GO(&e, E_NOMEM, "unable to opendir()", cu);
         }else if(errno == EMFILE || errno == ENFILE){
-            ORIG_GO(e, E_OS, "too many file descriptors open", cu);
+            ORIG_GO(&e, E_OS, "too many file descriptors open", cu);
         }else{
-            ORIG_GO(e, E_FS, "unable to open directory", cu);
+            ORIG_GO(&e, E_FS, "unable to open directory", cu);
         }
     }
     *out = d;
@@ -355,35 +355,35 @@ derr_t readlink_path(const string_builder_t* sb, dstr_t* stack_out,
     DSTR_VAR(stack, 256);
     dstr_t heap = {0};
     dstr_t* path;
-    PROP(e, sb_expand(sb, &slash, &stack, &heap, &path) );
+    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
 
     // now try and read
     ssize_t len = readlink(path->data, stack_out->data, stack_out->size);
     if(len < 0){
         if(errno == ENOMEM){
-            ORIG_GO(e, E_NOMEM, "no memory for readlink", cu_path);
+            ORIG_GO(&e, E_NOMEM, "no memory for readlink", cu_path);
         }else{
-            TRACE(e, "readlink %x: %x\n", FD(path), FE(&errno));
-            ORIG_GO(e, E_FS, "unable to readlink", cu_path);
+            TRACE(&e, "readlink %x: %x\n", FD(path), FE(&errno));
+            ORIG_GO(&e, E_FS, "unable to readlink", cu_path);
         }
     }
     // if link wasn't too long, we are done
     if((size_t)len < stack_out->size){
         stack_out->len = (size_t)len;
         // this should never fail now
-        PROP_GO(e, dstr_null_terminate(stack_out), cu_path);
+        PROP_GO(&e, dstr_null_terminate(stack_out), cu_path);
         *out = stack_out;
     }else{
         // the stack_out wasn't big enough
-        PROP_GO(e, dstr_new(heap_out, stack_out->size * 2), cu_path);
+        PROP_GO(&e, dstr_new(heap_out, stack_out->size * 2), cu_path);
         while(true){
             len = readlink(path->data, heap_out->data, heap_out->size);
             if(len < 0){
                 if(errno == ENOMEM){
-                    ORIG_GO(e, E_NOMEM, "no memory for readlink", cu_heap);
+                    ORIG_GO(&e, E_NOMEM, "no memory for readlink", cu_heap);
                 }else{
-                    TRACE(e, "readlink %x: %x\n", FD(path), FE(&errno));
-                    ORIG_GO(e, E_FS, "unable to readlink", cu_heap);
+                    TRACE(&e, "readlink %x: %x\n", FD(path), FE(&errno));
+                    ORIG_GO(&e, E_FS, "unable to readlink", cu_heap);
                 }
             }
             // check if the heap_out was big enough
@@ -391,9 +391,9 @@ derr_t readlink_path(const string_builder_t* sb, dstr_t* stack_out,
                 break;
             }
             // otherwise grow it and try again
-            PROP_GO(e, dstr_grow(heap_out, heap_out->size * 2), cu_heap);
+            PROP_GO(&e, dstr_grow(heap_out, heap_out->size * 2), cu_heap);
         }
-        PROP_GO(e, dstr_null_terminate(heap_out), cu_path);
+        PROP_GO(&e, dstr_null_terminate(heap_out), cu_path);
         *out = heap_out;
     }
 
@@ -409,22 +409,22 @@ derr_t symlink_path(const string_builder_t* to, const string_builder_t* at){
     DSTR_VAR(stack_at, 256);
     dstr_t heap_at = {0};
     dstr_t* at_out;
-    PROP(e, sb_expand(at, &slash, &stack_at, &heap_at, &at_out) );
+    PROP(&e, sb_expand(at, &slash, &stack_at, &heap_at, &at_out) );
 
     DSTR_VAR(stack_to, 256);
     dstr_t heap_to = {0};
     dstr_t* to_out;
-    PROP_GO(e, sb_expand(to, &slash, &stack_to, &heap_to,
+    PROP_GO(&e, sb_expand(to, &slash, &stack_to, &heap_to,
                        &to_out), cu_at);
 
     int ret = symlink(to_out->data, at_out->data);
     if(ret != 0){
         if(errno == ENOMEM){
-            ORIG_GO(e, E_NOMEM, "no memory for symlink", cu_to);
+            ORIG_GO(&e, E_NOMEM, "no memory for symlink", cu_to);
         }else{
-            TRACE(e, "symlink %x -> %x: %x\n",
+            TRACE(&e, "symlink %x -> %x: %x\n",
                       FD(at_out), FD(to_out), FE(&errno));
-            ORIG_GO(e, E_FS, "unable to symlink", cu_to);
+            ORIG_GO(&e, E_FS, "unable to symlink", cu_to);
         }
     }
 
@@ -441,15 +441,15 @@ derr_t chmod_path(const string_builder_t* sb, mode_t mode){
     DSTR_VAR(stack, 256);
     dstr_t heap = {0};
     dstr_t* path;
-    PROP(e, sb_expand(sb, &slash, &stack, &heap, &path) );
+    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
 
     int ret = chmod(path->data, mode);
     if(ret != 0){
         if(errno == ENOMEM){
-            ORIG_GO(e, E_NOMEM, "No memory for chmod", cu);
+            ORIG_GO(&e, E_NOMEM, "No memory for chmod", cu);
         }else{
-            TRACE(e, "chmod %x: %x\n", FD(path), FE(&errno));
-            ORIG_GO(e, E_OS, "chmod failed\n", cu);
+            TRACE(&e, "chmod %x: %x\n", FD(path), FE(&errno));
+            ORIG_GO(&e, E_OS, "chmod failed\n", cu);
         }
     }
 
@@ -463,9 +463,9 @@ derr_t dstr_fread_path(const string_builder_t* sb, dstr_t* buffer){
     DSTR_VAR(stack, 256);
     dstr_t heap = {0};
     dstr_t* path;
-    PROP(e, sb_expand(sb, &slash, &stack, &heap, &path) );
+    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
 
-    PROP_GO(e, dstr_fread_file(path->data, buffer), cu);
+    PROP_GO(&e, dstr_fread_file(path->data, buffer), cu);
 
 cu:
     dstr_free(&heap);
@@ -478,7 +478,7 @@ static inline derr_t do_stat_path(const string_builder_t* sb, struct stat* out,
     DSTR_VAR(stack, 256);
     dstr_t heap = {0};
     dstr_t* path;
-    PROP(e, sb_expand(sb, &slash, &stack, &heap, &path) );
+    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
 
     errno = 0;
     int ret;
@@ -490,11 +490,11 @@ static inline derr_t do_stat_path(const string_builder_t* sb, struct stat* out,
     if(eno != NULL) *eno = errno;
     if(ret != 0){
         if(errno == ENOMEM){
-            ORIG_GO(e, E_NOMEM, "no memory for stat", cu);
+            ORIG_GO(&e, E_NOMEM, "no memory for stat", cu);
         // only throw E_FS if calling function doesn't check *eno
         }else if(eno == NULL){
-            TRACE(e, "unable to stat %x: %x\n", FD(path), FE(&errno));
-            ORIG_GO(e, E_FS, "unable to stat", cu);
+            TRACE(&e, "unable to stat %x: %x\n", FD(path), FE(&errno));
+            ORIG_GO(&e, E_FS, "unable to stat", cu);
         }
     }
 
@@ -504,13 +504,13 @@ cu:
 }
 derr_t stat_path(const string_builder_t* sb, struct stat* out, int* eno){
     derr_t e = E_OK;
-    PROP(e, do_stat_path(sb, out, eno, false) );
-    return E_OK;
+    PROP(&e, do_stat_path(sb, out, eno, false) );
+    return e;
 }
 derr_t lstat_path(const string_builder_t* sb, struct stat* out, int* eno){
     derr_t e = E_OK;
-    PROP(e, do_stat_path(sb, out, eno, true) );
-    return E_OK;
+    PROP(&e, do_stat_path(sb, out, eno, true) );
+    return e;
 }
 
 derr_t mkdir_path(const string_builder_t* sb, mode_t mode, bool soft){
@@ -518,12 +518,12 @@ derr_t mkdir_path(const string_builder_t* sb, mode_t mode, bool soft){
     DSTR_VAR(stack, 256);
     dstr_t heap = {0};
     dstr_t* path;
-    PROP(e, sb_expand(sb, &slash, &stack, &heap, &path) );
+    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
 
     int ret = mkdir(path->data, mode);
     if(ret != 0){
         if(errno == ENOMEM){
-            ORIG_GO(e, E_NOMEM, "no memory for mkdir", cu);
+            ORIG_GO(&e, E_NOMEM, "no memory for mkdir", cu);
         }else if(soft && errno == EEXIST){
             // we might ignore this error, if what exists is a directory
             struct stat s;
@@ -532,14 +532,14 @@ derr_t mkdir_path(const string_builder_t* sb, mode_t mode, bool soft){
                 // it's a directory!  we are fine.
                 goto cu;
             }else if(errno == ENOMEM){
-                ORIG_GO(e, E_NOMEM, "no memory for stat", cu);
+                ORIG_GO(&e, E_NOMEM, "no memory for stat", cu);
             }else{
-                TRACE(e, "mkdir %x failed: file already exists\n", FD(path));
-                ORIG_GO(e, E_FS, "unable to mkdir", cu);
+                TRACE(&e, "mkdir %x failed: file already exists\n", FD(path));
+                ORIG_GO(&e, E_FS, "unable to mkdir", cu);
             }
         }else{
-            TRACE(e, "unable to mkdir %x: %x\n", FD(path), FE(&errno));
-            ORIG_GO(e, E_FS, "unable to mkdir", cu);
+            TRACE(&e, "unable to mkdir %x: %x\n", FD(path), FE(&errno));
+            ORIG_GO(&e, E_FS, "unable to mkdir", cu);
         }
     }
 
@@ -554,27 +554,27 @@ static inline derr_t do_dir_access_path(const string_builder_t* sb, bool create,
     DSTR_VAR(stack, 256);
     dstr_t heap = {0};
     dstr_t* path;
-    PROP(e, sb_expand(sb, &slash, &stack, &heap, &path) );
+    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
 
     *ret = do_dir_access(path->data, create, flags);
 
     dstr_free(&heap);
-    return E_OK;
+    return e;
 }
 derr_t dir_r_access_path(const string_builder_t* sb, bool create, bool* ret){
     derr_t e = E_OK;
-    PROP(e, do_dir_access_path(sb, create, ret, X_OK | R_OK) );
-    return E_OK;
+    PROP(&e, do_dir_access_path(sb, create, ret, X_OK | R_OK) );
+    return e;
 }
 derr_t dir_w_access_path(const string_builder_t* sb, bool create, bool* ret){
     derr_t e = E_OK;
-    PROP(e, do_dir_access_path(sb, create, ret, X_OK | W_OK) );
-    return E_OK;
+    PROP(&e, do_dir_access_path(sb, create, ret, X_OK | W_OK) );
+    return e;
 }
 derr_t dir_rw_access_path(const string_builder_t* sb, bool create, bool* ret){
     derr_t e = E_OK;
-    PROP(e, do_dir_access_path(sb, create, ret, X_OK | R_OK | W_OK) );
-    return E_OK;
+    PROP(&e, do_dir_access_path(sb, create, ret, X_OK | R_OK | W_OK) );
+    return e;
 }
 
 static inline derr_t do_file_access_path(const string_builder_t* sb, bool* ret, int flags){
@@ -582,27 +582,27 @@ static inline derr_t do_file_access_path(const string_builder_t* sb, bool* ret, 
     DSTR_VAR(stack, 256);
     dstr_t heap = {0};
     dstr_t* path;
-    PROP(e, sb_expand(sb, &slash, &stack, &heap, &path) );
+    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
 
     *ret = do_file_access(path->data, flags);
 
     dstr_free(&heap);
-    return E_OK;
+    return e;
 }
 derr_t file_r_access_path(const string_builder_t* sb, bool* ret){
     derr_t e = E_OK;
-    PROP(e, do_file_access_path(sb, ret, R_OK) );
-    return E_OK;
+    PROP(&e, do_file_access_path(sb, ret, R_OK) );
+    return e;
 }
 derr_t file_w_access_path(const string_builder_t* sb, bool* ret){
     derr_t e = E_OK;
-    PROP(e, do_file_access_path(sb, ret, W_OK) );
-    return E_OK;
+    PROP(&e, do_file_access_path(sb, ret, W_OK) );
+    return e;
 }
 derr_t file_rw_access_path(const string_builder_t* sb, bool* ret){
     derr_t e = E_OK;
-    PROP(e, do_file_access_path(sb, ret, R_OK | W_OK) );
-    return E_OK;
+    PROP(&e, do_file_access_path(sb, ret, R_OK | W_OK) );
+    return e;
 }
 
 derr_t exists_path(const string_builder_t* sb, bool* ret){
@@ -610,12 +610,12 @@ derr_t exists_path(const string_builder_t* sb, bool* ret){
     DSTR_VAR(stack, 256);
     dstr_t heap = {0};
     dstr_t* path;
-    PROP(e, sb_expand(sb, &slash, &stack, &heap, &path) );
+    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
 
     *ret = exists(path->data);
 
     dstr_free(&heap);
-    return E_OK;
+    return e;
 }
 
 derr_t remove_path(const string_builder_t* sb){
@@ -623,15 +623,15 @@ derr_t remove_path(const string_builder_t* sb){
     DSTR_VAR(stack, 256);
     dstr_t heap = {0};
     dstr_t* path;
-    PROP(e, sb_expand(sb, &slash, &stack, &heap, &path) );
+    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
 
     int ret = remove(path->data);
     if(ret != 0){
         if(errno == ENOMEM){
-            ORIG_GO(e, E_NOMEM, "no memory for remove", cu);
+            ORIG_GO(&e, E_NOMEM, "no memory for remove", cu);
         }else{
-            TRACE(e, "unable to remove %x: %x\n", FD(path), FE(&errno));
-            ORIG_GO(e, E_FS, "unable to remove", cu);
+            TRACE(&e, "unable to remove %x: %x\n", FD(path), FE(&errno));
+            ORIG_GO(&e, E_FS, "unable to remove", cu);
         }
     }
 
@@ -647,20 +647,20 @@ derr_t file_copy(const char* from, const char* to, mode_t mode){
     int fdin = open(from, O_RDONLY);
     if(fdin < 0){
         if(errno == ENOMEM){
-            ORIG(e, E_NOMEM, "no memory for open");
+            ORIG(&e, E_NOMEM, "no memory for open");
         }else{
-            TRACE(e, "%x: %x\n", FS(from), FE(&errno));
-            ORIG(e, E_OPEN, "unable to open file");
+            TRACE(&e, "%x: %x\n", FS(from), FE(&errno));
+            ORIG(&e, E_OPEN, "unable to open file");
         }
     }
 
     int fdout = open(to, O_WRONLY | O_CREAT | O_TRUNC, mode);
     if(fdout < 0){
         if(errno == ENOMEM){
-            ORIG_GO(e, E_NOMEM, "no memory for open", cu_fdin);
+            ORIG_GO(&e, E_NOMEM, "no memory for open", cu_fdin);
         }else{
-            TRACE(e, "%x: %x\n", FS(to), FE(&errno));
-            ORIG_GO(e, E_OPEN, "unable to open file", cu_fdin);
+            TRACE(&e, "%x: %x\n", FS(to), FE(&errno));
+            ORIG_GO(&e, E_OPEN, "unable to open file", cu_fdin);
         }
     }
 
@@ -668,10 +668,10 @@ derr_t file_copy(const char* from, const char* to, mode_t mode){
     while(true){
         size_t amnt_read;
         buffer.len = 0;
-        PROP_GO(e, dstr_read(fdin, &buffer, 0, &amnt_read), cu_fdout);
+        PROP_GO(&e, dstr_read(fdin, &buffer, 0, &amnt_read), cu_fdout);
         // break on a no-read
         if(amnt_read == 0) break;
-        PROP_GO(e, dstr_write(fdout, &buffer), cu_fdout);
+        PROP_GO(&e, dstr_write(fdout, &buffer), cu_fdout);
     }
 
 cu_fdout:
@@ -687,14 +687,14 @@ derr_t file_copy_path(const string_builder_t* sb_from,
     DSTR_VAR(stack_from, 256);
     dstr_t heap_from = {0};
     dstr_t* path_from;
-    PROP(e, sb_expand(sb_from, &slash, &stack_from, &heap_from, &path_from) );
+    PROP(&e, sb_expand(sb_from, &slash, &stack_from, &heap_from, &path_from) );
 
     DSTR_VAR(stack_to, 256);
     dstr_t heap_to = {0};
     dstr_t* path_to;
-    PROP_GO(e, sb_expand(sb_to, &slash, &stack_to, &heap_to, &path_to), cu_from);
+    PROP_GO(&e, sb_expand(sb_to, &slash, &stack_to, &heap_to, &path_to), cu_from);
 
-    PROP_GO(e, file_copy(path_from->data, path_to->data, mode), cu_to);
+    PROP_GO(&e, file_copy(path_from->data, path_to->data, mode), cu_to);
 
 cu_to:
     dstr_free(&heap_to);
@@ -709,20 +709,20 @@ derr_t touch(const char* path){
     int fd = open(path, O_WRONLY | O_CREAT | O_APPEND, 0666);
     if(fd < 0){
         if(errno == ENOMEM){
-            ORIG(e, E_NOMEM, "no memory for open");
+            ORIG(&e, E_NOMEM, "no memory for open");
         }else{
-            TRACE(e, "%x: %x\n", FS(path), FE(&errno));
-            ORIG(e, E_OPEN, "unable to open file");
+            TRACE(&e, "%x: %x\n", FS(path), FE(&errno));
+            ORIG(&e, E_OPEN, "unable to open file");
         }
     }
     close(fd);
     // use uitme to update the file's timestamp
     int ret = utime(path, NULL);
     if(ret != 0){
-        TRACE(e, "%x: %x\n", FS(path), FE(&errno));
-        ORIG(e, E_FS, "utime failed");
+        TRACE(&e, "%x: %x\n", FS(path), FE(&errno));
+        ORIG(&e, E_FS, "utime failed");
     }
-    return E_OK;
+    return e;
 }
 
 derr_t touch_path(const string_builder_t* sb){
@@ -730,9 +730,9 @@ derr_t touch_path(const string_builder_t* sb){
     DSTR_VAR(stack, 256);
     dstr_t heap = {0};
     dstr_t* path;
-    PROP(e, sb_expand(sb, &slash, &stack, &heap, &path) );
+    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
 
-    PROP_GO(e, touch(path->data), cu);
+    PROP_GO(&e, touch(path->data), cu);
 
 cu:
     dstr_free(&heap);

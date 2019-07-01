@@ -19,55 +19,55 @@ static int same_as(const char* a, const char* b){
 
 #define EXPECT(r, fa, fb, fc, fd, vc, vd) { \
     if(ret.type != r) { \
-        TRACE(e, "return value: expected %x, got %x\n", \
+        TRACE(&e, "return value: expected %x, got %x\n", \
                 FD(error_to_dstr(r)), FD(error_to_dstr(ret.type))); \
-        ORIG(e, E_VALUE, "wrong return value"); \
+        ORIG(&e, E_VALUE, "wrong return value"); \
     } \
     if(ret.type != E_NONE) { \
-        DROP(ret); \
+        DROP_VAR(&ret); \
     } \
     if(r == 0){ \
         if(nargout != newargc) { \
-            TRACE(e, "newargc: expected %x, got %x\n", FI(nargout), FI(newargc)); \
-            ORIG(e, E_VALUE, "wrong newargc"); \
+            TRACE(&e, "newargc: expected %x, got %x\n", FI(nargout), FI(newargc)); \
+            ORIG(&e, E_VALUE, "wrong newargc"); \
         } \
         for(int i = 0; i < nargout; i++){ \
             if(!same_as(argout[i], argv[i])){ \
-                TRACE(e, "argv: expected %x, got %x\n", FS(argout[i]), FS(argv[i])); \
-                ORIG(e, E_VALUE, "wrong found"); \
+                TRACE(&e, "argv: expected %x, got %x\n", FS(argout[i]), FS(argv[i])); \
+                ORIG(&e, E_VALUE, "wrong found"); \
             } \
         }\
         if(fa != opt_a.found){ \
-            TRACE(e, "opt_a.found: expected %x, got %x\n", FI(fa), FI(opt_a.found)); \
-            ORIG(e, E_VALUE, "wrong found"); \
+            TRACE(&e, "opt_a.found: expected %x, got %x\n", FI(fa), FI(opt_a.found)); \
+            ORIG(&e, E_VALUE, "wrong found"); \
         } \
         if(fb != opt_b.found){ \
-            TRACE(e, "opt_b.found: expected %x, got %x\n", FI(fb), FI(opt_b.found)); \
-            ORIG(e, E_VALUE, "wrong found"); \
+            TRACE(&e, "opt_b.found: expected %x, got %x\n", FI(fb), FI(opt_b.found)); \
+            ORIG(&e, E_VALUE, "wrong found"); \
         } \
         if(fc != opt_c.found){ \
-            TRACE(e, "opt_c.found: expected %x, got %x\n", FI(fc), FI(opt_c.found)); \
-            ORIG(e, E_VALUE, "wrong found"); \
+            TRACE(&e, "opt_c.found: expected %x, got %x\n", FI(fc), FI(opt_c.found)); \
+            ORIG(&e, E_VALUE, "wrong found"); \
         } \
         if(fd != opt_d.found){ \
-            TRACE(e, "opt_d.found: expected %x, got %x\n", FI(fd), FI(opt_d.found)); \
-            ORIG(e, E_VALUE, "wrong found"); \
+            TRACE(&e, "opt_d.found: expected %x, got %x\n", FI(fd), FI(opt_d.found)); \
+            ORIG(&e, E_VALUE, "wrong found"); \
         } \
         if(opt_a.val.data != NULL){ \
-            TRACE(e, "opt_a.val: expected %x, got %x\n", FS(NULL), FD(&opt_a.val)); \
-            ORIG(e, E_VALUE, "wrong option value"); \
+            TRACE(&e, "opt_a.val: expected %x, got %x\n", FS(NULL), FD(&opt_a.val)); \
+            ORIG(&e, E_VALUE, "wrong option value"); \
         } \
         if(opt_b.val.data != NULL){ \
-            TRACE(e, "opt_b.val: expected %x, got %x\n", FS(NULL), FD(&opt_b.val)); \
-            ORIG(e, E_VALUE, "wrong option value"); \
+            TRACE(&e, "opt_b.val: expected %x, got %x\n", FS(NULL), FD(&opt_b.val)); \
+            ORIG(&e, E_VALUE, "wrong option value"); \
         } \
         if(!same_as(vc, opt_c.val.data)){ \
-            TRACE(e, "opt_c.val: expected %x, got %x\n", FS(vc), FD(&opt_c.val)); \
-            ORIG(e, E_VALUE, "wrong option value"); \
+            TRACE(&e, "opt_c.val: expected %x, got %x\n", FS(vc), FD(&opt_c.val)); \
+            ORIG(&e, E_VALUE, "wrong option value"); \
         } \
         if(!same_as(vd, opt_d.val.data)){ \
-            TRACE(e, "opt_d.val: expected %x, got %x\n", FS(vd), FD(&opt_d.val)); \
-            ORIG(e, E_VALUE, "wrong option value"); \
+            TRACE(&e, "opt_d.val: expected %x, got %x\n", FS(vd), FD(&opt_d.val)); \
+            ORIG(&e, E_VALUE, "wrong option value"); \
         } \
     } \
 }
@@ -232,19 +232,19 @@ static derr_t test_opt_parse(void){
         EXPECT(0, 1,2,3,4, "cc","everything");
     }
 
-    return E_OK;
+    return e;
 }
 
 #undef EXPECT
 #define EXPECT(_exp) { \
     DSTR_STATIC(exp, _exp); \
     DSTR_VAR(out, 4096); \
-    PROP(e, opt_dump(spec, speclen, &out) ); \
+    PROP(&e, opt_dump(spec, speclen, &out) ); \
     int result = dstr_cmp(&exp, &out); \
     if(result != 0){ \
-        TRACE(e, "expected: %x\n" \
+        TRACE(&e, "expected: %x\n" \
                  "but got:  %x\n", FD(&exp), FD(&out)); \
-        ORIG(e, E_VALUE, "test fail"); \
+        ORIG(&e, E_VALUE, "test fail"); \
     } \
 }
 
@@ -271,24 +271,24 @@ static derr_t test_conf_parse(void){
     DSTR_VAR(badconf1, 4096);
     DSTR_VAR(badconf2, 4096);
     DSTR_VAR(badconf3, 4096);
-    PROP(e, FMT(&goodconf, "%x/opt_parse/goodconf", FS(g_test_files)) );
-    PROP(e, FMT(&goodconf2, "%x/opt_parse/goodconf2", FS(g_test_files)) );
-    PROP(e, FMT(&badconf1, "%x/opt_parse/badconf1", FS(g_test_files)) );
-    PROP(e, FMT(&badconf2, "%x/opt_parse/badconf2", FS(g_test_files)) );
-    PROP(e, FMT(&badconf3, "%x/opt_parse/badconf3", FS(g_test_files)) );
+    PROP(&e, FMT(&goodconf, "%x/opt_parse/goodconf", FS(g_test_files)) );
+    PROP(&e, FMT(&goodconf2, "%x/opt_parse/goodconf2", FS(g_test_files)) );
+    PROP(&e, FMT(&badconf1, "%x/opt_parse/badconf1", FS(g_test_files)) );
+    PROP(&e, FMT(&badconf2, "%x/opt_parse/badconf2", FS(g_test_files)) );
+    PROP(&e, FMT(&badconf3, "%x/opt_parse/badconf3", FS(g_test_files)) );
 
     // read one config file to make sure we are parsing right
     DSTR_VAR(text1, 4096);
-    PROP(e, dstr_fread_file(goodconf.data, &text1) );
-    PROP(e, conf_parse(&text1, spec, speclen) );
+    PROP(&e, dstr_fread_file(goodconf.data, &text1) );
+    PROP(&e, conf_parse(&text1, spec, speclen) );
     EXPECT("option1 hey there buddy\n"
            "option2 white   space\t test\n"
            "flag1\n");
 
     // read another config file to make sure we don't overwrite existing values
     DSTR_VAR(text2, 4096);
-    PROP(e, dstr_fread_file(goodconf2.data, &text2) );
-    PROP(e, conf_parse(&text2, spec, speclen) );
+    PROP(&e, dstr_fread_file(goodconf2.data, &text2) );
+    PROP(&e, conf_parse(&text2, spec, speclen) );
     EXPECT("option1 hey there buddy\n"
            "option2 white   space\t test\n"
            "option3 is new\n"
@@ -298,42 +298,42 @@ static derr_t test_conf_parse(void){
     // now make sure that we can't read any bad config files
     {
         DSTR_VAR(text, 4096);
-        PROP(e, dstr_fread_file(badconf1.data, &text) );
+        PROP(&e, dstr_fread_file(badconf1.data, &text) );
         e2 = conf_parse(&text, spec, speclen);
         CATCH(e2, E_VALUE){
             // we are expecting to puke on this input; do nothing
-            DROP(e2);
+            DROP_VAR(&e2);
         }else{
-            TRACE(e2, "conf parse should have puked on: %x\n", FD(&text));
-            RETHROW(e, e2, E_VALUE);
+            TRACE(&e2, "conf parse should have puked on: %x\n", FD(&text));
+            RETHROW(&e, &e2, E_VALUE);
         }
     }
     {
         DSTR_VAR(text, 4096);
-        PROP(e, dstr_fread_file(badconf2.data, &text) );
+        PROP(&e, dstr_fread_file(badconf2.data, &text) );
         e2 = conf_parse(&text, spec, speclen);
         CATCH(e2, E_VALUE){
             // we are expecting to puke on this input; do nothing
-            DROP(e2);
+            DROP_VAR(&e2);
         }else{
-            TRACE(e2, "conf parse should have puked on: %x\n", FD(&text));
-            RETHROW(e, e2, E_VALUE);
+            TRACE(&e2, "conf parse should have puked on: %x\n", FD(&text));
+            RETHROW(&e, &e2, E_VALUE);
         }
     }
     {
         DSTR_VAR(text, 4096);
-        PROP(e, dstr_fread_file(badconf3.data, &text) );
+        PROP(&e, dstr_fread_file(badconf3.data, &text) );
         e2 = conf_parse(&text, spec, speclen);
         CATCH(e2, E_VALUE){
             // we are expecting to puke on this input; do nothing
-            DROP(e2);
+            DROP_VAR(&e2);
         }else{
-            TRACE(e2, "conf parse should have puked on: %x\n", FD(&text));
-            RETHROW(e, e2, E_VALUE);
+            TRACE(&e2, "conf parse should have puked on: %x\n", FD(&text));
+            RETHROW(&e, &e2, E_VALUE);
         }
     }
 
-    return E_OK;
+    return e;
 }
 
 
@@ -346,15 +346,15 @@ int main(int argc, char** argv){
     // TODO: figure out why uncommenting this causes test to crash in windows
     // fclose(stderr);
 
-    PROP_GO(e, test_opt_parse(), test_fail);
-    PROP_GO(e, test_conf_parse(), test_fail);
+    PROP_GO(&e, test_opt_parse(), test_fail);
+    PROP_GO(&e, test_conf_parse(), test_fail);
 
     LOG_ERROR("PASS\n");
     return 0;
 
 test_fail:
     DUMP(e);
-    DROP(e);
+    DROP_VAR(&e);
     LOG_ERROR("FAIL\n");
     return 1;
 }

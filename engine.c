@@ -23,16 +23,16 @@ void event_pool_free(queue_t *pool){
 // call queue_init(), allocate/append a bunch of events
 derr_t event_pool_init(queue_t *pool, size_t nevents){
     derr_t e = E_OK;
-    PROP(e, queue_init(pool) );
+    PROP(&e, queue_init(pool) );
     for(size_t i = 0; i < nevents; i++){
         // allocate event
         event_t *ev = malloc(sizeof(*ev));
         if(ev == NULL){
-            ORIG_GO(e, E_NOMEM, "unable to alloc event", fail);
+            ORIG_GO(&e, E_NOMEM, "unable to alloc event", fail);
         }
         event_prep(ev, NULL);
         // allocate dstr_t
-        PROP_GO(e, dstr_new(&ev->buffer, 4096), fail_ev);
+        PROP_GO(&e, dstr_new(&ev->buffer, 4096), fail_ev);
         // append to list
         queue_append(pool, &ev->qe);
         continue;
@@ -41,7 +41,7 @@ derr_t event_pool_init(queue_t *pool, size_t nevents){
         free(ev);
         goto fail;
     }
-    return E_OK;
+    return e;
 
 fail:
     event_pool_free(pool);

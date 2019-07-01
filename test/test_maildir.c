@@ -31,22 +31,22 @@ static derr_t gen_fake_emails(maildir_t* mdir){
     for(size_t i = 0; i < NUM_FAKES; i++){
         // create padded index
         DSTR_VAR(index, IDX_LEN + 1);
-        PROP(e, FMT(&index, "%x", FU(i)) );
+        PROP(&e, FMT(&index, "%x", FU(i)) );
         // create uid
         DSTR_VAR(uid, UID_LEN + 1);
-        PROP(e, FMT(&uid, "UID%x", FU(i)) );
+        PROP(&e, FMT(&uid, "UID%x", FU(i)) );
         // create filename
         DSTR_VAR(fname, FNAME_LEN + 1);
-        PROP(e, FMT(&fname, "/cur/%x.%x,%x.hostname;2,ABC",
+        PROP(&e, FMT(&fname, "/cur/%x.%x,%x.hostname;2,ABC",
                   FD(&index), FD(&index), FD(&uid)) );
         // full path to file
         DSTR_VAR(path, 4096);
-        PROP(e, FMT(&path, "%x%x", FD(&mdir->path), FD(&fname)) );
+        PROP(&e, FMT(&path, "%x%x", FD(&mdir->path), FD(&fname)) );
         // create the file
         int ret = open(path.data, O_WRONLY|O_CREAT|O_TRUNC, 0770);
         if(ret < 0){
-            TRACE(e, "%x: %x\n", FS(path.data), FE(&errno));
-            ORIG(e, E_OS, "open() failed");
+            TRACE(&e, "%x: %x\n", FS(path.data), FE(&errno));
+            ORIG(&e, E_OS, "open() failed");
         }
         // close the file, we don't actually need it
         close(ret);
@@ -55,26 +55,26 @@ static derr_t gen_fake_emails(maildir_t* mdir){
         size_t orig_u_len = g_uids_block.len;
         size_t orig_f_len = g_fnames_block.len;
         // append uid and fname to block storage
-        PROP(e, dstr_append(&g_uids_block, &uid) );
-        PROP(e, dstr_append(&g_uids_block, &null) );
-        PROP(e, dstr_append(&g_fnames_block, &fname) );
-        PROP(e, dstr_append(&g_fnames_block, &null) );
+        PROP(&e, dstr_append(&g_uids_block, &uid) );
+        PROP(&e, dstr_append(&g_uids_block, &null) );
+        PROP(&e, dstr_append(&g_fnames_block, &fname) );
+        PROP(&e, dstr_append(&g_fnames_block, &null) );
         // set pointers of uid and fname
         uid.data = g_uids_block.data + orig_u_len;
         fname.data = g_fnames_block.data + orig_f_len;
         // append uid and fname to LIST(dstr_t)'s
-        PROP(e, LIST_APPEND(dstr_t, &g_uids, uid) );
-        PROP(e, LIST_APPEND(dstr_t, &g_fnames, fname) );
+        PROP(&e, LIST_APPEND(dstr_t, &g_uids, uid) );
+        PROP(&e, LIST_APPEND(dstr_t, &g_fnames, fname) );
     }
-    return E_OK;
+    return e;
 }
 
 #define EXP_VS_GOT(exp, got, str_type) { \
     int result = dstr_cmp(exp, got); \
     if(result != 0){ \
-        PROP(e, PFMT("expected \"%x\"\n" \
+        PROP(&e, PFMT("expected \"%x\"\n" \
                            "but got: \"%x\"\n", FD(exp), FD(got)) ); \
-        ORIG(e, E_VALUE, "mismatching " str_type); \
+        ORIG(&e, E_VALUE, "mismatching " str_type); \
     } \
 }
 
@@ -83,18 +83,18 @@ static derr_t test_maildir(void){
     // first create the maildir
     maildir_t mdir;
     DSTR_STATIC(mdir_path, "asdf_temp_maildir");
-    PROP(e, maildir_new(&mdir, &mdir_path) );
+    PROP(&e, maildir_new(&mdir, &mdir_path) );
     // then create fake emails
-    PROP(e, gen_fake_emails(&mdir) );
+    PROP(&e, gen_fake_emails(&mdir) );
     // now close maildir
     maildir_free(&mdir);
 
     // now open it again, and this time it should parse the fake emails
-    PROP(e, maildir_new(&mdir, &mdir_path) );
+    PROP(&e, maildir_new(&mdir, &mdir_path) );
 
     // verify the right things were registered
     if(mdir.filenames.len != NUM_FAKES){
-        ORIG(e, E_VALUE, "wrong number of registered files");
+        ORIG(&e, E_VALUE, "wrong number of registered files");
     }
     for(size_t i = 0; i < mdir.filenames.len; i++){
         size_t length = mdir.lengths.data[i];
@@ -103,11 +103,11 @@ static derr_t test_maildir(void){
     }
 
     // delete a file in the middle of the registry
-    PROP(e, maildir_delete_message(&mdir, IDX_DEL_TEST) );
+    PROP(&e, maildir_delete_message(&mdir, IDX_DEL_TEST) );
 
     // re-verify the right things remain
     if(mdir.filenames.len != NUM_FAKES - 1){
-        ORIG(e, E_VALUE, "wrong number of registered files after delete_msg");
+        ORIG(&e, E_VALUE, "wrong number of registered files after delete_msg");
     }
     for(size_t i = 0; i < mdir.filenames.len; i++){
         size_t length = mdir.lengths.data[i];
@@ -122,31 +122,31 @@ static derr_t test_maildir(void){
     // open a new email
     DSTR_VAR(tempname, 4096);
     int fd;
-    PROP(e, maildir_new_tmp_file(&mdir, &tempname, &fd) );
+    PROP(&e, maildir_new_tmp_file(&mdir, &tempname, &fd) );
     // write some data into that message
-    PROP(e, dstr_write(fd, &test_body) );
+    PROP(&e, dstr_write(fd, &test_body) );
     // done writing
     close(fd);
     // save the message
-    PROP(e, maildir_new_rename(&mdir, tempname.data, &test_uid, test_len) );
+    PROP(&e, maildir_new_rename(&mdir, tempname.data, &test_uid, test_len) );
     // get the index of that message
     size_t index;
-    PROP(e, maildir_get_index_from_uid(&mdir, &test_uid, &index) );
+    PROP(&e, maildir_get_index_from_uid(&mdir, &test_uid, &index) );
     // now open the same message
-    PROP(e, maildir_open_message(&mdir, index, &fd) );
+    PROP(&e, maildir_open_message(&mdir, index, &fd) );
     // read the body of the message
     DSTR_VAR(body, 4096);
     size_t amnt_read;
-    PROP(e, dstr_read(fd, &body, 0, &amnt_read) );
+    PROP(&e, dstr_read(fd, &body, 0, &amnt_read) );
     close(fd);
     EXP_VS_GOT(&test_body, &body, "email body");
 
     // delete all emails
-    PROP(e, rm_rf(mdir.path.data) );
+    PROP(&e, rm_rf(mdir.path.data) );
 
     maildir_free(&mdir);
 
-    return E_OK;
+    return e;
 }
 
 static derr_t test_mod_hostname(void){
@@ -164,27 +164,27 @@ static derr_t test_mod_hostname(void){
     exp.len = 0;
     for(int i = CHAR_MIN; i < CHAR_MAX + 1; i++){
         switch((char)i){
-            case '/': PROP(e, dstr_append(&exp, &DSTR_LIT("\\057")) ); break;
-            case ':': PROP(e, dstr_append(&exp, &DSTR_LIT("\\072")) ); break;
-            case '.': PROP(e, dstr_append(&exp, &DSTR_LIT("\\056")) ); break;
+            case '/': PROP(&e, dstr_append(&exp, &DSTR_LIT("\\057")) ); break;
+            case ':': PROP(&e, dstr_append(&exp, &DSTR_LIT("\\072")) ); break;
+            case '.': PROP(&e, dstr_append(&exp, &DSTR_LIT("\\056")) ); break;
             default: exp.data[exp.len++] = (char)i; break;
         }
     }
     // run test
     DSTR_VAR(out, 1024);
-    PROP(e, maildir_mod_hostname(&in, &out) );
+    PROP(&e, maildir_mod_hostname(&in, &out) );
     if(dstr_cmp(&out, &exp) != 0){
         size_t start = 0;
         while(start + 20 < out.len){
             dstr_t sub1 = dstr_sub(&exp, start, start + 20);
             dstr_t sub2 = dstr_sub(&out, start, start + 20);
-            TRACE(e, " expected: %x\n but got:  %x\n",
+            TRACE(&e, " expected: %x\n but got:  %x\n",
                       FD_DBG(&sub1), FD_DBG(&sub2));
             start += 20;
         }
-        ORIG(e, E_VALUE, "maildir_mod_hostname failed");
+        ORIG(&e, E_VALUE, "maildir_mod_hostname failed");
     }
-    return E_OK;
+    return e;
 }
 
 int main(int argc, char** argv){
@@ -192,15 +192,15 @@ int main(int argc, char** argv){
     // parse options and set default log level
     PARSE_TEST_OPTIONS(argc, argv, NULL, LOG_LVL_INFO);
 
-    PROP_GO(e, test_maildir(), test_fail);
-    PROP_GO(e, test_mod_hostname(), test_fail);
+    PROP_GO(&e, test_maildir(), test_fail);
+    PROP_GO(&e, test_mod_hostname(), test_fail);
 
     LOG_ERROR("PASS\n");
     return 0;
 
 test_fail:
     DUMP(e);
-    DROP(e);
+    DROP_VAR(&e);
     LOG_ERROR("FAIL\n");
     return 1;
 }

@@ -46,8 +46,8 @@ derr_t get_password(dstr_t* password){
         }
         if(linebreak) break;
     }
-    PROP( dstr_null_terminate(password) );
-    return E_OK;
+    PROP(& dstr_null_terminate(password) );
+    return e;
 }
 #else
 #include <termios.h>
@@ -61,8 +61,8 @@ derr_t get_password(dstr_t* password){
         // store terminal settings
         ret = tcgetattr(0, &tios);
         if(ret != 0){
-            TRACE(e, "%x: %x\n", FS("tcsetattr"), FE(&errno));
-            ORIG(e, E_OS, "failed to get terminal settings");
+            TRACE(&e, "%x: %x\n", FS("tcsetattr"), FE(&errno));
+            ORIG(&e, E_OS, "failed to get terminal settings");
         }
         // prepare to turn off echo
         old_lflag = tios.c_lflag;
@@ -70,8 +70,8 @@ derr_t get_password(dstr_t* password){
         // turn off echo
         ret = tcsetattr(0, TCSANOW, &tios);
         if(ret != 0){
-            TRACE(e, "%x: %x\n", FS("tcsetattr"), FE(&errno));
-            ORIG(e, E_OS, "failed to set terminal settings");
+            TRACE(&e, "%x: %x\n", FS("tcsetattr"), FE(&errno));
+            ORIG(&e, E_OS, "failed to set terminal settings");
         }
     }
 
@@ -82,12 +82,12 @@ derr_t get_password(dstr_t* password){
     // this is a pretty safe cast
     char* s = fgets(password->data, (int)password->size, stdin);
     if(s != password->data){
-        ORIG(e, E_OS, "fgets failed");
+        ORIG(&e, E_OS, "fgets failed");
     }
     // remove the newline from the end of the password
     password->len = strlen(password->data) - 1;
     // print the newline that didn't get echoed
-    PROP(e, FFMT(stderr, NULL, "\n") );
+    PROP(&e, FFMT(stderr, NULL, "\n") );
     fflush(stderr);
 
     if(ttymode){
@@ -95,11 +95,11 @@ derr_t get_password(dstr_t* password){
         tios.c_lflag = old_lflag;
         ret = tcsetattr(0, TCSANOW, &tios);
         if(ret != 0){
-            TRACE(e, "%x: %x\n", FS("tcsetattr"), FE(&errno));
-            ORIG(e, E_OS, "failed to set terminal settings");
+            TRACE(&e, "%x: %x\n", FS("tcsetattr"), FE(&errno));
+            ORIG(&e, E_OS, "failed to set terminal settings");
         }
     }
-    return E_OK;
+    return e;
 }
 #endif
 
@@ -108,8 +108,8 @@ derr_t get_string(dstr_t* out){
     derr_t e = E_OK;
     char* s = fgets(out->data, (int)out->size, stdin);
     if(s != out->data){
-        ORIG(e, E_OS, "fgets failed");
+        ORIG(&e, E_OS, "fgets failed");
     }
     out->len = strlen(out->data) - 1;
-    return E_OK;
+    return e;
 }

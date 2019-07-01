@@ -19,10 +19,10 @@ static void oneshot_cb(uv_prepare_t *prep){
     derr_t error = E_OK;
 
     // Here is where something needs to happen if we are going to test imap
-    // PROP_GO( imape_conn_out(), done);
+    // PROP_GO(& imape_conn_out(), done);
 
     // this is a placeholder to avoid compiler warnings
-    PROP_GO( E_OK, done);
+    PROP_GO(& E_OK, done);
 
     LOG_ERROR("oneshot\n");
 
@@ -52,42 +52,42 @@ static derr_t add_oneshot(loop_t *loop, uv_prepare_t *oneshot){
         ORIG(E_UV, "error initing prepare handle");
     }
 
-    return E_OK;
+    return e;
 }
 
 
 static derr_t test_imap(void){
     derr_t error;
     // init OpenSSL
-    PROP( ssl_library_init() );
+    PROP(& ssl_library_init() );
 
     // initialize loop
-    PROP_GO( loop_init(&loop), cu_ssl_lib);
+    PROP_GO(& loop_init(&loop), cu_ssl_lib);
 
     // TLS engine doesn't need any starting
 
     // IMAP engine needs initializing
 
-    PROP_GO( imape_init(), cu_loop);
+    PROP_GO(& imape_init(), cu_loop);
 
     // initialize SSL contexts
     ssl_context_t ctx_srv;
     ssl_context_t ctx_cli;
-    PROP_GO( ssl_context_new_client(&ctx_cli), cu_imape);
-    PROP_GO( ssl_context_new_server(&ctx_srv, CERT, KEY, DH), cu_ctx_cli);
+    PROP_GO(& ssl_context_new_client(&ctx_cli), cu_imape);
+    PROP_GO(& ssl_context_new_server(&ctx_srv, CERT, KEY, DH), cu_ctx_cli);
 
     // for the listener sockets
     ix_t ix_listener = { .type = IX_TYPE_LISTENER, .data = {.ssl_ctx = &ctx_srv }};
 
     // add listener to loop
-    PROP_GO( loop_add_listener(&loop, "0.0.0.0", "12345", &ix_listener),
+    PROP_GO(& loop_add_listener(&loop, "0.0.0.0", "12345", &ix_listener),
              cu_ctx_srv);
 
     uv_prepare_t oneshot;
-    PROP_GO( add_oneshot(&loop, &oneshot), cu_ctx_srv );
+    PROP_GO(& add_oneshot(&loop, &oneshot), cu_ctx_srv );
 
     // run the loop
-    PROP_GO( loop_run(&loop), cu_ctx_srv);
+    PROP_GO(& loop_run(&loop), cu_ctx_srv);
 
     // the loop handles closing sockets / listeners / sessions before exiting
 

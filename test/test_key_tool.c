@@ -203,8 +203,8 @@ static derr_t build_peer_list_result(unsigned int ctr, dstr_t* out){
 
     // if we have no calls, peer list won't change
     if(seq == API_NONE){
-        PROP(e, dstr_copy(&old_peer_list, out) );
-        return E_OK;
+        PROP(&e, dstr_copy(&old_peer_list, out) );
+        return e;
     }
 
     bool fetched_list = (seq == API_LIST || seq == API_LIST_ADD);
@@ -215,37 +215,37 @@ static derr_t build_peer_list_result(unsigned int ctr, dstr_t* out){
     DSTR_STATIC(end, "\"]\n");
     // always append the "start"
     out->len = 0;
-    PROP(e, dstr_append(out, &start) );
+    PROP(&e, dstr_append(out, &start) );
     // device "a" is always present
-    PROP(e, dstr_append(out, &fpr_a) );
+    PROP(&e, dstr_append(out, &fpr_a) );
     // append device "e"
     if(!fetched_list || (ctr & SX) == SX){
-        PROP(e, dstr_append(out, &separator) );
-        PROP(e, dstr_append(out, &fpr_e) );
+        PROP(&e, dstr_append(out, &separator) );
+        PROP(&e, dstr_append(out, &fpr_e) );
     }
     // append device "m"
     if(!fetched_list || (ctr & SM) == SM){
-        PROP(e, dstr_append(out, &separator) );
-        PROP(e, dstr_append(out, &fpr_m) );
+        PROP(&e, dstr_append(out, &separator) );
+        PROP(&e, dstr_append(out, &fpr_m) );
     }
     // append device "n"
     if(fetched_list && (ctr & SN) == SN){
-        PROP(e, dstr_append(out, &separator) );
-        PROP(e, dstr_append(out, &fpr_n) );
+        PROP(&e, dstr_append(out, &separator) );
+        PROP(&e, dstr_append(out, &fpr_n) );
     }
     // append the newly registered device
     if(added_device){
-        PROP(e, dstr_append(out, &separator) );
+        PROP(&e, dstr_append(out, &separator) );
         // if it is a re-registration, just append fpr_m again
         if(ctr & K){
-            PROP(e, dstr_append(out, &fpr_m) );
+            PROP(&e, dstr_append(out, &fpr_m) );
         // otherwise append the fingerprint we got in the handle_new_key() hook
         }else{
-            PROP(e, dstr_append(out, &reg_fpr) );
+            PROP(&e, dstr_append(out, &reg_fpr) );
         }
     }
-    PROP(e, dstr_append(out, &end) );
-    return E_OK;
+    PROP(&e, dstr_append(out, &end) );
+    return e;
 }
 
 DSTR_STATIC(add_device_path, "/api/add_device");
@@ -261,41 +261,41 @@ static derr_t build_list_devices_response(unsigned int ctr, const dstr_t* reg,
     DSTR_STATIC(end, "]}}");
     // always append the "start"
     out->len = 0;
-    PROP(e, dstr_append(out, &start) );
+    PROP(&e, dstr_append(out, &start) );
     // each device can reuse the formatted string
     const char* format = "\"%x\"";
     // always append device "a"
-    PROP(e, FMT(out, format, FD(&fpr_a)) );
+    PROP(&e, FMT(out, format, FD(&fpr_a)) );
     // append device "e"
     if((ctr & SX) == SX){
-        PROP(e, dstr_append(out, &separator) );
-        PROP(e, FMT(out, format, FD(&fpr_e)) );
+        PROP(&e, dstr_append(out, &separator) );
+        PROP(&e, FMT(out, format, FD(&fpr_e)) );
     }
     // append device "m"
     if((ctr & SM) == SM){
-        PROP(e, dstr_append(out, &separator) );
-        PROP(e, FMT(out, format, FD(&fpr_m)) );
+        PROP(&e, dstr_append(out, &separator) );
+        PROP(&e, FMT(out, format, FD(&fpr_m)) );
     }
     // append device "n"
     if((ctr & SN) == SN){
-        PROP(e, dstr_append(out, &separator) );
-        PROP(e, FMT(out, format, FD(&fpr_n)) );
+        PROP(&e, dstr_append(out, &separator) );
+        PROP(&e, FMT(out, format, FD(&fpr_n)) );
     }
     // append the newly registered device
     if(reg){
-        PROP(e, dstr_append(out, &separator) );
-        PROP(e, FMT(out, format, FD(reg)) );
+        PROP(&e, dstr_append(out, &separator) );
+        PROP(&e, FMT(out, format, FD(reg)) );
     }
-    PROP(e, dstr_append(out, &end) );
-    return E_OK;
+    PROP(&e, dstr_append(out, &end) );
+    return e;
 }
 
 static derr_t build_add_device_response(const dstr_t* fpr, dstr_t* out){
     derr_t e = E_OK;
     out->len = 0;
-    PROP(e, FMT(out, "{\"status\":\"success\",\"contents\":{\"device\":\"%x\"}}",
+    PROP(&e, FMT(out, "{\"status\":\"success\",\"contents\":{\"device\":\"%x\"}}",
                         FD(fpr)));
-    return E_OK;
+    return e;
 }
 
 static derr_t handle_new_key(const dstr_t* path, const dstr_t* arg,
@@ -307,24 +307,24 @@ static derr_t handle_new_key(const dstr_t* path, const dstr_t* arg,
     // the new key is going to be passed in PEM format, and we need the fpr
     keypair_t kp;
     DSTR_VAR(temp, 4096);
-    PROP(e, json_decode(arg, &temp) );
-    PROP(e, keypair_from_pem(&kp, &temp) );
+    PROP(&e, json_decode(arg, &temp) );
+    PROP(&e, keypair_from_pem(&kp, &temp) );
     // get hex of the fingerprint
     DSTR_VAR(hexfpr, 2*FL_FINGERPRINT);
-    PROP_GO(e, bin2hex(&kp.fingerprint, &hexfpr), cu);
+    PROP_GO(&e, bin2hex(&kp.fingerprint, &hexfpr), cu);
     // build a response for add_device
     DSTR_VAR(response, 2048);
-    PROP_GO(e, build_add_device_response(&hexfpr, &response), cu);
-    PROP_GO(e, fas_response_put(200, &response), cu);
+    PROP_GO(&e, build_add_device_response(&hexfpr, &response), cu);
+    PROP_GO(&e, fas_response_put(200, &response), cu);
 
     // store the key for later use
-    PROP_GO(e, dstr_copy(arg, &reg_pem), cu);
+    PROP_GO(&e, dstr_copy(arg, &reg_pem), cu);
     // store the hexfpr for later use
-    PROP_GO(e, dstr_copy(&hexfpr, &reg_fpr), cu);
+    PROP_GO(&e, dstr_copy(&hexfpr, &reg_fpr), cu);
 
 cu:
     keypair_free(&kp);
-    return E_OK;
+    return e;
 }
 
 static derr_t pack_responses_by_counter(unsigned int ctr){
@@ -338,9 +338,9 @@ static derr_t pack_responses_by_counter(unsigned int ctr){
     // do we pack a response for the initial list_devices?
     if(seq == API_LIST || seq == API_LIST_ADD){
         // pack the expected API call
-        PROP(e, fas_expect_put(&list_devices_path, &wildcard_arg, NULL, 0) );
-        PROP(e, build_list_devices_response(ctr, NULL, &response) );
-        PROP(e, fas_response_put(200, &response) );
+        PROP(&e, fas_expect_put(&list_devices_path, &wildcard_arg, NULL, 0) );
+        PROP(&e, build_list_devices_response(ctr, NULL, &response) );
+        PROP(&e, fas_response_put(200, &response) );
     }
 
     response.len = 0;
@@ -350,18 +350,18 @@ static derr_t pack_responses_by_counter(unsigned int ctr){
         // are we expecting a new key or a re-registration?
         if((ctr & K) == K){
             // key_tool has key on file, expecting a re-registration
-            PROP(e, fas_expect_put(&add_device_path, &pubkey_m, NULL, 0) );
+            PROP(&e, fas_expect_put(&add_device_path, &pubkey_m, NULL, 0) );
             // build the response
-            PROP(e, build_add_device_response(&fpr_m, &response) );
-            PROP(e, fas_response_put(200, &response) );
+            PROP(&e, build_add_device_response(&fpr_m, &response) );
+            PROP(&e, fas_response_put(200, &response) );
         }else{
             // key tool does not have key on file, need to deal with a new key
-            PROP(e, fas_expect_put(&add_device_path, &wildcard_arg,
+            PROP(&e, fas_expect_put(&add_device_path, &wildcard_arg,
                                  handle_new_key, ctr) );
             // the response will be pushed by handle_new_key
         }
     }
-    return E_OK;
+    return e;
 }
 
 static derr_t decrypt_by_counter(key_tool_t* kt, unsigned int ctr){
@@ -375,30 +375,30 @@ static derr_t decrypt_by_counter(key_tool_t* kt, unsigned int ctr){
     // open a file descriptor for reading
     int from = open(infile, O_RDONLY);
     if(from < 0){
-        TRACE(e, "%x: %x\n", FS(infile), FE(&errno));
-        ORIG(e, E_OS, "unable to open file for decrypting");
+        TRACE(&e, "%x: %x\n", FS(infile), FE(&errno));
+        ORIG(&e, E_OS, "unable to open file for decrypting");
     }
     // open a file descriptor for writing (we don't check the output)
     int to = open("_tktdir/trash", O_WRONLY | O_CREAT | O_TRUNC, 0660);
     if(to < 0){
-        TRACE(e, "%x: %x\n", FS("_tktdir/trash"), FE(&errno));
-        ORIG_GO(e, E_OS, "unable to open trash file", cu1);
+        TRACE(&e, "%x: %x\n", FS("_tktdir/trash"), FE(&errno));
+        ORIG_GO(&e, E_OS, "unable to open trash file", cu1);
     }
     // now make sure we get the right response from key_tool_decrypt
     size_t len;
     derr_t err = key_tool_decrypt(kt, from, to, &len);
     derr_type_t exp_e = decrypt_result_from_counter(ctr);
     if(err.type != exp_e){
-        TRACE(e, "expected %x but got %x\n",
+        TRACE(&e, "expected %x but got %x\n",
                   FD(error_to_dstr(exp_e)), FD(error_to_dstr(err.type)));
-        ORIG_GO(e, E_VALUE, "key_tool_decrypt returned wrong status", fail);
+        ORIG_GO(&e, E_VALUE, "key_tool_decrypt returned wrong status", fail);
     fail:
-        MERGE(e, err, "decryption error");
+        MERGE_CMD(&e, err, "decryption error");
         // don't DROP a merged error
         err = E_OK;
     }
 
-    DROP(err);
+    DROP_VAR(&err);
     close(to);
 cu1:
     close(from);
@@ -412,76 +412,76 @@ static derr_t do_test(unsigned int ctr){
     // create the "test key tool directory"
     int ret = mkdir("_tktdir", 0770);
     if(ret != 0){
-        TRACE(e, "%x: %x\n", FS("_tktdir"), FE(&errno));
-        ORIG(e, E_OS, "unable to create temporary directory");
+        TRACE(&e, "%x: %x\n", FS("_tktdir"), FE(&errno));
+        ORIG(&e, E_OS, "unable to create temporary directory");
     }
     // place initial files as necessary
     if(ctr & K){
-        PROP(e, dstr_fwrite_file("_tktdir/device.pem", &privkey_m) );
+        PROP(&e, dstr_fwrite_file("_tktdir/device.pem", &privkey_m) );
     }
     if(ctr & P){
-        PROP(e, dstr_fwrite_file("_tktdir/peer_list.json", &old_peer_list) );
+        PROP(&e, dstr_fwrite_file("_tktdir/peer_list.json", &old_peer_list) );
     }
 
     // allocate the key_tool
     key_tool_t kt;
     DSTR_STATIC(tempdir, "_tktdir");
     // absurdly small RSA key size makes for reasonably fast testing
-    PROP(e, key_tool_new(&kt, &tempdir, 512) );
+    PROP(&e, key_tool_new(&kt, &tempdir, 512) );
 
     // do the specified decryption
-    PROP_GO(e, decrypt_by_counter(&kt, ctr), cu);
+    PROP_GO(&e, decrypt_by_counter(&kt, ctr), cu);
 
     // set key_tool.found_expired_peer if necessary
     if((ctr & U) == U)
         kt.found_expired_peer = true;
 
     // pack API calls and responses
-    PROP_GO(e, pack_responses_by_counter(ctr), cu);
+    PROP_GO(&e, pack_responses_by_counter(ctr), cu);
 
     // update the key tool
     DSTR_STATIC(user, "user@splintermail.com");
     DSTR_STATIC(pass, "top_secr3t");
-    PROP_GO(e, key_tool_update(&kt, "127.0.0.1", fas_api_port, &user, &pass), cu);
+    PROP_GO(&e, key_tool_update(&kt, "127.0.0.1", fas_api_port, &user, &pass), cu);
 
     // make sure we got all the calls we thought we would
-    PROP_GO(e, fas_assert_done(), cu);
+    PROP_GO(&e, fas_assert_done(), cu);
 
     // make sure that we have a new peer if we are supposed to
     bool expecting_new_peer = new_peer_from_counter(ctr);
     if(expecting_new_peer != (kt.new_peer_list.len > 0)){
-        TRACE(e, "expecting new peer = %x but new_peer_list.len = %x\n",
+        TRACE(&e, "expecting new peer = %x but new_peer_list.len = %x\n",
                 FS(expecting_new_peer ? "true" : "false"), FU(kt.new_peer_list.len));
         for(size_t i = 0; i < kt.new_peer_list.len; i++){
             DSTR_VAR(hex, 2*FL_FINGERPRINT);
             bin2hex(&kt.new_peer_list.data[i], &hex);
-            TRACE(e, "    %x\n", FD(&hex));
+            TRACE(&e, "    %x\n", FD(&hex));
         }
-        ORIG_GO(e, E_VALUE, "new peer list is wrong", cu);
+        ORIG_GO(&e, E_VALUE, "new peer list is wrong", cu);
     }
 
     DSTR_VAR(temp, 2048);
     int result;
     // compare both of the output files
-    PROP_GO(e, build_peer_list_result(ctr, &temp), cu);
-    PROP_GO(e, file_cmp_dstr("_tktdir/peer_list.json", &temp, &result), cu);
+    PROP_GO(&e, build_peer_list_result(ctr, &temp), cu);
+    PROP_GO(&e, file_cmp_dstr("_tktdir/peer_list.json", &temp, &result), cu);
     if(result != 0){
         DSTR_VAR(ftemp, 2048);
         dstr_fread_file("_tktdir/peer_list.json", &ftemp);
-        TRACE(e, "expected:\n%x\n-----\n"
+        TRACE(&e, "expected:\n%x\n-----\n"
                  "but got:\n%x\n-----\n", FD(&temp), FD(&ftemp));
-        ORIG_GO(e, E_VALUE, "peer_list.json did not match", cu);
+        ORIG_GO(&e, E_VALUE, "peer_list.json did not match", cu);
     }
 
     // only compare device.pem if we already had a key
     if(ctr & K){
-        PROP_GO(e, file_cmp_dstr("_tktdir/device.pem", &privkey_m, &result), cu);
+        PROP_GO(&e, file_cmp_dstr("_tktdir/device.pem", &privkey_m, &result), cu);
         if(result != 0){
             DSTR_VAR(ftemp, 2048);
             dstr_fread_file("_tktdir/device.pem", &ftemp);
-            TRACE(e, "expected:\n%x-----\n"
+            TRACE(&e, "expected:\n%x-----\n"
                      "but got:\n%x-----\n", FD(&privkey_m), FD(&ftemp));
-            ORIG_GO(e, E_VALUE, "device.pem did not match", cu);
+            ORIG_GO(&e, E_VALUE, "device.pem did not match", cu);
         }
     }
 
@@ -502,34 +502,34 @@ static derr_t counter_to_dstr(unsigned int counter, dstr_t* buffer){
     char dn = (counter & DN) ? 'N' : 'n';
     char dm = (counter & DM) ? 'M' : 'm';
     char u  = (counter & U)  ? 'U' : 'u';
-    PROP(e, FMT(buffer, "%x%x%x%x%x%x%x%x%x",
+    PROP(&e, FMT(buffer, "%x%x%x%x%x%x%x%x%x",
                       FC(k), FC(p), FC(sx), FC(sn), FC(sm),
                       FC(dx), FC(dn), FC(dm), FC(u)) );
-    return E_OK;
+    return e;
 }
 
 static derr_t test_key_tool(void){
     derr_t e = E_OK;
 
     // start the fake api server
-    PROP(e, fas_start() );
+    PROP(&e, fas_start() );
 
     // unsigned int counter = (K|P|SX|SM|DX|DM);
     // unsigned int counter = 128;
-    // PROP_GO(e, do_test(counter), cu1);
+    // PROP_GO(&e, do_test(counter), cu1);
 
     DSTR_VAR(mode, 16);
     for(unsigned int counter = 0; counter < 2*K; counter++){
-        PROP_GO(e, counter_to_dstr(counter, &mode), cu1);
+        PROP_GO(&e, counter_to_dstr(counter, &mode), cu1);
         LOG_INFO("----- testing %x (%x) -----\n", FU(counter), FD(&mode));
-        IF_PROP(e, do_test(counter) ){
-            TRACE(e, "failed on %x (%x)\n", FU(counter), FD(&mode));
+        IF_PROP(&e, do_test(counter) ){
+            TRACE(&e, "failed on %x (%x)\n", FU(counter), FD(&mode));
             goto cu1;
         }
     }
 
 cu1:
-    MERGE(e, fas_join(), "fake pop server");
+    MERGE_CMD(&e, fas_join(), "fake pop server");
     return e;
 }
 
@@ -540,8 +540,8 @@ static derr_t test_peer_list_read_write(void){
     // create the "test key tool directory"
     int ret = mkdir("_tktdir", 0770);
     if(ret != 0){
-        TRACE(e, "%x: %x\n", FS("_tktdir"), FE(&errno));
-        ORIG(e, E_OS, "unable to create temporary directory");
+        TRACE(&e, "%x: %x\n", FS("_tktdir"), FE(&errno));
+        ORIG(&e, E_OS, "unable to create temporary directory");
     }
 
     LIST_VAR(json_t, json, 32);
@@ -559,32 +559,32 @@ static derr_t test_peer_list_read_write(void){
     const char* new_name = "_tktdir/new_pl.json";
 
     // create the initial peer list
-    PROP(e, dstr_fwrite_file(old_name, &old_peer_list) );
+    PROP(&e, dstr_fwrite_file(old_name, &old_peer_list) );
 
     // read the list
-    PROP(e, key_tool_peer_list_load(&kt, old_name) );
+    PROP(&e, key_tool_peer_list_load(&kt, old_name) );
 
     // write the list
-    PROP_GO(e, key_tool_peer_list_write(&kt, new_name), cleanup);
+    PROP_GO(&e, key_tool_peer_list_write(&kt, new_name), cleanup);
 
     // compare the files
     int result;
-    PROP_GO(e, file_cmp(old_name, new_name, &result), cleanup);
+    PROP_GO(&e, file_cmp(old_name, new_name, &result), cleanup);
     if(result != 0){
-        ORIG_GO(e, E_VALUE, "peer_list files don't match", cleanup);
+        ORIG_GO(&e, E_VALUE, "peer_list files don't match", cleanup);
     }
 
 cleanup:
     for(size_t i = 0; i < kt.peer_list.len; i++){
         dstr_free(&kt.peer_list.data[i]);
     }
-    return E_OK;
+    return e;
 }
 
 static void sig_handler(int signum){
     if(signum == SIGINT){
         derr_t e = rm_rf("_tktdir");
-        DROP(e);
+        DROP_VAR(&e);
         LOG_ERROR("FAIL (canceled)\n");
         exit(1);
     }
@@ -596,12 +596,12 @@ int main(int argc, char** argv){
     PARSE_TEST_OPTIONS(argc, argv, &g_test_files, LOG_LVL_INFO);
 
     // setup the library (application-wide step)
-    PROP_GO(e, ssl_library_init(), test_fail);
+    PROP_GO(&e, ssl_library_init(), test_fail);
 
     signal(SIGINT, sig_handler);
 
-    PROP_GO(e, test_peer_list_read_write(), test_fail);
-    PROP_GO(e, test_key_tool(), test_fail);
+    PROP_GO(&e, test_peer_list_read_write(), test_fail);
+    PROP_GO(&e, test_key_tool(), test_fail);
     DROP_CMD( rm_rf("_tktdir") );
 
     LOG_ERROR("PASS\n");
@@ -610,7 +610,7 @@ int main(int argc, char** argv){
 
 test_fail:
     DUMP(e);
-    DROP(e);
+    DROP_VAR(&e);
     LOG_ERROR("FAIL\n");
     ssl_library_close();
     return 1;

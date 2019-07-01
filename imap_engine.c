@@ -23,8 +23,8 @@ derr_t imape_init(imape_t *imape, size_t nwrite_events,
                   event_passer_t pass_up, void *upstream){
     derr_t error;
 
-    PROP_GO( queue_init(&imape->event_q), fail);
-    PROP_GO( event_pool_init(&imape->write_events, nwrite_events),
+    PROP_GO(& queue_init(&imape->event_q), fail);
+    PROP_GO(& event_pool_init(&imape->write_events, nwrite_events),
              fail_event_q);
 
     imape->work_req.data = imape;
@@ -39,7 +39,7 @@ derr_t imape_init(imape_t *imape, size_t nwrite_events,
     imape->quit_ev = NULL;
 
     imape->initialized = true;
-    return E_OK;
+    return e;
 
 fail_event_q:
     queue_free(&imape->event_q);
@@ -173,9 +173,9 @@ static void imape_data_onthread_start(imape_data_t *id, imape_t *imape,
         hooks_dn = imape_hooks_dn(session);
     }
 
-    PROP_GO( imap_reader_init(&id->reader, hooks_dn, hooks_up, id), fail);
+    PROP_GO(& imap_reader_init(&id->reader, hooks_dn, hooks_up, id), fail);
 
-    PROP_GO( queue_init(&id->pending_reads), fail_reader);
+    PROP_GO(& queue_init(&id->pending_reads), fail_reader);
 
     queue_cb_prep(&id->read_in_qcb);
 
