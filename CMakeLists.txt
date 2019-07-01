@@ -24,72 +24,80 @@ include_directories("${PROJECT_SOURCE_DIR}")
 # always include the binary directory (for including generated .h files)
 include_directories("${PROJECT_BINARY_DIR}")
 
-set(OBJ_TGTS api_client
-             common
-             crypto
-             ditm
-             fileops
-             json
-             key_tool
-             logger
-             maildir
-             networking
-             opt_parse
-             pop_client
-             pop_server
-             win_compat
-             console_input
-             ui
-             engine
-             uv_errors
-             loop
-             tls_engine
-             imap_engine
-             queue
-             jsw_atree
-             imap_parse
-             imap_expression
-             imap_read
-             hashmap
-             imap_maildir)
+set(OBJ_TGTS
+    api_client
+    common
+    crypto
+    ditm
+    fileops
+    json
+    key_tool
+    logger
+    maildir
+    networking
+    opt_parse
+    pop_client
+    pop_server
+    win_compat
+    console_input
+    ui
+    engine
+    uv_errors
+    loop
+    tls_engine
+    # imap_engine
+    queue
+    jsw_atree
+    # imap_parse
+    imap_expression
+    # imap_read
+    hashmap
+    imap_maildir
+)
 
-set(EXE_TGTS srvcli
-             splintermail
-             leak
-             encrypt_msg
-             decrypt_msg
-             imap)
+set(EXE_TGTS
+    # srvcli
+    splintermail
+    leak
+    encrypt_msg
+    decrypt_msg
+    # imap
+)
 
-set(TEST_OBJ_TGTS dummy_key_tool
-                  dummy_ui_harness
-                  fake_api_server
-                  fake_pop_server
-                  ditm_thread
-                  test_utils
-                  fake_imap_client
-                  fake_engine)
+set(TEST_OBJ_TGTS
+    dummy_key_tool
+    dummy_ui_harness
+    fake_api_server
+    fake_pop_server
+    ditm_thread
+    test_utils
+    # fake_imap_client
+    fake_engine
+)
 
-set(TEST_EXE_TGTS test_common
-                  test_pop_server
-                  test_ditm
-                  test_ditm_errors
-                  test_maildir
-                  test_logger
-                  test_pop_client
-                  test_crypto
-                  test_opt_parse
-                  test_networking
-                  test_json
-                  test_ui
-                  test_key_tool
-                  test_atree
-                  test_imap_scan
-                  test_imap_read
-                  test_hashmap
-                  test_imap_maildir
-                  test_loop
-                  test_queue
-                  test_tls_engine)
+set(TEST_EXE_TGTS
+    test_common
+    test_pop_server
+    test_ditm
+    test_ditm_errors
+    test_maildir
+    test_logger
+    test_pop_client
+    test_crypto
+    test_opt_parse
+    test_networking
+    test_json
+    test_ui
+    test_key_tool
+    test_atree
+    test_imap_scan
+    # test_imap_read
+    test_hashmap
+    test_imap_maildir
+    test_loop
+    test_queue
+    test_tls_engine
+)
 
 # additional TGTS if we are building server code
 if("${BUILD_SERVER_CODE}")
@@ -205,7 +213,7 @@ add_custom_command(
     DEPENDS "${input}"
     COMMENT "generating parser" VERBATIM
     )
-add_obj_tgt("${output}" "imap_parse_tab")
+# add_obj_tgt("${output}" "imap_parse_tab")
 # add a custom target just for depending on the generated header
 add_custom_target(bison_header DEPENDS "${bison_header}")
 
@@ -245,27 +253,27 @@ obj_depend_obj(queue uv_interface uv_errors common)
 obj_depend_obj(engine queue)
 obj_depend_obj(loop engine)
 obj_depend_obj(tls_engine engine networking)
-obj_depend_obj(imap_engine engine imap_read_o)
+# obj_depend_obj(imap_engine engine imap_read_o)
 obj_depend_obj(jsw_atree common)
-obj_depend_obj(imap_parse_tab imap_expression imap_read common)
-obj_depend_obj(imap_parse imap_parse_tab common)
-add_dependencies(imap_parse_o bison_header)
+# obj_depend_obj(imap_parse_tab imap_expression imap_read common)
+# obj_depend_obj(imap_parse imap_parse_tab common)
+# add_dependencies(imap_parse_o bison_header)
 obj_depend_obj(imap_scan common)
 add_dependencies(imap_scan_o bison_header)
-obj_depend_obj(imap_read imap_parse imap_scan common)
-add_dependencies(imap_read_o bison_header)
+# obj_depend_obj(imap_read imap_parse imap_scan common)
+# add_dependencies(imap_read_o bison_header)
 obj_depend_obj(hashmap common)
 obj_depend_obj(imap_maildir hashmap fileops)
 
 
 # describe executables with dependencies
-target_link_libraries(srvcli networking)
+# target_link_libraries(srvcli networking)
 target_link_libraries(splintermail ui console_input ditm key_tool opt_parse)
 target_link_libraries(leak networking)
 target_link_libraries(encrypt_msg crypto opt_parse)
 target_link_libraries(decrypt_msg crypto opt_parse)
 target_link_libraries(olt common fileops opt_parse)
-target_link_libraries(imap loop tls_engine imap_engine imap_parse networking)
+# target_link_libraries(imap loop tls_engine imap_engine imap_parse networking)
 
 # decide if we are building server code
 if("${BUILD_SERVER_CODE}")
@@ -353,7 +361,7 @@ if("${BUILD_TESTS}")
     obj_depend_obj(fake_pop_server pop_server pop_client)
     obj_depend_obj(ditm_thread ditm dummy_key_tool fileops)
     obj_depend_obj(dummy_key_tool crypto common)
-    obj_depend_obj(fake_imap_client uv_interface networking)
+    # obj_depend_obj(fake_imap_client uv_interface networking)
     obj_depend_obj(fake_engine loop tls_engine queue networking)
     # some dummy tools need openssl headers to compile... but not to link
     target_include_directories(dummy_key_tool_o PRIVATE ${OPENSSL_INCLUDE_DIR})
@@ -394,7 +402,7 @@ if("${BUILD_TESTS}")
     target_link_libraries(test_ui ui dummy_ui_harness json)
     target_link_libraries(test_atree jsw_atree)
     target_link_libraries(test_imap_scan imap_scan)
-    target_link_libraries(test_imap_read imap_read)
+    # target_link_libraries(test_imap_read imap_read)
     target_link_libraries(test_hashmap hashmap)
     target_link_libraries(test_imap_maildir imap_maildir)
     target_link_libraries(test_loop fake_engine networking)
@@ -445,8 +453,8 @@ if("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU")
     # libuv needs non-strict aliasing
     # see discussion here: https://github.com/libuv/libuv/issues/1230
     target_compile_options(loop_o PRIVATE -fno-strict-aliasing)
-    target_compile_options(imap_parse_tab_o PRIVATE -Wno-sign-conversion)
-    target_compile_options(imap_parse_tab_o PRIVATE -Wno-conversion)
+    # target_compile_options(imap_parse_tab_o PRIVATE -Wno-sign-conversion)
+    # target_compile_options(imap_parse_tab_o PRIVATE -Wno-conversion)
     # add some compiler hardening flags
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wformat -Wformat-security -Werror=format-security")
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fstack-protector-strong")
