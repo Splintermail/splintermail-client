@@ -14,6 +14,10 @@ derr_t imap_scanner_init(imap_scanner_t *scanner){
     // nothing to continue
     scanner->continuing = false;
 
+    // nothing to steal yet
+    scanner->in_literal = false;
+    scanner->literal_len = 0;
+
     return e;
 }
 
@@ -26,13 +30,6 @@ dstr_t get_scannable(imap_scanner_t *scanner){
     // this is always safe because "start" is always within the bytes buffer
     size_t offset = (size_t)(scanner->start - scanner->bytes.data);
     return dstr_sub(&scanner->bytes, offset, 0);
-}
-
-dstr_t get_token(imap_scanner_t *scanner){
-    // this is safe; "start" and "old_start" are always within the bytes buffer
-    size_t start_offset = (size_t)(scanner->old_start - scanner->bytes.data);
-    size_t end_offset = (size_t)(scanner->start - scanner->bytes.data);
-    return dstr_sub(&scanner->bytes, start_offset, end_offset);
 }
 
 dstr_t steal_bytes(imap_scanner_t *scanner, size_t to_steal){
@@ -56,7 +53,34 @@ dstr_t steal_bytes(imap_scanner_t *scanner, size_t to_steal){
 }
 
 derr_t imap_scan(imap_scanner_t *scanner, scan_mode_t mode, bool *more,
-                 int *type){
+                 dstr_t *token_out, int *type){
+    // first handle literals, which isn't well handled well by re2c
+    if(scanner->in_literal){
+        // if no bytes requested, return now to avoid dstr_sub's "0" behavior
+        if(scanner->literal_len == 0){
+            *token_out = (dstr_t){0};
+            *type = RAW;
+            *more = false;
+            // this is the end of the literal
+            scanner->in_literal = false;
+            return E_OK;
+        }
+        uintptr_t start = (uintptr_t)(scanner->start - scanner->bytes.data);
+        size_t bytes_left = scanner->bytes.len - start;
+        // do we have something to return?
+        if(bytes_left == 0){
+            *more = true;
+            return E_OK;
+        }
+        size_t steal_len = MIN(bytes_left, scanner->literal_len);
+        *more = false;
+        *type = RAW;
+        *token_out = dstr_sub(&scanner->bytes, start, start + steal_len);
+        scanner->start += steal_len;
+        scanner->literal_len -= steal_len;
+        if(scanner->literal_len == 0) scanner->in_literal = false;
+        return E_OK;
+    }
 #   define YYGETSTATE()  scanner->state
 #   define YYSETSTATE(s) { \
         scanner->state = s; \
@@ -504,7 +528,17 @@ search_mode:
         'undraft'       { *type = UNDRAFT; goto done; }
     */
 
+    size_t start_offset, end_offset;
 done:
+    // get the token bounds
+    // this is safe; start and old_start are always within the bytes buffer
+    start_offset = (size_t)(scanner->old_start - scanner->bytes.data);
+    end_offset = (size_t)(scanner->start - scanner->bytes.data);
+    /* TODO: does this work for all cases? Won't sometimes *cursor point to the
+             last character of a token, and sometimes it will point to the
+             character after a token? */
+    *token_out = dstr_sub(&scanner->bytes, start_offset, end_offset);
+
     // mark everything done until here
     scanner->old_start = scanner->start;
     scanner->start = cursor;

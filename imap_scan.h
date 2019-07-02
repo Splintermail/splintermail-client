@@ -25,6 +25,9 @@ typedef struct {
     char yych;
     // for automatic continue handling
     bool continuing;
+    // for scanning literals
+    bool in_literal;
+    size_t literal_len;
 } imap_scanner_t;
 
 derr_t imap_scanner_init(imap_scanner_t *scanner);
@@ -42,7 +45,7 @@ dstr_t steal_bytes(imap_scanner_t *scanner, size_t to_steal);
 
 // *more is set to true if more input is needed, otherwise *type is set
 derr_t imap_scan(imap_scanner_t *scanner, scan_mode_t mode, bool *more,
-                 int *type);
+                 dstr_t *token_out, int *type);
 /*  throws : E_PARAM (invalid input) */
 
 #endif // IMAP_SCAN_H

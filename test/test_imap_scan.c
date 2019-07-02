@@ -12,7 +12,6 @@
                 FD(error_to_dstr(exp_error)), \
                 FD(error_to_dstr(e.type))); \
         /* write either the scannable or the the last token + scannable */ \
-        dstr_t token = get_token(&scanner); \
         dstr_t scannable = get_scannable(&scanner); \
         if(exp_error == E_NONE){ \
             TRACE(&e, "on input: '%x'\n", FD(&scannable));  \
@@ -28,7 +27,6 @@
         TRACE(&e, "unexpected *more value: expected %x, got %x\n", \
                 FU(exp_more), FU(more)); \
         /* write either the scannable or the the last token + scannable */ \
-        dstr_t token = get_token(&scanner); \
         dstr_t scannable = get_scannable(&scanner); \
         if(exp_error == E_NONE){ \
             TRACE(&e, "on input: '%x'\n", FD(&scannable));  \
@@ -41,7 +39,6 @@
         TRACE(&e, "unexpected token type: expected %x, got %x\n", \
                 FI(exp_type), FI(type)); \
         /* write either the scannable or the the last token + scannable */ \
-        dstr_t token = get_token(&scanner); \
         dstr_t scannable = get_scannable(&scanner); \
         if(exp_error == E_NONE){ \
             TRACE(&e, "on input: '%x'\n", FD(&scannable));  \
@@ -60,6 +57,7 @@ static derr_t test_imap_scan(void){
 
     // TODO: re-write test when there is a full scanner API
 
+    dstr_t token;
     int type;
     bool more;
 
@@ -67,33 +65,33 @@ static derr_t test_imap_scan(void){
     PROP_GO(&e, FMT(&scanner.bytes, "tag O"), cu_scanner);
 
     // "tag O" -> TAG
-    e = imap_scan(&scanner, SCAN_MODE_TAG, &more, &type);
+    e = imap_scan(&scanner, SCAN_MODE_TAG, &more, &token, &type);
     EXPECT(E_NONE, false, RAW);
 
     // " O" -> ' '
-    e = imap_scan(&scanner, SCAN_MODE_COMMAND, &more, &type);
+    e = imap_scan(&scanner, SCAN_MODE_COMMAND, &more, &token, &type);
     EXPECT(E_NONE, false, ' ');
 
     // "O" -> MORE
-    e = imap_scan(&scanner, SCAN_MODE_COMMAND, &more, &type);
+    e = imap_scan(&scanner, SCAN_MODE_COMMAND, &more, &token, &type);
     EXPECT(E_NONE, true, 0);
 
     PROP_GO(&e, FMT(&scanner.bytes, "K"), cu_scanner);
 
     // "OK" -> OK
-    e = imap_scan(&scanner, SCAN_MODE_COMMAND, &more, &type);
+    e = imap_scan(&scanner, SCAN_MODE_COMMAND, &more, &token, &type);
     EXPECT(E_NONE, false, OK);
 
     PROP_GO(&e, FMT(&scanner.bytes, "\r"), cu_scanner);
 
     // "\r" -> MORE
-    e = imap_scan(&scanner, SCAN_MODE_COMMAND, &more, &type);
+    e = imap_scan(&scanner, SCAN_MODE_COMMAND, &more, &token, &type);
     EXPECT(E_NONE, true, 0);
 
     PROP_GO(&e, FMT(&scanner.bytes, "\n"), cu_scanner);
 
     // "\r\n" -> EOL
-    e = imap_scan(&scanner, SCAN_MODE_COMMAND, &more, &type);
+    e = imap_scan(&scanner, SCAN_MODE_COMMAND, &more, &token, &type);
     EXPECT(E_NONE, false, EOL);
 
 cu_scanner:
