@@ -114,8 +114,38 @@ What about error handling and parser callbacks?
       - Respondable errors:
           - Invalid IMAP syntax
           -
+functional programming to replace bison?
 
+   non-reentrant plan:
+    get_command:
+        get_tag:
+            get_command_name:
+            switch(name):
+                case FETCH: get_fetch
+                ...
 
+What about the reentrant version?
+    swtich:
+        get_command_mode:
+            get_tag_mode
+        get_tag_mode:
+            scan(TAG, &more)
+            if(!more):
+                // advance buffer
+                get_command_name(tag)
+        get_command_name_mode:
+            scan(COMMAND, &more)
+            if(!more):
+                // advance buffer
+                switch(name):
+                    case FETCH: get_fetch(tag, command)
+
+    Hm.  It seems not undoable, but I think it would be really verbose, and on
+    top of that, there's no way to get away from having to implement a stack
+    of states.  Frankly, I'd really like to use Bison's implementation.
+
+    Not to mention, the bison error handling seems so much better than anything
+    I would want to have to implement.
 
 
 # general DITM architecture for IMAP:

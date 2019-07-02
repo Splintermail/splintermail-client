@@ -2,10 +2,34 @@
 #define IMAP_EXPR_H
 
 #include "common.h"
+#include "link.h"
+// We need parser_t for the error context
+struct imap_parser_t;
+typedef struct imap_parser_t imap_parser_t;
 
 // forward declaration of final type
 union imap_expr_t;
 typedef union imap_expr_t imap_expr_t;
+
+typedef struct ie_dstr_t {
+    dstr_t dstr;
+    link_t link;
+} ie_dstr_t;
+DEF_CONTAINER_OF(ie_dstr_t, link, link_t)
+
+typedef struct {
+    bool inbox;
+    // dstr.data is non-null only if inbox is false
+    dstr_t dstr;
+} ie_mailbox_t;
+
+typedef enum {
+    IE_ST_ATTR_MESSAGES = 1,
+    IE_ST_ATTR_RECENT = 2,
+    IE_ST_ATTR_UIDNEXT = 4,
+    IE_ST_ATTR_UIDVLD = 8,
+    IE_ST_ATTR_UNSEEN = 16,
+} ie_st_attr_t;
 
 typedef struct {
     int year;
@@ -19,66 +43,33 @@ typedef struct {
     int z_min;
 } imap_time_t;
 
-typedef enum {
-    STATUS_TYPE_OK,
-    STATUS_TYPE_NO,
-    STATUS_TYPE_BAD,
-    STATUS_TYPE_PREAUTH,
-    STATUS_TYPE_BYE,
-} status_type_t;
+typedef struct {
+    // non-zero numbers, therefore "0" means "*" was passed
+    // also, not necessarily in order
+    unsigned int n1;
+    unsigned int n2;
+    link_t link;
+} ie_seq_spec_t;
+DEF_CONTAINER_OF(ie_seq_spec_t, link, link_t)
 
-const dstr_t *st_type_to_dstr(status_type_t type);
-
-typedef enum {
-    STATUS_CODE_NONE = 0,
-    STATUS_CODE_ALERT,
-    STATUS_CODE_CAPA,
-    STATUS_CODE_PARSE,
-    STATUS_CODE_PERMFLAGS,
-    STATUS_CODE_READ_ONLY,
-    STATUS_CODE_READ_WRITE,
-    STATUS_CODE_TRYCREATE,
-    STATUS_CODE_UIDNEXT,
-    STATUS_CODE_UIDVLD,
-    STATUS_CODE_UNSEEN,
-    STATUS_CODE_ATOM,
-} status_code_t;
-
-const dstr_t *st_code_to_dstr(status_code_t code);
+void ie_seq_spec_free(ie_seq_spec_t *s);
 
 typedef struct {
-    status_type_t status;
-    status_code_t code;
-    unsigned int code_extra;
-    dstr_t text;
-} ie_resp_status_type_t;
+    // just the head of a linked list of seq_specs, but easy to free this way.
+    link_t head;
+} ie_seq_set_t;
 
-typedef struct dstr_link_t {
-    dstr_t dstr;
-    struct dstr_link_t *next;
-} dstr_link_t;
+void ie_seq_set_free(ie_seq_set_t *s);
 
-void dstr_link_free(dstr_link_t *h);
+// append flags
 
 typedef enum {
-    IE_FLAG_ANSWERED,
-    IE_FLAG_FLAGGED,
-    IE_FLAG_DELETED,
-    IE_FLAG_SEEN,
-    IE_FLAG_DRAFT,
-    IE_FLAG_RECENT,
-    IE_FLAG_ASTERISK,
-    IE_FLAG_KEYWORD,
-    IE_FLAG_EXTENSION,
-} ie_flag_type_t;
-
-const dstr_t *flag_type_to_dstr(ie_flag_type_t f);
-
-typedef struct {
-    ie_flag_type_t type;
-    // dstr is only non-null if type is KEYWORD or EXTENSION
-    dstr_t dstr;
-} ie_flag_t;
+    IE_AFLAG_ANSWERED,
+    IE_AFLAG_FLAGGED,
+    IE_AFLAG_DELETED,
+    IE_AFLAG_SEEN,
+    IE_AFLAG_DRAFT,
+} ie_aflag_type_t;
 
 typedef struct {
     bool answered:1;
@@ -86,76 +77,11 @@ typedef struct {
     bool deleted:1;
     bool seen:1;
     bool draft:1;
-    bool recent:1;
-    bool asterisk:1;
-    dstr_link_t *keywords;
-    dstr_link_t *extensions;
-} ie_flag_list_t;
+    link_t keywords;
+    link_t extensions;
+} ie_aflags_t;
 
-void ie_flag_list_free(ie_flag_list_t* fl);
-
-typedef enum {
-    IE_MFLAG_NOINFERIORS,
-    IE_MFLAG_NOSELECT,
-    IE_MFLAG_MARKED,
-    IE_MFLAG_UNMARKED,
-    IE_MFLAG_EXTENSION,
-} ie_mflag_type_t;
-
-const dstr_t *mflag_type_to_dstr(ie_mflag_type_t f);
-
-typedef struct {
-    ie_mflag_type_t type;
-    // dstr is only non-null if type is KEYWORD or EXTENSION
-    dstr_t dstr;
-} ie_mflag_t;
-
-typedef struct {
-    bool noinferiors:1;
-    bool noselect:1;
-    bool marked:1;
-    bool unmarked:1;
-    dstr_link_t *extensions;
-} ie_mflag_list_t;
-
-void ie_mflag_list_free(ie_mflag_list_t* mfl);
-
-typedef struct {
-    bool inbox;
-    // dstr is only non-null if inbox is false
-    dstr_t dstr;
-} ie_mailbox_t;
-
-typedef enum {
-    IE_ST_ATTR_MESSAGES = 1,
-    IE_ST_ATTR_RECENT = 2,
-    IE_ST_ATTR_UIDNEXT = 4,
-    IE_ST_ATTR_UIDVLD = 8,
-    IE_ST_ATTR_UNSEEN = 16,
-} ie_st_attr_t;
-
-const dstr_t *st_attr_to_dstr(ie_st_attr_t attr);
-
-typedef struct {
-    unsigned char attrs;
-    unsigned int messages;
-    unsigned int recent;
-    unsigned int uidnext;
-    unsigned int uidvld;
-    unsigned int unseen;
-} ie_st_attr_resp_t;
-
-typedef struct ie_seq_set_t {
-    // non-zero numbers, therefore "0" means "*" was passed
-    // also, not necessarily in order
-    unsigned int n1;
-    unsigned int n2;
-    struct ie_seq_set_t *next;
-} ie_seq_set_t;
-
-void ie_seq_set_free(ie_seq_set_t *s);
-
-/*** SEARCH-related structs ***/
+// SEARCH-related things
 
 typedef enum {
     IE_SEARCH_ALL,         // no parameter
@@ -192,34 +118,33 @@ typedef enum {
     IE_SEARCH_SMALLER,     // uses param.num
     IE_SEARCH_UID,         // uses param.seq_set
     IE_SEARCH_SEQ_SET,     // uses param.seq_set
-    IE_SEARCH_NOT,         // uses param.search_key
-    IE_SEARCH_GROUP,       // uses param.search_key
-    IE_SEARCH_OR,          // uses param.search_or
+    IE_SEARCH_NOT,         // uses param.key
+    IE_SEARCH_OR,          // uses param.pair
+    IE_SEARCH_AND,          // uses param.pair
 } ie_search_key_type_t;
 
-// foward type declaration
 struct ie_search_key_t;
 typedef struct ie_search_key_t ie_search_key_t;
 
 typedef struct ie_search_header_t {
-    dstr_t name;
-    dstr_t value;
+    ie_dstr_t *name;
+    ie_dstr_t *value;
 } ie_search_header_t;
 
 // logical OR of two search keys
 typedef struct ie_search_or_t {
     ie_search_key_t *a;
     ie_search_key_t *b;
-} ie_search_or_t;
+} ie_search_pair_t;
 
 union ie_search_param_t {
-    dstr_t dstr;
+    ie_dstr_t *dstr;
     ie_search_header_t header; // just a pair of dstr_t's
     unsigned int num;
     imap_time_t date;
     ie_seq_set_t *seq_set;
-    ie_search_key_t *search_key;
-    ie_search_or_t search_or;
+    ie_search_key_t *key;
+    ie_search_pair_t pair;
 };
 
 struct ie_search_key_t {
@@ -229,98 +154,123 @@ struct ie_search_key_t {
     ie_search_key_t *next;
 };
 
-void ie_search_key_free(ie_search_key_t *key);
-
-/* FETCH-related structs */
-typedef struct ie_partial_t {
-    bool found;
-    unsigned int p1;
-    unsigned int p2;
-} ie_partial_t;
-
-typedef struct ie_section_part_t {
-    unsigned int n;
-    struct ie_section_part_t *next;
-} ie_section_part_t;
-
-void ie_section_part_free(ie_section_part_t *s);
-
-typedef enum {
-    IE_SECT_NONE = 0,
-    IE_SECT_MIME,
-    IE_SECT_TEXT,
-    IE_SECT_HEADER,
-    IE_SECT_HDR_FLDS,
-    IE_SECT_HDR_FLDS_NOT,
-} ie_sect_txt_type_t;
-
-typedef struct ie_sect_txt_t {
-    ie_sect_txt_type_t type;
-    dstr_link_t *headers;
-} ie_sect_txt_t;
-
-// a BODY[]<> or BODY.PEEK[]<> in the FETCH cmd, there may be many
-typedef struct ie_fetch_extra_t {
-    bool peek; // BODY or BODY.PEEK
-    // section-part
-    ie_section_part_t *sect_part;
-    // section-text or section-msgtext
-    ie_sect_txt_t sect_txt;
-    // the <p1.p2> at the end
-    ie_partial_t partial;
-    struct ie_fetch_extra_t *next;
-} ie_fetch_extra_t;
-
-void ie_fetch_extra_free(ie_fetch_extra_t *extra);
-
-typedef struct ie_fetch_attr_t {
-    bool envelope:1;
-    bool flags:1;
-    bool intdate:1;
-    bool uid:1;
-    bool rfc822:1;
-    bool rfc822_header:1;
-    bool rfc822_size:1;
-    bool rfc822_text:1;
-    bool body:1; // means BODY, not BODY[]
-    bool bodystruct:1;
-    ie_fetch_extra_t *extra;
-} ie_fetch_attr_t;
-
-void ie_fetch_attr_free(ie_fetch_attr_t *attr);
-
 union imap_expr_t {
-    bool boolean;
-    char ch;
-    unsigned int num;
-    int sign;
-    dstr_t dstr;
-    imap_time_t time;
-    ie_flag_type_t flag_type;
-    ie_flag_t flag;
-    ie_flag_list_t flag_list;
-    ie_mflag_type_t mflag_type;
-    ie_mflag_t mflag;
-    ie_mflag_list_t mflag_list;
-    ie_mailbox_t mailbox;
+    ie_dstr_t *dstr;
+    ie_mailbox_t *mailbox;
     ie_st_attr_t st_attr; // a single status attribute
     unsigned char st_attr_cmd; // logical OR of status attributes in command
-    ie_st_attr_resp_t st_attr_resp; // logical OR, and with response values
-    ie_seq_set_t *seq_set;
-    dstr_link_t *dstr_link;
-    ie_partial_t partial;
-    ie_section_part_t *sect_part;
-    ie_sect_txt_t sect_txt;
+    imap_time_t time;
+    unsigned int num;
+    int sign;
+    bool boolean;
+    ie_aflag_type_t aflag;
+    ie_aflags_t *aflags;
     ie_search_key_t *search_key;
-    ie_fetch_extra_t *fetch_extra;
-    ie_fetch_attr_t fetch_attr;
-    ie_resp_status_type_t status_type;
-    // dummy types to trigger %destructor actions
-    void *prekeep;
-    void *preqstring;
-    void *capa;
-    void *fetchresp;
-    void *f_rfc822resp;
+    ie_seq_spec_t *seq_spec;
+    ie_seq_set_t *seq_set;
 };
+
+
+////////////
+
+typedef enum {
+    KEEP_RAW,
+    KEEP_QSTRING,
+} keep_type_t;
+
+/* Bison-friendly API: errors are kept in the parser, all functions return
+   an expression type, even functions which really just modify some other
+   object.  This means that in error situations, we can easily call _free() on
+   all the inputs and return a NULL value to bison.
+
+   Essentially, when you see:
+
+       ie_dstr_t *ie_dstr_append(imap_parser_t *p, ie_dstr_t *d, ...)
+
+   the return value is a pointer to the same object as the argument, although
+   in error situations, the error in *p will set, *d will be freed, and NULL
+   will be returned.
+*/
+
+/* qstrings are allocated when the quote is found, which is before the first
+   token of the qstring is available, so we allocate an empty dstr (or not) */
+ie_dstr_t *ie_dstr_new_empty(imap_parser_t *p);
+// the content of the token is taken directly from the parser_t
+// also, parser->keep is read by ie_dstr_new, and nothing is allocated if !keep
+ie_dstr_t *ie_dstr_new(imap_parser_t *p, keep_type_t type);
+ie_dstr_t *ie_dstr_append(imap_parser_t *p, ie_dstr_t *d, keep_type_t type);
+void ie_dstr_free(ie_dstr_t *d);
+// free everything but the dstr_t
+void ie_dstr_free_shell(ie_dstr_t *d);
+
+ie_mailbox_t *ie_mailbox_new_noninbox(imap_parser_t *p, ie_dstr_t *name);
+ie_mailbox_t *ie_mailbox_new_inbox(imap_parser_t *p);
+void ie_mailbox_free(ie_mailbox_t *m);
+
+// append flags
+
+ie_aflags_t *ie_aflags_new(imap_parser_t *p);
+void ie_aflags_free(ie_aflags_t *af);
+
+ie_aflags_t *ie_aflags_add_simple(imap_parser_t *p, ie_aflags_t *af,
+        ie_aflag_type_t type);
+ie_aflags_t *ie_aflags_add_ext(imap_parser_t *p, ie_aflags_t *af,
+        ie_dstr_t *ext);
+ie_aflags_t *ie_aflags_add_kw(imap_parser_t *p, ie_aflags_t *af,
+        ie_dstr_t *kw);
+
+// sequence set construction
+
+ie_seq_spec_t *ie_seq_spec_new(imap_parser_t *p, unsigned int a,
+        unsigned int b);
+void ie_seq_spec_free(ie_seq_spec_t *spec);
+
+ie_seq_set_t *ie_seq_set_new(imap_parser_t *p);
+void ie_seq_set_free(ie_seq_set_t *set);
+ie_seq_set_t *ie_seq_set_append(imap_parser_t *p, ie_seq_set_t *set,
+        ie_seq_spec_t *spec);
+
+// search key construction
+ie_search_key_t *ie_search_key_new(imap_parser_t *p);
+void ie_search_key_free(ie_search_key_t *s);
+
+ie_search_key_t *ie_search_0(imap_parser_t *p, ie_search_key_type_t type);
+ie_search_key_t *ie_search_dstr(imap_parser_t *p, ie_search_key_type_t type,
+        ie_dstr_t *dstr);
+ie_search_key_t *ie_search_header(imap_parser_t *p, ie_search_key_type_t type,
+        ie_dstr_t *a, ie_dstr_t *b);
+ie_search_key_t *ie_search_num(imap_parser_t *p, ie_search_key_type_t type,
+        unsigned int num);
+ie_search_key_t *ie_search_date(imap_parser_t *p, ie_search_key_type_t type,
+        imap_time_t date);
+ie_search_key_t *ie_search_seq_set(imap_parser_t *p, ie_search_key_type_t type,
+        ie_seq_set_t *seq_set);
+ie_search_key_t *ie_search_not(imap_parser_t *p, ie_search_key_t *key);
+ie_search_key_t *ie_search_pair(imap_parser_t *p, ie_search_key_type_t type,
+        ie_search_key_t *a, ie_search_key_t *b);
+
+/* Hook wrappers.  These are just interfaces between functional code and
+   imperative code to make callbacks from the bison code. */
+
+void login_cmd(imap_parser_t *parser, ie_dstr_t *tag, ie_dstr_t *user,
+        ie_dstr_t *pass);
+void select_cmd(imap_parser_t *p, ie_dstr_t *tag, ie_mailbox_t *m);
+void examine_cmd(imap_parser_t *p, ie_dstr_t *tag, ie_mailbox_t *m);
+void create_cmd(imap_parser_t *p, ie_dstr_t *tag, ie_mailbox_t *m);
+void delete_cmd(imap_parser_t *p, ie_dstr_t *tag, ie_mailbox_t *m);
+void rename_cmd(imap_parser_t *p, ie_dstr_t *tag, ie_mailbox_t *old,
+        ie_mailbox_t *new);
+void subscribe_cmd(imap_parser_t *p, ie_dstr_t *tag, ie_mailbox_t *m);
+void unsubscribe_cmd(imap_parser_t *p, ie_dstr_t *tag, ie_mailbox_t *m);
+void list_cmd(imap_parser_t *p, ie_dstr_t *tag, ie_mailbox_t *m,
+        ie_dstr_t *pattern);
+void lsub_cmd(imap_parser_t *p, ie_dstr_t *tag, ie_mailbox_t *m,
+        ie_dstr_t *pattern);
+void status_cmd(imap_parser_t *p, ie_dstr_t *tag, ie_mailbox_t *m,
+        unsigned char st_attr);
+void append_cmd(imap_parser_t *p, ie_dstr_t *tag, ie_mailbox_t *m,
+        ie_aflags_t *aflags, imap_time_t time, ie_dstr_t *content);
+void search_cmd(imap_parser_t *p, ie_dstr_t *tag, bool uid_mode,
+        ie_dstr_t *charset, ie_search_key_t *search_key);
 
 #endif // IMAP_EXPR_H

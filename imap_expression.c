@@ -1,234 +1,617 @@
 #include <stdlib.h>
 
 #include "imap_expression.h"
+#include "logger.h"
 
-DSTR_STATIC(status_type_OK_dstr, "OK");
-DSTR_STATIC(status_type_NO_dstr, "NO");
-DSTR_STATIC(status_type_BAD_dstr, "BAD");
-DSTR_STATIC(status_type_PREAUTH_dstr, "PREAUTH");
-DSTR_STATIC(status_type_BYE_dstr, "BYE");
-DSTR_STATIC(status_type_UNK_dstr, "unknown status code");
+ie_dstr_t *ie_dstr_new_empty(imap_parser_t *p){
+    if(p->error.type != E_NONE) return NULL;
 
-const dstr_t *st_type_to_dstr(status_type_t type);
-const dstr_t *st_type_to_dstr(status_type_t type){
+    // allocate the dstr
+    ie_dstr_t *d = ie_dstr_new_empty(p);
+
+    // append the current value
+    return ie_dstr_append(p, d, type);
+}
+
+ie_dstr_t *ie_dstr_new(imap_parser_t *p, keep_type_t type){
+    if(p->error.type != E_NONE) return NULL;
+
+    // if keep is not set, return NULL
+    if(!p->keep) return NULL;
+    // only keep one thing per "keep"
+    p->keep = false;
+
+    // allocate struct
+    ie_dstr_t *d = malloc(sizeof(*d));
+    if(!d){
+        ORIG_GO(p->error, E_NOMEM, "no memory", fail);
+    }
+
+    // allocate dstr
+    PROP_GO(p->error, dstr_new(&d->dstr, 64), fail_malloc);
+
+    // prep link
+    link_init(&d->link);
+
+    // now append the current token to the dstr
+    return ie_dstr_append(p, d, type);
+
+fail_malloc:
+    free(d);
+fail:
+    return NULL;
+}
+
+ie_dstr_t *ie_dstr_append(imap_parser_t *p, ie_dstr_t *d, keep_type_t type){
+    if(p->error.type != E_NONE) goto fail;
+
+    // handle non-keep situations cleanly
+    if(!d) return NULL;
+
+    // patterns for recoding the quoted strings
+    LIST_STATIC(dstr_t, find, DSTR_LIT("\\\\"), DSTR_LIT("\\\""));
+    LIST_STATIC(dstr_t, repl, DSTR_LIT("\\"),   DSTR_LIT("\""));
     switch(type){
-    case STATUS_TYPE_OK: return &status_type_OK_dstr;
-    case STATUS_TYPE_NO: return &status_type_NO_dstr;
-    case STATUS_TYPE_BAD: return &status_type_BAD_dstr;
-    case STATUS_TYPE_PREAUTH: return &status_type_PREAUTH_dstr;
-    case STATUS_TYPE_BYE: return &status_type_BYE_dstr;
-    default: return &status_type_UNK_dstr;
+        case KEEP_RAW:
+            // no escapes or fancy shit necessary, just append
+            PROP_GO(p->error, dstr_append(&d->dstr, p->token), fail);
+            break;
+        case KEEP_QSTRING:
+            // unescape \" and \\ sequences
+            PROP_GO(p->error, dstr_recode(p->token, &d->dstr, &find,
+                        &repl, true), fail);
+            break;
     }
-};
+    return d;
 
-DSTR_STATIC(status_code_NONE_dstr, "STATUS_CODE_NONE");
-DSTR_STATIC(status_code_ALERT_dstr, "STATUS_CODE_ALERT");
-DSTR_STATIC(status_code_CAPA_dstr, "STATUS_CODE_CAPA");
-DSTR_STATIC(status_code_PARSE_dstr, "STATUS_CODE_PARSE");
-DSTR_STATIC(status_code_PERMFLAGS_dstr, "STATUS_CODE_PERMFLAGS");
-DSTR_STATIC(status_code_READ_ONLY_dstr, "STATUS_CODE_READ_ONLY");
-DSTR_STATIC(status_code_READ_WRITE_dstr, "STATUS_CODE_READ_WRITE");
-DSTR_STATIC(status_code_TRYCREATE_dstr, "STATUS_CODE_TRYCREATE");
-DSTR_STATIC(status_code_UIDNEXT_dstr, "STATUS_CODE_UIDNEXT");
-DSTR_STATIC(status_code_UIDVLD_dstr, "STATUS_CODE_UIDVLD");
-DSTR_STATIC(status_code_UNSEEN_dstr, "STATUS_CODE_UNSEEN");
-DSTR_STATIC(status_code_ATOM_dstr, "STATUS_CODE_ATOM");
-DSTR_STATIC(status_code_UNK_dstr, "unknown status code");
-
-const dstr_t *st_code_to_dstr(status_code_t code){
-    switch(code){
-    case STATUS_CODE_NONE: return &status_code_NONE_dstr;
-    case STATUS_CODE_ALERT: return &status_code_ALERT_dstr;
-    case STATUS_CODE_CAPA: return &status_code_CAPA_dstr;
-    case STATUS_CODE_PARSE: return &status_code_PARSE_dstr;
-    case STATUS_CODE_PERMFLAGS: return &status_code_PERMFLAGS_dstr;
-    case STATUS_CODE_READ_ONLY: return &status_code_READ_ONLY_dstr;
-    case STATUS_CODE_READ_WRITE: return &status_code_READ_WRITE_dstr;
-    case STATUS_CODE_TRYCREATE: return &status_code_TRYCREATE_dstr;
-    case STATUS_CODE_UIDNEXT: return &status_code_UIDNEXT_dstr;
-    case STATUS_CODE_UIDVLD: return &status_code_UIDVLD_dstr;
-    case STATUS_CODE_UNSEEN: return &status_code_UNSEEN_dstr;
-    case STATUS_CODE_ATOM: return &status_code_ATOM_dstr;
-    default: return &status_code_UNK_dstr;
-    }
-};
-
-DSTR_STATIC(flag_type_ANSWERED_dstr, "FLAG_ANSWERED");
-DSTR_STATIC(flag_type_FLAGGED_dstr, "FLAG_FLAGGED");
-DSTR_STATIC(flag_type_DELETED_dstr, "FLAG_DELETED");
-DSTR_STATIC(flag_type_SEEN_dstr, "FLAG_SEEN");
-DSTR_STATIC(flag_type_DRAFT_dstr, "FLAG_DRAFT");
-DSTR_STATIC(flag_type_RECENT_dstr, "FLAG_RECENT");
-DSTR_STATIC(flag_type_ASTERISK_dstr, "FLAG_ASTERISK");
-DSTR_STATIC(flag_type_KEYWORD_dstr, "FLAG_KEYWORD");
-DSTR_STATIC(flag_type_EXTENSION_dstr, "FLAG_EXTENSION");
-DSTR_STATIC(flag_type_UNK_dstr, "UNKNOWN FLAG");
-
-const dstr_t *flag_type_to_dstr(ie_flag_type_t f){
-    switch(f){
-        case IE_FLAG_ANSWERED: return &flag_type_ANSWERED_dstr;
-        case IE_FLAG_FLAGGED: return &flag_type_FLAGGED_dstr;
-        case IE_FLAG_DELETED: return &flag_type_DELETED_dstr;
-        case IE_FLAG_SEEN: return &flag_type_SEEN_dstr;
-        case IE_FLAG_DRAFT: return &flag_type_DRAFT_dstr;
-        case IE_FLAG_RECENT: return &flag_type_RECENT_dstr;
-        case IE_FLAG_ASTERISK: return &flag_type_ASTERISK_dstr;
-        case IE_FLAG_KEYWORD: return &flag_type_KEYWORD_dstr;
-        case IE_FLAG_EXTENSION: return &flag_type_EXTENSION_dstr;
-        default: return &flag_type_UNK_dstr;
-    }
+fail:
+    ie_dstr_free(d);
+    return NULL;
 }
 
-DSTR_STATIC(mflag_type_NOINFERIORS_dstr, "MFLAG_NOINFERIORS");
-DSTR_STATIC(mflag_type_NOSELECT_dstr, "MFLAG_NOSELECT");
-DSTR_STATIC(mflag_type_MARKED_dstr, "MFLAG_MARKED");
-DSTR_STATIC(mflag_type_UNMARKED_dstr, "MFLAG_UNMARKED");
-DSTR_STATIC(mflag_type_EXTENSION_dstr, "MFLAG_EXTENSION");
-DSTR_STATIC(mflag_type_UNK_dstr, "UNKNOWN MFLAG");
+void ie_dstr_free(ie_dstr_t *d){
+    if(!d) return;
+    link_remove(&d->link);
+    dstr_free(&d->dstr);
+    free(d);
+}
 
-const dstr_t *mflag_type_to_dstr(ie_mflag_type_t f){
-    switch(f){
-        case IE_MFLAG_NOINFERIORS: return &mflag_type_NOINFERIORS_dstr;
-        case IE_MFLAG_NOSELECT: return &mflag_type_NOSELECT_dstr;
-        case IE_MFLAG_MARKED: return &mflag_type_MARKED_dstr;
-        case IE_MFLAG_UNMARKED: return &mflag_type_UNMARKED_dstr;
-        case IE_MFLAG_EXTENSION: return &mflag_type_EXTENSION_dstr;
-        default: return &mflag_type_UNK_dstr;
+void ie_dstr_free_shell(ie_dstr_t *d){
+    if(!d) return;
+    link_remove(&d->link);
+    free(d);
+}
+
+static ie_mailbox_t *ie_mailbox_new(imap_parser_t *p, void){
+    ie_mailbox_t *m = malloc(sizeof(*m));
+    if(!m) TRACE_ORIG(p->error, E_NOMEM, "no memory");
+    *m = (ie_mailbox_t){0};
+    return NULL;
+}
+
+ie_mailbox_t *ie_mailbox_new_inbox(imap_parser_t *p, ie_dstr_t *name){
+    if(p->error.type != E_NONE) goto fail;
+
+    // handle non-keep situations cleanly
+    if(!name) return NULL;
+
+    ie_mailbox_t *m = ie_mailbox_new(p);
+    if(!m) return NULL;
+
+    m->inbox = false;
+    m->dstr = name->dstr;
+    ie_dstr_free_shell(name);
+
+    return m;
+
+fail:
+    ie_dstr_free(name);
+    return NULL;
+}
+
+ie_mailbox_t *ie_mailbox_new_noninbox(imap_parser_t *p){
+    if(p->error.type != E_NONE) return NULL;
+
+    // if keep is not set, return NULL
+    if(!p->keep) return NULL;
+    // only keep one thing per "keep"
+    p->keep = false;
+
+    ie_mailbox_t *m = ie_mailbox_new(p);
+    if(!m) return NULL;
+
+    m->inbox = true;
+
+    return m;
+}
+
+void ie_mailbox_free(ie_mailbox_t *m){
+    if(!m) return;
+    dstr_free(&m->dstr);
+    free(m);
+}
+
+// append flags
+
+ie_aflags_t *ie_aflags_new(imap_parser_t *p){
+    if(p->error.type != E_NONE) return NULL;
+
+    ie_aflags_t *af = malloc(sizeof(*af));
+    if(!af){
+        TRACE_ORIG(p->error, E_NOMEM, "no memory");
+        return NULL;
     }
+
+    *af = (ie_aflags_t){0};
+    link_init(&af->extensions);
+    link_init(&af->keywords);
+
+    return af;
+}
+void ie_aflags_free(ie_aflags_t *af){
+    if(!af) return;
+    link_remove(&af->extensions);
+    link_remove(&af->keywords);
+    free(af);
 }
 
-DSTR_STATIC(status_attr_MESSAGES_dstr, "ATTR_MESSAGES");
-DSTR_STATIC(status_attr_RECENT_dstr, "ATTR_RECENT");
-DSTR_STATIC(status_attr_UIDNEXT_dstr, "ATTR_UIDNEXT");
-DSTR_STATIC(status_attr_UIDVLD_dstr, "ATTR_UIDVLD");
-DSTR_STATIC(status_attr_UNSEEN_dstr, "ATTR_UNSEEN");
-DSTR_STATIC(status_attr_UNK_dstr, "Unknown attribute");
+ie_aflags_t *ie_aflags_add_simple(imap_parser_t *p, ie_aflags_t *af,
+        ie_aflag_type_t type){
+    if(p->error.type != E_NONE) goto fail;
 
-const dstr_t *st_attr_to_dstr(ie_st_attr_t attr){
-    switch(attr){
-        case IE_ST_ATTR_MESSAGES: return &status_attr_MESSAGES_dstr;
-        case IE_ST_ATTR_RECENT: return &status_attr_RECENT_dstr;
-        case IE_ST_ATTR_UIDNEXT: return &status_attr_UIDNEXT_dstr;
-        case IE_ST_ATTR_UIDVLD: return &status_attr_UIDVLD_dstr;
-        case IE_ST_ATTR_UNSEEN: return &status_attr_UNSEEN_dstr;
-        default: return &status_attr_UNK_dstr;
+    switch(type){
+        case IE_AFLAG_ANSWERED:
+            af->answered = true;
+            break;
+        case IE_AFLAG_FLAGGED:
+            af->flagged = true;
+            break;
+        case IE_AFLAG_DELETED:
+            af->deleted = true;
+            break;
+        case IE_AFLAG_SEEN:
+            af->seen = true;
+            break;
+        case IE_AFLAG_DRAFT:
+            af->draft = true;
+            break;
+        default:
+            TRACE(p->error, "append flag type %x\n", FU(type));
+            ORIG_GO(p->error, E_INTERNAL, "unexpcted append flag type", fail);
     }
+    return af;
+
+fail:
+    ie_aflags_free(af);
+    return NULL;
 }
 
-void dstr_link_free(dstr_link_t *h){
-    dstr_link_t *ptr, *next;
-    ptr = h;
-    while(ptr){
-        next = ptr->next;
-        dstr_free(&ptr->dstr);
-        free(ptr);
-        ptr = next;
+ie_aflags_t *ie_aflags_add_ext(imap_parser_t *p, ie_aflags_t *af,
+        ie_dstr_t *ext){
+    if(p->error.type != E_NONE) goto fail;
+
+    link_list_append(&af->extensions, &ext->link);
+
+    return af;
+
+fail:
+    ie_aflags_free(af);
+    ie_aflags_free(ext);
+    return NULL;
+}
+
+ie_aflags_t *ie_aflags_add_kw(imap_parser_t *p, ie_aflags_t *af,
+        ie_dstr_t *kw){
+    if(p->error.type != E_NONE) goto fail;
+
+    link_list_append(&af->keywords, &ext->link);
+
+    return af;
+
+fail:
+    ie_aflags_free(af);
+    ie_aflags_free(kw);
+    return NULL;
+}
+
+// sequence set construction
+
+ie_seq_spec_t *ie_seq_spec_new(imap_parser_t *p, unsigned int n1,
+        unsigned int n2){
+    if(p->error != E_NONE) return NULL;
+    ie_seq_spec_t *spec = malloc(sizeof(*spec));
+    if(!spec){
+        TRACE_ORIG(p->error, E_NOMEM, "no memory");
+        return NULL;
     }
+    spec->n1 = n1;
+    spec->n2 = n2;
+    link_init(&spec->link);
+    return spec;
 }
 
-void ie_flag_list_free(ie_flag_list_t* fl){
-    dstr_link_free(fl->keywords);
-    dstr_link_free(fl->extensions);
+void ie_seq_spec_t *ie_seq_spec_free(ie_seq_spec_t *spec){
+    if(!spec) return;
+    link_remove(&s->link);
+    free(spec);
 }
 
-void ie_mflag_list_free(ie_mflag_list_t* mfl){
-    dstr_link_free(mfl->extensions);
-}
-
-void ie_seq_set_free(ie_seq_set_t *s){
-    ie_seq_set_t *ptr, *next;
-    ptr = s;
-    while(ptr){
-        next = ptr->next;
-        free(ptr);
-        ptr = next;
+ie_seq_set_t *ie_seq_set_new(imap_parser_t *p){
+    if(p->error != E_NONE) return NULL;
+    ie_seq_set_t *set = malloc(sizeof(*set));
+    if(!set){
+        TRACE_ORIG(p->error, E_NOMEM, "no memory");
+        return NULL;
     }
+    *set = (ie_seq_set_t){0};
+    link_init(&s->head);
+    return s;
 }
 
-void ie_search_key_free(ie_search_key_t *key){
-    ie_search_key_t *ptr, *next;
-    ptr = key;
-    while(ptr){
-        next = ptr->next;
-        switch(ptr->type){
-            case IE_SEARCH_ALL:         //
-            case IE_SEARCH_ANSWERED:    //
-            case IE_SEARCH_DELETED:     //
-            case IE_SEARCH_FLAGGED:     //
-            case IE_SEARCH_NEW:         //
-            case IE_SEARCH_OLD:         //
-            case IE_SEARCH_RECENT:      //
-            case IE_SEARCH_SEEN:        //
-            case IE_SEARCH_SUBJECT:     //
-            case IE_SEARCH_UNANSWERED:  //
-            case IE_SEARCH_UNDELETED:   //
-            case IE_SEARCH_UNFLAGGED:   //
-            case IE_SEARCH_UNSEEN:      //
-            case IE_SEARCH_DRAFT:       //
-            case IE_SEARCH_UNDRAFT:     //
-            case IE_SEARCH_BEFORE:      // uses search_param.date
-            case IE_SEARCH_ON:          // uses search_param.date
-            case IE_SEARCH_SINCE:       // uses search_param.date
-            case IE_SEARCH_SENTBEFORE:  // uses search_param.date
-            case IE_SEARCH_SENTON:      // uses search_param.date
-            case IE_SEARCH_SENTSINCE:   // uses search_param.date
-            case IE_SEARCH_LARGER:      // uses search_param.num
-            case IE_SEARCH_SMALLER:     // uses search_param.num
-                break;
-            case IE_SEARCH_BCC:         // uses search_param.dstr
-            case IE_SEARCH_BODY:        // uses search_param.dstr
-            case IE_SEARCH_CC:          // uses search_param.dstr
-            case IE_SEARCH_FROM:        // uses search_param.dstr
-            case IE_SEARCH_KEYWORD:     // uses search_param.dstr
-            case IE_SEARCH_TEXT:        // uses search_param.dstr
-            case IE_SEARCH_TO:          // uses search_param.dstr
-            case IE_SEARCH_UNKEYWORD:   // uses search_param.dstr
-                dstr_free(&ptr->param.dstr);
-                break;
-            case IE_SEARCH_HEADER:      // uses search_param.header
-                dstr_free(&ptr->param.header.name);
-                dstr_free(&ptr->param.header.value);
-                break;
-            case IE_SEARCH_UID:         // uses search_param.seq_set
-            case IE_SEARCH_SEQ_SET:     // uses search_param.seq_set
-                ie_seq_set_free(ptr->param.seq_set);
-                break;
-            case IE_SEARCH_NOT:         // uses search_param.search_key
-            case IE_SEARCH_GROUP:       // uses search_param.search_key
-                ie_search_key_free(ptr->param.search_key);
-                break;
-            case IE_SEARCH_OR:          // uses search_param.search_or
-                ie_search_key_free(ptr->param.search_or.a);
-                ie_search_key_free(ptr->param.search_or.b);
-                break;
-        }
-        free(ptr);
-        ptr = next;
+void ie_seq_set_t *ie_seq_set_free(ie_seq_set_t *set){
+    if(!set) return;
+    ie_seq_spec_t *spec;
+    ie_seq_spec_t *temp;
+    LINK_FOR_EACH_SAFE(spec, temp, &s->head, ie_seq_spec_t, link){
+        ie_seq_spec_free(spec);
     }
+    free(set);
 }
 
-void ie_section_part_free(ie_section_part_t *s){
-    ie_section_part_t *ptr, *next;
-    ptr = s;
-    while(ptr){
-        next = ptr->next;
-        free(ptr);
-        ptr = next;
+ie_seq_set_t *ie_seq_set_append(imap_parser_t *p, ie_seq_set_t *set,
+        ie_seq_spec_t *spec){
+    if(p->error != E_NONE) goto fail;
+    link_list_append(&set->head, &spec->link);
+    return set;
+
+fail:
+    ie_seq_set_free(set);
+    ie_seq_spec_free(spec);
+    return NULL;
+}
+
+// search key construction
+
+ie_search_key_t *ie_search_key_new(imap_parser_t *p){
+    if(p->error != E_NONE) return NULL;
+    ie_search_key_t *s = malloc(sizeof(*s));
+    if(!s){
+        TRACE_ORIG(p->error, E_NOMEM, "no memory");
+        return NULL;
     }
+    *s = (ie_search_key_t){0};
+    return s;
 }
 
-void ie_fetch_extra_free(ie_fetch_extra_t *extra){
-    ie_fetch_extra_t *ptr, *next;
-    ptr = extra;
-    while(ptr){
-        next = ptr->next;
-        ie_section_part_free(ptr->sect_part);
-        dstr_link_free(ptr->sect_txt.headers);
-        free(ptr);
-        ptr = next;
-    }
+void ie_search_key_free(ie_search_key_t *s){
+    if(!s) return;
+    // TODO
 }
 
-void ie_fetch_attr_free(ie_fetch_attr_t *attr){
-    ie_fetch_extra_free(attr->extra);
+#define NEW_SEARCH_KEY_WITH_TYPE \
+    ie_search_key_t *s = ie_search_key_new(p); \
+    if(!s) goto fail; \
+    s->type = type
+
+
+ie_search_key_t *ie_search_0(imap_parser_t *p, ie_search_key_type_t type){
+    if(p->error != E_NONE) return NULL;
+    NEW_SEARCH_KEY_WITH_TYPE;
+    return s;
+
+fail:
+    return NULL;
+}
+
+ie_search_key_t *ie_search_dstr(imap_parser_t *p, ie_search_key_type_t type,
+        ie_dstr_t *dstr){
+    if(p->error != E_NONE) goto fail;
+    NEW_SEARCH_KEY_WITH_TYPE;
+    s->param.dstr = dstr;
+    return s;
+
+fail:
+    ie_dstr_free(dstr);
+    return NULL;
+}
+
+ie_search_key_t *ie_search_header(imap_parser_t *p, ie_search_key_type_t type,
+        ie_dstr_t *a, ie_dstr_t *b){
+    if(p->error != E_NONE) goto fail;
+    NEW_SEARCH_KEY_WITH_TYPE;
+    s->param.header.a = a;
+    s->param.header.b = b;
+    return s;
+
+fail:
+    ie_dstr_free(a);
+    ie_dstr_free(b);
+    return NULL;
+}
+
+ie_search_key_t *ie_search_num(imap_parser_t *p, ie_search_key_type_t type,
+        unsigned int num){
+    if(p->error != E_NONE) return NULL;
+    NEW_SEARCH_KEY_WITH_TYPE;
+    s->param.num = num;
+    return s;
+
+fail:
+    return NULL;
+}
+
+ie_search_key_t *ie_search_date(imap_parser_t *p, ie_search_key_type_t type,
+        imap_time_t date){
+    if(p->error != E_NONE) return NULL;
+    NEW_SEARCH_KEY_WITH_TYPE;
+    s->param.date = date;
+    return s;
+
+fail:
+    return NULL;
+}
+
+ie_search_key_t *ie_search_seq_set(imap_parser_t *p, ie_search_key_type_t type,
+        ie_seq_set_t *seq_set){
+    if(p->error != E_NONE) goto fail;
+    NEW_SEARCH_KEY_WITH_TYPE;
+    s->param.date =
+    return s;
+
+fail:
+    ie_seq_set_free(key);
+    return NULL;
+}
+
+ie_search_key_t *ie_search_not(imap_parser_t *p, ie_search_key_t *key){
+    if(p->error != E_NONE) goto fail;
+    ie_search_key_type_t type = IE_SEARCH_NOT;
+    NEW_SEARCH_KEY_WITH_TYPE;
+    return s;
+
+fail:
+    ie_search_key_free(key);
+    return NULL;
+}
+
+ie_search_key_t *ie_search_pair(imap_parser_t *p, ie_search_key_type_t type,
+        ie_search_key_t *a, ie_search_key_t *b){
+    if(p->error != E_NONE) goto fail;
+    NEW_SEARCH_KEY_WITH_TYPE;
+    s->param.pair.a = a;
+    s->param.pair.b = b;
+    return s;
+
+fail:
+    ie_search_key_free(a);
+    ie_search_key_free(b);
+    return NULL;
+}
+
+
+
+//// Hook wrappers
+
+void login_cmd(imap_parser_t *p, ie_dstr_t *tag, ie_dstr_t *user,
+        ie_dstr_t *pass){
+    if(p->error.type != E_NONE) goto fail;
+    if(!tag) ORIG_GO(p->error, E_INTERNAL, "invalid callback", fail);
+    if(!user) ORIG_GO(p->error, E_INTERNAL, "invalid callback", fail);
+    if(!pass) ORIG_GO(p->error, E_INTERNAL, "invalid callback", fail);
+
+    p->hooks_dn.login(p->hook_data, tag->dstr, user->dstr,
+            pass->dstr);
+
+    ie_dstr_free_shell(tag);
+    ie_dstr_free_shell(user);
+    ie_dstr_free_shell(pass);
+    return;
+
+fail:
+    ie_dstr_free(tag);
+    ie_dstr_free(user);
+    ie_dstr_free(pass);
+}
+
+void select_cmd(imap_parser_t *p, ie_dstr_t *tag, ie_mailbox_t *m){
+    if(p->error.type != E_NONE) goto fail;
+    if(!tag) ORIG_GO(p->error, E_INTERNAL, "invalid callback", fail);
+    if(!m) ORIG_GO(p->error, E_INTERNAL, "invalid callback", fail);
+
+    p->hooks_dn.select(p->hook_data, tag->dstr, m->inbox, m->dstr);
+
+    ie_dstr_free_shell(tag);
+    free(m);
+    return;
+
+fail:
+    ie_dstr_free(tag);
+    ie_mailbox_free(m);
+}
+
+void examine_cmd(imap_parser_t *p, ie_dstr_t *tag, ie_mailbox_t *m){
+    if(p->error.type != E_NONE) goto fail;
+    if(!tag) ORIG_GO(p->error, E_INTERNAL, "invalid callback", fail);
+    if(!m) ORIG_GO(p->error, E_INTERNAL, "invalid callback", fail);
+
+    p->hooks_dn.examine(p->hook_data, tag->dstr, m->inbox, m->dstr);
+
+    ie_dstr_free_shell(tag);
+    free(m);
+    return;
+
+fail:
+    ie_dstr_free(tag);
+    ie_mailbox_free(m);
+}
+
+void create_cmd(imap_parser_t *p, ie_dstr_t *tag, ie_mailbox_t *m){
+    if(p->error.type != E_NONE) goto fail;
+    if(!tag) ORIG_GO(p->error, E_INTERNAL, "invalid callback", fail);
+    if(!m) ORIG_GO(p->error, E_INTERNAL, "invalid callback", fail);
+
+    p->hooks_dn.create(p->hook_data, tag->dstr, m->inbox, m->dstr);
+
+    ie_dstr_free_shell(tag);
+    free(m);
+    return;
+
+fail:
+    ie_dstr_free(tag);
+    ie_mailbox_free(m);
+}
+
+void delete_cmd(imap_parser_t *p, ie_dstr_t *tag, ie_mailbox_t *m){
+    if(p->error.type != E_NONE) goto fail;
+    if(!tag) ORIG_GO(p->error, E_INTERNAL, "invalid callback", fail);
+    if(!m) ORIG_GO(p->error, E_INTERNAL, "invalid callback", fail);
+
+    p->hooks_dn.delete(p->hook_data, tag->dstr, m->inbox, m->dstr);
+
+    ie_dstr_free_shell(tag);
+    free(m);
+    return;
+
+fail:
+    ie_dstr_free(tag);
+    ie_mailbox_free(m);
+}
+
+void rename_cmd(imap_parser_t *p, ie_dstr_t *tag, ie_mailbox_t *old,
+        ie_mailbox_t *new){
+    if(p->error.type != E_NONE) goto fail;
+    if(!tag) ORIG_GO(p->error, E_INTERNAL, "invalid callback", fail);
+    if(!old) ORIG_GO(p->error, E_INTERNAL, "invalid callback", fail);
+    if(!new) ORIG_GO(p->error, E_INTERNAL, "invalid callback", fail);
+
+    p->hooks_dn.delete(p->hook_data, tag->dstr, old->inbox, old->dstr,
+            new->inbox, new->dstr);
+
+    ie_dstr_free_shell(tag);
+    free(old);
+    free(new);
+    return;
+
+fail:
+    ie_dstr_free(tag);
+    ie_mailbox_free(old);
+    ie_mailbox_free(new);
+}
+
+void subscribe_cmd(imap_parser_t *p, ie_dstr_t *tag, ie_mailbox_t *m){
+    if(p->error.type != E_NONE) goto fail;
+    if(!tag) ORIG_GO(p->error, E_INTERNAL, "invalid callback", fail);
+    if(!m) ORIG_GO(p->error, E_INTERNAL, "invalid callback", fail);
+
+    p->hooks_dn.susbscribe(p->hook_data, tag->dstr, m->inbox, m->dstr);
+
+    ie_dstr_free_shell(tag);
+    free(m);
+    return;
+
+fail:
+    ie_dstr_free(tag);
+    ie_mailbox_free(m);
+}
+
+void unsubscribe_cmd(imap_parser_t *p, ie_dstr_t *tag, ie_mailbox_t *m){
+    if(p->error.type != E_NONE) goto fail;
+    if(!tag) ORIG_GO(p->error, E_INTERNAL, "invalid callback", fail);
+    if(!m) ORIG_GO(p->error, E_INTERNAL, "invalid callback", fail);
+
+    p->hooks_dn.unsusbscribe(p->hook_data, tag->dstr, m->inbox, m->dstr);
+
+    ie_dstr_free_shell(tag);
+    free(m);
+    return;
+
+fail:
+    ie_dstr_free(tag);
+    ie_mailbox_free(m);
+}
+
+void list_cmd(imap_parser_t *p, ie_dstr_t *tag, ie_mailbox_t *m,
+        ie_dstr_t *pattern){
+    if(p->error.type != E_NONE) goto fail;
+    if(!tag) ORIG_GO(p->error, E_INTERNAL, "invalid callback", fail);
+    if(!m) ORIG_GO(p->error, E_INTERNAL, "invalid callback", fail);
+    if(!pattern) ORIG_GO(p->error, E_INTERNAL, "invalid callback", fail);
+
+    p->hooks_dn.list(p->hook_data, tag->dstr, m->inbox, m->mbx, pattern->dstr);
+
+    ie_dstr_free_shell(tag);
+    free(m);
+    ie_dstr_free_shell(pattern);
+    return;
+
+fail:
+    ie_dstr_free(tag);
+    ie_mailbox_free(m);
+    ie_dstr_free(pattern);
+}
+
+void lsub_cmd(imap_parser_t *p, ie_dstr_t *tag, ie_mailbox_t *m,
+        ie_dstr_t *pattern){
+    if(p->error.type != E_NONE) goto fail;
+    if(!tag) ORIG_GO(p->error, E_INTERNAL, "invalid callback", fail);
+    if(!m) ORIG_GO(p->error, E_INTERNAL, "invalid callback", fail);
+    if(!pattern) ORIG_GO(p->error, E_INTERNAL, "invalid callback", fail);
+
+    p->hooks_dn.lsub(p->hook_data, tag->dstr, m->inbox, m->mbx, pattern->dstr);
+
+    ie_dstr_free_shell(tag);
+    free(m);
+    ie_dstr_free_shell(pattern);
+    return;
+
+fail:
+    ie_dstr_free(tag);
+    ie_mailbox_free(m);
+    ie_dstr_free(pattern);
+}
+
+void status_cmd(imap_parser_t *p, ie_dstr_t *tag, ie_mailbox_t *m,
+        unsigned char st_attr){
+    if(p->error.type != E_NONE) goto fail;
+    if(!tag) ORIG_GO(p->error, E_INTERNAL, "invalid callback", fail);
+    if(!m) ORIG_GO(p->error, E_INTERNAL, "invalid callback", fail);
+
+    p->hooks_dn.status(parser->hook_data, tag->dstr, m->inbox, m->dstr,
+        st_attr & IE_ST_ATTR_MESSAGES,
+        st_attr & IE_ST_ATTR_RECENT,
+        st_attr & IE_ST_ATTR_UIDNEXT,
+        st_attr & IE_ST_ATTR_UIDVLD,
+        st_attr & IE_ST_ATTR_UNSEEN);
+
+    ie_dstr_free_shell(tag);
+    free(m);
+    return;
+
+fail:
+    ie_dstr_free(tag);
+    ie_mailbox_free(m);
+}
+
+void append_cmd(imap_parser_t *p, ie_dstr_t *tag, ie_mailbox_t *m,
+        ie_aflags_t *aflags, imap_time_t time, ie_dstr_t *content){
+    if(p->error.type != E_NONE) goto fail;
+    if(!tag) ORIG_GO(p->error, E_INTERNAL, "invalid callback", fail);
+    if(!m) ORIG_GO(p->error, E_INTERNAL, "invalid callback", fail);
+    if(!aflags) ORIG_GO(p->error, E_INTERNAL, "invalid callback", fail);
+    if(!content) ORIG_GO(p->error, E_INTERNAL, "invalid callback", fail);
+
+    p->hooks_dn.append(p->hook_data, tag->dstr, m->inbox, m->mbx, aflags, time,
+            content->dstr);
+
+    ie_dstr_free_shell(tag);
+    free(m);
+    // no shell for aflags
+    ie_dstr_free_shell(content);
+    return;
+
+fail:
+    ie_dstr_free(tag);
+    ie_mailbox_free(m);
+    ie_aflags_free(aflags);
+    ie_dstr_free(tag);
 }

@@ -1,6 +1,7 @@
 #ifndef IMAP_PARSE_H
 #define IMAP_PARSE_H
 
+// imap_expression.h needs imap_parser_t
 #include "imap_expression.h"
 #include "common.h"
 
@@ -45,11 +46,6 @@ typedef enum {
 
 dstr_t* scan_mode_to_dstr(scan_mode_t mode);
 
-typedef enum {
-    KEEP_RAW,
-    KEEP_QSTRING,
-} keep_type_t;
-
 // a list of hooks that are called when communicating with the email client
 typedef struct {
     void (*login)(void *data, dstr_t tag, dstr_t user, dstr_t pass);
@@ -66,64 +62,62 @@ typedef struct {
     void (*status)(void *data, dstr_t tag, bool inbox, dstr_t mbx,
                    bool messages, bool recent, bool uidnext,
                    bool uidvld, bool unseen);
-    void (*check)(void *data, dstr_t tag);
-    void (*close)(void *data, dstr_t tag);
-    void (*expunge)(void *data, dstr_t tag);
-    derr_t (*append_start)(void *data, dstr_t tag, bool inbox, dstr_t mbx,
-                           ie_flag_list_t flags, imap_time_t time);
-    derr_t (*append_chunk)(void *data, dstr_t chunk);
-    derr_t (*append_end)(void *data);
+//    void (*check)(void *data, dstr_t tag);
+//    void (*close)(void *data, dstr_t tag);
+//    void (*expunge)(void *data, dstr_t tag);
+    void (*append)(void *data, dstr_t tag, bool inbox, dstr_t mbx,
+            ie_aflags_t aflags, imap_time_t time, dstr_t content);
     void (*search)(void *data, dstr_t tag, bool uid_mode, dstr_t charset,
                    ie_search_key_t *search_key);
-    void (*fetch)(void *data, dstr_t tag, bool uid_mode, ie_seq_set_t *seq_set,
-                  ie_fetch_attr_t attr);
-    void (*store)(void *data, dstr_t tag, bool uid_mode, ie_seq_set_t *seq_set,
-                  int sign, bool silent, ie_flag_list_t flags);
-    void (*copy)(void *data, dstr_t tag, bool uid_mode, ie_seq_set_t *seq_set,
-                 bool inbox, dstr_t mbx);
+//     void (*fetch)(void *data, dstr_t tag, bool uid_mode, ie_seq_set_t *seq_set,
+//                   ie_fetch_attr_t attr);
+//     void (*store)(void *data, dstr_t tag, bool uid_mode, ie_seq_set_t *seq_set,
+//                   int sign, bool silent, ie_flag_list_t flags);
+//     void (*copy)(void *data, dstr_t tag, bool uid_mode, ie_seq_set_t *seq_set,
+//                  bool inbox, dstr_t mbx);
 } imap_parse_hooks_dn_t;
 
 // a list of hooks that are called when communicating with the mail server
 typedef struct {
-    void (*status_type)(void *data, dstr_t tag, status_type_t status,
-                        status_code_t code, unsigned int code_extra,
-                        dstr_t text);
-    // for CAPABILITY responses (both normal responses and as status codes)
-    derr_t (*capa_start)(void *data);
-    derr_t (*capa)(void *data, dstr_t capability);
-    void (*capa_end)(void *data, bool success);
-    //
-    void (*pflag)(void *data, ie_flag_list_t flags);
-    void (*list)(void *data, ie_mflag_list_t mflags, char sep, bool inbox,
-                 dstr_t mbx);
-    void (*lsub)(void *data, ie_mflag_list_t mflags, char sep, bool inbox,
-                 dstr_t mbx);
-    void (*status)(void *data, bool inbox, dstr_t mbx,
-                   bool found_messages, unsigned int messages,
-                   bool found_recent, unsigned int recent,
-                   bool found_uidnext, unsigned int uidnext,
-                   bool found_uidvld, unsigned int uidvld,
-                   bool found_unseen, unsigned int unseen);
-    void (*flags)(void *data, ie_flag_list_t flags);
-    void (*exists)(void *data, unsigned int num);
-    void (*recent)(void *data, unsigned int num);
-    void (*expunge)(void *data, unsigned int num);
-    // for FETCH responses
-    derr_t (*fetch_start)(void *data, unsigned int num);
-    derr_t (*f_flags)(void *data, ie_flag_list_t flags);
-    derr_t (*f_rfc822_start)(void *data);
-    derr_t (*f_rfc822_literal)(void *data, const dstr_t *raw); // don't free raw
-    derr_t (*f_rfc822_qstr)(void *data, const dstr_t *qstr); // don't free qstr
-    void (*f_rfc822_end)(void *data, bool success);
-    void (*f_uid)(void *data, unsigned int num);
-    void (*f_intdate)(void *data, imap_time_t imap_time);
-    void (*fetch_end)(void *data, bool success);
+//     void (*status_type)(void *data, dstr_t tag, status_type_t status,
+//                         status_code_t code, unsigned int code_extra,
+//                         dstr_t text);
+//     // for CAPABILITY responses (both normal responses and as status codes)
+//     derr_t (*capa_start)(void *data);
+//     derr_t (*capa)(void *data, dstr_t capability);
+//     void (*capa_end)(void *data, bool success);
+//     //
+//     void (*pflag)(void *data, ie_flag_list_t flags);
+//     void (*list)(void *data, ie_mflag_list_t mflags, char sep, bool inbox,
+//                  dstr_t mbx);
+//     void (*lsub)(void *data, ie_mflag_list_t mflags, char sep, bool inbox,
+//                  dstr_t mbx);
+//     void (*status)(void *data, bool inbox, dstr_t mbx,
+//                    bool found_messages, unsigned int messages,
+//                    bool found_recent, unsigned int recent,
+//                    bool found_uidnext, unsigned int uidnext,
+//                    bool found_uidvld, unsigned int uidvld,
+//                    bool found_unseen, unsigned int unseen);
+//     void (*flags)(void *data, ie_flag_list_t flags);
+//     void (*exists)(void *data, unsigned int num);
+//     void (*recent)(void *data, unsigned int num);
+//     void (*expunge)(void *data, unsigned int num);
+//     // for FETCH responses
+//     derr_t (*fetch_start)(void *data, unsigned int num);
+//     derr_t (*f_flags)(void *data, ie_flag_list_t flags);
+//     derr_t (*f_rfc822_start)(void *data);
+//     derr_t (*f_rfc822_literal)(void *data, const dstr_t *raw); // don't free raw
+//     derr_t (*f_rfc822_qstr)(void *data, const dstr_t *qstr); // don't free qstr
+//     void (*f_rfc822_end)(void *data, bool success);
+//     void (*f_uid)(void *data, unsigned int num);
+//     void (*f_intdate)(void *data, imap_time_t imap_time);
+//     void (*fetch_end)(void *data, bool success);
 } imap_parse_hooks_up_t;
 
 // forward declaration of imap_reader_t
 struct imap_reader_t;
 
-typedef struct {
+struct imap_parser_t {
     void *yyps;
     // a pointer that gets handed back with each hook
     void *hook_data;
@@ -142,9 +136,9 @@ typedef struct {
     // was this most recent line tagged?
     bool tagged;
     dstr_t *tag;
-    // for building status_type calls
-    status_type_t status_type;
-    status_code_t status_code;
+    // // for building status_type calls
+    // status_type_t status_type;
+    // status_code_t status_code;
     // the current token as a dstr_t, used in some cases by the parser
     const dstr_t *token;
     // should we keep the next thing we run across?
@@ -155,7 +149,7 @@ typedef struct {
     dstr_t temp;
     // should we keep the text at the end of the status-type response?
     bool keep_st_text;
-} imap_parser_t ;
+};
 
 void yyerror(imap_parser_t *parser, char const *s);
 
@@ -167,6 +161,8 @@ derr_t imap_parser_init(imap_parser_t *parser,
 void imap_parser_free(imap_parser_t *parser);
 
 derr_t imap_parse(imap_parser_t *parser, int type, const dstr_t *token);
+
+void set_scanner_to_literal_mode(imap_parser_t *parser, size_t len);
 
 /* this should be called after the literal hook has been called.  The "literal"
    argument should be either (dstr_t){0} if the literal hook was called with

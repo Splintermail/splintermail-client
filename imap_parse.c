@@ -109,6 +109,11 @@ derr_t imap_parse(imap_parser_t *parser, int type, const dstr_t *token){
     }
 }
 
+void set_scanner_to_literal_mode(imap_parser_t *parser, size_t len){
+    parser->reader->scanner->in_literal = true;
+    parser->reader->scanner->to_steal = len;
+}
+
 derr_t keep_init(void *data){
     derr_t e = E_OK;
     // dereference the scanner, so we can read the token

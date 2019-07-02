@@ -4,6 +4,7 @@
 #include "common.h"
 #include "imap_parse.h"
 #include "imap_scan.h"
+#include "imap_expression.h"
 
 typedef struct imap_reader_t {
     imap_parser_t parser;
@@ -29,6 +30,8 @@ void imap_reader_free(imap_reader_t *reader);
 derr_t imap_read(imap_reader_t *reader, const dstr_t *input);
 
 // for handling literals, these are hooks called by the parser
+ie_dstr_t *imap_read_literal(imap_parser_t *
+
 derr_t imap_read_literal(imap_reader_t *reader, size_t len, bool keep);
 derr_t imap_read_rfc822_literal(imap_reader_t *reader, size_t len);
 derr_t imap_read_append_literal(imap_reader_t *reader, size_t len);
