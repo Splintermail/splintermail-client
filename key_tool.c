@@ -509,7 +509,6 @@ derr_t key_tool_update(key_tool_t* kt, const char* host, unsigned int port,
 
 derr_t key_tool_check_recips(key_tool_t* kt, LIST(dstr_t)* recips){
     derr_t e = E_OK;
-    derr_t e2;
 
     // do nothing if we had no peer list on file
     if(kt->peer_list_state == KT_PL_NEW) return e;
@@ -544,20 +543,21 @@ derr_t key_tool_check_recips(key_tool_t* kt, LIST(dstr_t)* recips){
                 // ... then add it to new_peer_list
                 dstr_t new_peer;
                 PROP(&e, dstr_new(&new_peer, recip->len) );
-                derr_t e = dstr_copy(recip, &new_peer);
-                if(e.type){
-                    dstr_free(&new_peer);
-                    PROP(&e, e);
+                PROP_GO(&e, dstr_copy(recip, &new_peer), fail_new_peer);
+                PROP_GO(&e, LIST_APPEND(dstr_t, &kt->new_peer_list, new_peer),
+                        fail_recip);
+            fail_recip:
+                if(is_error(e)){
+                    dstr_free(recip);
                 }
-                e2 = LIST_APPEND(dstr_t, &kt->new_peer_list, new_peer);
-                if(e2.type){
+            fail_new_peer:
+                if(is_error(e)){
                     dstr_free(&new_peer);
-                    PROP(&e, e2);
+                    return e;
                 }
             }
         }
     }
-
     return e;
 }
 

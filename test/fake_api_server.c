@@ -345,7 +345,7 @@ derr_t fas_join(void){
     }
     responses.len = 0;
     resp_codes.len = 0;
-    MERGE_CMD(&e, thread_return, "fake api server")
+    MERGE_CMD(&e, thread_return, "fake api server");
     return e;
 }
 

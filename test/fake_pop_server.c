@@ -55,7 +55,10 @@ derr_t fps_end_test(void){
     }
     test_end = false;
     pthread_mutex_unlock(&fps_mutex);
-    return test_error;
+    // hand back the test_error and erase the local copy of it
+    derr_t retval = test_error;
+    test_error = E_OK;
+    return retval;
 }
 
 // common responses
@@ -342,7 +345,7 @@ void fake_pop_server_free(fake_pop_server_t* fps){
 }
 
 static void* fake_pop_server_thread(void* arg){
-    derr_t e = E_OK;
+    derr_t *e = &thread_error;
     fake_pop_server_t* fps = (fake_pop_server_t*)arg;
     ssl_context_t ctx = {0};
 
@@ -350,24 +353,22 @@ static void* fake_pop_server_thread(void* arg){
     DSTR_VAR(certfile, 4096);
     DSTR_VAR(keyfile, 4096);
     DSTR_VAR(dhfile, 4096);
-    PROP_GO(&e, FMT(&certfile, "%x/%x", FS(g_test_files), FS("ssl/good-cert.pem")), fail_early);
-    PROP_GO(&e, FMT(&keyfile, "%x/%x", FS(g_test_files), FS("ssl/good-key.pem")), fail_early);
-    PROP_GO(&e, FMT(&dhfile, "%x/%x", FS(g_test_files), FS("ssl/dh_4096.pem")), fail_early);
-    PROP_GO(&e, ssl_context_new_server(
+    PROP_GO(e, FMT(&certfile, "%x/%x", FS(g_test_files), FS("ssl/good-cert.pem")), fail_early);
+    PROP_GO(e, FMT(&keyfile, "%x/%x", FS(g_test_files), FS("ssl/good-key.pem")), fail_early);
+    PROP_GO(e, FMT(&dhfile, "%x/%x", FS(g_test_files), FS("ssl/dh_4096.pem")), fail_early);
+    PROP_GO(e, ssl_context_new_server(
             &ctx, certfile.data, keyfile.data, dhfile.data), fail_early);
 
     listener_t listener;
-    PROP_GO(&e, listener_new_ssl(&listener, &ctx, "127.0.0.1", fps_pop_port), fail_early);
+    PROP_GO(e, listener_new_ssl(&listener, &ctx, "127.0.0.1", fps_pop_port), fail_early);
     LOG_INFO("FPS ready for incoming connections\n");
 fail_early:
-    // after cond_signal, main thread will quit early based on this variable
-    thread_error = e;
     // no matter what, signal the main thread
     pthread_mutex_lock(&fps_mutex);
     pthread_cond_signal(&fps_cond);
     pthread_mutex_unlock(&fps_mutex);
     // return error if necessary
-    PROP_GO(&e, e, cleanup_1);
+    if(is_error(*e)) goto cleanup_1;
 
     while(keep_going){
         // wait for main thread to let us start
@@ -383,7 +384,7 @@ fail_early:
         connection_t conn;
         // accept a connection
         LOG_INFO("FPS about to accept()\n");
-        PROP_GO(&e, listener_accept(&listener, &conn), cleanup_2);
+        PROP_GO(e, listener_accept(&listener, &conn), cleanup_2);
         LOG_INFO("FPS accepted()\n");
 
         // set the pop_server to talk over this connection
@@ -399,12 +400,12 @@ fail_early:
 
         // send server greeting
         DSTR_VAR(banner, 128);
-        PROP_GO(&e, FMT(&banner, "+OK Fake POP Server Ready DITMv%x.%x.%x\r\n",
+        PROP_GO(e, FMT(&banner, "+OK Fake POP Server Ready DITMv%x.%x.%x\r\n",
                      FU(fps_ver_maj), FU(fps_ver_min), FU(fps_ver_bld)), cleanup_3);
-        PROP_GO(&e, pop_server_send_dstr(&fps->ps, &banner), cleanup_3);
+        PROP_GO(e, pop_server_send_dstr(&fps->ps, &banner), cleanup_3);
 
         // kick off server loop
-        PROP_GO(&e, pop_server_loop(&fps->ps, (void*)fps), cleanup_3);
+        PROP_GO(e, pop_server_loop(&fps->ps, (void*)fps), cleanup_3);
 
 cleanup_3:
         connection_close(&conn);
@@ -412,9 +413,11 @@ cleanup_3:
 
         // end-of-test
         pthread_mutex_lock(&fps_mutex);
-        // save the error from this test
-        test_error = e;
-        e = E_OK;
+        // save a copy of thread_error as this test's test_error
+        test_error.type = thread_error.type;
+        TRACE(&test_error, "%x", FD(&thread_error.msg));
+        // continue for the next test with a clean thread_error
+        DROP_VAR(&thread_error);
         test_end = true;
         pthread_cond_signal(&fps_cond);
         pthread_mutex_unlock(&fps_mutex);
@@ -424,7 +427,6 @@ cleanup_2:
     listener_close(&listener);
 cleanup_1:
     ssl_context_free(&ctx);
-    thread_error = e;
     LOG_INFO("fps exiting normally\n");
     return NULL;
 }
@@ -446,7 +448,8 @@ derr_t fake_pop_server_start(fake_pop_server_t* fps){
     // unlock mutex
     pthread_mutex_unlock(&fps_mutex);
 
-    if(thread_error.type){
+    // if the thread is failed, join it and return its error
+    if(is_error(thread_error)){
         return fake_pop_server_join();
     }
     return e;

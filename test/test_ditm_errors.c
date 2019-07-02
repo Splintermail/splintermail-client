@@ -203,7 +203,7 @@ cu_recv:
     /* well, first a write so in case of a failed test we don't hang */ \
     DSTR_STATIC(arbitrary_value, "LIST\r\n"); \
     derr_t e2 = connection_write(conn, &arbitrary_value); \
-    if(!e2.type){ \
+    if(!is_error(e2)){ \
         e2 = connection_read(conn, recv, NULL); \
     } \
     CATCH(e2, E_CONN){ \
