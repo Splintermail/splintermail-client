@@ -148,6 +148,13 @@ derr_t imap_scan(imap_scanner_t *scanner, scan_mode_t mode, bool *more,
 #   define YYBACKUP() marker = cursor;
 #   define YYRESTORE() cursor = marker;
 
+#   define INVALID_TOKEN_ERROR { \
+        dstr_t scannable = get_scannable(scanner); \
+        TRACE(&e, "in mode %x, found token '%x'.", \
+                FD(scan_mode_to_dstr(mode)), FD_DBG(&scannable)); \
+        ORIG(&e, E_PARAM, "invalid token for mode"); \
+    }
+
     derr_t e = E_OK;
 
     *more = false;
@@ -225,7 +232,7 @@ derr_t imap_scan(imap_scanner_t *scanner, scan_mode_t mode, bool *more,
 tag_mode:
 
     /*!re2c
-        *               { ORIG(&e, E_PARAM, "invalid token for mode"); }
+        *               { INVALID_TOKEN_ERROR; }
         eol             { *type = EOL; goto done; }
         tag             { *type = RAW; goto done; }
         [ *]            { *type = *scanner->start; goto done; }
@@ -234,7 +241,7 @@ tag_mode:
 command_mode:
 
     /*!re2c
-        *               { ORIG(&e, E_PARAM, "invalid token for mode"); }
+        *               { INVALID_TOKEN_ERROR; }
         eol             { *type = EOL; goto done; }
         " "             { *type = *scanner->start; goto done; }
 
@@ -277,7 +284,7 @@ command_mode:
 atom_mode:
 
     /*!re2c
-        *               { ORIG(&e, E_PARAM, "invalid token for mode"); }
+        *               { INVALID_TOKEN_ERROR; }
         atom_spec       { *type = *scanner->start; goto done; }
         eol             { *type = EOL; goto done; }
 
@@ -287,7 +294,7 @@ atom_mode:
 qstring_mode:
 
     /*!re2c
-        *               { ORIG(&e, E_PARAM, "invalid token for mode"); }
+        *               { INVALID_TOKEN_ERROR; }
         eol             { *type = EOL; goto done; }
         "\""            { *type = '"'; goto done; }
         qstring         { *type = RAW; goto done; }
@@ -296,7 +303,7 @@ qstring_mode:
 num_mode:
 
     /*!re2c
-        *               { ORIG(&e, E_PARAM, "invalid token for mode"); }
+        *               { INVALID_TOKEN_ERROR; }
         eol             { *type = EOL; goto done; }
         num             { *type = NUM; goto done; }
     */
@@ -304,7 +311,7 @@ num_mode:
 flag_mode:
 
     /*!re2c
-        *               { ORIG(&e, E_PARAM, "invalid token for mode"); }
+        *               { INVALID_TOKEN_ERROR; }
         atom_spec       { *type = *scanner->start; goto done; }
         literal         { *type = LITERAL; goto done; }
         eol             { *type = EOL; goto done; }
@@ -323,7 +330,7 @@ flag_mode:
 mflag_mode:
 
     /*!re2c
-        *               { ORIG(&e, E_PARAM, "invalid token for mode"); }
+        *               { INVALID_TOKEN_ERROR; }
         atom_spec       { *type = *scanner->start; goto done; }
         literal         { *type = LITERAL; goto done; }
         eol             { *type = EOL; goto done; }
@@ -339,9 +346,9 @@ mflag_mode:
 status_code_check_mode:
     // TODO: how far does this * expand?  does it always stop at the first char?
     /*!re2c
-        "\x00"          { ORIG(&e, E_PARAM, "invalid token for mode"); }
-        "\n"            { ORIG(&e, E_PARAM, "invalid token for mode"); }
-        "\r"            { ORIG(&e, E_PARAM, "invalid token for mode"); }
+        "\x00"          { INVALID_TOKEN_ERROR; }
+        "\n"            { INVALID_TOKEN_ERROR; }
+        "\r"            { INVALID_TOKEN_ERROR; }
         eol             { *type = EOL; goto done; }
         "["             { *type = YES_STATUS_CODE; goto done; }
         *               { *type = NO_STATUS_CODE; goto done; }
@@ -350,7 +357,7 @@ status_code_check_mode:
 status_code_mode:
 
     /*!re2c
-        *               { ORIG(&e, E_PARAM, "invalid token for mode"); }
+        *               { INVALID_TOKEN_ERROR; }
         atom_spec       { *type = *scanner->start; goto done; }
         eol             { *type = EOL; goto done; }
 
@@ -371,7 +378,7 @@ status_code_mode:
 status_text_mode:
 
     /*!re2c
-        *               { ORIG(&e, E_PARAM, "invalid token for mode"); }
+        *               { INVALID_TOKEN_ERROR; }
         eol             { *type = EOL; goto done; }
         text_spec       { *type = *scanner->start; goto done; }
         text_atom       { *type = RAW; goto done; }
@@ -380,7 +387,7 @@ status_text_mode:
 mailbox_mode:
 
     /*!re2c
-        *               { ORIG(&e, E_PARAM, "invalid token for mode"); }
+        *               { INVALID_TOKEN_ERROR; }
         astr_atom_spec  { *type = *scanner->start; goto done; }
         literal         { *type = LITERAL; goto done; }
         eol             { *type = EOL; goto done; }
@@ -393,7 +400,7 @@ mailbox_mode:
 astring_mode:
 
     /*!re2c
-        *               { ORIG(&e, E_PARAM, "invalid token for mode"); }
+        *               { INVALID_TOKEN_ERROR; }
         astr_atom_spec  { *type = *scanner->start; goto done; }
         literal         { *type = LITERAL; goto done; }
         eol             { *type = EOL; goto done; }
@@ -404,7 +411,7 @@ astring_mode:
 nqchar_mode:
 
     /*!re2c
-        *               { ORIG(&e, E_PARAM, "invalid token for mode"); }
+        *               { INVALID_TOKEN_ERROR; }
         "\""            { *type = *scanner->start; goto done; }
         qchar           { *type = QCHAR; goto done; }
         'nil'           { *type = NIL; goto done; }
@@ -414,7 +421,7 @@ nqchar_mode:
 nstring_mode:
 
     /*!re2c
-        *               { ORIG(&e, E_PARAM, "invalid token for mode"); }
+        *               { INVALID_TOKEN_ERROR; }
         eol             { *type = EOL; goto done; }
         literal         { *type = LITERAL; goto done; }
         atom_spec       { *type = *scanner->start; goto done; }
@@ -425,7 +432,7 @@ nstring_mode:
 status_attr_mode:
 
     /*!re2c
-        *               { ORIG(&e, E_PARAM, "invalid token for mode"); }
+        *               { INVALID_TOKEN_ERROR; }
         [() ]           { *type = *scanner->start; goto done; }
         eol             { *type = EOL; goto done; }
 
@@ -441,7 +448,7 @@ status_attr_mode:
 fetch_mode:
 
     /*!re2c
-        *               { ORIG(&e, E_PARAM, "invalid token for mode"); }
+        *               { INVALID_TOKEN_ERROR; }
         [[\]()<>. ]     { *type = *scanner->start; goto done; }
         eol             { *type = EOL; goto done; }
 
@@ -472,7 +479,7 @@ datetime_mode:
     // literal allowed since APPEND has an optional date_time then a literal
 
     /*!re2c
-        *               { ORIG(&e, E_PARAM, "invalid token for mode"); }
+        *               { INVALID_TOKEN_ERROR; }
         literal         { *type = LITERAL; goto done; }
         ["() :+-]       { *type = *scanner->start; goto done; }
         [0-9]           { *type = DIGIT; goto done; }
@@ -495,7 +502,7 @@ datetime_mode:
 wildcard_mode:
 
     /*!re2c
-        *               { ORIG(&e, E_PARAM, "invalid token for mode"); }
+        *               { INVALID_TOKEN_ERROR; }
         wild_atom_spec  { *type = *scanner->start; goto done; }
         literal         { *type = LITERAL; goto done; }
         eol             { *type = EOL; goto done; }
@@ -506,7 +513,7 @@ wildcard_mode:
 seqset_mode:
 
     /*!re2c
-        *               { ORIG(&e, E_PARAM, "invalid token for mode"); }
+        *               { INVALID_TOKEN_ERROR; }
         [ *:,]          { *type = *scanner->start; goto done; }
         eol             { *type = EOL; goto done; }
 
@@ -516,7 +523,7 @@ seqset_mode:
 store_mode:
 
     /*!re2c
-        *               { ORIG(&e, E_PARAM, "invalid token for mode"); }
+        *               { INVALID_TOKEN_ERROR; }
         [ +-]           { *type = *scanner->start; goto done; }
         eol             { *type = EOL; goto done; }
 
@@ -528,7 +535,7 @@ store_mode:
 search_mode:
 
     /*!re2c
-        *               { ORIG(&e, E_PARAM, "invalid token for mode"); }
+        *               { INVALID_TOKEN_ERROR; }
         literal         { *type = LITERAL; goto done; }
         num             { *type = NUM; goto done; }
         eol             { *type = EOL; goto done; }

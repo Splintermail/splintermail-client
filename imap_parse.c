@@ -45,15 +45,20 @@ derr_t imap_parse(imap_parser_t *parser, int type, const dstr_t *token){
     parser->token = token;
     int yyret = yypush_parse(parser->yyps, type, NULL, parser);
     switch(yyret){
-        case 0:             // parsing completed successful; parser is reset
+        case 0:
+            // YYACCEPT: parsing completed successful; parser is reset
             return e;
-        case YYPUSH_MORE:   // parsing incomplete, but valid; parser not reset
+        case YYPUSH_MORE:
+            // parsing incomplete, but valid; parser not reset
             return e;
-        case 1:             // invalid; parser is reset
+        case 1:
+            // YYABORT or syntax invalid; parser is reset
             ORIG(&e, E_PARAM, "invalid input");
-        case 2:             // memory exhaustion; parser is reset
+        case 2:
+            // memory exhaustion; parser is reset
             ORIG(&e, E_NOMEM, "memory exhaustion during yypush_parse");
-        default:            // this should never happen
+        default:
+            // this should never happen
             TRACE(&e, "yypush_parse() returned %x\n", FI(yyret));
             ORIG(&e, E_INTERNAL, "unexpected yypush_parse() return value");
     }
