@@ -147,6 +147,12 @@ What about the reentrant version?
     Not to mention, the bison error handling seems so much better than anything
     I would want to have to implement.
 
+# header dependencies
+imap_scan is self-contained; it has token definitions and scan_mode_t
+imap_parse.y calls needs to set parser->scan_mode
+
+imap_expression needs the parser->keep and parser->error
+
 
 # general DITM architecture for IMAP:
 

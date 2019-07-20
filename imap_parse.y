@@ -2,17 +2,18 @@
     #include <stdio.h>
     #include <imap_parse.h>
     #include <imap_expression.h>
+    #include <imap_scan.h>
     #include <logger.h>
+
+    #define YYTOKENTYPE // imap_scan_token_type_t
 
     #define MODE(m) p->scan_mode = SCAN_MODE_ ## m
 
-    #define START_QSTR p->preqstr_mode = p->scan_mode; MODE(QSTRING);
-    #define END_QSTR p->scan_mode = p->preqstr_mode;
+    #define E (&p->error)
 
     // a YYACCEPT wrapper that resets some custom parser details
     #define ACCEPT \
         MODE(TAG); \
-        p->keep = false; \
         YYACCEPT
 
     // must be a macro because it has to be able to call YYERROR
@@ -23,8 +24,8 @@
         unsigned int len; \
         derr_t e = dstr_tou(&sub, &len, 10); \
         /* an error here is a proper syntax error */ \
-        if(e.type != E_NONE){ \
-            DROP(e); \
+        if(is_error(e)){ \
+            DROP_VAR(&e); \
             /* TODO: call yyerror explicitly here, see info bison, apdx A */ \
             YYERROR; \
         } \
@@ -36,13 +37,48 @@
         unsigned int num ; \
         derr_t e = dstr_tou(p->token, &num, 10); \
         /* an error here is a proper syntax error */ \
-        if(e.type != E_NONE){ \
-            DROP(e); \
+        if(is_error(e)){ \
+            DROP_VAR(&e); \
             /* TODO: call yyerror explicitly here, see info bison, apdx A */ \
             YYERROR; \
         } \
         (out) = num; \
     }
+
+    #define PARSE_NZNUM(out){ \
+        PARSE_NUM(out); \
+        if((out) == 0){ \
+            /* TODO: call yyerror explicitly here, see info bison, apdx A */ \
+            YYERROR; \
+        } \
+    }
+
+    // make sure we don't get two selectability flags
+    #define MFLAG_SELECT(out, _mf, selectability) { \
+        /* _mf might be a function; just call it once */ \
+        ie_mflags_t *mf = (_mf); \
+        if(is_error(p->error)){ \
+            /* some other error occured */ \
+            ie_mflags_free(mf); \
+            (out) = NULL; \
+        }else{ \
+            if(mf->selectable != IE_SELECTABLE_NONE){ \
+                /* it's a syntax error to have multiple selectability flags */ \
+                ie_mflags_free(mf); \
+                (out) = NULL; \
+                /* TODO: call yyerror explicitly here, see info bison, apdx A */ \
+                YYERROR; \
+            }else{ \
+                mf->selectable = selectability; \
+                (out) = mf; \
+            } \
+        } \
+    }
+
+    // the scanner only returns QCHAR with 1- or 2-char matches.
+    // the 2-char matches are \\ and \"
+    #define QCHAR_TO_CHAR \
+        (p->token->len == 1) ? p->token->data[0] : p->token->data[1]
 
 %}
 
@@ -224,60 +260,101 @@
 %token EOL
 %token SILENT
 
+%type <ch> qchar
+%type <ch> nqchar
+// no destructor for char type
+
 %type <dstr> tag
 %type <dstr> atom
-%type <dstr> atom_
 %type <dstr> qstr
-%type <dstr> qstr_
-%type <dstr> qstr_body_
+%type <dstr> qstr_body
 %type <dstr> literal
-%type <dstr> literal_
-%type <dstr> literal_body_
+%type <dstr> literal_body
 %type <dstr> astring
-%type <dstr> astring_
-%type <dstr> string_
+%type <dstr> string
 %type <dstr> search_charset
 %type <dstr> search_astring
 %type <dstr> search_atom
+%type <dstr> header_list_1
+%type <dstr> st_text
+%type <dstr> sc_text
+%type <dstr> sc_text_
+%type <dstr> capas_1
+%type <dstr> f_rfc822
+%type <dstr> rfc822_nstring
 %destructor { ie_dstr_free($$); } <dstr>
 
-%type <mailbox> mailbox_
 %type <mailbox> mailbox
 %destructor { ie_mailbox_free($$); } <mailbox>
 
-%type <st_attr> st_attr
-%type <st_attr_cmd> st_attr_clist_1
+%type <status_attr> s_attr
+// no destructor needed
+
+// clist = "command" list, a logical OR of some flags
+%type <status_attr_cmd> s_attr_clist_1
+// no destructor needed
+
+// rlist = "response" list; a logical OR of flags but with integer arguments
+%type <status_attr_resp> s_attr_resp
+%type <status_attr_resp> s_attr_rlist_0
+%type <status_attr_resp> s_attr_rlist_1
 // no destructor needed
 
 %type <time> search_date;
 %type <time> date_time;
 %type <time> date;
 %type <time> append_time;
+%type <time> f_intdate;
 
 %type <sign> sign
+%type <sign> store_sign
 
 %type <num> num
+%type <num> nznum
 %type <num> digit
 %type <num> twodigit
 %type <num> fourdigit
-//%type <num> sc_num
+%type <num> sc_num
 %type <num> date_month
 %type <num> date_day
 %type <num> date_day_fixed
 %type <num> seq_num
+%type <num> f_uid
 
-%type <aflag> aflag_simple
+%type <flag> flag_simple
 
-%type <aflags> append_flags
-%type <aflags> append_flags_0
-%type <aflags> append_flags_1
-%destructor { ie_aflags_free($$); } <aflags>
+%type <flags> flags_0
+%type <flags> flags_1
+%type <flags> append_flags
+%type <flags> store_flags
+%destructor { ie_flags_free($$); } <flags>
+
+%type <pflag> pflag_simple
+
+%type <pflags> pflags
+%type <pflags> pflags_0
+%type <pflags> pflags_1
+%destructor { ie_pflags_free($$); } <pflags>
+
+%type <fflag> fflag_simple
+
+%type <fflags> f_fflags
+%type <fflags> fflags_0
+%type <fflags> fflags_1
+%destructor { ie_fflags_free($$); } <fflags>
+
+%type <mflag> mflag_simple
+%type <selectable> mflag_select
+
+%type <mflags> mflags
+%type <mflags> mflags_0
+%type <mflags> mflags_1
+%destructor { ie_mflags_free($$); } <mflags>
 
 %type <boolean> uid_mode
+%type <boolean> store_silent
 
-%type <seq_spec> seq_spec
-
-%type <seq_set> preseq
+%type <seq_set> seq_spec
 %type <seq_set> seq_set
 %destructor { ie_seq_set_free($$); } <seq_set>
 
@@ -287,26 +364,52 @@
 %type <search_key> search_or
 %destructor { ie_search_key_free($$); } <search_key>
 
+%type <sect_part> sect_part
+%destructor { ie_sect_part_free($$); } <sect_part>
+
+%type <sect_txt> sect_txt
+%type <sect_txt> sect_msgtxt
+%destructor { ie_sect_txt_free($$); } <sect_txt>
+
+%type <sect> sect
+%destructor { ie_sect_free($$); } <sect>
+
+%type <partial> partial
+%destructor { ie_partial_free($$); } <partial>
+
+%type <fetch_simple> fetch_attr_simple
+// no destructor; it's just an enum
+
+%type <fetch_extra> fetch_attr_extra
+%destructor { ie_fetch_extra_free($$); } <fetch_extra>
+
+%type <fetch_attrs> fetch_attr
+%type <fetch_attrs> fetch_attrs
+%type <fetch_attrs> fetch_attrs_1
+%destructor { ie_fetch_attrs_free($$); } <fetch_attrs>
+
+%type <status> st_type
+// no destructor; it's just an enum
+
+%type <st_code> st_code
+%type <st_code> st_code_
+%type <st_code> sc_capa
+%type <st_code> sc_pflags
+%type <st_code> sc_atom
+%destructor { ie_st_code_free($$); } <st_code>
+
+%type <fetch_resp> msg_attr_0
+%type <fetch_resp> msg_attr_1
+%destructor { ie_fetch_resp_free($$); } <fetch_resp>
+
 %% /********** Grammar Section **********/
 
 line: command EOL { ACCEPT; }
     | response EOL { ACCEPT; }
 ;
 
-//tagged: tag SP status_type_resp[s]   { ST_RESP($tag, $s); }
 
-//       | tag SP CHECK { CHECK_CMD($tag); };
-//       | tag SP CLOSE { CLOSE_CMD($tag); };
-//       | tag SP EXPUNGE { EXPUNGE_CMD($tag); };
-
-//       | fetch_cmd
-//       | store_cmd
-//       | copy_cmd
-//       | tag SP UID
-//;
-
-command:
-         tag SP STARTTLS /* TODO: respond BAD, we expect to already be in TLS */
+command: tag SP STARTTLS /* TODO: respond BAD, we expect to already be in TLS */
        | tag SP AUTHENTICATE SP ign_atom /* TODO: respond BAD, we only support LOGIN */
        | login_cmd
        | select_cmd
@@ -320,11 +423,26 @@ command:
        | lsub_cmd
        | status_cmd
        | append_cmd
-
+       | tag SP CHECK { check_cmd(p, $tag); }
+       | tag SP CLOSE { close_cmd(p, $tag); }
+       | tag SP EXPUNGE { expunge_cmd(p, $tag); }
        | search_cmd
+       | fetch_cmd
+       | store_cmd
+       | copy_cmd
 ;
 
-response: untag
+response: status_type_resp
+        | untag SP capa_resp
+        | untag SP LIST SP list_resp
+        | untag SP LSUB SP lsub_resp
+        | untag SP STATUS SP status_resp
+        | untag SP FLAGS SP flags_resp
+        | untag SP SEARCH num_list_0 // ignored; we will never issue a SEARCH
+        | untag SP exists_resp
+        | untag SP recent_resp
+        | untag SP expunge_resp
+        | untag SP fetch_resp
 ;
 
 untag: '*' { MODE(COMMAND); };
@@ -378,11 +496,11 @@ lsub_cmd: tag SP LSUB SP mailbox[m] { MODE(WILDCARD); } SP astring[pattern]
 /*** STATUS command ***/
 
 status_cmd: tag SP STATUS SP mailbox[m]
-          { MODE(ST_ATTR); } SP '(' st_attr_clist_1[sa] ')'
+          { MODE(STATUS_ATTR); } SP '(' s_attr_clist_1[sa] ')'
           { status_cmd(p, $tag, $m, $sa); };
 
-st_attr_clist_1: st_attr[s]                         { $$ = $s; }
-               | st_attr_clist_1[old] SP st_attr[s] { $$ = $old | $s; }
+s_attr_clist_1: s_attr[s]                         { $$ = $s; }
+              | s_attr_clist_1[old] SP s_attr[s] { $$ = $old | $s; }
 ;
 
 /*** APPEND command ***/
@@ -392,27 +510,8 @@ append_cmd: tag SP APPEND SP mailbox[m]
           { MODE(ASTRING); } literal[l]
           { append_cmd(p, $tag, $m, $f, $t, $l); };
 
-append_flags: %empty                        { $$ = NULL; }
-            | '(' append_flags_0[af] ')' SP { $$ = $af; }
-;
-
-append_flags_0: %empty            { $$ = NULL; }
-              | append_flags_1[l] { $$ = $l; }
-;
-
-append_flags_1: aflag_simple[s] { $$ = ie_aflags_add_simple(p, ie_aflags_new(p), $s); }
-              | '\\' atom[e]    { $$ = ie_aflags_add_ext(p, ie_aflags_new(p), $e); }
-              | atom [k]        { $$ = ie_aflags_add_kw(p, ie_aflags_new(p), $k); }
-              | append_flags_1[af] SP aflag_simple[s] { $$ = ie_aflags_add_simple(p, $af, $s); }
-              | append_flags_1[af] SP '\\' atom[e]    { $$ = ie_aflags_add_ext(p, $af, $e); }
-              | append_flags_1[af] SP atom[k]         { $$ = ie_aflags_add_kw(p, $af, $k); }
-;
-
-aflag_simple: '\\' ANSWERED { $$ = IE_AFLAG_ANSWERED; }
-            | '\\' FLAGGED  { $$ = IE_AFLAG_FLAGGED; }
-            | '\\' DELETED  { $$ = IE_AFLAG_DELETED; }
-            | '\\' SEEN     { $$ = IE_AFLAG_SEEN; }
-            | '\\' DRAFT    { $$ = IE_AFLAG_DRAFT; }
+append_flags: %empty                { $$ = NULL; }
+            | '(' flags_0[f] ')' SP { $$ = $f; }
 ;
 
 append_time: %empty             { $$ = (imap_time_t){0}; }
@@ -437,53 +536,53 @@ search_charset: %empty { $$ = NULL; }
 
 search_keys_1: search_key[k]                     { $$ = $k; MODE(SEARCH); }
              | search_keys_1[a] SP search_key[b]
-               { $$ = ie_search_pair(p, IE_SEARCH_AND, $a, $b); MODE(SEARCH); }
+               { $$ = ie_search_pair(E, IE_SEARCH_AND, $a, $b); MODE(SEARCH); }
 ;
 
-search_key: ALL                         { $$ = ie_search_0(p, IE_SEARCH_ALL); }
-          | ANSWERED                    { $$ = ie_search_0(p, IE_SEARCH_ANSWERED); }
-          | DELETED                     { $$ = ie_search_0(p, IE_SEARCH_DELETED); }
-          | FLAGGED                     { $$ = ie_search_0(p, IE_SEARCH_FLAGGED); }
-          | NEW                         { $$ = ie_search_0(p, IE_SEARCH_NEW); }
-          | OLD                         { $$ = ie_search_0(p, IE_SEARCH_OLD); }
-          | RECENT                      { $$ = ie_search_0(p, IE_SEARCH_RECENT); }
-          | SEEN                        { $$ = ie_search_0(p, IE_SEARCH_SEEN); }
-          | UNANSWERED                  { $$ = ie_search_0(p, IE_SEARCH_UNANSWERED); }
-          | UNDELETED                   { $$ = ie_search_0(p, IE_SEARCH_UNDELETED); }
-          | UNFLAGGED                   { $$ = ie_search_0(p, IE_SEARCH_UNFLAGGED); }
-          | UNSEEN                      { $$ = ie_search_0(p, IE_SEARCH_UNSEEN); }
-          | DRAFT                       { $$ = ie_search_0(p, IE_SEARCH_DRAFT); }
-          | UNDRAFT                     { $$ = ie_search_0(p, IE_SEARCH_UNDRAFT); }
-          | BCC SP search_astring[s]    { $$ = ie_search_dstr(p, IE_SEARCH_BCC, $s); }
-          | BODY SP search_astring[s]   { $$ = ie_search_dstr(p, IE_SEARCH_BODY, $s); }
-          | CC SP search_astring[s]     { $$ = ie_search_dstr(p, IE_SEARCH_CC, $s); }
-          | FROM SP search_astring[s]   { $$ = ie_search_dstr(p, IE_SEARCH_FROM, $s); }
-          | KEYWORD SP search_atom[s]   { $$ = ie_search_dstr(p, IE_SEARCH_KEYWORD, $s); }
-          | SUBJECT SP search_astring[s]{ $$ = ie_search_dstr(p, IE_SEARCH_SUBJECT, $s); }
-          | TEXT SP search_astring[s]   { $$ = ie_search_dstr(p, IE_SEARCH_TEXT, $s); }
-          | TO SP search_astring[s]     { $$ = ie_search_dstr(p, IE_SEARCH_TO, $s); }
-          | UNKEYWORD SP search_atom[s] { $$ = ie_search_dstr(p, IE_SEARCH_UNKEYWORD, $s); }
+search_key: ALL                         { $$ = ie_search_0(E, IE_SEARCH_ALL); }
+          | ANSWERED                    { $$ = ie_search_0(E, IE_SEARCH_ANSWERED); }
+          | DELETED                     { $$ = ie_search_0(E, IE_SEARCH_DELETED); }
+          | FLAGGED                     { $$ = ie_search_0(E, IE_SEARCH_FLAGGED); }
+          | NEW                         { $$ = ie_search_0(E, IE_SEARCH_NEW); }
+          | OLD                         { $$ = ie_search_0(E, IE_SEARCH_OLD); }
+          | RECENT                      { $$ = ie_search_0(E, IE_SEARCH_RECENT); }
+          | SEEN                        { $$ = ie_search_0(E, IE_SEARCH_SEEN); }
+          | UNANSWERED                  { $$ = ie_search_0(E, IE_SEARCH_UNANSWERED); }
+          | UNDELETED                   { $$ = ie_search_0(E, IE_SEARCH_UNDELETED); }
+          | UNFLAGGED                   { $$ = ie_search_0(E, IE_SEARCH_UNFLAGGED); }
+          | UNSEEN                      { $$ = ie_search_0(E, IE_SEARCH_UNSEEN); }
+          | DRAFT                       { $$ = ie_search_0(E, IE_SEARCH_DRAFT); }
+          | UNDRAFT                     { $$ = ie_search_0(E, IE_SEARCH_UNDRAFT); }
+          | BCC SP search_astring[s]    { $$ = ie_search_dstr(E, IE_SEARCH_BCC, $s); }
+          | BODY SP search_astring[s]   { $$ = ie_search_dstr(E, IE_SEARCH_BODY, $s); }
+          | CC SP search_astring[s]     { $$ = ie_search_dstr(E, IE_SEARCH_CC, $s); }
+          | FROM SP search_astring[s]   { $$ = ie_search_dstr(E, IE_SEARCH_FROM, $s); }
+          | KEYWORD SP search_atom[s]   { $$ = ie_search_dstr(E, IE_SEARCH_KEYWORD, $s); }
+          | SUBJECT SP search_astring[s]{ $$ = ie_search_dstr(E, IE_SEARCH_SUBJECT, $s); }
+          | TEXT SP search_astring[s]   { $$ = ie_search_dstr(E, IE_SEARCH_TEXT, $s); }
+          | TO SP search_astring[s]     { $$ = ie_search_dstr(E, IE_SEARCH_TO, $s); }
+          | UNKEYWORD SP search_atom[s] { $$ = ie_search_dstr(E, IE_SEARCH_UNKEYWORD, $s); }
           | search_hdr
-          | BEFORE SP search_date[d]    { $$ = ie_search_date(p, IE_SEARCH_BEFORE, $d); }
-          | ON SP search_date[d]        { $$ = ie_search_date(p, IE_SEARCH_ON, $d); }
-          | SINCE SP search_date[d]     { $$ = ie_search_date(p, IE_SEARCH_SINCE, $d); }
-          | SENTBEFORE SP search_date[d]{ $$ = ie_search_date(p, IE_SEARCH_SENTBEFORE, $d); }
-          | SENTON SP search_date[d]    { $$ = ie_search_date(p, IE_SEARCH_SENTON, $d); }
-          | SENTSINCE SP search_date[d] { $$ = ie_search_date(p, IE_SEARCH_SENTSINCE, $d); }
-          | LARGER SP num[n]            { $$ = ie_search_num(p, IE_SEARCH_LARGER, $n); }
-          | SMALLER SP num[n]           { $$ = ie_search_num(p, IE_SEARCH_SMALLER, $n); }
-          | UID SP seq_set[s]           { $$ = ie_search_seq_set(p, IE_SEARCH_UID, $s); }
-          | seq_set[s]                  { $$ = ie_search_seq_set(p, IE_SEARCH_SEQ_SET, $s); }
-          | NOT SP search_key[k]        { $$ = ie_search_not(p, $k); }
+          | BEFORE SP search_date[d]    { $$ = ie_search_date(E, IE_SEARCH_BEFORE, $d); }
+          | ON SP search_date[d]        { $$ = ie_search_date(E, IE_SEARCH_ON, $d); }
+          | SINCE SP search_date[d]     { $$ = ie_search_date(E, IE_SEARCH_SINCE, $d); }
+          | SENTBEFORE SP search_date[d]{ $$ = ie_search_date(E, IE_SEARCH_SENTBEFORE, $d); }
+          | SENTON SP search_date[d]    { $$ = ie_search_date(E, IE_SEARCH_SENTON, $d); }
+          | SENTSINCE SP search_date[d] { $$ = ie_search_date(E, IE_SEARCH_SENTSINCE, $d); }
+          | LARGER SP num[n]            { $$ = ie_search_num(E, IE_SEARCH_LARGER, $n); }
+          | SMALLER SP num[n]           { $$ = ie_search_num(E, IE_SEARCH_SMALLER, $n); }
+          | UID SP seq_set[s]           { $$ = ie_search_seq_set(E, IE_SEARCH_UID, $s); }
+          | seq_set[s]                  { $$ = ie_search_seq_set(E, IE_SEARCH_SEQ_SET, $s); }
+          | NOT SP search_key[k]        { $$ = ie_search_not(E, $k); }
           | '(' search_keys_1[k] ')'    { $$ = $k; }
           | search_or
 ;
 
 search_hdr: HEADER SP search_astring[h] SP search_astring[v]
-          { $$ = ie_search_header(p, IE_SEARCH_HEADER, $h, $v); MODE(SEARCH); };
+          { $$ = ie_search_header(E, IE_SEARCH_HEADER, $h, $v); MODE(SEARCH); };
 
 search_or: OR SP search_key[a] SP search_key[b]
-         { $$ = ie_search_pair(p, IE_SEARCH_OR, $a, $b); };
+         { $$ = ie_search_pair(E, IE_SEARCH_OR, $a, $b); };
 
 search_astring: { MODE(ASTRING); } astring[k] { $$ = $k; };
 
@@ -504,8 +603,331 @@ date: date_day '-' date_month '-' fourdigit
                            .month = $date_month,
                            .day   = $date_day}; };
 
+/*** FETCH command ***/
+
+fetch_cmd: tag SP uid_mode[u] FETCH SP seq_set[seq] SP
+           { MODE(FETCH); } fetch_attrs[attr]
+           { fetch_cmd(p, $tag, $u, $seq, $attr); };
+
+fetch_attrs: ALL           { $$ = ie_fetch_attrs_new(E);
+                             if($$ != NULL){
+                                 $$->flags = true;
+                                 $$->intdate = true;
+                                 $$->envelope = true;
+                             } }
+           | FAST          { $$ = ie_fetch_attrs_new(E);
+                             if($$ != NULL){
+                                 $$->flags = true;
+                                 $$->intdate = true;
+                                 $$->rfc822_size = true;
+                             } }
+           | FULL          { $$ = ie_fetch_attrs_new(E);
+                             if($$ != NULL){
+                                 $$->flags = true;
+                                 $$->intdate = true;
+                                 $$->rfc822_size = true;
+                                 $$->envelope = true;
+                                 $$->body = true; } }
+           | fetch_attr
+           | '(' fetch_attrs_1 ')'  { $$ = $fetch_attrs_1; }
+;
+
+fetch_attr: fetch_attr_simple[s] { $$ = ie_fetch_attrs_add_simple(E, ie_fetch_attrs_new(E), $s); }
+          | fetch_attr_extra[e]  { $$ = ie_fetch_attrs_add_extra(E, ie_fetch_attrs_new(E), $e); }
+;
+
+fetch_attrs_1: fetch_attr
+             | fetch_attrs_1[f] SP fetch_attr_simple[s] { $$ = ie_fetch_attrs_add_simple(E, $f, $s); }
+             | fetch_attrs_1[f] SP fetch_attr_extra[e]  { $$ = ie_fetch_attrs_add_extra(E, $f, $e); }
+;
+
+fetch_attr_simple: ENVELOPE       { $$ = IE_FETCH_ATTR_ENVELOPE; }
+                 | FLAGS          { $$ = IE_FETCH_ATTR_FLAGS; }
+                 | INTDATE        { $$ = IE_FETCH_ATTR_INTDATE; }
+                 | UID            { $$ = IE_FETCH_ATTR_UID; }
+                 | RFC822         { $$ = IE_FETCH_ATTR_RFC822; }
+                 | RFC822_HEADER  { $$ = IE_FETCH_ATTR_RFC822_HEADER; }
+                 | RFC822_SIZE    { $$ = IE_FETCH_ATTR_RFC822_SIZE; }
+                 | RFC822_TEXT    { $$ = IE_FETCH_ATTR_RFC822_TEXT; }
+                 | BODYSTRUCT     { $$ = IE_FETCH_ATTR_BODYSTRUCT; }
+                 | BODY           { $$ = IE_FETCH_ATTR_BODY; }
+;
+
+fetch_attr_extra: BODY '[' sect[s] ']' partial[p]      { $$ = ie_fetch_extra_new(E, false, $s, $p); }
+                | BODY_PEEK '[' sect[s] ']' partial[p] { $$ = ie_fetch_extra_new(E, true, $s, $p); }
+;
+
+sect: %empty                         { $$ = NULL; }
+    | sect_msgtxt[st]                { $$ = ie_sect_new(E, NULL, $st); }
+    | sect_part[sp]                  { $$ = ie_sect_new(E, $sp, NULL); }
+    | sect_part[sp] '.' sect_txt[st] { $$ = ie_sect_new(E, $sp, $st); }
+;
+
+sect_part: num                  { $$ = ie_sect_part_new(E, $num); }
+         | sect_part[s] '.' num { $$ = ie_sect_part_add(E, $s, ie_sect_part_new(E, $num)); }
+;
+
+sect_txt: sect_msgtxt
+        | MIME        { $$ = ie_sect_txt_new(E, IE_SECT_MIME, NULL); }
+;
+
+sect_msgtxt: HEADER { $$ = ie_sect_txt_new(E, IE_SECT_HEADER, NULL); }
+           | TEXT   { $$ = ie_sect_txt_new(E, IE_SECT_TEXT, NULL); }
+
+           | HDR_FLDS SP { MODE(ASTRING); } '(' header_list_1[h] ')'
+                    { $$ = ie_sect_txt_new(E, IE_SECT_HDR_FLDS, $h); }
+
+           | HDR_FLDS_NOT SP { MODE(ASTRING); } '(' header_list_1[h] ')'
+                    { $$ = ie_sect_txt_new(E, IE_SECT_HDR_FLDS_NOT, $h); }
+;
+
+header_list_1: astring[h]                     { $$ = $h; }
+             | header_list_1[l] SP astring[h] { $$ = ie_dstr_add(E, $l, $h); }
+;
+
+partial: %empty                      { $$ = NULL; }
+       | '<' num[a] '.' nznum[b] '>' { $$ = ie_partial_new(E, $a, $b); }
+;
+
+/*** STORE command ***/
+
+store_cmd: tag SP uid_mode[u] STORE SP seq_set[seq]
+           { MODE(STORE); } SP store_sign[sign] FLAGS store_silent[silent] SP
+           { MODE(FLAG); } store_flags[f]
+           { store_cmd(p, $tag, $u, $seq, $sign, $silent, $f); };
+
+store_sign: %empty  { $$ = 0; }
+          | '-'     { $$ = -1; }
+          | '+'     { $$ = 1; }
+;
+
+store_silent: %empty    { $$ = false; }
+            | SILENT    { $$ = true; }
+;
+
+store_flags: %empty             { $$ = NULL; }
+           | '(' flags_0[f] ')' { $$ = $f; }
+           | flags_1[f]         { $$ = $f; }
+;
+
+/*** COPY command ***/
+
+copy_cmd: tag SP uid_mode[u] COPY SP seq_set[seq] SP mailbox[m]
+          { copy_cmd(p, $tag, $u, $seq, $m); };
+
+/*** status-type responses.  Thanks for the the shitty grammar, IMAP4rev1 ***/
+
+/* a valid status-type response with status code input could be two things:
+        * OK [ALERT] asdf
+             ^^^^^^^ ^^^^---> status code, followed by general text
+        * OK [ALERT] asdf
+             ^^^^^^^^^^^^---> no status code, followed by general text which
+                              just happens to look like a status code...
+   We will resolve this by forcing any post-status text starting with a '['
+   to conform to the status code style, meaning that this valid input:
+
+        * OK [IMAP4rev1 has a shitty grammar ambiguity
+
+   will not be accepted.  This seems like an acceptable sacrifice.
+*/
+
+status_type_resp: tag[tg] SP st_type[tp] SP
+                  { MODE(STATUS_CODE_CHECK); } st_code[c] st_text[tx]
+                  { status_type_resp(p, $tg, $tp, $c, $tx); }
+                | untag SP st_type[tp] SP
+                  { MODE(STATUS_CODE_CHECK); } st_code[c] st_text[tx]
+                  { status_type_resp(p, NULL, $tp, $c, $tx); }
+;
+
+st_type: OK       { $$ = IE_ST_OK; }
+       | NO       { $$ = IE_ST_NO; }
+       | BAD      { $$ = IE_ST_BAD; }
+       | PREAUTH  { $$ = IE_ST_PREAUTH; }
+       | BYE      { $$ = IE_ST_BYE; }
+;
+
+/* YES_STATUS_CODE means we got a '['
+   NO_STATUS_CODE means we got the start of the text */
+st_code: YES_STATUS_CODE st_code_[c] ']' SP { MODE(STATUS_TEXT); $$ = $c; }
+       | %empty { $$ = NULL; }
+
+st_code_: ALERT      { $$ = ie_st_code_simple(E, IE_ST_CODE_ALERT); }
+        | PARSE      { $$ = ie_st_code_simple(E, IE_ST_CODE_PARSE); }
+        | READ_ONLY  { $$ = ie_st_code_simple(E, IE_ST_CODE_READ_ONLY); }
+        | READ_WRITE { $$ = ie_st_code_simple(E, IE_ST_CODE_READ_WRITE); }
+        | TRYCREATE  { $$ = ie_st_code_simple(E, IE_ST_CODE_TRYCREATE); }
+        | UIDNEXT sc_num[n] { $$ = ie_st_code_num(E, IE_ST_CODE_UIDNEXT, $n); }
+        | UIDVLD  sc_num[n] { $$ = ie_st_code_num(E, IE_ST_CODE_UIDVLD, $n); }
+        | UNSEEN  sc_num[n] { $$ = ie_st_code_num(E, IE_ST_CODE_UNSEEN, $n); }
+        | sc_pflags
+        | sc_capa
+        | sc_atom
+;
+
+sc_num: { MODE(NUM); } num[n] { MODE(STATUS_CODE); $$ = $n; };
+
+sc_pflags: PERMFLAGS { MODE(FLAG); } SP pflags[p] { $$ = ie_st_code_pflags(E, $p); }
+
+sc_capa: CAPA { MODE(ATOM); } SP capas_1[c] { $$ = ie_st_code_dstr(E, IE_ST_CODE_CAPA, $c); };
+
+sc_atom: atom[a] { MODE(STATUS_TEXT); } sc_text[t]
+    { $$ = ie_st_code_dstr(E, IE_ST_CODE_ATOM, ie_dstr_add(E, $a, $t)); };
+
+/* If text is included after the atom code, ignore the leading space */
+sc_text: %empty         { $$ = NULL; }
+       | SP sc_text_[t] { $$ = $t; }
+;
+
+sc_text_: st_txt_inner_char            { $$ = ie_dstr_new(E, p->token, KEEP_RAW); }
+        | sc_text_[t] st_txt_inner_char { $$ = ie_dstr_append(E, $t, p->token, KEEP_RAW); }
+;
+
+st_txt_inner_char: ' '
+                 | '['
+                 | RAW
+;
+
+/* starting with NO_STATUS_CODE indicates we skipped the status code entirely;
+   starting with st_txt_char indicates that we started after a status code */
+st_text: NO_STATUS_CODE         { MODE(STATUS_TEXT); $$ = ie_dstr_new(E, p->token, KEEP_RAW); }
+       | st_txt_char            { $$ = ie_dstr_new(E, p->token, KEEP_RAW); }
+       | st_text[t] st_txt_char { $$ = ie_dstr_append(E, $t, p->token, KEEP_RAW); }
+;
+
+st_txt_char: st_txt_inner_char
+           | ']'
+;
+
+/*** CAPABILITY response ***/
+
+capa_resp: CAPA { MODE(ATOM); } SP capas_1[c] { capa_resp(p, $c); };
+
+capas_1: atom
+       | capas_1[c] SP atom[a] { $$ = ie_dstr_add(E, $c, $a); }
+
+/*** LIST/LSUB responses ***/
+
+list_resp: mflags[mf] SP nqchar SP mailbox[mbx] { list_resp(p, $mf, $nqchar, $mbx); };
+
+lsub_resp: mflags[mf] SP nqchar SP mailbox[mbx] { lsub_resp(p, $mf, $nqchar, $mbx); };
+
+/* nqchar can't handle spaces, so an post-nqchar MODE() call is required */
+nqchar: prenqchar NIL                 { $$ = 0; MODE(MAILBOX); }
+      | prenqchar '"' qchar[q] '"'  { $$ = $q; MODE(MAILBOX); }
+;
+
+prenqchar: %empty { MODE(NQCHAR); };
+
+qchar: QCHAR { $$ = QCHAR_TO_CHAR; };
+
+/*** STATUS responses ***/
+
+status_resp: mailbox[m] { MODE(STATUS_ATTR); } SP '(' s_attr_rlist_0[sa] ')'
+             { status_resp(p, $m, $sa); };
+
+s_attr_rlist_0: %empty          { $$ = (ie_status_attr_resp_t){0}; }
+              | s_attr_rlist_1
+;
+
+s_attr_rlist_1: s_attr_resp
+              | s_attr_rlist_1[a] SP s_attr_resp[b] { $$ = ie_status_attr_resp_add($a, $b); }
+;
+
+s_attr_resp: s_attr[s] SP num[n] { $$ = ie_status_attr_resp_new($s, $n); };
+
+/*** FLAGS responses ***/
+
+flags_resp: { MODE(FLAG); } '(' flags_0[f] ')' { flags_resp(p, $f); };
+
+/*** EXISTS responses ***/
+
+exists_resp: num SP EXISTS { exists_resp(p, $num); };
+
+/*** RECENT responses ***/
+
+recent_resp: num SP RECENT { recent_resp(p, $num); };
+
+/*** EXPUNGE responses ***/
+
+expunge_resp: num SP EXPUNGE { expunge_resp(p, $num); };
+
+/*** FETCH responses ***/
+
+fetch_resp: num[n] SP FETCH { MODE(FETCH); } SP '(' msg_attr_0[ma] ')'
+            { fetch_resp(p, $n, $ma); }
+;
+
+msg_attr_0: %empty { $$ = NULL; }
+          | msg_attr_1
+;
+
+/* "fetch mode" */
+fm: %empty { MODE(FETCH); };
+
+/* most of these get ignored completely, we only really need:
+     - FLAGS,
+     - UID,
+     - INTERNALDATE,
+     - the fully body text
+   Anything else is going to be encrypted anyway. */
+msg_attr_1: f_fflags[f] fm  { $$ = ie_fetch_resp_flags(E, ie_fetch_resp_new(E), $f); }
+          | f_uid[u] fm     { $$ = ie_fetch_resp_uid(E, ie_fetch_resp_new(E), $u); }
+          | f_intdate[d] fm { $$ = ie_fetch_resp_intdate(E, ie_fetch_resp_new(E), $d); }
+          | f_rfc822[r] fm  { $$ = ie_fetch_resp_content(E, ie_fetch_resp_new(E), $r); }
+          | ign_msg_attr fm { $$ = ie_fetch_resp_new(E); }
+
+          | msg_attr_1[m] SP f_fflags[f] fm  { $$ = ie_fetch_resp_flags(E, $m, $f); }
+          | msg_attr_1[m] SP f_uid[u] fm     { $$ = ie_fetch_resp_uid(E, $m, $u); }
+          | msg_attr_1[m] SP f_intdate[d] fm { $$ = ie_fetch_resp_intdate(E, $m, $d); }
+          | msg_attr_1[m] SP f_rfc822[r] fm  { $$ = ie_fetch_resp_content(E, $m, $r); }
+          | msg_attr_1[m] SP ign_msg_attr fm   { $$ = $m; }
+;
+
+/* we can parse these without throwing errors, but we ignore them */
+ign_msg_attr: ENVELOPE SP '(' { MODE(NSTRING); } envelope ')'
+            | RFC822_TEXT SP { MODE(NSTRING); } ign_nstring
+            | RFC822_HEADER SP { MODE(NSTRING); } ign_nstring
+            | RFC822_SIZE SP NUM
+            /* don't even parse anything that starts with BODY */
+;
 
 
+f_fflags: FLAGS SP { MODE(FLAG); } '(' fflags_0[f] ')' { $$ = $f; };
+
+f_rfc822: RFC822 SP { MODE(NSTRING); } rfc822_nstring[r] { $$ = $r; }
+
+/* this will some day write to a file instead of memory, otherwise it would
+   just be "nstring" type */
+rfc822_nstring: NIL { $$ = NULL; }
+              | literal
+              | qstr
+;
+
+f_uid: UID SP { MODE(NUM); } num[n] { $$ = $n; };
+
+f_intdate: INTDATE SP date_time[d] { $$ = $d; };
+
+/*        date           subj           from          sender        reply-to */
+envelope: ign_nstring SP ign_nstring SP naddr_list SP naddr_list SP ign_nstring SP
+/*        to            cc            bcc           in-reply-to    message-id */
+          naddr_list SP naddr_list SP naddr_list SP ign_nstring SP ign_nstring
+;
+
+naddr_list: NIL
+          | '(' addr_list ')'
+;
+
+addr_list: address
+         | addr_list /* no SP! */ address
+;
+
+/*           addr-name      addr-adl       addr-mailbox   addr-host */
+address: '(' ign_nstring SP ign_nstring SP ign_nstring SP ign_nstring   ')'
+;
+
+ign_nstring: NIL
+           | ign_string
+;
 
 /*** start of "helper" categories: ***/
 
@@ -538,69 +960,73 @@ keyword: OK
        | INBOX
 ;
 
-atom_: RAW                { $$ = ie_dstr_new(p, KEEP_RAW); }
-     | atom_[a] atom_like_  { $$ = ie_dstr_append(p, $a, KEEP_RAW); }
+atom_like: RAW
+         | NUM
+         | keyword
 ;
 
-atom_like_: RAW
-          | NUM
-          | keyword
+atom: RAW                { $$ = ie_dstr_new(E, p->token, KEEP_RAW); }
+    | atom[a] atom_like  { $$ = ie_dstr_append(E, $a, p->token, KEEP_RAW); }
 ;
 
-qstr_: '"' preqstr qstr_body_[q] '"' { $$ = $q; };
+ign_atom: RAW
+        | ign_atom atom_like
+;
+
+qstr: '"' preqstr qstr_body[q] '"' { p->scan_mode = p->preqstr_mode; $$ = $q; };
 
 preqstr: %empty { p->preqstr_mode = p->scan_mode; MODE(QSTRING); };
 
-qstr_body_: %empty            { $$ = ie_dstr_new_empty(p); }
-          | qstr_body_[q] RAW { $$ = ie_dstr_append(p, $q, KEEP_QSTRING); }
+qstr_body: %empty           { $$ = ie_dstr_new_empty(E); }
+         | qstr_body[q] RAW { $$ = ie_dstr_append(E, $q, p->token, KEEP_QSTRING); }
 ;
+
+ign_qstr: '"' preqstr ign_qstr_body '"' { p->scan_mode = p->preqstr_mode; };
+
+ign_qstr_body: %empty
+             | ign_qstr_body RAW
+;
+
 
 /* note that LITERAL_END is passed by the application after it finishes reading
    the literal from the stream; it is never returned by the scanner */
-literal_: LITERAL { LITERAL_START; } literal_body_[l] { $$ = $l; };
+literal: LITERAL { LITERAL_START; } literal_body[l] { $$ = $l; };
 
 /* the scanner produces RAW tokens until the literal lengths is met.  Even if
    the literal length is 0, at least one empty RAW token is always produced */
-literal_body_: RAW                 { $$ = ie_dstr_new(p, KEEP_RAW); }
-             | literal_body_[l] RAW { $$ = ie_dstr_append(p, $l, KEEP_RAW); }
+literal_body: RAW                 { $$ = ie_dstr_new(E, p->token, KEEP_RAW); }
+            | literal_body[l] RAW { $$ = ie_dstr_append(E, $l, p->token, KEEP_RAW); }
 
-string_: qstr_
-       | literal_
+ign_literal: LITERAL { LITERAL_START; } ign_literal_body;
+
+ign_literal_body: RAW
+                | ign_literal_body RAW
+
+string: qstr
+      | literal
 ;
 
-astring_: atom_
-        | string_
+ign_string: ign_qstr
+          | ign_literal
+;
+
+astring: atom
+       | string
 ;
 
 tag: atom[a] { $$ = $a; MODE(COMMAND); };
 
-mailbox_: prembx astring_[a] { $$ = ie_mailbox_new_noninbox(p, $a); }
-        | prembx INBOX       { $$ = ie_mailbox_new_inbox(p); }
+mailbox: prembx astring[a] { $$ = ie_mailbox_new_noninbox(E, $a); }
+       | prembx INBOX       { $$ = ie_mailbox_new_inbox(E); }
 ;
 
 prembx: %empty { MODE(MAILBOX); };
 
-/* dummy grammar to make sure KEEP_CANCEL gets called in error handling */
-prekeep: %empty { p->keep = true; };
-
-/* the "keep" variations of the above */
-atom: prekeep atom_[a] { $$ = $a; };
-qstr: prekeep qstr_[q] { $$ = $q; };
-literal: prekeep literal_[l] { $$ = $l; };
-astring: prekeep astring_[a] { $$ = $a; };
-mailbox: prekeep mailbox_[m] { $$ = $m; };
-
-/* the "forget" variations */
-ign_atom: atom_[a] { ie_dstr_free($a); };
-ign_qstr: qstr_[q] { ie_dstr_free($q); };
-ign_literal: literal_[l] { ie_dstr_free($l); };
-ign_astring: astring_[a] { ie_dstr_free($a); };
-
-st_attr: MESSAGES    { $$ = IE_ST_ATTR_MESSAGES; }
-       | RECENT      { $$ = IE_ST_ATTR_RECENT; }
-       | UIDNEXT     { $$ = IE_ST_ATTR_UIDNEXT; }
-       | UIDVLD      { $$ = IE_ST_ATTR_UIDVLD; }
-       | UNSEEN      { $$ = IE_ST_ATTR_UNSEEN; }
+s_attr: MESSAGES    { $$ = IE_STATUS_ATTR_MESSAGES; }
+      | RECENT      { $$ = IE_STATUS_ATTR_RECENT; }
+      | UIDNEXT     { $$ = IE_STATUS_ATTR_UIDNEXT; }
+      | UIDVLD      { $$ = IE_STATUS_ATTR_UIDVLD; }
+      | UNSEEN      { $$ = IE_STATUS_ATTR_UNSEEN; }
 ;
 
 date_time: pre_date_time '"' date_day_fixed '-' date_month '-' fourdigit[y] SP
@@ -637,7 +1063,7 @@ date_month: JAN { $$ = 0; }
 ;
 
 sign: '+' { $$ = 1; }
-    | '-' { $$ = 2; }
+    | '-' { $$ = -1; }
 ;
 
 digit: DIGIT {
@@ -654,9 +1080,9 @@ digit: DIGIT {
         case '9': $$ = 9; break;
         default:
             // scanner should guarantee this never happens
-            if(p->error.type == E_NONE){
-                TRACE(p->error, "invalid digit: %x\n", FC(p->token->data[0]));
-                TRACE_ORIG(p->error, E_INTERNAL, "invalid digit");
+            if(is_error(p->error)){
+                TRACE(&p->error, "invalid digit: %x\n", FC(p->token->data[0]));
+                TRACE_ORIG(&p->error, E_INTERNAL, "invalid digit");
             }
             $$ = 0;
         }
@@ -667,28 +1093,128 @@ twodigit: digit digit { $$ = 10*$1 + $2; };
 fourdigit: digit digit digit digit { $$ = 1000*$1 + 100*$2 + 10*$3 + $4; };
 
 num: NUM { PARSE_NUM($$); };
+nznum: NUM { PARSE_NZNUM($$); };
 
-// num_list_0: %empty
-//           | num_list_1
-// ;
-//
-// num_list_1: NUM
-//           | num_list_1 SP NUM
-// ;
-
-seq_set: preseq[set] seq_spec[spec]      { $$ = ie_seq_set_append(p, $set, $spec); }
-       | seq_set[set] ',' seq_spec[spec] { $$ = ie_seq_set_append(p, $set, $spec); }
+/* num_list is ignored because it's only used by SEARCH responses, but we would
+   never issue a SEARCH command */
+num_list_0: %empty
+          | num_list_1
+;
+num_list_1: NUM
+          | num_list_1 SP NUM
 ;
 
-preseq: %empty { MODE(SEQSET); $$ = ie_seq_set_new(p); };
+seq_set: preseq seq_spec[set]            { $$ = $set; }
+       | seq_set[set] ',' seq_spec[spec] { $$ = ie_seq_set_append(E, $set, $spec); }
+;
 
-seq_spec: seq_num[n]                  { $$ = ie_seq_spec_new(p, $n, $n); }
-        | seq_num[n1] ':' seq_num[n2] { $$ = ie_seq_spec_new(p, $n1, $n2); }
+preseq: %empty { MODE(SEQSET); };
+
+seq_spec: seq_num[n]                  { $$ = ie_seq_set_new(E, $n, $n); }
+        | seq_num[n1] ':' seq_num[n2] { $$ = ie_seq_set_new(E, $n1, $n2); }
 ;
 
 seq_num: '*'    { $$ = 0; }
-       | num
+       | nznum
 ;
 
+/* flags, used by APPEND commands, STORE commands, and FLAGS responses */
+
+flags_0: %empty     { $$ = NULL; }
+       | flags_1
+;
+
+flags_1: flag_simple[s]  { $$ = ie_flags_add_simple(E, ie_flags_new(E), $s); }
+       | '\\' atom[e]    { $$ = ie_flags_add_ext(E, ie_flags_new(E), $e); }
+       | atom [k]        { $$ = ie_flags_add_kw(E, ie_flags_new(E), $k); }
+       | flags_1[f] SP flag_simple[s] { $$ = ie_flags_add_simple(E, $f, $s); }
+       | flags_1[f] SP '\\' atom[e]   { $$ = ie_flags_add_ext(E, $f, $e); }
+       | flags_1[f] SP atom[k]        { $$ = ie_flags_add_kw(E, $f, $k); }
+;
+
+flag_simple: '\\' ANSWERED { $$ = IE_FLAG_ANSWERED; }
+           | '\\' FLAGGED  { $$ = IE_FLAG_FLAGGED; }
+           | '\\' DELETED  { $$ = IE_FLAG_DELETED; }
+           | '\\' SEEN     { $$ = IE_FLAG_SEEN; }
+           | '\\' DRAFT    { $$ = IE_FLAG_DRAFT; }
+;
+
+/* pflags, only used by PERMANENTFLAGS code of status-type response */
+
+pflags: '(' pflags_0[pf] ')' { $$ = $pf; };
+
+pflags_0: %empty     { $$ = NULL; }
+       | pflags_1
+;
+
+pflags_1: pflag_simple[s]  { $$ = ie_pflags_add_simple(E, ie_pflags_new(E), $s); }
+        | '\\' atom[e]     { $$ = ie_pflags_add_ext(E, ie_pflags_new(E), $e); }
+        | atom [k]         { $$ = ie_pflags_add_kw(E, ie_pflags_new(E), $k); }
+        | pflags_1[pf] SP pflag_simple[s] { $$ = ie_pflags_add_simple(E, $pf, $s); }
+        | pflags_1[pf] SP '\\' atom[e]    { $$ = ie_pflags_add_ext(E, $pf, $e); }
+        | pflags_1[pf] SP atom[k]         { $$ = ie_pflags_add_kw(E, $pf, $k); }
+;
+
+pflag_simple: '\\' ANSWERED { $$ = IE_PFLAG_ANSWERED; }
+            | '\\' FLAGGED  { $$ = IE_PFLAG_FLAGGED; }
+            | '\\' DELETED  { $$ = IE_PFLAG_DELETED; }
+            | '\\' SEEN     { $$ = IE_PFLAG_SEEN; }
+            | '\\' DRAFT    { $$ = IE_PFLAG_DRAFT; }
+            | ASTERISK_FLAG { $$ = IE_PFLAG_ASTERISK; }
+;
+
+/* only one of these in a list */
+mflag_select: '\\' NOSELECT    { $$ = IE_SELECTABLE_NOSELECT; }
+            | '\\' MARKED      { $$ = IE_SELECTABLE_MARKED; }
+            | '\\' UNMARKED    { $$ = IE_SELECTABLE_UNMARKED; }
+;
+
+/* fflags, only used by FETCH responses */
+
+fflags_0: %empty     { $$ = NULL; }
+        | fflags_1
+;
+
+fflags_1: fflag_simple[s] { $$ = ie_fflags_add_simple(E, ie_fflags_new(E), $s); }
+        | '\\' atom[e]    { $$ = ie_fflags_add_ext(E, ie_fflags_new(E), $e); }
+        | atom [k]        { $$ = ie_fflags_add_kw(E, ie_fflags_new(E), $k); }
+        | fflags_1[f] SP fflag_simple[s] { $$ = ie_fflags_add_simple(E, $f, $s); }
+        | fflags_1[f] SP '\\' atom[e]    { $$ = ie_fflags_add_ext(E, $f, $e); }
+        | fflags_1[f] SP atom[k]         { $$ = ie_fflags_add_kw(E, $f, $k); }
+;
+
+fflag_simple: '\\' ANSWERED { $$ = IE_FFLAG_ANSWERED; }
+            | '\\' FLAGGED  { $$ = IE_FFLAG_FLAGGED; }
+            | '\\' DELETED  { $$ = IE_FFLAG_DELETED; }
+            | '\\' SEEN     { $$ = IE_FFLAG_SEEN; }
+            | '\\' DRAFT    { $$ = IE_FFLAG_DRAFT; }
+            | '\\' RECENT   { $$ = IE_FFLAG_RECENT; }
+;
+
+/* mflags, only used by LIST and LSUB responses */
+
+mflags: { MODE(MFLAG); } '(' mflags_0[mf] ')' { $$ = $mf; };
+
+mflags_0: %empty     { $$ = NULL; }
+        | mflags_1
+;
+
+mflags_1: mflag_simple[s]  { $$ = ie_mflags_add_simple(E, ie_mflags_new(E), $s); }
+        | mflag_select[s]  { MFLAG_SELECT($$, ie_mflags_new(E), $s); }
+        | '\\' atom[e]     { $$ = ie_mflags_add_ext(E, ie_mflags_new(E), $e); }
+        | atom [k]         { $$ = ie_mflags_add_kw(E, ie_mflags_new(E), $k); }
+        | mflags_1[mf] SP mflag_simple[s] { $$ = ie_mflags_add_simple(E, $mf, $s); }
+        | mflags_1[mf] SP mflag_select[s] { MFLAG_SELECT($$, $mf, $s); }
+        | mflags_1[mf] SP '\\' atom[e]    { $$ = ie_mflags_add_ext(E, $mf, $e); }
+        | mflags_1[mf] SP atom[k]         { $$ = ie_mflags_add_kw(E, $mf, $k); }
+;
+
+mflag_simple: '\\' ANSWERED    { $$ = IE_MFLAG_ANSWERED; }
+            | '\\' FLAGGED     { $$ = IE_MFLAG_FLAGGED; }
+            | '\\' DELETED     { $$ = IE_MFLAG_DELETED; }
+            | '\\' SEEN        { $$ = IE_MFLAG_SEEN; }
+            | '\\' DRAFT       { $$ = IE_MFLAG_DRAFT; }
+            | '\\' NOINFERIORS { $$ = IE_MFLAG_NOINFERIORS; }
+;
 
 SP: ' ';

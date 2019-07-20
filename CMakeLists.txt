@@ -48,9 +48,9 @@ set(OBJ_TGTS
     # imap_engine
     queue
     jsw_atree
-    # imap_parse
+    imap_parse
     imap_expression
-    # imap_read
+    imap_read
     hashmap
     imap_maildir
 )
@@ -91,7 +91,7 @@ set(TEST_EXE_TGTS
     test_key_tool
     test_atree
     test_imap_scan
-    # test_imap_read
+    test_imap_read
     test_hashmap
     test_imap_maildir
     test_loop
@@ -213,7 +213,7 @@ add_custom_command(
     DEPENDS "${input}"
     COMMENT "generating parser" VERBATIM
     )
-# add_obj_tgt("${output}" "imap_parse_tab")
+add_obj_tgt("${output}" "imap_parse_tab")
 # add a custom target just for depending on the generated header
 add_custom_target(bison_header DEPENDS "${bison_header}")
 
@@ -255,13 +255,13 @@ obj_depend_obj(loop engine)
 obj_depend_obj(tls_engine engine networking)
 # obj_depend_obj(imap_engine engine imap_read_o)
 obj_depend_obj(jsw_atree common)
-# obj_depend_obj(imap_parse_tab imap_expression imap_read common)
-# obj_depend_obj(imap_parse imap_parse_tab common)
-# add_dependencies(imap_parse_o bison_header)
+obj_depend_obj(imap_parse_tab imap_expression imap_scan common)
+obj_depend_obj(imap_parse imap_parse_tab common)
+add_dependencies(imap_parse_o bison_header)
 obj_depend_obj(imap_scan common)
 add_dependencies(imap_scan_o bison_header)
-# obj_depend_obj(imap_read imap_parse imap_scan common)
-# add_dependencies(imap_read_o bison_header)
+obj_depend_obj(imap_read imap_parse imap_scan common)
+add_dependencies(imap_read_o bison_header)
 obj_depend_obj(hashmap common)
 obj_depend_obj(imap_maildir hashmap fileops)
 
@@ -402,7 +402,7 @@ if("${BUILD_TESTS}")
     target_link_libraries(test_ui ui dummy_ui_harness json)
     target_link_libraries(test_atree jsw_atree)
     target_link_libraries(test_imap_scan imap_scan)
-    # target_link_libraries(test_imap_read imap_read)
+    target_link_libraries(test_imap_read imap_read)
     target_link_libraries(test_hashmap hashmap)
     target_link_libraries(test_imap_maildir imap_maildir)
     target_link_libraries(test_loop fake_engine networking)
@@ -453,8 +453,8 @@ if("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU")
     # libuv needs non-strict aliasing
     # see discussion here: https://github.com/libuv/libuv/issues/1230
     target_compile_options(loop_o PRIVATE -fno-strict-aliasing)
-    # target_compile_options(imap_parse_tab_o PRIVATE -Wno-sign-conversion)
-    # target_compile_options(imap_parse_tab_o PRIVATE -Wno-conversion)
+    target_compile_options(imap_parse_tab_o PRIVATE -Wno-sign-conversion)
+    target_compile_options(imap_parse_tab_o PRIVATE -Wno-conversion)
     # add some compiler hardening flags
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wformat -Wformat-security -Werror=format-security")
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fstack-protector-strong")

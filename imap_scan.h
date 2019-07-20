@@ -2,33 +2,10 @@
 #define IMAP_SCAN_H
 
 #include "common.h"
-#include "imap_parse.h"
+#include "imap_read_types.h"
+#include <imap_parse.tab.h>
 
-#define TRUE FLAG
-#define FALSE ATOM
-
-typedef struct {
-    dstr_t bytes;
-    char bytes_buffer[4096];
-    // const char* limit;
-    // continued scan start position
-    const char* cursor;
-    // continued scan backup position
-    const char* marker;
-    // clean scan start position
-    const char* start;
-    // previous scanner start position (start of the last token)
-    const char* old_start;
-    // part of continued scan state
-    int state;
-    bool accept;
-    char yych;
-    // for automatic continue handling
-    bool continuing;
-    // for scanning literals
-    bool in_literal;
-    size_t literal_len;
-} imap_scanner_t;
+dstr_t* scan_mode_to_dstr(scan_mode_t mode);
 
 derr_t imap_scanner_init(imap_scanner_t *scanner);
 void imap_scanner_free(imap_scanner_t *scanner);

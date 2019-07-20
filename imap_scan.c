@@ -1,6 +1,53 @@
 #include <imap_scan.h>
 #include <logger.h>
-#include <imap_parse.tab.h>
+
+DSTR_STATIC(scan_mode_TAG_dstr, "SCAN_MODE_TAG");
+DSTR_STATIC(scan_mode_QSTRING_dstr, "SCAN_MODE_QSTRING");
+DSTR_STATIC(scan_mode_NUM_dstr, "SCAN_MODE_NUM");
+DSTR_STATIC(scan_mode_COMMAND_dstr, "SCAN_MODE_COMMAND");
+DSTR_STATIC(scan_mode_ATOM_dstr, "SCAN_MODE_ATOM");
+DSTR_STATIC(scan_mode_FLAG_dstr, "SCAN_MODE_FLAG");
+DSTR_STATIC(scan_mode_STATUS_CODE_CHECK_dstr, "SCAN_MODE_STATUS_CODE_CHECK");
+DSTR_STATIC(scan_mode_STATUS_CODE_dstr, "SCAN_MODE_STATUS_CODE");
+DSTR_STATIC(scan_mode_STATUS_TEXT_dstr, "SCAN_MODE_STATUS_TEXT");
+DSTR_STATIC(scan_mode_MAILBOX_dstr, "SCAN_MODE_MAILBOX");
+DSTR_STATIC(scan_mode_ASTRING_dstr, "SCAN_MODE_ASTRING");
+DSTR_STATIC(scan_mode_NQCHAR_dstr, "SCAN_MODE_NQCHAR");
+DSTR_STATIC(scan_mode_NSTRING_dstr, "SCAN_MODE_NSTRING");
+DSTR_STATIC(scan_mode_STATUS_ATTR_dstr, "SCAN_MODE_STATUS_ATTR");
+DSTR_STATIC(scan_mode_FETCH_dstr, "SCAN_MODE_FETCH");
+DSTR_STATIC(scan_mode_DATETIME_dstr, "SCAN_MODE_DATETIME");
+DSTR_STATIC(scan_mode_WILDCARD_dstr, "SCAN_MODE_WILDCARD");
+DSTR_STATIC(scan_mode_SEQSET_dstr, "SCAN_MODE_SEQSET");
+DSTR_STATIC(scan_mode_STORE_dstr, "SCAN_MODE_STORE");
+DSTR_STATIC(scan_mode_SEARCH_dstr, "SCAN_MODE_SEARCH");
+DSTR_STATIC(scan_mode_unk_dstr, "unknown scan mode");
+
+dstr_t* scan_mode_to_dstr(scan_mode_t mode){
+    switch(mode){
+        case SCAN_MODE_TAG: return &scan_mode_TAG_dstr;
+        case SCAN_MODE_QSTRING: return &scan_mode_QSTRING_dstr;
+        case SCAN_MODE_NUM: return &scan_mode_NUM_dstr;
+        case SCAN_MODE_COMMAND: return &scan_mode_COMMAND_dstr;
+        case SCAN_MODE_ATOM: return &scan_mode_ATOM_dstr;
+        case SCAN_MODE_FLAG: return &scan_mode_FLAG_dstr;
+        case SCAN_MODE_STATUS_CODE_CHECK: return &scan_mode_STATUS_CODE_CHECK_dstr;
+        case SCAN_MODE_STATUS_CODE: return &scan_mode_STATUS_CODE_dstr;
+        case SCAN_MODE_STATUS_TEXT: return &scan_mode_STATUS_TEXT_dstr;
+        case SCAN_MODE_MAILBOX: return &scan_mode_MAILBOX_dstr;
+        case SCAN_MODE_ASTRING: return &scan_mode_ASTRING_dstr;
+        case SCAN_MODE_NQCHAR: return &scan_mode_NQCHAR_dstr;
+        case SCAN_MODE_NSTRING: return &scan_mode_NSTRING_dstr;
+        case SCAN_MODE_STATUS_ATTR: return &scan_mode_STATUS_ATTR_dstr;
+        case SCAN_MODE_FETCH: return &scan_mode_FETCH_dstr;
+        case SCAN_MODE_DATETIME: return &scan_mode_DATETIME_dstr;
+        case SCAN_MODE_WILDCARD: return &scan_mode_WILDCARD_dstr;
+        case SCAN_MODE_SEQSET: return &scan_mode_SEQSET_dstr;
+        case SCAN_MODE_STORE: return &scan_mode_STORE_dstr;
+        case SCAN_MODE_SEARCH: return &scan_mode_SEARCH_dstr;
+        default: return &scan_mode_unk_dstr;
+    }
+}
 
 derr_t imap_scanner_init(imap_scanner_t *scanner){
     derr_t e = E_OK;
@@ -141,7 +188,7 @@ derr_t imap_scan(imap_scanner_t *scanner, scan_mode_t mode, bool *more,
             case SCAN_MODE_ASTRING:             goto astring_mode;
             case SCAN_MODE_NQCHAR:              goto nqchar_mode;
             case SCAN_MODE_NSTRING:             goto nstring_mode;
-            case SCAN_MODE_ST_ATTR:             goto st_attr_mode;
+            case SCAN_MODE_STATUS_ATTR:         goto status_attr_mode;
             case SCAN_MODE_FETCH:               goto fetch_mode;
             case SCAN_MODE_DATETIME:            goto datetime_mode;
             case SCAN_MODE_WILDCARD:            goto wildcard_mode;
@@ -150,10 +197,6 @@ derr_t imap_scan(imap_scanner_t *scanner, scan_mode_t mode, bool *more,
             case SCAN_MODE_SEARCH:              goto search_mode;
         }
     }
-
-// restart:
-//     scanner->old_start = scanner->start;
-//     scanner->start = cursor;
 
     /*!re2c
         re2c:yyfill:enable = 0;
@@ -294,6 +337,7 @@ mflag_mode:
     */
 
 status_code_check_mode:
+    // TODO: how far does this * expand?  does it always stop at the first char?
     /*!re2c
         "\x00"          { ORIG(&e, E_PARAM, "invalid token for mode"); }
         "\n"            { ORIG(&e, E_PARAM, "invalid token for mode"); }
@@ -378,7 +422,7 @@ nstring_mode:
         'nil'           { *type = NIL; goto done; }
     */
 
-st_attr_mode:
+status_attr_mode:
 
     /*!re2c
         *               { ORIG(&e, E_PARAM, "invalid token for mode"); }

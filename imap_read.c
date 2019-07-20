@@ -1,36 +1,13 @@
 #include "imap_read.h"
+#include "imap_parse.h"
+#include "imap_scan.h"
 
 #include "logger.h"
 #include "imap_parse.tab.h"
 
-derr_t imap_read_literal(imap_reader_t *reader, size_t len, bool keep){
-    derr_t e = E_OK;
-    reader->in_literal = true;
-    reader->literal_len = len;
-    reader->keep_literal = keep;
-    if(keep){
-        PROP(&e, dstr_new(&reader->literal_temp, len) );
-    }
-    return e;
-}
-
-derr_t imap_read_rfc822_literal(imap_reader_t *reader, size_t len){
-    reader->in_literal = true;
-    reader->fetch_literal = true;
-    reader->literal_len = len;
-    return e;
-}
-
-derr_t imap_read_append_literal(imap_reader_t *reader, size_t len){
-    reader->in_literal = true;
-    reader->fetch_literal = true;
-    reader->literal_len = len;
-    return e;
-}
-
 derr_t imap_reader_init(imap_reader_t *reader,
-                        imap_parse_hooks_dn_t hooks_dn,
-                        imap_parse_hooks_up_t hooks_up,
+                        imap_hooks_dn_t hooks_dn,
+                        imap_hooks_up_t hooks_up,
                         void *hook_data){
     derr_t e = E_OK;
 
@@ -71,6 +48,7 @@ derr_t imap_read(imap_reader_t *reader, const dstr_t *input){
     PROP(&e, dstr_append(&reader->scanner.bytes, input) );
 
     int token_type;
+    dstr_t token;
     bool more;
 
     while(true){
@@ -83,9 +61,8 @@ derr_t imap_read(imap_reader_t *reader, const dstr_t *input){
         dstr_t scannable = get_scannable(&reader->scanner);
         LOG_DEBUG("scannable is: '%x'\n", FD(&scannable));
 
-        dstr_t token;
-        PROP(&e, imap_scan(&reader->scanner, scan_mode, &more, &token_type,
-                    &token) );
+        PROP(&e, imap_scan(&reader->scanner, scan_mode, &more, &token,
+                    &token_type) );
         if(more == true){
             // done with this input buffer
             break;
