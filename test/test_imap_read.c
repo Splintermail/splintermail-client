@@ -260,7 +260,7 @@ static derr_t append_start(void *data, dstr_t tag, bool inbox, dstr_t mbx,
     dstr_free(&tag);
     dstr_free(&mbx);
     ie_flag_list_free(&flags);
-    return E_OK;
+    return e;
 }
 
 //
@@ -499,14 +499,14 @@ static void st_hook(void *data, dstr_t tag, status_type_t status,
 static derr_t capa_start(void *data){
     (void)data;
     LOG_ERROR("CAPABILITY START\n");
-    return E_OK;
+    return e;
 }
 
 static derr_t capa(void *data, dstr_t capability){
     (void)data;
     LOG_ERROR("CAPABILITY: %x\n", FD(&capability));
     dstr_free(&capability);
-    return E_OK;
+    return e;
 }
 
 static void capa_end(void *data, bool success){
@@ -603,7 +603,7 @@ static void expunge_hook(void *data, unsigned int num){
 static derr_t fetch_start(void *data, unsigned int num){
     (void)data;
     LOG_ERROR("FETCH START (%x)\n", FU(num));
-    return E_OK;
+    return e;
 }
 
 static derr_t f_flags(void *data, ie_flag_list_t flags){
@@ -612,19 +612,19 @@ static derr_t f_flags(void *data, ie_flag_list_t flags){
     print_flag_list(flags);
     LOG_ERROR(")\n");
     ie_flag_list_free(&flags);
-    return E_OK;
+    return e;
 }
 
 static derr_t f_rfc822_start(void *data){
     (void)data;
     LOG_ERROR("FETCH RFC822 START\n");
-    return E_OK;
+    return e;
 }
 
 static derr_t f_rfc822_qstr(void *data, const dstr_t *qstr){
     (void)data;
     LOG_ERROR("FETCH QSTR '%x'\n", FD(qstr));
-    return E_OK;
+    return e;
 }
 
 static void f_rfc822_end(void *data, bool success){
@@ -652,10 +652,10 @@ static void fetch_end(void *data, bool success){
     error = cmd; \
     CATCH(E_ANY){}; \
     if(error != e){ \
-        TRACE(e, "expected parser to return %x, but got %x\n", \
+        TRACE(&e, "expected parser to return %x, but got %x\n", \
                 FD(error_to_dstr(e)), \
                 FD(error_to_dstr(error))); \
-        ORIG_GO(e, E_VALUE, "value mismatch", cu_parser); \
+        ORIG_GO(&e, E_VALUE, "value mismatch", cu_parser); \
     }\
 }
 
@@ -664,7 +664,7 @@ static void fetch_end(void *data, bool success){
 // static derr_t test_just_parser(void){
 //     derr_t error;
 //     imap_parser_t parser;
-//     PROP(e, imap_parser_init(&parser) );
+//     PROP(&e, imap_parser_init(&parser) );
 //
 //     EXPECT(E_OK, imap_parse(&parser, TAG) );
 //     EXPECT(E_OK, imap_parse(&parser, OK) );
@@ -727,10 +727,10 @@ static derr_t do_test_scanner_and_parser(LIST(dstr_t) *inputs){
 
     // init the reader
     imap_reader_t reader;
-    PROP(e, imap_reader_init(&reader, hooks_dn, hooks_up, NULL) );
+    PROP(&e, imap_reader_init(&reader, hooks_dn, hooks_up, NULL) );
 
     for(size_t i = 0; i < inputs->len; i++){
-        PROP_GO(e, imap_read(&reader, &inputs->data[i]), cu_reader);
+        PROP_GO(&e, imap_read(&reader, &inputs->data[i]), cu_reader);
     }
 cu_reader:
     imap_reader_free(&reader);
@@ -756,7 +756,7 @@ static derr_t test_scanner_and_parser(void){
             DSTR_LIT("* LSUB (\\ext \\noinferiors) \"/\" inbox\r\n"),
             DSTR_LIT("* LSUB (\\marked) \"/\" \"other\"\r\n"),
         );
-        PROP(e, do_test_scanner_and_parser(&inputs) );
+        PROP(&e, do_test_scanner_and_parser(&inputs) );
     }
     {
         LIST_PRESET(dstr_t, inputs,
@@ -766,7 +766,7 @@ static derr_t test_scanner_and_parser(void){
             DSTR_LIT("* STATUS {11}\r\nliteral box ()\r\n"),
             DSTR_LIT("* STATUS astring_box (UNSEEN 2 RECENT 4)\r\n"),
         );
-        PROP(e, do_test_scanner_and_parser(&inputs) );
+        PROP(&e, do_test_scanner_and_parser(&inputs) );
     }
     {
         LIST_PRESET(dstr_t, inputs,
@@ -775,7 +775,7 @@ static derr_t test_scanner_and_parser(void){
             DSTR_LIT("* 81 RECENT\r\n"),
             DSTR_LIT("* 41 expunge\r\n"),
         );
-        PROP(e, do_test_scanner_and_parser(&inputs) );
+        PROP(&e, do_test_scanner_and_parser(&inputs) );
     }
     {
         LIST_PRESET(dstr_t, inputs,
@@ -797,7 +797,7 @@ static derr_t test_scanner_and_parser(void){
             DSTR_LIT("r"),
             DSTR_LIT("al!)\r\n"),
         );
-        PROP(e, do_test_scanner_and_parser(&inputs) );
+        PROP(&e, do_test_scanner_and_parser(&inputs) );
     }
     ///////////////
     {
@@ -831,7 +831,7 @@ static derr_t test_scanner_and_parser(void){
             DSTR_LIT("tag COPY 5:* iNBoX\r\n"),
             DSTR_LIT("tag COPY 5:7 NOt_iNBoX\r\n"),
         );
-        PROP(e, do_test_scanner_and_parser(&inputs) );
+        PROP(&e, do_test_scanner_and_parser(&inputs) );
     }
     {
         LIST_PRESET(dstr_t, inputs,
@@ -844,7 +844,7 @@ static derr_t test_scanner_and_parser(void){
             DSTR_LIT("tag SEARCH SENTON 4-jul-1776 LARGER 9000\r\n"),
             DSTR_LIT("tag SEARCH OR (TO me FROM you) (FROM me TO you)\r\n"),
         );
-        PROP(e, do_test_scanner_and_parser(&inputs) );
+        PROP(&e, do_test_scanner_and_parser(&inputs) );
     }
     {
         LIST_PRESET(dstr_t, inputs,
@@ -863,7 +863,7 @@ static derr_t test_scanner_and_parser(void){
             DSTR_LIT("tag FETCH * BODY[HEADER.FIELDS (To From)]\r\n"),
             DSTR_LIT("tag FETCH * BODY[HEADER.FIELDS.NOT (To From)]\r\n"),
         );
-        PROP(e, do_test_scanner_and_parser(&inputs) );
+        PROP(&e, do_test_scanner_and_parser(&inputs) );
     }
     {
         LIST_PRESET(dstr_t, inputs,
@@ -872,9 +872,9 @@ static derr_t test_scanner_and_parser(void){
             DSTR_LIT("tag UID SEARCH DRAFT\r\n"),
             DSTR_LIT("tag UID FETCH 1,2,3:4 INTERNALDATE\r\n"),
         );
-        PROP(e, do_test_scanner_and_parser(&inputs) );
+        PROP(&e, do_test_scanner_and_parser(&inputs) );
     }
-    return E_OK;
+    return e;
 }
 
 static derr_t bad_capa(void *data, dstr_t capability){
@@ -882,7 +882,7 @@ static derr_t bad_capa(void *data, dstr_t capability){
     LOG_ERROR("BAD CAPA %x\n", FD(&capability));
     derr_t e = E_OK;
     dstr_free(&capability);
-    ORIG(e, E_VALUE, "fake error");
+    ORIG(&e, E_VALUE, "fake error");
 }
 
 
@@ -918,7 +918,7 @@ static derr_t test_bison_destructors(void){
 
     // init the reader
     imap_reader_t reader;
-    PROP(e, imap_reader_init(&reader, hooks_dn, hooks_up, NULL) );
+    PROP(&e, imap_reader_init(&reader, hooks_dn, hooks_up, NULL) );
 
     /* problems:
          - the "tag" does not get freed when I yypstate_delete() the parser if
@@ -929,11 +929,11 @@ static derr_t test_bison_destructors(void){
 
     // // leaks the tag due to not finish a command
     // DSTR_STATIC(input, "* OK [CAPABILITY IMAP4rev1]");
-    // PROP_GO(e, imap_read(&reader, &input), cu_reader);
+    // PROP_GO(&e, imap_read(&reader, &input), cu_reader);
 
     // leaks a keep_atom, but I'm not totally sure why... maybe a preallocated one?
     DSTR_STATIC(input, "* OK [CAPABILITY IMAP4rev1]\r\n");
-    PROP_GO(e, imap_read(&reader, &input), cu_reader);
+    PROP_GO(&e, imap_read(&reader, &input), cu_reader);
 
 cu_reader:
     imap_reader_free(&reader);
@@ -946,16 +946,16 @@ int main(int argc, char **argv){
     // parse options and set default log level
     PARSE_TEST_OPTIONS(argc, argv, NULL, LOG_LVL_ERROR);
 
-    // PROP_GO(e, test_just_parser(), test_fail);
-    PROP_GO(e, test_scanner_and_parser(), test_fail);
-    PROP_GO(e, test_bison_destructors(), test_fail);
+    // PROP_GO(&e, test_just_parser(), test_fail);
+    PROP_GO(&e, test_scanner_and_parser(), test_fail);
+    PROP_GO(&e, test_bison_destructors(), test_fail);
 
     LOG_ERROR("PASS\n");
     return 0;
 
 test_fail:
     DUMP(e);
-    DROP(e);
+    DROP_VAR(&e);
     LOG_ERROR("FAIL\n");
     return 1;
 }
