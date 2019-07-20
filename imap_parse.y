@@ -343,7 +343,6 @@
 %type <fflags> fflags_1
 %destructor { ie_fflags_free($$); } <fflags>
 
-%type <mflag> mflag_simple
 %type <selectable> mflag_select
 
 %type <mflags> mflags
@@ -1199,22 +1198,14 @@ mflags_0: %empty     { $$ = NULL; }
         | mflags_1
 ;
 
-mflags_1: mflag_simple[s]  { $$ = ie_mflags_add_simple(E, ie_mflags_new(E), $s); }
+mflags_1: '\\' NOINFERIORS { $$ = ie_mflags_add_noinf(E, ie_mflags_new(E)); }
         | mflag_select[s]  { MFLAG_SELECT($$, ie_mflags_new(E), $s); }
         | '\\' atom[e]     { $$ = ie_mflags_add_ext(E, ie_mflags_new(E), $e); }
         | atom [k]         { $$ = ie_mflags_add_kw(E, ie_mflags_new(E), $k); }
-        | mflags_1[mf] SP mflag_simple[s] { $$ = ie_mflags_add_simple(E, $mf, $s); }
-        | mflags_1[mf] SP mflag_select[s] { MFLAG_SELECT($$, $mf, $s); }
-        | mflags_1[mf] SP '\\' atom[e]    { $$ = ie_mflags_add_ext(E, $mf, $e); }
-        | mflags_1[mf] SP atom[k]         { $$ = ie_mflags_add_kw(E, $mf, $k); }
-;
-
-mflag_simple: '\\' ANSWERED    { $$ = IE_MFLAG_ANSWERED; }
-            | '\\' FLAGGED     { $$ = IE_MFLAG_FLAGGED; }
-            | '\\' DELETED     { $$ = IE_MFLAG_DELETED; }
-            | '\\' SEEN        { $$ = IE_MFLAG_SEEN; }
-            | '\\' DRAFT       { $$ = IE_MFLAG_DRAFT; }
-            | '\\' NOINFERIORS { $$ = IE_MFLAG_NOINFERIORS; }
+        | mflags_1[mf] SP '\\' NOINFERIORS { $$ = ie_mflags_add_noinf(E, $mf); }
+        | mflags_1[mf] SP mflag_select[s]  { MFLAG_SELECT($$, $mf, $s); }
+        | mflags_1[mf] SP '\\' atom[e]     { $$ = ie_mflags_add_ext(E, $mf, $e); }
+        | mflags_1[mf] SP atom[k]          { $$ = ie_mflags_add_kw(E, $mf, $k); }
 ;
 
 SP: ' ';

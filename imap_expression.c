@@ -395,21 +395,11 @@ void ie_mflags_free(ie_mflags_t *mf){
     free(mf);
 }
 
-ie_mflags_t *ie_mflags_add_simple(derr_t *e, ie_mflags_t *mf,
-        ie_mflag_type_t type){
+ie_mflags_t *ie_mflags_add_noinf(derr_t *e, ie_mflags_t *mf){
     if(is_error(*e)) goto fail;
 
-    switch(type){
-        case IE_MFLAG_ANSWERED: mf->answered = true; break;
-        case IE_MFLAG_FLAGGED: mf->flagged = true; break;
-        case IE_MFLAG_DELETED: mf->deleted = true; break;
-        case IE_MFLAG_SEEN: mf->seen = true; break;
-        case IE_MFLAG_DRAFT: mf->draft = true; break;
-        case IE_MFLAG_NOINFERIORS: mf->noinferiors = true; break;
-        default:
-            TRACE(e, "append mflag type %x\n", FU(type));
-            ORIG_GO(e, E_INTERNAL, "unexpcted append mflag type", fail);
-    }
+    mf->noinferiors = true;
+
     return mf;
 
 fail:

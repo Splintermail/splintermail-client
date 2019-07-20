@@ -121,17 +121,6 @@ typedef struct {
 // mflags, only used by LIST and LSUB responses
 
 typedef enum {
-    IE_MFLAG_ANSWERED = 0,
-    IE_MFLAG_FLAGGED  = 1,
-    IE_MFLAG_DELETED  = 2,
-    IE_MFLAG_SEEN     = 3,
-    IE_MFLAG_DRAFT    = 4,
-    // IE_PFLAG_ASTERISK
-    // IE_FFLAG_RECENT
-    IE_MFLAG_NOINFERIORS = 7,
-} ie_mflag_type_t;
-
-typedef enum {
     IE_SELECTABLE_NONE     = 0,
     IE_SELECTABLE_NOSELECT = 8,
     IE_SELECTABLE_MARKED   = 9,
@@ -139,12 +128,7 @@ typedef enum {
 } ie_selectable_t;
 
 typedef struct {
-    bool answered:1;
-    bool flagged:1;
-    bool deleted:1;
-    bool seen:1;
-    bool draft:1;
-    bool noinferiors:1;
+    bool noinferiors;
     ie_selectable_t selectable;
     ie_dstr_t *keywords;
     ie_dstr_t *extensions;
@@ -357,7 +341,6 @@ typedef union {
     ie_pflags_t *pflags;
     ie_fflag_type_t fflag;
     ie_fflags_t *fflags;
-    ie_mflag_type_t mflag;
     ie_selectable_t selectable;
     ie_mflags_t *mflags;
     ie_search_key_t *search_key;
@@ -457,8 +440,7 @@ ie_fflags_t *ie_fflags_add_kw(derr_t *e, ie_fflags_t *ff, ie_dstr_t *kw);
 ie_mflags_t *ie_mflags_new(derr_t *e);
 void ie_mflags_free(ie_mflags_t *mf);
 
-ie_mflags_t *ie_mflags_add_simple(derr_t *e, ie_mflags_t *mf,
-        ie_mflag_type_t type);
+ie_mflags_t *ie_mflags_add_noinf(derr_t *e, ie_mflags_t *mf);
 ie_mflags_t *ie_mflags_add_ext(derr_t *e, ie_mflags_t *mf, ie_dstr_t *ext);
 ie_mflags_t *ie_mflags_add_kw(derr_t *e, ie_mflags_t *mf, ie_dstr_t *kw);
 

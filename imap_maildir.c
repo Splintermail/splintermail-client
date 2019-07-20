@@ -64,7 +64,9 @@ derr_t imaildir_new(imaildir_t **maildir, const string_builder_t *path,
     // check for cur/new/tmp folders, and assign /NOSELECT accordingly
     bool ctn_present;
     PROP_GO(&e, ctn_check(&m->path, &ctn_present), fail_name);
-    m->mflags = (ie_mflag_list_t){.noselect = !ctn_present};
+    m->mflags = (ie_mflags_t){
+        .selectable = ctn_present ? IE_SELECTABLE_NONE : IE_SELECTABLE_NOSELECT,
+    };
     // init hashmap of messages (we will populate later, after SELECT command)
     PROP_GO(&e, hashmap_init(&m->msgs), fail_name);
     // init hashmap of children

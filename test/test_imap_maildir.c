@@ -8,12 +8,15 @@
 const char* g_test_files;
 
 // prints a leading space
-static void print_mflag_list(ie_mflag_list_t mflags){
+static void print_mflag_list(ie_mflags_t mflags){
     if(mflags.noinferiors){ LOG_ERROR(" \\NoInferiors"); };
-    if(mflags.noselect){ LOG_ERROR(" \\Noselect"); };
-    if(mflags.marked){ LOG_ERROR(" \\Marked");   };
-    if(mflags.unmarked){ LOG_ERROR(" \\Unmarked"); };
-    for(dstr_link_t *d = mflags.extensions; d != NULL; d = d->next){
+    switch(mflags.selectable){
+        case IE_SELECTABLE_NONE: break;
+        case IE_SELECTABLE_NOSELECT: LOG_ERROR(" \\Noselect"); break;
+        case IE_SELECTABLE_MARKED:   LOG_ERROR(" \\Marked"); break;
+        case IE_SELECTABLE_UNMARKED: LOG_ERROR(" \\Unmarked"); break;
+    }
+    for(ie_dstr_t *d = mflags.extensions; d != NULL; d = d->next){
         LOG_ERROR(" \\%x", FD(&d->dstr));
     }
 }

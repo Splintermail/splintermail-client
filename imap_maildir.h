@@ -13,7 +13,7 @@ typedef struct {
     dstr_t filename;
     size_t length;
     // flags
-    ie_flag_list_t flags;
+    ie_flags_t flags;
     // for putting in imaildir_t's hashmap of messages
     hash_elem_t h;
     // assist in calculating updates
@@ -29,7 +29,7 @@ typedef struct imsg_view_t {
     hash_elem_t h;
     /* our cache of flags, should only be read during comparisons for
        calculating unilateral FLAGS or RECENT responses */
-    ie_flag_list_t flags;
+    ie_flags_t flags;
     unsigned int update_no;
     bool recent;
     // for building a linked list of deleted messages (non-NULL means deleted)
@@ -53,7 +53,7 @@ typedef struct {
     string_builder_t path;
     unsigned int uid_validity;
     // mailbox flags
-    ie_mflag_list_t mflags;
+    ie_mflags_t mflags;
     // contents of this folder, mapping uid -> imsg_t*
     hashmap_t msgs;
     // child maildirs

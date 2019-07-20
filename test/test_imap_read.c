@@ -85,13 +85,16 @@ static void print_flag_list(ie_flag_list_t flags){
 }
 
 // no leading or trailing space
-static void print_mflag_list(ie_mflag_list_t mflags){
+static void print_mflag_list(ie_mflags_t *mflags){
     bool sp = false;
-    if(mflags.noinferiors){ LEAD_SP; LOG_ERROR("\\NoInferiors"); };
-    if(mflags.noselect){ LEAD_SP; LOG_ERROR("\\Noselect"); };
-    if(mflags.marked){   LEAD_SP; LOG_ERROR("\\Marked");   };
-    if(mflags.unmarked){ LEAD_SP; LOG_ERROR("\\Unmarked"); };
-    for(dstr_link_t *d = mflags.extensions; d != NULL; d = d->next){
+    if(mflags->noinferiors){ LEAD_SP; LOG_ERROR("\\NoInferiors"); };
+    switch(mflags->selectable){
+        case IE_SELECTABLE_NONE: break;
+        case IE_SELECTABLE_NOSELECT: LEAD_SP; LOG_ERROR("\\Noselect"); break;
+        case IE_SELECTABLE_MARKED:   LEAD_SP; LOG_ERROR("\\Marked"); break;
+        case IE_SELECTABLE_UNMARKED: LEAD_SP; LOG_ERROR("\\Unmarked"); break;
+    }
+    for(dstr_link_t *d = mflags->extensions; d != NULL; d = d->next){
         LEAD_SP; LOG_ERROR("\\%x", FD(&d->dstr));
     }
 }
