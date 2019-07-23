@@ -109,7 +109,7 @@ static void *loop_thread(void *arg){
 
 loop_handle_error:
     // the loop is only cleaned up while it is running.
-    if(e.type != E_NONE){
+    if(is_error(e)){
         loop_close(&ctx->loop, SPLIT(e));
     }
 

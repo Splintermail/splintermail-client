@@ -240,7 +240,7 @@ static void* fas_thread(void* arg){
 
 cleanup_6:
         connection_close(&conn);
-        if(e.type) goto cleanup_5;
+        if(is_error(e)) goto cleanup_5;
     }
     in_loop = false;
 
@@ -317,7 +317,7 @@ derr_t fas_join(void){
     if(in_loop){
         LOG_INFO("sending exit command to fake api server\n");
         e = fas_send_exit_command();
-        if(e.type){
+        if(is_error(e)){
             TRACE(&e, "error shutting down fake_api_server nicely\n");
             pthread_cancel(g_thread);
         }

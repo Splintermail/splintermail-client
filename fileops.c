@@ -398,7 +398,7 @@ derr_t readlink_path(const string_builder_t* sb, dstr_t* stack_out,
     }
 
 cu_heap:
-    if(e.type) dstr_free(heap_out);
+    if(is_error(e)) dstr_free(heap_out);
 cu_path:
     dstr_free(&heap);
     return e;

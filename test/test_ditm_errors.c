@@ -157,7 +157,7 @@ cu_buffer:
     dstr_free(&buffer);
 cu_recv:
     dstr_free(&recv);
-    if(e.type != E_NONE){
+    if(is_error(e)){
         LOG_INFO("---- FAIL ----\n");
     }else{
         LOG_INFO("---- PASS ----\n");

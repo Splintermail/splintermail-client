@@ -848,7 +848,7 @@ cu:
     ssl_library_close();
 fail:
     // if we have an uncaught error return 255
-    if(e.type != E_NONE){
+    if(is_error(e)){
         DUMP(e);
         DROP_VAR(&e);
         return 255;

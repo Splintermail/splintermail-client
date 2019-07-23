@@ -1007,7 +1007,7 @@ close_t1:
     }
 
     // if we have an uncaught error, delete t2 and propagate
-    if(e.type != E_NONE){
+    if(is_error(e)){
         ret = remove(t2path.data);
         if(ret != 0){
             LOG_ERROR("%x: %x\n", FS(t2path.data), FE(&errno));
@@ -1254,7 +1254,7 @@ derr_t ditm_inject_message(ditm_t* ditm, const dstr_t* subj, const dstr_t* msg){
 
 fail_tfd:
     close(tfd);
-    if(e.type) goto fail_temp;
+    if(is_error(e)) goto fail_temp;
 
     // make sure we can append to ditm->deletions
     PROP_GO(&e, LIST_APPEND(bool, &ditm->deletions, false), fail_temp);

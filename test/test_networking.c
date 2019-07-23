@@ -362,7 +362,7 @@ static derr_pair_t do_ssl_test(server_spec_t* srv_spec, client_spec_t* cli_spec)
         }
 
 ctx_fail:
-        if(e.type){
+        if(is_error(e)){
             SSL_CTX_free(ctx.ctx);
             ctx.ctx = NULL;
             goto c_server;

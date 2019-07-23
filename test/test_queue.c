@@ -242,7 +242,7 @@ int main(int argc, char** argv){
     PROP_GO(&e, test_queue_blocking(), test_fail);
 
 test_fail:
-    if(e.type){
+    if(is_error(e)){
         DUMP(e);
         DROP_VAR(&e);
         LOG_ERROR("FAIL\n");

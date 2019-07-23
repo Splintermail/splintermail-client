@@ -205,7 +205,7 @@ static derr_t pem_to_pkey(const char* pemkey, size_t len, EVP_PKEY** pkey){
 cleanup_2:
     BIO_free(pembio);
 cleanup_1:
-    if(e.type != E_NONE) EVP_PKEY_free(*pkey);
+    if(is_error(e)) EVP_PKEY_free(*pkey);
     return e;
 }
 
@@ -388,7 +388,7 @@ int main(int argc, char** argv){
     int newargc;
     // parse command line options
     derr_t e = opt_parse(argc, argv, spec, speclen, &newargc);
-    if(e.type != E_NONE){
+    if(is_error(e)){
         DROP_VAR(&e);
         return 2;
     }
@@ -422,7 +422,7 @@ cleanup_ssl:
 exit:
 #ifdef BUILD_SERVER_CODE
     // determine exit code, since we will DROP any error before exiting
-    exitval = (e.type != E_NONE);
+    exitval = (is_error(e));
     // any error at all (except for a user having no keys) is badbadbad
     CATCH(e, E_ANY ^ E_NOKEYS){
         // write errors to logfile

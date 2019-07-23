@@ -230,7 +230,7 @@ return_buffer:
     queue_append(&loop->read_events, &ev->qe);
     loop->session_iface.ref_down(ld->session, LOOP_REF_READ);
     // if there was an error, close the session
-    if(e.type){
+    if(is_error(e)){
         loop->session_iface.close(ld->session, e);
         PASSED(e);
         loop_data_onthread_close(ld);
@@ -266,7 +266,7 @@ return_buf:
     ev->ev_type = EV_WRITE_DONE;
     loop->pass_down(loop->downstream, ev);
     // if there was an error, close the session
-    if(e.type){
+    if(is_error(e)){
         loop->session_iface.close(ev->session, e);
         PASSED(e);
         loop_data_t *ld = loop->sess_get_loop_data(ev->session);
@@ -327,9 +327,7 @@ static void loop_data_connect_finish(loop_data_t *ld){
             loop->pass_down(loop->downstream, ev);
         // or can we write it to the socket?
         }else{
-            derr_t e = handle_write(loop, ld, ev);
-            if(e.type){
-                TRACE_PROP(&e);
+            IF_PROP(&e, handle_write(loop, ld, ev)){
                 // just hand it back to the downstream
                 ev->error = E_OK;
                 ev->ev_type = EV_WRITE_DONE;
