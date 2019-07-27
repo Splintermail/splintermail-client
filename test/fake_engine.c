@@ -139,7 +139,7 @@ static event_t *cb_reader_writer_send(cb_reader_writer_t *cbrw){
 
     dstr_copy(&cbrw->out, &ev->buffer);
 
-    ev->session = cbrw->session;
+    ev->session = &cbrw->session->session;
     fake_session_ref_up_test(ev->session, FAKE_ENGINE_REF_WRITE);
     ev->ev_type = EV_WRITE;
     return ev;
@@ -218,28 +218,16 @@ fail:
 
 /////// fake session stuff
 
-session_iface_t fake_session_iface_tlse = {
-    .ref_up = fake_session_ref_up_tlse,
-    .ref_down = fake_session_ref_down_tlse,
-    .close = fake_session_close,
-};
-
-session_iface_t fake_session_iface_loop = {
-    .ref_up = fake_session_ref_up_loop,
-    .ref_down = fake_session_ref_down_loop,
-    .close = fake_session_close,
-};
-
-static void fake_session_ref_up(void *session){
-    fake_session_t *s = session;
+static void fake_session_ref_up(session_t *session){
+    fake_session_t *s = CONTAINER_OF(session, fake_session_t, session);
     pthread_mutex_lock(&s->mutex);
     ++s->refs;
     // LOG_DEBUG("ref_up (%x)\n", FI(s->refs));
     pthread_mutex_unlock(&s->mutex);
 }
 
-static void fake_session_ref_down(void *session){
-    fake_session_t *s = session;
+static void fake_session_ref_down(session_t *session){
+    fake_session_t *s = CONTAINER_OF(session, fake_session_t, session);
     pthread_mutex_lock(&s->mutex);
     int refs = --s->refs;
     // LOG_DEBUG("ref_down (%x)\n", FI(s->refs));
@@ -248,9 +236,8 @@ static void fake_session_ref_down(void *session){
     if(refs > 0) return;
 
     // now the session is no longer in use, we call the session manager hook
-    if(s->session_destroyed){
-        s->session_destroyed(s, s->error);
-    }
+    s->session_destroyed(s, s->error);
+    PASSED(s->error);
 
     // free the session
     pthread_mutex_destroy(&s->mutex);
@@ -258,13 +245,13 @@ static void fake_session_ref_down(void *session){
 }
 
 // only called by loop thread
-void fake_session_ref_up_loop(void *session, int reason){
-    fake_session_t *s = session;
+void fake_session_ref_up_loop(session_t *session, int reason){
+    fake_session_t *s = CONTAINER_OF(session, fake_session_t, session);
     s->loop_refs[reason]++;
     fake_session_ref_up(session);
 }
-void fake_session_ref_down_loop(void *session, int reason){
-    fake_session_t *s = session;
+void fake_session_ref_down_loop(session_t *session, int reason){
+    fake_session_t *s = CONTAINER_OF(session, fake_session_t, session);
     s->loop_refs[reason]--;
     for(size_t i = 0; i < LOOP_REF_MAXIMUM; i++){
         if(s->loop_refs[i] < 0){
@@ -276,13 +263,13 @@ void fake_session_ref_down_loop(void *session, int reason){
 }
 
 // only called by tlse thread
-void fake_session_ref_up_tlse(void *session, int reason){
-    fake_session_t *s = session;
+void fake_session_ref_up_tlse(session_t *session, int reason){
+    fake_session_t *s = CONTAINER_OF(session, fake_session_t, session);
     s->tlse_refs[reason]++;
     fake_session_ref_up(session);
 }
-void fake_session_ref_down_tlse(void *session, int reason){
-    fake_session_t *s = session;
+void fake_session_ref_down_tlse(session_t *session, int reason){
+    fake_session_t *s = CONTAINER_OF(session, fake_session_t, session);
     s->tlse_refs[reason]--;
     for(size_t i = 0; i < TLSE_REF_MAXIMUM; i++){
         if(s->tlse_refs[i] < 0){
@@ -294,13 +281,13 @@ void fake_session_ref_down_tlse(void *session, int reason){
 }
 
 // only for use on test thread (fake engine and callbacks)
-void fake_session_ref_up_test(void *session, int reason){
-    fake_session_t *s = session;
+void fake_session_ref_up_test(session_t *session, int reason){
+    fake_session_t *s = CONTAINER_OF(session, fake_session_t, session);
     s->test_refs[reason]++;
     fake_session_ref_up(session);
 }
-void fake_session_ref_down_test(void *session, int reason){
-    fake_session_t *s = session;
+void fake_session_ref_down_test(session_t *session, int reason){
+    fake_session_t *s = CONTAINER_OF(session, fake_session_t, session);
     s->test_refs[reason]--;
     for(size_t i = 0; i < FAKE_ENGINE_REF_MAXIMUM; i++){
         if(s->test_refs[i] < 0){
@@ -313,7 +300,7 @@ void fake_session_ref_down_test(void *session, int reason){
 
 
 // to allocate new sessions (when loop.c only know about a single child struct)
-static derr_t fake_session_do_alloc(void **sptr, void *fake_pipeline,
+static derr_t fake_session_do_alloc(fake_session_t **sptr, fake_pipeline_t *fp,
                                     ssl_context_t* ssl_ctx, bool upwards){
     derr_t e = E_OK;
     // allocate the struct
@@ -321,51 +308,55 @@ static derr_t fake_session_do_alloc(void **sptr, void *fake_pipeline,
     if(!s) ORIG(&e, E_NOMEM, "no mem");
     *s = (fake_session_t){0};
 
-    // prepare the refs
+    // session prestart
     pthread_mutex_init(&s->mutex, NULL);
     s->refs = 1;
     s->test_refs[FAKE_ENGINE_REF_START_PROTECT] = 1;
     s->closed = false;
+    s->pipeline = fp;
+    s->session.ld = &s->loop_data;
+    s->session.td = &s->tlse_data;
 
-    // prepare the session callbacks and such
-    s->pipeline = fake_pipeline;
-    s->ssl_ctx = ssl_ctx;
-    s->upwards = upwards;
-
-    // init the engine_data elements
+    // per-engine prestart
     if(s->pipeline->loop){
-        loop_data_start(&s->loop_data, s->pipeline->loop, s);
+        loop_data_prestart(&s->loop_data, s->pipeline->loop, &s->session,
+                fake_session_ref_up_loop, fake_session_ref_down_loop);
     }
     if(s->pipeline->tlse){
-        tlse_data_start(&s->tlse_data, s->pipeline->tlse, s);
+        tlse_data_prestart(&s->tlse_data, s->pipeline->tlse, &s->session,
+                fake_session_ref_up_tlse, fake_session_ref_down_tlse, ssl_ctx,
+                upwards);
     }
-    fake_session_ref_down_test(s, FAKE_ENGINE_REF_START_PROTECT);
+
     *sptr = s;
 
     return e;
 }
 
+void fake_session_start(fake_session_t *s){
+    // per-engine start
+    if(s->pipeline->loop){
+        loop_data_start(&s->loop_data);
+    }
+    if(s->pipeline->tlse){
+        tlse_data_start(&s->tlse_data);
+    }
+    fake_session_ref_down_test(&s->session, FAKE_ENGINE_REF_START_PROTECT);
+}
+
 // to allocate new sessions (when loop.c only know about a single child struct)
-derr_t fake_session_alloc_accept(void **sptr, void *fake_pipeline,
+derr_t fake_session_alloc_accept(fake_session_t **sptr, fake_pipeline_t *fp,
                                  ssl_context_t* ssl_ctx){
     derr_t e = E_OK;
-    PROP(&e, fake_session_do_alloc(sptr, fake_pipeline, ssl_ctx, false) );
-
-    // get the new session
-    fake_session_t *s = *sptr;
-
-    // now the session is allocated, we call the session manager hook
-    if(s->pipeline->fake_session_accepted){
-        s->pipeline->fake_session_accepted(s);
-    }
+    PROP(&e, fake_session_do_alloc(sptr, fp, ssl_ctx, false) );
 
     return e;
 }
 
-derr_t fake_session_alloc_connect(void **sptr, void *fake_pipeline,
+derr_t fake_session_alloc_connect(fake_session_t **sptr, fake_pipeline_t *fp,
                                   ssl_context_t* ssl_ctx){
     derr_t e = E_OK;
-    PROP(&e, fake_session_do_alloc(sptr, fake_pipeline, ssl_ctx, true) );
+    PROP(&e, fake_session_do_alloc(sptr, fp, ssl_ctx, true) );
     return e;
 }
 
@@ -381,35 +372,14 @@ void fake_session_close(void *session, derr_t error){
 
     /* make sure every engine_data has a chance to pass a close event; a slow
        session without standing references must be protected */
-    fake_session_ref_up_test(s, FAKE_ENGINE_REF_CLOSE_PROTECT);
+    fake_session_ref_up_test(&s->session, FAKE_ENGINE_REF_CLOSE_PROTECT);
     if(s->pipeline->loop){
-        loop_data_close(&s->loop_data, s->pipeline->loop, s);
+        loop_data_close(&s->loop_data);
     }
     if(s->pipeline->tlse){
-        tlse_data_close(&s->tlse_data, s->pipeline->tlse, s);
+        tlse_data_close(&s->tlse_data);
     }
-    fake_session_ref_down_test(s, FAKE_ENGINE_REF_CLOSE_PROTECT);
-}
-
-loop_data_t *fake_session_get_loop_data(void *session){
-    fake_session_t *s = session;
-    return &s->loop_data;
-}
-
-tlse_data_t *fake_session_get_tlse_data(void *session){
-    fake_session_t *s = session;
-    return &s->tlse_data;
-}
-
-ssl_context_t *fake_session_get_ssl_ctx(void *session){
-    fake_session_t *s = session;
-    return s->ssl_ctx;
-}
-
-bool fake_session_get_upwards(void *session){
-    fake_session_t *s = session;
-    // right now the tests only accept()
-    return s->upwards;
+    fake_session_ref_down_test(&s->session, FAKE_ENGINE_REF_CLOSE_PROTECT);
 }
 
 /////// fake engine stuff

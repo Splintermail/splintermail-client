@@ -25,7 +25,7 @@ typedef struct {
     pthread_cond_t *cond;
 } test_context_t;
 
-static void fake_session_destroyed(fake_session_t *s, derr_t error){
+static void fake_session_dn_destroyed(fake_session_t *s, derr_t error){
     // free the cb_reader_writer if there is one
     if(s->mgr_data){
         cb_reader_writer_t *cbrw = s->mgr_data;
@@ -39,14 +39,25 @@ static void fake_session_destroyed(fake_session_t *s, derr_t error){
     }
 }
 
-/* In the first half of the test, we use reader-writer threads to connect to
-   the loop.  In the second half of the test, we use the loop to connect to
-   itself. */
-static bool test_mode_self_connect = false;
+typedef struct {
+    fake_pipeline_t pipeline;
+    listener_spec_t lspec;
+} test_lspec_t;
+DEF_CONTAINER_OF(test_lspec_t, lspec, listener_spec_t);
 
-static void fake_session_accepted(fake_session_t *s){
-    if(!test_mode_self_connect) return;
-    s->session_destroyed = fake_session_destroyed;
+static derr_t conn_recvd(listener_spec_t *lspec, session_t **session){
+    derr_t e = E_OK;
+
+    test_lspec_t *t = CONTAINER_OF(lspec, test_lspec_t, lspec);
+
+    fake_session_t *s;
+    PROP(&e, fake_session_alloc_accept(&s, &t->pipeline, NULL) );
+    s->session_destroyed = fake_session_dn_destroyed;
+    fake_session_start(s);
+
+    *session = &s->session;
+
+    return e;
 }
 
 static void *loop_thread(void *arg){
@@ -54,27 +65,26 @@ static void *loop_thread(void *arg){
     derr_t e = E_OK;
     size_t num_read_events = NUM_READ_EVENTS_PER_LOOP;
 
-    fake_pipeline_t pipeline = {
-        .loop = &ctx->loop,
-        .fake_session_accepted = fake_session_accepted,
-    };
-
     /* we can have a lot of simultaneous writes, which is not realistic
        compared to the real behavior of a pipeline, so we won't worry about
        testing that behavior */
     size_t num_write_wrappers = NUM_THREADS * WRITES_PER_THREAD;
     PROP_GO(&e, loop_init(&ctx->loop, num_read_events, num_write_wrappers,
                        ctx->downstream, fake_engine_pass_event,
-                       fake_session_iface_loop,
-                       fake_session_get_loop_data,
-                       fake_session_alloc_accept,
-                       &pipeline,
                        "127.0.0.1", port_str), done);
 
     // create the listener
-    uv_ptr_t uvp = {.type = LP_TYPE_LISTENER};
-    PROP_GO(&e, loop_add_listener(&ctx->loop, "127.0.0.1", port_str, &uvp),
-             cu_loop);
+    test_lspec_t test_lspec = {
+        .pipeline = {
+            .loop = &ctx->loop,
+        },
+        .lspec = {
+            .addr = "127.0.0.1",
+            .svc = port_str,
+            .conn_recvd = conn_recvd,
+        },
+    };
+    PROP_GO(&e, loop_add_listener(&ctx->loop, &test_lspec.lspec), cu_loop);
 
     // signal to the main thread
     pthread_mutex_lock(ctx->mutex);
@@ -100,6 +110,20 @@ done:
 
 // callbacks from fake_engine
 
+static void fake_session_up_destroyed(fake_session_t *s, derr_t error){
+    // free the cb_reader_writer if there is one
+    if(s->mgr_data){
+        cb_reader_writer_t *cbrw = s->mgr_data;
+        // catch an error from the cbrw
+        MERGE_VAR(&error, &cbrw->error, "cb reader/writer");
+        cb_reader_writer_free(cbrw);
+    }
+    if(error.type != E_NONE){
+        loop_close(s->pipeline->loop, error);
+        PASSED(error);
+    }
+}
+
 typedef struct {
     size_t nwrites;
     size_t nEOF;
@@ -110,18 +134,19 @@ typedef struct {
 
 static void launch_second_half_of_test(session_cb_data_t *cb_data,
                                        fake_pipeline_t *fp){
-    // start the second half of the tests
-    test_mode_self_connect = true;
     // make NUM_THREAD connections
     for(size_t i = 0; i < NUM_THREADS; i++){
         derr_t e = E_OK;
         // allocate a new connecting session
-        void* session;
-        PROP_GO(&e, fake_session_alloc_connect(&session, fp, NULL), fail);
+        fake_session_t* s;
+        PROP_GO(&e, fake_session_alloc_connect(&s, fp, NULL), fail);
 
-        // attach the destroy hook
-        fake_session_t *s = session;
-        s->session_destroyed = fake_session_destroyed;
+        s->session_destroyed = fake_session_up_destroyed;
+        // we have to start the session before we can start the cbrw
+        fake_session_ref_up_test(&s->session, FAKE_ENGINE_REF_CBRW_PROTECT);
+
+        // start the session
+        fake_session_start(s);
 
         // prepare a cb_reader_writer
         cb_reader_writer_t *cbrw = &cb_data->cb_reader_writers[i];
@@ -137,9 +162,12 @@ static void launch_second_half_of_test(session_cb_data_t *cb_data,
         loop_pass_event(&cb_data->test_ctx->loop, ev_new);
         cb_data->nwrites++;
 
+        fake_session_ref_down_test(&s->session, FAKE_ENGINE_REF_CBRW_PROTECT);
+
         continue;
 
     fail:
+        fake_session_ref_down_test(&s->session, FAKE_ENGINE_REF_CBRW_PROTECT);
         loop_close(&cb_data->test_ctx->loop, e);
         PASSED(e);
         break;

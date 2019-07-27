@@ -14,6 +14,7 @@ enum fake_engine_ref_reason_t {
     FAKE_ENGINE_REF_WRITE,
     FAKE_ENGINE_REF_START_PROTECT,
     FAKE_ENGINE_REF_CLOSE_PROTECT,
+    FAKE_ENGINE_REF_CBRW_PROTECT,
     FAKE_ENGINE_REF_MAXIMUM
 };
 
@@ -67,11 +68,10 @@ typedef struct {
     // null engines are ignored during session hooks
     loop_t *loop;
     tlse_t *tlse;
-    // session manager hook, returns cb_data for future calls
-    void (*fake_session_accepted)(fake_session_t*);
 } fake_pipeline_t;
 
 struct fake_session_t {
+    session_t session;
     pthread_mutex_t mutex;
     int refs;
     bool closed;
@@ -89,33 +89,32 @@ struct fake_session_t {
     int loop_refs[LOOP_REF_MAXIMUM];
     int tlse_refs[TLSE_REF_MAXIMUM];
     int test_refs[FAKE_ENGINE_REF_MAXIMUM];
-    // session manager hook
-    void *mgr_data;
+    /* session manager hook; this is to be set externally, after session_alloc
+       but before session_start */
     void (*session_destroyed)(fake_session_t*, derr_t);
+    void *mgr_data;
 };
+DEF_CONTAINER_OF(fake_session_t, session, session_t)
 
-derr_t fake_session_alloc_accept(void **sptr, void *fake_pipeline,
+derr_t fake_session_alloc_accept(fake_session_t **sptr, fake_pipeline_t *fp,
                                  ssl_context_t* ssl_ctx);
-
-derr_t fake_session_alloc_connect(void **sptr, void *fake_pipeline,
+derr_t fake_session_alloc_connect(fake_session_t **sptr, fake_pipeline_t *fp,
                                   ssl_context_t* ssl_ctx);
+void fake_session_start(fake_session_t *s);
 
 // only for use on loop thread
-void fake_session_ref_up_loop(void *session, int reason);
-void fake_session_ref_down_loop(void *session, int reason);
+void fake_session_ref_up_loop(session_t *session, int reason);
+void fake_session_ref_down_loop(session_t *session, int reason);
 
 // only for use on tlse thread
-void fake_session_ref_up_tlse(void *session, int reason);
-void fake_session_ref_down_tlse(void *session, int reason);
+void fake_session_ref_up_tlse(session_t *session, int reason);
+void fake_session_ref_down_tlse(session_t *session, int reason);
 
 // only for use on test thread (fake engine and callbacks)
-void fake_session_ref_up_test(void *session, int reason);
-void fake_session_ref_down_test(void *session, int reason);
+void fake_session_ref_up_test(session_t *session, int reason);
+void fake_session_ref_down_test(session_t *session, int reason);
 
 void fake_session_close(void *session, derr_t error);
-
-extern session_iface_t fake_session_iface_loop;
-extern session_iface_t fake_session_iface_tlse;
 
 loop_data_t *fake_session_get_loop_data(void *session);
 tlse_data_t *fake_session_get_tlse_data(void *session);

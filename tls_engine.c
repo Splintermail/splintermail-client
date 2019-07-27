@@ -11,8 +11,7 @@
 
 // forward declarations
 static void advance_state(tlse_data_t *td);
-static void tlse_data_onthread_start(tlse_data_t *td, tlse_t *tlse,
-                                     void *session);
+static void tlse_data_onthread_start(tlse_data_t *td);
 static void tlse_data_onthread_close(tlse_data_t *td);
 
 
@@ -76,7 +75,7 @@ static void do_ssl_read(tlse_data_t *td){
         td->read_out->ev_type = EV_READ;
         td->read_out->error = E_OK;
         td->read_out->session = td->session;
-        tlse->session_iface.ref_up(td->session, TLSE_REF_READ);
+        td->ref_up(td->session, TLSE_REF_READ);
         tlse->pass_down(tlse->downstream, td->read_out);
         td->read_out = NULL;
     }else{
@@ -118,7 +117,7 @@ static void do_ssl_read(tlse_data_t *td){
     return;
 
 close_session:
-    tlse->session_iface.close(td->session, e);
+    td->session->close(td->session, e);
     PASSED(e);
     td->tls_state = TLS_STATE_CLOSED;
 }
@@ -167,7 +166,7 @@ static void do_ssl_write(tlse_data_t *td){
 
 close_session:
     // this session is toast
-    tlse->session_iface.close(td->session, e);
+    td->session->close(td->session, e);
     PASSED(e);
     // go into close mode
     td->tls_state = TLS_STATE_CLOSED;
@@ -186,7 +185,7 @@ static void do_write_out(tlse_data_t *td){
     if(ret != 1 || amnt_read == 0){
         trace_ssl_errors(&e);
         TRACE_ORIG(&e, E_SSL, "reading from memory buffer failed");
-        tlse->session_iface.close(td->session, e);
+        td->session->close(td->session, e);
         PASSED(e);
         td->tls_state = TLS_STATE_CLOSED;
         // done with the write buffer
@@ -200,7 +199,7 @@ static void do_write_out(tlse_data_t *td){
     td->write_out->ev_type = EV_WRITE;
     td->write_out->error = E_OK;
     td->write_out->session = td->session;
-    tlse->session_iface.ref_up(td->session, TLSE_REF_WRITE);
+    td->ref_up(td->session, TLSE_REF_WRITE);
     tlse->pass_up(tlse->upstream, td->write_out);
     td->write_out = NULL;
     // optimistically return to idle state; it might kick us back to wfewb
@@ -312,7 +311,7 @@ static bool enter_idle(tlse_data_t *td){
                 td->read_out->ev_type = EV_READ;
                 td->read_out->error = E_OK;
                 td->read_out->session = td->session;
-                tlse->session_iface.ref_up(td->session, TLSE_REF_READ);
+                td->ref_up(td->session, TLSE_REF_READ);
                 tlse->pass_down(tlse->downstream, td->read_out);
                 td->read_out = NULL;
                 // mark EOF as sent
@@ -357,7 +356,7 @@ static bool enter_idle(tlse_data_t *td){
     return false;
 
 fail:
-    tlse->session_iface.close(td->session, e);
+    td->session->close(td->session, e);
     PASSED(e);
     td->tls_state = TLS_STATE_CLOSED;
     return true;
@@ -385,7 +384,7 @@ static void advance_state(tlse_data_t *td){
             && !td->write_in_qcb.qe.q && !td->write_out_qcb.qe.q){
         derr_t e = E_OK;
         TRACE_ORIG(&e, E_INTERNAL, "tlse_data is hung!  Killing session\n");
-        td->tlse->session_iface.close(td->session, e);
+        td->session->close(td->session, e);
         PASSED(e);
         td->tls_state = TLS_STATE_CLOSED;
     }
@@ -394,17 +393,16 @@ static void advance_state(tlse_data_t *td){
 // the main engine thread, in uv_work_cb form
 static void tlse_process_events(uv_work_t *req){
     tlse_t *tlse = req->data;
-    session_iface_t iface = tlse->session_iface;
     bool should_continue = true;
     while(should_continue){
         event_t *ev = queue_pop_first(&tlse->event_q, true);
         tlse_data_t *td;
-        td = ev->session ? tlse->session_get_tlse_data(ev->session) : NULL;
+        td = ev->session ? ev->session->td : NULL;
         // has this session been initialized?
         if(td && td->data_state == DATA_STATE_PREINIT
                 && ev->ev_type != EV_SESSION_CLOSE){
             // TODO: client connections start the handshake
-            tlse_data_onthread_start(td, tlse, ev->session);
+            tlse_data_onthread_start(td);
         }
         switch(ev->ev_type){
             case EV_READ:
@@ -420,7 +418,7 @@ static void tlse_process_events(uv_work_t *req){
             case EV_READ_DONE:
                 // LOG_ERROR("tlse: READ_DONE\n");
                 // erase session reference
-                iface.ref_down(ev->session, TLSE_REF_READ);
+                td->ref_down(ev->session, TLSE_REF_READ);
                 ev->session = NULL;
                 // return event to read event list
                 queue_append(&tlse->read_events, &ev->qe);
@@ -438,7 +436,7 @@ static void tlse_process_events(uv_work_t *req){
             case EV_WRITE_DONE:
                 // LOG_ERROR("tlse: WRITE_DONE\n");
                 // erase session reference
-                iface.ref_down(ev->session, TLSE_REF_WRITE);
+                td->ref_down(ev->session, TLSE_REF_WRITE);
                 ev->session = NULL;
                 // return event to write event list
                 queue_append(&tlse->write_events, &ev->qe);
@@ -470,12 +468,12 @@ static void tlse_process_events(uv_work_t *req){
                 break;
             case EV_SESSION_START:
                 // LOG_ERROR("tlse: SESSION_START\n");
-                iface.ref_down(ev->session, TLSE_REF_START_EVENT);
+                td->ref_down(ev->session, TLSE_REF_START_EVENT);
                 break;
             case EV_SESSION_CLOSE:
                 // LOG_ERROR("tlse: SESSION_CLOSE\n");
                 tlse_data_onthread_close(td);
-                iface.ref_down(ev->session, TLSE_REF_CLOSE_EVENT);
+                td->ref_down(ev->session, TLSE_REF_CLOSE_EVENT);
                 break;
             default:
                 LOG_ERROR("unexpected event type in tls engine, ev = %x\n",
@@ -491,26 +489,34 @@ void tlse_pass_event(void *tlse_void, event_t *ev){
 }
 
 
-void tlse_data_start(tlse_data_t *td, tlse_t *tlse, void *session){
+void tlse_data_prestart(tlse_data_t *td, tlse_t *tlse, session_t *session,
+        ref_fn_t ref_up, ref_fn_t ref_down, ssl_context_t *ssl_ctx,
+        bool upwards){
+    td->tlse = tlse;
+    td->session = session;
+    td->ref_up = ref_up;
+    td->ref_down = ref_down;
+    td->ssl_ctx = ssl_ctx;
+    td->upwards = upwards;
+}
+
+void tlse_data_start(tlse_data_t *td){
     // prepare the starting event
     event_prep(&td->start_ev, td);
     td->start_ev.ev_type = EV_SESSION_START;
     td->start_ev.error = E_OK;
     td->start_ev.buffer = (dstr_t){0};
-    td->start_ev.session = session;
-    tlse->session_iface.ref_up(session, TLSE_REF_START_EVENT);
+    td->start_ev.session = td->session;
+    td->ref_up(td->session, TLSE_REF_START_EVENT);
 
     // pass the starting event
-    tlse_pass_event(tlse, &td->start_ev);
+    tlse_pass_event(td->tlse, &td->start_ev);
 }
 
-static void tlse_data_onthread_start(tlse_data_t *td, tlse_t *tlse,
-                                     void *session){
+static void tlse_data_onthread_start(tlse_data_t *td){
     derr_t e = E_OK;
 
     // things which must be initialized, even in case of failure
-    td->session = session;
-    td->tlse = tlse;
     queue_cb_prep(&td->read_in_qcb, td);
     queue_cb_prep(&td->read_out_qcb, td);
     queue_cb_prep(&td->write_in_qcb, td);
@@ -528,8 +534,7 @@ static void tlse_data_onthread_start(tlse_data_t *td, tlse_t *tlse,
     PROP_GO(&e, queue_init(&td->pending_writes), fail_pending_reads);
 
     // allocate SSL object
-    ssl_context_t *ssl_ctx = tlse->session_get_ssl_ctx(session);
-    td->ssl = SSL_new(ssl_ctx->ctx);
+    td->ssl = SSL_new(td->ssl_ctx->ctx);
     if(td->ssl == NULL){
         ORIG_GO(&e, E_SSL, "unable to create SSL object", fail_pending_writes);
     }
@@ -551,7 +556,7 @@ static void tlse_data_onthread_start(tlse_data_t *td, tlse_t *tlse,
     SSL_set0_wbio(td->ssl, td->rawout);
 
     // set the SSL mode (server or client) appropriately
-    if(tlse->session_get_upwards(session)){
+    if(td->upwards){
         // upwards means we are the client
         SSL_set_connect_state(td->ssl);
 
@@ -599,7 +604,7 @@ fail_pending_reads:
 fail:
     td->data_state = DATA_STATE_CLOSED;
     td->tls_state = TLS_STATE_CLOSED;
-    tlse->session_iface.close(session, e);
+    td->session->close(td->session, e);
     PASSED(e);
     return;
 }
@@ -607,18 +612,17 @@ fail:
 
 /* session_close() will call tlse_data_close() from any thread.  The session is
    required to call this exactly one time for every session. */
-void tlse_data_close(tlse_data_t *td, tlse_t *tlse, void *session){
-    (void)session;
+void tlse_data_close(tlse_data_t *td){
     // prepare the closing event
     event_prep(&td->close_ev, td);
     td->close_ev.ev_type = EV_SESSION_CLOSE;
     td->close_ev.error = E_OK;
     td->close_ev.buffer = (dstr_t){0};
-    td->close_ev.session = session;
-    tlse->session_iface.ref_up(session, TLSE_REF_CLOSE_EVENT);
+    td->close_ev.session = td->session;
+    td->ref_up(td->session, TLSE_REF_CLOSE_EVENT);
 
     // pass the closing event
-    tlse_pass_event(tlse, &td->close_ev);
+    tlse_pass_event(td->tlse, &td->close_ev);
 }
 
 // called from the tlse thread, after EV_SESSION_CLOSE is received
@@ -685,10 +689,6 @@ static void tlse_data_onthread_close(tlse_data_t *td){
 
 
 derr_t tlse_init(tlse_t *tlse, size_t nread_events, size_t nwrite_events,
-                 session_iface_t session_iface,
-                 tlse_data_t *(*session_get_tlse_data)(void*),
-                 ssl_context_t *(*session_get_ssl_ctx)(void*),
-                 bool (*session_get_upwards)(void*),
                  event_passer_t pass_up, void *upstream,
                  event_passer_t pass_down, void *downstream){
     derr_t e = E_OK;
@@ -698,10 +698,6 @@ derr_t tlse_init(tlse_t *tlse, size_t nread_events, size_t nwrite_events,
     PROP_GO(&e, event_pool_init(&tlse->write_events, nwrite_events), fail_reads);
 
     tlse->work_req.data = tlse;
-    tlse->session_iface = session_iface;
-    tlse->session_get_tlse_data = session_get_tlse_data;
-    tlse->session_get_ssl_ctx = session_get_ssl_ctx;
-    tlse->session_get_upwards = session_get_upwards;
     tlse->pass_up = pass_up;
     tlse->upstream = upstream;
     tlse->pass_down = pass_down;

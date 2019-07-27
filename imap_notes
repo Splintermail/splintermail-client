@@ -481,7 +481,7 @@ Error handling during reads and writes:
     cannot respond with WRITE_DONE until *after* the layer below it passes back
     a WRITE_DONE):
 
-        R = "read", RD = "read done", W = "write", WD = "write done"
+        R = "read", D = "read done", W = "write", D = "write done"
 
     Engine | Timeline of read and write.  Read is pipelined, write is stacked
     -------+-----------------------------------------------------------------
@@ -587,11 +587,6 @@ Life of a per-session data struct:
         engine for that engine's session data, enable on-thread resource
         cleanup.
 
-    normal events, associated with a session:
-        guaranteed to come after the engine data was initialized with zeros,
-        but *not* guaranteed to come before the SESSION_START event.  Also,
-        it is possible to receive more normal events *after* a SESSION_CLOSE.
-
     SESSION_START event:
         This is like a reminder, in case no normal events come in, to trigger
         an engine to look at a session.  Things like starting TCP connections
@@ -612,14 +607,43 @@ Life of a per-session data struct:
         SESSION_CLOSE should not be processed (since the engine doesn't have
         the state in memory required to process them anymore).
 
+    normal events, associated with a session:
+        guaranteed to come after the engine data was initialized with zeros,
+        but *not* guaranteed to come before the SESSION_START event.  Also,
+        it is possible to receive more normal events *after* a SESSION_CLOSE.
+
     Potential Gotcha:
         Right now, I don't have a solution to guarantee that SESSION_START
         doesn't triggers an eventual SESSION_CLOSE on a neighbor node before
         the SESSION_START is even passed to that same neighbor (for example, if
-        a quick tlse_data_init() thread pushed a SESSION_QUIT to the IMAP
-        engine before imape_data_init pushes the SESSION_START).  That means
+        a quick tlse_data_init() fails, calling session_close() which pushes
+        a SESSION_CLOSE event to the IMAP engine before the session allocator
+        can call imape_data_init() to push the SESSION_START).  That means
         that you could actually recieve SESSION_CLOSE *before* you get
         SESSION_START.  We should be careful to implement that correctly.
+
+    Properties of certain calls in each engine:
+        engine_data_start():
+            Only called once, from off thread, in the session_alloc.  This
+            function should only send a SESSION_START event to the engine
+            thread (with a corresponding ref_up).
+        engine_data_onthread_start():
+            Called from on thread, the first time a packet is seen for the
+            session.  It will often be after the SESSION_START packet.   The
+            arguments which are needed from the session must use getters to
+            avoid a race condition during initialization of multiple engines.
+        engine_data_close():
+            Called from off thread, the first time session_close() is called.
+            session_close() guarantees it engine_data_close() will only be
+            called once.  This function should only send a SESSION_CLOSE to
+            the engine thread
+        engine_data_onthread_close():
+            Called from on thread, and must be robust to being called many
+            times.  In particular, in error situations, the engine which calls
+            session_close() will often immediately call its own
+            engine_data_onthread_close() to ensure no more packets are handled
+            for that engine.  Then later it will receive its SESSION_CLOSE
+            message and call engine_data_onthread_close() again.
 
     Error handling during session initialization:
         How does the error get passed?
@@ -632,6 +656,31 @@ Life of a per-session data struct:
             Errors from incoming connections are just logged; no other user
             session need to be bothered.  Errors from outgoing sessions should
             be handled by whatever thing asked for the session to be created.
+
+Life of a session:
+    Sessions can be started in one of two ways:
+      - a connecting session is created when we are acting as the client
+      - an accepting session is created when we are acting as the server
+
+    Connecting session:
+      - The allocation of the session will come from outside of the pipeline.
+        Some thread will call a session_alloc_connect() and feed in the
+        mgr_data field for the session_destroyed callback.
+      - The loop engine will use a SESSION_START event to trigger trying to
+        make a connection.  Any packets which the loop receives before making
+        the connection are buffered up in preconnected writes and written upon
+        making the connection.
+      - The first packet in the pipeline will come from the tls engine.  The
+        tls engine starts the handshake (client side starts) then the remote
+        imap server will send its hello.
+      - we may or may not know which user the connection belongs to.  If we do
+        know we probably can expect that the credentials are valid, because the
+        connection is one that we initiated.  Of course, we always have to
+        handle either connection.
+
+    Accepting session:
+      - The connection_cb for the listening socket will make a callback which
+        will allocate the session.
 
 
 Important hooks:

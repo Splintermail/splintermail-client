@@ -77,8 +77,6 @@ typedef struct {
     bool initialized;
     // generic engine stuff
     uv_work_t work_req;
-    session_iface_t session_iface;
-    tlse_data_t *(*session_get_tlse_data)(void*);
     ssl_context_t *(*session_get_ssl_ctx)(void*);
     bool (*session_get_upwards)(void*);
     queue_t event_q;
@@ -106,8 +104,13 @@ typedef enum {
 
 // TLS engine's per-session state
 struct tlse_data_t {
-    void *session;
+    // data to be set by prestart
+    session_t *session;
     tlse_t *tlse;
+    bool upwards;
+    ssl_context_t *ssl_ctx;
+    ref_fn_t ref_up;
+    ref_fn_t ref_down;
     // generic per-engine data stuff
     engine_data_state_t data_state;
     event_t start_ev;
@@ -144,10 +147,6 @@ struct tlse_data_t {
 };
 
 derr_t tlse_init(tlse_t *tlse, size_t nread_events, size_t nwrite_events,
-                 session_iface_t session_iface,
-                 tlse_data_t *(*session_get_tlse_data)(void*),
-                 ssl_context_t *(*session_get_ssl_ctx)(void*),
-                 bool (*session_get_upwards)(void*),
                  event_passer_t pass_up, void *upstream,
                  event_passer_t pass_down, void *downstream);
 
@@ -158,8 +157,14 @@ derr_t tlse_add_to_loop(tlse_t *tlse, uv_loop_t *loop);
 // function is an event_passer_t
 void tlse_pass_event(void *tlse_void, event_t *ev);
 
-void tlse_data_start(tlse_data_t *td, tlse_t *tlse, void *session);
-void tlse_data_close(tlse_data_t *td, tlse_t *tlse, void *session);
+/* prestart() is for setting before any errors can happen and before any
+   messages can be sent. */
+void tlse_data_prestart(tlse_data_t *td, tlse_t *tlse, session_t *session,
+        ref_fn_t ref_up, ref_fn_t ref_down, ssl_context_t *ssl_ctx,
+        bool upwards);
+
+void tlse_data_start(tlse_data_t *td);
+void tlse_data_close(tlse_data_t *td);
 
 enum tlse_ref_reason_t {
     TLSE_REF_READ = 0,
