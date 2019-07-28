@@ -33,8 +33,9 @@ static derr_t print_folders(imaildir_t *m, size_t indent){
     print_mflag_list(m->mflags);
     PROP(&e, PFMT("\n") );
     hashmap_iter_t i;
-    for(i = hashmap_first(&m->children); i.more; hashmap_next(&i)){
-        PROP(&e, print_folders((imaildir_t*)i.data, indent + 2) );
+    for(i = hashmap_first(&m->children); i.current; hashmap_next(&i)){
+        imaildir_t *m = CONTAINER_OF(i.current, imaildir_t, h);
+        PROP(&e, print_folders(m, indent + 2) );
     }
     return e;
 }

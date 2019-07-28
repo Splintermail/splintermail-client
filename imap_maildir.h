@@ -20,6 +20,7 @@ typedef struct {
     unsigned int update_no;
     bool expunged;
 } imsg_t;
+DEF_CONTAINER_OF(imsg_t, h, hash_elem_t);
 
 // view of imsg_t, owned by session context
 typedef struct imsg_view_t {
@@ -35,6 +36,7 @@ typedef struct imsg_view_t {
     // for building a linked list of deleted messages (non-NULL means deleted)
     struct imsg_view_t *next_del;
 } imsg_view_t;
+DEF_CONTAINER_OF(imsg_view_t, h, hash_elem_t);
 
 /* the DELETE command is given, and the IMAP-compliant action is decided, but
    the deletion does not actually happen until all views into the mailbox
@@ -67,6 +69,7 @@ typedef struct {
     // deletion behavior is decided at DELETE time, but might be executed later
     imaildir_del_plan_t del_plan;
 } imaildir_t;
+DEF_CONTAINER_OF(imaildir_t, h, hash_elem_t);
 
 /* open a maildir recursively. A copy will be made of *name. Reading files from
    disk is done lazily, not for performance, but for up-to-dateness and memory

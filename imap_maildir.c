@@ -36,7 +36,8 @@ static derr_t find_children(const string_builder_t *base, const dstr_t *name,
     imaildir_t *m;
     PROP_GO(&e, imaildir_new(&m, &parent->path, name), fail_malloc);
     // put this child into the parent's hashmap
-    PROP_GO(&e, hashmap_puts(&parent->children, &m->name, &m->h), fail_open);
+    PROP_GO(&e, hashmap_sets_unique(&parent->children, &m->name, &m->h),
+            fail_open);
 
     return e;
 
@@ -54,8 +55,6 @@ derr_t imaildir_new(imaildir_t **maildir, const string_builder_t *path,
     imaildir_t *m = malloc(sizeof(*m));
     *maildir = m;
     if(!m) ORIG(&e, E_NOMEM, "unable to malloc");
-    // set self-references
-    m->h.data = m;
     // copy the name
     m->name = (dstr_t){0};
     PROP_GO(&e, dstr_copy(name, &m->name), fail_malloc);
@@ -85,8 +84,9 @@ derr_t imaildir_new(imaildir_t **maildir, const string_builder_t *path,
     hashmap_iter_t i;
 fail_chld:
     // close all the child maildirs
-    for(i = hashmap_pop_first(&m->children); i.more; hashmap_pop_next(&i)){
-        imaildir_free((imaildir_t*)i.data);
+    for(i = hashmap_pop_first(&m->children); i.current; hashmap_pop_next(&i)){
+        imaildir_t *m = CONTAINER_OF(i.current, imaildir_t, h);
+        imaildir_free(m);
     }
     // then free the hashmap
     hashmap_free(&m->children);
@@ -103,12 +103,13 @@ fail_malloc:
 void imaildir_free(imaildir_t *m){
     // first free all the children (yay!! free the children!)
     hashmap_iter_t i;
-    for(i = hashmap_pop_first(&m->children); i.more; hashmap_pop_next(&i)){
-        imaildir_free((imaildir_t*)i.data);
+    for(i = hashmap_pop_first(&m->children); i.current; hashmap_pop_next(&i)){
+        imaildir_t *m = CONTAINER_OF(i.current, imaildir_t, h);
+        imaildir_free(m);
     }
     hashmap_free(&m->children);
     // free all the messages
-    for(i = hashmap_pop_first(&m->msgs); i.more; hashmap_pop_next(&i)){
+    for(i = hashmap_pop_first(&m->msgs); i.current; hashmap_pop_next(&i)){
         // TODO: what does this look like?
         // imsg_close((imsg_t*)i.data);
     }

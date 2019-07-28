@@ -15,8 +15,9 @@
 typedef struct {
     unsigned int n;
     dstr_t d;
-    hash_elem_t helem;
+    hash_elem_t he;
 } hashable_t;
+DEF_CONTAINER_OF(hashable_t, he, hash_elem_t);
 
 static derr_t test_hashmap(void){
     derr_t e = E_OK;
@@ -30,7 +31,6 @@ static derr_t test_hashmap(void){
     for(unsigned int i = 0; i < num_elems; i++){
         elems[i].n = i;
         elems[i].d = (dstr_t){0};
-        elems[i].helem.data = &elems[i];
     }
     // now go through and set all of the dstr-type keys
     for(size_t i = UINT_ELEMS; i < num_elems; i++){
@@ -43,35 +43,37 @@ static derr_t test_hashmap(void){
 
     // insert everything
     for(unsigned int i = 0; i < UINT_ELEMS; i++){
-        PROP_GO(&e, hashmap_putu(&h, i, &elems[i].helem), fail_h);
+        hash_elem_t *old = hashmap_setu(&h, i, &elems[i].he);
+        if(old) ORIG_GO(&e, E_VALUE, "insert was unique!", fail_h);
     }
     for(size_t i = UINT_ELEMS; i < num_elems; i++){
         char cmaj = (char)('a' + (i%(26*26) - i%26)/26);
         char cmin = (char)('a' + (i%26));
         PROP_GO(&e, FMT(&elems[i].d, "%x%x", FC(cmaj), FC(cmin)), fail_h);
-        PROP_GO(&e, hashmap_puts(&h, &elems[i].d, &elems[i].helem), fail_h);
+        hash_elem_t *old = hashmap_sets(&h, &elems[i].d, &elems[i].he);
+        if(old) ORIG_GO(&e, E_VALUE, "insert was unique!", fail_h);
     }
 
     // dereference everything
     for(unsigned int i = 0; i < UINT_ELEMS; i++){
-        void *val;
-        PROP_GO(&e, hashmap_getu(&h, i, &val, NULL), fail_h);
+        hash_elem_t *out = hashmap_getu(&h, i);
+        if(!out) ORIG_GO(&e, E_VALUE, "missing value!", fail_h);
         // make sure we got the right value
-        hashable_t *out = val;
-        if(out->n != i) ORIG_GO(&e, E_VALUE, "dereferenced wrong value", fail_h);
+        hashable_t *val = CONTAINER_OF(out, hashable_t, he);
+        if(val->n != i) ORIG_GO(&e, E_VALUE, "dereferenced wrong value", fail_h);
     }
     for(size_t i = UINT_ELEMS; i < num_elems; i++){
-        void *val;
-        PROP_GO(&e, hashmap_gets(&h, &elems[i].d, &val, NULL), fail_h);
+        hash_elem_t *out = hashmap_gets(&h, &elems[i].d);
+        if(!out) ORIG_GO(&e, E_VALUE, "missing value!", fail_h);
         // make sure we got the right value
-        hashable_t *out = val;
-        if(out->n != i) ORIG_GO(&e, E_VALUE, "dereferenced wrong value", fail_h);
+        hashable_t *val = CONTAINER_OF(out, hashable_t, he);
+        if(val->n != i) ORIG_GO(&e, E_VALUE, "dereferenced wrong value", fail_h);
     }
 
     // iterate through everything
     hashmap_iter_t i;
     size_t count = 0;
-    for(i = hashmap_first(&h); i.more; hashmap_next(&i)){
+    for(i = hashmap_first(&h); i.current; hashmap_next(&i)){
         if(++count > num_elems)
             ORIG_GO(&e, E_VALUE, "iterated too many elements", fail_h);
     }
@@ -80,7 +82,7 @@ static derr_t test_hashmap(void){
 
     // again, but popping
     count = 0;
-    for(i = hashmap_pop_first(&h); i.more; hashmap_pop_next(&i)){
+    for(i = hashmap_pop_first(&h); i.current; hashmap_pop_next(&i)){
         if(++count > num_elems)
             ORIG_GO(&e, E_VALUE, "iterated too many elements", fail_h);
     }
@@ -104,7 +106,7 @@ static derr_t test_empty_iter(void){
     derr_t e = E_OK;
     hashmap_t h;
     PROP(&e, hashmap_init(&h) );
-    for(hashmap_iter_t i = hashmap_first(&h); i.more; hashmap_next(&i)){
+    for(hashmap_iter_t i = hashmap_first(&h); i.current; hashmap_next(&i)){
         ORIG_GO(&e, E_VALUE, "iterated too many elements", fail_h);
     }
 fail_h:

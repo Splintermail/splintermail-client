@@ -237,7 +237,7 @@ static void check_rehash(hashmap_t *h){
 
 // returns the hash value
 static unsigned int hashmap_elem_init(hash_elem_t *elem, const dstr_t *skey,
-                                      unsigned int ukey, bool key_is_str){
+        unsigned int ukey, bool key_is_str){
     elem->key_is_str = key_is_str;
     elem->next = NULL;
     if(key_is_str){
@@ -259,57 +259,29 @@ static bool hash_elem_match(hash_elem_t *a, hash_elem_t *b){
     return !b->key_is_str && (a->key.uint == b->key.uint);
 }
 
-static derr_t hashmap_put(hashmap_t *h, const dstr_t *skey, unsigned int ukey,
-                          bool key_is_str, hash_elem_t *elem){
+// This will raise E_PARAM if and only if (**old == NULL && key is a duplicate)
+static derr_t hashmap_set(hashmap_t *h, const dstr_t *skey,
+        unsigned int ukey, bool key_is_str, hash_elem_t *elem,
+        hash_elem_t **old){
     derr_t e = E_OK;
-    hashmap_elem_init(elem, skey, ukey, key_is_str);
-    // get bucket index
-    size_t idx = elem->hash & h->mask;
-    // get end of bucket, checking for identical key as we go
-    hash_elem_t **eptr;
-    for(eptr = &h->buckets[idx]; *eptr != NULL; eptr = &(*eptr)->next){
-        if(hash_elem_match(elem, *eptr)){
-            ORIG(&e, E_PARAM, "key already in hashmap");
-        }
-    }
-    // set the eptr to this element
-    *eptr = elem;
-    h->num_elems++;
-    check_rehash(h);
-    return e;
-}
-
-// putters, raise error if key already in hashmap
-derr_t hashmap_puts(hashmap_t *h, const dstr_t *key, hash_elem_t *elem){
-    derr_t e = E_OK;
-    PROP(&e, hashmap_put(h, key, 0, true, elem) );
-    return e;
-}
-
-derr_t hashmap_putu(hashmap_t *h, unsigned int key, hash_elem_t *elem){
-    derr_t e = E_OK;
-    PROP(&e, hashmap_put(h, NULL, key, false, elem) );
-    return e;
-}
-
-static void hashmap_set(hashmap_t *h, const dstr_t *skey, unsigned int ukey,
-                        bool key_is_str, hash_elem_t *elem,
-                        void **old, bool *found){
     hashmap_elem_init(elem, skey, ukey, key_is_str);
     // get bucket index
     size_t idx = elem->hash & h->mask;
     // get end of bucket, checking for identical key as we go
     hash_elem_t **eptr;
     if(old) *old = NULL;
-    if(found) *found = false;
     bool replaced = false;
     // check if we need to replace an element with this value
     for(eptr = &h->buckets[idx]; *eptr != NULL; eptr = &(*eptr)->next){
         if(hash_elem_match(elem, *eptr)){
-            if(old) *old = (*eptr)->data;
-            if(found) *found = true;
+            if(old == NULL){
+                ORIG(&e, E_PARAM, "refusing to insert duplicate value");
+            }
             replaced = true;
+            *old = *eptr;
             *eptr = elem;
+            elem->next = (*old)->next;
+            (*old)->next = NULL;
             break;
         }
     }
@@ -319,21 +291,35 @@ static void hashmap_set(hashmap_t *h, const dstr_t *skey, unsigned int ukey,
         h->num_elems++;
     }
     check_rehash(h);
+
+    return e;
 }
 
-void hashmap_sets(hashmap_t *h, const dstr_t *key, hash_elem_t *elem,
-                    void **old, bool *found){
-    hashmap_set(h, key, 0, true, elem, old, found);
+hash_elem_t *hashmap_sets(hashmap_t *h, const dstr_t *key, hash_elem_t *elem){
+    hash_elem_t *old;
+    DROP_CMD( hashmap_set(h, key, 0, true, elem, &old) );
+    return old;
 }
 
-void hashmap_setu(hashmap_t *h, unsigned int key, hash_elem_t *elem,
-                    void **old, bool *found){
-    hashmap_set(h, NULL, key, false, elem, old, found);
+hash_elem_t *hashmap_setu(hashmap_t *h, unsigned int key, hash_elem_t *elem){
+    hash_elem_t *old;
+    DROP_CMD( hashmap_set(h, NULL, key, false, elem, &old) );
+    return old;
 }
 
-static derr_t hashmap_get(hashmap_t *h, const dstr_t *skey, unsigned int ukey,
-                          bool key_is_str, void **data, bool *found){
+derr_t hashmap_sets_unique(hashmap_t *h, const dstr_t *key, hash_elem_t *elem){
     derr_t e = E_OK;
+    PROP(&e, hashmap_set(h, key, 0, true, elem, NULL) );
+    return e;
+}
+derr_t hashmap_setu_unique(hashmap_t *h, unsigned int key, hash_elem_t *elem){
+    derr_t e = E_OK;
+    DROP_CMD( hashmap_set(h, NULL, key, false, elem, NULL) );
+    return e;
+}
+
+static hash_elem_t *hashmap_get(hashmap_t *h, const dstr_t *skey,
+        unsigned int ukey, bool key_is_str){
     // build dummy element
     hash_elem_t elem;
     hashmap_elem_init(&elem, skey, ukey, key_is_str);
@@ -344,75 +330,71 @@ static derr_t hashmap_get(hashmap_t *h, const dstr_t *skey, unsigned int ukey,
     for(eptr = &h->buckets[idx]; *eptr != NULL; eptr = &(*eptr)->next){
         if(hash_elem_match(&elem, *eptr)){
             // found match
-            if(found) *found = true;
-            if(data) *data = (*eptr)->data;
-            return e;
+            return *eptr;
         }
     }
     // no match found
-    if(data) *data = NULL;
-    if(found){
-        *found = false;
-    }else{
-        ORIG(&e, E_PARAM, "key not found in hashmap");
-    }
-    return e;
+    return NULL;
 }
 
-derr_t hashmap_gets(hashmap_t *h, const dstr_t *key, void **data, bool *found){
-    derr_t e = E_OK;
-    PROP(&e, hashmap_get(h, key, 0, true, data, found) );
-    return e;
+hash_elem_t *hashmap_gets(hashmap_t *h, const dstr_t *key){
+    return hashmap_get(h, key, 0, true);
 }
 
-derr_t hashmap_getu(hashmap_t *h, unsigned int key, void **data, bool *found){
-    derr_t e = E_OK;
-    PROP(&e, hashmap_get(h, NULL, key, false, data, found) );
-    return e;
+hash_elem_t *hashmap_getu(hashmap_t *h, unsigned int key){
+    return hashmap_get(h, NULL, key, false);
 }
 
-static void hashmap_del(hashmap_t *h, const dstr_t *skey, unsigned int ukey,
-                        bool key_is_str, void **old, bool *found){
+static hash_elem_t *hashmap_del(hashmap_t *h, const dstr_t *skey,
+        unsigned int ukey, bool key_is_str){
     // build dummy element
     hash_elem_t elem;
     hashmap_elem_init(&elem, skey, ukey, key_is_str);
     // get bucket index
     size_t idx = elem.hash & h->mask;
     // get end of bucket, checking for match
-    hash_elem_t *prev = NULL;
     hash_elem_t **eptr;
     for(eptr = &h->buckets[idx]; *eptr != NULL; eptr = &(*eptr)->next){
         if(hash_elem_match(&elem, *eptr)){
             // found match
-            if(found) *found = true;
-            if(old) *old = (*eptr)->data;
-            // correct prev's forward link
-            if(prev) prev->next = (*eptr)->next;
+            hash_elem_t *deleted = *eptr;
+            *eptr = deleted->next;
+            deleted->next = NULL;
             // decrement element count
             h->num_elems--;
-            return;
+            return deleted;
         }
-        prev = *eptr;
     }
-    if(found) *found = false;
-    if(old) *old = NULL;
+    return NULL;
 }
 
-void hashmap_dels(hashmap_t *h, const dstr_t *key, void **old, bool *found){
-    hashmap_del(h, key, 0, true, old, found);
+hash_elem_t *hashmap_dels(hashmap_t *h, const dstr_t *key){
+    return hashmap_del(h, key, 0, true);
 }
 
-void hashmap_delu(hashmap_t *h, unsigned int key, void **old, bool *found){
-    hashmap_del(h, NULL, key, false, old, found);
+hash_elem_t *hashmap_delu(hashmap_t *h, unsigned int key){
+    return hashmap_del(h, NULL, key, false);
 }
 
-static inline void locate_first_elem(hashmap_iter_t *i){
-    // get the first non-empty bucket
-    i->bucket_idx = 0;
+hashmap_iter_t hashmap_first(hashmap_t *h){
+    hashmap_iter_t i = {.hashmap = h};
+    i.current = i.hashmap->buckets[0];
+    if(i.current) return i;
+    hashmap_next(&i);
+    return i;
+}
+
+void hashmap_next(hashmap_iter_t *i){
+    // take the next element of the list
+    if(i->current != NULL){
+        i->current = i->current->next;
+        if(i->current != NULL) return;
+    }
+    // start into the next row
+    i->bucket_idx++;
+    // find a non-empty bucket
     for( ; i->bucket_idx < i->hashmap->num_buckets; i->bucket_idx++){
-        if(i->hashmap->buckets[i->bucket_idx]){
-            // track the forward pointer to element
-            i->prevs_next = &i->hashmap->buckets[i->bucket_idx];
+        if(i->hashmap->buckets[i->bucket_idx] != NULL){
             i->current = i->hashmap->buckets[i->bucket_idx];
             return;
         }
@@ -420,89 +402,26 @@ static inline void locate_first_elem(hashmap_iter_t *i){
     // found nothing
     i->current = NULL;
 }
-static inline void locate_next_elem(hashmap_iter_t *i){
-    if(!i->current) return;
-    // give the next item in this bucket's linked list, if any
-    if(i->current->next){
-        // track the forward pointer to element
-        i->prevs_next = &i->current->next;
-        i->current = i->current->next;
-        return;
-    }
-    // otherwise, find the next non-empty bucket
-    i->bucket_idx++;
-    for( ; i->bucket_idx < i->hashmap->num_buckets; i->bucket_idx++){
-        if(i->hashmap->buckets[i->bucket_idx]){
-            // track the forward pointer to element
-            i->prevs_next = &i->hashmap->buckets[i->bucket_idx];
-            i->current = i->hashmap->buckets[i->bucket_idx];
-            return;
-        }
-    }
-    // no more elements
-    i->current = NULL;
-}
-
-hashmap_iter_t hashmap_first(hashmap_t *h){
-    hashmap_iter_t i = {.hashmap = h};
-    locate_first_elem(&i);
-    if(i.current){
-        i.data = i.current->data;
-        i.more = true;
-    }else{
-        i.data = NULL;
-        i.more = false;
-    }
-    return i;
-}
-
-void hashmap_next(hashmap_iter_t *i){
-    locate_next_elem(i);
-    if(i->current){
-        i->data = i->current->data;
-        i->more = true;
-    }else{
-        i->data = NULL;
-        i->more = false;
-    }
-}
 
 hashmap_iter_t hashmap_pop_first(hashmap_t *h){
     hashmap_iter_t i = {.hashmap = h};
-    locate_first_elem(&i);
-    if(i.current){
-        i.data = i.current->data;
-        i.more = true;
-    }else{
-        // zero-element hashmap case
-        i.data = NULL;
-        i.more = false;
-        return i;
-    }
-    // fix forward reference
-    i.prevs_next = &i.current->next;
-    // decrement element counter
-    i.hashmap->num_elems--;
-    // prepare the next "next" call before giving the memory back
-    locate_next_elem(&i);
+    hashmap_pop_next(&i);
     return i;
 }
 
 void hashmap_pop_next(hashmap_iter_t *i){
-    // locate_next_elem() is already called from before
-    if(i->current){
-        i->data = i->current->data;
-        i->more = true;
-    }else{
-        i->data = NULL;
-        i->more = false;
-        // do nothing else
-        return;
+    for( ; i->bucket_idx < i->hashmap->num_buckets; i->bucket_idx++){
+        // check if the bucket is non-empty
+        if(i->hashmap->buckets[i->bucket_idx] != NULL) {
+            // remove the element from the bucket
+            i->current = i->hashmap->buckets[i->bucket_idx];
+            // point the bucket to the second element (if any)
+            i->hashmap->buckets[i->bucket_idx] = i->current->next;
+            // decrement element counter
+            i->hashmap->num_elems--;
+            return;
+        }
     }
-    // fix forward reference
-    *i->prevs_next = i->current->next;
-    // decrement element counter
-    i->hashmap->num_elems--;
-    // prepare the next "next" call before giving the memory back
-    locate_next_elem(i);
+    // found nothing
+    i->current = NULL;
 }
