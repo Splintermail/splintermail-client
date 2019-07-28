@@ -51,66 +51,31 @@
 static void place_node ( jsw_atree_t *tree, jsw_anode_t *node )
 {
   node->level = 1;
-  node->link[0] = node->link[1] = tree->nil;
+  node->link[0] = node->link[1] = &tree->nil;
   node->count = 1;
 }
 
-derr_t jsw_ainit ( jsw_atree_t *tree, cmp_f cmp, rel_f rel )
+void jsw_ainit ( jsw_atree_t *tree, cmp_f cmp, get_f get)
 {
-  derr_t e = E_OK;
   /* Initialize sentinel */
-  tree->nil = (jsw_anode_t *)malloc ( sizeof *tree->nil );
-  if ( tree->nil == NULL ) {
-    ORIG(&e, E_NOMEM, "unable to allocate sentinal node for andersson tree");
-  }
-
-  tree->nil->data = NULL; /* Simplifies some ops */
-  tree->nil->level = 0;
-  tree->nil->link[0] = tree->nil->link[1] = tree->nil;
-  tree->nil->count = 0;
+  tree->nil.level = 0;
+  tree->nil.link[0] = tree->nil.link[1] = &tree->nil;
+  tree->nil.count = 0;
 
   /* Initialize tree */
-  tree->root = tree->nil;
+  tree->root = &tree->nil;
   tree->cmp = cmp;
-  tree->rel = rel;
+  tree->get = get;
   tree->size = 0;
-
-  return e;
 }
 
-void jsw_adelete ( jsw_atree_t *tree )
-{
-  jsw_anode_t *it = tree->root;
-  jsw_anode_t *save;
-
-  /* Destruction by rotation */
-  while ( it != tree->nil ) {
-    if ( it->link[0] == tree->nil ) {
-      /* Remove node */
-      save = it->link[1];
-      tree->rel ( it->data );
-    }
-    else {
-      /* Rotate right */
-      save = it->link[0];
-      it->link[0] = save->link[1];
-      save->link[1] = it;
-    }
-
-    it = save;
-  }
-
-  /* Finalize destruction */
-  free ( tree->nil );
-}
-
-void *jsw_afind ( jsw_atree_t *tree, void *data, size_t *idx )
+jsw_anode_t *jsw_afind ( jsw_atree_t *tree, void *val, size_t *idx )
 {
   jsw_anode_t *it = tree->root;
   size_t left_count = 0;
 
-  while ( it != tree->nil ) {
-    int cmp = tree->cmp ( it->data, data );
+  while ( it != &tree->nil ) {
+    int cmp = tree->cmp ( tree->get(it), val );
 
     if ( cmp == 0 )
       break;
@@ -120,14 +85,14 @@ void *jsw_afind ( jsw_atree_t *tree, void *data, size_t *idx )
     it = it->link[dir];
   }
 
-  /* nil->data == NULL, nil->count = 0 */
+  /* nil.count = 0 */
   if ( idx ) *idx = left_count + it->link[0]->count;
-  return it->data;
+  return it == &tree->nil ? NULL : it;
 }
 
 void jsw_ainsert ( jsw_atree_t *tree, jsw_anode_t *node )
 {
-  if ( tree->root == tree->nil ) {
+  if ( tree->root == &tree->nil ) {
     /* Empty tree case */
     place_node ( tree, node );
     tree->root = node;
@@ -141,9 +106,9 @@ void jsw_ainsert ( jsw_atree_t *tree, jsw_anode_t *node )
     for ( ; ; ) {
       it->count++;
       path[top++] = it;
-      dir = tree->cmp ( it->data, node->data ) < 0;
+      dir = tree->cmp ( tree->get(it), tree->get(node) ) < 0;
 
-      if ( it->link[dir] == tree->nil )
+      if ( it->link[dir] == &tree->nil )
         break;
 
       it = it->link[dir];
@@ -173,10 +138,11 @@ void jsw_ainsert ( jsw_atree_t *tree, jsw_anode_t *node )
   ++tree->size;
 }
 
-int jsw_aerase ( jsw_atree_t *tree, void *data )
+jsw_anode_t *jsw_aerase ( jsw_atree_t *tree, void *val )
 {
-  if ( tree->root == tree->nil )
-    return 0;
+  jsw_anode_t *deleted;
+  if ( tree->root == &tree->nil )
+    return NULL;
   else {
     jsw_anode_t *it = tree->root;
     jsw_anode_t *path[JSW_AHEIGHT_LIMIT];
@@ -186,10 +152,10 @@ int jsw_aerase ( jsw_atree_t *tree, void *data )
     for ( ; ; ) {
       path[top++] = it;
 
-      if ( it == tree->nil )
-        return 0;
+      if ( it == &tree->nil )
+        return NULL;
 
-      cmp = tree->cmp ( it->data, data );
+      cmp = tree->cmp ( tree->get(it), val );
       if ( cmp == 0 )
         break;
 
@@ -198,11 +164,11 @@ int jsw_aerase ( jsw_atree_t *tree, void *data )
     }
 
     /* Remove the found node */
-    if ( it->link[0] == tree->nil
-      || it->link[1] == tree->nil )
+    if ( it->link[0] == &tree->nil
+      || it->link[1] == &tree->nil )
     {
       /* Single child case */
-      int dir2 = it->link[0] == tree->nil;
+      int dir2 = it->link[0] == &tree->nil;
 
       /* Unlink the item */
       if ( --top != 0 )
@@ -210,7 +176,7 @@ int jsw_aerase ( jsw_atree_t *tree, void *data )
       else
         tree->root = it->link[1];
 
-      tree->rel ( it->data );
+      deleted = it;
     }
     else {
       /* Two child case */
@@ -220,7 +186,7 @@ int jsw_aerase ( jsw_atree_t *tree, void *data )
       // prev is the parent of the heir
       jsw_anode_t *prev = it;
 
-      while ( heir->link[0] != tree->nil ) {
+      while ( heir->link[0] != &tree->nil ) {
         path[top++] = prev = heir;
         heir = heir->link[0];
       }
@@ -243,7 +209,7 @@ int jsw_aerase ( jsw_atree_t *tree, void *data )
         tree->root = heir;
       }
       // done with deleted node
-      tree->rel(it->data);
+      deleted = it;
     }
 
     /* Walk back up and rebalance */
@@ -279,7 +245,7 @@ int jsw_aerase ( jsw_atree_t *tree, void *data )
 
   --tree->size;
 
-  return 1;
+  return deleted;
 }
 
 size_t jsw_asize ( jsw_atree_t *tree )
@@ -291,7 +257,7 @@ size_t jsw_asize ( jsw_atree_t *tree )
   First step in traversal,
   handles min and max
 */
-static void *start ( jsw_atrav_t *trav,
+static jsw_anode_t *start ( jsw_atrav_t *trav,
   jsw_atree_t *tree, int dir )
 {
   trav->tree = tree;
@@ -299,24 +265,23 @@ static void *start ( jsw_atrav_t *trav,
   trav->top = 0;
 
   /* Build a path to work with */
-  if ( trav->it != tree->nil ) {
-    while ( trav->it->link[dir] != tree->nil ) {
+  if ( trav->it != &tree->nil ) {
+    while ( trav->it->link[dir] != &tree->nil ) {
       trav->path[trav->top++] = trav->it;
       trav->it = trav->it->link[dir];
     }
   }
 
-  /* Could be nil, but nil->data == NULL */
-  return trav->it->data;
+  return trav->it == &tree->nil ? NULL : trav->it;
 }
 
 /*
   Subsequent traversal steps,
   handles ascending and descending
 */
-static void *move ( jsw_atrav_t *trav, int dir )
+static jsw_anode_t *move ( jsw_atrav_t *trav, int dir )
 {
-  jsw_anode_t *nil = trav->tree->nil;
+  jsw_anode_t *nil = &trav->tree->nil;
 
   if ( trav->it->link[dir] != nil ) {
     /* Continue down this branch */
@@ -343,31 +308,30 @@ static void *move ( jsw_atrav_t *trav, int dir )
     } while ( last == trav->it->link[dir] );
   }
 
-  /* Could be nil, but nil->data == NULL */
-  return trav->it->data;
+  return trav->it == nil ? NULL : trav->it;
 }
 
-void *jsw_atfirst ( jsw_atrav_t *trav, jsw_atree_t *tree )
+jsw_anode_t *jsw_atfirst ( jsw_atrav_t *trav, jsw_atree_t *tree )
 {
   return start ( trav, tree, 0 ); /* Min value */
 }
 
-void *jsw_atlast ( jsw_atrav_t *trav, jsw_atree_t *tree )
+jsw_anode_t *jsw_atlast ( jsw_atrav_t *trav, jsw_atree_t *tree )
 {
   return start ( trav, tree, 1 ); /* Max value */
 }
 
-void *jsw_atnext ( jsw_atrav_t *trav )
+jsw_anode_t *jsw_atnext ( jsw_atrav_t *trav )
 {
   return move ( trav, 1 ); /* Toward larger items */
 }
 
-void *jsw_atprev ( jsw_atrav_t *trav )
+jsw_anode_t *jsw_atprev ( jsw_atrav_t *trav )
 {
   return move ( trav, 0 ); /* Toward smaller items */
 }
 
-void *jsw_aindex ( jsw_atree_t *tree, size_t idx )
+jsw_anode_t *jsw_aindex ( jsw_atree_t *tree, size_t idx )
 {
     /* if count idx is too high, return NULL */
     if(idx >= tree->size)
@@ -380,7 +344,7 @@ void *jsw_aindex ( jsw_atree_t *tree, size_t idx )
         /* index of the current node */
         size_t cur = left_count + it->link[0]->count;
         if ( cur == idx )
-            return it->data;
+            return it;
 
         int dir = ( cur < idx );
         /* add to left_count only if we move right */

@@ -28,7 +28,7 @@ typedef _Bool bool;
    linux kernel version, multi-token types ("struct xyz") are not supported. */
 #define DEF_CONTAINER_OF(structure, member, member_type) \
     static inline structure *structure ## _ ## member ## _container_of( \
-            member_type *ptr){ \
+            const member_type *ptr){ \
         if(ptr == NULL) return NULL; \
         uintptr_t offset = offsetof(structure, member); \
         return (structure*)((uintptr_t)ptr - offset); \
