@@ -6,7 +6,6 @@
 #include "common.h"
 #include "engine.h"
 #include "queue.h"
-#include "networking.h"
 
 struct loop_t;
 typedef struct loop_t loop_t;
@@ -54,6 +53,7 @@ typedef struct {
     char buffer[4096];
     event_t event;
 } read_wrapper_t;
+DEF_CONTAINER_OF(read_wrapper_t, event, event_t);
 
 // the socket_engine and event loop, one per pipeline
 struct loop_t {

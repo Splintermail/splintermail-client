@@ -77,8 +77,6 @@ typedef struct {
     bool initialized;
     // generic engine stuff
     uv_work_t work_req;
-    ssl_context_t *(*session_get_ssl_ctx)(void*);
-    bool (*session_get_upwards)(void*);
     queue_t event_q;
     queue_t read_events;
     queue_t write_events;

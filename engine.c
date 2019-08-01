@@ -2,9 +2,7 @@
 #include "logger.h"
 
 // Does not init the dstr or set callbacks.
-void event_prep(event_t *ev, void *parent_struct){
-    ev->error = E_OK;
-    ev->data = parent_struct;
+void event_prep(event_t *ev){
     ev->session = NULL;
     queue_elem_prep(&ev->qe, ev);
     queue_cb_prep(&ev->qcb, ev);
@@ -30,7 +28,7 @@ derr_t event_pool_init(queue_t *pool, size_t nevents){
         if(ev == NULL){
             ORIG_GO(&e, E_NOMEM, "unable to alloc event", fail);
         }
-        event_prep(ev, NULL);
+        event_prep(ev);
         // allocate dstr_t
         PROP_GO(&e, dstr_new(&ev->buffer, 4096), fail_ev);
         // append to list

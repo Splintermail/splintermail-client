@@ -134,7 +134,7 @@ static event_t *cb_reader_writer_send(cb_reader_writer_t *cbrw){
     event_t *ev = malloc(sizeof(*ev));
     if(!ev) ORIG_GO(&e, E_NOMEM, "no memory", fail);
 
-    event_prep(ev, NULL);
+    event_prep(ev);
     PROP_GO(&e, dstr_new(&ev->buffer, cbrw->out.len), fail_ev);
 
     dstr_copy(&cbrw->out, &ev->buffer);

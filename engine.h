@@ -125,17 +125,14 @@ typedef void (*ref_fn_t)(session_t*, int reason);
 
 typedef struct {
     dstr_t buffer; // for passing buffers.  Comes first to accomadate libuv.
-    derr_t error; // only for passing errors (TODO: delete this)
     event_type_t ev_type;
-    void *data; /* points to parent struct, if any.  Does not change.
-                   TODO: delete this in favor of CONTAINER_OF() */
     session_t *session; // points to the session_interface.  Changes each time.
     queue_elem_t qe; // for holding in queues
     queue_cb_t qcb; // for waiting on another buffer
 } event_t;
 
 // Does not set session, init the dstr, or set callbacks.
-void event_prep(event_t *ev, void *parent_struct);
+void event_prep(event_t *ev);
 
 // pass an event to an engine
 typedef void (*event_passer_t)(void*, event_t*);

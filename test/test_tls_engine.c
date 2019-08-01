@@ -244,7 +244,7 @@ static void handle_read(void *data, event_t *ev){
             MERGE_VAR(&cb_data->error, &e, "malloc");
             return;
         }
-        event_prep(ev_new, NULL);
+        event_prep(ev_new);
         if(dstr_new_quiet(&ev_new->buffer, ev->buffer.len)){
             derr_t e = E_OK;
             TRACE_ORIG(&e, E_NOMEM, "no memory!");

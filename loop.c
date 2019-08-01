@@ -135,7 +135,6 @@ static void allocator(uv_handle_t *handle, size_t suggest, uv_buf_t *buf){
     buf->len = ev->buffer.size;
 
     // store the session pointer and upref
-    ev->error = E_OK;
     ev->session = ld->session;
     ld->ref_up(ev->session, LOOP_REF_READ);
 
@@ -218,14 +217,12 @@ static void read_cb(uv_stream_t *stream, ssize_t ssize_read,
     }
 
     // pass the buffer down the pipeline
-    ev->error = E_OK;
     ev->ev_type = EV_READ;
     // ev->session already set and upref'd in allocator
     loop->pass_down(loop->downstream, ev);
     return;
 
 return_buffer:
-    ev->error = E_OK;
     ev->session = NULL;
     queue_append(&loop->read_events, &ev->qe);
     ld->ref_down(ld->session, LOOP_REF_READ);
@@ -262,7 +259,6 @@ static void write_cb(uv_write_t *uv_write, int status){
 
 return_buf:
     // return event
-    ev->error = E_OK;
     ev->ev_type = EV_WRITE_DONE;
     loop->pass_down(loop->downstream, ev);
     // if there was an error, close the session
@@ -323,14 +319,12 @@ static void loop_data_connect_finish(loop_data_t *ld){
     while((ev = queue_pop_first(&ld->preconnected_writes, false))){
         // should we skip this?
         if(ld->state == DATA_STATE_CLOSED){
-            ev->error = E_OK;
             ev->ev_type = EV_WRITE_DONE;
             loop->pass_down(loop->downstream, ev);
         // or can we write it to the socket?
         }else{
             IF_PROP(&e, handle_write(loop, ld, ev)){
                 // just hand it back to the downstream
-                ev->error = E_OK;
                 ev->ev_type = EV_WRITE_DONE;
                 loop->pass_down(loop->downstream, ev);
                 // close the session
@@ -538,9 +532,8 @@ void loop_data_prestart(loop_data_t *ld, loop_t *loop, session_t *session,
 
 void loop_data_start(loop_data_t *ld){
     // pass the starting event
-    event_prep(&ld->start_ev, ld);
+    event_prep(&ld->start_ev);
     ld->start_ev.session = ld->session;
-    ld->start_ev.error = E_OK;
     ld->start_ev.ev_type = EV_SESSION_START;
     ld->start_ev.buffer = (dstr_t){0};
     // ref up the starting event
@@ -709,8 +702,6 @@ fail_listen:
 }
 
 
-// derr_t loop_add_listener(loop_t *loop, const char *addr, const char *svc,
-//                          uv_ptr_t *uvp){
 derr_t loop_add_listener(loop_t *loop, listener_spec_t *lspec){
     derr_t e = E_OK;
     // allocate uv_tcp_t struct
@@ -861,7 +852,6 @@ static void loop_data_onthread_close(loop_data_t *ld){
         event_t *ev;
         while((ev = queue_pop_first(&ld->preconnected_writes, false))){
             // just hand it back to the downstream
-            ev->error = E_OK;
             ev->ev_type = EV_WRITE_DONE;
             loop->pass_down(loop->downstream, ev);
         }
@@ -876,9 +866,8 @@ static void loop_data_onthread_close(loop_data_t *ld){
 // Must not be called more than once, which must be enforced by the session
 void loop_data_close(loop_data_t *ld){
     // pass the closing event
-    event_prep(&ld->close_ev, ld);
+    event_prep(&ld->close_ev);
     ld->close_ev.session = ld->session;
-    ld->close_ev.error = E_OK;
     ld->close_ev.ev_type = EV_SESSION_CLOSE;
     ld->close_ev.buffer = (dstr_t){0};
     // ref up for the close event
@@ -918,7 +907,6 @@ static void event_cb(uv_async_t *handle){
                 break;
             case EV_WRITE:
                 if(loop->quitting || ld->state == DATA_STATE_CLOSED){
-                    ev->error = E_OK;
                     ev->ev_type = EV_WRITE_DONE;
                     loop->pass_down(loop->downstream, ev);
                 }else if(ld->connected == false){
@@ -926,7 +914,6 @@ static void event_cb(uv_async_t *handle){
                 }else{
                     IF_PROP(&e, handle_write(loop, ld, ev) ){
                         // return write buffer
-                        ev->error = E_OK;
                         ev->ev_type = EV_WRITE_DONE;
                         loop->pass_down(loop->downstream, ev);
                         // close session
@@ -953,6 +940,9 @@ static void event_cb(uv_async_t *handle){
                 loop_data_onthread_close(ld);
                 ld->ref_down(ev->session, LOOP_REF_CLOSE_EVENT);
                 break;
+            default:
+                LOG_ERROR("unexpected event type in loop engine, ev = %x\n",
+                        FP(ev));
         }
     }
 }
@@ -1009,7 +999,7 @@ derr_t loop_init(loop_t *loop, size_t num_read_events,
         if(rd_wrap == NULL){
             ORIG_GO(&e, E_NOMEM, "unable to alloc read wrapper", fail_rd_wraps);
         }
-        event_prep(&rd_wrap->event, rd_wrap);
+        event_prep(&rd_wrap->event);
         // set the event's dstr_t to be the buffer in the read_wrapper
         DSTR_WRAP_ARRAY(rd_wrap->event.buffer, rd_wrap->buffer);
         // append to list (qcb callbacks are not set here)
@@ -1043,7 +1033,7 @@ derr_t loop_init(loop_t *loop, size_t num_read_events,
     loop->remote_service = remote_service;
 
     // prep the quit message
-    event_prep(&loop->quitmsg, NULL);
+    event_prep(&loop->quitmsg);
     loop->quitmsg.buffer = (dstr_t){0};
 
     // some initial values
@@ -1063,7 +1053,7 @@ fail_rd_wraps:
     // free all of the buffers
     while((ev = queue_pop_first(&loop->read_events, false))){
         // event is wrapped
-        read_wrapper_t *rd_wrap = ev->data;
+        read_wrapper_t *rd_wrap = CONTAINER_OF(ev, read_wrapper_t, event);
         // the dstr of the read_wrapper_t needs no freeing
         free(rd_wrap);
     }
@@ -1088,7 +1078,7 @@ void loop_free(loop_t *loop){
     event_t *ev;
     while((ev = queue_pop_first(&loop->read_events, false))){
         // event is wrapped
-        read_wrapper_t *rd_wrap = ev->data;
+        read_wrapper_t *rd_wrap = CONTAINER_OF(ev, read_wrapper_t, event);
         // the dstr of the read_wrapper_t needs no freeing
         free(rd_wrap);
     }
