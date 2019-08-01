@@ -30,7 +30,7 @@ static event_t *unwrap_write(write_wrapper_t *wr_wrap){
 
 
 void write_wrapper_prep(write_wrapper_t *wr_wrap, loop_t *loop){
-    queue_elem_prep(&wr_wrap->qe, wr_wrap);
+    queue_elem_prep(&wr_wrap->qe);
 
     // the uv_req_t.data is a self-pointer
     wr_wrap->uv_write.data = wr_wrap;
@@ -120,13 +120,14 @@ static void allocator(uv_handle_t *handle, size_t suggest, uv_buf_t *buf){
     }else{
         // otherwise try and pop
         queue_cb_t *pause_qcb = &ld->read_pause_qcb;
-        ev = queue_pop_first_cb(&loop->read_events, pause_qcb);
+        queue_elem_t *qe = queue_pop_first_cb(&loop->read_events, pause_qcb);
         // if nothing is available, pass NULL to libuv.
-        if(ev == NULL){
+        if(qe == NULL){
             buf->base = NULL;
             buf->len = 0;
             return;
         }
+        ev = CONTAINER_OF(qe, event_t, qe);
     }
 
     // otherwise, return the buffer we just got
@@ -275,14 +276,15 @@ return_buf:
 static derr_t handle_write(loop_t *loop, loop_data_t *ld, event_t *ev){
     derr_t e = E_OK;
     // wrap event_t in a write_wrapper_t
-    write_wrapper_t *wr_wrap = queue_pop_first(&loop->write_wrappers, false);
+    queue_elem_t *qe = queue_pop_first(&loop->write_wrappers, false);
     // make sure there was an open write_wrapper_t
-    if(wr_wrap == NULL){
+    if(qe == NULL){
         TRACE(&e, "not enough write_wrappers!\n");
         TRACE_ORIG(&e, E_INTERNAL, "not enough write_wrappers!");
         loop_close(loop, SPLIT(e));
         return e;
     }
+    write_wrapper_t *wr_wrap = CONTAINER_OF(qe, write_wrapper_t, qe);
 
     // wrap the event
     wrap_write(wr_wrap, ev);
@@ -315,8 +317,9 @@ static void loop_data_connect_finish(loop_data_t *ld){
     ld->ref_up(ld->session, LOOP_REF_CONNECT_PROTECT);
 
     // empty the preconnected_writes
-    event_t *ev;
-    while((ev = queue_pop_first(&ld->preconnected_writes, false))){
+    queue_elem_t *qe;
+    while((qe = queue_pop_first(&ld->preconnected_writes, false))){
+        event_t *ev = CONTAINER_OF(qe, event_t, qe);
         // should we skip this?
         if(ld->state == DATA_STATE_CLOSED){
             ev->ev_type = EV_WRITE_DONE;
@@ -496,11 +499,11 @@ fail:
 
 
 // called when the downstream engine passes back an event_t as a READ_DONE
-static void new_buf__resume_reading(void *cb_data, void *new_buf){
+static void new_buf__resume_reading(queue_cb_t *qcb, queue_elem_t *new_buf){
     derr_t e = E_OK;
     // dereference the loop_data_t
-    loop_data_t *ld = cb_data;
-    event_t *ev = new_buf;
+    loop_data_t *ld = CONTAINER_OF(qcb, loop_data_t, read_pause_qcb);
+    event_t *ev = CONTAINER_OF(new_buf, event_t, qe);
     // resume reading
     int ret = uv_read_start((uv_stream_t*)(ld->sock), allocator, read_cb);
     if(ret < 0){
@@ -548,7 +551,7 @@ static void loop_data_onthread_start(loop_data_t *ld, uv_tcp_t *sock){
     ld->uvp.type = LP_TYPE_LOOP_DATA;
     ld->uvp.data.loop_data = ld;
     // prepare for resuming reads when buffers return
-    queue_cb_prep(&ld->read_pause_qcb, ld);
+    queue_cb_prep(&ld->read_pause_qcb);
     queue_cb_set(&ld->read_pause_qcb, NULL, new_buf__resume_reading);
 
     // ref up for the lifetime of the loop_data
@@ -849,8 +852,9 @@ static void loop_data_onthread_close(loop_data_t *ld){
 
     // if the socket is not yet connected, empty the preconnected_writes
     if(!ld->connected){
-        event_t *ev;
-        while((ev = queue_pop_first(&ld->preconnected_writes, false))){
+        queue_elem_t *qe;
+        while((qe = queue_pop_first(&ld->preconnected_writes, false))){
+            event_t *ev = CONTAINER_OF(qe, event_t, qe);
             // just hand it back to the downstream
             ev->ev_type = EV_WRITE_DONE;
             loop->pass_down(loop->downstream, ev);
@@ -883,8 +887,9 @@ static void event_cb(uv_async_t *handle){
     loop_t *loop = handle->loop->data;
 
     // handle all the events in the queue
-    event_t *ev;
-    while((ev = queue_pop_first(&loop->event_q, false))){
+    queue_elem_t *qe;
+    while((qe = queue_pop_first(&loop->event_q, false))){
+        event_t *ev = CONTAINER_OF(qe, event_t, qe);
         loop_data_t *ld;
         ld = ev->session ? ev->session->ld : NULL;
         // first packet for this loop_data?
@@ -1041,17 +1046,18 @@ derr_t loop_init(loop_t *loop, size_t num_read_events,
 
     return e;
 
-    write_wrapper_t *wr_wrap;
+    queue_elem_t *qe;
 fail_wr_wraps:
     // free all of the buffers
-    while((wr_wrap = queue_pop_first(&loop->write_wrappers, false))){
+    while((qe = queue_pop_first(&loop->write_wrappers, false))){
+        write_wrapper_t *wr_wrap = CONTAINER_OF(qe, write_wrapper_t, qe);
         free(wr_wrap);
     }
     queue_free(&loop->write_wrappers);
-    event_t *ev;
 fail_rd_wraps:
     // free all of the buffers
-    while((ev = queue_pop_first(&loop->read_events, false))){
+    while((qe = queue_pop_first(&loop->read_events, false))){
+        event_t *ev = CONTAINER_OF(qe, event_t, qe);
         // event is wrapped
         read_wrapper_t *rd_wrap = CONTAINER_OF(ev, read_wrapper_t, event);
         // the dstr of the read_wrapper_t needs no freeing
@@ -1068,15 +1074,16 @@ fail_loop:
 
 void loop_free(loop_t *loop){
     queue_free(&loop->event_q);
+    queue_elem_t *qe;
     // free all of the buffers
-    write_wrapper_t *wr_wrap;
-    while((wr_wrap = queue_pop_first(&loop->write_wrappers, false))){
+    while((qe = queue_pop_first(&loop->write_wrappers, false))){
+        write_wrapper_t *wr_wrap = CONTAINER_OF(qe, write_wrapper_t, qe);
         free(wr_wrap);
     }
     queue_free(&loop->write_wrappers);
     // free all of the buffers
-    event_t *ev;
-    while((ev = queue_pop_first(&loop->read_events, false))){
+    while((qe = queue_pop_first(&loop->read_events, false))){
+        event_t *ev = CONTAINER_OF(qe, event_t, qe);
         // event is wrapped
         read_wrapper_t *rd_wrap = CONTAINER_OF(ev, read_wrapper_t, event);
         // the dstr of the read_wrapper_t needs no freeing

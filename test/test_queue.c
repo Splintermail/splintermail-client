@@ -13,6 +13,7 @@ typedef struct {
     queue_elem_t qe;
     queue_cb_t qcb;
 } qtest_t;
+DEF_CONTAINER_OF(qtest_t, qe, queue_elem_t);
 
 static derr_t test_queue_simple(void){
     derr_t e = E_OK;
@@ -20,13 +21,13 @@ static derr_t test_queue_simple(void){
     qtest_t qlist[NELEMS];
     for(size_t i = 0; i < NELEMS; i++){
         qlist[i].id = i;
-        queue_elem_prep(&qlist[i].qe, &qlist[i]);
-        queue_cb_prep(&qlist[i].qcb, &qlist[i]);
+        queue_elem_prep(&qlist[i].qe);
+        queue_cb_prep(&qlist[i].qcb);
     }
 
     queue_t q;
     PROP(&e, queue_init(&q) );
-    void *resp;
+    queue_elem_t *resp;
 
     // check append/pop_first
     for(size_t i = 0; i < NELEMS; i++)
@@ -36,7 +37,7 @@ static derr_t test_queue_simple(void){
         resp = queue_pop_first(&q, false);
         if(resp == NULL)
             ORIG_GO(&e, E_VALUE, "unexpected null\n", cu_q);
-        if(resp != &qlist[i])
+        if(resp != &qlist[i].qe)
             ORIG_GO(&e, E_VALUE, "mismatched value\n", cu_q);
     }
     if(q.len != 0) ORIG_GO(&e, E_VALUE, "wrong len of queue", cu_q);
@@ -53,7 +54,7 @@ static derr_t test_queue_simple(void){
         resp = queue_pop_first(&q, false);
         if(resp == NULL)
             ORIG_GO(&e, E_VALUE, "unexpected null\n", cu_q);
-        if(resp != &qlist[i])
+        if(resp != &qlist[i].qe)
             ORIG_GO(&e, E_VALUE, "mismatched value\n", cu_q);
     }
     if(q.len != 0) ORIG_GO(&e, E_VALUE, "wrong len of queue", cu_q);
@@ -70,7 +71,7 @@ static derr_t test_queue_simple(void){
         resp = queue_pop_last(&q, false);
         if(resp == NULL)
             ORIG_GO(&e, E_VALUE, "unexpected null\n", cu_q);
-        if(resp != &qlist[i])
+        if(resp != &qlist[i].qe)
             ORIG_GO(&e, E_VALUE, "mismatched value\n", cu_q);
     }
     if(q.len != 0) ORIG_GO(&e, E_VALUE, "wrong len of queue", cu_q);
@@ -87,7 +88,7 @@ static derr_t test_queue_simple(void){
         resp = queue_pop_last(&q, false);
         if(resp == NULL)
             ORIG_GO(&e, E_VALUE, "unexpected null\n", cu_q);
-        if(resp != &qlist[i])
+        if(resp != &qlist[i].qe)
             ORIG_GO(&e, E_VALUE, "mismatched value\n", cu_q);
     }
     if(q.len != 0) ORIG_GO(&e, E_VALUE, "wrong len of queue", cu_q);
@@ -102,13 +103,13 @@ cu_q:
 }
 
 size_t pre_wait_calls = 0;
-static void pre_wait_cb(void *qcb_data){
+static void pre_wait_cb(queue_cb_t *qcb_data){
     (void)qcb_data;
     pre_wait_calls++;
 }
 
 size_t new_data_calls = 0;
-static void new_data_cb(void* qcb_data, void *new_data){
+static void new_data_cb(queue_cb_t* qcb_data, queue_elem_t *new_data){
     (void)qcb_data; (void)new_data;
     new_data_calls++;
 }
@@ -119,8 +120,8 @@ static derr_t test_queue_cb(void){
     qtest_t qlist[NELEMS];
     for(size_t i = 0; i < NELEMS; i++){
         qlist[i].id = i;
-        queue_elem_prep(&qlist[i].qe, &qlist[i]);
-        queue_cb_prep(&qlist[i].qcb, &qlist[i]);
+        queue_elem_prep(&qlist[i].qe);
+        queue_cb_prep(&qlist[i].qcb);
         queue_cb_set(&qlist[i].qcb, pre_wait_cb, new_data_cb);
     }
 
@@ -161,7 +162,7 @@ static void *first_popper_thread(void *arg){
     queue_t *q = arg;
     qtest_t *qtest;
     do {
-        qtest = queue_pop_first(q, true);
+        qtest = CONTAINER_OF(queue_pop_first(q, true), qtest_t, qe);
         first_pops++;
     } while(qtest->id != 4);
     return NULL;
@@ -171,7 +172,7 @@ static void *last_popper_thread(void *arg){
     queue_t *q = arg;
     qtest_t *qtest;
     do {
-        qtest = queue_pop_last(q, true);
+        qtest = CONTAINER_OF(queue_pop_last(q, true), qtest_t, qe);
         last_pops++;
     } while(qtest->id != 4);
     return NULL;
@@ -183,8 +184,8 @@ static derr_t test_queue_blocking(void){
     qtest_t qlist[NELEMS];
     for(size_t i = 0; i < NELEMS; i++){
         qlist[i].id = i;
-        queue_elem_prep(&qlist[i].qe, &qlist[i]);
-        queue_cb_prep(&qlist[i].qcb, &qlist[i]);
+        queue_elem_prep(&qlist[i].qe);
+        queue_cb_prep(&qlist[i].qcb);
         queue_cb_set(&qlist[i].qcb, pre_wait_cb, new_data_cb);
     }
 

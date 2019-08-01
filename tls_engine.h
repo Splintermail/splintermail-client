@@ -143,6 +143,10 @@ struct tlse_data_t {
     bool eof_sent;
     bool tls_eof_recvd;
 };
+DEF_CONTAINER_OF(tlse_data_t, read_out_qcb, queue_cb_t);
+DEF_CONTAINER_OF(tlse_data_t, read_in_qcb, queue_cb_t);
+DEF_CONTAINER_OF(tlse_data_t, write_out_qcb, queue_cb_t);
+DEF_CONTAINER_OF(tlse_data_t, write_in_qcb, queue_cb_t);
 
 derr_t tlse_init(tlse_t *tlse, size_t nread_events, size_t nwrite_events,
                  event_passer_t pass_up, void *upstream,

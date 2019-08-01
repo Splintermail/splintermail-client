@@ -2,16 +2,14 @@
 #include "logger.h"
 #include "uv_errors.h"
 
-void queue_elem_prep(queue_elem_t *qe, void *parent_struct){
-    qe->data = parent_struct;
+void queue_elem_prep(queue_elem_t *qe){
     qe->next = NULL;
     qe->prev = NULL;
     qe->q = NULL;
 }
 
-void queue_cb_prep(queue_cb_t *qcb, void *parent_struct){
-    qcb->data = parent_struct;
-    queue_elem_prep(&qcb->qe, qcb);
+void queue_cb_prep(queue_cb_t *qcb){
+    queue_elem_prep(&qcb->qe);
 }
 
 void queue_cb_set(queue_cb_t *qcb,
@@ -178,10 +176,8 @@ static inline queue_elem_t *do_pop_cb(queue_t *q, queue_cb_t *cb,
     if(qe == NULL && cb != NULL){
         // call the pre_wait hook (if any)
         if(cb->pre_wait_cb){
-            cb->pre_wait_cb(cb->data);
+            cb->pre_wait_cb(cb);
         }
-        // set parent-pointer of cb->qe
-        cb->qe.data = cb;
         // append cb to our list of things that are awaiting data
         do_append(&q->awaiting_first, &q->awaiting_last, &cb->qe);
         cb->qe.q = q;
@@ -194,17 +190,17 @@ static inline queue_elem_t *do_pop_cb(queue_t *q, queue_cb_t *cb,
     return qe;
 }
 
-void *queue_pop_first_cb(queue_t *q, queue_cb_t *cb){
+queue_elem_t *queue_pop_first_cb(queue_t *q, queue_cb_t *cb){
     queue_elem_t *qe = do_pop_cb(q, cb, do_pop_first);
-    return qe ? qe->data : NULL;
+    return qe;
 }
 
-void *queue_pop_last_cb(queue_t *q, queue_cb_t *cb){
+queue_elem_t *queue_pop_last_cb(queue_t *q, queue_cb_t *cb){
     queue_elem_t *qe = do_pop_cb(q, cb, do_pop_last);
-    return qe ? qe->data : NULL;
+    return qe;
 }
 
-void *queue_pop_first(queue_t *q, bool block){
+queue_elem_t *queue_pop_first(queue_t *q, bool block){
     uv_mutex_lock(&q->mutex);
     queue_elem_t *qe;
     while( (qe = do_pop_first(&q->first, &q->last)) == NULL && block){
@@ -216,10 +212,10 @@ void *queue_pop_first(queue_t *q, bool block){
         q->len--;
     }
     uv_mutex_unlock(&q->mutex);
-    return qe ? qe->data : NULL;
+    return qe;
 }
 
-void *queue_pop_last(queue_t *q, bool block){
+queue_elem_t *queue_pop_last(queue_t *q, bool block){
     uv_mutex_lock(&q->mutex);
     queue_elem_t *qe;
     while( (qe = do_pop_last(&q->first, &q->last)) == NULL && block){
@@ -231,18 +227,19 @@ void *queue_pop_last(queue_t *q, bool block){
         q->len--;
     }
     uv_mutex_unlock(&q->mutex);
-    return qe ? qe->data : NULL;
+    return qe;
 }
 
-void *queue_pop_find(queue_t *q, queue_matcher_cb_t matcher, void *user){
-    void *retval = NULL;
+queue_elem_t *queue_pop_find(queue_t *q, queue_matcher_cb_t matcher,
+        void *user){
+    queue_elem_t *retval = NULL;
     uv_mutex_lock(&q->mutex);
     queue_elem_t *this = q->first;
     while(this != NULL){
-        if(matcher(this->data, user)){
+        if(matcher(this, user)){
             do_pop_this(this, &q->first, &q->last);
             this->q = NULL;
-            retval = this->data;
+            retval = this;
             break;
         }
         this = this->next;
@@ -256,13 +253,14 @@ void queue_prepend(queue_t *q, queue_elem_t *elem){
     uv_mutex_lock(&q->mutex);
     // if the awaiting list is not empty, pass the data directly to the cb
     if(q->awaiting_first != NULL){
-        queue_cb_t *cb = do_pop_first(&q->awaiting_first,
-                                      &q->awaiting_last)->data;
+        queue_elem_t *temp = do_pop_first(&q->awaiting_first,
+                &q->awaiting_last);
+        queue_cb_t *cb = CONTAINER_OF(temp, queue_cb_t, qe);
         // done modifying the q, unlock the mutex
         uv_mutex_unlock(&q->mutex);
         cb->qe.q = NULL;
         // execute the callback
-        cb->new_data_cb(cb->data, elem->data);
+        cb->new_data_cb(cb, elem);
         return;
     }
     // otherwise, add this element to the list
@@ -277,13 +275,14 @@ void queue_append(queue_t *q, queue_elem_t *elem){
     uv_mutex_lock(&q->mutex);
     // if the awaiting list is not empty, pass the data directly to the cb
     if(q->awaiting_first != NULL){
-        queue_cb_t *cb = do_pop_first(&q->awaiting_first,
-                                      &q->awaiting_last)->data;
+        queue_elem_t *temp = do_pop_first(&q->awaiting_first,
+                &q->awaiting_last);
+        queue_cb_t *cb = CONTAINER_OF(temp, queue_cb_t, qe);
         cb->qe.q = NULL;
         // done modifying the q, unlock the mutex
         uv_mutex_unlock(&q->mutex);
         // execute the callback
-        cb->new_data_cb(cb->data, elem->data);
+        cb->new_data_cb(cb, elem);
         return;
     }
     // otherwise, add this element to the list

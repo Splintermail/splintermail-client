@@ -4,14 +4,15 @@
 // Does not init the dstr or set callbacks.
 void event_prep(event_t *ev){
     ev->session = NULL;
-    queue_elem_prep(&ev->qe, ev);
-    queue_cb_prep(&ev->qcb, ev);
+    queue_elem_prep(&ev->qe);
+    queue_cb_prep(&ev->qcb);
 }
 
 // free all the events in a pool and then call queue_free
 void event_pool_free(queue_t *pool){
-    event_t *ev;
-    while((ev = queue_pop_first(pool, false))){
+    queue_elem_t *qe;
+    while((qe = queue_pop_first(pool, false))){
+        event_t *ev = CONTAINER_OF(qe, event_t, qe);
         dstr_free(&ev->buffer);
         free(ev);
     }

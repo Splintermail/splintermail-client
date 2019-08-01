@@ -42,6 +42,7 @@ typedef struct write_wrapper_t {
     // libuv-style buffer (points into event_t)
     uv_buf_t uv_buf;
 } write_wrapper_t;
+DEF_CONTAINER_OF(write_wrapper_t, qe, queue_elem_t);
 
 void write_wrapper_prep(write_wrapper_t *wr_wrap, loop_t *loop);
 
@@ -110,6 +111,7 @@ struct loop_data_t {
     struct addrinfo *gai_aiptr;
     uv_connect_t connect_req;
 };
+DEF_CONTAINER_OF(loop_data_t, read_pause_qcb, queue_cb_t);
 
 // Per-listener specificiation.
 struct listener_spec_t {

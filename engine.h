@@ -130,6 +130,8 @@ typedef struct {
     queue_elem_t qe; // for holding in queues
     queue_cb_t qcb; // for waiting on another buffer
 } event_t;
+DEF_CONTAINER_OF(event_t, qe, queue_elem_t);
+DEF_CONTAINER_OF(event_t, qcb, queue_cb_t);
 
 // Does not set session, init the dstr, or set callbacks.
 void event_prep(event_t *ev);

@@ -19,9 +19,9 @@ static void tlse_data_onthread_close(tlse_data_t *td);
    write into.  The callback is called when a READ_DONE is passed back from the
    downstream engine.  It's possible we are not in the idle state when this
    callback is called. */
-static void read_out_cb(void *cb_data, void *new_data){
-    tlse_data_t *td = cb_data;
-    event_t *ev = new_data;
+static void read_out_cb(queue_cb_t *qcb, queue_elem_t *qe){
+    tlse_data_t *td = CONTAINER_OF(qcb, tlse_data_t, read_out_qcb);
+    event_t *ev = CONTAINER_OF(qe, event_t, qe);
     // store the event as this session's read_out
     td->read_out = ev;
     td->read_out->session = NULL;
@@ -29,9 +29,9 @@ static void read_out_cb(void *cb_data, void *new_data){
     advance_state(td);
 }
 
-static void write_out_cb(void *cb_data, void *new_data){
-    tlse_data_t *td = cb_data;
-    event_t *ev = new_data;
+static void write_out_cb(queue_cb_t *qcb, queue_elem_t *qe){
+    tlse_data_t *td = CONTAINER_OF(qcb, tlse_data_t, write_out_qcb);
+    event_t *ev = CONTAINER_OF(qe, event_t, qe);
     // store the event as this session's write_out
     td->write_out = ev;
     td->write_out->session = NULL;
@@ -39,18 +39,18 @@ static void write_out_cb(void *cb_data, void *new_data){
     advance_state(td);
 }
 
-static void read_in_cb(void *cb_data, void *new_data){
-    tlse_data_t *td = cb_data;
-    event_t *ev = new_data;
+static void read_in_cb(queue_cb_t *qcb, queue_elem_t *qe){
+    tlse_data_t *td = CONTAINER_OF(qcb, tlse_data_t, read_in_qcb);
+    event_t *ev = CONTAINER_OF(qe, event_t, qe);
     // store the event as this session's read_in
     td->read_in = ev;
     // re-evaluate the state machine
     advance_state(td);
 }
 
-static void write_in_cb(void *cb_data, void *new_data){
-    tlse_data_t *td = cb_data;
-    event_t *ev = new_data;
+static void write_in_cb(queue_cb_t *qcb, queue_elem_t *qe){
+    tlse_data_t *td = CONTAINER_OF(qcb, tlse_data_t, write_in_qcb);
+    event_t *ev = CONTAINER_OF(qe, event_t, qe);
     // store the event as this session's write_in
     td->write_in = ev;
     // re-evaluate the state machine
@@ -208,8 +208,11 @@ static bool enter_wfewb(tlse_data_t *td){
     // try to get a write_out
     if(!td->write_out){
         queue_cb_set(&td->write_out_qcb, NULL, write_out_cb);
-        td->write_out = queue_pop_first_cb(&tlse->write_events,
-                                           &td->write_out_qcb);
+        queue_elem_t *qe = queue_pop_first_cb(&tlse->write_events,
+                &td->write_out_qcb);
+        if(qe != NULL){
+            td->write_out = CONTAINER_OF(qe, event_t, qe);
+        }
     }
 
     if(td->write_out){
@@ -246,8 +249,11 @@ static bool enter_idle(tlse_data_t *td){
         // try to get a read_in
         if(!td->read_in){
             queue_cb_set(&td->read_in_qcb, NULL, read_in_cb);
-            td->read_in = queue_pop_first_cb(&td->pending_reads,
-                                             &td->read_in_qcb);
+            queue_elem_t *qe = queue_pop_first_cb(&td->pending_reads,
+                    &td->read_in_qcb);
+            if(qe != NULL){
+                td->read_in = CONTAINER_OF(qe, event_t, qe);
+            }
             // event session already belongs to session, no upref
         }
         if(td->read_in){
@@ -295,8 +301,11 @@ static bool enter_idle(tlse_data_t *td){
         // try to get a read_out buffer
         if(!td->read_out){
             queue_cb_set(&td->read_out_qcb, NULL, read_out_cb);
-            td->read_out = queue_pop_first_cb(&tlse->read_events,
-                                              &td->read_out_qcb);
+            queue_elem_t *qe = queue_pop_first_cb(&tlse->read_events,
+                    &td->read_out_qcb);
+            if(qe != NULL){
+                td->read_out = CONTAINER_OF(qe, event_t, qe);
+            }
         }
         // handle the SSL read immediately, if possible
         if(td->read_out){
@@ -336,8 +345,11 @@ static bool enter_idle(tlse_data_t *td){
         // try to get something to write
         if(!td->write_in){
             queue_cb_set(&td->write_in_qcb, NULL, write_in_cb);
-            td->write_in = queue_pop_first_cb(&td->pending_writes,
-                                              &td->write_in_qcb);
+            queue_elem_t *qe = queue_pop_first_cb(&td->pending_writes,
+                    &td->write_in_qcb);
+            if(qe != NULL){
+                td->write_in = CONTAINER_OF(qe, event_t, qe);
+            }
         }
         if(td->write_in){
             do_ssl_write(td);
@@ -389,7 +401,8 @@ static void tlse_process_events(uv_work_t *req){
     tlse_t *tlse = req->data;
     bool should_continue = true;
     while(should_continue){
-        event_t *ev = queue_pop_first(&tlse->event_q, true);
+        queue_elem_t *qe = queue_pop_first(&tlse->event_q, true);
+        event_t *ev = CONTAINER_OF(qe, event_t, qe);
         tlse_data_t *td;
         td = ev->session ? ev->session->td : NULL;
         // has this session been initialized?
@@ -508,10 +521,10 @@ static void tlse_data_onthread_start(tlse_data_t *td){
     derr_t e = E_OK;
 
     // things which must be initialized, even in case of failure
-    queue_cb_prep(&td->read_in_qcb, td);
-    queue_cb_prep(&td->read_out_qcb, td);
-    queue_cb_prep(&td->write_in_qcb, td);
-    queue_cb_prep(&td->write_out_qcb, td);
+    queue_cb_prep(&td->read_in_qcb);
+    queue_cb_prep(&td->read_out_qcb);
+    queue_cb_prep(&td->write_in_qcb);
+    queue_cb_prep(&td->write_out_qcb);
 
     // other non-failing things
     td->read_in = NULL;
@@ -655,12 +668,14 @@ static void tlse_data_onthread_close(tlse_data_t *td){
     }
 
     // empty pending reads and pending writes
-    event_t *ev;
-    while((ev = queue_pop_first(&td->pending_reads, false))){
+    queue_elem_t *qe;
+    while((qe = queue_pop_first(&td->pending_reads, false))){
+        event_t *ev = CONTAINER_OF(qe, event_t, qe);
         ev->ev_type = EV_READ_DONE;
         tlse->pass_up(tlse->upstream, ev);
     }
-    while((ev = queue_pop_first(&td->pending_writes, false))){
+    while((qe = queue_pop_first(&td->pending_writes, false))){
+        event_t *ev = CONTAINER_OF(qe, event_t, qe);
         ev->ev_type = EV_WRITE_DONE;
         tlse->pass_down(tlse->downstream, ev);
     }
