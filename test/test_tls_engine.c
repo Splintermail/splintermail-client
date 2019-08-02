@@ -22,8 +22,8 @@
 // path to where the test files can be found
 static const char* g_test_files;
 
-unsigned int listen_port = 12346;
-const char* port_str = "12346";
+unsigned int listen_port = 12348;
+const char* port_str = "12348";
 
 typedef struct {
     pthread_t thread;

@@ -13,8 +13,8 @@
 #define WRITES_PER_THREAD 10000
 #define NUM_READ_EVENTS_PER_LOOP 4
 
-unsigned int listen_port = 12346;
-const char* port_str = "12346";
+unsigned int listen_port = 12347;
+const char* port_str = "12347";
 
 typedef struct {
     pthread_t thread;
