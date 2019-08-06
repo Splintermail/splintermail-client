@@ -24,6 +24,24 @@ void link_list_append(link_t *head, link_t *link){
     link->next = head;
 }
 
+link_t *link_list_pop_first(link_t *head){
+    link_t *first = head->next;
+    if(first == head){
+        return NULL;
+    }
+    link_remove(first);
+    return first;
+}
+
+link_t *link_list_pop_last(link_t *head){
+    link_t *last = head->prev;
+    if(last == head){
+        return NULL;
+    }
+    link_remove(last);
+    return last;
+}
+
 void link_remove(link_t *link){
     // for a link not in a list, this will reduce to link->prev = link->prev
     link->next->prev = link->prev;

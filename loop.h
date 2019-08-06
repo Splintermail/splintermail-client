@@ -32,7 +32,7 @@ typedef struct {
 // for a pool of pre-allocated write buffers
 typedef struct write_wrapper_t {
     // self-pointer struct for enqueing this struct
-    queue_elem_t qe;
+    link_t link;
     // we need to know the loop for enqueuing
     loop_t *loop;
     // libuv write request handle
@@ -42,7 +42,7 @@ typedef struct write_wrapper_t {
     // libuv-style buffer (points into event_t)
     uv_buf_t uv_buf;
 } write_wrapper_t;
-DEF_CONTAINER_OF(write_wrapper_t, qe, queue_elem_t);
+DEF_CONTAINER_OF(write_wrapper_t, link, link_t);
 
 void write_wrapper_prep(write_wrapper_t *wr_wrap, loop_t *loop);
 

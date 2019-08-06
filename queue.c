@@ -2,14 +2,9 @@
 #include "logger.h"
 #include "uv_errors.h"
 
-void queue_elem_prep(queue_elem_t *qe){
-    qe->next = NULL;
-    qe->prev = NULL;
-    qe->q = NULL;
-}
-
 void queue_cb_prep(queue_cb_t *qcb){
-    queue_elem_prep(&qcb->qe);
+    link_init(&qcb->link);
+    qcb->q = NULL;
 }
 
 void queue_cb_set(queue_cb_t *qcb,
@@ -22,11 +17,9 @@ void queue_cb_set(queue_cb_t *qcb,
 
 derr_t queue_init(queue_t *q){
     derr_t e = E_OK;
-    // all pointers start as NULL
-    q->first = NULL;
-    q->last = NULL;
-    q->awaiting_first = NULL;
-    q->awaiting_last = NULL;
+    // prepare linked lists
+    link_init(&q->head);
+    link_init(&q->awaiting);
 
     // init mutex
     int ret = uv_mutex_init(&q->mutex);
@@ -56,250 +49,110 @@ void queue_free(queue_t *q){
     uv_cond_destroy(&q->cond);
 }
 
-static queue_elem_t *do_pop_first(queue_elem_t **first, queue_elem_t **last){
-    queue_elem_t *retval;
-    if(*first == NULL){
-        return NULL;
-    }
-    // get the data we are going to return
-    retval = *first;
-    // clean the struct before we release it from the list
-    struct queue_elem_t *new_first = (*first)->next;
-    (*first)->next = NULL;
-    (*first)->prev = NULL;
-    // fix the first pointer
-    *first = new_first;
-    // was that the last element?
-    if(*first == NULL){
-        // no more **last
-        *last = NULL;
-        return retval;
-    }
-    // otherwise correct the reverse pointer of the new first element
-    (*first)->prev = NULL;
-    return retval;
-}
-
-static queue_elem_t *do_pop_last(queue_elem_t **first, queue_elem_t **last){
-    queue_elem_t *retval;
-    if(*last == NULL){
-        return NULL;
-    }
-    // get the data we are going to return
-    retval = *last;
-    // clean the struct before we release it from the list
-    struct queue_elem_t *new_last = (*last)->prev;
-    (*last)->next = NULL;
-    (*last)->prev = NULL;
-    // fix the last pointer
-    *last = new_last;
-    // was that the first element?
-    if(*last == NULL){
-        // no more **first
-        *first = NULL;
-        return retval;
-    }
-    // otherwise correct the forward pointer of the new last element
-    (*last)->next = NULL;
-    return retval;
-}
-
-static void do_pop_this(queue_elem_t *this, queue_elem_t **first,
-                        queue_elem_t **last){
-    // is this the first element?
-    if(this->prev == NULL){
-        *first = this->next;
-    }else{
-        // fix the previous element's "next"
-        this->prev->next = this->next;
-    }
-    // is that the last element?
-    if(this->next == NULL){
-        *last = this->prev;
-    }else{
-        // fix the next element's "prev"
-        this->next->prev = this->prev;
-    }
-    // clean the struct
-    this->next = NULL;
-    this->prev = NULL;
-}
-
-static void do_prepend(queue_elem_t **first, queue_elem_t **last,
-                       queue_elem_t *elem){
-    // is list empty?
-    if(*first == NULL){
-        elem->next = NULL;
-        elem->prev = NULL;
-        *first = elem;
-        *last = elem;
-        return;
-    }
-    // otherwise, fix the reverse pointer of the first element
-    (*first)->prev = elem;
-    // set *elem's pointers
-    elem->prev = NULL;
-    elem->next = *first;
-    // fix **first
-    (*first) = elem;
-}
-
-static void do_append(queue_elem_t **first, queue_elem_t **last,
-                      queue_elem_t *elem){
-    // is list empty?
-    if(*last == NULL){
-        elem->next = NULL;
-        elem->prev = NULL;
-        *first = elem;
-        *last = elem;
-        return;
-    }
-    // otherwise, fix the forward pointer of the last element
-    (*last)->next = elem;
-    // set *elem's pointers
-    elem->prev = *last;
-    elem->next = NULL;
-    // fix **last
-    (*last) = elem;
-}
-
-static inline queue_elem_t *do_pop_cb(queue_t *q, queue_cb_t *cb,
-        queue_elem_t *(*pop_func)(queue_elem_t**, queue_elem_t**) ){
+static inline link_t *do_pop_cb(queue_t *q, queue_cb_t *qcb,
+        link_t *(*pop_func)(link_t*) ){
     uv_mutex_lock(&q->mutex);
     // if this queue_cb is already awaiting this queue, do nothing
-    if(cb->qe.q == q) {
+    if(qcb->q == q){
         uv_mutex_unlock(&q->mutex);
         return NULL;
     }
-    queue_elem_t *qe = pop_func(&q->first, &q->last);
-    // if list is empty remember cb for later (unless cb is NULL)
-    if(qe == NULL && cb != NULL){
+    link_t *link = pop_func(&q->head);
+    // if list is empty remember qcb for later (unless qcb is NULL)
+    if(link == NULL && qcb != NULL){
         // call the pre_wait hook (if any)
-        if(cb->pre_wait_cb){
-            cb->pre_wait_cb(cb);
+        if(qcb->pre_wait_cb){
+            qcb->pre_wait_cb(qcb);
         }
-        // append cb to our list of things that are awaiting data
-        do_append(&q->awaiting_first, &q->awaiting_last, &cb->qe);
-        cb->qe.q = q;
+        // append qcb to our list of things that are awaiting data
+        link_list_append(&q->awaiting, &qcb->link);
+        qcb->q = q;
     }
-    if(qe){
-        qe->q = NULL;
+    if(link){
         q->len--;
     }
     uv_mutex_unlock(&q->mutex);
-    return qe;
+    return link;
 }
 
-queue_elem_t *queue_pop_first_cb(queue_t *q, queue_cb_t *cb){
-    queue_elem_t *qe = do_pop_cb(q, cb, do_pop_first);
-    return qe;
+link_t *queue_pop_first_cb(queue_t *q, queue_cb_t *qcb){
+    return do_pop_cb(q, qcb, link_list_pop_first);
 }
 
-queue_elem_t *queue_pop_last_cb(queue_t *q, queue_cb_t *cb){
-    queue_elem_t *qe = do_pop_cb(q, cb, do_pop_last);
-    return qe;
+link_t *queue_pop_last_cb(queue_t *q, queue_cb_t *qcb){
+    return do_pop_cb(q, qcb, link_list_pop_last);
 }
 
-queue_elem_t *queue_pop_first(queue_t *q, bool block){
+static inline link_t *do_pop(queue_t *q, bool block,
+        link_t *(*pop_func)(link_t*) ){
     uv_mutex_lock(&q->mutex);
-    queue_elem_t *qe;
-    while( (qe = do_pop_first(&q->first, &q->last)) == NULL && block){
+    link_t *link;
+    while( (link = pop_func(&q->head)) == NULL && block){
         // wait for a signal
         uv_cond_wait(&q->cond, &q->mutex);
     }
-    if(qe){
-        qe->q = NULL;
+    if(link){
         q->len--;
     }
     uv_mutex_unlock(&q->mutex);
-    return qe;
+    return link;
 }
 
-queue_elem_t *queue_pop_last(queue_t *q, bool block){
-    uv_mutex_lock(&q->mutex);
-    queue_elem_t *qe;
-    while( (qe = do_pop_last(&q->first, &q->last)) == NULL && block){
-        // wait for a signal
-        uv_cond_wait(&q->cond, &q->mutex);
-    }
-    if(qe){
-        qe->q = NULL;
-        q->len--;
-    }
-    uv_mutex_unlock(&q->mutex);
-    return qe;
+link_t *queue_pop_first(queue_t *q, bool block){
+    return do_pop(q, block, link_list_pop_first);
 }
 
-queue_elem_t *queue_pop_find(queue_t *q, queue_matcher_cb_t matcher,
-        void *user){
-    queue_elem_t *retval = NULL;
-    uv_mutex_lock(&q->mutex);
-    queue_elem_t *this = q->first;
-    while(this != NULL){
-        if(matcher(this, user)){
-            do_pop_this(this, &q->first, &q->last);
-            this->q = NULL;
-            retval = this;
-            break;
-        }
-        this = this->next;
-    }
-    if(retval) q->len--;
-    uv_mutex_unlock(&q->mutex);
-    return retval;
+link_t *queue_pop_last(queue_t *q, bool block){
+    return do_pop(q, block, link_list_pop_last);
 }
 
-void queue_prepend(queue_t *q, queue_elem_t *elem){
+void queue_prepend(queue_t *q, link_t *link){
     uv_mutex_lock(&q->mutex);
     // if the awaiting list is not empty, pass the data directly to the cb
-    if(q->awaiting_first != NULL){
-        queue_elem_t *temp = do_pop_first(&q->awaiting_first,
-                &q->awaiting_last);
-        queue_cb_t *cb = CONTAINER_OF(temp, queue_cb_t, qe);
+    link_t *awaiter = link_list_pop_first(&q->awaiting);
+    if(awaiter != NULL){
+        queue_cb_t *cb = CONTAINER_OF(awaiter, queue_cb_t, link);
         // done modifying the q, unlock the mutex
         uv_mutex_unlock(&q->mutex);
-        cb->qe.q = NULL;
+        cb->q = NULL;
         // execute the callback
-        cb->new_data_cb(cb, elem);
+        cb->new_data_cb(cb, link);
         return;
     }
     // otherwise, add this element to the list
-    do_prepend(&q->first, &q->last, elem);
-    elem->q = q;
+    link_list_prepend(&q->head, link);
     q->len++;
     uv_cond_signal(&q->cond);
     uv_mutex_unlock(&q->mutex);
 }
 
-void queue_append(queue_t *q, queue_elem_t *elem){
+void queue_append(queue_t *q, link_t *link){
     uv_mutex_lock(&q->mutex);
     // if the awaiting list is not empty, pass the data directly to the cb
-    if(q->awaiting_first != NULL){
-        queue_elem_t *temp = do_pop_first(&q->awaiting_first,
-                &q->awaiting_last);
-        queue_cb_t *cb = CONTAINER_OF(temp, queue_cb_t, qe);
-        cb->qe.q = NULL;
+    link_t *awaiter = link_list_pop_first(&q->awaiting);
+    if(awaiter != NULL){
+        queue_cb_t *cb = CONTAINER_OF(awaiter, queue_cb_t, link);
+        cb->q = NULL;
         // done modifying the q, unlock the mutex
         uv_mutex_unlock(&q->mutex);
         // execute the callback
-        cb->new_data_cb(cb, elem);
+        cb->new_data_cb(cb, link);
         return;
     }
     // otherwise, add this element to the list
-    do_append(&q->first, &q->last, elem);
-    elem->q = q;
+    link_list_append(&q->head, link);
     q->len++;
     uv_cond_signal(&q->cond);
     uv_mutex_unlock(&q->mutex);
 }
 
-/* Does nothing if element is not in the list.  Specifying the list is
-   necessary to prevent a race condition. */
-void queue_remove(queue_t *q, queue_elem_t *qe){
+/* Specifying the list is necessary to prevent a race condition and for
+   tracking the length of the queue.  If link is in a list, q must be that
+   list. */
+void queue_remove(queue_t *q, link_t *link){
     uv_mutex_lock(&q->mutex);
-    if(qe->q != q) goto unlock;
-    do_pop_this(qe, &q->first, &q->last);
-    qe->q = NULL;
+    if(link->next == link) goto unlock;
+    link_remove(link);
     q->len--;
 unlock:
     uv_mutex_unlock(&q->mutex);
@@ -308,9 +161,9 @@ unlock:
 // Similar to queue_remove, but for unregistering a queue_cb_t
 void queue_remove_cb(queue_t *q, queue_cb_t *qcb){
     uv_mutex_lock(&q->mutex);
-    if(qcb->qe.q != q) goto unlock;
-    do_pop_this(&qcb->qe, &q->awaiting_first, &q->awaiting_last);
-    qcb->qe.q = NULL;
+    if(qcb->link.next != &qcb->link) goto unlock;
+    link_remove(&qcb->link);
+    qcb->q = NULL;
 unlock:
     uv_mutex_unlock(&q->mutex);
 }

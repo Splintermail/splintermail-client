@@ -396,7 +396,7 @@ void fake_engine_free(fake_engine_t *fake_engine){
 
 void fake_engine_pass_event(void *engine, event_t *ev){
     fake_engine_t *fake_engine = engine;
-    queue_append(&fake_engine->event_q, &ev->qe);
+    queue_append(&fake_engine->event_q, &ev->link);
 }
 
 derr_t fake_engine_run(fake_engine_t *fe, event_passer_t pass_up,
@@ -406,9 +406,9 @@ derr_t fake_engine_run(fake_engine_t *fe, event_passer_t pass_up,
     derr_t e = E_OK;
     // process incoming events from the upstream engine
     event_t *quit_ev = NULL;
-    queue_elem_t *qe;
-    while((qe = queue_pop_first(&fe->event_q, true))){
-        event_t *ev = CONTAINER_OF(qe, event_t, qe);
+    link_t *link;
+    while((link = queue_pop_first(&fe->event_q, true))){
+        event_t *ev = CONTAINER_OF(link, event_t, link);
         switch(ev->ev_type){
             case EV_READ:
                 //LOG_ERROR("got read\n");

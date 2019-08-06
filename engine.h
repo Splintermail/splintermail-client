@@ -127,10 +127,10 @@ typedef struct {
     dstr_t buffer; // for passing buffers.  Comes first to accomadate libuv.
     event_type_t ev_type;
     session_t *session; // points to the session_interface.  Changes each time.
-    queue_elem_t qe; // for holding in queues
+    link_t link; // for holding in queues
     queue_cb_t qcb; // for waiting on another buffer
 } event_t;
-DEF_CONTAINER_OF(event_t, qe, queue_elem_t);
+DEF_CONTAINER_OF(event_t, link, link_t);
 DEF_CONTAINER_OF(event_t, qcb, queue_cb_t);
 
 // Does not set session, init the dstr, or set callbacks.
