@@ -7,7 +7,7 @@
 #include "common.h"
 #include "logger.h"
 #include "ssl_errors.h"
-#include "uv_errors.h"
+#include "uv_util.h"
 
 // forward declarations
 static void advance_state(tlse_data_t *td);

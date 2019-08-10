@@ -1,7 +1,9 @@
-#ifndef UV_ERRORS_H
-#define UV_ERRORS_H
+#ifndef UV_UTIL
+#define UV_UTIL
 
 #include "common.h"
+
+// error handling helpers
 
 derr_type_t fmthook_uv_error(dstr_t* out, const void* arg);
 
@@ -14,5 +16,9 @@ static inline derr_type_t uv_err_type(int err){
     return (err == UV_ENOMEM) ? E_NOMEM : E_UV;
 }
 
-#endif // UV_ERRORS_H
+// type-punning wrappers
+
+int uv_cancel_work(uv_work_t *work);
+
+#endif // UV_UTIL
 

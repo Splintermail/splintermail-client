@@ -2,7 +2,7 @@
 
 #include <uv.h>
 
-#include "uv_errors.h"
+#include "uv_util.h"
 #include "logger.h"
 
 derr_type_t fmthook_uv_error(dstr_t* out, const void* arg){
@@ -18,3 +18,8 @@ derr_type_t fmthook_uv_error(dstr_t* out, const void* arg){
     out->len += len;
     return E_NONE;
 }
+
+int uv_cancel_work(uv_work_t *work){
+    return uv_cancel((uv_req_t*)work);
+}
+

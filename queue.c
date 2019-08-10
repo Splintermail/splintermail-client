@@ -1,6 +1,6 @@
 #include "queue.h"
 #include "logger.h"
-#include "uv_errors.h"
+#include "uv_util.h"
 
 void queue_cb_prep(queue_cb_t *qcb){
     link_init(&qcb->link);

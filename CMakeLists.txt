@@ -42,7 +42,7 @@ set(OBJ_TGTS
     console_input
     ui
     engine
-    uv_errors
+    uv_util
     loop
     tls_engine
     # imap_engine
@@ -250,8 +250,8 @@ obj_depend_obj(pop_server networking)
 obj_depend_obj(api_client networking crypto json)
 obj_depend_obj(key_tool api_client crypto)
 obj_depend_obj(ditm pop_client pop_server maildir json)
-obj_depend_obj(uv_errors common)
-obj_depend_obj(queue uv_interface uv_errors link common)
+obj_depend_obj(uv_util common)
+obj_depend_obj(queue uv_interface uv_util link common)
 obj_depend_obj(engine queue)
 obj_depend_obj(loop engine)
 obj_depend_obj(tls_engine engine networking)
@@ -455,7 +455,7 @@ if("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU")
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fdiagnostics-color=always")
     # libuv needs non-strict aliasing
     # see discussion here: https://github.com/libuv/libuv/issues/1230
-    target_compile_options(loop_o PRIVATE -fno-strict-aliasing)
+    target_compile_options(uv_util_o PRIVATE -fno-strict-aliasing)
     target_compile_options(imap_parse_tab_o PRIVATE -Wno-sign-conversion)
     target_compile_options(imap_parse_tab_o PRIVATE -Wno-conversion)
     # add some compiler hardening flags
@@ -490,7 +490,7 @@ elseif("${CMAKE_C_COMPILER_ID}" MATCHES "Clang")
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O2")
     # libuv needs non-strict aliasing
     # see discussion here: https://github.com/libuv/libuv/issues/1230
-    target_compile_options(loop_o PRIVATE -fno-strict-aliasing)
+    target_compile_options(uv_util_o PRIVATE -fno-strict-aliasing)
     target_compile_options(imap_parse_tab_o PRIVATE -Wno-sign-conversion)
     target_compile_options(imap_parse_tab_o PRIVATE -Wno-conversion)
     # add some compiler hardening flags

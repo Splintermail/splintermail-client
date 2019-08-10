@@ -5,7 +5,7 @@
 
 #include "logger.h"
 #include "loop.h"
-#include "uv_errors.h"
+#include "uv_util.h"
 
 static void loop_data_onthread_close(loop_data_t *ld);
 
