@@ -447,7 +447,7 @@ static void tlse_process_events(uv_work_t *req){
                 queue_append(&tlse->write_events, &ev->link);
                 // were we waiting for that WRITE_DONE before passing QUIT_UP?
                 if(tlse->quit_ev
-                        && tlse->write_events.len < tlse->nwrite_events){
+                        && tlse->write_events.len == tlse->nwrite_events){
                     tlse->pass_up(tlse->upstream, tlse->quit_ev);
                     tlse->quit_ev = NULL;
                     should_continue = false;
@@ -462,7 +462,7 @@ static void tlse_process_events(uv_work_t *req){
                 break;
             case EV_QUIT_UP:
                 // LOG_ERROR("tlse: QUIT_UP\n");
-                // Not done until all we have all of our write buffers back
+                // Not done until we have all of our write buffers back
                 if(tlse->write_events.len < tlse->nwrite_events){
                     // store this event for later
                     tlse->quit_ev = ev;
@@ -726,6 +726,7 @@ void tlse_free(tlse_t *tlse){
     event_pool_free(&tlse->write_events);
     event_pool_free(&tlse->read_events);
     queue_free(&tlse->event_q);
+    tlse->initialized = false;
 }
 
 
@@ -734,7 +735,7 @@ derr_t tlse_add_to_loop(tlse_t *tlse, uv_loop_t *loop){
     int ret = uv_queue_work(loop, &tlse->work_req, tlse_process_events, NULL);
     if(ret < 0){
         TRACE(&e, "uv_queue_work: %x\n", FUV(&ret));
-        ORIG(&e, uv_err_type(ret), "error initializing loop");
+        ORIG(&e, uv_err_type(ret), "error adding tls engine to uv loop");
     }
     return e;
 }
