@@ -67,9 +67,13 @@ typedef enum {
         pipe and back up it (as a QUIT_UP).  That simplifies the quit sequence
         a lot.
     */
+
+    // A guarantee that says "I'm done sending READ events."
     EV_QUIT_DOWN,
 
-    // second half of the quit sequence.
+    /* A guarantee that says "I'm done sending READ events, I have sent all
+       my READ_DONE events, I have received all of my WRITE_DONE events, and
+       I'm done sending WRITE events too." */
     EV_QUIT_UP,
 
     /* This is like a reminder, in case no normal events come in, to trigger

@@ -8,6 +8,7 @@
 #include <engine.h>
 #include <loop.h>
 #include <tls_engine.h>
+#include <imap_engine.h>
 
 enum fake_engine_ref_reason_t {
     FAKE_ENGINE_REF_READ,
@@ -50,7 +51,7 @@ typedef struct {
     dstr_t in;
     size_t nwrites; // total writes, not a count of writes-so-far
     size_t nrecvd;
-    fake_session_t *session;
+    fake_session_t *fake_session;
     event_passer_t passer;
     void *passer_engine;
 } cb_reader_writer_t;
@@ -68,6 +69,7 @@ typedef struct {
     // null engines are ignored during session hooks
     loop_t *loop;
     tlse_t *tlse;
+    imape_t *imape;
 } fake_pipeline_t;
 
 struct fake_session_t {
@@ -85,9 +87,11 @@ struct fake_session_t {
     // engine_data elements
     loop_data_t loop_data;
     tlse_data_t tlse_data;
+    imape_data_t imape_data;
     // per-reason-per-engine reference counts
     int loop_refs[LOOP_REF_MAXIMUM];
     int tlse_refs[TLSE_REF_MAXIMUM];
+    int imape_refs[IMAPE_REF_MAXIMUM];
     int test_refs[FAKE_ENGINE_REF_MAXIMUM];
     /* session manager hook; this is to be set externally, after session_alloc
        but before session_start */
@@ -114,11 +118,15 @@ void fake_session_ref_down_loop(session_t *session, int reason);
 void fake_session_ref_up_tlse(session_t *session, int reason);
 void fake_session_ref_down_tlse(session_t *session, int reason);
 
+// only for use on imape thread
+void fake_session_ref_up_imape(session_t *session, int reason);
+void fake_session_ref_down_imape(session_t *session, int reason);
+
 // only for use on test thread (fake engine and callbacks)
 void fake_session_ref_up_test(session_t *session, int reason);
 void fake_session_ref_down_test(session_t *session, int reason);
 
-void fake_session_close(void *session, derr_t error);
+void fake_session_close(session_t *session, derr_t error);
 
 loop_data_t *fake_session_get_loop_data(void *session);
 tlse_data_t *fake_session_get_tlse_data(void *session);

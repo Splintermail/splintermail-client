@@ -45,7 +45,7 @@ set(OBJ_TGTS
     uv_util
     loop
     tls_engine
-    # imap_engine
+    imap_engine
     queue
     jsw_atree
     imap_parse
@@ -74,6 +74,7 @@ set(TEST_OBJ_TGTS
     test_utils
     # fake_imap_client
     fake_engine
+    fake_imap_worker
 )
 
 set(TEST_EXE_TGTS
@@ -98,6 +99,7 @@ set(TEST_EXE_TGTS
     test_loop
     test_queue
     test_tls_engine
+    test_imap_engine
     test_link
 )
 
@@ -255,7 +257,7 @@ obj_depend_obj(queue uv_interface uv_util link common)
 obj_depend_obj(engine queue)
 obj_depend_obj(loop engine)
 obj_depend_obj(tls_engine engine networking)
-# obj_depend_obj(imap_engine engine imap_read_o)
+obj_depend_obj(imap_engine engine imap_read)
 obj_depend_obj(jsw_atree common)
 obj_depend_obj(imap_parse_tab imap_expression imap_scan common)
 obj_depend_obj(imap_parse imap_parse_tab common)
@@ -364,7 +366,7 @@ if("${BUILD_TESTS}")
     obj_depend_obj(ditm_thread ditm dummy_key_tool fileops)
     obj_depend_obj(dummy_key_tool crypto common)
     # obj_depend_obj(fake_imap_client uv_interface networking)
-    obj_depend_obj(fake_engine loop tls_engine queue networking)
+    obj_depend_obj(fake_engine loop tls_engine imap_engine queue networking)
     # some dummy tools need openssl headers to compile... but not to link
     target_include_directories(dummy_key_tool_o PRIVATE ${OPENSSL_INCLUDE_DIR})
     target_include_directories(dummy_ui_harness_o PRIVATE ${OPENSSL_INCLUDE_DIR})
@@ -410,6 +412,7 @@ if("${BUILD_TESTS}")
     target_link_libraries(test_loop fake_engine networking)
     target_link_libraries(test_queue queue)
     target_link_libraries(test_tls_engine fake_engine)
+    target_link_libraries(test_imap_engine fake_engine fake_imap_worker)
     target_link_libraries(test_link link common)
 
     if(WIN32)

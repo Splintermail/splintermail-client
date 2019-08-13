@@ -119,7 +119,7 @@ static event_t *cb_reader_writer_send(cb_reader_writer_t *cbrw){
     // check for completion criteria
     if(cbrw->nrecvd == cbrw->nwrites){
         // TODO
-        fake_session_close(cbrw->session, E_OK);
+        fake_session_close(&cbrw->fake_session->session, E_OK);
         return NULL;
     }
 
@@ -139,7 +139,7 @@ static event_t *cb_reader_writer_send(cb_reader_writer_t *cbrw){
 
     dstr_copy(&cbrw->out, &ev->buffer);
 
-    ev->session = &cbrw->session->session;
+    ev->session = &cbrw->fake_session->session;
     fake_session_ref_up_test(ev->session, FAKE_ENGINE_REF_WRITE);
     ev->ev_type = EV_WRITE;
     return ev;
@@ -147,7 +147,7 @@ static event_t *cb_reader_writer_send(cb_reader_writer_t *cbrw){
 fail_ev:
     free(ev);
 fail:
-    fake_session_close(cbrw->session, SPLIT(e));
+    fake_session_close(&cbrw->fake_session->session, SPLIT(e));
     cbrw->error = e;
     return NULL;
 }
@@ -161,7 +161,7 @@ event_t *cb_reader_writer_init(cb_reader_writer_t *cbrw, size_t id,
     PROP_GO(&e, dstr_new(&cbrw->out, 256), fail);
     PROP_GO(&e, dstr_new(&cbrw->in, 256), free_out);
 
-    cbrw->session = s;
+    cbrw->fake_session = s;
     cbrw->id = id;
     cbrw->nwrites = nwrites;
 
@@ -211,7 +211,7 @@ event_t *cb_reader_writer_read(cb_reader_writer_t *cbrw, dstr_t *buffer){
     return cb_reader_writer_send(cbrw);
 
 fail:
-    fake_session_close(cbrw->session, SPLIT(e));
+    fake_session_close(&cbrw->fake_session->session, SPLIT(e));
     cbrw->error = e;
     return NULL;
 }
@@ -235,6 +235,11 @@ static void fake_session_ref_down(session_t *session){
 
     if(refs > 0) return;
 
+    // finish closing the imape_data
+    if(s->pipeline->imape){
+        imape_data_postclose(&s->imape_data);
+    }
+
     // now the session is no longer in use, we call the session manager hook
     s->session_destroyed(s, s->error);
     PASSED(s->error);
@@ -256,7 +261,7 @@ void fake_session_ref_down_loop(session_t *session, int reason){
     for(size_t i = 0; i < LOOP_REF_MAXIMUM; i++){
         if(s->loop_refs[i] < 0){
             LOG_ERROR("negative loop ref of type %x!\n",
-                      FD(loop_ref_reason_to_dstr(reason)));
+                      FD(loop_ref_reason_to_dstr(i)));
         }
     }
     fake_session_ref_down(session);
@@ -274,9 +279,31 @@ void fake_session_ref_down_tlse(session_t *session, int reason){
     for(size_t i = 0; i < TLSE_REF_MAXIMUM; i++){
         if(s->tlse_refs[i] < 0){
             LOG_ERROR("negative tlse ref of type %x!\n",
-                      FD(tlse_ref_reason_to_dstr(reason)));
+                      FD(tlse_ref_reason_to_dstr(i)));
         }
     }
+    fake_session_ref_down(session);
+}
+
+// only called by imape thread
+void fake_session_ref_up_imape(session_t *session, int reason){
+    fake_session_t *s = CONTAINER_OF(session, fake_session_t, session);
+    pthread_mutex_lock(&s->mutex);
+    s->imape_refs[reason]++;
+    pthread_mutex_unlock(&s->mutex);
+    fake_session_ref_up(session);
+}
+void fake_session_ref_down_imape(session_t *session, int reason){
+    fake_session_t *s = CONTAINER_OF(session, fake_session_t, session);
+    pthread_mutex_lock(&s->mutex);
+    s->imape_refs[reason]--;
+    for(size_t i = 0; i < IMAPE_REF_MAXIMUM; i++){
+        if(s->imape_refs[i] < 0){
+            LOG_ERROR("negative imape ref of type %x!\n",
+                      FD(imape_ref_reason_to_dstr(i)));
+        }
+    }
+    pthread_mutex_unlock(&s->mutex);
     fake_session_ref_down(session);
 }
 
@@ -292,7 +319,7 @@ void fake_session_ref_down_test(session_t *session, int reason){
     for(size_t i = 0; i < FAKE_ENGINE_REF_MAXIMUM; i++){
         if(s->test_refs[i] < 0){
             LOG_ERROR("negative test ref of type %x!\n",
-                      FD(fe_ref_reason_to_dstr(reason)));
+                      FD(fe_ref_reason_to_dstr(i)));
         }
     }
     fake_session_ref_down(session);
@@ -316,6 +343,8 @@ static derr_t fake_session_do_alloc(fake_session_t **sptr, fake_pipeline_t *fp,
     s->pipeline = fp;
     s->session.ld = &s->loop_data;
     s->session.td = &s->tlse_data;
+    s->session.id = &s->imape_data;
+    s->session.close = fake_session_close;
 
     // per-engine prestart
     if(s->pipeline->loop){
@@ -326,6 +355,11 @@ static derr_t fake_session_do_alloc(fake_session_t **sptr, fake_pipeline_t *fp,
         tlse_data_prestart(&s->tlse_data, s->pipeline->tlse, &s->session,
                 fake_session_ref_up_tlse, fake_session_ref_down_tlse, ssl_ctx,
                 upwards);
+    }
+    if(s->pipeline->imape){
+        imape_data_prestart(&s->imape_data, s->pipeline->imape, &s->session,
+                upwards, NULL, fake_session_ref_up_imape,
+                fake_session_ref_down_imape);
     }
 
     *sptr = s;
@@ -340,6 +374,9 @@ void fake_session_start(fake_session_t *s){
     }
     if(s->pipeline->tlse){
         tlse_data_start(&s->tlse_data);
+    }
+    if(s->pipeline->imape){
+        imape_data_start(&s->imape_data);
     }
     fake_session_ref_down_test(&s->session, FAKE_ENGINE_REF_START_PROTECT);
 }
@@ -360,8 +397,8 @@ derr_t fake_session_alloc_connect(fake_session_t **sptr, fake_pipeline_t *fp,
     return e;
 }
 
-void fake_session_close(void *session, derr_t error){
-    fake_session_t *s = session;
+void fake_session_close(session_t *session, derr_t error){
+    fake_session_t *s = CONTAINER_OF(session, fake_session_t, session);
     MERGE_VAR(&s->error, &error, "session_close error");
     pthread_mutex_lock(&s->mutex);
     bool do_close = !s->closed;
@@ -378,6 +415,9 @@ void fake_session_close(void *session, derr_t error){
     }
     if(s->pipeline->tlse){
         tlse_data_close(&s->tlse_data);
+    }
+    if(s->pipeline->imape){
+        imape_data_close(&s->imape_data);
     }
     fake_session_ref_down_test(&s->session, FAKE_ENGINE_REF_CLOSE_PROTECT);
 }

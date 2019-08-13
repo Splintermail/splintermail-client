@@ -801,7 +801,6 @@ Separation between lower- and higher-level IMAP logic:
             returns a list of new folders
       - check folder for updates
             returns updated flags and list of new message UIDs
-      - watch folder for updates (like check but blocking)
       - download message X
             returns updated flags and list of new message UIDs
 
@@ -810,6 +809,34 @@ Separation between lower- and higher-level IMAP logic:
             higher-level logic receives hooks that server can't handle alone
       - deal with some updates in the folder you have selected
             no return, server just alerts its client when appropriate
+
+imap_controller_t: the thing that tells imap_session what to do.
+    For imap clients, this/these would be scoped to main().  Multiple clients
+    could exist in a single application and would just own separate,
+    non-interacting imap sessions.  For an imap server, this would be scoped to
+    a listener_spec_t; multiple server applications could coexist on separate,
+    non-interacting listening sockets.
+
+    For clients or sessions with multiple, non-interacting bundles of imap
+    sessions for multiple user accounts, the list of per-user structs should
+    exist within the overall imap_controller_t logic.
+
+imap_hooks_dn_t:
+    Define the imap server behavior.  These should be the same for all servers;
+    it is just "serve up the folder that we have downloaded and decrypted in
+    an IMAP-compliant way".  These should be built into the imap_engine.
+
+    The only special behaviors will be:
+      - protecting the special ditm_keys folder
+
+imap_hooks_up_t:
+    This has two varieties:
+      - a clone/decrypt variety
+      - a watch-the-keys-folder variety
+    It should be possible to define one set of hooks and have a few callbacks
+    like "message_added" which are ignored by sessions which just do cloning
+    (since the underlying maildir will handle them properly), but which trigger
+    special actions in the watch-the-key-folder sessions.
 
 Question:
     should imap_engine be it's own thread and separated from the

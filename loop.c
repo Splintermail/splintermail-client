@@ -809,16 +809,16 @@ static void close_everything_i(uv_async_t *handle){
     loop->pass_down(loop->downstream, &loop->quitmsg);
 
     /* Now we discard messages until we get the "quit" message echoed back to
-       us.  The discarding happens on the event queue handler, and we just need
-       to set loop->quitting here */
+       us.  The discarding happens on the event queue handler after setting
+       loop->quitting=true, which happens in the first call to loop_close(). */
 }
 
 static void close_everything_ii(loop_t *loop){
     /* Now we have received EV_QUIT_UP.  That means all downstream nodes have
        emptied their upwards and downwards queues and released all necessary
        references.  Now that we (the event loop thread) are the last thread
-       with any references, we close all of the handles (which will ref_down()
-       the relevant contexts) and exit the loop. */
+       with any references, we close all of the remaining handles (there should
+       only be async handles left) and the loop can exit. */
 
     // close the remaining handlers in the loop (should only be asyncs)
     uv_walk(&loop->uv_loop, close_remaining_handles, NULL);

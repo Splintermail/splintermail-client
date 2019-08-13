@@ -49,3 +49,7 @@ void link_remove(link_t *link){
     link->next = link;
     link->prev = link;
 }
+
+bool link_list_isempty(link_t *head){
+    return head == head->next;
+}

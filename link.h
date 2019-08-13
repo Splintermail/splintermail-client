@@ -22,6 +22,8 @@ link_t *link_list_pop_last(link_t *head);
 
 void link_remove(link_t *link);
 
+bool link_list_isempty(link_t *head);
+
 // automate for-loops which call CONTAINER_OF for each link in list
 #define LINK_FOR_EACH(var, head, structure, member) \
     for(var = CONTAINER_OF((head)->next, structure, member); \
