@@ -3,10 +3,16 @@
 
 #include <uv.h>
 
+struct imape_worker_t;
+typedef struct imape_worker_t imape_worker_t;
+struct imape_t;
+typedef struct imape_t imape_t;
+struct imape_data_t;
+typedef struct imape_data_t imape_data_t;
+
 #include "engine.h"
 #include "common.h"
 #include "imap_read.h"
-#include "imap_client.h"
 // TODO: find a way to avoid this include
 #include "loop.h"
 
@@ -108,22 +114,15 @@ Threading plan:
 
 */
 
-struct imape_worker_t;
-typedef struct imape_worker_t imape_worker_t;
-struct imape_t;
-typedef struct imape_t imape_t;
-struct imape_data_t;
-typedef struct imape_data_t imape_data_t;
-
 struct imape_t {
     bool initialized;
     // generic engine stuff
+    engine_t engine;
     uv_work_t work_req;
     queue_t event_q;
     queue_t write_events;
     // upstream engine, to which we pass write and read_done events
-    void *upstream;
-    event_passer_t pass_up;
+    engine_t *upstream;
     // for handling quitting state
     bool quitting;
     event_t *quit_ev;
@@ -138,15 +137,13 @@ struct imape_t {
     size_t running_workers;
     // only used for loop_close() if worker threads die early.
     loop_t *loop;
-    derr_t (*worker_new)(imape_t*, imape_worker_t**);
 };
+DEF_CONTAINER_OF(imape_t, engine, engine_t);
 
 /* imape_worker_t is an interface like session_t.  It gives us a neat
    separation between the multithreaded part of the imape_t and the actual imap
    operations. */
 struct imape_worker_t {
-    void (*process_event)(imape_worker_t*, imape_data_t*, event_t*);
-    void (*free)(imape_worker_t*);
     imape_t *imape;
     bool quitting;
     uv_work_t work_req;
@@ -160,6 +157,16 @@ typedef enum {
     IMAPE_ACTIVE,
 } imape_work_state_t;
 
+// the interface provided by either the client or the server logic.
+struct imap_logic_t;
+typedef struct imap_logic_t imap_logic_t;
+struct imap_logic_t {
+    void (*handle_read_event)(imap_logic_t *logic, const event_t *ev);
+    void (*handle_command_event)(imap_logic_t *logic, const event_t *ev);
+    void (*handle_maildir_event)(imap_logic_t *logic, const event_t *ev);
+    void (*free)(imap_logic_t *logic);
+};
+
 struct imape_data_t {
     // prestart stuff
     session_t *session;
@@ -167,13 +174,13 @@ struct imape_data_t {
     bool upwards;
     ref_fn_t ref_up;
     ref_fn_t ref_down;
-    const imap_client_spec_t *client_spec;
+    derr_t (*imap_logic_init)(imape_data_t *id, imap_logic_t **logic);
     // generic per-engine data stuff
     engine_data_state_t data_state;
     event_t start_ev;
     event_t close_ev;
     // IMAP-engine-specific stuff
-    imap_reader_t reader;
+    imap_logic_t *imap_logic;
 
     // Multithreaded worker considerations
     uv_mutex_t mutex;
@@ -184,18 +191,14 @@ struct imape_data_t {
 };
 DEF_CONTAINER_OF(imape_data_t, link, link_t);
 
-derr_t imape_init(imape_t *imape, size_t nwrite_events, event_passer_t pass_up,
-        void *upstream, size_t nworkers, loop_t *loop,
-        derr_t (*worker_new)(imape_t*, imape_worker_t**));
+derr_t imape_init(imape_t *imape, size_t nwrite_events, engine_t *upstream,
+        size_t nworkers, loop_t *loop);
 void imape_free(imape_t *imape);
 derr_t imape_add_to_loop(imape_t *imape, uv_loop_t *loop);
 
-// function is an event_passer_t
-void imape_pass_event(void *imape_void, event_t *ev);
-
 void imape_data_prestart(imape_data_t *id, imape_t *imape, session_t *session,
-        bool upwards, const imap_client_spec_t *client_spec, ref_fn_t ref_up,
-        ref_fn_t ref_down);
+        bool upwards, ref_fn_t ref_up, ref_fn_t ref_down,
+        derr_t (*imap_logic_init)(imape_data_t*, imap_logic_t**));
 void imape_data_start(imape_data_t *id);
 void imape_data_close(imape_data_t *id);
 /* with a multi-threaded engine, since SESSION_CLOSE is not guaranteed to be

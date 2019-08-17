@@ -5,9 +5,11 @@
 #include "engine.h"
 #include "loop.h"
 #include "tls_engine.h"
+#include "imap_engine.h"
 #include "networking.h"
 
 typedef struct {
+    session_t session;
     uv_mutex_t mutex;
     size_t refs;
     bool closed;
@@ -33,6 +35,9 @@ typedef struct {
     ssl_context_t *ssl_ctx_client;
     ssl_context_t *ssl_ctx_server;
 } imap_pipeline_t;
+
+derr_t imap_session_up_alloc(imap_session_t **sptr, imap_pipeline_t *pipeline,
+
 
 /* **sptr is where the allocated session is placed.
    *pipeline should be an imap_pipeline_t */

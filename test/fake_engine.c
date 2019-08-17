@@ -2,6 +2,7 @@
 #include <logger.h>
 
 #include "fake_engine.h"
+#include "fake_imap_logic.h"
 
 DSTR_STATIC(fe_ref_read_dstr, "read");
 DSTR_STATIC(fe_ref_write_dstr, "write");
@@ -358,8 +359,9 @@ static derr_t fake_session_do_alloc(fake_session_t **sptr, fake_pipeline_t *fp,
     }
     if(s->pipeline->imape){
         imape_data_prestart(&s->imape_data, s->pipeline->imape, &s->session,
-                upwards, NULL, fake_session_ref_up_imape,
-                fake_session_ref_down_imape);
+                upwards, fake_session_ref_up_imape,
+                fake_session_ref_down_imape,
+                fake_imap_logic_init);
     }
 
     *sptr = s;
@@ -424,9 +426,15 @@ void fake_session_close(session_t *session, derr_t error){
 
 /////// fake engine stuff
 
+static void fake_engine_pass_event(engine_t *engine, event_t *ev){
+    fake_engine_t *fake_engine = CONTAINER_OF(engine, fake_engine_t, engine);
+    queue_append(&fake_engine->event_q, &ev->link);
+}
+
 derr_t fake_engine_init(fake_engine_t *fake_engine){
     derr_t e = E_OK;
     PROP(&e, queue_init(&fake_engine->event_q) );
+    fake_engine->engine.pass_event = fake_engine_pass_event;
     return e;
 }
 
@@ -434,13 +442,8 @@ void fake_engine_free(fake_engine_t *fake_engine){
     queue_free(&fake_engine->event_q);
 }
 
-void fake_engine_pass_event(void *engine, event_t *ev){
-    fake_engine_t *fake_engine = engine;
-    queue_append(&fake_engine->event_q, &ev->link);
-}
-
-derr_t fake_engine_run(fake_engine_t *fe, event_passer_t pass_up,
-        void *upstream, void (*handle_read)(void*, event_t*),
+derr_t fake_engine_run(fake_engine_t *fe, engine_t *upstream,
+        void (*handle_read)(void*, event_t*),
         void (*handle_write_done)(void*, event_t*), bool (*quit_ready)(void*),
         void *cb_data){
     derr_t e = E_OK;
@@ -456,13 +459,13 @@ derr_t fake_engine_run(fake_engine_t *fe, event_passer_t pass_up,
                 handle_read(cb_data, ev);
                 // return buffer
                 ev->ev_type = EV_READ_DONE;
-                pass_up(upstream, ev);
+                upstream->pass_event(upstream, ev);
                 break;
             case EV_QUIT_DOWN:
                 // check if we need to wait for write events to be returned
                 if(quit_ready(cb_data)){
                     ev->ev_type = EV_QUIT_UP;
-                    pass_up(upstream, ev);
+                    upstream->pass_event(upstream, ev);
                     return e;
                 }else{
                     quit_ev = ev;
@@ -473,7 +476,7 @@ derr_t fake_engine_run(fake_engine_t *fe, event_passer_t pass_up,
                 // check for quitting condition
                 if(quit_ev && quit_ready(cb_data)){
                     quit_ev->ev_type = EV_QUIT_UP;
-                    pass_up(upstream, quit_ev);
+                    upstream->pass_event(upstream, quit_ev);
                     return e;
                 }
                 break;

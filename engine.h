@@ -37,6 +37,10 @@ typedef enum {
     // an empty buffer passed back from upstream.  Might carry an error.
     EV_WRITE_DONE,
 
+    // events which come to the imap engine from outside the pipeline
+    EV_COMMAND,
+    EV_MAILDIR,
+
     /* First half of the quit sequence.  This must start with the upstream-most
        engine (the socket engine).
 
@@ -137,8 +141,12 @@ typedef struct {
 DEF_CONTAINER_OF(event_t, link, link_t);
 DEF_CONTAINER_OF(event_t, qcb, queue_cb_t);
 
-// Does not set session, init the dstr, or set callbacks.
+// Does not set session, or callbacks, or init the buffer.
 void event_prep(event_t *ev);
+
+typedef struct engine_t {
+    void (*pass_event)(struct engine_t*, event_t*);
+} engine_t;
 
 // pass an event to an engine
 typedef void (*event_passer_t)(void*, event_t*);

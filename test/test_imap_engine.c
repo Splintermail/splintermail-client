@@ -11,11 +11,9 @@
 #include <logger.h>
 #include <loop.h>
 #include <tls_engine.h>
-#include <imap_worker.h>
 
 #include "test_utils.h"
 #include "fake_engine.h"
-#include "fake_imap_worker.h"
 
 #define NUM_THREADS 10
 #define WRITES_PER_THREAD 1000
@@ -81,14 +79,14 @@ static void *loop_thread(void *arg){
     PROP_GO(&e, ssl_context_new_server(&ctx->ssl_ctx, cert.data, key.data,
                                     dh.data), done);
 
-    PROP_GO(&e, imape_init(&ctx->imape, 5, imape_pass_event, &ctx->tlse, 5,
-                &ctx->loop, fake_imap_worker_new), cu_ssl_ctx);
+    PROP_GO(&e, imape_init(&ctx->imape, 5, &ctx->tlse.engine, 5, &ctx->loop),
+            cu_ssl_ctx);
 
-    PROP_GO(&e, tlse_init(&ctx->tlse, 5, 5, loop_pass_event, &ctx->loop,
-                imape_pass_event, &ctx->imape), cu_imape);
+    PROP_GO(&e, tlse_init(&ctx->tlse, 5, 5, &ctx->loop.engine,
+                &ctx->imape.engine), cu_imape);
 
-    PROP_GO(&e, loop_init(&ctx->loop, 5, 5, &ctx->tlse, tlse_pass_event,
-                "127.0.0.1", port_str), cu_tlse);
+    PROP_GO(&e, loop_init(&ctx->loop, 5, 5, &ctx->tlse.engine, "127.0.0.1",
+                port_str), cu_tlse);
 
     IF_PROP(&e, tlse_add_to_loop(&ctx->tlse, &ctx->loop.uv_loop) ){
         // Loop can't run but can't close without running; shit's fucked

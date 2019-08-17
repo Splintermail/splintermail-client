@@ -70,8 +70,7 @@ static void *loop_thread(void *arg){
        testing that behavior */
     size_t num_write_wrappers = NUM_THREADS * WRITES_PER_THREAD;
     PROP_GO(&e, loop_init(&ctx->loop, num_read_events, num_write_wrappers,
-                       ctx->downstream, fake_engine_pass_event,
-                       "127.0.0.1", port_str), done);
+                       ctx->downstream, "127.0.0.1", port_str), done);
 
     // create the listener
     test_lspec_t test_lspec = {
@@ -159,7 +158,7 @@ static void launch_second_half_of_test(session_cb_data_t *cb_data,
         s->mgr_data = cbrw;
 
         // pass the write
-        loop_pass_event(&cb_data->test_ctx->loop, ev_new);
+        fp->loop->engine.pass_event(&fp->loop->engine, ev_new);
         cb_data->nwrites++;
 
         fake_session_ref_down_test(&s->session, FAKE_ENGINE_REF_CBRW_PROTECT);
@@ -196,7 +195,8 @@ static void handle_read(void *data, event_t *ev){
         event_t *ev_new = cb_reader_writer_read(cbrw, &ev->buffer);
         if(ev_new){
             // pass the write
-            loop_pass_event(&cb_data->test_ctx->loop, ev_new);
+            fake_pipeline_t *fp = ((fake_session_t*)ev->session)->pipeline;
+            fp->loop->engine.pass_event(&fp->loop->engine, ev_new);
             cb_data->nwrites++;
         }
     }
@@ -222,7 +222,8 @@ static void handle_read(void *data, event_t *ev){
         fake_session_ref_up_test(ev_new->session, FAKE_ENGINE_REF_WRITE);
         ev_new->ev_type = EV_WRITE;
         // pass the write
-        loop_pass_event(&cb_data->test_ctx->loop, ev_new);
+        fake_pipeline_t *fp = ((fake_session_t*)ev->session)->pipeline;
+        fp->loop->engine.pass_event(&fp->loop->engine, ev_new);
         cb_data->nwrites++;
     }
 }
@@ -297,7 +298,7 @@ static derr_t test_loop(void){
 
     // catch error from fake_engine_run
     MERGE_CMD(&e, fake_engine_run(
-            &fake_engine, loop_pass_event, &test_ctx.loop,
+            &fake_engine, &test_ctx.loop.engine,
             handle_read, handle_write_done, quit_ready, &cb_data),
             "fake_engine_run");
 

@@ -13,6 +13,7 @@
 static void advance_state(tlse_data_t *td);
 static void tlse_data_onthread_start(tlse_data_t *td);
 static void tlse_data_onthread_close(tlse_data_t *td);
+static void tlse_pass_event(engine_t *tlse_engine, event_t *ev);
 
 
 /* Called after we decided we needed to do an SSL_read but we had nowhere to
@@ -75,7 +76,7 @@ static void do_ssl_read(tlse_data_t *td){
         td->read_out->ev_type = EV_READ;
         td->read_out->session = td->session;
         td->ref_up(td->session, TLSE_REF_READ);
-        tlse->pass_down(tlse->downstream, td->read_out);
+        tlse->downstream->pass_event(tlse->downstream, td->read_out);
         td->read_out = NULL;
     }else{
         switch(SSL_get_error(td->ssl, ret)){
@@ -157,7 +158,7 @@ static void do_ssl_write(tlse_data_t *td){
     else{
         // send WRITE_DONE after successful writes
         td->write_in->ev_type = EV_WRITE_DONE;
-        tlse->pass_down(tlse->downstream, td->write_in);
+        tlse->downstream->pass_event(tlse->downstream, td->write_in);
         td->write_in = NULL;
     }
     return;
@@ -195,7 +196,7 @@ static void do_write_out(tlse_data_t *td){
     td->write_out->ev_type = EV_WRITE;
     td->write_out->session = td->session;
     td->ref_up(td->session, TLSE_REF_WRITE);
-    tlse->pass_up(tlse->upstream, td->write_out);
+    tlse->upstream->pass_event(tlse->upstream, td->write_out);
     td->write_out = NULL;
     // optimistically return to idle state; it might kick us back to wfewb
     td->tls_state = TLS_STATE_IDLE;
@@ -289,7 +290,7 @@ static bool enter_idle(tlse_data_t *td){
             }
             // return read buffer
             td->read_in->ev_type = EV_READ_DONE;
-            tlse->pass_up(tlse->upstream, td->read_in);
+            tlse->upstream->pass_event(tlse->upstream, td->read_in);
             td->read_in = NULL;
         }
     }
@@ -315,7 +316,7 @@ static bool enter_idle(tlse_data_t *td){
                 td->read_out->ev_type = EV_READ;
                 td->read_out->session = td->session;
                 td->ref_up(td->session, TLSE_REF_READ);
-                tlse->pass_down(tlse->downstream, td->read_out);
+                tlse->downstream->pass_event(tlse->downstream, td->read_out);
                 td->read_out = NULL;
                 // mark EOF as sent
                 td->eof_sent = true;
@@ -416,7 +417,7 @@ static void tlse_process_events(uv_work_t *req){
                 // LOG_ERROR("tlse: READ\n");
                 if(tlse->quitting || td->tls_state == TLS_STATE_CLOSED){
                     ev->ev_type = EV_READ_DONE;
-                    tlse->pass_up(tlse->upstream, ev);
+                    tlse->upstream->pass_event(tlse->upstream, ev);
                 }else{
                     queue_append(&td->pending_reads, &ev->link);
                 }
@@ -433,7 +434,7 @@ static void tlse_process_events(uv_work_t *req){
                 // LOG_ERROR("tlse: WRITE\n");
                 if(tlse->quitting || td->tls_state == TLS_STATE_CLOSED){
                     ev->ev_type = EV_WRITE_DONE;
-                    tlse->pass_down(tlse->downstream, ev);
+                    tlse->downstream->pass_event(tlse->downstream, ev);
                 }else{
                     queue_append(&td->pending_writes, &ev->link);
                 }
@@ -448,7 +449,7 @@ static void tlse_process_events(uv_work_t *req){
                 // were we waiting for that WRITE_DONE before passing QUIT_UP?
                 if(tlse->quit_ev
                         && tlse->write_events.len == tlse->nwrite_events){
-                    tlse->pass_up(tlse->upstream, tlse->quit_ev);
+                    tlse->upstream->pass_event(tlse->upstream, tlse->quit_ev);
                     tlse->quit_ev = NULL;
                     should_continue = false;
                 }
@@ -458,7 +459,7 @@ static void tlse_process_events(uv_work_t *req){
                 // enter quitting state
                 tlse->quitting = true;
                 // pass the QUIT_DOWN along
-                tlse->pass_down(tlse->downstream, ev);
+                tlse->downstream->pass_event(tlse->downstream, ev);
                 break;
             case EV_QUIT_UP:
                 // LOG_ERROR("tlse: QUIT_UP\n");
@@ -467,7 +468,7 @@ static void tlse_process_events(uv_work_t *req){
                     // store this event for later
                     tlse->quit_ev = ev;
                 }else{
-                    tlse->pass_up(tlse->upstream, ev);
+                    tlse->upstream->pass_event(tlse->upstream, ev);
                     should_continue = false;
                 }
                 break;
@@ -488,8 +489,8 @@ static void tlse_process_events(uv_work_t *req){
 }
 
 
-void tlse_pass_event(void *tlse_void, event_t *ev){
-    tlse_t *tlse = tlse_void;
+static void tlse_pass_event(engine_t *tlse_engine, event_t *ev){
+    tlse_t *tlse = CONTAINER_OF(tlse_engine, tlse_t, engine);
     queue_append(&tlse->event_q, &ev->link);
 }
 
@@ -514,7 +515,7 @@ void tlse_data_start(tlse_data_t *td){
     td->ref_up(td->session, TLSE_REF_START_EVENT);
 
     // pass the starting event
-    tlse_pass_event(td->tlse, &td->start_ev);
+    tlse_pass_event(&td->tlse->engine, &td->start_ev);
 }
 
 static void tlse_data_onthread_start(tlse_data_t *td){
@@ -625,7 +626,7 @@ void tlse_data_close(tlse_data_t *td){
     td->ref_up(td->session, TLSE_REF_CLOSE_EVENT);
 
     // pass the closing event
-    tlse_pass_event(td->tlse, &td->close_ev);
+    tlse_pass_event(&td->tlse->engine, &td->close_ev);
 }
 
 // called from the tlse thread, after EV_SESSION_CLOSE is received
@@ -650,7 +651,7 @@ static void tlse_data_onthread_close(tlse_data_t *td){
     // release buffers we are holding
     if(td->read_in){
         td->read_in->ev_type = EV_READ_DONE;
-        tlse->pass_up(tlse->upstream, td->read_in);
+        tlse->upstream->pass_event(tlse->upstream, td->read_in);
         td->read_in = NULL;
     }
     if(td->read_out){
@@ -659,7 +660,7 @@ static void tlse_data_onthread_close(tlse_data_t *td){
     }
     if(td->write_in){
         td->write_in->ev_type = EV_WRITE_DONE;
-        tlse->pass_down(tlse->downstream, td->write_in);
+        tlse->downstream->pass_event(tlse->downstream, td->write_in);
         td->write_in = NULL;
     }
     if(td->write_out){
@@ -672,12 +673,12 @@ static void tlse_data_onthread_close(tlse_data_t *td){
     while((link = queue_pop_first(&td->pending_reads, false))){
         event_t *ev = CONTAINER_OF(link, event_t, link);
         ev->ev_type = EV_READ_DONE;
-        tlse->pass_up(tlse->upstream, ev);
+        tlse->upstream->pass_event(tlse->upstream, ev);
     }
     while((link = queue_pop_first(&td->pending_writes, false))){
         event_t *ev = CONTAINER_OF(link, event_t, link);
         ev->ev_type = EV_WRITE_DONE;
-        tlse->pass_down(tlse->downstream, ev);
+        tlse->downstream->pass_event(tlse->downstream, ev);
     }
 
     // free everything:
@@ -690,18 +691,17 @@ static void tlse_data_onthread_close(tlse_data_t *td){
 
 
 derr_t tlse_init(tlse_t *tlse, size_t nread_events, size_t nwrite_events,
-                 event_passer_t pass_up, void *upstream,
-                 event_passer_t pass_down, void *downstream){
+        engine_t *upstream, engine_t *downstream){
     derr_t e = E_OK;
 
     PROP_GO(&e, queue_init(&tlse->event_q), fail);
     PROP_GO(&e, event_pool_init(&tlse->read_events, nread_events), fail_event_q);
     PROP_GO(&e, event_pool_init(&tlse->write_events, nwrite_events), fail_reads);
 
+    tlse->engine.pass_event = tlse_pass_event;
+
     tlse->work_req.data = tlse;
-    tlse->pass_up = pass_up;
     tlse->upstream = upstream;
-    tlse->pass_down = pass_down;
     tlse->downstream = downstream;
 
     tlse->quitting = false;

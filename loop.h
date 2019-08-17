@@ -58,6 +58,7 @@ DEF_CONTAINER_OF(read_wrapper_t, event, event_t);
 
 // the socket_engine and event loop, one per pipeline
 struct loop_t {
+    engine_t engine;
     uv_loop_t uv_loop;
     uv_async_t loop_event_passer;
     uv_async_t loop_closer;
@@ -71,13 +72,13 @@ struct loop_t {
     queue_t write_wrappers;
     queue_t event_q;
     // neighboring engine
-    void *downstream;
-    event_passer_t pass_down;
+    engine_t *downstream;
     event_t quitmsg;
     bool quitting;
     // error passed by loop_close
     derr_t error;
 };
+DEF_CONTAINER_OF(loop_t, engine, engine_t);
 
 // per-session data struct
 struct loop_data_t {
@@ -125,15 +126,11 @@ struct listener_spec_t {
 
 // num_write_wrappers must match the downstream engine's num_write_events
 derr_t loop_init(loop_t *loop, size_t num_read_events,
-                 size_t num_write_wrappers,
-                 void *downstream, event_passer_t pass_down,
-                 const char* remote_host, const char* remote_service);
+        size_t num_write_wrappers, engine_t *downstream,
+        const char* remote_host, const char* remote_service);
 void loop_free(loop_t *loop);
 
 derr_t loop_run(loop_t *loop);
-
-// function is an event_passer_t
-void loop_pass_event(void *loop_engine, event_t *event);
 
 void loop_close(loop_t *loop, derr_t error);
 

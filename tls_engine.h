@@ -76,21 +76,21 @@ typedef struct tlse_data_t tlse_data_t;
 typedef struct {
     bool initialized;
     // generic engine stuff
+    engine_t engine;
     uv_work_t work_req;
     queue_t event_q;
     queue_t read_events;
     queue_t write_events;
     // upstream engine, to which we pass write and read_done events
-    void *upstream;
-    event_passer_t pass_up;
+    engine_t *upstream;
     // downstream engine, to which we pass read and write_done events
-    void *downstream;
-    event_passer_t pass_down;
+    engine_t *downstream;
     // for handling quitting state
     bool quitting;
     event_t *quit_ev;
     size_t nwrite_events;
 } tlse_t;
+DEF_CONTAINER_OF(tlse_t, engine, engine_t);
 
 
 typedef enum {
@@ -149,15 +149,11 @@ DEF_CONTAINER_OF(tlse_data_t, write_out_qcb, queue_cb_t);
 DEF_CONTAINER_OF(tlse_data_t, write_in_qcb, queue_cb_t);
 
 derr_t tlse_init(tlse_t *tlse, size_t nread_events, size_t nwrite_events,
-                 event_passer_t pass_up, void *upstream,
-                 event_passer_t pass_down, void *downstream);
+        engine_t *upstream, engine_t *downstream);
 
 void tlse_free(tlse_t *tlse);
 
 derr_t tlse_add_to_loop(tlse_t *tlse, uv_loop_t *loop);
-
-// function is an event_passer_t
-void tlse_pass_event(void *tlse_void, event_t *ev);
 
 /* prestart() is for setting before any errors can happen and before any
    messages can be sent. */

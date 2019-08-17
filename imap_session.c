@@ -5,40 +5,53 @@ static void uv_perror(const char *prefix, int code){
     fprintf(stderr, "%s: %s\n", prefix, uv_strerror(code));
 }
 
-derr_t session_alloc(void **sptr, void *pipeline, ssl_context_t *ssl_ctx){
+static derr_t session_alloc(imap_session_t **sptr, imap_pipeline_t *pipeline,
+        ssl_context_t *ssl_ctx, bool upwards){
     derr_t e = E_OK;
     // allocate the struct
     imap_session_t *s = malloc(sizeof(*s));
     if(!s) ORIG(E_NOMEM, "no mem");
     *s = (imap_session_t){0};
-    // save some important data
-    s->pipeline = pipeline;
-    // prepare the refs
-    ret = uv_mutex_init(&s->mutex, NULL);
+
+    // session prestart
+    int ret = uv_mutex_init(&s->mutex, NULL);
     if(ret < 0){
-        uv_perror("uv_mutex_init", ret);
-        error = (ret == UV_ENOMEM) ? E_NOMEM : E_UV;
-        ORIG_GO(error, "error initializing mutex", fail);
+        TRACE(&e, "uv_mutex_init: %x\n", FUV(&ret));
+        ORIG_GO(&e, uv_err_type(ret), "error initializing mutex", fail);
     }
     s->refs = 1;
     s->closed = false;
-    // prepare for session getters
-    imap_pipeline_t *pipeline = data;
-    s->loop = &pipeline->loop;
-    s->tlse = &pipeline->tlse;
+    s->pipeline = pipeline;
+    s->session.ld = &s->loop_data;
+    s->session.td = &s->tlse_data;
+    s->session.id = &s->imape_data;
     s->ssl_ctx = ssl_ctx;
-    // start engine data structs
-    loop_data_start(&s->loop_data, s->loop, s);
-    tlse_data_start(&s->tlse_data, s->tlse, s);
-    imape_data_start(&s->imape_data, s->imape, s);
+
+    // per-engine prestart
+    loop_data_prestart(&s->loop_data, s->pipeline->loop, &s->session,
+            imap_session_ref_up_loop, imap_session_ref_down_loop);
+
+    tlse_data_prestart(&s->tlse_data, s->pipeline->tlse, &s->session,
+            fake_session_ref_up_tlse, fake_session_ref_down_tlse, ssl_ctx,
+            upwards);
+
     *sptr = s;
-    session_ref_down(s);
     return e;
 
 fail:
     free(s);
     *sptr = NULL;
     return e;
+}
+
+derr_t imap_connect_up(imap_session_t **sptr, const imap_client_spec_t *spec);
+
+void imap_session_start(imap_session_t *s){
+    // per-engine start
+    loop_data_start(&s->loop_data, s->loop, s);
+    tlse_data_start(&s->tlse_data, s->tlse, s);
+    imape_data_start(&s->imape_data, s->imape, s);
+    session_ref_down(s);
 }
 
 static void imap_session_ref_up(void *session){
@@ -55,6 +68,11 @@ static void imap_session_ref_down(void *session){
     uv_mutex_unlock(&s->mutex);
 
     if(refs > 0) return;
+
+    // finish closing the imape_data
+    if(s->pipeline->imape){
+        imape_data_postclose(&s->imape_data);
+    }
 
     // now the session is no longer in use, we call the session manager hook
     if(s->session_destroyed){
@@ -139,29 +157,4 @@ void session_close(void *session, derr_t error){
     imap_session_ref_down(session);
 
     if(error) loop_close(s->loop, error);
-}
-
-static loop_data_t *session_get_loop_data(void *session){
-    imap_session_t *s = session;
-    return &s->loop_data;
-}
-
-static tlse_data_t *session_get_tlse_data(void *session){
-    imap_session_t *s = session;
-    return &s->tlse_data;
-}
-
-static imape_data_t *session_get_imape_data(void *session){
-    imap_session_t *s = session;
-    return &s->imape_data;
-}
-
-static ssl_context_t *session_get_ssl_ctx_client(void *session){
-    imap_session_t *s = session;
-    return s->ssl_ctx_client;
-}
-
-static ssl_context_t *session_get_ssl_ctx_server(void *session){
-    imap_session_t *s = session;
-    return s->ssl_ctx_server;
 }

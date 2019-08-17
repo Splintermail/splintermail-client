@@ -137,15 +137,16 @@ bool fake_session_get_upwards(void *session);
 /* The fake engine expects to be the last engine in a pipeline.  It will make
    callbacks into the test whenever a READ or WRITE_DONE is passed to it. */
 typedef struct {
+    engine_t engine;
     queue_t event_q;
 } fake_engine_t;
+DEF_CONTAINER_OF(fake_engine_t, engine, engine_t);
 
 derr_t fake_engine_init(fake_engine_t *fake_engine);
 void fake_engine_free(fake_engine_t *fake_engine);
-void fake_engine_pass_event(void *engine, event_t *ev);
 
-derr_t fake_engine_run(fake_engine_t *fe, event_passer_t pass_up,
-        void *upstream, void (*handle_read)(void*, event_t*),
+derr_t fake_engine_run(fake_engine_t *fe, engine_t *upstream,
+        void (*handle_read)(void*, event_t*),
         void (*handle_write_done)(void*, event_t*), bool (*quit_ready)(void*),
         void *cb_data);
 

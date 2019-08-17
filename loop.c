@@ -8,6 +8,7 @@
 #include "uv_util.h"
 
 static void loop_data_onthread_close(loop_data_t *ld);
+static void loop_pass_event(engine_t *loop_engine, event_t *event);
 
 
 static void wrap_write(write_wrapper_t *wr_wrap, event_t *ev){
@@ -220,7 +221,7 @@ static void read_cb(uv_stream_t *stream, ssize_t ssize_read,
     // pass the buffer down the pipeline
     ev->ev_type = EV_READ;
     // ev->session already set and upref'd in allocator
-    loop->pass_down(loop->downstream, ev);
+    loop->downstream->pass_event(loop->downstream, ev);
     return;
 
 return_buffer:
@@ -261,7 +262,7 @@ static void write_cb(uv_write_t *uv_write, int status){
 return_buf:
     // return event
     ev->ev_type = EV_WRITE_DONE;
-    loop->pass_down(loop->downstream, ev);
+    loop->downstream->pass_event(loop->downstream, ev);
     // if there was an error, close the session
     if(is_error(e)){
         ev->session->close(ev->session, e);
@@ -323,13 +324,13 @@ static void loop_data_connect_finish(loop_data_t *ld){
         // should we skip this?
         if(ld->state == DATA_STATE_CLOSED){
             ev->ev_type = EV_WRITE_DONE;
-            loop->pass_down(loop->downstream, ev);
+            loop->downstream->pass_event(loop->downstream, ev);
         // or can we write it to the socket?
         }else{
             IF_PROP(&e, handle_write(loop, ld, ev)){
                 // just hand it back to the downstream
                 ev->ev_type = EV_WRITE_DONE;
-                loop->pass_down(loop->downstream, ev);
+                loop->downstream->pass_event(loop->downstream, ev);
                 // close the session
                 ld->session->close(ld->session, e);
                 PASSED(e);
@@ -541,7 +542,7 @@ void loop_data_start(loop_data_t *ld){
     ld->start_ev.buffer = (dstr_t){0};
     // ref up the starting event
     ld->ref_up(ld->session, LOOP_REF_START_EVENT);
-    loop_pass_event(ld->loop, &ld->start_ev);
+    loop_pass_event(&ld->loop->engine, &ld->start_ev);
 }
 
 
@@ -806,7 +807,7 @@ static void close_everything_i(uv_async_t *handle){
 
     // Next, we pass the "quit" message to the next node of the pipeline
     loop->quitmsg.ev_type = EV_QUIT_DOWN;
-    loop->pass_down(loop->downstream, &loop->quitmsg);
+    loop->downstream->pass_event(loop->downstream, &loop->quitmsg);
 
     /* Now we discard messages until we get the "quit" message echoed back to
        us.  The discarding happens on the event queue handler after setting
@@ -857,7 +858,7 @@ static void loop_data_onthread_close(loop_data_t *ld){
             event_t *ev = CONTAINER_OF(link, event_t, link);
             // just hand it back to the downstream
             ev->ev_type = EV_WRITE_DONE;
-            loop->pass_down(loop->downstream, ev);
+            loop->downstream->pass_event(loop->downstream, ev);
         }
         queue_free(&ld->preconnected_writes);
     }
@@ -876,7 +877,7 @@ void loop_data_close(loop_data_t *ld){
     ld->close_ev.buffer = (dstr_t){0};
     // ref up for the close event
     ld->ref_up(ld->session, LOOP_REF_CLOSE_EVENT);
-    loop_pass_event(ld->loop, &ld->close_ev);
+    loop_pass_event(&ld->loop->engine, &ld->close_ev);
 }
 
 
@@ -913,14 +914,14 @@ static void event_cb(uv_async_t *handle){
             case EV_WRITE:
                 if(loop->quitting || ld->state == DATA_STATE_CLOSED){
                     ev->ev_type = EV_WRITE_DONE;
-                    loop->pass_down(loop->downstream, ev);
+                    loop->downstream->pass_event(loop->downstream, ev);
                 }else if(ld->connected == false){
                     queue_append(&ld->preconnected_writes, &ev->link);
                 }else{
                     IF_PROP(&e, handle_write(loop, ld, ev) ){
                         // return write buffer
                         ev->ev_type = EV_WRITE_DONE;
-                        loop->pass_down(loop->downstream, ev);
+                        loop->downstream->pass_event(loop->downstream, ev);
                         // close session
                         ev->session->close(ev->session, e);
                         PASSED(e);
@@ -954,10 +955,8 @@ static void event_cb(uv_async_t *handle){
 
 
 derr_t loop_init(loop_t *loop, size_t num_read_events,
-                 size_t num_write_wrappers,
-                 void *downstream, event_passer_t pass_down,
-                 const char* remote_host,
-                 const char* remote_service){
+        size_t num_write_wrappers, engine_t *downstream,
+        const char* remote_host, const char* remote_service){
     derr_t e = E_OK;
 
     // init loop
@@ -1030,9 +1029,11 @@ derr_t loop_init(loop_t *loop, size_t num_read_events,
     // init event queue
     PROP_GO(&e, queue_init(&loop->event_q), fail_wr_wraps);
 
+    // setup the engine_t interface
+    loop->engine.pass_event = loop_pass_event;
+
     // store values
     loop->downstream = downstream;
-    loop->pass_down = pass_down;
 
     loop->remote_host = remote_host;
     loop->remote_service = remote_service;
@@ -1113,9 +1114,8 @@ derr_t loop_run(loop_t *loop){
 }
 
 
-// function is an event_passer_t
-void loop_pass_event(void *loop_engine, event_t *event){
-    loop_t *loop = loop_engine;
+static void loop_pass_event(engine_t *loop_engine, event_t *event){
+    loop_t *loop = CONTAINER_OF(loop_engine, loop_t, engine);
     // put the event in the queue
     queue_append(&loop->event_q, &event->link);
     // let the loop know there's an event

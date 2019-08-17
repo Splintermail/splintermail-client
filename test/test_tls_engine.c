@@ -30,7 +30,7 @@ typedef struct {
     loop_t loop;
     tlse_t tlse;
     ssl_context_t ssl_ctx;
-    void *downstream;
+    engine_t *downstream;
     derr_t error;
     pthread_mutex_t *mutex;
     pthread_cond_t *cond;
@@ -79,13 +79,11 @@ static void *loop_thread(void *arg){
     PROP_GO(&e, ssl_context_new_server(&ctx->ssl_ctx, cert.data, key.data,
                                     dh.data), done);
 
-    PROP_GO(&e, tlse_init(&ctx->tlse, 5, 5,
-                       loop_pass_event, &ctx->loop,
-                       fake_engine_pass_event, ctx->downstream), cu_ssl_ctx);
+    PROP_GO(&e, tlse_init(&ctx->tlse, 5, 5, &ctx->loop.engine,
+                ctx->downstream), cu_ssl_ctx);
 
-    PROP_GO(&e, loop_init(&ctx->loop, 5, 5,
-                       &ctx->tlse, tlse_pass_event,
-                       "127.0.0.1", port_str), cu_tlse);
+    PROP_GO(&e, loop_init(&ctx->loop, 5, 5, &ctx->tlse.engine, "127.0.0.1",
+                port_str), cu_tlse);
 
     IF_PROP(&e, tlse_add_to_loop(&ctx->tlse, &ctx->loop.uv_loop) ){
         // Loop can't run but can't close without running; shit's fucked
@@ -194,7 +192,7 @@ static void launch_second_half_of_test(session_cb_data_t *cb_data,
         s->mgr_data = cbrw;
 
         // pass the write
-        tlse_pass_event(&cb_data->test_ctx->tlse, ev_new);
+        fp->tlse->engine.pass_event(&fp->tlse->engine, ev_new);
         cb_data->nwrites++;
 
         fake_session_ref_down_test(&s->session, FAKE_ENGINE_REF_CBRW_PROTECT);
@@ -231,7 +229,8 @@ static void handle_read(void *data, event_t *ev){
         event_t *ev_new = cb_reader_writer_read(cbrw, &ev->buffer);
         if(ev_new){
             // pass the write
-            tlse_pass_event(&cb_data->test_ctx->tlse, ev_new);
+            fake_pipeline_t *fp = ((fake_session_t*)ev->session)->pipeline;
+            fp->tlse->engine.pass_event(&fp->tlse->engine, ev_new);
             cb_data->nwrites++;
         }
     }
@@ -257,7 +256,8 @@ static void handle_read(void *data, event_t *ev){
         fake_session_ref_up_test(ev_new->session, FAKE_ENGINE_REF_WRITE);
         ev_new->ev_type = EV_WRITE;
         // pass the write
-        tlse_pass_event(&cb_data->test_ctx->tlse, ev_new);
+        fake_pipeline_t *fp = ((fake_session_t*)ev->session)->pipeline;
+        fp->tlse->engine.pass_event(&fp->tlse->engine, ev_new);
         cb_data->nwrites++;
     }
 }
@@ -301,7 +301,7 @@ static derr_t test_tlse(void){
     pthread_mutex_lock(&mutex);
     unlock_mutex_on_error = true;
     test_context_t test_ctx = {
-        .downstream = &fake_engine,
+        .downstream = &fake_engine.engine,
         .mutex = &mutex,
         .cond = &cond,
     };
@@ -344,7 +344,7 @@ static derr_t test_tlse(void){
 
     // catch error from fake_engine_run
     MERGE_CMD(&e, fake_engine_run(
-            &fake_engine, tlse_pass_event, &test_ctx.tlse,
+            &fake_engine, &test_ctx.tlse.engine,
             handle_read, handle_write_done, quit_ready, &cb_data),
             "fake_engine_run");
 
