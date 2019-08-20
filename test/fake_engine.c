@@ -222,6 +222,9 @@ fail:
 static void fake_session_ref_up(session_t *session){
     fake_session_t *s = CONTAINER_OF(session, fake_session_t, session);
     pthread_mutex_lock(&s->mutex);
+    if(s->refs == 0){
+        LOG_DEBUG("necromatic ref_up detected!\n");
+    }
     ++s->refs;
     // LOG_DEBUG("ref_up (%x)\n", FI(s->refs));
     pthread_mutex_unlock(&s->mutex);

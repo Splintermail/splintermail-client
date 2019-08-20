@@ -387,7 +387,7 @@ static void loop_data_connect_iii(uv_connect_t *req, int status){
 
     // TODO: better handling of the plethora of connection failure modes
     // TODO: log the address here too
-    TRACE(&ld->connect_iii_error, "failed to uv_conect: %x\n", FUV(&status));
+    TRACE(&ld->connect_iii_error, "failed to uv_connect: %x\n", FUV(&status));
 
     // retry the connection:
     if(ld->gai_aiptr->ai_next != NULL){
@@ -426,7 +426,8 @@ static void loop_data_connect_ii(uv_getaddrinfo_t* req, int status,
     // store this later, we need to free the whole chain at once
     ld->gai_result = result;
 
-    if(status == UV_ECANCELED){
+    // we also check to make sure the loop_data_t hasn't been canceled
+    if(status == UV_ECANCELED || ld->state == DATA_STATE_CLOSED){
         // no need for errors
         goto fail;
     }
