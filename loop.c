@@ -315,7 +315,6 @@ static void loop_data_connect_finish(loop_data_t *ld){
     /* now that we set ld->connected, the loop_data_onthread_close will
        not clean up for us, meaning that we need to have careful error
        handling to make sure we always empty and free the queue. */
-    ld->ref_up(ld->session, LOOP_REF_CONNECT_PROTECT);
 
     // empty the preconnected_writes
     link_t *link;
@@ -345,15 +344,9 @@ static void loop_data_connect_finish(loop_data_t *ld){
     queue_free(&ld->preconnected_writes);
     uv_freeaddrinfo(ld->gai_result);
 
-    /* Since onthread_close is *on-thread*, only in the case of
-       DATA_STATE_CLOSED being already set do we have to worry about ld
-       being freed during ref_down() */
-    bool close_now = (ld->state == DATA_STATE_CLOSED);
-
     // now loop_data_onthread_close will work normally.
-    ld->ref_down(ld->session, LOOP_REF_CONNECT_PROTECT);
 
-    if(close_now) return;
+    if (ld->state == DATA_STATE_CLOSED) return;
 
     // start reading
     int ret = uv_read_start((uv_stream_t*)(ld->sock), allocator, read_cb);
@@ -383,7 +376,7 @@ static void loop_data_connect_iii(uv_connect_t *req, int status){
         /* done with connect_iii_error, handle the rest in a function with
            normal error handling */
         loop_data_connect_finish(ld);
-        return;
+        goto success;
     }
 
     if(status == UV_ECANCELED){
@@ -418,6 +411,8 @@ fail:
     uv_freeaddrinfo(ld->gai_result);
     ld->session->close(ld->session, ld->connect_iii_error);
     PASSED(ld->connect_iii_error);
+success:
+    ld->ref_down(ld->session, LOOP_REF_CONNECT_PROTECT);
     return;
 }
 
@@ -463,6 +458,7 @@ fail:
     uv_freeaddrinfo(ld->gai_result);
     ld->session->close(ld->session, e);
     PASSED(e);
+    ld->ref_down(ld->session, LOOP_REF_CONNECT_PROTECT);
     return;
 }
 
@@ -471,6 +467,9 @@ fail:
 static void loop_data_connect_i(loop_data_t *ld){
     derr_t e = E_OK;
     loop_t *loop = ld->loop;
+
+    // protect the connection attempt
+    ld->ref_up(ld->session, LOOP_REF_CONNECT_PROTECT);
 
     // prepare for getaddrinfo
     memset(&ld->hints, 0, sizeof(ld->hints));
@@ -495,6 +494,7 @@ static void loop_data_connect_i(loop_data_t *ld){
 fail:
     ld->session->close(ld->session, e);
     PASSED(e);
+    ld->ref_down(ld->session, LOOP_REF_CONNECT_PROTECT);
     return;
 }
 
@@ -848,6 +848,7 @@ static void loop_data_onthread_close(loop_data_t *ld){
     /* close the loop_data's socket, if there is one.  ld->connected doesn't
        matter since all we do in the close callback is free the handle */
     if(ld->sock != NULL){
+        uv_read_stop((uv_stream_t*)(ld->sock));
         uv_close((uv_handle_t*)ld->sock, simple_close_cb);
     }
 
@@ -896,9 +897,17 @@ static void event_cb(uv_async_t *handle){
         // first packet for this loop_data?
         if(ld && ld->state == DATA_STATE_PREINIT
                 && ev->ev_type != EV_SESSION_CLOSE){
-            // TODO: this is not valid... I'll need some logic for starting a
-            // connection here
-            loop_data_onthread_start(ld, /* TODO */NULL);
+            /* if the loop is quitting, the session for this loop_data likely
+               has not been closed yet, since sessions are closed based on
+               based on their associated sockets and this session doesn't have
+               a socket yet */
+            if(loop->quitting){
+                ev->session->close(ev->session, E_OK);
+                PASSED(e);
+                loop_data_onthread_close(ld);
+            }else{
+                loop_data_onthread_start(ld, NULL);
+            }
         }
         switch(ev->ev_type){
             case EV_READ:

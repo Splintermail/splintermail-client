@@ -121,6 +121,7 @@ struct listener_spec_t {
     // these fields should be prepared by the caller of loop_add_listener()
     const char *addr;
     const char *svc;
+    // after receiving a connect, allocate a new downwards session
     derr_t (*conn_recvd)(listener_spec_t*, session_t**);
 };
 
