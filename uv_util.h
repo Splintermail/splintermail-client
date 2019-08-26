@@ -20,5 +20,8 @@ static inline derr_type_t uv_err_type(int err){
 
 int uv_cancel_work(uv_work_t *work);
 
+// set environment variable to use more worker threads
+derr_t set_uv_threadpool_size(unsigned int min, unsigned int recommended);
+
 #endif // UV_UTIL
 

@@ -55,7 +55,7 @@ static derr_t bind_via_gai(uv_tcp_t *srv, const char *addr, const char *svc){
     memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
-    hints.ai_flags = AI_PASSIVE;
+    hints.ai_flags = AI_PASSIVE /*| AI_ADDRCONFIG*/;
 
     // get address of host
     struct addrinfo *ai;
@@ -476,7 +476,7 @@ static void loop_data_connect_i(loop_data_t *ld){
     memset(&ld->hints, 0, sizeof(ld->hints));
     ld->hints.ai_family = AF_UNSPEC;
     ld->hints.ai_socktype = SOCK_STREAM;
-    ld->hints.ai_flags = AI_PASSIVE;
+    // ld->hints.ai_flags = AI_ADDRCONFIG;
 
     ld->gai_req.data = ld;
 
@@ -596,7 +596,9 @@ static void loop_data_onthread_start(loop_data_t *ld, uv_tcp_t *sock){
         ORIG_GO(&e, E_NOMEM, "unable to malloc", fail_preconnected_writes);
     }
 
-    // init the socket
+    /* Init the socket.  During loop_close(), we close all sessions by
+       uv_walk()ing through all of the sockets.  This socket is uv_walk()able
+       as soon as uv_tcp_init() is called. */
     int ret = uv_tcp_init(&ld->loop->uv_loop, ld->sock);
     if(ret < 0){
         TRACE(&e, "uv_tcp_init: %x\n", FUV(&ret));
