@@ -105,9 +105,9 @@ DEF_CONTAINER_OF(fake_session_t, session, session_t)
    if you run into an error after fake_session_alloc_*() but before
    fake_session_start(), you will need to downref the session to clean it up */
 derr_t fake_session_alloc_accept(fake_session_t **sptr, fake_pipeline_t *fp,
-                                 ssl_context_t* ssl_ctx);
+        ssl_context_t* ssl_ctx);
 derr_t fake_session_alloc_connect(fake_session_t **sptr, fake_pipeline_t *fp,
-                                  ssl_context_t* ssl_ctx);
+        ssl_context_t* ssl_ctx, const char *host, const char *service);
 void fake_session_start(fake_session_t *s);
 
 // only for use on loop thread

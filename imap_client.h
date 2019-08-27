@@ -11,8 +11,8 @@ typedef struct imap_client_t imap_client_t;
    session, populated with callbacks so the imap engine can tell the controller
    when something important happens. */
 typedef struct imap_client_spec_t {
-    const char *addr;
-    const char *svc;
+    const char *host;
+    const char *service;
     dstr_t user;
     dstr_t pass;
     // callbacks (in addition to the folder-level updates via imap_maildir_t)

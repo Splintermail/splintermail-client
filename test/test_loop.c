@@ -13,8 +13,9 @@
 #define WRITES_PER_THREAD 10000
 #define NUM_READ_EVENTS_PER_LOOP 4
 
+const char *host = "127.0.0.1";
+const char *port = "12347";
 unsigned int listen_port = 12347;
-const char* port_str = "12347";
 
 typedef struct {
     pthread_t thread;
@@ -70,7 +71,7 @@ static void *loop_thread(void *arg){
        testing that behavior */
     size_t num_write_wrappers = NUM_THREADS * WRITES_PER_THREAD;
     PROP_GO(&e, loop_init(&ctx->loop, num_read_events, num_write_wrappers,
-                       ctx->downstream, "127.0.0.1", port_str), done);
+                       ctx->downstream), done);
 
     // create the listener
     test_lspec_t test_lspec = {
@@ -79,7 +80,7 @@ static void *loop_thread(void *arg){
         },
         .lspec = {
             .addr = "127.0.0.1",
-            .svc = port_str,
+            .svc = port,
             .conn_recvd = conn_recvd,
         },
     };
@@ -117,7 +118,8 @@ static void fake_session_up_destroyed(fake_session_t *s, derr_t error){
         MERGE_VAR(&error, &cbrw->error, "cb reader/writer");
         cb_reader_writer_free(cbrw);
     }
-    if(error.type != E_NONE){
+    if(is_error(error)){
+        TRACE(&error, "shutting down loop due to session failure\n");
         loop_close(s->pipeline->loop, error);
         PASSED(error);
     }
@@ -138,7 +140,8 @@ static void launch_second_half_of_test(session_cb_data_t *cb_data,
         derr_t e = E_OK;
         // allocate a new connecting session
         fake_session_t* s;
-        PROP_GO(&e, fake_session_alloc_connect(&s, fp, NULL), fail);
+        PROP_GO(&e, fake_session_alloc_connect(&s, fp, NULL, host, port),
+                fail);
 
         s->session_destroyed = fake_session_up_destroyed;
         // we have to start the session before we can start the cbrw
@@ -151,7 +154,8 @@ static void launch_second_half_of_test(session_cb_data_t *cb_data,
         cb_reader_writer_t *cbrw = &cb_data->cb_reader_writers[i];
         event_t *ev_new = cb_reader_writer_init(cbrw, i, WRITES_PER_THREAD, s);
         if(!ev_new){
-            ORIG_GO(&e, E_VALUE, "did not get event from cb_reader_writer", fail);
+            ORIG_GO(&e, E_VALUE, "did not get event from cb_reader_writer",
+                    fail);
         }
 
         // attach the cb_reader_writer to the destroy hook

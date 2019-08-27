@@ -254,7 +254,7 @@ static void imape_process_events(uv_work_t *req){
         switch(ev->ev_type){
             case EV_READ:
                 // LOG_ERROR("imape: READ\n");
-                if(imape->quitting){
+                if(imape->quitting || id->data_state == DATA_STATE_CLOSED){
                     ev->ev_type = EV_READ_DONE;
                     imape->upstream->pass_event(imape->upstream, ev);
                 }else{
@@ -263,7 +263,7 @@ static void imape_process_events(uv_work_t *req){
                 }
                 break;
             case EV_COMMAND:
-                if(imape->quitting){
+                if(imape->quitting || id->data_state == DATA_STATE_CLOSED){
                     // XXX
                     // id->controller->pass_event(id->controller, ev);
                 }else{
@@ -271,7 +271,7 @@ static void imape_process_events(uv_work_t *req){
                 }
                 break;
             case EV_MAILDIR:
-                if(imape->quitting){
+                if(imape->quitting || id->data_state == DATA_STATE_CLOSED){
                     // XXX
                     // imap_maildir_pass_event(id->maildir, ev);
                 }else{

@@ -23,7 +23,8 @@
 static const char* g_test_files;
 
 unsigned int listen_port = 12348;
-const char* port_str = "12348";
+const char *host = "127.0.0.1";
+const char *port_str = "12348";
 
 typedef struct {
     pthread_t thread;
@@ -82,8 +83,7 @@ static void *loop_thread(void *arg){
     PROP_GO(&e, tlse_init(&ctx->tlse, 5, 5, &ctx->loop.engine,
                 ctx->downstream), cu_ssl_ctx);
 
-    PROP_GO(&e, loop_init(&ctx->loop, 5, 5, &ctx->tlse.engine, "127.0.0.1",
-                port_str), cu_tlse);
+    PROP_GO(&e, loop_init(&ctx->loop, 5, 5, &ctx->tlse.engine), cu_tlse);
 
     IF_PROP(&e, tlse_add_to_loop(&ctx->tlse, &ctx->loop.uv_loop) ){
         // Loop can't run but can't close without running; shit's fucked
@@ -172,7 +172,7 @@ static void launch_second_half_of_test(session_cb_data_t *cb_data,
         // allocate a new connecting session
         fake_session_t *s;
         PROP_GO(&e, fake_session_alloc_connect(&s, fp,
-                    cb_data->ssl_ctx_client), fail);
+                    cb_data->ssl_ctx_client, host, port_str), fail);
 
         s->session_destroyed = fake_session_up_destroyed;
         // we have to start the session before we can start the cbrw

@@ -483,8 +483,8 @@ static void loop_data_connect_i(loop_data_t *ld){
     int ret = uv_getaddrinfo(&loop->uv_loop,
                              &ld->gai_req,
                              loop_data_connect_ii,
-                             loop->remote_host,
-                             loop->remote_service,
+                             ld->host,
+                             ld->service,
                              &ld->hints);
     if(ret < 0){
         TRACE(&e, "uv_getaddrinfo setup: %x\n", FUV(&ret));
@@ -528,9 +528,12 @@ fail_resume:
 }
 
 void loop_data_prestart(loop_data_t *ld, loop_t *loop, session_t *session,
-        ref_fn_t ref_up, ref_fn_t ref_down){
+        const char *host, const char *service, ref_fn_t ref_up,
+        ref_fn_t ref_down){
     ld->loop = loop;
     ld->session = session;
+    ld->host = host;
+    ld->service = service;
     ld->ref_up = ref_up;
     ld->ref_down = ref_down;
 }
@@ -967,8 +970,7 @@ static void event_cb(uv_async_t *handle){
 
 
 derr_t loop_init(loop_t *loop, size_t num_read_events,
-        size_t num_write_wrappers, engine_t *downstream,
-        const char* remote_host, const char* remote_service){
+        size_t num_write_wrappers, engine_t *downstream){
     derr_t e = E_OK;
 
     // init loop
@@ -1046,9 +1048,6 @@ derr_t loop_init(loop_t *loop, size_t num_read_events,
 
     // store values
     loop->downstream = downstream;
-
-    loop->remote_host = remote_host;
-    loop->remote_service = remote_service;
 
     // prep the quit message
     event_prep(&loop->quitmsg);

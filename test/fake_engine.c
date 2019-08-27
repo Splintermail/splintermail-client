@@ -332,8 +332,11 @@ void fake_session_ref_down_test(session_t *session, int reason){
 
 // to allocate new sessions (when loop.c only know about a single child struct)
 static derr_t fake_session_do_alloc(fake_session_t **sptr, fake_pipeline_t *fp,
-                                    ssl_context_t* ssl_ctx, bool upwards){
+        ssl_context_t* ssl_ctx, const char *host, const char* service){
     derr_t e = E_OK;
+
+    bool upwards = (host != NULL);
+
     // allocate the struct
     fake_session_t *s = malloc(sizeof(*s));
     if(!s) ORIG(&e, E_NOMEM, "no mem");
@@ -352,8 +355,8 @@ static derr_t fake_session_do_alloc(fake_session_t **sptr, fake_pipeline_t *fp,
 
     // per-engine prestart
     if(s->pipeline->loop){
-        loop_data_prestart(&s->loop_data, s->pipeline->loop, &s->session,
-                fake_session_ref_up_loop, fake_session_ref_down_loop);
+        loop_data_prestart(&s->loop_data, s->pipeline->loop, &s->session, host,
+                service, fake_session_ref_up_loop, fake_session_ref_down_loop);
     }
     if(s->pipeline->tlse){
         tlse_data_prestart(&s->tlse_data, s->pipeline->tlse, &s->session,
@@ -390,15 +393,14 @@ void fake_session_start(fake_session_t *s){
 derr_t fake_session_alloc_accept(fake_session_t **sptr, fake_pipeline_t *fp,
                                  ssl_context_t* ssl_ctx){
     derr_t e = E_OK;
-    PROP(&e, fake_session_do_alloc(sptr, fp, ssl_ctx, false) );
-
+    PROP(&e, fake_session_do_alloc(sptr, fp, ssl_ctx, NULL, NULL) );
     return e;
 }
 
 derr_t fake_session_alloc_connect(fake_session_t **sptr, fake_pipeline_t *fp,
-                                  ssl_context_t* ssl_ctx){
+         ssl_context_t* ssl_ctx, const char *host, const char *service){
     derr_t e = E_OK;
-    PROP(&e, fake_session_do_alloc(sptr, fp, ssl_ctx, true) );
+    PROP(&e, fake_session_do_alloc(sptr, fp, ssl_ctx, host, service) );
     return e;
 }
 

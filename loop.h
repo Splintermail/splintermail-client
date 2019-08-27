@@ -63,9 +63,6 @@ struct loop_t {
     uv_async_t loop_event_passer;
     uv_async_t loop_closer;
     uv_mutex_t mutex;
-    // for outgoing connections
-    const char* remote_host;
-    const char* remote_service;
     // for pushing reads to the next engine
     queue_t read_events;
     // write reqs, for wrapping incoming write event_t's with libuv stuff
@@ -87,6 +84,8 @@ struct loop_data_t {
     loop_t *loop;
     ref_fn_t ref_up;
     ref_fn_t ref_down;
+    const char* host;
+    const char* service;
     // a self pointer the uv_tcp_t
     uv_ptr_t uvp;
     queue_cb_t read_pause_qcb;
@@ -127,8 +126,7 @@ struct listener_spec_t {
 
 // num_write_wrappers must match the downstream engine's num_write_events
 derr_t loop_init(loop_t *loop, size_t num_read_events,
-        size_t num_write_wrappers, engine_t *downstream,
-        const char* remote_host, const char* remote_service);
+        size_t num_write_wrappers, engine_t *downstream);
 void loop_free(loop_t *loop);
 
 derr_t loop_run(loop_t *loop);
@@ -140,7 +138,8 @@ derr_t loop_add_listener(loop_t *loop, listener_spec_t *lspec);
 /* prestart() is for setting before any errors can happen and before any
    messages can be sent. */
 void loop_data_prestart(loop_data_t *ld, loop_t *loop, session_t *session,
-        ref_fn_t ref_up, ref_fn_t ref_down);
+        const char *host, const char *service, ref_fn_t ref_up,
+        ref_fn_t ref_down);
 
 void loop_data_start(loop_data_t *ld);
 /* Not thread safe, must be called exactly once per loop_data_t.  Thread safety

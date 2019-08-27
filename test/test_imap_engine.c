@@ -85,8 +85,7 @@ static void *loop_thread(void *arg){
     PROP_GO(&e, tlse_init(&ctx->tlse, 5, 5, &ctx->loop.engine,
                 &ctx->imape.engine), cu_imape);
 
-    PROP_GO(&e, loop_init(&ctx->loop, 5, 5, &ctx->tlse.engine, "127.0.0.1",
-                port_str), cu_tlse);
+    PROP_GO(&e, loop_init(&ctx->loop, 5, 5, &ctx->tlse.engine), cu_tlse);
 
     IF_PROP(&e, tlse_add_to_loop(&ctx->tlse, &ctx->loop.uv_loop) ){
         // Loop can't run but can't close without running; shit's fucked
