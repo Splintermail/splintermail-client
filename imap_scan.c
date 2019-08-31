@@ -581,6 +581,10 @@ search_mode:
 
     size_t start_offset, end_offset;
 done:
+    // mark everything done until here
+    scanner->old_start = scanner->start;
+    scanner->start = cursor;
+
     // get the token bounds
     // this is safe; start and old_start are always within the bytes buffer
     start_offset = (size_t)(scanner->old_start - scanner->bytes.data);
@@ -589,9 +593,5 @@ done:
              last character of a token, and sometimes it will point to the
              character after a token? */
     *token_out = dstr_sub(&scanner->bytes, start_offset, end_offset);
-
-    // mark everything done until here
-    scanner->old_start = scanner->start;
-    scanner->start = cursor;
     return e;
 }

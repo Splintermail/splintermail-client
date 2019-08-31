@@ -14,7 +14,7 @@ derr_t imap_reader_init(imap_reader_t *reader,
     PROP(&e, imap_scanner_init(&reader->scanner) );
 
     PROP_GO(&e, imap_parser_init(&reader->parser, reader, hooks_dn, hooks_up,
-            &hook_data), fail_scanner);
+            hook_data), fail_scanner);
 
     // init literal-tracking stuff
     reader->in_literal = false;

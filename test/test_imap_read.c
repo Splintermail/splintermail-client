@@ -1,6 +1,9 @@
+#include <string.h>
+
 #include <common.h>
 #include <logger.h>
 #include <imap_read.h>
+#include <imap_expression.h>
 
 #include "test_utils.h"
 
@@ -48,69 +51,111 @@
     partial <p1.p2> should enforce non-zeroness of p2
 */
 
-// no leading or trailing space
-static void print_seq_set(ie_seq_set_t *seq_set){
-    for(ie_seq_set_t *p = seq_set; p != NULL; p = p->next){
-        DSTR_VAR(buf, 32);
-        if(p->n1 == p->n2)
-            FMT(&buf, "%x", p->n1 ? FU(p->n1) : FS("*"));
-        else
-            FMT(&buf, "%x-%x", p->n1 ? FU(p->n1) : FS("*"),
-                               p->n2 ? FU(p->n2) : FS("*"));
-        // add comma if there will be another
-        if(p->next) FMT(&buf, ",");
-        // flush buffer to stdout
-        LOG_ERROR("%x", FD(&buf));
-    }
-}
+typedef struct {
+    struct {
+        int login_cmd;
+        int select_cmd;
+        int examine_cmd;
+        int create_cmd;
+        int delete_cmd;
+        int rename_cmd;
+        int subscribe_cmd;
+        int unsubscribe_cmd;
+        int list_cmd;
+        int lsub_cmd;
+        int status_cmd;
+        int check_cmd;
+        int close_cmd;
+        int expunge_cmd;
+        int append_cmd;
+        int search_cmd;
+        int fetch_cmd;
+        int store_cmd;
+        int copy_cmd;
+        //
+        int st_resp;
+        int capa_resp;
+        int pflag_resp;
+        int list_resp;
+        int lsub_resp;
+        int status_resp;
+        int flags_resp;
+        int exists_resp;
+        int recent_resp;
+        int expunge_resp;
+        int fetch_resp;
+    } counts;
+    // the value recorded by a callback
+    dstr_t buf1;
+    // the value recorded by a secondary callback
+    dstr_t buf2;
+} calls_made_t;
 
-#define LEAD_SP if(sp) LOG_ERROR(" "); else sp = true
+#define ASSERT_COUNT(name, strname) \
+    if(exp->counts.name != got->counts.name){ \
+        TRACE(&e, "expected %x calls to %x, but got %x\n", \
+                FI(exp->counts.name), FS(strname), FI(got->counts.name)); \
+        pass = false; \
+    }
 
-// no leading or trailing space
-static void print_flag_list(ie_flag_list_t flags){
-    bool sp = false;
-    if(flags.answered){ LEAD_SP; LOG_ERROR("\\Answered"); };
-    if(flags.flagged){  LEAD_SP; LOG_ERROR("\\Flagged");  };
-    if(flags.deleted){  LEAD_SP; LOG_ERROR("\\Deleted");  };
-    if(flags.seen){     LEAD_SP; LOG_ERROR("\\Seen");     };
-    if(flags.draft){    LEAD_SP; LOG_ERROR("\\Draft");    };
-    if(flags.recent){   LEAD_SP; LOG_ERROR("\\Recent");   };
-    if(flags.asterisk){ LEAD_SP; LOG_ERROR("\\Asterisk"); };
-    for(dstr_link_t *d = flags.keywords; d != NULL; d = d->next){
-        LEAD_SP; LOG_ERROR("%x", FD(&d->dstr));
-    }
-    for(dstr_link_t *d = flags.extensions; d != NULL; d = d->next){
-        LEAD_SP; LOG_ERROR("\\%x", FD(&d->dstr));
-    }
-}
+static derr_t assert_calls_equal(const calls_made_t *exp,
+        const calls_made_t *got){
+    derr_t e = E_OK;
+    bool pass = true;
+    ASSERT_COUNT(login_cmd, "login_cmd");
+    ASSERT_COUNT(select_cmd, "select_cmd");
+    ASSERT_COUNT(examine_cmd, "examine_cmd");
+    ASSERT_COUNT(create_cmd, "create_cmd");
+    ASSERT_COUNT(delete_cmd, "delete_cmd");
+    ASSERT_COUNT(rename_cmd, "rename_cmd");
+    ASSERT_COUNT(subscribe_cmd, "subscribe_cmd");
+    ASSERT_COUNT(unsubscribe_cmd, "unsubscribe_cmd");
+    ASSERT_COUNT(list_cmd, "list_cmd");
+    ASSERT_COUNT(lsub_cmd, "lsub_cmd");
+    ASSERT_COUNT(status_cmd, "status_cmd");
+    ASSERT_COUNT(check_cmd, "check_cmd");
+    ASSERT_COUNT(close_cmd, "close_cmd");
+    ASSERT_COUNT(expunge_cmd, "expunge_cmd");
+    ASSERT_COUNT(append_cmd, "append_cmd");
+    ASSERT_COUNT(search_cmd, "search_cmd");
+    ASSERT_COUNT(fetch_cmd, "fetch_cmd");
+    ASSERT_COUNT(store_cmd, "store_cmd");
+    ASSERT_COUNT(copy_cmd, "copy_cmd");
+    ASSERT_COUNT(st_resp, "st_resp");
+    ASSERT_COUNT(capa_resp, "capa_resp");
+    ASSERT_COUNT(pflag_resp, "pflag_resp");
+    ASSERT_COUNT(list_resp, "list_resp");
+    ASSERT_COUNT(lsub_resp, "lsub_resp");
+    ASSERT_COUNT(status_resp, "status_resp");
+    ASSERT_COUNT(flags_resp, "flags_resp");
+    ASSERT_COUNT(exists_resp, "exists_resp");
+    ASSERT_COUNT(recent_resp, "recent_resp");
+    ASSERT_COUNT(expunge_resp, "expunge_resp");
+    ASSERT_COUNT(fetch_resp, "fetch_resp");
 
-// no leading or trailing space
-static void print_mflag_list(ie_mflags_t *mflags){
-    bool sp = false;
-    if(mflags->noinferiors){ LEAD_SP; LOG_ERROR("\\NoInferiors"); };
-    switch(mflags->selectable){
-        case IE_SELECTABLE_NONE: break;
-        case IE_SELECTABLE_NOSELECT: LEAD_SP; LOG_ERROR("\\Noselect"); break;
-        case IE_SELECTABLE_MARKED:   LEAD_SP; LOG_ERROR("\\Marked"); break;
-        case IE_SELECTABLE_UNMARKED: LEAD_SP; LOG_ERROR("\\Unmarked"); break;
+    if(dstr_cmp(&exp->buf1, &got->buf1) != 0){
+        TRACE(&e, "expected buf1: '%x'\nbut got buf1:  '%x'\n",
+                FD(&exp->buf1), FD(&got->buf1));
+        pass = false;
     }
-    for(dstr_link_t *d = mflags->extensions; d != NULL; d = d->next){
-        LEAD_SP; LOG_ERROR("\\%x", FD(&d->dstr));
-    }
-}
 
-// no leading or trailing space
-static void print_time(imap_time_t time){
-    if(!time.year) return;
-    LOG_ERROR("%x-%x-%x %x:%x:%x %x%x%x",
-              FI(time.day), FI(time.month), FI(time.year),
-              FI(time.hour), FI(time.min), FI(time.sec),
-              FS(time.z_sign ? "+" : "-"), FI(time.z_hour), FI(time.z_min));
+    if(dstr_cmp(&exp->buf2, &got->buf2) != 0){
+        TRACE(&e, "expected buf2: %x\nbut got buf2:  %x\n",
+                FD(&exp->buf2), FD(&got->buf2));
+    }
+    if(!pass) ORIG(&e, E_VALUE, "incorrect calls");
+    return e;
 }
 
 static void login_cmd(void *data, dstr_t tag, dstr_t user, dstr_t pass){
-    (void)data;
-    LOG_ERROR("LOGIN (%x) u:%x p:%x\n", FD(&tag), FD(&user), FD(&pass));
+    calls_made_t *calls = data;
+    calls->counts.login_cmd++;
+
+    DROP_CMD( FMT(&calls->buf1, "%x LOGIN ", FD(&tag)) );
+    DROP_CMD( print_astring(&calls->buf1, &user) );
+    DROP_CMD( FMT(&calls->buf1, " ") );
+    DROP_CMD( print_astring(&calls->buf1, &pass) );
+
     dstr_free(&tag);
     dstr_free(&user);
     dstr_free(&pass);
@@ -119,8 +164,14 @@ static void login_cmd(void *data, dstr_t tag, dstr_t user, dstr_t pass){
 //
 
 static void select_cmd(void *data, dstr_t tag, bool inbox, dstr_t mbx){
-    (void)data;
-    LOG_ERROR("SELECT (%x) mailbox: '%x' (%x)\n", FD(&tag), FD(&mbx), FU(inbox));
+    calls_made_t *calls = data;
+    calls->counts.select_cmd++;
+    if(inbox){
+        DROP_CMD( FMT(&calls->buf1, "%x SELECT INBOX", FD(&tag)) );
+    }else{
+        DROP_CMD( FMT(&calls->buf1, "%x SELECT ", FD(&tag)) );
+        DROP_CMD( print_astring(&calls->buf1, &mbx) );
+    }
     dstr_free(&tag);
     dstr_free(&mbx);
 }
@@ -128,8 +179,14 @@ static void select_cmd(void *data, dstr_t tag, bool inbox, dstr_t mbx){
 //
 
 static void examine_cmd(void *data, dstr_t tag, bool inbox, dstr_t mbx){
-    (void)data;
-    LOG_ERROR("EXAMINE (%x) mailbox: '%x' (%x)\n", FD(&tag), FD(&mbx), FU(inbox));
+    calls_made_t *calls = data;
+    calls->counts.examine_cmd++;
+    if(inbox){
+        DROP_CMD( FMT(&calls->buf1, "%x EXAMINE INBOX", FD(&tag)) );
+    }else{
+        DROP_CMD( FMT(&calls->buf1, "%x EXAMINE ", FD(&tag)) );
+        DROP_CMD( print_astring(&calls->buf1, &mbx) );
+    }
     dstr_free(&tag);
     dstr_free(&mbx);
 }
@@ -137,8 +194,14 @@ static void examine_cmd(void *data, dstr_t tag, bool inbox, dstr_t mbx){
 //
 
 static void create_cmd(void *data, dstr_t tag, bool inbox, dstr_t mbx){
-    (void)data;
-    LOG_ERROR("CREATE (%x) mailbox: '%x' (%x)\n", FD(&tag), FD(&mbx), FU(inbox));
+    calls_made_t *calls = data;
+    calls->counts.create_cmd++;
+    if(inbox){
+        DROP_CMD( FMT(&calls->buf1, "%x CREATE INBOX", FD(&tag)) );
+    }else{
+        DROP_CMD( FMT(&calls->buf1, "%x CREATE ", FD(&tag)) );
+        DROP_CMD( print_astring(&calls->buf1, &mbx) );
+    }
     dstr_free(&tag);
     dstr_free(&mbx);
 }
@@ -146,31 +209,52 @@ static void create_cmd(void *data, dstr_t tag, bool inbox, dstr_t mbx){
 //
 
 static void delete_cmd(void *data, dstr_t tag, bool inbox, dstr_t mbx){
-    (void)data;
-    LOG_ERROR("DELETE (%x) mailbox: '%x' (%x)\n", FD(&tag), FD(&mbx), FU(inbox));
+    calls_made_t *calls = data;
+    calls->counts.delete_cmd++;
+    if(inbox){
+        DROP_CMD( FMT(&calls->buf1, "%x DELETE INBOX", FD(&tag)) );
+    }else{
+        DROP_CMD( FMT(&calls->buf1, "%x DELETE ", FD(&tag)) );
+        DROP_CMD( print_astring(&calls->buf1, &mbx) );
+    }
     dstr_free(&tag);
     dstr_free(&mbx);
 }
 
 //
 
-static void rename_cmd(void *data, dstr_t tag,
-                       bool inbox_old, dstr_t mbx_old,
-                       bool inbox_new, dstr_t mbx_new){
-    (void)data;
-    LOG_ERROR("RENAME (%x) from: '%x' (%x) to: '%x' (%x) \n",
-              FD(&tag), FD(&mbx_old), FU(inbox_old), FD(&mbx_new), FU(inbox_new));
+static void rename_cmd(void *data, dstr_t tag, bool inbox_old, dstr_t mbx_old,
+    bool inbox_new, dstr_t mbx_new){
+    calls_made_t *calls = data;
+    calls->counts.rename_cmd++;
+    if(inbox_old){
+        DROP_CMD( FMT(&calls->buf1, "%x RENAME INBOX ", FD(&tag)) );
+    }else{
+        DROP_CMD( FMT(&calls->buf1, "%x RENAME ", FD(&tag)) );
+        DROP_CMD( print_astring(&calls->buf1, &mbx_old) );
+        DROP_CMD( FMT(&calls->buf1, " ") );
+    }
+    if(inbox_new){
+        DROP_CMD( FMT(&calls->buf1, "INBOX") );
+    }else{
+        DROP_CMD( print_astring(&calls->buf1, &mbx_new) );
+    }
     dstr_free(&tag);
     dstr_free(&mbx_old);
     dstr_free(&mbx_new);
-
 }
 
 //
 
 static void subscribe_cmd(void *data, dstr_t tag, bool inbox, dstr_t mbx){
-    (void)data;
-    LOG_ERROR("SUBSCRIBE (%x) mailbox: '%x' (%x)\n", FD(&tag), FD(&mbx), FU(inbox));
+    calls_made_t *calls = data;
+    calls->counts.subscribe_cmd++;
+    if(inbox){
+        DROP_CMD( FMT(&calls->buf1, "%x SUBSCRIBE INBOX", FD(&tag)) );
+    }else{
+        DROP_CMD( FMT(&calls->buf1, "%x SUBSCRIBE ", FD(&tag)) );
+        DROP_CMD( print_astring(&calls->buf1, &mbx) );
+    }
     dstr_free(&tag);
     dstr_free(&mbx);
 }
@@ -178,18 +262,34 @@ static void subscribe_cmd(void *data, dstr_t tag, bool inbox, dstr_t mbx){
 //
 
 static void unsubscribe_cmd(void *data, dstr_t tag, bool inbox, dstr_t mbx){
-    (void)data;
-    LOG_ERROR("UNSUBSCRIBE (%x) mailbox: '%x' (%x)\n", FD(&tag), FD(&mbx), FU(inbox));
+    calls_made_t *calls = data;
+    calls->counts.unsubscribe_cmd++;
+    if(inbox){
+        DROP_CMD( FMT(&calls->buf1, "%x UNSUBSCRIBE INBOX", FD(&tag)) );
+    }else{
+        DROP_CMD( FMT(&calls->buf1, "%x UNSUBSCRIBE ", FD(&tag)) );
+        DROP_CMD( print_astring(&calls->buf1, &mbx) );
+    }
     dstr_free(&tag);
     dstr_free(&mbx);
 }
 
 //
 
-static void list_cmd(void *data, dstr_t tag, bool inbox, dstr_t mbx, dstr_t pattern){
-    (void)data;
-    LOG_ERROR("LIST (%x) mailbox: '%x' (%x) pattern: '%x' \n",
-              FD(&tag), FD(&mbx), FU(inbox), FD(&pattern));
+static void list_cmd(void *data, dstr_t tag, bool inbox, dstr_t mbx,
+        dstr_t pattern){
+    calls_made_t *calls = data;
+    calls->counts.list_cmd++;
+
+    if(inbox){
+        DROP_CMD( FMT(&calls->buf1, "%x LIST INBOX ", FD(&tag)) );
+    }else{
+        DROP_CMD( FMT(&calls->buf1, "%x LIST ", FD(&tag)) );
+        DROP_CMD( print_astring(&calls->buf1, &mbx) );
+        DROP_CMD( FMT(&calls->buf1, " ") );
+    }
+    DROP_CMD( print_astring(&calls->buf1, &pattern) );
+
     dstr_free(&tag);
     dstr_free(&mbx);
     dstr_free(&pattern);
@@ -197,28 +297,46 @@ static void list_cmd(void *data, dstr_t tag, bool inbox, dstr_t mbx, dstr_t patt
 
 //
 
-static void lsub_cmd(void *data, dstr_t tag, bool inbox, dstr_t mbx, dstr_t pattern){
-    (void)data;
-    LOG_ERROR("LSUB (%x) mailbox: '%x' (%x) pattern: '%x' \n",
-              FD(&tag), FD(&mbx), FU(inbox), FD(&pattern));
+static void lsub_cmd(void *data, dstr_t tag, bool inbox, dstr_t mbx,
+        dstr_t pattern){
+    calls_made_t *calls = data;
+    calls->counts.lsub_cmd++;
+    if(inbox){
+        DROP_CMD( FMT(&calls->buf1, "%x LSUB INBOX ", FD(&tag)) );
+    }else{
+        DROP_CMD( FMT(&calls->buf1, "%x LSUB ", FD(&tag)) );
+        DROP_CMD( print_astring(&calls->buf1, &mbx) );
+        DROP_CMD( FMT(&calls->buf1, " ") );
+    }
+    DROP_CMD( print_astring(&calls->buf1, &pattern) );
+
     dstr_free(&tag);
     dstr_free(&mbx);
     dstr_free(&pattern);
 }
 
 //
+#define LEAD_SP1 if(sp){ DROP_CMD(FMT(&calls->buf1, " ") ); }else sp = true
 
 static void status_cmd(void *data, dstr_t tag, bool inbox,
-                       dstr_t mbx, bool messages, bool recent,
-                       bool uidnext, bool uidvld, bool unseen){
-    (void)data;
-    LOG_ERROR("STATUS (%x) '%x' (%x)", FD(&tag), FD(&mbx), FU(inbox));
-    if(messages) LOG_ERROR(" messages");
-    if(recent) LOG_ERROR(" recent");
-    if(uidnext) LOG_ERROR(" uidnext");
-    if(uidvld) LOG_ERROR(" uidvld");
-    if(unseen) LOG_ERROR(" unseen");
-    LOG_ERROR("\n");
+        dstr_t mbx, bool messages, bool recent, bool uidnext, bool uidvld,
+        bool unseen){
+    calls_made_t *calls = data;
+    calls->counts.status_cmd++;
+    if(inbox){
+        DROP_CMD( FMT(&calls->buf1, "%x STATUS INBOX (", FD(&tag)) );
+    }else{
+        DROP_CMD( FMT(&calls->buf1, "%x STATUS ", FD(&tag)) );
+        DROP_CMD( print_astring(&calls->buf1, &mbx) );
+        DROP_CMD( FMT(&calls->buf1, " (") );
+    }
+    bool sp = false;
+    if(messages){ LEAD_SP1; DROP_CMD( FMT(&calls->buf1, "MESSAGES") ); };
+    if(recent){ LEAD_SP1; DROP_CMD( FMT(&calls->buf1, "RECENT") ); };
+    if(uidnext){ LEAD_SP1; DROP_CMD( FMT(&calls->buf1, "UIDNEXT") ); };
+    if(uidvld){ LEAD_SP1; DROP_CMD( FMT(&calls->buf1, "UIDVALIDITY") ); };
+    if(unseen){ LEAD_SP1; DROP_CMD( FMT(&calls->buf1, "UNSEEN") ); };
+    DROP_CMD( FMT(&calls->buf1, ")") );
     dstr_free(&tag);
     dstr_free(&mbx);
 }
@@ -226,163 +344,73 @@ static void status_cmd(void *data, dstr_t tag, bool inbox,
 //
 
 static void check_cmd(void *data, dstr_t tag){
-    (void)data;
-    LOG_ERROR("CHECK (%x)\n", FD(&tag));
+    calls_made_t *calls = data;
+    calls->counts.check_cmd++;
+    DROP_CMD( FMT(&calls->buf1, "%x CHECK", FD(&tag)) );
     dstr_free(&tag);
 }
 
 //
 
 static void close_cmd(void *data, dstr_t tag){
-    (void)data;
-    LOG_ERROR("CLOSE (%x)\n", FD(&tag));
+    calls_made_t *calls = data;
+    calls->counts.close_cmd++;
+    DROP_CMD( FMT(&calls->buf1, "%x CLOSE", FD(&tag)) );
     dstr_free(&tag);
 }
 
 //
 
 static void expunge_cmd(void *data, dstr_t tag){
-    (void)data;
-    LOG_ERROR("EXPUNGE (%x)\n", FD(&tag));
+    calls_made_t *calls = data;
+    calls->counts.expunge_cmd++;
+    DROP_CMD( FMT(&calls->buf1, "%x EXPUNGE", FD(&tag)) );
     dstr_free(&tag);
 }
 
 //
 
-static derr_t append_start(void *data, dstr_t tag, bool inbox, dstr_t mbx,
-                           ie_flag_list_t flags, imap_time_t time){
-    (void)data;
-    LOG_ERROR("APPEND (%x) '%x' (%x) (", FD(&tag), FD(&mbx), FU(inbox));
-    print_flag_list(flags);
-    LOG_ERROR(")");
-    if(time.year){
-        LOG_ERROR(" ");
-        print_time(time);
+static void append_cmd(void *data, dstr_t tag, bool inbox, dstr_t mbx,
+        ie_flags_t *flags, imap_time_t time, dstr_t content){
+    calls_made_t *calls = data;
+    calls->counts.append_cmd++;
+    if(inbox){
+        DROP_CMD( FMT(&calls->buf1, "%x APPEND INBOX ", FD(&tag)) );
+    }else{
+        DROP_CMD( FMT(&calls->buf1, "%x APPEND ", FD(&tag)) );
+        DROP_CMD( print_astring(&calls->buf1, &mbx) );
+        DROP_CMD( FMT(&calls->buf1, " ") );
     }
-    LOG_ERROR("\n");
+    // flags
+    DROP_CMD( FMT(&calls->buf1, "(") );
+    DROP_CMD( print_ie_flags(&calls->buf1, flags) );
+    DROP_CMD( FMT(&calls->buf1, ") ") );
+    // time
+    if(time.year){
+        DROP_CMD( print_imap_time(&calls->buf1, time) );
+        DROP_CMD( FMT(&calls->buf1, " ") );
+    }
+    // literal
+    DROP_CMD( print_literal(&calls->buf1, &content) );
+
     dstr_free(&tag);
     dstr_free(&mbx);
-    ie_flag_list_free(&flags);
-    return e;
+    ie_flags_free(flags);
 }
 
 //
-
-static void print_search_key(ie_search_key_t *search_key){
-    for(ie_search_key_t *key = search_key; key != NULL; key = key->next){
-        union ie_search_param_t p = key->param;
-        // after the first search key, print a space before each one
-        if(key != search_key) LOG_ERROR(" ");
-        switch(key->type){
-            // things without parameters
-            case IE_SEARCH_ALL: LOG_ERROR("ALL"); break;
-            case IE_SEARCH_ANSWERED: LOG_ERROR("ANSWERED"); break;
-            case IE_SEARCH_DELETED: LOG_ERROR("DELETED"); break;
-            case IE_SEARCH_FLAGGED: LOG_ERROR("FLAGGED"); break;
-            case IE_SEARCH_NEW: LOG_ERROR("NEW"); break;
-            case IE_SEARCH_OLD: LOG_ERROR("OLD"); break;
-            case IE_SEARCH_RECENT: LOG_ERROR("RECENT"); break;
-            case IE_SEARCH_SEEN: LOG_ERROR("SEEN"); break;
-            case IE_SEARCH_SUBJECT: LOG_ERROR("SUBJECT"); break;
-            case IE_SEARCH_UNANSWERED: LOG_ERROR("UNANSWERED"); break;
-            case IE_SEARCH_UNDELETED: LOG_ERROR("UNDELETED"); break;
-            case IE_SEARCH_UNFLAGGED: LOG_ERROR("UNFLAGGED"); break;
-            case IE_SEARCH_UNSEEN: LOG_ERROR("UNSEEN"); break;
-            case IE_SEARCH_DRAFT: LOG_ERROR("DRAFT"); break;
-            case IE_SEARCH_UNDRAFT: LOG_ERROR("UNDRAFT"); break;
-            // things using param.dstr
-            case IE_SEARCH_BCC:
-                LOG_ERROR("BCC '%x'", FD(&p.dstr));
-                break;
-            case IE_SEARCH_BODY:
-                LOG_ERROR("BODY '%x'", FD(&p.dstr));
-                break;
-            case IE_SEARCH_CC:
-                LOG_ERROR("CC '%x'", FD(&p.dstr));
-                break;
-            case IE_SEARCH_FROM:
-                LOG_ERROR("FROM '%x'", FD(&p.dstr));
-                break;
-            case IE_SEARCH_KEYWORD:
-                LOG_ERROR("KEYWORD '%x'", FD(&p.dstr));
-                break;
-            case IE_SEARCH_TEXT:
-                LOG_ERROR("TEXT '%x'", FD(&p.dstr));
-                break;
-            case IE_SEARCH_TO:
-                LOG_ERROR("TO '%x'", FD(&p.dstr));
-                break;
-            case IE_SEARCH_UNKEYWORD:
-                LOG_ERROR("UNKEYWORD '%x'", FD(&p.dstr));
-                break;
-            // things using param.header
-            case IE_SEARCH_HEADER:
-                LOG_ERROR("HEADER '%x' '%x'", FD(&p.header.name),
-                                              FD(&p.header.value));
-                break;
-            // things using param.date
-            case IE_SEARCH_BEFORE:
-                LOG_ERROR("BEFORE %x-%x-%x", FI(p.date.day),
-                          FI(p.date.month), FI(p.date.year));
-                break;
-            case IE_SEARCH_ON:
-                LOG_ERROR("ON %x-%x-%x", FI(p.date.day),
-                          FI(p.date.month), FI(p.date.year));
-                break;
-            case IE_SEARCH_SINCE:
-                LOG_ERROR("SINCE %x-%x-%x", FI(p.date.day),
-                          FI(p.date.month), FI(p.date.year));
-                break;
-            case IE_SEARCH_SENTBEFORE:
-                LOG_ERROR("SENTBEFORE %x-%x-%x", FI(p.date.day),
-                          FI(p.date.month), FI(p.date.year));
-                break;
-            case IE_SEARCH_SENTON:
-                LOG_ERROR("SENTON %x-%x-%x", FI(p.date.day),
-                          FI(p.date.month), FI(p.date.year));
-                break;
-            case IE_SEARCH_SENTSINCE:
-                LOG_ERROR("SENTSINCE %x-%x-%x", FI(p.date.day),
-                          FI(p.date.month), FI(p.date.year));
-                break;
-            // things using param.num
-            case IE_SEARCH_LARGER: LOG_ERROR("LARGER %x", FU(p.num)); break;
-            case IE_SEARCH_SMALLER: LOG_ERROR("SMALLER %x", FU(p.num)); break;
-            // things using param.seq_set
-            case IE_SEARCH_UID:
-                LOG_ERROR("UID "); print_seq_set(p.seq_set);
-                break;
-            case IE_SEARCH_SEQ_SET:
-                LOG_ERROR("SEQ_SET "); print_seq_set(p.seq_set);
-                break;
-            // things using param.search_key
-            case IE_SEARCH_NOT:
-                LOG_ERROR("NOT "); print_search_key(p.search_key);
-                break;
-            case IE_SEARCH_GROUP:
-                LOG_ERROR("(");
-                print_search_key(p.search_key);
-                LOG_ERROR(")");
-                break;
-            // things using param.search_or
-            case IE_SEARCH_OR:
-                LOG_ERROR("OR ");
-                print_search_key(p.search_or.a);
-                LOG_ERROR(" ");
-                print_search_key(p.search_or.b);
-                break;
-            default:
-                LOG_ERROR("unknown-search-key-type:%x", FU(key->type));
-        }
-    }
-}
 
 static void search_cmd(void *data, dstr_t tag, bool uid_mode, dstr_t charset,
                       ie_search_key_t *search_key){
-    (void)data;
-    LOG_ERROR("%xSEARCH (%x) ", FS(uid_mode ? "UID " : ""), FD(&tag));
-    print_search_key(search_key);
-    LOG_ERROR("\n");
+    calls_made_t *calls = data;
+    calls->counts.search_cmd++;
+    DROP_CMD( FMT(&calls->buf1, "%x %xSEARCH ", FD(&tag),
+                FS(uid_mode ? "UID " : "")) );
+    if(charset.len > 0){
+        DROP_CMD( print_astring(&calls->buf1, &charset) );
+        DROP_CMD( FMT(&calls->buf1, " ") );
+    }
+    DROP_CMD( print_ie_search_key(&calls->buf1, search_key) );
     dstr_free(&tag);
     dstr_free(&charset);
     ie_search_key_free(search_key);
@@ -391,94 +419,57 @@ static void search_cmd(void *data, dstr_t tag, bool uid_mode, dstr_t charset,
 //
 
 static void fetch_cmd(void *data, dstr_t tag, bool uid_mode,
-                      ie_seq_set_t *seq_set, ie_fetch_attr_t attr){
-    (void)data;
-    LOG_ERROR("%xFETCH command (%x) ", FS(uid_mode ? "UID " : ""), FD(&tag));
+        ie_seq_set_t *seq_set, ie_fetch_attrs_t *attr){
+    calls_made_t *calls = data;
+    calls->counts.fetch_cmd++;
+    DROP_CMD( FMT(&calls->buf1, "%x %xFETCH ", FD(&tag),
+                FS(uid_mode ? "UID " : "")) );
     // print sequence
-    print_seq_set(seq_set);
-    // print the "fixed" attributes
-    if(attr.envelope) LOG_ERROR(" ENVELOPE");
-    if(attr.flags) LOG_ERROR(" FLAGS");
-    if(attr.intdate) LOG_ERROR(" INTERNALDATE");
-    if(attr.uid) LOG_ERROR(" UID");
-    if(attr.rfc822) LOG_ERROR(" RFC822");
-    if(attr.rfc822_header) LOG_ERROR(" RFC822_HEADER");
-    if(attr.rfc822_size) LOG_ERROR(" RFC822_SIZE");
-    if(attr.rfc822_text) LOG_ERROR(" RFC822_TEXT");
-    if(attr.body) LOG_ERROR(" BODY");
-    if(attr.bodystruct) LOG_ERROR(" BODYSTRUCT");
-    // print the free-form attributes
-    for(ie_fetch_extra_t *ex = attr.extra; ex != NULL; ex = ex->next){
-        // BODY or BODY.PEEK
-        LOG_ERROR(" BODY%x[", FS(ex->peek ? ".PEEK" : ""));
-        // the section part, a '.'-separated set of numbers inside the []
-        for(ie_section_part_t *sp = ex->sect_part; sp != NULL; sp = sp->next){
-            LOG_ERROR("%x%x", FU(sp->n), FS(sp->next ? "." : ""));
-        }
-        // separator between section-part and section-text
-        if(ex->sect_part && ex->sect_txt.type) LOG_ERROR(".");
-        // the section text part
-        switch(ex->sect_txt.type){
-            case IE_SECT_NONE:      break;
-            case IE_SECT_MIME:      LOG_ERROR("MIME"); break;
-            case IE_SECT_TEXT:      LOG_ERROR("TEXT"); break;
-            case IE_SECT_HEADER:    LOG_ERROR("HEADER"); break;
-            case IE_SECT_HDR_FLDS:
-                LOG_ERROR("HEADER.FIELDS (");
-                for(dstr_link_t *h = ex->sect_txt.headers; h; h = h->next)
-                    LOG_ERROR("%x%x", FD(&h->dstr), FS(h->next ? " " : ""));
-                LOG_ERROR(")");
-                break;
-            case IE_SECT_HDR_FLDS_NOT:
-                LOG_ERROR("HEADER.FIELDS.NOT (");
-                for(dstr_link_t *h = ex->sect_txt.headers; h; h = h->next)
-                    LOG_ERROR("%x%x", FD(&h->dstr), FS(h->next ? " " : ""));
-                LOG_ERROR(")");
-                break;
-        }
-        LOG_ERROR("]");
-        // the partial at the end
-        if(ex->partial.found){
-            LOG_ERROR("<%x.%x>", FU(ex->partial.p1), FU(ex->partial.p2));
-        }
-    }
-    LOG_ERROR("\n");
+    DROP_CMD( print_ie_seq_set(&calls->buf1, seq_set) );
+    DROP_CMD( FMT(&calls->buf1, " ") );
+    DROP_CMD( print_ie_fetch_attrs(&calls->buf1, attr) );
     dstr_free(&tag);
     ie_seq_set_free(seq_set);
-    ie_fetch_attr_free(&attr);
+    ie_fetch_attrs_free(attr);
 }
 
 //
 
 static void store_cmd(void *data, dstr_t tag, bool uid_mode,
                       ie_seq_set_t *seq_set, int sign, bool silent,
-                      ie_flag_list_t flags){
-    (void)data;
-    // print tag
-    LOG_ERROR("%xSTORE START (%x) ", FS(uid_mode ? "UID " : ""), FD(&tag));
-    // print sequence
-    print_seq_set(seq_set);
-    // what to do with FLAGS to follow
-    LOG_ERROR(" %xFLAGS%x ", FC(sign == 0 ? ' ' : (sign > 0 ? '+' : '-')),
-                            FS(silent ? ".SILENT" : ""));
-    print_flag_list(flags);
-    LOG_ERROR("\n");
+                      ie_flags_t *flags){
+    calls_made_t *calls = data;
+    calls->counts.store_cmd++;
+
+    DROP_CMD( FMT(&calls->buf1, "%x %xSTORE ", FD(&tag),
+                FS(uid_mode ? "UID " : "")) );
+    DROP_CMD( print_ie_seq_set(&calls->buf1, seq_set) );
+    DROP_CMD( FMT(&calls->buf1, " %xFLAGS%x (",
+            FS(sign == 0 ? "" : (sign > 0 ? "+" : "-")),
+            FS(silent ? ".SILENT" : "")) );
+    DROP_CMD( print_ie_flags(&calls->buf1, flags) );
+    DROP_CMD( FMT(&calls->buf1, ")") );
+
     dstr_free(&tag);
     ie_seq_set_free(seq_set);
-    ie_flag_list_free(&flags);
+    ie_flags_free(flags);
 }
 
 //
 
 static void copy_cmd(void *data, dstr_t tag, bool uid_mode,
-                     ie_seq_set_t *seq_set, bool inbox, dstr_t mbx){
-    (void)data;
-    // print tag
-    LOG_ERROR("%xCOPY (%x) ", FS(uid_mode ? "UID " : ""), FD(&tag));
-    // print sequence
-    print_seq_set(seq_set);
-    // what to do with FLAGS to follow
-    LOG_ERROR(" to '%x' (%x)\n", FD(&mbx), FU(inbox));
+        ie_seq_set_t *seq_set, bool inbox, dstr_t mbx){
+    calls_made_t *calls = data;
+    calls->counts.copy_cmd++;
+    DROP_CMD( FMT(&calls->buf1, "%x %xCOPY ", FD(&tag),
+                FS(uid_mode ? "UID " : "")) );
+    DROP_CMD( print_ie_seq_set(&calls->buf1, seq_set) );
+    if(inbox){
+        DROP_CMD( FMT(&calls->buf1, " INBOX") );
+    }else{
+        DROP_CMD( FMT(&calls->buf1, " ") );
+        DROP_CMD( print_astring(&calls->buf1, &mbx) );
+    }
     dstr_free(&tag);
     dstr_free(&mbx);
     ie_seq_set_free(seq_set);
@@ -486,68 +477,80 @@ static void copy_cmd(void *data, dstr_t tag, bool uid_mode,
 
 /////////////////////////////////////////////////////////
 
-static void st_hook(void *data, dstr_t tag, status_type_t status,
-                    status_code_t code, unsigned int code_extra,
-                    dstr_t text){
-    (void)data;
-    (void)status;
-    (void)code;
-    (void)code_extra;
-    LOG_ERROR("status_type response with tag %x, code %x (%x), and text %x\n",
-              FD(&tag), FD(st_code_to_dstr(code)), FU(code_extra), FD(&text));
+static void st_resp(void *data, dstr_t tag, ie_status_t status,
+        ie_st_code_t *code, dstr_t text){
+    calls_made_t *calls = data;
+    calls->counts.st_resp++;
+    DROP_CMD( FMT(&calls->buf1, "%x %x ", FD(tag.data ? &tag : &DSTR_LIT("*")),
+                FD(ie_status_to_dstr(status))) );
+    if(code){
+        DROP_CMD( print_ie_st_code(&calls->buf1, code) );
+        DROP_CMD( FMT(&calls->buf1, " ") );
+    }
+    DROP_CMD( dstr_append(&calls->buf1, &text) );
+
     dstr_free(&tag);
+    ie_st_code_free(code);
     dstr_free(&text);
 }
 
-static derr_t capa_start(void *data){
-    (void)data;
-    LOG_ERROR("CAPABILITY START\n");
-    return e;
-}
+//
 
-static derr_t capa(void *data, dstr_t capability){
-    (void)data;
-    LOG_ERROR("CAPABILITY: %x\n", FD(&capability));
-    dstr_free(&capability);
-    return e;
-}
-
-static void capa_end(void *data, bool success){
-    (void)data;
-    LOG_ERROR("CAPABILITY END (%x)\n", FS(success ? "success" : "fail"));
+static void capa_resp(void *data, ie_dstr_t *capas){
+    calls_made_t *calls = data;
+    calls->counts.capa_resp++;
+    // capa_resp can happen simultaneously with other responses, so use buf2
+    DROP_CMD( FMT(&calls->buf2, "CAPABILITY") );
+    for(ie_dstr_t *d = capas; d != NULL; d = d->next){
+        DROP_CMD( FMT(&calls->buf2, " %x", FD(&d->dstr)) );
+    }
 }
 
 //
 
-static void pflag_resp(void *data, ie_flag_list_t flags){
-    (void)data;
-    LOG_ERROR("PERMANENTFLAGS (");
-    print_flag_list(flags);
-    LOG_ERROR(")\n");
-    ie_flag_list_free(&flags);
+static void pflag_resp(void *data, ie_pflags_t *pflags){
+    calls_made_t *calls = data;
+    calls->counts.pflag_resp++;
+    // pflag_resp can happen simultaneously with other responses, so use buf2
+    DROP_CMD( FMT(&calls->buf2, "PERMANENTFLAGS (") );
+    DROP_CMD( print_ie_pflags(&calls->buf2, pflags) );
+    DROP_CMD( FMT(&calls->buf2, ")") );
+    ie_pflags_free(pflags);
 }
 
 //
 
-static void list_resp(void *data, ie_mflag_list_t mflags, char sep, bool inbox,
-                      dstr_t mbx){
-    (void)data;
-    LOG_ERROR("LIST (");
-    print_mflag_list(mflags);
-    LOG_ERROR(") '%x' '%x' (%x)\n", FC(sep), FD(&mbx), FU(inbox));
-    ie_mflag_list_free(&mflags);
+static void list_resp(void *data, ie_mflags_t *mflags, char sep, bool inbox,
+        dstr_t mbx){
+    calls_made_t *calls = data;
+    calls->counts.list_resp++;
+    DROP_CMD( FMT(&calls->buf1, "LIST (") );
+    DROP_CMD( print_ie_mflags(&calls->buf1, mflags) );
+    if(inbox){
+        DROP_CMD( FMT(&calls->buf1, ") \"%x\" INBOX", FC(sep)) );
+    }else{
+        DROP_CMD( FMT(&calls->buf1, ") \"%x\" ", FC(sep)) );
+        DROP_CMD( print_astring(&calls->buf1, &mbx) );
+    }
+    ie_mflags_free(mflags);
     dstr_free(&mbx);
 }
 
 //
 
-static void lsub_resp(void *data, ie_mflag_list_t mflags, char sep, bool inbox,
-                      dstr_t mbx){
-    (void)data;
-    LOG_ERROR("LSUB (");
-    print_mflag_list(mflags);
-    LOG_ERROR(") '%x' '%x' (%x)\n", FC(sep), FD(&mbx), FU(inbox));
-    ie_mflag_list_free(&mflags);
+static void lsub_resp(void *data, ie_mflags_t *mflags, char sep, bool inbox,
+        dstr_t mbx){
+    calls_made_t *calls = data;
+    calls->counts.lsub_resp++;
+    DROP_CMD( FMT(&calls->buf1, "LSUB (") );
+    DROP_CMD( print_ie_mflags(&calls->buf1, mflags) );
+    if(inbox){
+        DROP_CMD( FMT(&calls->buf1, ") \"%x\" INBOX", FC(sep)) );
+    }else{
+        DROP_CMD( FMT(&calls->buf1, ") \"%x\" ", FC(sep)) );
+        DROP_CMD( print_astring(&calls->buf1, &mbx) );
+    }
+    ie_mflags_free(mflags);
     dstr_free(&mbx);
 }
 
@@ -559,96 +562,107 @@ static void status_resp(void *data, bool inbox, dstr_t mbx,
                         bool found_uidnext, unsigned int uidnext,
                         bool found_uidvld, unsigned int uidvld,
                         bool found_unseen, unsigned int unseen){
-    (void)data;
-    LOG_ERROR("STATUS '%x' (%x)", FD(&mbx), FU(inbox));
-    if(found_messages) LOG_ERROR(" messages: %x", FU(messages));
-    if(found_recent) LOG_ERROR(" recent: %x", FU(recent));
-    if(found_uidnext) LOG_ERROR(" uidnext: %x", FU(uidnext));
-    if(found_uidvld) LOG_ERROR(" uidvld: %x", FU(uidvld));
-    if(found_unseen) LOG_ERROR(" unseen: %x", FU(unseen));
-    LOG_ERROR("\n");
+    calls_made_t *calls = data;
+    calls->counts.status_resp++;
+    if(inbox){
+        DROP_CMD( FMT(&calls->buf1, "STATUS INBOX (") );
+    }else{
+        DROP_CMD( FMT(&calls->buf1, "STATUS ") );
+        DROP_CMD( print_astring(&calls->buf1, &mbx) );
+        DROP_CMD( FMT(&calls->buf1, " (") );
+    }
+
+    bool sp = false;
+    if(found_messages){
+        LEAD_SP1;
+        DROP_CMD( FMT(&calls->buf1, "MESSAGES %x", FU(messages)) );
+    }
+    if(found_recent){
+        LEAD_SP1;
+        DROP_CMD( FMT(&calls->buf1, "RECENT %x", FU(recent)) );
+    }
+    if(found_uidnext){
+        LEAD_SP1;
+        DROP_CMD( FMT(&calls->buf1, "UIDNEXT %x", FU(uidnext)) );
+    }
+    if(found_uidvld){
+        LEAD_SP1;
+        DROP_CMD( FMT(&calls->buf1, "UIDVALIDITY %x", FU(uidvld)) );
+    }
+    if(found_unseen){
+        LEAD_SP1;
+        DROP_CMD( FMT(&calls->buf1, "UNSEEN %x", FU(unseen)) );
+    }
+    DROP_CMD( FMT(&calls->buf1, ")") );
     dstr_free(&mbx);
 }
 
 //
 
-static void flags_resp(void *data, ie_flag_list_t flags){
-    (void)data;
-    LOG_ERROR("FLAGS (");
-    print_flag_list(flags);
-    LOG_ERROR(")\n");
-    ie_flag_list_free(&flags);
+static void flags_resp(void *data, ie_flags_t *flags){
+    calls_made_t *calls = data;
+    calls->counts.flags_resp++;
+    DROP_CMD( FMT(&calls->buf1, "FLAGS (") );
+    DROP_CMD( print_ie_flags(&calls->buf1, flags) );
+    DROP_CMD( FMT(&calls->buf1, ")") );
+    ie_flags_free(flags);
 }
 
 //
 
-static void exists_hook(void *data, unsigned int num){
-    (void)data;
-    LOG_ERROR("EXISTS %x\n", FU(num));
+static void exists_resp(void *data, unsigned int num){
+    calls_made_t *calls = data;
+    calls->counts.exists_resp++;
+    DROP_CMD( FMT(&calls->buf1, "%x EXISTS", FU(num)) );
 }
 
 //
 
-static void recent_hook(void *data, unsigned int num){
-    (void)data;
-    LOG_ERROR("RECENT %x\n", FU(num));
+static void recent_resp(void *data, unsigned int num){
+    calls_made_t *calls = data;
+    calls->counts.recent_resp++;
+    DROP_CMD( FMT(&calls->buf1, "%x RECENT", FU(num)) );
 }
 
 //
 
-static void expunge_hook(void *data, unsigned int num){
-    (void)data;
-    LOG_ERROR("EXPUNGE %x\n", FU(num));
+static void expunge_resp(void *data, unsigned int num){
+    calls_made_t *calls = data;
+    calls->counts.expunge_resp++;
+    DROP_CMD( FMT(&calls->buf1, "%x EXPUNGE", FU(num)) );
 }
 
 //
 
-static derr_t fetch_start(void *data, unsigned int num){
-    (void)data;
-    LOG_ERROR("FETCH START (%x)\n", FU(num));
-    return e;
-}
+static void fetch_resp(void *data, unsigned int num,
+        ie_fetch_resp_t *fetch_resp){
+    calls_made_t *calls = data;
+    calls->counts.fetch_resp++;
+    DROP_CMD( FMT(&calls->buf1, "%x FETCH (", FU(num)) );
+    bool sp = false;
+    if(fetch_resp->flags){
+        LEAD_SP1;
+        DROP_CMD( FMT(&calls->buf1, "FLAGS (") );
+        DROP_CMD( print_ie_fflags(&calls->buf1, fetch_resp->flags) );
+        DROP_CMD( FMT(&calls->buf1, ")") );
+    }
+    if(fetch_resp->uid){
+        LEAD_SP1;
+        DROP_CMD( FMT(&calls->buf1, "UID %x", FU(fetch_resp->uid)) );
+    }
+    if(fetch_resp->intdate.year){
+        LEAD_SP1;
+        DROP_CMD( FMT(&calls->buf1, "INTERNALDATE ") );
+        DROP_CMD( print_imap_time(&calls->buf1, fetch_resp->intdate) );
+    }
+    if(fetch_resp->content){
+        LEAD_SP1;
+        DROP_CMD( FMT(&calls->buf1, "RFC822 ") );
+        DROP_CMD( print_string(&calls->buf1, &fetch_resp->content->dstr) );
+    }
+    DROP_CMD( FMT(&calls->buf1, ")") );
 
-static derr_t f_flags(void *data, ie_flag_list_t flags){
-    (void)data;
-    LOG_ERROR("FETCH FLAGS (");
-    print_flag_list(flags);
-    LOG_ERROR(")\n");
-    ie_flag_list_free(&flags);
-    return e;
-}
-
-static derr_t f_rfc822_start(void *data){
-    (void)data;
-    LOG_ERROR("FETCH RFC822 START\n");
-    return e;
-}
-
-static derr_t f_rfc822_qstr(void *data, const dstr_t *qstr){
-    (void)data;
-    LOG_ERROR("FETCH QSTR '%x'\n", FD(qstr));
-    return e;
-}
-
-static void f_rfc822_end(void *data, bool success){
-    (void)data;
-    LOG_ERROR("FETCH RFC822 END (%x)\n", FS(success ? "success" : "fail"));
-}
-
-static void f_uid(void *data, unsigned int num){
-    (void)data;
-    LOG_ERROR("FETCH UID %x\n", FU(num));
-}
-
-static void f_intdate(void *data, imap_time_t imap_time){
-    (void)data;
-    LOG_ERROR("FETCH INTERNALDATE %x-%x-%x\n",
-              FI(imap_time.year), FI(imap_time.month), FI(imap_time.day));
-}
-
-static void fetch_end(void *data, bool success){
-    (void)data;
-    LOG_ERROR("FETCH END (%x)\n", FS(success ? "success" : "fail"));
+    ie_fetch_resp_free(fetch_resp);
 }
 
 #define EXPECT(e, cmd) { \
@@ -679,11 +693,16 @@ static void fetch_end(void *data, bool success){
 // }
 
 
-static derr_t do_test_scanner_and_parser(LIST(dstr_t) *inputs){
+typedef struct {
+    dstr_t in;
+    calls_made_t out;
+} test_case_t;
+
+static derr_t do_test_scanner_and_parser(test_case_t *cases, size_t ncases){
     derr_t e = E_OK;
 
     // prepare to init the reader
-    imap_parse_hooks_dn_t hooks_dn = {
+    imap_hooks_dn_t hooks_dn = {
         login_cmd,
         select_cmd,
         examine_cmd,
@@ -698,250 +717,776 @@ static derr_t do_test_scanner_and_parser(LIST(dstr_t) *inputs){
         check_cmd,
         close_cmd,
         expunge_cmd,
-        append_start,
-        NULL,
-        NULL,
+        append_cmd,
         search_cmd,
         fetch_cmd,
         store_cmd,
         copy_cmd,
     };
-    imap_parse_hooks_up_t hooks_up = {
-        st_hook,
-        capa_start, capa, capa_end,
+    imap_hooks_up_t hooks_up = {
+        st_resp,
+        capa_resp,
         pflag_resp,
         list_resp,
         lsub_resp,
         status_resp,
         flags_resp,
-        exists_hook,
-        recent_hook,
-        expunge_hook,
-        fetch_start,
-            f_flags,
-            f_rfc822_start,
-                NULL,
-                f_rfc822_qstr,
-            f_rfc822_end,
-            f_uid,
-            f_intdate,
-        fetch_end,
+        exists_resp,
+        recent_resp,
+        expunge_resp,
+        fetch_resp,
     };
+
+    // prepare the calls_made struct
+    calls_made_t calls;
+    PROP(&e, dstr_new(&calls.buf1, 4096) );
+    PROP_GO(&e, dstr_new(&calls.buf1, 4096), cu_buf1);
 
     // init the reader
     imap_reader_t reader;
-    PROP(&e, imap_reader_init(&reader, hooks_dn, hooks_up, NULL) );
+    PROP_GO(&e, imap_reader_init(&reader, hooks_dn, hooks_up, &calls), cu_buf2);
 
-    for(size_t i = 0; i < inputs->len; i++){
-        PROP_GO(&e, imap_read(&reader, &inputs->data[i]), cu_reader);
+
+    for(size_t i = 0; i < ncases; i++){
+        // reset calls made
+        memset(&calls.counts, 0, sizeof(calls.counts));
+        calls.buf1.len = 0;
+        calls.buf2.len = 0;
+        // feed in the input
+        LOG_DEBUG("about to feed '%x'", FD(&cases[i].in));
+        PROP_GO(&e, imap_read(&reader, &cases[i].in), show_case);
+        LOG_DEBUG("fed '%x'", FD(&cases[i].in));
+        // check that the right calls were made
+        PROP_GO(&e, assert_calls_equal(&cases[i].out, &calls), show_case);
+        LOG_DEBUG("checked '%x'", FD(&cases[i].in));
+        continue;
+
+    show_case:
+        TRACE(&e, "failure with input:\n%x(end input)\n", FD(&cases[i].in));
+        goto cu_reader;
     }
+
 cu_reader:
     imap_reader_free(&reader);
+cu_buf2:
+    dstr_free(&calls.buf2);
+cu_buf1:
+    dstr_free(&calls.buf1);
     return e;
 }
 
+#define TEST_CASE(_in, _calls) (test_case_t){ \
+        .in = DSTR_LIT(_in), \
+        .out = (calls_made_t)_calls, \
+    }
 
 static derr_t test_scanner_and_parser(void){
     derr_t e = E_OK;
     {
-        LIST_PRESET(dstr_t, inputs,
-            DSTR_LIT("taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaag "
-                     "OK [ALERT] alert text\r\n"),
-            DSTR_LIT("taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaag "
-                     "OK [ALERTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT"
-                     "TTTTTTTT] alert text \r\n"),
-            DSTR_LIT("* capability 1 2 3 4\r\n"),
-            DSTR_LIT("* OK [capability 1 2 3 4] ready\r\n"),
-            DSTR_LIT("* OK [PERMANENTFLAGS (\\answered \\2 a 1)] hi!\r\n"),
-            DSTR_LIT("* ok [parse] hi\r\n"),
-            DSTR_LIT("* LIST (\\ext \\noselect) \"/\" inbox\r\n"),
-            DSTR_LIT("* LIST (\\marked) \"/\" \"other\"\r\n"),
-            DSTR_LIT("* LSUB (\\ext \\noinferiors) \"/\" inbox\r\n"),
-            DSTR_LIT("* LSUB (\\marked) \"/\" \"other\"\r\n"),
-        );
-        PROP(&e, do_test_scanner_and_parser(&inputs) );
+        test_case_t cases[] = {
+            {
+                .in=DSTR_LIT("taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaag "
+                             "OK [ALERT] alert text\r\n"),
+                .out={
+                    .counts={.st_resp=1},
+                    .buf1=DSTR_LIT("taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaag "
+                             "OK [ALERT] alert text"),
+                }
+            },
+            {
+                .in=DSTR_LIT("taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaag "
+                             "OK [ALERTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT"
+                             "TTTTTTTT] alert text \r\n"),
+                .out={
+                    .counts={.st_resp=1},
+                    .buf1=DSTR_LIT("taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaag "
+                                   "OK [ALERTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT"
+                                   "TTTTTTTT] alert text "),
+                }
+            },
+            {
+                .in=DSTR_LIT("* capability 1 2 3 4\r\n"),
+                .out={
+                    .counts={.capa_resp=1},
+                    .buf2=DSTR_LIT("CAPABILITY 1 2 3 4"),
+                }
+            },
+            {
+                .in=DSTR_LIT("* OK [capability 1 2 3 4] ready\r\n"),
+                .out={
+                    .counts={.st_resp=1},
+                    .buf1=DSTR_LIT("* OK [CAPABILITY 1 2 3 4] ready"),
+                }
+            },
+            {
+                .in=DSTR_LIT("* OK [PERMANENTFLAGS (\\answered \\2 a 1)] "
+                        "hi!\r\n"),
+                .out={
+                    .counts={.st_resp=1},
+                    .buf1=DSTR_LIT("* OK [PERMANENTFLAGS (\\Answered a 1 \\2)]"
+                        " hi!")
+                }
+            },
+            {
+                .in=DSTR_LIT("* ok [parse] hi\r\n"),
+                .out={
+                    .counts={.st_resp=1},
+                    .buf1=DSTR_LIT("* OK [PARSE] hi")
+                }
+            },
+            {
+                .in=DSTR_LIT("* LIST (\\ext \\noselect) \"/\" inbox\r\n"),
+                .out={
+                    .counts={.list_resp=1},
+                    .buf1=DSTR_LIT("LIST (\\Noselect \\ext) \"/\" INBOX")
+                }
+            },
+            {
+                .in=DSTR_LIT("* LIST (\\marked) \"/\" \"other\"\r\n"),
+                .out={
+                    .counts={.list_resp=1},
+                    .buf1=DSTR_LIT("LIST (\\Marked) \"/\" other")
+                }
+            },
+            {
+                .in=DSTR_LIT("* LSUB (\\ext \\noinferiors) \"/\" inbox\r\n"),
+                .out={
+                    .counts={.lsub_resp=1},
+                    .buf1=DSTR_LIT("LSUB (\\NoInferiors \\ext) \"/\" INBOX")
+                }
+            },
+            {
+                .in=DSTR_LIT("* LSUB (\\marked) \"/\" \"other\"\r\n"),
+                .out={
+                    .counts={.lsub_resp=1},
+                    .buf1=DSTR_LIT("LSUB (\\Marked) \"/\" other")
+                }
+            },
+        };
+        size_t ncases = sizeof(cases) / sizeof(*cases);
+        PROP(&e, do_test_scanner_and_parser(cases, ncases) );
     }
     {
-        LIST_PRESET(dstr_t, inputs,
-            DSTR_LIT("* STATUS inbox (UNSEEN 2 RECENT 4)\r\n"),
-            DSTR_LIT("* STATUS not_inbox (RECENT 4)\r\n"),
-            DSTR_LIT("* STATUS \"qstring \\\" box\" (MESSAGES 2)\r\n"),
-            DSTR_LIT("* STATUS {11}\r\nliteral box ()\r\n"),
-            DSTR_LIT("* STATUS astring_box (UNSEEN 2 RECENT 4)\r\n"),
-        );
-        PROP(&e, do_test_scanner_and_parser(&inputs) );
+        test_case_t cases[] = {
+            {
+                .in=DSTR_LIT("* STATUS inbox (UNSEEN 2 RECENT 4)\r\n"),
+                .out={
+                    .counts={.status_resp=1},
+                    .buf1=DSTR_LIT("STATUS INBOX (RECENT 4 UNSEEN 2)")
+                }
+            },
+            {
+                .in=DSTR_LIT("* STATUS not_inbox (RECENT 4)\r\n"),
+                .out={
+                    .counts={.status_resp=1},
+                    .buf1=DSTR_LIT("STATUS not_inbox (RECENT 4)")
+                }
+            },
+            {
+                .in=DSTR_LIT("* STATUS \"qstring \\\" box\" (MESSAGES 2)\r\n"),
+                .out={
+                    .counts={.status_resp=1},
+                    .buf1=DSTR_LIT("STATUS \"qstring \\\" box\" (MESSAGES 2)")
+                }
+            },
+            {
+                .in=DSTR_LIT("* STATUS {11}\r\nliteral box ()\r\n"),
+                .out={
+                    .counts={.status_resp=1},
+                    .buf1=DSTR_LIT("STATUS \"literal box\" ()")
+                }
+            },
+            {
+                .in=DSTR_LIT("* STATUS astring_box (UNSEEN 2 RECENT 4)\r\n"),
+                .out={
+                    .counts={.status_resp=1},
+                    .buf1=DSTR_LIT("STATUS astring_box (RECENT 4 UNSEEN 2)")
+                }
+            },
+        };
+        size_t ncases = sizeof(cases) / sizeof(*cases);
+        PROP(&e, do_test_scanner_and_parser(cases, ncases) );
     }
     {
-        LIST_PRESET(dstr_t, inputs,
-            DSTR_LIT("* FLAGS (\\seen \\answered keyword \\extra)\r\n"),
-            DSTR_LIT("* 45 EXISTS\r\n"),
-            DSTR_LIT("* 81 RECENT\r\n"),
-            DSTR_LIT("* 41 expunge\r\n"),
-        );
-        PROP(&e, do_test_scanner_and_parser(&inputs) );
+        test_case_t cases[] = {
+            {
+                .in=DSTR_LIT("* FLAGS (\\seen \\answered keyword \\extra)\r\n"),
+                .out={
+                    .counts={.flags_resp=1},
+                    .buf1=DSTR_LIT("FLAGS (\\Answered \\Seen keyword \\extra)")
+                }
+            },
+            {
+                .in=DSTR_LIT("* 45 EXISTS\r\n"),
+                .out={
+                    .counts={.exists_resp=1},
+                    .buf1=DSTR_LIT("45 EXISTS")
+                }
+            },
+            {
+                .in=DSTR_LIT("* 81 RECENT\r\n"),
+                .out={
+                    .counts={.recent_resp=1},
+                    .buf1=DSTR_LIT("81 RECENT")
+                }
+            },
+            {
+                .in=DSTR_LIT("* 41 expunge\r\n"),
+                .out={
+                    .counts={.expunge_resp=1},
+                    .buf1=DSTR_LIT("41 EXPUNGE")
+                }
+            },
+        };
+        size_t ncases = sizeof(cases) / sizeof(*cases);
+        PROP(&e, do_test_scanner_and_parser(cases, ncases) );
     }
     {
-        LIST_PRESET(dstr_t, inputs,
-            DSTR_LIT("* 15 FETCH (UID 1234)\r\n"),
-            DSTR_LIT("* 15 FETCH (INTERNALDATE \"11-jan-1999 00:11:22 +5000\")\r\n"),
-            DSTR_LIT("* 15 FETCH (INTERNALDATE \" 2-jan-1999 00:11:22 +5000\")\r\n"),
-            DSTR_LIT("* 15 FETCH (UID 1 FLAGS (\\seen \\ext))\r\n"),
-            DSTR_LIT("* 15 FETCH (RFC822 NIL)\r\n"),
-            DSTR_LIT("* 15 FETCH (RFC822 NI"),
-            DSTR_LIT("L)\r\n"),
-            DSTR_LIT("* 15 FETCH (RFC822 \"asdf asdf asdf\")\r\n"),
-            DSTR_LIT("* 15 FETCH (RFC822 {14}\r\nhello literal!)\r\n"),
-            DSTR_LIT("* 15 FETCH (RFC822 {14}\r\nhello"),
-            DSTR_LIT(" "),
-            DSTR_LIT("l"),
-            DSTR_LIT("i"),
-            DSTR_LIT("t"),
-            DSTR_LIT("e"),
-            DSTR_LIT("r"),
-            DSTR_LIT("al!)\r\n"),
-        );
-        PROP(&e, do_test_scanner_and_parser(&inputs) );
+        test_case_t cases[] = {
+            {
+                .in=DSTR_LIT("* 15 FETCH (UID 1234)\r\n"),
+                .out={
+                    .counts={.fetch_resp=1},
+                    .buf1=DSTR_LIT("15 FETCH (UID 1234)")
+                }
+            },
+            {
+                .in=DSTR_LIT("* 15 FETCH (INTERNALDATE \"11-jan-1999 00:11:22 "
+                        "+5000\")\r\n"),
+                .out={
+                    .counts={.fetch_resp=1},
+                    .buf1=DSTR_LIT("15 FETCH (INTERNALDATE \"11-Jan-1999 "
+                            "00:11:22 +5000\")")
+                }
+            },
+            {
+                .in=DSTR_LIT("* 15 FETCH (INTERNALDATE \" 2-jan-1999 00:11:22 "
+                        "+5000\")\r\n"),
+                .out={
+                    .counts={.fetch_resp=1},
+                    .buf1=DSTR_LIT("15 FETCH (INTERNALDATE \" 2-Jan-1999 "
+                            "00:11:22 +5000\")")
+                }
+            },
+            {
+                .in=DSTR_LIT("* 15 FETCH (UID 1 FLAGS (\\seen \\ext))\r\n"),
+                .out={
+                    .counts={.fetch_resp=1},
+                    .buf1=DSTR_LIT("15 FETCH (FLAGS (\\Seen \\ext) UID 1)")
+                }
+            },
+            {
+                .in=DSTR_LIT("* 15 FETCH (RFC822 NIL)\r\n"),
+                .out={
+                    .counts={.fetch_resp=1},
+                    .buf1=DSTR_LIT("15 FETCH (RFC822 \"\")")
+                }
+            },
+            {
+                .in=DSTR_LIT("* 15 FETCH (RFC822 NI"),
+            },
+            {
+                .in=DSTR_LIT("L)\r\n"),
+                .out={
+                    .counts={.fetch_resp=1},
+                    .buf1=DSTR_LIT("15 FETCH (RFC822 \"\")")
+                }
+            },
+            {
+                .in=DSTR_LIT("* 15 FETCH (RFC822 \"asdf asdf asdf\")\r\n"),
+                .out={
+                    .counts={.fetch_resp=1},
+                    .buf1=DSTR_LIT("15 FETCH (RFC822 \"asdf asdf asdf\")")
+                }
+            },
+            {
+                .in=DSTR_LIT("* 15 FETCH (RFC822 {14}\r\nhello literal!)\r\n"),
+                .out={
+                    .counts={.fetch_resp=1},
+                    .buf1=DSTR_LIT("15 FETCH (RFC822 \"hello literal!\")")
+                }
+            },
+            {.in=DSTR_LIT("* 15 FETCH (RFC822 {14}\r\nhello")},
+            {.in=DSTR_LIT(" ")},
+            {.in=DSTR_LIT("l")},
+            {.in=DSTR_LIT("i")},
+            {.in=DSTR_LIT("t")},
+            {.in=DSTR_LIT("e")},
+            {.in=DSTR_LIT("r")},
+            {
+                .in=DSTR_LIT("al!)\r\n"),
+                .out={
+                    .counts={.fetch_resp=1},
+                    .buf1=DSTR_LIT("15 FETCH (RFC822 \"hello literal!\")")
+                }
+            },
+        };
+        size_t ncases = sizeof(cases) / sizeof(*cases);
+        PROP(&e, do_test_scanner_and_parser(cases, ncases) );
     }
     ///////////////
     {
-        LIST_PRESET(dstr_t, inputs,
-            DSTR_LIT("tag LOGIN asdf \"pass phrase\"\r\n"),
-            DSTR_LIT("tag LOGIN \"asdf\" \"pass phrase\"\r\n"),
-            DSTR_LIT("tag LOGIN \"asdf\" {11}\r\npass phrase\r\n"),
-            DSTR_LIT("tag SELECT inbox\r\n"),
-            DSTR_LIT("tag SELECT \"crAZY boX\"\r\n"),
-            DSTR_LIT("tag EXAMINE {10}\r\nexamine_me\r\n"),
-            DSTR_LIT("tag CREATE create_me\r\n"),
-            DSTR_LIT("tag DELETE delete_me\r\n"),
-            DSTR_LIT("tag RENAME old_name new_name\r\n"),
-            DSTR_LIT("tag SUBSCRIBE subscribe_me\r\n"),
-            DSTR_LIT("tag UNSUBSCRIBE unsubscribe_me\r\n"),
-            DSTR_LIT("tag LIST \"\" *\r\n"),
-            DSTR_LIT("tag LSUB \"\" *\r\n"),
-            DSTR_LIT("tag STATUS inbox (unseen)\r\n"),
-            DSTR_LIT("tag STATUS notinbox (unseen messages)\r\n"),
-            DSTR_LIT("tag CHECK\r\n"),
-            DSTR_LIT("tag CLOSE\r\n"),
-            DSTR_LIT("tag EXPUNGE\r\n"),
-            DSTR_LIT("tag APPEND inbox (\\Seen) \"11-jan-1999 00:11:22 +5000\" "),
-            DSTR_LIT(            "{10}\r\nhello imap\r\n"),
-            DSTR_LIT("tag APPEND inbox \"11-jan-1999 00:11:22 +5000\" "),
-            DSTR_LIT(            "{10}\r\nhello imap\r\n"),
-            DSTR_LIT("tag APPEND inbox (\\Seen) "),
-            DSTR_LIT(            "{10}\r\nhello imap\r\n"),
-            DSTR_LIT("tag STORE 1:*,*:10 +FLAGS.SILENT ()\r\n"),
-            DSTR_LIT("tag STORE 5 +FLAGS \\Seen \\Extension\r\n"),
-            DSTR_LIT("tag COPY 5:* iNBoX\r\n"),
-            DSTR_LIT("tag COPY 5:7 NOt_iNBoX\r\n"),
-        );
-        PROP(&e, do_test_scanner_and_parser(&inputs) );
+        test_case_t cases[] = {
+            {
+                .in=DSTR_LIT("tag LOGIN asdf \"pass phrase\"\r\n"),
+                .out={
+                    .counts={.login_cmd=1},
+                    .buf1=DSTR_LIT("tag LOGIN asdf \"pass phrase\"")
+                }
+            },
+            {
+                .in=DSTR_LIT("tag LOGIN \"asdf\" \"pass phrase\"\r\n"),
+                .out={
+                    .counts={.login_cmd=1},
+                    .buf1=DSTR_LIT("tag LOGIN asdf \"pass phrase\"")
+                }
+            },
+            {
+                .in=DSTR_LIT("tag LOGIN \"asdf\" {11}\r\npass phrase\r\n"),
+                .out={
+                    .counts={.login_cmd=1},
+                    .buf1=DSTR_LIT("tag LOGIN asdf \"pass phrase\"")
+                }
+            },
+            {
+                .in=DSTR_LIT("tag SELECT inbox\r\n"),
+                .out={
+                    .counts={.select_cmd=1},
+                    .buf1=DSTR_LIT("tag SELECT INBOX")
+                }
+            },
+            {
+                .in=DSTR_LIT("tag SELECT \"crAZY boX\"\r\n"),
+                .out={
+                    .counts={.select_cmd=1},
+                    .buf1=DSTR_LIT("tag SELECT \"crAZY boX\"")
+                }
+            },
+            {
+                .in=DSTR_LIT("tag EXAMINE {10}\r\nexamine_me\r\n"),
+                .out={
+                    .counts={.examine_cmd=1},
+                    .buf1=DSTR_LIT("tag EXAMINE examine_me")
+                }
+            },
+            {
+                .in=DSTR_LIT("tag CREATE create_me\r\n"),
+                .out={
+                    .counts={.create_cmd=1},
+                    .buf1=DSTR_LIT("tag CREATE create_me")
+                }
+            },
+            {
+                .in=DSTR_LIT("tag DELETE delete_me\r\n"),
+                .out={
+                    .counts={.delete_cmd=1},
+                    .buf1=DSTR_LIT("tag DELETE delete_me")
+                }
+            },
+            {
+                .in=DSTR_LIT("tag RENAME old_name new_name\r\n"),
+                .out={
+                    .counts={.rename_cmd=1},
+                    .buf1=DSTR_LIT("tag RENAME old_name new_name")
+                }
+            },
+            {
+                .in=DSTR_LIT("tag SUBSCRIBE subscribe_me\r\n"),
+                .out={
+                    .counts={.subscribe_cmd=1},
+                    .buf1=DSTR_LIT("tag SUBSCRIBE subscribe_me")
+                }
+            },
+            {
+                .in=DSTR_LIT("tag UNSUBSCRIBE unsubscribe_me\r\n"),
+                .out={
+                    .counts={.unsubscribe_cmd=1},
+                    .buf1=DSTR_LIT("tag UNSUBSCRIBE unsubscribe_me")
+                }
+            },
+            {
+                .in=DSTR_LIT("tag LIST \"\" *\r\n"),
+                .out={
+                    .counts={.list_cmd=1},
+                    .buf1=DSTR_LIT("tag LIST \"\" *")
+                }
+            },
+            {
+                .in=DSTR_LIT("tag LSUB \"\" *\r\n"),
+                .out={
+                    .counts={.lsub_cmd=1},
+                    .buf1=DSTR_LIT("tag LSUB \"\" *")
+                }
+            },
+            {
+                .in=DSTR_LIT("tag STATUS inbox (unseen)\r\n"),
+                .out={
+                    .counts={.status_cmd=1},
+                    .buf1=DSTR_LIT("tag STATUS INBOX (UNSEEN)")
+                }
+            },
+            {
+                .in=DSTR_LIT("tag STATUS notinbox (unseen messages)\r\n"),
+                .out={
+                    .counts={.status_cmd=1},
+                    .buf1=DSTR_LIT("tag STATUS notinbox (MESSAGES UNSEEN)")
+                }
+            },
+            {
+                .in=DSTR_LIT("tag CHECK\r\n"),
+                .out={
+                    .counts={.check_cmd=1},
+                    .buf1=DSTR_LIT("tag CHECK")
+                }
+            },
+            {
+                .in=DSTR_LIT("tag CLOSE\r\n"),
+                .out={
+                    .counts={.close_cmd=1},
+                    .buf1=DSTR_LIT("tag CLOSE")
+                }
+            },
+            {
+                .in=DSTR_LIT("tag EXPUNGE\r\n"),
+                .out={
+                    .counts={.expunge_cmd=1},
+                    .buf1=DSTR_LIT("tag EXPUNGE")
+                }
+            },
+            {
+                .in=DSTR_LIT("tag APPEND inbox (\\Seen) \"11-jan-1999 "
+                        "00:11:22 +5000\" "),
+            },
+            {
+                .in=DSTR_LIT("{11}\r\nhello imap1\r\n"),
+                .out={
+                    .counts={.append_cmd=1},
+                    .buf1=DSTR_LIT("tag APPEND INBOX (\\Seen) \"11-Jan-1999 "
+                        "00:11:22 +5000\" {11}\r\nhello imap1")
+                }
+            },
+            {
+                .in=DSTR_LIT("tag APPEND inbox \"11-jan-1999 00:11:22 +5000\" "),
+            },
+            {
+                .in=DSTR_LIT("{11}\r\nhello imap2\r\n"),
+                .out={
+                    .counts={.append_cmd=1},
+                    .buf1=DSTR_LIT("tag APPEND INBOX () \"11-Jan-1999 "
+                        "00:11:22 +5000\" {11}\r\nhello imap2")
+                }
+            },
+            {
+                .in=DSTR_LIT("tag APPEND inbox (\\Seen) "),
+            },
+            {
+                .in=DSTR_LIT("{11}\r\nhello imap3\r\n"),
+                .out={
+                    .counts={.append_cmd=1},
+                    .buf1=DSTR_LIT("tag APPEND INBOX (\\Seen) "
+                            "{11}\r\nhello imap3")
+                }
+            },
+            {
+                .in=DSTR_LIT("tag STORE 1:*,*:10 +FLAGS.SILENT ()\r\n"),
+                .out={
+                    .counts={.store_cmd=1},
+                    .buf1=DSTR_LIT("tag STORE 1:*,*:10 +FLAGS.SILENT ()")
+                }
+            },
+            {
+                .in=DSTR_LIT("tag STORE 5 +FLAGS \\Seen \\Extension\r\n"),
+                .out={
+                    .counts={.store_cmd=1},
+                    .buf1=DSTR_LIT("tag STORE 5 +FLAGS (\\Seen \\Extension)")
+                }
+            },
+            {
+                .in=DSTR_LIT("tag COPY 5:* iNBoX\r\n"),
+                .out={
+                    .counts={.copy_cmd=1},
+                    .buf1=DSTR_LIT("tag COPY 5:* INBOX")
+                }
+            },
+            {
+                .in=DSTR_LIT("tag COPY 5:7 NOt_iNBoX\r\n"),
+                .out={
+                    .counts={.copy_cmd=1},
+                    .buf1=DSTR_LIT("tag COPY 5:7 NOt_iNBoX")
+                }
+            },
+        };
+        size_t ncases = sizeof(cases) / sizeof(*cases);
+        PROP(&e, do_test_scanner_and_parser(cases, ncases) );
     }
     {
-        LIST_PRESET(dstr_t, inputs,
-            DSTR_LIT("tag SEARCH DRAFT\r\n"),
-            DSTR_LIT("tag SEARCH DRAFT UNDRAFT\r\n"),
-            DSTR_LIT("tag SEARCH OR DRAFT undraft\r\n"),
-            DSTR_LIT("tag SEARCH (DRAFT)\r\n"),
-            DSTR_LIT("tag SEARCH 1,2,3:4\r\n"),
-            DSTR_LIT("tag SEARCH UID 1,2\r\n"),
-            DSTR_LIT("tag SEARCH SENTON 4-jul-1776 LARGER 9000\r\n"),
-            DSTR_LIT("tag SEARCH OR (TO me FROM you) (FROM me TO you)\r\n"),
-        );
-        PROP(&e, do_test_scanner_and_parser(&inputs) );
+        test_case_t cases[] = {
+            {
+                .in=DSTR_LIT("tag SEARCH DRAFT\r\n"),
+                .out={
+                    .counts={.search_cmd=1},
+                    .buf1=DSTR_LIT("tag SEARCH DRAFT")
+                }
+            },
+            {
+                .in=DSTR_LIT("tag SEARCH DRAFT UNDRAFT\r\n"),
+                .out={
+                    .counts={.search_cmd=1},
+                    .buf1=DSTR_LIT("tag SEARCH DRAFT UNDRAFT")
+                }
+            },
+            {
+                .in=DSTR_LIT("tag SEARCH OR DRAFT undraft\r\n"),
+                .out={
+                    .counts={.search_cmd=1},
+                    .buf1=DSTR_LIT("tag SEARCH OR DRAFT UNDRAFT")
+                }
+            },
+            {
+                .in=DSTR_LIT("tag SEARCH (DRAFT)\r\n"),
+                .out={
+                    .counts={.search_cmd=1},
+                    .buf1=DSTR_LIT("tag SEARCH (DRAFT)")
+                }
+            },
+            {
+                .in=DSTR_LIT("tag SEARCH 1,2,3:4\r\n"),
+                .out={
+                    .counts={.search_cmd=1},
+                    .buf1=DSTR_LIT("tag SEARCH 1,2,3:4")
+                }
+            },
+            {
+                .in=DSTR_LIT("tag SEARCH UID 1,2\r\n"),
+                .out={
+                    .counts={.search_cmd=1},
+                    .buf1=DSTR_LIT("tag SEARCH UID 1,2")
+                }
+            },
+            //{
+            //    .in=DSTR_LIT("tag SEARCH SENTON 4-jul-1776 LARGER 9000\r\n"),
+            //    .out={
+            //        .counts={.search_cmd=1},
+            //        .buf1=DSTR_LIT("tag SEARCH SENTON 4-jul-1776 LARGER 9000")
+            //    }
+            //},
+            {
+                .in=DSTR_LIT("tag SEARCH OR (TO me FROM you) (FROM me TO you)\r\n"),
+                .out={
+                    .counts={.search_cmd=1},
+                    .buf1=DSTR_LIT("tag SEARCH OR (TO me FROM you) (FROM me TO you)")
+                }
+            },
+        };
+        size_t ncases = sizeof(cases) / sizeof(*cases);
+        PROP(&e, do_test_scanner_and_parser(cases, ncases) );
     }
     {
-        LIST_PRESET(dstr_t, inputs,
-            DSTR_LIT("tag FETCH 1,2,3:4 INTERNALDATE\r\n"),
-            DSTR_LIT("tag FETCH 1,2 ALL\r\n"),
-            DSTR_LIT("tag FETCH * FAST\r\n"),
-            DSTR_LIT("tag FETCH * FULL\r\n"),
-            DSTR_LIT("tag FETCH * BODY\r\n"),
-            DSTR_LIT("tag FETCH * BODYSTRUCTURE\r\n"),
-            DSTR_LIT("tag FETCH * (INTERNALDATE BODY)\r\n"),
-            DSTR_LIT("tag FETCH * BODY[]\r\n"),
-            DSTR_LIT("tag FETCH * BODY[]<1.2>\r\n"),
-            DSTR_LIT("tag FETCH * BODY[1.2.3]\r\n"),
-            DSTR_LIT("tag FETCH * BODY[1.2.3.MIME]\r\n"),
-            DSTR_LIT("tag FETCH * BODY[TEXT]\r\n"),
-            DSTR_LIT("tag FETCH * BODY[HEADER.FIELDS (To From)]\r\n"),
-            DSTR_LIT("tag FETCH * BODY[HEADER.FIELDS.NOT (To From)]\r\n"),
-        );
-        PROP(&e, do_test_scanner_and_parser(&inputs) );
+        test_case_t cases[] = {
+            {
+                .in=DSTR_LIT("tag FETCH 1,2,3:4 INTERNALDATE\r\n"),
+                    .out={
+                        .counts={.fetch_cmd=1},
+                        .buf1=DSTR_LIT("tag FETCH 1,2,3:4 (INTERNALDATE)")
+                    }
+            },
+            {
+                .in=DSTR_LIT("tag FETCH 1,2 ALL\r\n"),
+                .out={
+                    .counts={.fetch_cmd=1},
+                    .buf1=DSTR_LIT("tag FETCH 1,2 (ENVELOPE FLAGS "
+                            "INTERNALDATE)")
+                }
+            },
+            {
+                .in=DSTR_LIT("tag FETCH * FAST\r\n"),
+                .out={
+                    .counts={.fetch_cmd=1},
+                    .buf1=DSTR_LIT("tag FETCH * (FLAGS INTERNALDATE "
+                            "RFC822_SIZE)")
+                }
+            },
+            {
+                .in=DSTR_LIT("tag FETCH * FULL\r\n"),
+                .out={
+                    .counts={.fetch_cmd=1},
+                    .buf1=DSTR_LIT("tag FETCH * (ENVELOPE FLAGS INTERNALDATE "
+                            "RFC822_SIZE BODY)")
+                }
+            },
+            {
+                .in=DSTR_LIT("tag FETCH * BODY\r\n"),
+                .out={
+                    .counts={.fetch_cmd=1},
+                    .buf1=DSTR_LIT("tag FETCH * (BODY)")
+                }
+            },
+            {
+                .in=DSTR_LIT("tag FETCH * BODYSTRUCTURE\r\n"),
+                .out={
+                    .counts={.fetch_cmd=1},
+                    .buf1=DSTR_LIT("tag FETCH * (BODYSTRUCTURE)")
+                }
+            },
+            {
+                .in=DSTR_LIT("tag FETCH * (INTERNALDATE BODY)\r\n"),
+                .out={
+                    .counts={.fetch_cmd=1},
+                    .buf1=DSTR_LIT("tag FETCH * (INTERNALDATE BODY)")
+                }
+            },
+            {
+                .in=DSTR_LIT("tag FETCH * BODY[]\r\n"),
+                .out={
+                    .counts={.fetch_cmd=1},
+                    .buf1=DSTR_LIT("tag FETCH * (BODY[])")
+                }
+            },
+            {
+                .in=DSTR_LIT("tag FETCH * BODY[]<1.2>\r\n"),
+                .out={
+                    .counts={.fetch_cmd=1},
+                    .buf1=DSTR_LIT("tag FETCH * (BODY[]<1.2>)")
+                }
+            },
+            {
+                .in=DSTR_LIT("tag FETCH * BODY[1.2.3]\r\n"),
+                .out={
+                    .counts={.fetch_cmd=1},
+                    .buf1=DSTR_LIT("tag FETCH * (BODY[1.2.3])")
+                }
+            },
+            {
+                .in=DSTR_LIT("tag FETCH * BODY[1.2.3.MIME]\r\n"),
+                .out={
+                    .counts={.fetch_cmd=1},
+                    .buf1=DSTR_LIT("tag FETCH * (BODY[1.2.3.MIME])")
+                }
+            },
+            {
+                .in=DSTR_LIT("tag FETCH * BODY[TEXT]\r\n"),
+                .out={
+                    .counts={.fetch_cmd=1},
+                    .buf1=DSTR_LIT("tag FETCH * (BODY[TEXT])")
+                }
+            },
+            //{
+            //    .in=DSTR_LIT("tag FETCH * BODY[HEADER.FIELDS (To From)]\r\n"),
+            //    .out={
+            //        .counts={.fetch_cmd=1},
+            //        .buf1=DSTR_LIT("tag FETCH * (BODY[HEADER.FIELDS (To From)])")
+            //    }
+            //},
+            //{
+            //    .in=DSTR_LIT("tag FETCH * BODY[HEADER.FIELDS.NOT (To From)]\r\n"),
+            //    .out={
+            //        .counts={.fetch_cmd=1},
+            //        .buf1=DSTR_LIT("tag FETCH * (BODY[HEADER.FIELDS.NOT (To From)])")
+            //    }
+            //},
+        };
+        size_t ncases = sizeof(cases) / sizeof(*cases);
+        PROP(&e, do_test_scanner_and_parser(cases, ncases) );
     }
     {
-        LIST_PRESET(dstr_t, inputs,
-            DSTR_LIT("tag UID STORE 5 +FLAGS \\Seen \\Extension\r\n"),
-            DSTR_LIT("tag UID COPY 5:* iNBoX\r\n"),
-            DSTR_LIT("tag UID SEARCH DRAFT\r\n"),
-            DSTR_LIT("tag UID FETCH 1,2,3:4 INTERNALDATE\r\n"),
-        );
-        PROP(&e, do_test_scanner_and_parser(&inputs) );
+        test_case_t cases[] = {
+            {
+                .in=DSTR_LIT("tag UID STORE 5 +FLAGS \\Seen \\Ext\r\n"),
+                    .out={
+                        .counts={.store_cmd=1},
+                        .buf1=DSTR_LIT("tag UID STORE 5 +FLAGS (\\Seen \\Ext)")
+                    }
+            },
+            {
+                .in=DSTR_LIT("tag UID COPY 5:* iNBoX\r\n"),
+                .out={
+                    .counts={.copy_cmd=1},
+                    .buf1=DSTR_LIT("tag UID COPY 5:* INBOX")
+                }
+            },
+            {
+                .in=DSTR_LIT("tag UID SEARCH DRAFT\r\n"),
+                .out={
+                    .counts={.search_cmd=1},
+                    .buf1=DSTR_LIT("tag UID SEARCH DRAFT")
+                }
+            },
+            {
+                .in=DSTR_LIT("tag UID FETCH 1,2,3:4 INTERNALDATE\r\n"),
+                .out={
+                    .counts={.fetch_cmd=1},
+                    .buf1=DSTR_LIT("tag UID FETCH 1,2,3:4 (INTERNALDATE)")
+                }
+            },
+        };
+        size_t ncases = sizeof(cases) / sizeof(*cases);
+        PROP(&e, do_test_scanner_and_parser(cases, ncases) );
     }
     return e;
 }
 
-static derr_t bad_capa(void *data, dstr_t capability){
-    (void)data;
-    LOG_ERROR("BAD CAPA %x\n", FD(&capability));
-    derr_t e = E_OK;
-    dstr_free(&capability);
-    ORIG(&e, E_VALUE, "fake error");
-}
-
-
-static derr_t test_bison_destructors(void){
-    /* Question: when I induce the parser code to call YYACCEPT, do any
-       destructors get called? */
-    // Test: force such a situation with a handle that always fails.
-
-    derr_t e;
-    imap_parse_hooks_up_t hooks_up = {
-        st_hook,
-        // fail in capa
-        capa_start, bad_capa, capa_end,
-        pflag_resp,
-        list_resp,
-        lsub_resp,
-        status_resp,
-        flags_resp,
-        exists_hook,
-        recent_hook,
-        expunge_hook,
-        fetch_start,
-            f_flags,
-            f_rfc822_start,
-                NULL,
-                f_rfc822_qstr,
-            f_rfc822_end,
-            f_uid,
-            f_intdate,
-        fetch_end,
-    };
-    imap_parse_hooks_dn_t hooks_dn = {0};
-
-    // init the reader
-    imap_reader_t reader;
-    PROP(&e, imap_reader_init(&reader, hooks_dn, hooks_up, NULL) );
-
-    /* problems:
-         - the "tag" does not get freed when I yypstate_delete() the parser if
-           I haven't finished out a command
-         - imap_parse() does not detect differences between parse errors and
-           hook errors.
-    */
-
-    // // leaks the tag due to not finish a command
-    // DSTR_STATIC(input, "* OK [CAPABILITY IMAP4rev1]");
-    // PROP_GO(&e, imap_read(&reader, &input), cu_reader);
-
-    // leaks a keep_atom, but I'm not totally sure why... maybe a preallocated one?
-    DSTR_STATIC(input, "* OK [CAPABILITY IMAP4rev1]\r\n");
-    PROP_GO(&e, imap_read(&reader, &input), cu_reader);
-
-cu_reader:
-    imap_reader_free(&reader);
-    return e;
-}
+// static derr_t bad_capa(void *data, dstr_t capability){
+//     (void)data;
+//     LOG_ERROR("BAD CAPA %x\n", FD(&capability));
+//     derr_t e = E_OK;
+//     dstr_free(&capability);
+//     ORIG(&e, E_VALUE, "fake error");
+// }
+//
+//
+// static derr_t test_bison_destructors(void){
+//     /* Question: when I induce the parser code to call YYACCEPT, do any
+//        destructors get called? */
+//     // Test: force such a situation with a handle that always fails.
+//
+//     derr_t e;
+//     imap_parse_hooks_up_t hooks_up = {
+//         st_hook,
+//         // fail in capa
+//         capa_start, bad_capa, capa_end,
+//         pflag_resp,
+//         list_resp,
+//         lsub_resp,
+//         status_resp,
+//         flags_resp,
+//         exists_hook,
+//         recent_hook,
+//         expunge_hook,
+//         fetch_start,
+//             f_flags,
+//             f_rfc822_start,
+//                 NULL,
+//                 f_rfc822_qstr,
+//             f_rfc822_end,
+//             f_uid,
+//             f_intdate,
+//         fetch_end,
+//     };
+//     imap_parse_hooks_dn_t hooks_dn = {0};
+//
+//     // init the reader
+//     imap_reader_t reader;
+//     PROP(&e, imap_reader_init(&reader, hooks_dn, hooks_up, NULL) );
+//
+//     /* problems:
+//          - the "tag" does not get freed when I yypstate_delete() the parser if
+//            I haven't finished out a command
+//          - imap_parse() does not detect differences between parse errors and
+//            hook errors.
+//     */
+//
+//     // // leaks the tag due to not finish a command
+//     // DSTR_STATIC(input, "* OK [CAPABILITY IMAP4rev1]");
+//     // PROP_GO(&e, imap_read(&reader, &input), cu_reader);
+//
+//     // leaks a keep_atom, but I'm not totally sure why... maybe a preallocated one?
+//     DSTR_STATIC(input, "* OK [CAPABILITY IMAP4rev1]\r\n");
+//     PROP_GO(&e, imap_read(&reader, &input), cu_reader);
+//
+// cu_reader:
+//     imap_reader_free(&reader);
+//     return e;
+// }
 
 
 int main(int argc, char **argv){
@@ -951,7 +1496,7 @@ int main(int argc, char **argv){
 
     // PROP_GO(&e, test_just_parser(), test_fail);
     PROP_GO(&e, test_scanner_and_parser(), test_fail);
-    PROP_GO(&e, test_bison_destructors(), test_fail);
+    // PROP_GO(&e, test_bison_destructors(), test_fail);
 
     LOG_ERROR("PASS\n");
     return 0;

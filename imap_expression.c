@@ -391,7 +391,6 @@ fail:
 void ie_mflags_free(ie_mflags_t *mf){
     if(!mf) return;
     ie_dstr_free(mf->extensions);
-    ie_dstr_free(mf->keywords);
     free(mf);
 }
 
@@ -419,21 +418,6 @@ ie_mflags_t *ie_mflags_add_ext(derr_t *e, ie_mflags_t *mf, ie_dstr_t *ext){
 fail:
     ie_mflags_free(mf);
     ie_dstr_free(ext);
-    return NULL;
-}
-
-ie_mflags_t *ie_mflags_add_kw(derr_t *e, ie_mflags_t *mf, ie_dstr_t *kw){
-    if(is_error(*e)) goto fail;
-
-    ie_dstr_t **last = &mf->keywords;
-    while(*last != NULL) last = &(*last)->next;
-    *last = kw;
-
-    return mf;
-
-fail:
-    ie_mflags_free(mf);
-    ie_dstr_free(kw);
     return NULL;
 }
 
@@ -466,8 +450,7 @@ ie_seq_set_t *ie_seq_set_append(derr_t *e, ie_seq_set_t *set,
 
     ie_seq_set_t **last = &set->next;
     while(*last != NULL) last = &(*last)->next;
-
-    (*last)->next = next;
+    *last = next;
 
     return set;
 
@@ -576,6 +559,19 @@ ie_search_key_t *ie_search_not(derr_t *e, ie_search_key_t *key){
     if(is_error(*e)) goto fail;
     ie_search_key_type_t type = IE_SEARCH_NOT;
     NEW_SEARCH_KEY_WITH_TYPE;
+    s->param.key = key;
+    return s;
+
+fail:
+    ie_search_key_free(key);
+    return NULL;
+}
+
+ie_search_key_t *ie_search_group(derr_t *e, ie_search_key_t *key){
+    if(is_error(*e)) goto fail;
+    ie_search_key_type_t type = IE_SEARCH_GROUP;
+    NEW_SEARCH_KEY_WITH_TYPE;
+    s->param.key = key;
     return s;
 
 fail:
@@ -709,7 +705,7 @@ fail:
 
 void ie_sect_part_free(ie_sect_part_t *sp){
     if(!sp) return;
-    ie_sect_part_free(sp);
+    ie_sect_part_free(sp->next);
     free(sp);
 }
 

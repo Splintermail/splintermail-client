@@ -115,6 +115,10 @@ int dstr_cmp(const dstr_t* a, const dstr_t* b){
     if(!a->data && !b->data){
         return 0;
     }
+    // as are two zero-length strings
+    if(a->len == 0 && b->len == 0){
+        return 0;
+    }
     // but one NULL and one not are not matching
     if(!a->data || !b->data){
         return a->data ? *a->data : *b->data;

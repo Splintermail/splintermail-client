@@ -40,7 +40,7 @@ typedef struct {
     void (*status_type)(void *data, dstr_t tag, ie_status_t status,
             ie_st_code_t *code, dstr_t text);
     void (*capa)(void *data, ie_dstr_t *capas);
-    void (*pflag)(void *data, ie_flags_t *flags);
+    void (*pflag)(void *data, ie_pflags_t *pflags);
     void (*list)(void *data, ie_mflags_t *mflags, char sep, bool inbox,
             dstr_t mbx);
     void (*lsub)(void *data, ie_mflags_t *mflags, char sep, bool inbox,

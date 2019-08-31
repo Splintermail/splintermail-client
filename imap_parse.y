@@ -573,7 +573,7 @@ search_key: ALL                         { $$ = ie_search_0(E, IE_SEARCH_ALL); }
           | UID SP seq_set[s]           { $$ = ie_search_seq_set(E, IE_SEARCH_UID, $s); }
           | seq_set[s]                  { $$ = ie_search_seq_set(E, IE_SEARCH_SEQ_SET, $s); }
           | NOT SP search_key[k]        { $$ = ie_search_not(E, $k); }
-          | '(' search_keys_1[k] ')'    { $$ = $k; }
+          | '(' search_keys_1[k] ')'    { $$ = ie_search_group(E, $k); }
           | search_or
 ;
 
@@ -747,7 +747,8 @@ st_type: OK       { $$ = IE_ST_OK; }
 
 /* YES_STATUS_CODE means we got a '['
    NO_STATUS_CODE means we got the start of the text */
-st_code: YES_STATUS_CODE st_code_[c] ']' SP { MODE(STATUS_TEXT); $$ = $c; }
+st_code: YES_STATUS_CODE { MODE(STATUS_CODE); }
+           st_code_[c] ']' SP { MODE(STATUS_TEXT); $$ = $c; }
        | %empty { $$ = NULL; }
 
 st_code_: ALERT      { $$ = ie_st_code_simple(E, IE_ST_CODE_ALERT); }
@@ -897,7 +898,7 @@ f_rfc822: RFC822 SP { MODE(NSTRING); } rfc822_nstring[r] { $$ = $r; }
 
 /* this will some day write to a file instead of memory, otherwise it would
    just be "nstring" type */
-rfc822_nstring: NIL { $$ = NULL; }
+rfc822_nstring: NIL { $$ = ie_dstr_new_empty(E); }
               | literal
               | qstr
 ;
@@ -1201,11 +1202,9 @@ mflags_0: %empty     { $$ = NULL; }
 mflags_1: '\\' NOINFERIORS { $$ = ie_mflags_add_noinf(E, ie_mflags_new(E)); }
         | mflag_select[s]  { MFLAG_SELECT($$, ie_mflags_new(E), $s); }
         | '\\' atom[e]     { $$ = ie_mflags_add_ext(E, ie_mflags_new(E), $e); }
-        | atom [k]         { $$ = ie_mflags_add_kw(E, ie_mflags_new(E), $k); }
         | mflags_1[mf] SP '\\' NOINFERIORS { $$ = ie_mflags_add_noinf(E, $mf); }
         | mflags_1[mf] SP mflag_select[s]  { MFLAG_SELECT($$, $mf, $s); }
         | mflags_1[mf] SP '\\' atom[e]     { $$ = ie_mflags_add_ext(E, $mf, $e); }
-        | mflags_1[mf] SP atom[k]          { $$ = ie_mflags_add_kw(E, $mf, $k); }
 ;
 
 SP: ' ';

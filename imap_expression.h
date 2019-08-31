@@ -130,7 +130,6 @@ typedef enum {
 typedef struct {
     bool noinferiors;
     ie_selectable_t selectable;
-    ie_dstr_t *keywords;
     ie_dstr_t *extensions;
 } ie_mflags_t;
 
@@ -172,6 +171,7 @@ typedef enum {
     IE_SEARCH_UID,         // uses param.seq_set
     IE_SEARCH_SEQ_SET,     // uses param.seq_set
     IE_SEARCH_NOT,         // uses param.key
+    IE_SEARCH_GROUP,       // uses param.key
     IE_SEARCH_OR,          // uses param.pair
     IE_SEARCH_AND,         // uses param.pair
 } ie_search_key_type_t;
@@ -203,8 +203,6 @@ union ie_search_param_t {
 struct ie_search_key_t {
     ie_search_key_type_t type;
     union ie_search_param_t param;
-    // there's always an implied logical AND with the *next element
-    struct ie_search_key_t *next;
 };
 
 // FETCH-related things
@@ -366,6 +364,7 @@ typedef union {
 
 ////////////
 #include "imap_read_types.h"
+#include "imap_expression_print.h"
 ////////////
 
 typedef enum {
@@ -442,7 +441,6 @@ void ie_mflags_free(ie_mflags_t *mf);
 
 ie_mflags_t *ie_mflags_add_noinf(derr_t *e, ie_mflags_t *mf);
 ie_mflags_t *ie_mflags_add_ext(derr_t *e, ie_mflags_t *mf, ie_dstr_t *ext);
-ie_mflags_t *ie_mflags_add_kw(derr_t *e, ie_mflags_t *mf, ie_dstr_t *kw);
 
 // sequence set construction
 
@@ -468,6 +466,7 @@ ie_search_key_t *ie_search_date(derr_t *e, ie_search_key_type_t type,
 ie_search_key_t *ie_search_seq_set(derr_t *e, ie_search_key_type_t type,
         ie_seq_set_t *seq_set);
 ie_search_key_t *ie_search_not(derr_t *e, ie_search_key_t *key);
+ie_search_key_t *ie_search_group(derr_t *e, ie_search_key_t *key);
 ie_search_key_t *ie_search_pair(derr_t *e, ie_search_key_type_t type,
         ie_search_key_t *a, ie_search_key_t *b);
 

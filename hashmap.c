@@ -1,7 +1,7 @@
 #include "hashmap.h"
 #include "logger.h"
 
-#define INIT_NUM_BUCKETS 1 /* power of 2 */
+#define INIT_NUM_BUCKETS 32 /* power of 2 */
 #define MAX_LOAD_FACTOR 5
 
 

@@ -286,7 +286,6 @@ void append_cmd(imap_parser_t *p, ie_dstr_t *tag, ie_mailbox_t *m,
     if(is_error(p->error)) goto fail;
     if(!tag) ORIG_GO(&p->error, E_INTERNAL, "invalid callback", fail);
     if(!m) ORIG_GO(&p->error, E_INTERNAL, "invalid callback", fail);
-    if(!flags) ORIG_GO(&p->error, E_INTERNAL, "invalid callback", fail);
     if(!content) ORIG_GO(&p->error, E_INTERNAL, "invalid callback", fail);
 
     p->hooks_dn.append(p->hook_data, tag->dstr, m->inbox, m->dstr, flags,
@@ -302,7 +301,7 @@ fail:
     ie_dstr_free(tag);
     ie_mailbox_free(m);
     ie_flags_free(flags);
-    ie_dstr_free(tag);
+    ie_dstr_free(content);
 }
 
 void check_cmd(imap_parser_t *p, ie_dstr_t *tag){
@@ -426,7 +425,9 @@ void status_type_resp(imap_parser_t *p, ie_dstr_t *tag, ie_status_t status,
         ie_st_code_t *code, ie_dstr_t *text){
     if(is_error(p->error)) goto fail;
 
-    p->hooks_up.status_type(p->hook_data, tag->dstr, status, code, text->dstr);
+    dstr_t tag_dstr = tag ? tag->dstr : (dstr_t){0};
+
+    p->hooks_up.status_type(p->hook_data, tag_dstr, status, code, text->dstr);
 
     ie_dstr_free_shell(tag);
     // no shell for status
@@ -485,11 +486,11 @@ void status_resp(imap_parser_t *p, ie_mailbox_t *m, ie_status_attr_resp_t sa){
     if(is_error(p->error)) goto fail;
 
     p->hooks_up.status(p->hook_data, m->inbox, m->dstr,
-            (sa.attrs | IE_STATUS_ATTR_MESSAGES), sa.messages,
-            (sa.attrs | IE_STATUS_ATTR_RECENT), sa.recent,
-            (sa.attrs | IE_STATUS_ATTR_UIDNEXT), sa.uidnext,
-            (sa.attrs | IE_STATUS_ATTR_UIDVLD), sa.uidvld,
-            (sa.attrs | IE_STATUS_ATTR_UNSEEN), sa.unseen);
+            (sa.attrs & IE_STATUS_ATTR_MESSAGES), sa.messages,
+            (sa.attrs & IE_STATUS_ATTR_RECENT), sa.recent,
+            (sa.attrs & IE_STATUS_ATTR_UIDNEXT), sa.uidnext,
+            (sa.attrs & IE_STATUS_ATTR_UIDVLD), sa.uidvld,
+            (sa.attrs & IE_STATUS_ATTR_UNSEEN), sa.unseen);
 
     free(m);
     // no shell for sa
