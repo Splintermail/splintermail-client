@@ -371,6 +371,7 @@
 %destructor { ie_sect_txt_free($$); } <sect_txt>
 
 %type <sect> sect
+%type <sect> _sect
 %destructor { ie_sect_free($$); } <sect>
 
 %type <partial> partial
@@ -656,10 +657,12 @@ fetch_attr_extra: BODY '[' sect[s] ']' partial[p]      { $$ = ie_fetch_extra_new
                 | BODY_PEEK '[' sect[s] ']' partial[p] { $$ = ie_fetch_extra_new(E, true, $s, $p); }
 ;
 
-sect: %empty                         { $$ = NULL; }
-    | sect_msgtxt[st]                { $$ = ie_sect_new(E, NULL, $st); }
-    | sect_part[sp]                  { $$ = ie_sect_new(E, $sp, NULL); }
-    | sect_part[sp] '.' sect_txt[st] { $$ = ie_sect_new(E, $sp, $st); }
+sect: _sect[s] { $$ = $s; MODE(FETCH); }
+
+_sect: %empty                         { $$ = NULL; }
+     | sect_msgtxt[st]                { $$ = ie_sect_new(E, NULL, $st); }
+     | sect_part[sp]                  { $$ = ie_sect_new(E, $sp, NULL); }
+     | sect_part[sp] '.' sect_txt[st] { $$ = ie_sect_new(E, $sp, $st); }
 ;
 
 sect_part: num                  { $$ = ie_sect_part_new(E, $num); }

@@ -477,7 +477,70 @@ fail:
 
 void ie_search_key_free(ie_search_key_t *s){
     if(!s) return;
-    // TODO
+    switch(s->type){
+        // no parameter
+        case IE_SEARCH_ALL:
+        case IE_SEARCH_ANSWERED:
+        case IE_SEARCH_DELETED:
+        case IE_SEARCH_FLAGGED:
+        case IE_SEARCH_NEW:
+        case IE_SEARCH_OLD:
+        case IE_SEARCH_RECENT:
+        case IE_SEARCH_SEEN:
+        case IE_SEARCH_SUBJECT:
+        case IE_SEARCH_UNANSWERED:
+        case IE_SEARCH_UNDELETED:
+        case IE_SEARCH_UNFLAGGED:
+        case IE_SEARCH_UNSEEN:
+        case IE_SEARCH_DRAFT:
+        case IE_SEARCH_UNDRAFT:
+            break;
+        // uses param.dstr
+        case IE_SEARCH_BCC:
+        case IE_SEARCH_BODY:
+        case IE_SEARCH_CC:
+        case IE_SEARCH_FROM:
+        case IE_SEARCH_KEYWORD:
+        case IE_SEARCH_TEXT:
+        case IE_SEARCH_TO:
+        case IE_SEARCH_UNKEYWORD:
+            ie_dstr_free(s->param.dstr);
+            break;
+        // uses param.header
+        case IE_SEARCH_HEADER:
+            ie_dstr_free(s->param.header.name);
+            ie_dstr_free(s->param.header.value);
+            break;
+        // uses param.date
+        case IE_SEARCH_BEFORE:
+        case IE_SEARCH_ON:
+        case IE_SEARCH_SINCE:
+        case IE_SEARCH_SENTBEFORE:
+        case IE_SEARCH_SENTON:
+        case IE_SEARCH_SENTSINCE:
+            break;
+        // uses param.num
+        case IE_SEARCH_LARGER:
+        case IE_SEARCH_SMALLER:
+            break;
+        // uses param.seq_set
+        case IE_SEARCH_UID:
+        case IE_SEARCH_SEQ_SET:
+            ie_seq_set_free(s->param.seq_set);
+            break;
+        // uses param.key
+        case IE_SEARCH_NOT:
+        case IE_SEARCH_GROUP:
+            ie_search_key_free(s->param.key);
+            break;
+        // uses param.pair
+        case IE_SEARCH_OR:
+        case IE_SEARCH_AND:
+            ie_search_key_free(s->param.pair.a);
+            ie_search_key_free(s->param.pair.b);
+            break;
+    }
+    free(s);
 }
 
 #define NEW_SEARCH_KEY_WITH_TYPE \
