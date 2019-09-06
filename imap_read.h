@@ -2,15 +2,18 @@
 #define IMAP_READ_H
 
 #include "common.h"
-#include "imap_read_types.h"
+#include "imap_scan.h"
+#include "imap_parse.h"
 
-// forward declaration of imap_reader_t
-struct imap_reader_t;
+typedef struct {
+    imap_parser_t parser;
+    imap_scanner_t scanner;
+    imap_parser_cb_t cb;
+    void *cb_data;
+} imap_reader_t;
 
-derr_t imap_reader_init(imap_reader_t *reader,
-                        imap_hooks_dn_t hooks_dn,
-                        imap_hooks_up_t hooks_up,
-                        void *hook_data);
+derr_t imap_reader_init(imap_reader_t *reader, imap_parser_cb_t cb,
+        void *cb_data);
 
 void imap_reader_free(imap_reader_t *reader);
 

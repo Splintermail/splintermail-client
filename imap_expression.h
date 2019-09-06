@@ -53,6 +53,11 @@ typedef struct ie_seq_set_t {
 
 void ie_seq_set_free(ie_seq_set_t *s);
 
+typedef struct ie_nums_t {
+    unsigned int num;
+    struct ie_nums_t *next;
+} ie_nums_t;
+
 // flags, used by APPEND commands, STORE commands, and FLAGS responses
 
 typedef enum {
@@ -315,13 +320,176 @@ typedef struct {
 // FETCH responses
 
 typedef struct {
+    unsigned int num;
     ie_fflags_t *flags;
     unsigned int uid;
     imap_time_t intdate;
     ie_dstr_t *content;
 } ie_fetch_resp_t;
 
-// final imap_expr_t type for bison
+// full command types
+
+typedef enum {
+    IMAP_CMD_STARTTLS,
+    IMAP_CMD_AUTH,
+    IMAP_CMD_LOGIN,
+    IMAP_CMD_SELECT,
+    IMAP_CMD_EXAMINE,
+    IMAP_CMD_CREATE,
+    IMAP_CMD_DELETE,
+    IMAP_CMD_RENAME,
+    IMAP_CMD_SUB,
+    IMAP_CMD_UNSUB,
+    IMAP_CMD_LIST,
+    IMAP_CMD_LSUB,
+    IMAP_CMD_STATUS,
+    IMAP_CMD_APPEND,
+    IMAP_CMD_CHECK,
+    IMAP_CMD_CLOSE,
+    IMAP_CMD_EXPUNGE,
+    IMAP_CMD_SEARCH,
+    IMAP_CMD_FETCH,
+    IMAP_CMD_STORE,
+    IMAP_CMD_COPY,
+} imap_cmd_type_t;
+
+typedef struct {
+    ie_dstr_t *user;
+    ie_dstr_t *pass;
+} ie_login_cmd_t;
+
+typedef struct {
+    ie_mailbox_t *old;
+    ie_mailbox_t *new;
+} ie_rename_cmd_t;
+
+typedef struct {
+    ie_mailbox_t *m;
+    ie_dstr_t *pattern;
+} ie_list_cmd_t;
+
+typedef struct {
+    ie_mailbox_t *m;
+    unsigned char status_attr;
+} ie_status_cmd_t;
+
+typedef struct {
+    ie_mailbox_t *m;
+    ie_flags_t *flags;
+    imap_time_t time;
+    ie_dstr_t *content;
+} ie_append_cmd_t;
+
+typedef struct {
+    bool uid_mode;
+    ie_dstr_t *charset;
+    ie_search_key_t *search_key;
+} ie_search_cmd_t;
+
+typedef struct {
+    bool uid_mode;
+    ie_seq_set_t *seq_set;
+    ie_fetch_attrs_t *attr;
+} ie_fetch_cmd_t;
+
+typedef struct {
+    bool uid_mode;
+    ie_seq_set_t *seq_set;
+    int sign;
+    bool silent;
+    ie_flags_t *flags;
+} ie_store_cmd_t;
+
+typedef struct {
+    bool uid_mode;
+    ie_seq_set_t *seq_set;
+    ie_mailbox_t *m;
+} ie_copy_cmd_t;
+
+typedef union {
+    // nothing for starttls
+    ie_dstr_t *auth;
+    ie_login_cmd_t *login;
+    ie_mailbox_t *select;
+    ie_mailbox_t *examine;
+    ie_mailbox_t *create;
+    ie_mailbox_t *delete;
+    ie_rename_cmd_t *rename;
+    ie_mailbox_t *sub;
+    ie_mailbox_t *unsub;
+    ie_list_cmd_t *list;
+    ie_list_cmd_t *lsub;
+    ie_status_cmd_t *status;
+    ie_append_cmd_t *append;
+    // nothing for check
+    // nothing for close
+    // nothing for expunge
+    ie_search_cmd_t *search;
+    ie_fetch_cmd_t *fetch;
+    ie_store_cmd_t *store;
+    ie_copy_cmd_t *copy;
+} imap_cmd_arg_t;
+
+typedef struct {
+    ie_dstr_t *tag;
+    imap_cmd_type_t type;
+    imap_cmd_arg_t arg;
+} imap_cmd_t;
+
+// full response types
+
+typedef enum {
+    IMAP_RESP_STATUS_TYPE,
+    IMAP_RESP_CAPA,
+    IMAP_RESP_LIST,
+    IMAP_RESP_LSUB,
+    IMAP_RESP_STATUS,
+    IMAP_RESP_FLAGS,
+    IMAP_RESP_SEARCH,
+    IMAP_RESP_EXISTS,
+    IMAP_RESP_EXPUNGE,
+    IMAP_RESP_RECENT,
+    IMAP_RESP_FETCH,
+} imap_resp_type_t;
+
+typedef struct {
+    ie_dstr_t *tag;
+    ie_status_t status;
+    ie_st_code_t *code;
+    ie_dstr_t *text;
+} ie_st_resp_t;
+
+typedef struct {
+    ie_mflags_t *mflags;
+    char sep;
+    ie_mailbox_t *m;
+} ie_list_resp_t;
+
+typedef struct {
+    ie_mailbox_t *m;
+    ie_status_attr_resp_t sa;
+} ie_status_resp_t;
+
+typedef struct {
+    ie_st_resp_t *status_type;
+    ie_dstr_t *capa;
+    ie_list_resp_t *list;
+    ie_list_resp_t *lsub;
+    ie_status_resp_t *status;
+    ie_flags_t *flags;
+    ie_nums_t *search;
+    unsigned int exists;
+    unsigned int expunge;
+    unsigned int recent;
+    ie_fetch_resp_t *fetch;
+} imap_resp_arg_t;
+
+typedef struct {
+    imap_resp_type_t type;
+    imap_resp_arg_t arg;
+} imap_resp_t;
+
+// final union type for bison
 typedef union {
     ie_dstr_t *dstr;
     ie_mailbox_t *mailbox;
@@ -343,6 +511,7 @@ typedef union {
     ie_mflags_t *mflags;
     ie_search_key_t *search_key;
     ie_seq_set_t *seq_set;
+    ie_nums_t *nums;
 
     // FETCH command things
     ie_sect_part_t *sect_part;
@@ -360,12 +529,14 @@ typedef union {
 
     // FETCH response
     ie_fetch_resp_t *fetch_resp;
-} imap_expr_t;
 
-////////////
-#include "imap_read_types.h"
-#include "imap_expression_print.h"
-////////////
+    // full commands
+    imap_cmd_t *imap_cmd;
+
+    // full responses
+    imap_resp_t *imap_resp;
+
+} imap_expr_t;
 
 typedef enum {
     KEEP_RAW,
@@ -449,6 +620,12 @@ void ie_seq_set_free(ie_seq_set_t *set);
 ie_seq_set_t *ie_seq_set_append(derr_t *e, ie_seq_set_t *set,
         ie_seq_set_t *next);
 
+// num list construction
+
+ie_nums_t *ie_nums_new(derr_t *e, unsigned int n);
+void ie_nums_free(ie_nums_t *num);
+ie_nums_t *ie_nums_append(derr_t *e, ie_nums_t *num, ie_nums_t *next);
+
 // search key construction
 
 ie_search_key_t *ie_search_key_new(derr_t *e);
@@ -520,6 +697,8 @@ ie_status_attr_resp_t ie_status_attr_resp_add(ie_status_attr_resp_t resp,
 ie_fetch_resp_t *ie_fetch_resp_new(derr_t *e);
 void ie_fetch_resp_free(ie_fetch_resp_t *f);
 
+ie_fetch_resp_t *ie_fetch_resp_num(derr_t *e, ie_fetch_resp_t *f,
+        unsigned int num);
 ie_fetch_resp_t *ie_fetch_resp_uid(derr_t *e, ie_fetch_resp_t *f,
         unsigned int uid);
 ie_fetch_resp_t *ie_fetch_resp_intdate(derr_t *e, ie_fetch_resp_t *f,
@@ -528,5 +707,63 @@ ie_fetch_resp_t *ie_fetch_resp_flags(derr_t *e, ie_fetch_resp_t *f,
         ie_fflags_t *flags);
 ie_fetch_resp_t *ie_fetch_resp_content(derr_t *e, ie_fetch_resp_t *f,
         ie_dstr_t *content);
+
+// full commands
+
+ie_login_cmd_t *ie_login_cmd_new(derr_t *e, ie_dstr_t *user, ie_dstr_t *pass);
+void ie_login_cmd_free(ie_login_cmd_t *login);
+
+ie_rename_cmd_t *ie_rename_cmd_new(derr_t *e, ie_mailbox_t *old,
+        ie_mailbox_t *new);
+void ie_rename_cmd_free(ie_rename_cmd_t *rename);
+
+ie_list_cmd_t *ie_list_cmd_new(derr_t *e, ie_mailbox_t *m, ie_dstr_t *pattern);
+void ie_list_cmd_free(ie_list_cmd_t *list);
+
+ie_status_cmd_t *ie_status_cmd_new(derr_t *e, ie_mailbox_t *m,
+        unsigned char status_attr);
+void ie_status_cmd_free(ie_status_cmd_t *status);
+
+ie_append_cmd_t *ie_append_cmd_new(derr_t *e, ie_mailbox_t *m,
+        ie_flags_t *flags, imap_time_t time, ie_dstr_t *content);
+void ie_append_cmd_free(ie_append_cmd_t *append);
+
+ie_search_cmd_t *ie_search_cmd_new(derr_t *e, bool uid_mode,
+        ie_dstr_t *charset, ie_search_key_t *search_key);
+void ie_search_cmd_free(ie_search_cmd_t *search);
+
+ie_fetch_cmd_t *ie_fetch_cmd_new(derr_t *e, bool uid_mode,
+        ie_seq_set_t *seq_set, ie_fetch_attrs_t *attr);
+void ie_fetch_cmd_free(ie_fetch_cmd_t *fetch);
+
+ie_store_cmd_t *ie_store_cmd_new(derr_t *e, bool uid_mode,
+        ie_seq_set_t *seq_set, int sign, bool silent, ie_flags_t *flags);
+void ie_store_cmd_free(ie_store_cmd_t *store);
+
+ie_copy_cmd_t *ie_copy_cmd_new(derr_t *e, bool uid_mode,
+        ie_seq_set_t *seq_set, ie_mailbox_t *m);
+void ie_copy_cmd_free(ie_copy_cmd_t *copy);
+
+imap_cmd_t *imap_cmd_new(derr_t *e, ie_dstr_t *tag, imap_cmd_type_t type,
+        imap_cmd_arg_t arg);
+void imap_cmd_free(imap_cmd_t *cmd);
+
+// full responses
+
+ie_st_resp_t *ie_st_resp_new(derr_t *e, ie_dstr_t *tag, ie_status_t status,
+        ie_st_code_t *code, ie_dstr_t *text);
+void ie_st_resp_free(ie_st_resp_t *st);
+
+ie_list_resp_t *ie_list_resp_new(derr_t *e, ie_mflags_t *mflags, char sep,
+        ie_mailbox_t *m);
+void ie_list_resp_free(ie_list_resp_t *list);
+
+ie_status_resp_t *ie_status_resp_new(derr_t *e, ie_mailbox_t *m,
+        ie_status_attr_resp_t sa);
+void ie_status_resp_free(ie_status_resp_t *status);
+
+imap_resp_t *imap_resp_new(derr_t *e, imap_resp_type_t type,
+        imap_resp_arg_t arg);
+void imap_resp_free(imap_resp_t *resp);
 
 #endif // IMAP_EXPR_H

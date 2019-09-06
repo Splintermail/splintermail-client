@@ -2,8 +2,68 @@
 #define IMAP_SCAN_H
 
 #include "common.h"
-#include "imap_read_types.h"
-#include <imap_parse.tab.h>
+
+// control scanner modes based on what state the parser is in
+typedef enum {
+    // TAG grabs either "*" or a tag
+    SCAN_MODE_TAG,
+    // For handling the body of a quoted string
+    SCAN_MODE_QSTRING,
+    // For numbers
+    SCAN_MODE_NUM,
+    // For right after the tag
+    SCAN_MODE_COMMAND,
+    // For when we are just looking for atoms, or atom-specials
+    SCAN_MODE_ATOM,
+    // For flags (regular, fetch, or permanent)
+    SCAN_MODE_FLAG,
+    // for mailbox flags
+    SCAN_MODE_MFLAG,
+    // For just after the OK/BAD/NO/PREAUTH/BYE
+    SCAN_MODE_STATUS_CODE_CHECK,
+    // For the first character of the [status_code]
+    SCAN_MODE_STATUS_CODE,
+    // For the freeform text part of a status-type response
+    SCAN_MODE_STATUS_TEXT,
+    SCAN_MODE_MAILBOX,
+    SCAN_MODE_ASTRING,
+    SCAN_MODE_NQCHAR,
+    SCAN_MODE_STATUS_ATTR,
+    // FETCH-response-related modes
+    SCAN_MODE_NSTRING,
+    SCAN_MODE_FETCH,
+    SCAN_MODE_DATETIME,
+    // for wildcard patterns
+    SCAN_MODE_WILDCARD,
+    // for sequence sets, which are read by the parser as atoms
+    SCAN_MODE_SEQSET,
+    // for the [+-]?FLAGS(.SILENT)? part of the STORE command
+    SCAN_MODE_STORE,
+    SCAN_MODE_SEARCH,
+} scan_mode_t;
+
+typedef struct {
+    dstr_t bytes;
+    char bytes_buffer[4096];
+    // const char* limit;
+    // continued scan start position
+    const char* cursor;
+    // continued scan backup position
+    const char* marker;
+    // clean scan start position
+    const char* start;
+    // previous scanner start position (start of the last token)
+    const char* old_start;
+    // part of continued scan state
+    int state;
+    bool accept;
+    char yych;
+    // for automatic continue handling
+    bool continuing;
+    // for scanning literals
+    bool in_literal;
+    size_t literal_len;
+} imap_scanner_t;
 
 dstr_t* scan_mode_to_dstr(scan_mode_t mode);
 

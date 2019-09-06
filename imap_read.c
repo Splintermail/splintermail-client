@@ -5,28 +5,17 @@
 #include "logger.h"
 #include "imap_parse.tab.h"
 
-derr_t imap_reader_init(imap_reader_t *reader,
-                        imap_hooks_dn_t hooks_dn,
-                        imap_hooks_up_t hooks_up,
-                        void *hook_data){
+derr_t imap_reader_init(imap_reader_t *reader, imap_parser_cb_t cb,
+        void *cb_data){
     derr_t e = E_OK;
 
     PROP(&e, imap_scanner_init(&reader->scanner) );
 
-    PROP_GO(&e, imap_parser_init(&reader->parser, reader, hooks_dn, hooks_up,
-            hook_data), fail_scanner);
+    PROP_GO(&e, imap_parser_init(&reader->parser, &reader->scanner, cb,
+                cb_data), fail_scanner);
 
-    // init literal-tracking stuff
-    reader->in_literal = false;
-    reader->keep_literal = false;
-    reader->fetch_literal = false;
-    reader->literal_len = 0;
-    reader->literal_temp = (dstr_t){0};
-    reader->literal_len = 0;
-
-    reader->hooks_up = hooks_up;
-    reader->hooks_dn = hooks_dn;
-    reader->hook_data = hook_data;
+    reader->cb = cb;
+    reader->cb_data = cb_data;
 
     return e;
 
@@ -38,7 +27,6 @@ fail_scanner:
 void imap_reader_free(imap_reader_t *reader){
     imap_scanner_free(&reader->scanner);
     imap_parser_free(&reader->parser);
-    dstr_free(&reader->literal_temp);
 }
 
 derr_t imap_read(imap_reader_t *reader, const dstr_t *input){

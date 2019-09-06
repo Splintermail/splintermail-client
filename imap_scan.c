@@ -1,6 +1,9 @@
 #include <imap_scan.h>
 #include <logger.h>
 
+#include <imap_parse.h>
+#include <imap_parse.tab.h>
+
 DSTR_STATIC(scan_mode_TAG_dstr, "SCAN_MODE_TAG");
 DSTR_STATIC(scan_mode_QSTRING_dstr, "SCAN_MODE_QSTRING");
 DSTR_STATIC(scan_mode_NUM_dstr, "SCAN_MODE_NUM");

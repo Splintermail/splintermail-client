@@ -37,6 +37,83 @@ const dstr_t *ie_status_attr_to_dstr(ie_status_attr_t sa){
     }
     return &IE_UNKNOWN_dstr;
 }
+DSTR_STATIC(IMAP_CMD_STARTTLS_dstr, "STARTTLS");
+DSTR_STATIC(IMAP_CMD_AUTH_dstr, "AUTH");
+DSTR_STATIC(IMAP_CMD_LOGIN_dstr, "LOGIN");
+DSTR_STATIC(IMAP_CMD_SELECT_dstr, "SELECT");
+DSTR_STATIC(IMAP_CMD_EXAMINE_dstr, "EXAMINE");
+DSTR_STATIC(IMAP_CMD_CREATE_dstr, "CREATE");
+DSTR_STATIC(IMAP_CMD_DELETE_dstr, "DELETE");
+DSTR_STATIC(IMAP_CMD_RENAME_dstr, "RENAME");
+DSTR_STATIC(IMAP_CMD_SUB_dstr, "SUB");
+DSTR_STATIC(IMAP_CMD_UNSUB_dstr, "UNSUB");
+DSTR_STATIC(IMAP_CMD_LIST_dstr, "LIST");
+DSTR_STATIC(IMAP_CMD_LSUB_dstr, "LSUB");
+DSTR_STATIC(IMAP_CMD_STATUS_dstr, "STATUS");
+DSTR_STATIC(IMAP_CMD_APPEND_dstr, "APPEND");
+DSTR_STATIC(IMAP_CMD_CHECK_dstr, "CHECK");
+DSTR_STATIC(IMAP_CMD_CLOSE_dstr, "CLOSE");
+DSTR_STATIC(IMAP_CMD_EXPUNGE_dstr, "EXPUNGE");
+DSTR_STATIC(IMAP_CMD_SEARCH_dstr, "SEARCH");
+DSTR_STATIC(IMAP_CMD_FETCH_dstr, "FETCH");
+DSTR_STATIC(IMAP_CMD_STORE_dstr, "STORE");
+DSTR_STATIC(IMAP_CMD_COPY_dstr, "COPY");
+
+const dstr_t *imap_cmd_type_to_dstr(imap_cmd_type_t type){
+    switch(type){
+        case IMAP_CMD_STARTTLS: return &IMAP_CMD_STARTTLS_dstr;
+        case IMAP_CMD_AUTH:     return &IMAP_CMD_AUTH_dstr;
+        case IMAP_CMD_LOGIN:    return &IMAP_CMD_LOGIN_dstr;
+        case IMAP_CMD_SELECT:   return &IMAP_CMD_SELECT_dstr;
+        case IMAP_CMD_EXAMINE:  return &IMAP_CMD_EXAMINE_dstr;
+        case IMAP_CMD_CREATE:   return &IMAP_CMD_CREATE_dstr;
+        case IMAP_CMD_DELETE:   return &IMAP_CMD_DELETE_dstr;
+        case IMAP_CMD_RENAME:   return &IMAP_CMD_RENAME_dstr;
+        case IMAP_CMD_SUB:      return &IMAP_CMD_SUB_dstr;
+        case IMAP_CMD_UNSUB:    return &IMAP_CMD_UNSUB_dstr;
+        case IMAP_CMD_LIST:     return &IMAP_CMD_LIST_dstr;
+        case IMAP_CMD_LSUB:     return &IMAP_CMD_LSUB_dstr;
+        case IMAP_CMD_STATUS:   return &IMAP_CMD_STATUS_dstr;
+        case IMAP_CMD_APPEND:   return &IMAP_CMD_APPEND_dstr;
+        case IMAP_CMD_CHECK:    return &IMAP_CMD_CHECK_dstr;
+        case IMAP_CMD_CLOSE:    return &IMAP_CMD_CLOSE_dstr;
+        case IMAP_CMD_EXPUNGE:  return &IMAP_CMD_EXPUNGE_dstr;
+        case IMAP_CMD_SEARCH:   return &IMAP_CMD_SEARCH_dstr;
+        case IMAP_CMD_FETCH:    return &IMAP_CMD_FETCH_dstr;
+        case IMAP_CMD_STORE:    return &IMAP_CMD_STORE_dstr;
+        case IMAP_CMD_COPY:     return &IMAP_CMD_COPY_dstr;
+    }
+    return &IE_UNKNOWN_dstr;
+}
+
+DSTR_STATIC(IMAP_RESP_STATUS_TYPE_dstr, "STATUS_TYPE");
+DSTR_STATIC(IMAP_RESP_CAPA_dstr, "CAPA");
+DSTR_STATIC(IMAP_RESP_LIST_dstr, "LIST");
+DSTR_STATIC(IMAP_RESP_LSUB_dstr, "LSUB");
+DSTR_STATIC(IMAP_RESP_STATUS_dstr, "STATUS");
+DSTR_STATIC(IMAP_RESP_FLAGS_dstr, "FLAGS");
+DSTR_STATIC(IMAP_RESP_SEARCH_dstr, "SEARCH");
+DSTR_STATIC(IMAP_RESP_EXISTS_dstr, "EXISTS");
+DSTR_STATIC(IMAP_RESP_EXPUNGE_dstr, "EXPUNGE");
+DSTR_STATIC(IMAP_RESP_RECENT_dstr, "RECENT");
+DSTR_STATIC(IMAP_RESP_FETCH_dstr, "FETCH");
+
+const dstr_t *imap_resp_type_to_dstr(imap_resp_type_t type){
+    switch(type){
+        case IMAP_RESP_STATUS_TYPE: return &IMAP_RESP_STATUS_TYPE_dstr;
+        case IMAP_RESP_CAPA:        return &IMAP_RESP_CAPA_dstr;
+        case IMAP_RESP_LIST:        return &IMAP_RESP_LIST_dstr;
+        case IMAP_RESP_LSUB:        return &IMAP_RESP_LSUB_dstr;
+        case IMAP_RESP_STATUS:      return &IMAP_RESP_STATUS_dstr;
+        case IMAP_RESP_FLAGS:       return &IMAP_RESP_FLAGS_dstr;
+        case IMAP_RESP_SEARCH:      return &IMAP_RESP_SEARCH_dstr;
+        case IMAP_RESP_EXISTS:      return &IMAP_RESP_EXISTS_dstr;
+        case IMAP_RESP_EXPUNGE:     return &IMAP_RESP_EXPUNGE_dstr;
+        case IMAP_RESP_RECENT:      return &IMAP_RESP_RECENT_dstr;
+        case IMAP_RESP_FETCH:       return &IMAP_RESP_FETCH_dstr;
+    }
+    return &IE_UNKNOWN_dstr;
+}
 
 static derr_t print_qstring_validated(dstr_t *out, const dstr_t *val){
     derr_t e = E_OK;
@@ -119,14 +196,44 @@ derr_t print_astring(dstr_t *out, const dstr_t *val){
             case '{':
             case ' ':
             case '%':
-            case ']':
-            case 127: maybe_atom = false; break;
-            default: if(val->data[i] < 32) maybe_atom = false;
+            case ']': maybe_atom = false; break;
+            default:
+                if(val->data[i] < 32 || val->data[i] == 127)
+                    maybe_atom = false;
         }
     }
     if(!maybe_atom){
         PROP(&e, print_qstring_validated(out, val) );
         return e;
+    }
+
+    // atoms don't need any recoding
+    PROP(&e, dstr_append(out, val) );
+    return e;
+}
+
+derr_t print_atom(dstr_t *out, const dstr_t *val){
+    derr_t e = E_OK;
+    for(size_t i = 0; i < val->len; i++){
+        switch(val->data[i]){
+            // anything with non-atom chars is invalid
+            case '(':
+            case ')':
+            case '{':
+            case ' ':
+            case '%':
+            case ']':
+                TRACE(&e, "unable to print '%x' (%x) in atom\n",
+                        FC(val->data[i]), FI(val->data[i]));
+                ORIG(&e, E_PARAM, "invalid atom");
+            default:
+                // CTL characters
+                if(val->data[i] < 32 || val->data[i] == 127){
+                    TRACE(&e, "unable to print '%x' (%x) in atom\n",
+                            FC(val->data[i]), FI(val->data[i]));
+                    ORIG(&e, E_PARAM, "invalid atom");
+                }
+        }
     }
 
     // atoms don't need any recoding
@@ -279,15 +386,15 @@ derr_t print_ie_seq_set(dstr_t *out, ie_seq_set_t *seq_set){
     return e;
 }
 
-//derr_t print_ie_mailbox(dstr_t *out, ie_mailbox_t *m){
-//    derr_t e = E_OK;
-//    if(m->inbox){
-//        PROP(&e, FMT(&out, "INBOX") );
-//    }else{
-//        PROP(&e, FMT(&out, "%x", FD(&m->dstr)) );
-//    }
-//    return e;
-//}
+derr_t print_ie_mailbox(dstr_t *out, ie_mailbox_t *m){
+    derr_t e = E_OK;
+    if(m->inbox){
+        PROP(&e, FMT(out, "INBOX") );
+    }else{
+        PROP(&e, print_astring(out, &m->dstr) );
+    }
+    return e;
+}
 
 derr_t print_ie_search_key(dstr_t *out, ie_search_key_t *key){
     derr_t e = E_OK;
@@ -542,5 +649,358 @@ derr_t print_ie_st_code(dstr_t *out, ie_st_code_t *code){
             ORIG(&e, E_PARAM, "unknown status code type");
     }
     PROP(&e, FMT(out, "]") );
+    return e;
+}
+
+derr_t print_atoms(dstr_t *out, ie_dstr_t *list){
+    derr_t e = E_OK;
+    bool sp = false;
+    for(ie_dstr_t *d = list; d != NULL; d = d->next){
+        LEAD_SP;
+        PROP(&e, print_atom(out, &d->dstr) );
+    }
+    return e;
+}
+
+derr_t print_nums(dstr_t *out, ie_nums_t *nums){
+    derr_t e = E_OK;
+    bool sp = false;
+    for(ie_nums_t *n = nums; n != NULL; n = n->next){
+        LEAD_SP;
+        PROP(&e, FMT(out, "%x", FU(n->num)) );
+    }
+    return e;
+}
+
+// full commands
+
+derr_t print_login_cmd(dstr_t *out, ie_login_cmd_t *login){
+    derr_t e = E_OK;
+    PROP(&e, FMT(out, "LOGIN ") );
+    PROP(&e, print_astring(out, &login->user->dstr) );
+    PROP(&e, FMT(out, " ") );
+    PROP(&e, print_astring(out, &login->pass->dstr) );
+    return e;
+}
+
+derr_t print_rename_cmd(dstr_t *out, ie_rename_cmd_t *rename){
+    derr_t e = E_OK;
+    PROP(&e, FMT(out, "RENAME ") );
+    PROP(&e, print_ie_mailbox(out, rename->old) );
+    PROP(&e, FMT(out, " ") );
+    PROP(&e, print_ie_mailbox(out, rename->new) );
+    return e;
+}
+
+derr_t print_list_cmd(dstr_t *out, ie_list_cmd_t *list){
+    derr_t e = E_OK;
+    PROP(&e, print_ie_mailbox(out, list->m) );
+    PROP(&e, FMT(out, " ") );
+    PROP(&e, print_astring(out, &list->pattern->dstr) );
+    return e;
+}
+
+derr_t print_status_cmd(dstr_t *out, ie_status_cmd_t *status){
+    derr_t e = E_OK;
+    PROP(&e, print_ie_mailbox(out, status->m) );
+    PROP(&e, FMT(out, " ") );
+    bool sp = false;
+    PROP(&e, FMT(out, "(") );
+    if(status->status_attr & IE_STATUS_ATTR_MESSAGES){
+        LEAD_SP;
+        PROP(&e, FMT(out, "MESSAGES") );
+    }
+    if(status->status_attr & IE_STATUS_ATTR_RECENT){
+        LEAD_SP;
+        PROP(&e, FMT(out, "RECENT") );
+    }
+    if(status->status_attr & IE_STATUS_ATTR_UIDNEXT){
+        LEAD_SP;
+        PROP(&e, FMT(out, "UIDNEXT") );
+    }
+    if(status->status_attr & IE_STATUS_ATTR_UIDVLD){
+        LEAD_SP;
+        PROP(&e, FMT(out, "UIDVALIDITY") );
+    }
+    if(status->status_attr & IE_STATUS_ATTR_UNSEEN){
+        LEAD_SP;
+        PROP(&e, FMT(out, "UNSEEN") );
+    }
+    PROP(&e, FMT(out, ")") );
+    return e;
+}
+
+derr_t print_append_cmd(dstr_t *out, ie_append_cmd_t *append){
+    derr_t e = E_OK;
+    PROP(&e, print_ie_mailbox(out, append->m) );
+    PROP(&e, FMT(out, " ") );
+    // flags
+    PROP(&e, FMT(out, "(") );
+    PROP(&e, print_ie_flags(out, append->flags) );
+    PROP(&e, FMT(out, ") ") );
+    // time
+    if(append->time.year){
+        PROP(&e, print_imap_time(out, append->time) );
+        PROP(&e, FMT(out, " ") );
+    }
+    // literal
+    PROP(&e, print_literal(out, &append->content->dstr) );
+    return e;
+}
+
+derr_t print_search_cmd(dstr_t *out, ie_search_cmd_t *search){
+    derr_t e = E_OK;
+    PROP(&e, FMT(out, "%xSEARCH ", FS(search->uid_mode ? "UID " : "")) );
+    if(search->charset != NULL){
+        PROP(&e, print_astring(out, &search->charset->dstr) );
+        PROP(&e, FMT(out, " ") );
+    }
+    PROP(&e, print_ie_search_key(out, search->search_key) );
+    return e;
+}
+
+derr_t print_fetch_cmd(dstr_t *out, ie_fetch_cmd_t *fetch){
+    derr_t e = E_OK;
+    PROP(&e, FMT(out, "%xFETCH ", FS(fetch->uid_mode ? "UID " : "")) );
+    PROP(&e, print_ie_seq_set(out, fetch->seq_set) );
+    PROP(&e, FMT(out, " ") );
+    PROP(&e, print_ie_fetch_attrs(out, fetch->attr) );
+    return e;
+}
+
+derr_t print_store_cmd(dstr_t *out, ie_store_cmd_t *store){
+    derr_t e = E_OK;
+    PROP(&e, FMT(out, "%xSTORE ", FS(store->uid_mode ? "UID " : "")) );
+    PROP(&e, print_ie_seq_set(out, store->seq_set) );
+    PROP(&e, FMT(out, " %xFLAGS%x (",
+            FS(store->sign == 0 ? "" : (store->sign > 0 ? "+" : "-")),
+            FS(store->silent ? ".SILENT" : "")) );
+    PROP(&e, print_ie_flags(out, store->flags) );
+    PROP(&e, FMT(out, ")") );
+    return e;
+}
+
+derr_t print_copy_cmd(dstr_t *out, ie_copy_cmd_t *copy){
+    derr_t e = E_OK;
+    PROP(&e, FMT(out, "%xCOPY ", FS(copy->uid_mode ? "UID " : "")) );
+    PROP(&e, print_ie_seq_set(out, copy->seq_set) );
+    PROP(&e, FMT(out, " ") );
+    PROP(&e, print_ie_mailbox(out, copy->m) );
+    return e;
+}
+
+derr_t print_imap_cmd(dstr_t *out, imap_cmd_t *cmd){
+    derr_t e = E_OK;
+    PROP(&e, print_astring(out, &cmd->tag->dstr) );
+    PROP(&e, FMT(out, " ") );
+    switch(cmd->type){
+        case IMAP_CMD_STARTTLS:
+            PROP(&e, FMT(out, "STARTTLS") );
+            break;
+        case IMAP_CMD_AUTH:
+            PROP(&e, FMT(out, "AUTHENTICATE ") );
+            PROP(&e, print_atom(out, &cmd->arg.auth->dstr) );
+            break;
+        case IMAP_CMD_LOGIN:
+            PROP(&e, print_login_cmd(out, cmd->arg.login) );
+            break;
+        case IMAP_CMD_SELECT:
+            PROP(&e, FMT(out, "SELECT ") );
+            PROP(&e, print_ie_mailbox(out, cmd->arg.select) );
+            break;
+        case IMAP_CMD_EXAMINE:
+            PROP(&e, FMT(out, "EXAMINE ") );
+            PROP(&e, print_ie_mailbox(out, cmd->arg.examine) );
+            break;
+        case IMAP_CMD_CREATE:
+            PROP(&e, FMT(out, "CREATE ") );
+            PROP(&e, print_ie_mailbox(out, cmd->arg.create) );
+            break;
+        case IMAP_CMD_DELETE:
+            PROP(&e, FMT(out, "DELETE ") );
+            PROP(&e, print_ie_mailbox(out, cmd->arg.delete) );
+            break;
+        case IMAP_CMD_RENAME:
+            PROP(&e, print_rename_cmd(out, cmd->arg.rename) );
+            break;
+        case IMAP_CMD_SUB:
+            PROP(&e, FMT(out, "SUBSCRIBE ") );
+            PROP(&e, print_ie_mailbox(out, cmd->arg.sub) );
+            break;
+        case IMAP_CMD_UNSUB:
+            PROP(&e, FMT(out, "UNSUBSCRIBE ") );
+            PROP(&e, print_ie_mailbox(out, cmd->arg.unsub) );
+            break;
+        case IMAP_CMD_LIST:
+            PROP(&e, FMT(out, "LIST ") );
+            PROP(&e, print_list_cmd(out, cmd->arg.list) );
+            break;
+        case IMAP_CMD_LSUB:
+            PROP(&e, FMT(out, "LSUB ") );
+            PROP(&e, print_list_cmd(out, cmd->arg.list) );
+            break;
+        case IMAP_CMD_STATUS:
+            PROP(&e, FMT(out, "STATUS ") );
+            PROP(&e, print_status_cmd(out, cmd->arg.status) );
+            break;
+        case IMAP_CMD_APPEND:
+            PROP(&e, FMT(out, "APPEND ") );
+            PROP(&e, print_append_cmd(out, cmd->arg.append) );
+            break;
+        case IMAP_CMD_CHECK:
+            PROP(&e, FMT(out, "CHECK") );
+            break;
+        case IMAP_CMD_CLOSE:
+            PROP(&e, FMT(out, "CLOSE") );
+            break;
+        case IMAP_CMD_EXPUNGE:
+            PROP(&e, FMT(out, "EXPUNGE") );
+            break;
+        case IMAP_CMD_SEARCH:
+            PROP(&e, print_search_cmd(out, cmd->arg.search) );
+            break;
+        case IMAP_CMD_FETCH:
+            PROP(&e, print_fetch_cmd(out, cmd->arg.fetch) );
+            break;
+        case IMAP_CMD_STORE:
+            PROP(&e, print_store_cmd(out, cmd->arg.store) );
+            break;
+        case IMAP_CMD_COPY:
+            PROP(&e, print_copy_cmd(out, cmd->arg.copy) );
+            break;
+        default:
+            LOG_ERROR("got command of type %x\n", FU(cmd->type));
+    }
+    return e;
+}
+
+// full responses
+
+derr_t print_st_resp(dstr_t *out, ie_st_resp_t *st){
+    derr_t e = E_OK;
+    PROP(&e, FMT(out, "%x %x ",
+                FD(st->tag ? &st->tag->dstr : &DSTR_LIT("*")),
+                FD(ie_status_to_dstr(st->status))) );
+    if(st->code){
+        PROP(&e, print_ie_st_code(out, st->code) );
+        PROP(&e, FMT(out, " ") );
+    }
+    PROP(&e, dstr_append(out, &st->text->dstr) );
+    return e;
+}
+
+derr_t print_list_resp(dstr_t *out, ie_list_resp_t *list){
+    derr_t e = E_OK;
+    PROP(&e, FMT(out, "(") );
+    PROP(&e, print_ie_mflags(out, list->mflags) );
+    PROP(&e, FMT(out, ") \"%x\" ", FC(list->sep)) );
+    PROP(&e, print_ie_mailbox(out, list->m) );
+    return e;
+}
+
+derr_t print_status_resp(dstr_t *out, ie_status_resp_t *status){
+    derr_t e = E_OK;
+    PROP(&e, print_ie_mailbox(out, status->m) );
+    PROP(&e, FMT(out, " (") );
+
+    bool sp = false;
+    if(status->sa.attrs & IE_STATUS_ATTR_MESSAGES){
+        LEAD_SP;
+        PROP(&e, FMT(out, "MESSAGES %x", FU(status->sa.messages)) );
+    }
+    if(status->sa.attrs & IE_STATUS_ATTR_RECENT){
+        LEAD_SP;
+        PROP(&e, FMT(out, "RECENT %x", FU(status->sa.recent)) );
+    }
+    if(status->sa.attrs & IE_STATUS_ATTR_UIDNEXT){
+        LEAD_SP;
+        PROP(&e, FMT(out, "UIDNEXT %x", FU(status->sa.uidnext)) );
+    }
+    if(status->sa.attrs & IE_STATUS_ATTR_UIDVLD){
+        LEAD_SP;
+        PROP(&e, FMT(out, "UIDVALIDITY %x", FU(status->sa.uidvld)) );
+    }
+    if(status->sa.attrs & IE_STATUS_ATTR_UNSEEN){
+        LEAD_SP;
+        PROP(&e, FMT(out, "UNSEEN %x", FU(status->sa.unseen)) );
+    }
+    PROP(&e, FMT(out, ")") );
+    return e;
+}
+
+derr_t print_fetch_resp(dstr_t *out, ie_fetch_resp_t *fetch){
+    derr_t e = E_OK;
+    PROP(&e, FMT(out, "%x FETCH (", FU(fetch->num)) );
+    bool sp = false;
+    if(fetch->flags){
+        LEAD_SP;
+        PROP(&e, FMT(out, "FLAGS (") );
+        PROP(&e, print_ie_fflags(out, fetch->flags) );
+        PROP(&e, FMT(out, ")") );
+    }
+    if(fetch->uid){
+        LEAD_SP;
+        PROP(&e, FMT(out, "UID %x", FU(fetch->uid)) );
+    }
+    if(fetch->intdate.year){
+        LEAD_SP;
+        PROP(&e, FMT(out, "INTERNALDATE ") );
+        PROP(&e, print_imap_time(out, fetch->intdate) );
+    }
+    if(fetch->content){
+        LEAD_SP;
+        PROP(&e, FMT(out, "RFC822 ") );
+        PROP(&e, print_string(out, &fetch->content->dstr) );
+    }
+    PROP(&e, FMT(out, ")") );
+    return e;
+}
+
+derr_t print_imap_resp(dstr_t *out, imap_resp_t *resp){
+    derr_t e = E_OK;
+    switch(resp->type){
+        case IMAP_RESP_STATUS_TYPE:
+            PROP(&e, print_st_resp(out, resp->arg.status_type) );
+            break;
+        case IMAP_RESP_CAPA:
+            PROP(&e, FMT(out, "CAPABILITY ") );
+            PROP(&e, print_atoms(out, resp->arg.capa) );
+            break;
+        case IMAP_RESP_LIST:
+            PROP(&e, FMT(out, "LIST ") );
+            PROP(&e, print_list_resp(out, resp->arg.list) );
+            break;
+        case IMAP_RESP_LSUB:
+            PROP(&e, FMT(out, "LSUB ") );
+            PROP(&e, print_list_resp(out, resp->arg.lsub) );
+            break;
+        case IMAP_RESP_STATUS:
+            PROP(&e, FMT(out, "STATUS ") );
+            PROP(&e, print_status_resp(out, resp->arg.status) );
+            break;
+        case IMAP_RESP_FLAGS:
+            PROP(&e, FMT(out, "FLAGS (") );
+            PROP(&e, print_ie_flags(out, resp->arg.flags) );
+            PROP(&e, FMT(out, ")") );
+            break;
+        case IMAP_RESP_SEARCH:
+            PROP(&e, FMT(out, "SEARCH ") );
+            PROP(&e, print_nums(out, resp->arg.search) );
+            break;
+        case IMAP_RESP_EXISTS:
+            PROP(&e, FMT(out, "%x EXISTS", FU(resp->arg.exists)) );
+            break;
+        case IMAP_RESP_EXPUNGE:
+            PROP(&e, FMT(out, "%x EXPUNGE", FU(resp->arg.expunge)) );
+            break;
+        case IMAP_RESP_RECENT:
+            PROP(&e, FMT(out, "%x RECENT", FU(resp->arg.recent)) );
+            break;
+        case IMAP_RESP_FETCH:
+            PROP(&e, print_fetch_resp(out, resp->arg.fetch) );
+            break;
+        default:
+            LOG_ERROR("got response of type %x\n", FU(resp->type));
+    }
     return e;
 }

@@ -3,14 +3,18 @@
 #include "imap_expression.h"
 #include "logger.h"
 
+#define IE_MALLOC(e_, type_, var_, label_) \
+    type_ *var_ = malloc(sizeof(*var_)); \
+    if(var_ == NULL){ \
+        ORIG_GO(e_, E_NOMEM, "no memory", label_); \
+    } \
+    *var_ = (type_){0}
+
+
 ie_dstr_t *ie_dstr_new_empty(derr_t *e){
     if(is_error(*e)) goto fail;
 
-    // allocate struct
-    ie_dstr_t *d = malloc(sizeof(*d));
-    if(!d){
-        ORIG_GO(e, E_NOMEM, "no memory", fail);
-    }
+    IE_MALLOC(e, ie_dstr_t, d, fail);
 
     // allocate dstr
     PROP_GO(e, dstr_new(&d->dstr, 64), fail_malloc);
@@ -95,9 +99,8 @@ void ie_dstr_free_shell(ie_dstr_t *d){
 static ie_mailbox_t *ie_mailbox_new(derr_t *e){
     if(is_error(*e)) goto fail;
 
-    ie_mailbox_t *m = malloc(sizeof(*m));
-    if(!m) TRACE_ORIG(e, E_NOMEM, "no memory");
-    *m = (ie_mailbox_t){0};
+    IE_MALLOC(e, ie_mailbox_t, m, fail);
+
     return m;
 
 fail:
@@ -146,12 +149,7 @@ void ie_mailbox_free(ie_mailbox_t *m){
 ie_flags_t *ie_flags_new(derr_t *e){
     if(is_error(*e)) goto fail;
 
-    ie_flags_t *f = malloc(sizeof(*f));
-    if(!f){
-        ORIG_GO(e, E_NOMEM, "no memory", fail);
-    }
-
-    *f = (ie_flags_t){0};
+    IE_MALLOC(e, ie_flags_t, f, fail);
 
     return f;
 
@@ -221,12 +219,7 @@ fail:
 ie_pflags_t *ie_pflags_new(derr_t *e){
     if(is_error(*e)) goto fail;
 
-    ie_pflags_t *pf = malloc(sizeof(*pf));
-    if(!pf){
-        ORIG_GO(e, E_NOMEM, "no memory", fail);
-    }
-
-    *pf = (ie_pflags_t){0};
+    IE_MALLOC(e, ie_pflags_t, pf, fail);
 
     return pf;
 
@@ -298,12 +291,7 @@ fail:
 ie_fflags_t *ie_fflags_new(derr_t *e){
     if(is_error(*e)) goto fail;
 
-    ie_fflags_t *ff = malloc(sizeof(*ff));
-    if(!ff){
-        ORIG_GO(e, E_NOMEM, "no memory", fail);
-    }
-
-    *ff = (ie_fflags_t){0};
+    IE_MALLOC(e, ie_fflags_t, ff, fail);
 
     return ff;
 
@@ -375,12 +363,7 @@ fail:
 ie_mflags_t *ie_mflags_new(derr_t *e){
     if(is_error(*e)) goto fail;
 
-    ie_mflags_t *mf = malloc(sizeof(*mf));
-    if(!mf){
-        ORIG_GO(e, E_NOMEM, "no memory", fail);
-    }
-
-    *mf = (ie_mflags_t){0};
+    IE_MALLOC(e, ie_mflags_t, mf, fail);
 
     return mf;
 
@@ -425,10 +408,9 @@ fail:
 
 ie_seq_set_t *ie_seq_set_new(derr_t *e, unsigned int n1, unsigned int n2){
     if(is_error(*e)) goto fail;
-    ie_seq_set_t *set = malloc(sizeof(*set));
-    if(!set){
-        ORIG_GO(e, E_NOMEM, "no memory", fail);
-    }
+
+    IE_MALLOC(e, ie_seq_set_t, set, fail);
+
     set->n1 = n1;
     set->n2 = n2;
     set->next = NULL;
@@ -460,15 +442,48 @@ fail:
     return NULL;
 }
 
+// num list construction
+
+ie_nums_t *ie_nums_new(derr_t *e, unsigned int n){
+    if(is_error(*e)) goto fail;
+
+    IE_MALLOC(e, ie_nums_t, nums, fail);
+
+    nums->num = n;
+
+    return nums;
+
+fail:
+    return NULL;
+}
+
+void ie_nums_free(ie_nums_t *nums){
+    ie_nums_free(nums->next);
+    free(nums);
+}
+
+ie_nums_t *ie_nums_append(derr_t *e, ie_nums_t *nums, ie_nums_t *next){
+    if(is_error(*e)) goto fail;
+
+    ie_nums_t **last = &nums->next;
+    while(*last != NULL) last = &(*last)->next;
+    *last = next;
+
+    return nums;
+
+fail:
+    ie_nums_free(nums);
+    ie_nums_free(next);
+    return NULL;
+}
+
 // search key construction
 
 ie_search_key_t *ie_search_key_new(derr_t *e){
     if(is_error(*e)) goto fail;
-    ie_search_key_t *s = malloc(sizeof(*s));
-    if(!s){
-        ORIG_GO(e, E_NOMEM, "no memory", fail);
-    }
-    *s = (ie_search_key_t){0};
+
+    IE_MALLOC(e, ie_search_key_t, s, fail);
+
     return s;
 
 fail:
@@ -660,11 +675,9 @@ fail:
 
 ie_fetch_attrs_t *ie_fetch_attrs_new(derr_t *e){
     if(is_error(*e)) goto fail;
-    ie_fetch_attrs_t *f = malloc(sizeof(*f));
-    if(!f){
-        ORIG_GO(e, E_NOMEM, "no memory", fail);
-    }
-    *f = (ie_fetch_attrs_t){0};
+
+    IE_MALLOC(e, ie_fetch_attrs_t, f, fail);
+
     return f;
 
 fail:
@@ -723,10 +736,7 @@ ie_fetch_extra_t *ie_fetch_extra_new(derr_t *e, bool peek, ie_sect_t *s,
         ie_partial_t *p){
     if(is_error(*e)) goto fail;
 
-    ie_fetch_extra_t *ex = malloc(sizeof(*ex));
-    if(!ex){
-        ORIG_GO(e, E_NOMEM, "no memory", fail);
-    }
+    IE_MALLOC(e, ie_fetch_extra_t, ex, fail);
 
     ex->peek = peek;
     ex->sect = s;
@@ -752,10 +762,7 @@ void ie_fetch_extra_free(ie_fetch_extra_t *ex){
 ie_sect_part_t *ie_sect_part_new(derr_t *e, unsigned int num){
     if(is_error(*e)) goto fail;
 
-    ie_sect_part_t *sp = malloc(sizeof(*sp));
-    if(!sp){
-        ORIG_GO(e, E_NOMEM, "no memory", fail);
-    }
+    IE_MALLOC(e, ie_sect_part_t, sp, fail);
 
     sp->n = num;
     sp->next = NULL;
@@ -791,10 +798,7 @@ ie_sect_txt_t *ie_sect_txt_new(derr_t *e, ie_sect_txt_type_t type,
         ie_dstr_t *headers){
     if(is_error(*e)) goto fail;
 
-    ie_sect_txt_t *st = malloc(sizeof(*st));
-    if(!st){
-        ORIG_GO(e, E_NOMEM, "no memory", fail);
-    }
+    IE_MALLOC(e, ie_sect_txt_t, st, fail);
 
     st->type = type;
     st->headers = headers;
@@ -815,10 +819,7 @@ void ie_sect_txt_free(ie_sect_txt_t *st){
 ie_sect_t *ie_sect_new(derr_t *e, ie_sect_part_t *sp, ie_sect_txt_t *st){
     if(is_error(*e)) goto fail;
 
-    ie_sect_t *s = malloc(sizeof(*s));
-    if(!s){
-        ORIG_GO(e, E_NOMEM, "no memory", fail);
-    }
+    IE_MALLOC(e, ie_sect_t, s, fail);
 
     s->sect_part = sp;
     s->sect_txt = st;
@@ -841,10 +842,7 @@ void ie_sect_free(ie_sect_t *s){
 ie_partial_t *ie_partial_new(derr_t *e, unsigned int a, unsigned int b){
     if(is_error(*e)) goto fail;
 
-    ie_partial_t *p = malloc(sizeof(*p));
-    if(!p){
-        ORIG_GO(e, E_NOMEM, "no memory", fail);
-    }
+    IE_MALLOC(e, ie_partial_t, p, fail);
 
     p->a = a;
     p->b = b;
@@ -864,11 +862,7 @@ void ie_partial_free(ie_partial_t *p){
 static ie_st_code_t *ie_st_code_new(derr_t *e){
     if(is_error(*e)) goto fail;
 
-    ie_st_code_t *stc = malloc(sizeof(*stc));
-    if(!stc){
-        ORIG_GO(e, E_NOMEM, "no memory", fail);
-    }
-    *stc = (ie_st_code_t){0};
+    IE_MALLOC(e, ie_st_code_t, stc, fail);
 
     return stc;
 
@@ -987,11 +981,7 @@ ie_status_attr_resp_t ie_status_attr_resp_add(ie_status_attr_resp_t resp,
 ie_fetch_resp_t *ie_fetch_resp_new(derr_t *e){
     if(is_error(*e)) goto fail;
 
-    ie_fetch_resp_t *f = malloc(sizeof(*f));
-    if(!f){
-        ORIG_GO(e, E_NOMEM, "no memory", fail);
-    }
-    *f = (ie_fetch_resp_t){0};
+    IE_MALLOC(e, ie_fetch_resp_t, f, fail);
 
     return f;
 
@@ -1004,6 +994,19 @@ void ie_fetch_resp_free(ie_fetch_resp_t *f){
     ie_fflags_free(f->flags);
     ie_dstr_free(f->content);
     free(f);
+}
+
+ie_fetch_resp_t *ie_fetch_resp_num(derr_t *e, ie_fetch_resp_t *f,
+        unsigned int num){
+    if(is_error(*e)) goto fail;
+
+    f->num = num;
+
+    return f;
+
+fail:
+    ie_fetch_resp_free(f);
+    return NULL;
 }
 
 ie_fetch_resp_t *ie_fetch_resp_uid(derr_t *e, ie_fetch_resp_t *f,
@@ -1066,4 +1069,380 @@ fail:
     ie_dstr_free(content);
     ie_fetch_resp_free(f);
     return NULL;
+}
+
+// full commands
+
+ie_login_cmd_t *ie_login_cmd_new(derr_t *e, ie_dstr_t *user, ie_dstr_t *pass){
+    if(is_error(*e)) goto fail;
+
+    IE_MALLOC(e, ie_login_cmd_t, login, fail);
+
+    login->user = user;
+    login->pass = pass;
+
+    return login;
+
+fail:
+    ie_dstr_free(user);
+    ie_dstr_free(pass);
+    return NULL;
+}
+
+void ie_login_cmd_free(ie_login_cmd_t *login){
+    ie_dstr_free(login->user);
+    ie_dstr_free(login->pass);
+    free(login);
+}
+
+ie_rename_cmd_t *ie_rename_cmd_new(derr_t *e, ie_mailbox_t *old,
+        ie_mailbox_t *new){
+    if(is_error(*e)) goto fail;
+
+    IE_MALLOC(e, ie_rename_cmd_t, rename, fail);
+
+    rename->old = old;
+    rename->new = new;
+
+    return rename;
+
+fail:
+    ie_mailbox_free(old);
+    ie_mailbox_free(new);
+    return NULL;
+}
+
+void ie_rename_cmd_free(ie_rename_cmd_t *rename){
+    ie_mailbox_free(rename->old);
+    ie_mailbox_free(rename->new);
+    free(rename);
+}
+
+ie_list_cmd_t *ie_list_cmd_new(derr_t *e, ie_mailbox_t *m, ie_dstr_t *pattern){
+    if(is_error(*e)) goto fail;
+
+    IE_MALLOC(e, ie_list_cmd_t, list, fail);
+
+    list->m = m;
+    list->pattern = pattern;
+
+    return list;
+
+fail:
+    ie_mailbox_free(m);
+    ie_dstr_free(pattern);
+    return NULL;
+}
+
+void ie_list_cmd_free(ie_list_cmd_t *list){
+    ie_mailbox_free(list->m);
+    ie_dstr_free(list->pattern);
+    free(list);
+}
+
+ie_status_cmd_t *ie_status_cmd_new(derr_t *e, ie_mailbox_t *m,
+        unsigned char status_attr){
+    if(is_error(*e)) goto fail;
+
+    IE_MALLOC(e, ie_status_cmd_t, status, fail);
+
+    status->m = m;
+    status->status_attr = status_attr;
+
+    return status;
+
+fail:
+    ie_mailbox_free(m);
+    return NULL;
+}
+
+void ie_status_cmd_free(ie_status_cmd_t *status){
+    ie_mailbox_free(status->m);
+    free(status);
+}
+
+ie_append_cmd_t *ie_append_cmd_new(derr_t *e, ie_mailbox_t *m,
+        ie_flags_t *flags, imap_time_t time, ie_dstr_t *content){
+    if(is_error(*e)) goto fail;
+
+    IE_MALLOC(e, ie_append_cmd_t, append, fail);
+
+    append->m = m;
+    append->flags = flags;
+    append->time = time;
+    append->content = content;
+
+    return append;
+
+fail:
+    ie_mailbox_free(m);
+    ie_flags_free(flags);
+    ie_dstr_free(content);
+    return NULL;
+}
+
+void ie_append_cmd_free(ie_append_cmd_t *append){
+    ie_mailbox_free(append->m);
+    ie_flags_free(append->flags);
+    ie_dstr_free(append->content);
+    free(append);
+}
+
+ie_search_cmd_t *ie_search_cmd_new(derr_t *e, bool uid_mode,
+        ie_dstr_t *charset, ie_search_key_t *search_key){
+    if(is_error(*e)) goto fail;
+
+    IE_MALLOC(e, ie_search_cmd_t, search, fail);
+
+    search->uid_mode = uid_mode;
+    search->charset = charset;
+    search->search_key = search_key;
+
+    return search;
+
+fail:
+    ie_dstr_free(charset);
+    ie_search_key_free(search_key);
+    return NULL;
+}
+
+void ie_search_cmd_free(ie_search_cmd_t *search){
+    ie_dstr_free(search->charset);
+    ie_search_key_free(search->search_key);
+    free(search);
+}
+
+ie_fetch_cmd_t *ie_fetch_cmd_new(derr_t *e, bool uid_mode,
+        ie_seq_set_t *seq_set, ie_fetch_attrs_t *attr){
+    if(is_error(*e)) goto fail;
+
+    IE_MALLOC(e, ie_fetch_cmd_t, fetch, fail);
+
+    fetch->uid_mode = uid_mode;
+    fetch->seq_set = seq_set;
+    fetch->attr = attr;
+
+    return fetch;
+
+fail:
+    ie_seq_set_free(seq_set);
+    ie_fetch_attrs_free(attr);
+    return NULL;
+}
+
+void ie_fetch_cmd_free(ie_fetch_cmd_t *fetch){
+    ie_seq_set_free(fetch->seq_set);
+    ie_fetch_attrs_free(fetch->attr);
+    free(fetch);
+}
+
+ie_store_cmd_t *ie_store_cmd_new(derr_t *e, bool uid_mode,
+        ie_seq_set_t *seq_set, int sign, bool silent, ie_flags_t *flags){
+    if(is_error(*e)) goto fail;
+
+    IE_MALLOC(e, ie_store_cmd_t, store, fail);
+
+    store->uid_mode = uid_mode;
+    store->seq_set = seq_set;
+    store->sign = sign;
+    store->silent = silent;
+    store->flags = flags;
+
+    return store;
+
+fail:
+    ie_seq_set_free(seq_set);
+    ie_flags_free(flags);
+    return NULL;
+}
+
+void ie_store_cmd_free(ie_store_cmd_t *store){
+    ie_seq_set_free(store->seq_set);
+    ie_flags_free(store->flags);
+    free(store);
+}
+
+ie_copy_cmd_t *ie_copy_cmd_new(derr_t *e, bool uid_mode,
+        ie_seq_set_t *seq_set, ie_mailbox_t *m){
+    if(is_error(*e)) goto fail;
+
+    IE_MALLOC(e, ie_copy_cmd_t, copy, fail);
+
+    copy->uid_mode = uid_mode;
+    copy->seq_set = seq_set;
+    copy->m = m;
+
+    return copy;
+
+fail:
+    ie_seq_set_free(seq_set);
+    ie_mailbox_free(m);
+    return NULL;
+}
+
+void ie_copy_cmd_free(ie_copy_cmd_t *copy){
+    ie_seq_set_free(copy->seq_set);
+    ie_mailbox_free(copy->m);
+    free(copy);
+}
+
+static void imap_cmd_arg_free(imap_cmd_type_t type, imap_cmd_arg_t arg){
+    switch(type){
+        case IMAP_CMD_STARTTLS: break;
+        case IMAP_CMD_AUTH:     ie_dstr_free(arg.auth); break;
+        case IMAP_CMD_LOGIN:    ie_login_cmd_free(arg.login); break;
+        case IMAP_CMD_SELECT:   ie_mailbox_free(arg.select); break;
+        case IMAP_CMD_EXAMINE:  ie_mailbox_free(arg.examine); break;
+        case IMAP_CMD_CREATE:   ie_mailbox_free(arg.create); break;
+        case IMAP_CMD_DELETE:   ie_mailbox_free(arg.delete); break;
+        case IMAP_CMD_RENAME:   ie_rename_cmd_free(arg.rename); break;
+        case IMAP_CMD_SUB:      ie_mailbox_free(arg.sub); break;
+        case IMAP_CMD_UNSUB:    ie_mailbox_free(arg.unsub); break;
+        case IMAP_CMD_LIST:     ie_list_cmd_free(arg.list); break;
+        case IMAP_CMD_LSUB:     ie_list_cmd_free(arg.lsub); break;
+        case IMAP_CMD_STATUS:   ie_status_cmd_free(arg.status); break;
+        case IMAP_CMD_APPEND:   ie_append_cmd_free(arg.append); break;
+        case IMAP_CMD_CHECK:    break;
+        case IMAP_CMD_CLOSE:    break;
+        case IMAP_CMD_EXPUNGE:  break;
+        case IMAP_CMD_SEARCH:   ie_search_cmd_free(arg.search); break;
+        case IMAP_CMD_FETCH:    ie_fetch_cmd_free(arg.fetch); break;
+        case IMAP_CMD_STORE:    ie_store_cmd_free(arg.store); break;
+        case IMAP_CMD_COPY:     ie_copy_cmd_free(arg.copy); break;
+    }
+}
+
+imap_cmd_t *imap_cmd_new(derr_t *e, ie_dstr_t *tag, imap_cmd_type_t type,
+        imap_cmd_arg_t arg){
+    if(is_error(*e)) goto fail;
+
+    IE_MALLOC(e, imap_cmd_t, cmd, fail);
+
+    cmd->tag = tag;
+    cmd->type = type;
+    cmd->arg = arg;
+
+    return cmd;
+
+fail:
+    ie_dstr_free(tag);
+    imap_cmd_arg_free(type, arg);
+    return NULL;
+}
+
+void imap_cmd_free(imap_cmd_t *cmd){
+    ie_dstr_free(cmd->tag);
+    imap_cmd_arg_free(cmd->type, cmd->arg);
+    free(cmd);
+}
+
+// full responses
+
+ie_st_resp_t *ie_st_resp_new(derr_t *e, ie_dstr_t *tag, ie_status_t status,
+        ie_st_code_t *code, ie_dstr_t *text){
+    if(is_error(*e)) goto fail;
+
+    IE_MALLOC(e, ie_st_resp_t, st, fail);
+
+    st->tag = tag;
+    st->status = status;
+    st->code = code;
+    st->text = text;
+
+    return st;
+
+fail:
+    ie_dstr_free(tag);
+    ie_st_code_free(code);
+    ie_dstr_free(text);
+    return NULL;
+}
+
+void ie_st_resp_free(ie_st_resp_t *st){
+    ie_dstr_free(st->tag);
+    ie_st_code_free(st->code);
+    ie_dstr_free(st->text);
+    free(st);
+}
+
+ie_list_resp_t *ie_list_resp_new(derr_t *e, ie_mflags_t *mflags, char sep,
+        ie_mailbox_t *m){
+    if(is_error(*e)) goto fail;
+
+    IE_MALLOC(e, ie_list_resp_t, list, fail);
+
+    list->mflags = mflags;
+    list->sep = sep;
+    list->m = m;
+
+    return list;
+
+fail:
+    ie_mflags_free(mflags);
+    ie_mailbox_free(m);
+    return NULL;
+}
+
+void ie_list_resp_free(ie_list_resp_t *list){
+    ie_mflags_free(list->mflags);
+    ie_mailbox_free(list->m);
+    free(list);
+}
+
+ie_status_resp_t *ie_status_resp_new(derr_t *e, ie_mailbox_t *m,
+        ie_status_attr_resp_t sa){
+    if(is_error(*e)) goto fail;
+
+    IE_MALLOC(e, ie_status_resp_t, status, fail);
+
+    status->m = m;
+    status->sa = sa;
+
+    return status;
+
+fail:
+    ie_mailbox_free(m);
+    return NULL;
+}
+
+void ie_status_resp_free(ie_status_resp_t *status){
+    ie_mailbox_free(status->m);
+    free(status);
+}
+
+static void imap_resp_arg_free(imap_resp_type_t type, imap_resp_arg_t arg){
+    switch(type){
+        case IMAP_RESP_STATUS_TYPE: ie_st_resp_free(arg.status_type); break;
+        case IMAP_RESP_CAPA:        ie_dstr_free(arg.capa); break;
+        case IMAP_RESP_LIST:        ie_list_resp_free(arg.list); break;
+        case IMAP_RESP_LSUB:        ie_list_resp_free(arg.lsub); break;
+        case IMAP_RESP_STATUS:      ie_status_resp_free(arg.status); break;
+        case IMAP_RESP_SEARCH:      ie_nums_free(arg.search); break;
+        case IMAP_RESP_FLAGS:       ie_flags_free(arg.flags); break;
+        case IMAP_RESP_EXISTS:      break;
+        case IMAP_RESP_EXPUNGE:     break;
+        case IMAP_RESP_RECENT:      break;
+        case IMAP_RESP_FETCH:       ie_fetch_resp_free(arg.fetch); break;
+    }
+}
+
+imap_resp_t *imap_resp_new(derr_t *e, imap_resp_type_t type,
+        imap_resp_arg_t arg){
+    if(is_error(*e)) goto fail;
+
+    IE_MALLOC(e, imap_resp_t, resp, fail);
+
+    resp->type = type;
+    resp->arg = arg;
+
+    return resp;
+
+fail:
+    imap_resp_arg_free(type, arg);
+    return NULL;
+}
+
+void imap_resp_free(imap_resp_t *resp){
+    imap_resp_arg_free(resp->type, resp->arg);
+    free(resp);
 }
