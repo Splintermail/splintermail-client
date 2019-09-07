@@ -123,14 +123,12 @@ struct tlse_data_t {
     queue_t pending_writes;
     // events which are being processed
     event_t *read_in;
-    event_t *read_out;
     event_t *write_in;
-    event_t *write_out;
     /* Why complicate things by using the full queue callback API, when you
        could instead just call advance_state() every time you passed a session
        another packet?  Because there's not any other way to identify which
-       session is the first session waiting for in the engine-level queues.
-       For example, when one session returns its unsused write_out to
+       session is the first session waiting in the engine-level queues. For
+       example, when one session returns its unsused write_out to
        tlse->write_events, that session doesn't know which other session needs
        to claim the newly released write_event, and thus cannot call
        advance_state() correctly. */
