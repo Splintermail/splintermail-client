@@ -29,32 +29,80 @@ static derr_t imape_worker_new(imape_t *imape, imape_worker_t **out){
 }
 
 static void imape_worker_free(imape_worker_t *worker){
-    // currently nothing to clean up
-    (void)worker;
+    // currently nothing in the imape_worker_t needs cleanup
+    free(worker);
 }
 
 static void worker_process_event(imape_worker_t *worker, imape_data_t *id,
         event_t *ev){
+    derr_t e = E_OK;
     imape_t *imape = worker->imape;
     session_t *session = id->session;
     // this should *really* never happen, so it's not critical to handle it
     if(session != ev->session){
         LOG_ERROR("mismatched session!");
     }
+
+    /* Note: we check id->data_state == DATA_STATE_CLOSED in all cases.  The
+       error handling is very similar to what the main imape_t thread does,
+       only since the imap_engine's checks can only guarantee protection
+       against failure-to-start sessions.  Here we actually can guarantee
+       protection aginst started-then-closed sessions. */
+
     switch(ev->ev_type){
         case EV_READ:
-            id->imap_logic->handle_read_event(id->imap_logic, ev);
-            // respond with READ_DONE
-            ev->ev_type = EV_READ_DONE;
-            imape->upstream->pass_event(imape->upstream, ev);
+            // a READ came in for the session
+            if(id->data_state == DATA_STATE_CLOSED){
+                ev->ev_type = EV_READ_DONE;
+                imape->upstream->pass_event(imape->upstream, ev);
+            }else{
+                IF_PROP(&e, id->imap_logic->read(id->imap_logic, ev)){
+                    id->session->close(id->session, e);
+                    PASSED(e);
+                    imape_data_onthread_close(id);
+                }
+            }
             break;
         case EV_COMMAND:
-            id->imap_logic->handle_command_event(id->imap_logic, ev);
-            // XXX: what to do with leftover event?
+            // a command came in for the session from the imap_controller_t
+            if(id->data_state == DATA_STATE_CLOSED){
+                // XXX
+            }else{
+                IF_PROP(&e, id->imap_logic->command(id->imap_logic, ev)){
+                    id->session->close(id->session, e);
+                    PASSED(e);
+                    imape_data_onthread_close(id);
+                }
+            }
             break;
         case EV_MAILDIR:
-            id->imap_logic->handle_maildir_event(id->imap_logic, ev);
-            // XXX: what to do with leftover event?
+            // a maildir event command came in for the session
+            if(id->data_state == DATA_STATE_CLOSED){
+                // XXX
+            }else{
+                IF_PROP(&e, id->imap_logic->maildir(id->imap_logic, ev)){
+                    id->session->close(id->session, e);
+                    PASSED(e);
+                    imape_data_onthread_close(id);
+                }
+            }
+            break;
+        case EV_WRITE_DONE:
+            /* a write buffer has become available.  ev->session will already
+               be set. */
+            /* TODO: mark "waiting_for_write_event" as false here, not in the
+                     queue cb */
+            if(id->data_state == DATA_STATE_CLOSED){
+                /* let the imape_t return the write event to write_buffers and
+                   ref_down the session */
+                imape->engine.pass_event(imape->upstream, ev);
+            }else{
+                IF_PROP(&e, id->imap_logic->write_buffer(id->imap_logic, ev)){
+                    id->session->close(id->session, e);
+                    PASSED(e);
+                    imape_data_onthread_close(id);
+                }
+            }
             break;
         case EV_SESSION_CLOSE:
             // LOG_ERROR("imape: SESSION_CLOSE\n");
@@ -187,7 +235,6 @@ fail_workers:
     while((link = link_list_pop_first(&imape->workers)) != NULL){
         imape_worker_t *worker = CONTAINER_OF(link, imape_worker_t, link);
         imape_worker_free(worker);
-        free(worker);
     }
 // fail_mutex:
     uv_mutex_destroy(&imape->workers_mutex);
@@ -208,7 +255,6 @@ void imape_free(imape_t *imape){
     while((link = link_list_pop_first(&imape->workers)) != NULL){
         imape_worker_t *worker = CONTAINER_OF(link, imape_worker_t, link);
         imape_worker_free(worker);
-        free(worker);
     }
     uv_mutex_destroy(&imape->workers_mutex);
     event_pool_free(&imape->write_events);
@@ -251,6 +297,12 @@ static void imape_process_events(uv_work_t *req){
                to the imape_data_t yet */
             imape_data_onthread_start(id);
         }
+
+        /* Note: we check id->data_state == DATA_STATE_CLOSED in all cases.
+           This is to detect failure-to-start sessions, not to detect if a
+           previously-working session has closed.  That check has to be done
+           inside a mutex by an imape_worker_t. */
+
         switch(ev->ev_type){
             case EV_READ:
                 // LOG_ERROR("imape: READ\n");
@@ -349,13 +401,14 @@ static void imape_process_events(uv_work_t *req){
 
 void imape_data_prestart(imape_data_t *id, imape_t *imape, session_t *session,
         bool upwards, ref_fn_t ref_up, ref_fn_t ref_down,
-        derr_t (*imap_logic_init)(imape_data_t*, imap_logic_t**)){
+        logic_alloc_t logic_alloc, void *alloc_data){
     id->imape = imape;
     id->session = session;
     id->upwards = upwards;
     id->ref_up = ref_up;
     id->ref_down = ref_down;
-    id->imap_logic_init = imap_logic_init;
+    id->logic_alloc = logic_alloc;
+    id->alloc_data = alloc_data;
 }
 
 void imape_data_start(imape_data_t *id){
@@ -384,7 +437,8 @@ static void imape_data_onthread_start(imape_data_t *id){
     }
     id->mutex_initialized = true;
 
-    PROP_GO(&e, id->imap_logic_init(id, &id->imap_logic), fail);
+    PROP_GO(&e, id->logic_alloc(&id->imap_logic, id->alloc_data, id),
+            fail_mutex);
 
     // Multithreaded worker considerations
 
@@ -397,6 +451,9 @@ static void imape_data_onthread_start(imape_data_t *id){
 
     return;
 
+fail_mutex:
+    uv_mutex_destroy(&id->mutex);
+    id->mutex_initialized = false;
 fail:
     id->data_state = DATA_STATE_CLOSED;
     id->session->close(id->session, e);

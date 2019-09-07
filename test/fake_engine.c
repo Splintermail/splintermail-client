@@ -367,7 +367,7 @@ static derr_t fake_session_do_alloc(fake_session_t **sptr, fake_pipeline_t *fp,
         imape_data_prestart(&s->imape_data, s->pipeline->imape, &s->session,
                 upwards, fake_session_ref_up_imape,
                 fake_session_ref_down_imape,
-                fake_imap_logic_init);
+                fake_imap_logic_init, NULL);
     }
 
     *sptr = s;

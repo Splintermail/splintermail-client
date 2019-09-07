@@ -9,75 +9,42 @@ struct imape_t;
 typedef struct imape_t imape_t;
 struct imape_data_t;
 typedef struct imape_data_t imape_data_t;
+struct imap_logic_t;
+typedef struct imap_logic_t imap_logic_t;
 
 #include "engine.h"
 #include "common.h"
-#include "imap_read.h"
+#include "imap_client.h"
 // TODO: find a way to avoid this include
 #include "loop.h"
 
 /*
 
 The imap engine has a multi-threaded execution model, where each imape_data is
-processed by a worker thread.  Primarily this is to avoid complexity.  The
-general flow of events for a single imape_data_t is:
- 1) EV_READs come in from the tls engine
- 2) data is tokenized and parsed by the bison code
- 3) when a complete message is received, bison makes a callback
- 4) that callback does not return control until is is done processing and the
-    next event can be handled
+processed by a single worker thread at a time.  This avoids complexity while
+offering decent performance.  Complexity is avoided by allowing the
+imape_data_t to essentially be operated by a single thread.  Additionally,
+asynchronous file IO is not necessary, but you still don't block the whole
+engine when just one session is doing a read or write.
 
-The blocking behavior of step 4 has some important consequences:
-  - No need to keep a queue of bison callbacks; we only handle 1 at a time
-  - No need to have an event struct for each bison callback
+There is one oddity that arises from the multi-threaded architecture: since the
+imape_t at quit-time blocks waiting for all of the write buffers to be
+returned, the easiest way to correctly return a write buffer not needed by a
+worker is to pass it back to the main imape_t thread.
 
-Wait, is that actually very important?  What are the consequences of allowing
-for asynchronous bison callback completion?
-  - Any non-decryption tasks which are slow need their own thread pool, too
-  - imape_data is more complicated (but imape is simpler)
-  - imap_maildir might not have to be multithreaded (if all access to it is
-    from the imape thread)
-  - bison callbacks could be completed out-of-order, and would have to be
-    reordered, especially for server-side callbacks (which have to respond to
-    the user in-order)
+Each imap_data_t is fully bidirectional; that is, if a write is blocked by
+network throughput, reads can still be processed, and vice-versa.  The thing
+that enables the bidirectionality is the fact that the imap parser returns
+a tagged-union object for every line of imap grammar.  Each message that comes
+in can be stored neatly in memory and processed at a later time.
 
-Ok, in summary, the asynchronous bison callback processing looks like a lot
-more complexity with no real wins; I'm going with synchronous processing, and
-sticking to the multi-threaded imape.
-
--> Wait, is all this really true?  With the multithreaded imap engine, each
-imape_data_t would have a queue of pending reads.  With the async bison
-callback processing, you could do the same thing; instead of queueing bison
-commands you would just store up reads in a queue of pending reads instead of
-trying to process them early. Then you would only have one external work task
-out at a time, so you don't need to reorder things there either.
-
-What about filesystem access?  I suspect that it is not thread-safe to do the
-libuv file system calls from off of the loop thread (such as from on the imape
-thread).  That would mean that I would have to refactor the code to be all
-single threaded: tls_engine would run on the loop thread, and its
-tlse_pass_event function would have to send an async_t to the loop thread to
-call tlse_process_events from the main thread.  With a similar change in the
-imap_engine, the imap engine could safely call libuv's async filesystem calls.
-
- -> Eh, I wouldn't have to run the tls thread on the same place actually.  Just
-    the imap engine.
-
-I don't know.  Right now I feel like I could rewrite the code without libuv
-without too much trouble; only loop.c really depends on it.  Using libuv's
-async filesystem calls would be a serious commitment to libuv.
-
-I think I will write it non-async first, because it will be much simpler, and
-if I need to rewrite it as async, I can do that.  But I don't have a really
-solid reason why this needs to be non-async.
-
-Maybe I should write it totally single-threaded now, and upgrade to fully async
-later?  Yes, then I can do some profiling to see how expensive each operation
-actually is, so I can know if I do go async how expensive each part of the
-processing is.
-
-OK, realistically, are you going to do that?  No.  Just write the multithreaded
-imape_t.
+Being bidirectional is critical for an IMAP server because you can't expect
+clients to behave nicely; the client might be trying to write a large email
+over the network to you and it might ignore you if you are also blindly writing
+a large email over the network to it.  Additionally, for a client to speak to
+servers other than LITERAL+ servers, it is necessary to be able to process
+reads in the middle of a write, while you wait for the imap synchronization
+message.
 
 --------
 
@@ -157,15 +124,30 @@ typedef enum {
     IMAPE_ACTIVE,
 } imape_work_state_t;
 
-// the interface provided by either the client or the server logic.
-struct imap_logic_t;
-typedef struct imap_logic_t imap_logic_t;
+/* The interface provided by either the client or the server logic.  In all
+   cases, the imap_logic_t is responsible for returning *ev. */
 struct imap_logic_t {
-    void (*handle_read_event)(imap_logic_t *logic, const event_t *ev);
-    void (*handle_command_event)(imap_logic_t *logic, const event_t *ev);
-    void (*handle_maildir_event)(imap_logic_t *logic, const event_t *ev);
+    // a READ came in for the session
+    derr_t (*read)(imap_logic_t *logic, event_t *ev);
+    // a command came in for the session from the imap_controller_t
+    derr_t (*command)(imap_logic_t *logic, event_t *ev);
+    // a maildir event command came in for the session
+    derr_t (*maildir)(imap_logic_t *logic, event_t *ev);
+    // a write buffer has become available.  ev->session will already be set.
+    derr_t (*write_buffer)(imap_logic_t *logic, event_t *ev);
     void (*free)(imap_logic_t *logic);
 };
+
+/* TODO: come up with a cleaner interface for the imap_logic_t, or maybe
+         abadon the interface and just pass in imape_data_t* and dereference
+         these things from there.
+   - the engine_t* is needed to return unneeded write events to the imape_t via
+     its event queue (so that the imape_t is always aware of write_events
+     during the quit sequence)
+   - the session_t is only needed for closing the session
+   - the queue_t is needed for grabbing write events from the imape_t
+*/
+typedef derr_t (*logic_alloc_t)(imap_logic_t**, void*, imape_data_t *id);
 
 struct imape_data_t {
     // prestart stuff
@@ -174,7 +156,8 @@ struct imape_data_t {
     bool upwards;
     ref_fn_t ref_up;
     ref_fn_t ref_down;
-    derr_t (*imap_logic_init)(imape_data_t *id, imap_logic_t **logic);
+    logic_alloc_t logic_alloc;
+    void *alloc_data;
     // generic per-engine data stuff
     engine_data_state_t data_state;
     event_t start_ev;
@@ -198,7 +181,7 @@ derr_t imape_add_to_loop(imape_t *imape, uv_loop_t *loop);
 
 void imape_data_prestart(imape_data_t *id, imape_t *imape, session_t *session,
         bool upwards, ref_fn_t ref_up, ref_fn_t ref_down,
-        derr_t (*imap_logic_init)(imape_data_t*, imap_logic_t**));
+        logic_alloc_t logic_alloc, void *alloc_data);
 void imape_data_start(imape_data_t *id);
 void imape_data_close(imape_data_t *id);
 /* with a multi-threaded engine, since SESSION_CLOSE is not guaranteed to be

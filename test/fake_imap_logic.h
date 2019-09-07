@@ -3,6 +3,6 @@
 
 #include <imap_engine.h>
 
-derr_t fake_imap_logic_init(imape_data_t *id, imap_logic_t **out);
+derr_t fake_imap_logic_init(imap_logic_t **out, void*, imape_data_t *id);
 
 #endif // FAKE_IMAP_LOGIC_H
