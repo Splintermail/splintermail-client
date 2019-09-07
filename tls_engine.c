@@ -16,6 +16,21 @@ static void tlse_data_onthread_start(tlse_data_t *td);
 static void tlse_data_onthread_close(tlse_data_t *td);
 static void tlse_pass_event(engine_t *tlse_engine, event_t *ev);
 
+/* To prevent infinite recursion of advance_state, which is triggered as a
+   callback when events are placed in queues, uneeded events are passed from
+   tlse_data_t's through the main tlse_t event queue, rather than directly
+   back into tsle.read_events or write_events. */
+static void abandon_write_out(tlse_data_t *td, event_t **write_out){
+    (*write_out)->ev_type = EV_WRITE_DONE;
+    tlse_pass_event(&td->tlse->engine, *write_out);
+    *write_out = NULL;
+}
+static void abandon_read_out(tlse_data_t *td, event_t **read_out){
+    (*read_out)->ev_type = EV_READ_DONE;
+    tlse_pass_event(&td->tlse->engine, *read_out);
+    *read_out = NULL;
+}
+
 
 /* Called after we decided we needed to do an SSL_read but we had nowhere to
    write into.  The callback is called when a READ_DONE is passed back from the
@@ -177,8 +192,7 @@ static void do_write_out(tlse_data_t *td, event_t **write_out){
         td->session->close(td->session, e);
         PASSED(e);
         td->tls_state = TLS_STATE_CLOSED;
-        // done with the write buffer
-        queue_append(&tlse->write_events, &(*write_out)->link);
+        abandon_write_out(td, write_out);
         *write_out = NULL;
         td->tls_state = TLS_STATE_IDLE;
         return;
@@ -376,10 +390,10 @@ static void advance_state(tlse_data_t *td, event_t *read_out,
     }
     // return any unused events
     if(read_out){
-        queue_append(&td->tlse->read_events, &read_out->link);
+        abandon_read_out(td, &read_out);
     }
     if(write_out){
-        queue_append(&td->tlse->write_events, &write_out->link);
+        abandon_write_out(td, &write_out);
     }
     // Make sure that the tlse_data is waiting on something to prevent hangs.
     if(!td->read_in_qcb.q && !td->read_out_qcb.q
@@ -419,9 +433,12 @@ static void tlse_process_events(uv_work_t *req){
                 break;
             case EV_READ_DONE:
                 // LOG_ERROR("tlse: READ_DONE\n");
-                // erase session reference
-                td->ref_down(ev->session, TLSE_REF_READ);
-                ev->session = NULL;
+                // if the event was abandonded, it doesn't have a session
+                if(ev->session){
+                    // erase session reference
+                    td->ref_down(ev->session, TLSE_REF_READ);
+                    ev->session = NULL;
+                }
                 // return event to read event list
                 queue_append(&tlse->read_events, &ev->link);
                 break;
@@ -436,9 +453,12 @@ static void tlse_process_events(uv_work_t *req){
                 break;
             case EV_WRITE_DONE:
                 // LOG_ERROR("tlse: WRITE_DONE\n");
-                // erase session reference
-                td->ref_down(ev->session, TLSE_REF_WRITE);
-                ev->session = NULL;
+                // if the event was abandonded, it doesn't have a session
+                if(ev->session){
+                    // erase session reference
+                    td->ref_down(ev->session, TLSE_REF_WRITE);
+                    ev->session = NULL;
+                }
                 // return event to write event list
                 queue_append(&tlse->write_events, &ev->link);
                 // were we waiting for that WRITE_DONE before passing QUIT_UP?
