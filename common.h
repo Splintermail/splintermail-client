@@ -116,7 +116,6 @@ dstr_t* error_to_dstr(derr_type_t error);
 
 // for right-hand side of declaration/definitions
 #define DSTR_LIT(str) ((dstr_t){.data=str, \
-                                /*TODO: wait is this valid?? */ \
                                 .size=sizeof(str), \
                                 .len=sizeof(str) - 1, \
                                 .fixed_size=true})

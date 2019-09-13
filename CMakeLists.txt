@@ -51,6 +51,7 @@ set(OBJ_TGTS
     imap_parse
     imap_expression
     imap_expression_print
+    imap_write
     imap_read
     hashmap
     imap_maildir
@@ -94,6 +95,7 @@ set(TEST_EXE_TGTS
     test_atree
     test_imap_scan
     test_imap_read
+    test_imap_write
     test_hashmap
     test_imap_maildir
     test_loop
@@ -267,6 +269,7 @@ obj_depend_obj(imap_scan imap_parse common)
 add_dependencies(imap_scan_o bison_header)
 obj_depend_obj(imap_read imap_parse imap_scan common)
 add_dependencies(imap_read_o bison_header)
+obj_depend_obj(imap_write imap_expression common)
 obj_depend_obj(hashmap common)
 obj_depend_obj(imap_maildir hashmap fileops)
 
@@ -408,6 +411,7 @@ if("${BUILD_TESTS}")
     target_link_libraries(test_atree jsw_atree)
     target_link_libraries(test_imap_scan imap_scan)
     target_link_libraries(test_imap_read imap_read)
+    target_link_libraries(test_imap_write imap_write)
     target_link_libraries(test_hashmap hashmap)
     target_link_libraries(test_imap_maildir imap_maildir)
     target_link_libraries(test_loop fake_engine networking)
