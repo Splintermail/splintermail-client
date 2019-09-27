@@ -1,39 +1,45 @@
 #ifndef IMAP_CLIENT_H
 #define IMAP_CLIENT_H
 
-struct imap_client_t;
-typedef struct imap_client_t imap_client_t;
+struct imap_controller_up_t;
+typedef struct imap_controller_up_t imap_controller_up_t;
+struct imap_client_spec_t;
+typedef struct imap_client_spec_t imap_client_spec_t;
 
+#include "engine.h"
+#include "queue.h"
 #include "imap_engine.h"
 
+// calls that a client-side imap logic can make into the controller
+
+// the interface that the imap controller exposes to an imap_client_t
+struct imap_controller_up_t {
+    // callbacks (in addition to the folder-level updates via imap_maildir_t)
+    void (*logged_in)(imap_controller_up_t*, session_t*);
+    void (*uptodate)(imap_controller_up_t*, session_t*);
+    void (*msg_recvd)(imap_controller_up_t*, session_t*);
+    // These should come from the imap session
+    // void (*closed)(struct imap_client_spec_t*);
+    // void (*error)(struct imap_client_spec_t*, derr_t);
+};
+
 /* The (immutable) information requried for creating an upwards imap session.
-   The imap controller will pass this struct in when creating an upwards imap
-   session, populated with callbacks so the imap engine can tell the controller
-   when something important happens. */
-typedef struct imap_client_spec_t {
+   The mutable state of the imap client is in imap_client_t (not exposed). */
+struct imap_client_spec_t {
     const char *host;
     const char *service;
     dstr_t user;
     dstr_t pass;
-    // callbacks (in addition to the folder-level updates via imap_maildir_t)
-    void (*logged_in)(struct imap_client_spec_t*);
-    void (*uptodate)(struct imap_client_spec_t*);
-    void (*msg_recvd)(struct imap_client_spec_t*);
-    // These should come from the imap session
-    // void (*closed)(struct imap_client_spec_t*);
-    // void (*error)(struct imap_client_spec_t*, derr_t);
-} imap_client_spec_t;
-
-/* The mutable state of an upwards imap session.  This is created by the imap
-   engine.  When an event comes in for an upwards imape_data_t, the imap worker
-   will ask call imap_client functions to update this state and it will handle
-   any resulting write events. */
-struct imap_client_t {
-    // *spec should be set during imape_data_prestart
-    const imap_client_spec_t *spec;
-    // which folder to be syncing
-    dstr_t folder;
 };
+
+typedef struct {
+    const imap_client_spec_t *spec;
+    const imap_controller_up_t *controller;
+} imap_client_alloc_arg_t;
+
+// the void* argument should be an imap_client_alloc_arg_t*
+derr_t imap_client_logic_alloc(imap_logic_t **out, void *arg_void,
+        imape_data_t *id);
 
 // The list of commands the controller can issue
 typedef enum {
@@ -41,9 +47,5 @@ typedef enum {
     IMAP_CLIENT_CMD_FOLDER, // set the folder to synchronize
     IMAP_CLIENT_CMD_CLOSE,  // logout
 } imap_client_command_type_t;
-
-void imap_client_handle_read_event(imape_data_t *id, const event_t *ev);
-void imap_client_handle_command_event(imape_data_t *id, const event_t *ev);
-void imap_client_handle_maildir_event(imape_data_t *id, const event_t *ev);
 
 #endif // IMAP_CLIENT_H

@@ -1288,6 +1288,7 @@ void ie_copy_cmd_free(ie_copy_cmd_t *copy){
 
 static void imap_cmd_arg_free(imap_cmd_type_t type, imap_cmd_arg_t arg){
     switch(type){
+        case IMAP_CMD_CAPA:     break;
         case IMAP_CMD_STARTTLS: break;
         case IMAP_CMD_AUTH:     ie_dstr_free(arg.auth); break;
         case IMAP_CMD_LOGIN:    ie_login_cmd_free(arg.login); break;

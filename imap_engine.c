@@ -35,7 +35,6 @@ static void imape_worker_free(imape_worker_t *worker){
 
 static void worker_process_event(imape_worker_t *worker, imape_data_t *id,
         event_t *ev){
-    derr_t e = E_OK;
     imape_t *imape = worker->imape;
     session_t *session = id->session;
     // this should *really* never happen, so it's not critical to handle it
@@ -45,9 +44,10 @@ static void worker_process_event(imape_worker_t *worker, imape_data_t *id,
 
     /* Note: we check id->data_state == DATA_STATE_CLOSED in all cases.  The
        error handling is very similar to what the main imape_t thread does,
-       only since the imap_engine's checks can only guarantee protection
+       except that the imap_engine's checks can only guarantee protection
        against failure-to-start sessions.  Here we actually can guarantee
-       protection aginst started-then-closed sessions. */
+       protection aginst started-then-closed sessions, because the imap_worker
+       is the only place where onthread_close is ever called. */
 
     switch(ev->ev_type){
         case EV_READ:
@@ -56,11 +56,7 @@ static void worker_process_event(imape_worker_t *worker, imape_data_t *id,
                 ev->ev_type = EV_READ_DONE;
                 imape->upstream->pass_event(imape->upstream, ev);
             }else{
-                IF_PROP(&e, id->imap_logic->read(id->imap_logic, ev)){
-                    id->session->close(id->session, e);
-                    PASSED(e);
-                    imape_data_onthread_close(id);
-                }
+                id->logic->new_event(id->logic, ev);
             }
             break;
         case EV_COMMAND:
@@ -68,11 +64,7 @@ static void worker_process_event(imape_worker_t *worker, imape_data_t *id,
             if(id->data_state == DATA_STATE_CLOSED){
                 // XXX
             }else{
-                IF_PROP(&e, id->imap_logic->command(id->imap_logic, ev)){
-                    id->session->close(id->session, e);
-                    PASSED(e);
-                    imape_data_onthread_close(id);
-                }
+                id->logic->new_event(id->logic, ev);
             }
             break;
         case EV_MAILDIR:
@@ -80,28 +72,18 @@ static void worker_process_event(imape_worker_t *worker, imape_data_t *id,
             if(id->data_state == DATA_STATE_CLOSED){
                 // XXX
             }else{
-                IF_PROP(&e, id->imap_logic->maildir(id->imap_logic, ev)){
-                    id->session->close(id->session, e);
-                    PASSED(e);
-                    imape_data_onthread_close(id);
-                }
+                id->logic->new_event(id->logic, ev);
             }
             break;
         case EV_WRITE_DONE:
             /* a write buffer has become available.  ev->session will already
                be set. */
-            /* TODO: mark "waiting_for_write_event" as false here, not in the
-                     queue cb */
             if(id->data_state == DATA_STATE_CLOSED){
                 /* let the imape_t return the write event to write_buffers and
                    ref_down the session */
                 imape->engine.pass_event(imape->upstream, ev);
             }else{
-                IF_PROP(&e, id->imap_logic->write_buffer(id->imap_logic, ev)){
-                    id->session->close(id->session, e);
-                    PASSED(e);
-                    imape_data_onthread_close(id);
-                }
+                id->logic->new_event(id->logic, ev);
             }
             break;
         case EV_SESSION_CLOSE:
@@ -141,24 +123,39 @@ static void worker_thread(uv_work_t *req){
                 break;
             }
         }
-        // otherwise get the imape_data_t from the link
+
+        // get the imape_data_t from the link
         imape_data_t *id = CONTAINER_OF(link, imape_data_t, link);
         id->ref_up(id->session, IMAPE_REF_WORKER);
 
-        // set the work_state of the thread to ACTIVE, and pop an event
+        // process all the events
         uv_mutex_lock(&id->mutex);
-        id->work_state = IMAPE_ACTIVE;
-        link = link_list_pop_first(&id->events);
+        while(!link_list_isempty(&id->events)){
+            link = link_list_pop_first(&id->events);
+            uv_mutex_unlock(&id->mutex);
+
+            event_t *ev = CONTAINER_OF(link, event_t, link);
+            worker_process_event(worker, id, ev);
+
+            uv_mutex_lock(&id->mutex);
+        }
         uv_mutex_unlock(&id->mutex);
 
-        event_t *ev = CONTAINER_OF(link, event_t, link);
-
-        // process the event
-        worker_process_event(worker, id, ev);
+        // let the logic do work
+        bool more_work = false;
+        if(id->data_state != DATA_STATE_CLOSED){
+            derr_t e = E_OK;
+            IF_PROP(&e, id->logic->do_work(id->logic)){
+                id->session->close(id->session, e);
+                PASSED(e);
+                imape_data_onthread_close(id);
+            }
+            more_work = id->logic->more_work(id->logic);
+        }
 
         // Is this thread done processing?  Or does it need more?
         uv_mutex_lock(&id->mutex);
-        if(link_list_isempty(&id->events)){
+        if(link_list_isempty(&id->events) && !more_work){
             id->work_state = IMAPE_INACTIVE;
             uv_mutex_unlock(&id->mutex);
         }else{
@@ -263,8 +260,9 @@ void imape_free(imape_t *imape){
     imape->initialized = false;
 }
 
-// a helper function to put the imape_data_t work_state logic in one place
-static void imape_add_event_to_imape_data(imape_t *imape, imape_data_t *id,
+// a helper function for passing events in a thread-safe way
+// (put the imape_data_t work_state logic in one place)
+void imape_add_event_to_imape_data(imape_t *imape, imape_data_t *id,
         event_t *ev){
     uv_mutex_lock(&id->mutex);
     // add event to list
@@ -437,7 +435,7 @@ static void imape_data_onthread_start(imape_data_t *id){
     }
     id->mutex_initialized = true;
 
-    PROP_GO(&e, id->logic_alloc(&id->imap_logic, id->alloc_data, id),
+    PROP_GO(&e, id->logic_alloc(&id->logic, id->alloc_data, id),
             fail_mutex);
 
     // Multithreaded worker considerations
@@ -486,7 +484,7 @@ void imape_data_onthread_close(imape_data_t *id){
 
     // don't close the mutex until after the last downref, in *_postclose()
 
-    id->imap_logic->free(id->imap_logic);
+    id->logic->free(id->logic);
 
     // lifetime reference
     id->ref_down(id->session, IMAPE_REF_LIFETIME);

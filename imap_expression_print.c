@@ -37,6 +37,7 @@ const dstr_t *ie_status_attr_to_dstr(ie_status_attr_t sa){
     }
     return &IE_UNKNOWN_dstr;
 }
+DSTR_STATIC(IMAP_CMD_CAPA_dstr, "CAPABILITY");
 DSTR_STATIC(IMAP_CMD_STARTTLS_dstr, "STARTTLS");
 DSTR_STATIC(IMAP_CMD_AUTH_dstr, "AUTH");
 DSTR_STATIC(IMAP_CMD_LOGIN_dstr, "LOGIN");
@@ -61,6 +62,7 @@ DSTR_STATIC(IMAP_CMD_COPY_dstr, "COPY");
 
 const dstr_t *imap_cmd_type_to_dstr(imap_cmd_type_t type){
     switch(type){
+        case IMAP_CMD_CAPA:     return &IMAP_CMD_CAPA_dstr;
         case IMAP_CMD_STARTTLS: return &IMAP_CMD_STARTTLS_dstr;
         case IMAP_CMD_AUTH:     return &IMAP_CMD_AUTH_dstr;
         case IMAP_CMD_LOGIN:    return &IMAP_CMD_LOGIN_dstr;
@@ -196,7 +198,8 @@ derr_t print_astring(dstr_t *out, const dstr_t *val){
             case '{':
             case ' ':
             case '%':
-            case ']': maybe_atom = false; break;
+            // case ']': // resp-specials are allowed in ASTRING-CHAR
+                maybe_atom = false; break;
             default:
                 if(val->data[i] < 32 || val->data[i] == 127)
                     maybe_atom = false;
@@ -794,6 +797,9 @@ derr_t print_imap_cmd(dstr_t *out, imap_cmd_t *cmd){
     PROP(&e, print_astring(out, &cmd->tag->dstr) );
     PROP(&e, FMT(out, " ") );
     switch(cmd->type){
+        case IMAP_CMD_CAPA:
+            PROP(&e, FMT(out, "CAPABILITY") );
+            break;
         case IMAP_CMD_STARTTLS:
             PROP(&e, FMT(out, "STARTTLS") );
             break;

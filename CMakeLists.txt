@@ -56,6 +56,8 @@ set(OBJ_TGTS
     hashmap
     imap_maildir
     link
+    imap_session
+    imap_client
 )
 
 set(EXE_TGTS
@@ -64,7 +66,7 @@ set(EXE_TGTS
     leak
     encrypt_msg
     decrypt_msg
-    # imap
+    imap
 )
 
 set(TEST_OBJ_TGTS
@@ -272,6 +274,8 @@ add_dependencies(imap_read_o bison_header)
 obj_depend_obj(imap_write imap_expression common)
 obj_depend_obj(hashmap common)
 obj_depend_obj(imap_maildir hashmap fileops)
+obj_depend_obj(imap_session uv_interface common)
+obj_depend_obj(imap_client imap_write common)
 
 
 # describe executables with dependencies
@@ -281,7 +285,7 @@ target_link_libraries(leak networking)
 target_link_libraries(encrypt_msg crypto opt_parse)
 target_link_libraries(decrypt_msg crypto opt_parse)
 target_link_libraries(olt common fileops opt_parse)
-#target_link_libraries(imap loop tls_engine imap_engine imap_client imap_session)
+target_link_libraries(imap loop tls_engine imap_engine imap_client imap_session)
 
 # decide if we are building server code
 if("${BUILD_SERVER_CODE}")

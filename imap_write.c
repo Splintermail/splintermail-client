@@ -862,6 +862,10 @@ derr_t imap_cmd_write(const imap_cmd_t *cmd, dstr_t *out, size_t *skip,
     STATIC_SKIP_FILL(" ");
 
     switch(cmd->type){
+        case IMAP_CMD_CAPA:
+            STATIC_SKIP_FILL("CAPABILITY");
+            break;
+
         case IMAP_CMD_STARTTLS:
             STATIC_SKIP_FILL("STARTTLS");
             break;

@@ -2,60 +2,58 @@
 #define IMAP_SESSION_H
 
 #include <uv.h>
+
 #include "engine.h"
 #include "loop.h"
 #include "tls_engine.h"
 #include "imap_engine.h"
 #include "networking.h"
 
-typedef struct {
-    session_t session;
-    uv_mutex_t mutex;
-    size_t refs;
-    bool closed;
-    loop_t *loop;
-    tlse_t *tlse;
-    ssl_context_t *ssl_ctx;
-    loop_data_t loop_data;
-    tlse_data_t tlse_data;
-    imape_data_t imape_data;
-    // per-engine ref counts
-    int loop_refs[LOOP_REF_MAXIMUM];
-    int tlse_refs[TLSE_REF_MAXIMUM];
-    int imape_refs[IMAPE_REF_MAXIMUM];
-    // session manager hook
-    void *mgr_data;
-    void (*session_destroyed)(fake_session_t*, derr_t);
-} imap_session_t;
+struct imap_session_t;
+typedef struct imap_session_t imap_session_t;
 
 typedef struct {
     loop_t *loop;
     tlse_t *tlse;
     imape_t *imape;
-    ssl_context_t *ssl_ctx_client;
-    ssl_context_t *ssl_ctx_server;
 } imap_pipeline_t;
 
-derr_t imap_session_up_alloc(imap_session_t **sptr, imap_pipeline_t *pipeline,
+struct imap_session_t {
+    session_t session;
+    uv_mutex_t mutex;
+    int refs;
+    bool closed;
+    derr_t error;
+    // engines
+    imap_pipeline_t *pipeline;
+    // engine_data elements
+    loop_data_t loop_data;
+    tlse_data_t tlse_data;
+    imape_data_t imape_data;
+    // per-reason-per-engine reference counts
+    int loop_refs[LOOP_REF_MAXIMUM];
+    int tlse_refs[TLSE_REF_MAXIMUM];
+    int imape_refs[IMAPE_REF_MAXIMUM];
+    /* session manager hook; this is to be set externally, after session_alloc
+       but before session_start */
+    void (*session_destroyed)(imap_session_t*, derr_t);
+    void *mgr_data;
+};
+DEF_CONTAINER_OF(imap_session_t, session, session_t)
 
+/* The imap session will not be freed in between imap_session_alloc_*() and
+   imap_session_start(), even in the case of an asynchronous failure.  However,
+   if you run into an error after imap_session_alloc_*() but before
+   imap_session_start(), you will need to downref the session to clean it up */
+derr_t imap_session_alloc_accept(imap_session_t **sptr, imap_pipeline_t *p,
+        ssl_context_t* ssl_ctx, logic_alloc_t logic_alloc, void *alloc_data);
+derr_t imap_session_alloc_connect(imap_session_t **sptr, imap_pipeline_t *p,
+        ssl_context_t* ssl_ctx, const char *host, const char *service,
+        logic_alloc_t logic_alloc, void *alloc_data);
+void imap_session_start(imap_session_t *s);
 
-/* **sptr is where the allocated session is placed.
-   *pipeline should be an imap_pipeline_t */
-derr_t imap_session_alloc(void **sptr, void *pipeline, ssl_context_t *ssl_ctx);
-void imap_session_close(void *session, derr_t error);
+void imap_session_ref_up(imap_session_t *session);
+void imap_session_ref_down(imap_session_t *session);
 
-// only for use on loop thread
-void imap_session_ref_up_loop(void *session, int reason);
-void imap_session_ref_down_loop(void *session, int reason);
-
-// only for use on tlse thread
-void imap_session_ref_up_tlse(void *session, int reason);
-void imap_session_ref_down_tlse(void *session, int reason);
-
-// only for use on imape thread
-void imap_session_ref_up_imape(void *session, int reason);
-void imap_session_ref_down_imape(void *session, int reason);
-
-extern session_iface_t imap_session_iface;
 
 #endif // IMAP_SESSION_H

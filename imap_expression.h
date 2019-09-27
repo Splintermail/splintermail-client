@@ -330,6 +330,7 @@ typedef struct {
 // full command types
 
 typedef enum {
+    IMAP_CMD_CAPA,
     IMAP_CMD_STARTTLS,
     IMAP_CMD_AUTH,
     IMAP_CMD_LOGIN,
@@ -407,6 +408,7 @@ typedef struct {
 } ie_copy_cmd_t;
 
 typedef union {
+    // nothing for capability
     // nothing for starttls
     ie_dstr_t *auth;
     ie_login_cmd_t *login;

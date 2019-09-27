@@ -30,7 +30,13 @@ engine when just one session is doing a read or write.
 There is one oddity that arises from the multi-threaded architecture: since the
 imape_t at quit-time blocks waiting for all of the write buffers to be
 returned, the easiest way to correctly return a write buffer not needed by a
-worker is to pass it back to the main imape_t thread.
+worker is to pass it back to the main imape_t thread.  Similarly, since the
+main imape_t thread returns the write event to the queue, the queue callback
+will occur on the main imape_t thread, meaning the callback needs to be able to
+hand the requested write event to to a worker through the normal event
+mechanism.  They are passed to imap workers as WRITE_DONE, although WRITE_DONE
+messages from the tlse_t is always handled by the imape_t without a worker.
+Note that the ev->session will be set by the imape_t thread in the callback.
 
 Each imap_data_t is fully bidirectional; that is, if a write is blocked by
 network throughput, reads can still be processed, and vice-versa.  The thing
@@ -78,6 +84,8 @@ Threading plan:
  4) if imape_data_t is inactive, set it active and push it to pendings
     else imape_data_t is active; no extra steps required.
  5) if imape_data_t is inactive, set it to active and push it to pendings
+
+
 
 */
 
@@ -127,14 +135,19 @@ typedef enum {
 /* The interface provided by either the client or the server logic.  In all
    cases, the imap_logic_t is responsible for returning *ev. */
 struct imap_logic_t {
-    // a READ came in for the session
-    derr_t (*read)(imap_logic_t *logic, event_t *ev);
-    // a command came in for the session from the imap_controller_t
-    derr_t (*command)(imap_logic_t *logic, event_t *ev);
-    // a maildir event command came in for the session
-    derr_t (*maildir)(imap_logic_t *logic, event_t *ev);
-    // a write buffer has become available.  ev->session will already be set.
-    derr_t (*write_buffer)(imap_logic_t *logic, event_t *ev);
+    /* transfer an event from the imap engine/worker system (thread-protected)
+       to the imap_logic_t object (not thread-protected).  The implementation
+       should probably just append the event to some internal list, and only
+       actually process events later, in the call to do_work(). */
+    void (*new_event)(imap_logic_t *logic, event_t *ev);
+
+    // is there more work to do?
+    bool (*more_work)(imap_logic_t *logic);
+
+    // advance the internal state by some increment, must not block
+    derr_t (*do_work)(imap_logic_t *logic);
+
+    // send unprocessed events home and free all resources
     void (*free)(imap_logic_t *logic);
 };
 
@@ -163,7 +176,7 @@ struct imape_data_t {
     event_t start_ev;
     event_t close_ev;
     // IMAP-engine-specific stuff
-    imap_logic_t *imap_logic;
+    imap_logic_t *logic;
 
     // Multithreaded worker considerations
     uv_mutex_t mutex;
@@ -193,6 +206,10 @@ void imape_data_postclose(imape_data_t *id);
 
 // expose onthread_close for the worker
 void imape_data_onthread_close(imape_data_t *id);
+
+// a helper function for passing events in a thread-safe way
+void imape_add_event_to_imape_data(imape_t *imape, imape_data_t *id,
+        event_t *ev);
 
 enum imape_ref_reason_t {
     IMAPE_REF_READ = 0,

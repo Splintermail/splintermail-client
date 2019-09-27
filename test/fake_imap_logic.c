@@ -9,6 +9,7 @@ struct fake_imap_logic_t{
     // interface for imape_data_t
     imap_logic_t logic;
     imape_data_t *id;
+    link_t events;
 };
 DEF_CONTAINER_OF(fake_imap_logic_t, logic, imap_logic_t)
 
@@ -17,15 +18,18 @@ static void fake_imap_logic_free(imap_logic_t *logic){
     free(fil);
 }
 
-static derr_t fil_handle_read(imap_logic_t *logic, event_t *ev){
-    derr_t e = E_OK;
+static void fil_new_event(imap_logic_t *logic, event_t *ev){
     fake_imap_logic_t *fil = CONTAINER_OF(logic, fake_imap_logic_t, logic);
+
+    link_list_append(&fil->events, &ev->link);
+}
+
+static derr_t fil_handle_read(fake_imap_logic_t *fil, event_t *ev){
+    derr_t e = E_OK;
     imape_data_t *id = fil->id;
     imape_t *imape = fil->id->imape;
     session_t *session = fil->id->session;
-    /* echo the message back for now.  Blocking here means we don't have to
-       implement imap_logic_t.write_buffer(), but that would break the
-       bidirectionality of imap for a real imap_logic_t. */
+    // TODO: don't block here
     link_t *link = queue_pop_first(&imape->write_events, true);
     event_t *write_ev = CONTAINER_OF(link, event_t, link);
     /* Now that we have taken the event from write_events, it's never
@@ -54,7 +58,32 @@ fail_write_ev:
     imape->upstream->pass_event(imape->upstream, ev);
 
     return e;
+}
 
+static derr_t fil_do_work(imap_logic_t *logic){
+    derr_t e = E_OK;
+    fake_imap_logic_t *fil = CONTAINER_OF(logic, fake_imap_logic_t, logic);
+
+    if(link_list_isempty(&fil->events)){
+        return e;
+    }
+
+    link_t *link = link_list_pop_first(&fil->events);
+    event_t *ev = CONTAINER_OF(link, event_t, link);
+    // TODO: handle other events
+    if(ev->ev_type != EV_READ){
+        ORIG(&e, E_VALUE, "Invalid event for fake_imap_logic");
+    }
+
+    PROP(&e, fil_handle_read(fil, ev) );
+
+    return e;
+}
+
+static bool fil_more_work(imap_logic_t *logic){
+    fake_imap_logic_t *fil = CONTAINER_OF(logic, fake_imap_logic_t, logic);
+
+    return !link_list_isempty(&fil->events);
 }
 
 derr_t fake_imap_logic_init(imap_logic_t **out, void* data, imape_data_t *id){
@@ -67,13 +96,14 @@ derr_t fake_imap_logic_init(imap_logic_t **out, void* data, imape_data_t *id){
     }
 
     fil->id = id;
-    fil->logic.read = fil_handle_read;
+    fil->logic.new_event = fil_new_event;
+    fil->logic.do_work = fil_do_work;
+    fil->logic.more_work = fil_more_work;
     fil->logic.free = fake_imap_logic_free;
-    // only handle reads for now
-    fil->logic.command = NULL;
-    fil->logic.maildir = NULL;
 
     *out = &fil->logic;
+
+    link_init(&fil->events);
 
     return e;
 }
