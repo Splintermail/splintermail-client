@@ -226,7 +226,7 @@ int main(int argc, char **argv){
 #endif
 
     char *default_args[] = {
-        "./imap",
+        "./sm_fetch",
         "127.0.0.1",
         "993",
         "test@splintermail.com",

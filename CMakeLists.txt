@@ -66,7 +66,7 @@ set(EXE_TGTS
     leak
     encrypt_msg
     decrypt_msg
-    imap
+    sm_fetch
 )
 
 set(TEST_OBJ_TGTS
@@ -285,7 +285,7 @@ target_link_libraries(leak networking)
 target_link_libraries(encrypt_msg crypto opt_parse)
 target_link_libraries(decrypt_msg crypto opt_parse)
 target_link_libraries(olt common fileops opt_parse)
-target_link_libraries(imap loop tls_engine imap_engine imap_client imap_session)
+target_link_libraries(sm_fetch loop tls_engine imap_engine imap_client imap_session)
 
 # decide if we are building server code
 if("${BUILD_SERVER_CODE}")
