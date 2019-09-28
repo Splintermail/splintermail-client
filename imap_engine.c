@@ -149,8 +149,9 @@ static void worker_thread(uv_work_t *req){
                 id->session->close(id->session, e);
                 PASSED(e);
                 imape_data_onthread_close(id);
+            }else{
+                more_work = id->logic->more_work(id->logic);
             }
-            more_work = id->logic->more_work(id->logic);
         }
 
         // Is this thread done processing?  Or does it need more?
@@ -201,6 +202,7 @@ derr_t imape_init(imape_t *imape, size_t nwrite_events, engine_t *upstream,
     imape->nwrite_events = nwrite_events;
     imape->quit_ev = NULL;
     imape->loop = loop;
+    imape->running_workers = 0;
 
     link_init(&imape->quit_sentinal);
     link_init(&imape->workers);
@@ -214,6 +216,12 @@ derr_t imape_init(imape_t *imape, size_t nwrite_events, engine_t *upstream,
     if(ret < 0){
         TRACE(&e, "uv_mutex_init: %x\n", FUV(&ret));
         ORIG_GO(&e, uv_err_type(ret), "error initializing mutex", fail_writes);
+    }
+
+    ret = uv_cond_init(&imape->workers_cond);
+    if(ret < 0){
+        TRACE(&e, "uv_cond_init: %x\n", FUV(&ret));
+        ORIG_GO(&e, uv_err_type(ret), "error initializing cond", fail_writes);
     }
 
     // initialize all the threads

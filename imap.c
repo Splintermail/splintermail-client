@@ -98,7 +98,8 @@ static void session_closed(imap_session_t *s, derr_t e){
     (void)s;
     (void)e;
     DUMP(e);
-    printf("session closed\n");
+    printf("session closed, exiting\n");
+    loop_close(&loop, E_OK);
 }
 
 static derr_t fetch_controller_init(fetch_controller_t *fc, imap_pipeline_t *p,
@@ -220,9 +221,12 @@ int main(int argc, char **argv){
     signal(SIGPIPE, SIG_IGN);
 #endif
 
+    char *argv2[] = {"./imap", "127.0.0.1", "12345", "u", "p"};
     if(argc != 5){
         fprintf(stderr, "usage: sm_fetch HOST PORT USERNAME PASSWORD\n");
-        exit(1);
+        argc = 5;
+        argv = argv2;
+        //exit(1);
     }
 
     // grab the arguments from the command line
