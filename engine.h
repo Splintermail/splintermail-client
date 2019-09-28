@@ -131,18 +131,25 @@ typedef struct session_t {
 
 typedef void (*ref_fn_t)(session_t*, int reason);
 
-typedef struct {
+struct event_t;
+typedef struct event_t event_t;
+
+typedef void (*event_returner_t)(event_t *ev);
+
+struct event_t {
     dstr_t buffer; // for passing buffers.  Comes first to accomadate libuv.
     event_type_t ev_type;
     session_t *session; // points to the session_interface.  Changes each time.
     link_t link; // for holding in queues
     queue_cb_t qcb; // for waiting on another buffer
-} event_t;
+    event_returner_t returner;
+    void *returner_arg;
+};
 DEF_CONTAINER_OF(event_t, link, link_t);
 DEF_CONTAINER_OF(event_t, qcb, queue_cb_t);
 
 // Does not set session, or callbacks, or init the buffer.
-void event_prep(event_t *ev);
+void event_prep(event_t *ev, event_returner_t returner, void *returner_arg);
 
 typedef struct engine_t {
     void (*pass_event)(struct engine_t*, event_t*);
@@ -165,6 +172,7 @@ typedef enum {
 void event_pool_free(queue_t *pool);
 
 // call queue_init(), allocate/append a bunch of events
-derr_t event_pool_init(queue_t *pool, size_t nevents);
+derr_t event_pool_init(queue_t *pool, size_t nevents,
+        event_returner_t returner, void *returner_arg);
 
 #endif // ENGINE_H

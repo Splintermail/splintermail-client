@@ -140,7 +140,7 @@ cu_imape:
 cu_ssl_ctx:
     ssl_context_free(&ctx->ssl_ctx);
 done:
-    MERGE_VAR(&ctx->error, &e, "test_tls_engine:loop_thread");
+    MERGE_VAR(&ctx->error, &e, "test_imap_engine:loop_thread");
 
     // signal to the main thread, in case we are exiting early
     pthread_mutex_lock(ctx->mutex);

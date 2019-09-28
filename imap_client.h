@@ -18,6 +18,7 @@ struct imap_controller_up_t {
     void (*logged_in)(const imap_controller_up_t*, session_t*);
     void (*uptodate)(const imap_controller_up_t*, session_t*);
     void (*msg_recvd)(const imap_controller_up_t*, session_t*);
+    void (*folders)(const imap_controller_up_t*, session_t*);
     // These should come from the imap session
     // void (*closed)(struct imap_client_spec_t*);
     // void (*error)(struct imap_client_spec_t*, derr_t);
@@ -43,9 +44,9 @@ derr_t imap_client_logic_alloc(imap_logic_t **out, void *arg_void,
 
 // The list of commands the controller can issue
 typedef enum {
-    IMAP_CLIENT_CMD_LIST,   // list all the folders
-    IMAP_CLIENT_CMD_FOLDER, // set the folder to synchronize
-    IMAP_CLIENT_CMD_CLOSE,  // logout
+    IMAP_CLIENT_CMD_LIST_FOLDERS, // list all the folders
+    IMAP_CLIENT_CMD_SET_FOLDER,   // set the folder to synchronize
+    IMAP_CLIENT_CMD_CLOSE,        // logout
 } imap_client_command_type_t;
 
 #endif // IMAP_CLIENT_H

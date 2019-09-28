@@ -119,7 +119,6 @@ static event_t *cb_reader_writer_send(cb_reader_writer_t *cbrw){
 
     // check for completion criteria
     if(cbrw->nrecvd == cbrw->nwrites){
-        // TODO
         fake_session_close(&cbrw->fake_session->session, E_OK);
         return NULL;
     }
@@ -132,21 +131,13 @@ static event_t *cb_reader_writer_send(cb_reader_writer_t *cbrw){
                  FU(cbrw->nrecvd + 1), FU(cbrw->nwrites)), fail);
 
     // copy out into a write event (which will be freed, but not by us)
-    event_t *ev = malloc(sizeof(*ev));
+    event_t *ev = fake_engine_get_write_event(cbrw->fake_engine, &cbrw->out);
     if(!ev) ORIG_GO(&e, E_NOMEM, "no memory", fail);
-
-    event_prep(ev);
-    PROP_GO(&e, dstr_new(&ev->buffer, cbrw->out.len), fail_ev);
-
-    dstr_copy(&cbrw->out, &ev->buffer);
 
     ev->session = &cbrw->fake_session->session;
     fake_session_ref_up_test(ev->session, FAKE_ENGINE_REF_WRITE);
-    ev->ev_type = EV_WRITE;
     return ev;
 
-fail_ev:
-    free(ev);
 fail:
     fake_session_close(&cbrw->fake_session->session, SPLIT(e));
     cbrw->error = e;
@@ -154,7 +145,7 @@ fail:
 }
 
 event_t *cb_reader_writer_init(cb_reader_writer_t *cbrw, size_t id,
-                               size_t nwrites, fake_session_t *s){
+        size_t nwrites, fake_session_t *s, engine_t *fake_engine){
     derr_t e = E_OK;
     *cbrw = (cb_reader_writer_t){0};
 
@@ -162,9 +153,10 @@ event_t *cb_reader_writer_init(cb_reader_writer_t *cbrw, size_t id,
     PROP_GO(&e, dstr_new(&cbrw->out, 256), fail);
     PROP_GO(&e, dstr_new(&cbrw->in, 256), free_out);
 
-    cbrw->fake_session = s;
     cbrw->id = id;
     cbrw->nwrites = nwrites;
+    cbrw->fake_session = s;
+    cbrw->fake_engine = fake_engine;
 
     // start sending the first message
     event_t *ev = cb_reader_writer_send(cbrw);
@@ -447,8 +439,34 @@ void fake_engine_free(fake_engine_t *fake_engine){
     queue_free(&fake_engine->event_q);
 }
 
+static void fake_engine_return_write_event(event_t *ev){
+    engine_t *fake_engine = ev->returner_arg;
+    ev->ev_type = EV_WRITE_DONE;
+    fake_engine->pass_event(fake_engine, ev);
+}
+
+event_t *fake_engine_get_write_event(engine_t *engine, dstr_t *text){
+    // copy out into a write event (which will be freed, but not by us)
+    event_t *ev = malloc(sizeof(*ev));
+    if(!ev) return NULL;
+
+    event_prep(ev, fake_engine_return_write_event, engine);
+    ev->ev_type = EV_WRITE;
+
+    if(dstr_new_quiet(&ev->buffer, text->len) != E_NONE){
+        goto fail;
+    }
+    dstr_copy(text, &ev->buffer);
+
+    return ev;
+
+fail:
+    free(ev);
+    return NULL;
+}
+
 derr_t fake_engine_run(fake_engine_t *fe, engine_t *upstream,
-        void (*handle_read)(void*, event_t*),
+        void (*handle_read)(void*, event_t*, engine_t *fake_engine),
         void (*handle_write_done)(void*, event_t*), bool (*quit_ready)(void*),
         void *cb_data){
     derr_t e = E_OK;
@@ -461,10 +479,9 @@ derr_t fake_engine_run(fake_engine_t *fe, engine_t *upstream,
             case EV_READ:
                 //LOG_ERROR("got read\n");
                 // check for EOF
-                handle_read(cb_data, ev);
+                handle_read(cb_data, ev, &fe->engine);
                 // return buffer
-                ev->ev_type = EV_READ_DONE;
-                upstream->pass_event(upstream, ev);
+                ev->returner(ev);
                 break;
             case EV_QUIT_DOWN:
                 // check if we need to wait for write events to be returned

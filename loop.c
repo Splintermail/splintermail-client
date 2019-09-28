@@ -261,8 +261,7 @@ static void write_cb(uv_write_t *uv_write, int status){
 
 return_buf:
     // return event
-    ev->ev_type = EV_WRITE_DONE;
-    loop->downstream->pass_event(loop->downstream, ev);
+    ev->returner(ev);
     // if there was an error, close the session
     if(is_error(e)){
         ev->session->close(ev->session, e);
@@ -322,14 +321,13 @@ static void loop_data_connect_finish(loop_data_t *ld){
         event_t *ev = CONTAINER_OF(link, event_t, link);
         // should we skip this?
         if(ld->state == DATA_STATE_CLOSED){
-            ev->ev_type = EV_WRITE_DONE;
-            loop->downstream->pass_event(loop->downstream, ev);
+            ev->returner(ev);
+        }
         // or can we write it to the socket?
-        }else{
+        else{
             IF_PROP(&e, handle_write(loop, ld, ev)){
                 // just hand it back to the downstream
-                ev->ev_type = EV_WRITE_DONE;
-                loop->downstream->pass_event(loop->downstream, ev);
+                ev->returner(ev);
                 // close the session
                 ld->session->close(ld->session, e);
                 PASSED(e);
@@ -540,7 +538,7 @@ void loop_data_prestart(loop_data_t *ld, loop_t *loop, session_t *session,
 
 void loop_data_start(loop_data_t *ld){
     // pass the starting event
-    event_prep(&ld->start_ev);
+    event_prep(&ld->start_ev, NULL, NULL);
     ld->start_ev.session = ld->session;
     ld->start_ev.ev_type = EV_SESSION_START;
     ld->start_ev.buffer = (dstr_t){0};
@@ -864,8 +862,7 @@ static void loop_data_onthread_close(loop_data_t *ld){
         while((link = queue_pop_first(&ld->preconnected_writes, false))){
             event_t *ev = CONTAINER_OF(link, event_t, link);
             // just hand it back to the downstream
-            ev->ev_type = EV_WRITE_DONE;
-            loop->downstream->pass_event(loop->downstream, ev);
+            ev->returner(ev);
         }
         queue_free(&ld->preconnected_writes);
     }
@@ -878,7 +875,7 @@ static void loop_data_onthread_close(loop_data_t *ld){
 // Must not be called more than once, which must be enforced by the session
 void loop_data_close(loop_data_t *ld){
     // pass the closing event
-    event_prep(&ld->close_ev);
+    event_prep(&ld->close_ev, NULL, NULL);
     ld->close_ev.session = ld->session;
     ld->close_ev.ev_type = EV_SESSION_CLOSE;
     ld->close_ev.buffer = (dstr_t){0};
@@ -928,15 +925,13 @@ static void event_cb(uv_async_t *handle){
                 break;
             case EV_WRITE:
                 if(loop->quitting || ld->state == DATA_STATE_CLOSED){
-                    ev->ev_type = EV_WRITE_DONE;
-                    loop->downstream->pass_event(loop->downstream, ev);
+                    ev->returner(ev);
                 }else if(ld->connected == false){
                     queue_append(&ld->preconnected_writes, &ev->link);
                 }else{
                     IF_PROP(&e, handle_write(loop, ld, ev) ){
                         // return write buffer
-                        ev->ev_type = EV_WRITE_DONE;
-                        loop->downstream->pass_event(loop->downstream, ev);
+                        ev->returner(ev);
                         // close session
                         ev->session->close(ev->session, e);
                         PASSED(e);
@@ -966,6 +961,13 @@ static void event_cb(uv_async_t *handle){
                         FP(ev));
         }
     }
+}
+
+
+static void loop_return_read_event(event_t *ev){
+    loop_t *loop = ev->returner_arg;
+    ev->ev_type = EV_READ_DONE;
+    loop_pass_event(&loop->engine, ev);
 }
 
 
@@ -1017,7 +1019,7 @@ derr_t loop_init(loop_t *loop, size_t num_read_events,
         if(rd_wrap == NULL){
             ORIG_GO(&e, E_NOMEM, "unable to alloc read wrapper", fail_rd_wraps);
         }
-        event_prep(&rd_wrap->event);
+        event_prep(&rd_wrap->event, loop_return_read_event, loop);
         // set the event's dstr_t to be the buffer in the read_wrapper
         DSTR_WRAP_ARRAY(rd_wrap->event.buffer, rd_wrap->buffer);
         // append to list (qcb callbacks are not set here)
@@ -1050,7 +1052,7 @@ derr_t loop_init(loop_t *loop, size_t num_read_events,
     loop->downstream = downstream;
 
     // prep the quit message
-    event_prep(&loop->quitmsg);
+    event_prep(&loop->quitmsg, NULL, NULL);
     loop->quitmsg.buffer = (dstr_t){0};
 
     // some initial values

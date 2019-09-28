@@ -24,7 +24,20 @@ typedef struct fake_session_t fake_session_t;
 
 /* reader-writer thread is an independent thread that just starts a connection,
    writes a bunch of shit, and tests that whatever was returned matches what
-   was sent */
+   was sent:
+
+    RW Thread starts the connection
+                      _______________________________________________
+                     |                                               |
+                     | fake_session, via fake_session_alloc_accpet() |
+    ___________      |  _______________       _______________        |
+   |           | --> | |               | --> |               |       |
+   | RW Thread |     | | test pipeline |     |  fake engine  |       |
+   |___________| <-- | |_______________| <-- | (just echoes) |       |
+                     |                       |_______________|       |
+                     |_______________________________________________|
+
+*/
 typedef struct {
     derr_t error;
     size_t thread_id;
@@ -41,8 +54,30 @@ typedef struct {
 // a pthread function, always returns NULL
 void *reader_writer_thread(void *reader_writer_context);
 
-/* cb_reader_writer is just like reader_writer except it connects via the loop
-   to the listener in the loop. */
+/* cb_reader_writer is just like reader_writer except it connects via the loop.
+   This tests the ability to make connections.
+
+   There are two sessions, which are distinguishable by sess->mgr_data.
+    ____________________________________________________
+   |                                                    |
+   | fake_session, via fake_session_alloc_connect()     |
+   |         _______________       ___________________  |
+   |    +-> |               | --> |                   | |    ______
+   |    |   | test pipeline |     |  fake engine      | <-- |      |
+   |  +-|-- |               | <-- |  (mgr_data!=NULL, | |   | CBRW |
+   |  | |   |               |     |   trigger cbrw)   | --> |______|
+   |__|_|___|_ _ _ _ _ _ _ _|_____|_ _ _ _ _ _ _ _ _ _|_|
+    __|_|___|_ _ _ _ _ _ _ _|_____|_ _ _ _ _ _ _ _ _ _|_
+   |  | |   |               |     |                   | |
+   |  | +-- |               | <-- | (mgr_data==NULL,  | |
+   |  |     |               |     |    just echoes)   | |
+   |  +---> |_______________| --> |___________________| |
+   |                                                    |
+   |                                                    |
+   | fake_session, via fake_session_alloc_accept()      |
+   |____________________________________________________|
+
+*/
 
 typedef struct {
     derr_t error;
@@ -52,13 +87,12 @@ typedef struct {
     size_t nwrites; // total writes, not a count of writes-so-far
     size_t nrecvd;
     fake_session_t *fake_session;
-    event_passer_t passer;
-    void *passer_engine;
+    engine_t *fake_engine;
 } cb_reader_writer_t;
 
 // returns the first WRITE event, or NULL if there was an error
 event_t *cb_reader_writer_init(cb_reader_writer_t *cbrw, size_t id,
-                             size_t nwrites, fake_session_t *s);
+        size_t nwrites, fake_session_t *s, engine_t *fake_engine);
 void cb_reader_writer_free(cb_reader_writer_t *cbrw);
 // returns the next WRITE event, if there is one
 event_t *cb_reader_writer_read(cb_reader_writer_t *cbrw, dstr_t *buffer);
@@ -145,8 +179,12 @@ DEF_CONTAINER_OF(fake_engine_t, engine, engine_t);
 derr_t fake_engine_init(fake_engine_t *fake_engine);
 void fake_engine_free(fake_engine_t *fake_engine);
 
+// get pre-prepped, pre-populated events; returns NULL on allocation error
+// (this is to make setting ev->returner a bit cleaner)
+event_t *fake_engine_get_write_event(engine_t *engine, dstr_t *text);
+
 derr_t fake_engine_run(fake_engine_t *fe, engine_t *upstream,
-        void (*handle_read)(void*, event_t*),
+        void (*handle_read)(void*, event_t*, engine_t *fake_engine),
         void (*handle_write_done)(void*, event_t*), bool (*quit_ready)(void*),
         void *cb_data);
 

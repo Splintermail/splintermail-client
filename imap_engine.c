@@ -35,7 +35,7 @@ static void imape_worker_free(imape_worker_t *worker){
 
 static void worker_process_event(imape_worker_t *worker, imape_data_t *id,
         event_t *ev){
-    imape_t *imape = worker->imape;
+    (void)worker;
     session_t *session = id->session;
     // this should *really* never happen, so it's not critical to handle it
     if(session != ev->session){
@@ -50,38 +50,13 @@ static void worker_process_event(imape_worker_t *worker, imape_data_t *id,
        is the only place where onthread_close is ever called. */
 
     switch(ev->ev_type){
-        case EV_READ:
-            // a READ came in for the session
+        case EV_READ: // a READ came in for the session
+        case EV_COMMAND: // a command came in from the imap_controller_t
+        case EV_MAILDIR: // a maildir event came in for the session
+        case EV_WRITE_DONE: /* a write buffer has become available.
+                               ev->session will already be set. */
             if(id->data_state == DATA_STATE_CLOSED){
-                ev->ev_type = EV_READ_DONE;
-                imape->upstream->pass_event(imape->upstream, ev);
-            }else{
-                id->logic->new_event(id->logic, ev);
-            }
-            break;
-        case EV_COMMAND:
-            // a command came in for the session from the imap_controller_t
-            if(id->data_state == DATA_STATE_CLOSED){
-                // XXX
-            }else{
-                id->logic->new_event(id->logic, ev);
-            }
-            break;
-        case EV_MAILDIR:
-            // a maildir event command came in for the session
-            if(id->data_state == DATA_STATE_CLOSED){
-                // XXX
-            }else{
-                id->logic->new_event(id->logic, ev);
-            }
-            break;
-        case EV_WRITE_DONE:
-            /* a write buffer has become available.  ev->session will already
-               be set. */
-            if(id->data_state == DATA_STATE_CLOSED){
-                /* let the imape_t return the write event to write_buffers and
-                   ref_down the session */
-                imape->engine.pass_event(imape->upstream, ev);
+                ev->returner(ev);
             }else{
                 id->logic->new_event(id->logic, ev);
             }
@@ -190,6 +165,12 @@ static void worker_exit_cb(uv_work_t *req, int status){
     }
 }
 
+static void imape_return_write_event(event_t *ev){
+    imape_t *imape = ev->returner_arg;
+    ev->ev_type = EV_WRITE_DONE;
+    imape_pass_event(&imape->engine, ev);
+}
+
 derr_t imape_init(imape_t *imape, size_t nwrite_events, engine_t *upstream,
         size_t nworkers, loop_t *loop){
     derr_t e = E_OK;
@@ -209,8 +190,8 @@ derr_t imape_init(imape_t *imape, size_t nwrite_events, engine_t *upstream,
 
     PROP_GO(&e, queue_init(&imape->event_q), fail);
     PROP_GO(&e, queue_init(&imape->ready_data), fail_event_q);
-    PROP_GO(&e, event_pool_init(&imape->write_events, nwrite_events),
-             fail_ready_data);
+    PROP_GO(&e, event_pool_init(&imape->write_events, nwrite_events,
+                imape_return_write_event, imape), fail_ready_data);
 
     int ret = uv_mutex_init(&imape->workers_mutex);
     if(ret < 0){
@@ -311,27 +292,10 @@ static void imape_process_events(uv_work_t *req){
 
         switch(ev->ev_type){
             case EV_READ:
-                // LOG_ERROR("imape: READ\n");
-                if(imape->quitting || id->data_state == DATA_STATE_CLOSED){
-                    ev->ev_type = EV_READ_DONE;
-                    imape->upstream->pass_event(imape->upstream, ev);
-                }else{
-                    // READs are handled by the imape_worker_t's
-                    imape_add_event_to_imape_data(imape, id, ev);
-                }
-                break;
             case EV_COMMAND:
-                if(imape->quitting || id->data_state == DATA_STATE_CLOSED){
-                    // XXX
-                    // id->controller->pass_event(id->controller, ev);
-                }else{
-                    imape_add_event_to_imape_data(imape, id, ev);
-                }
-                break;
             case EV_MAILDIR:
                 if(imape->quitting || id->data_state == DATA_STATE_CLOSED){
-                    // XXX
-                    // imap_maildir_pass_event(id->maildir, ev);
+                    ev->returner(ev);
                 }else{
                     imape_add_event_to_imape_data(imape, id, ev);
                 }
@@ -419,7 +383,7 @@ void imape_data_prestart(imape_data_t *id, imape_t *imape, session_t *session,
 
 void imape_data_start(imape_data_t *id){
     // prepare the starting event
-    event_prep(&id->start_ev);
+    event_prep(&id->start_ev, NULL, NULL);
     id->start_ev.ev_type = EV_SESSION_START;
     id->start_ev.buffer = (dstr_t){0};
     id->start_ev.session = id->session;
@@ -471,7 +435,7 @@ fail:
    is required to call this exactly one time for every session. */
 void imape_data_close(imape_data_t *id){
     // prepare the closing event
-    event_prep(&id->close_ev);
+    event_prep(&id->close_ev, NULL, NULL);
     id->close_ev.ev_type = EV_SESSION_CLOSE;
     id->close_ev.buffer = (dstr_t){0};
     id->close_ev.session = id->session;

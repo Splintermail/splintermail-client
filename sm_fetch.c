@@ -7,6 +7,7 @@
 #include "imap_engine.h"
 #include "imap_session.h"
 #include "uv_util.h"
+#include "hashmap.h"
 
 #define KEY "../c/test/files/ssl/good-key.pem"
 #define CERT "../c/test/files/ssl/good-cert.pem"
@@ -68,10 +69,20 @@ typedef struct {
     imap_pipeline_t *pipeline;
     ssl_context_t *cli_ctx;
     imap_controller_up_t ctrlr_up;
+    // user-wide state
+    bool folders_set;
+    hashmap_t folders;  // fc_folder_t
     // session
     imap_session_t *s;
 } fetch_controller_t;
 DEF_CONTAINER_OF(fetch_controller_t, ctrlr_up, imap_controller_up_t);
+
+typedef struct {
+    dstr_t name;
+    bool toggle;
+    hash_elem_t *h;
+} fc_folder_t;
+DEF_CONTAINER_OF(fc_folder_t, h, hash_elem_t);
 
 static void fetch_controller_logged_in(const imap_controller_up_t *ic,
         session_t *s){
@@ -99,6 +110,16 @@ static void fetch_controller_msg_recvd(const imap_controller_up_t *ic,
     (void)fc;
 }
 
+static void fetch_controller_folders(const imap_controller_up_t *ic,
+        session_t *s){
+    fetch_controller_t *fc = CONTAINER_OF(ic, fetch_controller_t, ctrlr_up);
+    imape_data_t *id = s->id;
+    (void)id;
+    (void)fc;
+    printf("got folder list, exiting\n");
+    loop_close(&loop, E_OK);
+}
+
 static void session_closed(imap_session_t *s, derr_t e){
     (void)s;
     DUMP(e);
@@ -116,20 +137,28 @@ static derr_t fetch_controller_init(fetch_controller_t *fc, imap_pipeline_t *p,
         .logged_in = fetch_controller_logged_in,
         .uptodate = fetch_controller_uptodate,
         .msg_recvd = fetch_controller_msg_recvd,
+        .folders = fetch_controller_folders,
     };
+
+    fc->folders_set = false;
+    PROP(&e, hashmap_init(&fc->folders) );
 
     // create an initial session
     imap_client_alloc_arg_t arg = (imap_client_alloc_arg_t){
         .spec = &client_spec,
         .controller = &fc->ctrlr_up,
     };
-    PROP(&e, imap_session_alloc_connect(&fc->s, fc->pipeline, fc->cli_ctx,
+    PROP_GO(&e, imap_session_alloc_connect(&fc->s, fc->pipeline, fc->cli_ctx,
                 client_spec.host, client_spec.service, imap_client_logic_alloc,
-                &arg) );
+                &arg), fail_folders);
     fc->s->session_destroyed = session_closed;
     fc->s->mgr_data = fc;
     imap_session_start(fc->s);
 
+    return e;
+
+fail_folders:
+    hashmap_free(&fc->folders);
     return e;
 };
 

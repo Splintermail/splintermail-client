@@ -165,7 +165,7 @@ typedef struct {
 } session_cb_data_t;
 
 static void launch_second_half_of_test(session_cb_data_t *cb_data,
-                                       fake_pipeline_t *fp){
+        fake_pipeline_t *fp, engine_t *fake_engine){
     // make NUM_THREAD connections
     for(size_t i = 0; i < NUM_THREADS; i++){
         derr_t e = E_OK;
@@ -183,7 +183,8 @@ static void launch_second_half_of_test(session_cb_data_t *cb_data,
 
         // prepare a cb_reader_writer
         cb_reader_writer_t *cbrw = &cb_data->cb_reader_writers[i];
-        event_t *ev_new = cb_reader_writer_init(cbrw, i, WRITES_PER_THREAD, s);
+        event_t *ev_new = cb_reader_writer_init(cbrw, i, WRITES_PER_THREAD,
+                s, fake_engine);
         if(!ev_new){
             ORIG_GO(&e, E_VALUE, "did not get event from cb_reader_writer\n", fail);
         }
@@ -207,7 +208,7 @@ static void launch_second_half_of_test(session_cb_data_t *cb_data,
     }
 }
 
-static void handle_read(void *data, event_t *ev){
+static void handle_read(void *data, event_t *ev, engine_t *fake_engine){
     session_cb_data_t *cb_data = data;
     if(ev->buffer.len == 0){
         // done with this session
@@ -217,7 +218,7 @@ static void handle_read(void *data, event_t *ev){
         if(cb_data->nEOF == NUM_THREADS){
             // reuse the fake_pipline
             fake_pipeline_t *fp = ((fake_session_t*)ev->session)->pipeline;
-            launch_second_half_of_test(cb_data, fp);
+            launch_second_half_of_test(cb_data, fp, fake_engine);
         }else if(cb_data->nEOF == NUM_THREADS*2){
             // test is over
             loop_close(&cb_data->test_ctx->loop, E_OK);
@@ -236,25 +237,15 @@ static void handle_read(void *data, event_t *ev){
     }
     // otherwise, echo back the message
     else{
-        event_t *ev_new = malloc(sizeof(*ev_new));
+        event_t *ev_new = fake_engine_get_write_event(fake_engine, &ev->buffer);
         if(!ev_new){
             derr_t e = E_OK;
             TRACE_ORIG(&e, E_NOMEM, "no memory!");
             MERGE_VAR(&cb_data->error, &e, "malloc");
             return;
         }
-        event_prep(ev_new);
-        if(dstr_new_quiet(&ev_new->buffer, ev->buffer.len)){
-            derr_t e = E_OK;
-            TRACE_ORIG(&e, E_NOMEM, "no memory!");
-            MERGE_VAR(&cb_data->error, &e, "malloc");
-            free(ev_new);
-            return;
-        }
-        dstr_copy(&ev->buffer, &ev_new->buffer);
         ev_new->session = ev->session;
         fake_session_ref_up_test(ev_new->session, FAKE_ENGINE_REF_WRITE);
-        ev_new->ev_type = EV_WRITE;
         // pass the write
         fake_pipeline_t *fp = ((fake_session_t*)ev->session)->pipeline;
         fp->tlse->engine.pass_event(&fp->tlse->engine, ev_new);
