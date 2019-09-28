@@ -42,12 +42,12 @@ derr_t imap_read(imap_reader_t *reader, const dstr_t *input){
     while(true){
         // try to scan a token
         scan_mode_t scan_mode = reader->parser.scan_mode;
-        LOG_INFO("---------------------\n"
-                 "mode is %x\n",
-                 FD(scan_mode_to_dstr(scan_mode)));
+        // LOG_INFO("---------------------\n"
+        //          "mode is %x\n",
+        //          FD(scan_mode_to_dstr(scan_mode)));
 
-        dstr_t scannable = get_scannable(&reader->scanner);
-        LOG_DEBUG("scannable is: '%x'\n", FD(&scannable));
+        // dstr_t scannable = get_scannable(&reader->scanner);
+        // LOG_DEBUG("scannable is: '%x'\n", FD(&scannable));
 
         PROP(&e, imap_scan(&reader->scanner, scan_mode, &more, &token,
                     &token_type) );
@@ -57,7 +57,7 @@ derr_t imap_read(imap_reader_t *reader, const dstr_t *input){
         }
 
         // print the token
-        LOG_INFO("token is '%x' (%x)\n", FD_DBG(&token), FI(token_type));
+        // LOG_INFO("token is '%x' (%x)\n", FD_DBG(&token), FI(token_type));
 
         // call parser, which will call context-specific actions
         PROP(&e, imap_parse(&reader->parser, token_type, &token) );

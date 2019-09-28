@@ -15,9 +15,9 @@ typedef struct imap_client_spec_t imap_client_spec_t;
 // the interface that the imap controller exposes to an imap_client_t
 struct imap_controller_up_t {
     // callbacks (in addition to the folder-level updates via imap_maildir_t)
-    void (*logged_in)(imap_controller_up_t*, session_t*);
-    void (*uptodate)(imap_controller_up_t*, session_t*);
-    void (*msg_recvd)(imap_controller_up_t*, session_t*);
+    void (*logged_in)(const imap_controller_up_t*, session_t*);
+    void (*uptodate)(const imap_controller_up_t*, session_t*);
+    void (*msg_recvd)(const imap_controller_up_t*, session_t*);
     // These should come from the imap session
     // void (*closed)(struct imap_client_spec_t*);
     // void (*error)(struct imap_client_spec_t*, derr_t);

@@ -73,21 +73,26 @@ typedef struct {
 } fetch_controller_t;
 DEF_CONTAINER_OF(fetch_controller_t, ctrlr_up, imap_controller_up_t);
 
-static void fetch_controller_logged_in(imap_controller_up_t *ic, session_t *s){
+static void fetch_controller_logged_in(const imap_controller_up_t *ic,
+        session_t *s){
+    fetch_controller_t *fc = CONTAINER_OF(ic, fetch_controller_t, ctrlr_up);
+    imape_data_t *id = s->id;
+    (void)id;
+    (void)fc;
+    printf("logged in! exiting...\n");
+    loop_close(&loop, E_OK);
+}
+
+static void fetch_controller_uptodate(const imap_controller_up_t *ic,
+        session_t *s){
     fetch_controller_t *fc = CONTAINER_OF(ic, fetch_controller_t, ctrlr_up);
     imape_data_t *id = s->id;
     (void)id;
     (void)fc;
 }
 
-static void fetch_controller_uptodate(imap_controller_up_t *ic, session_t *s){
-    fetch_controller_t *fc = CONTAINER_OF(ic, fetch_controller_t, ctrlr_up);
-    imape_data_t *id = s->id;
-    (void)id;
-    (void)fc;
-}
-
-static void fetch_controller_msg_recvd(imap_controller_up_t *ic, session_t *s){
+static void fetch_controller_msg_recvd(const imap_controller_up_t *ic,
+        session_t *s){
     fetch_controller_t *fc = CONTAINER_OF(ic, fetch_controller_t, ctrlr_up);
     imape_data_t *id = s->id;
     (void)id;
@@ -96,7 +101,6 @@ static void fetch_controller_msg_recvd(imap_controller_up_t *ic, session_t *s){
 
 static void session_closed(imap_session_t *s, derr_t e){
     (void)s;
-    (void)e;
     DUMP(e);
     printf("session closed, exiting\n");
     loop_close(&loop, E_OK);
@@ -221,11 +225,17 @@ int main(int argc, char **argv){
     signal(SIGPIPE, SIG_IGN);
 #endif
 
-    char *argv2[] = {"./imap", "127.0.0.1", "12345", "u", "p"};
+    char *default_args[] = {
+        "./imap",
+        "127.0.0.1",
+        "993",
+        "test@splintermail.com",
+        "password"
+    };
     if(argc != 5){
         fprintf(stderr, "usage: sm_fetch HOST PORT USERNAME PASSWORD\n");
         argc = 5;
-        argv = argv2;
+        argv = default_args;
         //exit(1);
     }
 
