@@ -52,6 +52,7 @@ typedef enum {
 typedef struct {
     // name of this folder
     dstr_t name;
+    // path to this maildir on the filesystem
     string_builder_t path;
     unsigned int uid_validity;
     // mailbox flags

@@ -201,3 +201,8 @@ derr_t imap_session_alloc_connect(imap_session_t **sptr, imap_pipeline_t *p,
                 logic_alloc, alloc_data) );
     return e;
 }
+
+void imap_session_send_command(imap_session_t *s, event_t *ev){
+    engine_t *engine = &s->pipeline->imape->engine;
+    engine->pass_event(engine, ev);
+}

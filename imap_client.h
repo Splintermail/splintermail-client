@@ -9,6 +9,7 @@ typedef struct imap_client_spec_t imap_client_spec_t;
 #include "engine.h"
 #include "queue.h"
 #include "imap_engine.h"
+#include "imap_maildir.h"
 
 // calls that a client-side imap logic can make into the controller
 
@@ -18,7 +19,10 @@ struct imap_controller_up_t {
     void (*logged_in)(const imap_controller_up_t*, session_t*);
     void (*uptodate)(const imap_controller_up_t*, session_t*);
     void (*msg_recvd)(const imap_controller_up_t*, session_t*);
-    void (*folders)(const imap_controller_up_t*, session_t*);
+    /* send a link list of folders from the server response.  The links of the
+       list will be emptied from the head that is given, and the head left
+       empty. */
+    void (*folders)(const imap_controller_up_t*, session_t*, link_t*);
     // These should come from the imap session
     // void (*closed)(struct imap_client_spec_t*);
     // void (*error)(struct imap_client_spec_t*, derr_t);
@@ -48,5 +52,14 @@ typedef enum {
     IMAP_CLIENT_CMD_SET_FOLDER,   // set the folder to synchronize
     IMAP_CLIENT_CMD_CLOSE,        // logout
 } imap_client_command_type_t;
+
+const dstr_t *imap_client_command_type_to_dstr(imap_client_command_type_t t);
+
+// an incoming event with ev->ev_type == EV_COMMAND must be in this struct
+typedef struct {
+    event_t ev;
+    imap_client_command_type_t cmd_type;
+} cmd_event_t;
+DEF_CONTAINER_OF(cmd_event_t, ev, event_t);
 
 #endif // IMAP_CLIENT_H

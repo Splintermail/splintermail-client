@@ -137,7 +137,7 @@ typedef struct event_t event_t;
 typedef void (*event_returner_t)(event_t *ev);
 
 struct event_t {
-    dstr_t buffer; // for passing buffers.  Comes first to accomadate libuv.
+    dstr_t buffer; // for passing buffers.  Comes first to accommodate libuv.
     event_type_t ev_type;
     session_t *session; // points to the session_interface.  Changes each time.
     link_t link; // for holding in queues

@@ -55,5 +55,6 @@ void imap_session_start(imap_session_t *s);
 void imap_session_ref_up(imap_session_t *session);
 void imap_session_ref_down(imap_session_t *session);
 
+void imap_session_send_command(imap_session_t *session, event_t *ev);
 
 #endif // IMAP_SESSION_H

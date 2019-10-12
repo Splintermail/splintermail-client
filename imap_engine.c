@@ -33,9 +33,7 @@ static void imape_worker_free(imape_worker_t *worker){
     free(worker);
 }
 
-static void worker_process_event(imape_worker_t *worker, imape_data_t *id,
-        event_t *ev){
-    (void)worker;
+static void worker_process_event(imape_data_t *id, event_t *ev){
     session_t *session = id->session;
     // this should *really* never happen, so it's not critical to handle it
     if(session != ev->session){
@@ -48,27 +46,24 @@ static void worker_process_event(imape_worker_t *worker, imape_data_t *id,
        against failure-to-start sessions.  Here we actually can guarantee
        protection aginst started-then-closed sessions, because the imap_worker
        is the only place where onthread_close is ever called. */
+    if(id->data_state == DATA_STATE_CLOSED){
+        ev->returner(ev);
+        return;
+    }
 
-    switch(ev->ev_type){
-        case EV_READ: // a READ came in for the session
-        case EV_COMMAND: // a command came in from the imap_controller_t
-        case EV_MAILDIR: // a maildir event came in for the session
-        case EV_WRITE_DONE: /* a write buffer has become available.
-                               ev->session will already be set. */
-            if(id->data_state == DATA_STATE_CLOSED){
-                ev->returner(ev);
-            }else{
-                id->logic->new_event(id->logic, ev);
-            }
-            break;
-        case EV_SESSION_CLOSE:
-            // LOG_ERROR("imape: SESSION_CLOSE\n");
-            imape_data_onthread_close(id);
-            id->ref_down(ev->session, IMAPE_REF_CLOSE_EVENT);
-            break;
-        default:
-            LOG_ERROR("unexpected event type in imap engine, ev = %x\n",
-                      FP(ev));
+    // catch session close events
+    if(ev->ev_type == EV_SESSION_CLOSE){
+        imape_data_onthread_close(id);
+        id->ref_down(ev->session, IMAPE_REF_CLOSE_EVENT);
+        return;
+    }
+
+    // pass the event to the logic
+    derr_t e = E_OK;
+    IF_PROP(&e, id->logic->new_event(id->logic, ev)){
+        id->session->close(id->session, e);
+        PASSED(e);
+        imape_data_onthread_close(id);
     }
 }
 
@@ -110,7 +105,7 @@ static void worker_thread(uv_work_t *req){
             uv_mutex_unlock(&id->mutex);
 
             event_t *ev = CONTAINER_OF(link, event_t, link);
-            worker_process_event(worker, id, ev);
+            worker_process_event(id, ev);
 
             uv_mutex_lock(&id->mutex);
         }
@@ -129,7 +124,7 @@ static void worker_thread(uv_work_t *req){
             }
         }
 
-        // Is this thread done processing?  Or does it need more?
+        // Is this imape_data_t done working?  Or does it need more?
         uv_mutex_lock(&id->mutex);
         if(link_list_isempty(&id->events) && !more_work){
             id->work_state = IMAPE_INACTIVE;

@@ -1388,6 +1388,8 @@ ie_list_resp_t *ie_list_resp_new(derr_t *e, ie_mflags_t *mflags, char sep,
     list->sep = sep;
     list->m = m;
 
+    link_init(&list->link);
+
     return list;
 
 fail:

@@ -154,6 +154,29 @@ static inline bool pvt_prop_test(derr_t *e, derr_t code){
         goto _label; \
     } \
 
+#define TRACE_CHECK(e) \
+    TRACE(&(e), \
+        "Handling %x in file %x: %x(), line %x\n", \
+        FD(error_to_dstr((e).type)), FS(FILE_BASENAME), \
+        FS(__func__), FI(__LINE__));
+
+/* handle an error that we have ignored until now, useful when transitioning
+   from chunks of code which use the bison error handling strategy to chunks
+   of code which use normal error handling */
+#define CHECK(e) { \
+    if(is_error(e)){ \
+        TRACE_CHECK(e); \
+        return e; \
+    } \
+}
+
+#define CHECK_GO(e, label) { \
+    if(is_error(e)){ \
+        TRACE_CHECK(e); \
+        goto label; \
+    } \
+}
+
 #define TRACE_CATCH(e) \
     TRACE((e), \
         "catching %x in file %x: %x(), line %x\n", \

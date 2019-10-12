@@ -14,7 +14,6 @@ typedef struct imap_logic_t imap_logic_t;
 
 #include "engine.h"
 #include "common.h"
-#include "imap_client.h"
 // TODO: find a way to avoid this include
 #include "loop.h"
 
@@ -62,17 +61,12 @@ Here's the general idea (threads not illustrated):
     |   v    | READ --------> |    v   | <-- control msgs |            |
     |        | <--- READ_DONE |        |                  |    IMAP    |
     |  TLS   |                |  IMAP  | callback fns --> | CONTROLLER |
-    | ENGINE | <------- WRITE | ENGINE | <--- fn ret vals |____________|
+    | ENGINE | <------- WRITE | ENGINE |                  |____________|
     |________| WRITE_DONE --> |        |                   _________
                               |        | <--- file events |         |
                               |        |                  |   IMAP  |
                               |        | callback fns --> | MAILDIR |
-                              |________| <--- fn ret vals |_________|
-
-The dual mechanisms for communicating to the imap engine (callback function
-return values and events) is due to the synchronous processing of bison
-callbacks; the imape_data processing needs immediate responses to function
-calls, but asynchronous events are still possible in other cases.
+                              |________|                  |_________|
 
 -------
 
@@ -80,12 +74,16 @@ Threading plan:
 
  1) imape receives an event for an imape_data_t
  2) imape_t locks that imape_data_t's mutex
- 3) imape_t inserts the packet into the imape_data_t
- 4) if imape_data_t is inactive, set it active and push it to pendings
-    else imape_data_t is active; no extra steps required.
- 5) if imape_data_t is inactive, set it to active and push it to pendings
+ 3) (with lock on imape_data_t) imape_t puts the packet in the imape_data_t.
+    - if imape_data_t is inactive, set it active and push it to ready_data
+    - else imape_data_t is active; no extra steps required.
 
-
+ 4) some time later, worker picks picks up imape_data_t
+ 5) (with lock) worker passes events to imap_logic_t
+ 6) worker executes logic->do_work()
+ 7) worker checks logic->more_work()
+ 8) (with lock) worker updates imape_data_t status.  Worker may return
+    imape_data_t to ready_data
 
 */
 
@@ -139,7 +137,7 @@ struct imap_logic_t {
        to the imap_logic_t object (not thread-protected).  The implementation
        should probably just append the event to some internal list, and only
        actually process events later, in the call to do_work(). */
-    void (*new_event)(imap_logic_t *logic, event_t *ev);
+    derr_t (*new_event)(imap_logic_t *logic, event_t *ev);
 
     // is there more work to do?
     bool (*more_work)(imap_logic_t *logic);

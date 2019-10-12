@@ -18,10 +18,11 @@ static void fake_imap_logic_free(imap_logic_t *logic){
     free(fil);
 }
 
-static void fil_new_event(imap_logic_t *logic, event_t *ev){
+static derr_t fil_new_event(imap_logic_t *logic, event_t *ev){
+    derr_t e = E_OK;
     fake_imap_logic_t *fil = CONTAINER_OF(logic, fake_imap_logic_t, logic);
-
     link_list_append(&fil->events, &ev->link);
+    return e;
 }
 
 static derr_t fil_handle_read(fake_imap_logic_t *fil, event_t *ev){

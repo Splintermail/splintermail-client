@@ -2,6 +2,7 @@
 #define IMAP_EXPR_H
 
 #include "common.h"
+#include "link.h"
 
 typedef struct ie_dstr_t {
     dstr_t dstr;
@@ -465,7 +466,10 @@ typedef struct {
     ie_mflags_t *mflags;
     char sep;
     ie_mailbox_t *m;
+    // for linking many responses together, initialized but not used by parser
+    link_t link;
 } ie_list_resp_t;
+DEF_CONTAINER_OF(ie_list_resp_t, link, link_t);
 
 typedef struct {
     ie_mailbox_t *m;
