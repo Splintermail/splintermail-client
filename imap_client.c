@@ -574,20 +574,11 @@ static derr_t try_read(imap_client_t *ic){
 
     event_t *ev = CONTAINER_OF(link, event_t, link);
 
-    switch(ev->ev_type){
-        case EV_READ:
-            // a READ came in for the session
-        case EV_COMMAND:
-            // a command came in for the session from the imap_controller_t
-            link_list_append(&ic->unread, &ev->link);
-            break;
-        case EV_MAILDIR:
-            ORIG_GO(&e, E_INTERNAL, "aaaahhhhhh!!!!", return_read);
-            break;
-        default:
-            TRACE(&e, "Invalid event type (%x) in imap_client", FU(ev->ev_type));
-            ORIG_GO(&e, E_INTERNAL, "Invalid event type in imap_client",
-                    return_read);
+    // for now, the only thing that goes into ic->unread is READ events
+    if(ev->ev_type != EV_READ){
+        LOG_ERROR("Invalid event type (%x) in imap_client", FU(ev->ev_type));
+        ORIG_GO(&e, E_INTERNAL, "Invalid event type in imap_client",
+                return_read);
     }
 
     // check for EOF
