@@ -405,6 +405,11 @@ void hashmap_next(hashmap_iter_t *i){
 
 hashmap_iter_t hashmap_pop_first(hashmap_t *h){
     hashmap_iter_t i = {.hashmap = h};
+    /* Return empty iterator if the hashmap hasn't been initialized.  This is
+       important to guarantee that zeroed structures can be safely freed, even
+       if they have to iterate through a hashmap as part of their freeing. */
+    if(!h->buckets) return i;
+
     hashmap_pop_next(&i);
     return i;
 }

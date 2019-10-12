@@ -101,6 +101,7 @@ fail_malloc:
 }
 
 void imaildir_free(imaildir_t *m){
+    if(!m) return;
     // first free all the children (yay!! free the children!)
     hashmap_iter_t i;
     for(i = hashmap_pop_first(&m->children); i.current; hashmap_pop_next(&i)){

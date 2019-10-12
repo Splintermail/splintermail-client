@@ -458,6 +458,7 @@ fail:
 }
 
 void ie_nums_free(ie_nums_t *nums){
+    if(!nums) return;
     ie_nums_free(nums->next);
     free(nums);
 }
@@ -1090,6 +1091,7 @@ fail:
 }
 
 void ie_login_cmd_free(ie_login_cmd_t *login){
+    if(!login) return;
     ie_dstr_free(login->user);
     ie_dstr_free(login->pass);
     free(login);
@@ -1113,6 +1115,7 @@ fail:
 }
 
 void ie_rename_cmd_free(ie_rename_cmd_t *rename){
+    if(!rename) return;
     ie_mailbox_free(rename->old);
     ie_mailbox_free(rename->new);
     free(rename);
@@ -1135,6 +1138,7 @@ fail:
 }
 
 void ie_list_cmd_free(ie_list_cmd_t *list){
+    if(!list) return;
     ie_mailbox_free(list->m);
     ie_dstr_free(list->pattern);
     free(list);
@@ -1157,6 +1161,7 @@ fail:
 }
 
 void ie_status_cmd_free(ie_status_cmd_t *status){
+    if(!status) return;
     ie_mailbox_free(status->m);
     free(status);
 }
@@ -1182,6 +1187,7 @@ fail:
 }
 
 void ie_append_cmd_free(ie_append_cmd_t *append){
+    if(!append) return;
     ie_mailbox_free(append->m);
     ie_flags_free(append->flags);
     ie_dstr_free(append->content);
@@ -1207,6 +1213,7 @@ fail:
 }
 
 void ie_search_cmd_free(ie_search_cmd_t *search){
+    if(!search) return;
     ie_dstr_free(search->charset);
     ie_search_key_free(search->search_key);
     free(search);
@@ -1231,6 +1238,7 @@ fail:
 }
 
 void ie_fetch_cmd_free(ie_fetch_cmd_t *fetch){
+    if(!fetch) return;
     ie_seq_set_free(fetch->seq_set);
     ie_fetch_attrs_free(fetch->attr);
     free(fetch);
@@ -1257,6 +1265,7 @@ fail:
 }
 
 void ie_store_cmd_free(ie_store_cmd_t *store){
+    if(!store) return;
     ie_seq_set_free(store->seq_set);
     ie_flags_free(store->flags);
     free(store);
@@ -1281,6 +1290,7 @@ fail:
 }
 
 void ie_copy_cmd_free(ie_copy_cmd_t *copy){
+    if(!copy) return;
     ie_seq_set_free(copy->seq_set);
     ie_mailbox_free(copy->m);
     free(copy);
@@ -1332,6 +1342,7 @@ fail:
 }
 
 void imap_cmd_free(imap_cmd_t *cmd){
+    if(!cmd) return;
     ie_dstr_free(cmd->tag);
     imap_cmd_arg_free(cmd->type, cmd->arg);
     free(cmd);
@@ -1360,6 +1371,7 @@ fail:
 }
 
 void ie_st_resp_free(ie_st_resp_t *st){
+    if(!st) return;
     ie_dstr_free(st->tag);
     ie_st_code_free(st->code);
     ie_dstr_free(st->text);
@@ -1385,6 +1397,7 @@ fail:
 }
 
 void ie_list_resp_free(ie_list_resp_t *list){
+    if(!list) return;
     ie_mflags_free(list->mflags);
     ie_mailbox_free(list->m);
     free(list);
@@ -1407,6 +1420,7 @@ fail:
 }
 
 void ie_status_resp_free(ie_status_resp_t *status){
+    if(!status) return;
     ie_mailbox_free(status->m);
     free(status);
 }
@@ -1444,6 +1458,7 @@ fail:
 }
 
 void imap_resp_free(imap_resp_t *resp){
+    if(!resp) return;
     imap_resp_arg_free(resp->type, resp->arg);
     free(resp);
 }
