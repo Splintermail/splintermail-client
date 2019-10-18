@@ -1122,8 +1122,9 @@ static derr_t list_resp_skip_fill(skip_fill_t *sf, ie_list_resp_t *list){
     STATIC_SKIP_FILL("(");
     PROP(&e, mflags_skip_fill(sf, list->mflags) );
     STATIC_SKIP_FILL(") \"");
+    // the separator needs 2 characters because FMT always null-terminates
+    DSTR_VAR(sep, 2);
     // the separator must be a quotable character
-    DSTR_VAR(sep, 1);
     switch(list->sep){
         case '\r':
         case '\n':
@@ -1220,6 +1221,11 @@ derr_t imap_resp_write(const imap_resp_t *resp, dstr_t *out, size_t *skip,
     skip_fill_t *sf = &skip_fill;
 
     imap_resp_arg_t arg = resp->arg;
+
+    // non-status-type responses are all untagged
+    if(resp->type != IMAP_RESP_STATUS_TYPE){
+        STATIC_SKIP_FILL("* ");
+    }
 
     switch(resp->type){
         case IMAP_RESP_STATUS_TYPE:

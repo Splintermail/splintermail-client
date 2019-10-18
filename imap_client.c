@@ -304,7 +304,7 @@ static derr_t send_list(imap_client_t *ic){
     ic->imap_state = LISTING;
 
     // issue the list command
-    ie_dstr_t *slash = ie_dstr_new(&e, &DSTR_LIT("/"), KEEP_RAW);
+    ie_dstr_t *slash = ie_dstr_new(&e, &DSTR_LIT(""), KEEP_RAW);
     ie_mailbox_t *ref_name = ie_mailbox_new_noninbox(&e, slash);
     ie_dstr_t *pattern = ie_dstr_new(&e, &DSTR_LIT("*"), KEEP_RAW);
     imap_cmd_arg_t arg = { .list=ie_list_cmd_new(&e, ref_name, pattern) };
@@ -466,12 +466,16 @@ static void resp_cb(void *cb_data, imap_resp_t *resp){
         DSTR_VAR(buf, 4096);
         size_t skip = 0;
         size_t want = 1;
-        LOG_INFO("recv: ");
         while(want > 0){
             buf.len = 0;
-            DROP_CMD( imap_resp_write(resp, &buf, &skip, &want) );
-            LOG_INFO("%x", FD(&buf));
+            derr_t e2 = E_OK;
+            IF_PROP(&e2, imap_resp_write(resp, &buf, &skip, &want) ){
+                DUMP(e2);
+                DROP_VAR(&e2);
+                break;
+            }
         }
+        LOG_INFO("recv: %x", FD(&buf));
     }
 
     // wrap the response
@@ -556,6 +560,9 @@ static derr_t try_write(imap_client_t *ic){
     }
     // send the write event
     ic->write_ev->ev_type = EV_WRITE;
+    {
+        LOG_ERROR("send: %x", FD(&ic->write_ev->buffer));
+    }
     ic->id->imape->upstream->pass_event(ic->id->imape->upstream, ic->write_ev);
     // done with event
     ic->write_ev = NULL;
