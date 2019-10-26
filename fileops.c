@@ -248,6 +248,21 @@ derr_t rm_rf(const char* path){
 }
 
 
+derr_t rm_rf_path(const string_builder_t *sb){
+    derr_t e = E_OK;
+    DSTR_VAR(stack, 256);
+    dstr_t heap = {0};
+    dstr_t* path;
+    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
+
+    PROP_GO(&e, rm_rf(path->data), cu);
+
+cu:
+    dstr_free(&heap);
+    return e;
+}
+
+
 // the string-builder-based version of for_each_file
 derr_t for_each_file_in_dir2(const string_builder_t* path,
                              for_each_file_hook2_t hook, void* userdata){
@@ -513,6 +528,35 @@ derr_t lstat_path(const string_builder_t* sb, struct stat* out, int* eno){
     return e;
 }
 
+static derr_t do_mkdir(const char *path, mode_t mode, bool soft){
+    derr_t e = E_OK;
+
+    int ret = mkdir(path, mode);
+    if(ret != 0){
+        if(errno == ENOMEM){
+            ORIG(&e, E_NOMEM, "no memory for mkdir");
+        }else if(soft && errno == EEXIST){
+            // we might ignore this error, if what exists is a directory
+            struct stat s;
+            int ret = stat(path, &s);
+            if(ret == 0 && S_ISDIR(s.st_mode)){
+                // it's a directory!  we are fine.
+                return e;
+            }else if(errno == ENOMEM){
+                ORIG(&e, E_NOMEM, "no memory for stat");
+            }else{
+                TRACE(&e, "mkdir %x failed: file already exists\n", FS(path));
+                ORIG(&e, E_FS, "unable to mkdir");
+            }
+        }else{
+            TRACE(&e, "unable to mkdir %x: %x\n", FS(path), FE(&errno));
+            ORIG(&e, E_FS, "unable to mkdir");
+        }
+    }
+
+    return e;
+}
+
 derr_t mkdir_path(const string_builder_t* sb, mode_t mode, bool soft){
     derr_t e = E_OK;
     DSTR_VAR(stack, 256);
@@ -520,28 +564,50 @@ derr_t mkdir_path(const string_builder_t* sb, mode_t mode, bool soft){
     dstr_t* path;
     PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
 
-    int ret = mkdir(path->data, mode);
-    if(ret != 0){
-        if(errno == ENOMEM){
-            ORIG_GO(&e, E_NOMEM, "no memory for mkdir", cu);
-        }else if(soft && errno == EEXIST){
-            // we might ignore this error, if what exists is a directory
-            struct stat s;
-            int ret = stat(path->data, &s);
-            if(ret == 0 && S_ISDIR(s.st_mode)){
-                // it's a directory!  we are fine.
-                goto cu;
-            }else if(errno == ENOMEM){
-                ORIG_GO(&e, E_NOMEM, "no memory for stat", cu);
-            }else{
-                TRACE(&e, "mkdir %x failed: file already exists\n", FD(path));
-                ORIG_GO(&e, E_FS, "unable to mkdir", cu);
-            }
-        }else{
-            TRACE(&e, "unable to mkdir %x: %x\n", FD(path), FE(&errno));
-            ORIG_GO(&e, E_FS, "unable to mkdir", cu);
+    PROP_GO(&e, do_mkdir(path->data, mode, soft), cu);
+
+cu:
+    dstr_free(&heap);
+    return e;
+}
+
+derr_t mkdirs_path(const string_builder_t* sb, mode_t mode){
+    derr_t e = E_OK;
+    DSTR_VAR(stack, 256);
+    dstr_t heap = {0};
+    dstr_t *path;
+    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
+
+    // count how many parent directories there are by repeated calls to dirname
+    char *cpath = path->data;
+    size_t cpath_len = path->len;
+    int nparents = 0;
+    while(true){
+        cpath = dirname(cpath);
+        if(strlen(cpath) == cpath_len){
+            // cpath not modified, no more parent directories
+            break;
         }
+        cpath_len = strlen(cpath);
+        nparents++;
     }
+
+    // the most root path can't be created, it's either / or .
+    nparents--;
+
+    for(int i = nparents; i >= 0; i--){
+        // repair the path
+        PROP_GO(&e, sb_expand(sb, &slash, &stack, &heap, &path), cu);
+        // get the ith parent
+        cpath = path->data;
+        for(int j = 0; j < i; j++){
+            cpath = dirname(cpath);
+        }
+        // create the ith parent
+        PROP_GO(&e, do_mkdir(cpath, mode, true), cu);
+    }
+
+    // the 0th parent was the full path, so we are done
 
 cu:
     dstr_free(&heap);

@@ -39,6 +39,7 @@ derr_t for_each_file_in_dir2(const string_builder_t* path,
                              for_each_file_hook2_t hook, void* userdata);
 
 derr_t rm_rf(const char* root_path);
+derr_t rm_rf_path(const string_builder_t *sb);
 
 // String-Builder-enabled libc wrappers below //
 
@@ -61,6 +62,7 @@ derr_t stat_path(const string_builder_t* sb, struct stat* out, int* eno);
 derr_t lstat_path(const string_builder_t* sb, struct stat* out, int* eno);
 
 derr_t mkdir_path(const string_builder_t* sb, mode_t mode, bool soft);
+derr_t mkdirs_path(const string_builder_t* sb, mode_t mode);
 
 derr_t dir_r_access_path(const string_builder_t* sb, bool create, bool* ret);
 derr_t dir_w_access_path(const string_builder_t* sb, bool create, bool* ret);

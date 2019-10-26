@@ -1381,12 +1381,12 @@ derr_t sb_expand(const string_builder_t* sb, const dstr_t* joiner,
     return e;
 
 use_heap:
+    DROP_VAR(&e);
     // we will need to allocate the heap_dstr to be bigger than stack_dstr
     PROP(&e, dstr_new(heap_dstr, stack_dstr->size * 2) );
     PROP_GO(&e, sb_to_dstr(sb, joiner, heap_dstr), fail_heap);
     // sb_expand is often for a path, so null-terminate it
     PROP_GO(&e, dstr_null_terminate(heap_dstr), fail_heap);
-    DROP_VAR(&e);
     return e;
 
 fail_heap:

@@ -50,6 +50,7 @@
 #else // not _WIN32
 
     #include <unistd.h>
+    #include <libgen.h>
 
 #endif // _WIN32
 

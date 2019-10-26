@@ -82,6 +82,7 @@ set(TEST_OBJ_TGTS
 
 set(TEST_EXE_TGTS
     test_common
+    test_fileops
     test_pop_server
     test_ditm
     test_ditm_errors
@@ -400,6 +401,7 @@ if("${BUILD_TESTS}")
 
     # describe test executables with dependencies
     target_link_libraries(test_common common)
+    target_link_libraries(test_fileops fileops)
     target_link_libraries(test_pop_server pop_server fileops)
     target_link_libraries(test_ditm ditm_thread fake_pop_server)
     target_link_libraries(test_ditm_errors ditm_thread fake_pop_server test_utils)
