@@ -10,6 +10,7 @@
 #include "hashmap.h"
 #include "imap_client.h"
 #include "imap_expression_print.h"
+#include "jsw_atree.h"
 
 #define KEY "../c/test/files/ssl/good-key.pem"
 #define CERT "../c/test/files/ssl/good-cert.pem"
@@ -104,23 +105,41 @@ static void fc_msg_recvd(const imap_controller_up_t *ic,
 }
 
 static void fc_folders(const imap_controller_up_t *ic,
-        session_t *session, link_t *folders){
+        session_t *session, jsw_atree_t *folders){
     fetch_controller_t *fc = CONTAINER_OF(ic, fetch_controller_t, ctrlr_up);
     imape_data_t *id = session->id;
     (void)id;
     (void)fc;
 
-    while(!link_list_isempty(folders)){
-        link_t *link = link_list_pop_first(folders);
-        ie_list_resp_t *list = CONTAINER_OF(link, ie_list_resp_t, link);
+    derr_t e = E_OK;
+
+    jsw_atrav_t trav;
+    jsw_anode_t *node = jsw_atfirst(&trav, folders);
+    for(; node != NULL; node = jsw_atnext(&trav)){
+        ie_list_resp_t *list = CONTAINER_OF(node, ie_list_resp_t, node);
+
+        // verify that the separator is actually "/"
+        if(list->sep != '/'){
+            TRACE(&e, "Got folder separator of %x but only / is supported\n",
+                    FC(list->sep));
+            ORIG_GO(&e, E_RESPONSE, "invalid folder separator", fail);
+        }
+
+        // build a path to the folder
+        // string_builder_t path = sb_append(&fc->root->path, &buf);
 
         DSTR_VAR(buf, 64);
         DROP_CMD( print_list_resp(&buf, list) );
-        ie_list_resp_free(list);
+        DROP_CMD( PFMT("%x\n", FD(&buf)) );
     }
 
     printf("got folder list, exiting\n");
     loop_close(&loop, E_OK);
+    return;
+
+fail:
+    loop_close(&loop, e);
+    PASSED(e);
 }
 
 static void session_closed(imap_session_t *session, derr_t e){

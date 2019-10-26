@@ -50,6 +50,9 @@
     parser should confirm that there was only one mbx-list-sflag given
 
     partial <p1.p2> should enforce non-zeroness of p2
+
+    there's no mechanism for handling folders where the first element is INBOX.
+    That exact mailbox is case insensitive, but InBoX/SubFolder is not.
 */
 
 typedef struct {

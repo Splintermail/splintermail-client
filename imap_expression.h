@@ -2,7 +2,7 @@
 #define IMAP_EXPR_H
 
 #include "common.h"
-#include "link.h"
+#include "jsw_atree.h"
 
 typedef struct ie_dstr_t {
     dstr_t dstr;
@@ -466,10 +466,15 @@ typedef struct {
     ie_mflags_t *mflags;
     char sep;
     ie_mailbox_t *m;
-    // for linking many responses together, initialized but not used by parser
-    link_t link;
+    // for a sorted list of many responses together, not used by parser
+    jsw_anode_t node;
 } ie_list_resp_t;
-DEF_CONTAINER_OF(ie_list_resp_t, link, link_t);
+DEF_CONTAINER_OF(ie_list_resp_t, node, jsw_anode_t);
+
+// get_f and cmp_f for jsw_atree implementation
+const void *ie_list_resp_get(const jsw_anode_t *node);
+// cmp does a simple alphanumeric sort
+int ie_list_resp_cmp(const void *a, const void *b);
 
 typedef struct {
     ie_mailbox_t *m;

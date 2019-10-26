@@ -19,10 +19,9 @@ struct imap_controller_up_t {
     void (*logged_in)(const imap_controller_up_t*, session_t*);
     void (*uptodate)(const imap_controller_up_t*, session_t*);
     void (*msg_recvd)(const imap_controller_up_t*, session_t*);
-    /* send a link list of folders from the server response.  The links of the
-       list will be emptied from the head that is given, and the head left
-       empty. */
-    void (*folders)(const imap_controller_up_t*, session_t*, link_t*);
+    /* send a sorted list of folders from the server response. The atree of
+       folders needs to be cleaned by the caller after the hook completes. */
+    void (*folders)(const imap_controller_up_t*, session_t*, jsw_atree_t*);
     // These should come from the imap session
     // void (*closed)(struct imap_client_spec_t*);
     // void (*error)(struct imap_client_spec_t*, derr_t);

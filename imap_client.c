@@ -93,7 +93,7 @@ struct imap_client_t {
     ic_goal_t goal;
     bool saw_capas;
     // accumulated LIST response
-    link_t folders;
+    jsw_atree_t folders;
 };
 DEF_CONTAINER_OF(imap_client_t, logic, imap_logic_t)
 DEF_CONTAINER_OF(imap_client_t, write_qcb, queue_cb_t)
@@ -124,6 +124,7 @@ static derr_t ic_cmd_new(ic_cmd_t **out, imap_cmd_t *cmd, cmd_done_t ok,
 
 static void ic_cmd_free(ic_cmd_t *ic_cmd){
     link_remove(&ic_cmd->link);
+    imap_cmd_free(ic_cmd->cmd);
     free(ic_cmd);
 }
 
@@ -284,8 +285,14 @@ static derr_t list_done(imap_client_t *ic, imap_cmd_t *cmd,
     }
     ic->goal = GOAL_NONE;
 
-    // controller->folders() will empty the ic->folders list
     ic->controller->folders(ic->controller, ic->id->session, &ic->folders);
+
+    // free folders
+    jsw_anode_t *node = jsw_apop(&ic->folders);
+    for(; node != NULL; node = jsw_apop(&ic->folders)){
+        ie_list_resp_t *list = CONTAINER_OF(node, ie_list_resp_t, node);
+        ie_list_resp_free(list);
+    }
 
     return e;
 }
@@ -293,7 +300,7 @@ static derr_t list_done(imap_client_t *ic, imap_cmd_t *cmd,
 static derr_t list_resp(imap_client_t *ic, ie_list_resp_t *list){
     derr_t e = E_OK;
 
-    link_list_append(&ic->folders, &list->link);
+    jsw_ainsert(&ic->folders, &list->node);
 
     return e;
 }
@@ -314,11 +321,15 @@ static derr_t send_list(imap_client_t *ic){
     CHECK(e);
 
     ic_cmd_t *ic_cmd;
-    PROP(&e, ic_cmd_new(&ic_cmd, cmd, list_done, NULL, NULL) );
+    PROP_GO(&e, ic_cmd_new(&ic_cmd, cmd, list_done, NULL, NULL), fail);
 
     // add to unwritten commands
     link_list_append(&ic->unwritten, &ic_cmd->link);
 
+    return e;
+
+fail:
+    imap_cmd_free(cmd);
     return e;
 }
 
@@ -660,7 +671,7 @@ static derr_t ic_set_goal(imap_client_t *ic, event_t *ev){
         TRACE(&e, "unable to accept %x command while in goal state %x\n",
                 FD(imap_client_command_type_to_dstr(cmd_ev->cmd_type)),
                 FD(goal_to_dstr(ic->goal)));
-        ORIG(&e, E_INTERNAL, "invalid command issued by controller");
+        ORIG_GO(&e, E_INTERNAL, "invalid command issued by controller", fail);
     }
 
     switch(cmd_ev->cmd_type){
@@ -669,12 +680,15 @@ static derr_t ic_set_goal(imap_client_t *ic, event_t *ev){
             PROP(&e, send_list(ic) );
             break;
         case IMAP_CLIENT_CMD_SET_FOLDER:
-            ORIG(&e, E_VALUE, "can't handle that command yet!");
+            ORIG_GO(&e, E_VALUE, "can't handle that command yet!", fail);
         case IMAP_CLIENT_CMD_CLOSE:
-            ORIG(&e, E_VALUE, "can't handle that command yet!");
+            ORIG_GO(&e, E_VALUE, "can't handle that command yet!", fail);
         default:
-            ORIG(&e, E_VALUE, "invalid goal from imap_controller_up");
+            ORIG_GO(&e, E_VALUE, "invalid goal from imap_controller_up", fail);
     }
+
+fail:
+    ev->returner(ev);
 
     return e;
 }
@@ -692,7 +706,7 @@ static derr_t new_event(imap_logic_t *logic, event_t *ev){
             break;
         case EV_COMMAND:
             // a command came in for the session from the imap_controller_t
-            ic_set_goal(ic, ev);
+            PROP(&e, ic_set_goal(ic, ev) );
             break;
         case EV_MAILDIR:
             // a maildir event command came in for the session
@@ -716,6 +730,7 @@ static derr_t new_event(imap_logic_t *logic, event_t *ev){
             LOG_ERROR("unexpected event type in imap client, ev = %x\n",
                       FP(ev));
     }
+
     return e;
 }
 
@@ -756,8 +771,7 @@ static void imap_client_free(imap_logic_t *logic){
     while(!link_list_isempty(&ic->unread)){
         link_t *link = link_list_pop_first(&ic->unread);
         event_t *ev = CONTAINER_OF(link, event_t, link);
-        ev->ev_type = EV_READ_DONE;
-        ic->id->imape->upstream->pass_event(ic->id->imape->upstream, ev);
+        ev->returner(ev);
     }
 
     // empty unhandled
@@ -783,17 +797,20 @@ static void imap_client_free(imap_logic_t *logic){
 
     // return write_ev
     if(ic->write_ev != NULL){
-        ic->write_ev->ev_type = EV_WRITE_DONE;
-        ic->id->imape->engine.pass_event(&ic->id->imape->engine, ic->write_ev);
+        ic->write_ev->returner(ic->write_ev);
         ic->write_ev = NULL;
     }
 
     // empty folders, if we have to close mid-list-response
-    while(!link_list_isempty(&ic->folders)){
-        link_t *link = link_list_pop_first(&ic->folders);
-        ie_list_resp_t *list = CONTAINER_OF(link, ie_list_resp_t, link);
+    jsw_anode_t *node = jsw_apop(&ic->folders);
+    for(; node != NULL; node = jsw_apop(&ic->folders)){
+        ie_list_resp_t *list = CONTAINER_OF(node, ie_list_resp_t, node);
         ie_list_resp_free(list);
     }
+
+    imap_reader_free(&ic->reader);
+
+    dstr_free(&ic->folder);
 
     free(ic);
 }
@@ -834,7 +851,7 @@ derr_t imap_client_logic_alloc(imap_logic_t **out, void *arg_void,
     ic->goal = GOAL_LOGIN;
     ic->saw_capas = false;
 
-    link_init(&ic->folders);
+    jsw_ainit(&ic->folders, ie_list_resp_cmp, ie_list_resp_get);
 
     *out = &ic->logic;
 

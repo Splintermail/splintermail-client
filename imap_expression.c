@@ -1388,8 +1388,6 @@ ie_list_resp_t *ie_list_resp_new(derr_t *e, ie_mflags_t *mflags, char sep,
     list->sep = sep;
     list->m = m;
 
-    link_init(&list->link);
-
     return list;
 
 fail:
@@ -1403,6 +1401,21 @@ void ie_list_resp_free(ie_list_resp_t *list){
     ie_mflags_free(list->mflags);
     ie_mailbox_free(list->m);
     free(list);
+}
+
+// get_f for jsw_atree implementation
+const void *ie_list_resp_get(const jsw_anode_t *node){
+    return (void*)CONTAINER_OF(node, ie_list_resp_t, node);
+}
+
+// cmp_f for jsw_atree implementation
+int ie_list_resp_cmp(const void *a, const void *b){
+    const ie_list_resp_t *resp_a = a;
+    const ie_list_resp_t *resp_b = b;
+    DSTR_STATIC(inbox, "INBOX");
+    const dstr_t *dstr_a = resp_a->m->inbox ? &inbox : &resp_a->m->dstr;
+    const dstr_t *dstr_b = resp_b->m->inbox ? &inbox : &resp_b->m->dstr;
+    return dstr_cmp(dstr_a, dstr_b);
 }
 
 ie_status_resp_t *ie_status_resp_new(derr_t *e, ie_mailbox_t *m,
