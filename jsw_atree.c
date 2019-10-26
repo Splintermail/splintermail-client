@@ -138,7 +138,15 @@ void jsw_ainsert ( jsw_atree_t *tree, jsw_anode_t *node )
   ++tree->size;
 }
 
-jsw_anode_t *jsw_aerase ( jsw_atree_t *tree, void *val )
+jsw_anode_t *jsw_apop ( jsw_atree_t *tree ){
+  if ( tree->root == &tree->nil )
+    return NULL;
+
+  // Leave the complex removal logic in one place
+  return jsw_aerase ( tree, tree->get(tree->root) );
+}
+
+jsw_anode_t *jsw_aerase ( jsw_atree_t *tree, const void *val )
 {
   jsw_anode_t *deleted;
   if ( tree->root == &tree->nil )

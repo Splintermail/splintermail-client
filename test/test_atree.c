@@ -197,7 +197,7 @@ static derr_t test_atree(void){
         for(int i = 0; i < NUM_INTS; i++){
             ints[i].value = rand();
         }
-        PROP(&e, do_test_atree(ints, 10) );
+        PROP(&e, do_test_atree(ints, NUM_INTS) );
     }
     return e;
 }
@@ -206,7 +206,6 @@ static derr_t test_indicies(void){
     derr_t e = E_OK;
     // elements
     binsrch_int_t ints[NUM_INTS];
-    size_t num_ints = sizeof(ints) / sizeof(*ints);
     for(int i = 0; i < NUM_INTS; i++){
         ints[i].value = i;
     }
@@ -214,11 +213,11 @@ static derr_t test_indicies(void){
     jsw_atree_t tree;
     jsw_ainit(&tree, cmp_binsrch_ints, get_binsrch_int);
     // insert each element
-    for(size_t i = 0; i < num_ints; i++){
+    for(size_t i = 0; i < NUM_INTS; i++){
         jsw_ainsert(&tree, &ints[i].anode);
     }
     // check each index after deref-by-value
-    for(size_t i = 0; i < num_ints; i++){
+    for(size_t i = 0; i < NUM_INTS; i++){
         size_t idx_out;
         jsw_anode_t *result = jsw_afind(&tree, &ints[i], &idx_out);
         if(result == NULL)
@@ -229,7 +228,7 @@ static derr_t test_indicies(void){
         }
     }
     // check each value after deref-by-index
-    for(size_t i = 0; i < num_ints; i++){
+    for(size_t i = 0; i < NUM_INTS; i++){
         jsw_anode_t *result = jsw_aindex(&tree, i);
         if(result == NULL)
             ORIG_GO(&e, E_VALUE, "failed to deref-by-index", done);
@@ -246,6 +245,49 @@ done:
     return e;
 }
 
+// code mostly copied from do_test_atree
+static derr_t test_apop(void){
+    derr_t e = E_OK;
+    // some values to be inserted and stuff
+    binsrch_int_t ints[NUM_INTS];
+    // prep all the binsrch_int_t's
+    for(int i = 0; i < NUM_INTS; i++){
+        ints[i].magic = (unsigned char)0xAA;
+        ints[i].value = i;
+    }
+    // the andersson tree
+    jsw_atree_t tree;
+    jsw_ainit(&tree, cmp_binsrch_ints, get_binsrch_int);
+    // insert each element
+    for(size_t i = 0; i < NUM_INTS; i++){
+        jsw_ainsert(&tree, &ints[i].anode);
+        // make sure all the properties of the atree are met
+        PROP(&e, atree_assertions(&tree) );
+    }
+    // print tree
+    print_atree(tree.root, 0);
+    // pop each element
+    jsw_anode_t *node = jsw_apop(&tree);
+    size_t count = 0;
+    for(; node != NULL; node = jsw_apop(&tree)){
+        // make sure all the properties of the atree are met
+        PROP(&e, atree_assertions(&tree) );
+        count++;
+    }
+    // count should match NUM_INTS
+    if(count != NUM_INTS){
+        TRACE(&e, "popped %x elements instead of %x\n", FU(count),
+                FU(NUM_INTS));
+        ORIG(&e, E_VALUE, "popped wrong number of elements");
+    }
+    // tree should be empty
+    if(tree.size != 0){
+        ORIG(&e, E_VALUE, "tree should be empty" );
+    }
+
+    return e;
+}
+
 int main(int argc, char** argv){
     derr_t e = E_OK;
     // parse options and set default log level
@@ -258,6 +300,7 @@ int main(int argc, char** argv){
 
     PROP_GO(&e, test_atree(), test_fail);
     PROP_GO(&e, test_indicies(), test_fail);
+    PROP_GO(&e, test_apop(), test_fail);
 
     LOG_ERROR("PASS\n");
     return 0;

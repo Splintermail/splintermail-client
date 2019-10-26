@@ -55,8 +55,20 @@ typedef struct jsw_atrav {
 void         jsw_ainit ( jsw_atree_t *tree, cmp_f cmp, get_f get );
 jsw_anode_t *jsw_afind ( jsw_atree_t *tree, void *val, size_t *idx );
 void         jsw_ainsert ( jsw_atree_t *tree, jsw_anode_t *node );
-jsw_anode_t *jsw_aerase ( jsw_atree_t *tree, void *val );
 size_t       jsw_asize ( jsw_atree_t *tree );
+
+// remove a node by value, returns the node if the value was found
+jsw_anode_t *jsw_aerase ( jsw_atree_t *tree, const void *val );
+
+/* The reason a function like this doesn't exist is because the tree does not
+   have parent node pointers, so removing a random element is actually quite
+   difficult. */
+// remove a node by reference
+// void         jsw_aremove ( jsw_atree_t *tree, jsw_anode_t *node);
+
+// pop any element (actually the root node), or return null if tree is empty
+jsw_anode_t *jsw_apop ( jsw_atree_t *tree );
+
 // index into tree
 jsw_anode_t *jsw_aindex ( jsw_atree_t *tree, size_t idx );
 
