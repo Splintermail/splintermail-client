@@ -578,22 +578,31 @@ derr_t mkdirs_path(const string_builder_t* sb, mode_t mode){
     dstr_t *path;
     PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
 
-    // count how many parent directories there are by repeated calls to dirname
+    // if the directory already exists, do nothing
+    if(exists(path->data)){
+        goto cu;
+    }
+
+    // count how many parent directories to make by repeated calls to dirname
     char *cpath = path->data;
     size_t cpath_len = path->len;
     int nparents = 0;
     while(true){
         cpath = dirname(cpath);
+        if(exists(path->data)){
+            // no need to make this parent
+            break;
+        }
         if(strlen(cpath) == cpath_len){
-            // cpath not modified, no more parent directories
+            // we've arrived at the most root path, either / or .
+            nparents--;
             break;
         }
         cpath_len = strlen(cpath);
         nparents++;
     }
 
-    // the most root path can't be created, it's either / or .
-    nparents--;
+    int first_created = -1;
 
     for(int i = nparents; i >= 0; i--){
         // repair the path
@@ -604,12 +613,34 @@ derr_t mkdirs_path(const string_builder_t* sb, mode_t mode){
             cpath = dirname(cpath);
         }
         // create the ith parent
-        PROP_GO(&e, do_mkdir(cpath, mode, true), cu);
+        PROP_GO(&e, do_mkdir(cpath, mode, true), fail);
+        // remember the first directory we made for failure handling
+        if(first_created < 0){
+            first_created = i;
+        }
     }
 
     // the 0th parent was the full path, so we are done
-
 cu:
+    dstr_free(&heap);
+    return e;
+
+fail:
+    // attempt to delete any folders we created
+    if(first_created >= 0){
+        derr_t e2 = sb_expand(sb, &slash, &stack, &heap, &path);
+        if(is_error(e2)){
+            // well, we tried
+            DROP_VAR(&e2);
+        }else{
+            // get the highest parent we created and delete it
+            cpath = path->data;
+            for(int j = 0; j < nparents; j++){
+                cpath = dirname(cpath);
+            }
+            DROP_CMD( rm_rf(cpath) );
+        }
+    }
     dstr_free(&heap);
     return e;
 }
