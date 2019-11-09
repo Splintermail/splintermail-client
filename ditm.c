@@ -904,22 +904,17 @@ static derr_t ditm_download_new_message(ditm_t* ditm, key_tool_t* kt,
 
     // read the first chunk
     bool end;
-    e2 = pop_client_get_body(&ditm->pc, &buffer, true, &end);
     // a FIXEDSIZE error here indicates buffer is full; internal error
-    CATCH(e2, E_FIXEDSIZE){
-        RETHROW_GO(&e, &e2, E_INTERNAL, close_t2);
-    }else PROP_GO(&e, e2, close_t2);
+    NOFAIL_GO(&e, E_FIXEDSIZE,
+            pop_client_get_body(&ditm->pc, &buffer, true, &end), close_t2);
 
     while(true){
         // fill up first_bytes if there's room
         size_t fb_left = first_bytes.size - first_bytes.len;
         if(fb_left > 0){
             dstr_t sub = dstr_sub(&buffer, 0, fb_left);
-            e2 = dstr_append(&first_bytes, &sub);
             // should never ever fail
-            CATCH(e2, E_ANY){
-                RETHROW_GO(&e, &e2, E_INTERNAL, close_t2);
-            }
+            NOFAIL_GO(&e, E_ANY, dstr_append(&first_bytes, &sub), close_t2);
         }
 
         // write buffer to file
@@ -931,11 +926,9 @@ static derr_t ditm_download_new_message(ditm_t* ditm, key_tool_t* kt,
         if(end) break;
 
         // read another chunk
-        e2 = pop_client_get_body(&ditm->pc, &buffer, false, &end);
         // a FIXEDSIZE error here indicates buffer is full; internal error
-        CATCH(e2, E_FIXEDSIZE){
-            RETHROW_GO(&e, &e2, E_INTERNAL, close_t2);
-        }else PROP_GO(&e, e2, close_t2);
+        NOFAIL_GO(&e, E_FIXEDSIZE,
+                pop_client_get_body(&ditm->pc, &buffer, false, &end), close_t2);
     }
 
     // reset temp file 1 for reading
@@ -1063,12 +1056,8 @@ derr_t ditm_mangle_unencrypted(int infd, int outfd, size_t* outlen){
     DSTR_VAR(buffer, 4096);
     // we need to read until either the subject line or the body
     while(true){
-        // read some stuff
-        derr_t e2 = dstr_read(infd, &buffer, 0, &amnt_read);
-        // E_FIXEDSIZE means we have an internal error
-        CATCH(e2, E_FIXEDSIZE){
-            RETHROW(&e, &e2, E_INTERNAL);
-        }else PROP(&e, e2);
+        // read some stuff, E_FIXEDSIZE means we have an internal error
+        NOFAIL(&e, E_FIXEDSIZE, dstr_read(infd, &buffer, 0, &amnt_read) );
         // break if necessary
         if(amnt_read == 0) break;
         // search for the patterns
@@ -1130,10 +1119,7 @@ derr_t ditm_mangle_unencrypted(int infd, int outfd, size_t* outlen){
     // now just dump the rest of infd into outfd
     while(amnt_read){
         // read something
-        derr_t e2 = dstr_read(infd, &buffer, 0, &amnt_read);
-        CATCH(e2, E_FIXEDSIZE){
-            RETHROW(&e, &e2, E_INTERNAL);
-        }else PROP(&e, e2);
+        NOFAIL(&e, E_FIXEDSIZE, dstr_read(infd, &buffer, 0, &amnt_read) );
         // break if necessary
         if(amnt_read == 0) break;
         // write something
@@ -1167,17 +1153,15 @@ derr_t ditm_mangle_corrupted(int infd, int outfd, size_t* outlen){
     // build the headers
     DSTR_VAR(buffer, 4096);
     // this should never fail
-    derr_t e2 = FMT(&buffer, "From: DITM <ditm@localhost>\r\n"
-                             "To: Local User <email_user@localhost>\r\n"
-                             "Date: %x\r\n"
-                             "Subject: DITM failed to decrypt message\r\n"
-                             "\r\n"
-                             "The following message appears to be corrupted"
-                             " and cannot be decrypted:\r\n"
-                             "\r\n", FS(d));
-    CATCH(e2, E_FIXEDSIZE){
-        RETHROW(&e, &e2, E_INTERNAL);
-    }else PROP(&e, e2);
+    NOFAIL(&e, E_FIXEDSIZE,
+        FMT(&buffer, "From: DITM <ditm@localhost>\r\n"
+                     "To: Local User <email_user@localhost>\r\n"
+                     "Date: %x\r\n"
+                     "Subject: DITM failed to decrypt message\r\n"
+                     "\r\n"
+                     "The following message appears to be corrupted"
+                     " and cannot be decrypted:\r\n"
+                     "\r\n", FS(d)) );
 
     // dump headers to message
     PROP(&e, dstr_write(outfd, &buffer) );
@@ -1188,10 +1172,7 @@ derr_t ditm_mangle_corrupted(int infd, int outfd, size_t* outlen){
     while(true){
         size_t amnt_read;
         // read some stuff
-        e2 = dstr_read(infd, &buffer, 0, &amnt_read);
-        CATCH(e2, E_FIXEDSIZE){
-            RETHROW(&e, &e2, E_INTERNAL);
-        }else PROP(&e, e2);
+        NOFAIL(&e, E_FIXEDSIZE, dstr_read(infd, &buffer, 0, &amnt_read) );
         // break if necessary
         if(amnt_read == 0) break;
         // write some stuff

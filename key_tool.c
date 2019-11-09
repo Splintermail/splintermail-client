@@ -23,10 +23,7 @@ static derr_t key_tool_register_key(key_tool_t* kt,
     // get ready for the api call
     DSTR_STATIC(command, "add_device");
     DSTR_VAR(argument, 4096);
-    e2 = keypair_get_public_pem(&kt->key, &argument);
-    CATCH(e2, E_FIXEDSIZE){
-        RETHROW(&e, &e2, E_INTERNAL);
-    }else PROP(&e, e2);
+    NOFAIL(&e, E_FIXEDSIZE, keypair_get_public_pem(&kt->key, &argument) );
     int code;
     DSTR_VAR(reason, 1024);
     DSTR_VAR(recv, 4096);
@@ -111,7 +108,6 @@ derr_t key_tool_peer_list_load(key_tool_t* kt, const char* filename){
 
 derr_t key_tool_peer_list_write(key_tool_t* kt, const char* filename){
     derr_t e = E_OK;
-    derr_t e2;
     FILE* f = fopen(filename, "w");
     if(!f){
         TRACE(&e, "%x: %x\n", FS(filename), FE(&errno));
@@ -128,11 +124,9 @@ derr_t key_tool_peer_list_write(key_tool_t* kt, const char* filename){
     for(size_t i = 0; i < kt->peer_list.len; i++){
         // get a hex of the fingerprint
         DSTR_VAR(hexfpr, FL_FINGERPRINT * 2);
-        e2 =  bin2hex(&kt->peer_list.data[i], &hexfpr);
         // an E_FIXEDSIZE represents an internal error
-        CATCH(e2, E_FIXEDSIZE){
-            RETHROW_GO(&e, &e2, E_INTERNAL, cleanup);
-        }else PROP_GO(&e, e2, cleanup);
+        NOFAIL_GO(&e, E_FIXEDSIZE, bin2hex(&kt->peer_list.data[i], &hexfpr),
+                cleanup);
         // write the hex fingerprint
         PROP_GO(&e, dstr_fwrite(f, &hexfpr), cleanup);
         // write the separator if necessary
@@ -180,11 +174,8 @@ derr_t key_tool_new(key_tool_t* kt, const dstr_t* dir, int def_key_bits){
         LOG_WARN("key generated!\n");
 
         // now try and load the key
-        e2 = keypair_load(&kt->key, temp_path.data);
         // E_OPEN or E_SSL here represents an internal error
-        CATCH(e2, E_OPEN | E_SSL){
-            RETHROW(&e, &e2, E_INTERNAL);
-        }else PROP(&e, e2);
+        NOFAIL(&e, E_OPEN | E_SSL, keypair_load(&kt->key, temp_path.data) );
 
         LOG_INFO("key tool generated a new key\n");
         kt->did_key_gen = true;
@@ -573,12 +564,8 @@ derr_t key_tool_decrypt(key_tool_t* kt, int infd, int outfd, size_t* outlen){
     size_t amnt_read;
     *outlen = 0;
     while(true){
-        // read from input
-        e2 = dstr_read(infd, &inbuf, 0, &amnt_read);
-        // this should never result in E_FIXEDSIZE
-        CATCH(e2, E_FIXEDSIZE){
-            RETHROW(&e, &e2, E_INTERNAL);
-        }else PROP(&e, e2);
+        // read from input, this should never result in E_FIXEDSIZE
+        NOFAIL(&e, E_FIXEDSIZE, dstr_read(infd, &inbuf, 0, &amnt_read) );
 
         // break if we are done
         if(amnt_read == 0) break;

@@ -245,10 +245,7 @@ derr_t api_password_call(const char* host, unsigned int port, dstr_t* command,
        which autoparse the json value in the post body make the signing process
        undeterministic */
     DSTR_VAR(payload, 8192);
-    e2 = bin2b64(&body, &payload, 0, true);
-    CATCH(e2, E_FIXEDSIZE){
-        RETHROW(&e, &e2, E_INTERNAL);
-    }else PROP(&e, e2);
+    NOFAIL(&e, E_FIXEDSIZE, bin2b64(&body, &payload, 0, true) );
 
     // build the authorization
     DSTR_VAR(user_pass, 256);
@@ -259,16 +256,11 @@ derr_t api_password_call(const char* host, unsigned int port, dstr_t* command,
     }else PROP(&e, e2);
 
     DSTR_VAR(up_b64, 384);
-    e2 = bin2b64(&user_pass, &up_b64, 0, true);
-    CATCH(e2, E_FIXEDSIZE){
-        RETHROW(&e, &e2, E_INTERNAL);
-    }else PROP(&e, e2);
+    NOFAIL(&e, E_FIXEDSIZE, bin2b64(&user_pass, &up_b64, 0, true) );
 
     DSTR_VAR(headers, 512);
-    e2 = FMT(&headers, "Authorization: Basic %x\r\n", FD(&up_b64));
-    CATCH(e2, E_FIXEDSIZE){
-        RETHROW(&e, &e2, E_INTERNAL);
-    }else PROP(&e, e2);
+    NOFAIL(&e, E_FIXEDSIZE,
+            FMT(&headers, "Authorization: Basic %x\r\n", FD(&up_b64)) );
 
     // make the API request
     PROP(&e, native_api_call(host, port, command, &payload, &headers,
@@ -302,45 +294,31 @@ derr_t api_token_call(const char* host, unsigned int port, dstr_t* command,
        which autoparse the json value in the post body make the signing process
        undeterministic */
     DSTR_VAR(payload, 8192);
-    e2 = bin2b64(&body, &payload, 0, true);
-    CATCH(e2, E_FIXEDSIZE){
-        RETHROW(&e, &e2, E_INTERNAL);
-    }else PROP(&e, e2);
+    NOFAIL(&e, E_FIXEDSIZE, bin2b64(&body, &payload, 0, true) );
 
     // sign the request
     DSTR_VAR(signature, 128);
     DSTR_VAR(hexsig, 256);
-    e2 = hmac(&token->secret, &payload, &signature);
     // token->secret shouldn't be too long, signature shouldn't be too short
-    CATCH(e2, E_PARAM | E_FIXEDSIZE){
-        RETHROW(&e, &e2, E_INTERNAL);
-    }else PROP(&e, e2);
+    NOFAIL(&e, E_PARAM | E_FIXEDSIZE,
+            hmac(&token->secret, &payload, &signature) );
 
     // convert signature to hex
-    e2 = bin2hex(&signature, &hexsig);
-    CATCH(e2, E_FIXEDSIZE){
-        RETHROW(&e, &e2, E_INTERNAL);
-    }else PROP(&e, e2);
+    NOFAIL(&e, E_FIXEDSIZE, bin2hex(&signature, &hexsig) );
 
     // build the authorization hedaers
     DSTR_VAR(key_header, 256);
-    e2 = FMT(&key_header, "X-AUTH-TOKEN: %x", FU(token->key));
-    CATCH(e2, E_FIXEDSIZE){
-        RETHROW(&e, &e2, E_INTERNAL);
-    }else PROP(&e, e2);
+    NOFAIL(&e, E_FIXEDSIZE,
+            FMT(&key_header, "X-AUTH-TOKEN: %x", FU(token->key)) );
 
     DSTR_VAR(signature_header, 512);
-    e2 = FMT(&signature_header, "X-AUTH-SIGNATURE: %x", FD(&hexsig));
-    CATCH(e2, E_FIXEDSIZE){
-        RETHROW(&e, &e2, E_INTERNAL);
-    }else PROP(&e, e2);
+    NOFAIL(&e, E_FIXEDSIZE,
+            FMT(&signature_header, "X-AUTH-SIGNATURE: %x", FD(&hexsig)) );
 
     // use native http requests
     DSTR_VAR(headers, 1024);
-    e2 = FMT(&headers, "%x\r\n%x\r\n", FD(&key_header), FD(&signature_header));
-    CATCH(e2, E_FIXEDSIZE){
-        RETHROW(&e, &e2, E_INTERNAL);
-    }else PROP(&e, e2);
+    NOFAIL(&e, E_FIXEDSIZE, FMT(&headers, "%x\r\n%x\r\n", FD(&key_header),
+                FD(&signature_header) ));
     // PFMT("payload %x\n", FD(&payload));
     // PFMT("headers %x\n", FD(&headers));
     // PFMT("command %x\n", FD(command));

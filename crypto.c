@@ -582,7 +582,6 @@ derr_t decrypter_start(decrypter_t* dc, keypair_t* kp, LIST(dstr_t)* recips,
            E_NOT4ME */
 static derr_t decrypter_parse_metadata(decrypter_t* dc){
     derr_t e = E_OK;
-    derr_t e2;
     // define some patterns
     LIST_PRESET(dstr_t, colon, DSTR_LIT(":"));
     LIST_PRESET(dstr_t, line_end, DSTR_LIT("\n"));
@@ -600,14 +599,14 @@ static derr_t decrypter_parse_metadata(decrypter_t* dc){
         pos = dstr_find(&dc->buffer, &tags, &which_tag, NULL);
         // must be a valid tag right at the beginning of the line
         if(!pos || pos > dc->buffer.data){
-            ORIG(&e, E_PARAM, "failed to parse message" );
+            ORIG(&e, E_PARAM, "failed to parse message");
         }
         // get a substring containing the rest of the line
         size_t start = (uintptr_t)(pos - dc->buffer.data) + tags.data[which_tag].len;
         dstr_t leftover = dstr_sub(&dc->buffer, start , 0);
         // the version tag must come first
         if(dc->version_found == false && which_tag != 0){
-            ORIG(&e, E_PARAM, "failed to parse message" );
+            ORIG(&e, E_PARAM, "failed to parse message");
         }
         // now do tag-sepcific parsing
         size_t line_len;
@@ -621,7 +620,7 @@ static derr_t decrypter_parse_metadata(decrypter_t* dc){
                         // we might not have all of the line yet
                         return e;;
                     }
-                    ORIG(&e, E_PARAM, "failed to parse version" );
+                    ORIG(&e, E_PARAM, "failed to parse version");
                 }
                 // otherwise we should have a version
                 sub = dstr_sub(&leftover, 0, (uintptr_t)(pos - leftover.data));
@@ -629,7 +628,7 @@ static derr_t decrypter_parse_metadata(decrypter_t* dc){
                 // this already returns E_PARAM on error:
                 PROP(&e, dstr_tou(&sub, &version, 10) );
                 if(version != 1){
-                    ORIG(&e, E_PARAM, "unsupported message version" );
+                    ORIG(&e, E_PARAM, "unsupported message version");
                 }
                 dc->version_found = true;
                 // remove this line from the buffer
@@ -645,7 +644,7 @@ static derr_t decrypter_parse_metadata(decrypter_t* dc){
                         // we might not have all of the line yet
                         return e;;
                     }
-                    ORIG(&e, E_PARAM, "failed to parse R line" );
+                    ORIG(&e, E_PARAM, "failed to parse R line");
                 }
                 // get the hash length
                 sub = dstr_sub(&leftover, 0, (uintptr_t)(pos - leftover.data));
@@ -664,7 +663,7 @@ static derr_t decrypter_parse_metadata(decrypter_t* dc){
                 hash = dstr_sub(&leftover, 0, hash_len);
                 // verify that after the hash we have a colon
                 if(leftover.data[hash_len] != ':'){
-                    ORIG(&e, E_PARAM, "failed to parse R line" );
+                    ORIG(&e, E_PARAM, "failed to parse R line");
                 }
                 // update the leftover string
                 leftover = dstr_sub(&leftover, hash_len + 1, 0);
@@ -676,7 +675,7 @@ static derr_t decrypter_parse_metadata(decrypter_t* dc){
                         // we might not have all of the line yet
                         return e;;
                     }
-                    ORIG(&e, E_PARAM, "failed to parse R line" );
+                    ORIG(&e, E_PARAM, "failed to parse R line");
                 }
                 // get the encrypted key length
                 sub = dstr_sub(&leftover, 0, (uintptr_t)(pos - leftover.data));
@@ -695,7 +694,7 @@ static derr_t decrypter_parse_metadata(decrypter_t* dc){
                 key = dstr_sub(&leftover, 0, key_len);
                 // verify that after the key we have a new line
                 if(leftover.data[key_len] != '\n'){
-                    ORIG(&e, E_PARAM, "failed to parse R line" );
+                    ORIG(&e, E_PARAM, "failed to parse R line");
                 }
                 // at last! we can check if this key was encrypted to us
                 int result;
@@ -723,7 +722,7 @@ static derr_t decrypter_parse_metadata(decrypter_t* dc){
                         // we might not have all of the line yet
                         return e;;
                     }
-                    ORIG(&e, E_PARAM, "failed to parse IV line" );
+                    ORIG(&e, E_PARAM, "failed to parse IV line");
                 }
                 // get the iv length
                 sub = dstr_sub(&leftover, 0, (uintptr_t)(pos - leftover.data));
@@ -742,19 +741,15 @@ static derr_t decrypter_parse_metadata(decrypter_t* dc){
                 iv = dstr_sub(&leftover, 0, iv_len);
                 // verify that after the iv we have a newline
                 if(leftover.data[iv_len] != '\n'){
-                    ORIG(&e, E_PARAM, "failed to parse IV line" );
+                    ORIG(&e, E_PARAM, "failed to parse IV line");
                 }
                 // make sure the iv is exactly as long as we need it to be
                 if(iv_len != CIPHER_IV_LEN){
-                    ORIG(&e, E_PARAM, "found invalid IV" );
+                    ORIG(&e, E_PARAM, "found invalid IV");
                 }
                 // store the iv
                 dc->iv_found = true;
-                e2 = dstr_copy(&iv, &dc->iv);
-                // that should never error
-                CATCH(e2, E_ANY){
-                    RETHROW(&e, &e2, E_INTERNAL);
-                }
+                NOFAIL(&e, E_ANY, dstr_copy(&iv, &dc->iv) );
                 // remove this line from the buffer
                 line_len = (uintptr_t)(leftover.data - dc->buffer.data) + iv_len + 1;
                 dstr_leftshift(&dc->buffer, line_len);
@@ -763,10 +758,10 @@ static derr_t decrypter_parse_metadata(decrypter_t* dc){
             case 3: // M = message begins
                 if(!dc->key_found){
                     // this is a speical error that ditm needs to catch
-                    ORIG(&e, E_NOT4ME, "our key not found" );
+                    ORIG(&e, E_NOT4ME, "our key not found");
                 }
                 if(!dc->iv_found){
-                    ORIG(&e, E_PARAM, "no IV found" );
+                    ORIG(&e, E_PARAM, "no IV found");
                 }
                 // start the decryption
                 const EVP_CIPHER* type = CIPHER_TYPE;
@@ -781,7 +776,7 @@ static derr_t decrypter_parse_metadata(decrypter_t* dc){
                                        biv, dc->kp->pair);
                 if(ret != 1){
                     trace_ssl_errors(&e);
-                    ORIG(&e, E_SSL, "EVP_OpenInit failed" );
+                    ORIG(&e, E_SSL, "EVP_OpenInit failed");
                 }
 
                 dc->message_started = true;
@@ -869,18 +864,11 @@ derr_t decrypter_update(decrypter_t* dc, dstr_t* in, dstr_t* out){
         }
 
         // read from *in to *base64
-        e2 = dstr_append(&dc->base64, &sub);
-        // that should never fail
-        CATCH(e, E_FIXEDSIZE){
-            RETHROW_GO(&e, &e2, E_INTERNAL, fail);
-        }else PROP(&e, e2);
+        NOFAIL_GO(&e, E_ANY, dstr_append(&dc->base64, &sub), fail);
         read += sub.len;
 
         // now push *base64 through the decoder
-        e2 = b642bin(&dc->base64, &dc->buffer);
-        CATCH(e2, E_FIXEDSIZE){
-            RETHROW_GO(&e, &e2, E_INTERNAL, fail);
-        }else PROP(&e, e2);
+        NOFAIL_GO(&e, E_FIXEDSIZE, b642bin(&dc->base64, &dc->buffer), fail);
 
         // are we still parsing metadata?
         if(dc->message_started == false){

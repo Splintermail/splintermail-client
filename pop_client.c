@@ -251,11 +251,8 @@ derr_t pop_client_quit(pop_client_t* pc, bool* status_ok, dstr_t* message){
 static derr_t pop_client_read(pop_client_t* pc){
     derr_t e = E_OK;
     size_t new_text_start = pc->response.len;
-    derr_t e2 = connection_read(&pc->conn, &pc->response, NULL);
     // if we fill the pc->response, that is an internal error
-    CATCH(e2, E_FIXEDSIZE){
-        RETHROW(&e, &e2, E_INTERNAL);
-    }else PROP(&e, e2);
+    NOFAIL(&e, E_FIXEDSIZE, connection_read(&pc->conn, &pc->response, NULL) );
     dstr_t sub = dstr_sub(&pc->response, new_text_start, 0);
     LOG_DEBUG("pop_client read: %x", FD(&sub));
     return e;

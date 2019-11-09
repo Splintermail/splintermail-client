@@ -387,11 +387,7 @@ derr_t maildir_new_rename(maildir_t* mdir, const char* tempname,
 
     // modify the hostname (replace unallowed characters)
     DSTR_VAR(modname, 4*HOSTNAME_COMPONENT_MAX_LEN);
-    derr_t e2 = maildir_mod_hostname(&hostname, &modname);
-    // this should not error under any circumstances
-    CATCH(e2, E_ANY){
-        RETHROW(&e, &e2, E_INTERNAL);
-    }
+    NOFAIL(&e, E_ANY, maildir_mod_hostname(&hostname, &modname) );
 
     // get the time
     time_t tloc;
@@ -403,7 +399,7 @@ derr_t maildir_new_rename(maildir_t* mdir, const char* tempname,
 
     // get new filename
     DSTR_VAR(filename, 255);
-    e2 = FMT(&filename, "%x.%x,%x.%x",
+    derr_t e2 = FMT(&filename, "%x.%x,%x.%x",
                            FI(tloc), FU(length), FD(uid), FD(&modname));
     CATCH(e2, E_FIXEDSIZE){
         RETHROW(&e, &e2, E_FS);

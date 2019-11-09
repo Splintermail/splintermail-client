@@ -751,81 +751,57 @@ derr_t j_to_dstr(json_t json, dstr_t* out){
 derr_t jtoi(json_t json, int* out){
     derr_t e = E_OK;
     NUMBER_CHECK;
-    derr_t e2 = dstr_toi(&json.token, out, 10);
     // if we already validated the number, E_PARAM is our internal failure
-    CATCH(e2, E_PARAM){
-        RETHROW(&e, &e2, E_INTERNAL);
-    }else PROP(&e, e2);
+    NOFAIL(&e, E_PARAM, dstr_toi(&json.token, out, 10) );
     return e;
 }
 derr_t jtou(json_t json, unsigned int* out){
     derr_t e = E_OK;
     NUMBER_CHECK;
-    derr_t e2 = dstr_tou(&json.token, out, 10);
     // if we already validated the number, E_PARAM is our internal failure
-    CATCH(e2, E_PARAM){
-        RETHROW(&e, &e2, E_INTERNAL);
-    }else PROP(&e, e2);
+    NOFAIL(&e, E_PARAM, dstr_tou(&json.token, out, 10) );
     return e;
 }
 derr_t jtol(json_t json, long* out){
     derr_t e = E_OK;
     NUMBER_CHECK;
-    derr_t e2 = dstr_tol(&json.token, out, 10);
     // if we already validated the number, E_PARAM is our internal failure
-    CATCH(e2, E_PARAM){
-        RETHROW(&e, &e2, E_INTERNAL);
-    }else PROP(&e, e2);
+    NOFAIL(&e, E_PARAM, dstr_tol(&json.token, out, 10) );
     return e;
 }
 derr_t jtoul(json_t json, unsigned long* out){
     derr_t e = E_OK;
     NUMBER_CHECK;
-    derr_t e2 = dstr_toul(&json.token, out, 10);
     // if we already validated the number, E_PARAM is our internal failure
-    CATCH(e2, E_PARAM){
-        RETHROW(&e, &e2, E_INTERNAL);
-    }else PROP(&e, e2);
+    NOFAIL(&e, E_PARAM, dstr_toul(&json.token, out, 10) );
     return e;
 }
 derr_t jtoll(json_t json, long long* out){
     derr_t e = E_OK;
     NUMBER_CHECK;
-    derr_t e2 = dstr_toll(&json.token, out, 10);
     // if we already validated the number, E_PARAM is our internal failure
-    CATCH(e2, E_PARAM){
-        RETHROW(&e, &e2, E_INTERNAL);
-    }else PROP(&e, e2);
+    NOFAIL(&e, E_PARAM, dstr_toll(&json.token, out, 10) );
     return e;
 }
 derr_t jtoull(json_t json, unsigned long long* out){
     derr_t e = E_OK;
     NUMBER_CHECK;
-    derr_t e2 = dstr_toull(&json.token, out, 10);
     // if we already validated the number, E_PARAM is our internal failure
-    CATCH(e2, E_PARAM){
-        RETHROW(&e, &e2, E_INTERNAL);
-    }else PROP(&e, e2);
+    NOFAIL(&e, E_PARAM, dstr_toull(&json.token, out, 10) );
     return e;
 }
 derr_t jtof(json_t json, float* out){
     derr_t e = E_OK;
     NUMBER_CHECK;
-    derr_t e2 = dstr_tof(&json.token, out);
     // if we already validated the number, E_PARAM is our internal failure
-    CATCH(e2, E_PARAM){
-        RETHROW(&e, &e2, E_INTERNAL);
-    }else PROP(&e, e2);
+    NOFAIL(&e, E_PARAM, dstr_tof(&json.token, out) );
     return e;
 }
 derr_t jtod(json_t json, double* out){
     derr_t e = E_OK;
     NUMBER_CHECK;
-    derr_t e2 = dstr_tod(&json.token, out);
     // if we already validated the number, E_PARAM is our internal failure
-    CATCH(e2, E_PARAM){
-        RETHROW(&e, &e2, E_INTERNAL);
-    }else PROP(&e, e2);
+    NOFAIL(&e, E_PARAM, dstr_tod(&json.token, out) );
     return e;
 }
 #undef NUMBER_CHECK
