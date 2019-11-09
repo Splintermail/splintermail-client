@@ -195,7 +195,7 @@ static derr_t send_login(imap_client_t *ic){
 
     ie_dstr_t *tag = ic_next_tag(&e, ic);
     imap_cmd_t *cmd = imap_cmd_new(&e, tag, IMAP_CMD_LOGIN, arg);
-    CHECK(e);
+    CHECK(&e);
 
     ic_cmd_t *ic_cmd;
     PROP(&e, ic_cmd_new(&ic_cmd, cmd, login_done, NULL, NULL) );
@@ -258,7 +258,7 @@ static derr_t send_capas(imap_client_t *ic){
     imap_cmd_arg_t arg = {0};
     ie_dstr_t *tag = ic_next_tag(&e, ic);
     imap_cmd_t *cmd = imap_cmd_new(&e, tag, IMAP_CMD_CAPA, arg);
-    CHECK(e);
+    CHECK(&e);
 
     ic_cmd_t *ic_cmd;
     PROP(&e, ic_cmd_new(&ic_cmd, cmd, capas_done, NULL, NULL) );
@@ -318,7 +318,7 @@ static derr_t send_list(imap_client_t *ic){
 
     ie_dstr_t *tag = ic_next_tag(&e, ic);
     imap_cmd_t *cmd = imap_cmd_new(&e, tag, IMAP_CMD_LIST, arg);
-    CHECK(e);
+    CHECK(&e);
 
     ic_cmd_t *ic_cmd;
     PROP_GO(&e, ic_cmd_new(&ic_cmd, cmd, list_done, NULL, NULL), fail);

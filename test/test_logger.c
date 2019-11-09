@@ -127,6 +127,30 @@ done:
     return e;
 }
 
+static derr_t test_nofail(void){
+    derr_t e = E_OK;
+    derr_t e1 = E_OK;
+
+    NOFAIL_GO(&e1, E_VALUE, orig_something(), check_match);
+check_match:
+    if(e1.type != E_INTERNAL){
+        ORIG_GO(&e, E_VALUE, "match failed", done);
+    }
+
+    // reset error
+    DROP_VAR(&e1);
+
+    NOFAIL_GO(&e1, E_PARAM, orig_something(), check_passthru);
+check_passthru:
+    if(e1.type != E_VALUE){
+        ORIG_GO(&e, E_VALUE, "passthru failed", done);
+    }
+
+done:
+    DROP_VAR(&e1);
+    return e;
+}
+
 static derr_t test_merge(void){
     // test the length of the message from orig_something
     derr_t e = orig_something();
@@ -166,6 +190,7 @@ int main(int argc, char **argv){
     PROP_GO(&e, test_prop(), test_fail);
     PROP_GO(&e, test_sequential_prop(), test_fail);
     PROP_GO(&e, test_rethrow(), test_fail);
+    PROP_GO(&e, test_nofail(), test_fail);
     PROP_GO(&e, test_merge(), test_fail);
 
     int exitval;

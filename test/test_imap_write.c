@@ -80,10 +80,7 @@ static derr_t do_cmd_writer_test(const cmd_test_case_t *tc){
 }
 
 #define CHECK_ERROR_AND_RUN_TEST \
-    if(is_error(e)){ \
-        TRACE_PROP(&e); \
-        return e; \
-    } \
+    CHECK(&e); \
     PROP(&e, do_cmd_writer_test(&tc) ); \
     IF_PROP(&e, do_cmd_writer_test(&tc) ){ \
         imap_cmd_free(tc.cmd); \

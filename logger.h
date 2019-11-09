@@ -39,6 +39,9 @@ int pvt_do_log(log_level_t level, const char* format,
              (const fmt_t[]){FI(1), __VA_ARGS__}, \
              sizeof((const fmt_t[]){FI(1), __VA_ARGS__}) / sizeof(fmt_t))
 
+#define FILE_LOC \
+    FILE_BASENAME, __func__, __LINE__
+
 static inline bool is_error(derr_t e){
     return e.type != E_NONE;
 }
@@ -110,15 +113,9 @@ static inline derr_type_t pvt_trace_quiet(
    return value of some command, but also it may be the secondary error context
    e2 in the `else` statement after a CATCH clause which does not trigger. */
 
-#define TRACE_PROP(e) \
-        TRACE((e), \
-            "propagating %x from file %x: %x(), line %x\n",\
-            FD(error_to_dstr((e)->type)), FS(FILE_BASENAME), \
-            FS(__func__), FI(__LINE__) \
-        )
-
 // append code's trace to e and return true if code is an error.
-static inline bool pvt_prop_test(derr_t *e, derr_t code){
+static inline bool pvt_prop(derr_t *e, derr_t code,
+        const char *file, const char *func, int line){
     // always keep the new trace
     if(code.msg.data != NULL){
         if(e->msg.data != NULL){
@@ -136,52 +133,41 @@ static inline bool pvt_prop_test(derr_t *e, derr_t code){
     // always keep the new type (this is different from MERGE)
     e->type = code.type;
 
-    return code.type != E_NONE;
+    if(!is_error(code)) return false;
+
+    TRACE(e, "propagating %x from file %x: %x(), line %x\n",
+        FD(error_to_dstr(e->type)), FS(file), FS(func), FI(line));
+    return true;
 }
 
 // An if statement with useful side-effects
 #define IF_PROP(e, code) \
-    if(pvt_prop_test((e), (code)) && (TRACE_PROP(e)  || true))
+    if(pvt_prop(e, code, FILE_LOC))
 
 // command can also be just a raw error code.
-#define PROP(e, _command) \
-    IF_PROP((e), (_command)){ \
-        return *(e); \
-    }
+#define PROP(e, code) \
+    if(pvt_prop(e, code, FILE_LOC)){ return *(e); }
 
-#define PROP_GO(e, _command, _label) \
-    IF_PROP((e), (_command)){ \
-        goto _label; \
-    } \
+#define PROP_GO(e, code, _label) \
+    if(pvt_prop(e, code, FILE_LOC)){ goto _label; }
 
-#define TRACE_CHECK(e) \
-    TRACE(&(e), \
-        "Handling %x in file %x: %x(), line %x\n", \
-        FD(error_to_dstr((e).type)), FS(FILE_BASENAME), \
-        FS(__func__), FI(__LINE__));
+/* CHECK handles an error that we have ignored until now, useful when
+   transitioning from chunks of code which use the bison error handling
+   strategy to chunks of code which use normal error handling */
+static inline bool pvt_check(derr_t *e,
+        const char *file, const char *func, int line){
+    if(!is_error(*e)) return false;
 
-/* handle an error that we have ignored until now, useful when transitioning
-   from chunks of code which use the bison error handling strategy to chunks
-   of code which use normal error handling */
-#define CHECK(e) { \
-    if(is_error(e)){ \
-        TRACE_CHECK(e); \
-        return e; \
-    } \
+    TRACE(e, "Handling %x in file %x: %x(), line %x\n",
+        FD(error_to_dstr(e->type)), FS(file), FS(func), FI(line));
+    return true;
 }
 
-#define CHECK_GO(e, label) { \
-    if(is_error(e)){ \
-        TRACE_CHECK(e); \
-        goto label; \
-    } \
-}
+#define CHECK(e) \
+    if(pvt_check(e, FILE_LOC)){ return *(e); }
 
-#define TRACE_CATCH(e) \
-    TRACE((e), \
-        "catching %x in file %x: %x(), line %x\n", \
-        FD(error_to_dstr((e)->type)), FS(FILE_BASENAME), \
-        FS(__func__), FI(__LINE__))
+#define CHECK_GO(e, label) \
+    if(pvt_check(e)){ goto label; }
 
 /* CATCH is almost always for checking the secondary error context, e2, to
    do some analysis before dropping it or merging it into the main error
@@ -194,9 +180,17 @@ static inline bool pvt_prop_test(derr_t *e, derr_t code){
    have a clearly defined scope for the CATCH to make decisions about.  Then
    you can choose to DROP the error, or merge it into the main error stack with
    a PROP or a RETHROW. */
+static inline bool pvt_catch(derr_t *e, derr_type_t error_mask,
+        const char *file, const char *func, int line){
+    if(e->type & error_mask){
+        TRACE(e, "catching %x in file %x: %x(), line %x\n",
+                FD(error_to_dstr(e->type)), FS(file), FS(func), FI(line));
+        return true;
+    }
+    return false;
+}
 
-#define CATCH(e, _error_mask) \
-    if(((e).type & (_error_mask)) && (TRACE_CATCH(&(e)) || true))
+#define CATCH(e, error_mask) if(pvt_catch(&(e), error_mask, FILE_LOC))
 
 
 /* RETHROW works like ORIG except it gives context to generic low-level errors
@@ -250,15 +244,35 @@ static inline void pvt_rethrow(derr_t *e, derr_t *e2, derr_type_t newtype,
 }
 
 #define RETHROW(e, _new, _newtype) {\
-    pvt_rethrow((e), (_new), (_newtype), FILE_BASENAME, __func__, __LINE__); \
+    pvt_rethrow((e), (_new), (_newtype), FILE_LOC); \
     return *(e); \
 }
 
 #define RETHROW_GO(e, _new, _newtype, label) {\
-    pvt_rethrow((e), (_new), (_newtype), FILE_BASENAME, __func__, __LINE__); \
+    pvt_rethrow((e), (_new), (_newtype), FILE_LOC); \
     goto label; \
 }
 
+/* NOFAIL will catch errors we have specifically prevented and turn them into
+   E_INTERNAL errors */
+static inline bool pvt_nofail(derr_t *e, derr_type_t mask, derr_t cmd,
+        const char* file, const char* func, int line){
+    // does the error from the command match the mask?
+    if(pvt_catch(&cmd, mask, file, func, line)){
+        // set error to E_INTERNAL
+        pvt_rethrow(e, &cmd, E_INTERNAL, file, func, line);
+        // take error actions
+        return true;
+    }
+    // otherwise, use normal PROP semantics
+    return pvt_prop(e, cmd, file, func, line);
+}
+
+#define NOFAIL(e, error_mask, cmd) \
+    if(pvt_nofail((e), (error_mask), (cmd), FILE_LOC)){ return *(e); }
+
+#define NOFAIL_GO(e, error_mask, cmd, label) \
+    if(pvt_nofail((e), (error_mask), (cmd), FILE_LOC)){ goto label; }
 
 /* MERGE and friends don't do control flow because they are only used when
    gathering errors from multiple threads.
@@ -289,7 +303,7 @@ static inline void pvt_merge_cmd(derr_t *e, derr_t cmd, const char* message,
     }
 }
 #define MERGE_CMD(e, cmd, message) \
-    pvt_merge_cmd((e), (cmd), (message), FILE_BASENAME, __func__, __LINE__)
+    pvt_merge_cmd((e), (cmd), (message), FILE_LOC)
 
 
 static inline void pvt_merge_var(derr_t *e, derr_t *var, const char* message,
@@ -299,7 +313,7 @@ static inline void pvt_merge_var(derr_t *e, derr_t *var, const char* message,
     *var = E_OK;
 }
 #define MERGE_VAR(e, e2, message) \
-    pvt_merge_var((e), (e2), (message), FILE_BASENAME, __func__, __LINE__)
+    pvt_merge_var((e), (e2), (message), FILE_LOC)
 
 
 /* SPLIT effectively duplicates an error object.  It is used in multi-threaded
@@ -320,7 +334,7 @@ static inline derr_t pvt_split(derr_t *orig, const char *file,
     dstr_append_quiet(&out.msg, &orig->msg);
     return out;
 }
-#define SPLIT(e) pvt_split(&(e), FILE_BASENAME, __func__, __LINE__)
+#define SPLIT(e) pvt_split(&(e), FILE_LOC)
 
 /* if you pass an error laterally, you need to reset it without freeing the
    message. It could be done manually but if I have any good ideas later for
