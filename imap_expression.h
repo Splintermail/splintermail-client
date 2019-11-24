@@ -475,6 +475,8 @@ DEF_CONTAINER_OF(ie_list_resp_t, node, jsw_anode_t);
 const void *ie_list_resp_get(const jsw_anode_t *node);
 // cmp does a simple alphanumeric sort
 int ie_list_resp_cmp(const void *a, const void *b);
+// for jsw_afind_ex
+int ie_list_resp_cmp_to_dstr(const void *list_resp, const void *dstr);
 
 typedef struct {
     ie_mailbox_t *m;
@@ -586,6 +588,8 @@ void ie_dstr_free_shell(ie_dstr_t *d);
 ie_mailbox_t *ie_mailbox_new_noninbox(derr_t *e, ie_dstr_t *name);
 ie_mailbox_t *ie_mailbox_new_inbox(derr_t *e);
 void ie_mailbox_free(ie_mailbox_t *m);
+// returns either the mailbox name, or a static dstr of "INBOX"
+const dstr_t *ie_mailbox_name(ie_mailbox_t *m);
 
 // flags, used by APPEND commands, STORE commands, and FLAGS responses
 

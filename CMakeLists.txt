@@ -55,6 +55,7 @@ set(OBJ_TGTS
     imap_read
     hashmap
     imap_maildir
+    imap_dirmgr
     link
     imap_session
     imap_client
@@ -100,7 +101,7 @@ set(TEST_EXE_TGTS
     test_imap_read
     test_imap_write
     test_hashmap
-    test_imap_maildir
+    # test_imap_maildir
     test_loop
     test_queue
     test_tls_engine
@@ -274,7 +275,8 @@ obj_depend_obj(imap_read imap_parse imap_scan common)
 add_dependencies(imap_read_o bison_header)
 obj_depend_obj(imap_write imap_expression common)
 obj_depend_obj(hashmap common)
-obj_depend_obj(imap_maildir hashmap fileops)
+obj_depend_obj(imap_maildir uv_util link hashmap fileops)
+obj_depend_obj(imap_dirmgr imap_maildir jsw_atree)
 obj_depend_obj(imap_session uv_interface common)
 obj_depend_obj(imap_client imap_write common)
 
@@ -286,7 +288,7 @@ target_link_libraries(leak networking)
 target_link_libraries(encrypt_msg crypto opt_parse)
 target_link_libraries(decrypt_msg crypto opt_parse)
 target_link_libraries(olt common fileops opt_parse)
-target_link_libraries(sm_fetch loop tls_engine imap_engine imap_client imap_session hashmap imap_expression imap_maildir jsw_atree)
+target_link_libraries(sm_fetch loop tls_engine imap_engine imap_dirmgr imap_client imap_session hashmap)
 
 # decide if we are building server code
 if("${BUILD_SERVER_CODE}")
@@ -419,7 +421,7 @@ if("${BUILD_TESTS}")
     target_link_libraries(test_imap_read imap_read)
     target_link_libraries(test_imap_write imap_write)
     target_link_libraries(test_hashmap hashmap)
-    target_link_libraries(test_imap_maildir imap_maildir)
+    # target_link_libraries(test_imap_maildir imap_maildir)
     target_link_libraries(test_loop fake_engine networking)
     target_link_libraries(test_queue queue)
     target_link_libraries(test_tls_engine fake_engine)

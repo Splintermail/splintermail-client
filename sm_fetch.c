@@ -11,6 +11,8 @@
 #include "imap_client.h"
 #include "imap_expression_print.h"
 #include "jsw_atree.h"
+#include "imap_utils.h"
+#include "imap_dirmgr.h"
 
 #define KEY "../c/test/files/ssl/good-key.pem"
 #define CERT "../c/test/files/ssl/good-cert.pem"
@@ -31,8 +33,11 @@ typedef struct {
     hashmap_t folders;  // fc_folder_t
     // session
     imap_session_t *s;
-    // maildir root
-    imaildir_t *root;
+    // dirmgr
+    dstr_t path;
+    dirmgr_t dirmgr;
+    // list of accessors for folders we are syncing
+    link_t accessors;
 } fetch_controller_t;
 DEF_CONTAINER_OF(fetch_controller_t, ctrlr_up, imap_controller_up_t);
 
@@ -111,6 +116,8 @@ static void fc_folders(const imap_controller_up_t *ic,
     (void)id;
     (void)fc;
 
+    fc->folders_set = true;
+
     derr_t e = E_OK;
 
     jsw_atrav_t trav;
@@ -126,15 +133,15 @@ static void fc_folders(const imap_controller_up_t *ic,
         }
 
         // build a path to the folder
-        // string_builder_t path = sb_append(&fc->root->path, &buf);
+        // string_builder_t path = sb_append(&SB(FD(&fc->path)), &buf);
 
         DSTR_VAR(buf, 64);
         DROP_CMD( print_list_resp(&buf, list) );
         DROP_CMD( PFMT("%x\n", FD(&buf)) );
     }
 
-    printf("got folder list, exiting\n");
-    loop_close(&loop, E_OK);
+    PROP_GO(&e, dirmgr_sync_folders(&fc->dirmgr, folders), fail);
+
     return;
 
 fail:
@@ -163,11 +170,15 @@ static derr_t fc_init(fetch_controller_t *fc, imap_pipeline_t *p,
     };
 
     fc->folders_set = false;
-    PROP(&e, hashmap_init(&fc->folders) );
 
-    string_builder_t path = SB(FS("/tmp/maildir_root"));
-    dstr_t name = DSTR_LIT("/");
-    PROP_GO(&e, imaildir_new(&fc->root, &path, &name), fail_folders);
+    // allocate for the path
+    PROP(&e, dstr_new(&fc->path, 256) );
+    // right now the path is not configurable
+    PROP_GO(&e, dstr_copy(&DSTR_LIT("/tmp/maildir_root"), &fc->path),
+            fail_path);
+
+    // dirmgr
+    PROP_GO(&e, dirmgr_init(&fc->dirmgr, SB(FD(&fc->path))), fail_path);
 
     // create an initial session
     imap_client_alloc_arg_t arg = (imap_client_alloc_arg_t){
@@ -176,17 +187,17 @@ static derr_t fc_init(fetch_controller_t *fc, imap_pipeline_t *p,
     };
     PROP_GO(&e, imap_session_alloc_connect(&fc->s, fc->pipeline, fc->cli_ctx,
                 client_spec.host, client_spec.service, imap_client_logic_alloc,
-                &arg), fail_root);
+                &arg), fail_dirmgr);
     fc->s->session_destroyed = session_closed;
     fc->s->mgr_data = fc;
     imap_session_start(fc->s);
 
     return e;
 
-fail_root:
-    imaildir_free(fc->root);
-fail_folders:
-    hashmap_free(&fc->folders);
+fail_dirmgr:
+    dirmgr_free(&fc->dirmgr);
+fail_path:
+    dstr_free(&fc->path);
     return e;
 };
 
@@ -194,8 +205,8 @@ static void fc_free(fetch_controller_t *fc){
     /* the controller should not be freed until the loop is closed, which
        should not happen until the session has closed and freed itself, so
        there is no need to free the fc->s at all */
-    imaildir_free(fc->root);
-    hashmap_free(&fc->folders);
+    dirmgr_free(&fc->dirmgr);
+    dstr_free(&fc->path);
 }
 
 

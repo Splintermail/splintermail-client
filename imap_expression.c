@@ -144,6 +144,13 @@ void ie_mailbox_free(ie_mailbox_t *m){
     free(m);
 }
 
+// returns either the mailbox name, or a static dstr of "INBOX"
+const dstr_t *ie_mailbox_name(ie_mailbox_t *m){
+    DSTR_STATIC(inbox, "INBOX");
+    if(m->inbox) return &inbox;
+    return &m->dstr;
+}
+
 // normal flags, used by APPEND command, STORE command, and FLAGS response.
 
 ie_flags_t *ie_flags_new(derr_t *e){
@@ -1412,10 +1419,13 @@ const void *ie_list_resp_get(const jsw_anode_t *node){
 int ie_list_resp_cmp(const void *a, const void *b){
     const ie_list_resp_t *resp_a = a;
     const ie_list_resp_t *resp_b = b;
-    DSTR_STATIC(inbox, "INBOX");
-    const dstr_t *dstr_a = resp_a->m->inbox ? &inbox : &resp_a->m->dstr;
-    const dstr_t *dstr_b = resp_b->m->inbox ? &inbox : &resp_b->m->dstr;
-    return dstr_cmp(dstr_a, dstr_b);
+    return dstr_cmp(ie_mailbox_name(resp_a->m), ie_mailbox_name(resp_b->m));
+}
+
+int ie_list_resp_cmp_to_dstr(const void *list_resp, const void *dstr){
+    const ie_list_resp_t *a = list_resp;
+    const dstr_t *b = dstr;
+    return dstr_cmp(ie_mailbox_name(a->m), b);
 }
 
 ie_status_resp_t *ie_status_resp_new(derr_t *e, ie_mailbox_t *m,

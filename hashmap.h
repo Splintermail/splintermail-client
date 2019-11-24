@@ -45,6 +45,7 @@ hash_elem_t *hashmap_setu(hashmap_t *h, unsigned int key, hash_elem_t *elem);
 // setters which throw errors instead of replacing existing elements.
 derr_t hashmap_sets_unique(hashmap_t *h, const dstr_t *key, hash_elem_t *elem);
 derr_t hashmap_setu_unique(hashmap_t *h, unsigned int key, hash_elem_t *elem);
+/* throws: E_PARAM */
 
 // getters return the found element, if any
 hash_elem_t *hashmap_gets(hashmap_t *h, const dstr_t *key);

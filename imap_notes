@@ -769,6 +769,16 @@ Message sequences:
     In order to optimize for both best-worst-case performance and general
     coolness, I'm choosing option 2: modify jsw_atree to support indexing.
 
+    Update: upon revisiting this, the const time lookups of the first strategy
+    are awfully attractive, especially now that I have done the fun part of the
+    second strategy (adding indexing to the atree).  However, I think there's
+    another layer of complexity that is not being addressed here, which is that
+    the indices need to be generated on a per-view basis.  The following should
+    also be considered:
+      - the cost from the "real" mailbox storage to assigning per-view indices
+      - when do we actually have to update the indices in the view?  EXPUNGE?
+      - the cost of porting updates back to the "real" mailbox from the view
+
 Overall IMAP sequence:
     init loop, tls engine, and imap engine
     loop starts listening for connections
@@ -855,4 +865,5 @@ Question:
       I like the own-thread pros better.  I like the cleaner architecture and
       the event passing between the two won't be a complete rewrite of the imap
       hooks because the higher level logic only needs a few actions (I think).
+
 

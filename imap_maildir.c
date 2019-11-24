@@ -1,6 +1,7 @@
 #include "imap_maildir.h"
 #include "logger.h"
 #include "fileops.h"
+#include "uv_util.h"
 
 // check for "cur" and "new" and "tmp" subdirs, "true" means "all present"
 static derr_t ctn_check(const string_builder_t *path, bool *ret){
@@ -16,107 +17,95 @@ static derr_t ctn_check(const string_builder_t *path, bool *ret){
     return e;
 }
 
-// check each child directory
-static derr_t find_children(const string_builder_t *base, const dstr_t *name,
-                            bool isdir, void *data){
+static derr_t populate_msgs(imaildir_t *m){
     derr_t e = E_OK;
-    // don't care about any non-directories here
-    if(!isdir) return e;
-    // also ignore subdirs named "cur", "tmp", and "new"
-    if(dstr_cmp(name, &DSTR_LIT("cur")) == 0) return e;
-    if(dstr_cmp(name, &DSTR_LIT("tmp")) == 0) return e;
-    if(dstr_cmp(name, &DSTR_LIT("new")) == 0) return e;
-    // dereference argument, the parent maildir
-    imaildir_t *parent = data;
-    // use parent->path explicitly, not via *base
-    (void)base;
-    // mark parent as having inferiors
-    parent->mflags.noinferiors = false;
-    // open the maildir
-    imaildir_t *m;
-    PROP_GO(&e, imaildir_new(&m, &parent->path, name), fail_malloc);
-    // put this child into the parent's hashmap
-    PROP_GO(&e, hashmap_sets_unique(&parent->children, &m->name, &m->h),
-            fail_open);
-
-    return e;
-
-fail_open:
-    imaildir_free(m);
-fail_malloc:
-    free(m);
+    (void)m;
     return e;
 }
 
-derr_t imaildir_new(imaildir_t **maildir, const string_builder_t *path,
-                    const dstr_t *name){
+static void imsg_free(imsg_t *msg){
+    (void)msg;
+}
+
+derr_t imaildir_init(imaildir_t *m, string_builder_t path, accessor_i *acc,
+        dirmgr_i *mgr){
     derr_t e = E_OK;
-    // allocate the pointer
-    imaildir_t *m = malloc(sizeof(*m));
-    *maildir = m;
-    if(!m) ORIG(&e, E_NOMEM, "unable to malloc");
-    // copy the name
-    m->name = (dstr_t){0};
-    PROP_GO(&e, dstr_copy(name, &m->name), fail_malloc);
-    // build path with name
-    m->path = sb_append(path, FD(&m->name));
+
+    // save path
+    m->path = path;
+
     // check for cur/new/tmp folders, and assign /NOSELECT accordingly
     bool ctn_present;
-    PROP_GO(&e, ctn_check(&m->path, &ctn_present), fail_name);
+    PROP(&e, ctn_check(&m->path, &ctn_present) );
     m->mflags = (ie_mflags_t){
-        .selectable = ctn_present ? IE_SELECTABLE_NONE : IE_SELECTABLE_NOSELECT,
+        .selectable=ctn_present ? IE_SELECTABLE_NONE : IE_SELECTABLE_NOSELECT,
     };
-    // init hashmap of messages (we will populate later, after SELECT command)
-    PROP_GO(&e, hashmap_init(&m->msgs), fail_name);
-    // init hashmap of children
-    PROP_GO(&e, hashmap_init(&m->children), fail_msgs);
-    // search for child folders
-    m->mflags.noinferiors = true;
-    PROP_GO(&e, for_each_file_in_dir2(&m->path, find_children, m), fail_chld);
+
+    // initialize lock
+    int ret = uv_rwlock_init(&m->lock);
+    if(ret < 0){
+        TRACE(&e, "uv_rwlock_init: %x\n", FUV(&ret));
+        ORIG(&e, uv_err_type(ret), "error initializing rwlock");
+    }
+
+    // init hashmap of messages
+    PROP_GO(&e, hashmap_init(&m->msgs), fail_rwlock);
+
+    PROP_GO(&e, populate_msgs(m), fail_msgs);
+
     // set other initial values
-    m->refs = 0;
-    m->del_plan = IMDP_DONT_DELETE;
+
     // TODO: UID_VALIDITY
     // m->uid_validity = ???
+
+    m->mgr = mgr;
+
+    // start with one accessor
+    link_init(&m->accessors);
+    link_list_append(&m->accessors, &acc->link);
 
     return e;
 
     hashmap_iter_t i;
-fail_chld:
-    // close all the child maildirs
-    for(i = hashmap_pop_first(&m->children); i.current; hashmap_pop_next(&i)){
-        imaildir_t *m = CONTAINER_OF(i.current, imaildir_t, h);
-        imaildir_free(m);
-    }
-    // then free the hashmap
-    hashmap_free(&m->children);
 fail_msgs:
+    // close all messages
+    for(i = hashmap_pop_first(&m->msgs); i.current; hashmap_pop_next(&i)){
+        imsg_t *msg = CONTAINER_OF(i.current, imsg_t, h);
+        imsg_free(msg);
+    }
     hashmap_free(&m->msgs);
-fail_name:
-    dstr_free(&m->name);
-fail_malloc:
-    free(m);
-    *maildir = NULL;
+fail_rwlock:
+    uv_rwlock_destroy(&m->lock);
     return e;
 }
 
 void imaildir_free(imaildir_t *m){
     if(!m) return;
-    // first free all the children (yay!! free the children!)
     hashmap_iter_t i;
-    for(i = hashmap_pop_first(&m->children); i.current; hashmap_pop_next(&i)){
-        imaildir_t *m = CONTAINER_OF(i.current, imaildir_t, h);
-        imaildir_free(m);
-    }
-    hashmap_free(&m->children);
-    // free all the messages
+    // close all messages
     for(i = hashmap_pop_first(&m->msgs); i.current; hashmap_pop_next(&i)){
-        // TODO: what does this look like?
-        // imsg_close((imsg_t*)i.data);
+        imsg_t *msg = CONTAINER_OF(i.current, imsg_t, h);
+        imsg_free(msg);
     }
     hashmap_free(&m->msgs);
-    // free name
-    dstr_free(&m->name);
-    // free pointer
-    free(m);
+    uv_rwlock_destroy(&m->lock);
+}
+
+void imaildir_register(imaildir_t *m, accessor_i *a){
+    link_list_append(&m->accessors, &a->link);
+}
+
+void imaildir_unregister(imaildir_t *m, accessor_i *a){
+    link_remove(&a->link);
+
+    if(link_list_isempty(&m->accessors) && m->mgr->all_unregistered != NULL){
+        m->mgr->all_unregistered(m->mgr, m);
+    }
+}
+
+void imaildir_force_close(imaildir_t *m){
+    accessor_i *acc, *temp;
+    LINK_FOR_EACH_SAFE(acc, temp, &m->accessors, accessor_i, link){
+        acc->force_close(acc);
+    }
 }

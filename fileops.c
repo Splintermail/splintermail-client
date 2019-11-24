@@ -228,7 +228,7 @@ derr_t rm_rf(const char* path){
     }
     // is path a directory?
     if(S_ISDIR(s.st_mode)){
-        // if so delete it recursivley
+        // if so delete it recursively
         PROP(&e, for_each_file_in_dir(path, rm_rf_hook, NULL) );
         // now delete the directory itself
         ret = rmdir(path);
