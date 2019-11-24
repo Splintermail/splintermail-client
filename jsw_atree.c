@@ -69,13 +69,12 @@ void jsw_ainit ( jsw_atree_t *tree, cmp_f cmp, get_f get)
   tree->size = 0;
 }
 
-jsw_anode_t *jsw_afind ( jsw_atree_t *tree, void *val, size_t *idx )
-{
+jsw_anode_t *jsw_afind_ex ( jsw_atree_t *tree, cmp_f alt_cmp, void *val, size_t *idx ) {
   jsw_anode_t *it = tree->root;
   size_t left_count = 0;
 
   while ( it != &tree->nil ) {
-    int cmp = tree->cmp ( tree->get(it), val );
+    int cmp = alt_cmp ( tree->get(it), val );
 
     if ( cmp == 0 )
       break;
@@ -88,6 +87,11 @@ jsw_anode_t *jsw_afind ( jsw_atree_t *tree, void *val, size_t *idx )
   /* nil.count = 0 */
   if ( idx ) *idx = left_count + it->link[0]->count;
   return it == &tree->nil ? NULL : it;
+}
+
+jsw_anode_t *jsw_afind ( jsw_atree_t *tree, void *val, size_t *idx )
+{
+  return jsw_afind_ex(tree, tree->cmp, val, idx);
 }
 
 void jsw_ainsert ( jsw_atree_t *tree, jsw_anode_t *node )

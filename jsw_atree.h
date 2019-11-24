@@ -57,6 +57,9 @@ jsw_anode_t *jsw_afind ( jsw_atree_t *tree, void *val, size_t *idx );
 void         jsw_ainsert ( jsw_atree_t *tree, jsw_anode_t *node );
 size_t       jsw_asize ( jsw_atree_t *tree );
 
+// find a node with an alternate comparison function (second param will be val)
+jsw_anode_t *jsw_afind_ex ( jsw_atree_t *tree, cmp_f alt_cmp, void *val, size_t *idx );
+
 // remove a node by value, returns the node if the value was found
 jsw_anode_t *jsw_aerase ( jsw_atree_t *tree, const void *val );
 
