@@ -40,6 +40,13 @@ static void worker_process_event(imape_data_t *id, event_t *ev){
         LOG_ERROR("mismatched session!");
     }
 
+    // catch session close events
+    if(ev->ev_type == EV_SESSION_CLOSE){
+        imape_data_onthread_close(id);
+        id->ref_down(ev->session, IMAPE_REF_CLOSE_EVENT);
+        return;
+    }
+
     /* Note: we check id->data_state == DATA_STATE_CLOSED in all cases.  The
        error handling is very similar to what the main imape_t thread does,
        except that the imap_engine's checks can only guarantee protection
@@ -48,13 +55,6 @@ static void worker_process_event(imape_data_t *id, event_t *ev){
        is the only place where onthread_close is ever called. */
     if(id->data_state == DATA_STATE_CLOSED){
         ev->returner(ev);
-        return;
-    }
-
-    // catch session close events
-    if(ev->ev_type == EV_SESSION_CLOSE){
-        imape_data_onthread_close(id);
-        id->ref_down(ev->session, IMAPE_REF_CLOSE_EVENT);
         return;
     }
 
