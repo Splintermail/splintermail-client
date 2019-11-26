@@ -680,7 +680,10 @@ static derr_t ic_set_goal(imap_client_t *ic, event_t *ev){
             PROP(&e, send_list(ic) );
             break;
         case IMAP_CLIENT_CMD_SET_FOLDER:
-            ORIG_GO(&e, E_VALUE, "can't handle that command yet!", fail);
+            // for now just pretend to be uptodate
+            PFMT("setting folder to %x\n", FD(&ev->buffer));
+            ic->controller->uptodate(ic->controller, ic->id->session);
+            break;
         case IMAP_CLIENT_CMD_CLOSE:
             ORIG_GO(&e, E_VALUE, "can't handle that command yet!", fail);
         default:

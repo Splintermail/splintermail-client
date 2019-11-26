@@ -30,7 +30,7 @@ typedef struct {
     imap_controller_up_t ctrlr_up;
     // user-wide state
     bool folders_set;
-    hashmap_t folders;  // fc_folder_t
+    link_t folders;  // fc_folder_t->link
     // session
     imap_session_t *s;
     // dirmgr
@@ -60,10 +60,77 @@ static cmd_event_t *fc_new_cmd_event(void){
 
 typedef struct {
     dstr_t name;
-    bool toggle;
-    hash_elem_t *h;
+    link_t link;  // fetch_controller_t->folders
 } fc_folder_t;
-DEF_CONTAINER_OF(fc_folder_t, h, hash_elem_t);
+DEF_CONTAINER_OF(fc_folder_t, link, link_t);
+
+static derr_t fc_folder_new(fc_folder_t **out, const dstr_t *name){
+    derr_t e = E_OK;
+
+    *out = NULL;
+
+    fc_folder_t *f = malloc(sizeof(*f));
+    if(f == NULL){
+        ORIG(&e, E_NOMEM, "no mem");
+    }
+    *f = (fc_folder_t){0};
+
+    // duplicate the name
+    PROP_GO(&e, dstr_new(&f->name, name->len), fail_malloc);
+    PROP_GO(&e, dstr_copy(name, &f->name), fail_malloc);
+
+    link_init(&f->link);
+
+    *out = f;
+
+    return e;
+
+fail_malloc:
+    free(f);
+    return e;
+}
+
+static void fc_folder_free(fc_folder_t *f){
+    if(f == NULL) return;
+    dstr_free(&f->name);
+    free(f);
+}
+
+/* pop a folder name from the list of folders to sync, and prepare a SET_FOLDER
+   command event to send to the client */
+static derr_t sync_next_folder(fetch_controller_t *fc){
+    derr_t e = E_OK;
+
+    link_t *link = link_list_pop_first(&fc->folders);
+    if(!link){
+        // done syncing folders
+        loop_close(&loop, e);
+        PASSED(e);
+        return e;
+    }
+
+    fc_folder_t *f = CONTAINER_OF(link, fc_folder_t, link);
+
+    // get a command event
+    cmd_event_t *cmd_ev = fc_new_cmd_event();
+    if(!cmd_ev) ORIG_GO(&e, E_NOMEM, "no memory", cu_folder);
+    cmd_ev->ev.session = &fc->s->session;
+    cmd_ev->cmd_type = IMAP_CLIENT_CMD_SET_FOLDER;
+
+    // steal the allocated name from the fc_folder_t, put it in the command
+    cmd_ev->ev.buffer = f->name;
+    f->name = (dstr_t){0};
+
+    // send the command event
+    imap_session_send_command(fc->s, &cmd_ev->ev);
+
+cu_folder:
+    fc_folder_free(f);
+
+    return e;
+}
+
+// imap_controller_up_t interface
 
 static void fc_logged_in(const imap_controller_up_t *ic,
         session_t *session){
@@ -96,9 +163,18 @@ fail:
 static void fc_uptodate(const imap_controller_up_t *ic,
         session_t *session){
     fetch_controller_t *fc = CONTAINER_OF(ic, fetch_controller_t, ctrlr_up);
-    imape_data_t *id = session->id;
-    (void)id;
-    (void)fc;
+    (void)session;
+
+    derr_t e = E_OK;
+
+    // get the first folder for a client to sync
+    PROP_GO(&e, sync_next_folder(fc), fail);
+
+    return;
+
+fail:
+    loop_close(&loop, e);
+    PASSED(e);
 }
 
 static void fc_msg_recvd(const imap_controller_up_t *ic,
@@ -132,15 +208,16 @@ static void fc_folders(const imap_controller_up_t *ic,
             ORIG_GO(&e, E_RESPONSE, "invalid folder separator", fail);
         }
 
-        // build a path to the folder
-        // string_builder_t path = sb_append(&SB(FD(&fc->path)), &buf);
-
-        DSTR_VAR(buf, 64);
-        DROP_CMD( print_list_resp(&buf, list) );
-        DROP_CMD( PFMT("%x\n", FD(&buf)) );
+        // store the folder name in our list of folders
+        fc_folder_t *f;
+        PROP_GO(&e, fc_folder_new(&f, ie_mailbox_name(list->m)), fail);
+        link_list_append(&fc->folders, &f->link);
     }
 
     PROP_GO(&e, dirmgr_sync_folders(&fc->dirmgr, folders), fail);
+
+    // get the first folder for a client to sync
+    PROP_GO(&e, sync_next_folder(fc), fail);
 
     return;
 
@@ -151,9 +228,9 @@ fail:
 
 static void session_closed(imap_session_t *session, derr_t e){
     (void)session;
-    DUMP(e);
     printf("session closed, exiting\n");
-    loop_close(&loop, E_OK);
+    loop_close(&loop, e);
+    PASSED(e);
 }
 
 static derr_t fc_init(fetch_controller_t *fc, imap_pipeline_t *p,
@@ -170,6 +247,7 @@ static derr_t fc_init(fetch_controller_t *fc, imap_pipeline_t *p,
     };
 
     fc->folders_set = false;
+    link_init(&fc->folders);
 
     // allocate for the path
     PROP(&e, dstr_new(&fc->path, 256) );
@@ -202,6 +280,12 @@ fail_path:
 };
 
 static void fc_free(fetch_controller_t *fc){
+    // empty the folder list
+    while(!link_list_isempty(&fc->folders)){
+        link_t *link = link_list_pop_first(&fc->folders);
+        fc_folder_t *f = CONTAINER_OF(link, fc_folder_t, link);
+        fc_folder_free(f);
+    }
     /* the controller should not be freed until the loop is closed, which
        should not happen until the session has closed and freed itself, so
        there is no need to free the fc->s at all */

@@ -1119,10 +1119,10 @@ derr_t loop_run(loop_t *loop){
     // did UV exit with an error?
     if(ret < 0){
         TRACE(&e, "uv_run: %x\n", FUV(&ret));
-        TRACE_ORIG(&e, uv_err_type(ret), "loop exited with error");
+        TRACE_ORIG(&e, uv_err_type(ret), "uv_run error");
     }
     // Did our code exit with an error?
-    MERGE_VAR(&e, &loop->error, "loop internal closing error");
+    MERGE_VAR(&e, &loop->error, "loop_run error");
     return e;
 }
 
