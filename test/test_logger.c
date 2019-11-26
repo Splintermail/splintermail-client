@@ -180,6 +180,50 @@ done:
     return e;
 }
 
+// this test is only useful when run under valgrind
+static derr_t test_merge_noleak(void){
+    // merge two errors, then free
+    {
+        derr_t e = orig_something();
+        MERGE_CMD(&e, orig_something(), "merge_cmd 2");
+        DROP_VAR(&e);
+    }
+    // same thing using MERGE_VAR
+    {
+        derr_t e1 = orig_something();
+        derr_t e2 = orig_something();
+        MERGE_VAR(&e1, &e2, "merge_var 2");
+        DROP_VAR(&e1);
+    }
+    // merge into E_OK, then free
+    {
+        derr_t e = E_OK;
+        MERGE_CMD(&e, orig_something(), "merge_cmd 2");
+        DROP_VAR(&e);
+    }
+    // same thing using MERGE_VAR
+    {
+        derr_t e1 = E_OK;
+        derr_t e2 = orig_something();
+        MERGE_VAR(&e1, &e2, "merge_var 2");
+        DROP_VAR(&e1);
+    }
+    // merge E_OK into an error, then free
+    {
+        derr_t e = orig_something();
+        MERGE_CMD(&e, E_OK, "merge_cmd 2");
+        DROP_VAR(&e);
+    }
+    // same thing using MERGE_VAR
+    {
+        derr_t e1 = orig_something();
+        derr_t e2 = E_OK;
+        MERGE_VAR(&e1, &e2, "merge_var 2");
+        DROP_VAR(&e1);
+    }
+    return E_OK;
+}
+
 
 int main(int argc, char **argv){
     derr_t e = E_OK;
@@ -192,6 +236,7 @@ int main(int argc, char **argv){
     PROP_GO(&e, test_rethrow(), test_fail);
     PROP_GO(&e, test_nofail(), test_fail);
     PROP_GO(&e, test_merge(), test_fail);
+    PROP_GO(&e, test_merge_noleak(), test_fail);
 
     int exitval;
 test_fail:

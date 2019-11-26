@@ -290,6 +290,13 @@ static inline void pvt_merge_cmd(derr_t *e, derr_t cmd, const char* message,
     // if e has no message, just use the new one
     if(e->msg.data == NULL){
         e->msg = cmd.msg;
+        if(e->msg.data != NULL){
+            // if the new one is non-NULL, extend it with some context
+            TRACE(e, "merging %x from %x at file %x: %x(), line %x\n",
+                FD(error_to_dstr(cmd.type)), FS(message), FS(file),
+                FS(func), FI(line));
+        }
+
     }else{
         // otherwise, embed the new message into the old one
         if(is_error(cmd) || cmd.msg.data != NULL){
