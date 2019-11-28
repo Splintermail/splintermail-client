@@ -25,15 +25,35 @@
 
 */
 typedef enum {
-    PREGREET = 0,
-    PRECAPA,
-    PREAUTH,
-    AUTHENTICATED,  // imap rfc "authenticated" state
-    LISTING,
-    PRESELECT,
-    SELECTED,       // imap rfc "selected" state
+    // general states
+    PREGREET = 0,   /* before receiving the greeting */
+    PRECAPA,        /* if you receive a greeting with no capabilities */
+    PREAUTH,        /* after login */
+    AUTHENTICATED,  /* imap rfc "authenticated" state */
     PRECLOSE,
+
+    // states for LIST command
+    LISTING,        /* after sending LIST, before receiving response */
+
+    // states for SET_FOLDER command
+    SELECTING,      /* after sending SELECT, before receiving response */
+    SELECTED,       /* imap rfc "selected" state */
+
 } imap_client_state_t;
+
+// any_of checks if a value is in a given list of enum values
+static inline bool any_of(int val, const int *list, size_t list_len){
+    for(size_t i = 0; i < list_len; i++){
+        if(val == list[i]){
+            return true;
+        }
+    }
+    return false;
+}
+// ANY_OF is a macro for using any_of in a sane way
+#define ANY_OF(val, ...) \
+    any_of(val, (const int[]){__VA_ARGS__}, \
+        sizeof((const int[]){__VA_ARGS__}) / sizeof(int))
 
 struct imap_client_t;
 typedef struct imap_client_t imap_client_t;
@@ -68,6 +88,36 @@ typedef enum {
 } ic_goal_t;
 static const dstr_t *goal_to_dstr(ic_goal_t goal);
 
+// we don't need the full ie_flags_t, we just need to know about a subset
+typedef struct {
+    bool answered:1;
+    bool flagged:1;
+    bool deleted:1;
+    bool seen:1;
+    bool draft:1;
+} supported_flags_t;
+
+// we don't need the full ie_pflags_t, we just need to know about a subset
+typedef struct {
+    bool answered:1;
+    bool flagged:1;
+    bool deleted:1;
+    bool seen:1;
+    bool draft:1;
+    bool asterisk:1;  // the "\*" flag
+} supported_pflags_t;
+
+typedef struct {
+    // responses which may come in between SELECT command and OK response
+    supported_flags_t supp_flags;
+    supported_pflags_t supp_pflags;
+    unsigned int uidvalidity;
+    unsigned int uidnext;
+    unsigned int unseen;
+    unsigned int exists;
+    unsigned int recent;
+} folder_sync_t;
+
 struct imap_client_t {
     // the imap_logic_t is exposed to the imape_data_t
     imap_logic_t logic;
@@ -87,6 +137,8 @@ struct imap_client_t {
     link_t unresponded;  // ic_cmd_t->link
     // which folder to be syncing
     dstr_t folder;
+    // the state of syncing that folder
+    folder_sync_t sync;
     // general IMAP state
     unsigned int next_tag;
     imap_client_state_t imap_state;
@@ -97,6 +149,11 @@ struct imap_client_t {
 };
 DEF_CONTAINER_OF(imap_client_t, logic, imap_logic_t)
 DEF_CONTAINER_OF(imap_client_t, write_qcb, queue_cb_t)
+
+static void folder_sync_free(folder_sync_t *sync){
+    // zeroize everything
+    *sync = (folder_sync_t){0};
+}
 
 static derr_t ic_cmd_new(ic_cmd_t **out, imap_cmd_t *cmd, cmd_done_t ok,
         cmd_done_t no, cmd_done_t bad){
@@ -308,11 +365,16 @@ static derr_t list_resp(imap_client_t *ic, ie_list_resp_t *list){
 static derr_t send_list(imap_client_t *ic){
     derr_t e = E_OK;
 
+    if(ic->imap_state != AUTHENTICATED){
+        ORIG(&e, E_INTERNAL,
+                "arrived at send_list out of AUTHENTICATED state");
+    }
+
     ic->imap_state = LISTING;
 
     // issue the list command
-    ie_dstr_t *slash = ie_dstr_new(&e, &DSTR_LIT(""), KEEP_RAW);
-    ie_mailbox_t *ref_name = ie_mailbox_new_noninbox(&e, slash);
+    ie_dstr_t *name = ie_dstr_new(&e, &DSTR_LIT(""), KEEP_RAW);
+    ie_mailbox_t *ref_name = ie_mailbox_new_noninbox(&e, name);
     ie_dstr_t *pattern = ie_dstr_new(&e, &DSTR_LIT("*"), KEEP_RAW);
     imap_cmd_arg_t arg = { .list=ie_list_cmd_new(&e, ref_name, pattern) };
 
@@ -322,6 +384,147 @@ static derr_t send_list(imap_client_t *ic){
 
     ic_cmd_t *ic_cmd;
     PROP_GO(&e, ic_cmd_new(&ic_cmd, cmd, list_done, NULL, NULL), fail);
+
+    // add to unwritten commands
+    link_list_append(&ic->unwritten, &ic_cmd->link);
+
+    return e;
+
+fail:
+    imap_cmd_free(cmd);
+    return e;
+}
+
+static derr_t select_done(imap_client_t *ic, imap_cmd_t *cmd,
+        const ie_st_resp_t *st){
+    (void)cmd;
+    (void)st;
+    derr_t e = E_OK;
+
+    if(ic->imap_state != SELECTING){
+        ORIG(&e, E_INTERNAL, "arrived at select_done out of SELECTING state");
+    }
+
+    if(ic->goal != GOAL_SYNC){
+        ORIG(&e, E_INTERNAL, "arrived at select_done without GOAL_SYNC");
+    }
+
+    ic->imap_state = SELECTED;
+
+    ORIG(&e, E_VALUE, "not sure what to do next");
+    // TODO: do something here
+
+    return e;
+}
+
+static derr_t select_flags(imap_client_t *ic, const ie_flags_t *flags){
+    derr_t e = E_OK;
+
+    if(ic->sync.supp_flags.answered || ic->sync.supp_flags.flagged
+            || ic->sync.supp_flags.deleted || ic->sync.supp_flags.seen
+            || ic->sync.supp_flags.draft){
+        ORIG(&e, E_INTERNAL, "got FLAGS more than once");
+    }
+
+    ic->sync.supp_flags.answered = flags->answered;
+    ic->sync.supp_flags.flagged = flags->flagged;
+    ic->sync.supp_flags.deleted = flags->deleted;
+    ic->sync.supp_flags.seen = flags->seen;
+    ic->sync.supp_flags.draft = flags->draft;
+
+    return e;
+}
+static derr_t select_pflags(imap_client_t *ic, const ie_pflags_t *pflags){
+    derr_t e = E_OK;
+
+    if(ic->sync.supp_pflags.answered || ic->sync.supp_pflags.flagged
+            || ic->sync.supp_pflags.deleted || ic->sync.supp_pflags.seen
+            || ic->sync.supp_pflags.draft || ic->sync.supp_pflags.asterisk){
+        ORIG(&e, E_INTERNAL, "got PFLAGS more than once");
+    }
+
+    ic->sync.supp_pflags.answered = pflags->answered;
+    ic->sync.supp_pflags.flagged = pflags->flagged;
+    ic->sync.supp_pflags.deleted = pflags->deleted;
+    ic->sync.supp_pflags.seen = pflags->seen;
+    ic->sync.supp_pflags.draft = pflags->draft;
+    ic->sync.supp_pflags.asterisk = pflags->asterisk;
+
+    return e;
+}
+static derr_t select_exists(imap_client_t *ic, unsigned int num){
+    derr_t e = E_OK;
+
+    if(ic->sync.exists != 0){
+        ORIG(&e, E_INTERNAL, "got EXISTS more than once");
+    }
+
+    ic->sync.exists = num;
+    return e;
+}
+static derr_t select_recent(imap_client_t *ic, unsigned int num){
+    derr_t e = E_OK;
+
+    if(ic->sync.recent != 0){
+        ORIG(&e, E_INTERNAL, "got RECENT more than once");
+    }
+
+    ic->sync.recent = num;
+    return e;
+}
+static derr_t select_uidnext(imap_client_t *ic, unsigned int num){
+    derr_t e = E_OK;
+
+    if(ic->sync.uidnext != 0){
+        ORIG(&e, E_INTERNAL, "got UIDNEXT more than once");
+    }
+
+    ic->sync.uidnext = num;
+    return e;
+}
+static derr_t select_uidvalidity(imap_client_t *ic, unsigned int num){
+    derr_t e = E_OK;
+    if(ic->sync.uidvalidity != 0){
+        ORIG(&e, E_INTERNAL, "got UIDVLD more than once");
+    }
+
+    ic->sync.uidvalidity = num;
+    return e;
+}
+static derr_t select_unseen(imap_client_t *ic, unsigned int num){
+    derr_t e = E_OK;
+
+    if(ic->sync.unseen != 0){
+        ORIG(&e, E_INTERNAL, "got UNSEEN more than once");
+    }
+
+    ic->sync.unseen = num;
+    return e;
+}
+
+static derr_t send_select(imap_client_t *ic){
+    derr_t e = E_OK;
+
+    if(ic->imap_state != AUTHENTICATED){
+        ORIG(&e, E_INTERNAL,
+                "arrived at send_select out of AUTHENTICATED state");
+    }
+
+    ic->imap_state = SELECTING;
+
+    // prepare the folder_sync_state
+
+
+    // issue the select command
+    ie_dstr_t *folder = ie_dstr_new(&e, &ic->folder, KEEP_RAW);
+    imap_cmd_arg_t arg = { .select=ie_mailbox_new_noninbox(&e, folder) };
+
+    ie_dstr_t *tag = ic_next_tag(&e, ic);
+    imap_cmd_t *cmd = imap_cmd_new(&e, tag, IMAP_CMD_SELECT, arg);
+    CHECK(&e);
+
+    ic_cmd_t *ic_cmd;
+    PROP_GO(&e, ic_cmd_new(&ic_cmd, cmd, select_done, NULL, NULL), fail);
 
     // add to unwritten commands
     link_list_append(&ic->unwritten, &ic_cmd->link);
@@ -349,22 +552,72 @@ static derr_t untagged_ok(imap_client_t *ic, const ie_st_code_t *code,
         return e;
     }
 
-    // handle codes which are independent of state
-    if(code != NULL && code->type == IE_ST_CODE_ALERT){
-        LOG_ERROR("server ALERT message: %x\n", FD(text));
-        return e;
+    if(code != NULL){
+        switch(code->type){
+            // handle codes which are independent of state
+            case IE_ST_CODE_ALERT:
+                LOG_ERROR("server ALERT message: %x\n", FD(text));
+                return e;
+
+            // handle codes which are specific to SELECTING state
+            case IE_ST_CODE_UIDNEXT:
+                if(ic->imap_state != SELECTING){
+                    ORIG(&e, E_INTERNAL, "got UIDNEXT outside of SELECTING");
+                }
+                select_uidnext(ic, code->arg.num);
+                return e;
+            case IE_ST_CODE_UIDVLD:
+                if(ic->imap_state != SELECTING){
+                    ORIG(&e, E_INTERNAL, "got UIDVLD outside of SELECTING");
+                }
+                select_uidvalidity(ic, code->arg.num);
+                return e;
+            case IE_ST_CODE_UNSEEN:
+                if(ic->imap_state != SELECTING){
+                    ORIG(&e, E_INTERNAL, "got UNSEEN outside of SELECTING");
+                }
+                select_unseen(ic, code->arg.num);
+                return e;
+            case IE_ST_CODE_PERMFLAGS:
+                if(ic->imap_state != SELECTING){
+                    ORIG(&e, E_INTERNAL, "got PERMFLAGS outside of SELECTING");
+                }
+                select_pflags(ic, code->arg.pflags);
+                return e;
+
+            default:
+                break;
+        }
     }
+    if(code != NULL && code->type == IE_ST_CODE_ALERT){
+    }
+
+
 
     switch(ic->imap_state){
         case PREGREET: /* not possible, already handled */
             break;
+
+        // states which currently can't handle untagged messages at all
+        /* TODO: this should not throw an error eventually, but in development
+                 it will be helpful to not silently drop them */
         case PRECAPA:
         case PREAUTH:
         case AUTHENTICATED:
-        case LISTING:
-        case PRESELECT:
-        case SELECTED:
         case PRECLOSE:
+        case LISTING:
+            TRACE(&e, "unhandled * OK status message\n");
+            ORIG(&e, E_INTERNAL, "unhandled message");
+            break;
+
+        case SELECTING:
+
+            break;
+
+        // TODO: this *certainly* should not throw an error
+        case SELECTED:
+            TRACE(&e, "unhandled * OK status message\n");
+            ORIG(&e, E_INTERNAL, "unhandled message");
             break;
     }
 
@@ -446,18 +699,26 @@ static derr_t status_type(imap_client_t *ic, const ie_st_resp_t *st){
             case IE_ST_NO:
                 // a warning about a command
                 // TODO: handle this
+                TRACE(&e, "unhandled * NO status message\n");
+                ORIG(&e, E_INTERNAL, "unhandled message");
                 break;
             case IE_ST_BAD:
                 // an error not from a command, or not sure from which command
                 // TODO: handle this
+                TRACE(&e, "unhandled * BAD status message\n");
+                ORIG(&e, E_INTERNAL, "unhandled message");
                 break;
             case IE_ST_PREAUTH:
                 // only allowed as a greeting
                 // TODO: handle this
+                TRACE(&e, "unhandled * PREAUTH status message\n");
+                ORIG(&e, E_INTERNAL, "unhandled message");
                 break;
             case IE_ST_BYE:
                 // we are logging out or server is shutting down.
                 // TODO: handle this
+                TRACE(&e, "unhandled * BYE status message\n");
+                ORIG(&e, E_INTERNAL, "unhandled message");
                 break;
             default:
                 TRACE(&e, "invalid status of unknown type %x\n", FU(st->status));
@@ -486,7 +747,7 @@ static void resp_cb(void *cb_data, imap_resp_t *resp){
                 break;
             }
         }
-        LOG_INFO("recv: %x", FD(&buf));
+        LOG_DEBUG("read: %x", FD(&buf));
     }
 
     // wrap the response
@@ -604,6 +865,7 @@ static derr_t try_read(imap_client_t *ic){
         ORIG_GO(&e, E_CONN, "Received unexpected EOF", return_read);
     }
 
+    LOG_INFO("recv: %x", FD(&ev->buffer));
     PROP_GO(&e, imap_read(&ic->reader, &ev->buffer), return_read);
 
 return_read:
@@ -615,7 +877,8 @@ return_read:
 
 static derr_t process_one_unhandled(imap_client_t *ic, ic_resp_t *ic_resp){
     derr_t e = E_OK;
-    (void)ic;
+
+    imap_resp_arg_t stolen;
 
     switch(ic_resp->resp->type){
         case IMAP_RESP_STATUS_TYPE:
@@ -625,20 +888,41 @@ static derr_t process_one_unhandled(imap_client_t *ic, ic_resp_t *ic_resp){
             PROP_GO(&e, check_capas(ic_resp->resp->arg.capa), cu);
             break;
         case IMAP_RESP_LIST:
-            {
-                ie_list_resp_t *list = ic_resp->resp->arg.list;
-                ic_resp->resp->arg.list = NULL;
-                // list_resp() is responsible for passing or freeing the resp
-                PROP_GO(&e, list_resp(ic, list), cu);
-            }
+            stolen.list = ic_resp->resp->arg.list;
+            ic_resp->resp->arg.list = NULL;
+            // list_resp() is responsible for passing or freeing the resp
+            PROP_GO(&e, list_resp(ic, stolen.list), cu);
             break;
-        case IMAP_RESP_LSUB: ORIG_GO(&e, E_VALUE, "got LSUB response\n", cu);
-        case IMAP_RESP_STATUS: ORIG_GO(&e, E_VALUE, "got STATUS response\n", cu);
-        case IMAP_RESP_FLAGS: ORIG_GO(&e, E_VALUE, "got FLAGS response\n", cu);
-        case IMAP_RESP_SEARCH: ORIG_GO(&e, E_VALUE, "got SEARCH response\n", cu);
-        case IMAP_RESP_EXISTS: ORIG_GO(&e, E_VALUE, "got EXISTS response\n", cu);
-        case IMAP_RESP_EXPUNGE: ORIG_GO(&e, E_VALUE, "got EXPUNGE response\n", cu);
-        case IMAP_RESP_RECENT: ORIG_GO(&e, E_VALUE, "got RECENT response\n", cu);
+        case IMAP_RESP_LSUB:
+            ORIG_GO(&e, E_VALUE, "got LSUB response\n", cu);
+            break;
+        case IMAP_RESP_STATUS:
+            ORIG_GO(&e, E_VALUE, "got STATUS response\n", cu);
+            break;
+        case IMAP_RESP_FLAGS:
+            if(ic->imap_state != SELECTING){
+                ORIG_GO(&e, E_VALUE, "got FLAGS outside of SELECTING\n", cu);
+            }
+            PROP_GO(&e, select_flags(ic, ic_resp->resp->arg.flags), cu);
+            break;
+        case IMAP_RESP_SEARCH:
+            ORIG_GO(&e, E_VALUE, "got SEARCH response\n", cu);
+            break;
+        case IMAP_RESP_EXISTS:
+            if(ic->imap_state != SELECTING){
+                ORIG_GO(&e, E_VALUE, "got EXISTS outside of SELECTING\n", cu);
+            }
+            PROP_GO(&e, select_exists(ic, ic_resp->resp->arg.exists), cu);
+            break;
+        case IMAP_RESP_EXPUNGE:
+            ORIG_GO(&e, E_VALUE, "got EXPUNGE response\n", cu);
+            break;
+        case IMAP_RESP_RECENT:
+            if(ic->imap_state != SELECTING){
+                ORIG_GO(&e, E_VALUE, "got RECENT outside of SELECTING\n", cu);
+            }
+            PROP_GO(&e, select_recent(ic, ic_resp->resp->arg.recent), cu);
+            break;
         case IMAP_RESP_FETCH: ORIG_GO(&e, E_VALUE, "got FETCH response\n", cu);
         default:
             TRACE(&e, "got response of unknown type %x\n",
@@ -677,12 +961,13 @@ static derr_t ic_set_goal(imap_client_t *ic, event_t *ev){
     switch(cmd_ev->cmd_type){
         case IMAP_CLIENT_CMD_LIST_FOLDERS:
             ic->goal = GOAL_LIST;
-            PROP(&e, send_list(ic) );
+            PROP_GO(&e, send_list(ic), fail);
             break;
         case IMAP_CLIENT_CMD_SET_FOLDER:
-            // for now just pretend to be uptodate
-            PFMT("setting folder to %x\n", FD(&ev->buffer));
-            ic->controller->uptodate(ic->controller, ic->id->session);
+            PFMT("selecting %x\n", FD(&ev->buffer));
+            ic->goal = GOAL_SYNC;
+            PROP_GO(&e, dstr_copy(&ev->buffer, &ic->folder), fail);
+            PROP_GO(&e, send_select(ic), fail);
             break;
         case IMAP_CLIENT_CMD_CLOSE:
             ORIG_GO(&e, E_VALUE, "can't handle that command yet!", fail);
@@ -811,6 +1096,9 @@ static void imap_client_free(imap_logic_t *logic){
         ie_list_resp_free(list);
     }
 
+    // free the folder_sync substate
+    folder_sync_free(&ic->sync);
+
     imap_reader_free(&ic->reader);
 
     dstr_free(&ic->folder);
@@ -868,30 +1156,30 @@ fail_malloc:
     return e;
 }
 
+DSTR_STATIC(unknown_dstr, "unknown");
+
 DSTR_STATIC(GOAL_NONE_dstr, "NONE");
 DSTR_STATIC(GOAL_LOGIN_dstr, "LOGIN");
 DSTR_STATIC(GOAL_LIST_dstr, "LIST");
 DSTR_STATIC(GOAL_SYNC_dstr, "SYNC");
-DSTR_STATIC(GOAL_unknown_dstr, "unknown");
 static const dstr_t *goal_to_dstr(ic_goal_t goal){
     switch(goal){
         case GOAL_NONE: return &GOAL_NONE_dstr;
         case GOAL_LOGIN: return &GOAL_LOGIN_dstr;
         case GOAL_LIST: return &GOAL_LIST_dstr;
         case GOAL_SYNC: return &GOAL_SYNC_dstr;
-        default: return &GOAL_unknown_dstr;
     }
+    return &unknown_dstr;
 }
 
 DSTR_STATIC(CMD_LIST_FOLDERS_dstr, "LIST_FOLDERS");
 DSTR_STATIC(CMD_SET_FOLDER_dstr, "SET_FOLDER");
 DSTR_STATIC(CMD_CLOSE_dstr, "CLOSE");
-DSTR_STATIC(CMD_unknown_dstr, "CLOSE");
 const dstr_t *imap_client_command_type_to_dstr(imap_client_command_type_t t){
     switch(t){
         case IMAP_CLIENT_CMD_LIST_FOLDERS: return &CMD_LIST_FOLDERS_dstr;
         case IMAP_CLIENT_CMD_SET_FOLDER: return &CMD_SET_FOLDER_dstr;
         case IMAP_CLIENT_CMD_CLOSE: return &CMD_CLOSE_dstr;
-        default: return &CMD_unknown_dstr;
     }
+    return &unknown_dstr;
 }

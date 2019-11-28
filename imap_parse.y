@@ -890,9 +890,9 @@ st_code_: ALERT      { $$ = ie_st_code_simple(E, IE_ST_CODE_ALERT); }
         | READ_ONLY  { $$ = ie_st_code_simple(E, IE_ST_CODE_READ_ONLY); }
         | READ_WRITE { $$ = ie_st_code_simple(E, IE_ST_CODE_READ_WRITE); }
         | TRYCREATE  { $$ = ie_st_code_simple(E, IE_ST_CODE_TRYCREATE); }
-        | UIDNEXT sc_num[n] { $$ = ie_st_code_num(E, IE_ST_CODE_UIDNEXT, $n); }
-        | UIDVLD  sc_num[n] { $$ = ie_st_code_num(E, IE_ST_CODE_UIDVLD, $n); }
-        | UNSEEN  sc_num[n] { $$ = ie_st_code_num(E, IE_ST_CODE_UNSEEN, $n); }
+        | UIDNEXT SP sc_num[n] { $$ = ie_st_code_num(E, IE_ST_CODE_UIDNEXT, $n); }
+        | UIDVLD SP sc_num[n] { $$ = ie_st_code_num(E, IE_ST_CODE_UIDVLD, $n); }
+        | UNSEEN SP sc_num[n] { $$ = ie_st_code_num(E, IE_ST_CODE_UNSEEN, $n); }
         | sc_pflags
         | sc_capa
         | sc_atom
