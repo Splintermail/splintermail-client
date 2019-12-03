@@ -383,7 +383,8 @@ cleanup_sql:
 int main(int argc, char** argv){
     // specify command line options
     opt_spec_t o_debug = {'d', "debug", false, OPT_RETURN_INIT};
-    opt_spec_t* spec[] = {&o_debug};
+    opt_spec_t o_help = {'h', "help", false, OPT_RETURN_INIT};
+    opt_spec_t* spec[] = {&o_debug, &o_help};
     size_t speclen = sizeof(spec) / sizeof(*spec);
     int newargc;
     // parse command line options
@@ -391,6 +392,16 @@ int main(int argc, char** argv){
     if(is_error(e)){
         DROP_VAR(&e);
         return 2;
+    }
+
+    // print help?
+    if(o_help.found){
+        printf("encrypt_msg: apply splintermail encryption to stdin\n");
+        printf("usage: encrypt_msg KEY_FILE [...]\n");
+#ifdef BUILD_SERVER_CODE
+        printf("usage: USER=email encrypt_msg\n");
+#endif
+        exit(0);
     }
 
     logger_add_fileptr(o_debug.found ? LOG_LVL_DEBUG : LOG_LVL_INFO, stderr);
