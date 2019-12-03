@@ -37,9 +37,13 @@ typedef enum {
 
     // states for SET_FOLDER command
     SELECTING,      /* after sending SELECT, before receiving response */
+    SEARCHING,      /* listing UIDs from selected state */
+    CLOSING,        /* after sending CLOSE */
+
     SELECTED,       /* imap rfc "selected" state */
 
 } imap_client_state_t;
+static const dstr_t *imap_client_state_to_dstr(imap_client_state_t state);
 
 // any_of checks if a value is in a given list of enum values
 static inline bool any_of(int val, const int *list, size_t list_len){
@@ -116,6 +120,16 @@ typedef struct {
     unsigned int unseen;
     unsigned int exists;
     unsigned int recent;
+    // keep track of all of the things we expect to see
+    struct {
+        bool supp_flags:1;
+        bool supp_pflags:1;
+        bool uidvalidity:1;
+        bool uidnext:1;
+        bool unseen:1;
+        bool exists:1;
+        bool recent:1;
+    } got;
 } folder_sync_t;
 
 struct imap_client_t {
@@ -298,8 +312,7 @@ static derr_t capas_done(imap_client_t *ic, imap_cmd_t *cmd,
     (void)cmd;
     (void)st;
     if(!ic->saw_capas){
-        // TODO: enable this when manual testing is not longer feasible
-        // ORIG(&e, E_RESPONSE, "never saw capabilities");
+        ORIG(&e, E_RESPONSE, "never saw capabilities");
     }
     PROP(&e, send_login(ic) );
     return e;
@@ -395,6 +408,118 @@ fail:
     return e;
 }
 
+static derr_t close_done(imap_client_t *ic, imap_cmd_t *cmd,
+        const ie_st_resp_t *st){
+    (void)cmd;
+    (void)st;
+    derr_t e = E_OK;
+
+    if(ic->imap_state != CLOSING){
+        ORIG(&e, E_INTERNAL, "arrived at close_done out of CLOSING state");
+    }
+
+    ic->imap_state = AUTHENTICATED;
+
+    /* TODO: respond to the controller without having to close the folder.
+             That will require allowing new goals to preempt old goals */
+
+    ic->goal = GOAL_NONE;
+
+    ic->controller->uptodate(ic->controller, ic->id->session);
+
+    return e;
+}
+
+static derr_t send_close(imap_client_t *ic){
+    derr_t e = E_OK;
+
+    ic->imap_state = CLOSING;
+
+    // issue a CLOSE command
+    imap_cmd_arg_t arg = {0};
+    ie_dstr_t *tag = ic_next_tag(&e, ic);
+    imap_cmd_t *cmd = imap_cmd_new(&e, tag, IMAP_CMD_CLOSE, arg);
+    CHECK(&e);
+
+    ic_cmd_t *ic_cmd;
+    PROP_GO(&e, ic_cmd_new(&ic_cmd, cmd, close_done, NULL, NULL), fail);
+
+    // add to unwritten commands
+    link_list_append(&ic->unwritten, &ic_cmd->link);
+
+    return e;
+
+fail:
+    imap_cmd_free(cmd);
+    return e;
+}
+
+static derr_t search_done(imap_client_t *ic, imap_cmd_t *cmd,
+        const ie_st_resp_t *st){
+    (void)cmd;
+    (void)st;
+    derr_t e = E_OK;
+
+    if(ic->imap_state != SEARCHING){
+        ORIG(&e, E_INTERNAL, "arrived at search_done out of SEARCHING state");
+    }
+
+    if(ic->goal != GOAL_SYNC){
+        ORIG(&e, E_INTERNAL, "arrived at search_done without GOAL_SYNC");
+    }
+
+    // TODO: actually download the files before CLOSE
+    PROP(&e, send_close(ic) );
+
+    return e;
+}
+
+static derr_t search_resp(imap_client_t *ic, const ie_nums_t *uids){
+    derr_t e = E_OK;
+
+    DSTR_VAR(buf, 1024);
+    PROP(&e, print_nums(&buf, uids) );
+    PROP(&e, PFMT("got uids: %x\n", FD(&buf)) );
+
+    // TODO: save these values
+
+    (void)ic;
+
+    return e;
+}
+
+static derr_t send_search(imap_client_t *ic){
+    derr_t e = E_OK;
+
+    ic->imap_state = SEARCHING;
+
+    // issue a `UID SEARCH UID <range>` command
+    bool uid_mode = true;
+    ie_dstr_t *charset = NULL;
+    // "1" is the first message, "0" represents "*" which is the last message
+    ie_seq_set_t *range = ie_seq_set_new(&e, 1, 0);
+    ie_search_key_t *search_key = ie_search_seq_set(&e, IE_SEARCH_UID, range);
+    imap_cmd_arg_t arg = {
+        .search=ie_search_cmd_new(&e, uid_mode, charset, search_key)
+    };
+
+    ie_dstr_t *tag = ic_next_tag(&e, ic);
+    imap_cmd_t *cmd = imap_cmd_new(&e, tag, IMAP_CMD_SEARCH, arg);
+    CHECK(&e);
+
+    ic_cmd_t *ic_cmd;
+    PROP_GO(&e, ic_cmd_new(&ic_cmd, cmd, search_done, NULL, NULL), fail);
+
+    // add to unwritten commands
+    link_list_append(&ic->unwritten, &ic_cmd->link);
+
+    return e;
+
+fail:
+    imap_cmd_free(cmd);
+    return e;
+}
+
 static derr_t select_done(imap_client_t *ic, imap_cmd_t *cmd,
         const ie_st_resp_t *st){
     (void)cmd;
@@ -409,10 +534,23 @@ static derr_t select_done(imap_client_t *ic, imap_cmd_t *cmd,
         ORIG(&e, E_INTERNAL, "arrived at select_done without GOAL_SYNC");
     }
 
-    ic->imap_state = SELECTED;
+    if(!ic->sync.got.supp_flags)
+        ORIG(&e, E_INTERNAL, "SELECT response missing FLAGS");
+    if(!ic->sync.got.supp_pflags)
+        ORIG(&e, E_INTERNAL, "SELECT response missing PFLAGS");
+    if(!ic->sync.got.uidvalidity)
+        ORIG(&e, E_INTERNAL, "SELECT response missing UIDVALIDITY");
+    // These are listed as REQUIRED in the spec but we can do without
+    // if(!ic->sync.got.uidnext)
+    //     ORIG(&e, E_INTERNAL, "SELECT response missing UIDNEXT");
+    // if(!ic->sync.got.unseen)
+    //     ORIG(&e, E_INTERNAL, "SELECT response missing UNSEEN");
+    // if(!ic->sync.got.exists)
+    //     ORIG(&e, E_INTERNAL, "SELECT response missing EXISTS");
+    // if(!ic->sync.got.recent)
+    //     ORIG(&e, E_INTERNAL, "SELECT response missing RECENT");
 
-    ORIG(&e, E_VALUE, "not sure what to do next");
-    // TODO: do something here
+    PROP(&e, send_search(ic) );
 
     return e;
 }
@@ -420,11 +558,10 @@ static derr_t select_done(imap_client_t *ic, imap_cmd_t *cmd,
 static derr_t select_flags(imap_client_t *ic, const ie_flags_t *flags){
     derr_t e = E_OK;
 
-    if(ic->sync.supp_flags.answered || ic->sync.supp_flags.flagged
-            || ic->sync.supp_flags.deleted || ic->sync.supp_flags.seen
-            || ic->sync.supp_flags.draft){
+    if(ic->sync.got.supp_flags){
         ORIG(&e, E_INTERNAL, "got FLAGS more than once");
     }
+    ic->sync.got.supp_flags = true;
 
     ic->sync.supp_flags.answered = flags->answered;
     ic->sync.supp_flags.flagged = flags->flagged;
@@ -437,11 +574,10 @@ static derr_t select_flags(imap_client_t *ic, const ie_flags_t *flags){
 static derr_t select_pflags(imap_client_t *ic, const ie_pflags_t *pflags){
     derr_t e = E_OK;
 
-    if(ic->sync.supp_pflags.answered || ic->sync.supp_pflags.flagged
-            || ic->sync.supp_pflags.deleted || ic->sync.supp_pflags.seen
-            || ic->sync.supp_pflags.draft || ic->sync.supp_pflags.asterisk){
-        ORIG(&e, E_INTERNAL, "got PFLAGS more than once");
+    if(ic->sync.got.supp_pflags){
+        ORIG(&e, E_INTERNAL, "got FLAGS more than once");
     }
+    ic->sync.got.supp_pflags = true;
 
     ic->sync.supp_pflags.answered = pflags->answered;
     ic->sync.supp_pflags.flagged = pflags->flagged;
@@ -455,9 +591,10 @@ static derr_t select_pflags(imap_client_t *ic, const ie_pflags_t *pflags){
 static derr_t select_exists(imap_client_t *ic, unsigned int num){
     derr_t e = E_OK;
 
-    if(ic->sync.exists != 0){
+    if(ic->sync.got.exists){
         ORIG(&e, E_INTERNAL, "got EXISTS more than once");
     }
+    ic->sync.got.exists = true;
 
     ic->sync.exists = num;
     return e;
@@ -465,9 +602,10 @@ static derr_t select_exists(imap_client_t *ic, unsigned int num){
 static derr_t select_recent(imap_client_t *ic, unsigned int num){
     derr_t e = E_OK;
 
-    if(ic->sync.recent != 0){
+    if(ic->sync.got.recent){
         ORIG(&e, E_INTERNAL, "got RECENT more than once");
     }
+    ic->sync.got.recent = true;
 
     ic->sync.recent = num;
     return e;
@@ -475,18 +613,21 @@ static derr_t select_recent(imap_client_t *ic, unsigned int num){
 static derr_t select_uidnext(imap_client_t *ic, unsigned int num){
     derr_t e = E_OK;
 
-    if(ic->sync.uidnext != 0){
+    if(ic->sync.got.uidnext){
         ORIG(&e, E_INTERNAL, "got UIDNEXT more than once");
     }
+    ic->sync.got.uidnext = true;
 
     ic->sync.uidnext = num;
     return e;
 }
 static derr_t select_uidvalidity(imap_client_t *ic, unsigned int num){
     derr_t e = E_OK;
-    if(ic->sync.uidvalidity != 0){
+
+    if(ic->sync.got.uidvalidity){
         ORIG(&e, E_INTERNAL, "got UIDVLD more than once");
     }
+    ic->sync.got.uidvalidity = true;
 
     ic->sync.uidvalidity = num;
     return e;
@@ -494,9 +635,10 @@ static derr_t select_uidvalidity(imap_client_t *ic, unsigned int num){
 static derr_t select_unseen(imap_client_t *ic, unsigned int num){
     derr_t e = E_OK;
 
-    if(ic->sync.unseen != 0){
+    if(ic->sync.got.unseen){
         ORIG(&e, E_INTERNAL, "got UNSEEN more than once");
     }
+    ic->sync.got.unseen = true;
 
     ic->sync.unseen = num;
     return e;
@@ -512,8 +654,8 @@ static derr_t send_select(imap_client_t *ic){
 
     ic->imap_state = SELECTING;
 
-    // prepare the folder_sync_state
-
+    // reset the folder_sync_t
+    ic->sync = (folder_sync_t){0};
 
     // issue the select command
     ie_dstr_t *folder = ie_dstr_new(&e, &ic->folder, KEEP_RAW);
@@ -552,6 +694,7 @@ static derr_t untagged_ok(imap_client_t *ic, const ie_st_code_t *code,
         return e;
     }
 
+    // Handle responses where the status code is what defines the behavior
     if(code != NULL){
         switch(code->type){
             // handle codes which are independent of state
@@ -589,10 +732,6 @@ static derr_t untagged_ok(imap_client_t *ic, const ie_st_code_t *code,
                 break;
         }
     }
-    if(code != NULL && code->type == IE_ST_CODE_ALERT){
-    }
-
-
 
     switch(ic->imap_state){
         case PREGREET: /* not possible, already handled */
@@ -606,12 +745,11 @@ static derr_t untagged_ok(imap_client_t *ic, const ie_st_code_t *code,
         case AUTHENTICATED:
         case PRECLOSE:
         case LISTING:
+        case SELECTING:
+        case SEARCHING:
+        case CLOSING:
             TRACE(&e, "unhandled * OK status message\n");
             ORIG(&e, E_INTERNAL, "unhandled message");
-            break;
-
-        case SELECTING:
-
             break;
 
         // TODO: this *certainly* should not throw an error
@@ -906,7 +1044,7 @@ static derr_t process_one_unhandled(imap_client_t *ic, ic_resp_t *ic_resp){
             PROP_GO(&e, select_flags(ic, ic_resp->resp->arg.flags), cu);
             break;
         case IMAP_RESP_SEARCH:
-            ORIG_GO(&e, E_VALUE, "got SEARCH response\n", cu);
+            PROP_GO(&e, search_resp(ic, ic_resp->resp->arg.search), cu);
             break;
         case IMAP_RESP_EXISTS:
             if(ic->imap_state != SELECTING){
@@ -955,6 +1093,14 @@ static derr_t ic_set_goal(imap_client_t *ic, event_t *ev){
         TRACE(&e, "unable to accept %x command while in goal state %x\n",
                 FD(imap_client_command_type_to_dstr(cmd_ev->cmd_type)),
                 FD(goal_to_dstr(ic->goal)));
+        ORIG_GO(&e, E_INTERNAL, "invalid command issued by controller", fail);
+    }
+
+    // TODO: allow for changing the goal at arbitrary times
+    if(ic->imap_state != AUTHENTICATED){
+        TRACE(&e, "unable to accept %x command while in state %x\n",
+                FD(imap_client_command_type_to_dstr(cmd_ev->cmd_type)),
+                FD(imap_client_state_to_dstr(ic->imap_state)));
         ORIG_GO(&e, E_INTERNAL, "invalid command issued by controller", fail);
     }
 
@@ -1168,6 +1314,32 @@ static const dstr_t *goal_to_dstr(ic_goal_t goal){
         case GOAL_LOGIN: return &GOAL_LOGIN_dstr;
         case GOAL_LIST: return &GOAL_LIST_dstr;
         case GOAL_SYNC: return &GOAL_SYNC_dstr;
+    }
+    return &unknown_dstr;
+}
+
+DSTR_STATIC(PREGREET_dstr, "PREGREET");
+DSTR_STATIC(PRECAPA_dstr, "PRECAPA");
+DSTR_STATIC(PREAUTH_dstr, "PREAUTH");
+DSTR_STATIC(AUTHENTICATED_dstr, "AUTHENTICATED");
+DSTR_STATIC(PRECLOSE_dstr, "PRECLOSE");
+DSTR_STATIC(LISTING_dstr, "LISTING");
+DSTR_STATIC(SELECTING_dstr, "SELECTING");
+DSTR_STATIC(SEARCHING_dstr, "SEARCHING");
+DSTR_STATIC(CLOSING_dstr, "CLOSING");
+DSTR_STATIC(SELECTED_dstr, "SELECTED");
+static const dstr_t *imap_client_state_to_dstr(imap_client_state_t state){
+    switch(state){
+        case PREGREET: return &PREGREET_dstr;
+        case PRECAPA: return &PRECAPA_dstr;
+        case PREAUTH: return &PREAUTH_dstr;
+        case AUTHENTICATED: return &AUTHENTICATED_dstr;
+        case PRECLOSE: return &PRECLOSE_dstr;
+        case LISTING: return &LISTING_dstr;
+        case SELECTING: return &SELECTING_dstr;
+        case SEARCHING: return &SEARCHING_dstr;
+        case CLOSING: return &CLOSING_dstr;
+        case SELECTED: return &SELECTED_dstr;
     }
     return &unknown_dstr;
 }

@@ -11,7 +11,6 @@
 #include "imap_client.h"
 #include "imap_expression_print.h"
 #include "jsw_atree.h"
-#include "imap_utils.h"
 #include "imap_dirmgr.h"
 
 #define KEY "../c/test/files/ssl/good-key.pem"
