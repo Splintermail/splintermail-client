@@ -247,7 +247,7 @@ derr_t print_atom(dstr_t *out, const dstr_t *val){
 
 #define LEAD_SP if(sp){ PROP(&e, FMT(out, " ") ); }else sp = true
 
-derr_t print_ie_flags(dstr_t *out, ie_flags_t *flags){
+derr_t print_ie_flags(dstr_t *out, const ie_flags_t *flags){
     derr_t e = E_OK;
     if(!flags) return e;
     bool sp = false;
@@ -265,7 +265,7 @@ derr_t print_ie_flags(dstr_t *out, ie_flags_t *flags){
     return e;
 }
 
-derr_t print_ie_mflags(dstr_t *out, ie_mflags_t *mflags){
+derr_t print_ie_mflags(dstr_t *out, const ie_mflags_t *mflags){
     derr_t e = E_OK;
     bool sp = false;
     if(mflags->noinferiors){ LEAD_SP; PROP(&e, FMT(out, "\\NoInferiors") ); };
@@ -285,7 +285,7 @@ derr_t print_ie_mflags(dstr_t *out, ie_mflags_t *mflags){
     return e;
 }
 
-derr_t print_ie_pflags(dstr_t *out, ie_pflags_t *pflags){
+derr_t print_ie_pflags(dstr_t *out, const ie_pflags_t *pflags){
     derr_t e = E_OK;
     if(!pflags) return e;
     bool sp = false;
@@ -304,7 +304,7 @@ derr_t print_ie_pflags(dstr_t *out, ie_pflags_t *pflags){
     return e;
 }
 
-derr_t print_ie_fflags(dstr_t *out, ie_fflags_t *fflags){
+derr_t print_ie_fflags(dstr_t *out, const ie_fflags_t *fflags){
     derr_t e = E_OK;
     if(!fflags) return e;
     bool sp = false;
@@ -374,9 +374,9 @@ derr_t print_imap_time(dstr_t *out, imap_time_t time){
     return e;
 }
 
-derr_t print_ie_seq_set(dstr_t *out, ie_seq_set_t *seq_set){
+derr_t print_ie_seq_set(dstr_t *out, const ie_seq_set_t *seq_set){
     derr_t e = E_OK;
-    for(ie_seq_set_t *p = seq_set; p != NULL; p = p->next){
+    for(const ie_seq_set_t *p = seq_set; p != NULL; p = p->next){
         if(p->n1 == p->n2){
             PROP(&e, FMT(out, "%x", p->n1 ? FU(p->n1) : FS("*")) );
         }else{
@@ -389,7 +389,7 @@ derr_t print_ie_seq_set(dstr_t *out, ie_seq_set_t *seq_set){
     return e;
 }
 
-derr_t print_ie_mailbox(dstr_t *out, ie_mailbox_t *m){
+derr_t print_ie_mailbox(dstr_t *out, const ie_mailbox_t *m){
     derr_t e = E_OK;
     if(m->inbox){
         PROP(&e, FMT(out, "INBOX") );
@@ -399,7 +399,7 @@ derr_t print_ie_mailbox(dstr_t *out, ie_mailbox_t *m){
     return e;
 }
 
-derr_t print_ie_search_key(dstr_t *out, ie_search_key_t *key){
+derr_t print_ie_search_key(dstr_t *out, const ie_search_key_t *key){
     derr_t e = E_OK;
     dstr_t *month;
     union ie_search_param_t p = key->param;
@@ -533,7 +533,7 @@ derr_t print_ie_search_key(dstr_t *out, ie_search_key_t *key){
     return e;
 }
 
-derr_t print_ie_fetch_attrs(dstr_t *out, ie_fetch_attrs_t *attr){
+derr_t print_ie_fetch_attrs(dstr_t *out, const ie_fetch_attrs_t *attr){
     derr_t e = E_OK;
     if(!attr) return e;
     // print the "fixed" attributes
@@ -599,7 +599,7 @@ derr_t print_ie_fetch_attrs(dstr_t *out, ie_fetch_attrs_t *attr){
     return e;
 }
 
-derr_t print_ie_st_code(dstr_t *out, ie_st_code_t *code){
+derr_t print_ie_st_code(dstr_t *out, const ie_st_code_t *code){
     derr_t e = E_OK;
     if(!code) return e;
     PROP(&e, FMT(out, "[") );
@@ -655,20 +655,20 @@ derr_t print_ie_st_code(dstr_t *out, ie_st_code_t *code){
     return e;
 }
 
-derr_t print_atoms(dstr_t *out, ie_dstr_t *list){
+derr_t print_atoms(dstr_t *out, const ie_dstr_t *list){
     derr_t e = E_OK;
     bool sp = false;
-    for(ie_dstr_t *d = list; d != NULL; d = d->next){
+    for(const ie_dstr_t *d = list; d != NULL; d = d->next){
         LEAD_SP;
         PROP(&e, print_atom(out, &d->dstr) );
     }
     return e;
 }
 
-derr_t print_nums(dstr_t *out, ie_nums_t *nums){
+derr_t print_nums(dstr_t *out, const ie_nums_t *nums){
     derr_t e = E_OK;
     bool sp = false;
-    for(ie_nums_t *n = nums; n != NULL; n = n->next){
+    for(const ie_nums_t *n = nums; n != NULL; n = n->next){
         LEAD_SP;
         PROP(&e, FMT(out, "%x", FU(n->num)) );
     }
@@ -677,7 +677,7 @@ derr_t print_nums(dstr_t *out, ie_nums_t *nums){
 
 // full commands
 
-derr_t print_login_cmd(dstr_t *out, ie_login_cmd_t *login){
+derr_t print_login_cmd(dstr_t *out, const ie_login_cmd_t *login){
     derr_t e = E_OK;
     PROP(&e, FMT(out, "LOGIN ") );
     PROP(&e, print_astring(out, &login->user->dstr) );
@@ -686,7 +686,7 @@ derr_t print_login_cmd(dstr_t *out, ie_login_cmd_t *login){
     return e;
 }
 
-derr_t print_rename_cmd(dstr_t *out, ie_rename_cmd_t *rename){
+derr_t print_rename_cmd(dstr_t *out, const ie_rename_cmd_t *rename){
     derr_t e = E_OK;
     PROP(&e, FMT(out, "RENAME ") );
     PROP(&e, print_ie_mailbox(out, rename->old) );
@@ -695,7 +695,7 @@ derr_t print_rename_cmd(dstr_t *out, ie_rename_cmd_t *rename){
     return e;
 }
 
-derr_t print_list_cmd(dstr_t *out, ie_list_cmd_t *list){
+derr_t print_list_cmd(dstr_t *out, const ie_list_cmd_t *list){
     derr_t e = E_OK;
     PROP(&e, print_ie_mailbox(out, list->m) );
     PROP(&e, FMT(out, " ") );
@@ -703,7 +703,7 @@ derr_t print_list_cmd(dstr_t *out, ie_list_cmd_t *list){
     return e;
 }
 
-derr_t print_status_cmd(dstr_t *out, ie_status_cmd_t *status){
+derr_t print_status_cmd(dstr_t *out, const ie_status_cmd_t *status){
     derr_t e = E_OK;
     PROP(&e, print_ie_mailbox(out, status->m) );
     PROP(&e, FMT(out, " ") );
@@ -733,7 +733,7 @@ derr_t print_status_cmd(dstr_t *out, ie_status_cmd_t *status){
     return e;
 }
 
-derr_t print_append_cmd(dstr_t *out, ie_append_cmd_t *append){
+derr_t print_append_cmd(dstr_t *out, const ie_append_cmd_t *append){
     derr_t e = E_OK;
     PROP(&e, print_ie_mailbox(out, append->m) );
     PROP(&e, FMT(out, " ") );
@@ -751,7 +751,7 @@ derr_t print_append_cmd(dstr_t *out, ie_append_cmd_t *append){
     return e;
 }
 
-derr_t print_search_cmd(dstr_t *out, ie_search_cmd_t *search){
+derr_t print_search_cmd(dstr_t *out, const ie_search_cmd_t *search){
     derr_t e = E_OK;
     PROP(&e, FMT(out, "%xSEARCH ", FS(search->uid_mode ? "UID " : "")) );
     if(search->charset != NULL){
@@ -762,7 +762,7 @@ derr_t print_search_cmd(dstr_t *out, ie_search_cmd_t *search){
     return e;
 }
 
-derr_t print_fetch_cmd(dstr_t *out, ie_fetch_cmd_t *fetch){
+derr_t print_fetch_cmd(dstr_t *out, const ie_fetch_cmd_t *fetch){
     derr_t e = E_OK;
     PROP(&e, FMT(out, "%xFETCH ", FS(fetch->uid_mode ? "UID " : "")) );
     PROP(&e, print_ie_seq_set(out, fetch->seq_set) );
@@ -771,7 +771,7 @@ derr_t print_fetch_cmd(dstr_t *out, ie_fetch_cmd_t *fetch){
     return e;
 }
 
-derr_t print_store_cmd(dstr_t *out, ie_store_cmd_t *store){
+derr_t print_store_cmd(dstr_t *out, const ie_store_cmd_t *store){
     derr_t e = E_OK;
     PROP(&e, FMT(out, "%xSTORE ", FS(store->uid_mode ? "UID " : "")) );
     PROP(&e, print_ie_seq_set(out, store->seq_set) );
@@ -783,7 +783,7 @@ derr_t print_store_cmd(dstr_t *out, ie_store_cmd_t *store){
     return e;
 }
 
-derr_t print_copy_cmd(dstr_t *out, ie_copy_cmd_t *copy){
+derr_t print_copy_cmd(dstr_t *out, const ie_copy_cmd_t *copy){
     derr_t e = E_OK;
     PROP(&e, FMT(out, "%xCOPY ", FS(copy->uid_mode ? "UID " : "")) );
     PROP(&e, print_ie_seq_set(out, copy->seq_set) );
@@ -792,7 +792,7 @@ derr_t print_copy_cmd(dstr_t *out, ie_copy_cmd_t *copy){
     return e;
 }
 
-derr_t print_imap_cmd(dstr_t *out, imap_cmd_t *cmd){
+derr_t print_imap_cmd(dstr_t *out, const imap_cmd_t *cmd){
     derr_t e = E_OK;
     PROP(&e, print_astring(out, &cmd->tag->dstr) );
     PROP(&e, FMT(out, " ") );
@@ -882,7 +882,7 @@ derr_t print_imap_cmd(dstr_t *out, imap_cmd_t *cmd){
 
 // full responses
 
-derr_t print_st_resp(dstr_t *out, ie_st_resp_t *st){
+derr_t print_st_resp(dstr_t *out, const ie_st_resp_t *st){
     derr_t e = E_OK;
     PROP(&e, FMT(out, "%x %x ",
                 FD(st->tag ? &st->tag->dstr : &DSTR_LIT("*")),
@@ -895,7 +895,7 @@ derr_t print_st_resp(dstr_t *out, ie_st_resp_t *st){
     return e;
 }
 
-derr_t print_list_resp(dstr_t *out, ie_list_resp_t *list){
+derr_t print_list_resp(dstr_t *out, const ie_list_resp_t *list){
     derr_t e = E_OK;
     PROP(&e, FMT(out, "(") );
     PROP(&e, print_ie_mflags(out, list->mflags) );
@@ -904,7 +904,7 @@ derr_t print_list_resp(dstr_t *out, ie_list_resp_t *list){
     return e;
 }
 
-derr_t print_status_resp(dstr_t *out, ie_status_resp_t *status){
+derr_t print_status_resp(dstr_t *out, const ie_status_resp_t *status){
     derr_t e = E_OK;
     PROP(&e, print_ie_mailbox(out, status->m) );
     PROP(&e, FMT(out, " (") );
@@ -934,7 +934,7 @@ derr_t print_status_resp(dstr_t *out, ie_status_resp_t *status){
     return e;
 }
 
-derr_t print_fetch_resp(dstr_t *out, ie_fetch_resp_t *fetch){
+derr_t print_fetch_resp(dstr_t *out, const ie_fetch_resp_t *fetch){
     derr_t e = E_OK;
     PROP(&e, FMT(out, "%x FETCH (", FU(fetch->num)) );
     bool sp = false;
@@ -962,7 +962,7 @@ derr_t print_fetch_resp(dstr_t *out, ie_fetch_resp_t *fetch){
     return e;
 }
 
-derr_t print_imap_resp(dstr_t *out, imap_resp_t *resp){
+derr_t print_imap_resp(dstr_t *out, const imap_resp_t *resp){
     derr_t e = E_OK;
     switch(resp->type){
         case IMAP_RESP_STATUS_TYPE:
