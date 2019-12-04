@@ -38,6 +38,7 @@ typedef enum {
     // states for SET_FOLDER command
     SELECTING,      /* after sending SELECT, before receiving response */
     SEARCHING,      /* listing UIDs from selected state */
+    FETCHING,       /* some FETCH commands are queued but not completed */
     CLOSING,        /* after sending CLOSE */
 
     SELECTED,       /* imap rfc "selected" state */
@@ -130,6 +131,7 @@ typedef struct {
         bool exists:1;
         bool recent:1;
     } got;
+    size_t fetches_pending;
 } folder_sync_t;
 
 struct imap_client_t {
@@ -454,6 +456,80 @@ fail:
     return e;
 }
 
+static derr_t fetch_done(imap_client_t *ic, imap_cmd_t *cmd,
+        const ie_st_resp_t *st){
+    (void)cmd;
+    (void)st;
+    derr_t e = E_OK;
+
+    if(ic->imap_state != FETCHING){
+        ORIG(&e, E_INTERNAL, "arrived at fetch_done out of FETCHING state");
+    }
+
+    if(ic->goal != GOAL_SYNC){
+        ORIG(&e, E_INTERNAL, "arrived at fetch_done without GOAL_SYNC");
+    }
+
+    // one less fetch command in flight
+    ic->sync.fetches_pending--;
+
+    if(ic->sync.fetches_pending == 0){
+        PROP(&e, send_close(ic) );
+    }
+
+    return e;
+}
+
+static derr_t fetch_resp(imap_client_t *ic, const ie_fetch_resp_t *fetch){
+    derr_t e = E_OK;
+
+    // yup
+    (void)ic;
+    (void)fetch;
+
+    return e;
+}
+
+static derr_t send_fetch(imap_client_t *ic, unsigned int uid){
+    derr_t e = E_OK;
+
+    if(ic->imap_state != SEARCHING){
+        ORIG(&e, E_INTERNAL, "arrived at send_fetch out of SEARCHING state");
+    }
+
+    // issue a UID FETCH command
+    bool uid_mode = true;
+    // fetch a single uid
+    ie_seq_set_t *uidseq = ie_seq_set_new(&e, uid, uid);
+    // fetch UID, FLAGS, and RFC822
+    ie_fetch_attrs_t *attr = ie_fetch_attrs_new(&e);
+    ie_fetch_attrs_add_simple(&e, attr, IE_FETCH_ATTR_UID);
+    ie_fetch_attrs_add_simple(&e, attr, IE_FETCH_ATTR_FLAGS);
+    ie_fetch_attrs_add_simple(&e, attr, IE_FETCH_ATTR_RFC822);
+    // build fetch command
+    ie_fetch_cmd_t *fetch = ie_fetch_cmd_new(&e, uid_mode, uidseq, attr);
+    imap_cmd_arg_t arg = {.fetch=fetch};
+
+    ie_dstr_t *tag = ic_next_tag(&e, ic);
+    imap_cmd_t *cmd = imap_cmd_new(&e, tag, IMAP_CMD_FETCH, arg);
+    CHECK(&e);
+
+    ic_cmd_t *ic_cmd;
+    PROP_GO(&e, ic_cmd_new(&ic_cmd, cmd, fetch_done, NULL, NULL), fail);
+
+    // add to unwritten commands
+    link_list_append(&ic->unwritten, &ic_cmd->link);
+
+    // one more fetch command queued
+    ic->sync.fetches_pending++;
+
+    return e;
+
+fail:
+    imap_cmd_free(cmd);
+    return e;
+}
+
 static derr_t search_done(imap_client_t *ic, imap_cmd_t *cmd,
         const ie_st_resp_t *st){
     (void)cmd;
@@ -468,8 +544,13 @@ static derr_t search_done(imap_client_t *ic, imap_cmd_t *cmd,
         ORIG(&e, E_INTERNAL, "arrived at search_done without GOAL_SYNC");
     }
 
-    // TODO: actually download the files before CLOSE
-    PROP(&e, send_close(ic) );
+    if(ic->sync.fetches_pending){
+        /* Transition to FETCHING state, where we will wait until we are
+           done fetching */
+        ic->imap_state = FETCHING;
+    }else{
+        PROP(&e, send_close(ic) );
+    }
 
     return e;
 }
@@ -477,13 +558,10 @@ static derr_t search_done(imap_client_t *ic, imap_cmd_t *cmd,
 static derr_t search_resp(imap_client_t *ic, const ie_nums_t *uids){
     derr_t e = E_OK;
 
-    DSTR_VAR(buf, 1024);
-    PROP(&e, print_nums(&buf, uids) );
-    PROP(&e, PFMT("got uids: %x\n", FD(&buf)) );
-
-    // TODO: save these values
-
-    (void)ic;
+    // send a UID search for each uid
+    for(const ie_nums_t *uid = uids; uid != NULL; uid = uid->next){
+        PROP(&e, send_fetch(ic, uid->num) );
+    }
 
     return e;
 }
@@ -747,6 +825,7 @@ static derr_t untagged_ok(imap_client_t *ic, const ie_st_code_t *code,
         case LISTING:
         case SELECTING:
         case SEARCHING:
+        case FETCHING:
         case CLOSING:
             TRACE(&e, "unhandled * OK status message\n");
             ORIG(&e, E_INTERNAL, "unhandled message");
@@ -1061,7 +1140,12 @@ static derr_t process_one_unhandled(imap_client_t *ic, ic_resp_t *ic_resp){
             }
             PROP_GO(&e, select_recent(ic, ic_resp->resp->arg.recent), cu);
             break;
-        case IMAP_RESP_FETCH: ORIG_GO(&e, E_VALUE, "got FETCH response\n", cu);
+        case IMAP_RESP_FETCH:
+            if(ic->imap_state != FETCHING){
+                ORIG_GO(&e, E_VALUE, "got FETCH outside of FETCHIN\n", cu);
+            }
+            PROP_GO(&e, fetch_resp(ic, ic_resp->resp->arg.fetch), cu);
+            break;
         default:
             TRACE(&e, "got response of unknown type %x\n",
                     FU(ic_resp->resp->type));
@@ -1326,6 +1410,7 @@ DSTR_STATIC(PRECLOSE_dstr, "PRECLOSE");
 DSTR_STATIC(LISTING_dstr, "LISTING");
 DSTR_STATIC(SELECTING_dstr, "SELECTING");
 DSTR_STATIC(SEARCHING_dstr, "SEARCHING");
+DSTR_STATIC(FETCHING_dstr, "FETCHING");
 DSTR_STATIC(CLOSING_dstr, "CLOSING");
 DSTR_STATIC(SELECTED_dstr, "SELECTED");
 static const dstr_t *imap_client_state_to_dstr(imap_client_state_t state){
@@ -1338,6 +1423,7 @@ static const dstr_t *imap_client_state_to_dstr(imap_client_state_t state){
         case LISTING: return &LISTING_dstr;
         case SELECTING: return &SELECTING_dstr;
         case SEARCHING: return &SEARCHING_dstr;
+        case FETCHING: return &FETCHING_dstr;
         case CLOSING: return &CLOSING_dstr;
         case SELECTED: return &SELECTED_dstr;
     }
