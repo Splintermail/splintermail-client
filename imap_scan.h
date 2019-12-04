@@ -43,8 +43,9 @@ typedef enum {
 } scan_mode_t;
 
 typedef struct {
+    // buffer is twice the size of a network read
     dstr_t bytes;
-    char bytes_buffer[4096];
+    char bytes_buffer[8192];
     // const char* limit;
     // continued scan start position
     const char* cursor;
@@ -79,6 +80,9 @@ dstr_t get_token(imap_scanner_t *scanner);
 
 // steal bytes from the scan stream, like in the case of a literal
 dstr_t steal_bytes(imap_scanner_t *scanner, size_t to_steal);
+
+// leftshift the buffer, reclaiming already-used bytes
+void imap_scanner_shrink(imap_scanner_t *scanner);
 
 // *more is set to true if more input is needed, otherwise *type is set
 derr_t imap_scan(imap_scanner_t *scanner, scan_mode_t mode, bool *more,

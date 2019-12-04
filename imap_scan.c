@@ -102,6 +102,17 @@ dstr_t steal_bytes(imap_scanner_t *scanner, size_t to_steal){
     }
 }
 
+void imap_scanner_shrink(imap_scanner_t *scanner){
+    // (this is always safe because "start" is always within the bytes buffer)
+    size_t offset = (size_t)(scanner->old_start - scanner->bytes.data);
+    dstr_leftshift(&scanner->bytes, offset);
+    // update all of the pointers in the scanner
+    scanner->old_start -= offset;
+    scanner->start -= offset;
+    scanner->cursor -= offset;
+    scanner->marker -= offset;
+}
+
 derr_t imap_scan(imap_scanner_t *scanner, scan_mode_t mode, bool *more,
                  dstr_t *token_out, int *type){
     // first handle literals, which isn't well handled well by re2c
