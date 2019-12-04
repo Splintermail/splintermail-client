@@ -774,9 +774,9 @@ static derr_t fetch_attr_skip_fill(skip_fill_t *sf, ie_fetch_attrs_t *attr){
     if(attr->intdate){       LEAD_SP; STATIC_SKIP_FILL("INTERNALDATE"); }
     if(attr->uid){           LEAD_SP; STATIC_SKIP_FILL("UID"); }
     if(attr->rfc822){        LEAD_SP; STATIC_SKIP_FILL("RFC822"); }
-    if(attr->rfc822_header){ LEAD_SP; STATIC_SKIP_FILL("RFC822_HEADER"); }
-    if(attr->rfc822_size){   LEAD_SP; STATIC_SKIP_FILL("RFC822_SIZE"); }
-    if(attr->rfc822_text){   LEAD_SP; STATIC_SKIP_FILL("RFC822_TEXT"); }
+    if(attr->rfc822_header){ LEAD_SP; STATIC_SKIP_FILL("RFC822.HEADER"); }
+    if(attr->rfc822_size){   LEAD_SP; STATIC_SKIP_FILL("RFC822.SIZE"); }
+    if(attr->rfc822_text){   LEAD_SP; STATIC_SKIP_FILL("RFC822.TEXT"); }
     if(attr->body){          LEAD_SP; STATIC_SKIP_FILL("BODY"); }
     if(attr->bodystruct){    LEAD_SP; STATIC_SKIP_FILL("BODYSTRUCTURE"); }
     // print the free-form attributes
