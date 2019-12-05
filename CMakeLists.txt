@@ -278,7 +278,7 @@ obj_depend_obj(hashmap common)
 obj_depend_obj(imap_maildir uv_util link hashmap fileops)
 obj_depend_obj(imap_dirmgr imap_maildir jsw_atree)
 obj_depend_obj(imap_session uv_interface common)
-obj_depend_obj(imap_client imap_write common)
+obj_depend_obj(imap_client imap_write crypto common)
 
 
 # describe executables with dependencies

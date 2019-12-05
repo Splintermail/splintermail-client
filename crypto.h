@@ -94,8 +94,8 @@ void decrypter_free(decrypter_t* dc);
 /* don't free kp until after decrypter_finish(), it is not used until
    the encrypted key is seen from *in during decrypter_update().  Also, *recips
    and *recips_block can be NULL if you don't want them */
-derr_t decrypter_start(decrypter_t* dc, keypair_t* kp, LIST(dstr_t)* recips,
-                       dstr_t* recips_block);
+derr_t decrypter_start(decrypter_t* dc, const keypair_t* kp,
+        LIST(dstr_t)* recips, dstr_t* recips_block);
 /* throws: E_NOMEM */
 
 /* the most this can possibly output is (in.len + block_size).  Also, the most

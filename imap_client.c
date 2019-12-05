@@ -146,6 +146,9 @@ struct imap_client_t {
     bool write_requested;
     event_t *write_ev;
     size_t write_skip;
+    // crypto
+    const keypair_t *keypair;
+    decrypter_t decrypter;
 
     link_t unread; // event_t->link
     link_t unhandled; // ic_resp_t->link
@@ -483,9 +486,31 @@ static derr_t fetch_done(imap_client_t *ic, imap_cmd_t *cmd,
 static derr_t fetch_resp(imap_client_t *ic, const ie_fetch_resp_t *fetch){
     derr_t e = E_OK;
 
-    // yup
-    (void)ic;
-    (void)fetch;
+    // TODO: handle more than just content decryption
+    if(!fetch->content){
+        return e;
+    }
+
+    dstr_t content;
+    PROP(&e, dstr_copy(&fetch->content->dstr, &content) );
+
+    dstr_t buffer;
+    PROP_GO(&e, dstr_new(&buffer, 4096), cu_content);
+
+    PROP_GO(&e, decrypter_start(&ic->decrypter, ic->keypair, NULL, NULL),
+            cu_buffer);
+
+    PROP_GO(&e, decrypter_update(&ic->decrypter, &content, &buffer), cu_buffer);
+
+    PROP_GO(&e, decrypter_finish(&ic->decrypter, &buffer), cu_buffer);
+
+    DROP_CMD( PFMT("----\n%x-----\n", FD(&buffer)) );
+
+cu_buffer:
+    dstr_free(&buffer);
+
+cu_content:
+    dstr_free(&content);
 
     return e;
 }
@@ -1329,6 +1354,8 @@ static void imap_client_free(imap_logic_t *logic){
     // free the folder_sync substate
     folder_sync_free(&ic->sync);
 
+    decrypter_free(&ic->decrypter);
+
     imap_reader_free(&ic->reader);
 
     dstr_free(&ic->folder);
@@ -1360,6 +1387,12 @@ derr_t imap_client_logic_alloc(imap_logic_t **out, void *arg_void,
     imap_client_alloc_arg_t *arg = arg_void;
     ic->spec = arg->spec;
     ic->controller = arg->controller;
+    ic->keypair = arg->keypair;
+
+    // crypto
+    PROP_GO(&e, decrypter_new(&ic->decrypter), fail_reader);
+
+
 
     ic->imap_state = PREGREET;
     link_init(&ic->unread);
@@ -1378,6 +1411,8 @@ derr_t imap_client_logic_alloc(imap_logic_t **out, void *arg_void,
 
     return e;
 
+fail_reader:
+    imap_reader_free(&ic->reader);
 fail_folder:
     dstr_free(&ic->folder);
 fail_malloc:

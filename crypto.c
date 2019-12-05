@@ -540,8 +540,8 @@ void decrypter_free(decrypter_t* dc){
     dstr_free(&dc->enc_key);
 }
 
-derr_t decrypter_start(decrypter_t* dc, keypair_t* kp, LIST(dstr_t)* recips,
-                       dstr_t* recips_block){
+derr_t decrypter_start(decrypter_t* dc, const keypair_t* kp,
+        LIST(dstr_t)* recips, dstr_t* recips_block){
     derr_t e = E_OK;
     // reset decrypter context in case a previous decryption was interrupted
     if(dc->message_started){

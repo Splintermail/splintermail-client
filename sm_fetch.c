@@ -22,6 +22,7 @@ loop_t loop;
 tlse_t tlse;
 imape_t imape;
 imap_client_spec_t client_spec;
+keypair_t keypair;
 
 typedef struct {
     imap_pipeline_t *pipeline;
@@ -261,6 +262,7 @@ static derr_t fc_init(fetch_controller_t *fc, imap_pipeline_t *p,
     imap_client_alloc_arg_t arg = (imap_client_alloc_arg_t){
         .spec = &client_spec,
         .controller = &fc->ctrlr_up,
+        .keypair = &keypair,
     };
     PROP_GO(&e, imap_session_alloc_connect(&fc->s, fc->pipeline, fc->cli_ctx,
                 client_spec.host, client_spec.service, imap_client_logic_alloc,
@@ -333,13 +335,23 @@ static void free_pipeline(imap_pipeline_t *pipeline){
 }
 
 
-static derr_t sm_fetch(void){
+static derr_t sm_fetch(char *host, char *svc, char *user, char *pass,
+        char *keyfile){
     derr_t e = E_OK;
+
+    // process commandline arguments
+    client_spec.host = host;
+    client_spec.service = svc;
+    DSTR_WRAP(client_spec.user, user, strlen(user), true);
+    DSTR_WRAP(client_spec.pass, pass, strlen(pass), true);
+
     // init OpenSSL
     PROP(&e, ssl_library_init() );
 
+    PROP_GO(&e, keypair_load(&keypair, keyfile), cu_ssl_lib);
+
     imap_pipeline_t pipeline;
-    PROP_GO(&e, build_pipeline(&pipeline), cu_ssl_lib);
+    PROP_GO(&e, build_pipeline(&pipeline), cu_keypair);
 
     /* After building the pipeline, we must run the pipeline if we want to
        cleanup nicely.  That means that we can't follow the normal cleanup
@@ -365,6 +377,8 @@ cu:
     fc_free(&fc);
     ssl_context_free(&ctx_cli);
     free_pipeline(&pipeline);
+cu_keypair:
+    keypair_free(&keypair);
 cu_ssl_lib:
     ssl_library_close();
     return e;
@@ -399,25 +413,22 @@ int main(int argc, char **argv){
         "127.0.0.1",
         "993",
         "test@splintermail.com",
-        "password"
+        "password",
+        "../c/test/files/key_tool/key_m.pem",
     };
-    if(argc != 5){
-        fprintf(stderr, "usage: sm_fetch HOST PORT USERNAME PASSWORD\n");
-        argc = 5;
+    if(argc != 6){
+        fprintf(stderr, "usage: sm_fetch HOST PORT USERNAME PASSWORD KEYFILE\n");
+        if(argc != 1){
+            exit(1);
+        }
+        argc = sizeof(default_args)/sizeof(*default_args);
         argv = default_args;
-        //exit(1);
     }
-
-    // grab the arguments from the command line
-    client_spec.host = argv[1];
-    client_spec.service = argv[2];
-    DSTR_WRAP(client_spec.user, argv[3], strlen(argv[3]), true);
-    DSTR_WRAP(client_spec.pass, argv[4], strlen(argv[4]), true);
 
     // add logger
     logger_add_fileptr(LOG_LVL_INFO, stdout);
 
-    derr_t e = sm_fetch();
+    derr_t e = sm_fetch(argv[1], argv[2], argv[3], argv[4], argv[5]);
     CATCH(e, E_ANY){
         DUMP(e);
         DROP_VAR(&e);

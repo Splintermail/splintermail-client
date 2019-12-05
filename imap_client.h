@@ -10,6 +10,7 @@ typedef struct imap_client_spec_t imap_client_spec_t;
 #include "queue.h"
 #include "imap_engine.h"
 #include "imap_maildir.h"
+#include "crypto.h"
 
 // calls that a client-side imap logic can make into the controller
 
@@ -22,9 +23,6 @@ struct imap_controller_up_t {
     /* send a sorted list of folders from the server response. The atree of
        folders needs to be cleaned by the caller after the hook completes. */
     void (*folders)(const imap_controller_up_t*, session_t*, jsw_atree_t*);
-    // These should come from the imap session
-    // void (*closed)(struct imap_client_spec_t*);
-    // void (*error)(struct imap_client_spec_t*, derr_t);
 };
 
 /* The (immutable) information requried for creating an upwards imap session.
@@ -39,6 +37,7 @@ struct imap_client_spec_t {
 typedef struct {
     const imap_client_spec_t *spec;
     const imap_controller_up_t *controller;
+    const keypair_t *keypair;
 } imap_client_alloc_arg_t;
 
 // the void* argument should be an imap_client_alloc_arg_t*
