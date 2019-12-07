@@ -22,9 +22,13 @@ void imap_session_ref_down(imap_session_t *s){
         imape_data_postclose(&s->imape_data);
     }
 
-    // now the session is no longer in use, we call the session manager hook
+    // signal to the manager that we are dead
     s->session_destroyed(s, s->error);
     PASSED(s->error);
+
+    // the session
+
+    // now the session is no longer in use, we call the session manager hook
 
     // free the session
     uv_mutex_destroy(&s->mutex);
@@ -92,8 +96,8 @@ static void imap_session_ref_down_imape(session_t *session, int reason){
 
 static void imap_session_close(session_t *session, derr_t error){
     imap_session_t *s = CONTAINER_OF(session, imap_session_t, session);
-    MERGE_VAR(&s->error, &error, "session_close error");
     uv_mutex_lock(&s->mutex);
+    MERGE_VAR(&s->error, &error, "session_close error");
     bool do_close = !s->closed;
     s->closed = true;
     uv_mutex_unlock(&s->mutex);
@@ -101,7 +105,7 @@ static void imap_session_close(session_t *session, derr_t error){
     if(!do_close) return;
 
     /* make sure every engine_data has a chance to pass a close event; a slow
-       session without standing references must be protected */
+       engine without standing references must be protected */
     imap_session_ref_up(s);
     if(s->pipeline->loop){
         loop_data_close(&s->loop_data);
@@ -135,6 +139,7 @@ static derr_t imap_session_do_alloc(imap_session_t **sptr, imap_pipeline_t *p,
         TRACE(&e, "uv_mutex_init: %x\n", FUV(&ret));
         ORIG_GO(&e, uv_err_type(ret), "error initializing mutex", fail);
     }
+    // startup protection
     s->refs = 1;
     s->closed = false;
     s->pipeline = p;
@@ -181,6 +186,7 @@ void imap_session_start(imap_session_t *s){
     if(s->pipeline->imape){
         imape_data_start(&s->imape_data);
     }
+    // end of startup protection
     imap_session_ref_down(s);
 }
 

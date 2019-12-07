@@ -43,7 +43,7 @@ typedef struct {
     dstr_t enc_key;
     char iv_buffer[CIPHER_IV_LEN];
     dstr_t iv;
-    keypair_t* kp;
+    const keypair_t* kp;
     // stuff that hasn't been decoded yet
     char base64_buffer[2048];
     dstr_t base64;

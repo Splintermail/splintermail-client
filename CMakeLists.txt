@@ -59,6 +59,7 @@ set(OBJ_TGTS
     link
     imap_session
     imap_client
+    maildir_name
 )
 
 set(EXE_TGTS
@@ -107,6 +108,7 @@ set(TEST_EXE_TGTS
     test_tls_engine
     test_imap_engine
     test_link
+    test_maildir_name
 )
 
 # additional TGTS if we are building server code
@@ -279,6 +281,7 @@ obj_depend_obj(imap_maildir uv_util link hashmap fileops)
 obj_depend_obj(imap_dirmgr imap_maildir jsw_atree)
 obj_depend_obj(imap_session uv_interface common)
 obj_depend_obj(imap_client imap_write crypto common)
+obj_depend_obj(maildir_name common)
 
 
 # describe executables with dependencies
@@ -427,6 +430,7 @@ if("${BUILD_TESTS}")
     target_link_libraries(test_tls_engine fake_engine)
     target_link_libraries(test_imap_engine fake_engine)
     target_link_libraries(test_link link common)
+    target_link_libraries(test_maildir_name maildir_name)
 
     if(WIN32)
         # make sure the user provided the location of Pthreads

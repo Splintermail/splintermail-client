@@ -52,9 +52,12 @@ derr_t imap_session_alloc_connect(imap_session_t **sptr, imap_pipeline_t *p,
         logic_alloc_t logic_alloc, void *alloc_data);
 void imap_session_start(imap_session_t *s);
 
-void imap_session_ref_up(imap_session_t *session);
-void imap_session_ref_down(imap_session_t *session);
+void imap_session_ref_up(imap_session_t *s);
+void imap_session_ref_down(imap_session_t *s);
 
-void imap_session_send_command(imap_session_t *session, event_t *ev);
+void imap_session_send_command(imap_session_t *s, event_t *ev);
+
+// should be called by the session manager AFTER the session_closed() hook
+void imap_session_free(imap_session_t *s);
 
 #endif // IMAP_SESSION_H
