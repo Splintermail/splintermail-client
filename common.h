@@ -302,6 +302,7 @@ derr_t dstr_toull(const dstr_t* in, unsigned long long* out, int base);
 derr_t dstr_tof(const dstr_t* in, float* out);
 derr_t dstr_tod(const dstr_t* in, double* out);
 derr_t dstr_told(const dstr_t* in, long double* out);
+derr_t dstr_tosize(const dstr_t* in, size_t* out, int base);
 /*  throws : E_PARAM (for bad number strings) */
 
 /*
@@ -399,12 +400,22 @@ derr_t dstr_append(dstr_t* dstr, const dstr_t* new_text);
 /* throws: E_FIXEDSIZE
            E_NOMEM */
 
-/* splits a dstr_t into a LIST(dstr_t) based on a single pattern.  The resulting
-   dstr_t's in the output will all point into the original text */
+/* splits a dstr_t into a LIST(dstr_t) based on a single pattern.  The
+   resulting dstr_t's in the output will all point into the original text */
 derr_t dstr_split(const dstr_t* text, const dstr_t* pattern,
                     LIST(dstr_t)* out);
 /*  throws : E_NOMEM
              E_FIXEDSIZE */
+
+/* like dstr_split, execpt in the case of E_FIXEDSIZE, it drops the error and
+   sets the final token to be the full remaining length of the string, so
+   if you split a string on '.' into 3 tokens, you could get something like:
+
+       "a.b.c.d.e.f" -> {"a", "b", "c.d.e.f"}
+*/
+derr_t dstr_split_soft(const dstr_t *text, const dstr_t *pattern,
+        LIST(dstr_t)* out);
+/* throws : E_NOMEM */
 
 // remove bytes from the left side of the string
 // this will do memcpy or memmove appropriately

@@ -450,6 +450,21 @@ derr_t dstr_told(const dstr_t* in, long double* out){
     *out = result;
     return e;
 }
+derr_t dstr_tosize(const dstr_t* in, size_t* out, int base){
+    derr_t e = E_OK;
+    // first copy into a unsigned long long
+    unsigned long long temp;
+    PROP(&e, dstr_toull(in, &temp, base) );
+
+#if ULLLONG_MAX > SIZE_MAX
+    if(temp > SIZE_MAX){
+        ORIG(&e, E_PARAM, "number string too large for size_t");
+    }
+#endif
+
+    *out = (size_t)temp;
+    return e;
+}
 
 char* dstr_find(const dstr_t* text, const LIST(dstr_t)* patterns,
                 size_t* which_pattern, size_t* partial_match_len){
@@ -656,9 +671,8 @@ derr_t dstr_copy(const dstr_t* in, dstr_t* out){
     return e;
 }
 
-// the LIST(dstr_t) returned will have its elements point into the dstr_t text
-// the LIST(dstr_t) should be allocated before this function
-derr_t dstr_split(const dstr_t* text, const dstr_t* pattern, LIST(dstr_t)* out){
+static derr_t do_dstr_split(const dstr_t* text, const dstr_t* pattern,
+        LIST(dstr_t)* out, bool soft){
     derr_t e = E_OK;
     // empty *out
     out->len = 0;
@@ -687,24 +701,52 @@ derr_t dstr_split(const dstr_t* text, const dstr_t* pattern, LIST(dstr_t)* out){
         }
 
         // append the new dstr that points into the text
+        dstr_t new;
         if(word_end == 0){
             /* in this special case, we manually add an empty string, because
                dstr_sub will interpret the 0 specially */
-            dstr_t new;
-            new.data = text->data;
+            new.data = position;
             new.len = 0;
             new.size = 0;
             new.fixed_size = true;
-            PROP(&e, LIST_APPEND(dstr_t, out, new) );
         }else{
-            dstr_t new = dstr_sub(text, word_start, word_end);
-            PROP(&e, LIST_APPEND(dstr_t, out, new) );
+            new = dstr_sub(text, word_start, word_end);
+        }
+        // try to append the new dstr_t to the list
+        IF_PROP(&e, LIST_APPEND(dstr_t, out, new)){
+            // check for soft failure case
+            if(soft && E_FIXEDSIZE){
+                DROP_VAR(&e);
+                // set the last token to point to the remainder of the text
+                if(out->len > 0){
+                    dstr_t *last = &out->data[out->len-1];
+                    last->len = text->len -
+                        ((uintptr_t)last->data - (uintptr_t)text->data);
+                }
+                // return without error
+                break;
+            }
+            return e;
         }
 
         // get ready for the next dstr_find()
         word_start = word_end + pattern->len;
     }
 
+    return e;
+}
+
+derr_t dstr_split(const dstr_t* text, const dstr_t* pattern,
+        LIST(dstr_t)* out){
+    derr_t e = E_OK;
+    PROP(&e, do_dstr_split(text, pattern, out, false) );
+    return e;
+}
+
+derr_t dstr_split_soft(const dstr_t* text, const dstr_t* pattern,
+        LIST(dstr_t)* out){
+    derr_t e = E_OK;
+    PROP(&e, do_dstr_split(text, pattern, out, true) );
     return e;
 }
 

@@ -5,7 +5,6 @@
 
 #include <common.h>
 #include <logger.h>
-#include <maildir.h>
 
 #include "test_utils.h"
 
@@ -155,24 +154,11 @@ static derr_t test_dstr_split(void){
     DSTR_STATIC(pattern, " ");
     LIST_VAR(dstr_t, list, 32);
     PROP(&e, dstr_split(&text, &pattern,  &list) );
-    // answers
-    DSTR_STATIC(s0, "abcd");
-    DSTR_STATIC(s1, "efgh");
-    DSTR_STATIC(s2, "ijkl");
 
-    int result;
-    result = dstr_cmp(&list.data[0], &s0);
-    if(result != 0){
-        ORIG(&e, E_VALUE, "FAIL");
-    }
-    result = dstr_cmp(&list.data[1], &s1);
-    if(result != 0){
-        ORIG(&e, E_VALUE, "FAIL");
-    }
-    result = dstr_cmp(&list.data[2], &s2);
-    if(result != 0){
-        ORIG(&e, E_VALUE, "FAIL");
-    }
+    EXP_VS_GOT(&list.data[0], &DSTR_LIT("abcd"));
+    EXP_VS_GOT(&list.data[1], &DSTR_LIT("efgh"));
+    EXP_VS_GOT(&list.data[2], &DSTR_LIT("ijkl"));
+
     // see if splitting on the split pattern results in 2 empty strings
     PROP(&e, dstr_split(&pattern, &pattern,  &list) );
     if(list.len != 2){
@@ -184,6 +170,43 @@ static derr_t test_dstr_split(void){
     if(list.data[1].len != 0){
         ORIG(&e, E_VALUE, "FAIL");
     }
+
+cleanup:
+    return e;
+}
+
+static derr_t test_dstr_split_soft(void){
+    derr_t e = E_OK;
+    LOG_INFO("----- test dstr_split_soft --------------\n");
+    // text to split
+    DSTR_STATIC(text, "1 2 3 and all the rest");
+    DSTR_STATIC(pattern, " ");
+    LIST_VAR(dstr_t, list, 3);
+
+    DSTR_STATIC(s0, "1");
+    DSTR_STATIC(s1, "2");
+    DSTR_STATIC(s2, "3 and all the rest");
+
+    // make sure we can't do a normal split
+    derr_t e2 = dstr_split(&text, &pattern, &list);
+    CATCH(e2, E_FIXEDSIZE){
+        // we expect this, do nothing
+        DROP_VAR(&e2);
+    }else{
+        TRACE(&e, "expected E_FIXEDSIZE but got %x\n",
+                FD(error_to_dstr(e2.type)));
+        DROP_VAR(&e2);
+        ORIG(&e, E_VALUE, "FAIL")
+    }
+
+    // retry with soft
+    PROP(&e, dstr_split_soft(&text, &pattern, &list) );
+
+    EXP_VS_GOT(&list.data[0], &s0);
+    EXP_VS_GOT(&list.data[1], &s1);
+    EXP_VS_GOT(&list.data[2], &s2);
+
+cleanup:
     return e;
 }
 
@@ -556,6 +579,7 @@ int main(int argc, char** argv){
     PROP_GO(&e, test_dstr_find(),            test_fail);
     PROP_GO(&e, test_dstr_count(),           test_fail);
     PROP_GO(&e, test_dstr_split(),           test_fail);
+    PROP_GO(&e, test_dstr_split_soft(),      test_fail);
     PROP_GO(&e, test_dstr_tod(),             test_fail);
     PROP_GO(&e, test_dstr_leftshift(),       test_fail);
     PROP_GO(&e, test_list_append(),          test_fail);
