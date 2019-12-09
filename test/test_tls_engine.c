@@ -27,25 +27,7 @@ const char *host = "127.0.0.1";
 const char *port_str = "12348";
 
 typedef struct {
-    pthread_t thread;
-    loop_t loop;
-    tlse_t tlse;
-    ssl_context_t ssl_ctx;
-    engine_t *downstream;
-    derr_t error;
-    pthread_mutex_t *mutex;
-    pthread_cond_t *cond;
-} test_context_t;
-
-static void fake_session_dn_destroyed(fake_session_t *s, derr_t error){
-    if(error.type != E_NONE){
-        loop_close(s->pipeline->loop, error);
-        PASSED(error);
-    }
-}
-
-typedef struct {
-    fake_pipeline_t pipeline;
+    imap_pipeline_t pipeline;
     ssl_context_t *ssl_ctx;
     listener_spec_t lspec;
 } test_lspec_t;
@@ -56,12 +38,23 @@ static derr_t conn_recvd(listener_spec_t *lspec, session_t **session){
 
     test_lspec_t *t = CONTAINER_OF(lspec, test_lspec_t, lspec);
 
-    fake_session_t *s;
-    PROP(&e, fake_session_alloc_accept(&s, &t->pipeline, t->ssl_ctx) );
-    s->session_destroyed = fake_session_dn_destroyed;
-    fake_session_start(s);
+    imap_session_alloc_args_t args = {
+        &t->pipeline,
+        NULL, // mgr (filled in by echo_session_mgr_new)
+        t->ssl_ctx,
+        NULL, // logic_alloc
+        NULL, // alloc_data
+        NULL, // host
+        NULL, // service
+        (terminal_t){},
+    };
 
-    *session = &s->session;
+    echo_session_mgr_t *esm;
+    PROP(&e, echo_session_mgr_new(&esm, args) );
+
+    imap_session_start(&esm->s);
+
+    *session = &esm->s.session;
 
     return e;
 }
@@ -139,135 +132,6 @@ done:
     return NULL;
 }
 
-// callbacks from fake_engine
-
-static void fake_session_up_destroyed(fake_session_t *s, derr_t error){
-    // free the cb_reader_writer if there is one
-    if(s->mgr_data){
-        cb_reader_writer_t *cbrw = s->mgr_data;
-        // catch an error from the cbrw
-        MERGE_VAR(&error, &cbrw->error, "cb reader/writer");
-        cb_reader_writer_free(cbrw);
-    }
-    if(error.type != E_NONE){
-        loop_close(s->pipeline->loop, error);
-        PASSED(error);
-    }
-}
-
-typedef struct {
-    size_t nwrites;
-    size_t nEOF;
-    test_context_t *test_ctx;
-    derr_t error;
-    cb_reader_writer_t cb_reader_writers[NUM_THREADS];
-    ssl_context_t *ssl_ctx_client;
-} session_cb_data_t;
-
-static void launch_second_half_of_test(session_cb_data_t *cb_data,
-        fake_pipeline_t *fp, engine_t *fake_engine){
-    // make NUM_THREAD connections
-    for(size_t i = 0; i < NUM_THREADS; i++){
-        derr_t e = E_OK;
-        // allocate a new connecting session
-        fake_session_t *s;
-        PROP_GO(&e, fake_session_alloc_connect(&s, fp,
-                    cb_data->ssl_ctx_client, host, port_str), fail);
-
-        s->session_destroyed = fake_session_up_destroyed;
-        // we have to start the session before we can start the cbrw
-        fake_session_ref_up_test(&s->session, FAKE_ENGINE_REF_CBRW_PROTECT);
-
-        // start the session
-        fake_session_start(s);
-
-        // prepare a cb_reader_writer
-        cb_reader_writer_t *cbrw = &cb_data->cb_reader_writers[i];
-        event_t *ev_new = cb_reader_writer_init(cbrw, i, WRITES_PER_THREAD,
-                s, fake_engine);
-        if(!ev_new){
-            ORIG_GO(&e, E_VALUE, "did not get event from cb_reader_writer\n", fail);
-        }
-
-        // attach the cb_reader_writer to the destroy hook
-        s->mgr_data = cbrw;
-
-        // pass the write
-        fp->tlse->engine.pass_event(&fp->tlse->engine, ev_new);
-        cb_data->nwrites++;
-
-        fake_session_ref_down_test(&s->session, FAKE_ENGINE_REF_CBRW_PROTECT);
-
-        continue;
-
-    fail:
-        fake_session_ref_down_test(&s->session, FAKE_ENGINE_REF_CBRW_PROTECT);
-        loop_close(&cb_data->test_ctx->loop, e);
-        PASSED(e);
-        break;
-    }
-}
-
-static void handle_read(void *data, event_t *ev, engine_t *fake_engine){
-    session_cb_data_t *cb_data = data;
-    if(ev->buffer.len == 0){
-        // done with this session
-        fake_session_close(ev->session, E_OK);
-        // was that the last session?
-        cb_data->nEOF++;
-        if(cb_data->nEOF == NUM_THREADS){
-            // reuse the fake_pipline
-            fake_pipeline_t *fp = ((fake_session_t*)ev->session)->pipeline;
-            launch_second_half_of_test(cb_data, fp, fake_engine);
-        }else if(cb_data->nEOF == NUM_THREADS*2){
-            // test is over
-            loop_close(&cb_data->test_ctx->loop, E_OK);
-        }
-    }
-    // is this session a cb_reader_writer session?
-    else if(ev->session && ((fake_session_t*)ev->session)->mgr_data){
-        cb_reader_writer_t *cbrw = ((fake_session_t*)ev->session)->mgr_data;
-        event_t *ev_new = cb_reader_writer_read(cbrw, &ev->buffer);
-        if(ev_new){
-            // pass the write
-            fake_pipeline_t *fp = ((fake_session_t*)ev->session)->pipeline;
-            fp->tlse->engine.pass_event(&fp->tlse->engine, ev_new);
-            cb_data->nwrites++;
-        }
-    }
-    // otherwise, echo back the message
-    else{
-        event_t *ev_new = fake_engine_get_write_event(fake_engine, &ev->buffer);
-        if(!ev_new){
-            derr_t e = E_OK;
-            TRACE_ORIG(&e, E_NOMEM, "no memory!");
-            MERGE_VAR(&cb_data->error, &e, "malloc");
-            return;
-        }
-        ev_new->session = ev->session;
-        fake_session_ref_up_test(ev_new->session, FAKE_ENGINE_REF_WRITE);
-        // pass the write
-        fake_pipeline_t *fp = ((fake_session_t*)ev->session)->pipeline;
-        fp->tlse->engine.pass_event(&fp->tlse->engine, ev_new);
-        cb_data->nwrites++;
-    }
-}
-
-static void handle_write_done(void *data, event_t *ev){
-    session_cb_data_t *cb_data = data;
-    // downref session
-    fake_session_ref_down_test(ev->session, FAKE_ENGINE_REF_WRITE);
-    // free event
-    dstr_free(&ev->buffer);
-    free(ev);
-    cb_data->nwrites--;
-}
-
-static bool quit_ready(void *data){
-    session_cb_data_t *cb_data = data;
-    return cb_data->nwrites == 0;
-}
-
 static derr_t test_tlse(void){
     derr_t e = E_OK;
     // prepare the client ssl context
@@ -327,17 +191,32 @@ static derr_t test_tlse(void){
                        reader_writer_thread, &threads[i]);
     }
 
+    imap_session_alloc_args_t session_connect_args = {
+        &(imap_pipeline_t){
+            .loop=&test_ctx.loop,
+            .tlse=&test_ctx.tlse,
+        },
+        NULL, // mgr (filled in by cb_reader_writer_init)
+        &ssl_ctx_client,
+        NULL, // logic_alloc
+        NULL, // alloc_data
+        host,
+        port_str,
+        (terminal_t){},
+    };
+
     session_cb_data_t cb_data = {
         .test_ctx = &test_ctx,
         .error = E_OK,
         .ssl_ctx_client = &ssl_ctx_client,
+        .num_threads = NUM_THREADS,
+        .writes_per_thread = WRITES_PER_THREAD,
+        .session_connect_args = session_connect_args,
     };
 
     // catch error from fake_engine_run
-    MERGE_CMD(&e, fake_engine_run(
-            &fake_engine, &test_ctx.tlse.engine,
-            handle_read, handle_write_done, quit_ready, &cb_data),
-            "fake_engine_run");
+    MERGE_CMD(&e, fake_engine_run(&fake_engine, &test_ctx.tlse.engine,
+                &cb_data, &test_ctx.loop), "fake_engine_run");
 
     // join all the threads
     for(size_t i = 0; i < sizeof(threads) / sizeof(*threads); i++){

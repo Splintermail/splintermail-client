@@ -23,7 +23,6 @@ struct imap_session_t {
     uv_mutex_t mutex;
     int refs;
     bool closed;
-    derr_t error;
     // engines
     imap_pipeline_t *pipeline;
     // engine_data elements
@@ -34,22 +33,37 @@ struct imap_session_t {
     int loop_refs[LOOP_REF_MAXIMUM];
     int tlse_refs[TLSE_REF_MAXIMUM];
     int imape_refs[IMAPE_REF_MAXIMUM];
-    /* session manager hook; this is to be set externally, after session_alloc
-       but before session_start */
-    void (*session_destroyed)(imap_session_t*, derr_t);
-    void *mgr_data;
+    manager_i *mgr;
 };
 DEF_CONTAINER_OF(imap_session_t, session, session_t)
 
+typedef struct {} terminal_t;
+
+typedef struct {
+    imap_pipeline_t *pipeline;
+    manager_i *mgr;
+    ssl_context_t* ssl_ctx;
+    logic_alloc_t logic_alloc;
+    void *alloc_data;
+    // only for connect sessions:
+    const char *host;
+    const char *service;
+    // included to allow for strong type checking
+    terminal_t terminal;
+} imap_session_alloc_args_t;
+
+/* TODO: fix this message and possibly the behavior with the new cleanup system
+   where imap_session is not allowed to free itself */
 /* The imap session will not be freed in between imap_session_alloc_*() and
    imap_session_start(), even in the case of an asynchronous failure.  However,
    if you run into an error after imap_session_alloc_*() but before
-   imap_session_start(), you will need to downref the session to clean it up */
-derr_t imap_session_alloc_accept(imap_session_t **sptr, imap_pipeline_t *p,
-        ssl_context_t* ssl_ctx, logic_alloc_t logic_alloc, void *alloc_data);
-derr_t imap_session_alloc_connect(imap_session_t **sptr, imap_pipeline_t *p,
-        ssl_context_t* ssl_ctx, const char *host, const char *service,
-        logic_alloc_t logic_alloc, void *alloc_data);
+   imap_session_start(), you will need to downref the session to clean it up.*/
+derr_t imap_session_alloc_accept(imap_session_t *s,
+        const imap_session_alloc_args_t *args);
+derr_t imap_session_alloc_connect(imap_session_t *s,
+        const imap_session_alloc_args_t *args);
+
+// imap_session_start marks the beginning of possible asynchronous errors
 void imap_session_start(imap_session_t *s);
 
 void imap_session_ref_up(imap_session_t *s);
@@ -57,7 +71,9 @@ void imap_session_ref_down(imap_session_t *s);
 
 void imap_session_send_command(imap_session_t *s, event_t *ev);
 
-// should be called by the session manager AFTER the session_closed() hook
+// should be called by the session manager AFTER the "dying" hook
 void imap_session_free(imap_session_t *s);
+
+void imap_session_close(session_t *session, derr_t error);
 
 #endif // IMAP_SESSION_H

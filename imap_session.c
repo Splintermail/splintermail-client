@@ -17,22 +17,23 @@ void imap_session_ref_down(imap_session_t *s){
 
     if(refs > 0) return;
 
-    // finish closing the imape_data
+    // signal to the manager that we are dead, manager will free us later
+    s->mgr->dead(s->mgr);
+}
+
+void imap_session_free(imap_session_t *s){
+
+    // loop_data does not need freeing
+
+    // tlse_data does not need freeing
+
+    // imape_data needs freeing
     if(s->pipeline->imape){
         imape_data_postclose(&s->imape_data);
     }
 
-    // signal to the manager that we are dead
-    s->session_destroyed(s, s->error);
-    PASSED(s->error);
-
-    // the session
-
-    // now the session is no longer in use, we call the session manager hook
-
-    // free the session
+    // free our own resources
     uv_mutex_destroy(&s->mutex);
-    free(s);
 }
 
 // only called by loop thread
@@ -94,15 +95,23 @@ static void imap_session_ref_down_imape(session_t *session, int reason){
 }
 
 
-static void imap_session_close(session_t *session, derr_t error){
+void imap_session_close(session_t *session, derr_t error){
     imap_session_t *s = CONTAINER_OF(session, imap_session_t, session);
     uv_mutex_lock(&s->mutex);
-    MERGE_VAR(&s->error, &error, "session_close error");
     bool do_close = !s->closed;
     s->closed = true;
     uv_mutex_unlock(&s->mutex);
 
-    if(!do_close) return;
+    if(!do_close){
+        /* TODO: find some way to gather secondary errors, since we already
+                 passed the first one as soon as we saw it */
+        DROP_VAR(&error);
+        return;
+    }
+
+    // signal to the manager that we are dying
+    s->mgr->dying(s->mgr, error);
+    PASSED(error);
 
     /* make sure every engine_data has a chance to pass a close event; a slow
        engine without standing references must be protected */
@@ -121,57 +130,47 @@ static void imap_session_close(session_t *session, derr_t error){
 
 
 // to allocate new sessions (when loop.c only know about a single child struct)
-static derr_t imap_session_do_alloc(imap_session_t **sptr, imap_pipeline_t *p,
-        ssl_context_t* ssl_ctx, const char *host, const char *service,
-        logic_alloc_t logic_alloc, void *alloc_data){
+static derr_t imap_session_do_alloc(imap_session_t *s,
+        const imap_session_alloc_args_t *args, bool upwards){
     derr_t e = E_OK;
 
-    bool upwards = (host != NULL);
-
-    // allocate the struct
-    imap_session_t *s = malloc(sizeof(*s));
-    if(!s) ORIG(&e, E_NOMEM, "no mem");
+    // zeroize session
     *s = (imap_session_t){0};
 
     // session prestart
     int ret = uv_mutex_init(&s->mutex);
     if(ret < 0){
         TRACE(&e, "uv_mutex_init: %x\n", FUV(&ret));
-        ORIG_GO(&e, uv_err_type(ret), "error initializing mutex", fail);
+        ORIG(&e, uv_err_type(ret), "error initializing mutex");
     }
     // startup protection
     s->refs = 1;
     s->closed = false;
-    s->pipeline = p;
+    s->pipeline = args->pipeline;
     s->session.ld = &s->loop_data;
     s->session.td = &s->tlse_data;
     s->session.id = &s->imape_data;
     s->session.close = imap_session_close;
+    s->mgr = args->mgr;
 
     // per-engine prestart
     if(s->pipeline->loop){
-        loop_data_prestart(&s->loop_data, s->pipeline->loop, &s->session, host,
-                service, imap_session_ref_up_loop, imap_session_ref_down_loop);
+        loop_data_prestart(&s->loop_data, s->pipeline->loop, &s->session,
+                args->host, args->service, imap_session_ref_up_loop,
+                imap_session_ref_down_loop);
     }
     if(s->pipeline->tlse){
         tlse_data_prestart(&s->tlse_data, s->pipeline->tlse, &s->session,
-                imap_session_ref_up_tlse, imap_session_ref_down_tlse, ssl_ctx,
-                upwards);
+                imap_session_ref_up_tlse, imap_session_ref_down_tlse,
+                args->ssl_ctx, upwards);
     }
     if(s->pipeline->imape){
         imape_data_prestart(&s->imape_data, s->pipeline->imape, &s->session,
                 upwards, imap_session_ref_up_imape,
                 imap_session_ref_down_imape,
-                logic_alloc, alloc_data);
+                args->logic_alloc, args->alloc_data);
     }
 
-    *sptr = s;
-
-    return e;
-
-fail:
-    free(s);
-    *sptr = NULL;
     return e;
 }
 
@@ -191,20 +190,17 @@ void imap_session_start(imap_session_t *s){
 }
 
 // to allocate new sessions (when loop.c only know about a single child struct)
-derr_t imap_session_alloc_accept(imap_session_t **sptr, imap_pipeline_t *p,
-        ssl_context_t* ssl_ctx, logic_alloc_t logic_alloc, void *alloc_data){
+derr_t imap_session_alloc_accept(imap_session_t *s,
+        const imap_session_alloc_args_t *args){
     derr_t e = E_OK;
-    PROP(&e, imap_session_do_alloc(sptr, p, ssl_ctx, NULL, NULL, logic_alloc,
-                alloc_data) );
+    PROP(&e, imap_session_do_alloc(s, args, false) );
     return e;
 }
 
-derr_t imap_session_alloc_connect(imap_session_t **sptr, imap_pipeline_t *p,
-        ssl_context_t* ssl_ctx, const char *host, const char *service,
-        logic_alloc_t logic_alloc, void *alloc_data){
+derr_t imap_session_alloc_connect(imap_session_t *s,
+        const imap_session_alloc_args_t *args){
     derr_t e = E_OK;
-    PROP(&e, imap_session_do_alloc(sptr, p, ssl_ctx, host, service,
-                logic_alloc, alloc_data) );
+    PROP(&e, imap_session_do_alloc(s, args, true) );
     return e;
 }
 

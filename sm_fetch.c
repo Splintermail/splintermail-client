@@ -32,7 +32,8 @@ typedef struct {
     bool folders_set;
     link_t folders;  // fc_folder_t->link
     // session
-    imap_session_t *s;
+    manager_i mgr;
+    imap_session_t s;
     // dirmgr
     dstr_t path;
     dirmgr_t dirmgr;
@@ -40,6 +41,7 @@ typedef struct {
     link_t accessors;
 } fetch_controller_t;
 DEF_CONTAINER_OF(fetch_controller_t, ctrlr_up, imap_controller_up_t);
+DEF_CONTAINER_OF(fetch_controller_t, mgr, manager_i);
 
 static void fc_free_cmd_event(event_t *ev){
     cmd_event_t *cmd_ev = CONTAINER_OF(ev, cmd_event_t, ev);
@@ -114,7 +116,7 @@ static derr_t sync_next_folder(fetch_controller_t *fc){
     // get a command event
     cmd_event_t *cmd_ev = fc_new_cmd_event();
     if(!cmd_ev) ORIG_GO(&e, E_NOMEM, "no memory", cu_folder);
-    cmd_ev->ev.session = &fc->s->session;
+    cmd_ev->ev.session = &fc->s.session;
     cmd_ev->cmd_type = IMAP_CLIENT_CMD_SET_FOLDER;
 
     // steal the allocated name from the fc_folder_t, put it in the command
@@ -122,7 +124,7 @@ static derr_t sync_next_folder(fetch_controller_t *fc){
     f->name = (dstr_t){0};
 
     // send the command event
-    imap_session_send_command(fc->s, &cmd_ev->ev);
+    imap_session_send_command(&fc->s, &cmd_ev->ev);
 
 cu_folder:
     fc_folder_free(f);
@@ -145,7 +147,7 @@ static void fc_logged_in(const imap_controller_up_t *ic,
            have to worry about race conditions */
         cmd_event_t *cmd_ev = fc_new_cmd_event();
         if(!cmd_ev) ORIG_GO(&e, E_NOMEM, "no memory", fail);
-        cmd_ev->ev.session = &s->session;
+        cmd_ev->ev.session = session;
         cmd_ev->cmd_type = IMAP_CLIENT_CMD_LIST_FOLDERS;
         imap_session_send_command(s, &cmd_ev->ev);
     }else{
@@ -226,11 +228,16 @@ fail:
     PASSED(e);
 }
 
-static void session_closed(imap_session_t *session, derr_t e){
-    (void)session;
-    printf("session closed, exiting\n");
+static void session_dying(manager_i *mgr, derr_t e){
+    (void)mgr;
+    printf("session dying, exiting\n");
     loop_close(&loop, e);
     PASSED(e);
+}
+
+static void session_dead(manager_i *mgr){
+    fetch_controller_t *fc = CONTAINER_OF(mgr, fetch_controller_t, mgr);
+    imap_session_free(&fc->s);
 }
 
 static derr_t fc_init(fetch_controller_t *fc, imap_pipeline_t *p,
@@ -258,18 +265,30 @@ static derr_t fc_init(fetch_controller_t *fc, imap_pipeline_t *p,
     // dirmgr
     PROP_GO(&e, dirmgr_init(&fc->dirmgr, SB(FD(&fc->path))), fail_path);
 
+    // prepare the manager_i for the imap_session
+    fc->mgr = (manager_i){
+        .dying = session_dying,
+        .dead = session_dead,
+    };
+
     // create an initial session
-    imap_client_alloc_arg_t arg = (imap_client_alloc_arg_t){
+    imap_client_alloc_arg_t client_arg = (imap_client_alloc_arg_t){
         .spec = &client_spec,
         .controller = &fc->ctrlr_up,
         .keypair = &keypair,
     };
-    PROP_GO(&e, imap_session_alloc_connect(&fc->s, fc->pipeline, fc->cli_ctx,
-                client_spec.host, client_spec.service, imap_client_logic_alloc,
-                &arg), fail_dirmgr);
-    fc->s->session_destroyed = session_closed;
-    fc->s->mgr_data = fc;
-    imap_session_start(fc->s);
+    imap_session_alloc_args_t session_arg = {
+        fc->pipeline,            // imap_pipeline_t
+        &fc->mgr,                // manager_i
+        fc->cli_ctx,             // ssl_context_t
+        imap_client_logic_alloc, // logic_alloc
+        &client_arg,             // logic_alloc data
+        client_spec.host,        // host
+        client_spec.service,     // port
+        (terminal_t){},
+    };
+    PROP_GO(&e, imap_session_alloc_connect(&fc->s, &session_arg), fail_dirmgr);
+    imap_session_start(&fc->s);
 
     return e;
 

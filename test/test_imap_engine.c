@@ -14,6 +14,7 @@
 
 #include "test_utils.h"
 #include "fake_engine.h"
+#include "fake_imap_logic.h"
 
 #define NUM_THREADS 10
 #define WRITES_PER_THREAD 1000
@@ -26,25 +27,7 @@ unsigned int listen_port = 12348;
 const char* port_str = "12348";
 
 typedef struct {
-    pthread_t thread;
-    loop_t loop;
-    tlse_t tlse;
-    imape_t imape;
-    ssl_context_t ssl_ctx;
-    derr_t error;
-    pthread_mutex_t *mutex;
-    pthread_cond_t *cond;
-} test_context_t;
-
-static void fake_session_dn_destroyed(fake_session_t *s, derr_t error){
-    if(error.type != E_NONE){
-        loop_close(s->pipeline->loop, error);
-        PASSED(error);
-    }
-}
-
-typedef struct {
-    fake_pipeline_t pipeline;
+    imap_pipeline_t pipeline;
     ssl_context_t *ssl_ctx;
     listener_spec_t lspec;
 } test_lspec_t;
@@ -55,12 +38,23 @@ static derr_t conn_recvd(listener_spec_t *lspec, session_t **session){
 
     test_lspec_t *t = CONTAINER_OF(lspec, test_lspec_t, lspec);
 
-    fake_session_t *s;
-    PROP(&e, fake_session_alloc_accept(&s, &t->pipeline, t->ssl_ctx) );
-    s->session_destroyed = fake_session_dn_destroyed;
-    fake_session_start(s);
+    imap_session_alloc_args_t args = {
+        &t->pipeline,
+        NULL, // mgr (filled in by echo_session_mgr_new)
+        t->ssl_ctx,
+        fake_imap_logic_init, // logic_alloc
+        NULL, // alloc_data
+        NULL, // host
+        NULL, // service
+        (terminal_t){},
+    };
 
-    *session = &s->session;
+    echo_session_mgr_t *esm;
+    PROP(&e, echo_session_mgr_new(&esm, args) );
+
+    imap_session_start(&esm->s);
+
+    *session = &esm->s.session;
 
     return e;
 }

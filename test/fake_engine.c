@@ -4,22 +4,6 @@
 #include "fake_engine.h"
 #include "fake_imap_logic.h"
 
-DSTR_STATIC(fe_ref_read_dstr, "read");
-DSTR_STATIC(fe_ref_write_dstr, "write");
-DSTR_STATIC(fe_ref_start_dstr, "start_protect");
-DSTR_STATIC(fe_ref_close_dstr, "close_protect");
-DSTR_STATIC(fe_ref_unknown_dstr, "unknown");
-
-static dstr_t *fe_ref_reason_to_dstr(enum fake_engine_ref_reason_t reason){
-    switch(reason){
-        case FAKE_ENGINE_REF_READ: return &fe_ref_read_dstr; break;
-        case FAKE_ENGINE_REF_WRITE: return &fe_ref_write_dstr; break;
-        case FAKE_ENGINE_REF_START_PROTECT: return &fe_ref_start_dstr; break;
-        case FAKE_ENGINE_REF_CLOSE_PROTECT: return &fe_ref_close_dstr; break;
-        default: return &fe_ref_unknown_dstr; break;
-    }
-}
-
 /////// reader-writer thread stuff
 
 void *reader_writer_thread(void *arg){
@@ -112,40 +96,104 @@ fail:
     return NULL;
 }
 
+static void echo_session_dying(manager_i *mgr, derr_t error){
+    tagged_mgr_t *tmgr = CONTAINER_OF(mgr, tagged_mgr_t, mgr);
+    echo_session_mgr_t *esm = CONTAINER_OF(tmgr, echo_session_mgr_t, tmgr);
+    if(is_error(error)){
+        loop_close(esm->s.pipeline->loop, error);
+        PASSED(error);
+    }
+}
+
+static void echo_session_dead(manager_i *mgr){
+    tagged_mgr_t *tmgr = CONTAINER_OF(mgr, tagged_mgr_t, mgr);
+    echo_session_mgr_t *esm = CONTAINER_OF(tmgr, echo_session_mgr_t, tmgr);
+    imap_session_free(&esm->s);
+
+    free(esm);
+}
+
+derr_t echo_session_mgr_new(echo_session_mgr_t **out,
+        imap_session_alloc_args_t args){
+    derr_t e = E_OK;
+
+    echo_session_mgr_t *esm = malloc(sizeof(*esm));
+    if(!esm) ORIG(&e, E_NOMEM, "no mem");
+    *esm = (echo_session_mgr_t){
+        .tmgr={
+            .is_cbrw=false,
+            .mgr={
+                .dying=echo_session_dying,
+                .dead=echo_session_dead,
+            },
+        },
+    };
+
+    args.mgr = &esm->tmgr.mgr;
+
+    PROP_GO(&e, imap_session_alloc_accept(&esm->s, &args), fail);
+
+    *out = esm;
+
+    return e;
+
+fail:
+    free(esm);
+    return e;
+}
+
 /////// cb_reader_writer stuff
 
-static event_t *cb_reader_writer_send(cb_reader_writer_t *cbrw){
+static derr_t cb_reader_writer_send(cb_reader_writer_t *cbrw, event_t **out){
     derr_t e = E_OK;
+
+    *out = NULL;
+
+    if(cbrw->dying) return e;
 
     // check for completion criteria
     if(cbrw->nrecvd == cbrw->nwrites){
-        fake_session_close(&cbrw->fake_session->session, E_OK);
-        return NULL;
+        imap_session_close(&cbrw->s.session, E_OK);
+        return e;
     }
 
     // reset buffers
     cbrw->out.len = 0;
     cbrw->in.len = 0;
 
-    PROP_GO(&e, FMT(&cbrw->out, "cbrw%x:%x/%x\n", FU(cbrw->id),
-                 FU(cbrw->nrecvd + 1), FU(cbrw->nwrites)), fail);
+    PROP(&e, FMT(&cbrw->out, "cbrw%x:%x/%x\n", FU(cbrw->id),
+                FU(cbrw->nrecvd + 1), FU(cbrw->nwrites)) );
 
     // copy out into a write event (which will be freed, but not by us)
-    event_t *ev = fake_engine_get_write_event(cbrw->fake_engine, &cbrw->out);
-    if(!ev) ORIG_GO(&e, E_NOMEM, "no memory", fail);
+    event_t *ev;
+    PROP(&e, fake_engine_get_write_event(cbrw->fake_engine, &cbrw->out, &ev) );
 
-    ev->session = &cbrw->fake_session->session;
-    fake_session_ref_up_test(ev->session, FAKE_ENGINE_REF_WRITE);
-    return ev;
+    ev->session = &cbrw->s.session;
+    imap_session_ref_up(&cbrw->s);
+    *out = ev;
 
-fail:
-    fake_session_close(&cbrw->fake_session->session, SPLIT(e));
-    cbrw->error = e;
-    return NULL;
+    return e;
 }
 
-event_t *cb_reader_writer_init(cb_reader_writer_t *cbrw, size_t id,
-        size_t nwrites, fake_session_t *s, engine_t *fake_engine){
+static void cbrw_session_dying(manager_i *mgr, derr_t error){
+    tagged_mgr_t *tmgr = CONTAINER_OF(mgr, tagged_mgr_t, mgr);
+    cb_reader_writer_t *cbrw = CONTAINER_OF(tmgr, cb_reader_writer_t, tmgr);
+    if(is_error(error)){
+        loop_close(cbrw->s.pipeline->loop, error);
+        PASSED(error);
+    }
+}
+
+static void cbrw_session_dead(manager_i *mgr){
+    tagged_mgr_t *tmgr = CONTAINER_OF(mgr, tagged_mgr_t, mgr);
+    cb_reader_writer_t *cbrw = CONTAINER_OF(tmgr, cb_reader_writer_t, tmgr);
+    imap_session_free(&cbrw->s);
+
+    cb_reader_writer_free(cbrw);
+}
+
+derr_t cb_reader_writer_init(cb_reader_writer_t *cbrw, size_t id,
+        size_t nwrites, engine_t *fake_engine, imap_session_alloc_args_t args){
     derr_t e = E_OK;
     *cbrw = (cb_reader_writer_t){0};
 
@@ -155,21 +203,27 @@ event_t *cb_reader_writer_init(cb_reader_writer_t *cbrw, size_t id,
 
     cbrw->id = id;
     cbrw->nwrites = nwrites;
-    cbrw->fake_session = s;
     cbrw->fake_engine = fake_engine;
+    cbrw->tmgr = (tagged_mgr_t){
+        .is_cbrw=true,
+        .mgr={
+            .dying=cbrw_session_dying,
+            .dead=cbrw_session_dead,
+        },
+    };
 
-    // start sending the first message
-    event_t *ev = cb_reader_writer_send(cbrw);
-    if(!ev) goto free_in;
-    return ev;
+    args.mgr = &cbrw->tmgr.mgr;
+
+    PROP_GO(&e, imap_session_alloc_connect(&cbrw->s, &args), free_in);
+
+    return e;
 
 free_in:
     dstr_free(&cbrw->in);
 free_out:
     dstr_free(&cbrw->out);
 fail:
-    DROP_VAR(&e);
-    return NULL;
+    return e;
 }
 
 void cb_reader_writer_free(cb_reader_writer_t *cbrw){
@@ -177,248 +231,35 @@ void cb_reader_writer_free(cb_reader_writer_t *cbrw){
     dstr_free(&cbrw->out);
 }
 
-event_t *cb_reader_writer_read(cb_reader_writer_t *cbrw, dstr_t *buffer){
-    // if we are exiting, just ignore this
-    if(cbrw->error.type != E_NONE) return NULL;
-
+static derr_t cb_reader_writer_read(cb_reader_writer_t *cbrw, dstr_t *buffer,
+        event_t **out){
     derr_t e = E_OK;
 
+    *out = NULL;
+
+    // if we are exiting, just ignore this
+    if(cbrw->dying) return e;
+
     // append the buffer to the input
-    PROP_GO(&e, dstr_append(&cbrw->in, buffer), fail);
+    PROP(&e, dstr_append(&cbrw->in, buffer) );
 
     // make sure we have the full line
     if(dstr_count(&cbrw->in, &DSTR_LIT("\n")) == 0){
-        return NULL;
+        return e;
     }
 
     // compare buffers
     if(dstr_cmp(&cbrw->in, &cbrw->out) != 0){
         TRACE(&e, "cbrw got a bad echo: \"%x\" (expected \"%x\")\n",
                 FD(&cbrw->in), FD(&cbrw->out));
-        ORIG_GO(&e, E_VALUE, "bad echo", fail);
+        ORIG(&e, E_VALUE, "bad echo");
     }
 
     cbrw->nrecvd++;
 
     // send another
-    return cb_reader_writer_send(cbrw);
-
-fail:
-    fake_session_close(&cbrw->fake_session->session, SPLIT(e));
-    cbrw->error = e;
-    return NULL;
-}
-
-/////// fake session stuff
-
-static void fake_session_ref_up(session_t *session){
-    fake_session_t *s = CONTAINER_OF(session, fake_session_t, session);
-    pthread_mutex_lock(&s->mutex);
-    if(s->refs == 0){
-        LOG_DEBUG("necromatic ref_up detected!\n");
-    }
-    ++s->refs;
-    // LOG_DEBUG("ref_up (%x)\n", FI(s->refs));
-    pthread_mutex_unlock(&s->mutex);
-}
-
-static void fake_session_ref_down(session_t *session){
-    fake_session_t *s = CONTAINER_OF(session, fake_session_t, session);
-    pthread_mutex_lock(&s->mutex);
-    int refs = --s->refs;
-    // LOG_DEBUG("ref_down (%x)\n", FI(s->refs));
-    pthread_mutex_unlock(&s->mutex);
-
-    if(refs > 0) return;
-
-    // finish closing the imape_data
-    if(s->pipeline->imape){
-        imape_data_postclose(&s->imape_data);
-    }
-
-    // now the session is no longer in use, we call the session manager hook
-    s->session_destroyed(s, s->error);
-    PASSED(s->error);
-
-    // free the session
-    pthread_mutex_destroy(&s->mutex);
-    free(s);
-}
-
-// only called by loop thread
-void fake_session_ref_up_loop(session_t *session, int reason){
-    fake_session_t *s = CONTAINER_OF(session, fake_session_t, session);
-    s->loop_refs[reason]++;
-    fake_session_ref_up(session);
-}
-void fake_session_ref_down_loop(session_t *session, int reason){
-    fake_session_t *s = CONTAINER_OF(session, fake_session_t, session);
-    s->loop_refs[reason]--;
-    for(size_t i = 0; i < LOOP_REF_MAXIMUM; i++){
-        if(s->loop_refs[i] < 0){
-            LOG_ERROR("negative loop ref of type %x!\n",
-                      FD(loop_ref_reason_to_dstr(i)));
-        }
-    }
-    fake_session_ref_down(session);
-}
-
-// only called by tlse thread
-void fake_session_ref_up_tlse(session_t *session, int reason){
-    fake_session_t *s = CONTAINER_OF(session, fake_session_t, session);
-    s->tlse_refs[reason]++;
-    fake_session_ref_up(session);
-}
-void fake_session_ref_down_tlse(session_t *session, int reason){
-    fake_session_t *s = CONTAINER_OF(session, fake_session_t, session);
-    s->tlse_refs[reason]--;
-    for(size_t i = 0; i < TLSE_REF_MAXIMUM; i++){
-        if(s->tlse_refs[i] < 0){
-            LOG_ERROR("negative tlse ref of type %x!\n",
-                      FD(tlse_ref_reason_to_dstr(i)));
-        }
-    }
-    fake_session_ref_down(session);
-}
-
-// only called by imape thread
-void fake_session_ref_up_imape(session_t *session, int reason){
-    fake_session_t *s = CONTAINER_OF(session, fake_session_t, session);
-    pthread_mutex_lock(&s->mutex);
-    s->imape_refs[reason]++;
-    pthread_mutex_unlock(&s->mutex);
-    fake_session_ref_up(session);
-}
-void fake_session_ref_down_imape(session_t *session, int reason){
-    fake_session_t *s = CONTAINER_OF(session, fake_session_t, session);
-    pthread_mutex_lock(&s->mutex);
-    s->imape_refs[reason]--;
-    for(size_t i = 0; i < IMAPE_REF_MAXIMUM; i++){
-        if(s->imape_refs[i] < 0){
-            LOG_ERROR("negative imape ref of type %x!\n",
-                      FD(imape_ref_reason_to_dstr(i)));
-        }
-    }
-    pthread_mutex_unlock(&s->mutex);
-    fake_session_ref_down(session);
-}
-
-// only for use on test thread (fake engine and callbacks)
-void fake_session_ref_up_test(session_t *session, int reason){
-    fake_session_t *s = CONTAINER_OF(session, fake_session_t, session);
-    s->test_refs[reason]++;
-    fake_session_ref_up(session);
-}
-void fake_session_ref_down_test(session_t *session, int reason){
-    fake_session_t *s = CONTAINER_OF(session, fake_session_t, session);
-    s->test_refs[reason]--;
-    for(size_t i = 0; i < FAKE_ENGINE_REF_MAXIMUM; i++){
-        if(s->test_refs[i] < 0){
-            LOG_ERROR("negative test ref of type %x!\n",
-                      FD(fe_ref_reason_to_dstr(i)));
-        }
-    }
-    fake_session_ref_down(session);
-}
-
-
-// to allocate new sessions (when loop.c only know about a single child struct)
-static derr_t fake_session_do_alloc(fake_session_t **sptr, fake_pipeline_t *fp,
-        ssl_context_t* ssl_ctx, const char *host, const char* service){
-    derr_t e = E_OK;
-
-    bool upwards = (host != NULL);
-
-    // allocate the struct
-    fake_session_t *s = malloc(sizeof(*s));
-    if(!s) ORIG(&e, E_NOMEM, "no mem");
-    *s = (fake_session_t){0};
-
-    // session prestart
-    pthread_mutex_init(&s->mutex, NULL);
-    s->refs = 1;
-    s->test_refs[FAKE_ENGINE_REF_START_PROTECT] = 1;
-    s->closed = false;
-    s->pipeline = fp;
-    s->session.ld = &s->loop_data;
-    s->session.td = &s->tlse_data;
-    s->session.id = &s->imape_data;
-    s->session.close = fake_session_close;
-
-    // per-engine prestart
-    if(s->pipeline->loop){
-        loop_data_prestart(&s->loop_data, s->pipeline->loop, &s->session, host,
-                service, fake_session_ref_up_loop, fake_session_ref_down_loop);
-    }
-    if(s->pipeline->tlse){
-        tlse_data_prestart(&s->tlse_data, s->pipeline->tlse, &s->session,
-                fake_session_ref_up_tlse, fake_session_ref_down_tlse, ssl_ctx,
-                upwards);
-    }
-    if(s->pipeline->imape){
-        imape_data_prestart(&s->imape_data, s->pipeline->imape, &s->session,
-                upwards, fake_session_ref_up_imape,
-                fake_session_ref_down_imape,
-                fake_imap_logic_init, NULL);
-    }
-
-    *sptr = s;
-
+    PROP(&e, cb_reader_writer_send(cbrw, out) );
     return e;
-}
-
-void fake_session_start(fake_session_t *s){
-    // per-engine start
-    if(s->pipeline->loop){
-        loop_data_start(&s->loop_data);
-    }
-    if(s->pipeline->tlse){
-        tlse_data_start(&s->tlse_data);
-    }
-    if(s->pipeline->imape){
-        imape_data_start(&s->imape_data);
-    }
-    fake_session_ref_down_test(&s->session, FAKE_ENGINE_REF_START_PROTECT);
-}
-
-// to allocate new sessions (when loop.c only know about a single child struct)
-derr_t fake_session_alloc_accept(fake_session_t **sptr, fake_pipeline_t *fp,
-                                 ssl_context_t* ssl_ctx){
-    derr_t e = E_OK;
-    PROP(&e, fake_session_do_alloc(sptr, fp, ssl_ctx, NULL, NULL) );
-    return e;
-}
-
-derr_t fake_session_alloc_connect(fake_session_t **sptr, fake_pipeline_t *fp,
-         ssl_context_t* ssl_ctx, const char *host, const char *service){
-    derr_t e = E_OK;
-    PROP(&e, fake_session_do_alloc(sptr, fp, ssl_ctx, host, service) );
-    return e;
-}
-
-void fake_session_close(session_t *session, derr_t error){
-    fake_session_t *s = CONTAINER_OF(session, fake_session_t, session);
-    MERGE_VAR(&s->error, &error, "session_close error");
-    pthread_mutex_lock(&s->mutex);
-    bool do_close = !s->closed;
-    s->closed = true;
-    pthread_mutex_unlock(&s->mutex);
-
-    if(!do_close) return;
-
-    /* make sure every engine_data has a chance to pass a close event; a slow
-       session without standing references must be protected */
-    fake_session_ref_up_test(&s->session, FAKE_ENGINE_REF_CLOSE_PROTECT);
-    if(s->pipeline->loop){
-        loop_data_close(&s->loop_data);
-    }
-    if(s->pipeline->tlse){
-        tlse_data_close(&s->tlse_data);
-    }
-    if(s->pipeline->imape){
-        imape_data_close(&s->imape_data);
-    }
-    fake_session_ref_down_test(&s->session, FAKE_ENGINE_REF_CLOSE_PROTECT);
 }
 
 /////// fake engine stuff
@@ -445,30 +286,121 @@ static void fake_engine_return_write_event(event_t *ev){
     fake_engine->pass_event(fake_engine, ev);
 }
 
-event_t *fake_engine_get_write_event(engine_t *engine, dstr_t *text){
+derr_t fake_engine_get_write_event(engine_t *engine, dstr_t *text,
+        event_t **out){
+    derr_t e = E_OK;
     // copy out into a write event (which will be freed, but not by us)
     event_t *ev = malloc(sizeof(*ev));
-    if(!ev) return NULL;
+    if(!ev) ORIG(&e, E_NOMEM, "no mem");
 
     event_prep(ev, fake_engine_return_write_event, engine);
     ev->ev_type = EV_WRITE;
 
-    if(dstr_new_quiet(&ev->buffer, text->len) != E_NONE){
-        goto fail;
-    }
-    dstr_copy(text, &ev->buffer);
+    PROP_GO(&e, dstr_new(&ev->buffer, text->len), fail);
+    PROP_GO(&e, dstr_copy(text, &ev->buffer), fail);
 
-    return ev;
+    *out = ev;
+    return e;
 
 fail:
     free(ev);
-    return NULL;
+    return e;
+}
+
+static derr_t launch_second_half_of_test(session_cb_data_t *cb_data,
+        engine_t *fake_engine, engine_t *upstream){
+    derr_t e = E_OK;
+    // make NUM_THREAD connections
+    for(size_t i = 0; i < cb_data->num_threads; i++){
+
+        // prepare a cb_reader_writer
+        cb_reader_writer_t *cbrw = &cb_data->cb_reader_writers[i];
+        PROP(&e, cb_reader_writer_init(cbrw, i, cb_data->writes_per_thread,
+                    fake_engine, cb_data->session_connect_args) );
+
+        // start the session
+        imap_session_start(&cbrw->s);
+
+        // get the first message
+        event_t *ev_new;
+        PROP(&e, cb_reader_writer_send(cbrw, &ev_new) );
+
+        // pass the write message
+        if(ev_new != NULL){
+            upstream->pass_event(upstream, ev_new);
+            cb_data->nwrites++;
+        }
+    }
+
+    return e;
+}
+
+static derr_t handle_read(session_cb_data_t *cb_data, event_t *ev,
+        engine_t *fake_engine, engine_t *upstream){
+    derr_t e = E_OK;
+
+    if(ev->buffer.len == 0){
+        // done with this session
+        imap_session_close(ev->session, E_OK);
+        // was that the last session?
+        cb_data->nEOF++;
+        if(cb_data->nEOF == cb_data->num_threads){
+            PROP(&e, launch_second_half_of_test(cb_data, fake_engine,
+                        upstream) );
+        }else if(cb_data->nEOF == cb_data->num_threads*2){
+            // test is over
+            loop_close(&cb_data->test_ctx->loop, E_OK);
+        }
+        return e;
+    }
+
+    // is this session a cb_reader_writer session?
+    imap_session_t *s = CONTAINER_OF(ev->session, imap_session_t, session);
+    manager_i *mgr = s->mgr;
+    tagged_mgr_t *tmgr = CONTAINER_OF(mgr, tagged_mgr_t, mgr);
+
+    if(tmgr->is_cbrw){
+        cb_reader_writer_t *cbrw = CONTAINER_OF(tmgr, cb_reader_writer_t, tmgr);
+        event_t *ev_new;
+        PROP(&e, cb_reader_writer_read(cbrw, &ev->buffer, &ev_new) );
+        if(ev_new){
+            // pass the write
+            upstream->pass_event(upstream, ev_new);
+            cb_data->nwrites++;
+        }
+    }
+    // otherwise, echo back the message
+    else{
+        event_t *ev_new;
+        PROP(&e, fake_engine_get_write_event(fake_engine, &ev->buffer,
+                    &ev_new) );
+        ev_new->session = ev->session;
+        imap_session_t *s = CONTAINER_OF(ev->session, imap_session_t, session);
+        imap_session_ref_up(s);
+        // pass the write
+        upstream->pass_event(upstream, ev_new);
+        cb_data->nwrites++;
+    }
+
+    return e;
+}
+
+static void handle_write_done(session_cb_data_t *cb_data, event_t *ev){
+    // downref session
+    imap_session_t *s = CONTAINER_OF(ev->session, imap_session_t, session);
+    imap_session_ref_down(s);
+    // free event
+    dstr_free(&ev->buffer);
+    free(ev);
+    cb_data->nwrites--;
+}
+
+static bool quit_ready(session_cb_data_t *cb_data){
+    return cb_data->nwrites == 0;
 }
 
 derr_t fake_engine_run(fake_engine_t *fe, engine_t *upstream,
-        void (*handle_read)(void*, event_t*, engine_t *fake_engine),
-        void (*handle_write_done)(void*, event_t*), bool (*quit_ready)(void*),
-        void *cb_data){
+        session_cb_data_t *cb_data, loop_t *loop){
     derr_t e = E_OK;
     // process incoming events from the upstream engine
     event_t *quit_ev = NULL;
@@ -479,7 +411,10 @@ derr_t fake_engine_run(fake_engine_t *fe, engine_t *upstream,
             case EV_READ:
                 //LOG_ERROR("got read\n");
                 // check for EOF
-                handle_read(cb_data, ev, &fe->engine);
+                IF_PROP(&e, handle_read(cb_data, ev, &fe->engine, upstream) ){
+                    loop_close(loop, e);
+                    PASSED(e);
+                }
                 // return buffer
                 ev->returner(ev);
                 break;
@@ -511,5 +446,5 @@ derr_t fake_engine_run(fake_engine_t *fe, engine_t *upstream,
                         "unexpected event type from upstream engine\n");
         }
     }
-    ORIG(&e, E_VALUE, "unexpected \t from fake_engine");
+    ORIG(&e, E_VALUE, "unexpected exit from fake_engine");
 }

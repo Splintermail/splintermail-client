@@ -9,18 +9,7 @@
 #include <loop.h>
 #include <tls_engine.h>
 #include <imap_engine.h>
-
-enum fake_engine_ref_reason_t {
-    FAKE_ENGINE_REF_READ,
-    FAKE_ENGINE_REF_WRITE,
-    FAKE_ENGINE_REF_START_PROTECT,
-    FAKE_ENGINE_REF_CLOSE_PROTECT,
-    FAKE_ENGINE_REF_CBRW_PROTECT,
-    FAKE_ENGINE_REF_MAXIMUM
-};
-
-struct fake_session_t;
-typedef struct fake_session_t fake_session_t;
+#include <imap_session.h>
 
 /* reader-writer thread is an independent thread that just starts a connection,
    writes a bunch of shit, and tests that whatever was returned matches what
@@ -29,7 +18,7 @@ typedef struct fake_session_t fake_session_t;
     RW Thread starts the connection
                       _______________________________________________
                      |                                               |
-                     | fake_session, via fake_session_alloc_accpet() |
+                     | imap_session, via imap_session_alloc_accpet() |
     ___________      |  _______________       _______________        |
    |           | --> | |               | --> |               |       |
    | RW Thread |     | | test pipeline |     |  fake engine  |       |
@@ -54,13 +43,29 @@ typedef struct {
 // a pthread function, always returns NULL
 void *reader_writer_thread(void *reader_writer_context);
 
+typedef struct {
+    manager_i mgr;
+    // cbrw or echo?
+    bool is_cbrw;
+} tagged_mgr_t;
+DEF_CONTAINER_OF(tagged_mgr_t, mgr, manager_i);
+
+typedef struct {
+    tagged_mgr_t tmgr;
+    imap_session_t s;
+} echo_session_mgr_t;
+DEF_CONTAINER_OF(echo_session_mgr_t, tmgr, tagged_mgr_t);
+
+derr_t echo_session_mgr_new(echo_session_mgr_t **out,
+        imap_session_alloc_args_t args);
+
 /* cb_reader_writer is just like reader_writer except it connects via the loop.
    This tests the ability to make connections.
 
    There are two sessions, which are distinguishable by sess->mgr_data.
     ____________________________________________________
    |                                                    |
-   | fake_session, via fake_session_alloc_connect()     |
+   | imap_session, via imap_session_alloc_connect()     |
    |         _______________       ___________________  |
    |    +-> |               | --> |                   | |    ______
    |    |   | test pipeline |     |  fake engine      | <-- |      |
@@ -74,7 +79,7 @@ void *reader_writer_thread(void *reader_writer_context);
    |  +---> |_______________| --> |___________________| |
    |                                                    |
    |                                                    |
-   | fake_session, via fake_session_alloc_accept()      |
+   | imap_session, via imap_session_alloc_accept()      |
    |____________________________________________________|
 
 */
@@ -86,87 +91,19 @@ typedef struct {
     dstr_t in;
     size_t nwrites; // total writes, not a count of writes-so-far
     size_t nrecvd;
-    fake_session_t *fake_session;
     engine_t *fake_engine;
+    imap_session_t s;
+    tagged_mgr_t tmgr;
+    bool dying;
 } cb_reader_writer_t;
+DEF_CONTAINER_OF(cb_reader_writer_t, tmgr, tagged_mgr_t);
 
 // returns the first WRITE event, or NULL if there was an error
-event_t *cb_reader_writer_init(cb_reader_writer_t *cbrw, size_t id,
-        size_t nwrites, fake_session_t *s, engine_t *fake_engine);
+derr_t cb_reader_writer_init(cb_reader_writer_t *cbrw, size_t id,
+        size_t nwrites, engine_t *fake_engine, imap_session_alloc_args_t args);
 void cb_reader_writer_free(cb_reader_writer_t *cbrw);
 // returns the next WRITE event, if there is one
-event_t *cb_reader_writer_read(cb_reader_writer_t *cbrw, dstr_t *buffer);
-
-// the fake_session is meant to be useful in a variety of unit tests
-
-typedef struct {
-    // null engines are ignored during session hooks
-    loop_t *loop;
-    tlse_t *tlse;
-    imape_t *imape;
-} fake_pipeline_t;
-
-struct fake_session_t {
-    session_t session;
-    pthread_mutex_t mutex;
-    int refs;
-    bool closed;
-    size_t id;
-    derr_t error;
-    // stuff for getters
-    ssl_context_t *ssl_ctx;
-    bool upwards;
-    // engines
-    fake_pipeline_t *pipeline;
-    // engine_data elements
-    loop_data_t loop_data;
-    tlse_data_t tlse_data;
-    imape_data_t imape_data;
-    // per-reason-per-engine reference counts
-    int loop_refs[LOOP_REF_MAXIMUM];
-    int tlse_refs[TLSE_REF_MAXIMUM];
-    int imape_refs[IMAPE_REF_MAXIMUM];
-    int test_refs[FAKE_ENGINE_REF_MAXIMUM];
-    /* session manager hook; this is to be set externally, after session_alloc
-       but before session_start */
-    void (*session_destroyed)(fake_session_t*, derr_t);
-    void *mgr_data;
-};
-DEF_CONTAINER_OF(fake_session_t, session, session_t)
-
-/* The fake session will not be freed in between fake_session_alloc_*() and
-   fake_session_start(), even in the case of an asynchronous failure.  However,
-   if you run into an error after fake_session_alloc_*() but before
-   fake_session_start(), you will need to downref the session to clean it up */
-derr_t fake_session_alloc_accept(fake_session_t **sptr, fake_pipeline_t *fp,
-        ssl_context_t* ssl_ctx);
-derr_t fake_session_alloc_connect(fake_session_t **sptr, fake_pipeline_t *fp,
-        ssl_context_t* ssl_ctx, const char *host, const char *service);
-void fake_session_start(fake_session_t *s);
-
-// only for use on loop thread
-void fake_session_ref_up_loop(session_t *session, int reason);
-void fake_session_ref_down_loop(session_t *session, int reason);
-
-// only for use on tlse thread
-void fake_session_ref_up_tlse(session_t *session, int reason);
-void fake_session_ref_down_tlse(session_t *session, int reason);
-
-// only for use on imape thread
-void fake_session_ref_up_imape(session_t *session, int reason);
-void fake_session_ref_down_imape(session_t *session, int reason);
-
-// only for use on test thread (fake engine and callbacks)
-void fake_session_ref_up_test(session_t *session, int reason);
-void fake_session_ref_down_test(session_t *session, int reason);
-
-void fake_session_close(session_t *session, derr_t error);
-
-loop_data_t *fake_session_get_loop_data(void *session);
-tlse_data_t *fake_session_get_tlse_data(void *session);
-ssl_context_t *fake_session_get_ssl_ctx(void *session);
-bool fake_session_get_upwards(void *session);
-
+// event_t *cb_reader_writer_read(cb_reader_writer_t *cbrw, dstr_t *buffer);
 
 /* The fake engine expects to be the last engine in a pipeline.  It will make
    callbacks into the test whenever a READ or WRITE_DONE is passed to it. */
@@ -179,13 +116,39 @@ DEF_CONTAINER_OF(fake_engine_t, engine, engine_t);
 derr_t fake_engine_init(fake_engine_t *fake_engine);
 void fake_engine_free(fake_engine_t *fake_engine);
 
-// get pre-prepped, pre-populated events; returns NULL on allocation error
-// (this is to make setting ev->returner a bit cleaner)
-event_t *fake_engine_get_write_event(engine_t *engine, dstr_t *text);
+derr_t fake_engine_get_write_event(engine_t *engine, dstr_t *text,
+        event_t **out);
+
+// for launching the loop thread
+typedef struct {
+    pthread_t thread;
+    loop_t loop;
+    tlse_t tlse;
+    imape_t imape;
+    ssl_context_t ssl_ctx;
+    engine_t *downstream;
+    derr_t error;
+    pthread_mutex_t *mutex;
+    pthread_cond_t *cond;
+} test_context_t;
+
+// for tracking the second half of the test
+typedef struct {
+    size_t nwrites;
+    size_t nEOF;
+    test_context_t *test_ctx;
+    derr_t error;
+    // there won't be more than 128 threads... right?
+    cb_reader_writer_t cb_reader_writers[128];
+    ssl_context_t *ssl_ctx_client;
+    size_t num_threads;
+    size_t writes_per_thread;
+    const char *host;
+    const char *port;
+    imap_session_alloc_args_t session_connect_args;
+} session_cb_data_t;
 
 derr_t fake_engine_run(fake_engine_t *fe, engine_t *upstream,
-        void (*handle_read)(void*, event_t*, engine_t *fake_engine),
-        void (*handle_write_done)(void*, event_t*), bool (*quit_ready)(void*),
-        void *cb_data);
+        session_cb_data_t *cb_data, loop_t *loop);
 
 #endif // FAKE_ENGINE_H
