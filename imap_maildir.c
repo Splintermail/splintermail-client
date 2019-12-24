@@ -4,6 +4,301 @@
 #include "uv_util.h"
 #include "maildir_name.h"
 
+// the internal struct to hold an accessor_i in a list with some metadata
+typedef struct {
+    accessor_i *accessor;
+    // the actual maildir
+    imaildir_t *m;
+    // the interface we give to the accessor
+    maildir_i maildir;
+    // the most recent change the object has reconciled
+    size_t reconciled;
+    link_t link;  // imaildir_t->accessors
+} acc_t;
+DEF_CONTAINER_OF(acc_t, link, link_t);
+DEF_CONTAINER_OF(acc_t, maildir, maildir_i);
+
+// decider_f represents the unique part of an update call of the maildir_i
+typedef derr_t (*decider_f)(imaildir_t *m, msg_update_type_e *update_type,
+        msg_update_value_u *update_val, void *data);
+
+// post_update is the common code for all the update calls of the maildir_i
+static derr_t post_update(maildir_i *maildir, size_t *seq, decider_f decider,
+        void *data){
+    derr_t e = E_OK;
+
+    acc_t *acc = CONTAINER_OF(maildir, acc_t, maildir);
+    imaildir_t *m = acc->m;
+
+    // allocate a new update struct
+    msg_update_t *update = malloc(sizeof(*update));
+    if(update == NULL) ORIG(&e, E_NOMEM, "no mem");
+    *update = (msg_update_t){0};
+
+    // init struct
+    link_init(&update->link);
+
+    uv_rwlock_wrlock(&m->content.lock);
+
+    // now we will decide what the update ought to be
+    PROP_GO(&e, decider(m, &update->type, &update->val, data), fail);
+
+    // set seq number
+    update->seq = ++m->content.seq;
+
+    // store the content as "unreconciled"
+    link_list_append(&m->content.unreconciled, &update->link);
+
+    uv_rwlock_wrunlock(&m->content.lock);
+
+    // return the seq number we actually got
+    *seq = update->seq;
+
+    return e;
+
+fail:
+    uv_rwlock_wrunlock(&m->content.lock);
+    free(update);
+    return e;
+}
+
+static msg_flags_t three_way_merge(msg_flags_t base, msg_flags_t old,
+        msg_flags_t new){
+    // which flags were changed by the accessor?
+    msg_flags_t changed = msg_flags_xor(old, new);
+
+    // which flags are different between the new and the base?
+    msg_flags_t diff = msg_flags_xor(base, new);
+
+    // apply changes which were both requested and necessary
+    return msg_flags_and(changed, diff);
+}
+
+typedef struct {
+    unsigned int uid;
+    msg_flags_t old;
+    msg_flags_t new;
+} decider_flags_args_t;
+
+// decider_flags is a decider_f
+static derr_t decider_flags(imaildir_t *m, msg_update_type_e *update_type,
+        msg_update_value_u *update_val, void *data){
+    derr_t e = E_OK;
+
+    decider_flags_args_t *args = data;
+
+    // find the real message by UID
+    hash_elem_t *h = hashmap_getu(&m->content.msgs, args->uid);
+    if(h == NULL){
+        // message has been deleted, this is a noop
+        *update_type = MSG_UPDATE_NOOP;
+        return e;
+    }
+    // get the message base
+    msg_base_t *base = CONTAINER_OF(h, msg_base_t, h);
+
+    // figure the actual changes to make
+    msg_flags_t changes =
+        three_way_merge(base->meta->flags, args->old, args->new);
+
+    // did we decide any changes were necessary?
+    msg_flags_t no_changes = {0};
+    if(msg_flags_eq(changes, no_changes)){
+        *update_type = MSG_UPDATE_NOOP;
+        return e;
+    }
+
+    // otherwise create an updated msg_meta_t
+    msg_flags_t flags_out = msg_flags_xor(base->meta->flags, changes);
+    msg_meta_t *new_meta;
+    PROP(&e, msg_meta_new(&new_meta, flags_out) );
+
+    // configure the update
+    *update_type = MSG_UPDATE_FLAGS;
+    update_val->flags.uid = args->uid;
+    update_val->flags.old = &base->meta->flags;
+    update_val->flags.new = &new_meta->flags;
+
+    // update base (old value freed when update is reconciled)
+    base->meta = new_meta;
+
+    return e;
+}
+
+// update_flags is part of maildir_i
+static derr_t update_flags(maildir_i *maildir, unsigned int uid,
+        msg_flags_t old, msg_flags_t new, size_t *seq){
+    derr_t e = E_OK;
+
+    decider_flags_args_t args = {.uid = uid, .old = old, .new = new};
+
+    PROP(&e, post_update(maildir, seq, decider_flags, &args) );
+
+    return e;
+}
+
+// new_msg is part of the maildir_i
+static derr_t new_msg(maildir_i *maildir, const dstr_t *filename,
+        msg_flags_t *flags, size_t *seq){
+    derr_t e = E_OK;
+
+    (void)maildir;
+    (void)filename;
+    (void)flags;
+    (void)seq;
+    ORIG(&e, E_VALUE, "not implemented");
+
+    return e;
+}
+
+typedef struct {
+    unsigned int uid;
+} decider_expunge_args_t;
+
+// decider_expunge is a decider_f
+static derr_t decider_expunge(imaildir_t *m, msg_update_type_e *update_type,
+        msg_update_value_u *update_val,  void *data){
+    derr_t e = E_OK;
+
+    decider_expunge_args_t *args = data;
+
+    // delete the message by UID
+    hash_elem_t *h = hashmap_delu(&m->content.msgs, args->uid);
+    if(h == NULL){
+        // message has already been deleted, this is a noop
+        *update_type = MSG_UPDATE_NOOP;
+        return e;
+    }
+    // get the message base
+    msg_base_t *base = CONTAINER_OF(h, msg_base_t, h);
+
+    // mark the message for deletion with the update
+    *update_type = MSG_UPDATE_EXPUNGE;
+    update_val->expunge.uid = args->uid;
+    update_val->expunge.old = &base->ref;
+
+    return e;
+}
+
+
+// expunge_msg is part of the maildir_i
+static derr_t expunge_msg(maildir_i *maildir, unsigned int uid, size_t *seq){
+    derr_t e = E_OK;
+
+    decider_expunge_args_t args = {.uid = uid};
+
+    PROP(&e, post_update(maildir, seq, decider_expunge, &args) );
+
+    return e;
+}
+
+static derr_t fopen_by_uid(maildir_i *maildir, unsigned int uid,
+        const char *mode, FILE **out){
+    derr_t e = E_OK;
+
+    acc_t *acc = CONTAINER_OF(maildir, acc_t, maildir);
+    imaildir_t *m = acc->m;
+
+    uv_rwlock_rdlock(&m->content.lock);
+
+    // try to get the hashmap
+    hash_elem_t *h = hashmap_getu(&m->content.msgs, uid);
+    if(h == NULL){
+        ORIG_GO(&e, E_PARAM, "no matching uid", done);
+    }
+    msg_base_t *base = CONTAINER_OF(h, msg_base_t, h);
+
+    // where is the message located?
+    string_builder_t dir = SUB(&m->path, base->subdir);
+    string_builder_t path = sb_append(&dir, FD(&base->filename));
+
+    PROP_GO(&e, fopen_path(&path, mode, out), done);
+
+done:
+    uv_rwlock_rdunlock(&m->content.lock);
+    return e;
+}
+
+/* msg_update_reconcile will free the msg_udpate_t as well as handling the
+   associated cleanup action (must be run within a content lock) */
+static void msg_update_reconcile(imaildir_t *m, msg_update_t *update){
+    link_remove(&update->link);
+    msg_meta_t *meta;
+    switch(update->type){
+        case MSG_UPDATE_FLAGS:
+            // done with the old meta
+            meta = CONTAINER_OF(update->val.flags.old, msg_meta_t, flags);
+            msg_meta_free(&meta);
+            break;
+
+        case MSG_UPDATE_NEW:
+            // nothing to free
+            break;
+
+        case MSG_UPDATE_EXPUNGE:
+            {
+                // get the msg_base_t to be deleted
+                msg_base_t *base;
+                base = CONTAINER_OF(update->val.expunge.old, msg_base_t, ref);
+                // get the file to be removed
+                string_builder_t dir = SUB(&m->path, base->subdir);
+                string_builder_t path = sb_append(&dir, FD(&base->filename));
+                // try removing the file
+                derr_t e = remove_path(&path);
+                CATCH(e, E_ANY){
+                    TRACE(&e, "warning: failed to delete message file\n");
+                    DUMP(e);
+                    DROP_VAR(&e);
+                }
+                // free the meta
+                msg_meta_free(&base->meta);
+                // free the base
+                msg_base_free(&base);
+            }
+            break;
+
+        case MSG_UPDATE_NOOP:
+            break;
+
+        default:
+            LOG_ERROR("unknown msg_update_t->type\n");
+    }
+
+    free(update);
+}
+
+static void reconcile_until(maildir_i *maildir, size_t seq){
+    acc_t *acc = CONTAINER_OF(maildir, acc_t, maildir);
+    imaildir_t *m = acc->m;
+
+    // first remember what seq this accessor is on
+    acc->reconciled = seq;
+
+    // figure out what the furthest-behind seq number is among all accessors
+    size_t most_behind = seq;
+    uv_mutex_lock(&m->access.mutex);
+    acc_t *acc_ptr;
+    LINK_FOR_EACH(acc_ptr, &m->access.accessors, acc_t, link){
+        if(acc_ptr->reconciled < most_behind){
+            most_behind = acc_ptr->reconciled;
+        }
+    }
+    uv_mutex_unlock(&m->access.mutex);
+
+    // now free all of the updates that are fully reconciled
+    uv_rwlock_wrlock(&m->content.lock);
+    msg_update_t *update, *temp;
+    LINK_FOR_EACH_SAFE(update, temp, &m->access.accessors, msg_update_t, link){
+        if(update->seq > most_behind){
+            // the updates are ordered, so no point in continuing
+            break;
+        }
+        // otherwise, this update is fully reconciled; do cleanup steps
+        msg_update_reconcile(m, update);
+    }
+    uv_rwlock_wrunlock(&m->content.lock);
+}
+
 // // check for "cur" and "new" and "tmp" subdirs, "true" means "all present"
 // static derr_t ctn_check(const string_builder_t *path, bool *ret){
 //     derr_t e = E_OK;
@@ -35,11 +330,11 @@ static derr_t add_msg_to_maildir(const string_builder_t *base,
     if(is_dir) return e;
 
     // extract uid and metadata from filename
-    msg_meta_value_t val;
+    msg_flags_t flags;
     unsigned int uid;
     size_t len;
 
-    derr_t e2 = maildir_name_parse(name, NULL, &len, &uid, &val, NULL, NULL);
+    derr_t e2 = maildir_name_parse(name, NULL, &len, &uid, &flags, NULL, NULL);
     CATCH(e2, E_PARAM){
         // TODO: Don't ignore bad filenames; add them as "need to be sync'd"
         DROP_VAR(&e2);
@@ -48,7 +343,7 @@ static derr_t add_msg_to_maildir(const string_builder_t *base,
 
     // allocate a new meta
     msg_meta_t *meta;
-    PROP(&e, msg_meta_new(&meta, val, arg->m->content.seq) );
+    PROP(&e, msg_meta_new(&meta, flags) );
 
     // allocate a new message
     msg_base_t *msg;
@@ -90,8 +385,6 @@ derr_t imaildir_init(imaildir_t *m, string_builder_t path, dirmgr_i *mgr){
     derr_t e = E_OK;
 
     *m = (imaildir_t){
-        .iface = {
-        },
         .path = path,
         .mgr = mgr,
         // TODO: finish setting values
@@ -162,6 +455,37 @@ void imaildir_free(imaildir_t *m){
     uv_rwlock_destroy(&m->content.lock);
 }
 
+// content must be read-locked
+static derr_t acc_new(acc_t **out, imaildir_t *m, accessor_i *accessor){
+    derr_t e = E_OK;
+
+    acc_t *acc = malloc(sizeof(*acc));
+    if(acc == NULL) ORIG(&e, E_NOMEM, "no mem");
+    *acc = (acc_t){
+        .accessor = accessor,
+        .m = m,
+        .maildir = {
+            .update_flags = update_flags,
+            .new_msg = new_msg,
+            .expunge_msg = expunge_msg,
+            .fopen_by_uid = fopen_by_uid,
+            .reconcile_until = reconcile_until,
+        },
+        .reconciled = m->content.seq,
+    };
+
+    link_init(&acc->link);
+
+    *out = acc;
+    return e;
+}
+
+static void acc_free(acc_t **acc){
+    if(!*acc) return;
+    free(*acc);
+    *acc = NULL;
+}
+
 // for jsw_atree: get a msg_view_t from a node
 static const void *maildir_view_get(const jsw_anode_t *node){
     const msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
@@ -171,7 +495,7 @@ static const void *maildir_view_get(const jsw_anode_t *node){
 static int maildir_view_cmp(const void *a, const void *b){
     const msg_view_t *viewa = a;
     const msg_view_t *viewb = b;
-    return viewa->ref->uid > viewb->ref->uid;
+    return viewa->base->uid > viewb->base->uid;
 }
 
 derr_t imaildir_register(imaildir_t *m, accessor_i *a, maildir_i **maildir_out,
@@ -203,7 +527,11 @@ derr_t imaildir_register(imaildir_t *m, accessor_i *a, maildir_i **maildir_out,
         ORIG_GO(&e, E_DEAD, "maildir in failed state", fail_access_mutex);
     }
 
-    link_list_append(&m->access.accessors, &a->link);
+    // our internal holder for an access_i interface
+    acc_t *acc = NULL;
+    PROP_GO(&e, acc_new(&acc, m, a), fail_access_mutex);
+
+    link_list_append(&m->access.accessors, &acc->link);
     m->access.naccessors++;
 
     uv_mutex_unlock(&m->access.mutex);
@@ -211,7 +539,7 @@ derr_t imaildir_register(imaildir_t *m, accessor_i *a, maildir_i **maildir_out,
     uv_rwlock_rdunlock(&m->content.lock);
 
     // pass the maildir_i
-    *maildir_out = &m->iface;
+    *maildir_out = &acc->maildir;
 
     return e;
 
@@ -230,15 +558,21 @@ fail:
     return e;
 }
 
-void imaildir_unregister(imaildir_t *m, accessor_i *a){
+void imaildir_unregister(maildir_i *maildir){
+    acc_t *acc = CONTAINER_OF(maildir, acc_t, maildir);
+
+    imaildir_t *m = acc->m;
+
     uv_mutex_lock(&m->access.mutex);
 
     /* In closing state, the list of accessors is not edited here.  This
        ensures that the iteration through the accessors list during
        imaildir_fail() is always safe. */
     if(!m->access.failed){
-        link_remove(&a->link);
+        link_remove(&acc->link);
     }
+
+    acc_free(&acc);
 
     bool all_unregistered = (--m->access.naccessors == 0);
 
@@ -270,9 +604,9 @@ static void imaildir_fail(imaildir_t *m, derr_t error){
 
     link_t *link;
     while((link = link_list_pop_first(&m->access.accessors)) != NULL){
-        accessor_i *a = CONTAINER_OF(link, accessor_i, link);
+        acc_t *acc = CONTAINER_OF(link, acc_t, link);
         // if there was an error, share it with all of the accessors.
-        a->release(a, BROADCAST(error));
+        acc->accessor->release(acc->accessor, BROADCAST(error));
     }
 
 done:

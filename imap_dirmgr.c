@@ -8,19 +8,15 @@
 //         const dstr_t *name);
 static void managed_dir_free(managed_dir_t **mgd);
 
-void dirmgr_close(dirmgr_t *dm, maildir_i *maildir, accessor_i *acc){
-    // deref the imaildir_t
-    imaildir_t *m = CONTAINER_OF(maildir, imaildir_t, iface);
-    // deref the managed_dir_t
-    managed_dir_t *mgd = CONTAINER_OF(m, managed_dir_t, m);
+void dirmgr_close(dirmgr_t *dm, maildir_i *maildir){
 
     // coordinate with calls to dirmgr_open:
 
     // we may end up freeing the mgd and removing it from the dirmgr
     uv_rwlock_wrlock(&dm->dirs.lock);
 
-    // accessor_unregister may result in a call to all_unregistered()
-    imaildir_unregister(&mgd->m, acc);
+    // imaildir_unregister may result in a call to all_unregistered()
+    imaildir_unregister(maildir);
 
     uv_rwlock_wrunlock(&dm->dirs.lock);
 }
@@ -341,7 +337,7 @@ done:
 // IMAP functions
 /////////////////
 
-derr_t dirmgr_open(dirmgr_t *dm, const dstr_t *name, accessor_i *acc,
+derr_t dirmgr_open(dirmgr_t *dm, const dstr_t *name, accessor_i *accessor,
         maildir_i **maildir_out, jsw_atree_t *view_out){
     derr_t e = E_OK;
     managed_dir_t *mgd;
@@ -370,8 +366,8 @@ try_again_after_state_change:
 
         // just add an accessor to the existing imaildir
         // TODO: catch E_DEAD and try again
-        PROP_GO(&e, imaildir_register(&mgd->m, acc, maildir_out, view_out),
-                fail_lock);
+        PROP_GO(&e, imaildir_register(&mgd->m, accessor, maildir_out,
+                    view_out), fail_lock);
         goto done;
     }
 
@@ -382,7 +378,7 @@ try_again_after_state_change:
     NOFAIL_GO(&e, E_PARAM,
             hashmap_sets_unique(&dm->dirs.map, name, &mgd->h), fail_managed);
 
-    PROP_GO(&e, imaildir_register(&mgd->m, acc, maildir_out, view_out),
+    PROP_GO(&e, imaildir_register(&mgd->m, accessor, maildir_out, view_out),
             fail_managed);
 
 done:

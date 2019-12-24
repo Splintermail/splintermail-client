@@ -84,4 +84,6 @@ derr_t file_copy_path(const string_builder_t* sb_from,
 derr_t touch(const char* path);
 derr_t touch_path(const string_builder_t* sb);
 
+derr_t fopen_path(const string_builder_t *sb, const char *mode, FILE **out);
+
 #endif // FILEOPS_H

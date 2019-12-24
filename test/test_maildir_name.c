@@ -32,20 +32,22 @@ static derr_t test_parse_valid(void){
     DSTR_STATIC(host_ans, "my.host.name");
     DSTR_VAR(info, 32);
     DSTR_STATIC(info_ans, "2,S");
-    msg_meta_value_t val, val_ans = {.answered=true, .flagged=true, .deleted=true};
+    msg_flags_t flags, flags_ans = {
+        .answered=true, .flagged=true, .deleted=true,
+    };
 
-    PROP(&e, maildir_name_parse(&name, &epoch, &len, &uid, &val, &host,
+    PROP(&e, maildir_name_parse(&name, &epoch, &len, &uid, &flags, &host,
                 &info) );
 
     EXP_VS_GOT_SIMPLE(epoch_ans, epoch, FU);
     EXP_VS_GOT_SIMPLE(len_ans, len, FU);
     EXP_VS_GOT_SIMPLE(uid_ans, uid, FU);
 
-    EXP_VS_GOT_SIMPLE(val_ans.answered, val.answered, FU);
-    EXP_VS_GOT_SIMPLE(val_ans.flagged,  val.flagged,  FU);
-    EXP_VS_GOT_SIMPLE(val_ans.seen,     val.seen,     FU);
-    EXP_VS_GOT_SIMPLE(val_ans.draft,    val.draft,    FU);
-    EXP_VS_GOT_SIMPLE(val_ans.deleted,  val.deleted,  FU);
+    EXP_VS_GOT_SIMPLE(flags_ans.answered, flags.answered, FU);
+    EXP_VS_GOT_SIMPLE(flags_ans.flagged,  flags.flagged,  FU);
+    EXP_VS_GOT_SIMPLE(flags_ans.seen,     flags.seen,     FU);
+    EXP_VS_GOT_SIMPLE(flags_ans.draft,    flags.draft,    FU);
+    EXP_VS_GOT_SIMPLE(flags_ans.deleted,  flags.deleted,  FU);
 
     EXP_VS_GOT_DSTR(&host_ans, &host);
     EXP_VS_GOT_DSTR(&info_ans, &info);

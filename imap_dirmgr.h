@@ -89,10 +89,10 @@ derr_t dirmgr_sync_folders(dirmgr_t *dm, jsw_atree_t *tree);
 
 /* open a maildir, or, if the maildir is already open, register the accessor
    with the already-open maildir */
-derr_t dirmgr_open(dirmgr_t *dm, const dstr_t *name, accessor_i *acc,
+derr_t dirmgr_open(dirmgr_t *dm, const dstr_t *name, accessor_i *accessor,
         maildir_i **maildir_out, jsw_atree_t *view_out);
 // unregister an accessor from a maildir in a thread-safe way
-void dirmgr_close(dirmgr_t *dm, maildir_i *maildir, accessor_i *acc);
+void dirmgr_close(dirmgr_t *dm, maildir_i *maildir);
 
 // derr_t dirmgr_create(imaildir_t *root, const dstr_t *name);
 

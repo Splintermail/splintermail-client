@@ -835,3 +835,22 @@ cu:
     dstr_free(&heap);
     return e;
 }
+
+derr_t fopen_path(const string_builder_t *sb, const char *mode, FILE **out){
+    derr_t e = E_OK;
+    DSTR_VAR(stack, 256);
+    dstr_t heap = {0};
+    dstr_t* path;
+    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
+
+    *out = fopen(path->data, mode);
+    if(!out){
+        TRACE(&e, "%x: %x\n", FD(path), FE(&errno));
+        ORIG_GO(&e, errno == ENOMEM ? E_NOMEM : E_OPEN, "unable to open file",
+                cu);
+    }
+
+cu:
+    dstr_free(&heap);
+    return e;
+}

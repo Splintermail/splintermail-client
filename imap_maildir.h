@@ -43,25 +43,36 @@ typedef struct imaildir_t imaildir_t;
    deregistered. */
 struct accessor_i {
     // a client accessor returns true, a server accessor returns false
-    bool (*upwards)(accessor_i *acc);
+    bool (*upwards)(accessor_i *accessor);
     /* release() tells the accessor to let go of the maildir, possibly due to
        an error.  release() also tells the accessor the maildir will not call
        into the accessor again. */
-    void (*release)(accessor_i *acc, derr_t error);
-    //
-    link_t link;  // imaildir_t->accessors
+    void (*release)(accessor_i *accessor, derr_t error);
 };
-DEF_CONTAINER_OF(accessor_i, link, link_t);
 
 /* imalidir_t-provided interface, required by accessors.  Currently only
    provided by the dirmgr_t, since the unregister call must be synchronized.
    All calls are thread-safe. */
 struct maildir_i {
-    // An accessor submits an update to the imaildir, possibly synchronously.
-    derr_t (*post_update)(maildir_i*, const msg_update_t *, bool sync,
-            size_t *seqno);
+    // an accessor submits an updated msg_meta_t to the imaildir
+    derr_t (*update_flags)(maildir_i*, unsigned int uid, msg_flags_t old,
+            msg_flags_t new, size_t *seq);
+    // an accessor submits a new message to the maildir
+    derr_t (*new_msg)(maildir_i*, const dstr_t *filename,
+            msg_flags_t *flags, size_t *seq);
+    // an accessor expunges a message from the maildir
+    derr_t (*expunge_msg)(maildir_i*, unsigned int uid, size_t *seq);
+
+    // // create a new temporary file in tmp/
+    // derr_t (*fopen_tmp)(maildir_i*, const char *mode, FILE**,
+    //         dstr_t *filename);
     // open a message by its uid
-    derr_t (*fopen_by_uid)(maildir_i*, unsigned int, FILE**);
+    derr_t (*fopen_by_uid)(maildir_i*, unsigned int uid, const char *mode,
+            FILE**);
+    // tell the maildir we have accepted one or more changes
+    void (*reconcile_until)(maildir_i*, size_t seq);
+    // // open a temporary message to write to (with corresponding msg_ref_t)
+    // derr_t (*new_msg)(maildir_i*, FILE**, msg_ref_t**);
 };
 
 // dirmgr_t-provided interface, required by imaildir_t
@@ -75,17 +86,7 @@ struct dirmgr_i {
 
 // IMAP maildir
 struct imaildir_t {
-    /* imaildir_t is a managed object:
-         - "dying" means a failure was hit or all accessors have deregistered
-         - "dead" means all accessors have deregistered
-
-       Note that the accessors are interested in the error reason (to report
-       to the user) but the dirmgr is uninterested, so imaildir_t will not
-       actually report an error to the dirmgr with "dying".
-    */
     dirmgr_i *mgr;
-    // the interface to the maildir
-    maildir_i iface;
     // path to this maildir on the filesystem
     string_builder_t path;
     unsigned int uid_validity;
@@ -98,7 +99,7 @@ struct imaildir_t {
         uv_rwlock_t lock;
         // contents of this folder, mapping uid -> imsg_t*
         hashmap_t msgs;
-        // msg_meta_t's which are not up-to-date but still used by some accessor
+        // msg_meta_t's which are not up-to-date but still used by an accessor
         link_t unreconciled;
         // seq is the id of the most up-to-date change
         size_t seq;
@@ -106,7 +107,7 @@ struct imaildir_t {
 
     struct {
         uv_mutex_t mutex;
-        link_t accessors;  // accessor_i->link
+        link_t accessors;  // acc_t->link
         /* The value of naccessors may not match the length of the accessors
            list, particularly during the failing shutdown sequence. */
         size_t naccessors;
@@ -116,7 +117,6 @@ struct imaildir_t {
         bool failed;
     } access;
 };
-DEF_CONTAINER_OF(imaildir_t, iface, maildir_i);
 
 // open a maildir at path, path must be linked to long-lived objects
 derr_t imaildir_init(imaildir_t *m, string_builder_t path, dirmgr_i *mgr);
@@ -130,11 +130,11 @@ void imaildir_close(imaildir_t *m);
 // void imaildir_ref_down(imaildir_t *m);
 
 // register an accessor, provide a maildir_i, and build a view
-derr_t imaildir_register(imaildir_t *m, accessor_i *a, maildir_i **maildir_out,
-        jsw_atree_t *view_out);
+derr_t imaildir_register(imaildir_t *m, accessor_i *accessor,
+        maildir_i **maildir_out, jsw_atree_t *view_out);
 /* there is a race condition between imalidir_register and imaildir_unregister;
    generally, if you got a maildir_i* through dirmgr_open, you should close it
    via dirmgr_close */
-void imaildir_unregister(imaildir_t *m, accessor_i *a);
+void imaildir_unregister(maildir_i *maildir);
 
 #endif // IMAP_MAILDIR_H

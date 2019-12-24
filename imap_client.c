@@ -1309,31 +1309,28 @@ static bool more_work(imap_logic_t *logic){
 
 static void imap_client_free(imap_logic_t *logic){
     imap_client_t *ic = CONTAINER_OF(logic, imap_client_t, logic);
+    link_t *link;
 
     // empty unread
-    while(!link_list_isempty(&ic->unread)){
-        link_t *link = link_list_pop_first(&ic->unread);
+    while((link = link_list_pop_first(&ic->unread)) != NULL){
         event_t *ev = CONTAINER_OF(link, event_t, link);
         ev->returner(ev);
     }
 
     // empty unhandled
-    while(!link_list_isempty(&ic->unhandled)){
-        link_t *link = link_list_pop_first(&ic->unhandled);
+    while((link = link_list_pop_first(&ic->unhandled)) != NULL){
         ic_resp_t *ic_resp = CONTAINER_OF(link, ic_resp_t, link);
         ic_resp_free(ic_resp);
     }
 
     // empty unwritten
-    while(!link_list_isempty(&ic->unwritten)){
-        link_t *link = link_list_pop_first(&ic->unwritten);
+    while((link = link_list_pop_first(&ic->unwritten)) != NULL){
         ic_cmd_t *ic_cmd = CONTAINER_OF(link, ic_cmd_t, link);
         ic_cmd_free(ic_cmd);
     }
 
     // empty unresponded
-    while(!link_list_isempty(&ic->unresponded)){
-        link_t *link = link_list_pop_first(&ic->unresponded);
+    while((link = link_list_pop_first(&ic->unresponded)) != NULL){
         ic_cmd_t *ic_cmd = CONTAINER_OF(link, ic_cmd_t, link);
         ic_cmd_free(ic_cmd);
     }
@@ -1345,8 +1342,8 @@ static void imap_client_free(imap_logic_t *logic){
     }
 
     // empty folders, if we have to close mid-list-response
-    jsw_anode_t *node = jsw_apop(&ic->folders);
-    for(; node != NULL; node = jsw_apop(&ic->folders)){
+    jsw_anode_t *node;
+    while((node = jsw_apop(&ic->folders)) != NULL){
         ie_list_resp_t *list = CONTAINER_OF(node, ie_list_resp_t, node);
         ie_list_resp_free(list);
     }

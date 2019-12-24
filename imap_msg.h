@@ -26,15 +26,19 @@
 
     Generally, we will accomplish this with the following important structs:
       - msg_base_t: the "full" message, owned and accessed by the imaildir_t
-      - msg_ref_t: the immutable parts of msg_base_t, exposed to accessors
-      - msg_meta_t: the mutable parts of a message, owned by imaildir_t but
-          exposed to accessors
-      - msg_view_t: a simple combination of a msg_ref_t* and a msg_meta_t*,
-          owned and accessed by the accessor
+      - msg_base_ref_t: the immutable parts of msg_base_t, exposed to accessors
+      - msg_meta_t: the mutable parts of a message, updated by creating copies
+          and passing them to accessors
+      - msg_flags_t: the portion of the msg_meta_t exposed to accessors
+          (currently the whole thing but in the future I hope to have block
+          allocations for msg_meta_t's, without exposing the extra details
+          in the part exposed to clients)
+      - msg_view_t: a simple combination of a msg_base_ref_t* and a
+          msg_flags_t*, owned and accessed by the accessor
 
     Therefore, entire mailboxes of messages are collections of the form:
       - for an imaildir_t: a hashmap mapping uids to msg_base_t's
-      - for an accessors: a uid-sorted jsw_atree of msg_ref_t's
+      - for an accessors: a uid-sorted jsw_atree of msg_view_t's
 
     What-if scenarios?
         C: the client accessor (connected upwards)
@@ -144,53 +148,52 @@ static inline string_builder_t SUB(const string_builder_t *path,
     }
 }
 
+struct msg_base_ref_t;
+typedef struct msg_base_ref_t msg_base_ref_t;
 struct msg_base_t;
 typedef struct msg_base_t msg_base_t;
+struct msg_flags_t;
+typedef struct msg_flags_t msg_flags_t;
 struct msg_meta_t;
 typedef struct msg_meta_t msg_meta_t;
-struct msg_ref_t;
-typedef struct msg_ref_t msg_ref_t;
 struct msg_view_t;
 typedef struct msg_view_t msg_view_t;
 
 typedef enum {
-    // a change in the mutable metadata
-    MSG_UPDATE_META,
-    // a new message
+    MSG_UPDATE_FLAGS,
     MSG_UPDATE_NEW,
-    // a deleted message
-    MSG_UPDATE_DEL,
+    MSG_UPDATE_EXPUNGE,
     // an update which was ignored by the imaildir_t (useful for syncing)
     MSG_UPDATE_NOOP,
 } msg_update_type_e;
 
 typedef struct {
-    size_t uid;
+    unsigned int uid;
     // the updated value
-    msg_meta_t *meta;
+    msg_flags_t *new;
     // the value to free after the update is reconciled
     // (the freeing is done by the maildir)
-    msg_meta_t *old;
-} msg_update_meta_t;
+    msg_flags_t *old;
+} msg_update_flags_t;
 
 typedef struct {
-    size_t uid;
+    unsigned int uid;
     // the new message (as of when it was created)
     msg_view_t *ref;
 } msg_update_new_t;
 
 typedef struct {
     // the uid to be deleted
-    size_t uid;
+    unsigned int uid;
     // the value to free after the update is reconciled
     // (the freeing is done by the maildir)
-    msg_ref_t *old;
-} msg_update_del_t;
+    msg_base_ref_t *old;
+} msg_update_expunge_t;
 
 typedef union {
-    msg_update_meta_t meta;
+    msg_update_flags_t flags;
     msg_update_new_t new;
-    msg_update_del_t del;
+    msg_update_expunge_t expunge;
 } msg_update_value_u;
 
 typedef struct {
@@ -199,11 +202,12 @@ typedef struct {
     // the order of the update
     size_t seq;
     // for tracking updates which are not fully-reconciled
-    link_t *link;
+    link_t link;
 } msg_update_t;
+DEF_CONTAINER_OF(msg_update_t, link, link_t);
 
 // immutable parts of an IMAP message, safe for reading via msg_view_t
-struct msg_ref_t {
+struct msg_base_ref_t {
     unsigned int uid;
     size_t length;
 };
@@ -211,58 +215,87 @@ struct msg_ref_t {
 // the full IMAP message, owned by imaildir_t
 struct msg_base_t {
     // immutable parts, exposed to accessor directly
-    msg_ref_t ref;
+    msg_base_ref_t ref;
     // mutable parts, accessor gets passed up-to-date copies directly
-    const msg_meta_t *meta;
+    msg_meta_t *meta;
     // the thread-safe parts, exposed to accessor via thread-safe getters:
     subdir_type_e subdir;
     dstr_t filename;
     // for referencing by uid
     hash_elem_t h;
 };
-DEF_CONTAINER_OF(msg_base_t, ref, msg_ref_t);
+DEF_CONTAINER_OF(msg_base_t, ref, msg_base_ref_t);
 DEF_CONTAINER_OF(msg_base_t, h, hash_elem_t);
-
-// the portion of a msg_meta_t which is copyable and parseable from a filename
-typedef struct {
-    bool answered:1;
-    bool flagged:1;
-    bool seen:1;
-    bool draft:1;
-    bool deleted:1;
-} msg_meta_value_t;
 
 /* Metadata about a message, owned by imaildir_t but viewable by accessors.  A
    new copy is created when it is updated.  Clients keep a pointer to this
    structure, so reconciling an update means the client just updates their
    pointer to the new structure. */
-struct msg_meta_t {
-    msg_meta_value_t val;
-    size_t seq;
-    // for tracking lifetimes of msg_meta_t's for reuse
-    link_t link;  // imaildir_t->old_metas
+struct msg_flags_t {
+    bool answered:1;
+    bool flagged:1;
+    bool seen:1;
+    bool draft:1;
+    bool deleted:1;
 };
+
+struct msg_meta_t {
+    msg_flags_t flags;
+    // TODO: put storage stuff here when we do block allocation of msg_meta_t's
+};
+DEF_CONTAINER_OF(msg_meta_t, flags, msg_flags_t);
 
 // an accessor-owned view of a message
 struct msg_view_t {
     // recent flag is only given to one server accessor, to pass to one client
     bool recent;
-    const msg_ref_t *ref;
-    const msg_meta_t *meta;
+    const msg_base_ref_t *base;
+    const msg_flags_t *flags;
     // for tracking the sequence ID via UID
     jsw_anode_t node;
 };
 DEF_CONTAINER_OF(msg_view_t, node, jsw_anode_t);
 
-derr_t msg_meta_new(msg_meta_t **out, msg_meta_value_t val, size_t seq);
+
+derr_t msg_meta_new(msg_meta_t **out, msg_flags_t val);
 void msg_meta_free(msg_meta_t **meta);
 
 derr_t msg_base_new(msg_base_t **out, unsigned int uid, size_t len,
-        subdir_type_e subdir, const dstr_t *filename,
-        const msg_meta_t *meta);
+        subdir_type_e subdir, const dstr_t *filename, msg_meta_t *meta);
 void msg_base_free(msg_base_t **base);
 
 derr_t msg_view_new(msg_view_t **view, msg_base_t *base);
 void msg_view_free(msg_view_t **view);
+
+
+static inline bool msg_flags_eq(msg_flags_t a, msg_flags_t b){
+    return a.answered == b.answered \
+        && a.flagged == b.flagged \
+        && a.seen == b.seen \
+        && a.draft == b.draft \
+        && a.deleted == b.deleted;
+}
+
+static inline msg_flags_t msg_flags_xor(msg_flags_t a,
+        msg_flags_t b){
+    return (msg_flags_t){
+        .answered = a.answered ^ b.answered,
+        .flagged  = a.flagged  ^ b.flagged,
+        .seen     = a.seen     ^ b.seen,
+        .draft    = a.draft    ^ b.draft,
+        .deleted  = a.deleted  ^ b.deleted,
+    };
+}
+
+static inline msg_flags_t msg_flags_and(msg_flags_t a,
+        msg_flags_t b){
+    return (msg_flags_t){
+        .answered = a.answered & b.answered,
+        .flagged  = a.flagged  & b.flagged,
+        .seen     = a.seen     & b.seen,
+        .draft    = a.draft    & b.draft,
+        .deleted  = a.deleted  & b.deleted,
+    };
+}
 
 #endif // IMAP_MSG_H
