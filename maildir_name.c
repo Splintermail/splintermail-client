@@ -1,45 +1,37 @@
 #include "maildir_name.h"
 #include "logger.h"
 
-// *meta is allowed to be NULL, which makes this a validation function
-derr_t maildir_name_parse_imap_flags(const dstr_t *flags, msg_meta_t *meta){
+// *val is allowed to be NULL, which makes this a validation function
+derr_t maildir_name_parse_meta_val(const dstr_t *flags, msg_meta_value_t *val){
     derr_t e = E_OK;
 
-    bool answered = false;
-    bool flagged = false;
-    bool seen = false;
-    bool draft = false;
-    bool deleted = false;
+    msg_meta_value_t temp = {0};
 
     for(size_t i = 0; i < flags->len; i++){
         char c = flags->data[i];
         switch(c){
-            case 'A': answered = true; break;
-            case 'F': flagged  = true; break;
-            case 'S': seen     = true; break;
-            case 'D': draft    = true; break;
-            case 'X': deleted  = true; break;
+            case 'A': temp.answered = true; break;
+            case 'F': temp.flagged  = true; break;
+            case 'S': temp.seen     = true; break;
+            case 'D': temp.draft    = true; break;
+            case 'X': temp.deleted  = true; break;
             default:
                 TRACE(&e, "invalid flag %x\n", FC(c));
                 ORIG(&e, E_PARAM, "invalid flag");
         }
     }
 
-    if(meta == NULL) return e;
+    if(val == NULL) return e;
 
-    meta->answered = answered;
-    meta->flagged = flagged;
-    meta->seen = seen;
-    meta->draft = draft;
-    meta->deleted = deleted;
+    *val = temp;
 
     return e;
 }
 
-/* only *name and *valid are required to be non-NULL, in which case this
-   becomes a validation function */
+/* only *name is required to be non-NULL, in which case this becomes a
+   validation function */
 derr_t maildir_name_parse(const dstr_t *name, unsigned long *epoch,
-        size_t *len, unsigned int *uid, msg_meta_t *meta, dstr_t *host,
+        size_t *len, unsigned int *uid, msg_meta_value_t *val, dstr_t *host,
         dstr_t *info){
     derr_t e = E_OK;
 
@@ -127,7 +119,7 @@ derr_t maildir_name_parse(const dstr_t *name, unsigned long *epoch,
     if(uid != NULL) *uid = temp_uid;
 
     // third field is imap flags (since MUA is responsible for maildir flags)
-    PROP(&e, maildir_name_parse_imap_flags(&fields.data[2], meta) );
+    PROP(&e, maildir_name_parse_meta_val(&fields.data[2], val) );
 
     // report hostname if requested
     if(host != NULL){
@@ -163,20 +155,20 @@ derr_t maildir_name_mod_hostname(const dstr_t* host, dstr_t *out){
     return e;
 }
 
-// info and meta are allowed to be NULL, but not host
+// info and val are allowed to be NULL, but not host
 derr_t maildir_name_write(dstr_t *out, unsigned long epoch, size_t len,
-        unsigned int uid, msg_meta_t *meta, const dstr_t *host,
+        unsigned int uid, const msg_meta_value_t *val, const dstr_t *host,
         const dstr_t *info){
     derr_t e = E_OK;
 
     PROP(&e, FMT(out, "%x.%x,%x,", FU(epoch), FU(len), FU(uid)) );
 
-    if(meta){
-        if(meta->answered){ PROP(&e, dstr_append(out, &DSTR_LIT("A")) ); }
-        if(meta->draft){    PROP(&e, dstr_append(out, &DSTR_LIT("D")) ); }
-        if(meta->flagged){  PROP(&e, dstr_append(out, &DSTR_LIT("F")) ); }
-        if(meta->seen){     PROP(&e, dstr_append(out, &DSTR_LIT("S")) ); }
-        if(meta->deleted){  PROP(&e, dstr_append(out, &DSTR_LIT("X")) ); }
+    if(val){
+        if(val->answered){ PROP(&e, dstr_append(out, &DSTR_LIT("A")) ); }
+        if(val->draft){    PROP(&e, dstr_append(out, &DSTR_LIT("D")) ); }
+        if(val->flagged){  PROP(&e, dstr_append(out, &DSTR_LIT("F")) ); }
+        if(val->seen){     PROP(&e, dstr_append(out, &DSTR_LIT("S")) ); }
+        if(val->deleted){  PROP(&e, dstr_append(out, &DSTR_LIT("X")) ); }
     }
 
     PROP(&e, dstr_append(out, &DSTR_LIT(".")) );

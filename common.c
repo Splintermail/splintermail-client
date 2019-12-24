@@ -30,6 +30,7 @@ DSTR_STATIC(derr_fs_dstr, "FILESYSTEM");
 DSTR_STATIC(derr_response_dstr, "RESPONSE");
 DSTR_STATIC(derr_nokeys_dstr, "NOKEYS");
 DSTR_STATIC(derr_uv_dstr, "UVERROR");
+DSTR_STATIC(derr_dead_dstr, "DEAD");
 DSTR_STATIC(derr_any_dstr, "ANY");
 
 dstr_t* error_to_dstr(derr_type_t type){
@@ -53,6 +54,7 @@ dstr_t* error_to_dstr(derr_type_t type){
         case E_RESPONSE: return &derr_response_dstr;
         case E_NOKEYS: return &derr_nokeys_dstr;
         case E_UV: return &derr_uv_dstr;
+        case E_DEAD: return &derr_dead_dstr;
         case E_ANY: return &derr_any_dstr;
     }
     return &derr_unknown_dstr;

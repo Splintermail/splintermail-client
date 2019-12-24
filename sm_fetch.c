@@ -12,6 +12,7 @@
 #include "imap_expression_print.h"
 #include "jsw_atree.h"
 #include "imap_dirmgr.h"
+#include "manager.h"
 
 #define KEY "../c/test/files/ssl/good-key.pem"
 #define CERT "../c/test/files/ssl/good-cert.pem"
@@ -37,8 +38,6 @@ typedef struct {
     // dirmgr
     dstr_t path;
     dirmgr_t dirmgr;
-    // list of accessors for folders we are syncing
-    link_t accessors;
 } fetch_controller_t;
 DEF_CONTAINER_OF(fetch_controller_t, ctrlr_up, imap_controller_up_t);
 DEF_CONTAINER_OF(fetch_controller_t, mgr, manager_i);

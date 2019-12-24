@@ -337,11 +337,31 @@ static inline derr_t pvt_split(derr_t *orig, const char *file,
         FD(error_to_dstr(orig->type)), FS(file), FS(func), FI(line));
     // copy type and zero msg
     derr_t out = {.type = orig->type, .msg = (dstr_t){0}};
-    // duplicate message
+    // duplicate message (best effort)
     dstr_append_quiet(&out.msg, &orig->msg);
     return out;
 }
 #define SPLIT(e) pvt_split(&(e), FILE_LOC)
+
+/* BROADCAST duplicates an error object, like SPLIT, except with a different
+   implication.  BROADCAST implies a shared reasource failed and all of its
+   accessors will receive the same error. */
+static inline derr_t pvt_broadcast(derr_t *orig, const char *file,
+        const char *func, int line){
+    // be smart if orig is not even an error
+    if(orig->type == E_NONE){
+        return E_OK;
+    }
+    // do TRACE before duplication
+    TRACE(orig, "broadcasting %x at file %x: %x(), line %x\n",
+        FD(error_to_dstr(orig->type)), FS(file), FS(func), FI(line));
+    // copy type and zero msg
+    derr_t out = {.type = orig->type, .msg = (dstr_t){0}};
+    // duplicate message (best effort)
+    dstr_append_quiet(&out.msg, &orig->msg);
+    return out;
+}
+#define BROADCAST(e) pvt_broadcast(&(e), FILE_LOC)
 
 /* if you pass an error laterally, you need to reset it without freeing the
    message. It could be done manually but if I have any good ideas later for

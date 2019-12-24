@@ -54,6 +54,7 @@ set(OBJ_TGTS
     imap_write
     imap_read
     hashmap
+    imap_msg
     imap_maildir
     imap_dirmgr
     link
@@ -277,7 +278,8 @@ obj_depend_obj(imap_read imap_parse imap_scan common)
 add_dependencies(imap_read_o bison_header)
 obj_depend_obj(imap_write imap_expression common)
 obj_depend_obj(hashmap common)
-obj_depend_obj(imap_maildir uv_util link hashmap fileops)
+obj_depend_obj(imap_msg jsw_atree link hashmap fileops)
+obj_depend_obj(imap_maildir maildir_name imap_msg uv_util fileops)
 obj_depend_obj(imap_dirmgr imap_maildir jsw_atree)
 obj_depend_obj(imap_session uv_interface common)
 obj_depend_obj(imap_client imap_write crypto common)

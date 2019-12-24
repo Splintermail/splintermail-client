@@ -64,6 +64,7 @@ typedef enum {              // GENERAL DEFINITIONS:
     E_RESPONSE  = 1 << 15,  // invalid response from something external
     E_NOKEYS    = 1 << 16,  // user has no keys, a non-critical error in encrypt_msg.c
     E_UV        = 1 << 17,  // an unidentified error from libuv
+    E_DEAD      = 1 << 18,  // attemped to use a two-phase lifetime object after it died
     E_ANY       = ~0, // for catching errors, never throw this error
 } derr_type_t;
 

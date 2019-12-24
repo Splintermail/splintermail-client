@@ -1,15 +1,15 @@
 #ifndef MAILDIR_NAME_H
 #define MAILDIR_NAME_H
 
-#include "imap_maildir.h"
+#include "imap_msg.h"
 
-// *meta is allowed to be NULL, which makes this a validation function
-derr_t maildir_name_parse_imap_flags(const dstr_t *flags, msg_meta_t *meta);
+// *val is allowed to be NULL, which makes this a validation function
+derr_t maildir_name_parse_meta_val(const dstr_t *flags, msg_meta_value_t *val);
 
-/* only *name and *valid are required to be non-NULL, in which case this
-   becomes a validation function */
+/* only *name is required to be non-NULL, in which case this becomes a
+   validation function */
 derr_t maildir_name_parse(const dstr_t *name, unsigned long *epoch,
-        size_t *len, unsigned int *uid, msg_meta_t *meta, dstr_t *host,
+        size_t *len, unsigned int *uid, msg_meta_value_t *val, dstr_t *host,
         dstr_t *info);
 
 /* modded_hostname replaces '/' with "057"
@@ -19,9 +19,9 @@ derr_t maildir_name_parse(const dstr_t *name, unsigned long *epoch,
 */
 derr_t maildir_name_mod_hostname(const dstr_t* host, dstr_t *out);
 
-// info and meta are allowed to be NULL, but not host
+// info and val are allowed to be NULL, but not host
 derr_t maildir_name_write(dstr_t *out, unsigned long epoch, size_t len,
-        unsigned int uid, msg_meta_t *meta, const dstr_t *host,
+        unsigned int uid, const msg_meta_value_t *val, const dstr_t *host,
         const dstr_t *info);
 
 #endif // MAILDIR_NAME_H

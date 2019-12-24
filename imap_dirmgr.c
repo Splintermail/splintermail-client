@@ -4,40 +4,35 @@
 #include "fileops.h"
 #include "uv_util.h"
 
-// managed_dir_t functions
+// static void managed_dir_new(managed_dir_t **out, dirmgr_t *dm,
+//         const dstr_t *name);
+static void managed_dir_free(managed_dir_t **mgd);
 
-static void mgd_accessor_unregister(maildir_i *iface, accessor_i *acc){
-    managed_dir_t *mgd = CONTAINER_OF(iface, managed_dir_t, iface);
-    dirmgr_t *dm = mgd->dm;
-
-    // we may end up freeing the mgd and removing it from the dirmgr
-    uv_rwlock_wrlock(&dm->lock);
-
-    // imaildir_unregister may result in a call to all_unregistered()
-    imaildir_unregister(&mgd->m, acc);
-
-    uv_rwlock_wrunlock(&dm->lock);
-}
-
-static void managed_dir_free(managed_dir_t *mgd){
-    if(mgd == NULL) return;
-    imaildir_free(&mgd->m);
-    dstr_free(&mgd->name);
-    free(mgd);
-}
-
-// end of managed_dir_t functions
-
-// dirmgr_i functions
-
-/* maildir_all_unregistered() can only be called from within the lock scope of
-   maildir_unregister(), so it doesn't need any locking */
-static void maildir_all_unregistered(dirmgr_i *iface, imaildir_t *m){
-    dirmgr_t *dm = CONTAINER_OF(iface, dirmgr_t, iface);
+void dirmgr_close(dirmgr_t *dm, maildir_i *maildir, accessor_i *acc){
+    // deref the imaildir_t
+    imaildir_t *m = CONTAINER_OF(maildir, imaildir_t, iface);
+    // deref the managed_dir_t
     managed_dir_t *mgd = CONTAINER_OF(m, managed_dir_t, m);
 
+    // coordinate with calls to dirmgr_open:
+
+    // we may end up freeing the mgd and removing it from the dirmgr
+    uv_rwlock_wrlock(&dm->dirs.lock);
+
+    // accessor_unregister may result in a call to all_unregistered()
+    imaildir_unregister(&mgd->m, acc);
+
+    uv_rwlock_wrunlock(&dm->dirs.lock);
+}
+
+/* all_unregistered() can only be called from within the lock scope of
+   dirmgr_close(), so it doesn't need any locking */
+static void all_unregistered(dirmgr_i *iface){
+    dirmgr_t *dm = CONTAINER_OF(iface, dirmgr_t, iface);
+    managed_dir_t *mgd = CONTAINER_OF(iface, managed_dir_t, dirmgr_iface);
+
     // remove the managed_dir from the maildir
-    hash_elem_t *h = hashmap_dels(&dm->dirs, &mgd->name);
+    hash_elem_t *h = hashmap_dels(&dm->dirs.map, &mgd->name);
 
     if(h == NULL){
         LOG_ERROR("unable to find maildir in hashmap!\n");
@@ -48,17 +43,62 @@ static void maildir_all_unregistered(dirmgr_i *iface, imaildir_t *m){
         LOG_ERROR("found wrong dir in hashmap!\n");
     }
 
-    managed_dir_free(mgd);
+    managed_dir_free(&mgd);
 
     // TODO: handle non-MGD_STATE_OPEN here
 
     // signal in case anybody was waiting for a state change
-    uv_mutex_lock(&dm->state_mutex);
-    uv_cond_broadcast(&dm->state_cond);
-    uv_mutex_unlock(&dm->state_mutex);
+    uv_mutex_lock(&dm->states.mutex);
+    uv_cond_broadcast(&dm->states.cond);
+    uv_mutex_unlock(&dm->states.mutex);
 }
 
-// end of dirmgr_i functions
+
+// managed_dir_t functions
+
+static derr_t managed_dir_new(managed_dir_t **out, dirmgr_t *dm,
+        const dstr_t *name){
+    derr_t e = E_OK;
+
+    managed_dir_t *mgd = malloc(sizeof(*mgd));
+    if(mgd == NULL) ORIG(&e, E_NOMEM, "no memory");
+    *mgd = (managed_dir_t){
+        // the interface we will give to the imaildir_t
+        .dirmgr_iface = {
+            .maildir_failed = NULL,
+            .all_unregistered = all_unregistered,
+        },
+        .state = MGD_STATE_OPEN,
+        .dm = dm,
+    };
+
+    // copy the name, which persists for the hashmap and for the imaildir_t
+    PROP_GO(&e, dstr_new(&mgd->name, name->len), fail_malloc);
+    PROP_GO(&e, dstr_copy(name, &mgd->name), fail_name);
+    string_builder_t path = sb_append(&dm->path, FD(&mgd->name));
+
+    PROP_GO(&e, imaildir_init(&mgd->m, path, &mgd->dirmgr_iface), fail_name);
+
+    *out = mgd;
+
+    return e;
+
+fail_name:
+    dstr_free(&mgd->name);
+fail_malloc:
+    free(mgd);
+    return e;
+}
+
+static void managed_dir_free(managed_dir_t **mgd){
+    if(*mgd == NULL) return;
+    imaildir_free(&(*mgd)->m);
+    dstr_free(&(*mgd)->name);
+    free(*mgd);
+    *mgd = NULL;
+}
+
+// end of managed_dir_t functions
 
 
 ////////////////////
@@ -131,7 +171,7 @@ static void managed_dir_delete_ctn(managed_dir_t *mgd){
     // if the dir is marked as unselectable, we need to delete ctn
     mgd->state = MGD_STATE_DELETING_CTN;
     // the final unregister should execute the deletion
-    imaildir_force_close(&mgd->m);
+    imaildir_close(&mgd->m);
 }
 
 
@@ -159,7 +199,7 @@ static derr_t delete_extra_dir_checks(delete_extra_dirs_arg_t *arg,
     *remote = (jsw_afind_ex(arg->tree, alt_cmp, &display_name, NULL) != NULL);
 
     // check selected dirs
-    hash_elem_t *h = hashmap_gets(&arg->dm->dirs, name);
+    hash_elem_t *h = hashmap_gets(&arg->dm->dirs.map, name);
     *mgd = (h == NULL ? NULL : CONTAINER_OF(h, managed_dir_t, h));
 
     dstr_free(&heap);
@@ -248,7 +288,7 @@ derr_t dirmgr_sync_folders(dirmgr_t *dm, jsw_atree_t *tree){
     derr_t e = E_OK;
 
     // we may choose to edit the content of the dirmgr
-    uv_rwlock_wrlock(&dm->lock);
+    uv_rwlock_wrlock(&dm->dirs.lock);
 
     // part I: check server response and create missing dirs
 
@@ -261,7 +301,7 @@ derr_t dirmgr_sync_folders(dirmgr_t *dm, jsw_atree_t *tree){
         const dstr_t *name = ie_mailbox_name(resp->m);
 
         // check if the maildir is being accessed right now
-        hash_elem_t *h = hashmap_gets(&dm->dirs, name);
+        hash_elem_t *h = hashmap_gets(&dm->dirs.map, name);
         if(h != NULL){
             managed_dir_t *mgd = CONTAINER_OF(h, managed_dir_t, h);
             // delete ctn?
@@ -293,7 +333,7 @@ derr_t dirmgr_sync_folders(dirmgr_t *dm, jsw_atree_t *tree){
             done);
 
 done:
-    uv_rwlock_wrunlock(&dm->lock);
+    uv_rwlock_wrunlock(&dm->dirs.lock);
     return e;
 }
 
@@ -302,125 +342,106 @@ done:
 /////////////////
 
 derr_t dirmgr_open(dirmgr_t *dm, const dstr_t *name, accessor_i *acc,
-        maildir_i **out){
+        maildir_i **maildir_out, jsw_atree_t *view_out){
     derr_t e = E_OK;
     managed_dir_t *mgd;
 
 try_again_after_state_change:
 
     // we may choose to edit the content of the dirmgr
-    uv_rwlock_wrlock(&dm->lock);
+    uv_rwlock_wrlock(&dm->dirs.lock);
 
-    hash_elem_t *h = hashmap_gets(&dm->dirs, name);
+    hash_elem_t *h = hashmap_gets(&dm->dirs.map, name);
     if(h != NULL){
         mgd = CONTAINER_OF(h, managed_dir_t, h);
 
         // check state
         if(mgd->state != MGD_STATE_OPEN){
             // prepare to wait
-            uv_mutex_lock(&dm->state_mutex);
+            uv_mutex_lock(&dm->states.mutex);
             // allow other threads to use dirmgr while we wait
-            uv_rwlock_wrunlock(&dm->lock);
+            uv_rwlock_wrunlock(&dm->dirs.lock);
             // wait for MGD_STATE_OPEN (or for the dir to be closed)
-            uv_cond_wait(&dm->state_cond, &dm->state_mutex);
-            uv_mutex_unlock(&dm->state_mutex);
+            uv_cond_wait(&dm->states.cond, &dm->states.mutex);
+            uv_mutex_unlock(&dm->states.mutex);
 
             goto try_again_after_state_change;
         }
 
         // just add an accessor to the existing imaildir
-        imaildir_register(&mgd->m, acc);
+        // TODO: catch E_DEAD and try again
+        PROP_GO(&e, imaildir_register(&mgd->m, acc, maildir_out, view_out),
+                fail_lock);
         goto done;
     }
 
     // no existing imaildir in dirs, better open a new one
-    mgd = malloc(sizeof(*mgd));
-    if(mgd == NULL) ORIG_GO(&e, E_NOMEM, "no memory", fail_lock);
-    *mgd = (managed_dir_t){0};
-
-    // copy the name, which persists for the hashmap and for the imaildir_t
-    PROP_GO(&e, dstr_new(&mgd->name, name->len), fail_malloc);
-    PROP_GO(&e, dstr_copy(name, &mgd->name), fail_name);
-    string_builder_t path = sb_append(&dm->path, FD(&mgd->name));
-
-    PROP_GO(&e, imaildir_init(&mgd->m, path, acc, &dm->iface), fail_name);
-
-    mgd->state = MGD_STATE_OPEN;
-
-    mgd->iface = (maildir_i){
-        .accessor_unregister=mgd_accessor_unregister,
-    };
-
-    mgd->refs = 0;
-    mgd->dm = dm;
+    PROP_GO(&e, managed_dir_new(&mgd, dm, name), fail_lock);
 
     // add to hashmap (we checked this path was not in the hashmap)
     NOFAIL_GO(&e, E_PARAM,
-            hashmap_sets_unique(&dm->dirs, name, &mgd->h), fail_imaildir);
+            hashmap_sets_unique(&dm->dirs.map, name, &mgd->h), fail_managed);
+
+    PROP_GO(&e, imaildir_register(&mgd->m, acc, maildir_out, view_out),
+            fail_managed);
 
 done:
-    *out = &mgd->iface;
-    uv_rwlock_wrunlock(&dm->lock);
+    uv_rwlock_wrunlock(&dm->dirs.lock);
     return e;
 
-fail_imaildir:
-    imaildir_free(&mgd->m);
-fail_name:
-    dstr_free(&mgd->name);
-fail_malloc:
-    free(mgd);
+fail_managed:
+    managed_dir_free(&mgd);
 fail_lock:
-    uv_rwlock_wrunlock(&dm->lock);
-    *out = NULL;
+    uv_rwlock_wrunlock(&dm->dirs.lock);
     return e;
 }
 
 derr_t dirmgr_init(dirmgr_t *dm, string_builder_t path){
     derr_t e = E_OK;
 
-    int ret = uv_rwlock_init(&dm->lock);
+    int ret = uv_rwlock_init(&dm->dirs.lock);
     if(ret < 0){
         TRACE(&e, "uv_rwlock_init: %x\n", FUV(&ret));
         ORIG(&e, uv_err_type(ret), "error initializing rwlock");
     }
 
-    ret = uv_mutex_init(&dm->state_mutex);
+    ret = uv_mutex_init(&dm->states.mutex);
     if(ret < 0){
         TRACE(&e, "uv_mutex_init: %x\n", FUV(&ret));
         ORIG_GO(&e, uv_err_type(ret), "error initializing mutex", fail_lock);
     }
 
-    ret = uv_cond_init(&dm->state_cond);
+    ret = uv_cond_init(&dm->states.cond);
     if(ret < 0){
         TRACE(&e, "uv_cond_init: %x\n", FUV(&ret));
         ORIG_GO(&e, uv_err_type(ret), "error initializing cond", fail_mutex);
     }
 
-    PROP_GO(&e, hashmap_init(&dm->dirs), fail_cond);
+    PROP_GO(&e, hashmap_init(&dm->dirs.map), fail_cond);
 
     // save path
     dm->path = path;
 
     dm->iface = (dirmgr_i){
-        .all_unregistered=maildir_all_unregistered,
+        .all_unregistered=all_unregistered,
     };
 
     return e;
 
 fail_cond:
-    uv_cond_destroy(&dm->state_cond);
+    uv_cond_destroy(&dm->states.cond);
 fail_mutex:
-    uv_mutex_destroy(&dm->state_mutex);
+    uv_mutex_destroy(&dm->states.mutex);
 fail_lock:
-    uv_rwlock_destroy(&dm->lock);
+    uv_rwlock_destroy(&dm->dirs.lock);
     return e;
 }
 
 
 void dirmgr_free(dirmgr_t *dm){
     if(!dm) return;
-    hashmap_free(&dm->dirs);
-    uv_cond_destroy(&dm->state_cond);
-    uv_mutex_destroy(&dm->state_mutex);
-    uv_rwlock_destroy(&dm->lock);
+    hashmap_free(&dm->dirs.map);
+    uv_cond_destroy(&dm->states.cond);
+    uv_mutex_destroy(&dm->states.mutex);
+    uv_rwlock_destroy(&dm->dirs.lock);
 }

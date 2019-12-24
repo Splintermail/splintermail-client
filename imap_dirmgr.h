@@ -26,28 +26,40 @@ typedef enum {
 
 typedef struct {
     dirmgr_i iface;
-    // thread-safe access to dirs
-    uv_rwlock_t lock;
-    // signalling around state changes
-    uv_mutex_t state_mutex;
-    uv_cond_t state_cond;
-    hashmap_t dirs;  // managed_dir_t->h
     string_builder_t path;
+
+    // lock ordering is dirs then states
+
+    // thread-safe access to the hashmap of all dirs
+    struct {
+        uv_rwlock_t lock;
+        hashmap_t map;  // managed_dir_t->h
+    } dirs;
+
+    /* thread-safe access to the states of individual directories.  Blocking
+       while a maildir is deleted from the filesystem is handled here. */
+    struct {
+        uv_mutex_t mutex;
+        uv_cond_t cond;
+    } states;
 } dirmgr_t;
 DEF_CONTAINER_OF(dirmgr_t, iface, dirmgr_i);
 
 typedef struct {
-    imaildir_t m;
-    maildir_state_e state;
-    // dirmgr passes out managed maildir_i interfaces
-    maildir_i iface;
-    hash_elem_t h;  // dirmgr_t->dirs
-    int refs;
+    // pointer to dirmgr_t
     dirmgr_t *dm;
+    // dirmgr_i interface to imaildir_t
+    dirmgr_i dirmgr_iface;
+    // the maildir
+    imaildir_t m;
+    // our state of the maildir_t
+    maildir_state_e state;
+    // storage
+    hash_elem_t h;  // dirmgr_t->dirs
     // keep a copy of the dictionary key
     dstr_t name;
 } managed_dir_t;
-DEF_CONTAINER_OF(managed_dir_t, iface, maildir_i);
+DEF_CONTAINER_OF(managed_dir_t, dirmgr_iface, dirmgr_i);
 DEF_CONTAINER_OF(managed_dir_t, h, hash_elem_t);
 DEF_CONTAINER_OF(managed_dir_t, m, imaildir_t);
 
@@ -55,7 +67,7 @@ DEF_CONTAINER_OF(managed_dir_t, m, imaildir_t);
 derr_t dirmgr_init(dirmgr_t *dm, string_builder_t path);
 void dirmgr_free(dirmgr_t *dm);
 
-// All non-setup/teardown dirmgr operations are thread-safe
+// All dirmgr operations except init/free are thread-safe
 
 ////////////////////
 // utility functions
@@ -78,7 +90,9 @@ derr_t dirmgr_sync_folders(dirmgr_t *dm, jsw_atree_t *tree);
 /* open a maildir, or, if the maildir is already open, register the accessor
    with the already-open maildir */
 derr_t dirmgr_open(dirmgr_t *dm, const dstr_t *name, accessor_i *acc,
-        maildir_i **out);
+        maildir_i **maildir_out, jsw_atree_t *view_out);
+// unregister an accessor from a maildir in a thread-safe way
+void dirmgr_close(dirmgr_t *dm, maildir_i *maildir, accessor_i *acc);
 
 // derr_t dirmgr_create(imaildir_t *root, const dstr_t *name);
 

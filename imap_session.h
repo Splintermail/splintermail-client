@@ -8,6 +8,7 @@
 #include "tls_engine.h"
 #include "imap_engine.h"
 #include "networking.h"
+#include "manager.h"
 
 struct imap_session_t;
 typedef struct imap_session_t imap_session_t;
