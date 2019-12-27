@@ -206,6 +206,51 @@ static derr_t test_imap_writer(void){
         CHECK(&e);
         PROP(&e, do_writer_test_multi(cases, sizeof(cases)/sizeof(*cases)) );
     }
+    // CONDSTORE extension
+    {
+        test_case_t cases[] = {
+            {
+                .cmd=imap_cmd_new(&e, IE_DSTR("tag"), IMAP_CMD_STATUS,
+                    (imap_cmd_arg_t){
+                        .status=ie_status_cmd_new(
+                            &e,
+                            ie_mailbox_new_noninbox(&e, IE_DSTR("box")),
+                            IE_STATUS_ATTR_UNSEEN | IE_STATUS_ATTR_HIMODSEQ
+                        ),
+                    }
+                ),
+                .out=(size_chunk_out_t[]){
+                    {64, "tag STATUS box (UNSEEN HIGHESTMODSEQ)\r\n"},
+                    {0}
+                },
+            },
+            {
+                .resp=imap_resp_new(&e, IMAP_RESP_STATUS,
+                    (imap_resp_arg_t){
+                        .status=ie_status_resp_new(
+                            &e,
+                            ie_mailbox_new_noninbox(&e, IE_DSTR("box")),
+                            ie_status_attr_resp_add(
+                                ie_status_attr_resp_new_64(
+                                    &e, IE_STATUS_ATTR_HIMODSEQ, 12345678901234UL
+                                ),
+                                ie_status_attr_resp_new_32(
+                                    &e, IE_STATUS_ATTR_UNSEEN, 100
+                                )
+                            )
+                        ),
+                    }
+                ),
+                .out=(size_chunk_out_t[]){
+                    {29, "* STATUS box (UNSEEN 100 HIGH"},
+                    {64, "ESTMODSEQ 12345678901234)\r\n"},
+                    {0}
+                },
+            },
+        };
+        CHECK(&e);
+        PROP(&e, do_writer_test_multi(cases, sizeof(cases)/sizeof(*cases)) );
+    }
     return e;
 }
 

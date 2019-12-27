@@ -959,8 +959,10 @@ void ie_st_code_free(ie_st_code_t *stc){
 
 // STATUS responses
 
-ie_status_attr_resp_t ie_status_attr_resp_new(ie_status_attr_t attr,
-        unsigned int n){
+ie_status_attr_resp_t ie_status_attr_resp_new_32(derr_t *e,
+        ie_status_attr_t attr, unsigned int n){
+    if(is_error(*e)) goto fail;
+
     ie_status_attr_resp_t retval = (ie_status_attr_resp_t){.attrs=attr};
     switch(attr){
         case IE_STATUS_ATTR_MESSAGES: retval.messages = n; break;
@@ -968,8 +970,35 @@ ie_status_attr_resp_t ie_status_attr_resp_new(ie_status_attr_t attr,
         case IE_STATUS_ATTR_UIDNEXT: retval.uidnext = n; break;
         case IE_STATUS_ATTR_UIDVLD: retval.uidvld = n; break;
         case IE_STATUS_ATTR_UNSEEN: retval.unseen = n; break;
+        case IE_STATUS_ATTR_HIMODSEQ:
+            ORIG_GO(e, E_INTERNAL, "wrong width creator function", fail);
+            break;
     }
     return retval;
+
+fail:
+    return (ie_status_attr_resp_t){0};
+}
+
+ie_status_attr_resp_t ie_status_attr_resp_new_64(derr_t *e,
+        ie_status_attr_t attr, unsigned long n){
+    if(is_error(*e)) goto fail;
+
+    ie_status_attr_resp_t retval = (ie_status_attr_resp_t){.attrs=attr};
+    switch(attr){
+        case IE_STATUS_ATTR_MESSAGES:
+        case IE_STATUS_ATTR_RECENT:
+        case IE_STATUS_ATTR_UIDNEXT:
+        case IE_STATUS_ATTR_UIDVLD:
+        case IE_STATUS_ATTR_UNSEEN:
+            ORIG_GO(e, E_INTERNAL, "wrong width creator function", fail);
+            break;
+        case IE_STATUS_ATTR_HIMODSEQ: retval.himodseq = n; break;
+    }
+    return retval;
+
+fail:
+    return (ie_status_attr_resp_t){0};
 }
 
 ie_status_attr_resp_t ie_status_attr_resp_add(ie_status_attr_resp_t resp,
@@ -981,6 +1010,7 @@ ie_status_attr_resp_t ie_status_attr_resp_add(ie_status_attr_resp_t resp,
     if(new.uidnext) retval.uidnext = new.uidnext;
     if(new.uidvld) retval.uidvld = new.uidvld;
     if(new.unseen) retval.unseen = new.unseen;
+    if(new.himodseq) retval.himodseq = new.himodseq;
     return retval;
 }
 

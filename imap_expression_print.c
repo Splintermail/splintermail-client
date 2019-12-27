@@ -26,6 +26,7 @@ DSTR_STATIC(IE_STATUS_ATTR_RECENT_dstr, "RECENT");
 DSTR_STATIC(IE_STATUS_ATTR_UIDNEXT_dstr, "UIDNEXT");
 DSTR_STATIC(IE_STATUS_ATTR_UIDVLD_dstr, "UIDVLD");
 DSTR_STATIC(IE_STATUS_ATTR_UNSEEN_dstr, "UNSEEN");
+DSTR_STATIC(IE_STATUS_ATTR_HIMODSEQ_dstr, "HIGHESTMODSEQ");
 
 const dstr_t *ie_status_attr_to_dstr(ie_status_attr_t sa){
     switch(sa){
@@ -34,6 +35,7 @@ const dstr_t *ie_status_attr_to_dstr(ie_status_attr_t sa){
         case IE_STATUS_ATTR_UIDNEXT: return &IE_STATUS_ATTR_UIDNEXT_dstr;
         case IE_STATUS_ATTR_UIDVLD: return &IE_STATUS_ATTR_UIDVLD_dstr;
         case IE_STATUS_ATTR_UNSEEN: return &IE_STATUS_ATTR_UNSEEN_dstr;
+        case IE_STATUS_ATTR_HIMODSEQ: return &IE_STATUS_ATTR_HIMODSEQ_dstr;
     }
     return &IE_UNKNOWN_dstr;
 }
@@ -733,6 +735,10 @@ derr_t print_status_cmd(dstr_t *out, const ie_status_cmd_t *status){
         LEAD_SP;
         PROP(&e, FMT(out, "UNSEEN") );
     }
+    if(status->status_attr & IE_STATUS_ATTR_HIMODSEQ){
+        LEAD_SP;
+        PROP(&e, FMT(out, "HIGHESTMODSEQ") );
+    }
     PROP(&e, FMT(out, ")") );
     return e;
 }
@@ -937,6 +943,10 @@ derr_t print_status_resp(dstr_t *out, const ie_status_resp_t *status){
     if(status->sa.attrs & IE_STATUS_ATTR_UNSEEN){
         LEAD_SP;
         PROP(&e, FMT(out, "UNSEEN %x", FU(status->sa.unseen)) );
+    }
+    if(status->sa.attrs & IE_STATUS_ATTR_HIMODSEQ){
+        LEAD_SP;
+        PROP(&e, FMT(out, "HIGHESTMODSEQ %x", FU(status->sa.himodseq)) );
     }
     PROP(&e, FMT(out, ")") );
     return e;

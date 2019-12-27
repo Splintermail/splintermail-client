@@ -21,6 +21,7 @@ typedef enum {
     IE_STATUS_ATTR_UIDNEXT = 4,
     IE_STATUS_ATTR_UIDVLD = 8,
     IE_STATUS_ATTR_UNSEEN = 16,
+    IE_STATUS_ATTR_HIMODSEQ = 32,
 } ie_status_attr_t;
 
 typedef struct {
@@ -30,6 +31,7 @@ typedef struct {
     unsigned int uidnext;
     unsigned int uidvld;
     unsigned int unseen;
+    unsigned long himodseq;
 } ie_status_attr_resp_t;
 
 typedef struct {
@@ -515,6 +517,7 @@ typedef union {
     ie_status_attr_resp_t status_attr_resp; // status attributes with args
     imap_time_t time;
     unsigned int num;
+    unsigned long modseqnum;
     char ch;
     int sign;
     bool boolean;
@@ -706,8 +709,10 @@ void ie_st_code_free(ie_st_code_t *stc);
 
 // STATUS responses
 
-ie_status_attr_resp_t ie_status_attr_resp_new(ie_status_attr_t attr,
-        unsigned int n);
+ie_status_attr_resp_t ie_status_attr_resp_new_32(derr_t *e,
+        ie_status_attr_t attr, unsigned int n);
+ie_status_attr_resp_t ie_status_attr_resp_new_64(derr_t *e,
+        ie_status_attr_t attr, unsigned long n);
 ie_status_attr_resp_t ie_status_attr_resp_add(ie_status_attr_resp_t resp,
         ie_status_attr_resp_t new);
 

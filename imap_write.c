@@ -339,6 +339,10 @@ static derr_t status_cmd_skip_fill(skip_fill_t *sf,
         LEAD_SP;
         STATIC_SKIP_FILL("UNSEEN");
     }
+    if(status->status_attr & IE_STATUS_ATTR_HIMODSEQ){
+        LEAD_SP;
+        STATIC_SKIP_FILL("HIGHESTMODSEQ");
+    }
     STATIC_SKIP_FILL(")");
     return e;
 }
@@ -539,6 +543,18 @@ static derr_t nznum_skip_fill(skip_fill_t *sf, unsigned int num){
     derr_t e = E_OK;
     if(!num){
         ORIG(&e, E_PARAM, "invalid zero in non-zero number");
+    }
+    DSTR_VAR(buf, 32);
+    PROP(&e, FMT(&buf, "%x", FU(num)) );
+    PROP(&e, raw_skip_fill(sf, &buf) );
+    return e;
+}
+
+static derr_t modseqnum_skip_fill(skip_fill_t *sf, unsigned long num){
+    derr_t e = E_OK;
+    // 63-bit number; maximum value is 2^63 - 1
+    if(num > 9223372036854775807UL){
+        ORIG(&e, E_PARAM, "modseqnum too big");
     }
     DSTR_VAR(buf, 32);
     PROP(&e, FMT(&buf, "%x", FU(num)) );
@@ -1164,28 +1180,33 @@ static derr_t status_resp_skip_fill(skip_fill_t *sf, ie_status_resp_t *status){
     bool sp = false;
     if(status->sa.attrs & IE_STATUS_ATTR_MESSAGES){
         LEAD_SP;
-        STATIC_SKIP_FILL("MESSAGES");
+        STATIC_SKIP_FILL("MESSAGES ");
         PROP(&e, num_skip_fill(sf, status->sa.messages) );
     }
     if(status->sa.attrs & IE_STATUS_ATTR_RECENT){
         LEAD_SP;
-        STATIC_SKIP_FILL("RECENT");
+        STATIC_SKIP_FILL("RECENT ");
         PROP(&e, num_skip_fill(sf, status->sa.recent) );
     }
     if(status->sa.attrs & IE_STATUS_ATTR_UIDNEXT){
         LEAD_SP;
-        STATIC_SKIP_FILL("UIDNEXT");
+        STATIC_SKIP_FILL("UIDNEXT ");
         PROP(&e, num_skip_fill(sf, status->sa.uidnext) );
     }
     if(status->sa.attrs & IE_STATUS_ATTR_UIDVLD){
         LEAD_SP;
-        STATIC_SKIP_FILL("UIDVALIDITY");
+        STATIC_SKIP_FILL("UIDVALIDITY ");
         PROP(&e, num_skip_fill(sf, status->sa.uidvld) );
     }
     if(status->sa.attrs & IE_STATUS_ATTR_UNSEEN){
         LEAD_SP;
-        STATIC_SKIP_FILL("UNSEEN");
+        STATIC_SKIP_FILL("UNSEEN ");
         PROP(&e, num_skip_fill(sf, status->sa.unseen) );
+    }
+    if(status->sa.attrs & IE_STATUS_ATTR_HIMODSEQ){
+        LEAD_SP;
+        STATIC_SKIP_FILL("HIGHESTMODSEQ ");
+        PROP(&e, modseqnum_skip_fill(sf, status->sa.himodseq) );
     }
     STATIC_SKIP_FILL(")");
     return e;

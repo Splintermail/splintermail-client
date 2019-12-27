@@ -53,6 +53,32 @@
         } \
     }
 
+    #define PARSE_MODSEQNUM(out){ \
+        unsigned long num ; \
+        derr_t e = dstr_toul(p->token, &num, 10); \
+        /* an error here is a proper syntax error */ \
+        if(is_error(e)){ \
+            DROP_VAR(&e); \
+            /* TODO: call yyerror explicitly here, see info bison, apdx A */ \
+            YYERROR; \
+        } \
+        /* 63-bit number; maximum value is 2^63 - 1 */ \
+        if((num) > 9223372036854775807UL){ \
+            PFMT("error?????????????\n"); \
+            /* TODO: call yyerror explicitly here, see info bison, apdx A */ \
+            YYERROR; \
+        } \
+        (out) = num; \
+    }
+
+    #define PARSE_NZMODSEQNUM(out){ \
+        PARSE_NUM(out); \
+        if((out) == 0){ \
+            /* TODO: call yyerror explicitly here, see info bison, apdx A */ \
+            YYERROR; \
+        } \
+    }
+
     // make sure we don't get two selectability flags
     #define MFLAG_SELECT(out, _mf, selectability) { \
         /* _mf might be a function; just call it once */ \
@@ -159,6 +185,7 @@
 %token UIDNEXT
 %token UIDVLD
 %token UNSEEN
+%token HIMODSEQ
 
 /* status attributes */
 %token MESSAGES
@@ -289,7 +316,9 @@
 %type <mailbox> mailbox
 %destructor { ie_mailbox_free($$); } <mailbox>
 
-%type <status_attr> s_attr
+%type <status_attr> s_attr_any
+%type <status_attr> s_attr_32
+%type <status_attr> s_attr_64
 // no destructor needed
 
 // clist = "command" list, a logical OR of some flags
@@ -322,6 +351,9 @@
 %type <num> date_day_fixed
 %type <num> seq_num
 %type <num> f_uid
+
+%type <modseqnum> modseqnum
+// %type <modseqnum> nzmodseqnum
 
 %type <flag> flag_simple
 
@@ -594,8 +626,8 @@ status_cmd: tag SP STATUS SP mailbox[m]
     { imap_cmd_arg_t arg = {.status=ie_status_cmd_new(E, $m, $sa)};
       $$ = imap_cmd_new(E, $tag, IMAP_CMD_STATUS, arg); };
 
-s_attr_clist_1: s_attr[s]                         { $$ = $s; }
-              | s_attr_clist_1[old] SP s_attr[s] { $$ = $old | $s; }
+s_attr_clist_1: s_attr_any[s]                        { $$ = $s; }
+              | s_attr_clist_1[old] SP s_attr_any[s] { $$ = $old | $s; }
 ;
 
 /*** APPEND command ***/
@@ -970,7 +1002,9 @@ s_attr_rlist_1: s_attr_resp
               | s_attr_rlist_1[a] SP s_attr_resp[b] { $$ = ie_status_attr_resp_add($a, $b); }
 ;
 
-s_attr_resp: s_attr[s] SP num[n] { $$ = ie_status_attr_resp_new($s, $n); };
+s_attr_resp: s_attr_32[s] SP num[n]        { $$ = ie_status_attr_resp_new_32(E, $s, $n); }
+           | s_attr_64[s] SP modseqnum[n]  { $$ = ie_status_attr_resp_new_64(E, $s, $n); }
+;
 
 /*** FLAGS response ***/
 
@@ -1178,11 +1212,17 @@ mailbox: prembx astring[a] { $$ = ie_mailbox_new_noninbox(E, $a); }
 
 prembx: %empty { MODE(MAILBOX); };
 
-s_attr: MESSAGES    { $$ = IE_STATUS_ATTR_MESSAGES; }
-      | RECENT      { $$ = IE_STATUS_ATTR_RECENT; }
-      | UIDNEXT     { $$ = IE_STATUS_ATTR_UIDNEXT; }
-      | UIDVLD      { $$ = IE_STATUS_ATTR_UIDVLD; }
-      | UNSEEN      { $$ = IE_STATUS_ATTR_UNSEEN; }
+s_attr_32: MESSAGES    { $$ = IE_STATUS_ATTR_MESSAGES; }
+         | RECENT      { $$ = IE_STATUS_ATTR_RECENT; }
+         | UIDNEXT     { $$ = IE_STATUS_ATTR_UIDNEXT; }
+         | UIDVLD      { $$ = IE_STATUS_ATTR_UIDVLD; }
+         | UNSEEN      { $$ = IE_STATUS_ATTR_UNSEEN; }
+;
+
+s_attr_64: HIMODSEQ    { $$ = IE_STATUS_ATTR_HIMODSEQ; };
+
+s_attr_any: s_attr_32
+          | s_attr_64
 ;
 
 date_time: pre_date_time '"' date_day_fixed '-' date_month '-' fourdigit[y] SP
@@ -1250,6 +1290,8 @@ fourdigit: digit digit digit digit { $$ = 1000*$1 + 100*$2 + 10*$3 + $4; };
 
 num: NUM { PARSE_NUM($$); };
 nznum: NUM { PARSE_NZNUM($$); };
+modseqnum: NUM { PARSE_MODSEQNUM($$); };
+// nzmodseqnum: NUM { PARSE_NZMODSEQNUM($$); };
 
 preseq: %empty { MODE(SEQSET); };
 

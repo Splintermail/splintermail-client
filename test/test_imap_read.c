@@ -690,6 +690,30 @@ static derr_t test_scanner_and_parser(void){
         size_t ncases = sizeof(cases) / sizeof(*cases);
         PROP(&e, do_test_scanner_and_parser(cases, ncases, parser_resp_cb) );
     }
+    // CONDSTORE extension commands
+    {
+        test_case_t cases[] = {
+            {
+                .in=DSTR_LIT("tag STATUS notinbox (unseen highestmodseq)\r\n"),
+                .cmd_calls=(int[]){IMAP_CMD_STATUS, -1},
+                .buf=DSTR_LIT("tag STATUS notinbox (UNSEEN HIGHESTMODSEQ)")
+            },
+        };
+        size_t ncases = sizeof(cases) / sizeof(*cases);
+        PROP(&e, do_test_scanner_and_parser(cases, ncases, parser_cmd_cb) );
+    }
+    // CONDSTORE extension responses
+    {
+        test_case_t cases[] = {
+            {
+                .in=DSTR_LIT("* STATUS astring_box (UNSEEN 2 HIGHESTMODSEQ 12345678901234)\r\n"),
+                .resp_calls=(int[]){IMAP_RESP_STATUS, -1},
+                .buf=DSTR_LIT("STATUS astring_box (UNSEEN 2 HIGHESTMODSEQ 12345678901234)")
+            },
+        };
+        size_t ncases = sizeof(cases) / sizeof(*cases);
+        PROP(&e, do_test_scanner_and_parser(cases, ncases, parser_resp_cb) );
+    }
     return e;
 }
 

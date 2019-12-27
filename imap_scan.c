@@ -459,6 +459,7 @@ status_attr_mode:
         'uidnext'       { *type = UIDNEXT; goto done; }
         'uidvalidity'   { *type = UIDVLD; goto done; }
         'unseen'        { *type = UNSEEN; goto done; }
+        'highestmodseq' { *type = HIMODSEQ; goto done; }
     */
 
 fetch_mode:
