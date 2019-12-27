@@ -73,6 +73,16 @@ struct maildir_i {
     void (*reconcile_until)(maildir_i*, size_t seq);
     // // open a temporary message to write to (with corresponding msg_ref_t)
     // derr_t (*new_msg)(maildir_i*, FILE**, msg_ref_t**);
+
+    /*
+    There are some problems with this API:
+      - no support for STORE with entire sequences of messages
+      - there needs to be a request_id because some update requests will have
+        to be passed to a client accessor, so the client can find out from the
+        server what the decided action is (and only then can the imaildir_t
+        respond to the server accessor that requested the update).
+      - additional, architectural problems fusee imap_msg.h
+    */
 };
 
 // dirmgr_t-provided interface, required by imaildir_t

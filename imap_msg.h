@@ -116,6 +116,29 @@
         be up-to-date on flags at all times, the maildir will have a thread-
         safe way to open a file by its UID (the maildir is always up-to-date
         with the filesystem).
+
+
+    ditm requires a local, unencrypted store of messages.  That means that a
+    file is not removed from the local store until all downwards connections
+    have been told the file is expunged (that's fairly easy).  The tricky part
+    here will be to have an accurate mapping of sequence numbers to UIDs so
+    that mail clients using sequence numbers will download the correct UID.
+
+    Oh, well we could just write the upwards client to fetch the UID any time
+    it does a FETCH.  But that would be obnixous to have to do a FETCH every
+    time that we do a STORE.
+
+    If we did a UID command upwards for every sequence command we received from
+    below, then it wouldn't be any concept of "in sync", but we would break the
+    benefits of a transparent caching layer, since EXPUNGE responses can be
+    sent unilaterally during UID commands but not sequence commands.  So then
+    the mail server would think the client knew things that we wouldn't be
+    allowed to actually tell the client.
+
+    I guess this problem is faced by every mail client every time that it
+    connects: which of the local messages no longer exist on the remote server?
+    I guess we just solve this the normal way: run a `UID SEARCH UID 1:*`, or
+    use the CONDSTORE and QRESYNC extensions.
 */
 
 typedef enum {

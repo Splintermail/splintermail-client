@@ -183,6 +183,21 @@ Responses which could be treated either way:
   - SEARCH
   - FLAGS
 
+Responses which permit an untagged EXPUNGE response:
+  - anything other than FETCH, STORE, or SEARCH
+  - that means UID FETCH, UID STORE, and UID SEARCH are fair game
+  - if a client sends anything other than FETCH, STORE, or SEARCH, it must wait
+    until that response is completed before sending any message with message
+    sequence numbers in it
+  - the standard doesn't say this, but I think a client doing only UID commands
+    would still have to wait for every command completion, due to it not being
+    safe to do things like UID FETCH on a non-existent UID.  From that
+    perspective, if you want to do pipelineing you must use message sequence
+    numbers instead of uids.
+
+    But the other untagged responses (FETCH, RECENT, EXISTS) are allowed at any
+    time, as far as I can tell.
+
 Therefore, our general architecture will be the following:
 
                 Server                Client
@@ -213,16 +228,36 @@ With the following details:
     "DITM Alerts", which exists only on the LOCAL STORE, through which DITM
     can communicate security alerts or critical failures or whatnot.
 
-data structures:
-  - Only one in-memory copy of a user's folder hierarchy, on a per-user basis.
-    A per-user data structure associated with a single imap connection keeps
-    track of the folders.  Each folder will have to be associated with things
-    like a list of pending deletions (which have to be coordinated between
-    multiple possible sessions) and a list of pending deletions, stuff like that
-  - A per-connection data structure keeps in memory the contents of a single
-    folder which that connection is associated with.
-  -
+OH SHIT, this architecture will suffer from a host of incorrect corner cases.
+    (See https://imapwiki.org/ImapTest/ServerStatus)
 
+    In general, there would be issues where expunges could not be executed
+    on behalf of one downwards connection without affecting another downwards
+    connection, because with this strategy multiple downwards connections would
+    share a single upwards connection.  The only solution would be to simulate
+    expunges and deleted flags, and then push up deleted flags and expunges in
+    a piecemeal way.  That would introduce a lot of complexity and a lot of
+    in-memory state, which would result in loss of state on shutdown (or even
+    more complexity to prevent that).
+
+    The alternate solution is to just have one upwards connection per downwards
+    connection (the original plan).  In 90% of cases, this is equally efficient
+    because it seems like a rare usage case to have multiple client connections
+    to a single mailbox.  Even in the case that two mail clients were
+    downloading identical copies of every message, only one upwards connection
+    would download each message, and the two mail clients would each be served
+    the message bodies directly from the decrypted local store.
+
+    This alternate solution sounds about 10x simpler.
+
+    The thought that went into the old strategy is not useless though... it
+    seems like it would be very relevant if I ever end up operating in some
+    kind of "offline" mode (which I will attempt not to do just yet).
+
+    But I am afraid that some of the message passing architecture dreamt up for
+    things like serializing flag updates will be useless... the only sane thing
+    to do is to pass all flag stores or fetches to the server and have the mail
+    server be the single point of truth.
 
 Order of work is:
     Make IMAP client capable of logging in
