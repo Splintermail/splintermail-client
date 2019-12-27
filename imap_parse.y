@@ -2,6 +2,7 @@
     #include <stdio.h>
     #include <imap_parse.h>
     #include <imap_expression.h>
+    #include <imap_extension.h>
     #include <imap_scan.h>
     #include <logger.h>
 
@@ -26,7 +27,7 @@
         /* an error here is a proper syntax error */ \
         if(is_error(e)){ \
             DROP_VAR(&e); \
-            /* TODO: call yyerror explicitly here, see info bison, apdx A */ \
+            yyerror(p, "invalid number"); \
             YYERROR; \
         } \
         /* put scanner in literal mode */ \
@@ -39,7 +40,7 @@
         /* an error here is a proper syntax error */ \
         if(is_error(e)){ \
             DROP_VAR(&e); \
-            /* TODO: call yyerror explicitly here, see info bison, apdx A */ \
+            yyerror(p, "invalid number"); \
             YYERROR; \
         } \
         (out) = num; \
@@ -48,7 +49,7 @@
     #define PARSE_NZNUM(out){ \
         PARSE_NUM(out); \
         if((out) == 0){ \
-            /* TODO: call yyerror explicitly here, see info bison, apdx A */ \
+            yyerror(p, "invalid number"); \
             YYERROR; \
         } \
     }
@@ -59,13 +60,13 @@
         /* an error here is a proper syntax error */ \
         if(is_error(e)){ \
             DROP_VAR(&e); \
-            /* TODO: call yyerror explicitly here, see info bison, apdx A */ \
+            yyerror(p, "invalid number"); \
             YYERROR; \
         } \
         /* 63-bit number; maximum value is 2^63 - 1 */ \
         if((num) > 9223372036854775807UL){ \
             PFMT("error?????????????\n"); \
-            /* TODO: call yyerror explicitly here, see info bison, apdx A */ \
+            yyerror(p, "invalid number"); \
             YYERROR; \
         } \
         (out) = num; \
@@ -74,7 +75,7 @@
     #define PARSE_NZMODSEQNUM(out){ \
         PARSE_NUM(out); \
         if((out) == 0){ \
-            /* TODO: call yyerror explicitly here, see info bison, apdx A */ \
+            yyerror(p, "invalid number"); \
             YYERROR; \
         } \
     }
@@ -92,7 +93,7 @@
                 /* it's a syntax error to have multiple selectability flags */ \
                 ie_mflags_free(mf); \
                 (out) = NULL; \
-                /* TODO: call yyerror explicitly here, see info bison, apdx A */ \
+                yyerror(p, "multiple selectability flags"); \
                 YYERROR; \
             }else{ \
                 mf->selectable = selectability; \
@@ -490,11 +491,10 @@ line: command EOL { ACCEPT; }
 
 command: command_[c]
 {
-    if(is_error(p->error)){
-        imap_cmd_free($c);
-    }else{
-        p->cb.cmd(p->cb_data, $c);
-    }
+    // extract the error (if any), since are about to pass it by value
+    derr_t error = p->error;
+    PASSED(p->error);
+    p->cb.cmd(p->cb_data, error, $c);
 };
 
 command_: starttls_cmd
@@ -523,11 +523,10 @@ command_: starttls_cmd
 
 response: response_[r]
 {
-    if(is_error(p->error)){
-        imap_resp_free($r);
-    }else{
-        p->cb.resp(p->cb_data, $r);
-    }
+    // extract the error (if any), since are about to pass it by value
+    derr_t error = p->error;
+    PASSED(p->error);
+    p->cb.resp(p->cb_data, error, $r);
 };
 
 response_: status_type_resp_tagged
@@ -868,7 +867,8 @@ copy_cmd: tag SP uid_mode[u] COPY SP seq_set[seq] SP mailbox[m]
 /*** ENABLE command ***/
 
 enable_cmd: tag SP ENABLE { MODE(ATOM); } SP capas_1[c]
-    { imap_cmd_arg_t arg = {.enable=$c};
+    { extension_assert_on_builder(E, p->exts, EXT_ENABLE);
+      imap_cmd_arg_t arg = {.enable=$c};
       $$ = imap_cmd_new(E, $tag, IMAP_CMD_ENABLE, arg); };
 
 
@@ -1120,7 +1120,8 @@ ign_nstring: NIL
 /*** ENABLED response ***/
 
 enabled_resp: ENABLED { MODE(ATOM); } SP capas_1[c]
-    { imap_resp_arg_t arg = {.enabled=$c};
+    { extension_assert_on_builder(E, p->exts, EXT_ENABLE);
+      imap_resp_arg_t arg = {.enabled=$c};
       $$ = imap_resp_new(E, IMAP_RESP_ENABLED, arg); };
 
 /*** start of "helper" categories: ***/
@@ -1219,7 +1220,9 @@ s_attr_32: MESSAGES    { $$ = IE_STATUS_ATTR_MESSAGES; }
          | UNSEEN      { $$ = IE_STATUS_ATTR_UNSEEN; }
 ;
 
-s_attr_64: HIMODSEQ    { $$ = IE_STATUS_ATTR_HIMODSEQ; };
+s_attr_64: HIMODSEQ
+    { extension_assert_on_builder(E, p->exts, EXT_CONDSTORE);
+      $$ = IE_STATUS_ATTR_HIMODSEQ; };
 
 s_attr_any: s_attr_32
           | s_attr_64

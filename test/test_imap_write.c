@@ -67,10 +67,15 @@ static derr_t do_writer_test(const test_case_t *tc){
         }
         size_t old_want = want;
 
+        extensions_t exts = {
+            .enable = EXT_STATE_ON,
+            .condstore = EXT_STATE_ON,
+        };
+
         if(tc->cmd != NULL){
-            PROP(&e, imap_cmd_write(tc->cmd, &buffer, &skip, &want) );
+            PROP(&e, imap_cmd_write(tc->cmd, &buffer, &skip, &want, &exts) );
         }else{
-            PROP(&e, imap_resp_write(tc->resp, &buffer, &skip, &want) );
+            PROP(&e, imap_resp_write(tc->resp, &buffer, &skip, &want, &exts) );
         }
 
         // check the output

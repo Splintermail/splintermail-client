@@ -8,6 +8,7 @@ typedef struct {
     size_t skip;   // input bytes left to skip, this will go to zero
     size_t passed; // input bytes handled, this will become skip on the next run
     size_t want; // output bytes needed to finish, just for information
+    const extensions_t *exts;
 } skip_fill_t;
 
 // The base skip_fill.  Skip some bytes, then fill a buffer with what remains.
@@ -340,6 +341,7 @@ static derr_t status_cmd_skip_fill(skip_fill_t *sf,
         STATIC_SKIP_FILL("UNSEEN");
     }
     if(status->status_attr & IE_STATUS_ATTR_HIMODSEQ){
+        PROP(&e, extension_assert_on(sf->exts, EXT_CONDSTORE) );
         LEAD_SP;
         STATIC_SKIP_FILL("HIGHESTMODSEQ");
     }
@@ -863,10 +865,10 @@ static derr_t fetch_attr_skip_fill(skip_fill_t *sf, ie_fetch_attrs_t *attr){
 }
 
 derr_t imap_cmd_write(const imap_cmd_t *cmd, dstr_t *out, size_t *skip,
-        size_t *want){
+        size_t *want, const extensions_t *exts){
     derr_t e = E_OK;
 
-    skip_fill_t skip_fill = { .out=out, .skip=*skip };
+    skip_fill_t skip_fill = { .out=out, .skip=*skip, .exts=exts };
     skip_fill_t *sf = &skip_fill;
 
     imap_cmd_arg_t arg = cmd->arg;
@@ -1032,6 +1034,7 @@ derr_t imap_cmd_write(const imap_cmd_t *cmd, dstr_t *out, size_t *skip,
             break;
 
         case IMAP_CMD_ENABLE:
+            PROP(&e, extension_assert_on(sf->exts, EXT_ENABLE) );
             STATIC_SKIP_FILL("ENABLE");
             for(ie_dstr_t *d = arg.enable; d != NULL; d = d->next){
                 STATIC_SKIP_FILL(" ");
@@ -1204,6 +1207,7 @@ static derr_t status_resp_skip_fill(skip_fill_t *sf, ie_status_resp_t *status){
         PROP(&e, num_skip_fill(sf, status->sa.unseen) );
     }
     if(status->sa.attrs & IE_STATUS_ATTR_HIMODSEQ){
+        PROP(&e, extension_assert_on(sf->exts, EXT_CONDSTORE) );
         LEAD_SP;
         STATIC_SKIP_FILL("HIGHESTMODSEQ ");
         PROP(&e, modseqnum_skip_fill(sf, status->sa.himodseq) );
@@ -1243,10 +1247,10 @@ static derr_t fetch_resp_skip_fill(skip_fill_t *sf, ie_fetch_resp_t *fetch){
 }
 
 derr_t imap_resp_write(const imap_resp_t *resp, dstr_t *out, size_t *skip,
-        size_t *want){
+        size_t *want, const extensions_t *exts){
     derr_t e = E_OK;
 
-    skip_fill_t skip_fill = { .out=out, .skip=*skip };
+    skip_fill_t skip_fill = { .out=out, .skip=*skip, .exts=exts};
     skip_fill_t *sf = &skip_fill;
 
     imap_resp_arg_t arg = resp->arg;
@@ -1320,6 +1324,7 @@ derr_t imap_resp_write(const imap_resp_t *resp, dstr_t *out, size_t *skip,
             break;
 
         case IMAP_RESP_ENABLED:
+            PROP(&e, extension_assert_on(sf->exts, EXT_ENABLE) );
             STATIC_SKIP_FILL("ENABLED");
             for(ie_dstr_t *d = arg.enabled; d != NULL; d = d->next){
                 STATIC_SKIP_FILL(" ");

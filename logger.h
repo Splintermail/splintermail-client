@@ -151,6 +151,25 @@ static inline bool pvt_prop(derr_t *e, derr_t code,
 #define PROP_GO(e, code, _label) \
     if(pvt_prop(e, code, FILE_LOC)){ goto _label; }
 
+
+// PROP_VAR and friends clean up the variable they merge from
+static inline bool pvt_prop_var(derr_t *e, derr_t *e2,
+        const char *file, const char *func, int line){
+    bool ret = pvt_prop(e, *e2, file, func, line);
+    *e2 = E_OK;
+    return ret;
+}
+
+#define IF_PROP_VAR(e, e2) \
+    if(pvt_prop_var(e, e2, FILE_LOC))
+
+#define PROP_VAR(e, e2) \
+    if(pvt_prop_var(e, e2, FILE_LOC)){ return *(e); }
+
+#define PROP_VAR_GO(e, e2, _label) \
+    if(pvt_prop_var(e, e2, FILE_LOC)){ goto _label; }
+
+
 /* CHECK handles an error that we have ignored until now, useful when
    transitioning from chunks of code which use the bison error handling
    strategy to chunks of code which use normal error handling */

@@ -9,7 +9,8 @@ void yyerror(imap_parser_t *parser, char const *s){
 }
 
 derr_t imap_parser_init(imap_parser_t *parser, imap_scanner_t *scanner,
-                        imap_parser_cb_t cb, void *cb_data){
+                        extensions_t *exts, imap_parser_cb_t cb,
+                        void *cb_data){
     derr_t e = E_OK;
 
     // init the bison parser
@@ -28,11 +29,14 @@ derr_t imap_parser_init(imap_parser_t *parser, imap_scanner_t *scanner,
     parser->cb_data = cb_data;
     parser->scanner = scanner;
 
+    parser->exts = exts;
+
     return e;
 }
 
 void imap_parser_free(imap_parser_t *parser){
     yypstate_delete(parser->yyps);
+    DROP_VAR(&parser->error);
 }
 
 derr_t imap_parse(imap_parser_t *parser, int type, const dstr_t *token){

@@ -141,6 +141,8 @@ struct imap_client_t {
     const imap_client_spec_t *spec;
     const imap_controller_up_t *controller;
     imap_reader_t reader;
+    // imap extensions
+    extensions_t exts;
     // write subsystem
     queue_cb_t write_qcb;
     bool write_requested;
@@ -971,9 +973,11 @@ static derr_t status_type(imap_client_t *ic, const ie_st_resp_t *st){
     return e;
 }
 
-static void resp_cb(void *cb_data, imap_resp_t *resp){
+static void resp_cb(void *cb_data, derr_t error, imap_resp_t *resp){
     imap_client_t *ic = cb_data;
     derr_t e = E_OK;
+
+    PROP_VAR_GO(&e, &error, fail);
 
     // print the response
     {
@@ -983,7 +987,7 @@ static void resp_cb(void *cb_data, imap_resp_t *resp){
         while(want > 0){
             buf.len = 0;
             derr_t e2 = E_OK;
-            IF_PROP(&e2, imap_resp_write(resp, &buf, &skip, &want) ){
+            IF_PROP(&e2, imap_resp_write(resp, &buf, &skip, &want, &ic->exts) ){
                 DUMP(e2);
                 DROP_VAR(&e2);
                 break;
@@ -1002,6 +1006,7 @@ static void resp_cb(void *cb_data, imap_resp_t *resp){
     return;
 
 fail:
+    imap_resp_free(resp);
     ic->id->session->close(ic->id->session, e);
     PASSED(e);
 }
@@ -1064,7 +1069,7 @@ static derr_t try_write(imap_client_t *ic){
     size_t want;
     ic->write_ev->buffer.len = 0;
     PROP(&e, imap_cmd_write(ic_cmd->cmd, &ic->write_ev->buffer,
-                &ic->write_skip, &want) );
+                &ic->write_skip, &want, &ic->exts) );
     // did we finish writing that command?
     if(want == 0){
         ic->write_skip = 0;
@@ -1371,12 +1376,16 @@ derr_t imap_client_logic_alloc(imap_logic_t **out, void *arg_void,
         *out = NULL;
         ORIG(&e, E_NOMEM, "no memory for malloc");
     }
-    *ic = (imap_client_t){0};
+    *ic = (imap_client_t){
+        .exts = (extensions_t){
+            .enable = EXT_STATE_OFF,
+        },
+    };
 
     PROP_GO(&e, dstr_new(&ic->folder, 256), fail_malloc);
 
     imap_parser_cb_t parser_cb = {.resp=resp_cb};
-    PROP_GO(&e, imap_reader_init(&ic->reader, parser_cb, ic), fail_folder);
+    PROP_GO(&e, imap_reader_init(&ic->reader, &ic->exts, parser_cb, ic), fail_folder);
 
     ic->id = id;
     ic->logic.new_event = new_event;

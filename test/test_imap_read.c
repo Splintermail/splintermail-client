@@ -58,6 +58,8 @@
 typedef struct {
     size_t cmd_counts[IMAP_CMD_ENABLE + 1];
     size_t resp_counts[IMAP_RESP_ENABLED + 1];
+    // the error from a callback
+    derr_t error;
     // the value recorded by a callback
     dstr_t buf;
 } calls_made_t;
@@ -96,8 +98,10 @@ static derr_t assert_calls_equal(const calls_made_t *exp,
     return e;
 }
 
-static void cmd_cb(void *cb_data, imap_cmd_t *cmd){
+static void cmd_cb(void *cb_data, derr_t error, imap_cmd_t *cmd){
     calls_made_t *calls = cb_data;
+    PROP_GO(&calls->error, error, done);
+
     size_t max_type = sizeof(calls->cmd_counts) / sizeof(*calls->cmd_counts);
     if(cmd->type >= 0 && cmd->type < max_type){
         calls->cmd_counts[cmd->type]++;
@@ -105,11 +109,15 @@ static void cmd_cb(void *cb_data, imap_cmd_t *cmd){
         LOG_ERROR("got command of unknown type %x\n", FU(cmd->type));
     }
     DROP_CMD( print_imap_cmd(&calls->buf, cmd) );
+
+done:
     imap_cmd_free(cmd);
 }
 
-static void resp_cb(void *cb_data, imap_resp_t *resp){
+static void resp_cb(void *cb_data, derr_t error, imap_resp_t *resp){
     calls_made_t *calls = cb_data;
+    PROP_GO(&calls->error, error, done);
+
     size_t max_type = sizeof(calls->resp_counts) / sizeof(*calls->resp_counts);
     if(resp->type >= 0 && resp->type < max_type){
         calls->resp_counts[resp->type]++;
@@ -117,6 +125,8 @@ static void resp_cb(void *cb_data, imap_resp_t *resp){
         LOG_ERROR("got response of unknown type %x\n", FU(resp->type));
     }
     DROP_CMD( print_imap_resp(&calls->buf, resp) );
+
+done:
     imap_resp_free(resp);
 }
 
@@ -135,22 +145,30 @@ static derr_t do_test_scanner_and_parser(test_case_t *cases, size_t ncases,
     derr_t e = E_OK;
 
     // prepare the calls_made struct
-    calls_made_t calls;
+    calls_made_t calls = {0};
     PROP(&e, dstr_new(&calls.buf, 4096) );
+
+    extensions_t exts = {
+        .enable = EXT_STATE_ON,
+        .condstore = EXT_STATE_ON,
+    };
 
     // init the reader
     imap_reader_t reader;
-    PROP_GO(&e, imap_reader_init(&reader, cb, &calls), cu_buf);
+    PROP_GO(&e, imap_reader_init(&reader, &exts, cb, &calls), cu_buf);
 
     for(size_t i = 0; i < ncases; i++){
         // reset calls made
         memset(&calls.cmd_counts, 0, sizeof(calls.cmd_counts));
         memset(&calls.resp_counts, 0, sizeof(calls.resp_counts));
+        DROP_VAR(&calls.error);
         calls.buf.len = 0;
         // feed in the input
         LOG_DEBUG("about to feed '%x'", FD(&cases[i].in));
         PROP_GO(&e, imap_read(&reader, &cases[i].in), show_case);
         LOG_DEBUG("fed '%x'", FD(&cases[i].in));
+        // check that there were no errors
+        PROP_VAR_GO(&e, &calls.error, show_case);
         // check that the right calls were made
         calls_made_t exp = { .buf = cases[i].buf };
         for(int *t = cases[i].cmd_calls; t && *t >= 0; t++){

@@ -5,13 +5,13 @@
 #include "logger.h"
 #include "imap_parse.tab.h"
 
-derr_t imap_reader_init(imap_reader_t *reader, imap_parser_cb_t cb,
-        void *cb_data){
+derr_t imap_reader_init(imap_reader_t *reader, extensions_t *exts,
+        imap_parser_cb_t cb, void *cb_data){
     derr_t e = E_OK;
 
     PROP(&e, imap_scanner_init(&reader->scanner) );
 
-    PROP_GO(&e, imap_parser_init(&reader->parser, &reader->scanner, cb,
+    PROP_GO(&e, imap_parser_init(&reader->parser, &reader->scanner, exts, cb,
                 cb_data), fail_scanner);
 
     reader->cb = cb;
