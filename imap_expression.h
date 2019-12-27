@@ -353,6 +353,7 @@ typedef enum {
     IMAP_CMD_FETCH,
     IMAP_CMD_STORE,
     IMAP_CMD_COPY,
+    IMAP_CMD_ENABLE,
 } imap_cmd_type_t;
 
 typedef struct {
@@ -431,6 +432,7 @@ typedef union {
     ie_fetch_cmd_t *fetch;
     ie_store_cmd_t *store;
     ie_copy_cmd_t *copy;
+    ie_dstr_t * enable;
 } imap_cmd_arg_t;
 
 typedef struct {
@@ -453,6 +455,7 @@ typedef enum {
     IMAP_RESP_EXPUNGE,
     IMAP_RESP_RECENT,
     IMAP_RESP_FETCH,
+    IMAP_RESP_ENABLED,
 } imap_resp_type_t;
 
 typedef struct {
@@ -495,6 +498,7 @@ typedef struct {
     unsigned int expunge;
     unsigned int recent;
     ie_fetch_resp_t *fetch;
+    ie_dstr_t *enabled;
 } imap_resp_arg_t;
 
 typedef struct {

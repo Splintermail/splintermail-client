@@ -281,6 +281,8 @@ command_mode:
         'store'         { *type = STORE; goto done; }
         'copy'          { *type = COPY; goto done; }
         'uid'           { *type = UID; goto done; }
+        'enable'        { *type = ENABLE; goto done; }
+        'enabled'       { *type = ENABLED; goto done; }
 
         'ok'            { *type = OK; goto done; }
         'no'            { *type = NO; goto done; }

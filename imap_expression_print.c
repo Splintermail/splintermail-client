@@ -59,6 +59,7 @@ DSTR_STATIC(IMAP_CMD_SEARCH_dstr, "SEARCH");
 DSTR_STATIC(IMAP_CMD_FETCH_dstr, "FETCH");
 DSTR_STATIC(IMAP_CMD_STORE_dstr, "STORE");
 DSTR_STATIC(IMAP_CMD_COPY_dstr, "COPY");
+DSTR_STATIC(IMAP_CMD_ENABLE_dstr, "ENABLE");
 
 const dstr_t *imap_cmd_type_to_dstr(imap_cmd_type_t type){
     switch(type){
@@ -84,6 +85,7 @@ const dstr_t *imap_cmd_type_to_dstr(imap_cmd_type_t type){
         case IMAP_CMD_FETCH:    return &IMAP_CMD_FETCH_dstr;
         case IMAP_CMD_STORE:    return &IMAP_CMD_STORE_dstr;
         case IMAP_CMD_COPY:     return &IMAP_CMD_COPY_dstr;
+        case IMAP_CMD_ENABLE:   return &IMAP_CMD_ENABLE_dstr;
     }
     return &IE_UNKNOWN_dstr;
 }
@@ -99,6 +101,7 @@ DSTR_STATIC(IMAP_RESP_EXISTS_dstr, "EXISTS");
 DSTR_STATIC(IMAP_RESP_EXPUNGE_dstr, "EXPUNGE");
 DSTR_STATIC(IMAP_RESP_RECENT_dstr, "RECENT");
 DSTR_STATIC(IMAP_RESP_FETCH_dstr, "FETCH");
+DSTR_STATIC(IMAP_RESP_ENABLED_dstr, "ENABLED");
 
 const dstr_t *imap_resp_type_to_dstr(imap_resp_type_t type){
     switch(type){
@@ -113,6 +116,7 @@ const dstr_t *imap_resp_type_to_dstr(imap_resp_type_t type){
         case IMAP_RESP_EXPUNGE:     return &IMAP_RESP_EXPUNGE_dstr;
         case IMAP_RESP_RECENT:      return &IMAP_RESP_RECENT_dstr;
         case IMAP_RESP_FETCH:       return &IMAP_RESP_FETCH_dstr;
+        case IMAP_RESP_ENABLED:     return &IMAP_RESP_ENABLED_dstr;
     }
     return &IE_UNKNOWN_dstr;
 }
@@ -874,6 +878,10 @@ derr_t print_imap_cmd(dstr_t *out, const imap_cmd_t *cmd){
         case IMAP_CMD_COPY:
             PROP(&e, print_copy_cmd(out, cmd->arg.copy) );
             break;
+        case IMAP_CMD_ENABLE:
+            PROP(&e, FMT(out, "ENABLE ") );
+            PROP(&e, print_atoms(out, cmd->arg.enable) );
+            break;
         default:
             LOG_ERROR("got command of type %x\n", FU(cmd->type));
     }
@@ -1004,6 +1012,10 @@ derr_t print_imap_resp(dstr_t *out, const imap_resp_t *resp){
             break;
         case IMAP_RESP_FETCH:
             PROP(&e, print_fetch_resp(out, resp->arg.fetch) );
+            break;
+        case IMAP_RESP_ENABLED:
+            PROP(&e, FMT(out, "ENABLED ") );
+            PROP(&e, print_atoms(out, resp->arg.enabled) );
             break;
         default:
             LOG_ERROR("got response of type %x\n", FU(resp->type));

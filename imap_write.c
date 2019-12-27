@@ -1015,6 +1015,14 @@ derr_t imap_cmd_write(const imap_cmd_t *cmd, dstr_t *out, size_t *skip,
             PROP(&e, mailbox_skip_fill(sf, arg.copy->m) );
             break;
 
+        case IMAP_CMD_ENABLE:
+            STATIC_SKIP_FILL("ENABLE");
+            for(ie_dstr_t *d = arg.enable; d != NULL; d = d->next){
+                STATIC_SKIP_FILL(" ");
+                PROP(&e, atom_skip_fill(sf, &d->dstr) );
+            }
+            break;
+
         default:
             TRACE(&e, "got command of unknown type %x\n", FU(cmd->type));
             ORIG(&e, E_INTERNAL, "unprintable command: unknown type");
@@ -1233,10 +1241,10 @@ derr_t imap_resp_write(const imap_resp_t *resp, dstr_t *out, size_t *skip,
             break;
 
         case IMAP_RESP_CAPA:
-            STATIC_SKIP_FILL("CAPABILITY ");
+            STATIC_SKIP_FILL("CAPABILITY");
             for(ie_dstr_t *d = arg.capa; d != NULL; d = d->next){
+                STATIC_SKIP_FILL(" ");
                 PROP(&e, atom_skip_fill(sf, &d->dstr) );
-                if(d->next){ STATIC_SKIP_FILL(" "); }
             }
             break;
 
@@ -1288,6 +1296,14 @@ derr_t imap_resp_write(const imap_resp_t *resp, dstr_t *out, size_t *skip,
 
         case IMAP_RESP_FETCH:
             PROP(&e, fetch_resp_skip_fill(sf, arg.fetch) );
+            break;
+
+        case IMAP_RESP_ENABLED:
+            STATIC_SKIP_FILL("ENABLED");
+            for(ie_dstr_t *d = arg.enabled; d != NULL; d = d->next){
+                STATIC_SKIP_FILL(" ");
+                PROP(&e, atom_skip_fill(sf, &d->dstr) );
+            }
             break;
 
         default:

@@ -125,6 +125,7 @@
 %token STORE
 %token COPY
 %token UID
+%token ENABLE
 
 /* responses */
 %token OK
@@ -142,6 +143,7 @@
 %token RECENT
 /*     EXPUNGE (listed above) */
 /*     FETCH (listed above) */
+%token ENABLED
 
 /* status-code stuff */
 %token YES_STATUS_CODE
@@ -428,6 +430,7 @@
 %type <imap_cmd> fetch_cmd
 %type <imap_cmd> store_cmd
 %type <imap_cmd> copy_cmd
+%type <imap_cmd> enable_cmd
 %destructor { imap_cmd_free($$); } <imap_cmd>
 
 %type <imap_resp> response_
@@ -444,6 +447,7 @@
 %type <imap_resp> recent_resp
 %type <imap_resp> expunge_resp
 %type <imap_resp> fetch_resp
+%type <imap_resp> enabled_resp
 %destructor { imap_resp_free($$); } <imap_resp>
 
 %% /********** Grammar Section **********/
@@ -482,6 +486,7 @@ command_: starttls_cmd
         | fetch_cmd
         | store_cmd
         | copy_cmd
+        | enable_cmd
 ;
 
 response: response_[r]
@@ -508,6 +513,7 @@ untagged_resp: status_type_resp_untagged
              | recent_resp
              | expunge_resp
              | fetch_resp
+             | enabled_resp
 
 untag: '*' { MODE(COMMAND); };
 
@@ -827,6 +833,13 @@ copy_cmd: tag SP uid_mode[u] COPY SP seq_set[seq] SP mailbox[m]
     { imap_cmd_arg_t arg = {.copy=ie_copy_cmd_new(E, $u, $seq, $m)};
       $$ = imap_cmd_new(E, $tag, IMAP_CMD_COPY, arg); };
 
+/*** ENABLE command ***/
+
+enable_cmd: tag SP ENABLE { MODE(ATOM); } SP capas_1[c]
+    { imap_cmd_arg_t arg = {.enable=$c};
+      $$ = imap_cmd_new(E, $tag, IMAP_CMD_ENABLE, arg); };
+
+
 /*** status-type responses.  Thanks for the the shitty grammar, IMAP4rev1 ***/
 
 /* a valid status-type response with status code input could be two things:
@@ -1069,6 +1082,12 @@ address: '(' ign_nstring SP ign_nstring SP ign_nstring SP ign_nstring   ')'
 ign_nstring: NIL
            | ign_string
 ;
+
+/*** ENABLED response ***/
+
+enabled_resp: ENABLED { MODE(ATOM); } SP capas_1[c]
+    { imap_resp_arg_t arg = {.enabled=$c};
+      $$ = imap_resp_new(E, IMAP_RESP_ENABLED, arg); };
 
 /*** start of "helper" categories: ***/
 

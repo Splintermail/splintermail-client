@@ -56,8 +56,8 @@
 */
 
 typedef struct {
-    size_t cmd_counts[IMAP_CMD_COPY + 1];
-    size_t resp_counts[IMAP_RESP_FETCH + 1];
+    size_t cmd_counts[IMAP_CMD_ENABLE + 1];
+    size_t resp_counts[IMAP_RESP_ENABLED + 1];
     // the value recorded by a callback
     dstr_t buf;
 } calls_made_t;
@@ -177,6 +177,7 @@ cu_buf:
 
 static derr_t test_scanner_and_parser(void){
     derr_t e = E_OK;
+    // Various responses, also some stream-parsing mechanics
     {
         test_case_t cases[] = {
             {
@@ -241,6 +242,7 @@ static derr_t test_scanner_and_parser(void){
         size_t ncases = sizeof(cases) / sizeof(*cases);
         PROP(&e, do_test_scanner_and_parser(cases, ncases, parser_resp_cb) );
     }
+    // Test STATUS responses
     {
         test_case_t cases[] = {
             {
@@ -272,6 +274,7 @@ static derr_t test_scanner_and_parser(void){
         size_t ncases = sizeof(cases) / sizeof(*cases);
         PROP(&e, do_test_scanner_and_parser(cases, ncases, parser_resp_cb) );
     }
+    // misc responses
     {
         test_case_t cases[] = {
             {
@@ -298,6 +301,7 @@ static derr_t test_scanner_and_parser(void){
         size_t ncases = sizeof(cases) / sizeof(*cases);
         PROP(&e, do_test_scanner_and_parser(cases, ncases, parser_resp_cb) );
     }
+    // FETCH responses
     {
         test_case_t cases[] = {
             {
@@ -363,7 +367,7 @@ static derr_t test_scanner_and_parser(void){
         size_t ncases = sizeof(cases) / sizeof(*cases);
         PROP(&e, do_test_scanner_and_parser(cases, ncases, parser_resp_cb) );
     }
-    ///////////////
+    // test imap commands
     {
         test_case_t cases[] = {
             {
@@ -508,6 +512,7 @@ static derr_t test_scanner_and_parser(void){
         size_t ncases = sizeof(cases) / sizeof(*cases);
         PROP(&e, do_test_scanner_and_parser(cases, ncases, parser_cmd_cb) );
     }
+    // SEARCH command
     {
         test_case_t cases[] = {
             {
@@ -554,6 +559,7 @@ static derr_t test_scanner_and_parser(void){
         size_t ncases = sizeof(cases) / sizeof(*cases);
         PROP(&e, do_test_scanner_and_parser(cases, ncases, parser_cmd_cb) );
     }
+    // FETCH command
     {
         test_case_t cases[] = {
             {
@@ -633,6 +639,7 @@ static derr_t test_scanner_and_parser(void){
         size_t ncases = sizeof(cases) / sizeof(*cases);
         PROP(&e, do_test_scanner_and_parser(cases, ncases, parser_cmd_cb) );
     }
+    // UID mode commands
     {
         test_case_t cases[] = {
             {
@@ -658,6 +665,30 @@ static derr_t test_scanner_and_parser(void){
         };
         size_t ncases = sizeof(cases) / sizeof(*cases);
         PROP(&e, do_test_scanner_and_parser(cases, ncases, parser_cmd_cb) );
+    }
+    // ENABLE extension command
+    {
+        test_case_t cases[] = {
+            {
+                .in=DSTR_LIT("tag ENABLE 1 2 3\r\n"),
+                .cmd_calls=(int[]){IMAP_CMD_ENABLE, -1},
+                .buf=DSTR_LIT("tag ENABLE 1 2 3")
+            },
+        };
+        size_t ncases = sizeof(cases) / sizeof(*cases);
+        PROP(&e, do_test_scanner_and_parser(cases, ncases, parser_cmd_cb) );
+    }
+    // ENABLE extension response
+    {
+        test_case_t cases[] = {
+            {
+                .in=DSTR_LIT("* ENABLED 1 2 3\r\n"),
+                .resp_calls=(int[]){IMAP_RESP_ENABLED, -1},
+                .buf=DSTR_LIT("ENABLED 1 2 3")
+            },
+        };
+        size_t ncases = sizeof(cases) / sizeof(*cases);
+        PROP(&e, do_test_scanner_and_parser(cases, ncases, parser_resp_cb) );
     }
     return e;
 }

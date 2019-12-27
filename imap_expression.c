@@ -1327,6 +1327,7 @@ static void imap_cmd_arg_free(imap_cmd_type_t type, imap_cmd_arg_t arg){
         case IMAP_CMD_FETCH:    ie_fetch_cmd_free(arg.fetch); break;
         case IMAP_CMD_STORE:    ie_store_cmd_free(arg.store); break;
         case IMAP_CMD_COPY:     ie_copy_cmd_free(arg.copy); break;
+        case IMAP_CMD_ENABLE:   ie_dstr_free(arg.enable); break;
     }
 }
 
@@ -1463,6 +1464,7 @@ static void imap_resp_arg_free(imap_resp_type_t type, imap_resp_arg_t arg){
         case IMAP_RESP_EXPUNGE:     break;
         case IMAP_RESP_RECENT:      break;
         case IMAP_RESP_FETCH:       ie_fetch_resp_free(arg.fetch); break;
+        case IMAP_RESP_ENABLED:     ie_dstr_free(arg.enabled); break;
     }
 }
 

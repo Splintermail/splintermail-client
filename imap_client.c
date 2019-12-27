@@ -1167,9 +1167,12 @@ static derr_t process_one_unhandled(imap_client_t *ic, ic_resp_t *ic_resp){
             break;
         case IMAP_RESP_FETCH:
             if(ic->imap_state != FETCHING){
-                ORIG_GO(&e, E_VALUE, "got FETCH outside of FETCHIN\n", cu);
+                ORIG_GO(&e, E_VALUE, "got FETCH outside of FETCHING\n", cu);
             }
             PROP_GO(&e, fetch_resp(ic, ic_resp->resp->arg.fetch), cu);
+            break;
+        case IMAP_RESP_ENABLED:
+            ORIG_GO(&e, E_VALUE, "got ENABLED response\n", cu);
             break;
         default:
             TRACE(&e, "got response of unknown type %x\n",
