@@ -733,15 +733,20 @@ void ie_search_key_free(ie_search_key_t *s){
             ie_search_key_free(s->param.pair.a);
             ie_search_key_free(s->param.pair.b);
             break;
+        case IE_SEARCH_MODSEQ:
+            ie_search_modseq_ext_free(s->param.modseq.ext);
+            break;
     }
     free(s);
 }
 
-#define NEW_SEARCH_KEY_WITH_TYPE \
+#define NEW_SEARCH_KEY \
     ie_search_key_t *s = ie_search_key_new(e); \
-    if(!s) goto fail; \
-    s->type = type
+    if(!s) goto fail
 
+#define NEW_SEARCH_KEY_WITH_TYPE \
+    NEW_SEARCH_KEY; \
+    s->type = type
 
 ie_search_key_t *ie_search_0(derr_t *e, ie_search_key_type_t type){
     if(is_error(*e)) goto fail;
@@ -847,6 +852,41 @@ ie_search_key_t *ie_search_pair(derr_t *e, ie_search_key_type_t type,
 fail:
     ie_search_key_free(a);
     ie_search_key_free(b);
+    return NULL;
+}
+
+ie_search_modseq_ext_t *ie_search_modseq_ext_new(derr_t *e,
+        ie_dstr_t *entry_name, ie_entry_type_t entry_type){
+    if(is_error(*e)) goto fail;
+
+    IE_MALLOC(e, ie_search_modseq_ext_t, ext, fail);
+    ext->entry_name = entry_name;
+    ext->entry_type = entry_type;
+
+    return ext;
+
+fail:
+    ie_dstr_free(entry_name);
+    return NULL;
+}
+
+void ie_search_modseq_ext_free(ie_search_modseq_ext_t *ext){
+    if(!ext) return;
+    ie_dstr_free(ext->entry_name);
+    free(ext);
+}
+
+ie_search_key_t *ie_search_modseq(derr_t *e, ie_search_modseq_ext_t *ext,
+        unsigned long modseq){
+    if(is_error(*e)) goto fail;
+    NEW_SEARCH_KEY;
+    s->type = IE_SEARCH_MODSEQ;
+    s->param.modseq.ext = ext;
+    s->param.modseq.modseq = modseq;
+    return s;
+
+fail:
+    ie_search_modseq_ext_free(ext);
     return NULL;
 }
 

@@ -296,6 +296,9 @@
 %token CONDSTORE
 %token CHGSINCE
 %token UNCHGSINCE
+%token PRIV
+/* %token ALL */
+%token SHARED
 
 %type <ch> qchar
 %type <ch> nqchar
@@ -414,7 +417,14 @@
 %type <search_key> search_keys_1
 %type <search_key> search_hdr
 %type <search_key> search_or
+%type <search_key> search_modseq
 %destructor { ie_search_key_free($$); } <search_key>
+
+%type <search_modseq_ext> search_modseq_ext
+%destructor { ie_search_modseq_ext_free($$); } <search_modseq_ext>
+
+%type <entry_type> entry_type
+// no destructor for entry_type
 
 %type <sect_part> sect_part
 %destructor { ie_sect_part_free($$); } <sect_part>
@@ -757,6 +767,7 @@ search_key: ALL                         { $$ = ie_search_0(E, IE_SEARCH_ALL); }
           | NOT SP search_key[k]        { $$ = ie_search_not(E, $k); }
           | '(' search_keys_1[k] ')'    { $$ = ie_search_group(E, $k); }
           | search_or
+          | search_modseq
 ;
 
 search_hdr: HEADER SP search_astring[h] SP search_astring[v]
@@ -764,6 +775,19 @@ search_hdr: HEADER SP search_astring[h] SP search_astring[v]
 
 search_or: OR SP search_key[a] SP search_key[b]
          { $$ = ie_search_pair(E, IE_SEARCH_OR, $a, $b); };
+
+search_modseq: MODSEQ search_modseq_ext[ext] modseqnum[s]
+    { extension_trigger_builder(E, p->exts, EXT_CONDSTORE);
+      $$ = ie_search_modseq(E, $ext, $s); };
+
+search_modseq_ext: SP                             { $$ = NULL; }
+                 | SP qstr[n] SP entry_type[t] SP { $$ = ie_search_modseq_ext_new(E, $n, $t); }
+;
+
+entry_type: PRIV    { $$ = IE_ENTRY_PRIV; }
+          | SHARED  { $$ = IE_ENTRY_SHARED; }
+          | ALL     { $$ = IE_ENTRY_ALL; }
+;
 
 search_astring: { MODE(ASTRING); } astring[k] { $$ = $k; };
 

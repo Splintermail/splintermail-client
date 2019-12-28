@@ -609,6 +609,9 @@ search_mode:
         'smaller'       { *type = SMALLER; goto done; }
         'uid'           { *type = UID; goto done; }
         'undraft'       { *type = UNDRAFT; goto done; }
+        'modseq'        { *type = MODSEQ; goto done; }
+        'priv'          { *type = PRIV; goto done; }
+        'shared'        { *type = SHARED; goto done; }
     */
 
 select_param_mode:

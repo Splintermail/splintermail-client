@@ -140,6 +140,21 @@ static derr_t quoted_skip_fill_noval(skip_fill_t *sf, const dstr_t *in){
     return e;
 }
 
+// throw an error if something is not quotable
+static derr_t assert_quotable(const dstr_t *val){
+    derr_t e = E_OK;
+    for(size_t i = 0; i < val->len; i++){
+        switch(val->data[i]){
+            // anything with non-quotable chars must immediately be literal
+            case '\r':
+            case '\n':
+            case '\0':
+                ORIG(&e, E_PARAM, "string contains unquotable characters");
+        }
+    }
+    return e;
+}
+
 typedef enum {
     IW_LITERAL,
     IW_QUOTED,
@@ -806,6 +821,26 @@ static derr_t search_key_skip_fill(skip_fill_t *sf, ie_search_key_t *key){
             PROP(&e, search_key_skip_fill(sf, p.pair.a) );
             STATIC_SKIP_FILL(" ");
             PROP(&e, search_key_skip_fill(sf, p.pair.b) );
+            break;
+        case IE_SEARCH_MODSEQ:
+            PROP(&e, extension_assert_on(sf->exts, EXT_CONDSTORE) );
+            STATIC_SKIP_FILL("MODSEQ ");
+            if(p.modseq.ext != NULL){
+                // entry_name must be quotable
+                PROP(&e, assert_quotable(&p.modseq.ext->entry_name->dstr) );
+                PROP(&e, quoted_skip_fill_noval(sf,
+                            &p.modseq.ext->entry_name->dstr) );
+                STATIC_SKIP_FILL(" ");
+                switch(p.modseq.ext->entry_type){
+                    case IE_ENTRY_PRIV:   STATIC_SKIP_FILL("priv");   break;
+                    case IE_ENTRY_SHARED: STATIC_SKIP_FILL("shared"); break;
+                    case IE_ENTRY_ALL:    STATIC_SKIP_FILL("all");    break;
+                    default:
+                        ORIG(&e, E_PARAM, "unknown modseq ext entry type");
+                }
+                STATIC_SKIP_FILL(" ");
+            }
+            PROP(&e, modseqnum_skip_fill(sf, p.modseq.modseq) );
             break;
         default:
             TRACE(&e, "unknown search key type: %x", FU(key->type));

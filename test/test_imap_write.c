@@ -217,8 +217,7 @@ static derr_t test_imap_writer(void){
             {
                 .cmd=imap_cmd_new(&e, IE_DSTR("tag"), IMAP_CMD_STATUS,
                     (imap_cmd_arg_t){
-                        .status=ie_status_cmd_new(
-                            &e,
+                        .status=ie_status_cmd_new(&e,
                             ie_mailbox_new_noninbox(&e, IE_DSTR("box")),
                             IE_STATUS_ATTR_UNSEEN | IE_STATUS_ATTR_HIMODSEQ
                         ),
@@ -232,8 +231,7 @@ static derr_t test_imap_writer(void){
             {
                 .cmd=imap_cmd_new(&e, IE_DSTR("tag"), IMAP_CMD_FETCH,
                     (imap_cmd_arg_t){
-                        .fetch=ie_fetch_cmd_new(
-                            &e,
+                        .fetch=ie_fetch_cmd_new(&e,
                             false,
                             ie_seq_set_new(&e, 1, 2),
                             ie_fetch_attrs_add_simple(
@@ -253,8 +251,7 @@ static derr_t test_imap_writer(void){
             {
                 .cmd=imap_cmd_new(&e, IE_DSTR("tag"), IMAP_CMD_STORE,
                     (imap_cmd_arg_t){
-                        .store=ie_store_cmd_new(
-                            &e,
+                        .store=ie_store_cmd_new(&e,
                             false,
                             ie_seq_set_new(&e, 1, 1),
                             ie_store_mods_unchgsince(&e, 12345678901234UL),
@@ -266,6 +263,39 @@ static derr_t test_imap_writer(void){
                 ),
                 .out=(size_chunk_out_t[]){
                     {64, "tag STORE 1 (UNCHANGEDSINCE 12345678901234) FLAGS ()\r\n"},
+                    {0}
+                },
+            },
+            {
+                .cmd=imap_cmd_new(&e, IE_DSTR("tag"), IMAP_CMD_SEARCH,
+                    (imap_cmd_arg_t){
+                        .search=ie_search_cmd_new(&e, false, NULL,
+                            ie_search_modseq(&e, NULL, 12345678901234UL)
+                        ),
+                    }
+                ),
+                .out=(size_chunk_out_t[]){
+                    {64, "tag SEARCH MODSEQ 12345678901234\r\n"},
+                    {0}
+                },
+            },
+            {
+                .cmd=imap_cmd_new(&e, IE_DSTR("tag"), IMAP_CMD_SEARCH,
+                    (imap_cmd_arg_t){
+                        .search=ie_search_cmd_new(&e, false, NULL,
+                            ie_search_modseq(&e,
+                                ie_search_modseq_ext_new(&e,
+                                    IE_DSTR("/flags/\\Answered"),
+                                    IE_ENTRY_ALL
+                                ),
+                                12345678901234UL
+                            )
+                        ),
+                    }
+                ),
+                .out=(size_chunk_out_t[]){
+                    {37, "tag SEARCH MODSEQ \"/flags/\\\\Answered\""},
+                    {64, " all 12345678901234\r\n"},
                     {0}
                 },
             },

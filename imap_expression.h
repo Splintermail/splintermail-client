@@ -193,6 +193,7 @@ typedef enum {
     IE_SEARCH_GROUP,       // uses param.key
     IE_SEARCH_OR,          // uses param.pair
     IE_SEARCH_AND,         // uses param.pair
+    IE_SEARCH_MODSEQ,      // uses param.modseq
 } ie_search_key_type_t;
 
 struct ie_search_key_t;
@@ -209,6 +210,26 @@ typedef struct ie_search_or_t {
     ie_search_key_t *b;
 } ie_search_pair_t;
 
+typedef enum {
+    IE_ENTRY_PRIV,
+    IE_ENTRY_SHARED,
+    IE_ENTRY_ALL,
+} ie_entry_type_t;
+
+// only used by CONDSTORE extension
+typedef struct {
+    ie_dstr_t *entry_name;
+    ie_entry_type_t entry_type;
+} ie_search_modseq_ext_t;
+
+// only used by CONDSTORE extension
+typedef struct {
+    // can be NULL
+    ie_search_modseq_ext_t *ext;
+    // can be zero
+    unsigned long modseq;
+} ie_search_modseq_t;
+
 union ie_search_param_t {
     ie_dstr_t *dstr;
     ie_search_header_t header; // just a pair of dstr_t's
@@ -217,6 +238,7 @@ union ie_search_param_t {
     ie_seq_set_t *seq_set;
     ie_search_key_t *key;
     ie_search_pair_t pair;
+    ie_search_modseq_t modseq;
 };
 
 struct ie_search_key_t {
@@ -589,6 +611,8 @@ typedef union {
     ie_selectable_t selectable;
     ie_mflags_t *mflags;
     ie_search_key_t *search_key;
+    ie_search_modseq_ext_t *search_modseq_ext;
+    ie_entry_type_t entry_type;
     ie_seq_set_t *seq_set;
     ie_nums_t *nums;
 
@@ -744,6 +768,13 @@ ie_search_key_t *ie_search_not(derr_t *e, ie_search_key_t *key);
 ie_search_key_t *ie_search_group(derr_t *e, ie_search_key_t *key);
 ie_search_key_t *ie_search_pair(derr_t *e, ie_search_key_type_t type,
         ie_search_key_t *a, ie_search_key_t *b);
+
+ie_search_modseq_ext_t *ie_search_modseq_ext_new(derr_t *e,
+        ie_dstr_t *entry_name, ie_entry_type_t entry_type);
+void ie_search_modseq_ext_free(ie_search_modseq_ext_t *ext);
+
+ie_search_key_t *ie_search_modseq(derr_t *e, ie_search_modseq_ext_t *ext,
+        unsigned long modseq);
 
 // fetch attr construction
 
