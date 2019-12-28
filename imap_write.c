@@ -1108,6 +1108,10 @@ static derr_t st_code_skip_fill(skip_fill_t *sf, ie_st_code_t *code){
         case IE_ST_CODE_TRYCREATE:
             STATIC_SKIP_FILL("TRYCREATE");
             break;
+        case IE_ST_CODE_NOMODSEQ:
+            PROP(&e, extension_assert_on(sf->exts, EXT_CONDSTORE) );
+            STATIC_SKIP_FILL("NOMODSEQ");
+            break;
         case IE_ST_CODE_UIDNEXT:     // unsigned int
             STATIC_SKIP_FILL("UIDNEXT ");
             PROP(&e, num_skip_fill(sf, code->arg.num) )
@@ -1119,6 +1123,11 @@ static derr_t st_code_skip_fill(skip_fill_t *sf, ie_st_code_t *code){
         case IE_ST_CODE_UNSEEN:      // unsigned int
             STATIC_SKIP_FILL("UNSEEN ");
             PROP(&e, num_skip_fill(sf, code->arg.num) );
+            break;
+        case IE_ST_CODE_HIMODSEQ:      // unsigned long
+            PROP(&e, extension_assert_on(sf->exts, EXT_CONDSTORE) );
+            STATIC_SKIP_FILL("HIGHESTMODSEQ ");
+            PROP(&e, modseqnum_skip_fill(sf, code->arg.modseqnum) );
             break;
         case IE_ST_CODE_PERMFLAGS:   // ie_pflags_t
             STATIC_SKIP_FILL("PERMANENTFLAGS (");

@@ -387,9 +387,11 @@ status_code_mode:
         'read_only'     { *type = READ_ONLY; goto done; }
         'read_write'    { *type = READ_WRITE; goto done; }
         'trycreate'     { *type = TRYCREATE; goto done; }
+        'nomodseq'      { *type = NOMODSEQ; goto done; }
         'uidnext'       { *type = UIDNEXT; goto done; }
         'uidvalidity'   { *type = UIDVLD; goto done; }
         'unseen'        { *type = UNSEEN; goto done; }
+        'highestmodseq' { *type = HIMODSEQ; goto done; }
 
         atom            { *type = RAW; goto done; }
     */

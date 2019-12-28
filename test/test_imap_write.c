@@ -252,6 +252,44 @@ static derr_t test_imap_writer(void){
                     {0}
                 },
             },
+            {
+                .resp=imap_resp_new(&e, IMAP_RESP_STATUS_TYPE,
+                    (imap_resp_arg_t){
+                        .status_type=ie_st_resp_new(
+                            &e,
+                            NULL,
+                            IE_ST_OK,
+                            ie_st_code_modseqnum(
+                                &e,
+                                IE_ST_CODE_HIMODSEQ,
+                                12345678901234UL
+                            ),
+                            IE_DSTR("text")
+                        ),
+                    }
+                ),
+                .out=(size_chunk_out_t[]){
+                    {64, "* OK [HIGHESTMODSEQ 12345678901234] text\r\n"},
+                    {0}
+                },
+            },
+            {
+                .resp=imap_resp_new(&e, IMAP_RESP_STATUS_TYPE,
+                    (imap_resp_arg_t){
+                        .status_type=ie_st_resp_new(
+                            &e,
+                            NULL,
+                            IE_ST_OK,
+                            ie_st_code_simple(&e, IE_ST_CODE_NOMODSEQ),
+                            IE_DSTR("text")
+                        ),
+                    }
+                ),
+                .out=(size_chunk_out_t[]){
+                    {64, "* OK [NOMODSEQ] text\r\n"},
+                    {0}
+                },
+            },
         };
         CHECK(&e);
         PROP(&e, do_writer_test_multi(cases, sizeof(cases)/sizeof(*cases)) );

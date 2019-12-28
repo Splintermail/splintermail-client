@@ -646,6 +646,9 @@ derr_t print_ie_st_code(dstr_t *out, const ie_st_code_t *code){
         case IE_ST_CODE_TRYCREATE:
             PROP(&e, FMT(out, "TRYCREATE") );
             break;
+        case IE_ST_CODE_NOMODSEQ:
+            PROP(&e, FMT(out, "NOMODSEQ") );
+            break;
         case IE_ST_CODE_UIDNEXT:     // unsigned int
             PROP(&e, FMT(out, "UIDNEXT %x", FU(code->arg.num)) );
             break;
@@ -654,6 +657,9 @@ derr_t print_ie_st_code(dstr_t *out, const ie_st_code_t *code){
             break;
         case IE_ST_CODE_UNSEEN:      // unsigned int
             PROP(&e, FMT(out, "UNSEEN %x", FU(code->arg.num)) );
+            break;
+        case IE_ST_CODE_HIMODSEQ:    // unsigned long
+            PROP(&e, FMT(out, "HIGHESTMODSEQ %x", FU(code->arg.modseqnum)) );
             break;
         case IE_ST_CODE_PERMFLAGS:   // ie_pflags_t
             PROP(&e, FMT(out, "PERMANENTFLAGS (") );

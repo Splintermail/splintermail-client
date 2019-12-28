@@ -49,7 +49,7 @@
     #define PARSE_NZNUM(out){ \
         PARSE_NUM(out); \
         if((out) == 0){ \
-            yyerror(p, "invalid number"); \
+            yyerror(p, "invalid number (zero)"); \
             YYERROR; \
         } \
     }
@@ -65,17 +65,16 @@
         } \
         /* 63-bit number; maximum value is 2^63 - 1 */ \
         if((num) > 9223372036854775807UL){ \
-            PFMT("error?????????????\n"); \
-            yyerror(p, "invalid number"); \
+            yyerror(p, "invalid number (too big)"); \
             YYERROR; \
         } \
         (out) = num; \
     }
 
     #define PARSE_NZMODSEQNUM(out){ \
-        PARSE_NUM(out); \
+        PARSE_MODSEQNUM(out); \
         if((out) == 0){ \
-            yyerror(p, "invalid number"); \
+            yyerror(p, "invalid number (zero)"); \
             YYERROR; \
         } \
     }
@@ -291,6 +290,7 @@
 
 /* CONDSTORE extension */
 %token HIMODSEQ
+%token NOMODSEQ
 %token CONDSTORE
 
 %type <ch> qchar
@@ -362,7 +362,8 @@
 %type <num> f_uid
 
 %type <modseqnum> modseqnum
-// %type <modseqnum> nzmodseqnum
+%type <modseqnum> nzmodseqnum
+%type <modseqnum> sc_modseqnum
 
 %type <flag> flag_simple
 
@@ -939,15 +940,22 @@ st_code_: ALERT      { $$ = ie_st_code_simple(E, IE_ST_CODE_ALERT); }
         | READ_ONLY  { $$ = ie_st_code_simple(E, IE_ST_CODE_READ_ONLY); }
         | READ_WRITE { $$ = ie_st_code_simple(E, IE_ST_CODE_READ_WRITE); }
         | TRYCREATE  { $$ = ie_st_code_simple(E, IE_ST_CODE_TRYCREATE); }
+        | NOMODSEQ   { $$ = ie_st_code_simple(E, IE_ST_CODE_NOMODSEQ); }
         | UIDNEXT SP sc_num[n] { $$ = ie_st_code_num(E, IE_ST_CODE_UIDNEXT, $n); }
-        | UIDVLD SP sc_num[n] { $$ = ie_st_code_num(E, IE_ST_CODE_UIDVLD, $n); }
-        | UNSEEN SP sc_num[n] { $$ = ie_st_code_num(E, IE_ST_CODE_UNSEEN, $n); }
+        | UIDVLD SP sc_num[n]  { $$ = ie_st_code_num(E, IE_ST_CODE_UIDVLD, $n); }
+        | UNSEEN SP sc_num[n]  { $$ = ie_st_code_num(E, IE_ST_CODE_UNSEEN, $n); }
+        | HIMODSEQ SP sc_modseqnum[n] { $$ = ie_st_code_modseqnum(E, IE_ST_CODE_HIMODSEQ, $n); }
         | sc_pflags
         | sc_capa
         | sc_atom
 ;
 
-sc_num: { MODE(NUM); } num[n] { MODE(STATUS_CODE); $$ = $n; };
+sc_num: { MODE(NUM); } nznum[n] { MODE(STATUS_CODE); $$ = $n; };
+
+sc_modseqnum: { MODE(NUM); } nzmodseqnum[n]
+    { extension_assert_on_builder(E, p->exts, EXT_CONDSTORE);
+      MODE(STATUS_CODE);
+      $$ = $n; };
 
 sc_pflags: PERMFLAGS { MODE(FLAG); } SP pflags[p] { $$ = ie_st_code_pflags(E, $p); }
 
@@ -1315,7 +1323,7 @@ fourdigit: digit digit digit digit { $$ = 1000*$1 + 100*$2 + 10*$3 + $4; };
 num: NUM { PARSE_NUM($$); };
 nznum: NUM { PARSE_NZNUM($$); };
 modseqnum: NUM { PARSE_MODSEQNUM($$); };
-// nzmodseqnum: NUM { PARSE_NZMODSEQNUM($$); };
+nzmodseqnum: NUM { PARSE_NZMODSEQNUM($$); };
 
 preseq: %empty { MODE(SEQSET); };
 

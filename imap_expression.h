@@ -310,9 +310,11 @@ typedef enum {              // Argument used:
     IE_ST_CODE_READ_ONLY,   // none
     IE_ST_CODE_READ_WRITE,  // none
     IE_ST_CODE_TRYCREATE,   // none
+    IE_ST_CODE_NOMODSEQ,    // none
     IE_ST_CODE_UIDNEXT,     // unsigned int
     IE_ST_CODE_UIDVLD,      // unsigned int
     IE_ST_CODE_UNSEEN,      // unsigned int
+    IE_ST_CODE_HIMODSEQ,    // unsigned long
     IE_ST_CODE_PERMFLAGS,   // ie_pflags_t
     IE_ST_CODE_CAPA,        // ie_dstr_t (as a list)
     IE_ST_CODE_ATOM,        /* ie_dstr_t (a list of 1 or 2 strings; if 2, the
@@ -324,6 +326,7 @@ typedef union {
     ie_dstr_t *dstr;
     ie_pflags_t *pflags;
     unsigned int num;
+    unsigned long modseqnum;
 } ie_st_code_arg_t;
 
 typedef struct {
@@ -724,7 +727,10 @@ void ie_partial_free(ie_partial_t *p);
 // status-type response codes
 
 ie_st_code_t *ie_st_code_simple(derr_t *e, ie_st_code_type_t type);
-ie_st_code_t *ie_st_code_num(derr_t *e, ie_st_code_type_t type, unsigned int n);
+ie_st_code_t *ie_st_code_num(derr_t *e, ie_st_code_type_t type,
+        unsigned int n);
+ie_st_code_t *ie_st_code_modseqnum(derr_t *e, ie_st_code_type_t type,
+        unsigned long n);
 ie_st_code_t *ie_st_code_pflags(derr_t *e, ie_pflags_t *pflags);
 ie_st_code_t *ie_st_code_dstr(derr_t *e, ie_st_code_type_t type,
         ie_dstr_t *dstr);

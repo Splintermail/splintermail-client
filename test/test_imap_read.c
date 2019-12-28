@@ -738,6 +738,16 @@ static derr_t test_scanner_and_parser(void){
                 .resp_calls=(int[]){IMAP_RESP_STATUS, -1},
                 .buf=DSTR_LIT("STATUS astring_box (UNSEEN 2 HIGHESTMODSEQ 12345678901234)")
             },
+            {
+                .in=DSTR_LIT("* OK [HIGHESTMODSEQ 12345678901234] text\r\n"),
+                .resp_calls=(int[]){IMAP_RESP_STATUS_TYPE, -1},
+                .buf=DSTR_LIT("* OK [HIGHESTMODSEQ 12345678901234] text")
+            },
+            {
+                .in=DSTR_LIT("* OK [NOMODSEQ] text\r\n"),
+                .resp_calls=(int[]){IMAP_RESP_STATUS_TYPE, -1},
+                .buf=DSTR_LIT("* OK [NOMODSEQ] text")
+            },
         };
         size_t ncases = sizeof(cases) / sizeof(*cases);
         PROP(&e, do_test_scanner_and_parser(cases, ncases, parser_resp_cb) );
