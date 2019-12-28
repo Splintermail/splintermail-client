@@ -534,7 +534,7 @@ static derr_t send_fetch(imap_client_t *ic, unsigned int uid){
     ie_fetch_attrs_add_simple(&e, attr, IE_FETCH_ATTR_FLAGS);
     ie_fetch_attrs_add_simple(&e, attr, IE_FETCH_ATTR_RFC822);
     // build fetch command
-    ie_fetch_cmd_t *fetch = ie_fetch_cmd_new(&e, uid_mode, uidseq, attr);
+    ie_fetch_cmd_t *fetch = ie_fetch_cmd_new(&e, uid_mode, uidseq, attr, NULL);
     imap_cmd_arg_t arg = {.fetch=fetch};
 
     ie_dstr_t *tag = ic_next_tag(&e, ic);

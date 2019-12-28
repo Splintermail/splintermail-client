@@ -897,6 +897,26 @@ static derr_t fetch_attr_skip_fill(skip_fill_t *sf, ie_fetch_attrs_t *attr){
     return e;
 }
 
+static derr_t fetch_mods_skip_fill(skip_fill_t *sf, ie_fetch_mods_t *mods){
+    derr_t e = E_OK;
+    if(mods == NULL) return e;
+    PROP(&e, extension_assert_on(sf->exts, EXT_CONDSTORE) );
+    STATIC_SKIP_FILL("(");
+    bool sp = false;
+    for(ie_fetch_mods_t *m = mods; m != NULL; m = m->next){
+        LEAD_SP;
+        switch(m->type){
+            case IE_FETCH_MOD_CHGSINCE:
+                STATIC_SKIP_FILL("CHANGEDSINCE ");
+                PROP(&e, nzmodseqnum_skip_fill(sf, m->arg.chgsince) );
+                break;
+            default: ORIG(&e, E_PARAM, "unknown fetch modifier type");
+        }
+    }
+    STATIC_SKIP_FILL(")");
+    return e;
+}
+
 derr_t imap_cmd_write(const imap_cmd_t *cmd, dstr_t *out, size_t *skip,
         size_t *want, const extensions_t *exts){
     derr_t e = E_OK;
@@ -1035,6 +1055,10 @@ derr_t imap_cmd_write(const imap_cmd_t *cmd, dstr_t *out, size_t *skip,
             PROP(&e, seq_set_skip_fill(sf, arg.fetch->seq_set) );
             STATIC_SKIP_FILL(" ");
             PROP(&e, fetch_attr_skip_fill(sf, arg.fetch->attr) );
+            if(arg.fetch->mods != NULL){
+                STATIC_SKIP_FILL(" ");
+                PROP(&e, fetch_mods_skip_fill(sf, arg.fetch->mods) )
+            }
             break;
 
         case IMAP_CMD_STORE:

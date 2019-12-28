@@ -294,6 +294,20 @@ typedef struct {
     ie_fetch_extra_t *extras;
 } ie_fetch_attrs_t;
 
+typedef enum {
+    IE_FETCH_MOD_CHGSINCE,
+} ie_fetch_mod_type_t;
+
+typedef struct {
+    unsigned long chgsince;
+} ie_fetch_mod_arg_t;
+
+typedef struct ie_fetch_mods_t {
+    ie_fetch_mod_type_t type;
+    ie_fetch_mod_arg_t arg;
+    struct ie_fetch_mods_t *next;
+} ie_fetch_mods_t;
+
 // Status-type-related things
 
 typedef enum {
@@ -417,6 +431,7 @@ typedef struct {
     bool uid_mode;
     ie_seq_set_t *seq_set;
     ie_fetch_attrs_t *attr;
+    ie_fetch_mods_t *mods;
 } ie_fetch_cmd_t;
 
 typedef struct {
@@ -571,6 +586,7 @@ typedef union {
     ie_fetch_simple_t fetch_simple;
     ie_fetch_extra_t *fetch_extra;
     ie_fetch_attrs_t *fetch_attrs;
+    ie_fetch_mods_t *fetch_mods;
 
     // Status-type things
     ie_status_t status;
@@ -718,6 +734,11 @@ ie_fetch_extra_t *ie_fetch_extra_new(derr_t *e, bool peek, ie_sect_t *s,
         ie_partial_t *p);
 void ie_fetch_extra_free(ie_fetch_extra_t *extra);
 
+ie_fetch_mods_t *ie_fetch_mods_chgsince(derr_t *e, unsigned long chgsince);
+ie_fetch_mods_t *ie_fetch_mods_add(derr_t *e, ie_fetch_mods_t *list,
+        ie_fetch_mods_t *mod);
+void ie_fetch_mods_free(ie_fetch_mods_t *mods);
+
 ie_sect_part_t *ie_sect_part_new(derr_t *e, unsigned int num);
 void ie_sect_part_free(ie_sect_part_t *sp);
 ie_sect_part_t *ie_sect_part_add(derr_t *e, ie_sect_part_t *sp,
@@ -803,7 +824,7 @@ ie_search_cmd_t *ie_search_cmd_new(derr_t *e, bool uid_mode,
 void ie_search_cmd_free(ie_search_cmd_t *search);
 
 ie_fetch_cmd_t *ie_fetch_cmd_new(derr_t *e, bool uid_mode,
-        ie_seq_set_t *seq_set, ie_fetch_attrs_t *attr);
+        ie_seq_set_t *seq_set, ie_fetch_attrs_t *attr, ie_fetch_mods_t *mods);
 void ie_fetch_cmd_free(ie_fetch_cmd_t *fetch);
 
 ie_store_cmd_t *ie_store_cmd_new(derr_t *e, bool uid_mode,

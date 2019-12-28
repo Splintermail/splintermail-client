@@ -807,6 +807,42 @@ void ie_fetch_extra_free(ie_fetch_extra_t *ex){
     free(ex);
 }
 
+ie_fetch_mods_t *ie_fetch_mods_chgsince(derr_t *e, unsigned long chgsince){
+    if(is_error(*e)) goto fail;
+
+    IE_MALLOC(e, ie_fetch_mods_t, mods, fail);
+
+    mods->type = IE_FETCH_MOD_CHGSINCE;
+    mods->arg.chgsince = chgsince;
+
+    return mods;
+
+fail:
+    return NULL;
+}
+
+ie_fetch_mods_t *ie_fetch_mods_add(derr_t *e, ie_fetch_mods_t *list,
+        ie_fetch_mods_t *mod){
+    if(is_error(*e)) goto fail;
+
+    ie_fetch_mods_t **last = &list;
+    while(*last != NULL) last = &(*last)->next;
+    *last = mod;
+
+    return list;
+
+fail:
+    ie_fetch_mods_free(list);
+    ie_fetch_mods_free(mod);
+    return NULL;
+}
+
+void ie_fetch_mods_free(ie_fetch_mods_t *mods){
+    if(!mods) return;
+    ie_fetch_mods_free(mods->next);
+    free(mods);
+}
+
 ie_sect_part_t *ie_sect_part_new(derr_t *e, unsigned int num){
     if(is_error(*e)) goto fail;
 
@@ -1377,7 +1413,7 @@ void ie_search_cmd_free(ie_search_cmd_t *search){
 }
 
 ie_fetch_cmd_t *ie_fetch_cmd_new(derr_t *e, bool uid_mode,
-        ie_seq_set_t *seq_set, ie_fetch_attrs_t *attr){
+        ie_seq_set_t *seq_set, ie_fetch_attrs_t *attr, ie_fetch_mods_t *mods){
     if(is_error(*e)) goto fail;
 
     IE_MALLOC(e, ie_fetch_cmd_t, fetch, fail);
@@ -1385,12 +1421,14 @@ ie_fetch_cmd_t *ie_fetch_cmd_new(derr_t *e, bool uid_mode,
     fetch->uid_mode = uid_mode;
     fetch->seq_set = seq_set;
     fetch->attr = attr;
+    fetch->mods = mods;
 
     return fetch;
 
 fail:
     ie_seq_set_free(seq_set);
     ie_fetch_attrs_free(attr);
+    ie_fetch_mods_free(mods);
     return NULL;
 }
 
@@ -1398,6 +1436,7 @@ void ie_fetch_cmd_free(ie_fetch_cmd_t *fetch){
     if(!fetch) return;
     ie_seq_set_free(fetch->seq_set);
     ie_fetch_attrs_free(fetch->attr);
+    ie_fetch_mods_free(fetch->mods);
     free(fetch);
 }
 

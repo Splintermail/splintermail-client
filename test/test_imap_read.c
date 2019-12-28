@@ -726,6 +726,11 @@ static derr_t test_scanner_and_parser(void){
                 .cmd_calls=(int[]){IMAP_CMD_EXAMINE, -1},
                 .buf=DSTR_LIT("tag EXAMINE notinbox (CONDSTORE)")
             },
+            {
+                .in=DSTR_LIT("tag FETCH 1,2,3:4 UID (CHANGEDSINCE 12345678901234)\r\n"),
+                .cmd_calls=(int[]){IMAP_CMD_FETCH, -1},
+                .buf=DSTR_LIT("tag FETCH 1,2,3:4 (UID) (CHANGEDSINCE 12345678901234)")
+            },
         };
         size_t ncases = sizeof(cases) / sizeof(*cases);
         PROP(&e, do_test_scanner_and_parser(cases, ncases, parser_cmd_cb) );

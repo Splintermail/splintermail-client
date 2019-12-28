@@ -809,6 +809,20 @@ derr_t print_fetch_cmd(dstr_t *out, const ie_fetch_cmd_t *fetch){
     PROP(&e, print_ie_seq_set(out, fetch->seq_set) );
     PROP(&e, FMT(out, " ") );
     PROP(&e, print_ie_fetch_attrs(out, fetch->attr) );
+    if(fetch->mods != NULL){
+        PROP(&e, FMT(out, " (") );
+        bool sp = false;
+        for(ie_fetch_mods_t *m = fetch->mods; m != NULL; m = m->next){
+            LEAD_SP;
+            switch(m->type){
+                case IE_FETCH_MOD_CHGSINCE:
+                    PROP(&e, FMT(out, "CHANGEDSINCE %x", FU(m->arg.chgsince)) );
+                    break;
+                default: ORIG(&e, E_PARAM, "unknown fetch modifier type");
+            }
+        }
+        PROP(&e, FMT(out, ")") );
+    }
     return e;
 }
 

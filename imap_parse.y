@@ -294,6 +294,7 @@
 %token NOMODSEQ
 %token MODIFIED
 %token CONDSTORE
+%token CHGSINCE
 
 %type <ch> qchar
 %type <ch> nqchar
@@ -438,6 +439,11 @@
 %type <fetch_attrs> fetch_attrs
 %type <fetch_attrs> fetch_attrs_1
 %destructor { ie_fetch_attrs_free($$); } <fetch_attrs>
+
+%type <fetch_mods> fetch_mods_0
+%type <fetch_mods> fetch_mods_1
+%type <fetch_mods> fetch_mod
+%destructor { ie_fetch_mods_free($$); } <fetch_mods>
 
 %type <status> st_type
 // no destructor; it's just an enum
@@ -775,8 +781,8 @@ date: date_day '-' date_month '-' fourdigit
 /*** FETCH command ***/
 
 fetch_cmd: tag SP uid_mode[u] FETCH SP seq_set[seq] SP
-           { MODE(FETCH); } fetch_attrs[attr]
-    { imap_cmd_arg_t arg = {.fetch=ie_fetch_cmd_new(E, $u, $seq, $attr)};
+           { MODE(FETCH); } fetch_attrs[attr] fetch_mods_0[mods]
+    { imap_cmd_arg_t arg = {.fetch=ie_fetch_cmd_new(E, $u, $seq, $attr, $mods)};
       $$ = imap_cmd_new(E, $tag, IMAP_CMD_FETCH, arg); };
 
 fetch_attrs: ALL           { $$ = ie_fetch_attrs_new(E);
@@ -826,6 +832,17 @@ fetch_attr_simple: ENVELOPE       { $$ = IE_FETCH_ATTR_ENVELOPE; }
 fetch_attr_extra: BODY '[' sect[s] ']' partial[p]      { $$ = ie_fetch_extra_new(E, false, $s, $p); }
                 | BODY_PEEK '[' sect[s] ']' partial[p] { $$ = ie_fetch_extra_new(E, true, $s, $p); }
 ;
+
+fetch_mods_0: %empty { $$ = NULL; }
+            | SP '(' fetch_mods_1[mods] ')' { $$ = $mods; }
+;
+
+fetch_mods_1: fetch_mod
+            | fetch_mods_1[l] SP fetch_mod[m]  { $$ = ie_fetch_mods_add(E, $l, $m); }
+;
+
+fetch_mod: CHGSINCE SP nzmodseqnum[s] { extension_trigger_builder(E, p->exts, EXT_CONDSTORE);
+                                            $$ = ie_fetch_mods_chgsince(E, $s); }
 
 sect: _sect[s] { $$ = $s; MODE(FETCH); }
 

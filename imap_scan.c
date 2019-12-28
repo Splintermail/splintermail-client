@@ -500,6 +500,7 @@ fetch_mode:
         'header.fields' { *type = HDR_FLDS; goto done; }
         'header.fields.not' { *type = HDR_FLDS_NOT; goto done; }
         'modseq'        { *type = MODSEQ; goto done; }
+        'changedsince'  { *type = CHGSINCE; goto done; }
     */
 
 datetime_mode:

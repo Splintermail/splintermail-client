@@ -230,6 +230,27 @@ static derr_t test_imap_writer(void){
                 },
             },
             {
+                .cmd=imap_cmd_new(&e, IE_DSTR("tag"), IMAP_CMD_FETCH,
+                    (imap_cmd_arg_t){
+                        .fetch=ie_fetch_cmd_new(
+                            &e,
+                            false,
+                            ie_seq_set_new(&e, 1, 2),
+                            ie_fetch_attrs_add_simple(
+                                &e,
+                                ie_fetch_attrs_new(&e),
+                                IE_FETCH_ATTR_UID
+                            ),
+                            ie_fetch_mods_chgsince(&e, 12345678901234UL)
+                        ),
+                    }
+                ),
+                .out=(size_chunk_out_t[]){
+                    {64, "tag FETCH 1:2 (UID) (CHANGEDSINCE 12345678901234)\r\n"},
+                    {0}
+                },
+            },
+            {
                 .resp=imap_resp_new(&e, IMAP_RESP_STATUS,
                     (imap_resp_arg_t){
                         .status=ie_status_resp_new(
