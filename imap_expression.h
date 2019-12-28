@@ -308,6 +308,20 @@ typedef struct ie_fetch_mods_t {
     struct ie_fetch_mods_t *next;
 } ie_fetch_mods_t;
 
+typedef enum {
+    IE_STORE_MOD_UNCHGSINCE,
+} ie_store_mod_type_t;
+
+typedef struct {
+    unsigned long unchgsince;
+} ie_store_mod_arg_t;
+
+typedef struct ie_store_mods_t {
+    ie_store_mod_type_t type;
+    ie_store_mod_arg_t arg;
+    struct ie_store_mods_t *next;
+} ie_store_mods_t;
+
 // Status-type-related things
 
 typedef enum {
@@ -437,6 +451,7 @@ typedef struct {
 typedef struct {
     bool uid_mode;
     ie_seq_set_t *seq_set;
+    ie_store_mods_t *mods;
     int sign;
     bool silent;
     ie_flags_t *flags;
@@ -587,6 +602,9 @@ typedef union {
     ie_fetch_extra_t *fetch_extra;
     ie_fetch_attrs_t *fetch_attrs;
     ie_fetch_mods_t *fetch_mods;
+
+    // STORE command things
+    ie_store_mods_t *store_mods;
 
     // Status-type things
     ie_status_t status;
@@ -761,6 +779,13 @@ void ie_sect_free(ie_sect_t *s);
 ie_partial_t *ie_partial_new(derr_t *e, unsigned int a, unsigned int b);
 void ie_partial_free(ie_partial_t *p);
 
+// store mod construction
+
+ie_store_mods_t *ie_store_mods_unchgsince(derr_t *e, unsigned long unchgsince);
+ie_store_mods_t *ie_store_mods_add(derr_t *e, ie_store_mods_t *list,
+        ie_store_mods_t *mod);
+void ie_store_mods_free(ie_store_mods_t *mods);
+
 // status-type response codes
 
 ie_st_code_t *ie_st_code_simple(derr_t *e, ie_st_code_type_t type);
@@ -835,7 +860,8 @@ ie_fetch_cmd_t *ie_fetch_cmd_new(derr_t *e, bool uid_mode,
 void ie_fetch_cmd_free(ie_fetch_cmd_t *fetch);
 
 ie_store_cmd_t *ie_store_cmd_new(derr_t *e, bool uid_mode,
-        ie_seq_set_t *seq_set, int sign, bool silent, ie_flags_t *flags);
+        ie_seq_set_t *seq_set, ie_store_mods_t *mods, int sign, bool silent,
+        ie_flags_t *flags);
 void ie_store_cmd_free(ie_store_cmd_t *store);
 
 ie_copy_cmd_t *ie_copy_cmd_new(derr_t *e, bool uid_mode,

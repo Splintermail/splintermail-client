@@ -295,6 +295,7 @@
 %token MODIFIED
 %token CONDSTORE
 %token CHGSINCE
+%token UNCHGSINCE
 
 %type <ch> qchar
 %type <ch> nqchar
@@ -444,6 +445,11 @@
 %type <fetch_mods> fetch_mods_1
 %type <fetch_mods> fetch_mod
 %destructor { ie_fetch_mods_free($$); } <fetch_mods>
+
+%type <store_mods> store_mods_0
+%type <store_mods> store_mods_1
+%type <store_mods> store_mod
+%destructor { ie_store_mods_free($$); } <store_mods>
 
 %type <status> st_type
 // no destructor; it's just an enum
@@ -881,11 +887,23 @@ partial: %empty                      { $$ = NULL; }
 /*** STORE command ***/
 
 store_cmd: tag SP uid_mode[u] STORE SP seq_set[seq]
-           { MODE(STORE); } SP store_sign[sign] FLAGS store_silent[silent] SP
+           { MODE(STORE); } SP store_mods_0[mods] store_sign[sign] FLAGS store_silent[silent]
            { MODE(FLAG); } store_flags[f]
     { imap_cmd_arg_t arg;
-      arg.store = ie_store_cmd_new(E, $u, $seq, $sign, $silent, $f);
+      arg.store = ie_store_cmd_new(E, $u, $seq, $mods, $sign, $silent, $f);
       $$ = imap_cmd_new(E, $tag, IMAP_CMD_STORE, arg); };
+
+store_mods_0: %empty                      { $$ = NULL; }
+            | '(' store_mods_1[m] ')' SP  { $$ = $m; }
+;
+
+store_mods_1: store_mod
+            | store_mods_1[l] SP store_mod[m]  { $$ = ie_store_mods_add(E, $l, $m); }
+;
+
+store_mod: UNCHGSINCE SP modseqnum[s]
+              { extension_trigger_builder(E, p->exts, EXT_CONDSTORE);
+                $$ = ie_store_mods_unchgsince(E, $s); }
 
 store_sign: %empty  { $$ = 0; }
           | '-'     { $$ = -1; }
@@ -896,9 +914,9 @@ store_silent: %empty    { $$ = false; }
             | SILENT    { $$ = true; }
 ;
 
-store_flags: %empty             { $$ = NULL; }
-           | '(' flags_0[f] ')' { $$ = $f; }
-           | flags_1[f]         { $$ = $f; }
+store_flags: %empty                { $$ = NULL; }
+           | SP '(' flags_0[f] ')' { $$ = $f; }
+           | SP flags_1[f]         { $$ = $f; }
 ;
 
 /*** COPY command ***/

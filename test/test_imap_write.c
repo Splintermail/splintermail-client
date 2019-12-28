@@ -251,6 +251,25 @@ static derr_t test_imap_writer(void){
                 },
             },
             {
+                .cmd=imap_cmd_new(&e, IE_DSTR("tag"), IMAP_CMD_STORE,
+                    (imap_cmd_arg_t){
+                        .store=ie_store_cmd_new(
+                            &e,
+                            false,
+                            ie_seq_set_new(&e, 1, 1),
+                            ie_store_mods_unchgsince(&e, 12345678901234UL),
+                            0,
+                            false,
+                            NULL
+                        ),
+                    }
+                ),
+                .out=(size_chunk_out_t[]){
+                    {64, "tag STORE 1 (UNCHANGEDSINCE 12345678901234) FLAGS ()\r\n"},
+                    {0}
+                },
+            },
+            {
                 .resp=imap_resp_new(&e, IMAP_RESP_STATUS,
                     (imap_resp_arg_t){
                         .status=ie_status_resp_new(

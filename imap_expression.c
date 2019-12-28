@@ -1073,6 +1073,44 @@ void ie_partial_free(ie_partial_t *p){
     free(p);
 }
 
+// store mod construction
+
+ie_store_mods_t *ie_store_mods_unchgsince(derr_t *e, unsigned long unchgsince){
+    if(is_error(*e)) goto fail;
+
+    IE_MALLOC(e, ie_store_mods_t, mods, fail);
+
+    mods->type = IE_STORE_MOD_UNCHGSINCE;
+    mods->arg.unchgsince = unchgsince;
+
+    return mods;
+
+fail:
+    return NULL;
+}
+
+ie_store_mods_t *ie_store_mods_add(derr_t *e, ie_store_mods_t *list,
+        ie_store_mods_t *mod){
+    if(is_error(*e)) goto fail;
+
+    ie_store_mods_t **last = &list;
+    while(*last != NULL) last = &(*last)->next;
+    *last = mod;
+
+    return list;
+
+fail:
+    ie_store_mods_free(list);
+    ie_store_mods_free(mod);
+    return NULL;
+}
+
+void ie_store_mods_free(ie_store_mods_t *mods){
+    if(!mods) return;
+    ie_store_mods_free(mods->next);
+    free(mods);
+}
+
 // status-type response codes
 static ie_st_code_t *ie_st_code_new(derr_t *e){
     if(is_error(*e)) goto fail;
@@ -1572,13 +1610,15 @@ void ie_fetch_cmd_free(ie_fetch_cmd_t *fetch){
 }
 
 ie_store_cmd_t *ie_store_cmd_new(derr_t *e, bool uid_mode,
-        ie_seq_set_t *seq_set, int sign, bool silent, ie_flags_t *flags){
+        ie_seq_set_t *seq_set, ie_store_mods_t *mods, int sign, bool silent,
+        ie_flags_t *flags){
     if(is_error(*e)) goto fail;
 
     IE_MALLOC(e, ie_store_cmd_t, store, fail);
 
     store->uid_mode = uid_mode;
     store->seq_set = seq_set;
+    store->mods = mods;
     store->sign = sign;
     store->silent = silent;
     store->flags = flags;
@@ -1587,6 +1627,7 @@ ie_store_cmd_t *ie_store_cmd_new(derr_t *e, bool uid_mode,
 
 fail:
     ie_seq_set_free(seq_set);
+    ie_store_mods_free(mods);
     ie_flags_free(flags);
     return NULL;
 }
@@ -1594,6 +1635,7 @@ fail:
 void ie_store_cmd_free(ie_store_cmd_t *store){
     if(!store) return;
     ie_seq_set_free(store->seq_set);
+    ie_store_mods_free(store->mods);
     ie_flags_free(store->flags);
     free(store);
 }

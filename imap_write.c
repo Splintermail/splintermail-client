@@ -899,17 +899,37 @@ static derr_t fetch_attr_skip_fill(skip_fill_t *sf, ie_fetch_attrs_t *attr){
 static derr_t fetch_mods_skip_fill(skip_fill_t *sf, ie_fetch_mods_t *mods){
     derr_t e = E_OK;
     if(mods == NULL) return e;
-    PROP(&e, extension_assert_on(sf->exts, EXT_CONDSTORE) );
     STATIC_SKIP_FILL("(");
     bool sp = false;
     for(ie_fetch_mods_t *m = mods; m != NULL; m = m->next){
         LEAD_SP;
         switch(m->type){
             case IE_FETCH_MOD_CHGSINCE:
+                PROP(&e, extension_assert_on(sf->exts, EXT_CONDSTORE) );
                 STATIC_SKIP_FILL("CHANGEDSINCE ");
                 PROP(&e, nzmodseqnum_skip_fill(sf, m->arg.chgsince) );
                 break;
             default: ORIG(&e, E_PARAM, "unknown fetch modifier type");
+        }
+    }
+    STATIC_SKIP_FILL(")");
+    return e;
+}
+
+static derr_t store_mods_skip_fill(skip_fill_t *sf, ie_store_mods_t *mods){
+    derr_t e = E_OK;
+    if(mods == NULL) return e;
+    STATIC_SKIP_FILL("(");
+    bool sp = false;
+    for(ie_store_mods_t *m = mods; m != NULL; m = m->next){
+        LEAD_SP;
+        switch(m->type){
+            case IE_STORE_MOD_UNCHGSINCE:
+                PROP(&e, extension_assert_on(sf->exts, EXT_CONDSTORE) );
+                STATIC_SKIP_FILL("UNCHANGEDSINCE ");
+                PROP(&e, modseqnum_skip_fill(sf, m->arg.unchgsince) );
+                break;
+            default: ORIG(&e, E_PARAM, "unknown store modifier type");
         }
     }
     STATIC_SKIP_FILL(")");
@@ -1067,11 +1087,15 @@ static derr_t do_imap_cmd_write(const imap_cmd_t *cmd, dstr_t *out,
             }
             STATIC_SKIP_FILL("STORE ");
             PROP(&e, seq_set_skip_fill(sf, arg.store->seq_set) );
+            if(arg.store->mods != NULL){
+                STATIC_SKIP_FILL(" ");
+                PROP(&e, store_mods_skip_fill(sf, arg.store->mods) )
+            }
             STATIC_SKIP_FILL(" ");
             // [+|-]FLAGS[.SILENT]
             if(arg.store->sign > 0){
                 STATIC_SKIP_FILL("+");
-            }else{
+            }else if(arg.store->sign < 0){
                 STATIC_SKIP_FILL("-");
             }
             STATIC_SKIP_FILL("FLAGS");

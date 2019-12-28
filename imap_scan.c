@@ -555,9 +555,12 @@ store_mode:
         *               { INVALID_TOKEN_ERROR; }
         [ +-]           { *type = *scanner->start; goto done; }
         eol             { *type = EOL; goto done; }
+        atom_spec       { *type = *scanner->start; goto done; }
+        num             { *type = NUM; goto done; }
 
         'flags'         { *type = FLAGS; goto done; }
         '.silent'       { *type = SILENT; goto done; }
+        'unchangedsince' { *type = UNCHGSINCE; goto done; }
     */
 
 
