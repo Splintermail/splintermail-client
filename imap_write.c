@@ -313,6 +313,28 @@ static derr_t atom_skip_fill(skip_fill_t *sf, const dstr_t *in){
 
 #define LEAD_SP if(sp){ STATIC_SKIP_FILL(" "); }else sp = true
 
+// has a leading space for convenience
+static derr_t select_params_skip_fill(skip_fill_t *sf,
+        ie_select_params_t *params){
+    derr_t e = E_OK;
+    if(sf == NULL) return e;
+    STATIC_SKIP_FILL(" (");
+    bool sp = false;
+    for(ie_select_params_t *p = params; p != NULL; p = p->next){
+        LEAD_SP;
+        switch(p->type){
+            case IE_SELECT_PARAM_CONDSTORE:
+                PROP(&e, extension_assert_on(sf->exts, EXT_CONDSTORE) );
+                STATIC_SKIP_FILL("CONDSTORE");
+                break;
+            default:
+                ORIG(&e, E_PARAM, "invalid select parameter");
+        }
+    }
+    STATIC_SKIP_FILL(")");
+    return e;
+}
+
 static derr_t status_cmd_skip_fill(skip_fill_t *sf,
         const ie_status_cmd_t *status){
     derr_t e = E_OK;
@@ -902,12 +924,14 @@ derr_t imap_cmd_write(const imap_cmd_t *cmd, dstr_t *out, size_t *skip,
 
         case IMAP_CMD_SELECT:
             STATIC_SKIP_FILL("SELECT ");
-            PROP(&e, mailbox_skip_fill(sf, arg.select) );
+            PROP(&e, mailbox_skip_fill(sf, arg.select->m) );
+            PROP(&e, select_params_skip_fill(sf, arg.select->params) );
             break;
 
         case IMAP_CMD_EXAMINE:
             STATIC_SKIP_FILL("EXAMINE ");
-            PROP(&e, mailbox_skip_fill(sf, arg.examine) );
+            PROP(&e, mailbox_skip_fill(sf, arg.examine->m) );
+            PROP(&e, select_params_skip_fill(sf, arg.examine->params) );
             break;
 
         case IMAP_CMD_CREATE:

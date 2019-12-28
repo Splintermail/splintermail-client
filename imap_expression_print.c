@@ -20,6 +20,14 @@ const dstr_t *ie_status_to_dstr(ie_status_t s){
     return &IE_UNKNOWN_dstr;
 }
 
+DSTR_STATIC(IE_SELECT_PARAM_CONDSTORE_dstr, "CONDSTORE");
+
+const dstr_t *ie_select_param_type_to_dstr(ie_select_param_type_t type){
+    switch(type){
+        case IE_SELECT_PARAM_CONDSTORE: return &IE_SELECT_PARAM_CONDSTORE_dstr;
+    }
+    return &IE_UNKNOWN_dstr;
+}
 
 DSTR_STATIC(IE_STATUS_ATTR_MESSAGES_dstr, "MESSAGES");
 DSTR_STATIC(IE_STATUS_ATTR_RECENT_dstr, "RECENT");
@@ -39,6 +47,7 @@ const dstr_t *ie_status_attr_to_dstr(ie_status_attr_t sa){
     }
     return &IE_UNKNOWN_dstr;
 }
+
 DSTR_STATIC(IMAP_CMD_CAPA_dstr, "CAPABILITY");
 DSTR_STATIC(IMAP_CMD_STARTTLS_dstr, "STARTTLS");
 DSTR_STATIC(IMAP_CMD_AUTH_dstr, "AUTH");
@@ -252,6 +261,18 @@ derr_t print_atom(dstr_t *out, const dstr_t *val){
 
 
 #define LEAD_SP if(sp){ PROP(&e, FMT(out, " ") ); }else sp = true
+
+derr_t print_ie_select_params(dstr_t *out, const ie_select_params_t *params){
+    derr_t e = E_OK;
+    PROP(&e, FMT(out, "(") );
+    bool sp = false;
+    for(const ie_select_params_t *p = params; p != NULL; p = p->next){
+        LEAD_SP;
+        PROP(&e, dstr_append(out, ie_select_param_type_to_dstr(p->type)) );
+    }
+    PROP(&e, FMT(out, ")") );
+    return e;
+}
 
 derr_t print_ie_flags(dstr_t *out, const ie_flags_t *flags){
     derr_t e = E_OK;
@@ -822,11 +843,19 @@ derr_t print_imap_cmd(dstr_t *out, const imap_cmd_t *cmd){
             break;
         case IMAP_CMD_SELECT:
             PROP(&e, FMT(out, "SELECT ") );
-            PROP(&e, print_ie_mailbox(out, cmd->arg.select) );
+            PROP(&e, print_ie_mailbox(out, cmd->arg.select->m) );
+            if(cmd->arg.select->params){
+                PROP(&e, FMT(out, " ") );
+                PROP(&e, print_ie_select_params(out, cmd->arg.select->params) );
+            }
             break;
         case IMAP_CMD_EXAMINE:
             PROP(&e, FMT(out, "EXAMINE ") );
-            PROP(&e, print_ie_mailbox(out, cmd->arg.examine) );
+            PROP(&e, print_ie_mailbox(out, cmd->arg.select->m) );
+            if(cmd->arg.select->params){
+                PROP(&e, FMT(out, " ") );
+                PROP(&e, print_ie_select_params(out, cmd->arg.select->params) );
+            }
             break;
         case IMAP_CMD_CREATE:
             PROP(&e, FMT(out, "CREATE ") );

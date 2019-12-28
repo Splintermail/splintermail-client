@@ -764,7 +764,8 @@ static derr_t send_select(imap_client_t *ic){
 
     // issue the select command
     ie_dstr_t *folder = ie_dstr_new(&e, &ic->folder, KEEP_RAW);
-    imap_cmd_arg_t arg = { .select=ie_mailbox_new_noninbox(&e, folder) };
+    ie_mailbox_t *m = ie_mailbox_new_noninbox(&e, folder);
+    imap_cmd_arg_t arg = { .select=ie_select_cmd_new(&e, m, NULL) };
 
     ie_dstr_t *tag = ic_next_tag(&e, ic);
     imap_cmd_t *cmd = imap_cmd_new(&e, tag, IMAP_CMD_SELECT, arg);

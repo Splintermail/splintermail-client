@@ -716,6 +716,16 @@ static derr_t test_scanner_and_parser(void){
                 .cmd_calls=(int[]){IMAP_CMD_STATUS, -1},
                 .buf=DSTR_LIT("tag STATUS notinbox (UNSEEN HIGHESTMODSEQ)")
             },
+            {
+                .in=DSTR_LIT("tag SELECT notinbox (CONDSTORE)\r\n"),
+                .cmd_calls=(int[]){IMAP_CMD_SELECT, -1},
+                .buf=DSTR_LIT("tag SELECT notinbox (CONDSTORE)")
+            },
+            {
+                .in=DSTR_LIT("tag EXAMINE notinbox (CONDSTORE)\r\n"),
+                .cmd_calls=(int[]){IMAP_CMD_EXAMINE, -1},
+                .buf=DSTR_LIT("tag EXAMINE notinbox (CONDSTORE)")
+            },
         };
         size_t ncases = sizeof(cases) / sizeof(*cases);
         PROP(&e, do_test_scanner_and_parser(cases, ncases, parser_cmd_cb) );

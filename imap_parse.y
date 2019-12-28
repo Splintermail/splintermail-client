@@ -186,7 +186,6 @@
 %token UIDNEXT
 %token UIDVLD
 %token UNSEEN
-%token HIMODSEQ
 
 /* status attributes */
 %token MESSAGES
@@ -290,6 +289,10 @@
 %token EOL
 %token SILENT
 
+/* CONDSTORE extension */
+%token HIMODSEQ
+%token CONDSTORE
+
 %type <ch> qchar
 %type <ch> nqchar
 // no destructor for char type
@@ -316,6 +319,11 @@
 
 %type <mailbox> mailbox
 %destructor { ie_mailbox_free($$); } <mailbox>
+
+%type <select_params> select_param
+%type <select_params> select_params_0
+%type <select_params> select_params_1
+%destructor { ie_select_params_free($$); } <select_params>
 
 %type <status_attr> s_attr_any
 %type <status_attr> s_attr_32
@@ -566,14 +574,27 @@ login_cmd: tag SP LOGIN SP { MODE(ASTRING); } astring[u] SP astring[p]
 
 /*** SELECT command ***/
 
-select_cmd: tag SP SELECT SP mailbox[m]
-    { imap_cmd_arg_t arg = {.select=$m};
+select_cmd: tag SP SELECT SP mailbox[m] select_params_0[p]
+    { imap_cmd_arg_t arg = {.select=ie_select_cmd_new(E, $m, $p)};
       $$ = imap_cmd_new(E, $tag, IMAP_CMD_SELECT, arg); };
+
+select_params_0: %empty                                                { $$ = NULL; }
+               | SP { MODE(SELECT_PARAM); } '(' select_params_1[p] ')' { $$ = $p; }
+;
+
+select_params_1: select_param[p]                        { $$ = $p; }
+               | select_params_1[l] SP select_param[p]  { $$ = ie_select_params_add(E, $l, $p); }
+;
+
+select_param: CONDSTORE
+                { /* this is a CONDSTORE-enabling command */
+                  extension_trigger_builder(E, p->exts, EXT_CONDSTORE);
+                  $$ = ie_select_params_new(E, IE_SELECT_PARAM_CONDSTORE); }
 
 /*** EXAMINE command ***/
 
-examine_cmd: tag SP EXAMINE SP mailbox[m]
-    { imap_cmd_arg_t arg = {.examine=$m};
+examine_cmd: tag SP EXAMINE SP mailbox[m] { MODE(SELECT_PARAM); } select_params_0[p]
+    { imap_cmd_arg_t arg = {.examine=ie_select_cmd_new(E, $m, $p)};
       $$ = imap_cmd_new(E, $tag, IMAP_CMD_EXAMINE, arg); };
 
 /*** CREATE command ***/

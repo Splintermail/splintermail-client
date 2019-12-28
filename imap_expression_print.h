@@ -5,6 +5,7 @@
 #include "imap_expression.h"
 
 const dstr_t *ie_status_to_dstr(ie_status_t s);
+const dstr_t *ie_select_param_type_to_dstr(ie_select_param_type_t type);
 const dstr_t *ie_status_attr_to_dstr(ie_status_attr_t sa);
 const dstr_t *imap_cmd_type_to_dstr(imap_cmd_type_t type);
 const dstr_t *imap_resp_type_to_dstr(imap_resp_type_t type);
@@ -17,6 +18,7 @@ derr_t print_astring(dstr_t *out, const dstr_t *val);
 derr_t print_atom(dstr_t *out, const dstr_t *val);
 
 // no leading or trailing spaces
+derr_t print_ie_select_params(dstr_t *out, const ie_select_params_t *select);
 derr_t print_ie_flags(dstr_t *out, const ie_flags_t *flags);
 derr_t print_ie_mflags(dstr_t *out, const ie_mflags_t *mflags);
 derr_t print_ie_pflags(dstr_t *out, const ie_pflags_t *pflags);

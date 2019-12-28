@@ -15,6 +15,17 @@ typedef struct {
     dstr_t dstr;
 } ie_mailbox_t;
 
+// only used in extensions
+typedef enum {
+    IE_SELECT_PARAM_CONDSTORE,
+} ie_select_param_type_t;
+
+typedef struct ie_select_params_t {
+    ie_select_param_type_t type;
+    // no .arg yet; no supported extensions need it
+    struct ie_select_params_t *next;
+} ie_select_params_t;
+
 typedef enum {
     IE_STATUS_ATTR_MESSAGES = 1,
     IE_STATUS_ATTR_RECENT = 2,
@@ -364,6 +375,11 @@ typedef struct {
 } ie_login_cmd_t;
 
 typedef struct {
+    ie_mailbox_t *m;
+    ie_select_params_t *params;
+} ie_select_cmd_t;
+
+typedef struct {
     ie_mailbox_t *old;
     ie_mailbox_t *new;
 } ie_rename_cmd_t;
@@ -416,8 +432,8 @@ typedef union {
     // nothing for starttls
     ie_dstr_t *auth;
     ie_login_cmd_t *login;
-    ie_mailbox_t *select;
-    ie_mailbox_t *examine;
+    ie_select_cmd_t *select;
+    ie_select_cmd_t *examine;
     ie_mailbox_t *create;
     ie_mailbox_t *delete;
     ie_rename_cmd_t *rename;
@@ -512,6 +528,7 @@ typedef struct {
 typedef union {
     ie_dstr_t *dstr;
     ie_mailbox_t *mailbox;
+    ie_select_params_t *select_params;
     ie_status_attr_t status_attr; // a single status attribute
     unsigned char status_attr_cmd; // logical OR of status attributes in command
     ie_status_attr_resp_t status_attr_resp; // status attributes with args
@@ -597,6 +614,12 @@ ie_mailbox_t *ie_mailbox_new_inbox(derr_t *e);
 void ie_mailbox_free(ie_mailbox_t *m);
 // returns either the mailbox name, or a static dstr of "INBOX"
 const dstr_t *ie_mailbox_name(ie_mailbox_t *m);
+
+ie_select_params_t *ie_select_params_new(derr_t *e,
+        ie_select_param_type_t type);
+ie_select_params_t *ie_select_params_add(derr_t *e,
+        ie_select_params_t *list, ie_select_params_t *new);
+void ie_select_params_free(ie_select_params_t *params);
 
 // flags, used by APPEND commands, STORE commands, and FLAGS responses
 
@@ -736,6 +759,10 @@ ie_fetch_resp_t *ie_fetch_resp_content(derr_t *e, ie_fetch_resp_t *f,
 
 ie_login_cmd_t *ie_login_cmd_new(derr_t *e, ie_dstr_t *user, ie_dstr_t *pass);
 void ie_login_cmd_free(ie_login_cmd_t *login);
+
+ie_select_cmd_t *ie_select_cmd_new(derr_t *e, ie_mailbox_t *m,
+        ie_select_params_t *params);
+void ie_select_cmd_free(ie_select_cmd_t *select);
 
 ie_rename_cmd_t *ie_rename_cmd_new(derr_t *e, ie_mailbox_t *old,
         ie_mailbox_t *new);

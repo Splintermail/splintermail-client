@@ -40,6 +40,7 @@ typedef enum {
     // for the [+-]?FLAGS(.SILENT)? part of the STORE command
     SCAN_MODE_STORE,
     SCAN_MODE_SEARCH,
+    SCAN_MODE_SELECT_PARAM,
 } scan_mode_t;
 
 typedef struct {

@@ -151,6 +151,46 @@ const dstr_t *ie_mailbox_name(ie_mailbox_t *m){
     return &m->dstr;
 }
 
+ie_select_params_t *ie_select_params_new(derr_t *e,
+        ie_select_param_type_t type){
+    if(is_error(*e)) goto fail;
+
+    IE_MALLOC(e, ie_select_params_t, params, fail);
+
+    if(type != IE_SELECT_PARAM_CONDSTORE){
+        ORIG_GO(e, E_INTERNAL, "unexpected select parameter type", fail);
+    }
+
+    params->type = type;
+
+    return params;
+
+fail:
+    return NULL;
+}
+
+ie_select_params_t *ie_select_params_add(derr_t *e, ie_select_params_t *list,
+        ie_select_params_t *new){
+    if(is_error(*e)) goto fail;
+
+    ie_select_params_t **last = &list->next;
+    while(*last != NULL) last = &(*last)->next;
+    *last = new;
+
+    return list;
+
+fail:
+    ie_select_params_free(list);
+    ie_select_params_free(new);
+    return NULL;
+}
+
+void ie_select_params_free(ie_select_params_t *params){
+    if(!params) return;
+    ie_select_params_free(params->next);
+    free(params);
+}
+
 // normal flags, used by APPEND command, STORE command, and FLAGS response.
 
 ie_flags_t *ie_flags_new(derr_t *e){
@@ -1134,6 +1174,30 @@ void ie_login_cmd_free(ie_login_cmd_t *login){
     free(login);
 }
 
+ie_select_cmd_t *ie_select_cmd_new(derr_t *e, ie_mailbox_t *m,
+        ie_select_params_t *params){
+    if(is_error(*e)) goto fail;
+
+    IE_MALLOC(e, ie_select_cmd_t, select, fail);
+
+    select->m = m;
+    select->params = params;
+
+    return select;
+
+fail:
+    ie_mailbox_free(m);
+    ie_select_params_free(params);
+    return NULL;
+}
+
+void ie_select_cmd_free(ie_select_cmd_t *select){
+    if(!select) return;
+    ie_mailbox_free(select->m);
+    ie_select_params_free(select->params);
+    free(select);
+}
+
 ie_rename_cmd_t *ie_rename_cmd_new(derr_t *e, ie_mailbox_t *old,
         ie_mailbox_t *new){
     if(is_error(*e)) goto fail;
@@ -1339,8 +1403,8 @@ static void imap_cmd_arg_free(imap_cmd_type_t type, imap_cmd_arg_t arg){
         case IMAP_CMD_STARTTLS: break;
         case IMAP_CMD_AUTH:     ie_dstr_free(arg.auth); break;
         case IMAP_CMD_LOGIN:    ie_login_cmd_free(arg.login); break;
-        case IMAP_CMD_SELECT:   ie_mailbox_free(arg.select); break;
-        case IMAP_CMD_EXAMINE:  ie_mailbox_free(arg.examine); break;
+        case IMAP_CMD_SELECT:   ie_select_cmd_free(arg.select); break;
+        case IMAP_CMD_EXAMINE:  ie_select_cmd_free(arg.examine); break;
         case IMAP_CMD_CREATE:   ie_mailbox_free(arg.create); break;
         case IMAP_CMD_DELETE:   ie_mailbox_free(arg.delete); break;
         case IMAP_CMD_RENAME:   ie_rename_cmd_free(arg.rename); break;

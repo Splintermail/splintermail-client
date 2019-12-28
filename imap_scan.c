@@ -24,6 +24,7 @@ DSTR_STATIC(scan_mode_WILDCARD_dstr, "SCAN_MODE_WILDCARD");
 DSTR_STATIC(scan_mode_SEQSET_dstr, "SCAN_MODE_SEQSET");
 DSTR_STATIC(scan_mode_STORE_dstr, "SCAN_MODE_STORE");
 DSTR_STATIC(scan_mode_SEARCH_dstr, "SCAN_MODE_SEARCH");
+DSTR_STATIC(scan_mode_SELECT_PARAM_dstr, "SCAN_MODE_SELECT_PARAM");
 DSTR_STATIC(scan_mode_unk_dstr, "unknown scan mode");
 
 dstr_t* scan_mode_to_dstr(scan_mode_t mode){
@@ -48,6 +49,7 @@ dstr_t* scan_mode_to_dstr(scan_mode_t mode){
         case SCAN_MODE_SEQSET: return &scan_mode_SEQSET_dstr;
         case SCAN_MODE_STORE: return &scan_mode_STORE_dstr;
         case SCAN_MODE_SEARCH: return &scan_mode_SEARCH_dstr;
+        case SCAN_MODE_SELECT_PARAM: return &scan_mode_SELECT_PARAM_dstr;
         default: return &scan_mode_unk_dstr;
     }
 }
@@ -216,6 +218,7 @@ derr_t imap_scan(imap_scanner_t *scanner, scan_mode_t mode, bool *more,
             case SCAN_MODE_SEQSET:              goto seqset_mode;
             case SCAN_MODE_STORE:               goto store_mode;
             case SCAN_MODE_SEARCH:              goto search_mode;
+            case SCAN_MODE_SELECT_PARAM:        goto select_param_mode;
         }
     }
 
@@ -594,6 +597,16 @@ search_mode:
         'smaller'       { *type = SMALLER; goto done; }
         'uid'           { *type = UID; goto done; }
         'undraft'       { *type = UNDRAFT; goto done; }
+    */
+
+select_param_mode:
+
+    /*!re2c
+        *               { INVALID_TOKEN_ERROR; }
+        eol             { *type = EOL; goto done; }
+        atom_spec       { *type = *scanner->start; goto done; }
+
+        'condstore'     { *type = CONDSTORE; goto done; }
     */
 
     size_t start_offset, end_offset;

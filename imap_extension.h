@@ -60,4 +60,43 @@ static inline void extension_assert_on_builder(derr_t *e,
     IF_PROP(e, extension_assert_on(exts, type)){}
 }
 
+// set an extension to "on", or throw an error if it is disabled
+static inline derr_t extension_trigger(extensions_t *exts, extension_e type){
+    derr_t e = E_OK;
+
+    extension_state_e *state;
+    const char *msg;
+
+    switch(type){
+        case EXT_ENABLE:
+            state = &exts->enable;
+            msg = "ENABLE extension for IMAP is not available";
+            break;
+        case EXT_CONDSTORE:
+            state = &exts->condstore;
+            msg = "CONDSTORE extension for IMAP is not available";
+            break;
+        case EXT_QRESYNC:
+            state = &exts->qresync;
+            msg = "QRESYNC extension for IMAP is not available";
+            break;
+        default:
+            ORIG(&e, E_INTERNAL, "invalid extension type");
+    }
+
+    if(*state == EXT_STATE_DISABLED){
+        ORIG(&e, E_PARAM, msg);
+    }
+
+    *state = EXT_STATE_ON;
+
+    return e;
+}
+
+// same as above but in a builder-friendly (bison-friendly) signature
+static inline void extension_trigger_builder(derr_t *e,
+        extensions_t *exts, extension_e type){
+    IF_PROP(e, extension_trigger(exts, type)){}
+}
+
 #endif // IMAP_EXTENSION_H
