@@ -749,6 +749,11 @@ static derr_t test_scanner_and_parser(void){
                 .buf=DSTR_LIT("* OK [NOMODSEQ] text")
             },
             {
+                .in=DSTR_LIT("* OK [MODIFIED 1:2,4:5] text\r\n"),
+                .resp_calls=(int[]){IMAP_RESP_STATUS_TYPE, -1},
+                .buf=DSTR_LIT("* OK [MODIFIED 1:2,4:5] text")
+            },
+            {
                 .in=DSTR_LIT("* SEARCH 1 (MODSEQ 12345678901234)\r\n"),
                 .resp_calls=(int[]){IMAP_RESP_SEARCH, -1},
                 .buf=DSTR_LIT("SEARCH 1 (MODSEQ 12345678901234)")

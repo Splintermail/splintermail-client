@@ -315,6 +315,7 @@ typedef enum {              // Argument used:
     IE_ST_CODE_UIDVLD,      // unsigned int
     IE_ST_CODE_UNSEEN,      // unsigned int
     IE_ST_CODE_HIMODSEQ,    // unsigned long
+    IE_ST_CODE_MODIFIED,    // ie_seq_set_t
     IE_ST_CODE_PERMFLAGS,   // ie_pflags_t
     IE_ST_CODE_CAPA,        // ie_dstr_t (as a list)
     IE_ST_CODE_ATOM,        /* ie_dstr_t (a list of 1 or 2 strings; if 2, the
@@ -327,6 +328,7 @@ typedef union {
     ie_pflags_t *pflags;
     unsigned int num;
     unsigned long modseqnum;
+    ie_seq_set_t *seq_set;
 } ie_st_code_arg_t;
 
 typedef struct {
@@ -738,6 +740,8 @@ ie_st_code_t *ie_st_code_num(derr_t *e, ie_st_code_type_t type,
         unsigned int n);
 ie_st_code_t *ie_st_code_modseqnum(derr_t *e, ie_st_code_type_t type,
         unsigned long n);
+ie_st_code_t *ie_st_code_seq_set(derr_t *e, ie_st_code_type_t type,
+        ie_seq_set_t *n);
 ie_st_code_t *ie_st_code_pflags(derr_t *e, ie_pflags_t *pflags);
 ie_st_code_t *ie_st_code_dstr(derr_t *e, ie_st_code_type_t type,
         ie_dstr_t *dstr);

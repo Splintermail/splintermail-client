@@ -1125,20 +1125,25 @@ static derr_t st_code_skip_fill(skip_fill_t *sf, ie_st_code_t *code){
             break;
         case IE_ST_CODE_UIDNEXT:     // unsigned int
             STATIC_SKIP_FILL("UIDNEXT ");
-            PROP(&e, num_skip_fill(sf, code->arg.num) )
+            PROP(&e, nznum_skip_fill(sf, code->arg.num) )
             break;
         case IE_ST_CODE_UIDVLD:      // unsigned int
             STATIC_SKIP_FILL("UIDVALIDITY ");
-            PROP(&e, num_skip_fill(sf, code->arg.num) );
+            PROP(&e, nznum_skip_fill(sf, code->arg.num) );
             break;
         case IE_ST_CODE_UNSEEN:      // unsigned int
             STATIC_SKIP_FILL("UNSEEN ");
-            PROP(&e, num_skip_fill(sf, code->arg.num) );
+            PROP(&e, nznum_skip_fill(sf, code->arg.num) );
             break;
-        case IE_ST_CODE_HIMODSEQ:      // unsigned long
+        case IE_ST_CODE_HIMODSEQ:    // unsigned long
             PROP(&e, extension_assert_on(sf->exts, EXT_CONDSTORE) );
             STATIC_SKIP_FILL("HIGHESTMODSEQ ");
-            PROP(&e, modseqnum_skip_fill(sf, code->arg.modseqnum) );
+            PROP(&e, nzmodseqnum_skip_fill(sf, code->arg.modseqnum) );
+            break;
+        case IE_ST_CODE_MODIFIED:    // ie_seq_set_t
+            PROP(&e, extension_assert_on(sf->exts, EXT_CONDSTORE) );
+            STATIC_SKIP_FILL("MODIFIED ");
+            PROP(&e, seq_set_skip_fill(sf, code->arg.seq_set) );
             break;
         case IE_ST_CODE_PERMFLAGS:   // ie_pflags_t
             STATIC_SKIP_FILL("PERMANENTFLAGS (");

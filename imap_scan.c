@@ -395,6 +395,7 @@ status_code_mode:
         'uidvalidity'   { *type = UIDVLD; goto done; }
         'unseen'        { *type = UNSEEN; goto done; }
         'highestmodseq' { *type = HIMODSEQ; goto done; }
+        'modified'      { *type = MODIFIED; goto done; }
 
         atom            { *type = RAW; goto done; }
     */
@@ -542,6 +543,7 @@ seqset_mode:
         *               { INVALID_TOKEN_ERROR; }
         [ *:,]          { *type = *scanner->start; goto done; }
         eol             { *type = EOL; goto done; }
+        atom_spec       { *type = *scanner->start; goto done; }
 
         nz_num          { *type = NUM; goto done; }
     */

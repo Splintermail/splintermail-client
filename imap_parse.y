@@ -292,6 +292,7 @@
 %token MODSEQ
 %token HIMODSEQ
 %token NOMODSEQ
+%token MODIFIED
 %token CONDSTORE
 
 %type <ch> qchar
@@ -401,6 +402,7 @@
 
 %type <seq_set> seq_spec
 %type <seq_set> seq_set
+%type <seq_set> sc_seq_set
 %destructor { ie_seq_set_free($$); } <seq_set>
 
 %type <nums> nums_1
@@ -947,6 +949,7 @@ st_code_: ALERT      { $$ = ie_st_code_simple(E, IE_ST_CODE_ALERT); }
         | UIDVLD SP sc_num[n]  { $$ = ie_st_code_num(E, IE_ST_CODE_UIDVLD, $n); }
         | UNSEEN SP sc_num[n]  { $$ = ie_st_code_num(E, IE_ST_CODE_UNSEEN, $n); }
         | HIMODSEQ SP sc_modseqnum[n] { $$ = ie_st_code_modseqnum(E, IE_ST_CODE_HIMODSEQ, $n); }
+        | MODIFIED SP sc_seq_set[s]  { $$ = ie_st_code_seq_set(E, IE_ST_CODE_MODIFIED, $s); }
         | sc_pflags
         | sc_capa
         | sc_atom
@@ -955,6 +958,11 @@ st_code_: ALERT      { $$ = ie_st_code_simple(E, IE_ST_CODE_ALERT); }
 sc_num: { MODE(NUM); } nznum[n] { MODE(STATUS_CODE); $$ = $n; };
 
 sc_modseqnum: { MODE(NUM); } nzmodseqnum[n]
+    { extension_assert_on_builder(E, p->exts, EXT_CONDSTORE);
+      MODE(STATUS_CODE);
+      $$ = $n; };
+
+sc_seq_set: { MODE(SEQSET); } seq_set[n]
     { extension_assert_on_builder(E, p->exts, EXT_CONDSTORE);
       MODE(STATUS_CODE);
       $$ = $n; };

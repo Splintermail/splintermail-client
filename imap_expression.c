@@ -964,6 +964,23 @@ fail:
     return NULL;
 }
 
+ie_st_code_t *ie_st_code_seq_set(derr_t *e, ie_st_code_type_t type,
+        ie_seq_set_t *seq_set){
+    if(is_error(*e)) goto fail;
+
+    ie_st_code_t *stc = ie_st_code_new(e);
+    if(is_error(*e)) goto fail;
+
+    stc->type = type;
+    stc->arg.seq_set = seq_set;
+
+    return stc;
+
+fail:
+    ie_seq_set_free(seq_set);
+    return NULL;
+}
+
 ie_st_code_t *ie_st_code_pflags(derr_t *e, ie_pflags_t *pflags){
     if(is_error(*e)) goto fail;
 
@@ -976,6 +993,7 @@ ie_st_code_t *ie_st_code_pflags(derr_t *e, ie_pflags_t *pflags){
     return stc;
 
 fail:
+    ie_pflags_free(pflags);
     return NULL;
 }
 
@@ -992,6 +1010,7 @@ ie_st_code_t *ie_st_code_dstr(derr_t *e, ie_st_code_type_t type,
     return stc;
 
 fail:
+    ie_dstr_free(dstr);
     return NULL;
 }
 
@@ -1008,6 +1027,7 @@ void ie_st_code_free(ie_st_code_t *stc){
         case IE_ST_CODE_UIDVLD:     break;
         case IE_ST_CODE_UNSEEN:     break;
         case IE_ST_CODE_HIMODSEQ:   break;
+        case IE_ST_CODE_MODIFIED:   ie_seq_set_free(stc->arg.seq_set); break;
         case IE_ST_CODE_PERMFLAGS:  ie_pflags_free(stc->arg.pflags); break;
         case IE_ST_CODE_CAPA:       ie_dstr_free(stc->arg.dstr); break;
         case IE_ST_CODE_ATOM:       ie_dstr_free(stc->arg.dstr); break;

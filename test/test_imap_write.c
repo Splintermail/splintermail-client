@@ -291,6 +291,27 @@ static derr_t test_imap_writer(void){
                 },
             },
             {
+                .resp=imap_resp_new(&e, IMAP_RESP_STATUS_TYPE,
+                    (imap_resp_arg_t){
+                        .status_type=ie_st_resp_new(
+                            &e,
+                            NULL,
+                            IE_ST_OK,
+                            ie_st_code_seq_set(
+                                &e,
+                                IE_ST_CODE_MODIFIED,
+                                ie_seq_set_new(&e, 1, 2)
+                            ),
+                            IE_DSTR("text")
+                        ),
+                    }
+                ),
+                .out=(size_chunk_out_t[]){
+                    {64, "* OK [MODIFIED 1:2] text\r\n"},
+                    {0}
+                },
+            },
+            {
                 .resp=imap_resp_new(&e, IMAP_RESP_SEARCH,
                     (imap_resp_arg_t){
                         .search=ie_search_resp_new(

@@ -661,6 +661,10 @@ derr_t print_ie_st_code(dstr_t *out, const ie_st_code_t *code){
         case IE_ST_CODE_HIMODSEQ:    // unsigned long
             PROP(&e, FMT(out, "HIGHESTMODSEQ %x", FU(code->arg.modseqnum)) );
             break;
+        case IE_ST_CODE_MODIFIED:    // ie_seq_set_t
+            PROP(&e, FMT(out, "MODIFIED ") );
+            PROP(&e, print_ie_seq_set(out, code->arg.seq_set) );
+            break;
         case IE_ST_CODE_PERMFLAGS:   // ie_pflags_t
             PROP(&e, FMT(out, "PERMANENTFLAGS (") );
             PROP(&e, print_ie_pflags(out, code->arg.pflags) );
