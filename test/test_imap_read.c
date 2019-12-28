@@ -753,6 +753,11 @@ static derr_t test_scanner_and_parser(void){
                 .resp_calls=(int[]){IMAP_RESP_SEARCH, -1},
                 .buf=DSTR_LIT("SEARCH 1 (MODSEQ 12345678901234)")
             },
+            {
+                .in=DSTR_LIT("* 1 FETCH (MODSEQ (12345678901234))\r\n"),
+                .resp_calls=(int[]){IMAP_RESP_FETCH, -1},
+                .buf=DSTR_LIT("1 FETCH (MODSEQ (12345678901234))")
+            },
         };
         size_t ncases = sizeof(cases) / sizeof(*cases);
         PROP(&e, do_test_scanner_and_parser(cases, ncases, parser_resp_cb) );

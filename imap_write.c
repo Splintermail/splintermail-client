@@ -1305,6 +1305,13 @@ static derr_t fetch_resp_skip_fill(skip_fill_t *sf, ie_fetch_resp_t *fetch){
         STATIC_SKIP_FILL("RFC822 ");
         PROP(&e, string_skip_fill(sf, &fetch->content->dstr) );
     }
+    if(fetch->modseq){
+        PROP(&e, extension_assert_on(sf->exts, EXT_CONDSTORE) );
+        LEAD_SP;
+        STATIC_SKIP_FILL("MODSEQ (");
+        PROP(&e, nzmodseqnum_skip_fill(sf, fetch->modseq) );
+        STATIC_SKIP_FILL(")");
+    }
     STATIC_SKIP_FILL(")");
     return e;
 }

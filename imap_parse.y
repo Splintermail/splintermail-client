@@ -365,6 +365,7 @@
 %type <modseqnum> modseqnum
 %type <modseqnum> nzmodseqnum
 %type <modseqnum> sc_modseqnum
+%type <modseqnum> f_modseq
 
 %type <flag> flag_simple
 
@@ -1096,21 +1097,24 @@ msg_attrs_0: %empty { $$ = NULL; }
 fm: %empty { MODE(FETCH); };
 
 /* most of these get ignored completely, we only really need:
-     - FLAGS,
-     - UID,
-     - INTERNALDATE,
+     - FLAGS
+     - UID
+     - INTERNALDATE
      - the fully body text
+     - MODSEQ
    Anything else is going to be encrypted anyway. */
 msg_attrs_1: f_fflags[f] fm  { $$ = ie_fetch_resp_flags(E, ie_fetch_resp_new(E), $f); }
            | f_uid[u] fm     { $$ = ie_fetch_resp_uid(E, ie_fetch_resp_new(E), $u); }
            | f_intdate[d] fm { $$ = ie_fetch_resp_intdate(E, ie_fetch_resp_new(E), $d); }
            | f_rfc822[r] fm  { $$ = ie_fetch_resp_content(E, ie_fetch_resp_new(E), $r); }
+           | f_modseq[s] fm  { $$ = ie_fetch_resp_modseq(E, ie_fetch_resp_new(E), $s); }
            | ign_msg_attr fm { $$ = ie_fetch_resp_new(E); }
 
            | msg_attrs_1[m] SP f_fflags[f] fm  { $$ = ie_fetch_resp_flags(E, $m, $f); }
            | msg_attrs_1[m] SP f_uid[u] fm     { $$ = ie_fetch_resp_uid(E, $m, $u); }
            | msg_attrs_1[m] SP f_intdate[d] fm { $$ = ie_fetch_resp_intdate(E, $m, $d); }
            | msg_attrs_1[m] SP f_rfc822[r] fm  { $$ = ie_fetch_resp_content(E, $m, $r); }
+           | msg_attrs_1[m] SP f_modseq[s] fm  { $$ = ie_fetch_resp_modseq(E, $m, $s); }
            | msg_attrs_1[m] SP ign_msg_attr fm   { $$ = $m; }
 ;
 
@@ -1125,7 +1129,11 @@ ign_msg_attr: ENVELOPE SP '(' { MODE(NSTRING); } envelope ')'
 
 f_fflags: FLAGS SP { MODE(FLAG); } '(' fflags_0[f] ')' { $$ = $f; };
 
-f_rfc822: RFC822 SP { MODE(NSTRING); } rfc822_nstring[r] { $$ = $r; }
+f_rfc822: RFC822 SP { MODE(NSTRING); } rfc822_nstring[r] { $$ = $r; };
+
+f_modseq: MODSEQ SP { MODE(MODSEQ); } '(' nzmodseqnum[s] ')'
+    { extension_assert_on_builder(E, p->exts, EXT_CONDSTORE);
+      $$ = $s; };
 
 /* this will some day write to a file instead of memory, otherwise it would
    just be "nstring" type */

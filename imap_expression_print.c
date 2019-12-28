@@ -1021,6 +1021,10 @@ derr_t print_fetch_resp(dstr_t *out, const ie_fetch_resp_t *fetch){
         PROP(&e, FMT(out, "RFC822 ") );
         PROP(&e, print_string(out, &fetch->content->dstr) );
     }
+    if(fetch->modseq){
+        LEAD_SP;
+        PROP(&e, FMT(out, "MODSEQ (%x)", FU(fetch->modseq)) );
+    }
     PROP(&e, FMT(out, ")") );
     return e;
 }

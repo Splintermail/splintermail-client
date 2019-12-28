@@ -306,6 +306,21 @@ static derr_t test_imap_writer(void){
                     {0}
                 },
             },
+            {
+                .resp=imap_resp_new(&e, IMAP_RESP_FETCH,
+                    (imap_resp_arg_t){
+                        .fetch=ie_fetch_resp_modseq(
+                            &e,
+                            ie_fetch_resp_num(&e, ie_fetch_resp_new(&e), 1),
+                            12345678901234UL
+                        ),
+                    }
+                ),
+                .out=(size_chunk_out_t[]){
+                    {64, "* 1 FETCH (MODSEQ (12345678901234))\r\n"},
+                    {0}
+                },
+            },
         };
         CHECK(&e);
         PROP(&e, do_writer_test_multi(cases, sizeof(cases)/sizeof(*cases)) );

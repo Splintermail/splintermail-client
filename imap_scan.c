@@ -498,6 +498,7 @@ fetch_mode:
         'header'        { *type = HEADER; goto done; }
         'header.fields' { *type = HDR_FLDS; goto done; }
         'header.fields.not' { *type = HDR_FLDS_NOT; goto done; }
+        'modseq'        { *type = MODSEQ; goto done; }
     */
 
 datetime_mode:

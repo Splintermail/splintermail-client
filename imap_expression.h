@@ -342,6 +342,7 @@ typedef struct {
     unsigned int uid;
     imap_time_t intdate;
     ie_dstr_t *content;
+    unsigned long modseq;
 } ie_fetch_resp_t;
 
 // full command types
@@ -766,6 +767,8 @@ ie_fetch_resp_t *ie_fetch_resp_flags(derr_t *e, ie_fetch_resp_t *f,
         ie_fflags_t *flags);
 ie_fetch_resp_t *ie_fetch_resp_content(derr_t *e, ie_fetch_resp_t *f,
         ie_dstr_t *content);
+ie_fetch_resp_t *ie_fetch_resp_modseq(derr_t *e, ie_fetch_resp_t *f,
+        unsigned long modseq);
 
 // full commands
 

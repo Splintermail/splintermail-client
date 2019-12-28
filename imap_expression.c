@@ -1168,6 +1168,23 @@ fail:
     return NULL;
 }
 
+ie_fetch_resp_t *ie_fetch_resp_modseq(derr_t *e, ie_fetch_resp_t *f,
+        unsigned long modseq){
+    if(is_error(*e)) goto fail;
+
+    if(f->modseq != 0){
+        ORIG_GO(e, E_INTERNAL, "got two MODSEQ numbers from one FETCH", fail);
+    }
+
+    f->modseq = modseq;
+
+    return f;
+
+fail:
+    ie_fetch_resp_free(f);
+    return NULL;
+}
+
 // full commands
 
 ie_login_cmd_t *ie_login_cmd_new(derr_t *e, ie_dstr_t *user, ie_dstr_t *pass){
