@@ -1,6 +1,5 @@
 #include "imap_write.h"
 #include "logger.h"
-#include "imap_expression_print.h"
 
 // the state of a run of skip_fills.
 typedef struct {
@@ -317,7 +316,7 @@ static derr_t atom_skip_fill(skip_fill_t *sf, const dstr_t *in){
 static derr_t select_params_skip_fill(skip_fill_t *sf,
         ie_select_params_t *params){
     derr_t e = E_OK;
-    if(sf == NULL) return e;
+    if(params == NULL) return e;
     STATIC_SKIP_FILL(" (");
     bool sp = false;
     for(ie_select_params_t *p = params; p != NULL; p = p->next){
@@ -530,7 +529,7 @@ static derr_t mflags_skip_fill(skip_fill_t *sf, ie_mflags_t *mflags){
     derr_t e = E_OK;
     if(!mflags) return e;
     bool sp = false;
-    if(mflags->noinferiors){ LEAD_SP; STATIC_SKIP_FILL("\\Noinferiors"); }
+    if(mflags->noinferiors){ LEAD_SP; STATIC_SKIP_FILL("\\NoInferiors"); }
     switch(mflags->selectable){
         case IE_SELECTABLE_NONE:
             break;
@@ -917,8 +916,9 @@ static derr_t fetch_mods_skip_fill(skip_fill_t *sf, ie_fetch_mods_t *mods){
     return e;
 }
 
-derr_t imap_cmd_write(const imap_cmd_t *cmd, dstr_t *out, size_t *skip,
-        size_t *want, const extensions_t *exts){
+static derr_t do_imap_cmd_write(const imap_cmd_t *cmd, dstr_t *out,
+        size_t *skip, size_t *want, const extensions_t *exts,
+        bool enforce_output){
     derr_t e = E_OK;
 
     skip_fill_t skip_fill = { .out=out, .skip=*skip, .exts=exts };
@@ -1078,8 +1078,9 @@ derr_t imap_cmd_write(const imap_cmd_t *cmd, dstr_t *out, size_t *skip,
             if(arg.store->silent){
                 STATIC_SKIP_FILL(".SILENT");
             }
-            STATIC_SKIP_FILL(" ");
+            STATIC_SKIP_FILL(" (");
             PROP(&e, flags_skip_fill(sf, arg.store->flags) );
+            STATIC_SKIP_FILL(")");
             break;
 
         case IMAP_CMD_COPY:
@@ -1109,7 +1110,7 @@ derr_t imap_cmd_write(const imap_cmd_t *cmd, dstr_t *out, size_t *skip,
     STATIC_SKIP_FILL("\r\n");
 
     // make sure we progressed further than last time
-    if(sf->passed == *skip){
+    if(enforce_output && sf->passed == *skip){
         TRACE(&e, "failed to print anything from command of type command=%x "
                 "at skip=%x\n", FD(imap_cmd_type_to_dstr(cmd->type)),
                 FU(*skip));
@@ -1315,7 +1316,7 @@ static derr_t fetch_resp_skip_fill(skip_fill_t *sf, ie_fetch_resp_t *fetch){
     bool sp = false;
     if(fetch->flags){
         LEAD_SP;
-        STATIC_SKIP_FILL(" FLAGS (");
+        STATIC_SKIP_FILL("FLAGS (");
         PROP(&e, fflags_skip_fill(sf, fetch->flags) );
         STATIC_SKIP_FILL(")");
     }
@@ -1345,8 +1346,9 @@ static derr_t fetch_resp_skip_fill(skip_fill_t *sf, ie_fetch_resp_t *fetch){
     return e;
 }
 
-derr_t imap_resp_write(const imap_resp_t *resp, dstr_t *out, size_t *skip,
-        size_t *want, const extensions_t *exts){
+static derr_t do_imap_resp_write(const imap_resp_t *resp, dstr_t *out,
+        size_t *skip, size_t *want, const extensions_t *exts,
+        bool enforce_output){
     derr_t e = E_OK;
 
     skip_fill_t skip_fill = { .out=out, .skip=*skip, .exts=exts};
@@ -1379,7 +1381,7 @@ derr_t imap_resp_write(const imap_resp_t *resp, dstr_t *out, size_t *skip,
 
         case IMAP_RESP_LSUB:
             STATIC_SKIP_FILL("LSUB ");
-            PROP(&e, list_resp_skip_fill(sf, arg.list) );
+            PROP(&e, list_resp_skip_fill(sf, arg.lsub) );
             break;
 
         case IMAP_RESP_STATUS:
@@ -1433,7 +1435,7 @@ derr_t imap_resp_write(const imap_resp_t *resp, dstr_t *out, size_t *skip,
     STATIC_SKIP_FILL("\r\n");
 
     // make sure we progressed further than last time
-    if(sf->passed == *skip){
+    if(enforce_output && sf->passed == *skip){
         TRACE(&e, "failed to print anything from response of type response=%x "
                 "at skip=%x\n", FD(imap_resp_type_to_dstr(resp->type)),
                 FU(*skip));
@@ -1442,5 +1444,51 @@ derr_t imap_resp_write(const imap_resp_t *resp, dstr_t *out, size_t *skip,
     // set the outputs
     *skip = sf->passed;
     *want = sf->want;
+    return e;
+}
+
+derr_t imap_cmd_write(const imap_cmd_t *cmd, dstr_t *out, size_t *skip,
+        size_t *want, const extensions_t *exts){
+    derr_t e = E_OK;
+    bool enforce_output = true;
+    PROP(&e, do_imap_cmd_write(cmd, out, skip, want, exts, enforce_output) );
+    return e;
+}
+
+derr_t imap_resp_write(const imap_resp_t *resp, dstr_t *out, size_t *skip,
+        size_t *want, const extensions_t *exts){
+    derr_t e = E_OK;
+    bool enforce_output = true;
+    PROP(&e, do_imap_resp_write(resp, out, skip, want, exts, enforce_output) );
+    return e;
+}
+
+derr_t imap_cmd_print(const imap_cmd_t *cmd, dstr_t *out,
+        const extensions_t *exts){
+    derr_t e = E_OK;
+    // measure and validate
+    size_t want, skip = 0;
+    dstr_t empty = {0};
+    PROP(&e, do_imap_cmd_write(cmd, &empty, &skip, &want, exts, false) );
+    // grow the output
+    PROP(&e, dstr_grow(out, out->len + want) );
+    // write out
+    skip = 0;
+    PROP(&e, do_imap_cmd_write(cmd, out, &skip, &want, exts, true) );
+    return e;
+}
+
+derr_t imap_resp_print(const imap_resp_t *resp, dstr_t *out,
+        const extensions_t *exts){
+    derr_t e = E_OK;
+    // measure and validate
+    size_t want, skip = 0;
+    dstr_t empty = {0};
+    PROP(&e, do_imap_resp_write(resp, &empty, &skip, &want, exts, false) );
+    // grow the output
+    PROP(&e, dstr_grow(out, out->len + want) );
+    // write out
+    skip = 0;
+    PROP(&e, do_imap_resp_write(resp, out, &skip, &want, exts, true) );
     return e;
 }

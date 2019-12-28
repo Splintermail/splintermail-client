@@ -608,6 +608,13 @@ typedef enum {
     KEEP_QSTRING,
 } keep_type_t;
 
+// convert enum's to dstr_t's
+const dstr_t *ie_status_to_dstr(ie_status_t s);
+const dstr_t *ie_select_param_type_to_dstr(ie_select_param_type_t type);
+const dstr_t *ie_status_attr_to_dstr(ie_status_attr_t sa);
+const dstr_t *imap_cmd_type_to_dstr(imap_cmd_type_t type);
+const dstr_t *imap_resp_type_to_dstr(imap_resp_type_t type);
+
 /* Bison-friendly API: errors are kept in the parser, all functions return
    an expression type, even functions which really just modify some other
    object.  This means that in error situations, we can easily call *_free() on

@@ -4,7 +4,7 @@
 #include <logger.h>
 #include <imap_read.h>
 #include <imap_expression.h>
-#include <imap_expression_print.h>
+#include <imap_write.h>
 
 #include "test_utils.h"
 
@@ -108,10 +108,18 @@ static void cmd_cb(void *cb_data, derr_t error, imap_cmd_t *cmd){
     }else{
         LOG_ERROR("got command of unknown type %x\n", FU(cmd->type));
     }
-    DROP_CMD( print_imap_cmd(&calls->buf, cmd) );
+
+    extensions_t exts = {
+        .enable = EXT_STATE_ON,
+        .condstore = EXT_STATE_ON,
+    };
+
+    derr_t e = E_OK;
+    PROP_GO(&e, imap_cmd_print(cmd, &calls->buf, &exts), done);
 
 done:
     imap_cmd_free(cmd);
+    DROP_VAR(&e);
 }
 
 static void resp_cb(void *cb_data, derr_t error, imap_resp_t *resp){
@@ -124,7 +132,18 @@ static void resp_cb(void *cb_data, derr_t error, imap_resp_t *resp){
     }else{
         LOG_ERROR("got response of unknown type %x\n", FU(resp->type));
     }
-    DROP_CMD( print_imap_resp(&calls->buf, resp) );
+
+    extensions_t exts = {
+        .enable = EXT_STATE_ON,
+        .condstore = EXT_STATE_ON,
+    };
+
+    derr_t e = E_OK;
+    IF_PROP(&e, imap_resp_print(resp, &calls->buf, &exts) ){
+        TRACE(&e, "failed to print response to buffer\n");
+        DUMP(e);
+        DROP_VAR(&e);
+    }
 
 done:
     imap_resp_free(resp);
@@ -203,7 +222,7 @@ static derr_t test_scanner_and_parser(void){
                              "OK [ALERT] alert text\r\n"),
                 .resp_calls=(int[]){IMAP_RESP_STATUS_TYPE, -1},
                 .buf=DSTR_LIT("taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaag "
-                         "OK [ALERT] alert text"),
+                         "OK [ALERT] alert text\r\n"),
             },
             {
                 .in=DSTR_LIT("taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaag "
@@ -212,49 +231,49 @@ static derr_t test_scanner_and_parser(void){
                 .resp_calls=(int[]){IMAP_RESP_STATUS_TYPE, -1},
                 .buf=DSTR_LIT("taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaag "
                                "OK [ALERTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT"
-                               "TTTTTTTT] alert text "),
+                               "TTTTTTTT] alert text \r\n"),
             },
             {
                 .in=DSTR_LIT("* capability 1 2 3 4\r\n"),
                 .resp_calls=(int[]){IMAP_RESP_CAPA, -1},
-                .buf=DSTR_LIT("CAPABILITY 1 2 3 4"),
+                .buf=DSTR_LIT("* CAPABILITY 1 2 3 4\r\n"),
             },
             {
                 .in=DSTR_LIT("* OK [capability 1 2 3 4] ready\r\n"),
                 .resp_calls=(int[]){IMAP_RESP_STATUS_TYPE, -1},
-                .buf=DSTR_LIT("* OK [CAPABILITY 1 2 3 4] ready"),
+                .buf=DSTR_LIT("* OK [CAPABILITY 1 2 3 4] ready\r\n"),
             },
             {
                 .in=DSTR_LIT("* OK [PERMANENTFLAGS (\\answered \\2 a 1)] "
                         "hi!\r\n"),
                 .resp_calls=(int[]){IMAP_RESP_STATUS_TYPE, -1},
                 .buf=DSTR_LIT("* OK [PERMANENTFLAGS (\\Answered a 1 \\2)]"
-                    " hi!")
+                    " hi!\r\n")
             },
             {
                 .in=DSTR_LIT("* ok [parse] hi\r\n"),
                 .resp_calls=(int[]){IMAP_RESP_STATUS_TYPE, -1},
-                .buf=DSTR_LIT("* OK [PARSE] hi")
+                .buf=DSTR_LIT("* OK [PARSE] hi\r\n")
             },
             {
                 .in=DSTR_LIT("* LIST (\\ext \\noselect) \"/\" inbox\r\n"),
                 .resp_calls=(int[]){IMAP_RESP_LIST, -1},
-                .buf=DSTR_LIT("LIST (\\Noselect \\ext) \"/\" INBOX")
+                .buf=DSTR_LIT("* LIST (\\Noselect \\ext) \"/\" INBOX\r\n")
             },
             {
                 .in=DSTR_LIT("* LIST (\\marked) \"/\" \"other\"\r\n"),
                 .resp_calls=(int[]){IMAP_RESP_LIST, -1},
-                .buf=DSTR_LIT("LIST (\\Marked) \"/\" other")
+                .buf=DSTR_LIT("* LIST (\\Marked) \"/\" other\r\n")
             },
             {
                 .in=DSTR_LIT("* LSUB (\\ext \\noinferiors) \"/\" inbox\r\n"),
                 .resp_calls=(int[]){IMAP_RESP_LSUB, -1},
-                .buf=DSTR_LIT("LSUB (\\NoInferiors \\ext) \"/\" INBOX")
+                .buf=DSTR_LIT("* LSUB (\\NoInferiors \\ext) \"/\" INBOX\r\n")
             },
             {
                 .in=DSTR_LIT("* LSUB (\\marked) \"/\" \"other\"\r\n"),
                 .resp_calls=(int[]){IMAP_RESP_LSUB, -1},
-                .buf=DSTR_LIT("LSUB (\\Marked) \"/\" other")
+                .buf=DSTR_LIT("* LSUB (\\Marked) \"/\" other\r\n")
             },
         };
         size_t ncases = sizeof(cases) / sizeof(*cases);
@@ -266,27 +285,27 @@ static derr_t test_scanner_and_parser(void){
             {
                 .in=DSTR_LIT("* STATUS inbox (UNSEEN 2 RECENT 4)\r\n"),
                 .resp_calls=(int[]){IMAP_RESP_STATUS, -1},
-                .buf=DSTR_LIT("STATUS INBOX (RECENT 4 UNSEEN 2)")
+                .buf=DSTR_LIT("* STATUS INBOX (RECENT 4 UNSEEN 2)\r\n")
             },
             {
                 .in=DSTR_LIT("* STATUS not_inbox (RECENT 4)\r\n"),
                 .resp_calls=(int[]){IMAP_RESP_STATUS, -1},
-                .buf=DSTR_LIT("STATUS not_inbox (RECENT 4)")
+                .buf=DSTR_LIT("* STATUS not_inbox (RECENT 4)\r\n")
             },
             {
                 .in=DSTR_LIT("* STATUS \"qstring \\\" box\" (MESSAGES 2)\r\n"),
                 .resp_calls=(int[]){IMAP_RESP_STATUS, -1},
-                .buf=DSTR_LIT("STATUS \"qstring \\\" box\" (MESSAGES 2)")
+                .buf=DSTR_LIT("* STATUS \"qstring \\\" box\" (MESSAGES 2)\r\n")
             },
             {
                 .in=DSTR_LIT("* STATUS {11}\r\nliteral box ()\r\n"),
                 .resp_calls=(int[]){IMAP_RESP_STATUS, -1},
-                .buf=DSTR_LIT("STATUS \"literal box\" ()")
+                .buf=DSTR_LIT("* STATUS \"literal box\" ()\r\n")
             },
             {
                 .in=DSTR_LIT("* STATUS astring_box (UNSEEN 2 RECENT 4)\r\n"),
                 .resp_calls=(int[]){IMAP_RESP_STATUS, -1},
-                .buf=DSTR_LIT("STATUS astring_box (RECENT 4 UNSEEN 2)")
+                .buf=DSTR_LIT("* STATUS astring_box (RECENT 4 UNSEEN 2)\r\n")
             },
         };
         size_t ncases = sizeof(cases) / sizeof(*cases);
@@ -298,22 +317,22 @@ static derr_t test_scanner_and_parser(void){
             {
                 .in=DSTR_LIT("* FLAGS (\\seen \\answered keyword \\extra)\r\n"),
                 .resp_calls=(int[]){IMAP_RESP_FLAGS, -1},
-                .buf=DSTR_LIT("FLAGS (\\Answered \\Seen keyword \\extra)")
+                .buf=DSTR_LIT("* FLAGS (\\Answered \\Seen keyword \\extra)\r\n")
             },
             {
                 .in=DSTR_LIT("* 45 EXISTS\r\n"),
                 .resp_calls=(int[]){IMAP_RESP_EXISTS, -1},
-                .buf=DSTR_LIT("45 EXISTS")
+                .buf=DSTR_LIT("* 45 EXISTS\r\n")
             },
             {
                 .in=DSTR_LIT("* 81 RECENT\r\n"),
                 .resp_calls=(int[]){IMAP_RESP_RECENT, -1},
-                .buf=DSTR_LIT("81 RECENT")
+                .buf=DSTR_LIT("* 81 RECENT\r\n")
             },
             {
                 .in=DSTR_LIT("* 41 expunge\r\n"),
                 .resp_calls=(int[]){IMAP_RESP_EXPUNGE, -1},
-                .buf=DSTR_LIT("41 EXPUNGE")
+                .buf=DSTR_LIT("* 41 EXPUNGE\r\n")
             },
         };
         size_t ncases = sizeof(cases) / sizeof(*cases);
@@ -325,31 +344,31 @@ static derr_t test_scanner_and_parser(void){
             {
                 .in=DSTR_LIT("* 15 FETCH (UID 1234)\r\n"),
                 .resp_calls=(int[]){IMAP_RESP_FETCH, -1},
-                .buf=DSTR_LIT("15 FETCH (UID 1234)")
+                .buf=DSTR_LIT("* 15 FETCH (UID 1234)\r\n")
             },
             {
                 .in=DSTR_LIT("* 15 FETCH (INTERNALDATE \"11-jan-1999 00:11:22 "
-                        "+5000\")\r\n"),
+                        "+0500\")\r\n"),
                 .resp_calls=(int[]){IMAP_RESP_FETCH, -1},
-                .buf=DSTR_LIT("15 FETCH (INTERNALDATE \"11-Jan-1999 "
-                        "00:11:22 +5000\")")
+                .buf=DSTR_LIT("* 15 FETCH (INTERNALDATE \"11-Jan-1999 "
+                        "00:11:22 +0500\")\r\n")
             },
             {
                 .in=DSTR_LIT("* 15 FETCH (INTERNALDATE \" 2-jan-1999 00:11:22 "
-                        "+5000\")\r\n"),
+                        "+0500\")\r\n"),
                 .resp_calls=(int[]){IMAP_RESP_FETCH, -1},
-                .buf=DSTR_LIT("15 FETCH (INTERNALDATE \" 2-Jan-1999 "
-                        "00:11:22 +5000\")")
+                .buf=DSTR_LIT("* 15 FETCH (INTERNALDATE \" 2-Jan-1999 "
+                        "00:11:22 +0500\")\r\n")
             },
             {
                 .in=DSTR_LIT("* 15 FETCH (UID 1 FLAGS (\\seen \\ext))\r\n"),
                 .resp_calls=(int[]){IMAP_RESP_FETCH, -1},
-                .buf=DSTR_LIT("15 FETCH (FLAGS (\\Seen \\ext) UID 1)")
+                .buf=DSTR_LIT("* 15 FETCH (FLAGS (\\Seen \\ext) UID 1)\r\n")
             },
             {
                 .in=DSTR_LIT("* 15 FETCH (RFC822 NIL)\r\n"),
                 .resp_calls=(int[]){IMAP_RESP_FETCH, -1},
-                .buf=DSTR_LIT("15 FETCH (RFC822 \"\")")
+                .buf=DSTR_LIT("* 15 FETCH (RFC822 \"\")\r\n")
             },
             {
                 .in=DSTR_LIT("* 15 FETCH (RFC822 NI"),
@@ -357,17 +376,17 @@ static derr_t test_scanner_and_parser(void){
             {
                 .in=DSTR_LIT("L)\r\n"),
                 .resp_calls=(int[]){IMAP_RESP_FETCH, -1},
-                .buf=DSTR_LIT("15 FETCH (RFC822 \"\")")
+                .buf=DSTR_LIT("* 15 FETCH (RFC822 \"\")\r\n")
             },
             {
                 .in=DSTR_LIT("* 15 FETCH (RFC822 \"asdf asdf asdf\")\r\n"),
                 .resp_calls=(int[]){IMAP_RESP_FETCH, -1},
-                .buf=DSTR_LIT("15 FETCH (RFC822 \"asdf asdf asdf\")")
+                .buf=DSTR_LIT("* 15 FETCH (RFC822 \"asdf asdf asdf\")\r\n")
             },
             {
                 .in=DSTR_LIT("* 15 FETCH (RFC822 {14}\r\nhello literal!)\r\n"),
                 .resp_calls=(int[]){IMAP_RESP_FETCH, -1},
-                .buf=DSTR_LIT("15 FETCH (RFC822 \"hello literal!\")")
+                .buf=DSTR_LIT("* 15 FETCH (RFC822 \"hello literal!\")\r\n")
             },
             {.in=DSTR_LIT("* 15 FETCH (RFC822 {14}\r\nhello")},
             {.in=DSTR_LIT(" ")},
@@ -379,7 +398,7 @@ static derr_t test_scanner_and_parser(void){
             {
                 .in=DSTR_LIT("al!)\r\n"),
                 .resp_calls=(int[]){IMAP_RESP_FETCH, -1},
-                .buf=DSTR_LIT("15 FETCH (RFC822 \"hello literal!\")")
+                .buf=DSTR_LIT("* 15 FETCH (RFC822 \"hello literal!\")\r\n")
             },
         };
         size_t ncases = sizeof(cases) / sizeof(*cases);
@@ -391,111 +410,111 @@ static derr_t test_scanner_and_parser(void){
             {
                 .in=DSTR_LIT("tag LOGIN asdf \"pass phrase\"\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_LOGIN, -1},
-                .buf=DSTR_LIT("tag LOGIN asdf \"pass phrase\"")
+                .buf=DSTR_LIT("tag LOGIN asdf \"pass phrase\"\r\n")
             },
             {
                 .in=DSTR_LIT("tag LOGIN \"asdf\" \"pass phrase\"\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_LOGIN, -1},
-                .buf=DSTR_LIT("tag LOGIN asdf \"pass phrase\"")
+                .buf=DSTR_LIT("tag LOGIN asdf \"pass phrase\"\r\n")
             },
             {
                 .in=DSTR_LIT("tag LOGIN \"asdf\" {11}\r\npass phrase\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_LOGIN, -1},
-                .buf=DSTR_LIT("tag LOGIN asdf \"pass phrase\"")
+                .buf=DSTR_LIT("tag LOGIN asdf \"pass phrase\"\r\n")
             },
             {
                 .in=DSTR_LIT("tag SELECT inbox\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_SELECT, -1},
-                .buf=DSTR_LIT("tag SELECT INBOX")
+                .buf=DSTR_LIT("tag SELECT INBOX\r\n")
             },
             {
                 .in=DSTR_LIT("tag SELECT \"crAZY boX\"\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_SELECT, -1},
-                .buf=DSTR_LIT("tag SELECT \"crAZY boX\"")
+                .buf=DSTR_LIT("tag SELECT \"crAZY boX\"\r\n")
             },
             {
                 .in=DSTR_LIT("tag EXAMINE {10}\r\nexamine_me\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_EXAMINE, -1},
-                .buf=DSTR_LIT("tag EXAMINE examine_me")
+                .buf=DSTR_LIT("tag EXAMINE examine_me\r\n")
             },
             {
                 .in=DSTR_LIT("tag CREATE create_me\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_CREATE, -1},
-                .buf=DSTR_LIT("tag CREATE create_me")
+                .buf=DSTR_LIT("tag CREATE create_me\r\n")
             },
             {
                 .in=DSTR_LIT("tag DELETE delete_me\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_DELETE, -1},
-                .buf=DSTR_LIT("tag DELETE delete_me")
+                .buf=DSTR_LIT("tag DELETE delete_me\r\n")
             },
             {
                 .in=DSTR_LIT("tag RENAME old_name new_name\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_RENAME, -1},
-                .buf=DSTR_LIT("tag RENAME old_name new_name")
+                .buf=DSTR_LIT("tag RENAME old_name new_name\r\n")
             },
             {
                 .in=DSTR_LIT("tag SUBSCRIBE subscribe_me\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_SUB, -1},
-                .buf=DSTR_LIT("tag SUBSCRIBE subscribe_me")
+                .buf=DSTR_LIT("tag SUBSCRIBE subscribe_me\r\n")
             },
             {
                 .in=DSTR_LIT("tag UNSUBSCRIBE unsubscribe_me\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_UNSUB, -1},
-                .buf=DSTR_LIT("tag UNSUBSCRIBE unsubscribe_me")
+                .buf=DSTR_LIT("tag UNSUBSCRIBE unsubscribe_me\r\n")
             },
             {
                 .in=DSTR_LIT("tag LIST \"\" *\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_LIST, -1},
-                .buf=DSTR_LIT("tag LIST \"\" *")
+                .buf=DSTR_LIT("tag LIST \"\" \"*\"\r\n")
             },
             {
                 .in=DSTR_LIT("tag LSUB \"\" *\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_LSUB, -1},
-                .buf=DSTR_LIT("tag LSUB \"\" *")
+                .buf=DSTR_LIT("tag LSUB \"\" \"*\"\r\n")
             },
             {
                 .in=DSTR_LIT("tag STATUS inbox (unseen)\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_STATUS, -1},
-                .buf=DSTR_LIT("tag STATUS INBOX (UNSEEN)")
+                .buf=DSTR_LIT("tag STATUS INBOX (UNSEEN)\r\n")
             },
             {
                 .in=DSTR_LIT("tag STATUS notinbox (unseen messages)\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_STATUS, -1},
-                .buf=DSTR_LIT("tag STATUS notinbox (MESSAGES UNSEEN)")
+                .buf=DSTR_LIT("tag STATUS notinbox (MESSAGES UNSEEN)\r\n")
             },
             {
                 .in=DSTR_LIT("tag CHECK\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_CHECK, -1},
-                .buf=DSTR_LIT("tag CHECK")
+                .buf=DSTR_LIT("tag CHECK\r\n")
             },
             {
                 .in=DSTR_LIT("tag CLOSE\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_CLOSE, -1},
-                .buf=DSTR_LIT("tag CLOSE")
+                .buf=DSTR_LIT("tag CLOSE\r\n")
             },
             {
                 .in=DSTR_LIT("tag EXPUNGE\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_EXPUNGE, -1},
-                .buf=DSTR_LIT("tag EXPUNGE")
+                .buf=DSTR_LIT("tag EXPUNGE\r\n")
             },
             {
                 .in=DSTR_LIT("tag APPEND inbox (\\Seen) \"11-jan-1999 "
-                        "00:11:22 +5000\" "),
+                        "00:11:22 +0500\" "),
             },
             {
                 .in=DSTR_LIT("{11}\r\nhello imap1\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_APPEND, -1},
                 .buf=DSTR_LIT("tag APPEND INBOX (\\Seen) \"11-Jan-1999 "
-                    "00:11:22 +5000\" {11}\r\nhello imap1")
+                    "00:11:22 +0500\" {11}\r\nhello imap1\r\n")
             },
             {
-                .in=DSTR_LIT("tag APPEND inbox \"11-jan-1999 00:11:22 +5000\" "),
+                .in=DSTR_LIT("tag APPEND inbox \"11-jan-1999 00:11:22 +0500\" "),
             },
             {
                 .in=DSTR_LIT("{11}\r\nhello imap2\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_APPEND, -1},
                 .buf=DSTR_LIT("tag APPEND INBOX () \"11-Jan-1999 "
-                    "00:11:22 +5000\" {11}\r\nhello imap2")
+                    "00:11:22 +0500\" {11}\r\nhello imap2\r\n")
             },
             {
                 .in=DSTR_LIT("tag APPEND inbox (\\Seen) "),
@@ -504,27 +523,27 @@ static derr_t test_scanner_and_parser(void){
                 .in=DSTR_LIT("{11}\r\nhello imap3\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_APPEND, -1},
                 .buf=DSTR_LIT("tag APPEND INBOX (\\Seen) "
-                        "{11}\r\nhello imap3")
+                        "{11}\r\nhello imap3\r\n")
             },
             {
                 .in=DSTR_LIT("tag STORE 1:*,*:10 +FLAGS.SILENT ()\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_STORE, -1},
-                .buf=DSTR_LIT("tag STORE 1:*,*:10 +FLAGS.SILENT ()")
+                .buf=DSTR_LIT("tag STORE 1:*,*:10 +FLAGS.SILENT ()\r\n")
             },
             {
                 .in=DSTR_LIT("tag STORE 5 +FLAGS \\Seen \\Extension\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_STORE, -1},
-                .buf=DSTR_LIT("tag STORE 5 +FLAGS (\\Seen \\Extension)")
+                .buf=DSTR_LIT("tag STORE 5 +FLAGS (\\Seen \\Extension)\r\n")
             },
             {
                 .in=DSTR_LIT("tag COPY 5:* iNBoX\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_COPY, -1},
-                .buf=DSTR_LIT("tag COPY 5:* INBOX")
+                .buf=DSTR_LIT("tag COPY 5:* INBOX\r\n")
             },
             {
                 .in=DSTR_LIT("tag COPY 5:7 NOt_iNBoX\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_COPY, -1},
-                .buf=DSTR_LIT("tag COPY 5:7 NOt_iNBoX")
+                .buf=DSTR_LIT("tag COPY 5:7 NOt_iNBoX\r\n")
             },
         };
         size_t ncases = sizeof(cases) / sizeof(*cases);
@@ -536,42 +555,42 @@ static derr_t test_scanner_and_parser(void){
             {
                 .in=DSTR_LIT("tag SEARCH DRAFT\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_SEARCH, -1},
-                .buf=DSTR_LIT("tag SEARCH DRAFT")
+                .buf=DSTR_LIT("tag SEARCH DRAFT\r\n")
             },
             {
                 .in=DSTR_LIT("tag SEARCH DRAFT UNDRAFT\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_SEARCH, -1},
-                .buf=DSTR_LIT("tag SEARCH DRAFT UNDRAFT")
+                .buf=DSTR_LIT("tag SEARCH DRAFT UNDRAFT\r\n")
             },
             {
                 .in=DSTR_LIT("tag SEARCH OR DRAFT undraft\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_SEARCH, -1},
-                .buf=DSTR_LIT("tag SEARCH OR DRAFT UNDRAFT")
+                .buf=DSTR_LIT("tag SEARCH OR DRAFT UNDRAFT\r\n")
             },
             {
                 .in=DSTR_LIT("tag SEARCH (DRAFT)\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_SEARCH, -1},
-                .buf=DSTR_LIT("tag SEARCH (DRAFT)")
+                .buf=DSTR_LIT("tag SEARCH (DRAFT)\r\n")
             },
             {
                 .in=DSTR_LIT("tag SEARCH 1,2,3:4\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_SEARCH, -1},
-                .buf=DSTR_LIT("tag SEARCH 1,2,3:4")
+                .buf=DSTR_LIT("tag SEARCH 1,2,3:4\r\n")
             },
             {
                 .in=DSTR_LIT("tag SEARCH UID 1,2\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_SEARCH, -1},
-                .buf=DSTR_LIT("tag SEARCH UID 1,2")
+                .buf=DSTR_LIT("tag SEARCH UID 1,2\r\n")
             },
             {
                 .in=DSTR_LIT("tag SEARCH SENTON 4-jUL-1776 LARGER 9000\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_SEARCH, -1},
-                .buf=DSTR_LIT("tag SEARCH SENTON 4-Jul-1776 LARGER 9000")
+                .buf=DSTR_LIT("tag SEARCH SENTON 4-Jul-1776 LARGER 9000\r\n")
             },
             {
                 .in=DSTR_LIT("tag SEARCH OR (TO me FROM you) (FROM me TO you)\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_SEARCH, -1},
-                .buf=DSTR_LIT("tag SEARCH OR (TO me FROM you) (FROM me TO you)")
+                .buf=DSTR_LIT("tag SEARCH OR (TO me FROM you) (FROM me TO you)\r\n")
             },
         };
         size_t ncases = sizeof(cases) / sizeof(*cases);
@@ -583,75 +602,75 @@ static derr_t test_scanner_and_parser(void){
             {
                 .in=DSTR_LIT("tag FETCH 1,2,3:4 INTERNALDATE\r\n"),
                     .cmd_calls=(int[]){IMAP_CMD_FETCH, -1},
-                    .buf=DSTR_LIT("tag FETCH 1,2,3:4 (INTERNALDATE)")
+                    .buf=DSTR_LIT("tag FETCH 1,2,3:4 (INTERNALDATE)\r\n")
             },
             {
                 .in=DSTR_LIT("tag FETCH 1,2 ALL\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_FETCH, -1},
                 .buf=DSTR_LIT("tag FETCH 1,2 (ENVELOPE FLAGS "
-                        "INTERNALDATE)")
+                        "INTERNALDATE)\r\n")
             },
             {
                 .in=DSTR_LIT("tag FETCH * FAST\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_FETCH, -1},
                 .buf=DSTR_LIT("tag FETCH * (FLAGS INTERNALDATE "
-                        "RFC822_SIZE)")
+                        "RFC822.SIZE)\r\n")
             },
             {
                 .in=DSTR_LIT("tag FETCH * FULL\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_FETCH, -1},
                 .buf=DSTR_LIT("tag FETCH * (ENVELOPE FLAGS INTERNALDATE "
-                        "RFC822_SIZE BODY)")
+                        "RFC822.SIZE BODY)\r\n")
             },
             {
                 .in=DSTR_LIT("tag FETCH * BODY\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_FETCH, -1},
-                .buf=DSTR_LIT("tag FETCH * (BODY)")
+                .buf=DSTR_LIT("tag FETCH * (BODY)\r\n")
             },
             {
                 .in=DSTR_LIT("tag FETCH * BODYSTRUCTURE\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_FETCH, -1},
-                .buf=DSTR_LIT("tag FETCH * (BODYSTRUCTURE)")
+                .buf=DSTR_LIT("tag FETCH * (BODYSTRUCTURE)\r\n")
             },
             {
                 .in=DSTR_LIT("tag FETCH * (INTERNALDATE BODY)\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_FETCH, -1},
-                .buf=DSTR_LIT("tag FETCH * (INTERNALDATE BODY)")
+                .buf=DSTR_LIT("tag FETCH * (INTERNALDATE BODY)\r\n")
             },
             {
                 .in=DSTR_LIT("tag FETCH * BODY[]\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_FETCH, -1},
-                .buf=DSTR_LIT("tag FETCH * (BODY[])")
+                .buf=DSTR_LIT("tag FETCH * (BODY[])\r\n")
             },
             {
                 .in=DSTR_LIT("tag FETCH * BODY[]<1.2>\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_FETCH, -1},
-                .buf=DSTR_LIT("tag FETCH * (BODY[]<1.2>)")
+                .buf=DSTR_LIT("tag FETCH * (BODY[]<1.2>)\r\n")
             },
             {
                 .in=DSTR_LIT("tag FETCH * BODY[1.2.3]\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_FETCH, -1},
-                .buf=DSTR_LIT("tag FETCH * (BODY[1.2.3])")
+                .buf=DSTR_LIT("tag FETCH * (BODY[1.2.3])\r\n")
             },
             {
                 .in=DSTR_LIT("tag FETCH * BODY[1.2.3.MIME]\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_FETCH, -1},
-                .buf=DSTR_LIT("tag FETCH * (BODY[1.2.3.MIME])")
+                .buf=DSTR_LIT("tag FETCH * (BODY[1.2.3.MIME])\r\n")
             },
             {
                 .in=DSTR_LIT("tag FETCH * BODY[TEXT]\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_FETCH, -1},
-                .buf=DSTR_LIT("tag FETCH * (BODY[TEXT])")
+                .buf=DSTR_LIT("tag FETCH * (BODY[TEXT])\r\n")
             },
             {
                 .in=DSTR_LIT("tag FETCH * BODY[HEADER.FIELDS (To From)]\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_FETCH, -1},
-                .buf=DSTR_LIT("tag FETCH * (BODY[HEADER.FIELDS (To From)])")
+                .buf=DSTR_LIT("tag FETCH * (BODY[HEADER.FIELDS (To From)])\r\n")
             },
             {
                 .in=DSTR_LIT("tag FETCH * BODY[HEADER.FIELDS.NOT (To From)]\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_FETCH, -1},
-                .buf=DSTR_LIT("tag FETCH * (BODY[HEADER.FIELDS.NOT (To From)])")
+                .buf=DSTR_LIT("tag FETCH * (BODY[HEADER.FIELDS.NOT (To From)])\r\n")
             },
         };
         size_t ncases = sizeof(cases) / sizeof(*cases);
@@ -663,22 +682,22 @@ static derr_t test_scanner_and_parser(void){
             {
                 .in=DSTR_LIT("tag UID STORE 5 +FLAGS \\Seen \\Ext\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_STORE, -1},
-                .buf=DSTR_LIT("tag UID STORE 5 +FLAGS (\\Seen \\Ext)")
+                .buf=DSTR_LIT("tag UID STORE 5 +FLAGS (\\Seen \\Ext)\r\n")
             },
             {
                 .in=DSTR_LIT("tag UID COPY 5:* iNBoX\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_COPY, -1},
-                .buf=DSTR_LIT("tag UID COPY 5:* INBOX")
+                .buf=DSTR_LIT("tag UID COPY 5:* INBOX\r\n")
             },
             {
                 .in=DSTR_LIT("tag UID SEARCH DRAFT\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_SEARCH, -1},
-                .buf=DSTR_LIT("tag UID SEARCH DRAFT")
+                .buf=DSTR_LIT("tag UID SEARCH DRAFT\r\n")
             },
             {
                 .in=DSTR_LIT("tag UID FETCH 1,2,3:4 INTERNALDATE\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_FETCH, -1},
-                .buf=DSTR_LIT("tag UID FETCH 1,2,3:4 (INTERNALDATE)")
+                .buf=DSTR_LIT("tag UID FETCH 1,2,3:4 (INTERNALDATE)\r\n")
             },
         };
         size_t ncases = sizeof(cases) / sizeof(*cases);
@@ -690,7 +709,7 @@ static derr_t test_scanner_and_parser(void){
             {
                 .in=DSTR_LIT("tag ENABLE 1 2 3\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_ENABLE, -1},
-                .buf=DSTR_LIT("tag ENABLE 1 2 3")
+                .buf=DSTR_LIT("tag ENABLE 1 2 3\r\n")
             },
         };
         size_t ncases = sizeof(cases) / sizeof(*cases);
@@ -702,7 +721,7 @@ static derr_t test_scanner_and_parser(void){
             {
                 .in=DSTR_LIT("* ENABLED 1 2 3\r\n"),
                 .resp_calls=(int[]){IMAP_RESP_ENABLED, -1},
-                .buf=DSTR_LIT("ENABLED 1 2 3")
+                .buf=DSTR_LIT("* ENABLED 1 2 3\r\n")
             },
         };
         size_t ncases = sizeof(cases) / sizeof(*cases);
@@ -714,22 +733,22 @@ static derr_t test_scanner_and_parser(void){
             {
                 .in=DSTR_LIT("tag STATUS notinbox (unseen highestmodseq)\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_STATUS, -1},
-                .buf=DSTR_LIT("tag STATUS notinbox (UNSEEN HIGHESTMODSEQ)")
+                .buf=DSTR_LIT("tag STATUS notinbox (UNSEEN HIGHESTMODSEQ)\r\n")
             },
             {
                 .in=DSTR_LIT("tag SELECT notinbox (CONDSTORE)\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_SELECT, -1},
-                .buf=DSTR_LIT("tag SELECT notinbox (CONDSTORE)")
+                .buf=DSTR_LIT("tag SELECT notinbox (CONDSTORE)\r\n")
             },
             {
                 .in=DSTR_LIT("tag EXAMINE notinbox (CONDSTORE)\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_EXAMINE, -1},
-                .buf=DSTR_LIT("tag EXAMINE notinbox (CONDSTORE)")
+                .buf=DSTR_LIT("tag EXAMINE notinbox (CONDSTORE)\r\n")
             },
             {
                 .in=DSTR_LIT("tag FETCH 1,2,3:4 UID (CHANGEDSINCE 12345678901234)\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_FETCH, -1},
-                .buf=DSTR_LIT("tag FETCH 1,2,3:4 (UID) (CHANGEDSINCE 12345678901234)")
+                .buf=DSTR_LIT("tag FETCH 1,2,3:4 (UID) (CHANGEDSINCE 12345678901234)\r\n")
             },
         };
         size_t ncases = sizeof(cases) / sizeof(*cases);
@@ -741,32 +760,32 @@ static derr_t test_scanner_and_parser(void){
             {
                 .in=DSTR_LIT("* STATUS astring_box (UNSEEN 2 HIGHESTMODSEQ 12345678901234)\r\n"),
                 .resp_calls=(int[]){IMAP_RESP_STATUS, -1},
-                .buf=DSTR_LIT("STATUS astring_box (UNSEEN 2 HIGHESTMODSEQ 12345678901234)")
+                .buf=DSTR_LIT("* STATUS astring_box (UNSEEN 2 HIGHESTMODSEQ 12345678901234)\r\n")
             },
             {
                 .in=DSTR_LIT("* OK [HIGHESTMODSEQ 12345678901234] text\r\n"),
                 .resp_calls=(int[]){IMAP_RESP_STATUS_TYPE, -1},
-                .buf=DSTR_LIT("* OK [HIGHESTMODSEQ 12345678901234] text")
+                .buf=DSTR_LIT("* OK [HIGHESTMODSEQ 12345678901234] text\r\n")
             },
             {
                 .in=DSTR_LIT("* OK [NOMODSEQ] text\r\n"),
                 .resp_calls=(int[]){IMAP_RESP_STATUS_TYPE, -1},
-                .buf=DSTR_LIT("* OK [NOMODSEQ] text")
+                .buf=DSTR_LIT("* OK [NOMODSEQ] text\r\n")
             },
             {
                 .in=DSTR_LIT("* OK [MODIFIED 1:2,4:5] text\r\n"),
                 .resp_calls=(int[]){IMAP_RESP_STATUS_TYPE, -1},
-                .buf=DSTR_LIT("* OK [MODIFIED 1:2,4:5] text")
+                .buf=DSTR_LIT("* OK [MODIFIED 1:2,4:5] text\r\n")
             },
             {
                 .in=DSTR_LIT("* SEARCH 1 (MODSEQ 12345678901234)\r\n"),
                 .resp_calls=(int[]){IMAP_RESP_SEARCH, -1},
-                .buf=DSTR_LIT("SEARCH 1 (MODSEQ 12345678901234)")
+                .buf=DSTR_LIT("* SEARCH 1 (MODSEQ 12345678901234)\r\n")
             },
             {
                 .in=DSTR_LIT("* 1 FETCH (MODSEQ (12345678901234))\r\n"),
                 .resp_calls=(int[]){IMAP_RESP_FETCH, -1},
-                .buf=DSTR_LIT("1 FETCH (MODSEQ (12345678901234))")
+                .buf=DSTR_LIT("* 1 FETCH (MODSEQ (12345678901234))\r\n")
             },
         };
         size_t ncases = sizeof(cases) / sizeof(*cases);

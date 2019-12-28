@@ -9,7 +9,7 @@
 #include "uv_util.h"
 #include "hashmap.h"
 #include "imap_client.h"
-#include "imap_expression_print.h"
+#include "imap_expression.h"
 #include "jsw_atree.h"
 #include "imap_dirmgr.h"
 #include "manager.h"

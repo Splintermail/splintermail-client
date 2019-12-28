@@ -3,6 +3,137 @@
 #include "imap_expression.h"
 #include "logger.h"
 
+DSTR_STATIC(IE_UNKNOWN_dstr, "UNKNOWN");
+
+DSTR_STATIC(IE_ST_OK_dstr, "OK");
+DSTR_STATIC(IE_ST_NO_dstr, "NO");
+DSTR_STATIC(IE_ST_BAD_dstr, "BAD");
+DSTR_STATIC(IE_ST_PREAUTH_dstr, "PREAUTH");
+DSTR_STATIC(IE_ST_BYE_dstr, "BYE");
+
+const dstr_t *ie_status_to_dstr(ie_status_t s){
+    switch(s){
+        case IE_ST_OK: return &IE_ST_OK_dstr;
+        case IE_ST_NO: return &IE_ST_NO_dstr;
+        case IE_ST_BAD: return &IE_ST_BAD_dstr;
+        case IE_ST_PREAUTH: return &IE_ST_PREAUTH_dstr;
+        case IE_ST_BYE: return &IE_ST_BYE_dstr;
+    }
+    return &IE_UNKNOWN_dstr;
+}
+
+DSTR_STATIC(IE_SELECT_PARAM_CONDSTORE_dstr, "CONDSTORE");
+
+const dstr_t *ie_select_param_type_to_dstr(ie_select_param_type_t type){
+    switch(type){
+        case IE_SELECT_PARAM_CONDSTORE: return &IE_SELECT_PARAM_CONDSTORE_dstr;
+    }
+    return &IE_UNKNOWN_dstr;
+}
+
+DSTR_STATIC(IE_STATUS_ATTR_MESSAGES_dstr, "MESSAGES");
+DSTR_STATIC(IE_STATUS_ATTR_RECENT_dstr, "RECENT");
+DSTR_STATIC(IE_STATUS_ATTR_UIDNEXT_dstr, "UIDNEXT");
+DSTR_STATIC(IE_STATUS_ATTR_UIDVLD_dstr, "UIDVLD");
+DSTR_STATIC(IE_STATUS_ATTR_UNSEEN_dstr, "UNSEEN");
+DSTR_STATIC(IE_STATUS_ATTR_HIMODSEQ_dstr, "HIGHESTMODSEQ");
+
+const dstr_t *ie_status_attr_to_dstr(ie_status_attr_t sa){
+    switch(sa){
+        case IE_STATUS_ATTR_MESSAGES: return &IE_STATUS_ATTR_MESSAGES_dstr;
+        case IE_STATUS_ATTR_RECENT: return &IE_STATUS_ATTR_RECENT_dstr;
+        case IE_STATUS_ATTR_UIDNEXT: return &IE_STATUS_ATTR_UIDNEXT_dstr;
+        case IE_STATUS_ATTR_UIDVLD: return &IE_STATUS_ATTR_UIDVLD_dstr;
+        case IE_STATUS_ATTR_UNSEEN: return &IE_STATUS_ATTR_UNSEEN_dstr;
+        case IE_STATUS_ATTR_HIMODSEQ: return &IE_STATUS_ATTR_HIMODSEQ_dstr;
+    }
+    return &IE_UNKNOWN_dstr;
+}
+
+DSTR_STATIC(IMAP_CMD_CAPA_dstr, "CAPABILITY");
+DSTR_STATIC(IMAP_CMD_STARTTLS_dstr, "STARTTLS");
+DSTR_STATIC(IMAP_CMD_AUTH_dstr, "AUTH");
+DSTR_STATIC(IMAP_CMD_LOGIN_dstr, "LOGIN");
+DSTR_STATIC(IMAP_CMD_SELECT_dstr, "SELECT");
+DSTR_STATIC(IMAP_CMD_EXAMINE_dstr, "EXAMINE");
+DSTR_STATIC(IMAP_CMD_CREATE_dstr, "CREATE");
+DSTR_STATIC(IMAP_CMD_DELETE_dstr, "DELETE");
+DSTR_STATIC(IMAP_CMD_RENAME_dstr, "RENAME");
+DSTR_STATIC(IMAP_CMD_SUB_dstr, "SUB");
+DSTR_STATIC(IMAP_CMD_UNSUB_dstr, "UNSUB");
+DSTR_STATIC(IMAP_CMD_LIST_dstr, "LIST");
+DSTR_STATIC(IMAP_CMD_LSUB_dstr, "LSUB");
+DSTR_STATIC(IMAP_CMD_STATUS_dstr, "STATUS");
+DSTR_STATIC(IMAP_CMD_APPEND_dstr, "APPEND");
+DSTR_STATIC(IMAP_CMD_CHECK_dstr, "CHECK");
+DSTR_STATIC(IMAP_CMD_CLOSE_dstr, "CLOSE");
+DSTR_STATIC(IMAP_CMD_EXPUNGE_dstr, "EXPUNGE");
+DSTR_STATIC(IMAP_CMD_SEARCH_dstr, "SEARCH");
+DSTR_STATIC(IMAP_CMD_FETCH_dstr, "FETCH");
+DSTR_STATIC(IMAP_CMD_STORE_dstr, "STORE");
+DSTR_STATIC(IMAP_CMD_COPY_dstr, "COPY");
+DSTR_STATIC(IMAP_CMD_ENABLE_dstr, "ENABLE");
+
+const dstr_t *imap_cmd_type_to_dstr(imap_cmd_type_t type){
+    switch(type){
+        case IMAP_CMD_CAPA:     return &IMAP_CMD_CAPA_dstr;
+        case IMAP_CMD_STARTTLS: return &IMAP_CMD_STARTTLS_dstr;
+        case IMAP_CMD_AUTH:     return &IMAP_CMD_AUTH_dstr;
+        case IMAP_CMD_LOGIN:    return &IMAP_CMD_LOGIN_dstr;
+        case IMAP_CMD_SELECT:   return &IMAP_CMD_SELECT_dstr;
+        case IMAP_CMD_EXAMINE:  return &IMAP_CMD_EXAMINE_dstr;
+        case IMAP_CMD_CREATE:   return &IMAP_CMD_CREATE_dstr;
+        case IMAP_CMD_DELETE:   return &IMAP_CMD_DELETE_dstr;
+        case IMAP_CMD_RENAME:   return &IMAP_CMD_RENAME_dstr;
+        case IMAP_CMD_SUB:      return &IMAP_CMD_SUB_dstr;
+        case IMAP_CMD_UNSUB:    return &IMAP_CMD_UNSUB_dstr;
+        case IMAP_CMD_LIST:     return &IMAP_CMD_LIST_dstr;
+        case IMAP_CMD_LSUB:     return &IMAP_CMD_LSUB_dstr;
+        case IMAP_CMD_STATUS:   return &IMAP_CMD_STATUS_dstr;
+        case IMAP_CMD_APPEND:   return &IMAP_CMD_APPEND_dstr;
+        case IMAP_CMD_CHECK:    return &IMAP_CMD_CHECK_dstr;
+        case IMAP_CMD_CLOSE:    return &IMAP_CMD_CLOSE_dstr;
+        case IMAP_CMD_EXPUNGE:  return &IMAP_CMD_EXPUNGE_dstr;
+        case IMAP_CMD_SEARCH:   return &IMAP_CMD_SEARCH_dstr;
+        case IMAP_CMD_FETCH:    return &IMAP_CMD_FETCH_dstr;
+        case IMAP_CMD_STORE:    return &IMAP_CMD_STORE_dstr;
+        case IMAP_CMD_COPY:     return &IMAP_CMD_COPY_dstr;
+        case IMAP_CMD_ENABLE:   return &IMAP_CMD_ENABLE_dstr;
+    }
+    return &IE_UNKNOWN_dstr;
+}
+
+DSTR_STATIC(IMAP_RESP_STATUS_TYPE_dstr, "STATUS_TYPE");
+DSTR_STATIC(IMAP_RESP_CAPA_dstr, "CAPA");
+DSTR_STATIC(IMAP_RESP_LIST_dstr, "LIST");
+DSTR_STATIC(IMAP_RESP_LSUB_dstr, "LSUB");
+DSTR_STATIC(IMAP_RESP_STATUS_dstr, "STATUS");
+DSTR_STATIC(IMAP_RESP_FLAGS_dstr, "FLAGS");
+DSTR_STATIC(IMAP_RESP_SEARCH_dstr, "SEARCH");
+DSTR_STATIC(IMAP_RESP_EXISTS_dstr, "EXISTS");
+DSTR_STATIC(IMAP_RESP_EXPUNGE_dstr, "EXPUNGE");
+DSTR_STATIC(IMAP_RESP_RECENT_dstr, "RECENT");
+DSTR_STATIC(IMAP_RESP_FETCH_dstr, "FETCH");
+DSTR_STATIC(IMAP_RESP_ENABLED_dstr, "ENABLED");
+
+const dstr_t *imap_resp_type_to_dstr(imap_resp_type_t type){
+    switch(type){
+        case IMAP_RESP_STATUS_TYPE: return &IMAP_RESP_STATUS_TYPE_dstr;
+        case IMAP_RESP_CAPA:        return &IMAP_RESP_CAPA_dstr;
+        case IMAP_RESP_LIST:        return &IMAP_RESP_LIST_dstr;
+        case IMAP_RESP_LSUB:        return &IMAP_RESP_LSUB_dstr;
+        case IMAP_RESP_STATUS:      return &IMAP_RESP_STATUS_dstr;
+        case IMAP_RESP_FLAGS:       return &IMAP_RESP_FLAGS_dstr;
+        case IMAP_RESP_SEARCH:      return &IMAP_RESP_SEARCH_dstr;
+        case IMAP_RESP_EXISTS:      return &IMAP_RESP_EXISTS_dstr;
+        case IMAP_RESP_EXPUNGE:     return &IMAP_RESP_EXPUNGE_dstr;
+        case IMAP_RESP_RECENT:      return &IMAP_RESP_RECENT_dstr;
+        case IMAP_RESP_FETCH:       return &IMAP_RESP_FETCH_dstr;
+        case IMAP_RESP_ENABLED:     return &IMAP_RESP_ENABLED_dstr;
+    }
+    return &IE_UNKNOWN_dstr;
+}
+
 #define IE_MALLOC(e_, type_, var_, label_) \
     type_ *var_ = malloc(sizeof(*var_)); \
     if(var_ == NULL){ \

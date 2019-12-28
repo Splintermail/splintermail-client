@@ -370,12 +370,53 @@ static derr_t test_imap_writer(void){
     return e;
 }
 
+// some basic tests around the simpler print api
+static derr_t test_imap_print(void){
+    derr_t e = E_OK;
+
+    dstr_t buf;
+    PROP(&e, dstr_new(&buf, 4096) );
+
+    extensions_t exts = {
+        .enable = EXT_STATE_ON,
+        .condstore = EXT_STATE_ON,
+    };
+
+    imap_cmd_t *cmd = imap_cmd_new(
+        &e, IE_DSTR("tag"), IMAP_CMD_LOGIN, (imap_cmd_arg_t){
+            .login=ie_login_cmd_new(
+                &e, IE_DSTR("\\user"), IE_DSTR("pass")
+            ),
+        }
+    );
+
+    CHECK_GO(&e, cu_buf);
+
+    PROP_GO(&e, imap_cmd_print(cmd, &buf, &exts), cu_cmd);
+
+    {
+        DSTR_STATIC(tgt, "tag LOGIN \"\\\\user\" pass\r\n");
+        if(dstr_cmp(&buf, &tgt) != 0){
+            TRACE(&e, "expected: %x\nbut got:  %x\n", FD_DBG(&tgt),
+                    FD_DBG(&buf));
+            ORIG(&e, E_VALUE, "incorrect value written");
+        }
+    }
+
+cu_cmd:
+    imap_cmd_free(cmd);
+cu_buf:
+    dstr_free(&buf);
+    return e;
+}
+
 int main(int argc, char **argv){
     derr_t e = E_OK;
     // parse options and set default log level
     PARSE_TEST_OPTIONS(argc, argv, NULL, LOG_LVL_ERROR);
 
     PROP_GO(&e, test_imap_writer(), test_fail);
+    PROP_GO(&e, test_imap_print(), test_fail);
 
     LOG_ERROR("PASS\n");
     return 0;

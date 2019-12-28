@@ -50,7 +50,6 @@ set(OBJ_TGTS
     jsw_atree
     imap_parse
     imap_expression
-    imap_expression_print
     imap_write
     imap_read
     hashmap
@@ -268,7 +267,7 @@ obj_depend_obj(loop engine)
 obj_depend_obj(tls_engine engine networking)
 obj_depend_obj(imap_engine engine imap_read)
 obj_depend_obj(jsw_atree common)
-obj_depend_obj(imap_expression imap_expression_print link common)
+obj_depend_obj(imap_expression link common)
 obj_depend_obj(imap_parse_tab imap_expression imap_scan common)
 obj_depend_obj(imap_parse imap_parse_tab common)
 add_dependencies(imap_parse_o bison_header)
@@ -423,7 +422,7 @@ if("${BUILD_TESTS}")
     target_link_libraries(test_ui ui dummy_ui_harness json)
     target_link_libraries(test_atree jsw_atree)
     target_link_libraries(test_imap_scan imap_scan)
-    target_link_libraries(test_imap_read imap_read)
+    target_link_libraries(test_imap_read imap_read imap_write)
     target_link_libraries(test_imap_write imap_write)
     target_link_libraries(test_hashmap hashmap)
     # target_link_libraries(test_imap_maildir imap_maildir)

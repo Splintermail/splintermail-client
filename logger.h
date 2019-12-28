@@ -186,7 +186,7 @@ static inline bool pvt_check(derr_t *e,
     if(pvt_check(e, FILE_LOC)){ return *(e); }
 
 #define CHECK_GO(e, label) \
-    if(pvt_check(e)){ goto label; }
+    if(pvt_check(e, FILE_LOC)){ goto label; }
 
 /* CATCH is almost always for checking the secondary error context, e2, to
    do some analysis before dropping it or merging it into the main error

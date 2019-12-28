@@ -4,7 +4,6 @@
 #include "queue.h"
 #include "link.h"
 #include "imap_expression.h"
-#include "imap_expression_print.h"
 #include "imap_write.h"
 
 #define IC_TAG_SIZE 16
