@@ -110,16 +110,15 @@ static void cmd_cb(void *cb_data, derr_t error, imap_cmd_t *cmd){
     }
 
     extensions_t exts = {
+        .uidplus = EXT_STATE_ON,
         .enable = EXT_STATE_ON,
         .condstore = EXT_STATE_ON,
     };
 
-    derr_t e = E_OK;
-    PROP_GO(&e, imap_cmd_print(cmd, &calls->buf, &exts), done);
+    PROP_GO(&calls->error, imap_cmd_print(cmd, &calls->buf, &exts), done);
 
 done:
     imap_cmd_free(cmd);
-    DROP_VAR(&e);
 }
 
 static void resp_cb(void *cb_data, derr_t error, imap_resp_t *resp){
@@ -134,16 +133,12 @@ static void resp_cb(void *cb_data, derr_t error, imap_resp_t *resp){
     }
 
     extensions_t exts = {
+        .uidplus = EXT_STATE_ON,
         .enable = EXT_STATE_ON,
         .condstore = EXT_STATE_ON,
     };
 
-    derr_t e = E_OK;
-    IF_PROP(&e, imap_resp_print(resp, &calls->buf, &exts) ){
-        TRACE(&e, "failed to print response to buffer\n");
-        DUMP(e);
-        DROP_VAR(&e);
-    }
+    PROP_GO(&calls->error, imap_resp_print(resp, &calls->buf, &exts), done);
 
 done:
     imap_resp_free(resp);
@@ -168,6 +163,7 @@ static derr_t do_test_scanner_and_parser(test_case_t *cases, size_t ncases,
     PROP(&e, dstr_new(&calls.buf, 4096) );
 
     extensions_t exts = {
+        .uidplus = EXT_STATE_ON,
         .enable = EXT_STATE_ON,
         .condstore = EXT_STATE_ON,
     };
@@ -702,6 +698,40 @@ static derr_t test_scanner_and_parser(void){
         };
         size_t ncases = sizeof(cases) / sizeof(*cases);
         PROP(&e, do_test_scanner_and_parser(cases, ncases, parser_cmd_cb) );
+    }
+    // UIDPLUS extension commands
+    {
+        test_case_t cases[] = {
+            {
+                .in=DSTR_LIT("tag UID EXPUNGE 1:2\r\n"),
+                .cmd_calls=(int[]){IMAP_CMD_EXPUNGE, -1},
+                .buf=DSTR_LIT("tag UID EXPUNGE 1:2\r\n")
+            },
+        };
+        size_t ncases = sizeof(cases) / sizeof(*cases);
+        PROP(&e, do_test_scanner_and_parser(cases, ncases, parser_cmd_cb) );
+    }
+    // UIDPLUS extension responses
+    {
+        test_case_t cases[] = {
+            {
+                .in=DSTR_LIT("* NO [UIDNOTSTICKY] text\r\n"),
+                .resp_calls=(int[]){IMAP_RESP_STATUS_TYPE, -1},
+                .buf=DSTR_LIT("* NO [UIDNOTSTICKY] text\r\n")
+            },
+            {
+                .in=DSTR_LIT("* OK [APPENDUID 1 2] text\r\n"),
+                .resp_calls=(int[]){IMAP_RESP_STATUS_TYPE, -1},
+                .buf=DSTR_LIT("* OK [APPENDUID 1 2] text\r\n")
+            },
+            {
+                .in=DSTR_LIT("* OK [COPYUID 1 2:4 8:10] text\r\n"),
+                .resp_calls=(int[]){IMAP_RESP_STATUS_TYPE, -1},
+                .buf=DSTR_LIT("* OK [COPYUID 1 2:4 8:10] text\r\n")
+            },
+        };
+        size_t ncases = sizeof(cases) / sizeof(*cases);
+        PROP(&e, do_test_scanner_and_parser(cases, ncases, parser_resp_cb) );
     }
     // ENABLE extension command
     {

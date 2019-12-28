@@ -1152,131 +1152,57 @@ void ie_store_mods_free(ie_store_mods_t *mods){
 }
 
 // status-type response codes
-static ie_st_code_t *ie_st_code_new(derr_t *e){
-    if(is_error(*e)) goto fail;
-
-    IE_MALLOC(e, ie_st_code_t, stc, fail);
-
-    return stc;
-
-fail:
-    return NULL;
-}
-
-ie_st_code_t *ie_st_code_simple(derr_t *e, ie_st_code_type_t type){
-    if(is_error(*e)) goto fail;
-
-    ie_st_code_t *stc = ie_st_code_new(e);
-    if(is_error(*e)) goto fail;
-
-    stc->type = type;
-
-    return stc;
-
-fail:
-    return NULL;
-}
-
-ie_st_code_t *ie_st_code_num(derr_t *e, ie_st_code_type_t type,
-        unsigned int n){
-    if(is_error(*e)) goto fail;
-
-    ie_st_code_t *stc = ie_st_code_new(e);
-    if(is_error(*e)) goto fail;
-
-    stc->type = type;
-    stc->arg.num = n;
-
-    return stc;
-
-fail:
-    return NULL;
-}
-
-ie_st_code_t *ie_st_code_modseqnum(derr_t *e, ie_st_code_type_t type,
-        unsigned long n){
-    if(is_error(*e)) goto fail;
-
-    ie_st_code_t *stc = ie_st_code_new(e);
-    if(is_error(*e)) goto fail;
-
-    stc->type = type;
-    stc->arg.modseqnum = n;
-
-    return stc;
-
-fail:
-    return NULL;
-}
-
-ie_st_code_t *ie_st_code_seq_set(derr_t *e, ie_st_code_type_t type,
-        ie_seq_set_t *seq_set){
-    if(is_error(*e)) goto fail;
-
-    ie_st_code_t *stc = ie_st_code_new(e);
-    if(is_error(*e)) goto fail;
-
-    stc->type = type;
-    stc->arg.seq_set = seq_set;
-
-    return stc;
-
-fail:
-    ie_seq_set_free(seq_set);
-    return NULL;
-}
-
-ie_st_code_t *ie_st_code_pflags(derr_t *e, ie_pflags_t *pflags){
-    if(is_error(*e)) goto fail;
-
-    ie_st_code_t *stc = ie_st_code_new(e);
-    if(is_error(*e)) goto fail;
-
-    stc->type = IE_ST_CODE_PERMFLAGS;
-    stc->arg.pflags = pflags;
-
-    return stc;
-
-fail:
-    ie_pflags_free(pflags);
-    return NULL;
-}
-
-ie_st_code_t *ie_st_code_dstr(derr_t *e, ie_st_code_type_t type,
-        ie_dstr_t *dstr){
-    if(is_error(*e)) goto fail;
-
-    ie_st_code_t *stc = ie_st_code_new(e);
-    if(is_error(*e)) goto fail;
-
-    stc->type = type;
-    stc->arg.dstr = dstr;
-
-    return stc;
-
-fail:
-    ie_dstr_free(dstr);
-    return NULL;
-}
-
-void ie_st_code_free(ie_st_code_t *stc){
-    if(!stc) return;
-    switch(stc->type){
+static void ie_st_code_arg_free(ie_st_code_type_t type, ie_st_code_arg_t arg){
+    switch(type){
         case IE_ST_CODE_ALERT:      break;
         case IE_ST_CODE_PARSE:      break;
         case IE_ST_CODE_READ_ONLY:  break;
         case IE_ST_CODE_READ_WRITE: break;
         case IE_ST_CODE_TRYCREATE:  break;
-        case IE_ST_CODE_NOMODSEQ:   break;
         case IE_ST_CODE_UIDNEXT:    break;
         case IE_ST_CODE_UIDVLD:     break;
         case IE_ST_CODE_UNSEEN:     break;
+        case IE_ST_CODE_PERMFLAGS:
+            ie_pflags_free(arg.pflags); break;
+        case IE_ST_CODE_CAPA:
+            ie_dstr_free(arg.capa); break;
+        case IE_ST_CODE_ATOM:
+            ie_dstr_free(arg.atom.name);
+            ie_dstr_free(arg.atom.text);
+            break;
+
+        case IE_ST_CODE_UIDNOSTICK: break;
+        case IE_ST_CODE_APPENDUID:  break;
+        case IE_ST_CODE_COPYUID:
+            ie_seq_set_free(arg.copyuid.uids_in);
+            ie_seq_set_free(arg.copyuid.uids_out);
+            break;
+
+        case IE_ST_CODE_NOMODSEQ:   break;
         case IE_ST_CODE_HIMODSEQ:   break;
-        case IE_ST_CODE_MODIFIED:   ie_seq_set_free(stc->arg.seq_set); break;
-        case IE_ST_CODE_PERMFLAGS:  ie_pflags_free(stc->arg.pflags); break;
-        case IE_ST_CODE_CAPA:       ie_dstr_free(stc->arg.dstr); break;
-        case IE_ST_CODE_ATOM:       ie_dstr_free(stc->arg.dstr); break;
+        case IE_ST_CODE_MODIFIED:   ie_seq_set_free(arg.modified); break;
     }
+}
+
+ie_st_code_t *ie_st_code_new(derr_t *e, ie_st_code_type_t type,
+        ie_st_code_arg_t arg){
+    if(is_error(*e)) goto fail;
+
+    IE_MALLOC(e, ie_st_code_t, stc, fail);
+
+    stc->type = type;
+    stc->arg = arg;
+
+    return stc;
+
+fail:
+    ie_st_code_arg_free(type, arg);
+    return NULL;
+}
+
+void ie_st_code_free(ie_st_code_t *stc){
+    if(!stc) return;
+    ie_st_code_arg_free(stc->type, stc->arg);
     free(stc);
 }
 
@@ -1724,7 +1650,7 @@ static void imap_cmd_arg_free(imap_cmd_type_t type, imap_cmd_arg_t arg){
         case IMAP_CMD_APPEND:   ie_append_cmd_free(arg.append); break;
         case IMAP_CMD_CHECK:    break;
         case IMAP_CMD_CLOSE:    break;
-        case IMAP_CMD_EXPUNGE:  break;
+        case IMAP_CMD_EXPUNGE:  ie_seq_set_free(arg.uid_expunge); break;
         case IMAP_CMD_SEARCH:   ie_search_cmd_free(arg.search); break;
         case IMAP_CMD_FETCH:    ie_fetch_cmd_free(arg.fetch); break;
         case IMAP_CMD_STORE:    ie_store_cmd_free(arg.store); break;

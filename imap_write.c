@@ -638,6 +638,29 @@ static derr_t seq_set_skip_fill(skip_fill_t *sf, ie_seq_set_t *seq_set){
     return e;
 }
 
+// uid_set is like seq_set but it can't contain '*' entries
+static derr_t uid_set_skip_fill(skip_fill_t *sf, ie_seq_set_t *seq_set){
+    derr_t e = E_OK;
+    for(ie_seq_set_t *p = seq_set; p != NULL; p = p->next){
+        if(p->n1 == 0 || p->n2 == 0){
+            ORIG(&e, E_PARAM, "invalid zero or '*' in uid_set");
+        }
+        // print the first number
+        PROP(&e, num_skip_fill(sf, p->n1) );
+        // are there two numbers?
+        if(p->n1 != p->n2){
+            // print separator
+            STATIC_SKIP_FILL(":");
+            PROP(&e, num_skip_fill(sf, p->n2) );
+        }
+        // add comma if there will be another
+        if(p->next){
+            STATIC_SKIP_FILL(",");
+        }
+    }
+    return e;
+}
+
 static derr_t search_date_skip_fill(skip_fill_t *sf, imap_time_t time){
     derr_t e = E_OK;
     bool pass = true;
@@ -1087,7 +1110,13 @@ static derr_t do_imap_cmd_write(const imap_cmd_t *cmd, dstr_t *out,
             break;
 
         case IMAP_CMD_EXPUNGE:
-            STATIC_SKIP_FILL("EXPUNGE");
+            if(arg.uid_expunge == NULL){
+                STATIC_SKIP_FILL("EXPUNGE");
+            }else{
+                PROP(&e, extension_assert_on(sf->exts, EXT_UIDPLUS) );
+                STATIC_SKIP_FILL("UID EXPUNGE ");
+                PROP(&e, uid_set_skip_fill(sf, arg.uid_expunge) );
+            }
             break;
 
         case IMAP_CMD_SEARCH:
@@ -1203,53 +1232,73 @@ static derr_t st_code_skip_fill(skip_fill_t *sf, ie_st_code_t *code){
         case IE_ST_CODE_TRYCREATE:
             STATIC_SKIP_FILL("TRYCREATE");
             break;
-        case IE_ST_CODE_NOMODSEQ:
-            PROP(&e, extension_assert_on(sf->exts, EXT_CONDSTORE) );
-            STATIC_SKIP_FILL("NOMODSEQ");
-            break;
-        case IE_ST_CODE_UIDNEXT:     // unsigned int
+        case IE_ST_CODE_UIDNEXT:
             STATIC_SKIP_FILL("UIDNEXT ");
-            PROP(&e, nznum_skip_fill(sf, code->arg.num) )
+            PROP(&e, nznum_skip_fill(sf, code->arg.uidnext) )
             break;
-        case IE_ST_CODE_UIDVLD:      // unsigned int
+        case IE_ST_CODE_UIDVLD:
             STATIC_SKIP_FILL("UIDVALIDITY ");
-            PROP(&e, nznum_skip_fill(sf, code->arg.num) );
+            PROP(&e, nznum_skip_fill(sf, code->arg.uidvld) );
             break;
-        case IE_ST_CODE_UNSEEN:      // unsigned int
+        case IE_ST_CODE_UNSEEN:
             STATIC_SKIP_FILL("UNSEEN ");
-            PROP(&e, nznum_skip_fill(sf, code->arg.num) );
+            PROP(&e, nznum_skip_fill(sf, code->arg.unseen) );
             break;
-        case IE_ST_CODE_HIMODSEQ:    // unsigned long
-            PROP(&e, extension_assert_on(sf->exts, EXT_CONDSTORE) );
-            STATIC_SKIP_FILL("HIGHESTMODSEQ ");
-            PROP(&e, nzmodseqnum_skip_fill(sf, code->arg.modseqnum) );
-            break;
-        case IE_ST_CODE_MODIFIED:    // ie_seq_set_t
-            PROP(&e, extension_assert_on(sf->exts, EXT_CONDSTORE) );
-            STATIC_SKIP_FILL("MODIFIED ");
-            PROP(&e, seq_set_skip_fill(sf, code->arg.seq_set) );
-            break;
-        case IE_ST_CODE_PERMFLAGS:   // ie_pflags_t
+        case IE_ST_CODE_PERMFLAGS:
             STATIC_SKIP_FILL("PERMANENTFLAGS (");
             PROP(&e, pflags_skip_fill(sf, code->arg.pflags) );
             STATIC_SKIP_FILL(")");
             break;
-        case IE_ST_CODE_CAPA:        // ie_dstr_t (as a list)
+        case IE_ST_CODE_CAPA:
             STATIC_SKIP_FILL("CAPABILITY ");
-            for(ie_dstr_t *d = code->arg.dstr; d != NULL; d = d->next){
+            for(ie_dstr_t *d = code->arg.capa; d != NULL; d = d->next){
                 PROP(&e, atom_skip_fill(sf, &d->dstr) );
                 if(d->next){ STATIC_SKIP_FILL(" "); }
             }
             break;
-        case IE_ST_CODE_ATOM:        // ie_dstr_t (as a list)
-            // the code, and atom
-            PROP(&e, atom_skip_fill(sf, &code->arg.dstr->dstr) );
-            // the freeform text afterwards
-            if(code->arg.dstr->next){
+        case IE_ST_CODE_ATOM:
+            PROP(&e, atom_skip_fill(sf, &code->arg.atom.name->dstr) );
+            if(code->arg.atom.text){
                 STATIC_SKIP_FILL(" ");
                 PROP(&e, st_code_text_skip_fill(sf,
-                            &code->arg.dstr->next->dstr) );
+                            &code->arg.atom.text->dstr) );
             }
+            break;
+
+        case IE_ST_CODE_UIDNOSTICK:
+            PROP(&e, extension_assert_on(sf->exts, EXT_UIDPLUS) );
+            STATIC_SKIP_FILL("UIDNOTSTICKY");
+            break;
+        case IE_ST_CODE_APPENDUID:
+            PROP(&e, extension_assert_on(sf->exts, EXT_UIDPLUS) );
+            STATIC_SKIP_FILL("APPENDUID ");
+            PROP(&e, nznum_skip_fill(sf, code->arg.appenduid.num) );
+            STATIC_SKIP_FILL(" ");
+            PROP(&e, nznum_skip_fill(sf, code->arg.appenduid.uid) );
+            break;
+        case IE_ST_CODE_COPYUID:
+            PROP(&e, extension_assert_on(sf->exts, EXT_UIDPLUS) );
+            STATIC_SKIP_FILL("COPYUID ");
+            PROP(&e, nznum_skip_fill(sf, code->arg.copyuid.num) );
+            STATIC_SKIP_FILL(" ");
+            PROP(&e, uid_set_skip_fill(sf, code->arg.copyuid.uids_in) );
+            STATIC_SKIP_FILL(" ");
+            PROP(&e, uid_set_skip_fill(sf, code->arg.copyuid.uids_out) );
+            break;
+
+        case IE_ST_CODE_NOMODSEQ:
+            PROP(&e, extension_assert_on(sf->exts, EXT_CONDSTORE) );
+            STATIC_SKIP_FILL("NOMODSEQ");
+            break;
+        case IE_ST_CODE_HIMODSEQ:
+            PROP(&e, extension_assert_on(sf->exts, EXT_CONDSTORE) );
+            STATIC_SKIP_FILL("HIGHESTMODSEQ ");
+            PROP(&e, nzmodseqnum_skip_fill(sf, code->arg.himodseq) );
+            break;
+        case IE_ST_CODE_MODIFIED:
+            PROP(&e, extension_assert_on(sf->exts, EXT_CONDSTORE) );
+            STATIC_SKIP_FILL("MODIFIED ");
+            PROP(&e, seq_set_skip_fill(sf, code->arg.modified) );
             break;
         default:
             TRACE(&e, "unknown status code type: %x", FU(code->type));

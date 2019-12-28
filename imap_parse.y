@@ -288,6 +288,11 @@
 %token EOL
 %token SILENT
 
+/* UIDPLUS extension */
+%token APPENDUID
+%token COPYUID
+%token UIDNOSTICK
+
 /* CONDSTORE extension */
 %token MODSEQ
 %token HIMODSEQ
@@ -370,7 +375,6 @@
 
 %type <modseqnum> modseqnum
 %type <modseqnum> nzmodseqnum
-%type <modseqnum> sc_modseqnum
 %type <modseqnum> f_modseq
 
 %type <flag> flag_simple
@@ -407,7 +411,8 @@
 
 %type <seq_set> seq_spec
 %type <seq_set> seq_set
-%type <seq_set> sc_seq_set
+%type <seq_set> uid_spec
+%type <seq_set> uid_set
 %destructor { ie_seq_set_free($$); } <seq_set>
 
 %type <nums> nums_1
@@ -469,6 +474,14 @@
 %type <st_code> sc_capa
 %type <st_code> sc_pflags
 %type <st_code> sc_atom
+//
+%type <st_code> sc_uidnostick
+%type <st_code> sc_appenduid
+%type <st_code> sc_copyuid
+//
+%type <st_code> sc_nomodseq
+%type <st_code> sc_himodseq
+%type <st_code> sc_modified
 %destructor { ie_st_code_free($$); } <st_code>
 
 %type <fetch_resp> msg_attrs_0
@@ -706,7 +719,13 @@ close_cmd: tag[t] SP CLOSE
 /*** EXPUNGE command ***/
 
 expunge_cmd: tag[t] SP EXPUNGE
-    { $$ = imap_cmd_new(E, $t, IMAP_CMD_EXPUNGE, (imap_cmd_arg_t){0}); };
+                { imap_cmd_arg_t arg = {0};
+                  $$ = imap_cmd_new(E, $t, IMAP_CMD_EXPUNGE, arg); }
+           | tag[t] SP UID SP EXPUNGE SP uid_set[s]
+                { extension_assert_on_builder(E, p->exts, EXT_UIDPLUS);
+                  imap_cmd_arg_t arg = {.uid_expunge=$s};
+                  $$ = imap_cmd_new(E, $t, IMAP_CMD_EXPUNGE, arg); }
+;
 
 /*** UID (modifier of other commands) ***/
 uid_mode: %empty { $$ = false; }
@@ -998,40 +1017,82 @@ st_code: YES_STATUS_CODE { MODE(STATUS_CODE); }
            st_code_[c] ']' SP { MODE(STATUS_TEXT); $$ = $c; }
        | %empty { $$ = NULL; }
 
-st_code_: ALERT      { $$ = ie_st_code_simple(E, IE_ST_CODE_ALERT); }
-        | PARSE      { $$ = ie_st_code_simple(E, IE_ST_CODE_PARSE); }
-        | READ_ONLY  { $$ = ie_st_code_simple(E, IE_ST_CODE_READ_ONLY); }
-        | READ_WRITE { $$ = ie_st_code_simple(E, IE_ST_CODE_READ_WRITE); }
-        | TRYCREATE  { $$ = ie_st_code_simple(E, IE_ST_CODE_TRYCREATE); }
-        | NOMODSEQ   { $$ = ie_st_code_simple(E, IE_ST_CODE_NOMODSEQ); }
-        | UIDNEXT SP sc_num[n] { $$ = ie_st_code_num(E, IE_ST_CODE_UIDNEXT, $n); }
-        | UIDVLD SP sc_num[n]  { $$ = ie_st_code_num(E, IE_ST_CODE_UIDVLD, $n); }
-        | UNSEEN SP sc_num[n]  { $$ = ie_st_code_num(E, IE_ST_CODE_UNSEEN, $n); }
-        | HIMODSEQ SP sc_modseqnum[n] { $$ = ie_st_code_modseqnum(E, IE_ST_CODE_HIMODSEQ, $n); }
-        | MODIFIED SP sc_seq_set[s]  { $$ = ie_st_code_seq_set(E, IE_ST_CODE_MODIFIED, $s); }
+st_code_: ALERT      { ie_st_code_arg_t arg = {0};
+                       $$ = ie_st_code_new(E, IE_ST_CODE_ALERT, arg); }
+        | PARSE      { ie_st_code_arg_t arg = {0};
+                       $$ = ie_st_code_new(E, IE_ST_CODE_PARSE, arg); }
+        | READ_ONLY  { ie_st_code_arg_t arg = {0};
+                       $$ = ie_st_code_new(E, IE_ST_CODE_READ_ONLY, arg); }
+        | READ_WRITE { ie_st_code_arg_t arg = {0};
+                       $$ = ie_st_code_new(E, IE_ST_CODE_READ_WRITE, arg); }
+        | TRYCREATE  { ie_st_code_arg_t arg = {0};
+                       $$ = ie_st_code_new(E, IE_ST_CODE_TRYCREATE, arg); }
+        | UIDNEXT SP sc_num[n] { ie_st_code_arg_t arg = {.uidnext=$n};
+                                 $$ = ie_st_code_new(E, IE_ST_CODE_UIDNEXT, arg); }
+        | UIDVLD SP sc_num[n]  { ie_st_code_arg_t arg = {.uidvld=$n};
+                                 $$ = ie_st_code_new(E, IE_ST_CODE_UIDVLD, arg); }
+        | UNSEEN SP sc_num[n]  { ie_st_code_arg_t arg = {.unseen=$n};
+                                 $$ = ie_st_code_new(E, IE_ST_CODE_UNSEEN, arg); }
         | sc_pflags
         | sc_capa
         | sc_atom
+
+        | sc_uidnostick
+        | sc_appenduid
+        | sc_copyuid
+
+        | sc_nomodseq
+        | sc_himodseq
+        | sc_modified
 ;
 
-sc_num: { MODE(NUM); } nznum[n] { MODE(STATUS_CODE); $$ = $n; };
+sc_end: %empty { MODE(STATUS_CODE); }
 
-sc_modseqnum: { MODE(NUM); } nzmodseqnum[n]
-    { extension_assert_on_builder(E, p->exts, EXT_CONDSTORE);
-      MODE(STATUS_CODE);
-      $$ = $n; };
+sc_num: { MODE(NUM); } nznum[n] sc_end { $$ = $n; };
 
-sc_seq_set: { MODE(SEQSET); } seq_set[n]
-    { extension_assert_on_builder(E, p->exts, EXT_CONDSTORE);
-      MODE(STATUS_CODE);
-      $$ = $n; };
+sc_pflags: PERMFLAGS { MODE(FLAG); } SP pflags[p] sc_end
+    { ie_st_code_arg_t arg = {.pflags=$p};
+      $$ = ie_st_code_new(E, IE_ST_CODE_PERMFLAGS, arg); };
 
-sc_pflags: PERMFLAGS { MODE(FLAG); } SP pflags[p] { $$ = ie_st_code_pflags(E, $p); }
-
-sc_capa: CAPA { MODE(ATOM); } SP capas_1[c] { $$ = ie_st_code_dstr(E, IE_ST_CODE_CAPA, $c); };
+sc_capa: CAPA { MODE(ATOM); } SP capas_1[c] sc_end
+    { ie_st_code_arg_t arg = {.capa=$c};
+      $$ = ie_st_code_new(E, IE_ST_CODE_CAPA, arg); };
 
 sc_atom: atom[a] { MODE(STATUS_TEXT); } sc_text[t]
-    { $$ = ie_st_code_dstr(E, IE_ST_CODE_ATOM, ie_dstr_add(E, $a, $t)); };
+    { ie_st_code_arg_t arg = {.atom={.name=$a, .text=$t}};
+      $$ = ie_st_code_new(E, IE_ST_CODE_ATOM, arg); };
+
+
+sc_uidnostick: UIDNOSTICK
+    { extension_assert_on_builder(E, p->exts, EXT_UIDPLUS);
+      ie_st_code_arg_t arg = {0};
+      $$ = ie_st_code_new(E, IE_ST_CODE_UIDNOSTICK, arg); };
+
+sc_appenduid: APPENDUID SP { MODE(NUM); } nznum[n] SP nznum[uid] sc_end
+    { extension_assert_on_builder(E, p->exts, EXT_UIDPLUS);
+      ie_st_code_arg_t arg = {.appenduid={.num=$n, .uid=$uid}};
+      $$ = ie_st_code_new(E, IE_ST_CODE_APPENDUID, arg); };
+
+sc_copyuid: COPYUID SP { MODE(NUM); } nznum[n] SP uid_set[in] SP uid_set[out] sc_end
+    { extension_assert_on_builder(E, p->exts, EXT_UIDPLUS);
+      ie_st_code_arg_t arg = {.copyuid={.num=$n, .uids_in=$in, .uids_out=$out}};
+      $$ = ie_st_code_new(E, IE_ST_CODE_COPYUID, arg); };
+
+
+sc_nomodseq: NOMODSEQ
+    { extension_assert_on_builder(E, p->exts, EXT_CONDSTORE);
+      ie_st_code_arg_t arg = {0};
+      $$ = ie_st_code_new(E, IE_ST_CODE_NOMODSEQ, arg); }
+
+sc_himodseq: HIMODSEQ SP { MODE(NUM); } nzmodseqnum[n] sc_end
+    { extension_assert_on_builder(E, p->exts, EXT_CONDSTORE);
+      ie_st_code_arg_t arg = {.himodseq=$n};
+      $$ = ie_st_code_new(E, IE_ST_CODE_HIMODSEQ, arg); }
+
+sc_modified: MODIFIED SP seq_set[s] sc_end
+    { extension_assert_on_builder(E, p->exts, EXT_CONDSTORE);
+      ie_st_code_arg_t arg = {.modified=$s};
+      $$ = ie_st_code_new(E, IE_ST_CODE_MODIFIED, arg); };
 
 /* If text is included after the atom code, ignore the leading space */
 sc_text: %empty         { $$ = NULL; }
@@ -1431,6 +1492,14 @@ nums_1: num              { $$ = ie_nums_new(E, $num); }
 seq_set: preseq seq_spec[set]            { $$ = $set; }
        | seq_set[set] ',' seq_spec[spec] { $$ = ie_seq_set_append(E, $set, $spec); }
 ;
+
+/* uid_set is like seq_set except without '*' values */
+uid_spec: nznum[n]                { $$ = ie_seq_set_new(E, $n, $n); }
+        | nznum[n1] ':' nznum[n2] { $$ = ie_seq_set_new(E, $n1, $n2); }
+;
+
+uid_set: preseq uid_spec[set]            { $$ = $set; }
+       | uid_set[set] ',' uid_spec[spec] { $$ = ie_seq_set_append(E, $set, $spec); }
 
 
 /* flags, used by APPEND commands, STORE commands, and FLAGS responses */

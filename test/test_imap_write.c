@@ -68,6 +68,7 @@ static derr_t do_writer_test(const test_case_t *tc){
         size_t old_want = want;
 
         extensions_t exts = {
+            .uidplus = EXT_STATE_ON,
             .enable = EXT_STATE_ON,
             .condstore = EXT_STATE_ON,
         };
@@ -175,6 +176,92 @@ static derr_t test_imap_writer(void){
                     {2, "rd"},
                     {2, "\"\r"},
                     {2, "\n"},
+                    {0}
+                },
+            },
+        };
+        CHECK(&e);
+        PROP(&e, do_writer_test_multi(cases, sizeof(cases)/sizeof(*cases)) );
+    }
+    // UIDPLUS extension
+    {
+        test_case_t cases[] = {
+            {
+                .cmd=imap_cmd_new(&e, IE_DSTR("tag"), IMAP_CMD_EXPUNGE,
+                    (imap_cmd_arg_t){0}
+                ),
+                .out=(size_chunk_out_t[]){
+                    {64, "tag EXPUNGE\r\n"},
+                    {0}
+                },
+            },
+            {
+                .cmd=imap_cmd_new(&e, IE_DSTR("tag"), IMAP_CMD_EXPUNGE,
+                    (imap_cmd_arg_t){
+                        .uid_expunge=ie_seq_set_new(&e, 1, 2),
+                    }
+                ),
+                .out=(size_chunk_out_t[]){
+                    {64, "tag UID EXPUNGE 1:2\r\n"},
+                    {0}
+                },
+            },
+            {
+                .resp=imap_resp_new(&e, IMAP_RESP_STATUS_TYPE,
+                    (imap_resp_arg_t){
+                        .status_type=ie_st_resp_new(&e, NULL, IE_ST_OK,
+                            ie_st_code_new(&e,
+                                IE_ST_CODE_UIDNOSTICK,
+                                (ie_st_code_arg_t){0}
+                            ),
+                            IE_DSTR("text")
+                        ),
+                    }
+                ),
+                .out=(size_chunk_out_t[]){
+                    {64, "* OK [UIDNOTSTICKY] text\r\n"},
+                    {0}
+                },
+            },
+            {
+                .resp=imap_resp_new(&e, IMAP_RESP_STATUS_TYPE,
+                    (imap_resp_arg_t){
+                        .status_type=ie_st_resp_new(&e, NULL, IE_ST_OK,
+                            ie_st_code_new(&e,
+                                IE_ST_CODE_APPENDUID,
+                                (ie_st_code_arg_t){
+                                    .appenduid={.num=1, .uid=2},
+                                }
+                            ),
+                            IE_DSTR("text")
+                        ),
+                    }
+                ),
+                .out=(size_chunk_out_t[]){
+                    {64, "* OK [APPENDUID 1 2] text\r\n"},
+                    {0}
+                },
+            },
+            {
+                .resp=imap_resp_new(&e, IMAP_RESP_STATUS_TYPE,
+                    (imap_resp_arg_t){
+                        .status_type=ie_st_resp_new(&e, NULL, IE_ST_OK,
+                            ie_st_code_new(&e,
+                                IE_ST_CODE_COPYUID,
+                                (ie_st_code_arg_t){
+                                    .copyuid={
+                                        .num=1,
+                                        .uids_in=ie_seq_set_new(&e, 1, 2),
+                                        .uids_out=ie_seq_set_new(&e, 4, 8),
+                                    },
+                                }
+                            ),
+                            IE_DSTR("text")
+                        ),
+                    }
+                ),
+                .out=(size_chunk_out_t[]){
+                    {64, "* OK [COPYUID 1 1:2 4:8] text\r\n"},
                     {0}
                 },
             },
@@ -325,14 +412,12 @@ static derr_t test_imap_writer(void){
             {
                 .resp=imap_resp_new(&e, IMAP_RESP_STATUS_TYPE,
                     (imap_resp_arg_t){
-                        .status_type=ie_st_resp_new(
-                            &e,
-                            NULL,
-                            IE_ST_OK,
-                            ie_st_code_modseqnum(
-                                &e,
+                        .status_type=ie_st_resp_new(&e, NULL, IE_ST_OK,
+                            ie_st_code_new(&e,
                                 IE_ST_CODE_HIMODSEQ,
-                                12345678901234UL
+                                (ie_st_code_arg_t){
+                                    .himodseq=12345678901234UL,
+                                }
                             ),
                             IE_DSTR("text")
                         ),
@@ -346,11 +431,11 @@ static derr_t test_imap_writer(void){
             {
                 .resp=imap_resp_new(&e, IMAP_RESP_STATUS_TYPE,
                     (imap_resp_arg_t){
-                        .status_type=ie_st_resp_new(
-                            &e,
-                            NULL,
-                            IE_ST_OK,
-                            ie_st_code_simple(&e, IE_ST_CODE_NOMODSEQ),
+                        .status_type=ie_st_resp_new(&e, NULL, IE_ST_OK,
+                            ie_st_code_new(&e,
+                                IE_ST_CODE_NOMODSEQ,
+                                (ie_st_code_arg_t){0}
+                            ),
                             IE_DSTR("text")
                         ),
                     }
@@ -363,14 +448,12 @@ static derr_t test_imap_writer(void){
             {
                 .resp=imap_resp_new(&e, IMAP_RESP_STATUS_TYPE,
                     (imap_resp_arg_t){
-                        .status_type=ie_st_resp_new(
-                            &e,
-                            NULL,
-                            IE_ST_OK,
-                            ie_st_code_seq_set(
-                                &e,
+                        .status_type=ie_st_resp_new(&e, NULL, IE_ST_OK,
+                            ie_st_code_new(&e,
                                 IE_ST_CODE_MODIFIED,
-                                ie_seq_set_new(&e, 1, 2)
+                                (ie_st_code_arg_t){
+                                    .modified=ie_seq_set_new(&e, 1, 2),
+                                }
                             ),
                             IE_DSTR("text")
                         ),
@@ -427,6 +510,7 @@ static derr_t test_imap_print(void){
     PROP(&e, dstr_new(&buf, 4096) );
 
     extensions_t exts = {
+        .uidplus = EXT_STATE_ON,
         .enable = EXT_STATE_ON,
         .condstore = EXT_STATE_ON,
     };

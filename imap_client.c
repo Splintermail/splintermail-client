@@ -793,7 +793,7 @@ static derr_t untagged_ok(imap_client_t *ic, const ie_st_code_t *code,
     // The very first message is treated specially
     if(ic->imap_state == PREGREET){
         if(code != NULL && code->type == IE_ST_CODE_CAPA){
-            PROP(&e, check_capas(code->arg.dstr) );
+            PROP(&e, check_capas(code->arg.capa) );
             PROP(&e, send_login(ic) );
         }else{
             PROP(&e, send_capas(ic) );
@@ -814,19 +814,19 @@ static derr_t untagged_ok(imap_client_t *ic, const ie_st_code_t *code,
                 if(ic->imap_state != SELECTING){
                     ORIG(&e, E_INTERNAL, "got UIDNEXT outside of SELECTING");
                 }
-                select_uidnext(ic, code->arg.num);
+                select_uidnext(ic, code->arg.uidnext);
                 return e;
             case IE_ST_CODE_UIDVLD:
                 if(ic->imap_state != SELECTING){
                     ORIG(&e, E_INTERNAL, "got UIDVLD outside of SELECTING");
                 }
-                select_uidvalidity(ic, code->arg.num);
+                select_uidvalidity(ic, code->arg.uidvld);
                 return e;
             case IE_ST_CODE_UNSEEN:
                 if(ic->imap_state != SELECTING){
                     ORIG(&e, E_INTERNAL, "got UNSEEN outside of SELECTING");
                 }
-                select_unseen(ic, code->arg.num);
+                select_unseen(ic, code->arg.unseen);
                 return e;
             case IE_ST_CODE_PERMFLAGS:
                 if(ic->imap_state != SELECTING){

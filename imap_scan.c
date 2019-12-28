@@ -328,6 +328,7 @@ num_mode:
         *               { INVALID_TOKEN_ERROR; }
         eol             { *type = EOL; goto done; }
         num             { *type = NUM; goto done; }
+        atom_spec       { *type = *scanner->start; goto done; }
     */
 
 flag_mode:
@@ -390,10 +391,13 @@ status_code_mode:
         'read_only'     { *type = READ_ONLY; goto done; }
         'read_write'    { *type = READ_WRITE; goto done; }
         'trycreate'     { *type = TRYCREATE; goto done; }
+        'uidnotsticky'  { *type = UIDNOSTICK; goto done; }
         'nomodseq'      { *type = NOMODSEQ; goto done; }
         'uidnext'       { *type = UIDNEXT; goto done; }
         'uidvalidity'   { *type = UIDVLD; goto done; }
         'unseen'        { *type = UNSEEN; goto done; }
+        'appenduid'     { *type = APPENDUID; goto done; }
+        'copyuid'       { *type = COPYUID; goto done; }
         'highestmodseq' { *type = HIMODSEQ; goto done; }
         'modified'      { *type = MODIFIED; goto done; }
 

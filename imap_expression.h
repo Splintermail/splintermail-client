@@ -354,31 +354,56 @@ typedef enum {
     IE_ST_BYE,
 } ie_status_t;
 
-typedef enum {              // Argument used:
-    IE_ST_CODE_ALERT,       // none
-    IE_ST_CODE_PARSE,       // none
-    IE_ST_CODE_READ_ONLY,   // none
-    IE_ST_CODE_READ_WRITE,  // none
-    IE_ST_CODE_TRYCREATE,   // none
-    IE_ST_CODE_NOMODSEQ,    // none
-    IE_ST_CODE_UIDNEXT,     // unsigned int
-    IE_ST_CODE_UIDVLD,      // unsigned int
-    IE_ST_CODE_UNSEEN,      // unsigned int
-    IE_ST_CODE_HIMODSEQ,    // unsigned long
-    IE_ST_CODE_MODIFIED,    // ie_seq_set_t
-    IE_ST_CODE_PERMFLAGS,   // ie_pflags_t
-    IE_ST_CODE_CAPA,        // ie_dstr_t (as a list)
-    IE_ST_CODE_ATOM,        /* ie_dstr_t (a list of 1 or 2 strings; if 2, the
-                               first is the name of the code and the rest is
-                               free-form text) */
+typedef enum {
+    IE_ST_CODE_ALERT,
+    IE_ST_CODE_PARSE,
+    IE_ST_CODE_READ_ONLY,
+    IE_ST_CODE_READ_WRITE,
+    IE_ST_CODE_TRYCREATE,
+    IE_ST_CODE_UIDNEXT,
+    IE_ST_CODE_UIDVLD,
+    IE_ST_CODE_UNSEEN,
+    IE_ST_CODE_PERMFLAGS,
+    IE_ST_CODE_CAPA,
+    IE_ST_CODE_ATOM,
+
+    IE_ST_CODE_UIDNOSTICK,
+    IE_ST_CODE_APPENDUID,
+    IE_ST_CODE_COPYUID,
+
+    IE_ST_CODE_NOMODSEQ,
+    IE_ST_CODE_HIMODSEQ,
+    IE_ST_CODE_MODIFIED,
 } ie_st_code_type_t;
 
+// TODO: switch to 1:1 types-to-args, like imap_cmd_arg_t
 typedef union {
-    ie_dstr_t *dstr;
+    unsigned int uidnext;
+    unsigned int uidvld;
+    unsigned int unseen;
     ie_pflags_t *pflags;
-    unsigned int num;
-    unsigned long modseqnum;
-    ie_seq_set_t *seq_set;
+    ie_dstr_t *capa;
+    struct {
+        // required:
+        ie_dstr_t *name;
+        // optional:
+        ie_dstr_t *text;
+    } atom;
+
+    // UIDPLUS extension
+    struct {
+        unsigned int num;
+        unsigned int uid;
+    } appenduid;
+    struct {
+        unsigned int num;
+        ie_seq_set_t *uids_in;
+        ie_seq_set_t *uids_out;
+    } copyuid;
+
+    // CONDSTORE extensions
+    unsigned long himodseq;
+    ie_seq_set_t *modified;
 } ie_st_code_arg_t;
 
 typedef struct {
@@ -503,7 +528,7 @@ typedef union {
     ie_append_cmd_t *append;
     // nothing for check
     // nothing for close
-    // nothing for expunge
+    ie_seq_set_t *uid_expunge; // NULL indicates normal EXPUNGE
     ie_search_cmd_t *search;
     ie_fetch_cmd_t *fetch;
     ie_store_cmd_t *store;
@@ -819,16 +844,8 @@ void ie_store_mods_free(ie_store_mods_t *mods);
 
 // status-type response codes
 
-ie_st_code_t *ie_st_code_simple(derr_t *e, ie_st_code_type_t type);
-ie_st_code_t *ie_st_code_num(derr_t *e, ie_st_code_type_t type,
-        unsigned int n);
-ie_st_code_t *ie_st_code_modseqnum(derr_t *e, ie_st_code_type_t type,
-        unsigned long n);
-ie_st_code_t *ie_st_code_seq_set(derr_t *e, ie_st_code_type_t type,
-        ie_seq_set_t *n);
-ie_st_code_t *ie_st_code_pflags(derr_t *e, ie_pflags_t *pflags);
-ie_st_code_t *ie_st_code_dstr(derr_t *e, ie_st_code_type_t type,
-        ie_dstr_t *dstr);
+ie_st_code_t *ie_st_code_new(derr_t *e, ie_st_code_type_t type,
+        ie_st_code_arg_t arg);
 void ie_st_code_free(ie_st_code_t *stc);
 
 // STATUS responses

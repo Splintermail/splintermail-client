@@ -259,14 +259,64 @@ OH SHIT, this architecture will suffer from a host of incorrect corner cases.
     to do is to pass all flag stores or fetches to the server and have the mail
     server be the single point of truth.
 
-Order of work is:
-    Make IMAP client capable of logging in
-    Make IMAP client capable of mirroring a folder layout
-    Make IMAP client capable of syncing a folder
-    Make IMAP server, and all that entails...
+OH SHIT, this actually *is* possible with the UIDPLUS command!  So this leaves
+us with two stragegies:
+    This leaves us with two strategies:
 
-Right now I'm going to work on:
-    Parsing server responses correctly
+      - The "passthru" strategy: we only hold a cache of downloaded/decrypted
+        files; most commands are passed directly through to the host
+        mailserver, except FETCH's which may be intercepted and SEARCHes,
+        which will have to be fused from server info and our own info
+
+      - The "subserver" strategy: we accumulate commands from the mail client
+        and only pass the relevant things to the mail server
+
+    Passthru pros:
+      - very clean and easy
+      - ditm layer has very neat and well-defined role in the system
+
+    Passthru cons:
+      - less code reuse; there's no real opportunity to extract high-level
+        functionality into an imap controller interface that could be used by
+        sm_fetch and ditm
+
+    Subserver pros:
+      - There's something beautiful about having the master stream updates to
+        us and we stream them to a lower client.
+      - The logic to stream updates from the mail server is identical between
+        sm_fetch and ditm
+      - There arises a concept of high-level control that isn't really possible
+        with a passthru strategy
+      - This strategy will potentially be more flexible when with different
+        backends
+
+    Subserver cons:
+      - To support CONDRESTORE/QRESYNC, most commands would just have to be
+        relayed to the mail server anyways, so your one upwards connection
+        would mostly just be a serialized version of the Passthru case.
+      - I don't know the easy and correct solution for handing things like
+        STOREs on expunged messages with correct MODSEQ data.
+      - On second thought, I think the proper solution is to maintain an
+        indepentent modseq record, and offer that to mail clients.  That would
+        be easy to guarantee correctness (except in uninstall/reinstall cases).
+        That would also work very neatly with non-IMAP backends; as long as you
+        can stream updates from whatever backend, you can serve semantically
+        correct IMAP to them.
+
+    Conclusion:
+        I think the Passthru strategy is kind of a no-brainer.  It seems like
+        the Subserver strategy looks really neat for download-only mail
+        clients, but realistically when mail is being passed in both directions
+        the Passthru strategy will be cleaner.
+
+        In future expansions with non-IMAP backends, I could see either that
+        the Passthru strategy is still the best option (basically a
+        per-connection translation layer), or maybe expand the subserver layer
+        to implement its own MODSEQ data, so that there is really a full
+        separation between the upwards connection and the downwards connection.
+        I could do that now but it seems like a lot of extra machinery without
+        much added benefit.
+
 
 # Socket / TLS / IMAP engines:
 

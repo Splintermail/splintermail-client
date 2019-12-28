@@ -60,6 +60,7 @@ set(OBJ_TGTS
     imap_session
     imap_client
     maildir_name
+    imap_extension
 )
 
 set(EXE_TGTS
@@ -268,14 +269,14 @@ obj_depend_obj(tls_engine engine networking)
 obj_depend_obj(imap_engine engine imap_read)
 obj_depend_obj(jsw_atree common)
 obj_depend_obj(imap_expression link common)
-obj_depend_obj(imap_parse_tab imap_expression imap_scan common)
+obj_depend_obj(imap_parse_tab imap_expression imap_extension imap_scan common)
 obj_depend_obj(imap_parse imap_parse_tab common)
 add_dependencies(imap_parse_o bison_header)
 obj_depend_obj(imap_scan imap_parse common)
 add_dependencies(imap_scan_o bison_header)
 obj_depend_obj(imap_read imap_parse imap_scan common)
 add_dependencies(imap_read_o bison_header)
-obj_depend_obj(imap_write imap_expression common)
+obj_depend_obj(imap_write imap_expression imap_extension common)
 obj_depend_obj(hashmap common)
 obj_depend_obj(imap_msg jsw_atree link hashmap fileops)
 obj_depend_obj(imap_maildir maildir_name imap_msg uv_util fileops)
