@@ -582,11 +582,13 @@ static derr_t search_done(imap_client_t *ic, imap_cmd_t *cmd,
     return e;
 }
 
-static derr_t search_resp(imap_client_t *ic, const ie_nums_t *uids){
+static derr_t search_resp(imap_client_t *ic, const ie_search_resp_t *search){
     derr_t e = E_OK;
 
-    // send a UID search for each uid
-    for(const ie_nums_t *uid = uids; uid != NULL; uid = uid->next){
+    if(!search) return e;
+
+    // send a UID fetch for each uid
+    for(const ie_nums_t *uid = search->nums; uid != NULL; uid = uid->next){
         PROP(&e, send_fetch(ic, uid->num) );
     }
 

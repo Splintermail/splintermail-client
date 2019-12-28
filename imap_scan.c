@@ -25,6 +25,7 @@ DSTR_STATIC(scan_mode_SEQSET_dstr, "SCAN_MODE_SEQSET");
 DSTR_STATIC(scan_mode_STORE_dstr, "SCAN_MODE_STORE");
 DSTR_STATIC(scan_mode_SEARCH_dstr, "SCAN_MODE_SEARCH");
 DSTR_STATIC(scan_mode_SELECT_PARAM_dstr, "SCAN_MODE_SELECT_PARAM");
+DSTR_STATIC(scan_mode_MODSEQ_dstr, "SCAN_MODE_MODSEQ");
 DSTR_STATIC(scan_mode_unk_dstr, "unknown scan mode");
 
 dstr_t* scan_mode_to_dstr(scan_mode_t mode){
@@ -50,6 +51,7 @@ dstr_t* scan_mode_to_dstr(scan_mode_t mode){
         case SCAN_MODE_STORE: return &scan_mode_STORE_dstr;
         case SCAN_MODE_SEARCH: return &scan_mode_SEARCH_dstr;
         case SCAN_MODE_SELECT_PARAM: return &scan_mode_SELECT_PARAM_dstr;
+        case SCAN_MODE_MODSEQ: return &scan_mode_MODSEQ_dstr;
         default: return &scan_mode_unk_dstr;
     }
 }
@@ -166,7 +168,7 @@ derr_t imap_scan(imap_scanner_t *scanner, scan_mode_t mode, bool *more,
 
 #   define INVALID_TOKEN_ERROR { \
         dstr_t scannable = get_scannable(scanner); \
-        TRACE(&e, "in mode %x, found token '%x'.", \
+        TRACE(&e, "in mode %x, found token '%x'.\n", \
                 FD(scan_mode_to_dstr(mode)), FD_DBG(&scannable)); \
         ORIG(&e, E_PARAM, "invalid token for mode"); \
     }
@@ -219,6 +221,7 @@ derr_t imap_scan(imap_scanner_t *scanner, scan_mode_t mode, bool *more,
             case SCAN_MODE_STORE:               goto store_mode;
             case SCAN_MODE_SEARCH:              goto search_mode;
             case SCAN_MODE_SELECT_PARAM:        goto select_param_mode;
+            case SCAN_MODE_MODSEQ:              goto modseq_mode;
         }
     }
 
@@ -609,6 +612,18 @@ select_param_mode:
         atom_spec       { *type = *scanner->start; goto done; }
 
         'condstore'     { *type = CONDSTORE; goto done; }
+    */
+
+modseq_mode:
+
+    /*!re2c
+        *               { INVALID_TOKEN_ERROR; }
+        eol             { *type = EOL; goto done; }
+        atom_spec       { *type = *scanner->start; goto done; }
+
+        'modseq'        { *type = MODSEQ; goto done; }
+
+        num             { *type = NUM; goto done; }
     */
 
     size_t start_offset, end_offset;

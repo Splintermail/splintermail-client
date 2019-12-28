@@ -1564,6 +1564,29 @@ void ie_status_resp_free(ie_status_resp_t *status){
     free(status);
 }
 
+ie_search_resp_t *ie_search_resp_new(derr_t *e, ie_nums_t *nums,
+        bool modseq_present, unsigned long modseqnum){
+    if(is_error(*e)) goto fail;
+
+    IE_MALLOC(e, ie_search_resp_t, search, fail);
+
+    search->nums = nums;
+    search->modseq_present = modseq_present;
+    search->modseqnum = modseqnum;
+
+    return search;
+
+fail:
+    ie_nums_free(nums);
+    return NULL;
+}
+
+void ie_search_resp_free(ie_search_resp_t *search){
+    if(!search) return;
+    ie_nums_free(search->nums);
+    free(search);
+}
+
 static void imap_resp_arg_free(imap_resp_type_t type, imap_resp_arg_t arg){
     switch(type){
         case IMAP_RESP_STATUS_TYPE: ie_st_resp_free(arg.status_type); break;
@@ -1571,7 +1594,7 @@ static void imap_resp_arg_free(imap_resp_type_t type, imap_resp_arg_t arg){
         case IMAP_RESP_LIST:        ie_list_resp_free(arg.list); break;
         case IMAP_RESP_LSUB:        ie_list_resp_free(arg.lsub); break;
         case IMAP_RESP_STATUS:      ie_status_resp_free(arg.status); break;
-        case IMAP_RESP_SEARCH:      ie_nums_free(arg.search); break;
+        case IMAP_RESP_SEARCH:      ie_search_resp_free(arg.search); break;
         case IMAP_RESP_FLAGS:       ie_flags_free(arg.flags); break;
         case IMAP_RESP_EXISTS:      break;
         case IMAP_RESP_EXPUNGE:     break;

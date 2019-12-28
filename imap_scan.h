@@ -41,6 +41,7 @@ typedef enum {
     SCAN_MODE_STORE,
     SCAN_MODE_SEARCH,
     SCAN_MODE_SELECT_PARAM,
+    SCAN_MODE_MODSEQ,
 } scan_mode_t;
 
 typedef struct {

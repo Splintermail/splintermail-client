@@ -51,6 +51,7 @@ derr_t print_imap_cmd(dstr_t *out, const imap_cmd_t *cmd);
 derr_t print_st_resp(dstr_t *out, const ie_st_resp_t *st);
 derr_t print_list_resp(dstr_t *out, const ie_list_resp_t *list);
 derr_t print_status_resp(dstr_t *out, const ie_status_resp_t *status);
+derr_t print_search_resp(dstr_t *out, const ie_search_resp_t *search);
 derr_t print_fetch_resp(dstr_t *out, const ie_fetch_resp_t *fetch);
 
 derr_t print_imap_resp(dstr_t *out, const imap_resp_t *resp);

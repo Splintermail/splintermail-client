@@ -289,6 +289,7 @@
 %token SILENT
 
 /* CONDSTORE extension */
+%token MODSEQ
 %token HIMODSEQ
 %token NOMODSEQ
 %token CONDSTORE
@@ -1044,11 +1045,24 @@ flags_resp: FLAGS SP { MODE(FLAG); } '(' flags_0[f] ')'
 /*** SEARCH response ***/
 
 search_resp: SEARCH
-                        { imap_resp_arg_t arg = {.search=NULL};
+                        { imap_resp_arg_t arg = {
+                              .search=ie_search_resp_new(E, NULL, false, 0),
+                          };
                           $$ = imap_resp_new(E, IMAP_RESP_SEARCH, arg); }
-           | SEARCH SP nums_1[n]
-                        { imap_resp_arg_t arg = {.search=$n};
+           | SEARCH pre_search_resp SP nums_1[n]
+                        { imap_resp_arg_t arg = {
+                              .search=ie_search_resp_new(E, $n, false, 0),
+                          };
+                          $$ = imap_resp_new(E, IMAP_RESP_SEARCH, arg); }
+           | SEARCH pre_search_resp SP nums_1[n] SP { MODE(MODSEQ); }
+                '(' MODSEQ SP nzmodseqnum[s] ')'
+                        { extension_assert_on_builder(E, p->exts, EXT_CONDSTORE);
+                          imap_resp_arg_t arg = {
+                              .search=ie_search_resp_new(E, $n, true, $s),
+                          };
                           $$ = imap_resp_new(E, IMAP_RESP_SEARCH, arg); };
+
+pre_search_resp: %empty { MODE(MODSEQ); };
 
 /*** EXISTS response ***/
 

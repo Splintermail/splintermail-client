@@ -586,6 +586,17 @@ static derr_t modseqnum_skip_fill(skip_fill_t *sf, unsigned long num){
     return e;
 }
 
+static derr_t nzmodseqnum_skip_fill(skip_fill_t *sf, unsigned long num){
+    derr_t e = E_OK;
+    if(!num){
+        ORIG(&e, E_PARAM, "invalid zero in non-zero number");
+    }
+    DSTR_VAR(buf, 32);
+    PROP(&e, FMT(&buf, "%x", FU(num)) );
+    PROP(&e, raw_skip_fill(sf, &buf) );
+    return e;
+}
+
 static derr_t seq_set_skip_fill(skip_fill_t *sf, ie_seq_set_t *seq_set){
     derr_t e = E_OK;
     for(ie_seq_set_t *p = seq_set; p != NULL; p = p->next){
@@ -1249,6 +1260,25 @@ static derr_t status_resp_skip_fill(skip_fill_t *sf, ie_status_resp_t *status){
     return e;
 }
 
+static derr_t search_resp_skip_fill(skip_fill_t *sf, ie_search_resp_t *search){
+    derr_t e = E_OK;
+    STATIC_SKIP_FILL("SEARCH");
+    if(search == NULL) return e;
+    for(ie_nums_t *n = search->nums; n != NULL; n = n->next){
+        STATIC_SKIP_FILL(" ");
+        PROP(&e, nznum_skip_fill(sf, n->num) );
+    }
+    if(!search->modseq_present) return e;
+    PROP(&e, extension_assert_on(sf->exts, EXT_CONDSTORE) );
+    if(search->nums == NULL){
+        ORIG(&e, E_PARAM, "got MODSEQ on empty search response");
+    }
+    STATIC_SKIP_FILL(" (MODSEQ ");
+    PROP(&e, nzmodseqnum_skip_fill(sf, search->modseqnum) );
+    STATIC_SKIP_FILL(")");
+    return e;
+}
+
 static derr_t fetch_resp_skip_fill(skip_fill_t *sf, ie_fetch_resp_t *fetch){
     derr_t e = E_OK;
     PROP(&e, nznum_skip_fill(sf, fetch->num) );
@@ -1328,13 +1358,7 @@ derr_t imap_resp_write(const imap_resp_t *resp, dstr_t *out, size_t *skip,
             break;
 
         case IMAP_RESP_SEARCH:
-            STATIC_SKIP_FILL("SEARCH ");
-            for(ie_nums_t *n = arg.search; n != NULL; n = n->next){
-                PROP(&e, num_skip_fill(sf, n->num) );
-                if(n->next){
-                    STATIC_SKIP_FILL(" ");
-                }
-            }
+            PROP(&e, search_resp_skip_fill(sf, arg.search) );
             break;
 
         case IMAP_RESP_EXISTS:

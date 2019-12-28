@@ -508,13 +508,19 @@ typedef struct {
 } ie_status_resp_t;
 
 typedef struct {
+    ie_nums_t *nums;
+    bool modseq_present;
+    unsigned long modseqnum;
+} ie_search_resp_t;
+
+typedef struct {
     ie_st_resp_t *status_type;
     ie_dstr_t *capa;
     ie_list_resp_t *list;
     ie_list_resp_t *lsub;
     ie_status_resp_t *status;
     ie_flags_t *flags;
-    ie_nums_t *search;
+    ie_search_resp_t *search;
     unsigned int exists;
     unsigned int expunge;
     unsigned int recent;
@@ -818,6 +824,10 @@ void ie_list_resp_free(ie_list_resp_t *list);
 ie_status_resp_t *ie_status_resp_new(derr_t *e, ie_mailbox_t *m,
         ie_status_attr_resp_t sa);
 void ie_status_resp_free(ie_status_resp_t *status);
+
+ie_search_resp_t *ie_search_resp_new(derr_t *e, ie_nums_t *nums,
+        bool modseq_present, unsigned long modseqnum);
+void ie_search_resp_free(ie_search_resp_t *search);
 
 imap_resp_t *imap_resp_new(derr_t *e, imap_resp_type_t type,
         imap_resp_arg_t arg);

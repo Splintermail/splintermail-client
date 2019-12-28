@@ -987,6 +987,16 @@ derr_t print_status_resp(dstr_t *out, const ie_status_resp_t *status){
     return e;
 }
 
+derr_t print_search_resp(dstr_t *out, const ie_search_resp_t *search){
+    derr_t e = E_OK;
+    if(search == NULL) return e;
+    PROP(&e, FMT(out, " ") );
+    PROP(&e, print_nums(out, search->nums) );
+    if(!search->modseq_present) return e;
+    PROP(&e, FMT(out, " (MODSEQ %x)", FU(search->modseqnum)) );
+    return e;
+}
+
 derr_t print_fetch_resp(dstr_t *out, const ie_fetch_resp_t *fetch){
     derr_t e = E_OK;
     PROP(&e, FMT(out, "%x FETCH (", FU(fetch->num)) );
@@ -1043,8 +1053,8 @@ derr_t print_imap_resp(dstr_t *out, const imap_resp_t *resp){
             PROP(&e, FMT(out, ")") );
             break;
         case IMAP_RESP_SEARCH:
-            PROP(&e, FMT(out, "SEARCH ") );
-            PROP(&e, print_nums(out, resp->arg.search) );
+            PROP(&e, FMT(out, "SEARCH") );
+            PROP(&e, print_search_resp(out, resp->arg.search) );
             break;
         case IMAP_RESP_EXISTS:
             PROP(&e, FMT(out, "%x EXISTS", FU(resp->arg.exists)) );

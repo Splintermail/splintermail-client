@@ -290,6 +290,22 @@ static derr_t test_imap_writer(void){
                     {0}
                 },
             },
+            {
+                .resp=imap_resp_new(&e, IMAP_RESP_SEARCH,
+                    (imap_resp_arg_t){
+                        .search=ie_search_resp_new(
+                            &e,
+                            ie_nums_new(&e, 1),
+                            true,
+                            12345678901234UL
+                        ),
+                    }
+                ),
+                .out=(size_chunk_out_t[]){
+                    {64, "* SEARCH 1 (MODSEQ 12345678901234)\r\n"},
+                    {0}
+                },
+            },
         };
         CHECK(&e);
         PROP(&e, do_writer_test_multi(cases, sizeof(cases)/sizeof(*cases)) );
