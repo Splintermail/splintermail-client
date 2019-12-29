@@ -305,6 +305,12 @@
 /* %token ALL */
 %token SHARED
 
+/* QRESYNC extension */
+%token CLOSED
+%token VANISHED
+%token EARLIER
+%token QRESYNC
+
 %type <ch> qchar
 %type <ch> nqchar
 // no destructor for char type
@@ -335,7 +341,19 @@
 %type <select_params> select_param
 %type <select_params> select_params_0
 %type <select_params> select_params_1
+%type <select_params> qresync_param
 %destructor { ie_select_params_free($$); } <select_params>
+
+%type <qresync_required> qresync_required
+// no destructor needed
+
+%type <qresync_opt> qresync_opt
+%type <qresync_opt> qresync_map
+%destructor {
+    ie_seq_set_free($$.u);
+    ie_seq_set_free($$.k);
+    ie_seq_set_free($$.v);
+} <qresync_opt>
 
 %type <status_attr> s_attr_any
 %type <status_attr> s_attr_32
@@ -529,6 +547,7 @@
 %type <imap_resp> expunge_resp
 %type <imap_resp> fetch_resp
 %type <imap_resp> enabled_resp
+%type <imap_resp> vanished_resp
 %destructor { imap_resp_free($$); } <imap_resp>
 
 %% /********** Grammar Section **********/
@@ -593,6 +612,8 @@ untagged_resp: status_type_resp_untagged
              | expunge_resp
              | fetch_resp
              | enabled_resp
+             | vanished_resp
+;
 
 untag: '*' { MODE(COMMAND); };
 
@@ -629,7 +650,33 @@ select_params_1: select_param[p]                        { $$ = $p; }
 select_param: CONDSTORE
                 { /* this is a CONDSTORE-enabling command */
                   extension_trigger_builder(E, p->exts, EXT_CONDSTORE);
-                  $$ = ie_select_params_new(E, IE_SELECT_PARAM_CONDSTORE); }
+                  ie_select_param_arg_t arg = {0};
+                  $$ = ie_select_params_new(E, IE_SELECT_PARAM_CONDSTORE, arg); }
+            | QRESYNC SP '(' qresync_param[p] ')'
+                { extension_assert_on_builder(E, p->exts, EXT_QRESYNC); $$ = $p; }
+;
+
+qresync_param: qresync_required[r] qresync_opt[opt]
+    { ie_select_param_arg_t arg = {.qresync={
+          .uidvld = $r.uidvld,
+          .last_modseq = $r.last_modseq,
+          .known_uids = $opt.u,
+          .seq_keys = $opt.k,
+          .uid_vals = $opt.v,
+      }};
+      $$ = ie_select_params_new(E, IE_SELECT_PARAM_QRESYNC, arg); };
+
+qresync_required: nznum[v] SP nzmodseqnum[m] { $$.uidvld = $v; $$.last_modseq = $m; };
+
+qresync_opt: %empty                                  { $$.u=NULL; $$.k=NULL; $$.v=NULL; }
+           | SP uid_set[u]                           { $$.u=$u;   $$.k=NULL; $$.v=NULL; }
+           | SP uid_set[u] SP '(' qresync_map[m] ')' { $$.u=$u;   $$.k=$m.k; $$.v=$m.v; }
+           | SP '(' qresync_map[m] ')'               { $$.u=NULL; $$.k=$m.k; $$.v=$m.v; }
+
+qresync_map: %empty                                  { $$.u=NULL; $$.k=NULL; $$.v=NULL; }
+           | uid_set[k] SP uid_set[v]                { $$.u=NULL; $$.k=$k;   $$.v=$v; }
+;
+
 
 /*** EXAMINE command ***/
 
@@ -832,7 +879,23 @@ date: date_day '-' date_month '-' fourdigit
 fetch_cmd: tag SP uid_mode[u] FETCH SP seq_set[seq] SP
            { MODE(FETCH); } fetch_attrs[attr] fetch_mods_0[mods]
     { imap_cmd_arg_t arg = {.fetch=ie_fetch_cmd_new(E, $u, $seq, $attr, $mods)};
-      $$ = imap_cmd_new(E, $tag, IMAP_CMD_FETCH, arg); };
+      $$ = imap_cmd_new(E, $tag, IMAP_CMD_FETCH, arg);
+      /* VANISHED can be used with UID mode and CHANGEDSINCE both active */
+      bool vanished = false;
+      bool chgsince = false;
+      for(ie_fetch_mods_t *mods = $mods; mods != NULL; mods = mods->next){
+          if(mods->type == IE_FETCH_MOD_VANISHED){
+              if($u == false){
+                  TRACE_ORIG(E, E_PARAM, "VANISHED modifier applies to UID FETCH");
+              }
+              vanished = true;
+          }else if(mods->type == IE_FETCH_MOD_CHGSINCE){
+              chgsince = true;
+          }
+      }
+      if(vanished && !chgsince){
+          TRACE_ORIG(E, E_PARAM, "VANISHED modifier requires CHANGEDSINCE modifier");
+      } };
 
 fetch_attrs: ALL           { $$ = ie_fetch_attrs_new(E);
                              if($$ != NULL){
@@ -890,8 +953,14 @@ fetch_mods_1: fetch_mod
             | fetch_mods_1[l] SP fetch_mod[m]  { $$ = ie_fetch_mods_add(E, $l, $m); }
 ;
 
-fetch_mod: CHGSINCE SP nzmodseqnum[s] { extension_trigger_builder(E, p->exts, EXT_CONDSTORE);
-                                            $$ = ie_fetch_mods_chgsince(E, $s); }
+fetch_mod: CHGSINCE SP nzmodseqnum[s]
+              { extension_trigger_builder(E, p->exts, EXT_CONDSTORE);
+                ie_fetch_mod_arg_t arg = {.chgsince=$s};
+                $$ = ie_fetch_mods_new(E, IE_FETCH_MOD_CHGSINCE, arg); }
+         | VANISHED
+              { extension_assert_on_builder(E, p->exts, EXT_QRESYNC);
+                ie_fetch_mod_arg_t arg = {0};
+                $$ = ie_fetch_mods_new(E, IE_FETCH_MOD_VANISHED, arg); }
 
 sect: _sect[s] { $$ = $s; MODE(FETCH); }
 
@@ -1044,6 +1113,11 @@ st_code_: ALERT      { ie_st_code_arg_t arg = {0};
         | sc_nomodseq
         | sc_himodseq
         | sc_modified
+
+        /* no extension check, this must be sent by servers supporting QRESYNC,
+           even if QRESYNC hasn't been enabled */
+        | CLOSED { ie_st_code_arg_t arg = {0};
+                   $$ = ie_st_code_new(E, IE_ST_CODE_CLOSED, arg); }
 ;
 
 sc_end: %empty { MODE(STATUS_CODE); }
@@ -1302,6 +1376,18 @@ enabled_resp: ENABLED { MODE(ATOM); } SP capas_1[c]
     { extension_assert_on_builder(E, p->exts, EXT_ENABLE);
       imap_resp_arg_t arg = {.enabled=$c};
       $$ = imap_resp_new(E, IMAP_RESP_ENABLED, arg); };
+
+/*** VANISHED response ***/
+
+vanished_resp: VANISHED SP seq_set[s]
+                { extension_assert_on_builder(E, p->exts, EXT_QRESYNC);
+                  imap_resp_arg_t arg = {.vanished={.earlier=false, .uids=$s}};
+                  $$ = imap_resp_new(E, IMAP_RESP_VANISHED, arg); }
+             | VANISHED SP '(' EARLIER ')' SP seq_set[s]
+                { extension_assert_on_builder(E, p->exts, EXT_QRESYNC);
+                  imap_resp_arg_t arg = {.vanished={.earlier=true, .uids=$s}};
+                  $$ = imap_resp_new(E, IMAP_RESP_VANISHED, arg); }
+;
 
 /*** start of "helper" categories: ***/
 

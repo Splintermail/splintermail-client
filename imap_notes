@@ -66,6 +66,11 @@ BYE [response code] human-readable text:
     race condition where synchronization of message sequence numbers would be
     ambiguous.  If a UID command is in progress, EXPUNGE *can* be sent.
 
+* VANISHED
+    Follows the same rules as EXPUNGE except a VANISHED response MUST NOT be
+    sent during a UID SEARCH command that contains message numbers in the
+    search criteria
+
 * FETCH
     can be response to a command or a unilateral server data (flag update)
 

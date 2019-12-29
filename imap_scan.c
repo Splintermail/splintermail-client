@@ -264,6 +264,7 @@ command_mode:
         *               { INVALID_TOKEN_ERROR; }
         eol             { *type = EOL; goto done; }
         " "             { *type = *scanner->start; goto done; }
+        atom_spec       { *type = *scanner->start; goto done; }
 
         'starttls'      { *type = STARTTLS; goto done; }
         'authenticate'  { *type = AUTHENTICATE; goto done; }
@@ -289,6 +290,8 @@ command_mode:
         'uid'           { *type = UID; goto done; }
         'enable'        { *type = ENABLE; goto done; }
         'enabled'       { *type = ENABLED; goto done; }
+        'vanished'      { *type = VANISHED; goto done; }
+        'earlier'       { *type = EARLIER; goto done; }
 
         'ok'            { *type = OK; goto done; }
         'no'            { *type = NO; goto done; }
@@ -391,15 +394,19 @@ status_code_mode:
         'read_only'     { *type = READ_ONLY; goto done; }
         'read_write'    { *type = READ_WRITE; goto done; }
         'trycreate'     { *type = TRYCREATE; goto done; }
-        'uidnotsticky'  { *type = UIDNOSTICK; goto done; }
         'nomodseq'      { *type = NOMODSEQ; goto done; }
         'uidnext'       { *type = UIDNEXT; goto done; }
         'uidvalidity'   { *type = UIDVLD; goto done; }
         'unseen'        { *type = UNSEEN; goto done; }
+
+        'uidnotsticky'  { *type = UIDNOSTICK; goto done; }
         'appenduid'     { *type = APPENDUID; goto done; }
         'copyuid'       { *type = COPYUID; goto done; }
+
         'highestmodseq' { *type = HIMODSEQ; goto done; }
         'modified'      { *type = MODIFIED; goto done; }
+
+        'closed'        { *type = CLOSED; goto done; }
 
         atom            { *type = RAW; goto done; }
     */
@@ -505,6 +512,7 @@ fetch_mode:
         'header.fields.not' { *type = HDR_FLDS_NOT; goto done; }
         'modseq'        { *type = MODSEQ; goto done; }
         'changedsince'  { *type = CHGSINCE; goto done; }
+        'vanished'      { *type = VANISHED; goto done; }
     */
 
 datetime_mode:
@@ -626,6 +634,9 @@ select_param_mode:
         atom_spec       { *type = *scanner->start; goto done; }
 
         'condstore'     { *type = CONDSTORE; goto done; }
+        'qresync'       { *type = QRESYNC; goto done; }
+
+        num             { *type = NUM; goto done; }
     */
 
 modseq_mode:

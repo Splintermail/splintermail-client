@@ -57,7 +57,7 @@
 
 typedef struct {
     size_t cmd_counts[IMAP_CMD_ENABLE + 1];
-    size_t resp_counts[IMAP_RESP_ENABLED + 1];
+    size_t resp_counts[IMAP_RESP_VANISHED + 1];
     // the error from a callback
     derr_t error;
     // the value recorded by a callback
@@ -113,6 +113,7 @@ static void cmd_cb(void *cb_data, derr_t error, imap_cmd_t *cmd){
         .uidplus = EXT_STATE_ON,
         .enable = EXT_STATE_ON,
         .condstore = EXT_STATE_ON,
+        .qresync = EXT_STATE_ON,
     };
 
     PROP_GO(&calls->error, imap_cmd_print(cmd, &calls->buf, &exts), done);
@@ -136,6 +137,7 @@ static void resp_cb(void *cb_data, derr_t error, imap_resp_t *resp){
         .uidplus = EXT_STATE_ON,
         .enable = EXT_STATE_ON,
         .condstore = EXT_STATE_ON,
+        .qresync = EXT_STATE_ON,
     };
 
     PROP_GO(&calls->error, imap_resp_print(resp, &calls->buf, &exts), done);
@@ -166,6 +168,7 @@ static derr_t do_test_scanner_and_parser(test_case_t *cases, size_t ncases,
         .uidplus = EXT_STATE_ON,
         .enable = EXT_STATE_ON,
         .condstore = EXT_STATE_ON,
+        .qresync = EXT_STATE_ON,
     };
 
     // init the reader
@@ -831,6 +834,60 @@ static derr_t test_scanner_and_parser(void){
                 .in=DSTR_LIT("* 1 FETCH (MODSEQ (12345678901234))\r\n"),
                 .resp_calls=(int[]){IMAP_RESP_FETCH, -1},
                 .buf=DSTR_LIT("* 1 FETCH (MODSEQ (12345678901234))\r\n")
+            },
+        };
+        size_t ncases = sizeof(cases) / sizeof(*cases);
+        PROP(&e, do_test_scanner_and_parser(cases, ncases, parser_resp_cb) );
+    }
+    // QRESYNC extension commands
+    {
+        test_case_t cases[] = {
+            {
+                .in=DSTR_LIT("tag UID FETCH 1 UID (CHANGEDSINCE 12345678901234 VANISHED)\r\n"),
+                .cmd_calls=(int[]){IMAP_CMD_FETCH, -1},
+                .buf=DSTR_LIT("tag UID FETCH 1 (UID) (CHANGEDSINCE 12345678901234 VANISHED)\r\n")
+            },
+            {
+                .in=DSTR_LIT("tag SELECT x (QRESYNC (7 8))\r\n"),
+                .cmd_calls=(int[]){IMAP_CMD_SELECT, -1},
+                .buf=DSTR_LIT("tag SELECT x (QRESYNC (7 8))\r\n")
+            },
+            {
+                .in=DSTR_LIT("tag SELECT x (QRESYNC (7 8 1:2,3,4,5))\r\n"),
+                .cmd_calls=(int[]){IMAP_CMD_SELECT, -1},
+                .buf=DSTR_LIT("tag SELECT x (QRESYNC (7 8 1:2,3,4,5))\r\n")
+            },
+            {
+                .in=DSTR_LIT("tag SELECT x (QRESYNC (7 8 (3:4 5:6)))\r\n"),
+                .cmd_calls=(int[]){IMAP_CMD_SELECT, -1},
+                .buf=DSTR_LIT("tag SELECT x (QRESYNC (7 8 (3:4 5:6)))\r\n")
+            },
+            {
+                .in=DSTR_LIT("tag SELECT x (QRESYNC (7 8 1:2 (3:4 5:6)))\r\n"),
+                .cmd_calls=(int[]){IMAP_CMD_SELECT, -1},
+                .buf=DSTR_LIT("tag SELECT x (QRESYNC (7 8 1:2 (3:4 5:6)))\r\n")
+            },
+        };
+        size_t ncases = sizeof(cases) / sizeof(*cases);
+        PROP(&e, do_test_scanner_and_parser(cases, ncases, parser_cmd_cb) );
+    }
+    // QRESYNC extension responses
+    {
+        test_case_t cases[] = {
+            {
+                .in=DSTR_LIT("* OK [CLOSED] text\r\n"),
+                .resp_calls=(int[]){IMAP_RESP_STATUS_TYPE, -1},
+                .buf=DSTR_LIT("* OK [CLOSED] text\r\n")
+            },
+            {
+                .in=DSTR_LIT("* VANISHED 1:2\r\n"),
+                .resp_calls=(int[]){IMAP_RESP_VANISHED, -1},
+                .buf=DSTR_LIT("* VANISHED 1:2\r\n")
+            },
+            {
+                .in=DSTR_LIT("* VANISHED (EARLIER) 1:2\r\n"),
+                .resp_calls=(int[]){IMAP_RESP_VANISHED, -1},
+                .buf=DSTR_LIT("* VANISHED (EARLIER) 1:2\r\n")
             },
         };
         size_t ncases = sizeof(cases) / sizeof(*cases);

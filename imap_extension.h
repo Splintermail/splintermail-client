@@ -24,7 +24,7 @@ typedef struct {
     extension_state_e qresync;
 } extensions_t;
 
-// throw an error if an action requires an extension to be enabled
+// throw an error if an action requires an extension to be enabled but it's not
 derr_t extension_assert_on(const extensions_t *exts,
         extension_e type);
 
@@ -32,10 +32,15 @@ derr_t extension_assert_on(const extensions_t *exts,
 void extension_assert_on_builder(derr_t *e,
         const extensions_t *exts, extension_e type);
 
+
+// throw an error if an action requires an extension to be available
+derr_t extension_assert_available(const extensions_t *exts,
+        extension_e type);
+void extension_assert_available_builder(derr_t *e,
+        extensions_t *exts, extension_e type);
+
 // set an extension to "on", or throw an error if it is disabled
 derr_t extension_trigger(extensions_t *exts, extension_e type);
-
-// same as above but in a builder-friendly (bison-friendly) signature
 void extension_trigger_builder(derr_t *e,
         extensions_t *exts, extension_e type);
 

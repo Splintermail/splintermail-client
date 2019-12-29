@@ -71,6 +71,7 @@ static derr_t do_writer_test(const test_case_t *tc){
             .uidplus = EXT_STATE_ON,
             .enable = EXT_STATE_ON,
             .condstore = EXT_STATE_ON,
+            .qresync = EXT_STATE_ON,
         };
 
         if(tc->cmd != NULL){
@@ -176,6 +177,20 @@ static derr_t test_imap_writer(void){
                     {2, "rd"},
                     {2, "\"\r"},
                     {2, "\n"},
+                    {0}
+                },
+            },
+            {
+                .cmd=imap_cmd_new(&e, IE_DSTR("tag"), IMAP_CMD_SELECT,
+                    (imap_cmd_arg_t){
+                        .select=ie_select_cmd_new(&e,
+                            ie_mailbox_new_noninbox(&e, IE_DSTR("box")),
+                            NULL
+                        ),
+                    }
+                ),
+                .out=(size_chunk_out_t[]){
+                    {64, "tag SELECT box\r\n"},
                     {0}
                 },
             },
@@ -326,7 +341,8 @@ static derr_t test_imap_writer(void){
                                 ie_fetch_attrs_new(&e),
                                 IE_FETCH_ATTR_UID
                             ),
-                            ie_fetch_mods_chgsince(&e, 12345678901234UL)
+                            ie_fetch_mods_new(&e, IE_FETCH_MOD_CHGSINCE,
+                                (ie_fetch_mod_arg_t){.chgsince=12345678901234UL})
                         ),
                     }
                 ),
@@ -383,6 +399,23 @@ static derr_t test_imap_writer(void){
                 .out=(size_chunk_out_t[]){
                     {37, "tag SEARCH MODSEQ \"/flags/\\\\Answered\""},
                     {64, " all 12345678901234\r\n"},
+                    {0}
+                },
+            },
+            {
+                .cmd=imap_cmd_new(&e, IE_DSTR("tag"), IMAP_CMD_SELECT,
+                    (imap_cmd_arg_t){
+                        .select=ie_select_cmd_new(&e,
+                            ie_mailbox_new_noninbox(&e, IE_DSTR("box")),
+                            ie_select_params_new(&e,
+                                IE_SELECT_PARAM_CONDSTORE,
+                                (ie_select_param_arg_t){}
+                            )
+                        ),
+                    }
+                ),
+                .out=(size_chunk_out_t[]){
+                    {64, "tag SELECT box (CONDSTORE)\r\n"},
                     {0}
                 },
             },
@@ -499,6 +532,142 @@ static derr_t test_imap_writer(void){
         CHECK(&e);
         PROP(&e, do_writer_test_multi(cases, sizeof(cases)/sizeof(*cases)) );
     }
+    // QRESYNC extension
+    {
+        test_case_t cases[] = {
+            {
+                .cmd=imap_cmd_new(&e, IE_DSTR("tag"), IMAP_CMD_FETCH,
+                    (imap_cmd_arg_t){
+                        .fetch=ie_fetch_cmd_new(&e,
+                            true,
+                            ie_seq_set_new(&e, 1, 2),
+                            ie_fetch_attrs_add_simple(
+                                &e,
+                                ie_fetch_attrs_new(&e),
+                                IE_FETCH_ATTR_UID
+                            ),
+                            ie_fetch_mods_add(&e,
+                                ie_fetch_mods_new(&e, IE_FETCH_MOD_CHGSINCE,
+                                    (ie_fetch_mod_arg_t){.chgsince=12345678901234UL}),
+                                ie_fetch_mods_new(&e, IE_FETCH_MOD_VANISHED,
+                                    (ie_fetch_mod_arg_t){0})
+                            )
+                        ),
+                    }
+                ),
+                .out=(size_chunk_out_t[]){
+                    {64, "tag UID FETCH 1:2 (UID) (CHANGEDSINCE 12345678901234 VANISHED)\r\n"},
+                    {0}
+                },
+            },
+            /*
+    struct {
+        unsigned int uidvld;
+        unsigned long last_modseq;
+        // list of known uids is optional; can't contain '*'
+        ie_seq_set_t *known_uids;
+        // seq-to-uid mapping is optional; neither can contain '*'
+        ie_seq_set_t *seq_keys;
+        ie_seq_set_t *uid_vals;
+    } qresync;
+               */
+            {
+                // QRESYNC modifier with only the required fields
+                .cmd=imap_cmd_new(&e, IE_DSTR("tag"), IMAP_CMD_SELECT,
+                    (imap_cmd_arg_t){
+                        .select=ie_select_cmd_new(&e,
+                            ie_mailbox_new_noninbox(&e, IE_DSTR("box")),
+                            ie_select_params_new(&e,
+                                IE_SELECT_PARAM_QRESYNC,
+                                (ie_select_param_arg_t){.qresync={
+                                    .uidvld = 7,
+                                    .last_modseq = 12345678901234UL,
+                                    .known_uids = NULL,
+                                    .seq_keys = NULL,
+                                    .uid_vals = NULL,
+                                }}
+                            )
+                        ),
+                    }
+                ),
+                .out=(size_chunk_out_t[]){
+                    {64, "tag SELECT box (QRESYNC (7 12345678901234))\r\n"},
+                    {0}
+                },
+            },
+            {
+                // QRESYNC modifier with all the fields
+                .cmd=imap_cmd_new(&e, IE_DSTR("tag"), IMAP_CMD_SELECT,
+                    (imap_cmd_arg_t){
+                        .select=ie_select_cmd_new(&e,
+                            ie_mailbox_new_noninbox(&e, IE_DSTR("box")),
+                            ie_select_params_new(&e,
+                                IE_SELECT_PARAM_QRESYNC,
+                                (ie_select_param_arg_t){.qresync={
+                                    .uidvld = 7,
+                                    .last_modseq = 8,
+                                    .known_uids = ie_seq_set_new(&e, 1, 2),
+                                    .seq_keys = ie_seq_set_new(&e, 3, 4),
+                                    .uid_vals = ie_seq_set_new(&e, 5, 6),
+                                }}
+                            )
+                        ),
+                    }
+                ),
+                .out=(size_chunk_out_t[]){
+                    {64, "tag SELECT box (QRESYNC (7 8 1:2 (3:4 5:6)))\r\n"},
+                    {0}
+                },
+            },
+            {
+                .resp=imap_resp_new(&e, IMAP_RESP_STATUS_TYPE,
+                    (imap_resp_arg_t){
+                        .status_type=ie_st_resp_new(&e, NULL, IE_ST_OK,
+                            ie_st_code_new(&e,
+                                IE_ST_CODE_CLOSED,
+                                (ie_st_code_arg_t){0}
+                            ),
+                            IE_DSTR("text")
+                        ),
+                    }
+                ),
+                .out=(size_chunk_out_t[]){
+                    {64, "* OK [CLOSED] text\r\n"},
+                    {0}
+                },
+            },
+            {
+                .resp=imap_resp_new(&e, IMAP_RESP_VANISHED,
+                    (imap_resp_arg_t){
+                        .vanished={
+                            .earlier=false,
+                            .uids=ie_seq_set_new(&e, 1, 2),
+                        },
+                    }
+                ),
+                .out=(size_chunk_out_t[]){
+                    {64, "* VANISHED 1:2\r\n"},
+                    {0}
+                },
+            },
+            {
+                .resp=imap_resp_new(&e, IMAP_RESP_VANISHED,
+                    (imap_resp_arg_t){
+                        .vanished={
+                            .earlier=true,
+                            .uids=ie_seq_set_new(&e, 1, 2),
+                        },
+                    }
+                ),
+                .out=(size_chunk_out_t[]){
+                    {64, "* VANISHED (EARLIER) 1:2\r\n"},
+                    {0}
+                },
+            },
+        };
+        CHECK(&e);
+        PROP(&e, do_writer_test_multi(cases, sizeof(cases)/sizeof(*cases)) );
+    }
     return e;
 }
 
@@ -513,6 +682,7 @@ static derr_t test_imap_print(void){
         .uidplus = EXT_STATE_ON,
         .enable = EXT_STATE_ON,
         .condstore = EXT_STATE_ON,
+        .qresync = EXT_STATE_ON,
     };
 
     imap_cmd_t *cmd = imap_cmd_new(

@@ -327,28 +327,6 @@ static derr_t atom_skip_fill(skip_fill_t *sf, const dstr_t *in){
 
 #define LEAD_SP if(sp){ STATIC_SKIP_FILL(" "); }else sp = true
 
-// has a leading space for convenience
-static derr_t select_params_skip_fill(skip_fill_t *sf,
-        ie_select_params_t *params){
-    derr_t e = E_OK;
-    if(params == NULL) return e;
-    STATIC_SKIP_FILL(" (");
-    bool sp = false;
-    for(ie_select_params_t *p = params; p != NULL; p = p->next){
-        LEAD_SP;
-        switch(p->type){
-            case IE_SELECT_PARAM_CONDSTORE:
-                PROP(&e, extension_assert_on(sf->exts, EXT_CONDSTORE) );
-                STATIC_SKIP_FILL("CONDSTORE");
-                break;
-            default:
-                ORIG(&e, E_PARAM, "invalid select parameter");
-        }
-    }
-    STATIC_SKIP_FILL(")");
-    return e;
-}
-
 static derr_t status_cmd_skip_fill(skip_fill_t *sf,
         const ie_status_cmd_t *status){
     derr_t e = E_OK;
@@ -661,6 +639,56 @@ static derr_t uid_set_skip_fill(skip_fill_t *sf, ie_seq_set_t *seq_set){
     return e;
 }
 
+// has a leading space for convenience
+static derr_t select_params_skip_fill(skip_fill_t *sf,
+        ie_select_params_t *params){
+    derr_t e = E_OK;
+    if(params == NULL) return e;
+    STATIC_SKIP_FILL(" (");
+    bool sp = false;
+    for(ie_select_params_t *p = params; p != NULL; p = p->next){
+        ie_select_param_arg_t arg = p->arg;
+        LEAD_SP;
+        switch(p->type){
+            case IE_SELECT_PARAM_CONDSTORE:
+                PROP(&e, extension_assert_on(sf->exts, EXT_CONDSTORE) );
+                STATIC_SKIP_FILL("CONDSTORE");
+                break;
+            case IE_SELECT_PARAM_QRESYNC:
+                PROP(&e, extension_assert_on(sf->exts, EXT_QRESYNC) );
+                STATIC_SKIP_FILL("QRESYNC (");
+                // first parameter: uidvalidity
+                PROP(&e, nznum_skip_fill(sf, arg.qresync.uidvld) );
+                STATIC_SKIP_FILL(" ");
+                // second parameter: last known modseq
+                PROP(&e, nzmodseqnum_skip_fill(sf, arg.qresync.last_modseq) );
+                if(arg.qresync.known_uids){
+                    // third parameter: list of known uids
+                    STATIC_SKIP_FILL(" ");
+                    PROP(&e, uid_set_skip_fill(sf, arg.qresync.known_uids) );
+                }
+                if(arg.qresync.seq_keys || arg.qresync.uid_vals){
+                    // seq_keys and uid_vals are requried to be together
+                    if(!arg.qresync.seq_keys || !arg.qresync.uid_vals){
+                        ORIG(&e, E_PARAM, "invalid QRESYNC select param");
+                    }
+                    // fourth parameter: map seq numbers to uids
+                    STATIC_SKIP_FILL(" (");
+                    PROP(&e, uid_set_skip_fill(sf, arg.qresync.seq_keys) );
+                    STATIC_SKIP_FILL(" ");
+                    PROP(&e, uid_set_skip_fill(sf, arg.qresync.uid_vals) );
+                    STATIC_SKIP_FILL(")");
+                }
+                STATIC_SKIP_FILL(")");
+                break;
+            default:
+                ORIG(&e, E_PARAM, "invalid select parameter");
+        }
+    }
+    STATIC_SKIP_FILL(")");
+    return e;
+}
+
 static derr_t search_date_skip_fill(skip_fill_t *sf, imap_time_t time){
     derr_t e = E_OK;
     bool pass = true;
@@ -967,6 +995,10 @@ static derr_t fetch_mods_skip_fill(skip_fill_t *sf, ie_fetch_mods_t *mods){
                 STATIC_SKIP_FILL("CHANGEDSINCE ");
                 PROP(&e, nzmodseqnum_skip_fill(sf, m->arg.chgsince) );
                 break;
+            case IE_FETCH_MOD_VANISHED:
+                PROP(&e, extension_assert_on(sf->exts, EXT_QRESYNC) );
+                STATIC_SKIP_FILL("VANISHED");
+                break;
             default: ORIG(&e, E_PARAM, "unknown fetch modifier type");
         }
     }
@@ -1143,6 +1175,25 @@ static derr_t do_imap_cmd_write(const imap_cmd_t *cmd, dstr_t *out,
                 STATIC_SKIP_FILL(" ");
                 PROP(&e, fetch_mods_skip_fill(sf, arg.fetch->mods) )
             }
+            // validate that VANISHED is used correctly
+            bool chgsince = false;
+            bool vanished = false;
+            ie_fetch_mods_t *mods = arg.fetch->mods;
+            for(; mods != NULL; mods = mods->next){
+                if(mods->type == IE_FETCH_MOD_VANISHED){
+                    if(!arg.fetch->uid_mode){
+                        ORIG(&e, E_PARAM,
+                                "VANISHED modifier applies to UID FETCH");
+                    }
+                    vanished = true;
+                }else if(mods->type == IE_FETCH_MOD_CHGSINCE){
+                    chgsince = true;
+                }
+            }
+            if(vanished && !chgsince){
+                ORIG(&e, E_PARAM,
+                        "VANISHED modifier requires CHANGEDSINCE modifier");
+            }
             break;
 
         case IMAP_CMD_STORE:
@@ -1300,6 +1351,12 @@ static derr_t st_code_skip_fill(skip_fill_t *sf, ie_st_code_t *code){
             STATIC_SKIP_FILL("MODIFIED ");
             PROP(&e, seq_set_skip_fill(sf, code->arg.modified) );
             break;
+
+        case IE_ST_CODE_CLOSED:
+            PROP(&e, extension_assert_available(sf->exts, EXT_QRESYNC) );
+            STATIC_SKIP_FILL("CLOSED");
+            break;
+
         default:
             TRACE(&e, "unknown status code type: %x", FU(code->type));
             ORIG(&e, E_PARAM, "unknown status code type");
@@ -1533,6 +1590,15 @@ static derr_t do_imap_resp_write(const imap_resp_t *resp, dstr_t *out,
                 STATIC_SKIP_FILL(" ");
                 PROP(&e, atom_skip_fill(sf, &d->dstr) );
             }
+            break;
+
+        case IMAP_RESP_VANISHED:
+            PROP(&e, extension_assert_on(sf->exts, EXT_QRESYNC) );
+            STATIC_SKIP_FILL("VANISHED ");
+            if(arg.vanished.earlier){
+                STATIC_SKIP_FILL("(EARLIER) ");
+            }
+            PROP(&e, uid_set_skip_fill(sf, arg.vanished.uids) );
             break;
 
         default:

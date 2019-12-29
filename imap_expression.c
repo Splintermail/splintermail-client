@@ -23,10 +23,12 @@ const dstr_t *ie_status_to_dstr(ie_status_t s){
 }
 
 DSTR_STATIC(IE_SELECT_PARAM_CONDSTORE_dstr, "CONDSTORE");
+DSTR_STATIC(IE_SELECT_PARAM_QRESYNC_dstr, "QRESYNC");
 
 const dstr_t *ie_select_param_type_to_dstr(ie_select_param_type_t type){
     switch(type){
         case IE_SELECT_PARAM_CONDSTORE: return &IE_SELECT_PARAM_CONDSTORE_dstr;
+        case IE_SELECT_PARAM_QRESYNC: return &IE_SELECT_PARAM_QRESYNC_dstr;
     }
     return &IE_UNKNOWN_dstr;
 }
@@ -115,6 +117,7 @@ DSTR_STATIC(IMAP_RESP_EXPUNGE_dstr, "EXPUNGE");
 DSTR_STATIC(IMAP_RESP_RECENT_dstr, "RECENT");
 DSTR_STATIC(IMAP_RESP_FETCH_dstr, "FETCH");
 DSTR_STATIC(IMAP_RESP_ENABLED_dstr, "ENABLED");
+DSTR_STATIC(IMAP_RESP_VANISHED_dstr, "VANISHED");
 
 const dstr_t *imap_resp_type_to_dstr(imap_resp_type_t type){
     switch(type){
@@ -130,6 +133,7 @@ const dstr_t *imap_resp_type_to_dstr(imap_resp_type_t type){
         case IMAP_RESP_RECENT:      return &IMAP_RESP_RECENT_dstr;
         case IMAP_RESP_FETCH:       return &IMAP_RESP_FETCH_dstr;
         case IMAP_RESP_ENABLED:     return &IMAP_RESP_ENABLED_dstr;
+        case IMAP_RESP_VANISHED:    return &IMAP_RESP_VANISHED_dstr;
     }
     return &IE_UNKNOWN_dstr;
 }
@@ -282,21 +286,31 @@ const dstr_t *ie_mailbox_name(ie_mailbox_t *m){
     return &m->dstr;
 }
 
+static void ie_select_param_arg_free(ie_select_param_type_t type,
+        ie_select_param_arg_t arg){
+    switch(type){
+        case IE_SELECT_PARAM_CONDSTORE: break;
+        case IE_SELECT_PARAM_QRESYNC:
+            ie_seq_set_free(arg.qresync.known_uids);
+            ie_seq_set_free(arg.qresync.seq_keys);
+            ie_seq_set_free(arg.qresync.uid_vals);
+            break;
+    }
+}
+
 ie_select_params_t *ie_select_params_new(derr_t *e,
-        ie_select_param_type_t type){
+        ie_select_param_type_t type, ie_select_param_arg_t arg){
     if(is_error(*e)) goto fail;
 
     IE_MALLOC(e, ie_select_params_t, params, fail);
 
-    if(type != IE_SELECT_PARAM_CONDSTORE){
-        ORIG_GO(e, E_INTERNAL, "unexpected select parameter type", fail);
-    }
-
     params->type = type;
+    params->arg = arg;
 
     return params;
 
 fail:
+    ie_select_param_arg_free(type, arg);
     return NULL;
 }
 
@@ -318,6 +332,7 @@ fail:
 
 void ie_select_params_free(ie_select_params_t *params){
     if(!params) return;
+    ie_select_param_arg_free(params->type, params->arg);
     ie_select_params_free(params->next);
     free(params);
 }
@@ -978,13 +993,14 @@ void ie_fetch_extra_free(ie_fetch_extra_t *ex){
     free(ex);
 }
 
-ie_fetch_mods_t *ie_fetch_mods_chgsince(derr_t *e, unsigned long chgsince){
+ie_fetch_mods_t *ie_fetch_mods_new(derr_t *e, ie_fetch_mod_type_t type,
+        ie_fetch_mod_arg_t arg){
     if(is_error(*e)) goto fail;
 
     IE_MALLOC(e, ie_fetch_mods_t, mods, fail);
 
-    mods->type = IE_FETCH_MOD_CHGSINCE;
-    mods->arg.chgsince = chgsince;
+    mods->type = type;
+    mods->arg = arg;
 
     return mods;
 
@@ -1180,7 +1196,11 @@ static void ie_st_code_arg_free(ie_st_code_type_t type, ie_st_code_arg_t arg){
 
         case IE_ST_CODE_NOMODSEQ:   break;
         case IE_ST_CODE_HIMODSEQ:   break;
-        case IE_ST_CODE_MODIFIED:   ie_seq_set_free(arg.modified); break;
+        case IE_ST_CODE_MODIFIED:
+            ie_seq_set_free(arg.modified);
+            break;
+
+        case IE_ST_CODE_CLOSED:     break;
     }
 }
 
@@ -1816,6 +1836,7 @@ static void imap_resp_arg_free(imap_resp_type_t type, imap_resp_arg_t arg){
         case IMAP_RESP_RECENT:      break;
         case IMAP_RESP_FETCH:       ie_fetch_resp_free(arg.fetch); break;
         case IMAP_RESP_ENABLED:     ie_dstr_free(arg.enabled); break;
+        case IMAP_RESP_VANISHED:    ie_seq_set_free(arg.vanished.uids); break;
     }
 }
 

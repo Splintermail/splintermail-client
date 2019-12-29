@@ -15,17 +15,6 @@ typedef struct {
     dstr_t dstr;
 } ie_mailbox_t;
 
-// only used in extensions
-typedef enum {
-    IE_SELECT_PARAM_CONDSTORE,
-} ie_select_param_type_t;
-
-typedef struct ie_select_params_t {
-    ie_select_param_type_t type;
-    // no .arg yet; no supported extensions need it
-    struct ie_select_params_t *next;
-} ie_select_params_t;
-
 typedef enum {
     IE_STATUS_ATTR_MESSAGES = 1,
     IE_STATUS_ATTR_RECENT = 2,
@@ -66,6 +55,30 @@ typedef struct ie_seq_set_t {
 } ie_seq_set_t;
 
 void ie_seq_set_free(ie_seq_set_t *s);
+
+typedef enum {
+    IE_SELECT_PARAM_CONDSTORE,
+    IE_SELECT_PARAM_QRESYNC,
+} ie_select_param_type_t;
+
+typedef union {
+    // nothing for condstore
+    struct {
+        unsigned int uidvld;
+        unsigned long last_modseq;
+        // list of known uids is optional; can't contain '*'
+        ie_seq_set_t *known_uids;
+        // seq-to-uid mapping is optional; neither can contain '*'
+        ie_seq_set_t *seq_keys;
+        ie_seq_set_t *uid_vals;
+    } qresync;
+} ie_select_param_arg_t;
+
+typedef struct ie_select_params_t {
+    ie_select_param_type_t type;
+    ie_select_param_arg_t arg;
+    struct ie_select_params_t *next;
+} ie_select_params_t;
 
 typedef struct ie_nums_t {
     unsigned int num;
@@ -318,10 +331,12 @@ typedef struct {
 
 typedef enum {
     IE_FETCH_MOD_CHGSINCE,
+    IE_FETCH_MOD_VANISHED,
 } ie_fetch_mod_type_t;
 
 typedef struct {
     unsigned long chgsince;
+    // nothing for vanished
 } ie_fetch_mod_arg_t;
 
 typedef struct ie_fetch_mods_t {
@@ -366,14 +381,16 @@ typedef enum {
     IE_ST_CODE_PERMFLAGS,
     IE_ST_CODE_CAPA,
     IE_ST_CODE_ATOM,
-
+    // UIDPLUS extension
     IE_ST_CODE_UIDNOSTICK,
     IE_ST_CODE_APPENDUID,
     IE_ST_CODE_COPYUID,
-
+    // CONDSTORE extension
     IE_ST_CODE_NOMODSEQ,
     IE_ST_CODE_HIMODSEQ,
     IE_ST_CODE_MODIFIED,
+    // QRESYNC extension
+    IE_ST_CODE_CLOSED,
 } ie_st_code_type_t;
 
 // TODO: switch to 1:1 types-to-args, like imap_cmd_arg_t
@@ -557,6 +574,7 @@ typedef enum {
     IMAP_RESP_RECENT,
     IMAP_RESP_FETCH,
     IMAP_RESP_ENABLED,
+    IMAP_RESP_VANISHED,
 } imap_resp_type_t;
 
 typedef struct {
@@ -606,6 +624,10 @@ typedef struct {
     unsigned int recent;
     ie_fetch_resp_t *fetch;
     ie_dstr_t *enabled;
+    struct {
+        bool earlier;
+        ie_seq_set_t *uids;
+    } vanished;
 } imap_resp_arg_t;
 
 typedef struct {
@@ -668,6 +690,20 @@ typedef union {
     // full responses
     imap_resp_t *imap_resp;
 
+    // structures which only exist to simplify the bison grammar
+    struct {
+        unsigned int uidvld;
+        unsigned long last_modseq;
+    } qresync_required;
+    struct {
+        // known "u"ids
+        ie_seq_set_t *u;
+        // sequence "k"eys
+        ie_seq_set_t *k;
+        // uid "v"alues
+        ie_seq_set_t *v;
+    } qresync_opt;
+
 } imap_expr_t;
 
 typedef enum {
@@ -718,7 +754,7 @@ void ie_mailbox_free(ie_mailbox_t *m);
 const dstr_t *ie_mailbox_name(ie_mailbox_t *m);
 
 ie_select_params_t *ie_select_params_new(derr_t *e,
-        ie_select_param_type_t type);
+        ie_select_param_type_t type, ie_select_param_arg_t arg);
 ie_select_params_t *ie_select_params_add(derr_t *e,
         ie_select_params_t *list, ie_select_params_t *new);
 void ie_select_params_free(ie_select_params_t *params);
@@ -815,7 +851,8 @@ ie_fetch_extra_t *ie_fetch_extra_new(derr_t *e, bool peek, ie_sect_t *s,
         ie_partial_t *p);
 void ie_fetch_extra_free(ie_fetch_extra_t *extra);
 
-ie_fetch_mods_t *ie_fetch_mods_chgsince(derr_t *e, unsigned long chgsince);
+ie_fetch_mods_t *ie_fetch_mods_new(derr_t *e, ie_fetch_mod_type_t type,
+        ie_fetch_mod_arg_t arg);
 ie_fetch_mods_t *ie_fetch_mods_add(derr_t *e, ie_fetch_mods_t *list,
         ie_fetch_mods_t *mod);
 void ie_fetch_mods_free(ie_fetch_mods_t *mods);
