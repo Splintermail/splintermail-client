@@ -755,15 +755,23 @@ fail_malloc:
 }
 
 
+void async_handle_close_cb(uv_handle_t *handle){
+    // every async specifies its own cleanup closure
+    async_spec_t *spec = handle->data;
+    if(spec->close_cb == NULL) return;
+    spec->close_cb(spec);
+}
+
+
 static void close_remaining_handles(uv_handle_t *handle, void *arg){
     (void)arg;
 
     // no double-close
     if(uv_is_closing(handle)) return;
 
-    // close asyncs with no callback
+    // close asyncs
     if(handle->type == UV_ASYNC){
-        uv_close(handle, NULL);
+        uv_close(handle, async_handle_close_cb);
         return;
     }
 
@@ -971,6 +979,12 @@ static void loop_return_read_event(event_t *ev){
 }
 
 
+// a no-op cleanup async_spec_t
+static async_spec_t no_cleanup_async_spec = {
+    .close_cb = NULL,
+};
+
+
 derr_t loop_init(loop_t *loop, size_t num_read_events,
         size_t num_write_wrappers, engine_t *downstream){
     derr_t e = E_OK;
@@ -984,6 +998,10 @@ derr_t loop_init(loop_t *loop, size_t num_read_events,
 
     // set the uv's data pointer to our loop_t
     loop->uv_loop.data = loop;
+
+    // set the async_spec_t's for our async objects
+    loop->loop_event_passer.data = &no_cleanup_async_spec;
+    loop->loop_closer.data = &no_cleanup_async_spec;
 
     // init async objects
     ret = uv_async_init(&loop->uv_loop, &loop->loop_event_passer, event_cb);

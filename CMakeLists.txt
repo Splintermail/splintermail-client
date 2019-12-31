@@ -58,7 +58,6 @@ set(OBJ_TGTS
     imap_dirmgr
     link
     imap_session
-    imap_client
     maildir_name
     imap_extension
 )
@@ -69,7 +68,7 @@ set(EXE_TGTS
     leak
     encrypt_msg
     decrypt_msg
-    sm_fetch
+    imap_ditm
 )
 
 set(TEST_OBJ_TGTS
@@ -80,7 +79,6 @@ set(TEST_OBJ_TGTS
     ditm_thread
     test_utils
     fake_engine
-    fake_imap_logic
 )
 
 set(TEST_EXE_TGTS
@@ -107,7 +105,6 @@ set(TEST_EXE_TGTS
     test_loop
     test_queue
     test_tls_engine
-    test_imap_engine
     test_link
     test_maildir_name
 )
@@ -266,9 +263,9 @@ obj_depend_obj(queue uv_interface uv_util link common)
 obj_depend_obj(engine queue)
 obj_depend_obj(loop engine)
 obj_depend_obj(tls_engine engine networking)
-obj_depend_obj(imap_engine engine imap_read)
+obj_depend_obj(imap_engine engine imap_read imap_write)
 obj_depend_obj(jsw_atree common)
-obj_depend_obj(imap_expression link common)
+obj_depend_obj(imap_expression jsw_atree link common)
 obj_depend_obj(imap_parse_tab imap_expression imap_extension imap_scan common)
 obj_depend_obj(imap_parse imap_parse_tab common)
 add_dependencies(imap_parse_o bison_header)
@@ -281,8 +278,7 @@ obj_depend_obj(hashmap common)
 obj_depend_obj(imap_msg jsw_atree link hashmap fileops)
 obj_depend_obj(imap_maildir maildir_name imap_msg uv_util fileops)
 obj_depend_obj(imap_dirmgr imap_maildir jsw_atree)
-obj_depend_obj(imap_session uv_interface common)
-obj_depend_obj(imap_client imap_write crypto common)
+obj_depend_obj(imap_session loop tls_engine imap_engine loop uv_interface)
 obj_depend_obj(maildir_name common)
 
 
@@ -293,7 +289,7 @@ target_link_libraries(leak networking)
 target_link_libraries(encrypt_msg crypto opt_parse)
 target_link_libraries(decrypt_msg crypto opt_parse)
 target_link_libraries(olt common fileops opt_parse)
-target_link_libraries(sm_fetch loop tls_engine imap_engine imap_dirmgr imap_client imap_session hashmap)
+target_link_libraries(imap_ditm imap_session imap_dirmgr crypto hashmap)
 
 # decide if we are building server code
 if("${BUILD_SERVER_CODE}")
@@ -382,7 +378,6 @@ if("${BUILD_TESTS}")
     obj_depend_obj(ditm_thread ditm dummy_key_tool fileops)
     obj_depend_obj(dummy_key_tool crypto common)
     obj_depend_obj(fake_engine imap_session loop tls_engine imap_engine queue networking)
-    obj_depend_obj(fake_imap_logic uv_interface)
     # some dummy tools need openssl headers to compile... but not to link
     target_include_directories(dummy_key_tool_o PRIVATE ${OPENSSL_INCLUDE_DIR})
     target_include_directories(dummy_ui_harness_o PRIVATE ${OPENSSL_INCLUDE_DIR})
@@ -430,7 +425,6 @@ if("${BUILD_TESTS}")
     target_link_libraries(test_loop fake_engine networking)
     target_link_libraries(test_queue queue)
     target_link_libraries(test_tls_engine fake_engine)
-    target_link_libraries(test_imap_engine fake_engine fake_imap_logic)
     target_link_libraries(test_link link common)
     target_link_libraries(test_maildir_name maildir_name)
 
@@ -478,6 +472,7 @@ if("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU")
     # libuv needs non-strict aliasing
     # see discussion here: https://github.com/libuv/libuv/issues/1230
     target_compile_options(uv_util_o PRIVATE -fno-strict-aliasing)
+    target_compile_options(imap_ditm PRIVATE -fno-strict-aliasing)
     target_compile_options(imap_parse_tab_o PRIVATE -Wno-sign-conversion)
     target_compile_options(imap_parse_tab_o PRIVATE -Wno-conversion)
     # add some compiler hardening flags

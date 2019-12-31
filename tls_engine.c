@@ -408,12 +408,10 @@ static void tlse_process_events(uv_work_t *req){
     while(should_continue){
         link_t *link = queue_pop_first(&tlse->event_q, true);
         event_t *ev = CONTAINER_OF(link, event_t, link);
-        tlse_data_t *td;
-        td = ev->session ? ev->session->td : NULL;
+        tlse_data_t *td = ev->session ? ev->session->td : NULL;
         // has this session been initialized?
         if(td && td->data_state == DATA_STATE_PREINIT
                 && ev->ev_type != EV_SESSION_CLOSE){
-            // TODO: client connections start the handshake
             tlse_data_onthread_start(td);
         }
         switch(ev->ev_type){

@@ -9,6 +9,7 @@
 #include "imap_engine.h"
 #include "networking.h"
 #include "manager.h"
+#include "imap_parse.h"
 
 struct imap_session_t;
 typedef struct imap_session_t imap_session_t;
@@ -44,8 +45,7 @@ typedef struct {
     imap_pipeline_t *pipeline;
     manager_i *mgr;
     ssl_context_t* ssl_ctx;
-    logic_alloc_t logic_alloc;
-    void *alloc_data;
+    imape_control_i *imap_control;
     // only for connect sessions:
     const char *host;
     const char *service;
@@ -53,12 +53,8 @@ typedef struct {
     terminal_t terminal;
 } imap_session_alloc_args_t;
 
-/* TODO: fix this message and possibly the behavior with the new cleanup system
-   where imap_session is not allowed to free itself */
-/* The imap session will not be freed in between imap_session_alloc_*() and
-   imap_session_start(), even in the case of an asynchronous failure.  However,
-   if you run into an error after imap_session_alloc_*() but before
-   imap_session_start(), you will need to downref the session to clean it up.*/
+/* To destroy a session that you have allocated but not started, you must use
+   imap_session_free().  After starting, you must wait until the dead call. */
 derr_t imap_session_alloc_accept(imap_session_t *s,
         const imap_session_alloc_args_t *args);
 derr_t imap_session_alloc_connect(imap_session_t *s,
@@ -70,7 +66,8 @@ void imap_session_start(imap_session_t *s);
 void imap_session_ref_up(imap_session_t *s);
 void imap_session_ref_down(imap_session_t *s);
 
-void imap_session_send_command(imap_session_t *s, event_t *ev);
+// pass an event wrapped in a cmd_event_t or resp_event_t to the imape_data
+void imap_session_send_event(imap_session_t *s, event_t *ev);
 
 // should be called by the session manager AFTER the "dying" hook
 void imap_session_free(imap_session_t *s);

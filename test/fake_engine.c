@@ -2,7 +2,6 @@
 #include <logger.h>
 
 #include "fake_engine.h"
-#include "fake_imap_logic.h"
 
 /////// reader-writer thread stuff
 

@@ -3,161 +3,13 @@
 #include "uv_util.h"
 
 static void imape_data_onthread_start(imape_data_t *id);
+static void imape_data_onthread_close(imape_data_t *id);
+static void imape_data_read_stuff(imape_data_t *id, const dstr_t *buffer);
+static void imape_data_write_stuff(imape_data_t *id);
 
 static void imape_pass_event(engine_t *imap_engine, event_t *ev){
     imape_t *imape = CONTAINER_OF(imap_engine, imape_t, engine);
     queue_append(&imape->event_q, &ev->link);
-}
-
-static derr_t imape_worker_new(imape_t *imape, imape_worker_t **out){
-    derr_t e = E_OK;
-    imape_worker_t *worker = malloc(sizeof(*worker));
-    if(worker == NULL){
-        *out = NULL;
-        ORIG(&e, E_NOMEM, "unable to alloc worker");
-    }
-
-    link_init(&worker->link);
-    worker->quitting = false;
-    worker->imape = imape;
-    worker->work_req.data = worker;
-
-    *out = worker;
-
-    return e;
-
-}
-
-static void imape_worker_free(imape_worker_t *worker){
-    // currently nothing in the imape_worker_t needs cleanup
-    free(worker);
-}
-
-static void worker_process_event(imape_data_t *id, event_t *ev){
-    session_t *session = id->session;
-    // this should *really* never happen, so it's not critical to handle it
-    if(session != ev->session){
-        LOG_ERROR("mismatched session!");
-    }
-
-    // catch session close events
-    if(ev->ev_type == EV_SESSION_CLOSE){
-        imape_data_onthread_close(id);
-        id->ref_down(ev->session, IMAPE_REF_CLOSE_EVENT);
-        return;
-    }
-
-    /* Note: we check id->data_state == DATA_STATE_CLOSED in all cases.  The
-       error handling is very similar to what the main imape_t thread does,
-       except that the imap_engine's checks can only guarantee protection
-       against failure-to-start sessions.  Here we actually can guarantee
-       protection aginst started-then-closed sessions, because the imap_worker
-       is the only place where onthread_close is ever called. */
-    if(id->data_state == DATA_STATE_CLOSED){
-        ev->returner(ev);
-        return;
-    }
-
-    // pass the event to the logic
-    derr_t e = E_OK;
-    IF_PROP(&e, id->logic->new_event(id->logic, ev)){
-        id->session->close(id->session, e);
-        PASSED(e);
-        imape_data_onthread_close(id);
-    }
-}
-
-// the worker thread, in uv_work_cb form
-static void worker_thread(uv_work_t *req){
-    imape_worker_t *worker = req->data;
-    imape_t *imape = worker->imape;
-    // mark this worker as running
-    uv_mutex_lock(&imape->workers_mutex);
-    imape->running_workers++;
-    uv_mutex_unlock(&imape->workers_mutex);
-
-    while(true){
-        // get a session that needs processing
-        link_t *link = queue_pop_first(&imape->ready_data, true);
-        // is this link the quit sentinal?
-        if(link == &imape->quit_sentinal){
-            // check if there is an imap_data_t behind the sentinal
-            link_t *temp = queue_pop_first(&imape->ready_data, false);
-            // put the sentinal back for another worker
-            queue_append(&imape->ready_data, link);
-            if(temp != NULL){
-                // keep working
-                link = temp;
-            }else{
-                // no more work for us to do, just quit
-                break;
-            }
-        }
-
-        // get the imape_data_t from the link
-        imape_data_t *id = CONTAINER_OF(link, imape_data_t, link);
-        id->ref_up(id->session, IMAPE_REF_WORKER);
-
-        // process all the events
-        uv_mutex_lock(&id->mutex);
-        while(!link_list_isempty(&id->events)){
-            link = link_list_pop_first(&id->events);
-            uv_mutex_unlock(&id->mutex);
-
-            event_t *ev = CONTAINER_OF(link, event_t, link);
-            worker_process_event(id, ev);
-
-            uv_mutex_lock(&id->mutex);
-        }
-        uv_mutex_unlock(&id->mutex);
-
-        // let the logic do work
-        bool more_work = false;
-        if(id->data_state != DATA_STATE_CLOSED){
-            derr_t e = E_OK;
-            IF_PROP(&e, id->logic->do_work(id->logic)){
-                id->session->close(id->session, e);
-                PASSED(e);
-                imape_data_onthread_close(id);
-            }else{
-                more_work = id->logic->more_work(id->logic);
-            }
-        }
-
-        // Is this imape_data_t done working?  Or does it need more?
-        uv_mutex_lock(&id->mutex);
-        if(link_list_isempty(&id->events) && !more_work){
-            id->work_state = IMAPE_INACTIVE;
-            uv_mutex_unlock(&id->mutex);
-        }else{
-            id->work_state = IMAPE_WAITING;
-            uv_mutex_unlock(&id->mutex);
-            queue_append(&imape->ready_data, &id->link);
-        }
-
-        id->ref_down(id->session, IMAPE_REF_WORKER);
-    }
-
-    // mark this worker as not running anymore
-    uv_mutex_lock(&imape->workers_mutex);
-    imape->running_workers--;
-    uv_cond_signal(&imape->workers_cond);
-    uv_mutex_unlock(&imape->workers_mutex);
-}
-
-// This will be called on the loop thread
-static void worker_exit_cb(uv_work_t *req, int status){
-    // if the thread was canceled, somebody else is handling errors.
-    if(status == UV_ECANCELED) return;
-
-    // Otherwise, raise an error
-    if(status != 0){
-        imape_worker_t *worker = req->data;
-        derr_t e = E_OK;
-        TRACE_ORIG(&e, E_VALUE, "imape worker thread exiting early");
-        loop_close(worker->imape->loop, e);
-        PASSED(e);
-    }
 }
 
 static void imape_return_write_event(event_t *ev){
@@ -166,8 +18,7 @@ static void imape_return_write_event(event_t *ev){
     imape_pass_event(&imape->engine, ev);
 }
 
-derr_t imape_init(imape_t *imape, size_t nwrite_events, engine_t *upstream,
-        size_t nworkers, loop_t *loop){
+derr_t imape_init(imape_t *imape, size_t nwrite_events, engine_t *upstream){
     derr_t e = E_OK;
 
     imape->engine.pass_event = imape_pass_event;
@@ -177,52 +28,15 @@ derr_t imape_init(imape_t *imape, size_t nwrite_events, engine_t *upstream,
     imape->quitting = false;
     imape->nwrite_events = nwrite_events;
     imape->quit_ev = NULL;
-    imape->loop = loop;
-    imape->running_workers = 0;
-
-    link_init(&imape->quit_sentinal);
-    link_init(&imape->workers);
 
     PROP_GO(&e, queue_init(&imape->event_q), fail);
-    PROP_GO(&e, queue_init(&imape->ready_data), fail_event_q);
     PROP_GO(&e, event_pool_init(&imape->write_events, nwrite_events,
-                imape_return_write_event, imape), fail_ready_data);
-
-    int ret = uv_mutex_init(&imape->workers_mutex);
-    if(ret < 0){
-        TRACE(&e, "uv_mutex_init: %x\n", FUV(&ret));
-        ORIG_GO(&e, uv_err_type(ret), "error initializing mutex", fail_writes);
-    }
-
-    ret = uv_cond_init(&imape->workers_cond);
-    if(ret < 0){
-        TRACE(&e, "uv_cond_init: %x\n", FUV(&ret));
-        ORIG_GO(&e, uv_err_type(ret), "error initializing cond", fail_writes);
-    }
-
-    // initialize all the threads
-    for(size_t i = 0; i < nworkers; i++){
-        imape_worker_t *worker;
-        PROP_GO(&e, imape_worker_new(imape, &worker), fail_workers);
-        link_list_append(&imape->workers, &worker->link);
-    }
+                imape_return_write_event, imape), fail_event_q);
 
     imape->initialized = true;
 
     return e;
 
-    link_t *link;
-fail_workers:
-    while((link = link_list_pop_first(&imape->workers)) != NULL){
-        imape_worker_t *worker = CONTAINER_OF(link, imape_worker_t, link);
-        imape_worker_free(worker);
-    }
-// fail_mutex:
-    uv_mutex_destroy(&imape->workers_mutex);
-fail_writes:
-    event_pool_free(&imape->write_events);
-fail_ready_data:
-    queue_free(&imape->ready_data);
 fail_event_q:
     queue_free(&imape->event_q);
 fail:
@@ -232,38 +46,12 @@ fail:
 
 void imape_free(imape_t *imape){
     if(!imape->initialized) return;
-    link_t *link;
-    while((link = link_list_pop_first(&imape->workers)) != NULL){
-        imape_worker_t *worker = CONTAINER_OF(link, imape_worker_t, link);
-        imape_worker_free(worker);
-    }
-    uv_mutex_destroy(&imape->workers_mutex);
     event_pool_free(&imape->write_events);
-    queue_free(&imape->ready_data);
     queue_free(&imape->event_q);
     imape->initialized = false;
 }
 
-// a helper function for passing events in a thread-safe way
-// (put the imape_data_t work_state logic in one place)
-void imape_add_event_to_imape_data(imape_t *imape, imape_data_t *id,
-        event_t *ev){
-    uv_mutex_lock(&id->mutex);
-    // add event to list
-    link_list_append(&id->events, &ev->link);
-    // does this event affect the state?
-    if(id->work_state == IMAPE_INACTIVE){
-        id->work_state = IMAPE_WAITING;
-        uv_mutex_unlock(&id->mutex);
-        queue_append(&imape->ready_data, &id->link);
-    }else{
-        uv_mutex_unlock(&id->mutex);
-    }
-}
-
-/* the main engine thread, in uv_work_cb form.  It really just passes events to
-   per-session queues within imape_data_t structs and interacts with worker
-   threads. */
+// the main engine thread, in uv_work_cb form.
 static void imape_process_events(uv_work_t *req){
     imape_t *imape = req->data;
     bool should_continue = true;
@@ -274,25 +62,26 @@ static void imape_process_events(uv_work_t *req){
         // has this session been initialized?
         if(id && id->data_state == DATA_STATE_PREINIT
                 && ev->ev_type != EV_SESSION_CLOSE){
-            /* onthread start can be safely run from the main thread because
-               the main thread can guarantee that no worker threads have access
-               to the imape_data_t yet */
             imape_data_onthread_start(id);
         }
-
-        /* Note: we check id->data_state == DATA_STATE_CLOSED in all cases.
-           This is to detect failure-to-start sessions, not to detect if a
-           previously-working session has closed.  That check has to be done
-           inside a mutex by an imape_worker_t. */
-
         switch(ev->ev_type){
             case EV_READ:
-            case EV_COMMAND:
-            case EV_MAILDIR:
                 if(imape->quitting || id->data_state == DATA_STATE_CLOSED){
                     ev->returner(ev);
                 }else{
-                    imape_add_event_to_imape_data(imape, id, ev);
+                    // pass the contents through the parser
+                    imape_data_read_stuff(id, &ev->buffer);
+                    ev->returner(ev);
+                }
+                break;
+            case EV_WRITE:
+                if(imape->quitting || id->data_state == DATA_STATE_CLOSED){
+                    ev->returner(ev);
+                }else{
+                    // the imap writer can't always write things right away
+                    link_list_append(&id->unwritten, &ev->link);
+                    // but do write whatever we can
+                    imape_data_write_stuff(id);
                 }
                 break;
             case EV_WRITE_DONE:
@@ -314,20 +103,6 @@ static void imape_process_events(uv_work_t *req){
                 // LOG_ERROR("imape: QUIT_DOWN\n");
                 // enter quitting state
                 imape->quitting = true;
-                imape_worker_t *worker;
-                // put each worker in the quitting state to drop unstarted work
-                LINK_FOR_EACH(worker, &imape->workers, imape_worker_t, link){
-                    worker->quitting = true;
-                }
-                // post the quit_sentinal, to wake up inactive workers
-                queue_append(&imape->ready_data, &imape->quit_sentinal);
-                /* we can't send EV_QUIT_UP until all workers have agreed to
-                   stop sending events (i.e., they have exited) */
-                uv_mutex_lock(&imape->workers_mutex);
-                while(imape->running_workers > 0){
-                    uv_cond_wait(&imape->workers_cond, &imape->workers_mutex);
-                }
-                uv_mutex_unlock(&imape->workers_mutex);
                 // still not done until we have all of our write buffers back
                 ev->ev_type = EV_QUIT_UP;
                 if(imape->write_events.len < imape->nwrite_events){
@@ -345,7 +120,8 @@ static void imape_process_events(uv_work_t *req){
             case EV_SESSION_CLOSE:
                 /* onthread close must be run on a worker thread to ensure it
                    is the only thread operating on it at a time */
-                imape_add_event_to_imape_data(imape, id, ev);
+                imape_data_onthread_close(id);
+                id->ref_down(ev->session, IMAPE_REF_CLOSE_EVENT);
                 break;
 
             case EV_QUIT_UP:
@@ -354,9 +130,6 @@ static void imape_process_events(uv_work_t *req){
             case EV_READ_DONE:
                 LOG_ERROR("imap engine received an illegal READ_DONE\n");
                 break;
-            case EV_WRITE:
-                LOG_ERROR("imap engine received an illegal WRITE\n");
-                break;
             default:
                 LOG_ERROR("unexpected event type in imap engine, ev = %x\n",
                           FP(ev));
@@ -364,16 +137,174 @@ static void imape_process_events(uv_work_t *req){
     }
 }
 
+derr_t imape_add_to_loop(imape_t *imape, uv_loop_t *loop){
+    derr_t e = E_OK;
+    // add main thread to loop
+    int ret = uv_queue_work(loop, &imape->work_req, imape_process_events, NULL);
+    if(ret < 0){
+        TRACE(&e, "uv_queue_work: %x\n", FUV(&ret));
+        ORIG(&e, uv_err_type(ret), "error adding imap engine to uv loop");
+    }
+    return e;
+}
+
+// pass a buffer through the imap reader
+static void imape_data_read_stuff(imape_data_t *id, const dstr_t *buffer){
+    derr_t e = E_OK;
+
+    // check for EOF
+    if(buffer->len == 0){
+        ORIG_GO(&e, E_CONN, "Received unexpected EOF", fail);
+
+    }
+
+    LOG_INFO("recv: %x", FD(buffer));
+    PROP_GO(&e, imap_read(&id->reader, buffer), fail);
+
+    return;
+
+fail:
+    id->session->close(id->session, e);
+    PASSED(e);
+    imape_data_onthread_close(id);
+    return;
+}
+
+// we use the callback form, queue_pop_first_cb(), to request write events
+static void id_prewait_cb(queue_cb_t *qcb){
+    /* upref the session while we wait for a write event.  When we receive one,
+       we will just reuse this reference */
+    imape_data_t *id = CONTAINER_OF(qcb, imape_data_t, write_qcb);
+    id->ref_up(id->session, IMAPE_REF_WRITE);
+    // mark that we have already requested a write
+    id->write_requested = true;
+}
+
+static void id_new_data_cb(queue_cb_t *qcb, link_t *link){
+    // dereference args
+    imape_data_t *id = CONTAINER_OF(qcb, imape_data_t, write_qcb);
+    event_t *ev = CONTAINER_OF(link, event_t, link);
+    // mark session (upref happened already, in prewait)
+    ev->session = id->session;
+    id->write_requested = false;
+    // use it!
+    id->write_ev = ev;
+    imape_data_write_stuff(id);
+}
+
+// write as many commands or responses as possible before returning
+static void imape_data_write_stuff(imape_data_t *id){
+    derr_t e = E_OK;
+
+    // make sure there's something to be written
+    while(!link_list_isempty(&id->unwritten)){
+
+        // get something to write to
+        if(id->write_ev == NULL && !id->write_requested){
+            queue_cb_set(&id->write_qcb, id_prewait_cb, id_new_data_cb);
+            link_t *link = queue_pop_first_cb(&id->imape->write_events,
+                    &id->write_qcb);
+            // do we need to set the session?
+            if(link != NULL){
+                id->write_ev = CONTAINER_OF(link, event_t, link);
+                id->write_ev->session = id->session;
+                id->ref_up(id->session, IMAPE_REF_WRITE);
+            }
+        }
+
+        if(id->write_ev == NULL) return;
+
+        // write some of whatever it is we need to write
+        link_t *link = id->unwritten.next;
+        event_t *ev_in = CONTAINER_OF(link, event_t, link);
+        size_t want = 0;
+        if(id->control->is_client){
+            cmd_event_t *cmd_ev = CONTAINER_OF(ev_in, cmd_event_t, ev);
+            // invalid syntax here means we have an internal bug
+            NOFAIL_GO(&e, E_PARAM, imap_cmd_write(cmd_ev->cmd,
+                        &id->write_ev->buffer, &id->write_skip, &want,
+                        &id->control->exts), fail);
+        }else{
+            resp_event_t *resp_ev = CONTAINER_OF(ev_in, resp_event_t, ev);
+            NOFAIL_GO(&e, E_PARAM, imap_resp_write(resp_ev->resp,
+                        &id->write_ev->buffer, &id->write_skip, &want,
+                        &id->control->exts), fail);
+        }
+
+        // did we finish writing that thing?
+        if(want == 0){
+            link_remove(link);
+            ev_in->returner(ev_in);
+        }
+
+        // send the write event
+        id->write_ev->ev_type = EV_WRITE;
+        {
+            LOG_ERROR("send: %x", FD(&id->write_ev->buffer));
+        }
+        id->imape->upstream->pass_event(id->imape->upstream, id->write_ev);
+
+        // done with event
+        id->write_ev = NULL;
+    }
+
+    return;
+
+fail:
+    id->session->close(id->session, e);
+    PASSED(e);
+    imape_data_onthread_close(id);
+    return;
+}
+
+// parser callback for servers
+
+static void cmd_cb(void *cb_data, derr_t error, imap_cmd_t *cmd){
+    imape_data_t *id = cb_data;
+    derr_t e = E_OK;
+
+    PROP_VAR_GO(&e, &error, fail);
+
+    // pass the command to whatever is controlling this imap session
+    id->control->object_cb.cmd(id->control, cmd);
+
+    return;
+
+fail:
+    imap_cmd_free(cmd);
+    id->session->close(id->session, e);
+    PASSED(e);
+}
+static imap_parser_cb_t imape_parser_cmd_cb = {.cmd=cmd_cb};
+
+// parser callback for clients
+
+static void resp_cb(void *cb_data, derr_t error, imap_resp_t *resp){
+    imape_data_t *id = cb_data;
+    derr_t e = E_OK;
+
+    PROP_VAR_GO(&e, &error, fail);
+
+    // pass the response to whatever is controlling this imap session
+    id->control->object_cb.resp(id->control, resp);
+
+    return;
+
+fail:
+    imap_resp_free(resp);
+    id->session->close(id->session, e);
+    PASSED(e);
+}
+static imap_parser_cb_t imape_parser_resp_cb = {.resp=resp_cb};
+
 void imape_data_prestart(imape_data_t *id, imape_t *imape, session_t *session,
-        bool upwards, ref_fn_t ref_up, ref_fn_t ref_down,
-        logic_alloc_t logic_alloc, void *alloc_data){
+        ref_fn_t ref_up, ref_fn_t ref_down, imape_control_i *control){
+    *id = (imape_data_t){0};
     id->imape = imape;
     id->session = session;
-    id->upwards = upwards;
     id->ref_up = ref_up;
     id->ref_down = ref_down;
-    id->logic_alloc = logic_alloc;
-    id->alloc_data = alloc_data;
+    id->control = control;
 }
 
 void imape_data_start(imape_data_t *id){
@@ -393,32 +324,21 @@ static void imape_data_onthread_start(imape_data_t *id){
 
     id->data_state = DATA_STATE_STARTED;
 
-    // The mutex is not closed until imape_data_postclose()
-    id->mutex_initialized = false;
-    int ret = uv_mutex_init(&id->mutex);
-    if(ret < 0){
-        TRACE(&e, "uv_mutex_init: %x\n", FUV(&ret));
-        ORIG_GO(&e, uv_err_type(ret), "error initializing mutex", fail);
-    }
-    id->mutex_initialized = true;
+    link_init(&id->unwritten);
+    queue_cb_prep(&id->write_qcb);
 
-    PROP_GO(&e, id->logic_alloc(&id->logic, id->alloc_data, id),
-            fail_mutex);
+    // choose the right parser callback
+    imap_parser_cb_t parser_cb =
+        id->control->is_client ? imape_parser_resp_cb : imape_parser_cmd_cb;
 
-    // Multithreaded worker considerations
-
-    id->work_state = IMAPE_INACTIVE;
-    link_init(&id->events);
-    link_init(&id->link);
+    PROP_GO(&e, imap_reader_init(&id->reader, &id->control->exts, parser_cb,
+                id), fail);
 
     // lifetime reference
     id->ref_up(id->session, IMAPE_REF_LIFETIME);
 
     return;
 
-fail_mutex:
-    uv_mutex_destroy(&id->mutex);
-    id->mutex_initialized = false;
 fail:
     id->data_state = DATA_STATE_CLOSED;
     id->session->close(id->session, e);
@@ -440,7 +360,7 @@ void imape_data_close(imape_data_t *id){
     id->imape->engine.pass_event(&id->imape->engine, &id->close_ev);
 }
 
-void imape_data_onthread_close(imape_data_t *id){
+static void imape_data_onthread_close(imape_data_t *id){
     // no double closing.  This could happen if imape_data_start failed.
     if(id->data_state == DATA_STATE_CLOSED) return;
     // safe from PREINIT state
@@ -449,55 +369,18 @@ void imape_data_onthread_close(imape_data_t *id){
     id->data_state = DATA_STATE_CLOSED;
     if(exit_early) return;
 
-    // don't close the mutex until after the last downref, in *_postclose()
+    // release unwritten events
+    link_t *link;
+    while((link = link_list_pop_first(&id->unwritten)) != NULL){
+        event_t *ev = CONTAINER_OF(link, event_t, link);
+        ev->returner(ev);
+    }
 
-    id->logic->free(id->logic);
+    // clse reader
+    imap_reader_free(&id->reader);
 
     // lifetime reference
     id->ref_down(id->session, IMAPE_REF_LIFETIME);
-}
-
-void imape_data_postclose(imape_data_t *id){
-    // the last resource, which can't be freed until after ALL events
-    if(id->mutex_initialized){
-        uv_mutex_destroy(&id->mutex);
-        id->mutex_initialized = false;
-    }
-}
-
-derr_t imape_add_to_loop(imape_t *imape, uv_loop_t *loop){
-    derr_t e = E_OK;
-    // add main thread to loop
-    int ret = uv_queue_work(loop, &imape->work_req, imape_process_events, NULL);
-    if(ret < 0){
-        TRACE(&e, "uv_queue_work: %x\n", FUV(&ret));
-        ORIG(&e, uv_err_type(ret), "error adding imap engine to uv loop");
-    }
-    // add worker threads to loop
-    imape_worker_t *worker;
-    size_t started_workers = 0;
-    LINK_FOR_EACH(worker, &imape->workers, imape_worker_t, link){
-        ret = uv_queue_work(loop, &worker->work_req, worker_thread,
-                worker_exit_cb);
-        if(ret < 0){
-            TRACE(&e, "uv_queue_work: %x\n", FUV(&ret));
-            ORIG_GO(&e, uv_err_type(ret), "error adding worker to uv loop",
-                    fail_workers);
-        }
-        started_workers++;
-    }
-    return e;
-
-fail_workers:
-    LINK_FOR_EACH(worker, &imape->workers, imape_worker_t, link){
-        // only cancel the workers we started
-        if(started_workers == 0) break;
-        uv_cancel_work(&worker->work_req);
-        started_workers--;
-    }
-//fail_main:
-    uv_cancel_work(&imape->work_req);
-    return e;
 }
 
 DSTR_STATIC(imape_ref_read_dstr, "read");
@@ -505,7 +388,6 @@ DSTR_STATIC(imape_ref_write_dstr, "write");
 DSTR_STATIC(imape_ref_start_event_dstr, "start_event");
 DSTR_STATIC(imape_ref_close_event_dstr, "close_event");
 DSTR_STATIC(imape_ref_lifetime_dstr, "lifetime");
-DSTR_STATIC(imape_ref_worker_dstr, "worker");
 DSTR_STATIC(imape_ref_unknown_dstr, "unknown");
 
 dstr_t *imape_ref_reason_to_dstr(enum imape_ref_reason_t reason){
@@ -515,7 +397,6 @@ dstr_t *imape_ref_reason_to_dstr(enum imape_ref_reason_t reason){
         case IMAPE_REF_START_EVENT: return &imape_ref_start_event_dstr; break;
         case IMAPE_REF_CLOSE_EVENT: return &imape_ref_close_event_dstr; break;
         case IMAPE_REF_LIFETIME: return &imape_ref_lifetime_dstr; break;
-        case IMAPE_REF_WORKER: return &imape_ref_worker_dstr; break;
         default: return &imape_ref_unknown_dstr;
     }
 }

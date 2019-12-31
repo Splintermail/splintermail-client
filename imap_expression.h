@@ -3,6 +3,7 @@
 
 #include "common.h"
 #include "jsw_atree.h"
+#include "link.h"
 
 typedef struct ie_dstr_t {
     dstr_t dstr;
@@ -557,6 +558,8 @@ typedef struct {
     ie_dstr_t *tag;
     imap_cmd_type_t type;
     imap_cmd_arg_t arg;
+    // storage
+    link_t link;
 } imap_cmd_t;
 
 // full response types
@@ -633,6 +636,8 @@ typedef struct {
 typedef struct {
     imap_resp_type_t type;
     imap_resp_arg_t arg;
+    // storage
+    link_t link;
 } imap_resp_t;
 
 // final union type for bison

@@ -27,10 +27,7 @@ void imap_session_free(imap_session_t *s){
 
     // tlse_data does not need freeing
 
-    // imape_data needs freeing
-    if(s->pipeline->imape){
-        imape_data_postclose(&s->imape_data);
-    }
+    // imape_data does not need freeing
 
     // free our own resources
     uv_mutex_destroy(&s->mutex);
@@ -166,9 +163,8 @@ static derr_t imap_session_do_alloc(imap_session_t *s,
     }
     if(s->pipeline->imape){
         imape_data_prestart(&s->imape_data, s->pipeline->imape, &s->session,
-                upwards, imap_session_ref_up_imape,
-                imap_session_ref_down_imape,
-                args->logic_alloc, args->alloc_data);
+                imap_session_ref_up_imape, imap_session_ref_down_imape,
+                args->imap_control);
     }
 
     return e;
@@ -204,7 +200,7 @@ derr_t imap_session_alloc_connect(imap_session_t *s,
     return e;
 }
 
-void imap_session_send_command(imap_session_t *s, event_t *ev){
+void imap_session_send_event(imap_session_t *s, event_t *ev){
     engine_t *engine = &s->pipeline->imape->engine;
     engine->pass_event(engine, ev);
 }

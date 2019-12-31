@@ -1689,6 +1689,8 @@ imap_cmd_t *imap_cmd_new(derr_t *e, ie_dstr_t *tag, imap_cmd_type_t type,
     cmd->type = type;
     cmd->arg = arg;
 
+    link_init(&cmd->link);
+
     return cmd;
 
 fail:
@@ -1848,6 +1850,8 @@ imap_resp_t *imap_resp_new(derr_t *e, imap_resp_type_t type,
 
     resp->type = type;
     resp->arg = arg;
+
+    link_init(&resp->link);
 
     return resp;
 
