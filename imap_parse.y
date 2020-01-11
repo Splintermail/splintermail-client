@@ -939,6 +939,7 @@ fetch_attr_simple: ENVELOPE       { $$ = IE_FETCH_ATTR_ENVELOPE; }
                  | RFC822_TEXT    { $$ = IE_FETCH_ATTR_RFC822_TEXT; }
                  | BODYSTRUCT     { $$ = IE_FETCH_ATTR_BODYSTRUCT; }
                  | BODY           { $$ = IE_FETCH_ATTR_BODY; }
+                 | MODSEQ         { $$ = IE_FETCH_ATTR_MODSEQ; }
 ;
 
 fetch_attr_extra: BODY '[' sect[s] ']' partial[p]      { $$ = ie_fetch_extra_new(E, false, $s, $p); }

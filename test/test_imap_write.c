@@ -420,6 +420,26 @@ static derr_t test_imap_writer(void){
                 },
             },
             {
+                .cmd=imap_cmd_new(&e, IE_DSTR("tag"), IMAP_CMD_FETCH,
+                    (imap_cmd_arg_t){
+                        .fetch=ie_fetch_cmd_new(&e,
+                            true,
+                            ie_seq_set_new(&e, 1, 2),
+                            ie_fetch_attrs_add_simple(
+                                &e,
+                                ie_fetch_attrs_new(&e),
+                                IE_FETCH_ATTR_MODSEQ
+                            ),
+                            NULL
+                        ),
+                    }
+                ),
+                .out=(size_chunk_out_t[]){
+                    {64, "tag UID FETCH 1:2 (MODSEQ)\r\n"},
+                    {0}
+                },
+            },
+            {
                 .resp=imap_resp_new(&e, IMAP_RESP_STATUS,
                     (imap_resp_arg_t){
                         .status=ie_status_resp_new(
@@ -560,17 +580,6 @@ static derr_t test_imap_writer(void){
                     {0}
                 },
             },
-            /*
-    struct {
-        unsigned int uidvld;
-        unsigned long last_modseq;
-        // list of known uids is optional; can't contain '*'
-        ie_seq_set_t *known_uids;
-        // seq-to-uid mapping is optional; neither can contain '*'
-        ie_seq_set_t *seq_keys;
-        ie_seq_set_t *uid_vals;
-    } qresync;
-               */
             {
                 // QRESYNC modifier with only the required fields
                 .cmd=imap_cmd_new(&e, IE_DSTR("tag"), IMAP_CMD_SELECT,

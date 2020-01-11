@@ -24,7 +24,7 @@
 static derr_t test_parse_valid(void){
     derr_t e = E_OK;
 
-    DSTR_STATIC(name, "0123456789.123,456,AFX.my.host.name:2,S");
+    DSTR_STATIC(name, "0123456789.1,456,123.my.host.name:2,S");
     unsigned long epoch, epoch_ans = 123456789;
     size_t len, len_ans = 123;
     unsigned int uid, uid_ans = 456;
@@ -32,22 +32,13 @@ static derr_t test_parse_valid(void){
     DSTR_STATIC(host_ans, "my.host.name");
     DSTR_VAR(info, 32);
     DSTR_STATIC(info_ans, "2,S");
-    msg_flags_t flags, flags_ans = {
-        .answered=true, .flagged=true, .deleted=true,
-    };
 
-    PROP(&e, maildir_name_parse(&name, &epoch, &len, &uid, &flags, &host,
+    PROP(&e, maildir_name_parse(&name, &epoch, &uid, &len, &host,
                 &info) );
 
     EXP_VS_GOT_SIMPLE(epoch_ans, epoch, FU);
-    EXP_VS_GOT_SIMPLE(len_ans, len, FU);
     EXP_VS_GOT_SIMPLE(uid_ans, uid, FU);
-
-    EXP_VS_GOT_SIMPLE(flags_ans.answered, flags.answered, FU);
-    EXP_VS_GOT_SIMPLE(flags_ans.flagged,  flags.flagged,  FU);
-    EXP_VS_GOT_SIMPLE(flags_ans.seen,     flags.seen,     FU);
-    EXP_VS_GOT_SIMPLE(flags_ans.draft,    flags.draft,    FU);
-    EXP_VS_GOT_SIMPLE(flags_ans.deleted,  flags.deleted,  FU);
+    EXP_VS_GOT_SIMPLE(len_ans, len, FU);
 
     EXP_VS_GOT_DSTR(&host_ans, &host);
     EXP_VS_GOT_DSTR(&info_ans, &info);

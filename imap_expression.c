@@ -231,6 +231,26 @@ void ie_dstr_free_shell(ie_dstr_t *d){
     free(d);
 }
 
+ie_dstr_t *ie_dstr_copy(derr_t *e, const ie_dstr_t *old){
+    if(!old) goto fail;
+
+    ie_dstr_t *d = ie_dstr_new_empty(e);
+    d = ie_dstr_append(e, d, &old->dstr, KEEP_RAW);
+    CHECK_GO(e, fail);
+
+    // recurse
+    d->next = ie_dstr_copy(e, old->next);
+
+    CHECK_GO(e, fail_new);
+
+    return d;
+
+fail_new:
+    ie_dstr_free(d);
+fail:
+    return NULL;
+}
+
 static ie_mailbox_t *ie_mailbox_new(derr_t *e){
     if(is_error(*e)) goto fail;
 
@@ -278,6 +298,20 @@ void ie_mailbox_free(ie_mailbox_t *m){
     dstr_free(&m->dstr);
     free(m);
 }
+
+ie_mailbox_t *ie_mailbox_copy(derr_t *e, const ie_mailbox_t *old){
+    if(!old) return NULL;
+
+    if(old->inbox){
+        return ie_mailbox_new_inbox(e);
+    }
+
+    ie_dstr_t *name = ie_dstr_new_empty(e);
+    name = ie_dstr_append(e, name, &old->dstr, KEEP_RAW);
+
+    return ie_mailbox_new_noninbox(e, name);
+}
+
 
 // returns either the mailbox name, or a static dstr of "INBOX"
 const dstr_t *ie_mailbox_name(ie_mailbox_t *m){
@@ -337,6 +371,26 @@ void ie_select_params_free(ie_select_params_t *params){
     free(params);
 }
 
+ie_select_params_t *ie_select_params_copy(derr_t *e,
+        const ie_select_params_t *old){
+    if(!old) return NULL;
+
+    ie_select_param_arg_t arg = old->arg;
+    switch(old->type){
+        case IE_SELECT_PARAM_CONDSTORE:
+            break;
+        case IE_SELECT_PARAM_QRESYNC:
+            arg.qresync.known_uids =
+                ie_seq_set_copy(e, old->arg.qresync.known_uids);
+            arg.qresync.seq_keys =
+                ie_seq_set_copy(e, old->arg.qresync.seq_keys);
+            arg.qresync.uid_vals =
+                ie_seq_set_copy(e, old->arg.qresync.uid_vals);
+            break;
+    }
+    return ie_select_params_new(e, old->type, arg);
+}
+
 // normal flags, used by APPEND command, STORE command, and FLAGS response.
 
 ie_flags_t *ie_flags_new(derr_t *e){
@@ -355,6 +409,26 @@ void ie_flags_free(ie_flags_t *f){
     ie_dstr_free(f->extensions);
     ie_dstr_free(f->keywords);
     free(f);
+}
+
+ie_flags_t *ie_flags_copy(derr_t *e, const ie_flags_t *old){
+    if(!old) goto fail;
+
+    ie_flags_t *f = ie_flags_new(e);
+    CHECK_GO(e, fail);
+
+    *f = *old;
+    f->keywords = ie_dstr_copy(e, old->keywords);
+    f->extensions = ie_dstr_copy(e, old->extensions);
+
+    CHECK_GO(e, fail_new);
+
+    return f;
+
+fail_new:
+    ie_flags_free(f);
+fail:
+    return NULL;
 }
 
 ie_flags_t *ie_flags_add_simple(derr_t *e, ie_flags_t *f, ie_flag_type_t type){
@@ -425,6 +499,26 @@ void ie_pflags_free(ie_pflags_t *pf){
     ie_dstr_free(pf->extensions);
     ie_dstr_free(pf->keywords);
     free(pf);
+}
+
+ie_pflags_t *ie_pflags_copy(derr_t *e, const ie_pflags_t *old){
+    if(!old) goto fail;
+
+    ie_pflags_t *pf = ie_pflags_new(e);
+    CHECK_GO(e, fail);
+
+    *pf = *old;
+    pf->keywords = ie_dstr_copy(e, old->keywords);
+    pf->extensions = ie_dstr_copy(e, old->extensions);
+
+    CHECK_GO(e, fail_new);
+
+    return pf;
+
+fail_new:
+    ie_pflags_free(pf);
+fail:
+    return NULL;
 }
 
 ie_pflags_t *ie_pflags_add_simple(derr_t *e, ie_pflags_t *pf,
@@ -499,6 +593,26 @@ void ie_fflags_free(ie_fflags_t *ff){
     free(ff);
 }
 
+ie_fflags_t *ie_fflags_copy(derr_t *e, const ie_fflags_t *old){
+    if(!old) goto fail;
+
+    ie_fflags_t *ff = ie_fflags_new(e);
+    CHECK_GO(e, fail);
+
+    *ff = *old;
+    ff->keywords = ie_dstr_copy(e, old->keywords);
+    ff->extensions = ie_dstr_copy(e, old->extensions);
+
+    CHECK_GO(e, fail_new);
+
+    return ff;
+
+fail_new:
+    ie_fflags_free(ff);
+fail:
+    return NULL;
+}
+
 ie_fflags_t *ie_fflags_add_simple(derr_t *e, ie_fflags_t *ff,
         ie_fflag_type_t type){
     if(is_error(*e)) goto fail;
@@ -570,6 +684,25 @@ void ie_mflags_free(ie_mflags_t *mf){
     free(mf);
 }
 
+ie_mflags_t *ie_mflags_copy(derr_t *e, const ie_mflags_t *old){
+    if(!old) goto fail;
+
+    ie_mflags_t *mf = ie_mflags_new(e);
+    CHECK_GO(e, fail);
+
+    *mf = *old;
+    mf->extensions = ie_dstr_copy(e, old->extensions);
+
+    CHECK_GO(e, fail_new);
+
+    return mf;
+
+fail_new:
+    ie_mflags_free(mf);
+fail:
+    return NULL;
+}
+
 ie_mflags_t *ie_mflags_add_noinf(derr_t *e, ie_mflags_t *mf){
     if(is_error(*e)) goto fail;
 
@@ -619,6 +752,25 @@ void ie_seq_set_free(ie_seq_set_t *set){
     free(set);
 }
 
+ie_seq_set_t *ie_seq_set_copy(derr_t *e, const ie_seq_set_t *old){
+    if(!old) goto fail;
+
+    ie_seq_set_t *set = ie_seq_set_new(e, old->n1, old->n2);
+    CHECK_GO(e, fail);
+
+    // recurse
+    set->next = ie_seq_set_copy(e, old->next);
+
+    CHECK_GO(e, fail_new);
+
+    return set;
+
+fail_new:
+    ie_seq_set_free(set);
+fail:
+    return NULL;
+}
+
 ie_seq_set_t *ie_seq_set_append(derr_t *e, ie_seq_set_t *set,
         ie_seq_set_t *next){
     if(is_error(*e)) goto fail;
@@ -654,6 +806,25 @@ void ie_nums_free(ie_nums_t *nums){
     if(!nums) return;
     ie_nums_free(nums->next);
     free(nums);
+}
+
+ie_nums_t *ie_nums_copy(derr_t *e, const ie_nums_t *old){
+    if(!old) goto fail;
+
+    ie_nums_t *nums = ie_nums_new(e, old->num);
+    CHECK_GO(e, fail);
+
+    // recurse
+    nums->next = ie_nums_copy(e, old->next);
+
+    CHECK_GO(e, fail_new);
+
+    return nums;
+
+fail_new:
+    ie_nums_free(nums);
+fail:
+    return NULL;
 }
 
 ie_nums_t *ie_nums_append(derr_t *e, ie_nums_t *nums, ie_nums_t *next){
@@ -938,6 +1109,7 @@ ie_fetch_attrs_t *ie_fetch_attrs_add_simple(derr_t *e, ie_fetch_attrs_t *f,
         case IE_FETCH_ATTR_RFC822_TEXT: f->rfc822_text = true; break;
         case IE_FETCH_ATTR_BODY: f->body = true; break;
         case IE_FETCH_ATTR_BODYSTRUCT: f->bodystruct = true; break;
+        case IE_FETCH_ATTR_MODSEQ: f->modseq = true; break;
         default:
             TRACE(e, "fetch attr type %x\n", FU(simple));
             ORIG_GO(e, E_INTERNAL, "unexpcted fetch attr type", fail);
@@ -1761,6 +1933,16 @@ void ie_list_resp_free(ie_list_resp_t *list){
     free(list);
 }
 
+ie_list_resp_t *ie_list_resp_copy(derr_t *e, const ie_list_resp_t *old){
+    if(!old) goto fail;
+
+    return ie_list_resp_new(e, ie_mflags_copy(e, old->mflags), old->sep,
+            ie_mailbox_copy(e, old->m));
+
+fail:
+    return NULL;
+}
+
 // get_f for jsw_atree implementation
 const void *ie_list_resp_get(const jsw_anode_t *node){
     return (void*)CONTAINER_OF(node, ie_list_resp_t, node);
@@ -1773,6 +1955,7 @@ int ie_list_resp_cmp(const void *a, const void *b){
     return dstr_cmp(ie_mailbox_name(resp_a->m), ie_mailbox_name(resp_b->m));
 }
 
+// cmp_f for jsw_afind_ex, when you want to search via a simple dstr key
 int ie_list_resp_cmp_to_dstr(const void *list_resp, const void *dstr){
     const ie_list_resp_t *a = list_resp;
     const dstr_t *b = dstr;

@@ -1,18 +1,11 @@
 #include <signal.h>
 
-#include "common.h"
+#include "sm_fetch.h"
 #include "logger.h"
-#include "loop.h"
-#include "tls_engine.h"
-#include "imap_engine.h"
-#include "imap_session.h"
 #include "uv_util.h"
 #include "hashmap.h"
-#include "imap_client.h"
-#include "imap_expression.h"
 #include "jsw_atree.h"
-#include "imap_dirmgr.h"
-#include "manager.h"
+#include "crypto.h"
 
 #define KEY "../c/test/files/ssl/good-key.pem"
 #define CERT "../c/test/files/ssl/good-cert.pem"
@@ -22,298 +15,465 @@ uv_idle_t idle;
 loop_t loop;
 tlse_t tlse;
 imape_t imape;
-imap_client_spec_t client_spec;
 keypair_t keypair;
+// fetcher has to be zeroized for proper cleanup if build_pipeline fails
+fetcher_t fetcher = {0};
 
-typedef struct {
-    imap_pipeline_t *pipeline;
-    ssl_context_t *cli_ctx;
-    imap_controller_up_t ctrlr_up;
-    // user-wide state
-    bool folders_set;
-    link_t folders;  // fc_folder_t->link
-    // session
-    manager_i mgr;
-    imap_session_t s;
-    // dirmgr
-    dstr_t path;
-    dirmgr_t dirmgr;
-} fetch_controller_t;
-DEF_CONTAINER_OF(fetch_controller_t, ctrlr_up, imap_controller_up_t);
-DEF_CONTAINER_OF(fetch_controller_t, mgr, manager_i);
+// engine interface
+static void fetcher_pass_event(struct engine_t *engine, event_t *ev){
+    fetcher_t *fetcher = CONTAINER_OF(engine, fetcher_t, engine);
 
-static void fc_free_cmd_event(event_t *ev){
-    cmd_event_t *cmd_ev = CONTAINER_OF(ev, cmd_event_t, ev);
-    dstr_free(&cmd_ev->ev.buffer);
-    free(cmd_ev);
-}
+    imap_event_t *imap_ev;
 
-static cmd_event_t *fc_new_cmd_event(void){
-    cmd_event_t *cmd_ev = malloc(sizeof(*cmd_ev));
-    if(!cmd_ev) return NULL;
-    *cmd_ev = (cmd_event_t){0};
+    switch(ev->ev_type){
+        case EV_READ:
+            imap_ev = CONTAINER_OF(ev, imap_event_t, ev);
+            // fetcher only accepts imap_resp_t's as EV_READs
+            if(imap_ev->type != IMAP_EVENT_TYPE_RESP){
+                LOG_ERROR("unallowed imap_cmd_t as EV_READ in fetcher\n");
+                ev->returner(ev);
+                break;
+            }
 
-    event_prep(&cmd_ev->ev, fc_free_cmd_event, NULL);
-    cmd_ev->ev.ev_type = EV_COMMAND;
+            // steal the imap_resp_t and return the rest of the event
+            imap_resp_t *resp = imap_ev->arg.resp;
+            imap_ev->arg.resp = NULL;
+            ev->returner(ev);
 
-    return cmd_ev;
-}
+            // queue up the response
+            uv_mutex_lock(&fetcher->ts.mutex);
+            link_list_append(&fetcher->ts.unhandled_resps, &resp->link);
+            uv_mutex_unlock(&fetcher->ts.mutex);
+            break;
 
-typedef struct {
-    dstr_t name;
-    link_t link;  // fetch_controller_t->folders
-} fc_folder_t;
-DEF_CONTAINER_OF(fc_folder_t, link, link_t);
+        case EV_QUIT_DOWN:
+            // store the QUIT event for when we are fully dead
+            fetcher->quit_ev = ev;
 
-static derr_t fc_folder_new(fc_folder_t **out, const dstr_t *name){
-    derr_t e = E_OK;
+            // make sure we are actually quitting
+            // TODO: clean up the error reporting path
+            fetcher_close(fetcher, E_OK);
+            break;
 
-    *out = NULL;
-
-    fc_folder_t *f = malloc(sizeof(*f));
-    if(f == NULL){
-        ORIG(&e, E_NOMEM, "no mem");
+        default:
+            LOG_ERROR("unallowed event type (%x)\n", FU(ev->ev_type));
     }
-    *f = (fc_folder_t){0};
 
-    // duplicate the name
-    PROP_GO(&e, dstr_new(&f->name, name->len), fail_malloc);
-    PROP_GO(&e, dstr_copy(name, &f->name), fail_malloc);
-
-    link_init(&f->link);
-
-    *out = f;
-
-    return e;
-
-fail_malloc:
-    free(f);
-    return e;
+    // trigger more work
+    fetcher_advance(fetcher);
 }
 
-static void fc_folder_free(fc_folder_t *f){
-    if(f == NULL) return;
-    dstr_free(&f->name);
-    free(f);
+// forward declarations
+static void fetcher_advance_onthread(fetcher_t *fetcher);
+
+// callable from any thread
+void fetcher_advance(fetcher_t *fetcher){
+    // alert the loop thread to try to enqueue the worker
+    int ret = uv_async_send(&fetcher->advance_async);
+    if(ret < 0){
+        /* ret != 0 is only possible under some specific circumstances:
+             - if the async handle is not an async type (should never happen)
+             - if uv_close was called on the async handle (should never happen
+               because we don't close uv_handles until all imap_sessions have
+               closed, so there won't be anyone to call this function)
+
+           Therefore, it is safe to not "properly" handle this error.  But, we
+           will at least log it since we are relying on undocumented behavior.
+        */
+        LOG_ERROR("uv_async_send: %x\n", FUV(&ret));
+        LOG_ERROR("uv_async_send should never fail!\n");
+    }
 }
 
-/* pop a folder name from the list of folders to sync, and prepare a SET_FOLDER
-   command event to send to the client */
-static derr_t sync_next_folder(fetch_controller_t *fc){
+// mgr_up
+
+static void session_up_dying(manager_i *mgr, derr_t e){
+    fetcher_session_t *up = CONTAINER_OF(mgr, fetcher_session_t, mgr);
+    fetcher_t *fetcher = CONTAINER_OF(up, fetcher_t, up);
+    printf("session up dying\n");
+
+    fetcher_close(fetcher, e);
+    PASSED(e);
+
+    // any further steps must be done on-thread
+    fetcher_advance(fetcher);
+}
+
+static void session_up_dead(manager_i *mgr){
+    fetcher_session_t *up = CONTAINER_OF(mgr, fetcher_session_t, mgr);
+    fetcher_t *fetcher = CONTAINER_OF(up, fetcher_t, up);
+
+    uv_mutex_lock(&fetcher->ts.mutex);
+    fetcher->ts.n_live_sessions--;
+    uv_mutex_unlock(&fetcher->ts.mutex);
+
+    fetcher_advance(fetcher);
+}
+
+// fetcher_async_cb is a uv_async_cb
+static void fetcher_async_cb(uv_async_t *async){
+    async_spec_t *spec = async->data;
+    fetcher_t *fetcher = CONTAINER_OF(spec, fetcher_t, advance_spec);
+    fetcher_advance_onthread(fetcher);
+}
+
+// fetcher_async_close_cb is a async_spec_t->close_cb
+static void fetcher_async_close_cb(async_spec_t *spec){
+    fetcher_t *fetcher = CONTAINER_OF(spec, fetcher_t, advance_spec);
+
+    // shutdown, part three of three: report ourselves as dead
+    fetcher->mgr->dead(fetcher->mgr);
+
+    // now we can continue the QUIT sequence by passing along the QUIT_UP
+    fetcher->quit_ev->ev_type = EV_QUIT_UP;
+    engine_t *upstream = &fetcher->pipeline->imape->engine;
+    upstream->pass_event(upstream, fetcher->quit_ev);
+    fetcher->quit_ev = NULL;
+}
+
+// part of the imaildir_i, meaning this can be called on- or off-thread
+static void fetcher_conn_up_cmd(maildir_conn_up_i *conn_up, imap_cmd_t *cmd){
+    fetcher_t *fetcher = CONTAINER_OF(conn_up, fetcher_t, conn_up);
+
+    uv_mutex_lock(&fetcher->ts.mutex);
+    link_list_append(&fetcher->ts.maildir_cmds, &cmd->link);
+    uv_mutex_unlock(&fetcher->ts.mutex);
+
+    fetcher_advance(fetcher);
+}
+
+// part of the imaildir_i, meaning this can be called on- or off-thread
+static void fetcher_conn_up_synced(maildir_conn_up_i *conn_up){
+    fetcher_t *fetcher = CONTAINER_OF(conn_up, fetcher_t, conn_up);
+    fetcher->mailbox_synced = true;
+
+    // we don't want to hold a folder open after it is synced, so unselect now
+    derr_t e = E_OK;
+    IF_PROP(&e, fetcher->maildir->unselect(fetcher->maildir) ){
+        fetcher_close(fetcher, e);
+    }
+
+    fetcher_advance(fetcher);
+}
+
+// part of the imaildir_i, meaning this can be called on- or off-thread
+static void fetcher_conn_up_unselected(maildir_conn_up_i *conn_up){
+    fetcher_t *fetcher = CONTAINER_OF(conn_up, fetcher_t, conn_up);
+    fetcher->mailbox_unselected = true;
+    // we still can't close the maildir until we are onthread
+
+    fetcher_advance(fetcher);
+}
+
+// part of the imaildir_i, meaning this can be called on- or off-thread
+static void fetcher_conn_up_release(maildir_conn_up_i *conn_up, derr_t error){
     derr_t e = E_OK;
 
-    link_t *link = link_list_pop_first(&fc->folders);
-    if(!link){
-        // done syncing folders
-        loop_close(&loop, e);
+    fetcher_t *fetcher = CONTAINER_OF(conn_up, fetcher_t, conn_up);
+
+    IF_PROP_VAR(&e, &error){
+        // maildir is failing with an error
+        fetcher_close(fetcher, e);
         PASSED(e);
-        return e;
-    }
-
-    fc_folder_t *f = CONTAINER_OF(link, fc_folder_t, link);
-
-    // get a command event
-    cmd_event_t *cmd_ev = fc_new_cmd_event();
-    if(!cmd_ev) ORIG_GO(&e, E_NOMEM, "no memory", cu_folder);
-    cmd_ev->ev.session = &fc->s.session;
-    cmd_ev->cmd_type = IMAP_CLIENT_CMD_SET_FOLDER;
-
-    // steal the allocated name from the fc_folder_t, put it in the command
-    cmd_ev->ev.buffer = f->name;
-    f->name = (dstr_t){0};
-
-    // send the command event
-    imap_session_send_command(&fc->s, &cmd_ev->ev);
-
-cu_folder:
-    fc_folder_free(f);
-
-    return e;
-}
-
-// imap_controller_up_t interface
-
-static void fc_logged_in(const imap_controller_up_t *ic,
-        session_t *session){
-    derr_t e = E_OK;
-
-    fetch_controller_t *fc = CONTAINER_OF(ic, fetch_controller_t, ctrlr_up);
-    imap_session_t *s = CONTAINER_OF(session, imap_session_t, session);
-
-    if(!fc->folders_set){
-        /* the first session without folders fetches the folder list for us.
-           We should not have multiple connections in flight yet, so we don't
-           have to worry about race conditions */
-        cmd_event_t *cmd_ev = fc_new_cmd_event();
-        if(!cmd_ev) ORIG_GO(&e, E_NOMEM, "no memory", fail);
-        cmd_ev->ev.session = session;
-        cmd_ev->cmd_type = IMAP_CLIENT_CMD_LIST_FOLDERS;
-        imap_session_send_command(s, &cmd_ev->ev);
     }else{
-        printf("already have folder list, exiting\n");
-        loop_close(&loop, E_OK);
-    }
-
-    return;
-
-fail:
-    loop_close(&loop, e);
-    PASSED(e);
-}
-
-static void fc_uptodate(const imap_controller_up_t *ic,
-        session_t *session){
-    fetch_controller_t *fc = CONTAINER_OF(ic, fetch_controller_t, ctrlr_up);
-    (void)session;
-
-    derr_t e = E_OK;
-
-    // get the first folder for a client to sync
-    PROP_GO(&e, sync_next_folder(fc), fail);
-
-    return;
-
-fail:
-    loop_close(&loop, e);
-    PASSED(e);
-}
-
-static void fc_msg_recvd(const imap_controller_up_t *ic,
-        session_t *session){
-    fetch_controller_t *fc = CONTAINER_OF(ic, fetch_controller_t, ctrlr_up);
-    imape_data_t *id = session->id;
-    (void)id;
-    (void)fc;
-}
-
-static void fc_folders(const imap_controller_up_t *ic,
-        session_t *session, jsw_atree_t *folders){
-    fetch_controller_t *fc = CONTAINER_OF(ic, fetch_controller_t, ctrlr_up);
-    imape_data_t *id = session->id;
-    (void)id;
-    (void)fc;
-
-    fc->folders_set = true;
-
-    derr_t e = E_OK;
-
-    jsw_atrav_t trav;
-    jsw_anode_t *node = jsw_atfirst(&trav, folders);
-    for(; node != NULL; node = jsw_atnext(&trav)){
-        ie_list_resp_t *list = CONTAINER_OF(node, ie_list_resp_t, node);
-
-        // verify that the separator is actually "/"
-        if(list->sep != '/'){
-            TRACE(&e, "Got folder separator of %x but only / is supported\n",
-                    FC(list->sep));
-            ORIG_GO(&e, E_RESPONSE, "invalid folder separator", fail);
+        // it's still an error if the maildir releases us before we release it
+        if(fetcher->maildir != NULL){
+            TRACE_ORIG(&e, E_INTERNAL, "maildir closed unexpectedly");
+            fetcher_close(fetcher, e);
+            PASSED(e);
         }
-
-        // store the folder name in our list of folders
-        fc_folder_t *f;
-        PROP_GO(&e, fc_folder_new(&f, ie_mailbox_name(list->m)), fail);
-        link_list_append(&fc->folders, &f->link);
     }
 
-    PROP_GO(&e, dirmgr_sync_folders(&fc->dirmgr, folders), fail);
+    fetcher->maildir_has_ref = false;
 
-    // get the first folder for a client to sync
-    PROP_GO(&e, sync_next_folder(fc), fail);
-
-    return;
-
-fail:
-    loop_close(&loop, e);
-    PASSED(e);
+    fetcher_advance(fetcher);
 }
 
-static void session_dying(manager_i *mgr, derr_t e){
-    (void)mgr;
-    printf("session dying, exiting\n");
-    loop_close(&loop, e);
-    PASSED(e);
-}
-
-static void session_dead(manager_i *mgr){
-    fetch_controller_t *fc = CONTAINER_OF(mgr, fetch_controller_t, mgr);
-    imap_session_free(&fc->s);
-}
-
-static derr_t fc_init(fetch_controller_t *fc, imap_pipeline_t *p,
-        ssl_context_t *cli_ctx){
+static derr_t fetcher_init(fetcher_t *fetcher, const char *host,
+        const char *svc, const dstr_t *user, const dstr_t *pass,
+        imap_pipeline_t *p, ssl_context_t *cli_ctx, manager_i *mgr){
     derr_t e = E_OK;
 
-    fc->pipeline = p;
-    fc->cli_ctx = cli_ctx;
-    fc->ctrlr_up = (imap_controller_up_t){
-        .logged_in = fc_logged_in,
-        .uptodate = fc_uptodate,
-        .msg_recvd = fc_msg_recvd,
-        .folders = fc_folders,
+    // start by zeroizing everything and storing static values
+    *fetcher = (fetcher_t){
+        .host = host,
+        .svc = svc,
+        .user = user,
+        .pass = pass,
+        .pipeline = p,
+        .cli_ctx = cli_ctx,
+        .mgr = mgr,
+
+        .engine = {
+            .pass_event = fetcher_pass_event,
+        },
     };
 
-    fc->folders_set = false;
-    link_init(&fc->folders);
+    fetcher->up.mgr = (manager_i){
+        .dying = session_up_dying,
+        .dead = session_up_dead,
+    };
+    fetcher->up.ctrl = (imape_control_i){
+        // enable UIDPLUS, ENABLE, CONDSTORE, and QRESYNC
+        .exts = {
+            .uidplus = EXT_STATE_ON,
+            .enable = EXT_STATE_ON,
+            .condstore = EXT_STATE_ON,
+            .qresync = EXT_STATE_ON,
+        },
+        .is_client = true,
+    };
+
+    fetcher->advance_spec = (async_spec_t){
+        .close_cb = fetcher_async_close_cb,
+    };
+
+    fetcher->conn_up = (maildir_conn_up_i){
+        .cmd = fetcher_conn_up_cmd,
+        .synced = fetcher_conn_up_synced,
+        .unselected = fetcher_conn_up_unselected,
+        .release = fetcher_conn_up_release,
+    };
+
+    link_init(&fetcher->ts.unhandled_resps);
+    link_init(&fetcher->ts.maildir_cmds);
+    link_init(&fetcher->inflight_cmds);
+
+    jsw_ainit(&fetcher->folders, ie_list_resp_cmp, ie_list_resp_get);
 
     // allocate for the path
-    PROP(&e, dstr_new(&fc->path, 256) );
+    PROP(&e, dstr_new(&fetcher->path, 256) );
     // right now the path is not configurable
-    PROP_GO(&e, dstr_copy(&DSTR_LIT("/tmp/maildir_root"), &fc->path),
+    PROP_GO(&e, dstr_copy(&DSTR_LIT("/tmp/maildir_root"), &fetcher->path),
             fail_path);
 
     // dirmgr
-    PROP_GO(&e, dirmgr_init(&fc->dirmgr, SB(FD(&fc->path))), fail_path);
+    PROP_GO(&e, dirmgr_init(&fetcher->dirmgr, SB(FD(&fetcher->path))),
+            fail_path);
 
-    // prepare the manager_i for the imap_session
-    fc->mgr = (manager_i){
-        .dying = session_dying,
-        .dead = session_dead,
-    };
+    int ret = uv_mutex_init(&fetcher->ts.mutex);
+    if(ret < 0){
+        TRACE(&e, "uv_mutex_init: %x\n", FUV(&ret));
+        ORIG_GO(&e, uv_err_type(ret), "error initializing mutex", fail_dirmgr);
+    }
 
-    // create an initial session
-    imap_client_alloc_arg_t client_arg = (imap_client_alloc_arg_t){
-        .spec = &client_spec,
-        .controller = &fc->ctrlr_up,
-        .keypair = &keypair,
-    };
-    imap_session_alloc_args_t session_arg = {
-        fc->pipeline,            // imap_pipeline_t
-        &fc->mgr,                // manager_i
-        fc->cli_ctx,             // ssl_context_t
-        imap_client_logic_alloc, // logic_alloc
-        &client_arg,             // logic_alloc data
-        client_spec.host,        // host
-        client_spec.service,     // port
+    /* establish the uv_async_t; if that fails we must not create off-thread
+       resources or they would not be able to communicate with us */
+
+    // allocate memory for both sessions, but don't start them until later
+    imap_session_alloc_args_t arg_up = {
+        fetcher->pipeline,
+        &fetcher->up.mgr,   // manager_i
+        fetcher->cli_ctx,   // ssl_context_t
+        &fetcher->up.ctrl,  // imape_control_i
+        fetcher->host,
+        fetcher->svc,
         (terminal_t){},
     };
-    PROP_GO(&e, imap_session_alloc_connect(&fc->s, &session_arg), fail_dirmgr);
-    imap_session_start(&fc->s);
+    PROP_GO(&e, imap_session_alloc_connect(&fetcher->up.s, &arg_up),
+            fail_mutex);
 
-    return e;
-
-fail_dirmgr:
-    dirmgr_free(&fc->dirmgr);
-fail_path:
-    dstr_free(&fc->path);
-    return e;
-};
-
-static void fc_free(fetch_controller_t *fc){
-    // empty the folder list
-    while(!link_list_isempty(&fc->folders)){
-        link_t *link = link_list_pop_first(&fc->folders);
-        fc_folder_t *f = CONTAINER_OF(link, fc_folder_t, link);
-        fc_folder_free(f);
+    /* establish the uv_async_t as the last step. If this fails, we can't
+       communicate with off-thread resources or they would not be able to
+       communicate with us.  However, if something else fails, we can only
+       close the uv_async_t asynchronously, so we make sure this is the last
+       step that can possibly fail. */
+    fetcher->advance_async.data = &fetcher->advance_spec;
+    ret = uv_async_init(&fetcher->pipeline->loop->uv_loop,
+            &fetcher->advance_async, fetcher_async_cb);
+    if(ret < 0){
+        TRACE(&e, "uv_async_init: %x\n", FUV(&ret));
+        ORIG_GO(&e, uv_err_type(ret), "error initializing advance_async",
+                fail_session);
     }
-    /* the controller should not be freed until the loop is closed, which
-       should not happen until the session has closed and freed itself, so
-       there is no need to free the fc->s at all */
-    dirmgr_free(&fc->dirmgr);
-    dstr_free(&fc->path);
+
+
+    // now that everything is configured, it is safe to start the sessions
+    fetcher->ts.n_live_sessions = 1;
+    imap_session_start(&fetcher->up.s);
+
+    return e;
+
+fail_session:
+    imap_session_free(&fetcher->up.s);
+fail_mutex:
+    uv_mutex_destroy(&fetcher->ts.mutex);
+fail_dirmgr:
+    dirmgr_free(&fetcher->dirmgr);
+fail_path:
+    dstr_free(&fetcher->path);
+    return e;
 }
 
+static void fetcher_free(fetcher_t *fetcher){
+    // free the folders list
+    jsw_anode_t *node;
+    while((node = jsw_apop(&fetcher->folders))){
+        ie_list_resp_t *list = CONTAINER_OF(node, ie_list_resp_t, node);
+        ie_list_resp_free(list);
+    }
+    // free any imap cmds or resps laying around
+    link_t *link;
+    while((link = link_list_pop_first(&fetcher->ts.unhandled_resps))){
+        imap_resp_t *resp = CONTAINER_OF(link, imap_resp_t, link);
+        imap_resp_free(resp);
+    }
+    while((link = link_list_pop_first(&fetcher->ts.maildir_cmds))){
+        imap_cmd_t *cmd = CONTAINER_OF(link, imap_cmd_t, link);
+        imap_cmd_free(cmd);
+    }
+    // async must already have been closed
+    imap_session_free(&fetcher->up.s);
+    uv_mutex_destroy(&fetcher->ts.mutex);
+    dirmgr_free(&fetcher->dirmgr);
+    dstr_free(&fetcher->path);
+    return;
+}
 
-static derr_t build_pipeline(imap_pipeline_t *pipeline){
+// work_cb is a uv_work_cb
+static void work_cb(uv_work_t *req){
+    fetcher_t *fetcher = CONTAINER_OF(req, fetcher_t, uv_work);
+
+    // all the fetcher state machine logic falls within this call
+    derr_t e = E_OK;
+    IF_PROP(&e, fetcher_do_work(fetcher) ){
+        fetcher_close(fetcher, e);
+        PASSED(e);
+    }
+}
+
+// after_work_cb is a uv_after_work_cb
+static void after_work_cb(uv_work_t *req, int status){
+    fetcher_t *fetcher = CONTAINER_OF(req, fetcher_t, uv_work);
+
+    // throw an error if the thread was canceled
+    if(status < 0){
+        derr_t e = E_OK;
+        // close fetcher with error
+        TRACE(&e, "uv work request failed: %x\n", FUV(&status));
+        TRACE_ORIG(&e, uv_err_type(status), "work request failed");
+        fetcher_close(fetcher, e);
+        PASSED(e);
+    }
+
+    // we are no longer executing
+    fetcher->executing = false;
+
+    // check if we need to re-enqueue ourselves
+    fetcher_advance_onthread(fetcher);
+}
+
+// always called from on-thread
+static void fetcher_maybe_enqueue(fetcher_t *fetcher){
+    if(fetcher->ts.closed) return;
+    if(!fetcher_more_work(fetcher)) return;
+
+    // try to enqueue work
+    int ret = uv_queue_work(&fetcher->pipeline->loop->uv_loop, &fetcher->uv_work,
+            work_cb, after_work_cb);
+    if(ret < 0){
+        // capture error
+        derr_t e = E_OK;
+        TRACE(&e, "uv_queue_work: %x\n", FUV(&ret));
+        TRACE_ORIG(&e, uv_err_type(ret), "failed to enqueue work");
+
+        fetcher_close(fetcher, e);
+        PASSED(e);
+
+        return;
+    }
+
+    // work is enqueued
+    fetcher->executing = true;
+
+    return;
+}
+
+// safe to call many times from any thread
+void fetcher_close(fetcher_t *fetcher, derr_t error){
+    uv_mutex_lock(&fetcher->ts.mutex);
+    // only execute the close sequence once
+    bool do_close = !fetcher->ts.closed;
+    fetcher->ts.closed = true;
+    uv_mutex_unlock(&fetcher->ts.mutex);
+
+    if(!do_close){
+        // secondary errors get dropped
+        DROP_VAR(&error);
+        return;
+    }
+
+    // TODO: clean up ownership hierarchy and error reporting
+    TRACE_PROP(&error);
+    loop_close(fetcher->pipeline->loop, error);
+    PASSED(error);
+
+    // tell our owner we are dying
+    fetcher->mgr->dying(fetcher->mgr, E_OK);
+
+    // we can close multithreaded resources here but we can't release refs
+    imap_session_close(&fetcher->up.s.session, E_OK);
+
+    // everything else must be done on-thread
+    fetcher_advance(fetcher);
+}
+
+// only safe to call once
+static void fetcher_close_onthread(fetcher_t *fetcher){
+    /* now that we are onthread, it is safe to release refs for things we don't
+       own ourselves */
+    if(fetcher->maildir){
+        // extract the maildir from fetcher so it is clear we are done
+        maildir_i *maildir = fetcher->maildir;
+        fetcher->maildir = NULL;
+        // now make the very last call into the maildir_i
+        dirmgr_close_up(&fetcher->dirmgr, maildir, &fetcher->conn_up);
+    }
+}
+
+// must be called on-thread
+static void fetcher_advance_onthread(fetcher_t *fetcher){
+    // if a worker is executing, do nothing; we'll check again in work_done()
+    if(fetcher->executing) return;
+
+    if(fetcher->ts.closed && !fetcher->closed_onthread){
+        fetcher->closed_onthread = true;
+        fetcher_close_onthread(fetcher);
+    }
+
+    // shutdown, part two of three: close the async
+    if(fetcher->dead){
+        uv_close((uv_handle_t*)&fetcher->advance_async, async_handle_close_cb);
+        // end of the line for this object
+        return;
+    }
+
+    // shutdown, part one of three: make the final call to fetcher_advance
+    if(fetcher->closed_onthread && fetcher->ts.n_live_sessions == 0
+            && fetcher->ts.n_unreturned_events == 0
+            && !fetcher->maildir_has_ref
+            && fetcher->quit_ev){
+        /* because these counts are thread-safe and we have locked the mutex
+           and the count decrementers call async_send inside the same mutex,
+           we know that there can be no more calls to async_send now.  That
+           does not guarantee that there can't be some unprocessed async_sends
+           floating around somewhere, and since I'm not sure what happens if
+           we call uv_close on a uv_async_t with unprocessed async_sends, I am
+           going to call async_send one more time here, and when that send is
+           processed, we will know that no unprocessed sends remain. */
+        fetcher->dead = true;
+        fetcher_advance(fetcher);
+        return;
+    }
+
+    // if there is work to do, enqueue some work
+    fetcher_maybe_enqueue(fetcher);
+}
+
+////////////////
+
+
+static derr_t build_pipeline(imap_pipeline_t *pipeline, fetcher_t *fetcher){
     derr_t e = E_OK;
 
     // set UV_THREADPOOL_SIZE
@@ -328,7 +488,7 @@ static derr_t build_pipeline(imap_pipeline_t *pipeline){
     PROP_GO(&e, tlse_add_to_loop(&tlse, &loop.uv_loop), fail);
 
     // initialize IMAP engine
-    PROP_GO(&e, imape_init(&imape, 5, &tlse.engine, nworkers, &loop), fail);
+    PROP_GO(&e, imape_init(&imape, 5, &tlse.engine, &fetcher->engine), fail);
     PROP_GO(&e, imape_add_to_loop(&imape, &loop.uv_loop), fail);
 
     *pipeline = (imap_pipeline_t){
@@ -353,15 +513,34 @@ static void free_pipeline(imap_pipeline_t *pipeline){
 }
 
 
+static void fetcher_dying(manager_i *mgr, derr_t e){
+    (void)mgr;
+    // TODO: this error handling is so fucking broken...
+    DROP_VAR(&e);
+    LOG_ERROR("fetcher dying...\n");
+}
+
+static void fetcher_dead(manager_i *mgr){
+    (void)mgr;
+    // fetcher is freed after loop shuts down
+    LOG_ERROR("fetcher dead...\n");
+}
+
+static manager_i fetcher_mgr = {
+    .dying = fetcher_dying,
+    .dead = fetcher_dead,
+};
+
+
 static derr_t sm_fetch(char *host, char *svc, char *user, char *pass,
         char *keyfile){
     derr_t e = E_OK;
 
-    // process commandline arguments
-    client_spec.host = host;
-    client_spec.service = svc;
-    DSTR_WRAP(client_spec.user, user, strlen(user), true);
-    DSTR_WRAP(client_spec.pass, pass, strlen(pass), true);
+    // wrap commandline arguments
+    dstr_t d_user;
+    DSTR_WRAP(d_user, user, strlen(user), true);
+    dstr_t d_pass;
+    DSTR_WRAP(d_pass, pass, strlen(pass), true);
 
     // init OpenSSL
     PROP(&e, ssl_library_init() );
@@ -369,17 +548,17 @@ static derr_t sm_fetch(char *host, char *svc, char *user, char *pass,
     PROP_GO(&e, keypair_load(&keypair, keyfile), cu_ssl_lib);
 
     imap_pipeline_t pipeline;
-    PROP_GO(&e, build_pipeline(&pipeline), cu_keypair);
+    PROP_GO(&e, build_pipeline(&pipeline, &fetcher), cu_keypair);
 
     /* After building the pipeline, we must run the pipeline if we want to
        cleanup nicely.  That means that we can't follow the normal cleanup
        pattern, and instead we must initialize all of our variables to zero */
 
     ssl_context_t ctx_cli = {0};
-    fetch_controller_t fc = {0};
 
     PROP_GO(&e, ssl_context_new_client(&ctx_cli), fail);
-    PROP_GO(&e, fc_init(&fc, &pipeline, &ctx_cli), fail);
+    PROP_GO(&e, fetcher_init(&fetcher, host, svc, &d_user, &d_pass, &pipeline,
+                &ctx_cli, &fetcher_mgr), fail);
 
 fail:
     if(is_error(e)){
@@ -392,7 +571,7 @@ fail:
     PROP_GO(&e, loop_run(&loop), cu);
 
 cu:
-    fc_free(&fc);
+    fetcher_free(&fetcher);
     ssl_context_free(&ctx_cli);
     free_pipeline(&pipeline);
 cu_keypair:

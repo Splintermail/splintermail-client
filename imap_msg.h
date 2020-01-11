@@ -5,6 +5,7 @@
 #include "link.h"
 #include "jsw_atree.h"
 #include "hashmap.h"
+#include "imap_expression.h"
 
 /*
     Coordinating multiple imap clients and servers accessing the same mailbox
@@ -19,7 +20,7 @@
         independently of the real mailbox state.
       - Efficient: There may be tens of thousands of messages in a mailbox, so
         O(N) performance is not acceptable in most cases.  This implies that
-        most changes have to be difference-enoded; when updating a view to
+        most changes have to be difference-encoded; when updating a view to
         match a mailbox, mail clients often need to be alerted to the
         difference in state, and without difference-encoding that would be an
         O(N) operation.
@@ -229,6 +230,24 @@ typedef struct {
 } msg_update_t;
 DEF_CONTAINER_OF(msg_update_t, link, link_t);
 
+
+// a modification event; there's one per message
+typedef enum {
+    // a message was created or its metadata was modified
+    MOD_TYPE_MESSAGE,
+    // a message was expunged
+    MOD_TYPE_EXPUNGE,
+} msg_mod_type_e;
+
+typedef struct {
+    msg_mod_type_e type;
+    unsigned long modseq;
+
+    // for storage from within the imaildir_t
+    jsw_anode_t node;
+} msg_mod_t;
+
+
 // immutable parts of an IMAP message, safe for reading via msg_view_t
 struct msg_base_ref_t {
     unsigned int uid;
@@ -244,11 +263,13 @@ struct msg_base_t {
     // the thread-safe parts, exposed to accessor via thread-safe getters:
     subdir_type_e subdir;
     dstr_t filename;
+    // filling the message is a two-step process, so track if it's complete
+    bool filled;
     // for referencing by uid
-    hash_elem_t h;
+    jsw_anode_t node;
 };
 DEF_CONTAINER_OF(msg_base_t, ref, msg_base_ref_t);
-DEF_CONTAINER_OF(msg_base_t, h, hash_elem_t);
+DEF_CONTAINER_OF(msg_base_t, node, jsw_anode_t);
 
 /* Metadata about a message, owned by imaildir_t but viewable by accessors.  A
    new copy is created when it is updated.  Clients keep a pointer to this
@@ -264,9 +285,11 @@ struct msg_flags_t {
 
 struct msg_meta_t {
     msg_flags_t flags;
+    msg_mod_t mod;
     // TODO: put storage stuff here when we do block allocation of msg_meta_t's
 };
 DEF_CONTAINER_OF(msg_meta_t, flags, msg_flags_t);
+DEF_CONTAINER_OF(msg_mod_t, node, jsw_anode_t);
 
 // an accessor-owned view of a message
 struct msg_view_t {
@@ -276,19 +299,38 @@ struct msg_view_t {
     const msg_flags_t *flags;
     // for tracking the sequence ID via UID
     jsw_anode_t node;
+    // for referencing by uid
+    hash_elem_t h;
 };
 DEF_CONTAINER_OF(msg_view_t, node, jsw_anode_t);
 
 
-derr_t msg_meta_new(msg_meta_t **out, msg_flags_t val);
+typedef struct {
+    unsigned int uid;
+    msg_mod_t mod;
+
+    // for storing in a jsw_atree of expunges
+    jsw_anode_t node;
+} msg_expunge_t;
+DEF_CONTAINER_OF(msg_expunge_t, node, jsw_anode_t);
+
+
+derr_t msg_meta_new(msg_meta_t **out, msg_flags_t flags, unsigned long modseq);
 void msg_meta_free(msg_meta_t **meta);
 
-derr_t msg_base_new(msg_base_t **out, unsigned int uid, size_t len,
-        subdir_type_e subdir, const dstr_t *filename, msg_meta_t *meta);
+// msg_base_t is restored from two places in a two-step process
+derr_t msg_base_new(msg_base_t **out, unsigned int uid, msg_meta_t *meta);
+derr_t msg_base_fill(msg_base_t *base, size_t len, subdir_type_e subdir,
+        const dstr_t *filename);
+// base doesn't own the meta; that must be handled separately
 void msg_base_free(msg_base_t **base);
 
 derr_t msg_view_new(msg_view_t **view, msg_base_t *base);
 void msg_view_free(msg_view_t **view);
+
+derr_t msg_expunge_new(msg_expunge_t **out, unsigned int uid,
+        unsigned long modseq);
+void msg_expunge_free(msg_expunge_t **expunge);
 
 
 static inline bool msg_flags_eq(msg_flags_t a, msg_flags_t b){
@@ -318,6 +360,18 @@ static inline msg_flags_t msg_flags_and(msg_flags_t a,
         .seen     = a.seen     & b.seen,
         .draft    = a.draft    & b.draft,
         .deleted  = a.deleted  & b.deleted,
+    };
+}
+
+static inline msg_flags_t msg_flags_from_fetch_flags(ie_fflags_t *ff){
+    if(!ff) return (msg_flags_t){0};
+
+    return (msg_flags_t){
+        .answered = ff->answered,
+        .flagged  = ff->flagged,
+        .seen     = ff->seen,
+        .draft    = ff->draft,
+        .deleted  = ff->deleted,
     };
 }
 

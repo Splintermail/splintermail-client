@@ -55,6 +55,9 @@ hash_elem_t *hashmap_getu(hashmap_t *h, unsigned int key);
 hash_elem_t *hashmap_dels(hashmap_t *h, const dstr_t *key);
 hash_elem_t *hashmap_delu(hashmap_t *h, unsigned int key);
 
+// delete an element directly (elem must be in h)
+void hashmap_del_elem(hashmap_t *h, hash_elem_t *elem);
+
 // iterators
 hashmap_iter_t hashmap_first(hashmap_t *h);
 void hashmap_next(hashmap_iter_t *i);

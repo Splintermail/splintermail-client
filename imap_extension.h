@@ -44,4 +44,7 @@ derr_t extension_trigger(extensions_t *exts, extension_e type);
 void extension_trigger_builder(derr_t *e,
         extensions_t *exts, extension_e type);
 
+// get the token that would represent an extension
+const dstr_t *extension_token(extension_e ext);
+
 #endif // IMAP_EXTENSION_H

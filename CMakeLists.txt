@@ -55,11 +55,15 @@ set(OBJ_TGTS
     hashmap
     imap_msg
     imap_maildir
+    imap_maildir_log_lmdb
     imap_dirmgr
     link
     imap_session
     maildir_name
     imap_extension
+    # imap_ditm_logic
+    sm_fetch_logic
+    imap_util
 )
 
 set(EXE_TGTS
@@ -68,7 +72,8 @@ set(EXE_TGTS
     leak
     encrypt_msg
     decrypt_msg
-    imap_ditm
+    # imap_ditm
+    sm_fetch
 )
 
 set(TEST_OBJ_TGTS
@@ -163,6 +168,13 @@ if("${LIBUV_LIB}" STREQUAL "")
     set(LIBUV_LIB "uv")
 endif()
 target_link_libraries(uv_interface INTERFACE "${LIBUV_LIB}")
+
+add_library(lmdb_interface INTERFACE)
+# target_include_directories(libuv INTERFACE "${path/to/liblmdb/include}")
+if("${LIBLMDB_LIB}" STREQUAL "")
+    set(LIBLMDB_LIB "lmdb")
+endif()
+target_link_libraries(lmdb_interface INTERFACE "${LIBLMDB_LIB}")
 
 # tgt object depends on external library (propagate linking and includes)
 function(obj_depend_lib tgt includes libs)
@@ -276,7 +288,8 @@ add_dependencies(imap_read_o bison_header)
 obj_depend_obj(imap_write imap_expression imap_extension common)
 obj_depend_obj(hashmap common)
 obj_depend_obj(imap_msg jsw_atree link hashmap fileops)
-obj_depend_obj(imap_maildir maildir_name imap_msg uv_util fileops)
+obj_depend_obj(imap_maildir maildir_name imap_util imap_msg uv_util fileops imap_maildir_log_lmdb)
+obj_depend_obj(imap_maildir_log_lmdb lmdb_interface)
 obj_depend_obj(imap_dirmgr imap_maildir jsw_atree)
 obj_depend_obj(imap_session loop tls_engine imap_engine loop uv_interface)
 obj_depend_obj(maildir_name common)
@@ -289,7 +302,8 @@ target_link_libraries(leak networking)
 target_link_libraries(encrypt_msg crypto opt_parse)
 target_link_libraries(decrypt_msg crypto opt_parse)
 target_link_libraries(olt common fileops opt_parse)
-target_link_libraries(imap_ditm imap_session imap_dirmgr crypto hashmap)
+# target_link_libraries(imap_ditm imap_session imap_dirmgr imap_ditm_logic crypto)
+target_link_libraries(sm_fetch imap_session imap_dirmgr sm_fetch_logic crypto)
 
 # decide if we are building server code
 if("${BUILD_SERVER_CODE}")
@@ -472,7 +486,8 @@ if("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU")
     # libuv needs non-strict aliasing
     # see discussion here: https://github.com/libuv/libuv/issues/1230
     target_compile_options(uv_util_o PRIVATE -fno-strict-aliasing)
-    target_compile_options(imap_ditm PRIVATE -fno-strict-aliasing)
+    # target_compile_options(imap_ditm PRIVATE -fno-strict-aliasing)
+    target_compile_options(sm_fetch PRIVATE -fno-strict-aliasing)
     target_compile_options(imap_parse_tab_o PRIVATE -Wno-sign-conversion)
     target_compile_options(imap_parse_tab_o PRIVATE -Wno-conversion)
     # add some compiler hardening flags

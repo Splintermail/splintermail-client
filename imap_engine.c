@@ -18,16 +18,21 @@ static void imape_return_write_event(event_t *ev){
     imape_pass_event(&imape->engine, ev);
 }
 
-derr_t imape_init(imape_t *imape, size_t nwrite_events, engine_t *upstream){
+derr_t imape_init(imape_t *imape, size_t nwrite_events, engine_t *upstream,
+        engine_t *downstream){
     derr_t e = E_OK;
+    *imape = (imape_t){
+        .engine = { .pass_event = imape_pass_event },
 
-    imape->engine.pass_event = imape_pass_event;
+        .upstream = upstream,
+        .downstream = downstream,
+        .quitting = false,
+        .nwrite_events = nwrite_events,
+        .quit_ev = NULL,
+    };
 
     imape->work_req.data = imape;
-    imape->upstream = upstream;
-    imape->quitting = false;
-    imape->nwrite_events = nwrite_events;
-    imape->quit_ev = NULL;
+
 
     PROP_GO(&e, queue_init(&imape->event_q), fail);
     PROP_GO(&e, event_pool_init(&imape->write_events, nwrite_events,
@@ -103,6 +108,11 @@ static void imape_process_events(uv_work_t *req){
                 // LOG_ERROR("imape: QUIT_DOWN\n");
                 // enter quitting state
                 imape->quitting = true;
+                // pass the QUIT_DOWN along
+                imape->downstream->pass_event(imape->downstream, ev);
+                break;
+            case EV_QUIT_UP:
+                // LOG_ERROR("imape: QUIT_UP\n");
                 // still not done until we have all of our write buffers back
                 ev->ev_type = EV_QUIT_UP;
                 if(imape->write_events.len < imape->nwrite_events){
@@ -124,9 +134,6 @@ static void imape_process_events(uv_work_t *req){
                 id->ref_down(ev->session, IMAPE_REF_CLOSE_EVENT);
                 break;
 
-            case EV_QUIT_UP:
-                LOG_ERROR("imap engine received an illegal QUIT_UP\n");
-                break;
             case EV_READ_DONE:
                 LOG_ERROR("imap engine received an illegal READ_DONE\n");
                 break;
@@ -217,22 +224,23 @@ static void imape_data_write_stuff(imape_data_t *id){
         // write some of whatever it is we need to write
         link_t *link = id->unwritten.next;
         event_t *ev_in = CONTAINER_OF(link, event_t, link);
+        imap_event_t *imap_ev = CONTAINER_OF(ev_in, imap_event_t, ev);
         size_t want = 0;
+        id->write_ev->buffer.len = 0;
         if(id->control->is_client){
-            cmd_event_t *cmd_ev = CONTAINER_OF(ev_in, cmd_event_t, ev);
             // invalid syntax here means we have an internal bug
-            NOFAIL_GO(&e, E_PARAM, imap_cmd_write(cmd_ev->cmd,
+            NOFAIL_GO(&e, E_PARAM, imap_cmd_write(imap_ev->arg.cmd,
                         &id->write_ev->buffer, &id->write_skip, &want,
                         &id->control->exts), fail);
         }else{
-            resp_event_t *resp_ev = CONTAINER_OF(ev_in, resp_event_t, ev);
-            NOFAIL_GO(&e, E_PARAM, imap_resp_write(resp_ev->resp,
+            NOFAIL_GO(&e, E_PARAM, imap_resp_write(imap_ev->arg.resp,
                         &id->write_ev->buffer, &id->write_skip, &want,
                         &id->control->exts), fail);
         }
 
         // did we finish writing that thing?
         if(want == 0){
+            id->write_skip = 0;
             link_remove(link);
             ev_in->returner(ev_in);
         }
@@ -257,6 +265,47 @@ fail:
     return;
 }
 
+static void imap_ev_returner(event_t *ev){
+    // downref session
+    imape_data_t *id = ev->returner_arg;
+    id->ref_down(id->session, IMAPE_REF_READ);
+
+    // free imap object
+    imap_event_t *imap_ev = CONTAINER_OF(ev, imap_event_t, ev);
+    switch(imap_ev->type){
+        case IMAP_EVENT_TYPE_CMD:
+            imap_cmd_free(imap_ev->arg.cmd);
+            break;
+        case IMAP_EVENT_TYPE_RESP:
+            imap_resp_free(imap_ev->arg.resp);
+            break;
+    }
+
+    // free backing memory
+    free(imap_ev);
+}
+
+static derr_t imap_event_new(imap_event_t **out, imap_event_type_e type,
+        imap_event_arg_u arg, imape_data_t *id){
+    derr_t e = E_OK;
+
+    imap_event_t *imap_ev = malloc(sizeof(*imap_ev));
+    if(!imap_ev) ORIG(&e, E_NOMEM, "nomem");
+    *imap_ev = (imap_event_t){
+        .arg = arg,
+        .type = type,
+    };
+
+    event_prep(&imap_ev->ev, imap_ev_returner, id);
+    imap_ev->ev.session = id->session;
+    id->ref_up(id->session, IMAPE_REF_READ);
+    imap_ev->ev.ev_type = EV_READ;
+
+    *out = imap_ev;
+
+    return e;
+}
+
 // parser callback for servers
 
 static void cmd_cb(void *cb_data, derr_t error, imap_cmd_t *cmd){
@@ -265,8 +314,14 @@ static void cmd_cb(void *cb_data, derr_t error, imap_cmd_t *cmd){
 
     PROP_VAR_GO(&e, &error, fail);
 
-    // pass the command to whatever is controlling this imap session
-    id->control->object_cb.cmd(id->control, cmd);
+    // prepare the imap event
+    imap_event_t *imap_ev;
+    imap_event_arg_u arg = { .cmd = cmd };
+
+    PROP_GO(&e, imap_event_new(&imap_ev, IMAP_EVENT_TYPE_CMD, arg, id), fail);
+
+    // pass the event downstream
+    id->imape->downstream->pass_event(id->imape->downstream, &imap_ev->ev);
 
     return;
 
@@ -285,8 +340,14 @@ static void resp_cb(void *cb_data, derr_t error, imap_resp_t *resp){
 
     PROP_VAR_GO(&e, &error, fail);
 
-    // pass the response to whatever is controlling this imap session
-    id->control->object_cb.resp(id->control, resp);
+    // prepare the imap event
+    imap_event_t *imap_ev;
+    imap_event_arg_u arg = { .resp = resp };
+
+    PROP_GO(&e, imap_event_new(&imap_ev, IMAP_EVENT_TYPE_RESP, arg, id), fail);
+
+    // pass the event downstream
+    id->imape->downstream->pass_event(id->imape->downstream, &imap_ev->ev);
 
     return;
 
@@ -369,6 +430,11 @@ static void imape_data_onthread_close(imape_data_t *id){
     id->data_state = DATA_STATE_CLOSED;
     if(exit_early) return;
 
+    // let go of write_ev
+    if(id->write_ev){
+        imape_return_write_event(id->write_ev);
+    }
+
     // release unwritten events
     link_t *link;
     while((link = link_list_pop_first(&id->unwritten)) != NULL){
@@ -376,7 +442,7 @@ static void imape_data_onthread_close(imape_data_t *id){
         ev->returner(ev);
     }
 
-    // clse reader
+    // close reader
     imap_reader_free(&id->reader);
 
     // lifetime reference

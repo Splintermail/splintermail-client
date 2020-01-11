@@ -314,6 +314,7 @@ typedef enum {
     IE_FETCH_ATTR_RFC822_TEXT,
     IE_FETCH_ATTR_BODY, // means BODY, not BODY[]
     IE_FETCH_ATTR_BODYSTRUCT,
+    IE_FETCH_ATTR_MODSEQ,
 } ie_fetch_simple_t;
 
 typedef struct {
@@ -327,6 +328,7 @@ typedef struct {
     bool rfc822_text:1;
     bool body:1; // means BODY, not BODY[]
     bool bodystruct:1;
+    bool modseq:1;
     ie_fetch_extra_t *extras;
 } ie_fetch_attrs_t;
 
@@ -551,7 +553,7 @@ typedef union {
     ie_fetch_cmd_t *fetch;
     ie_store_cmd_t *store;
     ie_copy_cmd_t *copy;
-    ie_dstr_t * enable;
+    ie_dstr_t *enable;
 } imap_cmd_arg_t;
 
 typedef struct {
@@ -561,6 +563,7 @@ typedef struct {
     // storage
     link_t link;
 } imap_cmd_t;
+DEF_CONTAINER_OF(imap_cmd_t, link, link_t);
 
 // full response types
 
@@ -639,6 +642,7 @@ typedef struct {
     // storage
     link_t link;
 } imap_resp_t;
+DEF_CONTAINER_OF(imap_resp_t, link, link_t);
 
 // final union type for bison
 typedef union {
@@ -751,10 +755,12 @@ ie_dstr_t *ie_dstr_add(derr_t *e, ie_dstr_t *list, ie_dstr_t *new);
 void ie_dstr_free(ie_dstr_t *d);
 // free everything but the dstr_t
 void ie_dstr_free_shell(ie_dstr_t *d);
+ie_dstr_t *ie_dstr_copy(derr_t *e, const ie_dstr_t *d);
 
 ie_mailbox_t *ie_mailbox_new_noninbox(derr_t *e, ie_dstr_t *name);
 ie_mailbox_t *ie_mailbox_new_inbox(derr_t *e);
 void ie_mailbox_free(ie_mailbox_t *m);
+ie_mailbox_t *ie_mailbox_copy(derr_t *e, const ie_mailbox_t *old);
 // returns either the mailbox name, or a static dstr of "INBOX"
 const dstr_t *ie_mailbox_name(ie_mailbox_t *m);
 
@@ -763,11 +769,14 @@ ie_select_params_t *ie_select_params_new(derr_t *e,
 ie_select_params_t *ie_select_params_add(derr_t *e,
         ie_select_params_t *list, ie_select_params_t *new);
 void ie_select_params_free(ie_select_params_t *params);
+ie_select_params_t *ie_select_params_copy(derr_t *e,
+        const ie_select_params_t *old);
 
 // flags, used by APPEND commands, STORE commands, and FLAGS responses
 
 ie_flags_t *ie_flags_new(derr_t *e);
 void ie_flags_free(ie_flags_t *f);
+ie_flags_t *ie_flags_copy(derr_t *e, const ie_flags_t *old);
 
 ie_flags_t *ie_flags_add_simple(derr_t *e, ie_flags_t *f, ie_flag_type_t type);
 ie_flags_t *ie_flags_add_ext(derr_t *e, ie_flags_t *f, ie_dstr_t *ext);
@@ -777,6 +786,7 @@ ie_flags_t *ie_flags_add_kw(derr_t *e, ie_flags_t *f, ie_dstr_t *kw);
 
 ie_pflags_t *ie_pflags_new(derr_t *e);
 void ie_pflags_free(ie_pflags_t *pf);
+ie_pflags_t *ie_pflags_copy(derr_t *e, const ie_pflags_t *old);
 
 ie_pflags_t *ie_pflags_add_simple(derr_t *e, ie_pflags_t *pf,
         ie_pflag_type_t type);
@@ -787,6 +797,7 @@ ie_pflags_t *ie_pflags_add_kw(derr_t *e, ie_pflags_t *pf, ie_dstr_t *kw);
 
 ie_fflags_t *ie_fflags_new(derr_t *e);
 void ie_fflags_free(ie_fflags_t *ff);
+ie_fflags_t *ie_fflags_copy(derr_t *e, const ie_fflags_t *old);
 
 ie_fflags_t *ie_fflags_add_simple(derr_t *e, ie_fflags_t *ff,
         ie_fflag_type_t type);
@@ -797,6 +808,7 @@ ie_fflags_t *ie_fflags_add_kw(derr_t *e, ie_fflags_t *ff, ie_dstr_t *kw);
 
 ie_mflags_t *ie_mflags_new(derr_t *e);
 void ie_mflags_free(ie_mflags_t *mf);
+ie_mflags_t *ie_mflags_copy(derr_t *e, const ie_mflags_t *old);
 
 ie_mflags_t *ie_mflags_add_noinf(derr_t *e, ie_mflags_t *mf);
 ie_mflags_t *ie_mflags_add_ext(derr_t *e, ie_mflags_t *mf, ie_dstr_t *ext);
@@ -805,6 +817,7 @@ ie_mflags_t *ie_mflags_add_ext(derr_t *e, ie_mflags_t *mf, ie_dstr_t *ext);
 
 ie_seq_set_t *ie_seq_set_new(derr_t *e, unsigned int n1, unsigned int n2);
 void ie_seq_set_free(ie_seq_set_t *set);
+ie_seq_set_t *ie_seq_set_copy(derr_t *e, const ie_seq_set_t *old);
 ie_seq_set_t *ie_seq_set_append(derr_t *e, ie_seq_set_t *set,
         ie_seq_set_t *next);
 
@@ -812,6 +825,7 @@ ie_seq_set_t *ie_seq_set_append(derr_t *e, ie_seq_set_t *set,
 
 ie_nums_t *ie_nums_new(derr_t *e, unsigned int n);
 void ie_nums_free(ie_nums_t *num);
+ie_nums_t *ie_nums_copy(derr_t *e, const ie_nums_t *old);
 ie_nums_t *ie_nums_append(derr_t *e, ie_nums_t *num, ie_nums_t *next);
 
 // search key construction
@@ -971,6 +985,7 @@ void ie_st_resp_free(ie_st_resp_t *st);
 ie_list_resp_t *ie_list_resp_new(derr_t *e, ie_mflags_t *mflags, char sep,
         ie_mailbox_t *m);
 void ie_list_resp_free(ie_list_resp_t *list);
+ie_list_resp_t *ie_list_resp_copy(derr_t *e, const ie_list_resp_t *old);
 
 ie_status_resp_t *ie_status_resp_new(derr_t *e, ie_mailbox_t *m,
         ie_status_attr_resp_t sa);

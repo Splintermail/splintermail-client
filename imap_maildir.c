@@ -3,195 +3,299 @@
 #include "fileops.h"
 #include "uv_util.h"
 #include "maildir_name.h"
+#include "imap_util.h"
 
-// the internal struct to hold an accessor_i in a list with some metadata
+// forward declarations
+static derr_t conn_up_resp(maildir_i*, imap_resp_t*);
+// static derr_t maildir_cmd(maildir_i*, imap_cmd_t*);
+static bool conn_up_synced(maildir_i*);
+static bool conn_up_selected(maildir_i*);
+static derr_t conn_up_unselect(maildir_i *maildir);
+
+/* There's a tricky little state machine for how to accurately calculate the
+   HIGHESTMODSEQ value against which you have synchronized.  Following a
+   successful SELECT (QRESYNC ...) command (and assuming you are handling all
+   FETCH and VANISHED responses properly), then your HIGHESTMODSEQ can be
+   calculated during every tagged response as:
+
+     "the value of the HIGHESTMODSEQ untagged OK response since the last
+     tagged response, or if there hasn't been one, the highest MODSEQ reported
+     since the last tagged response, or if there hasn't been any of those
+     either, then just whatever it was last time."
+
+   Of course, if your SELECT (QRESYNC ...) failed due to UIDVALIDITY issues,
+   the HIGHESTMODSEQ you see belongs to the server, but has nothing to do with
+   your state.
+
+   Therefore, you can update your own HIGHESTMODSEQ in the persistent cache to
+   the value produced by this state machine any time you finish a FETCH command
+   or successful SELECT (QRESYNC ...), provided you have no new messages to
+   download. */
+
 typedef struct {
-    accessor_i *accessor;
-    // the actual maildir
-    imaildir_t *m;
-    // the interface we give to the accessor
-    maildir_i maildir;
-    // the most recent change the object has reconciled
-    size_t reconciled;
-    link_t link;  // imaildir_t->accessors
-} acc_t;
-DEF_CONTAINER_OF(acc_t, link, link_t);
-DEF_CONTAINER_OF(acc_t, maildir, maildir_i);
+    // the current value (as of last tagged response)
+    unsigned long now;
+    // first priority, if nonzero
+    unsigned long from_ok_code;
+    // second priority, if nonzero
+    unsigned long from_fetch;
+} himodseq_calc_t;
 
-// decider_f represents the unique part of an update call of the maildir_i
-typedef derr_t (*decider_f)(imaildir_t *m, msg_update_type_e *update_type,
-        msg_update_value_u *update_val, void *data);
+// gather whatever we saw since the last tagged response return if it changed
+static bool hmsc_step(himodseq_calc_t *hmsc){
+    unsigned long old = hmsc->now;
+    if(hmsc->from_ok_code){
+        hmsc->now = hmsc->from_ok_code;
+    }else if(hmsc->from_fetch){
+        hmsc->now = MAX(hmsc->now, hmsc->from_fetch);
+    }
+    // flush the values we saw
+    hmsc->from_ok_code = 0;
+    hmsc->from_fetch = 0;
+    // return whether or not it changed
+    return old != hmsc->now;
+}
 
-// post_update is the common code for all the update calls of the maildir_i
-static derr_t post_update(maildir_i *maildir, size_t *seq, decider_f decider,
-        void *data){
+static void hmsc_prep(himodseq_calc_t *hmsc, unsigned long starting_val){
+    *hmsc = (himodseq_calc_t){
+        .now = starting_val,
+    };
+}
+
+static unsigned long hmsc_now(himodseq_calc_t *hmsc){
+    return hmsc->now;
+}
+
+static void hmsc_saw_ok_code(himodseq_calc_t *hmsc, unsigned long val){
+    hmsc->from_ok_code = val;
+}
+
+static void hmsc_saw_fetch(himodseq_calc_t *hmsc, unsigned long val){
+    // only keep it if it is higher
+    hmsc->from_fetch = MAX(hmsc->from_fetch, val);
+}
+
+// a tool for building as-dense-as-possible sequence sets one value at a time
+typedef jsw_atree_t seq_set_builder_t;
+typedef struct {
+    unsigned int n1;
+    unsigned int n2;
+    jsw_anode_t node;
+} seq_set_builder_elem_t;
+DEF_CONTAINER_OF(seq_set_builder_elem_t, node, jsw_anode_t);
+
+static const void *ssbe_jsw_get(const jsw_anode_t *node){
+    return CONTAINER_OF(node, seq_set_builder_elem_t, node);
+}
+static int ssbe_jsw_cmp_n1(const void *a, const void *b){
+    const seq_set_builder_elem_t *ssbea = a;
+    const seq_set_builder_elem_t *ssbeb = b;
+    return JSW_NUM_CMP(ssbea->n1, ssbeb->n1);
+}
+
+static void seq_set_builder_prep(seq_set_builder_t *ssb){
+    jsw_ainit(ssb, ssbe_jsw_cmp_n1, ssbe_jsw_get);
+}
+
+// free all the nodes of the ssb
+static void seq_set_builder_free(seq_set_builder_t *ssb){
+    jsw_anode_t *node;
+    while((node = jsw_apop(ssb))){
+        seq_set_builder_elem_t *ssbe =
+            CONTAINER_OF(node, seq_set_builder_elem_t, node);
+        free(ssbe);
+    }
+}
+
+static bool seq_set_builder_isempty(seq_set_builder_t *ssb){
+    return ssb->root->count == 0;
+}
+
+static derr_t seq_set_builder_add_range(seq_set_builder_t *ssb,
+        unsigned int n1, unsigned int n2){
     derr_t e = E_OK;
 
-    acc_t *acc = CONTAINER_OF(maildir, acc_t, maildir);
-    imaildir_t *m = acc->m;
+    // for now only accept valid UIDs (no 0, no *)
+    // (this simplifies seq_set_builder_extract)
+    if(!n1 || !n2){
+        ORIG(&e, E_PARAM, "invalid UID in seq_set_builder");
+    }
 
-    // allocate a new update struct
-    msg_update_t *update = malloc(sizeof(*update));
-    if(update == NULL) ORIG(&e, E_NOMEM, "no mem");
-    *update = (msg_update_t){0};
+    seq_set_builder_elem_t *ssbe = malloc(sizeof(*ssbe));
+    if(!ssbe) ORIG(&e, E_NOMEM, "nomem");
+    *ssbe = (seq_set_builder_elem_t){ .n1 = MIN(n1, n2), .n2 = MAX(n1, n2) };
 
-    // init struct
-    link_init(&update->link);
-
-    uv_rwlock_wrlock(&m->content.lock);
-
-    // now we will decide what the update ought to be
-    PROP_GO(&e, decider(m, &update->type, &update->val, data), fail);
-
-    // set seq number
-    update->seq = ++m->content.seq;
-
-    // store the content as "unreconciled"
-    link_list_append(&m->content.unreconciled, &update->link);
-
-    uv_rwlock_wrunlock(&m->content.lock);
-
-    // return the seq number we actually got
-    *seq = update->seq;
+    jsw_ainsert(ssb, &ssbe->node);
 
     return e;
+}
 
+static derr_t seq_set_builder_add_val(seq_set_builder_t *ssb, unsigned int n1){
+    derr_t e = E_OK;
+
+    PROP(&e, seq_set_builder_add_range(ssb, n1, n1) );
+
+    return e;
+}
+
+// walk the sorted values and build a dense-as-possible sequence set
+static ie_seq_set_t *seq_set_builder_extract(derr_t *e,
+        seq_set_builder_t *ssb){
+    if(is_error(*e)) goto fail;
+
+    ie_seq_set_t *base = NULL;
+
+    // start the traversal
+    jsw_atrav_t trav;
+    jsw_anode_t *node = jsw_atfirst(&trav, ssb);
+
+    // detect the empty-list case
+    if(!node) goto done;
+
+    // handle the very first node
+    seq_set_builder_elem_t *ssbe =
+        CONTAINER_OF(node, seq_set_builder_elem_t, node);
+    base = ie_seq_set_new(e, ssbe->n1, ssbe->n2);
+    ie_seq_set_t *cur = base;
+    CHECK_GO(e, fail);
+
+    // handle all other nodes
+    for(node = jsw_atnext(&trav); node != NULL; node = jsw_atnext(&trav)){
+        seq_set_builder_elem_t *ssbe =
+            CONTAINER_OF(node, seq_set_builder_elem_t, node);
+        // sequences touch?
+        if(ssbe->n1 <= cur->n2 + 1){
+            // yes, extend the current seq_set_t
+            cur->n2 = ssbe->n2;
+        }else{
+            // no, start a new one
+            cur->next = ie_seq_set_new(e, ssbe->n1, ssbe->n2);
+            CHECK_GO(e, fail_base);
+            cur = cur->next;
+        }
+    }
+
+done:
+    // always free the ssb, it's a one-time use item
+    seq_set_builder_free(ssb);
+
+    return base;
+
+fail_base:
+    // free anything we allocated
+    ie_seq_set_free(base);
 fail:
-    uv_rwlock_wrunlock(&m->content.lock);
-    free(update);
-    return e;
+    seq_set_builder_free(ssb);
+    return NULL;
 }
 
-static msg_flags_t three_way_merge(msg_flags_t base, msg_flags_t old,
-        msg_flags_t new){
-    // which flags were changed by the accessor?
-    msg_flags_t changed = msg_flags_xor(old, new);
 
-    // which flags are different between the new and the base?
-    msg_flags_t diff = msg_flags_xor(base, new);
-
-    // apply changes which were both requested and necessary
-    return msg_flags_and(changed, diff);
-}
-
-typedef struct {
-    unsigned int uid;
-    msg_flags_t old;
-    msg_flags_t new;
-} decider_flags_args_t;
-
-// decider_flags is a decider_f
-static derr_t decider_flags(imaildir_t *m, msg_update_type_e *update_type,
-        msg_update_value_u *update_val, void *data){
-    derr_t e = E_OK;
-
-    decider_flags_args_t *args = data;
-
-    // find the real message by UID
-    hash_elem_t *h = hashmap_getu(&m->content.msgs, args->uid);
-    if(h == NULL){
-        // message has been deleted, this is a noop
-        *update_type = MSG_UPDATE_NOOP;
-        return e;
-    }
-    // get the message base
-    msg_base_t *base = CONTAINER_OF(h, msg_base_t, h);
-
-    // figure the actual changes to make
-    msg_flags_t changes =
-        three_way_merge(base->meta->flags, args->old, args->new);
-
-    // did we decide any changes were necessary?
-    msg_flags_t no_changes = {0};
-    if(msg_flags_eq(changes, no_changes)){
-        *update_type = MSG_UPDATE_NOOP;
-        return e;
-    }
-
-    // otherwise create an updated msg_meta_t
-    msg_flags_t flags_out = msg_flags_xor(base->meta->flags, changes);
-    msg_meta_t *new_meta;
-    PROP(&e, msg_meta_new(&new_meta, flags_out) );
-
-    // configure the update
-    *update_type = MSG_UPDATE_FLAGS;
-    update_val->flags.uid = args->uid;
-    update_val->flags.old = &base->meta->flags;
-    update_val->flags.new = &new_meta->flags;
-
-    // update base (old value freed when update is reconciled)
-    base->meta = new_meta;
-
-    return e;
-}
-
-// update_flags is part of maildir_i
-static derr_t update_flags(maildir_i *maildir, unsigned int uid,
-        msg_flags_t old, msg_flags_t new, size_t *seq){
-    derr_t e = E_OK;
-
-    decider_flags_args_t args = {.uid = uid, .old = old, .new = new};
-
-    PROP(&e, post_update(maildir, seq, decider_flags, &args) );
-
-    return e;
-}
-
-// new_msg is part of the maildir_i
-static derr_t new_msg(maildir_i *maildir, const dstr_t *filename,
-        msg_flags_t *flags, size_t *seq){
-    derr_t e = E_OK;
-
+// static derr_t maildir_resp_not_allowed(maildir_i* maildir, imap_resp_t* resp){
+//     (void)maildir;
+//     (void)resp;
+//     derr_t e = E_OK;
+//     ORIG(&e, E_INTERNAL, "response not allowed from a downwards connection");
+// }
+static derr_t maildir_cmd_not_allowed(maildir_i* maildir, imap_cmd_t* cmd){
     (void)maildir;
-    (void)filename;
-    (void)flags;
-    (void)seq;
-    ORIG(&e, E_VALUE, "not implemented");
-
-    return e;
+    (void)cmd;
+    derr_t e = E_OK;
+    ORIG(&e, E_INTERNAL, "command not allowed from an upwards connection");
 }
 
+// up_t is all the state we have for an upwards connection
 typedef struct {
-    unsigned int uid;
-} decider_expunge_args_t;
+    imaildir_t *m;
+    // the interfaced provided to us
+    maildir_conn_up_i *conn;
+    // the interface we provide
+    maildir_i maildir;
+    // this connection's state
+    bool selected;
+    bool synced;
+    bool close_sent;
+    // a tool for tracking the highestmodseq we have actually synced
+    himodseq_calc_t hmsc;
+    // a seq_set_builder_t
+    seq_set_builder_t uids_to_download;
+    // current tag
+    size_t tag;
+    link_t cbs;  // imap_cmd_cb_t->link
+    link_t link;  // imaildir_t->access.ups
+} up_t;
+DEF_CONTAINER_OF(up_t, maildir, maildir_i);
+DEF_CONTAINER_OF(up_t, link, link_t);
 
-// decider_expunge is a decider_f
-static derr_t decider_expunge(imaildir_t *m, msg_update_type_e *update_type,
-        msg_update_value_u *update_val,  void *data){
+// dn_t is all the state we have for a downwards connection
+typedef struct {
+    /* TODO: support downwards connections
+        The structures needed will be:
+          - maildir_conn_dn_i
+          - maildir_i
+          - a view of the mailbox
+          - some concept of callbacks for responding to commands
+          ...
+          - NOT a list of uncommitted changes; that list should be maildir-wide
+    */
+} dn_t;
+
+static derr_t up_new(up_t **out, maildir_conn_up_i *conn, imaildir_t *m){
     derr_t e = E_OK;
+    *out = NULL;
 
-    decider_expunge_args_t *args = data;
+    up_t *up = malloc(sizeof(*up));
+    if(!up) ORIG(&e, E_NOMEM, "nomem");
+    *up = (up_t){
+        .m = m,
+        .conn = conn,
+        .maildir = {
+            .resp = conn_up_resp,
+            .cmd = maildir_cmd_not_allowed,
+            .synced = conn_up_synced,
+            .selected = conn_up_selected,
+            .unselect = conn_up_unselect,
+        },
+    };
 
-    // delete the message by UID
-    hash_elem_t *h = hashmap_delu(&m->content.msgs, args->uid);
-    if(h == NULL){
-        // message has already been deleted, this is a noop
-        *update_type = MSG_UPDATE_NOOP;
-        return e;
+    // start with the himodseqvalue in the persistent cache
+    hmsc_prep(&up->hmsc, m->content.log->get_himodseq_up(m->content.log));
+
+    // TODO: walk through the m->content.msgs looking for unfilled msg_base_t's
+    seq_set_builder_prep(&up->uids_to_download);
+
+    link_init(&up->cbs);
+    link_init(&up->link);
+
+    *out = up;
+
+    return e;
+};
+
+// up_free is meant to be called right after imaildir_unregister_up()
+static void up_free(up_t **up){
+    if(*up == NULL) return;
+    /* it's not allowed to remove the up_t from imaildir.access.ups here, due
+       to race conditions in the cleanup sequence */
+
+    // cancel all callbacks
+    link_t *link;
+    while((link = link_list_pop_first(&(*up)->cbs))){
+        imap_cmd_cb_t *cb = CONTAINER_OF(link, imap_cmd_cb_t, link);
+        cb->free(cb);
     }
-    // get the message base
-    msg_base_t *base = CONTAINER_OF(h, msg_base_t, h);
 
-    // mark the message for deletion with the update
-    *update_type = MSG_UPDATE_EXPUNGE;
-    update_val->expunge.uid = args->uid;
-    update_val->expunge.old = &base->ref;
+    // free anything in the sequence_set_builder
+    seq_set_builder_free(&(*up)->uids_to_download);
 
-    return e;
+    // release the interface
+    (*up)->conn->release((*up)->conn, E_OK);
+
+    // free memory
+    free(*up);
+    *up = NULL;
 }
 
-
-// expunge_msg is part of the maildir_i
-static derr_t expunge_msg(maildir_i *maildir, unsigned int uid, size_t *seq){
-    derr_t e = E_OK;
-
-    decider_expunge_args_t args = {.uid = uid};
-
-    PROP(&e, post_update(maildir, seq, decider_expunge, &args) );
-
-    return e;
-}
-
+/*
 static derr_t fopen_by_uid(maildir_i *maildir, unsigned int uid,
         const char *mode, FILE **out){
     derr_t e = E_OK;
@@ -218,86 +322,7 @@ done:
     uv_rwlock_rdunlock(&m->content.lock);
     return e;
 }
-
-/* msg_update_reconcile will free the msg_udpate_t as well as handling the
-   associated cleanup action (must be run within a content lock) */
-static void msg_update_reconcile(imaildir_t *m, msg_update_t *update){
-    link_remove(&update->link);
-    msg_meta_t *meta;
-    switch(update->type){
-        case MSG_UPDATE_FLAGS:
-            // done with the old meta
-            meta = CONTAINER_OF(update->val.flags.old, msg_meta_t, flags);
-            msg_meta_free(&meta);
-            break;
-
-        case MSG_UPDATE_NEW:
-            // nothing to free
-            break;
-
-        case MSG_UPDATE_EXPUNGE:
-            {
-                // get the msg_base_t to be deleted
-                msg_base_t *base;
-                base = CONTAINER_OF(update->val.expunge.old, msg_base_t, ref);
-                // get the file to be removed
-                string_builder_t dir = SUB(&m->path, base->subdir);
-                string_builder_t path = sb_append(&dir, FD(&base->filename));
-                // try removing the file
-                derr_t e = remove_path(&path);
-                CATCH(e, E_ANY){
-                    TRACE(&e, "warning: failed to delete message file\n");
-                    DUMP(e);
-                    DROP_VAR(&e);
-                }
-                // free the meta
-                msg_meta_free(&base->meta);
-                // free the base
-                msg_base_free(&base);
-            }
-            break;
-
-        case MSG_UPDATE_NOOP:
-            break;
-
-        default:
-            LOG_ERROR("unknown msg_update_t->type\n");
-    }
-
-    free(update);
-}
-
-static void reconcile_until(maildir_i *maildir, size_t seq){
-    acc_t *acc = CONTAINER_OF(maildir, acc_t, maildir);
-    imaildir_t *m = acc->m;
-
-    // first remember what seq this accessor is on
-    acc->reconciled = seq;
-
-    // figure out what the furthest-behind seq number is among all accessors
-    size_t most_behind = seq;
-    uv_mutex_lock(&m->access.mutex);
-    acc_t *acc_ptr;
-    LINK_FOR_EACH(acc_ptr, &m->access.accessors, acc_t, link){
-        if(acc_ptr->reconciled < most_behind){
-            most_behind = acc_ptr->reconciled;
-        }
-    }
-    uv_mutex_unlock(&m->access.mutex);
-
-    // now free all of the updates that are fully reconciled
-    uv_rwlock_wrlock(&m->content.lock);
-    msg_update_t *update, *temp;
-    LINK_FOR_EACH_SAFE(update, temp, &m->access.accessors, msg_update_t, link){
-        if(update->seq > most_behind){
-            // the updates are ordered, so no point in continuing
-            break;
-        }
-        // otherwise, this update is fully reconciled; do cleanup steps
-        msg_update_reconcile(m, update);
-    }
-    uv_rwlock_wrunlock(&m->content.lock);
-}
+*/
 
 // // check for "cur" and "new" and "tmp" subdirs, "true" means "all present"
 // static derr_t ctn_check(const string_builder_t *path, bool *ret){
@@ -330,45 +355,45 @@ static derr_t add_msg_to_maildir(const string_builder_t *base,
     if(is_dir) return e;
 
     // extract uid and metadata from filename
-    msg_flags_t flags;
     unsigned int uid;
     size_t len;
 
-    derr_t e2 = maildir_name_parse(name, NULL, &len, &uid, &flags, NULL, NULL);
+    derr_t e2 = maildir_name_parse(name, NULL, &uid, &len, NULL, NULL);
     CATCH(e2, E_PARAM){
         // TODO: Don't ignore bad filenames; add them as "need to be sync'd"
         DROP_VAR(&e2);
         return e;
     }else PROP(&e, e2);
 
-    // allocate a new meta
-    msg_meta_t *meta;
-    PROP(&e, msg_meta_new(&meta, flags) );
+    // grab the metadata we loaded from the persistent cache
+    jsw_anode_t *node = jsw_afind(&arg->m->content.msgs, &uid, NULL);
+    if(node == NULL){
+        // TODO: handle this better
+        ORIG(&e, E_INTERNAL, "UID on file not in cache");
+    }
 
-    // allocate a new message
-    msg_base_t *msg;
-    PROP_GO(&e, msg_base_new(&msg, uid, len, arg->subdir, name, meta),
-            fail_meta);
+    msg_base_t *msg_base = CONTAINER_OF(node, msg_base_t, node);
 
-    // add the file to the maildir (must be unique)
-    PROP_GO(&e, hashmap_setu_unique(&arg->m->content.msgs, uid, &msg->h), fail_base);
+    if(msg_base->filled){
+        // TODO: handle this better
+        ORIG(&e, E_INTERNAL, "duplicate UID on file");
+    }
 
-    return e;
+    printf("CALLING MSG_BASE_FILL\n");
+    PROP(&e, msg_base_fill(msg_base, len, arg->subdir, name) );
 
-fail_meta:
-    msg_meta_free(&meta);
-fail_base:
-    msg_base_free(&msg);
     return e;
 }
 
 // not safe to call after maildir_init due to race conditions
 static derr_t populate_msgs(imaildir_t *m){
     derr_t e = E_OK;
+    LOG_ERROR("POPULATE!!\n");
 
     // check /cur and /new
     subdir_type_e subdirs[] = {SUBDIR_CUR, SUBDIR_NEW};
 
+    // add every file we have
     for(size_t i = 0; i < sizeof(subdirs)/sizeof(*subdirs); i++){
         subdir_type_e subdir = subdirs[i];
         string_builder_t subpath = SUB(&m->path, subdir);
@@ -378,24 +403,76 @@ static derr_t populate_msgs(imaildir_t *m){
         PROP(&e, for_each_file_in_dir2(&subpath, add_msg_to_maildir, &arg) );
     }
 
+    // detect uids that are unfilled
+    jsw_atrav_t trav;
+    jsw_anode_t *node = jsw_atfirst(&trav, &m->content.msgs);
+    while(node != NULL){
+        msg_base_t *base = CONTAINER_OF(node, msg_base_t, node);
+        if(base->filled == true){
+            node = jsw_atnext(&trav);
+            continue;
+        }
+
+        // advance the node, popping base->node from msgs
+        node = jsw_pop_atnext(&trav);
+
+        // place the base in m->content.msgs_empty
+        jsw_ainsert(&m->content.msgs_empty, &base->node);
+        LOG_ERROR("UNFILLED!!\n");
+    }
+    LOG_ERROR("POPULATE DONE!!\n");
+
     return e;
 }
 
-derr_t imaildir_init(imaildir_t *m, string_builder_t path, dirmgr_i *mgr){
+// for maildir.content.msgs
+static const void *msg_base_jsw_get(const jsw_anode_t *node){
+    const msg_base_t *base = CONTAINER_OF(node, msg_base_t, node);
+    return (void*)base;
+}
+static int msg_base_jsw_cmp_uid(const void *a, const void *b){
+    const msg_base_t *basea = a;
+    const msg_base_t *baseb = b;
+    return JSW_NUM_CMP(basea->ref.uid, baseb->ref.uid);
+}
+
+// for maildir.content.expunged
+static const void *msg_expunge_jsw_get(const jsw_anode_t *node){
+    const msg_expunge_t *expunge = CONTAINER_OF(node, msg_expunge_t, node);
+    return (void*)expunge;
+}
+static int msg_expunge_jsw_cmp_uid(const void *a, const void *b){
+    const msg_expunge_t *expungea = a;
+    const msg_expunge_t *expungeb = b;
+    return JSW_NUM_CMP(expungea->uid, expungeb->uid);
+}
+
+// for maildir.content.mods
+static const void *msg_mod_jsw_get(const jsw_anode_t *node){
+    const msg_mod_t *mod = CONTAINER_OF(node, msg_mod_t, node);
+    return (void*)mod;
+}
+static int msg_mod_jsw_cmp_modseq(const void *a, const void *b){
+    const msg_mod_t *moda = a;
+    const msg_mod_t *modb = b;
+    return JSW_NUM_CMP(moda->modseq, modb->modseq);
+}
+
+derr_t imaildir_init(imaildir_t *m, string_builder_t path, const dstr_t *name,
+        dirmgr_i *dirmgr){
     derr_t e = E_OK;
 
     *m = (imaildir_t){
         .path = path,
-        .mgr = mgr,
+        .name = name,
+        .dirmgr = dirmgr,
         // TODO: finish setting values
         // .uid_validity = ???
         // .mflags = ???
-        .content = {
-        },
     };
 
     link_init(&m->content.unreconciled);
-    link_init(&m->access.accessors);
+    link_init(&m->access.ups);
 
     // // check for cur/new/tmp folders, and assign /NOSELECT accordingly
     // bool ctn_present;
@@ -418,24 +495,32 @@ derr_t imaildir_init(imaildir_t *m, string_builder_t path, dirmgr_i *mgr){
                 fail_content_lock);
     }
 
-    // init hashmap of messages
-    PROP_GO(&e, hashmap_init(&m->content.msgs), fail_access_mutex);
+    // init msgs
+    jsw_ainit(&m->content.msgs, msg_base_jsw_cmp_uid, msg_base_jsw_get);
+    jsw_ainit(&m->content.msgs_empty, msg_base_jsw_cmp_uid, msg_base_jsw_get);
 
-    // populate messages
-    PROP_GO(&e, populate_msgs(m), fail_msgs);
+    // init expunged
+    jsw_ainit(&m->content.expunged, msg_expunge_jsw_cmp_uid,
+            msg_expunge_jsw_get);
+
+    // init mods
+    jsw_ainit(&m->content.mods, msg_mod_jsw_cmp_modseq, msg_mod_jsw_get);
+
+    // any remaining failures must result in a call to imaildir_free()
+
+    PROP_GO(&e, imaildir_log_open(&m->path, &m->content.msgs,
+                &m->content.expunged, &m->content.mods, &m->content.log),
+            fail_free);
+
+    // populate messages by reading files
+    PROP_GO(&e, populate_msgs(m), fail_free);
 
     return e;
 
-    hashmap_iter_t i;
-fail_msgs:
-    // close all messages
-    for(i = hashmap_pop_first(&m->content.msgs); i.current; hashmap_pop_next(&i)){
-        msg_base_t *base = CONTAINER_OF(i.current, msg_base_t, h);
-        msg_base_free(&base);
-    }
-    hashmap_free(&m->content.msgs);
-fail_access_mutex:
-    uv_mutex_destroy(&m->access.mutex);
+fail_free:
+    imaildir_free(m);
+    return e;
+
 fail_content_lock:
     uv_rwlock_destroy(&m->content.lock);
     return e;
@@ -444,124 +529,658 @@ fail_content_lock:
 // free must only be called if the maildir has no accessors
 void imaildir_free(imaildir_t *m){
     if(!m) return;
-    hashmap_iter_t i;
-    // close all messages
-    for(i = hashmap_pop_first(&m->content.msgs); i.current; hashmap_pop_next(&i)){
-        msg_base_t *base = CONTAINER_OF(i.current, msg_base_t, h);
+    jsw_anode_t *node;
+    // free all expunged
+    while((node = jsw_apop(&m->content.expunged))){
+        msg_expunge_t *expunge = CONTAINER_OF(node, msg_expunge_t, node);
+        msg_expunge_free(&expunge);
+    }
+
+    // free all messages
+    while((node = jsw_apop(&m->content.msgs))){
+        msg_base_t *base = CONTAINER_OF(node, msg_base_t, node);
+        msg_meta_free(&base->meta);
         msg_base_free(&base);
     }
-    hashmap_free(&m->content.msgs);
+    while((node = jsw_apop(&m->content.msgs_empty))){
+        msg_base_t *base = CONTAINER_OF(node, msg_base_t, node);
+        msg_meta_free(&base->meta);
+        msg_base_free(&base);
+    }
+
+    // free any detached msg_meta's
+    link_t *link;
+    while((link = link_list_pop_first(&m->content.unreconciled))){
+        // msg_update_t *update = CONTAINER_OF(link, msg_update_t, link);
+        LOG_ERROR("FOUND UNRECONCILED UPDATES BUT DON'T KNOW HOW TO FREE THEM");
+    }
+
+    // none of the nodes in m->content.mods are still valid, so leave it alone
+
+    // handle the case where imaildir_init failed in imaildir_log_open
+    if(m->content.log){
+        m->content.log->close(m->content.log);
+    }
+
     uv_mutex_destroy(&m->access.mutex);
     uv_rwlock_destroy(&m->content.lock);
 }
 
-// content must be read-locked
-static derr_t acc_new(acc_t **out, imaildir_t *m, accessor_i *accessor){
-    derr_t e = E_OK;
+// this is for the himodseq that we serve to clients
+static unsigned long imaildir_himodseq_dn(imaildir_t *m){
+    jsw_atrav_t trav;
+    jsw_anode_t *node = jsw_atlast(&trav, &m->content.mods);
+    if(node != NULL){
+        msg_mod_t *mod = CONTAINER_OF(node, msg_mod_t, node);
+        return mod->modseq;
+    }
 
-    acc_t *acc = malloc(sizeof(*acc));
-    if(acc == NULL) ORIG(&e, E_NOMEM, "no mem");
-    *acc = (acc_t){
-        .accessor = accessor,
-        .m = m,
-        .maildir = {
-            .update_flags = update_flags,
-            .new_msg = new_msg,
-            .expunge_msg = expunge_msg,
-            .fopen_by_uid = fopen_by_uid,
-            .reconcile_until = reconcile_until,
-        },
-        .reconciled = m->content.seq,
+    // if the mailbox is empty, return 1
+    return 1;
+}
+
+// this is for the himodseq when we sync from the server
+static unsigned long imaildir_himodseq_up(imaildir_t *m){
+    return m->content.log->get_himodseq_up(m->content.log);
+}
+
+// // content must be read-locked
+// static derr_t acc_new(acc_t **out, imaildir_t *m, accessor_i *accessor){
+//     derr_t e = E_OK;
+//
+//     acc_t *acc = malloc(sizeof(*acc));
+//     if(acc == NULL) ORIG(&e, E_NOMEM, "no mem");
+//     *acc = (acc_t){
+//         .accessor = accessor,
+//         .m = m,
+//         .maildir = {
+//             .update_flags = update_flags,
+//             .new_msg = new_msg,
+//             .expunge_msg = expunge_msg,
+//             .fopen_by_uid = fopen_by_uid,
+//             .reconcile_until = reconcile_until,
+//         },
+//         .reconciled = m->content.seq,
+//     };
+//
+//     link_init(&acc->link);
+//
+//     *out = acc;
+//     return e;
+// }
+//
+// static void acc_free(acc_t **acc){
+//     if(!*acc) return;
+//     free(*acc);
+//     *acc = NULL;
+// }
+
+// // for jsw_atree: get a msg_view_t from a node
+// static const void *maildir_view_get(const jsw_anode_t *node){
+//     const msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
+//     return (void*)view;
+// }
+// // for jsw_atree: compare two msg_view_t's by uid
+// static int maildir_view_cmp(const void *a, const void *b){
+//     const msg_view_t *viewa = a;
+//     const msg_view_t *viewb = b;
+//     return viewa->base->uid > viewb->base->uid;
+// }
+
+// // build a view of the maildir
+// static derr_t imaildir_build_dirview(imaildir_t *m, jsw_atree_t *dirview_out){
+//     derr_t e = E_OK;
+//
+//     // lock content while we copy it
+//     uv_rwlock_rdlock(&m->content.lock);
+//
+//     // initialize the output view
+//     jsw_ainit(dirview_out, maildir_view_cmp, maildir_view_get);
+//
+//     // make a view of every message
+//     hashmap_iter_t i;
+//     for(i = hashmap_first(&m->content.msgs); i.current; hashmap_next(&i)){
+//         // build a message view of this message
+//         msg_base_t *base = CONTAINER_OF(i.current, msg_base_t, h);
+//         msg_view_t *view;
+//         PROP_GO(&e, msg_view_new(&view, base), fail);
+//         // add message view to the dir view
+//         jsw_ainsert(dirview_out, &view->node);
+//     }
+//
+//     uv_rwlock_rdunlock(&m->content.lock);
+//
+//     // pass the maildir_i
+//     *maildir_out = &acc->maildir;
+//
+//     return e;
+//
+//     jsw_anode_t *node;
+// fail:
+//     // free all of the references
+//     while((node = jsw_apop(dirview_out)) != NULL){
+//         msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
+//         msg_view_free(&view);
+//     }
+// // fail_content_lock:
+//     uv_rwlock_wrunlock(&m->content.lock);
+//     return e;
+// }
+
+static ie_dstr_t *write_tag_up(derr_t *e, size_t tag){
+    if(is_error(*e)) goto fail;
+
+    DSTR_VAR(buf, 32);
+    PROP_GO(e, FMT(&buf, "maildir_up%x", FU(tag)), fail);
+
+    return ie_dstr_new(e, &buf, KEEP_RAW);
+
+fail:
+    return NULL;
+}
+
+// read the serial of a tag we issued
+static derr_t read_tag_up(ie_dstr_t *tag, size_t *tag_out, bool *was_ours){
+    derr_t e = E_OK;
+    *tag_out = 0;
+
+    DSTR_STATIC(maildir_up, "maildir_up");
+    dstr_t ignore_substr = dstr_sub(&tag->dstr, 0, maildir_up.len);
+    // make sure it starts with "maildir_up"
+    if(dstr_cmp(&ignore_substr, &maildir_up) != 0){
+        PFMT("ignore_substr was %x\n", FD(&ignore_substr));
+        *was_ours = false;
+        return e;
+    }
+
+    *was_ours = true;
+
+    dstr_t number_substr = dstr_sub(&tag->dstr, maildir_up.len, tag->dstr.len);
+    PROP(&e, dstr_tosize(&number_substr, tag_out, 10) );
+
+    return e;
+}
+
+typedef struct {
+    up_t *up;
+    imap_cmd_cb_t cb;
+} up_cb_t;
+DEF_CONTAINER_OF(up_cb_t, cb, imap_cmd_cb_t);
+
+// up_cb_free is an imap_cmd_cb_free_f
+static void up_cb_free(imap_cmd_cb_t *cb){
+    if(!cb) return;
+    up_cb_t *up_cb = CONTAINER_OF(cb, up_cb_t, cb);
+    free(up_cb);
+}
+
+static up_cb_t *up_cb_new(derr_t *e, up_t *up, size_t tag,
+        imap_cmd_cb_call_f call, imap_cmd_t *cmd){
+    if(is_error(*e)) goto fail;
+
+    up_cb_t *up_cb = malloc(sizeof(*up_cb));
+    if(!up_cb) goto fail;
+    *up_cb = (up_cb_t){
+        .up = up,
     };
 
-    link_init(&acc->link);
+    imap_cmd_cb_prep(&up_cb->cb, tag, call, up_cb_free);
 
-    *out = acc;
-    return e;
+    return up_cb;
+
+fail:
+    imap_cmd_free(cmd);
+    return NULL;
 }
 
-static void acc_free(acc_t **acc){
-    if(!*acc) return;
-    free(*acc);
-    *acc = NULL;
+// send a command and store its callback
+static void send_cmd(up_t *up, imap_cmd_t *cmd, up_cb_t *up_cb){
+    // store the callback
+    link_list_append(&up->cbs, &up_cb->cb.link);
+
+    // send the command through the conn_up
+    up->conn->cmd(up->conn, cmd);
 }
 
-// for jsw_atree: get a msg_view_t from a node
-static const void *maildir_view_get(const jsw_anode_t *node){
-    const msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
-    return (void*)view;
-}
-// for jsw_atree: compare two msg_view_t's by uid
-static int maildir_view_cmp(const void *a, const void *b){
-    const msg_view_t *viewa = a;
-    const msg_view_t *viewb = b;
-    return viewa->base->uid > viewb->base->uid;
-}
-
-derr_t imaildir_register(imaildir_t *m, accessor_i *a, maildir_i **maildir_out,
-        jsw_atree_t *dirview_out){
+// close_done is an imap_cmd_cb_call_f
+static derr_t close_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
     derr_t e = E_OK;
 
-    // lock content while we copy it
-    uv_rwlock_rdlock(&m->content.lock);
+    up_cb_t *up_cb = CONTAINER_OF(cb, up_cb_t, cb);
+    up_t *up = up_cb->up;
 
-    // initialize the output view
-    jsw_ainit(dirview_out, maildir_view_cmp, maildir_view_get);
-
-    // make a view of every message
-    hashmap_iter_t i;
-    for(i = hashmap_first(&m->content.msgs); i.current; hashmap_next(&i)){
-        // build a message view of this message
-        msg_base_t *base = CONTAINER_OF(i.current, msg_base_t, h);
-        msg_view_t *view;
-        PROP_GO(&e, msg_view_new(&view, base), fail);
-        // add message view to the dir view
-        jsw_ainsert(dirview_out, &view->node);
+    if(st_resp->status != IE_ST_OK){
+        ORIG(&e, E_PARAM, "close failed\n");
     }
 
-    // register accessor (need an additional lock)
-    uv_mutex_lock(&m->access.mutex);
+    // signal that we are done with this connection
+    up->conn->unselected(up->conn);
 
-    // don't edit the accessor list after we have failed
-    if(m->access.failed){
-        ORIG_GO(&e, E_DEAD, "maildir in failed state", fail_access_mutex);
-    }
+    /* TODO: we should be changing to a different primary connection now
+       instead of waiting until somebody unregisters... */
 
-    // our internal holder for an access_i interface
-    acc_t *acc = NULL;
-    PROP_GO(&e, acc_new(&acc, m, a), fail_access_mutex);
+    return e;
+}
 
-    link_list_append(&m->access.accessors, &acc->link);
-    m->access.naccessors++;
+static derr_t send_close(up_t *up){
+    derr_t e = E_OK;
 
-    uv_mutex_unlock(&m->access.mutex);
+    // issue a CLOSE command
+    imap_cmd_arg_t arg = {0};
+    size_t tag = ++up->tag;
+    ie_dstr_t *tag_str = write_tag_up(&e, tag);
+    imap_cmd_t *cmd = imap_cmd_new(&e, tag_str, IMAP_CMD_CLOSE, arg);
 
-    uv_rwlock_rdunlock(&m->content.lock);
+    // build the callback
+    up_cb_t *up_cb = up_cb_new(&e, up, tag, close_done, cmd);
 
-    // pass the maildir_i
-    *maildir_out = &acc->maildir;
+    CHECK(&e);
+
+    up->close_sent = true;
+    send_cmd(up, cmd, up_cb);
+
+    return e;
+}
+
+// after every command, evaluate our internal state to decide the next one
+static derr_t next_cmd(up_t *up);
+
+static derr_t imaildir_new_msg(imaildir_t *m, unsigned int uid,
+        msg_flags_t flags, msg_base_t **out){
+    derr_t e = E_OK;
+    *out = NULL;
+
+    uv_rwlock_wrlock(&m->content.lock);
+
+    // get the last highets modseq
+    unsigned long himodseq_dn = imaildir_himodseq_dn(m);
+
+    // create a new meta
+    msg_meta_t *meta;
+    PROP(&e, msg_meta_new(&meta, flags, himodseq_dn + 1) );
+
+    // create a new base
+    msg_base_t *base;
+    PROP_GO(&e, msg_base_new(&base, uid, meta), fail_meta);
+
+    // add message to log
+    maildir_log_i *log = m->content.log;
+    PROP_GO(&e, log->update_msg(log, uid, meta), fail_base);
+
+    // insert meta into mods
+    jsw_ainsert(&m->content.mods, &meta->mod.node);
+
+    // insert base into msgs_empty
+    jsw_ainsert(&m->content.msgs_empty, &base->node);
+
+    uv_rwlock_wrunlock(&m->content.lock);
+
+    *out = base;
 
     return e;
 
-fail_access_mutex:
-    uv_mutex_unlock(&m->access.mutex);
-
-    jsw_anode_t *node;
-fail:
-    // free all of the references
-    while((node = jsw_apop(dirview_out)) != NULL){
-        msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
-        msg_view_free(&view);
-    }
-// fail_content_lock:
+fail_base:
+    msg_base_free(&base);
+fail_meta:
+    msg_meta_free(&meta);
     uv_rwlock_wrunlock(&m->content.lock);
     return e;
 }
 
-void imaildir_unregister(maildir_i *maildir){
-    acc_t *acc = CONTAINER_OF(maildir, acc_t, maildir);
+static derr_t fetch_resp(up_t *up, const ie_fetch_resp_t *fetch){
+    derr_t e = E_OK;
 
-    imaildir_t *m = acc->m;
+    // grab UID
+    if(!fetch->uid){
+        LOG_ERROR("detected fetch without UID, skipping\n");
+        return e;
+    }
+
+    // do we already have this UID?
+    uv_rwlock_rdlock(&up->m->content.lock);
+    msg_base_t *base = NULL;
+    // check filled messages
+    jsw_anode_t *node = jsw_afind(&up->m->content.msgs, &fetch->uid, NULL);
+    if(!node){
+        // check empty messages
+        jsw_afind(&up->m->content.msgs_empty, &fetch->uid, NULL);
+    }
+    if(node){
+        base = CONTAINER_OF(node, msg_base_t, node);
+    }
+    uv_rwlock_rdunlock(&up->m->content.lock);
+
+    if(!base){
+        // new UID
+        msg_flags_t flags = msg_flags_from_fetch_flags(fetch->flags);
+        PROP(&e, imaildir_new_msg(up->m, fetch->uid, flags, &base) );
+
+        // TODO: handle INTERNALDATE
+
+        // do we have the content right now?
+        if(fetch->content){
+            // TODO: decrypt and save to file
+            LOG_ERROR("need to decrypt and save file\n");
+        }else{
+            PROP(&e, seq_set_builder_add_val(&up->uids_to_download,
+                        fetch->uid) );
+        }
+
+    }else{
+        // existing UID
+        // TODO: update flags
+        ORIG(&e, E_INTERNAL, "update flags");
+
+        if(fetch->content){
+            LOG_ERROR("dropping unexpected RFC822 content\n");
+        }
+    }
+
+    // did we see a MODSEQ value?
+    if(fetch->modseq > 0){
+        hmsc_saw_fetch(&up->hmsc, fetch->modseq);
+    }
+
+    return e;
+}
+
+// fetch_done is an imap_cmd_cb_call_f
+static derr_t fetch_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
+    derr_t e = E_OK;
+
+    up_cb_t *up_cb = CONTAINER_OF(cb, up_cb_t, cb);
+    up_t *up = up_cb->up;
+
+    if(st_resp->status != IE_ST_OK){
+        ORIG(&e, E_PARAM, "fetch failed\n");
+    }
+
+    PROP(&e, next_cmd(up) );
+
+    return e;
+}
+
+static derr_t imaildir_get_unfilled(imaildir_t *m, seq_set_builder_t *ssb){
+    derr_t e = E_OK;
+
+    uv_rwlock_rdlock(&m->content.lock);
+
+    jsw_atrav_t trav;
+    jsw_anode_t *node = jsw_atfirst(&trav, &m->content.msgs_empty);
+    for(; node != NULL; node = jsw_atnext(&trav)){
+        msg_base_t *base = CONTAINER_OF(node, msg_base_t, node);
+        PROP_GO(&e, seq_set_builder_add_val(ssb, base->ref.uid), cu);
+    }
+
+cu:
+    uv_rwlock_rdunlock(&m->content.lock);
+    return e;
+}
+
+static derr_t send_fetch(up_t *up){
+    derr_t e = E_OK;
+
+    // issue a UID FETCH command
+    bool uid_mode = true;
+    // fetch all the messages we need to download
+    ie_seq_set_t *uidseq = seq_set_builder_extract(&e, &up->uids_to_download);
+    // fetch UID, FLAGS, RFC822 content, and MODSEQ
+    ie_fetch_attrs_t *attr = ie_fetch_attrs_new(&e);
+    ie_fetch_attrs_add_simple(&e, attr, IE_FETCH_ATTR_UID);
+    ie_fetch_attrs_add_simple(&e, attr, IE_FETCH_ATTR_FLAGS);
+    ie_fetch_attrs_add_simple(&e, attr, IE_FETCH_ATTR_RFC822);
+    ie_fetch_attrs_add_simple(&e, attr, IE_FETCH_ATTR_MODSEQ);
+
+    // build fetch command
+    ie_fetch_cmd_t *fetch = ie_fetch_cmd_new(&e, uid_mode, uidseq, attr, NULL);
+    imap_cmd_arg_t arg = {.fetch=fetch};
+
+    size_t tag = ++up->tag;
+    ie_dstr_t *tag_str = write_tag_up(&e, tag);
+    imap_cmd_t *cmd = imap_cmd_new(&e, tag_str, IMAP_CMD_FETCH, arg);
+
+    // build the callback
+    up_cb_t *up_cb = up_cb_new(&e, up, tag, fetch_done, cmd);
+
+    CHECK(&e);
+
+    send_cmd(up, cmd, up_cb);
+
+    return e;
+}
+
+// initial_search_done is an imap_cmd_cb_call_f
+static derr_t initial_search_done(imap_cmd_cb_t *cb,
+        const ie_st_resp_t *st_resp){
+    derr_t e = E_OK;
+
+    up_cb_t *up_cb = CONTAINER_OF(cb, up_cb_t, cb);
+    up_t *up = up_cb->up;
+
+    if(st_resp->status != IE_ST_OK){
+        ORIG(&e, E_PARAM, "search failed\n");
+    }
+
+    if(!seq_set_builder_isempty(&up->uids_to_download)){
+        /* skip next_cmd, since we can't store the HIGESTMODSEQ until after the
+           first complete fetch */
+
+        PROP(&e, send_fetch(up) );
+    }else{
+        PROP(&e, next_cmd(up) );
+    }
+
+    return e;
+}
+
+static derr_t search_resp(up_t *up, const ie_search_resp_t *search){
+    derr_t e = E_OK;
+
+    // send a UID fetch for each uid
+    for(const ie_nums_t *uid = search->nums; uid != NULL; uid = uid->next){
+        /* TODO: Check if we've already downloaded this UID.  This could happen
+                 if a large initial download failed halfway through. */
+
+        // add this UID to our list of existing UIDs
+        PROP(&e, seq_set_builder_add_val(&up->uids_to_download, uid->num) );
+    }
+
+    return e;
+}
+
+static derr_t send_initial_search(up_t *up){
+    derr_t e = E_OK;
+
+    // issue a `UID SEARCH UID 1:*` command to find all existing messages
+    bool uid_mode = true;
+    ie_dstr_t *charset = NULL;
+    // "1" is the first message, "0" represents "*" which is the last message
+    ie_seq_set_t *range = ie_seq_set_new(&e, 1, 0);
+    ie_search_key_t *search_key = ie_search_seq_set(&e, IE_SEARCH_UID, range);
+    imap_cmd_arg_t arg = {
+        .search=ie_search_cmd_new(&e, uid_mode, charset, search_key)
+    };
+
+    size_t tag = ++up->tag;
+    ie_dstr_t *tag_str = write_tag_up(&e, tag);
+    imap_cmd_t *cmd = imap_cmd_new(&e, tag_str, IMAP_CMD_SEARCH, arg);
+
+    // build the callback
+    up_cb_t *up_cb = up_cb_new(&e, up, tag, initial_search_done, cmd);
+
+    CHECK(&e);
+
+    send_cmd(up, cmd, up_cb);
+
+    return e;
+}
+
+// after every command, evaluate our internal state to decide the next one
+static derr_t next_cmd(up_t *up){
+    derr_t e = E_OK;
+
+    // do we need to cache a newer, fresher modseq value?
+    if(hmsc_step(&up->hmsc)){
+        maildir_log_i *log = up->m->content.log;
+        PROP(&e, log->set_himodseq_up(log, hmsc_now(&up->hmsc)) )
+    }
+
+    // never send anything more after a close
+    if(up->close_sent) return e;
+
+    /* Are we synchronized?  We are synchronized when:
+         - hmsc_now() is nonzero (zero means SELECT (QRESYNC ...) failed)
+         - there are no UIDs that we need to download */
+    if(!hmsc_now(&up->hmsc)){
+        /* zero himodseq means means SELECT (QRESYNC ...) failed, so request
+           all the flags and UIDs explicitly */
+        PROP(&e, send_initial_search(up) );
+    }else if(!seq_set_builder_isempty(&up->uids_to_download)){
+        printf("NEXT_CMD: MORE UIDS TO FETCH\n");
+        // there are UID's we need to download
+        PROP(&e, send_fetch(up) );
+    }else{
+        // we are synchronized!  Is it our first time?
+        if(!up->synced){
+            up->synced = true;
+            // send the signal to all the conn_up's
+            up_t *up_to_signal;
+            LINK_FOR_EACH(up_to_signal, &up->m->access.ups, up_t, link){
+                up_to_signal->conn->synced(up_to_signal->conn);
+            }
+        }
+
+        // TODO: start IDLE here, when that's actually supported
+
+    }
+
+    return e;
+}
+
+// select_done is an imap_cmd_cb_call_f
+static derr_t select_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
+    derr_t e = E_OK;
+
+    up_cb_t *up_cb = CONTAINER_OF(cb, up_cb_t, cb);
+    up_t *up = up_cb->up;
+
+    if(st_resp->status != IE_ST_OK){
+        ORIG(&e, E_PARAM, "select failed\n");
+    }
+
+    /* Add imaildir_t's unfilled UIDs to uids_to_download.  This doesn't have
+       to go here precisely, but it does have to happen *after* an up_t becomes
+       the primary up_t, and it has to happen before the first next_cmd(), and
+       it has to happen exactly once, so this is a pretty good spot. */
+    PROP(&e, imaildir_get_unfilled(up->m, &up->uids_to_download) );
+    printf("UIDS to fetch? %d\n", seq_set_builder_isempty(&up->uids_to_download));
+
+    /* if this is a first-time sync, we have to delay next_cmd(), which will
+       try to save the HIMODSEQ */
+    maildir_log_i *log = up->m->content.log;
+    if(!log->get_himodseq_up(log)){
+        PROP(&e, send_initial_search(up) );
+    }else{
+        PROP(&e, next_cmd(up) );
+    }
+
+    return e;
+}
+
+static derr_t make_select(up_t *up, imap_cmd_t **cmd_out, up_cb_t **cb_out){
+    derr_t e = E_OK;
+
+    *cmd_out = NULL;
+    *cb_out = NULL;
+
+    // use QRESYNC with select if we have a valid UIDVALIDITY and HIGHESTMODSEQ
+    ie_select_params_t *params = NULL;
+    unsigned int uidvld = up->m->content.log->get_uidvld(up->m->content.log);
+    unsigned long our_himodseq = imaildir_himodseq_up(up->m);
+    if(uidvld && our_himodseq){
+        ie_select_param_arg_t params_arg = { .qresync = {
+            .uidvld = uidvld,
+            .last_modseq = our_himodseq,
+        } };
+        params = ie_select_params_new(&e, IE_SELECT_PARAM_QRESYNC, params_arg);
+    }
+
+    // issue a SELECT command
+    ie_dstr_t *name = ie_dstr_new(&e, up->m->name, KEEP_RAW);
+    ie_mailbox_t *mailbox = ie_mailbox_new_noninbox(&e, name);
+    ie_select_cmd_t *select = ie_select_cmd_new(&e, mailbox, params);
+    imap_cmd_arg_t arg = { .select=select, };
+
+    size_t tag = ++up->tag;
+    ie_dstr_t *tag_str = write_tag_up(&e, tag);
+    imap_cmd_t *cmd = imap_cmd_new(&e, tag_str, IMAP_CMD_SELECT, arg);
+
+    // build the callback
+    up_cb_t *up_cb = up_cb_new(&e, up, tag, select_done, cmd);
+
+    CHECK(&e);
+
+    *cmd_out = cmd;
+    *cb_out = up_cb;
+
+    return e;
+}
+
+derr_t imaildir_register_up(imaildir_t *m, maildir_conn_up_i *conn_up,
+        maildir_i **maildir_out){
+    derr_t e = E_OK;
+
+    // allocate a new up_t
+    up_t *up;
+    PROP(&e, up_new(&up, conn_up, m) );
+
+    /* to keep our state machine simple, we pre-allocate an initial command,
+       so that race conditions and weirdities don't arise if we become the
+       primary conn_up and then we fail to allocate a command */
+    imap_cmd_t *cmd;
+    up_cb_t *up_cb;
+    PROP_GO(&e, make_select(up, &cmd, &up_cb), fail_up);
+
+    // everything's ready
+
+    *maildir_out = &up->maildir;
+
+    // add the up_t to the maildir, and check if it the new primary conn_up
+    uv_mutex_lock(&m->access.mutex);
+    if(m->access.failed){
+        ORIG_GO(&e, E_DEAD, "maildir in failed state", fail_dead);
+    }
+    bool is_primary = link_list_isempty(&m->access.ups);
+    link_list_append(&m->access.ups, &up->link);
+    m->access.naccessors++;
+    uv_mutex_unlock(&m->access.mutex);
+
+    if(!is_primary){
+        // turns out we don't need cmd or up_cb
+        imap_cmd_free(cmd);
+        up_cb->cb.free(&up_cb->cb);
+        return e;
+    }
+
+    send_cmd(up, cmd, up_cb);
+
+    // treat the connection state as "selected", even though we just sent it
+    up->selected = true;
+
+    return e;
+
+fail_dead:
+    uv_mutex_unlock(&m->access.mutex);
+fail_up:
+    up_free(&up);
+    return e;
+}
+
+void imaildir_unregister_up(maildir_i *maildir, maildir_conn_up_i *conn){
+    // conn argument is just for type safety
+    (void)conn;
+    up_t *up = CONTAINER_OF(maildir, up_t, maildir);
+    imaildir_t *m = up->m;
 
     uv_mutex_lock(&m->access.mutex);
 
@@ -569,10 +1188,10 @@ void imaildir_unregister(maildir_i *maildir){
        ensures that the iteration through the accessors list during
        imaildir_fail() is always safe. */
     if(!m->access.failed){
-        link_remove(&acc->link);
+        link_remove(&up->link);
     }
 
-    acc_free(&acc);
+    up_free(&up);
 
     bool all_unregistered = (--m->access.naccessors == 0);
 
@@ -582,15 +1201,10 @@ void imaildir_unregister(maildir_i *maildir){
     uv_mutex_unlock(&m->access.mutex);
 
     if(all_unregistered){
-        m->mgr->all_unregistered(m->mgr);
+        m->dirmgr->all_unregistered(m->dirmgr);
     }
-
-    return;
 }
 
-/* I'm not sure there's a valid reason to call this other than from within the
-   imaildir code, because if you want to close everything you should do it by
-   closing sessions, not by closing shared resources. */
 static void imaildir_fail(imaildir_t *m, derr_t error){
     uv_mutex_lock(&m->access.mutex);
     bool do_fail = !m->access.failed;
@@ -599,14 +1213,11 @@ static void imaildir_fail(imaildir_t *m, derr_t error){
 
     if(!do_fail) goto done;
 
-    // we only actually report errors to the accessors
-    m->mgr->maildir_failed(m->mgr);
-
     link_t *link;
-    while((link = link_list_pop_first(&m->access.accessors)) != NULL){
-        acc_t *acc = CONTAINER_OF(link, acc_t, link);
+    while((link = link_list_pop_first(&m->access.ups)) != NULL){
+        up_t *up = CONTAINER_OF(link, up_t, link);
         // if there was an error, share it with all of the accessors.
-        acc->accessor->release(acc->accessor, BROADCAST(error));
+        up->conn->release(up->conn, BROADCAST(error));
     }
 
 done:
@@ -614,7 +1225,310 @@ done:
     DROP_VAR(&error);
 }
 
-// useful if a maildir needs to be deleted but it has accessors or something
-void imaildir_close(imaildir_t *m){
+// useful if an open maildir needs to be deleted
+void imaildir_forceclose(imaildir_t *m){
     imaildir_fail(m, E_OK);
+}
+
+static derr_t delete_one_msg(const string_builder_t *base, const dstr_t *name,
+        bool is_dir, void *data){
+    derr_t e = E_OK;
+    (void)data;
+
+    // ignore directories
+    if(is_dir) return e;
+
+    string_builder_t path = sb_append(base, FD(name));
+
+    PROP(&e, remove_path(&path) );
+
+    return e;
+}
+
+// delete all the messages we have, like in case of UIDVALIDITY change
+static derr_t delete_all_msgs(imaildir_t *m){
+    derr_t e = E_OK;
+
+    // check /cur and /new
+    subdir_type_e subdirs[] = {SUBDIR_CUR, SUBDIR_NEW, SUBDIR_TMP};
+
+    for(size_t i = 0; i < sizeof(subdirs)/sizeof(*subdirs); i++){
+        subdir_type_e subdir = subdirs[i];
+        string_builder_t subpath = SUB(&m->path, subdir);
+
+        PROP(&e, for_each_file_in_dir2(&subpath, delete_one_msg, NULL) );
+    }
+
+    return e;
+}
+
+static derr_t check_uidvld(up_t *up, unsigned int uidvld){
+    derr_t e = E_OK;
+
+    maildir_log_i *log = up->m->content.log;
+    unsigned int old_uidvld = log->get_uidvld(log);
+
+    if(old_uidvld != uidvld){
+
+        // TODO: puke if we have any active connections downwards
+
+        // if old_uidvld is nonzero, this really is a change, not a first-time
+        if(old_uidvld){
+            LOG_ERROR("detected change in UIDVALIDITY, dropping cache\n");
+        }else{
+            LOG_ERROR("detected first-time download\n");
+        }
+        PROP(&e, log->drop(log) );
+        PROP(&e, delete_all_msgs(up->m) );
+
+        // set the new uidvld and reset the himodseq
+        PROP(&e, log->set_uidvld(log, uidvld) );
+        PROP(&e, log->set_himodseq_up(log, 0) );
+    }
+
+    return e;
+}
+
+// handle untagged OK responses separately from other status type responses
+static derr_t untagged_ok(up_t *up, const ie_st_code_t *code,
+        const dstr_t *text){
+    derr_t e = E_OK;
+
+    // Handle responses where the status code is what defines the behavior
+    if(code != NULL){
+        switch(code->type){
+            case IE_ST_CODE_READ_ONLY:
+                ORIG(&e, E_INTERNAL, "unable to handle READ only boxes");
+                break;
+
+            case IE_ST_CODE_READ_WRITE:
+                // nothing special required
+                break;
+
+            case IE_ST_CODE_UIDNEXT:
+                // nothing special required, we will use extensions instead
+                break;
+
+            case IE_ST_CODE_UIDVLD:
+                PROP(&e, check_uidvld(up, code->arg.uidvld) );
+                break;
+
+            case IE_ST_CODE_PERMFLAGS:
+                // TODO: check that these look sane
+                break;
+
+            case IE_ST_CODE_HIMODSEQ:
+                // tell our himodseq calculator what we saw
+                hmsc_saw_ok_code(&up->hmsc, code->arg.himodseq);
+                break;
+
+            case IE_ST_CODE_NOMODSEQ:
+                ORIG(&e, E_RESPONSE,
+                        "server mailbox does not support modseq numbers");
+                break;
+
+
+            case IE_ST_CODE_ALERT:
+            case IE_ST_CODE_PARSE:
+            case IE_ST_CODE_TRYCREATE:
+            case IE_ST_CODE_UNSEEN:
+            case IE_ST_CODE_CAPA:
+            case IE_ST_CODE_ATOM:
+            // UIDPLUS extension
+            case IE_ST_CODE_UIDNOSTICK:
+            case IE_ST_CODE_APPENDUID:
+            case IE_ST_CODE_COPYUID:
+            // CONDSTORE extension
+            case IE_ST_CODE_MODIFIED:
+            // QRESYNC extension
+            case IE_ST_CODE_CLOSED:
+                (void)text;
+                ORIG(&e, E_INTERNAL, "code not supported\n");
+                break;
+        }
+    }
+
+    return e;
+}
+
+static derr_t tagged_status_type(up_t *up, const ie_st_resp_t *st){
+    derr_t e = E_OK;
+
+    // read the tag
+    size_t tag_found;
+    bool was_ours;
+    PROP(&e, read_tag_up(st->tag, &tag_found, &was_ours) );
+    if(!was_ours){
+        ORIG(&e, E_INTERNAL, "tag not ours");
+    }
+
+    // peek at the first command we need a response to
+    link_t *link = up->cbs.next;
+    if(link == NULL){
+        TRACE(&e, "got tag %x with no commands in flight\n",
+                FD(&st->tag->dstr));
+        ORIG(&e, E_RESPONSE, "bad status type response");
+    }
+
+    // make sure the tag matches
+    imap_cmd_cb_t *cb = CONTAINER_OF(link, imap_cmd_cb_t, link);
+    if(cb->tag != tag_found){
+        TRACE(&e, "got tag %x but expected %x\n",
+                FU(tag_found), FU(cb->tag));
+        ORIG(&e, E_RESPONSE, "bad status type response");
+    }
+
+    // do the callback
+    link_remove(link);
+    PROP_GO(&e, cb->call(cb, st), cu_cb);
+
+cu_cb:
+    cb->free(cb);
+
+    return e;
+}
+
+static derr_t untagged_status_type(up_t *up, const ie_st_resp_t *st){
+    derr_t e = E_OK;
+    switch(st->status){
+        case IE_ST_OK:
+            // informational message
+            PROP(&e, untagged_ok(up, st->code, &st->text->dstr) );
+            break;
+        case IE_ST_NO:
+            // a warning about a command
+            // TODO: handle this
+            TRACE(&e, "unhandled * NO status message\n");
+            ORIG(&e, E_INTERNAL, "unhandled message");
+            break;
+        case IE_ST_BAD:
+            // an error not from a command, or not sure from which command
+            // TODO: handle this
+            TRACE(&e, "unhandled * BAD status message\n");
+            ORIG(&e, E_INTERNAL, "unhandled message");
+            break;
+        case IE_ST_PREAUTH:
+            // only allowed as a greeting
+            // TODO: handle this
+            TRACE(&e, "unhandled * PREAUTH status message\n");
+            ORIG(&e, E_INTERNAL, "unhandled message");
+            break;
+        case IE_ST_BYE:
+            // we are logging out or server is shutting down.
+            // TODO: handle this
+            TRACE(&e, "unhandled * BYE status message\n");
+            ORIG(&e, E_INTERNAL, "unhandled message");
+            break;
+        default:
+            TRACE(&e, "invalid status of unknown type %x\n", FU(st->status));
+            ORIG(&e, E_INTERNAL, "bad imap parse");
+    }
+
+    return e;
+}
+
+// we either need to consume the resp or free it
+static derr_t conn_up_resp(maildir_i *maildir, imap_resp_t *resp){
+    derr_t e = E_OK;
+
+    up_t *up = CONTAINER_OF(maildir, up_t, maildir);
+
+    const imap_resp_arg_t *arg = &resp->arg;
+
+    switch(resp->type){
+        case IMAP_RESP_STATUS_TYPE:
+            // tagged responses are handled by callbacks
+            if(arg->status_type->tag){
+                PROP_GO(&e, tagged_status_type(up, arg->status_type),
+                        cu_resp);
+            }else{
+                PROP_GO(&e, untagged_status_type(up, arg->status_type),
+                        cu_resp);
+            }
+            break;
+
+        case IMAP_RESP_FETCH:
+            PROP_GO(&e, fetch_resp(up, arg->fetch), cu_resp);
+            break;
+
+        case IMAP_RESP_SEARCH:
+            PROP_GO(&e, search_resp(up, arg->search), cu_resp);
+            break;
+
+        case IMAP_RESP_EXISTS:
+            // TODO
+            LOG_ERROR("IGNORING EXISTS RESPONSE\n");
+            break;
+        case IMAP_RESP_RECENT:
+            // TODO
+            LOG_ERROR("IGNORING RECENT RESPONSE\n");
+            break;
+        case IMAP_RESP_FLAGS:
+            // TODO
+            LOG_ERROR("IGNORING RECENT RESPONSE\n");
+            break;
+
+        case IMAP_RESP_STATUS:
+        case IMAP_RESP_EXPUNGE:
+        case IMAP_RESP_ENABLED:
+        case IMAP_RESP_VANISHED:
+            ORIG_GO(&e, E_INTERNAL, "unhandled responses", cu_resp);
+
+        case IMAP_RESP_CAPA:
+        case IMAP_RESP_LIST:
+        case IMAP_RESP_LSUB:
+            ORIG_GO(&e, E_INTERNAL, "Invalid responses", cu_resp);
+    }
+
+cu_resp:
+    imap_resp_free(resp);
+
+    return e;
+}
+
+// returned value is based on the entire maildir
+bool conn_up_synced(maildir_i *maildir){
+
+    up_t *up = CONTAINER_OF(maildir, up_t, maildir);
+    imaildir_t *m = up->m;
+
+    bool synced = false;
+
+    uv_mutex_lock(&m->access.mutex);
+    if(!link_list_isempty(&m->access.ups)){
+        link_t *link = m->access.ups.next;
+        up_t *primary_up = CONTAINER_OF(link, up_t, link);
+        synced = primary_up->synced;
+    }
+    uv_mutex_unlock(&m->access.mutex);
+
+    return synced;
+}
+
+// returned value is based on the entire maildir
+// returned value is based on the entire maildir
+bool conn_up_selected(maildir_i *maildir){
+
+    up_t *up = CONTAINER_OF(maildir, up_t, maildir);
+
+    // TODO: review the thread safety of this strategy.
+
+    return up->selected;
+}
+
+static derr_t conn_up_unselect(maildir_i *maildir){
+    derr_t e = E_OK;
+
+    up_t *up = CONTAINER_OF(maildir, up_t, maildir);
+
+    if(!up->selected){
+        // signal that it's already done
+        up->conn->unselected(up->conn);
+        return e;
+    }
+
+    // otherwise, send the close
+    PROP(&e, send_close(up) );
+
+    return e;
 }

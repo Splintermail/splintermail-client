@@ -8,24 +8,24 @@
 //         const dstr_t *name);
 static void managed_dir_free(managed_dir_t **mgd);
 
-void dirmgr_close(dirmgr_t *dm, maildir_i *maildir){
-
+void dirmgr_close_up(dirmgr_t *dm, maildir_i *maildir,
+        maildir_conn_up_i *conn){
     // coordinate with calls to dirmgr_open:
 
     // we may end up freeing the mgd and removing it from the dirmgr
     uv_rwlock_wrlock(&dm->dirs.lock);
 
     // imaildir_unregister may result in a call to all_unregistered()
-    imaildir_unregister(maildir);
+    imaildir_unregister_up(maildir, conn);
 
     uv_rwlock_wrunlock(&dm->dirs.lock);
 }
 
 /* all_unregistered() can only be called from within the lock scope of
-   dirmgr_close(), so it doesn't need any locking */
+   dirmgr_close_up/dn(), so it doesn't need any locking */
 static void all_unregistered(dirmgr_i *iface){
-    dirmgr_t *dm = CONTAINER_OF(iface, dirmgr_t, iface);
     managed_dir_t *mgd = CONTAINER_OF(iface, managed_dir_t, dirmgr_iface);
+    dirmgr_t *dm = mgd->dm;
 
     // remove the managed_dir from the maildir
     hash_elem_t *h = hashmap_dels(&dm->dirs.map, &mgd->name);
@@ -42,11 +42,6 @@ static void all_unregistered(dirmgr_i *iface){
     managed_dir_free(&mgd);
 
     // TODO: handle non-MGD_STATE_OPEN here
-
-    // signal in case anybody was waiting for a state change
-    uv_mutex_lock(&dm->states.mutex);
-    uv_cond_broadcast(&dm->states.cond);
-    uv_mutex_unlock(&dm->states.mutex);
 }
 
 
@@ -61,7 +56,6 @@ static derr_t managed_dir_new(managed_dir_t **out, dirmgr_t *dm,
     *mgd = (managed_dir_t){
         // the interface we will give to the imaildir_t
         .dirmgr_iface = {
-            .maildir_failed = NULL,
             .all_unregistered = all_unregistered,
         },
         .state = MGD_STATE_OPEN,
@@ -72,8 +66,8 @@ static derr_t managed_dir_new(managed_dir_t **out, dirmgr_t *dm,
     PROP_GO(&e, dstr_new(&mgd->name, name->len), fail_malloc);
     PROP_GO(&e, dstr_copy(name, &mgd->name), fail_name);
     string_builder_t path = sb_append(&dm->path, FD(&mgd->name));
-
-    PROP_GO(&e, imaildir_init(&mgd->m, path, &mgd->dirmgr_iface), fail_name);
+    PROP_GO(&e, imaildir_init(&mgd->m, path, name, &mgd->dirmgr_iface),
+            fail_name);
 
     *out = mgd;
 
@@ -167,7 +161,7 @@ static void managed_dir_delete_ctn(managed_dir_t *mgd){
     // if the dir is marked as unselectable, we need to delete ctn
     mgd->state = MGD_STATE_DELETING_CTN;
     // the final unregister should execute the deletion
-    imaildir_close(&mgd->m);
+    imaildir_forceclose(&mgd->m);
 }
 
 
@@ -202,8 +196,8 @@ static derr_t delete_extra_dir_checks(delete_extra_dirs_arg_t *arg,
     return e;
 }
 
-static derr_t delete_extra_dirs(const string_builder_t *base, const dstr_t *name,
-        bool isdir, void *userdata){
+static derr_t delete_extra_dirs(const string_builder_t *base,
+        const dstr_t *name, bool isdir, void *userdata){
     derr_t e = E_OK;
 
     // dereference userdata
@@ -211,6 +205,8 @@ static derr_t delete_extra_dirs(const string_builder_t *base, const dstr_t *name
 
     // we only care about directories, not files
     if(!isdir) return e;
+    // skip hidden folders
+    if(name->len > 0 && name->data[0] == '.') return e;
     // skip ctn
     if(dstr_cmp(name, &DSTR_LIT("cur")) == 0) return e;
     if(dstr_cmp(name, &DSTR_LIT("tmp")) == 0) return e;
@@ -337,12 +333,10 @@ done:
 // IMAP functions
 /////////////////
 
-derr_t dirmgr_open(dirmgr_t *dm, const dstr_t *name, accessor_i *accessor,
-        maildir_i **maildir_out, jsw_atree_t *view_out){
+derr_t dirmgr_open_up(dirmgr_t *dm, const dstr_t *name, maildir_conn_up_i *up,
+        maildir_i **maildir_out){
     derr_t e = E_OK;
     managed_dir_t *mgd;
-
-try_again_after_state_change:
 
     // we may choose to edit the content of the dirmgr
     uv_rwlock_wrlock(&dm->dirs.lock);
@@ -351,23 +345,8 @@ try_again_after_state_change:
     if(h != NULL){
         mgd = CONTAINER_OF(h, managed_dir_t, h);
 
-        // check state
-        if(mgd->state != MGD_STATE_OPEN){
-            // prepare to wait
-            uv_mutex_lock(&dm->states.mutex);
-            // allow other threads to use dirmgr while we wait
-            uv_rwlock_wrunlock(&dm->dirs.lock);
-            // wait for MGD_STATE_OPEN (or for the dir to be closed)
-            uv_cond_wait(&dm->states.cond, &dm->states.mutex);
-            uv_mutex_unlock(&dm->states.mutex);
-
-            goto try_again_after_state_change;
-        }
-
         // just add an accessor to the existing imaildir
-        // TODO: catch E_DEAD and try again
-        PROP_GO(&e, imaildir_register(&mgd->m, accessor, maildir_out,
-                    view_out), fail_lock);
+        PROP_GO(&e, imaildir_register_up(&mgd->m, up, maildir_out), fail_lock);
         goto done;
     }
 
@@ -378,8 +357,7 @@ try_again_after_state_change:
     NOFAIL_GO(&e, E_PARAM,
             hashmap_sets_unique(&dm->dirs.map, name, &mgd->h), fail_managed);
 
-    PROP_GO(&e, imaildir_register(&mgd->m, accessor, maildir_out, view_out),
-            fail_managed);
+    PROP_GO(&e, imaildir_register_up(&mgd->m, up, maildir_out), fail_managed);
 
 done:
     uv_rwlock_wrunlock(&dm->dirs.lock);
@@ -401,33 +379,13 @@ derr_t dirmgr_init(dirmgr_t *dm, string_builder_t path){
         ORIG(&e, uv_err_type(ret), "error initializing rwlock");
     }
 
-    ret = uv_mutex_init(&dm->states.mutex);
-    if(ret < 0){
-        TRACE(&e, "uv_mutex_init: %x\n", FUV(&ret));
-        ORIG_GO(&e, uv_err_type(ret), "error initializing mutex", fail_lock);
-    }
-
-    ret = uv_cond_init(&dm->states.cond);
-    if(ret < 0){
-        TRACE(&e, "uv_cond_init: %x\n", FUV(&ret));
-        ORIG_GO(&e, uv_err_type(ret), "error initializing cond", fail_mutex);
-    }
-
-    PROP_GO(&e, hashmap_init(&dm->dirs.map), fail_cond);
+    PROP_GO(&e, hashmap_init(&dm->dirs.map), fail_lock);
 
     // save path
     dm->path = path;
 
-    dm->iface = (dirmgr_i){
-        .all_unregistered=all_unregistered,
-    };
-
     return e;
 
-fail_cond:
-    uv_cond_destroy(&dm->states.cond);
-fail_mutex:
-    uv_mutex_destroy(&dm->states.mutex);
 fail_lock:
     uv_rwlock_destroy(&dm->dirs.lock);
     return e;
@@ -437,7 +395,5 @@ fail_lock:
 void dirmgr_free(dirmgr_t *dm){
     if(!dm) return;
     hashmap_free(&dm->dirs.map);
-    uv_cond_destroy(&dm->states.cond);
-    uv_mutex_destroy(&dm->states.mutex);
     uv_rwlock_destroy(&dm->dirs.lock);
 }

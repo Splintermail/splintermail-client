@@ -128,3 +128,20 @@ void extension_trigger_builder(derr_t *e,
         extensions_t *exts, extension_e type){
     IF_PROP(e, extension_trigger(exts, type)){}
 }
+
+
+DSTR_STATIC(EXT_UIDPLUS_dstr, "UIDPLUS");
+DSTR_STATIC(EXT_ENABLE_dstr, "ENABLE");
+DSTR_STATIC(EXT_CONDSTORE_dstr, "CONDSTORE");
+DSTR_STATIC(EXT_QRESYNC_dstr, "QRESYNC");
+DSTR_STATIC(EXT_unknown_dstr, "unknown");
+
+const dstr_t *extension_token(extension_e ext){
+    switch(ext){
+        case EXT_UIDPLUS: return &EXT_UIDPLUS_dstr;
+        case EXT_ENABLE: return &EXT_ENABLE_dstr;
+        case EXT_CONDSTORE: return &EXT_CONDSTORE_dstr;
+        case EXT_QRESYNC: return &EXT_QRESYNC_dstr;
+    }
+    return &EXT_unknown_dstr;
+}

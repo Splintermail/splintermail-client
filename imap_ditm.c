@@ -1,18 +1,11 @@
 #include <signal.h>
 
-#include "common.h"
+#include "imap_ditm.h"
 #include "logger.h"
 #include "loop.h"
-#include "tls_engine.h"
-#include "imap_engine.h"
-#include "imap_session.h"
 #include "uv_util.h"
-#include "hashmap.h"
-#include "imap_expression.h"
 #include "jsw_atree.h"
 #include "imap_dirmgr.h"
-#include "manager.h"
-#include "link.h"
 #include "crypto.h"
 
 #define KEY "../c/test/files/ssl/good-key.pem"
@@ -26,52 +19,6 @@ keypair_t keypair;
 
 char *g_host;
 char *g_svc;
-
-typedef struct {
-    manager_i mgr;
-    imap_session_t s;
-    derr_t error;
-    bool close_called;
-    // parser callbacks and imap extesions
-    imape_control_i ctrl;
-} ditm_session_t;
-DEF_CONTAINER_OF(ditm_session_t, mgr, manager_i);
-DEF_CONTAINER_OF(ditm_session_t, ctrl, imape_control_i);
-
-typedef struct {
-    imap_pipeline_t *pipeline;
-    ssl_context_t *cli_ctx;
-    ssl_context_t *srv_ctx;
-    // our manager
-    manager_i *mgr;
-    // sessions
-    ditm_session_t up;
-    ditm_session_t dn;
-    // every imap_ditm_t has only one uv_work_t, so it's single threaded
-    uv_work_t uv_work;
-    bool executing;
-    bool closed;
-    bool dead;
-    derr_t error;
-    bool startup_completed;
-
-    // we need an async to be able to call advance from any thread
-    uv_async_t advance_async;
-    async_spec_t advance_spec;
-
-    // thread-safe components
-    struct {
-        uv_mutex_t mutex;
-        link_t unhandled_cmds;
-        link_t unhandled_resps;
-        size_t n_live_sessions;
-        size_t n_unreturned_events;
-    } ts;
-} imap_ditm_t;
-DEF_CONTAINER_OF(imap_ditm_t, up, ditm_session_t);
-DEF_CONTAINER_OF(imap_ditm_t, dn, ditm_session_t);
-DEF_CONTAINER_OF(imap_ditm_t, advance_spec, async_spec_t);
-DEF_CONTAINER_OF(imap_ditm_t, uv_work, uv_work_t);
 
 // forward declarations
 static void imap_ditm_advance_onthread(imap_ditm_t *ditm);
@@ -94,23 +41,6 @@ static void imap_ditm_advance(imap_ditm_t *ditm){
         LOG_ERROR("uv_async_send should never fail!\n");
     }
 }
-
-// static void fc_free_cmd_event(event_t *ev){
-//     cmd_event_t *cmd_ev = CONTAINER_OF(ev, cmd_event_t, ev);
-//     dstr_free(&cmd_ev->ev.buffer);
-//     free(cmd_ev);
-// }
-//
-// static cmd_event_t *fc_new_cmd_event(void){
-//     cmd_event_t *cmd_ev = malloc(sizeof(*cmd_ev));
-//     if(!cmd_ev) return NULL;
-//     *cmd_ev = (cmd_event_t){0};
-//
-//     event_prep(&cmd_ev->ev, fc_free_cmd_event, NULL);
-//     cmd_ev->ev.ev_type = EV_COMMAND;
-//
-//     return cmd_ev;
-// }
 
 // mgr_up
 
@@ -244,8 +174,12 @@ static derr_t imap_ditm_init(imap_ditm_t *ditm, imap_pipeline_t *p,
     };
 
     ditm->error = E_OK;
+    // for downwards session
     link_init(&ditm->ts.unhandled_cmds);
+    link_init(&ditm->ts.returned_resps);
+    // for upwards session
     link_init(&ditm->ts.unhandled_resps);
+    link_init(&ditm->ts.returned_cmds);
 
     int ret = uv_mutex_init(&ditm->ts.mutex);
     if(ret < 0){
@@ -285,7 +219,7 @@ static derr_t imap_ditm_init(imap_ditm_t *ditm, imap_pipeline_t *p,
         g_svc,
         (terminal_t){},
     };
-    PROP_GO(&e, imap_session_alloc_accept(&ditm->dn.s, &arg_dn), fail_sess_dn);
+    PROP_GO(&e, imap_session_alloc_accept(&ditm->dn.s, &arg_dn), fail_sess_up);
 
     // now that everything is configured, it is safe to start the sessions
     ditm->ts.n_live_sessions = 2;
@@ -296,8 +230,8 @@ static derr_t imap_ditm_init(imap_ditm_t *ditm, imap_pipeline_t *p,
 
     return e;
 
-fail_sess_dn:
-    imap_session_free(&ditm->dn.s);
+fail_sess_up:
+    imap_session_free(&ditm->up.s);
 fail_async:
     /* if we started the uv_async_t, we have to return E_OK, but trigger the
        dying and dead calls, since we have to close the uv_async_t in a cb */
@@ -322,21 +256,16 @@ static void imap_ditm_free(imap_ditm_t *ditm){
     return;
 }
 
-// imap_ditm_do_work is a uv_work_cb
-static void imap_ditm_do_work(uv_work_t *req){
+// work_cb is a uv_work_cb
+static void work_cb(uv_work_t *req){
     imap_ditm_t *ditm = CONTAINER_OF(req, imap_ditm_t, uv_work);
 
-    // TODO: do something useful
-    printf("doing work!\n");
+    // all the ditm state machine logic falls within this call
+    IF_PROP(&ditm->error, imap_ditm_do_work(ditm) ){}
 }
 
-static bool imap_ditm_more_work(imap_ditm_t *ditm){
-    return !link_list_isempty(&ditm->ts.unhandled_cmds)
-        || !link_list_isempty(&ditm->ts.unhandled_resps);
-}
-
-// imap_ditm_work_done is a uv_after_work_cb
-static void imap_ditm_work_done(uv_work_t *req, int status){
+// after_work_cb is a uv_after_work_cb
+static void after_work_cb(uv_work_t *req, int status){
     imap_ditm_t *ditm = CONTAINER_OF(req, imap_ditm_t, uv_work);
 
     // throw an error if the thread was canceled
@@ -362,7 +291,7 @@ static void imap_ditm_maybe_enqueue(imap_ditm_t *ditm){
 
     // try to enqueue work
     int ret = uv_queue_work(&ditm->pipeline->loop->uv_loop, &ditm->uv_work,
-            imap_ditm_do_work, imap_ditm_work_done);
+            work_cb, after_work_cb);
     if(ret < 0){
         // capture error
         TRACE(&ditm->error, "uv_queue_work: %x\n", FUV(&ret));
@@ -460,6 +389,24 @@ static void imap_ditm_advance_onthread(imap_ditm_t *ditm){
     // if there is work to do, enqueue some work
     imap_ditm_maybe_enqueue(ditm);
 }
+
+void imap_ditm_cmd_ev_returner(event_t *ev){
+    imap_ditm_t *ditm = ev->returner_arg;
+
+    uv_mutex_lock(&ditm->ts.mutex);
+    link_list_append(&ditm->ts.returned_cmds, &ev->link);
+    uv_mutex_unlock(&ditm->ts.mutex);
+}
+
+void imap_ditm_resp_ev_returner(event_t *ev){
+    imap_ditm_t *ditm = ev->returner_arg;
+
+    uv_mutex_lock(&ditm->ts.mutex);
+    link_list_append(&ditm->ts.returned_resps, &ev->link);
+    uv_mutex_unlock(&ditm->ts.mutex);
+}
+
+//// application startup and teardown
 
 static derr_t build_pipeline(imap_pipeline_t *pipeline){
     derr_t e = E_OK;

@@ -118,15 +118,16 @@ static inline bool pvt_prop(derr_t *e, derr_t code,
         const char *file, const char *func, int line){
     // always keep the new trace
     if(code.msg.data != NULL){
-        if(e->msg.data != NULL){
+        // handle empty errors or duplicat parameters
+        if(e->msg.data == NULL || e->msg.data == code.msg.data){
+            // just use the new trace as is
+            e->msg = code.msg;
+        }else if(e->msg.data != NULL){
             // apend the new trace to the existing one
             // best effort; ignore error
             dstr_append_quiet(&e->msg, &code.msg);
             // done with the new msg
             dstr_free(&code.msg);
-        }else{
-            // just use the new trace as is
-            e->msg = code.msg;
         }
     }
 
@@ -150,6 +151,9 @@ static inline bool pvt_prop(derr_t *e, derr_t code,
 
 #define PROP_GO(e, code, _label) \
     if(pvt_prop(e, code, FILE_LOC)){ goto _label; }
+
+#define TRACE_PROP(e) \
+    do { IF_PROP(e, *e){} } while(0)
 
 
 // PROP_VAR and friends clean up the variable they merge from

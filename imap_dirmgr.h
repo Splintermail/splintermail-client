@@ -25,25 +25,14 @@ typedef enum {
 } maildir_state_e;
 
 typedef struct {
-    dirmgr_i iface;
     string_builder_t path;
-
-    // lock ordering is dirs then states
 
     // thread-safe access to the hashmap of all dirs
     struct {
         uv_rwlock_t lock;
         hashmap_t map;  // managed_dir_t->h
     } dirs;
-
-    /* thread-safe access to the states of individual directories.  Blocking
-       while a maildir is deleted from the filesystem is handled here. */
-    struct {
-        uv_mutex_t mutex;
-        uv_cond_t cond;
-    } states;
 } dirmgr_t;
-DEF_CONTAINER_OF(dirmgr_t, iface, dirmgr_i);
 
 typedef struct {
     // pointer to dirmgr_t
@@ -65,6 +54,11 @@ DEF_CONTAINER_OF(managed_dir_t, m, imaildir_t);
 
 // path must be linked to long-lived objects
 derr_t dirmgr_init(dirmgr_t *dm, string_builder_t path);
+
+/* dirmgr_free can only be called when no maildirs are opened.  There isn't a
+   mechanism for forcing all of them to close, so the dirmgr lifetime should
+   just be tied to something that will outlive any object that might read from
+   the dirmgr */
 void dirmgr_free(dirmgr_t *dm);
 
 // All dirmgr operations except init/free are thread-safe
@@ -87,12 +81,31 @@ derr_t dirmgr_sync_folders(dirmgr_t *dm, jsw_atree_t *tree);
 // IMAP functions
 /////////////////
 
-/* open a maildir, or, if the maildir is already open, register the accessor
-   with the already-open maildir */
-derr_t dirmgr_open(dirmgr_t *dm, const dstr_t *name, accessor_i *accessor,
-        maildir_i **maildir_out, jsw_atree_t *view_out);
-// unregister an accessor from a maildir in a thread-safe way
-void dirmgr_close(dirmgr_t *dm, maildir_i *maildir);
+/* open a maildir, or, if the maildir is already open, register the new
+   connections with the existing maildir */
+/* TODO: this used to have some complex logic around retrying when there was a
+         maildir that was in the process of closing, but that was susceptible
+         to deadlocks if either you tried to open a maildir twice on the same
+         thread or if you were in a worker-threadpool architecture and you ever
+         tried to open a maildir from too many actors at once.  That's a hard
+         thing to protect against, and deadlocks are really unacceptable, so
+         this needs to be an asynchronous callback with success/failure.
+
+         But then if you do it as an asynchronous callback, then the reference
+         counting gets tricky.  I think this is all to support the case where
+         one client deletes a folder and other clients try to open it... I
+         think I'll just throw an error and let the client deal with it. */
+derr_t dirmgr_open_up(dirmgr_t *dm, const dstr_t *name, maildir_conn_up_i *up,
+        maildir_i **maildir_out);
+derr_t dirmgr_open_dn(dirmgr_t *dm, const dstr_t *name, maildir_conn_up_i *dn,
+        maildir_i **maildir_out);
+
+// unregister a connection from a maildir in a thread-safe way
+// (the argument is actually just for type-safety, it's not used)
+void dirmgr_close_up(dirmgr_t *dm, maildir_i *maildir,
+        maildir_conn_up_i *conn);
+void dirmgr_close_dn(dirmgr_t *dm, maildir_i *maildir,
+        maildir_conn_dn_i *conn);
 
 // derr_t dirmgr_create(imaildir_t *root, const dstr_t *name);
 

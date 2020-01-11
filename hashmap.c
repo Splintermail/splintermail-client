@@ -384,6 +384,24 @@ hashmap_iter_t hashmap_first(hashmap_t *h){
     return i;
 }
 
+// delete an element directly (elem must be in h)
+void hashmap_del_elem(hashmap_t *h, hash_elem_t *elem){
+    // get bucket index
+    size_t idx = elem->hash & h->mask;
+    // walk the list looking for elem
+    hash_elem_t **fixme = &h->buckets[idx];
+    hash_elem_t *ptr = h->buckets[idx];
+    while(ptr){
+        if(ptr == elem){
+            // remove elemnt from linked list
+            *fixme = ptr->next;
+            break;
+        }
+        fixme = &ptr->next;
+        ptr = ptr->next;
+    }
+}
+
 void hashmap_next(hashmap_iter_t *i){
     // take the next element of the list
     if(i->current != NULL){

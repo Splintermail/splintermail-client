@@ -1,0 +1,734 @@
+#include <lmdb.h>
+
+#include "imap_maildir.h"
+#include "maildir_name.h"
+#include "logger.h"
+#include "fileops.h"
+
+/*
+LMDB does a lot of stuff we don't even need.  But importantly, it offers
+guarantees that data is written to the filesystem, and it doesn't need periodic
+checkpointing.
+
+I'd rather not have an LMDB dependency, but it works for now.
+
+We'll use LMDB in the dubmest way possible:
+  - one unnamed database per lmdb environment
+  - one lmdb environment per maildir
+  - one lmdb transaction at a time
+*/
+
+// use lmdb in the dumbest way possible: only one transaction ever.
+
+static derr_type_t fmthook_lmdb_error(dstr_t* out, const void* arg){
+    // cast the input
+    const int* err = (const int*)arg;
+    const char *msg = mdb_strerror(*err);
+    size_t len = strlen(msg);
+    // make sure the message will fit
+    derr_type_t type = dstr_grow_quiet(out, out->len + len);
+    if(type) return type;
+    // copy the message
+    memcpy(out->data + out->len, msg, len);
+    out->len += len;
+    return E_NONE;
+}
+
+static inline fmt_t FLMDB(const int* err){
+    return (fmt_t){FMT_EXT, {.ext = {.arg = (const void*)err,
+                                     .hook = fmthook_lmdb_error} } };
+
+}
+static inline derr_type_t lmdb_err_type(int err){
+    return (err == ENOMEM) ? E_NOMEM : E_FS;
+}
+
+
+struct log_t;
+typedef struct log_t log_t;
+
+struct log_t {
+    // the interface we provide to the imaildir_t
+    maildir_log_i iface;
+    MDB_env *env;
+    unsigned int uidvld;
+    unsigned long himodseq_up;
+};
+DEF_CONTAINER_OF(log_t, iface, maildir_log_i);
+
+static derr_t lmdb_env_open_path(const string_builder_t *dirpath,
+        MDB_env **env){
+    derr_t e = E_OK;
+
+    string_builder_t lmdb_path = sb_append(dirpath, FS(".cache.lmdb"));
+
+    PROP(&e, mkdir_path(&lmdb_path, 0700, true) );
+
+    // now expand the path and create the lmdb env
+    DSTR_VAR(stack, 256);
+    dstr_t heap = {0};
+    dstr_t* path;
+    PROP(&e, sb_expand(&lmdb_path, &DSTR_LIT("/"), &stack, &heap, &path) );
+
+    // create the env
+    int ret = mdb_env_create(env);
+    if(ret){
+        TRACE(&e, "mdb_env_create: %x\n", FLMDB(&ret));
+        ORIG_GO(&e, lmdb_err_type(ret), "error creating environment", cu);
+    }
+
+    // open the env
+    ret = mdb_env_open(*env, path->data, 0, 0600);
+    if(ret){
+        TRACE(&e, "mdb_env_create: %x\n", FLMDB(&ret));
+        ORIG_GO(&e, lmdb_err_type(ret), "error opening environment", fail_env);
+    }
+
+fail_env:
+    // close the environment in error situations
+    if(is_error(e)){
+        mdb_env_close(*env);
+    }
+
+cu:
+    dstr_free(&heap);
+    return e;
+}
+
+static derr_t lmdb_txn_open(log_t *log, bool write, MDB_txn **txn,
+        MDB_dbi *dbi){
+    derr_t e = E_OK;
+
+    // get the transaction
+    int ret = mdb_txn_begin(log->env, NULL, write ? 0 : MDB_RDONLY, txn);
+    if(ret){
+        TRACE(&e, "mdb_txn_begin: %x\n", FLMDB(&ret));
+        ORIG(&e, lmdb_err_type(ret), "error opening transaction");
+    }
+
+    // get the environment
+    ret = mdb_dbi_open(*txn, NULL, 0, dbi);
+    if(ret){
+        TRACE(&e, "mdb_dbi_open: %x\n", FLMDB(&ret));
+        ORIG_GO(&e, lmdb_err_type(ret), "error opening transaction", fail_txn);
+    }
+
+    return e;
+
+fail_txn:
+    mdb_txn_abort(*txn);
+    *txn = NULL;
+    return e;
+}
+
+typedef enum {
+    LMDB_KEY_UIDVLD,      // "v" for "validity"
+    LMDB_KEY_HIMODSEQUP,  // "h" for "high"
+    LMDB_KEY_UID,         // "m" for "message"
+} lmdb_key_type_e;
+
+typedef union {
+    unsigned int uid;
+} lmdb_key_arg_u;
+
+typedef struct {
+    lmdb_key_type_e type;
+    lmdb_key_arg_u arg;
+} lmdb_key_t;
+
+static derr_t lmdb_key_marshal(lmdb_key_t *lk, dstr_t *out){
+    derr_t e = E_OK;
+    out->len = 0;
+
+    switch(lk->type){
+        case LMDB_KEY_UIDVLD:
+            PROP(&e, FMT(out, "v") );
+            break;
+        case LMDB_KEY_HIMODSEQUP:
+            PROP(&e, FMT(out, "h") );
+            break;
+        case LMDB_KEY_UID:
+            PROP(&e, FMT(out, "m.%x", FU(lk->arg.uid)) );
+    }
+    return e;
+}
+
+static derr_t lmdb_key_unmarshal(const dstr_t *key, lmdb_key_t *lk){
+    derr_t e = E_OK;
+
+    *lk = (lmdb_key_t){0};
+
+    if(key->len < 1){
+        ORIG(&e, E_VALUE, "zero-length key in database");
+    }
+
+    lmdb_key_arg_u arg = {0};
+
+    switch(key->data[0]){
+        case 'v':
+            // make sure the key has nothing else
+            if(key->len > 1){
+                ORIG(&e, E_VALUE, "uidvalidity key is too long in database");
+            }
+            *lk = (lmdb_key_t){
+                .type = LMDB_KEY_UIDVLD,
+            };
+            break;
+        case 'h':
+            // make sure the key has nothing else
+            if(key->len > 1){
+                ORIG(&e, E_VALUE, "himodsequp key is too long in database");
+            }
+            *lk = (lmdb_key_t){
+                .type = LMDB_KEY_HIMODSEQUP,
+            };
+            break;
+        case 'm':
+            // check the validity of the uid part of the key
+            if(key->len < 3){
+                ORIG(&e, E_VALUE, "zero-length msg uid in key in database");
+            }
+            // parse the uid
+            dstr_t uidstr = dstr_sub(key, 2, key->len);
+            PROP(&e, dstr_tou(&uidstr, &arg.uid, 10) );
+            *lk = (lmdb_key_t){
+                .type = LMDB_KEY_UID,
+                .arg = arg,
+            };
+            break;
+        default:
+            ORIG(&e, E_VALUE, "invalid key in database");
+    }
+
+    return e;
+}
+
+
+DSTR_STATIC(lmdb_format_version, "1");
+/*
+    LMDB marshaled metadata line format:
+
+        1:12345:b:[afsdx]
+        |   |   |    |
+        |   |   |    |
+        |   |   |    flags (if not expunged)
+        |   |   |
+        |   |   "m"essage or e"x"punged message
+        |   |
+        |   modseq number
+        |
+        version number
+*/
+
+static derr_t marshal_msg_meta(const msg_meta_t *meta, dstr_t *out){
+    derr_t e = E_OK;
+
+    out->len = 0;
+
+    // version number (1) : modseq : "m" for "message" : [flags]
+    PROP(&e, FMT(out, "%x:%x:m:", FD(&lmdb_format_version),
+                FU(meta->mod.modseq)) );
+
+    if(meta->flags.answered){ PROP(&e, dstr_append(out, &DSTR_LIT("A")) ); }
+    if(meta->flags.draft){    PROP(&e, dstr_append(out, &DSTR_LIT("D")) ); }
+    if(meta->flags.flagged){  PROP(&e, dstr_append(out, &DSTR_LIT("F")) ); }
+    if(meta->flags.seen){     PROP(&e, dstr_append(out, &DSTR_LIT("S")) ); }
+    if(meta->flags.deleted){  PROP(&e, dstr_append(out, &DSTR_LIT("X")) ); }
+
+    return e;
+}
+
+static derr_t marshal_msg_expunge(const msg_expunge_t *expunge, dstr_t *out){
+    derr_t e = E_OK;
+
+    out->len = 0;
+
+    // version number (1) : modseq : "x" for "expunge" :
+    PROP(&e, FMT(out, "%x:%x:x:", FD(&lmdb_format_version),
+                FU(expunge->mod.modseq)) );
+
+    return e;
+}
+
+static unsigned int get_uidvld(maildir_log_i* iface){
+    log_t *log = CONTAINER_OF(iface, log_t, iface);
+
+    return log->uidvld;
+}
+
+static derr_t set_uidvld(maildir_log_i* iface, unsigned int uidvld){
+    derr_t e = E_OK;
+
+    log_t *log = CONTAINER_OF(iface, log_t, iface);
+
+    // create a transaction
+    MDB_txn *txn;
+    MDB_dbi dbi;
+    PROP(&e, lmdb_txn_open(log, true, &txn, &dbi) );
+
+    // serialize the key
+    lmdb_key_t lk = {
+        .type = LMDB_KEY_UIDVLD,
+    };
+    DSTR_VAR(key, 32);
+    PROP_GO(&e, lmdb_key_marshal(&lk, &key), cu_txn);
+
+    MDB_val db_key = {
+        .mv_size = key.len,
+        .mv_data = key.data,
+    };
+
+    // serialize the value
+    DSTR_VAR(value, 32);
+    PROP_GO(&e, FMT(&value, "%x", FU(uidvld)), cu_txn);
+
+    MDB_val db_value = {
+        .mv_size = value.len,
+        .mv_data = value.data,
+    };
+
+    int ret = mdb_put(txn, dbi, &db_key, &db_value, 0);
+    if(ret){
+        TRACE(&e, "mdb_put: %x\n", FLMDB(&ret));
+        ORIG_GO(&e, lmdb_err_type(ret), "error storing uidvalidity", cu_txn);
+    }
+
+    // update in-memory value
+    log->uidvld = uidvld;
+
+cu_txn:
+    if(is_error(e)){
+        mdb_txn_abort(txn);
+    }else{
+        mdb_txn_commit(txn);
+    }
+
+    return e;
+}
+
+static unsigned long get_himodseq_up(maildir_log_i* iface){
+    log_t *log = CONTAINER_OF(iface, log_t, iface);
+
+    return log->himodseq_up;
+}
+
+static derr_t set_himodseq_up(maildir_log_i* iface,
+        unsigned long himodseq_up){
+    derr_t e = E_OK;
+
+    log_t *log = CONTAINER_OF(iface, log_t, iface);
+
+    // create a transaction
+    MDB_txn *txn;
+    MDB_dbi dbi;
+    PROP(&e, lmdb_txn_open(log, true, &txn, &dbi) );
+
+    // serialize the key
+    lmdb_key_t lk = {
+        .type = LMDB_KEY_HIMODSEQUP,
+    };
+    DSTR_VAR(key, 32);
+    PROP_GO(&e, lmdb_key_marshal(&lk, &key), cu_txn);
+
+    MDB_val db_key = {
+        .mv_size = key.len,
+        .mv_data = key.data,
+    };
+
+    // serialize the value
+    DSTR_VAR(value, 32);
+    PROP_GO(&e, FMT(&value, "%x", FU(himodseq_up)), cu_txn);
+
+    MDB_val db_value = {
+        .mv_size = value.len,
+        .mv_data = value.data,
+    };
+
+    int ret = mdb_put(txn, dbi, &db_key, &db_value, 0);
+    if(ret){
+        TRACE(&e, "mdb_put: %x\n", FLMDB(&ret));
+        ORIG_GO(&e, lmdb_err_type(ret), "error storing himodseq_up", cu_txn);
+    }
+
+    // update in-memory value
+    log->himodseq_up = himodseq_up;
+
+cu_txn:
+    if(is_error(e)){
+        mdb_txn_abort(txn);
+    }else{
+        mdb_txn_commit(txn);
+    }
+
+    return e;
+}
+
+// store the new flags and the new modseq
+static derr_t update_msg(maildir_log_i* iface, unsigned int uid,
+        const msg_meta_t *meta){
+    derr_t e = E_OK;
+
+    log_t *log = CONTAINER_OF(iface, log_t, iface);
+
+    // create a transaction
+    MDB_txn *txn;
+    MDB_dbi dbi;
+    PROP(&e, lmdb_txn_open(log, true, &txn, &dbi) );
+
+    // serialize the key
+    lmdb_key_t lk = {
+        .type = LMDB_KEY_UID,
+        .arg = {
+            .uid = uid,
+        },
+    };
+    DSTR_VAR(key, 32);
+    PROP_GO(&e, lmdb_key_marshal(&lk, &key), cu_txn);
+
+    MDB_val db_key = {
+        .mv_size = key.len,
+        .mv_data = key.data,
+    };
+
+    // serialize the value
+    DSTR_VAR(value, 128);
+    PROP_GO(&e, marshal_msg_meta(meta, &value), cu_txn);
+
+    MDB_val db_value = {
+        .mv_size = value.len,
+        .mv_data = value.data,
+    };
+
+    int ret = mdb_put(txn, dbi, &db_key, &db_value, 0);
+    if(ret){
+        TRACE(&e, "mdb_put: %x\n", FLMDB(&ret));
+        ORIG_GO(&e, lmdb_err_type(ret), "error storing metadata", cu_txn);
+    }
+
+cu_txn:
+    if(is_error(e)){
+        mdb_txn_abort(txn);
+    }else{
+        mdb_txn_commit(txn);
+    }
+
+    return e;
+}
+
+// store the expunged uid and the new modseq
+static derr_t expunge_msg(maildir_log_i* iface, msg_expunge_t *expunge){
+    derr_t e = E_OK;
+
+    log_t *log = CONTAINER_OF(iface, log_t, iface);
+
+    // create a transaction
+    MDB_txn *txn;
+    MDB_dbi dbi;
+    PROP(&e, lmdb_txn_open(log, true, &txn, &dbi) );
+
+    // serialize the key
+    lmdb_key_t lk = {
+        .type = LMDB_KEY_UID,
+        .arg = {
+            .uid = expunge->uid,
+        },
+    };
+    DSTR_VAR(key, 32);
+    PROP_GO(&e, lmdb_key_marshal(&lk, &key), cu_txn);
+
+    MDB_val db_key = {
+        .mv_size = key.len,
+        .mv_data = key.data,
+    };
+
+    // serialize the value
+    DSTR_VAR(value, 128);
+    PROP_GO(&e, marshal_msg_expunge(expunge, &value), cu_txn);
+
+    MDB_val db_value = {
+        .mv_size = value.len,
+        .mv_data = value.data,
+    };
+
+    int ret = mdb_put(txn, dbi, &db_key, &db_value, 0);
+    if(ret){
+        TRACE(&e, "mdb_put: %x\n", FLMDB(&ret));
+        ORIG_GO(&e, lmdb_err_type(ret), "error storing expunge", cu_txn);
+    }
+
+cu_txn:
+    if(is_error(e)){
+        mdb_txn_abort(txn);
+    }else{
+        mdb_txn_commit(txn);
+    }
+
+    return e;
+}
+
+static derr_t drop(maildir_log_i* iface){
+    derr_t e = E_OK;
+
+    log_t *log = CONTAINER_OF(iface, log_t, iface);
+
+    // create a transaction
+    MDB_txn *txn;
+    MDB_dbi dbi;
+    PROP(&e, lmdb_txn_open(log, true, &txn, &dbi) );
+
+    // empty the database
+    int ret = mdb_drop(txn, dbi, 0);
+    if(ret){
+        TRACE(&e, "mdb_drop: %x\n", FLMDB(&ret));
+        ORIG_GO(&e, lmdb_err_type(ret), "error dropping database", cu_txn);
+    }
+
+    // clean up the in-memory values
+    log->uidvld = 0;
+    log->himodseq_up = 0;
+
+cu_txn:
+    if(is_error(e)){
+        mdb_txn_abort(txn);
+    }else{
+        mdb_txn_commit(txn);
+    }
+    return e;
+}
+
+// close the log
+static void log_close(maildir_log_i* iface){
+    log_t *log = CONTAINER_OF(iface, log_t, iface);
+    mdb_env_close(log->env);
+    free(log);
+}
+
+static derr_t read_one_message(unsigned int uid, unsigned long modseq,
+        msg_flags_t flags, jsw_atree_t *msgs, jsw_atree_t *mods){
+    derr_t e = E_OK;
+    printf("READ ONE\n");
+
+    // allocate a new meta object
+    msg_meta_t *meta;
+    PROP(&e, msg_meta_new(&meta, flags, modseq) );
+
+    // allocate a new base object
+    msg_base_t *base;
+    PROP_GO(&e, msg_base_new(&base, uid, meta), fail_meta);
+
+    // insert meta into mods
+    jsw_ainsert(mods, &meta->mod.node);
+
+    // insert base into msgs
+    jsw_ainsert(msgs, &base->node);
+
+    return e;
+
+fail_meta:
+    msg_meta_free(&meta);
+    return e;
+}
+
+static derr_t read_one_expunge(unsigned int uid, unsigned long modseq,
+        jsw_atree_t *expunged, jsw_atree_t *mods){
+    derr_t e = E_OK;
+
+    // allocate a new meta object
+    msg_expunge_t *expunge;
+    PROP(&e, msg_expunge_new(&expunge, uid, modseq) );
+
+    // add to expunged
+    jsw_ainsert(expunged, &expunge->node);
+
+    // add to mods
+    jsw_ainsert(mods, &expunge->mod.node);
+
+    return e;
+}
+
+static derr_t parse_flags(const dstr_t *flags_str, msg_flags_t *flags){
+    derr_t e = E_OK;
+
+    msg_flags_t temp = {0};
+
+    for(size_t i = 0; i < flags_str->len; i++){
+        char c = flags_str->data[i];
+        switch(c){
+            case 'a':
+            case 'A': temp.answered = true; break;
+
+            case 'f':
+            case 'F': temp.flagged  = true; break;
+
+            case 's':
+            case 'S': temp.seen     = true; break;
+
+            case 'd':
+            case 'D': temp.draft    = true; break;
+
+            case 'x':
+            case 'X': temp.deleted  = true; break;
+            default:
+                TRACE(&e, "invalid flag %x\n", FC(c));
+                ORIG(&e, E_PARAM, "invalid flag");
+        }
+    }
+
+    if(flags == NULL) return e;
+
+    *flags = temp;
+
+    return e;
+}
+
+static derr_t read_one_value(unsigned int uid, dstr_t *value,
+        jsw_atree_t *msgs, jsw_atree_t *expunged, jsw_atree_t *mods){
+    derr_t e = E_OK;
+
+    // check the version of the lmdb value string
+    LIST_VAR(dstr_t, version_rest, 2);
+    PROP(&e, dstr_split_soft(value, &DSTR_LIT(":"), &version_rest) );
+    if(dstr_cmp(&version_rest.data[0], &lmdb_format_version) != 0 ){
+        ORIG(&e, E_VALUE, "invalid format version found in lmdb, not parsing");
+    }
+
+    // now get the rest of the fields
+    LIST_VAR(dstr_t, fields, 3);
+    PROP(&e, dstr_split(&version_rest.data[1], &DSTR_LIT(":"), &fields) );
+
+    unsigned long modseq;
+    PROP(&e, dstr_toul(&fields.data[0], &modseq, 10) );
+
+    // check if this uid was expunged or still exists
+    if(fields.data[1].len != 1){
+        ORIG(&e, E_VALUE, "unparsable lmdb line");
+    }
+    switch(fields.data[1].data[0]){
+        case 'm': {
+            // read the last field
+            msg_flags_t flags;
+            PROP(&e, parse_flags(&fields.data[2], &flags) );
+            // submit parsed values
+            PROP(&e, read_one_message(uid, modseq, flags, msgs, mods) );
+        } break;
+        case 'x': {
+            // submit parsed values
+            PROP(&e, read_one_expunge(uid, modseq, expunged, mods) );
+        } break;
+        default: ORIG(&e, E_VALUE, "unparsable lmdb line");
+    }
+
+    return e;
+}
+
+static derr_t read_all_keys(log_t *log, jsw_atree_t *msgs,
+        jsw_atree_t *expunged, jsw_atree_t *mods){
+    derr_t e = E_OK;
+
+    // create a transaction
+    MDB_txn *txn;
+    MDB_dbi dbi;
+    PROP(&e, lmdb_txn_open(log, false, &txn, &dbi) );
+
+    // create a cursor
+    MDB_cursor *cursor;
+    int ret = mdb_cursor_open(txn, dbi, &cursor);
+    if(ret){
+        TRACE(&e, "mdb_cursor_open: %x\n", FLMDB(&ret));
+        ORIG_GO(&e, lmdb_err_type(ret), "error opening cursor", cu_txn);
+    }
+
+    // iterate through every key/value in the database
+    MDB_val db_key;
+    MDB_val db_value;
+    ret = mdb_cursor_get(cursor, &db_key, &db_value, MDB_FIRST);
+    while(ret == 0){
+        // wrap MDB_val's in dstr_t's
+        dstr_t key;
+        DSTR_WRAP(key, db_key.mv_data, db_key.mv_size, false);
+        dstr_t value;
+        DSTR_WRAP(value, db_value.mv_data, db_value.mv_size, false);
+
+        // figure out what kind of key this is
+        lmdb_key_t lk;
+        PROP_GO(&e, lmdb_key_unmarshal(&key, &lk), cu_cursor);
+        switch(lk.type){
+            case LMDB_KEY_UIDVLD: {
+                // store the uidvalidity value in memory
+                unsigned int uidvld;
+                PROP(&e, dstr_tou(&value, &uidvld, 10) );
+                log->uidvld = uidvld;
+            } break;
+
+            case LMDB_KEY_HIMODSEQUP: {
+                // store the himodseq_up value in memory
+                unsigned long himodseq_up;
+                PROP(&e, dstr_toul(&value, &himodseq_up, 10) );
+                log->himodseq_up = himodseq_up;
+            } break;
+
+            case LMDB_KEY_UID: {
+                // read this ui this value to the relevant structs
+                PROP_GO(&e, read_one_value(lk.arg.uid, &value, msgs, expunged,
+                            mods), cu_cursor);
+            } break;
+        }
+
+        // get the next value from the cursor
+        ret = mdb_cursor_get(cursor, &db_key, &db_value, MDB_NEXT);
+    }
+    // this loop should end with MDB_NOTFOUND, indicating the end of the db
+    if(ret != MDB_NOTFOUND){
+        TRACE(&e, "mdb_cursor_get: %x\n", FLMDB(&ret));
+        ORIG_GO(&e, lmdb_err_type(ret), "error reading cursor", cu_cursor);
+    }
+
+cu_cursor:
+    mdb_cursor_close(cursor);
+
+cu_txn:
+    if(is_error(e)){
+        mdb_txn_abort(txn);
+    }else{
+        mdb_txn_commit(txn);
+    }
+    return e;
+}
+
+derr_t imaildir_log_open(const string_builder_t *dirpath,
+        jsw_atree_t *msgs_out, jsw_atree_t *expunged_out,
+        jsw_atree_t *mods_out, maildir_log_i **log_out){
+    derr_t e = E_OK;
+
+    log_t *log = malloc(sizeof(*log));
+    if(!log) ORIG(&e, E_NOMEM, "nomem");
+    *log = (log_t){
+        .iface = {
+            .get_uidvld = get_uidvld,
+            .set_uidvld = set_uidvld,
+            .get_himodseq_up = get_himodseq_up,
+            .set_himodseq_up = set_himodseq_up,
+            .update_msg = update_msg,
+            .expunge_msg = expunge_msg,
+            .drop = drop,
+            .close = log_close,
+        },
+    };
+
+    // open the lmdb environment
+    PROP_GO(&e, lmdb_env_open_path(dirpath, &log->env), fail_malloc);
+
+    // populate metadata in imalidir_t structs
+    PROP_GO(&e, read_all_keys(log, msgs_out, expunged_out, mods_out),
+            fail_env);
+
+    *log_out = &log->iface;
+
+    return e;
+
+fail_env:
+    mdb_env_close(log->env);
+fail_malloc:
+    free(log);
+    return e;
+}

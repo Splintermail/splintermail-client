@@ -915,6 +915,7 @@ static derr_t fetch_attr_skip_fill(skip_fill_t *sf, ie_fetch_attrs_t *attr){
     if(attr->rfc822_text){   LEAD_SP; STATIC_SKIP_FILL("RFC822.TEXT"); }
     if(attr->body){          LEAD_SP; STATIC_SKIP_FILL("BODY"); }
     if(attr->bodystruct){    LEAD_SP; STATIC_SKIP_FILL("BODYSTRUCTURE"); }
+    if(attr->modseq){        LEAD_SP; STATIC_SKIP_FILL("MODSEQ"); }
     // print the free-form attributes
     for(ie_fetch_extra_t *ex = attr->extras; ex != NULL; ex = ex->next){
         // BODY or BODY.PEEK

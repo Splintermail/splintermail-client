@@ -1,6 +1,8 @@
 #ifndef UV_UTIL
 #define UV_UTIL
 
+#include <uv.h>
+
 #include "common.h"
 
 // error handling helpers

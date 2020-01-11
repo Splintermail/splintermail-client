@@ -3,14 +3,10 @@
 
 #include "imap_msg.h"
 
-// *flags is allowed to be NULL, which makes this a validation function
-derr_t maildir_name_parse_flags(const dstr_t *flags_str, msg_flags_t *flags);
-
 /* only *name is required to be non-NULL, in which case this becomes a
    validation function */
 derr_t maildir_name_parse(const dstr_t *name, unsigned long *epoch,
-        size_t *len, unsigned int *uid, msg_flags_t *flags, dstr_t *host,
-        dstr_t *info);
+        unsigned int *uid, size_t *len, dstr_t *host, dstr_t *info);
 
 /* modded_hostname replaces '/' with "057"
                         and ':' with "072"
@@ -20,8 +16,7 @@ derr_t maildir_name_parse(const dstr_t *name, unsigned long *epoch,
 derr_t maildir_name_mod_hostname(const dstr_t* host, dstr_t *out);
 
 // info and flags are allowed to be NULL, but not host
-derr_t maildir_name_write(dstr_t *out, unsigned long epoch, size_t len,
-        unsigned int uid, const msg_flags_t *flags, const dstr_t *host,
-        const dstr_t *info);
+derr_t maildir_name_write(dstr_t *out, unsigned long epoch, unsigned int uid,
+        size_t len, const dstr_t *host, const dstr_t *info);
 
 #endif // MAILDIR_NAME_H

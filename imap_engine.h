@@ -22,8 +22,10 @@ struct imape_t {
     uv_work_t work_req;
     queue_t event_q;
     queue_t write_events;
-    // upstream engine, to which we pass write and read_done events
+    // upstream engine, to which we pass write events
     engine_t *upstream;
+    // downstream engine, to which we pass read events
+    engine_t *downstream;
     // for handling quitting state
     bool quitting;
     event_t *quit_ev;
@@ -31,17 +33,11 @@ struct imape_t {
 };
 DEF_CONTAINER_OF(imape_t, engine, engine_t);
 
-union imap_object_cb_u {
-    void (*cmd)(imape_control_i*, imap_cmd_t*);
-    void (*resp)(imape_control_i*, imap_resp_t*);
-};
-
 // TODO: make this interface all functions and no data
 // (this should happen with a revamp of how extensions are handled)
 struct imape_control_i {
     bool is_client;
     extensions_t exts;
-    union imap_object_cb_u object_cb;
 };
 
 struct imape_data_t {
@@ -68,7 +64,8 @@ struct imape_data_t {
 };
 DEF_CONTAINER_OF(imape_data_t, write_qcb, queue_cb_t)
 
-derr_t imape_init(imape_t *imape, size_t nwrite_events, engine_t *upstream);
+derr_t imape_init(imape_t *imape, size_t nwrite_events, engine_t *upstream,
+        engine_t *downstream);
 void imape_free(imape_t *imape);
 derr_t imape_add_to_loop(imape_t *imape, uv_loop_t *loop);
 
@@ -88,17 +85,24 @@ enum imape_ref_reason_t {
 
 dstr_t *imape_ref_reason_to_dstr(enum imape_ref_reason_t reason);
 
-// incoming WRITE events must be cmd_event_t's or resp_event_t's
-typedef struct {
-    event_t ev;
-    const imap_cmd_t *cmd;
-} cmd_event_t;
-DEF_CONTAINER_OF(cmd_event_t, ev, event_t);
+// outgoing READ events are wrapped in imap_event_t's
+// incoming WRITE events are wrapped in imap_event_t's
+
+typedef enum {
+    IMAP_EVENT_TYPE_CMD,
+    IMAP_EVENT_TYPE_RESP,
+} imap_event_type_e;
+
+typedef union {
+    imap_cmd_t *cmd;
+    imap_resp_t *resp;
+} imap_event_arg_u;
 
 typedef struct {
     event_t ev;
-    const imap_resp_t *resp;
-} resp_event_t;
-DEF_CONTAINER_OF(resp_event_t, ev, event_t);
+    imap_event_type_e type;
+    imap_event_arg_u arg;
+} imap_event_t;
+DEF_CONTAINER_OF(imap_event_t, ev, event_t);
 
 #endif // IMAP_ENGINE_H
