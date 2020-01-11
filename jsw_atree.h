@@ -2,7 +2,6 @@
 #define JSW_ATREE_H
 
 #include <stdio.h>
-#include "common.h"
 
 /*
   Andersson tree library
@@ -24,6 +23,9 @@
 */
 
 #define JSW_AHEIGHT_LIMIT 64 /* Tallest allowable tree */
+
+// same +/0/- semantics as strcmp but for sorting numbers
+#define JSW_NUM_CMP(a, b) ((a) < (b) ? -1 : (a) > (b))
 
 typedef struct jsw_anode {
   int               level;   /* Horizontal level for balance */
@@ -53,19 +55,22 @@ typedef struct jsw_atrav {
 
 /* Andersson tree functions */
 void         jsw_ainit ( jsw_atree_t *tree, cmp_f cmp, get_f get );
-jsw_anode_t *jsw_afind ( jsw_atree_t *tree, void *val, size_t *idx );
+jsw_anode_t *jsw_afind ( jsw_atree_t *tree, const void *val, size_t *idx );
 void         jsw_ainsert ( jsw_atree_t *tree, jsw_anode_t *node );
 size_t       jsw_asize ( jsw_atree_t *tree );
 
 // find a node with an alternate comparison function (second param will be val)
-jsw_anode_t *jsw_afind_ex ( jsw_atree_t *tree, cmp_f alt_cmp, void *val, size_t *idx );
+/* (you still have to compare against the sorted field of each node, but you
+    might have a novel way to provide the key to compare) */
+jsw_anode_t *jsw_afind_ex ( jsw_atree_t *tree, cmp_f alt_cmp, const void *val, size_t *idx );
 
 // remove a node by value, returns the node if the value was found
 jsw_anode_t *jsw_aerase ( jsw_atree_t *tree, const void *val );
 
 /* The reason a function like this doesn't exist is because the tree does not
    have parent node pointers, so removing a random element is actually quite
-   difficult. */
+   difficult.  (well... you could just call jsw_aerase(tree, tree->get(node)),
+   it would be exactly the same) */
 // remove a node by reference
 // void         jsw_aremove ( jsw_atree_t *tree, jsw_anode_t *node);
 
@@ -80,5 +85,23 @@ jsw_anode_t *jsw_atfirst ( jsw_atrav_t *trav, jsw_atree_t *tree );
 jsw_anode_t *jsw_atlast ( jsw_atrav_t *trav, jsw_atree_t *tree );
 jsw_anode_t *jsw_atnext ( jsw_atrav_t *trav );
 jsw_anode_t *jsw_atprev ( jsw_atrav_t *trav );
+
+/* traverse from an aribtrary node that is already in the tree */
+jsw_anode_t *jsw_atnode ( jsw_atrav_t *trav, jsw_atree_t *tree, jsw_anode_t *node );
+
+/* planned extensions, for iterating through subsections of the tree:
+jsw_anode_t *jsw_at_lt ();
+jsw_anode_t *jsw_at_le ();
+jsw_anode_t *jsw_at_gt ();
+jsw_anode_t *jsw_at_ge ();
+jsw_anode_t *jsw_at_lt_ex ();
+jsw_anode_t *jsw_at_le_ex ();
+jsw_anode_t *jsw_at_gt_ex ();
+jsw_anode_t *jsw_at_ge_ex ();
+*/
+
+/* like atnext/atprev except the current value is removed from the tree */
+jsw_anode_t *jsw_pop_atnext( jsw_atrav_t *trav );
+jsw_anode_t *jsw_pop_atprev( jsw_atrav_t *trav );
 
 #endif

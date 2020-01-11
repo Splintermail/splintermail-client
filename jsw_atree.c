@@ -16,8 +16,6 @@
 
 #include <stdlib.h>
 #include "jsw_atree.h"
-#include "common.h"
-#include "logger.h"
 
 /* Remove left horizontal links */
 #define skew(t) do {                                      \
@@ -69,7 +67,7 @@ void jsw_ainit ( jsw_atree_t *tree, cmp_f cmp, get_f get)
   tree->size = 0;
 }
 
-jsw_anode_t *jsw_afind_ex ( jsw_atree_t *tree, cmp_f alt_cmp, void *val, size_t *idx ) {
+jsw_anode_t *jsw_afind_ex ( jsw_atree_t *tree, cmp_f alt_cmp, const void *val, size_t *idx ) {
   jsw_anode_t *it = tree->root;
   size_t left_count = 0;
 
@@ -89,7 +87,7 @@ jsw_anode_t *jsw_afind_ex ( jsw_atree_t *tree, cmp_f alt_cmp, void *val, size_t 
   return it == &tree->nil ? NULL : it;
 }
 
-jsw_anode_t *jsw_afind ( jsw_atree_t *tree, void *val, size_t *idx )
+jsw_anode_t *jsw_afind ( jsw_atree_t *tree, const void *val, size_t *idx )
 {
   return jsw_afind_ex(tree, tree->cmp, val, idx);
 }
@@ -142,12 +140,9 @@ void jsw_ainsert ( jsw_atree_t *tree, jsw_anode_t *node )
   ++tree->size;
 }
 
-jsw_anode_t *jsw_apop ( jsw_atree_t *tree ){
-  if ( tree->root == &tree->nil )
-    return NULL;
-
-  // Leave the complex removal logic in one place
-  return jsw_aerase ( tree, tree->get(tree->root) );
+size_t jsw_asize ( jsw_atree_t *tree )
+{
+  return tree->size;
 }
 
 jsw_anode_t *jsw_aerase ( jsw_atree_t *tree, const void *val )
@@ -260,9 +255,34 @@ jsw_anode_t *jsw_aerase ( jsw_atree_t *tree, const void *val )
   return deleted;
 }
 
-size_t jsw_asize ( jsw_atree_t *tree )
+jsw_anode_t *jsw_apop ( jsw_atree_t *tree ){
+  if ( tree->root == &tree->nil )
+    return NULL;
+
+  // Leave the complex removal logic in one place
+  return jsw_aerase ( tree, tree->get(tree->root) );
+}
+
+jsw_anode_t *jsw_aindex ( jsw_atree_t *tree, size_t idx )
 {
-  return tree->size;
+    /* if count idx is too high, return NULL */
+    if(idx >= tree->size)
+        return NULL;
+
+    /* walk through tree making decisions based on counts */
+    jsw_anode_t *it = tree->root;
+    size_t left_count = 0;
+    while ( 1 ){
+        /* index of the current node */
+        size_t cur = left_count + it->link[0]->count;
+        if ( cur == idx )
+            return it;
+
+        int dir = ( cur < idx );
+        /* add to left_count only if we move right */
+        if ( dir ) left_count += it->link[0]->count + 1;
+        it = it->link[dir];
+    }
 }
 
 /*
@@ -343,24 +363,59 @@ jsw_anode_t *jsw_atprev ( jsw_atrav_t *trav )
   return move ( trav, 0 ); /* Toward smaller items */
 }
 
-jsw_anode_t *jsw_aindex ( jsw_atree_t *tree, size_t idx )
+jsw_anode_t *jsw_atnode ( jsw_atrav_t *trav, jsw_atree_t *tree, jsw_anode_t *node )
 {
-    /* if count idx is too high, return NULL */
-    if(idx >= tree->size)
+  trav->tree = tree;
+  trav->it = tree->root;
+  trav->top = 0;
+
+  const void *val = tree->get(node);
+
+  while ( trav->it != &tree->nil ) {
+    int cmp = tree->cmp ( tree->get(trav->it), val );
+
+    if ( cmp == 0 )
+      break;
+
+    int dir = ( cmp < 0 );
+    trav->path[trav->top++] = trav->it;
+    trav->it = trav->it->link[dir];
+
+  }
+
+  return trav->it == &tree->nil ? NULL : trav->it;
+}
+
+static jsw_anode_t *pop_move ( jsw_atrav_t *trav, int dir )
+{
+    if ( trav->it == &trav->tree->nil )
         return NULL;
 
-    /* walk through tree making decisions based on counts */
-    jsw_anode_t *it = tree->root;
-    size_t left_count = 0;
-    while ( true ){
-        /* index of the current node */
-        size_t cur = left_count + it->link[0]->count;
-        if ( cur == idx )
-            return it;
+    /* remember the current node, which we will pop */
+    jsw_anode_t *pop_node = trav->it;
 
-        int dir = ( cur < idx );
-        /* add to left_count only if we move right */
-        if ( dir ) left_count += it->link[0]->count + 1;
-        it = it->link[dir];
+    /* figure out the node we will return */
+    jsw_anode_t *ret_node = move ( trav, dir );
+
+    jsw_aerase ( trav->tree, trav->tree->get(pop_node) );
+
+    /* trav has a broken path and must be reset */
+    if ( ret_node == NULL ) {
+        /* simulate walking off the end of the tree */
+        start ( trav, trav->tree, dir );
+        return move ( trav, dir );
     }
+    else {
+        return jsw_atnode ( trav, trav->tree, ret_node );
+    }
+}
+
+jsw_anode_t *jsw_pop_atnext( jsw_atrav_t *trav )
+{
+    return pop_move ( trav, 1 );
+}
+
+jsw_anode_t *jsw_pop_atprev( jsw_atrav_t *trav )
+{
+    return pop_move ( trav, 0 );
 }

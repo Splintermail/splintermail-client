@@ -22,12 +22,11 @@ DEF_CONTAINER_OF(binsrch_int_t, anode, jsw_anode_t);
 static int cmp_binsrch_ints(const void *a, const void *b){
     int aval = ((binsrch_int_t*)a)->value;
     int bval = ((binsrch_int_t*)b)->value;
-    if(aval == bval) return 0;
-    return aval > bval ? 1 : -1;
+    return JSW_NUM_CMP(aval, bval);
 }
 
-static const void *get_binsrch_int(const jsw_anode_t *node){
-    return &CONTAINER_OF(node, binsrch_int_t, anode)->value;
+static const void *get_binsrch(const jsw_anode_t *node){
+    return CONTAINER_OF(node, binsrch_int_t, anode);
 }
 
 static derr_t print_atree(const jsw_anode_t *node, size_t indent){
@@ -136,7 +135,7 @@ static derr_t do_test_atree(binsrch_int_t *ints, size_t num_ints){
     derr_t e = E_OK;
     // the andersson tree
     jsw_atree_t tree;
-    jsw_ainit(&tree, cmp_binsrch_ints, get_binsrch_int);
+    jsw_ainit(&tree, cmp_binsrch_ints, get_binsrch);
     // insert each element
     for(size_t i = 0; i < num_ints; i++){
         jsw_ainsert(&tree, &ints[i].anode);
@@ -211,7 +210,7 @@ static derr_t test_indicies(void){
     }
     // the andersson tree
     jsw_atree_t tree;
-    jsw_ainit(&tree, cmp_binsrch_ints, get_binsrch_int);
+    jsw_ainit(&tree, cmp_binsrch_ints, get_binsrch);
     // insert each element
     for(size_t i = 0; i < NUM_INTS; i++){
         jsw_ainsert(&tree, &ints[i].anode);
@@ -257,7 +256,7 @@ static derr_t test_apop(void){
     }
     // the andersson tree
     jsw_atree_t tree;
-    jsw_ainit(&tree, cmp_binsrch_ints, get_binsrch_int);
+    jsw_ainit(&tree, cmp_binsrch_ints, get_binsrch);
     // insert each element
     for(size_t i = 0; i < NUM_INTS; i++){
         jsw_ainsert(&tree, &ints[i].anode);
@@ -288,6 +287,128 @@ static derr_t test_apop(void){
     return e;
 }
 
+/* Traverse a tree, popping a bunch of elements. At each point, step forwards
+   and backwards to make sure that we don't get weird effects from popping
+   while we are in the middle of a traversal. */
+static derr_t test_atrav(void){
+    derr_t e = E_OK;
+    // some values to be inserted and stuff
+    binsrch_int_t ints[NUM_INTS];
+    // prep all the binsrch_int_t's
+    for(int i = 0; i < NUM_INTS; i++){
+        ints[i].magic = (unsigned char)0xAA;
+        ints[i].value = i;
+    }
+    // the andersson tree
+    jsw_atree_t tree;
+    jsw_ainit(&tree, cmp_binsrch_ints, get_binsrch);
+    // insert each element
+    for(size_t i = 0; i < NUM_INTS; i++){
+        jsw_ainsert(&tree, &ints[i].anode);
+    }
+    // walk the tree, popping first, last, and odd elements
+    size_t i = 0;
+    jsw_atrav_t trav;
+    jsw_anode_t *node = jsw_atfirst(&trav, &tree);
+    while(true){
+        binsrch_int_t *bsi = CONTAINER_OF(node, binsrch_int_t, anode);
+        if(bsi->value != (int)i){
+            TRACE(&e, "expected %x got %x\n", FU(i), FI(bsi->value));
+            ORIG(&e, E_VALUE, "found wrong value while walking");
+        }
+
+        // check the result of stepping backwards then forwards
+        jsw_atrav_t trav_copy = trav;
+        jsw_anode_t *node2 = jsw_atprev(&trav);
+        if(i < 3){
+            if(node2 != NULL) ORIG(&e, E_VALUE, "expected NULL backstep");
+            // oops, we broke trav, so restore it
+            trav = trav_copy;
+        }else{
+            if(node2 == NULL) ORIG(&e, E_VALUE, "expected non-NULL backstep");
+
+            int exp = (int)i - 1;
+            if(exp % 2){
+                exp--;
+            }
+
+            binsrch_int_t *bsi2 = CONTAINER_OF(node2, binsrch_int_t, anode);
+            if(bsi2->value != exp){
+                TRACE(&e, "expected %x got %x\n", FI(exp), FI(bsi2->value));
+                ORIG(&e, E_VALUE, "found wrong value in backstep");
+            }
+
+            // step forwards again to put trav back where the want it
+            node2 = jsw_atnext(&trav);
+
+            // should be back where we started
+            if(node2 != node){
+                ORIG(&e, E_VALUE, "backstep reset failed");
+            }
+        }
+
+        // now advance the node, popping first/last/odd elements
+        if(i == 0 || i == NUM_INTS || i % 2 ){
+            node = jsw_pop_atnext(&trav);
+        }else{
+            node = jsw_atnext(&trav);
+        }
+        i++;
+
+        // check end-of-iteration conditions
+        if(i == NUM_INTS){
+            if(node != NULL){
+                ORIG(&e, E_VALUE, "expected NULL atnext");
+            }
+            break;
+        }
+
+        // check the result of stepping forwards then backwards
+        trav_copy = trav;
+        node2 = jsw_atnext(&trav);
+        if(i == NUM_INTS - 1){
+            if(node2 != NULL){
+                ORIG(&e, E_VALUE, "expected NULL forestep");
+            }
+            // oops, we broke trav, so restore it
+            trav = trav_copy;
+        }else{
+            if(node2 == NULL) ORIG(&e, E_VALUE, "expected non-NULL forestep");
+
+            int exp = (int)i + 1;
+
+            binsrch_int_t *bsi2 = CONTAINER_OF(node2, binsrch_int_t, anode);
+            if(bsi2->value != exp){
+                TRACE(&e, "expected %x got %x\n", FI(exp), FI(bsi2->value));
+                ORIG(&e, E_VALUE, "found wrong value in forestep");
+            }
+
+            // step backwards again to put trav back where the want it
+            node2 = jsw_atprev(&trav);
+
+            // should be back where we started
+            if(node2 != node){
+                ORIG(&e, E_VALUE, "forestep reset failed");
+            }
+        }
+    }
+
+    // tree should be reduced in size
+    size_t exp_size = NUM_INTS;
+    // expect no odds
+    exp_size -= NUM_INTS/2;
+    // expect no zero element
+    exp_size -= (NUM_INTS > 0);
+    // expect no final element
+    exp_size -= (NUM_INTS % 2);
+    if(tree.size != exp_size){
+        TRACE(&e, "expected %x got %x\n", FU(tree.size), FU(exp_size));
+        ORIG(&e, E_VALUE, "tree should be empty" );
+    }
+
+    return e;
+}
+
 int main(int argc, char** argv){
     derr_t e = E_OK;
     // parse options and set default log level
@@ -301,6 +422,7 @@ int main(int argc, char** argv){
     PROP_GO(&e, test_atree(), test_fail);
     PROP_GO(&e, test_indicies(), test_fail);
     PROP_GO(&e, test_apop(), test_fail);
+    PROP_GO(&e, test_atrav(), test_fail);
 
     LOG_ERROR("PASS\n");
     return 0;
