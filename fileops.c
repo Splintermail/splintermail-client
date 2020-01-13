@@ -854,3 +854,31 @@ cu:
     dstr_free(&heap);
     return e;
 }
+
+derr_t rename_path(const string_builder_t *src, const string_builder_t *dst){
+    derr_t e = E_OK;
+    DSTR_VAR(stack_src, 256);
+    dstr_t heap_src = {0};
+    dstr_t* path_src;
+    PROP(&e, sb_expand(src, &slash, &stack_src, &heap_src, &path_src) );
+
+    DSTR_VAR(stack_dst, 256);
+    dstr_t heap_dst = {0};
+    dstr_t* path_dst;
+    PROP_GO(&e, sb_expand(dst, &slash, &stack_dst, &heap_dst, &path_dst),
+            cu_src);
+
+    int ret = rename(path_src->data, path_dst->data);
+    if(ret != 0){
+        TRACE(&e, "rename(%x, %x): %x\n", FD(path_src), FD(path_dst),
+                FE(&errno));
+        ORIG_GO(&e, errno == ENOMEM ? E_NOMEM : E_OS, "unable to rename file",
+                cu_dst);
+    }
+
+cu_dst:
+    dstr_free(&heap_dst);
+cu_src:
+    dstr_free(&heap_src);
+    return e;
+}
