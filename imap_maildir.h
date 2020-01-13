@@ -10,6 +10,7 @@
 #include "jsw_atree.h"
 #include "manager.h"
 #include "imap_msg.h"
+#include "crypto.h"
 
 /*
 The imap maildir is a major part of the logic in the system.  In a pure imap
@@ -151,6 +152,8 @@ struct imaildir_t {
     unsigned int uid_validity;
     // mailbox flags
     ie_mflags_t mflags;
+    // crypto for this box
+    const keypair_t *keypair;
 
     // // incoming events are always stored first and handled later
     // struct {
@@ -186,8 +189,9 @@ struct imaildir_t {
         maildir_log_i *log;
         // msg_update_t's that are not up-to-date but still in a view somewhere
         link_t unreconciled;  // msg_update_t->link
-        // seq is the id of the most up-to-date change
-        size_t seq;
+
+        // the latest serial of things we put in /tmp
+        size_t tmp_count;
     } content;
 
     struct {
@@ -205,7 +209,7 @@ struct imaildir_t {
 
 // open a maildir at path, path and name must be linked to long-lived objects
 derr_t imaildir_init(imaildir_t *m, string_builder_t path, const dstr_t *name,
-        dirmgr_i *mgr);
+        dirmgr_i *mgr, const keypair_t *keypair);
 // free must only be called if the maildir has no accessors
 void imaildir_free(imaildir_t *m);
 
@@ -241,10 +245,10 @@ struct maildir_log_i {
     unsigned long (*get_himodseq_up)(maildir_log_i*);
     derr_t (*set_himodseq_up)(maildir_log_i*, unsigned long himodseq_up);
 
-    // store the new flags and the new modseq, as well as the modseq_dn
+    // store the up-to-date message date
     derr_t (*update_msg)(maildir_log_i*, unsigned int uid,
-            const msg_meta_t *meta);
-    // store the expunged uid and the new modseq, as well as the modseq_dn
+            const msg_base_t *base);
+    // store the expunged uid and the modseq_dn
     derr_t (*expunge_msg)(maildir_log_i*, msg_expunge_t *expunge);
     // wipe the database (such as with a UIDVALIDITY change)
     derr_t (*drop)(maildir_log_i*);

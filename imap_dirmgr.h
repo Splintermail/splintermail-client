@@ -7,6 +7,7 @@
 #include "jsw_atree.h"
 #include "hashmap.h"
 #include "imap_maildir.h"
+#include "crypto.h"
 
 /*
 
@@ -26,6 +27,8 @@ typedef enum {
 
 typedef struct {
     string_builder_t path;
+
+    const keypair_t *keypair;
 
     // thread-safe access to the hashmap of all dirs
     struct {
@@ -53,7 +56,8 @@ DEF_CONTAINER_OF(managed_dir_t, h, hash_elem_t);
 DEF_CONTAINER_OF(managed_dir_t, m, imaildir_t);
 
 // path must be linked to long-lived objects
-derr_t dirmgr_init(dirmgr_t *dm, string_builder_t path);
+derr_t dirmgr_init(dirmgr_t *dm, string_builder_t path,
+        const keypair_t *keypair);
 
 /* dirmgr_free can only be called when no maildirs are opened.  There isn't a
    mechanism for forcing all of them to close, so the dirmgr lifetime should

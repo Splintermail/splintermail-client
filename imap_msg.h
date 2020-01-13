@@ -252,6 +252,7 @@ typedef struct {
 struct msg_base_ref_t {
     unsigned int uid;
     size_t length;
+    imap_time_t internaldate;
 };
 
 // the full IMAP message, owned by imaildir_t
@@ -319,7 +320,8 @@ derr_t msg_meta_new(msg_meta_t **out, msg_flags_t flags, unsigned long modseq);
 void msg_meta_free(msg_meta_t **meta);
 
 // msg_base_t is restored from two places in a two-step process
-derr_t msg_base_new(msg_base_t **out, unsigned int uid, msg_meta_t *meta);
+derr_t msg_base_new(msg_base_t **out, unsigned int uid, imap_time_t time,
+        msg_meta_t *meta);
 derr_t msg_base_fill(msg_base_t *base, size_t len, subdir_type_e subdir,
         const dstr_t *filename);
 // base doesn't own the meta; that must be handled separately

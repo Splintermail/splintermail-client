@@ -208,8 +208,7 @@ DSTR_STATIC(lmdb_format_version, "1");
 /*
     LMDB marshaled metadata line format:
 
-        1:12345:b:[afsdx]
-        |   |   |    |
+        1:12345:b:[afsdx:DATE]
         |   |   |    |
         |   |   |    flags (if not expunged)
         |   |   |
@@ -218,27 +217,72 @@ DSTR_STATIC(lmdb_format_version, "1");
         |   modseq number
         |
         version number
+
+    DATE looks like:
+
+       2020.12.25.23.59.59.-7.00
+                           |
+                           timezone is signed
 */
 
-static derr_t marshal_msg_meta(const msg_meta_t *meta, dstr_t *out){
+static derr_t marshal_date(imap_time_t intdate, dstr_t *out){
     derr_t e = E_OK;
 
-    out->len = 0;
-
-    // version number (1) : modseq : "m" for "message" : [flags]
-    PROP(&e, FMT(out, "%x:%x:m:", FD(&lmdb_format_version),
-                FU(meta->mod.modseq)) );
-
-    if(meta->flags.answered){ PROP(&e, dstr_append(out, &DSTR_LIT("A")) ); }
-    if(meta->flags.draft){    PROP(&e, dstr_append(out, &DSTR_LIT("D")) ); }
-    if(meta->flags.flagged){  PROP(&e, dstr_append(out, &DSTR_LIT("F")) ); }
-    if(meta->flags.seen){     PROP(&e, dstr_append(out, &DSTR_LIT("S")) ); }
-    if(meta->flags.deleted){  PROP(&e, dstr_append(out, &DSTR_LIT("X")) ); }
+    PROP(&e, FMT(out, "%x.%x.%x.%x.%x.%x.%x.%x",
+                FI(intdate.year), FI(intdate.month), FI(intdate.day),
+                FI(intdate.hour), FI(intdate.min), FI(intdate.sec),
+                FI(intdate.z_hour), FI(intdate.z_min)) );
 
     return e;
 }
 
-static derr_t marshal_msg_expunge(const msg_expunge_t *expunge, dstr_t *out){
+static derr_t parse_date(const dstr_t *dstr, imap_time_t *intdate){
+    derr_t e = E_OK;
+
+    LIST_VAR(dstr_t, fields, 8);
+    PROP(&e, dstr_split(dstr, &DSTR_LIT("."), &fields) );
+
+    if(fields.len != 8){
+        ORIG(&e, E_PARAM, "invalid internaldate");
+    }
+
+    PROP(&e, dstr_toi(&fields.data[0], &intdate->year, 10) );
+    PROP(&e, dstr_toi(&fields.data[1], &intdate->month, 10) );
+    PROP(&e, dstr_toi(&fields.data[2], &intdate->day, 10) );
+    PROP(&e, dstr_toi(&fields.data[3], &intdate->hour, 10) );
+    PROP(&e, dstr_toi(&fields.data[4], &intdate->min, 10) );
+    PROP(&e, dstr_toi(&fields.data[5], &intdate->sec, 10) );
+    PROP(&e, dstr_toi(&fields.data[6], &intdate->z_hour, 10) );
+    PROP(&e, dstr_toi(&fields.data[7], &intdate->z_min, 10) );
+
+    return e;
+}
+
+static derr_t marshal_message(const msg_base_t *base, dstr_t *out){
+    derr_t e = E_OK;
+
+    out->len = 0;
+
+    // version number (1) : modseq : "m" for "message" : [flags] : date
+    PROP(&e, FMT(out, "%x:%x:m:", FD(&lmdb_format_version),
+                FU(base->meta->mod.modseq)) );
+
+    msg_flags_t *flags = &base->meta->flags;
+
+    if(flags->answered){ PROP(&e, dstr_append(out, &DSTR_LIT("A")) ); }
+    if(flags->draft){    PROP(&e, dstr_append(out, &DSTR_LIT("D")) ); }
+    if(flags->flagged){  PROP(&e, dstr_append(out, &DSTR_LIT("F")) ); }
+    if(flags->seen){     PROP(&e, dstr_append(out, &DSTR_LIT("S")) ); }
+    if(flags->deleted){  PROP(&e, dstr_append(out, &DSTR_LIT("X")) ); }
+
+    PROP(&e, dstr_append(out, &DSTR_LIT(":")) );
+
+    PROP(&e, marshal_date(base->ref.internaldate, out) );
+
+    return e;
+}
+
+static derr_t marshal_expunge(const msg_expunge_t *expunge, dstr_t *out){
     derr_t e = E_OK;
 
     out->len = 0;
@@ -365,7 +409,7 @@ cu_txn:
 
 // store the new flags and the new modseq
 static derr_t update_msg(maildir_log_i* iface, unsigned int uid,
-        const msg_meta_t *meta){
+        const msg_base_t *base){
     derr_t e = E_OK;
 
     log_t *log = CONTAINER_OF(iface, log_t, iface);
@@ -392,7 +436,7 @@ static derr_t update_msg(maildir_log_i* iface, unsigned int uid,
 
     // serialize the value
     DSTR_VAR(value, 128);
-    PROP_GO(&e, marshal_msg_meta(meta, &value), cu_txn);
+    PROP_GO(&e, marshal_message(base, &value), cu_txn);
 
     MDB_val db_value = {
         .mv_size = value.len,
@@ -443,7 +487,7 @@ static derr_t expunge_msg(maildir_log_i* iface, msg_expunge_t *expunge){
 
     // serialize the value
     DSTR_VAR(value, 128);
-    PROP_GO(&e, marshal_msg_expunge(expunge, &value), cu_txn);
+    PROP_GO(&e, marshal_expunge(expunge, &value), cu_txn);
 
     MDB_val db_value = {
         .mv_size = value.len,
@@ -504,9 +548,9 @@ static void log_close(maildir_log_i* iface){
 }
 
 static derr_t read_one_message(unsigned int uid, unsigned long modseq,
-        msg_flags_t flags, jsw_atree_t *msgs, jsw_atree_t *mods){
+        msg_flags_t flags, imap_time_t intdate, jsw_atree_t *msgs,
+        jsw_atree_t *mods){
     derr_t e = E_OK;
-    printf("READ ONE\n");
 
     // allocate a new meta object
     msg_meta_t *meta;
@@ -514,7 +558,7 @@ static derr_t read_one_message(unsigned int uid, unsigned long modseq,
 
     // allocate a new base object
     msg_base_t *base;
-    PROP_GO(&e, msg_base_new(&base, uid, meta), fail_meta);
+    PROP_GO(&e, msg_base_new(&base, uid, intdate, meta), fail_meta);
 
     // insert meta into mods
     jsw_ainsert(mods, &meta->mod.node);
@@ -593,8 +637,11 @@ static derr_t read_one_value(unsigned int uid, dstr_t *value,
     }
 
     // now get the rest of the fields
-    LIST_VAR(dstr_t, fields, 3);
+    LIST_VAR(dstr_t, fields, 4);
     PROP(&e, dstr_split(&version_rest.data[1], &DSTR_LIT(":"), &fields) );
+    if(fields.len < 2){
+        ORIG(&e, E_VALUE, "unparsable lmdb line");
+    }
 
     unsigned long modseq;
     PROP(&e, dstr_toul(&fields.data[0], &modseq, 10) );
@@ -604,17 +651,24 @@ static derr_t read_one_value(unsigned int uid, dstr_t *value,
         ORIG(&e, E_VALUE, "unparsable lmdb line");
     }
     switch(fields.data[1].data[0]){
-        case 'm': {
-            // read the last field
+        case 'm':
+            // we should have all of the fields
+            if(fields.len != 4){
+                ORIG(&e, E_VALUE, "unparsable lmdb line");
+            }
             msg_flags_t flags;
             PROP(&e, parse_flags(&fields.data[2], &flags) );
+            imap_time_t intdate;
+            PROP(&e, parse_date(&fields.data[3], &intdate) );
+            // read the
             // submit parsed values
-            PROP(&e, read_one_message(uid, modseq, flags, msgs, mods) );
-        } break;
-        case 'x': {
+            PROP(&e, read_one_message(uid, modseq, flags, intdate, msgs,
+                        mods) );
+            break;
+        case 'x':
             // submit parsed values
             PROP(&e, read_one_expunge(uid, modseq, expunged, mods) );
-        } break;
+            break;
         default: ORIG(&e, E_VALUE, "unparsable lmdb line");
     }
 

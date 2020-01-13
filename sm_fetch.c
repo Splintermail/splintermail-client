@@ -248,8 +248,8 @@ static derr_t fetcher_init(fetcher_t *fetcher, const char *host,
             fail_path);
 
     // dirmgr
-    PROP_GO(&e, dirmgr_init(&fetcher->dirmgr, SB(FD(&fetcher->path))),
-            fail_path);
+    string_builder_t path = SB(FD(&fetcher->path));
+    PROP_GO(&e, dirmgr_init(&fetcher->dirmgr, path, &keypair), fail_path);
 
     int ret = uv_mutex_init(&fetcher->ts.mutex);
     if(ret < 0){

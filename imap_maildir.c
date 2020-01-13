@@ -1,3 +1,9 @@
+#include <sys/stat.h>
+#include <string.h>
+#include <errno.h>
+#include <time.h>
+#include <fcntl.h>
+
 #include "imap_maildir.h"
 #include "logger.h"
 #include "fileops.h"
@@ -5,189 +11,16 @@
 #include "maildir_name.h"
 #include "imap_util.h"
 
+#include "win_compat.h"
+
+#define HOSTNAME_COMPONENT_MAX_LEN 32
+
 // forward declarations
 static derr_t conn_up_resp(maildir_i*, imap_resp_t*);
 // static derr_t maildir_cmd(maildir_i*, imap_cmd_t*);
 static bool conn_up_synced(maildir_i*);
 static bool conn_up_selected(maildir_i*);
 static derr_t conn_up_unselect(maildir_i *maildir);
-
-/* There's a tricky little state machine for how to accurately calculate the
-   HIGHESTMODSEQ value against which you have synchronized.  Following a
-   successful SELECT (QRESYNC ...) command (and assuming you are handling all
-   FETCH and VANISHED responses properly), then your HIGHESTMODSEQ can be
-   calculated during every tagged response as:
-
-     "the value of the HIGHESTMODSEQ untagged OK response since the last
-     tagged response, or if there hasn't been one, the highest MODSEQ reported
-     since the last tagged response, or if there hasn't been any of those
-     either, then just whatever it was last time."
-
-   Of course, if your SELECT (QRESYNC ...) failed due to UIDVALIDITY issues,
-   the HIGHESTMODSEQ you see belongs to the server, but has nothing to do with
-   your state.
-
-   Therefore, you can update your own HIGHESTMODSEQ in the persistent cache to
-   the value produced by this state machine any time you finish a FETCH command
-   or successful SELECT (QRESYNC ...), provided you have no new messages to
-   download. */
-
-typedef struct {
-    // the current value (as of last tagged response)
-    unsigned long now;
-    // first priority, if nonzero
-    unsigned long from_ok_code;
-    // second priority, if nonzero
-    unsigned long from_fetch;
-} himodseq_calc_t;
-
-// gather whatever we saw since the last tagged response return if it changed
-static bool hmsc_step(himodseq_calc_t *hmsc){
-    unsigned long old = hmsc->now;
-    if(hmsc->from_ok_code){
-        hmsc->now = hmsc->from_ok_code;
-    }else if(hmsc->from_fetch){
-        hmsc->now = MAX(hmsc->now, hmsc->from_fetch);
-    }
-    // flush the values we saw
-    hmsc->from_ok_code = 0;
-    hmsc->from_fetch = 0;
-    // return whether or not it changed
-    return old != hmsc->now;
-}
-
-static void hmsc_prep(himodseq_calc_t *hmsc, unsigned long starting_val){
-    *hmsc = (himodseq_calc_t){
-        .now = starting_val,
-    };
-}
-
-static unsigned long hmsc_now(himodseq_calc_t *hmsc){
-    return hmsc->now;
-}
-
-static void hmsc_saw_ok_code(himodseq_calc_t *hmsc, unsigned long val){
-    hmsc->from_ok_code = val;
-}
-
-static void hmsc_saw_fetch(himodseq_calc_t *hmsc, unsigned long val){
-    // only keep it if it is higher
-    hmsc->from_fetch = MAX(hmsc->from_fetch, val);
-}
-
-// a tool for building as-dense-as-possible sequence sets one value at a time
-typedef jsw_atree_t seq_set_builder_t;
-typedef struct {
-    unsigned int n1;
-    unsigned int n2;
-    jsw_anode_t node;
-} seq_set_builder_elem_t;
-DEF_CONTAINER_OF(seq_set_builder_elem_t, node, jsw_anode_t);
-
-static const void *ssbe_jsw_get(const jsw_anode_t *node){
-    return CONTAINER_OF(node, seq_set_builder_elem_t, node);
-}
-static int ssbe_jsw_cmp_n1(const void *a, const void *b){
-    const seq_set_builder_elem_t *ssbea = a;
-    const seq_set_builder_elem_t *ssbeb = b;
-    return JSW_NUM_CMP(ssbea->n1, ssbeb->n1);
-}
-
-static void seq_set_builder_prep(seq_set_builder_t *ssb){
-    jsw_ainit(ssb, ssbe_jsw_cmp_n1, ssbe_jsw_get);
-}
-
-// free all the nodes of the ssb
-static void seq_set_builder_free(seq_set_builder_t *ssb){
-    jsw_anode_t *node;
-    while((node = jsw_apop(ssb))){
-        seq_set_builder_elem_t *ssbe =
-            CONTAINER_OF(node, seq_set_builder_elem_t, node);
-        free(ssbe);
-    }
-}
-
-static bool seq_set_builder_isempty(seq_set_builder_t *ssb){
-    return ssb->root->count == 0;
-}
-
-static derr_t seq_set_builder_add_range(seq_set_builder_t *ssb,
-        unsigned int n1, unsigned int n2){
-    derr_t e = E_OK;
-
-    // for now only accept valid UIDs (no 0, no *)
-    // (this simplifies seq_set_builder_extract)
-    if(!n1 || !n2){
-        ORIG(&e, E_PARAM, "invalid UID in seq_set_builder");
-    }
-
-    seq_set_builder_elem_t *ssbe = malloc(sizeof(*ssbe));
-    if(!ssbe) ORIG(&e, E_NOMEM, "nomem");
-    *ssbe = (seq_set_builder_elem_t){ .n1 = MIN(n1, n2), .n2 = MAX(n1, n2) };
-
-    jsw_ainsert(ssb, &ssbe->node);
-
-    return e;
-}
-
-static derr_t seq_set_builder_add_val(seq_set_builder_t *ssb, unsigned int n1){
-    derr_t e = E_OK;
-
-    PROP(&e, seq_set_builder_add_range(ssb, n1, n1) );
-
-    return e;
-}
-
-// walk the sorted values and build a dense-as-possible sequence set
-static ie_seq_set_t *seq_set_builder_extract(derr_t *e,
-        seq_set_builder_t *ssb){
-    if(is_error(*e)) goto fail;
-
-    ie_seq_set_t *base = NULL;
-
-    // start the traversal
-    jsw_atrav_t trav;
-    jsw_anode_t *node = jsw_atfirst(&trav, ssb);
-
-    // detect the empty-list case
-    if(!node) goto done;
-
-    // handle the very first node
-    seq_set_builder_elem_t *ssbe =
-        CONTAINER_OF(node, seq_set_builder_elem_t, node);
-    base = ie_seq_set_new(e, ssbe->n1, ssbe->n2);
-    ie_seq_set_t *cur = base;
-    CHECK_GO(e, fail);
-
-    // handle all other nodes
-    for(node = jsw_atnext(&trav); node != NULL; node = jsw_atnext(&trav)){
-        seq_set_builder_elem_t *ssbe =
-            CONTAINER_OF(node, seq_set_builder_elem_t, node);
-        // sequences touch?
-        if(ssbe->n1 <= cur->n2 + 1){
-            // yes, extend the current seq_set_t
-            cur->n2 = ssbe->n2;
-        }else{
-            // no, start a new one
-            cur->next = ie_seq_set_new(e, ssbe->n1, ssbe->n2);
-            CHECK_GO(e, fail_base);
-            cur = cur->next;
-        }
-    }
-
-done:
-    // always free the ssb, it's a one-time use item
-    seq_set_builder_free(ssb);
-
-    return base;
-
-fail_base:
-    // free anything we allocated
-    ie_seq_set_free(base);
-fail:
-    seq_set_builder_free(ssb);
-    return NULL;
-}
 
 
 // static derr_t maildir_resp_not_allowed(maildir_i* maildir, imap_resp_t* resp){
@@ -379,7 +212,6 @@ static derr_t add_msg_to_maildir(const string_builder_t *base,
         ORIG(&e, E_INTERNAL, "duplicate UID on file");
     }
 
-    printf("CALLING MSG_BASE_FILL\n");
     PROP(&e, msg_base_fill(msg_base, len, arg->subdir, name) );
 
     return e;
@@ -388,7 +220,6 @@ static derr_t add_msg_to_maildir(const string_builder_t *base,
 // not safe to call after maildir_init due to race conditions
 static derr_t populate_msgs(imaildir_t *m){
     derr_t e = E_OK;
-    LOG_ERROR("POPULATE!!\n");
 
     // check /cur and /new
     subdir_type_e subdirs[] = {SUBDIR_CUR, SUBDIR_NEW};
@@ -418,9 +249,7 @@ static derr_t populate_msgs(imaildir_t *m){
 
         // place the base in m->content.msgs_empty
         jsw_ainsert(&m->content.msgs_empty, &base->node);
-        LOG_ERROR("UNFILLED!!\n");
     }
-    LOG_ERROR("POPULATE DONE!!\n");
 
     return e;
 }
@@ -459,13 +288,14 @@ static int msg_mod_jsw_cmp_modseq(const void *a, const void *b){
 }
 
 derr_t imaildir_init(imaildir_t *m, string_builder_t path, const dstr_t *name,
-        dirmgr_i *dirmgr){
+        dirmgr_i *dirmgr, const keypair_t *keypair){
     derr_t e = E_OK;
 
     *m = (imaildir_t){
         .path = path,
         .name = name,
         .dirmgr = dirmgr,
+        .keypair = keypair,
         // TODO: finish setting values
         // .uid_validity = ???
         // .mflags = ???
@@ -799,13 +629,16 @@ static derr_t imaildir_new_msg(imaildir_t *m, unsigned int uid,
     msg_meta_t *meta;
     PROP(&e, msg_meta_new(&meta, flags, himodseq_dn + 1) );
 
+    // don't know the internaldate yet
+    imap_time_t intdate = {0};
+
     // create a new base
     msg_base_t *base;
-    PROP_GO(&e, msg_base_new(&base, uid, meta), fail_meta);
+    PROP_GO(&e, msg_base_new(&base, uid, intdate, meta), fail_meta);
 
     // add message to log
     maildir_log_i *log = m->content.log;
-    PROP_GO(&e, log->update_msg(log, uid, meta), fail_base);
+    PROP_GO(&e, log->update_msg(log, uid, base), fail_base);
 
     // insert meta into mods
     jsw_ainsert(&m->content.mods, &meta->mod.node);
@@ -823,6 +656,146 @@ fail_base:
     msg_base_free(&base);
 fail_meta:
     msg_meta_free(&meta);
+    uv_rwlock_wrunlock(&m->content.lock);
+    return e;
+}
+
+static derr_t imaildir_decrypt(imaildir_t *m, const dstr_t *cipher,
+        const string_builder_t *path, size_t *len){
+    derr_t e = E_OK;
+
+    // create the file
+    FILE *f;
+    PROP(&e, fopen_path(path, "w", &f) );
+
+    // TODO: fix decrypter_t API to support const input strings
+    // copy the content, just to work around the stream-only API of decrypter_t
+    dstr_t copy;
+    PROP_GO(&e, dstr_new(&copy, cipher->len), cu_file);
+    PROP_GO(&e, dstr_copy(cipher, &copy), cu_copy);
+
+    dstr_t plain;
+    PROP_GO(&e, dstr_new(&plain, cipher->len), cu_copy);
+
+    // TODO: use key_tool_decrypt instead, it is more robust
+
+    // create the decrypter
+    decrypter_t dc;
+    PROP_GO(&e, decrypter_new(&dc), cu_plain);
+    PROP_GO(&e, decrypter_start(&dc, m->keypair, NULL, NULL), cu_dc);
+
+    // decrypt the message
+    PROP_GO(&e, decrypter_update(&dc, &copy, &plain), cu_dc);
+    PROP_GO(&e, decrypter_finish(&dc, &plain), cu_dc);
+
+    if(len) *len = plain.len;
+
+    // write the file
+    PROP_GO(&e, dstr_fwrite(f, &plain), cu_dc);
+
+cu_dc:
+    decrypter_free(&dc);
+
+cu_plain:
+    dstr_free(&plain);
+
+cu_copy:
+    dstr_free(&copy);
+
+    int ret;
+cu_file:
+    ret = fclose(f);
+    // check for closing error
+    if(ret != 0 && !is_error(e)){
+        TRACE(&e, "fclose(%x): %x\n", FSB(path, &DSTR_LIT("/")),
+                FE(&errno));
+        ORIG(&e, E_OS, "failed to write file");
+    }
+
+    return e;
+}
+
+static derr_t imaildir_handle_static_fetch_attr(imaildir_t *m,
+        msg_base_t *base, const ie_fetch_resp_t *fetch){
+    derr_t e = E_OK;
+
+    if(!fetch->content) return e;
+
+    // we shouldn't have anything after the message is filled
+    if(base->filled){
+        LOG_ERROR("dropping unexpected static fetch attributes\n");
+        return e;
+    }
+
+    // we always fill all the static attributes in one request
+    if(!fetch->intdate.year){
+        ORIG(&e, E_RESPONSE, "missing INTERNALDATE response");
+    }
+
+    uv_rwlock_wrlock(&m->content.lock);
+
+    base->ref.internaldate = fetch->intdate;
+
+    /* save the internaldate in the database before saving the file content,
+       in case we crash */
+    maildir_log_i *log = m->content.log;
+    PROP_GO(&e, log->update_msg(log, base->ref.uid, base), fail_lock);
+
+    size_t tmp_id = m->content.tmp_count++;
+
+    // decrypt without lock
+    // TODO: this is not safe!  A dn_t could delete base.
+    uv_rwlock_wrunlock(&m->content.lock);
+
+    if(!fetch->content){
+        ORIG(&e, E_RESPONSE, "missing RFC822 content response");
+    }
+
+    // figure the temporary file name
+    DSTR_VAR(tmp_name, 32);
+    NOFAIL(&e, E_FIXEDSIZE, FMT(&tmp_name, "%x", FU(tmp_id)) );
+
+    // build the path
+    string_builder_t tmp_dir = TMP(&m->path);
+    string_builder_t tmp_path = sb_append(&tmp_dir, FD(&tmp_name));
+
+    // do the decryption
+    size_t len = 0;
+    PROP(&e, imaildir_decrypt(m, &fetch->content->dstr, &tmp_path, &len) );
+    base->ref.length = len;
+
+    // get hostname
+    DSTR_VAR(hostname, 256);
+    gethostname(hostname.data, hostname.size);
+    hostname.len = strnlen(hostname.data, HOSTNAME_COMPONENT_MAX_LEN);
+
+    // get epochtime
+    time_t tloc;
+    time_t tret = time(&tloc);
+    if(tret < 0){
+        // if this fails... just use zero
+        tloc = ((time_t) 0);
+    }
+
+    unsigned long epoch = (unsigned long)tloc;
+
+    // figure the new path
+    DSTR_VAR(cur_name, 255);
+    PROP(&e, maildir_name_write(&cur_name, epoch, base->ref.uid, len,
+                &hostname, NULL) );
+    string_builder_t cur_dir = CUR(&m->path);
+    string_builder_t cur_path = sb_append(&cur_dir, FD(&cur_name));
+
+    // move the file into place
+    PROP(&e, rename_path(&tmp_path, &cur_path) );
+
+    /* TODO: register the file as downloaded in the database, so we can detect
+             deletions from MUAs.  Probably this is not super important unless
+             we also support tracking file updates. */
+
+    return e;
+
+fail_lock:
     uv_rwlock_wrunlock(&m->content.lock);
     return e;
 }
@@ -855,17 +828,10 @@ static derr_t fetch_resp(up_t *up, const ie_fetch_resp_t *fetch){
         msg_flags_t flags = msg_flags_from_fetch_flags(fetch->flags);
         PROP(&e, imaildir_new_msg(up->m, fetch->uid, flags, &base) );
 
-        // TODO: handle INTERNALDATE
-
-        // do we have the content right now?
-        if(fetch->content){
-            // TODO: decrypt and save to file
-            LOG_ERROR("need to decrypt and save file\n");
-        }else{
+        if(!fetch->content){
             PROP(&e, seq_set_builder_add_val(&up->uids_to_download,
                         fetch->uid) );
         }
-
     }else{
         // existing UID
         // TODO: update flags
@@ -875,6 +841,8 @@ static derr_t fetch_resp(up_t *up, const ie_fetch_resp_t *fetch){
             LOG_ERROR("dropping unexpected RFC822 content\n");
         }
     }
+
+    PROP(&e, imaildir_handle_static_fetch_attr(up->m, base, fetch) );
 
     // did we see a MODSEQ value?
     if(fetch->modseq > 0){
@@ -924,11 +892,12 @@ static derr_t send_fetch(up_t *up){
     bool uid_mode = true;
     // fetch all the messages we need to download
     ie_seq_set_t *uidseq = seq_set_builder_extract(&e, &up->uids_to_download);
-    // fetch UID, FLAGS, RFC822 content, and MODSEQ
+    // fetch UID, FLAGS, RFC822 content, INTERNALDATE, and MODSEQ
     ie_fetch_attrs_t *attr = ie_fetch_attrs_new(&e);
     ie_fetch_attrs_add_simple(&e, attr, IE_FETCH_ATTR_UID);
     ie_fetch_attrs_add_simple(&e, attr, IE_FETCH_ATTR_FLAGS);
     ie_fetch_attrs_add_simple(&e, attr, IE_FETCH_ATTR_RFC822);
+    ie_fetch_attrs_add_simple(&e, attr, IE_FETCH_ATTR_INTDATE);
     ie_fetch_attrs_add_simple(&e, attr, IE_FETCH_ATTR_MODSEQ);
 
     // build fetch command
@@ -1036,7 +1005,6 @@ static derr_t next_cmd(up_t *up){
            all the flags and UIDs explicitly */
         PROP(&e, send_initial_search(up) );
     }else if(!seq_set_builder_isempty(&up->uids_to_download)){
-        printf("NEXT_CMD: MORE UIDS TO FETCH\n");
         // there are UID's we need to download
         PROP(&e, send_fetch(up) );
     }else{
@@ -1073,7 +1041,6 @@ static derr_t select_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
        the primary up_t, and it has to happen before the first next_cmd(), and
        it has to happen exactly once, so this is a pretty good spot. */
     PROP(&e, imaildir_get_unfilled(up->m, &up->uids_to_download) );
-    printf("UIDS to fetch? %d\n", seq_set_builder_isempty(&up->uids_to_download));
 
     /* if this is a first-time sync, we have to delay next_cmd(), which will
        try to save the HIMODSEQ */

@@ -274,7 +274,9 @@ us with two stragegies:
         which will have to be fused from server info and our own info
 
       - The "subserver" strategy: we accumulate commands from the mail client
-        and only pass the relevant things to the mail server
+        and only pass the relevant things to the mail server.  (update): to
+        do this properly, you would have to track a local version of modseq
+        numbers (and maybe even uids).
 
     Passthru pros:
       - very clean and easy
@@ -284,6 +286,8 @@ us with two stragegies:
       - less code reuse; there's no real opportunity to extract high-level
         functionality into an imap controller interface that could be used by
         sm_fetch and ditm
+      - (update): unable to handle situations like hiding un-decryptable
+        messages
 
     Subserver pros:
       - There's something beautiful about having the master stream updates to
@@ -309,18 +313,10 @@ us with two stragegies:
         correct IMAP to them.
 
     Conclusion:
-        I think the Passthru strategy is kind of a no-brainer.  It seems like
-        the Subserver strategy looks really neat for download-only mail
-        clients, but realistically when mail is being passed in both directions
-        the Passthru strategy will be cleaner.
-
-        In future expansions with non-IMAP backends, I could see either that
-        the Passthru strategy is still the best option (basically a
-        per-connection translation layer), or maybe expand the subserver layer
-        to implement its own MODSEQ data, so that there is really a full
-        separation between the upwards connection and the downwards connection.
-        I could do that now but it seems like a lot of extra machinery without
-        much added benefit.
+        Passthru sounds easy but seems too inflexible to be tenable.  I think
+        it most likely would not work.  Subserver is more complex but higly
+        flexible and will definitely work, as well as working nicely with
+        non-imap backends.
 
 
 # Socket / TLS / IMAP engines:

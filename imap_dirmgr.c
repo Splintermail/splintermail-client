@@ -66,8 +66,8 @@ static derr_t managed_dir_new(managed_dir_t **out, dirmgr_t *dm,
     PROP_GO(&e, dstr_new(&mgd->name, name->len), fail_malloc);
     PROP_GO(&e, dstr_copy(name, &mgd->name), fail_name);
     string_builder_t path = sb_append(&dm->path, FD(&mgd->name));
-    PROP_GO(&e, imaildir_init(&mgd->m, path, name, &mgd->dirmgr_iface),
-            fail_name);
+    PROP_GO(&e, imaildir_init(&mgd->m, path, name, &mgd->dirmgr_iface,
+                dm->keypair), fail_name);
 
     *out = mgd;
 
@@ -370,8 +370,14 @@ fail_lock:
     return e;
 }
 
-derr_t dirmgr_init(dirmgr_t *dm, string_builder_t path){
+derr_t dirmgr_init(dirmgr_t *dm, string_builder_t path,
+        const keypair_t *keypair){
     derr_t e = E_OK;
+
+    *dm = (dirmgr_t){
+        .keypair = keypair,
+        .path = path,
+    };
 
     int ret = uv_rwlock_init(&dm->dirs.lock);
     if(ret < 0){
@@ -380,9 +386,6 @@ derr_t dirmgr_init(dirmgr_t *dm, string_builder_t path){
     }
 
     PROP_GO(&e, hashmap_init(&dm->dirs.map), fail_lock);
-
-    // save path
-    dm->path = path;
 
     return e;
 

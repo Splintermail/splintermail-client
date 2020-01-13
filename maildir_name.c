@@ -22,9 +22,11 @@ derr_t maildir_name_parse(const dstr_t *name, unsigned long *epoch,
        HOST = hostname modified to not contain '/' or ':'
 
        // we define our own unique delivery id:
-       DELIV_ID = VER.UID
+       DELIV_ID = VER.UID.LEN
 
        VER = version of the delivery id
+
+       LEN = length of the message body
 
        UID = UID of the message
 

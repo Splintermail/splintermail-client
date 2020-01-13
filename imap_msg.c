@@ -25,7 +25,8 @@ void msg_meta_free(msg_meta_t **meta){
     *meta = NULL;
 }
 
-derr_t msg_base_new(msg_base_t **out, unsigned int uid, msg_meta_t *meta){
+derr_t msg_base_new(msg_base_t **out, unsigned int uid, imap_time_t intdate,
+        msg_meta_t *meta){
     derr_t e = E_OK;
 
     // allocate the new base
@@ -35,6 +36,7 @@ derr_t msg_base_new(msg_base_t **out, unsigned int uid, msg_meta_t *meta){
     *base = (msg_base_t){
         .ref = {
             .uid = uid,
+            .internaldate = intdate,
         },
         .meta = meta,
     };

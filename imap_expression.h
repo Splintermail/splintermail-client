@@ -42,8 +42,7 @@ typedef struct {
     int hour;
     int min;
     int sec;
-    int z_sign; /* -1 or + 1 */
-    int z_hour;
+    int z_hour; // signed
     int z_min;
 } imap_time_t;
 

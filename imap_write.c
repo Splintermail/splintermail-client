@@ -379,11 +379,11 @@ DSTR_STATIC(dec_dstr, "Dec");
 static derr_t validate_time(imap_time_t time){
     derr_t e = E_OK;
     bool pass = true;
-    if(time.year < 999 || time.year > 9999){
+    if(time.year < 1000 || time.year > 9999){
         TRACE(&e, "invalid year: %x\n", FI(time.year));
         pass = false;
     }
-    if(time.month < 0 || time.month > 11){
+    if(time.month < 1 || time.month > 12){
         TRACE(&e, "invalid month: %x\n", FI(time.month));
         pass = false;
     }
@@ -420,17 +420,17 @@ static derr_t validate_time(imap_time_t time){
 
 static dstr_t *get_imap_month(int month){
     switch(month){
-        case 0:  return &jan_dstr;
-        case 1:  return &feb_dstr;
-        case 2:  return &mar_dstr;
-        case 3:  return &apr_dstr;
-        case 4:  return &may_dstr;
-        case 5:  return &jun_dstr;
-        case 6:  return &jul_dstr;
-        case 7:  return &aug_dstr;
-        case 8:  return &sep_dstr;
-        case 9:  return &oct_dstr;
-        case 10: return &nov_dstr;
+        case 1:  return &jan_dstr;
+        case 2:  return &feb_dstr;
+        case 3:  return &mar_dstr;
+        case 4:  return &apr_dstr;
+        case 5:  return &may_dstr;
+        case 6:  return &jun_dstr;
+        case 7:  return &jul_dstr;
+        case 8:  return &aug_dstr;
+        case 9:  return &sep_dstr;
+        case 10:  return &oct_dstr;
+        case 11: return &nov_dstr;
         default: return &dec_dstr;
     }
 }
@@ -447,7 +447,8 @@ static derr_t time_skip_fill(skip_fill_t *sf, imap_time_t time){
         FI(time.hour / 10), FI(time.hour % 10),
         FI(time.min / 10), FI(time.min % 10),
         FI(time.sec / 10), FI(time.sec % 10),
-        FS(time.z_sign ? "+" : "-"), FI(time.z_hour / 10), FI(time.z_hour % 10),
+        FS(time.z_hour >= 0 ? "+" : "-"),
+        FI(time.z_hour / 10), FI(time.z_hour % 10),
         FI(time.z_min / 10), FI(time.z_min % 10)) );
 
     PROP(&e, raw_skip_fill(sf, &buffer) );
