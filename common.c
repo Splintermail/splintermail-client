@@ -977,8 +977,15 @@ derr_t dstr_write_file(const char* filename, const dstr_t* buffer){
         ORIG(&e, E_OPEN, "unable to open file");
     }
     PROP_GO(&e, dstr_write(fd, buffer), cleanup);
+
+    int ret;
 cleanup:
-    close(fd);
+    ret = close(fd);
+    // check for closing error
+    if(ret != 0 && !is_error(e)){
+        TRACE(&e, "close(%x): %x\n", FS(filename), FE(&errno));
+        ORIG(&e, E_OS, "failed to write file");
+    }
     return e;
 }
 
@@ -1015,8 +1022,15 @@ derr_t dstr_fwrite_file(const char* filename, const dstr_t* buffer){
         ORIG(&e, errno == ENOMEM ? E_NOMEM : E_OPEN, "unable to open file");
     }
     PROP_GO(&e, dstr_fwrite(f, buffer), cleanup);
+
+    int ret;
 cleanup:
-    fclose(f);
+    ret = fclose(f);
+    // check for closing error
+    if(ret != 0 && !is_error(e)){
+        TRACE(&e, "fclose(%x): %x\n", FS(filename), FE(&errno));
+        ORIG(&e, E_OS, "failed to write file");
+    }
     return e;
 }
 
