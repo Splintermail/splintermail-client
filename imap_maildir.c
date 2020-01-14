@@ -254,6 +254,43 @@ static derr_t populate_msgs(imaildir_t *m){
     return e;
 }
 
+static derr_t imaildir_print_msgs(imaildir_t *m){
+    derr_t e = E_OK;
+
+    PROP(&e, PFMT("msgs:\n") );
+    jsw_atrav_t trav;
+    jsw_anode_t *node = jsw_atfirst(&trav, &m->content.msgs);
+    for(; node != NULL; node = jsw_atnext(&trav)){
+        msg_base_t *base = CONTAINER_OF(node, msg_base_t, node);
+        DSTR_VAR(buffer, 1024);
+        PROP(&e, msg_base_write(base, &buffer) );
+        PROP(&e, PFMT("    %x\n", FD(&buffer)) );
+    }
+    PROP(&e, PFMT("----\n") );
+
+    PROP(&e, PFMT("unfilled:\n") );
+    node = jsw_atfirst(&trav, &m->content.msgs_empty);
+    for(; node != NULL; node = jsw_atnext(&trav)){
+        msg_base_t *base = CONTAINER_OF(node, msg_base_t, node);
+        DSTR_VAR(buffer, 1024);
+        PROP(&e, msg_base_write(base, &buffer) );
+        PROP(&e, PFMT("    %x\n", FD(&buffer)) );
+    }
+    PROP(&e, PFMT("----\n") );
+
+    PROP(&e, PFMT("expunged:\n") );
+    node = jsw_atfirst(&trav, &m->content.expunged);
+    for(; node != NULL; node = jsw_atnext(&trav)){
+        msg_expunge_t *expunge = CONTAINER_OF(node, msg_expunge_t, node);
+        DSTR_VAR(buffer, 1024);
+        PROP(&e, msg_expunge_write(expunge, &buffer) );
+        PROP(&e, PFMT("    %x\n", FD(&buffer)) );
+    }
+    PROP(&e, PFMT("----\n") );
+
+    return e;
+}
+
 // for maildir.content.msgs
 static const void *msg_base_jsw_get(const jsw_anode_t *node){
     const msg_base_t *base = CONTAINER_OF(node, msg_base_t, node);
@@ -345,6 +382,8 @@ derr_t imaildir_init(imaildir_t *m, string_builder_t path, const dstr_t *name,
     // populate messages by reading files
     PROP_GO(&e, populate_msgs(m), fail_free);
 
+    PROP_GO(&e, imaildir_print_msgs(m), fail_free);
+
     return e;
 
 fail_free:
@@ -359,6 +398,7 @@ fail_content_lock:
 // free must only be called if the maildir has no accessors
 void imaildir_free(imaildir_t *m){
     if(!m) return;
+    DROP_CMD(imaildir_print_msgs(m) );
     jsw_anode_t *node;
     // free all expunged
     while((node = jsw_apop(&m->content.expunged))){
@@ -518,7 +558,6 @@ static derr_t read_tag_up(ie_dstr_t *tag, size_t *tag_out, bool *was_ours){
     dstr_t ignore_substr = dstr_sub(&tag->dstr, 0, maildir_up.len);
     // make sure it starts with "maildir_up"
     if(dstr_cmp(&ignore_substr, &maildir_up) != 0){
-        PFMT("ignore_substr was %x\n", FD(&ignore_substr));
         *was_ours = false;
         return e;
     }
@@ -789,6 +828,16 @@ static derr_t imaildir_handle_static_fetch_attr(imaildir_t *m,
     // move the file into place
     PROP(&e, rename_path(&tmp_path, &cur_path) );
 
+    // fill base
+    PROP(&e, msg_base_fill(base, len, SUBDIR_CUR, &cur_name) );
+
+    // move base to msgs
+    jsw_anode_t *node = jsw_aerase(&m->content.msgs_empty, base);
+    if(node != &base->node){
+        ORIG(&e, E_INTERNAL, "removed wrong node from tree");
+    }
+    jsw_ainsert(&m->content.msgs, &base->node);
+
     /* TODO: register the file as downloaded in the database, so we can detect
              deletions from MUAs.  Probably this is not super important unless
              we also support tracking file updates. */
@@ -816,7 +865,7 @@ static derr_t fetch_resp(up_t *up, const ie_fetch_resp_t *fetch){
     jsw_anode_t *node = jsw_afind(&up->m->content.msgs, &fetch->uid, NULL);
     if(!node){
         // check empty messages
-        jsw_afind(&up->m->content.msgs_empty, &fetch->uid, NULL);
+        node = jsw_afind(&up->m->content.msgs_empty, &fetch->uid, NULL);
     }
     if(node){
         base = CONTAINER_OF(node, msg_base_t, node);
@@ -835,7 +884,7 @@ static derr_t fetch_resp(up_t *up, const ie_fetch_resp_t *fetch){
     }else{
         // existing UID
         // TODO: update flags
-        ORIG(&e, E_INTERNAL, "update flags");
+        LOG_ERROR("need to update flags");
 
         if(fetch->content){
             LOG_ERROR("dropping unexpected RFC822 content\n");
@@ -933,7 +982,6 @@ static derr_t initial_search_done(imap_cmd_cb_t *cb,
     if(!seq_set_builder_isempty(&up->uids_to_download)){
         /* skip next_cmd, since we can't store the HIGESTMODSEQ until after the
            first complete fetch */
-
         PROP(&e, send_fetch(up) );
     }else{
         PROP(&e, next_cmd(up) );
@@ -1289,6 +1337,10 @@ static derr_t untagged_ok(up_t *up, const ie_st_code_t *code,
                 hmsc_saw_ok_code(&up->hmsc, code->arg.himodseq);
                 break;
 
+            case IE_ST_CODE_UNSEEN:
+                // we can ignore this, since we use himodseq
+                break;
+
             case IE_ST_CODE_NOMODSEQ:
                 ORIG(&e, E_RESPONSE,
                         "server mailbox does not support modseq numbers");
@@ -1298,7 +1350,6 @@ static derr_t untagged_ok(up_t *up, const ie_st_code_t *code,
             case IE_ST_CODE_ALERT:
             case IE_ST_CODE_PARSE:
             case IE_ST_CODE_TRYCREATE:
-            case IE_ST_CODE_UNSEEN:
             case IE_ST_CODE_CAPA:
             case IE_ST_CODE_ATOM:
             // UIDPLUS extension
@@ -1423,16 +1474,14 @@ static derr_t conn_up_resp(maildir_i *maildir, imap_resp_t *resp){
             break;
 
         case IMAP_RESP_EXISTS:
-            // TODO
-            LOG_ERROR("IGNORING EXISTS RESPONSE\n");
+            // TODO: possibly handle this?
             break;
         case IMAP_RESP_RECENT:
-            // TODO
+            // TODO: possibly handle this?
             LOG_ERROR("IGNORING RECENT RESPONSE\n");
             break;
         case IMAP_RESP_FLAGS:
-            // TODO
-            LOG_ERROR("IGNORING RECENT RESPONSE\n");
+            // TODO: possibly handle this?
             break;
 
         case IMAP_RESP_STATUS:

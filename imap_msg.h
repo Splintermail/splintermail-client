@@ -246,6 +246,7 @@ typedef struct {
     // for storage from within the imaildir_t
     jsw_anode_t node;
 } msg_mod_t;
+DEF_CONTAINER_OF(msg_mod_t, node, jsw_anode_t);
 
 
 // immutable parts of an IMAP message, safe for reading via msg_view_t
@@ -290,7 +291,7 @@ struct msg_meta_t {
     // TODO: put storage stuff here when we do block allocation of msg_meta_t's
 };
 DEF_CONTAINER_OF(msg_meta_t, flags, msg_flags_t);
-DEF_CONTAINER_OF(msg_mod_t, node, jsw_anode_t);
+DEF_CONTAINER_OF(msg_meta_t, mod, msg_mod_t);
 
 // an accessor-owned view of a message
 struct msg_view_t {
@@ -314,6 +315,7 @@ typedef struct {
     jsw_anode_t node;
 } msg_expunge_t;
 DEF_CONTAINER_OF(msg_expunge_t, node, jsw_anode_t);
+DEF_CONTAINER_OF(msg_expunge_t, mod, msg_mod_t);
 
 
 derr_t msg_meta_new(msg_meta_t **out, msg_flags_t flags, unsigned long modseq);
@@ -322,6 +324,7 @@ void msg_meta_free(msg_meta_t **meta);
 // msg_base_t is restored from two places in a two-step process
 derr_t msg_base_new(msg_base_t **out, unsigned int uid, imap_time_t time,
         msg_meta_t *meta);
+// makes a copy of name
 derr_t msg_base_fill(msg_base_t *base, size_t len, subdir_type_e subdir,
         const dstr_t *filename);
 // base doesn't own the meta; that must be handled separately
@@ -333,6 +336,12 @@ void msg_view_free(msg_view_t **view);
 derr_t msg_expunge_new(msg_expunge_t **out, unsigned int uid,
         unsigned long modseq);
 void msg_expunge_free(msg_expunge_t **expunge);
+
+// helper functions for writing debug information to buffers
+derr_t msg_base_write(const msg_base_t *base, dstr_t *out);
+derr_t msg_meta_write(const msg_meta_t *meta, dstr_t *out);
+derr_t msg_mod_write(const msg_mod_t *mod, dstr_t *out);
+derr_t msg_expunge_write(const msg_expunge_t *expunge, dstr_t *out);
 
 
 static inline bool msg_flags_eq(msg_flags_t a, msg_flags_t b){

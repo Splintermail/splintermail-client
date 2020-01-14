@@ -117,3 +117,63 @@ void msg_expunge_free(msg_expunge_t **expunge){
     free(*expunge);
     *expunge = NULL;
 }
+
+// helper functions for writing debug information to buffers
+derr_t msg_base_write(const msg_base_t *base, dstr_t *out){
+    derr_t e = E_OK;
+
+    PROP(&e, FMT(out, "base:%x:%x/%x:",
+            FU(base->ref.uid),
+            base->filled ? FD(&base->filename) : FS("unfilled"),
+            FU(base->ref.length)) );
+
+    PROP(&e, msg_meta_write(base->meta, out) );
+
+    return e;
+}
+
+derr_t msg_meta_write(const msg_meta_t *meta, dstr_t *out){
+    derr_t e = E_OK;
+
+    PROP(&e, dstr_append(out, &DSTR_LIT("meta:")) );
+
+    msg_flags_t f = meta->flags;
+    if(f.answered){ PROP(&e, dstr_append(out, &DSTR_LIT("A")) ); }
+    if(f.draft){    PROP(&e, dstr_append(out, &DSTR_LIT("D")) ); }
+    if(f.flagged){  PROP(&e, dstr_append(out, &DSTR_LIT("F")) ); }
+    if(f.seen){     PROP(&e, dstr_append(out, &DSTR_LIT("S")) ); }
+    if(f.deleted){  PROP(&e, dstr_append(out, &DSTR_LIT("X")) ); }
+
+    PROP(&e, FMT(out, ":%x", FU(meta->mod.modseq)) );
+
+    return e;
+}
+
+derr_t msg_expunge_write(const msg_expunge_t *expunge, dstr_t *out){
+    derr_t e = E_OK;
+
+    PROP(&e, FMT(out, "expunge:%x", FU(expunge->uid)) );
+
+    return e;
+
+}
+
+derr_t msg_mod_write(const msg_mod_t *mod, dstr_t *out){
+    derr_t e = E_OK;
+
+    msg_meta_t *meta;
+    msg_expunge_t *expunge;
+
+    switch(mod->type){
+        case MOD_TYPE_MESSAGE:
+            meta = CONTAINER_OF(mod, msg_meta_t, mod);
+            PROP(&e, msg_meta_write(meta, out) );
+            break;
+        case MOD_TYPE_EXPUNGE:
+            expunge = CONTAINER_OF(mod, msg_expunge_t, mod);
+            PROP(&e, msg_expunge_write(expunge, out) );
+            break;
+    }
+
+    return e;
+}

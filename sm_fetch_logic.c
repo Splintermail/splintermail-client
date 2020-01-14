@@ -164,10 +164,21 @@ static derr_t do_sync_mailbox(fetcher_t *fetcher, jsw_anode_t *node){
     return e;
 }
 
+// a filter for only syncing with the inbox
+static bool node_is_for_inbox(jsw_anode_t *node){
+    ie_list_resp_t *list = CONTAINER_OF(node, ie_list_resp_t, node);
+    const dstr_t *dir_name = ie_mailbox_name(list->m);
+    return dstr_cmp(dir_name, &DSTR_LIT("INBOX")) == 0;
+}
+
 static derr_t sync_first_mailbox(fetcher_t *fetcher){
     derr_t e = E_OK;
 
     jsw_anode_t *node = jsw_atfirst(&fetcher->folders_trav, &fetcher->folders);
+
+    while(node && !node_is_for_inbox(node)){
+        node = jsw_atnext(&fetcher->folders_trav);
+    }
 
     PROP(&e, do_sync_mailbox(fetcher, node) );
 
@@ -178,6 +189,10 @@ static derr_t sync_next_mailbox(fetcher_t *fetcher){
     derr_t e = E_OK;
 
     jsw_anode_t *node = jsw_atnext(&fetcher->folders_trav);
+
+    while(node && !node_is_for_inbox(node)){
+        node = jsw_atnext(&fetcher->folders_trav);
+    }
 
     PROP(&e, do_sync_mailbox(fetcher, node) );
 
