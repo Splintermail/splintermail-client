@@ -617,6 +617,11 @@ typedef struct {
 } ie_search_resp_t;
 
 typedef struct {
+    bool earlier;
+    ie_seq_set_t *uids;
+} ie_vanished_resp_t;
+
+typedef struct {
     ie_st_resp_t *status_type;
     ie_dstr_t *capa;
     ie_list_resp_t *list;
@@ -629,10 +634,7 @@ typedef struct {
     unsigned int recent;
     ie_fetch_resp_t *fetch;
     ie_dstr_t *enabled;
-    struct {
-        bool earlier;
-        ie_seq_set_t *uids;
-    } vanished;
+    ie_vanished_resp_t *vanished;
 } imap_resp_arg_t;
 
 typedef struct {
@@ -993,6 +995,10 @@ void ie_status_resp_free(ie_status_resp_t *status);
 ie_search_resp_t *ie_search_resp_new(derr_t *e, ie_nums_t *nums,
         bool modseq_present, unsigned long modseqnum);
 void ie_search_resp_free(ie_search_resp_t *search);
+
+ie_vanished_resp_t *ie_vanished_resp_new(derr_t *e, bool earlier,
+        ie_seq_set_t *seq_set);
+void ie_vanished_resp_free(ie_vanished_resp_t *vanished);
 
 imap_resp_t *imap_resp_new(derr_t *e, imap_resp_type_t type,
         imap_resp_arg_t arg);

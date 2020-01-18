@@ -1382,11 +1382,15 @@ enabled_resp: ENABLED { MODE(ATOM); } SP capas_1[c]
 
 vanished_resp: VANISHED SP seq_set[s]
                 { extension_assert_on_builder(E, p->exts, EXT_QRESYNC);
-                  imap_resp_arg_t arg = {.vanished={.earlier=false, .uids=$s}};
+                  imap_resp_arg_t arg = {
+                      .vanished=ie_vanished_resp_new(E, false, $s)
+                  };
                   $$ = imap_resp_new(E, IMAP_RESP_VANISHED, arg); }
              | VANISHED SP '(' EARLIER ')' SP seq_set[s]
                 { extension_assert_on_builder(E, p->exts, EXT_QRESYNC);
-                  imap_resp_arg_t arg = {.vanished={.earlier=true, .uids=$s}};
+                  imap_resp_arg_t arg = {
+                      .vanished=ie_vanished_resp_new(E, true, $s)
+                  };
                   $$ = imap_resp_new(E, IMAP_RESP_VANISHED, arg); }
 ;
 

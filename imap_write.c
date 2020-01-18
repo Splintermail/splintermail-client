@@ -1597,10 +1597,10 @@ static derr_t do_imap_resp_write(const imap_resp_t *resp, dstr_t *out,
         case IMAP_RESP_VANISHED:
             PROP(&e, extension_assert_on(sf->exts, EXT_QRESYNC) );
             STATIC_SKIP_FILL("VANISHED ");
-            if(arg.vanished.earlier){
+            if(arg.vanished->earlier){
                 STATIC_SKIP_FILL("(EARLIER) ");
             }
-            PROP(&e, uid_set_skip_fill(sf, arg.vanished.uids) );
+            PROP(&e, uid_set_skip_fill(sf, arg.vanished->uids) );
             break;
 
         default:

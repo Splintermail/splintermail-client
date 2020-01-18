@@ -648,10 +648,10 @@ static derr_t test_imap_writer(void){
             {
                 .resp=imap_resp_new(&e, IMAP_RESP_VANISHED,
                     (imap_resp_arg_t){
-                        .vanished={
-                            .earlier=false,
-                            .uids=ie_seq_set_new(&e, 1, 2),
-                        },
+                        .vanished=ie_vanished_resp_new(&e,
+                                false,
+                                ie_seq_set_new(&e, 1, 2)
+                        ),
                     }
                 ),
                 .out=(size_chunk_out_t[]){
@@ -662,10 +662,10 @@ static derr_t test_imap_writer(void){
             {
                 .resp=imap_resp_new(&e, IMAP_RESP_VANISHED,
                     (imap_resp_arg_t){
-                        .vanished={
-                            .earlier=true,
-                            .uids=ie_seq_set_new(&e, 1, 2),
-                        },
+                        .vanished=ie_vanished_resp_new(&e,
+                                true,
+                                ie_seq_set_new(&e, 1, 2)
+                        ),
                     }
                 ),
                 .out=(size_chunk_out_t[]){

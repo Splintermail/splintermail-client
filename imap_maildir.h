@@ -104,16 +104,16 @@ struct maildir_conn_up_i {
     void (*cmd)(maildir_conn_up_i*, imap_cmd_t*);
     // this event indicates the maildir finished an initial sync
     void (*synced)(maildir_conn_up_i*);
-    // this event is a response to the maildir_i->select() call
+    // this event is a response to the maildir_i->unselect() call
     void (*unselected)(maildir_conn_up_i*);
-    // The maildir BROADCASTS is failures when it dies
+    // The maildir BROADCASTs its failures when it dies
     void (*release)(maildir_conn_up_i*, derr_t);
 };
 
 // the maildir will provide imap server behavior to a downwards session
 struct maildir_conn_dn_i {
     void (*resp)(maildir_conn_dn_i*, imap_cmd_t*);
-    // The maildir BROADCASTS is failures when it dies
+    // The maildir BROADCASTs its failures when it dies
     void (*release)(maildir_conn_dn_i*, derr_t);
 };
 

@@ -198,7 +198,8 @@ Responses which permit an untagged EXPUNGE response:
     would still have to wait for every command completion, due to it not being
     safe to do things like UID FETCH on a non-existent UID.  From that
     perspective, if you want to do pipelineing you must use message sequence
-    numbers instead of uids.
+    numbers instead of uids.  (update: I think maybe you just have to handle
+    BAD responses from the UID FETCH command...)
 
     But the other untagged responses (FETCH, RECENT, EXISTS) are allowed at any
     time, as far as I can tell.

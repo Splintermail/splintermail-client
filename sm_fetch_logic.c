@@ -697,6 +697,8 @@ static derr_t handle_one_maildir_cmd(fetcher_t *fetcher, imap_cmd_t *cmd){
     derr_t e = E_OK;
 
     // detect if we are receiving commands from a maildir we closed
+    // TODO: if we close one maildir and open another, how do we know where the
+    // stream of one maildir ends and the other stream begins?
     if(!fetcher->maildir){
         imap_cmd_free(cmd);
         return e;

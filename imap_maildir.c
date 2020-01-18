@@ -93,7 +93,6 @@ static derr_t up_new(up_t **out, maildir_conn_up_i *conn, imaildir_t *m){
     // start with the himodseqvalue in the persistent cache
     hmsc_prep(&up->hmsc, m->content.log->get_himodseq_up(m->content.log));
 
-    // TODO: walk through the m->content.msgs looking for unfilled msg_base_t's
     seq_set_builder_prep(&up->uids_to_download);
 
     link_init(&up->cbs);
@@ -294,23 +293,18 @@ static derr_t imaildir_print_msgs(imaildir_t *m){
 // for maildir.content.msgs
 static const void *msg_base_jsw_get(const jsw_anode_t *node){
     const msg_base_t *base = CONTAINER_OF(node, msg_base_t, node);
-    return (void*)base;
+    return (void*)&base->ref.uid;
 }
-static int msg_base_jsw_cmp_uid(const void *a, const void *b){
-    const msg_base_t *basea = a;
-    const msg_base_t *baseb = b;
-    return JSW_NUM_CMP(basea->ref.uid, baseb->ref.uid);
+static int jsw_cmp_uid(const void *a, const void *b){
+    const unsigned int *uida = a;
+    const unsigned int *uidb = b;
+    return JSW_NUM_CMP(*uida, *uidb);
 }
 
 // for maildir.content.expunged
 static const void *msg_expunge_jsw_get(const jsw_anode_t *node){
     const msg_expunge_t *expunge = CONTAINER_OF(node, msg_expunge_t, node);
-    return (void*)expunge;
-}
-static int msg_expunge_jsw_cmp_uid(const void *a, const void *b){
-    const msg_expunge_t *expungea = a;
-    const msg_expunge_t *expungeb = b;
-    return JSW_NUM_CMP(expungea->uid, expungeb->uid);
+    return (void*)&expunge->uid;
 }
 
 // for maildir.content.mods
@@ -318,10 +312,10 @@ static const void *msg_mod_jsw_get(const jsw_anode_t *node){
     const msg_mod_t *mod = CONTAINER_OF(node, msg_mod_t, node);
     return (void*)mod;
 }
-static int msg_mod_jsw_cmp_modseq(const void *a, const void *b){
-    const msg_mod_t *moda = a;
-    const msg_mod_t *modb = b;
-    return JSW_NUM_CMP(moda->modseq, modb->modseq);
+static int jsw_cmp_modseq(const void *a, const void *b){
+    const unsigned long *modseqa = a;
+    const unsigned long *modseqb = b;
+    return JSW_NUM_CMP(*modseqa, *modseqb);
 }
 
 derr_t imaildir_init(imaildir_t *m, string_builder_t path, const dstr_t *name,
@@ -363,15 +357,14 @@ derr_t imaildir_init(imaildir_t *m, string_builder_t path, const dstr_t *name,
     }
 
     // init msgs
-    jsw_ainit(&m->content.msgs, msg_base_jsw_cmp_uid, msg_base_jsw_get);
-    jsw_ainit(&m->content.msgs_empty, msg_base_jsw_cmp_uid, msg_base_jsw_get);
+    jsw_ainit(&m->content.msgs, jsw_cmp_uid, msg_base_jsw_get);
+    jsw_ainit(&m->content.msgs_empty, jsw_cmp_uid, msg_base_jsw_get);
 
     // init expunged
-    jsw_ainit(&m->content.expunged, msg_expunge_jsw_cmp_uid,
-            msg_expunge_jsw_get);
+    jsw_ainit(&m->content.expunged, jsw_cmp_uid, msg_expunge_jsw_get);
 
     // init mods
-    jsw_ainit(&m->content.mods, msg_mod_jsw_cmp_modseq, msg_mod_jsw_get);
+    jsw_ainit(&m->content.mods, jsw_cmp_modseq, msg_mod_jsw_get);
 
     // any remaining failures must result in a call to imaildir_free()
 
@@ -832,7 +825,7 @@ static derr_t imaildir_handle_static_fetch_attr(imaildir_t *m,
     PROP(&e, msg_base_fill(base, len, SUBDIR_CUR, &cur_name) );
 
     // move base to msgs
-    jsw_anode_t *node = jsw_aerase(&m->content.msgs_empty, base);
+    jsw_anode_t *node = jsw_aerase(&m->content.msgs_empty, &base->ref.uid);
     if(node != &base->node){
         ORIG(&e, E_INTERNAL, "removed wrong node from tree");
     }
@@ -840,7 +833,7 @@ static derr_t imaildir_handle_static_fetch_attr(imaildir_t *m,
 
     /* TODO: register the file as downloaded in the database, so we can detect
              deletions from MUAs.  Probably this is not super important unless
-             we also support tracking file updates. */
+             we also support detecit file updates in real-time. */
 
     return e;
 
@@ -995,12 +988,58 @@ static derr_t search_resp(up_t *up, const ie_search_resp_t *search){
 
     // send a UID fetch for each uid
     for(const ie_nums_t *uid = search->nums; uid != NULL; uid = uid->next){
-        /* TODO: Check if we've already downloaded this UID.  This could happen
-                 if a large initial download failed halfway through. */
+        /* Check if we've already downloaded this UID.  This could happen if a
+           large initial download failed halfway through. */
+        // TODO: race condition here, need to guard around content.msgs
+        if(jsw_afind(&up->m->content.msgs, &uid, NULL) != NULL){
+            continue;
+        }
 
         // add this UID to our list of existing UIDs
         PROP(&e, seq_set_builder_add_val(&up->uids_to_download, uid->num) );
     }
+
+    return e;
+}
+
+static derr_t vanished_resp(up_t *up, const ie_vanished_resp_t *vanished){
+    derr_t e = E_OK;
+
+    //// This is super broken.
+    // const ie_seq_set_t *uid_range = vanished->uids;
+    // for(; uid_range != NULL; uid_range = uid_range->next){
+    //     // get endpoints for this range (uid range must be concrete, no *'s)
+    //     unsigned int max = MAX(uid_range->n1, uid_range->n2);
+    //     unsigned int min = MIN(uid_range->n1, uid_range->n2);
+
+    //     // use while loop to avoid infinite loop if max == UINT_MAX
+    //     unsigned int uid = min;
+    //     do {
+    //         // delete any files from the filesystem
+    //         jsw_anode_t *node = jsw_aerase(&up->m->content.msgs, &uid);
+    //         if(node){
+    //             // message was on the filesystem
+    //             msg_base_t *base = CONTAINER_OF(node, msg_base_t, node);
+    //             /* TODO: wait, what is the deletion order?  Are all meta's always
+    //                      in content.mods?  What about unused metas?  What about
+    //                      deleteing messages that some people are still using?
+
+    //                      This needs a lot more thought.
+    //             */
+    //             msg_meta_free(&base->meta);
+    //         }
+    //         node = jsw_aerase(&up->m->content.msgs_empty, &uid);
+    //         if(node){
+    //             // message was not yet on the filesystem
+    //             msg_base_t *base = CONTAINER_OF(node, msg_base_t, node);
+    //             // TODO: figure this out
+    //             (void)base;
+    //         }
+    //         printf("loop\n");
+
+    //         uid++;
+    //     } while (uid != max);
+    // }
 
     return e;
 }
@@ -1186,6 +1225,8 @@ derr_t imaildir_register_up(imaildir_t *m, maildir_conn_up_i *conn_up,
 
 fail_dead:
     uv_mutex_unlock(&m->access.mutex);
+// fail_cmd:
+    imap_cmd_free(cmd);
 fail_up:
     up_free(&up);
     return e;
@@ -1473,6 +1514,10 @@ static derr_t conn_up_resp(maildir_i *maildir, imap_resp_t *resp){
             PROP_GO(&e, search_resp(up, arg->search), cu_resp);
             break;
 
+        case IMAP_RESP_VANISHED:
+            PROP_GO(&e, vanished_resp(up, arg->vanished), cu_resp);
+            break;
+
         case IMAP_RESP_EXISTS:
             // TODO: possibly handle this?
             break;
@@ -1487,7 +1532,6 @@ static derr_t conn_up_resp(maildir_i *maildir, imap_resp_t *resp){
         case IMAP_RESP_STATUS:
         case IMAP_RESP_EXPUNGE:
         case IMAP_RESP_ENABLED:
-        case IMAP_RESP_VANISHED:
             ORIG_GO(&e, E_INTERNAL, "unhandled responses", cu_resp);
 
         case IMAP_RESP_CAPA:

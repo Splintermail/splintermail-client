@@ -2007,6 +2007,28 @@ void ie_search_resp_free(ie_search_resp_t *search){
     free(search);
 }
 
+ie_vanished_resp_t *ie_vanished_resp_new(derr_t *e, bool earlier,
+        ie_seq_set_t *uids){
+    if(is_error(*e)) goto fail;
+
+    IE_MALLOC(e, ie_vanished_resp_t, vanished, fail);
+
+    vanished->earlier = earlier;
+    vanished->uids = uids;
+
+    return vanished;
+
+fail:
+    ie_seq_set_free(uids);
+    return NULL;
+}
+
+void ie_vanished_resp_free(ie_vanished_resp_t *vanished){
+    if(!vanished) return;
+    ie_seq_set_free(vanished->uids);
+    free(vanished);
+}
+
 static void imap_resp_arg_free(imap_resp_type_t type, imap_resp_arg_t arg){
     switch(type){
         case IMAP_RESP_STATUS_TYPE: ie_st_resp_free(arg.status_type); break;
@@ -2021,7 +2043,7 @@ static void imap_resp_arg_free(imap_resp_type_t type, imap_resp_arg_t arg){
         case IMAP_RESP_RECENT:      break;
         case IMAP_RESP_FETCH:       ie_fetch_resp_free(arg.fetch); break;
         case IMAP_RESP_ENABLED:     ie_dstr_free(arg.enabled); break;
-        case IMAP_RESP_VANISHED:    ie_seq_set_free(arg.vanished.uids); break;
+        case IMAP_RESP_VANISHED:    ie_vanished_resp_free(arg.vanished); break;
     }
 }
 
