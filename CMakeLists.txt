@@ -55,6 +55,7 @@ set(OBJ_TGTS
     hashmap
     imap_msg
     imap_maildir
+    imap_maildir_up
     imap_maildir_log_lmdb
     imap_dirmgr
     link
@@ -289,8 +290,9 @@ obj_depend_obj(imap_write imap_expression imap_extension common)
 obj_depend_obj(hashmap common)
 obj_depend_obj(imap_util common jsw_atree imap_expression)
 obj_depend_obj(imap_msg jsw_atree link hashmap fileops)
-obj_depend_obj(imap_maildir maildir_name imap_util imap_msg uv_util fileops imap_maildir_log_lmdb)
+obj_depend_obj(imap_maildir_up maildir_name imap_util imap_msg uv_util fileops)
 obj_depend_obj(imap_maildir_log_lmdb lmdb_interface)
+obj_depend_obj(imap_maildir imap_maildir_up imap_maildir_log_lmdb)
 obj_depend_obj(imap_dirmgr imap_maildir jsw_atree)
 obj_depend_obj(imap_session loop tls_engine imap_engine loop uv_interface)
 obj_depend_obj(maildir_name common)

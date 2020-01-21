@@ -866,91 +866,133 @@ Message sequences:
       - when do we actually have to update the indices in the view?  EXPUNGE?
       - the cost of porting updates back to the "real" mailbox from the view
 
-Overall IMAP sequence:
-    init loop, tls engine, and imap engine
-    loop starts listening for connections
-    client A connects
-    imap session A initialized
-    outgoing connection for imap session (ixs) A created
-    client A passes login info for a@splintermail
-    login info validated
-    user context (ixu) A initialized for a@splintermail
-    outgoing connection for ixu A created (to watch the key box)
-    now just service commands as you recieve them
-    ...
+    Update: no, to make things simple and to get message sequences "for free"
+    I'm just going to do jsw_atrees everywhere.  If you have 10,000 messages,
+    a lookup in the atree is only 14 comparisons.
 
-    user context A makes 1 outgoing connection:
-        which will watch for updates to the keys mailbox
-    client A
-        one will sit open watching for updates to the mailbox for syncing keys
+Message store thread safety:
 
-    user context A connects remotely, validates credentials
+    There's a lot of possible message states, but we will try to restrict the
+    possible combinations by not allowing views to include messages which have
+    not been downloaded.  This simplifies the number of states (avoid complex
+    states like "deleted-by-one-but-downloading-for-another"), at the cost of
+    not allowing download-on-request behavior.  That's ok though, since first
+    we want to support the full IMAP spec, and we couldn't support SEARCH
+    properly without download-on-request behavior.
 
-Separation between lower- and higher-level IMAP logic:
+    So a full table of possible message states, and the resulting states might
+    look like:
 
-    The IMAP engine deals with the full range of IMAP hooks, but it can
-    simplify the stream of events for a higher-level logic element.  A higher-
-    level element might be the mutt synchronizer, or the DITM server.
+        STATE      | log status  | file status | msgs status | expunged status
+        ----------------------------------------------------------------------
+(up_t)  detected   | unfilled    | not present | unfilled    | not present
+        downloaded | unfilled    | as /tmp/uid | unfilled    | not present
+        decrypted  | unfilled    | as /tmp/xyz | unfilled    | not present
+        ----------------------------------------------------------------------
+        available  | filled      | as /cur/uid | filled      | not present
+        expunged   | expunged    | as /cur/uid | expunged    | unpushed
+          .removed | ...         | not present | not present | ...
+          .pushed  | pushed      | ...         | ...         | pushed
+        ----------------------------------------------------------------------
+(dn_t)  appended   | not present | as /tmp/abc | not present | not present
+        encrypted  | not present | as /tmp/xyz | not present | not present
+        (after successful message submission, the next step is "available")
 
-    Low-level tasks that the IMAP engine can automate:
-      (for upwards connections)
-      - check for new folders
-            returns a list of new folders
-      - check folder for updates
-            returns updated flags and list of new message UIDs
-      - download message X
-            returns updated flags and list of new message UIDs
+    Notes:
+      - A message is in msgs and in expunged only after it has been expunged
+        locally and while there are still views open which have not accepted
+        the expunged message.
+      - expunged.removed is not a formal state; it is just what happens when
+        either all server accessors accept an expunge, or when we detect on
+        startup that a file exists on the filesystem that has been expunged.
+        In either case, the message will not longer be in msgs.
+      - expunged.pushed indicates the expunge command was pushed upstream
+      - Server accessors only ever see messages that are in the second block.
+        This is accomplished by simply building views that don't include the
+        unfilled messages.
+      - A uid is never removed from the log, though it is often updated
+      - A uid in the log, once expunged, must never be updated as if it were a
+        normal message.  This affects STORE-after-EXPUNGE cases.
+      - The available->expunged transition can be triggered by a VANISHED,
+        a VANISHED (EARLIER) — since the distinction only affects the up_t —
+        or an EXPUNGE coming from the server accessor.  Those should all call
+        the same imaildir_t command, which can handled any associated effects.
+      - It's not ok to expunge a message locally without pushing the change,
+        but only because the downwards connection could be broken right after
+        we expunge locally, and we would have to then keep the remote
+        connection open until the changes were done propagating upwards.  It is
+        better to force the expunge to be synchronous.
+      - It's not OK to append a message locally until after the remote APPEND
+        is complete, due to the above reason, but also due to factors like
+        the mail server reserves the right to reject the APPEND on the basis of
+        storage quotas or something like that.
+      - nothing in /tmp is reused across restarts
 
-      (for downwards connections)
-      - just be an imap server
-            higher-level logic receives hooks that server can't handle alone
-      - deal with some updates in the folder you have selected
-            no return, server just alerts its client when appropriate
+    Startup cases:
+      - log shows "unfilled" but file not present: download/decrypt message
+      - log shows "filled" but file not present: delete from remote store
+      - log shows "expunged" without ".pushed": push expunge upstream
+      - log shows "expunged" but file still present: delete locally
 
-imap_controller_t: the thing that tells imap_session what to do.
-    For imap clients, this/these would be scoped to main().  Multiple clients
-    could exist in a single application and would just own separate,
-    non-interacting imap sessions.  For an imap server, this would be scoped to
-    a listener_spec_t; multiple server applications could coexist on separate,
-    non-interacting listening sockets.
+    Difficulties:
 
-    For clients or sessions with multiple, non-interacting bundles of imap
-    sessions for multiple user accounts, the list of per-user structs should
-    exist within the overall imap_controller_t logic.
+      - How to handle complex multi-updates, such as a new message which has
+        been accepted by some accessor, accepted and updated by another,
+        accepted and updated differently by another, and accepted and deleted
+        by a final one?
+          - An easy thing to do is to have two jsw_atree's of messages; one for
+            messages which exist on the filesystem (whether semantically
+            expunged or not), where a message remains viewable until all server
+            accessors have finished reading it.  The second jsw_atree contains
+            only expunged messages.
+          - With the above strategy, storing flags on yet-unaccepted expunged
+            messages would work fine (as long as you left those changes
+            in-memory and did not try to log them; you'd instead have to log
+            a noop change for the resulting modseq, if you wanted to support
+            CONDSTORE or QRESYNC).
+          - It should be the responsibility of the imaildir_t to serialize all
+            flag-setting and expunging requests, keeping each base's meta
+            up-to-date, and deleting files when the expunge has been accepted
+            by all accessors.
+          - The above responsibility implies an imaildir_update() function
 
-imap_hooks_dn_t:
-    Define the imap server behavior.  These should be the same for all servers;
-    it is just "serve up the folder that we have downloaded and decrypted in
-    an IMAP-compliant way".  These should be built into the imap_engine.
+      - How would STORE'ing flags work?  The easy thing to do is to accept the
+        flags locally, create a modseq event for it, calculate a submission to
+        send upwards, then send it.  This would be vulnerable to client noise
+        like:
 
-    The only special behaviors will be:
-      - protecting the special ditm_keys folder
+          - we accept +\Seen, create a modseq, and alert all clients
+          - we queue a STORE +\Seen command
+          - we recieve a FETCH FLAGS \FLAGGED response, the result of some
+            STORE +\FLAGGED command sent by some other client
+          - we create a new modseq, and alert clients again
+          - we receive the FETCH FLAGS \Seen \Flagged response, the result of
+            our own STORE command
+          - we create a new modseq, and alert clients yet again
 
-imap_hooks_up_t:
-    This has two varieties:
-      - a clone/decrypt variety
-      - a watch-the-keys-folder variety
-    It should be possible to define one set of hooks and have a few callbacks
-    like "message_added" which are ignored by sessions which just do cloning
-    (since the underlying maildir will handle them properly), but which trigger
-    special actions in the watch-the-key-folder sessions.
+        I think this is ok though, because at the end of the day we have the
+        correct state.  These sorts of race conditions are inherent to multiple
+        clients setting conflicting values, but realistically they are pretty
+        rare corner cases... a human user is only going to set a flag on one
+        imap client at a time.
 
-Question:
-    should imap_engine be it's own thread and separated from the
-    higher-level logic?  Or should the higher level logic be on the same
-    thread?
+      - How would STORE'ing flags work if we did not force it to be
+        synchronous?  We would have to track the modseq_dn that we know to be
+        in agreement with the mailserver, so that if we crashed and restored
+        we could re-submit the STOREs that we had sent already.  But that would
+        require us to store the actual STORE command (which may be a flag diff)
+        that we sent alongside every modseq in the database, which sounds
+        terrible.
 
-    Same thread pros:
-      - no synchronization issues
-      - no separate (complex) events for each high-level imap functionality
+        Well, that's not quite true; you could pretty easily just allow remote
+        updates to be trampled in the rare case of a mid-STORE crash.  99% of
+        users would never notice the incorrectness.  I think the real
+        difficulty would be the need for persisting the connection after the
+        mail client disconnected, so probably it's better to force the change
+        to be synchronous.
 
-    own thread pros:
-      - imap engine is free to choose to give more priority to surprise reads
-      - session becomes the proper interface between the two levels
-      - high-level logic doesn't need to integrate with session closing
-
-      I like the own-thread pros better.  I like the cleaner architecture and
-      the event passing between the two won't be a complete rewrite of the imap
-      hooks because the higher level logic only needs a few actions (I think).
-
-
+      - If we make STORE'ing synchronous, then every server accessor would have
+        to receive some sort of serial whenever it sends a STORE (probably the
+        tag of the upwards STORE command) and it would have to wait for that
+        serial to be returned before it could actually respond to its client.
+        That seems much more doable.

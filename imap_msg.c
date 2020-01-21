@@ -1,5 +1,6 @@
 #include "imap_msg.h"
 #include "logger.h"
+#include "fileops.h"
 
 derr_t msg_meta_new(msg_meta_t **out, msg_flags_t flags, unsigned long modseq){
     derr_t e = E_OK;
@@ -25,8 +26,8 @@ void msg_meta_free(msg_meta_t **meta){
     *meta = NULL;
 }
 
-derr_t msg_base_new(msg_base_t **out, unsigned int uid, imap_time_t intdate,
-        msg_meta_t *meta){
+derr_t msg_base_new(msg_base_t **out, unsigned int uid, msg_base_state_e state,
+        imap_time_t intdate, msg_meta_t *meta){
     derr_t e = E_OK;
 
     // allocate the new base
@@ -39,6 +40,7 @@ derr_t msg_base_new(msg_base_t **out, unsigned int uid, imap_time_t intdate,
             .internaldate = intdate,
         },
         .meta = meta,
+        .state = state,
     };
 
     *out = base;
@@ -46,9 +48,14 @@ derr_t msg_base_new(msg_base_t **out, unsigned int uid, imap_time_t intdate,
     return e;
 }
 
-derr_t msg_base_fill(msg_base_t *base, size_t len, subdir_type_e subdir,
+derr_t msg_base_set_file(msg_base_t *base, size_t len, subdir_type_e subdir,
         const dstr_t *filename){
     derr_t e = E_OK;
+
+    // never set the file twice!
+    if(base->filename.data != NULL){
+        ORIG(&e, E_INTERNAL, "can't set two files for one message");
+    }
 
     // duplicate the filename into base
     PROP(&e, dstr_new(&base->filename, filename->len) );
@@ -57,12 +64,27 @@ derr_t msg_base_fill(msg_base_t *base, size_t len, subdir_type_e subdir,
     base->ref.length = len;
     base->subdir = subdir;
 
-    base->filled = true;
-
     return e;
 
 fail_filename:
     dstr_free(&base->filename);
+    return e;
+}
+
+derr_t msg_base_del_file(msg_base_t *base, const string_builder_t *basepath){
+    derr_t e = E_OK;
+
+    if(base->filename.data == NULL){
+        ORIG(&e, E_INTERNAL, "cannot delete file when none has been set");
+    }
+
+    string_builder_t subdir = SUB(basepath, base->subdir);
+    string_builder_t path = sb_append(&subdir, FD(&base->filename));
+    PROP(&e, remove_path(&path) );
+
+    dstr_free(&base->filename);
+    base->filename = (dstr_t){0};
+
     return e;
 }
 
@@ -94,13 +116,14 @@ void msg_view_free(msg_view_t **view){
 }
 
 derr_t msg_expunge_new(msg_expunge_t **out, unsigned int uid,
-        unsigned long modseq){
+        msg_expunge_state_e state, unsigned long modseq){
     derr_t e = E_OK;
 
     msg_expunge_t *expunge = malloc(sizeof(*expunge));
     if(expunge == NULL) ORIG(&e, E_NOMEM, "no mem");
     *expunge = (msg_expunge_t){
         .uid = uid,
+        .state = state,
         .mod = {
             .type = MOD_TYPE_EXPUNGE,
             .modseq = modseq,
@@ -122,10 +145,18 @@ void msg_expunge_free(msg_expunge_t **expunge){
 derr_t msg_base_write(const msg_base_t *base, dstr_t *out){
     derr_t e = E_OK;
 
-    PROP(&e, FMT(out, "base:%x:%x/%x:",
-            FU(base->ref.uid),
-            base->filled ? FD(&base->filename) : FS("unfilled"),
-            FU(base->ref.length)) );
+    dstr_t state_str = {0};
+    switch(base->state){
+        case MSG_BASE_UNFILLED: state_str = DSTR_LIT("unfilled"); break;
+        case MSG_BASE_FILLED:   state_str = DSTR_LIT("filled");   break;
+        case MSG_BASE_EXPUNGED: state_str = DSTR_LIT("expunged"); break;
+    }
+
+    PROP(&e, FMT(out, "base:%x:%x:%x/%x:",
+                FU(base->ref.uid),
+                FD(&state_str),
+                FD(&base->filename),
+                FU(base->ref.length)) );
 
     PROP(&e, msg_meta_write(base->meta, out) );
 

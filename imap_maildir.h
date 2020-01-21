@@ -169,35 +169,12 @@ struct imaildir_t {
     //     } dn;
     // } lists;
 
-    // lock ordering (when required) is content, then access
+    // lock ordering is downwards
 
     struct {
-        uv_rwlock_t lock;
-
-        // messages in the mailbox which we have downloaded, ordered by uid
-        jsw_atree_t msgs;  // msg_base_t->node
-        // messages in the mailbox which we have not downloaded, ordered by uid
-        jsw_atree_t msgs_empty;  // msg_base_t->node
-
-        // messages which no longer exist, ordered by uid
-        jsw_atree_t expunged;  // msg_expunge_t->node
-
-        // all modifications, ordered by modseq
-        jsw_atree_t mods;  // msg_mod_t->node
-
-        // access to persistent storage
-        maildir_log_i *log;
-        // msg_update_t's that are not up-to-date but still in a view somewhere
-        link_t unreconciled;  // msg_update_t->link
-
-        // the latest serial of things we put in /tmp
-        size_t tmp_count;
-    } content;
-
-    struct {
-        uv_mutex_t mutex;
+        uv_mutex_t lock;
         link_t ups;  // up_t->link;
-        /* The value of naccessors may not match the length of the accessors
+        /* The value of naccessors may not match the length of the accessor
            lists, particularly during the failing shutdown sequence. */
         size_t naccessors;
         /* failed refers to the whole imaildir_t, but the only race condition
@@ -205,6 +182,32 @@ struct imaildir_t {
            same mutex as naccessors */
         bool failed;
     } access;
+
+    struct {
+        uv_rwlock_t lock;
+        jsw_atree_t tree;  // msg_base_t->node
+    } msgs;
+
+    struct {
+        uv_rwlock_t lock;
+        jsw_atree_t tree;  // msg_mod_t->node
+    } mods;
+
+    struct {
+        uv_rwlock_t lock;
+        jsw_atree_t tree;  // msg_expunge_t->node;
+    } expunged;
+
+    struct {
+        uv_mutex_t lock;
+        maildir_log_i *log;
+    } log;
+
+    struct {
+        uv_mutex_t lock;
+        // the latest serial of things we put in /tmp
+        size_t count;
+    } tmp;
 };
 
 // open a maildir at path, path and name must be linked to long-lived objects
@@ -231,6 +234,8 @@ derr_t imaildir_register_dn(imaildir_t *m, maildir_conn_dn_i *dn,
 void imaildir_unregister_up(maildir_i *m, maildir_conn_up_i *conn);
 void imaildir_unregister_dn(maildir_i *m, maildir_conn_dn_i *conn);
 
+bool imaildir_synced(imaildir_t *m);
+
 /* Synchronous filesystem-backed storage for an imap maildir.
 
    Message content is stored in maildir format, and is managed directly by the
@@ -245,13 +250,12 @@ struct maildir_log_i {
     unsigned long (*get_himodseq_up)(maildir_log_i*);
     derr_t (*set_himodseq_up)(maildir_log_i*, unsigned long himodseq_up);
 
-    // store the up-to-date message date
-    derr_t (*update_msg)(maildir_log_i*, unsigned int uid,
-            const msg_base_t *base);
-    // store the expunged uid and the modseq_dn
-    derr_t (*expunge_msg)(maildir_log_i*, msg_expunge_t *expunge);
-    // wipe the database (such as with a UIDVALIDITY change)
-    derr_t (*drop)(maildir_log_i*);
+    // store the up-to-date message
+    derr_t (*update_msg)(maildir_log_i*, const msg_base_t *base);
+
+    // store the up-to-date expunge
+    derr_t (*update_expunge)(maildir_log_i*, msg_expunge_t *expunge);
+
     // close and free the log
     void (*close)(maildir_log_i*);
 };
@@ -260,5 +264,8 @@ struct maildir_log_i {
 derr_t imaildir_log_open(const string_builder_t *dirpath,
         jsw_atree_t *msgs_out, jsw_atree_t *expunged_out,
         jsw_atree_t *mods_out, maildir_log_i **log_out);
+
+// this must be implemented by some backend, currently only lmdb
+derr_t imaildir_log_rm(const string_builder_t *dirpath);
 
 #endif // IMAP_MAILDIR_H

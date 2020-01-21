@@ -210,9 +210,10 @@ DSTR_STATIC(lmdb_format_version, "1");
 
         1:12345:b:[afsdx:DATE]
         |   |   |    |
+        |   |   |    |
         |   |   |    flags (if not expunged)
         |   |   |
-        |   |   "m"essage or e"x"punged message
+        |   |   "u"nfilled / "f"illed / "e"xpunged / "x": expunge pushed
         |   |
         |   modseq number
         |
@@ -263,20 +264,35 @@ static derr_t marshal_message(const msg_base_t *base, dstr_t *out){
 
     out->len = 0;
 
-    // version number (1) : modseq : "m" for "message" : [flags] : date
-    PROP(&e, FMT(out, "%x:%x:m:", FD(&lmdb_format_version),
+    // version number (1) : modseq : "u"nfilled or "f"illed : [flags] : date
+    PROP(&e, FMT(out, "%x:%x:", FD(&lmdb_format_version),
                 FU(base->meta->mod.modseq)) );
 
-    msg_flags_t *flags = &base->meta->flags;
+    // filled or unfilled?
+    DSTR_STATIC(unfilled, "u");
+    DSTR_STATIC(filled, "f");
+    dstr_t *statechar = NULL;
+    switch(base->state){
+        case MSG_BASE_UNFILLED: statechar = &unfilled; break;
+        case MSG_BASE_FILLED: statechar = &filled; break;
+        case MSG_BASE_EXPUNGED:
+            ORIG(&e, E_INTERNAL, "can't log an EXPUNGED message");
+    }
+    if(statechar == NULL){
+        ORIG(&e, E_INTERNAL, "invalid expunge state");
+    }
+    PROP(&e, FMT(out, "%x:", FD(statechar)) );
 
+    // flags
+    msg_flags_t *flags = &base->meta->flags;
     if(flags->answered){ PROP(&e, dstr_append(out, &DSTR_LIT("A")) ); }
     if(flags->draft){    PROP(&e, dstr_append(out, &DSTR_LIT("D")) ); }
     if(flags->flagged){  PROP(&e, dstr_append(out, &DSTR_LIT("F")) ); }
     if(flags->seen){     PROP(&e, dstr_append(out, &DSTR_LIT("S")) ); }
     if(flags->deleted){  PROP(&e, dstr_append(out, &DSTR_LIT("X")) ); }
 
+    // internaldate
     PROP(&e, dstr_append(out, &DSTR_LIT(":")) );
-
     PROP(&e, marshal_date(base->ref.internaldate, out) );
 
     return e;
@@ -287,9 +303,22 @@ static derr_t marshal_expunge(const msg_expunge_t *expunge, dstr_t *out){
 
     out->len = 0;
 
-    // version number (1) : modseq : "x" for "expunge" :
-    PROP(&e, FMT(out, "%x:%x:x:", FD(&lmdb_format_version),
+    // version number (2) : modseq : "e"xpunged or "x" for expunged/pushed :
+
+    PROP(&e, FMT(out, "%x:%x:", FD(&lmdb_format_version),
                 FU(expunge->mod.modseq)) );
+
+    DSTR_STATIC(expunged, "e");
+    DSTR_STATIC(pushed, "x");
+    dstr_t *statechar = NULL;
+    switch(expunge->state){
+        case MSG_EXPUNGE_UNPUSHED: statechar = &expunged; break;
+        case MSG_EXPUNGE_PUSHED: statechar = &pushed; break;
+    }
+    if(statechar == NULL){
+        ORIG(&e, E_INTERNAL, "invalid expunge state");
+    }
+    PROP(&e, FMT(out, "%x:", FD(statechar)) );
 
     return e;
 }
@@ -408,8 +437,7 @@ cu_txn:
 }
 
 // store the new flags and the new modseq
-static derr_t update_msg(maildir_log_i* iface, unsigned int uid,
-        const msg_base_t *base){
+static derr_t update_msg(maildir_log_i* iface, const msg_base_t *base){
     derr_t e = E_OK;
 
     log_t *log = CONTAINER_OF(iface, log_t, iface);
@@ -423,7 +451,7 @@ static derr_t update_msg(maildir_log_i* iface, unsigned int uid,
     lmdb_key_t lk = {
         .type = LMDB_KEY_UID,
         .arg = {
-            .uid = uid,
+            .uid = base->ref.uid,
         },
     };
     DSTR_VAR(key, 32);
@@ -460,7 +488,7 @@ cu_txn:
 }
 
 // store the expunged uid and the new modseq
-static derr_t expunge_msg(maildir_log_i* iface, msg_expunge_t *expunge){
+static derr_t update_expunge(maildir_log_i* iface, msg_expunge_t *expunge){
     derr_t e = E_OK;
 
     log_t *log = CONTAINER_OF(iface, log_t, iface);
@@ -510,36 +538,6 @@ cu_txn:
     return e;
 }
 
-static derr_t drop(maildir_log_i* iface){
-    derr_t e = E_OK;
-
-    log_t *log = CONTAINER_OF(iface, log_t, iface);
-
-    // create a transaction
-    MDB_txn *txn;
-    MDB_dbi dbi;
-    PROP(&e, lmdb_txn_open(log, true, &txn, &dbi) );
-
-    // empty the database
-    int ret = mdb_drop(txn, dbi, 0);
-    if(ret){
-        TRACE(&e, "mdb_drop: %x\n", FLMDB(&ret));
-        ORIG_GO(&e, lmdb_err_type(ret), "error dropping database", cu_txn);
-    }
-
-    // clean up the in-memory values
-    log->uidvld = 0;
-    log->himodseq_up = 0;
-
-cu_txn:
-    if(is_error(e)){
-        mdb_txn_abort(txn);
-    }else{
-        mdb_txn_commit(txn);
-    }
-    return e;
-}
-
 // close the log
 static void log_close(maildir_log_i* iface){
     log_t *log = CONTAINER_OF(iface, log_t, iface);
@@ -547,9 +545,9 @@ static void log_close(maildir_log_i* iface){
     free(log);
 }
 
-static derr_t read_one_message(unsigned int uid, unsigned long modseq,
-        msg_flags_t flags, imap_time_t intdate, jsw_atree_t *msgs,
-        jsw_atree_t *mods){
+static derr_t read_one_message(unsigned int uid, msg_base_state_e state,
+        unsigned long modseq, msg_flags_t flags, imap_time_t intdate,
+        jsw_atree_t *msgs, jsw_atree_t *mods){
     derr_t e = E_OK;
 
     // allocate a new meta object
@@ -558,7 +556,7 @@ static derr_t read_one_message(unsigned int uid, unsigned long modseq,
 
     // allocate a new base object
     msg_base_t *base;
-    PROP_GO(&e, msg_base_new(&base, uid, intdate, meta), fail_meta);
+    PROP_GO(&e, msg_base_new(&base, uid, state, intdate, meta), fail_meta);
 
     // insert meta into mods
     jsw_ainsert(mods, &meta->mod.node);
@@ -573,13 +571,13 @@ fail_meta:
     return e;
 }
 
-static derr_t read_one_expunge(unsigned int uid, unsigned long modseq,
-        jsw_atree_t *expunged, jsw_atree_t *mods){
+static derr_t read_one_expunge(unsigned int uid, msg_expunge_state_e state,
+        unsigned long modseq, jsw_atree_t *expunged, jsw_atree_t *mods){
     derr_t e = E_OK;
 
     // allocate a new meta object
     msg_expunge_t *expunge;
-    PROP(&e, msg_expunge_new(&expunge, uid, modseq) );
+    PROP(&e, msg_expunge_new(&expunge, uid, state, modseq) );
 
     // add to expunged
     jsw_ainsert(expunged, &expunge->node);
@@ -638,7 +636,8 @@ static derr_t read_one_value(unsigned int uid, dstr_t *value,
 
     // now get the rest of the fields
     LIST_VAR(dstr_t, fields, 4);
-    PROP(&e, dstr_split(&version_rest.data[1], &DSTR_LIT(":"), &fields) );
+    NOFAIL(&e, E_FIXEDSIZE,
+            dstr_split(&version_rest.data[1], &DSTR_LIT(":"), &fields) );
     if(fields.len < 2){
         ORIG(&e, E_VALUE, "unparsable lmdb line");
     }
@@ -651,24 +650,38 @@ static derr_t read_one_value(unsigned int uid, dstr_t *value,
         ORIG(&e, E_VALUE, "unparsable lmdb line");
     }
     switch(fields.data[1].data[0]){
-        case 'm':
+        case 'u':
+        case 'f': {
             // we should have all of the fields
             if(fields.len != 4){
                 ORIG(&e, E_VALUE, "unparsable lmdb line");
+            }
+            msg_base_state_e state;
+            if(fields.data[1].data[0] == 'u'){
+                state = MSG_BASE_UNFILLED;
+            }else{
+                state = MSG_BASE_FILLED;
             }
             msg_flags_t flags;
             PROP(&e, parse_flags(&fields.data[2], &flags) );
             imap_time_t intdate;
             PROP(&e, parse_date(&fields.data[3], &intdate) );
-            // read the
             // submit parsed values
-            PROP(&e, read_one_message(uid, modseq, flags, intdate, msgs,
+            PROP(&e, read_one_message(uid, state, modseq, flags, intdate, msgs,
                         mods) );
-            break;
-        case 'x':
+        } break;
+
+        case 'e':
+        case 'x': {
+            msg_expunge_state_e state;
+            if(fields.data[1].data[0] == 'e'){
+                state = MSG_EXPUNGE_UNPUSHED;
+            }else{
+                state = MSG_EXPUNGE_PUSHED;
+            }
             // submit parsed values
-            PROP(&e, read_one_expunge(uid, modseq, expunged, mods) );
-            break;
+            PROP(&e, read_one_expunge(uid, state, modseq, expunged, mods) );
+        } break;
         default: ORIG(&e, E_VALUE, "unparsable lmdb line");
     }
 
@@ -763,8 +776,7 @@ derr_t imaildir_log_open(const string_builder_t *dirpath,
             .get_himodseq_up = get_himodseq_up,
             .set_himodseq_up = set_himodseq_up,
             .update_msg = update_msg,
-            .expunge_msg = expunge_msg,
-            .drop = drop,
+            .update_expunge = update_expunge,
             .close = log_close,
         },
     };
@@ -786,3 +798,13 @@ fail_malloc:
     free(log);
     return e;
 }
+
+derr_t imaildir_log_rm(const string_builder_t *dirpath){
+    derr_t e = E_OK;
+
+    string_builder_t lmdb_path = sb_append(dirpath, FS(".cache.lmdb"));
+    PROP(&e, rm_rf_path(&lmdb_path) );
+
+    return e;
+}
+

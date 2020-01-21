@@ -7,6 +7,36 @@ A collection of structs and functions to help write imap clients and servers.
 
 #include "imap_expression.h"
 
+typedef enum {
+    SUBDIR_CUR = 0,
+    SUBDIR_TMP = 1,
+    SUBDIR_NEW = 2,
+} subdir_type_e;
+
+// Helper functions for automating access to cur/, tmp/, and new/
+DSTR_STATIC(subdir_cur_dstr, "cur");
+DSTR_STATIC(subdur_tmp_dstr, "tmp");
+DSTR_STATIC(subdir_new_dstr, "new");
+
+static inline string_builder_t CUR(const string_builder_t *path){
+    return sb_append(path, FD(&subdir_cur_dstr));
+}
+static inline string_builder_t TMP(const string_builder_t *path){
+    return sb_append(path, FD(&subdur_tmp_dstr));
+}
+static inline string_builder_t NEW(const string_builder_t *path){
+    return sb_append(path, FD(&subdir_new_dstr));
+}
+static inline string_builder_t SUB(const string_builder_t *path,
+        subdir_type_e type){
+    switch(type){
+        case SUBDIR_CUR: return CUR(path);
+        case SUBDIR_NEW: return NEW(path);
+        case SUBDIR_TMP:
+        default:         return TMP(path);
+    }
+}
+
 /* imap_cmd_cb_t: a closure for handling responses to imap commands.
 
    call() may or may not happen, but free() will always happen */
