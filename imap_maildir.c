@@ -655,8 +655,7 @@ static derr_t delete_all_msg_files(imaildir_t *m){
 derr_t imaildir_up_check_uidvld(imaildir_t *m, unsigned int uidvld){
     derr_t e = E_OK;
 
-    maildir_log_i *log = m->log.log;
-    unsigned int old_uidvld = log->get_uidvld(log);
+    unsigned int old_uidvld = m->log.log->get_uidvld(m->log.log);
 
     if(old_uidvld != uidvld){
 
@@ -687,7 +686,7 @@ derr_t imaildir_up_check_uidvld(imaildir_t *m, unsigned int uidvld){
         PROP(&e, touch_path(&invalid_path) );
 
         // close the log
-        log->close(log);
+        m->log.log->close(m->log.log);
 
         // delete the log from the filesystem
         PROP(&e, imaildir_log_rm(&m->path) );
@@ -702,7 +701,7 @@ derr_t imaildir_up_check_uidvld(imaildir_t *m, unsigned int uidvld){
         PROP(&e, imaildir_read_cache_and_files(m) );
 
         // set the new uidvld
-        PROP(&e, log->set_uidvld(log, uidvld) );
+        PROP(&e, m->log.log->set_uidvld(m->log.log, uidvld) );
     }
 
     return e;
