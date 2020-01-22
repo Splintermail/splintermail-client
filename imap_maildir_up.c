@@ -198,7 +198,7 @@ static derr_t fetch_resp(up_t *up, const ie_fetch_resp_t *fetch){
     msg_base_t *base = imaildir_up_lookup_msg(up->m, fetch->uid, &expunged);
 
     if(expunged){
-        LOG_ERROR("detected fetch for expunged UID, skipping\n");
+        LOG_INFO("detected fetch for expunged UID, skipping\n");
         return e;
     }
 
@@ -211,10 +211,10 @@ static derr_t fetch_resp(up_t *up, const ie_fetch_resp_t *fetch){
             PROP(&e, seq_set_builder_add_val(&up->uids_to_download,
                         fetch->uid) );
         }
-    }else{
-        // existing UID
-        // TODO: update flags
-        LOG_ERROR("need to update flags\n");
+    }else if(fetch->flags){
+        // existing UID with update flags
+        msg_flags_t flags = msg_flags_from_fetch_flags(fetch->flags);
+        PROP(&e, imaildir_up_update_flags(up->m, base, flags) );
     }
 
     if(fetch->content){
@@ -754,11 +754,8 @@ static derr_t conn_up_resp(maildir_i *maildir, imap_resp_t *resp){
             break;
 
         case IMAP_RESP_EXISTS:
-            // TODO: possibly handle this?
             break;
         case IMAP_RESP_RECENT:
-            // TODO: possibly handle this?
-            LOG_ERROR("IGNORING RECENT RESPONSE\n");
             break;
         case IMAP_RESP_FLAGS:
             // TODO: possibly handle this?

@@ -222,26 +222,26 @@ static derr_t populate_msgs(imaildir_t *m){
 static derr_t imaildir_print_msgs(imaildir_t *m){
     derr_t e = E_OK;
 
-    PROP(&e, PFMT("msgs:\n") );
+    LOG_INFO("msgs:\n");
     jsw_atrav_t trav;
     jsw_anode_t *node = jsw_atfirst(&trav, &m->msgs.tree);
     for(; node != NULL; node = jsw_atnext(&trav)){
         msg_base_t *base = CONTAINER_OF(node, msg_base_t, node);
         DSTR_VAR(buffer, 1024);
         PROP(&e, msg_base_write(base, &buffer) );
-        PROP(&e, PFMT("    %x\n", FD(&buffer)) );
+        LOG_INFO("    %x\n", FD(&buffer));
     }
-    PROP(&e, PFMT("----\n") );
+    LOG_INFO("----\n");
 
-    PROP(&e, PFMT("expunged:\n") );
+    LOG_INFO("expunged:\n");
     node = jsw_atfirst(&trav, &m->expunged.tree);
     for(; node != NULL; node = jsw_atnext(&trav)){
         msg_expunge_t *expunge = CONTAINER_OF(node, msg_expunge_t, node);
         DSTR_VAR(buffer, 1024);
         PROP(&e, msg_expunge_write(expunge, &buffer) );
-        PROP(&e, PFMT("    %x\n", FD(&buffer)) );
+        LOG_INFO("    %x\n", FD(&buffer));
     }
-    PROP(&e, PFMT("----\n") );
+    LOG_INFO("----\n");
 
     return e;
 }
@@ -677,7 +677,7 @@ derr_t imaildir_up_check_uidvld(imaildir_t *m, unsigned int uidvld){
         if(old_uidvld){
             LOG_ERROR("detected change in UIDVALIDITY, dropping cache\n");
         }else{
-            LOG_ERROR("detected first-time download\n");
+            LOG_INFO("detected first-time download\n");
         }
 
         /* first mark the cache as invalid, in case we crash or lose power
@@ -780,6 +780,50 @@ fail:
     return e;
 }
 
+// update flags for an existing message
+derr_t imaildir_up_update_flags(imaildir_t *m, msg_base_t *base,
+        msg_flags_t flags){
+    derr_t e = E_OK;
+
+    // acquire locks
+    uv_rwlock_wrlock(&m->msgs.lock);
+    uv_rwlock_wrlock(&m->mods.lock);
+    uv_mutex_lock(&m->log.lock);
+
+    // get the next highest modseq
+    unsigned long modseq = himodseq_dn_unsafe(m) + 1;
+
+    /* TODO: if we decide to allow local-STORE-then-push semantics, here we
+             would have to merge local, unpushed +FLAGS and -FLAGS changes into
+             the info pushed to us by the remote. */
+
+    // create a new meta
+    msg_meta_t *meta;
+    PROP_GO(&e, msg_meta_new(&meta, flags, modseq), fail);
+
+    // place the new meta
+    msg_meta_t *old = base->meta;
+    base->meta = meta;
+    jsw_ainsert(&m->mods.tree, &meta->mod.node);
+
+    /* TODO: detect if we have any open views, and store the old meta until it
+             is no longer needed */
+
+    // if there are no active views, clean up the old meta right now
+    jsw_anode_t *erased = jsw_aerase(&m->mods.tree, &old->mod.modseq);
+    if(erased != &old->mod.node){
+        LOG_ERROR("erased the wrong meta from mods!\n");
+    }
+    msg_meta_free(&old);
+
+fail:
+    uv_mutex_unlock(&m->log.lock);
+    uv_rwlock_wrunlock(&m->mods.lock);
+    uv_rwlock_wrunlock(&m->msgs.lock);
+
+    return e;
+}
+
 static derr_t imaildir_decrypt(imaildir_t *m, const dstr_t *cipher,
         const string_builder_t *path, size_t *len){
     derr_t e = E_OK;
@@ -848,7 +892,7 @@ derr_t imaildir_up_handle_static_fetch_attr(imaildir_t *m,
 
     // we shouldn't have anything after the message is filled
     if(base->state != MSG_BASE_UNFILLED){
-        LOG_ERROR("dropping unexpected static fetch attributes\n");
+        LOG_WARN("dropping unexpected static fetch attributes\n");
         return e;
     }
 
@@ -998,7 +1042,7 @@ derr_t imaildir_up_expunge_pushed(imaildir_t *m, unsigned int uid){
     // get the expunge in-memory record
     jsw_anode_t *node = jsw_afind(&m->expunged.tree, &uid, NULL);
     if(!node){
-        LOG_ERROR("pushed an EXPUNGE that was not found in memory!\n");
+        LOG_WARN("pushed an EXPUNGE that was not found in memory!\n");
         // soft fail; don't throw an error
         goto fail;
     }

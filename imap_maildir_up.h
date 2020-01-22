@@ -61,6 +61,10 @@ msg_base_t *imaildir_up_lookup_msg(imaildir_t *m, unsigned int uid,
 derr_t imaildir_up_new_msg(imaildir_t *m, unsigned int uid, msg_flags_t flags,
         msg_base_t **out);
 
+// update flags for an existing message
+derr_t imaildir_up_update_flags(imaildir_t *m, msg_base_t *base,
+        msg_flags_t flags);
+
 // handle the static attributes from a FETCH
 derr_t imaildir_up_handle_static_fetch_attr(imaildir_t *m,
         msg_base_t *base, const ie_fetch_resp_t *fetch);
