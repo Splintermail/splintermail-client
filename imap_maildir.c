@@ -260,6 +260,37 @@ static derr_t imaildir_read_cache_and_files(imaildir_t *m){
     return e;
 }
 
+static derr_t delete_one_msg_file(const string_builder_t *base,
+        const dstr_t *name, bool is_dir, void *data){
+    derr_t e = E_OK;
+    (void)data;
+
+    // ignore directories
+    if(is_dir) return e;
+
+    string_builder_t path = sb_append(base, FD(name));
+
+    PROP(&e, remove_path(&path) );
+
+    return e;
+}
+
+static derr_t delete_all_msg_files(const string_builder_t *maildir_path){
+    derr_t e = E_OK;
+
+    // check /cur and /new
+    subdir_type_e subdirs[] = {SUBDIR_CUR, SUBDIR_NEW, SUBDIR_TMP};
+
+    for(size_t i = 0; i < sizeof(subdirs)/sizeof(*subdirs); i++){
+        subdir_type_e subdir = subdirs[i];
+        string_builder_t subpath = SUB(maildir_path, subdir);
+
+        PROP(&e, for_each_file_in_dir2(&subpath, delete_one_msg_file, NULL) );
+    }
+
+    return e;
+}
+
 // for maildir.content.msgs
 static const void *msg_base_jsw_get(const jsw_anode_t *node){
     const msg_base_t *base = CONTAINER_OF(node, msg_base_t, node);
@@ -291,6 +322,24 @@ static int jsw_cmp_modseq(const void *a, const void *b){
 derr_t imaildir_init(imaildir_t *m, string_builder_t path, const dstr_t *name,
         dirmgr_i *dirmgr, const keypair_t *keypair){
     derr_t e = E_OK;
+
+    // check if the cache is in an invalid state
+    string_builder_t invalid_path = sb_append(&path, FS(".invalid"));
+    bool is_invalid;
+    PROP(&e, exists_path(&invalid_path, &is_invalid) );
+
+    if(is_invalid){
+        // we must have failed while wiping the cache; finish the job
+
+        // delete the log from the filesystem
+        PROP(&e, imaildir_log_rm(&path) );
+
+        // delete message files from the filesystem
+        PROP(&e, delete_all_msg_files(&path) );
+
+        // cache is no longer invalid
+        PROP(&e, remove_path(&invalid_path) );
+    }
 
     *m = (imaildir_t){
         .path = path,
@@ -621,37 +670,6 @@ void imaildir_forceclose(imaildir_t *m){
     imaildir_fail(m, E_OK);
 }
 
-static derr_t delete_one_msg_file(const string_builder_t *base,
-        const dstr_t *name, bool is_dir, void *data){
-    derr_t e = E_OK;
-    (void)data;
-
-    // ignore directories
-    if(is_dir) return e;
-
-    string_builder_t path = sb_append(base, FD(name));
-
-    PROP(&e, remove_path(&path) );
-
-    return e;
-}
-
-static derr_t delete_all_msg_files(imaildir_t *m){
-    derr_t e = E_OK;
-
-    // check /cur and /new
-    subdir_type_e subdirs[] = {SUBDIR_CUR, SUBDIR_NEW, SUBDIR_TMP};
-
-    for(size_t i = 0; i < sizeof(subdirs)/sizeof(*subdirs); i++){
-        subdir_type_e subdir = subdirs[i];
-        string_builder_t subpath = SUB(&m->path, subdir);
-
-        PROP(&e, for_each_file_in_dir2(&subpath, delete_one_msg_file, NULL) );
-    }
-
-    return e;
-}
-
 derr_t imaildir_up_check_uidvld(imaildir_t *m, unsigned int uidvld){
     derr_t e = E_OK;
 
@@ -670,7 +688,7 @@ derr_t imaildir_up_check_uidvld(imaildir_t *m, unsigned int uidvld){
                  be wrlock()'d to enter this part of the code, but it spends
                  most of its time rdlock()'d by server accessors and such. */
         /* TODO: on windows, we'll have to ensure that nobody has any files
-                 open at all, because delete_all_msgs() would fail */
+                 open at all, because delete_all_msg_files() would fail */
 
 
         // if old_uidvld is nonzero, this really is a change, not a first-time
@@ -692,10 +710,13 @@ derr_t imaildir_up_check_uidvld(imaildir_t *m, unsigned int uidvld){
         PROP(&e, imaildir_log_rm(&m->path) );
 
         // delete message files from the filesystem
-        PROP(&e, delete_all_msg_files(m) );
+        PROP(&e, delete_all_msg_files(&m->path) );
 
         // empty in-memory structs
         free_trees_unsafe(m);
+
+        // cache is no longer invalid
+        PROP(&e, remove_path(&invalid_path) );
 
         // reopen the log and repopulate the maildir (it should be empty)
         PROP(&e, imaildir_read_cache_and_files(m) );

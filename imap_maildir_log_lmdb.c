@@ -803,7 +803,11 @@ derr_t imaildir_log_rm(const string_builder_t *dirpath){
     derr_t e = E_OK;
 
     string_builder_t lmdb_path = sb_append(dirpath, FS(".cache.lmdb"));
-    PROP(&e, rm_rf_path(&lmdb_path) );
+    bool dir_exists;
+    PROP(&e, exists_path(&lmdb_path, &dir_exists) );
+    if(dir_exists){
+        PROP(&e, rm_rf_path(&lmdb_path) );
+    }
 
     return e;
 }
