@@ -46,6 +46,7 @@ typedef struct {
     manager_i *mgr;
     ssl_context_t* ssl_ctx;
     imape_control_i *imap_control;
+    engine_t *downstream;
     // only for connect sessions:
     const char *host;
     const char *service;

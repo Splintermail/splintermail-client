@@ -164,7 +164,7 @@ static derr_t imap_session_do_alloc(imap_session_t *s,
     if(s->pipeline->imape){
         imape_data_prestart(&s->imape_data, s->pipeline->imape, &s->session,
                 imap_session_ref_up_imape, imap_session_ref_down_imape,
-                args->imap_control);
+                args->imap_control, args->downstream);
     }
 
     return e;

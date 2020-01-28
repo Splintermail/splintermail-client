@@ -3,13 +3,8 @@
 #include "sm_fetch.h"
 #include "logger.h"
 #include "uv_util.h"
-#include "hashmap.h"
 #include "jsw_atree.h"
 #include "crypto.h"
-
-#define KEY "../c/test/files/ssl/good-key.pem"
-#define CERT "../c/test/files/ssl/good-cert.pem"
-#define DH "../c/test/files/ssl/dh_4096.pem"
 
 uv_idle_t idle;
 loop_t loop;
@@ -260,12 +255,13 @@ static derr_t fetcher_init(fetcher_t *fetcher, const char *host,
     /* establish the uv_async_t; if that fails we must not create off-thread
        resources or they would not be able to communicate with us */
 
-    // allocate memory for both sessions, but don't start them until later
+    // allocate memory for the session, but don't start it until later
     imap_session_alloc_args_t arg_up = {
         fetcher->pipeline,
         &fetcher->up.mgr,   // manager_i
         fetcher->cli_ctx,   // ssl_context_t
         &fetcher->up.ctrl,  // imape_control_i
+        &fetcher->engine,
         fetcher->host,
         fetcher->svc,
         (terminal_t){},
@@ -473,7 +469,7 @@ static void fetcher_advance_onthread(fetcher_t *fetcher){
 ////////////////
 
 
-static derr_t build_pipeline(imap_pipeline_t *pipeline, fetcher_t *fetcher){
+static derr_t build_pipeline(imap_pipeline_t *pipeline, engine_t *quit_engine){
     derr_t e = E_OK;
 
     // set UV_THREADPOOL_SIZE
@@ -488,7 +484,7 @@ static derr_t build_pipeline(imap_pipeline_t *pipeline, fetcher_t *fetcher){
     PROP_GO(&e, tlse_add_to_loop(&tlse, &loop.uv_loop), fail);
 
     // initialize IMAP engine
-    PROP_GO(&e, imape_init(&imape, 5, &tlse.engine, &fetcher->engine), fail);
+    PROP_GO(&e, imape_init(&imape, 5, &tlse.engine, quit_engine), fail);
     PROP_GO(&e, imape_add_to_loop(&imape, &loop.uv_loop), fail);
 
     *pipeline = (imap_pipeline_t){
@@ -548,7 +544,7 @@ static derr_t sm_fetch(char *host, char *svc, char *user, char *pass,
     PROP_GO(&e, keypair_load(&keypair, keyfile), cu_ssl_lib);
 
     imap_pipeline_t pipeline;
-    PROP_GO(&e, build_pipeline(&pipeline, &fetcher), cu_keypair);
+    PROP_GO(&e, build_pipeline(&pipeline, &fetcher.engine), cu_keypair);
 
     /* After building the pipeline, we must run the pipeline if we want to
        cleanup nicely.  That means that we can't follow the normal cleanup

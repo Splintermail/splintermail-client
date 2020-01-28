@@ -56,6 +56,7 @@ set(OBJ_TGTS
     imap_msg
     imap_maildir
     imap_maildir_up
+    imap_maildir_dn
     imap_maildir_log_lmdb
     imap_dirmgr
     link
@@ -65,6 +66,7 @@ set(OBJ_TGTS
     # imap_ditm_logic
     sm_fetch_logic
     imap_util
+    sm_serve_logic
 )
 
 set(EXE_TGTS
@@ -75,6 +77,7 @@ set(EXE_TGTS
     decrypt_msg
     # imap_ditm
     sm_fetch
+    sm_serve
 )
 
 set(TEST_OBJ_TGTS
@@ -290,9 +293,10 @@ obj_depend_obj(imap_write imap_expression imap_extension common)
 obj_depend_obj(hashmap common)
 obj_depend_obj(imap_util common jsw_atree imap_expression)
 obj_depend_obj(imap_msg jsw_atree link hashmap fileops)
-obj_depend_obj(imap_maildir_up maildir_name imap_util imap_msg uv_util fileops)
+obj_depend_obj(imap_maildir_up maildir_name imap_util imap_msg uv_util crypto fileops)
+obj_depend_obj(imap_maildir_dn maildir_name imap_util imap_msg uv_util crypto fileops)
 obj_depend_obj(imap_maildir_log_lmdb lmdb_interface)
-obj_depend_obj(imap_maildir imap_maildir_up imap_maildir_log_lmdb)
+obj_depend_obj(imap_maildir imap_maildir_up imap_maildir_dn imap_maildir_log_lmdb)
 obj_depend_obj(imap_dirmgr imap_maildir jsw_atree)
 obj_depend_obj(imap_session loop tls_engine imap_engine loop uv_interface)
 obj_depend_obj(maildir_name common)
@@ -306,7 +310,8 @@ target_link_libraries(encrypt_msg crypto opt_parse)
 target_link_libraries(decrypt_msg crypto opt_parse)
 target_link_libraries(olt common fileops opt_parse)
 # target_link_libraries(imap_ditm imap_session imap_dirmgr imap_ditm_logic crypto)
-target_link_libraries(sm_fetch imap_session imap_dirmgr sm_fetch_logic crypto)
+target_link_libraries(sm_fetch imap_session imap_dirmgr sm_fetch_logic)
+target_link_libraries(sm_serve imap_session imap_dirmgr sm_serve_logic)
 
 # decide if we are building server code
 if("${BUILD_SERVER_CODE}")
@@ -491,6 +496,7 @@ if("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU")
     target_compile_options(uv_util_o PRIVATE -fno-strict-aliasing)
     # target_compile_options(imap_ditm PRIVATE -fno-strict-aliasing)
     target_compile_options(sm_fetch PRIVATE -fno-strict-aliasing)
+    target_compile_options(sm_serve PRIVATE -fno-strict-aliasing)
     target_compile_options(imap_parse_tab_o PRIVATE -Wno-sign-conversion)
     target_compile_options(imap_parse_tab_o PRIVATE -Wno-conversion)
     # add some compiler hardening flags

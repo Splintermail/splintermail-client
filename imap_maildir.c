@@ -6,6 +6,7 @@
 
 #include "imap_maildir.h"
 #include "imap_maildir_up.h"
+#include "imap_maildir_dn.h"
 #include "logger.h"
 #include "fileops.h"
 #include "uv_util.h"
@@ -18,19 +19,6 @@
 
 // forward declarations
 static unsigned long himodseq_dn_unsafe(imaildir_t *m);
-
-// dn_t is all the state we have for a downwards connection
-typedef struct {
-    /* TODO: support downwards connections
-        The structures needed will be:
-          - maildir_conn_dn_i
-          - maildir_i
-          - a view of the mailbox
-          - some concept of callbacks for responding to commands
-          ...
-          - NOT a list of uncommitted changes; that list should be maildir-wide
-    */
-} dn_t;
 
 typedef struct {
     imaildir_t *m;
@@ -614,6 +602,36 @@ void imaildir_unregister_up(maildir_i *maildir, maildir_conn_up_i *conn){
     }
 
     up_free(&up);
+
+    bool all_unregistered = (--m->access.naccessors == 0);
+
+    /* done with our own thread safety, the race between all_unregistered and
+       imaildir_register must be be resolved externally if we want it to be
+       safe to call imaildir_free() inside an all_unregistered() callback */
+    uv_mutex_unlock(&m->access.lock);
+
+    if(all_unregistered){
+        m->dirmgr->all_unregistered(m->dirmgr);
+    }
+}
+
+void imaildir_unregister_dn(maildir_i *maildir, maildir_conn_dn_i *conn){
+    // conn argument is just for type safety
+    (void)conn;
+    dn_t *dn = CONTAINER_OF(maildir, dn_t, maildir);
+    imaildir_t *m = dn->m;
+
+    uv_mutex_lock(&m->access.lock);
+
+    /* In closing state, the list of accessors is not edited here.  This
+       ensures that the iteration through the accessors list during
+       imaildir_fail() is always safe. */
+    if(!m->access.failed){
+        // TODO: detect if the primary dn_t has changed
+        link_remove(&dn->link);
+    }
+
+    dn_free(&dn);
 
     bool all_unregistered = (--m->access.naccessors == 0);
 

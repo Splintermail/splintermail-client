@@ -24,8 +24,8 @@ struct imape_t {
     queue_t write_events;
     // upstream engine, to which we pass write events
     engine_t *upstream;
-    // downstream engine, to which we pass read events
-    engine_t *downstream;
+    // quit_downstream engine, to which we pass only QUIT events
+    engine_t *quit_downstream;
     // for handling quitting state
     bool quitting;
     event_t *quit_ev;
@@ -47,6 +47,7 @@ struct imape_data_t {
     ref_fn_t ref_up;
     ref_fn_t ref_down;
     imape_control_i *control;
+    engine_t *downstream;  // where we send READ events
     // generic per-engine data stuff
     engine_data_state_t data_state;
     event_t start_ev;
@@ -65,12 +66,13 @@ struct imape_data_t {
 DEF_CONTAINER_OF(imape_data_t, write_qcb, queue_cb_t)
 
 derr_t imape_init(imape_t *imape, size_t nwrite_events, engine_t *upstream,
-        engine_t *downstream);
+        engine_t *quit_downstream);
 void imape_free(imape_t *imape);
 derr_t imape_add_to_loop(imape_t *imape, uv_loop_t *loop);
 
 void imape_data_prestart(imape_data_t *id, imape_t *imape, session_t *session,
-        ref_fn_t ref_up, ref_fn_t ref_down, imape_control_i *control);
+        ref_fn_t ref_up, ref_fn_t ref_down, imape_control_i *control,
+        engine_t *downstream);
 void imape_data_start(imape_data_t *id);
 void imape_data_close(imape_data_t *id);
 

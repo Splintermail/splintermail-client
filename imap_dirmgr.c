@@ -21,6 +21,19 @@ void dirmgr_close_up(dirmgr_t *dm, maildir_i *maildir,
     uv_rwlock_wrunlock(&dm->dirs.lock);
 }
 
+void dirmgr_close_dn(dirmgr_t *dm, maildir_i *maildir,
+        maildir_conn_dn_i *conn){
+    // coordinate with calls to dirmgr_open:
+
+    // we may end up freeing the mgd and removing it from the dirmgr
+    uv_rwlock_wrlock(&dm->dirs.lock);
+
+    // imaildir_unregister may result in a call to all_unregistered()
+    imaildir_unregister_dn(maildir, conn);
+
+    uv_rwlock_wrunlock(&dm->dirs.lock);
+}
+
 /* all_unregistered() can only be called from within the lock scope of
    dirmgr_close_up/dn(), so it doesn't need any locking */
 static void all_unregistered(dirmgr_i *iface){

@@ -43,6 +43,7 @@ static derr_t conn_recvd(listener_spec_t *lspec, session_t **session){
         NULL, // mgr (filled in by echo_session_mgr_new)
         t->ssl_ctx,
         NULL, // imap_control
+        NULL, // imape_data's downstream
         NULL, // host
         NULL, // service
         (terminal_t){},
@@ -198,6 +199,7 @@ static derr_t test_tlse(void){
         NULL, // mgr (filled in by cb_reader_writer_init)
         &ssl_ctx_client,
         NULL, // imap_control
+        NULL, // imape_data's downstream
         host,
         port_str,
         (terminal_t){},

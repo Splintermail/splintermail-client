@@ -118,7 +118,7 @@ static inline bool pvt_prop(derr_t *e, derr_t code,
         const char *file, const char *func, int line){
     // always keep the new trace
     if(code.msg.data != NULL){
-        // handle empty errors or duplicat parameters
+        // handle empty errors or duplicate parameters
         if(e->msg.data == NULL || e->msg.data == code.msg.data){
             // just use the new trace as is
             e->msg = code.msg;

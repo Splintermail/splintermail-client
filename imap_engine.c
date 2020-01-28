@@ -19,13 +19,13 @@ static void imape_return_write_event(event_t *ev){
 }
 
 derr_t imape_init(imape_t *imape, size_t nwrite_events, engine_t *upstream,
-        engine_t *downstream){
+        engine_t *quit_downstream){
     derr_t e = E_OK;
     *imape = (imape_t){
         .engine = { .pass_event = imape_pass_event },
 
         .upstream = upstream,
-        .downstream = downstream,
+        .quit_downstream = quit_downstream,
         .quitting = false,
         .nwrite_events = nwrite_events,
         .quit_ev = NULL,
@@ -109,7 +109,7 @@ static void imape_process_events(uv_work_t *req){
                 // enter quitting state
                 imape->quitting = true;
                 // pass the QUIT_DOWN along
-                imape->downstream->pass_event(imape->downstream, ev);
+                imape->quit_downstream->pass_event(imape->quit_downstream, ev);
                 break;
             case EV_QUIT_UP:
                 // LOG_ERROR("imape: QUIT_UP\n");
@@ -321,7 +321,7 @@ static void cmd_cb(void *cb_data, derr_t error, imap_cmd_t *cmd){
     PROP_GO(&e, imap_event_new(&imap_ev, IMAP_EVENT_TYPE_CMD, arg, id), fail);
 
     // pass the event downstream
-    id->imape->downstream->pass_event(id->imape->downstream, &imap_ev->ev);
+    id->downstream->pass_event(id->downstream, &imap_ev->ev);
 
     return;
 
@@ -347,7 +347,7 @@ static void resp_cb(void *cb_data, derr_t error, imap_resp_t *resp){
     PROP_GO(&e, imap_event_new(&imap_ev, IMAP_EVENT_TYPE_RESP, arg, id), fail);
 
     // pass the event downstream
-    id->imape->downstream->pass_event(id->imape->downstream, &imap_ev->ev);
+    id->downstream->pass_event(id->downstream, &imap_ev->ev);
 
     return;
 
@@ -359,13 +359,16 @@ fail:
 static imap_parser_cb_t imape_parser_resp_cb = {.resp=resp_cb};
 
 void imape_data_prestart(imape_data_t *id, imape_t *imape, session_t *session,
-        ref_fn_t ref_up, ref_fn_t ref_down, imape_control_i *control){
-    *id = (imape_data_t){0};
-    id->imape = imape;
-    id->session = session;
-    id->ref_up = ref_up;
-    id->ref_down = ref_down;
-    id->control = control;
+        ref_fn_t ref_up, ref_fn_t ref_down, imape_control_i *control,
+        engine_t *downstream){
+    *id = (imape_data_t){
+        .imape = imape,
+        .session = session,
+        .ref_up = ref_up,
+        .ref_down = ref_down,
+        .control = control,
+        .downstream = downstream,
+    };
 }
 
 void imape_data_start(imape_data_t *id){

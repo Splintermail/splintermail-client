@@ -112,7 +112,7 @@ struct maildir_conn_up_i {
 
 // the maildir will provide imap server behavior to a downwards session
 struct maildir_conn_dn_i {
-    void (*resp)(maildir_conn_dn_i*, imap_cmd_t*);
+    void (*resp)(maildir_conn_dn_i*, imap_resp_t*);
     // The maildir BROADCASTs its failures when it dies
     void (*release)(maildir_conn_dn_i*, derr_t);
 };
