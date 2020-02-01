@@ -42,6 +42,7 @@ typedef struct {
     server_session_t dn;
     // every server_t has only one uv_work_t, so it's single threaded
     uv_work_t uv_work;
+    bool greeting_sent;
     bool executing;
     bool closed_onthread;
     bool dead;

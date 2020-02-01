@@ -30,25 +30,60 @@ static derr_t imap_event_new(imap_event_t **out, server_t *server,
     return e;
 }
 
-// // send a command and store its callback
-// static void send_resp(derr_t *e, server_t *server, imap_resp_t *resp){
-//     if(is_error(*e)) goto fail;
-//
-//     // create a response event
-//     imap_event_t *imap_ev;
-//     PROP_GO(e, imap_event_new(&imap_ev, server, resp), fail);
-//
-//     // send the command to the imap session
-//     imap_session_send_event(&server->dn.s, &imap_ev->ev);
-//
-//     return;
-//
-// fail:
-//     imap_resp_free(resp);
-// }
+static void send_resp(derr_t *e, server_t *server, imap_resp_t *resp){
+    if(is_error(*e)) goto fail;
+
+    // create a response event
+    imap_event_t *imap_ev;
+    PROP_GO(e, imap_event_new(&imap_ev, server, resp), fail);
+
+    // send the response to the imap session
+    imap_session_send_event(&server->dn.s, &imap_ev->ev);
+
+    return;
+
+fail:
+    imap_resp_free(resp);
+}
+
+
+static ie_dstr_t *build_capas(derr_t *e){
+   if(is_error(*e)) goto fail;
+
+   ie_dstr_t *capas = ie_dstr_new(e, &DSTR_LIT("IMAP4rev1"), KEEP_RAW);
+
+   return capas;
+
+fail:
+    return NULL;
+}
+
+
+static derr_t send_greeting(server_t *server){
+    derr_t e = E_OK;
+
+    // build code
+    ie_dstr_t *capas = build_capas(&e);
+    ie_st_code_arg_t code_arg = {.capa = capas};
+    ie_st_code_t *st_code = ie_st_code_new(&e, IE_ST_CODE_CAPA, code_arg);
+
+    // build text
+    ie_dstr_t *text = ie_dstr_new(&e, &DSTR_LIT("greetings, friend!"),
+            KEEP_RAW);
+
+    // build response
+    ie_st_resp_t *st_resp = ie_st_resp_new(&e, NULL, IE_ST_OK, st_code, text);
+    imap_resp_arg_t arg = {.status_type=st_resp};
+    imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_STATUS_TYPE, arg);
+
+    send_resp(&e, server, resp);
+
+    return e;
+}
 
 bool server_more_work(server_t *server){
-    return !link_list_isempty(&server->ts.unhandled_cmds)
+    return !server->greeting_sent
+        || !link_list_isempty(&server->ts.unhandled_cmds)
         || !link_list_isempty(&server->ts.maildir_resps);
 }
 
@@ -118,6 +153,12 @@ fail:
 
 derr_t server_do_work(server_t *server){
     derr_t e = E_OK;
+
+    // send greeting
+    if(!server->greeting_sent){
+        PROP(&e, send_greeting(server));
+        server->greeting_sent = true;
+    }
 
     // unhandled commands
     while(!server->ts.closed){

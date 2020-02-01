@@ -24,21 +24,21 @@ static void server_pass_event(struct engine_t *engine, event_t *ev){
     switch(ev->ev_type){
         case EV_READ:
             imap_ev = CONTAINER_OF(ev, imap_event_t, ev);
-            // server only accepts imap_resp_t's as EV_READs
-            if(imap_ev->type != IMAP_EVENT_TYPE_RESP){
-                LOG_ERROR("unallowed imap_cmd_t as EV_READ in server\n");
+            // server only accepts imap_cmd_t's as EV_READs
+            if(imap_ev->type != IMAP_EVENT_TYPE_CMD){
+                LOG_ERROR("unallowed imap_resp_t as EV_READ in server\n");
                 ev->returner(ev);
                 break;
             }
 
-            // steal the imap_resp_t and return the rest of the event
-            imap_resp_t *resp = imap_ev->arg.resp;
-            imap_ev->arg.resp = NULL;
+            // steal the imap_cmd_t and return the rest of the event
+            imap_cmd_t *cmd = imap_ev->arg.cmd;
+            imap_ev->arg.cmd = NULL;
             ev->returner(ev);
 
             // queue up the response
             uv_mutex_lock(&server->ts.mutex);
-            link_list_append(&server->ts.unhandled_cmds, &resp->link);
+            link_list_append(&server->ts.unhandled_cmds, &cmd->link);
             uv_mutex_unlock(&server->ts.mutex);
             break;
 
@@ -174,7 +174,7 @@ static derr_t server_init(server_t *server, imap_pipeline_t *p,
             .condstore = EXT_STATE_ON,
             .qresync = EXT_STATE_ON,
         },
-        .is_client = true,
+        .is_client = false,
     };
 
     server->advance_spec = (async_spec_t){
@@ -256,6 +256,9 @@ fail_path:
 
 static void server_start(server_t *server){
     imap_session_start(&server->dn.s);
+
+    // trigger the server to send the greeting
+    server_advance(server);
 }
 
 static void server_free(server_t *server){
@@ -357,10 +360,9 @@ void server_close(server_t *server, derr_t error){
         return;
     }
 
-    // TODO: clean up ownership hierarchy and error reporting
-    TRACE_PROP(&error);
-    loop_close(server->pipeline->loop, error);
-    PASSED(error);
+    // print the session error, but keep the server up
+    DUMP(error);
+    DROP_VAR(&error);
 
     // tell our owner we are dying
     server->mgr->dying(server->mgr, E_OK);
@@ -527,6 +529,7 @@ static void server_dead(manager_i *mgr){
     managed_srv_free(&mgd);
 }
 
+// not threadsafe, and must not be called while server_mgr is quitting
 static derr_t server_mgr_new_mgd(server_mgr_t *server_mgr, imap_pipeline_t *p,
         ssl_context_t *ctx_srv, managed_srv_t **out){
     derr_t e = E_OK;
@@ -546,19 +549,8 @@ static derr_t server_mgr_new_mgd(server_mgr_t *server_mgr, imap_pipeline_t *p,
 
     PROP_GO(&e, server_init(&mgd->server, p, ctx_srv, &mgd->mgr), fail);
 
-    // append managed to the server_mgr's list
-    uv_mutex_lock(&server_mgr->mutex);
-    // detect late-starters and cancel them (shouldn't be possible, but still.)
-    if(server_mgr->quit_ev){
-        server_free(&mgd->server);
-        ORIG_GO(&e, E_DEAD, "server_mgr is quitting", fail);
-    }
     link_list_append(&server_mgr->mgd, &mgd->link);
     server_mgr->n_servers++;
-    uv_mutex_unlock(&server_mgr->mutex);
-
-    // now it is safe to start the server
-    server_start(&mgd->server);
 
     *out = mgd;
 
@@ -630,12 +622,29 @@ static derr_t conn_recvd(listener_spec_t *lspec, session_t **session){
 
     server_lspec_t *l = CONTAINER_OF(lspec, server_lspec_t, lspec);
 
+    // append managed to the server_mgr's list
+    uv_mutex_lock(&l->server_mgr->mutex);
+
+    // detect late-starters and cancel them (shouldn't be possible, but still.)
+    if(l->server_mgr->quit_ev){
+        ORIG_GO(&e, E_DEAD, "server_mgr is quitting", fail);
+    }
+
     managed_srv_t *mgd;
-    PROP(&e, server_mgr_new_mgd(l->server_mgr, l->pipeline, l->ctx_srv,
-                &mgd) );
+    PROP_GO(&e, server_mgr_new_mgd(l->server_mgr, l->pipeline, l->ctx_srv,
+                &mgd), fail);
 
     *session = &mgd->server.dn.s.session;
 
+    uv_mutex_unlock(&l->server_mgr->mutex);
+
+    // now it is safe to start the server
+    server_start(&mgd->server);
+
+    return e;
+
+fail:
+    uv_mutex_unlock(&l->server_mgr->mutex);
     return e;
 }
 
