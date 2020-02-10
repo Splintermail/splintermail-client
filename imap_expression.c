@@ -53,6 +53,8 @@ const dstr_t *ie_status_attr_to_dstr(ie_status_attr_t sa){
 }
 
 DSTR_STATIC(IMAP_CMD_CAPA_dstr, "CAPABILITY");
+DSTR_STATIC(IMAP_CMD_NOOP_dstr, "NOOP");
+DSTR_STATIC(IMAP_CMD_LOGOUT_dstr, "LOGOUT");
 DSTR_STATIC(IMAP_CMD_STARTTLS_dstr, "STARTTLS");
 DSTR_STATIC(IMAP_CMD_AUTH_dstr, "AUTH");
 DSTR_STATIC(IMAP_CMD_LOGIN_dstr, "LOGIN");
@@ -79,6 +81,8 @@ DSTR_STATIC(IMAP_CMD_ENABLE_dstr, "ENABLE");
 const dstr_t *imap_cmd_type_to_dstr(imap_cmd_type_t type){
     switch(type){
         case IMAP_CMD_CAPA:     return &IMAP_CMD_CAPA_dstr;
+        case IMAP_CMD_NOOP:     return &IMAP_CMD_NOOP_dstr;
+        case IMAP_CMD_LOGOUT:   return &IMAP_CMD_LOGOUT_dstr;
         case IMAP_CMD_STARTTLS: return &IMAP_CMD_STARTTLS_dstr;
         case IMAP_CMD_AUTH:     return &IMAP_CMD_AUTH_dstr;
         case IMAP_CMD_LOGIN:    return &IMAP_CMD_LOGIN_dstr;
@@ -1826,6 +1830,8 @@ void ie_copy_cmd_free(ie_copy_cmd_t *copy){
 static void imap_cmd_arg_free(imap_cmd_type_t type, imap_cmd_arg_t arg){
     switch(type){
         case IMAP_CMD_CAPA:     break;
+        case IMAP_CMD_NOOP:     break;
+        case IMAP_CMD_LOGOUT:   break;
         case IMAP_CMD_STARTTLS: break;
         case IMAP_CMD_AUTH:     ie_dstr_free(arg.auth); break;
         case IMAP_CMD_LOGIN:    ie_login_cmd_free(arg.login); break;

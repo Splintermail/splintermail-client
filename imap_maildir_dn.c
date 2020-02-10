@@ -63,6 +63,8 @@ static derr_t conn_dn_cmd(maildir_i *maildir, imap_cmd_t *cmd){
 
     switch(cmd->type){
         case IMAP_CMD_CAPA:
+        case IMAP_CMD_NOOP:
+        case IMAP_CMD_LOGOUT:
         case IMAP_CMD_STARTTLS:
         case IMAP_CMD_AUTH:
         case IMAP_CMD_LOGIN:

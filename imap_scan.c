@@ -266,6 +266,9 @@ command_mode:
         " "             { *type = *scanner->start; goto done; }
         atom_spec       { *type = *scanner->start; goto done; }
 
+        'capability'    { *type = CAPA; goto done; }
+        'noop'          { *type = NOOP; goto done; }
+        'logout'        { *type = LOGOUT; goto done; }
         'starttls'      { *type = STARTTLS; goto done; }
         'authenticate'  { *type = AUTHENTICATE; goto done; }
         'login'         { *type = LOGIN; goto done; }
@@ -298,7 +301,6 @@ command_mode:
         'bad'           { *type = BAD; goto done; }
         'preauth'       { *type = PREAUTH; goto done; }
         'bye'           { *type = BYE; goto done; }
-        'capability'    { *type = CAPA; goto done; }
         'flags'         { *type = FLAGS; goto done; }
         'exists'        { *type = EXISTS; goto done; }
         'recent'        { *type = RECENT; goto done; }

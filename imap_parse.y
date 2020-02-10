@@ -129,6 +129,9 @@
 %token LITERAL_END
 
 /* commands */
+%token CAPA
+%token NOOP
+%token LOGOUT
 %token STARTTLS
 %token AUTHENTICATE
 %token LOGIN
@@ -159,7 +162,7 @@
 %token BAD
 %token PREAUTH
 %token BYE
-%token CAPA
+/*     CAPA (listed above) */
 /*     LIST (listed above) */
 /*     LSUB (listed above) */
 /*     STATUS (listed above) */
@@ -508,6 +511,9 @@
 
 
 %type <imap_cmd> command_
+%type <imap_cmd> capa_cmd
+%type <imap_cmd> noop_cmd
+%type <imap_cmd> logout_cmd
 %type <imap_cmd> starttls_cmd
 %type <imap_cmd> authenticate_cmd
 %type <imap_cmd> login_cmd
@@ -564,7 +570,10 @@ command: command_[c]
     p->cb.cmd(p->cb_data, error, $c);
 };
 
-command_: starttls_cmd
+command_: capa_cmd
+        | noop_cmd
+        | logout_cmd
+        | starttls_cmd
         | authenticate_cmd
         | login_cmd
         | select_cmd
@@ -616,6 +625,21 @@ untagged_resp: status_type_resp_untagged
 ;
 
 untag: '*' { MODE(COMMAND); };
+
+/*** CAPABILITY command ***/
+
+capa_cmd: tag SP CAPA
+    { $$ = imap_cmd_new(E, $tag, IMAP_CMD_CAPA, (imap_cmd_arg_t){0}); };
+
+/*** NOOP command ***/
+
+noop_cmd: tag SP NOOP
+    { $$ = imap_cmd_new(E, $tag, IMAP_CMD_NOOP, (imap_cmd_arg_t){0}); };
+
+/*** LOGOUT command ***/
+
+logout_cmd: tag SP LOGOUT
+    { $$ = imap_cmd_new(E, $tag, IMAP_CMD_LOGOUT, (imap_cmd_arg_t){0}); };
 
 /*** STARTTLS command ***/
 

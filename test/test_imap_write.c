@@ -127,8 +127,37 @@ cu:
 
 static derr_t test_imap_writer(void){
     derr_t e = E_OK;
+    imap_cmd_arg_t no_arg = {0};
     {
         test_case_t cases[] = {
+            {
+                .cmd=imap_cmd_new(&e, IE_DSTR("tag"), IMAP_CMD_CAPA, no_arg),
+                .out=(size_chunk_out_t[]){
+                    {64, "tag CAPABILITY\r\n"},
+                    {0}
+                },
+            },
+            {
+                .cmd=imap_cmd_new(&e, IE_DSTR("tag"), IMAP_CMD_NOOP, no_arg),
+                .out=(size_chunk_out_t[]){
+                    {64, "tag NOOP\r\n"},
+                    {0}
+                },
+            },
+            {
+                .cmd=imap_cmd_new(&e, IE_DSTR("tag"), IMAP_CMD_LOGOUT, no_arg),
+                .out=(size_chunk_out_t[]){
+                    {64, "tag LOGOUT\r\n"},
+                    {0}
+                },
+            },
+            {
+                .cmd=imap_cmd_new(&e, IE_DSTR("tag"), IMAP_CMD_STARTTLS, no_arg),
+                .out=(size_chunk_out_t[]){
+                    {64, "tag STARTTLS\r\n"},
+                    {0}
+                },
+            },
             {
                 .cmd=imap_cmd_new(&e, IE_DSTR("tag"), IMAP_CMD_LOGIN,
                     (imap_cmd_arg_t){

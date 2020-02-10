@@ -1049,6 +1049,14 @@ static derr_t do_imap_cmd_write(const imap_cmd_t *cmd, dstr_t *out,
             STATIC_SKIP_FILL("CAPABILITY");
             break;
 
+        case IMAP_CMD_NOOP:
+            STATIC_SKIP_FILL("NOOP");
+            break;
+
+        case IMAP_CMD_LOGOUT:
+            STATIC_SKIP_FILL("LOGOUT");
+            break;
+
         case IMAP_CMD_STARTTLS:
             STATIC_SKIP_FILL("STARTTLS");
             break;

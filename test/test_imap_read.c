@@ -407,6 +407,26 @@ static derr_t test_scanner_and_parser(void){
     {
         test_case_t cases[] = {
             {
+                .in=DSTR_LIT("tag CAPABILITY\r\n"),
+                .cmd_calls=(int[]){IMAP_CMD_CAPA, -1},
+                .buf=DSTR_LIT("tag CAPABILITY\r\n")
+            },
+            {
+                .in=DSTR_LIT("tag NOOP\r\n"),
+                .cmd_calls=(int[]){IMAP_CMD_NOOP, -1},
+                .buf=DSTR_LIT("tag NOOP\r\n")
+            },
+            {
+                .in=DSTR_LIT("tag LOGOUT\r\n"),
+                .cmd_calls=(int[]){IMAP_CMD_LOGOUT, -1},
+                .buf=DSTR_LIT("tag LOGOUT\r\n")
+            },
+            {
+                .in=DSTR_LIT("tag STARTTLS\r\n"),
+                .cmd_calls=(int[]){IMAP_CMD_STARTTLS, -1},
+                .buf=DSTR_LIT("tag STARTTLS\r\n")
+            },
+            {
                 .in=DSTR_LIT("tag LOGIN asdf \"pass phrase\"\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_LOGIN, -1},
                 .buf=DSTR_LIT("tag LOGIN asdf \"pass phrase\"\r\n")

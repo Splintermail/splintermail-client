@@ -2,6 +2,20 @@
 #include "logger.h"
 #include "imap_util.h"
 
+DSTR_STATIC(PREAUTH_dstr, "PREAUTH");
+DSTR_STATIC(AUTHENTICATED_dstr, "AUTHENTICATED");
+DSTR_STATIC(SELECTED_dstr, "SELECTED");
+DSTR_STATIC(UNKNOWN_dstr, "unknown");
+
+const dstr_t *imap_server_state_to_dstr(imap_server_state_t state){
+    switch(state){
+        case PREAUTH: return &PREAUTH_dstr;
+        case AUTHENTICATED: return &AUTHENTICATED_dstr;
+        case SELECTED: return &SELECTED_dstr;
+    }
+    return &UNKNOWN_dstr;
+}
+
 static void server_imap_ev_returner(event_t *ev){
     imap_event_t *imap_ev = CONTAINER_OF(ev, imap_event_t, ev);
     imap_resp_free(imap_ev->arg.resp);
@@ -46,6 +60,64 @@ fail:
     imap_resp_free(resp);
 }
 
+static derr_t send_st_resp(server_t *server, const ie_dstr_t *tag,
+        const dstr_t *msg, ie_status_t status){
+    derr_t e = E_OK;
+
+    // copy tag
+    ie_dstr_t *tag_copy = ie_dstr_copy(&e, tag);
+
+    // build text
+    ie_dstr_t *text = ie_dstr_new(&e, msg, KEEP_RAW);
+
+    // build response
+    ie_st_resp_t *st_resp = ie_st_resp_new(&e, tag_copy, status, NULL,
+            text);
+    imap_resp_arg_t arg = {.status_type=st_resp};
+    imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_STATUS_TYPE, arg);
+
+    send_resp(&e, server, resp);
+    CHECK(&e);
+
+    return e;
+}
+
+static derr_t send_ok(server_t *server, const ie_dstr_t *tag,
+        const dstr_t *msg){
+    derr_t e = E_OK;
+    PROP(&e, send_st_resp(server, tag, msg, IE_ST_OK) );
+    return e;
+}
+
+static derr_t send_no(server_t *server, const ie_dstr_t *tag,
+        const dstr_t *msg){
+    derr_t e = E_OK;
+    PROP(&e, send_st_resp(server, tag, msg, IE_ST_NO) );
+    return e;
+}
+
+static derr_t send_bad(server_t *server, const ie_dstr_t *tag,
+        const dstr_t *msg){
+    derr_t e = E_OK;
+    PROP(&e, send_st_resp(server, tag, msg, IE_ST_BAD) );
+    return e;
+}
+
+static derr_t assert_state(server_t *server, imap_server_state_t state,
+        const ie_dstr_t *tag, bool *ok){
+    derr_t e = E_OK;
+
+    *ok = (server->imap_state == state);
+    if(*ok) return e;
+
+    DSTR_VAR(msg, 128);
+    PROP(&e, FMT(&msg, "command not allowed in %x state",
+            FD(imap_server_state_to_dstr(server->imap_state))) );
+
+    PROP(&e, send_bad(server, tag, &msg) );
+
+    return e;
+}
 
 static ie_dstr_t *build_capas(derr_t *e){
    if(is_error(*e)) goto fail;
@@ -81,6 +153,44 @@ static derr_t send_greeting(server_t *server){
     return e;
 }
 
+static derr_t send_capas(server_t *server, const ie_dstr_t *tag){
+    derr_t e = E_OK;
+
+    // build CAPABILITY response
+    ie_dstr_t *capas = build_capas(&e);
+    imap_resp_arg_t arg = {.capa=capas};
+    imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_CAPA, arg);
+
+    send_resp(&e, server, resp);
+
+    CHECK(&e);
+
+    PROP(&e, send_ok(server, tag,
+                &DSTR_LIT("if you didn't know, now you know")) );
+
+    return e;
+}
+
+static derr_t check_login(server_t *server, const ie_dstr_t *tag,
+        const ie_login_cmd_t *login){
+    derr_t e = E_OK;
+
+    if(dstr_cmp(&login->user->dstr, &DSTR_LIT("test@splintermail.com")) != 0){
+        PROP(&e, send_no(server, tag, &DSTR_LIT("wrong user")) );
+        return e;
+    }
+
+    // TODO: this is like 12 different levels of wrong
+    if(dstr_cmp(&login->pass->dstr, &DSTR_LIT("password")) != 0){
+        PROP(&e, send_no(server, tag, &DSTR_LIT("wrong pass")) );
+        return e;
+    }
+
+    PROP(&e, send_ok(server, tag, &DSTR_LIT("logged in")) );
+
+    return e;
+}
+
 bool server_more_work(server_t *server){
     return !server->greeting_sent
         || !link_list_isempty(&server->ts.unhandled_cmds)
@@ -92,14 +202,34 @@ static derr_t handle_one_command(server_t *server, imap_cmd_t *cmd){
     derr_t e = E_OK;
 
     const imap_cmd_arg_t *arg = &cmd->arg;
-    (void)server;
-    (void)arg;
+    const ie_dstr_t *tag = cmd->tag;
+    bool state_ok;
 
     switch(cmd->type){
         case IMAP_CMD_CAPA:
+            PROP_GO(&e, send_capas(server, tag), cu_cmd);
+            break;
+
         case IMAP_CMD_STARTTLS:
+            PROP_GO(&e, send_bad(server, tag,
+                &DSTR_LIT("STARTTLS not supported, connect with TLS instead")),
+                cu_cmd);
+            break;
+
         case IMAP_CMD_AUTH:
+            PROP_GO(&e, send_bad(server, tag,
+                &DSTR_LIT("AUTH not supported, use LOGIN instead")), cu_cmd);
+            break;
+
         case IMAP_CMD_LOGIN:
+            PROP_GO(&e, assert_state(server, PREAUTH, tag, &state_ok), cu_cmd);
+            if(state_ok){
+                check_login(server, tag, arg->login);
+            }
+            break;
+
+        case IMAP_CMD_NOOP:
+        case IMAP_CMD_LOGOUT:
         case IMAP_CMD_SELECT:
         case IMAP_CMD_EXAMINE:
         case IMAP_CMD_CREATE:

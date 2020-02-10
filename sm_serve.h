@@ -11,14 +11,11 @@
    state, everything after that is the responsibility of the imaildir_t */
 typedef enum {
     // general states
-    PREGREET = 0,   // before receiving the greeting
-    PREAUTH,        // after login
+    PREAUTH = 0,    // before login
     AUTHENTICATED,  // imap rfc "authenticated" state
-    LISTING,        // after sending LIST, before receiving response
-
     SELECTED,       // in this state, filter things the maildir doesn't want
-} imap_client_state_t;
-const dstr_t *imap_client_state_to_dstr(imap_client_state_t state);
+} imap_server_state_t;
+const dstr_t *imap_server_state_to_dstr(imap_server_state_t state);
 
 typedef struct {
     manager_i mgr;
@@ -62,7 +59,7 @@ typedef struct {
         size_t n_live_sessions;
     } ts;
 
-    imap_client_state_t imap_state;
+    imap_server_state_t imap_state;
     bool saw_capas;
     // accumulated LIST response
     jsw_atree_t folders;

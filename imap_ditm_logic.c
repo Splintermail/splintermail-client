@@ -59,6 +59,9 @@ static derr_t relay_commands(imap_ditm_t *ditm){
         // check if we need to modify the command in some way
         switch(cmd->type){
             case IMAP_CMD_CAPA:
+            case IMAP_CMD_NOOP:
+            case IMAP_CMD_LOGOUT:
+            case IMAP_CMD_STARTTLS:
             case IMAP_CMD_AUTH:
             case IMAP_CMD_LOGIN:
             case IMAP_CMD_CREATE:
@@ -80,7 +83,6 @@ static derr_t relay_commands(imap_ditm_t *ditm){
             case IMAP_CMD_FETCH:
             case IMAP_CMD_ENABLE:
             case IMAP_CMD_SEARCH:
-            case IMAP_CMD_STARTTLS:
                 // command is ok to pass along blindly
                 ORIG(&e, E_INTERNAL, "not handled yet");
                 break;

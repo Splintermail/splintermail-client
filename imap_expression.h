@@ -445,6 +445,8 @@ typedef struct {
 
 typedef enum {
     IMAP_CMD_CAPA,
+    IMAP_CMD_NOOP,
+    IMAP_CMD_LOGOUT,
     IMAP_CMD_STARTTLS,
     IMAP_CMD_AUTH,
     IMAP_CMD_LOGIN,
@@ -531,6 +533,8 @@ typedef struct {
 
 typedef union {
     // nothing for capability
+    // nothing for noop
+    // nothing for logout
     // nothing for starttls
     ie_dstr_t *auth;
     ie_login_cmd_t *login;
