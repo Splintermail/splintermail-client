@@ -32,6 +32,7 @@ derr_t event_pool_init(queue_t *pool, size_t nevents,
         if(ev == NULL){
             ORIG_GO(&e, E_NOMEM, "unable to alloc event", fail);
         }
+        *ev = (event_t){0};
         event_prep(ev, returner, returner_arg);
         // allocate dstr_t
         PROP_GO(&e, dstr_new(&ev->buffer, 4096), fail_ev);

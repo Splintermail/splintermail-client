@@ -1037,6 +1037,7 @@ derr_t loop_init(loop_t *loop, size_t num_read_events,
         if(rd_wrap == NULL){
             ORIG_GO(&e, E_NOMEM, "unable to alloc read wrapper", fail_rd_wraps);
         }
+        *rd_wrap = (read_wrapper_t){0};
         event_prep(&rd_wrap->event, loop_return_read_event, loop);
         // set the event's dstr_t to be the buffer in the read_wrapper
         DSTR_WRAP_ARRAY(rd_wrap->event.buffer, rd_wrap->buffer);

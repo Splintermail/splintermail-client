@@ -124,6 +124,12 @@ struct tlse_data_t {
     // events which are being processed
     event_t *read_in;
     event_t *write_in;
+    /* after write_in is passed through the SSL buffer, we will store the the
+       write_in as write_in_unresponded, then we will enter the
+       WAIT_FOR_EMTPY_WRITE_BIO state, and when the last byte is sent we will
+       enqueue the WRITE_DONE for write_in_unresponded to happen when the
+       WRITE_DONE for that last byte is sent back to us. */
+    event_t *write_in_unresponded;
     /* Why complicate things by using the full queue callback API, when you
        could instead just call advance_state() every time you passed a session
        another packet?  Because there's not any other way to identify which

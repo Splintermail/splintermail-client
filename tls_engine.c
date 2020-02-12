@@ -160,9 +160,17 @@ static void do_ssl_write(tlse_data_t *td){
        SSL_write() must be called with identical arguments.  For more details,
        see `man ssl_write`. */
     else{
-        // done with write_in
-        td->write_in->returner(td->write_in);
-        td->write_in = NULL;
+        /* write was successful, now we will wait the last byte of the
+           rawout is pushed upwards, and we will queue the WRITE_DONE for
+           write_in for when that last byte is actually sent on the wire */
+        if(BIO_eof(td->rawout)){
+            // there's no bytes to wait for before a WRITE_DONE, so send it now
+            td->write_in->returner(td->write_in);
+            td->write_in = NULL;
+        }else{
+            td->write_in_unresponded = td->write_in;
+            td->write_in = NULL;
+        }
     }
     return;
 
@@ -198,6 +206,15 @@ static void do_write_out(tlse_data_t *td, event_t **write_out){
     // pass the write buffer along
     (*write_out)->ev_type = EV_WRITE;
     (*write_out)->session = td->session;
+    if(BIO_eof(td->rawout)){
+        /* write_out contains the final bytes from write_in_unresponded, so
+           when write_out comes back as WRITE_DONE we will be able to send
+           WRITE_DONE down the pipe. */
+        (*write_out)->prev = td->write_in_unresponded;
+        td->write_in_unresponded = NULL;
+    }else{
+        (*write_out)->prev = NULL;
+    }
     td->ref_up(td->session, TLSE_REF_WRITE);
     tlse->upstream->pass_event(tlse->upstream, (*write_out));
     *write_out = NULL;
@@ -444,6 +461,11 @@ static void tlse_process_events(uv_work_t *req){
                 break;
             case EV_WRITE_DONE:
                 // LOG_ERROR("tlse: WRITE_DONE\n");
+                // pass along synchronous WRITE_DONE if one is attached
+                if(ev->prev){
+                    ev->prev->returner(ev->prev);
+                    ev->prev = NULL;
+                }
                 // if the event was abandonded, it doesn't have a session
                 if(ev->session){
                     // erase session reference
@@ -536,6 +558,7 @@ static void tlse_data_onthread_start(tlse_data_t *td){
     // other non-failing things
     td->read_in = NULL;
     td->write_in = NULL;
+    td->write_in_unresponded = NULL;
     td->want_read = false;
     td->eof_recvd = false;
 

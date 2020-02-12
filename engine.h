@@ -144,6 +144,9 @@ struct event_t {
     queue_cb_t qcb; // for waiting on another buffer
     event_returner_t returner;
     void *returner_arg;
+    event_t *prev; /* allow write events to be linked such that the end of the
+                      pipeline is only sent a WRITE_DONE when its data is
+                      actually sent over the wire */
 };
 DEF_CONTAINER_OF(event_t, link, link_t);
 DEF_CONTAINER_OF(event_t, qcb, queue_cb_t);
