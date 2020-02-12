@@ -22,8 +22,15 @@ static void server_imap_ev_returner(event_t *ev){
     free(imap_ev);
 }
 
-static derr_t imap_event_new(imap_event_t **out, server_t *server,
-        imap_resp_t *resp){
+// the last message we send gets this returner
+static void final_event_returner(event_t *ev){
+    imap_session_close(ev->session, E_OK);
+    // call the main returner, which frees the event
+    server_imap_ev_returner(ev);
+}
+
+static derr_t imap_event_new_ex(imap_event_t **out, server_t *server,
+        imap_resp_t *resp, bool final){
     derr_t e = E_OK;
     *out = NULL;
 
@@ -36,7 +43,9 @@ static derr_t imap_event_new(imap_event_t **out, server_t *server,
 
     /* we don't keep the server alive to free in-flight event_t's, so don't set
        the returner_arg to point to the server (which may get freed) */
-    event_prep(&imap_ev->ev, server_imap_ev_returner, NULL);
+    event_returner_t returner =
+        final ? final_event_returner : server_imap_ev_returner;
+    event_prep(&imap_ev->ev, returner, NULL);
     imap_ev->ev.session = &server->dn.s.session;
     imap_ev->ev.ev_type = EV_WRITE;
 
@@ -44,12 +53,20 @@ static derr_t imap_event_new(imap_event_t **out, server_t *server,
     return e;
 }
 
-static void send_resp(derr_t *e, server_t *server, imap_resp_t *resp){
+static derr_t imap_event_new(imap_event_t **out, server_t *server,
+        imap_resp_t *resp){
+    derr_t e = E_OK;
+    PROP(&e, imap_event_new_ex(out, server, resp, false) );
+    return e;
+}
+
+static void send_resp_ex(derr_t *e, server_t *server, imap_resp_t *resp,
+        bool final){
     if(is_error(*e)) goto fail;
 
     // create a response event
     imap_event_t *imap_ev;
-    PROP_GO(e, imap_event_new(&imap_ev, server, resp), fail);
+    PROP_GO(e, imap_event_new_ex(&imap_ev, server, resp, final), fail);
 
     // send the response to the imap session
     imap_session_send_event(&server->dn.s, &imap_ev->ev);
@@ -60,8 +77,12 @@ fail:
     imap_resp_free(resp);
 }
 
+static void send_resp(derr_t *e, server_t *server, imap_resp_t *resp){
+    send_resp_ex(e, server, resp, false);
+}
+
 static derr_t send_st_resp(server_t *server, const ie_dstr_t *tag,
-        const dstr_t *msg, ie_status_t status){
+        const dstr_t *msg, ie_status_t status, bool final){
     derr_t e = E_OK;
 
     // copy tag
@@ -76,7 +97,7 @@ static derr_t send_st_resp(server_t *server, const ie_dstr_t *tag,
     imap_resp_arg_t arg = {.status_type=st_resp};
     imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_STATUS_TYPE, arg);
 
-    send_resp(&e, server, resp);
+    send_resp_ex(&e, server, resp, final);
     CHECK(&e);
 
     return e;
@@ -85,21 +106,27 @@ static derr_t send_st_resp(server_t *server, const ie_dstr_t *tag,
 static derr_t send_ok(server_t *server, const ie_dstr_t *tag,
         const dstr_t *msg){
     derr_t e = E_OK;
-    PROP(&e, send_st_resp(server, tag, msg, IE_ST_OK) );
+    PROP(&e, send_st_resp(server, tag, msg, IE_ST_OK, false) );
     return e;
 }
 
 static derr_t send_no(server_t *server, const ie_dstr_t *tag,
         const dstr_t *msg){
     derr_t e = E_OK;
-    PROP(&e, send_st_resp(server, tag, msg, IE_ST_NO) );
+    PROP(&e, send_st_resp(server, tag, msg, IE_ST_NO, false) );
     return e;
 }
 
 static derr_t send_bad(server_t *server, const ie_dstr_t *tag,
         const dstr_t *msg){
     derr_t e = E_OK;
-    PROP(&e, send_st_resp(server, tag, msg, IE_ST_BAD) );
+    PROP(&e, send_st_resp(server, tag, msg, IE_ST_BAD, false) );
+    return e;
+}
+
+static derr_t send_bye(server_t *server, const dstr_t *msg){
+    derr_t e = E_OK;
+    PROP(&e, send_st_resp(server, NULL, msg, IE_ST_BYE, false) );
     return e;
 }
 
@@ -210,8 +237,22 @@ static derr_t handle_one_command(server_t *server, imap_cmd_t *cmd){
             PROP_GO(&e, send_capas(server, tag), cu_cmd);
             break;
 
+        case IMAP_CMD_NOOP:
+            PROP_GO(&e, send_ok(server, tag, &DSTR_LIT("done, son!")), cu_cmd);
+            break;
+
+        case IMAP_CMD_LOGOUT:
+            PROP_GO(&e, send_bye(server, &DSTR_LIT("goodbye, my love...")),
+                    cu_cmd);
+            // send a message which will close the session upon WRITE_DONE
+            DSTR_STATIC(final_msg,
+                    "I'm gonna be strong, I can make it through this");
+            PROP_GO(&e, send_st_resp(server, tag, &final_msg, IE_ST_OK, true),
+                    cu_cmd);
+            break;
+
         case IMAP_CMD_STARTTLS:
-            PROP_GO(&e, send_bad(server, tag,
+           PROP_GO(&e, send_bad(server, tag,
                 &DSTR_LIT("STARTTLS not supported, connect with TLS instead")),
                 cu_cmd);
             break;
@@ -228,8 +269,6 @@ static derr_t handle_one_command(server_t *server, imap_cmd_t *cmd){
             }
             break;
 
-        case IMAP_CMD_NOOP:
-        case IMAP_CMD_LOGOUT:
         case IMAP_CMD_SELECT:
         case IMAP_CMD_EXAMINE:
         case IMAP_CMD_CREATE:
