@@ -91,6 +91,11 @@ static void imape_process_events(uv_work_t *req){
                 break;
             case EV_WRITE_DONE:
                 // LOG_ERROR("imape: WRITE_DONE\n");
+                if(ev->prev){
+                    // let the downstream know this event is fully written
+                    ev->prev->returner(ev->prev);
+                    ev->prev = NULL;
+                }
                 // erase session reference
                 id->ref_down(ev->session, IMAPE_REF_WRITE);
                 ev->session = NULL;
@@ -242,7 +247,8 @@ static void imape_data_write_stuff(imape_data_t *id){
         if(want == 0){
             id->write_skip = 0;
             link_remove(link);
-            ev_in->returner(ev_in);
+            // call ev_in->returner when this write_ev returns as WRITE_DONE
+            id->write_ev->prev = ev_in;
         }
 
         // send the write event
