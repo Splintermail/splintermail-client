@@ -160,6 +160,52 @@ derr_t imape_add_to_loop(imape_t *imape, uv_loop_t *loop){
     return e;
 }
 
+static void warn_event_returner(event_t *ev){
+    imape_data_t *id = ev->returner_arg;
+    id->ref_down(ev->session, IMAPE_REF_WRITE);
+
+    imap_event_t *imap_ev = CONTAINER_OF(ev, imap_event_t, ev);
+    imap_resp_free(imap_ev->arg.resp);
+    free(imap_ev);
+}
+
+static derr_t warn_invalid_command(imape_data_t *id){
+    derr_t e = E_OK;
+
+    /* create an untagged BAD reply to indicate that we couldn't identify the
+       source of the problem (since we don't yet have a way to get the tag from
+       a partially parsed command) */
+
+    DSTR_STATIC(msg, "failure parsing command");
+    ie_dstr_t *text = ie_dstr_new(&e, &msg, KEEP_RAW);
+    ie_st_resp_t *st_resp = ie_st_resp_new(&e, NULL, IE_ST_BAD, NULL, text);
+    imap_resp_arg_t arg = {.status_type=st_resp};
+    imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_STATUS_TYPE, arg);
+    CHECK_GO(&e, fail);
+
+    imap_event_t *imap_ev = malloc(sizeof(*imap_ev));
+    if(!imap_ev) ORIG_GO(&e, E_NOMEM, "nomem", fail_resp);
+    *imap_ev = (imap_event_t){
+        .type = IMAP_EVENT_TYPE_RESP,
+        .arg = { .resp = resp },
+    };
+
+    event_prep(&imap_ev->ev, warn_event_returner, id);
+    imap_ev->ev.session = id->session;
+    imap_ev->ev.ev_type = EV_WRITE;
+    id->ref_up(id->session, IMAPE_REF_WRITE);
+
+    imape_pass_event(&id->imape->engine, &imap_ev->ev);
+
+    return e;
+
+fail_resp:
+    imap_resp_free(resp);
+
+fail:
+    return e;
+}
+
 // pass a buffer through the imap reader
 static void imape_data_read_stuff(imape_data_t *id, const dstr_t *buffer){
     derr_t e = E_OK;
@@ -171,7 +217,16 @@ static void imape_data_read_stuff(imape_data_t *id, const dstr_t *buffer){
     }
 
     LOG_INFO("recv: %x", FD(buffer));
-    PROP_GO(&e, imap_read(&id->reader, buffer), fail);
+    derr_t e2 = imap_read(&id->reader, buffer);
+    CATCH(e2, E_PARAM){
+        derr_t e3 = warn_invalid_command(id);
+        CATCH(e3, E_ANY){
+            // merge the new error with the original error
+            MERGE_VAR(&e2, &e3, "failure to warn about invalid command\n");
+            // rethrow the original error
+            RETHROW_GO(&e, &e2, E_PARAM, fail);
+        }
+    } else PROP_GO(&e, e2, fail);
 
     return;
 

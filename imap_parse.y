@@ -119,6 +119,9 @@
 /* compile error on parser generator conflicts */
 %expect 0
 
+/* the scanner passes its errors to the parser for better error recovery */
+%token INVALID_TOKEN
+
 /* some generic types */
 %token RAW
 %token NIL
@@ -560,6 +563,7 @@
 
 line: command EOL { ACCEPT; }
     | response EOL { ACCEPT; }
+    | error EOL { MODE(TAG); YYABORT; }
 ;
 
 command: command_[c]

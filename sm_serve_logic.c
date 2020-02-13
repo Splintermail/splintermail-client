@@ -17,6 +17,9 @@ const dstr_t *imap_server_state_to_dstr(imap_server_state_t state){
 }
 
 static void server_imap_ev_returner(event_t *ev){
+    imap_session_t *s = CONTAINER_OF(ev->session, imap_session_t, session);
+    imap_session_ref_down(s);
+
     imap_event_t *imap_ev = CONTAINER_OF(ev, imap_event_t, ev);
     imap_resp_free(imap_ev->arg.resp);
     free(imap_ev);
@@ -48,6 +51,7 @@ static derr_t imap_event_new_ex(imap_event_t **out, server_t *server,
     event_prep(&imap_ev->ev, returner, NULL);
     imap_ev->ev.session = &server->dn.s.session;
     imap_ev->ev.ev_type = EV_WRITE;
+    imap_session_ref_up(&server->dn.s);
 
     *out = imap_ev;
     return e;
@@ -92,8 +96,7 @@ static derr_t send_st_resp(server_t *server, const ie_dstr_t *tag,
     ie_dstr_t *text = ie_dstr_new(&e, msg, KEEP_RAW);
 
     // build response
-    ie_st_resp_t *st_resp = ie_st_resp_new(&e, tag_copy, status, NULL,
-            text);
+    ie_st_resp_t *st_resp = ie_st_resp_new(&e, tag_copy, status, NULL, text);
     imap_resp_arg_t arg = {.status_type=st_resp};
     imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_STATUS_TYPE, arg);
 

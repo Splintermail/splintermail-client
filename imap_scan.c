@@ -166,12 +166,10 @@ derr_t imap_scan(imap_scanner_t *scanner, scan_mode_t mode, bool *more,
 #   define YYBACKUP() marker = cursor;
 #   define YYRESTORE() cursor = marker;
 
-#   define INVALID_TOKEN_ERROR { \
-        dstr_t scannable = get_scannable(scanner); \
-        TRACE(&e, "in mode %x, found token '%x'.\n", \
-                FD(scan_mode_to_dstr(mode)), FD_DBG(&scannable)); \
-        ORIG(&e, E_PARAM, "invalid token for mode"); \
-    }
+/*  we used to throw an error on invalid tokens, but good parsing also means
+    good error recovery.  That's hard, but bison already does it really well,
+    so instead of throwing an error, pass the error along to bison */
+#   define INVALID_TOKEN_ERROR { *type = INVALID_TOKEN; goto done; }
 
     derr_t e = E_OK;
 
@@ -230,7 +228,7 @@ derr_t imap_scan(imap_scanner_t *scanner, scan_mode_t mode, bool *more,
         re2c:flags:input = custom;
         re2c:define:YYCTYPE = char;
 
-        eol             = "\r\n";
+        eol             = "\r"?"\n";
         sp              = " ";
         literal         = "{"[0-9]+"}\r\n";
         tag             = [^(){%*+"\x00-\x1F\x7F\\ ]{1,32};
