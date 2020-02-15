@@ -33,8 +33,8 @@ derr_t for_each_file_in_dir(const char* path, for_each_file_hook_t hook, void* u
            E_INTERNAL
            <whatever the hook can throw> */
 
-// arguments are: (base, file, isdir, userdata)
-typedef derr_t (*for_each_file_hook2_t)(const string_builder_t*, const dstr_t*, bool, void*);
+typedef derr_t (*for_each_file_hook2_t)(const string_builder_t* base,
+        const dstr_t* file, bool isdir, void* userdata);
 derr_t for_each_file_in_dir2(const string_builder_t* path,
                              for_each_file_hook2_t hook, void* userdata);
 

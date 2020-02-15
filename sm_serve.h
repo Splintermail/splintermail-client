@@ -61,8 +61,6 @@ typedef struct {
 
     imap_server_state_t imap_state;
     bool saw_capas;
-    // accumulated LIST response
-    jsw_atree_t folders;
 
     // the interface we feed to the imaildir for client communication
     maildir_conn_dn_i conn_dn;
@@ -70,7 +68,6 @@ typedef struct {
     bool maildir_has_ref;
     bool mailbox_synced;
     bool mailbox_unselected;
-
 } server_t;
 DEF_CONTAINER_OF(server_t, dn, server_session_t);
 DEF_CONTAINER_OF(server_t, advance_spec, async_spec_t);

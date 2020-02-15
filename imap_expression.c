@@ -297,6 +297,28 @@ fail:
     return NULL;
 }
 
+ie_mailbox_t *ie_mailbox_new_maybeinbox(derr_t *e, const dstr_t *name){
+    if(is_error(*e)) goto fail;
+
+    if(name->len == 5){
+        ie_dstr_t *dstr_name = ie_dstr_new(e, name, KEEP_RAW);
+        return ie_mailbox_new_noninbox(e, dstr_name);
+    }
+
+    DSTR_VAR(lower, 5);
+    DROP_CMD( dstr_copy(name, &lower) );
+
+    if(dstr_cmp(&lower, &DSTR_LIT("inbox")) == 0){
+        return ie_mailbox_new_inbox(e);
+    }
+
+    ie_dstr_t *dstr_name = ie_dstr_new(e, name, KEEP_RAW);
+    return ie_mailbox_new_noninbox(e, dstr_name);
+
+fail:
+    return NULL;
+}
+
 void ie_mailbox_free(ie_mailbox_t *m){
     if(!m) return;
     dstr_free(&m->dstr);
@@ -704,6 +726,19 @@ ie_mflags_t *ie_mflags_copy(derr_t *e, const ie_mflags_t *old){
 fail_new:
     ie_mflags_free(mf);
 fail:
+    return NULL;
+}
+
+ie_mflags_t *ie_mflags_set_selectable(derr_t *e, ie_mflags_t *mf,
+        ie_selectable_t selectable){
+    if(is_error(*e)) goto fail;
+
+    mf->selectable = selectable;
+
+    return mf;
+
+fail:
+    ie_mflags_free(mf);
     return NULL;
 }
 

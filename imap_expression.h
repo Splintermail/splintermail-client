@@ -764,6 +764,7 @@ ie_dstr_t *ie_dstr_copy(derr_t *e, const ie_dstr_t *d);
 
 ie_mailbox_t *ie_mailbox_new_noninbox(derr_t *e, ie_dstr_t *name);
 ie_mailbox_t *ie_mailbox_new_inbox(derr_t *e);
+ie_mailbox_t *ie_mailbox_new_maybeinbox(derr_t *e, const dstr_t *name);
 void ie_mailbox_free(ie_mailbox_t *m);
 ie_mailbox_t *ie_mailbox_copy(derr_t *e, const ie_mailbox_t *old);
 // returns either the mailbox name, or a static dstr of "INBOX"
@@ -815,6 +816,8 @@ ie_mflags_t *ie_mflags_new(derr_t *e);
 void ie_mflags_free(ie_mflags_t *mf);
 ie_mflags_t *ie_mflags_copy(derr_t *e, const ie_mflags_t *old);
 
+ie_mflags_t *ie_mflags_set_selectable(derr_t *e, ie_mflags_t *mf,
+        ie_selectable_t selectable);
 ie_mflags_t *ie_mflags_add_noinf(derr_t *e, ie_mflags_t *mf);
 ie_mflags_t *ie_mflags_add_ext(derr_t *e, ie_mflags_t *mf, ie_dstr_t *ext);
 

@@ -189,8 +189,6 @@ static derr_t server_init(server_t *server, imap_pipeline_t *p,
     link_init(&server->ts.unhandled_cmds);
     link_init(&server->ts.maildir_resps);
 
-    jsw_ainit(&server->folders, ie_list_resp_cmp, ie_list_resp_get);
-
     // allocate for the path
     PROP(&e, dstr_new(&server->path, 256) );
     // right now the path is not configurable
@@ -263,12 +261,6 @@ static void server_start(server_t *server){
 
 static void server_free(server_t *server){
     if(!server) return;
-    // free the folders list
-    jsw_anode_t *node;
-    while((node = jsw_apop(&server->folders))){
-        ie_list_resp_t *list = CONTAINER_OF(node, ie_list_resp_t, node);
-        ie_list_resp_free(list);
-    }
     // free any imap cmds or resps laying around
     link_t *link;
     while((link = link_list_pop_first(&server->ts.unhandled_cmds))){

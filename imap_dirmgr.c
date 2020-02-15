@@ -342,6 +342,95 @@ done:
     return e;
 }
 
+static derr_t ctn_check(const string_builder_t *path, bool *ret){
+    derr_t e = E_OK;
+    char *ctn[3] = {"cur", "tmp", "new"};
+    *ret = true;
+    for(size_t i = 0; i < 3; i++){
+        string_builder_t subdir_path = sb_append(path, FS(ctn[i]));
+        bool temp;
+        PROP(&e, dir_rw_access_path(&subdir_path, false, &temp) );
+        *ret &= temp;
+    }
+    return e;
+}
+
+typedef struct for_each_mbx_arg_t {
+    for_each_mbx_hook_t hook;
+    void *hook_data;
+    const string_builder_t *name;
+    bool found_child;
+} for_each_mbx_arg_t;
+
+// call user's hook with an expanded string_builder_t
+static derr_t call_user_hook(const for_each_mbx_arg_t *arg, bool has_ctn){
+    derr_t e = E_OK;
+    DSTR_VAR(stack, 256);
+    dstr_t heap = {0};
+    dstr_t* path;
+    PROP(&e, sb_expand(arg->name, &DSTR_LIT("/"), &stack, &heap, &path) );
+
+    PROP_GO(&e, arg->hook(path, has_ctn, arg->found_child, arg->hook_data),
+            cu);
+
+cu:
+    dstr_free(&heap);
+    return e;
+}
+
+static derr_t handle_each_mbx(const string_builder_t* base,
+        const dstr_t* file, bool isdir, void* userdata){
+    derr_t e = E_OK;
+
+    if(!isdir) return e;
+    if(dstr_cmp(file, &DSTR_LIT("cur")) == 0) return e;
+    if(dstr_cmp(file, &DSTR_LIT("tmp")) == 0) return e;
+    if(dstr_cmp(file, &DSTR_LIT("new")) == 0) return e;
+    if(dstr_cmp(file, &DSTR_LIT(".cache.lmdb")) == 0) return e;
+
+    for_each_mbx_arg_t *prev_arg = userdata;
+    prev_arg->found_child = true;
+
+    string_builder_t path = sb_append(base, FD(file));
+    string_builder_t name = sb_append(prev_arg->name, FD(file));
+
+    for_each_mbx_arg_t arg = {
+        .hook = prev_arg->hook,
+        .hook_data = prev_arg->hook_data,
+        .name = &name,
+        // this may be altered during the recursion
+        .found_child = false,
+    };
+
+    bool has_ctn;
+    PROP(&e, ctn_check(&path, &has_ctn) );
+
+    // recurse (and check for inferior mailboxes)
+    PROP(&e, for_each_file_in_dir2(&path, handle_each_mbx, &arg) );
+
+    PROP(&e, call_user_hook(&arg, has_ctn) );
+
+    return e;
+}
+
+// used to generate LIST responses
+derr_t dirmgr_do_for_each_mbx(dirmgr_t *dm, const dstr_t *ref_name,
+        for_each_mbx_hook_t hook, void *hook_data){
+    derr_t e = E_OK;
+
+    for_each_mbx_arg_t arg = {
+        .hook = hook,
+        .hook_data = hook_data,
+        .name = NULL,
+    };
+
+    string_builder_t path = sb_append(&dm->path, FD(ref_name));
+
+    PROP(&e, for_each_file_in_dir2(&path, handle_each_mbx, &arg) );
+
+    return e;
+}
+
 /////////////////
 // IMAP functions
 /////////////////

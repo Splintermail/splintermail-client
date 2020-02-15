@@ -127,5 +127,9 @@ void dirmgr_close_dn(dirmgr_t *dm, maildir_i *maildir,
 // derr_t imaildir_list(imaildir_t *root, ...);
 // derr_t imaildir_lsub(imaildir_t *root, ...);
 
+typedef derr_t (*for_each_mbx_hook_t)(const dstr_t *name, bool has_ctn,
+        bool has_children, void *data);
+derr_t dirmgr_do_for_each_mbx(dirmgr_t *dm, const dstr_t *ref_name,
+        for_each_mbx_hook_t hook, void *hook_data);
 
 #endif // IMAP_DIRMGR_H

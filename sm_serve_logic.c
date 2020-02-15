@@ -205,19 +205,210 @@ static derr_t check_login(server_t *server, const ie_dstr_t *tag,
         const ie_login_cmd_t *login){
     derr_t e = E_OK;
 
-    if(dstr_cmp(&login->user->dstr, &DSTR_LIT("test@splintermail.com")) != 0){
+    if(dstr_cmp(&login->user->dstr, &DSTR_LIT("a")) != 0){
         PROP(&e, send_no(server, tag, &DSTR_LIT("wrong user")) );
         return e;
     }
 
     // TODO: this is like 12 different levels of wrong
-    if(dstr_cmp(&login->pass->dstr, &DSTR_LIT("password")) != 0){
+    if(dstr_cmp(&login->pass->dstr, &DSTR_LIT("b")) != 0){
         PROP(&e, send_no(server, tag, &DSTR_LIT("wrong pass")) );
         return e;
     }
 
+    server->imap_state = AUTHENTICATED;
+
     PROP(&e, send_ok(server, tag, &DSTR_LIT("logged in")) );
 
+    return e;
+}
+
+static bool mbx_name_is_sanitary(const dstr_t *name){
+    if(name->len == 0){
+        return true;
+    }
+
+    // all names should appear as relative paths
+    if(name->data[0] == '/'){
+        return false;
+    }
+
+    // no ".." ever
+    if(dstr_count(name, &DSTR_LIT("..")) > 0){
+        return false;
+    }
+
+    // no null bytes ever
+    if(dstr_count(name, &DSTR_LIT("\0")) > 0){
+        return false;
+    }
+
+    return true;
+}
+
+static dstr_t read_nonwild(dstr_t pattern, dstr_t *nonwild){
+    size_t i = 0;
+    for(i = 0; i < pattern.len; i++){
+        if(pattern.data[i] == '*' || pattern.data[i] == '%'){
+            break;
+        }
+    }
+    if(i == 0){
+        *nonwild = (dstr_t){0};
+        return pattern;
+    }
+    *nonwild = dstr_sub(&pattern, 0, i);
+    return dstr_sub(&pattern, i, pattern.len);
+}
+
+// read_wild is only safe to call if you know a wildcard is coming
+static dstr_t read_wild(dstr_t pattern, bool *asterisk){
+    *asterisk = false;
+    size_t i;
+    for(i = 0; i < pattern.len; i++){
+        if(pattern.data[i] == '*') *asterisk = true;
+        if(pattern.data[i] != '*' && pattern.data[i] != '%'){
+            break;
+        }
+    }
+    return dstr_sub(&pattern, i, pattern.len);
+}
+
+static bool match_nonwild(dstr_t name, dstr_t nonwild, dstr_t pattern){
+    // make sure there's enough name for the nonwild
+    if(name.len < nonwild.len){
+        return false;
+    }
+
+    // make sure the non-wild matches
+    if(nonwild.len > 0){
+        dstr_t should_match = dstr_sub(&name, 0, nonwild.len);
+        if(dstr_cmp(&nonwild, &should_match) != 0){
+            return false;
+        }
+        // consume the matched part of the name
+        name = dstr_sub(&name, nonwild.len, name.len);
+    }
+
+    // was that all there was?
+    if(pattern.len == 0){
+        return name.len == 0;
+    }
+
+    // get the wild-card part of the pattern
+    bool asterisk;
+    pattern = read_wild(pattern, &asterisk);
+    // then get the nonwild that follows it
+    pattern = read_nonwild(pattern, &nonwild);
+
+    // consume the name byte-by-byte looking for a match to the next nonwild
+    while(name.len > 0){
+        // can we consume the first (nonmatching) character in the name?
+        if(!asterisk && name.data[0] == '/'){
+            return false;
+        }
+        // consume a character
+        name = dstr_sub(&name, 1, name.len);
+        // try to recurse
+        if(match_nonwild(name, nonwild, pattern)) return true;
+    }
+    return false;
+}
+
+static bool mbx_name_matches(dstr_t name, dstr_t pattern){
+    // start with the initial non-wild
+    dstr_t nonwild;
+    pattern = read_nonwild(pattern, &nonwild);
+    return match_nonwild(name, nonwild, pattern);
+}
+
+typedef struct {
+    // accumulated LIST response
+    jsw_atree_t folders;
+    dstr_t pattern;
+} lister_t;
+
+// handle_list_mbx is a for_each_mbx_hook_t
+static derr_t handle_list_mbx(const dstr_t *name, bool has_ctn,
+        bool has_children, void *data){
+    derr_t e = E_OK;
+
+    lister_t *lister = data;
+
+    // skip non-matching responses
+    if(!mbx_name_matches(*name, lister->pattern)){
+        return e;
+    }
+
+    // build a LIST response for this mailbox
+    ie_mailbox_t *m = ie_mailbox_new_maybeinbox(&e, name);
+
+    ie_mflags_t *mf = ie_mflags_new(&e);
+    if(!has_ctn){
+        mf = ie_mflags_set_selectable(&e, mf, IE_SELECTABLE_NOSELECT);
+    }
+    if(has_children){
+        mf = ie_mflags_add_noinf(&e, mf);
+    }
+
+    ie_list_resp_t *list = ie_list_resp_new(&e, mf, '/', m);
+    CHECK(&e);
+
+    // append this response to the atree
+    jsw_ainsert(&lister->folders, &list->node);
+
+    return e;
+}
+
+static derr_t list_cmd(server_t *server, const ie_dstr_t *tag,
+        const ie_list_cmd_t *list_cmd){
+    derr_t e = E_OK;
+
+    const dstr_t *ref_name = ie_mailbox_name(list_cmd->m);
+
+    // verify reference name is sanitary
+    if(!mbx_name_is_sanitary(ref_name)){
+        PROP(&e, send_no(server, tag, &DSTR_LIT("bad reference name")) );
+        return e;
+    }
+
+    lister_t lister = {
+        .pattern = list_cmd->pattern->dstr,
+    };
+
+    jsw_ainit(&lister.folders, ie_list_resp_cmp, ie_list_resp_get);
+
+    // build a list of LIST responses, one for each folder
+    PROP_GO(&e, dirmgr_do_for_each_mbx(&server->dirmgr, ref_name,
+                handle_list_mbx, &lister), fail);
+
+    // send the LIST responses in sorted order
+    jsw_atrav_t trav;
+    jsw_anode_t *node = jsw_atfirst(&trav, &lister.folders);
+    while(node){
+        // get the response from this node
+        ie_list_resp_t *list_resp = CONTAINER_OF(node, ie_list_resp_t, node);
+
+        // pop this node now, since send_resp will free this response on errors
+        node = jsw_pop_atnext(&trav);
+
+        imap_resp_arg_t arg = {.list = list_resp};
+        imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_LIST, arg);
+        send_resp(&e, server, resp);
+    }
+    CHECK(&e);
+
+    PROP(&e, send_ok(server, tag, &DSTR_LIT("now you have all the things")) );
+
+    return e;
+
+fail:
+    // free all the LIST responses
+    while((node = jsw_apop(&lister.folders))){
+        ie_list_resp_t *list_resp = CONTAINER_OF(node, ie_list_resp_t, node);
+        ie_list_resp_free(list_resp);
+
+    }
     return e;
 }
 
@@ -255,7 +446,7 @@ static derr_t handle_one_command(server_t *server, imap_cmd_t *cmd){
             break;
 
         case IMAP_CMD_STARTTLS:
-           PROP_GO(&e, send_bad(server, tag,
+            PROP_GO(&e, send_bad(server, tag,
                 &DSTR_LIT("STARTTLS not supported, connect with TLS instead")),
                 cu_cmd);
             break;
@@ -268,19 +459,20 @@ static derr_t handle_one_command(server_t *server, imap_cmd_t *cmd){
         case IMAP_CMD_LOGIN:
             PROP_GO(&e, assert_state(server, PREAUTH, tag, &state_ok), cu_cmd);
             if(state_ok){
-                check_login(server, tag, arg->login);
+                PROP(&e, check_login(server, tag, arg->login) );
+            }
+            break;
+
+        case IMAP_CMD_LIST:
+            PROP_GO(&e, assert_state(server, AUTHENTICATED, tag, &state_ok),
+                    cu_cmd);
+            if(state_ok){
+                PROP(&e, list_cmd(server, tag, arg->list) );
             }
             break;
 
         case IMAP_CMD_SELECT:
         case IMAP_CMD_EXAMINE:
-        case IMAP_CMD_CREATE:
-        case IMAP_CMD_DELETE:
-        case IMAP_CMD_RENAME:
-        case IMAP_CMD_SUB:
-        case IMAP_CMD_UNSUB:
-        case IMAP_CMD_LIST:
-        case IMAP_CMD_LSUB:
         case IMAP_CMD_STATUS:
         case IMAP_CMD_APPEND:
         case IMAP_CMD_CHECK:
@@ -290,6 +482,13 @@ static derr_t handle_one_command(server_t *server, imap_cmd_t *cmd){
         case IMAP_CMD_FETCH:
         case IMAP_CMD_STORE:
         case IMAP_CMD_COPY:
+        // there's no intention of supporting these in sm_serve
+        case IMAP_CMD_CREATE:
+        case IMAP_CMD_DELETE:
+        case IMAP_CMD_RENAME:
+        case IMAP_CMD_SUB:
+        case IMAP_CMD_UNSUB:
+        case IMAP_CMD_LSUB:
         case IMAP_CMD_ENABLE:
             ORIG_GO(&e, E_INTERNAL, "Unhandled command", cu_cmd);
     }
