@@ -5,6 +5,9 @@
 
 #include "libdstr/common.h"
 
+// an unidentified error from libuv
+extern derr_type_t E_UV;
+
 // error handling helpers
 
 derr_type_t fmthook_uv_error(dstr_t* out, const void* arg);

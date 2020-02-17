@@ -662,7 +662,7 @@ int do_main(int argc, char* argv[], bool windows_service){
                 // can_register = true;
                 // now see if we have a good token on file
                 e2 = api_token_read(creds_path.data, &token);
-                CATCH(e2, E_PARAM | E_INTERNAL){
+                CATCH(e2, E_PARAM, E_INTERNAL){
                     DROP_VAR(&e2);
                     // broken token, warn user
                     DROP_CMD( FFMT(stderr, NULL,

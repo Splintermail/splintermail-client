@@ -6,6 +6,8 @@
 #include "uv_util.h"
 #include "libdstr/logger.h"
 
+REGISTER_ERROR_TYPE(E_UV, "UVERROR");
+
 derr_type_t fmthook_uv_error(dstr_t* out, const void* arg){
     // cast the input
     const int* err = (const int*)arg;

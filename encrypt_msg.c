@@ -26,6 +26,13 @@
 LIST_HEADERS(keypair_t)
 LIST_FUNCTIONS(keypair_t)
 
+// an error in the SQL library
+derr_type_t E_SQL;
+REGISTER_ERROR_TYPE(E_SQL, "SQLERROR");
+// user has no keys (non-critical error)
+derr_type_t E_NOKEYS;
+REGISTER_ERROR_TYPE(E_NOKEYS, "NOKEYS");
+
 static derr_t do_encryption(EVP_PKEY** pkeys, size_t nkeys, LIST(dstr_t)* fprs){
     derr_t e = E_OK;
 
@@ -435,7 +442,10 @@ exit:
     // determine exit code, since we will DROP any error before exiting
     exitval = (is_error(e));
     // any error at all (except for a user having no keys) is badbadbad
-    CATCH(e, E_ANY ^ E_NOKEYS){
+    CATCH(e, E_NOKEYS){
+        // silently drop E_NOKEYS error, which is no error at all
+        DROP_VAR(&e);
+    }else CATCH(e, E_ANY){
         // write errors to logfile
         DUMP(e);
         DSTR_STATIC(summary, "unexpected error in encrypt_message, check log");
@@ -444,8 +454,6 @@ exit:
         // put a line break in log file for ease of reading
         LOG_ERROR("\n");
     }
-    // silently drop E_NOKEYS error, which is no error at all
-    DROP_VAR(&e);
 #else
     // the non-server case; report all errors
     DUMP(e);

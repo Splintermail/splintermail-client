@@ -9,55 +9,54 @@
 
 #include "win_compat.h"
 
-// static strings for the error_to_dstr function
-DSTR_STATIC(derr_ok_dstr, "OK");
-DSTR_STATIC(derr_unknown_dstr, "UNKNOWN_ERROR_CODE");
-DSTR_STATIC(derr_io_dstr, "IOERROR");
-DSTR_STATIC(derr_nomem_dstr, "NOMEM");
-DSTR_STATIC(derr_sock_dstr, "SOCKERROR");
-DSTR_STATIC(derr_conn_dstr, "CONNERROR");
-DSTR_STATIC(derr_value_dstr, "VALUEERROR");
-DSTR_STATIC(derr_fixedsize_dstr, "FIXEDSIZE");
-DSTR_STATIC(derr_os_dstr, "OSERROR");
-DSTR_STATIC(derr_badidx_dstr, "BADIDX");
-DSTR_STATIC(derr_ssl_dstr, "SSLERROR");
-DSTR_STATIC(derr_sql_dstr, "SQLERROR");
-DSTR_STATIC(derr_not4me_dstr, "NOT4ME");
-DSTR_STATIC(derr_open_dstr, "OPEN");
-DSTR_STATIC(derr_param_dstr, "PARAM");
-DSTR_STATIC(derr_internal_dstr, "INTERNAL");
-DSTR_STATIC(derr_fs_dstr, "FILESYSTEM");
-DSTR_STATIC(derr_response_dstr, "RESPONSE");
-DSTR_STATIC(derr_nokeys_dstr, "NOKEYS");
-DSTR_STATIC(derr_uv_dstr, "UVERROR");
-DSTR_STATIC(derr_dead_dstr, "DEAD");
-DSTR_STATIC(derr_any_dstr, "ANY");
+// define standard error types
+// derr_type_t E_NONE = NULL;
 
-dstr_t* error_to_dstr(derr_type_t type){
-    switch(type){
-        case E_NONE: return &derr_ok_dstr;
-        case E_IO: return &derr_io_dstr;
-        case E_NOMEM: return &derr_nomem_dstr;
-        case E_SOCK: return &derr_sock_dstr;
-        case E_CONN: return &derr_conn_dstr;
-        case E_VALUE: return &derr_value_dstr;
-        case E_FIXEDSIZE: return &derr_fixedsize_dstr;
-        case E_OS: return &derr_os_dstr;
-        case E_BADIDX: return &derr_badidx_dstr;
-        case E_SSL: return &derr_ssl_dstr;
-        case E_SQL: return &derr_sql_dstr;
-        case E_NOT4ME: return &derr_not4me_dstr;
-        case E_OPEN: return &derr_open_dstr;
-        case E_PARAM: return &derr_param_dstr;
-        case E_INTERNAL: return &derr_internal_dstr;
-        case E_FS: return &derr_fs_dstr;
-        case E_RESPONSE: return &derr_response_dstr;
-        case E_NOKEYS: return &derr_nokeys_dstr;
-        case E_UV: return &derr_uv_dstr;
-        case E_DEAD: return &derr_dead_dstr;
-        case E_ANY: return &derr_any_dstr;
+DSTR_STATIC(E_ANY_dstr, "ANY");
+bool E_ANY_matches(derr_type_t self, derr_type_t other){
+    (void)self;
+    return other != E_NONE;
+}
+derr_type_t E_ANY = &(struct derr_type_t){
+    .dstr = &E_ANY_dstr,
+    .matches = E_ANY_matches,
+};
+
+REGISTER_ERROR_TYPE(E_NOMEM, "NOMEM");
+REGISTER_ERROR_TYPE(E_SOCK, "SOCKERROR");
+REGISTER_ERROR_TYPE(E_CONN, "CONNERROR");
+REGISTER_ERROR_TYPE(E_VALUE, "VALUEERROR");
+REGISTER_ERROR_TYPE(E_FIXEDSIZE, "FIXEDSIZE");
+REGISTER_ERROR_TYPE(E_OS, "OSERROR");
+REGISTER_ERROR_TYPE(E_BADIDX, "BADIDX");
+REGISTER_ERROR_TYPE(E_OPEN, "OPEN");
+REGISTER_ERROR_TYPE(E_PARAM, "PARAM");
+REGISTER_ERROR_TYPE(E_INTERNAL, "INTERNAL");
+REGISTER_ERROR_TYPE(E_FS, "FILESYSTEM");
+REGISTER_ERROR_TYPE(E_RESPONSE, "RESPONSE");
+REGISTER_ERROR_TYPE(E_DEAD, "DEAD");
+
+// support for error type groups
+bool derr_type_group_matches(derr_type_t self, derr_type_t other){
+    struct derr_type_group_arg_t *arg = self->data;
+    for(size_t i = 0; i < arg->ntypes; i++){
+        // allow matching against E_NONE
+        if(arg->types[i] == E_NONE && other == E_NONE){
+            return true;
+        }
+        if(arg->types[i]->matches(arg->types[i], other)){
+            return true;
+        }
     }
-    return &derr_unknown_dstr;
+    return false;
+}
+
+const dstr_t *error_to_dstr(derr_type_t type){
+    if(type == E_NONE){
+        DSTR_STATIC(E_OK_dstr, "OK");
+        return &E_OK_dstr;
+    }
+    return type->dstr;
 }
 
 derr_type_t dstr_new_quiet(dstr_t *ds, size_t size){

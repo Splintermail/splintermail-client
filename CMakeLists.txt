@@ -139,6 +139,7 @@ set(OBJ_TGTS
     ditm
     key_tool
     maildir
+    ssl_errors
     networking
     pop_client
     pop_server
@@ -239,13 +240,13 @@ target_include_directories(ui_o PRIVATE ${OPENSSL_INCLUDE_DIR})
 
 # object inter-dependencies make exectuable dependencies easier to express:
 # objects with dummy interfaces must not be dependencies here
-obj_depend_obj(crypto dstr)
+obj_depend_obj(crypto ssl_errors dstr)
 obj_depend_obj(maildir dstr)
-obj_depend_obj(networking dstr)
+obj_depend_obj(networking ssl_errors dstr)
 obj_depend_obj(pop_client networking)
 obj_depend_obj(pop_server networking)
 obj_depend_obj(api_client networking crypto)
-obj_depend_obj(key_tool api_client crypto)
+obj_depend_obj(key_tool ssl_errors api_client crypto)
 obj_depend_obj(ditm pop_client pop_server maildir)
 obj_depend_obj(uv_util dstr)
 obj_depend_obj(queue uv_interface uv_util)

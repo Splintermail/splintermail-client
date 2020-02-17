@@ -29,6 +29,8 @@
 #define EVP_CIPHER_CTX_reset EVP_CIPHER_CTX_cleanup
 #endif // old OpenSSL api
 
+REGISTER_ERROR_TYPE(E_NOT4ME, "NOT4ME");
+
 DSTR_STATIC(pem_header, "-----BEGIN SPLINTERMAIL MESSAGE-----");
 DSTR_STATIC(pem_footer, "-----END SPLINTERMAIL MESSAGE-----");
 

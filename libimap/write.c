@@ -33,7 +33,8 @@ static derr_t raw_skip_fill(skip_fill_t *sf, const dstr_t *in){
 
     if(appendme.len > 0){
         // this can't fail because appendme.len can't exceed space
-        NOFAIL(&e, E_NOMEM|E_FIXEDSIZE, dstr_append(sf->out, &appendme) );
+        NOFAIL(&e, ERROR_GROUP(E_NOMEM, E_FIXEDSIZE),
+                dstr_append(sf->out, &appendme) );
     }
 
     sf->passed += appendme.len;

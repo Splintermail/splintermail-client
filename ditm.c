@@ -9,6 +9,7 @@
 #include "ditm.h"
 #include "libdstr/logger.h"
 #include "networking.h"
+#include "ssl_errors.h"
 #include "libdstr/json.h"
 #include "libdstr/fileops.h"
 
@@ -201,7 +202,7 @@ static derr_t loginhook(void* arg, const dstr_t* username,
     // END OF VERY CAREFUL ERROR HANDLING
 
     // silently disconnect from email client on temporary errors
-    CATCH(e2, E_CONN | E_NOMEM | E_OS | E_SSL){
+    CATCH(e2, E_CONN, E_NOMEM, E_OS, E_SSL){
         // allow the error to propagate
         TRACE(&e2, "temporary error detected, disconnecting\n");
         RETHROW(&e, &e2, e2.type);
@@ -237,7 +238,7 @@ static derr_t loginhook(void* arg, const dstr_t* username,
         PROP(&e, ditm_inject_message(ditm, &badsrv_subj, &badsrv_body) );
     }
     // if we caught an internal error... sorry, user.  Here's an apology
-    else CATCH(e2, E_INTERNAL | E_ANY){
+    else CATCH(e2, E_INTERNAL, E_ANY){
         if(e2.type != E_INTERNAL){
             TRACE(&e2, "HEY! this error shouldn't be possible here\n");
         }
@@ -709,7 +710,7 @@ static derr_t ditm_parse_minversion(dstr_t* msg, unsigned int* maj,
     LIST_PRESET(dstr_t, patterns, DSTR_LIT("DITMv"));
     char* position = dstr_find(msg, &patterns, NULL, NULL);
     if(!position){
-        ORIG(&e, E_IO, "minimum version not found");
+        ORIG(&e, E_RESPONSE, "minimum version not found");
     }
 
     // find the end of the minversion string
@@ -1408,7 +1409,7 @@ derr_t ignore_list_load(ignore_list_t* il, const dstr_t* userdir){
     // read the file
     e2 = dstr_fread_file(path.data, &text);
     // we can recover from not being able to open the file
-    CATCH(e2, E_OPEN | E_OS){
+    CATCH(e2, E_OPEN, E_OS){
         LOG_WARN("unable to load ignore.json\n");
         DROP_VAR(&e2);
         goto cu;

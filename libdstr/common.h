@@ -44,40 +44,78 @@ typedef struct {
     bool fixed_size;
 } dstr_t;
 
-typedef enum {              // GENERAL DEFINITIONS:
-    E_NONE      = 0,        // no error
-    E_IO        = 1 << 0,   // delete this
-    E_NOMEM     = 1 << 1,   // some memory allocation failed
-    E_SOCK      = 1 << 2,   // error in socket(), bind(), listen(), or accept()
-    E_CONN      = 1 << 3,   // error in connect() or send() or recv()
-    E_VALUE     = 1 << 4,   // delete this
-    E_FIXEDSIZE = 1 << 5,   // an operation would result in a buffer overflow
-    E_OS        = 1 << 6,   // some system call failed
-    E_BADIDX    = 1 << 7,   // delete this
-    E_SSL       = 1 << 8,   // an encryption-related error
-    E_SQL       = 1 << 9,   // an error in the SQL library
-    E_NOT4ME    = 1 << 10,  // decryption failed due to missing key
-    E_OPEN      = 1 << 11,  // an error in open() # TODO: replace with E_FS
-    E_PARAM     = 1 << 12,  // invalid input parameter
-    E_INTERNAL  = 1 << 13,  // a never-should-happen failure occured
-    E_FS        = 1 << 14,  // a file system-related error
-    E_RESPONSE  = 1 << 15,  // invalid response from something external
-    E_NOKEYS    = 1 << 16,  // user has no keys, a non-critical error in encrypt_msg.c
-    E_UV        = 1 << 17,  // an unidentified error from libuv
-    E_DEAD      = 1 << 18,  // attemped to use a two-phase lifetime object after it died
-    E_ANY       = ~0, // for catching errors, never throw this error
-} derr_type_t;
+/* Build an extensible error system, where every error type is a global
+   pointer to a simple interface.  The system is extensible because the error
+   handling macros do not need an exhaustive list of all errors in order to
+   work. */
+
+struct derr_type_t;
+typedef const struct derr_type_t *derr_type_t;
+struct derr_type_t {
+    const dstr_t *dstr;
+    bool (*matches)(derr_type_t self, derr_type_t other);
+    // for simple closures, like with error groups
+    void *data;
+};
 
 typedef struct {
     derr_type_t type;
     dstr_t msg;
 } derr_t;
 
+const dstr_t *error_to_dstr(derr_type_t type);
+
+#define REGISTER_ERROR_TYPE(NAME, NAME_STRING) \
+    DSTR_STATIC(NAME ## _dstr, NAME_STRING); \
+    static bool NAME ## _matches(derr_type_t self, derr_type_t other){ \
+        (void)self; \
+        return other == NAME; \
+    } \
+    derr_type_t NAME = &(struct derr_type_t){ \
+        .dstr = &NAME ## _dstr, \
+        .matches = NAME ## _matches, \
+    };
+
+/* Error type groups are for matching matching against multiple error types.
+   Error groups must never be thrown, because they do not support .to_string
+   and they will not self-match. They are only for catching errors. */
+struct derr_type_group_arg_t {
+    derr_type_t *types;
+    size_t ntypes;
+};
+bool derr_type_group_matches(derr_type_t self, derr_type_t other);
+#define ERROR_GROUP(...) \
+    &(struct derr_type_t){ \
+        .dstr = NULL, \
+        .matches = derr_type_group_matches, \
+        .data = &(struct derr_type_group_arg_t){ \
+            .types = (derr_type_t[]){__VA_ARGS__}, \
+            .ntypes = sizeof((derr_type_t[]){__VA_ARGS__}) / sizeof(derr_type_t), \
+        } \
+    }
+
+#define E_NONE NULL
+extern derr_type_t E_ANY;        /* For catching errors only; this value must
+                                    never be thrown.  Will match against any
+                                    non-E_NONE error. */
+
+extern derr_type_t E_NOMEM;      // some memory allocation failed
+extern derr_type_t E_SOCK;       // error in socket(), bind(), listen(), or accept()
+extern derr_type_t E_CONN;       // error in connect() or send() or recv()
+extern derr_type_t E_VALUE;      // delete this
+extern derr_type_t E_FIXEDSIZE;  // an operation would result in a buffer overflow
+extern derr_type_t E_OS;         // some system call failed
+extern derr_type_t E_BADIDX;     // delete this
+extern derr_type_t E_OPEN;       // an error in open() # TODO: replace with E_FS
+extern derr_type_t E_PARAM;      // invalid input parameter
+extern derr_type_t E_INTERNAL;   // a never-should-happen failure occured
+extern derr_type_t E_FS;         // a file system-related error
+extern derr_type_t E_RESPONSE;   // invalid response from something external
+extern derr_type_t E_DEAD;       // attemped to use a two-phase lifetime object after it died
+
 /* for backwards compatibility with a LOT of code, E_OK is not part of the
    derr_type_t enum but is actually a derr_t struct with an empty message. */
 #define E_OK ((derr_t){.type = E_NONE})
-
-dstr_t* error_to_dstr(derr_type_t error);
 
 // wrap an empty char[] with in a dstr_t
 #define DSTR_WRAP_ARRAY(dstr, buffer){ \

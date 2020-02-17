@@ -10,6 +10,7 @@
 #include <libdstr/logger.h>
 #include <ditm.h>
 #include <networking.h>
+#include <ssl_errors.h>
 #include <libdstr/fileops.h>
 
 #include "fake_pop_server.h"

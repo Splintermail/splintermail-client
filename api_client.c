@@ -300,7 +300,7 @@ derr_t api_token_call(const char* host, unsigned int port, dstr_t* command,
     DSTR_VAR(signature, 128);
     DSTR_VAR(hexsig, 256);
     // token->secret shouldn't be too long, signature shouldn't be too short
-    NOFAIL(&e, E_PARAM | E_FIXEDSIZE,
+    NOFAIL(&e, ERROR_GROUP(E_PARAM, E_FIXEDSIZE),
             hmac(&token->secret, &payload, &signature) );
 
     // convert signature to hex

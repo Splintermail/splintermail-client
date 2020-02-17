@@ -2,6 +2,7 @@
 
 #include "key_tool.h"
 #include "libdstr/logger.h"
+#include "ssl_errors.h"
 
 /* throws: E_NOMEM
            E_INTERNAL
@@ -71,7 +72,7 @@ derr_t key_tool_peer_list_load(key_tool_t* kt, const char* filename){
     kt->json_block.len = 0;
     // read the peer list file
     e2 = dstr_fread_file(filename, &kt->json_block);
-    CATCH(e2, E_OPEN | E_OS){
+    CATCH(e2, E_OPEN, E_OS){
         RETHROW(&e, &e2, E_FS);
     }else PROP(&e, e2);
 
@@ -160,7 +161,7 @@ derr_t key_tool_new(key_tool_t* kt, const dstr_t* dir, int def_key_bits){
     e2 = keypair_load(&kt->key, temp_path.data);
     // an E_OPEN means it is likely that the key doesn't exist
     // and an SSL error means we should just regenerate the key
-    CATCH(e2, E_OPEN | E_SSL){
+    CATCH(e2, E_OPEN, E_SSL){
         DROP_VAR(&e2);
         // if we can't load the key, gen_key now and register it later
         LOG_WARN("Unable to load key, generating a new one\n");
@@ -175,7 +176,7 @@ derr_t key_tool_new(key_tool_t* kt, const dstr_t* dir, int def_key_bits){
 
         // now try and load the key
         // E_OPEN or E_SSL here represents an internal error
-        NOFAIL(&e, E_OPEN | E_SSL, keypair_load(&kt->key, temp_path.data) );
+        NOFAIL(&e, ERROR_GROUP(E_OPEN, E_SSL), keypair_load(&kt->key, temp_path.data) );
 
         LOG_INFO("key tool generated a new key\n");
         kt->did_key_gen = true;
@@ -206,7 +207,7 @@ derr_t key_tool_new(key_tool_t* kt, const dstr_t* dir, int def_key_bits){
 
     e2 = key_tool_peer_list_load(kt, temp_path.data);
     // the list might not exist or it might be corrupted
-    CATCH(e2, E_FS | E_PARAM){
+    CATCH(e2, E_FS, E_PARAM){
         DROP_VAR(&e2);
         // if we can't load the list, set state to new
         kt->peer_list.len = 0;

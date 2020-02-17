@@ -205,15 +205,19 @@ static inline bool pvt_check(derr_t *e,
    a PROP or a RETHROW. */
 static inline bool pvt_catch(derr_t *e, derr_type_t error_mask,
         const char *file, const char *func, int line){
-    if(e->type & error_mask){
+    // if(e->type & error_mask){
+    //     TRACE(e, "catching %x in file %x: %x(), line %x\n",
+    //             FD(error_to_dstr(e->type)), FS(file), FS(func), FI(line));
+    //     return true;
+    // }
+    if(error_mask->matches(error_mask, e->type)){
         TRACE(e, "catching %x in file %x: %x(), line %x\n",
                 FD(error_to_dstr(e->type)), FS(file), FS(func), FI(line));
         return true;
     }
     return false;
 }
-
-#define CATCH(e, error_mask) if(pvt_catch(&(e), error_mask, FILE_LOC))
+#define CATCH(e, ...) if(pvt_catch(&(e), ERROR_GROUP(__VA_ARGS__), FILE_LOC))
 
 
 /* RETHROW works like ORIG except it gives context to generic low-level errors

@@ -15,6 +15,9 @@
 
 #define MAX_ENCRYPTER_PUBKEYS 128
 
+// decryption failed due to missing key
+extern derr_type_t E_NOT4ME;
+
 typedef struct {
     EVP_PKEY* pair;
     char fingerprint_buffer[FL_FINGERPRINT];
