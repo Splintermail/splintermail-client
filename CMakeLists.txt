@@ -19,26 +19,142 @@ if("${CMAKE_BUILD_TYPE}" STREQUAL "debug")
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DBUILD_DEBUG")
 endif()
 
+# python3 is needed for packaging the installers
+if("${PYTHON_3_CMD}" STREQUAL "")
+    set(PYTHON_3_CMD "python3")
+endif()
+
+# re2c is needed for the IMAP scanner
+if("${RE2C}" STREQUAL "")
+    set(RE2C "re2c")
+endif()
+
+# bison is needed for the IMAP scanner
+if("${BISON}" STREQUAL "")
+    set(BISON "bison")
+endif()
+
+# inlcude OpenSSL
+if(APPLE OR WIN32)
+    set(OPENSSL_USE_STATIC_LIBS TRUE)
+endif()
+find_package(OpenSSL REQUIRED)
+
+# include libuv
+add_library(uv_interface INTERFACE)
+# target_include_directories(libuv INTERFACE "${path/to/libuv/include}")
+if("${LIBUV_LIB}" STREQUAL "")
+    set(LIBUV_LIB "uv")
+endif()
+target_link_libraries(uv_interface INTERFACE "${LIBUV_LIB}")
+
+add_library(lmdb_interface INTERFACE)
+# target_include_directories(libuv INTERFACE "${path/to/liblmdb/include}")
+if("${LIBLMDB_LIB}" STREQUAL "")
+    set(LIBLMDB_LIB "lmdb")
+endif()
+target_link_libraries(lmdb_interface INTERFACE "${LIBLMDB_LIB}")
+
+# Add -DFILE_BASENAME="logname" to the compile options for a source file.
+function(define_file_logname_for_source orig_sourcefile final_sourcefile)
+    get_filename_component(projpath "${PROJECT_SOURCE_DIR}" REALPATH)
+    string(LENGTH "${projpath}" projpath_len)
+    math(EXPR projpath_rm_len "${projpath_len} + 1")
+
+    # Ensure that the projpath can be removed from the orig_sourcefile path
+    get_filename_component(srcpath "${orig_sourcefile}" REALPATH)
+    string(FIND "${srcpath}" "${projpath}" relpath_idx)
+    if(NOT "${relpath_idx}" EQUAL "0")
+        message("for source file: ${final_sourcefile}")
+        message("srcpath is: ${srcpath}")
+        message("projpath is: ${projpath}")
+        message( FATAL_ERROR "srcpath does not start with projpath!")
+    endif()
+    # Remove the projpath and a trailing '/' from the sourcefile path
+    string(SUBSTRING "${srcpath}" "${projpath_rm_len}" -1 logname)
+    get_property(defs SOURCE "${final_sourcefile}"
+        PROPERTY COMPILE_DEFINITIONS)
+    list(APPEND defs "FILE_BASENAME=\"${logname}\"")
+    # Set the updated compile definitions on the source file.
+    set_property(
+        SOURCE "${final_sourcefile}"
+        PROPERTY COMPILE_DEFINITIONS ${defs})
+endfunction()
+
+# Will add -DFILE_BASENAME="logname" for each source file depended on
+# by tgt, where filename is the name of the file.  Needed for logger.h
+function(define_file_logname_for_target targetname)
+    get_target_property(source_files "${targetname}" SOURCES)
+    foreach(sourcefile ${source_files})
+        define_file_logname_for_source("${sourcefile}" "${sourcefile}")
+    endforeach()
+endfunction()
+
+# tgt object depends on external library (propagate linking and includes)
+function(obj_depend_lib tgt includes libs)
+    if(NOT "${includes}" STREQUAL "")
+        # compile object with new includes
+        target_include_directories("${tgt}_o" PUBLIC ${includes})
+        # compile dependent objects with new includes
+        target_include_directories("${tgt}" INTERFACE ${includes})
+    endif()
+    if(NOT "${libs}" STREQUAL "")
+        # link dependent objects with new libraries
+        target_link_libraries("${tgt}" INTERFACE ${libs})
+    endif()
+endfunction()
+
+# tgt object depends on another object (propagate linking and includes)
+function(obj_depend_obj tgt)
+    foreach(dep ${ARGN})
+        get_target_property(incl "${dep}" INTERFACE_INCLUDE_DIRECTORIES)
+        if(NOT "${incl}" MATCHES ".*NOTFOUND")
+            # if the INTERFACE library has an include, we need it to compile
+            target_include_directories("${tgt}_o" PUBLIC ${incl})
+            target_include_directories("${tgt}" INTERFACE ${incl})
+        endif()
+    endforeach()
+    target_link_libraries("${tgt}" INTERFACE ${ARGN})
+endfunction()
+
+# for adding an interface library, which might be generated
+# (extra arguments become extra file dependencies)
+function(add_obj_tgt file tgt)
+    # create the object library itself
+    add_library("${tgt}_o" OBJECT "${file}")
+    define_file_logname_for_target("${tgt}_o")
+    # create an interface library whose dependents will link against the object
+    add_library("${tgt}" INTERFACE)
+    target_sources("${tgt}" INTERFACE $<TARGET_OBJECTS:${tgt}_o> ${ARGN})
+endfunction()
+
+# similar to add_obj_tgt but preserves logname for generated files
+function(add_gen_obj_tgt orig_file gen_file tgt)
+    # define_file_logname_for_source(orig_sourcefile final_sourcefile)
+    # create the object library itself
+    add_library("${tgt}_o" OBJECT "${gen_file}")
+    define_file_logname_for_source("${orig_file}" "${gen_file}")
+    # create an interface library whose dependents will link against the object
+    add_library("${tgt}" INTERFACE)
+    target_sources("${tgt}" INTERFACE $<TARGET_OBJECTS:${tgt}_o> ${ARGN})
+endfunction()
+
 # always include the source directory (for compiling generated .c files)
 include_directories("${PROJECT_SOURCE_DIR}")
 # always include the binary directory (for including generated .h files)
 include_directories("${PROJECT_BINARY_DIR}")
 
+add_subdirectory(libdstr)
+
 set(OBJ_TGTS
     api_client
-    common
     crypto
     ditm
-    fileops
-    json
     key_tool
-    logger
     maildir
     networking
-    opt_parse
     pop_client
     pop_server
-    win_compat
     console_input
     ui
     engine
@@ -47,19 +163,16 @@ set(OBJ_TGTS
     tls_engine
     imap_engine
     queue
-    jsw_atree
     imap_parse
     imap_expression
     imap_write
     imap_read
-    hashmap
     imap_msg
     imap_maildir
     imap_maildir_up
     imap_maildir_dn
     imap_maildir_log_lmdb
     imap_dirmgr
-    link
     imap_session
     maildir_name
     imap_extension
@@ -125,98 +238,16 @@ if("${BUILD_SERVER_CODE}")
     list(APPEND EXE_TGTS olt)
 endif()
 
+# objects become OBJECT libraries, but are accessed through INTERFACE libraries
+foreach(tgt ${OBJ_TGTS})
+    add_obj_tgt("${tgt}.c" "${tgt}")
+endforeach()
 
-# Will add -DFILE_BASENAME="filename" for each source file depended on
-# by tgt, where filename is the name of the file.  Needed for logger.h
-function(define_file_basename_for_sources targetname)
-    get_target_property(source_files "${targetname}" SOURCES)
-    foreach(sourcefile ${source_files})
-        # Get source file's current list of compile definitions.
-        get_property(defs SOURCE "${sourcefile}"
-            PROPERTY COMPILE_DEFINITIONS)
-        # Add the FILE_BASENAME=filename compile definition to the list.
-        get_filename_component(basename "${sourcefile}" NAME)
-        list(APPEND defs "FILE_BASENAME=\"${basename}\"")
-        # Set the updated compile definitions on the source file.
-        set_property(
-            SOURCE "${sourcefile}"
-            PROPERTY COMPILE_DEFINITIONS ${defs})
-    endforeach()
-endfunction()
-
-# python3 is needed for packaging the installers
-if("${PYTHON_3_CMD}" STREQUAL "")
-    set(PYTHON_3_CMD "python3")
-endif()
-
-# re2c is needed for the IMAP scanner
-if("${RE2C}" STREQUAL "")
-    set(RE2C "re2c")
-endif()
-
-# bison is needed for the IMAP scanner
-if("${BISON}" STREQUAL "")
-    set(BISON "bison")
-endif()
-
-# inlcude OpenSSL
-if(APPLE OR WIN32)
-    set(OPENSSL_USE_STATIC_LIBS TRUE)
-endif()
-find_package(OpenSSL REQUIRED)
-
-# include libuv
-add_library(uv_interface INTERFACE)
-# target_include_directories(libuv INTERFACE "${path/to/libuv/include}")
-if("${LIBUV_LIB}" STREQUAL "")
-    set(LIBUV_LIB "uv")
-endif()
-target_link_libraries(uv_interface INTERFACE "${LIBUV_LIB}")
-
-add_library(lmdb_interface INTERFACE)
-# target_include_directories(libuv INTERFACE "${path/to/liblmdb/include}")
-if("${LIBLMDB_LIB}" STREQUAL "")
-    set(LIBLMDB_LIB "lmdb")
-endif()
-target_link_libraries(lmdb_interface INTERFACE "${LIBLMDB_LIB}")
-
-# tgt object depends on external library (propagate linking and includes)
-function(obj_depend_lib tgt includes libs)
-    if(NOT "${includes}" STREQUAL "")
-        # compile object with new includes
-        target_include_directories("${tgt}_o" PUBLIC ${includes})
-        # compile dependent objects with new includes
-        target_include_directories("${tgt}" INTERFACE ${includes})
-    endif()
-    if(NOT "${libs}" STREQUAL "")
-        # link dependent objects with new libraries
-        target_link_libraries("${tgt}" INTERFACE ${libs})
-    endif()
-endfunction()
-
-# tgt object depends on another object (propagate linking and includes)
-function(obj_depend_obj tgt)
-    foreach(dep ${ARGN})
-        get_target_property(incl "${dep}" INTERFACE_INCLUDE_DIRECTORIES)
-        if(NOT "${incl}" MATCHES ".*NOTFOUND")
-            # if the INTERFACE library has an include, we need it to compile
-            target_include_directories("${tgt}_o" PUBLIC ${incl})
-            target_include_directories("${tgt}" INTERFACE ${incl})
-        endif()
-    endforeach()
-    target_link_libraries("${tgt}" INTERFACE ${ARGN})
-endfunction()
-
-# for adding an interface library, which might be generated
-# extra arguments become extra file dependencies
-function(add_obj_tgt file tgt)
-    # create the object library itself
-    add_library("${tgt}_o" OBJECT "${file}")
-    define_file_basename_for_sources("${tgt}_o")
-    # create an interface library whose dependents will link against the object
-    add_library("${tgt}" INTERFACE)
-    target_sources("${tgt}" INTERFACE $<TARGET_OBJECTS:${tgt}_o> ${ARGN})
-endfunction()
+# add executables
+foreach(tgt ${EXE_TGTS})
+    add_executable("${tgt}" "${tgt}.c")
+    define_file_logname_for_target("${tgt}")
+endforeach()
 
 # generate the imap scanner
 set(input "${PROJECT_SOURCE_DIR}/imap_scan.c")
@@ -227,7 +258,7 @@ add_custom_command(
     DEPENDS "${input}"
     COMMENT "generating scanner" VERBATIM
     )
-add_obj_tgt("${output}" "imap_scan")
+add_gen_obj_tgt("${input}" "${output}" "imap_scan")
 
 # generate the imap parser
 set(input "${PROJECT_SOURCE_DIR}/imap_parse.y")
@@ -239,20 +270,9 @@ add_custom_command(
     DEPENDS "${input}"
     COMMENT "generating parser" VERBATIM
     )
-add_obj_tgt("${output}" "imap_parse_tab")
+add_gen_obj_tgt("${input}" "${output}" "imap_parse_tab")
 # add a custom target just for depending on the generated header
 add_custom_target(bison_header DEPENDS "${bison_header}")
-
-# objects become OBJECT libraries, but are accessed through INTERFACE libraries
-foreach(tgt ${OBJ_TGTS})
-    add_obj_tgt("${tgt}.c" "${tgt}")
-endforeach()
-
-# add executables
-foreach(tgt ${EXE_TGTS})
-    add_executable("${tgt}" "${tgt}.c")
-    define_file_basename_for_sources("${tgt}")
-endforeach()
 
 # some targets need OpenSSL headers
 obj_depend_lib(networking "${OPENSSL_INCLUDE_DIR}" "${OPENSSL_LIBRARIES}")
@@ -262,53 +282,47 @@ target_include_directories(ui_o PRIVATE ${OPENSSL_INCLUDE_DIR})
 
 # object inter-dependencies make exectuable dependencies easier to express:
 # objects with dummy interfaces must not be dependencies here
-obj_depend_obj(common logger win_compat)
-obj_depend_obj(opt_parse common)
-obj_depend_obj(fileops common)
-obj_depend_obj(crypto common)
-obj_depend_obj(json common)
-obj_depend_obj(maildir fileops)
-obj_depend_obj(networking fileops)
+obj_depend_obj(crypto dstr)
+obj_depend_obj(maildir dstr)
+obj_depend_obj(networking dstr)
 obj_depend_obj(pop_client networking)
 obj_depend_obj(pop_server networking)
-obj_depend_obj(api_client networking crypto json)
+obj_depend_obj(api_client networking crypto)
 obj_depend_obj(key_tool api_client crypto)
-obj_depend_obj(ditm pop_client pop_server maildir json)
-obj_depend_obj(uv_util common)
-obj_depend_obj(queue uv_interface uv_util link common)
+obj_depend_obj(ditm pop_client pop_server maildir)
+obj_depend_obj(uv_util dstr)
+obj_depend_obj(queue uv_interface uv_util)
 obj_depend_obj(engine queue)
 obj_depend_obj(loop engine)
 obj_depend_obj(tls_engine engine networking)
 obj_depend_obj(imap_engine engine imap_read imap_write)
-obj_depend_obj(jsw_atree common)
-obj_depend_obj(imap_expression jsw_atree link common)
-obj_depend_obj(imap_parse_tab imap_expression imap_extension imap_scan common)
-obj_depend_obj(imap_parse imap_parse_tab common)
+obj_depend_obj(imap_expression dstr)
+obj_depend_obj(imap_parse_tab imap_expression imap_extension imap_scan)
+obj_depend_obj(imap_parse imap_parse_tab)
 add_dependencies(imap_parse_o bison_header)
-obj_depend_obj(imap_scan imap_parse common)
+obj_depend_obj(imap_scan imap_parse)
 add_dependencies(imap_scan_o bison_header)
-obj_depend_obj(imap_read imap_parse imap_scan common)
+obj_depend_obj(imap_read imap_parse imap_scan)
 add_dependencies(imap_read_o bison_header)
-obj_depend_obj(imap_write imap_expression imap_extension common)
-obj_depend_obj(hashmap common)
-obj_depend_obj(imap_util common jsw_atree imap_expression)
-obj_depend_obj(imap_msg jsw_atree link hashmap fileops)
-obj_depend_obj(imap_maildir_up maildir_name imap_util imap_msg uv_util crypto fileops)
-obj_depend_obj(imap_maildir_dn maildir_name imap_util imap_msg uv_util crypto fileops)
+obj_depend_obj(imap_write imap_expression imap_extension)
+obj_depend_obj(imap_util imap_expression)
+obj_depend_obj(imap_msg dstr)
+obj_depend_obj(imap_maildir_up maildir_name imap_util imap_msg uv_util crypto)
+obj_depend_obj(imap_maildir_dn maildir_name imap_util imap_msg uv_util crypto)
 obj_depend_obj(imap_maildir_log_lmdb lmdb_interface)
 obj_depend_obj(imap_maildir imap_maildir_up imap_maildir_dn imap_maildir_log_lmdb)
-obj_depend_obj(imap_dirmgr imap_maildir jsw_atree)
+obj_depend_obj(imap_dirmgr imap_maildir)
 obj_depend_obj(imap_session loop tls_engine imap_engine loop uv_interface)
-obj_depend_obj(maildir_name common)
+obj_depend_obj(maildir_name)
 
 
 # describe executables with dependencies
 # target_link_libraries(srvcli networking)
-target_link_libraries(splintermail ui console_input ditm key_tool opt_parse)
+target_link_libraries(splintermail ui console_input ditm key_tool)
 target_link_libraries(leak networking)
-target_link_libraries(encrypt_msg crypto opt_parse)
-target_link_libraries(decrypt_msg crypto opt_parse)
-target_link_libraries(olt common fileops opt_parse)
+target_link_libraries(encrypt_msg crypto)
+target_link_libraries(decrypt_msg crypto)
+target_link_libraries(olt dstr)
 # target_link_libraries(imap_ditm imap_session imap_dirmgr imap_ditm_logic crypto)
 target_link_libraries(sm_fetch imap_session imap_dirmgr sm_fetch_logic)
 target_link_libraries(sm_serve imap_session imap_dirmgr sm_serve_logic)
@@ -333,7 +347,7 @@ if("${BUILD_SERVER_CODE}")
     # badbadbad_alert needs non-strict aliasing due to sockaddr_info business
     target_compile_options(badbadbad_alert_o PRIVATE -fno-strict-aliasing)
 
-    obj_depend_obj(badbadbad_alert common)
+    obj_depend_obj(badbadbad_alert dstr)
     target_link_libraries(encrypt_msg badbadbad_alert)
     target_link_libraries(badbadbad badbadbad_alert)
 endif()
@@ -388,17 +402,17 @@ if("${BUILD_TESTS}")
     # OBJECT FILES (so they aren't being recompiled over and over)
     foreach(tgt ${TEST_OBJ_TGTS})
         add_library("${tgt}_o" OBJECT "test/${tgt}.c")
-        define_file_basename_for_sources("${tgt}_o")
+        define_file_logname_for_target("${tgt}_o")
         add_library("${tgt}" INTERFACE)
         target_sources("${tgt}" INTERFACE $<TARGET_OBJECTS:${tgt}_o>)
     endforeach()
 
     # object intra-dependencies, make exectuable dependencies easier to express:
     # objects with dummy interfaces must not be dependencies here
-    obj_depend_obj(fake_api_server crypto networking json)
+    obj_depend_obj(fake_api_server crypto networking)
     obj_depend_obj(fake_pop_server pop_server pop_client)
-    obj_depend_obj(ditm_thread ditm dummy_key_tool fileops)
-    obj_depend_obj(dummy_key_tool crypto common)
+    obj_depend_obj(ditm_thread ditm dummy_key_tool)
+    obj_depend_obj(dummy_key_tool crypto)
     obj_depend_obj(fake_engine imap_session loop tls_engine imap_engine queue networking)
     # some dummy tools need openssl headers to compile... but not to link
     target_include_directories(dummy_key_tool_o PRIVATE ${OPENSSL_INCLUDE_DIR})
@@ -415,39 +429,39 @@ if("${BUILD_TESTS}")
     # add test executables, tests and INCLUDE the root directory
     foreach(tgt ${TEST_EXE_TGTS})
         add_executable("${tgt}" "test/${tgt}.c")
-        define_file_basename_for_sources("${tgt}")
+        define_file_logname_for_target("${tgt}")
         # all exectuables use opt_parse
-        target_link_libraries("${tgt}" opt_parse)
+        target_link_libraries("${tgt}" dstr)
         # add test
         add_test(NAME "do_${tgt}"
             COMMAND ${valgrind_cmd} "./${tgt}" "${PROJECT_SOURCE_DIR}/test/files")
     endforeach()
 
     # describe test executables with dependencies
-    target_link_libraries(test_common common)
-    target_link_libraries(test_fileops fileops)
-    target_link_libraries(test_pop_server pop_server fileops)
+    # target_link_libraries(test_common)
+    # target_link_libraries(test_fileops)
+    target_link_libraries(test_pop_server pop_server)
     target_link_libraries(test_ditm ditm_thread fake_pop_server)
     target_link_libraries(test_ditm_errors ditm_thread fake_pop_server test_utils)
     target_link_libraries(test_maildir maildir)
-    target_link_libraries(test_logger logger opt_parse)
+    # target_link_libraries(test_logger)
     target_link_libraries(test_pop_client pop_client fake_pop_server)
     target_link_libraries(test_crypto crypto)
-    target_link_libraries(test_opt_parse opt_parse)
+    # target_link_libraries(test_opt_parse)
     target_link_libraries(test_networking networking)
-    target_link_libraries(test_json json)
+    # target_link_libraries(test_json)
     target_link_libraries(test_key_tool key_tool test_utils fake_api_server)
-    target_link_libraries(test_ui ui dummy_ui_harness json)
-    target_link_libraries(test_atree jsw_atree)
+    target_link_libraries(test_ui ui dummy_ui_harness)
+    # target_link_libraries(test_atree)
     target_link_libraries(test_imap_scan imap_scan)
     target_link_libraries(test_imap_read imap_read imap_write)
     target_link_libraries(test_imap_write imap_write)
-    target_link_libraries(test_hashmap hashmap)
+    # target_link_libraries(test_hashmap)
     # target_link_libraries(test_imap_maildir imap_maildir)
     target_link_libraries(test_loop fake_engine networking)
     target_link_libraries(test_queue queue)
     target_link_libraries(test_tls_engine fake_engine)
-    target_link_libraries(test_link link common)
+    # target_link_libraries(test_link)
     target_link_libraries(test_maildir_name maildir_name)
 
     if(WIN32)
@@ -988,13 +1002,13 @@ elseif(WIN32)
     set(keygen_src_out "${PROJECT_BINARY_DIR}/installer/keygen.c")
     preprocessed_copy("${keygen_src_in}" "${keygen_src_out}")
     add_executable(keygen "${keygen_src_out}")
-    define_file_basename_for_sources(keygen)
+    define_file_logname_for_target(keygen)
     target_link_libraries(keygen fileops)
     list(APPEND tgt_deps keygen)
 
     # rm_rf.exe (will be embedded in installer for uninstallation)
     add_executable(rm_rf "${supp_dir}/windows/rm_rf.c")
-    define_file_basename_for_sources(rm_rf)
+    define_file_logname_for_target(rm_rf)
     target_link_libraries(rm_rf fileops)
     list(APPEND tgt_deps rm_rf)
 
