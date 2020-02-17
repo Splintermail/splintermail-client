@@ -1,7 +1,7 @@
 #ifndef IMAP_SCAN_H
 #define IMAP_SCAN_H
 
-#include "common.h"
+#include "libdstr/common.h"
 
 // control scanner modes based on what state the parser is in
 typedef enum {

@@ -1,6 +1,6 @@
-#include "common.h"
+#include "libdstr/common.h"
 #include "ui.h"
-#include "win_compat.h"
+#include "libdstr/win_compat.h"
 #include "ditm.h"
 
 #ifndef _WIN32

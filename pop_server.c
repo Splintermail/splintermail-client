@@ -1,7 +1,7 @@
 #include <string.h>
 
 #include "networking.h"
-#include "logger.h"
+#include "libdstr/logger.h"
 #include "pop_server.h"
 
 #define BUFFER_SIZE 4096

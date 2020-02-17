@@ -1,5 +1,5 @@
 #include "fake_imap_client.h"
-#include <logger.h>
+#include <libdstr/logger.h>
 
 static void uv_perror(const char *prefix, int code){
     fprintf(stderr, "%s: %s\n", prefix, uv_strerror(code));

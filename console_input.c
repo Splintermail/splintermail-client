@@ -2,9 +2,9 @@
 #include <string.h>
 
 #include "console_input.h"
-#include "common.h"
-#include "logger.h"
-#include "win_compat.h"
+#include "libdstr/common.h"
+#include "libdstr/logger.h"
+#include "libdstr/win_compat.h"
 
 #ifdef _WIN32
 #include <conio.h>

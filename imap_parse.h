@@ -4,7 +4,7 @@
 #include "imap_expression.h"
 #include "imap_extension.h"
 #include "imap_scan.h"
-#include "common.h"
+#include "libdstr/common.h"
 
 typedef union {
     void (*cmd)(void *cb_data, derr_t error, imap_cmd_t *cmd);

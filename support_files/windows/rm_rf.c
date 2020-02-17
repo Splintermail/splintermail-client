@@ -1,10 +1,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include <common.h>
-#include <logger.h>
-#include <win_compat.h>
-#include <fileops.h>
+#include <libdstr/common.h>
+#include <libdstr/logger.h>
+#include <libdstr/win_compat.h>
+#include <libdstr/fileops.h>
 
 // deletes whatever is found in the first argument
 int main(int argc, char** argv) {

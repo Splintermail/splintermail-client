@@ -1,6 +1,6 @@
 #include "imap_msg.h"
-#include "logger.h"
-#include "fileops.h"
+#include "libdstr/logger.h"
+#include "libdstr/fileops.h"
 
 derr_t msg_meta_new(msg_meta_t **out, msg_flags_t flags, unsigned long modseq){
     derr_t e = E_OK;

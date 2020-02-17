@@ -3,9 +3,9 @@
 
 #include <uv.h>
 
-#include "common.h"
-#include "jsw_atree.h"
-#include "hashmap.h"
+#include "libdstr/common.h"
+#include "libdstr/jsw_atree.h"
+#include "libdstr/hashmap.h"
 #include "imap_maildir.h"
 #include "crypto.h"
 

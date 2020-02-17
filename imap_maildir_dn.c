@@ -1,5 +1,5 @@
 #include "imap_maildir_dn.h"
-#include "logger.h"
+#include "libdstr/logger.h"
 #include "imap_util.h"
 
 // forward declarations

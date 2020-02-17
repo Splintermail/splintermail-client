@@ -1,8 +1,8 @@
 #ifndef IMAP_DITM_H
 #define IMAP_DITM_H
 
-#include "common.h"
-#include "link.h"
+#include "libdstr/common.h"
+#include "libdstr/link.h"
 #include "manager.h"
 #include "imap_session.h"
 

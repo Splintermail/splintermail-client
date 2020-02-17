@@ -1,5 +1,5 @@
 #include "sm_fetch.h"
-#include "logger.h"
+#include "libdstr/logger.h"
 #include "imap_util.h"
 
 typedef struct {

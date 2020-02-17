@@ -4,17 +4,17 @@
 #include <string.h>
 #include <signal.h>
 
-#include <common.h>
-#include <logger.h>
+#include <libdstr/common.h>
+#include <libdstr/logger.h>
 #include <key_tool.h>
 #include <fixed_lengths.h>
-#include <fileops.h>
+#include <libdstr/fileops.h>
 #include <networking.h>
 
 #include "fake_api_server.h"
 #include "test_utils.h"
 
-#include <win_compat.h>
+#include <libdstr/win_compat.h>
 
 // path to where the test files can be found
 const char* g_test_files;

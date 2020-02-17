@@ -3,7 +3,7 @@
 
 #include <uv.h>
 
-#include "common.h"
+#include "libdstr/common.h"
 #include "engine.h"
 #include "queue.h"
 

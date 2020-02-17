@@ -1,7 +1,7 @@
 #ifndef POP_SERVER_H
 #define POP_SERVER_H
 
-#include "common.h"
+#include "libdstr/common.h"
 #include "networking.h"
 
 typedef struct {

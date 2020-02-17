@@ -1,7 +1,7 @@
 #include "imap_dirmgr.h"
-#include "logger.h"
+#include "libdstr/logger.h"
 #include "imap_expression.h"
-#include "fileops.h"
+#include "libdstr/fileops.h"
 #include "uv_util.h"
 
 // static void managed_dir_new(managed_dir_t **out, dirmgr_t *dm,

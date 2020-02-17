@@ -1,7 +1,7 @@
 #ifndef MAILDIR_H
 #define MAILDIR_H
 
-#include "common.h"
+#include "libdstr/common.h"
 
 typedef struct {
     char path_buffer[4096];

@@ -3,7 +3,7 @@
 
 #include <pthread.h>
 
-#include <common.h>
+#include <libdstr/common.h>
 #include <queue.h>
 #include <engine.h>
 #include <loop.h>

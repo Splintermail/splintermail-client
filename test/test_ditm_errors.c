@@ -6,11 +6,11 @@
 #include <signal.h>
 #include <stdlib.h>
 
-#include <common.h>
-#include <logger.h>
+#include <libdstr/common.h>
+#include <libdstr/logger.h>
 #include <ditm.h>
 #include <networking.h>
-#include <fileops.h>
+#include <libdstr/fileops.h>
 
 #include "fake_pop_server.h"
 #include "fake_api_server.h"
@@ -18,7 +18,7 @@
 #include "dummy_key_tool.h"
 #include "ditm_thread.h"
 
-#include <win_compat.h>
+#include <libdstr/win_compat.h>
 
 // path to where the test files can be found
 const char* g_test_files;

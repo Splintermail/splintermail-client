@@ -3,11 +3,11 @@
 
 #include <uv.h>
 
-#include "common.h"
-#include "hashmap.h"
+#include "libdstr/common.h"
+#include "libdstr/hashmap.h"
 #include "imap_expression.h"
-#include "link.h"
-#include "jsw_atree.h"
+#include "libdstr/link.h"
+#include "libdstr/jsw_atree.h"
 #include "manager.h"
 #include "imap_msg.h"
 #include "crypto.h"

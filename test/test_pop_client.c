@@ -1,15 +1,15 @@
 #include <string.h>
 #include <time.h>
 
-#include <common.h>
-#include <logger.h>
+#include <libdstr/common.h>
+#include <libdstr/logger.h>
 #include <pop_client.h>
 #include <pop_server.h>
 
 #include "fake_pop_server.h"
 #include "test_utils.h"
 
-#include <win_compat.h>
+#include <libdstr/win_compat.h>
 
 // path to where the test files can be found
 const char* g_test_files;

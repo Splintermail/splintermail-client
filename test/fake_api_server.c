@@ -3,10 +3,10 @@
 #define HAVE_STRUCT_TIMESPEC
 #include <pthread.h>
 
-#include <common.h>
-#include <json.h>
+#include <libdstr/common.h>
+#include <libdstr/json.h>
 #include <crypto.h>
-#include <logger.h>
+#include <libdstr/logger.h>
 #include <networking.h>
 
 #include "test_utils.h"

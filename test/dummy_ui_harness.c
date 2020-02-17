@@ -3,11 +3,11 @@
 
 #include "dummy_ui_harness.h"
 
-#include <logger.h>
+#include <libdstr/logger.h>
 #include <ditm.h>
-#include <fileops.h>
+#include <libdstr/fileops.h>
 #include <networking.h>
-#include <json.h>
+#include <libdstr/json.h>
 #include <console_input.h>
 
 // ditm.h

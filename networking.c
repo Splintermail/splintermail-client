@@ -10,11 +10,11 @@
 #include <openssl/opensslv.h>
 
 #include "networking.h"
-#include "logger.h"
-#include "fileops.h"
+#include "libdstr/logger.h"
+#include "libdstr/fileops.h"
 #include "ssl_errors.h"
 
-#include "win_compat.h"
+#include "libdstr/win_compat.h"
 
 // forward declaration of function only exposed to tests
 derr_t ssl_context_load_from_os(ssl_context_t* ctx);

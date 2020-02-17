@@ -1,9 +1,9 @@
 #include <stdio.h>
 #include <string.h>
 
-#include <opt_parse.h>
-#include <common.h>
-#include <logger.h>
+#include <libdstr/opt_parse.h>
+#include <libdstr/common.h>
+#include <libdstr/logger.h>
 
 #include "test_utils.h"
 

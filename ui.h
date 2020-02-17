@@ -1,8 +1,8 @@
 #ifndef UI_C
 #define UI_C
 
-#include "common.h"
-#include "win_compat.h"
+#include "libdstr/common.h"
+#include "libdstr/win_compat.h"
 
 #ifdef _WIN32
 // stuff for windows service to work

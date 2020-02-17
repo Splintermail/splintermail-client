@@ -5,7 +5,7 @@ static const unsigned int DITM_VERSION_MAJOR = 0;
 static const unsigned int DITM_VERSION_MINOR = 2;
 static const unsigned int DITM_VERSION_BUILD = 0;
 
-#include "common.h"
+#include "libdstr/common.h"
 #include "maildir.h"
 #include "pop_client.h"
 #include "pop_server.h"

@@ -1,9 +1,9 @@
 #include <signal.h>
 
 #include "sm_fetch.h"
-#include "logger.h"
+#include "libdstr/logger.h"
 #include "uv_util.h"
-#include "jsw_atree.h"
+#include "libdstr/jsw_atree.h"
 #include "crypto.h"
 
 uv_idle_t idle;

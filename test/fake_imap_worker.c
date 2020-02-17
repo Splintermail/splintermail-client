@@ -1,6 +1,6 @@
 #include <uv.h>
 
-#include <logger.h>
+#include <libdstr/logger.h>
 #include <queue.h>
 #include <engine.h>
 

@@ -4,9 +4,9 @@
 #include "dummy_ui_harness.h"
 #include "test_utils.h"
 
-#include <logger.h>
+#include <libdstr/logger.h>
 #include <ui.h>
-#include <win_compat.h>
+#include <libdstr/win_compat.h>
 
 #define TEST_LOG_LEVEL LOG_LVL_DEBUG
 

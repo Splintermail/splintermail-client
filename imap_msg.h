@@ -1,10 +1,10 @@
 #ifndef IMAP_MSG_H
 #define IMAP_MSG_H
 
-#include "common.h"
-#include "link.h"
-#include "jsw_atree.h"
-#include "hashmap.h"
+#include "libdstr/common.h"
+#include "libdstr/link.h"
+#include "libdstr/jsw_atree.h"
+#include "libdstr/hashmap.h"
 #include "imap_expression.h"
 #include "imap_util.h"
 

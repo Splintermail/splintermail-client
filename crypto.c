@@ -15,10 +15,10 @@
 #include <openssl/opensslv.h>
 
 #include "crypto.h"
-#include "logger.h"
+#include "libdstr/logger.h"
 #include "ssl_errors.h"
 
-#include "win_compat.h"
+#include "libdstr/win_compat.h"
 
 #define FORMAT_VERSON 1
 #define B64_WIDTH 64

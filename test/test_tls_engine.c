@@ -5,10 +5,10 @@
 
 #include <pthread.h>
 
-#include <common.h>
+#include <libdstr/common.h>
 #include <queue.h>
 #include <networking.h>
-#include <logger.h>
+#include <libdstr/logger.h>
 #include <loop.h>
 #include <tls_engine.h>
 

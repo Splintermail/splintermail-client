@@ -3,9 +3,9 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 
-#include <common.h>
-#include <logger.h>
-#include <hashmap.h>
+#include <libdstr/common.h>
+#include <libdstr/logger.h>
+#include <libdstr/hashmap.h>
 
 #include "test_utils.h"
 

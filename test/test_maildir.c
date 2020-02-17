@@ -1,14 +1,14 @@
 #include <fcntl.h>
 #include <limits.h>
 
-#include <common.h>
-#include <logger.h>
+#include <libdstr/common.h>
+#include <libdstr/logger.h>
 #include <maildir.h>
-#include <fileops.h>
+#include <libdstr/fileops.h>
 
 #include "test_utils.h"
 
-#include <win_compat.h>
+#include <libdstr/win_compat.h>
 
 #define NUM_FAKES 1000
 #define IDX_DEL_TEST (NUM_FAKES / 2)

@@ -4,7 +4,7 @@
 #define HAVE_STRUCT_TIMESPEC
 #include <pthread.h>
 
-#include <common.h>
+#include <libdstr/common.h>
 #include <ditm.h>
 
 // path to where the test files can be found

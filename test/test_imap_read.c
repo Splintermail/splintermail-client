@@ -1,7 +1,7 @@
 #include <string.h>
 
-#include <common.h>
-#include <logger.h>
+#include <libdstr/common.h>
+#include <libdstr/logger.h>
 #include <imap_read.h>
 #include <imap_expression.h>
 #include <imap_write.h>

@@ -1,10 +1,10 @@
 #include <string.h>
 
-#include "common.h"
-#include "logger.h"
+#include "libdstr/common.h"
+#include "libdstr/logger.h"
 #include "networking.h"
 
-#include "win_compat.h"
+#include "libdstr/win_compat.h"
 
 static derr_t connect_tls(const char* addr, char* port){
     derr_t error;

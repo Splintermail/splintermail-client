@@ -1,7 +1,7 @@
 #ifndef DUMMY_UI_HARNESS_C
 #define DUMMY_UI_HARNESS_C
 
-#include <common.h>
+#include <libdstr/common.h>
 #include <api_client.h>
 
 // Shitty MSVC preprocessor won't let us stack __VA_ARGS__ macros

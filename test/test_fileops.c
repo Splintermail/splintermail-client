@@ -1,8 +1,8 @@
 #include <stdio.h>
 #include <string.h>
 
-#include <fileops.h>
-#include <logger.h>
+#include <libdstr/fileops.h>
+#include <libdstr/logger.h>
 
 #include "test_utils.h"
 

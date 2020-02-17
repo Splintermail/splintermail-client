@@ -4,10 +4,10 @@
 #include <fcntl.h>
 #include <string.h>
 
-#include "common.h"
-#include "logger.h"
+#include "libdstr/common.h"
+#include "libdstr/logger.h"
 #include "crypto.h"
-#include "opt_parse.h"
+#include "libdstr/opt_parse.h"
 
 int main(int argc, char** argv){
     derr_t e = E_OK;

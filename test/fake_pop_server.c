@@ -3,15 +3,15 @@
 #define HAVE_STRUCT_TIMESPEC
 #include <pthread.h>
 
-#include <common.h>
-#include <logger.h>
+#include <libdstr/common.h>
+#include <libdstr/logger.h>
 #include <pop_server.h>
 #include <networking.h>
 #include <pop_client.h>
 
 #include "fake_pop_server.h"
 
-#include <win_compat.h>
+#include <libdstr/win_compat.h>
 
 char g_username[] = "b@splintermail.com";
 char g_password[] = "b";

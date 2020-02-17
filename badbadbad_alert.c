@@ -6,7 +6,7 @@
 #include <time.h>
 
 #include "badbadbad_alert.h"
-#include "logger.h"
+#include "libdstr/logger.h"
 
 #define SOCKFILE "/run/badbadbad/badbadbad.sock"
 #define LOGFILE "/var/log/badbadbad/badbadbad.log"

@@ -1,10 +1,10 @@
 #include <signal.h>
 
 #include "imap_ditm.h"
-#include "logger.h"
+#include "libdstr/logger.h"
 #include "loop.h"
 #include "uv_util.h"
-#include "jsw_atree.h"
+#include "libdstr/jsw_atree.h"
 #include "imap_dirmgr.h"
 #include "crypto.h"
 

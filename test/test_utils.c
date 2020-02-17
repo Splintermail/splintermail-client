@@ -1,10 +1,10 @@
 #include <string.h>
 #include <errno.h>
 
-#include <logger.h>
-#include <common.h>
-#include <fileops.h>
-#include <win_compat.h>
+#include <libdstr/logger.h>
+#include <libdstr/common.h>
+#include <libdstr/fileops.h>
+#include <libdstr/win_compat.h>
 
 #include "test_utils.h"
 

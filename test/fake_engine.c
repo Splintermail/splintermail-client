@@ -1,5 +1,5 @@
 #include <networking.h>
-#include <logger.h>
+#include <libdstr/logger.h>
 
 #include "fake_engine.h"
 

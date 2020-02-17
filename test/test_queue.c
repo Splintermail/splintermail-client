@@ -1,7 +1,7 @@
 #include <pthread.h>
 
-#include <common.h>
-#include <logger.h>
+#include <libdstr/common.h>
+#include <libdstr/logger.h>
 #include <queue.h>
 
 #include "test_utils.h"

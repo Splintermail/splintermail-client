@@ -4,7 +4,7 @@
 
 #include "ixs.h"
 #include "loop.h"
-#include "logger.h"
+#include "libdstr/logger.h"
 
 
 static void uv_perror(const char *prefix, int code){

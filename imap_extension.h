@@ -1,7 +1,7 @@
 #ifndef IMAP_EXTENSION_H
 #define IMAP_EXTENSION_H
 
-#include "common.h"
+#include "libdstr/common.h"
 
 typedef enum {
     EXT_UIDPLUS,

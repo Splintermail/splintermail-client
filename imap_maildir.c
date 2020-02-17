@@ -7,13 +7,13 @@
 #include "imap_maildir.h"
 #include "imap_maildir_up.h"
 #include "imap_maildir_dn.h"
-#include "logger.h"
-#include "fileops.h"
+#include "libdstr/logger.h"
+#include "libdstr/fileops.h"
 #include "uv_util.h"
 #include "maildir_name.h"
 #include "imap_util.h"
 
-#include "win_compat.h"
+#include "libdstr/win_compat.h"
 
 #define HOSTNAME_COMPONENT_MAX_LEN 32
 

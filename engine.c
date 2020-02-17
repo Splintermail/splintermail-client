@@ -1,5 +1,5 @@
 #include "engine.h"
-#include "logger.h"
+#include "libdstr/logger.h"
 
 // Does not init the dstr or set callbacks.
 void event_prep(event_t *ev, event_returner_t returner, void *returner_arg){

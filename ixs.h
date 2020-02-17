@@ -6,7 +6,7 @@
 #include <openssl/bio.h>
 #include <openssl/ssl.h>
 
-#include "common.h"
+#include "libdstr/common.h"
 #include "networking.h"
 #include "ix.h"
 #include "queue.h"

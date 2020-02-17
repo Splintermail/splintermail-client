@@ -1,5 +1,5 @@
 #include "sm_serve.h"
-#include "logger.h"
+#include "libdstr/logger.h"
 #include "imap_util.h"
 
 DSTR_STATIC(PREAUTH_dstr, "PREAUTH");

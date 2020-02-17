@@ -1,7 +1,7 @@
 #include <errno.h>
 
 #include "key_tool.h"
-#include "logger.h"
+#include "libdstr/logger.h"
 
 /* throws: E_NOMEM
            E_INTERNAL

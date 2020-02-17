@@ -1,7 +1,7 @@
 #ifndef FAKE_POP_SERVER_H
 #define FAKE_POP_SERVER_H
 
-#include <common.h>
+#include <libdstr/common.h>
 
 // path to where the test files can be found
 extern const char* g_test_files;

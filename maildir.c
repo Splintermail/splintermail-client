@@ -5,10 +5,10 @@
 #include <fcntl.h>
 
 #include "maildir.h"
-#include "logger.h"
-#include "fileops.h"
+#include "libdstr/logger.h"
+#include "libdstr/fileops.h"
 
-#include "win_compat.h"
+#include "libdstr/win_compat.h"
 
 #define HOSTNAME_COMPONENT_MAX_LEN 32
 

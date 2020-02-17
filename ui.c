@@ -6,16 +6,16 @@
 #include <errno.h>
 
 #include "ui.h"
-#include "logger.h"
+#include "libdstr/logger.h"
 #include "ditm.h"
 #include "api_client.h"
-#include "json.h"
-#include "opt_parse.h"
-#include "fileops.h"
+#include "libdstr/json.h"
+#include "libdstr/opt_parse.h"
+#include "libdstr/fileops.h"
 #include "console_input.h"
 #include "print_help.h"
 
-#include "win_compat.h"
+#include "libdstr/win_compat.h"
 
 // default ditm directory
 #ifndef _WIN32

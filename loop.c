@@ -3,7 +3,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "logger.h"
+#include "libdstr/logger.h"
 #include "loop.h"
 #include "uv_util.h"
 

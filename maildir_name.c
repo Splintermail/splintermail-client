@@ -1,5 +1,5 @@
 #include "maildir_name.h"
-#include "logger.h"
+#include "libdstr/logger.h"
 
 static unsigned int deliv_id_ver = 1;
 

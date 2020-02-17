@@ -4,7 +4,7 @@
 #include <uv.h>
 
 #include "uv_util.h"
-#include "logger.h"
+#include "libdstr/logger.h"
 
 derr_type_t fmthook_uv_error(dstr_t* out, const void* arg){
     // cast the input

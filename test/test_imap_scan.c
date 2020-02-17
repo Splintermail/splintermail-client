@@ -1,5 +1,5 @@
-#include <common.h>
-#include <logger.h>
+#include <libdstr/common.h>
+#include <libdstr/logger.h>
 #include <imap_scan.h>
 #include <imap_parse.h>
 #include <imap_parse.tab.h>

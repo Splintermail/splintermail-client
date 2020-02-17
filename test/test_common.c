@@ -3,12 +3,12 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 
-#include <common.h>
-#include <logger.h>
+#include <libdstr/common.h>
+#include <libdstr/logger.h>
 
 #include "test_utils.h"
 
-#include <win_compat.h>
+#include <libdstr/win_compat.h>
 
 #define EXP_VS_GOT(exp, got) { \
     int result = dstr_cmp(exp, got); \

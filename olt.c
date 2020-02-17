@@ -4,10 +4,10 @@
 #include <pwd.h>
 #include <grp.h>
 
-#include "common.h"
-#include "logger.h"
-#include "fileops.h"
-#include "opt_parse.h"
+#include "libdstr/common.h"
+#include "libdstr/logger.h"
+#include "libdstr/fileops.h"
+#include "libdstr/opt_parse.h"
 
 static char* dot = ".";
 static char* dotdot = "..";

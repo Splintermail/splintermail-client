@@ -1,10 +1,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include <common.h>
-#include <logger.h>
-#include <win_compat.h>
-#include <fileops.h>
+#include <libdstr/common.h>
+#include <libdstr/logger.h>
+#include <libdstr/win_compat.h>
+#include <libdstr/fileops.h>
 
 derr_t do_popen(const char* args, const dstr_t* input, dstr_t* output){
     LOG_INFO("spawing child process: %x\n", FS(args));

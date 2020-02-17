@@ -1,5 +1,5 @@
-#include "common.h"
-#include "logger.h"
+#include "libdstr/common.h"
+#include "libdstr/logger.h"
 #include "badbadbad_alert.h"
 
 int main(int argc, char** argv){

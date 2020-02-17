@@ -1,5 +1,5 @@
-#include "common.h"
-#include "logger.h"
+#include "libdstr/common.h"
+#include "libdstr/logger.h"
 
 //// I hated how the API for this turned out
 
