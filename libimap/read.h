@@ -2,8 +2,8 @@
 #define IMAP_READ_H
 
 #include "libdstr/common.h"
-#include "imap_scan.h"
-#include "imap_parse.h"
+#include "scan.h"
+#include "parse.h"
 
 typedef struct {
     imap_parser_t parser;

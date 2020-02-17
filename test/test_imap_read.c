@@ -2,9 +2,9 @@
 
 #include <libdstr/common.h>
 #include <libdstr/logger.h>
-#include <imap_read.h>
-#include <imap_expression.h>
-#include <imap_write.h>
+#include <libimap/read.h>
+#include <libimap/expression.h>
+#include <libimap/write.h>
 
 #include "test_utils.h"
 

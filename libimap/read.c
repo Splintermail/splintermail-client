@@ -1,6 +1,6 @@
-#include "imap_read.h"
-#include "imap_parse.h"
-#include "imap_scan.h"
+#include "read.h"
+#include "parse.h"
+#include "scan.h"
 
 #include "libdstr/logger.h"
 #include "imap_parse.tab.h"

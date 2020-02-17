@@ -5,8 +5,8 @@
 
 #include "libdstr/common.h"
 #include "engine.h"
-#include "imap_read.h"
-#include "imap_write.h"
+#include "libimap/read.h"
+#include "libimap/write.h"
 
 struct imape_t;
 typedef struct imape_t imape_t;

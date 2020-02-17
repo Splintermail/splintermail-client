@@ -1,7 +1,7 @@
 #include <libdstr/common.h>
 #include <libdstr/logger.h>
-#include <imap_scan.h>
-#include <imap_parse.h>
+#include <libimap/scan.h>
+#include <libimap/parse.h>
 #include <imap_parse.tab.h>
 
 #include "test_utils.h"

@@ -5,7 +5,7 @@
 #include "libdstr/link.h"
 #include "libdstr/jsw_atree.h"
 #include "libdstr/hashmap.h"
-#include "imap_expression.h"
+#include "libimap/expression.h"
 #include "imap_util.h"
 
 struct msg_base_ref_t;

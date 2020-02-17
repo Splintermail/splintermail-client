@@ -142,11 +142,11 @@ derr_t imap_ditm_do_work(imap_ditm_t *ditm){
 // /////////////////////////////////////////////////////////////
 // #include "libdstr/logger.h"
 // #include "imap_client.h"
-// #include "imap_read.h"
+// #include "libimap/read.h"
 // #include "queue.h"
 // #include "libdstr/link.h"
-// #include "imap_expression.h"
-// #include "imap_write.h"
+// #include "libimap/expression.h"
+// #include "libimap/write.h"
 //
 // #define IC_TAG_SIZE 16
 //

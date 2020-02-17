@@ -5,7 +5,7 @@
 
 #include "libdstr/common.h"
 #include "libdstr/hashmap.h"
-#include "imap_expression.h"
+#include "libimap/expression.h"
 #include "libdstr/link.h"
 #include "libdstr/jsw_atree.h"
 #include "manager.h"

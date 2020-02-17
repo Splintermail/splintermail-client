@@ -5,8 +5,8 @@
    2 bytes.
 */
 
-#include "imap_expression.h"
-#include "imap_extension.h"
+#include "expression.h"
+#include "extension.h"
 
 // *skip is an input and output, *want is just output.
 derr_t imap_cmd_write(const imap_cmd_t *cmd, dstr_t *out, size_t *skip,

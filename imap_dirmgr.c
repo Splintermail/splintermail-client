@@ -1,6 +1,6 @@
 #include "imap_dirmgr.h"
 #include "libdstr/logger.h"
-#include "imap_expression.h"
+#include "libimap/expression.h"
 #include "libdstr/fileops.h"
 #include "uv_util.h"
 

@@ -1,9 +1,9 @@
 #ifndef IMAP_PARSE_H
 #define IMAP_PARSE_H
 
-#include "imap_expression.h"
-#include "imap_extension.h"
-#include "imap_scan.h"
+#include "expression.h"
+#include "extension.h"
+#include "scan.h"
 #include "libdstr/common.h"
 
 typedef union {

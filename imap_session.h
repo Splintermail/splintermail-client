@@ -9,7 +9,7 @@
 #include "imap_engine.h"
 #include "networking.h"
 #include "manager.h"
-#include "imap_parse.h"
+#include "libimap/parse.h"
 
 struct imap_session_t;
 typedef struct imap_session_t imap_session_t;

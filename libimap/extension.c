@@ -1,4 +1,4 @@
-#include "imap_extension.h"
+#include "extension.h"
 #include "libdstr/logger.h"
 
 // throw an error if an action requires an extension to be enabled

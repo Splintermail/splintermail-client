@@ -1,6 +1,6 @@
 #include <stdlib.h>
 
-#include "imap_expression.h"
+#include "expression.h"
 #include "libdstr/logger.h"
 
 DSTR_STATIC(IE_UNKNOWN_dstr, "UNKNOWN");
