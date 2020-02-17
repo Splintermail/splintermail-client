@@ -24,16 +24,6 @@ if("${PYTHON_3_CMD}" STREQUAL "")
     set(PYTHON_3_CMD "python3")
 endif()
 
-# re2c is needed for the IMAP scanner
-if("${RE2C}" STREQUAL "")
-    set(RE2C "re2c")
-endif()
-
-# bison is needed for the IMAP scanner
-if("${BISON}" STREQUAL "")
-    set(BISON "bison")
-endif()
-
 # inlcude OpenSSL
 if(APPLE OR WIN32)
     set(OPENSSL_USE_STATIC_LIBS TRUE)
@@ -57,12 +47,12 @@ target_link_libraries(lmdb_interface INTERFACE "${LIBLMDB_LIB}")
 
 # Add -DFILE_BASENAME="logname" to the compile options for a source file.
 function(define_file_logname_for_source orig_sourcefile final_sourcefile)
-    get_filename_component(projpath "${PROJECT_SOURCE_DIR}" REALPATH)
+    get_filename_component(projpath "${PROJECT_SOURCE_DIR}" ABSOLUTE)
     string(LENGTH "${projpath}" projpath_len)
     math(EXPR projpath_rm_len "${projpath_len} + 1")
 
     # Ensure that the projpath can be removed from the orig_sourcefile path
-    get_filename_component(srcpath "${orig_sourcefile}" REALPATH)
+    get_filename_component(srcpath "${orig_sourcefile}" ABSOLUTE)
     string(FIND "${srcpath}" "${projpath}" relpath_idx)
     if(NOT "${relpath_idx}" EQUAL "0")
         message("for source file: ${final_sourcefile}")
@@ -88,6 +78,13 @@ function(define_file_logname_for_target targetname)
     foreach(sourcefile ${source_files})
         define_file_logname_for_source("${sourcefile}" "${sourcefile}")
     endforeach()
+endfunction()
+
+function(add_source_compile_option src opt)
+    get_property(opts SOURCE "${src}"
+        PROPERTY COMPILE_DEFINITIONS)
+    list(APPEND opts "${opt}")
+    set_property(SOURCE "${src}" PROPERTY COMPILE_OPTIONS "${opts}")
 endfunction()
 
 # tgt object depends on external library (propagate linking and includes)
@@ -128,23 +125,13 @@ function(add_obj_tgt file tgt)
     target_sources("${tgt}" INTERFACE $<TARGET_OBJECTS:${tgt}_o> ${ARGN})
 endfunction()
 
-# similar to add_obj_tgt but preserves logname for generated files
-function(add_gen_obj_tgt orig_file gen_file tgt)
-    # define_file_logname_for_source(orig_sourcefile final_sourcefile)
-    # create the object library itself
-    add_library("${tgt}_o" OBJECT "${gen_file}")
-    define_file_logname_for_source("${orig_file}" "${gen_file}")
-    # create an interface library whose dependents will link against the object
-    add_library("${tgt}" INTERFACE)
-    target_sources("${tgt}" INTERFACE $<TARGET_OBJECTS:${tgt}_o> ${ARGN})
-endfunction()
-
 # always include the source directory (for compiling generated .c files)
 include_directories("${PROJECT_SOURCE_DIR}")
 # always include the binary directory (for including generated .h files)
 include_directories("${PROJECT_BINARY_DIR}")
 
 add_subdirectory(libdstr)
+add_subdirectory(libimap)
 
 set(OBJ_TGTS
     api_client
@@ -163,10 +150,6 @@ set(OBJ_TGTS
     tls_engine
     imap_engine
     queue
-    imap_parse
-    imap_expression
-    imap_write
-    imap_read
     imap_msg
     imap_maildir
     imap_maildir_up
@@ -175,7 +158,6 @@ set(OBJ_TGTS
     imap_dirmgr
     imap_session
     maildir_name
-    imap_extension
     # imap_ditm_logic
     sm_fetch_logic
     imap_util
@@ -249,31 +231,6 @@ foreach(tgt ${EXE_TGTS})
     define_file_logname_for_target("${tgt}")
 endforeach()
 
-# generate the imap scanner
-set(input "${PROJECT_SOURCE_DIR}/imap_scan.c")
-set(output "${PROJECT_BINARY_DIR}/imap_scan.gen.c")
-add_custom_command(
-    OUTPUT "${output}"
-    COMMAND "${RE2C}" -W -Werror --storable-state -o "${output}" "${input}"
-    DEPENDS "${input}"
-    COMMENT "generating scanner" VERBATIM
-    )
-add_gen_obj_tgt("${input}" "${output}" "imap_scan")
-
-# generate the imap parser
-set(input "${PROJECT_SOURCE_DIR}/imap_parse.y")
-set(output "${PROJECT_BINARY_DIR}/imap_parse.tab.c")
-set(bison_header "${PROJECT_BINARY_DIR}/imap_parse.tab.h")
-add_custom_command(
-    OUTPUT "${output}" "${bison_header}"
-    COMMAND "${BISON}" -d -o "${output}" "${input}" --report=state
-    DEPENDS "${input}"
-    COMMENT "generating parser" VERBATIM
-    )
-add_gen_obj_tgt("${input}" "${output}" "imap_parse_tab")
-# add a custom target just for depending on the generated header
-add_custom_target(bison_header DEPENDS "${bison_header}")
-
 # some targets need OpenSSL headers
 obj_depend_lib(networking "${OPENSSL_INCLUDE_DIR}" "${OPENSSL_LIBRARIES}")
 obj_depend_lib(crypto "${OPENSSL_INCLUDE_DIR}" "${OPENSSL_LIBRARIES}")
@@ -295,17 +252,8 @@ obj_depend_obj(queue uv_interface uv_util)
 obj_depend_obj(engine queue)
 obj_depend_obj(loop engine)
 obj_depend_obj(tls_engine engine networking)
-obj_depend_obj(imap_engine engine imap_read imap_write)
-obj_depend_obj(imap_expression dstr)
-obj_depend_obj(imap_parse_tab imap_expression imap_extension imap_scan)
-obj_depend_obj(imap_parse imap_parse_tab)
-add_dependencies(imap_parse_o bison_header)
-obj_depend_obj(imap_scan imap_parse)
-add_dependencies(imap_scan_o bison_header)
-obj_depend_obj(imap_read imap_parse imap_scan)
-add_dependencies(imap_read_o bison_header)
-obj_depend_obj(imap_write imap_expression imap_extension)
-obj_depend_obj(imap_util imap_expression)
+obj_depend_obj(imap_engine engine imap)
+obj_depend_obj(imap_util imap)
 obj_depend_obj(imap_msg dstr)
 obj_depend_obj(imap_maildir_up maildir_name imap_util imap_msg uv_util crypto)
 obj_depend_obj(imap_maildir_dn maildir_name imap_util imap_msg uv_util crypto)
@@ -453,9 +401,9 @@ if("${BUILD_TESTS}")
     target_link_libraries(test_key_tool key_tool test_utils fake_api_server)
     target_link_libraries(test_ui ui dummy_ui_harness)
     # target_link_libraries(test_atree)
-    target_link_libraries(test_imap_scan imap_scan)
-    target_link_libraries(test_imap_read imap_read imap_write)
-    target_link_libraries(test_imap_write imap_write)
+    target_link_libraries(test_imap_scan imap)
+    target_link_libraries(test_imap_read imap)
+    target_link_libraries(test_imap_write imap)
     # target_link_libraries(test_hashmap)
     # target_link_libraries(test_imap_maildir imap_maildir)
     target_link_libraries(test_loop fake_engine networking)
@@ -511,8 +459,6 @@ if("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU")
     # target_compile_options(imap_ditm PRIVATE -fno-strict-aliasing)
     target_compile_options(sm_fetch PRIVATE -fno-strict-aliasing)
     target_compile_options(sm_serve PRIVATE -fno-strict-aliasing)
-    target_compile_options(imap_parse_tab_o PRIVATE -Wno-sign-conversion)
-    target_compile_options(imap_parse_tab_o PRIVATE -Wno-conversion)
     # add some compiler hardening flags
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wformat -Wformat-security -Werror=format-security")
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fstack-protector-strong")
@@ -546,8 +492,6 @@ elseif("${CMAKE_C_COMPILER_ID}" MATCHES "Clang")
     # libuv needs non-strict aliasing
     # see discussion here: https://github.com/libuv/libuv/issues/1230
     target_compile_options(uv_util_o PRIVATE -fno-strict-aliasing)
-    target_compile_options(imap_parse_tab_o PRIVATE -Wno-sign-conversion)
-    target_compile_options(imap_parse_tab_o PRIVATE -Wno-conversion)
     # add some compiler hardening flags
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wformat -Wformat-security -Werror=format-security")
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -D_FORTIFY_SOURCE")
