@@ -119,10 +119,10 @@ endfunction()
 function(add_obj_tgt file tgt)
     # create the object library itself
     add_library("${tgt}_o" OBJECT "${file}")
-    define_file_logname_for_target("${tgt}_o")
     # create an interface library whose dependents will link against the object
     add_library("${tgt}" INTERFACE)
     target_sources("${tgt}" INTERFACE $<TARGET_OBJECTS:${tgt}_o> ${ARGN})
+    define_file_logname_for_target("${tgt}_o")
 endfunction()
 
 # always include the source directory (for compiling generated .c files)
@@ -214,13 +214,6 @@ set(TEST_EXE_TGTS
     test_maildir_name
 )
 
-# additional TGTS if we are building server code
-if("${BUILD_SERVER_CODE}")
-    list(APPEND OBJ_TGTS badbadbad_alert)
-    list(APPEND EXE_TGTS badbadbad)
-    list(APPEND EXE_TGTS olt)
-endif()
-
 # objects become OBJECT libraries, but are accessed through INTERFACE libraries
 foreach(tgt ${OBJ_TGTS})
     add_obj_tgt("${tgt}.c" "${tgt}")
@@ -271,13 +264,14 @@ target_link_libraries(splintermail ui console_input ditm key_tool)
 target_link_libraries(leak networking)
 target_link_libraries(encrypt_msg crypto)
 target_link_libraries(decrypt_msg crypto)
-target_link_libraries(olt dstr)
 # target_link_libraries(imap_ditm imap_session imap_dirmgr imap_ditm_logic crypto)
 target_link_libraries(sm_fetch imap_session imap_dirmgr sm_fetch_logic)
 target_link_libraries(sm_serve imap_session imap_dirmgr sm_serve_logic)
 
 # decide if we are building server code
 if("${BUILD_SERVER_CODE}")
+    add_subdirectory(server)
+
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DBUILD_SERVER_CODE=yes")
 
     # set a default MYSQL include directory
@@ -291,14 +285,8 @@ if("${BUILD_SERVER_CODE}")
         target_link_libraries(encrypt_msg ${MYSQL_LIBRARIES})
         set(MYSQL_INCLUDE_DIR "-I/usr/include/mysql")
     endif()
-    target_link_libraries(encrypt_msg mysqlclient)
-
-    # badbadbad_alert needs non-strict aliasing due to sockaddr_info business
-    target_compile_options(badbadbad_alert_o PRIVATE -fno-strict-aliasing)
-
-    obj_depend_obj(badbadbad_alert dstr)
+    target_link_libraries(encrypt_msg mysqlclient badbadbad_alert)
     target_link_libraries(encrypt_msg badbadbad_alert)
-    target_link_libraries(badbadbad badbadbad_alert)
 endif()
 
 # OS-specific steps

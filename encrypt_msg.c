@@ -10,7 +10,7 @@
 
 #ifdef BUILD_SERVER_CODE
 #include <mysql.h>
-#include "badbadbad_alert.h"
+#include "server/badbadbad_alert.h"
 #endif // BUILD_SERVER_CODE
 
 #include "libdstr/common.h"
