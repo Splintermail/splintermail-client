@@ -472,6 +472,43 @@ fail_lock:
     return e;
 }
 
+derr_t dirmgr_open_dn(dirmgr_t *dm, const dstr_t *name, maildir_conn_dn_i *dn,
+        maildir_i **maildir_out){
+    derr_t e = E_OK;
+    managed_dir_t *mgd;
+
+    // we may choose to edit the content of the dirmgr
+    uv_rwlock_wrlock(&dm->dirs.lock);
+
+    hash_elem_t *h = hashmap_gets(&dm->dirs.map, name);
+    if(h != NULL){
+        mgd = CONTAINER_OF(h, managed_dir_t, h);
+
+        // just add an accessor to the existing imaildir
+        PROP_GO(&e, imaildir_register_dn(&mgd->m, dn, maildir_out), fail_lock);
+        goto done;
+    }
+
+    // no existing imaildir in dirs, better open a new one
+    PROP_GO(&e, managed_dir_new(&mgd, dm, name), fail_lock);
+
+    // add to hashmap (we checked this path was not in the hashmap)
+    NOFAIL_GO(&e, E_PARAM,
+            hashmap_sets_unique(&dm->dirs.map, name, &mgd->h), fail_managed);
+
+    PROP_GO(&e, imaildir_register_dn(&mgd->m, dn, maildir_out), fail_managed);
+
+done:
+    uv_rwlock_wrunlock(&dm->dirs.lock);
+    return e;
+
+fail_managed:
+    managed_dir_free(&mgd);
+fail_lock:
+    uv_rwlock_wrunlock(&dm->dirs.lock);
+    return e;
+}
+
 derr_t dirmgr_init(dirmgr_t *dm, string_builder_t path,
         const keypair_t *keypair){
     derr_t e = E_OK;

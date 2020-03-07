@@ -29,6 +29,7 @@ derr_t dn_new(dn_t **out, maildir_conn_dn_i *conn, imaildir_t *m){
             .selected = NULL,
             .unselect = NULL,
         },
+        .selected = false,
     };
     link_init(&dn->link);
 
@@ -60,6 +61,13 @@ static derr_t conn_dn_cmd(maildir_i *maildir, imap_cmd_t *cmd){
     const imap_cmd_arg_t *arg = &cmd->arg;
     (void)dn;
     (void)arg;
+
+    if(cmd->type == IMAP_CMD_SELECT && dn->selected){
+        ORIG_GO(&e, E_INTERNAL, "SELECT sent to selected dn_t", cu_cmd);
+    }
+    if(cmd->type != IMAP_CMD_SELECT && !dn->selected){
+        ORIG_GO(&e, E_INTERNAL, "non-SELECT sent to unselected dn_t", cu_cmd);
+    }
 
     switch(cmd->type){
         case IMAP_CMD_CAPA:

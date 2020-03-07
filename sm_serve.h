@@ -66,8 +66,6 @@ typedef struct {
     maildir_conn_dn_i conn_dn;
     maildir_i *maildir;
     bool maildir_has_ref;
-    bool mailbox_synced;
-    bool mailbox_unselected;
 } server_t;
 DEF_CONTAINER_OF(server_t, dn, server_session_t);
 DEF_CONTAINER_OF(server_t, advance_spec, async_spec_t);

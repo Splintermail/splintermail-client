@@ -75,7 +75,32 @@ looks like this:
 
 The server state machine is responsible for implementing the IMAP server.
 There may be many conn_dn's, and there will be one server state machine for
-every conn_dn.  That state machine is not written yet.
+every conn_dn.  That state machine looks like this:
+
+    event: maildir recieves a conn_dn (state machine begins)
+      |
+    decision: are we serving in DITM mode?
+      |\
+   no | \ yes
+      |  \
+      | state: wait to initial sync
+      |   |
+      | event: sync complete
+      |  /
+      | /
+      |/
+    signal: maildir is open (respond to SELECT command)
+      | __________________________________
+      |/                                  |
+    state: wait for command from below    ^
+      |    or maildir event from above    |
+      |\___                               |
+      |    |                              |
+      |  event: command or event          ^
+      |    |    (handle it appropriately) |
+      |    |______________________________|
+      |
+    event: close command (state machine ends)
 
 */
 
@@ -99,8 +124,10 @@ typedef struct imaildir_t imaildir_t;
 struct maildir_log_i;
 typedef struct maildir_log_i maildir_log_i;
 
-// an upwards session lets the maildir read and write from the main mail store
+/* the upwards session must provide this interface to the maildir; it is how
+   the maildir will communicate the imap client behavior */
 struct maildir_conn_up_i {
+    // the maildir wants to pass an imap command over the wire
     void (*cmd)(maildir_conn_up_i*, imap_cmd_t*);
     // this event indicates the maildir finished an initial sync
     void (*synced)(maildir_conn_up_i*);
@@ -110,8 +137,10 @@ struct maildir_conn_up_i {
     void (*release)(maildir_conn_up_i*, derr_t);
 };
 
-// the maildir will provide imap server behavior to a downwards session
+/* the downwards session must provide this interface to the maildir; it is how
+   the maildir will communicate the imap server behavior */
 struct maildir_conn_dn_i {
+    // the maildir wants to pass an imap response over the wire
     void (*resp)(maildir_conn_dn_i*, imap_resp_t*);
     // The maildir BROADCASTs its failures when it dies
     void (*release)(maildir_conn_dn_i*, derr_t);
@@ -121,9 +150,6 @@ struct maildir_i {
     // imap responses must come from an upwards connection
     derr_t (*resp)(maildir_i*, imap_resp_t*);
 
-    // imap commands must come from a downwards connection
-    derr_t (*cmd)(maildir_i*, imap_cmd_t*);
-
     // return true if the maildir is currently synchronized with the mailserver
     bool (*synced)(maildir_i*);
 
@@ -132,6 +158,12 @@ struct maildir_i {
 
     // if the connection is in a SELECTED state, CLOSE it.
     derr_t (*unselect)(maildir_i*);
+
+    ////// for downwards connections:
+
+    // imap commands must come from a downwards connection
+    // (the first one must be the SELECT)
+    derr_t (*cmd)(maildir_i*, imap_cmd_t*);
 
     // unregistering must be done through the imaildir_t or dirmgr_t
 };
@@ -174,6 +206,7 @@ struct imaildir_t {
     struct {
         uv_mutex_t lock;
         link_t ups;  // up_t->link;
+        link_t dns;  // dn_t->link;
         /* The value of naccessors may not match the length of the accessor
            lists, particularly during the failing shutdown sequence. */
         size_t naccessors;
@@ -222,11 +255,14 @@ void imaildir_forceclose(imaildir_t *m);
 // void imaildir_ref_up(imaildir_t *m);
 // void imaildir_ref_down(imaildir_t *m);
 
-// register new connection and provide a maildir_i
-derr_t imaildir_register_up(imaildir_t *m, maildir_conn_up_i *up,
+// regsiter a new connection with the imaildir, and return a maildir_i
+derr_t imaildir_register_up(imaildir_t *m, maildir_conn_up_i *conn_up,
         maildir_i **maildir_out);
-derr_t imaildir_register_dn(imaildir_t *m, maildir_conn_dn_i *dn,
+
+// regsiter a new connection with the imaildir, and return a maildir_i
+derr_t imaildir_register_dn(imaildir_t *m, maildir_conn_dn_i *conn_dn,
         maildir_i **maildir_out);
+
 /* there is a race condition between imalidir_register and imaildir_unregister;
    generally, if you got a maildir_i* through dirmgr_open, you should close it
    via dirmgr_close */

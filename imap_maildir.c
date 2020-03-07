@@ -340,6 +340,7 @@ derr_t imaildir_init(imaildir_t *m, string_builder_t path, const dstr_t *name,
     };
 
     link_init(&m->access.ups);
+    link_init(&m->access.dns);
 
     // // check for cur/new/tmp folders, and assign /NOSELECT accordingly
     // bool ctn_present;
@@ -582,6 +583,40 @@ fail_lock:
     uv_mutex_unlock(&m->access.lock);
 // fail_up:
     up_free(&up);
+    return e;
+}
+
+derr_t imaildir_register_dn(imaildir_t *m, maildir_conn_dn_i *conn_dn,
+        maildir_i **maildir_out){
+    derr_t e = E_OK;
+
+    // allocate a new dn_t
+    dn_t *dn;
+    PROP(&e, dn_new(&dn, conn_dn, m) );
+
+    uv_mutex_lock(&m->access.lock);
+    if(m->access.failed){
+        ORIG_GO(&e, E_DEAD, "maildir in failed state", fail_lock);
+    }
+
+    // add the dn_t to the maildir
+    link_list_append(&m->access.dns, &dn->link);
+    m->access.naccessors++;
+
+    // done with access mutex
+    uv_mutex_unlock(&m->access.lock);
+
+    /* final initialization step is when the downwards session calls
+       maildir_i->cmd() to send the SELECT command sent by the client */
+
+    *maildir_out = &dn->maildir;
+
+    return e;
+
+fail_lock:
+    uv_mutex_unlock(&m->access.lock);
+// fail_dn
+    dn_free(&dn);
     return e;
 }
 

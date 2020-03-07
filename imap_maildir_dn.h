@@ -12,6 +12,7 @@ typedef struct {
     maildir_conn_dn_i *conn;
     // the interface we provide
     maildir_i maildir;
+    bool selected;
     link_t link;  // imaildir_t->access.dns
 } dn_t;
 DEF_CONTAINER_OF(dn_t, maildir, maildir_i);

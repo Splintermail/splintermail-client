@@ -101,7 +101,7 @@ derr_t dirmgr_sync_folders(dirmgr_t *dm, jsw_atree_t *tree);
          think I'll just throw an error and let the client deal with it. */
 derr_t dirmgr_open_up(dirmgr_t *dm, const dstr_t *name, maildir_conn_up_i *up,
         maildir_i **maildir_out);
-derr_t dirmgr_open_dn(dirmgr_t *dm, const dstr_t *name, maildir_conn_up_i *dn,
+derr_t dirmgr_open_dn(dirmgr_t *dm, const dstr_t *name, maildir_conn_dn_i *dn,
         maildir_i **maildir_out);
 
 // unregister a connection from a maildir in a thread-safe way

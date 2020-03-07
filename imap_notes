@@ -880,7 +880,7 @@ Message store thread safety:
     we want to support the full IMAP spec, and we couldn't support SEARCH
     properly without download-on-request behavior.
 
-    So a full table of possible message states, and the resulting states might
+    So a full table of possible message states and the resulting states might
     look like:
 
         STATE      | log status  | file status | msgs status | expunged status

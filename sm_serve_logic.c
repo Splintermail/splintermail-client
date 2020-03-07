@@ -133,6 +133,18 @@ static derr_t send_bye(server_t *server, const dstr_t *msg){
     return e;
 }
 
+static derr_t send_invalid_state_resp(server_t *server, const ie_dstr_t *tag){
+    derr_t e = E_OK;
+
+    DSTR_VAR(msg, 128);
+    PROP(&e, FMT(&msg, "command not allowed in %x state",
+            FD(imap_server_state_to_dstr(server->imap_state))) );
+
+    PROP(&e, send_bad(server, tag, &msg) );
+
+    return e;
+}
+
 static derr_t assert_state(server_t *server, imap_server_state_t state,
         const ie_dstr_t *tag, bool *ok){
     derr_t e = E_OK;
@@ -140,11 +152,7 @@ static derr_t assert_state(server_t *server, imap_server_state_t state,
     *ok = (server->imap_state == state);
     if(*ok) return e;
 
-    DSTR_VAR(msg, 128);
-    PROP(&e, FMT(&msg, "command not allowed in %x state",
-            FD(imap_server_state_to_dstr(server->imap_state))) );
-
-    PROP(&e, send_bad(server, tag, &msg) );
+    PROP(&e, send_invalid_state_resp(server, tag) );
 
     return e;
 }
@@ -412,6 +420,40 @@ fail:
     return e;
 }
 
+static derr_t do_unselect(server_t *server){
+    derr_t e = E_OK;
+    (void)server;
+    ORIG(&e, E_INTERNAL, "not implemented");
+    return e;
+}
+
+static derr_t do_select(server_t *server, const ie_dstr_t *tag,
+        const ie_select_cmd_t *select){
+    derr_t e = E_OK;
+
+    const dstr_t *dir_name = ie_mailbox_name(select->m);
+
+    server->maildir_has_ref = true;
+    PROP_GO(&e, dirmgr_open_dn(&server->dirmgr, dir_name, &server->conn_dn,
+                &server->maildir), fail_maildir);
+
+    // make sure the select did not include QRESYNC or CONDSTORE
+    if(select->params){
+        ORIG_GO(&e, E_PARAM, "QRESYNC and CONDSTORE not supported",
+                fail_maildir);
+    }
+
+    /* TODO: check if we are in DITM mode or serve-locally mode.  For now we
+             only support serve-locally mode */
+    PROP_GO(&e, send_ok(server, tag, &DSTR_LIT("welcome in")), fail_maildir);
+
+    return e;
+
+fail_maildir:
+    server->maildir_has_ref = false;
+    return e;
+}
+
 bool server_more_work(server_t *server){
     return !server->greeting_sent
         || !link_list_isempty(&server->ts.unhandled_cmds)
@@ -472,6 +514,17 @@ static derr_t handle_one_command(server_t *server, imap_cmd_t *cmd){
             break;
 
         case IMAP_CMD_SELECT:
+            if(server->imap_state == AUTHENTICATED){
+                PROP_GO(&e, do_select(server, tag, arg->select), cu_cmd);
+            }else if(server->imap_state == SELECTED){
+                PROP_GO(&e, do_unselect(server), cu_cmd);
+                PROP_GO(&e, do_select(server, tag, arg->select), cu_cmd);
+            }else{
+                PROP_GO(&e, send_invalid_state_resp(server, tag), cu_cmd);
+            }
+            break;
+
+
         case IMAP_CMD_EXAMINE:
         case IMAP_CMD_STATUS:
         case IMAP_CMD_APPEND:
