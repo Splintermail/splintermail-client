@@ -276,6 +276,10 @@ static void server_free(server_t *server){
     uv_mutex_destroy(&server->ts.mutex);
     dirmgr_free(&server->dirmgr);
     dstr_free(&server->path);
+
+    if(server->pause){
+        server->pause->cancel(&server->pause);
+    }
     return;
 }
 
@@ -364,6 +368,14 @@ void server_close(server_t *server, derr_t error){
 
     // everything else must be done on-thread
     server_advance(server);
+}
+
+void server_close_maildir_onthread(server_t *server){
+    // extract the maildir from server so it is clear we are done
+    maildir_i *maildir = server->maildir;
+    server->maildir = NULL;
+    // now make the very last call into the maildir_i
+    dirmgr_close_dn(&server->dirmgr, maildir, &server->conn_dn);
 }
 
 // only safe to call once

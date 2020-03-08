@@ -1656,6 +1656,13 @@ void ie_select_cmd_free(ie_select_cmd_t *select){
     free(select);
 }
 
+ie_select_cmd_t *ie_select_cmd_copy(derr_t *e, const ie_select_cmd_t *old){
+    if(!old) return NULL;
+
+    return ie_select_cmd_new(e, ie_mailbox_copy(e, old->m),
+            ie_select_params_copy(e, old->params));
+}
+
 ie_rename_cmd_t *ie_rename_cmd_new(derr_t *e, ie_mailbox_t *old,
         ie_mailbox_t *new){
     if(is_error(*e)) goto fail;

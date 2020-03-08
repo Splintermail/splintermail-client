@@ -947,6 +947,7 @@ void ie_login_cmd_free(ie_login_cmd_t *login);
 ie_select_cmd_t *ie_select_cmd_new(derr_t *e, ie_mailbox_t *m,
         ie_select_params_t *params);
 void ie_select_cmd_free(ie_select_cmd_t *select);
+ie_select_cmd_t *ie_select_cmd_copy(derr_t *e, const ie_select_cmd_t *old);
 
 ie_rename_cmd_t *ie_rename_cmd_new(derr_t *e, ie_mailbox_t *old,
         ie_mailbox_t *new);

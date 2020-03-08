@@ -26,6 +26,18 @@ typedef struct {
 DEF_CONTAINER_OF(server_session_t, mgr, manager_i);
 DEF_CONTAINER_OF(server_session_t, ctrl, imape_control_i);
 
+// a callback with a condition check
+struct pause_t;
+typedef struct pause_t pause_t;
+
+struct pause_t {
+    // you can't call run until ready returns true
+    bool (*ready)(pause_t*);
+    // you must call either run or cancel, but not both
+    derr_t (*run)(pause_t**);
+    void (*cancel)(pause_t**);
+};
+
 typedef struct {
     imap_pipeline_t *pipeline;
     ssl_context_t *ctx_srv;
@@ -66,6 +78,9 @@ typedef struct {
     maildir_conn_dn_i conn_dn;
     maildir_i *maildir;
     bool maildir_has_ref;
+
+    // pause is for delaying actions until some future time
+    pause_t *pause;
 } server_t;
 DEF_CONTAINER_OF(server_t, dn, server_session_t);
 DEF_CONTAINER_OF(server_t, advance_spec, async_spec_t);
@@ -84,6 +99,8 @@ derr_t server_do_work(server_t *server);
    be thread-safe with respect to reads, because all external-facing state
    modifications will trigger another check. */
 bool server_more_work(server_t *server);
+
+void server_close_maildir_onthread(server_t *server);
 
 // safe to call many times from any thread
 void server_close(server_t *server, derr_t error);

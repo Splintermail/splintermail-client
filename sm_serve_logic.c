@@ -2,6 +2,12 @@
 #include "libdstr/logger.h"
 #include "imap_util.h"
 
+// forward declarations
+static derr_t do_select(server_t *server, const ie_dstr_t *tag,
+        const ie_select_cmd_t *select);
+static derr_t send_ok(server_t *server, const ie_dstr_t *tag,
+        const dstr_t *msg);
+
 DSTR_STATIC(PREAUTH_dstr, "PREAUTH");
 DSTR_STATIC(AUTHENTICATED_dstr, "AUTHENTICATED");
 DSTR_STATIC(SELECTED_dstr, "SELECTED");
@@ -14,6 +20,145 @@ const dstr_t *imap_server_state_to_dstr(imap_server_state_t state){
         case SELECTED: return &SELECTED_dstr;
     }
     return &UNKNOWN_dstr;
+}
+
+// a pause for when you want to select but another folder is still open
+typedef struct {
+    ie_select_cmd_t *select;
+    ie_dstr_t *tag;
+    server_t *server;
+    pause_t pause;
+} select_pause_t;
+DEF_CONTAINER_OF(select_pause_t, pause, pause_t);
+
+static void select_pause_free(select_pause_t *select_pause){
+    ie_select_cmd_free(select_pause->select);
+    ie_dstr_free(select_pause->tag);
+    free(select_pause);
+}
+
+static bool select_pause_ready(pause_t *pause){
+    select_pause_t *select_pause = CONTAINER_OF(pause, select_pause_t, pause);
+    return select_pause->server->maildir_has_ref == false;
+}
+
+static derr_t select_pause_run(pause_t **pause){
+    derr_t e = E_OK;
+
+    select_pause_t *select_pause = CONTAINER_OF(*pause, select_pause_t, pause);
+
+    PROP_GO(&e, do_select(select_pause->server,
+                select_pause->tag, select_pause->select), cu);
+
+cu:
+    select_pause_free(select_pause);
+    *pause = NULL;
+    return e;
+}
+
+static void select_pause_cancel(pause_t **pause){
+    select_pause_t *select_pause = CONTAINER_OF(*pause, select_pause_t, pause);
+    select_pause_free(select_pause);
+    *pause = NULL;
+}
+
+static derr_t select_pause_new(pause_t **out, server_t *server,
+        const ie_dstr_t *tag, const ie_select_cmd_t *select){
+    derr_t e = E_OK;
+
+    *out = NULL;
+
+    select_pause_t *select_pause = malloc(sizeof(*select_pause));
+    if(!select_pause) ORIG(&e, E_NOMEM, "no mem");
+    *select_pause = (select_pause_t){
+        .server = server,
+        .pause = {
+            .ready = select_pause_ready,
+            .run = select_pause_run,
+            .cancel = select_pause_cancel,
+        }
+    };
+
+    select_pause->select = ie_select_cmd_copy(&e, select);
+    select_pause->tag = ie_dstr_copy(&e, tag);
+    CHECK_GO(&e, fail);
+
+    *out = &select_pause->pause;
+
+    return e;
+
+fail:
+    select_pause_free(select_pause);
+    return e;
+}
+
+// a pause for when you close a maildir and have to wait for it to shut down
+typedef struct {
+    ie_dstr_t *tag;
+    server_t *server;
+    pause_t pause;
+} close_pause_t;
+DEF_CONTAINER_OF(close_pause_t, pause, pause_t);
+
+static void close_pause_free(close_pause_t *close_pause){
+    ie_dstr_free(close_pause->tag);
+    free(close_pause);
+}
+
+static bool close_pause_ready(pause_t *pause){
+    close_pause_t *close_pause = CONTAINER_OF(pause, close_pause_t, pause);
+    return close_pause->server->maildir_has_ref == false;
+}
+
+static derr_t close_pause_run(pause_t **pause){
+    derr_t e = E_OK;
+
+    close_pause_t *close_pause = CONTAINER_OF(*pause, close_pause_t, pause);
+
+    close_pause->server->imap_state = AUTHENTICATED;
+
+    PROP_GO(&e, send_ok(close_pause->server, close_pause->tag,
+                &DSTR_LIT("get offa my lawn!")), cu);
+
+cu:
+    close_pause_free(close_pause);
+    *pause = NULL;
+    return e;
+}
+
+static void close_pause_cancel(pause_t **pause){
+    close_pause_t *close_pause = CONTAINER_OF(*pause, close_pause_t, pause);
+    close_pause_free(close_pause);
+    *pause = NULL;
+}
+
+static derr_t close_pause_new(pause_t **out, server_t *server,
+        const ie_dstr_t *tag){
+    derr_t e = E_OK;
+
+    *out = NULL;
+
+    close_pause_t *close_pause = malloc(sizeof(*close_pause));
+    if(!close_pause) ORIG(&e, E_NOMEM, "no mem");
+    *close_pause = (close_pause_t){
+        .server = server,
+        .pause = {
+            .ready = close_pause_ready,
+            .run = close_pause_run,
+            .cancel = close_pause_cancel,
+        }
+    };
+
+    close_pause->tag = ie_dstr_copy(&e, tag);
+    CHECK_GO(&e, fail);
+
+    *out = &close_pause->pause;
+
+    return e;
+
+fail:
+    close_pause_free(close_pause);
+    return e;
 }
 
 static void server_imap_ev_returner(event_t *ev){
@@ -420,13 +565,6 @@ fail:
     return e;
 }
 
-static derr_t do_unselect(server_t *server){
-    derr_t e = E_OK;
-    (void)server;
-    ORIG(&e, E_INTERNAL, "not implemented");
-    return e;
-}
-
 static derr_t do_select(server_t *server, const ie_dstr_t *tag,
         const ie_select_cmd_t *select){
     derr_t e = E_OK;
@@ -447,6 +585,8 @@ static derr_t do_select(server_t *server, const ie_dstr_t *tag,
              only support serve-locally mode */
     PROP_GO(&e, send_ok(server, tag, &DSTR_LIT("welcome in")), fail_maildir);
 
+    server->imap_state = SELECTED;
+
     return e;
 
 fail_maildir:
@@ -457,7 +597,8 @@ fail_maildir:
 bool server_more_work(server_t *server){
     return !server->greeting_sent
         || !link_list_isempty(&server->ts.unhandled_cmds)
-        || !link_list_isempty(&server->ts.maildir_resps);
+        || !link_list_isempty(&server->ts.maildir_resps)
+        || (server->pause && server->pause->ready(server->pause));
 }
 
 // we either need to consume the command or free it
@@ -517,19 +658,29 @@ static derr_t handle_one_command(server_t *server, imap_cmd_t *cmd){
             if(server->imap_state == AUTHENTICATED){
                 PROP_GO(&e, do_select(server, tag, arg->select), cu_cmd);
             }else if(server->imap_state == SELECTED){
-                PROP_GO(&e, do_unselect(server), cu_cmd);
-                PROP_GO(&e, do_select(server, tag, arg->select), cu_cmd);
+                // close the maildir
+                server_close_maildir_onthread(server);
+                // SELECT the new one after this one closes
+                PROP_GO(&e, select_pause_new(&server->pause, server, tag,
+                            arg->select), cu_cmd);
             }else{
                 PROP_GO(&e, send_invalid_state_resp(server, tag), cu_cmd);
             }
             break;
 
+        case IMAP_CMD_CLOSE:
+            PROP_GO(&e, assert_state(server, SELECTED, tag, &state_ok),
+                    cu_cmd);
+            // close the maildir
+            server_close_maildir_onthread(server);
+            // respond OK afterwards
+            PROP_GO(&e, close_pause_new(&server->pause, server, tag), cu_cmd);
+            break;
 
         case IMAP_CMD_EXAMINE:
         case IMAP_CMD_STATUS:
         case IMAP_CMD_APPEND:
         case IMAP_CMD_CHECK:
-        case IMAP_CMD_CLOSE:
         case IMAP_CMD_EXPUNGE:
         case IMAP_CMD_SEARCH:
         case IMAP_CMD_FETCH:
@@ -575,6 +726,22 @@ fail:
     return e;
 }
 
+static bool intercept_cmd_type(imap_cmd_type_t type){
+    switch(type){
+        /* (SELECT is special; it may trigger a dirmgr_close_dn, then it always
+            triggers a dirmgr_open_dn in the sm_serve_logic, and then it is
+            also passed into the maildir as the first command, but not here) */
+        case IMAP_CMD_SELECT:
+
+        // also intercept close-like commands
+        case IMAP_CMD_LOGOUT:
+        case IMAP_CMD_CLOSE:
+            return true;
+        default:
+            return false;
+    }
+}
+
 derr_t server_do_work(server_t *server){
     derr_t e = E_OK;
 
@@ -584,8 +751,8 @@ derr_t server_do_work(server_t *server){
         server->greeting_sent = true;
     }
 
-    // unhandled commands
-    while(!server->ts.closed){
+    // unhandled client commands from the client
+    while(!server->ts.closed && !server->pause){
         // pop a command
         uv_mutex_lock(&server->ts.mutex);
         link_t *link = link_list_pop_first(&server->ts.unhandled_cmds);
@@ -596,7 +763,7 @@ derr_t server_do_work(server_t *server){
         imap_cmd_t *cmd = CONTAINER_OF(link, imap_cmd_t, link);
 
         // detect if we need to just pass the command to the maildir
-        if(server->maildir){
+        if(server->maildir && !intercept_cmd_type(cmd->type)){
             PROP(&e, server->maildir->cmd(server->maildir, cmd) );
             continue;
         }
@@ -616,6 +783,12 @@ derr_t server_do_work(server_t *server){
         imap_resp_t *resp = CONTAINER_OF(link, imap_resp_t, link);
 
         PROP(&e, handle_one_maildir_resp(server, resp) );
+    }
+
+    // handle delayed actions
+    if(!server->ts.closed
+            && server->pause && server->pause->ready(server->pause)){
+        PROP(&e, server->pause->run(&server->pause) );
     }
 
     return e;
