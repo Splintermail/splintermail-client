@@ -187,20 +187,6 @@ struct imaildir_t {
     // crypto for this box
     const keypair_t *keypair;
 
-    // // incoming events are always stored first and handled later
-    // struct {
-    //     // mutex should be for list coherence, nothing else
-    //     uv_mutex_t mutex;
-    //     struct {
-    //         link_t cmds;
-    //         link_t resps;
-    //     } up;
-    //     struct {
-    //         link_t cmds;
-    //         link_t resps;
-    //     } dn;
-    // } lists;
-
     // lock ordering is downwards
 
     struct {

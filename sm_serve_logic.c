@@ -3,10 +3,15 @@
 #include "imap_util.h"
 
 // forward declarations
-static derr_t do_select(server_t *server, const ie_dstr_t *tag,
-        const ie_select_cmd_t *select);
+static derr_t do_select(server_t *server, imap_cmd_t *select_cmd);
 static derr_t send_ok(server_t *server, const ie_dstr_t *tag,
         const dstr_t *msg);
+
+static inline imap_cmd_t *steal_cmd(imap_cmd_t **cmd){
+    imap_cmd_t *temp = *cmd;
+    *cmd = NULL;
+    return temp;
+}
 
 DSTR_STATIC(PREAUTH_dstr, "PREAUTH");
 DSTR_STATIC(AUTHENTICATED_dstr, "AUTHENTICATED");
@@ -24,16 +29,14 @@ const dstr_t *imap_server_state_to_dstr(imap_server_state_t state){
 
 // a pause for when you want to select but another folder is still open
 typedef struct {
-    ie_select_cmd_t *select;
-    ie_dstr_t *tag;
+    imap_cmd_t *select_cmd;
     server_t *server;
     pause_t pause;
 } select_pause_t;
 DEF_CONTAINER_OF(select_pause_t, pause, pause_t);
 
 static void select_pause_free(select_pause_t *select_pause){
-    ie_select_cmd_free(select_pause->select);
-    ie_dstr_free(select_pause->tag);
+    imap_cmd_free(select_pause->select_cmd);
     free(select_pause);
 }
 
@@ -47,8 +50,7 @@ static derr_t select_pause_run(pause_t **pause){
 
     select_pause_t *select_pause = CONTAINER_OF(*pause, select_pause_t, pause);
 
-    PROP_GO(&e, do_select(select_pause->server,
-                select_pause->tag, select_pause->select), cu);
+    PROP_GO(&e, do_select(select_pause->server, select_pause->select_cmd), cu);
 
 cu:
     select_pause_free(select_pause);
@@ -63,7 +65,7 @@ static void select_pause_cancel(pause_t **pause){
 }
 
 static derr_t select_pause_new(pause_t **out, server_t *server,
-        const ie_dstr_t *tag, const ie_select_cmd_t *select){
+        imap_cmd_t *select_cmd){
     derr_t e = E_OK;
 
     *out = NULL;
@@ -72,6 +74,7 @@ static derr_t select_pause_new(pause_t **out, server_t *server,
     if(!select_pause) ORIG(&e, E_NOMEM, "no mem");
     *select_pause = (select_pause_t){
         .server = server,
+        .select_cmd = select_cmd,
         .pause = {
             .ready = select_pause_ready,
             .run = select_pause_run,
@@ -79,16 +82,8 @@ static derr_t select_pause_new(pause_t **out, server_t *server,
         }
     };
 
-    select_pause->select = ie_select_cmd_copy(&e, select);
-    select_pause->tag = ie_dstr_copy(&e, tag);
-    CHECK_GO(&e, fail);
-
     *out = &select_pause->pause;
 
-    return e;
-
-fail:
-    select_pause_free(select_pause);
     return e;
 }
 
@@ -565,25 +560,19 @@ fail:
     return e;
 }
 
-static derr_t do_select(server_t *server, const ie_dstr_t *tag,
-        const ie_select_cmd_t *select){
+// we either need to consume *select_cmd or free it
+static derr_t do_select(server_t *server, imap_cmd_t *select_cmd){
     derr_t e = E_OK;
 
-    const dstr_t *dir_name = ie_mailbox_name(select->m);
+    const dstr_t *dir_name = ie_mailbox_name(select_cmd->arg.select->m);
 
     server->maildir_has_ref = true;
     PROP_GO(&e, dirmgr_open_dn(&server->dirmgr, dir_name, &server->conn_dn,
                 &server->maildir), fail_maildir);
 
-    // make sure the select did not include QRESYNC or CONDSTORE
-    if(select->params){
-        ORIG_GO(&e, E_PARAM, "QRESYNC and CONDSTORE not supported",
-                fail_maildir);
-    }
-
-    /* TODO: check if we are in DITM mode or serve-locally mode.  For now we
-             only support serve-locally mode */
-    PROP_GO(&e, send_ok(server, tag, &DSTR_LIT("welcome in")), fail_maildir);
+    // pass this SELECT command to the maildir
+    PROP_GO(&e, server->maildir->cmd(server->maildir,
+                steal_cmd(&select_cmd)), fail_maildir);
 
     server->imap_state = SELECTED;
 
@@ -591,6 +580,8 @@ static derr_t do_select(server_t *server, const ie_dstr_t *tag,
 
 fail_maildir:
     server->maildir_has_ref = false;
+
+    imap_cmd_free(select_cmd);
     return e;
 }
 
@@ -656,13 +647,13 @@ static derr_t handle_one_command(server_t *server, imap_cmd_t *cmd){
 
         case IMAP_CMD_SELECT:
             if(server->imap_state == AUTHENTICATED){
-                PROP_GO(&e, do_select(server, tag, arg->select), cu_cmd);
+                PROP_GO(&e, do_select(server, steal_cmd(&cmd)), cu_cmd);
             }else if(server->imap_state == SELECTED){
                 // close the maildir
                 server_close_maildir_onthread(server);
                 // SELECT the new one after this one closes
-                PROP_GO(&e, select_pause_new(&server->pause, server, tag,
-                            arg->select), cu_cmd);
+                PROP_GO(&e, select_pause_new(&server->pause, server,
+                            steal_cmd(&cmd)), cu_cmd);
             }else{
                 PROP_GO(&e, send_invalid_state_resp(server, tag), cu_cmd);
             }
