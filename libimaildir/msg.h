@@ -88,10 +88,8 @@ struct msg_view_t {
     bool recent;
     const msg_base_ref_t *base;
     const msg_flags_t *flags;
-    // for tracking the sequence ID via UID
+    // for tracking the sequence ID sorted by UID
     jsw_anode_t node;
-    // for referencing by uid
-    hash_elem_t h;
 };
 DEF_CONTAINER_OF(msg_view_t, node, jsw_anode_t);
 

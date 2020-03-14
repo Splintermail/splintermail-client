@@ -9,6 +9,8 @@ typedef struct {
     maildir_i maildir;
     bool selected;
     link_t link;  // imaildir_t->access.dns
+    // view of the mailbox; this order defines sequence numbers
+    jsw_atree_t views;  // msg_view_t->node
 } dn_t;
 DEF_CONTAINER_OF(dn_t, maildir, maildir_i);
 DEF_CONTAINER_OF(dn_t, link, link_t);

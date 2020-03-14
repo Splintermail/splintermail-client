@@ -12,6 +12,17 @@ static derr_t maildir_resp_not_allowed(maildir_i* maildir, imap_resp_t* resp){
     ORIG(&e, E_INTERNAL, "response not allowed from an downwards connection");
 }
 
+// for views
+static const void *msg_view_jsw_get(const jsw_anode_t *node){
+    const msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
+    return (void*)&view->base->uid;
+}
+static int jsw_cmp_uid(const void *a, const void *b){
+    const unsigned int *uida = a;
+    const unsigned int *uidb = b;
+    return JSW_NUM_CMP(*uida, *uidb);
+}
+
 derr_t dn_new(dn_t **out, maildir_conn_dn_i *conn, imaildir_t *m){
     derr_t e = E_OK;
     *out = NULL;
@@ -33,6 +44,10 @@ derr_t dn_new(dn_t **out, maildir_conn_dn_i *conn, imaildir_t *m){
     };
     link_init(&dn->link);
 
+    /* the view gets built during processing of the SELECT command, so that the
+       CONDSTORE/QRESYNC extensions can be handled efficiently */
+    jsw_ainit(&dn->views, jsw_cmp_uid, msg_view_jsw_get);
+
     *out = dn;
 
     return e;
@@ -43,6 +58,13 @@ void dn_free(dn_t **dn){
     if(*dn == NULL) return;
     /* it's not allowed to remove the dn_t from imaildir.access.dns here, due
        to race conditions in the cleanup sequence */
+
+    // free all the message views
+    jsw_anode_t *node;
+    while((node = jsw_apop(&(*dn)->views))){
+        msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
+        msg_view_free(&view);
+    }
 
     // free memory
     free(*dn);
@@ -238,6 +260,25 @@ static derr_t send_uidvld_resp(dn_t *dn){
     return e;
 }
 
+static derr_t build_views_unsafe(dn_t *dn){
+    derr_t e = E_OK;
+
+    /* TODO: wait, if we build the view lazily like this, how do we properly
+       ignore updates that come to us before we have updated? */
+
+    // make one view for every message present in the mailbox
+    jsw_atrav_t trav;
+    jsw_anode_t *node = jsw_atfirst(&trav, &dn->m->msgs.tree);
+    for(; node != NULL; node = jsw_atnext(&trav)){
+        msg_base_t *msg = CONTAINER_OF(node, msg_base_t, node);
+        msg_view_t *view;
+        PROP(&e, msg_view_new(&view, msg) );
+        jsw_ainsert(&dn->views, &view->node);
+    }
+
+    return e;
+}
+
 static derr_t select_cmd(dn_t *dn, const ie_dstr_t *tag,
         const ie_select_cmd_t *select){
     derr_t e = E_OK;
@@ -253,24 +294,31 @@ static derr_t select_cmd(dn_t *dn, const ie_dstr_t *tag,
     uv_rwlock_rdlock(&dn->m->mods.lock);
 
     // generate/send required SELECT responses
-    PROP(&e, send_flags_resp(dn) );
-    PROP(&e, send_exists_resp_unsafe(dn) );
-    PROP(&e, send_recent_resp_unsafe(dn) );
-    PROP(&e, send_unseen_resp_unsafe(dn) );
-    PROP(&e, send_pflags_resp(dn) );
-    PROP(&e, send_uidnext_resp_unsafe(dn) );
-    PROP(&e, send_uidvld_resp(dn) );
+    PROP_GO(&e, send_flags_resp(dn), unlock);
+    PROP_GO(&e, send_exists_resp_unsafe(dn), unlock);
+    PROP_GO(&e, send_recent_resp_unsafe(dn), unlock);
+    PROP_GO(&e, send_unseen_resp_unsafe(dn), unlock);
+    PROP_GO(&e, send_pflags_resp(dn), unlock);
+    PROP_GO(&e, send_uidnext_resp_unsafe(dn), unlock);
+    PROP_GO(&e, send_uidvld_resp(dn), unlock);
 
+    PROP_GO(&e, build_views_unsafe(dn), unlock);
+
+unlock:
     // release lock
     uv_rwlock_rdunlock(&dn->m->mods.lock);
     uv_rwlock_rdunlock(&dn->m->expunged.lock);
     uv_rwlock_rdunlock(&dn->m->msgs.lock);
+    if(is_error(e)){
+        goto done;
+    }
 
 
     /* TODO: check if we are in DITM mode or serve-locally mode.  For now we
              only support serve-locally mode */
     PROP(&e, send_ok(dn, tag, &DSTR_LIT("welcome in")) );
 
+done:
     return e;
 }
 
