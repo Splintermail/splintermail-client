@@ -994,7 +994,7 @@ derr_t imaildir_up_handle_static_fetch_attr(imaildir_t *m,
 
     // get hostname
     DSTR_VAR(hostname, 256);
-    gethostname(hostname.data, hostname.size);
+    compat_gethostname(hostname.data, hostname.size);
     hostname.len = strnlen(hostname.data, HOSTNAME_COMPONENT_MAX_LEN);
 
     // get epochtime

@@ -76,7 +76,7 @@ derr_t exists_path(const string_builder_t* path, bool* ret);
 derr_t remove_path(const string_builder_t* sb);
 
 /* mode is unused if the file already exists. Use chmod if you really need to
-   set the mode.  Also mode will be modified by umask via open() */
+   set the mode.  Also mode will be modified by umask via compat_open() */
 derr_t file_copy(const char* from, const char* to, mode_t mode);
 derr_t file_copy_path(const string_builder_t* sb_from,
                       const string_builder_t* sb_to, mode_t mode);

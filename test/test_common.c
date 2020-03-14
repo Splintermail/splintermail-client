@@ -412,7 +412,7 @@ static derr_t test_fmt(void){
     int errnum = 5;
     DSTR_VAR(exp, 4096);
     DSTR_VAR(errstr, 512);
-    strerror_r(errnum, errstr.data, errstr.size);
+    compat_strerror_r(errnum, errstr.data, errstr.size);
     exp.len = (size_t)snprintf(exp.data, exp.size,
                               "t|string|dstring|\\0\\n\\r"
                               "|1234|12345678901234|-1234|-12345678901234"

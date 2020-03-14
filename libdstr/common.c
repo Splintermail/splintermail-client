@@ -842,7 +842,7 @@ bool in_list(const dstr_t* val, const LIST(dstr_t)* list, size_t* idx){
 
 derr_t dstr_read(int fd, dstr_t* buffer, size_t count, size_t* amnt_read){
     derr_t e = E_OK;
-    // read() returns a signed size_t (ssize_t)
+    // compat_read() returns a signed size_t (ssize_t)
     ssize_t ar = 0;
     if(count == 0){
         // 0 means "try to fill buffer"
@@ -855,7 +855,7 @@ derr_t dstr_read(int fd, dstr_t* buffer, size_t count, size_t* amnt_read){
         // grow buffer to fit
         PROP(&e, dstr_grow(buffer, buffer->len + count) );
     }
-    ar = read(fd, buffer->data + buffer->len, count);
+    ar = compat_read(fd, buffer->data + buffer->len, count);
     if(ar < 0){
         TRACE(&e, "%x: %x\n", FS("read"), FE(&errno));
         ORIG(&e, E_OS, "error in read");
@@ -873,7 +873,7 @@ derr_t dstr_write(int fd, const dstr_t* buffer){
     size_t total = 0;
     size_t zero_writes = 0;
     while(total < buffer->len){
-        ssize_t amnt_written = write(fd, buffer->data + total, buffer->len - total);
+        ssize_t amnt_written = compat_write(fd, buffer->data + total, buffer->len - total);
         // writing zero bytes is a failure mode
         if(amnt_written < 0){
             TRACE(&e, "%x: %x\n", FS("write"), FE(&errno));
@@ -945,7 +945,7 @@ derr_t dstr_fwrite(FILE* f, const dstr_t* buffer){
 
 derr_t dstr_read_file(const char* filename, dstr_t* buffer){
     derr_t e = E_OK;
-    int fd = open(filename, O_RDONLY);
+    int fd = compat_open(filename, O_RDONLY);
     if(fd < 0){
         TRACE(&e, "%x: %x\n", FS(filename), FE(&errno));
         ORIG(&e, E_OPEN, "unable to open file");
@@ -964,13 +964,13 @@ derr_t dstr_read_file(const char* filename, dstr_t* buffer){
         }
     }
 cleanup:
-    close(fd);
+    compat_close(fd);
     return e;
 }
 
 derr_t dstr_write_file(const char* filename, const dstr_t* buffer){
     derr_t e = E_OK;
-    int fd = open(filename, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    int fd = compat_open(filename, O_WRONLY | O_CREAT | O_TRUNC, 0666);
     if(fd < 0){
         TRACE(&e, "%x: %x\n", FS(filename), FE(&errno));
         ORIG(&e, E_OPEN, "unable to open file");
@@ -979,10 +979,10 @@ derr_t dstr_write_file(const char* filename, const dstr_t* buffer){
 
     int ret;
 cleanup:
-    ret = close(fd);
+    ret = compat_close(fd);
     // check for closing error
     if(ret != 0 && !is_error(e)){
-        TRACE(&e, "close(%x): %x\n", FS(filename), FE(&errno));
+        TRACE(&e, "compat_close(%x): %x\n", FS(filename), FE(&errno));
         ORIG(&e, E_OS, "failed to write file");
     }
     return e;
@@ -990,7 +990,7 @@ cleanup:
 
 derr_t dstr_fread_file(const char* filename, dstr_t* buffer){
     derr_t e = E_OK;
-    FILE* f = fopen(filename, "r");
+    FILE* f = compat_fopen(filename, "r");
     if(!f){
         TRACE(&e, "%x: %x\n", FS(filename), FE(&errno));
         ORIG(&e, errno == ENOMEM ? E_NOMEM : E_OPEN, "unable to open file");
@@ -1015,7 +1015,7 @@ cleanup:
 
 derr_t dstr_fwrite_file(const char* filename, const dstr_t* buffer){
     derr_t e = E_OK;
-    FILE* f = fopen(filename, "w");
+    FILE* f = compat_fopen(filename, "w");
     if(!f){
         TRACE(&e, "%x: %x\n", FS(filename), FE(&errno));
         ORIG(&e, errno == ENOMEM ? E_NOMEM : E_OPEN, "unable to open file");
@@ -1378,7 +1378,7 @@ derr_type_t fmthook_strerror(dstr_t* out, const void* arg){
     const int* err = (const int*)arg;
     // we'll just assume that 512 characters is quite long enough
     DSTR_VAR(temp, 512);
-    strerror_r(*err, temp.data, temp.size);
+    compat_strerror_r(*err, temp.data, temp.size);
     temp.len = strnlen(temp.data, temp.size);
     return dstr_append_quiet(out, &temp);
 }

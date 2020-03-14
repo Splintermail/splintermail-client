@@ -12,25 +12,11 @@
 
     #define S_ISDIR(mode)  (((mode) & S_IFMT) == S_IFDIR)
 
-    #define read compat_read
-    #define write compat_write
-    #define open compat_open
-    #define chmod compat_chmod
-    #define close compat_close
-    #define fopen compat_fopen
-    #define gethostname compat_gethostname
-    #define mkdir compat_mkdir
-    #define strerror_r compat_strerror_r
-    #define pipe compat_pipe
-    // use the "new" functions... with same prototypes and behaviors
-    #define rmdir _rmdir
-    #define lseek _lseek
-    #define dup _dup
-    // for access()
-    #define access compat_access
+    // for compat_access()
     #define X_OK 00
     #define R_OK 02
     #define W_OK 04
+
     #define ssize_t int
 
     void win_perror(void);
@@ -46,11 +32,30 @@
     int compat_strerror_r(int errnum, char* buf, size_t buflen);
     int compat_pipe(int* pfds);
 
+    // use the "new" functions... with same prototypes and behaviors
+    #define compat_rmdir _rmdir
+    #define compat_lseek _lseek
+    #define compat_dup _dup
 
 #else // not _WIN32
 
     #include <unistd.h>
     #include <libgen.h>
+
+    #define compat_read read
+    #define compat_write write
+    #define compat_open open
+    #define compat_chmod chmod
+    #define compat_close close
+    #define compat_fopen fopen
+    #define compat_access access
+    #define compat_gethostname gethostname
+    #define compat_mkdir mkdir
+    #define compat_strerror_r strerror_r
+    #define compat_pipe pipe
+    #define compat_rmdir rmdir
+    #define compat_lseek lseek
+    #define compat_dup dup
 
 #endif // _WIN32
 

@@ -87,7 +87,7 @@ derr_t gen_key(int bits, const char* keyfile){
     }
 
     // open the file for the private key
-    FILE* f = fopen(keyfile, "w");
+    FILE* f = compat_fopen(keyfile, "w");
     if(!f){
         TRACE(&e, "%x: %x\n", FS(keyfile), FE(&errno));
         ORIG_GO(&e, errno == ENOMEM ? E_NOMEM : E_OPEN, "failed to open file for writing", cleanup_2);
@@ -121,7 +121,7 @@ derr_t keypair_load(keypair_t* kp, const char* keyfile){
     EVP_PKEY* temp;
 
     // open the file for the private key
-    f = fopen(keyfile, "r");
+    f = compat_fopen(keyfile, "r");
     if(!f){
         TRACE(&e, "%x: %x\n", FS(keyfile), FE(&errno));
         ORIG_GO(&e, errno == ENOMEM ? E_NOMEM : E_OPEN, "failed to open file", cleanup_1);

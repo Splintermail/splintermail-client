@@ -46,7 +46,7 @@ derr_t maildir_new_rename(maildir_t* mdir, const char* tempname,
 derr_t maildir_get_index_from_uid(const maildir_t* mdir, const dstr_t* uid,
                                     size_t* index);
 // maildir_open_message() is for reading existing messages
-// then you just use close() directly on the fd
+// then you just use compat_close() directly on the fd
 derr_t maildir_open_message(const maildir_t* mdir, size_t index, int* fd);
 
 derr_t maildir_delete_message(maildir_t* mdir, size_t index);

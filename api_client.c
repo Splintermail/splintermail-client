@@ -70,7 +70,7 @@ derr_t api_token_read(const char* path, api_token_t* token){
 derr_t api_token_write(const char* path, api_token_t* token){
     derr_t e = E_OK;
     // open the file for writing (with the new nonce)
-    FILE* f = fopen(path, "w");
+    FILE* f = compat_fopen(path, "w");
     if(!f){
         LOG_ERROR("%x: %x\n", FS(path), FE(&errno));
         ORIG(&e, errno == ENOMEM ? E_NOMEM : E_FS,

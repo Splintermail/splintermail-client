@@ -29,7 +29,7 @@ static derr_t maildir_create(const dstr_t* path){
     }else PROP(&e, e2);
 
     // create maildir
-    int ret = mkdir(root.data, 0770);
+    int ret = compat_mkdir(root.data, 0770);
     if(ret && errno != EEXIST){
         TRACE(&e, "%x: %x\n", FS(root.data), FE(&errno));
         ORIG(&e, E_OS, "unable to make maildir");
@@ -42,7 +42,7 @@ static derr_t maildir_create(const dstr_t* path){
         RETHROW(&e, &e2, E_FS);
     }else PROP_GO(&e, e2, cleanup_1);
 
-    ret = mkdir(cur.data, 0770);
+    ret = compat_mkdir(cur.data, 0770);
     if(ret && errno != EEXIST){
         TRACE(&e, "%x: %x\n", FS(cur.data), FE(&errno));
         ORIG_GO(&e, E_OS, "unable to make maildir/cur", cleanup_1);
@@ -55,7 +55,7 @@ static derr_t maildir_create(const dstr_t* path){
         RETHROW(&e, &e2, E_FS);
     }else PROP_GO(&e, e, cleanup_2);
 
-    ret = mkdir(new.data, 0770);
+    ret = compat_mkdir(new.data, 0770);
     if(ret && errno != EEXIST){
         TRACE(&e, "%x: %x\n", FS(new.data), FE(&errno));
         ORIG_GO(&e, E_OS, "unable to make maildir/new", cleanup_2);
@@ -68,7 +68,7 @@ static derr_t maildir_create(const dstr_t* path){
         RETHROW(&e, &e2, E_FS);
     }else PROP_GO(&e, e2, cleanup_3);
 
-    ret = mkdir(tmp.data, 0770);
+    ret = compat_mkdir(tmp.data, 0770);
     if(ret && errno != EEXIST){
         TRACE(&e, "%x: %x\n", FS(tmp.data), FE(&errno));
         ORIG_GO(&e, E_OS, "unable to make maildir/tmp", cleanup_3);
@@ -77,11 +77,11 @@ static derr_t maildir_create(const dstr_t* path){
     return e;
 
 cleanup_3:
-    rmdir(new.data);
+    compat_rmdir(new.data);
 cleanup_2:
-    rmdir(cur.data);
+    compat_rmdir(cur.data);
 cleanup_1:
-    rmdir(root.data);
+    compat_rmdir(root.data);
     return e;
 }
 
@@ -367,7 +367,7 @@ derr_t maildir_new_tmp_file(maildir_t* mdir, dstr_t* tempname, int* fd){
             ORIG(&e, E_INTERNAL, "unable to find an unused file in maildir/tmp");
         }
     }
-    *fd = open(tempname->data, O_CREAT | O_TRUNC | O_RDWR, 0660);
+    *fd = compat_open(tempname->data, O_CREAT | O_TRUNC | O_RDWR, 0660);
 
     if(*fd < 0){
         TRACE(&e, "%x: %x\n", FS("creating /tmp/ message"), FE(&errno));
@@ -382,7 +382,7 @@ derr_t maildir_new_rename(maildir_t* mdir, const char* tempname,
     derr_t e = E_OK;
     // get host name
     DSTR_VAR(hostname, 256);
-    gethostname(hostname.data, hostname.size);
+    compat_gethostname(hostname.data, hostname.size);
     hostname.len = strnlen(hostname.data, HOSTNAME_COMPONENT_MAX_LEN);
 
     // modify the hostname (replace unallowed characters)
@@ -454,7 +454,7 @@ derr_t maildir_open_message(const maildir_t* mdir, size_t index, int* fd){
     DSTR_VAR(path, 4096);
     PROP(&e, FMT(&path, "%x%x", FD(&mdir->path), FD(filename)) );
 
-    *fd = open(path.data, O_RDONLY);
+    *fd = compat_open(path.data, O_RDONLY);
 
     if(*fd < 0){
         TRACE(&e, "%x: %x\n", FS(path.data), FE(&errno));

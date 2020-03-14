@@ -56,7 +56,7 @@ int compat_open(const char* pathname, int flags, ...){
     }
     va_end(ap);
 
-    // if we call posix open() we always want binary mode
+    // if we call posix compat_open() we always want binary mode
     int oflag = _O_BINARY | flags;
 
     // no sharing of files

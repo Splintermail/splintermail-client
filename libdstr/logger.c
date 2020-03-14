@@ -1,5 +1,6 @@
 #include "common.h"
 #include "logger.h"
+#include "win_compat.h"
 
 #define LIST_LEN_MAX 16
 
@@ -65,7 +66,7 @@ int pvt_do_log(log_level_t level, const char* format,
     for(size_t i = 0; i < fnlist_len; i++){
         if(level >= fnlevels[i]){
             // open the file
-            FILE* f = fopen(fnlist[i], "a");
+            FILE* f = compat_fopen(fnlist[i], "a");
             // there's no good way to report errors
             if(!f) continue;
             pvt_ffmt_quiet(f, NULL, format, args, nargs);

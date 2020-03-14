@@ -106,7 +106,7 @@ extern derr_type_t E_VALUE;      // delete this
 extern derr_type_t E_FIXEDSIZE;  // an operation would result in a buffer overflow
 extern derr_type_t E_OS;         // some system call failed
 extern derr_type_t E_BADIDX;     // delete this
-extern derr_type_t E_OPEN;       // an error in open() # TODO: replace with E_FS
+extern derr_type_t E_OPEN;       // an error in compat_open() # TODO: replace with E_FS
 extern derr_type_t E_PARAM;      // invalid input parameter
 extern derr_type_t E_INTERNAL;   // a never-should-happen failure occured
 extern derr_type_t E_FS;         // a file system-related error
@@ -484,7 +484,7 @@ derr_t list_append_with_mem(LIST(dstr_t)* list, dstr_t* mem, dstr_t in,
 // a correct but currently inefficient lookup mechanism
 bool in_list(const dstr_t* val, const LIST(dstr_t)* list, size_t* idx);
 
-/* wraps the unistd.h read() function to read from a file descriptor and append
+/* wraps the unistd.h compat_read() function to read from a file descriptor and append
    it directly into a dstr_t buffer.  Specifying count=0 means try to fill the
    buffer.  dstr_read() will grow the buffer before it tries to read if
    necessary. */

@@ -43,13 +43,13 @@ static derr_t gen_fake_emails(maildir_t* mdir){
         DSTR_VAR(path, 4096);
         PROP(&e, FMT(&path, "%x%x", FD(&mdir->path), FD(&fname)) );
         // create the file
-        int ret = open(path.data, O_WRONLY|O_CREAT|O_TRUNC, 0770);
+        int ret = compat_open(path.data, O_WRONLY|O_CREAT|O_TRUNC, 0770);
         if(ret < 0){
             TRACE(&e, "%x: %x\n", FS(path.data), FE(&errno));
-            ORIG(&e, E_OS, "open() failed");
+            ORIG(&e, E_OS, "compat_open() failed");
         }
         // close the file, we don't actually need it
-        close(ret);
+        compat_close(ret);
         // null terminator
         DSTR_STATIC(null, "\0");
         size_t orig_u_len = g_uids_block.len;
@@ -126,7 +126,7 @@ static derr_t test_maildir(void){
     // write some data into that message
     PROP(&e, dstr_write(fd, &test_body) );
     // done writing
-    close(fd);
+    compat_close(fd);
     // save the message
     PROP(&e, maildir_new_rename(&mdir, tempname.data, &test_uid, test_len) );
     // get the index of that message
@@ -138,7 +138,7 @@ static derr_t test_maildir(void){
     DSTR_VAR(body, 4096);
     size_t amnt_read;
     PROP(&e, dstr_read(fd, &body, 0, &amnt_read) );
-    close(fd);
+    compat_close(fd);
     EXP_VS_GOT(&test_body, &body, "email body");
 
     // delete all emails

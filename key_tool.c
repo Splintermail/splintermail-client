@@ -109,7 +109,7 @@ derr_t key_tool_peer_list_load(key_tool_t* kt, const char* filename){
 
 derr_t key_tool_peer_list_write(key_tool_t* kt, const char* filename){
     derr_t e = E_OK;
-    FILE* f = fopen(filename, "w");
+    FILE* f = compat_fopen(filename, "w");
     if(!f){
         TRACE(&e, "%x: %x\n", FS(filename), FE(&errno));
         ORIG(&e, errno == ENOMEM ? E_NOMEM : E_FS, "unable to open peer_list file for writing");

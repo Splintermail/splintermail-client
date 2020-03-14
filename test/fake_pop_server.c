@@ -253,7 +253,7 @@ static derr_t fake_pop_server_add_email(fake_pop_server_t* fps,
     // open the file
     DSTR_VAR(realpath, 4096);
     PROP(&e, FMT(&realpath, "%x/%x", FS(g_test_files), FS(path)) );
-    int fd = open(realpath.data, O_RDONLY);
+    int fd = compat_open(realpath.data, O_RDONLY);
     if(fd < 0){
         TRACE(&e, "%x: %x\n", FD(&realpath), FE(&errno));
         ORIG_GO(&e, E_OS, "unable to open email file", cleanup_1);
@@ -264,10 +264,10 @@ static derr_t fake_pop_server_add_email(fake_pop_server_t* fps,
         PROP_GO(&e, dstr_read(fd, &message, 4096, &amnt_read), cleanup_fd);
         continue;
     cleanup_fd:
-        close(fd);
+        compat_close(fd);
         goto cleanup_1;
     }
-    close(fd);
+    compat_close(fd);
     // create the uid dstring
     dstr_t uid_d;
     PROP_GO(&e, dstr_new(&uid_d, 32), cleanup_1);

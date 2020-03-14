@@ -252,7 +252,7 @@ derr_t ssl_context_new_server(ssl_context_t* ctx, const char* certfile,
     // set diffie-helman perameters
     if(dhfile){
         DH* dh = NULL;
-        FILE* fp = fopen(dhfile, "r");
+        FILE* fp = compat_fopen(dhfile, "r");
         if(!fp){
             // already checked read access above, so highly likely E_NOMEM
             ORIG_GO(&e, E_NOMEM, "unable to open dhfile", cleanup);

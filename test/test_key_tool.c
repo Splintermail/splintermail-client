@@ -373,13 +373,13 @@ static derr_t decrypt_by_counter(key_tool_t* kt, unsigned int ctr){
     snprintf(infile, sizeof(infile), "%s/key_tool/AA%s%s%s.msg",
                                      g_test_files, x, n, m);
     // open a file descriptor for reading
-    int from = open(infile, O_RDONLY);
+    int from = compat_open(infile, O_RDONLY);
     if(from < 0){
         TRACE(&e, "%x: %x\n", FS(infile), FE(&errno));
         ORIG(&e, E_OS, "unable to open file for decrypting");
     }
     // open a file descriptor for writing (we don't check the output)
-    int to = open("_tktdir/trash", O_WRONLY | O_CREAT | O_TRUNC, 0660);
+    int to = compat_open("_tktdir/trash", O_WRONLY | O_CREAT | O_TRUNC, 0660);
     if(to < 0){
         TRACE(&e, "%x: %x\n", FS("_tktdir/trash"), FE(&errno));
         ORIG_GO(&e, E_OS, "unable to open trash file", cu1);
@@ -399,9 +399,9 @@ static derr_t decrypt_by_counter(key_tool_t* kt, unsigned int ctr){
     }
 
     DROP_VAR(&err);
-    close(to);
+    compat_close(to);
 cu1:
-    close(from);
+    compat_close(from);
     return e;
 }
 
@@ -410,7 +410,7 @@ static derr_t do_test(unsigned int ctr){
     // delete the temporary directory if it already exists
     DROP_CMD( rm_rf("_tktdir") );
     // create the "test key tool directory"
-    int ret = mkdir("_tktdir", 0770);
+    int ret = compat_mkdir("_tktdir", 0770);
     if(ret != 0){
         TRACE(&e, "%x: %x\n", FS("_tktdir"), FE(&errno));
         ORIG(&e, E_OS, "unable to create temporary directory");
@@ -538,7 +538,7 @@ static derr_t test_peer_list_read_write(void){
     // remove the directory if there already is one
     DROP_CMD( rm_rf("_tktdir") );
     // create the "test key tool directory"
-    int ret = mkdir("_tktdir", 0770);
+    int ret = compat_mkdir("_tktdir", 0770);
     if(ret != 0){
         TRACE(&e, "%x: %x\n", FS("_tktdir"), FE(&errno));
         ORIG(&e, E_OS, "unable to create temporary directory");

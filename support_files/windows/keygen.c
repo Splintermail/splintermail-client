@@ -159,7 +159,7 @@ int main(int argc, char** argv) {
 
     DSTR_VAR(ssl_cert_file, 1024);
     FMT(&ssl_cert_file, "%xQWER cert_name REWQ", FS(output_dir));
-    FILE* f = fopen(ssl_cert_file.data, "a");
+    FILE* f = compat_fopen(ssl_cert_file.data, "a");
     PROP( dstr_fwrite(f, &ca_cert) );
     fclose(f);
 

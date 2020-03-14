@@ -397,18 +397,18 @@ static derr_t do_test_mangle(const char* infile, const char* outfile,
                              derr_t (*mangle_hook)(int, int, size_t*)){
     derr_t e = E_OK;
     // open the relevant files
-    int infd = open(infile, O_RDONLY);
+    int infd = compat_open(infile, O_RDONLY);
     if(infd < 0){
         TRACE(&e, "%x: %x\n", FS(infile), FE(&errno));
         ORIG(&e, E_OS, "unable to open file for test");
     }
-    int outfd = open(outfile, O_RDONLY);
+    int outfd = compat_open(outfile, O_RDONLY);
     if(outfd < 0){
         TRACE(&e, "%x: %x\n", FS(outfile), FE(&errno));
         ORIG_GO(&e, E_OS, "unable to open file for test", cu1);
     }
     // open a temp file
-    int temp = open("do_test_mangle.temp", O_CREAT | O_RDWR | O_TRUNC, 0660);
+    int temp = compat_open("do_test_mangle.temp", O_CREAT | O_RDWR | O_TRUNC, 0660);
     if(temp < 0)
         ORIG_GO(&e, E_OS, "unable to create file for test", cu2);
     // allocate memory for the "answer"
@@ -423,7 +423,7 @@ static derr_t do_test_mangle(const char* infile, const char* outfile,
     size_t amnt_read;
     PROP_GO(&e, mangle_hook(infd, temp, &outlen), cu5);
     // reset temp file descriptor for reading
-    off_t oret = lseek(temp, 0, SEEK_SET);
+    off_t oret = compat_lseek(temp, 0, SEEK_SET);
     if(oret == (off_t) -1){
         TRACE(&e, "%x: %x\n", FS("lseek"), FE(&errno));
         ORIG_GO(&e, E_OS, "lseek failed", cu5);
@@ -451,12 +451,12 @@ cu5:
 cu4:
     dstr_free(&answer);
 cu3:
-    close(temp);
+    compat_close(temp);
     remove("do_test_mangle.temp");
 cu2:
-    close(outfd);
+    compat_close(outfd);
 cu1:
-    close(infd);
+    compat_close(infd);
     return e;
 }
 
@@ -569,7 +569,7 @@ cu1:
 static derr_t test_ignore_list(void){
     derr_t e = E_OK;
     // first make a throwaway directory
-    int ret = mkdir("test_ignore_dir", 0770);
+    int ret = compat_mkdir("test_ignore_dir", 0770);
     if(ret != 0){
         ORIG(&e, E_OS, "unable to make ignore directory");
     }

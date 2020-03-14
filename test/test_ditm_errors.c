@@ -385,12 +385,12 @@ static derr_t test_ditm_errors(void){
     // make ditm_dir/userdir/cur as a file, not a dir
     DSTR_VAR(temp, 4096);
     PROP_GO(&e, FMT(&temp, "%x/%x/cur", FS(ditm_path), FS(g_username)), cu_ctx);
-    ret = open(temp.data, O_WRONLY | O_CREAT, 0644);
+    ret = compat_open(temp.data, O_WRONLY | O_CREAT, 0644);
     if(ret < 0){
         TRACE(&e, "unable to create %x: %x\n", FD(&temp), FE(&errno));
         ORIG_GO(&e, E_FS, "FS setup failed", cu_ctx);
     }
-    close(ret);
+    compat_close(ret);
     // run the test
     LOG_INFO("---- TEST CASE E: error in maildir_new() ----\n");
     PROP_GO(&e, do_test(test_broken_conn_after_loginhook, &ctx, true, E_FS, E_CONN), cu_ctx);
@@ -442,7 +442,7 @@ static derr_t test_ditm_errors(void){
     // create ignore.json as a dir, not a file
     temp.len = 0;
     PROP_GO(&e, FMT(&temp, "%x/%x/ignore.json", FS(ditm_path), FS(g_username)), cu_ctx);
-    ret = mkdir(temp.data, 0755);
+    ret = compat_mkdir(temp.data, 0755);
     if(ret < 0){
         TRACE(&e, "unable to mkdir %x: %x\n", FD(&temp), FE(&errno));
         ORIG_GO(&e, E_FS, "FS setup failed", cu_ctx);

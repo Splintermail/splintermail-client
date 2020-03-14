@@ -387,7 +387,7 @@ static derr_t retrhook(void* arg, unsigned int index){
             response.len = 0;
         }
     }
-    close(fd);
+    compat_close(fd);
 
     // encode the last of the response
     PROP(&e, pop3_encode(&buffer, &response, true));
@@ -398,7 +398,7 @@ static derr_t retrhook(void* arg, unsigned int index){
     return e;
 
 cleanup:
-    close(fd);
+    compat_close(fd);
     return e;
 }
 
@@ -612,7 +612,7 @@ static derr_t tophook(void* arg, unsigned int index, unsigned int lines){
             response.len = 0;
         }
     }
-    close(fd);
+    compat_close(fd);
 
     // encode the last of the response
     PROP(&e, pop3_encode(&checked, &response, true));
@@ -623,7 +623,7 @@ static derr_t tophook(void* arg, unsigned int index, unsigned int lines){
     return e;
 
 fail:
-    close(fd);
+    compat_close(fd);
     return e;
 }
 
@@ -933,7 +933,7 @@ static derr_t ditm_download_new_message(ditm_t* ditm, key_tool_t* kt,
     }
 
     // reset temp file 1 for reading
-    off_t oret = lseek(t1fd, 0, SEEK_SET);
+    off_t oret = compat_lseek(t1fd, 0, SEEK_SET);
     if(oret == (off_t) -1){
         TRACE(&e, "%x: %x\n", FS("lseek"), FE(&errno));
         // I don't see why this would ever fail
@@ -955,13 +955,13 @@ static derr_t ditm_download_new_message(ditm_t* ditm, key_tool_t* kt,
             DROP_VAR(&e2);
             // broken message, mangle the body and hand it to the user
             // reset temp file 1 and temp file 2, we're going to try again
-            oret = lseek(t1fd, 0, SEEK_SET);
+            oret = compat_lseek(t1fd, 0, SEEK_SET);
             if(oret == (off_t) -1){
                 TRACE(&e, "%x: %x\n", FS("lseek"), FE(&errno));
                 // I don't see why this would ever fail
                 ORIG_GO(&e, E_INTERNAL, "lseek failed", close_t2);
             }
-            oret = lseek(t2fd, 0, SEEK_SET);
+            oret = compat_lseek(t2fd, 0, SEEK_SET);
             if(oret == (off_t) -1){
                 TRACE(&e, "%x: %x\n", FS("lseek"), FE(&errno));
                 // I don't see why this would ever fail
@@ -989,9 +989,9 @@ static derr_t ditm_download_new_message(ditm_t* ditm, key_tool_t* kt,
     }
 
 close_t2:
-    close(t2fd);
+    compat_close(t2fd);
 close_t1:
-    close(t1fd);
+    compat_close(t1fd);
 
     // in all cases we are done with t1, so delete it
     int ret = remove(t1path.data);
@@ -1235,7 +1235,7 @@ derr_t ditm_inject_message(ditm_t* ditm, const dstr_t* subj, const dstr_t* msg){
     tlen += msg->len;
 
 fail_tfd:
-    close(tfd);
+    compat_close(tfd);
     if(is_error(e)) goto fail_temp;
 
     // make sure we can append to ditm->deletions
@@ -1487,7 +1487,7 @@ derr_t ignore_list_write(ignore_list_t* il, const dstr_t* userdir){
     DSTR_VAR(path, 4096);
     PROP(&e, FMT(&path, "%x/ignore.json", FD(userdir)) );
     // open the file for reading
-    FILE* f = fopen(path.data, "w");
+    FILE* f = compat_fopen(path.data, "w");
     if(!f){
         TRACE(&e, "%x: %x\n", FS(path.data), FE(&errno));
         ORIG(&e, errno == ENOMEM ? E_NOMEM : E_FS, "unable to open ignore.json for writing");

@@ -174,7 +174,7 @@ static void* ssl_server_thread(void* arg){
 
         // set diffie-helman perameters
         DH* dh = NULL;
-        FILE* fp = fopen(dhfile.data, "r");
+        FILE* fp = compat_fopen(dhfile.data, "r");
         if(!fp){
             // already checked read access above, so highly likely E_NOMEM
             ORIG_GO(e, E_NOMEM, "unable to open dhfile", ctx_fail);

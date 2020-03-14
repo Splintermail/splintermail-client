@@ -24,7 +24,7 @@ static inline bool do_dir_access(const char* path, bool create, int flags){
             return false;
         }
         // we might be able to create the directory
-        ret = mkdir(path, 0770);
+        ret = compat_mkdir(path, 0770);
         if(ret != 0){
             LOG_DEBUG("%x: %x\n", FS(path), FE(&errno));
             LOG_DEBUG("%x: unable to stat or create directory\n", FS(path));
@@ -42,7 +42,7 @@ static inline bool do_dir_access(const char* path, bool create, int flags){
     }
 
     // lastly, make sure we have access
-    ret = access(path, flags);
+    ret = compat_access(path, flags);
     if(ret != 0){
         LOG_DEBUG("%x: %x\n", FS(path), FE(&errno));
         LOG_DEBUG("%x: incorrect permissions\n", FS(path));
@@ -70,7 +70,7 @@ static inline bool do_file_access(const char* path, int flags){
         // if we can't stat it, that is the end of the test
         return false;
     }
-    ret = access(path, flags);
+    ret = compat_access(path, flags);
     if(ret != 0){
         LOG_DEBUG("%x: %x\n", FS(path), FE(&errno));
         // could be that it doesn't exist, could be bad permissions
@@ -194,14 +194,14 @@ static derr_t rm_rf_hook(const char* base, const dstr_t* file,
         // recursively delete everything in the directory
         PROP(&e, for_each_file_in_dir(path.data, rm_rf_hook, NULL) );
         // now delete the directory itself
-        int ret = rmdir(path.data);
+        int ret = compat_rmdir(path.data);
         if(ret != 0){
             TRACE(&e, "%x: %x\n", FS(path.data), FE(&errno));
             ORIG(&e, E_OS, "failed to remove directory");
         }
     }else{
         // make sure we have write permissions to delete the file
-        int ret = chmod(path.data, 0600);
+        int ret = compat_chmod(path.data, 0600);
         if(ret != 0){
             TRACE(&e, "%x: %x\n", FS(path.data), FE(&errno));
             ORIG(&e, E_OS, "failed to remove file");
@@ -231,7 +231,7 @@ derr_t rm_rf(const char* path){
         // if so delete it recursively
         PROP(&e, for_each_file_in_dir(path, rm_rf_hook, NULL) );
         // now delete the directory itself
-        ret = rmdir(path);
+        ret = compat_rmdir(path);
         if(ret != 0){
             TRACE(&e, "%x: %x\n", FS(path), FE(&errno));
             ORIG(&e, E_OS, "failed to remove directory");
@@ -458,7 +458,7 @@ derr_t chmod_path(const string_builder_t* sb, mode_t mode){
     dstr_t* path;
     PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
 
-    int ret = chmod(path->data, mode);
+    int ret = compat_chmod(path->data, mode);
     if(ret != 0){
         if(errno == ENOMEM){
             ORIG_GO(&e, E_NOMEM, "No memory for chmod", cu);
@@ -531,7 +531,7 @@ derr_t lstat_path(const string_builder_t* sb, struct stat* out, int* eno){
 static derr_t do_mkdir(const char *path, mode_t mode, bool soft){
     derr_t e = E_OK;
 
-    int ret = mkdir(path, mode);
+    int ret = compat_mkdir(path, mode);
     if(ret != 0){
         if(errno == ENOMEM){
             ORIG(&e, E_NOMEM, "no memory for mkdir");
@@ -741,7 +741,7 @@ derr_t file_copy(const char* from, const char* to, mode_t mode){
     derr_t e = E_OK;
     DSTR_VAR(buffer, 4096);
 
-    int fdin = open(from, O_RDONLY);
+    int fdin = compat_open(from, O_RDONLY);
     if(fdin < 0){
         if(errno == ENOMEM){
             ORIG(&e, E_NOMEM, "no memory for open");
@@ -751,7 +751,7 @@ derr_t file_copy(const char* from, const char* to, mode_t mode){
         }
     }
 
-    int fdout = open(to, O_WRONLY | O_CREAT | O_TRUNC, mode);
+    int fdout = compat_open(to, O_WRONLY | O_CREAT | O_TRUNC, mode);
     if(fdout < 0){
         if(errno == ENOMEM){
             ORIG_GO(&e, E_NOMEM, "no memory for open", cu_fdin);
@@ -772,9 +772,9 @@ derr_t file_copy(const char* from, const char* to, mode_t mode){
     }
 
 cu_fdout:
-    close(fdout);
+    compat_close(fdout);
 cu_fdin:
-    close(fdin);
+    compat_close(fdin);
     return e;
 }
 
@@ -803,7 +803,7 @@ cu_from:
 derr_t touch(const char* path){
     derr_t e = E_OK;
     // create the file if necessary
-    int fd = open(path, O_WRONLY | O_CREAT | O_APPEND, 0666);
+    int fd = compat_open(path, O_WRONLY | O_CREAT | O_APPEND, 0666);
     if(fd < 0){
         if(errno == ENOMEM){
             ORIG(&e, E_NOMEM, "no memory for open");
@@ -812,7 +812,7 @@ derr_t touch(const char* path){
             ORIG(&e, E_OPEN, "unable to open file");
         }
     }
-    close(fd);
+    compat_close(fd);
     // use uitme to update the file's timestamp
     int ret = utime(path, NULL);
     if(ret != 0){
@@ -843,7 +843,7 @@ derr_t fopen_path(const string_builder_t *sb, const char *mode, FILE **out){
     dstr_t* path;
     PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
 
-    *out = fopen(path->data, mode);
+    *out = compat_fopen(path->data, mode);
     if(!out){
         TRACE(&e, "%x: %x\n", FD(path), FE(&errno));
         ORIG_GO(&e, errno == ENOMEM ? E_NOMEM : E_OPEN, "unable to open file",

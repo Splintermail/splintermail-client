@@ -25,7 +25,7 @@ static void* async_reader_thread(void* arg){
     while(true){
         char c;
         // read just one character
-        ssize_t amnt_read = read(*fd, &c, 1);
+        ssize_t amnt_read = compat_read(*fd, &c, 1);
         if(amnt_read == 0){
             break;
         }else if(amnt_read < 0){
@@ -116,19 +116,19 @@ static derr_t run_test_case(struct test_case_t test){
     strings = test.strings;
     // replace stdout with a pipe
     int fds[2];
-    int ret = pipe(fds);
+    int ret = compat_pipe(fds);
     if(ret != 0){
         perror("pipe");
         UH_OH("run_test_case failed to open pipe\n");
     }
     fflush(stdout);
-    close(1);
-    ret = dup(fds[1]);
+    compat_close(1);
+    ret = compat_dup(fds[1]);
     if(ret < 0){
         perror("pipe");
         UH_OH("run_test_case failed to dupe pipe\n");
     }
-    close(fds[1]);
+    compat_close(fds[1]);
     // prepare local copy of test.argv
     // because otherwise argv might get modified, resulting in segfault
     int argc = 0;
@@ -152,7 +152,7 @@ static derr_t run_test_case(struct test_case_t test){
     int main_ret = do_main(argc, local_argv, false);
     // capture stdout (and stop_async_reader)
     fflush(stdout);
-    close(1);
+    compat_close(1);
     dstr_t* out_buffer;
     IF_PROP(&e, stop_async_reader(&out_buffer) ){
         UH_OH("error in stop_async_reader\n");
@@ -160,8 +160,8 @@ static derr_t run_test_case(struct test_case_t test){
         DROP_VAR(&e);
     }
     // restore the real stdout
-    close(fds[0]);
-    ret = dup(real_stdout_fd);
+    compat_close(fds[0]);
+    ret = compat_dup(real_stdout_fd);
     if(ret < 0){
         perror("pipe");
         UH_OH("run_test_case failed to restore stdin\n");
@@ -210,7 +210,7 @@ int main(int argc, char** argv){
     logger_add_fileptr(TEST_LOG_LEVEL, stderr);
     PROP_GO(&e, dstr_new(&reason_log, 4096), fail_0);
     // first save the stdout file descriptor
-    real_stdout_fd = dup(1);
+    real_stdout_fd = compat_dup(1);
     if(real_stdout_fd < 0){
         perror("dup");
         goto fail;
