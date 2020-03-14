@@ -1,5 +1,5 @@
 #include "write.h"
-#include "libdstr/logger.h"
+#include "libdstr/libdstr.h"
 
 // the state of a run of skip_fills.
 typedef struct {

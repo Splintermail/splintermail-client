@@ -1,8 +1,3 @@
-#ifndef LINK_H
-#define LINK_H
-
-#include "common.h"
-
 // circularly linked lists, where the head element is not part of the list
 
 typedef struct link_t {
@@ -37,5 +32,3 @@ bool link_list_isempty(link_t *head);
         &var->member != (head); \
         var = temp, \
         temp = CONTAINER_OF(var->member.next, structure, member))
-
-#endif // LINK_H

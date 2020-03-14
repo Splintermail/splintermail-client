@@ -2,9 +2,7 @@
 #include <time.h>
 #include <limits.h>
 
-#include <libdstr/common.h>
-#include <libdstr/logger.h>
-#include <libdstr/jsw_atree.h>
+#include <libdstr/libdstr.h>
 
 #include "test_utils.h"
 

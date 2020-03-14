@@ -1,7 +1,7 @@
 #ifndef NETWORKING_H
 #define NETWORKING_H
 
-#include "libdstr/common.h"
+#include "libdstr/libdstr.h"
 
 #include <openssl/bio.h>
 

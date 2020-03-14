@@ -4,7 +4,7 @@
     #include <libimap/expression.h>
     #include <libimap/extension.h>
     #include <libimap/scan.h>
-    #include <libdstr/logger.h>
+    #include <libdstr/libdstr.h>
 
     #define YYTOKENTYPE // imap_scan_token_type_t
 

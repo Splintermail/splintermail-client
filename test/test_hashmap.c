@@ -2,10 +2,9 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <stdlib.h>
 
-#include <libdstr/common.h>
-#include <libdstr/logger.h>
-#include <libdstr/hashmap.h>
+#include <libdstr/libdstr.h>
 
 #include "test_utils.h"
 

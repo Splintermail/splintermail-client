@@ -4,7 +4,7 @@
 #include <uv.h>
 
 #include <imap_engine.h>
-#include <libdstr/common.h>
+#include <libdstr/libdstr.h>
 
 derr_t fake_imap_worker_new(imape_t *imape, imape_worker_t **worker);
 

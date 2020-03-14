@@ -3,8 +3,7 @@
 
 #include <uv.h>
 
-#include "libdstr/common.h"
-#include "libdstr/link.h"
+#include "libdstr/libdstr.h"
 
 /* This queue has two APIs: a normal API and a callback API.  Both are
    thread-safe.  The normal API can optionally block waiting to pop an element

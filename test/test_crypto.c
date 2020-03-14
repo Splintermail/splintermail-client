@@ -13,13 +13,11 @@
 #include <openssl/safestack.h>
 #include <openssl/engine.h>
 
-#include <libdstr/common.h>
-#include <libdstr/logger.h>
+#include <libdstr/libdstr.h>
 #include <crypto.h>
 
 #include "test_utils.h"
 
-#include <libdstr/win_compat.h>
 
 DSTR_STATIC(base64_partial,
     "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4v\n"

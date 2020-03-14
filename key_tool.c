@@ -1,7 +1,7 @@
 #include <errno.h>
 
 #include "key_tool.h"
-#include "libdstr/logger.h"
+#include "libdstr/libdstr.h"
 #include "ssl_errors.h"
 
 /* throws: E_NOMEM

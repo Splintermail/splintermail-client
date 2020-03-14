@@ -1,5 +1,5 @@
 #include "sm_serve.h"
-#include "libdstr/logger.h"
+#include "libdstr/libdstr.h"
 
 // forward declarations
 static derr_t do_select(server_t *server, imap_cmd_t *select_cmd);

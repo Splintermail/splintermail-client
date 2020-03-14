@@ -1,12 +1,12 @@
 #define HAVE_STRUCT_TIMESPEC
 #include <pthread.h>
+#include <errno.h>
 
 #include "dummy_ui_harness.h"
 #include "test_utils.h"
 
-#include <libdstr/logger.h>
+#include <libdstr/libdstr.h>
 #include <ui.h>
-#include <libdstr/win_compat.h>
 
 #define TEST_LOG_LEVEL LOG_LVL_DEBUG
 

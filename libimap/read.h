@@ -1,7 +1,7 @@
 #ifndef IMAP_READ_H
 #define IMAP_READ_H
 
-#include "libdstr/common.h"
+#include "libdstr/libdstr.h"
 #include "scan.h"
 #include "parse.h"
 

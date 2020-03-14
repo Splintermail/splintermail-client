@@ -1,5 +1,5 @@
 #include "sm_fetch.h"
-#include "libdstr/logger.h"
+#include "libdstr/libdstr.h"
 
 typedef struct {
     fetcher_t *fetcher;

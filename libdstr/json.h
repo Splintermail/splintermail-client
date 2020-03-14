@@ -1,8 +1,3 @@
-#ifndef JSON_H
-#define JSON_H
-
-#include "common.h"
-
 typedef enum {
     JSON_STRING,
     JSON_NUMBER,
@@ -63,5 +58,3 @@ derr_t jtoull(json_t json, unsigned long long* out);
 derr_t jtof(json_t json, float* out);
 derr_t jtod(json_t json, double* out);
 derr_t jtold(json_t json, long double* out);
-
-#endif // JSON_H

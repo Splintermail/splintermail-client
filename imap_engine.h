@@ -3,7 +3,7 @@
 
 #include <uv.h>
 
-#include "libdstr/common.h"
+#include "libdstr/libdstr.h"
 #include "engine.h"
 #include "libimap/read.h"
 #include "libimap/write.h"

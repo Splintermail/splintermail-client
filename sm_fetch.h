@@ -1,8 +1,7 @@
 #ifndef SM_FETCH_H
 #define SM_FETCH_H
 
-#include "libdstr/common.h"
-#include "libdstr/link.h"
+#include "libdstr/libdstr.h"
 #include "manager.h"
 #include "imap_session.h"
 #include "libimaildir/libimaildir.h"

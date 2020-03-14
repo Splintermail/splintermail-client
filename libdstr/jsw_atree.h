@@ -1,8 +1,3 @@
-#ifndef JSW_ATREE_H
-#define JSW_ATREE_H
-
-#include <stdio.h>
-
 /*
   Andersson tree library
 
@@ -103,5 +98,3 @@ jsw_anode_t *jsw_at_ge_ex ();
 /* like atnext/atprev except the current value is removed from the tree */
 jsw_anode_t *jsw_pop_atnext( jsw_atrav_t *trav );
 jsw_anode_t *jsw_pop_atprev( jsw_atrav_t *trav );
-
-#endif

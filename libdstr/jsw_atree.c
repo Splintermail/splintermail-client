@@ -14,8 +14,7 @@
            Search for successor should save the path
 */
 
-#include <stdlib.h>
-#include "jsw_atree.h"
+#include "libdstr.h"
 
 /* Remove left horizontal links */
 #define skew(t) do {                                      \

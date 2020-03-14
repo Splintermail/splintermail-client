@@ -1,6 +1,4 @@
-#include <libdstr/common.h>
-#include <libdstr/logger.h>
-#include <libdstr/link.h>
+#include <libdstr/libdstr.h>
 
 #include "test_utils.h"
 

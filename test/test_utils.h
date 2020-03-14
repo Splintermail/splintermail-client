@@ -3,8 +3,7 @@
 
 #include <string.h>
 
-#include <libdstr/common.h>
-#include <libdstr/opt_parse.h>
+#include <libdstr/libdstr.h>
 
 // if a test ever needs extra CLI options a VA_ARG could be added to this macro
 // if you need to get the test_files_path, that arg should be type const char**

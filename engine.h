@@ -2,7 +2,7 @@
 #define ENGINE_H
 
 #include "queue.h"
-#include "libdstr/common.h"
+#include "libdstr/libdstr.h"
 
 /* This header defines some interfaces by which engines pass events to each
    other.  Hence the name "engine.h". */

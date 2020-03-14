@@ -1,8 +1,3 @@
-#ifndef FILESOPS_H
-#define FILESOPS_H
-
-#include "common.h"
-
 #ifdef _WIN32
     typedef unsigned int mode_t;
     #include <sys/utime.h>
@@ -87,5 +82,3 @@ derr_t touch_path(const string_builder_t* sb);
 derr_t fopen_path(const string_builder_t *sb, const char *mode, FILE **out);
 
 derr_t rename_path(const string_builder_t *src, const string_builder_t *dst);
-
-#endif // FILEOPS_H

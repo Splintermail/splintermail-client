@@ -2,7 +2,7 @@
 #include "parse.h"
 #include "scan.h"
 
-#include "libdstr/logger.h"
+#include "libdstr/libdstr.h"
 #include "imap_parse.tab.h"
 
 derr_t imap_reader_init(imap_reader_t *reader, extensions_t *exts,

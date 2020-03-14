@@ -4,9 +4,10 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <time.h>
+#include <errno.h>
 
 #include "badbadbad_alert.h"
-#include "libdstr/logger.h"
+#include "libdstr/libdstr.h"
 
 #define SOCKFILE "/run/badbadbad/badbadbad.sock"
 #define LOGFILE "/var/log/badbadbad/badbadbad.log"

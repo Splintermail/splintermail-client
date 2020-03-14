@@ -3,18 +3,16 @@
 #include <sys/types.h>
 #include <string.h>
 #include <signal.h>
+#include <errno.h>
 
-#include <libdstr/common.h>
-#include <libdstr/logger.h>
+#include <libdstr/libdstr.h>
 #include <key_tool.h>
 #include <fixed_lengths.h>
-#include <libdstr/fileops.h>
 #include <networking.h>
 
 #include "fake_api_server.h"
 #include "test_utils.h"
 
-#include <libdstr/win_compat.h>
 
 // path to where the test files can be found
 const char* g_test_files;

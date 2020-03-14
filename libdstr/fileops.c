@@ -4,10 +4,7 @@
 #include <errno.h>
 #include <string.h>
 
-#include "fileops.h"
-#include "logger.h"
-
-#include "win_compat.h"
+#include "libdstr.h"
 
 static char* dot = ".";
 static char* dotdot = "..";

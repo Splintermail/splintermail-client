@@ -1,7 +1,7 @@
 #include <stdlib.h>
 
 #include "expression.h"
-#include "libdstr/logger.h"
+#include "libdstr/libdstr.h"
 
 DSTR_STATIC(IE_UNKNOWN_dstr, "UNKNOWN");
 

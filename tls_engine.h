@@ -1,7 +1,7 @@
 #ifndef TLS_ENGINE_H
 #define TLS_ENGINE_H
 
-#include "libdstr/common.h"
+#include "libdstr/libdstr.h"
 #include "engine.h"
 #include "networking.h"
 

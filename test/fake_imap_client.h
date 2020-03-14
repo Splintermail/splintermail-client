@@ -3,7 +3,7 @@
 
 #include <uv.h>
 
-#include <libdstr/common.h>
+#include <libdstr/libdstr.h>
 #include <networking.h>
 #include <queue.h>
 

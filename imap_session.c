@@ -1,5 +1,5 @@
 #include "imap_session.h"
-#include "libdstr/logger.h"
+#include "libdstr/libdstr.h"
 #include "uv_util.h"
 
 void imap_session_ref_up(imap_session_t *s){

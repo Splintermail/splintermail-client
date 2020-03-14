@@ -2,7 +2,7 @@
 #include <stdint.h>
 
 #include "pop_client.h"
-#include "libdstr/logger.h"
+#include "libdstr/libdstr.h"
 #include "networking.h"
 
 #define CHUNK_SIZE 4096

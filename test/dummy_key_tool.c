@@ -1,5 +1,5 @@
 #include <key_tool.h>
-#include <libdstr/logger.h>
+#include <libdstr/libdstr.h>
 
 #include "dummy_key_tool.h"
 

@@ -1,8 +1,7 @@
 #ifndef API_CLIENT_C
 #define API_CLIENT_C
 
-#include "libdstr/common.h"
-#include "libdstr/json.h"
+#include "libdstr/libdstr.h"
 
 typedef struct{
     unsigned int key;

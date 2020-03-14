@@ -1,15 +1,12 @@
 #define HAVE_STRUCT_TIMESPEC
 #include <pthread.h>
 
-#include <libdstr/common.h>
-#include <libdstr/logger.h>
+#include <libdstr/libdstr.h>
 #include <pop_server.h>
 #include <networking.h>
-#include <libdstr/fileops.h>
 
 #include "test_utils.h"
 
-#include <libdstr/win_compat.h>
 
 // for keeping track of which hooks were called
 typedef enum{

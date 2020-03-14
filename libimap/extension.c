@@ -1,5 +1,5 @@
 #include "extension.h"
-#include "libdstr/logger.h"
+#include "libdstr/libdstr.h"
 
 // throw an error if an action requires an extension to be enabled
 derr_t extension_assert_on(const extensions_t *exts,

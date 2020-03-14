@@ -4,7 +4,7 @@
 #include <uv.h>
 
 #include "uv_util.h"
-#include "libdstr/logger.h"
+#include "libdstr/libdstr.h"
 
 REGISTER_ERROR_TYPE(E_UV, "UVERROR");
 

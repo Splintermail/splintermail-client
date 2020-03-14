@@ -1,4 +1,4 @@
-#include "libdstr/logger.h"
+#include "libdstr/libdstr.h"
 
 #include "libimaildir.h"
 

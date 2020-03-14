@@ -7,13 +7,10 @@
 #include <stdint.h>
 
 #include "ditm.h"
-#include "libdstr/logger.h"
+#include "libdstr/libdstr.h"
 #include "networking.h"
 #include "ssl_errors.h"
-#include "libdstr/json.h"
-#include "libdstr/fileops.h"
 
-#include "libdstr/win_compat.h"
 
 #define UIDS_LENGTH 128
 #define UIDS_SIZE (128*16)

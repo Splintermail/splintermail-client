@@ -1,8 +1,3 @@
-#ifndef HASHMAP_H
-#define HASHMAP_H
-
-#include "common.h"
-
 typedef union {
     const dstr_t *dstr;
     unsigned int uint;
@@ -69,5 +64,3 @@ void hashmap_next(hashmap_iter_t *i);
 // "pop"ing iterators, also remove objects from the hashmap
 hashmap_iter_t hashmap_pop_first(hashmap_t *h);
 void hashmap_pop_next(hashmap_iter_t *i);
-
-#endif // HASHMAP_H

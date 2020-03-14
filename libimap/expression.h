@@ -1,9 +1,7 @@
 #ifndef IMAP_EXPR_H
 #define IMAP_EXPR_H
 
-#include "libdstr/common.h"
-#include "libdstr/jsw_atree.h"
-#include "libdstr/link.h"
+#include "libdstr/libdstr.h"
 
 typedef struct ie_dstr_t {
     dstr_t dstr;

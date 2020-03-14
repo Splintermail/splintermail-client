@@ -2,16 +2,15 @@
 #include <fcntl.h>
 #define HAVE_STRUCT_TIMESPEC
 #include <pthread.h>
+#include <errno.h>
 
-#include <libdstr/common.h>
-#include <libdstr/logger.h>
+#include <libdstr/libdstr.h>
 #include <pop_server.h>
 #include <networking.h>
 #include <pop_client.h>
 
 #include "fake_pop_server.h"
 
-#include <libdstr/win_compat.h>
 
 char g_username[] = "b@splintermail.com";
 char g_password[] = "b";

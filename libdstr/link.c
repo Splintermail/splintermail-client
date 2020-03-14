@@ -1,4 +1,4 @@
-#include "link.h"
+#include "libdstr.h"
 
 void link_init(link_t *l){
     l->prev = l;

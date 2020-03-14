@@ -1,8 +1,6 @@
 #include <uv.h>
 
-#include "libdstr/common.h"
-#include "libdstr/jsw_atree.h"
-#include "libdstr/hashmap.h"
+#include "libdstr/libdstr.h"
 #include "crypto.h"
 
 /*

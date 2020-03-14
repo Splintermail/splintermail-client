@@ -1,7 +1,4 @@
-#include "libdstr/common.h"
-#include "libdstr/link.h"
-#include "libdstr/jsw_atree.h"
-#include "libdstr/hashmap.h"
+#include "libdstr/libdstr.h"
 #include "libimap/expression.h"
 
 struct msg_base_ref_t;

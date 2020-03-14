@@ -18,8 +18,7 @@
 #include <direct.h>
 #pragma warning(pop)
 
-#include "common.h"
-#include "logger.h"
+#include "libdstr.h"
 
 void win_perror(void){
     char buf[256];

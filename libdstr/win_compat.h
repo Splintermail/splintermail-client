@@ -1,7 +1,3 @@
-#ifndef WIN_COMPAT_H
-#define WIN_COMPAT_H
-
-
 #ifdef _WIN32
     // no point in seeing MSVC warnings in other MS's own damn code
     #pragma warning(push, 0)
@@ -58,5 +54,3 @@
     #define compat_dup dup
 
 #endif // _WIN32
-
-#endif // WIN_COMPAT_H

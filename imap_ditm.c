@@ -1,10 +1,9 @@
 #include <signal.h>
 
 #include "imap_ditm.h"
-#include "libdstr/logger.h"
+#include "libdstr/libdstr.h"
 #include "loop.h"
 #include "uv_util.h"
-#include "libdstr/jsw_atree.h"
 #include "crypto.h"
 #include "libimaildir/libimaildir.h"
 

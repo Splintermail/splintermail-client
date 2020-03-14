@@ -1,7 +1,6 @@
 #include <string.h>
 
-#include <libdstr/common.h>
-#include <libdstr/logger.h>
+#include <libdstr/libdstr.h>
 #include <libimap/read.h>
 #include <libimap/expression.h>
 #include <libimap/write.h>

@@ -1,7 +1,7 @@
 #ifndef FAKE_API_CLIENT_H
 #define FAKE_API_CLIENT_H
 
-#include <libdstr/common.h>
+#include <libdstr/libdstr.h>
 
 // a way for an external program to kill the server nicely
 extern unsigned int fas_api_port;

@@ -1,9 +1,8 @@
 #ifndef KEY_TOOL_H
 #define KEY_TOOL_H
 
-#include "libdstr/common.h"
+#include "libdstr/libdstr.h"
 #include "api_client.h"
-#include "libdstr/json.h"
 #include "crypto.h"
 #include "fixed_lengths.h"
 

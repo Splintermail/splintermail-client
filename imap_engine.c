@@ -1,5 +1,8 @@
+#include <errno.h>
+#include <stdlib.h>
+
 #include "imap_engine.h"
-#include "libdstr/logger.h"
+#include "libdstr/libdstr.h"
 #include "uv_util.h"
 
 static void imape_data_onthread_start(imape_data_t *id);

@@ -1,8 +1,3 @@
-#ifndef OPTPARSE_H
-#define OPTPARSE_H
-
-#include "common.h"
-
 #define OPT_RETURN_INIT 0, {.data=NULL, .size=0, .len=0, .fixed_size=true}
 
 /*
@@ -36,5 +31,3 @@ derr_t conf_parse(const dstr_t* text, opt_spec_t* spec[], size_t speclen);
 
 derr_t opt_dump(opt_spec_t* spec[], size_t speclen, dstr_t* out);
 derr_t opt_fdump(opt_spec_t* spec[], size_t speclen, FILE* f, size_t* len);
-
-#endif // OPTPARSE_H

@@ -4,8 +4,7 @@
 #include <uv.h>
 
 #include "tls_engine.h"
-#include "libdstr/common.h"
-#include "libdstr/logger.h"
+#include "libdstr/libdstr.h"
 #include "ssl_errors.h"
 #include "uv_util.h"
 

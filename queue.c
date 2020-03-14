@@ -1,5 +1,5 @@
 #include "queue.h"
-#include "libdstr/logger.h"
+#include "libdstr/libdstr.h"
 #include "uv_util.h"
 
 void queue_cb_prep(queue_cb_t *qcb){

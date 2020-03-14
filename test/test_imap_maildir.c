@@ -1,5 +1,4 @@
-#include <libdstr/common.h>
-#include <libdstr/logger.h>
+#include <libdstr/libdstr.h>
 #include <imap_maildir.h>
 
 #include "test_utils.h"

@@ -1,6 +1,4 @@
-#include "common.h"
-#include "logger.h"
-#include "win_compat.h"
+#include "libdstr.h"
 
 #define LIST_LEN_MAX 16
 

@@ -1,7 +1,5 @@
-#include <libdstr/common.h>
-#include <libdstr/logger.h>
+#include <libdstr/libdstr.h>
 
-#include <libdstr/json.h>
 
 #include "test_utils.h"
 

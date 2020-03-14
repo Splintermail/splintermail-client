@@ -1,7 +1,7 @@
 #ifndef CONSOLE_INPUT_C
 #define CONSOLE_INPUT_C
 
-#include "libdstr/common.h"
+#include "libdstr/libdstr.h"
 
 // this is really only its own module to make testing the UI easier
 

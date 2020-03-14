@@ -1,9 +1,7 @@
 #include <string.h>
 #include <ctype.h>
 
-#include <stdio.h>
-#include "opt_parse.h"
-#include "logger.h"
+#include "libdstr.h"
 
 // terminology used in variable names:
 // progname arg --something --something-else seval

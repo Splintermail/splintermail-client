@@ -6,15 +6,12 @@
 #include <signal.h>
 #include <stdlib.h>
 
-#include <libdstr/common.h>
-#include <libdstr/logger.h>
+#include <libdstr/libdstr.h>
 #include <ditm.h>
 #include <networking.h>
-#include <libdstr/fileops.h>
 
 #include "ditm_thread.h"
 
-#include <libdstr/win_compat.h>
 
 // if the thread fails
 static derr_t thread_error = E_OK;

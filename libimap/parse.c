@@ -1,5 +1,5 @@
 #include "parse.h"
-#include "libdstr/logger.h"
+#include "libdstr/libdstr.h"
 
 #include <imap_parse.tab.h>
 

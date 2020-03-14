@@ -2,14 +2,11 @@
 #include <string.h>
 #include <errno.h>
 
-#include "libdstr/common.h"
-#include "libdstr/logger.h"
+#include "libdstr/libdstr.h"
 #include "networking.h"
-#include "libdstr/json.h"
 #include "crypto.h"
 #include "api_client.h"
 
-#include "libdstr/win_compat.h"
 
 void api_token_init(api_token_t* token){
     // wrap the buffer with the dstr

@@ -1,14 +1,19 @@
 #ifndef LIBDSTR_H
 #define LIBDSTR_H
 
-#include "common.h"
-#include "fileops.h"
-#include "hashmap.h"
-#include "json.h"
+#include <stdio.h>
+#include <stdint.h>
+
 #include "jsw_atree.h"
+#include "win_compat.h"
+
+#include "common.h"
+
+#include "fileops.h"
+#include "json.h"
 #include "link.h"
 #include "logger.h"
 #include "opt_parse.h"
-#include "win_compat.h"
+#include "hashmap.h"
 
 #endif // LIBDSTR_H

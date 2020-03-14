@@ -1,9 +1,3 @@
-#ifndef LOGGER_H
-#define LOGGER_H
-
-#include <stdio.h>
-#include "common.h"
-
 typedef enum {
     LOG_LVL_DEBUG,
     LOG_LVL_INFO,
@@ -394,5 +388,3 @@ static inline derr_t pvt_broadcast(derr_t *orig, const char *file,
    message. It could be done manually but if I have any good ideas later for
    what to do here I want these instances to be marked identically. */
 #define PASSED(e) (e) = E_OK
-
-#endif // LOGGER_H

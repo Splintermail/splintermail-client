@@ -1,5 +1,5 @@
 #include "imap_ditm.h"
-#include "libdstr/logger.h"
+#include "libdstr/libdstr.h"
 
 #define RED "\x1b[31m"
 #define GRN "\x1b[32m"
@@ -140,11 +140,9 @@ derr_t imap_ditm_do_work(imap_ditm_t *ditm){
 };
 
 // /////////////////////////////////////////////////////////////
-// #include "libdstr/logger.h"
 // #include "imap_client.h"
 // #include "libimap/read.h"
 // #include "queue.h"
-// #include "libdstr/link.h"
 // #include "libimap/expression.h"
 // #include "libimap/write.h"
 //

@@ -1,7 +1,7 @@
 #ifndef POP_CLIENT_H
 #define POP_CLIENT_H
 
-#include "libdstr/common.h"
+#include "libdstr/libdstr.h"
 #include "networking.h"
 #include "fixed_lengths.h"
 

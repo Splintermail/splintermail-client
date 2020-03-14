@@ -3,11 +3,10 @@
 #include <fcntl.h>
 #include <stdint.h>
 #include <ctype.h>
+#include <stdlib.h>
+#include <string.h>
 
-#include "common.h"
-#include "logger.h"
-
-#include "win_compat.h"
+#include "libdstr.h"
 
 // define standard error types
 // derr_type_t E_NONE = NULL;

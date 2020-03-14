@@ -3,8 +3,7 @@
 #include <stdint.h>
 #include <limits.h>
 
-#include "json.h"
-#include "logger.h"
+#include "libdstr.h"
 
 /* State machine description with labels (adapted from https://json.org)
 

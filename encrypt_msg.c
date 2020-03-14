@@ -13,10 +13,8 @@
 #include "server/badbadbad_alert.h"
 #endif // BUILD_SERVER_CODE
 
-#include "libdstr/common.h"
-#include "libdstr/logger.h"
+#include "libdstr/libdstr.h"
 #include "crypto.h"
-#include "libdstr/opt_parse.h"
 
 // this should only have to be 10, but just in case...
 #define MAX_ENCRYPTION_KEYS 32

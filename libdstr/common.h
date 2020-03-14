@@ -1,14 +1,5 @@
-#ifndef COMMON_H
-#define COMMON_H
-
-#include <stdio.h>
-#include <stdarg.h>
-#include <stdint.h>
-#include <stdbool.h>
-#include <errno.h>
-#include <stdlib.h>
-#include <string.h>
 #include <stddef.h>
+#include <stdbool.h>
 #undef bool
 typedef _Bool bool;
 
@@ -724,6 +715,3 @@ typedef struct {
                 .joiner = _joiner, \
             })\
         }}})
-
-
-#endif //COMMON_H

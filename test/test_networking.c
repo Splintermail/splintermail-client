@@ -8,11 +8,9 @@
 #include <openssl/err.h>
 #include <openssl/opensslv.h>
 
-#include <libdstr/common.h>
-#include <libdstr/logger.h>
+#include <libdstr/libdstr.h>
 #include <ditm.h>
 #include <networking.h>
-#include <libdstr/fileops.h>
 #include <ssl_errors.h>
 
 // forward declaration of function only exposed to tests

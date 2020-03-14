@@ -3,7 +3,7 @@
 
 #include <uv.h>
 
-#include "libdstr/common.h"
+#include "libdstr/libdstr.h"
 
 // an unidentified error from libuv
 extern derr_type_t E_UV;

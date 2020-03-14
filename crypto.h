@@ -5,7 +5,7 @@
 
 #include <openssl/rsa.h>
 
-#include "libdstr/common.h"
+#include "libdstr/libdstr.h"
 #include "fixed_lengths.h"
 
 #define CIPHER_TYPE EVP_aes_256_gcm()

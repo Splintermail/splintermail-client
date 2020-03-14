@@ -3,11 +3,11 @@
 #include <errno.h>
 #include <pwd.h>
 #include <grp.h>
+#include <string.h>
+#include <stdlib.h>
+#include <errno.h>
 
-#include "libdstr/common.h"
-#include "libdstr/logger.h"
-#include "libdstr/fileops.h"
-#include "libdstr/opt_parse.h"
+#include "libdstr/libdstr.h"
 
 static char* dot = ".";
 static char* dotdot = "..";

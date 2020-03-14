@@ -1,10 +1,9 @@
 #include <stdio.h>
 #include <string.h>
+#include <errno.h>
 
 #include "console_input.h"
-#include "libdstr/common.h"
-#include "libdstr/logger.h"
-#include "libdstr/win_compat.h"
+#include "libdstr/libdstr.h"
 
 #ifdef _WIN32
 #include <conio.h>

@@ -3,6 +3,7 @@
 #include <signal.h>
 #include <string.h>
 #include <limits.h>
+#include <errno.h>
 
 #include <openssl/ssl.h>
 #include <openssl/evp.h>
@@ -15,10 +16,9 @@
 #include <openssl/opensslv.h>
 
 #include "crypto.h"
-#include "libdstr/logger.h"
+#include "libdstr/libdstr.h"
 #include "ssl_errors.h"
 
-#include "libdstr/win_compat.h"
 
 #define FORMAT_VERSON 1
 #define B64_WIDTH 64
