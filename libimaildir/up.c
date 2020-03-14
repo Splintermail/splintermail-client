@@ -65,9 +65,6 @@ void up_free(up_t **up){
     seq_set_builder_free(&(*up)->uids_to_expunge);
     ie_seq_set_free((*up)->uids_being_expunged);
 
-    // release the interface
-    (*up)->conn->release((*up)->conn, E_OK);
-
     // free memory
     free(*up);
     *up = NULL;

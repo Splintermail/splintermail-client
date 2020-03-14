@@ -123,22 +123,26 @@ static void server_conn_dn_resp(maildir_conn_dn_i *conn_dn, imap_resp_t *resp){
 }
 
 // part of the imaildir_i, meaning this can be called on- or off-thread
-static void server_conn_dn_release(maildir_conn_dn_i *conn_dn, derr_t error){
-    derr_t e = E_OK;
-
+static void server_conn_dn_failure(maildir_conn_dn_i *conn_dn, derr_t error){
     server_t *server = CONTAINER_OF(conn_dn, server_t, conn_dn);
 
-    IF_PROP_VAR(&e, &error){
-        // maildir is failing with an error
+    TRACE_PROP(&error);
+    server_close(server, error);
+    PASSED(error);
+
+    server_advance(server);
+}
+
+// part of the imaildir_i, meaning this can be called on- or off-thread
+static void server_conn_dn_release(maildir_conn_dn_i *conn_dn){
+    server_t *server = CONTAINER_OF(conn_dn, server_t, conn_dn);
+
+    // it's an error if the maildir releases us before we release it
+    if(server->maildir != NULL){
+        derr_t e = E_OK;
+        TRACE_ORIG(&e, E_INTERNAL, "maildir closed unexpectedly");
         server_close(server, e);
         PASSED(e);
-    }else{
-        // it's still an error if the maildir releases us before we release it
-        if(server->maildir != NULL){
-            TRACE_ORIG(&e, E_INTERNAL, "maildir closed unexpectedly");
-            server_close(server, e);
-            PASSED(e);
-        }
     }
 
     server->maildir_has_ref = false;
@@ -182,6 +186,7 @@ static derr_t server_init(server_t *server, imap_pipeline_t *p,
 
     server->conn_dn = (maildir_conn_dn_i){
         .resp = server_conn_dn_resp,
+        .failure = server_conn_dn_failure,
         .release = server_conn_dn_release,
     };
 

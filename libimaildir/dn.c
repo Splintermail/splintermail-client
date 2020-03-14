@@ -44,9 +44,6 @@ void dn_free(dn_t **dn){
     /* it's not allowed to remove the dn_t from imaildir.access.dns here, due
        to race conditions in the cleanup sequence */
 
-    // release the interface
-    (*dn)->conn->release((*dn)->conn, E_OK);
-
     // free memory
     free(*dn);
     *dn = NULL;

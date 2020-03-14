@@ -161,22 +161,26 @@ static void fetcher_conn_up_unselected(maildir_conn_up_i *conn_up){
 }
 
 // part of the imaildir_i, meaning this can be called on- or off-thread
-static void fetcher_conn_up_release(maildir_conn_up_i *conn_up, derr_t error){
-    derr_t e = E_OK;
-
+static void fetcher_conn_up_failure(maildir_conn_up_i *conn_up, derr_t error){
     fetcher_t *fetcher = CONTAINER_OF(conn_up, fetcher_t, conn_up);
 
-    IF_PROP_VAR(&e, &error){
-        // maildir is failing with an error
+    TRACE_PROP(&error);
+    fetcher_close(fetcher, error);
+    PASSED(error);
+
+    fetcher_advance(fetcher);
+}
+
+// part of the imaildir_i, meaning this can be called on- or off-thread
+static void fetcher_conn_up_release(maildir_conn_up_i *conn_up){
+    fetcher_t *fetcher = CONTAINER_OF(conn_up, fetcher_t, conn_up);
+
+    // it's an error if the maildir releases us before we release it
+    if(fetcher->maildir != NULL){
+        derr_t e = E_OK;
+        TRACE_ORIG(&e, E_INTERNAL, "maildir closed unexpectedly");
         fetcher_close(fetcher, e);
         PASSED(e);
-    }else{
-        // it's still an error if the maildir releases us before we release it
-        if(fetcher->maildir != NULL){
-            TRACE_ORIG(&e, E_INTERNAL, "maildir closed unexpectedly");
-            fetcher_close(fetcher, e);
-            PASSED(e);
-        }
     }
 
     fetcher->maildir_has_ref = false;
@@ -227,6 +231,7 @@ static derr_t fetcher_init(fetcher_t *fetcher, const char *host,
         .cmd = fetcher_conn_up_cmd,
         .synced = fetcher_conn_up_synced,
         .unselected = fetcher_conn_up_unselected,
+        .failure = fetcher_conn_up_failure,
         .release = fetcher_conn_up_release,
     };
 

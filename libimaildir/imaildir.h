@@ -126,7 +126,12 @@ struct maildir_conn_up_i {
     // this event is a response to the maildir_i->unselect() call
     void (*unselected)(maildir_conn_up_i*);
     // The maildir BROADCASTs its failures when it dies
-    void (*release)(maildir_conn_up_i*, derr_t);
+    /* note the asymmetry: the maildir resource can tell the actor owning the
+       conn_up that the actor must die with this call, but there is no call for
+       the actor to tell the shared resource to die */
+    void (*failure)(maildir_conn_up_i*, derr_t);
+    // this is always the last call to the interface
+    void (*release)(maildir_conn_up_i*);
 };
 
 /* the downwards session must provide this interface to the maildir; it is how
@@ -135,7 +140,12 @@ struct maildir_conn_dn_i {
     // the maildir wants to pass an imap response over the wire
     void (*resp)(maildir_conn_dn_i*, imap_resp_t*);
     // The maildir BROADCASTs its failures when it dies
-    void (*release)(maildir_conn_dn_i*, derr_t);
+    /* note the asymmetry: the maildir resource can tell the actor owning the
+       conn_up that the actor must die with this call, but there is no call for
+       the actor to tell the shared resource to die */
+    void (*failure)(maildir_conn_dn_i*, derr_t);
+    // this is always the last call to the interface
+    void (*release)(maildir_conn_dn_i*);
 };
 
 struct maildir_i {

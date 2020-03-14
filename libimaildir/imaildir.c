@@ -629,6 +629,8 @@ void imaildir_unregister_up(maildir_i *maildir, maildir_conn_up_i *conn){
     if(!m->access.failed){
         // TODO: detect if the primary up_t has changed
         link_remove(&up->link);
+        // release the interface
+        up->conn->release(up->conn);
     }
 
     up_free(&up);
@@ -659,6 +661,8 @@ void imaildir_unregister_dn(maildir_i *maildir, maildir_conn_dn_i *conn){
     if(!m->access.failed){
         // TODO: detect if the primary dn_t has changed
         link_remove(&dn->link);
+        // release the interface
+        dn->conn->release(dn->conn);
     }
 
     dn_free(&dn);
@@ -705,7 +709,12 @@ static void imaildir_fail(imaildir_t *m, derr_t error){
     while((link = link_list_pop_first(&m->access.ups)) != NULL){
         up_t *up = CONTAINER_OF(link, up_t, link);
         // if there was an error, share it with all of the accessors.
-        up->conn->release(up->conn, BROADCAST(error));
+        up->conn->failure(up->conn, BROADCAST(error));
+    }
+    while((link = link_list_pop_first(&m->access.dns)) != NULL){
+        dn_t *dn = CONTAINER_OF(link, dn_t, link);
+        // if there was an error, share it with all of the accessors.
+        dn->conn->failure(dn->conn, BROADCAST(error));
     }
 
 done:
