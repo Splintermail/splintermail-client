@@ -1,6 +1,6 @@
 #include <libdstr/common.h>
 #include <libdstr/logger.h>
-#include <maildir_name.h>
+#include <libimaildir/libimaildir.h>
 
 #include "test_utils.h"
 

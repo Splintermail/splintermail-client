@@ -132,6 +132,7 @@ include_directories("${PROJECT_BINARY_DIR}")
 
 add_subdirectory(libdstr)
 add_subdirectory(libimap)
+add_subdirectory(libimaildir)
 
 set(OBJ_TGTS
     api_client
@@ -151,17 +152,9 @@ set(OBJ_TGTS
     tls_engine
     imap_engine
     queue
-    imap_msg
-    imap_maildir
-    imap_maildir_up
-    imap_maildir_dn
-    imap_maildir_log_lmdb
-    imap_dirmgr
     imap_session
-    maildir_name
     # imap_ditm_logic
     sm_fetch_logic
-    imap_util
     sm_serve_logic
 )
 
@@ -247,16 +240,7 @@ obj_depend_obj(engine queue)
 obj_depend_obj(loop engine)
 obj_depend_obj(tls_engine engine networking)
 obj_depend_obj(imap_engine engine imap)
-obj_depend_obj(imap_util imap)
-obj_depend_obj(imap_msg dstr)
-obj_depend_obj(imap_maildir_up maildir_name imap_util imap_msg uv_util crypto)
-obj_depend_obj(imap_maildir_dn maildir_name imap_util imap_msg uv_util crypto)
-obj_depend_obj(imap_maildir_log_lmdb lmdb_interface)
-obj_depend_obj(imap_maildir imap_maildir_up imap_maildir_dn imap_maildir_log_lmdb)
-obj_depend_obj(imap_dirmgr imap_maildir)
 obj_depend_obj(imap_session loop tls_engine imap_engine loop uv_interface)
-obj_depend_obj(maildir_name)
-
 
 # describe executables with dependencies
 # target_link_libraries(srvcli networking)
@@ -265,8 +249,8 @@ target_link_libraries(leak networking)
 target_link_libraries(encrypt_msg crypto)
 target_link_libraries(decrypt_msg crypto)
 # target_link_libraries(imap_ditm imap_session imap_dirmgr imap_ditm_logic crypto)
-target_link_libraries(sm_fetch imap_session imap_dirmgr sm_fetch_logic)
-target_link_libraries(sm_serve imap_session imap_dirmgr sm_serve_logic)
+target_link_libraries(sm_fetch imap_session sm_fetch_logic imaildir)
+target_link_libraries(sm_serve imap_session sm_serve_logic imaildir)
 
 # decide if we are building server code
 if("${BUILD_SERVER_CODE}")
@@ -399,7 +383,7 @@ if("${BUILD_TESTS}")
     target_link_libraries(test_queue queue)
     target_link_libraries(test_tls_engine fake_engine)
     # target_link_libraries(test_link)
-    target_link_libraries(test_maildir_name maildir_name)
+    target_link_libraries(test_maildir_name imaildir)
 
     if(WIN32)
         # make sure the user provided the location of Pthreads

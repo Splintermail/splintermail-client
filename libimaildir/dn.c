@@ -1,6 +1,6 @@
-#include "imap_maildir_dn.h"
 #include "libdstr/logger.h"
-#include "imap_util.h"
+
+#include "libimaildir.h"
 
 // forward declarations
 static derr_t conn_dn_cmd(maildir_i*, imap_cmd_t*);

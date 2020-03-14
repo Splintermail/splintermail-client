@@ -1,12 +1,8 @@
-#ifndef IMAP_MSG_H
-#define IMAP_MSG_H
-
 #include "libdstr/common.h"
 #include "libdstr/link.h"
 #include "libdstr/jsw_atree.h"
 #include "libdstr/hashmap.h"
 #include "libimap/expression.h"
-#include "imap_util.h"
 
 struct msg_base_ref_t;
 typedef struct msg_base_ref_t msg_base_ref_t;
@@ -191,5 +187,3 @@ static inline msg_flags_t msg_flags_from_fetch_flags(ie_fflags_t *ff){
         .deleted  = ff->deleted,
     };
 }
-
-#endif // IMAP_MSG_H

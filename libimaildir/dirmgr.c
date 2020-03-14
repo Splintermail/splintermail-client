@@ -1,8 +1,9 @@
-#include "imap_dirmgr.h"
 #include "libdstr/logger.h"
 #include "libimap/expression.h"
 #include "libdstr/fileops.h"
 #include "uv_util.h"
+
+#include "libimaildir.h"
 
 // static void managed_dir_new(managed_dir_t **out, dirmgr_t *dm,
 //         const dstr_t *name);

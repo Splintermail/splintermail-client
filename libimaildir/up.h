@@ -1,8 +1,3 @@
-#ifndef IMAP_MAILDIR_UP_H
-#define IMAP_MAILDIR_UP_H
-
-#include "imap_maildir.h"
-
 /* the component of an imap_maildir responsible for synchronizing upwards */
 
 // up_t is all the state we have for an upwards connection
@@ -41,7 +36,7 @@ void up_free(up_t **up);
 derr_t make_select(up_t *up, unsigned int uidvld, unsigned long our_himodseq,
         imap_cmd_t **cmd_out, up_cb_t **cb_out);
 
-void send_cmd(up_t *up, imap_cmd_t *cmd, up_cb_t *up_cb);
+void up_send_cmd(up_t *up, imap_cmd_t *cmd, up_cb_t *up_cb);
 
 
 /* imaildir functions exposed only to up_t.  They are generally written under
@@ -78,5 +73,3 @@ derr_t imaildir_up_get_unpushed_expunges(imaildir_t *m,
 derr_t imaildir_up_delete_msg(imaildir_t *m, unsigned int uid);
 
 derr_t imaildir_up_expunge_pushed(imaildir_t *m, unsigned int uid);
-
-#endif // IMAP_MAILDIR_UP_H

@@ -1,9 +1,9 @@
 #include <lmdb.h>
 
-#include "imap_maildir.h"
-#include "maildir_name.h"
 #include "libdstr/logger.h"
 #include "libdstr/fileops.h"
+
+#include "libimaildir.h"
 
 /*
 LMDB does a lot of stuff we don't even need.  But importantly, it offers

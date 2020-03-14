@@ -5,8 +5,8 @@
 #include "loop.h"
 #include "uv_util.h"
 #include "libdstr/jsw_atree.h"
-#include "imap_dirmgr.h"
 #include "crypto.h"
+#include "libimaildir/libimaildir.h"
 
 #define KEY "../c/test/files/ssl/good-key.pem"
 #define CERT "../c/test/files/ssl/good-cert.pem"

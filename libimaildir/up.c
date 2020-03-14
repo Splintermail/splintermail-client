@@ -1,6 +1,6 @@
-#include "imap_maildir_up.h"
 #include "libdstr/logger.h"
-#include "imap_util.h"
+
+#include "libimaildir.h"
 
 // forward declarations
 static derr_t conn_up_resp(maildir_i*, imap_resp_t*);
@@ -133,7 +133,7 @@ fail:
 }
 
 // send a command and store its callback
-void send_cmd(up_t *up, imap_cmd_t *cmd, up_cb_t *up_cb){
+void up_send_cmd(up_t *up, imap_cmd_t *cmd, up_cb_t *up_cb){
     // store the callback
     link_list_append(&up->cbs, &up_cb->cb.link);
 
@@ -176,7 +176,7 @@ static derr_t send_close(up_t *up){
     CHECK(&e);
 
     up->close_sent = true;
-    send_cmd(up, cmd, up_cb);
+    up_send_cmd(up, cmd, up_cb);
 
     return e;
 }
@@ -278,7 +278,7 @@ static derr_t send_expunge(up_t *up){
 
     CHECK(&e);
 
-    send_cmd(up, cmd, up_cb);
+    up_send_cmd(up, cmd, up_cb);
 
     return e;
 }
@@ -328,7 +328,7 @@ static derr_t send_deletions(up_t *up){
 
     CHECK(&e);
 
-    send_cmd(up, cmd, up_cb);
+    up_send_cmd(up, cmd, up_cb);
 
     return e;
 }
@@ -377,7 +377,7 @@ static derr_t send_fetch(up_t *up){
 
     CHECK(&e);
 
-    send_cmd(up, cmd, up_cb);
+    up_send_cmd(up, cmd, up_cb);
 
     return e;
 }
@@ -469,7 +469,7 @@ static derr_t send_initial_search(up_t *up){
 
     CHECK(&e);
 
-    send_cmd(up, cmd, up_cb);
+    up_send_cmd(up, cmd, up_cb);
 
     return e;
 }

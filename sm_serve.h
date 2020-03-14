@@ -5,7 +5,7 @@
 #include "libdstr/link.h"
 #include "manager.h"
 #include "imap_session.h"
-#include "imap_dirmgr.h"
+#include "libimaildir/libimaildir.h"
 
 /* server is only responsible for navigating until just before the SELECTED
    state, everything after that is the responsibility of the imaildir_t */

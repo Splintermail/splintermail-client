@@ -1,8 +1,3 @@
-#ifndef MAILDIR_NAME_H
-#define MAILDIR_NAME_H
-
-#include "imap_msg.h"
-
 /* only *name is required to be non-NULL, in which case this becomes a
    validation function */
 derr_t maildir_name_parse(const dstr_t *name, unsigned long *epoch,
@@ -18,5 +13,3 @@ derr_t maildir_name_mod_hostname(const dstr_t* host, dstr_t *out);
 // info and flags are allowed to be NULL, but not host
 derr_t maildir_name_write(dstr_t *out, unsigned long epoch, unsigned int uid,
         size_t len, const dstr_t *host, const dstr_t *info);
-
-#endif // MAILDIR_NAME_H

@@ -1,6 +1,3 @@
-#ifndef IMAP_MAILDIR_H
-#define IMAP_MAILDIR_H
-
 #include <uv.h>
 
 #include "libdstr/common.h"
@@ -8,8 +5,6 @@
 #include "libimap/expression.h"
 #include "libdstr/link.h"
 #include "libdstr/jsw_atree.h"
-#include "manager.h"
-#include "imap_msg.h"
 #include "crypto.h"
 
 /*
@@ -289,5 +284,3 @@ derr_t imaildir_log_open(const string_builder_t *dirpath,
 
 // this must be implemented by some backend, currently only lmdb
 derr_t imaildir_log_rm(const string_builder_t *dirpath);
-
-#endif // IMAP_MAILDIR_H

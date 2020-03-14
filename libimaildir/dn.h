@@ -1,8 +1,3 @@
-#ifndef IMAP_MAILDIR_DN_H
-#define IMAP_MAILDIR_DN_H
-
-#include "imap_maildir.h"
-
 /* the component of an imap_maildir responsible for synchronizing dnwards */
 
 // dn_t is all the state we have for an upwards connection
@@ -21,6 +16,4 @@ DEF_CONTAINER_OF(dn_t, link, link_t);
 derr_t dn_new(dn_t **out, maildir_conn_dn_i *conn, imaildir_t *m);
 void dn_free(dn_t **dn);
 
-void send_resp(dn_t *dn, imap_resp_t *resp);
-
-#endif // IMAP_MAILDIR_DN_H
+void dn_send_resp(dn_t *dn, imap_resp_t *resp);

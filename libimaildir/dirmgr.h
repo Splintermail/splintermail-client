@@ -1,12 +1,8 @@
-#ifndef IMAP_DIRMGR_H
-#define IMAP_DIRMGR_H
-
 #include <uv.h>
 
 #include "libdstr/common.h"
 #include "libdstr/jsw_atree.h"
 #include "libdstr/hashmap.h"
-#include "imap_maildir.h"
 #include "crypto.h"
 
 /*
@@ -131,5 +127,3 @@ typedef derr_t (*for_each_mbx_hook_t)(const dstr_t *name, bool has_ctn,
         bool has_children, void *data);
 derr_t dirmgr_do_for_each_mbx(dirmgr_t *dm, const dstr_t *ref_name,
         for_each_mbx_hook_t hook, void *hook_data);
-
-#endif // IMAP_DIRMGR_H

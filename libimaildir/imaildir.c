@@ -4,14 +4,11 @@
 #include <time.h>
 #include <fcntl.h>
 
-#include "imap_maildir.h"
-#include "imap_maildir_up.h"
-#include "imap_maildir_dn.h"
 #include "libdstr/logger.h"
 #include "libdstr/fileops.h"
 #include "uv_util.h"
-#include "maildir_name.h"
-#include "imap_util.h"
+
+#include "libimaildir.h"
 
 #include "libdstr/win_compat.h"
 
@@ -574,7 +571,7 @@ derr_t imaildir_register_up(imaildir_t *m, maildir_conn_up_i *conn_up,
 
     if(is_primary){
         // send SELECT if we are primary
-        send_cmd(up, cmd, up_cb);
+        up_send_cmd(up, cmd, up_cb);
     }
 
     return e;
