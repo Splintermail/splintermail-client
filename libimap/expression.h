@@ -169,13 +169,13 @@ typedef enum {
     IE_SEARCH_OLD,         // no parameter
     IE_SEARCH_RECENT,      // no parameter
     IE_SEARCH_SEEN,        // no parameter
-    IE_SEARCH_SUBJECT,     // no parameter
     IE_SEARCH_UNANSWERED,  // no parameter
     IE_SEARCH_UNDELETED,   // no parameter
     IE_SEARCH_UNFLAGGED,   // no parameter
     IE_SEARCH_UNSEEN,      // no parameter
     IE_SEARCH_DRAFT,       // no parameter
     IE_SEARCH_UNDRAFT,     // no parameter
+    IE_SEARCH_SUBJECT,     // uses param.dstr
     IE_SEARCH_BCC,         // uses param.dstr
     IE_SEARCH_BODY,        // uses param.dstr
     IE_SEARCH_CC,          // uses param.dstr

@@ -905,7 +905,6 @@ void ie_search_key_free(ie_search_key_t *s){
         case IE_SEARCH_OLD:
         case IE_SEARCH_RECENT:
         case IE_SEARCH_SEEN:
-        case IE_SEARCH_SUBJECT:
         case IE_SEARCH_UNANSWERED:
         case IE_SEARCH_UNDELETED:
         case IE_SEARCH_UNFLAGGED:
@@ -914,6 +913,7 @@ void ie_search_key_free(ie_search_key_t *s){
         case IE_SEARCH_UNDRAFT:
             break;
         // uses param.dstr
+        case IE_SEARCH_SUBJECT:
         case IE_SEARCH_BCC:
         case IE_SEARCH_BODY:
         case IE_SEARCH_CC:
