@@ -1,8 +1,3 @@
-#ifndef IMAP_SCAN_H
-#define IMAP_SCAN_H
-
-#include "libdstr/libdstr.h"
-
 // control scanner modes based on what state the parser is in
 typedef enum {
     // TAG grabs either "*" or a tag
@@ -90,5 +85,3 @@ void imap_scanner_shrink(imap_scanner_t *scanner);
 derr_t imap_scan(imap_scanner_t *scanner, scan_mode_t mode, bool *more,
                  dstr_t *token_out, int *type);
 /*  throws : E_PARAM (invalid input) */
-
-#endif // IMAP_SCAN_H

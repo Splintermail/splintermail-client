@@ -1,10 +1,3 @@
-#ifndef IMAP_READ_H
-#define IMAP_READ_H
-
-#include "libdstr/libdstr.h"
-#include "scan.h"
-#include "parse.h"
-
 typedef struct {
     imap_parser_t parser;
     imap_scanner_t scanner;
@@ -19,5 +12,3 @@ derr_t imap_reader_init(imap_reader_t *reader, extensions_t *exts,
 void imap_reader_free(imap_reader_t *reader);
 
 derr_t imap_read(imap_reader_t *reader, const dstr_t *input);
-
-#endif // IMAP_READ_H

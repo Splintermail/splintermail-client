@@ -1,7 +1,6 @@
 #include <stdlib.h>
 
-#include "expression.h"
-#include "libdstr/libdstr.h"
+#include "libimap.h"
 
 DSTR_STATIC(IE_UNKNOWN_dstr, "UNKNOWN");
 

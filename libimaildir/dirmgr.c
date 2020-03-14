@@ -1,5 +1,5 @@
 #include "libdstr/libdstr.h"
-#include "libimap/expression.h"
+#include "libimap/libimap.h"
 #include "uv_util.h"
 
 #include "libimaildir.h"

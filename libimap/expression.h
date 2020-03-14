@@ -1,8 +1,3 @@
-#ifndef IMAP_EXPR_H
-#define IMAP_EXPR_H
-
-#include "libdstr/libdstr.h"
-
 typedef struct ie_dstr_t {
     dstr_t dstr;
     struct ie_dstr_t *next;
@@ -1009,5 +1004,3 @@ void ie_vanished_resp_free(ie_vanished_resp_t *vanished);
 imap_resp_t *imap_resp_new(derr_t *e, imap_resp_type_t type,
         imap_resp_arg_t arg);
 void imap_resp_free(imap_resp_t *resp);
-
-#endif // IMAP_EXPR_H

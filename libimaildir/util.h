@@ -5,7 +5,7 @@
 A collection of structs and functions to help write imap clients and servers.
 */
 
-#include "libimap/expression.h"
+#include "libimap/libimap.h"
 
 typedef enum {
     SUBDIR_CUR = 0,

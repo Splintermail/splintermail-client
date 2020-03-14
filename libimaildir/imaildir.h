@@ -1,7 +1,7 @@
 #include <uv.h>
 
 #include "libdstr/libdstr.h"
-#include "libimap/expression.h"
+#include "libimap/libimap.h"
 #include "crypto.h"
 
 /*

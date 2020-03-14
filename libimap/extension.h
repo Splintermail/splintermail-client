@@ -1,8 +1,3 @@
-#ifndef IMAP_EXTENSION_H
-#define IMAP_EXTENSION_H
-
-#include "libdstr/libdstr.h"
-
 typedef enum {
     EXT_UIDPLUS,
     EXT_ENABLE,
@@ -46,5 +41,3 @@ void extension_trigger_builder(derr_t *e,
 
 // get the token that would represent an extension
 const dstr_t *extension_token(extension_e ext);
-
-#endif // IMAP_EXTENSION_H

@@ -1,11 +1,3 @@
-#ifndef IMAP_PARSE_H
-#define IMAP_PARSE_H
-
-#include "expression.h"
-#include "extension.h"
-#include "scan.h"
-#include "libdstr/libdstr.h"
-
 typedef union {
     void (*cmd)(void *cb_data, derr_t error, imap_cmd_t *cmd);
     void (*resp)(void *cb_data, derr_t error, imap_resp_t *resp);
@@ -47,5 +39,3 @@ void imap_parser_free(imap_parser_t *parser);
 derr_t imap_parse(imap_parser_t *parser, int type, const dstr_t *token);
 
 void set_scanner_to_literal_mode(imap_parser_t *parser, size_t len);
-
-#endif // IMAP_PARSE_H

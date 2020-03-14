@@ -1,7 +1,5 @@
-#include <libimap/scan.h>
-#include <libdstr/libdstr.h>
+#include <libimap/libimap.h>
 
-#include <libimap/parse.h>
 #include <imap_parse.tab.h>
 
 DSTR_STATIC(scan_mode_TAG_dstr, "SCAN_MODE_TAG");

@@ -1,7 +1,7 @@
 #include <string.h>
 
 #include <libdstr/libdstr.h>
-#include <libimap/write.h>
+#include <libimap/libimap.h>
 
 #include "test_utils.h"
 

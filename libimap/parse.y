@@ -1,10 +1,6 @@
 %{
     #include <stdio.h>
-    #include <libimap/parse.h>
-    #include <libimap/expression.h>
-    #include <libimap/extension.h>
-    #include <libimap/scan.h>
-    #include <libdstr/libdstr.h>
+    #include <libimap/libimap.h>
 
     #define YYTOKENTYPE // imap_scan_token_type_t
 
