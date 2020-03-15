@@ -8,5 +8,6 @@
 #include "up.h"
 #include "dn.h"
 #include "dirmgr.h"
+#include "search.h"
 
 #endif // LIBIMAILDIR_H

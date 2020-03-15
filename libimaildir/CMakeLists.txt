@@ -9,6 +9,7 @@ add_library(
     name.c
     up.c
     util.c
+    search.c
 )
 target_link_libraries(imaildir imap dstr lmdb crypto)
 define_file_logname_for_target(imaildir)

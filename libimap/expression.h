@@ -825,9 +825,10 @@ ie_seq_set_t *ie_seq_set_append(derr_t *e, ie_seq_set_t *set,
 // num list construction
 
 ie_nums_t *ie_nums_new(derr_t *e, unsigned int n);
-void ie_nums_free(ie_nums_t *num);
+void ie_nums_free(ie_nums_t *nums);
 ie_nums_t *ie_nums_copy(derr_t *e, const ie_nums_t *old);
-ie_nums_t *ie_nums_append(derr_t *e, ie_nums_t *num, ie_nums_t *next);
+// O(N), where N = len(nums).  Reverse args for O(1), but prepending behavior
+ie_nums_t *ie_nums_append(derr_t *e, ie_nums_t *nums, ie_nums_t *next);
 
 // search key construction
 

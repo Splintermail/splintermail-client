@@ -107,13 +107,13 @@ static derr_t send_ok(dn_t *dn, const ie_dstr_t *tag,
 //     PROP(&e, send_st_resp(dn, tag, msg, IE_ST_NO) );
 //     return e;
 // }
-//
-// static derr_t send_bad(dn_t *dn, const ie_dstr_t *tag,
-//         const dstr_t *msg){
-//     derr_t e = E_OK;
-//     PROP(&e, send_st_resp(dn, tag, msg, IE_ST_BAD) );
-//     return e;
-// }
+
+static derr_t send_bad(dn_t *dn, const ie_dstr_t *tag,
+        const dstr_t *msg){
+    derr_t e = E_OK;
+    PROP(&e, send_st_resp(dn, tag, msg, IE_ST_BAD) );
+    return e;
+}
 
 ////
 
@@ -322,6 +322,85 @@ done:
     return e;
 }
 
+// nums will be consumed
+static derr_t send_search_resp(dn_t *dn, const ie_dstr_t *tag,
+        ie_nums_t *nums){
+    derr_t e = E_OK;
+
+    // TODO: support modseq here
+    bool modseq_present = false;
+    unsigned long modseqnum = 0;
+    ie_search_resp_t *search = ie_search_resp_new(&e, nums, modseq_present,
+            modseqnum);
+    imap_resp_arg_t arg = {.search=search};
+    imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_SEARCH, arg);
+    CHECK(&e);
+
+    dn->conn->resp(dn->conn, resp);
+
+    return e;
+}
+
+static derr_t search_cmd(dn_t *dn, const ie_dstr_t *tag,
+        const ie_search_cmd_t *search){
+    derr_t e = E_OK;
+
+    // handle the empty maildir case
+    if(dn->views.size == 0){
+        PROP(&e, send_search_resp(dn, tag, NULL) );
+        PROP(&e, send_ok(dn, tag, &DSTR_LIT("don't waste my time!")) );
+        return e;
+    }
+
+    // now figure out some constants to do the search
+    unsigned int seq_max = dn->views.size;
+
+    jsw_atrav_t trav;
+    jsw_anode_t *node = jsw_atlast(&trav, &dn->views);
+    msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
+
+    unsigned int uid_max = view->base->uid;
+
+    // we'll calculate the sequence number as we go
+    unsigned int seq = seq_max;
+
+    ie_nums_t *nums = NULL;
+
+    // check every message in the view in reverse order
+    for(; node != NULL; node = jsw_atprev(&trav)){
+        view = CONTAINER_OF(node, msg_view_t, node);
+
+        bool match;
+        PROP_GO(&e, search_key_eval(search->search_key, view, seq, seq_max,
+                    uid_max, &match), fail);
+
+        if(match){
+            unsigned int val = search->uid_mode ? view->base->uid : seq;
+            if(!nums){
+                nums = ie_nums_new(&e, val);
+                CHECK_GO(&e, fail);
+            }else{
+                ie_nums_t *next = ie_nums_new(&e, val);
+                // build the list backwards, it's more efficient
+                nums = ie_nums_append(&e, next, nums);
+                CHECK_GO(&e, fail);
+            }
+        }
+
+        seq--;
+    }
+
+    // finally, send the responses (nums will be consumed)
+    PROP(&e, send_search_resp(dn, tag, nums) );
+    PROP(&e, send_ok(dn, tag, &DSTR_LIT("too easy!")) );
+
+    return e;
+
+fail:
+    ie_nums_free(nums);
+    return e;
+}
+
 // we either need to consume the cmd or free it
 static derr_t conn_dn_cmd(maildir_i *maildir, imap_cmd_t *cmd){
     derr_t e = E_OK;
@@ -341,11 +420,29 @@ static derr_t conn_dn_cmd(maildir_i *maildir, imap_cmd_t *cmd){
     switch(cmd->type){
         case IMAP_CMD_SELECT:
             PROP_GO(&e, select_cmd(dn, tag, arg->select), cu_cmd);
+            dn->selected = true;
             break;
 
+        case IMAP_CMD_SEARCH:
+            PROP_GO(&e, search_cmd(dn, tag, arg->search), cu_cmd);
+            break;
+
+        // things we need to support here
+        case IMAP_CMD_CHECK:
+        case IMAP_CMD_EXPUNGE:
+        case IMAP_CMD_FETCH:
+        case IMAP_CMD_STORE:
+        case IMAP_CMD_COPY:
+        // any-state commands
         case IMAP_CMD_CAPA:
         case IMAP_CMD_NOOP:
         case IMAP_CMD_LOGOUT:
+
+        // supported in a different layer
+        case IMAP_CMD_CLOSE:
+            ORIG_GO(&e, E_INTERNAL, "unhandled command", cu_cmd);
+
+        // unsupported commands in this state
         case IMAP_CMD_STARTTLS:
         case IMAP_CMD_AUTH:
         case IMAP_CMD_LOGIN:
@@ -359,15 +456,11 @@ static derr_t conn_dn_cmd(maildir_i *maildir, imap_cmd_t *cmd){
         case IMAP_CMD_LSUB:
         case IMAP_CMD_STATUS:
         case IMAP_CMD_APPEND:
-        case IMAP_CMD_CHECK:
-        case IMAP_CMD_CLOSE:
-        case IMAP_CMD_EXPUNGE:
-        case IMAP_CMD_SEARCH:
-        case IMAP_CMD_FETCH:
-        case IMAP_CMD_STORE:
-        case IMAP_CMD_COPY:
         case IMAP_CMD_ENABLE:
-            ORIG_GO(&e, E_INTERNAL, "unhandled command", cu_cmd);
+            PROP_GO(&e, send_bad(
+                dn, tag, &DSTR_LIT("command not allowed in SELECTED state")
+            ), cu_cmd);
+            break;
     }
 
 cu_cmd:
