@@ -297,11 +297,11 @@ static derr_t assert_state(server_t *server, imap_server_state_t state,
 }
 
 static ie_dstr_t *build_capas(derr_t *e){
-   if(is_error(*e)) goto fail;
+    if(is_error(*e)) goto fail;
 
-   ie_dstr_t *capas = ie_dstr_new(e, &DSTR_LIT("IMAP4rev1"), KEEP_RAW);
+    ie_dstr_t *capas = ie_dstr_new(e, &DSTR_LIT("IMAP4rev1"), KEEP_RAW);
 
-   return capas;
+    return capas;
 
 fail:
     return NULL;
@@ -722,6 +722,9 @@ static bool intercept_cmd_type(imap_cmd_type_t type){
             triggers a dirmgr_open_dn in the sm_serve_logic, and then it is
             also passed into the maildir as the first command, but not here) */
         case IMAP_CMD_SELECT:
+
+        // CAPABILTIES can all be handled in one place
+        case IMAP_CMD_CAPA:
 
         // also intercept close-like commands
         case IMAP_CMD_LOGOUT:

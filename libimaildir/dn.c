@@ -427,18 +427,21 @@ static derr_t conn_dn_cmd(maildir_i *maildir, imap_cmd_t *cmd){
             PROP_GO(&e, search_cmd(dn, tag, arg->search), cu_cmd);
             break;
 
-        // things we need to support here
         case IMAP_CMD_CHECK:
+        case IMAP_CMD_NOOP:
+            // TODO: check for pending responses to send here
+            PROP_GO(&e, send_ok(dn, tag, &DSTR_LIT("zzzzz...")), cu_cmd);
+            break;
+
+        // things we need to support here
         case IMAP_CMD_EXPUNGE:
         case IMAP_CMD_FETCH:
         case IMAP_CMD_STORE:
         case IMAP_CMD_COPY:
-        // any-state commands
-        case IMAP_CMD_CAPA:
-        case IMAP_CMD_NOOP:
-        case IMAP_CMD_LOGOUT:
 
         // supported in a different layer
+        case IMAP_CMD_CAPA:
+        case IMAP_CMD_LOGOUT:
         case IMAP_CMD_CLOSE:
             ORIG_GO(&e, E_INTERNAL, "unhandled command", cu_cmd);
 
