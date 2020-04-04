@@ -12,6 +12,12 @@ static inline imap_cmd_t *steal_cmd(imap_cmd_t **cmd){
     return temp;
 }
 
+static inline ie_dstr_t *steal_tag(ie_dstr_t **tag){
+    ie_dstr_t *temp = *tag;
+    *tag = NULL;
+    return temp;
+}
+
 DSTR_STATIC(PREAUTH_dstr, "PREAUTH");
 DSTR_STATIC(AUTHENTICATED_dstr, "AUTHENTICATED");
 DSTR_STATIC(SELECTED_dstr, "SELECTED");
@@ -90,6 +96,7 @@ static derr_t select_pause_new(pause_t **out, server_t *server,
 typedef struct {
     ie_dstr_t *tag;
     server_t *server;
+    derr_t (*after)(server_t*, ie_dstr_t* tag);
     pause_t pause;
 } close_pause_t;
 DEF_CONTAINER_OF(close_pause_t, pause, pause_t);
@@ -108,11 +115,13 @@ static derr_t close_pause_run(pause_t **pause){
     derr_t e = E_OK;
 
     close_pause_t *close_pause = CONTAINER_OF(*pause, close_pause_t, pause);
+    server_t *server = close_pause->server;
 
-    close_pause->server->imap_state = AUTHENTICATED;
-
-    PROP_GO(&e, send_ok(close_pause->server, close_pause->tag,
-                &DSTR_LIT("get offa my lawn!")), cu);
+    if(close_pause->after){
+        ie_dstr_t *tag = close_pause->tag;
+        close_pause->tag = NULL;
+        PROP_GO(&e, close_pause->after(server, tag), cu);
+    }
 
 cu:
     close_pause_free(close_pause);
@@ -127,7 +136,7 @@ static void close_pause_cancel(pause_t **pause){
 }
 
 static derr_t close_pause_new(pause_t **out, server_t *server,
-        const ie_dstr_t *tag){
+        const ie_dstr_t *tag, derr_t (*after)(server_t*, ie_dstr_t*)){
     derr_t e = E_OK;
 
     *out = NULL;
@@ -136,6 +145,7 @@ static derr_t close_pause_new(pause_t **out, server_t *server,
     if(!close_pause) ORIG(&e, E_NOMEM, "no mem");
     *close_pause = (close_pause_t){
         .server = server,
+        .after = after,
         .pause = {
             .ready = close_pause_ready,
             .run = close_pause_run,
@@ -154,6 +164,7 @@ fail:
     close_pause_free(close_pause);
     return e;
 }
+
 
 static void server_imap_ev_returner(event_t *ev){
     imap_session_t *s = CONTAINER_OF(ev->session, imap_session_t, session);
@@ -571,7 +582,7 @@ static derr_t do_select(server_t *server, imap_cmd_t *select_cmd){
 
     // pass this SELECT command to the maildir
     PROP_GO(&e, server->maildir->cmd(server->maildir,
-                steal_cmd(&select_cmd)), fail_maildir);
+                select_cmd), fail_maildir);
 
     server->imap_state = SELECTED;
 
@@ -581,6 +592,44 @@ fail_maildir:
     server->maildir_has_ref = false;
 
     imap_cmd_free(select_cmd);
+    return e;
+}
+
+// this runs after the maildir has finished closing
+// (this is a close_pause_t->after() callback)
+static derr_t do_close(server_t *server, ie_dstr_t *tag){
+    derr_t e = E_OK;
+
+    // build text
+    DSTR_STATIC(msg, "get offa my lawn!");
+    ie_dstr_t *text = ie_dstr_new(&e, &msg, KEEP_RAW);
+
+    // build response
+    ie_st_resp_t *st_resp = ie_st_resp_new(&e, tag, IE_ST_OK, NULL, text);
+    imap_resp_arg_t arg = {.status_type=st_resp};
+    imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_STATUS_TYPE, arg);
+
+    send_resp(&e, server, resp);
+    CHECK(&e);
+
+    server->imap_state = AUTHENTICATED;
+
+    return e;
+}
+
+// this may or may not have to wait for the3 maildir to close before it runs
+// (this is a close_pause_t->after() callback)
+static derr_t do_logout(server_t *server, ie_dstr_t *tag){
+    derr_t e = E_OK;
+
+    PROP_GO(&e, send_bye(server, &DSTR_LIT("goodbye, my love...")), cu_tag);
+
+    // send a message which will close the session upon WRITE_DONE
+    DSTR_STATIC(final_msg, "I'm gonna be strong, I can make it through this");
+    PROP_GO(&e, send_st_resp(server, tag, &final_msg, IE_ST_OK, true), cu_tag);
+
+cu_tag:
+    ie_dstr_free(tag);
     return e;
 }
 
@@ -609,13 +658,15 @@ static derr_t handle_one_command(server_t *server, imap_cmd_t *cmd){
             break;
 
         case IMAP_CMD_LOGOUT:
-            PROP_GO(&e, send_bye(server, &DSTR_LIT("goodbye, my love...")),
-                    cu_cmd);
-            // send a message which will close the session upon WRITE_DONE
-            DSTR_STATIC(final_msg,
-                    "I'm gonna be strong, I can make it through this");
-            PROP_GO(&e, send_st_resp(server, tag, &final_msg, IE_ST_OK, true),
-                    cu_cmd);
+            if(server->imap_state == SELECTED){
+                // close the maildir
+                server_close_maildir_onthread(server);
+                // call do_logout() after the maildir finishes closing
+                PROP_GO(&e, close_pause_new(&server->pause, server, tag,
+                            do_logout), cu_cmd);
+            }else{
+                PROP_GO(&e, do_logout(server, steal_tag(&cmd->tag)), cu_cmd);
+            }
             break;
 
         case IMAP_CMD_STARTTLS:
@@ -661,10 +712,13 @@ static derr_t handle_one_command(server_t *server, imap_cmd_t *cmd){
         case IMAP_CMD_CLOSE:
             PROP_GO(&e, assert_state(server, SELECTED, tag, &state_ok),
                     cu_cmd);
-            // close the maildir
-            server_close_maildir_onthread(server);
-            // respond OK afterwards
-            PROP_GO(&e, close_pause_new(&server->pause, server, tag), cu_cmd);
+            if(state_ok){
+                // close the maildir
+                server_close_maildir_onthread(server);
+                // call do_close() after the maildir finishes closing
+                PROP_GO(&e, close_pause_new(&server->pause, server, tag,
+                            do_close), cu_cmd);
+            }
             break;
 
         case IMAP_CMD_EXAMINE:
