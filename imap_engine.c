@@ -229,6 +229,7 @@ static void imape_data_read_stuff(imape_data_t *id, const dstr_t *buffer){
             // rethrow the original error
             RETHROW_GO(&e, &e2, E_PARAM, fail);
         }
+        DROP_VAR(&e2);
     } else PROP_GO(&e, e2, fail);
 
     return;
