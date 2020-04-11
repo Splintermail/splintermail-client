@@ -758,7 +758,16 @@ static derr_t handle_one_maildir_resp(server_t *server, imap_resp_t *resp){
         return e;
     }
 
-    // for now, just submit all maildir responses blindly
+    // detect if this is a tagged status_type response were waiting for
+    if(server->await_tag && resp->type == IMAP_RESP_STATUS_TYPE
+            && resp->arg.status_type->tag
+            && dstr_cmp(&server->await_tag->dstr,
+                        &resp->arg.status_type->tag->dstr) == 0){
+        ie_dstr_free(server->await_tag);
+        server->await_tag = 0;
+    }
+
+    // otherwise, just submit all maildir responses blindly
     imap_event_t *imap_ev;
     PROP_GO(&e, imap_event_new(&imap_ev, server, resp), fail);
     imap_session_send_event(&server->dn.s, &imap_ev->ev);
@@ -789,6 +798,28 @@ static bool intercept_cmd_type(imap_cmd_type_t type){
     }
 }
 
+// on failure, we must free the whole command
+static derr_t server_await_if_async(server_t *server, imap_cmd_t *cmd){
+    derr_t e = E_OK;
+
+    switch(cmd->type){
+        // right now, the only async commands are those which edit the maildir
+        case IMAP_CMD_STORE:
+            server->await_tag = ie_dstr_copy(&e, cmd->tag);
+            CHECK_GO(&e, fail);
+            break;
+
+        default:
+            break;
+    }
+
+    return e;
+
+fail:
+    imap_cmd_free(cmd);
+    return e;
+}
+
 derr_t server_do_work(server_t *server){
     derr_t e = E_OK;
 
@@ -799,7 +830,7 @@ derr_t server_do_work(server_t *server){
     }
 
     // unhandled client commands from the client
-    while(!server->ts.closed && !server->pause){
+    while(!server->ts.closed && !server->await_tag && !server->pause){
         // pop a command
         uv_mutex_lock(&server->ts.mutex);
         link_t *link = link_list_pop_first(&server->ts.unhandled_cmds);
@@ -811,6 +842,9 @@ derr_t server_do_work(server_t *server){
 
         // detect if we need to just pass the command to the maildir
         if(server->maildir && !intercept_cmd_type(cmd->type)){
+            // asynchronous commands must be awaited:
+            PROP(&e, server_await_if_async(server, cmd) );
+
             PROP(&e, server->maildir->cmd(server->maildir, cmd) );
             continue;
         }

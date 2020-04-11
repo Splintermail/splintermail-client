@@ -284,6 +284,7 @@ static void server_free(server_t *server){
     if(server->pause){
         server->pause->cancel(&server->pause);
     }
+    ie_dstr_free(server->await_tag);
     return;
 }
 

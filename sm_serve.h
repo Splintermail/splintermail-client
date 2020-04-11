@@ -80,6 +80,8 @@ typedef struct {
 
     // pause is for delaying actions until some future time
     pause_t *pause;
+    // if non-NULL, we're waiting on some tagged response to be passed out
+    ie_dstr_t *await_tag;
 } server_t;
 DEF_CONTAINER_OF(server_t, dn, server_session_t);
 DEF_CONTAINER_OF(server_t, advance_spec, async_spec_t);
