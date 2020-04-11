@@ -3,17 +3,10 @@
 #include "libimaildir.h"
 
 // forward declarations
-static derr_t conn_up_resp(maildir_i*, imap_resp_t*);
-static bool conn_up_synced(maildir_i*);
-static bool conn_up_selected(maildir_i*);
-static derr_t conn_up_unselect(maildir_i *maildir);
-
-static derr_t maildir_cmd_not_allowed(maildir_i* maildir, imap_cmd_t* cmd){
-    (void)maildir;
-    (void)cmd;
-    derr_t e = E_OK;
-    ORIG(&e, E_INTERNAL, "command not allowed from an upwards connection");
-}
+static derr_t conn_up_resp(maildir_up_i*, imap_resp_t*);
+static bool conn_up_synced(maildir_up_i*);
+static bool conn_up_selected(maildir_up_i*);
+static derr_t conn_up_unselect(maildir_up_i *maildir_up);
 
 static void up_finalize(refs_t *refs){
     up_t *up = CONTAINER_OF(refs, up_t, refs);
@@ -48,9 +41,8 @@ derr_t up_new(up_t **out, maildir_conn_up_i *conn, imaildir_t *m){
     *up = (up_t){
         .m = m,
         .conn = conn,
-        .maildir = {
+        .maildir_up = {
             .resp = conn_up_resp,
-            .cmd = maildir_cmd_not_allowed,
             .synced = conn_up_synced,
             .selected = conn_up_selected,
             .unselect = conn_up_unselect,
@@ -726,10 +718,10 @@ static derr_t untagged_status_type(up_t *up, const ie_st_resp_t *st){
 }
 
 // we either need to consume the resp or free it
-static derr_t conn_up_resp(maildir_i *maildir, imap_resp_t *resp){
+static derr_t conn_up_resp(maildir_up_i *maildir_up, imap_resp_t *resp){
     derr_t e = E_OK;
 
-    up_t *up = CONTAINER_OF(maildir, up_t, maildir);
+    up_t *up = CONTAINER_OF(maildir_up, up_t, maildir_up);
 
     const imap_resp_arg_t *arg = &resp->arg;
 
@@ -783,26 +775,26 @@ cu_resp:
 }
 
 // returned value is based on the entire maildir
-bool conn_up_synced(maildir_i *maildir){
-    up_t *up = CONTAINER_OF(maildir, up_t, maildir);
+bool conn_up_synced(maildir_up_i *maildir_up){
+    up_t *up = CONTAINER_OF(maildir_up, up_t, maildir_up);
     imaildir_t *m = up->m;
 
     return imaildir_synced(m);
 }
 
 // this is thread-safe since up_t is designed to run on the conn_up thread
-bool conn_up_selected(maildir_i *maildir){
+bool conn_up_selected(maildir_up_i *maildir_up){
 
-    up_t *up = CONTAINER_OF(maildir, up_t, maildir);
+    up_t *up = CONTAINER_OF(maildir_up, up_t, maildir_up);
 
     return up->selected;
 }
 
 // this is thread-safe since up_t is designed to run on the conn_up thread
-static derr_t conn_up_unselect(maildir_i *maildir){
+static derr_t conn_up_unselect(maildir_up_i *maildir_up){
     derr_t e = E_OK;
 
-    up_t *up = CONTAINER_OF(maildir, up_t, maildir);
+    up_t *up = CONTAINER_OF(maildir_up, up_t, maildir_up);
 
     if(!up->selected){
         // signal that it's already done

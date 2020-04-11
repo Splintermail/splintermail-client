@@ -76,7 +76,7 @@ typedef struct {
 
     // the interface we feed to the imaildir for client communication
     maildir_conn_dn_i conn_dn;
-    maildir_i *maildir;
+    maildir_dn_i *maildir_dn;
     bool maildir_has_ref;
 
     // pause is for delaying actions until some future time

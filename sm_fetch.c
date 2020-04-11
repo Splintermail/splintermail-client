@@ -126,7 +126,7 @@ static void fetcher_async_close_cb(async_spec_t *spec){
     fetcher->quit_ev = NULL;
 }
 
-// part of the imaildir_i, meaning this can be called on- or off-thread
+// part of the maildir_conn_up_i, meaning this can be called on- or off-thread
 static void fetcher_conn_up_cmd(maildir_conn_up_i *conn_up, imap_cmd_t *cmd){
     fetcher_t *fetcher = CONTAINER_OF(conn_up, fetcher_t, conn_up);
 
@@ -137,30 +137,30 @@ static void fetcher_conn_up_cmd(maildir_conn_up_i *conn_up, imap_cmd_t *cmd){
     fetcher_advance(fetcher);
 }
 
-// part of the imaildir_i, meaning this can be called on- or off-thread
+// part of the maildir_conn_up_i, meaning this can be called on- or off-thread
 static void fetcher_conn_up_synced(maildir_conn_up_i *conn_up){
     fetcher_t *fetcher = CONTAINER_OF(conn_up, fetcher_t, conn_up);
     fetcher->mailbox_synced = true;
 
     // we don't want to hold a folder open after it is synced, so unselect now
     derr_t e = E_OK;
-    IF_PROP(&e, fetcher->maildir->unselect(fetcher->maildir) ){
+    IF_PROP(&e, fetcher->maildir_up->unselect(fetcher->maildir_up) ){
         fetcher_close(fetcher, e);
     }
 
     fetcher_advance(fetcher);
 }
 
-// part of the imaildir_i, meaning this can be called on- or off-thread
+// part of the maildir_conn_up_i, meaning this can be called on- or off-thread
 static void fetcher_conn_up_unselected(maildir_conn_up_i *conn_up){
     fetcher_t *fetcher = CONTAINER_OF(conn_up, fetcher_t, conn_up);
     fetcher->mailbox_unselected = true;
-    // we still can't close the maildir until we are onthread
+    // we still can't close the maildir_up until we are onthread
 
     fetcher_advance(fetcher);
 }
 
-// part of the imaildir_i, meaning this can be called on- or off-thread
+// part of the maildir_conn_up_i, meaning this can be called on- or off-thread
 static void fetcher_conn_up_failure(maildir_conn_up_i *conn_up, derr_t error){
     fetcher_t *fetcher = CONTAINER_OF(conn_up, fetcher_t, conn_up);
 
@@ -171,14 +171,14 @@ static void fetcher_conn_up_failure(maildir_conn_up_i *conn_up, derr_t error){
     fetcher_advance(fetcher);
 }
 
-// part of the imaildir_i, meaning this can be called on- or off-thread
+// part of the maildir_conn_up_i, meaning this can be called on- or off-thread
 static void fetcher_conn_up_release(maildir_conn_up_i *conn_up){
     fetcher_t *fetcher = CONTAINER_OF(conn_up, fetcher_t, conn_up);
 
-    // it's an error if the maildir releases us before we release it
-    if(fetcher->maildir != NULL){
+    // it's an error if the maildir_up releases us before we release it
+    if(fetcher->maildir_up != NULL){
         derr_t e = E_OK;
-        TRACE_ORIG(&e, E_INTERNAL, "maildir closed unexpectedly");
+        TRACE_ORIG(&e, E_INTERNAL, "maildir_up closed unexpectedly");
         fetcher_close(fetcher, e);
         PASSED(e);
     }
@@ -423,12 +423,12 @@ void fetcher_close(fetcher_t *fetcher, derr_t error){
 static void fetcher_close_onthread(fetcher_t *fetcher){
     /* now that we are onthread, it is safe to release refs for things we don't
        own ourselves */
-    if(fetcher->maildir){
-        // extract the maildir from fetcher so it is clear we are done
-        maildir_i *maildir = fetcher->maildir;
-        fetcher->maildir = NULL;
-        // now make the very last call into the maildir_i
-        dirmgr_close_up(&fetcher->dirmgr, maildir, &fetcher->conn_up);
+    if(fetcher->maildir_up){
+        // extract the maildir_up from fetcher so it is clear we are done
+        maildir_up_i *maildir_up = fetcher->maildir_up;
+        fetcher->maildir_up = NULL;
+        // now make the very last call into the maildir_up_i
+        dirmgr_close_up(&fetcher->dirmgr, maildir_up);
     }
 }
 

@@ -526,7 +526,7 @@ cu:
 }
 
 derr_t imaildir_register_up(imaildir_t *m, maildir_conn_up_i *conn_up,
-        maildir_i **maildir_out){
+        maildir_up_i **maildir_up_out){
     derr_t e = E_OK;
 
     // allocate a new up_t
@@ -548,7 +548,7 @@ derr_t imaildir_register_up(imaildir_t *m, maildir_conn_up_i *conn_up,
     // treat the connection state as "selected", even though we just sent it
     up->selected = true;
 
-    *maildir_out = &up->maildir;
+    *maildir_up_out = &up->maildir_up;
     ref_up(&up->refs);
 
     /* everything's ready, further errors will be passed to the conn_up via
@@ -574,7 +574,7 @@ derr_t imaildir_register_up(imaildir_t *m, maildir_conn_up_i *conn_up,
 }
 
 derr_t imaildir_register_dn(imaildir_t *m, maildir_conn_dn_i *conn_dn,
-        maildir_i **maildir_out){
+        maildir_dn_i **maildir_dn_out){
     derr_t e = E_OK;
 
     // allocate a new dn_t
@@ -589,18 +589,16 @@ derr_t imaildir_register_dn(imaildir_t *m, maildir_conn_dn_i *conn_dn,
     uv_mutex_unlock(&m->access.lock);
 
     /* final initialization step is when the downwards session calls
-       maildir_i->cmd() to send the SELECT command sent by the client */
+       maildir_dn_i->cmd() to send the SELECT command sent by the client */
 
-    *maildir_out = &dn->maildir;
+    *maildir_dn_out = &dn->maildir_dn;
     ref_up(&dn->refs);
 
     return e;
 }
 
-void imaildir_unregister_up(maildir_i *maildir, maildir_conn_up_i *conn){
-    // conn argument is just for type safety
-    (void)conn;
-    up_t *up = CONTAINER_OF(maildir, up_t, maildir);
+void imaildir_unregister_up(maildir_up_i *maildir_up){
+    up_t *up = CONTAINER_OF(maildir_up, up_t, maildir_up);
     imaildir_t *m = up->m;
 
     uv_mutex_lock(&m->access.lock);
@@ -608,7 +606,7 @@ void imaildir_unregister_up(maildir_i *maildir, maildir_conn_up_i *conn){
         // TODO: detect if the primary up_t has changed
         // remove from its list
         link_remove(&up->link);
-        // unref for maildir
+        // unref for imaildir
         ref_dn(&up->refs);
     }
     // unref for conn
@@ -626,17 +624,15 @@ void imaildir_unregister_up(maildir_i *maildir, maildir_conn_up_i *conn){
     }
 }
 
-void imaildir_unregister_dn(maildir_i *maildir, maildir_conn_dn_i *conn){
-    // conn argument is just for type safety
-    (void)conn;
-    dn_t *dn = CONTAINER_OF(maildir, dn_t, maildir);
+void imaildir_unregister_dn(maildir_dn_i *maildir_dn){
+    dn_t *dn = CONTAINER_OF(maildir_dn, dn_t, maildir_dn);
     imaildir_t *m = dn->m;
 
     uv_mutex_lock(&m->access.lock);
     if(!dn->force_closed){
         // remove from its list
         link_remove(&dn->link);
-        // unref for maildir
+        // unref for imaildir
         ref_dn(&dn->refs);
     }
     // unref for conn
@@ -654,7 +650,7 @@ void imaildir_unregister_dn(maildir_i *maildir, maildir_conn_dn_i *conn){
     }
 }
 
-// part of maildir_i
+// part of maildir_up_i
 bool imaildir_synced(imaildir_t *m){
     bool synced = false;
 
@@ -710,7 +706,8 @@ static void imaildir_fail(imaildir_t *m, derr_t error){
         dn_t *dn = CONTAINER_OF(link, dn_t, link);
         // if there was an error, share it with all of the accessors.
         dn->conn->failure(dn->conn, BROADCAST(error));
-        ref_dn(&up->refs);
+        // unref for imaildir
+        ref_dn(&dn->refs);
     }
 
     // free the error

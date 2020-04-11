@@ -82,7 +82,7 @@ typedef struct {
 
     // the interface we feed to the imaildir for server communication
     maildir_conn_up_i conn_up;
-    maildir_i *maildir;
+    maildir_up_i *maildir_up;
     bool maildir_has_ref;
     bool mailbox_synced;
     bool mailbox_unselected;

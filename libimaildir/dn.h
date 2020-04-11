@@ -1,6 +1,6 @@
 /* the component of an imap_maildir responsible for synchronizing downwards */
 
-// dn_t is all the state we have for an upwards connection
+// dn_t is all the state we have for a downwards connection
 typedef struct {
     imaildir_t *m;
     // if this imaildir was force-closed, we have to unregister differently
@@ -8,7 +8,7 @@ typedef struct {
     // the interfaced provided to us
     maildir_conn_dn_i *conn;
     // the interface we provide
-    maildir_i maildir;
+    maildir_dn_i maildir_dn;
     bool selected;
     link_t link;  // imaildir_t->access.dns
     // view of the mailbox; this order defines sequence numbers
@@ -16,7 +16,7 @@ typedef struct {
     // 2 refs: on for imaildir's access.dns, one for server->maildir
     refs_t refs;
 } dn_t;
-DEF_CONTAINER_OF(dn_t, maildir, maildir_i);
+DEF_CONTAINER_OF(dn_t, maildir_dn, maildir_dn_i);
 DEF_CONTAINER_OF(dn_t, link, link_t);
 DEF_CONTAINER_OF(dn_t, refs, refs_t);
 

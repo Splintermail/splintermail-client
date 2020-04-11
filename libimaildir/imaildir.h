@@ -101,8 +101,10 @@ struct maildir_conn_up_i;
 typedef struct maildir_conn_up_i maildir_conn_up_i;
 struct maildir_conn_dn_i;
 typedef struct maildir_conn_dn_i maildir_conn_dn_i;
-struct maildir_i;
-typedef struct maildir_i maildir_i;
+struct maildir_up_i;
+typedef struct maildir_up_i maildir_up_i;
+struct maildir_dn_i;
+typedef struct maildir_dn_i maildir_dn_i;
 struct dirmgr_i;
 typedef struct dirmgr_i dirmgr_i;
 struct imaildir_t;
@@ -117,7 +119,7 @@ struct maildir_conn_up_i {
     void (*cmd)(maildir_conn_up_i*, imap_cmd_t*);
     // this event indicates the maildir finished an initial sync
     void (*synced)(maildir_conn_up_i*);
-    // this event is a response to the maildir_i->unselect() call
+    // this event is a response to the maildir_up_i->unselect() call
     void (*unselected)(maildir_conn_up_i*);
     // The maildir BROADCASTs its failures when it dies
     /* note the asymmetry: the maildir resource can tell the actor owning the
@@ -142,24 +144,26 @@ struct maildir_conn_dn_i {
     void (*release)(maildir_conn_dn_i*);
 };
 
-struct maildir_i {
+struct maildir_up_i {
     // imap responses must come from an upwards connection
-    derr_t (*resp)(maildir_i*, imap_resp_t*);
+    derr_t (*resp)(maildir_up_i*, imap_resp_t*);
 
     // return true if the maildir is currently synchronized with the mailserver
-    bool (*synced)(maildir_i*);
+    bool (*synced)(maildir_up_i*);
 
     // return true if the maildir is the conn is in a SELECTED state
-    bool (*selected)(maildir_i*);
+    bool (*selected)(maildir_up_i*);
 
     // if the connection is in a SELECTED state, CLOSE it.
-    derr_t (*unselect)(maildir_i*);
+    derr_t (*unselect)(maildir_up_i*);
 
-    ////// for downwards connections:
+    // unregistering must be done through the imaildir_t or dirmgr_t
+};
 
+struct maildir_dn_i {
     // imap commands must come from a downwards connection
     // (the first one must be the SELECT)
-    derr_t (*cmd)(maildir_i*, imap_cmd_t*);
+    derr_t (*cmd)(maildir_dn_i*, imap_cmd_t*);
 
     // unregistering must be done through the imaildir_t or dirmgr_t
 };
@@ -239,18 +243,18 @@ void imaildir_forceclose(imaildir_t *m);
 
 // regsiter a new connection with the imaildir, and return a maildir_i
 derr_t imaildir_register_up(imaildir_t *m, maildir_conn_up_i *conn_up,
-        maildir_i **maildir_out);
+        maildir_up_i **maildir_up_out);
 
 // regsiter a new connection with the imaildir, and return a maildir_i
 derr_t imaildir_register_dn(imaildir_t *m, maildir_conn_dn_i *conn_dn,
-        maildir_i **maildir_out);
+        maildir_dn_i **maildir_dn_out);
 
 /* there is a race condition between imalidir_register and imaildir_unregister;
-   generally, if you got a maildir_i* through dirmgr_open, you should close it
+   generally, if you got a maildir_*_i through dirmgr_open, you should close it
    via dirmgr_close */
 // (the argument is actually just for type-safety, it's not used)
-void imaildir_unregister_up(maildir_i *m, maildir_conn_up_i *conn);
-void imaildir_unregister_dn(maildir_i *m, maildir_conn_dn_i *conn);
+void imaildir_unregister_up(maildir_up_i *m);
+void imaildir_unregister_dn(maildir_dn_i *m);
 
 bool imaildir_synced(imaildir_t *m);
 

@@ -152,13 +152,13 @@ static derr_t do_sync_mailbox(fetcher_t *fetcher, jsw_anode_t *node){
 
     fetcher->maildir_has_ref = true;
     IF_PROP(&e, dirmgr_open_up(&fetcher->dirmgr, dir_name, &fetcher->conn_up,
-                &fetcher->maildir) ){
+                &fetcher->maildir_up) ){
         // oops, nevermind
         fetcher->maildir_has_ref = false;
         return e;
     }
 
-    // the maildir takes care of the rest
+    // the maildir_up takes care of the rest
 
     return e;
 }
@@ -695,15 +695,15 @@ cu_resp:
 static derr_t handle_one_maildir_cmd(fetcher_t *fetcher, imap_cmd_t *cmd){
     derr_t e = E_OK;
 
-    // detect if we are receiving commands from a maildir we closed
-    // TODO: if we close one maildir and open another, how do we know where the
-    // stream of one maildir ends and the other stream begins?
-    if(!fetcher->maildir){
+    // detect if we are receiving commands from a maildir_up we closed
+    // TODO: if we close one maildir_up and open another, how do we know where the
+    // stream of one maildir_up ends and the other stream begins?
+    if(!fetcher->maildir_up){
         imap_cmd_free(cmd);
         return e;
     }
 
-    // for now, just submit all maildir commands blindly
+    // for now, just submit all maildir_up commands blindly
     imap_event_t *imap_ev;
     PROP_GO(&e, imap_event_new(&imap_ev, fetcher, cmd), fail);
     imap_session_send_event(&fetcher->up.s, &imap_ev->ev);
@@ -729,16 +729,16 @@ derr_t fetcher_do_work(fetcher_t *fetcher){
 
         imap_resp_t *resp = CONTAINER_OF(link, imap_resp_t, link);
 
-        // detect if we need to just pass the command to the maildir
-        if(fetcher->maildir){
-            PROP(&e, fetcher->maildir->resp(fetcher->maildir, resp) );
+        // detect if we need to just pass the command to the maildir_up
+        if(fetcher->maildir_up){
+            PROP(&e, fetcher->maildir_up->resp(fetcher->maildir_up, resp) );
             continue;
         }
 
         PROP(&e, handle_one_response(fetcher, resp) );
     }
 
-    // commands from the maildir
+    // commands from the maildir_up
     while(!fetcher->ts.closed){
         // pop a command
         uv_mutex_lock(&fetcher->ts.mutex);
@@ -753,10 +753,10 @@ derr_t fetcher_do_work(fetcher_t *fetcher){
     }
 
     // check if we need to transition to the next folder
-    if(fetcher->maildir && fetcher->mailbox_unselected){
-        maildir_i *maildir = fetcher->maildir;
-        fetcher->maildir = NULL;
-        dirmgr_close_up(&fetcher->dirmgr, maildir, &fetcher->conn_up);
+    if(fetcher->maildir_up && fetcher->mailbox_unselected){
+        maildir_up_i *maildir_up = fetcher->maildir_up;
+        fetcher->maildir_up = NULL;
+        dirmgr_close_up(&fetcher->dirmgr, maildir_up);
         fetcher->imap_state = AUTHENTICATED;
     }
 
@@ -764,7 +764,7 @@ derr_t fetcher_do_work(fetcher_t *fetcher){
     if(fetcher->listed
             // have we seen the response to CLOSE?
             && fetcher->imap_state == AUTHENTICATED
-            // has the maildir released us?
+            // has the maildir_up released us?
             && !fetcher->maildir_has_ref){
         PROP(&e, sync_next_mailbox(fetcher) );
     }

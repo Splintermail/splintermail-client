@@ -92,7 +92,7 @@ static derr_t select_pause_new(pause_t **out, server_t *server,
     return e;
 }
 
-// a pause for when you close a maildir and have to wait for it to shut down
+// a pause for when you close a maildir_dn and have to wait for it to shut down
 typedef struct {
     ie_dstr_t *tag;
     server_t *server;
@@ -578,10 +578,10 @@ static derr_t do_select(server_t *server, imap_cmd_t *select_cmd){
 
     server->maildir_has_ref = true;
     PROP_GO(&e, dirmgr_open_dn(&server->dirmgr, dir_name, &server->conn_dn,
-                &server->maildir), fail_maildir);
+                &server->maildir_dn), fail_maildir);
 
-    // pass this SELECT command to the maildir
-    PROP_GO(&e, server->maildir->cmd(server->maildir,
+    // pass this SELECT command to the maildir_dn
+    PROP_GO(&e, server->maildir_dn->cmd(server->maildir_dn,
                 select_cmd), fail_maildir);
 
     server->imap_state = SELECTED;
@@ -595,7 +595,7 @@ fail_maildir:
     return e;
 }
 
-// this runs after the maildir has finished closing
+// this runs after the maildir_dn has finished closing
 // (this is a close_pause_t->after() callback)
 static derr_t do_close(server_t *server, ie_dstr_t *tag){
     derr_t e = E_OK;
@@ -617,7 +617,7 @@ static derr_t do_close(server_t *server, ie_dstr_t *tag){
     return e;
 }
 
-// this may or may not have to wait for the3 maildir to close before it runs
+// this may or may not have to wait for the3 maildir_dn to close before it runs
 // (this is a close_pause_t->after() callback)
 static derr_t do_logout(server_t *server, ie_dstr_t *tag){
     derr_t e = E_OK;
@@ -659,9 +659,9 @@ static derr_t handle_one_command(server_t *server, imap_cmd_t *cmd){
 
         case IMAP_CMD_LOGOUT:
             if(server->imap_state == SELECTED){
-                // close the maildir
+                // close the maildir_dn
                 server_close_maildir_onthread(server);
-                // call do_logout() after the maildir finishes closing
+                // call do_logout() after the maildir_dn finishes closing
                 PROP_GO(&e, close_pause_new(&server->pause, server, tag,
                             do_logout), cu_cmd);
             }else{
@@ -699,7 +699,7 @@ static derr_t handle_one_command(server_t *server, imap_cmd_t *cmd){
             if(server->imap_state == AUTHENTICATED){
                 PROP_GO(&e, do_select(server, steal_cmd(&cmd)), cu_cmd);
             }else if(server->imap_state == SELECTED){
-                // close the maildir
+                // close the maildir_dn
                 server_close_maildir_onthread(server);
                 // SELECT the new one after this one closes
                 PROP_GO(&e, select_pause_new(&server->pause, server,
@@ -713,9 +713,9 @@ static derr_t handle_one_command(server_t *server, imap_cmd_t *cmd){
             PROP_GO(&e, assert_state(server, SELECTED, tag, &state_ok),
                     cu_cmd);
             if(state_ok){
-                // close the maildir
+                // close the maildir_dn
                 server_close_maildir_onthread(server);
-                // call do_close() after the maildir finishes closing
+                // call do_close() after the maildir_dn finishes closing
                 PROP_GO(&e, close_pause_new(&server->pause, server, tag,
                             do_close), cu_cmd);
             }
@@ -750,10 +750,8 @@ cu_cmd:
 static derr_t handle_one_maildir_resp(server_t *server, imap_resp_t *resp){
     derr_t e = E_OK;
 
-    // detect if we are receiving commands from a maildir we closed
-    // TODO: if we close one maildir and open another, how do we know where the
-    // stream of one maildir ends and the other stream begins?
-    if(!server->maildir){
+    // detect if we are receiving commands from a maildir_dn we closed
+    if(!server->maildir_dn){
         imap_resp_free(resp);
         return e;
     }
@@ -767,7 +765,7 @@ static derr_t handle_one_maildir_resp(server_t *server, imap_resp_t *resp){
         server->await_tag = 0;
     }
 
-    // otherwise, just submit all maildir responses blindly
+    // otherwise, just submit all maildir_dn responses blindly
     imap_event_t *imap_ev;
     PROP_GO(&e, imap_event_new(&imap_ev, server, resp), fail);
     imap_session_send_event(&server->dn.s, &imap_ev->ev);
@@ -783,7 +781,8 @@ static bool intercept_cmd_type(imap_cmd_type_t type){
     switch(type){
         /* (SELECT is special; it may trigger a dirmgr_close_dn, then it always
             triggers a dirmgr_open_dn in the sm_serve_logic, and then it is
-            also passed into the maildir as the first command, but not here) */
+            also passed into the maildir_dn as the first command, but not here)
+            */
         case IMAP_CMD_SELECT:
 
         // CAPABILTIES can all be handled in one place
@@ -803,7 +802,7 @@ static derr_t server_await_if_async(server_t *server, imap_cmd_t *cmd){
     derr_t e = E_OK;
 
     switch(cmd->type){
-        // right now, the only async commands are those which edit the maildir
+        // right now, the only async commands are ones that edit the maildir_dn
         case IMAP_CMD_STORE:
             server->await_tag = ie_dstr_copy(&e, cmd->tag);
             CHECK_GO(&e, fail);
@@ -840,19 +839,19 @@ derr_t server_do_work(server_t *server){
 
         imap_cmd_t *cmd = CONTAINER_OF(link, imap_cmd_t, link);
 
-        // detect if we need to just pass the command to the maildir
-        if(server->maildir && !intercept_cmd_type(cmd->type)){
+        // detect if we need to just pass the command to the maildir_dn
+        if(server->maildir_dn && !intercept_cmd_type(cmd->type)){
             // asynchronous commands must be awaited:
             PROP(&e, server_await_if_async(server, cmd) );
 
-            PROP(&e, server->maildir->cmd(server->maildir, cmd) );
+            PROP(&e, server->maildir_dn->cmd(server->maildir_dn, cmd) );
             continue;
         }
 
         PROP(&e, handle_one_command(server, cmd) );
     }
 
-    // responses from the maildir
+    // responses from the maildir_dn
     while(!server->ts.closed){
         // pop a response
         uv_mutex_lock(&server->ts.mutex);

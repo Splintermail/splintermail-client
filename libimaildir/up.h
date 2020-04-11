@@ -8,7 +8,7 @@ typedef struct {
     // the interfaced provided to us
     maildir_conn_up_i *conn;
     // the interface we provide
-    maildir_i maildir;
+    maildir_up_i maildir_up;
     // this connection's state
     bool selected;
     bool synced;
@@ -25,7 +25,7 @@ typedef struct {
     // 2 refs: on for imaildir's access.ups, one for fetcher->maildir
     refs_t refs;
 } up_t;
-DEF_CONTAINER_OF(up_t, maildir, maildir_i);
+DEF_CONTAINER_OF(up_t, maildir_up, maildir_up_i);
 DEF_CONTAINER_OF(up_t, link, link_t);
 DEF_CONTAINER_OF(up_t, refs, refs_t);
 

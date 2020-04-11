@@ -6,28 +6,26 @@
 //         const dstr_t *name);
 static void managed_dir_free(managed_dir_t **mgd);
 
-void dirmgr_close_up(dirmgr_t *dm, maildir_i *maildir,
-        maildir_conn_up_i *conn){
+void dirmgr_close_up(dirmgr_t *dm, maildir_up_i *maildir_up){
     // coordinate with calls to dirmgr_open:
 
     // we may end up freeing the mgd and removing it from the dirmgr
     uv_rwlock_wrlock(&dm->dirs.lock);
 
     // imaildir_unregister may result in a call to all_unregistered()
-    imaildir_unregister_up(maildir, conn);
+    imaildir_unregister_up(maildir_up);
 
     uv_rwlock_wrunlock(&dm->dirs.lock);
 }
 
-void dirmgr_close_dn(dirmgr_t *dm, maildir_i *maildir,
-        maildir_conn_dn_i *conn){
+void dirmgr_close_dn(dirmgr_t *dm, maildir_dn_i *maildir_dn){
     // coordinate with calls to dirmgr_open:
 
     // we may end up freeing the mgd and removing it from the dirmgr
     uv_rwlock_wrlock(&dm->dirs.lock);
 
     // imaildir_unregister may result in a call to all_unregistered()
-    imaildir_unregister_dn(maildir, conn);
+    imaildir_unregister_dn(maildir_dn);
 
     uv_rwlock_wrunlock(&dm->dirs.lock);
 }
@@ -434,7 +432,7 @@ derr_t dirmgr_do_for_each_mbx(dirmgr_t *dm, const dstr_t *ref_name,
 /////////////////
 
 derr_t dirmgr_open_up(dirmgr_t *dm, const dstr_t *name, maildir_conn_up_i *up,
-        maildir_i **maildir_out){
+        maildir_up_i **maildir_up_out){
     derr_t e = E_OK;
     managed_dir_t *mgd;
 
@@ -446,7 +444,8 @@ derr_t dirmgr_open_up(dirmgr_t *dm, const dstr_t *name, maildir_conn_up_i *up,
         mgd = CONTAINER_OF(h, managed_dir_t, h);
 
         // just add an accessor to the existing imaildir
-        PROP_GO(&e, imaildir_register_up(&mgd->m, up, maildir_out), fail_lock);
+        PROP_GO(&e, imaildir_register_up(&mgd->m, up, maildir_up_out),
+                fail_lock);
         goto done;
     }
 
@@ -455,15 +454,15 @@ derr_t dirmgr_open_up(dirmgr_t *dm, const dstr_t *name, maildir_conn_up_i *up,
 
     // add to hashmap (we checked this path was not in the hashmap)
     NOFAIL_GO(&e, E_PARAM,
-            hashmap_sets_unique(&dm->dirs.map, name, &mgd->h), fail_managed);
+            hashmap_sets_unique(&dm->dirs.map, name, &mgd->h), fail_mgd);
 
-    PROP_GO(&e, imaildir_register_up(&mgd->m, up, maildir_out), fail_managed);
+    PROP_GO(&e, imaildir_register_up(&mgd->m, up, maildir_up_out), fail_mgd);
 
 done:
     uv_rwlock_wrunlock(&dm->dirs.lock);
     return e;
 
-fail_managed:
+fail_mgd:
     managed_dir_free(&mgd);
 fail_lock:
     uv_rwlock_wrunlock(&dm->dirs.lock);
@@ -471,7 +470,7 @@ fail_lock:
 }
 
 derr_t dirmgr_open_dn(dirmgr_t *dm, const dstr_t *name, maildir_conn_dn_i *dn,
-        maildir_i **maildir_out){
+        maildir_dn_i **maildir_dn_out){
     derr_t e = E_OK;
     managed_dir_t *mgd;
 
@@ -483,7 +482,8 @@ derr_t dirmgr_open_dn(dirmgr_t *dm, const dstr_t *name, maildir_conn_dn_i *dn,
         mgd = CONTAINER_OF(h, managed_dir_t, h);
 
         // just add an accessor to the existing imaildir
-        PROP_GO(&e, imaildir_register_dn(&mgd->m, dn, maildir_out), fail_lock);
+        PROP_GO(&e, imaildir_register_dn(&mgd->m, dn, maildir_dn_out),
+                fail_lock);
         goto done;
     }
 
@@ -492,15 +492,15 @@ derr_t dirmgr_open_dn(dirmgr_t *dm, const dstr_t *name, maildir_conn_dn_i *dn,
 
     // add to hashmap (we checked this path was not in the hashmap)
     NOFAIL_GO(&e, E_PARAM,
-            hashmap_sets_unique(&dm->dirs.map, name, &mgd->h), fail_managed);
+            hashmap_sets_unique(&dm->dirs.map, name, &mgd->h), fail_mgd);
 
-    PROP_GO(&e, imaildir_register_dn(&mgd->m, dn, maildir_out), fail_managed);
+    PROP_GO(&e, imaildir_register_dn(&mgd->m, dn, maildir_dn_out), fail_mgd);
 
 done:
     uv_rwlock_wrunlock(&dm->dirs.lock);
     return e;
 
-fail_managed:
+fail_mgd:
     managed_dir_free(&mgd);
 fail_lock:
     uv_rwlock_wrunlock(&dm->dirs.lock);

@@ -111,7 +111,7 @@ static void server_async_close_cb(async_spec_t *spec){
     server->mgr->dead(server->mgr);
 }
 
-// part of the imaildir_i, meaning this can be called on- or off-thread
+// part of the maildir_conn_dn_i, meaning this can be called on- or off-thread
 static void server_conn_dn_resp(maildir_conn_dn_i *conn_dn, imap_resp_t *resp){
     server_t *server = CONTAINER_OF(conn_dn, server_t, conn_dn);
 
@@ -122,7 +122,7 @@ static void server_conn_dn_resp(maildir_conn_dn_i *conn_dn, imap_resp_t *resp){
     server_advance(server);
 }
 
-// part of the imaildir_i, meaning this can be called on- or off-thread
+// part of the maildir_conn_dn_i, meaning this can be called on- or off-thread
 static void server_conn_dn_failure(maildir_conn_dn_i *conn_dn, derr_t error){
     server_t *server = CONTAINER_OF(conn_dn, server_t, conn_dn);
 
@@ -133,14 +133,14 @@ static void server_conn_dn_failure(maildir_conn_dn_i *conn_dn, derr_t error){
     server_advance(server);
 }
 
-// part of the imaildir_i, meaning this can be called on- or off-thread
+// part of the maildir_conn_dn_i, meaning this can be called on- or off-thread
 static void server_conn_dn_release(maildir_conn_dn_i *conn_dn){
     server_t *server = CONTAINER_OF(conn_dn, server_t, conn_dn);
 
-    // it's an error if the maildir releases us before we release it
-    if(server->maildir != NULL){
+    // it's an error if the maildir_dn releases us before we release it
+    if(server->maildir_dn != NULL){
         derr_t e = E_OK;
-        TRACE_ORIG(&e, E_INTERNAL, "maildir closed unexpectedly");
+        TRACE_ORIG(&e, E_INTERNAL, "maildir_dn closed unexpectedly");
         server_close(server, e);
         PASSED(e);
     }
@@ -376,23 +376,19 @@ void server_close(server_t *server, derr_t error){
 }
 
 void server_close_maildir_onthread(server_t *server){
-    // extract the maildir from server so it is clear we are done
-    maildir_i *maildir = server->maildir;
-    server->maildir = NULL;
-    // now make the very last call into the maildir_i
-    dirmgr_close_dn(&server->dirmgr, maildir, &server->conn_dn);
+    // extract the maildir_dn from server so it is clear we are done
+    maildir_dn_i *maildir_dn = server->maildir_dn;
+    server->maildir_dn = NULL;
+    // now make the very last call into the maildir_dn_i
+    dirmgr_close_dn(&server->dirmgr, maildir_dn);
 }
 
 // only safe to call once
 static void server_close_onthread(server_t *server){
     /* now that we are onthread, it is safe to release refs for things we don't
        own ourselves */
-    if(server->maildir){
-        // extract the maildir from server so it is clear we are done
-        maildir_i *maildir = server->maildir;
-        server->maildir = NULL;
-        // now make the very last call into the maildir_i
-        dirmgr_close_dn(&server->dirmgr, maildir, &server->conn_dn);
+    if(server->maildir_dn){
+        server_close_maildir_onthread(server);
     }
 }
 

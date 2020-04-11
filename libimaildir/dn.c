@@ -1,14 +1,7 @@
 #include "libimaildir.h"
 
 // forward declarations
-static derr_t conn_dn_cmd(maildir_i*, imap_cmd_t*);
-
-static derr_t maildir_resp_not_allowed(maildir_i* maildir, imap_resp_t* resp){
-    (void)maildir;
-    (void)resp;
-    derr_t e = E_OK;
-    ORIG(&e, E_INTERNAL, "response not allowed from an downwards connection");
-}
+static derr_t conn_dn_cmd(maildir_dn_i*, imap_cmd_t*);
 
 // for views
 static const void *msg_view_jsw_get(const jsw_anode_t *node){
@@ -50,13 +43,8 @@ derr_t dn_new(dn_t **out, maildir_conn_dn_i *conn, imaildir_t *m){
     *dn = (dn_t){
         .m = m,
         .conn = conn,
-        .maildir = {
+        .maildir_dn = {
             .cmd = conn_dn_cmd,
-            .resp = maildir_resp_not_allowed,
-            // TODO: what to do about these functions?
-            .synced = NULL,
-            .selected = NULL,
-            .unselect = NULL,
         },
         .selected = false,
     };
@@ -408,10 +396,10 @@ fail:
 }
 
 // we either need to consume the cmd or free it
-static derr_t conn_dn_cmd(maildir_i *maildir, imap_cmd_t *cmd){
+static derr_t conn_dn_cmd(maildir_dn_i *maildir_dn, imap_cmd_t *cmd){
     derr_t e = E_OK;
 
-    dn_t *dn = CONTAINER_OF(maildir, dn_t, maildir);
+    dn_t *dn = CONTAINER_OF(maildir_dn, dn_t, maildir_dn);
 
     const ie_dstr_t *tag = cmd->tag;
     const imap_cmd_arg_t *arg = &cmd->arg;
