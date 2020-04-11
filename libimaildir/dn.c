@@ -1,5 +1,3 @@
-#include "libdstr/libdstr.h"
-
 #include "libimaildir.h"
 
 // forward declarations
@@ -23,6 +21,26 @@ static int jsw_cmp_uid(const void *a, const void *b){
     return JSW_NUM_CMP(*uida, *uidb);
 }
 
+// dn_free is meant to be called right after imaildir_unregister_dn()
+static void dn_finalize(refs_t *refs){
+    dn_t *dn = CONTAINER_OF(refs, dn_t, refs);
+
+    // release the conn_dn if we haven't yet
+    if(dn->conn) dn->conn->release(dn->conn);
+
+    // free all the message views
+    jsw_anode_t *node;
+    while((node = jsw_apop(&dn->views))){
+        msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
+        msg_view_free(&view);
+    }
+
+    refs_free(&dn->refs);
+
+    // free memory
+    free(dn);
+}
+
 derr_t dn_new(dn_t **out, maildir_conn_dn_i *conn, imaildir_t *m){
     derr_t e = E_OK;
     *out = NULL;
@@ -42,6 +60,9 @@ derr_t dn_new(dn_t **out, maildir_conn_dn_i *conn, imaildir_t *m){
         },
         .selected = false,
     };
+
+    PROP_GO(&e, refs_init(&dn->refs, 1, dn_finalize), fail_malloc);
+
     link_init(&dn->link);
 
     /* the view gets built during processing of the SELECT command, so that the
@@ -51,25 +72,10 @@ derr_t dn_new(dn_t **out, maildir_conn_dn_i *conn, imaildir_t *m){
     *out = dn;
 
     return e;
+
+fail_malloc:
+    free(dn);
 };
-
-// dn_free is meant to be called right after imaildir_unregister_dn()
-void dn_free(dn_t **dn){
-    if(*dn == NULL) return;
-    /* it's not allowed to remove the dn_t from imaildir.access.dns here, due
-       to race conditions in the cleanup sequence */
-
-    // free all the message views
-    jsw_anode_t *node;
-    while((node = jsw_apop(&(*dn)->views))){
-        msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
-        msg_view_free(&view);
-    }
-
-    // free memory
-    free(*dn);
-    *dn = NULL;
-}
 
 //// TODO: unify these send_* functions with the ones in sm_serve_logic?
 

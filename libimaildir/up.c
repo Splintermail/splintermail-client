@@ -15,6 +15,30 @@ static derr_t maildir_cmd_not_allowed(maildir_i* maildir, imap_cmd_t* cmd){
     ORIG(&e, E_INTERNAL, "command not allowed from an upwards connection");
 }
 
+static void up_finalize(refs_t *refs){
+    up_t *up = CONTAINER_OF(refs, up_t, refs);
+
+    // release the conn_up if we haven't yet
+    if(up->conn) up->conn->release(up->conn);
+
+    // cancel all callbacks
+    link_t *link;
+    while((link = link_list_pop_first(&up->cbs))){
+        imap_cmd_cb_t *cb = CONTAINER_OF(link, imap_cmd_cb_t, link);
+        cb->free(cb);
+    }
+
+    // free anything in the sequence_set_builder's
+    seq_set_builder_free(&up->uids_to_download);
+    seq_set_builder_free(&up->uids_to_expunge);
+    ie_seq_set_free(up->uids_being_expunged);
+
+    refs_free(&up->refs);
+
+    // free memory
+    free(up);
+}
+
 derr_t up_new(up_t **out, maildir_conn_up_i *conn, imaildir_t *m){
     derr_t e = E_OK;
     *out = NULL;
@@ -33,6 +57,8 @@ derr_t up_new(up_t **out, maildir_conn_up_i *conn, imaildir_t *m){
         },
     };
 
+    PROP_GO(&e, refs_init(&up->refs, 1, up_finalize), fail_malloc);
+
     // start with the himodseqvalue in the persistent cache
     hmsc_prep(&up->hmsc, imaildir_up_get_himodseq_up(m));
 
@@ -45,30 +71,11 @@ derr_t up_new(up_t **out, maildir_conn_up_i *conn, imaildir_t *m){
     *out = up;
 
     return e;
+
+fail_malloc:
+    free(up);
+    return e;
 };
-
-// up_free is meant to be called right after imaildir_unregister_up()
-void up_free(up_t **up){
-    if(*up == NULL) return;
-    /* it's not allowed to remove the up_t from imaildir.access.ups here, due
-       to race conditions in the cleanup sequence */
-
-    // cancel all callbacks
-    link_t *link;
-    while((link = link_list_pop_first(&(*up)->cbs))){
-        imap_cmd_cb_t *cb = CONTAINER_OF(link, imap_cmd_cb_t, link);
-        cb->free(cb);
-    }
-
-    // free anything in the sequence_set_builder's
-    seq_set_builder_free(&(*up)->uids_to_download);
-    seq_set_builder_free(&(*up)->uids_to_expunge);
-    ie_seq_set_free((*up)->uids_being_expunged);
-
-    // free memory
-    free(*up);
-    *up = NULL;
-}
 
 static ie_dstr_t *write_tag_up(derr_t *e, size_t tag){
     if(is_error(*e)) goto fail;

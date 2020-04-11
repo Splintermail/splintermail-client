@@ -1,9 +1,8 @@
 #include <lmdb.h>
 #include <string.h>
 
-#include "libdstr/libdstr.h"
-
 #include "libimaildir.h"
+
 
 /*
 LMDB does a lot of stuff we don't even need.  But importantly, it offers

@@ -1,6 +1,3 @@
-#include "libdstr/libdstr.h"
-#include "libimap/libimap.h"
-
 struct msg_base_ref_t;
 typedef struct msg_base_ref_t msg_base_ref_t;
 struct msg_base_t;

@@ -1,6 +1,13 @@
 #ifndef LIBIMAILDIR_H
 #define LIBIMAILDIR_H
 
+#include <uv.h>
+
+#include "libdstr/libdstr.h"
+#include "libimap/libimap.h"
+#include "refs.h"
+#include "crypto.h"
+
 #include "util.h"
 #include "msg.h"
 #include "name.h"

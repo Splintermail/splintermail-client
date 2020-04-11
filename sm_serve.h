@@ -4,6 +4,7 @@
 #include "libdstr/libdstr.h"
 #include "manager.h"
 #include "imap_session.h"
+#include "refs.h"
 #include "libimaildir/libimaildir.h"
 
 /* server is only responsible for navigating until just before the SELECTED

@@ -1,8 +1,3 @@
-#include <uv.h>
-
-#include "libdstr/libdstr.h"
-#include "crypto.h"
-
 /*
 
 imaildir_t coordinates multiple actors who might read/write to a single

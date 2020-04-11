@@ -651,6 +651,79 @@ References:
     triggers the event loop to close the socket on-thread, and then at a later
     time in a close_cb the reference finally gets downref'd.
 
+References, continued:
+    Now that we're in the imaildir_t development, we have lots more references.
+
+    I'll use boxes to draw general thread boundaries around several objects:
+     _____________
+    |             |
+    | imap_engine |-------------- imap_session_t
+    |_____________|                 _____|_____
+         |        \_____           |     |     |
+         |              |          | fetcher_t |
+  imap_session_t   imap_session_t  |     |     |
+     ____|_____     ____|_____     |    up_t   |
+    |    |     |   |    |     |    |_____|_____|
+    | server_t |   | server_t |          |
+    |    |     |   |    |     |          |
+    |   dn_t   |   |   dn_t   |          |
+    |____|_____|   |____|_____|          |
+         |              |        ________|___
+         |              +-------|            |
+         |                      | imaildir_t |
+         +----------------------|____________|
+
+    But the ownership structures are weird:
+      - imap_sessions are owned by fetchers and servers
+      - servers are all owned by a singleton server_mgr
+      - in real life, there will be a user_t owns several fetchers/servers
+
+      - dn_t and up_t are owned by the imaildir
+      - the imaildir_t is owned by the singleton dirmgr
+
+    Garbage collected languages separate the memory lifetime from the open/close
+    cycle.  Is that even my problem?
+
+    My current issues are:
+      - When is it safe for the dn_t to unref the server_t?  Right now there's
+        a mutex protection on imaildir->access->dns, so anybody who is going to
+        use that list has to hold the mutex, and you can be sure that when you
+        pull the dn out of the list nobody else will try to contact that
+        server.
+
+        Unless they are already using that dn_t.  The only thread who should
+        be using the dn_t is the server_t's thread, so right now if the server
+        closes the imaildir, the dn releases it's server, but if the dirmgr
+        closes the imaildir (which could happen on any thread), the dn does
+        not release the server until later, when the imaildir is being freed.
+
+        I don't like the weird logic there, where the release (and free) can
+        happen at two different times.
+
+        the dn_t cannot release the server while:
+          - the imaildir_t holds it in a list
+          - the server_t might be in a call to the dn_t
+
+        the dn_t cannot be freed while:
+          - the imaildir_t holds it in a list
+          - the server_t holds a reference to it at all
+
+        you could:
+          - let the imaildir_t's list be one ref
+          - let the server_t's pointer be the second ref
+          - write the finalizer of dn to release the server if it hasn't been
+            released
+
+        There's still the problem of "when does dn release its server in the
+        case that the imaildir force-closes it?"
+
+        This is just the classic problem of me not separating the finalizer
+        from the closer, simple as that.  A ref count to free the dn_t at the
+        right time would indeed help with the freeing problem, and putting a
+        conditional release of the server in the finalizer of the dn_t is all
+        that's needed.
+
+
 Life of a per-session data struct:
 
     session_allocator() -- called from any thread

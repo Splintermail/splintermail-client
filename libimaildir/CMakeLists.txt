@@ -11,5 +11,5 @@ add_library(
     util.c
     search.c
 )
-target_link_libraries(imaildir imap dstr lmdb crypto)
+target_link_libraries(imaildir imap dstr lmdb crypto refs)
 define_file_logname_for_target(imaildir)

@@ -3,6 +3,8 @@
 // up_t is all the state we have for an upwards connection
 typedef struct {
     imaildir_t *m;
+    // if this imaildir was force-closed, we have to unregister differently
+    bool force_closed;
     // the interfaced provided to us
     maildir_conn_up_i *conn;
     // the interface we provide
@@ -20,9 +22,12 @@ typedef struct {
     size_t tag;
     link_t cbs;  // imap_cmd_cb_t->link
     link_t link;  // imaildir_t->access.ups
+    // 2 refs: on for imaildir's access.ups, one for fetcher->maildir
+    refs_t refs;
 } up_t;
 DEF_CONTAINER_OF(up_t, maildir, maildir_i);
 DEF_CONTAINER_OF(up_t, link, link_t);
+DEF_CONTAINER_OF(up_t, refs, refs_t);
 
 typedef struct {
     up_t *up;
@@ -31,7 +36,7 @@ typedef struct {
 DEF_CONTAINER_OF(up_cb_t, cb, imap_cmd_cb_t);
 
 derr_t up_new(up_t **out, maildir_conn_up_i *conn, imaildir_t *m);
-void up_free(up_t **up);
+// no up_free, it has to be ref_dn'd
 
 derr_t make_select(up_t *up, unsigned int uidvld, unsigned long our_himodseq,
         imap_cmd_t **cmd_out, up_cb_t **cb_out);

@@ -4,10 +4,9 @@
 #include <time.h>
 #include <fcntl.h>
 
-#include "libdstr/libdstr.h"
-#include "uv_util.h"
-
 #include "libimaildir.h"
+
+#include "uv_util.h"
 
 
 #define HOSTNAME_COMPONENT_MAX_LEN 32
@@ -529,30 +528,15 @@ cu:
 derr_t imaildir_register_up(imaildir_t *m, maildir_conn_up_i *conn_up,
         maildir_i **maildir_out){
     derr_t e = E_OK;
-    /* TODO: redo this logic, it's too confusing.  Maybe introduce an unstarted
-       state or something?  I'm not quite sure how to fix the complexity. */
 
     // allocate a new up_t
     up_t *up;
     PROP(&e, up_new(&up, conn_up, m) );
 
     uv_mutex_lock(&m->access.lock);
-    if(m->access.failed){
-        ORIG_GO(&e, E_DEAD, "maildir in failed state", fail_lock);
-    }
 
     // check if we will be the primary up_t
     bool is_primary = link_list_isempty(&m->access.ups);
-    imap_cmd_t *cmd;
-    up_cb_t *up_cb;
-    if(is_primary){
-        maildir_log_i *log = m->log.log;
-        unsigned int uidvld = log->get_uidvld(log);
-        unsigned long himodseq = log->get_himodseq_up(log);
-        // prepare an initial SELECT to send
-        PROP_GO(&e, make_select(up, uidvld, himodseq, &cmd, &up_cb),
-                fail_lock);
-    }
 
     // add the up_t to the maildir
     link_list_append(&m->access.ups, &up->link);
@@ -564,20 +548,28 @@ derr_t imaildir_register_up(imaildir_t *m, maildir_conn_up_i *conn_up,
     // treat the connection state as "selected", even though we just sent it
     up->selected = true;
 
-    // everything's ready
     *maildir_out = &up->maildir;
+    ref_up(&up->refs);
 
+    /* everything's ready, further errors will be passed to the conn_up via
+       asynchronous mechanisms */
     if(is_primary){
-        // send SELECT if we are primary
-        up_send_cmd(up, cmd, up_cb);
+        derr_t e2 = E_OK;
+        imap_cmd_t *cmd;
+        up_cb_t *up_cb;
+        maildir_log_i *log = m->log.log;
+        unsigned int uidvld = log->get_uidvld(log);
+        unsigned long himodseq = log->get_himodseq_up(log);
+        // prepare an initial SELECT to send
+        IF_PROP(&e2, make_select(up, uidvld, himodseq, &cmd, &up_cb)){
+            up->conn->failure(up->conn, e2);
+            PASSED(e2);
+        }else{
+            // send SELECT if we are primary
+            up_send_cmd(up, cmd, up_cb);
+        }
     }
 
-    return e;
-
-fail_lock:
-    uv_mutex_unlock(&m->access.lock);
-// fail_up:
-    up_free(&up);
     return e;
 }
 
@@ -590,14 +582,9 @@ derr_t imaildir_register_dn(imaildir_t *m, maildir_conn_dn_i *conn_dn,
     PROP(&e, dn_new(&dn, conn_dn, m) );
 
     uv_mutex_lock(&m->access.lock);
-    if(m->access.failed){
-        ORIG_GO(&e, E_DEAD, "maildir in failed state", fail_lock);
-    }
-
     // add the dn_t to the maildir
     link_list_append(&m->access.dns, &dn->link);
     m->access.naccessors++;
-
     // done with access mutex
     uv_mutex_unlock(&m->access.lock);
 
@@ -605,13 +592,8 @@ derr_t imaildir_register_dn(imaildir_t *m, maildir_conn_dn_i *conn_dn,
        maildir_i->cmd() to send the SELECT command sent by the client */
 
     *maildir_out = &dn->maildir;
+    ref_up(&dn->refs);
 
-    return e;
-
-fail_lock:
-    uv_mutex_unlock(&m->access.lock);
-// fail_dn
-    dn_free(&dn);
     return e;
 }
 
@@ -622,18 +604,15 @@ void imaildir_unregister_up(maildir_i *maildir, maildir_conn_up_i *conn){
     imaildir_t *m = up->m;
 
     uv_mutex_lock(&m->access.lock);
-
-    /* In closing state, the list of accessors is not edited here.  This
-       ensures that the iteration through the accessors list during
-       imaildir_fail() is always safe. */
-    if(!m->access.failed){
+    if(!up->force_closed){
         // TODO: detect if the primary up_t has changed
+        // remove from its list
         link_remove(&up->link);
-        // release the interface
-        up->conn->release(up->conn);
+        // unref for maildir
+        ref_dn(&up->refs);
     }
-
-    up_free(&up);
+    // unref for conn
+    ref_dn(&up->refs);
 
     bool all_unregistered = (--m->access.naccessors == 0);
 
@@ -654,18 +633,14 @@ void imaildir_unregister_dn(maildir_i *maildir, maildir_conn_dn_i *conn){
     imaildir_t *m = dn->m;
 
     uv_mutex_lock(&m->access.lock);
-
-    /* In closing state, the list of accessors is not edited here.  This
-       ensures that the iteration through the accessors list during
-       imaildir_fail() is always safe. */
-    if(!m->access.failed){
-        // TODO: detect if the primary dn_t has changed
+    if(!dn->force_closed){
+        // remove from its list
         link_remove(&dn->link);
-        // release the interface
-        dn->conn->release(dn->conn);
+        // unref for maildir
+        ref_dn(&dn->refs);
     }
-
-    dn_free(&dn);
+    // unref for conn
+    ref_dn(&dn->refs);
 
     bool all_unregistered = (--m->access.naccessors == 0);
 
@@ -697,27 +672,47 @@ bool imaildir_synced(imaildir_t *m){
     return synced;
 }
 
+/* imaildir_fail actually just force-closes all of the current accessors, it
+   is the responsibility of the dirmgr to ensure nothing else connects */
 static void imaildir_fail(imaildir_t *m, derr_t error){
-    uv_mutex_lock(&m->access.lock);
-    bool do_fail = !m->access.failed;
-    m->access.failed = true;
-    uv_mutex_unlock(&m->access.lock);
-
-    if(!do_fail) goto done;
-
+    // we'll make copies of the current accessors
+    link_t ups;
+    link_t dns;
     link_t *link;
+
+    link_init(&ups);
+    link_init(&dns);
+
+    uv_mutex_lock(&m->access.lock);
+    // mark all up_t's and dn_t's as force-closed during the copy
     while((link = link_list_pop_first(&m->access.ups)) != NULL){
         up_t *up = CONTAINER_OF(link, up_t, link);
-        // if there was an error, share it with all of the accessors.
-        up->conn->failure(up->conn, BROADCAST(error));
+        up->force_closed = true;
+        link_list_append(&ups, link);
     }
     while((link = link_list_pop_first(&m->access.dns)) != NULL){
         dn_t *dn = CONTAINER_OF(link, dn_t, link);
+        dn->force_closed = true;
+        link_list_append(&dns, link);
+    }
+    uv_mutex_unlock(&m->access.lock);
+
+    // now go through our copied lists and send the failure message to each one
+
+    while((link = link_list_pop_first(&ups)) != NULL){
+        up_t *up = CONTAINER_OF(link, up_t, link);
+        // if there was an error, share it with all of the accessors.
+        up->conn->failure(up->conn, BROADCAST(error));
+        // unref for imaildir
+        ref_dn(&up->refs);
+    }
+    while((link = link_list_pop_first(&dns)) != NULL){
+        dn_t *dn = CONTAINER_OF(link, dn_t, link);
         // if there was an error, share it with all of the accessors.
         dn->conn->failure(dn->conn, BROADCAST(error));
+        ref_dn(&up->refs);
     }
 
-done:
     // free the error
     DROP_VAR(&error);
 }

@@ -1,9 +1,3 @@
-#include <uv.h>
-
-#include "libdstr/libdstr.h"
-#include "libimap/libimap.h"
-#include "crypto.h"
-
 /*
 The imap maildir is a major part of the logic in the system.  In a pure imap
 client, the application logic only has to LIST folders, then sequentially open

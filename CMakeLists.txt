@@ -152,6 +152,7 @@ set(OBJ_TGTS
     tls_engine
     imap_engine
     queue
+    refs
     imap_session
     # imap_ditm_logic
     sm_fetch_logic
@@ -236,6 +237,7 @@ obj_depend_obj(key_tool ssl_errors api_client crypto)
 obj_depend_obj(ditm pop_client pop_server maildir)
 obj_depend_obj(uv_util dstr)
 obj_depend_obj(queue uv_interface uv_util)
+obj_depend_obj(refs uv_interface uv_util)
 obj_depend_obj(engine queue)
 obj_depend_obj(loop engine)
 obj_depend_obj(tls_engine engine networking)

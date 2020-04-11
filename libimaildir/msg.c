@@ -1,5 +1,3 @@
-#include "libdstr/libdstr.h"
-
 #include "libimaildir.h"
 
 derr_t msg_meta_new(msg_meta_t **out, msg_flags_t flags, unsigned long modseq){
