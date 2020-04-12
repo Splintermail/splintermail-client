@@ -637,7 +637,9 @@ bool server_more_work(server_t *server){
     return !server->greeting_sent
         || !link_list_isempty(&server->ts.unhandled_cmds)
         || !link_list_isempty(&server->ts.maildir_resps)
-        || (server->pause && server->pause->ready(server->pause));
+        || (server->pause && server->pause->ready(server->pause))
+        || (server->maildir_dn
+                && server->maildir_dn->more_work(server->maildir_dn));
 }
 
 // we either need to consume the command or free it
@@ -826,6 +828,12 @@ derr_t server_do_work(server_t *server){
     if(!server->greeting_sent){
         PROP(&e, send_greeting(server));
         server->greeting_sent = true;
+    }
+
+    // if the maildir_dn needs on-thread work... do it.
+    while(server->maildir_dn
+            && server->maildir_dn->more_work(server->maildir_dn)){
+        PROP(&e, server->maildir_dn->do_work(server->maildir_dn) );
     }
 
     // unhandled client commands from the client

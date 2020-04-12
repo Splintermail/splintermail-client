@@ -135,6 +135,8 @@ struct maildir_conn_up_i {
 struct maildir_conn_dn_i {
     // the maildir wants to pass an imap response over the wire
     void (*resp)(maildir_conn_dn_i*, imap_resp_t*);
+    // the maildir has some processing that needs to happen on-thread
+    void (*advance)(maildir_conn_dn_i*);
     // The maildir BROADCASTs its failures when it dies
     /* note the asymmetry: the maildir resource can tell the actor owning the
        conn_up that the actor must die with this call, but there is no call for
@@ -145,7 +147,6 @@ struct maildir_conn_dn_i {
 };
 
 struct maildir_up_i {
-    // imap responses must come from an upwards connection
     derr_t (*resp)(maildir_up_i*, imap_resp_t*);
 
     // return true if the maildir is currently synchronized with the mailserver
@@ -161,9 +162,12 @@ struct maildir_up_i {
 };
 
 struct maildir_dn_i {
-    // imap commands must come from a downwards connection
     // (the first one must be the SELECT)
     derr_t (*cmd)(maildir_dn_i*, imap_cmd_t*);
+    // check if there is on-thread processing needed
+    bool (*more_work)(maildir_dn_i*);
+    // do some on-thread work
+    derr_t (*do_work)(maildir_dn_i*);
 
     // unregistering must be done through the imaildir_t or dirmgr_t
 };

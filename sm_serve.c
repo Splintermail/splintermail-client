@@ -123,6 +123,12 @@ static void server_conn_dn_resp(maildir_conn_dn_i *conn_dn, imap_resp_t *resp){
 }
 
 // part of the maildir_conn_dn_i, meaning this can be called on- or off-thread
+static void server_conn_dn_advance(maildir_conn_dn_i *conn_dn){
+    server_t *server = CONTAINER_OF(conn_dn, server_t, conn_dn);
+    server_advance(server);
+}
+
+// part of the maildir_conn_dn_i, meaning this can be called on- or off-thread
 static void server_conn_dn_failure(maildir_conn_dn_i *conn_dn, derr_t error){
     server_t *server = CONTAINER_OF(conn_dn, server_t, conn_dn);
 
@@ -186,6 +192,7 @@ static derr_t server_init(server_t *server, imap_pipeline_t *p,
 
     server->conn_dn = (maildir_conn_dn_i){
         .resp = server_conn_dn_resp,
+        .advance = server_conn_dn_advance,
         .failure = server_conn_dn_failure,
         .release = server_conn_dn_release,
     };

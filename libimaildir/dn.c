@@ -2,6 +2,8 @@
 
 // forward declarations
 static derr_t conn_dn_cmd(maildir_dn_i*, imap_cmd_t*);
+static bool conn_dn_more_work(maildir_dn_i*);
+static derr_t conn_dn_do_work(maildir_dn_i*);
 
 // for views
 static const void *msg_view_jsw_get(const jsw_anode_t *node){
@@ -45,6 +47,8 @@ derr_t dn_new(dn_t **out, maildir_conn_dn_i *conn, imaildir_t *m){
         .conn = conn,
         .maildir_dn = {
             .cmd = conn_dn_cmd,
+            .more_work = conn_dn_more_work,
+            .do_work = conn_dn_do_work,
         },
         .selected = false,
     };
@@ -463,5 +467,16 @@ static derr_t conn_dn_cmd(maildir_dn_i *maildir_dn, imap_cmd_t *cmd){
 cu_cmd:
     imap_cmd_free(cmd);
 
+    return e;
+}
+
+static bool conn_dn_more_work(maildir_dn_i *maildir_dn){
+    (void)maildir_dn;
+    return false;
+}
+
+static derr_t conn_dn_do_work(maildir_dn_i *maildir_dn){
+    (void)maildir_dn;
+    derr_t e = E_OK;
     return e;
 }
