@@ -1,3 +1,11 @@
+// malloc for writing builder APIs
+#define IE_MALLOC(e_, type_, var_, label_) \
+    type_ *var_ = malloc(sizeof(*var_)); \
+    if(var_ == NULL){ \
+        ORIG_GO(e_, E_NOMEM, "no memory", label_); \
+    } \
+    *var_ = (type_){0}
+
 typedef struct ie_dstr_t {
     dstr_t dstr;
     struct ie_dstr_t *next;
@@ -426,8 +434,10 @@ typedef struct {
 // FETCH responses
 
 typedef struct {
+    // num is either a seq num or a uid, depending on the command
     unsigned int num;
     ie_fflags_t *flags;
+    // uid is for response to e.g. `FETCH 1 UID`
     unsigned int uid;
     imap_time_t intdate;
     ie_dstr_t *content;
@@ -899,6 +909,7 @@ ie_store_mods_t *ie_store_mods_unchgsince(derr_t *e, unsigned long unchgsince);
 ie_store_mods_t *ie_store_mods_add(derr_t *e, ie_store_mods_t *list,
         ie_store_mods_t *mod);
 void ie_store_mods_free(ie_store_mods_t *mods);
+ie_store_mods_t *ie_store_mods_copy(derr_t *e, const ie_store_mods_t *old);
 
 // status-type response codes
 
@@ -970,6 +981,8 @@ ie_store_cmd_t *ie_store_cmd_new(derr_t *e, bool uid_mode,
         ie_seq_set_t *seq_set, ie_store_mods_t *mods, int sign, bool silent,
         ie_flags_t *flags);
 void ie_store_cmd_free(ie_store_cmd_t *store);
+ie_store_cmd_t *ie_store_cmd_copy(derr_t *e, const ie_store_cmd_t *old);
+
 
 ie_copy_cmd_t *ie_copy_cmd_new(derr_t *e, bool uid_mode,
         ie_seq_set_t *seq_set, ie_mailbox_t *m);

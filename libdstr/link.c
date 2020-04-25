@@ -24,6 +24,21 @@ void link_list_append(link_t *head, link_t *link){
     link->next = head;
 }
 
+void link_list_append_list(link_t *recip, link_t *donor){
+    if(link_list_isempty(donor)) return;
+
+    link_t *donor_first = donor->next;
+    link_t *donor_last = donor->prev;
+
+    recip->prev->next = donor_first;
+    donor_first->prev = recip->prev;
+
+    recip->prev = donor_last;
+    donor_last->next = recip;
+
+    link_init(donor);
+}
+
 link_t *link_list_pop_first(link_t *head){
     link_t *first = head->next;
     if(first == head){

@@ -72,18 +72,24 @@ struct msg_flags_t {
 };
 
 struct msg_meta_t {
+    unsigned int uid;
     msg_flags_t flags;
     msg_mod_t mod;
+    // for tracking lists of msg_meta_t's during updates
+    link_t link;  // meta_diff_t->new or meta_diff_t->old
     // TODO: put storage stuff here when we do block allocation of msg_meta_t's
 };
-DEF_CONTAINER_OF(msg_meta_t, flags, msg_flags_t);
+// DEF_CONTAINER_OF(msg_meta_t, flags, msg_flags_t);
 DEF_CONTAINER_OF(msg_meta_t, mod, msg_mod_t);
+DEF_CONTAINER_OF(msg_meta_t, link, link_t);
 
 // an accessor-owned view of a message
 struct msg_view_t {
     // recent flag is only given to one server accessor, to pass to one client
     bool recent;
     const msg_base_ref_t *base;
+    /* this could technicaly be just a struct, but it'll be easier when I want
+       to support extension flags if I leave it as a pointer */
     const msg_flags_t *flags;
     // for tracking the sequence ID sorted by UID
     jsw_anode_t node;
@@ -107,7 +113,72 @@ DEF_CONTAINER_OF(msg_expunge_t, node, jsw_anode_t);
 DEF_CONTAINER_OF(msg_expunge_t, mod, msg_mod_t);
 
 
-derr_t msg_meta_new(msg_meta_t **out, msg_flags_t flags, unsigned long modseq);
+typedef enum {
+    UPDATE_REQ_STORE,
+} update_req_type_e;
+
+typedef union {
+    /* this store command must use UIDs, even if it originated as one with
+       sequence numbers.  That calculation must happen in the dn_t, since the
+       translation must be done against the current view of that accessor. */
+    ie_store_cmd_t *uid_store;
+} update_req_val_u;
+
+// a request for an update
+typedef struct {
+    const void *requester;
+    update_req_type_e type;
+    update_req_val_u val;
+    link_t link;  // imaildir_t->update.pending
+} update_req_t;
+
+/* updates are represented as two parts:
+    - a single refs_t is stored with the imaildir_t for each update, with a
+      finalizer that runs when all of the accessors have accepted their
+      respective update_t's.  The finalizer to the refs_t will free the refs_t
+      but also take any follow-up actions (removing files from the file system,
+      in the case of an EXPUNGE update, for instance)
+    - a separately-allocated update_t is passed to each accessor, with a
+      pointer to the shared refs_t. */
+
+typedef enum {
+    // a new message has arrived
+    UPDATE_NEW,
+    // new metadata for a message
+    UPDATE_META,
+    // a newly expunged message
+    // TODO: what would this update look like?  how are expunges stored in the dn_t?
+    UDPATE_EXPUNGE,
+} update_type_e;
+
+typedef struct {
+    union {
+        // dn_t owns this
+        msg_view_t *view;
+        // dn_t does not own this
+        const msg_meta_t *meta;
+        // dn_t owns this
+        msg_expunge_t *expunge;
+    } val;
+    link_t link; // update_t->updates
+} update_val_t;
+DEF_CONTAINER_OF(update_val_t, link, link_t);
+
+// an update that needs to get propagated to each accessor
+typedef struct {
+    const void *requester;
+    // this is upref'd/downref'd automatically in update_new()/update_free()
+    refs_t *refs;
+    // for storing pending updates
+    link_t link;  // up_t->pending_updates or dn_t->pending_updates
+    update_type_e type;
+    link_t updates;  // update_val_t->link
+} update_t;
+DEF_CONTAINER_OF(update_t, link, link_t);
+
+
+derr_t msg_meta_new(msg_meta_t **out, unsigned int uid, msg_flags_t flags,
+        unsigned long modseq);
 void msg_meta_free(msg_meta_t **meta);
 
 // msg_base_t is restored from two places in a two-step process
@@ -130,6 +201,20 @@ void msg_view_free(msg_view_t **view);
 derr_t msg_expunge_new(msg_expunge_t **out, unsigned int uid,
         msg_expunge_state_e state, unsigned long modseq);
 void msg_expunge_free(msg_expunge_t **expunge);
+
+// update_req_store has a builder API
+update_req_t *update_req_store_new(derr_t *e, ie_store_cmd_t *uid_store,
+        const void *requester);
+void update_req_free(update_req_t *req);
+
+// you have to manually fill the update_t->tree
+// this will also call ref_up (when successful)
+derr_t update_new(update_t **out, refs_t *refs, const void *requester,
+        update_type_e type);
+// this will empty the update->updates if you haven't already
+// this will also call ref_dn
+void update_free(update_t **update);
+
 
 // helper functions for writing debug information to buffers
 derr_t msg_base_write(const msg_base_t *base, dstr_t *out);
@@ -168,6 +253,27 @@ static inline msg_flags_t msg_flags_and(msg_flags_t a,
     };
 }
 
+static inline msg_flags_t msg_flags_or(msg_flags_t a,
+        msg_flags_t b){
+    return (msg_flags_t){
+        .answered = a.answered | b.answered,
+        .flagged  = a.flagged  | b.flagged,
+        .seen     = a.seen     | b.seen,
+        .draft    = a.draft    | b.draft,
+        .deleted  = a.deleted  | b.deleted,
+    };
+}
+
+static inline msg_flags_t msg_flags_not(msg_flags_t a){
+    return (msg_flags_t){
+        .answered = !a.answered,
+        .flagged  = !a.flagged,
+        .seen     = !a.seen,
+        .draft    = !a.draft,
+        .deleted  = !a.deleted,
+    };
+}
+
 static inline msg_flags_t msg_flags_from_fetch_flags(ie_fflags_t *ff){
     if(!ff) return (msg_flags_t){0};
 
@@ -177,5 +283,17 @@ static inline msg_flags_t msg_flags_from_fetch_flags(ie_fflags_t *ff){
         .seen     = ff->seen,
         .draft    = ff->draft,
         .deleted  = ff->deleted,
+    };
+}
+
+static inline msg_flags_t msg_flags_from_flags(ie_flags_t *f){
+    if(!f) return (msg_flags_t){0};
+
+    return (msg_flags_t){
+        .answered = f->answered,
+        .flagged  = f->flagged,
+        .seen     = f->seen,
+        .draft    = f->draft,
+        .deleted  = f->deleted,
     };
 }

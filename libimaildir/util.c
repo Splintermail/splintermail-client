@@ -2,6 +2,39 @@
 
 #include "libimaildir.h"
 
+const void *msg_view_jsw_get(const jsw_anode_t *node){
+    const msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
+    return (void*)&view->base->uid;
+}
+
+const void *msg_expunge_jsw_get(const jsw_anode_t *node){
+    const msg_expunge_t *expunge = CONTAINER_OF(node, msg_expunge_t, node);
+    return (void*)&expunge->uid;
+}
+
+const void *msg_mod_jsw_get(const jsw_anode_t *node){
+    const msg_mod_t *mod = CONTAINER_OF(node, msg_mod_t, node);
+    return (void*)&mod->modseq;
+}
+
+const void *msg_base_jsw_get(const jsw_anode_t *node){
+    const msg_base_t *base = CONTAINER_OF(node, msg_base_t, node);
+    return (void*)&base->ref.uid;
+}
+
+int jsw_cmp_modseq(const void *a, const void *b){
+    const unsigned long *modseqa = a;
+    const unsigned long *modseqb = b;
+    return JSW_NUM_CMP(*modseqa, *modseqb);
+}
+
+int jsw_cmp_uid(const void *a, const void *b){
+    const unsigned int *uida = a;
+    const unsigned int *uidb = b;
+    return JSW_NUM_CMP(*uida, *uidb);
+}
+
+
 void imap_cmd_cb_prep(imap_cmd_cb_t *cb, size_t tag, imap_cmd_cb_call_f call,
         imap_cmd_cb_free_f free){
     *cb = (imap_cmd_cb_t){

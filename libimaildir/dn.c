@@ -1,24 +1,25 @@
 #include "libimaildir.h"
 
+#include "uv_util.h"
+
 // forward declarations
 static derr_t conn_dn_cmd(maildir_dn_i*, imap_cmd_t*);
 static bool conn_dn_more_work(maildir_dn_i*);
 static derr_t conn_dn_do_work(maildir_dn_i*);
 
-// for views
-static const void *msg_view_jsw_get(const jsw_anode_t *node){
-    const msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
-    return (void*)&view->base->uid;
-}
-static int jsw_cmp_uid(const void *a, const void *b){
-    const unsigned int *uida = a;
-    const unsigned int *uidb = b;
-    return JSW_NUM_CMP(*uida, *uidb);
-}
-
-// dn_free is meant to be called right after imaildir_unregister_dn()
 static void dn_finalize(refs_t *refs){
     dn_t *dn = CONTAINER_OF(refs, dn_t, refs);
+
+    ie_dstr_free(dn->next_resp_tag);
+
+    // free any unhandled updates
+    link_t *link;
+    while((link = link_list_pop_first(&dn->pending_updates.list))){
+        update_t *update = CONTAINER_OF(link, update_t, link);
+        update_free(&update);
+    }
+
+    uv_mutex_destroy(&dn->pending_updates.mutex);
 
     // release the conn_dn if we haven't yet
     if(dn->conn) dn->conn->release(dn->conn);
@@ -53,9 +54,16 @@ derr_t dn_new(dn_t **out, maildir_conn_dn_i *conn, imaildir_t *m){
         .selected = false,
     };
 
-    PROP_GO(&e, refs_init(&dn->refs, 1, dn_finalize), fail_malloc);
+    int ret = uv_mutex_init(&dn->pending_updates.mutex);
+    if(ret < 0){
+        TRACE(&e, "uv_mutex_init: %x\n", FUV(&ret));
+        ORIG_GO(&e, uv_err_type(ret), "error initializing mutex", fail_malloc);
+    }
+
+    PROP_GO(&e, refs_init(&dn->refs, 1, dn_finalize), fail_mutex);
 
     link_init(&dn->link);
+    link_init(&dn->pending_updates.list);
 
     /* the view gets built during processing of the SELECT command, so that the
        CONDSTORE/QRESYNC extensions can be handled efficiently */
@@ -65,6 +73,8 @@ derr_t dn_new(dn_t **out, maildir_conn_dn_i *conn, imaildir_t *m){
 
     return e;
 
+fail_mutex:
+    uv_mutex_destroy(&dn->pending_updates.mutex);
 fail_malloc:
     free(dn);
 };
@@ -399,6 +409,92 @@ fail:
     return e;
 }
 
+// take a sequence set and create a UID seq set (builder api)
+static ie_seq_set_t *copy_seq_to_uids(derr_t *e, dn_t *dn, bool uid_mode,
+        const ie_seq_set_t *old){
+    if(is_error(*e)) goto fail;
+
+    seq_set_builder_t ssb;
+    seq_set_builder_prep(&ssb);
+
+    // get the last UID, for replacing 0's we see in the seq_set
+    jsw_atrav_t trav;
+    jsw_anode_t *node = jsw_atlast(&trav, &dn->views);
+    msg_view_t *last_view = CONTAINER_OF(node, msg_view_t, node);
+    unsigned int last_uid = last_view->base->uid;
+
+    for(const ie_seq_set_t *ptr = old; ptr != NULL; ptr = ptr->next){
+        // handle zeros
+        unsigned int n1 = ptr->n1 ? ptr->n1 : last_uid;
+        unsigned int n2 = ptr->n2 ? ptr->n2 : last_uid;
+        // reorder args
+        unsigned int a = MIN(n1, n2);
+        unsigned int b = MAX(n1, n2);
+        // avoid infinite loops with a do/while loop
+        unsigned int i = a;
+        do {
+            if(uid_mode){
+                // UID in range?
+                if(i > last_uid) break;
+                // UID in mailbox?
+                node = jsw_afind(&dn->views, &i, NULL);
+                if(!node) continue;
+                PROP_GO(e, seq_set_builder_add_val(&ssb, i), fail_ssb);
+            }else{
+                // sequence number in range?
+                if(i >= dn->views.size) break;
+                // sequence number in mailbox?
+                node = jsw_aindex(&dn->views, (size_t)i);
+                if(!node) continue;
+                msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
+                unsigned int uid = view->base->uid;
+                PROP_GO(e, seq_set_builder_add_val(&ssb, uid), fail_ssb);
+            }
+        } while(i++ != b);
+    }
+
+    return seq_set_builder_extract(e, &ssb);
+
+fail_ssb:
+    seq_set_builder_free(&ssb);
+fail:
+    return NULL;
+}
+
+static derr_t store_cmd(dn_t *dn, const ie_dstr_t *tag,
+        const ie_store_cmd_t *store){
+    derr_t e = E_OK;
+
+    // store commands can be ignored when there are no messages
+    if(dn->views.size == 0){
+        PROP(&e, send_ok(dn, tag, &DSTR_LIT("nuthin to store!")) );
+        return e;
+    }
+
+    // save this tag
+    ie_dstr_free(dn->next_resp_tag);
+    dn->next_resp_tag = ie_dstr_copy(&e, tag);
+
+    // convert the the range to local uids
+    ie_store_cmd_t *uid_store = ie_store_cmd_new(&e,
+        store->uid_mode,
+        copy_seq_to_uids(&e, dn, store->uid_mode, store->seq_set),
+        ie_store_mods_copy(&e, store->mods),
+        store->sign,
+        store->silent,
+        ie_flags_copy(&e, store->flags)
+    );
+
+    // now send the uid_store to the imaildir_t
+    update_req_t *req = update_req_store_new(&e, uid_store, dn);
+
+    CHECK(&e);
+
+    PROP(&e, imaildir_request_update(dn->m, req) );
+
+    return e;
+}
+
 // we either need to consume the cmd or free it
 static derr_t conn_dn_cmd(maildir_dn_i *maildir_dn, imap_cmd_t *cmd){
     derr_t e = E_OK;
@@ -431,10 +527,13 @@ static derr_t conn_dn_cmd(maildir_dn_i *maildir_dn, imap_cmd_t *cmd){
             PROP_GO(&e, send_ok(dn, tag, &DSTR_LIT("zzzzz...")), cu_cmd);
             break;
 
+        case IMAP_CMD_STORE:
+            PROP_GO(&e, store_cmd(dn, tag, arg->store), cu_cmd);
+            break;
+
         // things we need to support here
         case IMAP_CMD_EXPUNGE:
         case IMAP_CMD_FETCH:
-        case IMAP_CMD_STORE:
         case IMAP_CMD_COPY:
 
         // supported in a different layer
@@ -471,12 +570,126 @@ cu_cmd:
 }
 
 static bool conn_dn_more_work(maildir_dn_i *maildir_dn){
-    (void)maildir_dn;
-    return false;
+    dn_t *dn = CONTAINER_OF(maildir_dn, dn_t, maildir_dn);
+    return dn->pending_updates.ready;
 }
 
-static derr_t conn_dn_do_work(maildir_dn_i *maildir_dn){
-    (void)maildir_dn;
+static derr_t send_flags_update(dn_t *dn, unsigned int num, msg_flags_t flags,
+        bool recent){
     derr_t e = E_OK;
+
+    ie_fflags_t *ff = ie_fflags_new(&e);
+    if(flags.answered) ff = ie_fflags_add_simple(&e, ff, IE_FFLAG_ANSWERED);
+    if(flags.flagged)  ff = ie_fflags_add_simple(&e, ff, IE_FFLAG_FLAGGED);
+    if(flags.seen)     ff = ie_fflags_add_simple(&e, ff, IE_FFLAG_DELETED);
+    if(flags.draft)    ff = ie_fflags_add_simple(&e, ff, IE_FFLAG_SEEN);
+    if(flags.deleted)  ff = ie_fflags_add_simple(&e, ff, IE_FFLAG_DRAFT);
+    if(recent)         ff = ie_fflags_add_simple(&e, ff, IE_FFLAG_RECENT);
+
+    // TODO: support modseq here too
+    ie_fetch_resp_t *fetch = ie_fetch_resp_new(&e);
+    fetch = ie_fetch_resp_num(&e, fetch, num);
+    fetch = ie_fetch_resp_flags(&e, fetch, ff);
+
+    imap_resp_arg_t arg = {.fetch=fetch};
+    imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_FETCH, arg);
+    CHECK(&e);
+
+    dn->conn->resp(dn->conn, resp);
+
     return e;
+}
+
+static derr_t process_meta_update(dn_t *dn, const update_t *update){
+    derr_t e = E_OK;
+
+    update_val_t *update_val;
+    LINK_FOR_EACH(update_val, &update->updates, update_val_t, link){
+        const msg_meta_t *meta = update_val->val.meta;
+
+        // find our view of this uid
+        size_t idx;
+        jsw_anode_t *node = jsw_afind(&dn->views, &meta->uid, &idx);
+        if(!node){
+            LOG_ERROR("missing uid in dn.c::process_meta_update()\n");
+            continue;
+        }
+        if(idx > UINT_MAX){
+            LOG_ERROR("index too high for a sequence number (%x)!\n", FU(idx));
+        }
+        unsigned int seq_num = (unsigned int)idx;
+        msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
+
+        // send a FETCH update with the new flags.
+        // TODO: should we be sending this when there is no change?
+        // TODO: how do we avoid sending this for FLAGS.SILENT?
+        // TODO: pass in uid or seq num?
+        PROP(&e, send_flags_update(dn, meta->uid, meta->flags, view->recent) );
+
+        // update the meta in our view
+        view->flags = &meta->flags;
+    }
+
+    return e;
+}
+
+// process updates until we hit our own update
+static derr_t conn_dn_do_work(maildir_dn_i *maildir_dn){
+    derr_t e = E_OK;
+
+    dn_t *dn = CONTAINER_OF(maildir_dn, dn_t, maildir_dn);
+
+    uv_mutex_lock(&dn->pending_updates.mutex);
+    dn->pending_updates.ready = false;
+
+    update_t *update, *temp;
+    LINK_FOR_EACH_SAFE(
+        update, temp, &dn->pending_updates.list, update_t, link
+    ){
+        bool last_update_to_process = (update->requester == dn);
+
+        switch(update->type){
+            case UPDATE_NEW:
+                LOG_ERROR("don't know what to do with UDPATE_NEW yet\n");
+                break;
+
+            case UPDATE_META:
+                // process the event right now
+                e = process_meta_update(dn, update);
+                link_remove(&update->link);
+                update_free(&update);
+                PROP_GO(&e, e, unlock);
+                break;
+
+            case UDPATE_EXPUNGE:
+                LOG_ERROR("don't know what to do with UPDATE_EXPUNGE yet\n");
+                break;
+        }
+
+        if(last_update_to_process) break;
+
+        continue;
+
+    }
+
+    PROP(&e, send_ok(dn, dn->next_resp_tag, &DSTR_LIT("as you wish")) );
+
+unlock:
+    uv_mutex_unlock(&dn->pending_updates.mutex);
+
+    return e;
+}
+
+void dn_update(dn_t *dn, update_t *update){
+    // was this our request?
+    bool advance = update->requester == dn;
+
+    uv_mutex_lock(&dn->pending_updates.mutex);
+    link_list_append(&dn->pending_updates.list, &update->link);
+    uv_mutex_unlock(&dn->pending_updates.mutex);
+
+    if(advance){
+        dn->pending_updates.ready = true;
+        dn->conn->advance(dn->conn);
+    }
 }

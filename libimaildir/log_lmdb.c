@@ -551,7 +551,7 @@ static derr_t read_one_message(unsigned int uid, msg_base_state_e state,
 
     // allocate a new meta object
     msg_meta_t *meta;
-    PROP(&e, msg_meta_new(&meta, flags, modseq) );
+    PROP(&e, msg_meta_new(&meta, uid, flags, modseq) );
 
     // allocate a new base object
     msg_base_t *base;

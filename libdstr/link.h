@@ -11,6 +11,9 @@ void link_init(link_t *l);
 void link_list_prepend(link_t *head, link_t *link);
 void link_list_append(link_t *head, link_t *link);
 
+// empty the donor list into the recip list
+void link_list_append_list(link_t *recip, link_t *donor);
+
 // pop a single element, or return NULL if there is none
 link_t *link_list_pop_first(link_t *head);
 link_t *link_list_pop_last(link_t *head);

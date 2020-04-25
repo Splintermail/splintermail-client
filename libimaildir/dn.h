@@ -15,6 +15,15 @@ typedef struct {
     jsw_atree_t views;  // msg_view_t->node
     // 2 refs: on for imaildir's access.dns, one for server->maildir
     refs_t refs;
+    // updates that have not yet been accepted
+    struct {
+        uv_mutex_t mutex;
+        link_t list;  // update_t->link
+        // this is set to true after receiving an update we were awaiting
+        bool ready;
+    } pending_updates;
+    // for tagging status type responses after async operations
+    ie_dstr_t *next_resp_tag;
 } dn_t;
 DEF_CONTAINER_OF(dn_t, maildir_dn, maildir_dn_i);
 DEF_CONTAINER_OF(dn_t, link, link_t);
@@ -23,4 +32,4 @@ DEF_CONTAINER_OF(dn_t, refs, refs_t);
 derr_t dn_new(dn_t **out, maildir_conn_dn_i *conn, imaildir_t *m);
 // no dn_free, it has to be ref_dn'd
 
-void dn_send_resp(dn_t *dn, imap_resp_t *resp);
+void dn_update(dn_t *dn, update_t *update);

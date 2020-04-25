@@ -197,7 +197,6 @@ static derr_t populate_msgs(imaildir_t *m){
         }
     }
 
-
     return e;
 }
 
@@ -271,34 +270,6 @@ static derr_t delete_all_msg_files(const string_builder_t *maildir_path){
     }
 
     return e;
-}
-
-// for maildir.content.msgs
-static const void *msg_base_jsw_get(const jsw_anode_t *node){
-    const msg_base_t *base = CONTAINER_OF(node, msg_base_t, node);
-    return (void*)&base->ref.uid;
-}
-static int jsw_cmp_uid(const void *a, const void *b){
-    const unsigned int *uida = a;
-    const unsigned int *uidb = b;
-    return JSW_NUM_CMP(*uida, *uidb);
-}
-
-// for maildir.content.expunged
-static const void *msg_expunge_jsw_get(const jsw_anode_t *node){
-    const msg_expunge_t *expunge = CONTAINER_OF(node, msg_expunge_t, node);
-    return (void*)&expunge->uid;
-}
-
-// for maildir.content.mods
-static const void *msg_mod_jsw_get(const jsw_anode_t *node){
-    const msg_mod_t *mod = CONTAINER_OF(node, msg_mod_t, node);
-    return (void*)&mod->modseq;
-}
-static int jsw_cmp_modseq(const void *a, const void *b){
-    const unsigned long *modseqa = a;
-    const unsigned long *modseqb = b;
-    return JSW_NUM_CMP(*modseqa, *modseqb);
 }
 
 derr_t imaildir_init(imaildir_t *m, string_builder_t path, const dstr_t *name,
@@ -655,13 +626,11 @@ bool imaildir_synced(imaildir_t *m){
     bool synced = false;
 
     uv_mutex_lock(&m->access.lock);
-    if(!m->access.failed){
-        // only need to check the primary up_t
-        if(!link_list_isempty(&m->access.ups)){
-            link_t *link = m->access.ups.next;
-            up_t *primary_up = CONTAINER_OF(link, up_t, link);
-            synced = primary_up->synced;
-        }
+    // only need to check the primary up_t
+    if(!link_list_isempty(&m->access.ups)){
+        link_t *link = m->access.ups.next;
+        up_t *primary_up = CONTAINER_OF(link, up_t, link);
+        synced = primary_up->synced;
     }
     uv_mutex_unlock(&m->access.lock);
 
@@ -717,6 +686,242 @@ static void imaildir_fail(imaildir_t *m, derr_t error){
 // useful if an open maildir needs to be deleted
 void imaildir_forceclose(imaildir_t *m){
     imaildir_fail(m, E_OK);
+}
+
+/* the new metas should be released (that is, their links reset to look like
+   empty lists) as soon as we are done creating all the update_t's */
+static void disconnect_new_metas(link_t *new_metas){
+    // clean up the new metas' links
+    while(link_list_pop_first(new_metas)){};
+}
+
+/* the old metas should be released when all update_t's referencing any of them
+   have been accepted */
+static void free_old_metas(link_t *old_metas){
+    link_t *link;
+    while((link = link_list_pop_first(old_metas))){
+        msg_meta_t *meta = CONTAINER_OF(link, msg_meta_t, link);
+        msg_meta_free(&meta);
+    }
+}
+
+// take a store_cmd and generate a pair of lists of metas
+// (this will also make the updates to the log)
+static derr_t meta_diff_from_store_cmd_unsafe(imaildir_t *m, link_t *old_metas,
+        link_t *new_metas, const ie_store_cmd_t *uid_store){
+    derr_t e = E_OK;
+
+    // iterate through all of the UIDs from the STORE command
+    ie_seq_set_t *seq_set = uid_store->seq_set;
+    for(; seq_set != NULL; seq_set = seq_set->next){
+        // iterate through the UIDs in the range
+        unsigned int a = MIN(seq_set->n1, seq_set->n2);
+        unsigned int b = MAX(seq_set->n1, seq_set->n2);
+        unsigned int i = a;
+        do {
+            // check if we have this UID
+            jsw_anode_t *node = jsw_afind(&m->msgs.tree, &i, NULL);
+            if(!node) continue;
+            // get the old meta
+            msg_base_t *msg = CONTAINER_OF(node, msg_base_t, node);
+            msg_meta_t *old = msg->meta;
+            // calculate the new flags
+            msg_flags_t new_flags;
+            msg_flags_t cmd_flags = msg_flags_from_flags(uid_store->flags);
+            switch(uid_store->sign){
+                case 0:
+                    // set flags exactly (new = cmd)
+                    new_flags = cmd_flags;
+                    break;
+                case 1:
+                    // add the marked flags (new = old | cmd)
+                    new_flags = msg_flags_or(old->flags, cmd_flags);
+                    break;
+                case -1:
+                    // remove the marked flags (new = old & (~cmd))
+                    new_flags = msg_flags_and(old->flags,
+                            msg_flags_not(cmd_flags));
+                    break;
+                default:
+                    ORIG_GO(&e, E_INTERNAL, "invalid uid_store->sign",
+                            fail_lists);
+            }
+
+            // skip noops
+            if(msg_flags_eq(new_flags, old->flags)) continue;
+
+            // allocate a new meta
+            msg_meta_t *new;
+            unsigned long modseq = himodseq_dn_unsafe(m) + 1;
+            PROP_GO(&e, msg_meta_new(&new, msg->ref.uid, new_flags, modseq),
+                    fail_lists);
+
+            // replace the old meta in the in-memory stores
+            msg->meta = new;
+            node = jsw_aerase(&m->mods.tree, &old->mod.modseq);
+            if(node != &old->mod.node){
+                LOG_ERROR("extracted the wrong node in %x\n", FS(__func__));
+            }
+            jsw_ainsert(&m->mods.tree, &new->mod.node);
+
+            // keep track of the new and the old metas
+            link_list_append(old_metas, &old->link);
+            link_list_append(new_metas, &new->link);
+
+            // update the message in the log
+            maildir_log_i *log = m->log.log;
+            PROP_GO(&e, log->update_msg(log, msg), fail_lists);
+
+            // phew!
+
+        } while(i++ != b);
+    }
+
+    return e;
+
+fail_lists:
+    free_old_metas(old_metas);
+    disconnect_new_metas(new_metas);
+    return e;
+}
+
+typedef struct {
+    link_t old_metas;
+    refs_t refs;
+} post_update_store_t;
+DEF_CONTAINER_OF(post_update_store_t, refs, refs_t);
+
+// a finalizer_t
+static void post_update_store_finalize(refs_t *refs){
+    post_update_store_t *pus = CONTAINER_OF(refs, post_update_store_t, refs);
+    free_old_metas(&pus->old_metas);
+    refs_free(&pus->refs);
+    free(pus);
+}
+
+static derr_t post_update_store_new(post_update_store_t **out,
+        link_t *old_metas){
+    derr_t e = E_OK;
+    *out = NULL;
+
+    post_update_store_t *pus = malloc(sizeof(*pus));
+    if(!pus) ORIG(&e, E_NOMEM, "nomem");
+    *pus = (post_update_store_t){0};
+
+    PROP_GO(&e, refs_init(&pus->refs, 1, post_update_store_finalize),
+            fail_malloc);
+
+    link_init(&pus->old_metas);
+    // steal the whole list
+    link_list_append_list(&pus->old_metas, old_metas);
+
+    *out = pus;
+    return e;
+
+fail_malloc:
+    free(pus);
+    return e;
+}
+
+// distribute update_t's to every dn_t accessor based on a meta_diff_t
+// type should be either UPDATE_NEW or UPDATE_META
+static derr_t distribute_meta_diff_unsafe(imaildir_t *m, link_t *old_metas,
+        link_t *new_metas, const void *requester, update_type_e type){
+    derr_t e = E_OK;
+
+    post_update_store_t *pus;
+    // we start with one local ref
+    PROP_GO(&e, post_update_store_new(&pus, old_metas), cu);
+
+    dn_t *dn;
+    LINK_FOR_EACH(dn, &m->access.dns, dn_t, link){
+        // a new update_t for this new dn_t
+        update_t *update;
+        PROP_GO(&e, update_new(&update, &pus->refs, requester, type), cu_pus);
+        msg_meta_t *meta;
+        LINK_FOR_EACH(meta, new_metas, msg_meta_t, link){
+            update_val_t *val = malloc(sizeof(*val));
+            if(!val) ORIG_GO(&e, E_NOMEM, "nomem", fail_update);
+            *val = (update_val_t){ .val = {.meta = meta} };
+            link_init(&val->link);
+
+            // store this update_val_t in the update_t
+            link_list_append(&update->updates, &val->link);
+        }
+
+        // send the update to this dn_t
+        dn_update(dn, update);
+        continue;
+
+    fail_update:
+        update_free(&update);
+        goto cu_pus;
+    }
+
+cu_pus:
+    // done with our local ref
+    ref_dn(&pus->refs);
+cu:
+    // this list is empty if post_update_store succeeds
+    free_old_metas(old_metas);
+    disconnect_new_metas(new_metas);
+    return e;
+}
+
+static derr_t imaildir_request_update_store(imaildir_t *m, update_req_t *req){
+    derr_t e = E_OK;
+
+    link_t old_metas;
+    link_t new_metas;
+    link_init(&old_metas);
+    link_init(&new_metas);
+
+    // calculate and update the new metas
+    PROP(&e, meta_diff_from_store_cmd_unsafe(m, &old_metas, &new_metas,
+                req->val.uid_store) );
+    // allocate and distribute updates
+    PROP(&e, distribute_meta_diff_unsafe(m, &old_metas, &new_metas,
+                req->requester, UPDATE_META) );
+
+    return e;
+}
+
+// this will always consume or free req
+derr_t imaildir_request_update(imaildir_t *m, update_req_t *req){
+    derr_t e = E_OK;
+
+    uv_mutex_lock(&m->access.lock);
+    uv_rwlock_wrlock(&m->msgs.lock);
+    uv_rwlock_wrlock(&m->mods.lock);
+    uv_rwlock_wrlock(&m->expunged.lock);
+    uv_mutex_lock(&m->log.lock);
+    uv_mutex_lock(&m->update.lock);
+    // TODO: decide if we need to sync upwards or notify downwards
+    // (for now the up_t has nothing to do with this function)
+
+    // calculate the new views and pass a copy to every dn_t
+    switch(req->type){
+        case UPDATE_REQ_STORE:
+            PROP_GO(&e, imaildir_request_update_store(m, req), unlock);
+            break;
+    }
+unlock:
+    update_req_free(req);
+
+    uv_mutex_unlock(&m->update.lock);
+    uv_mutex_unlock(&m->log.lock);
+    uv_rwlock_wrunlock(&m->expunged.lock);
+    uv_rwlock_wrunlock(&m->mods.lock);
+    uv_rwlock_wrunlock(&m->msgs.lock);
+    uv_mutex_unlock(&m->access.lock);
+
+    if(is_error(e)){
+        // always just let the asynchronous error handling dominate
+        imaildir_fail(m, e);
+        PASSED(e);
+    }
+
+    return e;
 }
 
 derr_t imaildir_up_check_uidvld(imaildir_t *m, unsigned int uidvld){
@@ -816,7 +1021,7 @@ derr_t imaildir_up_new_msg(imaildir_t *m, unsigned int uid, msg_flags_t flags,
     unsigned long modseq = himodseq_dn_unsafe(m) + 1;
 
     // create a new meta
-    PROP_GO(&e, msg_meta_new(&meta, flags, modseq), fail);
+    PROP_GO(&e, msg_meta_new(&meta, uid, flags, modseq), fail);
 
     // don't know the internaldate yet
     imap_time_t intdate = {0};
@@ -869,7 +1074,7 @@ derr_t imaildir_up_update_flags(imaildir_t *m, msg_base_t *base,
 
     // create a new meta
     msg_meta_t *meta;
-    PROP_GO(&e, msg_meta_new(&meta, flags, modseq), fail);
+    PROP_GO(&e, msg_meta_new(&meta, base->ref.uid, flags, modseq), fail);
 
     // place the new meta
     msg_meta_t *old = base->meta;
@@ -1037,12 +1242,10 @@ fail:
 void imaildir_up_initial_sync_complete(imaildir_t *m){
     uv_mutex_lock(&m->access.lock);
 
-    if(!m->access.failed){
-        // send the signal to all the conn_up's
-        up_t *up_to_signal;
-        LINK_FOR_EACH(up_to_signal, &m->access.ups, up_t, link){
-            up_to_signal->conn->synced(up_to_signal->conn);
-        }
+    // send the signal to all the conn_up's
+    up_t *up_to_signal;
+    LINK_FOR_EACH(up_to_signal, &m->access.ups, up_t, link){
+        up_to_signal->conn->synced(up_to_signal->conn);
     }
 
     uv_mutex_unlock(&m->access.lock);

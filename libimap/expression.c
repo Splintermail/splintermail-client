@@ -141,13 +141,6 @@ const dstr_t *imap_resp_type_to_dstr(imap_resp_type_t type){
     return &IE_UNKNOWN_dstr;
 }
 
-#define IE_MALLOC(e_, type_, var_, label_) \
-    type_ *var_ = malloc(sizeof(*var_)); \
-    if(var_ == NULL){ \
-        ORIG_GO(e_, E_NOMEM, "no memory", label_); \
-    } \
-    *var_ = (type_){0}
-
 
 ie_dstr_t *ie_dstr_new_empty(derr_t *e){
     if(is_error(*e)) goto fail;
@@ -1377,6 +1370,31 @@ void ie_store_mods_free(ie_store_mods_t *mods){
     free(mods);
 }
 
+ie_store_mods_t *ie_store_mods_copy(derr_t *e, const ie_store_mods_t *old){
+    if(!old) return NULL;
+
+    ie_store_mods_t *mods;
+
+    switch(old->type){
+        case IE_STORE_MOD_UNCHGSINCE:
+            mods = ie_store_mods_unchgsince(e, old->arg.unchgsince);
+            break;
+    }
+    CHECK_GO(e, fail);
+
+    // recurse
+    mods->next = ie_store_mods_copy(e, mods->next);
+
+    CHECK_GO(e, fail_new);
+
+    return mods;
+
+fail_new:
+    ie_store_mods_free(mods);
+fail:
+    return NULL;
+}
+
 // status-type response codes
 static void ie_st_code_arg_free(ie_st_code_type_t type, ie_st_code_arg_t arg){
     switch(type){
@@ -1841,6 +1859,24 @@ void ie_store_cmd_free(ie_store_cmd_t *store){
     ie_store_mods_free(store->mods);
     ie_flags_free(store->flags);
     free(store);
+}
+
+ie_store_cmd_t *ie_store_cmd_copy(derr_t *e, const ie_store_cmd_t *old){
+    if(!old) goto fail;
+
+    ie_store_cmd_t *store = ie_store_cmd_new(e,
+        old->uid_mode,
+        ie_seq_set_copy(e, old->seq_set),
+        ie_store_mods_copy(e, old->mods),
+        old->sign,
+        old->silent,
+        ie_flags_copy(e, old->flags)
+    );
+
+    return store;
+
+fail:
+    return NULL;
 }
 
 ie_copy_cmd_t *ie_copy_cmd_new(derr_t *e, bool uid_mode,

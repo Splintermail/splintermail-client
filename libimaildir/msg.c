@@ -1,11 +1,13 @@
 #include "libimaildir.h"
 
-derr_t msg_meta_new(msg_meta_t **out, msg_flags_t flags, unsigned long modseq){
+derr_t msg_meta_new(msg_meta_t **out, unsigned int uid, msg_flags_t flags,
+        unsigned long modseq){
     derr_t e = E_OK;
 
     msg_meta_t *meta = malloc(sizeof(*meta));
     if(meta == NULL) ORIG(&e, E_NOMEM, "no mem");
     *meta = (msg_meta_t){
+        .uid = uid,
         .flags = flags,
         .mod = {
             .type = MOD_TYPE_MESSAGE,
@@ -137,6 +139,79 @@ void msg_expunge_free(msg_expunge_t **expunge){
     if(!*expunge) return;
     free(*expunge);
     *expunge = NULL;
+}
+
+
+// update_req_store has a builder API
+update_req_t *update_req_store_new(derr_t *e, ie_store_cmd_t *uid_store,
+        const void *requester){
+    if(is_error(*e)) goto fail;
+
+    IE_MALLOC(e, update_req_t, req, fail);
+
+    req->requester = requester;
+    req->type = UPDATE_REQ_STORE;
+    req->val.uid_store = uid_store;
+    link_init(&req->link);
+
+    return req;
+
+fail:
+    ie_store_cmd_free(uid_store);
+    return NULL;
+}
+
+void update_req_free(update_req_t *req){
+    if(!req) return;
+    switch(req->type){
+        case UPDATE_REQ_STORE: ie_store_cmd_free(req->val.uid_store); break;
+    }
+    free(req);
+}
+
+derr_t update_new(update_t **out, refs_t *refs, const void *requester,
+        update_type_e type){
+    derr_t e = E_OK;
+    *out = NULL;
+
+    update_t *update = malloc(sizeof(*update));
+    if(!update) ORIG(&e, E_NOMEM, "nomem");
+    *update = (update_t){.requester = requester, .type = type, .refs = refs};
+
+    link_init(&update->link);
+    link_init(&update->updates);
+
+    *out = update;
+    ref_up(refs);
+
+    return e;
+}
+
+void update_free(update_t **update){
+    if(!*update) return;
+    ref_dn((*update)->refs);
+
+    // empty the tree
+    link_t *link;
+    while((link = link_list_pop_first(&(*update)->updates))){
+        update_val_t *val = CONTAINER_OF(link, update_val_t, link);
+
+        switch((*update)->type){
+            case UPDATE_NEW:
+                msg_view_free(&val->val.view);
+                break;
+            case UPDATE_META:
+                // val.meta is a pointer to someone else's memory
+                break;
+            case UDPATE_EXPUNGE:
+                msg_expunge_free(&val->val.expunge);
+                break;
+        }
+
+        free(val);
+    }
+    free(*update);
+    *update = NULL;
 }
 
 // helper functions for writing debug information to buffers

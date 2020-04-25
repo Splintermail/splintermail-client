@@ -200,10 +200,6 @@ struct imaildir_t {
         /* The value of naccessors may not match the length of the accessor
            lists, particularly during the failing shutdown sequence. */
         size_t naccessors;
-        /* failed refers to the whole imaildir_t, but the only race condition
-           is related to rejecting incoming accessors, so it falls under the
-           same mutex as naccessors */
-        bool failed;
     } access;
 
     struct {
@@ -231,6 +227,12 @@ struct imaildir_t {
         // the latest serial of things we put in /tmp
         size_t count;
     } tmp;
+
+    struct {
+        uv_mutex_t lock;
+        link_t requested;  // update_req_t->link
+        // link_t in_flight;  // update_base_t->link
+    } update;
 };
 
 // open a maildir at path, path and name must be linked to long-lived objects
@@ -241,6 +243,9 @@ void imaildir_free(imaildir_t *m);
 
 // useful if an open maildir needs to be deleted
 void imaildir_forceclose(imaildir_t *m);
+
+// this will always consume or free req
+derr_t imaildir_request_update(imaildir_t *m, update_req_t *req);
 
 // void imaildir_ref_up(imaildir_t *m);
 // void imaildir_ref_down(imaildir_t *m);
