@@ -57,6 +57,13 @@ typedef struct ie_seq_set_t {
 
 void ie_seq_set_free(ie_seq_set_t *s);
 
+typedef struct {
+    const ie_seq_set_t *ptr;
+    unsigned int max;
+    unsigned int i;
+    unsigned int imax;
+} ie_seq_set_trav_t;
+
 typedef enum {
     IE_SELECT_PARAM_CONDSTORE,
     IE_SELECT_PARAM_QRESYNC,
@@ -831,6 +838,11 @@ void ie_seq_set_free(ie_seq_set_t *set);
 ie_seq_set_t *ie_seq_set_copy(derr_t *e, const ie_seq_set_t *old);
 ie_seq_set_t *ie_seq_set_append(derr_t *e, ie_seq_set_t *set,
         ie_seq_set_t *next);
+
+// return 0 when done
+unsigned int ie_seq_set_iter(ie_seq_set_trav_t *trav,
+        const ie_seq_set_t *seq_set, unsigned int max);
+unsigned int ie_seq_set_next(ie_seq_set_trav_t *trav);
 
 // num list construction
 

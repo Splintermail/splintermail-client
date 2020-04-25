@@ -818,6 +818,43 @@ fail:
     return NULL;
 }
 
+unsigned int ie_seq_set_iter(ie_seq_set_trav_t *trav,
+        const ie_seq_set_t *seq_set, unsigned int max){
+    trav->ptr = seq_set;
+    if(!trav->ptr) return 0;
+
+    trav->max = max;
+
+    // handle zeros
+    unsigned int n1 = trav->ptr->n1 ? trav->ptr->n1 : trav->max;
+    unsigned int n2 = trav->ptr->n2 ? trav->ptr->n2 : trav->max;
+    // reorder
+    trav->i = MIN(n1, n2);
+    trav->imax = MAX(n1, n2);
+
+    return trav->i;
+}
+
+unsigned int ie_seq_set_next(ie_seq_set_trav_t *trav){
+    // protect against extra calls
+    if(!trav->ptr) return 0;
+
+    if(trav->i++ == trav->imax){
+        // done with this seq set
+        trav->ptr = trav->ptr->next;
+        if(!trav->ptr) return 0;
+
+        // handle zeros
+        unsigned int n1 = trav->ptr->n1 ? trav->ptr->n1 : trav->max;
+        unsigned int n2 = trav->ptr->n2 ? trav->ptr->n2 : trav->max;
+        // reorder
+        trav->i = MIN(n1, n2);
+        trav->imax = MAX(n1, n2);
+    }
+
+    return trav->i;
+}
+
 // num list construction
 
 ie_nums_t *ie_nums_new(derr_t *e, unsigned int n){
