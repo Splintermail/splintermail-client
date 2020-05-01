@@ -537,7 +537,7 @@ static derr_t list_cmd(server_t *server, const ie_dstr_t *tag,
     jsw_ainit(&lister.folders, ie_list_resp_cmp, ie_list_resp_get);
 
     // build a list of LIST responses, one for each folder
-    PROP_GO(&e, dirmgr_do_for_each_mbx(&server->dirmgr, ref_name,
+    PROP_GO(&e, dirmgr_do_for_each_mbx(server->dirmgr, ref_name,
                 handle_list_mbx, &lister), fail);
 
     // send the LIST responses in sorted order
@@ -577,7 +577,7 @@ static derr_t do_select(server_t *server, imap_cmd_t *select_cmd){
     const dstr_t *dir_name = ie_mailbox_name(select_cmd->arg.select->m);
 
     server->maildir_has_ref = true;
-    PROP_GO(&e, dirmgr_open_dn(&server->dirmgr, dir_name, &server->conn_dn,
+    PROP_GO(&e, dirmgr_open_dn(server->dirmgr, dir_name, &server->conn_dn,
                 &server->maildir_dn), fail_maildir);
 
     // pass this SELECT command to the maildir_dn

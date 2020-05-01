@@ -157,7 +157,7 @@ static void server_conn_dn_release(maildir_conn_dn_i *conn_dn){
 }
 
 static derr_t server_init(server_t *server, imap_pipeline_t *p,
-        ssl_context_t *ctx_srv, manager_i *mgr){
+        ssl_context_t *ctx_srv, dirmgr_t *dirmgr, manager_i *mgr){
     derr_t e = E_OK;
 
     // start by zeroizing everything and storing static values
@@ -165,7 +165,7 @@ static derr_t server_init(server_t *server, imap_pipeline_t *p,
         .pipeline = p,
         .ctx_srv = ctx_srv,
         .mgr = mgr,
-
+        .dirmgr = dirmgr,
         .engine = {
             .pass_event = server_pass_event,
         },
@@ -200,20 +200,10 @@ static derr_t server_init(server_t *server, imap_pipeline_t *p,
     link_init(&server->ts.unhandled_cmds);
     link_init(&server->ts.maildir_resps);
 
-    // allocate for the path
-    PROP(&e, dstr_new(&server->path, 256) );
-    // right now the path is not configurable
-    PROP_GO(&e, dstr_copy(&DSTR_LIT("/tmp/maildir_root"), &server->path),
-            fail_path);
-
-    // dirmgr
-    string_builder_t path = SB(FD(&server->path));
-    PROP_GO(&e, dirmgr_init(&server->dirmgr, path, NULL), fail_path);
-
     int ret = uv_mutex_init(&server->ts.mutex);
     if(ret < 0){
         TRACE(&e, "uv_mutex_init: %x\n", FUV(&ret));
-        ORIG_GO(&e, uv_err_type(ret), "error initializing mutex", fail_dirmgr);
+        ORIG(&e, uv_err_type(ret), "error initializing mutex");
     }
 
     /* establish the uv_async_t; if that fails we must not create off-thread
@@ -256,10 +246,6 @@ fail_session:
     imap_session_free(&server->dn.s);
 fail_mutex:
     uv_mutex_destroy(&server->ts.mutex);
-fail_dirmgr:
-    dirmgr_free(&server->dirmgr);
-fail_path:
-    dstr_free(&server->path);
     return e;
 }
 
@@ -285,8 +271,6 @@ static void server_free(server_t *server){
     // async must already have been closed
     imap_session_free(&server->dn.s);
     uv_mutex_destroy(&server->ts.mutex);
-    dirmgr_free(&server->dirmgr);
-    dstr_free(&server->path);
 
     if(server->pause){
         server->pause->cancel(&server->pause);
@@ -387,7 +371,7 @@ void server_close_maildir_onthread(server_t *server){
     maildir_dn_i *maildir_dn = server->maildir_dn;
     server->maildir_dn = NULL;
     // now make the very last call into the maildir_dn_i
-    dirmgr_close_dn(&server->dirmgr, maildir_dn);
+    dirmgr_close_dn(server->dirmgr, maildir_dn);
 }
 
 // only safe to call once
@@ -543,7 +527,7 @@ static void server_dead(manager_i *mgr){
 
 // not threadsafe, and must not be called while server_mgr is quitting
 static derr_t server_mgr_new_mgd(server_mgr_t *server_mgr, imap_pipeline_t *p,
-        ssl_context_t *ctx_srv, managed_srv_t **out){
+        ssl_context_t *ctx_srv, dirmgr_t *dirmgr, managed_srv_t **out){
     derr_t e = E_OK;
     *out = NULL;
 
@@ -559,7 +543,7 @@ static derr_t server_mgr_new_mgd(server_mgr_t *server_mgr, imap_pipeline_t *p,
 
     link_init(&mgd->link);
 
-    PROP_GO(&e, server_init(&mgd->server, p, ctx_srv, &mgd->mgr), fail);
+    PROP_GO(&e, server_init(&mgd->server, p, ctx_srv, dirmgr, &mgd->mgr), fail);
 
     link_list_append(&server_mgr->mgd, &mgd->link);
     server_mgr->n_servers++;
@@ -621,6 +605,7 @@ static void server_mgr_free(server_mgr_t *server_mgr){
 
 typedef struct {
     server_mgr_t *server_mgr;
+    dirmgr_t *dirmgr;
 
     imap_pipeline_t *pipeline;
     ssl_context_t *ctx_srv;
@@ -644,7 +629,7 @@ static derr_t conn_recvd(listener_spec_t *lspec, session_t **session){
 
     managed_srv_t *mgd;
     PROP_GO(&e, server_mgr_new_mgd(l->server_mgr, l->pipeline, l->ctx_srv,
-                &mgd), fail);
+                l->dirmgr, &mgd), fail);
 
     *session = &mgd->server.dn.s.session;
 
@@ -674,8 +659,13 @@ static derr_t sm_serve(char *host, char *svc, char *key, char *cert, char *dh){
     server_mgr_t server_mgr;
     PROP_GO(&e, server_mgr_init(&server_mgr, &imape.engine), cu_ssl_ctx);
 
+    // init the dirmgr, which must be shared across server_t's of the same user
+    dirmgr_t dirmgr;
+    string_builder_t dirmgr_path = SB(FD(&DSTR_LIT("/tmp/maildir_root")));
+    PROP_GO(&e, dirmgr_init(&dirmgr, dirmgr_path, NULL), cu_server_mgr);
+
     imap_pipeline_t pipeline;
-    PROP_GO(&e, build_pipeline(&pipeline, &server_mgr.engine), cu_server_mgr);
+    PROP_GO(&e, build_pipeline(&pipeline, &server_mgr.engine), cu_dirmgr);
 
     /* After building the pipeline, we must run the pipeline if we want to
        cleanup nicely.  That means that we can't follow the normal cleanup
@@ -685,6 +675,7 @@ static derr_t sm_serve(char *host, char *svc, char *key, char *cert, char *dh){
     // add the lspec to the loop
     server_lspec_t server_lspec = {
         .server_mgr = &server_mgr,
+        .dirmgr = &dirmgr,
         .pipeline = &pipeline,
         .ctx_srv=&ctx_srv,
         .lspec = {
@@ -707,6 +698,8 @@ fail:
 
 cu:
     free_pipeline(&pipeline);
+cu_dirmgr:
+    dirmgr_free(&dirmgr);
 cu_server_mgr:
     server_mgr_free(&server_mgr);
 cu_ssl_ctx:

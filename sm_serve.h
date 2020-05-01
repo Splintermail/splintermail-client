@@ -41,8 +41,7 @@ struct pause_t {
 typedef struct {
     imap_pipeline_t *pipeline;
     ssl_context_t *ctx_srv;
-    dirmgr_t dirmgr;
-    dstr_t path;
+    dirmgr_t *dirmgr;
     // participate in proper shutdown sequence as an engine
     engine_t engine;
     // our manager
