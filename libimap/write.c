@@ -1676,3 +1676,33 @@ derr_t imap_resp_print(const imap_resp_t *resp, dstr_t *out,
     PROP(&e, do_imap_resp_write(resp, out, &skip, &want, exts, true) );
     return e;
 }
+
+imap_cmd_t *imap_cmd_assert_writable(derr_t *e, imap_cmd_t *cmd,
+        const extensions_t *exts){
+    if(is_error(*e)) goto fail;
+
+    size_t want, skip = 0;
+    dstr_t empty = {0};
+    PROP_GO(e, do_imap_cmd_write(cmd, &empty, &skip, &want, exts, false),
+            fail);
+    return cmd;
+
+fail:
+    imap_cmd_free(cmd);
+    return NULL;
+}
+
+imap_resp_t *imap_resp_assert_writable(derr_t *e, imap_resp_t *resp,
+        const extensions_t *exts){
+    if(is_error(*e)) goto fail;
+
+    size_t want, skip = 0;
+    dstr_t empty = {0};
+    PROP_GO(e, do_imap_resp_write(resp, &empty, &skip, &want, exts, false),
+            fail);
+    return resp;
+
+fail:
+    imap_resp_free(resp);
+    return NULL;
+}

@@ -35,6 +35,18 @@ int jsw_cmp_uid(const void *a, const void *b){
 }
 
 
+derr_t index_to_seq_num(size_t index, unsigned int *seq_num){
+    derr_t e = E_OK;
+    *seq_num = 0;
+    // don't let index + 1 be a non-uint32 value
+    if(index >= UINT_MAX){
+        ORIG(&e, E_INTERNAL, "index too high");
+    }
+    *seq_num = (unsigned int)index + 1;
+    return e;
+}
+
+
 void imap_cmd_cb_prep(imap_cmd_cb_t *cb, size_t tag, imap_cmd_cb_call_f call,
         imap_cmd_cb_free_f free){
     *cb = (imap_cmd_cb_t){

@@ -61,7 +61,7 @@ derr_t imap_read(imap_reader_t *reader, const dstr_t *input){
         if(e2.type == E_PARAM){
             dstr_t scannable = get_scannable(&reader->scanner);
             TRACE(&e, "syntax error on message:\n%x%x\n(end of message)\n",
-                    FD(&token), FD(&scannable));
+                    FD_DBG(&token), FD_DBG(&scannable));
         }
         PROP(&e, e2);
     }

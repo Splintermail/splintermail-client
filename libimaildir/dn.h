@@ -22,8 +22,15 @@ typedef struct {
         // this is set to true after receiving an update we were awaiting
         bool ready;
     } pending_updates;
-    // for tagging status type responses after async operations
-    ie_dstr_t *next_resp_tag;
+
+    // handle stores asynchronously
+    struct {
+        ie_dstr_t *tag;
+        bool uid_mode;
+        bool silent;
+        // an expected FLAGS for every uid to be updated
+        jsw_atree_t tree;  // exp_flags_t->node
+    } store;
 } dn_t;
 DEF_CONTAINER_OF(dn_t, maildir_dn, maildir_dn_i);
 DEF_CONTAINER_OF(dn_t, link, link_t);

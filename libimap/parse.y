@@ -1051,8 +1051,7 @@ store_silent: %empty    { $$ = false; }
             | SILENT    { $$ = true; }
 ;
 
-store_flags: %empty                { $$ = NULL; }
-           | SP '(' flags_0[f] ')' { $$ = $f; }
+store_flags: SP '(' flags_0[f] ')' { $$ = $f; }
            | SP flags_1[f]         { $$ = $f; }
 ;
 

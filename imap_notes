@@ -1069,3 +1069,8 @@ Message store thread safety:
         tag of the upwards STORE command) and it would have to wait for that
         serial to be returned before it could actually respond to its client.
         That seems much more doable.
+
+
+IMAP bugs:
+  - not all SEARCH keys are supported
+  - syntax error messages are utterly useless
