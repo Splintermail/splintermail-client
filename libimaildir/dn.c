@@ -455,7 +455,7 @@ fail:
     return e;
 }
 
-// take a sequence set and create a UID seq set (builder api)
+// take a sequence set and create a UID seq set
 // sets *ok = true IFF all numbers present
 static derr_t copy_seq_to_uids(dn_t *dn, bool uid_mode,
         const ie_seq_set_t *old, bool *ok, ie_seq_set_t **out){
@@ -469,9 +469,6 @@ static derr_t copy_seq_to_uids(dn_t *dn, bool uid_mode,
         return e;
     }
 
-    seq_set_builder_t ssb;
-    seq_set_builder_prep(&ssb);
-
     jsw_anode_t *node;
 
     // get the last UID or last index, for replacing 0's we see in the seq_set
@@ -482,8 +479,12 @@ static derr_t copy_seq_to_uids(dn_t *dn, bool uid_mode,
         msg_view_t *last_view = CONTAINER_OF(node, msg_view_t, node);
         last = last_view->base->uid;
     } else {
-        last = dn->views.size - 1;
+        size_t last_index = dn->views.size - 1;
+        PROP(&e, index_to_seq_num(last_index, &last) );
     }
+
+    seq_set_builder_t ssb;
+    seq_set_builder_prep(&ssb);
 
     ie_seq_set_trav_t trav;
     unsigned int i = ie_seq_set_iter(&trav, old, last);
