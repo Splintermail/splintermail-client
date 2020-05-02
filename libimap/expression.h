@@ -772,6 +772,10 @@ void ie_dstr_free(ie_dstr_t *d);
 void ie_dstr_free_shell(ie_dstr_t *d);
 ie_dstr_t *ie_dstr_copy(derr_t *e, const ie_dstr_t *d);
 
+// read an entire file into a dstr
+// TODO: don't read entire files into memory
+ie_dstr_t *ie_dstr_new_from_fd(derr_t *e, int fd);
+
 ie_mailbox_t *ie_mailbox_new_noninbox(derr_t *e, ie_dstr_t *name);
 ie_mailbox_t *ie_mailbox_new_inbox(derr_t *e);
 ie_mailbox_t *ie_mailbox_new_maybeinbox(derr_t *e, const dstr_t *name);

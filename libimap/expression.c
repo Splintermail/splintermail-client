@@ -247,6 +247,30 @@ fail:
     return NULL;
 }
 
+ie_dstr_t *ie_dstr_new_from_fd(derr_t *e, int fd){
+    if(is_error(*e)) goto fail;
+
+    ie_dstr_t *d = ie_dstr_new_empty(e);
+    CHECK_GO(e, fail);
+
+    size_t amnt_read = 0;
+    do {
+        // grow the buffer if necessary
+        if(d->dstr.len == d->dstr.size){
+            PROP_GO(e, dstr_grow(&d->dstr, d->dstr.size + 1), fail_dstr);
+        }
+        // try to fill the buffer
+        PROP_GO(e, dstr_read(fd, &d->dstr, 0, &amnt_read), fail_dstr);
+    } while(amnt_read > 0);
+
+    return d;
+
+fail_dstr:
+    ie_dstr_free(d);
+fail:
+    return NULL;
+}
+
 static ie_mailbox_t *ie_mailbox_new(derr_t *e){
     if(is_error(*e)) goto fail;
 
