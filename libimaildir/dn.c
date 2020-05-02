@@ -516,6 +516,7 @@ fail_ssb:
     return e;
 }
 
+
 static derr_t store_cmd(dn_t *dn, const ie_dstr_t *tag,
         const ie_store_cmd_t *store){
     derr_t e = E_OK;
@@ -525,8 +526,9 @@ static derr_t store_cmd(dn_t *dn, const ie_dstr_t *tag,
     PROP(&e, copy_seq_to_uids(dn, store->uid_mode, store->seq_set, &ok,
                 &uid_seq) );
     if(!ok){
-        PROP(&e, send_bad(dn, tag, &DSTR_LIT("bad sequence set")) );
-        return e;
+        PROP_GO(&e, send_bad(dn, tag, &DSTR_LIT("bad sequence set")),
+                fail_uid_seq);
+        goto fail_uid_seq;
     }
 
     // reset the dn.store state
@@ -605,6 +607,123 @@ fail_uid_seq:
     return e;
 }
 
+
+static derr_t send_fetch_resp(dn_t *dn, const ie_fetch_cmd_t *fetch,
+        unsigned int uid){
+    derr_t e = E_OK;
+
+    // get the view
+    size_t index;
+    jsw_anode_t *node = jsw_afind(&dn->views, &uid, &index);
+    if(!node) ORIG(&e, E_INTERNAL, "uid missing");
+    msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
+
+    unsigned int seq_num;
+    PROP(&e, index_to_seq_num(index, &seq_num) );
+
+    // build a fetch response
+    ie_fetch_resp_t *f = ie_fetch_resp_new(&e);
+
+    f = ie_fetch_resp_num(&e, f, fetch->uid_mode ? uid : seq_num);
+
+    if(fetch->attr->envelope) ORIG_GO(&e, E_INTERNAL, "not implemented", fail);
+
+    if(fetch->attr->flags){
+        ie_fflags_t *ff = ie_fflags_new(&e);
+        if(view->flags->answered)
+            ff = ie_fflags_add_simple(&e, ff, IE_FFLAG_ANSWERED);
+        if(view->flags->flagged)
+            ff = ie_fflags_add_simple(&e, ff, IE_FFLAG_FLAGGED);
+        if(view->flags->seen)
+            ff = ie_fflags_add_simple(&e, ff, IE_FFLAG_SEEN);
+        if(view->flags->draft)
+            ff = ie_fflags_add_simple(&e, ff, IE_FFLAG_DRAFT);
+        if(view->flags->deleted)
+            ff = ie_fflags_add_simple(&e, ff, IE_FFLAG_DELETED);
+        if(view->recent)
+            ff = ie_fflags_add_simple(&e, ff, IE_FFLAG_RECENT);
+        f = ie_fetch_resp_flags(&e, f, ff);
+    }
+
+    if(fetch->attr->intdate){
+        f = ie_fetch_resp_intdate(&e, f, view->base->internaldate);
+    }
+
+    if(fetch->attr->uid){
+        f = ie_fetch_resp_uid(&e, f, uid);
+    }
+
+    if(fetch->attr->rfc822){
+        int fd;
+        IF_PROP(&e, imaildir_open_msg(dn->m, uid, &fd) ){}
+        ie_dstr_t *content = ie_dstr_new_from_fd(&e, fd);
+        // ignore return value of close on read-only file descriptor
+        imaildir_close_msg(dn->m, uid, &fd);
+        f = ie_fetch_resp_content(&e, f, content);
+    }
+
+    if(fetch->attr->rfc822_header) ORIG_GO(&e, E_INTERNAL, "not implemented", fail);
+    if(fetch->attr->rfc822_size) ORIG_GO(&e, E_INTERNAL, "not implemented", fail);
+    if(fetch->attr->rfc822_text) ORIG_GO(&e, E_INTERNAL, "not implemented", fail);
+    if(fetch->attr->body) ORIG_GO(&e, E_INTERNAL, "not implemented", fail); // means BODY, not BODY[]
+    if(fetch->attr->bodystruct) ORIG_GO(&e, E_INTERNAL, "not implemented", fail);
+    if(fetch->attr->modseq) ORIG_GO(&e, E_INTERNAL, "not implemented", fail);
+
+    if(fetch->attr->extras) ORIG_GO(&e, E_INTERNAL, "not implemented", fail);
+
+    // finally, send the fetch response
+    imap_resp_arg_t arg = {.fetch=f};
+    imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_FETCH, arg);
+
+    extensions_t exts = {0};
+    resp = imap_resp_assert_writable(&e, resp, &exts);
+
+    CHECK(&e);
+
+    dn->conn->resp(dn->conn, resp);
+
+    return e;
+
+fail:
+    ie_fetch_resp_free(f);
+    return e;
+}
+
+
+static derr_t fetch_cmd(dn_t *dn, const ie_dstr_t *tag,
+        const ie_fetch_cmd_t *fetch){
+    derr_t e = E_OK;
+
+    bool ok;
+    ie_seq_set_t *uid_seq;
+    PROP(&e, copy_seq_to_uids(dn, fetch->uid_mode, fetch->seq_set, &ok,
+                &uid_seq) );
+    if(!ok){
+        PROP_GO(&e, send_bad(dn, tag, &DSTR_LIT("bad sequence set")), cu);
+        goto cu;
+    }
+
+    // build a response for every uid requested
+    ie_seq_set_trav_t trav;
+    unsigned int uid = ie_seq_set_iter(&trav, uid_seq, 0);
+    for(; uid != 0; uid = ie_seq_set_next(&trav)){
+        PROP_GO(&e, send_fetch_resp(dn, fetch, uid), cu);
+    }
+    uid = ie_seq_set_iter(&trav, uid_seq, 0);
+    for(; uid != 0; uid = ie_seq_set_next(&trav)){
+        printf("uid: %u\n", uid);
+    }
+
+    DSTR_STATIC(msg, "you didn't hear it from me");
+    PROP_GO(&e, send_ok(dn, tag, &msg), cu);
+
+cu:
+    ie_seq_set_free(uid_seq);
+
+    return e;
+}
+
+
 // we either need to consume the cmd or free it
 static derr_t conn_dn_cmd(maildir_dn_i *maildir_dn, imap_cmd_t *cmd){
     derr_t e = E_OK;
@@ -641,9 +760,12 @@ static derr_t conn_dn_cmd(maildir_dn_i *maildir_dn, imap_cmd_t *cmd){
             PROP_GO(&e, store_cmd(dn, tag, arg->store), cu_cmd);
             break;
 
+        case IMAP_CMD_FETCH:
+            PROP_GO(&e, fetch_cmd(dn, tag, arg->fetch), cu_cmd);
+            break;
+
         // things we need to support here
         case IMAP_CMD_EXPUNGE:
-        case IMAP_CMD_FETCH:
         case IMAP_CMD_COPY:
 
         // supported in a different layer
