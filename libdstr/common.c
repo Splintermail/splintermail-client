@@ -841,6 +841,7 @@ bool in_list(const dstr_t* val, const LIST(dstr_t)* list, size_t* idx){
 
 derr_t dstr_read(int fd, dstr_t* buffer, size_t count, size_t* amnt_read){
     derr_t e = E_OK;
+    if(amnt_read) *amnt_read = 0;
     // compat_read() returns a signed size_t (ssize_t)
     ssize_t ar = 0;
     if(count == 0){

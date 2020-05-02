@@ -3,6 +3,7 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <string.h>
+#include <stdarg.h>
 
 #include "libdstr.h"
 
@@ -838,6 +839,9 @@ derr_t fopen_path(const string_builder_t *sb, const char *mode, FILE **out){
     DSTR_VAR(stack, 256);
     dstr_t heap = {0};
     dstr_t* path;
+
+    *out = NULL;
+
     PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
 
     *out = compat_fopen(path->data, mode);
@@ -845,6 +849,31 @@ derr_t fopen_path(const string_builder_t *sb, const char *mode, FILE **out){
         TRACE(&e, "%x: %x\n", FD(path), FE(&errno));
         ORIG_GO(&e, errno == ENOMEM ? E_NOMEM : E_OPEN, "unable to open file",
                 cu);
+    }
+
+cu:
+    dstr_free(&heap);
+    return e;
+}
+
+derr_t open_path(const string_builder_t *sb, int *out, int flags, ...){
+    derr_t e = E_OK;
+    DSTR_VAR(stack, 256);
+    dstr_t heap = {0};
+    dstr_t* path;
+
+    *out = -1;
+
+    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
+
+    if(flags & O_CREAT){
+        va_list ap;
+        va_start(ap, flags);
+        int mode =  va_arg(ap, int);
+        va_end(ap);
+        *out = compat_open(path->data, flags, mode);
+    }else{
+        *out = compat_open(path->data, flags);
     }
 
 cu:
