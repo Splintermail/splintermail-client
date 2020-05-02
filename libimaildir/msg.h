@@ -53,6 +53,7 @@ struct msg_base_t {
     subdir_type_e subdir;
     dstr_t filename;
     msg_base_state_e state;
+    int open_fds;
     // for referencing by uid
     jsw_anode_t node;
 };

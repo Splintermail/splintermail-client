@@ -267,6 +267,12 @@ void imaildir_unregister_dn(maildir_dn_i *m);
 
 bool imaildir_synced(imaildir_t *m);
 
+// open a message in a thread-safe way; return a file descriptor
+derr_t imaildir_open_msg(imaildir_t *m, unsigned int uid, int *fd);
+
+// close a message in a thread-safe way; return the result of close()
+int imaildir_close_msg(imaildir_t *m, unsigned int uid, int *fd);
+
 /* Synchronous filesystem-backed storage for an imap maildir.
 
    Message content is stored in maildir format, and is managed directly by the

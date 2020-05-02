@@ -13,6 +13,7 @@
 
 // forward declarations
 static unsigned long himodseq_dn_unsafe(imaildir_t *m);
+static void imaildir_fail(imaildir_t *m, derr_t error);
 
 typedef struct {
     imaildir_t *m;
@@ -635,6 +636,60 @@ bool imaildir_synced(imaildir_t *m){
     uv_mutex_unlock(&m->access.lock);
 
     return synced;
+}
+
+// open a message in a thread-safe way; return a file descriptor
+derr_t imaildir_open_msg(imaildir_t *m, unsigned int uid, int *fd){
+    derr_t e = E_OK;
+    *fd = -1;
+
+    uv_rwlock_rdlock(&m->msgs.lock);
+
+    jsw_anode_t *node = jsw_afind(&m->msgs.tree, &uid, NULL);
+    if(!node) ORIG_GO(&e, E_INTERNAL, "uid missing", unlock);
+    msg_base_t *msg = CONTAINER_OF(node, msg_base_t, node);
+
+    string_builder_t subdir_path = SUB(&m->path, msg->subdir);
+    string_builder_t msg_path = sb_append(&subdir_path, FD(&msg->filename));
+    PROP_GO(&e, open_path(&msg_path, fd, O_RDONLY), unlock);
+
+    msg->open_fds++;
+
+unlock:
+    uv_rwlock_rdunlock(&m->msgs.lock);
+
+    return e;
+}
+
+// close a message in a thread-safe way; return the result of close()
+int imaildir_close_msg(imaildir_t *m, unsigned int uid, int *fd){
+    if(*fd < 0) return 0;
+
+    // write-lock, because may rename or delete files within this lock scope
+    uv_rwlock_wrlock(&m->msgs.lock);
+
+    jsw_anode_t *node = jsw_afind(&m->msgs.tree, &uid, NULL);
+    if(!node){
+        // imaildir is in an inconsistent state
+        derr_t e = E_OK;
+        TRACE_ORIG(&e, E_INTERNAL, "uid missing during imaildir_close_msg");
+        imaildir_fail(m, e);
+        PASSED(e);
+    }else{
+        msg_base_t *msg = CONTAINER_OF(node, msg_base_t, node);
+        msg->open_fds--;
+        // TODO: handle things which require the file not to be open anymore
+        /* (errors during this should result in imaildir_fail(), since the
+            caller is not responsible for the failure) */
+    }
+
+    int ret;
+close:
+    close(*fd);
+    *fd = -1;
+
+    uv_rwlock_wrunlock(&m->msgs.lock);
+    return ret;
 }
 
 /* imaildir_fail actually just force-closes all of the current accessors, it
