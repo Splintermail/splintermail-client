@@ -154,7 +154,6 @@ set(OBJ_TGTS
     queue
     refs
     imap_session
-    # imap_ditm_logic
     sm_fetch_logic
     sm_serve_logic
 )
@@ -165,7 +164,6 @@ set(EXE_TGTS
     leak
     encrypt_msg
     decrypt_msg
-    # imap_ditm
     sm_fetch
     sm_serve
 )
@@ -200,7 +198,6 @@ set(TEST_EXE_TGTS
     test_imap_read
     test_imap_write
     test_hashmap
-    # test_imap_maildir
     test_loop
     test_queue
     test_tls_engine
@@ -251,7 +248,6 @@ target_link_libraries(splintermail ui console_input ditm key_tool)
 target_link_libraries(leak networking)
 target_link_libraries(encrypt_msg crypto)
 target_link_libraries(decrypt_msg crypto)
-# target_link_libraries(imap_ditm imap_session imap_dirmgr imap_ditm_logic crypto)
 target_link_libraries(sm_fetch imap_session sm_fetch_logic imaildir)
 target_link_libraries(sm_serve imap_session sm_serve_logic imaildir)
 
@@ -381,7 +377,6 @@ if("${BUILD_TESTS}")
     target_link_libraries(test_imap_read imap)
     target_link_libraries(test_imap_write imap)
     # target_link_libraries(test_hashmap)
-    # target_link_libraries(test_imap_maildir imap_maildir)
     target_link_libraries(test_loop fake_engine networking)
     target_link_libraries(test_queue queue)
     target_link_libraries(test_tls_engine fake_engine)
@@ -433,7 +428,6 @@ if("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU")
     # libuv needs non-strict aliasing
     # see discussion here: https://github.com/libuv/libuv/issues/1230
     target_compile_options(uv_util_o PRIVATE -fno-strict-aliasing)
-    # target_compile_options(imap_ditm PRIVATE -fno-strict-aliasing)
     target_compile_options(sm_fetch PRIVATE -fno-strict-aliasing)
     target_compile_options(sm_serve PRIVATE -fno-strict-aliasing)
     # add some compiler hardening flags

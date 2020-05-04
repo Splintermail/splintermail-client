@@ -25,7 +25,7 @@ The NEW new and improved modular pipelining:
 */
 
 typedef enum {
-    // a filled buffer from upstream.  Might carry an error.
+    // a filled buffer from upstream.
     EV_READ = 10,
 
     // an empty buffer passed back from downstream
@@ -34,12 +34,8 @@ typedef enum {
     // a filled buffer from downstream
     EV_WRITE,
 
-    // an empty buffer passed back from upstream.  Might carry an error.
+    // an empty buffer passed back from upstream
     EV_WRITE_DONE,
-
-    // events which come to the imap engine from outside the pipeline
-    EV_COMMAND,
-    EV_MAILDIR,
 
     /* First half of the quit sequence.  This must start with the upstream-most
        engine (the socket engine).

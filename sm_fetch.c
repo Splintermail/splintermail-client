@@ -6,7 +6,6 @@
 #include "uv_util.h"
 #include "crypto.h"
 
-uv_idle_t idle;
 loop_t loop;
 tlse_t tlse;
 imape_t imape;
@@ -82,7 +81,8 @@ void fetcher_advance(fetcher_t *fetcher){
 
 // mgr_up
 
-static void session_up_dying(manager_i *mgr, derr_t e){
+static void session_up_dying(manager_i *mgr, void *caller, derr_t e){
+    (void)caller;
     fetcher_session_t *up = CONTAINER_OF(mgr, fetcher_session_t, mgr);
     fetcher_t *fetcher = CONTAINER_OF(up, fetcher_t, up);
     printf("session up dying\n");
@@ -94,7 +94,8 @@ static void session_up_dying(manager_i *mgr, derr_t e){
     fetcher_advance(fetcher);
 }
 
-static void session_up_dead(manager_i *mgr){
+static void session_up_dead(manager_i *mgr, void *caller){
+    (void)caller;
     fetcher_session_t *up = CONTAINER_OF(mgr, fetcher_session_t, mgr);
     fetcher_t *fetcher = CONTAINER_OF(up, fetcher_t, up);
 
@@ -117,7 +118,7 @@ static void fetcher_async_close_cb(async_spec_t *spec){
     fetcher_t *fetcher = CONTAINER_OF(spec, fetcher_t, advance_spec);
 
     // shutdown, part three of three: report ourselves as dead
-    fetcher->mgr->dead(fetcher->mgr);
+    fetcher->mgr->dead(fetcher->mgr, fetcher);
 
     // now we can continue the QUIT sequence by passing along the QUIT_UP
     fetcher->quit_ev->ev_type = EV_QUIT_UP;
@@ -410,7 +411,7 @@ void fetcher_close(fetcher_t *fetcher, derr_t error){
     PASSED(error);
 
     // tell our owner we are dying
-    fetcher->mgr->dying(fetcher->mgr, E_OK);
+    fetcher->mgr->dying(fetcher->mgr, fetcher, E_OK);
 
     // we can close multithreaded resources here but we can't release refs
     imap_session_close(&fetcher->up.s.session, E_OK);
@@ -514,15 +515,17 @@ static void free_pipeline(imap_pipeline_t *pipeline){
 }
 
 
-static void fetcher_dying(manager_i *mgr, derr_t e){
+static void fetcher_dying(manager_i *mgr, void *caller, derr_t e){
     (void)mgr;
+    (void)caller;
     // TODO: this error handling is so fucking broken...
     DROP_VAR(&e);
     LOG_ERROR("fetcher dying...\n");
 }
 
-static void fetcher_dead(manager_i *mgr){
+static void fetcher_dead(manager_i *mgr, void *caller){
     (void)mgr;
+    (void)caller;
     // fetcher is freed after loop shuts down
     LOG_ERROR("fetcher dead...\n");
 }
@@ -591,7 +594,6 @@ static void stop_loop_on_signal(int signum){
     if(hard_exit) exit(1);
     hard_exit = true;
     // launch an asynchronous loop abort
-    // uv_idle_stop(&idle);
     loop_close(&loop, E_OK);
 }
 

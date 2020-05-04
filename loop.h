@@ -120,6 +120,7 @@ struct listener_spec_t {
     // a tagged self-pointer, which will be filled out by loop_add_listener()
     uv_ptr_t uvp;
     // these fields should be prepared by the caller of loop_add_listener()
+    // (these are for what port to bind to)
     const char *addr;
     const char *svc;
     // after receiving a connect, allocate a new downwards session

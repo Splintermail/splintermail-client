@@ -9,7 +9,6 @@
 #define CERT "../c/test/files/ssl/good-cert.pem"
 #define DH "../c/test/files/ssl/dh_4096.pem"
 
-uv_idle_t idle;
 loop_t loop;
 tlse_t tlse;
 imape_t imape;
@@ -73,7 +72,10 @@ void server_advance(server_t *server){
 
 // mgr_dn
 
-static void session_dn_dying(manager_i *mgr, derr_t e){
+static void session_dn_dying(manager_i *mgr, void *caller, derr_t e){
+    // TODO: simplify this code by using the new *caller parameter
+    //       (eliminate managed_srv_t entirely)
+    (void)caller;
     server_session_t *dn = CONTAINER_OF(mgr, server_session_t, mgr);
     server_t *server = CONTAINER_OF(dn, server_t, dn);
     printf("session dn dying\n");
@@ -85,7 +87,10 @@ static void session_dn_dying(manager_i *mgr, derr_t e){
     server_advance(server);
 }
 
-static void session_dn_dead(manager_i *mgr){
+static void session_dn_dead(manager_i *mgr, void *caller){
+    // TODO: simplify this code by using the new *caller parameter
+    //       (eliminate managed_srv_t entirely)
+    (void)caller;
     server_session_t *dn = CONTAINER_OF(mgr, server_session_t, mgr);
     server_t *server = CONTAINER_OF(dn, server_t, dn);
 
@@ -108,7 +113,7 @@ static void server_async_close_cb(async_spec_t *spec){
     server_t *server = CONTAINER_OF(spec, server_t, advance_spec);
 
     // shutdown, part three of three: report ourselves as dead
-    server->mgr->dead(server->mgr);
+    server->mgr->dead(server->mgr, server);
 }
 
 // part of the maildir_conn_dn_i, meaning this can be called on- or off-thread
@@ -357,7 +362,7 @@ void server_close(server_t *server, derr_t error){
     DROP_VAR(&error);
 
     // tell our owner we are dying
-    server->mgr->dying(server->mgr, E_OK);
+    server->mgr->dying(server->mgr, server, E_OK);
 
     // we can close multithreaded resources here but we can't release refs
     imap_session_close(&server->dn.s.session, E_OK);
@@ -502,7 +507,10 @@ static void managed_srv_free(managed_srv_t **mgd){
     return;
 }
 
-static void server_dying(manager_i *mgr, derr_t e){
+static void server_dying(manager_i *mgr, void *caller, derr_t e){
+    // TODO: simplify this code by using the new *caller parameter
+    //       (eliminate managed_srv_t entirely)
+    (void)caller;
     managed_srv_t *mgd = CONTAINER_OF(mgr, managed_srv_t, mgr);
     server_mgr_t *server_mgr = mgd->server_mgr;
     // TODO: this error handling is so fucking broken...
@@ -520,7 +528,10 @@ static void server_dying(manager_i *mgr, derr_t e){
     uv_mutex_unlock(&server_mgr->mutex);
 }
 
-static void server_dead(manager_i *mgr){
+static void server_dead(manager_i *mgr, void *caller){
+    // TODO: simplify this code by using the new *caller parameter
+    //       (eliminate managed_srv_t entirely)
+    (void)caller;
     managed_srv_t *mgd = CONTAINER_OF(mgr, managed_srv_t, mgr);
     managed_srv_free(&mgd);
 }
@@ -718,7 +729,6 @@ static void stop_loop_on_signal(int signum){
     if(hard_exit) exit(1);
     hard_exit = true;
     // launch an asynchronous loop abort
-    // uv_idle_stop(&idle);
     loop_close(&loop, E_OK);
 }
 

@@ -93,9 +93,9 @@ typedef struct manager_i manager_i;
 
 struct manager_i {
     // report "dying" when you start failing
-    void (*dying)(manager_i*, derr_t);
+    void (*dying)(manager_i*, void *caller, derr_t);
     // report "dead" when you are ready to be freed
-    void (*dead)(manager_i*);
+    void (*dead)(manager_i*, void *caller);
 };
 
 #endif // MANAGER_H

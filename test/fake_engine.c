@@ -95,7 +95,10 @@ fail:
     return NULL;
 }
 
-static void echo_session_dying(manager_i *mgr, derr_t error){
+static void echo_session_dying(manager_i *mgr, void *caller, derr_t error){
+    // TODO: simplify this code by using the new *caller parameter
+    //       (eliminate tagged_mgr_t entirely)
+    (void)caller;
     tagged_mgr_t *tmgr = CONTAINER_OF(mgr, tagged_mgr_t, mgr);
     echo_session_mgr_t *esm = CONTAINER_OF(tmgr, echo_session_mgr_t, tmgr);
     if(is_error(error)){
@@ -104,7 +107,10 @@ static void echo_session_dying(manager_i *mgr, derr_t error){
     }
 }
 
-static void echo_session_dead(manager_i *mgr){
+static void echo_session_dead(manager_i *mgr, void *caller){
+    // TODO: simplify this code by using the new *caller parameter
+    //       (eliminate tagged_mgr_t entirely)
+    (void)caller;
     tagged_mgr_t *tmgr = CONTAINER_OF(mgr, tagged_mgr_t, mgr);
     echo_session_mgr_t *esm = CONTAINER_OF(tmgr, echo_session_mgr_t, tmgr);
     imap_session_free(&esm->s);
@@ -174,7 +180,10 @@ static derr_t cb_reader_writer_send(cb_reader_writer_t *cbrw, event_t **out){
     return e;
 }
 
-static void cbrw_session_dying(manager_i *mgr, derr_t error){
+static void cbrw_session_dying(manager_i *mgr, void *caller, derr_t error){
+    // TODO: simplify this code by using the new *caller parameter
+    //       (eliminate tagged_mgr_t entirely)
+    (void)caller;
     tagged_mgr_t *tmgr = CONTAINER_OF(mgr, tagged_mgr_t, mgr);
     cb_reader_writer_t *cbrw = CONTAINER_OF(tmgr, cb_reader_writer_t, tmgr);
     if(is_error(error)){
@@ -183,7 +192,10 @@ static void cbrw_session_dying(manager_i *mgr, derr_t error){
     }
 }
 
-static void cbrw_session_dead(manager_i *mgr){
+static void cbrw_session_dead(manager_i *mgr, void *caller){
+    // TODO: simplify this code by using the new *caller parameter
+    //       (eliminate tagged_mgr_t entirely)
+    (void)caller;
     tagged_mgr_t *tmgr = CONTAINER_OF(mgr, tagged_mgr_t, mgr);
     cb_reader_writer_t *cbrw = CONTAINER_OF(tmgr, cb_reader_writer_t, tmgr);
     imap_session_free(&cbrw->s);

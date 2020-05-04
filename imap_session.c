@@ -18,7 +18,7 @@ void imap_session_ref_down(imap_session_t *s){
     if(refs > 0) return;
 
     // signal to the manager that we are dead, manager will free us later
-    s->mgr->dead(s->mgr);
+    s->mgr->dead(s->mgr, s);
 }
 
 void imap_session_free(imap_session_t *s){
@@ -107,7 +107,7 @@ void imap_session_close(session_t *session, derr_t error){
     }
 
     // signal to the manager that we are dying
-    s->mgr->dying(s->mgr, error);
+    s->mgr->dying(s->mgr, s, error);
     PASSED(error);
 
     /* make sure every engine_data has a chance to pass a close event; a slow

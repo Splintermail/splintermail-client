@@ -42,7 +42,7 @@ typedef struct {
     imap_pipeline_t *pipeline;
     ssl_context_t *ctx_srv;
     dirmgr_t *dirmgr;
-    // participate in proper shutdown sequence as an engine
+    // participate in message passing as an engine
     engine_t engine;
     // our manager
     manager_i *mgr;
