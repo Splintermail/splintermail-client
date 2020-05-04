@@ -26,6 +26,10 @@ int uv_cancel_work(uv_work_t *work){
     return uv_cancel((uv_req_t*)work);
 }
 
+void uv_async_close(uv_async_t* async, uv_close_cb close_cb){
+    uv_close((uv_handle_t*)async, close_cb);
+}
+
 derr_t set_uv_threadpool_size(unsigned int min, unsigned int recommended){
     derr_t e = E_OK;
 
@@ -89,4 +93,15 @@ derr_t set_uv_threadpool_size(unsigned int min, unsigned int recommended){
     }
 
     return e;
+}
+
+async_spec_t no_cleanup_async_spec = {
+    .close_cb = NULL,
+};
+
+void async_handle_close_cb(uv_handle_t *handle){
+    // every async specifies its own cleanup closure
+    async_spec_t *spec = handle->data;
+    if(spec->close_cb == NULL) return;
+    spec->close_cb(spec);
 }

@@ -755,14 +755,6 @@ fail_malloc:
 }
 
 
-void async_handle_close_cb(uv_handle_t *handle){
-    // every async specifies its own cleanup closure
-    async_spec_t *spec = handle->data;
-    if(spec->close_cb == NULL) return;
-    spec->close_cb(spec);
-}
-
-
 static void close_remaining_handles(uv_handle_t *handle, void *arg){
     (void)arg;
 
@@ -977,12 +969,6 @@ static void loop_return_read_event(event_t *ev){
     ev->ev_type = EV_READ_DONE;
     loop_pass_event(&loop->engine, ev);
 }
-
-
-// a no-op cleanup async_spec_t
-static async_spec_t no_cleanup_async_spec = {
-    .close_cb = NULL,
-};
 
 
 derr_t loop_init(loop_t *loop, size_t num_read_events,

@@ -2,7 +2,6 @@
 
 #include "sm_serve.h"
 #include "libdstr/libdstr.h"
-#include "uv_util.h"
 #include "networking.h"
 
 #define KEY "../c/test/files/ssl/good-key.pem"

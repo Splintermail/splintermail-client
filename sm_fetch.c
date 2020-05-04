@@ -3,7 +3,6 @@
 
 #include "sm_fetch.h"
 #include "libdstr/libdstr.h"
-#include "uv_util.h"
 #include "crypto.h"
 
 loop_t loop;

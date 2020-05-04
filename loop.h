@@ -13,8 +13,6 @@ struct loop_data_t;
 typedef struct loop_data_t loop_data_t;
 struct listener_spec_t;
 typedef struct listener_spec_t listener_spec_t;
-struct async_spec_t;
-typedef struct async_spec_t async_spec_t;
 
 /* A tagged union of pointers, mostly important for uv_walk, to determine which
    type of handler we are looking at */
@@ -126,15 +124,6 @@ struct listener_spec_t {
     // after receiving a connect, allocate a new downwards session
     derr_t (*conn_recvd)(listener_spec_t*, session_t**);
 };
-
-// Per-async specification for how to clean up the uv_async_t
-struct async_spec_t {
-    // the callback we will use to free the uv_async_t handle
-    void (*close_cb)(async_spec_t*);
-};
-
-// the async close_cb for all asyncs
-void async_handle_close_cb(uv_handle_t *handle);
 
 // num_write_wrappers must match the downstream engine's num_write_events
 derr_t loop_init(loop_t *loop, size_t num_read_events,

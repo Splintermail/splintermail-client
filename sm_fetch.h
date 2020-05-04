@@ -6,6 +6,7 @@
 #include "imap_session.h"
 #include "refs.h"
 #include "libimaildir/libimaildir.h"
+#include "uv_util.h"
 
 /* fetcher is only responsible for navigating until just before the SELECTED
    state, everything after that is the responsibility of the imaildir_t */
