@@ -70,9 +70,10 @@ static derr_t test_hashmap(void){
     }
 
     // iterate through everything
-    hashmap_iter_t i;
     size_t count = 0;
-    for(i = hashmap_first(&h); i.current; hashmap_next(&i)){
+    hashmap_trav_t trav;
+    hash_elem_t *elem = hashmap_iter(&trav, &h);
+    for( ; elem; elem = hashmap_next(&trav)){
         if(++count > num_elems)
             ORIG_GO(&e, E_VALUE, "iterated too many elements", fail_h);
     }
@@ -81,7 +82,8 @@ static derr_t test_hashmap(void){
 
     // again, but popping
     count = 0;
-    for(i = hashmap_pop_first(&h); i.current; hashmap_pop_next(&i)){
+    elem = hashmap_pop_iter(&trav, &h);
+    for( ; elem; elem = hashmap_pop_next(&trav)){
         if(++count > num_elems)
             ORIG_GO(&e, E_VALUE, "iterated too many elements", fail_h);
     }
@@ -103,12 +105,31 @@ fail_elems:
 
 static derr_t test_empty_iter(void){
     derr_t e = E_OK;
-    hashmap_t h;
+    hashmap_trav_t trav;
+    hash_elem_t *elem;
+    // pre-init iterate
+    hashmap_t h = {0};
+    elem = hashmap_iter(&trav, &h);
+    for( ; elem; elem = hashmap_next(&trav)){
+        ORIG(&e, E_VALUE, "iterated too many elements");
+    }
+
+    // post-init iterate
     PROP(&e, hashmap_init(&h) );
-    for(hashmap_iter_t i = hashmap_first(&h); i.current; hashmap_next(&i)){
+    elem = hashmap_iter(&trav, &h);
+    for( ; elem; elem = hashmap_next(&trav)){
         ORIG_GO(&e, E_VALUE, "iterated too many elements", fail_h);
     }
+
+    // post-free iterate
+    hashmap_free(&h);
+    elem = hashmap_iter(&trav, &h);
+    for( ; elem; elem = hashmap_next(&trav)){
+        ORIG(&e, E_VALUE, "iterated too many elements");
+    }
+
 fail_h:
+    // double-free check
     hashmap_free(&h);
     return e;
 }

@@ -1,5 +1,4 @@
 #include <stdlib.h>
-#include <string.h>
 
 #include "libdstr.h"
 
@@ -177,7 +176,7 @@ derr_t hashmap_init(hashmap_t *h){
 
 void hashmap_free(hashmap_t *h){
     if(h->buckets) free(h->buckets);
-    memset(h, 0, sizeof(*h));
+    *h = (hashmap_t){0};
 }
 
 static void check_rehash(hashmap_t *h){
@@ -378,14 +377,6 @@ hash_elem_t *hashmap_delu(hashmap_t *h, unsigned int key){
     return hashmap_del(h, NULL, key, false);
 }
 
-hashmap_iter_t hashmap_first(hashmap_t *h){
-    hashmap_iter_t i = {.hashmap = h};
-    i.current = i.hashmap->buckets[0];
-    if(i.current) return i;
-    hashmap_next(&i);
-    return i;
-}
-
 // delete an element directly (elem must be in h)
 void hashmap_del_elem(hashmap_t *h, hash_elem_t *elem){
     // get bucket index
@@ -404,49 +395,47 @@ void hashmap_del_elem(hashmap_t *h, hash_elem_t *elem){
     }
 }
 
-void hashmap_next(hashmap_iter_t *i){
+hash_elem_t *hashmap_iter(hashmap_trav_t *trav, hashmap_t *h){
+    *trav = (hashmap_trav_t){.hashmap = h};
+    return hashmap_next(trav);
+}
+
+hash_elem_t *hashmap_next(hashmap_trav_t *trav){
     // take the next element of the list
-    if(i->current != NULL){
-        i->current = i->current->next;
-        if(i->current != NULL) return;
+    if(trav->current != NULL){
+        trav->current = trav->current->next;
+        if(trav->current != NULL) return trav->current;
+        // move to the next bucket
+        trav->bucket_idx++;
     }
-    // start into the next row
-    i->bucket_idx++;
     // find a non-empty bucket
-    for( ; i->bucket_idx < i->hashmap->num_buckets; i->bucket_idx++){
-        if(i->hashmap->buckets[i->bucket_idx] != NULL){
-            i->current = i->hashmap->buckets[i->bucket_idx];
-            return;
+    for( ; trav->bucket_idx < trav->hashmap->num_buckets; trav->bucket_idx++){
+        if(trav->hashmap->buckets[trav->bucket_idx] != NULL){
+            trav->current = trav->hashmap->buckets[trav->bucket_idx];
+            return trav->current;
         }
     }
     // found nothing
-    i->current = NULL;
+    return NULL;
 }
 
-hashmap_iter_t hashmap_pop_first(hashmap_t *h){
-    hashmap_iter_t i = {.hashmap = h};
-    /* Return empty iterator if the hashmap hasn't been initialized.  This is
-       important to guarantee that zeroed structures can be safely freed, even
-       if they have to iterate through a hashmap as part of their freeing. */
-    if(!h->buckets) return i;
-
-    hashmap_pop_next(&i);
-    return i;
+hash_elem_t *hashmap_pop_iter(hashmap_trav_t *trav, hashmap_t *h){
+    *trav = (hashmap_trav_t){.hashmap = h};
+    return hashmap_pop_next(trav);
 }
 
-void hashmap_pop_next(hashmap_iter_t *i){
-    for( ; i->bucket_idx < i->hashmap->num_buckets; i->bucket_idx++){
+hash_elem_t *hashmap_pop_next(hashmap_trav_t *trav){
+    for( ; trav->bucket_idx < trav->hashmap->num_buckets; trav->bucket_idx++){
         // check if the bucket is non-empty
-        if(i->hashmap->buckets[i->bucket_idx] != NULL) {
+        hash_elem_t *elem;
+        if((elem = trav->hashmap->buckets[trav->bucket_idx])){
             // remove the element from the bucket
-            i->current = i->hashmap->buckets[i->bucket_idx];
-            // point the bucket to the second element (if any)
-            i->hashmap->buckets[i->bucket_idx] = i->current->next;
+            trav->hashmap->buckets[trav->bucket_idx] = elem->next;
             // decrement element counter
-            i->hashmap->num_elems--;
-            return;
+            trav->hashmap->num_elems--;
+            return elem;
         }
     }
     // found nothing
-    i->current = NULL;
+    return NULL;
 }

@@ -18,12 +18,10 @@ typedef struct {
 } hashmap_t;
 
 typedef struct {
-    // internal state only
     hashmap_t *hashmap;
     size_t bucket_idx;
-    // for application to read (read-only):
     hash_elem_t *current;
-} hashmap_iter_t;
+} hashmap_trav_t;
 
 derr_t hashmap_init(hashmap_t *h);
 /* throws: E_NOMEM */
@@ -54,13 +52,10 @@ hash_elem_t *hashmap_delu(hashmap_t *h, unsigned int key);
 void hashmap_del_elem(hashmap_t *h, hash_elem_t *elem);
 
 // iterators
-hashmap_iter_t hashmap_first(hashmap_t *h);
-void hashmap_next(hashmap_iter_t *i);
-// example:
-//    for(hashmap_iter_t i = hashmap_first(&h); i.current; hashmap_next(&i)){
-//        do_something(i.current);
-//    }
+
+hash_elem_t *hashmap_iter(hashmap_trav_t *trav, hashmap_t *h);
+hash_elem_t *hashmap_next(hashmap_trav_t *trav);
 
 // "pop"ing iterators, also remove objects from the hashmap
-hashmap_iter_t hashmap_pop_first(hashmap_t *h);
-void hashmap_pop_next(hashmap_iter_t *i);
+hash_elem_t *hashmap_pop_iter(hashmap_trav_t *trav, hashmap_t *h);
+hash_elem_t *hashmap_pop_next(hashmap_trav_t *trav);
