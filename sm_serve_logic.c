@@ -589,6 +589,7 @@ static derr_t do_select(server_t *server, imap_cmd_t *select_cmd){
     return e;
 
 fail_maildir:
+    dirmgr_close_dn(server->dirmgr, server->maildir_dn);
     server->maildir_has_ref = false;
 
     imap_cmd_free(select_cmd);
