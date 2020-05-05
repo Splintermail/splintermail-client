@@ -55,6 +55,28 @@ static derr_t test_dstr_cmp(void){
     return e;
 }
 
+static derr_t test_dstr_grow(void){
+    derr_t e = E_OK;
+    LOG_INFO("----- test dstr_grow --------------------\n");
+    // confirm that we can use dstr_copy on an empty dstr
+    dstr_t dstr = {0};
+    PROP_GO(&e, dstr_copy(&DSTR_LIT("copy"), &dstr), cleanup);
+    EXP_VS_GOT(&dstr, &DSTR_LIT("copy"));
+    dstr_free(&dstr);
+    // confirm that dstr freed dstr is equivalent to the empty string
+    EXP_VS_GOT(&dstr, &DSTR_LIT(""));
+    // confirm that double-free is safe
+    dstr_free(&dstr);
+    // confirm that dstr_append also works
+    PROP_GO(&e, dstr_append(&dstr, &DSTR_LIT("a")), cleanup);
+    PROP_GO(&e, dstr_append(&dstr, &DSTR_LIT("b")), cleanup);
+    PROP_GO(&e, dstr_append(&dstr, &DSTR_LIT("c")), cleanup);
+    EXP_VS_GOT(&dstr, &DSTR_LIT("abc"));
+cleanup:
+    dstr_free(&dstr);
+    return e;
+}
+
 static derr_t test_dstr_sub(void){
     derr_t e = E_OK;
     LOG_INFO("----- test dstr_sub ---------------------\n");
@@ -153,9 +175,9 @@ static derr_t test_dstr_split(void){
     LIST_VAR(dstr_t, list, 32);
     PROP(&e, dstr_split(&text, &pattern,  &list) );
 
-    EXP_VS_GOT(&list.data[0], &DSTR_LIT("abcd"));
-    EXP_VS_GOT(&list.data[1], &DSTR_LIT("efgh"));
-    EXP_VS_GOT(&list.data[2], &DSTR_LIT("ijkl"));
+    EXP_VS_GOT(&DSTR_LIT("abcd"), &list.data[0]);
+    EXP_VS_GOT(&DSTR_LIT("efgh"), &list.data[1]);
+    EXP_VS_GOT(&DSTR_LIT("ijkl"), &list.data[2]);
 
     // see if splitting on the split pattern results in 2 empty strings
     PROP(&e, dstr_split(&pattern, &pattern,  &list) );
@@ -200,9 +222,9 @@ static derr_t test_dstr_split_soft(void){
     // retry with soft
     PROP(&e, dstr_split_soft(&text, &pattern, &list) );
 
-    EXP_VS_GOT(&list.data[0], &s0);
-    EXP_VS_GOT(&list.data[1], &s1);
-    EXP_VS_GOT(&list.data[2], &s2);
+    EXP_VS_GOT(&s0, &list.data[0]);
+    EXP_VS_GOT(&s1, &list.data[1]);
+    EXP_VS_GOT(&s2, &list.data[2]);
 
 cleanup:
     return e;
@@ -573,6 +595,7 @@ int main(int argc, char** argv){
     PARSE_TEST_OPTIONS(argc, argv, NULL, LOG_LVL_WARN);
 
     PROP_GO(&e, test_dstr_cmp(),             test_fail);
+    PROP_GO(&e, test_dstr_grow(),            test_fail);
     PROP_GO(&e, test_dstr_sub(),             test_fail);
     PROP_GO(&e, test_dstr_find(),            test_fail);
     PROP_GO(&e, test_dstr_count(),           test_fail);

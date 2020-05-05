@@ -81,9 +81,7 @@ derr_t dstr_new(dstr_t *ds, size_t size){
 void dstr_free(dstr_t* ds){
     if(ds->data) {
         free(ds->data);
-        ds->data = NULL;
-        ds->size = 0;
-        ds->len = 0;
+        *ds = (dstr_t){0};
     }
 }
 
