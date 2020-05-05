@@ -133,6 +133,7 @@ include_directories("${PROJECT_BINARY_DIR}")
 add_subdirectory(libdstr)
 add_subdirectory(libimap)
 add_subdirectory(libimaildir)
+add_subdirectory(citm)
 
 set(OBJ_TGTS
     api_client
