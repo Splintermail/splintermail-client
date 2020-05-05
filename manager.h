@@ -86,6 +86,63 @@
        maybe we introduce one additional flow, which can be an accessor error
        flow, where a shared resource should BROADCAST its error to every
        accessor.
+
+UPDATE:
+    more thoughts, or "wow this seems so much harder than it ought to be"
+
+    First, the manager_i model is surprisingly similar to the "structured" part
+    of CSP, where a subprocess always executes within the lifetime of its
+    parent process.  I like this model.
+
+    There's a hiccup with the manager_i interface and libuv: uv_async_t's can
+    only be closed asynchronously after they are created.  That has led to a
+    forked initialization API, where you call thing_init(), then EITHER
+    thing_start() follwed by the normal API or thing_cancel(), where cancel()
+    denotes that the rest of the normal manager_i calls will be ignored.
+
+    This is obnoxious but it keeps the intermediate error states to a minimum.
+
+    The really obnoxious part is that it changes who frees the memory at the
+    end; in the canceled case, a thing needs to free itself, potentially
+    asynchronously, whereas in the normal case a thing is freed by its owner
+    after it calls mgr->dead().
+
+    Maybe all actors always free themselves?  They're the only things that
+    have this weird behavior, why not let them do that?
+
+    The owner of the actor would just have to hold a reference to keep it from
+    transitioning from "dying" to "dead", and it would be freed right after
+    "dead".
+
+Another problem:
+    If you use reference counts, then you have to hold references:
+      - on each thing you own
+      - on yourself for each thing you own
+
+    That's kinda weird.  I guess normally you would own references for all of
+    your peers, but in the hierarchical setup of manager_i you track the
+    references of yourself on behalf of the things you own.
+
+    The really obnoxious part is that you have to store them separately, since
+    you can't downref yourself for things you own until they call mgr->dead(),
+    but they can't all mgr->dead() until you release them, which you will never
+    do unless you distinguish between the two types of refs.
+
+    No... this isn't true.  As soon as you decide to close, you are safe to
+    ref_dn the things you own; but you are required to not make additional
+    calls into those things.  That's the semantic meaning of ref_dn anyway.
+
+Conclusion of update:
+    Your problems with ref counting were because of your hesitancy to guard all
+    calls into a thing against asynchronous errors.  It's easy enough with
+    actors, since it can be handled neatly by .close_onthread(), but for
+    multi-threaded things, you basically have to wrap every external call in a
+    mutex lock to ensure close() isn't called while you are in the middle of
+    processing some other call.
+
+    The only alternative would be to use a reference count *just* to decide
+    when you should release the things you own, and do a check-quit/ref-up
+    dance at the entrance to every external call.  That sounds awful.
 */
 
 struct manager_i;
@@ -97,5 +154,11 @@ struct manager_i {
     // report "dead" when you are ready to be freed
     void (*dead)(manager_i*, void *caller);
 };
+
+// is the .dead call always useful?  I think not
+static inline void noop_mgr_dead(manager_i *mgr, void *caller){
+    (void)mgr;
+    (void)caller;
+}
 
 #endif // MANAGER_H
