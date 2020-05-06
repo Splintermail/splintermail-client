@@ -1,13 +1,10 @@
 typedef struct {
-    const char *remote_host;
-    const char *remote_svc;
-
     uv_mutex_t mutex;
+    const string_builder_t *root;
 
-    /* sf_pair_t's are owned dynamically; they may fail before we know what
-       user they belong to.  Therefore the user_pool_t provides the manager_i
-       to all of them. */
-    manager_i sf_pair_mgr;
+    /* sf_pair_t's are owned dynamically; the user_pool owns them until they
+       call .set_owner(), at which point we pass them to a user_t */
+    sf_pair_cb_i sf_pair_cb;
 
     // provide a separate manager_i for each user_t
     manager_i user_mgr;
@@ -24,7 +21,7 @@ typedef struct {
     event_t *quit_ev;
     bool quitting;
 } user_pool_t;
-DEF_CONTAINER_OF(user_pool_t, sf_pair_mgr, manager_i);
+DEF_CONTAINER_OF(user_pool_t, sf_pair_cb, sf_pair_cb_i);
 DEF_CONTAINER_OF(user_pool_t, user_mgr, manager_i);
 DEF_CONTAINER_OF(user_pool_t, engine, engine_t);
 DEF_CONTAINER_OF(user_pool_t, refs, refs_t);
@@ -32,8 +29,7 @@ DEF_CONTAINER_OF(user_pool_t, refs, refs_t);
 
 derr_t user_pool_init(
     user_pool_t *user_pool,
-    const char *remote_host,
-    const char *remote_svc,
+    const string_builder_t *root,
     imap_pipeline_t *pipeline
 );
 

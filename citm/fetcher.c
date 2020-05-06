@@ -16,7 +16,7 @@ void fetcher_close(fetcher_t *fetcher, derr_t error){
 
     // tell our owner we are dying
     TRACE_PROP(&error);
-    fetcher->mgr->dying(fetcher->mgr, fetcher, E_OK);
+    fetcher->cb->dying(fetcher->cb, E_OK);
     PASSED(error);
 
     // we can close multithreaded resources here but we can't release refs
@@ -211,23 +211,23 @@ static void fetcher_conn_up_release(maildir_conn_up_i *conn_up){
 }
 
 
-static derr_t fetcher_new(fetcher_t **out, const char *host,
-        const char *svc, const dstr_t *user, const dstr_t *pass,
-        dirmgr_t *dirmgr, imap_pipeline_t *p, ssl_context_t *cli_ctx,
-        manager_i *mgr){
+derr_t fetcher_new(
+    fetcher_t **out,
+    fetcher_cb_i *cb,
+    const char *host,
+    const char *svc,
+    imap_pipeline_t *p,
+    ssl_context_t *ctx_cli
+){
     derr_t e = E_OK;
 
     fetcher_t *fetcher = malloc(sizeof(*fetcher));
     if(!fetcher) ORIG(&e, E_NOMEM, "nomem");
     *fetcher = (fetcher_t){
+        .cb = cb,
         .host = host,
         .svc = svc,
-        .user = user,
-        .pass = pass,
         .pipeline = p,
-        .cli_ctx = cli_ctx,
-        .dirmgr = dirmgr,
-        .mgr = mgr,
 
         .engine = {
             .pass_event = fetcher_pass_event,
@@ -285,11 +285,11 @@ static derr_t fetcher_new(fetcher_t **out, const char *host,
     imap_session_alloc_args_t arg_up = {
         fetcher->pipeline,
         &fetcher->session_mgr,
-        fetcher->cli_ctx,
+        ctx_cli,
         &fetcher->ctrl,
         &fetcher->engine,
-        fetcher->host,
-        fetcher->svc,
+        host,
+        svc,
         (terminal_t){},
     };
     PROP_GO(&e, imap_session_alloc_connect(&fetcher->s, &arg_up),
@@ -319,6 +319,16 @@ fail_actor:
 fail_malloc:
     free(fetcher);
     return e;
+}
+
+// part of fetcher-provided interface to the sf_pair
+derr_t fetcher_login(
+    fetcher_t *fetcher,
+    const ie_dstr_t *user,
+    const ie_dstr_t *pass
+){
+    derr_t e = E_OK;
+
 }
 
 void fetcher_start(fetcher_t *fetcher){

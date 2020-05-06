@@ -14,27 +14,7 @@ static void user_keyfetcher_dying(manager_i *mgr, void *caller, derr_t error){
     uv_mutex_unlock(&user->mutex);
 
     fetcher_release(keyfetcher);
-    ref_dn(&user->refs);
-}
-
-
-// this gets called by the user_pool's sf_pair_mgr
-void user_sf_pair_dying(user_t *user, sf_pair_t *sf_pair, derr_t error){
-    // just print an error, nothing more
-    if(is_error(error)){
-        TRACE_PROP(&error);
-        TRACE(&error, "server/fetcher pair dying with error\n");
-        DUMP(error);
-        DROP_VAR(&error);
-    }
-
-    uv_mutex_lock(&user->mutex);
-    if(!user->closed){
-        link_remove(&sf_pair->link);
-    }
-    uv_mutex_unlock(&user->mutex);
-
-    sf_pair_release(sf_pair);
+    // drop the keyfetcher ref
     ref_dn(&user->refs);
 }
 
@@ -71,7 +51,9 @@ void user_close(user_t *user, derr_t error){
 static void user_finalize(refs_t *refs){
     user_t *user = CONTAINER_OF(refs, user_t, refs);
 
-    user->mgr->dead(user->mgr, user);
+    if(!user->canceled){
+        user->mgr->dead(user->mgr, user);
+    }
 
     dstr_free(&user->name);
     refs_free(&user->refs);
@@ -139,12 +121,27 @@ fail_malloc:
 
 
 void user_release(user_t *user){
+    // drop owner ref
+    ref_dn(&user->refs);
+}
+
+void user_start(user_t *user){
+    // ref up for the keyfetcher
+    ref_up(&user->refs);
+    fetcher_start(user->keyfetcher);
+}
+
+void user_cancel(user_t *user){
+    user->canceled = true;
+    fetcher_cancel(user->keyfetcher);
+    // drop owner ref
     ref_dn(&user->refs);
 }
 
 
 derr_t user_add_sf_pair(user_t *user, sf_pair_t *sf_pair){
     derr_t e = E_OK;
+
     uv_mutex_lock(&user->mutex);
 
     if(user->closed){
@@ -152,9 +149,23 @@ derr_t user_add_sf_pair(user_t *user, sf_pair_t *sf_pair){
     }
 
     link_list_append(&user->sf_pairs, &sf_pair->link);
-    ref_up(&user->refs);
+    user->npairs++;
 
 unlock:
     uv_mutex_unlock(&user->mutex);
     return e;
+}
+
+
+// this gets called by the user_pool's sf_pair_cb
+bool user_remove_sf_pair(user_t *user, sf_pair_t *sf_pair){
+
+    uv_mutex_lock(&user->mutex);
+    if(!user->closed){
+        link_remove(&sf_pair->link);
+    }
+    bool empty = (--user->npairs == 0);
+    uv_mutex_unlock(&user->mutex);
+
+    return empty;
 }

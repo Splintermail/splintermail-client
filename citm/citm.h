@@ -10,11 +10,6 @@
 #include "loop.h"
 #include "fetcher.h"
 #include "server.h"
-
-struct sf_pair_t;
-typedef struct sf_pair_t sf_pair_t;
-
+#include "sf_pair.h"
 #include "user.h"
 #include "user_pool.h"
-
-#include "sf_pair.h"

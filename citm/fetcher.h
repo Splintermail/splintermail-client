@@ -11,29 +11,32 @@ typedef enum {
 } imap_client_state_t;
 const dstr_t *imap_client_state_to_dstr(imap_client_state_t state);
 
-typedef struct {
-    manager_i mgr;
-    imap_session_t s;
-    // parser callbacks and imap extesions
-    imape_control_i ctrl;
-} fetcher_session_t;
-DEF_CONTAINER_OF(fetcher_session_t, mgr, manager_i);
-DEF_CONTAINER_OF(fetcher_session_t, ctrl, imape_control_i);
+// an interface that must be provided by the sf_pair
+struct fetcher_cb_i;
+typedef struct fetcher_cb_i fetcher_cb_i;
+struct fetcher_cb_i {
+    void (*dying)(fetcher_cb_i*, derr_t error);
+    // ready for login credentials
+    derr_t (*login_ready)(fetcher_cb_i*);
+    // login failed
+    derr_t (*login_failed)(fetcher_cb_i*);
+    // login succeeded (this will give us our dirmgr)
+    derr_t (*login_succeeded)(fetcher_cb_i*, dirmgr_t **);
+};
 
 typedef struct {
+    fetcher_cb_i *cb;
     const char *host;
     const char *svc;
     const dstr_t *user;
     const dstr_t *pass;
     imap_pipeline_t *pipeline;
-    ssl_context_t *cli_ctx;
-    dirmgr_t *dirmgr;
-    // participate in proper shutdown sequence as an engine
+    // participate in message passing as an engine
     engine_t engine;
-    // our manager
-    manager_i *mgr;
-    // don't use our manager_i if we fail in init
     bool init_complete;
+
+    // initialized during cb->login_ready()
+    dirmgr_t *dirmgr;
 
     // fetcher session
     manager_i session_mgr;
@@ -73,13 +76,31 @@ typedef struct {
     bool maildir_has_ref;
     bool mailbox_synced;
     bool mailbox_unselected;
-
 } fetcher_t;
 DEF_CONTAINER_OF(fetcher_t, conn_up, maildir_conn_up_i);
 DEF_CONTAINER_OF(fetcher_t, engine, engine_t);
 DEF_CONTAINER_OF(fetcher_t, session_mgr, manager_i);
 DEF_CONTAINER_OF(fetcher_t, ctrl, imape_control_i);
 DEF_CONTAINER_OF(fetcher_t, actor, actor_t);
+
+
+derr_t fetcher_new(
+    fetcher_t **out,
+    fetcher_cb_i *cb,
+    const char *host,
+    const char *svc,
+    imap_pipeline_t *p,
+    ssl_context_t *ctx_cli
+);
+
+
+// part of fetcher-provided interface to the sf_pair
+derr_t fetcher_login(
+    fetcher_t *fetcher,
+    const ie_dstr_t *user,
+    const ie_dstr_t *pass
+);
+
 
 /* Advance the state machine of the fetch controller by some non-zero amount.
    This will only be called if fetcher_more_work returns true.  It is

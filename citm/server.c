@@ -16,7 +16,7 @@ void server_close(server_t *server, derr_t error){
 
     // pass the error along to our owner
     TRACE_PROP(&error);
-    server->mgr->dying(server->mgr, server, error);
+    server->cb->dying(server->cb, error);
     PASSED(error);
 
     // we can close multithreaded resources here but we can't release refs
@@ -81,9 +81,6 @@ static void server_dead_onthread(actor_t *actor){
     if(!server->init_complete){
         free(server);
         return;
-    }
-    if(!server->canceled){
-        server->mgr->dead(server->mgr, server);
     }
     server_free(&server);
 }
@@ -186,8 +183,35 @@ static void server_conn_dn_release(maildir_conn_dn_i *conn_dn){
     actor_advance(&server->actor);
 }
 
-derr_t server_new(server_t **out, imap_pipeline_t *p, ssl_context_t *ctx_srv,
-        manager_i *mgr, session_t **session){
+// the server-provided interface to the sf_pair
+derr_t server_allow_greeting(server_t *server){
+    server->greeting_allowed = true;
+    actor_advance(&server->actor);
+    return E_OK;
+}
+
+// the server-provided interface to the sf_pair
+derr_t server_login_succeeded(server_t *server, dirmgr_t *dirmgr){
+    server->dirmgr = dirmgr;
+    server->login_state = LOGIN_SUCCEEDED;
+    actor_advance(&server->actor);
+    return E_OK;
+}
+
+// the server-provided interface to the sf_pair
+derr_t server_login_failed(server_t *server){
+    server->login_state = LOGIN_FAILED;
+    actor_advance(&server->actor);
+    return E_OK;
+}
+
+derr_t server_new(
+    server_t **out,
+    server_cb_i *cb,
+    imap_pipeline_t *p,
+    ssl_context_t *ctx_srv,
+    session_t **session
+){
     derr_t e = E_OK;
 
     *out = NULL;
@@ -196,9 +220,8 @@ derr_t server_new(server_t **out, imap_pipeline_t *p, ssl_context_t *ctx_srv,
     server_t *server = malloc(sizeof(*server));
     if(!server) ORIG(&e, E_NOMEM, "nomem");
     *server = (server_t){
+        .cb = cb,
         .pipeline = p,
-        .ctx_srv = ctx_srv,
-        .mgr = mgr,
         .engine = {
             .pass_event = server_pass_event,
         },
@@ -251,7 +274,7 @@ derr_t server_new(server_t **out, imap_pipeline_t *p, ssl_context_t *ctx_srv,
     imap_session_alloc_args_t arg_dn = {
         server->pipeline,
         &server->session_mgr,   // manager_i
-        server->ctx_srv,   // ssl_context_t
+        ctx_srv,   // ssl_context_t
         &server->ctrl,  // imape_control_i
         &server->engine,   // engine_t
         NULL, // host
@@ -260,12 +283,12 @@ derr_t server_new(server_t **out, imap_pipeline_t *p, ssl_context_t *ctx_srv,
     };
     PROP_GO(&e, imap_session_alloc_accept(&server->s, &arg_dn), fail_mutex);
 
+    // start with a pause on the greeting
+    PROP_GO(&e, greet_pause_new(&server->pause, server), fail_session);
+
     // take an owner's ref of the imap_session
     // TODO: refactor imap_session to assume an owner's ref
     imap_session_ref_up(&server->s);
-
-    // ref up for the session
-    actor_ref_up(&server->actor);
 
     server->init_complete = true;
     *out = server;
@@ -290,17 +313,14 @@ fail_malloc:
 }
 
 void server_start(server_t *server){
+    // ref up for the session
+    actor_ref_up(&server->actor);
     imap_session_start(&server->s);
     // trigger the server to send the greeting
     actor_advance(&server->actor);
 }
 
 void server_cancel(server_t *server){
-    server->canceled = true;
-
-    // downref for the session, which will not be making a mgr->dead call
-    actor_ref_dn(&server->actor);
-
     server_release(server);
 }
 

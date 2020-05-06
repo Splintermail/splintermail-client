@@ -15,8 +15,11 @@ static user_pool_t user_pool = {0};
 
 typedef struct {
     user_pool_t *user_pool;
+    const char *remote_host;
+    const char *remote_svc;
     imap_pipeline_t *pipeline;
     ssl_context_t *ctx_srv;
+    ssl_context_t *ctx_cli;
     listener_spec_t lspec;
 } citm_lspec_t;
 DEF_CONTAINER_OF(citm_lspec_t, lspec, listener_spec_t);
@@ -31,9 +34,12 @@ static derr_t conn_recvd(listener_spec_t *lspec, session_t **session){
     PROP_GO(&e,
         sf_pair_new(
             &sf_pair,
+            &l->user_pool->sf_pair_cb,
+            l->remote_host,
+            l->remote_svc,
             l->pipeline,
             l->ctx_srv,
-            &l->user_pool->sf_pair_mgr,
+            l->ctx_cli,
             session
         ),
     fail_sf_pair);
@@ -100,26 +106,35 @@ static derr_t citm(const char *local_host, const char *local_svc,
     // init OpenSSL
     PROP(&e, ssl_library_init() );
 
-    // init ssl context
+    // init ssl contexts
     ssl_context_t ctx_srv;
     PROP_GO(&e, ssl_context_new_server(&ctx_srv, cert, key, dh), cu_ssl_lib);
 
+    ssl_context_t ctx_cli;
+    PROP_GO(&e, ssl_context_new_client(&ctx_cli), cu_ctx_srv);
+
     imap_pipeline_t pipeline;
-    PROP_GO(&e, build_pipeline(&pipeline, &user_pool.engine), cu_ctx_srv);
+    PROP_GO(&e, build_pipeline(&pipeline, &user_pool.engine), cu_ctx_cli);
 
     /* After building the pipeline, we must run the pipeline if we want to
        cleanup nicely.  That means that we can't follow the normal cleanup
        pattern, and instead we must initialize all of our variables to zero
        (that is, if we had any variables right here) */
 
-    PROP_GO(&e, user_pool_init(&user_pool, remote_host, remote_svc,
-                &pipeline), fail);
+    // TODO: make the maildir root configurable
+    DSTR_STATIC(maildir_root, "/tmp/maildir_root");
+    string_builder_t root = SB(FD(&maildir_root));
+
+    PROP_GO(&e, user_pool_init(&user_pool, &root, &pipeline), fail);
 
     // add the lspec to the loop
     citm_lspec_t citm_lspec = {
         .user_pool = &user_pool,
+        .remote_host = remote_host,
+        .remote_svc = remote_svc,
         .pipeline = &pipeline,
-        .ctx_srv=&ctx_srv,
+        .ctx_srv = &ctx_srv,
+        .ctx_cli = &ctx_cli,
         .lspec = {
             .addr = local_host,
             .svc = local_svc,
@@ -141,6 +156,8 @@ fail:
 cu:
     user_pool_free(&user_pool);
     free_pipeline(&pipeline);
+cu_ctx_cli:
+    ssl_context_free(&ctx_cli);
 cu_ctx_srv:
     ssl_context_free(&ctx_srv);
 cu_ssl_lib:
@@ -189,6 +206,8 @@ int main(int argc, char **argv){
         }
         argc = sizeof(default_args)/sizeof(*default_args);
         argv = default_args;
+        fprintf(stderr, "using args: %s %s %s %s %s %s\n",
+                argv[2], argv[3], argv[4], argv[5], argv[6], argv[7]);
     }
 
     // add logger

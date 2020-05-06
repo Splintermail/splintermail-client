@@ -4,6 +4,9 @@
 static derr_t do_select(server_t *server, imap_cmd_t *select_cmd);
 static derr_t send_ok(server_t *server, const ie_dstr_t *tag,
         const dstr_t *msg);
+static derr_t send_no(server_t *server, const ie_dstr_t *tag,
+        const dstr_t *msg);
+static derr_t send_greeting(server_t *server);
 
 static inline imap_cmd_t *steal_cmd(imap_cmd_t **cmd){
     imap_cmd_t *temp = *cmd;
@@ -29,6 +32,63 @@ const dstr_t *imap_server_state_to_dstr(imap_server_state_t state){
         case SELECTED: return &SELECTED_dstr;
     }
     return &UNKNOWN_dstr;
+}
+
+/* a pause for when you have started up but you don't want to send a greeting
+   until you connect to the remote server */
+typedef struct {
+    server_t *server;
+    pause_t pause;
+} greet_pause_t;
+DEF_CONTAINER_OF(greet_pause_t, pause, pause_t);
+
+static void greet_pause_free(greet_pause_t *greet_pause){
+    free(greet_pause);
+}
+
+static bool greet_pause_ready(pause_t *pause){
+    greet_pause_t *greet_pause = CONTAINER_OF(pause, greet_pause_t, pause);
+    return greet_pause->server->greeting_allowed;
+}
+
+static derr_t greet_pause_run(pause_t **pause){
+    derr_t e = E_OK;
+
+    greet_pause_t *greet_pause = CONTAINER_OF(*pause, greet_pause_t, pause);
+
+    PROP_GO(&e, send_greeting(greet_pause->server), cu);
+
+cu:
+    greet_pause_free(greet_pause);
+    *pause = NULL;
+    return e;
+}
+
+static void greet_pause_cancel(pause_t **pause){
+    greet_pause_t *greet_pause = CONTAINER_OF(*pause, greet_pause_t, pause);
+    greet_pause_free(greet_pause);
+    *pause = NULL;
+}
+
+derr_t greet_pause_new(pause_t **out, server_t *server){
+    derr_t e = E_OK;
+
+    *out = NULL;
+
+    greet_pause_t *greet_pause = malloc(sizeof(*greet_pause));
+    if(!greet_pause) ORIG(&e, E_NOMEM, "no mem");
+    *greet_pause = (greet_pause_t){
+        .server = server,
+        .pause = {
+            .ready = greet_pause_ready,
+            .run = greet_pause_run,
+            .cancel = greet_pause_cancel,
+        }
+    };
+
+    *out = &greet_pause->pause;
+
+    return e;
 }
 
 // a pause for when you want to select but another folder is still open
@@ -164,6 +224,81 @@ fail:
     return e;
 }
 
+
+// a pause while you wait to login via a different connection
+typedef struct {
+    ie_dstr_t *tag;
+    server_t *server;
+    pause_t pause;
+} login_pause_t;
+DEF_CONTAINER_OF(login_pause_t, pause, pause_t);
+
+static void login_pause_free(login_pause_t *login_pause){
+    ie_dstr_free(login_pause->tag);
+    free(login_pause);
+}
+
+static bool login_pause_ready(pause_t *pause){
+    login_pause_t *login_pause = CONTAINER_OF(pause, login_pause_t, pause);
+    return login_pause->server->login_state != LOGIN_PENDING;
+}
+
+static derr_t login_pause_run(pause_t **pause){
+    derr_t e = E_OK;
+
+    login_pause_t *login_pause = CONTAINER_OF(*pause, login_pause_t, pause);
+    server_t *server = login_pause->server;
+    const ie_dstr_t *tag = login_pause->tag;
+
+    if(server->login_state == LOGIN_SUCCEEDED){
+        server->imap_state = AUTHENTICATED;
+        PROP_GO(&e, send_ok(server, tag, &DSTR_LIT("logged in")), cu);
+    }else{
+        PROP_GO(&e, send_no(server, tag, &DSTR_LIT("no dice, try again")), cu);
+    }
+
+cu:
+    login_pause_free(login_pause);
+    *pause = NULL;
+    return e;
+}
+
+static void login_pause_cancel(pause_t **pause){
+    login_pause_t *login_pause = CONTAINER_OF(*pause, login_pause_t, pause);
+    login_pause_free(login_pause);
+    *pause = NULL;
+}
+
+static derr_t login_pause_new(pause_t **out, server_t *server,
+        const ie_dstr_t *tag){
+    derr_t e = E_OK;
+
+    *out = NULL;
+
+    login_pause_t *login_pause = malloc(sizeof(*login_pause));
+    if(!login_pause) ORIG(&e, E_NOMEM, "no mem");
+    *login_pause = (login_pause_t){
+        .server = server,
+        .pause = {
+            .ready = login_pause_ready,
+            .run = login_pause_run,
+            .cancel = login_pause_cancel,
+        }
+    };
+
+    login_pause->tag = ie_dstr_copy(&e, tag);
+    CHECK_GO(&e, fail);
+
+    *out = &login_pause->pause;
+
+    return e;
+
+fail:
+    login_pause_free(login_pause);
+    return e;
+}
+
+//
 
 static void server_imap_ev_returner(event_t *ev){
     imap_session_t *s = CONTAINER_OF(ev->session, imap_session_t, session);
@@ -362,21 +497,17 @@ static derr_t check_login(server_t *server, const ie_dstr_t *tag,
         const ie_login_cmd_t *login){
     derr_t e = E_OK;
 
-    if(dstr_cmp(&login->user->dstr, &DSTR_LIT("a")) != 0){
-        PROP(&e, send_no(server, tag, &DSTR_LIT("wrong user")) );
-        return e;
-    }
+    // prepare a login pause
+    pause_t *pause;
+    PROP(&e, login_pause_new(&pause, server, tag) );
 
-    // TODO: this is like 12 different levels of wrong
-    if(dstr_cmp(&login->pass->dstr, &DSTR_LIT("b")) != 0){
-        PROP(&e, send_no(server, tag, &DSTR_LIT("wrong pass")) );
-        return e;
-    }
+    // report the login attempt to the sf_pair
+    PROP(&e, server->cb->login(server->cb, login->user, login->pass) );
 
-    server->imap_state = AUTHENTICATED;
+    return e;
 
-    PROP(&e, send_ok(server, tag, &DSTR_LIT("logged in")) );
-
+fail_pause:
+    pause->cancel(&pause);
     return e;
 }
 
@@ -637,8 +768,7 @@ cu_tag:
 
 bool server_more_work(actor_t *actor){
     server_t *server = CONTAINER_OF(actor, server_t, actor);
-    return !server->greeting_sent
-        || !link_list_isempty(&server->ts.unhandled_cmds)
+    return !link_list_isempty(&server->ts.unhandled_cmds)
         || !link_list_isempty(&server->ts.maildir_resps)
         || (server->pause && server->pause->ready(server->pause))
         || (server->maildir_dn
@@ -828,12 +958,6 @@ derr_t server_do_work(actor_t *actor){
     derr_t e = E_OK;
 
     server_t *server = CONTAINER_OF(actor, server_t, actor);
-
-    // send greeting
-    if(!server->greeting_sent){
-        PROP(&e, send_greeting(server));
-        server->greeting_sent = true;
-    }
 
     // if the maildir_dn needs on-thread work... do it.
     while(server->maildir_dn

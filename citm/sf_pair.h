@@ -1,30 +1,59 @@
+struct sf_pair_t;
+typedef struct sf_pair_t sf_pair_t;
+struct sf_pair_cb_i;
+typedef struct sf_pair_cb_i sf_pair_cb_i;
+
+// the interface the server->fetcher needs from its owner
+struct sf_pair_cb_i {
+    /* note that .set_owner() will actually change the callback pointer (it's a
+       real transfer of ownership), but this is thread-safe because the only
+       other calls which may be concurrent with it would be .dying(), and
+       .set_owner() will return E_DEAD if .dying() has run, or will hold the
+       mutex long enough that .dying() is not sent to the wrong owner. */
+    derr_t (*set_owner)(sf_pair_cb_i*, sf_pair_t *sf_pair,
+            const dstr_t *name, dirmgr_t **dirmgr, void **owner);
+    void (*dying)(sf_pair_cb_i*, sf_pair_t *sf_pair, derr_t error);
+};
+
 // server-fetcher pair
 struct sf_pair_t {
-    manager_i *mgr;
-    manager_i conn_mgr;
-    // server is defined during sf_pair_new()
+    // cb is constant, but *owner can change
+    sf_pair_cb_i *cb;
+    void *owner;
+
     server_t *server;
-    // allowed to be NULL before login is complete
-    user_t *user;
-    // allowed to be NULL before LOGIN command from server
     fetcher_t *fetcher;
+
+    // callbacks for the server
+    server_cb_i server_cb;
+    // callbacks for the fetcher
+    fetcher_cb_i fetcher_cb;
+
+    // last attempted login username
+    dstr_t username;
 
     refs_t refs;
 
     uv_mutex_t mutex;
-    bool closing;
+    bool closed;
     bool canceled;
     link_t link; // user_t->sf_pairs or user_pool_t->unowned
+
+    // state tracking
 };
-DEF_CONTAINER_OF(sf_pair_t, conn_mgr, manager_i);
 DEF_CONTAINER_OF(sf_pair_t, refs, refs_t);
 DEF_CONTAINER_OF(sf_pair_t, link, link_t);
+DEF_CONTAINER_OF(sf_pair_t, server_cb, server_cb_i);
+DEF_CONTAINER_OF(sf_pair_t, fetcher_cb, fetcher_cb_i);
 
 derr_t sf_pair_new(
     sf_pair_t **out,
+    sf_pair_cb_i *cb,
+    const char *remote_host,
+    const char *remote_svc,
     imap_pipeline_t *p,
     ssl_context_t *ctx_srv,
-    manager_i *mgr,
+    ssl_context_t *ctx_cli,
     session_t **session
 );
 

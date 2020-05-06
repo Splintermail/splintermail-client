@@ -18,7 +18,9 @@ typedef struct {
 
     uv_mutex_t mutex;
     link_t sf_pairs;  // sf_pair_t->link
+    size_t npairs;
     bool closed;
+    bool canceled;
 } user_t;
 DEF_CONTAINER_OF(user_t, keyfetcher_mgr, manager_i);
 DEF_CONTAINER_OF(user_t, h, hash_elem_t);
@@ -34,11 +36,15 @@ derr_t user_new(
     const string_builder_t *root
 );
 
+void user_start(user_t *user);
+
+void user_cancel(user_t *user);
+
 void user_close(user_t *user, derr_t error);
 
 void user_release(user_t *user);
 
 derr_t user_add_sf_pair(user_t *user, sf_pair_t *sf_pair);
 
-// the user_pool will relay manager_i events to us:
-void user_sf_pair_dying(user_t *user, sf_pair_t *sf_pair, derr_t error);
+// return true if there are no more sf_pairs, in which case you should close it
+bool user_remove_sf_pair(user_t *user, sf_pair_t *sf_pair);
