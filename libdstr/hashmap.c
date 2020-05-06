@@ -377,10 +377,12 @@ hash_elem_t *hashmap_delu(hashmap_t *h, unsigned int key){
     return hashmap_del(h, NULL, key, false);
 }
 
-// delete an element directly (elem must be in h)
+// delete an element directly, if elem is in h
 void hashmap_del_elem(hashmap_t *h, hash_elem_t *elem){
     // get bucket index
     size_t idx = elem->hash & h->mask;
+    // make sure bucket index is in range
+    if(idx >= h->num_buckets) return;
     // walk the list looking for elem
     hash_elem_t **fixme = &h->buckets[idx];
     hash_elem_t *ptr = h->buckets[idx];
@@ -388,6 +390,8 @@ void hashmap_del_elem(hashmap_t *h, hash_elem_t *elem){
         if(ptr == elem){
             // remove elemnt from linked list
             *fixme = ptr->next;
+            // decrement element count
+            h->num_elems--;
             break;
         }
         fixme = &ptr->next;

@@ -134,6 +134,64 @@ fail_h:
     return e;
 }
 
+static derr_t test_hashmap_del_elem(void){
+    derr_t e = E_OK;
+    // all of the elements
+    size_t num_elems = 10;
+    hashable_t elems[10];
+
+    // allocate hashmap
+    hashmap_t h;
+    PROP(&e, hashmap_init(&h) );
+
+    // insert all of the elements
+    for(unsigned int i = 0; i < num_elems; i++){
+        elems[i].n = i;
+        if(h.num_elems != i)
+            ORIG_GO(&e, E_VALUE, "wrong num_elems", cu);
+        hash_elem_t *old = hashmap_setu(&h, i, &elems[i].he);
+        if(old != NULL)
+            ORIG_GO(&e, E_VALUE, "hashmap_setu() returned non-null", cu);
+    }
+    if(h.num_elems != num_elems)
+        ORIG_GO(&e, E_VALUE, "wrong num_elems", cu);
+
+    // is it safe to delete an element not in the hashmap?
+    hash_elem_t not_present_elem = {0};
+    hashmap_del_elem(&h, &not_present_elem);
+    if(h.num_elems != num_elems)
+        ORIG_GO(&e, E_VALUE, "wrong num_elems", cu);
+
+    // delete each element
+    for(unsigned int i = 0; i < num_elems; i++){
+        elems[i].n = i;
+        if(h.num_elems != num_elems - i)
+            ORIG_GO(&e, E_VALUE, "wrong num_elems", cu);
+        hashmap_del_elem(&h, &elems[i].he);
+        // is it gone?
+        hash_elem_t *old = hashmap_getu(&h, i);
+        if(old != NULL)
+            ORIG_GO(&e, E_VALUE, "hashmap_getu() returned non-null", cu);
+        // is it safe to call again?
+        hashmap_del_elem(&h, &elems[i].he);
+    }
+    if(h.num_elems != 0)
+        ORIG_GO(&e, E_VALUE, "wrong num_elems", cu);
+
+    // is it still safe to delete an element not in the hashmap?
+    hashmap_del_elem(&h, &not_present_elem);
+    if(h.num_elems != 0)
+        ORIG_GO(&e, E_VALUE, "wrong num_elems", cu);
+
+    // what if the hashmap has not been initialized?
+    hashmap_t not_initialized_hashmap = {0};
+    hashmap_del_elem(&not_initialized_hashmap, &not_present_elem);
+
+cu:
+    hashmap_free(&h);
+    return e;
+}
+
 int main(int argc, char** argv){
     derr_t e = E_OK;
     // parse options and set default log level
@@ -141,6 +199,7 @@ int main(int argc, char** argv){
 
     PROP_GO(&e, test_hashmap(), test_fail);
     PROP_GO(&e, test_empty_iter(), test_fail);
+    PROP_GO(&e, test_hashmap_del_elem(), test_fail);
 
     LOG_ERROR("PASS\n");
     return 0;
