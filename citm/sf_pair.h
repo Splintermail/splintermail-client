@@ -38,8 +38,6 @@ struct sf_pair_t {
     bool closed;
     bool canceled;
     link_t link; // user_t->sf_pairs or user_pool_t->unowned
-
-    // state tracking
 };
 DEF_CONTAINER_OF(sf_pair_t, refs, refs_t);
 DEF_CONTAINER_OF(sf_pair_t, link, link_t);

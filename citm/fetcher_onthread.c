@@ -1,5 +1,8 @@
 #include "citm.h"
 
+// foward declarations
+static derr_t send_login(fetcher_t *fetcher);
+
 typedef struct {
     fetcher_t *fetcher;
     imap_cmd_cb_t cb;
@@ -31,6 +34,65 @@ fail:
     imap_cmd_free(cmd);
     return NULL;
 }
+
+/* a pause for when you have are ready to send credentials but you don't have
+   any to send yet */
+typedef struct {
+    fetcher_t *fetcher;
+    pause_t pause;
+} creds_pause_t;
+DEF_CONTAINER_OF(creds_pause_t, pause, pause_t);
+
+static void creds_pause_free(creds_pause_t *creds_pause){
+    free(creds_pause);
+}
+
+static bool creds_pause_ready(pause_t *pause){
+    creds_pause_t *creds_pause = CONTAINER_OF(pause, creds_pause_t, pause);
+    return creds_pause->fetcher->login_cmd;
+}
+
+static derr_t creds_pause_run(pause_t **pause){
+    derr_t e = E_OK;
+
+    creds_pause_t *creds_pause = CONTAINER_OF(*pause, creds_pause_t, pause);
+
+    PROP_GO(&e, send_login(creds_pause->fetcher), cu);
+
+cu:
+    creds_pause_free(creds_pause);
+    *pause = NULL;
+    return e;
+}
+
+static void creds_pause_cancel(pause_t **pause){
+    creds_pause_t *creds_pause = CONTAINER_OF(*pause, creds_pause_t, pause);
+    creds_pause_free(creds_pause);
+    *pause = NULL;
+}
+
+derr_t creds_pause_new(pause_t **out, fetcher_t *fetcher){
+    derr_t e = E_OK;
+
+    *out = NULL;
+
+    creds_pause_t *creds_pause = malloc(sizeof(*creds_pause));
+    if(!creds_pause) ORIG(&e, E_NOMEM, "no mem");
+    *creds_pause = (creds_pause_t){
+        .fetcher = fetcher,
+        .pause = {
+            .ready = creds_pause_ready,
+            .run = creds_pause_run,
+            .cancel = creds_pause_cancel,
+        }
+    };
+
+    *out = &creds_pause->pause;
+
+    return e;
+}
+
+//
 
 static void fetcher_imap_ev_returner(event_t *ev){
     fetcher_t *fetcher = ev->returner_arg;
@@ -345,6 +407,7 @@ static derr_t send_enable(fetcher_t *fetcher){
 
     return e;
 }
+
 //////////////////////////////////////////////////////////////
 
 // capas_done is an imap_cmd_cb_call_f
@@ -462,9 +525,16 @@ static derr_t login_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
     fetcher_cb_t *fcb = CONTAINER_OF(cb, fetcher_cb_t, cb);
     fetcher_t *fetcher = fcb->fetcher;
 
+    // catch failed login attempts
     if(st_resp->status != IE_ST_OK){
-        ORIG(&e, E_PARAM, "login failed\n");
+        PROP(&e, fetcher->cb->login_failed(fetcher->cb) );
+
+        // wait for another call to fetcher_login()
+        PROP(&e, creds_pause_new(&fetcher->pause, fetcher) );
+        return e;
     }
+
+    PROP(&e, fetcher->cb->login_succeeded(fetcher->cb, &fetcher->dirmgr) );
 
     if(fetcher->imap_state != FETCHER_PREAUTH){
         ORIG(&e, E_INTERNAL, "arrived at login_done out of PREAUTH state");
@@ -482,19 +552,16 @@ static derr_t login_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
         PROP(&e, send_capas(fetcher) );
     }
 
-
     return e;
 }
 
 static derr_t send_login(fetcher_t *fetcher){
     derr_t e = E_OK;
 
-    fetcher->imap_state = FETCHER_PREAUTH;
-
-    // build the login command
-    ie_dstr_t *user = ie_dstr_new(&e, fetcher->user, KEEP_RAW);
-    ie_dstr_t *pass = ie_dstr_new(&e, fetcher->pass, KEEP_RAW);
-    imap_cmd_arg_t arg = {.login=ie_login_cmd_new(&e, user, pass)};
+    // take the login_cmd that's already been prepared
+    ie_login_cmd_t *login = fetcher->login_cmd;
+    fetcher->login_cmd = NULL;
+    imap_cmd_arg_t arg = {.login=login};
 
     // finish constructing the imap command
     size_t tag = ++fetcher->tag;
@@ -517,7 +584,14 @@ static derr_t untagged_ok(fetcher_t *fetcher, const ie_st_code_t *code,
 
     // The very first message is treated specially
     if(fetcher->imap_state == FETCHER_PREGREET){
-        PROP(&e, send_login(fetcher) );
+        // proceed to preauth state
+        fetcher->imap_state = FETCHER_PREAUTH;
+
+        // prepare to wait for a call to fetcher_login()
+        PROP(&e, creds_pause_new(&fetcher->pause, fetcher) );
+
+        // tell the sf_pair we need login creds
+        PROP(&e, fetcher->cb->login_ready(fetcher->cb) );
         return e;
     }
 
@@ -637,6 +711,7 @@ static derr_t untagged_status_type(fetcher_t *fetcher, const ie_st_resp_t *st){
 bool fetcher_more_work(actor_t *actor){
     fetcher_t *fetcher = CONTAINER_OF(actor, fetcher_t, actor);
     return !link_list_isempty(&fetcher->ts.unhandled_resps)
+        || (fetcher->pause && fetcher->pause->ready(fetcher->pause))
         || !link_list_isempty(&fetcher->ts.maildir_cmds);
 }
 
@@ -714,7 +789,7 @@ derr_t fetcher_do_work(actor_t *actor){
     fetcher_t *fetcher = CONTAINER_OF(actor, fetcher_t, actor);
 
     // unhandled responses
-    while(!fetcher->ts.closed){
+    while(!fetcher->ts.closed && !fetcher->pause){
         // pop a response
         uv_mutex_lock(&fetcher->ts.mutex);
         link_t *link = link_list_pop_first(&fetcher->ts.unhandled_resps);
@@ -755,14 +830,20 @@ derr_t fetcher_do_work(actor_t *actor){
         fetcher->imap_state = FETCHER_AUTHENTICATED;
     }
 
-    // check if we need to transition to the next folder
-    if(fetcher->listed
-            // have we seen the response to CLOSE?
-            && fetcher->imap_state == FETCHER_AUTHENTICATED
-            // has the maildir_up released us?
-            && !fetcher->maildir_has_ref){
-        PROP(&e, sync_next_mailbox(fetcher) );
+    // handle delayed actions
+    if(!fetcher->ts.closed
+            && fetcher->pause && fetcher->pause->ready(fetcher->pause)){
+        PROP(&e, fetcher->pause->run(&fetcher->pause) );
     }
+
+    // // check if we need to transition to the next folder
+    // if(fetcher->listed
+    //         // have we seen the response to CLOSE?
+    //         && fetcher->imap_state == FETCHER_AUTHENTICATED
+    //         // has the maildir_up released us?
+    //         && !fetcher->maildir_has_ref){
+    //     PROP(&e, sync_next_mailbox(fetcher) );
+    // }
 
     return e;
 };

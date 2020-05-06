@@ -94,7 +94,7 @@ static derr_t fetcher_cb_login_failed(fetcher_cb_i *fetcher_cb){
     sf_pair_t *sf_pair = CONTAINER_OF(fetcher_cb, sf_pair_t, fetcher_cb);
     uv_mutex_lock(&sf_pair->mutex);
 
-
+    PROP_GO(&e, server_login_failed(sf_pair->server), unlock);
 
 unlock:
     uv_mutex_unlock(&sf_pair->mutex);
@@ -208,6 +208,7 @@ fail_malloc:
 
 void sf_pair_start(sf_pair_t *sf_pair){
     server_start(sf_pair->server);
+    fetcher_start(sf_pair->fetcher);
 }
 
 void sf_pair_cancel(sf_pair_t *sf_pair){

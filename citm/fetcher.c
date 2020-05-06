@@ -16,7 +16,7 @@ void fetcher_close(fetcher_t *fetcher, derr_t error){
 
     // tell our owner we are dying
     TRACE_PROP(&error);
-    fetcher->cb->dying(fetcher->cb, E_OK);
+    fetcher->cb->dying(fetcher->cb, error);
     PASSED(error);
 
     // we can close multithreaded resources here but we can't release refs
@@ -29,6 +29,11 @@ void fetcher_close(fetcher_t *fetcher, derr_t error){
 static void fetcher_free(fetcher_t **old){
     fetcher_t *fetcher = *old;
     if(!fetcher) return;
+    // free any unfinished pauses
+    if(fetcher->pause){
+        fetcher->pause->cancel(&fetcher->pause);
+    }
+    ie_login_cmd_free(fetcher->login_cmd);
     // free the folders list
     jsw_anode_t *node;
     while((node = jsw_apop(&fetcher->folders))){
@@ -130,7 +135,7 @@ static void fetcher_pass_event(struct engine_t *engine, event_t *ev){
 static void session_dying(manager_i *mgr, void *caller, derr_t e){
     (void)caller;
     fetcher_t *fetcher = CONTAINER_OF(mgr, fetcher_t, session_mgr);
-    printf("session up dying\n");
+    LOG_INFO("session up dying\n");
 
     fetcher_close(fetcher, e);
     PASSED(e);
@@ -329,6 +334,15 @@ derr_t fetcher_login(
 ){
     derr_t e = E_OK;
 
+    // duplicate the user and pass into the fetcher
+    ie_dstr_t *user_copy = ie_dstr_copy(&e, user);
+    ie_dstr_t *pass_copy = ie_dstr_copy(&e, pass);
+    fetcher->login_cmd = ie_login_cmd_new(&e, user_copy, pass_copy);
+    CHECK(&e);
+
+    actor_advance(&fetcher->actor);
+
+    return e;
 }
 
 void fetcher_start(fetcher_t *fetcher){

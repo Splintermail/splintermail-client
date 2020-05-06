@@ -8,6 +8,8 @@
 #include "refs.h"
 #include "actor.h"
 #include "loop.h"
+
+#include "pause.h"
 #include "fetcher.h"
 #include "server.h"
 #include "sf_pair.h"

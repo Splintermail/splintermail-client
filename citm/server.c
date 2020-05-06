@@ -47,6 +47,7 @@ static void server_free(server_t **old){
     if(server->pause){
         server->pause->cancel(&server->pause);
     }
+
     ie_dstr_free(server->await_tag);
     free(server);
     *old = NULL;
@@ -126,7 +127,7 @@ static void server_pass_event(struct engine_t *engine, event_t *ev){
 static void session_dying(manager_i *mgr, void *caller, derr_t e){
     (void)caller;
     server_t *server = CONTAINER_OF(mgr, server_t, session_mgr);
-    printf("session dn dying\n");
+    LOG_INFO("session dn dying\n");
 
     server_close(server, e);
     PASSED(e);

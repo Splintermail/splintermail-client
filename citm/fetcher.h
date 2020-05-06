@@ -28,8 +28,6 @@ typedef struct {
     fetcher_cb_i *cb;
     const char *host;
     const char *svc;
-    const dstr_t *user;
-    const dstr_t *pass;
     imap_pipeline_t *pipeline;
     // participate in message passing as an engine
     engine_t engine;
@@ -70,6 +68,10 @@ typedef struct {
 
     size_t tag;
 
+    // pause is for delaying actions until some future time
+    pause_t *pause;
+    ie_login_cmd_t *login_cmd;
+
     // the interface we feed to the imaildir for server communication
     maildir_conn_up_i conn_up;
     maildir_up_i *maildir_up;
@@ -83,7 +85,6 @@ DEF_CONTAINER_OF(fetcher_t, session_mgr, manager_i);
 DEF_CONTAINER_OF(fetcher_t, ctrl, imape_control_i);
 DEF_CONTAINER_OF(fetcher_t, actor, actor_t);
 
-
 derr_t fetcher_new(
     fetcher_t **out,
     fetcher_cb_i *cb,
@@ -93,14 +94,12 @@ derr_t fetcher_new(
     ssl_context_t *ctx_cli
 );
 
-
 // part of fetcher-provided interface to the sf_pair
 derr_t fetcher_login(
     fetcher_t *fetcher,
     const ie_dstr_t *user,
     const ie_dstr_t *pass
 );
-
 
 /* Advance the state machine of the fetch controller by some non-zero amount.
    This will only be called if fetcher_more_work returns true.  It is

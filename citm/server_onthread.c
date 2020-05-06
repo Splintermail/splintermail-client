@@ -254,7 +254,7 @@ static derr_t login_pause_run(pause_t **pause){
         server->imap_state = AUTHENTICATED;
         PROP_GO(&e, send_ok(server, tag, &DSTR_LIT("logged in")), cu);
     }else{
-        PROP_GO(&e, send_no(server, tag, &DSTR_LIT("no dice, try again")), cu);
+        PROP_GO(&e, send_no(server, tag, &DSTR_LIT("dice, try again")), cu);
     }
 
 cu:
@@ -290,6 +290,7 @@ static derr_t login_pause_new(pause_t **out, server_t *server,
     CHECK_GO(&e, fail);
 
     *out = &login_pause->pause;
+    server->login_state = LOGIN_PENDING;
 
     return e;
 
@@ -498,16 +499,11 @@ static derr_t check_login(server_t *server, const ie_dstr_t *tag,
     derr_t e = E_OK;
 
     // prepare a login pause
-    pause_t *pause;
-    PROP(&e, login_pause_new(&pause, server, tag) );
+    PROP(&e, login_pause_new(&server->pause, server, tag) );
 
     // report the login attempt to the sf_pair
     PROP(&e, server->cb->login(server->cb, login->user, login->pass) );
 
-    return e;
-
-fail_pause:
-    pause->cancel(&pause);
     return e;
 }
 

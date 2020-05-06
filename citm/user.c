@@ -13,9 +13,10 @@ static void user_keyfetcher_dying(manager_i *mgr, void *caller, derr_t error){
     }
     uv_mutex_unlock(&user->mutex);
 
-    fetcher_release(keyfetcher);
-    // drop the keyfetcher ref
-    ref_dn(&user->refs);
+    // TODO: have a keyfetcher
+    // fetcher_release(keyfetcher);
+    // // drop the keyfetcher ref
+    // ref_dn(&user->refs);
 }
 
 
@@ -126,14 +127,16 @@ void user_release(user_t *user){
 }
 
 void user_start(user_t *user){
-    // ref up for the keyfetcher
-    ref_up(&user->refs);
-    fetcher_start(user->keyfetcher);
+    // TODO: have a keyfetcher
+    // // ref up for the keyfetcher
+    // ref_up(&user->refs);
+    // fetcher_start(user->keyfetcher);
 }
 
 void user_cancel(user_t *user){
     user->canceled = true;
-    fetcher_cancel(user->keyfetcher);
+    // TODO: have a keyfetcher
+    // fetcher_cancel(user->keyfetcher);
     // drop owner ref
     ref_dn(&user->refs);
 }
