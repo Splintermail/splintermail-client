@@ -1,6 +1,7 @@
 #include "citm.h"
 
 void passthru_req_free(passthru_req_t *passthru){
+    if(!passthru) return;
     switch(passthru->type){
         case PASSTHRU_LIST:
             list_req_free(CONTAINER_OF(passthru, list_req_t, passthru));
@@ -9,6 +10,7 @@ void passthru_req_free(passthru_req_t *passthru){
 }
 
 void passthru_resp_free(passthru_resp_t *passthru){
+    if(!passthru) return;
     switch(passthru->type){
         case PASSTHRU_LIST:
             list_resp_free(CONTAINER_OF(passthru, list_resp_t, passthru));

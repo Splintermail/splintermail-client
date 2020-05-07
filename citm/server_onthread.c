@@ -670,7 +670,7 @@ static derr_t do_close(server_t *server, ie_dstr_t *tag){
     return e;
 }
 
-// this may or may not have to wait for the3 maildir_dn to close before it runs
+// this may or may not have to wait for the maildir_dn to close before it runs
 // (this is a close_pause_t->after() callback)
 static derr_t do_logout(server_t *server, ie_dstr_t *tag){
     derr_t e = E_OK;

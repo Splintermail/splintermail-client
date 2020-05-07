@@ -52,8 +52,9 @@ derr_t user_pool_sf_pair_set_owner(sf_pair_cb_i *cb, sf_pair_t *sf_pair,
             goto unlock;
         }
         user_start(user);
-        // not possible to receive a return value; we just checked the map
-        hashmap_sets(&user_pool->users, &user->name, &user->h);
+        hash_elem_t *h = hashmap_sets(&user_pool->users, &user->name, &user->h);
+        // just log this, it should never happen
+        if(h) LOG_ERROR("UNEXPECTED VALUE IN HASHMAP!\n");
         // ref_up for the user
         ref_up(&user_pool->refs);
     }else{
@@ -83,15 +84,20 @@ void user_pool_sf_pair_dying(sf_pair_cb_i *cb, sf_pair_t *sf_pair,
         DROP_VAR(&error);
     }
 
+    user_t *user_to_close = NULL;
+
     uv_mutex_lock(&user_pool->mutex);
     if(sf_pair->owner){
         // sf_pair is owned by a user_t
         user_t *user = sf_pair->owner;
         bool empty = user_remove_sf_pair(user, sf_pair);
         if(empty){
-            // don't let another sf_pair connect to this user_t
+            /* Remove the user_t inside the mutex.  It has to be closed outside
+               the mutex but removing it from the hashmap ensures that it will
+               not be used by any other concurrent invocations of this
+               user_pool */
             hashmap_del_elem(&user_pool->users, &user->h);
-            user_close(user, E_OK);
+            user_to_close = user;
         }
     }else{
         // sf_pair is unowned
@@ -101,6 +107,8 @@ void user_pool_sf_pair_dying(sf_pair_cb_i *cb, sf_pair_t *sf_pair,
         }
     }
     uv_mutex_unlock(&user_pool->mutex);
+
+    if(user_to_close) user_close(user_to_close, E_OK);
 
     sf_pair_release(sf_pair);
     // ref down for the sf_pair

@@ -151,6 +151,7 @@ derr_t user_add_sf_pair(user_t *user, sf_pair_t *sf_pair){
         ORIG_GO(&e, E_DEAD, "user is closed", unlock);
     }
 
+    link_remove(&sf_pair->link);
     link_list_append(&user->sf_pairs, &sf_pair->link);
     user->npairs++;
 
