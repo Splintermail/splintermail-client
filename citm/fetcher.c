@@ -158,13 +158,7 @@ static void fetcher_conn_up_cmd(maildir_conn_up_i *conn_up, imap_cmd_t *cmd){
 // part of the maildir_conn_up_i, meaning this can be called on- or off-thread
 static void fetcher_conn_up_synced(maildir_conn_up_i *conn_up){
     fetcher_t *fetcher = CONTAINER_OF(conn_up, fetcher_t, conn_up);
-    fetcher->mailbox_synced = true;
-
-    // we don't want to hold a folder open after it is synced, so unselect now
-    derr_t e = E_OK;
-    IF_PROP(&e, fetcher->maildir_up->unselect(fetcher->maildir_up) ){
-        fetcher_close(fetcher, e);
-    }
+    fetcher->mbx_state = MBX_SYNCED;
 
     actor_advance(&fetcher->actor);
 }
@@ -173,7 +167,7 @@ static void fetcher_conn_up_synced(maildir_conn_up_i *conn_up){
 // part of the maildir_conn_up_i, meaning this can be called on- or off-thread
 static void fetcher_conn_up_unselected(maildir_conn_up_i *conn_up){
     fetcher_t *fetcher = CONTAINER_OF(conn_up, fetcher_t, conn_up);
-    fetcher->mailbox_unselected = true;
+    fetcher->mbx_state = MBX_UNSELECTED;
     // we still can't close the maildir_up until we are onthread
 
     actor_advance(&fetcher->actor);
@@ -344,6 +338,18 @@ derr_t fetcher_passthru_req(fetcher_t *fetcher, passthru_req_t *passthru){
     actor_advance(&fetcher->actor);
 
     return E_OK;
+}
+
+// part of fetcher-provided interface to the sf_pair
+derr_t fetcher_select(fetcher_t *fetcher, const ie_mailbox_t *m){
+    derr_t e = E_OK;
+
+    fetcher->select_mailbox = ie_mailbox_copy(&e, m);
+    CHECK(&e);
+
+    actor_advance(&fetcher->actor);
+
+    return e;
 }
 
 void fetcher_start(fetcher_t *fetcher){

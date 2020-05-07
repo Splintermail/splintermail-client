@@ -1515,6 +1515,54 @@ void ie_st_code_free(ie_st_code_t *stc){
     free(stc);
 }
 
+ie_st_code_t *ie_st_code_copy(derr_t *e, const ie_st_code_t *old){
+    if(!old) goto fail;
+
+    ie_st_code_type_t type = old->type;
+    ie_st_code_arg_t arg = {0};
+    switch(type){
+        case IE_ST_CODE_ALERT:      break;
+        case IE_ST_CODE_PARSE:      break;
+        case IE_ST_CODE_READ_ONLY:  break;
+        case IE_ST_CODE_READ_WRITE: break;
+        case IE_ST_CODE_TRYCREATE:  break;
+        case IE_ST_CODE_UIDNEXT:    break;
+        case IE_ST_CODE_UIDVLD:     break;
+        case IE_ST_CODE_UNSEEN:     break;
+        case IE_ST_CODE_PERMFLAGS:
+            arg.pflags = ie_pflags_copy(e, old->arg.pflags);
+            break;
+        case IE_ST_CODE_CAPA:
+            arg.capa = ie_dstr_copy(e, old->arg.capa);
+            break;
+        case IE_ST_CODE_ATOM:
+            arg.atom.name = ie_dstr_copy(e, old->arg.atom.name);
+            arg.atom.text = ie_dstr_copy(e, old->arg.atom.text);
+            break;
+
+        case IE_ST_CODE_UIDNOSTICK: break;
+        case IE_ST_CODE_APPENDUID:  break;
+        case IE_ST_CODE_COPYUID:
+            arg.copyuid.uids_in = ie_seq_set_copy(e, old->arg.copyuid.uids_in);
+            arg.copyuid.uids_out =
+                ie_seq_set_copy(e, old->arg.copyuid.uids_out);
+            break;
+
+        case IE_ST_CODE_NOMODSEQ:   break;
+        case IE_ST_CODE_HIMODSEQ:   break;
+        case IE_ST_CODE_MODIFIED:
+            arg.modified = ie_seq_set_copy(e, old->arg.modified);
+            break;
+
+        case IE_ST_CODE_CLOSED:     break;
+    }
+
+    return ie_st_code_new(e, type, arg);
+
+fail:
+    return NULL;
+}
+
 
 // STATUS responses
 
@@ -2064,6 +2112,19 @@ void ie_st_resp_free(ie_st_resp_t *st){
     ie_st_code_free(st->code);
     ie_dstr_free(st->text);
     free(st);
+}
+
+ie_st_resp_t *ie_st_resp_copy(derr_t *e, const ie_st_resp_t *old){
+    if(!old) goto fail;
+
+    return ie_st_resp_new(e,
+        ie_dstr_copy(e, old->tag),
+        old->status,
+        ie_st_code_copy(e, old->code),
+        ie_dstr_copy(e, old->text));
+
+fail:
+    return NULL;
 }
 
 ie_list_resp_t *ie_list_resp_new(derr_t *e, ie_mflags_t *mflags, char sep,

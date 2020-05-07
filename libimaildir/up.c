@@ -783,6 +783,7 @@ bool conn_up_synced(maildir_up_i *maildir_up){
 }
 
 // this is thread-safe since up_t is designed to run on the conn_up thread
+// TODO: is that valid?  Can nothing in the up.c run on another thread?
 bool conn_up_selected(maildir_up_i *maildir_up){
 
     up_t *up = CONTAINER_OF(maildir_up, up_t, maildir_up);
@@ -791,12 +792,15 @@ bool conn_up_selected(maildir_up_i *maildir_up){
 }
 
 // this is thread-safe since up_t is designed to run on the conn_up thread
+// TODO: is that valid?  Can nothing in the up.c run on another thread?
 static derr_t conn_up_unselect(maildir_up_i *maildir_up){
     derr_t e = E_OK;
 
     up_t *up = CONTAINER_OF(maildir_up, up_t, maildir_up);
 
     if(!up->selected){
+        // don't allow any more commands
+        up->close_sent = true;
         // signal that it's already done
         up->conn->unselected(up->conn);
         return e;

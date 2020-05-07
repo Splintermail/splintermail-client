@@ -932,6 +932,7 @@ ie_store_mods_t *ie_store_mods_copy(derr_t *e, const ie_store_mods_t *old);
 ie_st_code_t *ie_st_code_new(derr_t *e, ie_st_code_type_t type,
         ie_st_code_arg_t arg);
 void ie_st_code_free(ie_st_code_t *stc);
+ie_st_code_t *ie_st_code_copy(derr_t *e, const ie_st_code_t *old);
 
 // STATUS responses
 
@@ -1014,6 +1015,7 @@ void imap_cmd_free(imap_cmd_t *cmd);
 ie_st_resp_t *ie_st_resp_new(derr_t *e, ie_dstr_t *tag, ie_status_t status,
         ie_st_code_t *code, ie_dstr_t *text);
 void ie_st_resp_free(ie_st_resp_t *st);
+ie_st_resp_t *ie_st_resp_copy(derr_t *e, const ie_st_resp_t *old);
 
 ie_list_resp_t *ie_list_resp_new(derr_t *e, ie_mflags_t *mflags, char sep,
         ie_mailbox_t *m);

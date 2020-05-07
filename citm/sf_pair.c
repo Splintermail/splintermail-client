@@ -68,16 +68,31 @@ static derr_t server_cb_passthru_req(server_cb_i *server_cb,
 
     sf_pair_t *sf_pair = CONTAINER_OF(server_cb, sf_pair_t, server_cb);
     uv_mutex_lock(&sf_pair->mutex);
-    if(sf_pair->closed) ORIG_GO(&e, E_DEAD, "sf_pair is closed", unlock);
+    if(sf_pair->closed){
+        passthru_req_free(passthru);
+        ORIG_GO(&e, E_DEAD, "sf_pair is closed", unlock);
+    }
 
     PROP_GO(&e, fetcher_passthru_req(sf_pair->fetcher, passthru), unlock);
+    goto unlock;
 
 unlock:
     uv_mutex_unlock(&sf_pair->mutex);
+    return e;
+}
 
-    if(is_error(e)){
-        passthru_req_free(passthru);
-    }
+// part of server_cb_i
+static derr_t server_cb_select(server_cb_i *server_cb, const ie_mailbox_t *m){
+    derr_t e = E_OK;
+
+    sf_pair_t *sf_pair = CONTAINER_OF(server_cb, sf_pair_t, server_cb);
+    uv_mutex_lock(&sf_pair->mutex);
+    if(sf_pair->closed) ORIG_GO(&e, E_DEAD, "sf_pair is closed", unlock);
+
+    PROP_GO(&e, fetcher_select(sf_pair->fetcher, m), unlock);
+
+unlock:
+    uv_mutex_unlock(&sf_pair->mutex);
     return e;
 }
 
@@ -156,16 +171,46 @@ static derr_t fetcher_cb_passthru_resp(fetcher_cb_i *fetcher_cb,
 
     sf_pair_t *sf_pair = CONTAINER_OF(fetcher_cb, sf_pair_t, fetcher_cb);
     uv_mutex_lock(&sf_pair->mutex);
-    if(sf_pair->closed) ORIG_GO(&e, E_DEAD, "sf_pair is closed", unlock);
+    if(sf_pair->closed){
+        passthru_resp_free(passthru);
+        ORIG_GO(&e, E_DEAD, "sf_pair is closed", unlock);
+    }
 
     PROP_GO(&e, server_passthru_resp(sf_pair->server, passthru), unlock);
 
 unlock:
     uv_mutex_unlock(&sf_pair->mutex);
+    return e;
+}
 
-    if(is_error(e)){
-        passthru_resp_free(passthru);
-    }
+// part of the fetcher_cb_i
+static derr_t fetcher_cb_select_succeeded(fetcher_cb_i *fetcher_cb){
+    derr_t e = E_OK;
+
+    sf_pair_t *sf_pair = CONTAINER_OF(fetcher_cb, sf_pair_t, fetcher_cb);
+    uv_mutex_lock(&sf_pair->mutex);
+    if(sf_pair->closed) ORIG_GO(&e, E_DEAD, "sf_pair is closed", unlock);
+
+    PROP_GO(&e, server_select_succeeded(sf_pair->server), unlock);
+
+unlock:
+    uv_mutex_unlock(&sf_pair->mutex);
+    return e;
+}
+
+// part of the fetcher_cb_i
+static derr_t fetcher_cb_select_failed(fetcher_cb_i *fetcher_cb,
+        const ie_st_resp_t *st_resp){
+    derr_t e = E_OK;
+
+    sf_pair_t *sf_pair = CONTAINER_OF(fetcher_cb, sf_pair_t, fetcher_cb);
+    uv_mutex_lock(&sf_pair->mutex);
+    if(sf_pair->closed) ORIG_GO(&e, E_DEAD, "sf_pair is closed", unlock);
+
+    PROP_GO(&e, server_select_failed(sf_pair->server, st_resp), unlock);
+
+unlock:
+    uv_mutex_unlock(&sf_pair->mutex);
     return e;
 }
 
@@ -193,13 +238,16 @@ derr_t sf_pair_new(
             .dying = server_cb_dying,
             .login = server_cb_login,
             .passthru_req = server_cb_passthru_req,
+            .select = server_cb_select,
         },
         .fetcher_cb = {
             .dying = fetcher_cb_dying,
             .login_ready = fetcher_cb_login_ready,
-            .login_failed = fetcher_cb_login_failed,
             .login_succeeded = fetcher_cb_login_succeeded,
+            .login_failed = fetcher_cb_login_failed,
             .passthru_resp = fetcher_cb_passthru_resp,
+            .select_succeeded = fetcher_cb_select_succeeded,
+            .select_failed = fetcher_cb_select_failed,
         },
     };
 

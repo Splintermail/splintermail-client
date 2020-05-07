@@ -49,6 +49,7 @@ static void server_free(server_t **old){
     passthru_resp_free(server->passthru);
     imap_cmd_free(server->pause_cmd);
     ie_dstr_free(server->pause_tag);
+    ie_st_resp_free(server->select_st_resp);
 
     free(server);
     *old = NULL;
@@ -212,6 +213,24 @@ derr_t server_passthru_resp(server_t *server, passthru_resp_t *passthru){
     server->passthru = passthru;
     actor_advance(&server->actor);
     return E_OK;
+}
+
+derr_t server_select_succeeded(server_t *server){
+    server->select_state = SELECT_SUCCEEDED;
+    actor_advance(&server->actor);
+    return E_OK;
+}
+
+derr_t server_select_failed(server_t *server, const ie_st_resp_t *st_resp){
+    derr_t e = E_OK;
+
+    server->select_st_resp = ie_st_resp_copy(&e, st_resp);
+    CHECK(&e)
+
+    server->select_state = SELECT_FAILED;
+    actor_advance(&server->actor);
+
+    return e;
 }
 
 

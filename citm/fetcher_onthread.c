@@ -35,20 +35,6 @@ fail:
     return NULL;
 }
 
-/* a pause for when you have are ready to send credentials but you don't have
-   any to send yet */
-static bool creds_paused(fetcher_t *fetcher){
-    return !fetcher->login_cmd;
-}
-
-static derr_t start_creds_pause(fetcher_t *fetcher){
-    fetcher->paused = creds_paused;
-    fetcher->after_pause = send_login;
-    return E_OK;
-}
-
-//
-
 static void fetcher_imap_ev_returner(event_t *ev){
     fetcher_t *fetcher = ev->returner_arg;
 
@@ -138,39 +124,38 @@ fail:
     cb->free(cb);
 }
 
-// static derr_t do_sync_mailbox(fetcher_t *fetcher, jsw_anode_t *node){
-//     derr_t e = E_OK;
-//
-//     if(fetcher->imap_state != FETCHER_AUTHENTICATED){
-//         ORIG(&e, E_INTERNAL,
-//                 "arrived at do_sync_mailbox out of AUTHENTICATED state");
-//     }
-//     fetcher->imap_state = FETCHER_SELECTED;
-//
-//     if(!node){
-//         LOG_INFO("done syncing all folders!\n");
-//         fetcher_close(fetcher, E_OK);
-//         return e;
-//     }
-//
-//     fetcher->mailbox_synced = false;
-//     fetcher->mailbox_unselected = false;
-//
-//     ie_list_resp_t *list = CONTAINER_OF(node, ie_list_resp_t, node);
-//     const dstr_t *dir_name = ie_mailbox_name(list->m);
-//
-//     fetcher->maildir_has_ref = true;
-//     IF_PROP(&e, dirmgr_open_up(fetcher->dirmgr, dir_name, &fetcher->conn_up,
-//                 &fetcher->maildir_up) ){
-//         // oops, nevermind
-//         fetcher->maildir_has_ref = false;
-//         return e;
-//     }
-//
-//     // the maildir_up takes care of the rest
-//
-//     return e;
-// }
+static derr_t select_mailbox(fetcher_t *fetcher){
+    derr_t e = E_OK;
+
+    if(fetcher->imap_state != FETCHER_AUTHENTICATED){
+        ORIG_GO(&e, E_INTERNAL,
+                "arrived at select_mailbox out of AUTHENTICATED state", cu);
+    }
+    fetcher->imap_state = FETCHER_SELECTED;
+
+    const dstr_t *dir_name = ie_mailbox_name(fetcher->select_mailbox);
+
+    fetcher->mbx_state = MBX_SELECTING;
+    fetcher->maildir_has_ref = true;
+    // ref up for maildir
+    actor_ref_up(&fetcher->actor);
+
+    IF_PROP(&e, dirmgr_open_up(fetcher->dirmgr, dir_name, &fetcher->conn_up,
+                &fetcher->maildir_up) ){
+        // oops, nevermind
+        fetcher->mbx_state = MBX_NONE;
+        fetcher->maildir_has_ref = false;
+        actor_ref_dn(&fetcher->actor);
+        goto cu;
+    }
+
+    // the maildir_up takes care of the rest
+
+cu:
+    ie_mailbox_free(fetcher->select_mailbox);
+    fetcher->select_mailbox = NULL;
+    return e;
+}
 
 // list_done is an imap_cmd_cb_call_f
 static derr_t list_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
@@ -458,7 +443,6 @@ static derr_t login_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
         PROP(&e, fetcher->cb->login_failed(fetcher->cb) );
 
         // wait for another call to fetcher_login()
-        PROP(&e, start_creds_pause(fetcher) );
         return e;
     }
 
@@ -515,11 +499,10 @@ static derr_t untagged_ok(fetcher_t *fetcher, const ie_st_code_t *code,
         // proceed to preauth state
         fetcher->imap_state = FETCHER_PREAUTH;
 
-        // prepare to wait for a call to fetcher_login()
-        PROP(&e, start_creds_pause(fetcher) );
-
         // tell the sf_pair we need login creds
         PROP(&e, fetcher->cb->login_ready(fetcher->cb) );
+
+        // prepare to wait for a call to fetcher_login()
         return e;
     }
 
@@ -545,7 +528,6 @@ static derr_t untagged_ok(fetcher_t *fetcher, const ie_st_code_t *code,
                  it will be helpful to not silently drop them */
         case FETCHER_PREAUTH:
         case FETCHER_AUTHENTICATED:
-        case FETCHER_LISTING:
             TRACE(&e, "unhandled * OK status message\n");
             ORIG(&e, E_INTERNAL, "unhandled message");
             break;
@@ -637,22 +619,43 @@ static derr_t untagged_status_type(fetcher_t *fetcher, const ie_st_resp_t *st){
 }
 
 bool fetcher_passthru_more_work(fetcher_t *fetcher){
-    if(!fetcher->enable_set) return false;
     if(!fetcher->passthru) return false;
+    // don't consider a passthru command until we've called ENABLE
+    if(!fetcher->enable_set) return false;
 
-    switch(fetcher->passthru->type){
-        case PASSTHRU_LIST:
-            // TODO: are we in the AUTHENTICATED state?  Are we transitioning?
-            return !fetcher->passthru_sent;
+    // do we need to unselect something?
+    if(fetcher->imap_state == FETCHER_SELECTED
+            && fetcher->mbx_state < MBX_UNSELECTING){
+        return true;
     }
+
+    // do we need to send something?
+    return fetcher->imap_state == FETCHER_AUTHENTICATED
+        && !fetcher->passthru_sent;
+}
+
+bool fetcher_select_more_work(fetcher_t *fetcher){
+    if(!fetcher->select_mailbox) return false;
+    // don't consider a SELECT command until we've called ENABLE
+    if(!fetcher->enable_set) return false;
+
+    // do we need to unselect something?
+    if(fetcher->imap_state == FETCHER_SELECTED
+            && fetcher->mbx_state < MBX_UNSELECTING){
+        return true;
+    }
+
+    // do we need to select something?
+    return fetcher->imap_state == FETCHER_AUTHENTICATED;
 }
 
 bool fetcher_more_work(actor_t *actor){
     fetcher_t *fetcher = CONTAINER_OF(actor, fetcher_t, actor);
     return !link_list_isempty(&fetcher->ts.unhandled_resps)
-        || (fetcher->paused && !fetcher->paused(fetcher))
         || !link_list_isempty(&fetcher->ts.maildir_cmds)
-        || fetcher_passthru_more_work(fetcher);
+        || fetcher->login_cmd
+        || fetcher_passthru_more_work(fetcher)
+        || fetcher_select_more_work(fetcher);
 }
 
 // we either need to consume the resp or free it
@@ -726,11 +729,33 @@ fail:
 static derr_t fetcher_passthru_do_work(fetcher_t *fetcher){
     derr_t e = E_OK;
 
-    // TODO: make sure we are properly in the AUTHENTICATED state first
+    // unselect anything that is selected
+    if(fetcher->imap_state == FETCHER_SELECTED){
+        // try to transition towards FETCHER_AUTHENTICATED
+        PROP(&e, fetcher->maildir_up->unselect(fetcher->maildir_up) );
+        fetcher->mbx_state = MBX_UNSELECTING;
+        return e;
+    }
 
     switch(fetcher->passthru->type){
         case PASSTHRU_LIST: PROP(&e, passthru_list(fetcher) ); break;
     }
+
+    return e;
+}
+
+static derr_t fetcher_select_do_work(fetcher_t *fetcher){
+    derr_t e = E_OK;
+
+    // unselect anything that is selected
+    if(fetcher->imap_state == FETCHER_SELECTED){
+        // try to transition towards FETCHER_AUTHENTICATED
+        PROP(&e, fetcher->maildir_up->unselect(fetcher->maildir_up) );
+        fetcher->mbx_state = MBX_UNSELECTING;
+        return e;
+    }
+
+    PROP(&e, select_mailbox(fetcher) );
 
     return e;
 }
@@ -741,7 +766,7 @@ derr_t fetcher_do_work(actor_t *actor){
     fetcher_t *fetcher = CONTAINER_OF(actor, fetcher_t, actor);
 
     // unhandled responses
-    while(!fetcher->ts.closed && !fetcher->paused){
+    while(!fetcher->ts.closed){
         // pop a response
         uv_mutex_lock(&fetcher->ts.mutex);
         link_t *link = link_list_pop_first(&fetcher->ts.unhandled_resps);
@@ -774,12 +799,27 @@ derr_t fetcher_do_work(actor_t *actor){
         PROP(&e, handle_one_maildir_cmd(fetcher, cmd) );
     }
 
-    // check if we finished the unselecting process
-    if(fetcher->maildir_up && fetcher->mailbox_unselected){
+    // check if we finished the unselecting process, start closing process
+    if(fetcher->maildir_up && fetcher->mbx_state == MBX_UNSELECTED){
         maildir_up_i *maildir_up = fetcher->maildir_up;
         fetcher->maildir_up = NULL;
+        fetcher->mbx_state = MBX_CLOSING;
+        // now make the very last call into the maildir_up_i
         dirmgr_close_up(fetcher->dirmgr, maildir_up);
+
+        /* we still have to wait for fetcher->maildir_has_ref to be false
+           before we can proceed */
+    }
+
+    // check if we finished the closing process, change state
+    if(fetcher->mbx_state == FETCHER_SELECTED
+            && fetcher->mbx_state == MBX_NONE){
         fetcher->imap_state = FETCHER_AUTHENTICATED;
+    }
+
+    // check if we have a login command to execute on
+    if(!fetcher->ts.closed && fetcher->login_cmd){
+        PROP(&e, send_login(fetcher) );
     }
 
     // check if we have some passthru behavior to execute on
@@ -787,11 +827,9 @@ derr_t fetcher_do_work(actor_t *actor){
         PROP(&e, fetcher_passthru_do_work(fetcher) );
     }
 
-    // handle delayed actions
-    if(!fetcher->ts.closed && fetcher->paused && !fetcher->paused(fetcher)){
-        PROP(&e, fetcher->after_pause(fetcher) );
-        fetcher->paused = NULL;
-        fetcher->after_pause = NULL;
+    // check if we have a select to execute on
+    if(!fetcher->ts.closed && fetcher_select_more_work(fetcher)){
+        PROP(&e, fetcher_select_do_work(fetcher) );
     }
 
     // // check if we need to transition to the next folder

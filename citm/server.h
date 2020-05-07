@@ -18,6 +18,13 @@ typedef enum {
     LOGIN_FAILED,
 } login_state_e;
 
+// the result of a external request
+typedef enum {
+    SELECT_PENDING = 0,
+    SELECT_SUCCEEDED,
+    SELECT_FAILED,
+} select_state_e;
+
 // an interface that must be provided by the sf_pair
 struct server_cb_i;
 typedef struct server_cb_i server_cb_i;
@@ -94,11 +101,12 @@ struct server_t {
     derr_t (*after_passthru_pause)(server_t*, passthru_resp_t*);
     ie_dstr_t *pause_tag;
     imap_cmd_t *pause_cmd;
-
     // if non-NULL, we're waiting on some tagged response to be passed out
     ie_dstr_t *await_tag;
     login_state_e login_state;
     passthru_resp_t *passthru;
+    select_state_e select_state;
+    ie_st_resp_t *select_st_resp;
 };
 DEF_CONTAINER_OF(server_t, conn_dn, maildir_conn_dn_i);
 DEF_CONTAINER_OF(server_t, engine, engine_t);
