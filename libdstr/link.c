@@ -6,6 +6,12 @@ void link_init(link_t *l){
 };
 
 void link_list_prepend(link_t *head, link_t *link){
+    // require explicit safety, but don't leave a footgun laying around
+    if(link->next != link){
+        LOG_ERROR("YOU MUST CALL LINK_REMOVE() BEFORE LINK_LIST_PREPEND!!\n");
+        link_remove(link);
+    }
+
     // for an empty list, old_next is just head
     link_t *old_next = head->next;
     // in the empty list case, this set's head's .next and .prev
@@ -17,6 +23,12 @@ void link_list_prepend(link_t *head, link_t *link){
 }
 
 void link_list_append(link_t *head, link_t *link){
+    // require explicit safety, but don't leave a footgun laying around
+    if(link->next != link){
+        LOG_ERROR("YOU MUST CALL LINK_REMOVE() BEFORE LINK_LIST_PREPEND!!\n");
+        link_remove(link);
+    }
+
     link_t *old_prev = head->prev;
     old_prev->next = link;
     head->prev = link;

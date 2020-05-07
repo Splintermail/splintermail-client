@@ -54,12 +54,35 @@ static derr_t test_link(void){
     return e;
 }
 
+static derr_t test_link_append_to_other_list(void){
+    derr_t e = E_OK;
+
+    link_t list;
+    link_t list2;
+    link_t link;
+
+    link_init(&list);
+    link_init(&list2);
+    link_init(&link);
+
+    link_list_append(&list, &link);
+    link_list_append(&list2, &link);
+
+    link_t *l = link_list_pop_first(&list);
+    if(l){
+        ORIG(&e, E_VALUE, "list not empty!\n");
+    }
+
+    return e;
+}
+
 int main(int argc, char** argv){
     derr_t e = E_OK;
     // parse options and set default log level
     PARSE_TEST_OPTIONS(argc, argv, NULL, LOG_LVL_WARN);
 
     PROP_GO(&e, test_link(), test_fail);
+    PROP_GO(&e, test_link_append_to_other_list(), test_fail);
 
     LOG_ERROR("PASS\n");
     return 0;

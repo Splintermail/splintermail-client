@@ -7,7 +7,9 @@ typedef struct link_t {
 
 void link_init(link_t *l);
 
-// append a single element.  This does not combine lists.
+/* prepend/append a single element.  You must ensure that link is not in a list
+   via link_remove() before calling these; the new and old lists may have
+   different thread safety requirements */
 void link_list_prepend(link_t *head, link_t *link);
 void link_list_append(link_t *head, link_t *link);
 
