@@ -22,6 +22,8 @@ struct fetcher_cb_i {
     derr_t (*login_failed)(fetcher_cb_i*);
     // login succeeded (this will give us our dirmgr)
     derr_t (*login_succeeded)(fetcher_cb_i*, dirmgr_t **);
+    // submit a passthru response (use or consume passthru)
+    derr_t (*passthru_resp)(fetcher_cb_i*, passthru_resp_t *passthru);
 };
 
 typedef struct {
@@ -60,17 +62,16 @@ typedef struct {
 
     imap_client_state_t imap_state;
     bool saw_capas;
-    // accumulated LIST response
-    jsw_atree_t folders;
-    bool listed;
-    // for walking through the list of folders, synchronizing each one
-    jsw_atrav_t folders_trav;
+    bool enable_set;
 
     size_t tag;
 
     // pause is for delaying actions until some future time
     pause_t *pause;
     ie_login_cmd_t *login_cmd;
+    passthru_req_t *passthru;
+    list_resp_t *list_resp;
+    bool passthru_sent;
 
     // the interface we feed to the imaildir for server communication
     maildir_conn_up_i conn_up;
@@ -100,6 +101,9 @@ derr_t fetcher_login(
     const ie_dstr_t *user,
     const ie_dstr_t *pass
 );
+
+// part of fetcher-provided interface to the sf_pair (user or consume passthru)
+derr_t fetcher_passthru_req(fetcher_t *fetcher, passthru_req_t *passthru);
 
 /* Advance the state machine of the fetch controller by some non-zero amount.
    This will only be called if fetcher_more_work returns true.  It is

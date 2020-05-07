@@ -22,6 +22,8 @@ struct server_cb_i {
     void (*dying)(server_cb_i*, derr_t error);
     // submit login credentials
     derr_t (*login)(server_cb_i*, const ie_dstr_t*, const ie_dstr_t*);
+    // submit a passthru command (use or consume passthru)
+    derr_t (*passthru_req)(server_cb_i*, passthru_req_t *passthru);
 };
 
 typedef struct {
@@ -67,6 +69,7 @@ typedef struct {
     // if non-NULL, we're waiting on some tagged response to be passed out
     ie_dstr_t *await_tag;
     login_state_e login_state;
+    passthru_resp_t *passthru;
 } server_t;
 DEF_CONTAINER_OF(server_t, conn_dn, maildir_conn_dn_i);
 DEF_CONTAINER_OF(server_t, engine, engine_t);
@@ -78,6 +81,7 @@ DEF_CONTAINER_OF(server_t, actor, actor_t);
 derr_t server_allow_greeting(server_t *server);
 derr_t server_login_succeeded(server_t *server, dirmgr_t *dirmgr);
 derr_t server_login_failed(server_t *server);
+derr_t server_passthru_resp(server_t *server, passthru_resp_t *passthru);
 
 /* Advance the state machine of the serve controller by some non-zero amount.
    This will only be called if server_more_work returns true.  It is

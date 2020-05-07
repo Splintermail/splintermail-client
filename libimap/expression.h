@@ -976,6 +976,7 @@ void ie_rename_cmd_free(ie_rename_cmd_t *rename);
 
 ie_list_cmd_t *ie_list_cmd_new(derr_t *e, ie_mailbox_t *m, ie_dstr_t *pattern);
 void ie_list_cmd_free(ie_list_cmd_t *list);
+ie_list_cmd_t *ie_list_cmd_copy(derr_t *e, const ie_list_cmd_t *old);
 
 ie_status_cmd_t *ie_status_cmd_new(derr_t *e, ie_mailbox_t *m,
         unsigned char status_attr);

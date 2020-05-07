@@ -183,74 +183,39 @@ fail:
     cb->free(cb);
 }
 
-static derr_t do_sync_mailbox(fetcher_t *fetcher, jsw_anode_t *node){
-    derr_t e = E_OK;
-
-    if(fetcher->imap_state != FETCHER_AUTHENTICATED){
-        ORIG(&e, E_INTERNAL,
-                "arrived at do_sync_mailbox out of AUTHENTICATED state");
-    }
-    fetcher->imap_state = FETCHER_SELECTED;
-
-    if(!node){
-        LOG_INFO("done syncing all folders!\n");
-        fetcher_close(fetcher, E_OK);
-        return e;
-    }
-
-    fetcher->mailbox_synced = false;
-    fetcher->mailbox_unselected = false;
-
-    ie_list_resp_t *list = CONTAINER_OF(node, ie_list_resp_t, node);
-    const dstr_t *dir_name = ie_mailbox_name(list->m);
-
-    fetcher->maildir_has_ref = true;
-    IF_PROP(&e, dirmgr_open_up(fetcher->dirmgr, dir_name, &fetcher->conn_up,
-                &fetcher->maildir_up) ){
-        // oops, nevermind
-        fetcher->maildir_has_ref = false;
-        return e;
-    }
-
-    // the maildir_up takes care of the rest
-
-    return e;
-}
-
-// a filter for only syncing with the inbox
-static bool node_is_for_inbox(jsw_anode_t *node){
-    ie_list_resp_t *list = CONTAINER_OF(node, ie_list_resp_t, node);
-    const dstr_t *dir_name = ie_mailbox_name(list->m);
-    return dstr_cmp(dir_name, &DSTR_LIT("INBOX")) == 0;
-}
-
-static derr_t sync_first_mailbox(fetcher_t *fetcher){
-    derr_t e = E_OK;
-
-    jsw_anode_t *node = jsw_atfirst(&fetcher->folders_trav, &fetcher->folders);
-
-    while(node && !node_is_for_inbox(node)){
-        node = jsw_atnext(&fetcher->folders_trav);
-    }
-
-    PROP(&e, do_sync_mailbox(fetcher, node) );
-
-    return e;
-}
-
-static derr_t sync_next_mailbox(fetcher_t *fetcher){
-    derr_t e = E_OK;
-
-    jsw_anode_t *node = jsw_atnext(&fetcher->folders_trav);
-
-    while(node && !node_is_for_inbox(node)){
-        node = jsw_atnext(&fetcher->folders_trav);
-    }
-
-    PROP(&e, do_sync_mailbox(fetcher, node) );
-
-    return e;
-}
+// static derr_t do_sync_mailbox(fetcher_t *fetcher, jsw_anode_t *node){
+//     derr_t e = E_OK;
+//
+//     if(fetcher->imap_state != FETCHER_AUTHENTICATED){
+//         ORIG(&e, E_INTERNAL,
+//                 "arrived at do_sync_mailbox out of AUTHENTICATED state");
+//     }
+//     fetcher->imap_state = FETCHER_SELECTED;
+//
+//     if(!node){
+//         LOG_INFO("done syncing all folders!\n");
+//         fetcher_close(fetcher, E_OK);
+//         return e;
+//     }
+//
+//     fetcher->mailbox_synced = false;
+//     fetcher->mailbox_unselected = false;
+//
+//     ie_list_resp_t *list = CONTAINER_OF(node, ie_list_resp_t, node);
+//     const dstr_t *dir_name = ie_mailbox_name(list->m);
+//
+//     fetcher->maildir_has_ref = true;
+//     IF_PROP(&e, dirmgr_open_up(fetcher->dirmgr, dir_name, &fetcher->conn_up,
+//                 &fetcher->maildir_up) ){
+//         // oops, nevermind
+//         fetcher->maildir_has_ref = false;
+//         return e;
+//     }
+//
+//     // the maildir_up takes care of the rest
+//
+//     return e;
+// }
 
 // list_done is an imap_cmd_cb_call_f
 static derr_t list_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
@@ -263,18 +228,16 @@ static derr_t list_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
         ORIG(&e, E_PARAM, "list failed\n");
     }
 
-    if(fetcher->imap_state != FETCHER_LISTING){
-        ORIG(&e, E_INTERNAL, "arrived at list_done out of LISTING state");
-    }
-    fetcher->imap_state = FETCHER_AUTHENTICATED;
+    // let go of the passthru_req
+    passthru_req_free(fetcher->passthru);
+    fetcher->passthru = NULL;
+    fetcher->passthru_sent = false;
 
-    fetcher->listed = true;
+    // send out the accumulated response
+    list_resp_t *list_resp = fetcher->list_resp;
+    fetcher->list_resp = NULL;
 
-    // sync folders with the filesystem
-    PROP(&e, dirmgr_sync_folders(fetcher->dirmgr, &fetcher->folders) );
-
-    // start syncing
-    PROP(&e, sync_first_mailbox(fetcher) );
+    PROP(&e, fetcher->cb->passthru_resp(fetcher->cb, &list_resp->passthru) );
 
     return e;
 }
@@ -282,8 +245,8 @@ static derr_t list_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
 static derr_t list_resp(fetcher_t *fetcher, const ie_list_resp_t *list){
     derr_t e = E_OK;
 
-    if(fetcher->imap_state != FETCHER_LISTING){
-        ORIG(&e, E_INTERNAL, "got list response outside of LISTING state");
+    if(!fetcher->passthru || fetcher->passthru->type != PASSTHRU_LIST){
+        ORIG(&e, E_INTERNAL, "got list response without PASSTHRU_LIST");
     }
 
     // verify that the separator is actually "/"
@@ -293,30 +256,39 @@ static derr_t list_resp(fetcher_t *fetcher, const ie_list_resp_t *list){
         ORIG(&e, E_RESPONSE, "invalid folder separator");
     }
 
+    list_req_t *list_req =
+        CONTAINER_OF(fetcher->passthru, list_req_t, passthru);
+
     // store a copy of the list response
     ie_list_resp_t *copy = ie_list_resp_copy(&e, list);
     CHECK(&e);
 
-    jsw_ainsert(&fetcher->folders, &copy->node);
+    jsw_ainsert(&fetcher->list_resp->tree, &copy->node);
 
     return e;
 }
 
-static derr_t send_list(fetcher_t *fetcher){
+static derr_t passthru_list(fetcher_t *fetcher){
     derr_t e = E_OK;
 
     if(fetcher->imap_state != FETCHER_AUTHENTICATED){
         ORIG(&e, E_INTERNAL,
-                "arrived at send_list out of AUTHENTICATED state");
+                "arrived at passthru_list out of AUTHENTICATED state");
     }
 
-    fetcher->imap_state = FETCHER_LISTING;
+    // prepare for the response
+    fetcher->list_resp = list_resp_new(&e, fetcher->passthru->tag);
+    fetcher->passthru_sent = true;
+    CHECK(&e);
 
-    // issue the list command
-    ie_dstr_t *name = ie_dstr_new(&e, &DSTR_LIT(""), KEEP_RAW);
-    ie_mailbox_t *ref_name = ie_mailbox_new_noninbox(&e, name);
-    ie_dstr_t *pattern = ie_dstr_new(&e, &DSTR_LIT("*"), KEEP_RAW);
-    imap_cmd_arg_t arg = { .list=ie_list_cmd_new(&e, ref_name, pattern) };
+    list_req_t *list_req =
+        CONTAINER_OF(fetcher->passthru, list_req_t, passthru);
+
+    // steal the ie_list_cmd_t*
+    ie_list_cmd_t *list_cmd = list_req->list;
+    list_req->list = NULL;
+
+    imap_cmd_arg_t arg = { .list=list_cmd };
 
     size_t tag = ++fetcher->tag;
     ie_dstr_t *tag_str = write_tag(&e, tag);
@@ -342,8 +314,9 @@ static derr_t enable_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
         ORIG(&e, E_PARAM, "enable failed\n");
     }
 
-    // start listing folders
-    PROP(&e, send_list(fetcher) );
+    /* now start executing orders on behalf of the server, which just looks
+       like sitting idle for a while before we have orders */
+    fetcher->enable_set = true;
 
     return e;
 }
@@ -545,7 +518,7 @@ static derr_t login_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
     if(st_resp->code->type == IE_ST_CODE_CAPA){
         // check capabilities
         PROP(&e, check_capas(st_resp->code->arg.capa) );
-        // then list the folders
+        // then send the enable command
         PROP(&e, send_enable(fetcher) );
     }else{
         // otherwise, explicitly ask for them
@@ -708,11 +681,23 @@ static derr_t untagged_status_type(fetcher_t *fetcher, const ie_st_resp_t *st){
     return e;
 }
 
+bool fetcher_passthru_more_work(fetcher_t *fetcher){
+    if(!fetcher->enable_set) return false;
+    if(!fetcher->passthru) return false;
+
+    switch(fetcher->passthru->type){
+        case PASSTHRU_LIST:
+            // TODO: are we in the AUTHENTICATED state?  Are we transitioning?
+            return !fetcher->passthru_sent;
+    }
+}
+
 bool fetcher_more_work(actor_t *actor){
     fetcher_t *fetcher = CONTAINER_OF(actor, fetcher_t, actor);
     return !link_list_isempty(&fetcher->ts.unhandled_resps)
         || (fetcher->pause && fetcher->pause->ready(fetcher->pause))
-        || !link_list_isempty(&fetcher->ts.maildir_cmds);
+        || !link_list_isempty(&fetcher->ts.maildir_cmds)
+        || fetcher_passthru_more_work(fetcher);
 }
 
 // we either need to consume the resp or free it
@@ -783,6 +768,18 @@ fail:
     return e;
 }
 
+static derr_t fetcher_passthru_do_work(fetcher_t *fetcher){
+    derr_t e = E_OK;
+
+    // TODO: make sure we are properly in the AUTHENTICATED state first
+
+    switch(fetcher->passthru->type){
+        case PASSTHRU_LIST: PROP(&e, passthru_list(fetcher) ); break;
+    }
+
+    return e;
+}
+
 derr_t fetcher_do_work(actor_t *actor){
     derr_t e = E_OK;
 
@@ -822,12 +819,17 @@ derr_t fetcher_do_work(actor_t *actor){
         PROP(&e, handle_one_maildir_cmd(fetcher, cmd) );
     }
 
-    // check if we need to transition to the next folder
+    // check if we finished the unselecting process
     if(fetcher->maildir_up && fetcher->mailbox_unselected){
         maildir_up_i *maildir_up = fetcher->maildir_up;
         fetcher->maildir_up = NULL;
         dirmgr_close_up(fetcher->dirmgr, maildir_up);
         fetcher->imap_state = FETCHER_AUTHENTICATED;
+    }
+
+    // check if we have some passthru behavior to execute on
+    if(!fetcher->ts.closed && fetcher_passthru_more_work(fetcher)){
+        PROP(&e, fetcher_passthru_do_work(fetcher) );
     }
 
     // handle delayed actions

@@ -1788,6 +1788,20 @@ void ie_list_cmd_free(ie_list_cmd_t *list){
     free(list);
 }
 
+ie_list_cmd_t *ie_list_cmd_copy(derr_t *e, const ie_list_cmd_t *old){
+    if(!old) goto fail;
+
+    ie_list_cmd_t *list = ie_list_cmd_new(e,
+        ie_mailbox_copy(e, old->m),
+        ie_dstr_copy(e, old->pattern)
+    );
+
+    return list;
+
+fail:
+    return NULL;
+}
+
 ie_status_cmd_t *ie_status_cmd_new(derr_t *e, ie_mailbox_t *m,
         unsigned char status_attr){
     if(is_error(*e)) goto fail;

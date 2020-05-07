@@ -9,6 +9,7 @@
 #include "actor.h"
 #include "loop.h"
 
+#include "passthru.h"
 #include "pause.h"
 #include "fetcher.h"
 #include "server.h"

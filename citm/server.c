@@ -49,6 +49,7 @@ static void server_free(server_t **old){
     }
 
     ie_dstr_free(server->await_tag);
+    passthru_resp_free(server->passthru);
     free(server);
     *old = NULL;
     return;
@@ -202,6 +203,13 @@ derr_t server_login_succeeded(server_t *server, dirmgr_t *dirmgr){
 // the server-provided interface to the sf_pair
 derr_t server_login_failed(server_t *server){
     server->login_state = LOGIN_FAILED;
+    actor_advance(&server->actor);
+    return E_OK;
+}
+
+// the server-provided interface to the sf_pair
+derr_t server_passthru_resp(server_t *server, passthru_resp_t *passthru){
+    server->passthru = passthru;
     actor_advance(&server->actor);
     return E_OK;
 }

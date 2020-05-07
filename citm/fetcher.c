@@ -34,12 +34,8 @@ static void fetcher_free(fetcher_t **old){
         fetcher->pause->cancel(&fetcher->pause);
     }
     ie_login_cmd_free(fetcher->login_cmd);
-    // free the folders list
-    jsw_anode_t *node;
-    while((node = jsw_apop(&fetcher->folders))){
-        ie_list_resp_t *list = CONTAINER_OF(node, ie_list_resp_t, node);
-        ie_list_resp_free(list);
-    }
+    passthru_req_free(fetcher->passthru);
+    list_resp_free(fetcher->list_resp);
     // free any imap cmds or resps laying around
     link_t *link;
     while((link = link_list_pop_first(&fetcher->ts.unhandled_resps))){
@@ -266,8 +262,6 @@ derr_t fetcher_new(
     link_init(&fetcher->ts.maildir_cmds);
     link_init(&fetcher->inflight_cmds);
 
-    jsw_ainit(&fetcher->folders, ie_list_resp_cmp, ie_list_resp_get);
-
     actor_i actor_iface = {
         .more_work = fetcher_more_work,
         .do_work = fetcher_do_work,
@@ -343,6 +337,16 @@ derr_t fetcher_login(
     actor_advance(&fetcher->actor);
 
     return e;
+}
+
+// part of fetcher-provided interface to the sf_pair (user or consume passthru)
+derr_t fetcher_passthru_req(fetcher_t *fetcher, passthru_req_t *passthru){
+    fetcher->passthru = passthru;
+    fetcher->passthru_sent = false;
+
+    actor_advance(&fetcher->actor);
+
+    return E_OK;
 }
 
 void fetcher_start(fetcher_t *fetcher){

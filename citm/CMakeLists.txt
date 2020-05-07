@@ -1,6 +1,7 @@
 add_executable(
     citm
     citm.c
+    passthru.c
     server.c
     server_onthread.c
     fetcher.c
