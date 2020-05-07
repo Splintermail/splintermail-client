@@ -578,7 +578,7 @@ static derr_t do_select(server_t *server, imap_cmd_t *select_cmd){
 
     server->maildir_has_ref = true;
     PROP_GO(&e, dirmgr_open_dn(server->dirmgr, dir_name, &server->conn_dn,
-                &server->maildir_dn), fail_maildir);
+                &server->maildir_dn), fail_ref);
 
     // pass this SELECT command to the maildir_dn
     PROP_GO(&e, server->maildir_dn->cmd(server->maildir_dn,
@@ -590,6 +590,7 @@ static derr_t do_select(server_t *server, imap_cmd_t *select_cmd){
 
 fail_maildir:
     dirmgr_close_dn(server->dirmgr, server->maildir_dn);
+fail_ref:
     server->maildir_has_ref = false;
 
     imap_cmd_free(select_cmd);

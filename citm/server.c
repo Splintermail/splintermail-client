@@ -44,12 +44,12 @@ static void server_free(server_t **old){
 
     uv_mutex_destroy(&server->ts.mutex);
 
-    if(server->pause){
-        server->pause->cancel(&server->pause);
-    }
-
+    // pause-related state
     ie_dstr_free(server->await_tag);
     passthru_resp_free(server->passthru);
+    imap_cmd_free(server->pause_cmd);
+    ie_dstr_free(server->pause_tag);
+
     free(server);
     *old = NULL;
     return;
@@ -214,6 +214,7 @@ derr_t server_passthru_resp(server_t *server, passthru_resp_t *passthru){
     return E_OK;
 }
 
+
 derr_t server_new(
     server_t **out,
     server_cb_i *cb,
@@ -293,7 +294,7 @@ derr_t server_new(
     PROP_GO(&e, imap_session_alloc_accept(&server->s, &arg_dn), fail_mutex);
 
     // start with a pause on the greeting
-    PROP_GO(&e, greet_pause_new(&server->pause, server), fail_session);
+    PROP_GO(&e, start_greet_pause(server), fail_session);
 
     // take an owner's ref of the imap_session
     // TODO: refactor imap_session to assume an owner's ref

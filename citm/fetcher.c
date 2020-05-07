@@ -29,10 +29,7 @@ void fetcher_close(fetcher_t *fetcher, derr_t error){
 static void fetcher_free(fetcher_t **old){
     fetcher_t *fetcher = *old;
     if(!fetcher) return;
-    // free any unfinished pauses
-    if(fetcher->pause){
-        fetcher->pause->cancel(&fetcher->pause);
-    }
+    // free any unfinished pause state
     ie_login_cmd_free(fetcher->login_cmd);
     passthru_req_free(fetcher->passthru);
     list_resp_free(fetcher->list_resp);

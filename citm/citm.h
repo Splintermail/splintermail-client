@@ -10,7 +10,6 @@
 #include "loop.h"
 
 #include "passthru.h"
-#include "pause.h"
 #include "fetcher.h"
 #include "server.h"
 #include "sf_pair.h"

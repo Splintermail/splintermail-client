@@ -1,3 +1,6 @@
+struct server_t;
+typedef struct server_t server_t;
+
 /* server is only responsible for navigating until just before the SELECTED
    state, everything after that is the responsibility of the imaildir_t */
 typedef enum {
@@ -8,7 +11,7 @@ typedef enum {
 } imap_server_state_t;
 const dstr_t *imap_server_state_to_dstr(imap_server_state_t state);
 
-// the result of a login request
+// the result of a external request
 typedef enum {
     LOGIN_PENDING = 0,
     LOGIN_SUCCEEDED,
@@ -20,13 +23,30 @@ struct server_cb_i;
 typedef struct server_cb_i server_cb_i;
 struct server_cb_i {
     void (*dying)(server_cb_i*, derr_t error);
+
     // submit login credentials
     derr_t (*login)(server_cb_i*, const ie_dstr_t*, const ie_dstr_t*);
+
     // submit a passthru command (use or consume passthru)
     derr_t (*passthru_req)(server_cb_i*, passthru_req_t *passthru);
+
+    // submit a SELECT request
+    derr_t (*select)(server_cb_i*, const ie_mailbox_t *m);
 };
 
-typedef struct {
+// the server-provided interface to the sf_pair
+derr_t server_allow_greeting(server_t *server);
+
+derr_t server_login_succeeded(server_t *server, dirmgr_t *dirmgr);
+derr_t server_login_failed(server_t *server);
+
+// use or consume passthru
+derr_t server_passthru_resp(server_t *server, passthru_resp_t *passthru);
+
+derr_t server_select_succeeded(server_t *server);
+derr_t server_select_failed(server_t *server, const ie_st_resp_t *st_resp);
+
+struct server_t {
     server_cb_i *cb;
     imap_pipeline_t *pipeline;
     // participate in message passing as an engine
@@ -65,23 +85,26 @@ typedef struct {
     bool maildir_has_ref;
 
     // pause is for delaying actions until some future time
-    pause_t *pause;
+    bool (*paused)(server_t*);
+    // after_pause() is called onthread after paused() returns NULL
+    derr_t (*after_pause)(server_t*);
+    // server->after_tagged_pause() may be called by server->after_pause()
+    derr_t (*after_tagged_pause)(server_t*, const ie_dstr_t*);
+    // server->after_passthru_pause() may be called by server->after_pause()
+    derr_t (*after_passthru_pause)(server_t*, passthru_resp_t*);
+    ie_dstr_t *pause_tag;
+    imap_cmd_t *pause_cmd;
+
     // if non-NULL, we're waiting on some tagged response to be passed out
     ie_dstr_t *await_tag;
     login_state_e login_state;
     passthru_resp_t *passthru;
-} server_t;
+};
 DEF_CONTAINER_OF(server_t, conn_dn, maildir_conn_dn_i);
 DEF_CONTAINER_OF(server_t, engine, engine_t);
 DEF_CONTAINER_OF(server_t, session_mgr, manager_i);
 DEF_CONTAINER_OF(server_t, ctrl, imape_control_i);
 DEF_CONTAINER_OF(server_t, actor, actor_t);
-
-// the server-provided interface to the sf_pair
-derr_t server_allow_greeting(server_t *server);
-derr_t server_login_succeeded(server_t *server, dirmgr_t *dirmgr);
-derr_t server_login_failed(server_t *server);
-derr_t server_passthru_resp(server_t *server, passthru_resp_t *passthru);
 
 /* Advance the state machine of the serve controller by some non-zero amount.
    This will only be called if server_more_work returns true.  It is
@@ -115,4 +138,4 @@ void server_close(server_t *server, derr_t error);
 // the last external call to the server_t
 void server_release(server_t *server);
 
-derr_t greet_pause_new(pause_t **out, server_t *server);
+derr_t start_greet_pause(server_t *server);

@@ -7,6 +7,9 @@ static derr_t send_ok(server_t *server, const ie_dstr_t *tag,
 static derr_t send_no(server_t *server, const ie_dstr_t *tag,
         const dstr_t *msg);
 static derr_t send_greeting(server_t *server);
+static derr_t do_logout(server_t *server, const ie_dstr_t *tag);
+static derr_t do_close(server_t *server, const ie_dstr_t *tag);
+static derr_t do_select(server_t *server, imap_cmd_t *select_cmd);
 
 static inline imap_cmd_t *steal_cmd(imap_cmd_t **cmd){
     imap_cmd_t *temp = *cmd;
@@ -34,222 +37,88 @@ const dstr_t *imap_server_state_to_dstr(imap_server_state_t state){
     return &UNKNOWN_dstr;
 }
 
-/* a pause for when you have started up but you don't want to send a greeting
-   until you connect to the remote server */
-typedef struct {
-    server_t *server;
-    pause_t pause;
-} greet_pause_t;
-DEF_CONTAINER_OF(greet_pause_t, pause, pause_t);
-
-static void greet_pause_free(greet_pause_t *greet_pause){
-    free(greet_pause);
+// a reusable paused function for server->paused
+static bool pause_while_maildir_has_ref(server_t *server){
+    return server->maildir_has_ref;
 }
 
-static bool greet_pause_ready(pause_t *pause){
-    greet_pause_t *greet_pause = CONTAINER_OF(pause, greet_pause_t, pause);
-    return greet_pause->server->greeting_allowed;
-}
-
-static derr_t greet_pause_run(pause_t **pause){
+// a reusable after_paused function that handles the server->pause_tag
+static derr_t after_tagged_pause(server_t *server){
     derr_t e = E_OK;
 
-    greet_pause_t *greet_pause = CONTAINER_OF(*pause, greet_pause_t, pause);
-
-    PROP_GO(&e, send_greeting(greet_pause->server), cu);
+    PROP_GO(&e, server->after_tagged_pause(server, server->pause_tag), cu);
 
 cu:
-    greet_pause_free(greet_pause);
-    *pause = NULL;
+    ie_dstr_free(server->pause_tag);
+    server->pause_tag = NULL;
     return e;
 }
 
-static void greet_pause_cancel(pause_t **pause){
-    greet_pause_t *greet_pause = CONTAINER_OF(*pause, greet_pause_t, pause);
-    greet_pause_free(greet_pause);
-    *pause = NULL;
+/* a pause for when you have started up but you don't want to send a greeting
+   until you connect to the remote server */
+static bool greet_paused(server_t *server){
+    return !server->greeting_allowed;
 }
 
-derr_t greet_pause_new(pause_t **out, server_t *server){
-    derr_t e = E_OK;
-
-    *out = NULL;
-
-    greet_pause_t *greet_pause = malloc(sizeof(*greet_pause));
-    if(!greet_pause) ORIG(&e, E_NOMEM, "no mem");
-    *greet_pause = (greet_pause_t){
-        .server = server,
-        .pause = {
-            .ready = greet_pause_ready,
-            .run = greet_pause_run,
-            .cancel = greet_pause_cancel,
-        }
-    };
-
-    *out = &greet_pause->pause;
-
-    return e;
+derr_t start_greet_pause(server_t *server){
+    server->paused = greet_paused;
+    server->after_pause = send_greeting;
+    return E_OK;
 }
 
 // a pause for when you want to select but another folder is still open
-typedef struct {
-    imap_cmd_t *select_cmd;
-    server_t *server;
-    pause_t pause;
-} select_pause_t;
-DEF_CONTAINER_OF(select_pause_t, pause, pause_t);
-
-static void select_pause_free(select_pause_t *select_pause){
-    imap_cmd_free(select_pause->select_cmd);
-    free(select_pause);
-}
-
-static bool select_pause_ready(pause_t *pause){
-    select_pause_t *select_pause = CONTAINER_OF(pause, select_pause_t, pause);
-    return select_pause->server->maildir_has_ref == false;
-}
-
-static derr_t select_pause_run(pause_t **pause){
+static derr_t after_select_pause(server_t *server){
     derr_t e = E_OK;
 
-    select_pause_t *select_pause = CONTAINER_OF(*pause, select_pause_t, pause);
+    PROP(&e, do_select(server, steal_cmd(&server->pause_cmd)) );
 
-    PROP_GO(&e, do_select(select_pause->server, select_pause->select_cmd), cu);
-
-cu:
-    select_pause_free(select_pause);
-    *pause = NULL;
     return e;
 }
 
-static void select_pause_cancel(pause_t **pause){
-    select_pause_t *select_pause = CONTAINER_OF(*pause, select_pause_t, pause);
-    select_pause_free(select_pause);
-    *pause = NULL;
+static derr_t start_select_pause(server_t *server, imap_cmd_t **pause_cmd){
+    server->paused = pause_while_maildir_has_ref;
+    server->after_pause = after_select_pause;
+    server->pause_cmd = steal_cmd(pause_cmd);
+    return E_OK;
 }
 
-static derr_t select_pause_new(pause_t **out, server_t *server,
-        imap_cmd_t *select_cmd){
+// a pause for when you have to close a maildir_dn before logging out
+static derr_t start_logout_pause(server_t *server, const ie_dstr_t *tag){
     derr_t e = E_OK;
 
-    *out = NULL;
+    server->pause_tag = ie_dstr_copy(&e, tag);
+    CHECK(&e);
 
-    select_pause_t *select_pause = malloc(sizeof(*select_pause));
-    if(!select_pause) ORIG(&e, E_NOMEM, "no mem");
-    *select_pause = (select_pause_t){
-        .server = server,
-        .select_cmd = select_cmd,
-        .pause = {
-            .ready = select_pause_ready,
-            .run = select_pause_run,
-            .cancel = select_pause_cancel,
-        }
-    };
-
-    *out = &select_pause->pause;
+    server->paused = pause_while_maildir_has_ref;
+    server->after_pause = after_tagged_pause;
+    server->after_tagged_pause = do_logout;
 
     return e;
 }
 
-// a pause for when you close a maildir_dn and have to wait for it to shut down
-typedef struct {
-    ie_dstr_t *tag;
-    server_t *server;
-    derr_t (*after)(server_t*, ie_dstr_t* tag);
-    pause_t pause;
-} close_pause_t;
-DEF_CONTAINER_OF(close_pause_t, pause, pause_t);
-
-static void close_pause_free(close_pause_t *close_pause){
-    ie_dstr_free(close_pause->tag);
-    free(close_pause);
-}
-
-static bool close_pause_ready(pause_t *pause){
-    close_pause_t *close_pause = CONTAINER_OF(pause, close_pause_t, pause);
-    return close_pause->server->maildir_has_ref == false;
-}
-
-static derr_t close_pause_run(pause_t **pause){
+// a pause for when you have to close a maildir_dn before responding to CLOSE
+static derr_t start_close_pause(server_t *server, const ie_dstr_t *tag){
     derr_t e = E_OK;
 
-    close_pause_t *close_pause = CONTAINER_OF(*pause, close_pause_t, pause);
-    server_t *server = close_pause->server;
+    server->pause_tag = ie_dstr_copy(&e, tag);
+    CHECK(&e);
 
-    if(close_pause->after){
-        ie_dstr_t *tag = close_pause->tag;
-        close_pause->tag = NULL;
-        PROP_GO(&e, close_pause->after(server, tag), cu);
-    }
-
-cu:
-    close_pause_free(close_pause);
-    *pause = NULL;
-    return e;
-}
-
-static void close_pause_cancel(pause_t **pause){
-    close_pause_t *close_pause = CONTAINER_OF(*pause, close_pause_t, pause);
-    close_pause_free(close_pause);
-    *pause = NULL;
-}
-
-static derr_t close_pause_new(pause_t **out, server_t *server,
-        const ie_dstr_t *tag, derr_t (*after)(server_t*, ie_dstr_t*)){
-    derr_t e = E_OK;
-
-    *out = NULL;
-
-    close_pause_t *close_pause = malloc(sizeof(*close_pause));
-    if(!close_pause) ORIG(&e, E_NOMEM, "no mem");
-    *close_pause = (close_pause_t){
-        .server = server,
-        .after = after,
-        .pause = {
-            .ready = close_pause_ready,
-            .run = close_pause_run,
-            .cancel = close_pause_cancel,
-        }
-    };
-
-    close_pause->tag = ie_dstr_copy(&e, tag);
-    CHECK_GO(&e, fail);
-
-    *out = &close_pause->pause;
+    server->paused = pause_while_maildir_has_ref;
+    server->after_pause = after_tagged_pause;
+    server->after_tagged_pause = do_close;
 
     return e;
-
-fail:
-    close_pause_free(close_pause);
-    return e;
 }
-
 
 // a pause while you wait to login via a different connection
-typedef struct {
-    ie_dstr_t *tag;
-    server_t *server;
-    pause_t pause;
-} login_pause_t;
-DEF_CONTAINER_OF(login_pause_t, pause, pause_t);
-
-static void login_pause_free(login_pause_t *login_pause){
-    ie_dstr_free(login_pause->tag);
-    free(login_pause);
+static bool login_paused(server_t *server){
+    return server->login_state == LOGIN_PENDING;
 }
 
-static bool login_pause_ready(pause_t *pause){
-    login_pause_t *login_pause = CONTAINER_OF(pause, login_pause_t, pause);
-    return login_pause->server->login_state != LOGIN_PENDING;
-}
-
-static derr_t login_pause_run(pause_t **pause){
+static derr_t after_login_pause(server_t *server){
     derr_t e = E_OK;
 
-    login_pause_t *login_pause = CONTAINER_OF(*pause, login_pause_t, pause);
-    server_t *server = login_pause->server;
-    const ie_dstr_t *tag = login_pause->tag;
-
+    const ie_dstr_t *tag = server->pause_tag;
     if(server->login_state == LOGIN_SUCCEEDED){
         server->imap_state = AUTHENTICATED;
         PROP_GO(&e, send_ok(server, tag, &DSTR_LIT("logged in")), cu);
@@ -258,110 +127,47 @@ static derr_t login_pause_run(pause_t **pause){
     }
 
 cu:
-    login_pause_free(login_pause);
-    *pause = NULL;
+    ie_dstr_free(server->pause_tag);
+    server->pause_tag = NULL;
     return e;
 }
 
-static void login_pause_cancel(pause_t **pause){
-    login_pause_t *login_pause = CONTAINER_OF(*pause, login_pause_t, pause);
-    login_pause_free(login_pause);
-    *pause = NULL;
-}
-
-static derr_t login_pause_new(pause_t **out, server_t *server,
-        const ie_dstr_t *tag){
+static derr_t start_login_pause(server_t *server, const ie_dstr_t *tag){
     derr_t e = E_OK;
 
-    *out = NULL;
+    server->pause_tag = ie_dstr_copy(&e, tag);
+    CHECK(&e);
 
-    login_pause_t *login_pause = malloc(sizeof(*login_pause));
-    if(!login_pause) ORIG(&e, E_NOMEM, "no mem");
-    *login_pause = (login_pause_t){
-        .server = server,
-        .pause = {
-            .ready = login_pause_ready,
-            .run = login_pause_run,
-            .cancel = login_pause_cancel,
-        }
-    };
-
-    login_pause->tag = ie_dstr_copy(&e, tag);
-    CHECK_GO(&e, fail);
-
-    *out = &login_pause->pause;
+    server->paused = login_paused;
+    server->after_pause = after_login_pause;
     server->login_state = LOGIN_PENDING;
 
-    return e;
-
-fail:
-    login_pause_free(login_pause);
     return e;
 }
 
 // a pause for when you are waiting for a passthru command to return something
-typedef struct {
-    server_t *server;
-    derr_t (*after)(server_t*, passthru_resp_t *passthru);
-    pause_t pause;
-} passthru_pause_t;
-DEF_CONTAINER_OF(passthru_pause_t, pause, pause_t);
-
-static void passthru_pause_free(passthru_pause_t *passthru_pause){
-    free(passthru_pause);
+static bool passthru_paused(server_t *server){
+    return !server->passthru;
 }
 
-static bool passthru_pause_ready(pause_t *pause){
-    passthru_pause_t *passthru_pause =
-        CONTAINER_OF(pause, passthru_pause_t, pause);
-    return passthru_pause->server->passthru;
-}
-
-static derr_t passthru_pause_run(pause_t **pause){
+static derr_t after_passthru_pause(server_t *server){
     derr_t e = E_OK;
 
-    passthru_pause_t *passthru_pause =
-        CONTAINER_OF(*pause, passthru_pause_t, pause);
-    server_t *server = passthru_pause->server;
+    passthru_resp_t *passthru = server->passthru;
+    server->passthru = NULL;
+    PROP(&e, server->after_passthru_pause(server, passthru) );
 
-    if(passthru_pause->after){
-        passthru_resp_t *passthru = server->passthru;
-        server->passthru = NULL;
-        PROP_GO(&e, passthru_pause->after(server, passthru), cu);
-    }
-
-cu:
-    passthru_pause_free(passthru_pause);
-    *pause = NULL;
     return e;
 }
 
-static void passthru_pause_cancel(pause_t **pause){
-    passthru_pause_t *passthru_pause =
-        CONTAINER_OF(*pause, passthru_pause_t, pause);
-    passthru_pause_free(passthru_pause);
-    *pause = NULL;
-}
-
-static derr_t passthru_pause_new(pause_t **out, server_t *server,
+static derr_t start_passthru_pause(server_t *server,
         derr_t (*after)(server_t*, passthru_resp_t*)){
     derr_t e = E_OK;
 
-    *out = NULL;
+    server->after_passthru_pause = after;
 
-    passthru_pause_t *passthru_pause = malloc(sizeof(*passthru_pause));
-    if(!passthru_pause) ORIG(&e, E_NOMEM, "no mem");
-    *passthru_pause = (passthru_pause_t){
-        .server = server,
-        .after = after,
-        .pause = {
-            .ready = passthru_pause_ready,
-            .run = passthru_pause_run,
-            .cancel = passthru_pause_cancel,
-        }
-    };
-
-    *out = &passthru_pause->pause;
+    server->paused = passthru_paused;
+    server->after_pause = after_passthru_pause;
 
     return e;
 }
@@ -566,7 +372,7 @@ static derr_t check_login(server_t *server, const ie_dstr_t *tag,
     derr_t e = E_OK;
 
     // prepare a login pause
-    PROP(&e, login_pause_new(&server->pause, server, tag) );
+    PROP(&e, start_login_pause(server, tag) );
 
     // report the login attempt to the sf_pair
     PROP(&e, server->cb->login(server->cb, login->user, login->pass) );
@@ -615,7 +421,7 @@ static derr_t list_cmd(server_t *server, const ie_dstr_t *tag,
     PROP(&e, server->cb->passthru_req(server->cb, &list_req->passthru) );
 
     // wait for a response
-    PROP(&e, passthru_pause_new(&server->pause, server, list_done) );
+    PROP(&e, start_passthru_pause(server, list_done) );
 
     return e;
 }
@@ -629,7 +435,7 @@ static derr_t do_select(server_t *server, imap_cmd_t *select_cmd){
     server->maildir_has_ref = true;
     actor_ref_up(&server->actor);
     PROP_GO(&e, dirmgr_open_dn(server->dirmgr, dir_name, &server->conn_dn,
-                &server->maildir_dn), fail_maildir);
+                &server->maildir_dn), fail_ref);
 
     // pass this SELECT command to the maildir_dn
     PROP_GO(&e, server->maildir_dn->cmd(server->maildir_dn,
@@ -641,6 +447,7 @@ static derr_t do_select(server_t *server, imap_cmd_t *select_cmd){
 
 fail_maildir:
     dirmgr_close_dn(server->dirmgr, server->maildir_dn);
+fail_ref:
     server->maildir_has_ref = false;
     actor_ref_dn(&server->actor);
 
@@ -650,7 +457,7 @@ fail_maildir:
 
 // this runs after the maildir_dn has finished closing
 // (this is a close_pause_t->after() callback)
-static derr_t do_close(server_t *server, ie_dstr_t *tag){
+static derr_t do_close(server_t *server, const ie_dstr_t *tag){
     derr_t e = E_OK;
 
     // build text
@@ -658,7 +465,8 @@ static derr_t do_close(server_t *server, ie_dstr_t *tag){
     ie_dstr_t *text = ie_dstr_new(&e, &msg, KEEP_RAW);
 
     // build response
-    ie_st_resp_t *st_resp = ie_st_resp_new(&e, tag, IE_ST_OK, NULL, text);
+    ie_dstr_t *tag_copy = ie_dstr_copy(&e, tag);
+    ie_st_resp_t *st_resp = ie_st_resp_new(&e, tag_copy, IE_ST_OK, NULL, text);
     imap_resp_arg_t arg = {.status_type=st_resp};
     imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_STATUS_TYPE, arg);
 
@@ -671,18 +479,15 @@ static derr_t do_close(server_t *server, ie_dstr_t *tag){
 }
 
 // this may or may not have to wait for the maildir_dn to close before it runs
-// (this is a close_pause_t->after() callback)
-static derr_t do_logout(server_t *server, ie_dstr_t *tag){
+static derr_t do_logout(server_t *server, const ie_dstr_t *tag){
     derr_t e = E_OK;
 
-    PROP_GO(&e, send_bye(server, &DSTR_LIT("goodbye, my love...")), cu_tag);
+    PROP(&e, send_bye(server, &DSTR_LIT("goodbye, my love...")) );
 
     // send a message which will close the session upon WRITE_DONE
     DSTR_STATIC(final_msg, "I'm gonna be strong, I can make it through this");
-    PROP_GO(&e, send_st_resp(server, tag, &final_msg, IE_ST_OK, true), cu_tag);
+    PROP(&e, send_st_resp(server, tag, &final_msg, IE_ST_OK, true) );
 
-cu_tag:
-    ie_dstr_free(tag);
     return e;
 }
 
@@ -690,7 +495,7 @@ bool server_more_work(actor_t *actor){
     server_t *server = CONTAINER_OF(actor, server_t, actor);
     return !link_list_isempty(&server->ts.unhandled_cmds)
         || !link_list_isempty(&server->ts.maildir_resps)
-        || (server->pause && server->pause->ready(server->pause))
+        || (server->paused && !server->paused(server))
         || (server->maildir_dn
                 && server->maildir_dn->more_work(server->maildir_dn));
 }
@@ -717,8 +522,7 @@ static derr_t handle_one_command(server_t *server, imap_cmd_t *cmd){
                 // close the maildir_dn
                 server_close_maildir_onthread(server);
                 // call do_logout() after the maildir_dn finishes closing
-                PROP_GO(&e, close_pause_new(&server->pause, server, tag,
-                            do_logout), cu_cmd);
+                PROP_GO(&e, start_logout_pause(server, tag), cu_cmd);
             }else{
                 PROP_GO(&e, do_logout(server, steal_tag(&cmd->tag)), cu_cmd);
             }
@@ -757,8 +561,7 @@ static derr_t handle_one_command(server_t *server, imap_cmd_t *cmd){
                 // close the maildir_dn
                 server_close_maildir_onthread(server);
                 // SELECT the new one after this one closes
-                PROP_GO(&e, select_pause_new(&server->pause, server,
-                            steal_cmd(&cmd)), cu_cmd);
+                PROP_GO(&e, start_select_pause(server, &cmd), cu_cmd);
             }else{
                 PROP_GO(&e, send_invalid_state_resp(server, tag), cu_cmd);
             }
@@ -771,8 +574,7 @@ static derr_t handle_one_command(server_t *server, imap_cmd_t *cmd){
                 // close the maildir_dn
                 server_close_maildir_onthread(server);
                 // call do_close() after the maildir_dn finishes closing
-                PROP_GO(&e, close_pause_new(&server->pause, server, tag,
-                            do_close), cu_cmd);
+                PROP_GO(&e, start_close_pause(server, tag), cu_cmd);
             }
             break;
 
@@ -886,7 +688,7 @@ derr_t server_do_work(actor_t *actor){
     }
 
     // unhandled client commands from the client
-    while(!server->ts.closed && !server->await_tag && !server->pause){
+    while(!server->ts.closed && !server->await_tag && !server->paused){
         // pop a command
         uv_mutex_lock(&server->ts.mutex);
         link_t *link = link_list_pop_first(&server->ts.unhandled_cmds);
@@ -923,9 +725,10 @@ derr_t server_do_work(actor_t *actor){
     }
 
     // handle delayed actions
-    if(!server->ts.closed
-            && server->pause && server->pause->ready(server->pause)){
-        PROP(&e, server->pause->run(&server->pause) );
+    if(!server->ts.closed && server->paused && !server->paused(server)){
+        PROP(&e, server->after_pause(server) );
+        server->paused = NULL;
+        server->after_pause = NULL;
     }
 
     return e;

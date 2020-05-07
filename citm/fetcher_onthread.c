@@ -37,59 +37,14 @@ fail:
 
 /* a pause for when you have are ready to send credentials but you don't have
    any to send yet */
-typedef struct {
-    fetcher_t *fetcher;
-    pause_t pause;
-} creds_pause_t;
-DEF_CONTAINER_OF(creds_pause_t, pause, pause_t);
-
-static void creds_pause_free(creds_pause_t *creds_pause){
-    free(creds_pause);
+static bool creds_paused(fetcher_t *fetcher){
+    return !fetcher->login_cmd;
 }
 
-static bool creds_pause_ready(pause_t *pause){
-    creds_pause_t *creds_pause = CONTAINER_OF(pause, creds_pause_t, pause);
-    return creds_pause->fetcher->login_cmd;
-}
-
-static derr_t creds_pause_run(pause_t **pause){
-    derr_t e = E_OK;
-
-    creds_pause_t *creds_pause = CONTAINER_OF(*pause, creds_pause_t, pause);
-
-    PROP_GO(&e, send_login(creds_pause->fetcher), cu);
-
-cu:
-    creds_pause_free(creds_pause);
-    *pause = NULL;
-    return e;
-}
-
-static void creds_pause_cancel(pause_t **pause){
-    creds_pause_t *creds_pause = CONTAINER_OF(*pause, creds_pause_t, pause);
-    creds_pause_free(creds_pause);
-    *pause = NULL;
-}
-
-derr_t creds_pause_new(pause_t **out, fetcher_t *fetcher){
-    derr_t e = E_OK;
-
-    *out = NULL;
-
-    creds_pause_t *creds_pause = malloc(sizeof(*creds_pause));
-    if(!creds_pause) ORIG(&e, E_NOMEM, "no mem");
-    *creds_pause = (creds_pause_t){
-        .fetcher = fetcher,
-        .pause = {
-            .ready = creds_pause_ready,
-            .run = creds_pause_run,
-            .cancel = creds_pause_cancel,
-        }
-    };
-
-    *out = &creds_pause->pause;
-
-    return e;
+static derr_t start_creds_pause(fetcher_t *fetcher){
+    fetcher->paused = creds_paused;
+    fetcher->after_pause = send_login;
+    return E_OK;
 }
 
 //
@@ -503,7 +458,7 @@ static derr_t login_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
         PROP(&e, fetcher->cb->login_failed(fetcher->cb) );
 
         // wait for another call to fetcher_login()
-        PROP(&e, creds_pause_new(&fetcher->pause, fetcher) );
+        PROP(&e, start_creds_pause(fetcher) );
         return e;
     }
 
@@ -561,7 +516,7 @@ static derr_t untagged_ok(fetcher_t *fetcher, const ie_st_code_t *code,
         fetcher->imap_state = FETCHER_PREAUTH;
 
         // prepare to wait for a call to fetcher_login()
-        PROP(&e, creds_pause_new(&fetcher->pause, fetcher) );
+        PROP(&e, start_creds_pause(fetcher) );
 
         // tell the sf_pair we need login creds
         PROP(&e, fetcher->cb->login_ready(fetcher->cb) );
@@ -695,7 +650,7 @@ bool fetcher_passthru_more_work(fetcher_t *fetcher){
 bool fetcher_more_work(actor_t *actor){
     fetcher_t *fetcher = CONTAINER_OF(actor, fetcher_t, actor);
     return !link_list_isempty(&fetcher->ts.unhandled_resps)
-        || (fetcher->pause && fetcher->pause->ready(fetcher->pause))
+        || (fetcher->paused && !fetcher->paused(fetcher))
         || !link_list_isempty(&fetcher->ts.maildir_cmds)
         || fetcher_passthru_more_work(fetcher);
 }
@@ -786,7 +741,7 @@ derr_t fetcher_do_work(actor_t *actor){
     fetcher_t *fetcher = CONTAINER_OF(actor, fetcher_t, actor);
 
     // unhandled responses
-    while(!fetcher->ts.closed && !fetcher->pause){
+    while(!fetcher->ts.closed && !fetcher->paused){
         // pop a response
         uv_mutex_lock(&fetcher->ts.mutex);
         link_t *link = link_list_pop_first(&fetcher->ts.unhandled_resps);
@@ -833,9 +788,10 @@ derr_t fetcher_do_work(actor_t *actor){
     }
 
     // handle delayed actions
-    if(!fetcher->ts.closed
-            && fetcher->pause && fetcher->pause->ready(fetcher->pause)){
-        PROP(&e, fetcher->pause->run(&fetcher->pause) );
+    if(!fetcher->ts.closed && fetcher->paused && !fetcher->paused(fetcher)){
+        PROP(&e, fetcher->after_pause(fetcher) );
+        fetcher->paused = NULL;
+        fetcher->after_pause = NULL;
     }
 
     // // check if we need to transition to the next folder

@@ -1,3 +1,6 @@
+struct fetcher_t;
+typedef struct fetcher_t fetcher_t;
+
 /* fetcher is only responsible for navigating until just before the SELECTED
    state, everything after that is the responsibility of the imaildir_t */
 typedef enum {
@@ -16,17 +19,34 @@ struct fetcher_cb_i;
 typedef struct fetcher_cb_i fetcher_cb_i;
 struct fetcher_cb_i {
     void (*dying)(fetcher_cb_i*, derr_t error);
+
     // ready for login credentials
     derr_t (*login_ready)(fetcher_cb_i*);
+
     // login failed
     derr_t (*login_failed)(fetcher_cb_i*);
     // login succeeded (this will give us our dirmgr)
     derr_t (*login_succeeded)(fetcher_cb_i*, dirmgr_t **);
+
     // submit a passthru response (use or consume passthru)
     derr_t (*passthru_resp)(fetcher_cb_i*, passthru_resp_t *passthru);
+
+    // select succeeded
+    derr_t (*select_succeeded)(fetcher_cb_i*);
+    derr_t (*select_failed)(fetcher_cb_i*, const ie_st_resp_t *st_resp);
 };
 
-typedef struct {
+// the fetcher-provided interface to the sf_pair
+derr_t fetcher_login(
+    fetcher_t *fetcher,
+    const ie_dstr_t *user,
+    const ie_dstr_t *pass
+);
+// (user or consume passthru)
+derr_t fetcher_passthru_req(fetcher_t *fetcher, passthru_req_t *passthru);
+derr_t fetcher_select(fetcher_t *fetcher, const ie_mailbox_t *m);
+
+struct fetcher_t {
     fetcher_cb_i *cb;
     const char *host;
     const char *svc;
@@ -67,7 +87,9 @@ typedef struct {
     size_t tag;
 
     // pause is for delaying actions until some future time
-    pause_t *pause;
+    bool (*paused)(fetcher_t*);
+    // after_pause() is called onthread after paused() returns NULL
+    derr_t (*after_pause)(fetcher_t*);
     ie_login_cmd_t *login_cmd;
     passthru_req_t *passthru;
     list_resp_t *list_resp;
@@ -79,7 +101,7 @@ typedef struct {
     bool maildir_has_ref;
     bool mailbox_synced;
     bool mailbox_unselected;
-} fetcher_t;
+};
 DEF_CONTAINER_OF(fetcher_t, conn_up, maildir_conn_up_i);
 DEF_CONTAINER_OF(fetcher_t, engine, engine_t);
 DEF_CONTAINER_OF(fetcher_t, session_mgr, manager_i);
@@ -94,16 +116,6 @@ derr_t fetcher_new(
     imap_pipeline_t *p,
     ssl_context_t *ctx_cli
 );
-
-// part of fetcher-provided interface to the sf_pair
-derr_t fetcher_login(
-    fetcher_t *fetcher,
-    const ie_dstr_t *user,
-    const ie_dstr_t *pass
-);
-
-// part of fetcher-provided interface to the sf_pair (user or consume passthru)
-derr_t fetcher_passthru_req(fetcher_t *fetcher, passthru_req_t *passthru);
 
 /* Advance the state machine of the fetch controller by some non-zero amount.
    This will only be called if fetcher_more_work returns true.  It is
