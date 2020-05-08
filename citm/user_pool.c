@@ -83,6 +83,10 @@ void user_pool_sf_pair_dying(sf_pair_cb_i *cb, sf_pair_t *sf_pair,
         DUMP(error);
         DROP_VAR(&error);
     }
+}
+
+void user_pool_sf_pair_release(sf_pair_cb_i *cb, sf_pair_t *sf_pair){
+    user_pool_t *user_pool = CONTAINER_OF(cb, user_pool_t, sf_pair_cb);
 
     user_t *user_to_close = NULL;
 
@@ -182,6 +186,7 @@ derr_t user_pool_init(
         .sf_pair_cb = {
             .set_owner = user_pool_sf_pair_set_owner,
             .dying = user_pool_sf_pair_dying,
+            .release = user_pool_sf_pair_release,
         },
         .user_mgr = {
             .dying = user_pool_user_dying,

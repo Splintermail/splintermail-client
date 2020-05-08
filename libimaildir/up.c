@@ -516,8 +516,22 @@ static derr_t select_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
     up_t *up = up_cb->up;
 
     if(st_resp->status != IE_ST_OK){
-        ORIG(&e, E_PARAM, "select failed\n");
+        // handle the special case where the mail server doesn't have this dir
+        if(st_resp->status == IE_ST_NO){
+            up->m->rm_on_close = true;
+        }
+        up->selected = false;
+        // don't allow any more commands
+        up->close_sent = true;
+        // report the error
+        up->conn->selected(up->conn, st_resp);
+        return e;
     }
+
+    up->m->rm_on_close = false;
+
+    // SELECT succeeded
+    up->conn->selected(up->conn, NULL);
 
     /* Add imaildir_t's unfilled UIDs to uids_to_download.  This doesn't have
        to go here precisely, but it does have to happen *after* an up_t becomes

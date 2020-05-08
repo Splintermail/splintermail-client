@@ -29,6 +29,9 @@ void server_close(server_t *server, derr_t error){
 static void server_free(server_t **old){
     server_t *server = *old;
     if(!server) return;
+
+    server->cb->release(server->cb);
+
     // free any imap cmds or resps laying around
     link_t *link;
     while((link = link_list_pop_first(&server->ts.unhandled_cmds))){
@@ -50,7 +53,6 @@ static void server_free(server_t **old){
     imap_cmd_free(server->pause_cmd);
     ie_dstr_free(server->pause_tag);
     ie_st_resp_free(server->select_st_resp);
-
     free(server);
     *old = NULL;
     return;

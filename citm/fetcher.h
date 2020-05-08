@@ -28,6 +28,7 @@ struct fetcher_cb_i;
 typedef struct fetcher_cb_i fetcher_cb_i;
 struct fetcher_cb_i {
     void (*dying)(fetcher_cb_i*, derr_t error);
+    void (*release)(fetcher_cb_i*);
 
     // ready for login credentials
     derr_t (*login_ready)(fetcher_cb_i*);

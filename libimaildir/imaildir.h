@@ -117,6 +117,9 @@ typedef struct maildir_log_i maildir_log_i;
 struct maildir_conn_up_i {
     // the maildir wants to pass an imap command over the wire
     void (*cmd)(maildir_conn_up_i*, imap_cmd_t*);
+    // this event indiates a SELECT finished, with an ie_st_resp_t if it failed
+    // (if select fails, you should go straight to dirmgr_close_up())
+    void (*selected)(maildir_conn_up_i*, const ie_st_resp_t*);
     // this event indicates the maildir finished an initial sync
     void (*synced)(maildir_conn_up_i*);
     // this event is a response to the maildir_up_i->unselect() call
@@ -190,6 +193,10 @@ struct imaildir_t {
     ie_mflags_t mflags;
     // crypto for this box
     const keypair_t *keypair;
+
+    // if SELECT returned NO, delete the box afterwards
+    bool rm_on_close;
+
 
     // lock ordering is downwards
 

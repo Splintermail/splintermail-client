@@ -56,6 +56,7 @@ static void user_finalize(refs_t *refs){
         user->mgr->dead(user->mgr, user);
     }
 
+    dirmgr_free(&user->dirmgr);
     dstr_free(&user->name);
     refs_free(&user->refs);
     uv_mutex_destroy(&user->mutex);

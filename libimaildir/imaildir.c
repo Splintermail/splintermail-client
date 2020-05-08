@@ -308,13 +308,6 @@ derr_t imaildir_init(imaildir_t *m, string_builder_t path, const dstr_t *name,
     link_init(&m->access.ups);
     link_init(&m->access.dns);
 
-    // // check for cur/new/tmp folders, and assign /NOSELECT accordingly
-    // bool ctn_present;
-    // PROP(&e, ctn_check(&m->path, &ctn_present) );
-    // m->mflags = (ie_mflags_t){
-    //     .selectable=ctn_present ? IE_SELECTABLE_NONE : IE_SELECTABLE_NOSELECT,
-    // };
-
     // initialize locks
     int ret = uv_mutex_init(&m->access.lock);
     if(ret < 0){
@@ -415,6 +408,15 @@ void imaildir_free(imaildir_t *m){
     // handle the case where imaildir_init failed in imaildir_log_open
     if(m->log.log){
         m->log.log->close(m->log.log);
+    }
+
+    // check if we found out this maildir doesn't exist anymore
+    if(m->rm_on_close){
+        // delete the log from the filesystem
+        DROP_CMD( imaildir_log_rm(&m->path) );
+
+        // delete message files from the filesystem
+        DROP_CMD( delete_all_msg_files(&m->path) );
     }
 
     uv_mutex_destroy(&m->tmp.lock);

@@ -6,8 +6,19 @@ static void sf_pair_finalize(refs_t *refs){
     // free state generated at runtime
     dstr_free(&sf_pair->username);
 
+    refs_free(&sf_pair->children);
     refs_free(&sf_pair->refs);
     free(sf_pair);
+}
+
+static void sf_pair_children_finalize(refs_t *children){
+    sf_pair_t *sf_pair = CONTAINER_OF(children, sf_pair_t, children);
+
+    // close if we haven't already
+    sf_pair_close(sf_pair, E_OK);
+
+    // release our owner
+    sf_pair->cb->release(sf_pair->cb, sf_pair);
 }
 
 void sf_pair_close(sf_pair_t *sf_pair, derr_t error){
@@ -37,10 +48,18 @@ static void server_cb_dying(server_cb_i *cb, derr_t error){
     sf_pair_t *sf_pair = CONTAINER_OF(cb, sf_pair_t, server_cb);
 
     sf_pair_close(sf_pair, error);
+}
+
+// part of server_cb_i
+static void server_cb_release(server_cb_i *cb){
+    sf_pair_t *sf_pair = CONTAINER_OF(cb, sf_pair_t, server_cb);
+    printf("sf_pair released by sever\n");
 
     // ref down for the server
     ref_dn(&sf_pair->refs);
+    ref_dn(&sf_pair->children);
 }
+
 
 // part of server_cb_i
 static derr_t server_cb_login(server_cb_i *server_cb, const ie_dstr_t *user,
@@ -102,9 +121,16 @@ static void fetcher_cb_dying(fetcher_cb_i *cb, derr_t error){
     sf_pair_t *sf_pair = CONTAINER_OF(cb, sf_pair_t, fetcher_cb);
 
     sf_pair_close(sf_pair, error);
+}
+
+// part of fetcher_cb_i
+static void fetcher_cb_release(fetcher_cb_i *cb){
+    sf_pair_t *sf_pair = CONTAINER_OF(cb, sf_pair_t, fetcher_cb);
+    printf("sf_pair released by fetcher\n");
 
     // ref down for the fetcher
     ref_dn(&sf_pair->refs);
+    ref_dn(&sf_pair->children);
 }
 
 // part of the fetcher_cb_i
@@ -236,12 +262,14 @@ derr_t sf_pair_new(
         .cb = cb,
         .server_cb = {
             .dying = server_cb_dying,
+            .release = server_cb_release,
             .login = server_cb_login,
             .passthru_req = server_cb_passthru_req,
             .select = server_cb_select,
         },
         .fetcher_cb = {
             .dying = fetcher_cb_dying,
+            .release = fetcher_cb_release,
             .login_ready = fetcher_cb_login_ready,
             .login_succeeded = fetcher_cb_login_succeeded,
             .login_failed = fetcher_cb_login_failed,
@@ -261,6 +289,8 @@ derr_t sf_pair_new(
 
     // start with an owner ref, a server ref, and a fetcher ref
     PROP_GO(&e, refs_init(&sf_pair->refs, 3, sf_pair_finalize), fail_mutex);
+    PROP_GO(&e, refs_init(&sf_pair->children, 2, sf_pair_children_finalize),
+            fail_refs);
 
     PROP_GO(&e,
         server_new(
@@ -269,7 +299,7 @@ derr_t sf_pair_new(
             p,
             ctx_srv,
             session),
-        fail_refs);
+        fail_children);
 
     PROP_GO(&e,
         fetcher_new(
@@ -287,6 +317,8 @@ derr_t sf_pair_new(
 
 fail_server:
     server_cancel(sf_pair->server);
+fail_children:
+    refs_free(&sf_pair->children);
 fail_refs:
     refs_free(&sf_pair->refs);
 fail_mutex:
@@ -310,6 +342,8 @@ void sf_pair_cancel(sf_pair_t *sf_pair){
     // lose a reference, since the conn_dying call won't be made
     ref_dn(&sf_pair->refs);
     ref_dn(&sf_pair->refs);
+    ref_dn(&sf_pair->children);
+    ref_dn(&sf_pair->children);
 
     sf_pair_release(sf_pair);
 }

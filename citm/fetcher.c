@@ -29,10 +29,14 @@ void fetcher_close(fetcher_t *fetcher, derr_t error){
 static void fetcher_free(fetcher_t **old){
     fetcher_t *fetcher = *old;
     if(!fetcher) return;
+
+    fetcher->cb->release(fetcher->cb);
+
     // free any unfinished pause state
     ie_login_cmd_free(fetcher->login_cmd);
     passthru_req_free(fetcher->passthru);
     list_resp_free(fetcher->list_resp);
+    ie_mailbox_free(fetcher->select_mailbox);
     // free any imap cmds or resps laying around
     link_t *link;
     while((link = link_list_pop_first(&fetcher->ts.unhandled_resps))){
@@ -154,6 +158,35 @@ static void fetcher_conn_up_cmd(maildir_conn_up_i *conn_up, imap_cmd_t *cmd){
     actor_advance(&fetcher->actor);
 }
 
+// part of the maildir_conn_up_i, meaning this can be called on- or off-thread
+static void fetcher_conn_up_selected(maildir_conn_up_i *conn_up,
+        const ie_st_resp_t *st_resp){
+    fetcher_t *fetcher = CONTAINER_OF(conn_up, fetcher_t, conn_up);
+
+    // check for errors
+    if(st_resp){
+        /* for our purposes, treat this as an unselected() event; we just close
+           the conn_up on-thread either way */
+        fetcher->mbx_state = MBX_UNSELECTED;
+        // pass the select error upwards
+        derr_t e = E_OK;
+        IF_PROP(&e, fetcher->cb->select_failed(fetcher->cb, st_resp) ){
+            fetcher_close(fetcher, e);
+            PASSED(e);
+        }
+
+        actor_advance(&fetcher->actor);
+
+    }else{
+        fetcher->mbx_state = MBX_SYNCED;
+        derr_t e = E_OK;
+        IF_PROP(&e, fetcher->cb->select_succeeded(fetcher->cb) ){
+            fetcher_close(fetcher, e);
+            PASSED(e);
+        }
+    }
+}
+
 
 // part of the maildir_conn_up_i, meaning this can be called on- or off-thread
 static void fetcher_conn_up_synced(maildir_conn_up_i *conn_up){
@@ -243,6 +276,7 @@ derr_t fetcher_new(
 
     fetcher->conn_up = (maildir_conn_up_i){
         .cmd = fetcher_conn_up_cmd,
+        .selected = fetcher_conn_up_selected,
         .synced = fetcher_conn_up_synced,
         .unselected = fetcher_conn_up_unselected,
         .failure = fetcher_conn_up_failure,

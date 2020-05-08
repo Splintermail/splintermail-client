@@ -30,6 +30,7 @@ struct server_cb_i;
 typedef struct server_cb_i server_cb_i;
 struct server_cb_i {
     void (*dying)(server_cb_i*, derr_t error);
+    void (*release)(server_cb_i*);
 
     // submit login credentials
     derr_t (*login)(server_cb_i*, const ie_dstr_t*, const ie_dstr_t*);

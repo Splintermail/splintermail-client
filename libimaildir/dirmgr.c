@@ -2,6 +2,8 @@
 
 #include "uv_util.h"
 
+static derr_t make_ctn(const string_builder_t *dir_path, mode_t mode);
+
 // static void managed_dir_new(managed_dir_t **out, dirmgr_t *dm,
 //         const dstr_t *name);
 static void managed_dir_free(managed_dir_t **mgd);
@@ -60,6 +62,12 @@ static derr_t managed_dir_new(managed_dir_t **out, dirmgr_t *dm,
         const dstr_t *name){
     derr_t e = E_OK;
 
+    // maildir not open in dirmgr, make sure it exists on the filesystem
+    string_builder_t dir_path = sb_append(&dm->path, FD(name));
+    PROP(&e, mkdirs_path(&dir_path, 0777) );
+    // also ensure ctn exist
+    PROP(&e, make_ctn(&dir_path, 0777) );
+
     managed_dir_t *mgd = malloc(sizeof(*mgd));
     if(mgd == NULL) ORIG(&e, E_NOMEM, "no memory");
     *mgd = (managed_dir_t){
@@ -75,7 +83,7 @@ static derr_t managed_dir_new(managed_dir_t **out, dirmgr_t *dm,
     PROP_GO(&e, dstr_new(&mgd->name, name->len), fail_malloc);
     PROP_GO(&e, dstr_copy(name, &mgd->name), fail_name);
     string_builder_t path = sb_append(&dm->path, FD(&mgd->name));
-    PROP_GO(&e, imaildir_init(&mgd->m, path, name, &mgd->dirmgr_iface,
+    PROP_GO(&e, imaildir_init(&mgd->m, path, &mgd->name, &mgd->dirmgr_iface,
                 dm->keypair), fail_name);
 
     *out = mgd;
@@ -454,7 +462,7 @@ derr_t dirmgr_open_up(dirmgr_t *dm, const dstr_t *name, maildir_conn_up_i *up,
 
     // add to hashmap (we checked this path was not in the hashmap)
     NOFAIL_GO(&e, E_PARAM,
-            hashmap_sets_unique(&dm->dirs.map, name, &mgd->h), fail_mgd);
+            hashmap_sets_unique(&dm->dirs.map, &mgd->name, &mgd->h), fail_mgd);
 
     PROP_GO(&e, imaildir_register_up(&mgd->m, up, maildir_up_out), fail_mgd);
 
@@ -468,6 +476,7 @@ fail_lock:
     uv_rwlock_wrunlock(&dm->dirs.lock);
     return e;
 }
+static dirmgr_t *g_dm;
 
 derr_t dirmgr_open_dn(dirmgr_t *dm, const dstr_t *name, maildir_conn_dn_i *dn,
         maildir_dn_i **maildir_dn_out){
@@ -492,7 +501,7 @@ derr_t dirmgr_open_dn(dirmgr_t *dm, const dstr_t *name, maildir_conn_dn_i *dn,
 
     // add to hashmap (we checked this path was not in the hashmap)
     NOFAIL_GO(&e, E_PARAM,
-            hashmap_sets_unique(&dm->dirs.map, name, &mgd->h), fail_mgd);
+            hashmap_sets_unique(&dm->dirs.map, &mgd->name, &mgd->h), fail_mgd);
 
     PROP_GO(&e, imaildir_register_dn(&mgd->m, dn, maildir_dn_out), fail_mgd);
 
@@ -532,8 +541,61 @@ fail_lock:
 }
 
 
+/* Prune empty directories whenever we shutdown.  This is a cleanup mechanism
+   to deal with how we optimistically create maildir trees and delete their
+   contents when we find out later that they don't exist on the mail server. */
+typedef struct {
+    bool nonempty;
+} prune_data_t;
+
+static derr_t _prune_empty_dirs(const string_builder_t *base,
+        const dstr_t *name, bool isdir, void *userdata){
+    derr_t e = E_OK;
+    prune_data_t *parent_data = userdata;
+
+    if(!isdir){
+        // parent is not empty
+        parent_data->nonempty = true;
+        return e;
+    }
+
+    // recurse
+    string_builder_t path = sb_append(base, FD(name));
+    prune_data_t our_data = {0};
+    PROP(&e, for_each_file_in_dir2(&path, _prune_empty_dirs, &our_data) );
+
+    if(our_data.nonempty){
+        // we are not empty
+        parent_data->nonempty = true;
+        return e;
+    }
+
+    PROP(&e, rm_rf_path(&path) );
+
+    return e;
+}
+
+static void prune_empty_dirs(const string_builder_t *path){
+    derr_t e = E_OK;
+    prune_data_t data = {0};
+    PROP_GO(&e, for_each_file_in_dir2(path, _prune_empty_dirs, &data), warn);
+    if(data.nonempty) return;
+
+    PROP_GO(&e, rm_rf_path(path), warn);
+
+    return;
+
+warn:
+    TRACE(&e, "failed to prune maildir: %x\n", FSB(path, &DSTR_LIT("/")));
+    DUMP(e);
+    DROP_VAR(&e);
+    return;
+}
+
+
 void dirmgr_free(dirmgr_t *dm){
     if(!dm) return;
+    prune_empty_dirs(&dm->path);
     hashmap_free(&dm->dirs.map);
     uv_rwlock_destroy(&dm->dirs.lock);
 }

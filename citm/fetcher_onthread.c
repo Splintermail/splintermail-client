@@ -732,8 +732,8 @@ static derr_t fetcher_passthru_do_work(fetcher_t *fetcher){
     // unselect anything that is selected
     if(fetcher->imap_state == FETCHER_SELECTED){
         // try to transition towards FETCHER_AUTHENTICATED
-        PROP(&e, fetcher->maildir_up->unselect(fetcher->maildir_up) );
         fetcher->mbx_state = MBX_UNSELECTING;
+        PROP(&e, fetcher->maildir_up->unselect(fetcher->maildir_up) );
         return e;
     }
 
@@ -750,8 +750,8 @@ static derr_t fetcher_select_do_work(fetcher_t *fetcher){
     // unselect anything that is selected
     if(fetcher->imap_state == FETCHER_SELECTED){
         // try to transition towards FETCHER_AUTHENTICATED
-        PROP(&e, fetcher->maildir_up->unselect(fetcher->maildir_up) );
         fetcher->mbx_state = MBX_UNSELECTING;
+        PROP(&e, fetcher->maildir_up->unselect(fetcher->maildir_up) );
         return e;
     }
 
@@ -812,7 +812,7 @@ derr_t fetcher_do_work(actor_t *actor){
     }
 
     // check if we finished the closing process, change state
-    if(fetcher->mbx_state == FETCHER_SELECTED
+    if(fetcher->imap_state == FETCHER_SELECTED
             && fetcher->mbx_state == MBX_NONE){
         fetcher->imap_state = FETCHER_AUTHENTICATED;
     }

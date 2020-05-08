@@ -13,6 +13,7 @@ struct sf_pair_cb_i {
     derr_t (*set_owner)(sf_pair_cb_i*, sf_pair_t *sf_pair,
             const dstr_t *name, dirmgr_t **dirmgr, void **owner);
     void (*dying)(sf_pair_cb_i*, sf_pair_t *sf_pair, derr_t error);
+    void (*release)(sf_pair_cb_i*, sf_pair_t *sf_pair);
 };
 
 // server-fetcher pair
@@ -33,6 +34,8 @@ struct sf_pair_t {
     dstr_t username;
 
     refs_t refs;
+    // TODO: why do I seem to need a separate refcount for child objects?
+    refs_t children;
 
     uv_mutex_t mutex;
     bool closed;
@@ -40,6 +43,7 @@ struct sf_pair_t {
     link_t link; // user_t->sf_pairs or user_pool_t->unowned
 };
 DEF_CONTAINER_OF(sf_pair_t, refs, refs_t);
+DEF_CONTAINER_OF(sf_pair_t, children, refs_t);
 DEF_CONTAINER_OF(sf_pair_t, link, link_t);
 DEF_CONTAINER_OF(sf_pair_t, server_cb, server_cb_i);
 DEF_CONTAINER_OF(sf_pair_t, fetcher_cb, fetcher_cb_i);
