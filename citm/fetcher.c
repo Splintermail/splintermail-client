@@ -229,6 +229,7 @@ static void fetcher_conn_up_release(maildir_conn_up_i *conn_up){
     }
 
     fetcher->maildir_has_ref = false;
+    fetcher->mbx_state = MBX_NONE;
     // ref down for maildir
     actor_ref_dn(&fetcher->actor);
 
@@ -362,6 +363,12 @@ derr_t fetcher_login(
     actor_advance(&fetcher->actor);
 
     return e;
+}
+
+// the fetcher-provided interface to the sf_pair
+void fetcher_set_dirmgr(fetcher_t *fetcher, dirmgr_t *dirmgr){
+    fetcher->dirmgr = dirmgr;
+    actor_advance(&fetcher->actor);
 }
 
 // part of fetcher-provided interface to the sf_pair (user or consume passthru)

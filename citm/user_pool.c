@@ -1,8 +1,9 @@
 #include "citm.h"
 
-void user_pool_user_dying(manager_i *mgr, void *caller, derr_t error){
+// part of user_cb_i
+void user_pool_user_dying(user_cb_i *cb, user_t *caller, derr_t error){
     user_t *user = caller;
-    user_pool_t *user_pool = CONTAINER_OF(mgr, user_pool_t, user_mgr);
+    user_pool_t *user_pool = CONTAINER_OF(cb, user_pool_t, user_cb);
 
     // just print an error, nothing more
     if(is_error(error)){
@@ -17,21 +18,20 @@ void user_pool_user_dying(manager_i *mgr, void *caller, derr_t error){
         /* remove from hashmap, if it wasn't removed already.  It would be
            removed already if it was shut down normally, such as after removing
            the final sf_pair */
-        hashmap_del_elem(&user_pool->users, &user->h);
+        if(hashmap_del_elem(&user_pool->users, &user->h)){
+            user_release(user);
+        }
     }
     uv_mutex_unlock(&user_pool->mutex);
 
-    user_release(user);
     // ref down for the user
     ref_dn(&user_pool->refs);
 }
 
-
 derr_t user_pool_sf_pair_set_owner(sf_pair_cb_i *cb, sf_pair_t *sf_pair,
-            const dstr_t *name, dirmgr_t **dirmgr, void **owner){
+            const dstr_t *name, const dstr_t *pass, void **owner){
     derr_t e = E_OK;
 
-    *dirmgr = NULL;
     *owner = NULL;
     user_pool_t *user_pool = CONTAINER_OF(cb, user_pool_t, sf_pair_cb);
 
@@ -45,7 +45,7 @@ derr_t user_pool_sf_pair_set_owner(sf_pair_cb_i *cb, sf_pair_t *sf_pair,
     user_t *user = CONTAINER_OF(h, user_t, h);
     if(!user){
         PROP_GO(&e,
-            user_new(&user, &user_pool->user_mgr, name, user_pool->root),
+            user_new(&user, &user_pool->user_cb, name, pass, user_pool->root),
             unlock);
         IF_PROP(&e, user_add_sf_pair(user, sf_pair) ){
             user_cancel(user);
@@ -62,7 +62,6 @@ derr_t user_pool_sf_pair_set_owner(sf_pair_cb_i *cb, sf_pair_t *sf_pair,
     }
 
     // set dirmgr and owner
-    *dirmgr = &user->dirmgr;
     *owner = user;
 
 unlock:
@@ -94,8 +93,10 @@ void user_pool_sf_pair_release(sf_pair_cb_i *cb, sf_pair_t *sf_pair){
     if(sf_pair->owner){
         // sf_pair is owned by a user_t
         user_t *user = sf_pair->owner;
+        // check the hashmap before removing the sf_pair, which may free user
+        bool in_hashmap = hashmap_del_elem(&user_pool->users, &user->h);
         bool empty = user_remove_sf_pair(user, sf_pair);
-        if(empty){
+        if(empty && in_hashmap){
             /* Remove the user_t inside the mutex.  It has to be closed outside
                the mutex but removing it from the hashmap ensures that it will
                not be used by any other concurrent invocations of this
@@ -112,11 +113,14 @@ void user_pool_sf_pair_release(sf_pair_cb_i *cb, sf_pair_t *sf_pair){
     }
     uv_mutex_unlock(&user_pool->mutex);
 
-    if(user_to_close) user_close(user_to_close, E_OK);
-
     sf_pair_release(sf_pair);
     // ref down for the sf_pair
     ref_dn(&user_pool->refs);
+
+    if(user_to_close){
+        user_close(user_to_close, E_OK);
+        user_release(user_to_close);
+    }
 }
 
 
@@ -155,6 +159,7 @@ static void user_pool_pass_event(struct engine_t *engine, event_t *ev){
             for( ; elem; elem = hashmap_pop_next(&trav)){
                 user_t *user = CONTAINER_OF(elem, user_t, h);
                 user_close(user, E_OK);
+                user_release(user);
             }
 
             // close all unowned sf_pair_t's
@@ -188,9 +193,8 @@ derr_t user_pool_init(
             .dying = user_pool_sf_pair_dying,
             .release = user_pool_sf_pair_release,
         },
-        .user_mgr = {
+        .user_cb = {
             .dying = user_pool_user_dying,
-            .dead = noop_mgr_dead,
         },
         .engine = {
             .pass_event = user_pool_pass_event,

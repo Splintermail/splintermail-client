@@ -11,7 +11,7 @@ struct sf_pair_cb_i {
        .set_owner() will return E_DEAD if .dying() has run, or will hold the
        mutex long enough that .dying() is not sent to the wrong owner. */
     derr_t (*set_owner)(sf_pair_cb_i*, sf_pair_t *sf_pair,
-            const dstr_t *name, dirmgr_t **dirmgr, void **owner);
+            const dstr_t *name, const dstr_t *pass, void **owner);
     void (*dying)(sf_pair_cb_i*, sf_pair_t *sf_pair, derr_t error);
     void (*release)(sf_pair_cb_i*, sf_pair_t *sf_pair);
 };
@@ -30,8 +30,9 @@ struct sf_pair_t {
     // callbacks for the fetcher
     fetcher_cb_i fetcher_cb;
 
-    // last attempted login username
+    // last attempted login credentials
     dstr_t username;
+    dstr_t password;
 
     refs_t refs;
     // TODO: why do I seem to need a separate refcount for child objects?

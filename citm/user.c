@@ -45,16 +45,12 @@ void user_close(user_t *user, derr_t error){
     }
 
     // pass the error to our manager
-    user->mgr->dying(user->mgr, user, error);
+    user->cb->dying(user->cb, user, error);
 }
 
 
 static void user_finalize(refs_t *refs){
     user_t *user = CONTAINER_OF(refs, user_t, refs);
-
-    if(!user->canceled){
-        user->mgr->dead(user->mgr, user);
-    }
 
     dirmgr_free(&user->dirmgr);
     dstr_free(&user->name);
@@ -66,8 +62,9 @@ static void user_finalize(refs_t *refs){
 
 derr_t user_new(
     user_t **out,
-    manager_i *user_mgr,
+    user_cb_i *cb,
     const dstr_t *name,
+    const dstr_t *pass,
     const string_builder_t *root
 ){
     derr_t e = E_OK;
@@ -77,7 +74,7 @@ derr_t user_new(
     user_t *user = malloc(sizeof(*user));
     if(!user) ORIG(&e, E_NOMEM, "nomem");
     *user = (user_t){
-        .mgr = user_mgr,
+        .cb = cb,
         .keyfetcher_mgr = {
             .dying = user_keyfetcher_dying,
             .dead = noop_mgr_dead,
@@ -98,13 +95,14 @@ derr_t user_new(
 
     user->path = sb_append(root, FD(&user->name));
 
-    /* TODO: it's not valid to specify a key up front, because:
-               - you'll eventually need a list of keys
-               - you don't know them up front
-               - some imaildir_t's will need differing keys (like the keybox)
-               - other imaildir_t's need a dynamic list of keys */
-    const keypair_t *keypair = NULL;
-    PROP_GO(&e, dirmgr_init(&user->dirmgr, user->path, keypair), fail_name);
+    /* TODO: kick off a keyfetcher thread which is responsible for:
+               - generating or reusing a key we have on file
+               - fetching remote keys
+               - uploading our key if it is not there
+               - streaming updates of remote keys while this user is active
+
+             For now, we'll just hardcode a global key and call it a day. */
+    PROP_GO(&e, dirmgr_init(&user->dirmgr, user->path, &g_keypair), fail_name);
 
     *out = user;
 
@@ -155,9 +153,15 @@ derr_t user_add_sf_pair(user_t *user, sf_pair_t *sf_pair){
     link_remove(&sf_pair->link);
     link_list_append(&user->sf_pairs, &sf_pair->link);
     user->npairs++;
+    ref_up(&user->refs);
 
 unlock:
     uv_mutex_unlock(&user->mutex);
+
+    // pass the global-keypair-initialized dirmgr into each sf_pair
+    server_set_dirmgr(sf_pair->server, &user->dirmgr);
+    fetcher_set_dirmgr(sf_pair->fetcher, &user->dirmgr);
+
     return e;
 }
 
@@ -171,6 +175,8 @@ bool user_remove_sf_pair(user_t *user, sf_pair_t *sf_pair){
     }
     bool empty = (--user->npairs == 0);
     uv_mutex_unlock(&user->mutex);
+
+    ref_dn(&user->refs);
 
     return empty;
 }

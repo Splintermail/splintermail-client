@@ -2,6 +2,9 @@
 #include "libimap/libimap.h"
 #include "libimaildir/libimaildir.h"
 
+// TODO: proper key management
+extern keypair_t g_keypair;
+
 #include "manager.h"
 #include "imap_session.h"
 #include "uv_util.h"

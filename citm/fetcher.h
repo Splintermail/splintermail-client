@@ -34,7 +34,7 @@ struct fetcher_cb_i {
     derr_t (*login_ready)(fetcher_cb_i*);
 
     // login succeeded (this will give us our dirmgr)
-    derr_t (*login_succeeded)(fetcher_cb_i*, dirmgr_t **);
+    derr_t (*login_succeeded)(fetcher_cb_i*);
     // login failed
     derr_t (*login_failed)(fetcher_cb_i*);
 
@@ -52,6 +52,7 @@ derr_t fetcher_login(
     const ie_dstr_t *user,
     const ie_dstr_t *pass
 );
+void fetcher_set_dirmgr(fetcher_t *fetcher, dirmgr_t *dirmgr);
 // (user or consume passthru)
 derr_t fetcher_passthru_req(fetcher_t *fetcher, passthru_req_t *passthru);
 derr_t fetcher_select(fetcher_t *fetcher, const ie_mailbox_t *m);
@@ -65,7 +66,7 @@ struct fetcher_t {
     engine_t engine;
     bool init_complete;
 
-    // initialized during cb->login_ready()
+    // initialized some time after a successful login
     dirmgr_t *dirmgr;
 
     // fetcher session

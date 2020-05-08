@@ -5,6 +5,7 @@ static void sf_pair_finalize(refs_t *refs){
 
     // free state generated at runtime
     dstr_free(&sf_pair->username);
+    dstr_free(&sf_pair->password);
 
     refs_free(&sf_pair->children);
     refs_free(&sf_pair->refs);
@@ -53,7 +54,6 @@ static void server_cb_dying(server_cb_i *cb, derr_t error){
 // part of server_cb_i
 static void server_cb_release(server_cb_i *cb){
     sf_pair_t *sf_pair = CONTAINER_OF(cb, sf_pair_t, server_cb);
-    printf("sf_pair released by sever\n");
 
     // ref down for the server
     ref_dn(&sf_pair->refs);
@@ -72,6 +72,7 @@ static derr_t server_cb_login(server_cb_i *server_cb, const ie_dstr_t *user,
 
     // save the username in case it succeeds
     PROP_GO(&e, dstr_copy(&user->dstr, &sf_pair->username), unlock);
+    PROP_GO(&e, dstr_copy(&pass->dstr, &sf_pair->password), unlock);
 
     PROP_GO(&e, fetcher_login(sf_pair->fetcher, user, pass), unlock);
 
@@ -126,7 +127,6 @@ static void fetcher_cb_dying(fetcher_cb_i *cb, derr_t error){
 // part of fetcher_cb_i
 static void fetcher_cb_release(fetcher_cb_i *cb){
     sf_pair_t *sf_pair = CONTAINER_OF(cb, sf_pair_t, fetcher_cb);
-    printf("sf_pair released by fetcher\n");
 
     // ref down for the fetcher
     ref_dn(&sf_pair->refs);
@@ -163,27 +163,24 @@ unlock:
 }
 
 // part of the fetcher_cb_i
-static derr_t fetcher_cb_login_succeeded(
-        fetcher_cb_i *fetcher_cb, dirmgr_t **out){
+static derr_t fetcher_cb_login_succeeded(fetcher_cb_i *fetcher_cb){
     derr_t e = E_OK;
 
     sf_pair_t *sf_pair = CONTAINER_OF(fetcher_cb, sf_pair_t, fetcher_cb);
     uv_mutex_lock(&sf_pair->mutex);
 
     // request an owner
-    dirmgr_t *dirmgr;
     PROP_GO(&e,
         sf_pair->cb->set_owner(
             sf_pair->cb,
             sf_pair,
             &sf_pair->username,
-            &dirmgr,
+            &sf_pair->password,
             &sf_pair->owner),
         unlock);
 
-    // share the exciting news with the fetcher and the server
-    *out = dirmgr;
-    PROP_GO(&e, server_login_succeeded(sf_pair->server, dirmgr), unlock);
+    // share the exciting news with the server_t
+    PROP(&e, server_login_succeeded(sf_pair->server) );
 
 unlock:
     uv_mutex_unlock(&sf_pair->mutex);

@@ -196,8 +196,7 @@ derr_t server_allow_greeting(server_t *server){
 }
 
 // the server-provided interface to the sf_pair
-derr_t server_login_succeeded(server_t *server, dirmgr_t *dirmgr){
-    server->dirmgr = dirmgr;
+derr_t server_login_succeeded(server_t *server){
     server->login_state = LOGIN_SUCCEEDED;
     actor_advance(&server->actor);
     return E_OK;
@@ -209,6 +208,13 @@ derr_t server_login_failed(server_t *server){
     actor_advance(&server->actor);
     return E_OK;
 }
+
+// the server-provided interface to the sf_pair
+void server_set_dirmgr(server_t *server, dirmgr_t *dirmgr){
+    server->dirmgr = dirmgr;
+    actor_advance(&server->actor);
+}
+
 
 // the server-provided interface to the sf_pair
 derr_t server_passthru_resp(server_t *server, passthru_resp_t *passthru){

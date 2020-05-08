@@ -378,11 +378,11 @@ hash_elem_t *hashmap_delu(hashmap_t *h, unsigned int key){
 }
 
 // delete an element directly, if elem is in h
-void hashmap_del_elem(hashmap_t *h, hash_elem_t *elem){
+bool hashmap_del_elem(hashmap_t *h, hash_elem_t *elem){
     // get bucket index
     size_t idx = elem->hash & h->mask;
     // make sure bucket index is in range
-    if(idx >= h->num_buckets) return;
+    if(idx >= h->num_buckets) return false;
     // walk the list looking for elem
     hash_elem_t **fixme = &h->buckets[idx];
     hash_elem_t *ptr = h->buckets[idx];
@@ -392,11 +392,29 @@ void hashmap_del_elem(hashmap_t *h, hash_elem_t *elem){
             *fixme = ptr->next;
             // decrement element count
             h->num_elems--;
-            break;
+            return true;
         }
         fixme = &ptr->next;
         ptr = ptr->next;
     }
+    return false;
+}
+
+// check if an element is in the map
+bool hashmap_has_elem(const hashmap_t *h, const hash_elem_t *elem){
+    // get bucket index
+    size_t idx = elem->hash & h->mask;
+    // make sure bucket index is in range
+    if(idx >= h->num_buckets) return false;
+    // walk the list looking for elem
+    hash_elem_t *ptr = h->buckets[idx];
+    while(ptr){
+        if(ptr == elem){
+            return true;
+        }
+        ptr = ptr->next;
+    }
+    return false;
 }
 
 hash_elem_t *hashmap_iter(hashmap_trav_t *trav, hashmap_t *h){

@@ -1,4 +1,14 @@
-typedef struct {
+struct user_t;
+typedef struct user_t user_t;
+struct user_cb_i;
+typedef struct user_cb_i user_cb_i;
+
+struct user_cb_i {
+    void (*dying)(user_cb_i*, user_t *caller, derr_t error);
+};
+
+struct user_t {
+    user_cb_i *cb;
     // the login username
     dstr_t name;
     hash_elem_t h;  // user_pool_t->users
@@ -11,9 +21,6 @@ typedef struct {
     manager_i keyfetcher_mgr;
     fetcher_t *keyfetcher;
 
-    // our manager
-    manager_i *mgr;
-
     refs_t refs;
 
     uv_mutex_t mutex;
@@ -21,7 +28,7 @@ typedef struct {
     size_t npairs;
     bool closed;
     bool canceled;
-} user_t;
+};
 DEF_CONTAINER_OF(user_t, keyfetcher_mgr, manager_i);
 DEF_CONTAINER_OF(user_t, h, hash_elem_t);
 DEF_CONTAINER_OF(user_t, refs, refs_t);
@@ -31,8 +38,9 @@ DEF_CONTAINER_OF(user_t, refs, refs_t);
 // user->path will become root/name
 derr_t user_new(
     user_t **user,
-    manager_i *user_mgr,
+    user_cb_i *cb,
     const dstr_t *name,
+    const dstr_t *pass,
     const string_builder_t *root
 );
 

@@ -13,6 +13,9 @@ static imape_t imape;
 // user_pool has to be zeroized for proper cleanup if build_pipeline fails
 static user_pool_t user_pool = {0};
 
+// the global keypair
+keypair_t g_keypair;
+
 typedef struct {
     user_pool_t *user_pool;
     const char *remote_host;
@@ -100,6 +103,7 @@ static void free_pipeline(imap_pipeline_t *pipeline){
 
 static derr_t citm(const char *local_host, const char *local_svc,
         const char *key, const char *cert, const char *dh,
+        const char *keyfile,
         const char *remote_host, const char *remote_svc){
     derr_t e = E_OK;
 
@@ -113,8 +117,11 @@ static derr_t citm(const char *local_host, const char *local_svc,
     ssl_context_t ctx_cli;
     PROP_GO(&e, ssl_context_new_client(&ctx_cli), cu_ctx_srv);
 
+    // init global keypair
+    PROP_GO(&e, keypair_load(&g_keypair, keyfile), cu_ctx_cli);
+
     imap_pipeline_t pipeline;
-    PROP_GO(&e, build_pipeline(&pipeline, &user_pool.engine), cu_ctx_cli);
+    PROP_GO(&e, build_pipeline(&pipeline, &user_pool.engine), cu_keypair);
 
     /* After building the pipeline, we must run the pipeline if we want to
        cleanup nicely.  That means that we can't follow the normal cleanup
@@ -156,6 +163,8 @@ fail:
 cu:
     user_pool_free(&user_pool);
     free_pipeline(&pipeline);
+cu_keypair:
+    keypair_free(&g_keypair);
 cu_ctx_cli:
     ssl_context_free(&ctx_cli);
 cu_ctx_srv:
@@ -195,25 +204,26 @@ int main(int argc, char **argv){
         KEY,
         CERT,
         DH,
+        "../c/test/files/key_tool/key_m.pem",
         "127.0.0.1",
         "993",
     };
 
-    if(argc != 8){
-        fprintf(stderr, "usage: citm LOCAL_HOST LOCAL_PORT KEY CERT DH REMOTE_HOST REMOTE_PORT\n");
+    if(argc != 9){
+        fprintf(stderr, "usage: citm LOCAL_HOST LOCAL_PORT KEY CERT DH KEYFILE REMOTE_HOST REMOTE_PORT\n");
         if(argc != 1){
             exit(1);
         }
         argc = sizeof(default_args)/sizeof(*default_args);
         argv = default_args;
-        fprintf(stderr, "using args: %s %s %s %s %s %s\n",
-                argv[2], argv[3], argv[4], argv[5], argv[6], argv[7]);
+        fprintf(stderr, "using args: %s %s %s %s %s %s %s\n",
+                argv[2], argv[3], argv[4], argv[5], argv[6], argv[7], argv[8]);
     }
 
     // add logger
     logger_add_fileptr(LOG_LVL_INFO, stdout);
 
-    derr_t e = citm(argv[1], argv[2], argv[3], argv[4], argv[5], argv[6], argv[7]);
+    derr_t e = citm(argv[1], argv[2], argv[3], argv[4], argv[5], argv[6], argv[7], argv[8]);
     CATCH(e, E_ANY){
         DUMP(e);
         DROP_VAR(&e);

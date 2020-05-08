@@ -45,8 +45,10 @@ struct server_cb_i {
 // the server-provided interface to the sf_pair
 derr_t server_allow_greeting(server_t *server);
 
-derr_t server_login_succeeded(server_t *server, dirmgr_t *dirmgr);
+derr_t server_login_succeeded(server_t *server);
 derr_t server_login_failed(server_t *server);
+
+void server_set_dirmgr(server_t *server, dirmgr_t *dirmgr);
 
 // use or consume passthru
 derr_t server_passthru_resp(server_t *server, passthru_resp_t *passthru);
@@ -61,7 +63,7 @@ struct server_t {
     engine_t engine;
     bool init_complete;
 
-    // initialized during a successful login
+    // initialized some time after a successful login
     dirmgr_t *dirmgr;
 
     // server session

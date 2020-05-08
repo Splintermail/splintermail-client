@@ -446,7 +446,7 @@ static derr_t login_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
         return e;
     }
 
-    PROP(&e, fetcher->cb->login_succeeded(fetcher->cb, &fetcher->dirmgr) );
+    PROP(&e, fetcher->cb->login_succeeded(fetcher->cb) );
 
     if(fetcher->imap_state != FETCHER_PREAUTH){
         ORIG(&e, E_INTERNAL, "arrived at login_done out of PREAUTH state");
@@ -638,6 +638,8 @@ bool fetcher_select_more_work(fetcher_t *fetcher){
     if(!fetcher->select_mailbox) return false;
     // don't consider a SELECT command until we've called ENABLE
     if(!fetcher->enable_set) return false;
+    // don't consider a SELECT command without a dirmgr
+    if(!fetcher->dirmgr) return false;
 
     // do we need to unselect something?
     if(fetcher->imap_state == FETCHER_SELECTED
@@ -738,10 +740,9 @@ static derr_t fetcher_passthru_do_work(fetcher_t *fetcher){
     }
 
     switch(fetcher->passthru->type){
-        case PASSTHRU_LIST: PROP(&e, passthru_list(fetcher) ); break;
+        case PASSTHRU_LIST: PROP(&e, passthru_list(fetcher) ); return e;
     }
-
-    return e;
+    ORIG(&e, E_INTERNAL, "unrecognized passthru");
 }
 
 static derr_t fetcher_select_do_work(fetcher_t *fetcher){
@@ -831,15 +832,6 @@ derr_t fetcher_do_work(actor_t *actor){
     if(!fetcher->ts.closed && fetcher_select_more_work(fetcher)){
         PROP(&e, fetcher_select_do_work(fetcher) );
     }
-
-    // // check if we need to transition to the next folder
-    // if(fetcher->listed
-    //         // have we seen the response to CLOSE?
-    //         && fetcher->imap_state == FETCHER_AUTHENTICATED
-    //         // has the maildir_up released us?
-    //         && !fetcher->maildir_has_ref){
-    //     PROP(&e, sync_next_mailbox(fetcher) );
-    // }
 
     return e;
 };

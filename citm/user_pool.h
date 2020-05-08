@@ -7,7 +7,7 @@ typedef struct {
     sf_pair_cb_i sf_pair_cb;
 
     // provide a separate manager_i for each user_t
-    manager_i user_mgr;
+    user_cb_i user_cb;
 
     hashmap_t users;  // user_t->h
     link_t unowned;  // sf_pair_t->link
@@ -22,7 +22,7 @@ typedef struct {
     bool quitting;
 } user_pool_t;
 DEF_CONTAINER_OF(user_pool_t, sf_pair_cb, sf_pair_cb_i);
-DEF_CONTAINER_OF(user_pool_t, user_mgr, manager_i);
+DEF_CONTAINER_OF(user_pool_t, user_cb, user_cb_i);
 DEF_CONTAINER_OF(user_pool_t, engine, engine_t);
 DEF_CONTAINER_OF(user_pool_t, refs, refs_t);
 
