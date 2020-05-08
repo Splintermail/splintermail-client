@@ -36,6 +36,7 @@ static void fetcher_free(fetcher_t **old){
     ie_login_cmd_free(fetcher->login_cmd);
     passthru_req_free(fetcher->passthru);
     list_resp_free(fetcher->list_resp);
+    lsub_resp_free(fetcher->lsub_resp);
     ie_mailbox_free(fetcher->select_mailbox);
     // free any imap cmds or resps laying around
     link_t *link;

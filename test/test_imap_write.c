@@ -127,6 +127,7 @@ cu:
 static derr_t test_imap_writer(void){
     derr_t e = E_OK;
     imap_cmd_arg_t no_arg = {0};
+    // basic commands
     {
         test_case_t cases[] = {
             {
@@ -219,6 +220,57 @@ static derr_t test_imap_writer(void){
                 ),
                 .out=(size_chunk_out_t[]){
                     {64, "tag SELECT box\r\n"},
+                    {0}
+                },
+            },
+            {
+                .cmd=imap_cmd_new(&e, IE_DSTR("tag"), IMAP_CMD_LIST,
+                    (imap_cmd_arg_t){
+                        .list=ie_list_cmd_new(&e,
+                            ie_mailbox_new_noninbox(&e, IE_DSTR("box")),
+                            IE_DSTR("*")
+                        ),
+                    }
+                ),
+                .out=(size_chunk_out_t[]){
+                    {64, "tag LIST box \"*\"\r\n"},
+                    {0}
+                },
+            },
+        };
+        CHECK(&e);
+        PROP(&e, do_writer_test_multi(cases, sizeof(cases)/sizeof(*cases)) );
+    }
+    // basic responses
+    {
+        test_case_t cases[] = {
+            {
+                .resp=imap_resp_new(&e, IMAP_RESP_LIST,
+                    (imap_resp_arg_t){
+                        .list=ie_list_resp_new(&e,
+                                NULL,
+                                '/',
+                                ie_mailbox_new_noninbox(&e, IE_DSTR("box"))
+                        ),
+                    }
+                ),
+                .out=(size_chunk_out_t[]){
+                    {64, "* LIST () \"/\" box\r\n"},
+                    {0}
+                },
+            },
+            {
+                .resp=imap_resp_new(&e, IMAP_RESP_LSUB,
+                    (imap_resp_arg_t){
+                        .lsub=ie_list_resp_new(&e,
+                                NULL,
+                                '/',
+                                ie_mailbox_new_noninbox(&e, IE_DSTR("box"))
+                        ),
+                    }
+                ),
+                .out=(size_chunk_out_t[]){
+                    {64, "* LSUB () \"/\" box\r\n"},
                     {0}
                 },
             },

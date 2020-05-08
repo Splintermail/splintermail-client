@@ -103,6 +103,7 @@ struct fetcher_t {
     passthru_req_t *passthru;
     bool passthru_sent;
     list_resp_t *list_resp;
+    lsub_resp_t *lsub_resp;
     //
     ie_mailbox_t *select_mailbox;
 

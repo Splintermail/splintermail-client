@@ -1680,7 +1680,6 @@ derr_t imap_resp_print(const imap_resp_t *resp, dstr_t *out,
 imap_cmd_t *imap_cmd_assert_writable(derr_t *e, imap_cmd_t *cmd,
         const extensions_t *exts){
     if(is_error(*e)) goto fail;
-
     size_t want, skip = 0;
     dstr_t empty = {0};
     PROP_GO(e, do_imap_cmd_write(cmd, &empty, &skip, &want, exts, false),

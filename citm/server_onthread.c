@@ -471,6 +471,52 @@ static derr_t list_cmd(server_t *server, const ie_dstr_t *tag,
     return e;
 }
 
+// lsub_done is a passthru_pause_t->after()
+static derr_t lsub_done(server_t *server, passthru_resp_t *passthru){
+    derr_t e = E_OK;
+
+    lsub_resp_t *lsub_resp = CONTAINER_OF(passthru, lsub_resp_t, passthru);
+
+    // send the LSUB responses in sorted order
+    jsw_atrav_t trav;
+    jsw_anode_t *node = jsw_atfirst(&trav, &lsub_resp->tree);
+    while(node){
+        // get the response from this node
+        ie_list_resp_t *lsub_resp = CONTAINER_OF(node, ie_list_resp_t, node);
+
+        // pop this node now, since send_resp will free this response on errors
+        node = jsw_pop_atnext(&trav);
+
+        imap_resp_arg_t arg = {.lsub = lsub_resp};
+        imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_LSUB, arg);
+        send_resp(&e, server, resp);
+    }
+    CHECK_GO(&e, cu);
+
+    dstr_t msg = DSTR_LIT("now you have all the important things");
+    PROP_GO(&e, send_ok(server, passthru->tag, &msg), cu);
+
+cu:
+    passthru_resp_free(passthru);
+    return e;
+}
+
+static derr_t lsub_cmd(server_t *server, const ie_dstr_t *tag,
+        const ie_list_cmd_t *lsub_cmd){
+    derr_t e = E_OK;
+
+    // LSUB is a passthru command
+    lsub_req_t *lsub_req = lsub_req_new(&e, tag, lsub_cmd);
+    CHECK(&e);
+
+    PROP(&e, server->cb->passthru_req(server->cb, &lsub_req->passthru) );
+
+    // wait for a response
+    PROP(&e, start_passthru_pause(server, lsub_done) );
+
+    return e;
+}
+
 // we either need to consume *select_cmd or free it
 static derr_t do_select(server_t *server, imap_cmd_t *select_cmd){
     derr_t e = E_OK;
@@ -597,6 +643,14 @@ static derr_t handle_one_command(server_t *server, imap_cmd_t *cmd){
             }
             break;
 
+        case IMAP_CMD_LSUB:
+            PROP_GO(&e, assert_state(server, AUTHENTICATED, tag, &state_ok),
+                    cu_cmd);
+            if(state_ok){
+                PROP(&e, lsub_cmd(server, tag, arg->list) );
+            }
+            break;
+
         case IMAP_CMD_SELECT:
             if(server->imap_state != AUTHENTICATED
                     && server->imap_state != SELECTED){
@@ -647,7 +701,6 @@ static derr_t handle_one_command(server_t *server, imap_cmd_t *cmd){
         case IMAP_CMD_RENAME:
         case IMAP_CMD_SUB:
         case IMAP_CMD_UNSUB:
-        case IMAP_CMD_LSUB:
         case IMAP_CMD_ENABLE:
             ORIG_GO(&e, E_INTERNAL, "Unhandled command", cu_cmd);
     }

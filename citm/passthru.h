@@ -3,6 +3,7 @@
 
 typedef enum {
     PASSTHRU_LIST,
+    PASSTHRU_LSUB,
 } passthru_type_e;
 
 typedef struct {
@@ -41,3 +42,26 @@ list_resp_t *list_resp_new(derr_t *e, const ie_dstr_t *tag);
 list_resp_t *list_resp_add(derr_t *e, list_resp_t *list_resp,
         const ie_list_resp_t *list);
 void list_resp_free(list_resp_t *list_resp);
+
+//
+
+typedef struct {
+    passthru_req_t passthru;
+    ie_list_cmd_t *lsub;
+} lsub_req_t;
+DEF_CONTAINER_OF(lsub_req_t, passthru, passthru_req_t);
+
+lsub_req_t *lsub_req_new(derr_t *e, const ie_dstr_t *tag,
+        const ie_list_cmd_t *lsub);
+void lsub_req_free(lsub_req_t *lsub_req);
+
+typedef struct {
+    passthru_resp_t passthru;
+    jsw_atree_t tree;  // ie_list_resp_t->node
+} lsub_resp_t;
+DEF_CONTAINER_OF(lsub_resp_t, passthru, passthru_resp_t);
+
+lsub_resp_t *lsub_resp_new(derr_t *e, const ie_dstr_t *tag);
+lsub_resp_t *lsub_resp_add(derr_t *e, lsub_resp_t *lsub_resp,
+        const ie_list_resp_t *lsub);
+void lsub_resp_free(lsub_resp_t *lsub_resp);

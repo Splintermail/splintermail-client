@@ -243,6 +243,92 @@ static derr_t passthru_list(fetcher_t *fetcher){
     return e;
 }
 
+// lsub_done is an imap_cmd_cb_call_f
+static derr_t lsub_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
+    derr_t e = E_OK;
+
+    fetcher_cb_t *fcb = CONTAINER_OF(cb, fetcher_cb_t, cb);
+    fetcher_t *fetcher = fcb->fetcher;
+
+    if(st_resp->status != IE_ST_OK){
+        ORIG(&e, E_PARAM, "lsub failed\n");
+    }
+
+    // let go of the passthru_req
+    passthru_req_free(fetcher->passthru);
+    fetcher->passthru = NULL;
+    fetcher->passthru_sent = false;
+
+    // send out the accumulated response
+    lsub_resp_t *lsub_resp = fetcher->lsub_resp;
+    fetcher->lsub_resp = NULL;
+
+    PROP(&e, fetcher->cb->passthru_resp(fetcher->cb, &lsub_resp->passthru) );
+
+    return e;
+}
+
+static derr_t lsub_resp(fetcher_t *fetcher, const ie_list_resp_t *lsub){
+    derr_t e = E_OK;
+
+    if(!fetcher->passthru || fetcher->passthru->type != PASSTHRU_LSUB){
+        ORIG(&e, E_INTERNAL, "got lsub response without PASSTHRU_LSUB");
+    }
+
+    // verify that the separator is actually "/"
+    if(lsub->sep != '/'){
+        TRACE(&e, "Got folder separator of %x but only / is supported\n",
+                FC(lsub->sep));
+        ORIG(&e, E_RESPONSE, "invalid folder separator");
+    }
+
+    lsub_req_t *lsub_req =
+        CONTAINER_OF(fetcher->passthru, lsub_req_t, passthru);
+
+    // store a copy of the lsub response
+    ie_list_resp_t *copy = ie_list_resp_copy(&e, lsub);
+    CHECK(&e);
+
+    jsw_ainsert(&fetcher->lsub_resp->tree, &copy->node);
+
+    return e;
+}
+
+static derr_t passthru_lsub(fetcher_t *fetcher){
+    derr_t e = E_OK;
+
+    if(fetcher->imap_state != FETCHER_AUTHENTICATED){
+        ORIG(&e, E_INTERNAL,
+                "arrived at passthru_lsub out of AUTHENTICATED state");
+    }
+
+    // prepare for the response
+    fetcher->lsub_resp = lsub_resp_new(&e, fetcher->passthru->tag);
+    fetcher->passthru_sent = true;
+    CHECK(&e);
+
+    lsub_req_t *lsub_req =
+        CONTAINER_OF(fetcher->passthru, lsub_req_t, passthru);
+
+    // steal the ie_list_cmd_t*
+    ie_list_cmd_t *lsub_cmd = lsub_req->lsub;
+    lsub_req->lsub = NULL;
+
+    imap_cmd_arg_t arg = { .lsub=lsub_cmd };
+
+    size_t tag = ++fetcher->tag;
+    ie_dstr_t *tag_str = write_tag(&e, tag);
+    imap_cmd_t *cmd = imap_cmd_new(&e, tag_str, IMAP_CMD_LSUB, arg);
+
+    // build the callback
+    fetcher_cb_t *fcb = fetcher_cb_new(&e, fetcher, tag, lsub_done, cmd);
+
+    // store the callback and send the command
+    send_cmd(&e, fetcher, cmd, &fcb->cb);
+
+    return e;
+}
+
 // enable_done is an imap_cmd_cb_call_f
 static derr_t enable_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
     derr_t e = E_OK;
@@ -683,11 +769,13 @@ static derr_t handle_one_response(fetcher_t *fetcher, imap_resp_t *resp){
         case IMAP_RESP_LIST:
             PROP_GO(&e, list_resp(fetcher, arg->list), cu_resp);
             break;
+        case IMAP_RESP_LSUB:
+            PROP_GO(&e, lsub_resp(fetcher, arg->lsub), cu_resp);
+            break;
         case IMAP_RESP_ENABLED:
             PROP_GO(&e, enabled_resp(fetcher, arg->enabled), cu_resp);
             break;
 
-        case IMAP_RESP_LSUB:
         case IMAP_RESP_STATUS:
         case IMAP_RESP_FLAGS:
         case IMAP_RESP_SEARCH:
@@ -741,6 +829,7 @@ static derr_t fetcher_passthru_do_work(fetcher_t *fetcher){
 
     switch(fetcher->passthru->type){
         case PASSTHRU_LIST: PROP(&e, passthru_list(fetcher) ); return e;
+        case PASSTHRU_LSUB: PROP(&e, passthru_lsub(fetcher) ); return e;
     }
     ORIG(&e, E_INTERNAL, "unrecognized passthru");
 }
