@@ -5,12 +5,20 @@ typedef enum {
     PASSTHRU_LIST,
     PASSTHRU_LSUB,
     PASSTHRU_STATUS,
+    PASSTHRU_CREATE,
+    PASSTHRU_DELETE,
+    PASSTHRU_SUB,
+    PASSTHRU_UNSUB,
 } passthru_type_e;
 
 typedef union {
     ie_list_cmd_t *list;
     ie_list_cmd_t *lsub;
     ie_status_cmd_t *status;
+    ie_mailbox_t *create;
+    ie_mailbox_t *delete;
+    ie_mailbox_t *sub;
+    ie_mailbox_t *unsub;
 } passthru_req_arg_u;
 
 typedef struct {
@@ -31,6 +39,10 @@ typedef union {
     passthru_list_resp_t *list;
     passthru_lsub_resp_t *lsub;
     ie_status_resp_t *status;
+    // nothing for create
+    // nothing for delete
+    // nothing for sub
+    // nothing for unsub
 } passthru_resp_arg_u;
 
 typedef struct {

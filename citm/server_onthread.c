@@ -425,8 +425,46 @@ static derr_t check_login(server_t *server, const ie_dstr_t *tag,
     return e;
 }
 
-// send_list is a passthru_pause_t->after()
-static derr_t send_list(server_t *server, passthru_resp_t *passthru_resp){
+
+/* send_passthru_st_resp is the builder-api version of passthru_done that is
+   easy to include in other server->after_passthru_pause() functions */
+static void send_passthru_st_resp(derr_t *e, server_t *server,
+        passthru_resp_t *passthru_resp){
+    if(is_error(*e)) goto cu;
+
+    // send the tagged status-type response with the correct tag
+    ie_st_resp_t *st_resp = ie_st_resp_new(e,
+        steal_dstr(&passthru_resp->tag),
+        passthru_resp->st_resp->status,
+        ie_st_code_copy(e, passthru_resp->st_resp->code),
+        steal_dstr(&passthru_resp->st_resp->text)
+    );
+
+    imap_resp_arg_t arg = { .status_type = st_resp };
+    imap_resp_t *resp = imap_resp_new(e, IMAP_RESP_STATUS_TYPE, arg);
+
+    send_resp(e, server, resp);
+
+    CHECK_GO(e, cu);
+
+cu:
+    passthru_resp_free(passthru_resp);
+}
+
+
+/* passthru_done is a generic server->after_passthru_pause() for things with no
+   additional arguments */
+static derr_t passthru_done(server_t *server, passthru_resp_t *passthru_resp){
+    derr_t e = E_OK;
+
+    send_passthru_st_resp(&e, server, passthru_resp);
+    CHECK(&e);
+
+    return e;
+}
+
+// list_done is a server->after_passthru_pause()
+static derr_t list_done(server_t *server, passthru_resp_t *passthru_resp){
     derr_t e = E_OK;
 
     // send the LIST responses in sorted order
@@ -443,37 +481,15 @@ static derr_t send_list(server_t *server, passthru_resp_t *passthru_resp){
         imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_LIST, arg);
         send_resp(&e, server, resp);
     }
-    CHECK_GO(&e, cu);
 
-    dstr_t msg = DSTR_LIT("now you have all the things");
-    PROP_GO(&e, send_ok(server, passthru_resp->tag, &msg), cu);
-
-cu:
-    passthru_resp_free(passthru_resp);
-    return e;
-}
-
-static derr_t list_cmd(server_t *server, const ie_dstr_t *tag,
-        const ie_list_cmd_t *list_cmd){
-    derr_t e = E_OK;
-
-    // LIST is a passthru command
-    ie_dstr_t *tag_copy = ie_dstr_copy(&e, tag);
-    passthru_req_arg_u arg = { .list = ie_list_cmd_copy(&e, list_cmd) };
-    passthru_req_t *passthru_req;
-    passthru_req = passthru_req_new(&e, tag_copy, PASSTHRU_LIST, arg);
+    send_passthru_st_resp(&e, server, passthru_resp);
     CHECK(&e);
 
-    PROP(&e, server->cb->passthru_req(server->cb, passthru_req) );
-
-    // wait for a response
-    PROP(&e, start_passthru_pause(server, send_list) );
-
     return e;
 }
 
-// send_lsub is a passthru_pause_t->after()
-static derr_t send_lsub(server_t *server, passthru_resp_t *passthru_resp){
+// lsub_done is a server->after_passthru_pause()
+static derr_t lsub_done(server_t *server, passthru_resp_t *passthru_resp){
     derr_t e = E_OK;
 
     // send the LSUB responses in sorted order
@@ -490,37 +506,15 @@ static derr_t send_lsub(server_t *server, passthru_resp_t *passthru_resp){
         imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_LSUB, arg);
         send_resp(&e, server, resp);
     }
-    CHECK_GO(&e, cu);
 
-    dstr_t msg = DSTR_LIT("now you have all the important things");
-    PROP_GO(&e, send_ok(server, passthru_resp->tag, &msg), cu);
-
-cu:
-    passthru_resp_free(passthru_resp);
-    return e;
-}
-
-static derr_t lsub_cmd(server_t *server, const ie_dstr_t *tag,
-        const ie_list_cmd_t *lsub_cmd){
-    derr_t e = E_OK;
-
-    // LSUB is a passthru command
-    ie_dstr_t *tag_copy = ie_dstr_copy(&e, tag);
-    passthru_req_arg_u arg = { .lsub = ie_list_cmd_copy(&e, lsub_cmd) };
-    passthru_req_t *passthru_req;
-    passthru_req = passthru_req_new(&e, tag_copy, PASSTHRU_LSUB, arg);
+    send_passthru_st_resp(&e, server, passthru_resp);
     CHECK(&e);
 
-    PROP(&e, server->cb->passthru_req(server->cb, passthru_req) );
-
-    // wait for a response
-    PROP(&e, start_passthru_pause(server, send_lsub) );
-
     return e;
 }
 
-// send_status is a passthru_pause_t->after()
-static derr_t send_status(server_t *server, passthru_resp_t *passthru_resp){
+// status_done is a server->after_passthru_pause()
+static derr_t status_done(server_t *server, passthru_resp_t *passthru_resp){
     derr_t e = E_OK;
 
     // send the STATUS response (there may not be one if the commmand failed)
@@ -534,41 +528,75 @@ static derr_t send_status(server_t *server, passthru_resp_t *passthru_resp){
         send_resp(&e, server, resp);
     }
 
-    // send the tagged status-type response with the correct tag
-    ie_st_resp_t *st_resp = ie_st_resp_new(&e,
-        steal_dstr(&passthru_resp->tag),
-        passthru_resp->st_resp->status,
-        ie_st_code_copy(&e, passthru_resp->st_resp->code),
-        steal_dstr(&passthru_resp->st_resp->text)
-    );
+    send_passthru_st_resp(&e, server, passthru_resp);
+    CHECK(&e);
 
-    imap_resp_arg_t arg = { .status_type = st_resp };
-    imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_STATUS_TYPE, arg);
-
-    send_resp(&e, server, resp);
-
-    CHECK_GO(&e, cu);
-
-cu:
-    passthru_resp_free(passthru_resp);
     return e;
 }
 
-static derr_t status_cmd(server_t *server, const ie_dstr_t *tag,
-        const ie_status_cmd_t *status_cmd){
+static derr_t passthru_cmd(server_t *server, const ie_dstr_t *tag,
+        const imap_cmd_t *cmd){
     derr_t e = E_OK;
 
-    // STATUS is a passthru command
     ie_dstr_t *tag_copy = ie_dstr_copy(&e, tag);
-    passthru_req_arg_u arg = { .status = ie_status_cmd_copy(&e, status_cmd) };
+    passthru_type_e type;
+    passthru_req_arg_u arg = {0};
+    derr_t (*after_passthru_pause)(server_t*, passthru_resp_t*);
+    switch(cmd->type){
+        case IMAP_CMD_LIST:
+            type = PASSTHRU_LIST;
+            arg.list = ie_list_cmd_copy(&e, cmd->arg.list);
+            after_passthru_pause = list_done;
+            break;
+
+        case IMAP_CMD_LSUB:
+            type = PASSTHRU_LSUB;
+            arg.lsub = ie_list_cmd_copy(&e, cmd->arg.lsub);
+            after_passthru_pause = lsub_done;
+            break;
+
+        case IMAP_CMD_STATUS:
+            type = PASSTHRU_STATUS;
+            arg.status = ie_status_cmd_copy(&e, cmd->arg.status);
+            after_passthru_pause = status_done;
+            break;
+
+        case IMAP_CMD_CREATE:
+            type = PASSTHRU_CREATE;
+            arg.create = ie_mailbox_copy(&e, cmd->arg.create);
+            after_passthru_pause = passthru_done;
+            break;
+
+        case IMAP_CMD_DELETE:
+            type = PASSTHRU_DELETE;
+            arg.create = ie_mailbox_copy(&e, cmd->arg.delete);
+            after_passthru_pause = passthru_done;
+            break;
+
+        case IMAP_CMD_SUB:
+            type = PASSTHRU_SUB;
+            arg.create = ie_mailbox_copy(&e, cmd->arg.sub);
+            after_passthru_pause = passthru_done;
+            break;
+
+        case IMAP_CMD_UNSUB:
+            type = PASSTHRU_UNSUB;
+            arg.create = ie_mailbox_copy(&e, cmd->arg.unsub);
+            after_passthru_pause = passthru_done;
+            break;
+
+        default:
+            ORIG(&e, E_INTERNAL, "illegal command type in passthru_cmd");
+    }
     passthru_req_t *passthru_req;
-    passthru_req = passthru_req_new(&e, tag_copy, PASSTHRU_STATUS, arg);
+    passthru_req = passthru_req_new(&e, tag_copy, type, arg);
     CHECK(&e);
 
     PROP(&e, server->cb->passthru_req(server->cb, passthru_req) );
 
     // wait for a response
-    PROP(&e, start_passthru_pause(server, send_status) );
+    PROP(&e, start_passthru_pause(server, after_passthru_pause) );
+
 
     return e;
 }
@@ -691,29 +719,20 @@ static derr_t handle_one_command(server_t *server, imap_cmd_t *cmd){
             }
             break;
 
+        // passthru commands
         case IMAP_CMD_LIST:
-            PROP_GO(&e, assert_state(server, AUTHENTICATED, tag, &state_ok),
-                    cu_cmd);
-            if(state_ok){
-                PROP(&e, list_cmd(server, tag, arg->list) );
-            }
-            break;
-
         case IMAP_CMD_LSUB:
-            PROP_GO(&e, assert_state(server, AUTHENTICATED, tag, &state_ok),
-                    cu_cmd);
-            if(state_ok){
-                PROP(&e, lsub_cmd(server, tag, arg->lsub) );
-            }
-            break;
-
         case IMAP_CMD_STATUS:
+        case IMAP_CMD_CREATE:
+        case IMAP_CMD_DELETE:
+        case IMAP_CMD_SUB:
+        case IMAP_CMD_UNSUB:
             if(server->imap_state != AUTHENTICATED
                     && server->imap_state != SELECTED){
                 PROP_GO(&e, send_invalid_state_resp(server, tag), cu_cmd);
                 break;
             }
-            PROP(&e, status_cmd(server, tag, arg->status) );
+            PROP(&e, passthru_cmd(server, tag, cmd) );
             break;
 
         case IMAP_CMD_SELECT:
@@ -759,12 +778,7 @@ static derr_t handle_one_command(server_t *server, imap_cmd_t *cmd){
         case IMAP_CMD_FETCH:
         case IMAP_CMD_STORE:
         case IMAP_CMD_COPY:
-        // there's no intention of supporting these in sm_serve
-        case IMAP_CMD_CREATE:
-        case IMAP_CMD_DELETE:
         case IMAP_CMD_RENAME:
-        case IMAP_CMD_SUB:
-        case IMAP_CMD_UNSUB:
         case IMAP_CMD_ENABLE:
             ORIG_GO(&e, E_INTERNAL, "Unhandled command", cu_cmd);
     }
