@@ -34,9 +34,8 @@ static void fetcher_free(fetcher_t **old){
 
     // free any unfinished pause state
     ie_login_cmd_free(fetcher->login_cmd);
-    passthru_req_free(fetcher->passthru);
-    list_resp_free(fetcher->list_resp);
-    lsub_resp_free(fetcher->lsub_resp);
+    passthru_req_free(fetcher->passthru_req);
+    passthru_resp_arg_free(fetcher->pt_arg_type, fetcher->pt_arg);
     ie_mailbox_free(fetcher->select_mailbox);
     // free any imap cmds or resps laying around
     link_t *link;
@@ -373,8 +372,8 @@ void fetcher_set_dirmgr(fetcher_t *fetcher, dirmgr_t *dirmgr){
 }
 
 // part of fetcher-provided interface to the sf_pair (user or consume passthru)
-derr_t fetcher_passthru_req(fetcher_t *fetcher, passthru_req_t *passthru){
-    fetcher->passthru = passthru;
+derr_t fetcher_passthru_req(fetcher_t *fetcher, passthru_req_t *passthru_req){
+    fetcher->passthru_req = passthru_req;
     fetcher->passthru_sent = false;
 
     actor_advance(&fetcher->actor);

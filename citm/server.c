@@ -49,7 +49,7 @@ static void server_free(server_t **old){
 
     // pause-related state
     ie_dstr_free(server->await_tag);
-    passthru_resp_free(server->passthru);
+    passthru_resp_free(server->passthru_resp);
     imap_cmd_free(server->pause_cmd);
     ie_dstr_free(server->pause_tag);
     ie_st_resp_free(server->select_st_resp);
@@ -217,8 +217,8 @@ void server_set_dirmgr(server_t *server, dirmgr_t *dirmgr){
 
 
 // the server-provided interface to the sf_pair
-derr_t server_passthru_resp(server_t *server, passthru_resp_t *passthru){
-    server->passthru = passthru;
+derr_t server_passthru_resp(server_t *server, passthru_resp_t *passthru_resp){
+    server->passthru_resp = passthru_resp;
     actor_advance(&server->actor);
     return E_OK;
 }

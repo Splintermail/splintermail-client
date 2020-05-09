@@ -983,6 +983,7 @@ ie_list_cmd_t *ie_list_cmd_copy(derr_t *e, const ie_list_cmd_t *old);
 ie_status_cmd_t *ie_status_cmd_new(derr_t *e, ie_mailbox_t *m,
         unsigned char status_attr);
 void ie_status_cmd_free(ie_status_cmd_t *status);
+ie_status_cmd_t *ie_status_cmd_copy(derr_t *e, const ie_status_cmd_t *old);
 
 ie_append_cmd_t *ie_append_cmd_new(derr_t *e, ie_mailbox_t *m,
         ie_flags_t *flags, imap_time_t time, ie_dstr_t *content);
@@ -1026,6 +1027,7 @@ ie_list_resp_t *ie_list_resp_copy(derr_t *e, const ie_list_resp_t *old);
 ie_status_resp_t *ie_status_resp_new(derr_t *e, ie_mailbox_t *m,
         ie_status_attr_resp_t sa);
 void ie_status_resp_free(ie_status_resp_t *status);
+ie_status_resp_t *ie_status_resp_copy(derr_t *e, const ie_status_resp_t *old);
 
 ie_search_resp_t *ie_search_resp_new(derr_t *e, ie_nums_t *nums,
         bool modseq_present, unsigned long modseqnum);

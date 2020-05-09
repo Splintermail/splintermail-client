@@ -36,7 +36,7 @@ struct server_cb_i {
     derr_t (*login)(server_cb_i*, const ie_dstr_t*, const ie_dstr_t*);
 
     // submit a passthru command (use or consume passthru)
-    derr_t (*passthru_req)(server_cb_i*, passthru_req_t *passthru);
+    derr_t (*passthru_req)(server_cb_i*, passthru_req_t *passthru_req);
 
     // submit a SELECT request
     derr_t (*select)(server_cb_i*, const ie_mailbox_t *m);
@@ -51,7 +51,7 @@ derr_t server_login_failed(server_t *server);
 void server_set_dirmgr(server_t *server, dirmgr_t *dirmgr);
 
 // use or consume passthru
-derr_t server_passthru_resp(server_t *server, passthru_resp_t *passthru);
+derr_t server_passthru_resp(server_t *server, passthru_resp_t *passthru_resp);
 
 derr_t server_select_succeeded(server_t *server);
 derr_t server_select_failed(server_t *server, const ie_st_resp_t *st_resp);
@@ -107,7 +107,7 @@ struct server_t {
     // if non-NULL, we're waiting on some tagged response to be passed out
     ie_dstr_t *await_tag;
     login_state_e login_state;
-    passthru_resp_t *passthru;
+    passthru_resp_t *passthru_resp;
     select_state_e select_state;
     ie_st_resp_t *select_st_resp;
 };

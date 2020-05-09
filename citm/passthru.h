@@ -4,64 +4,62 @@
 typedef enum {
     PASSTHRU_LIST,
     PASSTHRU_LSUB,
+    PASSTHRU_STATUS,
 } passthru_type_e;
+
+typedef union {
+    ie_list_cmd_t *list;
+    ie_list_cmd_t *lsub;
+    ie_status_cmd_t *status;
+} passthru_req_arg_u;
 
 typedef struct {
     passthru_type_e type;
     ie_dstr_t *tag;
+    passthru_req_arg_u arg;
 } passthru_req_t;
 
 typedef struct {
+    jsw_atree_t tree;  // ie_list_resp_t->node
+} passthru_list_resp_t;
+
+typedef struct {
+    jsw_atree_t tree;  // ie_list_resp_t->node
+} passthru_lsub_resp_t;
+
+typedef union {
+    passthru_list_resp_t *list;
+    passthru_lsub_resp_t *lsub;
+    ie_status_resp_t *status;
+} passthru_resp_arg_u;
+
+typedef struct {
     passthru_type_e type;
+    // the original tag
     ie_dstr_t *tag;
+    passthru_resp_arg_u arg;
+    // the passed-thru tagged status-type response (ignore the wrong tag)
+    ie_st_resp_t *st_resp;
 } passthru_resp_t;
 
-// frees the surrounding struct
-void passthru_req_free(passthru_req_t *passthru);
-void passthru_resp_free(passthru_resp_t *passthru);
+passthru_list_resp_t *passthru_list_resp_new(derr_t *e);
+void passthru_list_resp_free(passthru_list_resp_t *passthru_list_resp);
+passthru_list_resp_t *passthru_list_resp_add(derr_t *e,
+        passthru_list_resp_t *passthru_list_resp, ie_list_resp_t *list);
 
-//
+passthru_lsub_resp_t *passthru_lsub_resp_new(derr_t *e);
+void passthru_lsub_resp_free(passthru_lsub_resp_t *passthru_lsub_resp);
+passthru_lsub_resp_t *passthru_lsub_resp_add(derr_t *e,
+        passthru_lsub_resp_t *passthru_lsub_resp, ie_list_resp_t *lsub);
 
-typedef struct {
-    passthru_req_t passthru;
-    ie_list_cmd_t *list;
-} list_req_t;
-DEF_CONTAINER_OF(list_req_t, passthru, passthru_req_t);
+void passthru_req_arg_free(passthru_type_e type, passthru_req_arg_u arg);
 
-list_req_t *list_req_new(derr_t *e, const ie_dstr_t *tag,
-        const ie_list_cmd_t *list);
-void list_req_free(list_req_t *list_req);
+passthru_req_t *passthru_req_new(derr_t *e, ie_dstr_t *tag,
+        passthru_type_e type, passthru_req_arg_u arg);
+void passthru_req_free(passthru_req_t *passthru_req);
 
-typedef struct {
-    passthru_resp_t passthru;
-    jsw_atree_t tree;  // ie_list_resp_t->node
-} list_resp_t;
-DEF_CONTAINER_OF(list_resp_t, passthru, passthru_resp_t);
+void passthru_resp_arg_free(passthru_type_e type, passthru_resp_arg_u arg);
 
-list_resp_t *list_resp_new(derr_t *e, const ie_dstr_t *tag);
-list_resp_t *list_resp_add(derr_t *e, list_resp_t *list_resp,
-        const ie_list_resp_t *list);
-void list_resp_free(list_resp_t *list_resp);
-
-//
-
-typedef struct {
-    passthru_req_t passthru;
-    ie_list_cmd_t *lsub;
-} lsub_req_t;
-DEF_CONTAINER_OF(lsub_req_t, passthru, passthru_req_t);
-
-lsub_req_t *lsub_req_new(derr_t *e, const ie_dstr_t *tag,
-        const ie_list_cmd_t *lsub);
-void lsub_req_free(lsub_req_t *lsub_req);
-
-typedef struct {
-    passthru_resp_t passthru;
-    jsw_atree_t tree;  // ie_list_resp_t->node
-} lsub_resp_t;
-DEF_CONTAINER_OF(lsub_resp_t, passthru, passthru_resp_t);
-
-lsub_resp_t *lsub_resp_new(derr_t *e, const ie_dstr_t *tag);
-lsub_resp_t *lsub_resp_add(derr_t *e, lsub_resp_t *lsub_resp,
-        const ie_list_resp_t *lsub);
-void lsub_resp_free(lsub_resp_t *lsub_resp);
+passthru_resp_t *passthru_resp_new(derr_t *e, ie_dstr_t *tag,
+        passthru_type_e type, passthru_resp_arg_u arg, ie_st_resp_t *st_resp);
+void passthru_resp_free(passthru_resp_t *passthru_resp);

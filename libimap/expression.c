@@ -1895,6 +1895,18 @@ void ie_status_cmd_free(ie_status_cmd_t *status){
     free(status);
 }
 
+ie_status_cmd_t *ie_status_cmd_copy(derr_t *e, const ie_status_cmd_t *old){
+    if(!old) goto fail;
+
+    return ie_status_cmd_new(e,
+        ie_mailbox_copy(e, old->m),
+        old->status_attr
+    );
+
+fail:
+    return NULL;
+}
+
 ie_append_cmd_t *ie_append_cmd_new(derr_t *e, ie_mailbox_t *m,
         ie_flags_t *flags, imap_time_t time, ie_dstr_t *content){
     if(is_error(*e)) goto fail;
@@ -2224,6 +2236,18 @@ void ie_status_resp_free(ie_status_resp_t *status){
     if(!status) return;
     ie_mailbox_free(status->m);
     free(status);
+}
+
+ie_status_resp_t *ie_status_resp_copy(derr_t *e, const ie_status_resp_t *old){
+    if(!old) goto fail;
+
+    return ie_status_resp_new(e,
+        ie_mailbox_copy(e, old->m),
+        old->sa
+    );
+
+fail:
+    return NULL;
 }
 
 ie_search_resp_t *ie_search_resp_new(derr_t *e, ie_nums_t *nums,

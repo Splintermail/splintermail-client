@@ -192,15 +192,15 @@ static derr_t start_login_pause(server_t *server, const ie_dstr_t *tag){
 
 // a pause for when you are waiting for a passthru command to return something
 static bool passthru_paused(server_t *server){
-    return !server->passthru;
+    return !server->passthru_resp;
 }
 
 static derr_t after_passthru_pause(server_t *server){
     derr_t e = E_OK;
 
-    passthru_resp_t *passthru = server->passthru;
-    server->passthru = NULL;
-    PROP(&e, server->after_passthru_pause(server, passthru) );
+    passthru_resp_t *passthru_resp = server->passthru_resp;
+    server->passthru_resp = NULL;
+    PROP(&e, server->after_passthru_pause(server, passthru_resp) );
 
     return e;
 }
@@ -425,15 +425,13 @@ static derr_t check_login(server_t *server, const ie_dstr_t *tag,
     return e;
 }
 
-// list_done is a passthru_pause_t->after()
-static derr_t list_done(server_t *server, passthru_resp_t *passthru){
+// send_list is a passthru_pause_t->after()
+static derr_t send_list(server_t *server, passthru_resp_t *passthru_resp){
     derr_t e = E_OK;
-
-    list_resp_t *list_resp = CONTAINER_OF(passthru, list_resp_t, passthru);
 
     // send the LIST responses in sorted order
     jsw_atrav_t trav;
-    jsw_anode_t *node = jsw_atfirst(&trav, &list_resp->tree);
+    jsw_anode_t *node = jsw_atfirst(&trav, &passthru_resp->arg.list->tree);
     while(node){
         // get the response from this node
         ie_list_resp_t *list_resp = CONTAINER_OF(node, ie_list_resp_t, node);
@@ -448,10 +446,10 @@ static derr_t list_done(server_t *server, passthru_resp_t *passthru){
     CHECK_GO(&e, cu);
 
     dstr_t msg = DSTR_LIT("now you have all the things");
-    PROP_GO(&e, send_ok(server, passthru->tag, &msg), cu);
+    PROP_GO(&e, send_ok(server, passthru_resp->tag, &msg), cu);
 
 cu:
-    passthru_resp_free(passthru);
+    passthru_resp_free(passthru_resp);
     return e;
 }
 
@@ -460,26 +458,27 @@ static derr_t list_cmd(server_t *server, const ie_dstr_t *tag,
     derr_t e = E_OK;
 
     // LIST is a passthru command
-    list_req_t *list_req = list_req_new(&e, tag, list_cmd);
+    ie_dstr_t *tag_copy = ie_dstr_copy(&e, tag);
+    passthru_req_arg_u arg = { .list = ie_list_cmd_copy(&e, list_cmd) };
+    passthru_req_t *passthru_req;
+    passthru_req = passthru_req_new(&e, tag_copy, PASSTHRU_LIST, arg);
     CHECK(&e);
 
-    PROP(&e, server->cb->passthru_req(server->cb, &list_req->passthru) );
+    PROP(&e, server->cb->passthru_req(server->cb, passthru_req) );
 
     // wait for a response
-    PROP(&e, start_passthru_pause(server, list_done) );
+    PROP(&e, start_passthru_pause(server, send_list) );
 
     return e;
 }
 
-// lsub_done is a passthru_pause_t->after()
-static derr_t lsub_done(server_t *server, passthru_resp_t *passthru){
+// send_lsub is a passthru_pause_t->after()
+static derr_t send_lsub(server_t *server, passthru_resp_t *passthru_resp){
     derr_t e = E_OK;
-
-    lsub_resp_t *lsub_resp = CONTAINER_OF(passthru, lsub_resp_t, passthru);
 
     // send the LSUB responses in sorted order
     jsw_atrav_t trav;
-    jsw_anode_t *node = jsw_atfirst(&trav, &lsub_resp->tree);
+    jsw_anode_t *node = jsw_atfirst(&trav, &passthru_resp->arg.lsub->tree);
     while(node){
         // get the response from this node
         ie_list_resp_t *lsub_resp = CONTAINER_OF(node, ie_list_resp_t, node);
@@ -494,10 +493,10 @@ static derr_t lsub_done(server_t *server, passthru_resp_t *passthru){
     CHECK_GO(&e, cu);
 
     dstr_t msg = DSTR_LIT("now you have all the important things");
-    PROP_GO(&e, send_ok(server, passthru->tag, &msg), cu);
+    PROP_GO(&e, send_ok(server, passthru_resp->tag, &msg), cu);
 
 cu:
-    passthru_resp_free(passthru);
+    passthru_resp_free(passthru_resp);
     return e;
 }
 
@@ -506,13 +505,70 @@ static derr_t lsub_cmd(server_t *server, const ie_dstr_t *tag,
     derr_t e = E_OK;
 
     // LSUB is a passthru command
-    lsub_req_t *lsub_req = lsub_req_new(&e, tag, lsub_cmd);
+    ie_dstr_t *tag_copy = ie_dstr_copy(&e, tag);
+    passthru_req_arg_u arg = { .lsub = ie_list_cmd_copy(&e, lsub_cmd) };
+    passthru_req_t *passthru_req;
+    passthru_req = passthru_req_new(&e, tag_copy, PASSTHRU_LSUB, arg);
     CHECK(&e);
 
-    PROP(&e, server->cb->passthru_req(server->cb, &lsub_req->passthru) );
+    PROP(&e, server->cb->passthru_req(server->cb, passthru_req) );
 
     // wait for a response
-    PROP(&e, start_passthru_pause(server, lsub_done) );
+    PROP(&e, start_passthru_pause(server, send_lsub) );
+
+    return e;
+}
+
+// send_status is a passthru_pause_t->after()
+static derr_t send_status(server_t *server, passthru_resp_t *passthru_resp){
+    derr_t e = E_OK;
+
+    // send the STATUS response (there may not be one if the commmand failed)
+    if(passthru_resp->arg.status){
+        ie_status_resp_t *status = passthru_resp->arg.status;
+        passthru_resp->arg.status = NULL;
+
+        imap_resp_arg_t arg = { .status = status };
+        imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_STATUS, arg);
+
+        send_resp(&e, server, resp);
+    }
+
+    // send the tagged status-type response with the correct tag
+    ie_st_resp_t *st_resp = ie_st_resp_new(&e,
+        steal_dstr(&passthru_resp->tag),
+        passthru_resp->st_resp->status,
+        ie_st_code_copy(&e, passthru_resp->st_resp->code),
+        steal_dstr(&passthru_resp->st_resp->text)
+    );
+
+    imap_resp_arg_t arg = { .status_type = st_resp };
+    imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_STATUS_TYPE, arg);
+
+    send_resp(&e, server, resp);
+
+    CHECK_GO(&e, cu);
+
+cu:
+    passthru_resp_free(passthru_resp);
+    return e;
+}
+
+static derr_t status_cmd(server_t *server, const ie_dstr_t *tag,
+        const ie_status_cmd_t *status_cmd){
+    derr_t e = E_OK;
+
+    // STATUS is a passthru command
+    ie_dstr_t *tag_copy = ie_dstr_copy(&e, tag);
+    passthru_req_arg_u arg = { .status = ie_status_cmd_copy(&e, status_cmd) };
+    passthru_req_t *passthru_req;
+    passthru_req = passthru_req_new(&e, tag_copy, PASSTHRU_STATUS, arg);
+    CHECK(&e);
+
+    PROP(&e, server->cb->passthru_req(server->cb, passthru_req) );
+
+    // wait for a response
+    PROP(&e, start_passthru_pause(server, send_status) );
 
     return e;
 }
@@ -647,8 +703,17 @@ static derr_t handle_one_command(server_t *server, imap_cmd_t *cmd){
             PROP_GO(&e, assert_state(server, AUTHENTICATED, tag, &state_ok),
                     cu_cmd);
             if(state_ok){
-                PROP(&e, lsub_cmd(server, tag, arg->list) );
+                PROP(&e, lsub_cmd(server, tag, arg->lsub) );
             }
+            break;
+
+        case IMAP_CMD_STATUS:
+            if(server->imap_state != AUTHENTICATED
+                    && server->imap_state != SELECTED){
+                PROP_GO(&e, send_invalid_state_resp(server, tag), cu_cmd);
+                break;
+            }
+            PROP(&e, status_cmd(server, tag, arg->status) );
             break;
 
         case IMAP_CMD_SELECT:
@@ -687,7 +752,6 @@ static derr_t handle_one_command(server_t *server, imap_cmd_t *cmd){
             break;
 
         case IMAP_CMD_EXAMINE:
-        case IMAP_CMD_STATUS:
         case IMAP_CMD_APPEND:
         case IMAP_CMD_CHECK:
         case IMAP_CMD_EXPUNGE:

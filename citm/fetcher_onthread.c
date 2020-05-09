@@ -3,6 +3,18 @@
 // foward declarations
 static derr_t send_login(fetcher_t *fetcher);
 
+static inline passthru_resp_arg_u steal_pt_arg(passthru_resp_arg_u *arg){
+    passthru_resp_arg_u temp = *arg;
+    *arg = (passthru_resp_arg_u){0};
+    return temp;
+}
+
+static inline ie_dstr_t *steal_dstr(ie_dstr_t **tag){
+    ie_dstr_t *temp = *tag;
+    *tag = NULL;
+    return temp;
+}
+
 typedef struct {
     fetcher_t *fetcher;
     imap_cmd_cb_t cb;
@@ -164,20 +176,21 @@ static derr_t list_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
     fetcher_cb_t *fcb = CONTAINER_OF(cb, fetcher_cb_t, cb);
     fetcher_t *fetcher = fcb->fetcher;
 
-    if(st_resp->status != IE_ST_OK){
-        ORIG(&e, E_PARAM, "list failed\n");
-    }
+    // send out the accumulated response
+    passthru_resp_t *passthru_resp = passthru_resp_new(&e,
+        steal_dstr(&fetcher->passthru_req->tag),
+        fetcher->pt_arg_type,
+        steal_pt_arg(&fetcher->pt_arg),
+        ie_st_resp_copy(&e, st_resp)
+    );
 
     // let go of the passthru_req
-    passthru_req_free(fetcher->passthru);
-    fetcher->passthru = NULL;
+    passthru_req_free(fetcher->passthru_req);
+    fetcher->passthru_req = NULL;
     fetcher->passthru_sent = false;
+    CHECK(&e);
 
-    // send out the accumulated response
-    list_resp_t *list_resp = fetcher->list_resp;
-    fetcher->list_resp = NULL;
-
-    PROP(&e, fetcher->cb->passthru_resp(fetcher->cb, &list_resp->passthru) );
+    PROP(&e, fetcher->cb->passthru_resp(fetcher->cb, passthru_resp) );
 
     return e;
 }
@@ -185,7 +198,7 @@ static derr_t list_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
 static derr_t list_resp(fetcher_t *fetcher, const ie_list_resp_t *list){
     derr_t e = E_OK;
 
-    if(!fetcher->passthru || fetcher->passthru->type != PASSTHRU_LIST){
+    if(!fetcher->passthru_req || fetcher->passthru_req->type != PASSTHRU_LIST){
         ORIG(&e, E_INTERNAL, "got list response without PASSTHRU_LIST");
     }
 
@@ -197,10 +210,9 @@ static derr_t list_resp(fetcher_t *fetcher, const ie_list_resp_t *list){
     }
 
     // store a copy of the list response
-    ie_list_resp_t *copy = ie_list_resp_copy(&e, list);
+    fetcher->pt_arg.list = passthru_list_resp_add(&e,
+            fetcher->pt_arg.list, ie_list_resp_copy(&e, list));
     CHECK(&e);
-
-    jsw_ainsert(&fetcher->list_resp->tree, &copy->node);
 
     return e;
 }
@@ -213,17 +225,18 @@ static derr_t passthru_list(fetcher_t *fetcher){
                 "arrived at passthru_list out of AUTHENTICATED state");
     }
 
-    // prepare for the response
-    fetcher->list_resp = list_resp_new(&e, fetcher->passthru->tag);
     fetcher->passthru_sent = true;
+
+    // prepare for the response
+    fetcher->pt_arg_type = PASSTHRU_LIST;
+    fetcher->pt_arg = (passthru_resp_arg_u){
+        .list = passthru_list_resp_new(&e)
+    };
     CHECK(&e);
 
-    list_req_t *list_req =
-        CONTAINER_OF(fetcher->passthru, list_req_t, passthru);
-
     // steal the ie_list_cmd_t*
-    ie_list_cmd_t *list_cmd = list_req->list;
-    list_req->list = NULL;
+    ie_list_cmd_t *list_cmd = fetcher->passthru_req->arg.list;
+    fetcher->passthru_req->arg.list = NULL;
 
     imap_cmd_arg_t arg = { .list=list_cmd };
 
@@ -251,16 +264,21 @@ static derr_t lsub_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
         ORIG(&e, E_PARAM, "lsub failed\n");
     }
 
-    // let go of the passthru_req
-    passthru_req_free(fetcher->passthru);
-    fetcher->passthru = NULL;
-    fetcher->passthru_sent = false;
-
     // send out the accumulated response
-    lsub_resp_t *lsub_resp = fetcher->lsub_resp;
-    fetcher->lsub_resp = NULL;
+    passthru_resp_t *passthru_resp = passthru_resp_new(&e,
+        steal_dstr(&fetcher->passthru_req->tag),
+        fetcher->pt_arg_type,
+        steal_pt_arg(&fetcher->pt_arg),
+        ie_st_resp_copy(&e, st_resp)
+    );
 
-    PROP(&e, fetcher->cb->passthru_resp(fetcher->cb, &lsub_resp->passthru) );
+    // let go of the passthru_req
+    passthru_req_free(fetcher->passthru_req);
+    fetcher->passthru_req = NULL;
+    fetcher->passthru_sent = false;
+    CHECK(&e);
+
+    PROP(&e, fetcher->cb->passthru_resp(fetcher->cb, passthru_resp) );
 
     return e;
 }
@@ -268,7 +286,7 @@ static derr_t lsub_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
 static derr_t lsub_resp(fetcher_t *fetcher, const ie_list_resp_t *lsub){
     derr_t e = E_OK;
 
-    if(!fetcher->passthru || fetcher->passthru->type != PASSTHRU_LSUB){
+    if(!fetcher->passthru_req || fetcher->passthru_req->type != PASSTHRU_LSUB){
         ORIG(&e, E_INTERNAL, "got lsub response without PASSTHRU_LSUB");
     }
 
@@ -280,10 +298,9 @@ static derr_t lsub_resp(fetcher_t *fetcher, const ie_list_resp_t *lsub){
     }
 
     // store a copy of the lsub response
-    ie_list_resp_t *copy = ie_list_resp_copy(&e, lsub);
+    fetcher->pt_arg.lsub = passthru_lsub_resp_add(&e,
+            fetcher->pt_arg.lsub, ie_list_resp_copy(&e, lsub));
     CHECK(&e);
-
-    jsw_ainsert(&fetcher->lsub_resp->tree, &copy->node);
 
     return e;
 }
@@ -296,17 +313,18 @@ static derr_t passthru_lsub(fetcher_t *fetcher){
                 "arrived at passthru_lsub out of AUTHENTICATED state");
     }
 
-    // prepare for the response
-    fetcher->lsub_resp = lsub_resp_new(&e, fetcher->passthru->tag);
     fetcher->passthru_sent = true;
+
+    // prepare for the response
+    fetcher->pt_arg_type = PASSTHRU_LSUB;
+    fetcher->pt_arg = (passthru_resp_arg_u){
+        .lsub = passthru_lsub_resp_new(&e)
+    };
     CHECK(&e);
 
-    lsub_req_t *lsub_req =
-        CONTAINER_OF(fetcher->passthru, lsub_req_t, passthru);
-
     // steal the ie_list_cmd_t*
-    ie_list_cmd_t *lsub_cmd = lsub_req->lsub;
-    lsub_req->lsub = NULL;
+    ie_list_cmd_t *lsub_cmd = fetcher->passthru_req->arg.lsub;
+    fetcher->passthru_req->arg.lsub = NULL;
 
     imap_cmd_arg_t arg = { .lsub=lsub_cmd };
 
@@ -316,6 +334,77 @@ static derr_t passthru_lsub(fetcher_t *fetcher){
 
     // build the callback
     fetcher_cb_t *fcb = fetcher_cb_new(&e, fetcher, tag, lsub_done, cmd);
+
+    // store the callback and send the command
+    send_cmd(&e, fetcher, cmd, &fcb->cb);
+
+    return e;
+}
+
+// status_done is an imap_cmd_cb_call_f
+static derr_t status_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
+    derr_t e = E_OK;
+
+    fetcher_cb_t *fcb = CONTAINER_OF(cb, fetcher_cb_t, cb);
+    fetcher_t *fetcher = fcb->fetcher;
+
+    // send out the response
+    passthru_resp_t *passthru_resp = passthru_resp_new(&e,
+        steal_dstr(&fetcher->passthru_req->tag),
+        fetcher->pt_arg_type,
+        steal_pt_arg(&fetcher->pt_arg),
+        ie_st_resp_copy(&e, st_resp)
+    );
+
+    // let go of the passthru_req
+    passthru_req_free(fetcher->passthru_req);
+    fetcher->passthru_req = NULL;
+    fetcher->passthru_sent = false;
+    CHECK(&e);
+
+    PROP(&e, fetcher->cb->passthru_resp(fetcher->cb, passthru_resp) );
+
+    return e;
+}
+
+static derr_t status_resp(fetcher_t *fetcher, const ie_status_resp_t *status){
+    derr_t e = E_OK;
+
+    if(!fetcher->passthru_req
+            || fetcher->passthru_req->type != PASSTHRU_STATUS){
+        ORIG(&e, E_INTERNAL, "got status response without PASSTHRU_STATUS");
+    }
+
+    // store a copy of the STATUS response
+    fetcher->pt_arg = (passthru_resp_arg_u){
+        .status = ie_status_resp_copy(&e, status)
+    };
+    CHECK(&e);
+
+    return e;
+}
+
+static derr_t passthru_status(fetcher_t *fetcher){
+    derr_t e = E_OK;
+
+    fetcher->passthru_sent = true;
+
+    // prepare for the response
+    fetcher->pt_arg_type = PASSTHRU_STATUS;
+    fetcher->pt_arg = (passthru_resp_arg_u){ .status = NULL };
+
+    // steal the ie_status_cmd_t*
+    ie_status_cmd_t *status_cmd = fetcher->passthru_req->arg.status;
+    fetcher->passthru_req->arg.status = NULL;
+
+    imap_cmd_arg_t arg = { .status=status_cmd };
+
+    size_t tag = ++fetcher->tag;
+    ie_dstr_t *tag_str = write_tag(&e, tag);
+    imap_cmd_t *cmd = imap_cmd_new(&e, tag_str, IMAP_CMD_STATUS, arg);
+
+    // build the callback
+    fetcher_cb_t *fcb = fetcher_cb_new(&e, fetcher, tag, status_done, cmd);
 
     // store the callback and send the command
     send_cmd(&e, fetcher, cmd, &fcb->cb);
@@ -699,7 +788,7 @@ static derr_t untagged_status_type(fetcher_t *fetcher, const ie_st_resp_t *st){
 }
 
 static bool fetcher_passthru_more_work(fetcher_t *fetcher){
-    if(!fetcher->passthru) return false;
+    if(!fetcher->passthru_req) return false;
     // don't consider a passthru command until we've called ENABLE
     if(!fetcher->enable_set) return false;
 
@@ -766,11 +855,13 @@ static derr_t handle_one_response(fetcher_t *fetcher, imap_resp_t *resp){
         case IMAP_RESP_LSUB:
             PROP_GO(&e, lsub_resp(fetcher, arg->lsub), cu_resp);
             break;
+        case IMAP_RESP_STATUS:
+            PROP_GO(&e, status_resp(fetcher, arg->status), cu_resp);
+            break;
         case IMAP_RESP_ENABLED:
             PROP_GO(&e, enabled_resp(fetcher, arg->enabled), cu_resp);
             break;
 
-        case IMAP_RESP_STATUS:
         case IMAP_RESP_FLAGS:
         case IMAP_RESP_SEARCH:
         case IMAP_RESP_EXISTS:
@@ -821,9 +912,10 @@ static derr_t fetcher_passthru_do_work(fetcher_t *fetcher){
         return e;
     }
 
-    switch(fetcher->passthru->type){
-        case PASSTHRU_LIST: PROP(&e, passthru_list(fetcher) ); return e;
-        case PASSTHRU_LSUB: PROP(&e, passthru_lsub(fetcher) ); return e;
+    switch(fetcher->passthru_req->type){
+        case PASSTHRU_LIST:   PROP(&e, passthru_list(fetcher) ); return e;
+        case PASSTHRU_LSUB:   PROP(&e, passthru_lsub(fetcher) ); return e;
+        case PASSTHRU_STATUS: PROP(&e, passthru_status(fetcher) ); return e;
     }
     ORIG(&e, E_INTERNAL, "unrecognized passthru");
 }

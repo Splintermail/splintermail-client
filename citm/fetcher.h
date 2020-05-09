@@ -39,7 +39,7 @@ struct fetcher_cb_i {
     derr_t (*login_failed)(fetcher_cb_i*);
 
     // submit a passthru response (use or consume passthru)
-    derr_t (*passthru_resp)(fetcher_cb_i*, passthru_resp_t *passthru);
+    derr_t (*passthru_resp)(fetcher_cb_i*, passthru_resp_t *passthru_resp);
 
     // select succeeded
     derr_t (*select_succeeded)(fetcher_cb_i*);
@@ -54,7 +54,7 @@ derr_t fetcher_login(
 );
 void fetcher_set_dirmgr(fetcher_t *fetcher, dirmgr_t *dirmgr);
 // (user or consume passthru)
-derr_t fetcher_passthru_req(fetcher_t *fetcher, passthru_req_t *passthru);
+derr_t fetcher_passthru_req(fetcher_t *fetcher, passthru_req_t *passthru_req);
 derr_t fetcher_select(fetcher_t *fetcher, const ie_mailbox_t *m);
 
 struct fetcher_t {
@@ -100,10 +100,10 @@ struct fetcher_t {
     // external command processing: there can only be one at a time.
     ie_login_cmd_t *login_cmd;
     //
-    passthru_req_t *passthru;
+    passthru_req_t *passthru_req;
     bool passthru_sent;
-    list_resp_t *list_resp;
-    lsub_resp_t *lsub_resp;
+    passthru_type_e pt_arg_type;
+    passthru_resp_arg_u pt_arg;
     //
     ie_mailbox_t *select_mailbox;
 
