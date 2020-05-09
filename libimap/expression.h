@@ -59,6 +59,7 @@ void ie_seq_set_free(ie_seq_set_t *s);
 
 typedef struct {
     const ie_seq_set_t *ptr;
+    unsigned int min;
     unsigned int max;
     unsigned int i;
     unsigned int imax;
@@ -845,7 +846,7 @@ ie_seq_set_t *ie_seq_set_append(derr_t *e, ie_seq_set_t *set,
 
 // return 0 when done
 unsigned int ie_seq_set_iter(ie_seq_set_trav_t *trav,
-        const ie_seq_set_t *seq_set, unsigned int max);
+        const ie_seq_set_t *seq_set, unsigned int min, unsigned int max);
 unsigned int ie_seq_set_next(ie_seq_set_trav_t *trav);
 
 // num list construction

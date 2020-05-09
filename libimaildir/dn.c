@@ -456,13 +456,11 @@ fail:
 }
 
 // take a sequence set and create a UID seq set
-// sets *ok = true IFF all numbers present
 static derr_t copy_seq_to_uids(dn_t *dn, bool uid_mode,
-        const ie_seq_set_t *old, bool *ok, ie_seq_set_t **out){
+        const ie_seq_set_t *old, ie_seq_set_t **out){
     derr_t e = E_OK;
 
     *out = NULL;
-    *ok = false;
 
     // nothing in the tree
     if(dn->views.size == 0){
@@ -471,14 +469,22 @@ static derr_t copy_seq_to_uids(dn_t *dn, bool uid_mode,
 
     jsw_anode_t *node;
 
+
     // get the last UID or last index, for replacing 0's we see in the seq_set
+    // also get the starting inde
+    unsigned int first;
     unsigned int last;
     if(uid_mode){
         jsw_atrav_t trav;
-        jsw_anode_t *node = jsw_atlast(&trav, &dn->views);
+        jsw_anode_t *node = jsw_atfirst(&trav, &dn->views);
+        msg_view_t *first_view = CONTAINER_OF(node, msg_view_t, node);
+        first = first_view->base->uid;
+        node = jsw_atlast(&trav, &dn->views);
         msg_view_t *last_view = CONTAINER_OF(node, msg_view_t, node);
         last = last_view->base->uid;
     } else {
+        // first sequence number is always 1
+        first = 1;
         size_t last_index = dn->views.size - 1;
         PROP(&e, index_to_seq_num(last_index, &last) );
     }
@@ -487,25 +493,23 @@ static derr_t copy_seq_to_uids(dn_t *dn, bool uid_mode,
     seq_set_builder_prep(&ssb);
 
     ie_seq_set_trav_t trav;
-    unsigned int i = ie_seq_set_iter(&trav, old, last);
+    unsigned int i = ie_seq_set_iter(&trav, old, first, last);
     for(; i != 0; i = ie_seq_set_next(&trav)){
         if(uid_mode){
             // UID in mailbox?
             node = jsw_afind(&dn->views, &i, NULL);
-            if(!node) goto fail_ssb;
+            if(!node) continue;
             PROP_GO(&e, seq_set_builder_add_val(&ssb, i), fail_ssb);
         }else{
             // sequence number in mailbox?
             node = jsw_aindex(&dn->views, (size_t)i - 1);
-            if(!node) goto fail_ssb;
+            if(!node) continue;
             msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
             unsigned int uid = view->base->uid;
             PROP_GO(&e, seq_set_builder_add_val(&ssb, uid), fail_ssb);
         }
     }
 
-    // all numbers in seq set were present
-    *ok = true;
     *out = seq_set_builder_extract(&e, &ssb);
     CHECK(&e);
 
@@ -521,15 +525,8 @@ static derr_t store_cmd(dn_t *dn, const ie_dstr_t *tag,
         const ie_store_cmd_t *store){
     derr_t e = E_OK;
 
-    bool ok;
     ie_seq_set_t *uid_seq;
-    PROP(&e, copy_seq_to_uids(dn, store->uid_mode, store->seq_set, &ok,
-                &uid_seq) );
-    if(!ok){
-        PROP_GO(&e, send_bad(dn, tag, &DSTR_LIT("bad sequence set")),
-                fail_uid_seq);
-        goto fail_uid_seq;
-    }
+    PROP(&e, copy_seq_to_uids(dn, store->uid_mode, store->seq_set, &uid_seq) );
 
     // reset the dn.store state
     dn_store_free(dn);
@@ -541,7 +538,7 @@ static derr_t store_cmd(dn_t *dn, const ie_dstr_t *tag,
 
     // figure out what all of the flags we expect to see are
     ie_seq_set_trav_t trav;
-    unsigned int uid = ie_seq_set_iter(&trav, uid_seq, 0);
+    unsigned int uid = ie_seq_set_iter(&trav, uid_seq, 0, 0);
     for(; uid != 0; uid = ie_seq_set_next(&trav)){
         jsw_anode_t *node = jsw_afind(&dn->views, &uid, NULL);
         if(!node){
@@ -602,7 +599,6 @@ static derr_t store_cmd(dn_t *dn, const ie_dstr_t *tag,
 
 fail_dn_store:
     dn_store_free(dn);
-fail_uid_seq:
     ie_seq_set_free(uid_seq);
     return e;
 }
@@ -694,24 +690,14 @@ static derr_t fetch_cmd(dn_t *dn, const ie_dstr_t *tag,
         const ie_fetch_cmd_t *fetch){
     derr_t e = E_OK;
 
-    bool ok;
     ie_seq_set_t *uid_seq;
-    PROP(&e, copy_seq_to_uids(dn, fetch->uid_mode, fetch->seq_set, &ok,
-                &uid_seq) );
-    if(!ok){
-        PROP_GO(&e, send_bad(dn, tag, &DSTR_LIT("bad sequence set")), cu);
-        goto cu;
-    }
+    PROP(&e, copy_seq_to_uids(dn, fetch->uid_mode, fetch->seq_set, &uid_seq) );
 
     // build a response for every uid requested
     ie_seq_set_trav_t trav;
-    unsigned int uid = ie_seq_set_iter(&trav, uid_seq, 0);
+    unsigned int uid = ie_seq_set_iter(&trav, uid_seq, 0, 0);
     for(; uid != 0; uid = ie_seq_set_next(&trav)){
         PROP_GO(&e, send_fetch_resp(dn, fetch, uid), cu);
-    }
-    uid = ie_seq_set_iter(&trav, uid_seq, 0);
-    for(; uid != 0; uid = ie_seq_set_next(&trav)){
-        printf("uid: %u\n", uid);
     }
 
     DSTR_STATIC(msg, "you didn't hear it from me");
@@ -955,7 +941,7 @@ static derr_t send_store_resp(dn_t *dn, const ie_seq_set_t *updated_uids){
 
     jsw_anode_t *node = jsw_atfirst(&atrav, &dn->store.tree);
     exp_flags = CONTAINER_OF(node, exp_flags_t, node);
-    updated_uid = ie_seq_set_iter(&strav, updated_uids, 0);
+    updated_uid = ie_seq_set_iter(&strav, updated_uids, 0, 0);
 
     // quit when we reach the end of both lists
     while(exp_flags || updated_uid){

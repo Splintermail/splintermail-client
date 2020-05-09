@@ -843,20 +843,30 @@ fail:
 }
 
 unsigned int ie_seq_set_iter(ie_seq_set_trav_t *trav,
-        const ie_seq_set_t *seq_set, unsigned int max){
+        const ie_seq_set_t *seq_set, unsigned int min, unsigned int max){
     trav->ptr = seq_set;
-    if(!trav->ptr) return 0;
-
+    trav->min = min;
     trav->max = max;
 
-    // handle zeros
-    unsigned int n1 = trav->ptr->n1 ? trav->ptr->n1 : trav->max;
-    unsigned int n2 = trav->ptr->n2 ? trav->ptr->n2 : trav->max;
-    // reorder
-    trav->i = MIN(n1, n2);
-    trav->imax = MAX(n1, n2);
-
-    return trav->i;
+    while(trav->ptr){
+        // handle zeros
+        unsigned int n1 = trav->ptr->n1 ? trav->ptr->n1 : trav->max;
+        unsigned int n2 = trav->ptr->n2 ? trav->ptr->n2 : trav->max;
+        // reorder
+        trav->i = MIN(n1, n2);
+        trav->imax = MAX(n1, n2);
+        // check bounds
+        if(trav->imax < trav->min || (trav->max && trav->i > trav->max)){
+            trav->ptr = trav->ptr->next;
+            trav->i = 0;
+            continue;
+        }
+        // adjust bounds
+        trav->i = MAX(trav->i, trav->min);
+        if(trav->max) trav->imax = MIN(trav->imax, trav->max);
+        return trav->i;
+    }
+    return 0;
 }
 
 unsigned int ie_seq_set_next(ie_seq_set_trav_t *trav){
@@ -868,12 +878,25 @@ unsigned int ie_seq_set_next(ie_seq_set_trav_t *trav){
         trav->ptr = trav->ptr->next;
         if(!trav->ptr) return 0;
 
-        // handle zeros
-        unsigned int n1 = trav->ptr->n1 ? trav->ptr->n1 : trav->max;
-        unsigned int n2 = trav->ptr->n2 ? trav->ptr->n2 : trav->max;
-        // reorder
-        trav->i = MIN(n1, n2);
-        trav->imax = MAX(n1, n2);
+        while(trav->ptr){
+            // handle zeros
+            unsigned int n1 = trav->ptr->n1 ? trav->ptr->n1 : trav->max;
+            unsigned int n2 = trav->ptr->n2 ? trav->ptr->n2 : trav->max;
+            // reorder
+            trav->i = MIN(n1, n2);
+            trav->imax = MAX(n1, n2);
+            // check bounds
+            if(trav->imax < trav->min || (trav->max && trav->i > trav->max)){
+                trav->ptr = trav->ptr->next;
+                trav->i = 0;
+                continue;
+            }
+            // adjust bounds
+            trav->i = MAX(trav->i, trav->min);
+            if(trav->max) trav->imax = MIN(trav->imax, trav->max);
+            return trav->i;
+        }
+        return 0;
     }
 
     return trav->i;
