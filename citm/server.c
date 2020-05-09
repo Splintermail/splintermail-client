@@ -60,7 +60,7 @@ static void server_free(server_t **old){
 
 
 // part of the actor interface
-void server_actor_failure(actor_t *actor, derr_t error){
+static void server_actor_failure(actor_t *actor, derr_t error){
     server_t *server = CONTAINER_OF(actor, server_t, actor);
     TRACE_PROP(&error);
     server_close(server, error);

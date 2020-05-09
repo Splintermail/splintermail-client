@@ -685,9 +685,7 @@ int imaildir_close_msg(imaildir_t *m, unsigned int uid, int *fd){
             caller is not responsible for the failure) */
     }
 
-    int ret;
-close:
-    close(*fd);
+    int ret = close(*fd);
     *fd = -1;
 
     uv_rwlock_wrunlock(&m->msgs.lock);

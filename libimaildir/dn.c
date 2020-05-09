@@ -123,6 +123,7 @@ fail_mutex:
     uv_mutex_destroy(&dn->pending_updates.mutex);
 fail_malloc:
     free(dn);
+    return e;
 };
 
 //// TODO: unify these send_* functions with the ones in sm_serve_logic?
@@ -377,8 +378,7 @@ done:
 }
 
 // nums will be consumed
-static derr_t send_search_resp(dn_t *dn, const ie_dstr_t *tag,
-        ie_nums_t *nums){
+static derr_t send_search_resp(dn_t *dn, ie_nums_t *nums){
     derr_t e = E_OK;
 
     // TODO: support modseq here
@@ -401,13 +401,14 @@ static derr_t search_cmd(dn_t *dn, const ie_dstr_t *tag,
 
     // handle the empty maildir case
     if(dn->views.size == 0){
-        PROP(&e, send_search_resp(dn, tag, NULL) );
+        PROP(&e, send_search_resp(dn, NULL) );
         PROP(&e, send_ok(dn, tag, &DSTR_LIT("don't waste my time!")) );
         return e;
     }
 
     // now figure out some constants to do the search
-    unsigned int seq_max = dn->views.size;
+    unsigned int seq_max;
+    PROP(&e, index_to_seq_num(dn->views.size - 1, &seq_max) );
 
     jsw_atrav_t trav;
     jsw_anode_t *node = jsw_atlast(&trav, &dn->views);
@@ -445,7 +446,7 @@ static derr_t search_cmd(dn_t *dn, const ie_dstr_t *tag,
     }
 
     // finally, send the responses (nums will be consumed)
-    PROP(&e, send_search_resp(dn, tag, nums) );
+    PROP(&e, send_search_resp(dn, nums) );
     PROP(&e, send_ok(dn, tag, &DSTR_LIT("too easy!")) );
 
     return e;

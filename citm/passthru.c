@@ -6,6 +6,9 @@ void passthru_req_free(passthru_req_t *passthru){
         case PASSTHRU_LIST:
             list_req_free(CONTAINER_OF(passthru, list_req_t, passthru));
             break;
+        case PASSTHRU_LSUB:
+            lsub_req_free(CONTAINER_OF(passthru, lsub_req_t, passthru));
+            break;
     }
 }
 
@@ -14,6 +17,9 @@ void passthru_resp_free(passthru_resp_t *passthru){
     switch(passthru->type){
         case PASSTHRU_LIST:
             list_resp_free(CONTAINER_OF(passthru, list_resp_t, passthru));
+            break;
+        case PASSTHRU_LSUB:
+            lsub_resp_free(CONTAINER_OF(passthru, lsub_resp_t, passthru));
             break;
     }
 }

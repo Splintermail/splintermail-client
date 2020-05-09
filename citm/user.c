@@ -14,6 +14,7 @@ static void user_keyfetcher_dying(manager_i *mgr, void *caller, derr_t error){
     uv_mutex_unlock(&user->mutex);
 
     // TODO: have a keyfetcher
+    (void)keyfetcher;
     // fetcher_release(keyfetcher);
     // // drop the keyfetcher ref
     // ref_dn(&user->refs);
@@ -54,6 +55,7 @@ static void user_finalize(refs_t *refs){
 
     dirmgr_free(&user->dirmgr);
     dstr_free(&user->name);
+    dstr_free(&user->pass);
     refs_free(&user->refs);
     uv_mutex_destroy(&user->mutex);
     free(user);
@@ -92,6 +94,7 @@ derr_t user_new(
     PROP_GO(&e, refs_init(&user->refs, 1, user_finalize), fail_mutex);
 
     PROP_GO(&e, dstr_copy(name, &user->name), fail_refs);
+    PROP_GO(&e, dstr_copy(pass, &user->pass), fail_name);
 
     user->path = sb_append(root, FD(&user->name));
 
@@ -102,12 +105,14 @@ derr_t user_new(
                - streaming updates of remote keys while this user is active
 
              For now, we'll just hardcode a global key and call it a day. */
-    PROP_GO(&e, dirmgr_init(&user->dirmgr, user->path, &g_keypair), fail_name);
+    PROP_GO(&e, dirmgr_init(&user->dirmgr, user->path, &g_keypair), fail_pass);
 
     *out = user;
 
     return e;
 
+fail_pass:
+    dstr_free(&user->pass);
 fail_name:
     dstr_free(&user->name);
 fail_refs:
@@ -127,6 +132,7 @@ void user_release(user_t *user){
 
 void user_start(user_t *user){
     // TODO: have a keyfetcher
+    (void)user;
     // // ref up for the keyfetcher
     // ref_up(&user->refs);
     // fetcher_start(user->keyfetcher);

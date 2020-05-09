@@ -12,7 +12,7 @@
 // derr_type_t E_NONE = NULL;
 
 DSTR_STATIC(E_ANY_dstr, "ANY");
-bool E_ANY_matches(derr_type_t self, derr_type_t other){
+static bool E_ANY_matches(derr_type_t self, derr_type_t other){
     (void)self;
     return other != E_NONE;
 }

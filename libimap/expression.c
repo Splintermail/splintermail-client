@@ -1457,7 +1457,7 @@ void ie_store_mods_free(ie_store_mods_t *mods){
 ie_store_mods_t *ie_store_mods_copy(derr_t *e, const ie_store_mods_t *old){
     if(!old) return NULL;
 
-    ie_store_mods_t *mods;
+    ie_store_mods_t *mods = NULL;  // solve a false maybe-uninitialized warning
 
     switch(old->type){
         case IE_STORE_MOD_UNCHGSINCE:

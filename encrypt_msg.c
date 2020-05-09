@@ -9,7 +9,19 @@
 #include <openssl/evp.h>
 
 #ifdef BUILD_SERVER_CODE
+
+// mysql throws missing prototype error with gcc, so ignore that warning
+#ifdef __GNUC__
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstrict-prototypes"
+#endif // __GNUC__
+
 #include <mysql.h>
+
+#ifdef __GNUC__
+#pragma GCC diagnostic pop
+#endif // __GNUC__
+
 #include "server/badbadbad_alert.h"
 #endif // BUILD_SERVER_CODE
 

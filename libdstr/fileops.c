@@ -876,7 +876,7 @@ derr_t open_path(const string_builder_t *sb, int *out, int flags, ...){
         *out = compat_open(path->data, flags);
     }
 
-cu:
+// cu:
     dstr_free(&heap);
     return e;
 }

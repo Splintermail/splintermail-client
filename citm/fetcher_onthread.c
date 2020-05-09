@@ -196,9 +196,6 @@ static derr_t list_resp(fetcher_t *fetcher, const ie_list_resp_t *list){
         ORIG(&e, E_RESPONSE, "invalid folder separator");
     }
 
-    list_req_t *list_req =
-        CONTAINER_OF(fetcher->passthru, list_req_t, passthru);
-
     // store a copy of the list response
     ie_list_resp_t *copy = ie_list_resp_copy(&e, list);
     CHECK(&e);
@@ -281,9 +278,6 @@ static derr_t lsub_resp(fetcher_t *fetcher, const ie_list_resp_t *lsub){
                 FC(lsub->sep));
         ORIG(&e, E_RESPONSE, "invalid folder separator");
     }
-
-    lsub_req_t *lsub_req =
-        CONTAINER_OF(fetcher->passthru, lsub_req_t, passthru);
 
     // store a copy of the lsub response
     ie_list_resp_t *copy = ie_list_resp_copy(&e, lsub);
@@ -704,7 +698,7 @@ static derr_t untagged_status_type(fetcher_t *fetcher, const ie_st_resp_t *st){
     return e;
 }
 
-bool fetcher_passthru_more_work(fetcher_t *fetcher){
+static bool fetcher_passthru_more_work(fetcher_t *fetcher){
     if(!fetcher->passthru) return false;
     // don't consider a passthru command until we've called ENABLE
     if(!fetcher->enable_set) return false;
@@ -720,7 +714,7 @@ bool fetcher_passthru_more_work(fetcher_t *fetcher){
         && !fetcher->passthru_sent;
 }
 
-bool fetcher_select_more_work(fetcher_t *fetcher){
+static bool fetcher_select_more_work(fetcher_t *fetcher){
     if(!fetcher->select_mailbox) return false;
     // don't consider a SELECT command until we've called ENABLE
     if(!fetcher->enable_set) return false;

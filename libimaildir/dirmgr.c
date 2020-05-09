@@ -476,7 +476,6 @@ fail_lock:
     uv_rwlock_wrunlock(&dm->dirs.lock);
     return e;
 }
-static dirmgr_t *g_dm;
 
 derr_t dirmgr_open_dn(dirmgr_t *dm, const dstr_t *name, maildir_conn_dn_i *dn,
         maildir_dn_i **maildir_dn_out){

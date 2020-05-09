@@ -45,6 +45,111 @@ if("${LIBLMDB_LIB}" STREQUAL "")
 endif()
 target_link_libraries(lmdb_interface INTERFACE "${LIBLMDB_LIB}")
 
+# compiler-specific flags
+if("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU")
+    # flags for gcc
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Werror")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wextra")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wstrict-overflow")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wconversion")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wstrict-prototypes")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wmissing-prototypes")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fstrict-aliasing")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wstrict-aliasing=2")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-missing-field-initializers")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fdiagnostics-color=always")
+    # add some compiler hardening flags
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wformat -Wformat-security -Werror=format-security")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fstack-protector-strong")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fPIE -fPIC")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O2 -D_FORTIFY_SOURCE=2")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -pie")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -z relro")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -z now")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -z noexecstack")
+    # this just gets ignored
+    # set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -z noexecheap")
+    # for debug builds
+    # set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=address")
+
+elseif("${CMAKE_C_COMPILER_ID}" MATCHES "Clang")
+    # flags common to "AppleClang" and "Clang"
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Werror")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fdiagnostics-color=always")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Weverything")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-padded")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-gnu-zero-variadic-macro-arguments")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-reserved-id-macro")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-unused-macros")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-double-promotion")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-missing-noreturn")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-missing-field-initializers")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-unused-command-line-argument")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-overlength-strings")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-shadow")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fstrict-aliasing")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O2")
+    # add some compiler hardening flags
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wformat -Wformat-security -Werror=format-security")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -D_FORTIFY_SOURCE")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fstack-protector-strong")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fPIE")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -pie")
+    if("${CMAKE_C_COMPILER_ID}" STREQUAL "Clang")
+        # clang options not apparently supported on AppleClang:
+        set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,-z,relro")
+        set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,-z,now")
+        # control flow integrity
+        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=cfi")
+        # test for integer overflow
+        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=integer")
+        # stack-based buffer overrun protection
+        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=safe-stack")
+        # address sanitizer (behaves a bit like valgrind):
+        # set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=address -fno-omit-frame-pointer")
+    endif()
+elseif("${CMAKE_C_COMPILER_ID}" STREQUAL "MSVC")
+    # flags for MVSC (VS 2017)
+    # see https://docs.microsoft.com/en-us/cpp/error-messages/compiler-warnings
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /W4")     # treat warnings as errors
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /Wall")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /wd4221") # ANSI compliance
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /wd4204") # ANSI compliance
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /wd4820") # byte padded structs
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /wd4668") # unknown macro in #if()
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /wd4996") # _CRT_SECURE warnings
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /wd5045") # Spectre mitigation
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /wd4706") # setting value in if() expr
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /wd4710") # function didn't get inlined
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /wd4711") # function got auto-inlined
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /wd4127") # if() tests a constant value
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /wd4738") # float stored in mem not reg
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /wd4738") # float stored in mem not reg
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /wd4456") # local vars shadow prev vars
+    # These "unsafe" functions are just standard C functions
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /D_CRT_SECURE_NO_WARNINGS")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /O2")
+    # add some compiler hardening flags
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /sdl")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /GS")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /DYNAMICBASE")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /guard:cf")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /DYNAMICBASE")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /GUARD:CF")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /NXCOMPAT")
+    # statically link against Visual C++ library
+    # (because vc_redist distributing is insanity, and this "just works")
+    foreach(flag_var CMAKE_C_FLAGS CMAKE_C_FLAGS_DEBUG CMAKE_C_FLAGS_RELEASE
+            CMAKE_C_FLAGS_MINSIZEREL CMAKE_C_FLAGS_RELWITHDEBINFO)
+       if(${flag_var} MATCHES "/MD")
+          string(REGEX REPLACE "/MD" "/MT" ${flag_var} "${${flag_var}}")
+       endif(${flag_var} MATCHES "/MD")
+    endforeach(flag_var)
+else()
+    message(FATAL_ERROR "compiler not detected...")
+endif()
+
 # Add -DFILE_BASENAME="logname" to the compile options for a source file.
 function(define_file_logname_for_source orig_sourcefile final_sourcefile)
     get_filename_component(projpath "${PROJECT_SOURCE_DIR}" ABSOLUTE)
@@ -415,114 +520,27 @@ if("${BUILD_TESTS}")
 
 endif()
 
-# compiler-specific flags
+
+# compiler- and target-specific flag adjustments
 if("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU")
     # flags for gcc
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wextra")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wstrict-overflow")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wconversion")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wstrict-prototypes")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wmissing-prototypes")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fstrict-aliasing")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wstrict-aliasing=2")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-missing-field-initializers")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fdiagnostics-color=always")
+
     # libuv needs non-strict aliasing
     # see discussion here: https://github.com/libuv/libuv/issues/1230
     target_compile_options(uv_util_o PRIVATE -fno-strict-aliasing)
     target_compile_options(sm_fetch PRIVATE -fno-strict-aliasing)
     target_compile_options(sm_serve PRIVATE -fno-strict-aliasing)
-    # add some compiler hardening flags
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wformat -Wformat-security -Werror=format-security")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fstack-protector-strong")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fPIE -fPIC")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O2 -D_FORTIFY_SOURCE=2")
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -pie")
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -z relro")
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -z now")
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -z noexecstack")
-    # this just gets ignored
-    # set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -z noexecheap")
-    # for debug builds
-    # set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=address")
 
 elseif("${CMAKE_C_COMPILER_ID}" MATCHES "Clang")
     # flags common to "AppleClang" and "Clang"
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fdiagnostics-color=always")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Weverything")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-padded")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-gnu-zero-variadic-macro-arguments")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-reserved-id-macro")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-unused-macros")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-double-promotion")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-missing-noreturn")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-missing-field-initializers")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-unused-command-line-argument")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-overlength-strings")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-shadow")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fstrict-aliasing")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O2")
-    # libuv needs non-strict aliasing
-    # see discussion here: https://github.com/libuv/libuv/issues/1230
+
     target_compile_options(uv_util_o PRIVATE -fno-strict-aliasing)
-    # add some compiler hardening flags
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wformat -Wformat-security -Werror=format-security")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -D_FORTIFY_SOURCE")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fstack-protector-strong")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fPIE")
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -pie")
-    if("${CMAKE_C_COMPILER_ID}" STREQUAL "Clang")
-        # clang options not apparently supported on AppleClang:
-        set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,-z,relro")
-        set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,-z,now")
-        # control flow integrity
-        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=cfi")
-        # test for integer overflow
-        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=integer")
-        # stack-based buffer overrun protection
-        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=safe-stack")
-        # address sanitizer (behaves a bit like valgrind):
-        # set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=address -fno-omit-frame-pointer")
-    endif()
+    target_compile_options(sm_fetch PRIVATE -fno-strict-aliasing)
+    target_compile_options(sm_serve PRIVATE -fno-strict-aliasing)
+
 elseif("${CMAKE_C_COMPILER_ID}" STREQUAL "MSVC")
     # flags for MVSC (VS 2017)
-    # see https://docs.microsoft.com/en-us/cpp/error-messages/compiler-warnings
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /Wall")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /wd4221") # ANSI compliance
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /wd4204") # ANSI compliance
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /wd4820") # byte padded structs
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /wd4668") # unknown macro in #if()
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /wd4996") # _CRT_SECURE warnings
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /wd5045") # Spectre mitigation
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /wd4706") # setting value in if() expr
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /wd4710") # function didn't get inlined
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /wd4711") # function got auto-inlined
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /wd4127") # if() tests a constant value
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /wd4738") # float stored in mem not reg
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /wd4738") # float stored in mem not reg
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /wd4456") # local vars shadow prev vars
-    # These "unsafe" functions are just standard C functions
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /D_CRT_SECURE_NO_WARNINGS")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /O2")
-    # add some compiler hardening flags
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /sdl")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /GS")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /DYNAMICBASE")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /guard:cf")
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /DYNAMICBASE")
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /GUARD:CF")
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /NXCOMPAT")
-    # statically link against Visual C++ library
-    # (because vc_redist distributing is insanity, and this "just works")
-    foreach(flag_var CMAKE_C_FLAGS CMAKE_C_FLAGS_DEBUG CMAKE_C_FLAGS_RELEASE
-            CMAKE_C_FLAGS_MINSIZEREL CMAKE_C_FLAGS_RELWITHDEBINFO)
-       if(${flag_var} MATCHES "/MD")
-          string(REGEX REPLACE "/MD" "/MT" ${flag_var} "${${flag_var}}")
-       endif(${flag_var} MATCHES "/MD")
-    endforeach(flag_var)
-else()
-    message(WARNING "compiler not detected...")
+
 endif()
 
 

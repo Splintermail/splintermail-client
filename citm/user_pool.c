@@ -1,7 +1,7 @@
 #include "citm.h"
 
 // part of user_cb_i
-void user_pool_user_dying(user_cb_i *cb, user_t *caller, derr_t error){
+static void user_pool_user_dying(user_cb_i *cb, user_t *caller, derr_t error){
     user_t *user = caller;
     user_pool_t *user_pool = CONTAINER_OF(cb, user_pool_t, user_cb);
 
@@ -28,7 +28,7 @@ void user_pool_user_dying(user_cb_i *cb, user_t *caller, derr_t error){
     ref_dn(&user_pool->refs);
 }
 
-derr_t user_pool_sf_pair_set_owner(sf_pair_cb_i *cb, sf_pair_t *sf_pair,
+static derr_t user_pool_sf_pair_set_owner(sf_pair_cb_i *cb, sf_pair_t *sf_pair,
             const dstr_t *name, const dstr_t *pass, void **owner){
     derr_t e = E_OK;
 
@@ -71,9 +71,10 @@ unlock:
 }
 
 
-void user_pool_sf_pair_dying(sf_pair_cb_i *cb, sf_pair_t *sf_pair,
+static void user_pool_sf_pair_dying(sf_pair_cb_i *cb, sf_pair_t *sf_pair,
         derr_t error){
-    user_pool_t *user_pool = CONTAINER_OF(cb, user_pool_t, sf_pair_cb);
+    (void)cb;
+    (void)sf_pair;
 
     // always just print the error
     if(is_error(error)){
@@ -84,7 +85,7 @@ void user_pool_sf_pair_dying(sf_pair_cb_i *cb, sf_pair_t *sf_pair,
     }
 }
 
-void user_pool_sf_pair_release(sf_pair_cb_i *cb, sf_pair_t *sf_pair){
+static void user_pool_sf_pair_release(sf_pair_cb_i *cb, sf_pair_t *sf_pair){
     user_pool_t *user_pool = CONTAINER_OF(cb, user_pool_t, sf_pair_cb);
 
     user_t *user_to_close = NULL;
@@ -125,7 +126,7 @@ void user_pool_sf_pair_release(sf_pair_cb_i *cb, sf_pair_t *sf_pair){
 
 
 // user_pool_finalize does not free the user_pool, it just sends a quit_ev
-void user_pool_finalize(refs_t *refs){
+static void user_pool_finalize(refs_t *refs){
     user_pool_t *user_pool = CONTAINER_OF(refs, user_pool_t, refs);
 
     user_pool->quit_ev->ev_type = EV_QUIT_UP;
@@ -136,8 +137,6 @@ void user_pool_finalize(refs_t *refs){
 
 static void user_pool_pass_event(struct engine_t *engine, event_t *ev){
     user_pool_t *user_pool = CONTAINER_OF(engine, user_pool_t, engine);
-
-    imap_event_t *imap_ev;
 
     switch(ev->ev_type){
         case EV_QUIT_DOWN:

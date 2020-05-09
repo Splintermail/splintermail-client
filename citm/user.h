@@ -9,8 +9,9 @@ struct user_cb_i {
 
 struct user_t {
     user_cb_i *cb;
-    // the login username
+    // the login creds
     dstr_t name;
+    dstr_t pass;
     hash_elem_t h;  // user_pool_t->users
     // the root of the user's maildir
     string_builder_t path;
