@@ -621,7 +621,8 @@ static derr_t send_fetch_resp(dn_t *dn, const ie_fetch_cmd_t *fetch,
     // build a fetch response
     ie_fetch_resp_t *f = ie_fetch_resp_new(&e);
 
-    f = ie_fetch_resp_num(&e, f, fetch->uid_mode ? uid : seq_num);
+    // the num is always a sequence number, even in case of a UID FETCH
+    f = ie_fetch_resp_num(&e, f, seq_num);
 
     if(fetch->attr->envelope) ORIG_GO(&e, E_INTERNAL, "not implemented", fail);
 
@@ -646,7 +647,8 @@ static derr_t send_fetch_resp(dn_t *dn, const ie_fetch_cmd_t *fetch,
         f = ie_fetch_resp_intdate(&e, f, view->base->internaldate);
     }
 
-    if(fetch->attr->uid){
+    // UID is implcitly requested by all UID_FETCH commands
+    if(fetch->attr->uid || fetch->uid_mode){
         f = ie_fetch_resp_uid(&e, f, uid);
     }
 

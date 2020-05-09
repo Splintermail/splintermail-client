@@ -442,10 +442,11 @@ typedef struct {
 // FETCH responses
 
 typedef struct {
-    // num is either a seq num or a uid, depending on the command
+    // num always a seq number, even in the case of a UID FETCH
     unsigned int num;
     ie_fflags_t *flags;
-    // uid is for response to e.g. `FETCH 1 UID`
+    /* uid is for response to e.g. `FETCH 1 UID`, and is implicitly requested
+       by any UID FETCH command */
     unsigned int uid;
     imap_time_t intdate;
     ie_dstr_t *content;
