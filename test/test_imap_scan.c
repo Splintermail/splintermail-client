@@ -24,25 +24,17 @@
     if(exp_error == E_NONE && exp_more != more){ \
         TRACE(&e, "unexpected *more value: expected %x, got %x\n", \
                 FU(exp_more), FU(more)); \
-        /* write either the scannable or the the last token + scannable */ \
+        /* write the last token + scannable */ \
         dstr_t scannable = get_scannable(&scanner); \
-        if(exp_error == E_NONE){ \
-            TRACE(&e, "on input: '%x'\n", FD(&scannable));  \
-        }else{ \
-            TRACE(&e, "on input: '%x%x'\n", FD(&token), FD(&scannable));  \
-        } \
+        TRACE(&e, "on input: '%x%x'\n", FD(&token), FD(&scannable));  \
         ORIG_GO(&e, E_VALUE, "unexpected *more", cu_scanner); \
     } \
     if(exp_error == E_NONE && exp_more == false && exp_type != type){ \
         TRACE(&e, "unexpected token type: expected %x, got %x\n", \
                 FI(exp_type), FI(type)); \
-        /* write either the scannable or the the last token + scannable */ \
+        /* write the last token + scannable */ \
         dstr_t scannable = get_scannable(&scanner); \
-        if(exp_error == E_NONE){ \
-            TRACE(&e, "on input: '%x'\n", FD(&scannable));  \
-        }else{ \
-            TRACE(&e, "on input: '%x%x'\n", FD(&token), FD(&scannable));  \
-        } \
+        TRACE(&e, "on input: '%x%x'\n", FD(&token), FD(&scannable));  \
         ORIG_GO(&e, E_VALUE, "unexpected token type", cu_scanner); \
     } \
 }
@@ -52,8 +44,6 @@ static derr_t test_imap_scan(void){
 
     imap_scanner_t scanner;
     PROP(&e, imap_scanner_init(&scanner) );
-
-    // TODO: re-write test when there is a full scanner API
 
     dstr_t token;
     int type;

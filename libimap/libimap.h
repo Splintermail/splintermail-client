@@ -10,4 +10,6 @@
 #include "read.h"
 #include "write.h"
 
+#include "imf.h"
+
 #endif // LIBIMAP_H

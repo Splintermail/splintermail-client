@@ -4,7 +4,7 @@ typedef union {
 } imap_parser_cb_t;
 
 typedef struct imap_parser_t {
-    void *yyps;
+    void *imapyyps;
     // for callbacks
     imap_parser_cb_t cb;
     void *cb_data;
@@ -16,9 +16,6 @@ typedef struct imap_parser_t {
     scan_mode_t scan_mode;
     // the mode before the start of a qstring
     scan_mode_t preqstr_mode;
-    // // for building status_type calls
-    // status_type_t status_type;
-    // status_code_t status_code;
     // the current token as a dstr_t, used in some cases by the parser
     const dstr_t *token;
     // should we keep the next thing we run across?
@@ -29,7 +26,7 @@ typedef struct imap_parser_t {
     extensions_t *exts;
 } imap_parser_t;
 
-void yyerror(imap_parser_t *parser, char const *s);
+void imapyyerror(imap_parser_t *parser, char const *s);
 
 derr_t imap_parser_init(imap_parser_t *parser, imap_scanner_t *scanner,
                         extensions_t *exts, imap_parser_cb_t cb,

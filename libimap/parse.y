@@ -2,7 +2,7 @@
     #include <stdio.h>
     #include <libimap/libimap.h>
 
-    #define YYTOKENTYPE // imap_scan_token_type_t
+    #define IMAPYYTOKENTYPE // imap_scan_token_type_t
 
     #define MODE(m) p->scan_mode = SCAN_MODE_ ## m
 
@@ -23,7 +23,7 @@
         /* an error here is a proper syntax error */ \
         if(is_error(e)){ \
             DROP_VAR(&e); \
-            yyerror(p, "invalid number"); \
+            imapyyerror(p, "invalid number"); \
             YYERROR; \
         } \
         /* put scanner in literal mode */ \
@@ -36,7 +36,7 @@
         /* an error here is a proper syntax error */ \
         if(is_error(e)){ \
             DROP_VAR(&e); \
-            yyerror(p, "invalid number"); \
+            imapyyerror(p, "invalid number"); \
             YYERROR; \
         } \
         (out) = num; \
@@ -45,7 +45,7 @@
     #define PARSE_NZNUM(out){ \
         PARSE_NUM(out); \
         if((out) == 0){ \
-            yyerror(p, "invalid number (zero)"); \
+            imapyyerror(p, "invalid number (zero)"); \
             YYERROR; \
         } \
     }
@@ -56,12 +56,12 @@
         /* an error here is a proper syntax error */ \
         if(is_error(e)){ \
             DROP_VAR(&e); \
-            yyerror(p, "invalid number"); \
+            imapyyerror(p, "invalid number"); \
             YYERROR; \
         } \
         /* 63-bit number; maximum value is 2^63 - 1 */ \
         if((num) > 9223372036854775807UL){ \
-            yyerror(p, "invalid number (too big)"); \
+            imapyyerror(p, "invalid number (too big)"); \
             YYERROR; \
         } \
         (out) = num; \
@@ -70,7 +70,7 @@
     #define PARSE_NZMODSEQNUM(out){ \
         PARSE_MODSEQNUM(out); \
         if((out) == 0){ \
-            yyerror(p, "invalid number (zero)"); \
+            imapyyerror(p, "invalid number (zero)"); \
             YYERROR; \
         } \
     }
@@ -88,7 +88,7 @@
                 /* it's a syntax error to have multiple selectability flags */ \
                 ie_mflags_free(mf); \
                 (out) = NULL; \
-                yyerror(p, "multiple selectability flags"); \
+                imapyyerror(p, "multiple selectability flags"); \
                 YYERROR; \
             }else{ \
                 mf->selectable = selectability; \
@@ -104,6 +104,8 @@
 
 %}
 
+/* use a different prefix, to not overlap with the imf parser's prefix */
+%define api.prefix {imapyy}
 /* this defines the type of yylval, which is the semantic value of a token */
 %define api.value.type {imap_expr_t}
 /* reentrant */

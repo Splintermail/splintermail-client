@@ -311,6 +311,8 @@ set(TEST_EXE_TGTS
     test_link
     test_maildir_name
     test_imap_expression
+    test_imf_scan
+    test_imf_parse
 )
 
 # objects become OBJECT libraries, but are accessed through INTERFACE libraries
@@ -491,6 +493,8 @@ if("${BUILD_TESTS}")
     # target_link_libraries(test_link)
     target_link_libraries(test_maildir_name imaildir)
     target_link_libraries(test_imap_expression imap)
+    target_link_libraries(test_imf_scan imap)
+    target_link_libraries(test_imf_parse imap)
 
     if(WIN32)
         # make sure the user provided the location of Pthreads

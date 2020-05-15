@@ -247,6 +247,12 @@ fail:
     return NULL;
 }
 
+bool ie_dstr_eq(const ie_dstr_t *a, const ie_dstr_t *b){
+    IE_EQ_PTR_CHECK(a, b);
+    return dstr_cmp(&a->dstr, &b->dstr) == 0
+        && ie_dstr_eq(a->next, b->next);
+}
+
 ie_dstr_t *ie_dstr_new_from_fd(derr_t *e, int fd){
     if(is_error(*e)) goto fail;
 

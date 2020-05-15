@@ -6,10 +6,32 @@
     } \
     *var_ = (type_){0}
 
+#define IE_EQ_PTR_CHECK(a, b) \
+    if(a == b) return true; \
+    if(!a || !b) return false
+
+// functional API for passing a parameter and erasing its original location
+#define DEF_STEAL_STRUCT(type) \
+    static inline type steal_##type(type *old){ \
+        type temp = *old; \
+        *old = (type){0}; \
+        return temp; \
+    }
+
+#define DEF_STEAL_PTR(type) \
+    static inline type *steal_##type(type **old){ \
+        type *temp = *old; \
+        *old = NULL; \
+        return temp; \
+    }
+
+#define STEAL(type, ptr) steal_##type(ptr)
+
 typedef struct ie_dstr_t {
     dstr_t dstr;
     struct ie_dstr_t *next;
 } ie_dstr_t;
+DEF_STEAL_PTR(ie_dstr_t);
 
 typedef struct {
     bool inbox;
@@ -764,7 +786,7 @@ ie_dstr_t *ie_dstr_new_empty(derr_t *e);
 // the content of the token is taken directly from the parser_t
 // also, parser->keep is read by ie_dstr_new, and nothing is allocated if !keep
 ie_dstr_t *ie_dstr_new(derr_t *e, const dstr_t *token, keep_type_t type);
-// append  to the string, not the linked list
+// append to the string, not the linked list
 ie_dstr_t *ie_dstr_append(derr_t *e, ie_dstr_t *d, const dstr_t *token,
         keep_type_t type);
 // append to the linked list, not the string
@@ -773,6 +795,7 @@ void ie_dstr_free(ie_dstr_t *d);
 // free everything but the dstr_t
 void ie_dstr_free_shell(ie_dstr_t *d);
 ie_dstr_t *ie_dstr_copy(derr_t *e, const ie_dstr_t *d);
+bool ie_dstr_eq(const ie_dstr_t *a, const ie_dstr_t *b);
 
 // read an entire file into a dstr
 // TODO: don't read entire files into memory
