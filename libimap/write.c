@@ -1,5 +1,11 @@
 #include "libimap.h"
 
+// convenience macros for shorter lines
+#define STATIC_SKIP_FILL(_in) \
+    PROP(&e, raw_skip_fill(sf, &DSTR_LIT(_in)) )
+
+#define LEAD_SP if(sp){ STATIC_SKIP_FILL(" "); }else sp = true
+
 // the state of a run of skip_fills.
 typedef struct {
     dstr_t *out;
@@ -159,7 +165,6 @@ typedef enum {
     IW_LITERAL,
     IW_QUOTED,
     IW_RAW,
-    IW_NIL,
 } iw_string_type_t;
 
 static iw_string_type_t classify_astring(const dstr_t *val){
@@ -262,6 +267,16 @@ static derr_t string_skip_fill(skip_fill_t *sf, const dstr_t *in){
     return e;
 }
 
+static derr_t nstring_skip_fill(skip_fill_t *sf, const ie_dstr_t *in){
+    derr_t e = E_OK;
+    if(!in){
+        STATIC_SKIP_FILL("NIL");
+    }else{
+        PROP(&e, string_skip_fill(sf, &in->dstr) );
+    }
+    return e;
+}
+
 static derr_t tag_skip_fill(skip_fill_t *sf, const dstr_t *in){
     derr_t e = E_OK;
     for(size_t i = 0; i < in->len; i++){
@@ -321,11 +336,7 @@ static derr_t atom_skip_fill(skip_fill_t *sf, const dstr_t *in){
     return e;
 }
 
-// convenience macros for shorter lines
-#define STATIC_SKIP_FILL(_in) \
-    PROP(&e, raw_skip_fill(sf, &DSTR_LIT(_in)) )
-
-#define LEAD_SP if(sp){ STATIC_SKIP_FILL(" "); }else sp = true
+//
 
 static derr_t status_cmd_skip_fill(skip_fill_t *sf,
         const ie_status_cmd_t *status){
@@ -507,6 +518,7 @@ static derr_t fflags_skip_fill(skip_fill_t *sf, ie_fflags_t *fflags){
     if(fflags->deleted){  LEAD_SP; STATIC_SKIP_FILL("\\Deleted");  }
     if(fflags->seen){     LEAD_SP; STATIC_SKIP_FILL("\\Seen");     }
     if(fflags->draft){    LEAD_SP; STATIC_SKIP_FILL("\\Draft");    }
+    if(fflags->recent){   LEAD_SP; STATIC_SKIP_FILL("\\Recent");   }
     for(ie_dstr_t *d = fflags->keywords; d != NULL; d = d->next){
         LEAD_SP;
         PROP(&e, atom_skip_fill(sf, &d->dstr) );
@@ -1483,6 +1495,78 @@ static derr_t search_resp_skip_fill(skip_fill_t *sf, ie_search_resp_t *search){
     STATIC_SKIP_FILL(")");
     return e;
 }
+/*
+    typedef struct ie_fetch_resp_extra_t {
+        // section, or the part in the "[]", NULL if not present
+        ie_sect_t *sect;
+        // the <p1> from the <p1.p2> partial of the request
+        ie_nums_t *offset;
+        // TODO: support BODYSTRUCTURE response
+        ie_dstr_t *content;
+        struct ie_fetch_resp_extra_t *next;
+    } ie_fetch_resp_extra_t;
+*/
+
+static derr_t fetch_resp_extra_skip_fill(skip_fill_t *sf,
+        ie_fetch_resp_extra_t *extra){
+    derr_t e = E_OK;
+    STATIC_SKIP_FILL("BODY[");
+    if(extra->sect){
+        // section-part
+        ie_sect_part_t *sect_part = extra->sect->sect_part;
+        for( ; sect_part; sect_part = sect_part->next){
+            PROP(&e, nznum_skip_fill(sf, sect_part->n));
+            if(sect_part->next){
+                STATIC_SKIP_FILL(".");
+            }
+        }
+        // section-msgtext or section-text
+        if(extra->sect->sect_txt){
+            ie_dstr_t *d;
+            if(extra->sect->sect_part){
+                STATIC_SKIP_FILL(".");
+            }
+            switch(extra->sect->sect_txt->type){
+                case IE_SECT_MIME:
+                    STATIC_SKIP_FILL("MIME");
+                    break;
+                case IE_SECT_TEXT:
+                    STATIC_SKIP_FILL("TEXT");
+                    break;
+                case IE_SECT_HEADER:
+                    STATIC_SKIP_FILL("HEADER");
+                    break;
+                case IE_SECT_HDR_FLDS:
+                    STATIC_SKIP_FILL("HEADER.FIELDS (");
+                    d = extra->sect->sect_txt->headers;
+                    for( ; d != NULL; d = d->next){
+                        PROP(&e, astring_skip_fill(sf, &d->dstr) );
+                        if(d->next) STATIC_SKIP_FILL(" ");
+                    }
+                    STATIC_SKIP_FILL(")");
+                    break;
+                case IE_SECT_HDR_FLDS_NOT:
+                    STATIC_SKIP_FILL("HEADER.FIELDS.NOT (");
+                    d = extra->sect->sect_txt->headers;
+                    for( ; d != NULL; d = d->next){
+                        PROP(&e, astring_skip_fill(sf, &d->dstr) );
+                        if(d->next) STATIC_SKIP_FILL(" ");
+                    }
+                    STATIC_SKIP_FILL(")");
+                    break;
+            }
+        }
+    }
+    STATIC_SKIP_FILL("]");
+    if(extra->offset){
+        STATIC_SKIP_FILL("<");
+        PROP(&e, num_skip_fill(sf, extra->offset->num) );
+        STATIC_SKIP_FILL(">");
+    }
+    STATIC_SKIP_FILL(" ");
+    PROP(&e, nstring_skip_fill(sf, extra->content) );
+    return e;
+}
 
 static derr_t fetch_resp_skip_fill(skip_fill_t *sf, ie_fetch_resp_t *fetch){
     derr_t e = E_OK;
@@ -1516,6 +1600,11 @@ static derr_t fetch_resp_skip_fill(skip_fill_t *sf, ie_fetch_resp_t *fetch){
         STATIC_SKIP_FILL("MODSEQ (");
         PROP(&e, nzmodseqnum_skip_fill(sf, fetch->modseq) );
         STATIC_SKIP_FILL(")");
+    }
+    ie_fetch_resp_extra_t *extra = fetch->extras;
+    for( ; extra; extra = extra->next){
+        LEAD_SP;
+        PROP(&e, fetch_resp_extra_skip_fill(sf, extra) );
     }
     STATIC_SKIP_FILL(")");
     return e;

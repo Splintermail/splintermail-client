@@ -253,6 +253,13 @@ bool ie_dstr_eq(const ie_dstr_t *a, const ie_dstr_t *b){
         && ie_dstr_eq(a->next, b->next);
 }
 
+dstr_t ie_dstr_sub(const ie_dstr_t* d, size_t start, size_t end){
+    if(!d) return (dstr_t){0};
+    // don't support the shitty end semantics of common.h
+    if(end == 0) return (dstr_t){0};
+    return dstr_sub(&d->dstr, start, end);
+}
+
 ie_dstr_t *ie_dstr_new_from_fd(derr_t *e, int fd){
     if(is_error(*e)) goto fail;
 
@@ -1652,6 +1659,33 @@ ie_status_attr_resp_t ie_status_attr_resp_add(ie_status_attr_resp_t resp,
 
 // FETCH responses
 
+ie_fetch_resp_extra_t *ie_fetch_resp_extra_new(derr_t *e, ie_sect_t *sect,
+        ie_nums_t *offset, ie_dstr_t *content){
+    if(is_error(*e)) goto fail;
+
+    IE_MALLOC(e, ie_fetch_resp_extra_t, extra, fail);
+    extra->sect = sect;
+    extra->offset = offset;
+    extra->content = content;
+
+    return extra;
+
+fail:
+    ie_sect_free(sect);
+    ie_nums_free(offset);
+    ie_dstr_free(content);
+    return NULL;
+}
+
+void ie_fetch_resp_extra_free(ie_fetch_resp_extra_t *extra){
+    if(!extra) return;
+    ie_fetch_resp_extra_free(extra->next);
+    ie_sect_free(extra->sect);
+    ie_nums_free(extra->offset);
+    ie_dstr_free(extra->content);
+    free(extra);
+}
+
 ie_fetch_resp_t *ie_fetch_resp_new(derr_t *e){
     if(is_error(*e)) goto fail;
 
@@ -1667,6 +1701,7 @@ void ie_fetch_resp_free(ie_fetch_resp_t *f){
     if(!f) return;
     ie_fflags_free(f->flags);
     ie_dstr_free(f->content);
+    ie_fetch_resp_extra_free(f->extras);
     free(f);
 }
 
@@ -1759,6 +1794,22 @@ ie_fetch_resp_t *ie_fetch_resp_modseq(derr_t *e, ie_fetch_resp_t *f,
 
 fail:
     ie_fetch_resp_free(f);
+    return NULL;
+}
+
+ie_fetch_resp_t *ie_fetch_resp_add_extra(derr_t *e, ie_fetch_resp_t *f,
+        ie_fetch_resp_extra_t *extra){
+    if(is_error(*e)) goto fail;
+
+    ie_fetch_resp_extra_t **last = &f->extras;
+    while(*last != NULL) last = &(*last)->next;
+    *last = extra;
+
+    return f;
+
+fail:
+    ie_fetch_resp_free(f);
+    ie_fetch_resp_extra_free(extra);
     return NULL;
 }
 

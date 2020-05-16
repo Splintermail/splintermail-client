@@ -274,6 +274,85 @@ static derr_t test_imap_writer(void){
                     {0}
                 },
             },
+            {
+                .resp=imap_resp_new(&e, IMAP_RESP_FETCH,
+                    (imap_resp_arg_t){
+                        .fetch=ie_fetch_resp_add_extra(&e,
+                            ie_fetch_resp_modseq(&e,
+                                ie_fetch_resp_flags(&e,
+                                    ie_fetch_resp_intdate(&e,
+                                        ie_fetch_resp_uid(&e,
+                                            ie_fetch_resp_num(&e,
+                                                ie_fetch_resp_new(&e),
+                                                5
+                                            ),
+                                            8
+                                        ),
+                                        (imap_time_t){
+                                            .year=2020,
+                                            .month=5,
+                                            .day=16
+                                        }
+                                    ),
+                                    ie_fflags_add_simple(&e,
+                                        ie_fflags_new(&e),
+                                        IE_FFLAG_RECENT
+                                    )
+                                ),
+                                100200300
+                            ),
+                            ie_fetch_resp_extra_new(&e,
+                                ie_sect_new(&e,
+                                    NULL,
+                                    ie_sect_txt_new(&e,
+                                        IE_SECT_HDR_FLDS,
+                                        ie_dstr_add(&e,
+                                            IE_DSTR("From"),
+                                            IE_DSTR("To")
+                                        )
+                                    )
+                                ),
+                                ie_nums_new(&e, 6),
+                                IE_DSTR("asdf\r\nTo: asdf\r\n\r\n")
+                            )
+                        ),
+                    }
+                ),
+                .out=(size_chunk_out_t[]){
+                    {1024, "* 5 FETCH ("
+                           "FLAGS (\\Recent) "
+                           "UID 8 "
+                           "INTERNALDATE \"16-May-2020 00:00:00 +0000\" "
+                           "MODSEQ (100200300) "
+                           "BODY[HEADER.FIELDS (From To)]<6> {18}\r\n"
+                               "asdf\r\nTo: asdf\r\n\r\n"
+                           ")\r\n"},
+                    {0}
+                },
+            },
+            {
+                .resp=imap_resp_new(&e, IMAP_RESP_FETCH,
+                    (imap_resp_arg_t){
+                        .fetch=ie_fetch_resp_add_extra(&e,
+                            ie_fetch_resp_num(&e,
+                                ie_fetch_resp_new(&e),
+                                5
+                            ),
+                            ie_fetch_resp_extra_new(&e,
+                                NULL,
+                                ie_nums_new(&e, 6),
+                                IE_DSTR("asdf\r\nTo: asdf\r\n\r\nbody\r\n")
+                            )
+                        ),
+                    }
+                ),
+                .out=(size_chunk_out_t[]){
+                    {1024, "* 5 FETCH (BODY[]<6> {24}\r\n"
+                               "asdf\r\nTo: asdf\r\n\r\nbody\r\n"
+                           ")\r\n"},
+                    {0}
+                },
+            },
         };
         CHECK(&e);
         PROP(&e, do_writer_test_multi(cases, sizeof(cases)/sizeof(*cases)) );

@@ -463,6 +463,16 @@ typedef struct {
 
 // FETCH responses
 
+typedef struct ie_fetch_resp_extra_t {
+    // section, or the part in the "[]", NULL if not present
+    ie_sect_t *sect;
+    // the <p1> from the <p1.p2> partial of the request
+    ie_nums_t *offset;
+    // TODO: support BODYSTRUCTURE response
+    ie_dstr_t *content;
+    struct ie_fetch_resp_extra_t *next;
+} ie_fetch_resp_extra_t;
+
 typedef struct {
     // num always a seq number, even in the case of a UID FETCH
     unsigned int num;
@@ -473,6 +483,7 @@ typedef struct {
     imap_time_t intdate;
     ie_dstr_t *content;
     unsigned long modseq;
+    ie_fetch_resp_extra_t *extras;
 } ie_fetch_resp_t;
 
 // full command types
@@ -796,6 +807,8 @@ void ie_dstr_free(ie_dstr_t *d);
 void ie_dstr_free_shell(ie_dstr_t *d);
 ie_dstr_t *ie_dstr_copy(derr_t *e, const ie_dstr_t *d);
 bool ie_dstr_eq(const ie_dstr_t *a, const ie_dstr_t *b);
+// get a substring of the content
+dstr_t ie_dstr_sub(const ie_dstr_t* d, size_t start, size_t end);
 
 // read an entire file into a dstr
 // TODO: don't read entire files into memory
@@ -970,6 +983,10 @@ ie_status_attr_resp_t ie_status_attr_resp_add(ie_status_attr_resp_t resp,
 
 // FETCH responses
 
+ie_fetch_resp_extra_t *ie_fetch_resp_extra_new(derr_t *e, ie_sect_t *sect,
+        ie_nums_t *offset, ie_dstr_t *content);
+void ie_fetch_resp_extra_free(ie_fetch_resp_extra_t *extra);
+
 ie_fetch_resp_t *ie_fetch_resp_new(derr_t *e);
 void ie_fetch_resp_free(ie_fetch_resp_t *f);
 
@@ -985,6 +1002,8 @@ ie_fetch_resp_t *ie_fetch_resp_content(derr_t *e, ie_fetch_resp_t *f,
         ie_dstr_t *content);
 ie_fetch_resp_t *ie_fetch_resp_modseq(derr_t *e, ie_fetch_resp_t *f,
         unsigned long modseq);
+ie_fetch_resp_t *ie_fetch_resp_add_extra(derr_t *e, ie_fetch_resp_t *f,
+        ie_fetch_resp_extra_t *extra);
 
 // full commands
 
