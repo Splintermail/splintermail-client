@@ -55,6 +55,27 @@ static derr_t test_dstr_cmp(void){
     return e;
 }
 
+static derr_t test_dstr_icmp(void){
+    derr_t e = E_OK;
+    LOG_INFO("----- test dstr_icmp --------------------\n");
+    DSTR_STATIC(a, "aBc");
+    DSTR_STATIC(b, "abc");
+    DSTR_STATIC(c, "a!c");
+    if(dstr_cmp(&a, &b) == 0){
+        TRACE(&e, "case-sensitive cmp failed\n");
+        ORIG(&e, E_VALUE, "FAIL");
+    }
+    if(dstr_icmp(&a, &b) != 0){
+        TRACE(&e, "case-insensitive cmp failed\n");
+        ORIG(&e, E_VALUE, "FAIL");
+    }
+    if(dstr_cmp(&a, &c) != dstr_icmp(&b, &c)){
+        TRACE(&e, "case-insensitive cmp returned wrong value\n");
+        ORIG(&e, E_VALUE, "FAIL");
+    }
+    return e;
+}
+
 static derr_t test_dstr_grow(void){
     derr_t e = E_OK;
     LOG_INFO("----- test dstr_grow --------------------\n");
@@ -595,6 +616,7 @@ int main(int argc, char** argv){
     PARSE_TEST_OPTIONS(argc, argv, NULL, LOG_LVL_WARN);
 
     PROP_GO(&e, test_dstr_cmp(),             test_fail);
+    PROP_GO(&e, test_dstr_icmp(),            test_fail);
     PROP_GO(&e, test_dstr_grow(),            test_fail);
     PROP_GO(&e, test_dstr_sub(),             test_fail);
     PROP_GO(&e, test_dstr_find(),            test_fail);

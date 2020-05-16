@@ -146,6 +146,48 @@ int dstr_cmp(const dstr_t* a, const dstr_t* b){
     return 0;
 }
 
+int dstr_icmp(const dstr_t* a, const dstr_t* b){
+    // two NULL strings are considered matching
+    if(!a->data && !b->data){
+        return 0;
+    }
+    // as are two zero-length strings
+    if(a->len == 0 && b->len == 0){
+        return 0;
+    }
+    // but one NULL and one not are not matching
+    if(!a->data || !b->data){
+        return a->data ? *a->data : *b->data;
+    }
+    // don't read past the end of either string
+    size_t max = MIN(a->len, b->len);
+
+    for(size_t i = 0; i < max; i++){
+        char ca = a->data[i];
+        char cb = b->data[i];
+        if(ca >= 'a' && ca <= 'z') ca = (char)(ca - 32);
+        if(cb >= 'a' && cb <= 'z') cb = (char)(cb - 32);
+        if(ca != cb){
+            return ca - cb;
+        }
+    }
+
+    // one string might be longer than the other
+    if(a->len > b->len){
+        int ca = (int)(a->data[b->len]);
+        if(ca >= 'a' && ca <= 'z') ca = (char)(ca - 32);
+        return ca;
+    }
+    if(b->len > a->len){
+        int cb = (int)(b->data[a->len]);
+        if(cb >= 'a' && cb <= 'z') cb = (char)(cb - 32);
+        return -cb;
+    }
+
+    // strings match
+    return 0;
+}
+
 void dstr_upper(dstr_t* text){
     for(size_t i = 0; i < text->len; i++){
         char c = text->data[i];
@@ -163,7 +205,7 @@ void dstr_lower(dstr_t* text){
         if(c >= 'A' && c <= 'Z'){
             /* because of the range check, this int->signed char cast
                cannot be undefined behavior */
-            text->data[i] = (char)(text->data[i]+ 32);
+            text->data[i] = (char)(text->data[i] + 32);
         }
     }
 }

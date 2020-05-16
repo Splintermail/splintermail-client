@@ -315,6 +315,9 @@ dstr_t dstr_sub(const dstr_t* in, size_t start, size_t end);
 // because there's multiple ways to encode the same accent in UTF8
 int dstr_cmp(const dstr_t* a, const dstr_t* b);
 
+// case-insensitive
+int dstr_icmp(const dstr_t* a, const dstr_t* b);
+
 // Not UTF8-smart at all
 void dstr_upper(dstr_t* text);
 void dstr_lower(dstr_t* text);
