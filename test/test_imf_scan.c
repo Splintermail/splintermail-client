@@ -112,6 +112,11 @@ static derr_t test_imf_scan(void){
     e = imf_scan(&scanner, IMF_SCAN_UNSTRUCT, &token, &type);
     EXPECT(E_NONE, DONE, "");
 
+    // ensure that the token dstr points to just after the end of the buffer
+    if(token.data != imf_msg.data + imf_msg.len){
+        ORIG_GO(&e, E_VALUE, "DONE token not valid", cu_scanner);
+    }
+
 cu_scanner:
     imf_scanner_free(&scanner);
     return e;

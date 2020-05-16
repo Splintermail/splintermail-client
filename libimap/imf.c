@@ -2,19 +2,32 @@
 
 #include <libimap/libimap.h>
 
+
+dstr_t token_extend(dstr_t start, dstr_t end){
+    size_t len = (size_t)(end.data - start.data) + end.len;
+    return (dstr_t){
+        .data = start.data,
+        .len = len,
+        .size = len,
+        .fixed_size = true,
+    };
+}
+
+
 static void imf_hdr_arg_free(imf_hdr_type_e type, imf_hdr_arg_u arg){
     switch(type){
-        case IMF_HDR_UNSTRUCT: ie_dstr_free(arg.unstruct); break;
+        case IMF_HDR_UNSTRUCT: /* nothing to free */ (void)arg; break;
     }
 }
 
 
-imf_hdr_t *imf_hdr_new(derr_t *e, ie_dstr_t *name, imf_hdr_type_e type,
-        imf_hdr_arg_u arg){
+imf_hdr_t *imf_hdr_new(derr_t *e, dstr_t bytes, dstr_t name,
+        imf_hdr_type_e type, imf_hdr_arg_u arg){
     if(is_error(*e)) goto fail;
 
     IE_MALLOC(e, imf_hdr_t, hdr, fail);
 
+    hdr->bytes = bytes;
     hdr->name = name;
     hdr->type = type;
     hdr->arg = arg;
@@ -22,7 +35,6 @@ imf_hdr_t *imf_hdr_new(derr_t *e, ie_dstr_t *name, imf_hdr_type_e type,
     return hdr;
 
 fail:
-    ie_dstr_free(name);
     imf_hdr_arg_free(type, arg);
     return NULL;
 }
@@ -46,39 +58,22 @@ void imf_hdr_free(imf_hdr_t *hdr){
     if(!hdr) return;
     imf_hdr_free(hdr->next);
     imf_hdr_arg_free(hdr->type, hdr->arg);
-    ie_dstr_free(hdr->name);
     free(hdr);
-}
-
-static bool imf_hdr_arg_eq(imf_hdr_type_e type, imf_hdr_arg_u a,
-        imf_hdr_arg_u b){
-    switch(type){
-        case IMF_HDR_UNSTRUCT:
-            return ie_dstr_eq(a.unstruct, b.unstruct);
-            break;
-    }
-    return false;
-}
-
-bool imf_hdr_eq(const imf_hdr_t *a, const imf_hdr_t *b){
-    IE_EQ_PTR_CHECK(a, b);
-    return ie_dstr_eq(a->name, b->name)
-        && a->type == b->type
-        && imf_hdr_arg_eq(a->type, a->arg, b->arg)
-        && imf_hdr_eq(a->next, b->next);
 }
 
 static void imf_body_arg_free(imf_body_type_e type, imf_body_arg_u arg){
     switch(type){
-        case IMF_BODY_UNSTRUCT: ie_dstr_free(arg.unstruct); break;
+        case IMF_BODY_UNSTRUCT: /* nothing to free */ (void)arg; break;
     }
 }
 
-imf_body_t *imf_body_new(derr_t *e, imf_body_type_e type, imf_body_arg_u arg){
+imf_body_t *imf_body_new(derr_t *e, dstr_t bytes, imf_body_type_e type,
+        imf_body_arg_u arg){
     if(is_error(*e)) goto fail;
 
     IE_MALLOC(e, imf_body_t, body, fail);
 
+    body->bytes = bytes;
     body->type = type;
     body->arg = arg;
 
@@ -95,27 +90,14 @@ void imf_body_free(imf_body_t *body){
     free(body);
 }
 
-static bool imf_body_arg_eq(imf_body_type_e type, imf_body_arg_u a,
-        imf_body_arg_u b){
-    switch(type){
-        case IMF_BODY_UNSTRUCT:
-            return ie_dstr_eq(a.unstruct, b.unstruct);
-            break;
-    }
-    return false;
-}
-
-bool imf_body_eq(const imf_body_t *a, const imf_body_t *b){
-    IE_EQ_PTR_CHECK(a, b);
-    return a->type == b->type
-        && imf_body_arg_eq(a->type, a->arg, b->arg);
-}
-
-imf_t *imf_new(derr_t *e, imf_hdr_t *hdr, imf_body_t *body){
+imf_t *imf_new(derr_t *e, dstr_t bytes, dstr_t hdr_bytes, imf_hdr_t *hdr,
+        imf_body_t *body){
     if(is_error(*e)) goto fail;
 
     IE_MALLOC(e, imf_t, imf, fail);
 
+    imf->bytes = bytes;
+    imf->hdr_bytes = hdr_bytes;
     imf->hdr = hdr;
     imf->body = body;
 
@@ -132,12 +114,6 @@ void imf_free(imf_t *imf){
     imf_hdr_free(imf->hdr);
     imf_body_free(imf->body);
     free(imf);
-}
-
-bool imf_eq(const imf_t *a, const imf_t *b){
-    IE_EQ_PTR_CHECK(a, b);
-    return imf_hdr_eq(a->hdr, b->hdr)
-        && imf_body_eq(a->body, b->body);
 }
 
 // scanner
@@ -280,7 +256,8 @@ derr_t imf_scan(imf_scanner_t *scanner, imf_scan_mode_t mode,
 
 // parser
 
-void imfyyerror(imf_parser_t *parser, char const *s){
+void imfyyerror(dstr_t *imfyyloc, imf_parser_t *parser, char const *s){
+    (void)imfyyloc;
     (void)parser;
     printf("ERROR: %s\n", s);
 }
@@ -328,7 +305,8 @@ derr_t imf_parse(const dstr_t *msg, imf_t **out){
                 cu_parser);
 
         parser.token = &token;
-        int yyret = imfyypush_parse(parser.imfyyps, token_type, NULL, &parser);
+        int yyret = imfyypush_parse(parser.imfyyps, token_type, NULL, &token,
+                &parser);
         switch(yyret){
             case 0:
                 // YYACCEPT: parsing completed successfully
@@ -360,4 +338,16 @@ cu_parser:
 cu_scanner:
     imf_scanner_free(&scanner);
     return e;
+}
+
+imf_t *imf_parse_builder(derr_t *e, const ie_dstr_t *msg){
+    if(is_error(*e)) goto fail;
+
+    imf_t *imf;
+    PROP_GO(e, imf_parse(&msg->dstr, &imf), fail);
+
+    return imf;
+
+fail:
+    return NULL;
 }
