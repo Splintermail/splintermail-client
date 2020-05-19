@@ -119,6 +119,9 @@ static void send_cmd(derr_t *e, fetcher_t *fetcher, imap_cmd_t *cmd,
         imap_cmd_cb_t *cb){
     if(is_error(*e)) goto fail;
 
+    cmd = imap_cmd_assert_writable(e, cmd, &fetcher->ctrl.exts);
+    CHECK_GO(e, fail);
+
     // store the callback
     link_list_append(&fetcher->inflight_cmds, &cb->link);
 

@@ -396,6 +396,18 @@ static derr_t test_scanner_and_parser(void){
                 .resp_calls=(int[]){IMAP_RESP_FETCH, -1},
                 .buf=DSTR_LIT("* 15 FETCH (RFC822 \"hello literal!\")\r\n")
             },
+            {
+                .in=DSTR_LIT("* 16 FETCH (UID 983 BODY[] {3}\r\nhi!)\r\n"),
+                .resp_calls=(int[]){IMAP_RESP_FETCH, -1},
+                .buf=DSTR_LIT("* 16 FETCH (UID 983 BODY[] \"hi!\")\r\n")
+            },
+            {
+                .in=DSTR_LIT("* 17 FETCH (INTERNALDATE "
+                             "\"01-May-2020 09:32:24 -0600\")\r\n"),
+                .resp_calls=(int[]){IMAP_RESP_FETCH, -1},
+                .buf=DSTR_LIT("* 17 FETCH (INTERNALDATE "
+                              "\" 1-May-2020 09:32:24 -0600\")\r\n")
+            },
         };
         size_t ncases = sizeof(cases) / sizeof(*cases);
         PROP(&e, do_test_scanner_and_parser(cases, ncases, parser_resp_cb) );

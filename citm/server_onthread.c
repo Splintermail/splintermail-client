@@ -271,6 +271,11 @@ static void send_resp_ex(derr_t *e, server_t *server, imap_resp_t *resp,
         bool final){
     if(is_error(*e)) goto fail;
 
+    // TODO: support extensions better
+    extensions_t exts = {0};
+    resp = imap_resp_assert_writable(e, resp, &exts);
+    CHECK_GO(e, fail);
+
     // create a response event
     imap_event_t *imap_ev;
     PROP_GO(e, imap_event_new_ex(&imap_ev, server, resp, final), fail);

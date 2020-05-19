@@ -47,6 +47,13 @@ derr_t up_new(up_t **out, maildir_conn_up_i *conn, imaildir_t *m){
             .selected = conn_up_selected,
             .unselect = conn_up_unselect,
         },
+        // TODO: read extensions from somewhere else
+        .exts = {
+            .uidplus = EXT_STATE_ON,
+            .enable = EXT_STATE_ON,
+            .condstore = EXT_STATE_ON,
+            .qresync = EXT_STATE_ON,
+        },
     };
 
     PROP_GO(&e, refs_init(&up->refs, 1, up_finalize), fail_malloc);
@@ -165,6 +172,7 @@ static derr_t send_close(up_t *up){
     size_t tag = ++up->tag;
     ie_dstr_t *tag_str = write_tag_up(&e, tag);
     imap_cmd_t *cmd = imap_cmd_new(&e, tag_str, IMAP_CMD_CLOSE, arg);
+    cmd = imap_cmd_assert_writable(&e, cmd, &up->exts);
 
     // build the callback
     up_cb_t *up_cb = up_cb_new(&e, up, tag, close_done, cmd);
@@ -203,7 +211,7 @@ static derr_t fetch_resp(up_t *up, const ie_fetch_resp_t *fetch){
         msg_flags_t flags = msg_flags_from_fetch_flags(fetch->flags);
         PROP(&e, imaildir_up_new_msg(up->m, fetch->uid, flags, &base) );
 
-        if(!fetch->content){
+        if(!fetch->extras){
             PROP(&e, seq_set_builder_add_val(&up->uids_to_download,
                         fetch->uid) );
         }
@@ -213,7 +221,7 @@ static derr_t fetch_resp(up_t *up, const ie_fetch_resp_t *fetch){
         PROP(&e, imaildir_up_update_flags(up->m, base, flags) );
     }
 
-    if(fetch->content){
+    if(fetch->extras){
         PROP(&e, imaildir_up_handle_static_fetch_attr(up->m, base, fetch) );
     }
 
@@ -268,6 +276,7 @@ static derr_t send_expunge(up_t *up){
     size_t tag = ++up->tag;
     ie_dstr_t *tag_str = write_tag_up(&e, tag);
     imap_cmd_t *cmd = imap_cmd_new(&e, tag_str, IMAP_CMD_EXPUNGE, arg);
+    cmd = imap_cmd_assert_writable(&e, cmd, &up->exts);
 
     // build the callback
     up_cb_t *up_cb = up_cb_new(&e, up, tag, expunge_done, cmd);
@@ -318,6 +327,7 @@ static derr_t send_deletions(up_t *up){
     size_t tag = ++up->tag;
     ie_dstr_t *tag_str = write_tag_up(&e, tag);
     imap_cmd_t *cmd = imap_cmd_new(&e, tag_str, IMAP_CMD_STORE, arg);
+    cmd = imap_cmd_assert_writable(&e, cmd, &up->exts);
 
     // build the callback
     up_cb_t *up_cb = up_cb_new(&e, up, tag, deletions_done, cmd);
@@ -352,13 +362,15 @@ static derr_t send_fetch(up_t *up){
     bool uid_mode = true;
     // fetch all the messages we need to download
     ie_seq_set_t *uidseq = seq_set_builder_extract(&e, &up->uids_to_download);
-    // fetch UID, FLAGS, RFC822 content, INTERNALDATE, and MODSEQ
+    // fetch UID, FLAGS, INTERNALDATE, MODSEQ, and BODY[]
     ie_fetch_attrs_t *attr = ie_fetch_attrs_new(&e);
-    ie_fetch_attrs_add_simple(&e, attr, IE_FETCH_ATTR_UID);
-    ie_fetch_attrs_add_simple(&e, attr, IE_FETCH_ATTR_FLAGS);
-    ie_fetch_attrs_add_simple(&e, attr, IE_FETCH_ATTR_RFC822);
-    ie_fetch_attrs_add_simple(&e, attr, IE_FETCH_ATTR_INTDATE);
-    ie_fetch_attrs_add_simple(&e, attr, IE_FETCH_ATTR_MODSEQ);
+    attr = ie_fetch_attrs_add_simple(&e, attr, IE_FETCH_ATTR_UID);
+    attr = ie_fetch_attrs_add_simple(&e, attr, IE_FETCH_ATTR_FLAGS);
+    attr = ie_fetch_attrs_add_simple(&e, attr, IE_FETCH_ATTR_INTDATE);
+    attr = ie_fetch_attrs_add_simple(&e, attr, IE_FETCH_ATTR_MODSEQ);
+    // also fetch the BODY.PEEK[] to not affect \Seen prematurely
+    ie_fetch_extra_t *extra = ie_fetch_extra_new(&e, true, NULL, NULL);
+    attr =  ie_fetch_attrs_add_extra(&e, attr, extra);
 
     // build fetch command
     ie_fetch_cmd_t *fetch = ie_fetch_cmd_new(&e, uid_mode, uidseq, attr, NULL);
@@ -367,6 +379,7 @@ static derr_t send_fetch(up_t *up){
     size_t tag = ++up->tag;
     ie_dstr_t *tag_str = write_tag_up(&e, tag);
     imap_cmd_t *cmd = imap_cmd_new(&e, tag_str, IMAP_CMD_FETCH, arg);
+    cmd = imap_cmd_assert_writable(&e, cmd, &up->exts);
 
     // build the callback
     up_cb_t *up_cb = up_cb_new(&e, up, tag, fetch_done, cmd);
@@ -459,6 +472,7 @@ static derr_t send_initial_search(up_t *up){
     size_t tag = ++up->tag;
     ie_dstr_t *tag_str = write_tag_up(&e, tag);
     imap_cmd_t *cmd = imap_cmd_new(&e, tag_str, IMAP_CMD_SEARCH, arg);
+    cmd = imap_cmd_assert_writable(&e, cmd, &up->exts);
 
     // build the callback
     up_cb_t *up_cb = up_cb_new(&e, up, tag, initial_search_done, cmd);
@@ -578,6 +592,7 @@ derr_t make_select(up_t *up, unsigned int uidvld, unsigned long our_himodseq,
     size_t tag = ++up->tag;
     ie_dstr_t *tag_str = write_tag_up(&e, tag);
     imap_cmd_t *cmd = imap_cmd_new(&e, tag_str, IMAP_CMD_SELECT, arg);
+    cmd = imap_cmd_assert_writable(&e, cmd, &up->exts);
 
     // build the callback
     up_cb_t *up_cb = up_cb_new(&e, up, tag, select_done, cmd);

@@ -31,6 +31,9 @@ typedef struct {
         // an expected FLAGS for every uid to be updated
         jsw_atree_t tree;  // exp_flags_t->node
     } store;
+
+    // TODO: support extensions better
+    extensions_t exts;
 } dn_t;
 DEF_CONTAINER_OF(dn_t, maildir_dn, maildir_dn_i);
 DEF_CONTAINER_OF(dn_t, link, link_t);

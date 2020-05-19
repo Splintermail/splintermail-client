@@ -142,6 +142,7 @@ static derr_t send_st_resp(dn_t *dn, const ie_dstr_t *tag, const dstr_t *msg,
     ie_st_resp_t *st_resp = ie_st_resp_new(&e, tag_copy, status, NULL, text);
     imap_resp_arg_t arg = {.status_type=st_resp};
     imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_STATUS_TYPE, arg);
+    resp = imap_resp_assert_writable(&e, resp, &dn->exts);
     CHECK(&e);
 
     dn->conn->resp(dn->conn, resp);
@@ -184,6 +185,7 @@ static derr_t send_flags_resp(dn_t *dn){
     // flags = ie_flags_add_simple(&e, flags, IE_FLAG_DRAFT);
     imap_resp_arg_t arg = {.flags=flags};
     imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_FLAGS, arg);
+    resp = imap_resp_assert_writable(&e, resp, &dn->exts);
     CHECK(&e);
 
     dn->conn->resp(dn->conn, resp);
@@ -201,6 +203,7 @@ static derr_t send_exists_resp_unsafe(dn_t *dn){
 
     imap_resp_arg_t arg = {.exists=exists};
     imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_EXISTS, arg);
+    resp = imap_resp_assert_writable(&e, resp, &dn->exts);
     CHECK(&e);
 
     dn->conn->resp(dn->conn, resp);
@@ -216,6 +219,7 @@ static derr_t send_recent_resp_unsafe(dn_t *dn){
     unsigned int recent = 0;
     imap_resp_arg_t arg = {.recent=recent};
     imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_RECENT, arg);
+    resp = imap_resp_assert_writable(&e, resp, &dn->exts);
     CHECK(&e);
 
     dn->conn->resp(dn->conn, resp);
@@ -252,6 +256,7 @@ static derr_t send_pflags_resp(dn_t *dn){
     ie_st_resp_t *st_resp = ie_st_resp_new(&e, NULL, IE_ST_OK, code, text);
     imap_resp_arg_t arg = {.status_type=st_resp};
     imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_STATUS_TYPE, arg);
+    resp = imap_resp_assert_writable(&e, resp, &dn->exts);
     CHECK(&e);
 
     dn->conn->resp(dn->conn, resp);
@@ -288,6 +293,7 @@ static derr_t send_uidnext_resp_unsafe(dn_t *dn){
     ie_st_resp_t *st_resp = ie_st_resp_new(&e, NULL, IE_ST_OK, code, text);
     imap_resp_arg_t arg = {.status_type=st_resp};
     imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_STATUS_TYPE, arg);
+    resp = imap_resp_assert_writable(&e, resp, &dn->exts);
     CHECK(&e);
 
     dn->conn->resp(dn->conn, resp);
@@ -308,6 +314,7 @@ static derr_t send_uidvld_resp(dn_t *dn){
     ie_st_resp_t *st_resp = ie_st_resp_new(&e, NULL, IE_ST_OK, code, text);
     imap_resp_arg_t arg = {.status_type=st_resp};
     imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_STATUS_TYPE, arg);
+    resp = imap_resp_assert_writable(&e, resp, &dn->exts);
     CHECK(&e);
 
     dn->conn->resp(dn->conn, resp);
@@ -388,6 +395,7 @@ static derr_t send_search_resp(dn_t *dn, ie_nums_t *nums){
             modseqnum);
     imap_resp_arg_t arg = {.search=search};
     imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_SEARCH, arg);
+    resp = imap_resp_assert_writable(&e, resp, &dn->exts);
     CHECK(&e);
 
     dn->conn->resp(dn->conn, resp);
@@ -605,6 +613,169 @@ fail_dn_store:
 }
 
 
+// a helper struct to lazily load the message body
+typedef struct {
+    imaildir_t *m;
+    unsigned int uid;
+    ie_dstr_t *content;
+    // the first taker gets *content; following takers get a copy
+    bool taken;
+    imf_t *imf;
+} loader_t;
+
+static loader_t loader_prep(imaildir_t *m, unsigned int uid){
+    return (loader_t){ .m = m, .uid = uid };
+}
+
+static void loader_load(derr_t *e, loader_t *loader){
+    if(is_error(*e)) goto fail;
+    if(loader->content) return;
+
+    int fd;
+    PROP_GO(e, imaildir_open_msg(loader->m, loader->uid, &fd), fail);
+    loader->content = ie_dstr_new_from_fd(e, fd);
+    // ignore return value of close on read-only file descriptor
+    imaildir_close_msg(loader->m, loader->uid, &fd);
+
+fail:
+    return;
+}
+
+// get the content but don't take ownership
+static ie_dstr_t *loader_get(derr_t *e, loader_t *loader){
+    if(is_error(*e)) goto fail;
+
+    loader_load(e, loader);
+    return loader->content;
+
+fail:
+    return NULL;
+}
+
+// take ownership of the content (or a copy if the original is spoken for)
+static ie_dstr_t *loader_take(derr_t *e, loader_t *loader){
+    if(is_error(*e)) goto fail;
+
+    loader_load(e, loader);
+    if(loader->taken){
+        return ie_dstr_copy(e, loader->content);
+    }
+
+    loader->taken = true;
+    return loader->content;
+
+fail:
+    return NULL;
+}
+
+// parse the content into an imf_t
+static imf_t *loader_parse(derr_t *e, loader_t *loader){
+    if(is_error(*e)) goto fail;
+    if(loader->imf) return loader->imf;
+
+    loader->imf = imf_parse_builder(e, loader_get(e, loader));
+    return loader->imf;
+
+fail:
+    return NULL;
+}
+
+static void loader_free(loader_t *loader){
+    imf_free(loader->imf);
+    loader->imf = NULL;
+    if(!loader->taken){
+        ie_dstr_free(loader->content);
+    }
+    loader->content = NULL;
+}
+
+
+static ie_dstr_t *imf_copy_body(derr_t *e, imf_t *imf){
+    if(is_error(*e)) return NULL;
+    if(!imf->body) return ie_dstr_new_empty(e);
+    return ie_dstr_new(e, &imf->body->bytes, KEEP_RAW);
+}
+
+
+static ie_dstr_t *imf_copy_hdrs(derr_t *e, imf_t *imf){
+    if(is_error(*e)) return NULL;
+    return ie_dstr_new(e, &imf->hdr_bytes, KEEP_RAW);
+}
+
+
+static const dstr_t *imf_posthdr_empty_line(derr_t *e, imf_t *imf){
+    /* for some odd reason the IMAP standard says that HEADER.FIELDS and
+       HEADER.FIELDS.NOT responses need to include the empty line after the
+       headers, if one exists */
+    static dstr_t none = (dstr_t){0};
+    static dstr_t crlf = DSTR_LIT("\r\n");
+    static dstr_t lf = DSTR_LIT("\n");
+    if(is_error(*e)) return &none;
+
+    // find the last hdr
+    imf_hdr_t *hdr = imf->hdr;
+    while(hdr->next) hdr = hdr->next;
+
+    // get a dstr of just the separator bytes
+    dstr_t last_hdr_and_sep = token_extend(hdr->bytes, imf->hdr_bytes);
+    dstr_t sep =
+        dstr_sub(&last_hdr_and_sep, hdr->bytes.len, last_hdr_and_sep.len);
+    if(sep.len == 0){
+        return &none;
+    }
+    if(dstr_cmp(&sep, &lf) == 0){
+        return &lf;
+    }
+    return &crlf;
+}
+
+
+static ie_dstr_t *imf_copy_hdr_fields(derr_t *e, imf_t *imf,
+        const ie_dstr_t *names){
+    if(is_error(*e)) return NULL;
+
+    ie_dstr_t *out = ie_dstr_new_empty(e);
+    const imf_hdr_t *hdr = imf->hdr;
+    for( ; hdr; hdr = hdr->next){
+        const ie_dstr_t *name = names;
+        for( ; name; name = name->next){
+            if(dstr_icmp(&hdr->name, &name->dstr) == 0){
+                out = ie_dstr_append(e, out, &hdr->bytes, KEEP_RAW);
+                break;
+            }
+        }
+    }
+    // include any post-header separator line
+    out = ie_dstr_append(e, out, imf_posthdr_empty_line(e, imf), KEEP_RAW);
+    return out;
+}
+
+
+static ie_dstr_t *imf_copy_hdr_fields_not(derr_t *e, imf_t *imf,
+        const ie_dstr_t *names){
+    if(is_error(*e)) return NULL;
+
+    ie_dstr_t *out = ie_dstr_new_empty(e);
+    const imf_hdr_t *hdr = imf->hdr;
+    for( ; hdr; hdr = hdr->next){
+        const ie_dstr_t *name = names;
+        bool keep = true;
+        for( ; name; name = name->next){
+            if(dstr_icmp(&hdr->name, &name->dstr) == 0){
+                keep = false;
+                break;
+            }
+        }
+        if(keep){
+            out = ie_dstr_append(e, out, &hdr->bytes, KEEP_RAW);
+        }
+    }
+    // include any post-header separator line
+    out = ie_dstr_append(e, out, imf_posthdr_empty_line(e, imf), KEEP_RAW);
+    return out;
+}
+
+
 static derr_t send_fetch_resp(dn_t *dn, const ie_fetch_cmd_t *fetch,
         unsigned int uid){
     derr_t e = E_OK;
@@ -615,6 +786,9 @@ static derr_t send_fetch_resp(dn_t *dn, const ie_fetch_cmd_t *fetch,
     if(!node) ORIG(&e, E_INTERNAL, "uid missing");
     msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
 
+    // handle lazy loading of the content
+    loader_t loader = loader_prep(dn->m, uid);
+
     unsigned int seq_num;
     PROP(&e, index_to_seq_num(index, &seq_num) );
 
@@ -624,7 +798,7 @@ static derr_t send_fetch_resp(dn_t *dn, const ie_fetch_cmd_t *fetch,
     // the num is always a sequence number, even in case of a UID FETCH
     f = ie_fetch_resp_num(&e, f, seq_num);
 
-    if(fetch->attr->envelope) ORIG_GO(&e, E_INTERNAL, "not implemented", fail);
+    if(fetch->attr->envelope) TRACE_ORIG(&e, E_INTERNAL, "not implemented");
 
     if(fetch->attr->flags){
         ie_fflags_t *ff = ie_fflags_new(&e);
@@ -653,38 +827,121 @@ static derr_t send_fetch_resp(dn_t *dn, const ie_fetch_cmd_t *fetch,
     }
 
     if(fetch->attr->rfc822){
-        int fd;
-        IF_PROP(&e, imaildir_open_msg(dn->m, uid, &fd) ){}
-        ie_dstr_t *content = ie_dstr_new_from_fd(&e, fd);
-        // ignore return value of close on read-only file descriptor
-        imaildir_close_msg(dn->m, uid, &fd);
-        f = ie_fetch_resp_content(&e, f, content);
+        // take ownership of the content
+        f = ie_fetch_resp_rfc822(&e, f, loader_take(&e, &loader));
     }
 
-    if(fetch->attr->rfc822_header) ORIG_GO(&e, E_INTERNAL, "not implemented", fail);
-    if(fetch->attr->rfc822_size) ORIG_GO(&e, E_INTERNAL, "not implemented", fail);
-    if(fetch->attr->rfc822_text) ORIG_GO(&e, E_INTERNAL, "not implemented", fail);
-    if(fetch->attr->body) ORIG_GO(&e, E_INTERNAL, "not implemented", fail); // means BODY, not BODY[]
-    if(fetch->attr->bodystruct) ORIG_GO(&e, E_INTERNAL, "not implemented", fail);
-    if(fetch->attr->modseq) ORIG_GO(&e, E_INTERNAL, "not implemented", fail);
+    if(fetch->attr->rfc822_header){
+        imf_t *imf = loader_parse(&e, &loader);
+        f = ie_fetch_resp_rfc822_hdr(&e, f, imf_copy_hdrs(&e, imf));
+    }
 
-    if(fetch->attr->extras) ORIG_GO(&e, E_INTERNAL, "not implemented", fail);
+    if(fetch->attr->rfc822_text){
+        imf_t *imf = loader_parse(&e, &loader);
+        f = ie_fetch_resp_rfc822_text(&e, f, imf_copy_body(&e, imf));
+    }
+
+    if(fetch->attr->rfc822_size){
+        if(view->base->length > UINT_MAX){
+            TRACE_ORIG(&e, E_INTERNAL, "msg length exceeds UINT_MAX");
+        }else{
+            unsigned int size = (unsigned int)view->base->length;
+            f = ie_fetch_resp_rfc822_size(&e, f, ie_nums_new(&e, size));
+        }
+    }
+
+    if(fetch->attr->body) TRACE_ORIG(&e, E_INTERNAL, "not implemented"); // means BODY, not BODY[]
+    if(fetch->attr->bodystruct) TRACE_ORIG(&e, E_INTERNAL, "not implemented");
+    if(fetch->attr->modseq) TRACE_ORIG(&e, E_INTERNAL, "not implemented");
+
+    ie_fetch_extra_t *extra = fetch->attr->extras;
+    for( ; extra; extra = extra->next){
+        ie_dstr_t *content_resp = NULL;
+        ie_sect_t *sect = extra->sect;
+        if(!sect){
+            // BODY[] by itself
+            content_resp = loader_take(&e, &loader);
+        }else{
+            // first parse the whole message
+            imf_t *root_imf = loader_parse(&e, &loader);
+
+            imf_t *imf = root_imf;
+            if(sect->sect_part){
+                // we don't parse MIME parts yet
+                TRACE_ORIG(&e, E_INTERNAL, "not implemented");
+                // TODO: point *imf at whatever relevant submessage
+            }
+
+            if(sect->sect_txt){
+                switch(sect->sect_txt->type){
+                    case IE_SECT_MIME:
+                        // if MIME is used, then ie_sect_t.sect_part != NULL
+                        TRACE_ORIG(&e, E_INTERNAL, "not implemented");
+                        break;
+
+                    case IE_SECT_TEXT:
+                        // just the body of the message
+                        content_resp = imf_copy_body(&e, imf);
+                        break;
+
+                    case IE_SECT_HEADER:
+                        // just the headers of the message
+                        content_resp = imf_copy_hdrs(&e, imf);
+                        break;
+
+                    case IE_SECT_HDR_FLDS:
+                        // just the headers of the message
+                        content_resp = imf_copy_hdr_fields(
+                            &e, imf, sect->sect_txt->headers
+                        );
+                        break;
+
+                    case IE_SECT_HDR_FLDS_NOT:
+                        // just the headers of the message
+                        content_resp = imf_copy_hdr_fields_not(
+                            &e, imf, sect->sect_txt->headers
+                        );
+                        break;
+                }
+            }else{
+                /* TODO: for now, since we don't support sect->sect_part, this
+                   can't happen non-null.
+
+                   But I don't know what to put here when we do support it. */
+                TRACE_ORIG(&e, E_INTERNAL, "not implemented");
+            }
+        }
+
+        ie_nums_t *offset = NULL;
+        if(extra->partial){
+            // replace content_resp with a substring of the content_resp
+            dstr_t sub = ie_dstr_sub(content_resp,
+                    extra->partial->a, extra->partial->b);
+            ie_dstr_t *temp = content_resp;
+            content_resp = ie_dstr_new(&e, &sub, KEEP_RAW);
+            ie_dstr_free(temp);
+            offset = ie_nums_new(&e, extra->partial->a);
+        }
+
+        // extend the fetch_resp
+        ie_sect_t *sect_resp = ie_sect_copy(&e, sect);
+        ie_fetch_resp_extra_t *extra_resp =
+            ie_fetch_resp_extra_new(&e, sect_resp, offset, content_resp);
+        f = ie_fetch_resp_add_extra(&e, f, extra_resp);
+    }
 
     // finally, send the fetch response
     imap_resp_arg_t arg = {.fetch=f};
     imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_FETCH, arg);
 
-    extensions_t exts = {0};
-    resp = imap_resp_assert_writable(&e, resp, &exts);
+    resp = imap_resp_assert_writable(&e, resp, &dn->exts);
+
+    loader_free(&loader);
 
     CHECK(&e);
 
     dn->conn->resp(dn->conn, resp);
 
-    return e;
-
-fail:
-    ie_fetch_resp_free(f);
     return e;
 }
 
@@ -695,6 +952,8 @@ static derr_t fetch_cmd(dn_t *dn, const ie_dstr_t *tag,
 
     ie_seq_set_t *uid_seq;
     PROP(&e, copy_seq_to_uids(dn, fetch->uid_mode, fetch->seq_set, &uid_seq) );
+
+    // TODO: support PEEK properly
 
     // build a response for every uid requested
     ie_seq_set_trav_t trav;
@@ -814,10 +1073,7 @@ static derr_t send_flags_update(dn_t *dn, unsigned int num, msg_flags_t flags,
 
     imap_resp_arg_t arg = {.fetch=fetch};
     imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_FETCH, arg);
-
-    extensions_t exts = {0};
-    resp = imap_resp_assert_writable(&e, resp, &exts);
-
+    resp = imap_resp_assert_writable(&e, resp, &dn->exts);
     CHECK(&e);
 
     dn->conn->resp(dn->conn, resp);

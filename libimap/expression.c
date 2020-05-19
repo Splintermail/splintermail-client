@@ -1362,7 +1362,17 @@ ie_sect_part_t *ie_sect_part_add(derr_t *e, ie_sect_part_t *sp,
 
 fail:
     ie_sect_part_free(sp);
+    ie_sect_part_free(num);
     return NULL;
+}
+
+ie_sect_part_t *ie_sect_part_copy(derr_t *e, const ie_sect_part_t *old){
+    if(!old) return NULL;
+
+    return ie_sect_part_add(e,
+        ie_sect_part_new(e, old->n),
+        ie_sect_part_copy(e, old->next)
+    );
 }
 
 ie_sect_txt_t *ie_sect_txt_new(derr_t *e, ie_sect_txt_type_t type,
@@ -1387,6 +1397,15 @@ void ie_sect_txt_free(ie_sect_txt_t *st){
     free(st);
 }
 
+ie_sect_txt_t *ie_sect_txt_copy(derr_t *e, const ie_sect_txt_t *old){
+    if(!old) return NULL;
+
+    return ie_sect_txt_new(e,
+        old->type,
+        ie_dstr_copy(e, old->headers)
+    );
+}
+
 ie_sect_t *ie_sect_new(derr_t *e, ie_sect_part_t *sp, ie_sect_txt_t *st){
     if(is_error(*e)) goto fail;
 
@@ -1408,6 +1427,15 @@ void ie_sect_free(ie_sect_t *s){
     ie_sect_part_free(s->sect_part);
     ie_sect_txt_free(s->sect_txt);
     free(s);
+}
+
+ie_sect_t *ie_sect_copy(derr_t *e, const ie_sect_t *old){
+    if(!old) return NULL;
+
+    return ie_sect_new(e,
+        ie_sect_part_copy(e, old->sect_part),
+        ie_sect_txt_copy(e, old->sect_txt)
+    );
 }
 
 ie_partial_t *ie_partial_new(derr_t *e, unsigned int a, unsigned int b){
@@ -1700,7 +1728,10 @@ fail:
 void ie_fetch_resp_free(ie_fetch_resp_t *f){
     if(!f) return;
     ie_fflags_free(f->flags);
-    ie_dstr_free(f->content);
+    ie_dstr_free(f->rfc822);
+    ie_dstr_free(f->rfc822_hdr);
+    ie_dstr_free(f->rfc822_text);
+    ie_nums_free(f->rfc822_size);
     ie_fetch_resp_extra_free(f->extras);
     free(f);
 }
@@ -1762,23 +1793,78 @@ fail:
     return NULL;
 }
 
-ie_fetch_resp_t *ie_fetch_resp_content(derr_t *e, ie_fetch_resp_t *f,
-        ie_dstr_t *content){
+ie_fetch_resp_t *ie_fetch_resp_rfc822(derr_t *e, ie_fetch_resp_t *f,
+        ie_dstr_t *rfc822){
     if(is_error(*e)) goto fail;
 
-    if(f->content != NULL){
-        ORIG_GO(e, E_INTERNAL, "got two body contents from one FETCH", fail);
+    if(f->rfc822 != NULL){
+        ORIG_GO(e, E_INTERNAL, "got two rfc822's from one FETCH", fail);
     }
 
-    f->content = content;
+    f->rfc822 = rfc822;
 
     return f;
 
 fail:
-    ie_dstr_free(content);
+    ie_dstr_free(rfc822);
     ie_fetch_resp_free(f);
     return NULL;
 }
+
+ie_fetch_resp_t *ie_fetch_resp_rfc822_hdr(derr_t *e, ie_fetch_resp_t *f,
+        ie_dstr_t *rfc822_hdr){
+    if(is_error(*e)) goto fail;
+
+    if(f->rfc822_hdr != NULL){
+        ORIG_GO(e, E_INTERNAL, "got two rfc822_hdr's from one FETCH", fail);
+    }
+
+    f->rfc822_hdr = rfc822_hdr;
+
+    return f;
+
+fail:
+    ie_dstr_free(rfc822_hdr);
+    ie_fetch_resp_free(f);
+    return NULL;
+}
+
+ie_fetch_resp_t *ie_fetch_resp_rfc822_text(derr_t *e, ie_fetch_resp_t *f,
+        ie_dstr_t *rfc822_text){
+    if(is_error(*e)) goto fail;
+
+    if(f->rfc822_text != NULL){
+        ORIG_GO(e, E_INTERNAL, "got two rfc822_text's from one FETCH", fail);
+    }
+
+    f->rfc822_text = rfc822_text;
+
+    return f;
+
+fail:
+    ie_dstr_free(rfc822_text);
+    ie_fetch_resp_free(f);
+    return NULL;
+}
+
+ie_fetch_resp_t *ie_fetch_resp_rfc822_size(derr_t *e, ie_fetch_resp_t *f,
+        ie_nums_t *rfc822_size){
+    if(is_error(*e)) goto fail;
+
+    if(f->rfc822_size != NULL){
+        ORIG_GO(e, E_INTERNAL, "got two rfc822_size's from one FETCH", fail);
+    }
+
+    f->rfc822_size = rfc822_size;
+
+    return f;
+
+fail:
+    ie_nums_free(rfc822_size);
+    ie_fetch_resp_free(f);
+    return NULL;
+}
+
 
 ie_fetch_resp_t *ie_fetch_resp_modseq(derr_t *e, ie_fetch_resp_t *f,
         unsigned long modseq){

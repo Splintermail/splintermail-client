@@ -336,8 +336,11 @@
 %type <dstr> sc_text_
 %type <dstr> capas_1
 %type <dstr> f_rfc822
-%type <dstr> rfc822_nstring
+%type <dstr> file_nstring
 %destructor { ie_dstr_free($$); } <dstr>
+
+%type <fetch_resp_extra> f_extra
+%destructor { ie_fetch_resp_extra_free($$); } <fetch_resp_extra>
 
 %type <mailbox> mailbox
 %destructor { ie_mailbox_free($$); } <mailbox>
@@ -1334,16 +1337,18 @@ fm: %empty { MODE(FETCH); };
 msg_attrs_1: f_fflags[f] fm  { $$ = ie_fetch_resp_flags(E, ie_fetch_resp_new(E), $f); }
            | f_uid[u] fm     { $$ = ie_fetch_resp_uid(E, ie_fetch_resp_new(E), $u); }
            | f_intdate[d] fm { $$ = ie_fetch_resp_intdate(E, ie_fetch_resp_new(E), $d); }
-           | f_rfc822[r] fm  { $$ = ie_fetch_resp_content(E, ie_fetch_resp_new(E), $r); }
+           | f_rfc822[r] fm  { $$ = ie_fetch_resp_rfc822(E, ie_fetch_resp_new(E), $r); }
            | f_modseq[s] fm  { $$ = ie_fetch_resp_modseq(E, ie_fetch_resp_new(E), $s); }
+           | f_extra[e] fm   { $$ = ie_fetch_resp_add_extra(E, ie_fetch_resp_new(E), $e); }
            | ign_msg_attr fm { $$ = ie_fetch_resp_new(E); }
 
            | msg_attrs_1[m] SP f_fflags[f] fm  { $$ = ie_fetch_resp_flags(E, $m, $f); }
            | msg_attrs_1[m] SP f_uid[u] fm     { $$ = ie_fetch_resp_uid(E, $m, $u); }
            | msg_attrs_1[m] SP f_intdate[d] fm { $$ = ie_fetch_resp_intdate(E, $m, $d); }
-           | msg_attrs_1[m] SP f_rfc822[r] fm  { $$ = ie_fetch_resp_content(E, $m, $r); }
+           | msg_attrs_1[m] SP f_rfc822[r] fm  { $$ = ie_fetch_resp_rfc822(E, $m, $r); }
            | msg_attrs_1[m] SP f_modseq[s] fm  { $$ = ie_fetch_resp_modseq(E, $m, $s); }
-           | msg_attrs_1[m] SP ign_msg_attr fm   { $$ = $m; }
+           | msg_attrs_1[m] SP f_extra[e] fm   { $$ = ie_fetch_resp_add_extra(E, $m, $e); }
+           | msg_attrs_1[m] SP ign_msg_attr fm { $$ = $m; }
 ;
 
 /* we can parse these without throwing errors, but we ignore them */
@@ -1357,7 +1362,11 @@ ign_msg_attr: ENVELOPE SP '(' { MODE(NSTRING); } envelope ')'
 
 f_fflags: FLAGS SP { MODE(FLAG); } '(' fflags_0[f] ')' { $$ = $f; };
 
-f_rfc822: RFC822 SP { MODE(NSTRING); } rfc822_nstring[r] { $$ = $r; };
+f_rfc822: RFC822 SP { MODE(NSTRING); } file_nstring[r] { $$ = $r; };
+
+/* of all the BODY[*] things, just support BODY[] */
+f_extra: BODY '[' ']' SP { MODE(NSTRING); } file_nstring[r]
+    { $$ = ie_fetch_resp_extra_new(E, NULL, NULL, $r); };
 
 f_modseq: MODSEQ SP { MODE(MODSEQ); } '(' nzmodseqnum[s] ')'
     { extension_assert_on_builder(E, p->exts, EXT_CONDSTORE);
@@ -1365,7 +1374,7 @@ f_modseq: MODSEQ SP { MODE(MODSEQ); } '(' nzmodseqnum[s] ')'
 
 /* this will some day write to a file instead of memory, otherwise it would
    just be "nstring" type */
-rfc822_nstring: NIL { $$ = ie_dstr_new_empty(E); }
+file_nstring: NIL { $$ = ie_dstr_new_empty(E); }
               | literal
               | qstr
 ;

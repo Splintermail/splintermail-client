@@ -481,7 +481,10 @@ typedef struct {
        by any UID FETCH command */
     unsigned int uid;
     imap_time_t intdate;
-    ie_dstr_t *content;
+    ie_dstr_t *rfc822;
+    ie_dstr_t *rfc822_hdr;
+    ie_dstr_t *rfc822_text;
+    ie_nums_t *rfc822_size;
     unsigned long modseq;
     ie_fetch_resp_extra_t *extras;
 } ie_fetch_resp_t;
@@ -741,6 +744,7 @@ typedef union {
     ie_st_code_t *st_code;
 
     // FETCH response
+    ie_fetch_resp_extra_t *fetch_resp_extra;
     ie_fetch_resp_t *fetch_resp;
 
     // full commands
@@ -946,13 +950,17 @@ ie_sect_part_t *ie_sect_part_new(derr_t *e, unsigned int num);
 void ie_sect_part_free(ie_sect_part_t *sp);
 ie_sect_part_t *ie_sect_part_add(derr_t *e, ie_sect_part_t *sp,
         ie_sect_part_t *n);
+ie_sect_part_t *ie_sect_part_copy(derr_t *e, const ie_sect_part_t *old);
 
 ie_sect_txt_t *ie_sect_txt_new(derr_t *e, ie_sect_txt_type_t type,
         ie_dstr_t *headers);
 void ie_sect_txt_free(ie_sect_txt_t *st);
+ie_sect_txt_t *ie_sect_txt_copy(derr_t *e, const ie_sect_txt_t *old);
 
 ie_sect_t *ie_sect_new(derr_t *e, ie_sect_part_t *sp, ie_sect_txt_t *st);
 void ie_sect_free(ie_sect_t *s);
+ie_sect_t *ie_sect_copy(derr_t *e, const ie_sect_t *old);
+
 
 ie_partial_t *ie_partial_new(derr_t *e, unsigned int a, unsigned int b);
 void ie_partial_free(ie_partial_t *p);
@@ -998,8 +1006,14 @@ ie_fetch_resp_t *ie_fetch_resp_intdate(derr_t *e, ie_fetch_resp_t *f,
         imap_time_t intdate);
 ie_fetch_resp_t *ie_fetch_resp_flags(derr_t *e, ie_fetch_resp_t *f,
         ie_fflags_t *flags);
-ie_fetch_resp_t *ie_fetch_resp_content(derr_t *e, ie_fetch_resp_t *f,
-        ie_dstr_t *content);
+ie_fetch_resp_t *ie_fetch_resp_rfc822(derr_t *e, ie_fetch_resp_t *f,
+        ie_dstr_t *rfc822);
+ie_fetch_resp_t *ie_fetch_resp_rfc822_hdr(derr_t *e, ie_fetch_resp_t *f,
+        ie_dstr_t *rfc822_hdr);
+ie_fetch_resp_t *ie_fetch_resp_rfc822_text(derr_t *e, ie_fetch_resp_t *f,
+        ie_dstr_t *rfc822_text);
+ie_fetch_resp_t *ie_fetch_resp_rfc822_size(derr_t *e, ie_fetch_resp_t *f,
+        ie_nums_t *rfc_822size);
 ie_fetch_resp_t *ie_fetch_resp_modseq(derr_t *e, ie_fetch_resp_t *f,
         unsigned long modseq);
 ie_fetch_resp_t *ie_fetch_resp_add_extra(derr_t *e, ie_fetch_resp_t *f,

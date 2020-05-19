@@ -353,6 +353,35 @@ static derr_t test_imap_writer(void){
                     {0}
                 },
             },
+            {
+                .resp=imap_resp_new(&e, IMAP_RESP_FETCH,
+                    (imap_resp_arg_t){
+                        .fetch=ie_fetch_resp_rfc822_size(&e,
+                            ie_fetch_resp_rfc822_text(&e,
+                                ie_fetch_resp_rfc822_hdr(&e,
+                                    ie_fetch_resp_rfc822(&e,
+                                        ie_fetch_resp_num(&e,
+                                            ie_fetch_resp_new(&e),
+                                            5
+                                        ),
+                                        IE_DSTR("rfc822")
+                                    ),
+                                    IE_DSTR("rfc822_hdr")
+                                ),
+                                IE_DSTR("rfc822_text")
+                            ),
+                            ie_nums_new(&e, 20)
+                        ),
+                    }
+                ),
+                .out=(size_chunk_out_t[]){
+                    {1024, "* 5 FETCH (RFC822 \"rfc822\" "
+                           "RFC822.HEADER \"rfc822_hdr\" "
+                           "RFC822.TEXT \"rfc822_text\" "
+                           "RFC822.SIZE 20)\r\n"},
+                    {0}
+                },
+            },
         };
         CHECK(&e);
         PROP(&e, do_writer_test_multi(cases, sizeof(cases)/sizeof(*cases)) );

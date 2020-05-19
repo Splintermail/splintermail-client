@@ -374,19 +374,6 @@ static derr_t status_cmd_skip_fill(skip_fill_t *sf,
     return e;
 }
 
-DSTR_STATIC(jan_dstr, "Jan");
-DSTR_STATIC(feb_dstr, "Feb");
-DSTR_STATIC(mar_dstr, "Mar");
-DSTR_STATIC(apr_dstr, "Apr");
-DSTR_STATIC(may_dstr, "May");
-DSTR_STATIC(jun_dstr, "Jun");
-DSTR_STATIC(jul_dstr, "Jul");
-DSTR_STATIC(aug_dstr, "Aug");
-DSTR_STATIC(sep_dstr, "Sep");
-DSTR_STATIC(oct_dstr, "Oct");
-DSTR_STATIC(nov_dstr, "Nov");
-DSTR_STATIC(dec_dstr, "Dec");
-
 static derr_t validate_time(imap_time_t time){
     derr_t e = E_OK;
     bool pass = true;
@@ -414,7 +401,7 @@ static derr_t validate_time(imap_time_t time){
         TRACE(&e, "invalid seconds: %x\n", FI(time.sec));
         pass = false;
     }
-    if(time.z_hour < 0 || time.z_hour > 24){
+    if(time.z_hour < -24 || time.z_hour > 24){
         TRACE(&e, "invalid zone hours: %x\n", FI(time.z_hour));
         pass = false;
     }
@@ -428,6 +415,19 @@ static derr_t validate_time(imap_time_t time){
     }
     return e;
 }
+
+DSTR_STATIC(jan_dstr, "Jan");
+DSTR_STATIC(feb_dstr, "Feb");
+DSTR_STATIC(mar_dstr, "Mar");
+DSTR_STATIC(apr_dstr, "Apr");
+DSTR_STATIC(may_dstr, "May");
+DSTR_STATIC(jun_dstr, "Jun");
+DSTR_STATIC(jul_dstr, "Jul");
+DSTR_STATIC(aug_dstr, "Aug");
+DSTR_STATIC(sep_dstr, "Sep");
+DSTR_STATIC(oct_dstr, "Oct");
+DSTR_STATIC(nov_dstr, "Nov");
+DSTR_STATIC(dec_dstr, "Dec");
 
 static dstr_t *get_imap_month(int month){
     switch(month){
@@ -446,12 +446,14 @@ static dstr_t *get_imap_month(int month){
     }
 }
 
-static derr_t time_skip_fill(skip_fill_t *sf, imap_time_t time){
+// This corresponds to the date-time type of the IMAP formal syntax
+static derr_t date_time_skip_fill(skip_fill_t *sf, imap_time_t time){
     derr_t e = E_OK;
     PROP(&e, validate_time(time) );
 
     dstr_t *month = get_imap_month(time.month);
     DSTR_VAR(buffer, 256);
+    // does use fixed-width day
     PROP(&e, FMT(&buffer, "\"%x%x-%x-%x %x%x:%x%x:%x%x %x%x%x%x%x\"",
         time.day < 10 ? FC(' ') : FI(time.day / 10), FI(time.day % 10),
         FD(month), FI(time.year),
@@ -459,7 +461,7 @@ static derr_t time_skip_fill(skip_fill_t *sf, imap_time_t time){
         FI(time.min / 10), FI(time.min % 10),
         FI(time.sec / 10), FI(time.sec % 10),
         FS(time.z_hour >= 0 ? "+" : "-"),
-        FI(time.z_hour / 10), FI(time.z_hour % 10),
+        FI(ABS(time.z_hour) / 10), FI(ABS(time.z_hour) % 10),
         FI(time.z_min / 10), FI(time.z_min % 10)) );
 
     PROP(&e, raw_skip_fill(sf, &buffer) );
@@ -702,6 +704,8 @@ static derr_t select_params_skip_fill(skip_fill_t *sf,
     return e;
 }
 
+
+// This corresponds to the date type of the IMAP formal syntax
 static derr_t search_date_skip_fill(skip_fill_t *sf, imap_time_t time){
     derr_t e = E_OK;
     bool pass = true;
@@ -1149,7 +1153,7 @@ static derr_t do_imap_cmd_write(const imap_cmd_t *cmd, dstr_t *out,
             PROP(&e, flags_skip_fill(sf, arg.append->flags) );
             STATIC_SKIP_FILL(") ");
             if(arg.append->time.year){
-                PROP(&e, time_skip_fill(sf, arg.append->time) );
+                PROP(&e, date_time_skip_fill(sf, arg.append->time) );
                 STATIC_SKIP_FILL(" ");
             }
             PROP(&e, literal_skip_fill(sf, &arg.append->content->dstr) );
@@ -1587,12 +1591,27 @@ static derr_t fetch_resp_skip_fill(skip_fill_t *sf, ie_fetch_resp_t *fetch){
     if(fetch->intdate.year){
         LEAD_SP;
         STATIC_SKIP_FILL("INTERNALDATE ");
-        PROP(&e, time_skip_fill(sf, fetch->intdate) );
+        PROP(&e, date_time_skip_fill(sf, fetch->intdate) );
     }
-    if(fetch->content){
+    if(fetch->rfc822){
         LEAD_SP;
         STATIC_SKIP_FILL("RFC822 ");
-        PROP(&e, string_skip_fill(sf, &fetch->content->dstr) );
+        PROP(&e, string_skip_fill(sf, &fetch->rfc822->dstr) );
+    }
+    if(fetch->rfc822_hdr){
+        LEAD_SP;
+        STATIC_SKIP_FILL("RFC822.HEADER ");
+        PROP(&e, string_skip_fill(sf, &fetch->rfc822_hdr->dstr) );
+    }
+    if(fetch->rfc822_text){
+        LEAD_SP;
+        STATIC_SKIP_FILL("RFC822.TEXT ");
+        PROP(&e, string_skip_fill(sf, &fetch->rfc822_text->dstr) );
+    }
+    if(fetch->rfc822_size){
+        LEAD_SP;
+        STATIC_SKIP_FILL("RFC822.SIZE ");
+        PROP(&e, num_skip_fill(sf, fetch->rfc822_size->num) );
     }
     if(fetch->modseq){
         PROP(&e, extension_assert_on(sf->exts, EXT_CONDSTORE) );

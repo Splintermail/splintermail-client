@@ -221,7 +221,11 @@ static void imape_data_read_stuff(imape_data_t *id, const dstr_t *buffer){
 
     LOG_INFO("recv: %x", FD(buffer));
     derr_t e2 = imap_read(&id->reader, buffer);
-    CATCH(e2, E_PARAM){
+    // imap clients should fail immediately on syntax errors
+    if(id->control->is_client){
+        PROP_GO(&e, e2, fail);
+    // imap servers should issue warnings to the client
+    }else CATCH(e2, E_PARAM){
         derr_t e3 = warn_invalid_command(id);
         CATCH(e3, E_ANY){
             // merge the new error with the original error

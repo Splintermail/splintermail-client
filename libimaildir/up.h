@@ -24,6 +24,9 @@ typedef struct {
     link_t link;  // imaildir_t->access.ups
     // 2 refs: on for imaildir's access.ups, one for fetcher->maildir
     refs_t refs;
+
+    // TODO: read extensions from somewhere else
+    extensions_t exts;
 } up_t;
 DEF_CONTAINER_OF(up_t, maildir_up, maildir_up_i);
 DEF_CONTAINER_OF(up_t, link, link_t);

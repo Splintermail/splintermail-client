@@ -1227,11 +1227,17 @@ derr_t imaildir_up_handle_static_fetch_attr(imaildir_t *m,
     }
 
     // we always fill all the static attributes in one shot
-    if(!fetch->content){
-        ORIG(&e, E_RESPONSE, "missing RFC822 content response");
+    if(!fetch->extras){
+        ORIG(&e, E_RESPONSE, "missing BODY.PEEK[] response");
     }
     if(!fetch->intdate.year){
         ORIG(&e, E_RESPONSE, "missing INTERNALDATE response");
+    }
+
+    // we always request BODY.PEEK[] with no other arguments
+    ie_fetch_resp_extra_t *extra = fetch->extras;
+    if(extra->sect || extra->offset || extra->next){
+        ORIG(&e, E_RESPONSE, "wrong BODY[*] response");
     }
 
     base->ref.internaldate = fetch->intdate;
@@ -1248,7 +1254,7 @@ derr_t imaildir_up_handle_static_fetch_attr(imaildir_t *m,
 
     // do the decryption
     size_t len = 0;
-    PROP(&e, imaildir_decrypt(m, &fetch->content->dstr, &tmp_path, &len) );
+    PROP(&e, imaildir_decrypt(m, &extra->content->dstr, &tmp_path, &len) );
     base->ref.length = len;
 
     // get hostname
