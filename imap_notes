@@ -1074,3 +1074,149 @@ Message store thread safety:
 IMAP bugs:
   - not all SEARCH keys are supported
   - syntax error messages are utterly useless
+
+Multi-threaded architecture:
+    There was a time that I seriously considered what was worth making
+    multi-threaded and what was not worth it (see discussion in
+    8097492ba:imap_engine.h and later in 47b287f5ca:imap_engine.h).  When I
+    originally made that decision, it was largely due to me thinking it would
+    be possible to interact with bison via callbacks rather than having a
+    struct for every possible message type.  That assumption failed miserably.
+
+    Now, there's this weird semi-actor-based, semi-lock-based system between
+    the fetcher_t, the up_t, the server_t, the dn_t, and the imaildir_t.
+    The up_t is supposed to do its work on the fetcher_t's thread, even though
+    it's basically owned by the imaildir_t, and it is confusing as shit.  I
+    can barely keep it straight.
+
+    That said, it seems to be pretty correct.  It's just that it took me way
+    too much time to come up with all of the details.
+
+    Of interest is the ratio of occurances of uv_mutex* and uv_rwlock*:
+
+        instances of    in total    in citm/sm_fetch/sm_serve/libimaildir
+        -----------------------------------------------------------------
+        uv_mutex*       247         190
+        uv_rwlock*      74          74
+
+    In other words, *all* of the multithreading complexity is in those files.
+
+    What benefits are there from this multithreading complexity?
+     1) you can do some processing concurrently
+     2) you can reduce the number of reentrant state machines
+
+    Regarding 1): I don't know if anything I do is more costly than the
+    encryption/decryption.  I haven't profiled it to check.  There is only one
+    or two places where that happens though, so it would be pretty easy for the
+    crypto to happen on other threads (and handle the result as asynchronous
+    events).
+
+    Regarding 2): Most of the interfaces I have ended up being tied to async
+    state machines anyway.  Let's do a tally of (a)sync vs (s)ynchronous calls:
+
+        // imaildir.h
+        struct maildir_conn_up_i {
+    a       void (*cmd)(maildir_conn_up_i*, imap_cmd_t*);
+    a       void (*selected)(maildir_conn_up_i*, const ie_st_resp_t*);
+    a       void (*synced)(maildir_conn_up_i*);
+    a       void (*unselected)(maildir_conn_up_i*);
+     -      void (*failure)(maildir_conn_up_i*, derr_t);
+     -      void (*release)(maildir_conn_up_i*);
+        };
+        struct maildir_up_i {
+      s     derr_t (*resp)(maildir_up_i*, imap_resp_t*);
+      s     bool (*synced)(maildir_up_i*);
+      s     bool (*selected)(maildir_up_i*);
+      s     derr_t (*unselect)(maildir_up_i*);
+        };
+        struct maildir_conn_dn_i {
+    a       void (*resp)(maildir_conn_dn_i*, imap_resp_t*);
+    a       void (*advance)(maildir_conn_dn_i*);
+     -      void (*failure)(maildir_conn_dn_i*, derr_t);
+     -      void (*release)(maildir_conn_dn_i*);
+        };
+        struct maildir_dn_i {
+      s     derr_t (*cmd)(maildir_dn_i*, imap_cmd_t*);
+      s     bool (*more_work)(maildir_dn_i*);
+      s     derr_t (*do_work)(maildir_dn_i*);
+        };
+
+        // up.h
+      s derr_t make_select(up_t *up, unsigned int uidvld, unsigned long our_himodseq,
+                imap_cmd_t **cmd_out, up_cb_t **cb_out);
+      s void up_send_cmd(up_t *up, imap_cmd_t *cmd, up_cb_t *up_cb);
+
+        // dn.h
+      s void dn_update(dn_t *dn, update_t *update);
+
+        // fetcher.h
+        struct fetcher_cb_i {
+     -      void (*dying)(fetcher_cb_i*, derr_t error);
+     -      void (*release)(fetcher_cb_i*);
+    a       derr_t (*login_ready)(fetcher_cb_i*);
+    a       derr_t (*login_succeeded)(fetcher_cb_i*);
+    a       derr_t (*login_failed)(fetcher_cb_i*);
+    a       derr_t (*passthru_resp)(fetcher_cb_i*, passthru_resp_t *passthru_resp);
+    a       derr_t (*select_succeeded)(fetcher_cb_i*);
+    a       derr_t (*select_failed)(fetcher_cb_i*, const ie_st_resp_t *st_resp);
+        };
+
+    a   derr_t fetcher_login(fetcher_t *fetcher, const ie_dstr_t *user, const ie_dstr_t *pass);
+    a   void fetcher_set_dirmgr(fetcher_t *fetcher, dirmgr_t *dirmgr);
+    a   derr_t fetcher_passthru_req(fetcher_t *fetcher, passthru_req_t *passthru_req);
+    a   derr_t fetcher_select(fetcher_t *fetcher, const ie_mailbox_t *m);
+
+
+        // server.h
+        struct server_cb_i {
+     -      void (*dying)(server_cb_i*, derr_t error);
+     -      void (*release)(server_cb_i*);
+    a       derr_t (*login)(server_cb_i*, const ie_dstr_t*, const ie_dstr_t*);
+    a       derr_t (*passthru_req)(server_cb_i*, passthru_req_t *passthru_req);
+    a       derr_t (*select)(server_cb_i*, const ie_mailbox_t *m);
+        };
+    a   derr_t server_allow_greeting(server_t *server);
+    a   derr_t server_login_succeeded(server_t *server);
+    a   derr_t server_login_failed(server_t *server);
+    a   void server_set_dirmgr(server_t *server, dirmgr_t *dirmgr);
+    a   derr_t server_passthru_resp(server_t *server, passthru_resp_t *passthru_resp);
+    a   derr_t server_select_succeeded(server_t *server);
+    a   derr_t server_select_failed(server_t *server, const ie_st_resp_t *st_resp);
+
+        // sf_pair.h
+        struct sf_pair_cb_i {
+      s     derr_t (*set_owner)(sf_pair_cb_i*, sf_pair_t *sf_pair,
+                    const dstr_t *name, const dstr_t *pass, void **owner);
+     -      void (*dying)(sf_pair_cb_i*, sf_pair_t *sf_pair, derr_t error);
+     -      void (*release)(sf_pair_cb_i*, sf_pair_t *sf_pair);
+        };
+
+        // user.h
+        struct user_cb_i {
+     -      void (*dying)(user_cb_i*, user_t *caller, derr_t error);
+        };
+      s void user_start(user_t *user);
+      s void user_cancel(user_t *user);
+      s void user_close(user_t *user, derr_t error);
+      s void user_release(user_t *user);
+      s derr_t user_add_sf_pair(user_t *user, sf_pair_t *sf_pair);
+      s bool user_remove_sf_pair(user_t *user, sf_pair_t *sf_pair);
+
+    OK, we got 17 synchronous calls, 26 async calls, and 9 dying/release calls.
+
+    Pros and cons of switching to a single engine_t for all of this logic:
+        pros:
+          - the hardest parts of the system (imaildir) become way simpler
+          - other tricky parts (dirmgr, user_pool/user) become trivial
+          - parts which could become harder (async calls) are already done
+          - I need to do something to fix imaildir_t and up_t anwyay
+          - many email clients only sync on one connection anyway
+          - less boilerplate (server.c, fetcher.c)
+          - tests will likely be much easier to write
+
+        cons:
+          - lots more architecture churning
+          - possibly less performant with some email clients
+
+    Decision: I want stability and simplicity more than I want to bull-rush a
+    solution.  I'll do this refactor now.
