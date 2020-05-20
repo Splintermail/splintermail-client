@@ -260,8 +260,6 @@ set(OBJ_TGTS
     queue
     refs
     imap_session
-    sm_fetch_logic
-    sm_serve_logic
     actor
 )
 
@@ -271,8 +269,6 @@ set(EXE_TGTS
     leak
     encrypt_msg
     decrypt_msg
-    sm_fetch
-    sm_serve
 )
 
 set(TEST_OBJ_TGTS
@@ -358,8 +354,6 @@ target_link_libraries(splintermail ui console_input ditm key_tool)
 target_link_libraries(leak networking)
 target_link_libraries(encrypt_msg crypto)
 target_link_libraries(decrypt_msg crypto)
-target_link_libraries(sm_fetch imap_session sm_fetch_logic imaildir)
-target_link_libraries(sm_serve imap_session sm_serve_logic imaildir)
 
 # decide if we are building server code
 if("${BUILD_SERVER_CODE}")
@@ -532,15 +526,11 @@ if("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU")
     # libuv needs non-strict aliasing
     # see discussion here: https://github.com/libuv/libuv/issues/1230
     target_compile_options(uv_util_o PRIVATE -fno-strict-aliasing)
-    target_compile_options(sm_fetch PRIVATE -fno-strict-aliasing)
-    target_compile_options(sm_serve PRIVATE -fno-strict-aliasing)
 
 elseif("${CMAKE_C_COMPILER_ID}" MATCHES "Clang")
     # flags common to "AppleClang" and "Clang"
 
     target_compile_options(uv_util_o PRIVATE -fno-strict-aliasing)
-    target_compile_options(sm_fetch PRIVATE -fno-strict-aliasing)
-    target_compile_options(sm_serve PRIVATE -fno-strict-aliasing)
 
 elseif("${CMAKE_C_COMPILER_ID}" STREQUAL "MSVC")
     # flags for MVSC (VS 2017)
