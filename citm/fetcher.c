@@ -178,12 +178,7 @@ static void fetcher_conn_up_selected(maildir_conn_up_i *conn_up,
         actor_advance(&fetcher->actor);
 
     }else{
-        fetcher->mbx_state = MBX_SYNCED;
-        derr_t e = E_OK;
-        IF_PROP(&e, fetcher->cb->select_succeeded(fetcher->cb) ){
-            fetcher_close(fetcher, e);
-            PASSED(e);
-        }
+        fetcher->mbx_state = MBX_SYNCING;
     }
 }
 
@@ -192,6 +187,12 @@ static void fetcher_conn_up_selected(maildir_conn_up_i *conn_up,
 static void fetcher_conn_up_synced(maildir_conn_up_i *conn_up){
     fetcher_t *fetcher = CONTAINER_OF(conn_up, fetcher_t, conn_up);
     fetcher->mbx_state = MBX_SYNCED;
+
+    derr_t e = E_OK;
+    IF_PROP(&e, fetcher->cb->select_succeeded(fetcher->cb) ){
+        fetcher_close(fetcher, e);
+        PASSED(e);
+    }
 
     actor_advance(&fetcher->actor);
 }

@@ -539,7 +539,7 @@ derr_t imaildir_register_up(imaildir_t *m, maildir_conn_up_i *conn_up,
             up->conn->failure(up->conn, e2);
             PASSED(e2);
         }else{
-            // send SELECT if we are primary
+            // send SELECT
             up_send_cmd(up, cmd, up_cb);
         }
     }
