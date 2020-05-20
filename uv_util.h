@@ -45,5 +45,8 @@ extern async_spec_t no_cleanup_async_spec;
 // the async close_cb for all asyncs
 void async_handle_close_cb(uv_handle_t *handle);
 
+// derr_t-compatible initializers
+derr_t uv_util_mutex_init(uv_mutex_t *mutex);
+
 #endif // UV_UTIL
 

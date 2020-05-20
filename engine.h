@@ -116,6 +116,10 @@ typedef enum {
               and it *must* be safe from double calls.
 
     */
+
+    /* an event for intra-engine wakeups and such; it should never be passed
+       between engines */
+    EV_INTERNAL,
 } event_type_t;
 
 typedef struct session_t {

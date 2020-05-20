@@ -16,21 +16,13 @@ typedef enum {
 
 typedef struct {
     string_builder_t path;
-
     const keypair_t *keypair;
-
-    // thread-safe access to the hashmap of all dirs
-    struct {
-        uv_rwlock_t lock;
-        hashmap_t map;  // managed_dir_t->h
-    } dirs;
+    hashmap_t dirs;  // managed_dir_t->h
 } dirmgr_t;
 
 typedef struct {
     // pointer to dirmgr_t
     dirmgr_t *dm;
-    // dirmgr_i interface to imaildir_t
-    dirmgr_i dirmgr_iface;
     // the maildir
     imaildir_t m;
     // our state of the maildir_t
@@ -40,7 +32,6 @@ typedef struct {
     // keep a copy of the dictionary key
     dstr_t name;
 } managed_dir_t;
-DEF_CONTAINER_OF(managed_dir_t, dirmgr_iface, dirmgr_i);
 DEF_CONTAINER_OF(managed_dir_t, h, hash_elem_t);
 DEF_CONTAINER_OF(managed_dir_t, m, imaildir_t);
 

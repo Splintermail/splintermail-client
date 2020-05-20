@@ -1,36 +1,7 @@
 #include "citm.h"
 
-// safe to call many times from any thread
-void fetcher_close(fetcher_t *fetcher, derr_t error){
-    uv_mutex_lock(&fetcher->ts.mutex);
-    // only execute the close sequence once
-    bool do_close = !fetcher->ts.closed;
-    fetcher->ts.closed = true;
-    uv_mutex_unlock(&fetcher->ts.mutex);
-
-    if(!do_close){
-        // secondary errors get dropped
-        DROP_VAR(&error);
-        return;
-    }
-
-    // tell our owner we are dying
-    TRACE_PROP(&error);
-    fetcher->cb->dying(fetcher->cb, error);
-    PASSED(error);
-
-    // we can close multithreaded resources here but we can't release refs
-    imap_session_close(&fetcher->s.session, E_OK);
-
-    // everything else must be done on-thread
-    actor_close(&fetcher->actor);
-}
-
-static void fetcher_free(fetcher_t **old){
-    fetcher_t *fetcher = *old;
+void fetcher_free(fetcher_t *fetcher){
     if(!fetcher) return;
-
-    fetcher->cb->release(fetcher->cb);
 
     // free any unfinished pause state
     ie_login_cmd_free(fetcher->login_cmd);
@@ -39,36 +10,39 @@ static void fetcher_free(fetcher_t **old){
     ie_mailbox_free(fetcher->select_mailbox);
     // free any imap cmds or resps laying around
     link_t *link;
-    while((link = link_list_pop_first(&fetcher->ts.unhandled_resps))){
+    while((link = link_list_pop_first(&fetcher->unhandled_resps))){
         imap_resp_t *resp = CONTAINER_OF(link, imap_resp_t, link);
         imap_resp_free(resp);
     }
-    while((link = link_list_pop_first(&fetcher->ts.maildir_cmds))){
+    while((link = link_list_pop_first(&fetcher->maildir_cmds))){
         imap_cmd_t *cmd = CONTAINER_OF(link, imap_cmd_t, link);
         imap_cmd_free(cmd);
     }
-    // async must already have been closed
     imap_session_free(&fetcher->s);
-    uv_mutex_destroy(&fetcher->ts.mutex);
-    free(fetcher);
-    *old = NULL;
     return;
 }
 
-// part of the actor interface
-static void fetcher_actor_failure(actor_t *actor, derr_t error){
-    fetcher_t *fetcher = CONTAINER_OF(actor, fetcher_t, actor);
-    TRACE_PROP(&error);
-    fetcher_close(fetcher, error);
-    PASSED(error);
+static void fetcher_finalize(refs_t *refs){
+    fetcher_t *fetcher = CONTAINER_OF(refs, fetcher_t, refs);
+    fetcher->cb->release(fetcher->cb);
 }
 
-// part of the actor interface
-static void fetcher_close_onthread(actor_t *actor){
-    fetcher_t *fetcher = CONTAINER_OF(actor, fetcher_t, actor);
+void fetcher_close(fetcher_t *fetcher, derr_t error){
+    bool do_close = !fetcher->closed;
+    fetcher->closed = true;
 
-    /* now that we are onthread, it is safe to release refs for things we don't
-       own ourselves */
+    if(!do_close){
+        // secondary errors get dropped
+        DROP_VAR(&error);
+        return;
+    }
+
+    // pass the error along to our owner
+    TRACE_PROP(&error);
+    fetcher->cb->dying(fetcher->cb, error);
+    PASSED(error);
+
+    // it is safe to release refs for things we don't own ourselves
     if(fetcher->maildir_up){
         // extract the maildir_up from fetcher so it is clear we are done
         maildir_up_i *maildir_up = fetcher->maildir_up;
@@ -76,91 +50,112 @@ static void fetcher_close_onthread(actor_t *actor){
         // now make the very last call into the maildir_up_i
         dirmgr_close_up(fetcher->dirmgr, maildir_up);
     }
-
-    // we are done making calls into the imap_session
-    imap_session_ref_down(&fetcher->s);
 }
 
-// part of the actor interface
-static void fetcher_dead_onthread(actor_t *actor){
-    fetcher_t *fetcher = CONTAINER_OF(actor, fetcher_t, actor);
-    if(!fetcher->init_complete){
-        free(fetcher);
+
+static void fetcher_work_loop(fetcher_t *fetcher){
+    bool noop = false;
+    while(!fetcher->closed && !noop){
+        derr_t e = E_OK;
+        IF_PROP(&e, fetcher_do_work(fetcher, &noop)){
+            fetcher_close(fetcher, e);
+            PASSED(e);
+            break;
+        }
+    }
+}
+
+
+void fetcher_read_ev(fetcher_t *fetcher, event_t *ev){
+    imap_event_t *imap_ev = CONTAINER_OF(ev, imap_event_t, ev);
+
+    // fetcher only accepts imap_resp_t's as EV_READs
+    if(imap_ev->type != IMAP_EVENT_TYPE_RESP){
+        LOG_ERROR("unallowed imap_cmd_t as EV_READ in fetcher\n");
         return;
     }
-    fetcher_free(&fetcher);
+
+    imap_resp_t *resp = STEAL(imap_resp_t, &imap_ev->arg.resp);
+
+    link_list_append(&fetcher->unhandled_resps, &resp->link);
+
+    fetcher_work_loop(fetcher);
 }
 
-
-// engine interface
-static void fetcher_pass_event(struct engine_t *engine, event_t *ev){
-    fetcher_t *fetcher = CONTAINER_OF(engine, fetcher_t, engine);
-
-    imap_event_t *imap_ev;
-
-    switch(ev->ev_type){
-        case EV_READ:
-            imap_ev = CONTAINER_OF(ev, imap_event_t, ev);
-            // fetcher only accepts imap_resp_t's as EV_READs
-            if(imap_ev->type != IMAP_EVENT_TYPE_RESP){
-                LOG_ERROR("unallowed imap_cmd_t as EV_READ in fetcher\n");
-                ev->returner(ev);
-                break;
-            }
-
-            // steal the imap_resp_t and return the rest of the event
-            imap_resp_t *resp = imap_ev->arg.resp;
-            imap_ev->arg.resp = NULL;
-            ev->returner(ev);
-
-            // queue up the response
-            uv_mutex_lock(&fetcher->ts.mutex);
-            link_list_append(&fetcher->ts.unhandled_resps, &resp->link);
-            uv_mutex_unlock(&fetcher->ts.mutex);
-            break;
-
-        default:
-            LOG_ERROR("unallowed event type (%x)\n", FU(ev->ev_type));
-    }
-
-    // trigger more work
-    actor_advance(&fetcher->actor);
+static void fetcher_enqueue(fetcher_t *fetcher){
+    if(fetcher->closed || fetcher->enqueued) return;
+    fetcher->enqueued = true;
+    // ref_up for wake_ev
+    ref_up(&fetcher->refs);
+    fetcher->engine->pass_event(fetcher->engine, &fetcher->wake_ev.ev);
 }
+
+static void fetcher_wakeup(wake_event_t *wake_ev){
+    fetcher_t *fetcher = CONTAINER_OF(wake_ev, fetcher_t, wake_ev);
+    fetcher->enqueued = false;
+    // ref_dn for wake_ev
+    ref_dn(&fetcher->refs);
+    fetcher_work_loop(fetcher);
+}
+
+void fetcher_login(fetcher_t *fetcher, ie_login_cmd_t *login_cmd){
+    fetcher->login_cmd = login_cmd;
+    fetcher_enqueue(fetcher);
+}
+
+void fetcher_passthru_req(fetcher_t *fetcher, passthru_req_t *passthru_req){
+    fetcher->passthru_req = passthru_req;
+    fetcher_enqueue(fetcher);
+}
+
+void fetcher_select(fetcher_t *fetcher, ie_mailbox_t *m){
+    fetcher->select_mailbox = m;
+    fetcher_enqueue(fetcher);
+}
+
+void fetcher_set_dirmgr(fetcher_t *fetcher, dirmgr_t *dirmgr){
+    fetcher->dirmgr = dirmgr;
+    fetcher_enqueue(fetcher);
+}
+
 
 // session_mgr
 
-static void session_dying(manager_i *mgr, void *caller, derr_t e){
+static void session_dying(manager_i *mgr, void *caller, derr_t error){
     (void)caller;
     fetcher_t *fetcher = CONTAINER_OF(mgr, fetcher_t, session_mgr);
     LOG_INFO("session up dying\n");
 
-    fetcher_close(fetcher, e);
-    PASSED(e);
-}
+    /* ignore dying event and only pay attention to dead event, to shield
+       the citm objects from the extra asynchronicity */
 
+    // store the error for the close_onthread() call
+    fetcher->session_dying_error = error;
+    PASSED(error);
+}
 
 static void session_dead(manager_i *mgr, void *caller){
     (void)caller;
     fetcher_t *fetcher = CONTAINER_OF(mgr, fetcher_t, session_mgr);
-    // ref down for session
-    actor_ref_dn(&fetcher->actor);
+
+    // send the close event to trigger fetcher_close()
+    event_prep(&fetcher->close_ev, NULL, NULL);
+    fetcher->close_ev.session = &fetcher->s.session;
+    fetcher->close_ev.ev_type = EV_SESSION_CLOSE;
+    fetcher->engine->pass_event(fetcher->engine, &fetcher->close_ev);
 }
 
 
-// part of the maildir_conn_up_i, meaning this can be called on- or off-thread
+// part of the maildir_conn_up_i
 static void fetcher_conn_up_cmd(maildir_conn_up_i *conn_up, imap_cmd_t *cmd){
     fetcher_t *fetcher = CONTAINER_OF(conn_up, fetcher_t, conn_up);
-
-    uv_mutex_lock(&fetcher->ts.mutex);
-    link_list_append(&fetcher->ts.maildir_cmds, &cmd->link);
-    uv_mutex_unlock(&fetcher->ts.mutex);
-
-    actor_advance(&fetcher->actor);
+    link_list_append(&fetcher->maildir_cmds, &cmd->link);
+    fetcher_enqueue(fetcher);
 }
 
-// part of the maildir_conn_up_i, meaning this can be called on- or off-thread
+// part of the maildir_conn_up_i
 static void fetcher_conn_up_selected(maildir_conn_up_i *conn_up,
-        const ie_st_resp_t *st_resp){
+        ie_st_resp_t *st_resp){
     fetcher_t *fetcher = CONTAINER_OF(conn_up, fetcher_t, conn_up);
 
     // check for errors
@@ -168,47 +163,34 @@ static void fetcher_conn_up_selected(maildir_conn_up_i *conn_up,
         /* for our purposes, treat this as an unselected() event; we just close
            the conn_up on-thread either way */
         fetcher->mbx_state = MBX_UNSELECTED;
-        // pass the select error upwards
-        derr_t e = E_OK;
-        IF_PROP(&e, fetcher->cb->select_failed(fetcher->cb, st_resp) ){
-            fetcher_close(fetcher, e);
-            PASSED(e);
-        }
-
-        actor_advance(&fetcher->actor);
-
+        fetcher->cb->select_result(fetcher->cb, st_resp);
     }else{
         fetcher->mbx_state = MBX_SYNCING;
     }
+
+    fetcher_enqueue(fetcher);
 }
 
 
-// part of the maildir_conn_up_i, meaning this can be called on- or off-thread
+// part of the maildir_conn_up_i
 static void fetcher_conn_up_synced(maildir_conn_up_i *conn_up){
     fetcher_t *fetcher = CONTAINER_OF(conn_up, fetcher_t, conn_up);
     fetcher->mbx_state = MBX_SYNCED;
-
-    derr_t e = E_OK;
-    IF_PROP(&e, fetcher->cb->select_succeeded(fetcher->cb) ){
-        fetcher_close(fetcher, e);
-        PASSED(e);
-    }
-
-    actor_advance(&fetcher->actor);
+    fetcher->cb->select_result(fetcher->cb, NULL);
+    fetcher_enqueue(fetcher);
 }
 
 
-// part of the maildir_conn_up_i, meaning this can be called on- or off-thread
+// part of the maildir_conn_up_i
 static void fetcher_conn_up_unselected(maildir_conn_up_i *conn_up){
     fetcher_t *fetcher = CONTAINER_OF(conn_up, fetcher_t, conn_up);
     fetcher->mbx_state = MBX_UNSELECTED;
-    // we still can't close the maildir_up until we are onthread
-
-    actor_advance(&fetcher->actor);
+    // TODO: can we close maildir_up immediately with single-thread paradigm?
+    fetcher_enqueue(fetcher);
 }
 
 
-// part of the maildir_conn_up_i, meaning this can be called on- or off-thread
+// part of the maildir_conn_up_i
 static void fetcher_conn_up_failure(maildir_conn_up_i *conn_up, derr_t error){
     fetcher_t *fetcher = CONTAINER_OF(conn_up, fetcher_t, conn_up);
     TRACE_PROP(&error);
@@ -217,48 +199,36 @@ static void fetcher_conn_up_failure(maildir_conn_up_i *conn_up, derr_t error){
 }
 
 
-// part of the maildir_conn_up_i, meaning this can be called on- or off-thread
+// part of the maildir_conn_up_i
 static void fetcher_conn_up_release(maildir_conn_up_i *conn_up){
     fetcher_t *fetcher = CONTAINER_OF(conn_up, fetcher_t, conn_up);
-
-    // it's an error if the maildir_up releases us before we release it
-    if(fetcher->maildir_up != NULL){
-        derr_t e = E_OK;
-        TRACE_ORIG(&e, E_INTERNAL, "maildir_up closed unexpectedly");
-        fetcher_close(fetcher, e);
-        PASSED(e);
-    }
 
     fetcher->maildir_has_ref = false;
     fetcher->mbx_state = MBX_NONE;
     // ref down for maildir
-    actor_ref_dn(&fetcher->actor);
+    ref_dn(&fetcher->refs);
 
-    actor_advance(&fetcher->actor);
+    fetcher_enqueue(fetcher);
 }
 
 
-derr_t fetcher_new(
-    fetcher_t **out,
+derr_t fetcher_init(
+    fetcher_t *fetcher,
     fetcher_cb_i *cb,
     const char *host,
     const char *svc,
     imap_pipeline_t *p,
+    engine_t *engine,
     ssl_context_t *ctx_cli
 ){
     derr_t e = E_OK;
 
-    fetcher_t *fetcher = malloc(sizeof(*fetcher));
-    if(!fetcher) ORIG(&e, E_NOMEM, "nomem");
     *fetcher = (fetcher_t){
         .cb = cb,
         .host = host,
         .svc = svc,
         .pipeline = p,
-
-        .engine = {
-            .pass_event = fetcher_pass_event,
-        },
+        .engine = engine,
     };
 
     fetcher->session_mgr = (manager_i){
@@ -285,27 +255,16 @@ derr_t fetcher_new(
         .release = fetcher_conn_up_release,
     };
 
-    link_init(&fetcher->ts.unhandled_resps);
-    link_init(&fetcher->ts.maildir_cmds);
+    link_init(&fetcher->unhandled_resps);
+    link_init(&fetcher->maildir_cmds);
     link_init(&fetcher->inflight_cmds);
 
-    actor_i actor_iface = {
-        .more_work = fetcher_more_work,
-        .do_work = fetcher_do_work,
-        .failure = fetcher_actor_failure,
-        .close_onthread = fetcher_close_onthread,
-        .dead_onthread = fetcher_dead_onthread,
-    };
+    event_prep(&fetcher->wake_ev.ev, NULL, NULL);
+    fetcher->wake_ev.ev.ev_type = EV_INTERNAL;
+    fetcher->wake_ev.handler = fetcher_wakeup;
 
-    // start with the actor, which has special rules for error handling
-    PROP_GO(&e, actor_init(&fetcher->actor, &p->loop->uv_loop, actor_iface),
-            fail_malloc);
-
-    int ret = uv_mutex_init(&fetcher->ts.mutex);
-    if(ret < 0){
-        TRACE(&e, "uv_mutex_init: %x\n", FUV(&ret));
-        ORIG_GO(&e, uv_err_type(ret), "error initializing mutex", fail_actor);
-    }
+    // start with a reference for imap_session_t
+    PROP(&e, refs_init(&fetcher->refs, 1, fetcher_finalize) );
 
     // allocate memory for the session, but don't start it until later
     imap_session_alloc_args_t arg_up = {
@@ -313,100 +272,20 @@ derr_t fetcher_new(
         &fetcher->session_mgr,
         ctx_cli,
         &fetcher->ctrl,
-        &fetcher->engine,
+        fetcher->engine,
         host,
         svc,
         (terminal_t){},
     };
-    PROP_GO(&e, imap_session_alloc_connect(&fetcher->s, &arg_up),
-            fail_mutex);
-
-    // take an owner's ref of the imap_session
-    // TODO: refactor imap_session to assume an owner's ref
-    imap_session_ref_up(&fetcher->s);
-
-    // ref up for session
-    actor_ref_up(&fetcher->actor);
-
-    fetcher->init_complete = true;
-    *out = fetcher;
+    PROP_GO(&e, imap_session_alloc_connect(&fetcher->s, &arg_up), fail_refs);
 
     return e;
 
-fail_mutex:
-    uv_mutex_destroy(&fetcher->ts.mutex);
-fail_actor:
-    // finish cleanup in actor callback
-    fetcher->init_complete = false;
-    // drop the owner ref
-    actor_ref_dn(&fetcher->actor);
-    return e;
-
-fail_malloc:
-    free(fetcher);
-    return e;
-}
-
-// part of fetcher-provided interface to the sf_pair
-derr_t fetcher_login(
-    fetcher_t *fetcher,
-    const ie_dstr_t *user,
-    const ie_dstr_t *pass
-){
-    derr_t e = E_OK;
-
-    // duplicate the user and pass into the fetcher
-    ie_dstr_t *user_copy = ie_dstr_copy(&e, user);
-    ie_dstr_t *pass_copy = ie_dstr_copy(&e, pass);
-    fetcher->login_cmd = ie_login_cmd_new(&e, user_copy, pass_copy);
-    CHECK(&e);
-
-    actor_advance(&fetcher->actor);
-
-    return e;
-}
-
-// the fetcher-provided interface to the sf_pair
-void fetcher_set_dirmgr(fetcher_t *fetcher, dirmgr_t *dirmgr){
-    fetcher->dirmgr = dirmgr;
-    actor_advance(&fetcher->actor);
-}
-
-// part of fetcher-provided interface to the sf_pair (user or consume passthru)
-derr_t fetcher_passthru_req(fetcher_t *fetcher, passthru_req_t *passthru_req){
-    fetcher->passthru_req = passthru_req;
-    fetcher->passthru_sent = false;
-
-    actor_advance(&fetcher->actor);
-
-    return E_OK;
-}
-
-// part of fetcher-provided interface to the sf_pair
-derr_t fetcher_select(fetcher_t *fetcher, const ie_mailbox_t *m){
-    derr_t e = E_OK;
-
-    fetcher->select_mailbox = ie_mailbox_copy(&e, m);
-    CHECK(&e);
-
-    actor_advance(&fetcher->actor);
-
+fail_refs:
+    refs_free(&fetcher->refs);
     return e;
 }
 
 void fetcher_start(fetcher_t *fetcher){
     imap_session_start(&fetcher->s);
-}
-
-// fetcher will be freed asynchronously and won't make manager callbacks
-void fetcher_cancel(fetcher_t *fetcher){
-    // downref for the session, which will not be making a mgr->dead call
-    actor_ref_dn(&fetcher->actor);
-
-    fetcher_release(fetcher);
-}
-
-void fetcher_release(fetcher_t *fetcher){
-    // drop the owner's ref
-    actor_ref_dn(&fetcher->actor);
 }

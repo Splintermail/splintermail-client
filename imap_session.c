@@ -132,7 +132,7 @@ static derr_t imap_session_do_alloc(imap_session_t *s,
     derr_t e = E_OK;
 
     // zeroize session
-    *s = (imap_session_t){0};
+    *s = (imap_session_t){ .upwards = upwards };
 
     // session prestart
     int ret = uv_mutex_init(&s->mutex);

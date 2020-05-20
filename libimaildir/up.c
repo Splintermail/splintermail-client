@@ -538,7 +538,9 @@ static derr_t select_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
         // don't allow any more commands
         up->close_sent = true;
         // report the error
-        up->conn->selected(up->conn, st_resp);
+        ie_st_resp_t *st_resp_copy = ie_st_resp_copy(&e, st_resp);
+        CHECK(&e);
+        up->conn->selected(up->conn, st_resp_copy);
         return e;
     }
 

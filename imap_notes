@@ -1220,3 +1220,68 @@ Multi-threaded architecture:
 
     Decision: I want stability and simplicity more than I want to bull-rush a
     solution.  I'll do this refactor now.
+
+UPDATE: The refactor is done.  There are a few important points to this
+        refactor:
+  - The citm engine is always at the top of the callstack
+  - All _close() calls on citme objects are synchronous
+  - All calls between citme objects are asynchronous
+
+    Why make all close() calls synchronous?
+      - It is easy to check if objects are closed in the citm engine, or at
+        the very first entrypoint to any call made by the citm engine.  That
+        makes it easy to reason about what is closed when you are anywhere else
+        in the call stack; you can just assume that nothing that you would
+        touch is ever closed, or you would also have been closed already.
+
+      - A complication of this strategy is that you can't call close() on
+        anything at any place except at the very top of the callstack.  That's
+        not so hard... you just have to throw errors and only catch them in one
+        place.
+
+    Why are all calls between citm objects asynchronous?
+      - Avoid callback hell.  Break callback chains along object boundaries.
+
+      - Contain errors within major objects; i.e. a fetcher failure should not
+        pass its error through the sf_pair and to the server that requested
+        some command.
+
+        Why not have all entrypoints to objects return void and handle their
+        own errors internally? You could also imagine that if the server made a
+        call through to the fetcher, the entrypoint in the fetcher could catch
+        the error and call fetcher_close().  However, if all close() calls are
+        synchronous (which is highly desirable), then fetcher_close() will
+        result in a server_close(), and when control returns to the server
+        object, the server would have to check if it was closed or not.
+
+        Or in other words, synchronous close() calls demand that errors are
+        passed up the stack to the base of the event handler in all cases.
+
+    How are async calls implemented?
+      - Async calls look like:
+
+            void thing_do_something(thing_t *thing, arg_t *arg);
+
+        where it is assumed that *arg belongs to *thing after the call is made.
+        Under the hood, *thing is storing *arg in some buffer it will check
+        later and enqueuing a wake_event_t with the citm engine so that *thing
+        will wake up some time later and see the stored *arg value.
+
+    POST-REFACTOR SUMMARY:
+        I think this refactor was an excellent idea.  It took much less time
+        than I expected, and the code got a lot simpler in several places where
+        it was already so complicated that I barely understood what I had
+        wrote a couple of weeks ago.
+
+        There are some details in libimaildir that still don't seem quite
+        right.  Before, I was dreading updating them because of how complicated
+        libimaildir had gotten, but now they should be pretty easy to resolve.
+
+    TL;DR: new mutex counts:
+
+        instances of    in total    in citm/libimaildir
+        -----------------------------------------------
+        uv_mutex*       61          0
+        uv_rwlock*      0           0
+*/
+

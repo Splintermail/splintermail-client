@@ -36,6 +36,7 @@ struct imap_session_t {
     int tlse_refs[TLSE_REF_MAXIMUM];
     int imape_refs[IMAPE_REF_MAXIMUM];
     manager_i *mgr;
+    bool upwards;
 };
 DEF_CONTAINER_OF(imap_session_t, session, session_t)
 

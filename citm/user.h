@@ -5,6 +5,7 @@ typedef struct user_cb_i user_cb_i;
 
 struct user_cb_i {
     void (*dying)(user_cb_i*, user_t *caller, derr_t error);
+    void (*dead)(user_cb_i*, user_t *caller);
 };
 
 struct user_t {
@@ -12,7 +13,7 @@ struct user_t {
     // the login creds
     dstr_t name;
     dstr_t pass;
-    hash_elem_t h;  // user_pool_t->users
+    hash_elem_t h;  // citme_t->users
     // the root of the user's maildir
     string_builder_t path;
     // each user gets one dirmgr
@@ -24,7 +25,6 @@ struct user_t {
 
     refs_t refs;
 
-    uv_mutex_t mutex;
     link_t sf_pairs;  // sf_pair_t->link
     size_t npairs;
     bool closed;
@@ -45,15 +45,5 @@ derr_t user_new(
     const string_builder_t *root
 );
 
-void user_start(user_t *user);
-
-void user_cancel(user_t *user);
-
-void user_close(user_t *user, derr_t error);
-
-void user_release(user_t *user);
-
-derr_t user_add_sf_pair(user_t *user, sf_pair_t *sf_pair);
-
-// return true if there are no more sf_pairs, in which case you should close it
-bool user_remove_sf_pair(user_t *user, sf_pair_t *sf_pair);
+void user_add_sf_pair(user_t *user, sf_pair_t *sf_pair);
+void user_remove_sf_pair(user_t *user, sf_pair_t *sf_pair);

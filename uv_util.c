@@ -105,3 +105,14 @@ void async_handle_close_cb(uv_handle_t *handle){
     if(spec->close_cb == NULL) return;
     spec->close_cb(spec);
 }
+
+
+derr_t uv_util_mutex_init(uv_mutex_t *mutex){
+    derr_t e = E_OK;
+    int ret = uv_mutex_init(mutex);
+    if(ret < 0){
+        TRACE(&e, "uv_mutex_init: %x\n", FUV(&ret));
+        ORIG(&e, uv_err_type(ret), "error initializing mutex");
+    }
+    return e;
+}

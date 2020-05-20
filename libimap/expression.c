@@ -1924,6 +1924,14 @@ void ie_login_cmd_free(ie_login_cmd_t *login){
     free(login);
 }
 
+ie_login_cmd_t *ie_login_cmd_copy(derr_t *e, const ie_login_cmd_t *old){
+    if(!old) return NULL;
+    return ie_login_cmd_new(e,
+        ie_dstr_copy(e, old->user),
+        ie_dstr_copy(e, old->pass)
+    );
+}
+
 ie_select_cmd_t *ie_select_cmd_new(derr_t *e, ie_mailbox_t *m,
         ie_select_params_t *params){
     if(is_error(*e)) goto fail;

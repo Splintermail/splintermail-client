@@ -220,12 +220,14 @@ static derr_t start_passthru_pause(server_t *server,
 //
 
 static void server_imap_ev_returner(event_t *ev){
-    imap_session_t *s = CONTAINER_OF(ev->session, imap_session_t, session);
-    imap_session_ref_down(s);
+    server_t *server = ev->returner_arg;
 
     imap_event_t *imap_ev = CONTAINER_OF(ev, imap_event_t, ev);
     imap_resp_free(imap_ev->arg.resp);
     free(imap_ev);
+
+    // one less unreturned event
+    ref_dn(&server->refs);
 }
 
 // the last message we send gets this returner
@@ -247,14 +249,14 @@ static derr_t imap_event_new_ex(imap_event_t **out, server_t *server,
         .arg = { .resp = resp },
     };
 
-    /* we don't keep the server alive to free in-flight event_t's, so don't set
-       the returner_arg to point to the server (which may get freed) */
     event_returner_t returner =
         final ? final_event_returner : server_imap_ev_returner;
-    event_prep(&imap_ev->ev, returner, NULL);
+    event_prep(&imap_ev->ev, returner, server);
     imap_ev->ev.session = &server->s.session;
     imap_ev->ev.ev_type = EV_WRITE;
-    imap_session_ref_up(&server->s);
+
+    // one more unreturned event
+    ref_up(&server->refs);
 
     *out = imap_ev;
     return e;
@@ -425,7 +427,10 @@ static derr_t check_login(server_t *server, const ie_dstr_t *tag,
     PROP(&e, start_login_pause(server, tag) );
 
     // report the login attempt to the sf_pair
-    PROP(&e, server->cb->login(server->cb, login->user, login->pass) );
+    ie_login_cmd_t *login_cmd_copy = ie_login_cmd_copy(&e, login);
+    CHECK(&e);
+
+    server->cb->login(server->cb, login_cmd_copy);
 
     return e;
 }
@@ -597,7 +602,7 @@ static derr_t passthru_cmd(server_t *server, const ie_dstr_t *tag,
     passthru_req = passthru_req_new(&e, tag_copy, type, arg);
     CHECK(&e);
 
-    PROP(&e, server->cb->passthru_req(server->cb, passthru_req) );
+    server->cb->passthru_req(server->cb, passthru_req);
 
     // wait for a response
     PROP(&e, start_passthru_pause(server, after_passthru_pause) );
@@ -613,9 +618,12 @@ static derr_t do_select(server_t *server, imap_cmd_t *select_cmd){
     const dstr_t *dir_name = ie_mailbox_name(select_cmd->arg.select->m);
 
     server->maildir_has_ref = true;
-    actor_ref_up(&server->actor);
+
     PROP_GO(&e, dirmgr_open_dn(server->dirmgr, dir_name, &server->conn_dn,
                 &server->maildir_dn), fail_ref);
+
+    // ref_up for maildir
+    ref_up(&server->refs);
 
     // pass this SELECT command to the maildir_dn
     PROP(&e, server->maildir_dn->cmd(server->maildir_dn,
@@ -627,7 +635,6 @@ static derr_t do_select(server_t *server, imap_cmd_t *select_cmd){
 
 fail_ref:
     server->maildir_has_ref = false;
-    actor_ref_dn(&server->actor);
 
     imap_cmd_free(select_cmd);
     return e;
@@ -669,15 +676,6 @@ static derr_t do_logout(server_t *server, const ie_dstr_t *tag){
     return e;
 }
 
-bool server_more_work(actor_t *actor){
-    server_t *server = CONTAINER_OF(actor, server_t, actor);
-    return !link_list_isempty(&server->ts.unhandled_cmds)
-        || !link_list_isempty(&server->ts.maildir_resps)
-        || (server->paused && !server->paused(server))
-        || (server->maildir_dn
-                && server->maildir_dn->more_work(server->maildir_dn));
-}
-
 // we either need to consume the command or free it
 static derr_t handle_one_command(server_t *server, imap_cmd_t *cmd){
     derr_t e = E_OK;
@@ -702,7 +700,7 @@ static derr_t handle_one_command(server_t *server, imap_cmd_t *cmd){
                 // call do_logout() after the maildir_dn finishes closing
                 PROP_GO(&e, start_logout_pause(server, tag), cu_cmd);
             }else{
-                PROP_GO(&e, do_logout(server, steal_dstr(&cmd->tag)), cu_cmd);
+                PROP_GO(&e, do_logout(server, cmd->tag), cu_cmd);
             }
             break;
 
@@ -755,9 +753,9 @@ static derr_t handle_one_command(server_t *server, imap_cmd_t *cmd){
             /* Ask the sf_pair for permission to SELECT the folder.  Permission
                may not be grated if e.g. the fetcher finds out the folder does
                not exist or if it is the keybox folder */
-            PROP_GO(&e,
-                server->cb->select(server->cb, arg->select->m),
-            cu_cmd);
+            ie_mailbox_t *m_copy = ie_mailbox_copy(&e, arg->select->m);
+            CHECK_GO(&e, cu_cmd);
+            server->cb->select(server->cb, m_copy);
 
             /* now wait for both the response from above and for the maildir_dn
                to close */
@@ -866,24 +864,22 @@ fail:
     return e;
 }
 
-derr_t server_do_work(actor_t *actor){
+derr_t server_do_work(server_t *server, bool *noop){
     derr_t e = E_OK;
 
-    server_t *server = CONTAINER_OF(actor, server_t, actor);
+    *noop = true;
 
     // if the maildir_dn needs on-thread work... do it.
     while(server->maildir_dn
             && server->maildir_dn->more_work(server->maildir_dn)){
         PROP(&e, server->maildir_dn->do_work(server->maildir_dn) );
+        *noop = false;
     }
 
     // unhandled client commands from the client
-    while(!server->ts.closed && !server->await_tag && !server->paused){
+    while(!server->closed && !server->await_tag && !server->paused){
         // pop a command
-        uv_mutex_lock(&server->ts.mutex);
-        link_t *link = link_list_pop_first(&server->ts.unhandled_cmds);
-        uv_mutex_unlock(&server->ts.mutex);
-
+        link_t *link = link_list_pop_first(&server->unhandled_cmds);
         if(!link) break;
 
         imap_cmd_t *cmd = CONTAINER_OF(link, imap_cmd_t, link);
@@ -898,27 +894,27 @@ derr_t server_do_work(actor_t *actor){
         }
 
         PROP(&e, handle_one_command(server, cmd) );
+        *noop = false;
     }
 
     // responses from the maildir_dn
-    while(!server->ts.closed){
+    while(!server->closed){
         // pop a response
-        uv_mutex_lock(&server->ts.mutex);
-        link_t *link = link_list_pop_first(&server->ts.maildir_resps);
-        uv_mutex_unlock(&server->ts.mutex);
-
+        link_t *link = link_list_pop_first(&server->maildir_resps);
         if(!link) break;
 
         imap_resp_t *resp = CONTAINER_OF(link, imap_resp_t, link);
 
         PROP(&e, handle_one_maildir_resp(server, resp) );
+        *noop = false;
     }
 
     // handle delayed actions
-    if(!server->ts.closed && server->paused && !server->paused(server)){
+    if(!server->closed && server->paused && !server->paused(server)){
         PROP(&e, server->after_pause(server) );
         server->paused = NULL;
         server->after_pause = NULL;
+        *noop = false;
     }
 
     return e;

@@ -15,13 +15,11 @@ typedef struct {
     jsw_atree_t views;  // msg_view_t->node
     // 2 refs: on for imaildir's access.dns, one for server->maildir
     refs_t refs;
+
     // updates that have not yet been accepted
-    struct {
-        uv_mutex_t mutex;
-        link_t list;  // update_t->link
-        // this is set to true after receiving an update we were awaiting
-        bool ready;
-    } pending_updates;
+    link_t pending_updates;  // update_t->link
+    // this is set to true after receiving an update we were awaiting
+    bool ready;
 
     // handle stores asynchronously
     struct {

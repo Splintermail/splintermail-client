@@ -260,7 +260,6 @@ set(OBJ_TGTS
     queue
     refs
     imap_session
-    actor
 )
 
 set(EXE_TGTS
@@ -346,7 +345,6 @@ obj_depend_obj(loop engine)
 obj_depend_obj(tls_engine engine networking)
 obj_depend_obj(imap_engine engine imap)
 obj_depend_obj(imap_session loop tls_engine imap_engine uv_interface)
-obj_depend_obj(actor uv_interface)
 
 # describe executables with dependencies
 # target_link_libraries(srvcli networking)

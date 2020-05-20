@@ -10,17 +10,17 @@
 static loop_t loop;
 static tlse_t tlse;
 static imape_t imape;
-// user_pool has to be zeroized for proper cleanup if build_pipeline fails
-static user_pool_t user_pool = {0};
+static citme_t citme;
 
 // the global keypair
 keypair_t g_keypair;
 
+
 typedef struct {
-    user_pool_t *user_pool;
     const char *remote_host;
     const char *remote_svc;
     imap_pipeline_t *pipeline;
+    citme_t *citme;
     ssl_context_t *ctx_srv;
     ssl_context_t *ctx_cli;
     listener_spec_t lspec;
@@ -34,33 +34,38 @@ static derr_t conn_recvd(listener_spec_t *lspec, session_t **session){
     citm_lspec_t *l = CONTAINER_OF(lspec, citm_lspec_t, lspec);
 
     sf_pair_t *sf_pair;
-    PROP_GO(&e,
+    PROP(&e,
         sf_pair_new(
             &sf_pair,
-            &l->user_pool->sf_pair_cb,
+            &l->citme->sf_pair_cb,
+            &l->citme->engine,
             l->remote_host,
             l->remote_svc,
             l->pipeline,
             l->ctx_srv,
             l->ctx_cli,
             session
-        ),
-    fail_sf_pair);
+        ) );
 
     // append managed to the server_mgr's list
-    PROP_GO(&e, user_pool_new_sf_pair(l->user_pool, sf_pair), fail_sf_pair);
+    citme_add_sf_pair(l->citme, sf_pair);
 
     // now it is safe to start the server
     sf_pair_start(sf_pair);
 
     return e;
-
-fail_sf_pair:
-    sf_pair_cancel(sf_pair);
-    return e;
 }
 
-static derr_t build_pipeline(imap_pipeline_t *pipeline, engine_t *quit_engine){
+
+
+static void free_pipeline(imap_pipeline_t *pipeline){
+    imape_free(pipeline->imape);
+    tlse_free(pipeline->tlse);
+    loop_free(pipeline->loop);
+}
+
+
+static derr_t build_pipeline(imap_pipeline_t *pipeline, citme_t *citme){
     derr_t e = E_OK;
 
     // set UV_THREADPOOL_SIZE
@@ -75,8 +80,10 @@ static derr_t build_pipeline(imap_pipeline_t *pipeline, engine_t *quit_engine){
     PROP_GO(&e, tlse_add_to_loop(&tlse, &loop.uv_loop), fail);
 
     // initialize IMAP engine
-    PROP_GO(&e, imape_init(&imape, 5, &tlse.engine, quit_engine), fail);
+    PROP_GO(&e, imape_init(&imape, 5, &tlse.engine, &citme->engine), fail);
     PROP_GO(&e, imape_add_to_loop(&imape, &loop.uv_loop), fail);
+
+    PROP_GO(&e, citme_add_to_loop(citme, &loop.uv_loop), fail);
 
     *pipeline = (imap_pipeline_t){
         .loop=&loop,
@@ -91,13 +98,6 @@ fail:
     DROP_VAR(&e);
     LOG_ERROR("fatal error: failed to construct pipeline\n");
     exit(1);
-}
-
-
-static void free_pipeline(imap_pipeline_t *pipeline){
-    imape_free(pipeline->imape);
-    tlse_free(pipeline->tlse);
-    loop_free(pipeline->loop);
 }
 
 
@@ -121,25 +121,26 @@ static derr_t citm(const char *local_host, const char *local_svc,
     PROP_GO(&e, keypair_load(&g_keypair, keyfile), cu_ctx_cli);
 
     imap_pipeline_t pipeline;
-    PROP_GO(&e, build_pipeline(&pipeline, &user_pool.engine), cu_keypair);
+
+    // TODO: make the maildir root configurable
+    DSTR_STATIC(maildir_root, "/tmp/maildir_root");
+    string_builder_t root = SB(FD(&maildir_root));
+
+    PROP_GO(&e, citme_init(&citme, &root, &imape.engine), cu_keypair);
+
+    PROP_GO(&e, build_pipeline(&pipeline, &citme), cu_citme);
 
     /* After building the pipeline, we must run the pipeline if we want to
        cleanup nicely.  That means that we can't follow the normal cleanup
        pattern, and instead we must initialize all of our variables to zero
        (that is, if we had any variables right here) */
 
-    // TODO: make the maildir root configurable
-    DSTR_STATIC(maildir_root, "/tmp/maildir_root");
-    string_builder_t root = SB(FD(&maildir_root));
-
-    PROP_GO(&e, user_pool_init(&user_pool, &root, &pipeline), fail);
-
     // add the lspec to the loop
     citm_lspec_t citm_lspec = {
-        .user_pool = &user_pool,
         .remote_host = remote_host,
         .remote_svc = remote_svc,
         .pipeline = &pipeline,
+        .citme = &citme,
         .ctx_srv = &ctx_srv,
         .ctx_cli = &ctx_cli,
         .lspec = {
@@ -161,8 +162,9 @@ fail:
     PROP_GO(&e, loop_run(&loop), cu);
 
 cu:
-    user_pool_free(&user_pool);
     free_pipeline(&pipeline);
+cu_citme:
+    citme_free(&citme);
 cu_keypair:
     keypair_free(&g_keypair);
 cu_ctx_cli:
@@ -182,7 +184,6 @@ static void stop_loop_on_signal(int signum){
     if(hard_exit) exit(1);
     hard_exit = true;
     // launch an asynchronous loop abort
-    // uv_idle_stop(&idle);
     loop_close(&loop, E_OK);
 }
 

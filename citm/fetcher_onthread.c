@@ -55,7 +55,7 @@ static void fetcher_imap_ev_returner(event_t *ev){
     free(imap_ev);
 
     // one less unreturned event
-    actor_ref_dn(&fetcher->actor);
+    ref_dn(&fetcher->refs);
 }
 
 static derr_t imap_event_new(imap_event_t **out, fetcher_t *fetcher,
@@ -75,7 +75,7 @@ static derr_t imap_event_new(imap_event_t **out, fetcher_t *fetcher,
     imap_ev->ev.ev_type = EV_WRITE;
 
     // one more unreturned event
-    actor_ref_up(&fetcher->actor);
+    ref_up(&fetcher->refs);
 
     *out = imap_ev;
     return e;
@@ -152,17 +152,17 @@ static derr_t select_mailbox(fetcher_t *fetcher){
 
     fetcher->mbx_state = MBX_SELECTING;
     fetcher->maildir_has_ref = true;
-    // ref up for maildir
-    actor_ref_up(&fetcher->actor);
 
     IF_PROP(&e, dirmgr_open_up(fetcher->dirmgr, dir_name, &fetcher->conn_up,
                 &fetcher->maildir_up) ){
         // oops, nevermind
         fetcher->mbx_state = MBX_NONE;
         fetcher->maildir_has_ref = false;
-        actor_ref_dn(&fetcher->actor);
         goto cu;
     }
+
+    // ref up for maildir
+    ref_up(&fetcher->refs);
 
     // the maildir_up takes care of the rest
 
@@ -194,7 +194,7 @@ static derr_t passthru_done(imap_cmd_cb_t *cb,
     fetcher->passthru_sent = false;
     CHECK(&e);
 
-    PROP(&e, fetcher->cb->passthru_resp(fetcher->cb, passthru_resp) );
+    fetcher->cb->passthru_resp(fetcher->cb, passthru_resp);
 
     return e;
 }
@@ -555,13 +555,13 @@ static derr_t login_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
 
     // catch failed login attempts
     if(st_resp->status != IE_ST_OK){
-        PROP(&e, fetcher->cb->login_failed(fetcher->cb) );
+        fetcher->cb->login_result(fetcher->cb, false);
 
         // wait for another call to fetcher_login()
         return e;
     }
 
-    PROP(&e, fetcher->cb->login_succeeded(fetcher->cb) );
+    fetcher->cb->login_result(fetcher->cb, true);
 
     if(fetcher->imap_state != FETCHER_PREAUTH){
         ORIG(&e, E_INTERNAL, "arrived at login_done out of PREAUTH state");
@@ -615,7 +615,7 @@ static derr_t untagged_ok(fetcher_t *fetcher, const ie_st_code_t *code,
         fetcher->imap_state = FETCHER_PREAUTH;
 
         // tell the sf_pair we need login creds
-        PROP(&e, fetcher->cb->login_ready(fetcher->cb) );
+        fetcher->cb->login_ready(fetcher->cb);
 
         // prepare to wait for a call to fetcher_login()
         return e;
@@ -766,15 +766,6 @@ static bool fetcher_select_more_work(fetcher_t *fetcher){
     return fetcher->imap_state == FETCHER_AUTHENTICATED;
 }
 
-bool fetcher_more_work(actor_t *actor){
-    fetcher_t *fetcher = CONTAINER_OF(actor, fetcher_t, actor);
-    return !link_list_isempty(&fetcher->ts.unhandled_resps)
-        || !link_list_isempty(&fetcher->ts.maildir_cmds)
-        || fetcher->login_cmd
-        || fetcher_passthru_more_work(fetcher)
-        || fetcher_select_more_work(fetcher);
-}
-
 // we either need to consume the resp or free it
 static derr_t handle_one_response(fetcher_t *fetcher, imap_resp_t *resp){
     derr_t e = E_OK;
@@ -878,18 +869,15 @@ static derr_t fetcher_select_do_work(fetcher_t *fetcher){
     return e;
 }
 
-derr_t fetcher_do_work(actor_t *actor){
+derr_t fetcher_do_work(fetcher_t *fetcher, bool *noop){
     derr_t e = E_OK;
 
-    fetcher_t *fetcher = CONTAINER_OF(actor, fetcher_t, actor);
+    *noop = true;
 
     // unhandled responses
-    while(!fetcher->ts.closed){
+    while(!fetcher->closed){
         // pop a response
-        uv_mutex_lock(&fetcher->ts.mutex);
-        link_t *link = link_list_pop_first(&fetcher->ts.unhandled_resps);
-        uv_mutex_unlock(&fetcher->ts.mutex);
-
+        link_t *link = link_list_pop_first(&fetcher->unhandled_resps);
         if(!link) break;
 
         imap_resp_t *resp = CONTAINER_OF(link, imap_resp_t, link);
@@ -901,20 +889,19 @@ derr_t fetcher_do_work(actor_t *actor){
         }
 
         PROP(&e, handle_one_response(fetcher, resp) );
+        *noop = false;
     }
 
     // commands from the maildir_up
-    while(!fetcher->ts.closed){
+    while(!fetcher->closed){
         // pop a command
-        uv_mutex_lock(&fetcher->ts.mutex);
-        link_t *link = link_list_pop_first(&fetcher->ts.maildir_cmds);
-        uv_mutex_unlock(&fetcher->ts.mutex);
-
+        link_t *link = link_list_pop_first(&fetcher->maildir_cmds);
         if(!link) break;
 
         imap_cmd_t *cmd = CONTAINER_OF(link, imap_cmd_t, link);
 
         PROP(&e, handle_one_maildir_cmd(fetcher, cmd) );
+        *noop = false;
     }
 
     // check if we finished the unselecting process, start closing process
@@ -927,27 +914,32 @@ derr_t fetcher_do_work(actor_t *actor){
 
         /* we still have to wait for fetcher->maildir_has_ref to be false
            before we can proceed */
+        *noop = false;
     }
 
     // check if we finished the closing process, change state
     if(fetcher->imap_state == FETCHER_SELECTED
             && fetcher->mbx_state == MBX_NONE){
         fetcher->imap_state = FETCHER_AUTHENTICATED;
+        *noop = false;
     }
 
     // check if we have a login command to execute on
-    if(!fetcher->ts.closed && fetcher->login_cmd){
+    if(!fetcher->closed && fetcher->login_cmd){
         PROP(&e, send_login(fetcher) );
+        *noop = false;
     }
 
     // check if we have some passthru behavior to execute on
-    if(!fetcher->ts.closed && fetcher_passthru_more_work(fetcher)){
+    if(!fetcher->closed && fetcher_passthru_more_work(fetcher)){
         PROP(&e, fetcher_passthru_do_work(fetcher) );
+        *noop = false;
     }
 
     // check if we have a select to execute on
-    if(!fetcher->ts.closed && fetcher_select_more_work(fetcher)){
+    if(!fetcher->closed && fetcher_select_more_work(fetcher)){
         PROP(&e, fetcher_select_do_work(fetcher) );
+        *noop = false;
     }
 
     return e;

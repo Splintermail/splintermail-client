@@ -105,8 +105,6 @@ struct maildir_up_i;
 typedef struct maildir_up_i maildir_up_i;
 struct maildir_dn_i;
 typedef struct maildir_dn_i maildir_dn_i;
-struct dirmgr_i;
-typedef struct dirmgr_i dirmgr_i;
 struct imaildir_t;
 typedef struct imaildir_t imaildir_t;
 struct maildir_log_i;
@@ -119,7 +117,7 @@ struct maildir_conn_up_i {
     void (*cmd)(maildir_conn_up_i*, imap_cmd_t*);
     // this event indiates a SELECT finished, with an ie_st_resp_t if it failed
     // (if select fails, you should go straight to dirmgr_close_up())
-    void (*selected)(maildir_conn_up_i*, const ie_st_resp_t*);
+    void (*selected)(maildir_conn_up_i*, ie_st_resp_t*);
     // this event indicates the maildir finished an initial sync
     void (*synced)(maildir_conn_up_i*);
     // this event is a response to the maildir_up_i->unselect() call
@@ -175,15 +173,8 @@ struct maildir_dn_i {
     // unregistering must be done through the imaildir_t or dirmgr_t
 };
 
-// dirmgr_t-provided interface, required by imaildir_t
-struct dirmgr_i {
-    // all_unregistered is called any time the number of acessors goes to zero.
-    void (*all_unregistered)(dirmgr_i*);
-};
-
 // IMAP maildir
 struct imaildir_t {
-    dirmgr_i *dirmgr;
     // path to this maildir on the filesystem
     string_builder_t path;
     // the mailbox name
@@ -198,53 +189,26 @@ struct imaildir_t {
     bool rm_on_close;
 
 
-    // lock ordering is downwards
+    // accessors
+    link_t ups;  // up_t->link;
+    link_t dns;  // dn_t->link;
+    /* The value of naccessors may not match the length of the accessor
+       lists, particularly during the failing shutdown sequence. */
+    size_t naccessors;
 
-    struct {
-        uv_mutex_t lock;
-        link_t ups;  // up_t->link;
-        link_t dns;  // dn_t->link;
-        /* The value of naccessors may not match the length of the accessor
-           lists, particularly during the failing shutdown sequence. */
-        size_t naccessors;
-    } access;
-
-    struct {
-        uv_rwlock_t lock;
-        jsw_atree_t tree;  // msg_base_t->node
-    } msgs;
-
-    struct {
-        uv_rwlock_t lock;
-        jsw_atree_t tree;  // msg_mod_t->node
-    } mods;
-
-    struct {
-        uv_rwlock_t lock;
-        jsw_atree_t tree;  // msg_expunge_t->node;
-    } expunged;
-
-    struct {
-        uv_mutex_t lock;
-        maildir_log_i *log;
-    } log;
-
-    struct {
-        uv_mutex_t lock;
-        // the latest serial of things we put in /tmp
-        size_t count;
-    } tmp;
-
-    struct {
-        uv_mutex_t lock;
-        link_t requested;  // update_req_t->link
-        // link_t in_flight;  // update_base_t->link
-    } update;
+    jsw_atree_t msgs;  // msg_base_t->node
+    jsw_atree_t mods;  // msg_mod_t->node
+    jsw_atree_t expunged;  // msg_expunge_t->node;
+    maildir_log_i *log;
+    // the latest serial of things we put in /tmp
+    size_t tmp_count;
+    link_t updates_requested;  // update_req_t->link
+    // link_t updates_in_flight;  // update_base_t->link
 };
 
 // open a maildir at path, path and name must be linked to long-lived objects
 derr_t imaildir_init(imaildir_t *m, string_builder_t path, const dstr_t *name,
-        dirmgr_i *mgr, const keypair_t *keypair);
+        const keypair_t *keypair);
 // free must only be called if the maildir has no accessors
 void imaildir_free(imaildir_t *m);
 
@@ -265,9 +229,8 @@ derr_t imaildir_register_up(imaildir_t *m, maildir_conn_up_i *conn_up,
 derr_t imaildir_register_dn(imaildir_t *m, maildir_conn_dn_i *conn_dn,
         maildir_dn_i **maildir_dn_out);
 
-/* there is a race condition between imalidir_register and imaildir_unregister;
-   generally, if you got a maildir_*_i through dirmgr_open, you should close it
-   via dirmgr_close */
+/* if you got a maildir_*_i through dirmgr_open, you should close it via
+   dirmgr_close */
 // (the argument is actually just for type-safety, it's not used)
 void imaildir_unregister_up(maildir_up_i *m);
 void imaildir_unregister_dn(maildir_dn_i *m);
@@ -311,3 +274,5 @@ derr_t imaildir_log_open(const string_builder_t *dirpath,
 
 // this must be implemented by some backend, currently only lmdb
 derr_t imaildir_log_rm(const string_builder_t *dirpath);
+
+size_t imaildir_naccessors(imaildir_t *m);

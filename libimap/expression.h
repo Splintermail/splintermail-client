@@ -523,6 +523,7 @@ typedef struct {
     ie_dstr_t *user;
     ie_dstr_t *pass;
 } ie_login_cmd_t;
+DEF_STEAL_PTR(ie_login_cmd_t);
 
 typedef struct {
     ie_mailbox_t *m;
@@ -615,6 +616,7 @@ typedef struct {
     link_t link;
 } imap_cmd_t;
 DEF_CONTAINER_OF(imap_cmd_t, link, link_t);
+DEF_STEAL_PTR(imap_cmd_t);
 
 // full response types
 
@@ -696,6 +698,7 @@ typedef struct {
     link_t link;
 } imap_resp_t;
 DEF_CONTAINER_OF(imap_resp_t, link, link_t);
+DEF_STEAL_PTR(imap_resp_t);
 
 // final union type for bison
 typedef union {
@@ -1023,6 +1026,7 @@ ie_fetch_resp_t *ie_fetch_resp_add_extra(derr_t *e, ie_fetch_resp_t *f,
 
 ie_login_cmd_t *ie_login_cmd_new(derr_t *e, ie_dstr_t *user, ie_dstr_t *pass);
 void ie_login_cmd_free(ie_login_cmd_t *login);
+ie_login_cmd_t *ie_login_cmd_copy(derr_t *e, const ie_login_cmd_t *old);
 
 ie_select_cmd_t *ie_select_cmd_new(derr_t *e, ie_mailbox_t *m,
         ie_select_params_t *params);

@@ -1464,7 +1464,7 @@ atom_like: RAW
          | keyword
 ;
 
-atom: RAW                { $$ = ie_dstr_new(E, p->token, KEEP_RAW); }
+atom: RAW                { PFMT("ATOM:%x\n", FD_DBG(p->token)); $$ = ie_dstr_new(E, p->token, KEEP_RAW); }
     | atom[a] atom_like  { $$ = ie_dstr_append(E, $a, p->token, KEEP_RAW); }
 ;
 
@@ -1489,7 +1489,7 @@ literal: LITERAL { LITERAL_START; } literal_body[l] { $$ = $l; };
 
 /* the scanner produces RAW tokens until the literal lengths is met.  Even if
    the literal length is 0, at least one empty RAW token is always produced */
-literal_body: RAW                 { $$ = ie_dstr_new(E, p->token, KEEP_RAW); }
+literal_body: RAW                 {  PFMT("RAW:%x\n", FD_DBG(p->token)); $$ = ie_dstr_new(E, p->token, KEEP_RAW); }
             | literal_body[l] RAW { $$ = ie_dstr_append(E, $l, p->token, KEEP_RAW); }
 
 ign_literal: LITERAL { LITERAL_START; } ign_literal_body;

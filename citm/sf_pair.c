@@ -1,32 +1,31 @@
 #include "citm.h"
 
-static void sf_pair_finalize(refs_t *refs){
-    sf_pair_t *sf_pair = CONTAINER_OF(refs, sf_pair_t, refs);
+void sf_pair_free(sf_pair_t **old){
+    sf_pair_t *sf_pair = *old;
+    if(!sf_pair) return;
 
     // free state generated at runtime
+    ie_login_cmd_free(sf_pair->login_cmd);
     dstr_free(&sf_pair->username);
     dstr_free(&sf_pair->password);
 
-    refs_free(&sf_pair->children);
+    server_free(&sf_pair->server);
+    fetcher_free(&sf_pair->fetcher);
+
     refs_free(&sf_pair->refs);
     free(sf_pair);
+
+    *old = NULL;
 }
 
-static void sf_pair_children_finalize(refs_t *children){
-    sf_pair_t *sf_pair = CONTAINER_OF(children, sf_pair_t, children);
-
-    // close if we haven't already
-    sf_pair_close(sf_pair, E_OK);
-
-    // release our owner
+static void sf_pair_finalize(refs_t *refs){
+    sf_pair_t *sf_pair = CONTAINER_OF(refs, sf_pair_t, refs);
     sf_pair->cb->release(sf_pair->cb, sf_pair);
 }
 
 void sf_pair_close(sf_pair_t *sf_pair, derr_t error){
-    uv_mutex_lock(&sf_pair->mutex);
     bool do_close = !sf_pair->closed;
     sf_pair->closed = true;
-    uv_mutex_unlock(&sf_pair->mutex);
 
     if(!do_close){
         // drop secondary errors
@@ -34,14 +33,62 @@ void sf_pair_close(sf_pair_t *sf_pair, derr_t error){
         return;
     }
 
-    server_close(sf_pair->server, E_OK);
-    server_release(sf_pair->server);
-
-    fetcher_close(sf_pair->fetcher, E_OK);
-    fetcher_release(sf_pair->fetcher);
+    server_close(&sf_pair->server, E_OK);
+    fetcher_close(&sf_pair->fetcher, E_OK);
 
     sf_pair->cb->dying(sf_pair->cb, sf_pair, error);
     PASSED(error);
+}
+
+static void sf_pair_enqueue(sf_pair_t *sf_pair){
+    if(sf_pair->closed || sf_pair->enqueued) return;
+    sf_pair->enqueued = true;
+    // ref_up for wake_ev
+    ref_up(&sf_pair->refs);
+    sf_pair->engine->pass_event(sf_pair->engine, &sf_pair->wake_ev.ev);
+}
+
+static void sf_pair_wakeup(wake_event_t *wake_ev){
+    // printf("---- sf_pair_wakeup\n");
+    sf_pair_t *sf_pair = CONTAINER_OF(wake_ev, sf_pair_t, wake_ev);
+    sf_pair->enqueued = false;
+    // ref_dn for wake_ev
+    ref_dn(&sf_pair->refs);
+
+    derr_t e = E_OK;
+    // what did we wake up for?
+    if(sf_pair->login_result){
+        sf_pair->login_result = false;
+        // request an owner
+        PROP_GO(&e,
+            sf_pair->cb->set_owner(
+                sf_pair->cb,
+                sf_pair,
+                &sf_pair->username,
+                &sf_pair->password,
+                &sf_pair->owner),
+            fail);
+        server_login_result(&sf_pair->server, true);
+    }else if(sf_pair->login_cmd){
+        // save the username and password in case the login succeeds
+        PROP_GO(&e,
+            dstr_copy(&sf_pair->login_cmd->user->dstr, &sf_pair->username),
+        fail);
+
+        PROP_GO(&e,
+            dstr_copy(&sf_pair->login_cmd->pass->dstr, &sf_pair->password),
+        fail);
+
+        fetcher_login(
+            &sf_pair->fetcher, STEAL(ie_login_cmd_t, &sf_pair->login_cmd)
+        );
+    }else{
+        LOG_ERROR("sf_pair_wakeup() for no reason\n");
+    }
+    return;
+
+fail:
+    sf_pair_close(sf_pair, e);
 }
 
 // part of server_cb_i
@@ -57,190 +104,92 @@ static void server_cb_release(server_cb_i *cb){
 
     // ref down for the server
     ref_dn(&sf_pair->refs);
-    ref_dn(&sf_pair->children);
 }
 
 
 // part of server_cb_i
-static derr_t server_cb_login(server_cb_i *server_cb, const ie_dstr_t *user,
-        const ie_dstr_t *pass){
-    derr_t e = E_OK;
-
+static void server_cb_login(server_cb_i *server_cb,
+        ie_login_cmd_t *login_cmd){
+    // printf("---- server_cb_login\n");
     sf_pair_t *sf_pair = CONTAINER_OF(server_cb, sf_pair_t, server_cb);
-    uv_mutex_lock(&sf_pair->mutex);
-    if(sf_pair->closed) ORIG_GO(&e, E_DEAD, "sf_pair is closed", unlock);
-
-    // save the username in case it succeeds
-    PROP_GO(&e, dstr_copy(&user->dstr, &sf_pair->username), unlock);
-    PROP_GO(&e, dstr_copy(&pass->dstr, &sf_pair->password), unlock);
-
-    PROP_GO(&e, fetcher_login(sf_pair->fetcher, user, pass), unlock);
-
-unlock:
-    uv_mutex_unlock(&sf_pair->mutex);
-    return e;
+    // the copy of credentials can fail, so enqueue the work
+    sf_pair->login_cmd = login_cmd;
+    sf_pair_enqueue(sf_pair);
 }
 
 // part of server_cb_i
-static derr_t server_cb_passthru_req(server_cb_i *server_cb,
-        passthru_req_t *passthru){
-    derr_t e = E_OK;
-
+static void server_cb_passthru_req(server_cb_i *server_cb,
+        passthru_req_t *passthru_req){
+    // printf("---- server_cb_passthru_req\n");
     sf_pair_t *sf_pair = CONTAINER_OF(server_cb, sf_pair_t, server_cb);
-    uv_mutex_lock(&sf_pair->mutex);
-    if(sf_pair->closed){
-        passthru_req_free(passthru);
-        ORIG_GO(&e, E_DEAD, "sf_pair is closed", unlock);
-    }
-
-    PROP_GO(&e, fetcher_passthru_req(sf_pair->fetcher, passthru), unlock);
-    goto unlock;
-
-unlock:
-    uv_mutex_unlock(&sf_pair->mutex);
-    return e;
+    fetcher_passthru_req(&sf_pair->fetcher, passthru_req);
 }
 
 // part of server_cb_i
-static derr_t server_cb_select(server_cb_i *server_cb, const ie_mailbox_t *m){
-    derr_t e = E_OK;
-
+static void server_cb_select(server_cb_i *server_cb, ie_mailbox_t *m){
+    // printf("---- server_cb_select\n");
     sf_pair_t *sf_pair = CONTAINER_OF(server_cb, sf_pair_t, server_cb);
-    uv_mutex_lock(&sf_pair->mutex);
-    if(sf_pair->closed) ORIG_GO(&e, E_DEAD, "sf_pair is closed", unlock);
-
-    PROP_GO(&e, fetcher_select(sf_pair->fetcher, m), unlock);
-
-unlock:
-    uv_mutex_unlock(&sf_pair->mutex);
-    return e;
+    fetcher_select(&sf_pair->fetcher, m);
 }
 
 
 // part of fetcher_cb_i
 static void fetcher_cb_dying(fetcher_cb_i *cb, derr_t error){
     sf_pair_t *sf_pair = CONTAINER_OF(cb, sf_pair_t, fetcher_cb);
-
     sf_pair_close(sf_pair, error);
 }
 
 // part of fetcher_cb_i
 static void fetcher_cb_release(fetcher_cb_i *cb){
     sf_pair_t *sf_pair = CONTAINER_OF(cb, sf_pair_t, fetcher_cb);
-
     // ref down for the fetcher
     ref_dn(&sf_pair->refs);
-    ref_dn(&sf_pair->children);
 }
 
 // part of the fetcher_cb_i
-static derr_t fetcher_cb_login_ready(fetcher_cb_i *fetcher_cb){
-    derr_t e = E_OK;
-
+static void fetcher_cb_login_ready(fetcher_cb_i *fetcher_cb){
+    // printf("---- fetcher_cb_login_ready\n");
     sf_pair_t *sf_pair = CONTAINER_OF(fetcher_cb, sf_pair_t, fetcher_cb);
-    uv_mutex_lock(&sf_pair->mutex);
-
-    // allow the server to proceed
-    PROP_GO(&e, server_allow_greeting(sf_pair->server), unlock);
-
-unlock:
-    uv_mutex_unlock(&sf_pair->mutex);
-    return e;
+    server_allow_greeting(&sf_pair->server);
 }
 
 // part of the fetcher_cb_i
-static derr_t fetcher_cb_login_failed(fetcher_cb_i *fetcher_cb){
-    derr_t e = E_OK;
-
+static void fetcher_cb_login_result(fetcher_cb_i *fetcher_cb,
+        bool login_result){
+    // printf("---- fetcher_cb_login_result\n");
     sf_pair_t *sf_pair = CONTAINER_OF(fetcher_cb, sf_pair_t, fetcher_cb);
-    uv_mutex_lock(&sf_pair->mutex);
 
-    PROP_GO(&e, server_login_failed(sf_pair->server), unlock);
-
-unlock:
-    uv_mutex_unlock(&sf_pair->mutex);
-    return e;
-}
-
-// part of the fetcher_cb_i
-static derr_t fetcher_cb_login_succeeded(fetcher_cb_i *fetcher_cb){
-    derr_t e = E_OK;
-
-    sf_pair_t *sf_pair = CONTAINER_OF(fetcher_cb, sf_pair_t, fetcher_cb);
-    uv_mutex_lock(&sf_pair->mutex);
-
-    // request an owner
-    PROP_GO(&e,
-        sf_pair->cb->set_owner(
-            sf_pair->cb,
-            sf_pair,
-            &sf_pair->username,
-            &sf_pair->password,
-            &sf_pair->owner),
-        unlock);
-
-    // share the exciting news with the server_t
-    PROP(&e, server_login_succeeded(sf_pair->server) );
-
-unlock:
-    uv_mutex_unlock(&sf_pair->mutex);
-    return e;
+    if(login_result){
+        // the set_owner call can fail, so enqueue the work
+        sf_pair->login_result = true;
+        sf_pair_enqueue(sf_pair);
+    }else{
+        // pass failures through immediately
+        server_login_result(&sf_pair->server, false);
+    }
 }
 
 // part of fetcher_cb_i
-static derr_t fetcher_cb_passthru_resp(fetcher_cb_i *fetcher_cb,
-        passthru_resp_t *passthru){
-    derr_t e = E_OK;
-
+static void fetcher_cb_passthru_resp(fetcher_cb_i *fetcher_cb,
+        passthru_resp_t *passthru_resp){
+    // printf("---- fetcher_cb_passthru_resp\n");
     sf_pair_t *sf_pair = CONTAINER_OF(fetcher_cb, sf_pair_t, fetcher_cb);
-    uv_mutex_lock(&sf_pair->mutex);
-    if(sf_pair->closed){
-        passthru_resp_free(passthru);
-        ORIG_GO(&e, E_DEAD, "sf_pair is closed", unlock);
-    }
-
-    PROP_GO(&e, server_passthru_resp(sf_pair->server, passthru), unlock);
-
-unlock:
-    uv_mutex_unlock(&sf_pair->mutex);
-    return e;
+    server_passthru_resp(&sf_pair->server, passthru_resp);
 }
 
 // part of the fetcher_cb_i
-static derr_t fetcher_cb_select_succeeded(fetcher_cb_i *fetcher_cb){
-    derr_t e = E_OK;
-
+static void fetcher_cb_select_result(fetcher_cb_i *fetcher_cb,
+        ie_st_resp_t *st_resp){
+    // printf("---- fetcher_cb_select_result\n");
     sf_pair_t *sf_pair = CONTAINER_OF(fetcher_cb, sf_pair_t, fetcher_cb);
-    uv_mutex_lock(&sf_pair->mutex);
-    if(sf_pair->closed) ORIG_GO(&e, E_DEAD, "sf_pair is closed", unlock);
-
-    PROP_GO(&e, server_select_succeeded(sf_pair->server), unlock);
-
-unlock:
-    uv_mutex_unlock(&sf_pair->mutex);
-    return e;
-}
-
-// part of the fetcher_cb_i
-static derr_t fetcher_cb_select_failed(fetcher_cb_i *fetcher_cb,
-        const ie_st_resp_t *st_resp){
-    derr_t e = E_OK;
-
-    sf_pair_t *sf_pair = CONTAINER_OF(fetcher_cb, sf_pair_t, fetcher_cb);
-    uv_mutex_lock(&sf_pair->mutex);
-    if(sf_pair->closed) ORIG_GO(&e, E_DEAD, "sf_pair is closed", unlock);
-
-    PROP_GO(&e, server_select_failed(sf_pair->server, st_resp), unlock);
-
-unlock:
-    uv_mutex_unlock(&sf_pair->mutex);
-    return e;
+    server_select_result(&sf_pair->server, st_resp);
 }
 
 
 derr_t sf_pair_new(
     sf_pair_t **out,
     sf_pair_cb_i *cb,
+    engine_t *engine,
     const char *remote_host,
     const char *remote_svc,
     imap_pipeline_t *p,
@@ -257,6 +206,7 @@ derr_t sf_pair_new(
     if(!sf_pair) ORIG(&e, E_NOMEM, "nomem");
     *sf_pair = (sf_pair_t){
         .cb = cb,
+        .engine = engine,
         .server_cb = {
             .dying = server_cb_dying,
             .release = server_cb_release,
@@ -268,43 +218,40 @@ derr_t sf_pair_new(
             .dying = fetcher_cb_dying,
             .release = fetcher_cb_release,
             .login_ready = fetcher_cb_login_ready,
-            .login_succeeded = fetcher_cb_login_succeeded,
-            .login_failed = fetcher_cb_login_failed,
+            .login_result = fetcher_cb_login_result,
             .passthru_resp = fetcher_cb_passthru_resp,
-            .select_succeeded = fetcher_cb_select_succeeded,
-            .select_failed = fetcher_cb_select_failed,
+            .select_result = fetcher_cb_select_result,
         },
     };
 
-    link_init(&sf_pair->link);
+    link_init(&sf_pair->citme_link);
+    link_init(&sf_pair->user_link);
 
-    int ret = uv_mutex_init(&sf_pair->mutex);
-    if(ret < 0){
-        TRACE(&e, "uv_mutex_init: %x\n", FUV(&ret));
-        ORIG_GO(&e, uv_err_type(ret), "error initializing mutex", fail_malloc);
-    }
+    event_prep(&sf_pair->wake_ev.ev, NULL, NULL);
+    sf_pair->wake_ev.ev.ev_type = EV_INTERNAL;
+    sf_pair->wake_ev.handler = sf_pair_wakeup;
 
-    // start with an owner ref, a server ref, and a fetcher ref
-    PROP_GO(&e, refs_init(&sf_pair->refs, 3, sf_pair_finalize), fail_mutex);
-    PROP_GO(&e, refs_init(&sf_pair->children, 2, sf_pair_children_finalize),
-            fail_refs);
+    // start with a server ref and a fetcher ref
+    PROP_GO(&e, refs_init(&sf_pair->refs, 2, sf_pair_finalize), fail_malloc);
 
     PROP_GO(&e,
-        server_new(
+        server_init(
             &sf_pair->server,
             &sf_pair->server_cb,
             p,
+            engine,
             ctx_srv,
             session),
-        fail_children);
+        fail_refs);
 
     PROP_GO(&e,
-        fetcher_new(
+        fetcher_init(
             &sf_pair->fetcher,
             &sf_pair->fetcher_cb,
             remote_host,
             remote_svc,
             p,
+            engine,
             ctx_cli),
         fail_server);
 
@@ -313,38 +260,15 @@ derr_t sf_pair_new(
     return e;
 
 fail_server:
-    server_cancel(sf_pair->server);
-fail_children:
-    refs_free(&sf_pair->children);
+    server_free(&sf_pair->server);
 fail_refs:
     refs_free(&sf_pair->refs);
-fail_mutex:
-    uv_mutex_destroy(&sf_pair->mutex);
 fail_malloc:
     free(sf_pair);
     return e;
 }
 
 void sf_pair_start(sf_pair_t *sf_pair){
-    server_start(sf_pair->server);
-    fetcher_start(sf_pair->fetcher);
-}
-
-void sf_pair_cancel(sf_pair_t *sf_pair){
-    sf_pair->canceled = true;
-
-    server_cancel(sf_pair->server);
-    fetcher_cancel(sf_pair->fetcher);
-
-    // lose a reference, since the conn_dying call won't be made
-    ref_dn(&sf_pair->refs);
-    ref_dn(&sf_pair->refs);
-    ref_dn(&sf_pair->children);
-    ref_dn(&sf_pair->children);
-
-    sf_pair_release(sf_pair);
-}
-
-void sf_pair_release(sf_pair_t *sf_pair){
-    ref_dn(&sf_pair->refs);
+    server_start(&sf_pair->server);
+    fetcher_start(&sf_pair->fetcher);
 }

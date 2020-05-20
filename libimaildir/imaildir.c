@@ -6,8 +6,6 @@
 
 #include "libimaildir.h"
 
-#include "uv_util.h"
-
 
 #define HOSTNAME_COMPONENT_MAX_LEN 32
 
@@ -60,10 +58,10 @@ static derr_t add_msg_to_maildir(const string_builder_t *base,
     */
 
     // grab the metadata we loaded from the persistent cache
-    jsw_anode_t *node = jsw_afind(&arg->m->msgs.tree, &uid, NULL);
+    jsw_anode_t *node = jsw_afind(&arg->m->msgs, &uid, NULL);
     if(node == NULL){
         // ok, check expunged files
-        node = jsw_afind(&arg->m->expunged.tree, &uid, NULL);
+        node = jsw_afind(&arg->m->expunged, &uid, NULL);
         if(!node){
             ORIG(&e, E_INTERNAL, "UID on file not in cache anywhere");
         }
@@ -131,17 +129,16 @@ static derr_t handle_missing_file(imaildir_t *m, msg_base_t *base,
             PROP(&e, msg_expunge_new(&expunge, uid, state, modseq) );
 
             // add expunge to log
-            maildir_log_i *log = m->log.log;
-            PROP_GO(&e, log->update_expunge(log, expunge), fail_expunge);
+            PROP_GO(&e, m->log->update_expunge(m->log, expunge), fail_expunge);
 
             // just drop the base, no need to update it
             *drop_base = true;
 
             // insert expunge into mods
-            jsw_ainsert(&m->mods.tree, &expunge->mod.node);
+            jsw_ainsert(&m->mods, &expunge->mod.node);
 
             // insert expunge into expunged
-            jsw_ainsert(&m->expunged.tree, &expunge->node);
+            jsw_ainsert(&m->expunged, &expunge->node);
 
         } break;
 
@@ -176,7 +173,7 @@ static derr_t populate_msgs(imaildir_t *m){
 
     // now handle messages with no matching file
     jsw_atrav_t trav;
-    jsw_anode_t *node = jsw_atfirst(&trav, &m->msgs.tree);
+    jsw_anode_t *node = jsw_atfirst(&trav, &m->msgs);
     while(node != NULL){
         msg_base_t *base = CONTAINER_OF(node, msg_base_t, node);
 
@@ -188,7 +185,7 @@ static derr_t populate_msgs(imaildir_t *m){
         if(drop_base){
             node = jsw_pop_atnext(&trav);
             if(base->meta){
-                jsw_aerase(&m->mods.tree, &base->meta->mod.modseq);
+                jsw_aerase(&m->mods, &base->meta->mod.modseq);
                 msg_meta_free(&base->meta);
             }
             msg_base_free(&base);
@@ -206,7 +203,7 @@ static derr_t imaildir_print_msgs(imaildir_t *m){
 
     LOG_INFO("msgs:\n");
     jsw_atrav_t trav;
-    jsw_anode_t *node = jsw_atfirst(&trav, &m->msgs.tree);
+    jsw_anode_t *node = jsw_atfirst(&trav, &m->msgs);
     for(; node != NULL; node = jsw_atnext(&trav)){
         msg_base_t *base = CONTAINER_OF(node, msg_base_t, node);
         DSTR_VAR(buffer, 1024);
@@ -216,7 +213,7 @@ static derr_t imaildir_print_msgs(imaildir_t *m){
     LOG_INFO("----\n");
 
     LOG_INFO("expunged:\n");
-    node = jsw_atfirst(&trav, &m->expunged.tree);
+    node = jsw_atfirst(&trav, &m->expunged);
     for(; node != NULL; node = jsw_atnext(&trav)){
         msg_expunge_t *expunge = CONTAINER_OF(node, msg_expunge_t, node);
         DSTR_VAR(buffer, 1024);
@@ -231,8 +228,8 @@ static derr_t imaildir_print_msgs(imaildir_t *m){
 static derr_t imaildir_read_cache_and_files(imaildir_t *m){
     derr_t e = E_OK;
 
-    PROP(&e, imaildir_log_open(&m->path, &m->msgs.tree, &m->expunged.tree,
-                &m->mods.tree, &m->log.log) );
+    PROP(&e, imaildir_log_open(&m->path, &m->msgs, &m->expunged,
+                &m->mods, &m->log) );
 
     // populate messages by reading files
     PROP(&e, populate_msgs(m) );
@@ -274,7 +271,7 @@ static derr_t delete_all_msg_files(const string_builder_t *maildir_path){
 }
 
 derr_t imaildir_init(imaildir_t *m, string_builder_t path, const dstr_t *name,
-        dirmgr_i *dirmgr, const keypair_t *keypair){
+        const keypair_t *keypair){
     derr_t e = E_OK;
 
     // check if the cache is in an invalid state
@@ -298,62 +295,23 @@ derr_t imaildir_init(imaildir_t *m, string_builder_t path, const dstr_t *name,
     *m = (imaildir_t){
         .path = path,
         .name = name,
-        .dirmgr = dirmgr,
         .keypair = keypair,
         // TODO: finish setting values
         // .uid_validity = ???
         // .mflags = ???
     };
 
-    link_init(&m->access.ups);
-    link_init(&m->access.dns);
-
-    // initialize locks
-    int ret = uv_mutex_init(&m->access.lock);
-    if(ret < 0){
-        TRACE(&e, "uv_mutex_init: %x\n", FUV(&ret));
-        ORIG(&e, uv_err_type(ret), "error initializing mutex");
-    }
-    ret = uv_rwlock_init(&m->msgs.lock);
-    if(ret < 0){
-        TRACE(&e, "uv_rwlock_init: %x\n", FUV(&ret));
-        ORIG_GO(&e, uv_err_type(ret), "error initializing rwlock",
-                fail_access_lock);
-    }
-    ret = uv_rwlock_init(&m->mods.lock);
-    if(ret < 0){
-        TRACE(&e, "uv_rwlock_init: %x\n", FUV(&ret));
-        ORIG_GO(&e, uv_err_type(ret), "error initializing rwlock",
-                fail_msgs_lock);
-    }
-    ret = uv_rwlock_init(&m->expunged.lock);
-    if(ret < 0){
-        TRACE(&e, "uv_rwlock_init: %x\n", FUV(&ret));
-        ORIG_GO(&e, uv_err_type(ret), "error initializing rwlock",
-                fail_mods_lock);
-    }
-
-    ret = uv_mutex_init(&m->log.lock);
-    if(ret < 0){
-        TRACE(&e, "uv_mutex_init: %x\n", FUV(&ret));
-        ORIG_GO(&e, uv_err_type(ret), "error initializing mutex",
-                fail_expunged_lock);
-    }
-    ret = uv_mutex_init(&m->tmp.lock);
-    if(ret < 0){
-        TRACE(&e, "uv_mutex_init: %x\n", FUV(&ret));
-        ORIG_GO(&e, uv_err_type(ret), "error initializing mutex",
-                fail_log_lock);
-    }
+    link_init(&m->ups);
+    link_init(&m->dns);
 
     // init msgs
-    jsw_ainit(&m->msgs.tree, jsw_cmp_uid, msg_base_jsw_get);
+    jsw_ainit(&m->msgs, jsw_cmp_uid, msg_base_jsw_get);
 
     // init expunged
-    jsw_ainit(&m->expunged.tree, jsw_cmp_uid, msg_expunge_jsw_get);
+    jsw_ainit(&m->expunged, jsw_cmp_uid, msg_expunge_jsw_get);
 
     // init mods
-    jsw_ainit(&m->mods.tree, jsw_cmp_modseq, msg_mod_jsw_get);
+    jsw_ainit(&m->mods, jsw_cmp_modseq, msg_mod_jsw_get);
 
     // any remaining failures must result in a call to imaildir_free()
 
@@ -364,34 +322,22 @@ derr_t imaildir_init(imaildir_t *m, string_builder_t path, const dstr_t *name,
 fail_free:
     imaildir_free(m);
     return e;
-
-fail_log_lock:
-    uv_mutex_destroy(&m->log.lock);
-fail_expunged_lock:
-    uv_rwlock_destroy(&m->expunged.lock);
-fail_mods_lock:
-    uv_rwlock_destroy(&m->mods.lock);
-fail_msgs_lock:
-    uv_rwlock_destroy(&m->msgs.lock);
-fail_access_lock:
-    uv_mutex_destroy(&m->access.lock);
-    return e;
 }
 
 static void free_trees_unsafe(imaildir_t *m){
     jsw_anode_t *node;
 
     // empty mods, but don't free any of it (they'll all be freed elsewhere)
-    while(jsw_apop(&m->mods.tree)){}
+    while(jsw_apop(&m->mods)){}
 
     // free all expunged
-    while((node = jsw_apop(&m->expunged.tree))){
+    while((node = jsw_apop(&m->expunged))){
         msg_expunge_t *expunge = CONTAINER_OF(node, msg_expunge_t, node);
         msg_expunge_free(&expunge);
     }
 
     // free all messages
-    while((node = jsw_apop(&m->msgs.tree))){
+    while((node = jsw_apop(&m->msgs))){
         msg_base_t *base = CONTAINER_OF(node, msg_base_t, node);
         msg_meta_free(&base->meta);
         msg_base_free(&base);
@@ -406,8 +352,8 @@ void imaildir_free(imaildir_t *m){
     free_trees_unsafe(m);
 
     // handle the case where imaildir_init failed in imaildir_log_open
-    if(m->log.log){
-        m->log.log->close(m->log.log);
+    if(m->log){
+        m->log->close(m->log);
     }
 
     // check if we found out this maildir doesn't exist anymore
@@ -418,20 +364,13 @@ void imaildir_free(imaildir_t *m){
         // delete message files from the filesystem
         DROP_CMD( delete_all_msg_files(&m->path) );
     }
-
-    uv_mutex_destroy(&m->tmp.lock);
-    uv_mutex_destroy(&m->log.lock);
-    uv_rwlock_destroy(&m->expunged.lock);
-    uv_rwlock_destroy(&m->mods.lock);
-    uv_rwlock_destroy(&m->msgs.lock);
-    uv_mutex_destroy(&m->access.lock);
 }
 
 // this is for the himodseq that we serve to clients
 static unsigned long himodseq_dn_unsafe(imaildir_t *m){
     // TODO: handle noop modseq's that result from STORE-after-EXPUNGE's
     jsw_atrav_t trav;
-    jsw_anode_t *node = jsw_atlast(&trav, &m->mods.tree);
+    jsw_anode_t *node = jsw_atlast(&trav, &m->mods);
     if(node != NULL){
         msg_mod_t *mod = CONTAINER_OF(node, msg_mod_t, node);
         return mod->modseq;
@@ -443,39 +382,28 @@ static unsigned long himodseq_dn_unsafe(imaildir_t *m){
 
 // this is for the himodseq when we sync from the server
 unsigned long imaildir_up_get_himodseq_up(imaildir_t *m){
-    uv_mutex_lock(&m->log.lock);
-    unsigned long retval = m->log.log->get_himodseq_up(m->log.log);
-    uv_mutex_unlock(&m->log.lock);
-    return retval;
+    return m->log->get_himodseq_up(m->log);
 }
 
 // this is for the himodseq when we sync from the server
 derr_t imaildir_up_set_himodseq_up(imaildir_t *m, unsigned long himodseq){
     derr_t e = E_OK;
-
-    uv_mutex_lock(&m->log.lock);
-    e = m->log.log->set_himodseq_up(m->log.log, himodseq);
-    uv_mutex_unlock(&m->log.lock);
-
+    PROP(&e, m->log->set_himodseq_up(m->log, himodseq) );
     return e;
 }
 
 derr_t imaildir_up_get_unfilled_msgs(imaildir_t *m, seq_set_builder_t *ssb){
     derr_t e = E_OK;
 
-    uv_rwlock_rdlock(&m->msgs.lock);
-
     jsw_atrav_t trav;
-    jsw_anode_t *node = jsw_atfirst(&trav, &m->msgs.tree);
+    jsw_anode_t *node = jsw_atfirst(&trav, &m->msgs);
     for(; node != NULL; node = jsw_atnext(&trav)){
         msg_base_t *base = CONTAINER_OF(node, msg_base_t, node);
         if(base->state != MSG_BASE_UNFILLED) continue;
 
-        PROP_GO(&e, seq_set_builder_add_val(ssb, base->ref.uid), cu);
+        PROP(&e, seq_set_builder_add_val(ssb, base->ref.uid) );
     }
 
-cu:
-    uv_rwlock_rdunlock(&m->msgs.lock);
     return e;
 }
 
@@ -483,19 +411,15 @@ derr_t imaildir_up_get_unpushed_expunges(imaildir_t *m,
         seq_set_builder_t *ssb){
     derr_t e = E_OK;
 
-    uv_rwlock_rdlock(&m->expunged.lock);
-
     jsw_atrav_t trav;
-    jsw_anode_t *node = jsw_atfirst(&trav, &m->expunged.tree);
+    jsw_anode_t *node = jsw_atfirst(&trav, &m->expunged);
     for(; node != NULL; node = jsw_atnext(&trav)){
         msg_expunge_t *expunge = CONTAINER_OF(node, msg_expunge_t, node);
         if(expunge->state != MSG_EXPUNGE_UNPUSHED) continue;
 
-        PROP_GO(&e, seq_set_builder_add_val(ssb, expunge->uid), cu);
+        PROP(&e, seq_set_builder_add_val(ssb, expunge->uid) );
     }
 
-cu:
-    uv_rwlock_rdunlock(&m->expunged.lock);
     return e;
 }
 
@@ -507,17 +431,12 @@ derr_t imaildir_register_up(imaildir_t *m, maildir_conn_up_i *conn_up,
     up_t *up;
     PROP(&e, up_new(&up, conn_up, m) );
 
-    uv_mutex_lock(&m->access.lock);
-
     // check if we will be the primary up_t
-    bool is_primary = link_list_isempty(&m->access.ups);
+    bool is_primary = link_list_isempty(&m->ups);
 
     // add the up_t to the maildir
-    link_list_append(&m->access.ups, &up->link);
-    m->access.naccessors++;
-
-    // done with access mutex
-    uv_mutex_unlock(&m->access.lock);
+    link_list_append(&m->ups, &up->link);
+    m->naccessors++;
 
     // treat the connection state as "selected", even though we just sent it
     up->selected = true;
@@ -531,7 +450,7 @@ derr_t imaildir_register_up(imaildir_t *m, maildir_conn_up_i *conn_up,
         derr_t e2 = E_OK;
         imap_cmd_t *cmd;
         up_cb_t *up_cb;
-        maildir_log_i *log = m->log.log;
+        maildir_log_i *log = m->log;
         unsigned int uidvld = log->get_uidvld(log);
         unsigned long himodseq = log->get_himodseq_up(log);
         // prepare an initial SELECT to send
@@ -555,12 +474,9 @@ derr_t imaildir_register_dn(imaildir_t *m, maildir_conn_dn_i *conn_dn,
     dn_t *dn;
     PROP(&e, dn_new(&dn, conn_dn, m) );
 
-    uv_mutex_lock(&m->access.lock);
     // add the dn_t to the maildir
-    link_list_append(&m->access.dns, &dn->link);
-    m->access.naccessors++;
-    // done with access mutex
-    uv_mutex_unlock(&m->access.lock);
+    link_list_append(&m->dns, &dn->link);
+    m->naccessors++;
 
     /* final initialization step is when the downwards session calls
        maildir_dn_i->cmd() to send the SELECT command sent by the client */
@@ -575,7 +491,6 @@ void imaildir_unregister_up(maildir_up_i *maildir_up){
     up_t *up = CONTAINER_OF(maildir_up, up_t, maildir_up);
     imaildir_t *m = up->m;
 
-    uv_mutex_lock(&m->access.lock);
     if(!up->force_closed){
         // TODO: detect if the primary up_t has changed
         // remove from its list
@@ -586,23 +501,13 @@ void imaildir_unregister_up(maildir_up_i *maildir_up){
     // unref for conn
     ref_dn(&up->refs);
 
-    bool all_unregistered = (--m->access.naccessors == 0);
-
-    /* done with our own thread safety, the race between all_unregistered and
-       imaildir_register must be be resolved externally if we want it to be
-       safe to call imaildir_free() inside an all_unregistered() callback */
-    uv_mutex_unlock(&m->access.lock);
-
-    if(all_unregistered){
-        m->dirmgr->all_unregistered(m->dirmgr);
-    }
+    m->naccessors--;
 }
 
 void imaildir_unregister_dn(maildir_dn_i *maildir_dn){
     dn_t *dn = CONTAINER_OF(maildir_dn, dn_t, maildir_dn);
     imaildir_t *m = dn->m;
 
-    uv_mutex_lock(&m->access.lock);
     if(!dn->force_closed){
         // remove from its list
         link_remove(&dn->link);
@@ -612,30 +517,19 @@ void imaildir_unregister_dn(maildir_dn_i *maildir_dn){
     // unref for conn
     ref_dn(&dn->refs);
 
-    bool all_unregistered = (--m->access.naccessors == 0);
-
-    /* done with our own thread safety, the race between all_unregistered and
-       imaildir_register must be be resolved externally if we want it to be
-       safe to call imaildir_free() inside an all_unregistered() callback */
-    uv_mutex_unlock(&m->access.lock);
-
-    if(all_unregistered){
-        m->dirmgr->all_unregistered(m->dirmgr);
-    }
+    m->naccessors--;
 }
 
 // part of maildir_up_i
 bool imaildir_synced(imaildir_t *m){
     bool synced = false;
 
-    uv_mutex_lock(&m->access.lock);
     // only need to check the primary up_t
-    if(!link_list_isempty(&m->access.ups)){
-        link_t *link = m->access.ups.next;
+    if(!link_list_isempty(&m->ups)){
+        link_t *link = m->ups.next;
         up_t *primary_up = CONTAINER_OF(link, up_t, link);
         synced = primary_up->synced;
     }
-    uv_mutex_unlock(&m->access.lock);
 
     return synced;
 }
@@ -645,20 +539,15 @@ derr_t imaildir_open_msg(imaildir_t *m, unsigned int uid, int *fd){
     derr_t e = E_OK;
     *fd = -1;
 
-    uv_rwlock_rdlock(&m->msgs.lock);
-
-    jsw_anode_t *node = jsw_afind(&m->msgs.tree, &uid, NULL);
-    if(!node) ORIG_GO(&e, E_INTERNAL, "uid missing", unlock);
+    jsw_anode_t *node = jsw_afind(&m->msgs, &uid, NULL);
+    if(!node) ORIG(&e, E_INTERNAL, "uid missing");
     msg_base_t *msg = CONTAINER_OF(node, msg_base_t, node);
 
     string_builder_t subdir_path = SUB(&m->path, msg->subdir);
     string_builder_t msg_path = sb_append(&subdir_path, FD(&msg->filename));
-    PROP_GO(&e, open_path(&msg_path, fd, O_RDONLY), unlock);
+    PROP(&e, open_path(&msg_path, fd, O_RDONLY) );
 
     msg->open_fds++;
-
-unlock:
-    uv_rwlock_rdunlock(&m->msgs.lock);
 
     return e;
 }
@@ -667,10 +556,7 @@ unlock:
 int imaildir_close_msg(imaildir_t *m, unsigned int uid, int *fd){
     if(*fd < 0) return 0;
 
-    // write-lock, because may rename or delete files within this lock scope
-    uv_rwlock_wrlock(&m->msgs.lock);
-
-    jsw_anode_t *node = jsw_afind(&m->msgs.tree, &uid, NULL);
+    jsw_anode_t *node = jsw_afind(&m->msgs, &uid, NULL);
     if(!node){
         // imaildir is in an inconsistent state
         derr_t e = E_OK;
@@ -688,7 +574,6 @@ int imaildir_close_msg(imaildir_t *m, unsigned int uid, int *fd){
     int ret = close(*fd);
     *fd = -1;
 
-    uv_rwlock_wrunlock(&m->msgs.lock);
     return ret;
 }
 
@@ -703,19 +588,17 @@ static void imaildir_fail(imaildir_t *m, derr_t error){
     link_init(&ups);
     link_init(&dns);
 
-    uv_mutex_lock(&m->access.lock);
     // mark all up_t's and dn_t's as force-closed during the copy
-    while((link = link_list_pop_first(&m->access.ups)) != NULL){
+    while((link = link_list_pop_first(&m->ups)) != NULL){
         up_t *up = CONTAINER_OF(link, up_t, link);
         up->force_closed = true;
         link_list_append(&ups, link);
     }
-    while((link = link_list_pop_first(&m->access.dns)) != NULL){
+    while((link = link_list_pop_first(&m->dns)) != NULL){
         dn_t *dn = CONTAINER_OF(link, dn_t, link);
         dn->force_closed = true;
         link_list_append(&dns, link);
     }
-    uv_mutex_unlock(&m->access.lock);
 
     // now go through our copied lists and send the failure message to each one
 
@@ -775,7 +658,7 @@ static derr_t meta_diff_from_store_cmd_unsafe(imaildir_t *m, link_t *old_metas,
         unsigned int i = a;
         do {
             // check if we have this UID
-            jsw_anode_t *node = jsw_afind(&m->msgs.tree, &i, NULL);
+            jsw_anode_t *node = jsw_afind(&m->msgs, &i, NULL);
             if(!node) continue;
             // get the old meta
             msg_base_t *msg = CONTAINER_OF(node, msg_base_t, node);
@@ -813,18 +696,18 @@ static derr_t meta_diff_from_store_cmd_unsafe(imaildir_t *m, link_t *old_metas,
 
             // replace the old meta in the in-memory stores
             msg->meta = new;
-            node = jsw_aerase(&m->mods.tree, &old->mod.modseq);
+            node = jsw_aerase(&m->mods, &old->mod.modseq);
             if(node != &old->mod.node){
                 LOG_ERROR("extracted the wrong node in %x\n", FS(__func__));
             }
-            jsw_ainsert(&m->mods.tree, &new->mod.node);
+            jsw_ainsert(&m->mods, &new->mod.node);
 
             // keep track of the new and the old metas
             link_list_append(old_metas, &old->link);
             link_list_append(new_metas, &new->link);
 
             // update the message in the log
-            maildir_log_i *log = m->log.log;
+            maildir_log_i *log = m->log;
             PROP_GO(&e, log->update_msg(log, msg), fail_lists);
 
             // phew!
@@ -889,7 +772,7 @@ static derr_t distribute_meta_diff_unsafe(imaildir_t *m, link_t *old_metas,
     PROP_GO(&e, post_update_store_new(&pus, old_metas), cu);
 
     dn_t *dn;
-    LINK_FOR_EACH(dn, &m->access.dns, dn_t, link){
+    LINK_FOR_EACH(dn, &m->dns, dn_t, link){
         // a new update_t for this new dn_t
         update_t *update;
         PROP_GO(&e, update_new(&update, &pus->refs, requester, type), cu_pus);
@@ -945,30 +828,18 @@ static derr_t imaildir_request_update_store(imaildir_t *m, update_req_t *req){
 derr_t imaildir_request_update(imaildir_t *m, update_req_t *req){
     derr_t e = E_OK;
 
-    uv_mutex_lock(&m->access.lock);
-    uv_rwlock_wrlock(&m->msgs.lock);
-    uv_rwlock_wrlock(&m->mods.lock);
-    uv_rwlock_wrlock(&m->expunged.lock);
-    uv_mutex_lock(&m->log.lock);
-    uv_mutex_lock(&m->update.lock);
     // TODO: decide if we need to sync upwards or notify downwards
     // (for now the up_t has nothing to do with this function)
 
     // calculate the new views and pass a copy to every dn_t
     switch(req->type){
         case UPDATE_REQ_STORE:
-            PROP_GO(&e, imaildir_request_update_store(m, req), unlock);
+            PROP_GO(&e, imaildir_request_update_store(m, req), cu);
             break;
     }
-unlock:
-    update_req_free(req);
 
-    uv_mutex_unlock(&m->update.lock);
-    uv_mutex_unlock(&m->log.lock);
-    uv_rwlock_wrunlock(&m->expunged.lock);
-    uv_rwlock_wrunlock(&m->mods.lock);
-    uv_rwlock_wrunlock(&m->msgs.lock);
-    uv_mutex_unlock(&m->access.lock);
+cu:
+    update_req_free(req);
 
     if(is_error(e)){
         // always just let the asynchronous error handling dominate
@@ -982,7 +853,7 @@ unlock:
 derr_t imaildir_up_check_uidvld(imaildir_t *m, unsigned int uidvld){
     derr_t e = E_OK;
 
-    unsigned int old_uidvld = m->log.log->get_uidvld(m->log.log);
+    unsigned int old_uidvld = m->log->get_uidvld(m->log);
 
     if(old_uidvld != uidvld){
 
@@ -991,11 +862,6 @@ derr_t imaildir_up_check_uidvld(imaildir_t *m, unsigned int uidvld){
                  half fails?  How do we recover?  How would we even detect that
                  the cache was half-wiped? */
         // TODO: should we just delete the lmdb database to reclaim space?
-        /* TODO: if we lock msgs, but somebody is blocking on reading it, how
-                 would we make sure they don't?  It seems like we need some
-                 higher rwlock, like m->cache_valid or something, which has to
-                 be wrlock()'d to enter this part of the code, but it spends
-                 most of its time rdlock()'d by server accessors and such. */
         /* TODO: on windows, we'll have to ensure that nobody has any files
                  open at all, because delete_all_msg_files() would fail */
 
@@ -1013,7 +879,7 @@ derr_t imaildir_up_check_uidvld(imaildir_t *m, unsigned int uidvld){
         PROP(&e, touch_path(&invalid_path) );
 
         // close the log
-        m->log.log->close(m->log.log);
+        m->log->close(m->log);
 
         // delete the log from the filesystem
         PROP(&e, imaildir_log_rm(&m->path) );
@@ -1031,7 +897,7 @@ derr_t imaildir_up_check_uidvld(imaildir_t *m, unsigned int uidvld){
         PROP(&e, imaildir_read_cache_and_files(m) );
 
         // set the new uidvld
-        PROP(&e, m->log.log->set_uidvld(m->log.log, uidvld) );
+        PROP(&e, m->log->set_uidvld(m->log, uidvld) );
     }
 
     return e;
@@ -1042,19 +908,15 @@ msg_base_t *imaildir_up_lookup_msg(imaildir_t *m, unsigned int uid,
     msg_base_t *out;
 
     // check for the UID in msgs
-    uv_rwlock_rdlock(&m->msgs.lock);
-    jsw_anode_t *node = jsw_afind(&m->msgs.tree, &uid, NULL);
+    jsw_anode_t *node = jsw_afind(&m->msgs, &uid, NULL);
     if(!node){
         out = NULL;
         // check if it is expunged
-        uv_rwlock_rdlock(&m->expunged.lock);
-        *expunged = (jsw_afind(&m->expunged.tree, &uid, NULL) != NULL);
-        uv_rwlock_rdunlock(&m->expunged.lock);
+        *expunged = (jsw_afind(&m->expunged, &uid, NULL) != NULL);
     }else{
         out = CONTAINER_OF(node, msg_base_t, node);
         *expunged = (out->state == MSG_BASE_EXPUNGED);
     }
-    uv_rwlock_rdunlock(&m->msgs.lock);
 
     return out;
 }
@@ -1067,16 +929,11 @@ derr_t imaildir_up_new_msg(imaildir_t *m, unsigned int uid, msg_flags_t flags,
     msg_meta_t *meta = NULL;
     msg_base_t *base = NULL;
 
-    // acquire locks
-    uv_rwlock_wrlock(&m->msgs.lock);
-    uv_rwlock_wrlock(&m->mods.lock);
-    uv_mutex_lock(&m->log.lock);
-
     // get the next highest modseq
     unsigned long modseq = himodseq_dn_unsafe(m) + 1;
 
     // create a new meta
-    PROP_GO(&e, msg_meta_new(&meta, uid, flags, modseq), fail);
+    PROP(&e, msg_meta_new(&meta, uid, flags, modseq) );
 
     // don't know the internaldate yet
     imap_time_t intdate = {0};
@@ -1086,27 +943,22 @@ derr_t imaildir_up_new_msg(imaildir_t *m, unsigned int uid, msg_flags_t flags,
     PROP_GO(&e, msg_base_new(&base, uid, state, intdate, meta), fail);
 
     // add message to log
-    maildir_log_i *log = m->log.log;
+    maildir_log_i *log = m->log;
     PROP_GO(&e, log->update_msg(log, base), fail);
 
     // insert meta into mods
-    jsw_ainsert(&m->mods.tree, &meta->mod.node);
+    jsw_ainsert(&m->mods, &meta->mod.node);
 
     // insert base into msgs
-    jsw_ainsert(&m->msgs.tree, &base->node);
+    jsw_ainsert(&m->msgs, &base->node);
 
     *out = base;
 
+    return e;
+
 fail:
-    if(is_error(e)){
-        msg_base_free(&base);
-        msg_meta_free(&meta);
-    }
-
-    uv_mutex_unlock(&m->log.lock);
-    uv_rwlock_wrunlock(&m->mods.lock);
-    uv_rwlock_wrunlock(&m->msgs.lock);
-
+    msg_base_free(&base);
+    msg_meta_free(&meta);
     return e;
 }
 
@@ -1114,11 +966,6 @@ fail:
 derr_t imaildir_up_update_flags(imaildir_t *m, msg_base_t *base,
         msg_flags_t flags){
     derr_t e = E_OK;
-
-    // acquire locks
-    uv_rwlock_wrlock(&m->msgs.lock);
-    uv_rwlock_wrlock(&m->mods.lock);
-    uv_mutex_lock(&m->log.lock);
 
     // get the next highest modseq
     unsigned long modseq = himodseq_dn_unsafe(m) + 1;
@@ -1129,27 +976,22 @@ derr_t imaildir_up_update_flags(imaildir_t *m, msg_base_t *base,
 
     // create a new meta
     msg_meta_t *meta;
-    PROP_GO(&e, msg_meta_new(&meta, base->ref.uid, flags, modseq), fail);
+    PROP(&e, msg_meta_new(&meta, base->ref.uid, flags, modseq) );
 
     // place the new meta
     msg_meta_t *old = base->meta;
     base->meta = meta;
-    jsw_ainsert(&m->mods.tree, &meta->mod.node);
+    jsw_ainsert(&m->mods, &meta->mod.node);
 
     /* TODO: detect if we have any open views, and store the old meta until it
              is no longer needed */
 
     // if there are no active views, clean up the old meta right now
-    jsw_anode_t *erased = jsw_aerase(&m->mods.tree, &old->mod.modseq);
+    jsw_anode_t *erased = jsw_aerase(&m->mods, &old->mod.modseq);
     if(erased != &old->mod.node){
         LOG_ERROR("erased the wrong meta from mods!\n");
     }
     msg_meta_free(&old);
-
-fail:
-    uv_mutex_unlock(&m->log.lock);
-    uv_rwlock_wrunlock(&m->mods.lock);
-    uv_rwlock_wrunlock(&m->msgs.lock);
 
     return e;
 }
@@ -1210,10 +1052,7 @@ cu_file:
 }
 
 static size_t imaildir_new_tmp_id(imaildir_t *m){
-    uv_mutex_lock(&m->tmp.lock);
-    size_t tmp_id = m->tmp.count++;
-    uv_mutex_unlock(&m->tmp.lock);
-    return tmp_id;
+    return m->tmp_count++;
 }
 
 derr_t imaildir_up_handle_static_fetch_attr(imaildir_t *m,
@@ -1282,46 +1121,28 @@ derr_t imaildir_up_handle_static_fetch_attr(imaildir_t *m,
     // move the file into place
     PROP(&e, rename_path(&tmp_path, &cur_path) );
 
-    // aquire locks
-    uv_rwlock_wrlock(&m->msgs.lock);
-    uv_mutex_lock(&m->log.lock);
-
     // fill base
-    PROP_GO(&e, msg_base_set_file(base, len, SUBDIR_CUR, &cur_name), fail);
+    PROP(&e, msg_base_set_file(base, len, SUBDIR_CUR, &cur_name) );
     base->state = MSG_BASE_FILLED;
 
     // save the update information to the log
-    PROP_GO(&e, m->log.log->update_msg(m->log.log, base), fail);
-
-fail:
-    uv_mutex_unlock(&m->log.lock);
-    uv_rwlock_wrunlock(&m->msgs.lock);
+    PROP(&e, m->log->update_msg(m->log, base) );
 
     return e;
 }
 
 void imaildir_up_initial_sync_complete(imaildir_t *m){
-    uv_mutex_lock(&m->access.lock);
-
     // send the signal to all the conn_up's
     up_t *up_to_signal;
-    LINK_FOR_EACH(up_to_signal, &m->access.ups, up_t, link){
+    LINK_FOR_EACH(up_to_signal, &m->ups, up_t, link){
         up_to_signal->conn->synced(up_to_signal->conn);
     }
-
-    uv_mutex_unlock(&m->access.lock);
 }
 
 derr_t imaildir_up_delete_msg(imaildir_t *m, unsigned int uid){
     derr_t e = E_OK;
 
     msg_expunge_t *expunge = NULL;
-
-    // acquire locks
-    uv_rwlock_wrlock(&m->msgs.lock);
-    uv_rwlock_wrlock(&m->mods.lock);
-    uv_rwlock_wrlock(&m->expunged.lock);
-    uv_mutex_lock(&m->log.lock);
 
     // get the next highest modseq
     unsigned long modseq = himodseq_dn_unsafe(m) + 1;
@@ -1330,14 +1151,14 @@ derr_t imaildir_up_delete_msg(imaildir_t *m, unsigned int uid){
     msg_expunge_state_e state = MSG_EXPUNGE_PUSHED;
 
     // allocate a new expunged to store in memory
-    PROP_GO(&e, msg_expunge_new(&expunge, uid, state, modseq), fail);
+    PROP(&e, msg_expunge_new(&expunge, uid, state, modseq) );
 
     // add expunge to log
-    maildir_log_i *log = m->log.log;
+    maildir_log_i *log = m->log;
     PROP_GO(&e, log->update_expunge(log, expunge), fail);
 
     // update state of the corresponding message
-    jsw_anode_t *node = jsw_afind(&m->msgs.tree, &uid, NULL);
+    jsw_anode_t *node = jsw_afind(&m->msgs, &uid, NULL);
     if(node){
         msg_base_t *base = CONTAINER_OF(node, msg_base_t, node);
         // TODO: delay the file deletion until all views have been updated
@@ -1348,49 +1169,39 @@ derr_t imaildir_up_delete_msg(imaildir_t *m, unsigned int uid){
     }
 
     // insert expunge into mods
-    jsw_ainsert(&m->mods.tree, &expunge->mod.node);
+    jsw_ainsert(&m->mods, &expunge->mod.node);
 
     // insert expunge into expunged
-    jsw_ainsert(&m->expunged.tree, &expunge->node);
+    jsw_ainsert(&m->expunged, &expunge->node);
+
+    return e;
 
 fail:
-    if(is_error(e)){
-        msg_expunge_free(&expunge);
-    }
-
-    uv_mutex_unlock(&m->log.lock);
-    uv_rwlock_wrunlock(&m->expunged.lock);
-    uv_rwlock_wrunlock(&m->mods.lock);
-    uv_rwlock_wrunlock(&m->msgs.lock);
-
+    msg_expunge_free(&expunge);
     return e;
 }
 
 derr_t imaildir_up_expunge_pushed(imaildir_t *m, unsigned int uid){
     derr_t e = E_OK;
 
-    // acquire locks
-    uv_rwlock_wrlock(&m->expunged.lock);
-    uv_mutex_lock(&m->log.lock);
-
     // get the expunge in-memory record
-    jsw_anode_t *node = jsw_afind(&m->expunged.tree, &uid, NULL);
+    jsw_anode_t *node = jsw_afind(&m->expunged, &uid, NULL);
     if(!node){
         LOG_WARN("pushed an EXPUNGE that was not found in memory!\n");
         // soft fail; don't throw an error
-        goto fail;
+        return e;
     }
 
     msg_expunge_t *expunge = CONTAINER_OF(node, msg_expunge_t, node);
     expunge->state = MSG_EXPUNGE_PUSHED;
 
     // update the expunge in the log
-    maildir_log_i *log = m->log.log;
-    PROP_GO(&e, log->update_expunge(log, expunge), fail);
-
-fail:
-    uv_mutex_unlock(&m->log.lock);
-    uv_rwlock_wrunlock(&m->expunged.lock);
+    maildir_log_i *log = m->log;
+    PROP(&e, log->update_expunge(log, expunge) );
 
     return e;
+}
+
+size_t imaildir_naccessors(imaildir_t *m){
+    return m->naccessors;
 }

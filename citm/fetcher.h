@@ -31,40 +31,33 @@ struct fetcher_cb_i {
     void (*release)(fetcher_cb_i*);
 
     // ready for login credentials
-    derr_t (*login_ready)(fetcher_cb_i*);
-
-    // login succeeded (this will give us our dirmgr)
-    derr_t (*login_succeeded)(fetcher_cb_i*);
-    // login failed
-    derr_t (*login_failed)(fetcher_cb_i*);
-
-    // submit a passthru response (use or consume passthru)
-    derr_t (*passthru_resp)(fetcher_cb_i*, passthru_resp_t *passthru_resp);
-
-    // select succeeded
-    derr_t (*select_succeeded)(fetcher_cb_i*);
-    derr_t (*select_failed)(fetcher_cb_i*, const ie_st_resp_t *st_resp);
+    void (*login_ready)(fetcher_cb_i*);
+    void (*login_result)(fetcher_cb_i*, bool login_result);
+    void (*passthru_resp)(fetcher_cb_i*, passthru_resp_t *passthru_resp);
+    // *st_resp == NULL on successful SELECT
+    void (*select_result)(fetcher_cb_i*, ie_st_resp_t *st_resp);
 };
 
 // the fetcher-provided interface to the sf_pair
-derr_t fetcher_login(
-    fetcher_t *fetcher,
-    const ie_dstr_t *user,
-    const ie_dstr_t *pass
-);
+void fetcher_login(fetcher_t *fetcher, ie_login_cmd_t *login_cmd);
+void fetcher_passthru_req(fetcher_t *fetcher, passthru_req_t *passthru_req);
+void fetcher_select(fetcher_t *fetcher, ie_mailbox_t *m);
 void fetcher_set_dirmgr(fetcher_t *fetcher, dirmgr_t *dirmgr);
-// (user or consume passthru)
-derr_t fetcher_passthru_req(fetcher_t *fetcher, passthru_req_t *passthru_req);
-derr_t fetcher_select(fetcher_t *fetcher, const ie_mailbox_t *m);
 
 struct fetcher_t {
     fetcher_cb_i *cb;
     const char *host;
     const char *svc;
     imap_pipeline_t *pipeline;
-    // participate in message passing as an engine
-    engine_t engine;
-    bool init_complete;
+    engine_t *engine;
+
+    refs_t refs;
+    wake_event_t wake_ev;
+    bool enqueued;
+
+    // offthread closing (for handling imap_session_t)
+    derr_t session_dying_error;
+    event_t close_ev;
 
     // initialized some time after a successful login
     dirmgr_t *dirmgr;
@@ -75,18 +68,11 @@ struct fetcher_t {
     // parser callbacks and imap extesions
     imape_control_i ctrl;
 
-    // actor handles all of the scheduling
-    actor_t actor;
-
-    // thread-safe components
-    struct {
-        uv_mutex_t mutex;
-        bool closed;
-        // from upwards session
-        link_t unhandled_resps;  // imap_resp_t->link
-        // from maildir
-        link_t maildir_cmds;  // imap_cmd_t->link
-    } ts;
+    bool closed;
+    // from upwards session
+    link_t unhandled_resps;  // imap_resp_t->link
+    // from maildir
+    link_t maildir_cmds;  // imap_cmd_t->link
 
     // commands we sent upwards, but haven't gotten a response yet
     link_t inflight_cmds;  // imap_cmd_cb_t->link
@@ -113,39 +99,27 @@ struct fetcher_t {
     bool maildir_has_ref;
     fetcher_mailbox_state_e mbx_state;
 };
+DEF_CONTAINER_OF(fetcher_t, refs, refs_t);
+DEF_CONTAINER_OF(fetcher_t, wake_ev, wake_event_t);
+DEF_CONTAINER_OF(fetcher_t, close_ev, event_t);
+DEF_CONTAINER_OF(fetcher_t, s, imap_session_t);
 DEF_CONTAINER_OF(fetcher_t, conn_up, maildir_conn_up_i);
-DEF_CONTAINER_OF(fetcher_t, engine, engine_t);
 DEF_CONTAINER_OF(fetcher_t, session_mgr, manager_i);
 DEF_CONTAINER_OF(fetcher_t, ctrl, imape_control_i);
-DEF_CONTAINER_OF(fetcher_t, actor, actor_t);
 
-derr_t fetcher_new(
-    fetcher_t **out,
+derr_t fetcher_do_work(fetcher_t *fetcher, bool *noop);
+
+derr_t fetcher_init(
+    fetcher_t *fetcher,
     fetcher_cb_i *cb,
     const char *host,
     const char *svc,
     imap_pipeline_t *p,
+    engine_t *engine,
     ssl_context_t *ctx_cli
 );
-
-/* Advance the state machine of the fetch controller by some non-zero amount.
-   This will only be called if fetcher_more_work returns true.  It is
-   run on a worker thread from a pool, but it will only be executing on one
-   thread at a time. */
-derr_t fetcher_do_work(actor_t *actor);
-
-/* Decide if it is possible to advance the state machine or not.  This should
-   not alter the fetcher state in any way, and so it does not have to
-   be thread-safe with respect to reads, because all external-facing state
-   modifications will trigger another check. */
-bool fetcher_more_work(actor_t *actor);
-
-void fetcher_close(fetcher_t *fetcher, derr_t error);
-
 void fetcher_start(fetcher_t *fetcher);
+void fetcher_close(fetcher_t *fetcher, derr_t error);
+void fetcher_free(fetcher_t *fetcher);
 
-// fetcher will be freed asynchronously and won't make manager callbacks
-void fetcher_cancel(fetcher_t *fetcher);
-
-// the last external call to the fetcher_t
-void fetcher_release(fetcher_t *fetcher);
+void fetcher_read_ev(fetcher_t *fetcher, event_t *ev);

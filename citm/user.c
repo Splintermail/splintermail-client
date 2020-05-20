@@ -1,31 +1,8 @@
 #include "citm.h"
 
-static void user_keyfetcher_dying(manager_i *mgr, void *caller, derr_t error){
-    user_t *user = CONTAINER_OF(mgr, user_t, keyfetcher_mgr);
-    fetcher_t *keyfetcher = caller;
-
-    // we can't handle this failure
-    user_close(user, error);
-
-    uv_mutex_lock(&user->mutex);
-    if(!user->closed){
-        user->keyfetcher = NULL;
-    }
-    uv_mutex_unlock(&user->mutex);
-
-    // TODO: have a keyfetcher
-    (void)keyfetcher;
-    // fetcher_release(keyfetcher);
-    // // drop the keyfetcher ref
-    // ref_dn(&user->refs);
-}
-
-
-void user_close(user_t *user, derr_t error){
-    uv_mutex_lock(&user->mutex);
+static void user_close(user_t *user, derr_t error){
     bool do_close = !user->closed;
     user->closed = true;
-    uv_mutex_unlock(&user->mutex);
 
     if(!do_close){
         // secondary errors are dropped
@@ -36,7 +13,7 @@ void user_close(user_t *user, derr_t error){
     // close everything
     link_t *link;
     while((link = link_list_pop_first(&user->sf_pairs))){
-        sf_pair_t *sf_pair = CONTAINER_OF(link, sf_pair_t, link);
+        sf_pair_t *sf_pair = CONTAINER_OF(link, sf_pair_t, user_link);
         sf_pair_close(sf_pair, E_OK);
     }
 
@@ -47,6 +24,28 @@ void user_close(user_t *user, derr_t error){
 
     // pass the error to our manager
     user->cb->dying(user->cb, user, error);
+
+    // drop the lifetime reference
+    ref_dn(&user->refs);
+}
+
+
+static void user_keyfetcher_dying(manager_i *mgr, void *caller, derr_t error){
+    user_t *user = CONTAINER_OF(mgr, user_t, keyfetcher_mgr);
+    fetcher_t *keyfetcher = caller;
+
+    // we can't handle this failure
+    user_close(user, error);
+
+    if(!user->closed){
+        user->keyfetcher = NULL;
+    }
+
+    // TODO: have a keyfetcher
+    (void)keyfetcher;
+    // fetcher_release(keyfetcher);
+    // // drop the keyfetcher ref
+    // ref_dn(&user->refs);
 }
 
 
@@ -57,7 +56,6 @@ static void user_finalize(refs_t *refs){
     dstr_free(&user->name);
     dstr_free(&user->pass);
     refs_free(&user->refs);
-    uv_mutex_destroy(&user->mutex);
     free(user);
 }
 
@@ -85,13 +83,8 @@ derr_t user_new(
 
     link_init(&user->sf_pairs);
 
-    int ret = uv_mutex_init(&user->mutex);
-    if(ret < 0){
-        TRACE(&e, "uv_mutex_init: %x\n", FUV(&ret));
-        ORIG_GO(&e, uv_err_type(ret), "error initializing mutex", fail_malloc);
-    }
-
-    PROP_GO(&e, refs_init(&user->refs, 1, user_finalize), fail_mutex);
+    // start with a lifetime ref
+    PROP_GO(&e, refs_init(&user->refs, 1, user_finalize), fail_malloc);
 
     PROP_GO(&e, dstr_copy(name, &user->name), fail_refs);
     PROP_GO(&e, dstr_copy(pass, &user->pass), fail_name);
@@ -109,6 +102,8 @@ derr_t user_new(
 
     *out = user;
 
+    // TODO: start the keyfetcher
+
     return e;
 
 fail_pass:
@@ -117,72 +112,36 @@ fail_name:
     dstr_free(&user->name);
 fail_refs:
     refs_free(&user->refs);
-fail_mutex:
-    uv_mutex_destroy(&user->mutex);
 fail_malloc:
     free(user);
     return e;
 }
 
 
-void user_release(user_t *user){
-    // drop owner ref
-    ref_dn(&user->refs);
-}
 
-void user_start(user_t *user){
-    // TODO: have a keyfetcher
-    (void)user;
-    // // ref up for the keyfetcher
-    // ref_up(&user->refs);
-    // fetcher_start(user->keyfetcher);
-}
-
-void user_cancel(user_t *user){
-    user->canceled = true;
-    // TODO: have a keyfetcher
-    // fetcher_cancel(user->keyfetcher);
-    // drop owner ref
-    ref_dn(&user->refs);
-}
-
-
-derr_t user_add_sf_pair(user_t *user, sf_pair_t *sf_pair){
-    derr_t e = E_OK;
-
-    uv_mutex_lock(&user->mutex);
-
-    if(user->closed){
-        ORIG_GO(&e, E_DEAD, "user is closed", unlock);
-    }
-
-    link_remove(&sf_pair->link);
-    link_list_append(&user->sf_pairs, &sf_pair->link);
+void user_add_sf_pair(user_t *user, sf_pair_t *sf_pair){
+    link_remove(&sf_pair->user_link);
+    link_list_append(&user->sf_pairs, &sf_pair->user_link);
     user->npairs++;
+    // ref up for sf_pair
     ref_up(&user->refs);
 
-unlock:
-    uv_mutex_unlock(&user->mutex);
-
     // pass the global-keypair-initialized dirmgr into each sf_pair
-    server_set_dirmgr(sf_pair->server, &user->dirmgr);
-    fetcher_set_dirmgr(sf_pair->fetcher, &user->dirmgr);
-
-    return e;
+    server_set_dirmgr(&sf_pair->server, &user->dirmgr);
+    fetcher_set_dirmgr(&sf_pair->fetcher, &user->dirmgr);
 }
 
 
-// this gets called by the user_pool's sf_pair_cb
-bool user_remove_sf_pair(user_t *user, sf_pair_t *sf_pair){
+// this gets called by the citme's sf_pair_cb
+void user_remove_sf_pair(user_t *user, sf_pair_t *sf_pair){
 
-    uv_mutex_lock(&user->mutex);
     if(!user->closed){
-        link_remove(&sf_pair->link);
+        link_remove(&sf_pair->user_link);
     }
-    bool empty = (--user->npairs == 0);
-    uv_mutex_unlock(&user->mutex);
 
-    ref_dn(&user->refs);
+    if(--user->npairs == 0){
+        user_close(user, E_OK);
+    }
 
-    return empty;
+    // don't ref_dn until sf_pair is dead (happens in citm_engine.c)
 }

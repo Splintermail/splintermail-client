@@ -56,12 +56,10 @@ static void dn_finalize(refs_t *refs){
 
     // free any unhandled updates
     link_t *link;
-    while((link = link_list_pop_first(&dn->pending_updates.list))){
+    while((link = link_list_pop_first(&dn->pending_updates))){
         update_t *update = CONTAINER_OF(link, update_t, link);
         update_free(&update);
     }
-
-    uv_mutex_destroy(&dn->pending_updates.mutex);
 
     // release the conn_dn if we haven't yet
     if(dn->conn) dn->conn->release(dn->conn);
@@ -98,16 +96,10 @@ derr_t dn_new(dn_t **out, maildir_conn_dn_i *conn, imaildir_t *m){
         .selected = false,
     };
 
-    int ret = uv_mutex_init(&dn->pending_updates.mutex);
-    if(ret < 0){
-        TRACE(&e, "uv_mutex_init: %x\n", FUV(&ret));
-        ORIG_GO(&e, uv_err_type(ret), "error initializing mutex", fail_malloc);
-    }
-
-    PROP_GO(&e, refs_init(&dn->refs, 1, dn_finalize), fail_mutex);
+    PROP(&e, refs_init(&dn->refs, 1, dn_finalize) );
 
     link_init(&dn->link);
-    link_init(&dn->pending_updates.list);
+    link_init(&dn->pending_updates);
 
     /* the view gets built during processing of the SELECT command, so that the
        CONDSTORE/QRESYNC extensions can be handled efficiently */
@@ -117,12 +109,6 @@ derr_t dn_new(dn_t **out, maildir_conn_dn_i *conn, imaildir_t *m){
 
     *out = dn;
 
-    return e;
-
-fail_mutex:
-    uv_mutex_destroy(&dn->pending_updates.mutex);
-fail_malloc:
-    free(dn);
     return e;
 };
 
@@ -196,10 +182,10 @@ static derr_t send_flags_resp(dn_t *dn){
 static derr_t send_exists_resp_unsafe(dn_t *dn){
     derr_t e = E_OK;
 
-    if(dn->m->msgs.tree.size > UINT_MAX){
+    if(dn->m->msgs.size > UINT_MAX){
         ORIG(&e, E_VALUE, "too many messages for exists response");
     }
-    unsigned int exists = (unsigned int)dn->m->msgs.tree.size;
+    unsigned int exists = (unsigned int)dn->m->msgs.size;
 
     imap_resp_arg_t arg = {.exists=exists};
     imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_EXISTS, arg);
@@ -271,14 +257,14 @@ static derr_t send_uidnext_resp_unsafe(dn_t *dn){
 
     // check the highest value in msgs tree
     jsw_atrav_t trav;
-    jsw_anode_t *node = jsw_atlast(&trav, &dn->m->msgs.tree);
+    jsw_anode_t *node = jsw_atlast(&trav, &dn->m->msgs);
     if(node){
         msg_base_t *base = CONTAINER_OF(node, msg_base_t, node);
         max_uid = MAX(max_uid, base->ref.uid);
     }
 
     // check the highest value in expunged tree
-    node = jsw_atlast(&trav, &dn->m->expunged.tree);
+    node = jsw_atlast(&trav, &dn->m->expunged);
     if(node){
         msg_expunge_t *expunge = CONTAINER_OF(node, msg_expunge_t, node);
         max_uid = MAX(max_uid, expunge->uid);
@@ -304,7 +290,7 @@ static derr_t send_uidnext_resp_unsafe(dn_t *dn){
 static derr_t send_uidvld_resp(dn_t *dn){
     derr_t e = E_OK;
 
-    maildir_log_i *log = dn->m->log.log;
+    maildir_log_i *log = dn->m->log;
     ie_st_code_arg_t code_arg = {.uidvld = log->get_uidvld(log)};
     ie_st_code_t *code = ie_st_code_new(&e, IE_ST_CODE_UIDVLD, code_arg);
 
@@ -330,7 +316,7 @@ static derr_t build_views_unsafe(dn_t *dn){
 
     // make one view for every message present in the mailbox
     jsw_atrav_t trav;
-    jsw_anode_t *node = jsw_atfirst(&trav, &dn->m->msgs.tree);
+    jsw_anode_t *node = jsw_atfirst(&trav, &dn->m->msgs);
     for(; node != NULL; node = jsw_atnext(&trav)){
         msg_base_t *msg = CONTAINER_OF(node, msg_base_t, node);
         msg_view_t *view;
@@ -350,37 +336,21 @@ static derr_t select_cmd(dn_t *dn, const ie_dstr_t *tag,
         ORIG(&e, E_PARAM, "QRESYNC and CONDSTORE not supported");
     }
 
-    // obtain lock
-    uv_rwlock_rdlock(&dn->m->msgs.lock);
-    uv_rwlock_rdlock(&dn->m->expunged.lock);
-    uv_rwlock_rdlock(&dn->m->mods.lock);
-
     // generate/send required SELECT responses
-    PROP_GO(&e, send_flags_resp(dn), unlock);
-    PROP_GO(&e, send_exists_resp_unsafe(dn), unlock);
-    PROP_GO(&e, send_recent_resp_unsafe(dn), unlock);
-    PROP_GO(&e, send_unseen_resp_unsafe(dn), unlock);
-    PROP_GO(&e, send_pflags_resp(dn), unlock);
-    PROP_GO(&e, send_uidnext_resp_unsafe(dn), unlock);
-    PROP_GO(&e, send_uidvld_resp(dn), unlock);
+    PROP(&e, send_flags_resp(dn) );
+    PROP(&e, send_exists_resp_unsafe(dn) );
+    PROP(&e, send_recent_resp_unsafe(dn) );
+    PROP(&e, send_unseen_resp_unsafe(dn) );
+    PROP(&e, send_pflags_resp(dn) );
+    PROP(&e, send_uidnext_resp_unsafe(dn) );
+    PROP(&e, send_uidvld_resp(dn) );
 
-    PROP_GO(&e, build_views_unsafe(dn), unlock);
-
-unlock:
-    // release lock
-    uv_rwlock_rdunlock(&dn->m->mods.lock);
-    uv_rwlock_rdunlock(&dn->m->expunged.lock);
-    uv_rwlock_rdunlock(&dn->m->msgs.lock);
-    if(is_error(e)){
-        goto done;
-    }
-
+    PROP(&e, build_views_unsafe(dn) );
 
     /* TODO: check if we are in DITM mode or serve-locally mode.  For now we
              only support serve-locally mode */
     PROP(&e, send_ok(dn, tag, &DSTR_LIT("welcome in")) );
 
-done:
     return e;
 }
 
@@ -1051,7 +1021,7 @@ cu_cmd:
 
 static bool conn_dn_more_work(maildir_dn_i *maildir_dn){
     dn_t *dn = CONTAINER_OF(maildir_dn, dn_t, maildir_dn);
-    return dn->pending_updates.ready;
+    return dn->ready;
 }
 
 static derr_t send_flags_update(dn_t *dn, unsigned int num, msg_flags_t flags,
@@ -1265,8 +1235,7 @@ static derr_t conn_dn_do_work(maildir_dn_i *maildir_dn){
 
     dn_t *dn = CONTAINER_OF(maildir_dn, dn_t, maildir_dn);
 
-    uv_mutex_lock(&dn->pending_updates.mutex);
-    dn->pending_updates.ready = false;
+    dn->ready = false;
 
     // prepare a list of updates we got
     seq_set_builder_t ssb;
@@ -1274,7 +1243,7 @@ static derr_t conn_dn_do_work(maildir_dn_i *maildir_dn){
 
     update_t *update, *temp;
     LINK_FOR_EACH_SAFE(
-        update, temp, &dn->pending_updates.list, update_t, link
+        update, temp, &dn->pending_updates, update_t, link
     ){
         bool last_update_to_process = (update->requester == dn);
 
@@ -1311,8 +1280,6 @@ cu:
     seq_set_builder_free(&ssb);
     dn_store_free(dn);
 
-    uv_mutex_unlock(&dn->pending_updates.mutex);
-
     return e;
 }
 
@@ -1320,12 +1287,10 @@ void dn_update(dn_t *dn, update_t *update){
     // was this our request?
     bool advance = update->requester == dn;
 
-    uv_mutex_lock(&dn->pending_updates.mutex);
-    link_list_append(&dn->pending_updates.list, &update->link);
-    uv_mutex_unlock(&dn->pending_updates.mutex);
+    link_list_append(&dn->pending_updates, &update->link);
 
     if(advance){
-        dn->pending_updates.ready = true;
+        dn->ready = true;
         dn->conn->advance(dn->conn);
     }
 }
