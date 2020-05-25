@@ -70,8 +70,9 @@ if("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU")
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -z noexecstack")
     # this just gets ignored
     # set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -z noexecheap")
-    # for debug builds
-    # set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=address")
+    if("${CMAKE_BUILD_TYPE}" STREQUAL "debug")
+        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=address -fno-omit-frame-pointer")
+    endif()
 
 elseif("${CMAKE_C_COMPILER_ID}" MATCHES "Clang")
     # flags common to "AppleClang" and "Clang"
