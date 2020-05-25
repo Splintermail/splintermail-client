@@ -132,7 +132,7 @@ derr_t imf_scanner_init(imf_scanner_t *scanner, const dstr_t *bytes){
 
 void imf_scanner_free(imf_scanner_t *scanner){
     // currently nothing to free, but I don't know if it'll stay like that
-    (void)scanner;
+    *scanner = (imf_scanner_t){0};
 }
 
 dstr_t imf_get_scannable(imf_scanner_t *scanner){
@@ -161,20 +161,32 @@ dstr_t imf_get_scannable(imf_scanner_t *scanner){
         nicely with multiple blocks, so each block has to be in a different
         function.  That means re2c runs with the --reusable option.  It also
         means this scanner uses the default API instead of the general API.
+        UPDATE: the default API has a end-of-buffer-overrun bug, so I've filed
+        a bug and I'm using the generic API
 */
+
+#define  YYPEEK()         idx >= scanner->bytes->len ? '\0' : scanner->bytes->data[idx]
+#define  YYSKIP()         ++idx >= scanner->bytes->len ? '\0' : scanner->bytes->data[idx]
+// #define  YYBACKUP()       YYMARKER = YYCURSOR
+// #define  YYBACKUPCTX()    YYCTXMARKER = YYCURSOR
+// #define  YYRESTORE()      YYCURSOR = YYMARKER
+// #define  YYRESTORECTX()   YYCURSOR = YYCTXMARKER
+// #define  YYRESTORERAG(t)  YYCURSOR = t
+#define  YYLESSTHAN(n)    scanner->bytes->len - idx < n
+// #define  YYSTAGP(t)       t = YYCURSOR
+// #define  YYSTAGPD(t)      t = YYCURSOR - 1
+// #define  YYSTAGN(t)       t = NULL
 
 /*!rules:re2c
     eol             = "\r"?"\n";
     ws              = [ \x09]+;
     hdrname         = [^\x00-\x20:]+;
     unstruct        = [^\x00-\x19]+;
+    body            = [\x00-\xff]+;
 */
 
 // Pass errors to bison
 #define INVALID_TOKEN_ERROR { *type = INVALID_TOKEN; goto done; }
-
-// never refill the buffer
-#define YYFILL() -1
 
 static void scan_done(imf_scanner_t *scanner, const char *YYCURSOR,
         dstr_t *token_out){
@@ -194,13 +206,12 @@ static void scan_done(imf_scanner_t *scanner, const char *YYCURSOR,
 static derr_t scan_hdr(imf_scanner_t *scanner, dstr_t *token_out, int *type){
     derr_t e = E_OK;
 
-    const char* YYCURSOR = scanner->start;
-    const char* YYLIMIT = scanner->bytes->data + scanner->bytes->len;
-
-    YYCURSOR = scanner->start;
+    size_t idx = (size_t)(scanner->start - scanner->bytes->data);
 
     /*!use:re2c
+        re2c:flags:input = custom;
         re2c:define:YYCTYPE = char;
+        re2c:yyfill:enable = 0;
         re2c:eof = 0;
 
         *               { INVALID_TOKEN_ERROR; }
@@ -212,7 +223,7 @@ static derr_t scan_hdr(imf_scanner_t *scanner, dstr_t *token_out, int *type){
     */
 
 done:
-    scan_done(scanner, YYCURSOR, token_out);
+    scan_done(scanner, &scanner->bytes->data[idx], token_out);
     return e;
 }
 
@@ -220,13 +231,12 @@ static derr_t scan_unstruct(imf_scanner_t *scanner, dstr_t *token_out,
         int *type){
     derr_t e = E_OK;
 
-    const char* YYCURSOR = scanner->start;
-    const char* YYLIMIT = scanner->bytes->data + scanner->bytes->len;
-
-    YYCURSOR = scanner->start;
+    size_t idx = (size_t)(scanner->start - scanner->bytes->data);
 
     /*!use:re2c
+        re2c:flags:input = custom;
         re2c:define:YYCTYPE = char;
+        re2c:yyfill:enable = 0;
         re2c:eof = 0;
 
         *               { INVALID_TOKEN_ERROR; }
@@ -236,7 +246,28 @@ static derr_t scan_unstruct(imf_scanner_t *scanner, dstr_t *token_out,
     */
 
 done:
-    scan_done(scanner, YYCURSOR, token_out);
+    scan_done(scanner, &scanner->bytes->data[idx], token_out);
+    return e;
+}
+
+static derr_t scan_body(imf_scanner_t *scanner, dstr_t *token_out,
+        int *type){
+    derr_t e = E_OK;
+
+    size_t idx = (size_t)(scanner->start - scanner->bytes->data);
+
+    /*!use:re2c
+        re2c:flags:input = custom;
+        re2c:define:YYCTYPE = char;
+        re2c:yyfill:enable = 0;
+        re2c:eof = 0;
+
+        $               { *type = DONE; goto done; }
+        body            { *type  = BODY; goto done; }
+    */
+
+done:
+    scan_done(scanner, &scanner->bytes->data[idx], token_out);
     return e;
 }
 
@@ -250,6 +281,9 @@ derr_t imf_scan(imf_scanner_t *scanner, imf_scan_mode_t mode,
         case IMF_SCAN_UNSTRUCT:
             PROP(&e, scan_unstruct(scanner, token_out, type) );
             return e;
+        case IMF_SCAN_BODY:
+            PROP(&e, scan_body(scanner, token_out, type) );
+            return e;
     }
     ORIG(&e, E_INTERNAL, "invalid imf_scan_mode");
 }
@@ -259,7 +293,7 @@ derr_t imf_scan(imf_scanner_t *scanner, imf_scan_mode_t mode,
 void imfyyerror(dstr_t *imfyyloc, imf_parser_t *parser, char const *s){
     (void)imfyyloc;
     (void)parser;
-    printf("ERROR: %s\n", s);
+    LOG_ERROR("ERROR: %x\n", FS(s));
 }
 
 static derr_t imf_parser_init(imf_parser_t *parser, imf_scanner_t *scanner){

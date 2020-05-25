@@ -49,6 +49,7 @@
 %token WS
 %token HDRNAME
 %token UNSTRUCT
+%token BODY
 
 %type <hdr> hdrs
 %type <hdr> hdrs_0
@@ -65,7 +66,7 @@ imf: hdrs[h] body[b] DONE
    { dstr_t bytes = token_extend(@h, @b);
      p->imf = imf_new(E, bytes, @h, $h, $b); YYACCEPT; }
 
-hdrs: hdrs_0[h] EOL { $$ = $h; MODE(UNSTRUCT); };
+hdrs: hdrs_0[h] EOL { $$ = $h; MODE(BODY); };
 
 hdrs_0: EOL       { $$ = NULL; }
       | hdrs_1
@@ -96,13 +97,7 @@ hdrval: hdr_eol
 
 // right now only unstruct bodies are supported
 body: %empty     { $$ = NULL; }
-    | body_1[b]
+    | BODY[b]
         { imf_body_arg_u arg = {};
           $$ = imf_body_new(E, @b, IMF_BODY_UNSTRUCT, arg); }
-;
-
-body_1: EOL
-      | UNSTRUCT
-      | body_1[b] EOL
-      | body_1[b] UNSTRUCT
 ;

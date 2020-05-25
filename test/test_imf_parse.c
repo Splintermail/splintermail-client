@@ -113,6 +113,7 @@ static derr_t test_imf_parse(void){
 
 cu:
     imf_free(got);
+    imf_free(exp);
 
     return e;
 }

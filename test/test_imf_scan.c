@@ -1,3 +1,5 @@
+#include <stdlib.h>
+
 #include <libdstr/libdstr.h>
 #include <libimap/libimap.h>
 #include <imf.tab.h>
@@ -14,9 +16,9 @@
         /* write either the scannable or the the last token + scannable */ \
         dstr_t scannable = imf_get_scannable(&scanner); \
         if(exp_error == E_NONE){ \
-            TRACE(&e, "on input: '%x'\n", FD(&scannable));  \
+            TRACE(&e, "on input: '%x'\n", FD_DBG(&scannable));  \
         }else{ \
-            TRACE(&e, "on input: '%x%x'\n", FD(&token), FD(&scannable));  \
+            TRACE(&e, "on input: '%x%x'\n", FD_DBG(&token), FD_DBG(&scannable));  \
         } \
         ORIG_GO(&e, E_VALUE, "unexpected status", cu_scanner); \
     } \
@@ -28,15 +30,15 @@
                 FI(exp_type), FI(type)); \
         /* write the last token + scannable */ \
         dstr_t scannable = imf_get_scannable(&scanner); \
-        TRACE(&e, "on input: '%x%x'\n", FD(&token), FD(&scannable));  \
+        TRACE(&e, "on input: '%x%x'\n", FD_DBG(&token), FD_DBG(&scannable));  \
         ORIG_GO(&e, E_VALUE, "unexpected token type", cu_scanner); \
     } \
     if(exp_error == E_NONE && dstr_cmp(&token, &exp_token) != 0){ \
         TRACE(&e, "expected token \"%x\" but got token \"%x\"\n", \
-                FD(&exp_token), FD(&token)); \
+                FD_DBG(&exp_token), FD_DBG(&token)); \
         /* write the last token + scannable */ \
         dstr_t scannable = imf_get_scannable(&scanner); \
-        TRACE(&e, "on input: '%x%x'\n", FD(&token), FD(&scannable));  \
+        TRACE(&e, "on input: '%x%x'\n", FD_DBG(&token), FD_DBG(&scannable));  \
         ORIG_GO(&e, E_VALUE, "unexpected token type", cu_scanner); \
     } \
 }
@@ -96,14 +98,8 @@ static derr_t test_imf_scan(void){
     e = imf_scan(&scanner, IMF_SCAN_HDR, &token, &type);
     EXPECT(E_NONE, EOL, "\r\n");
 
-    e = imf_scan(&scanner, IMF_SCAN_UNSTRUCT, &token, &type);
-    EXPECT(E_NONE, UNSTRUCT, "body");
-
-    e = imf_scan(&scanner, IMF_SCAN_UNSTRUCT, &token, &type);
-    EXPECT(E_NONE, EOL, "\r\n");
-
-    e = imf_scan(&scanner, IMF_SCAN_UNSTRUCT, &token, &type);
-    EXPECT(E_NONE, UNSTRUCT, "unfinished line");
+    e = imf_scan(&scanner, IMF_SCAN_BODY, &token, &type);
+    EXPECT(E_NONE, BODY, "body\r\nunfinished line");
 
     e = imf_scan(&scanner, IMF_SCAN_UNSTRUCT, &token, &type);
     EXPECT(E_NONE, DONE, "");
@@ -119,6 +115,70 @@ static derr_t test_imf_scan(void){
 
 cu_scanner:
     imf_scanner_free(&scanner);
+    // test safe against double-free
+    imf_scanner_free(&scanner);
+    return e;
+}
+
+
+static derr_t test_overrun(void){
+    /* I caught a memory access exception reading the first byte after a
+       128-byte-long message.  Construct a dstr_t that has no extra bytes
+       in order to expose end-of-buffer overruns in the scanner */
+    derr_t e = E_OK;
+
+    imf_scanner_t scanner;
+    dstr_t token;
+    int type;
+
+#define DSTR_STUB(var, cstr, label) \
+    char *var = malloc(strlen(cstr)); \
+    if(!var) ORIG_GO(&e, E_NOMEM, "nomem", label); \
+    dstr_t d_##var = { \
+        .data = var, \
+        .len = strlen(cstr), \
+        .size = strlen(cstr), \
+        .fixed_size = true, \
+    }; \
+    memcpy(d_##var.data, cstr, strlen(cstr))
+
+    DSTR_STUB(body1, "body1", done);
+    DSTR_STUB(body2, "body2\r", cu_body1);
+    DSTR_STUB(body3, "body3\n", cu_body2);
+    DSTR_STUB(body4, "body4\r\n", cu_body3);
+
+    PROP_GO(&e, imf_scanner_init(&scanner, &d_body1), cu_bodies);
+    e = imf_scan(&scanner, IMF_SCAN_BODY, &token, &type);
+    EXPECT(E_NONE, BODY, "body1");
+    imf_scanner_free(&scanner);
+
+    PROP_GO(&e, imf_scanner_init(&scanner, &d_body2), cu_bodies);
+    e = imf_scan(&scanner, IMF_SCAN_BODY, &token, &type);
+    EXPECT(E_NONE, BODY, "body2\r");
+    imf_scanner_free(&scanner);
+
+    PROP_GO(&e, imf_scanner_init(&scanner, &d_body3), cu_bodies);
+    e = imf_scan(&scanner, IMF_SCAN_BODY, &token, &type);
+    EXPECT(E_NONE, BODY, "body3\n");
+    imf_scanner_free(&scanner);
+
+    PROP_GO(&e, imf_scanner_init(&scanner, &d_body4), cu_bodies);
+    e = imf_scan(&scanner, IMF_SCAN_BODY, &token, &type);
+    EXPECT(E_NONE, BODY, "body4\r\n");
+    imf_scanner_free(&scanner);
+
+cu_scanner:
+    imf_scanner_free(&scanner);
+
+cu_bodies:
+    free(body4);
+cu_body3:
+    free(body3);
+cu_body2:
+    free(body2);
+cu_body1:
+    free(body1);
+done:
     return e;
 }
 
@@ -128,6 +188,7 @@ int main(int argc, char** argv){
     PARSE_TEST_OPTIONS(argc, argv, NULL, LOG_LVL_DEBUG);
 
     PROP_GO(&e, test_imf_scan(), test_fail);
+    PROP_GO(&e, test_overrun(), test_fail);
 
     LOG_ERROR("PASS\n");
     return 0;

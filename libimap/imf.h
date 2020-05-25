@@ -65,6 +65,7 @@ typedef union {
 typedef enum {
     IMF_SCAN_HDR,
     IMF_SCAN_UNSTRUCT,
+    IMF_SCAN_BODY,
 } imf_scan_mode_t;
 
 typedef struct {
