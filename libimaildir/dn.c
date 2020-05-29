@@ -35,7 +35,7 @@ static void exp_flags_free(exp_flags_t **exp_flags){
 }
 
 // free everything related to dn.store
-static void dn_store_free(dn_t *dn){
+static void dn_free_store(dn_t *dn){
     ie_dstr_free(dn->store.tag);
     dn->store.tag = NULL;
 
@@ -46,57 +46,18 @@ static void dn_store_free(dn_t *dn){
     }
 }
 
-// forward declarations
-static derr_t conn_dn_cmd(maildir_dn_i*, imap_cmd_t*);
-static bool conn_dn_more_work(maildir_dn_i*);
-static derr_t conn_dn_do_work(maildir_dn_i*);
-
-static void dn_finalize(refs_t *refs){
-    dn_t *dn = CONTAINER_OF(refs, dn_t, refs);
-
-    // free any unhandled updates
-    link_t *link;
-    while((link = link_list_pop_first(&dn->pending_updates))){
-        update_t *update = CONTAINER_OF(link, update_t, link);
-        update_free(&update);
-    }
-
-    // release the conn_dn if we haven't yet
-    if(dn->conn) dn->conn->release(dn->conn);
-
-    // free all the message views
-    jsw_anode_t *node;
-    while((node = jsw_apop(&dn->views))){
-        msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
-        msg_view_free(&view);
-    }
-
-    dn_store_free(dn);
-
-    refs_free(&dn->refs);
-
-    // free memory
-    free(dn);
+void dn_free(dn_t *dn){
+    if(!dn) return;
+    // actually there's nothing to free...
 }
 
-derr_t dn_new(dn_t **out, maildir_conn_dn_i *conn, imaildir_t *m){
+derr_t dn_init(dn_t *dn, dn_cb_i *cb){
     derr_t e = E_OK;
-    *out = NULL;
 
-    dn_t *dn = malloc(sizeof(*dn));
-    if(!dn) ORIG(&e, E_NOMEM, "nomem");
     *dn = (dn_t){
-        .m = m,
-        .conn = conn,
-        .maildir_dn = {
-            .cmd = conn_dn_cmd,
-            .more_work = conn_dn_more_work,
-            .do_work = conn_dn_do_work,
-        },
+        .cb = cb,
         .selected = false,
     };
-
-    PROP(&e, refs_init(&dn->refs, 1, dn_finalize) );
 
     link_init(&dn->link);
     link_init(&dn->pending_updates);
@@ -106,8 +67,6 @@ derr_t dn_new(dn_t **out, maildir_conn_dn_i *conn, imaildir_t *m){
     jsw_ainit(&dn->views, jsw_cmp_uid, msg_view_jsw_get);
 
     jsw_ainit(&dn->store.tree, jsw_cmp_uid, exp_flags_jsw_get);
-
-    *out = dn;
 
     return e;
 };
@@ -131,7 +90,7 @@ static derr_t send_st_resp(dn_t *dn, const ie_dstr_t *tag, const dstr_t *msg,
     resp = imap_resp_assert_writable(&e, resp, &dn->exts);
     CHECK(&e);
 
-    dn->conn->resp(dn->conn, resp);
+    PROP(&e, dn->cb->resp(dn->cb, resp) );
 
     return e;
 }
@@ -174,7 +133,7 @@ static derr_t send_flags_resp(dn_t *dn){
     resp = imap_resp_assert_writable(&e, resp, &dn->exts);
     CHECK(&e);
 
-    dn->conn->resp(dn->conn, resp);
+    PROP(&e, dn->cb->resp(dn->cb, resp) );
 
     return e;
 }
@@ -192,7 +151,7 @@ static derr_t send_exists_resp_unsafe(dn_t *dn){
     resp = imap_resp_assert_writable(&e, resp, &dn->exts);
     CHECK(&e);
 
-    dn->conn->resp(dn->conn, resp);
+    PROP(&e, dn->cb->resp(dn->cb, resp) );
 
     return e;
 }
@@ -208,7 +167,7 @@ static derr_t send_recent_resp_unsafe(dn_t *dn){
     resp = imap_resp_assert_writable(&e, resp, &dn->exts);
     CHECK(&e);
 
-    dn->conn->resp(dn->conn, resp);
+    PROP(&e, dn->cb->resp(dn->cb, resp) );
 
     return e;
 }
@@ -245,7 +204,7 @@ static derr_t send_pflags_resp(dn_t *dn){
     resp = imap_resp_assert_writable(&e, resp, &dn->exts);
     CHECK(&e);
 
-    dn->conn->resp(dn->conn, resp);
+    PROP(&e, dn->cb->resp(dn->cb, resp) );
 
     return e;
 }
@@ -282,7 +241,7 @@ static derr_t send_uidnext_resp_unsafe(dn_t *dn){
     resp = imap_resp_assert_writable(&e, resp, &dn->exts);
     CHECK(&e);
 
-    dn->conn->resp(dn->conn, resp);
+    PROP(&e, dn->cb->resp(dn->cb, resp) );
 
     return e;
 }
@@ -303,7 +262,7 @@ static derr_t send_uidvld_resp(dn_t *dn){
     resp = imap_resp_assert_writable(&e, resp, &dn->exts);
     CHECK(&e);
 
-    dn->conn->resp(dn->conn, resp);
+    PROP(&e, dn->cb->resp(dn->cb, resp) );
 
     return e;
 }
@@ -368,7 +327,7 @@ static derr_t send_search_resp(dn_t *dn, ie_nums_t *nums){
     resp = imap_resp_assert_writable(&e, resp, &dn->exts);
     CHECK(&e);
 
-    dn->conn->resp(dn->conn, resp);
+    PROP(&e, dn->cb->resp(dn->cb, resp) );
 
     return e;
 }
@@ -508,7 +467,7 @@ static derr_t store_cmd(dn_t *dn, const ie_dstr_t *tag,
     PROP(&e, copy_seq_to_uids(dn, store->uid_mode, store->seq_set, &uid_seq) );
 
     // reset the dn.store state
-    dn_store_free(dn);
+    dn_free_store(dn);
     dn->store.uid_mode = store->uid_mode;
     dn->store.silent = store->silent;
 
@@ -572,12 +531,12 @@ static derr_t store_cmd(dn_t *dn, const ie_dstr_t *tag,
     CHECK_GO(&e, fail_dn_store);
 
     // at this point, it may be better to leave the dn_store in-tact
-    PROP(&e, imaildir_request_update(dn->m, req) );
+    PROP(&e, imaildir_dn_request_update(dn->m, req) );
 
     return e;
 
 fail_dn_store:
-    dn_store_free(dn);
+    dn_free_store(dn);
     ie_seq_set_free(uid_seq);
     return e;
 }
@@ -602,10 +561,14 @@ static void loader_load(derr_t *e, loader_t *loader){
     if(loader->content) return;
 
     int fd;
-    PROP_GO(e, imaildir_open_msg(loader->m, loader->uid, &fd), fail);
+    PROP_GO(e, imaildir_dn_open_msg(loader->m, loader->uid, &fd), fail);
     loader->content = ie_dstr_new_from_fd(e, fd);
+
+    // if imalidir fails in this call, this will overwrite e with E_IMAILDIR
+    int ret;
+    PROP_GO(e, imaildir_dn_close_msg(loader->m, loader->uid, &fd, &ret), fail);
     // ignore return value of close on read-only file descriptor
-    imaildir_close_msg(loader->m, loader->uid, &fd);
+    (void)ret;
 
 fail:
     return;
@@ -910,7 +873,7 @@ static derr_t send_fetch_resp(dn_t *dn, const ie_fetch_cmd_t *fetch,
 
     CHECK(&e);
 
-    dn->conn->resp(dn->conn, resp);
+    PROP(&e, dn->cb->resp(dn->cb, resp) );
 
     return e;
 }
@@ -943,10 +906,8 @@ cu:
 
 
 // we either need to consume the cmd or free it
-static derr_t conn_dn_cmd(maildir_dn_i *maildir_dn, imap_cmd_t *cmd){
+derr_t dn_cmd(dn_t *dn, imap_cmd_t *cmd){
     derr_t e = E_OK;
-
-    dn_t *dn = CONTAINER_OF(maildir_dn, dn_t, maildir_dn);
 
     const ie_dstr_t *tag = cmd->tag;
     const imap_cmd_arg_t *arg = &cmd->arg;
@@ -1019,8 +980,25 @@ cu_cmd:
     return e;
 }
 
-static bool conn_dn_more_work(maildir_dn_i *maildir_dn){
-    dn_t *dn = CONTAINER_OF(maildir_dn, dn_t, maildir_dn);
+derr_t dn_disconnect(dn_t *dn, bool expunge){
+    derr_t e = E_OK;
+
+    if(expunge){
+        /* calculate a UID expunge command that we would push to the server,
+           and do not disconnect until that response comes in */
+        // TODO: properly support expunge=true
+        PROP(&e, dn->cb->disconnected(dn->cb, NULL) );
+    }else{
+        /* since the server_t is not allowed to process commands while it is
+           waiting for the dn_t to respond to a command, there's no additional
+           need to synchronize at this point */
+        PROP(&e, dn->cb->disconnected(dn->cb, NULL) );
+    }
+
+    return e;
+}
+
+bool dn_more_work(dn_t *dn){
     return dn->ready;
 }
 
@@ -1046,7 +1024,7 @@ static derr_t send_flags_update(dn_t *dn, unsigned int num, msg_flags_t flags,
     resp = imap_resp_assert_writable(&e, resp, &dn->exts);
     CHECK(&e);
 
-    dn->conn->resp(dn->conn, resp);
+    PROP(&e, dn->cb->resp(dn->cb, resp) );
 
     return e;
 }
@@ -1229,11 +1207,9 @@ static derr_t process_meta_update(dn_t *dn, const update_t *update,
 }
 
 // process updates until we hit our own update
-static derr_t conn_dn_do_work(maildir_dn_i *maildir_dn){
+derr_t dn_do_work(dn_t *dn){
     derr_t e = E_OK;
     derr_t e2;
-
-    dn_t *dn = CONTAINER_OF(maildir_dn, dn_t, maildir_dn);
 
     dn->ready = false;
 
@@ -1278,12 +1254,12 @@ static derr_t conn_dn_do_work(maildir_dn_i *maildir_dn){
 
 cu:
     seq_set_builder_free(&ssb);
-    dn_store_free(dn);
+    dn_free_store(dn);
 
     return e;
 }
 
-void dn_update(dn_t *dn, update_t *update){
+void dn_imaildir_update(dn_t *dn, update_t *update){
     // was this our request?
     bool advance = update->requester == dn;
 
@@ -1291,6 +1267,24 @@ void dn_update(dn_t *dn, update_t *update){
 
     if(advance){
         dn->ready = true;
-        dn->conn->advance(dn->conn);
+        dn->cb->enqueue(dn->cb);
     }
+}
+
+// we have to free the view as we unregister
+void dn_imaildir_preunregister(dn_t *dn){
+    // free any unhandled updates
+    link_t *link;
+    while((link = link_list_pop_first(&dn->pending_updates))){
+        update_t *update = CONTAINER_OF(link, update_t, link);
+        update_free(&update);
+    }
+
+    // free all the message views
+    jsw_anode_t *node;
+    while((node = jsw_apop(&dn->views))){
+        msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
+        msg_view_free(&view);
+    }
+    dn_free_store(dn);
 }

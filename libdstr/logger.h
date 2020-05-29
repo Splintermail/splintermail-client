@@ -251,7 +251,7 @@ static inline void pvt_rethrow(derr_t *e, derr_t *e2, derr_type_t newtype,
         e->msg = e2->msg;
         // done with the old error, but don't free the trace we are reusing
         *e2 = E_OK;
-    }else{
+    }else if(e->msg.data != e2->msg.data){
         // otherwise, combine the traces
         /* TODO: you should clearly dilineate the new trace from the old trace,
                  so that it is clear exactly what is being rethrown */

@@ -65,7 +65,7 @@ const dstr_t *error_to_dstr(derr_type_t type);
     derr_type_t NAME = &(struct derr_type_t){ \
         .dstr = &NAME ## _dstr, \
         .matches = NAME ## _matches, \
-    };
+    }
 
 /* Error type groups are for matching matching against multiple error types.
    Error groups must never be thrown, because they do not support .to_string

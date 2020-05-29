@@ -90,88 +90,17 @@ every conn_dn.  That state machine looks like this:
 
 */
 
-typedef enum {
-    IMAILDIR_WAITING_FOR_CONN = 0,
-    IMAILDIR_INITIAL_SYNC,
-    IMAILDIR_IDLE,
-    IMAILDIR_CLOSING,
-} downloader_state_e;
+/* E_IMAILDIR means that the imaildir is in an invalid state.  This will be
+   thrown by an imaildir function when imaildir_fail() was called before
+   exiting the function.  As a result, the accessor is likely to be in a closed
+   state before that imaildir function returns, and it may be desirable in
+   that accessor's close function to detect this error and keep this stack
+   trace, which will be more informative than the original stack trace from
+   when imaildir_fail() triggered this accessor's close function. */
+extern derr_type_t E_IMAILDIR;
 
-struct maildir_conn_up_i;
-typedef struct maildir_conn_up_i maildir_conn_up_i;
-struct maildir_conn_dn_i;
-typedef struct maildir_conn_dn_i maildir_conn_dn_i;
-struct maildir_up_i;
-typedef struct maildir_up_i maildir_up_i;
-struct maildir_dn_i;
-typedef struct maildir_dn_i maildir_dn_i;
-struct imaildir_t;
-typedef struct imaildir_t imaildir_t;
 struct maildir_log_i;
 typedef struct maildir_log_i maildir_log_i;
-
-/* the upwards session must provide this interface to the maildir; it is how
-   the maildir will communicate the imap client behavior */
-struct maildir_conn_up_i {
-    // the maildir wants to pass an imap command over the wire
-    void (*cmd)(maildir_conn_up_i*, imap_cmd_t*);
-    // this event indiates a SELECT finished, with an ie_st_resp_t if it failed
-    // (if select fails, you should go straight to dirmgr_close_up())
-    void (*selected)(maildir_conn_up_i*, ie_st_resp_t*);
-    // this event indicates the maildir finished an initial sync
-    void (*synced)(maildir_conn_up_i*);
-    // this event is a response to the maildir_up_i->unselect() call
-    void (*unselected)(maildir_conn_up_i*);
-    // The maildir BROADCASTs its failures when it dies
-    /* note the asymmetry: the maildir resource can tell the actor owning the
-       conn_up that the actor must die with this call, but there is no call for
-       the actor to tell the shared resource to die */
-    void (*failure)(maildir_conn_up_i*, derr_t);
-    // this is always the last call to the interface
-    void (*release)(maildir_conn_up_i*);
-};
-
-/* the downwards session must provide this interface to the maildir; it is how
-   the maildir will communicate the imap server behavior */
-struct maildir_conn_dn_i {
-    // the maildir wants to pass an imap response over the wire
-    void (*resp)(maildir_conn_dn_i*, imap_resp_t*);
-    // the maildir has some processing that needs to happen on-thread
-    void (*advance)(maildir_conn_dn_i*);
-    // The maildir BROADCASTs its failures when it dies
-    /* note the asymmetry: the maildir resource can tell the actor owning the
-       conn_up that the actor must die with this call, but there is no call for
-       the actor to tell the shared resource to die */
-    void (*failure)(maildir_conn_dn_i*, derr_t);
-    // this is always the last call to the interface
-    void (*release)(maildir_conn_dn_i*);
-};
-
-struct maildir_up_i {
-    derr_t (*resp)(maildir_up_i*, imap_resp_t*);
-
-    // return true if the maildir is currently synchronized with the mailserver
-    bool (*synced)(maildir_up_i*);
-
-    // return true if the maildir is the conn is in a SELECTED state
-    bool (*selected)(maildir_up_i*);
-
-    // if the connection is in a SELECTED state, CLOSE it.
-    derr_t (*unselect)(maildir_up_i*);
-
-    // unregistering must be done through the imaildir_t or dirmgr_t
-};
-
-struct maildir_dn_i {
-    // (the first one must be the SELECT)
-    derr_t (*cmd)(maildir_dn_i*, imap_cmd_t*);
-    // check if there is on-thread processing needed
-    bool (*more_work)(maildir_dn_i*);
-    // do some on-thread work
-    derr_t (*do_work)(maildir_dn_i*);
-
-    // unregistering must be done through the imaildir_t or dirmgr_t
-};
 
 // IMAP maildir
 struct imaildir_t {
@@ -187,7 +116,6 @@ struct imaildir_t {
 
     // if SELECT returned NO, delete the box afterwards
     bool rm_on_close;
-
 
     // accessors
     link_t ups;  // up_t->link;
@@ -215,33 +143,17 @@ void imaildir_free(imaildir_t *m);
 // useful if an open maildir needs to be deleted
 void imaildir_forceclose(imaildir_t *m);
 
-// this will always consume or free req
-derr_t imaildir_request_update(imaildir_t *m, update_req_t *req);
-
-// void imaildir_ref_up(imaildir_t *m);
-// void imaildir_ref_down(imaildir_t *m);
+// regsiter a new connection with the imaildir, and return a maildir_i
+void imaildir_register_up(imaildir_t *m, up_t *up);
 
 // regsiter a new connection with the imaildir, and return a maildir_i
-derr_t imaildir_register_up(imaildir_t *m, maildir_conn_up_i *conn_up,
-        maildir_up_i **maildir_up_out);
-
-// regsiter a new connection with the imaildir, and return a maildir_i
-derr_t imaildir_register_dn(imaildir_t *m, maildir_conn_dn_i *conn_dn,
-        maildir_dn_i **maildir_dn_out);
+void imaildir_register_dn(imaildir_t *m, dn_t *dn);
 
 /* if you got a maildir_*_i through dirmgr_open, you should close it via
    dirmgr_close */
-// (the argument is actually just for type-safety, it's not used)
-void imaildir_unregister_up(maildir_up_i *m);
-void imaildir_unregister_dn(maildir_dn_i *m);
-
-bool imaildir_synced(imaildir_t *m);
-
-// open a message in a thread-safe way; return a file descriptor
-derr_t imaildir_open_msg(imaildir_t *m, unsigned int uid, int *fd);
-
-// close a message in a thread-safe way; return the result of close()
-int imaildir_close_msg(imaildir_t *m, unsigned int uid, int *fd);
+// returns number of accessors after unregister operation
+size_t imaildir_unregister_up(up_t *up);
+size_t imaildir_unregister_dn(dn_t *dn);
 
 /* Synchronous filesystem-backed storage for an imap maildir.
 
@@ -275,4 +187,55 @@ derr_t imaildir_log_open(const string_builder_t *dirpath,
 // this must be implemented by some backend, currently only lmdb
 derr_t imaildir_log_rm(const string_builder_t *dirpath);
 
-size_t imaildir_naccessors(imaildir_t *m);
+
+/////////////////
+/* imaildir functions exposed only for up_t.  up_t does not keep its own view
+   of the imaildir, and so it will read and write directly to the imaildir_t.
+   This works because only one up_t is ever active for an imaildir_t. */
+
+/* these two are called during up_imaildir_select() for the up_t to populate
+   its internal seq_set_builder_t's */
+derr_t imaildir_up_get_unfilled_msgs(imaildir_t *m, seq_set_builder_t *ssb);
+derr_t imaildir_up_get_unpushed_expunges(imaildir_t *m,
+        seq_set_builder_t *ssb);
+
+derr_t imaildir_up_check_uidvld(imaildir_t *m, unsigned int uidvld);
+
+derr_t imaildir_up_set_himodseq_up(imaildir_t *m, unsigned long himodseq);
+
+// return the msg if it exists and if it is expunged
+msg_base_t *imaildir_up_lookup_msg(imaildir_t *m, unsigned int uid,
+        bool *expunged);
+
+// add a new message to the maildir
+derr_t imaildir_up_new_msg(imaildir_t *m, unsigned int uid, msg_flags_t flags,
+        msg_base_t **out);
+
+// update flags for an existing message
+derr_t imaildir_up_update_flags(imaildir_t *m, msg_base_t *base,
+        msg_flags_t flags);
+
+// handle the static attributes from a FETCH
+derr_t imaildir_up_handle_static_fetch_attr(imaildir_t *m,
+        msg_base_t *base, const ie_fetch_resp_t *fetch);
+
+void imaildir_up_initial_sync_complete(imaildir_t *m);
+
+derr_t imaildir_up_delete_msg(imaildir_t *m, unsigned int uid);
+
+derr_t imaildir_up_expunge_pushed(imaildir_t *m, unsigned int uid);
+
+
+/////////////////
+/* imaildir functions exposed only for dn_t.  dn_t keeps its own view of the
+   mailbox and therefore relies less on the imaildir_t. */
+
+// this will always consume or free req
+derr_t imaildir_dn_request_update(imaildir_t *m, update_req_t *req);
+
+// open a message in a thread-safe way; return a file descriptor
+derr_t imaildir_dn_open_msg(imaildir_t *m, unsigned int uid, int *fd);
+
+// close a message in a thread-safe way; return the result of close()
+derr_t imaildir_dn_close_msg(imaildir_t *m, unsigned int uid, int *fd,
+        int *ret);

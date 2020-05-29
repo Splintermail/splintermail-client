@@ -25,7 +25,7 @@ void link_list_prepend(link_t *head, link_t *link){
 void link_list_append(link_t *head, link_t *link){
     // require explicit safety, but don't leave a footgun laying around
     if(link->next != link){
-        LOG_ERROR("YOU MUST CALL LINK_REMOVE() BEFORE LINK_LIST_PREPEND!!\n");
+        LOG_ERROR("YOU MUST CALL LINK_REMOVE() BEFORE LINK_LIST_APPEND!!\n");
         link_remove(link);
     }
 

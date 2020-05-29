@@ -2,40 +2,15 @@
 
 static derr_t make_ctn(const string_builder_t *dir_path, mode_t mode);
 
-static void managed_dir_free(managed_dir_t **mgd);
-
-static void dirmgr_check_empty_imaildir(dirmgr_t *dm, imaildir_t *m){
-    if(imaildir_naccessors(m)) return;
-
-    // imaildir_t is empty
-    managed_dir_t *mgd = CONTAINER_OF(m, managed_dir_t, m);
-    // remove the managed_dir from the maildir
-    if(!hashmap_del_elem(&dm->dirs, &mgd->h)){
-        LOG_ERROR("unable to find maildir in hashmap!\n");
-    }
-    managed_dir_free(&mgd);
-
-    // TODO: handle non-MGD_STATE_OPEN here
-}
-
-void dirmgr_close_up(dirmgr_t *dm, maildir_up_i *maildir_up){
-    up_t *up = CONTAINER_OF(maildir_up, up_t, maildir_up);
-    imaildir_t *m = up->m;
-    imaildir_unregister_up(maildir_up);
-
-    dirmgr_check_empty_imaildir(dm, m);
-}
-
-void dirmgr_close_dn(dirmgr_t *dm, maildir_dn_i *maildir_dn){
-    dn_t *dn = CONTAINER_OF(maildir_dn, dn_t, maildir_dn);
-    imaildir_t *m = dn->m;
-    imaildir_unregister_dn(maildir_dn);
-
-    dirmgr_check_empty_imaildir(dm, m);
-}
-
-
 // managed_dir_t functions
+
+static void managed_dir_free(managed_dir_t **mgd){
+    if(*mgd == NULL) return;
+    imaildir_free(&(*mgd)->m);
+    dstr_free(&(*mgd)->name);
+    free(*mgd);
+    *mgd = NULL;
+}
 
 static derr_t managed_dir_new(managed_dir_t **out, dirmgr_t *dm,
         const dstr_t *name){
@@ -71,14 +46,6 @@ fail_name:
 fail_malloc:
     free(mgd);
     return e;
-}
-
-static void managed_dir_free(managed_dir_t **mgd){
-    if(*mgd == NULL) return;
-    imaildir_free(&(*mgd)->m);
-    dstr_free(&(*mgd)->name);
-    free(*mgd);
-    *mgd = NULL;
 }
 
 // end of managed_dir_t functions
@@ -409,8 +376,7 @@ derr_t dirmgr_do_for_each_mbx(dirmgr_t *dm, const dstr_t *ref_name,
 // IMAP functions
 /////////////////
 
-derr_t dirmgr_open_up(dirmgr_t *dm, const dstr_t *name, maildir_conn_up_i *up,
-        maildir_up_i **maildir_up_out){
+derr_t dirmgr_open_up(dirmgr_t *dm, const dstr_t *name, up_t *up){
     derr_t e = E_OK;
     managed_dir_t *mgd;
 
@@ -419,7 +385,7 @@ derr_t dirmgr_open_up(dirmgr_t *dm, const dstr_t *name, maildir_conn_up_i *up,
         mgd = CONTAINER_OF(h, managed_dir_t, h);
 
         // just add an accessor to the existing imaildir
-        PROP(&e, imaildir_register_up(&mgd->m, up, maildir_up_out) );
+        imaildir_register_up(&mgd->m, up);
         return e;
     }
 
@@ -427,20 +393,14 @@ derr_t dirmgr_open_up(dirmgr_t *dm, const dstr_t *name, maildir_conn_up_i *up,
     PROP(&e, managed_dir_new(&mgd, dm, name) );
 
     // add to hashmap (we checked this path was not in the hashmap)
-    NOFAIL_GO(&e, E_PARAM,
-            hashmap_sets_unique(&dm->dirs, &mgd->name, &mgd->h), fail_mgd);
+    hashmap_sets(&dm->dirs, &mgd->name, &mgd->h);
 
-    PROP_GO(&e, imaildir_register_up(&mgd->m, up, maildir_up_out), fail_mgd);
+    imaildir_register_up(&mgd->m, up);
 
-    return e;
-
-fail_mgd:
-    managed_dir_free(&mgd);
     return e;
 }
 
-derr_t dirmgr_open_dn(dirmgr_t *dm, const dstr_t *name, maildir_conn_dn_i *dn,
-        maildir_dn_i **maildir_dn_out){
+derr_t dirmgr_open_dn(dirmgr_t *dm, const dstr_t *name, dn_t *dn){
     derr_t e = E_OK;
     managed_dir_t *mgd;
 
@@ -449,7 +409,7 @@ derr_t dirmgr_open_dn(dirmgr_t *dm, const dstr_t *name, maildir_conn_dn_i *dn,
         mgd = CONTAINER_OF(h, managed_dir_t, h);
 
         // just add an accessor to the existing imaildir
-        PROP(&e, imaildir_register_dn(&mgd->m, dn, maildir_dn_out) );
+        imaildir_register_dn(&mgd->m, dn);
         return e;
     }
 
@@ -457,16 +417,38 @@ derr_t dirmgr_open_dn(dirmgr_t *dm, const dstr_t *name, maildir_conn_dn_i *dn,
     PROP(&e, managed_dir_new(&mgd, dm, name) );
 
     // add to hashmap (we checked this path was not in the hashmap)
-    NOFAIL_GO(&e, E_PARAM,
-            hashmap_sets_unique(&dm->dirs, &mgd->name, &mgd->h), fail_mgd);
+    hashmap_sets(&dm->dirs, &mgd->name, &mgd->h);
 
-    PROP_GO(&e, imaildir_register_dn(&mgd->m, dn, maildir_dn_out), fail_mgd);
+    imaildir_register_dn(&mgd->m, dn);
 
     return e;
+}
 
-fail_mgd:
+static void handle_empty_imaildir(dirmgr_t *dm, imaildir_t *m){
+    managed_dir_t *mgd = CONTAINER_OF(m, managed_dir_t, m);
+    // remove the managed_dir from the maildir
+    if(!hashmap_del_elem(&dm->dirs, &mgd->h)){
+        LOG_ERROR("unable to find maildir in hashmap!\n");
+    }
     managed_dir_free(&mgd);
-    return e;
+
+    // TODO: handle non-MGD_STATE_OPEN here
+}
+
+void dirmgr_close_up(dirmgr_t *dm, up_t *up){
+    imaildir_t *m = up->m;
+    size_t naccessors = imaildir_unregister_up(up);
+    if(naccessors) return;
+
+    handle_empty_imaildir(dm, m);
+}
+
+void dirmgr_close_dn(dirmgr_t *dm, dn_t *dn){
+    imaildir_t *m = dn->m;
+    size_t naccessors = imaildir_unregister_dn(dn);
+    if(naccessors) return;
+
+    handle_empty_imaildir(dm, m);
 }
 
 derr_t dirmgr_init(dirmgr_t *dm, string_builder_t path,

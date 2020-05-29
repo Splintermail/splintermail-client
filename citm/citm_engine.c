@@ -118,11 +118,13 @@ static void citme_process_events(uv_work_t *req){
                     fetcher = CONTAINER_OF(s, fetcher_t, s);
                     fetcher_close(fetcher, fetcher->session_dying_error);
                     PASSED(fetcher->session_dying_error);
+                    // ref down for session
                     ref_dn(&fetcher->refs);
                 }else{
                     server = CONTAINER_OF(s, server_t, s);
                     server_close(server, server->session_dying_error);
                     PASSED(server->session_dying_error);
+                    // ref down for session
                     ref_dn(&server->refs);
                 }
                 break;

@@ -49,7 +49,6 @@ static void sf_pair_enqueue(sf_pair_t *sf_pair){
 }
 
 static void sf_pair_wakeup(wake_event_t *wake_ev){
-    // printf("---- sf_pair_wakeup\n");
     sf_pair_t *sf_pair = CONTAINER_OF(wake_ev, sf_pair_t, wake_ev);
     sf_pair->enqueued = false;
     // ref_dn for wake_ev
@@ -93,6 +92,7 @@ fail:
 
 // part of server_cb_i
 static void server_cb_dying(server_cb_i *cb, derr_t error){
+    // printf("---- server_cb_dying\n");
     sf_pair_t *sf_pair = CONTAINER_OF(cb, sf_pair_t, server_cb);
 
     sf_pair_close(sf_pair, error);
@@ -100,6 +100,7 @@ static void server_cb_dying(server_cb_i *cb, derr_t error){
 
 // part of server_cb_i
 static void server_cb_release(server_cb_i *cb){
+    // printf("---- server_cb_release\n");
     sf_pair_t *sf_pair = CONTAINER_OF(cb, sf_pair_t, server_cb);
 
     // ref down for the server
@@ -135,12 +136,14 @@ static void server_cb_select(server_cb_i *server_cb, ie_mailbox_t *m){
 
 // part of fetcher_cb_i
 static void fetcher_cb_dying(fetcher_cb_i *cb, derr_t error){
+    // printf("---- fetcher_cb_dying\n");
     sf_pair_t *sf_pair = CONTAINER_OF(cb, sf_pair_t, fetcher_cb);
     sf_pair_close(sf_pair, error);
 }
 
 // part of fetcher_cb_i
 static void fetcher_cb_release(fetcher_cb_i *cb){
+    // printf("---- fetcher_cb_release\n");
     sf_pair_t *sf_pair = CONTAINER_OF(cb, sf_pair_t, fetcher_cb);
     // ref down for the fetcher
     ref_dn(&sf_pair->refs);

@@ -16,11 +16,8 @@ const dstr_t *imap_client_state_to_dstr(imap_client_state_t state);
 typedef enum {
     MBX_NONE = 0,       // we have no mailbox open at all
     MBX_SELECTING,      // we are in the process of selecting a mailbox
-    MBX_SYNCING,        // received a response to SELECT, we are syncing
     MBX_SYNCED,         // we have finished the initial sync
     MBX_UNSELECTING,    // we are trying to unselect
-    MBX_UNSELECTED,     // we are done unselecting
-    MBX_CLOSING,        // we've closed it but it still has a ref on us
 } fetcher_mailbox_state_e;
 
 // an interface that must be provided by the sf_pair
@@ -71,8 +68,6 @@ struct fetcher_t {
     bool closed;
     // from upwards session
     link_t unhandled_resps;  // imap_resp_t->link
-    // from maildir
-    link_t maildir_cmds;  // imap_cmd_t->link
 
     // commands we sent upwards, but haven't gotten a response yet
     link_t inflight_cmds;  // imap_cmd_cb_t->link
@@ -94,20 +89,19 @@ struct fetcher_t {
     ie_mailbox_t *select_mailbox;
 
     // the interface we feed to the imaildir for server communication
-    maildir_conn_up_i conn_up;
-    maildir_up_i *maildir_up;
-    bool maildir_has_ref;
+    up_cb_i up_cb;
+    up_t up;
+    // is our up_t registered with an imaildir?
+    bool maildir_connected;
     fetcher_mailbox_state_e mbx_state;
 };
 DEF_CONTAINER_OF(fetcher_t, refs, refs_t);
 DEF_CONTAINER_OF(fetcher_t, wake_ev, wake_event_t);
 DEF_CONTAINER_OF(fetcher_t, close_ev, event_t);
 DEF_CONTAINER_OF(fetcher_t, s, imap_session_t);
-DEF_CONTAINER_OF(fetcher_t, conn_up, maildir_conn_up_i);
+DEF_CONTAINER_OF(fetcher_t, up_cb, up_cb_i);
 DEF_CONTAINER_OF(fetcher_t, session_mgr, manager_i);
 DEF_CONTAINER_OF(fetcher_t, ctrl, imape_control_i);
-
-derr_t fetcher_do_work(fetcher_t *fetcher, bool *noop);
 
 derr_t fetcher_init(
     fetcher_t *fetcher,

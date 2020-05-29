@@ -11,18 +11,29 @@ typedef enum {
 } imap_server_state_t;
 const dstr_t *imap_server_state_to_dstr(imap_server_state_t state);
 
-// the result of a external request
 typedef enum {
-    LOGIN_PENDING = 0,
-    LOGIN_SUCCEEDED,
-    LOGIN_FAILED,
+    GREET_NONE = 0,
+    GREET_AWAITING,
+    GREET_READY,
+} greet_state_e;
+
+typedef enum {
+    LOGIN_NONE = 0,
+    LOGIN_PENDING,
+    LOGIN_DONE,
 } login_state_e;
 
-// the result of a external request
 typedef enum {
-    SELECT_PENDING = 0,
-    SELECT_SUCCEEDED,
-    SELECT_FAILED,
+    PASSTHRU_NONE = 0,
+    PASSTHRU_PENDING,
+    PASSTHRU_DONE,
+} passthru_state_e;
+
+typedef enum {
+    SELECT_NONE = 0,
+    SELECT_DISCONNECTING, // we want to SELECT but we are disconnecting first
+    SELECT_PENDING,       // we've asked our owner for permission to SELECT
+    SELECT_DONE,          // we have the result of the SELECT
 } select_state_e;
 
 // an interface that must be provided by the sf_pair
@@ -69,46 +80,65 @@ struct server_t {
     bool closed;
     // from downwards session
     link_t unhandled_cmds;  // imap_cmd_t->link
-    // from maildir
-    link_t maildir_resps;  // imap_resp_t->link
 
     imap_server_state_t imap_state;
     bool greeting_allowed;
     bool saw_capas;
 
     // the interface we feed to the imaildir for client communication
-    maildir_conn_dn_i conn_dn;
-    maildir_dn_i *maildir_dn;
-    bool maildir_has_ref;
+    dn_cb_i dn_cb;
+    dn_t dn;
 
-    // pause is for delaying actions until some future time
-    bool (*paused)(server_t*);
-    // after_pause() is called onthread after paused() returns NULL
-    derr_t (*after_pause)(server_t*);
-    // server->after_tagged_pause() may be called by server->after_pause()
-    derr_t (*after_tagged_pause)(server_t*, const ie_dstr_t*);
-    // server->after_passthru_pause() may be called by server->after_pause()
-    derr_t (*after_passthru_pause)(server_t*, passthru_resp_t*);
-    ie_dstr_t *pause_tag;
-    imap_cmd_t *pause_cmd;
-    // if non-NULL, we're waiting on some tagged response to be passed out
-    ie_dstr_t *await_tag;
-    login_state_e login_state;
-    passthru_resp_t *passthru_resp;
-    select_state_e select_state;
-    ie_st_resp_t *select_st_resp;
+    // various pauses and their state tracking, only one active at a time
+
+    struct {
+        greet_state_e state;
+    } greet;
+
+    struct {
+        login_state_e state;
+        bool result;
+        ie_dstr_t *tag;
+    } login;
+
+    struct {
+        passthru_state_e state;
+        passthru_resp_t *resp;
+    } passthru;
+
+    // await commands that are processed asynchronously by the dn_t/imaildir_t
+    // TODO: why not just await all commands and call it a day?
+    struct {
+        ie_dstr_t *tag;
+    } await;
+
+    // handling SELECT commands
+    struct {
+        select_state_e state;
+        // we have to remember the whole command, not just the tag
+        imap_cmd_t *cmd;
+        ie_st_resp_t *st_resp;
+    } select;
+
+    struct {
+        // no DONE state since this pause is resolved in a dn_t callback
+        bool awaiting;
+        ie_dstr_t *tag;
+    } close;
+
+    struct {
+        // no DONE state since this pause is resolved in a dn_t callback
+        bool disconnecting;
+        ie_dstr_t *tag;
+    } logout;
 };
 DEF_CONTAINER_OF(server_t, refs, refs_t);
 DEF_CONTAINER_OF(server_t, wake_ev, wake_event_t);
 DEF_CONTAINER_OF(server_t, close_ev, event_t);
 DEF_CONTAINER_OF(server_t, s, imap_session_t);
-DEF_CONTAINER_OF(server_t, conn_dn, maildir_conn_dn_i);
+DEF_CONTAINER_OF(server_t, dn_cb, dn_cb_i);
 DEF_CONTAINER_OF(server_t, session_mgr, manager_i);
 DEF_CONTAINER_OF(server_t, ctrl, imape_control_i);
-
-derr_t server_do_work(server_t *server, bool *noop);
-
-void server_close_maildir_onthread(server_t *server);
 
 derr_t server_init(
     server_t *server,
@@ -122,5 +152,4 @@ void server_start(server_t *server);
 void server_close(server_t *server, derr_t error);
 void server_free(server_t *server);
 
-derr_t start_greet_pause(server_t *server);
 void server_read_ev(server_t *server, event_t *ev);

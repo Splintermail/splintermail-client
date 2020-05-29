@@ -38,6 +38,7 @@ typedef struct {
     // dstr.data is non-null only if inbox is false
     dstr_t dstr;
 } ie_mailbox_t;
+DEF_STEAL_PTR(ie_mailbox_t);
 
 typedef enum {
     IE_STATUS_ATTR_MESSAGES = 1,
@@ -642,6 +643,7 @@ typedef struct {
     ie_st_code_t *code;
     ie_dstr_t *text;
 } ie_st_resp_t;
+DEF_STEAL_PTR(ie_st_resp_t);
 
 typedef struct {
     ie_mflags_t *mflags;

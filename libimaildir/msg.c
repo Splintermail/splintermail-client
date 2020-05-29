@@ -15,6 +15,8 @@ derr_t msg_meta_new(msg_meta_t **out, unsigned int uid, msg_flags_t flags,
         },
     };
 
+    link_init(&meta->link);
+
     *out = meta;
 
     return e;

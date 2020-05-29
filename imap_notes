@@ -1239,6 +1239,11 @@ UPDATE: The refactor is done.  There are a few important points to this
         not so hard... you just have to throw errors and only catch them in one
         place.
 
+      - imalidir_t has some odd behavior, where it might close its accessor any
+        time it is called.  To make that as safe as possible, it will also
+        throw E_IMAILDIR at the same time so that the accessor does not try to
+        operate after being closed
+
     Why are all calls between citm objects asynchronous?
       - Avoid callback hell.  Break callback chains along object boundaries.
 

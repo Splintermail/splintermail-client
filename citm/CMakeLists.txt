@@ -3,9 +3,7 @@ add_executable(
     citm.c
     passthru.c
     server.c
-    server_onthread.c
     fetcher.c
-    fetcher_onthread.c
     user.c
     citm_engine.c
     sf_pair.c

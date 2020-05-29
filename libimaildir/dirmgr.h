@@ -79,15 +79,13 @@ derr_t dirmgr_sync_folders(dirmgr_t *dm, jsw_atree_t *tree);
          counting gets tricky.  I think this is all to support the case where
          one client deletes a folder and other clients try to open it... I
          think I'll just throw an error and let the client deal with it. */
-derr_t dirmgr_open_up(dirmgr_t *dm, const dstr_t *name, maildir_conn_up_i *up,
-        maildir_up_i **maildir_up_out);
-derr_t dirmgr_open_dn(dirmgr_t *dm, const dstr_t *name, maildir_conn_dn_i *dn,
-        maildir_dn_i **maildir_dn_out);
+derr_t dirmgr_open_up(dirmgr_t *dm, const dstr_t *name, up_t *up);
+derr_t dirmgr_open_dn(dirmgr_t *dm, const dstr_t *name, dn_t *dn);
 
 // unregister a connection from a maildir in a thread-safe way
 // (the argument is actually just for type-safety, it's not used)
-void dirmgr_close_up(dirmgr_t *dm, maildir_up_i *maildir_up);
-void dirmgr_close_dn(dirmgr_t *dm, maildir_dn_i *maildir_dn);
+void dirmgr_close_up(dirmgr_t *dm, up_t *up);
+void dirmgr_close_dn(dirmgr_t *dm, dn_t *dn);
 
 // derr_t dirmgr_create(imaildir_t *root, const dstr_t *name);
 

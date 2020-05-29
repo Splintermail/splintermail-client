@@ -53,6 +53,7 @@ typedef struct {
     // the passed-thru tagged status-type response (ignore the wrong tag)
     ie_st_resp_t *st_resp;
 } passthru_resp_t;
+DEF_STEAL_PTR(passthru_resp_t);
 
 passthru_list_resp_t *passthru_list_resp_new(derr_t *e);
 void passthru_list_resp_free(passthru_list_resp_t *passthru_list_resp);

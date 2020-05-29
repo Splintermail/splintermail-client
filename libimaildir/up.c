@@ -2,18 +2,8 @@
 
 #include "libimaildir.h"
 
-// forward declarations
-static derr_t conn_up_resp(maildir_up_i*, imap_resp_t*);
-static bool conn_up_synced(maildir_up_i*);
-static bool conn_up_selected(maildir_up_i*);
-static derr_t conn_up_unselect(maildir_up_i *maildir_up);
-
-static void up_finalize(refs_t *refs){
-    up_t *up = CONTAINER_OF(refs, up_t, refs);
-
-    // release the conn_up if we haven't yet
-    if(up->conn) up->conn->release(up->conn);
-
+void up_free(up_t *up){
+    if(!up) return;
     // cancel all callbacks
     link_t *link;
     while((link = link_list_pop_first(&up->cbs))){
@@ -25,28 +15,13 @@ static void up_finalize(refs_t *refs){
     seq_set_builder_free(&up->uids_to_download);
     seq_set_builder_free(&up->uids_to_expunge);
     ie_seq_set_free(up->uids_being_expunged);
-
-    refs_free(&up->refs);
-
-    // free memory
-    free(up);
 }
 
-derr_t up_new(up_t **out, maildir_conn_up_i *conn, imaildir_t *m){
+derr_t up_init(up_t *up, up_cb_i *cb){
     derr_t e = E_OK;
-    *out = NULL;
 
-    up_t *up = malloc(sizeof(*up));
-    if(!up) ORIG(&e, E_NOMEM, "nomem");
     *up = (up_t){
-        .m = m,
-        .conn = conn,
-        .maildir_up = {
-            .resp = conn_up_resp,
-            .synced = conn_up_synced,
-            .selected = conn_up_selected,
-            .unselect = conn_up_unselect,
-        },
+        .cb = cb,
         // TODO: read extensions from somewhere else
         .exts = {
             .uidplus = EXT_STATE_ON,
@@ -56,25 +31,30 @@ derr_t up_new(up_t **out, maildir_conn_up_i *conn, imaildir_t *m){
         },
     };
 
-    PROP_GO(&e, refs_init(&up->refs, 1, up_finalize), fail_malloc);
-
-    // start with the himodseqvalue in the persistent cache
-    hmsc_prep(&up->hmsc, imaildir_up_get_himodseq_up(m));
-
     seq_set_builder_prep(&up->uids_to_download);
     seq_set_builder_prep(&up->uids_to_expunge);
 
     link_init(&up->cbs);
     link_init(&up->link);
 
-    *out = up;
-
-    return e;
-
-fail_malloc:
-    free(up);
     return e;
 };
+
+void up_imaildir_select(
+    up_t *up,
+    unsigned int uidvld,
+    unsigned long himodseq_up
+){
+    // do some final initialization steps that can't fail
+    up->selected = true;
+    up->select_pending = true;
+    up->select_uidvld = uidvld;
+    up->select_himodseq = himodseq_up;
+    hmsc_prep(&up->hmsc, up->select_himodseq);
+
+    // enqueue ourselves
+    up->cb->enqueue(up->cb);
+}
 
 static ie_dstr_t *write_tag_up(derr_t *e, size_t tag){
     if(is_error(*e)) goto fail;
@@ -136,12 +116,15 @@ fail:
 }
 
 // send a command and store its callback
-void up_send_cmd(up_t *up, imap_cmd_t *cmd, up_cb_t *up_cb){
+static derr_t up_send_cmd(up_t *up, imap_cmd_t *cmd, up_cb_t *up_cb){
+    derr_t e = E_OK;
     // store the callback
     link_list_append(&up->cbs, &up_cb->cb.link);
 
-    // send the command through the conn_up
-    up->conn->cmd(up->conn, cmd);
+    // send the command through the up_cb_i
+    PROP(&e, up->cb->cmd(up->cb, cmd) );
+
+    return e;
 }
 
 // close_done is an imap_cmd_cb_call_f
@@ -156,10 +139,7 @@ static derr_t close_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
     }
 
     // signal that we are done with this connection
-    up->conn->unselected(up->conn);
-
-    /* TODO: we should be changing to a different primary connection now
-       instead of waiting until somebody unregisters... */
+    PROP(&e, up->cb->unselected(up->cb) );
 
     return e;
 }
@@ -180,7 +160,7 @@ static derr_t send_close(up_t *up){
     CHECK(&e);
 
     up->close_sent = true;
-    up_send_cmd(up, cmd, up_cb);
+    PROP(&e, up_send_cmd(up, cmd, up_cb) );
 
     return e;
 }
@@ -283,7 +263,7 @@ static derr_t send_expunge(up_t *up){
 
     CHECK(&e);
 
-    up_send_cmd(up, cmd, up_cb);
+    PROP(&e, up_send_cmd(up, cmd, up_cb) );
 
     return e;
 }
@@ -334,7 +314,7 @@ static derr_t send_deletions(up_t *up){
 
     CHECK(&e);
 
-    up_send_cmd(up, cmd, up_cb);
+    PROP(&e, up_send_cmd(up, cmd, up_cb) );
 
     return e;
 }
@@ -386,7 +366,7 @@ static derr_t send_fetch(up_t *up){
 
     CHECK(&e);
 
-    up_send_cmd(up, cmd, up_cb);
+    PROP(&e, up_send_cmd(up, cmd, up_cb) );
 
     return e;
 }
@@ -479,7 +459,7 @@ static derr_t send_initial_search(up_t *up){
 
     CHECK(&e);
 
-    up_send_cmd(up, cmd, up_cb);
+    PROP(&e, up_send_cmd(up, cmd, up_cb) );
 
     return e;
 }
@@ -540,14 +520,14 @@ static derr_t select_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
         // report the error
         ie_st_resp_t *st_resp_copy = ie_st_resp_copy(&e, st_resp);
         CHECK(&e);
-        up->conn->selected(up->conn, st_resp_copy);
+        up->cb->selected(up->cb, st_resp_copy);
         return e;
     }
 
     up->m->rm_on_close = false;
 
     // SELECT succeeded
-    up->conn->selected(up->conn, NULL);
+    up->cb->selected(up->cb, NULL);
 
     /* Add imaildir_t's unfilled UIDs to uids_to_download.  This doesn't have
        to go here precisely, but it does have to happen *after* an up_t becomes
@@ -559,7 +539,7 @@ static derr_t select_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
 
     /* if this is a first-time sync, we have to delay next_cmd(), which will
        try to save the HIMODSEQ */
-    if(!imaildir_up_get_himodseq_up(up->m)){
+    if(!up->select_himodseq){
         PROP(&e, send_initial_search(up) );
     }else{
         PROP(&e, next_cmd(up) );
@@ -568,19 +548,16 @@ static derr_t select_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
     return e;
 }
 
-derr_t make_select(up_t *up, unsigned int uidvld, unsigned long our_himodseq,
-        imap_cmd_t **cmd_out, up_cb_t **cb_out){
+static derr_t send_select(up_t *up, unsigned int uidvld,
+        unsigned long himodseq_up){
     derr_t e = E_OK;
-
-    *cmd_out = NULL;
-    *cb_out = NULL;
 
     // use QRESYNC with select if we have a valid UIDVALIDITY and HIGHESTMODSEQ
     ie_select_params_t *params = NULL;
-    if(uidvld && our_himodseq){
+    if(uidvld && himodseq_up){
         ie_select_param_arg_t params_arg = { .qresync = {
             .uidvld = uidvld,
-            .last_modseq = our_himodseq,
+            .last_modseq = himodseq_up,
         } };
         params = ie_select_params_new(&e, IE_SELECT_PARAM_QRESYNC, params_arg);
     }
@@ -601,8 +578,7 @@ derr_t make_select(up_t *up, unsigned int uidvld, unsigned long our_himodseq,
 
     CHECK(&e);
 
-    *cmd_out = cmd;
-    *cb_out = up_cb;
+    PROP(&e, up_send_cmd(up, cmd, up_cb) );
 
     return e;
 }
@@ -749,10 +725,8 @@ static derr_t untagged_status_type(up_t *up, const ie_st_resp_t *st){
 }
 
 // we either need to consume the resp or free it
-static derr_t conn_up_resp(maildir_up_i *maildir_up, imap_resp_t *resp){
+derr_t up_resp(up_t *up, imap_resp_t *resp){
     derr_t e = E_OK;
-
-    up_t *up = CONTAINER_OF(maildir_up, up_t, maildir_up);
 
     const imap_resp_arg_t *arg = &resp->arg;
 
@@ -805,40 +779,39 @@ cu_resp:
     return e;
 }
 
-// returned value is based on the entire maildir
-bool conn_up_synced(maildir_up_i *maildir_up){
-    up_t *up = CONTAINER_OF(maildir_up, up_t, maildir_up);
-    imaildir_t *m = up->m;
-
-    return imaildir_synced(m);
-}
-
-// this is thread-safe since up_t is designed to run on the conn_up thread
-// TODO: is that valid?  Can nothing in the up.c run on another thread?
-bool conn_up_selected(maildir_up_i *maildir_up){
-
-    up_t *up = CONTAINER_OF(maildir_up, up_t, maildir_up);
-
-    return up->selected;
-}
-
-// this is thread-safe since up_t is designed to run on the conn_up thread
-// TODO: is that valid?  Can nothing in the up.c run on another thread?
-static derr_t conn_up_unselect(maildir_up_i *maildir_up){
+derr_t up_unselect(up_t *up){
     derr_t e = E_OK;
-
-    up_t *up = CONTAINER_OF(maildir_up, up_t, maildir_up);
 
     if(!up->selected){
         // don't allow any more commands
         up->close_sent = true;
         // signal that it's already done
-        up->conn->unselected(up->conn);
+        PROP(&e, up->cb->unselected(up->cb) );
         return e;
     }
 
     // otherwise, send the close
+    // TODO: don't always expunge!!
     PROP(&e, send_close(up) );
+
+    return e;
+}
+
+
+bool up_more_work(up_t *up){
+    if(up->select_pending){
+        return true;
+    }
+    return false;
+}
+
+derr_t up_do_work(up_t *up){
+    derr_t e = E_OK;
+
+    if(up->select_pending){
+        up->select_pending = false;
+        PROP(&e, send_select(up, up->select_uidvld, up->select_himodseq) );
+    }
 
     return e;
 }
