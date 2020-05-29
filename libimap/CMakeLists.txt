@@ -76,6 +76,19 @@ define_file_logname_for_source("${imap_parse_in}" "${imap_parse_out}")
 define_file_logname_for_source("${imf_scan_in}" "${imf_scan_out}")
 define_file_logname_for_source("${imf_parse_in}" "${imf_parse_out}")
 
+# Work around missing prototype with bison 3.6:
+get_property(opts SOURCE "${imap_parse_out}" PROPERTY COMPILE_OPTIONS)
+# compiler- and target-specific flag adjustments
+if("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU")
+    list(APPEND opts "-Wno-missing-prototypes")
+elseif("${CMAKE_C_COMPILER_ID}" MATCHES "Clang")
+    list(APPEND opts "-Wno-missing-prototypes")
+elseif("${CMAKE_C_COMPILER_ID}" STREQUAL "MSVC")
+    # flags for MVSC (VS 2017)
+endif()
+# Set the updated compile definitions on the source file.
+set_property(SOURCE "${imap_parse_out}" PROPERTY COMPILE_OPTIONS ${opts})
+
 add_library(
     imap
     STATIC

@@ -2,8 +2,6 @@
     #include <stdio.h>
     #include <libimap/libimap.h>
 
-    #define IMAPYYTOKENTYPE // imap_scan_token_type_t
-
     #define MODE(m) p->scan_mode = SCAN_MODE_ ## m
 
     #define E (&p->error)
