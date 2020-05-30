@@ -56,7 +56,7 @@ derr_t fps_end_test(void){
     pthread_mutex_unlock(&fps_mutex);
     // hand back the test_error and erase the local copy of it
     derr_t retval = test_error;
-    test_error = E_OK;
+    PASSED(test_error);
     return retval;
 }
 
@@ -413,8 +413,7 @@ cleanup_3:
         // end-of-test
         pthread_mutex_lock(&fps_mutex);
         // save a copy of thread_error as this test's test_error
-        test_error.type = thread_error.type;
-        TRACE(&test_error, "%x", FD(&thread_error.msg));
+        TRACE_PROP_VAR(&test_error, &thread_error);
         // continue for the next test with a clean thread_error
         DROP_VAR(&thread_error);
         test_end = true;

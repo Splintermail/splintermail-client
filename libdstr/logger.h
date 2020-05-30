@@ -167,6 +167,9 @@ static inline bool pvt_prop_var(derr_t *e, derr_t *e2,
 #define PROP_VAR_GO(e, e2, _label) \
     if(pvt_prop_var(e, e2, FILE_LOC)){ goto _label; }
 
+#define TRACE_PROP_VAR(e, e2) \
+    do { IF_PROP_VAR(e, e2){} } while(0)
+
 
 /* CHECK handles an error that we have ignored until now, useful when
    transitioning from chunks of code which use the bison error handling
