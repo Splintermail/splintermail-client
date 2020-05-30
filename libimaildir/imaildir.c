@@ -439,6 +439,12 @@ void imaildir_register_up(imaildir_t *m, up_t *up){
         unsigned int uidvld = log->get_uidvld(log);
         unsigned long himodseq_up = log->get_himodseq_up(log);
         up_imaildir_select(up, uidvld, himodseq_up);
+    }else{
+        // if the primary is already synced, trigger an immediate sync call.
+        up_t *primary = CONTAINER_OF(m->ups.next, up_t, link);
+        if(primary->synced){
+            up->cb->synced(up->cb);
+        }
     }
 }
 
