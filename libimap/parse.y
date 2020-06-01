@@ -154,6 +154,7 @@
 %token COPY
 %token UID
 %token ENABLE
+%token UNSELECT
 
 /* responses */
 %token OK
@@ -538,6 +539,7 @@
 %type <imap_cmd> store_cmd
 %type <imap_cmd> copy_cmd
 %type <imap_cmd> enable_cmd
+%type <imap_cmd> unselect_cmd
 %destructor { imap_cmd_free($$); } <imap_cmd>
 
 %type <imap_resp> response_
@@ -567,7 +569,7 @@ line: command EOL { ACCEPT; }
 
 command: command_[c]
 {
-    // extract the error (if any), since are about to pass it by value
+    // extract the error (if any), since we are about to pass it by value
     derr_t error = p->error;
     PASSED(p->error);
     p->cb.cmd(p->cb_data, error, $c);
@@ -598,6 +600,7 @@ command_: capa_cmd
         | store_cmd
         | copy_cmd
         | enable_cmd
+        | unselect_cmd
 ;
 
 response: response_[r]
@@ -1070,6 +1073,12 @@ enable_cmd: tag SP ENABLE { MODE(ATOM); } SP capas_1[c]
     { extension_assert_on_builder(E, p->exts, EXT_ENABLE);
       imap_cmd_arg_t arg = {.enable=$c};
       $$ = imap_cmd_new(E, $tag, IMAP_CMD_ENABLE, arg); };
+
+/*** UNSELECT command ***/
+
+unselect_cmd: tag[t] SP UNSELECT
+    { extension_assert_on_builder(E, p->exts, EXT_UNSELECT);
+      $$ = imap_cmd_new(E, $t, IMAP_CMD_UNSELECT, (imap_cmd_arg_t){0}); };
 
 
 /*** status-type responses.  Thanks for the the shitty grammar, IMAP4rev1 ***/

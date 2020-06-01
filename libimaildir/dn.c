@@ -967,9 +967,16 @@ derr_t dn_cmd(dn_t *dn, imap_cmd_t *cmd){
         case IMAP_CMD_LSUB:
         case IMAP_CMD_STATUS:
         case IMAP_CMD_APPEND:
-        case IMAP_CMD_ENABLE:
             PROP_GO(&e, send_bad(
                 dn, tag, &DSTR_LIT("command not allowed in SELECTED state")
+            ), cu_cmd);
+            break;
+
+        // unsupported extensions
+        case IMAP_CMD_ENABLE:
+        case IMAP_CMD_UNSELECT:
+            PROP_GO(&e, send_bad(
+                dn, tag, &DSTR_LIT("extension not supported")
             ), cu_cmd);
             break;
     }

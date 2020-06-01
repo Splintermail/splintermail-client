@@ -934,8 +934,15 @@ static derr_t handle_one_command(server_t *server, imap_cmd_t *cmd){
         case IMAP_CMD_STORE:
         case IMAP_CMD_COPY:
         case IMAP_CMD_RENAME:
-        case IMAP_CMD_ENABLE:
             ORIG_GO(&e, E_INTERNAL, "Unhandled command", cu_cmd);
+
+        // unsupported extensions
+        case IMAP_CMD_ENABLE:
+        case IMAP_CMD_UNSELECT:
+            PROP_GO(&e,
+                send_bad(server, tag, &DSTR_LIT("extension not supported")),
+            cu_cmd);
+            break;
     }
 
 cu_cmd:

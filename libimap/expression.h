@@ -518,6 +518,7 @@ typedef enum {
     IMAP_CMD_STORE,
     IMAP_CMD_COPY,
     IMAP_CMD_ENABLE,
+    IMAP_CMD_UNSELECT,
 } imap_cmd_type_t;
 
 typedef struct {
@@ -607,6 +608,7 @@ typedef union {
     ie_store_cmd_t *store;
     ie_copy_cmd_t *copy;
     ie_dstr_t *enable;
+    // nothing for unselect
 } imap_cmd_arg_t;
 
 typedef struct {

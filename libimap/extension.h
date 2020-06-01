@@ -3,6 +3,7 @@ typedef enum {
     EXT_ENABLE,
     EXT_CONDSTORE,
     EXT_QRESYNC,
+    EXT_UNSELECT,
 } extension_e;
 
 typedef enum {
@@ -17,6 +18,7 @@ typedef struct {
     extension_state_e enable;
     extension_state_e condstore;
     extension_state_e qresync;
+    extension_state_e unselect;
 } extensions_t;
 
 // throw an error if an action requires an extension to be enabled but it's not

@@ -25,6 +25,10 @@ derr_t extension_assert_on(const extensions_t *exts,
             state = exts->qresync;
             msg = "QRESYNC extension for IMAP is not available";
             break;
+        case EXT_UNSELECT:
+            state = exts->unselect;
+            msg = "UNSELECT extension for IMAP is not available";
+            break;
         default:
             ORIG(&e, E_INTERNAL, "invalid extension type");
     }
@@ -68,6 +72,10 @@ derr_t extension_assert_available(const extensions_t *exts,
             state = exts->qresync;
             msg = "QRESYNC extension for IMAP is not available";
             break;
+        case EXT_UNSELECT:
+            state = exts->unselect;
+            msg = "UNSELECT extension for IMAP is not available";
+            break;
         default:
             ORIG(&e, E_INTERNAL, "invalid extension type");
     }
@@ -109,6 +117,10 @@ derr_t extension_trigger(extensions_t *exts, extension_e type){
             state = &exts->qresync;
             msg = "QRESYNC extension for IMAP is not available";
             break;
+        case EXT_UNSELECT:
+            state = &exts->unselect;
+            msg = "UNSELECT extension for IMAP is not available";
+            break;
         default:
             ORIG(&e, E_INTERNAL, "invalid extension type");
     }
@@ -133,6 +145,7 @@ DSTR_STATIC(EXT_UIDPLUS_dstr, "UIDPLUS");
 DSTR_STATIC(EXT_ENABLE_dstr, "ENABLE");
 DSTR_STATIC(EXT_CONDSTORE_dstr, "CONDSTORE");
 DSTR_STATIC(EXT_QRESYNC_dstr, "QRESYNC");
+DSTR_STATIC(EXT_UNSELECT_dstr, "UNSELECT");
 DSTR_STATIC(EXT_unknown_dstr, "unknown");
 
 const dstr_t *extension_token(extension_e ext){
@@ -141,6 +154,7 @@ const dstr_t *extension_token(extension_e ext){
         case EXT_ENABLE: return &EXT_ENABLE_dstr;
         case EXT_CONDSTORE: return &EXT_CONDSTORE_dstr;
         case EXT_QRESYNC: return &EXT_QRESYNC_dstr;
+        case EXT_UNSELECT: return &EXT_UNSELECT_dstr;
     }
     return &EXT_unknown_dstr;
 }

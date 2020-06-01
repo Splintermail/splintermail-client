@@ -71,6 +71,7 @@ static derr_t do_writer_test(const test_case_t *tc){
             .enable = EXT_STATE_ON,
             .condstore = EXT_STATE_ON,
             .qresync = EXT_STATE_ON,
+            .unselect = EXT_STATE_ON,
         };
 
         if(tc->cmd != NULL){
@@ -865,6 +866,22 @@ static derr_t test_imap_writer(void){
         CHECK(&e);
         PROP(&e, do_writer_test_multi(cases, sizeof(cases)/sizeof(*cases)) );
     }
+    // UNSELECT extension
+    {
+        test_case_t cases[] = {
+            {
+                .cmd=imap_cmd_new(&e,
+                    IE_DSTR("tag"), IMAP_CMD_UNSELECT, (imap_cmd_arg_t){0}
+                ),
+                .out=(size_chunk_out_t[]){
+                    {64, "tag UNSELECT\r\n"},
+                    {0}
+                },
+            },
+        };
+        CHECK(&e);
+        PROP(&e, do_writer_test_multi(cases, sizeof(cases)/sizeof(*cases)) );
+    }
     return e;
 }
 
@@ -880,6 +897,7 @@ static derr_t test_imap_print(void){
         .enable = EXT_STATE_ON,
         .condstore = EXT_STATE_ON,
         .qresync = EXT_STATE_ON,
+        .unselect = EXT_STATE_ON,
     };
 
     imap_cmd_t *cmd = imap_cmd_new(

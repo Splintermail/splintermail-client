@@ -1267,6 +1267,11 @@ static derr_t do_imap_cmd_write(const imap_cmd_t *cmd, dstr_t *out,
             }
             break;
 
+        case IMAP_CMD_UNSELECT:
+            PROP(&e, extension_assert_on(sf->exts, EXT_UNSELECT) );
+            STATIC_SKIP_FILL("UNSELECT");
+            break;
+
         default:
             TRACE(&e, "got command of unknown type %x\n", FU(cmd->type));
             ORIG(&e, E_INTERNAL, "unprintable command: unknown type");

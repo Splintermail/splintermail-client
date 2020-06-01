@@ -76,6 +76,7 @@ DSTR_STATIC(IMAP_CMD_FETCH_dstr, "FETCH");
 DSTR_STATIC(IMAP_CMD_STORE_dstr, "STORE");
 DSTR_STATIC(IMAP_CMD_COPY_dstr, "COPY");
 DSTR_STATIC(IMAP_CMD_ENABLE_dstr, "ENABLE");
+DSTR_STATIC(IMAP_CMD_UNSELECT_dstr, "UNSELECT");
 
 const dstr_t *imap_cmd_type_to_dstr(imap_cmd_type_t type){
     switch(type){
@@ -104,6 +105,7 @@ const dstr_t *imap_cmd_type_to_dstr(imap_cmd_type_t type){
         case IMAP_CMD_STORE:    return &IMAP_CMD_STORE_dstr;
         case IMAP_CMD_COPY:     return &IMAP_CMD_COPY_dstr;
         case IMAP_CMD_ENABLE:   return &IMAP_CMD_ENABLE_dstr;
+        case IMAP_CMD_UNSELECT: return &IMAP_CMD_UNSELECT_dstr;
     }
     return &IE_UNKNOWN_dstr;
 }
@@ -2240,6 +2242,7 @@ static void imap_cmd_arg_free(imap_cmd_type_t type, imap_cmd_arg_t arg){
         case IMAP_CMD_STORE:    ie_store_cmd_free(arg.store); break;
         case IMAP_CMD_COPY:     ie_copy_cmd_free(arg.copy); break;
         case IMAP_CMD_ENABLE:   ie_dstr_free(arg.enable); break;
+        case IMAP_CMD_UNSELECT: break;
     }
 }
 

@@ -291,6 +291,7 @@ command_mode:
         'enabled'       { *type = ENABLED; goto done; }
         'vanished'      { *type = VANISHED; goto done; }
         'earlier'       { *type = EARLIER; goto done; }
+        'unselect'      { *type = UNSELECT; goto done; }
 
         'ok'            { *type = OK; goto done; }
         'no'            { *type = NO; goto done; }
