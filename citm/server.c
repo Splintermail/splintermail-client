@@ -767,7 +767,9 @@ static derr_t request_select(server_t *server){
 static derr_t do_select(server_t *server, imap_cmd_t *select_cmd){
     derr_t e = E_OK;
 
-    PROP_GO(&e, dn_init(&server->dn, &server->dn_cb), fail_cmd);
+    PROP_GO(&e,
+        dn_init(&server->dn, &server->dn_cb, &server->ctrl.exts),
+    fail_cmd);
 
     const dstr_t *dir_name = ie_mailbox_name(select_cmd->arg.select->m);
 

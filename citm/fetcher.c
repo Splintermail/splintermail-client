@@ -258,6 +258,7 @@ derr_t fetcher_init(
             .enable = EXT_STATE_ON,
             .condstore = EXT_STATE_ON,
             .qresync = EXT_STATE_ON,
+            .unselect = EXT_STATE_ON,
         },
         .is_client = true,
     };
@@ -453,7 +454,9 @@ static derr_t select_mailbox(fetcher_t *fetcher){
                 "arrived at select_mailbox out of AUTHENTICATED state", cu);
     }
 
-    PROP_GO(&e, up_init(&fetcher->up, &fetcher->up_cb), cu);
+    PROP_GO(&e,
+        up_init(&fetcher->up, &fetcher->up_cb, &fetcher->ctrl.exts),
+    cu);
 
     const dstr_t *dir_name = ie_mailbox_name(fetcher->select_mailbox);
 
@@ -770,6 +773,7 @@ static derr_t check_capas(const ie_dstr_t *capas){
     bool found_uidplus = false;
     bool found_condstore = false;
     bool found_qresync = false;
+    bool found_unselect = false;
 
     for(const ie_dstr_t *capa = capas; capa != NULL; capa = capa->next){
         DSTR_VAR(buf, 32);
@@ -788,6 +792,8 @@ static derr_t check_capas(const ie_dstr_t *capas){
             found_condstore = true;
         }else if(dstr_cmp(&buf, extension_token(EXT_QRESYNC)) == 0){
             found_qresync = true;
+        }else if(dstr_cmp(&buf, extension_token(EXT_UNSELECT)) == 0){
+            found_unselect = true;
         }
     }
 
@@ -810,6 +816,10 @@ static derr_t check_capas(const ie_dstr_t *capas){
     }
     if(!found_qresync){
         TRACE(&e, "missing capability: QRESYNC\n");
+        pass = false;
+    }
+    if(!found_unselect){
+        TRACE(&e, "missing capability: UNSELECT\n");
         pass = false;
     }
 

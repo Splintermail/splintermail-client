@@ -60,10 +60,9 @@ struct dn_t {
         jsw_atree_t tree;  // exp_flags_t->node
     } store;
 
-    // TODO: support extensions better
-    extensions_t exts;
+    extensions_t *exts;
 };
 DEF_CONTAINER_OF(dn_t, link, link_t);
 
-derr_t dn_init(dn_t *dn, dn_cb_i *cb);
+derr_t dn_init(dn_t *dn, dn_cb_i *cb, extensions_t *exts);
 void dn_free(dn_t *dn);

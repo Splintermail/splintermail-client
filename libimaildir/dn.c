@@ -51,12 +51,13 @@ void dn_free(dn_t *dn){
     // actually there's nothing to free...
 }
 
-derr_t dn_init(dn_t *dn, dn_cb_i *cb){
+derr_t dn_init(dn_t *dn, dn_cb_i *cb, extensions_t *exts){
     derr_t e = E_OK;
 
     *dn = (dn_t){
         .cb = cb,
         .selected = false,
+        .exts = exts,
     };
 
     link_init(&dn->link);
@@ -87,7 +88,7 @@ static derr_t send_st_resp(dn_t *dn, const ie_dstr_t *tag, const dstr_t *msg,
     ie_st_resp_t *st_resp = ie_st_resp_new(&e, tag_copy, status, NULL, text);
     imap_resp_arg_t arg = {.status_type=st_resp};
     imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_STATUS_TYPE, arg);
-    resp = imap_resp_assert_writable(&e, resp, &dn->exts);
+    resp = imap_resp_assert_writable(&e, resp, dn->exts);
     CHECK(&e);
 
     PROP(&e, dn->cb->resp(dn->cb, resp) );
@@ -130,7 +131,7 @@ static derr_t send_flags_resp(dn_t *dn){
     // flags = ie_flags_add_simple(&e, flags, IE_FLAG_DRAFT);
     imap_resp_arg_t arg = {.flags=flags};
     imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_FLAGS, arg);
-    resp = imap_resp_assert_writable(&e, resp, &dn->exts);
+    resp = imap_resp_assert_writable(&e, resp, dn->exts);
     CHECK(&e);
 
     PROP(&e, dn->cb->resp(dn->cb, resp) );
@@ -148,7 +149,7 @@ static derr_t send_exists_resp_unsafe(dn_t *dn){
 
     imap_resp_arg_t arg = {.exists=exists};
     imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_EXISTS, arg);
-    resp = imap_resp_assert_writable(&e, resp, &dn->exts);
+    resp = imap_resp_assert_writable(&e, resp, dn->exts);
     CHECK(&e);
 
     PROP(&e, dn->cb->resp(dn->cb, resp) );
@@ -164,7 +165,7 @@ static derr_t send_recent_resp_unsafe(dn_t *dn){
     unsigned int recent = 0;
     imap_resp_arg_t arg = {.recent=recent};
     imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_RECENT, arg);
-    resp = imap_resp_assert_writable(&e, resp, &dn->exts);
+    resp = imap_resp_assert_writable(&e, resp, dn->exts);
     CHECK(&e);
 
     PROP(&e, dn->cb->resp(dn->cb, resp) );
@@ -201,7 +202,7 @@ static derr_t send_pflags_resp(dn_t *dn){
     ie_st_resp_t *st_resp = ie_st_resp_new(&e, NULL, IE_ST_OK, code, text);
     imap_resp_arg_t arg = {.status_type=st_resp};
     imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_STATUS_TYPE, arg);
-    resp = imap_resp_assert_writable(&e, resp, &dn->exts);
+    resp = imap_resp_assert_writable(&e, resp, dn->exts);
     CHECK(&e);
 
     PROP(&e, dn->cb->resp(dn->cb, resp) );
@@ -238,7 +239,7 @@ static derr_t send_uidnext_resp_unsafe(dn_t *dn){
     ie_st_resp_t *st_resp = ie_st_resp_new(&e, NULL, IE_ST_OK, code, text);
     imap_resp_arg_t arg = {.status_type=st_resp};
     imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_STATUS_TYPE, arg);
-    resp = imap_resp_assert_writable(&e, resp, &dn->exts);
+    resp = imap_resp_assert_writable(&e, resp, dn->exts);
     CHECK(&e);
 
     PROP(&e, dn->cb->resp(dn->cb, resp) );
@@ -259,7 +260,7 @@ static derr_t send_uidvld_resp(dn_t *dn){
     ie_st_resp_t *st_resp = ie_st_resp_new(&e, NULL, IE_ST_OK, code, text);
     imap_resp_arg_t arg = {.status_type=st_resp};
     imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_STATUS_TYPE, arg);
-    resp = imap_resp_assert_writable(&e, resp, &dn->exts);
+    resp = imap_resp_assert_writable(&e, resp, dn->exts);
     CHECK(&e);
 
     PROP(&e, dn->cb->resp(dn->cb, resp) );
@@ -324,7 +325,7 @@ static derr_t send_search_resp(dn_t *dn, ie_nums_t *nums){
             modseqnum);
     imap_resp_arg_t arg = {.search=search};
     imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_SEARCH, arg);
-    resp = imap_resp_assert_writable(&e, resp, &dn->exts);
+    resp = imap_resp_assert_writable(&e, resp, dn->exts);
     CHECK(&e);
 
     PROP(&e, dn->cb->resp(dn->cb, resp) );
@@ -867,7 +868,7 @@ static derr_t send_fetch_resp(dn_t *dn, const ie_fetch_cmd_t *fetch,
     imap_resp_arg_t arg = {.fetch=f};
     imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_FETCH, arg);
 
-    resp = imap_resp_assert_writable(&e, resp, &dn->exts);
+    resp = imap_resp_assert_writable(&e, resp, dn->exts);
 
     loader_free(&loader);
 
@@ -1028,7 +1029,7 @@ static derr_t send_flags_update(dn_t *dn, unsigned int num, msg_flags_t flags,
 
     imap_resp_arg_t arg = {.fetch=fetch};
     imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_FETCH, arg);
-    resp = imap_resp_assert_writable(&e, resp, &dn->exts);
+    resp = imap_resp_assert_writable(&e, resp, dn->exts);
     CHECK(&e);
 
     PROP(&e, dn->cb->resp(dn->cb, resp) );

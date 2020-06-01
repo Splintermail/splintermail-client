@@ -17,18 +17,12 @@ void up_free(up_t *up){
     ie_seq_set_free(up->uids_being_expunged);
 }
 
-derr_t up_init(up_t *up, up_cb_i *cb){
+derr_t up_init(up_t *up, up_cb_i *cb, extensions_t *exts){
     derr_t e = E_OK;
 
     *up = (up_t){
         .cb = cb,
-        // TODO: read extensions from somewhere else
-        .exts = {
-            .uidplus = EXT_STATE_ON,
-            .enable = EXT_STATE_ON,
-            .condstore = EXT_STATE_ON,
-            .qresync = EXT_STATE_ON,
-        },
+        .exts = exts,
     };
 
     seq_set_builder_prep(&up->uids_to_download);
@@ -127,8 +121,8 @@ static derr_t up_send_cmd(up_t *up, imap_cmd_t *cmd, up_cb_t *up_cb){
     return e;
 }
 
-// close_done is an imap_cmd_cb_call_f
-static derr_t close_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
+// unselect_done is an imap_cmd_cb_call_f
+static derr_t unselect_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
     derr_t e = E_OK;
 
     up_cb_t *up_cb = CONTAINER_OF(cb, up_cb_t, cb);
@@ -144,18 +138,18 @@ static derr_t close_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
     return e;
 }
 
-static derr_t send_close(up_t *up){
+static derr_t send_unselect(up_t *up){
     derr_t e = E_OK;
 
-    // issue a CLOSE command
+    // issue an UNSELECT command
     imap_cmd_arg_t arg = {0};
     size_t tag = ++up->tag;
     ie_dstr_t *tag_str = write_tag_up(&e, tag);
-    imap_cmd_t *cmd = imap_cmd_new(&e, tag_str, IMAP_CMD_CLOSE, arg);
-    cmd = imap_cmd_assert_writable(&e, cmd, &up->exts);
+    imap_cmd_t *cmd = imap_cmd_new(&e, tag_str, IMAP_CMD_UNSELECT, arg);
+    cmd = imap_cmd_assert_writable(&e, cmd, up->exts);
 
     // build the callback
-    up_cb_t *up_cb = up_cb_new(&e, up, tag, close_done, cmd);
+    up_cb_t *up_cb = up_cb_new(&e, up, tag, unselect_done, cmd);
 
     CHECK(&e);
 
@@ -256,7 +250,7 @@ static derr_t send_expunge(up_t *up){
     size_t tag = ++up->tag;
     ie_dstr_t *tag_str = write_tag_up(&e, tag);
     imap_cmd_t *cmd = imap_cmd_new(&e, tag_str, IMAP_CMD_EXPUNGE, arg);
-    cmd = imap_cmd_assert_writable(&e, cmd, &up->exts);
+    cmd = imap_cmd_assert_writable(&e, cmd, up->exts);
 
     // build the callback
     up_cb_t *up_cb = up_cb_new(&e, up, tag, expunge_done, cmd);
@@ -307,7 +301,7 @@ static derr_t send_deletions(up_t *up){
     size_t tag = ++up->tag;
     ie_dstr_t *tag_str = write_tag_up(&e, tag);
     imap_cmd_t *cmd = imap_cmd_new(&e, tag_str, IMAP_CMD_STORE, arg);
-    cmd = imap_cmd_assert_writable(&e, cmd, &up->exts);
+    cmd = imap_cmd_assert_writable(&e, cmd, up->exts);
 
     // build the callback
     up_cb_t *up_cb = up_cb_new(&e, up, tag, deletions_done, cmd);
@@ -359,7 +353,7 @@ static derr_t send_fetch(up_t *up){
     size_t tag = ++up->tag;
     ie_dstr_t *tag_str = write_tag_up(&e, tag);
     imap_cmd_t *cmd = imap_cmd_new(&e, tag_str, IMAP_CMD_FETCH, arg);
-    cmd = imap_cmd_assert_writable(&e, cmd, &up->exts);
+    cmd = imap_cmd_assert_writable(&e, cmd, up->exts);
 
     // build the callback
     up_cb_t *up_cb = up_cb_new(&e, up, tag, fetch_done, cmd);
@@ -452,7 +446,7 @@ static derr_t send_initial_search(up_t *up){
     size_t tag = ++up->tag;
     ie_dstr_t *tag_str = write_tag_up(&e, tag);
     imap_cmd_t *cmd = imap_cmd_new(&e, tag_str, IMAP_CMD_SEARCH, arg);
-    cmd = imap_cmd_assert_writable(&e, cmd, &up->exts);
+    cmd = imap_cmd_assert_writable(&e, cmd, up->exts);
 
     // build the callback
     up_cb_t *up_cb = up_cb_new(&e, up, tag, initial_search_done, cmd);
@@ -571,7 +565,7 @@ static derr_t send_select(up_t *up, unsigned int uidvld,
     size_t tag = ++up->tag;
     ie_dstr_t *tag_str = write_tag_up(&e, tag);
     imap_cmd_t *cmd = imap_cmd_new(&e, tag_str, IMAP_CMD_SELECT, arg);
-    cmd = imap_cmd_assert_writable(&e, cmd, &up->exts);
+    cmd = imap_cmd_assert_writable(&e, cmd, up->exts);
 
     // build the callback
     up_cb_t *up_cb = up_cb_new(&e, up, tag, select_done, cmd);
@@ -790,9 +784,8 @@ derr_t up_unselect(up_t *up){
         return e;
     }
 
-    // otherwise, send the close
-    // TODO: don't always expunge!!
-    PROP(&e, send_close(up) );
+    // otherwise, unselect the mailbox
+    PROP(&e, send_unselect(up) );
 
     return e;
 }

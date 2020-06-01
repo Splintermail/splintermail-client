@@ -69,8 +69,8 @@ struct up_t {
     unsigned int select_uidvld;
     unsigned long select_himodseq;
 
-    // TODO: read extensions from somewhere else
-    extensions_t exts;
+    // *exts should point to somewhere else
+    extensions_t *exts;
 };
 DEF_CONTAINER_OF(up_t, link, link_t);
 
@@ -80,5 +80,5 @@ typedef struct {
 } up_cb_t;
 DEF_CONTAINER_OF(up_cb_t, cb, imap_cmd_cb_t);
 
-derr_t up_init(up_t *up, up_cb_i *cb);
+derr_t up_init(up_t *up, up_cb_i *cb, extensions_t *exts);
 void up_free(up_t *up);
