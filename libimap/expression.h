@@ -909,6 +909,7 @@ ie_nums_t *ie_nums_append(derr_t *e, ie_nums_t *nums, ie_nums_t *next);
 
 ie_search_key_t *ie_search_key_new(derr_t *e);
 void ie_search_key_free(ie_search_key_t *s);
+ie_search_key_t *ie_search_key_copy(derr_t *e, const ie_search_key_t *old);
 
 ie_search_key_t *ie_search_0(derr_t *e, ie_search_key_type_t type);
 ie_search_key_t *ie_search_dstr(derr_t *e, ie_search_key_type_t type,
@@ -929,6 +930,8 @@ ie_search_key_t *ie_search_pair(derr_t *e, ie_search_key_type_t type,
 ie_search_modseq_ext_t *ie_search_modseq_ext_new(derr_t *e,
         ie_dstr_t *entry_name, ie_entry_type_t entry_type);
 void ie_search_modseq_ext_free(ie_search_modseq_ext_t *ext);
+ie_search_modseq_ext_t *ie_search_modseq_ext_copy(derr_t *e,
+        const ie_search_modseq_ext_t *old);
 
 ie_search_key_t *ie_search_modseq(derr_t *e, ie_search_modseq_ext_t *ext,
         unsigned long modseq);
@@ -937,6 +940,7 @@ ie_search_key_t *ie_search_modseq(derr_t *e, ie_search_modseq_ext_t *ext,
 
 ie_fetch_attrs_t *ie_fetch_attrs_new(derr_t *e);
 void ie_fetch_attrs_free(ie_fetch_attrs_t *f);
+ie_fetch_attrs_t *ie_fetch_attrs_copy(derr_t *e, const ie_fetch_attrs_t *old);
 
 ie_fetch_attrs_t *ie_fetch_attrs_add_simple(derr_t *e, ie_fetch_attrs_t *f,
         ie_fetch_simple_t simple);
@@ -946,12 +950,14 @@ ie_fetch_attrs_t *ie_fetch_attrs_add_extra(derr_t *e, ie_fetch_attrs_t *f,
 ie_fetch_extra_t *ie_fetch_extra_new(derr_t *e, bool peek, ie_sect_t *s,
         ie_partial_t *p);
 void ie_fetch_extra_free(ie_fetch_extra_t *extra);
+ie_fetch_extra_t *ie_fetch_extra_copy(derr_t *e, const ie_fetch_extra_t *old);
 
 ie_fetch_mods_t *ie_fetch_mods_new(derr_t *e, ie_fetch_mod_type_t type,
         ie_fetch_mod_arg_t arg);
 ie_fetch_mods_t *ie_fetch_mods_add(derr_t *e, ie_fetch_mods_t *list,
         ie_fetch_mods_t *mod);
 void ie_fetch_mods_free(ie_fetch_mods_t *mods);
+ie_fetch_mods_t *ie_fetch_mods_copy(derr_t *e, const ie_fetch_mods_t *old);
 
 ie_sect_part_t *ie_sect_part_new(derr_t *e, unsigned int num);
 void ie_sect_part_free(ie_sect_part_t *sp);
@@ -971,6 +977,7 @@ ie_sect_t *ie_sect_copy(derr_t *e, const ie_sect_t *old);
 
 ie_partial_t *ie_partial_new(derr_t *e, unsigned int a, unsigned int b);
 void ie_partial_free(ie_partial_t *p);
+ie_partial_t *ie_partial_copy(derr_t *e, const ie_partial_t *old);
 
 // store mod construction
 
@@ -1040,6 +1047,7 @@ ie_select_cmd_t *ie_select_cmd_copy(derr_t *e, const ie_select_cmd_t *old);
 ie_rename_cmd_t *ie_rename_cmd_new(derr_t *e, ie_mailbox_t *old,
         ie_mailbox_t *new);
 void ie_rename_cmd_free(ie_rename_cmd_t *rename);
+ie_rename_cmd_t *ie_rename_cmd_copy(derr_t *e, const ie_rename_cmd_t * old);
 
 ie_list_cmd_t *ie_list_cmd_new(derr_t *e, ie_mailbox_t *m, ie_dstr_t *pattern);
 void ie_list_cmd_free(ie_list_cmd_t *list);
@@ -1053,14 +1061,17 @@ ie_status_cmd_t *ie_status_cmd_copy(derr_t *e, const ie_status_cmd_t *old);
 ie_append_cmd_t *ie_append_cmd_new(derr_t *e, ie_mailbox_t *m,
         ie_flags_t *flags, imap_time_t time, ie_dstr_t *content);
 void ie_append_cmd_free(ie_append_cmd_t *append);
+ie_append_cmd_t *ie_append_cmd_copy(derr_t *e, const ie_append_cmd_t *old);
 
 ie_search_cmd_t *ie_search_cmd_new(derr_t *e, bool uid_mode,
         ie_dstr_t *charset, ie_search_key_t *search_key);
 void ie_search_cmd_free(ie_search_cmd_t *search);
+ie_search_cmd_t *ie_search_cmd_copy(derr_t *e, const ie_search_cmd_t *old);
 
 ie_fetch_cmd_t *ie_fetch_cmd_new(derr_t *e, bool uid_mode,
         ie_seq_set_t *seq_set, ie_fetch_attrs_t *attr, ie_fetch_mods_t *mods);
 void ie_fetch_cmd_free(ie_fetch_cmd_t *fetch);
+ie_fetch_cmd_t *ie_fetch_cmd_copy(derr_t *e, const ie_fetch_cmd_t *old);
 
 ie_store_cmd_t *ie_store_cmd_new(derr_t *e, bool uid_mode,
         ie_seq_set_t *seq_set, ie_store_mods_t *mods, int sign, bool silent,
@@ -1072,10 +1083,12 @@ ie_store_cmd_t *ie_store_cmd_copy(derr_t *e, const ie_store_cmd_t *old);
 ie_copy_cmd_t *ie_copy_cmd_new(derr_t *e, bool uid_mode,
         ie_seq_set_t *seq_set, ie_mailbox_t *m);
 void ie_copy_cmd_free(ie_copy_cmd_t *copy);
+ie_copy_cmd_t *ie_copy_cmd_copy(derr_t *e, const ie_copy_cmd_t *old);
 
 imap_cmd_t *imap_cmd_new(derr_t *e, ie_dstr_t *tag, imap_cmd_type_t type,
         imap_cmd_arg_t arg);
 void imap_cmd_free(imap_cmd_t *cmd);
+imap_cmd_t *imap_cmd_copy(derr_t *e, const imap_cmd_t *old);
 
 // full responses
 

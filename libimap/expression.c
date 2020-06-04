@@ -1049,6 +1049,7 @@ void ie_search_key_free(ie_search_key_t *s){
             ie_search_key_free(s->param.pair.a);
             ie_search_key_free(s->param.pair.b);
             break;
+        // uses param.modseq
         case IE_SEARCH_MODSEQ:
             ie_search_modseq_ext_free(s->param.modseq.ext);
             break;
@@ -1192,6 +1193,15 @@ void ie_search_modseq_ext_free(ie_search_modseq_ext_t *ext){
     free(ext);
 }
 
+ie_search_modseq_ext_t *ie_search_modseq_ext_copy(derr_t *e,
+        const ie_search_modseq_ext_t *old){
+    if(!old) return NULL;
+    return ie_search_modseq_ext_new(e,
+        ie_dstr_copy(e, old->entry_name),
+        old->entry_type
+    );
+}
+
 ie_search_key_t *ie_search_modseq(derr_t *e, ie_search_modseq_ext_t *ext,
         unsigned long modseq){
     if(is_error(*e)) goto fail;
@@ -1203,6 +1213,89 @@ ie_search_key_t *ie_search_modseq(derr_t *e, ie_search_modseq_ext_t *ext,
 
 fail:
     ie_search_modseq_ext_free(ext);
+    return NULL;
+}
+
+ie_search_key_t *ie_search_key_copy(derr_t *e, const ie_search_key_t *old){
+    if(!old) return NULL;
+    switch(old->type){
+        // no parameter
+        case IE_SEARCH_ALL:
+        case IE_SEARCH_ANSWERED:
+        case IE_SEARCH_DELETED:
+        case IE_SEARCH_FLAGGED:
+        case IE_SEARCH_NEW:
+        case IE_SEARCH_OLD:
+        case IE_SEARCH_RECENT:
+        case IE_SEARCH_SEEN:
+        case IE_SEARCH_UNANSWERED:
+        case IE_SEARCH_UNDELETED:
+        case IE_SEARCH_UNFLAGGED:
+        case IE_SEARCH_UNSEEN:
+        case IE_SEARCH_DRAFT:
+        case IE_SEARCH_UNDRAFT:
+            return ie_search_0(e, old->type);
+        // uses param.dstr
+        case IE_SEARCH_SUBJECT:
+        case IE_SEARCH_BCC:
+        case IE_SEARCH_BODY:
+        case IE_SEARCH_CC:
+        case IE_SEARCH_FROM:
+        case IE_SEARCH_KEYWORD:
+        case IE_SEARCH_TEXT:
+        case IE_SEARCH_TO:
+        case IE_SEARCH_UNKEYWORD:
+            return ie_search_dstr(e,
+                old->type,
+                ie_dstr_copy(e, old->param.dstr)
+            );
+        // uses param.header
+        case IE_SEARCH_HEADER:
+            return ie_search_header(e,
+                old->type,
+                ie_dstr_copy(e, old->param.header.name),
+                ie_dstr_copy(e, old->param.header.value)
+            );
+        // uses param.date
+        case IE_SEARCH_BEFORE:
+        case IE_SEARCH_ON:
+        case IE_SEARCH_SINCE:
+        case IE_SEARCH_SENTBEFORE:
+        case IE_SEARCH_SENTON:
+        case IE_SEARCH_SENTSINCE:
+            return ie_search_date(e, old->type, old->param.date);
+        // uses param.num
+        case IE_SEARCH_LARGER:
+        case IE_SEARCH_SMALLER:
+            return ie_search_num(e, old->type, old->param.num);
+        // uses param.seq_set
+        case IE_SEARCH_UID:
+        case IE_SEARCH_SEQ_SET:
+            return ie_search_seq_set(e,
+                old->type,
+                ie_seq_set_copy(e, old->param.seq_set)
+            );
+        // uses param.key
+        case IE_SEARCH_NOT:
+            return ie_search_not(e, ie_search_key_copy(e, old->param.key));
+        case IE_SEARCH_GROUP:
+            return ie_search_group(e, ie_search_key_copy(e, old->param.key));
+        // uses param.pair
+        case IE_SEARCH_OR:
+        case IE_SEARCH_AND:
+            return ie_search_pair(e,
+                old->type,
+                ie_search_key_copy(e, old->param.pair.a),
+                ie_search_key_copy(e, old->param.pair.b)
+            );
+        // uses param.modseq
+        case IE_SEARCH_MODSEQ:
+            return ie_search_modseq(e,
+                ie_search_modseq_ext_copy(e, old->param.modseq.ext),
+                old->param.modseq.modseq
+            );
+    }
+    TRACE_ORIG(e, E_INTERNAL, "unknown search key type");
     return NULL;
 }
 
@@ -1223,6 +1316,19 @@ void ie_fetch_attrs_free(ie_fetch_attrs_t *f){
     if(!f) return;
     ie_fetch_extra_free(f->extras);
     free(f);
+}
+
+ie_fetch_attrs_t *ie_fetch_attrs_copy(derr_t *e, const ie_fetch_attrs_t *old){
+    if(!old) return NULL;
+
+    ie_fetch_attrs_t *f = ie_fetch_attrs_new(e);
+    // copy everything but the *extras
+    *f = *old;
+    f->extras = NULL;
+    // copy the *extras separately
+    f = ie_fetch_attrs_add_extra(e, f, ie_fetch_extra_copy(e, old->extras));
+
+    return f;
 }
 
 ie_fetch_attrs_t *ie_fetch_attrs_add_simple(derr_t *e, ie_fetch_attrs_t *f,
@@ -1295,6 +1401,27 @@ void ie_fetch_extra_free(ie_fetch_extra_t *ex){
     free(ex);
 }
 
+ie_fetch_extra_t *ie_fetch_extra_copy(derr_t *e, const ie_fetch_extra_t *old){
+    if(!old) return NULL;
+
+    ie_fetch_extra_t *extra = ie_fetch_extra_new(e,
+        old->peek,
+        ie_sect_copy(e, old->sect),
+        ie_partial_copy(e, old->partial)
+    );
+    CHECK_GO(e, fail);
+
+    extra->next = ie_fetch_extra_copy(e, old->next);
+    CHECK_GO(e, fail_extra);
+
+    return extra;
+
+fail_extra:
+    ie_fetch_extra_free(extra);
+fail:
+    return NULL;
+}
+
 ie_fetch_mods_t *ie_fetch_mods_new(derr_t *e, ie_fetch_mod_type_t type,
         ie_fetch_mod_arg_t arg){
     if(is_error(*e)) goto fail;
@@ -1330,6 +1457,15 @@ void ie_fetch_mods_free(ie_fetch_mods_t *mods){
     if(!mods) return;
     ie_fetch_mods_free(mods->next);
     free(mods);
+}
+
+ie_fetch_mods_t *ie_fetch_mods_copy(derr_t *e, const ie_fetch_mods_t *old){
+    if(!old) return NULL;
+
+    return ie_fetch_mods_add(e,
+        ie_fetch_mods_new(e, old->type, old->arg),
+        ie_fetch_mods_copy(e, old->next)
+    );
 }
 
 ie_sect_part_t *ie_sect_part_new(derr_t *e, unsigned int num){
@@ -1457,6 +1593,11 @@ fail:
 void ie_partial_free(ie_partial_t *p){
     if(!p) return;
     free(p);
+}
+
+ie_partial_t *ie_partial_copy(derr_t *e, const ie_partial_t *old){
+    if(!old) return NULL;
+    return ie_partial_new(e, old->a, old->b);
 }
 
 // store mod construction
@@ -1989,6 +2130,14 @@ void ie_rename_cmd_free(ie_rename_cmd_t *rename){
     free(rename);
 }
 
+ie_rename_cmd_t *ie_rename_cmd_copy(derr_t *e, const ie_rename_cmd_t *old){
+    if(!old) return NULL;
+    return ie_rename_cmd_new(e,
+        ie_mailbox_copy(e, old->old),
+        ie_mailbox_copy(e, old->new)
+    );
+}
+
 ie_list_cmd_t *ie_list_cmd_new(derr_t *e, ie_mailbox_t *m, ie_dstr_t *pattern){
     if(is_error(*e)) goto fail;
 
@@ -2088,6 +2237,16 @@ void ie_append_cmd_free(ie_append_cmd_t *append){
     free(append);
 }
 
+ie_append_cmd_t *ie_append_cmd_copy(derr_t *e, const ie_append_cmd_t *old){
+    if(!old) return NULL;
+    return ie_append_cmd_new(e,
+        ie_mailbox_copy(e, old->m),
+        ie_flags_copy(e, old->flags),
+        old->time,
+        ie_dstr_copy(e, old->content)
+    );
+}
+
 ie_search_cmd_t *ie_search_cmd_new(derr_t *e, bool uid_mode,
         ie_dstr_t *charset, ie_search_key_t *search_key){
     if(is_error(*e)) goto fail;
@@ -2111,6 +2270,15 @@ void ie_search_cmd_free(ie_search_cmd_t *search){
     ie_dstr_free(search->charset);
     ie_search_key_free(search->search_key);
     free(search);
+}
+
+ie_search_cmd_t *ie_search_cmd_copy(derr_t *e, const ie_search_cmd_t *old){
+    if(!old) return NULL;
+    return ie_search_cmd_new(e,
+        old->uid_mode,
+        ie_dstr_copy(e, old->charset),
+        ie_search_key_copy(e, old->search_key)
+    );
 }
 
 ie_fetch_cmd_t *ie_fetch_cmd_new(derr_t *e, bool uid_mode,
@@ -2139,6 +2307,16 @@ void ie_fetch_cmd_free(ie_fetch_cmd_t *fetch){
     ie_fetch_attrs_free(fetch->attr);
     ie_fetch_mods_free(fetch->mods);
     free(fetch);
+}
+
+ie_fetch_cmd_t *ie_fetch_cmd_copy(derr_t *e, const ie_fetch_cmd_t *old){
+    if(!old) return NULL;
+    return ie_fetch_cmd_new(e,
+        old->uid_mode,
+        ie_seq_set_copy(e, old->seq_set),
+        ie_fetch_attrs_copy(e, old->attr),
+        ie_fetch_mods_copy(e, old->mods)
+    );
 }
 
 ie_store_cmd_t *ie_store_cmd_new(derr_t *e, bool uid_mode,
@@ -2215,6 +2393,15 @@ void ie_copy_cmd_free(ie_copy_cmd_t *copy){
     free(copy);
 }
 
+ie_copy_cmd_t *ie_copy_cmd_copy(derr_t *e, const ie_copy_cmd_t *old){
+    if(!old) return NULL;
+    return ie_copy_cmd_new(e,
+        old->uid_mode,
+        ie_seq_set_copy(e, old->seq_set),
+        ie_mailbox_copy(e, old->m)
+    );
+}
+
 static void imap_cmd_arg_free(imap_cmd_type_t type, imap_cmd_arg_t arg){
     switch(type){
         case IMAP_CMD_CAPA:     break;
@@ -2271,6 +2458,49 @@ void imap_cmd_free(imap_cmd_t *cmd){
     ie_dstr_free(cmd->tag);
     imap_cmd_arg_free(cmd->type, cmd->arg);
     free(cmd);
+}
+
+static imap_cmd_arg_t imap_cmd_arg_copy(derr_t *e, imap_cmd_type_t type,
+        const imap_cmd_arg_t old){
+    imap_cmd_arg_t arg = {0};
+    switch(type){
+        case IMAP_CMD_CAPA:     break;
+        case IMAP_CMD_NOOP:     break;
+        case IMAP_CMD_LOGOUT:   break;
+        case IMAP_CMD_STARTTLS: break;
+        case IMAP_CMD_AUTH:     arg.auth = ie_dstr_copy(e, old.auth); break;
+        case IMAP_CMD_LOGIN:    arg.login = ie_login_cmd_copy(e, old.login); break;
+        case IMAP_CMD_SELECT:   arg.select = ie_select_cmd_copy(e, old.select); break;
+        case IMAP_CMD_EXAMINE:  arg.examine = ie_select_cmd_copy(e, old.examine); break;
+        case IMAP_CMD_CREATE:   arg.create = ie_mailbox_copy(e, old.create); break;
+        case IMAP_CMD_DELETE:   arg.delete = ie_mailbox_copy(e, old.delete); break;
+        case IMAP_CMD_RENAME:   arg.rename = ie_rename_cmd_copy(e, old.rename); break;
+        case IMAP_CMD_SUB:      arg.sub = ie_mailbox_copy(e, old.sub); break;
+        case IMAP_CMD_UNSUB:    arg.unsub = ie_mailbox_copy(e, old.unsub); break;
+        case IMAP_CMD_LIST:     arg.list = ie_list_cmd_copy(e, old.list); break;
+        case IMAP_CMD_LSUB:     arg.lsub = ie_list_cmd_copy(e, old.lsub); break;
+        case IMAP_CMD_STATUS:   arg.status = ie_status_cmd_copy(e, old.status); break;
+        case IMAP_CMD_APPEND:   arg.append = ie_append_cmd_copy(e, old.append); break;
+        case IMAP_CMD_CHECK:    break;
+        case IMAP_CMD_CLOSE:    break;
+        case IMAP_CMD_EXPUNGE:  arg.uid_expunge = ie_seq_set_copy(e, old.uid_expunge); break;
+        case IMAP_CMD_SEARCH:   arg.search = ie_search_cmd_copy(e, arg.search); break;
+        case IMAP_CMD_FETCH:    arg.fetch = ie_fetch_cmd_copy(e, old.fetch); break;
+        case IMAP_CMD_STORE:    arg.store = ie_store_cmd_copy(e, old.store); break;
+        case IMAP_CMD_COPY:     arg.copy = ie_copy_cmd_copy(e, old.copy); break;
+        case IMAP_CMD_ENABLE:   arg.enable = ie_dstr_copy(e, old.enable); break;
+        case IMAP_CMD_UNSELECT: break;
+    }
+    return arg;
+}
+
+imap_cmd_t *imap_cmd_copy(derr_t *e, const imap_cmd_t *old){
+    if(!old) return NULL;
+    return imap_cmd_new(e,
+        ie_dstr_copy(e, old->tag),
+        old->type,
+        imap_cmd_arg_copy(e, old->type, old->arg)
+    );
 }
 
 // full responses
