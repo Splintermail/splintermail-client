@@ -3,10 +3,6 @@
 
 #include "citm.h"
 
-#define KEY "../c/test/files/ssl/good-key.pem"
-#define CERT "../c/test/files/ssl/good-cert.pem"
-#define DH "../c/test/files/ssl/dh_4096.pem"
-
 static loop_t loop;
 static tlse_t tlse;
 static imape_t imape;
@@ -101,10 +97,16 @@ fail:
 }
 
 
-static derr_t citm(const char *local_host, const char *local_svc,
-        const char *key, const char *cert, const char *dh,
+static derr_t citm(
+        const char *local_host,
+        const char *local_svc,
+        const char *key,
+        const char *cert,
+        const char *dh,
         const char *keyfile,
-        const char *remote_host, const char *remote_svc){
+        const char *remote_host,
+        const char *remote_svc,
+        const dstr_t *maildir_root){
     derr_t e = E_OK;
 
     // init OpenSSL
@@ -122,9 +124,7 @@ static derr_t citm(const char *local_host, const char *local_svc,
 
     imap_pipeline_t pipeline;
 
-    // TODO: make the maildir root configurable
-    DSTR_STATIC(maildir_root, "/tmp/maildir_root");
-    string_builder_t root = SB(FD(&maildir_root));
+    string_builder_t root = SB(FD(maildir_root));
 
     PROP_GO(&e, citme_init(&citme, &root, &imape.engine), cu_keypair);
 
@@ -198,33 +198,74 @@ int main(int argc, char **argv){
     signal(SIGPIPE, SIG_IGN);
 #endif
 
-    char *default_args[] = {
-        "./citm",
-        "127.0.0.1",
-        "1993",
-        KEY,
-        CERT,
-        DH,
-        "../c/test/files/key_tool/key_m.pem",
-        "127.0.0.1",
-        "993",
-    };
+    // defaults
+    const char *d_l_host   = "127.0.0.1";
+    const char *d_l_port   = "1993";
+    const char *d_r_host   = "127.0.0.1";
+    const char *d_r_port   = "993";
+    const char *d_tls_key  = "../c/test/files/ssl/good-key.pem";
+    const char *d_tls_cert = "../c/test/files/ssl/good-cert.pem";
+    const char *d_tls_dh   = "../c/test/files/ssl/dh_4096.pem";
+    const char *d_mail_key = "../c/test/files/key_tool/key_m.pem";
+    DSTR_STATIC(d_maildirs, "/tmp/maildir_root");
 
-    if(argc != 9){
-        fprintf(stderr, "usage: citm LOCAL_HOST LOCAL_PORT KEY CERT DH KEYFILE REMOTE_HOST REMOTE_PORT\n");
-        if(argc != 1){
-            exit(1);
+    // options
+    opt_spec_t o_l_host   = {'\0', "local-host",  true, OPT_RETURN_INIT};
+    opt_spec_t o_l_port   = {'\0', "local-port",  true, OPT_RETURN_INIT};
+    opt_spec_t o_r_host   = {'\0', "remote-host", true, OPT_RETURN_INIT};
+    opt_spec_t o_r_port   = {'\0', "remote-port", true, OPT_RETURN_INIT};
+    opt_spec_t o_tls_key  = {'\0', "tls-key",     true, OPT_RETURN_INIT};
+    opt_spec_t o_tls_cert = {'\0', "tls-cert",    true, OPT_RETURN_INIT};
+    opt_spec_t o_tls_dh   = {'\0', "tls-dh",      true, OPT_RETURN_INIT};
+    opt_spec_t o_mail_key = {'\0', "mail-key",    true, OPT_RETURN_INIT};
+    opt_spec_t o_maildirs = {'\0', "maildirs",    true, OPT_RETURN_INIT};
+
+    opt_spec_t* spec[] = {
+        &o_l_host,
+        &o_l_port,
+        &o_r_host,
+        &o_r_port,
+        &o_tls_key,
+        &o_tls_cert,
+        &o_tls_dh,
+        &o_mail_key,
+        &o_maildirs,
+    };
+    size_t speclen = sizeof(spec) / sizeof(*spec);
+    int newargc;
+    {
+        derr_t e = opt_parse(argc, argv, spec, speclen, &newargc);
+        CATCH(e, E_ANY){
+            DUMP(e);
+            DROP_VAR(&e);
+            return 1;
         }
-        argc = sizeof(default_args)/sizeof(*default_args);
-        argv = default_args;
-        fprintf(stderr, "using args: %s %s %s %s %s %s %s\n",
-                argv[2], argv[3], argv[4], argv[5], argv[6], argv[7], argv[8]);
     }
+
+    // resolve options
+    const char *l_host = o_l_host.found ? o_l_host.val.data : d_l_host;
+    const char *l_port = o_l_port.found ? o_l_port.val.data : d_l_port;
+    const char *r_host = o_r_host.found ? o_r_host.val.data : d_r_host;
+    const char *r_port = o_r_port.found ? o_r_port.val.data : d_r_port;
+    const char *tls_key = o_tls_key.found ? o_tls_key.val.data : d_tls_key;
+    const char *tls_cert = o_tls_cert.found ? o_tls_cert.val.data : d_tls_cert;
+    const char *tls_dh = o_tls_dh.found ? o_tls_dh.val.data : d_tls_dh;
+    const char *mail_key = o_mail_key.found ? o_mail_key.val.data : d_mail_key;
+    const dstr_t *maildirs = o_maildirs.found ? &o_maildirs.val : &d_maildirs;
 
     // add logger
     logger_add_fileptr(LOG_LVL_INFO, stdout);
 
-    derr_t e = citm(argv[1], argv[2], argv[3], argv[4], argv[5], argv[6], argv[7], argv[8]);
+    derr_t e = citm(
+        l_host,
+        l_port,
+        tls_key,
+        tls_cert,
+        tls_dh,
+        mail_key,
+        r_host,
+        r_port,
+        maildirs);
     CATCH(e, E_ANY){
         DUMP(e);
         DROP_VAR(&e);
