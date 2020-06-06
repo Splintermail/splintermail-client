@@ -150,6 +150,7 @@ static derr_t citm(
         },
     };
     PROP_GO(&e, loop_add_listener(&loop, &citm_lspec.lspec), fail);
+    LOG_INFO("listener ready\n");
 
 fail:
     if(is_error(e)){
@@ -255,6 +256,7 @@ int main(int argc, char **argv){
 
     // add logger
     logger_add_fileptr(LOG_LVL_INFO, stdout);
+    auto_log_flush(true);
 
     derr_t e = citm(
         l_host,

@@ -460,6 +460,14 @@ if("${BUILD_TESTS}")
             COMMAND ${valgrind_cmd} "./${tgt}" "${PROJECT_SOURCE_DIR}/test/files")
     endforeach()
 
+    # add some python-based end-to-end tests
+    add_test(NAME "e2e_citm"
+        COMMAND
+            "${PYTHON_3_CMD}"
+            "${PROJECT_SOURCE_DIR}/test/e2e_citm.py"
+            "${PROJECT_SOURCE_DIR}/test/files"
+    )
+
     # describe test executables with dependencies
     # target_link_libraries(test_common)
     # target_link_libraries(test_fileops)
