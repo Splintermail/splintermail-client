@@ -9,6 +9,7 @@ derr_t logger_add_fileptr(log_level_t level, FILE* f);
 derr_t logger_add_filename(log_level_t level, const char* f);
 void logger_clear_outputs(void);
 void log_flush(void);
+void auto_log_flush(bool val);
 // this ALWAYS return 0, for use in the CATCH macro
 int pvt_do_log(log_level_t level, const char* format,
              const fmt_t* args, size_t nargs);

@@ -9,6 +9,7 @@ static log_level_t fplevels[LIST_LEN_MAX];
 static log_level_t fnlevels[LIST_LEN_MAX];
 static size_t fplist_len = 0;
 static size_t fnlist_len = 0;
+static bool _auto_log_flush = false;
 
 derr_t logger_add_fileptr(log_level_t level, FILE* f){
     derr_t e = E_OK;
@@ -50,6 +51,10 @@ void log_flush(void){
     }
 }
 
+void auto_log_flush(bool val){
+    _auto_log_flush = val;
+}
+
 // don't use any error-handling macros because they would recurse infinitely
 int pvt_do_log(log_level_t level, const char* format,
                const fmt_t* args, size_t nargs){
@@ -70,6 +75,9 @@ int pvt_do_log(log_level_t level, const char* format,
             pvt_ffmt_quiet(f, NULL, format, args, nargs);
             fclose(f);
         }
+    }
+    if(_auto_log_flush){
+        log_flush();
     }
     return 0;
 }
