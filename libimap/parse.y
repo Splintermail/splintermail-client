@@ -1686,7 +1686,7 @@ mflag_select: '\\' NOSELECT    { $$ = IE_SELECTABLE_NOSELECT; }
 
 /* fflags, only used by FETCH responses */
 
-fflags_0: %empty     { $$ = NULL; }
+fflags_0: %empty     { $$ = ie_fflags_new(E); }
         | fflags_1
 ;
 

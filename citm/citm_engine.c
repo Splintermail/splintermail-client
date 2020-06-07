@@ -135,12 +135,10 @@ static void citme_process_events(uv_work_t *req){
                     s = CONTAINER_OF(ev->session, imap_session_t, session);
                     if(s->upwards){
                         fetcher = CONTAINER_OF(s, fetcher_t, s);
-                        if(!fetcher->closed)
-                            fetcher_read_ev(fetcher, ev);
+                        fetcher_read_ev(fetcher, ev);
                     }else{
                         server = CONTAINER_OF(s, server_t, s);
-                        if(!server->closed)
-                            server_read_ev(server, ev);
+                        server_read_ev(server, ev);
                     }
                 }
                 ev->returner(ev);

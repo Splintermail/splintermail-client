@@ -60,15 +60,17 @@ typedef void (*imap_cmd_cb_free_f)(imap_cmd_cb_t *cb);
 
 struct imap_cmd_cb_t {
     // the tag the command was issued with
-    size_t tag;
+    ie_dstr_t *tag;
     imap_cmd_cb_call_f call;
+    // free() is always called, even if call() was not
     imap_cmd_cb_free_f free;
     link_t link;
 };
 DEF_CONTAINER_OF(imap_cmd_cb_t, link, link_t);
 
-void imap_cmd_cb_prep(imap_cmd_cb_t *cb, size_t tag, imap_cmd_cb_call_f call,
-        imap_cmd_cb_free_f free);
+void imap_cmd_cb_init(derr_t *e, imap_cmd_cb_t *cb, const ie_dstr_t *tag,
+        imap_cmd_cb_call_f call, imap_cmd_cb_free_f free);
+void imap_cmd_cb_free(imap_cmd_cb_t *cb);
 
 
 

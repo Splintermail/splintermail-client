@@ -47,14 +47,20 @@ derr_t index_to_seq_num(size_t index, unsigned int *seq_num){
 }
 
 
-void imap_cmd_cb_prep(imap_cmd_cb_t *cb, size_t tag, imap_cmd_cb_call_f call,
-        imap_cmd_cb_free_f free){
+void imap_cmd_cb_init(derr_t *e, imap_cmd_cb_t *cb, const ie_dstr_t *tag,
+        imap_cmd_cb_call_f call, imap_cmd_cb_free_f free){
     *cb = (imap_cmd_cb_t){
-        .tag = tag,
+        .tag = ie_dstr_copy(e, tag),
         .call = call,
         .free = free,
     };
     link_init(&cb->link);
+}
+
+void imap_cmd_cb_free(imap_cmd_cb_t *cb){
+    if(!cb) return;
+    ie_dstr_free(cb->tag);
+    cb->tag = NULL;
 }
 
 /* himdodeq_calc_t */

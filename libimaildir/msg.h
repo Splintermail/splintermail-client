@@ -99,6 +99,8 @@ DEF_CONTAINER_OF(msg_view_t, node, jsw_anode_t);
 
 
 typedef enum {
+    /* UNPUSHED is only really useful for detecting expunges from the
+       filesystem; any expunges from citm are done synchronously anyway */
     MSG_EXPUNGE_UNPUSHED,
     MSG_EXPUNGE_PUSHED,
 } msg_expunge_state_e;
@@ -116,6 +118,7 @@ DEF_CONTAINER_OF(msg_expunge_t, mod, msg_mod_t);
 
 typedef enum {
     UPDATE_REQ_STORE,
+    UPDATE_REQ_EXPUNGE,
 } update_req_type_e;
 
 typedef union {
@@ -123,11 +126,14 @@ typedef union {
        sequence numbers.  That calculation must happen in the dn_t, since the
        translation must be done against the current view of that accessor. */
     ie_store_cmd_t *uid_store;
+    /* we only support UID EXPUNGE commands internally.  Only the dn_t knows
+       which UIDs can be closed as a result of a given CLOSE command. */
+    ie_seq_set_t *uids;
 } update_req_val_u;
 
 // a request for an update
 typedef struct {
-    const void *requester;
+    void *requester;
     update_req_type_e type;
     update_req_val_u val;
     link_t link;  // imaildir_t->update.pending
@@ -150,30 +156,29 @@ typedef enum {
     // a newly expunged message
     // TODO: what would this update look like?  how are expunges stored in the dn_t?
     UDPATE_EXPUNGE,
+    // a synchronization message with a ie_st_resp_t IFF there was a failure
+    UPDATE_SYNC,
 } update_type_e;
 
-typedef struct {
-    union {
-        // dn_t owns this
-        msg_view_t *view;
-        // dn_t does not own this
-        const msg_meta_t *meta;
-        // dn_t owns this
-        msg_expunge_t *expunge;
-    } val;
-    link_t link; // update_t->updates
-} update_val_t;
-DEF_CONTAINER_OF(update_val_t, link, link_t);
+typedef union {
+    // dn_t owns this
+    msg_view_t *view;
+    // dn_t does not own this
+    const msg_meta_t *meta;
+    // dn_t owns this
+    msg_expunge_t *expunge;
+    // dn_t owns this (only sent to the requester of the udpate)
+    ie_st_resp_t *sync;
+} update_arg_u;
 
 // an update that needs to get propagated to each accessor
 typedef struct {
-    const void *requester;
     // this is upref'd/downref'd automatically in update_new()/update_free()
     refs_t *refs;
+    update_type_e type;
+    update_arg_u arg;
     // for storing pending updates
     link_t link;  // up_t->pending_updates or dn_t->pending_updates
-    update_type_e type;
-    link_t updates;  // update_val_t->link
 } update_t;
 DEF_CONTAINER_OF(update_t, link, link_t);
 
@@ -205,13 +210,15 @@ void msg_expunge_free(msg_expunge_t **expunge);
 
 // update_req_store has a builder API
 update_req_t *update_req_store_new(derr_t *e, ie_store_cmd_t *uid_store,
-        const void *requester);
+        void *requester);
+update_req_t *update_req_expunge_new(derr_t *e, ie_seq_set_t *uids,
+        void *requester);
 void update_req_free(update_req_t *req);
 
 // you have to manually fill the update_t->tree
 // this will also call ref_up (when successful)
-derr_t update_new(update_t **out, refs_t *refs, const void *requester,
-        update_type_e type);
+derr_t update_new(update_t **out, refs_t *refs, update_type_e type,
+        update_arg_u arg);
 // this will empty the update->updates if you haven't already
 // this will also call ref_dn
 void update_free(update_t **update);

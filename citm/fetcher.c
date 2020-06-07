@@ -59,6 +59,11 @@ void fetcher_close(fetcher_t *fetcher, derr_t error){
     fetcher->cb->dying(fetcher->cb, error);
     PASSED(error);
 
+    /* TODO: if we are being closed externally, don't close the imap_session
+       until the up_t has had a chance to gracefully shut down, since it may
+       be in the middle of relaying commands on behalf of the imaildir_t which
+       are difficult to replay.  This would imply significant reconsideration
+       of how fetcher->closed is handled throughout the fetcher_t. */
     imap_session_close(&fetcher->s.session, E_OK);
 
     // disconnect from the imaildir
@@ -70,19 +75,22 @@ void fetcher_close(fetcher_t *fetcher, derr_t error){
 
 
 static void fetcher_work_loop(fetcher_t *fetcher){
-    bool noop = false;
-    while(!fetcher->closed && !noop){
+    bool noop;
+    do {
+        noop = true;
         derr_t e = E_OK;
         IF_PROP(&e, fetcher_do_work(fetcher, &noop)){
             fetcher_close(fetcher, e);
             PASSED(e);
             break;
         }
-    }
+    } while(!noop);
 }
 
 
 void fetcher_read_ev(fetcher_t *fetcher, event_t *ev){
+    if(fetcher->closed) return;
+
     imap_event_t *imap_ev = CONTAINER_OF(ev, imap_event_t, ev);
 
     // fetcher only accepts imap_resp_t's as EV_READs
@@ -168,6 +176,10 @@ static void session_dead(manager_i *mgr, void *caller){
 static derr_t fetcher_up_cmd(up_cb_i *up_cb, imap_cmd_t *cmd){
     derr_t e = E_OK;
     fetcher_t *fetcher = CONTAINER_OF(up_cb, fetcher_t, up_cb);
+
+    /* Note: this callback can happen multiple times, even after a call to
+       up_unselect(), since it is possible the up_t has a list of requested
+       commands from the imaildir_t that it must first service */
 
     // for now, just submit all maildir_up commands blindly
     imap_event_t *imap_ev;
@@ -332,23 +344,28 @@ DEF_CONTAINER_OF(fetcher_cb_t, cb, imap_cmd_cb_t);
 static void fetcher_cb_free(imap_cmd_cb_t *cb){
     if(!cb) return;
     fetcher_cb_t *fcb = CONTAINER_OF(cb, fetcher_cb_t, cb);
+    imap_cmd_cb_free(&fcb->cb);
     free(fcb);
 }
 
-static fetcher_cb_t *fetcher_cb_new(derr_t *e, fetcher_t *fetcher, size_t tag,
-        imap_cmd_cb_call_f call, imap_cmd_t *cmd){
+static fetcher_cb_t *fetcher_cb_new(derr_t *e, fetcher_t *fetcher,
+        const ie_dstr_t *tag, imap_cmd_cb_call_f call, imap_cmd_t *cmd){
     if(is_error(*e)) goto fail;
 
     fetcher_cb_t *fcb = malloc(sizeof(*fcb));
-    if(!fcb) goto fail;
+    if(!fcb) ORIG_GO(e, E_NOMEM, "nomem", fail);
     *fcb = (fetcher_cb_t){
         .fetcher = fetcher,
     };
 
-    imap_cmd_cb_prep(&fcb->cb, tag, call, fetcher_cb_free);
+    imap_cmd_cb_init(e, &fcb->cb, tag, call, fetcher_cb_free);
+
+    CHECK_GO(e, fail_malloc);
 
     return fcb;
 
+fail_malloc:
+    free(fcb);
 fail:
     imap_cmd_free(cmd);
     return NULL;
@@ -398,27 +415,6 @@ static ie_dstr_t *write_tag(derr_t *e, size_t tag){
 
 fail:
     return NULL;
-}
-
-// read the serial of a tag we issued
-static derr_t read_tag(ie_dstr_t *tag, size_t *tag_out, bool *was_ours){
-    derr_t e = E_OK;
-    *tag_out = 0;
-
-    DSTR_STATIC(fetcher, "fetcher");
-    dstr_t ignore_substr = dstr_sub(&tag->dstr, 0, fetcher.len);
-    // make sure it starts with "fetcher"
-    if(dstr_cmp(&ignore_substr, &fetcher) != 0){
-        *was_ours = false;
-        return e;
-    }
-
-    *was_ours = true;
-
-    dstr_t number_substr = dstr_sub(&tag->dstr, fetcher.len, tag->dstr.len);
-    PROP(&e, dstr_tosize(&number_substr, tag_out, 10) );
-
-    return e;
 }
 
 // send a command and store its callback
@@ -656,7 +652,8 @@ static derr_t send_passthru(fetcher_t *fetcher){
     imap_cmd_t *cmd = imap_cmd_new(&e, tag_str, imap_type, imap_arg);
 
     // build the callback
-    fetcher_cb_t *fcb = fetcher_cb_new(&e, fetcher, tag, passthru_done, cmd);
+    fetcher_cb_t *fcb =
+        fetcher_cb_new(&e, fetcher, tag_str, passthru_done, cmd);
 
     // store the callback and send the command
     send_cmd(&e, fetcher, cmd, &fcb->cb);
@@ -734,7 +731,7 @@ static derr_t send_enable(fetcher_t *fetcher){
     imap_cmd_t *cmd = imap_cmd_new(&e, tag_str, IMAP_CMD_ENABLE, arg);
 
     // build the callback
-    fetcher_cb_t *fcb = fetcher_cb_new(&e, fetcher, tag, enable_done, cmd);
+    fetcher_cb_t *fcb = fetcher_cb_new(&e, fetcher, tag_str, enable_done, cmd);
 
     // store the callback and send the command
     send_cmd(&e, fetcher, cmd, &fcb->cb);
@@ -851,7 +848,7 @@ static derr_t send_capas(fetcher_t *fetcher){
     imap_cmd_t *cmd = imap_cmd_new(&e, tag_str, IMAP_CMD_CAPA, arg);
 
     // build the callback
-    fetcher_cb_t *fcb = fetcher_cb_new(&e, fetcher, tag, capas_done, cmd);
+    fetcher_cb_t *fcb = fetcher_cb_new(&e, fetcher, tag_str, capas_done, cmd);
 
     // store the callback and send the command
     send_cmd(&e, fetcher, cmd, &fcb->cb);
@@ -909,7 +906,7 @@ static derr_t send_login(fetcher_t *fetcher){
     imap_cmd_t *cmd = imap_cmd_new(&e, tag_str, IMAP_CMD_LOGIN, arg);
 
     // build the callback
-    fetcher_cb_t *fcb = fetcher_cb_new(&e, fetcher, tag, login_done, cmd);
+    fetcher_cb_t *fcb = fetcher_cb_new(&e, fetcher, tag_str, login_done, cmd);
 
     // store the callback and send the command
     send_cmd(&e, fetcher, cmd, &fcb->cb);
@@ -973,14 +970,6 @@ static derr_t untagged_ok(fetcher_t *fetcher, const ie_st_code_t *code,
 static derr_t tagged_status_type(fetcher_t *fetcher, const ie_st_resp_t *st){
     derr_t e = E_OK;
 
-    // read the tag
-    size_t tag_found;
-    bool was_ours;
-    PROP(&e, read_tag(st->tag, &tag_found, &was_ours) );
-    if(!was_ours){
-        ORIG(&e, E_INTERNAL, "tag not ours");
-    }
-
     // peek at the first command we need a response to
     link_t *link = fetcher->inflight_cmds.next;
     if(link == NULL){
@@ -991,9 +980,9 @@ static derr_t tagged_status_type(fetcher_t *fetcher, const ie_st_resp_t *st){
 
     // make sure the tag matches
     imap_cmd_cb_t *cb = CONTAINER_OF(link, imap_cmd_cb_t, link);
-    if(cb->tag != tag_found){
+    if(dstr_cmp(&st->tag->dstr, &cb->tag->dstr) != 0){
         TRACE(&e, "got tag %x but expected %x\n",
-                FU(tag_found), FU(cb->tag));
+                FD(&st->tag->dstr), FD(&cb->tag->dstr));
         ORIG(&e, E_RESPONSE, "bad status type response");
     }
 
@@ -1163,16 +1152,16 @@ static derr_t fetcher_select_do_work(fetcher_t *fetcher){
 static derr_t fetcher_do_work(fetcher_t *fetcher, bool *noop){
     derr_t e = E_OK;
 
-    *noop = true;
-
     if(fetcher->closed) return e;
 
-    // does up_t have work to do?
+    // do any up_t work
     if(fetcher->mbx_state){
-        while(up_more_work(&fetcher->up)){
-            *noop = false;
-            PROP(&e, up_do_work(&fetcher->up) );
-        }
+        bool up_noop;
+        do {
+            up_noop = true;
+            PROP(&e, up_do_work(&fetcher->up, &up_noop) );
+            if(!up_noop) *noop = false;
+        } while(!up_noop);
     }
 
     link_t *link;

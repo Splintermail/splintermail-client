@@ -23,9 +23,7 @@ derr_t dn_cmd(dn_t *dn, imap_cmd_t *cmd);
 /* CLOSE is sometimes explicit and sometimes not (LOGOUT), but any such command
    triggers a dn_disconnect */
 derr_t dn_disconnect(dn_t *dn, bool expunge);
-// there's work to be done
-bool dn_more_work(dn_t *dn);
-derr_t dn_do_work(dn_t *dn);
+derr_t dn_do_work(dn_t *dn, bool *noop);
 
 // the interface the up_t provides to the imaildir:
 
@@ -34,11 +32,15 @@ void dn_imaildir_update(dn_t *dn, update_t *update);
 // we have to free the view as we unregister
 void dn_imaildir_preunregister(dn_t *dn);
 
+typedef enum {
+    DN_WAIT_NONE = 0,
+    DN_WAIT_WAITING,
+    DN_WAIT_READY,
+} dn_wait_state_e;
+
 // dn_t is all the state we have for a downwards connection
 struct dn_t {
     imaildir_t *m;
-    // if this imaildir was force-closed, we have to unregister differently
-    bool force_closed;
     // the interfaced provided to us
     dn_cb_i *cb;
     bool selected;
@@ -48,17 +50,26 @@ struct dn_t {
 
     // updates that have not yet been accepted
     link_t pending_updates;  // update_t->link
-    // this is set to true after receiving an update we were awaiting
-    bool ready;
 
     // handle stores asynchronously
     struct {
+        dn_wait_state_e state;
         ie_dstr_t *tag;
         bool uid_mode;
         bool silent;
         // an expected FLAGS for every uid to be updated
         jsw_atree_t tree;  // exp_flags_t->node
     } store;
+
+    /* disconnects can be from CLOSE, SELECT, EXAMINE, or LOGOUT.  They all
+       trigger the same behavior (expunging msgs with the \Delete flag) and
+       none of them result in sending * EXPUNGE responses.  In all cases, our
+       owner is responsible from sending the * OK response at the end, and we
+       are only responsible for making a cb->disconnected() call after the
+       expunge is completed */
+    struct {
+        dn_wait_state_e state;
+    } disconnect;
 
     extensions_t *exts;
 };

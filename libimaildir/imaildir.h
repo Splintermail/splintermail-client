@@ -116,6 +116,7 @@ struct imaildir_t {
 
     // if SELECT returned NO, delete the box afterwards
     bool rm_on_close;
+    bool closed;
 
     // accessors
     link_t ups;  // up_t->link;
@@ -123,6 +124,32 @@ struct imaildir_t {
     /* The value of naccessors may not match the length of the accessor
        lists, particularly during the failing shutdown sequence. */
     size_t naccessors;
+
+    /* if the primary up_t is disconnecting, we save commands that we would
+       pass through it for the next up_t.  The UNSELECT is synchronous though,
+       so that if up_t has any useful commands in flight in front of the
+       UNSELECT, those will be completed before we take a new primary.
+
+       That of course, does not help us in the case of a truly broken
+       connection to the mail server.  In that case, ideally we should just
+       break our connection with the mail client, and let the mail client's
+       replay logic take over.
+
+       In the case the mail client disconnects, we should just make sure to let
+       the corresponding upwards connection continue to live long enough to
+       disconnect gracefully, since there may be a secondary downwards
+       connection whose commands are being relayed through that upwards
+       connection, and closing it abruptly may introduce spurious duplicated
+       commands in the replay logic (or spurious disconnects for the secondary
+       downwards connection, if we passed the broken connection to it without
+       any replay logic).
+
+       All things considered, the only IMAP commands which cannot safely be
+       duplicated are APPEND, COPY, and RENAME (I think).
+    */
+    link_t replays;
+    // the id in the tag of commands originating with us
+    size_t tag;
 
     jsw_atree_t msgs;  // msg_base_t->node
     jsw_atree_t mods;  // msg_mod_t->node
@@ -221,8 +248,10 @@ derr_t imaildir_up_handle_static_fetch_attr(imaildir_t *m,
 
 void imaildir_up_initial_sync_complete(imaildir_t *m);
 
+// we detected that a message was expunged on the server
 derr_t imaildir_up_delete_msg(imaildir_t *m, unsigned int uid);
 
+// a message that was already expunged locally was expunged remotely
 derr_t imaildir_up_expunge_pushed(imaildir_t *m, unsigned int uid);
 
 

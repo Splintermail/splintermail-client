@@ -36,6 +36,7 @@ static void exp_flags_free(exp_flags_t **exp_flags){
 
 // free everything related to dn.store
 static void dn_free_store(dn_t *dn){
+    dn->store.state = DN_WAIT_NONE;
     ie_dstr_free(dn->store.tag);
     dn->store.tag = NULL;
 
@@ -517,7 +518,7 @@ static derr_t store_cmd(dn_t *dn, const ie_dstr_t *tag,
 
     // convert the the range to local uids
     ie_store_cmd_t *uid_store = ie_store_cmd_new(&e,
-        store->uid_mode,
+        true,
         uid_seq,
         ie_store_mods_copy(&e, store->mods),
         store->sign,
@@ -532,6 +533,7 @@ static derr_t store_cmd(dn_t *dn, const ie_dstr_t *tag,
     CHECK_GO(&e, fail_dn_store);
 
     // at this point, it may be better to leave the dn_store in-tact
+    dn->store.state = DN_WAIT_WAITING;
     PROP(&e, imaildir_dn_request_update(dn->m, req) );
 
     return e;
@@ -988,14 +990,52 @@ cu_cmd:
     return e;
 }
 
+// send an expunge for every message that we know of that is \Deleted
+static derr_t get_uids_to_expunge(dn_t *dn, ie_seq_set_t **out){
+    derr_t e = E_OK;
+    *out = NULL;
+
+    seq_set_builder_t ssb;
+    seq_set_builder_prep(&ssb);
+
+    jsw_atrav_t atrav;
+    jsw_anode_t *node = jsw_atfirst(&atrav, &dn->views);
+    for(; node; node = jsw_atnext(&atrav)){
+        msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
+        if(view->flags->deleted){
+            unsigned int uid = view->base->uid;
+            PROP_GO(&e, seq_set_builder_add_val(&ssb, uid), fail_ssb);
+        }
+    }
+
+    *out = seq_set_builder_extract(&e, &ssb);
+    CHECK(&e);
+
+    return e;
+
+fail_ssb:
+    seq_set_builder_free(&ssb);
+    return e;
+}
+
 derr_t dn_disconnect(dn_t *dn, bool expunge){
     derr_t e = E_OK;
 
     if(expunge){
-        /* calculate a UID expunge command that we would push to the server,
+        /* calculate a UID EXPUNGE command that we would push to the server,
            and do not disconnect until that response comes in */
-        // TODO: properly support expunge=true
-        PROP(&e, dn->cb->disconnected(dn->cb, NULL) );
+        ie_seq_set_t *uids;
+        PROP(&e, get_uids_to_expunge(dn, &uids) );
+        if(!uids){
+            // nothing to expunge, disconnect immediately
+            PROP(&e, dn->cb->disconnected(dn->cb, NULL) );
+        }else{
+            // request an expunge update first
+            update_req_t *req = update_req_expunge_new(&e, uids, dn);
+            CHECK(&e);
+            dn->disconnect.state = DN_WAIT_WAITING;
+            PROP(&e, imaildir_dn_request_update(dn->m, req) );
+        }
     }else{
         /* since the server_t is not allowed to process commands while it is
            waiting for the dn_t to respond to a command, there's no additional
@@ -1004,10 +1044,6 @@ derr_t dn_disconnect(dn_t *dn, bool expunge){
     }
 
     return e;
-}
-
-bool dn_more_work(dn_t *dn){
-    return dn->ready;
 }
 
 static derr_t send_flags_update(dn_t *dn, unsigned int num, msg_flags_t flags,
@@ -1080,6 +1116,7 @@ static derr_t send_store_resp_noupdate(dn_t *dn, const exp_flags_t *exp_flags){
 
 static derr_t send_store_resp_noexp(dn_t *dn, unsigned int uid){
     derr_t e = E_OK;
+    printf("uid %u\n", uid);
 
     size_t index;
     jsw_anode_t *node = jsw_afind(&dn->views, &uid, &index);
@@ -1132,12 +1169,13 @@ static derr_t send_store_resp_expupdate(dn_t *dn, const exp_flags_t *exp_flags){
         return e;
     }
 
-    // got an expected chage, but it was a .SILENT command
+    // got an expected change, but it was a .SILENT command
 
     return e;
 }
 
-static derr_t send_store_resp(dn_t *dn, const ie_seq_set_t *updated_uids){
+static derr_t send_store_resp(dn_t *dn, ie_seq_set_t *updated_uids,
+        ie_st_resp_t *st_resp){
     derr_t e = E_OK;
 
     /* Send a FETCH response with all the updates.  Unless there was a .SILENT
@@ -1160,76 +1198,89 @@ static derr_t send_store_resp(dn_t *dn, const ie_seq_set_t *updated_uids){
 
     // quit when we reach the end of both lists
     while(exp_flags || updated_uid){
-
-        // either there's no more exp_flags or updated_uids is behind
-        if(!exp_flags || exp_flags->uid > updated_uid){
-            PROP(&e, send_store_resp_noexp(dn, updated_uid) );
-            updated_uid = ie_seq_set_next(&strav);
-            continue;
+        if(updated_uid){
+            // either there's no more exp_flags or updated_uids is behind
+            if(!exp_flags || exp_flags->uid > updated_uid){
+                PROP_GO(&e, send_store_resp_noexp(dn, updated_uid), cu);
+                updated_uid = ie_seq_set_next(&strav);
+                continue;
+            }
         }
 
-        // either there's no more updated_uids or exp_flags is behind
-        if(!updated_uid || updated_uid > exp_flags->uid){
-            PROP(&e, send_store_resp_noupdate(dn, exp_flags) );
-            node = jsw_atnext(&atrav);
-            exp_flags = CONTAINER_OF(node, exp_flags_t, node);
-            continue;
+        if(exp_flags){
+            // either there's no more updated_uids or exp_flags is behind
+            if(!updated_uid || updated_uid > exp_flags->uid){
+                PROP_GO(&e, send_store_resp_noupdate(dn, exp_flags), cu);
+                node = jsw_atnext(&atrav);
+                exp_flags = CONTAINER_OF(node, exp_flags_t, node);
+                continue;
+            }
         }
 
         // otherwise, we know exp_flags->uid and updated_uid are valid and equal
-        PROP(&e, send_store_resp_expupdate(dn, exp_flags) );
+        PROP_GO(&e, send_store_resp_expupdate(dn, exp_flags), cu);
 
         node = jsw_atnext(&atrav);
         exp_flags = CONTAINER_OF(node, exp_flags_t, node);
         updated_uid = ie_seq_set_next(&strav);
     }
 
-    PROP(&e, send_ok(dn, dn->store.tag, &DSTR_LIT("as you wish")) );
+    if(st_resp){
+        // the command failed
+        PROP_GO(&e,
+            send_st_resp(
+                dn,
+                dn->store.tag,
+                &st_resp->text->dstr,
+                st_resp->status
+            ),
+        cu);
+    }else{
+        PROP_GO(&e, send_ok(dn, dn->store.tag, &DSTR_LIT("as you wish")), cu);
+    }
 
+cu:
+    ie_seq_set_free(updated_uids);
+    ie_st_resp_free(st_resp);
     return e;
 }
 
-static derr_t process_meta_update(dn_t *dn, const update_t *update,
+static derr_t process_meta_update(dn_t *dn, update_t *update,
         seq_set_builder_t *ssb){
     derr_t e = E_OK;
 
-    update_val_t *update_val;
-    LINK_FOR_EACH(update_val, &update->updates, update_val_t, link){
-        const msg_meta_t *meta = update_val->val.meta;
+    const msg_meta_t *meta = update->arg.meta;
 
-        // find our view of this uid
-        jsw_anode_t *node = jsw_afind(&dn->views, &meta->uid, NULL);
-        if(!node){
-            // TODO: update a pending UPDATE_NEW message with this uid in it
-            ORIG(&e, E_INTERNAL, "missing uid");
-        }
-
-        // update the meta in our view
-        msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
-        view->flags = &meta->flags;
-
-        PROP(&e, seq_set_builder_add_val(ssb, meta->uid) );
+    // find our view of this uid
+    jsw_anode_t *node = jsw_afind(&dn->views, &meta->uid, NULL);
+    if(!node){
+        // TODO: update a pending UPDATE_NEW message with this uid in it
+        ORIG_GO(&e, E_INTERNAL, "missing uid", cu);
     }
 
+    // update the meta in our view
+    msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
+    view->flags = &meta->flags;
+
+    PROP_GO(&e, seq_set_builder_add_val(ssb, meta->uid), cu);
+
+cu:
+    update_free(&update);
     return e;
 }
 
-// process updates until we hit our own update
-derr_t dn_do_work(dn_t *dn){
+static derr_t do_work_store(dn_t *dn){
     derr_t e = E_OK;
-    derr_t e2;
-
-    dn->ready = false;
 
     // prepare a list of updates we got
     seq_set_builder_t ssb;
     seq_set_builder_prep(&ssb);
 
+    ie_st_resp_t *st_resp = NULL;
+
     update_t *update, *temp;
-    LINK_FOR_EACH_SAFE(
-        update, temp, &dn->pending_updates, update_t, link
-    ){
-        bool last_update_to_process = (update->requester == dn);
+    LINK_FOR_EACH_SAFE(update, temp, &dn->pending_updates, update_t, link){
+        bool last_update_to_process = false;
 
         switch(update->type){
             case UPDATE_NEW:
@@ -1238,14 +1289,20 @@ derr_t dn_do_work(dn_t *dn){
 
             case UPDATE_META:
                 // process the event right now
-                e2 = process_meta_update(dn, update, &ssb);
                 link_remove(&update->link);
-                update_free(&update);
-                PROP_VAR_GO(&e, &e2, cu);
+                PROP_GO(&e, process_meta_update(dn, update, &ssb), cu);
                 break;
 
             case UDPATE_EXPUNGE:
                 LOG_ERROR("don't know what to do with UPDATE_EXPUNGE yet\n");
+                break;
+
+            case UPDATE_SYNC:
+                // free the update and break out of the loop
+                link_remove(&update->link);
+                st_resp = STEAL(ie_st_resp_t, &update->arg.sync);
+                update_free(&update);
+                last_update_to_process = true;
                 break;
         }
 
@@ -1256,25 +1313,48 @@ derr_t dn_do_work(dn_t *dn){
     CHECK_GO(&e, cu);
 
     // send the response to the store command
-    e2 = send_store_resp(dn, updated_uids);
-    ie_seq_set_free(updated_uids);
-    PROP_VAR_GO(&e, &e2, cu);
+    PROP_GO(&e,
+        send_store_resp(dn, updated_uids, STEAL(ie_st_resp_t, &st_resp)),
+    cu);
 
 cu:
+    ie_st_resp_free(st_resp);
     seq_set_builder_free(&ssb);
     dn_free_store(dn);
+    return e;
+}
+
+// process updates until we hit our own update
+derr_t dn_do_work(dn_t *dn, bool *noop){
+    derr_t e = E_OK;
+
+    if(dn->store.state == DN_WAIT_READY){
+        *noop = false;
+        PROP(&e, do_work_store(dn) );
+    }
+
+    if(dn->disconnect.state == DN_WAIT_READY){
+        *noop = false;
+
+        ORIG(&e, E_INTERNAL, "not implemented");
+    }
 
     return e;
 }
 
 void dn_imaildir_update(dn_t *dn, update_t *update){
-    // was this our request?
-    bool advance = update->requester == dn;
+    bool ours = update->type == UPDATE_SYNC;
 
     link_list_append(&dn->pending_updates, &update->link);
 
-    if(advance){
-        dn->ready = true;
+    if(ours){
+        if(dn->store.state == DN_WAIT_WAITING){
+            dn->store.state = DN_WAIT_READY;
+        }else if(dn->disconnect.state == DN_WAIT_WAITING){
+            dn->disconnect.state = DN_WAIT_READY;
+        }else{
+            LOG_ERROR("dn_t doesn't know what it's waiting for\n");
+        }
         dn->cb->enqueue(dn->cb);
     }
 }

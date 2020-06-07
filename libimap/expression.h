@@ -77,6 +77,7 @@ typedef struct ie_seq_set_t {
     unsigned int n2;
     struct ie_seq_set_t *next;
 } ie_seq_set_t;
+DEF_STEAL_PTR(ie_seq_set_t);
 
 void ie_seq_set_free(ie_seq_set_t *s);
 
@@ -575,6 +576,7 @@ typedef struct {
     bool silent;
     ie_flags_t *flags;
 } ie_store_cmd_t;
+DEF_STEAL_PTR(ie_store_cmd_t);
 
 typedef struct {
     bool uid_mode;

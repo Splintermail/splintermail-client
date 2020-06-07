@@ -2,14 +2,14 @@
 
 #include "libimaildir.h"
 
+typedef struct {
+    up_t *up;
+    imap_cmd_cb_t cb;
+} up_cb_t;
+DEF_CONTAINER_OF(up_cb_t, cb, imap_cmd_cb_t);
+
 void up_free(up_t *up){
     if(!up) return;
-    // cancel all callbacks
-    link_t *link;
-    while((link = link_list_pop_first(&up->cbs))){
-        imap_cmd_cb_t *cb = CONTAINER_OF(link, imap_cmd_cb_t, link);
-        cb->free(cb);
-    }
 
     // free anything in the sequence_set_builder's
     seq_set_builder_free(&up->uids_to_download);
@@ -30,6 +30,8 @@ derr_t up_init(up_t *up, up_cb_i *cb, extensions_t *exts){
 
     link_init(&up->cbs);
     link_init(&up->link);
+    link_init(&up->relay.cmds);
+    link_init(&up->relay.cbs);
 
     return e;
 };
@@ -41,13 +43,38 @@ void up_imaildir_select(
 ){
     // do some final initialization steps that can't fail
     up->selected = true;
-    up->select_pending = true;
-    up->select_uidvld = uidvld;
-    up->select_himodseq = himodseq_up;
-    hmsc_prep(&up->hmsc, up->select_himodseq);
+    up->select.pending = true;
+    up->select.uidvld = uidvld;
+    up->select.himodseq = himodseq_up;
+    hmsc_prep(&up->hmsc, himodseq_up);
 
     // enqueue ourselves
     up->cb->enqueue(up->cb);
+}
+
+void up_imaildir_relay_cmd(up_t *up, imap_cmd_t *cmd, imap_cmd_cb_t *cb){
+    // just remember these for later
+    link_list_append(&up->relay.cmds, &cmd->link);
+    link_list_append(&up->relay.cbs, &cb->link);
+
+    // enqueue ourselves
+    up->cb->enqueue(up->cb);
+}
+
+void up_imaildir_preunregister(up_t *up){
+    link_t *link;
+    // cancel all callbacks, which may trigger imaildir_t relay replays
+    while((link = link_list_pop_first(&up->cbs))){
+        imap_cmd_cb_t *cb = CONTAINER_OF(link, imap_cmd_cb_t, link);
+        cb->free(cb);
+    }
+    while((link = link_list_pop_first(&up->relay.cbs))){
+        imap_cmd_cb_t *cb = CONTAINER_OF(link, imap_cmd_cb_t, link);
+        cb->free(cb);
+    }
+
+    // let go of the link_t for relay commands, but don't try to free them
+    while((link = link_list_pop_first(&up->relay.cmds))){}
 }
 
 static ie_dstr_t *write_tag_up(derr_t *e, size_t tag){
@@ -62,48 +89,31 @@ fail:
     return NULL;
 }
 
-// read the serial of a tag we issued
-static derr_t read_tag_up(ie_dstr_t *tag, size_t *tag_out, bool *was_ours){
-    derr_t e = E_OK;
-    *tag_out = 0;
-
-    DSTR_STATIC(maildir_up, "maildir_up");
-    dstr_t ignore_substr = dstr_sub(&tag->dstr, 0, maildir_up.len);
-    // make sure it starts with "maildir_up"
-    if(dstr_cmp(&ignore_substr, &maildir_up) != 0){
-        *was_ours = false;
-        return e;
-    }
-
-    *was_ours = true;
-
-    dstr_t number_substr = dstr_sub(&tag->dstr, maildir_up.len, tag->dstr.len);
-    PROP(&e, dstr_tosize(&number_substr, tag_out, 10) );
-
-    return e;
-}
-
 // up_cb_free is an imap_cmd_cb_free_f
 static void up_cb_free(imap_cmd_cb_t *cb){
     if(!cb) return;
     up_cb_t *up_cb = CONTAINER_OF(cb, up_cb_t, cb);
+    imap_cmd_cb_free(&up_cb->cb);
     free(up_cb);
 }
 
-static up_cb_t *up_cb_new(derr_t *e, up_t *up, size_t tag,
+static up_cb_t *up_cb_new(derr_t *e, up_t *up, const ie_dstr_t *tag,
         imap_cmd_cb_call_f call, imap_cmd_t *cmd){
     if(is_error(*e)) goto fail;
 
     up_cb_t *up_cb = malloc(sizeof(*up_cb));
-    if(!up_cb) goto fail;
+    if(!up_cb) ORIG_GO(e, E_NOMEM, "nomem", fail);
     *up_cb = (up_cb_t){
         .up = up,
     };
 
-    imap_cmd_cb_prep(&up_cb->cb, tag, call, up_cb_free);
+    imap_cmd_cb_init(e, &up_cb->cb, tag, call, up_cb_free);
+    CHECK_GO(e, fail_malloc);
 
     return up_cb;
 
+fail_malloc:
+    free(up_cb);
 fail:
     imap_cmd_free(cmd);
     return NULL;
@@ -149,11 +159,11 @@ static derr_t send_unselect(up_t *up){
     cmd = imap_cmd_assert_writable(&e, cmd, up->exts);
 
     // build the callback
-    up_cb_t *up_cb = up_cb_new(&e, up, tag, unselect_done, cmd);
+    up_cb_t *up_cb = up_cb_new(&e, up, tag_str, unselect_done, cmd);
 
     CHECK(&e);
 
-    up->close_sent = true;
+    up->unselect_sent = true;
     PROP(&e, up_send_cmd(up, cmd, up_cb) );
 
     return e;
@@ -253,7 +263,7 @@ static derr_t send_expunge(up_t *up){
     cmd = imap_cmd_assert_writable(&e, cmd, up->exts);
 
     // build the callback
-    up_cb_t *up_cb = up_cb_new(&e, up, tag, expunge_done, cmd);
+    up_cb_t *up_cb = up_cb_new(&e, up, tag_str, expunge_done, cmd);
 
     CHECK(&e);
 
@@ -304,7 +314,7 @@ static derr_t send_deletions(up_t *up){
     cmd = imap_cmd_assert_writable(&e, cmd, up->exts);
 
     // build the callback
-    up_cb_t *up_cb = up_cb_new(&e, up, tag, deletions_done, cmd);
+    up_cb_t *up_cb = up_cb_new(&e, up, tag_str, deletions_done, cmd);
 
     CHECK(&e);
 
@@ -356,7 +366,7 @@ static derr_t send_fetch(up_t *up){
     cmd = imap_cmd_assert_writable(&e, cmd, up->exts);
 
     // build the callback
-    up_cb_t *up_cb = up_cb_new(&e, up, tag, fetch_done, cmd);
+    up_cb_t *up_cb = up_cb_new(&e, up, tag_str, fetch_done, cmd);
 
     CHECK(&e);
 
@@ -449,7 +459,7 @@ static derr_t send_initial_search(up_t *up){
     cmd = imap_cmd_assert_writable(&e, cmd, up->exts);
 
     // build the callback
-    up_cb_t *up_cb = up_cb_new(&e, up, tag, initial_search_done, cmd);
+    up_cb_t *up_cb = up_cb_new(&e, up, tag_str, initial_search_done, cmd);
 
     CHECK(&e);
 
@@ -468,7 +478,7 @@ static derr_t next_cmd(up_t *up){
     }
 
     // never send anything more after a close
-    if(up->close_sent) return e;
+    if(up->unselect_sent) return e;
 
     /* Are we synchronized?  We are synchronized when:
          - hmsc_now() is nonzero (zero means SELECT (QRESYNC ...) failed)
@@ -488,6 +498,8 @@ static derr_t next_cmd(up_t *up){
         if(!up->synced){
             up->synced = true;
             imaildir_up_initial_sync_complete(up->m);
+            // we may have pending relay commands, so enqueue a check
+            up->cb->enqueue(up->cb);
         }
 
         // TODO: start IDLE here, when that's actually supported
@@ -510,7 +522,7 @@ static derr_t select_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
         }
         up->selected = false;
         // don't allow any more commands
-        up->close_sent = true;
+        up->unselect_sent = true;
         // report the error
         ie_st_resp_t *st_resp_copy = ie_st_resp_copy(&e, st_resp);
         CHECK(&e);
@@ -533,7 +545,7 @@ static derr_t select_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
 
     /* if this is a first-time sync, we have to delay next_cmd(), which will
        try to save the HIMODSEQ */
-    if(!up->select_himodseq){
+    if(!up->select.himodseq){
         PROP(&e, send_initial_search(up) );
     }else{
         PROP(&e, next_cmd(up) );
@@ -568,7 +580,7 @@ static derr_t send_select(up_t *up, unsigned int uidvld,
     cmd = imap_cmd_assert_writable(&e, cmd, up->exts);
 
     // build the callback
-    up_cb_t *up_cb = up_cb_new(&e, up, tag, select_done, cmd);
+    up_cb_t *up_cb = up_cb_new(&e, up, tag_str, select_done, cmd);
 
     CHECK(&e);
 
@@ -645,14 +657,6 @@ static derr_t untagged_ok(up_t *up, const ie_st_code_t *code,
 static derr_t tagged_status_type(up_t *up, const ie_st_resp_t *st){
     derr_t e = E_OK;
 
-    // read the tag
-    size_t tag_found;
-    bool was_ours;
-    PROP(&e, read_tag_up(st->tag, &tag_found, &was_ours) );
-    if(!was_ours){
-        ORIG(&e, E_INTERNAL, "tag not ours");
-    }
-
     // peek at the first command we need a response to
     link_t *link = up->cbs.next;
     if(link == NULL){
@@ -663,9 +667,9 @@ static derr_t tagged_status_type(up_t *up, const ie_st_resp_t *st){
 
     // make sure the tag matches
     imap_cmd_cb_t *cb = CONTAINER_OF(link, imap_cmd_cb_t, link);
-    if(cb->tag != tag_found){
+    if(dstr_cmp(&st->tag->dstr, &cb->tag->dstr) != 0){
         TRACE(&e, "got tag %x but expected %x\n",
-                FU(tag_found), FU(cb->tag));
+                FD(&st->tag->dstr), FD(&cb->tag->dstr));
         ORIG(&e, E_RESPONSE, "bad status type response");
     }
 
@@ -778,7 +782,7 @@ derr_t up_unselect(up_t *up){
 
     if(!up->selected){
         // don't allow any more commands
-        up->close_sent = true;
+        up->unselect_sent = true;
         // signal that it's already done
         PROP(&e, up->cb->unselected(up->cb) );
         return e;
@@ -790,20 +794,38 @@ derr_t up_unselect(up_t *up){
     return e;
 }
 
-
-bool up_more_work(up_t *up){
-    if(up->select_pending){
-        return true;
-    }
-    return false;
-}
-
-derr_t up_do_work(up_t *up){
+derr_t up_do_work(up_t *up, bool *noop){
     derr_t e = E_OK;
 
-    if(up->select_pending){
-        up->select_pending = false;
-        PROP(&e, send_select(up, up->select_uidvld, up->select_himodseq) );
+    if(up->select.pending){
+        *noop = false;
+        up->select.pending = false;
+        PROP(&e, send_select(up, up->select.uidvld, up->select.himodseq) );
+    }
+
+    /* after we are synchronized, but before we send unselect, try to relay
+       any commands that were requested of us by the imaildir_t */
+    while(up->synced && !up->unselect_sent
+            && !link_list_isempty(&up->relay.cmds)){
+        *noop = false;
+        link_t *link;
+        // get the command
+        link = link_list_pop_first(&up->relay.cmds);
+        const imap_cmd_t *cmd_orig = CONTAINER_OF(link, imap_cmd_t, link);
+        // get the callback
+        link = link_list_pop_first(&up->relay.cbs);
+        imap_cmd_cb_t *cb = CONTAINER_OF(link, imap_cmd_cb_t, link);
+
+        // store the callback
+        link_list_append(&up->cbs, &cb->link);
+
+        /* this is weird, but we actually need to make a copy of the cmd we
+           were given and just forget the original */
+        imap_cmd_t *cmd_copy = imap_cmd_copy(&e, cmd_orig);
+        CHECK(&e);
+
+        // send the command through the up_cb_i
+        PROP(&e, up->cb->cmd(up->cb, cmd_copy) );
     }
 
     return e;

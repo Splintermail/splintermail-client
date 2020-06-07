@@ -109,18 +109,21 @@ void server_close(server_t *server, derr_t error){
 }
 
 static void server_work_loop(server_t *server){
-    bool noop = false;
-    while(!server->closed && !noop){
+    bool noop;
+    do {
+        noop = true;
         derr_t e = E_OK;
         IF_PROP(&e, server_do_work(server, &noop)){
             server_close(server, e);
             PASSED(e);
             break;
         }
-    }
+    } while(!noop);
 }
 
 void server_read_ev(server_t *server, event_t *ev){
+    if(server->closed) return;
+
     imap_event_t *imap_ev = CONTAINER_OF(ev, imap_event_t, ev);
 
     // server only accepts imap_cmd_t's as EV_READs
@@ -1108,16 +1111,18 @@ cu:
 derr_t server_do_work(server_t *server, bool *noop){
     derr_t e = E_OK;
 
-    *noop = true;
     if(server->closed) return e;
 
     link_t *link;
 
-    // if the maildir_dn needs on-thread work... do it.
-    while(server->imap_state == SELECTED
-            && dn_more_work(&server->dn)){
-        *noop = false;
-        PROP(&e, dn_do_work(&server->dn) );
+    // do any dn_t work
+    if(server->imap_state == SELECTED){
+        bool dn_noop;
+        do {
+            dn_noop = true;
+            PROP(&e, dn_do_work(&server->dn, &dn_noop) );
+            if(!dn_noop) *noop = false;
+        } while(!dn_noop);
     }
 
     // unhandled client commands from the client

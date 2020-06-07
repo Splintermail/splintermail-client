@@ -146,7 +146,7 @@ void msg_expunge_free(msg_expunge_t **expunge){
 
 // update_req_store has a builder API
 update_req_t *update_req_store_new(derr_t *e, ie_store_cmd_t *uid_store,
-        const void *requester){
+        void *requester){
     if(is_error(*e)) goto fail;
 
     IE_MALLOC(e, update_req_t, req, fail);
@@ -163,57 +163,81 @@ fail:
     return NULL;
 }
 
+// update_req_expunge has a builder API
+update_req_t *update_req_expunge_new(derr_t *e, ie_seq_set_t *uids,
+        void *requester){
+    if(is_error(*e)) goto fail;
+
+    IE_MALLOC(e, update_req_t, req, fail);
+
+    req->requester = requester;
+    req->type = UPDATE_REQ_EXPUNGE;
+    req->val.uids = uids;
+    link_init(&req->link);
+
+    return req;
+
+fail:
+    ie_seq_set_free(uids);
+    return NULL;
+}
+
 void update_req_free(update_req_t *req){
     if(!req) return;
     switch(req->type){
         case UPDATE_REQ_STORE: ie_store_cmd_free(req->val.uid_store); break;
+        case UPDATE_REQ_EXPUNGE: ie_seq_set_free(req->val.uids); break;
     }
     free(req);
 }
 
-derr_t update_new(update_t **out, refs_t *refs, const void *requester,
-        update_type_e type){
+static void update_arg_free(update_type_e type, update_arg_u arg){
+    switch(type){
+        case UPDATE_NEW:
+            msg_view_free(&arg.view);
+            break;
+        case UPDATE_META:
+            // val.meta is a pointer to someone else's memory
+            break;
+        case UDPATE_EXPUNGE:
+            msg_expunge_free(&arg.expunge);
+            break;
+        case UPDATE_SYNC:
+            ie_st_resp_free(arg.sync);
+            break;
+    }
+}
+
+derr_t update_new(update_t **out, refs_t *refs, update_type_e type,
+        update_arg_u arg){
     derr_t e = E_OK;
     *out = NULL;
 
     update_t *update = malloc(sizeof(*update));
-    if(!update) ORIG(&e, E_NOMEM, "nomem");
-    *update = (update_t){.requester = requester, .type = type, .refs = refs};
+    if(!update) ORIG_GO(&e, E_NOMEM, "nomem", fail);
+    *update = (update_t){.refs = refs, .type = type, .arg = arg};
 
     link_init(&update->link);
-    link_init(&update->updates);
 
     *out = update;
-    ref_up(refs);
+    if(refs) ref_up(refs);
 
+    return e;
+
+fail:
+    update_arg_free(type, arg);
     return e;
 }
 
-void update_free(update_t **update){
-    if(!*update) return;
-    ref_dn((*update)->refs);
+void update_free(update_t **old){
+    update_t *update = *old;
+    if(!update) return;
+    if(update->refs) ref_dn(update->refs);
 
-    // empty the tree
-    link_t *link;
-    while((link = link_list_pop_first(&(*update)->updates))){
-        update_val_t *val = CONTAINER_OF(link, update_val_t, link);
+    update_arg_free(update->type, update->arg);
 
-        switch((*update)->type){
-            case UPDATE_NEW:
-                msg_view_free(&val->val.view);
-                break;
-            case UPDATE_META:
-                // val.meta is a pointer to someone else's memory
-                break;
-            case UDPATE_EXPUNGE:
-                msg_expunge_free(&val->val.expunge);
-                break;
-        }
-
-        free(val);
-    }
-    free(*update);
-    *update = NULL;
+    free(update);
+    *old = NULL;
 }
 
 // helper functions for writing debug information to buffers

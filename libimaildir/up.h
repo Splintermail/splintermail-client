@@ -32,29 +32,28 @@ struct up_cb_i {
 derr_t up_resp(up_t *up, imap_resp_t *resp);
 // if the connection is in a SELECTED state, CLOSE it.
 derr_t up_unselect(up_t *up);
-// there's work to be done
-bool up_more_work(up_t *up);
-derr_t up_do_work(up_t *up);
+derr_t up_do_work(up_t *up, bool *noop);
 
 // the interface the up_t provides to the imaildir:
 
+// up_imaildir_select contains late-initialization information
 void up_imaildir_select(
     up_t *up,
     unsigned int uidvld,
     unsigned long himodseq_up
 );
+void up_imaildir_relay_cmd(up_t *up, imap_cmd_t *cmd, imap_cmd_cb_t *cb);
+void up_imaildir_preunregister(up_t *up);
 
 // up_t is all the state we have for an upwards connection
 struct up_t {
     imaildir_t *m;
-    // if this imaildir was force-closed, we have to unregister differently
-    bool force_closed;
     // the interfaced provided to us
     up_cb_i *cb;
     // this connection's state
     bool selected;
     bool synced;
-    bool close_sent;
+    bool unselect_sent;
     // a tool for tracking the highestmodseq we have actually synced
     himodseq_calc_t hmsc;
     seq_set_builder_t uids_to_download;
@@ -62,23 +61,25 @@ struct up_t {
     ie_seq_set_t *uids_being_expunged;
     // current tag
     size_t tag;
-    link_t cbs;  // imap_cmd_cb_t->link
+    link_t cbs;  // imap_cmd_cb_t->link (may be up_cb_t or imaildir_cb_t)
     link_t link;  // imaildir_t->access.ups
 
-    bool select_pending;
-    unsigned int select_uidvld;
-    unsigned long select_himodseq;
+    struct {
+        bool pending;
+        unsigned int uidvld;
+        unsigned long himodseq;
+    } select;
+
+    struct {
+        // cmds and cbs are synchronized lists
+        link_t cmds;  // imap_cmd_t->link
+        link_t cbs;  // imap_cmd_cb_t->link (from an imaildir_cb_t)
+    } relay;
 
     // *exts should point to somewhere else
     extensions_t *exts;
 };
 DEF_CONTAINER_OF(up_t, link, link_t);
-
-typedef struct {
-    up_t *up;
-    imap_cmd_cb_t cb;
-} up_cb_t;
-DEF_CONTAINER_OF(up_cb_t, cb, imap_cmd_cb_t);
 
 derr_t up_init(up_t *up, up_cb_i *cb, extensions_t *exts);
 void up_free(up_t *up);
