@@ -170,7 +170,7 @@ static derr_t send_unselect(up_t *up){
 }
 
 // after every command, evaluate our internal state to decide the next one
-static derr_t next_cmd(up_t *up);
+static derr_t next_cmd(up_t *up, const ie_st_code_t *code);
 
 static derr_t fetch_resp(up_t *up, const ie_fetch_resp_t *fetch){
     derr_t e = E_OK;
@@ -238,14 +238,13 @@ static derr_t expunge_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
         // use while loop to avoid infinite loop if max == UINT_MAX
         unsigned int uid = min;
         do {
-            PROP(&e, imaildir_up_expunge_pushed(up->m, uid) );
+            PROP(&e, imaildir_up_delete_msg(up->m, uid) );
         } while (max != uid++);
     }
     ie_seq_set_free(up->uids_being_expunged);
     up->uids_being_expunged = NULL;
 
-
-    PROP(&e, next_cmd(up) );
+    PROP(&e, next_cmd(up, st_resp->code) );
 
     return e;
 }
@@ -334,7 +333,7 @@ static derr_t fetch_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
         ORIG(&e, E_PARAM, "fetch failed\n");
     }
 
-    PROP(&e, next_cmd(up) );
+    PROP(&e, next_cmd(up, st_resp->code) );
 
     return e;
 }
@@ -395,7 +394,7 @@ static derr_t initial_search_done(imap_cmd_cb_t *cb,
            for us. */
         PROP(&e, send_fetch(up) );
     }else{
-        PROP(&e, next_cmd(up) );
+        PROP(&e, next_cmd(up, st_resp->code) );
     }
 
     return e;
@@ -469,8 +468,13 @@ static derr_t send_initial_search(up_t *up){
 }
 
 // after every command, evaluate our internal state to decide the next one
-static derr_t next_cmd(up_t *up){
+static derr_t next_cmd(up_t *up, const ie_st_code_t *code){
     derr_t e = E_OK;
+
+    // check the last command's status-type response for a HIMODSEQ
+    if(code && code->type == IE_ST_CODE_HIMODSEQ){
+        hmsc_saw_ok_code(&up->hmsc, code->arg.himodseq);
+    }
 
     // do we need to cache a newer, fresher modseq value?
     if(hmsc_step(&up->hmsc)){
@@ -548,7 +552,7 @@ static derr_t select_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
     if(!up->select.himodseq){
         PROP(&e, send_initial_search(up) );
     }else{
-        PROP(&e, next_cmd(up) );
+        PROP(&e, next_cmd(up, st_resp->code) );
     }
 
     return e;

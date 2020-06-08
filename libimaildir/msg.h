@@ -154,8 +154,7 @@ typedef enum {
     // new metadata for a message
     UPDATE_META,
     // a newly expunged message
-    // TODO: what would this update look like?  how are expunges stored in the dn_t?
-    UDPATE_EXPUNGE,
+    UPDATE_EXPUNGE,
     // a synchronization message with a ie_st_resp_t IFF there was a failure
     UPDATE_SYNC,
 } update_type_e;

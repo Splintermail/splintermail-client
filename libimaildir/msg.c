@@ -120,6 +120,7 @@ void msg_view_free(msg_view_t **view){
 derr_t msg_expunge_new(msg_expunge_t **out, unsigned int uid,
         msg_expunge_state_e state, unsigned long modseq){
     derr_t e = E_OK;
+    *out = NULL;
 
     msg_expunge_t *expunge = malloc(sizeof(*expunge));
     if(expunge == NULL) ORIG(&e, E_NOMEM, "no mem");
@@ -199,7 +200,7 @@ static void update_arg_free(update_type_e type, update_arg_u arg){
         case UPDATE_META:
             // val.meta is a pointer to someone else's memory
             break;
-        case UDPATE_EXPUNGE:
+        case UPDATE_EXPUNGE:
             msg_expunge_free(&arg.expunge);
             break;
         case UPDATE_SYNC:

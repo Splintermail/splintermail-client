@@ -1227,6 +1227,9 @@ static derr_t do_imap_cmd_write(const imap_cmd_t *cmd, dstr_t *out,
                 STATIC_SKIP_FILL("UID ");
             }
             STATIC_SKIP_FILL("STORE ");
+            if(!arg.store->seq_set){
+                ORIG(&e, E_PARAM, "empty seq_set in STORE command");
+            }
             PROP(&e, seq_set_skip_fill(sf, arg.store->seq_set) );
             if(arg.store->mods != NULL){
                 STATIC_SKIP_FILL(" ");

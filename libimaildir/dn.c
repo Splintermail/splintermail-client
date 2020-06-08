@@ -47,6 +47,11 @@ static void dn_free_store(dn_t *dn){
     }
 }
 
+// free everything related to dn.disconnect
+static void dn_free_disconnect(dn_t *dn){
+    dn->disconnect.state = DN_WAIT_NONE;
+}
+
 void dn_free(dn_t *dn){
     if(!dn) return;
     // actually there's nothing to free...
@@ -467,6 +472,11 @@ static derr_t store_cmd(dn_t *dn, const ie_dstr_t *tag,
 
     ie_seq_set_t *uid_seq;
     PROP(&e, copy_seq_to_uids(dn, store->uid_mode, store->seq_set, &uid_seq) );
+    // detect noop STOREs
+    if(!uid_seq){
+        PROP(&e, send_ok(dn, tag, &DSTR_LIT("noop STORE command")) );
+        return e;
+    }
 
     // reset the dn.store state
     dn_free_store(dn);
@@ -519,13 +529,12 @@ static derr_t store_cmd(dn_t *dn, const ie_dstr_t *tag,
     // convert the the range to local uids
     ie_store_cmd_t *uid_store = ie_store_cmd_new(&e,
         true,
-        uid_seq,
+        STEAL(ie_seq_set_t, &uid_seq),
         ie_store_mods_copy(&e, store->mods),
         store->sign,
         store->silent,
         ie_flags_copy(&e, store->flags)
     );
-    uid_seq = NULL;
 
     // now send the uid_store to the imaildir_t
     update_req_t *req = update_req_store_new(&e, uid_store, dn);
@@ -1046,8 +1055,8 @@ derr_t dn_disconnect(dn_t *dn, bool expunge){
     return e;
 }
 
-static derr_t send_flags_update(dn_t *dn, unsigned int num, msg_flags_t flags,
-        bool recent){
+static derr_t send_flags_update(dn_t *dn, unsigned int seq_num,
+        msg_flags_t flags, bool recent){
     derr_t e = E_OK;
 
     ie_fflags_t *ff = ie_fflags_new(&e);
@@ -1060,7 +1069,7 @@ static derr_t send_flags_update(dn_t *dn, unsigned int num, msg_flags_t flags,
 
     // TODO: support modseq here too
     ie_fetch_resp_t *fetch = ie_fetch_resp_new(&e);
-    fetch = ie_fetch_resp_num(&e, fetch, num);
+    fetch = ie_fetch_resp_num(&e, fetch, seq_num);
     fetch = ie_fetch_resp_flags(&e, fetch, ff);
 
     imap_resp_arg_t arg = {.fetch=fetch};
@@ -1098,25 +1107,20 @@ static derr_t send_store_resp_noupdate(dn_t *dn, const exp_flags_t *exp_flags){
 
     // we expected this change, do we report it?
     if(!dn->store.silent){
-        unsigned int num;
-        if(dn->store.uid_mode){
-            num = exp_flags->uid;
-        }else{
-            PROP(&e, index_to_seq_num(index, &num) );
-        }
+        unsigned int seq_num;
+        PROP(&e, index_to_seq_num(index, &seq_num) );
 
-        PROP(&e, send_flags_update(dn, num, *view->flags, view->recent) );
+        PROP(&e, send_flags_update(dn, seq_num, *view->flags, view->recent) );
         return e;
     }
 
-    // got an expected chage, but it was a .SILENT command
+    // got an expected change, but it was a .SILENT command
 
     return e;
 }
 
 static derr_t send_store_resp_noexp(dn_t *dn, unsigned int uid){
     derr_t e = E_OK;
-    printf("uid %u\n", uid);
 
     size_t index;
     jsw_anode_t *node = jsw_afind(&dn->views, &uid, &index);
@@ -1245,7 +1249,7 @@ cu:
     return e;
 }
 
-static derr_t process_meta_update(dn_t *dn, update_t *update,
+static derr_t process_meta_update_for_store(dn_t *dn, update_t *update,
         seq_set_builder_t *ssb){
     derr_t e = E_OK;
 
@@ -1290,11 +1294,13 @@ static derr_t do_work_store(dn_t *dn){
             case UPDATE_META:
                 // process the event right now
                 link_remove(&update->link);
-                PROP_GO(&e, process_meta_update(dn, update, &ssb), cu);
+                PROP_GO(&e,
+                    process_meta_update_for_store(dn, update, &ssb),
+                cu);
                 break;
 
-            case UDPATE_EXPUNGE:
-                LOG_ERROR("don't know what to do with UPDATE_EXPUNGE yet\n");
+            case UPDATE_EXPUNGE:
+                // skip expunges during STORE handling
                 break;
 
             case UPDATE_SYNC:
@@ -1324,6 +1330,42 @@ cu:
     return e;
 }
 
+
+static derr_t do_work_disconnect(dn_t *dn){
+    derr_t e = E_OK;
+
+    ie_st_resp_t *st_resp = NULL;
+
+    update_t *update, *temp;
+    LINK_FOR_EACH_SAFE(update, temp, &dn->pending_updates, update_t, link){
+        switch(update->type){
+            // ignore everything but the status-type response
+            case UPDATE_NEW:
+            case UPDATE_META:
+            case UPDATE_EXPUNGE:
+                break;
+
+            case UPDATE_SYNC:
+                // free the update and break out of the loop
+                link_remove(&update->link);
+                st_resp = STEAL(ie_st_resp_t, &update->arg.sync);
+                update_free(&update);
+                break;
+        }
+    }
+
+    // done disconnecting
+    PROP_GO(&e,
+        dn->cb->disconnected(dn->cb, STEAL(ie_st_resp_t, &st_resp)),
+    cu);
+
+cu:
+    dn_free_disconnect(dn);
+    ie_st_resp_free(st_resp);
+    return e;
+}
+
+
 // process updates until we hit our own update
 derr_t dn_do_work(dn_t *dn, bool *noop){
     derr_t e = E_OK;
@@ -1335,8 +1377,7 @@ derr_t dn_do_work(dn_t *dn, bool *noop){
 
     if(dn->disconnect.state == DN_WAIT_READY){
         *noop = false;
-
-        ORIG(&e, E_INTERNAL, "not implemented");
+        PROP(&e, do_work_disconnect(dn) );
     }
 
     return e;
@@ -1375,4 +1416,5 @@ void dn_imaildir_preunregister(dn_t *dn){
         msg_view_free(&view);
     }
     dn_free_store(dn);
+    dn_free_disconnect(dn);
 }

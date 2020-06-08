@@ -248,12 +248,7 @@ derr_t imaildir_up_handle_static_fetch_attr(imaildir_t *m,
 
 void imaildir_up_initial_sync_complete(imaildir_t *m);
 
-// we detected that a message was expunged on the server
 derr_t imaildir_up_delete_msg(imaildir_t *m, unsigned int uid);
-
-// a message that was already expunged locally was expunged remotely
-derr_t imaildir_up_expunge_pushed(imaildir_t *m, unsigned int uid);
-
 
 /////////////////
 /* imaildir functions exposed only for dn_t.  dn_t keeps its own view of the

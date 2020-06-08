@@ -13,6 +13,7 @@ REGISTER_ERROR_TYPE(E_IMAILDIR, "E_IMAILDIR");
 // forward declarations
 static derr_t handle_new_meta(imaildir_t *m, msg_base_t *msg,
         msg_meta_t *new);
+static derr_t handle_new_expunge(imaildir_t *m, msg_expunge_t *expunge);
 
 typedef struct {
     imaildir_t *m;
@@ -147,6 +148,7 @@ static derr_t add_msg_to_maildir(const string_builder_t *base,
     derr_t e = E_OK;
 
     add_msg_arg_t *arg = data;
+    imaildir_t *m = arg->m;
 
     // ignore directories
     if(is_dir) return e;
@@ -164,7 +166,8 @@ static derr_t add_msg_to_maildir(const string_builder_t *base,
 
     /*  Possible startup states (given that a file exists):
           - msg NOT in msgs and NOT in expunged:
-                this is an error, should never occur.
+                either somebody put a perfectly parseable filename in our
+                directory or we have a bug
           - msg NOT in msgs and IS in expunged:
                 we crashed without all accessors acknowleding a an expunge,
                 just delete the file
@@ -181,16 +184,17 @@ static derr_t add_msg_to_maildir(const string_builder_t *base,
     */
 
     // grab the metadata we loaded from the persistent cache
-    jsw_anode_t *node = jsw_afind(&arg->m->msgs, &uid, NULL);
+    jsw_anode_t *node = jsw_afind(&m->msgs, &uid, NULL);
     if(node == NULL){
         // ok, check expunged files
-        node = jsw_afind(&arg->m->expunged, &uid, NULL);
+        node = jsw_afind(&m->expunged, &uid, NULL);
         if(!node){
             ORIG(&e, E_INTERNAL, "UID on file not in cache anywhere");
         }
         // if the message is expunged, it's time to delete the file
         string_builder_t rm_path = sb_append(base, FD(name));
         PROP(&e, remove_path(&rm_path) );
+        return e;
     }
 
     msg_base_t *msg_base = CONTAINER_OF(node, msg_base_t, node);
@@ -202,7 +206,7 @@ static derr_t add_msg_to_maildir(const string_builder_t *base,
             PROP(&e, msg_base_set_file(msg_base, len, arg->subdir, name) );
             break;
         case MSG_BASE_FILLED:
-            // most vanila case
+            // most vanilla case
             PROP(&e, msg_base_set_file(msg_base, len, arg->subdir, name) );
             break;
         case MSG_BASE_EXPUNGED:
@@ -898,69 +902,34 @@ void imaildir_up_initial_sync_complete(imaildir_t *m){
 derr_t imaildir_up_delete_msg(imaildir_t *m, unsigned int uid){
     derr_t e = E_OK;
 
-    msg_expunge_t *expunge = NULL;
-
-    // get the next highest modseq
-    unsigned long modseq = himodseq_dn(m) + 1;
-
-    // if the conn_up sent it, the state must be PUSHED
-    msg_expunge_state_e state = MSG_EXPUNGE_PUSHED;
-
-    // allocate a new expunged to store in memory
-    PROP(&e, msg_expunge_new(&expunge, uid, state, modseq) );
-
-    // add expunge to log
-    maildir_log_i *log = m->log;
-    PROP_GO(&e, log->update_expunge(log, expunge), fail);
-
-    // update state of the corresponding message
-    jsw_anode_t *node = jsw_afind(&m->msgs, &uid, NULL);
-    if(node){
-        msg_base_t *base = CONTAINER_OF(node, msg_base_t, node);
-        // TODO: delay the file deletion until all views have been updated
-        if(base->state == MSG_BASE_FILLED){
-            PROP_GO(&e, msg_base_del_file(base, &m->path), fail);
-        }
-        base->state = MSG_BASE_EXPUNGED;
-    }
-
-    // insert expunge into mods
-    jsw_ainsert(&m->mods, &expunge->mod.node);
-
-    // insert expunge into expunged
-    jsw_ainsert(&m->expunged, &expunge->node);
-
-    return e;
-
-fail:
-    msg_expunge_free(&expunge);
-    return e;
-}
-
-derr_t imaildir_up_expunge_pushed(imaildir_t *m, unsigned int uid){
-    derr_t e = E_OK;
-
-    // get the expunge in-memory record
+    // check if we just need to change the state of an existing expunge
     jsw_anode_t *node = jsw_afind(&m->expunged, &uid, NULL);
-    if(!node){
-        LOG_WARN("pushed an EXPUNGE that was not found in memory!\n");
-        // soft fail; don't throw an error
+    if(node){
+        msg_expunge_t *expunge = CONTAINER_OF(node, msg_expunge_t, node);
+        if(expunge->state == MSG_EXPUNGE_PUSHED){
+            // no change necessary
+            return e;
+        }
+
+        // update the expunge in the log
+        expunge->state = MSG_EXPUNGE_PUSHED;
+        PROP(&e, m->log->update_expunge(m->log, expunge) );
         return e;
     }
 
-    msg_expunge_t *expunge = CONTAINER_OF(node, msg_expunge_t, node);
-    expunge->state = MSG_EXPUNGE_PUSHED;
+    // otherwise, create a new expunge
+    unsigned long modseq = himodseq_dn(m) + 1;
+    msg_expunge_t *expunge;
+    PROP(&e, msg_expunge_new(&expunge, uid, MSG_EXPUNGE_PUSHED, modseq) );
 
-    // update the expunge in the log
-    maildir_log_i *log = m->log;
-    PROP(&e, log->update_expunge(log, expunge) );
+    PROP(&e, handle_new_expunge(m, expunge) );
 
     return e;
 }
 
 ///////////////// interface to dn_t /////////////////
 
-// a struct for delete an old meta after it's replacement is fully accepted
+// a struct for deleting an old meta after its replacement is fully accepted
 typedef struct {
     msg_meta_t *old;
     refs_t refs;
@@ -1015,39 +984,156 @@ static derr_t handle_new_meta(imaildir_t *m, msg_base_t *msg,
 
     // update the message in the log
     maildir_log_i *log = m->log;
-    PROP_GO(&e, log->update_msg(log, msg), fail_meta);
+    PROP_GO(&e, log->update_msg(log, msg), fail_old);
 
     if(link_list_isempty(&m->dns)){
         // just free the old meta immediately
         msg_meta_free(&old);
-    }else{
-        // delay the freeing of the old meta
-        old_meta_t *old_meta;
-        PROP(&e, old_meta_new(&old_meta, old) );
-        // distribute an update to every dn_t
-        dn_t *dn;
-        LINK_FOR_EACH(dn, &m->dns, dn_t, link){
-            update_arg_u arg = { .meta = new };
-            update_t *update;
-            PROP_GO(&e,
-                update_new(&update, &old_meta->refs, UPDATE_META, arg),
-            fail_ref);
-            // send the update
-            dn_imaildir_update(dn, update);
-        }
-    fail_ref:
-        // drop the ref we held during the update distribution
-        ref_dn(&old_meta->refs);
-        if(is_error(e)) goto fail;
+        return e;
     }
 
+    // delay the freeing of the old meta
+    old_meta_t *old_meta;
+    PROP_GO(&e, old_meta_new(&old_meta, old), fail_old);
+    // distribute an update to every dn_t
+    dn_t *dn;
+    LINK_FOR_EACH(dn, &m->dns, dn_t, link){
+        update_arg_u arg = { .meta = new };
+        update_t *update;
+        PROP_GO(&e,
+            update_new(&update, &old_meta->refs, UPDATE_META, arg),
+        cu_ref);
+        // send the update
+        dn_imaildir_update(dn, update);
+    }
+
+cu_ref:
+    // drop the ref we held during the update distribution
+    ref_dn(&old_meta->refs);
     return e;
 
-fail_meta:
+fail_old:
     msg_meta_free(&old);
-fail:
     return e;
 }
+
+// a struct for deleting an old message after its replacement is fully accepted
+typedef struct {
+    imaildir_t *m;
+    msg_base_t *old;
+    refs_t refs;
+} old_base_t;
+DEF_CONTAINER_OF(old_base_t, refs, refs_t);
+
+// clean up the msg_base_t and it's file after an expunge
+static void remove_and_delete_msg_base(imaildir_t *m, msg_base_t *msg){
+    if(msg->filename.data != NULL){
+        // delete the file backing the message
+        DROP_CMD( msg_base_del_file(msg, &m->path) );
+    }
+    // deal with the attached msg_meta_t
+    jsw_aerase(&m->mods, &msg->meta->mod.modseq);
+    msg_meta_free(&msg->meta);
+    // deal with the msg_base_t
+    jsw_aerase(&m->msgs, &msg->ref.uid);
+    msg_base_free(&msg);
+}
+
+// a finalizer_t
+static void old_base_finalize(refs_t *refs){
+    old_base_t *old_base = CONTAINER_OF(refs, old_base_t, refs);
+    remove_and_delete_msg_base(old_base->m, old_base->old);
+    refs_free(&old_base->refs);
+    free(old_base);
+}
+
+static derr_t old_base_new(old_base_t **out, imaildir_t *m, msg_base_t *old){
+    derr_t e = E_OK;
+    *out = NULL;
+
+    old_base_t *old_base = malloc(sizeof(*old_base));
+    if(!old_base) ORIG_GO(&e, E_NOMEM, "nomem", fail_old);
+    *old_base = (old_base_t){.m = m, .old = old};
+
+    PROP_GO(&e, refs_init(&old_base->refs, 1, old_base_finalize), fail_malloc);
+
+    *out = old_base;
+    return e;
+
+fail_malloc:
+    free(old_base);
+fail_old:
+    msg_base_free(&old);
+    return e;
+}
+
+
+// store a newly allocated expunge and distribute it to the dn_t's, if any
+// consumes or frees *expunge
+static derr_t handle_new_expunge(imaildir_t *m, msg_expunge_t *expunge){
+    derr_t e = E_OK;
+
+    // add expunge to log
+    PROP_GO(&e, m->log->update_expunge(m->log, expunge), fail);
+
+    // insert expunge into mods
+    jsw_ainsert(&m->mods, &expunge->mod.node);
+
+    // insert expunge into expunged
+    jsw_ainsert(&m->expunged, &expunge->node);
+
+    // get the corresponding message, if one exists
+    msg_base_t *msg = NULL;
+    jsw_anode_t *node = jsw_afind(&m->msgs, &expunge->uid, NULL);
+    if(node){
+        msg = CONTAINER_OF(node, msg_base_t, node);
+        // set the state
+        msg->state = MSG_BASE_EXPUNGED;
+    }
+
+    if(link_list_isempty(&m->dns)){
+        // no dn_t's to update, free the old msg immediately
+        if(msg) remove_and_delete_msg_base(m, msg);
+        return e;
+    }
+
+    old_base_t *old_base = NULL;
+    refs_t *update_refs = NULL;
+    if(msg){
+        // delay the freeing of the old msg
+        PROP(&e, old_base_new(&old_base, m, msg) );
+        update_refs = &old_base->refs;
+    }
+    // distribute an update to every dn_t
+    dn_t *dn;
+    LINK_FOR_EACH(dn, &m->dns, dn_t, link){
+        // make a copy of *expunge (so dn_t can support CONDSTORE/QRESYNC)
+        msg_expunge_t *copy;
+        PROP_GO(&e,
+            msg_expunge_new(
+                &copy, expunge->uid, expunge->state, expunge->mod.modseq
+            ),
+        cu_ref);
+        update_arg_u arg = { .expunge = copy };
+        update_t *update;
+        PROP_GO(&e,
+            update_new(&update, update_refs, UPDATE_EXPUNGE, arg),
+        cu_ref);
+        // send the update
+        dn_imaildir_update(dn, update);
+    }
+
+cu_ref:
+    // drop the ref we held during the update distribution
+    if(msg) ref_dn(&old_base->refs);
+
+    return e;
+
+fail:
+    msg_expunge_free(&expunge);
+    return e;
+}
+
 
 // calculate the response to an UPDATE_REQ_STORE locally
 static derr_t service_update_req_store(imaildir_t *m, update_req_t *req){
