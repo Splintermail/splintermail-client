@@ -140,13 +140,21 @@ def wait_for_listener(q):
 
 
 def wait_for_match(q, pattern):
+    ignored = []
     while True:
         line = q.get()
         if line is None:
             raise ValueError("EOF")
-        if re.match(pattern, line) is not None:
-            return line
-        # print("ignoring", line)
+        match = re.match(pattern, line)
+        if match is not None:
+            return match, ignored
+        ignored.append(line)
+
+
+def ensure_no_match(ignored, pattern):
+    for line in ignored:
+        if re.match(pattern, line):
+            raise ValueError(f"{line} matched {pattern}")
 
 
 @contextlib.contextmanager
@@ -178,7 +186,7 @@ def run_subproc(cmd):
             raise ValueError("cmd failed to exit promply, sent SIGKILL")
         if p.poll() != 0:
             fmt_failure(reader)
-            raise ValueError("cmd exited %d", exit)
+            raise ValueError("cmd exited %d"%p.poll())
         if dump_logs:
             fmt_failure(reader)
 
@@ -187,20 +195,27 @@ def start_kill(cmd):
     with run_subproc(cmd) as (p, out_q):
         pass
 
+
+@contextlib.contextmanager
+def _session(p):
+    with run_connection() as (write_q, read_q):
+        wait_for_match(read_q, b"\\* OK")
+
+        write_q.put(b"A login test@splintermail.com password\r\n")
+        wait_for_match(read_q, b"A OK")
+
+        yield p, write_q, read_q
+
+        write_q.put(b"Z logout\r\n")
+        wait_for_match(read_q, b"\\* BYE")
+        wait_for_match(read_q, b"Z OK")
+
+
 @contextlib.contextmanager
 def session(cmd):
     with run_subproc(cmd) as (p, out_q):
-        with run_connection() as (write_q, read_q):
-            wait_for_match(read_q, b"\\* OK")
-
-            write_q.put(b"A login test@splintermail.com password\r\n")
-            wait_for_match(read_q, b"A OK")
-
-            yield p, write_q, read_q
-
-            write_q.put(b"Z logout\r\n")
-            wait_for_match(read_q, b"\\* BYE")
-            wait_for_match(read_q, b"Z OK")
+        with _session(p) as stuff:
+            yield stuff
 
 
 def login_logout(cmd):
@@ -229,7 +244,7 @@ def select_close(cmd):
 
 
 def select_select(cmd):
-    with session(cmd) as (p, write_q, read_q):
+    with inbox(cmd) as (p, write_q, read_q):
         write_q.put(b"1 select \"Test Folder\"\r\n")
         wait_for_match(read_q, b"1 OK")
 
@@ -249,6 +264,58 @@ def store(cmd):
         write_q.put(b"4 fetch 1 flags\r\n")
         wait_for_match(read_q, b"\\* 1 FETCH \\(FLAGS \\(\\)\\)")
         wait_for_match(read_q, b"4 OK")
+
+        # noop store (for seq num = UINT_MAX-1)
+        write_q.put(b"5 store 4294967294 flags \\Seen\r\n")
+        _, ignored = wait_for_match(read_q, b"5 OK noop STORE")
+        ensure_no_match(ignored, b"\\* [0-9]* FLAGS")
+
+
+def get_uid(seq_num, write_q, read_q):
+    write_q.put(b"U fetch %d UID\r\n"%seq_num)
+    match, _ = wait_for_match(
+        read_q, b"\\* %d FETCH \\(UID ([0-9]*)\\)"%seq_num
+    )
+    wait_for_match(read_q, b"U OK")
+    return match[1]
+
+
+def expunge_on_close(cmd):
+    with inbox(cmd) as (p, write_q, read_q):
+        uid = get_uid(1, write_q, read_q)
+
+        write_q.put(b"1 store 1 flags \\Deleted\r\n")
+        wait_for_match(read_q, b"1 OK")
+
+        write_q.put(b"2 close\r\n")
+        wait_for_match(read_q, b"2 OK")
+
+        write_q.put(b"3 select INBOX\r\n")
+        wait_for_match(read_q, b"3 OK")
+
+        write_q.put(b"4 search UID %s\r\n"%uid)
+        _, ignored = wait_for_match(read_q, b"4 OK")
+        ensure_no_match(ignored, b"\\* SEARCH [0-9]*")
+
+
+def no_expunge_on_logout(cmd):
+    with run_subproc(cmd) as (p, out_q):
+        with _session(p) as (p, write_q, read_q):
+            write_q.put(b"1 select INBOX\r\n")
+            wait_for_match(read_q, b"1 OK")
+
+            uid = get_uid(1, write_q, read_q)
+
+            write_q.put(b"2 store 1 flags \\Deleted\r\n")
+            wait_for_match(read_q, b"2 OK")
+
+        with _session(p) as (p, write_q, read_q):
+            write_q.put(b"1 select INBOX\r\n")
+            wait_for_match(read_q, b"1 OK")
+
+            write_q.put(b"2 UID search UID %s\r\n"%uid)
+            wait_for_match(read_q, b"\\* SEARCH %s*"%uid)
+            wait_for_match(read_q, b"2 OK")
 
 
 def terminate_with_open_connection(cmd):
@@ -286,6 +353,8 @@ if __name__ == "__main__":
         select_close,
         select_select,
         store,
+        expunge_on_close,
+        no_expunge_on_logout,
         terminate_with_open_connection,
     ]
 
