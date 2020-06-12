@@ -197,14 +197,14 @@ def start_kill(cmd):
 
 
 @contextlib.contextmanager
-def _session(p):
+def _session():
     with run_connection() as (write_q, read_q):
         wait_for_match(read_q, b"\\* OK")
 
         write_q.put(b"A login test@splintermail.com password\r\n")
         wait_for_match(read_q, b"A OK")
 
-        yield p, write_q, read_q
+        yield write_q, read_q
 
         write_q.put(b"Z logout\r\n")
         wait_for_match(read_q, b"\\* BYE")
@@ -214,8 +214,8 @@ def _session(p):
 @contextlib.contextmanager
 def session(cmd):
     with run_subproc(cmd) as (p, out_q):
-        with _session(p) as stuff:
-            yield stuff
+        with _session() as stuff:
+            yield p, *stuff
 
 
 def login_logout(cmd):
@@ -224,13 +224,20 @@ def login_logout(cmd):
 
 
 @contextlib.contextmanager
+def _inbox():
+    with _session() as (write_q, read_q):
+        write_q.put(b"B select INBOX\r\n")
+        wait_for_match(read_q, b"B OK")
+
+        yield write_q, read_q
+
+@contextlib.contextmanager
 def inbox(cmd):
     with session(cmd) as (p, write_q, read_q):
         write_q.put(b"B select INBOX\r\n")
         wait_for_match(read_q, b"B OK")
 
         yield p, write_q, read_q
-
 
 def select_logout(cmd):
     with inbox(cmd) as (p, write_q, read_q):
@@ -324,22 +331,46 @@ def expunge_on_close(cmd):
 
 def no_expunge_on_logout(cmd):
     with run_subproc(cmd) as (p, out_q):
-        with _session(p) as (p, write_q, read_q):
-            write_q.put(b"1 select INBOX\r\n")
-            wait_for_match(read_q, b"1 OK")
-
+        with _inbox() as (write_q, read_q):
             uid = get_uid(1, write_q, read_q)
 
-            write_q.put(b"2 store 1 flags \\Deleted\r\n")
-            wait_for_match(read_q, b"2 OK")
-
-        with _session(p) as (p, write_q, read_q):
-            write_q.put(b"1 select INBOX\r\n")
+            write_q.put(b"1 store 1 flags \\Deleted\r\n")
             wait_for_match(read_q, b"1 OK")
 
-            write_q.put(b"2 UID search UID %s\r\n"%uid)
+        with _inbox() as (write_q, read_q):
+            write_q.put(b"1 UID search UID %s\r\n"%uid)
             wait_for_match(read_q, b"\\* SEARCH %s*"%uid)
-            wait_for_match(read_q, b"2 OK")
+            wait_for_match(read_q, b"1 OK")
+
+
+def noop(cmd):
+    with run_subproc(cmd) as (p, out_q):
+        with _inbox() as (w1, r1), _inbox() as (w2, r2):
+            # empty flags for a few messages
+            w1.put(b"1a store 1:3 flags ()\r\n")
+            wait_for_match(r1, b"1a OK")
+
+            # sync to second connection
+            w2.put(b"1b NOOP\r\n")
+            wait_for_match(r2, b"1b OK")
+
+            # make some updates
+            w1.put(b"3a store 1 flags \\Deleted\r\n")
+            wait_for_match(r1, b"3a OK")
+            w1.put(b"4a store 2 flags \\Answered\r\n")
+            wait_for_match(r1, b"4a OK")
+            w1.put(b"5a store 3 flags \\Answered\r\n")
+            wait_for_match(r1, b"5a OK")
+            w1.put(b"6a expunge\r\n")
+            wait_for_match(r1, b"6a OK")
+
+            # sync to second connection
+            assert r2.empty(), "expected empty queue before NOOP"
+            w2.put(b"2b NOOP\r\n")
+            wait_for_match(r2, b"\\* 2 FETCH \\(FLAGS \\(\\\\Answered\\)\\)")
+            wait_for_match(r2, b"\\* 3 FETCH \\(FLAGS \\(\\\\Answered\\)\\)")
+            wait_for_match(r2, b"\\* 1 EXPUNGE")
+            wait_for_match(r2, b"2b OK")
 
 
 def terminate_with_open_connection(cmd):
@@ -349,6 +380,7 @@ def terminate_with_open_connection(cmd):
 
             p.send_signal(signal.SIGTERM)
             p.wait(0.1)
+            assert p.poll() is not None, "SIGTERM was not handled fast enough"
 
 
 # Prepare a subdirectory
@@ -380,6 +412,7 @@ if __name__ == "__main__":
         expunge,
         expunge_on_close,
         no_expunge_on_logout,
+        noop,
         terminate_with_open_connection,
     ]
 
