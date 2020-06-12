@@ -2,6 +2,9 @@
 
 #include "uv_util.h"
 
+// forward declarations
+static derr_t get_uids_to_expunge(dn_t *dn, ie_seq_set_t **out);
+
 typedef struct {
     unsigned int uid;
     msg_flags_t flags;
@@ -37,14 +40,20 @@ static void exp_flags_free(exp_flags_t **exp_flags){
 // free everything related to dn.store
 static void dn_free_store(dn_t *dn){
     dn->store.state = DN_WAIT_NONE;
-    ie_dstr_free(dn->store.tag);
-    dn->store.tag = NULL;
+    ie_dstr_free(STEAL(ie_dstr_t, &dn->store.tag));
 
     jsw_anode_t *node;
     while((node = jsw_apop(&dn->store.tree))){
         exp_flags_t *exp_flags = CONTAINER_OF(node, exp_flags_t, node);
         exp_flags_free(&exp_flags);
     }
+}
+
+// free everything related to dn.expunge
+static void dn_free_expunge(dn_t *dn){
+    dn->expunge.state = DN_WAIT_NONE;
+    ie_dstr_t *tag = STEAL(ie_dstr_t, &dn->expunge.tag);
+    ie_dstr_free(tag);
 }
 
 // free everything related to dn.disconnect
@@ -145,13 +154,13 @@ static derr_t send_flags_resp(dn_t *dn){
     return e;
 }
 
-static derr_t send_exists_resp_unsafe(dn_t *dn){
+static derr_t send_exists_resp(dn_t *dn){
     derr_t e = E_OK;
 
-    if(dn->m->msgs.size > UINT_MAX){
+    if(dn->views.size > UINT_MAX){
         ORIG(&e, E_VALUE, "too many messages for exists response");
     }
-    unsigned int exists = (unsigned int)dn->m->msgs.size;
+    unsigned int exists = (unsigned int)dn->views.size;
 
     imap_resp_arg_t arg = {.exists=exists};
     imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_EXISTS, arg);
@@ -163,7 +172,7 @@ static derr_t send_exists_resp_unsafe(dn_t *dn){
     return e;
 }
 
-static derr_t send_recent_resp_unsafe(dn_t *dn){
+static derr_t send_recent_resp(dn_t *dn){
     derr_t e = E_OK;
 
     // TODO: support \Recent flag
@@ -179,7 +188,7 @@ static derr_t send_recent_resp_unsafe(dn_t *dn){
     return e;
 }
 
-static derr_t send_unseen_resp_unsafe(dn_t *dn){
+static derr_t send_unseen_resp(dn_t *dn){
     derr_t e = E_OK;
 
     // TODO: what technically is "unseen"?  And what if nothing is unseen?
@@ -216,25 +225,8 @@ static derr_t send_pflags_resp(dn_t *dn){
     return e;
 }
 
-static derr_t send_uidnext_resp_unsafe(dn_t *dn){
+static derr_t send_uidnext_resp(dn_t *dn, unsigned int max_uid){
     derr_t e = E_OK;
-
-    unsigned int max_uid = 0;
-
-    // check the highest value in msgs tree
-    jsw_atrav_t trav;
-    jsw_anode_t *node = jsw_atlast(&trav, &dn->m->msgs);
-    if(node){
-        msg_base_t *base = CONTAINER_OF(node, msg_base_t, node);
-        max_uid = MAX(max_uid, base->ref.uid);
-    }
-
-    // check the highest value in expunged tree
-    node = jsw_atlast(&trav, &dn->m->expunged);
-    if(node){
-        msg_expunge_t *expunge = CONTAINER_OF(node, msg_expunge_t, node);
-        max_uid = MAX(max_uid, expunge->uid);
-    }
 
     ie_st_code_arg_t code_arg = {.uidnext = max_uid + 1};
     ie_st_code_t *code = ie_st_code_new(&e, IE_ST_CODE_UIDNEXT, code_arg);
@@ -253,42 +245,22 @@ static derr_t send_uidnext_resp_unsafe(dn_t *dn){
     return e;
 }
 
-static derr_t send_uidvld_resp(dn_t *dn){
+static derr_t send_uidvld_resp(dn_t *dn, unsigned int uidvld){
     derr_t e = E_OK;
 
-    maildir_log_i *log = dn->m->log;
-    ie_st_code_arg_t code_arg = {.uidvld = log->get_uidvld(log)};
+    ie_st_code_arg_t code_arg = { .uidvld = uidvld };
     ie_st_code_t *code = ie_st_code_new(&e, IE_ST_CODE_UIDVLD, code_arg);
 
     DSTR_STATIC(msg, "ride or die");
     ie_dstr_t *text = ie_dstr_new(&e, &msg, KEEP_RAW);
 
     ie_st_resp_t *st_resp = ie_st_resp_new(&e, NULL, IE_ST_OK, code, text);
-    imap_resp_arg_t arg = {.status_type=st_resp};
+    imap_resp_arg_t arg = { .status_type = st_resp };
     imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_STATUS_TYPE, arg);
     resp = imap_resp_assert_writable(&e, resp, dn->exts);
     CHECK(&e);
 
     PROP(&e, dn->cb->resp(dn->cb, resp) );
-
-    return e;
-}
-
-static derr_t build_views_unsafe(dn_t *dn){
-    derr_t e = E_OK;
-
-    /* TODO: wait, if we build the view lazily like this, how do we properly
-       ignore updates that come to us before we have updated? */
-
-    // make one view for every message present in the mailbox
-    jsw_atrav_t trav;
-    jsw_anode_t *node = jsw_atfirst(&trav, &dn->m->msgs);
-    for(; node != NULL; node = jsw_atnext(&trav)){
-        msg_base_t *msg = CONTAINER_OF(node, msg_base_t, node);
-        msg_view_t *view;
-        PROP(&e, msg_view_new(&view, msg) );
-        jsw_ainsert(&dn->views, &view->node);
-    }
 
     return e;
 }
@@ -302,19 +274,19 @@ static derr_t select_cmd(dn_t *dn, const ie_dstr_t *tag,
         ORIG(&e, E_PARAM, "QRESYNC and CONDSTORE not supported");
     }
 
+    unsigned int max_uid;
+    unsigned int uidvld;
+    PROP(&e, imaildir_dn_build_views(dn->m, &dn->views, &max_uid, &uidvld) );
+
     // generate/send required SELECT responses
     PROP(&e, send_flags_resp(dn) );
-    PROP(&e, send_exists_resp_unsafe(dn) );
-    PROP(&e, send_recent_resp_unsafe(dn) );
-    PROP(&e, send_unseen_resp_unsafe(dn) );
+    PROP(&e, send_exists_resp(dn) );
+    PROP(&e, send_recent_resp(dn) );
+    PROP(&e, send_unseen_resp(dn) );
     PROP(&e, send_pflags_resp(dn) );
-    PROP(&e, send_uidnext_resp_unsafe(dn) );
-    PROP(&e, send_uidvld_resp(dn) );
+    PROP(&e, send_uidnext_resp(dn, max_uid) );
+    PROP(&e, send_uidvld_resp(dn, uidvld) );
 
-    PROP(&e, build_views_unsafe(dn) );
-
-    /* TODO: check if we are in DITM mode or serve-locally mode.  For now we
-             only support serve-locally mode */
     PROP(&e, send_ok(dn, tag, &DSTR_LIT("welcome in")) );
 
     return e;
@@ -474,6 +446,7 @@ static derr_t store_cmd(dn_t *dn, const ie_dstr_t *tag,
     PROP(&e, copy_seq_to_uids(dn, store->uid_mode, store->seq_set, &uid_seq) );
     // detect noop STOREs
     if(!uid_seq){
+        PROP(&e, dn_gather_updates(dn, store->uid_mode) );
         PROP(&e, send_ok(dn, tag, &DSTR_LIT("noop STORE command")) );
         return e;
     }
@@ -917,6 +890,39 @@ cu:
 }
 
 
+static derr_t expunge_cmd(dn_t *dn, const ie_dstr_t *tag){
+    derr_t e = E_OK;
+
+    ie_seq_set_t *uids;
+    PROP(&e, get_uids_to_expunge(dn, &uids) );
+    // detect noop EXPUNGEs
+    if(!uids){
+        PROP(&e, dn_gather_updates(dn, true) );
+        PROP(&e, send_ok(dn, tag, &DSTR_LIT("noop EXPUNGE command")) );
+        return e;
+    }
+
+    // reset the dn.expunge state
+    dn_free_expunge(dn);
+    dn->expunge.tag = ie_dstr_copy(&e, tag);
+    dn->expunge.state = DN_WAIT_WAITING;
+    CHECK_GO(&e, fail);
+
+    // request an expunge update
+    update_req_t *req =
+        update_req_expunge_new(&e, STEAL(ie_seq_set_t, &uids), dn);
+    CHECK_GO(&e, fail);
+    PROP_GO(&e, imaildir_dn_request_update(dn->m, req), fail);
+
+    return e;
+
+fail:
+    dn_free_expunge(dn);
+    ie_seq_set_free(uids);
+    return e;
+}
+
+
 // we either need to consume the cmd or free it
 derr_t dn_cmd(dn_t *dn, imap_cmd_t *cmd){
     derr_t e = E_OK;
@@ -938,26 +944,34 @@ derr_t dn_cmd(dn_t *dn, imap_cmd_t *cmd){
             break;
 
         case IMAP_CMD_SEARCH:
+            PROP_GO(&e, dn_gather_updates(dn, arg->search->uid_mode), cu_cmd);
             PROP_GO(&e, search_cmd(dn, tag, arg->search), cu_cmd);
             break;
 
         case IMAP_CMD_CHECK:
         case IMAP_CMD_NOOP:
-            // TODO: check for pending responses to send here
+            PROP_GO(&e, dn_gather_updates(dn, true), cu_cmd);
             PROP_GO(&e, send_ok(dn, tag, &DSTR_LIT("zzzzz...")), cu_cmd);
             break;
 
         case IMAP_CMD_STORE:
+            // store_cmd has its own handling of updates
             PROP_GO(&e, store_cmd(dn, tag, arg->store), cu_cmd);
             break;
 
         case IMAP_CMD_FETCH:
+            PROP_GO(&e, dn_gather_updates(dn, arg->fetch->uid_mode), cu_cmd);
             PROP_GO(&e, fetch_cmd(dn, tag, arg->fetch), cu_cmd);
             break;
 
         // things we need to support here
         case IMAP_CMD_EXPUNGE:
+            // updates are handled after an UPDATE_SYNC
+            PROP_GO(&e, expunge_cmd(dn, tag), cu_cmd);
+            break;
+
         case IMAP_CMD_COPY:
+            ORIG_GO(&e, E_INTERNAL, "not yet implemented", cu_cmd);
 
         // supported in a different layer
         case IMAP_CMD_CAPA:
@@ -965,7 +979,7 @@ derr_t dn_cmd(dn_t *dn, imap_cmd_t *cmd){
         case IMAP_CMD_CLOSE:
             ORIG_GO(&e, E_INTERNAL, "unhandled command", cu_cmd);
 
-        // unsupported commands in this state
+        // commands which must be handled externally
         case IMAP_CMD_STARTTLS:
         case IMAP_CMD_AUTH:
         case IMAP_CMD_LOGIN:
@@ -980,7 +994,7 @@ derr_t dn_cmd(dn_t *dn, imap_cmd_t *cmd){
         case IMAP_CMD_STATUS:
         case IMAP_CMD_APPEND:
             PROP_GO(&e, send_bad(
-                dn, tag, &DSTR_LIT("command not allowed in SELECTED state")
+                dn, tag, &DSTR_LIT("unexpected command in dn_t")
             ), cu_cmd);
             break;
 
@@ -1081,6 +1095,283 @@ static derr_t send_flags_update(dn_t *dn, unsigned int seq_num,
 
     return e;
 }
+
+static derr_t send_expunge(dn_t *dn, unsigned int seq_num){
+    derr_t e = E_OK;
+
+    imap_resp_arg_t arg = { .expunge = seq_num };
+    imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_EXPUNGE, arg);
+    resp = imap_resp_assert_writable(&e, resp, dn->exts);
+    CHECK(&e);
+
+    PROP(&e, dn->cb->resp(dn->cb, resp) );
+
+    return e;
+}
+
+
+// state for gathering updates
+typedef struct {
+    jsw_atree_t news;  // uid_t->node
+    jsw_atree_t metas;  // uid_t->node
+    jsw_atree_t expunges;  // uid_t->node
+    /* expunge updates can't be freed until after we have emitted messages for
+       them, due to the fact that they have to be removed from the view at the
+       time of emitting messages, and that act will alter the seq num of other
+       messages, which we need to delay */
+    link_t updates_to_free;
+    /* TODO: do I need to keep track of what the original metas were, so that
+             in cases of add/remove a flag we don't report anything?  If so, I
+             will have to add another struct here for tracking those somehow */
+} gather_t;
+
+typedef struct {
+    unsigned int uid;
+    jsw_anode_t node;
+} gathered_t;
+DEF_CONTAINER_OF(gathered_t, node, jsw_anode_t);
+
+static const void *gathered_jsw_get(const jsw_anode_t *node){
+    const gathered_t *gathered = CONTAINER_OF(node, gathered_t, node);
+    return (void*)&gathered->uid;
+}
+
+static void gather_prep(gather_t *gather){
+    jsw_ainit(&gather->news, jsw_cmp_uid, gathered_jsw_get);
+    jsw_ainit(&gather->metas, jsw_cmp_uid, gathered_jsw_get);
+    jsw_ainit(&gather->expunges, jsw_cmp_uid, gathered_jsw_get);
+    link_init(&gather->updates_to_free);
+}
+
+static void gather_free(gather_t *gather){
+    jsw_anode_t *node;
+    while((node = jsw_apop(&gather->news))){
+        gathered_t *gathered = CONTAINER_OF(node, gathered_t, node);
+        free(gathered);
+    }
+    while((node = jsw_apop(&gather->metas))){
+        gathered_t *gathered = CONTAINER_OF(node, gathered_t, node);
+        free(gathered);
+    }
+    while((node = jsw_apop(&gather->expunges))){
+        gathered_t *gathered = CONTAINER_OF(node, gathered_t, node);
+        free(gathered);
+    }
+    link_t *link;
+    while((link = link_list_pop_first(&gather->updates_to_free))){
+        update_t *update = CONTAINER_OF(link, update_t, link);
+        update_free(&update);
+    }
+}
+
+static derr_t gathered_new(gathered_t **out, unsigned int uid){
+    derr_t e = E_OK;
+    *out = NULL;
+
+    gathered_t *gathered = malloc(sizeof(*gathered));
+    if(!out) ORIG(&e, E_NOMEM, "nomem");
+    *gathered = (gathered_t){ .uid = uid };
+
+    *out = gathered;
+
+    return e;
+}
+
+static void gathered_free(gathered_t *gathered){
+    if(!gathered) return;
+    free(gathered);
+}
+
+static derr_t gather_update_new(dn_t *dn, gather_t *gather, update_t *update){
+    derr_t e = E_OK;
+
+    msg_view_t *view = update->arg.new;
+
+    // remember that this uid is new
+    gathered_t *gathered;
+    PROP_GO(&e, gathered_new(&gathered, view->base->uid), cu);
+    jsw_ainsert(&gather->news, &gathered->node);
+
+    // add the view to our views
+    jsw_ainsert(&dn->views, &view->node);
+    update->arg.new = NULL;
+
+cu:
+    update_free(&update);
+    return e;
+}
+
+static derr_t gather_update_meta(dn_t *dn, gather_t *gather, update_t *update){
+    derr_t e = E_OK;
+
+    const msg_meta_t *meta = update->arg.meta;
+
+    // remember that this uid is modified
+    if(!jsw_afind(&gather->metas, &meta->uid, NULL)){
+        gathered_t *gathered;
+        PROP_GO(&e, gathered_new(&gathered, meta->uid), cu);
+        jsw_ainsert(&gather->metas, &gathered->node);
+    }
+
+    // find our view of this uid
+    jsw_anode_t *node = jsw_afind(&dn->views, &meta->uid, NULL);
+    if(!node){
+        // This should never happen since we process messages in order
+        ORIG_GO(&e, E_INTERNAL, "missing uid", cu);
+    }
+
+    // update the meta in our view
+    msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
+    view->flags = &meta->flags;
+
+cu:
+    update_free(&update);
+    return e;
+}
+
+static derr_t gather_update_expunge(
+    dn_t *dn, gather_t *gather, update_t *update
+){
+    derr_t e = E_OK;
+    (void)dn;
+
+    const msg_expunge_t *expunge = update->arg.expunge;
+
+    // remember that this uid is new
+    gathered_t *gathered;
+    PROP_GO(&e, gathered_new(&gathered, expunge->uid), cu);
+    jsw_ainsert(&gather->expunges, &gathered->node);
+
+    // removing the view happens later, so we don't affect the the seq numbers
+
+cu:
+    // delay freeing the update until we remove the message from the view
+    link_list_append(&gather->updates_to_free, &update->link);
+    return e;
+}
+
+static derr_t gather_send_responses(dn_t *dn, gather_t *gather){
+    derr_t e = E_OK;
+    jsw_atrav_t trav;
+    jsw_anode_t *node;
+
+    // step 1: any EXPUNGEs don't get FETCHes or count for EXISTS
+    node = jsw_atfirst(&trav, &gather->expunges);
+    for(; node; node = jsw_atnext(&trav)){
+        gathered_t *gathered = CONTAINER_OF(node, gathered_t, node);
+
+        node = jsw_aerase(&gather->news, &gathered->uid);
+        if(node) gathered_free(CONTAINER_OF(node, gathered_t, node));
+
+        node = jsw_aerase(&gather->metas, &gathered->uid);
+        if(node) gathered_free(CONTAINER_OF(node, gathered_t, node));
+    }
+
+    // step 2: any new messages don't get FETCHes
+    node = jsw_atfirst(&trav, &gather->news);
+    for(; node; node = jsw_atnext(&trav)){
+        gathered_t *gathered = CONTAINER_OF(node, gathered_t, node);
+
+        node = jsw_aerase(&gather->metas, &gathered->uid);
+        if(node) gathered_free(CONTAINER_OF(node, gathered_t, node));
+    }
+
+    // step 3: send flag updates
+    node = jsw_atfirst(&trav, &gather->metas);
+    for(; node; node = jsw_atnext(&trav)){
+        gathered_t *gathered = CONTAINER_OF(node, gathered_t, node);
+
+        // find our view of this uid
+        size_t index;
+        node = jsw_afind(&dn->views, &gathered->uid, &index);
+        if(!node) ORIG(&e, E_INTERNAL, "missing uid");
+
+        msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
+
+        unsigned int seq_num;
+        PROP(&e, index_to_seq_num(index, &seq_num) );
+        bool recent = false;
+        PROP(&e, send_flags_update(dn, seq_num, *view->flags, recent) );
+    }
+
+    // step 4: send expunge updates (in reverse order)
+    node = jsw_atlast(&trav, &gather->expunges);
+    for(; node; node = jsw_atprev(&trav)){
+        gathered_t *gathered = CONTAINER_OF(node, gathered_t, node);
+
+        // find our view of this uid
+        size_t index;
+        jsw_anode_t *node = jsw_afind(&dn->views, &gathered->uid, &index);
+        if(!node) ORIG(&e, E_INTERNAL, "missing uid");
+
+        // just remove and delete the view
+        msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
+        jsw_aerase(&dn->views, &gathered->uid);
+        msg_view_free(&view);
+
+        unsigned int seq_num;
+        PROP(&e, index_to_seq_num(index, &seq_num) );
+        PROP(&e, send_expunge(dn, seq_num) );
+    }
+
+    // step 5: send a new EXISTS response
+    if(gather->news.size){
+        PROP(&e, send_exists_resp(dn) );
+    }
+
+    return e;
+}
+
+// send unsolicited untagged responses for external updates to mailbox
+derr_t dn_gather_updates(dn_t *dn, bool allow_expunge){
+    derr_t e = E_OK;
+
+    /* updates need to be processed in batches:
+         - no meta updates should be passed for newly created messages
+         - only one FETCH is allowed per UID
+         - EXPUNGEs should come next and be reverse-ordered
+         - EXISTS should come last, to make a delete-one-create-another
+           situation a little less ambiguous */
+
+    gather_t gather;
+    gather_prep(&gather);
+
+    update_t *update, *temp;
+    LINK_FOR_EACH_SAFE(update, temp, &dn->pending_updates, update_t, link){
+        switch(update->type){
+            // ignore everything but the status-type response
+            case UPDATE_NEW:
+                link_remove(&update->link);
+                PROP_GO(&e, gather_update_new(dn, &gather, update), cu);
+                break;
+
+            case UPDATE_META:
+                link_remove(&update->link);
+                PROP_GO(&e, gather_update_meta(dn, &gather, update), cu);
+                break;
+
+            case UPDATE_EXPUNGE:
+                if(!allow_expunge) break;
+                link_remove(&update->link);
+                PROP_GO(&e, gather_update_expunge(dn, &gather, update), cu);
+                break;
+
+            case UPDATE_SYNC:
+                // this must be the point up to which we are emitting messages
+                link_remove(&update->link);
+                update_free(&update);
+                goto exit_loop;
+        }
+    }
+exit_loop:
+
+    PROP_GO(&e, gather_send_responses(dn, &gather), cu);
+
+cu:
+    gather_free(&gather);
+    return e;
+}
+
 
 static derr_t send_store_resp_noupdate(dn_t *dn, const exp_flags_t *exp_flags){
     derr_t e = E_OK;
@@ -1288,6 +1579,7 @@ static derr_t do_work_store(dn_t *dn){
 
         switch(update->type){
             case UPDATE_NEW:
+                // TODO: handle these
                 LOG_ERROR("don't know what to do with UPDATE_NEW yet\n");
                 break;
 
@@ -1300,7 +1592,7 @@ static derr_t do_work_store(dn_t *dn){
                 break;
 
             case UPDATE_EXPUNGE:
-                // skip expunges during STORE handling
+                // TODO: handle these in UID mode
                 break;
 
             case UPDATE_SYNC:
@@ -1327,6 +1619,28 @@ cu:
     ie_st_resp_free(st_resp);
     seq_set_builder_free(&ssb);
     dn_free_store(dn);
+    return e;
+}
+
+
+static derr_t do_work_expunge(dn_t *dn){
+    derr_t e = E_OK;
+
+    ie_st_resp_t *st_resp = NULL;
+
+    PROP_GO(&e, dn_gather_updates(dn, true), cu);
+
+    // done expunging
+    PROP_GO(&e,
+        send_ok(dn,
+            dn->expunge.tag,
+            &DSTR_LIT("I had Frankie whack 'em for ya")
+        ),
+    cu);
+
+cu:
+    dn_free_expunge(dn);
+    ie_st_resp_free(st_resp);
     return e;
 }
 
@@ -1375,6 +1689,11 @@ derr_t dn_do_work(dn_t *dn, bool *noop){
         PROP(&e, do_work_store(dn) );
     }
 
+    if(dn->expunge.state == DN_WAIT_READY){
+        *noop = false;
+        PROP(&e, do_work_expunge(dn) );
+    }
+
     if(dn->disconnect.state == DN_WAIT_READY){
         *noop = false;
         PROP(&e, do_work_disconnect(dn) );
@@ -1384,13 +1703,19 @@ derr_t dn_do_work(dn_t *dn, bool *noop){
 }
 
 void dn_imaildir_update(dn_t *dn, update_t *update){
-    bool ours = update->type == UPDATE_SYNC;
+    // ignore updates that come in before we have built a view
+    if(!dn->selected){
+        update_free(&update);
+        return;
+    }
 
     link_list_append(&dn->pending_updates, &update->link);
 
-    if(ours){
+    if(update->type == UPDATE_SYNC){
         if(dn->store.state == DN_WAIT_WAITING){
             dn->store.state = DN_WAIT_READY;
+        }else if(dn->expunge.state == DN_WAIT_WAITING){
+            dn->expunge.state = DN_WAIT_READY;
         }else if(dn->disconnect.state == DN_WAIT_WAITING){
             dn->disconnect.state = DN_WAIT_READY;
         }else{
@@ -1402,6 +1727,14 @@ void dn_imaildir_update(dn_t *dn, update_t *update){
 
 // we have to free the view as we unregister
 void dn_imaildir_preunregister(dn_t *dn){
+    /* free all the message views before freeing updates (which might
+       invalidate some views) */
+    jsw_anode_t *node;
+    while((node = jsw_apop(&dn->views))){
+        msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
+        msg_view_free(&view);
+    }
+
     // free any unhandled updates
     link_t *link;
     while((link = link_list_pop_first(&dn->pending_updates))){
@@ -1409,12 +1742,7 @@ void dn_imaildir_preunregister(dn_t *dn){
         update_free(&update);
     }
 
-    // free all the message views
-    jsw_anode_t *node;
-    while((node = jsw_apop(&dn->views))){
-        msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
-        msg_view_free(&view);
-    }
     dn_free_store(dn);
+    dn_free_expunge(dn);
     dn_free_disconnect(dn);
 }

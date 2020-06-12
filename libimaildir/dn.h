@@ -20,6 +20,8 @@ struct dn_cb_i {
 
 // (the first one must be the SELECT)
 derr_t dn_cmd(dn_t *dn, imap_cmd_t *cmd);
+// some commands are handled externally but should still trigger server updates
+derr_t dn_gather_updates(dn_t *dn, bool allow_expunge);
 /* CLOSE is sometimes explicit and sometimes not (LOGOUT), but any such command
    triggers a dn_disconnect */
 derr_t dn_disconnect(dn_t *dn, bool expunge);
@@ -60,6 +62,11 @@ struct dn_t {
         // an expected FLAGS for every uid to be updated
         jsw_atree_t tree;  // exp_flags_t->node
     } store;
+
+    struct {
+        dn_wait_state_e state;
+        ie_dstr_t *tag;
+    } expunge;
 
     /* disconnects can be from CLOSE, SELECT, EXAMINE, or LOGOUT.  They all
        trigger the same behavior (expunging msgs with the \Delete flag) and

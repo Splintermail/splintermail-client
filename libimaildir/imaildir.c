@@ -1373,6 +1373,37 @@ static derr_t relay_update_req_expunge(imaildir_t *m,
     return e;
 }
 
+
+derr_t imaildir_dn_build_views(imaildir_t *m, jsw_atree_t *views,
+        unsigned int *max_uid, unsigned int *uidvld){
+    derr_t e = E_OK;
+
+    *max_uid = 0;
+
+    // make one view for every message present in the mailbox
+    jsw_atrav_t trav;
+    jsw_anode_t *node = jsw_atfirst(&trav, &m->msgs);
+    for(; node != NULL; node = jsw_atnext(&trav)){
+        msg_base_t *msg = CONTAINER_OF(node, msg_base_t, node);
+        msg_view_t *view;
+        PROP(&e, msg_view_new(&view, msg) );
+        jsw_ainsert(views, &view->node);
+        // messages are sorted by uid, so no need to do a comparison
+        *max_uid = msg->ref.uid;
+    }
+
+    // check the highest uid in expunged tree
+    node = jsw_atlast(&trav, &m->expunged);
+    if(node){
+        msg_expunge_t *expunge = CONTAINER_OF(node, msg_expunge_t, node);
+        *max_uid = MAX(*max_uid, expunge->uid);
+    }
+
+    *uidvld = m->log->get_uidvld(m->log);
+
+    return e;
+}
+
 // this will always consume or free req
 derr_t imaildir_dn_request_update(imaildir_t *m, update_req_t *req){
     derr_t e = E_OK;

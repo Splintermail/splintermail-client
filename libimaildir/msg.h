@@ -161,7 +161,7 @@ typedef enum {
 
 typedef union {
     // dn_t owns this
-    msg_view_t *view;
+    msg_view_t *new;
     // dn_t does not own this
     const msg_meta_t *meta;
     // dn_t owns this

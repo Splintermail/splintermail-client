@@ -195,7 +195,7 @@ void update_req_free(update_req_t *req){
 static void update_arg_free(update_type_e type, update_arg_u arg){
     switch(type){
         case UPDATE_NEW:
-            msg_view_free(&arg.view);
+            msg_view_free(&arg.new);
             break;
         case UPDATE_META:
             // val.meta is a pointer to someone else's memory

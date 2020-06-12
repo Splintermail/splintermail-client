@@ -280,6 +280,30 @@ def get_uid(seq_num, write_q, read_q):
     return match[1]
 
 
+def expunge(cmd):
+    with inbox(cmd) as (p, write_q, read_q):
+        uid1 = get_uid(1, write_q, read_q)
+        uid2 = get_uid(2, write_q, read_q)
+
+        # expunge two messages and confirm they report back in reverse order
+        write_q.put(b"1 store 1:2 flags \\Deleted\r\n")
+        wait_for_match(read_q, b"1 OK")
+
+        write_q.put(b"2 expunge\r\n")
+        wait_for_match(read_q, b"\\* 2 EXPUNGE")
+        wait_for_match(read_q, b"\\* 1 EXPUNGE")
+        wait_for_match(read_q, b"2 OK")
+
+        # confirm neither UID is still present
+        write_q.put(b"3 search UID %s\r\n"%uid1)
+        _, ignored = wait_for_match(read_q, b"3 OK")
+        ensure_no_match(ignored, b"\\* SEARCH [0-9]*")
+
+        write_q.put(b"4 search UID %s\r\n"%uid2)
+        _, ignored = wait_for_match(read_q, b"4 OK")
+        ensure_no_match(ignored, b"\\* SEARCH [0-9]*")
+
+
 def expunge_on_close(cmd):
     with inbox(cmd) as (p, write_q, read_q):
         uid = get_uid(1, write_q, read_q)
@@ -353,6 +377,7 @@ if __name__ == "__main__":
         select_close,
         select_select,
         store,
+        expunge,
         expunge_on_close,
         no_expunge_on_logout,
         terminate_with_open_connection,
