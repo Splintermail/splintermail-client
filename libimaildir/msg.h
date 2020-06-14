@@ -200,7 +200,7 @@ derr_t msg_base_del_file(msg_base_t *base, const string_builder_t *basepath);
 // base doesn't own the meta; that must be handled separately
 void msg_base_free(msg_base_t **base);
 
-derr_t msg_view_new(msg_view_t **view, msg_base_t *base);
+derr_t msg_view_new(msg_view_t **view, const msg_base_t *base);
 void msg_view_free(msg_view_t **view);
 
 derr_t msg_expunge_new(msg_expunge_t **out, unsigned int uid,
@@ -214,11 +214,9 @@ update_req_t *update_req_expunge_new(derr_t *e, ie_seq_set_t *uids,
         void *requester);
 void update_req_free(update_req_t *req);
 
-// you have to manually fill the update_t->tree
 // this will also call ref_up (when successful)
 derr_t update_new(update_t **out, refs_t *refs, update_type_e type,
         update_arg_u arg);
-// this will empty the update->updates if you haven't already
 // this will also call ref_dn
 void update_free(update_t **update);
 

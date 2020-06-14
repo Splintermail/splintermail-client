@@ -72,9 +72,10 @@ void up_imaildir_preunregister(up_t *up){
         imap_cmd_cb_t *cb = CONTAINER_OF(link, imap_cmd_cb_t, link);
         cb->free(cb);
     }
-
-    // let go of the link_t for relay commands, but don't try to free them
-    while((link = link_list_pop_first(&up->relay.cmds))){}
+    while((link = link_list_pop_first(&up->relay.cmds))){
+        imap_cmd_t *cmd = CONTAINER_OF(link, imap_cmd_t, link);
+        imap_cmd_free(cmd);
+    }
 }
 
 static ie_dstr_t *write_tag_up(derr_t *e, size_t tag){
@@ -501,9 +502,7 @@ static derr_t next_cmd(up_t *up, const ie_st_code_t *code){
         // we are synchronized!  Is it our first time?
         if(!up->synced){
             up->synced = true;
-            imaildir_up_initial_sync_complete(up->m);
-            // we may have pending relay commands, so enqueue a check
-            up->cb->enqueue(up->cb);
+            PROP(&e, imaildir_up_initial_sync_complete(up->m, up) );
         }
 
         // TODO: start IDLE here, when that's actually supported
@@ -807,7 +806,7 @@ derr_t up_do_work(up_t *up, bool *noop){
         PROP(&e, send_select(up, up->select.uidvld, up->select.himodseq) );
     }
 
-    /* after we are synchronized, but before we send unselect, try to relay
+    /* after we are synchronized, but until we send unselect, try to relay
        any commands that were requested of us by the imaildir_t */
     while(up->synced && !up->unselect_sent
             && !link_list_isempty(&up->relay.cmds)){
@@ -815,7 +814,7 @@ derr_t up_do_work(up_t *up, bool *noop){
         link_t *link;
         // get the command
         link = link_list_pop_first(&up->relay.cmds);
-        const imap_cmd_t *cmd_orig = CONTAINER_OF(link, imap_cmd_t, link);
+        imap_cmd_t *cmd = CONTAINER_OF(link, imap_cmd_t, link);
         // get the callback
         link = link_list_pop_first(&up->relay.cbs);
         imap_cmd_cb_t *cb = CONTAINER_OF(link, imap_cmd_cb_t, link);
@@ -823,13 +822,8 @@ derr_t up_do_work(up_t *up, bool *noop){
         // store the callback
         link_list_append(&up->cbs, &cb->link);
 
-        /* this is weird, but we actually need to make a copy of the cmd we
-           were given and just forget the original */
-        imap_cmd_t *cmd_copy = imap_cmd_copy(&e, cmd_orig);
-        CHECK(&e);
-
         // send the command through the up_cb_i
-        PROP(&e, up->cb->cmd(up->cb, cmd_copy) );
+        PROP(&e, up->cb->cmd(up->cb, cmd) );
     }
 
     return e;

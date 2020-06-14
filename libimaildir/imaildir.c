@@ -11,70 +11,129 @@
 REGISTER_ERROR_TYPE(E_IMAILDIR, "E_IMAILDIR");
 
 // forward declarations
+static derr_t handle_new_message(imaildir_t *m, const msg_base_t *msg);
 static derr_t handle_new_meta(imaildir_t *m, msg_base_t *msg,
         msg_meta_t *new);
 static derr_t handle_new_expunge(imaildir_t *m, msg_expunge_t *expunge);
+static void imaildir_fail(imaildir_t *m, derr_t error);
 
+
+typedef derr_t (*relay_cb_f)(imaildir_t *m, const ie_st_resp_t *st_resp,
+        dn_t *requester);
+
+/* relay_t is what the imaildir uses to track relayed commands.  It has all the
+   information for responding to the original requester or for replaying the
+   command on a new up_t, should the original one fail. */
 typedef struct {
     imaildir_t *m;
-    dn_t *requester;
-    // keep a whole copy of the command
+    // keep a whole copy of the command in case we have to replay it
     imap_cmd_t *cmd;
+    // requester may be set to NULL if the requester disconnects
+    dn_t *requester;
+    // what do we do when we finish?
+    relay_cb_f cb;
+    link_t link;  // imaildir_t->relays
+} relay_t;
+DEF_CONTAINER_OF(relay_t, link, link_t);
+
+
+// builder api
+static relay_t *relay_new(derr_t *e, imaildir_t *m, imap_cmd_t *cmd,
+        dn_t *requester){
+    if(is_error(*e)) goto fail;
+
+    relay_t *relay = malloc(sizeof(*relay));
+    if(!relay) ORIG_GO(e, E_NOMEM, "nomem", fail);
+    *relay = (relay_t){
+        .m = m,
+        .cmd = cmd,
+        .requester = requester,
+    };
+
+    link_init(&relay->link);
+
+    return relay;
+
+fail:
+    imap_cmd_free(cmd);
+    return NULL;
+}
+
+static void relay_free(relay_t *relay){
+    if(!relay) return;
+    imap_cmd_free(relay->cmd);
+    free(relay);
+}
+
+
+// imaildir_cb_t will alert the imaildir_t if/when the command completes
+typedef struct {
+    // remember the relay_t we correspond to
+    relay_t *relay;
     imap_cmd_cb_t cb;
 } imaildir_cb_t;
 DEF_CONTAINER_OF(imaildir_cb_t, cb, imap_cmd_cb_t);
 
-static void imaildir_replay(imaildir_t *m, imaildir_cb_t *new){
-    link_t *link;
-    // sort the callback by its tag when placing it in the list
-    bool placed = false;
-    for(link = m->replays.prev; link != &m->replays; link = link->prev){
-        imap_cmd_cb_t *cb = CONTAINER_OF(link, imap_cmd_cb_t, link);
-        imaildir_cb_t *old = CONTAINER_OF(cb, imaildir_cb_t, cb);
-        if(new->cb.tag > old->cb.tag){
-            placed = true;
-            link_list_append(link, &new->cb.link);
-            break;
+// relay_cmd_done is an imap_cmd_cb_call_f
+static derr_t relay_cmd_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
+    derr_t e = E_OK;
+    imaildir_cb_t *imaildir_cb = CONTAINER_OF(cb, imaildir_cb_t, cb);
+    relay_t *relay = imaildir_cb->relay;
+
+    dn_t *requester = relay->requester;
+
+    // done with this relay
+    link_remove(&relay->link);
+    relay_free(relay);
+
+    // is the requester still around for us to respond to?
+    if(requester){
+
+        ie_st_resp_t *st_copy = NULL;
+        if(st_resp->status != IE_ST_OK){
+            // just pass the failure to the requester
+            st_copy = ie_st_resp_copy(&e, st_resp);
+            CHECK_GO(&e, fail);
         }
+
+        update_arg_u arg = { .sync = st_copy };
+        update_t *update = NULL;
+        PROP_GO(&e, update_new(&update, NULL, UPDATE_SYNC, arg), fail);
+
+        dn_imaildir_update(requester, update);
     }
-    if(!placed){
-        link_list_prepend(&m->replays, &new->cb.link);
-    }
-    // the actual replay happens when we select a new up_t
+
+    return e;
+
+fail:
+    /* we must close accessors who don't have a way to tell they are now
+       out-of-date */
+    imaildir_fail(relay->m, SPLIT(e));
+    /* now we must throw a special error since we are about to return
+       control to an accessor that probably just got closed */
+    RETHROW(&e, &e, E_IMAILDIR);
 }
 
 // imaildir_cb_free is an imap_cmd_cb_free_f
 static void imaildir_cb_free(imap_cmd_cb_t *cb){
     if(!cb) return;
     imaildir_cb_t *imaildir_cb = CONTAINER_OF(cb, imaildir_cb_t, cb);
-    imaildir_t *m = imaildir_cb->m;
-
-    // do we need to replay this command on a different up_t?
-    if(!m->closed){
-        imaildir_replay(m, imaildir_cb);
-        return;
-    }
-
-    // otherwise, continue with freeing it
-    imap_cmd_free(imaildir_cb->cmd);
     imap_cmd_cb_free(&imaildir_cb->cb);
     free(imaildir_cb);
 }
 
-static imaildir_cb_t *imaildir_cb_new(derr_t *e, imaildir_t *m,
-        dn_t *requester, const ie_dstr_t *tag, imap_cmd_t *cmd,
-        imap_cmd_cb_call_f call){
+// this takes cmd just to free it if we fail
+static imaildir_cb_t *imaildir_cb_new(derr_t *e, relay_t *relay,
+        const ie_dstr_t *tag_str){
     if(is_error(*e)) goto fail;
 
     imaildir_cb_t *imaildir_cb = malloc(sizeof(*imaildir_cb));
     if(!imaildir_cb) ORIG_GO(e, E_NOMEM, "nomem", fail);
-    *imaildir_cb = (imaildir_cb_t){
-        .m = m,
-        .requester = requester,
-        .cmd = cmd,
-    };
+    *imaildir_cb = (imaildir_cb_t){ .relay = relay };
 
-    imap_cmd_cb_init(e, &imaildir_cb->cb, tag, call, imaildir_cb_free);
+    imap_cmd_cb_init(e,
+        &imaildir_cb->cb, tag_str, relay_cmd_done, imaildir_cb_free
+    );
     CHECK_GO(e, fail_malloc);
 
     return imaildir_cb;
@@ -82,7 +141,6 @@ static imaildir_cb_t *imaildir_cb_new(derr_t *e, imaildir_t *m,
 fail_malloc:
     free(imaildir_cb);
 fail:
-    imap_cmd_free(cmd);
     return NULL;
 }
 
@@ -430,7 +488,7 @@ derr_t imaildir_init(imaildir_t *m, string_builder_t path, const dstr_t *name,
 
     link_init(&m->ups);
     link_init(&m->dns);
-    link_init(&m->replays);
+    link_init(&m->relays);
 
     // init msgs
     jsw_ainit(&m->msgs, jsw_cmp_uid, msg_base_jsw_get);
@@ -480,11 +538,11 @@ void imaildir_free(imaildir_t *m){
     // if we weren't already closed, we definitely are now
     m->closed = true;
 
-    // free any replays we were holding on to
+    // free any relays we were holding on to
     link_t *link;
-    while((link = link_list_pop_first(&m->replays))){
-        imap_cmd_cb_t *cb = CONTAINER_OF(link, imap_cmd_cb_t, link);
-        cb->free(cb);
+    while((link = link_list_pop_first(&m->relays))){
+        relay_t *relay = CONTAINER_OF(link, relay_t, link);
+        relay_free(relay);
     }
 
     free_trees(m);
@@ -509,6 +567,12 @@ void imaildir_forceclose(imaildir_t *m){
     imaildir_fail(m, E_OK);
 }
 
+static void promote_up_to_primary(imaildir_t *m, up_t *up){
+    unsigned int uidvld = m->log->get_uidvld(m->log);
+    unsigned long himodseq_up = m->log->get_himodseq_up(m->log);
+    up_imaildir_select(up, uidvld, himodseq_up);
+}
+
 void imaildir_register_up(imaildir_t *m, up_t *up){
     // check if we will be the primary up_t
     bool is_primary = link_list_isempty(&m->ups);
@@ -520,24 +584,10 @@ void imaildir_register_up(imaildir_t *m, up_t *up){
     up->m = m;
 
     if(is_primary){
-        maildir_log_i *log = m->log;
-        unsigned int uidvld = log->get_uidvld(log);
-        unsigned long himodseq_up = log->get_himodseq_up(log);
-        up_imaildir_select(up, uidvld, himodseq_up);
-        // replay any uncompleted commands
-        link_t *link;
-        while((link = link_list_pop_first(&m->replays))){
-            imap_cmd_cb_t *cb = CONTAINER_OF(link, imap_cmd_cb_t, link);
-            imaildir_cb_t *imaildir_cb = CONTAINER_OF(cb, imaildir_cb_t, cb);
-            /* this is weird, but we're going to pass the original copy of cmd,
-               and we'll just have to make the copy on the up_t thread to get
-               the error handling right */
-            up_imaildir_relay_cmd(up, imaildir_cb->cmd, cb);
-        }
+        promote_up_to_primary(m, up);
     }else{
-        // if the primary is already synced, trigger an immediate sync call.
-        up_t *primary = CONTAINER_OF(m->ups.next, up_t, link);
-        if(primary->synced){
+        // if this mailbox has synced before, trigger an immediate sync call
+        if(m->synced){
             up->cb->synced(up->cb);
         }
     }
@@ -562,9 +612,16 @@ size_t imaildir_unregister_up(up_t *up){
     // don't do additional handling during a force_close
     if(m->closed) return --m->naccessors;
 
-    // TODO: detect if the primary up_t has changed
-    // remove from its list
+    bool was_primary = (&up->link == m->ups.next);
+
+    // remove from list
     link_remove(&up->link);
+
+    if(was_primary && !link_list_isempty(&m->ups)){
+        // promote the next up_t to be a primary
+        up_t *primary = CONTAINER_OF(m->ups.next, up_t, link);
+        promote_up_to_primary(m, primary);
+    }
 
     return --m->naccessors;
 }
@@ -577,6 +634,14 @@ size_t imaildir_unregister_dn(dn_t *dn){
     if(!m->closed){
         // remove from its list
         link_remove(&dn->link);
+    }
+
+    // clean up references to this dn_t in the relay_t's
+    relay_t *relay;
+    LINK_FOR_EACH(relay, &m->relays, relay_t, link){
+        if(relay->requester == dn){
+            relay->requester = NULL;
+        }
     }
 
     return --m->naccessors;
@@ -888,15 +953,56 @@ derr_t imaildir_up_handle_static_fetch_attr(imaildir_t *m,
     // save the update information to the log
     PROP(&e, m->log->update_msg(m->log, base) );
 
+    // maybe send updates to dn_t's
+    PROP(&e, handle_new_message(m, base) );
+
     return e;
+
+    // TODO: it seems like this should raise an E_IMAILDIR
 }
 
-void imaildir_up_initial_sync_complete(imaildir_t *m){
-    // send the signal to all the conn_up's
-    up_t *up;
-    LINK_FOR_EACH(up, &m->ups, up_t, link){
-        up->cb->synced(up->cb);
+derr_t imaildir_up_initial_sync_complete(imaildir_t *m, up_t *up){
+    derr_t e = E_OK;
+
+    /* only broadcast the synced event the first time an up_t syncs; after that
+       we are already sure that we are in a reasonable state relative to the
+       remote mailbox */
+    if(!m->synced){
+        m->synced = true;
+        // send the signal to all the conn_up's
+        up_t *up;
+        LINK_FOR_EACH(up, &m->ups, up_t, link){
+            up->cb->synced(up->cb);
+        }
     }
+
+    // replay any uncompleted commands
+    imap_cmd_t *cmd = NULL;
+    relay_t *relay;
+    relay_t *temp;
+    LINK_FOR_EACH_SAFE(relay, temp, &m->relays, relay_t, link){
+        // discard relay_t's without an active requester
+        if(!relay->requester){
+            link_remove(&relay->link);
+            relay_free(relay);
+            continue;
+        }
+
+        cmd = imap_cmd_copy(&e, relay->cmd);
+        CHECK(&e);
+
+        imaildir_cb_t *imaildir_cb =
+            imaildir_cb_new(&e, relay, relay->cmd->tag);
+        CHECK_GO(&e, fail);
+
+        up_imaildir_relay_cmd(up, cmd, &imaildir_cb->cb);
+    }
+
+    return e;
+
+fail:
+    imap_cmd_free(cmd);
+    return e;
 }
 
 derr_t imaildir_up_delete_msg(imaildir_t *m, unsigned int uid){
@@ -928,6 +1034,59 @@ derr_t imaildir_up_delete_msg(imaildir_t *m, unsigned int uid){
 }
 
 ///////////////// interface to dn_t /////////////////
+
+static void empty_unsent_updates(link_t *unsent){
+    link_t *link;
+    while((link = link_list_pop_first(unsent))){
+        update_t *update = CONTAINER_OF(link, update_t, link);
+        update_free(&update);
+    }
+}
+
+/* Unlike handle_new_meta() and handle_new_expunge(), this function is called
+   after the new information is already committed to persistent storage, so
+   all we have to do now is send updates.  Ultimately, this is due to the fact
+   that in the UPDATE_META and UPDATE_EXPUNGE case, the dn_t's have
+   msg_view_t's that point to things we would like to free, so in those cases,
+   we need to be extremely careful about e.g. freeing and old msg_meta_t during
+   error handling that some dn_t will still try to read.
+   TODO: consider redesigning the msg_view_t to not share memory so all the
+         handle_new_*() functions can be this simple */
+static derr_t handle_new_message(imaildir_t *m, const msg_base_t *msg){
+    derr_t e = E_OK;
+
+    if(link_list_isempty(&m->dns)) return e;
+
+    link_t unsent;
+    link_init(&unsent);
+
+    msg_view_t *view;
+
+    dn_t *dn;
+    LINK_FOR_EACH(dn, &m->dns, dn_t, link){
+        PROP_GO(&e, msg_view_new(&view, msg), fail);
+
+        update_arg_u arg = { .new = view };
+        update_t *update;
+        PROP_GO(&e, update_new(&update, NULL, UPDATE_NEW, arg), fail_copy);
+
+        link_list_append(&unsent, &update->link);
+    }
+
+    LINK_FOR_EACH(dn, &m->dns, dn_t, link){
+        link_t *link = link_list_pop_first(&unsent);
+        update_t *update = CONTAINER_OF(link, update_t, link);
+        dn_imaildir_update(dn, update);
+    }
+
+    return e;
+
+fail_copy:
+    msg_view_free(&view);
+fail:
+    empty_unsent_updates(&unsent);
+    return e;
+}
 
 // a struct for deleting an old meta after its replacement is fully accepted
 typedef struct {
@@ -967,15 +1126,7 @@ fail_old:
     return e;
 }
 
-static void empty_unsent_updates(link_t *unsent){
-    link_t *link;
-    while((link = link_list_pop_first(unsent))){
-        update_t *update = CONTAINER_OF(link, update_t, link);
-        update_free(&update);
-    }
-}
-
-static derr_t prep_meta_updates(imaildir_t *m, link_t *unsent,
+static derr_t make_meta_updates(imaildir_t *m, link_t *unsent,
         const msg_meta_t *new, refs_t *refs){
     derr_t e = E_OK;
 
@@ -1001,7 +1152,17 @@ static derr_t handle_new_meta(imaildir_t *m, msg_base_t *msg,
         msg_meta_t *new){
     derr_t e = E_OK;
 
-    bool distribute = !link_list_isempty(&m->dns);
+    /* ignore updates to EXPUNGED messages, to ensure that we don't
+       accidentally call log.update_msg(), which would overwrite the expunge
+       entry we already have at that UID */
+    if(msg->state == MSG_BASE_EXPUNGED){
+        msg_meta_free(&new);
+        return e;
+    }
+
+    bool distribute =
+        msg->state == MSG_BASE_FILLED && !link_list_isempty(&m->dns);
+
     link_t unsent;
     link_init(&unsent);
     old_meta_t *old_meta = NULL;
@@ -1012,7 +1173,7 @@ static derr_t handle_new_meta(imaildir_t *m, msg_base_t *msg,
     if(distribute){
         // prepare to distribute updates
         PROP_GO(&e, old_meta_new(&old_meta, old), fail);
-        PROP_GO(&e, prep_meta_updates(m, &unsent, new, &old_meta->refs), fail);
+        PROP_GO(&e, make_meta_updates(m, &unsent, new, &old_meta->refs), fail);
     }
 
     // update the message in the log
@@ -1114,7 +1275,7 @@ fail:
 }
 
 
-static derr_t prep_expunge_updates(imaildir_t *m, link_t *unsent,
+static derr_t make_expunge_updates(imaildir_t *m, link_t *unsent,
         const msg_expunge_t *expunge, refs_t *refs){
     derr_t e = E_OK;
 
@@ -1150,7 +1311,6 @@ fail:
 static derr_t handle_new_expunge(imaildir_t *m, msg_expunge_t *expunge){
     derr_t e = E_OK;
 
-    bool distribute = !link_list_isempty(&m->dns);
     link_t unsent;
     link_init(&unsent);
     old_base_t *old_base = NULL;
@@ -1162,23 +1322,26 @@ static derr_t handle_new_expunge(imaildir_t *m, msg_expunge_t *expunge){
     // get the corresponding message, if one exists
     // TODO: why would it ever not exist??
     msg_base_t *msg = NULL;
+    msg_base_state_e old_state = 0;
     jsw_anode_t *node = jsw_afind(&m->msgs, &expunge->uid, NULL);
     if(node){
         msg = CONTAINER_OF(node, msg_base_t, node);
         // set the state
+        old_state = msg->state;
         msg->state = MSG_BASE_EXPUNGED;
     }
 
+    bool distribute =
+        msg && old_state == MSG_BASE_FILLED && !link_list_isempty(&m->dns);
+
     if(distribute){
-        if(msg){
-            // delay the freeing of the old msg
-            PROP_GO(&e, old_base_new(&old_base, m, msg), fail);
-            update_refs = &old_base->refs;
-        }
+        // delay the freeing of the old msg
+        PROP_GO(&e, old_base_new(&old_base, m, msg), fail);
+        update_refs = &old_base->refs;
 
         // prepare to distribute updates
         PROP_GO(&e,
-            prep_expunge_updates(m, &unsent, expunge, update_refs),
+            make_expunge_updates(m, &unsent, expunge, update_refs),
         fail);
     }
 
@@ -1199,10 +1362,8 @@ static derr_t handle_new_expunge(imaildir_t *m, msg_expunge_t *expunge){
             dn_imaildir_update(dn, update);
         }
 
-        if(old_base){
-            // drop the ref we held during the update distribution
-            ref_dn(&old_base->refs);
-        }
+        // drop the ref we held during the update distribution
+        ref_dn(&old_base->refs);
     }else if(msg){
         msg_base_free(&msg);
     }
@@ -1287,37 +1448,6 @@ static derr_t service_update_req_store(imaildir_t *m, update_req_t *req){
     return e;
 }
 
-// relay_cmd_done is an imap_cmd_cb_call_f
-static derr_t relay_cmd_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
-    derr_t e = E_OK;
-    imaildir_cb_t *imaildir_cb = CONTAINER_OF(cb, imaildir_cb_t, cb);
-    imaildir_t *m = imaildir_cb->m;
-
-    ie_st_resp_t *st_copy = NULL;
-    if(st_resp->status != IE_ST_OK){
-        // just pass the failure to the requester
-        st_copy = ie_st_resp_copy(&e, st_resp);
-        CHECK_GO(&e, fail);
-    }
-
-    dn_t *requester = imaildir_cb->requester;
-    update_arg_u arg = { .sync = st_copy };
-    update_t *update = NULL;
-    PROP_GO(&e, update_new(&update, NULL, UPDATE_SYNC, arg), fail);
-
-    dn_imaildir_update(requester, update);
-
-    return e;
-
-fail:
-    /* we must close accessors who don't have a way to tell they are now
-       out-of-date */
-    imaildir_fail(m, SPLIT(e));
-    /* now we must throw a special error since we are about to return
-       control to an accessor that probably just got closed */
-    RETHROW(&e, &e, E_IMAILDIR);
-}
-
 static derr_t relay_update_req_store(imaildir_t *m, update_req_t *req){
     derr_t e = E_OK;
     dn_t *requester = req->requester;
@@ -1329,21 +1459,37 @@ static derr_t relay_update_req_store(imaildir_t *m, update_req_t *req){
         .store = STEAL(ie_store_cmd_t, &req->val.uid_store)
     };
     imap_cmd_t *cmd = imap_cmd_new(&e, tag_str, IMAP_CMD_STORE, arg);
-    imaildir_cb_t *imaildir_cb =
-        imaildir_cb_new(&e, m, requester, tag_str, cmd, relay_cmd_done);
+    relay_t *relay = relay_new(&e, m, cmd, requester);
     CHECK(&e);
 
-    if(link_list_isempty(&m->ups)){
-        // store this for later
-        imaildir_replay(m, imaildir_cb);
-    }else{
-        // relay through the primary up_t
+    imap_cmd_t *cmd_copy;
+    // relay through the primary up_t, only if the primary up_t is synced
+    if(!link_list_isempty(&m->ups)){
         up_t *up = CONTAINER_OF(m->ups.next, up_t, link);
-        up_imaildir_relay_cmd(up, imaildir_cb->cmd, &imaildir_cb->cb);
+        if(up->synced){
+            cmd_copy = imap_cmd_copy(&e, relay->cmd);
+            CHECK_GO(&e, fail_relay);
+
+            imaildir_cb_t *imaildir_cb = imaildir_cb_new(&e, relay, tag_str);
+            CHECK_GO(&e, fail_cmd);
+
+            up_imaildir_relay_cmd(up, cmd_copy, &imaildir_cb->cb);
+        }
     }
 
+    /* once we store the relay and return E_OK, any failures crash the whole
+       imaildir_t, instead of the dn_t */
+    link_list_append(&m->relays, &relay->link);
+
+    return e;
+
+fail_cmd:
+    imap_cmd_free(cmd_copy);
+fail_relay:
+    relay_free(relay);
     return e;
 }
+
 
 static derr_t relay_update_req_expunge(imaildir_t *m,
         update_req_t *req){
@@ -1357,19 +1503,34 @@ static derr_t relay_update_req_expunge(imaildir_t *m,
         .uid_expunge = STEAL(ie_seq_set_t, &req->val.uids)
     };
     imap_cmd_t *cmd = imap_cmd_new(&e, tag_str, IMAP_CMD_EXPUNGE, arg);
-    imaildir_cb_t *imaildir_cb =
-        imaildir_cb_new(&e, m, requester, tag_str, cmd, relay_cmd_done);
+    relay_t *relay = relay_new(&e, m, cmd, requester);
     CHECK(&e);
 
-    if(link_list_isempty(&m->ups)){
-        // store this for later
-        imaildir_replay(m, imaildir_cb);
-    }else{
-        // relay through the primary up_t
+    imap_cmd_t *cmd_copy;
+    // relay through the primary up_t, only if the primary up_t is synced
+    if(!link_list_isempty(&m->ups)){
         up_t *up = CONTAINER_OF(m->ups.next, up_t, link);
-        up_imaildir_relay_cmd(up, imaildir_cb->cmd, &imaildir_cb->cb);
+        if(up->synced){
+            cmd_copy = imap_cmd_copy(&e, relay->cmd);
+            CHECK_GO(&e, fail_relay);
+
+            imaildir_cb_t *imaildir_cb = imaildir_cb_new(&e, relay, tag_str);
+            CHECK_GO(&e, fail_cmd);
+
+            up_imaildir_relay_cmd(up, cmd_copy, &imaildir_cb->cb);
+        }
     }
 
+    /* once we store the relay and return E_OK, any failures crash the whole
+       imaildir_t, instead of the dn_t */
+    link_list_append(&m->relays, &relay->link);
+
+    return e;
+
+fail_cmd:
+    imap_cmd_free(cmd_copy);
+fail_relay:
+    relay_free(relay);
     return e;
 }
 
@@ -1385,11 +1546,13 @@ derr_t imaildir_dn_build_views(imaildir_t *m, jsw_atree_t *views,
     jsw_anode_t *node = jsw_atfirst(&trav, &m->msgs);
     for(; node != NULL; node = jsw_atnext(&trav)){
         msg_base_t *msg = CONTAINER_OF(node, msg_base_t, node);
+        // messages are sorted by uid, so no need to do a comparison
+        *max_uid = msg->ref.uid;
+        // skip UNFILLED or EXPUNGED messages
+        if(msg->state != MSG_BASE_FILLED) continue;
         msg_view_t *view;
         PROP(&e, msg_view_new(&view, msg) );
         jsw_ainsert(views, &view->node);
-        // messages are sorted by uid, so no need to do a comparison
-        *max_uid = msg->ref.uid;
     }
 
     // check the highest uid in expunged tree

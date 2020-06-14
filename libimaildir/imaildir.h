@@ -113,6 +113,8 @@ struct imaildir_t {
     ie_mflags_t mflags;
     // crypto for this box
     const keypair_t *keypair;
+    // has this imaildir synced yet? (subsequent sync's don't send updates)
+    bool synced;
 
     // if SELECT returned NO, delete the box afterwards
     bool rm_on_close;
@@ -145,9 +147,8 @@ struct imaildir_t {
        any replay logic).
 
        All things considered, the only IMAP commands which cannot safely be
-       duplicated are APPEND, COPY, and RENAME (I think).
-    */
-    link_t replays;
+       duplicated are APPEND, COPY, and RENAME (I think). */
+    link_t relays;  // relay_t->link
     // the id in the tag of commands originating with us
     size_t tag;
 
@@ -246,7 +247,7 @@ derr_t imaildir_up_update_flags(imaildir_t *m, msg_base_t *base,
 derr_t imaildir_up_handle_static_fetch_attr(imaildir_t *m,
         msg_base_t *base, const ie_fetch_resp_t *fetch);
 
-void imaildir_up_initial_sync_complete(imaildir_t *m);
+derr_t imaildir_up_initial_sync_complete(imaildir_t *m, up_t *up);
 
 derr_t imaildir_up_delete_msg(imaildir_t *m, unsigned int uid);
 

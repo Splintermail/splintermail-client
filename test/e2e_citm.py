@@ -373,10 +373,62 @@ def noop(cmd):
             wait_for_match(r2, b"2b OK")
 
 
+def up_transition(cmd):
+    with run_subproc(cmd) as (p, out_q):
+        with _session() as (w1, r1):
+            with _session() as (w2, r2):
+                # let the second connection be the primary up_t
+                w2.put(b"1b select INBOX\r\n")
+                wait_for_match(r2, b"1b OK")
+
+                w1.put(b"1a select INBOX\r\n")
+                wait_for_match(r1, b"1a OK")
+
+                # Make sure everything is working
+                w1.put(b"2a STORE 1 flags ()\r\n")
+                wait_for_match(r1, b"2a OK")
+                w2.put(b"2b STORE 1 flags \\Answered\r\n")
+                wait_for_match(r2, b"2b OK")
+
+            # Make sure the first connection still works
+            w1.put(b"3a STORE 1 flags ()\r\n")
+            wait_for_match(r1, b"\\* 1 FETCH \\(FLAGS \\(\\)\\)")
+            wait_for_match(r1, b"3a OK")
+
+
 def terminate_with_open_connection(cmd):
     with run_subproc(cmd) as (p, out_q):
         with run_connection() as (write_q, read_q):
             wait_for_match(read_q, b"\\* OK")
+
+            p.send_signal(signal.SIGTERM)
+            p.wait(0.1)
+            assert p.poll() is not None, "SIGTERM was not handled fast enough"
+
+
+def terminate_with_open_session(cmd):
+    with run_subproc(cmd) as (p, out_q):
+        with run_connection() as (write_q, read_q):
+            wait_for_match(read_q, b"\\* OK")
+
+            write_q.put(b"1 login test@splintermail.com password\r\n")
+            wait_for_match(read_q, b"1 OK")
+
+            p.send_signal(signal.SIGTERM)
+            p.wait(0.1)
+            assert p.poll() is not None, "SIGTERM was not handled fast enough"
+
+
+def terminate_with_open_mailbox(cmd):
+    with run_subproc(cmd) as (p, out_q):
+        with run_connection() as (write_q, read_q):
+            wait_for_match(read_q, b"\\* OK")
+
+            write_q.put(b"1 login test@splintermail.com password\r\n")
+            wait_for_match(read_q, b"1 OK")
+
+            write_q.put(b"2 select INBOX\r\n")
+            wait_for_match(read_q, b"2 OK")
 
             p.send_signal(signal.SIGTERM)
             p.wait(0.1)
@@ -413,7 +465,10 @@ if __name__ == "__main__":
         expunge_on_close,
         no_expunge_on_logout,
         noop,
+        up_transition,
         terminate_with_open_connection,
+        terminate_with_open_session,
+        terminate_with_open_mailbox,
     ]
 
     for test in tests:

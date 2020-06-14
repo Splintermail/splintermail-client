@@ -98,7 +98,7 @@ void msg_base_free(msg_base_t **base){
     *base = NULL;
 }
 
-derr_t msg_view_new(msg_view_t **view, msg_base_t *base){
+derr_t msg_view_new(msg_view_t **view, const msg_base_t *base){
     derr_t e = E_OK;
 
     *view = malloc(sizeof(**view));

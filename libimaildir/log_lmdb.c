@@ -810,4 +810,3 @@ derr_t imaildir_log_rm(const string_builder_t *dirpath){
 
     return e;
 }
-
