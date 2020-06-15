@@ -13,6 +13,7 @@ import re
 import subprocess
 import threading
 import ssl
+import codecs
 
 
 class IOThread(threading.Thread):
@@ -395,6 +396,60 @@ def up_transition(cmd):
             wait_for_match(r1, b"\\* 1 FETCH \\(FLAGS \\(\\)\\)")
             wait_for_match(r1, b"3a OK")
 
+def do_passthru_test(p, write_q, read_q):
+    write_q.put(b"1 LIST \"\" *\r\n")
+    wait_for_match(read_q, b"\\* LIST \\(.*\\) \"/\" INBOX")
+    wait_for_match(read_q, b"1 OK")
+
+    write_q.put(b"2 LSUB \"\" *\r\n")
+    wait_for_match(read_q, b"2 OK")
+
+    write_q.put(b"3 STATUS INBOX (MESSAGES)\r\n")
+    wait_for_match(read_q, b"\\* STATUS INBOX \\(MESSAGES [0-9]*\\)")
+    wait_for_match(read_q, b"3 OK")
+
+    # test SUBSCRIBE and UNSUBSCRIBE
+    write_q.put(b"4 SUBSCRIBE INBOX\r\n")
+    wait_for_match(read_q, b"4 OK")
+
+    write_q.put(b"5 LSUB \"\" *\r\n")
+    wait_for_match(read_q, b"\\* LSUB \\(.*\\) \"/\" INBOX")
+    wait_for_match(read_q, b"5 OK")
+
+    write_q.put(b"6 UNSUBSCRIBE INBOX\r\n")
+    wait_for_match(read_q, b"6 OK")
+
+    write_q.put(b"7 LSUB \"\" *\r\n")
+    _, ignored = wait_for_match(read_q, b"7 OK")
+    ensure_no_match(ignored, b"\\* LSUB \\(.*\\) \"/\" INBOX")
+
+    # test CREATE and DELETE
+    name = codecs.encode(b"deleteme_" + os.urandom(5), "hex_codec")
+
+    write_q.put(b"8 CREATE %s\r\n"%name)
+    wait_for_match(read_q, b"8 OK")
+
+    write_q.put(b"9 LIST \"\" *\r\n")
+    wait_for_match(read_q, b"\\* LIST \\(.*\\) \"/\" %s"%name)
+    wait_for_match(read_q, b"9 OK")
+
+    write_q.put(b"10 DELETE %s\r\n"%name)
+    wait_for_match(read_q, b"10 OK")
+
+    write_q.put(b"11 LIST \"\" *\r\n")
+    _, ignored = wait_for_match(read_q, b"11 OK")
+    ensure_no_match(ignored, b"\\* LIST \\(.*\\) \"/\" %s"%name)
+
+
+def passthru_unselected(cmd):
+    with session(cmd) as (p, write_q, read_q):
+        do_passthru_test(p, write_q, read_q)
+
+
+def passthru_selected(cmd):
+    with inbox(cmd) as (p, write_q, read_q):
+        do_passthru_test(p, write_q, read_q)
+
 
 def terminate_with_open_connection(cmd):
     with run_subproc(cmd) as (p, out_q):
@@ -466,6 +521,8 @@ if __name__ == "__main__":
         no_expunge_on_logout,
         noop,
         up_transition,
+        passthru_unselected,
+        passthru_selected,
         terminate_with_open_connection,
         terminate_with_open_session,
         terminate_with_open_mailbox,

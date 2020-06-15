@@ -44,6 +44,7 @@ typedef union {
     // nothing for sub
     // nothing for unsub
 } passthru_resp_arg_u;
+DEF_STEAL_STRUCT(passthru_resp_arg_u);
 
 typedef struct {
     passthru_type_e type;

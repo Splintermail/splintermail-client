@@ -966,6 +966,15 @@ static bool intercept_cmd_type(imap_cmd_type_t type){
         // CAPABILTIES can all be handled in one place
         case IMAP_CMD_CAPA:
 
+        // passthru commands
+        case IMAP_CMD_LIST:
+        case IMAP_CMD_LSUB:
+        case IMAP_CMD_STATUS:
+        case IMAP_CMD_CREATE:
+        case IMAP_CMD_DELETE:
+        case IMAP_CMD_SUB:
+        case IMAP_CMD_UNSUB:
+
         // also intercept close-like commands
         case IMAP_CMD_LOGOUT:
         case IMAP_CMD_CLOSE:

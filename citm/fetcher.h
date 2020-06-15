@@ -79,18 +79,25 @@ struct fetcher_t {
     size_t tag;
 
     // external command processing: there can only be one at a time.
-    ie_login_cmd_t *login_cmd;
-    //
-    passthru_req_t *passthru_req;
-    bool passthru_sent;
-    passthru_type_e pt_arg_type;
-    passthru_resp_arg_u pt_arg;
-    //
-    ie_mailbox_t *select_mailbox;
+    struct {
+        ie_login_cmd_t *cmd;
+    } login;
+
+    struct {
+        passthru_req_t *req;
+        bool sent;
+        passthru_type_e type;
+        passthru_resp_arg_u arg;
+    } passthru;
+
+    struct {
+        ie_mailbox_t *mailbox;
+    } select;
 
     // the interface we feed to the imaildir for server communication
     up_cb_i up_cb;
     up_t up;
+    link_t pending_cmds;
     // is our up_t registered with an imaildir?
     bool maildir_connected;
     fetcher_mailbox_state_e mbx_state;
