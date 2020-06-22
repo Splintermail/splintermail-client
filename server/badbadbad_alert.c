@@ -262,6 +262,8 @@ void badbadbad_alert(dstr_t* summary, dstr_t* body){
     // then communicate to the badbadbad server
     send_to_badbadbad_server(&tag, summary, body, &buff);
 
+    dstr_free(&buff);
+
     return;
 
 fail:

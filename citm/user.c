@@ -98,7 +98,7 @@ derr_t user_new(
                - streaming updates of remote keys while this user is active
 
              For now, we'll just hardcode a global key and call it a day. */
-    PROP_GO(&e, dirmgr_init(&user->dirmgr, user->path, &g_keypair), fail_pass);
+    PROP_GO(&e, dirmgr_init(&user->dirmgr, user->path, g_keypair), fail_pass);
 
     *out = user;
 

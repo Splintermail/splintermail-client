@@ -27,14 +27,10 @@
 
 #include "libdstr/libdstr.h"
 #include "crypto.h"
+#include "fixed_lengths.h"
 
 // this should only have to be 10, but just in case...
 #define MAX_ENCRYPTION_KEYS 32
-
-// TODO: delete these.  the fixed-size fpr buffer in keypair_t breaks
-//       LIST_APPEND, so LIST(keypair_t) is fundamentally dangerous
-LIST_HEADERS(keypair_t)
-LIST_FUNCTIONS(keypair_t)
 
 // an error in the SQL library
 derr_type_t E_SQL;
@@ -43,7 +39,7 @@ REGISTER_ERROR_TYPE(E_SQL, "SQLERROR");
 derr_type_t E_NOKEYS;
 REGISTER_ERROR_TYPE(E_NOKEYS, "NOKEYS");
 
-static derr_t do_encryption(EVP_PKEY** pkeys, size_t nkeys, LIST(dstr_t)* fprs){
+static derr_t do_encryption(link_t *keys){
     derr_t e = E_OK;
 
     // buffer for reading from stdin
@@ -57,7 +53,7 @@ static derr_t do_encryption(EVP_PKEY** pkeys, size_t nkeys, LIST(dstr_t)* fprs){
     encrypter_t enc;
     PROP(&e, encrypter_new(&enc) );
 
-    PROP_GO(&e, encrypter_start(&enc, pkeys, nkeys, fprs, &out), cleanup_enc);
+    PROP_GO(&e, encrypter_start(&enc, keys, &out), cleanup_enc);
 
     while(true){
         // write the encrypted buffer to stdout
@@ -89,46 +85,29 @@ cleanup_enc:
 
 static derr_t cli_encrypt(int argc, char** argv){
     derr_t e = E_OK;
-    // load keys from filenames on the command line
-    LIST_VAR(keypair_t, keys, MAX_ENCRYPTION_KEYS);
+    link_t keys;
+    link_init(&keys);
     for(int i = 1; i < argc; i++){
-        keypair_t key;
-        PROP_GO(&e, keypair_load(&key, argv[i]), cleanup_keys);
-        PROP_GO(&e, LIST_APPEND(keypair_t, &keys, key), cleanup_key);
-        // fix the now-broken pointer in keys.data[i].fingerprint
-        // wow this is ugly that this is necessary
-        keys.data[i-1].fingerprint.data = keys.data[i-1].fingerprint_buffer;
+        keypair_t *kp;
+        PROP_GO(&e, keypair_load(&kp, argv[i]), cu_keys);
+        link_list_append(&keys, &kp->link);
         // this is for debug
         DSTR_VAR(hex, 256);
-        bin2hex(&key.fingerprint, &hex);
+        bin2hex(kp->fingerprint, &hex);
         LOG_DEBUG("%x : %x\n", FS(argv[i]), FD(&hex));
         DSTR_VAR(pemout, 4096);
-        PROP(&e, keypair_get_public_pem(&keys.data[i-1], &pemout) );
+        PROP(&e, keypair_get_public_pem(kp, &pemout) );
         LOG_DEBUG("%x\n", FD(&pemout));
-        continue;
-
-    cleanup_key:
-        keypair_free(&key);
-        goto cleanup_keys;
-    }
-
-    // rearrange the EVP_PKEYs into an array
-    EVP_PKEY* pkeys[MAX_ENCRYPTION_KEYS];
-    for(size_t i = 0; i < keys.len; i++){
-        pkeys[i] = keys.data[i].pair;
-    }
-    // rearrange the fingerprints into an array as well
-    LIST_VAR(dstr_t, fprs, MAX_ENCRYPTION_KEYS);
-    for(size_t i = 0; i < keys.len; i++){
-        LIST_APPEND(dstr_t, &fprs, keys.data[i].fingerprint);
     }
 
     // ready to start encrypting
-    PROP_GO(&e, do_encryption(pkeys, keys.len, &fprs), cleanup_keys);
+    PROP_GO(&e, do_encryption(&keys), cu_keys);
 
-cleanup_keys:
-    for(size_t i = 0; i < keys.len; i++){
-        keypair_free(&keys.data[i]);
+    link_t *link;
+cu_keys:
+    while((link = link_list_pop_first(&keys))){
+        keypair_t *kp = CONTAINER_OF(link, keypair_t, link);
+        keypair_free(&kp);
     }
     return e;
 }
@@ -185,7 +164,7 @@ static derr_t get_user_id(MYSQL* sql, const char* email, unsigned int* uid){
     }
 
     if(!found_uid){
-        ORIG(&e, E_INTERNAL, "no such user");
+        ORIG_GO(&e, E_INTERNAL, "no such user", cleanup_res);
     }
 
 cleanup_res:
@@ -193,40 +172,7 @@ cleanup_res:
     return e;
 }
 
-static derr_t pem_to_pkey(const char* pemkey, size_t len, EVP_PKEY** pkey){
-    derr_t e = E_OK;
-    // try to allocate for the EVP_PKEY
-    *pkey = EVP_PKEY_new();
-    if(!*pkey){
-        trace_ssl_errors(&e);
-        ORIG(&e, E_SSL, "EVP_PKEY_new failed");
-    }
-
-    // wrap the pem-encoded key in an SSL memory BIO
-    if(len > INT_MAX)
-        ORIG(&e, E_INTERNAL, "pem key is way too long");
-    BIO* pembio = BIO_new_mem_buf((const void*)pemkey, (int)len);
-    if(!pembio){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "unable to create BIO", cleanup_1);
-    }
-
-    // read the public key from the BIO (no password protection)
-    EVP_PKEY* temp;
-    temp = PEM_read_bio_PUBKEY(pembio, pkey, NULL, NULL);
-    if(!temp){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "failed to read public key", cleanup_2);
-    }
-
-cleanup_2:
-    BIO_free(pembio);
-cleanup_1:
-    if(is_error(e)) EVP_PKEY_free(*pkey);
-    return e;
-}
-
-static derr_t get_keys(MYSQL* sql, unsigned int uid, LIST(keypair_t)* keys){
+static derr_t get_keys(MYSQL* sql, unsigned int uid, link_t* keys){
     derr_t e = E_OK;
     // build request
     DSTR_VAR(req, 256);
@@ -250,37 +196,31 @@ static derr_t get_keys(MYSQL* sql, unsigned int uid, LIST(keypair_t)* keys){
 
     // loop through results
     LOG_DEBUG("mysql fingerprint results:\n");
-    keys->len = 0;
     MYSQL_ROW row;
     while( (row = mysql_fetch_row(res)) ){
-        // initialize a keypair
-        keypair_t kp;
-        DSTR_WRAP_ARRAY(kp.fingerprint, kp.fingerprint_buffer);
-
         // get lengths of fields
         unsigned long *lens = mysql_fetch_lengths(res);
 
-        // copy the fingerprint to the keypair
+        // create a keypair from the public_key field
+        dstr_t pem;
+        DSTR_WRAP(pem, row[1], lens[1], 0);
+        keypair_t *kp;
+        PROP_GO(&e, keypair_from_pem(&kp, &pem), loop_end);
+
+        // append key to output list
+        link_list_append(keys, &kp->link);
+
+        // verify the fingerprint matches
         dstr_t hexfpr;
         DSTR_WRAP(hexfpr, row[0], lens[0], 0);
         LOG_DEBUG("    %x\n", FD(&hexfpr));
-        PROP_GO(&e, hex2bin(&hexfpr, &kp.fingerprint), loop_end);
+        DSTR_VAR(fpr, FL_FINGERPRINT);
+        PROP_GO(&e, hex2bin(&hexfpr, &fpr), loop_end);
 
-        // read the public key
-        PROP_GO(&e, pem_to_pkey(row[1], lens[1], &kp.pair), loop_end);
-
-        // try to append the public key to the list
-        PROP_GO(&e, LIST_APPEND(keypair_t, keys, kp), cleanup_key);
-
-        // fix the now-broken pointers in keys.data[-1].fingerprint
-        // wow this is ugly that this is necessary
-        keys->data[keys->len - 1].fingerprint.data =
-            keys->data[keys->len - 1].fingerprint_buffer;
-        continue;
-
-    cleanup_key:
-        keypair_free(&kp);
-        goto loop_end;
+        if(dstr_cmp(&fpr, kp->fingerprint) != 0){
+            ORIG_GO(&e, E_INTERNAL,
+                    "mismatched db vs calculated fingerprint", loop_end);
+        }
     }
 loop_end:
     // if we had an error, we still need to read all the results
@@ -291,48 +231,57 @@ loop_end:
         ORIG_GO(&e, E_SQL, "error fetching rows", cleanup_res);
     }
     // also cleanup if we ran into other errors in the loop
-    PROP_GO(&e, e, fail);
+    PROP_GO(&e, e, cleanup_res);
 
 cleanup_res:
     mysql_free_result(res);
     return e;
-
-fail:
-    for(size_t i = 0; i < keys->len; i++){
-        keypair_free(&keys->data[i]);
-    }
-    mysql_free_result(res);
-    return e;
 }
 
-static derr_t mysql_encrypt(void){
+static derr_t mysql_encrypt(const dstr_t *debug_sock){
     derr_t e = E_OK;
     // get USER variable (that is, to whom we are encrypting)
     char* user = getenv("USER");
 
-    // load the mysql config from a file
-    DSTR_VAR(conf_text, 256);
-    PROP(&e, dstr_fread_file("/etc/encrypt_msg/encrypt_msg.conf", &conf_text) );
-    // parse the file
-    LIST_VAR(dstr_t, conf, 4);
-    DSTR_STATIC(pattern, "\n");
-    PROP(&e, dstr_split(&conf_text, &pattern, &conf) );
-    // if there is a newline at the end of the file, ignore it
-    if(conf.len == 4 && conf.data[3].len == 0) conf.len--;
-    if(conf.len != 3){
-        ORIG(&e, E_INTERNAL, "config file must contain exactly the mysql host, "
-                         "user, and password, each on a separate line");
-    }
     // get null-terminated values, for mysql api
-    DSTR_VAR(sqlhost, 256);
-    DSTR_VAR(sqluser, 256);
-    DSTR_VAR(sqlpass, 256);
-    PROP(&e, dstr_copy(&conf.data[0], &sqlhost) );
-    PROP(&e, dstr_copy(&conf.data[1], &sqluser) );
-    PROP(&e, dstr_copy(&conf.data[2], &sqlpass) );
-    PROP(&e, dstr_null_terminate(&sqlhost) );
-    PROP(&e, dstr_null_terminate(&sqluser) );
-    PROP(&e, dstr_null_terminate(&sqlpass) );
+    char *sqlhost = NULL;
+    char *sqluser = NULL;
+    char *sqlpass = NULL;
+    char *sqlsock = NULL;
+    DSTR_VAR(d_sqlhost, 256);
+    DSTR_VAR(d_sqluser, 256);
+    DSTR_VAR(d_sqlpass, 256);
+    DSTR_VAR(d_sqlsock, 256);
+    if(debug_sock){
+        PROP(&e, dstr_copy(debug_sock, &d_sqlsock) );
+        PROP(&e, dstr_null_terminate(&d_sqlsock) );
+        sqlsock = d_sqlsock.data;
+    }else{
+        // load the mysql config from a file
+        DSTR_VAR(conf_text, 256);
+        PROP(&e, dstr_fread_file("/etc/encrypt_msg/encrypt_msg.conf", &conf_text) );
+        // parse the file
+        LIST_VAR(dstr_t, conf, 4);
+        DSTR_STATIC(pattern, "\n");
+        PROP(&e, dstr_split(&conf_text, &pattern, &conf) );
+        // if there is a newline at the end of the file, ignore it
+        if(conf.len == 4 && conf.data[3].len == 0) conf.len--;
+        if(conf.len != 3){
+            ORIG(&e, E_INTERNAL, "config file must contain exactly the mysql "
+                    "host, user, and password, each on a separate line");
+        }
+        // get null-terminated values, for mysql api
+        PROP(&e, dstr_copy(&conf.data[0], &d_sqlhost) );
+        PROP(&e, dstr_copy(&conf.data[1], &d_sqluser) );
+        PROP(&e, dstr_copy(&conf.data[2], &d_sqlpass) );
+        PROP(&e, dstr_null_terminate(&d_sqlhost) );
+        PROP(&e, dstr_null_terminate(&d_sqluser) );
+        PROP(&e, dstr_null_terminate(&d_sqlpass) );
+        sqlhost = d_sqlhost.data;
+        sqluser = d_sqluser.data;
+        sqlpass = d_sqlpass.data;
+        sqlsock = "/var/run/mysqld/mysqld.sock";
+    }
 
     // init mysql
     int ret = mysql_library_init(0, NULL, NULL);
@@ -348,8 +297,8 @@ static derr_t mysql_encrypt(void){
     }
 
     // make a connection with mysqld
-    mret = mysql_real_connect(&sql, sqlhost.data, sqluser.data, sqlpass.data,
-                "splintermail", 0, "/var/run/mysqld/mysqld.sock", 0);
+    mret = mysql_real_connect(&sql, sqlhost, sqluser, sqlpass,
+                "splintermail", 0, sqlsock, 0);
     if(!mret){
         trace_sql_error(&e, &sql);
         ORIG_GO(&e, E_SQL, "unable to connect to mysqld", cleanup_sql_obj);
@@ -360,33 +309,23 @@ static derr_t mysql_encrypt(void){
     PROP_GO(&e, get_user_id(&sql, user, &uid), cleanup_sql_obj);
 
     // use the user_id to get the encryption keys
-    LIST_VAR(keypair_t, keys, MAX_ENCRYPTION_KEYS);
-    PROP_GO(&e, get_keys(&sql, uid, &keys), cleanup_sql_obj);
+    link_t keys;
+    link_init(&keys);
+    PROP_GO(&e, get_keys(&sql, uid, &keys), cu_keys);
 
-    if(keys.len == 0){
+    if(link_list_isempty(&keys)){
         TRACE(&e, "no keys for user %x\n", FS(user));
-        ORIG_GO(&e, E_NOKEYS, "No keys for user", cleanup_keys);
+        ORIG_GO(&e, E_NOKEYS, "No keys for user", cu_keys);
     }
 
-    // rearrange the EVP_PKEYs into an array
-    EVP_PKEY* pkeys[MAX_ENCRYPTION_KEYS];
-    for(size_t i = 0; i < keys.len; i++){
-        pkeys[i] = keys.data[i].pair;
-    }
-    // rearrange the fingerprints into an array as well
-    LIST_VAR(dstr_t, fprs, MAX_ENCRYPTION_KEYS);
-    for(size_t i = 0; i < keys.len; i++){
-        LIST_APPEND(dstr_t, &fprs, keys.data[i].fingerprint);
-    }
+    // ready to start encrypting
+    PROP_GO(&e, do_encryption(&keys), cu_keys);
 
-
-    // finally ready to start encrypting
-
-    PROP_GO(&e, do_encryption(pkeys, keys.len, &fprs), cleanup_keys);
-
-cleanup_keys:
-    for(size_t i = 0; i < keys.len; i++){
-        keypair_free(&keys.data[i]);
+    link_t *link;
+cu_keys:
+    while((link = link_list_pop_first(&keys))){
+        keypair_t *kp = CONTAINER_OF(link, keypair_t, link);
+        keypair_free(&kp);
     }
 cleanup_sql_obj:
     mysql_close(&sql);
@@ -401,7 +340,12 @@ int main(int argc, char** argv){
     // specify command line options
     opt_spec_t o_debug = {'d', "debug", false, OPT_RETURN_INIT};
     opt_spec_t o_help = {'h', "help", false, OPT_RETURN_INIT};
+#ifdef BUILD_SERVER_CODE
+    opt_spec_t o_debug_sock = {'\0', "debug-sock", true, OPT_RETURN_INIT};
+    opt_spec_t* spec[] = {&o_debug, &o_help, &o_debug_sock};
+#else
     opt_spec_t* spec[] = {&o_debug, &o_help};
+#endif
     size_t speclen = sizeof(spec) / sizeof(*spec);
     int newargc;
     // parse command line options
@@ -416,7 +360,7 @@ int main(int argc, char** argv){
         printf("encrypt_msg: apply splintermail encryption to stdin\n");
         printf("usage: encrypt_msg KEY_FILE [...]\n");
 #ifdef BUILD_SERVER_CODE
-        printf("usage: USER=email encrypt_msg\n");
+        printf("usage: USER=email encrypt_msg [--debug-sock SOCK]\n");
 #endif
         exit(0);
     }
@@ -434,7 +378,11 @@ int main(int argc, char** argv){
 
     if(newargc == 1){
 #ifdef BUILD_SERVER_CODE
-        PROP_GO(&e, mysql_encrypt(), cleanup_ssl);
+        const dstr_t *debug_sock = NULL;
+        if(o_debug_sock.found){
+            debug_sock = &o_debug_sock.val;
+        }
+        PROP_GO(&e, mysql_encrypt(debug_sock), cleanup_ssl);
 #else
         ORIG_GO(&e, E_PARAM, "compiled without mysql support, please provide "
                          "encryption key files as command line arguments",
@@ -454,7 +402,6 @@ exit:
     // any error at all (except for a user having no keys) is badbadbad
     CATCH(e, E_NOKEYS){
         // silently drop E_NOKEYS error, which is no error at all
-        DROP_VAR(&e);
     }else CATCH(e, E_ANY){
         // write errors to logfile
         DUMP(e);
@@ -467,7 +414,7 @@ exit:
 #else
     // the non-server case; report all errors
     DUMP(e);
-    DROP_VAR(&e);
 #endif
+    DROP_VAR(&e);
     return exitval;
 }

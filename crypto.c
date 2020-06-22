@@ -18,6 +18,7 @@
 #include "crypto.h"
 #include "libdstr/libdstr.h"
 #include "ssl_errors.h"
+#include "refs.h"
 
 
 #define FORMAT_VERSON 1
@@ -108,11 +109,97 @@ cleanup_1:
     return e;
 }
 
-derr_t keypair_load(keypair_t* kp, const char* keyfile){
+// backing memory for a keypair_t
+typedef struct {
+    EVP_PKEY *pair;
+    dstr_t fingerprint;
+    refs_t refs;
+} _keypair_t;
+DEF_CONTAINER_OF(_keypair_t, fingerprint, dstr_t);
+DEF_CONTAINER_OF(_keypair_t, refs, refs_t);
+
+static void keypair_finalizer(refs_t *refs){
+    _keypair_t *_kp = CONTAINER_OF(refs, _keypair_t, refs);
+    dstr_free(&_kp->fingerprint);
+    EVP_PKEY_free(_kp->pair);
+    free(_kp);
+}
+
+static derr_t keypair_new(keypair_t **out, EVP_PKEY* pkey){
     derr_t e = E_OK;
+
+    *out = NULL;
+
+    // allocate backing memory
+    _keypair_t *_kp = malloc(sizeof(*_kp));
+    if(!_kp) ORIG_GO(&e, E_NOMEM, "nomem", fail);
+    *_kp = (_keypair_t){ .pair = pkey };
+
+    // start with 1 ref for the keypair_t we will return
+    PROP_GO(&e, refs_init(&_kp->refs, 1, keypair_finalizer), fail_back_mem);
+
+    // allocate reference memory
+    keypair_t *kp = malloc(sizeof(*kp));
+    if(!kp) ORIG_GO(&e, E_NOMEM, "nomem", fail_refs);
+    *kp = (keypair_t){ .pair = _kp->pair, .fingerprint = &_kp->fingerprint };
+    link_init(&kp->link);
+
+    // initialize fingerprint
+    PROP_GO(&e, dstr_new(&_kp->fingerprint, FL_FINGERPRINT), fail_ref_mem);
+
+    // now get ready to get the fingerprint of the key
+    X509* x = X509_new();
+    if(!x){
+        trace_ssl_errors(&e);
+        ORIG_GO(&e, E_NOMEM, "X509_new failed", fail_fpr);
+    }
+
+    int ret = X509_set_pubkey(x, pkey);
+    if(ret != 1){
+        trace_ssl_errors(&e);
+        ORIG_GO(&e, E_SSL, "X509_set_pubkey failed", fail_x509);
+    }
+
+    // get the fingerprint
+    unsigned int fpr_len;
+    const EVP_MD* type = EVP_sha256();
+    ret = X509_pubkey_digest(
+        x, type, (unsigned char*)_kp->fingerprint.data, &fpr_len
+    );
+    if(ret != 1){
+        trace_ssl_errors(&e);
+        ORIG_GO(&e, E_SSL, "X509_pubkey_digest failed", fail_x509);
+    }
+    _kp->fingerprint.len = fpr_len;
+
+    X509_free(x);
+
+    *out = kp;
+    return e;
+
+fail_x509:
+    X509_free(x);
+fail_fpr:
+    dstr_free(&_kp->fingerprint);
+fail_ref_mem:
+    free(kp);
+fail_refs:
+    refs_free(&_kp->refs);
+fail_back_mem:
+    free(_kp);
+fail:
+    EVP_PKEY_free(pkey);
+    return e;
+}
+
+derr_t keypair_load(keypair_t **out, const char *keyfile){
+    derr_t e = E_OK;
+
+    *out = NULL;
+
     // try to allocate for the EVP_PKEY
-    kp->pair = EVP_PKEY_new();
-    if(!kp->pair){
+    EVP_PKEY *pkey = EVP_PKEY_new();
+    if(!pkey){
         trace_ssl_errors(&e);
         ORIG(&e, E_NOMEM, "EVP_PKEY_new failed");
     }
@@ -124,60 +211,35 @@ derr_t keypair_load(keypair_t* kp, const char* keyfile){
     f = compat_fopen(keyfile, "r");
     if(!f){
         TRACE(&e, "%x: %x\n", FS(keyfile), FE(&errno));
-        ORIG_GO(&e, errno == ENOMEM ? E_NOMEM : E_OPEN, "failed to open file", cleanup_1);
+        derr_type_t err_type = errno == ENOMEM ? E_NOMEM : E_OPEN;
+        ORIG_GO(&e, err_type, "failed to open file", fail_pkey);
     }
 
     // read the private key from the file (no password)
-    temp = PEM_read_PrivateKey(f, &kp->pair, NULL, NULL);
+    temp = PEM_read_PrivateKey(f, &pkey, NULL, NULL);
     fclose(f);
     if(!temp){
         trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "failed to read private key", cleanup_1);
+        ORIG_GO(&e, E_SSL, "failed to read private key", fail_pkey);
     }
 
-    // initialize fingerprint
-    DSTR_WRAP_ARRAY(kp->fingerprint, kp->fingerprint_buffer);
-
-    // now get ready to get the fingerprint of the key
-    X509* x = X509_new();
-    if(!x){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_NOMEM, "X509_new failed", cleanup_1);
-    }
-
-    int ret = X509_set_pubkey(x, kp->pair);
-    if(ret != 1){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "X509_set_pubkey failed", cleanup_2);
-    }
-
-    // get the fingerprint
-    unsigned int fpr_len;
-    const EVP_MD* type = EVP_sha256();
-    ret = X509_pubkey_digest(x, type, (unsigned char*)kp->fingerprint.data, &fpr_len);
-    if(ret != 1){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "X509_pubkey_digest failed", cleanup_2);
-    }
-    kp->fingerprint.len = fpr_len;
-
-    X509_free(x);
+    PROP(&e, keypair_new(out, pkey) );
 
     return e;
 
-cleanup_2:
-    X509_free(x);
-cleanup_1:
-    EVP_PKEY_free(kp->pair);
-    kp->pair = NULL;
+fail_pkey:
+    EVP_PKEY_free(pkey);
     return e;
 }
 
-derr_t keypair_from_pem(keypair_t* kp, const dstr_t* pem){
+derr_t keypair_from_pem(keypair_t **out, const dstr_t *pem){
     derr_t e = E_OK;
+
+    *out = NULL;
+
     // try to allocate for the EVP_PKEY
-    kp->pair = EVP_PKEY_new();
-    if(!kp->pair){
+    EVP_PKEY *pkey = EVP_PKEY_new();
+    if(!pkey){
         trace_ssl_errors(&e);
         ORIG(&e, E_SSL, "EVP_PKEY_new failed");
     }
@@ -191,61 +253,57 @@ derr_t keypair_from_pem(keypair_t* kp, const dstr_t* pem){
     BIO* pembio = BIO_new_mem_buf((void*)pem->data, pemlen);
     if(!pembio){
         trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "unable to create BIO", fail_1);
+        ORIG_GO(&e, E_SSL, "unable to create BIO", fail_pkey);
     }
 
     // read the public key from the BIO (no password protection)
     EVP_PKEY* temp;
-    temp = PEM_read_bio_PUBKEY(pembio, &kp->pair, NULL, NULL);
+    temp = PEM_read_bio_PUBKEY(pembio, &pkey, NULL, NULL);
     BIO_free(pembio);
     if(!temp){
         trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "failed to read public key", fail_1);
+        ORIG_GO(&e, E_SSL, "failed to read public key", fail_pkey);
     }
 
-    // initialize fingerprint
-    DSTR_WRAP_ARRAY(kp->fingerprint, kp->fingerprint_buffer);
-
-    // now get ready to get the fingerprint of the key
-    X509* x = X509_new();
-    if(!x){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "X509_new failed", fail_1);
-    }
-
-    int ret = X509_set_pubkey(x, kp->pair);
-    if(ret != 1){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "X509_set_pubkey failed", fail_2);
-    }
-
-    // get the fingerprint
-    unsigned int fpr_len;
-    const EVP_MD* type = EVP_sha256();
-    ret = X509_pubkey_digest(x, type, (unsigned char*)kp->fingerprint.data, &fpr_len);
-    if(ret != 1){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "X509_pubkey_digest failed", fail_2);
-    }
-    kp->fingerprint.len = fpr_len;
-
-    X509_free(x);
+    PROP(&e, keypair_new(out, pkey) );
 
     return e;
 
-fail_2:
-    X509_free(x);
-fail_1:
-    EVP_PKEY_free(kp->pair);
-    kp->pair = NULL;
+fail_pkey:
+    EVP_PKEY_free(pkey);
     return e;
 }
 
-void keypair_free(keypair_t* kp){
-    if(kp->pair){
-        EVP_PKEY_free(kp->pair);
-    }
-    kp->pair = NULL;
+derr_t keypair_copy(keypair_t *old, keypair_t **out){
+    derr_t e = E_OK;
+
+    *out = NULL;
+
+    // dereference backing memory
+    _keypair_t *_kp = CONTAINER_OF(old->fingerprint, _keypair_t, fingerprint);
+
+    // allocate reference memory
+    keypair_t *kp = malloc(sizeof(*kp));
+    if(!kp) ORIG(&e, E_NOMEM, "nomem");
+    *kp = (keypair_t){ .pair = _kp->pair, .fingerprint = &_kp->fingerprint };
+    link_init(&kp->link);
+
+    // upref the backing memory
+    ref_up(&_kp->refs);
+
+    *out = kp;
+    return e;
+}
+
+void keypair_free(keypair_t **old){
+    if(!old) return;
+    keypair_t *kp = *old;
+    // downref the backing memory
+    _keypair_t *_kp = CONTAINER_OF(kp->fingerprint, _keypair_t, fingerprint);
+    ref_dn(&_kp->refs);
+    // free the reference memory
+    free(kp);
+    *old = NULL;
 }
 
 derr_t keypair_get_public_pem(keypair_t* kp, dstr_t* out){
@@ -294,6 +352,8 @@ derr_t encrypter_new(encrypter_t* ec){
 
     DSTR_WRAP_ARRAY(ec->pre64, ec->pre64_buffer);
 
+    link_init(&ec->keys);
+
     return e;
 }
 
@@ -302,17 +362,47 @@ void encrypter_free(encrypter_t* ec){
         EVP_CIPHER_CTX_free(ec->ctx);
     }
     ec->ctx = NULL;
+    // free key references
+    link_t *link;
+    while((link = link_list_pop_first(&ec->keys))){
+        keypair_t *kp = CONTAINER_OF(link, keypair_t, link);
+        keypair_free(&kp);
+    }
+}
+
+static void encrypter_reset(encrypter_t *ec){
+    // reset (not free) the cipher context
+    EVP_CIPHER_CTX_reset(ec->ctx);
+    // free key references
+    link_t *link;
+    while((link = link_list_pop_first(&ec->keys))){
+        keypair_t *kp = CONTAINER_OF(link, keypair_t, link);
+        keypair_free(&kp);
+    }
 }
 
 /* this will initialize the EVP_CIPHER_CTX, generate the random symmetrical
    key, encrypt that key to every public key given, and output the header of
    the message */
-derr_t encrypter_start(encrypter_t* ec, EVP_PKEY** pkeys, size_t npkeys,
-                       LIST(dstr_t)* fingerprints, dstr_t* out){
+// derr_t encrypter_start(encrypter_t* ec, EVP_PKEY** pkeys, size_t npkeys,
+//                        LIST(dstr_t)* fingerprints, dstr_t* out){
+derr_t encrypter_start(encrypter_t* ec, link_t *keys, dstr_t* out){
     derr_t e = E_OK;
-    // check inputs
-    if(npkeys > MAX_ENCRYPTER_PUBKEYS)
-        ORIG(&e, E_FIXEDSIZE, "too many pubkeys to encrypt to");
+
+    // count and copy the keys
+    ec->nkeys = 0;
+    keypair_t *kp;
+    LINK_FOR_EACH(kp, keys, keypair_t, link){
+        if(ec->nkeys == MAX_ENCRYPTER_PUBKEYS){
+            ORIG(&e, E_FIXEDSIZE, "too many pubkeys to encrypt to");
+        }
+
+        ec->pkeys[ec->nkeys++] = kp->pair;
+
+        keypair_t *copy;
+        PROP(&e, keypair_copy(kp, &copy) );
+        link_list_append(&ec->keys, &copy->link);
+    }
 
     // get ready to recieve all of the encrypted keys
     unsigned char* eks[MAX_ENCRYPTER_PUBKEYS];
@@ -320,16 +410,16 @@ derr_t encrypter_start(encrypter_t* ec, EVP_PKEY** pkeys, size_t npkeys,
 
     // get max length of encrypted keys
     int max_ek_len = 0;
-    for(size_t i = 0; i < npkeys; i++){
-        max_ek_len = MAX(max_ek_len, EVP_PKEY_size(pkeys[i]));
+    for(size_t i = 0; i < ec->nkeys; i++){
+        max_ek_len = MAX(max_ek_len, EVP_PKEY_size(ec->pkeys[i]));
     }
 
     // allocate a block of space for eks[i] to point into
     dstr_t eks_block;
-    PROP_GO(&e, dstr_new(&eks_block, npkeys * (size_t)max_ek_len), cleanup_1);
+    PROP_GO(&e, dstr_new(&eks_block, ec->nkeys * (size_t)max_ek_len), cu);
 
     // set eks pointers to point into eks_block
-    for(size_t i = 0; i < npkeys; i++){
+    for(size_t i = 0; i < ec->nkeys; i++){
         eks[i] = (unsigned char*)&(eks_block.data[i * (size_t)max_ek_len]);
     }
 
@@ -343,17 +433,17 @@ derr_t encrypter_start(encrypter_t* ec, EVP_PKEY** pkeys, size_t npkeys,
     // we are choosing not to use a VLA, so we do a check here
     int iv_len = EVP_CIPHER_iv_length(type);
     if((size_t)iv_len > sizeof(iv)){
-        ORIG_GO(&e, E_FIXEDSIZE, "short iv buffer", cleanup_1);
+        ORIG_GO(&e, E_FIXEDSIZE, "short iv buffer", cu);
     }
 
     // make sure npkeys isn't outrageous before the cast
-    if(npkeys > INT_MAX)
-        ORIG_GO(&e, E_VALUE, "way too many pkeys", cleanup_1);
-    int npkeys_i = (int)npkeys;
-    int ret = EVP_SealInit(ec->ctx, type, eks, ek_len, iv, pkeys, npkeys_i);
-    if(ret != npkeys_i){
+    if(ec->nkeys > INT_MAX)
+        ORIG_GO(&e, E_VALUE, "way too many pkeys", cu);
+    int npkeys = (int)ec->nkeys;
+    int ret = EVP_SealInit(ec->ctx, type, eks, ek_len, iv, ec->pkeys, npkeys);
+    if(ret != npkeys){
         trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "EVP_SealInit failed", cleanup_1);
+        ORIG_GO(&e, E_SSL, "EVP_SealInit failed", cu);
     }
 
     // append PEM-like header to *out in plain text
@@ -371,17 +461,22 @@ derr_t encrypter_start(encrypter_t* ec, EVP_PKEY** pkeys, size_t npkeys,
 
     // append each recipient and their encrypted key in base64
     // example output: "R:v-64:<sha256 hash>:256:<pubkey-encrypted msg key>
-    for(size_t i = 0; i < npkeys; i++){
+    size_t i = 0;
+    LINK_FOR_EACH(kp, keys, keypair_t, link){
         // wrap the encrypted key in a dstr_t for ease of printing
         dstr_t ek_wrapper;
         DSTR_WRAP(ek_wrapper, (char*)eks[i], (size_t)ek_len[i], false);
+
         // format line
         PROP_GO(&e, FMT(&ec->pre64, "R:%x:%x:%x:%x\n",
-                                 FU(fingerprints->data[i].len),
-                                 FD(&fingerprints->data[i]),
+                                 FU(kp->fingerprint->len),
+                                 FD(kp->fingerprint),
                                  FI(ek_len[i]),
                                  FD(&ek_wrapper)), fail_1);
+        // dump line
         PROP_GO(&e, bin2b64(&ec->pre64, out, B64_WIDTH, false), fail_1);
+
+        i++;
     }
 
     // append the IV
@@ -392,13 +487,13 @@ derr_t encrypter_start(encrypter_t* ec, EVP_PKEY** pkeys, size_t npkeys,
     PROP_GO(&e, FMT(&ec->pre64, "IV:%x:%x\nM:", FI(iv_len), FD(&iv_wrapper)), fail_1);
     PROP_GO(&e, bin2b64(&ec->pre64, out, B64_WIDTH, false), fail_1);
 
-cleanup_1:
+cu:
     dstr_free(&eks_block);
     return e;
 
 fail_1:
-    EVP_CIPHER_CTX_reset(ec->ctx);
     dstr_free(&eks_block);
+    encrypter_reset(ec);
     return e;
 }
 
@@ -443,8 +538,7 @@ derr_t encrypter_update(encrypter_t* ec, dstr_t* in, dstr_t* out){
     return e;
 
 fail:
-    // reset (not free) the cipher context
-    EVP_CIPHER_CTX_reset(ec->ctx);
+    encrypter_reset(ec);
     return e;
 }
 
@@ -493,8 +587,7 @@ derr_t encrypter_finish(encrypter_t* ec, dstr_t* out){
     PROP_GO(&e, dstr_append(out, &line_break), cleanup);
 
 cleanup:
-    // reset (not free) the cipher context
-    EVP_CIPHER_CTX_reset(ec->ctx);
+    encrypter_reset(ec);
     return e;
 }
 
@@ -700,7 +793,7 @@ static derr_t decrypter_parse_metadata(decrypter_t* dc){
                 }
                 // at last! we can check if this key was encrypted to us
                 int result;
-                result = dstr_cmp(&hash, &dc->kp->fingerprint);
+                result = dstr_cmp(&hash, dc->kp->fingerprint);
                 if(result == 0){
                     dc->key_found = true;
                     PROP(&e, dstr_copy(&key, &dc->enc_key) );

@@ -163,28 +163,32 @@ static derr_t test_crypto(void){
     PROP(&e, gen_key(1024, keyfile) );
 
     // load the keys that are now written to a file
-    keypair_t kp;
+    keypair_t *kp;
     PROP(&e, keypair_load(&kp, keyfile) );
     // delete the temporary file
     remove(keyfile);
 
     DSTR_VAR(pubkey_pem, 4096);
-    PROP(&e, keypair_get_public_pem(&kp, &pubkey_pem) );
+    PROP(&e, keypair_get_public_pem(kp, &pubkey_pem) );
     LOG_DEBUG("PEM-formatted public key: %x", FD(&pubkey_pem));
-    LOG_DEBUG("fingerprint (%x) %x\n", FU(kp.fingerprint.len), FD_DBG(&kp.fingerprint));
+    LOG_DEBUG("fingerprint (%x) %x\n",
+            FU(kp->fingerprint->len), FD_DBG(kp->fingerprint));
 
     // allocate an encrypter
     encrypter_t ec;
     PROP_GO(&e, encrypter_new(&ec), cleanup_1);
 
-    DSTR_STATIC(plain, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567890987654321ZYXWUTSRQPONMLKJIHGFEDCBAzyxwutsrqponmlkjihgfedcba");
+    DSTR_STATIC(plain,
+        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+        "0987654321ZYXWUTSRQPONMLKJIHGFEDCBAzyxwutsrqponmlkjihgfedcba");
     DSTR_VAR(in, 4096);
     dstr_copy(&plain, &in);
     DSTR_VAR(enc, 4096);
     DSTR_VAR(decr, 4096);
-    LIST_VAR(dstr_t, fprs, 1);
-    LIST_APPEND(dstr_t, &fprs, kp.fingerprint);
-    PROP_GO(&e, encrypter_start(&ec, &kp.pair, 1, &fprs, &enc), cleanup_2);
+    link_t keys;
+    link_init(&keys);
+    link_list_append(&keys, &kp->link);
+    PROP_GO(&e, encrypter_start(&ec, &keys, &enc), cleanup_2);
 
     dstr_t sub;
     while(in.len){
@@ -205,7 +209,7 @@ static derr_t test_crypto(void){
     decrypter_t dc;
     PROP_GO(&e, decrypter_new(&dc), cleanup_2);
 
-    PROP_GO(&e, decrypter_start(&dc, &kp, NULL, NULL), cleanup_3);
+    PROP_GO(&e, decrypter_start(&dc, kp, NULL, NULL), cleanup_3);
 
     //PROP_GO(&e, decrypter_update(&dc, &enc, &decr), cleanup_3);
 

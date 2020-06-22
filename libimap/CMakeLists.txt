@@ -99,3 +99,4 @@ add_library(
     "${imf_parse_out}"
 )
 target_link_libraries(imap dstr)
+default_compile_options(imap TRUE)

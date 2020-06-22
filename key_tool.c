@@ -24,7 +24,7 @@ static derr_t key_tool_register_key(key_tool_t* kt,
     // get ready for the api call
     DSTR_STATIC(command, "add_device");
     DSTR_VAR(argument, 4096);
-    NOFAIL(&e, E_FIXEDSIZE, keypair_get_public_pem(&kt->key, &argument) );
+    NOFAIL(&e, E_FIXEDSIZE, keypair_get_public_pem(kt->key, &argument) );
     int code;
     DSTR_VAR(reason, 1024);
     DSTR_VAR(recv, 4096);
@@ -430,7 +430,7 @@ derr_t key_tool_update(key_tool_t* kt, const char* host, unsigned int port,
 
         // if we are using an old key, make sure it is in the list
         if(kt->did_key_gen == false){
-            if(in_list(&kt->key.fingerprint, &srv_fprs, NULL) == false){
+            if(in_list(kt->key->fingerprint, &srv_fprs, NULL) == false){
                 our_key_missing_from_list_devices = true;
             }
         }
@@ -469,11 +469,11 @@ derr_t key_tool_update(key_tool_t* kt, const char* host, unsigned int port,
        list on file */
 
     // if our own key is not in the list, add it
-    if(in_list(&kt->key.fingerprint, &kt->peer_list, NULL) == false){
+    if(in_list(kt->key->fingerprint, &kt->peer_list, NULL) == false){
         // it has to be dynamically allocated for the kt->peer_list
         dstr_t fpr;
         PROP(&e, dstr_new(&fpr, FL_FINGERPRINT) );
-        e2 = dstr_copy(&kt->key.fingerprint, &fpr);
+        e2 = dstr_copy(kt->key->fingerprint, &fpr);
         if(e2.type){
             dstr_free(&fpr);
             PROP(&e, e2);
@@ -558,7 +558,7 @@ derr_t key_tool_decrypt(key_tool_t* kt, int infd, int outfd, size_t* outlen){
     derr_t e2;
     DSTR_VAR(recips_block, FL_DEVICES * FL_FINGERPRINT);
     LIST_VAR(dstr_t, recips, FL_DEVICES);
-    PROP(&e, decrypter_start(&kt->dc, &kt->key, &recips, &recips_block) );
+    PROP(&e, decrypter_start(&kt->dc, kt->key, &recips, &recips_block) );
 
     DSTR_VAR(inbuf, 4096);
     DSTR_VAR(outbuf, 4096 + FL_ENCRYPTION_BLOCK_SIZE);

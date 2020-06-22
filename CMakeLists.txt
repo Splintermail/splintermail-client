@@ -45,111 +45,118 @@ if("${LIBLMDB_LIB}" STREQUAL "")
 endif()
 target_link_libraries(lmdb_interface INTERFACE "${LIBLMDB_LIB}")
 
-# compiler-specific flags
-if("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU")
-    # flags for gcc
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Werror")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wextra")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wstrict-overflow")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wconversion")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wstrict-prototypes")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wmissing-prototypes")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fstrict-aliasing")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wstrict-aliasing=2")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-missing-field-initializers")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fdiagnostics-color=always")
-    # add some compiler hardening flags
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wformat -Wformat-security -Werror=format-security")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fstack-protector-strong")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fPIE -fPIC")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O2 -D_FORTIFY_SOURCE=2")
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -pie")
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -z relro")
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -z now")
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -z noexecstack")
-    # this just gets ignored
-    # set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -z noexecheap")
-    if("${CMAKE_BUILD_TYPE}" STREQUAL "debug")
-        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=address -fno-omit-frame-pointer")
-    endif()
+function(default_compile_options tgt allow_asan)
+    # compiler-specific flags
+    if("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU")
+        # flags for gcc
+        target_compile_options("${tgt}" PRIVATE "-Werror")
+        target_compile_options("${tgt}" PRIVATE "-Wall")
+        target_compile_options("${tgt}" PRIVATE "-Wextra")
+        target_compile_options("${tgt}" PRIVATE "-Wstrict-overflow")
+        target_compile_options("${tgt}" PRIVATE "-Wconversion")
+        target_compile_options("${tgt}" PRIVATE "-Wstrict-prototypes")
+        target_compile_options("${tgt}" PRIVATE "-Wmissing-prototypes")
+        target_compile_options("${tgt}" PRIVATE "-fstrict-aliasing")
+        target_compile_options("${tgt}" PRIVATE "-Wstrict-aliasing=2")
+        target_compile_options("${tgt}" PRIVATE "-Wno-missing-field-initializers")
+        target_compile_options("${tgt}" PRIVATE "-fdiagnostics-color=always")
+        # add some compiler hardening flags
+        target_compile_options("${tgt}" PRIVATE "-Wformat" "-Wformat-security" "-Werror=format-security")
+        target_compile_options("${tgt}" PRIVATE "-fstack-protector-strong")
+        target_compile_options("${tgt}" PRIVATE "-fPIE" "-fPIC")
+        target_compile_options("${tgt}" PRIVATE "-O2" "-D_FORTIFY_SOURCE=2")
+        target_link_options("${tgt}" PRIVATE "-pie")
+        target_link_options("${tgt}" PRIVATE "-Wl,-z,relro")
+        target_link_options("${tgt}" PRIVATE "-Wl,-z,now")
+        target_link_options("${tgt}" PRIVATE "-Wl,-z,noexecstack")
+        # this just gets ignored
+        # target_link_options("${tgt}" PRIVATE "-z noexecheap")
+        if(("${CMAKE_BUILD_TYPE}" STREQUAL "debug") AND ("${allow_asan}"))
+            target_compile_options("${tgt}" PRIVATE "-fsanitize=address" "-fno-omit-frame-pointer")
+            target_link_options("${tgt}" PRIVATE "-fsanitize=address" "-fno-omit-frame-pointer")
+        endif()
 
-elseif("${CMAKE_C_COMPILER_ID}" MATCHES "Clang")
-    # flags common to "AppleClang" and "Clang"
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Werror")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fdiagnostics-color=always")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Weverything")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-padded")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-gnu-zero-variadic-macro-arguments")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-reserved-id-macro")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-unused-macros")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-double-promotion")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-missing-noreturn")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-missing-field-initializers")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-unused-command-line-argument")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-overlength-strings")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-shadow")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fstrict-aliasing")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O2")
-    # add some compiler hardening flags
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wformat -Wformat-security -Werror=format-security")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -D_FORTIFY_SOURCE")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fstack-protector-strong")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fPIE")
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -pie")
-    if("${CMAKE_C_COMPILER_ID}" STREQUAL "Clang")
-        # clang options not apparently supported on AppleClang:
-        set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,-z,relro")
-        set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,-z,now")
-        # control flow integrity
-        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=cfi")
-        # test for integer overflow
-        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=integer")
-        # stack-based buffer overrun protection
-        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=safe-stack")
-        # address sanitizer (behaves a bit like valgrind):
-        # set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=address -fno-omit-frame-pointer")
+    elseif("${CMAKE_C_COMPILER_ID}" MATCHES "Clang")
+        # flags common to "AppleClang" and "Clang"
+        target_compile_options("${tgt}" PRIVATE "-Werror")
+        target_compile_options("${tgt}" PRIVATE "-fdiagnostics-color=always")
+        target_compile_options("${tgt}" PRIVATE "-Weverything")
+        target_compile_options("${tgt}" PRIVATE "-Wno-padded")
+        target_compile_options("${tgt}" PRIVATE "-Wno-gnu-zero-variadic-macro-arguments")
+        target_compile_options("${tgt}" PRIVATE "-Wno-reserved-id-macro")
+        target_compile_options("${tgt}" PRIVATE "-Wno-unused-macros")
+        target_compile_options("${tgt}" PRIVATE "-Wno-double-promotion")
+        target_compile_options("${tgt}" PRIVATE "-Wno-missing-noreturn")
+        target_compile_options("${tgt}" PRIVATE "-Wno-missing-field-initializers")
+        target_compile_options("${tgt}" PRIVATE "-Wno-unused-command-line-argument")
+        target_compile_options("${tgt}" PRIVATE "-Wno-overlength-strings")
+        target_compile_options("${tgt}" PRIVATE "-Wno-shadow")
+        target_compile_options("${tgt}" PRIVATE "-fstrict-aliasing")
+        target_compile_options("${tgt}" PRIVATE "-O2")
+        # add some compiler hardening flags
+        target_compile_options("${tgt}" PRIVATE "-Wformat" "-Wformat-security" "-Werror=format-security")
+        target_compile_options("${tgt}" PRIVATE "-D_FORTIFY_SOURCE")
+        target_compile_options("${tgt}" PRIVATE "-fstack-protector-strong")
+        target_compile_options("${tgt}" PRIVATE "-fPIE")
+        target_link_options("${tgt}" PRIVATE "-pie")
+        if("${CMAKE_C_COMPILER_ID}" STREQUAL "Clang")
+            # clang options not apparently supported on AppleClang:
+            target_link_options("${tgt}" PRIVATE "-Wl,-z,relro")
+            target_link_options("${tgt}" PRIVATE "-Wl,-z,now")
+            # control flow integrity
+            target_compile_options("${tgt}" PRIVATE "-fsanitize=cfi")
+            # test for integer overflow
+            target_compile_options("${tgt}" PRIVATE "-fsanitize=integer")
+            # stack-based buffer overrun protection
+            target_compile_options("${tgt}" PRIVATE "-fsanitize=safe-stack")
+            if(("${CMAKE_BUILD_TYPE}" STREQUAL "debug") AND ("${allow_asan}"))
+                target_compile_options("${tgt}" PRIVATE "-fsanitize=address" "-fno-omit-frame-pointer")
+                target_link_options("${tgt}" PRIVATE "-fsanitize=address" "-fno-omit-frame-pointer")
+            endif()
+        endif()
+
+    elseif("${CMAKE_C_COMPILER_ID}" STREQUAL "MSVC")
+        # flags for MVSC (VS 2017)
+        # see https://docs.microsoft.com/en-us/cpp/error-messages/compiler-warnings
+        target_compile_options("${tgt}" PRIVATE "/W4")     # treat warnings as errors
+        target_compile_options("${tgt}" PRIVATE "/Wall")
+        target_compile_options("${tgt}" PRIVATE "/wd4221") # ANSI compliance
+        target_compile_options("${tgt}" PRIVATE "/wd4204") # ANSI compliance
+        target_compile_options("${tgt}" PRIVATE "/wd4820") # byte padded structs
+        target_compile_options("${tgt}" PRIVATE "/wd4668") # unknown macro in #if()
+        target_compile_options("${tgt}" PRIVATE "/wd4996") # _CRT_SECURE warnings
+        target_compile_options("${tgt}" PRIVATE "/wd5045") # Spectre mitigation
+        target_compile_options("${tgt}" PRIVATE "/wd4706") # setting value in if() expr
+        target_compile_options("${tgt}" PRIVATE "/wd4710") # function didn't get inlined
+        target_compile_options("${tgt}" PRIVATE "/wd4711") # function got auto-inlined
+        target_compile_options("${tgt}" PRIVATE "/wd4127") # if() tests a constant value
+        target_compile_options("${tgt}" PRIVATE "/wd4738") # float stored in mem not reg
+        target_compile_options("${tgt}" PRIVATE "/wd4738") # float stored in mem not reg
+        target_compile_options("${tgt}" PRIVATE "/wd4456") # local vars shadow prev vars
+        # These "unsafe" functions are just standard C functions
+        target_compile_options("${tgt}" PRIVATE "/D_CRT_SECURE_NO_WARNINGS")
+        target_compile_options("${tgt}" PRIVATE "/O2")
+        # add some compiler hardening flags
+        target_compile_options("${tgt}" PRIVATE "/sdl")
+        target_compile_options("${tgt}" PRIVATE "/GS")
+        target_compile_options("${tgt}" PRIVATE "/DYNAMICBASE")
+        target_compile_options("${tgt}" PRIVATE "/guard:cf")
+        target_link_options("${tgt}" PRIVATE "/DYNAMICBASE")
+        target_link_options("${tgt}" PRIVATE "/GUARD:CF")
+        target_link_options("${tgt}" PRIVATE "/NXCOMPAT")
+        # statically link against Visual C++ library
+        # (because vc_redist distributing is insanity, and this "just works")
+        foreach(flag_var CMAKE_C_FLAGS CMAKE_C_FLAGS_DEBUG CMAKE_C_FLAGS_RELEASE
+                CMAKE_C_FLAGS_MINSIZEREL CMAKE_C_FLAGS_RELWITHDEBINFO)
+           if(${flag_var} MATCHES "/MD")
+              string(REGEX REPLACE "/MD" "/MT" ${flag_var} "${${flag_var}}")
+           endif(${flag_var} MATCHES "/MD")
+        endforeach(flag_var)
+    else()
+        message(FATAL_ERROR "compiler not detected...")
     endif()
-elseif("${CMAKE_C_COMPILER_ID}" STREQUAL "MSVC")
-    # flags for MVSC (VS 2017)
-    # see https://docs.microsoft.com/en-us/cpp/error-messages/compiler-warnings
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /W4")     # treat warnings as errors
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /Wall")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /wd4221") # ANSI compliance
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /wd4204") # ANSI compliance
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /wd4820") # byte padded structs
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /wd4668") # unknown macro in #if()
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /wd4996") # _CRT_SECURE warnings
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /wd5045") # Spectre mitigation
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /wd4706") # setting value in if() expr
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /wd4710") # function didn't get inlined
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /wd4711") # function got auto-inlined
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /wd4127") # if() tests a constant value
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /wd4738") # float stored in mem not reg
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /wd4738") # float stored in mem not reg
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /wd4456") # local vars shadow prev vars
-    # These "unsafe" functions are just standard C functions
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /D_CRT_SECURE_NO_WARNINGS")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /O2")
-    # add some compiler hardening flags
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /sdl")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /GS")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /DYNAMICBASE")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /guard:cf")
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /DYNAMICBASE")
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /GUARD:CF")
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /NXCOMPAT")
-    # statically link against Visual C++ library
-    # (because vc_redist distributing is insanity, and this "just works")
-    foreach(flag_var CMAKE_C_FLAGS CMAKE_C_FLAGS_DEBUG CMAKE_C_FLAGS_RELEASE
-            CMAKE_C_FLAGS_MINSIZEREL CMAKE_C_FLAGS_RELWITHDEBINFO)
-       if(${flag_var} MATCHES "/MD")
-          string(REGEX REPLACE "/MD" "/MT" ${flag_var} "${${flag_var}}")
-       endif(${flag_var} MATCHES "/MD")
-    endforeach(flag_var)
-else()
-    message(FATAL_ERROR "compiler not detected...")
-endif()
+endfunction()
+
 
 # Add -DFILE_BASENAME="logname" to the compile options for a source file.
 function(define_file_logname_for_source orig_sourcefile final_sourcefile)
@@ -225,10 +232,11 @@ endfunction()
 function(add_obj_tgt file tgt)
     # create the object library itself
     add_library("${tgt}_o" OBJECT "${file}")
+    default_compile_options("${tgt}_o" TRUE)
+    define_file_logname_for_target("${tgt}_o")
     # create an interface library whose dependents will link against the object
     add_library("${tgt}" INTERFACE)
     target_sources("${tgt}" INTERFACE $<TARGET_OBJECTS:${tgt}_o> ${ARGN})
-    define_file_logname_for_target("${tgt}_o")
 endfunction()
 
 # always include the source directory (for compiling generated .c files)
@@ -319,6 +327,7 @@ endforeach()
 # add executables
 foreach(tgt ${EXE_TGTS})
     add_executable("${tgt}" "${tgt}.c")
+    default_compile_options("${tgt}" TRUE)
     define_file_logname_for_target("${tgt}")
 endforeach()
 
@@ -330,7 +339,7 @@ target_include_directories(ui_o PRIVATE ${OPENSSL_INCLUDE_DIR})
 
 # object inter-dependencies make exectuable dependencies easier to express:
 # objects with dummy interfaces must not be dependencies here
-obj_depend_obj(crypto ssl_errors dstr)
+obj_depend_obj(crypto refs ssl_errors dstr)
 obj_depend_obj(maildir dstr)
 obj_depend_obj(networking ssl_errors dstr)
 obj_depend_obj(pop_client networking)
@@ -425,6 +434,7 @@ if("${BUILD_TESTS}")
     # OBJECT FILES (so they aren't being recompiled over and over)
     foreach(tgt ${TEST_OBJ_TGTS})
         add_library("${tgt}_o" OBJECT "test/${tgt}.c")
+        default_compile_options("${tgt}_o" TRUE)
         define_file_logname_for_target("${tgt}_o")
         add_library("${tgt}" INTERFACE)
         target_sources("${tgt}" INTERFACE $<TARGET_OBJECTS:${tgt}_o>)
@@ -452,6 +462,7 @@ if("${BUILD_TESTS}")
     # add test executables, tests and INCLUDE the root directory
     foreach(tgt ${TEST_EXE_TGTS})
         add_executable("${tgt}" "test/${tgt}.c")
+        default_compile_options("${tgt}" TRUE)
         define_file_logname_for_target("${tgt}")
         # all exectuables use opt_parse
         target_link_libraries("${tgt}" dstr)
@@ -465,6 +476,12 @@ if("${BUILD_TESTS}")
         COMMAND
             "${PYTHON_3_CMD}"
             "${PROJECT_SOURCE_DIR}/test/e2e_citm.py"
+            "${PROJECT_SOURCE_DIR}/test/files"
+    )
+    add_test(NAME "enc_dec"
+        COMMAND
+            "${PYTHON_3_CMD}"
+            "${PROJECT_SOURCE_DIR}/test/enc_dec.py"
             "${PROJECT_SOURCE_DIR}/test/files"
     )
 
@@ -939,12 +956,14 @@ elseif(WIN32)
     set(keygen_src_out "${PROJECT_BINARY_DIR}/installer/keygen.c")
     preprocessed_copy("${keygen_src_in}" "${keygen_src_out}")
     add_executable(keygen "${keygen_src_out}")
+    default_compile_options(keygen FALSE)
     define_file_logname_for_target(keygen)
     target_link_libraries(keygen fileops)
     list(APPEND tgt_deps keygen)
 
     # rm_rf.exe (will be embedded in installer for uninstallation)
     add_executable(rm_rf "${supp_dir}/windows/rm_rf.c")
+    default_compile_options(rm_rf FALSE)
     define_file_logname_for_target(rm_rf)
     target_link_libraries(rm_rf fileops)
     list(APPEND tgt_deps rm_rf)

@@ -303,13 +303,13 @@ static derr_t handle_new_key(const dstr_t* path, const dstr_t* arg,
     (void) path;
     (void) counter;
     // the new key is going to be passed in PEM format, and we need the fpr
-    keypair_t kp;
+    keypair_t *kp;
     DSTR_VAR(temp, 4096);
     PROP(&e, json_decode(arg, &temp) );
     PROP(&e, keypair_from_pem(&kp, &temp) );
     // get hex of the fingerprint
     DSTR_VAR(hexfpr, 2*FL_FINGERPRINT);
-    PROP_GO(&e, bin2hex(&kp.fingerprint, &hexfpr), cu);
+    PROP_GO(&e, bin2hex(kp->fingerprint, &hexfpr), cu);
     // build a response for add_device
     DSTR_VAR(response, 2048);
     PROP_GO(&e, build_add_device_response(&hexfpr, &response), cu);

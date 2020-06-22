@@ -9,4 +9,5 @@ add_executable(
     sf_pair.c
 )
 target_link_libraries(citm dstr imap_session imaildir)
+default_compile_options(citm TRUE)
 define_file_logname_for_target(citm)

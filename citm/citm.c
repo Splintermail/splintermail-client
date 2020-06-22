@@ -9,7 +9,7 @@ static imape_t imape;
 static citme_t citme;
 
 // the global keypair
-keypair_t g_keypair;
+keypair_t *g_keypair;
 
 
 typedef struct {

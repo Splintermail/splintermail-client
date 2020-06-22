@@ -56,7 +56,7 @@ derr_t key_tool_decrypt(key_tool_t* kt, int infd, int outfd, size_t* outlen){
 
     DSTR_VAR(recips_block, FL_DEVICES * FL_FINGERPRINT);
     LIST_VAR(dstr_t, recips, FL_DEVICES);
-    PROP(&e, decrypter_start(&kt->dc, &kt->key, &recips, &recips_block) );
+    PROP(&e, decrypter_start(&kt->dc, kt->key, &recips, &recips_block) );
 
     DSTR_VAR(inbuf, 4096);
     DSTR_VAR(outbuf, 4096 + FL_ENCRYPTION_BLOCK_SIZE);

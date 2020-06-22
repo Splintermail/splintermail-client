@@ -18,17 +18,24 @@
 // decryption failed due to missing key
 extern derr_type_t E_NOT4ME;
 
+// keypair_t is really a shared pointer
 typedef struct {
     EVP_PKEY* pair;
-    char fingerprint_buffer[FL_FINGERPRINT];
-    dstr_t fingerprint;
+    const dstr_t *fingerprint;
+    link_t link;
 } keypair_t;
+DEF_CONTAINER_OF(keypair_t, link, link_t);
 
 typedef struct {
     EVP_CIPHER_CTX* ctx;
     char pre64_buffer[1024];
     dstr_t pre64;
     size_t block_size;
+    // keys to encrypt with
+    link_t keys;  // keypair_t->link
+    // an array-list copy of the key pointers
+    EVP_PKEY* pkeys[MAX_ENCRYPTER_PUBKEYS];
+    size_t nkeys;
 } encrypter_t;
 
 typedef struct {
@@ -46,7 +53,7 @@ typedef struct {
     dstr_t enc_key;
     char iv_buffer[CIPHER_IV_LEN];
     dstr_t iv;
-    const keypair_t* kp;
+    const keypair_t *kp;
     // stuff that hasn't been decoded yet
     char base64_buffer[2048];
     dstr_t base64;
@@ -69,22 +76,24 @@ derr_t gen_key(int bits, const char* keyfile);
            E_OPEN (failed to open file for writing) */
 
 // keypair_load needs a matching keypair_free afterwards
-derr_t keypair_load(keypair_t* kp, const char* keyfile);
+derr_t keypair_load(keypair_t **out, const char *keyfile);
 /* throws: E_SSL (anything with the SSL library)
            E_NOMEM
            E_OPEN (failed to open file for reading) */
 
-derr_t keypair_from_pem(keypair_t* kp, const dstr_t* pem);
-void keypair_free(keypair_t* kp);
-derr_t keypair_get_public_pem(keypair_t* kp, dstr_t* out);
+derr_t keypair_from_pem(keypair_t **out, const dstr_t *pem);
+void keypair_free(keypair_t **old);
+derr_t keypair_get_public_pem(keypair_t *kp, dstr_t *out);
 /* throws: E_NOMEM (either internally with the memory BIO or writing to *out)
            E_FIXEDSIZE (writing to *out)
            E_INTERNAL */
 
+derr_t keypair_copy(keypair_t *old, keypair_t **out);
+
 derr_t encrypter_new(encrypter_t* ec);
 void encrypter_free(encrypter_t* ec);
-derr_t encrypter_start(encrypter_t* ec, EVP_PKEY** pkeys, size_t npkeys,
-                         LIST(dstr_t)* fingerprints, dstr_t* out);
+// encrypter_start will make a copy of the keys (via keypair_copy)
+derr_t encrypter_start(encrypter_t* ec, link_t *keys, dstr_t* out);
 derr_t encrypter_update(encrypter_t* ec, dstr_t* in, dstr_t* out);
 derr_t encrypter_finish(encrypter_t* ec, dstr_t* out);
 

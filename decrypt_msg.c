@@ -33,7 +33,7 @@ int main(int argc, char** argv){
     // init SSL
     PROP_GO(&e, crypto_library_init(), exit);
 
-    keypair_t kp;
+    keypair_t *kp;
     PROP_GO(&e, keypair_load(&kp, argv[1]), cleanup_ssl);
 
     // buffer for reading from stdin
@@ -49,7 +49,7 @@ int main(int argc, char** argv){
     decrypter_t dec;
     PROP_GO(&e, decrypter_new(&dec), cleanup_key);
 
-    PROP_GO(&e, decrypter_start(&dec, &kp, &recips, &recips_block), cleanup_dec);
+    PROP_GO(&e, decrypter_start(&dec, kp, &recips, &recips_block), cleanup_dec);
 
     while(true){
         // read ciphertext from stdin
@@ -93,8 +93,8 @@ exit:
     retval = is_error(e);
     if(is_error(e)){
         DUMP(e);
-        DROP_VAR(&e);
     }
+    DROP_VAR(&e);
 
     return retval;
 }

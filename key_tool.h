@@ -158,7 +158,7 @@ typedef struct {
     char dir_buffer[4096];
     dstr_t dir;
     // the decryption key
-    keypair_t key;
+    keypair_t *key;
     bool did_key_gen;
     // dynamic backing memory for json
     dstr_t json_block;
