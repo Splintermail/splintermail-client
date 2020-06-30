@@ -15,6 +15,7 @@ import threading
 import ssl
 import codecs
 
+TIMEOUT = 0.5
 
 class IOThread(threading.Thread):
     def __init__(self, io, q):
@@ -174,7 +175,7 @@ def run_subproc(cmd):
 
             # in the no-error case, expect a clean and near-instant exit
             p.send_signal(signal.SIGTERM)
-            p.wait(0.1)
+            p.wait(TIMEOUT)
     except:
         dump_logs= True
         raise
@@ -457,7 +458,7 @@ def terminate_with_open_connection(cmd):
             wait_for_match(read_q, b"\\* OK")
 
             p.send_signal(signal.SIGTERM)
-            p.wait(0.1)
+            p.wait(TIMEOUT)
             assert p.poll() is not None, "SIGTERM was not handled fast enough"
 
 
@@ -470,7 +471,7 @@ def terminate_with_open_session(cmd):
             wait_for_match(read_q, b"1 OK")
 
             p.send_signal(signal.SIGTERM)
-            p.wait(0.1)
+            p.wait(TIMEOUT)
             assert p.poll() is not None, "SIGTERM was not handled fast enough"
 
 
@@ -486,7 +487,7 @@ def terminate_with_open_mailbox(cmd):
             wait_for_match(read_q, b"2 OK")
 
             p.send_signal(signal.SIGTERM)
-            p.wait(0.1)
+            p.wait(TIMEOUT)
             assert p.poll() is not None, "SIGTERM was not handled fast enough"
 
 

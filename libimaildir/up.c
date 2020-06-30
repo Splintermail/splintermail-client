@@ -236,7 +236,7 @@ static derr_t expunge_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
         unsigned int max = MAX(uid_range->n1, uid_range->n2);
         unsigned int min = MIN(uid_range->n1, uid_range->n2);
 
-        // use while loop to avoid infinite loop if max == UINT_MAX
+        // use do/while loop to avoid infinite loop if max == UINT_MAX
         unsigned int uid = min;
         do {
             PROP(&e, imaildir_up_delete_msg(up->m, uid) );
@@ -339,6 +339,57 @@ static derr_t fetch_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
     return e;
 }
 
+/* a "bootstrap" fetch triggers the behavior of a SELECT (QRESYNC ...) when our
+   UIDVALIDITY was correct and our HIGHESTMODSEQ was zero.
+
+   The bootstrap fetch should be invoked anytime that we had the wrong
+   UIDVALIDITY, either because it is an initial synchronization and we didn't
+   know the UIDVALIDITY at all, or because it changed on us.
+
+   After the boostrap fetch is complete, our state should correctly represent
+   the HIGHESTMODSEQ value reported after the SELECT. */
+static derr_t send_bootstrap_fetch(up_t *up){
+    derr_t e = E_OK;
+
+    // issue a UID FETCH command
+    bool uid_mode = true;
+    // fetch ALL the messages
+    ie_seq_set_t *uidseq = ie_seq_set_new(&e, 1, 0);
+    // fetch UID, FLAGS, and MODSEQ
+    ie_fetch_attrs_t *attr = ie_fetch_attrs_new(&e);
+    attr = ie_fetch_attrs_add_simple(&e, attr, IE_FETCH_ATTR_UID);
+    attr = ie_fetch_attrs_add_simple(&e, attr, IE_FETCH_ATTR_FLAGS);
+    attr = ie_fetch_attrs_add_simple(&e, attr, IE_FETCH_ATTR_MODSEQ);
+    // specify CHANGEDSINCE 0 so we get all the updates
+    ie_fetch_mod_arg_t mod_arg = { .chgsince = 1 };
+    ie_fetch_mods_t *mods = ie_fetch_mods_new(&e,
+        IE_FETCH_MOD_CHGSINCE, mod_arg
+    );
+    // specify VANISHED so we populate expunges as well
+    mods = ie_fetch_mods_add(&e,
+        mods,
+        ie_fetch_mods_new(&e, IE_FETCH_MOD_VANISHED, (ie_fetch_mod_arg_t){0})
+    );
+
+    // build fetch command
+    ie_fetch_cmd_t *fetch = ie_fetch_cmd_new(&e, uid_mode, uidseq, attr, mods);
+    imap_cmd_arg_t arg = {.fetch=fetch};
+
+    size_t tag = ++up->tag;
+    ie_dstr_t *tag_str = write_tag_up(&e, tag);
+    imap_cmd_t *cmd = imap_cmd_new(&e, tag_str, IMAP_CMD_FETCH, arg);
+    cmd = imap_cmd_assert_writable(&e, cmd, up->exts);
+
+    // build the callback
+    up_cb_t *up_cb = up_cb_new(&e, up, tag_str, fetch_done, cmd);
+
+    CHECK(&e);
+
+    PROP(&e, up_send_cmd(up, cmd, up_cb) );
+
+    return e;
+}
+
 static derr_t send_fetch(up_t *up){
     derr_t e = E_OK;
 
@@ -375,52 +426,6 @@ static derr_t send_fetch(up_t *up){
     return e;
 }
 
-// initial_search_done is an imap_cmd_cb_call_f
-static derr_t initial_search_done(imap_cmd_cb_t *cb,
-        const ie_st_resp_t *st_resp){
-    derr_t e = E_OK;
-
-    up_cb_t *up_cb = CONTAINER_OF(cb, up_cb_t, cb);
-    up_t *up = up_cb->up;
-
-    if(st_resp->status != IE_ST_OK){
-        ORIG(&e, E_PARAM, "search failed\n");
-    }
-
-    if(!seq_set_builder_isempty(&up->uids_to_download)){
-        /* skip next_cmd, since we can't store the HIGESTMODSEQ until after the
-           first complete fetch.  This is because the HIGHESTMODSEQ at this
-           point is based on what was reported after the SELECT, but since the
-           SELECT (QRESYNC (...)) failed, that is not actually a valid himodseq
-           for us. */
-        PROP(&e, send_fetch(up) );
-    }else{
-        PROP(&e, next_cmd(up, st_resp->code) );
-    }
-
-    return e;
-}
-
-static derr_t search_resp(up_t *up, const ie_search_resp_t *search){
-    derr_t e = E_OK;
-
-    // send a UID fetch for each uid
-    for(const ie_nums_t *uid = search->nums; uid != NULL; uid = uid->next){
-        /* Check if we've already downloaded this UID.  This could happen if a
-           large initial download failed halfway through. */
-        bool expunged;
-        msg_base_t *base = imaildir_up_lookup_msg(up->m, uid->num, &expunged);
-        if(expunged || (base && base->state != MSG_BASE_UNFILLED)){
-            continue;
-        }
-
-        // add this UID to our list of existing UIDs
-        PROP(&e, seq_set_builder_add_val(&up->uids_to_download, uid->num) );
-    }
-
-    return e;
-}
-
 static derr_t vanished_resp(up_t *up, const ie_vanished_resp_t *vanished){
     derr_t e = E_OK;
 
@@ -430,40 +435,12 @@ static derr_t vanished_resp(up_t *up, const ie_vanished_resp_t *vanished){
         unsigned int max = MAX(uid_range->n1, uid_range->n2);
         unsigned int min = MIN(uid_range->n1, uid_range->n2);
 
-        // use while loop to avoid infinite loop if max == UINT_MAX
+        // use do/while loop to avoid infinite loop if max == UINT_MAX
         unsigned int uid = min;
         do {
             PROP(&e, imaildir_up_delete_msg(up->m, uid) );
         } while (max != uid++);
     }
-
-    return e;
-}
-
-static derr_t send_initial_search(up_t *up){
-    derr_t e = E_OK;
-
-    // issue a `UID SEARCH UID 1:*` command to find all existing messages
-    bool uid_mode = true;
-    ie_dstr_t *charset = NULL;
-    // "1" is the first message, "0" represents "*" which is the last message
-    ie_seq_set_t *range = ie_seq_set_new(&e, 1, 0);
-    ie_search_key_t *search_key = ie_search_seq_set(&e, IE_SEARCH_UID, range);
-    imap_cmd_arg_t arg = {
-        .search=ie_search_cmd_new(&e, uid_mode, charset, search_key)
-    };
-
-    size_t tag = ++up->tag;
-    ie_dstr_t *tag_str = write_tag_up(&e, tag);
-    imap_cmd_t *cmd = imap_cmd_new(&e, tag_str, IMAP_CMD_SEARCH, arg);
-    cmd = imap_cmd_assert_writable(&e, cmd, up->exts);
-
-    // build the callback
-    up_cb_t *up_cb = up_cb_new(&e, up, tag_str, initial_search_done, cmd);
-
-    CHECK(&e);
-
-    PROP(&e, up_send_cmd(up, cmd, up_cb) );
 
     return e;
 }
@@ -478,7 +455,12 @@ static derr_t next_cmd(up_t *up, const ie_st_code_t *code){
     }
 
     // do we need to cache a newer, fresher modseq value?
-    if(hmsc_step(&up->hmsc)){
+    /* if we need a bootstrap fetch, don't step or reset the hmsc; the state it
+       accumulates during the SELECT (QRESYNC ...) is still needed, even if the
+       QRESYNC didn't happen due to a UIDVALIDITY issue.  After the bootstrap
+       fetch, our own himodseq will match the what the server reported after
+       the SELECT */
+    if(!up->bootstrapping && hmsc_step(&up->hmsc)){
         PROP(&e, imaildir_up_set_himodseq_up(up->m, hmsc_now(&up->hmsc)) );
     }
 
@@ -486,12 +468,11 @@ static derr_t next_cmd(up_t *up, const ie_st_code_t *code){
     if(up->unselect_sent) return e;
 
     /* Are we synchronized?  We are synchronized when:
-         - hmsc_now() is nonzero (zero means SELECT (QRESYNC ...) failed)
+         - up->bootstrapping is false
          - there are no UIDs that we need to download */
-    if(!hmsc_now(&up->hmsc)){
-        /* zero himodseq means means SELECT (QRESYNC ...) failed, so request
-           all the flags and UIDs explicitly */
-        PROP(&e, send_initial_search(up) );
+    if(up->bootstrapping){
+        up->bootstrapping = false;
+        PROP(&e, send_bootstrap_fetch(up) );
     }else if(!seq_set_builder_isempty(&up->uids_to_download)){
         // there are UID's we need to download
         PROP(&e, send_fetch(up) );
@@ -546,13 +527,7 @@ static derr_t select_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
     // do the same for unpushed expunges
     PROP(&e, imaildir_up_get_unpushed_expunges(up->m, &up->uids_to_expunge) );
 
-    /* if this is a first-time sync, we have to delay next_cmd(), which will
-       try to save the HIMODSEQ */
-    if(!up->select.himodseq){
-        PROP(&e, send_initial_search(up) );
-    }else{
-        PROP(&e, next_cmd(up, st_resp->code) );
-    }
+    PROP(&e, next_cmd(up, st_resp->code) );
 
     return e;
 }
@@ -613,7 +588,17 @@ static derr_t untagged_ok(up_t *up, const ie_st_code_t *code,
                 break;
 
             case IE_ST_CODE_UIDVLD:
+                // imaildir will reset file storage in case of a mismatch
                 PROP(&e, imaildir_up_check_uidvld(up->m, code->arg.uidvld) );
+
+                if(code->arg.uidvld != up->select.uidvld){
+                    /* invalidate the original himodseq, which may be from an
+                       old UIDVALIDITY */
+                    hmsc_invalidate_starting_val(&up->hmsc);
+                    /* start with a bootstrap fetch and don't step the hmsc or
+                       save the himodseq to the log yet */
+                    up->bootstrapping = true;
+                }
                 break;
 
             case IE_ST_CODE_PERMFLAGS:
@@ -747,10 +732,6 @@ derr_t up_resp(up_t *up, imap_resp_t *resp){
             PROP_GO(&e, fetch_resp(up, arg->fetch), cu_resp);
             break;
 
-        case IMAP_RESP_SEARCH:
-            PROP_GO(&e, search_resp(up, arg->search), cu_resp);
-            break;
-
         case IMAP_RESP_VANISHED:
             PROP_GO(&e, vanished_resp(up, arg->vanished), cu_resp);
             break;
@@ -763,6 +744,7 @@ derr_t up_resp(up_t *up, imap_resp_t *resp){
             // TODO: possibly handle this?
             break;
 
+        case IMAP_RESP_SEARCH:
         case IMAP_RESP_STATUS:
         case IMAP_RESP_EXPUNGE:
         case IMAP_RESP_ENABLED:

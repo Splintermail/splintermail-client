@@ -56,6 +56,8 @@ struct up_t {
     bool unselect_sent;
     // a tool for tracking the highestmodseq we have actually synced
     himodseq_calc_t hmsc;
+    // handle initial synchronizations specially
+    bool bootstrapping;
     seq_set_builder_t uids_to_download;
     seq_set_builder_t uids_to_expunge;
     ie_seq_set_t *uids_being_expunged;

@@ -109,6 +109,9 @@ unsigned long hmsc_now(himodseq_calc_t *hmsc);
 void hmsc_saw_ok_code(himodseq_calc_t *hmsc, unsigned long val);
 void hmsc_saw_fetch(himodseq_calc_t *hmsc, unsigned long val);
 
+// we found out the initial himodseq was never valid
+void hmsc_invalidate_starting_val(himodseq_calc_t *hmsc);
+
 // gather whatever we saw since the last tagged response return if it changed
 bool hmsc_step(himodseq_calc_t *hmsc);
 

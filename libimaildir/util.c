@@ -84,6 +84,10 @@ void hmsc_saw_fetch(himodseq_calc_t *hmsc, unsigned long val){
     hmsc->from_fetch = MAX(hmsc->from_fetch, val);
 }
 
+void hmsc_invalidate_starting_val(himodseq_calc_t *hmsc){
+    hmsc->now = 0;
+}
+
 // gather whatever we saw since the last tagged response return if it changed
 bool hmsc_step(himodseq_calc_t *hmsc){
     unsigned long old = hmsc->now;
