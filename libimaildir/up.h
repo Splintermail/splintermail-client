@@ -39,11 +39,16 @@ derr_t up_do_work(up_t *up, bool *noop);
 // up_imaildir_select contains late-initialization information
 void up_imaildir_select(
     up_t *up,
+    const dstr_t *name,
     unsigned int uidvld,
     unsigned long himodseq_up
 );
 void up_imaildir_relay_cmd(up_t *up, imap_cmd_t *cmd, imap_cmd_cb_t *cb);
 void up_imaildir_preunregister(up_t *up);
+// disallow downloading a specific UID
+void up_imaildir_have_local_file(up_t *up, unsigned uid);
+// trigger any downloading work that needs to be done after a hold ends
+void up_imaildir_hold_end(up_t *up);
 
 // up_t is all the state we have for an upwards connection
 struct up_t {
@@ -54,6 +59,8 @@ struct up_t {
     bool selected;
     bool synced;
     bool unselect_sent;
+    // did next_cmd choose not to send a command last time?
+    bool need_next_cmd;
     // a tool for tracking the highestmodseq we have actually synced
     himodseq_calc_t hmsc;
     // handle initial synchronizations specially
@@ -68,6 +75,7 @@ struct up_t {
 
     struct {
         bool pending;
+        const dstr_t *name;
         unsigned int uidvld;
         unsigned long himodseq;
     } select;

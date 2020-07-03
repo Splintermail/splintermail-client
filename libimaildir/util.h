@@ -141,6 +141,9 @@ derr_t seq_set_builder_add_range(seq_set_builder_t *ssb, unsigned int n1,
 
 derr_t seq_set_builder_add_val(seq_set_builder_t *ssb, unsigned int n1);
 
+// del_val() will not work if you ever called add_range()
+void seq_set_builder_del_val(seq_set_builder_t *ssb, unsigned int val);
+
 // walk the sorted values and build a dense-as-possible sequence set
 ie_seq_set_t *seq_set_builder_extract(derr_t *e, seq_set_builder_t *ssb);
 

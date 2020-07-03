@@ -1288,5 +1288,60 @@ UPDATE: The refactor is done.  There are a few important points to this
         -----------------------------------------------
         uv_mutex*       61          0
         uv_rwlock*      0           0
-*/
 
+How does APPEND work?
+    APPEND is allowed without having to SELECT a mailbox.  The naieve way to
+    implement that would be as a passthru command (without saving it locally),
+    and then populate the local filesystem via an actual download from the
+    mail server.  That would be very clean because APPEND generates the same
+    exact messages regardless of whether or not you were the conncection that
+    just APPENDED the message.  But it's also unacceptably inefficient.
+
+    Desired traits of our APPEND implementation:
+      - it should support the live connection APPEND
+      - it should support the implicit filesystem APPEND
+      - no race conditions if e.g. we start an APPEND to an unopened imaildir
+        and the imaildir is opened after the fact
+      - same behavior for APPEND to an opened or a closed imaildir_t
+      - same behavior if actual APPEND passes over the same up_t which is the
+        imaildir_t's primary up_t, or if it passes over a different one
+
+    ## UPDATE: this was a bad idea
+    # Idea:
+    #   - imaildir_t supports an appender_t accessor, which is not associated
+    #     with any connection
+    #   - appender_t declares that an append attempt is in progress
+    #       - imaildir_t tells its primary up_t not to download messages until
+    #         the attempt finishes
+    #   - appender_t later declares that an append attempt failed or succeeded
+    #   - if it succeeded, the imaildir_t renames the temporary file into place
+    #       - imaildir_t tells its primary up_t to not download the UID but to
+    #         otherwise continue downloading messages
+
+    # What happens if the imaildir_t closes (fails) mid-APPEND?
+    #   - I guess if it is in an inconsistent state there's nothing you can do
+    #   - worst case is you redownload a message that you could have copied on
+    #     disk
+    #   - an alternate strategy would be to store messages as reference-counted
+    #     blobs, and when the append
+    #   - it's not valid to write the message on file first, because we are not
+    #     able to know the UID until after the APPEND is successful
+
+    # What happens when the imaildir_t reopens mid-APPEND?
+    #   - fuck this is getting hard
+
+    # What happens if the APPEND fails?
+    #   - easy, you just tell the imaildir that it failed
+
+    # Why does the appender_t need to be an accessor?
+    #   - you need to keep the imaildir_t open, because the downloading pause is
+    #     purely an in-memory concept; if you put it on the filesystem then it
+    #     would wrongly persist against
+
+    Idea:
+      - dirmgr_t keeps an in-memory map of mailbox names to upload-in-progress
+        status
+      - up_t will query the dirmgr before trying to download a message
+
+    Yeah, this is the way to go for sure; the imaildir_t could fail and come
+    back, or show up mid-APPEND, and it's all the same to us.

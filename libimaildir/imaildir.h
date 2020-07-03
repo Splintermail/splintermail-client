@@ -102,11 +102,20 @@ extern derr_type_t E_IMAILDIR;
 struct maildir_log_i;
 typedef struct maildir_log_i maildir_log_i;
 
+struct imaildir_cb_i;
+typedef struct imaildir_cb_i imaildir_cb_i;
+
+struct imaildir_cb_i {
+    // verify that we are allowed to download right now
+    bool (*allow_download)(imaildir_cb_i*, imaildir_t*);
+};
+
 // IMAP maildir
 struct imaildir_t {
+    imaildir_cb_i *cb;
     // path to this maildir on the filesystem
     string_builder_t path;
-    // the mailbox name
+    // the name of this box for SELECT purposes
     const dstr_t *name;
     unsigned int uid_validity;
     // mailbox flags
@@ -147,11 +156,16 @@ struct imaildir_t {
        any replay logic).
 
        All things considered, the only IMAP commands which cannot safely be
-       duplicated are APPEND, COPY, and RENAME (I think). */
+       duplicated are APPEND, COPY, and RENAME (I think).
+
+       Fortunately, APPEND is already handled as a passthru command so this
+       should not be a concern there. */
     link_t relays;  // relay_t->link
     // the id in the tag of commands originating with us
     size_t tag;
 
+    // did we open via imaildir_init_lite()?
+    bool lite;
     jsw_atree_t msgs;  // msg_base_t->node
     jsw_atree_t mods;  // msg_mod_t->node
     jsw_atree_t expunged;  // msg_expunge_t->node;
@@ -163,8 +177,13 @@ struct imaildir_t {
 };
 
 // open a maildir at path, path and name must be linked to long-lived objects
-derr_t imaildir_init(imaildir_t *m, string_builder_t path, const dstr_t *name,
-        const keypair_t *keypair);
+derr_t imaildir_init(imaildir_t *m, imaildir_cb_i *cb, string_builder_t path,
+        const dstr_t *name, const keypair_t *keypair);
+
+/* open an imaildir without reading files on disk.  The imaildir is only
+   allowed to be used for imaildir_add_local_file() */
+derr_t imaildir_init_lite(imaildir_t *m, string_builder_t path);
+
 // free must only be called if the maildir has no accessors
 void imaildir_free(imaildir_t *m);
 
@@ -251,6 +270,9 @@ derr_t imaildir_up_initial_sync_complete(imaildir_t *m, up_t *up);
 
 derr_t imaildir_up_delete_msg(imaildir_t *m, unsigned int uid);
 
+// verify that we are allowed to download messages right now
+bool imaildir_up_allow_download(imaildir_t *m);
+
 /////////////////
 /* imaildir functions exposed only for dn_t.  dn_t keeps its own view of the
    mailbox and therefore relies less on the imaildir_t. */
@@ -267,3 +289,19 @@ derr_t imaildir_dn_open_msg(imaildir_t *m, unsigned int uid, int *fd);
 // close a message in a thread-safe way; return the result of close()
 derr_t imaildir_dn_close_msg(imaildir_t *m, unsigned int uid, int *fd,
         int *ret);
+
+/////////////////
+// support for APPEND and COPY (without redownloading message)
+
+// add a file to an open imaildir_t (rename or remove path)
+derr_t imaildir_add_local_file(
+    imaildir_t *m,
+    const string_builder_t *path,
+    unsigned int uid,
+    size_t len,
+    imap_time_t intdate,
+    msg_flags_t flags
+);
+
+// the dirmgr should call this, not the owner of the hold
+void imaildir_hold_end(imaildir_t *m);

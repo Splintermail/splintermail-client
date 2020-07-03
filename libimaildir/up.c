@@ -38,12 +38,14 @@ derr_t up_init(up_t *up, up_cb_i *cb, extensions_t *exts){
 
 void up_imaildir_select(
     up_t *up,
+    const dstr_t *name,
     unsigned int uidvld,
     unsigned long himodseq_up
 ){
     // do some final initialization steps that can't fail
     up->selected = true;
     up->select.pending = true;
+    up->select.name = name;
     up->select.uidvld = uidvld;
     up->select.himodseq = himodseq_up;
     hmsc_prep(&up->hmsc, himodseq_up);
@@ -76,6 +78,18 @@ void up_imaildir_preunregister(up_t *up){
         imap_cmd_t *cmd = CONTAINER_OF(link, imap_cmd_t, link);
         imap_cmd_free(cmd);
     }
+}
+
+void up_imaildir_have_local_file(up_t *up, unsigned int uid){
+    /* if we listed this file as something to download, remove it now.  We
+       don't need to worry about it reappearing in that list, because we only
+       put things in that list if they are not a present in the the imaildir_t,
+       which should already be populated */
+    seq_set_builder_del_val(&up->uids_to_download, uid);
+}
+
+void up_imaildir_hold_end(up_t *up){
+    up->cb->enqueue(up->cb);
 }
 
 static ie_dstr_t *write_tag_up(derr_t *e, size_t tag){
@@ -467,27 +481,40 @@ static derr_t next_cmd(up_t *up, const ie_st_code_t *code){
     // never send anything more after a close
     if(up->unselect_sent) return e;
 
-    /* Are we synchronized?  We are synchronized when:
-         - up->bootstrapping is false
-         - there are no UIDs that we need to download */
+    // finish imaildir bootstrap if we need to
     if(up->bootstrapping){
         up->bootstrapping = false;
         PROP(&e, send_bootstrap_fetch(up) );
-    }else if(!seq_set_builder_isempty(&up->uids_to_download)){
-        // there are UID's we need to download
-        PROP(&e, send_fetch(up) );
-    }else if(!seq_set_builder_isempty(&up->uids_to_expunge)){
-        // there are UID's we need to delete/expunge
-        PROP(&e, send_deletions(up) );
-    }else{
-        // we are synchronized!  Is it our first time?
-        if(!up->synced){
-            up->synced = true;
-            PROP(&e, imaildir_up_initial_sync_complete(up->m, up) );
-        }
-
-        // TODO: start IDLE here, when that's actually supported
+        return e;
     }
+
+    // do we have UIDs to delete/expunge?
+    if(!seq_set_builder_isempty(&up->uids_to_expunge)){
+        PROP(&e, send_deletions(up) );
+        return e;
+    }
+
+    // do we have message content to download?
+    if(!seq_set_builder_isempty(&up->uids_to_download)){
+        // are we allowed to download right now?
+        if(imaildir_up_allow_download(up->m)){
+            PROP(&e, send_fetch(up) );
+        }else{
+            up->need_next_cmd = true;
+        }
+        return e;
+    }
+
+    // we are synchronized!
+
+    // is it our first time for this connection?
+    if(!up->synced){
+        up->synced = true;
+        PROP(&e, imaildir_up_initial_sync_complete(up->m, up) );
+    }
+
+    // TODO: start IDLE here, when that's actually supported
+    up->need_next_cmd = true;
 
     return e;
 }
@@ -539,15 +566,17 @@ static derr_t send_select(up_t *up, unsigned int uidvld,
     // use QRESYNC with select if we have a valid UIDVALIDITY and HIGHESTMODSEQ
     ie_select_params_t *params = NULL;
     if(uidvld && himodseq_up){
-        ie_select_param_arg_t params_arg = { .qresync = {
-            .uidvld = uidvld,
-            .last_modseq = himodseq_up,
-        } };
+        ie_select_param_arg_t params_arg = {
+            .qresync = {
+                .uidvld = uidvld,
+                .last_modseq = himodseq_up,
+            }
+        };
         params = ie_select_params_new(&e, IE_SELECT_PARAM_QRESYNC, params_arg);
     }
 
     // issue a SELECT command
-    ie_dstr_t *name = ie_dstr_new(&e, up->m->name, KEEP_RAW);
+    ie_dstr_t *name = ie_dstr_new(&e, up->select.name, KEEP_RAW);
     ie_mailbox_t *mailbox = ie_mailbox_new_noninbox(&e, name);
     ie_select_cmd_t *select = ie_select_cmd_new(&e, mailbox, params);
     imap_cmd_arg_t arg = { .select=select, };
@@ -786,6 +815,7 @@ derr_t up_do_work(up_t *up, bool *noop){
         *noop = false;
         up->select.pending = false;
         PROP(&e, send_select(up, up->select.uidvld, up->select.himodseq) );
+        return e;
     }
 
     /* after we are synchronized, but until we send unselect, try to relay
@@ -806,6 +836,14 @@ derr_t up_do_work(up_t *up, bool *noop){
 
         // send the command through the up_cb_i
         PROP(&e, up->cb->cmd(up->cb, cmd) );
+        return e;
+    }
+
+    // check if we just need to call next_cmd
+    if(up->need_next_cmd
+            && imaildir_up_allow_download(up->m)){
+        PROP(&e, next_cmd(up, NULL) );
+        return e;
     }
 
     return e;

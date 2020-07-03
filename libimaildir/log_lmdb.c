@@ -549,6 +549,13 @@ static derr_t read_one_message(unsigned int uid, msg_base_state_e state,
         jsw_atree_t *msgs, jsw_atree_t *mods){
     derr_t e = E_OK;
 
+    /* a zero modseq value is only allowed for the UNFILLED state, and the
+       UNFILLED state requires a zero modseq value */
+    if(modseq && state == MSG_BASE_UNFILLED)
+        ORIG(&e, E_INTERNAL, "invalid nonzero modseq on UNFILLED message");
+    if(!modseq && state != MSG_BASE_UNFILLED)
+        ORIG(&e, E_INTERNAL, "invalid zero modseq on FILLED message");
+
     // allocate a new meta object
     msg_meta_t *meta;
     PROP(&e, msg_meta_new(&meta, uid, flags, modseq) );

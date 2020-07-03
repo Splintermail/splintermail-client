@@ -159,6 +159,18 @@ derr_t seq_set_builder_add_val(seq_set_builder_t *ssb, unsigned int n1){
     return e;
 }
 
+// del_val() will not work if you ever called add_range()
+void seq_set_builder_del_val(seq_set_builder_t *ssb, unsigned int val){
+    // erase all nodes with a matching n1
+    // (this assumes add_range() was never called)
+    jsw_anode_t *node;
+    while((node = jsw_aerase(ssb, &val))){
+        seq_set_builder_elem_t *ssbe =
+            CONTAINER_OF(node, seq_set_builder_elem_t, node);
+        free(ssbe);
+    }
+}
+
 // walk the sorted values and build a dense-as-possible sequence set
 ie_seq_set_t *seq_set_builder_extract(derr_t *e, seq_set_builder_t *ssb){
     if(is_error(*e)) goto fail;

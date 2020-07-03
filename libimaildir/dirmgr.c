@@ -34,8 +34,11 @@ static derr_t managed_dir_new(managed_dir_t **out, dirmgr_t *dm,
     PROP_GO(&e, dstr_new(&mgd->name, name->len), fail_malloc);
     PROP_GO(&e, dstr_copy(name, &mgd->name), fail_name);
     string_builder_t path = sb_append(&dm->path, FD(&mgd->name));
-    PROP_GO(&e, imaildir_init(&mgd->m, path, &mgd->name, dm->keypair),
-            fail_name);
+    PROP_GO(&e,
+        imaildir_init(
+            &mgd->m, &dm->imaildir_cb, path, &mgd->name, dm->keypair
+        ),
+    fail_name);
 
     *out = mgd;
 
@@ -49,6 +52,36 @@ fail_malloc:
 }
 
 // end of managed_dir_t functions
+
+
+// dirmgr_hold_t functions
+
+static derr_t dirmgr_hold_new(dirmgr_hold_t **out, const dstr_t *name){
+    derr_t e = E_OK;
+    *out = NULL;
+
+    dirmgr_hold_t *hold = malloc(sizeof(*hold));
+    if(!hold) ORIG(&e, E_NOMEM, "nomem");
+    *hold = (dirmgr_hold_t){
+        .count = 1,
+    };
+
+    PROP_GO(&e, dstr_copy(name, &hold->name), fail);
+
+    return e;
+
+fail:
+    free(hold);
+    return e;
+}
+
+static void dirmgr_hold_free(dirmgr_hold_t *hold){
+    if(!hold) return;
+    dstr_free(&hold->name);
+    free(hold);
+}
+
+// end of dirmgr_hold_t functions
 
 
 ////////////////////
@@ -427,9 +460,7 @@ derr_t dirmgr_open_dn(dirmgr_t *dm, const dstr_t *name, dn_t *dn){
 static void handle_empty_imaildir(dirmgr_t *dm, imaildir_t *m){
     managed_dir_t *mgd = CONTAINER_OF(m, managed_dir_t, m);
     // remove the managed_dir from the maildir
-    if(!hashmap_del_elem(&dm->dirs, &mgd->h)){
-        LOG_ERROR("unable to find maildir in hashmap!\n");
-    }
+    hashmap_del_elem(&dm->dirs, &mgd->h);
     managed_dir_free(&mgd);
 
     // TODO: handle non-MGD_STATE_OPEN here
@@ -451,6 +482,14 @@ void dirmgr_close_dn(dirmgr_t *dm, dn_t *dn){
     handle_empty_imaildir(dm, m);
 }
 
+// part of the imaildir_cb_i
+static bool imaildir_cb_allow_download(imaildir_cb_i *cb, imaildir_t *m){
+    dirmgr_t *dm = CONTAINER_OF(cb, dirmgr_t, imaildir_cb);
+    managed_dir_t *mgd = CONTAINER_OF(m, managed_dir_t, m);
+
+    return !hashmap_gets(&dm->holds, &mgd->name);
+}
+
 derr_t dirmgr_init(dirmgr_t *dm, string_builder_t path,
         const keypair_t *keypair){
     derr_t e = E_OK;
@@ -458,10 +497,18 @@ derr_t dirmgr_init(dirmgr_t *dm, string_builder_t path,
     *dm = (dirmgr_t){
         .keypair = keypair,
         .path = path,
+        .imaildir_cb = {
+            .allow_download = imaildir_cb_allow_download,
+        },
     };
 
-    PROP(&e, hashmap_init(&dm->dirs) );
+    PROP_GO(&e, hashmap_init(&dm->dirs), fail_dirs);
+    PROP(&e, hashmap_init(&dm->holds) );
 
+    return e;
+
+fail_dirs:
+    hashmap_free(&dm->dirs);
     return e;
 }
 
@@ -522,4 +569,94 @@ void dirmgr_free(dirmgr_t *dm){
     if(!dm) return;
     prune_empty_dirs(&dm->path);
     hashmap_free(&dm->dirs);
+    hashmap_free(&dm->holds);
+}
+
+
+derr_t dirmgr_hold_start(dirmgr_t *dm, const dstr_t *name){
+    derr_t e = E_OK;
+
+    // check if we already have a hold for this name
+    hash_elem_t *h = hashmap_gets(&dm->holds, name);
+    if(h != NULL){
+        dirmgr_hold_t *hold = CONTAINER_OF(h, dirmgr_hold_t, h);
+        hold->count++;
+        return e;
+    }
+
+    // create a new hold
+    dirmgr_hold_t *hold;
+    PROP(&e, dirmgr_hold_new(&hold, name) );
+
+    // add to hashmap (we checked this name was not in the hashmap)
+    hashmap_sets(&dm->holds, &hold->name, &hold->h);
+
+    return e;
+}
+
+
+// this will rename or delete the file at *path
+derr_t dirmgr_hold_add_local_file(
+    dirmgr_t *dm,
+    const dstr_t *name,
+    const string_builder_t *path,
+    unsigned int uid,
+    size_t len,
+    imap_time_t intdate,
+    msg_flags_t flags
+){
+    derr_t e = E_OK;
+
+    // check if there's already an imaildir open
+    hash_elem_t *h = hashmap_gets(&dm->dirs, name);
+    if(h != NULL){
+        managed_dir_t *mgd = CONTAINER_OF(h, managed_dir_t, h);
+        PROP(&e,
+            imaildir_add_local_file(&mgd->m, path, uid, len, intdate, flags)
+        );
+        return e;
+    }
+
+    // open a new temporary imaildir_t
+    imaildir_t m;
+    string_builder_t m_path = sb_append(&dm->path, FD(name));
+    PROP_GO(&e, imaildir_init_lite(&m, m_path), fail_path);
+
+    PROP(&e,
+        imaildir_add_local_file(&m, path, uid, len, intdate, flags)
+    );
+
+    imaildir_free(&m);
+
+    return e;
+
+fail_path:
+    DROP_CMD( remove_path(path) );
+    return e;
+}
+
+
+void dirmgr_hold_end(dirmgr_t *dm, const dstr_t *name){
+    // check if we already have a hold for this name
+    hash_elem_t *h = hashmap_gets(&dm->holds, name);
+    if(h == NULL){
+        LOG_ERROR("dirmgr_hold_t not found for %x\n", FD(name));
+        return;
+    }
+
+    dirmgr_hold_t *hold = CONTAINER_OF(h, dirmgr_hold_t, h);
+    if(--hold->count == 0){
+        // remove from holds and free the hold
+        hashmap_del_elem(&dm->holds, h);
+        dirmgr_hold_free(hold);
+
+        // if the imaildir is open, let it know the hold is over
+        hash_elem_t *h = hashmap_gets(&dm->dirs, name);
+        if(h != NULL){
+            managed_dir_t *mgd = CONTAINER_OF(h, managed_dir_t, h);
+            imaildir_hold_end(&mgd->m);
+        }
+    }
+
+    return;
 }

@@ -11,7 +11,7 @@
 REGISTER_ERROR_TYPE(E_IMAILDIR, "E_IMAILDIR");
 
 // forward declarations
-static derr_t handle_new_message(imaildir_t *m, const msg_base_t *msg);
+static derr_t handle_new_msg(imaildir_t *m, const msg_base_t *msg);
 static derr_t handle_new_meta(imaildir_t *m, msg_base_t *msg,
         msg_meta_t *new);
 static derr_t handle_new_expunge(imaildir_t *m, msg_expunge_t *expunge);
@@ -200,7 +200,8 @@ typedef struct {
     subdir_type_e subdir;
 } add_msg_arg_t;
 
-// only for imaildir_init, use imaildir_up_new_msg afterwards
+/* only for imaildir_init, use imaildir_up_new_msg or imaildir_add_local_file
+   afterwards imaildir_init */
 static derr_t add_msg_to_maildir(const string_builder_t *base,
         const dstr_t *name, bool is_dir, void *data){
     derr_t e = E_OK;
@@ -227,7 +228,7 @@ static derr_t add_msg_to_maildir(const string_builder_t *base,
                 either somebody put a perfectly parseable filename in our
                 directory or we have a bug
           - msg NOT in msgs and IS in expunged:
-                we crashed without all accessors acknowleding a an expunge,
+                we crashed without all accessors acknowleding an expunge,
                 just delete the file
           - msg IS in msgs and IS in expunged:
                 not possible; the log can only produce one struct or the other
@@ -256,12 +257,17 @@ static derr_t add_msg_to_maildir(const string_builder_t *base,
     }
 
     msg_base_t *msg_base = CONTAINER_OF(node, msg_base_t, node);
+    msg_meta_t *meta = msg_base->meta;
 
     switch(msg_base->state){
         case MSG_BASE_UNFILLED:
+            // assign a modseq to the message
+            meta->mod.modseq = himodseq_dn(m) + 1;
+            jsw_ainsert(&m->mods, &meta->mod.node);
             // correct the state
             msg_base->state = MSG_BASE_FILLED;
             PROP(&e, msg_base_set_file(msg_base, len, arg->subdir, name) );
+            PROP(&e, m->log->update_msg(m->log, msg_base) );
             break;
         case MSG_BASE_FILLED:
             // most vanilla case
@@ -339,7 +345,7 @@ fail_expunge:
     return e;
 }
 
-// not safe to call after maildir_init due to race conditions
+// not safe to call after maildir_init
 static derr_t populate_msgs(imaildir_t *m){
     derr_t e = E_OK;
 
@@ -410,11 +416,13 @@ static derr_t imaildir_print_msgs(imaildir_t *m){
     return e;
 }
 
-static derr_t imaildir_read_cache_and_files(imaildir_t *m){
+static derr_t imaildir_read_cache_and_files(imaildir_t *m, bool read_files){
     derr_t e = E_OK;
 
     PROP(&e, imaildir_log_open(&m->path, &m->msgs, &m->expunged,
                 &m->mods, &m->log) );
+
+    if(!read_files) return e;
 
     // populate messages by reading files
     PROP(&e, populate_msgs(m) );
@@ -455,8 +463,9 @@ static derr_t delete_all_msg_files(const string_builder_t *maildir_path){
     return e;
 }
 
-derr_t imaildir_init(imaildir_t *m, string_builder_t path, const dstr_t *name,
-        const keypair_t *keypair){
+static derr_t imaildir_init_ex(imaildir_t *m, imaildir_cb_i *cb,
+        string_builder_t path, const dstr_t *name, const keypair_t *keypair,
+        bool read_files){
     derr_t e = E_OK;
 
     // check if the cache is in an invalid state
@@ -478,9 +487,11 @@ derr_t imaildir_init(imaildir_t *m, string_builder_t path, const dstr_t *name,
     }
 
     *m = (imaildir_t){
+        .cb = cb,
         .path = path,
         .name = name,
         .keypair = keypair,
+        .lite = !read_files,
         // TODO: finish setting values
         // .uid_validity = ???
         // .mflags = ???
@@ -501,7 +512,7 @@ derr_t imaildir_init(imaildir_t *m, string_builder_t path, const dstr_t *name,
 
     // any remaining failures must result in a call to imaildir_free()
 
-    PROP_GO(&e, imaildir_read_cache_and_files(m), fail_free);
+    PROP_GO(&e, imaildir_read_cache_and_files(m, read_files), fail_free);
 
     return e;
 
@@ -509,6 +520,28 @@ fail_free:
     imaildir_free(m);
     return e;
 }
+
+
+derr_t imaildir_init(imaildir_t *m, imaildir_cb_i *cb, string_builder_t path,
+        const dstr_t *name, const keypair_t *keypair){
+    derr_t e = E_OK;
+
+    PROP(&e, imaildir_init_ex(m, cb, path, name, keypair, true) );
+
+    return e;
+}
+
+
+/* open an imaildir without reading files on disk.  The imaildir is only
+   allowed to be used for imaildir_add_local_file() */
+derr_t imaildir_init_lite(imaildir_t *m, string_builder_t path){
+    derr_t e = E_OK;
+
+    PROP(&e, imaildir_init_ex(m, NULL, path, NULL, NULL, false) );
+
+    return e;
+}
+
 
 static void free_trees(imaildir_t *m){
     jsw_anode_t *node;
@@ -570,7 +603,7 @@ void imaildir_forceclose(imaildir_t *m){
 static void promote_up_to_primary(imaildir_t *m, up_t *up){
     unsigned int uidvld = m->log->get_uidvld(m->log);
     unsigned long himodseq_up = m->log->get_himodseq_up(m->log);
-    up_imaildir_select(up, uidvld, himodseq_up);
+    up_imaildir_select(up, m->name, uidvld, himodseq_up);
 }
 
 void imaildir_register_up(imaildir_t *m, up_t *up){
@@ -685,23 +718,18 @@ derr_t imaildir_up_check_uidvld(imaildir_t *m, unsigned int uidvld){
 
     unsigned int old_uidvld = m->log->get_uidvld(m->log);
 
-    if(old_uidvld != uidvld){
+    if(old_uidvld == uidvld) return e;
 
-        // TODO: puke if we have any connections downwards with built views
-        /* TODO: what if we get halfway through wiping the cache, but the other
-                 half fails?  How do we recover?  How would we even detect that
-                 the cache was half-wiped? */
-        // TODO: should we just delete the lmdb database to reclaim space?
-        /* TODO: on windows, we'll have to ensure that nobody has any files
-                 open at all, because delete_all_msg_files() would fail */
+    // TODO: puke if we have any connections downwards with built views
+    /* TODO: this definitely feels like a place that the whole imaildir should
+             shot down if there is a failure (but maybe that is covered by the
+             previous case) */
+    /* TODO: on windows, we'll have to ensure that nobody has any files
+             open at all, because delete_all_msg_files() would fail */
 
-
-        // if old_uidvld is nonzero, this really is a change, not a first-time
-        if(old_uidvld){
-            LOG_ERROR("detected change in UIDVALIDITY, dropping cache\n");
-        }else{
-            LOG_INFO("detected first-time download\n");
-        }
+    // if old_uidvld is nonzero, this really is a change, not a first-time
+    if(old_uidvld){
+        LOG_ERROR("detected change in UIDVALIDITY, dropping cache\n");
 
         /* first mark the cache as invalid, in case we crash or lose power
            halfway through */
@@ -724,11 +752,13 @@ derr_t imaildir_up_check_uidvld(imaildir_t *m, unsigned int uidvld){
         PROP(&e, remove_path(&invalid_path) );
 
         // reopen the log and repopulate the maildir (it should be empty)
-        PROP(&e, imaildir_read_cache_and_files(m) );
-
-        // set the new uidvld
-        PROP(&e, m->log->set_uidvld(m->log, uidvld) );
+        PROP(&e, imaildir_read_cache_and_files(m, true) );
+    }else{
+        LOG_INFO("detected first-time download\n");
     }
+
+    // set the new uidvld
+    PROP(&e, m->log->set_uidvld(m->log, uidvld) );
 
     return e;
 }
@@ -766,11 +796,9 @@ derr_t imaildir_up_new_msg(imaildir_t *m, unsigned int uid, msg_flags_t flags,
     msg_meta_t *meta = NULL;
     msg_base_t *base = NULL;
 
-    // get the next highest modseq
-    unsigned long modseq = himodseq_dn(m) + 1;
-
-    // create a new meta
-    PROP(&e, msg_meta_new(&meta, uid, flags, modseq) );
+    /* create a new meta with a 0 modseq (which we fill in after the content of
+       the message is downloaded */
+    PROP(&e, msg_meta_new(&meta, uid, flags, 0) );
 
     // don't know the internaldate yet
     imap_time_t intdate = {0};
@@ -780,13 +808,9 @@ derr_t imaildir_up_new_msg(imaildir_t *m, unsigned int uid, msg_flags_t flags,
     PROP_GO(&e, msg_base_new(&base, uid, state, intdate, meta), fail);
 
     // add message to log
-    maildir_log_i *log = m->log;
-    PROP_GO(&e, log->update_msg(log, base), fail);
+    PROP_GO(&e, m->log->update_msg(m->log, base), fail);
 
-    // insert meta into mods
-    jsw_ainsert(&m->mods, &meta->mod.node);
-
-    // insert base into msgs
+    // insert base into msgs, but leave the zero-modseq meta out of mods
     jsw_ainsert(&m->msgs, &base->node);
 
     *out = base;
@@ -804,12 +828,19 @@ derr_t imaildir_up_update_flags(imaildir_t *m, msg_base_t *base,
         msg_flags_t flags){
     derr_t e = E_OK;
 
+    // this is a noop if the flags already match
+    if(msg_flags_eq(base->meta->flags, flags)){
+        return e;
+    }
+
+    // if the msg is UNFILLED, we can just edit the flags directly
+    if(base->state == MSG_BASE_UNFILLED){
+        base->meta->flags = flags;
+        return e;
+    }
+
     // get the next highest modseq
     unsigned long modseq = himodseq_dn(m) + 1;
-
-    /* TODO: if we decide to allow local-STORE-then-push semantics, here we
-             would have to merge local, unpushed +FLAGS and -FLAGS changes into
-             the info pushed to us by the remote. */
 
     // create a new meta
     msg_meta_t *meta;
@@ -870,6 +901,7 @@ cu_file:
     if(ret != 0 && !is_error(e)){
         TRACE(&e, "fclose(%x): %x\n", FSB(path, &DSTR_LIT("/")),
                 FE(&errno));
+        DROP_CMD( remove_path(path) );
         ORIG(&e, E_OS, "failed to write file");
     }
 
@@ -878,6 +910,50 @@ cu_file:
 
 static size_t imaildir_new_tmp_id(imaildir_t *m){
     return m->tmp_count++;
+}
+
+// removes or renames path
+static derr_t place_file_fill_msg(imaildir_t *m, const string_builder_t *path,
+        msg_base_t *base, size_t len){
+    derr_t e = E_OK;
+
+    // get hostname
+    DSTR_VAR(hostname, 256);
+    compat_gethostname(hostname.data, hostname.size);
+    hostname.len = strnlen(hostname.data, HOSTNAME_COMPONENT_MAX_LEN);
+
+    // get epochtime
+    time_t tloc;
+    time_t tret = time(&tloc);
+    if(tret < 0){
+        // if this fails... just use zero
+        tloc = ((time_t) 0);
+    }
+
+    unsigned long epoch = (unsigned long)tloc;
+
+    // figure the new path
+    DSTR_VAR(cur_name, 255);
+    PROP_GO(&e,
+        maildir_name_write(
+            &cur_name, epoch, base->ref.uid, len, &hostname, NULL
+        ),
+    fail);
+    string_builder_t cur_dir = CUR(&m->path);
+    string_builder_t cur_path = sb_append(&cur_dir, FD(&cur_name));
+
+    // move the file into place
+    PROP_GO(&e, rename_path(path, &cur_path), fail);
+
+    // fill base
+    PROP(&e, msg_base_set_file(base, len, SUBDIR_CUR, &cur_name) );
+    base->state = MSG_BASE_FILLED;
+
+    return e;
+
+fail:
+    DROP_CMD( remove_path(path) );
+    return e;
 }
 
 derr_t imaildir_up_handle_static_fetch_attr(imaildir_t *m,
@@ -921,40 +997,19 @@ derr_t imaildir_up_handle_static_fetch_attr(imaildir_t *m,
     PROP(&e, imaildir_decrypt(m, &extra->content->dstr, &tmp_path, &len) );
     base->ref.length = len;
 
-    // get hostname
-    DSTR_VAR(hostname, 256);
-    compat_gethostname(hostname.data, hostname.size);
-    hostname.len = strnlen(hostname.data, HOSTNAME_COMPONENT_MAX_LEN);
-
-    // get epochtime
-    time_t tloc;
-    time_t tret = time(&tloc);
-    if(tret < 0){
-        // if this fails... just use zero
-        tloc = ((time_t) 0);
-    }
-
-    unsigned long epoch = (unsigned long)tloc;
-
-    // figure the new path
-    DSTR_VAR(cur_name, 255);
-    PROP(&e, maildir_name_write(&cur_name, epoch, base->ref.uid, len,
-                &hostname, NULL) );
-    string_builder_t cur_dir = CUR(&m->path);
-    string_builder_t cur_path = sb_append(&cur_dir, FD(&cur_name));
-
     // move the file into place
-    PROP(&e, rename_path(&tmp_path, &cur_path) );
+    PROP(&e, place_file_fill_msg(m, &tmp_path, base, len) );
 
-    // fill base
-    PROP(&e, msg_base_set_file(base, len, SUBDIR_CUR, &cur_name) );
-    base->state = MSG_BASE_FILLED;
+    // assign a modseq to meta and place it in mods
+    msg_meta_t *meta = base->meta;
+    meta->mod.modseq = himodseq_dn(m) + 1;
+    jsw_ainsert(&m->mods, &meta->mod.node);
 
     // save the update information to the log
     PROP(&e, m->log->update_msg(m->log, base) );
 
     // maybe send updates to dn_t's
-    PROP(&e, handle_new_message(m, base) );
+    PROP(&e, handle_new_msg(m, base) );
 
     return e;
 
@@ -1033,6 +1088,10 @@ derr_t imaildir_up_delete_msg(imaildir_t *m, unsigned int uid){
     return e;
 }
 
+bool imaildir_up_allow_download(imaildir_t *m){
+    return m->cb->allow_download(m->cb, m);
+}
+
 ///////////////// interface to dn_t /////////////////
 
 static void empty_unsent_updates(link_t *unsent){
@@ -1048,11 +1107,11 @@ static void empty_unsent_updates(link_t *unsent){
    all we have to do now is send updates.  Ultimately, this is due to the fact
    that in the UPDATE_META and UPDATE_EXPUNGE case, the dn_t's have
    msg_view_t's that point to things we would like to free, so in those cases,
-   we need to be extremely careful about e.g. freeing and old msg_meta_t during
+   we need to be extremely careful about e.g. freeing an old msg_meta_t during
    error handling that some dn_t will still try to read.
    TODO: consider redesigning the msg_view_t to not share memory so all the
          handle_new_*() functions can be this simple */
-static derr_t handle_new_message(imaildir_t *m, const msg_base_t *msg){
+static derr_t handle_new_msg(imaildir_t *m, const msg_base_t *msg){
     derr_t e = E_OK;
 
     if(link_list_isempty(&m->dns)) return e;
@@ -1320,7 +1379,9 @@ static derr_t handle_new_expunge(imaildir_t *m, msg_expunge_t *expunge){
     PROP_GO(&e, m->log->update_expunge(m->log, expunge), fail);
 
     // get the corresponding message, if one exists
-    // TODO: why would it ever not exist??
+    /* Why it might not exist: it is possible to get a VANISHED (EARLIER)
+       response under some circumstances, like after a SELECT (QRESYNC ...)
+       where a message has been added AND deleted since your last sync */
     msg_base_t *msg = NULL;
     msg_base_state_e old_state = 0;
     jsw_anode_t *node = jsw_afind(&m->msgs, &expunge->uid, NULL);
@@ -1646,4 +1707,69 @@ derr_t imaildir_dn_close_msg(imaildir_t *m, unsigned int uid, int *fd,
     }
 
     return e;
+}
+
+///////////////// support for APPEND and COPY /////////////////
+
+
+// add a file to an open imaildir_t (rename or remove path)
+derr_t imaildir_add_local_file(
+    imaildir_t *m,
+    const string_builder_t *path,
+    unsigned int uid,
+    size_t len,
+    imap_time_t intdate,
+    msg_flags_t flags
+){
+    derr_t e = E_OK;
+
+    msg_meta_t *meta = NULL;
+    msg_base_t *base = NULL;
+
+    /* fill the metadata in the log; the loading logic will puke if we put the
+       file in place without writing the metadata first */
+    PROP_GO(&e, msg_meta_new(&meta, uid, flags, 0), fail_path);
+
+    msg_base_state_e state = MSG_BASE_UNFILLED;
+    PROP_GO(&e, msg_base_new(&base, uid, state, intdate, meta), fail_path);
+
+    PROP_GO(&e, m->log->update_msg(m->log, base), fail_path);
+
+    // move the file into place
+    PROP_GO(&e, place_file_fill_msg(m, path, base, len), fail_msg);
+
+    // let the primary up_t know about the uid we don't need to download
+    if(!link_list_isempty(&m->ups)){
+        up_t *up = CONTAINER_OF(m->ups.next, up_t, link);
+        up_imaildir_have_local_file(up, uid);
+    }
+
+    // assign a modseq and mark the message as FILLED in the log
+    meta->mod.modseq = himodseq_dn(m) + 1;
+    PROP_GO(&e, m->log->update_msg(m->log, base), fail_msg);
+
+    // insert the message into memory
+    jsw_ainsert(&m->mods, &meta->mod.node);
+    jsw_ainsert(&m->msgs, &base->node);
+
+    // finally, push an update to the dn_t's
+    PROP(&e, handle_new_msg(m, base) );
+
+    return e;
+
+fail_path:
+    DROP_CMD( remove_path(path) );
+fail_msg:
+    msg_base_free(&base);
+    msg_meta_free(&meta);
+    return e;
+}
+
+// the dirmgr should call this, not the owner of the hold
+void imaildir_hold_end(imaildir_t *m){
+    if(!link_list_isempty(&m->ups)){
+        // let the primary up_t know
+        up_t *up = CONTAINER_OF(m->ups.next, up_t, link);
+        up_imaildir_hold_end(up);
+    }
 }
