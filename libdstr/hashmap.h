@@ -48,10 +48,8 @@ hash_elem_t *hashmap_getu(hashmap_t *h, unsigned int key);
 hash_elem_t *hashmap_dels(hashmap_t *h, const dstr_t *key);
 hash_elem_t *hashmap_delu(hashmap_t *h, unsigned int key);
 
-// delete an element directly (elem must be in h), returns if it was found
-bool hashmap_del_elem(hashmap_t *h, hash_elem_t *elem);
-// check if an element is in the map
-bool hashmap_has_elem(const hashmap_t *h, const hash_elem_t *elem);
+// delete an element directly (elem must be in h)
+void hashmap_del_elem(hashmap_t *h, hash_elem_t *elem);
 
 // iterators
 

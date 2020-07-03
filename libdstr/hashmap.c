@@ -377,12 +377,15 @@ hash_elem_t *hashmap_delu(hashmap_t *h, unsigned int key){
     return hashmap_del(h, NULL, key, false);
 }
 
-// delete an element directly, if elem is in h
-bool hashmap_del_elem(hashmap_t *h, hash_elem_t *elem){
+// delete an element directly (elem must be in h)
+void hashmap_del_elem(hashmap_t *h, hash_elem_t *elem){
     // get bucket index
     size_t idx = elem->hash & h->mask;
     // make sure bucket index is in range
-    if(idx >= h->num_buckets) return false;
+    if(idx >= h->num_buckets){
+        LOG_ERROR("hashmap_del_elem() elem has invalid index for hashmap!\n");
+        return;
+    }
     // walk the list looking for elem
     hash_elem_t **fixme = &h->buckets[idx];
     hash_elem_t *ptr = h->buckets[idx];
@@ -392,29 +395,12 @@ bool hashmap_del_elem(hashmap_t *h, hash_elem_t *elem){
             *fixme = ptr->next;
             // decrement element count
             h->num_elems--;
-            return true;
+            return;
         }
         fixme = &ptr->next;
         ptr = ptr->next;
     }
-    return false;
-}
-
-// check if an element is in the map
-bool hashmap_has_elem(const hashmap_t *h, const hash_elem_t *elem){
-    // get bucket index
-    size_t idx = elem->hash & h->mask;
-    // make sure bucket index is in range
-    if(idx >= h->num_buckets) return false;
-    // walk the list looking for elem
-    hash_elem_t *ptr = h->buckets[idx];
-    while(ptr){
-        if(ptr == elem){
-            return true;
-        }
-        ptr = ptr->next;
-    }
-    return false;
+    LOG_ERROR("hashmap_del_elem() did not find the element in the hashmap!\n");
 }
 
 hash_elem_t *hashmap_iter(hashmap_trav_t *trav, hashmap_t *h){

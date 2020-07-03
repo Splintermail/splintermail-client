@@ -156,7 +156,7 @@ static derr_t test_hashmap_del_elem(void){
     if(h.num_elems != num_elems)
         ORIG_GO(&e, E_VALUE, "wrong num_elems", cu);
 
-    // is it safe to delete an element not in the hashmap?
+    // is it memory-safe to delete an element not in the hashmap?
     hash_elem_t not_present_elem = {0};
     hashmap_del_elem(&h, &not_present_elem);
     if(h.num_elems != num_elems)
@@ -172,13 +172,13 @@ static derr_t test_hashmap_del_elem(void){
         hash_elem_t *old = hashmap_getu(&h, i);
         if(old != NULL)
             ORIG_GO(&e, E_VALUE, "hashmap_getu() returned non-null", cu);
-        // is it safe to call again?
+        // is it memory-safe to call again?
         hashmap_del_elem(&h, &elems[i].he);
     }
     if(h.num_elems != 0)
         ORIG_GO(&e, E_VALUE, "wrong num_elems", cu);
 
-    // is it still safe to delete an element not in the hashmap?
+    // is it still memory-safe to delete an element not in the hashmap?
     hashmap_del_elem(&h, &not_present_elem);
     if(h.num_elems != 0)
         ORIG_GO(&e, E_VALUE, "wrong num_elems", cu);
