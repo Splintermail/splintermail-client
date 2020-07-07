@@ -7,28 +7,34 @@ void imapyyerror(imap_parser_t *parser, char const *s){
     printf("ERROR: %s\n", s);
 }
 
-derr_t imap_parser_init(imap_parser_t *parser, imap_scanner_t *scanner,
-                        extensions_t *exts, imap_parser_cb_t cb,
-                        void *cb_data){
+derr_t imap_parser_init(
+    imap_parser_t *parser,
+    imap_scanner_t *scanner,
+    extensions_t *exts,
+    imap_parser_cb_t cb,
+    void *cb_data,
+    bool is_client
+){
     derr_t e = E_OK;
+
+    *parser = (imap_parser_t){
+        .cb = cb,
+        .cb_data = cb_data,
+        .is_client = is_client,
+        .scanner = scanner,
+        .exts = exts,
+
+        .error = E_OK,
+        .keep = false,
+        .keep_st_text = false,
+        .scan_mode = SCAN_MODE_TAG,
+    };
 
     // init the bison parser
     parser->imapyyps = imapyypstate_new();
     if(parser->imapyyps == NULL){
         ORIG(&e, E_NOMEM, "unable to allocate imapyypstate");
     }
-
-    // initial state details
-    parser->scan_mode = SCAN_MODE_TAG;
-    parser->error = E_OK;
-    parser->keep = false;
-    parser->keep_st_text = false;
-
-    parser->cb = cb;
-    parser->cb_data = cb_data;
-    parser->scanner = scanner;
-
-    parser->exts = exts;
 
     return e;
 }

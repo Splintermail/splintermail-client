@@ -143,7 +143,10 @@ static void imape_process_events(uv_work_t *req){
                 break;
 
             case EV_READ_DONE:
-                LOG_ERROR("imap engine received an illegal READ_DONE\n");
+                LOG_ERROR("imap engine received an illegal READ_DONE event\n");
+                break;
+            case EV_INTERNAL:
+                LOG_ERROR("imap engine received an illegal INTERNAL event\n");
                 break;
             default:
                 LOG_ERROR("unexpected event type in imap engine, ev = %x\n",
@@ -399,7 +402,35 @@ fail:
     id->session->close(id->session, e);
     PASSED(e);
 }
-static imap_parser_cb_t imape_parser_cmd_cb = {.cmd=cmd_cb};
+
+static void need_plus_cb(void *cb_data){
+    imape_data_t *id = cb_data;
+    derr_t e = E_OK;
+
+    // prepare the imap command
+    imap_cmd_arg_t cmd_arg = {0};
+    imap_cmd_t *cmd = imap_cmd_new(&e, NULL, IMAP_CMD_PLUS, cmd_arg);
+    CHECK_GO(&e, fail);
+
+    // prepare the imap event
+    imap_event_t *imap_ev;
+    imap_event_arg_u arg = { .cmd = cmd };
+
+    PROP_GO(&e, imap_event_new(&imap_ev, IMAP_EVENT_TYPE_CMD, arg, id), fail);
+
+    // pass the event downstream
+    id->downstream->pass_event(id->downstream, &imap_ev->ev);
+
+    return;
+
+fail:
+    id->session->close(id->session, e);
+    PASSED(e);
+};
+
+static imap_parser_cb_t imape_parser_cmd_cb = {
+    .cmd=cmd_cb, .need_plus=need_plus_cb,
+};
 
 // parser callback for clients
 
@@ -460,12 +491,17 @@ static void imape_data_onthread_start(imape_data_t *id){
     link_init(&id->unwritten);
     queue_cb_prep(&id->write_qcb);
 
+    bool is_client = id->control->is_client;
+
     // choose the right parser callback
     imap_parser_cb_t parser_cb =
-        id->control->is_client ? imape_parser_resp_cb : imape_parser_cmd_cb;
+        is_client ? imape_parser_resp_cb : imape_parser_cmd_cb;
 
-    PROP_GO(&e, imap_reader_init(&id->reader, &id->control->exts, parser_cb,
-                id), fail);
+    PROP_GO(&e,
+        imap_reader_init(
+            &id->reader, &id->control->exts, parser_cb, id, is_client
+        ),
+    fail);
 
     // lifetime reference
     id->ref_up(id->session, IMAPE_REF_LIFETIME);
@@ -535,6 +571,7 @@ dstr_t *imape_ref_reason_to_dstr(enum imape_ref_reason_t reason){
         case IMAPE_REF_START_EVENT: return &imape_ref_start_event_dstr; break;
         case IMAPE_REF_CLOSE_EVENT: return &imape_ref_close_event_dstr; break;
         case IMAPE_REF_LIFETIME: return &imape_ref_lifetime_dstr; break;
+        case IMAPE_REF_MAXIMUM:
         default: return &imape_ref_unknown_dstr;
     }
 }

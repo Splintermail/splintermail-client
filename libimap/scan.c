@@ -8,6 +8,7 @@ DSTR_STATIC(scan_mode_NUM_dstr, "SCAN_MODE_NUM");
 DSTR_STATIC(scan_mode_COMMAND_dstr, "SCAN_MODE_COMMAND");
 DSTR_STATIC(scan_mode_ATOM_dstr, "SCAN_MODE_ATOM");
 DSTR_STATIC(scan_mode_FLAG_dstr, "SCAN_MODE_FLAG");
+DSTR_STATIC(scan_mode_MFLAG_dstr, "SCAN_MODE_MFLAG");
 DSTR_STATIC(scan_mode_STATUS_CODE_CHECK_dstr, "SCAN_MODE_STATUS_CODE_CHECK");
 DSTR_STATIC(scan_mode_STATUS_CODE_dstr, "SCAN_MODE_STATUS_CODE");
 DSTR_STATIC(scan_mode_STATUS_TEXT_dstr, "SCAN_MODE_STATUS_TEXT");
@@ -34,6 +35,7 @@ dstr_t* scan_mode_to_dstr(scan_mode_t mode){
         case SCAN_MODE_COMMAND: return &scan_mode_COMMAND_dstr;
         case SCAN_MODE_ATOM: return &scan_mode_ATOM_dstr;
         case SCAN_MODE_FLAG: return &scan_mode_FLAG_dstr;
+        case SCAN_MODE_MFLAG: return &scan_mode_MFLAG_dstr;
         case SCAN_MODE_STATUS_CODE_CHECK: return &scan_mode_STATUS_CODE_CHECK_dstr;
         case SCAN_MODE_STATUS_CODE: return &scan_mode_STATUS_CODE_dstr;
         case SCAN_MODE_STATUS_TEXT: return &scan_mode_STATUS_TEXT_dstr;
@@ -122,7 +124,7 @@ derr_t imap_scan(imap_scanner_t *scanner, scan_mode_t mode, bool *more,
         // if no bytes requested, return now to avoid dstr_sub's "0" behavior
         if(scanner->literal_len == 0){
             *token_out = (dstr_t){0};
-            *type = RAW;
+            *type = LITERAL_END;
             *more = false;
             // this is the end of the literal
             scanner->in_literal = false;
@@ -141,7 +143,6 @@ derr_t imap_scan(imap_scanner_t *scanner, scan_mode_t mode, bool *more,
         *token_out = dstr_sub(&scanner->bytes, start, start + steal_len);
         scanner->start += steal_len;
         scanner->literal_len -= steal_len;
-        if(scanner->literal_len == 0) scanner->in_literal = false;
         return E_OK;
     }
 #   define YYGETSTATE()  scanner->state

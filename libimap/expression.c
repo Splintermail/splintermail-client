@@ -51,6 +51,7 @@ const dstr_t *ie_status_attr_to_dstr(ie_status_attr_t sa){
     return &IE_UNKNOWN_dstr;
 }
 
+DSTR_STATIC(IMAP_CMD_PLUS_dstr, "+");
 DSTR_STATIC(IMAP_CMD_CAPA_dstr, "CAPABILITY");
 DSTR_STATIC(IMAP_CMD_NOOP_dstr, "NOOP");
 DSTR_STATIC(IMAP_CMD_LOGOUT_dstr, "LOGOUT");
@@ -80,6 +81,7 @@ DSTR_STATIC(IMAP_CMD_UNSELECT_dstr, "UNSELECT");
 
 const dstr_t *imap_cmd_type_to_dstr(imap_cmd_type_t type){
     switch(type){
+        case IMAP_CMD_PLUS:     return &IMAP_CMD_PLUS_dstr;
         case IMAP_CMD_CAPA:     return &IMAP_CMD_CAPA_dstr;
         case IMAP_CMD_NOOP:     return &IMAP_CMD_NOOP_dstr;
         case IMAP_CMD_LOGOUT:   return &IMAP_CMD_LOGOUT_dstr;
@@ -110,6 +112,7 @@ const dstr_t *imap_cmd_type_to_dstr(imap_cmd_type_t type){
     return &IE_UNKNOWN_dstr;
 }
 
+DSTR_STATIC(IMAP_RESP_PLUS_dstr, "+");
 DSTR_STATIC(IMAP_RESP_STATUS_TYPE_dstr, "STATUS_TYPE");
 DSTR_STATIC(IMAP_RESP_CAPA_dstr, "CAPA");
 DSTR_STATIC(IMAP_RESP_LIST_dstr, "LIST");
@@ -126,6 +129,7 @@ DSTR_STATIC(IMAP_RESP_VANISHED_dstr, "VANISHED");
 
 const dstr_t *imap_resp_type_to_dstr(imap_resp_type_t type){
     switch(type){
+        case IMAP_RESP_PLUS:        return &IMAP_RESP_PLUS_dstr;
         case IMAP_RESP_STATUS_TYPE: return &IMAP_RESP_STATUS_TYPE_dstr;
         case IMAP_RESP_CAPA:        return &IMAP_RESP_CAPA_dstr;
         case IMAP_RESP_LIST:        return &IMAP_RESP_LIST_dstr;
@@ -2404,6 +2408,7 @@ ie_copy_cmd_t *ie_copy_cmd_copy(derr_t *e, const ie_copy_cmd_t *old){
 
 static void imap_cmd_arg_free(imap_cmd_type_t type, imap_cmd_arg_t arg){
     switch(type){
+        case IMAP_CMD_PLUS:     break;
         case IMAP_CMD_CAPA:     break;
         case IMAP_CMD_NOOP:     break;
         case IMAP_CMD_LOGOUT:   break;
@@ -2464,6 +2469,7 @@ static imap_cmd_arg_t imap_cmd_arg_copy(derr_t *e, imap_cmd_type_t type,
         const imap_cmd_arg_t old){
     imap_cmd_arg_t arg = {0};
     switch(type){
+        case IMAP_CMD_PLUS:     break;
         case IMAP_CMD_CAPA:     break;
         case IMAP_CMD_NOOP:     break;
         case IMAP_CMD_LOGOUT:   break;
@@ -2681,6 +2687,7 @@ void ie_vanished_resp_free(ie_vanished_resp_t *vanished){
 
 static void imap_resp_arg_free(imap_resp_type_t type, imap_resp_arg_t arg){
     switch(type){
+        case IMAP_RESP_PLUS:        break;
         case IMAP_RESP_STATUS_TYPE: ie_st_resp_free(arg.status_type); break;
         case IMAP_RESP_CAPA:        ie_dstr_free(arg.capa); break;
         case IMAP_RESP_LIST:        ie_list_resp_free(arg.list); break;

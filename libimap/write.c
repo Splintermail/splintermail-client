@@ -13,6 +13,8 @@ typedef struct {
     size_t passed; // input bytes handled, this will become skip on the next run
     size_t want; // output bytes needed to finish, just for information
     const extensions_t *exts;
+    // we cheat and always write commands with the LITERAL+ extension
+    bool is_cmd;
 } skip_fill_t;
 
 // The base skip_fill.  Skip some bytes, then fill a buffer with what remains.
@@ -127,7 +129,10 @@ static derr_t literal_skip_fill(skip_fill_t *sf, const dstr_t *in){
     derr_t e = E_OK;
     // generate the imap literal header
     DSTR_VAR(header, 64);
-    PROP(&e, FMT(&header, "{%x}\r\n", FU(in->len)) );
+
+    // use LITERAL+ extension on commands
+    const char *fmt = sf->is_cmd ? "{%x+}\r\n" : "{%x}\r\n";
+    PROP(&e, FMT(&header, fmt, FU(in->len)) );
 
     PROP(&e, raw_skip_fill(sf, &header) );
     PROP(&e, raw_skip_fill(sf, in) );
@@ -1049,7 +1054,9 @@ static derr_t do_imap_cmd_write(const imap_cmd_t *cmd, dstr_t *out,
         bool enforce_output){
     derr_t e = E_OK;
 
-    skip_fill_t skip_fill = { .out=out, .skip=*skip, .exts=exts };
+    skip_fill_t skip_fill = {
+        .out=out, .skip=*skip, .exts=exts, .is_cmd=true,
+    };
     skip_fill_t *sf = &skip_fill;
 
     imap_cmd_arg_t arg = cmd->arg;
@@ -1061,6 +1068,10 @@ static derr_t do_imap_cmd_write(const imap_cmd_t *cmd, dstr_t *out,
     STATIC_SKIP_FILL(" ");
 
     switch(cmd->type){
+        case IMAP_CMD_PLUS:
+            ORIG(&e, E_INTERNAL, "IMAP_CMD_PLUS is not a writable command");
+            break;
+
         case IMAP_CMD_CAPA:
             STATIC_SKIP_FILL("CAPABILITY");
             break;
@@ -1647,12 +1658,16 @@ static derr_t do_imap_resp_write(const imap_resp_t *resp, dstr_t *out,
 
     imap_resp_arg_t arg = resp->arg;
 
-    // non-status-type responses are all untagged
-    if(resp->type != IMAP_RESP_STATUS_TYPE){
+    // non-status-type, non-plus responses are all untagged
+    if(resp->type != IMAP_RESP_STATUS_TYPE && resp->type != IMAP_RESP_PLUS){
         STATIC_SKIP_FILL("* ");
     }
 
     switch(resp->type){
+        case IMAP_RESP_PLUS:
+            STATIC_SKIP_FILL("+");
+            break;
+
         case IMAP_RESP_STATUS_TYPE:
             PROP(&e, st_skip_fill(sf, arg.status_type) );
             break;
@@ -1731,6 +1746,7 @@ static derr_t do_imap_resp_write(const imap_resp_t *resp, dstr_t *out,
             TRACE(&e, "got response of unknown type %x\n", FU(resp->type));
             ORIG(&e, E_INTERNAL, "unprintable response: unknown type");
     }
+
     // line break
     STATIC_SKIP_FILL("\r\n");
 

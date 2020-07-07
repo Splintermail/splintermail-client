@@ -76,13 +76,15 @@ define_file_logname_for_source("${imap_parse_in}" "${imap_parse_out}")
 define_file_logname_for_source("${imf_scan_in}" "${imf_scan_out}")
 define_file_logname_for_source("${imf_parse_in}" "${imf_parse_out}")
 
-# Work around missing prototype with bison 3.6:
+# Work around missing prototype and poor enum handling with bison 3.6:
 get_property(opts SOURCE "${imap_parse_out}" PROPERTY COMPILE_OPTIONS)
 # compiler- and target-specific flag adjustments
 if("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU")
     list(APPEND opts "-Wno-missing-prototypes")
+    list(APPEND opts "-Wno-switch-enum")
 elseif("${CMAKE_C_COMPILER_ID}" MATCHES "Clang")
     list(APPEND opts "-Wno-missing-prototypes")
+    list(APPEND opts "-Wno-switch-enum")
 elseif("${CMAKE_C_COMPILER_ID}" STREQUAL "MSVC")
     # flags for MVSC (VS 2017)
 endif()

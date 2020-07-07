@@ -552,6 +552,19 @@ static derr_t send_greeting(server_t *server){
     return e;
 }
 
+
+static derr_t send_plus(server_t *server){
+    derr_t e = E_OK;
+
+    imap_resp_arg_t arg = {0};
+    imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_PLUS, arg);
+    send_resp(&e, server, resp);
+    CHECK(&e);
+
+    return e;
+}
+
+
 static derr_t send_capas(server_t *server, const ie_dstr_t *tag){
     derr_t e = E_OK;
 
@@ -736,6 +749,26 @@ static derr_t passthru_cmd(server_t *server, const ie_dstr_t *tag,
             arg.create = ie_mailbox_copy(&e, cmd->arg.unsub);
             break;
 
+        case IMAP_CMD_PLUS:
+        case IMAP_CMD_CAPA:
+        case IMAP_CMD_NOOP:
+        case IMAP_CMD_LOGOUT:
+        case IMAP_CMD_STARTTLS:
+        case IMAP_CMD_AUTH:
+        case IMAP_CMD_LOGIN:
+        case IMAP_CMD_SELECT:
+        case IMAP_CMD_EXAMINE:
+        case IMAP_CMD_RENAME:
+        case IMAP_CMD_APPEND:
+        case IMAP_CMD_CHECK:
+        case IMAP_CMD_CLOSE:
+        case IMAP_CMD_EXPUNGE:
+        case IMAP_CMD_SEARCH:
+        case IMAP_CMD_FETCH:
+        case IMAP_CMD_STORE:
+        case IMAP_CMD_COPY:
+        case IMAP_CMD_ENABLE:
+        case IMAP_CMD_UNSELECT:
         default:
             ORIG(&e, E_INTERNAL, "illegal command type in passthru_cmd");
     }
@@ -840,6 +873,10 @@ static derr_t handle_one_command(server_t *server, imap_cmd_t *cmd){
     bool state_ok;
 
     switch(cmd->type){
+        case IMAP_CMD_PLUS:
+            PROP_GO(&e, send_plus(server), cu_cmd);
+            break;
+
         case IMAP_CMD_CAPA:
             PROP_GO(&e, send_capas(server, tag), cu_cmd);
             break;
@@ -888,6 +925,7 @@ static derr_t handle_one_command(server_t *server, imap_cmd_t *cmd){
         case IMAP_CMD_DELETE:
         case IMAP_CMD_SUB:
         case IMAP_CMD_UNSUB:
+        case IMAP_CMD_APPEND:
             if(server->imap_state != AUTHENTICATED
                     && server->imap_state != SELECTED){
                 PROP_GO(&e, send_invalid_state_resp(server, tag), cu_cmd);
@@ -931,7 +969,6 @@ static derr_t handle_one_command(server_t *server, imap_cmd_t *cmd){
             break;
 
         case IMAP_CMD_EXAMINE:
-        case IMAP_CMD_APPEND:
         case IMAP_CMD_CHECK:
         case IMAP_CMD_EXPUNGE:
         case IMAP_CMD_SEARCH:
@@ -979,6 +1016,23 @@ static bool intercept_cmd_type(imap_cmd_type_t type){
         case IMAP_CMD_LOGOUT:
         case IMAP_CMD_CLOSE:
             return true;
+
+        case IMAP_CMD_PLUS:
+        case IMAP_CMD_NOOP:
+        case IMAP_CMD_STARTTLS:
+        case IMAP_CMD_AUTH:
+        case IMAP_CMD_LOGIN:
+        case IMAP_CMD_EXAMINE:
+        case IMAP_CMD_RENAME:
+        case IMAP_CMD_APPEND:
+        case IMAP_CMD_CHECK:
+        case IMAP_CMD_EXPUNGE:
+        case IMAP_CMD_SEARCH:
+        case IMAP_CMD_FETCH:
+        case IMAP_CMD_STORE:
+        case IMAP_CMD_COPY:
+        case IMAP_CMD_ENABLE:
+        case IMAP_CMD_UNSELECT:
         default:
             return false;
     }
@@ -988,14 +1042,9 @@ static bool intercept_cmd_type(imap_cmd_type_t type){
 static derr_t server_await_if_async(server_t *server, imap_cmd_t *cmd){
     derr_t e = E_OK;
 
-    switch(cmd->type){
-        case IMAP_CMD_STORE:
-            server->await.tag = ie_dstr_copy(&e, cmd->tag);
-            CHECK_GO(&e, fail);
-            break;
-
-        default:
-            break;
+    if(cmd->type == IMAP_CMD_STORE){
+        server->await.tag = ie_dstr_copy(&e, cmd->tag);
+        CHECK_GO(&e, fail);
     }
 
     return e;

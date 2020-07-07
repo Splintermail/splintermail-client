@@ -494,6 +494,7 @@ typedef struct {
 // full command types
 
 typedef enum {
+    IMAP_CMD_PLUS,  // not a real command, just an in-line request for a +
     IMAP_CMD_CAPA,
     IMAP_CMD_NOOP,
     IMAP_CMD_LOGOUT,
@@ -585,6 +586,7 @@ typedef struct {
 } ie_copy_cmd_t;
 
 typedef union {
+    // nothing for plus
     // nothing for capability
     // nothing for noop
     // nothing for logout
@@ -626,6 +628,7 @@ DEF_STEAL_PTR(imap_cmd_t);
 // full response types
 
 typedef enum {
+    IMAP_RESP_PLUS,  // not actually returned by the parser, ever
     IMAP_RESP_STATUS_TYPE,
     IMAP_RESP_CAPA,
     IMAP_RESP_LIST,
@@ -682,6 +685,7 @@ typedef struct {
 } ie_vanished_resp_t;
 
 typedef struct {
+    // nothing for plus
     ie_st_resp_t *status_type;
     ie_dstr_t *capa;
     ie_list_resp_t *list;

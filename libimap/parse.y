@@ -26,6 +26,10 @@
         } \
         /* put scanner in literal mode */ \
         set_scanner_to_literal_mode(p, len); \
+        if(!p->is_client){ \
+            /* send a plus token to the client */ \
+            p->cb.need_plus(p->cb_data); \
+        } \
     }
 
     #define PARSE_NUM(out){ \
@@ -323,7 +327,8 @@
 %type <dstr> qstr
 %type <dstr> qstr_body
 %type <dstr> literal
-%type <dstr> literal_body
+%type <dstr> literal_body_0
+%type <dstr> literal_body_1
 %type <dstr> astring
 %type <dstr> string
 %type <dstr> search_charset
@@ -575,6 +580,13 @@ command: command_[c]
     p->cb.cmd(p->cb_data, error, $c);
 };
 
+cmdcheck: %empty {
+    if(p->is_client){
+        imapyyerror(p, "imap commands not allowed, only responses");
+        YYERROR;
+    }
+}
+
 command_: capa_cmd
         | noop_cmd
         | logout_cmd
@@ -611,6 +623,13 @@ response: response_[r]
     p->cb.resp(p->cb_data, error, $r);
 };
 
+respcheck: %empty {
+    if(!p->is_client){
+        imapyyerror(p, "imap responses not allowed, only commands");
+        YYERROR;
+    }
+}
+
 response_: status_type_resp_tagged
          | untag SP untagged_resp[u] { $$ = $u; }
 ;
@@ -634,38 +653,38 @@ untag: '*' { MODE(COMMAND); };
 
 /*** CAPABILITY command ***/
 
-capa_cmd: tag SP CAPA
+capa_cmd: tag SP CAPA cmdcheck
     { $$ = imap_cmd_new(E, $tag, IMAP_CMD_CAPA, (imap_cmd_arg_t){0}); };
 
 /*** NOOP command ***/
 
-noop_cmd: tag SP NOOP
+noop_cmd: tag SP NOOP cmdcheck
     { $$ = imap_cmd_new(E, $tag, IMAP_CMD_NOOP, (imap_cmd_arg_t){0}); };
 
 /*** LOGOUT command ***/
 
-logout_cmd: tag SP LOGOUT
+logout_cmd: tag SP LOGOUT cmdcheck
     { $$ = imap_cmd_new(E, $tag, IMAP_CMD_LOGOUT, (imap_cmd_arg_t){0}); };
 
 /*** STARTTLS command ***/
 
-starttls_cmd: tag SP STARTTLS
+starttls_cmd: tag SP STARTTLS cmdcheck
     { $$ = imap_cmd_new(E, $tag, IMAP_CMD_STARTTLS, (imap_cmd_arg_t){0}); };
 
 /*** AUTHENTICATE command ***/
-authenticate_cmd: tag SP AUTHENTICATE SP atom
+authenticate_cmd: tag SP AUTHENTICATE cmdcheck SP atom
     { imap_cmd_arg_t arg = {.auth=$atom};
       $$ = imap_cmd_new(E, $tag, IMAP_CMD_AUTH, arg); };
 
 /*** LOGIN command ***/
 
-login_cmd: tag SP LOGIN SP { MODE(ASTRING); } astring[u] SP astring[p]
+login_cmd: tag SP LOGIN cmdcheck SP { MODE(ASTRING); } astring[u] SP astring[p]
     { imap_cmd_arg_t arg = {.login=ie_login_cmd_new(E, $u, $p)};
       $$ = imap_cmd_new(E, $tag, IMAP_CMD_LOGIN, arg); };
 
 /*** SELECT command ***/
 
-select_cmd: tag SP SELECT SP mailbox[m] select_params_0[p]
+select_cmd: tag SP SELECT cmdcheck SP mailbox[m] select_params_0[p]
     { imap_cmd_arg_t arg = {.select=ie_select_cmd_new(E, $m, $p)};
       $$ = imap_cmd_new(E, $tag, IMAP_CMD_SELECT, arg); };
 
@@ -710,55 +729,55 @@ qresync_map: %empty                                  { $$.u=NULL; $$.k=NULL; $$.
 
 /*** EXAMINE command ***/
 
-examine_cmd: tag SP EXAMINE SP mailbox[m] { MODE(SELECT_PARAM); } select_params_0[p]
+examine_cmd: tag SP EXAMINE cmdcheck SP mailbox[m] { MODE(SELECT_PARAM); } select_params_0[p]
     { imap_cmd_arg_t arg = {.examine=ie_select_cmd_new(E, $m, $p)};
       $$ = imap_cmd_new(E, $tag, IMAP_CMD_EXAMINE, arg); };
 
 /*** CREATE command ***/
 
-create_cmd: tag SP CREATE SP mailbox[m]
+create_cmd: tag SP CREATE cmdcheck SP mailbox[m]
     { imap_cmd_arg_t arg = {.create=$m};
       $$ = imap_cmd_new(E, $tag, IMAP_CMD_CREATE, arg); };
 
 /*** DELETE command ***/
 
-delete_cmd: tag SP DELETE SP mailbox[m]
+delete_cmd: tag SP DELETE cmdcheck SP mailbox[m]
     { imap_cmd_arg_t arg = {.delete=$m};
       $$ = imap_cmd_new(E, $tag, IMAP_CMD_DELETE, arg); };
 
 /*** RENAME command ***/
 
-rename_cmd: tag SP RENAME SP mailbox[o] SP mailbox[n]
+rename_cmd: tag SP RENAME cmdcheck SP mailbox[o] SP mailbox[n]
     { imap_cmd_arg_t arg = {.rename=ie_rename_cmd_new(E, $o, $n)};
       $$ = imap_cmd_new(E, $tag, IMAP_CMD_RENAME, arg); };
 
 /*** SUBSCRIBE command ***/
 
-subscribe_cmd: tag SP SUBSCRIBE SP mailbox[m]
+subscribe_cmd: tag SP SUBSCRIBE cmdcheck SP mailbox[m]
     { imap_cmd_arg_t arg = {.sub=$m};
       $$ = imap_cmd_new(E, $tag, IMAP_CMD_SUB, arg); };
 
 /*** UNSUBSCRIBE command ***/
 
-unsubscribe_cmd: tag SP UNSUBSCRIBE SP mailbox[m]
+unsubscribe_cmd: tag SP UNSUBSCRIBE cmdcheck SP mailbox[m]
     { imap_cmd_arg_t arg = {.unsub=$m};
       $$ = imap_cmd_new(E, $tag, IMAP_CMD_UNSUB, arg); };
 
 /*** LIST command ***/
 
-list_cmd: tag SP LIST SP mailbox[m] { MODE(WILDCARD); } SP astring[p]
+list_cmd: tag SP LIST cmdcheck SP mailbox[m] { MODE(WILDCARD); } SP astring[p]
     { imap_cmd_arg_t arg = {.list=ie_list_cmd_new(E, $m, $p)};
       $$ = imap_cmd_new(E, $tag, IMAP_CMD_LIST, arg); };
 
 /*** LSUB command ***/
 
-lsub_cmd: tag SP LSUB SP mailbox[m] { MODE(WILDCARD); } SP astring[p]
+lsub_cmd: tag SP LSUB cmdcheck SP mailbox[m] { MODE(WILDCARD); } SP astring[p]
     { imap_cmd_arg_t arg = {.lsub=ie_list_cmd_new(E, $m, $p)};
       $$ = imap_cmd_new(E, $tag, IMAP_CMD_LSUB, arg); };
 
 /*** STATUS command ***/
 
-status_cmd: tag SP STATUS SP mailbox[m]
+status_cmd: tag SP STATUS cmdcheck SP mailbox[m]
           { MODE(STATUS_ATTR); } SP '(' s_attr_clist_1[sa] ')'
     { imap_cmd_arg_t arg = {.status=ie_status_cmd_new(E, $m, $sa)};
       $$ = imap_cmd_new(E, $tag, IMAP_CMD_STATUS, arg); };
@@ -769,7 +788,7 @@ s_attr_clist_1: s_attr_any[s]                        { $$ = $s; }
 
 /*** APPEND command ***/
 
-append_cmd: tag SP APPEND SP mailbox[m]
+append_cmd: tag SP APPEND cmdcheck SP mailbox[m]
           { MODE(FLAG); } SP append_flags[f] append_time[t]
           { MODE(ASTRING); } literal[l]
     { imap_cmd_arg_t arg = {.append=ie_append_cmd_new(E, $m, $f, $t, $l)};
@@ -785,17 +804,17 @@ append_time: %empty             { $$ = (imap_time_t){0}; }
 
 /*** CHECK command ***/
 
-check_cmd: tag[t] SP CHECK
+check_cmd: tag[t] SP CHECK cmdcheck
     { $$ = imap_cmd_new(E, $t, IMAP_CMD_CHECK, (imap_cmd_arg_t){0}); };
 
 /*** CLOSE command ***/
 
-close_cmd: tag[t] SP CLOSE
+close_cmd: tag[t] SP CLOSE cmdcheck
     { $$ = imap_cmd_new(E, $t, IMAP_CMD_CLOSE, (imap_cmd_arg_t){0}); };
 
 /*** EXPUNGE command ***/
 
-expunge_cmd: tag[t] SP EXPUNGE
+expunge_cmd: tag[t] SP EXPUNGE cmdcheck
                 { imap_cmd_arg_t arg = {0};
                   $$ = imap_cmd_new(E, $t, IMAP_CMD_EXPUNGE, arg); }
            | tag[t] SP UID SP EXPUNGE SP uid_set[s]
@@ -811,7 +830,7 @@ uid_mode: %empty { $$ = false; }
 
 /*** SEARCH command ***/
 
-search_cmd: tag SP uid_mode[u] SEARCH SP
+search_cmd: tag SP uid_mode[u] SEARCH cmdcheck SP
             { MODE(SEARCH); } search_charset[c]
             { MODE(SEARCH); } search_keys_1[k]
     { imap_cmd_arg_t arg = {.search=ie_search_cmd_new(E, $u, $c, $k)};
@@ -906,7 +925,7 @@ date: date_day '-' date_month '-' fourdigit
 
 /*** FETCH command ***/
 
-fetch_cmd: tag SP uid_mode[u] FETCH SP seq_set[seq] SP
+fetch_cmd: tag SP uid_mode[u] FETCH cmdcheck SP seq_set[seq] SP
            { MODE(FETCH); } fetch_attrs[attr] fetch_mods_0[mods]
     { imap_cmd_arg_t arg = {.fetch=ie_fetch_cmd_new(E, $u, $seq, $attr, $mods)};
       $$ = imap_cmd_new(E, $tag, IMAP_CMD_FETCH, arg);
@@ -1029,7 +1048,7 @@ partial: %empty                      { $$ = NULL; }
 
 /*** STORE command ***/
 
-store_cmd: tag SP uid_mode[u] STORE SP seq_set[seq]
+store_cmd: tag SP uid_mode[u] STORE cmdcheck SP seq_set[seq]
            { MODE(STORE); } SP store_mods_0[mods] store_sign[sign] FLAGS store_silent[silent]
            { MODE(FLAG); } store_flags[f]
     { imap_cmd_arg_t arg;
@@ -1063,20 +1082,20 @@ store_flags: SP '(' flags_0[f] ')' { $$ = $f; }
 
 /*** COPY command ***/
 
-copy_cmd: tag SP uid_mode[u] COPY SP seq_set[seq] SP mailbox[m]
+copy_cmd: tag SP uid_mode[u] COPY cmdcheck SP seq_set[seq] SP mailbox[m]
     { imap_cmd_arg_t arg = {.copy=ie_copy_cmd_new(E, $u, $seq, $m)};
       $$ = imap_cmd_new(E, $tag, IMAP_CMD_COPY, arg); };
 
 /*** ENABLE command ***/
 
-enable_cmd: tag SP ENABLE { MODE(ATOM); } SP capas_1[c]
+enable_cmd: tag SP ENABLE cmdcheck { MODE(ATOM); } SP capas_1[c]
     { extension_assert_on_builder(E, p->exts, EXT_ENABLE);
       imap_cmd_arg_t arg = {.enable=$c};
       $$ = imap_cmd_new(E, $tag, IMAP_CMD_ENABLE, arg); };
 
 /*** UNSELECT command ***/
 
-unselect_cmd: tag[t] SP UNSELECT
+unselect_cmd: tag[t] SP UNSELECT cmdcheck
     { extension_assert_on_builder(E, p->exts, EXT_UNSELECT);
       $$ = imap_cmd_new(E, $t, IMAP_CMD_UNSELECT, (imap_cmd_arg_t){0}); };
 
@@ -1231,7 +1250,7 @@ st_txt_char: st_txt_inner_char
 
 /*** CAPABILITY response ***/
 
-capa_resp: CAPA { MODE(ATOM); } SP capas_1[c]
+capa_resp: CAPA respcheck { MODE(ATOM); } SP capas_1[c]
     { imap_resp_arg_t arg = {.capa=$c};
       $$ = imap_resp_new(E, IMAP_RESP_CAPA, arg); };
 
@@ -1240,11 +1259,11 @@ capas_1: atom
 
 /*** LIST/LSUB responses ***/
 
-list_resp: LIST SP mflags[mf] SP nqchar SP mailbox[mbx]
+list_resp: LIST respcheck SP mflags[mf] SP nqchar SP mailbox[mbx]
     { imap_resp_arg_t arg = {.list=ie_list_resp_new(E, $mf, $nqchar, $mbx)};
       $$ = imap_resp_new(E, IMAP_RESP_LIST, arg); };
 
-lsub_resp: LSUB SP mflags[mf] SP nqchar SP mailbox[mbx]
+lsub_resp: LSUB respcheck SP mflags[mf] SP nqchar SP mailbox[mbx]
     { imap_resp_arg_t arg = {.lsub=ie_list_resp_new(E, $mf, $nqchar, $mbx)};
       $$ = imap_resp_new(E, IMAP_RESP_LSUB, arg); };
 
@@ -1259,7 +1278,7 @@ qchar: QCHAR { $$ = QCHAR_TO_CHAR; };
 
 /*** STATUS response ***/
 
-status_resp: STATUS SP mailbox[m] { MODE(STATUS_ATTR); } SP '(' s_attr_rlist_0[sa] ')'
+status_resp: STATUS respcheck SP mailbox[m] { MODE(STATUS_ATTR); } SP '(' s_attr_rlist_0[sa] ')'
     { imap_resp_arg_t arg = {.status=ie_status_resp_new(E, $m, $sa)};
       $$ = imap_resp_new(E, IMAP_RESP_STATUS, arg); };
 
@@ -1277,23 +1296,23 @@ s_attr_resp: s_attr_32[s] SP num[n]        { $$ = ie_status_attr_resp_new_32(E, 
 
 /*** FLAGS response ***/
 
-flags_resp: FLAGS SP { MODE(FLAG); } '(' flags_0[f] ')'
+flags_resp: FLAGS respcheck SP { MODE(FLAG); } '(' flags_0[f] ')'
     { imap_resp_arg_t arg = {.flags=$f};
       $$ = imap_resp_new(E, IMAP_RESP_FLAGS, arg); };
 
 /*** SEARCH response ***/
 
-search_resp: SEARCH
+search_resp: SEARCH respcheck
                         { imap_resp_arg_t arg = {
                               .search=ie_search_resp_new(E, NULL, false, 0),
                           };
                           $$ = imap_resp_new(E, IMAP_RESP_SEARCH, arg); }
-           | SEARCH pre_search_resp SP nums_1[n]
+           | SEARCH respcheck pre_search_resp SP nums_1[n]
                         { imap_resp_arg_t arg = {
                               .search=ie_search_resp_new(E, $n, false, 0),
                           };
                           $$ = imap_resp_new(E, IMAP_RESP_SEARCH, arg); }
-           | SEARCH pre_search_resp SP nums_1[n] SP { MODE(MODSEQ); }
+           | SEARCH respcheck pre_search_resp SP nums_1[n] SP { MODE(MODSEQ); }
                 '(' MODSEQ SP nzmodseqnum[s] ')'
                         { extension_assert_on_builder(E, p->exts, EXT_CONDSTORE);
                           imap_resp_arg_t arg = {
@@ -1305,25 +1324,25 @@ pre_search_resp: %empty { MODE(MODSEQ); };
 
 /*** EXISTS response ***/
 
-exists_resp: num SP EXISTS
+exists_resp: num SP EXISTS respcheck
     { imap_resp_arg_t arg = {.exists=$num};
       $$ = imap_resp_new(E, IMAP_RESP_EXISTS, arg); };
 
 /*** RECENT response ***/
 
-recent_resp: num SP RECENT
+recent_resp: num SP RECENT respcheck
     { imap_resp_arg_t arg = {.recent=$num};
       $$ = imap_resp_new(E, IMAP_RESP_RECENT, arg); };
 
 /*** EXPUNGE response ***/
 
-expunge_resp: num SP EXPUNGE
+expunge_resp: num SP EXPUNGE respcheck
     { imap_resp_arg_t arg = {.expunge=$num};
       $$ = imap_resp_new(E, IMAP_RESP_EXPUNGE, arg); };
 
 /*** FETCH response ***/
 
-fetch_resp: num[n] SP FETCH { MODE(FETCH); } SP '(' msg_attrs_0[ma] ')'
+fetch_resp: num[n] SP FETCH respcheck { MODE(FETCH); } SP '(' msg_attrs_0[ma] ')'
     { imap_resp_arg_t arg = {.fetch=ie_fetch_resp_num(E, $ma, $n)};
       $$ = imap_resp_new(E, IMAP_RESP_FETCH, arg); };
 
@@ -1414,20 +1433,20 @@ ign_nstring: NIL
 
 /*** ENABLED response ***/
 
-enabled_resp: ENABLED { MODE(ATOM); } SP capas_1[c]
+enabled_resp: ENABLED respcheck { MODE(ATOM); } SP capas_1[c]
     { extension_assert_on_builder(E, p->exts, EXT_ENABLE);
       imap_resp_arg_t arg = {.enabled=$c};
       $$ = imap_resp_new(E, IMAP_RESP_ENABLED, arg); };
 
 /*** VANISHED response ***/
 
-vanished_resp: VANISHED SP seq_set[s]
+vanished_resp: VANISHED respcheck SP seq_set[s]
                 { extension_assert_on_builder(E, p->exts, EXT_QRESYNC);
                   imap_resp_arg_t arg = {
                       .vanished=ie_vanished_resp_new(E, false, $s)
                   };
                   $$ = imap_resp_new(E, IMAP_RESP_VANISHED, arg); }
-             | VANISHED SP '(' EARLIER ')' SP seq_set[s]
+             | VANISHED respcheck SP '(' EARLIER ')' SP seq_set[s]
                 { extension_assert_on_builder(E, p->exts, EXT_QRESYNC);
                   imap_resp_arg_t arg = {
                       .vanished=ie_vanished_resp_new(E, true, $s)
@@ -1490,19 +1509,21 @@ ign_qstr_body: %empty
 ;
 
 
-/* note that LITERAL_END is passed by the application after it finishes reading
-   the literal from the stream; it is never returned by the scanner */
-literal: LITERAL { LITERAL_START; } literal_body[l] { $$ = $l; };
+literal: LITERAL { LITERAL_START; } literal_body_0[l]  LITERAL_END { $$ = $l; };
 
-/* the scanner produces RAW tokens until the literal lengths is met.  Even if
-   the literal length is 0, at least one empty RAW token is always produced */
-literal_body: RAW                 { $$ = ie_dstr_new(E, p->token, KEEP_RAW); }
-            | literal_body[l] RAW { $$ = ie_dstr_append(E, $l, p->token, KEEP_RAW); }
+literal_body_0: %empty          { $$ = ie_dstr_new_empty(E); }
+              | literal_body_1
+;
+
+literal_body_1: RAW                   { $$ = ie_dstr_new(E, p->token, KEEP_RAW); }
+              | literal_body_1[l] RAW { $$ = ie_dstr_append(E, $l, p->token, KEEP_RAW); }
+;
 
 ign_literal: LITERAL { LITERAL_START; } ign_literal_body;
 
 ign_literal_body: RAW
                 | ign_literal_body RAW
+;
 
 string: qstr
       | literal

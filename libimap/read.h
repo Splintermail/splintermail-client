@@ -7,7 +7,7 @@ typedef struct {
 } imap_reader_t;
 
 derr_t imap_reader_init(imap_reader_t *reader, extensions_t *exts,
-        imap_parser_cb_t cb, void *cb_data);
+        imap_parser_cb_t cb, void *cb_data, bool is_client);
 
 void imap_reader_free(imap_reader_t *reader);
 

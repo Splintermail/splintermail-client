@@ -508,6 +508,7 @@ static void tlse_process_events(uv_work_t *req){
                 tlse_data_onthread_close(td);
                 td->ref_down(ev->session, TLSE_REF_CLOSE_EVENT);
                 break;
+            case EV_INTERNAL:
             default:
                 LOG_ERROR("unexpected event type in tls engine, ev = %x\n",
                         FP(ev));
@@ -785,6 +786,7 @@ dstr_t *tlse_ref_reason_to_dstr(enum tlse_ref_reason_t reason){
         case TLSE_REF_WRITE: return &tlse_ref_write_dstr; break;
         case TLSE_REF_START_EVENT: return &tlse_ref_start_event_dstr; break;
         case TLSE_REF_CLOSE_EVENT: return &tlse_ref_close_event_dstr; break;
+        case TLSE_REF_MAXIMUM:
         default: return &tlse_ref_unknown_dstr;
     }
 }

@@ -956,6 +956,7 @@ static void event_cb(uv_async_t *handle){
                 loop_data_onthread_close(ld);
                 ld->ref_down(ev->session, LOOP_REF_CLOSE_EVENT);
                 break;
+            case EV_INTERNAL:
             default:
                 LOG_ERROR("unexpected event type in loop engine, ev = %x\n",
                         FP(ev));
@@ -1189,6 +1190,7 @@ dstr_t *loop_ref_reason_to_dstr(enum loop_ref_reason_t reason){
         case LOOP_REF_CLOSE_EVENT: return &loop_ref_close_event_dstr; break;
         case LOOP_REF_CONNECT_PROTECT: return &loop_ref_connect_dstr; break;
         case LOOP_REF_LIFETIME: return &loop_ref_lifetime_dstr; break;
+        case LOOP_REF_MAXIMUM:
         default: return &loop_ref_unknown_dstr;
     }
 }

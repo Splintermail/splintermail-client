@@ -936,14 +936,9 @@ static derr_t untagged_ok(fetcher_t *fetcher, const ie_st_code_t *code,
 
     // Handle responses where the status code is what defines the behavior
     if(code != NULL){
-        switch(code->type){
-            // handle codes which are independent of state
-            case IE_ST_CODE_ALERT:
-                LOG_ERROR("server ALERT message: %x\n", FD(text));
-                return e;
-
-            default:
-                break;
+        if(code->type == IE_ST_CODE_ALERT){
+            LOG_ERROR("server ALERT message: %x\n", FD(text));
+            return e;
         }
     }
 
@@ -1104,6 +1099,7 @@ static derr_t handle_one_response(fetcher_t *fetcher, imap_resp_t *resp){
             PROP_GO(&e, enabled_resp(fetcher, arg->enabled), cu_resp);
             break;
 
+        case IMAP_RESP_PLUS:
         case IMAP_RESP_FLAGS:
         case IMAP_RESP_SEARCH:
         case IMAP_RESP_EXISTS:
@@ -1181,6 +1177,7 @@ static bool fetcher_intercept_resp(fetcher_t *fetcher,
         case IMAP_RESP_ENABLED:
             return true;
 
+        case IMAP_RESP_PLUS:
         case IMAP_RESP_FLAGS:
         case IMAP_RESP_SEARCH:
         case IMAP_RESP_EXISTS:

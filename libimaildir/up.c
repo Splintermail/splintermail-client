@@ -779,6 +779,7 @@ derr_t up_resp(up_t *up, imap_resp_t *resp){
         case IMAP_RESP_ENABLED:
             ORIG_GO(&e, E_INTERNAL, "unhandled responses", cu_resp);
 
+        case IMAP_RESP_PLUS:
         case IMAP_RESP_CAPA:
         case IMAP_RESP_LIST:
         case IMAP_RESP_LSUB:

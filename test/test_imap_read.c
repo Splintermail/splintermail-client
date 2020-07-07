@@ -120,6 +120,11 @@ done:
     imap_cmd_free(cmd);
 }
 
+static void need_plus(void *cb_data){
+    // ignore these
+    (void)cb_data;
+}
+
 static void resp_cb(void *cb_data, derr_t error, imap_resp_t *resp){
     calls_made_t *calls = cb_data;
     PROP_GO(&calls->error, error, done);
@@ -145,7 +150,7 @@ done:
     imap_resp_free(resp);
 }
 
-imap_parser_cb_t parser_cmd_cb = { .cmd=cmd_cb };
+imap_parser_cb_t parser_cmd_cb = { .cmd=cmd_cb, .need_plus=need_plus };
 imap_parser_cb_t parser_resp_cb = { .resp=resp_cb };
 
 typedef struct {
@@ -156,8 +161,10 @@ typedef struct {
 } test_case_t;
 
 static derr_t do_test_scanner_and_parser(test_case_t *cases, size_t ncases,
-        imap_parser_cb_t cb){
+        bool is_client){
     derr_t e = E_OK;
+
+    imap_parser_cb_t cb = is_client ? parser_resp_cb : parser_cmd_cb;
 
     // prepare the calls_made struct
     calls_made_t calls = {0};
@@ -173,7 +180,9 @@ static derr_t do_test_scanner_and_parser(test_case_t *cases, size_t ncases,
 
     // init the reader
     imap_reader_t reader;
-    PROP_GO(&e, imap_reader_init(&reader, &exts, cb, &calls), cu_buf);
+    PROP_GO(&e,
+        imap_reader_init(&reader, &exts, cb, &calls, is_client),
+    cu_buf);
 
     for(size_t i = 0; i < ncases; i++){
         // reset calls made
@@ -276,7 +285,7 @@ static derr_t test_scanner_and_parser(void){
             },
         };
         size_t ncases = sizeof(cases) / sizeof(*cases);
-        PROP(&e, do_test_scanner_and_parser(cases, ncases, parser_resp_cb) );
+        PROP(&e, do_test_scanner_and_parser(cases, ncases, true) );
     }
     // Test STATUS responses
     {
@@ -308,7 +317,7 @@ static derr_t test_scanner_and_parser(void){
             },
         };
         size_t ncases = sizeof(cases) / sizeof(*cases);
-        PROP(&e, do_test_scanner_and_parser(cases, ncases, parser_resp_cb) );
+        PROP(&e, do_test_scanner_and_parser(cases, ncases, true) );
     }
     // misc responses
     {
@@ -335,7 +344,7 @@ static derr_t test_scanner_and_parser(void){
             },
         };
         size_t ncases = sizeof(cases) / sizeof(*cases);
-        PROP(&e, do_test_scanner_and_parser(cases, ncases, parser_resp_cb) );
+        PROP(&e, do_test_scanner_and_parser(cases, ncases, true) );
     }
     // FETCH responses
     {
@@ -413,7 +422,7 @@ static derr_t test_scanner_and_parser(void){
             },
         };
         size_t ncases = sizeof(cases) / sizeof(*cases);
-        PROP(&e, do_test_scanner_and_parser(cases, ncases, parser_resp_cb) );
+        PROP(&e, do_test_scanner_and_parser(cases, ncases, true) );
     }
     // test imap commands
     {
@@ -536,7 +545,7 @@ static derr_t test_scanner_and_parser(void){
                 .in=DSTR_LIT("{11}\r\nhello imap1\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_APPEND, -1},
                 .buf=DSTR_LIT("tag APPEND INBOX (\\Seen) \"11-Jan-1999 "
-                    "00:11:22 +0500\" {11}\r\nhello imap1\r\n")
+                    "00:11:22 +0500\" {11+}\r\nhello imap1\r\n")
             },
             {
                 .in=DSTR_LIT("tag APPEND inbox \"11-jan-1999 00:11:22 +0500\" "),
@@ -545,7 +554,7 @@ static derr_t test_scanner_and_parser(void){
                 .in=DSTR_LIT("{11}\r\nhello imap2\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_APPEND, -1},
                 .buf=DSTR_LIT("tag APPEND INBOX () \"11-Jan-1999 "
-                    "00:11:22 +0500\" {11}\r\nhello imap2\r\n")
+                    "00:11:22 +0500\" {11+}\r\nhello imap2\r\n")
             },
             {
                 .in=DSTR_LIT("tag APPEND inbox (\\Seen) "),
@@ -554,7 +563,12 @@ static derr_t test_scanner_and_parser(void){
                 .in=DSTR_LIT("{11}\r\nhello imap3\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_APPEND, -1},
                 .buf=DSTR_LIT("tag APPEND INBOX (\\Seen) "
-                        "{11}\r\nhello imap3\r\n")
+                        "{11+}\r\nhello imap3\r\n")
+            },
+            {
+                .in=DSTR_LIT("tag APPEND inbox {11}\r\nhello imap4\r\n"),
+                .cmd_calls=(int[]){IMAP_CMD_APPEND, -1},
+                .buf=DSTR_LIT("tag APPEND INBOX () {11+}\r\nhello imap4\r\n")
             },
             {
                 .in=DSTR_LIT("tag STORE 1:*,*:10 +FLAGS.SILENT ()\r\n"),
@@ -576,9 +590,15 @@ static derr_t test_scanner_and_parser(void){
                 .cmd_calls=(int[]){IMAP_CMD_COPY, -1},
                 .buf=DSTR_LIT("tag COPY 5:7 NOt_iNBoX\r\n")
             },
+            // test literal tokenizing/parsing
+            {
+                .in=DSTR_LIT("tag APPEND inbox {0}\r\n\r\n"),
+                .cmd_calls=(int[]){IMAP_CMD_APPEND, -1},
+                .buf=DSTR_LIT("tag APPEND INBOX () {0+}\r\n\r\n")
+            },
         };
         size_t ncases = sizeof(cases) / sizeof(*cases);
-        PROP(&e, do_test_scanner_and_parser(cases, ncases, parser_cmd_cb) );
+        PROP(&e, do_test_scanner_and_parser(cases, ncases, false) );
     }
     // SEARCH command
     {
@@ -625,7 +645,7 @@ static derr_t test_scanner_and_parser(void){
             },
         };
         size_t ncases = sizeof(cases) / sizeof(*cases);
-        PROP(&e, do_test_scanner_and_parser(cases, ncases, parser_cmd_cb) );
+        PROP(&e, do_test_scanner_and_parser(cases, ncases, false) );
     }
     // FETCH command
     {
@@ -705,7 +725,7 @@ static derr_t test_scanner_and_parser(void){
             },
         };
         size_t ncases = sizeof(cases) / sizeof(*cases);
-        PROP(&e, do_test_scanner_and_parser(cases, ncases, parser_cmd_cb) );
+        PROP(&e, do_test_scanner_and_parser(cases, ncases, false) );
     }
     // UID mode commands
     {
@@ -732,7 +752,7 @@ static derr_t test_scanner_and_parser(void){
             },
         };
         size_t ncases = sizeof(cases) / sizeof(*cases);
-        PROP(&e, do_test_scanner_and_parser(cases, ncases, parser_cmd_cb) );
+        PROP(&e, do_test_scanner_and_parser(cases, ncases, false) );
     }
     // UIDPLUS extension commands
     {
@@ -744,7 +764,7 @@ static derr_t test_scanner_and_parser(void){
             },
         };
         size_t ncases = sizeof(cases) / sizeof(*cases);
-        PROP(&e, do_test_scanner_and_parser(cases, ncases, parser_cmd_cb) );
+        PROP(&e, do_test_scanner_and_parser(cases, ncases, false) );
     }
     // UIDPLUS extension responses
     {
@@ -766,7 +786,7 @@ static derr_t test_scanner_and_parser(void){
             },
         };
         size_t ncases = sizeof(cases) / sizeof(*cases);
-        PROP(&e, do_test_scanner_and_parser(cases, ncases, parser_resp_cb) );
+        PROP(&e, do_test_scanner_and_parser(cases, ncases, true) );
     }
     // ENABLE extension command
     {
@@ -778,7 +798,7 @@ static derr_t test_scanner_and_parser(void){
             },
         };
         size_t ncases = sizeof(cases) / sizeof(*cases);
-        PROP(&e, do_test_scanner_and_parser(cases, ncases, parser_cmd_cb) );
+        PROP(&e, do_test_scanner_and_parser(cases, ncases, false) );
     }
     // ENABLE extension response
     {
@@ -790,7 +810,7 @@ static derr_t test_scanner_and_parser(void){
             },
         };
         size_t ncases = sizeof(cases) / sizeof(*cases);
-        PROP(&e, do_test_scanner_and_parser(cases, ncases, parser_resp_cb) );
+        PROP(&e, do_test_scanner_and_parser(cases, ncases, true) );
     }
     // CONDSTORE extension commands
     {
@@ -837,7 +857,7 @@ static derr_t test_scanner_and_parser(void){
             },
         };
         size_t ncases = sizeof(cases) / sizeof(*cases);
-        PROP(&e, do_test_scanner_and_parser(cases, ncases, parser_cmd_cb) );
+        PROP(&e, do_test_scanner_and_parser(cases, ncases, false) );
     }
     // CONDSTORE extension responses
     {
@@ -874,7 +894,7 @@ static derr_t test_scanner_and_parser(void){
             },
         };
         size_t ncases = sizeof(cases) / sizeof(*cases);
-        PROP(&e, do_test_scanner_and_parser(cases, ncases, parser_resp_cb) );
+        PROP(&e, do_test_scanner_and_parser(cases, ncases, true) );
     }
     // QRESYNC extension commands
     {
@@ -906,7 +926,7 @@ static derr_t test_scanner_and_parser(void){
             },
         };
         size_t ncases = sizeof(cases) / sizeof(*cases);
-        PROP(&e, do_test_scanner_and_parser(cases, ncases, parser_cmd_cb) );
+        PROP(&e, do_test_scanner_and_parser(cases, ncases, false) );
     }
     // QRESYNC extension responses
     {
@@ -928,7 +948,7 @@ static derr_t test_scanner_and_parser(void){
             },
         };
         size_t ncases = sizeof(cases) / sizeof(*cases);
-        PROP(&e, do_test_scanner_and_parser(cases, ncases, parser_resp_cb) );
+        PROP(&e, do_test_scanner_and_parser(cases, ncases, true) );
     }
     // UNSELECT extension command
     {
@@ -940,7 +960,7 @@ static derr_t test_scanner_and_parser(void){
             },
         };
         size_t ncases = sizeof(cases) / sizeof(*cases);
-        PROP(&e, do_test_scanner_and_parser(cases, ncases, parser_cmd_cb) );
+        PROP(&e, do_test_scanner_and_parser(cases, ncases, false) );
     }
     return e;
 }

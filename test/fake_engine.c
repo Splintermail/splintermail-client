@@ -452,6 +452,9 @@ derr_t fake_engine_run(fake_engine_t *fe, engine_t *upstream,
             case EV_READ_DONE:
             case EV_WRITE:
             case EV_QUIT_UP:
+            case EV_SESSION_START:
+            case EV_SESSION_CLOSE:
+            case EV_INTERNAL:
             default:
                 ORIG(&e, E_VALUE,
                         "unexpected event type from upstream engine\n");

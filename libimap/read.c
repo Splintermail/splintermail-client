@@ -3,13 +3,16 @@
 #include "imap_parse.tab.h"
 
 derr_t imap_reader_init(imap_reader_t *reader, extensions_t *exts,
-        imap_parser_cb_t cb, void *cb_data){
+        imap_parser_cb_t cb, void *cb_data, bool is_client){
     derr_t e = E_OK;
 
     PROP(&e, imap_scanner_init(&reader->scanner) );
 
-    PROP_GO(&e, imap_parser_init(&reader->parser, &reader->scanner, exts, cb,
-                cb_data), fail_scanner);
+    PROP_GO(&e,
+        imap_parser_init(
+            &reader->parser, &reader->scanner, exts, cb, cb_data, is_client
+        ),
+    fail_scanner);
 
     reader->cb = cb;
     reader->cb_data = cb_data;
