@@ -112,7 +112,7 @@ derr_t msg_view_new(msg_view_t **view, const msg_base_t *base){
 }
 
 void msg_view_free(msg_view_t **view){
-    if(view == NULL) return;
+    if(*view == NULL) return;
     free(*view);
     *view = NULL;
 }
