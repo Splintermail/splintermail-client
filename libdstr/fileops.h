@@ -35,6 +35,8 @@ derr_t for_each_file_in_dir2(const string_builder_t* path,
 
 derr_t rm_rf(const char* root_path);
 derr_t rm_rf_path(const string_builder_t *sb);
+// like rm_rf_path but it leaves the top-level directory untouched
+derr_t empty_dir(const string_builder_t *sb);
 
 // String-Builder-enabled libc wrappers below //
 
@@ -51,6 +53,7 @@ derr_t symlink_path(const string_builder_t* to, const string_builder_t* at);
 
 derr_t chmod_path(const string_builder_t* sb, mode_t mode);
 derr_t dstr_fread_path(const string_builder_t* sb, dstr_t* buffer);
+derr_t dstr_fwrite_path(const string_builder_t* sb, const dstr_t* buffer);
 
 /* If *eno!=NULL then stat_path can only throw E_NOMEM */
 derr_t stat_path(const string_builder_t* sb, struct stat* out, int* eno);

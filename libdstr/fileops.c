@@ -261,6 +261,22 @@ cu:
 }
 
 
+// like rm_rf_path but it leaves the top-level directory untouched
+derr_t empty_dir(const string_builder_t *sb){
+    derr_t e = E_OK;
+    DSTR_VAR(stack, 256);
+    dstr_t heap = {0};
+    dstr_t* path;
+    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
+
+    PROP_GO(&e, for_each_file_in_dir(path->data, rm_rf_hook, NULL), cu);
+
+cu:
+    dstr_free(&heap);
+    return e;
+}
+
+
 // the string-builder-based version of for_each_file
 derr_t for_each_file_in_dir2(const string_builder_t* path,
                              for_each_file_hook2_t hook, void* userdata){
@@ -479,6 +495,20 @@ derr_t dstr_fread_path(const string_builder_t* sb, dstr_t* buffer){
     PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
 
     PROP_GO(&e, dstr_fread_file(path->data, buffer), cu);
+
+cu:
+    dstr_free(&heap);
+    return e;
+}
+
+derr_t dstr_fwrite_path(const string_builder_t *sb, const dstr_t* buffer){
+    derr_t e = E_OK;
+    DSTR_VAR(stack, 256);
+    dstr_t heap = {0};
+    dstr_t* path;
+    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
+
+    PROP_GO(&e, dstr_fwrite_file(path->data, buffer), cu);
 
 cu:
     dstr_free(&heap);
