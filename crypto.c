@@ -274,7 +274,7 @@ fail_pkey:
     return e;
 }
 
-derr_t keypair_copy(keypair_t *old, keypair_t **out){
+derr_t keypair_copy(const keypair_t *old, keypair_t **out){
     derr_t e = E_OK;
 
     *out = NULL;
@@ -296,8 +296,8 @@ derr_t keypair_copy(keypair_t *old, keypair_t **out){
 }
 
 void keypair_free(keypair_t **old){
-    if(!old) return;
     keypair_t *kp = *old;
+    if(!kp) return;
     // downref the backing memory
     _keypair_t *_kp = CONTAINER_OF(kp->fingerprint, _keypair_t, fingerprint);
     ref_dn(&_kp->refs);
@@ -1098,4 +1098,109 @@ derr_t random_bytes(dstr_t* out, size_t nbytes){
     // extend the length of the dstr
     out->len = nbytes;
     return e;
+}
+
+
+derr_t keyshare_init(keyshare_t *keyshare){
+    derr_t e = E_OK;
+
+    link_init(&keyshare->keys);
+    link_init(&keyshare->listeners);
+
+    return e;
+}
+
+// all listeners must already be unregistered
+void keyshare_free(keyshare_t *keyshare){
+    link_t *link;
+    while((link = link_list_pop_first(&keyshare->keys))){
+        keypair_t *kp = CONTAINER_OF(link, keypair_t, link);
+        keypair_free(&kp);
+    }
+}
+
+derr_t keyshare_add_key(keyshare_t *keyshare, const keypair_t *kp){
+    derr_t e = E_OK;
+
+    link_t copies;
+    link_init(&copies);
+    link_t *link;
+
+    // make a copy for ourselves
+    keypair_t *ours;
+    PROP(&e, keypair_copy(kp, &ours) );
+
+    // make all the copies
+    key_listener_i *key_listener;
+    LINK_FOR_EACH(key_listener, &keyshare->listeners, key_listener_i, link){
+        keypair_t *copy;
+        PROP_GO(&e, keypair_copy(kp, &copy), fail);
+        link_list_append(&copies, &copy->link);
+    }
+
+    // store our copy
+    link_list_append(&keyshare->keys, &ours->link);
+
+    // pass out all the copies
+    LINK_FOR_EACH(key_listener, &keyshare->listeners, key_listener_i, link){
+        link = link_list_pop_first(&copies);
+        keypair_t *kp = CONTAINER_OF(link, keypair_t, link);
+        key_listener->add(key_listener, kp);
+    }
+
+    return e;
+
+fail:
+    while((link = link_list_pop_first(&copies))){
+        keypair_t *kp = CONTAINER_OF(link, keypair_t, link);
+        keypair_free(&kp);
+    }
+    keypair_free(&ours);
+    return e;
+}
+
+void keyshare_del_key(keyshare_t *keyshare, const dstr_t *fingerprint){
+    // just spread the word
+    key_listener_i *key_listener;
+    LINK_FOR_EACH(key_listener, &keyshare->listeners, key_listener_i, link){
+        key_listener->del(key_listener, fingerprint);
+    }
+}
+
+derr_t keyshare_register(keyshare_t *keyshare, key_listener_i *key_listener,
+        link_t *initial_keys){
+    derr_t e = E_OK;
+
+    link_t copies;
+    link_init(&copies);
+    link_t *link;
+
+    // make all the copies
+    keypair_t *kp;
+    LINK_FOR_EACH(kp, &keyshare->keys, keypair_t, link){
+        keypair_t *copy;
+        PROP_GO(&e, keypair_copy(kp, &copy), fail);
+        link_list_append(&copies, &copy->link);
+    }
+
+    // remember this key_listener
+    link_list_append(&keyshare->listeners, &key_listener->link);
+
+    // give the list of new copies to the new key_listener
+    link_list_append_list(initial_keys, &copies);
+
+    return e;
+
+fail:
+    while((link = link_list_pop_first(&copies))){
+        keypair_t *kp = CONTAINER_OF(link, keypair_t, link);
+        keypair_free(&kp);
+    }
+    return e;
+}
+
+void keyshare_unregister(keyshare_t *keyshare, key_listener_i *key_listener){
+    (void)keyshare;
+    // just forget the listener
+    link_remove(&key_listener->link);
 }

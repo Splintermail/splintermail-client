@@ -160,12 +160,11 @@ static derr_t test_crypto(void){
     derr_t e = E_OK;
 
     const char* keyfile = "_delete_me_if_you_see_me.pem";
-    PROP(&e, gen_key(1024, keyfile) );
+    PROP_GO(&e, gen_key(1024, keyfile), cu_file);
 
     // load the keys that are now written to a file
     keypair_t *kp;
-    PROP(&e, keypair_load(&kp, keyfile) );
-    // delete the temporary file
+    PROP_GO(&e, keypair_load(&kp, keyfile), cu_file);
     remove(keyfile);
 
     DSTR_VAR(pubkey_pem, 4096);
@@ -236,6 +235,191 @@ cleanup_2:
     encrypter_free(&ec);
 cleanup_1:
     keypair_free(&kp);
+cu_file:
+    // delete the temporary file
+    remove(keyfile);
+    return e;
+}
+
+static derr_t test_keypair(void){
+    derr_t e = E_OK;
+
+    const char* keyfile = "_delete_me_if_you_see_me.pem";
+    PROP_GO(&e, gen_key(1024, keyfile), cu_file);
+
+    keypair_t *kp;
+    PROP_GO(&e, keypair_load(&kp, keyfile), cu_file);
+    remove(keyfile);
+
+    // read the public key as PEM text
+    DSTR_VAR(pem1, 4096);
+    PROP_GO(&e, keypair_get_public_pem(kp, &pem1), cu_kp);
+
+    // duplicate the key
+    keypair_t *copy;
+    PROP_GO(&e, keypair_copy(kp, &copy), cu_kp);
+
+    // delete the original
+    keypair_free(&kp);
+
+    // verify the memory is still there
+    DSTR_VAR(pem2, 4096);
+    PROP_GO(&e, keypair_get_public_pem(copy, &pem2), cu_copy);
+
+    if(dstr_cmp(&pem1, &pem2) != 0){
+        TRACE(&e, "PEM1:\n%xPEM2:\n%x", FD(&pem1), FD(&pem2));
+        ORIG_GO(&e, E_VALUE, "pems do not match", cu_copy);
+    }
+
+cu_copy:
+    keypair_free(&copy);
+cu_kp:
+    keypair_free(&kp);
+cu_file:
+    // delete the temporary file
+    remove(keyfile);
+    return e;
+}
+
+typedef struct {
+    key_listener_i l1;
+    bool l1_add;
+    bool l1_del;
+
+    key_listener_i l2;
+    bool l2_add;
+    bool l2_del;
+} test_keyshare_vars_t;
+DEF_CONTAINER_OF(test_keyshare_vars_t, l1, key_listener_i);
+DEF_CONTAINER_OF(test_keyshare_vars_t, l2, key_listener_i);
+
+static void l1_add(key_listener_i *l1, keypair_t *kp){
+   test_keyshare_vars_t *vars = CONTAINER_OF(l1, test_keyshare_vars_t, l1);
+   // we don't actually need the keypair
+   keypair_free(&kp);
+   vars->l1_add = true;
+}
+
+static void l1_del(key_listener_i *l1, const dstr_t *fingerprint){
+   test_keyshare_vars_t *vars = CONTAINER_OF(l1, test_keyshare_vars_t, l1);
+   (void)fingerprint;
+   vars->l1_del = true;
+}
+
+static void l2_add(key_listener_i *l2, keypair_t *kp){
+   test_keyshare_vars_t *vars = CONTAINER_OF(l2, test_keyshare_vars_t, l2);
+   // we don't actually need the keypair
+   keypair_free(&kp);
+   vars->l2_add = true;
+}
+
+static void l2_del(key_listener_i *l2, const dstr_t *fingerprint){
+   test_keyshare_vars_t *vars = CONTAINER_OF(l2, test_keyshare_vars_t, l2);
+   (void)fingerprint;
+   vars->l2_del = true;
+}
+
+static derr_t test_keyshare(void){
+    derr_t e = E_OK;
+
+    // prepare for callbacks
+    test_keyshare_vars_t vars = {
+        .l1 = {
+            .add = l1_add,
+            .del = l1_del,
+        },
+        .l2 = {
+            .add = l2_add,
+            .del = l2_del,
+        },
+    };
+    link_init(&vars.l1.link);
+    link_init(&vars.l2.link);
+
+    keypair_t *kp1, *kp2;
+
+    const char* keyfile = "_delete_me_if_you_see_me.pem";
+
+    // build a couple random keys
+    PROP_GO(&e, gen_key(1024, keyfile), cu_file);
+    PROP_GO(&e, keypair_load(&kp1, keyfile), cu_file);
+    remove(keyfile);
+
+    PROP_GO(&e, gen_key(1024, keyfile), cu_kp1);
+    PROP_GO(&e, keypair_load(&kp2, keyfile), cu_kp1);
+    remove(keyfile);
+
+    // create a keyshare
+    keyshare_t keyshare;
+    PROP_GO(&e, keyshare_init(&keyshare), cu_kp2);
+
+    // register l1 with the keyshare
+    link_t keys;
+    link_init(&keys);
+    PROP_GO(&e, keyshare_register(&keyshare, &vars.l1, &keys), cu_keyshare);
+
+    if(!link_list_isempty(&keys))
+        ORIG_GO(&e, E_VALUE, "initial l1 key list not empty", cu_keys);
+
+    // add a key to the keyshare
+    PROP_GO(&e, keyshare_add_key(&keyshare, kp1), cu_keys);
+    if(!vars.l1_add)
+        ORIG_GO(&e, E_VALUE, "l1_add not called", cu_keys);
+    vars.l1_add = false;
+
+    // register l2 with the keyshare
+    PROP_GO(&e, keyshare_register(&keyshare, &vars.l2, &keys), cu_keys);
+
+    if(link_list_isempty(&keys))
+        ORIG_GO(&e, E_VALUE, "initial l2 key list is empty", cu_keys);
+
+    // add a key to the keyshare
+    PROP_GO(&e, keyshare_add_key(&keyshare, kp2), cu_keys);
+    if(!vars.l1_add)
+        ORIG_GO(&e, E_VALUE, "l1_add not called", cu_keys);
+    if(!vars.l2_add)
+        ORIG_GO(&e, E_VALUE, "l2_add not called", cu_keys);
+    vars.l1_add = false;
+    vars.l2_add = false;
+
+    // del a key from the keyshare
+    keyshare_del_key(&keyshare, kp1->fingerprint);
+    if(!vars.l1_del)
+        ORIG_GO(&e, E_VALUE, "l1_del not called", cu_keys);
+    if(!vars.l2_del)
+        ORIG_GO(&e, E_VALUE, "l2_del not called", cu_keys);
+    vars.l1_del = false;
+    vars.l2_del = false;
+
+    // unregister l1
+    keyshare_unregister(&keyshare, &vars.l1);
+
+    // del a key from the keyshare
+    keyshare_del_key(&keyshare, kp1->fingerprint);
+    if(vars.l1_del)
+        ORIG_GO(&e, E_VALUE, "l1_del called after unregister", cu_keys);
+    if(!vars.l2_del)
+        ORIG_GO(&e, E_VALUE, "l2_del not called", cu_keys);
+    vars.l2_del = false;
+
+    // unregister l2
+    keyshare_unregister(&keyshare, &vars.l2);
+
+    link_t *link;
+cu_keys:
+    while((link = link_list_pop_first(&keys))){
+        keypair_t *kp = CONTAINER_OF(link, keypair_t, link);
+        keypair_free(&kp);
+    }
+cu_keyshare:
+    keyshare_free(&keyshare);
+cu_kp2:
+    keypair_free(&kp1);
+cu_kp1:
+    keypair_free(&kp2);
+    // delete the temporary file
+cu_file:
+    remove(keyfile);
     return e;
 }
 
@@ -249,6 +433,8 @@ int main(int argc, char** argv){
     PROP_GO(&e, test_b64_encoders(), test_fail);
     PROP_GO(&e, test_hex_encoders(), test_fail);
     PROP_GO(&e, test_crypto(), test_fail);
+    PROP_GO(&e, test_keypair(), test_fail);
+    PROP_GO(&e, test_keyshare(), test_fail);
 
     LOG_ERROR("PASS\n");
     crypto_library_close();

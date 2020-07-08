@@ -88,7 +88,7 @@ derr_t keypair_get_public_pem(keypair_t *kp, dstr_t *out);
            E_FIXEDSIZE (writing to *out)
            E_INTERNAL */
 
-derr_t keypair_copy(keypair_t *old, keypair_t **out);
+derr_t keypair_copy(const keypair_t *old, keypair_t **out);
 
 derr_t encrypter_new(encrypter_t* ec);
 void encrypter_free(encrypter_t* ec);
@@ -185,5 +185,33 @@ M:<message octets until the end of base64 data> // the encrypted message
          "https://security.stackexchange.com/a/56471"
 
    */
+
+// event-based updates for a list of keys
+struct key_listener_i;
+typedef struct key_listener_i key_listener_i;
+
+struct key_listener_i {
+    void (*add)(key_listener_i*, keypair_t*);
+    void (*del)(key_listener_i*, const dstr_t *fingerprint);
+    link_t link;  // keyshare_t->listeners
+};
+DEF_CONTAINER_OF(key_listener_i, link, link_t);
+
+typedef struct {
+    link_t keys; // shared_keypair_t->link
+    link_t listeners; // key_listener_i->link
+} keyshare_t;
+
+derr_t keyshare_init(keyshare_t *keyshare);
+
+// all listeners must already be unregistered
+void keyshare_free(keyshare_t *keyshare);
+
+derr_t keyshare_add_key(keyshare_t *keyshare, const keypair_t *kp);
+void keyshare_del_key(keyshare_t *keyshare, const dstr_t *fingerprint);
+
+derr_t keyshare_register(keyshare_t *keyshare, key_listener_i *key_listener,
+        link_t *initial_keys);
+void keyshare_unregister(keyshare_t *keyshare, key_listener_i *key_listener);
 
 #endif //CRYPTO_H
