@@ -1426,7 +1426,7 @@ static derr_t handle_new_expunge(imaildir_t *m, msg_expunge_t *expunge){
         // drop the ref we held during the update distribution
         ref_dn(&old_base->refs);
     }else if(msg){
-        msg_base_free(&msg);
+        remove_and_delete_msg_base(m, msg);
     }
 
     return e;
