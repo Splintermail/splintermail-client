@@ -17,26 +17,58 @@ import codecs
 
 TIMEOUT = 0.5
 
+USER="test@splintermail.com"
+PASS="password"
+
+def as_bytes(msg):
+    if isinstance(msg, bytes):
+        return msg
+    return msg.encode("utf8")
+
+
+class EOFError(Exception):
+    pass
+
 class IOThread(threading.Thread):
     def __init__(self, io, q):
         self.io = io
         self.q = q
         self.buffer = []
+        self.started = False
+        self.closed = False
         super().__init__()
 
     def full_text(self):
         return b''.join(self.buffer)
 
+    def start(self):
+        self.started = True
+        super().start()
+
     def __enter__(self):
         self.start()
         return self
 
-    def __exit__(self, *_):
-        self.quit()
+    def __exit__(self, typ, val, trace):
+        self.close(failed=typ is not None)
+
+    def close(self, failed=False):
+        if not self.started:
+            return
+
+        if self.closed:
+            return
+
+        self.closed = True
+        self.quit(failed)
         self.join()
 
 
 class ReaderThread(IOThread):
+    def __init__(self, closable, *arg):
+        self.closable = closable
+        super().__init__(*arg)
+
     def run(self):
         try:
             while True:
@@ -48,11 +80,16 @@ class ReaderThread(IOThread):
         finally:
             self.q.put(None)
 
-    def quit(self):
-        self.io.close()
+    def quit(self, failed):
+        if failed:
+            self.closable.close()
 
 
 class SocketReaderThread(IOThread):
+    def __init__(self, closable, *arg):
+        self.closable = closable
+        super().__init__(*arg)
+
     def run(self):
         buf = b""
         try:
@@ -72,8 +109,9 @@ class SocketReaderThread(IOThread):
         finally:
             self.q.put(None)
 
-    def quit(self):
-        self.io.close()
+    def quit(self, failed):
+        if failed:
+            self.closable.close()
 
 
 class WriterThread(IOThread):
@@ -88,7 +126,7 @@ class WriterThread(IOThread):
         finally:
             self.io.close()
 
-    def quit(self):
+    def quit(self, _):
         self.q.put(None)
 
 
@@ -111,7 +149,7 @@ def client_context(cafile=None):
 
 
 @contextlib.contextmanager
-def run_connection(host="127.0.0.1", port=1993):
+def run_connection(closable, host="127.0.0.1", port=1993):
     with socket.socket() as sock:
         sock.connect((host, port))
         tls = client_context().wrap_socket(sock, server_hostname=host)
@@ -119,7 +157,8 @@ def run_connection(host="127.0.0.1", port=1993):
         read_q = queue.Queue()
         write_q = queue.Queue()
 
-        with WriterThread(tls, write_q), SocketReaderThread(tls, read_q):
+        with WriterThread(tls, write_q), \
+                SocketReaderThread(closable, tls, read_q):
             yield write_q, read_q
 
 
@@ -136,7 +175,7 @@ def wait_for_listener(q):
     while True:
         line = q.get()
         if line is None:
-            raise ValueError("did not find \"listener ready\" message")
+            raise EOFError("did not find \"listener ready\" message")
         if line == b"listener ready\n":
             break
 
@@ -146,7 +185,7 @@ def wait_for_match(q, pattern):
     while True:
         line = q.get()
         if line is None:
-            raise ValueError("EOF")
+            raise EOFError("EOF")
         match = re.match(pattern, line)
         if match is not None:
             return match, ignored
@@ -158,52 +197,110 @@ def ensure_no_match(ignored, pattern):
         if re.match(pattern, line):
             raise ValueError(f"{line} matched {pattern}")
 
+def wait_for_resp(q, tag, status, require=tuple(), disallow=tuple()):
+    """all patterns in require must be present, and none in disallow"""
+    tag = as_bytes(tag)
+    status = as_bytes(status)
+    recvd = []
+    while True:
+        line = q.get()
+        if line is None:
+            raise EOFError("EOF")
+        # ensure no disallow matches
+        for dis in disallow:
+            if re.match(dis, line) is not None:
+                raise ValueError(f"got disallowed match to ({dis}): {line}")
+        recvd.append(line)
+        # Is this the last line?
+        if line.startswith(tag + b" "):
+            # end of command response
+            if not line.startswith(tag + b" " + status):
+                raise ValueError(f"needed {status}, got: {line}")
+            break
+    # return the first match of every required pattern
+    req_matches = []
+    for req in require:
+        for line in recvd:
+            match = re.match(req, line)
+            if match is not None:
+                req_matches.append(match)
+                break
+        else:
+            raise ValueError(f"required pattern ({req}) not found")
+    return req_matches
 
-@contextlib.contextmanager
-def run_subproc(cmd):
-    # print(" ".join(cmd))
-    out_q = queue.Queue()
-    p = subprocess.Popen(
-        cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE
-    )
-    dump_logs= False
-    try:
-        with ReaderThread(p.stdout, out_q) as reader:
-            wait_for_listener(out_q)
 
-            yield p, out_q
+def disallow_match(q, pattern):
+    while True:
+        line = q.get()
 
-            # in the no-error case, expect a clean and near-instant exit
-            p.send_signal(signal.SIGTERM)
-            p.wait(TIMEOUT)
-    except:
-        dump_logs= True
-        raise
-    finally:
-        # expect that the user has already waited the process
-        if p.poll() is None:
-            p.send_signal(signal.SIGKILL)
-            p.wait()
-            fmt_failure(reader)
-            raise ValueError("cmd failed to exit promply, sent SIGKILL")
-        if p.poll() != 0:
-            fmt_failure(reader)
-            raise ValueError("cmd exited %d"%p.poll())
+
+class Subproc:
+    def __init__(self, cmd):
+        self.started = False
+        self.closed = False
+        self.out_q = queue.Queue()
+        self.cmd = cmd
+
+    def __enter__(self):
+        self.start()
+        return self
+
+    def __exit__(self, typ, *_):
+        dump_logs = typ is not None
+        try:
+            self.close()
+        except:
+            dump_logs = True
+
         if dump_logs:
-            fmt_failure(reader)
+            fmt_failure(self.reader)
 
+    def start(self):
+        self.p = subprocess.Popen(
+            self.cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE
+        )
 
-def start_kill(cmd):
-    with run_subproc(cmd) as (p, out_q):
-        pass
+        self.reader = ReaderThread(self, self.p.stdout, self.out_q)
+        self.reader.start()
+
+        self.started = True
+
+        wait_for_listener(self.out_q)
+
+    def close(self, sig=signal.SIGTERM):
+        if not self.started:
+            return
+
+        if self.closed:
+            return
+        self.closed = True
+
+        try:
+            if sig is not None:
+                self.p.send_signal(sig)
+
+            try:
+                self.p.wait(TIMEOUT)
+            except subprocess.TimeoutExpired:
+                self.p.send_signal(signal.SIGKILL)
+                self.p.wait()
+                raise ValueError("cmd failed to exit promply, sent SIGKILL")
+
+            if self.p.poll() != 0:
+                raise ValueError("cmd exited %d"%self.p.poll())
+        finally:
+            self.reader.close()
 
 
 @contextlib.contextmanager
-def _session():
-    with run_connection() as (write_q, read_q):
+def _session(closable):
+    with run_connection(closable) as (write_q, read_q):
         wait_for_match(read_q, b"\\* OK")
 
-        write_q.put(b"A login test@splintermail.com password\r\n")
+        write_q.put(
+            b"A login %s %s\r\n"%(USER.encode('utf8'), PASS.encode('utf8'))
+        )
         wait_for_match(read_q, b"A OK")
 
         yield write_q, read_q
@@ -213,21 +310,17 @@ def _session():
         wait_for_match(read_q, b"Z OK")
 
 
+
 @contextlib.contextmanager
 def session(cmd):
-    with run_subproc(cmd) as (p, out_q):
-        with _session() as stuff:
-            yield p, *stuff
-
-
-def login_logout(cmd):
-    with session(cmd) as (p, write_q, read_q):
-        pass
+    with Subproc(cmd) as subproc:
+        with _session(subproc) as stuff:
+            yield stuff
 
 
 @contextlib.contextmanager
-def _inbox():
-    with _session() as (write_q, read_q):
+def _inbox(closable):
+    with _session(closable) as (write_q, read_q):
         write_q.put(b"B select INBOX\r\n")
         wait_for_match(read_q, b"B OK")
 
@@ -235,257 +328,350 @@ def _inbox():
 
 @contextlib.contextmanager
 def inbox(cmd):
-    with session(cmd) as (p, write_q, read_q):
+    with session(cmd) as (write_q, read_q):
         write_q.put(b"B select INBOX\r\n")
         wait_for_match(read_q, b"B OK")
 
-        yield p, write_q, read_q
+        yield write_q, read_q
 
-def select_logout(cmd):
-    with inbox(cmd) as (p, write_q, read_q):
+
+#### tests
+
+
+def test_start_kill(cmd, maildir_root):
+    with Subproc(cmd) as subproc:
         pass
 
 
-def select_close(cmd):
-    with inbox(cmd) as (p, write_q, read_q):
+def test_login_logout(cmd, maildir_root):
+    with session(cmd) as (write_q, read_q):
+        pass
+
+
+def test_select_logout(cmd, maildir_root):
+    with inbox(cmd) as (write_q, read_q):
+        pass
+
+
+def test_select_close(cmd, maildir_root):
+    with inbox(cmd) as (write_q, read_q):
         write_q.put(b"1 close\r\n")
-        wait_for_match(read_q, b"1 OK")
+        wait_for_resp(read_q, "1", "OK")
 
 
-def select_select(cmd):
-    with inbox(cmd) as (p, write_q, read_q):
+def test_select_select(cmd, maildir_root):
+    with inbox(cmd) as (write_q, read_q):
         write_q.put(b"1 select \"Test Folder\"\r\n")
-        wait_for_match(read_q, b"1 OK")
+        wait_for_resp(read_q, "1", "OK")
 
 
-def store(cmd):
-    with inbox(cmd) as (p, write_q, read_q):
+def test_store(cmd, maildir_root):
+    with inbox(cmd) as (write_q, read_q):
         write_q.put(b"1 store 1 flags \\Seen\r\n")
-        wait_for_match(read_q, b"1 OK")
+        wait_for_resp(read_q, "1", "OK")
 
         write_q.put(b"2 fetch 1 flags\r\n")
-        wait_for_match(read_q, b"\\* 1 FETCH \\(FLAGS \\(\\\\Seen\\)\\)")
-        wait_for_match(read_q, b"2 OK")
+        wait_for_resp(
+            read_q,
+            "2",
+            "OK",
+            require=[b"\\* 1 FETCH \\(FLAGS \\(\\\\Seen\\)\\)"],
+        )
 
         write_q.put(b"3 store 1 -flags \\Seen\r\n")
-        wait_for_match(read_q, b"3 OK")
+        wait_for_resp(read_q, "3", "OK")
 
         write_q.put(b"4 fetch 1 flags\r\n")
-        wait_for_match(read_q, b"\\* 1 FETCH \\(FLAGS \\(\\)\\)")
-        wait_for_match(read_q, b"4 OK")
+        wait_for_resp(
+            read_q,
+            "4",
+            "OK",
+            require=[b"\\* 1 FETCH \\(FLAGS \\(\\)\\)"],
+        )
 
         # noop store (for seq num = UINT_MAX-1)
         write_q.put(b"5 store 4294967294 flags \\Seen\r\n")
-        _, ignored = wait_for_match(read_q, b"5 OK noop STORE")
-        ensure_no_match(ignored, b"\\* [0-9]* FLAGS")
+        wait_for_resp(
+            read_q,
+            "5",
+            "OK",
+            require=[b"5 OK noop STORE"],
+            disallow=[b"\\* [0-9]* FLAGS"],
+        )
 
 
 def get_uid(seq_num, write_q, read_q):
     write_q.put(b"U fetch %d UID\r\n"%seq_num)
-    match, _ = wait_for_match(
-        read_q, b"\\* %d FETCH \\(UID ([0-9]*)\\)"%seq_num
+    matches = wait_for_resp(
+        read_q,
+        "U",
+        "OK",
+        require=[b"\\* %d FETCH \\(UID ([0-9]*)\\)"%seq_num],
     )
-    wait_for_match(read_q, b"U OK")
-    return match[1]
+    return matches[0][1]
 
 
-def expunge(cmd):
-    with inbox(cmd) as (p, write_q, read_q):
+def test_expunge(cmd, maildir_root):
+    with inbox(cmd) as (write_q, read_q):
         uid1 = get_uid(1, write_q, read_q)
         uid2 = get_uid(2, write_q, read_q)
 
         # expunge two messages and confirm they report back in reverse order
         write_q.put(b"1 store 1:2 flags \\Deleted\r\n")
-        wait_for_match(read_q, b"1 OK")
+        wait_for_resp(read_q, "1", "OK")
 
         write_q.put(b"2 expunge\r\n")
-        wait_for_match(read_q, b"\\* 2 EXPUNGE")
-        wait_for_match(read_q, b"\\* 1 EXPUNGE")
-        wait_for_match(read_q, b"2 OK")
+        wait_for_resp(
+            read_q,
+            "2",
+            "OK",
+            require=[
+                b"\\* 2 EXPUNGE",
+                b"\\* 1 EXPUNGE",
+            ],
+        )
 
         # confirm neither UID is still present
         write_q.put(b"3 search UID %s\r\n"%uid1)
-        _, ignored = wait_for_match(read_q, b"3 OK")
-        ensure_no_match(ignored, b"\\* SEARCH [0-9]*")
+        wait_for_resp(
+            read_q,
+            "3",
+            "OK",
+            disallow=[b"\\* SEARCH [0-9]*"],
+        )
 
         write_q.put(b"4 search UID %s\r\n"%uid2)
-        _, ignored = wait_for_match(read_q, b"4 OK")
-        ensure_no_match(ignored, b"\\* SEARCH [0-9]*")
+        wait_for_resp(
+            read_q,
+            "4",
+            "OK",
+            disallow=[b"\\* SEARCH [0-9]*"],
+        )
 
 
-def expunge_on_close(cmd):
-    with inbox(cmd) as (p, write_q, read_q):
+def test_expunge_on_close(cmd, maildir_root):
+    with inbox(cmd) as (write_q, read_q):
         uid = get_uid(1, write_q, read_q)
 
         write_q.put(b"1 store 1 flags \\Deleted\r\n")
-        wait_for_match(read_q, b"1 OK")
+        wait_for_resp(read_q, "1", "OK")
 
         write_q.put(b"2 close\r\n")
-        wait_for_match(read_q, b"2 OK")
+        wait_for_resp(read_q, "2", "OK")
 
         write_q.put(b"3 select INBOX\r\n")
-        wait_for_match(read_q, b"3 OK")
+        wait_for_resp(read_q, "3", "OK")
 
         write_q.put(b"4 search UID %s\r\n"%uid)
-        _, ignored = wait_for_match(read_q, b"4 OK")
-        ensure_no_match(ignored, b"\\* SEARCH [0-9]*")
+        wait_for_resp(
+            read_q,
+            "4",
+            "OK",
+            disallow=[b"\\* SEARCH [0-9]*"],
+        )
 
 
-def no_expunge_on_logout(cmd):
-    with run_subproc(cmd) as (p, out_q):
-        with _inbox() as (write_q, read_q):
+def test_no_expunge_on_logout(cmd, maildir_root):
+    with Subproc(cmd) as subproc:
+        with _inbox(subproc) as (write_q, read_q):
             uid = get_uid(1, write_q, read_q)
 
             write_q.put(b"1 store 1 flags \\Deleted\r\n")
-            wait_for_match(read_q, b"1 OK")
+            wait_for_resp(read_q, "1", "OK")
 
-        with _inbox() as (write_q, read_q):
+        with _inbox(subproc) as (write_q, read_q):
             write_q.put(b"1 UID search UID %s\r\n"%uid)
-            wait_for_match(read_q, b"\\* SEARCH %s*"%uid)
-            wait_for_match(read_q, b"1 OK")
+            wait_for_resp(
+                read_q,
+                "1",
+                "OK",
+                require=[b"\\* SEARCH %s*"%uid],
+            )
 
 
-def noop(cmd):
-    with run_subproc(cmd) as (p, out_q):
-        with _inbox() as (w1, r1), _inbox() as (w2, r2):
+def test_noop(cmd, maildir_root):
+    with Subproc(cmd) as subproc:
+        with _inbox(subproc) as (w1, r1), _inbox(subproc) as (w2, r2):
             # empty flags for a few messages
             w1.put(b"1a store 1:3 flags ()\r\n")
-            wait_for_match(r1, b"1a OK")
+            wait_for_resp(r1, "1a", "OK")
 
             # sync to second connection
             w2.put(b"1b NOOP\r\n")
-            wait_for_match(r2, b"1b OK")
+            wait_for_resp(r2, "1b", "OK")
 
             # make some updates
             w1.put(b"3a store 1 flags \\Deleted\r\n")
-            wait_for_match(r1, b"3a OK")
+            wait_for_resp(r1, "3a", "OK")
             w1.put(b"4a store 2 flags \\Answered\r\n")
-            wait_for_match(r1, b"4a OK")
+            wait_for_resp(r1, "4a", "OK")
             w1.put(b"5a store 3 flags \\Answered\r\n")
-            wait_for_match(r1, b"5a OK")
+            wait_for_resp(r1, "5a", "OK")
             w1.put(b"6a expunge\r\n")
-            wait_for_match(r1, b"6a OK")
+            wait_for_resp(r1, "6a", "OK")
 
             # sync to second connection
             assert r2.empty(), "expected empty queue before NOOP"
             w2.put(b"2b NOOP\r\n")
-            wait_for_match(r2, b"\\* 2 FETCH \\(FLAGS \\(\\\\Answered\\)\\)")
-            wait_for_match(r2, b"\\* 3 FETCH \\(FLAGS \\(\\\\Answered\\)\\)")
-            wait_for_match(r2, b"\\* 1 EXPUNGE")
-            wait_for_match(r2, b"2b OK")
+            wait_for_resp(
+                r2,
+                "2b",
+                "OK",
+                require=[
+                    b"\\* 2 FETCH \\(FLAGS \\(\\\\Answered\\)\\)",
+                    b"\\* 3 FETCH \\(FLAGS \\(\\\\Answered\\)\\)",
+                    b"\\* 1 EXPUNGE"
+                ],
+            )
 
 
-def up_transition(cmd):
-    with run_subproc(cmd) as (p, out_q):
-        with _session() as (w1, r1):
-            with _session() as (w2, r2):
+def test_up_transition(cmd, maildir_root):
+    with Subproc(cmd) as subproc:
+        with _session(subproc) as (w1, r1):
+            with _session(subproc) as (w2, r2):
                 # let the second connection be the primary up_t
                 w2.put(b"1b select INBOX\r\n")
-                wait_for_match(r2, b"1b OK")
+                wait_for_resp(r2, "1b", "OK")
 
                 w1.put(b"1a select INBOX\r\n")
-                wait_for_match(r1, b"1a OK")
+                wait_for_resp(r1, "1a", "OK")
 
                 # Make sure everything is working
                 w1.put(b"2a STORE 1 flags ()\r\n")
-                wait_for_match(r1, b"2a OK")
+                wait_for_resp(r1, "2a", "OK")
                 w2.put(b"2b STORE 1 flags \\Answered\r\n")
-                wait_for_match(r2, b"2b OK")
+                wait_for_resp(r2, "2b", "OK")
 
             # Make sure the first connection still works
             w1.put(b"3a STORE 1 flags ()\r\n")
-            wait_for_match(r1, b"\\* 1 FETCH \\(FLAGS \\(\\)\\)")
-            wait_for_match(r1, b"3a OK")
+            wait_for_resp(
+                r1,
+                "3a",
+                "OK",
+                require=[b"\\* 1 FETCH \\(FLAGS \\(\\)\\)"],
+            )
 
-def do_passthru_test(p, write_q, read_q):
+
+def do_passthru_test(write_q, read_q):
     write_q.put(b"1 LIST \"\" *\r\n")
-    wait_for_match(read_q, b"\\* LIST \\(.*\\) \"/\" INBOX")
-    wait_for_match(read_q, b"1 OK")
+    wait_for_resp(
+        read_q,
+        "1",
+        "OK",
+        require=[b"\\* LIST \\(.*\\) \"/\" INBOX"],
+    )
 
     write_q.put(b"2 LSUB \"\" *\r\n")
-    wait_for_match(read_q, b"2 OK")
+    wait_for_resp(read_q, "2", "OK")
 
     write_q.put(b"3 STATUS INBOX (MESSAGES)\r\n")
-    wait_for_match(read_q, b"\\* STATUS INBOX \\(MESSAGES [0-9]*\\)")
-    wait_for_match(read_q, b"3 OK")
+    wait_for_resp(
+        read_q,
+        "3",
+        "OK",
+        require=[b"\\* STATUS INBOX \\(MESSAGES [0-9]*\\)"],
+    )
 
     # test SUBSCRIBE and UNSUBSCRIBE
     write_q.put(b"4 SUBSCRIBE INBOX\r\n")
-    wait_for_match(read_q, b"4 OK")
+    wait_for_resp(read_q, "4", "OK")
 
     write_q.put(b"5 LSUB \"\" *\r\n")
-    wait_for_match(read_q, b"\\* LSUB \\(.*\\) \"/\" INBOX")
-    wait_for_match(read_q, b"5 OK")
+    wait_for_resp(
+        read_q,
+        "5",
+        "OK",
+        require=[b"\\* LSUB \\(.*\\) \"/\" INBOX"],
+    )
 
     write_q.put(b"6 UNSUBSCRIBE INBOX\r\n")
-    wait_for_match(read_q, b"6 OK")
+    wait_for_resp(read_q, "6", "OK")
 
     write_q.put(b"7 LSUB \"\" *\r\n")
-    _, ignored = wait_for_match(read_q, b"7 OK")
-    ensure_no_match(ignored, b"\\* LSUB \\(.*\\) \"/\" INBOX")
+    wait_for_resp(
+        read_q,
+        "7",
+        "OK",
+        disallow=[b"\\* LSUB \\(.*\\) \"/\" INBOX"],
+    )
 
     # test CREATE and DELETE
     name = codecs.encode(b"deleteme_" + os.urandom(5), "hex_codec")
 
     write_q.put(b"8 CREATE %s\r\n"%name)
-    wait_for_match(read_q, b"8 OK")
+    wait_for_resp(read_q, "8", "OK")
 
     write_q.put(b"9 LIST \"\" *\r\n")
-    wait_for_match(read_q, b"\\* LIST \\(.*\\) \"/\" %s"%name)
-    wait_for_match(read_q, b"9 OK")
+    wait_for_resp(
+        read_q,
+        "9",
+        "OK",
+        require=[b"\\* LIST \\(.*\\) \"/\" %s"%name],
+    )
 
     write_q.put(b"10 DELETE %s\r\n"%name)
-    wait_for_match(read_q, b"10 OK")
+    wait_for_resp(read_q, "10", "OK")
 
     write_q.put(b"11 LIST \"\" *\r\n")
-    _, ignored = wait_for_match(read_q, b"11 OK")
-    ensure_no_match(ignored, b"\\* LIST \\(.*\\) \"/\" %s"%name)
+    wait_for_resp(
+        read_q,
+        "11",
+        "OK",
+        disallow=[b"\\* LIST \\(.*\\) \"/\" %s"%name],
+    )
 
 
-def passthru_unselected(cmd):
-    with session(cmd) as (p, write_q, read_q):
-        do_passthru_test(p, write_q, read_q)
+def test_passthru_unselected(cmd, maildir_root):
+    with session(cmd) as (write_q, read_q):
+        do_passthru_test(write_q, read_q)
 
 
-def passthru_selected(cmd):
-    with inbox(cmd) as (p, write_q, read_q):
-        do_passthru_test(p, write_q, read_q)
+def test_passthru_selected(cmd, maildir_root):
+    with inbox(cmd) as (write_q, read_q):
+        do_passthru_test(write_q, read_q)
 
 
-def terminate_with_open_connection(cmd):
-    with run_subproc(cmd) as (p, out_q):
-        with run_connection() as (write_q, read_q):
+def test_terminate_with_open_connection(cmd, maildir_root):
+    with Subproc(cmd) as subproc:
+        with run_connection(subproc) as (write_q, read_q):
             wait_for_match(read_q, b"\\* OK")
 
+            p = subproc.p
             p.send_signal(signal.SIGTERM)
             p.wait(TIMEOUT)
             assert p.poll() is not None, "SIGTERM was not handled fast enough"
 
 
-def terminate_with_open_session(cmd):
-    with run_subproc(cmd) as (p, out_q):
-        with run_connection() as (write_q, read_q):
+def test_terminate_with_open_session(cmd, maildir_root):
+    with Subproc(cmd) as subproc:
+        with run_connection(subproc) as (write_q, read_q):
             wait_for_match(read_q, b"\\* OK")
 
-            write_q.put(b"1 login test@splintermail.com password\r\n")
+            write_q.put(
+                b"1 login %s %s\r\n"%(USER.encode('utf8'), PASS.encode('utf8'))
+            )
             wait_for_match(read_q, b"1 OK")
 
+            p = subproc.p
             p.send_signal(signal.SIGTERM)
             p.wait(TIMEOUT)
             assert p.poll() is not None, "SIGTERM was not handled fast enough"
 
 
-def terminate_with_open_mailbox(cmd):
-    with run_subproc(cmd) as (p, out_q):
-        with run_connection() as (write_q, read_q):
+def test_terminate_with_open_mailbox(cmd, maildir_root):
+    with Subproc(cmd) as subproc:
+        with run_connection(subproc) as (write_q, read_q):
             wait_for_match(read_q, b"\\* OK")
 
-            write_q.put(b"1 login test@splintermail.com password\r\n")
+            write_q.put(
+                b"1 login %s %s\r\n"%(USER.encode('utf8'), PASS.encode('utf8'))
+            )
             wait_for_match(read_q, b"1 OK")
 
             write_q.put(b"2 select INBOX\r\n")
             wait_for_match(read_q, b"2 OK")
 
+            p = subproc.p
             p.send_signal(signal.SIGTERM)
             p.wait(TIMEOUT)
             assert p.poll() is not None, "SIGTERM was not handled fast enough"
@@ -511,22 +697,22 @@ if __name__ == "__main__":
     test_files = sys.argv[1]
 
     tests = [
-        start_kill,
-        login_logout,
-        select_logout,
-        select_close,
-        select_select,
-        store,
-        expunge,
-        expunge_on_close,
-        no_expunge_on_logout,
-        noop,
-        up_transition,
-        passthru_unselected,
-        passthru_selected,
-        terminate_with_open_connection,
-        terminate_with_open_session,
-        terminate_with_open_mailbox,
+        test_start_kill,
+        test_login_logout,
+        test_select_logout,
+        test_select_close,
+        test_select_select,
+        test_store,
+        test_expunge,
+        test_expunge_on_close,
+        test_no_expunge_on_logout,
+        test_noop,
+        test_up_transition,
+        test_passthru_unselected,
+        test_passthru_selected,
+        test_terminate_with_open_connection,
+        test_terminate_with_open_session,
+        test_terminate_with_open_mailbox,
     ]
 
     for test in tests:
@@ -545,6 +731,6 @@ if __name__ == "__main__":
                 "--mail-key", os.path.join(test_files, "key_tool/key_m.pem"),
                 "--maildirs", maildir_root,
             ]
-        test(cmd)
+        test(cmd, maildir_root)
 
     print("PASS")
