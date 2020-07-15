@@ -19,6 +19,9 @@ struct user_t {
     // each user gets one dirmgr
     dirmgr_t dirmgr;
 
+    keyshare_t keyshare;
+    bool keyfetcher_synced;
+
     // a manager_i for the key-fetching fetcher_t
     manager_i keyfetcher_mgr;
     fetcher_t *keyfetcher;

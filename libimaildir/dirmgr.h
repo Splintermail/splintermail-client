@@ -47,6 +47,7 @@ struct dirmgr_t {
     hashmap_t dirs;  // managed_dir_t->h
     hashmap_t holds;  // dirmgr_hold_t->h
     imaildir_cb_i imaildir_cb;
+    size_t tmp_count;
 };
 DEF_CONTAINER_OF(dirmgr_t, imaildir_cb, imaildir_cb_i);
 
@@ -59,6 +60,9 @@ derr_t dirmgr_init(dirmgr_t *dm, string_builder_t path,
    just be tied to something that will outlive any object that might read from
    the dirmgr */
 void dirmgr_free(dirmgr_t *dm);
+
+// the first tmp id will be 1, and increment from there
+size_t dirmgr_new_tmp_id(dirmgr_t *dirmgr);
 
 ////////////////////
 // utility functions

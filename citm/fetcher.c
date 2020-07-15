@@ -648,6 +648,16 @@ static derr_t send_passthru(fetcher_t *fetcher){
             // prepare the passthru arg
             // (nothing to do)
             break;
+
+        case PASSTHRU_APPEND:
+            // steal the imap command
+            imap_arg.append = fetcher->passthru.req->arg.append;
+            fetcher->passthru.req->arg.append = NULL;
+            // set the imap type
+            imap_type = IMAP_CMD_APPEND;
+            // prepare the passthru arg
+            // (nothing to do)
+            break;
     }
 
     size_t tag = ++fetcher->tag;

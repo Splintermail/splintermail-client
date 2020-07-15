@@ -68,6 +68,8 @@ static derr_t dirmgr_hold_new(dirmgr_hold_t **out, const dstr_t *name){
 
     PROP_GO(&e, dstr_copy(name, &hold->name), fail);
 
+    *out = hold;
+
     return e;
 
 fail:
@@ -298,7 +300,7 @@ derr_t dirmgr_sync_folders(dirmgr_t *dm, jsw_atree_t *tree){
         string_builder_t dir_path = sb_append(&dm->path, FD(name));
         PROP(&e, mkdirs_path(&dir_path, 0777) );
 
-        // also ensure ctn exist?
+        // also ensure ctn exist
         if(resp->mflags->selectable != IE_SELECTABLE_NOSELECT){
             PROP(&e, make_ctn(&dir_path, 0777) );
         }
@@ -494,6 +496,11 @@ derr_t dirmgr_init(dirmgr_t *dm, string_builder_t path,
         const keypair_t *keypair){
     derr_t e = E_OK;
 
+    // first, make sure we can prepare the filesystem how we like it
+    string_builder_t tmp_path = sb_append(&path, FS("tmp"));
+    PROP(&e, mkdirs_path(&tmp_path, 0700) );
+    PROP(&e, empty_dir(&tmp_path) );
+
     *dm = (dirmgr_t){
         .keypair = keypair,
         .path = path,
@@ -567,9 +574,20 @@ warn:
 
 void dirmgr_free(dirmgr_t *dm){
     if(!dm) return;
+
+    // clean up any temporary files
+    string_builder_t tmp_path = sb_append(&dm->path, FS("tmp"));
+    DROP_CMD( empty_dir(&tmp_path) );
+
     prune_empty_dirs(&dm->path);
     hashmap_free(&dm->dirs);
     hashmap_free(&dm->holds);
+}
+
+
+// the first tmp id will be 1, and increment from there
+size_t dirmgr_new_tmp_id(dirmgr_t *dirmgr){
+    return ++dirmgr->tmp_count;
 }
 
 
@@ -617,10 +635,16 @@ derr_t dirmgr_hold_add_local_file(
         return e;
     }
 
+    // make sure it exists on the filesystem
+    string_builder_t dir_path = sb_append(&dm->path, FD(name));
+    PROP(&e, mkdirs_path(&dir_path, 0777) );
+
+    // also ensure ctn exist
+    PROP(&e, make_ctn(&dir_path, 0777) );
+
     // open a new temporary imaildir_t
     imaildir_t m;
-    string_builder_t m_path = sb_append(&dm->path, FD(name));
-    PROP_GO(&e, imaildir_init_lite(&m, m_path), fail_path);
+    PROP_GO(&e, imaildir_init_lite(&m, dir_path), fail_path);
 
     PROP(&e,
         imaildir_add_local_file(&m, path, uid, len, intdate, flags)

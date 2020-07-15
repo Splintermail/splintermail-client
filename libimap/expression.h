@@ -462,6 +462,7 @@ typedef struct {
     ie_st_code_type_t type;
     ie_st_code_arg_t arg;
 } ie_st_code_t;
+DEF_STEAL_PTR(ie_st_code_t);
 
 // FETCH responses
 

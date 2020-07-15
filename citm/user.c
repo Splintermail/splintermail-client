@@ -52,6 +52,7 @@ static void user_keyfetcher_dying(manager_i *mgr, void *caller, derr_t error){
 static void user_finalize(refs_t *refs){
     user_t *user = CONTAINER_OF(refs, user_t, refs);
 
+    keyshare_free(&user->keyshare);
     dirmgr_free(&user->dirmgr);
     dstr_free(&user->name);
     dstr_free(&user->pass);
@@ -79,6 +80,8 @@ derr_t user_new(
             .dying = user_keyfetcher_dying,
             .dead = noop_mgr_dead,
         },
+        // TODO: actually sync the keyfetcher
+        .keyfetcher_synced = true,
     };
 
     link_init(&user->sf_pairs);
@@ -100,12 +103,20 @@ derr_t user_new(
              For now, we'll just hardcode a global key and call it a day. */
     PROP_GO(&e, dirmgr_init(&user->dirmgr, user->path, g_keypair), fail_pass);
 
+    PROP_GO(&e, keyshare_init(&user->keyshare), fail_dirmgr);
+
+    PROP_GO(&e, keyshare_add_key(&user->keyshare, g_keypair), fail_keyshare);
+
     *out = user;
 
     // TODO: start the keyfetcher
 
     return e;
 
+fail_keyshare:
+    keyshare_free(&user->keyshare);
+fail_dirmgr:
+    dirmgr_free(&user->dirmgr);
 fail_pass:
     dstr_free(&user->pass);
 fail_name:
@@ -118,7 +129,6 @@ fail_malloc:
 }
 
 
-
 void user_add_sf_pair(user_t *user, sf_pair_t *sf_pair){
     link_remove(&sf_pair->user_link);
     link_list_append(&user->sf_pairs, &sf_pair->user_link);
@@ -126,9 +136,14 @@ void user_add_sf_pair(user_t *user, sf_pair_t *sf_pair){
     // ref up for sf_pair
     ref_up(&user->refs);
 
-    // pass the global-keypair-initialized dirmgr into each sf_pair
-    server_set_dirmgr(&sf_pair->server, &user->dirmgr);
-    fetcher_set_dirmgr(&sf_pair->fetcher, &user->dirmgr);
+    sf_pair->owner = user;
+
+    /* if we've already synced the keyfetcher, we can respond to the sf_pair
+       immediately.  If not, then we will respond to all of them when we have
+       finished the sync */
+    if(user->keyfetcher_synced){
+        sf_pair_owner_resp(sf_pair, &user->dirmgr, &user->keyshare);
+    }
 }
 
 

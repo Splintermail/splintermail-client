@@ -17,6 +17,8 @@ import codecs
 
 TIMEOUT = 0.5
 
+TIMEOUT = 0.1
+
 USER="test@splintermail.com"
 PASS="password"
 
@@ -631,6 +633,93 @@ def test_passthru_selected(cmd, maildir_root):
         do_passthru_test(write_q, read_q)
 
 
+def test_append(cmd, maildir_root):
+    with Subproc(cmd) as subproc:
+        # APPEND while not open
+        with _session(subproc) as (write_q, read_q):
+            write_q.put(b"1 APPEND INBOX {11}\r\n")
+            wait_for_match(read_q, b"\\+")
+            write_q.put(b"hello world\r\n")
+            wait_for_resp(read_q, "1", "OK")
+
+            # Log in to make sure that the thing we uploaded was sane
+            write_q.put(b"1b select INBOX\r\n")
+            wait_for_resp(read_q, "1b", "OK")
+
+        # APPEND while open
+        with _inbox(subproc) as (write_q, read_q):
+            write_q.put(b"1 APPEND INBOX {11}\r\n")
+            wait_for_match(read_q, b"\\+")
+            write_q.put(b"hello world\r\n")
+            wait_for_resp(read_q, "1", "OK")
+
+        # APPEND from either while two are open
+        with _inbox(subproc) as (w1, r1), _inbox(subproc) as (w2, r2):
+            w1.put(b"1 APPEND INBOX {11}\r\n")
+            wait_for_match(r1, b"\\+")
+            w1.put(b"hello world\r\n")
+            wait_for_resp(r1, "1", "OK")
+
+            # Check for update with NOOP on 2
+            w2.put(b"1 NOOP\r\n")
+            wait_for_resp(
+                r2,
+                "1",
+                "OK",
+                require=[b"\\* [0-9]* EXISTS"],
+            )
+
+            w2.put(b"2 APPEND INBOX {11}\r\n")
+            wait_for_match(r2, b"\\+")
+            w2.put(b"hello world\r\n")
+            wait_for_resp(r2, "2", "OK")
+
+            # Check for update with NOOP on 2
+            w1.put(b"2 NOOP\r\n")
+            wait_for_resp(
+                r1,
+                "2",
+                "OK",
+                require=[b"\\* [0-9]* EXISTS"],
+            )
+
+        # APPEND from an unrelated connection while open
+        with _session(subproc) as (w1, r1), _inbox(subproc) as (w2, r2):
+            w1.put(b"1 APPEND INBOX {11}\r\n")
+            wait_for_match(r1, b"\\+")
+            w1.put(b"hello world\r\n")
+            wait_for_resp(r1, "1", "OK")
+
+            # Check for update with NOOP on 2
+            w2.put(b"2 NOOP\r\n")
+            wait_for_resp(
+                r2,
+                "2",
+                "OK",
+                require=[b"\\* [0-9]* EXISTS", b"asdf"],
+            )
+
+
+def test_append_to_nonexisting(cmd, maildir_root):
+    bad_path = os.path.join(maildir_root, USER, "asdf")
+    assert not os.path.exists(bad_path), \
+            "non-existing directory exists before APPEND"
+
+    with Subproc(cmd) as subproc:
+        with _session(subproc) as (write_q, read_q):
+            write_q.put(b"1 APPEND asdf {11}\r\n")
+            wait_for_match(read_q, b"\\+")
+            write_q.put(b"hello world\r\n")
+            wait_for_resp(
+                read_q,
+                "1",
+                "NO",
+                require=[b"1 NO \\[TRYCREATE\\]"],
+            )
+
+    assert not os.path.exists(bad_path), \
+            "path to a non-existing directory exists after APPEND"
+
 def test_terminate_with_open_connection(cmd, maildir_root):
     with Subproc(cmd) as subproc:
         with run_connection(subproc) as (write_q, read_q):
@@ -697,22 +786,24 @@ if __name__ == "__main__":
     test_files = sys.argv[1]
 
     tests = [
-        test_start_kill,
-        test_login_logout,
-        test_select_logout,
-        test_select_close,
-        test_select_select,
-        test_store,
-        test_expunge,
-        test_expunge_on_close,
-        test_no_expunge_on_logout,
-        test_noop,
-        test_up_transition,
-        test_passthru_unselected,
-        test_passthru_selected,
-        test_terminate_with_open_connection,
-        test_terminate_with_open_session,
-        test_terminate_with_open_mailbox,
+        # test_start_kill,
+        # test_login_logout,
+        # test_select_logout,
+        # test_select_close,
+        # test_select_select,
+        # test_store,
+        # test_expunge,
+        # test_expunge_on_close,
+        # test_no_expunge_on_logout,
+        # test_noop,
+        # test_up_transition,
+        # test_passthru_unselected,
+        # test_passthru_selected,
+        test_append,
+        test_append_to_nonexisting,
+        # test_terminate_with_open_connection,
+        # test_terminate_with_open_session,
+        # test_terminate_with_open_mailbox,
     ]
 
     for test in tests:

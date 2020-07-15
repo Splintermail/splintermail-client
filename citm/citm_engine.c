@@ -19,11 +19,10 @@ static void citme_user_dying(user_cb_i *cb, user_t *caller, derr_t error){
     ref_dn(&citme->refs);
 }
 
-static derr_t citme_sf_pair_set_owner(sf_pair_cb_i *cb, sf_pair_t *sf_pair,
-            const dstr_t *name, const dstr_t *pass, void **owner){
+static derr_t citme_sf_pair_request_owner(sf_pair_cb_i *cb, sf_pair_t *sf_pair,
+            const dstr_t *name, const dstr_t *pass){
     derr_t e = E_OK;
 
-    *owner = NULL;
     citme_t *citme = CONTAINER_OF(cb, citme_t, sf_pair_cb);
 
     // check if this user already exists
@@ -40,9 +39,6 @@ static derr_t citme_sf_pair_set_owner(sf_pair_cb_i *cb, sf_pair_t *sf_pair,
         ref_up(&citme->refs);
     }
     user_add_sf_pair(user, sf_pair);
-
-    // set dirmgr and owner
-    *owner = user;
 
     return e;
 }
@@ -75,14 +71,14 @@ static void citme_sf_pair_dying(sf_pair_cb_i *cb, sf_pair_t *sf_pair,
 static void citme_sf_pair_release(sf_pair_cb_i *cb, sf_pair_t *sf_pair){
     citme_t *citme = CONTAINER_OF(cb, citme_t, sf_pair_cb);
 
-    if(sf_pair->owner){
-        // sf_pair is owned by a user_t
-        user_t *user = sf_pair->owner;
-        ref_dn(&user->refs);
-    }
+    // remember the user, if the sf_pair has an owner
+    user_t *user = sf_pair->owner;
 
     // free the sf_pair
     sf_pair_free(&sf_pair);
+
+    // maybe free the user
+    if(user) ref_dn(&user->refs);
 
     // ref down for the sf_pair
     ref_dn(&citme->refs);
@@ -202,7 +198,7 @@ derr_t citme_init(
         .work_req = { .data = citme },
 
         .sf_pair_cb = {
-            .set_owner = citme_sf_pair_set_owner,
+            .request_owner = citme_sf_pair_request_owner,
             .dying = citme_sf_pair_dying,
             .release = citme_sf_pair_release,
         },

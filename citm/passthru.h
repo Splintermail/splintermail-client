@@ -9,6 +9,7 @@ typedef enum {
     PASSTHRU_DELETE,
     PASSTHRU_SUB,
     PASSTHRU_UNSUB,
+    PASSTHRU_APPEND,
 } passthru_type_e;
 
 typedef union {
@@ -19,6 +20,7 @@ typedef union {
     ie_mailbox_t *delete;
     ie_mailbox_t *sub;
     ie_mailbox_t *unsub;
+    ie_append_cmd_t *append;
 } passthru_req_arg_u;
 
 typedef struct {
@@ -26,6 +28,7 @@ typedef struct {
     ie_dstr_t *tag;
     passthru_req_arg_u arg;
 } passthru_req_t;
+DEF_STEAL_PTR(passthru_req_t);
 
 typedef struct {
     jsw_atree_t tree;  // ie_list_resp_t->node
@@ -43,6 +46,7 @@ typedef union {
     // nothing for delete
     // nothing for sub
     // nothing for unsub
+    // nothing for append
 } passthru_resp_arg_u;
 DEF_STEAL_STRUCT(passthru_resp_arg_u);
 

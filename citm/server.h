@@ -36,7 +36,7 @@ typedef enum {
     SELECT_DONE,          // we have the result of the SELECT
 } select_state_e;
 
-// an interface that must be provided by the sf_pair
+// the sf_pair-provided interface to the server
 struct server_cb_i;
 typedef struct server_cb_i server_cb_i;
 struct server_cb_i {

@@ -1752,7 +1752,9 @@ ie_st_code_t *ie_st_code_copy(derr_t *e, const ie_st_code_t *old){
             break;
 
         case IE_ST_CODE_UIDNOSTICK: break;
-        case IE_ST_CODE_APPENDUID:  break;
+        case IE_ST_CODE_APPENDUID:
+            arg.appenduid = old->arg.appenduid;
+            break;
         case IE_ST_CODE_COPYUID:
             arg.copyuid.uids_in = ie_seq_set_copy(e, old->arg.copyuid.uids_in);
             arg.copyuid.uids_out =
@@ -1760,7 +1762,9 @@ ie_st_code_t *ie_st_code_copy(derr_t *e, const ie_st_code_t *old){
             break;
 
         case IE_ST_CODE_NOMODSEQ:   break;
-        case IE_ST_CODE_HIMODSEQ:   break;
+        case IE_ST_CODE_HIMODSEQ:
+            arg.himodseq = old->arg.himodseq;
+            break;
         case IE_ST_CODE_MODIFIED:
             arg.modified = ie_seq_set_copy(e, old->arg.modified);
             break;

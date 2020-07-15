@@ -606,11 +606,43 @@ static void send_passthru_st_resp(derr_t *e, server_t *server,
         passthru_resp_t *passthru_resp){
     if(is_error(*e)) goto cu;
 
+    // filter out unsupported extensions
+    if(passthru_resp->st_resp->code){
+        switch(passthru_resp->st_resp->code->type){
+            case IE_ST_CODE_ALERT:
+            case IE_ST_CODE_PARSE:
+            case IE_ST_CODE_READ_ONLY:
+            case IE_ST_CODE_READ_WRITE:
+            case IE_ST_CODE_TRYCREATE:
+            case IE_ST_CODE_UIDNEXT:
+            case IE_ST_CODE_UIDVLD:
+            case IE_ST_CODE_UNSEEN:
+            case IE_ST_CODE_PERMFLAGS:
+            case IE_ST_CODE_CAPA:
+            case IE_ST_CODE_ATOM:
+                break;
+            // UIDPLUS extension
+            case IE_ST_CODE_UIDNOSTICK:
+            case IE_ST_CODE_APPENDUID:
+            case IE_ST_CODE_COPYUID:
+            // CONDSTORE extension
+            case IE_ST_CODE_NOMODSEQ:
+            case IE_ST_CODE_HIMODSEQ:
+            case IE_ST_CODE_MODIFIED:
+            // QRESYNC extension
+            case IE_ST_CODE_CLOSED:
+                ie_st_code_free(
+                    STEAL(ie_st_code_t, &passthru_resp->st_resp->code)
+                );
+                break;
+        }
+    }
+
     // send the tagged status-type response with the correct tag
     ie_st_resp_t *st_resp = ie_st_resp_new(e,
         STEAL(ie_dstr_t, &passthru_resp->tag),
         passthru_resp->st_resp->status,
-        ie_st_code_copy(e, passthru_resp->st_resp->code),
+        STEAL(ie_st_code_t, &passthru_resp->st_resp->code),
         STEAL(ie_dstr_t, &passthru_resp->st_resp->text)
     );
 
@@ -736,17 +768,22 @@ static derr_t passthru_cmd(server_t *server, const ie_dstr_t *tag,
 
         case IMAP_CMD_DELETE:
             type = PASSTHRU_DELETE;
-            arg.create = ie_mailbox_copy(&e, cmd->arg.delete);
+            arg.delete = ie_mailbox_copy(&e, cmd->arg.delete);
             break;
 
         case IMAP_CMD_SUB:
             type = PASSTHRU_SUB;
-            arg.create = ie_mailbox_copy(&e, cmd->arg.sub);
+            arg.sub = ie_mailbox_copy(&e, cmd->arg.sub);
             break;
 
         case IMAP_CMD_UNSUB:
             type = PASSTHRU_UNSUB;
-            arg.create = ie_mailbox_copy(&e, cmd->arg.unsub);
+            arg.unsub = ie_mailbox_copy(&e, cmd->arg.unsub);
+            break;
+
+        case IMAP_CMD_APPEND:
+            type = PASSTHRU_APPEND;
+            arg.append = ie_append_cmd_copy(&e, cmd->arg.append);
             break;
 
         case IMAP_CMD_PLUS:
@@ -759,7 +796,6 @@ static derr_t passthru_cmd(server_t *server, const ie_dstr_t *tag,
         case IMAP_CMD_SELECT:
         case IMAP_CMD_EXAMINE:
         case IMAP_CMD_RENAME:
-        case IMAP_CMD_APPEND:
         case IMAP_CMD_CHECK:
         case IMAP_CMD_CLOSE:
         case IMAP_CMD_EXPUNGE:
@@ -1011,6 +1047,7 @@ static bool intercept_cmd_type(imap_cmd_type_t type){
         case IMAP_CMD_DELETE:
         case IMAP_CMD_SUB:
         case IMAP_CMD_UNSUB:
+        case IMAP_CMD_APPEND:
 
         // also intercept close-like commands
         case IMAP_CMD_LOGOUT:
@@ -1024,7 +1061,6 @@ static bool intercept_cmd_type(imap_cmd_type_t type){
         case IMAP_CMD_LOGIN:
         case IMAP_CMD_EXAMINE:
         case IMAP_CMD_RENAME:
-        case IMAP_CMD_APPEND:
         case IMAP_CMD_CHECK:
         case IMAP_CMD_EXPUNGE:
         case IMAP_CMD_SEARCH:
@@ -1123,6 +1159,7 @@ static derr_t do_work_passthru(server_t *server, bool *noop){
         case PASSTHRU_DELETE:
         case PASSTHRU_SUB:
         case PASSTHRU_UNSUB:
+        case PASSTHRU_APPEND:
             PROP(&e, passthru_done(server, resp) );
             break;
     }
