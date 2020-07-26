@@ -40,13 +40,13 @@ derr_t up_do_work(up_t *up, bool *noop);
 void up_imaildir_select(
     up_t *up,
     const dstr_t *name,
-    unsigned int uidvld,
+    unsigned int uidvld_up,
     unsigned long himodseq_up
 );
 void up_imaildir_relay_cmd(up_t *up, imap_cmd_t *cmd, imap_cmd_cb_t *cb);
 void up_imaildir_preunregister(up_t *up);
 // disallow downloading a specific UID
-void up_imaildir_have_local_file(up_t *up, unsigned uid);
+void up_imaildir_have_local_file(up_t *up, unsigned uid_up);
 // trigger any downloading work that needs to be done after a hold ends
 void up_imaildir_hold_end(up_t *up);
 
@@ -65,9 +65,9 @@ struct up_t {
     himodseq_calc_t hmsc;
     // handle initial synchronizations specially
     bool bootstrapping;
-    seq_set_builder_t uids_to_download;
-    seq_set_builder_t uids_to_expunge;
-    ie_seq_set_t *uids_being_expunged;
+    seq_set_builder_t uids_up_to_download;
+    seq_set_builder_t uids_up_to_expunge;
+    ie_seq_set_t *uids_up_being_expunged;
     // current tag
     size_t tag;
     link_t cbs;  // imap_cmd_cb_t->link (may be up_cb_t or imaildir_cb_t)
@@ -76,7 +76,7 @@ struct up_t {
     struct {
         bool pending;
         const dstr_t *name;
-        unsigned int uidvld;
+        unsigned int uidvld_up;
         unsigned long himodseq;
     } select;
 

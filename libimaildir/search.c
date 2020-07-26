@@ -5,7 +5,7 @@ typedef struct {
     const msg_view_t *view;
     unsigned int seq;
     unsigned int seq_max;
-    unsigned int uid_max;
+    unsigned int uid_dn_max;
 } search_args_t;
 
 static bool get_recent(const msg_view_t *view){
@@ -46,19 +46,19 @@ static derr_t do_eval(const search_args_t *args, size_t lvl,
     switch(key->type){
         case IE_SEARCH_ALL: *out = true; break;
 
-        case IE_SEARCH_ANSWERED:    *out =  view->flags->answered;  break;
-        case IE_SEARCH_UNANSWERED:  *out = !view->flags->answered;  break;
-        case IE_SEARCH_DELETED:     *out =  view->flags->deleted;   break;
-        case IE_SEARCH_UNDELETED:   *out = !view->flags->deleted;   break;
-        case IE_SEARCH_FLAGGED:     *out =  view->flags->flagged;   break;
-        case IE_SEARCH_UNFLAGGED:   *out = !view->flags->flagged;   break;
-        case IE_SEARCH_SEEN:        *out =  view->flags->seen;      break;
-        case IE_SEARCH_UNSEEN:      *out = !view->flags->seen;      break;
-        case IE_SEARCH_DRAFT:       *out =  view->flags->draft;     break;
-        case IE_SEARCH_UNDRAFT:     *out = !view->flags->draft;     break;
+        case IE_SEARCH_ANSWERED:    *out =  view->flags.answered;  break;
+        case IE_SEARCH_UNANSWERED:  *out = !view->flags.answered;  break;
+        case IE_SEARCH_DELETED:     *out =  view->flags.deleted;   break;
+        case IE_SEARCH_UNDELETED:   *out = !view->flags.deleted;   break;
+        case IE_SEARCH_FLAGGED:     *out =  view->flags.flagged;   break;
+        case IE_SEARCH_UNFLAGGED:   *out = !view->flags.flagged;   break;
+        case IE_SEARCH_SEEN:        *out =  view->flags.seen;      break;
+        case IE_SEARCH_UNSEEN:      *out = !view->flags.seen;      break;
+        case IE_SEARCH_DRAFT:       *out =  view->flags.draft;     break;
+        case IE_SEARCH_UNDRAFT:     *out = !view->flags.draft;     break;
 
         case IE_SEARCH_NEW:
-            *out = get_recent(view) && !view->flags->seen;
+            *out = get_recent(view) && !view->flags.seen;
             break;
 
         case IE_SEARCH_OLD:
@@ -95,7 +95,9 @@ static derr_t do_eval(const search_args_t *args, size_t lvl,
             } break;
 
         case IE_SEARCH_UID:
-            *out = in_seq_set(view->base->uid, param.seq_set, args->uid_max);
+            *out = in_seq_set(
+                view->uid_dn, param.seq_set, args->uid_dn_max
+            );
             break;
 
         case IE_SEARCH_SEQ_SET:     // uses param.seq_set
@@ -129,7 +131,7 @@ static derr_t do_eval(const search_args_t *args, size_t lvl,
 }
 
 derr_t search_key_eval(const ie_search_key_t *key, const msg_view_t *view,
-        unsigned int seq, unsigned int seq_max, unsigned int uid_max,
+        unsigned int seq, unsigned int seq_max, unsigned int uid_dn_max,
         bool *out){
     derr_t e = E_OK;
 
@@ -137,7 +139,7 @@ derr_t search_key_eval(const ie_search_key_t *key, const msg_view_t *view,
         .view = view,
         .seq = seq,
         .seq_max = seq_max,
-        .uid_max = uid_max,
+        .uid_dn_max = uid_dn_max,
     };
     PROP(&e, do_eval(&args, 0, key, out) );
 

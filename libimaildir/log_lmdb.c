@@ -11,7 +11,7 @@ checkpointing.
 
 I'd rather not have an LMDB dependency, but it works for now.
 
-We'll use LMDB in the dubmest way possible:
+We'll use LMDB in the dumbest way possible:
   - one unnamed database per lmdb environment
   - one lmdb environment per maildir
   - one lmdb transaction at a time
@@ -34,10 +34,17 @@ static derr_type_t fmthook_lmdb_error(dstr_t* out, const void* arg){
 }
 
 static inline fmt_t FLMDB(const int* err){
-    return (fmt_t){FMT_EXT, {.ext = {.arg = (const void*)err,
-                                     .hook = fmthook_lmdb_error} } };
-
+    return (fmt_t){
+        FMT_EXT,
+        {
+            .ext = {
+                .arg = (const void*)err,
+                .hook = fmthook_lmdb_error,
+            }
+        }
+    };
 }
+
 static inline derr_type_t lmdb_err_type(int err){
     return (err == ENOMEM) ? E_NOMEM : E_FS;
 }
@@ -50,7 +57,8 @@ struct log_t {
     // the interface we provide to the imaildir_t
     maildir_log_i iface;
     MDB_env *env;
-    unsigned int uidvld;
+    unsigned int uidvld_up;
+    unsigned int uidvld_dn;
     unsigned long himodseq_up;
 };
 DEF_CONTAINER_OF(log_t, iface, maildir_log_i);
@@ -121,13 +129,13 @@ fail_txn:
 }
 
 typedef enum {
-    LMDB_KEY_UIDVLD,      // "v" for "validity"
+    LMDB_KEY_UIDVLDS,      // "v" for "validity"
     LMDB_KEY_HIMODSEQUP,  // "h" for "high"
-    LMDB_KEY_UID,         // "m" for "message"
+    LMDB_KEY_UIDUP,       // "m" for "message"
 } lmdb_key_type_e;
 
 typedef union {
-    unsigned int uid;
+    unsigned int uid_up;
 } lmdb_key_arg_u;
 
 typedef struct {
@@ -140,14 +148,14 @@ static derr_t lmdb_key_marshal(lmdb_key_t *lk, dstr_t *out){
     out->len = 0;
 
     switch(lk->type){
-        case LMDB_KEY_UIDVLD:
+        case LMDB_KEY_UIDVLDS:
             PROP(&e, FMT(out, "v") );
             break;
         case LMDB_KEY_HIMODSEQUP:
             PROP(&e, FMT(out, "h") );
             break;
-        case LMDB_KEY_UID:
-            PROP(&e, FMT(out, "m.%x", FU(lk->arg.uid)) );
+        case LMDB_KEY_UIDUP:
+            PROP(&e, FMT(out, "m.%x", FU(lk->arg.uid_up)) );
     }
     return e;
 }
@@ -170,7 +178,7 @@ static derr_t lmdb_key_unmarshal(const dstr_t *key, lmdb_key_t *lk){
                 ORIG(&e, E_VALUE, "uidvalidity key is too long in database");
             }
             *lk = (lmdb_key_t){
-                .type = LMDB_KEY_UIDVLD,
+                .type = LMDB_KEY_UIDVLDS,
             };
             break;
         case 'h':
@@ -183,15 +191,15 @@ static derr_t lmdb_key_unmarshal(const dstr_t *key, lmdb_key_t *lk){
             };
             break;
         case 'm':
-            // check the validity of the uid part of the key
+            // check the validity of the uid_up part of the key
             if(key->len < 3){
-                ORIG(&e, E_VALUE, "zero-length msg uid in key in database");
+                ORIG(&e, E_VALUE, "zero-length msg uid_up in key in database");
             }
-            // parse the uid
+            // parse the uid_up
             dstr_t uidstr = dstr_sub(key, 2, key->len);
-            PROP(&e, dstr_tou(&uidstr, &arg.uid, 10) );
+            PROP(&e, dstr_tou(&uidstr, &arg.uid_up, 10) );
             *lk = (lmdb_key_t){
-                .type = LMDB_KEY_UID,
+                .type = LMDB_KEY_UIDUP,
                 .arg = arg,
             };
             break;
@@ -207,14 +215,16 @@ DSTR_STATIC(lmdb_format_version, "1");
 /*
     LMDB marshaled metadata line format:
 
-        1:12345:b:[afsdx:DATE]
-        |   |   |    |
-        |   |   |    |
-        |   |   |    flags (if not expunged)
-        |   |   |
-        |   |   "u"nfilled / "f"illed / "e"xpunged / "x": expunge pushed
-        |   |
-        |   modseq number
+        1:7:12345:b:[afsdx:DATE]
+        | |   |   |    |
+        | |   |   |    |
+        | |   |   |    flags (if not expunged)
+        | |   |   |
+        | |   |   "u"nfilled / "f"illed / "e"xpunged / "x": expunge pushed
+        | |   |
+        | |   modseq number
+        | |
+        | uid_dn
         |
         version number
 
@@ -258,23 +268,23 @@ static derr_t parse_date(const dstr_t *dstr, imap_time_t *intdate){
     return e;
 }
 
-static derr_t marshal_message(const msg_base_t *base, dstr_t *out){
+static derr_t marshal_message(const msg_t *msg, dstr_t *out){
     derr_t e = E_OK;
 
     out->len = 0;
 
-    // version number (1) : modseq : "u"nfilled or "f"illed : [flags] : date
-    PROP(&e, FMT(out, "%x:%x:", FD(&lmdb_format_version),
-                FU(base->meta->mod.modseq)) );
+    // version : uid_dn : modseq : "u"nfilled or "f"illed : [flags] : date
+    PROP(&e, FMT(out, "%x:%x:%x:", FD(&lmdb_format_version),
+                FU(msg->uid_dn), FU(msg->mod.modseq)) );
 
     // filled or unfilled?
     DSTR_STATIC(unfilled, "u");
     DSTR_STATIC(filled, "f");
     dstr_t *statechar = NULL;
-    switch(base->state){
-        case MSG_BASE_UNFILLED: statechar = &unfilled; break;
-        case MSG_BASE_FILLED: statechar = &filled; break;
-        case MSG_BASE_EXPUNGED:
+    switch(msg->state){
+        case MSG_UNFILLED: statechar = &unfilled; break;
+        case MSG_FILLED: statechar = &filled; break;
+        case MSG_EXPUNGED:
             ORIG(&e, E_INTERNAL, "can't log an EXPUNGED message");
     }
     if(statechar == NULL){
@@ -283,7 +293,7 @@ static derr_t marshal_message(const msg_base_t *base, dstr_t *out){
     PROP(&e, FMT(out, "%x:", FD(statechar)) );
 
     // flags
-    msg_flags_t *flags = &base->meta->flags;
+    const msg_flags_t *flags = &msg->flags;
     if(flags->answered){ PROP(&e, dstr_append(out, &DSTR_LIT("A")) ); }
     if(flags->draft){    PROP(&e, dstr_append(out, &DSTR_LIT("D")) ); }
     if(flags->flagged){  PROP(&e, dstr_append(out, &DSTR_LIT("F")) ); }
@@ -292,7 +302,7 @@ static derr_t marshal_message(const msg_base_t *base, dstr_t *out){
 
     // internaldate
     PROP(&e, dstr_append(out, &DSTR_LIT(":")) );
-    PROP(&e, marshal_date(base->ref.internaldate, out) );
+    PROP(&e, marshal_date(msg->internaldate, out) );
 
     return e;
 }
@@ -302,10 +312,10 @@ static derr_t marshal_expunge(const msg_expunge_t *expunge, dstr_t *out){
 
     out->len = 0;
 
-    // version number (2) : modseq : "e"xpunged or "x" for expunged/pushed :
+    // version : uid_dn : modseq : "e"xpunged or "x" for expunged/pushed :
 
-    PROP(&e, FMT(out, "%x:%x:", FD(&lmdb_format_version),
-                FU(expunge->mod.modseq)) );
+    PROP(&e, FMT(out, "%x:%x:%x:", FD(&lmdb_format_version),
+                FU(expunge->uid_dn), FU(expunge->mod.modseq)) );
 
     DSTR_STATIC(expunged, "e");
     DSTR_STATIC(pushed, "x");
@@ -322,13 +332,21 @@ static derr_t marshal_expunge(const msg_expunge_t *expunge, dstr_t *out){
     return e;
 }
 
-static unsigned int get_uidvld(maildir_log_i* iface){
+static unsigned int get_uidvld_up(maildir_log_i* iface){
     log_t *log = CONTAINER_OF(iface, log_t, iface);
 
-    return log->uidvld;
+    return log->uidvld_up;
 }
 
-static derr_t set_uidvld(maildir_log_i* iface, unsigned int uidvld){
+static unsigned int get_uidvld_dn(maildir_log_i* iface){
+    log_t *log = CONTAINER_OF(iface, log_t, iface);
+
+    return log->uidvld_dn;
+}
+
+static derr_t set_uidvlds(
+    maildir_log_i* iface, unsigned int uidvld_up, unsigned int uidvld_dn
+){
     derr_t e = E_OK;
 
     log_t *log = CONTAINER_OF(iface, log_t, iface);
@@ -340,7 +358,7 @@ static derr_t set_uidvld(maildir_log_i* iface, unsigned int uidvld){
 
     // serialize the key
     lmdb_key_t lk = {
-        .type = LMDB_KEY_UIDVLD,
+        .type = LMDB_KEY_UIDVLDS,
     };
     DSTR_VAR(key, 32);
     PROP_GO(&e, lmdb_key_marshal(&lk, &key), cu_txn);
@@ -351,8 +369,8 @@ static derr_t set_uidvld(maildir_log_i* iface, unsigned int uidvld){
     };
 
     // serialize the value
-    DSTR_VAR(value, 32);
-    PROP_GO(&e, FMT(&value, "%x", FU(uidvld)), cu_txn);
+    DSTR_VAR(value, 64);
+    PROP_GO(&e, FMT(&value, "%x:", FU(uidvld_up), FU(uidvld_dn)), cu_txn);
 
     MDB_val db_value = {
         .mv_size = value.len,
@@ -365,8 +383,9 @@ static derr_t set_uidvld(maildir_log_i* iface, unsigned int uidvld){
         ORIG_GO(&e, lmdb_err_type(ret), "error storing uidvalidity", cu_txn);
     }
 
-    // update in-memory value
-    log->uidvld = uidvld;
+    // update in-memory values
+    log->uidvld_up = uidvld_up;
+    log->uidvld_dn = uidvld_dn;
 
 cu_txn:
     if(is_error(e)){
@@ -436,7 +455,7 @@ cu_txn:
 }
 
 // store the new flags and the new modseq
-static derr_t update_msg(maildir_log_i* iface, const msg_base_t *base){
+static derr_t update_msg(maildir_log_i* iface, const msg_t *msg){
     derr_t e = E_OK;
 
     log_t *log = CONTAINER_OF(iface, log_t, iface);
@@ -448,9 +467,9 @@ static derr_t update_msg(maildir_log_i* iface, const msg_base_t *base){
 
     // serialize the key
     lmdb_key_t lk = {
-        .type = LMDB_KEY_UID,
+        .type = LMDB_KEY_UIDUP,
         .arg = {
-            .uid = base->ref.uid,
+            .uid_up = msg->uid_up,
         },
     };
     DSTR_VAR(key, 32);
@@ -463,7 +482,7 @@ static derr_t update_msg(maildir_log_i* iface, const msg_base_t *base){
 
     // serialize the value
     DSTR_VAR(value, 128);
-    PROP_GO(&e, marshal_message(base, &value), cu_txn);
+    PROP_GO(&e, marshal_message(msg, &value), cu_txn);
 
     MDB_val db_value = {
         .mv_size = value.len,
@@ -487,7 +506,8 @@ cu_txn:
 }
 
 // store the expunged uid and the new modseq
-static derr_t update_expunge(maildir_log_i* iface, msg_expunge_t *expunge){
+static derr_t update_expunge(maildir_log_i* iface,
+        const msg_expunge_t *expunge){
     derr_t e = E_OK;
 
     log_t *log = CONTAINER_OF(iface, log_t, iface);
@@ -499,9 +519,9 @@ static derr_t update_expunge(maildir_log_i* iface, msg_expunge_t *expunge){
 
     // serialize the key
     lmdb_key_t lk = {
-        .type = LMDB_KEY_UID,
+        .type = LMDB_KEY_UIDUP,
         .arg = {
-            .uid = expunge->uid,
+            .uid_up = expunge->uid_up,
         },
     };
     DSTR_VAR(key, 32);
@@ -537,59 +557,73 @@ cu_txn:
     return e;
 }
 
-// close the log
 static void log_close(maildir_log_i* iface){
     log_t *log = CONTAINER_OF(iface, log_t, iface);
     mdb_env_close(log->env);
     free(log);
 }
 
-static derr_t read_one_message(unsigned int uid, msg_base_state_e state,
-        unsigned long modseq, msg_flags_t flags, imap_time_t intdate,
-        jsw_atree_t *msgs, jsw_atree_t *mods){
+static derr_t read_uidvlds(log_t *log, const dstr_t *value){
+    derr_t e = E_OK;
+
+    LIST_VAR(dstr_t, uidvlds, 2);
+    PROP(&e, dstr_split(value, &DSTR_LIT(":"), &uidvlds) );
+    if(uidvlds.len != 2){
+        ORIG(&e, E_VALUE, "did not find 2 UIDVALIDITY values in log");
+    }
+
+    // store the uidvld_up in memory
+    PROP(&e, dstr_tou(&uidvlds.data[0], &log->uidvld_up, 10) );
+
+    // store the uidvld_dn in memory
+    PROP(&e, dstr_tou(&uidvlds.data[1], &log->uidvld_dn, 10) );
+
+    return e;
+}
+
+static derr_t read_one_message(unsigned int uid_up, unsigned int uid_dn,
+        msg_state_e state, unsigned long modseq, msg_flags_t flags,
+        imap_time_t intdate, jsw_atree_t *msgs, jsw_atree_t *mods){
     derr_t e = E_OK;
 
     /* a zero modseq value is only allowed for the UNFILLED state, and the
        UNFILLED state requires a zero modseq value */
-    if(modseq && state == MSG_BASE_UNFILLED)
+    if(modseq && state == MSG_UNFILLED)
         ORIG(&e, E_INTERNAL, "invalid nonzero modseq on UNFILLED message");
-    if(!modseq && state != MSG_BASE_UNFILLED)
+    if(!modseq && state != MSG_UNFILLED)
         ORIG(&e, E_INTERNAL, "invalid zero modseq on FILLED message");
 
-    // allocate a new meta object
-    msg_meta_t *meta;
-    PROP(&e, msg_meta_new(&meta, uid, flags, modseq) );
+    // allocate a new msg object
+    msg_t *msg;
+    PROP(&e, msg_new(&msg, uid_up, uid_dn, state, intdate, flags, modseq) );
 
-    // allocate a new base object
-    msg_base_t *base;
-    PROP_GO(&e, msg_base_new(&base, uid, state, intdate, meta), fail_meta);
+    // insert msg into mods
+    if(uid_dn){
+        jsw_ainsert(mods, &msg->mod.node);
+    }
 
-    // insert meta into mods
-    jsw_ainsert(mods, &meta->mod.node);
+    // insert msg into msgs
+    jsw_ainsert(msgs, &msg->node);
 
-    // insert base into msgs
-    jsw_ainsert(msgs, &base->node);
-
-    return e;
-
-fail_meta:
-    msg_meta_free(&meta);
     return e;
 }
 
-static derr_t read_one_expunge(unsigned int uid, msg_expunge_state_e state,
-        unsigned long modseq, jsw_atree_t *expunged, jsw_atree_t *mods){
+static derr_t read_one_expunge(unsigned int uid_up, unsigned int uid_dn,
+        msg_expunge_state_e state, unsigned long modseq, jsw_atree_t *expunged,
+        jsw_atree_t *mods){
     derr_t e = E_OK;
 
     // allocate a new meta object
     msg_expunge_t *expunge;
-    PROP(&e, msg_expunge_new(&expunge, uid, state, modseq) );
+    PROP(&e, msg_expunge_new(&expunge, uid_up, uid_dn, state, modseq) );
+
+    // add to mods
+    if(uid_dn){
+        jsw_ainsert(mods, &expunge->mod.node);
+    }
 
     // add to expunged
     jsw_ainsert(expunged, &expunge->node);
-
-    // add to mods
-    jsw_ainsert(mods, &expunge->mod.node);
 
     return e;
 }
@@ -629,7 +663,7 @@ static derr_t parse_flags(const dstr_t *flags_str, msg_flags_t *flags){
     return e;
 }
 
-static derr_t read_one_value(unsigned int uid, dstr_t *value,
+static derr_t read_one_value(unsigned int uid_up, dstr_t *value,
         jsw_atree_t *msgs, jsw_atree_t *expunged, jsw_atree_t *mods){
     derr_t e = E_OK;
 
@@ -641,52 +675,56 @@ static derr_t read_one_value(unsigned int uid, dstr_t *value,
     }
 
     // now get the rest of the fields
-    LIST_VAR(dstr_t, fields, 4);
+    LIST_VAR(dstr_t, fields, 5);
     NOFAIL(&e, E_FIXEDSIZE,
             dstr_split(&version_rest.data[1], &DSTR_LIT(":"), &fields) );
-    if(fields.len < 2){
+    if(fields.len < 3){
         ORIG(&e, E_VALUE, "unparsable lmdb line");
     }
+
+    unsigned int uid_dn;
+    PROP(&e, dstr_tou(&fields.data[0], &uid_dn, 10) );
 
     unsigned long modseq;
-    PROP(&e, dstr_toul(&fields.data[0], &modseq, 10) );
+    PROP(&e, dstr_toul(&fields.data[1], &modseq, 10) );
 
     // check if this uid was expunged or still exists
-    if(fields.data[1].len != 1){
+    if(fields.data[2].len != 1){
         ORIG(&e, E_VALUE, "unparsable lmdb line");
     }
-    switch(fields.data[1].data[0]){
+    switch(fields.data[2].data[0]){
         case 'u':
         case 'f': {
             // we should have all of the fields
-            if(fields.len != 4){
+            if(fields.len != 5){
                 ORIG(&e, E_VALUE, "unparsable lmdb line");
             }
-            msg_base_state_e state;
-            if(fields.data[1].data[0] == 'u'){
-                state = MSG_BASE_UNFILLED;
+            msg_state_e state;
+            if(fields.data[2].data[0] == 'u'){
+                state = MSG_UNFILLED;
             }else{
-                state = MSG_BASE_FILLED;
+                state = MSG_FILLED;
             }
             msg_flags_t flags;
-            PROP(&e, parse_flags(&fields.data[2], &flags) );
+            PROP(&e, parse_flags(&fields.data[3], &flags) );
             imap_time_t intdate;
-            PROP(&e, parse_date(&fields.data[3], &intdate) );
+            PROP(&e, parse_date(&fields.data[4], &intdate) );
             // submit parsed values
-            PROP(&e, read_one_message(uid, state, modseq, flags, intdate, msgs,
-                        mods) );
+            PROP(&e, read_one_message(uid_up, uid_dn, state, modseq, flags,
+                        intdate, msgs, mods) );
         } break;
 
         case 'e':
         case 'x': {
             msg_expunge_state_e state;
-            if(fields.data[1].data[0] == 'e'){
+            if(fields.data[2].data[0] == 'e'){
                 state = MSG_EXPUNGE_UNPUSHED;
             }else{
                 state = MSG_EXPUNGE_PUSHED;
             }
             // submit parsed values
-            PROP(&e, read_one_expunge(uid, state, modseq, expunged, mods) );
+            PROP(&e, read_one_expunge(uid_up, uid_dn, state, modseq, expunged,
+                        mods) );
         } break;
         default: ORIG(&e, E_VALUE, "unparsable lmdb line");
     }
@@ -726,11 +764,8 @@ static derr_t read_all_keys(log_t *log, jsw_atree_t *msgs,
         lmdb_key_t lk;
         PROP_GO(&e, lmdb_key_unmarshal(&key, &lk), cu_cursor);
         switch(lk.type){
-            case LMDB_KEY_UIDVLD: {
-                // store the uidvalidity value in memory
-                unsigned int uidvld;
-                PROP(&e, dstr_tou(&value, &uidvld, 10) );
-                log->uidvld = uidvld;
+            case LMDB_KEY_UIDVLDS: {
+                PROP_GO(&e, read_uidvlds(log, &value), cu_cursor);
             } break;
 
             case LMDB_KEY_HIMODSEQUP: {
@@ -740,10 +775,10 @@ static derr_t read_all_keys(log_t *log, jsw_atree_t *msgs,
                 log->himodseq_up = himodseq_up;
             } break;
 
-            case LMDB_KEY_UID: {
+            case LMDB_KEY_UIDUP: {
                 // read this ui this value to the relevant structs
-                PROP_GO(&e, read_one_value(lk.arg.uid, &value, msgs, expunged,
-                            mods), cu_cursor);
+                PROP_GO(&e, read_one_value(lk.arg.uid_up, &value, msgs,
+                            expunged, mods), cu_cursor);
             } break;
         }
 
@@ -777,8 +812,9 @@ derr_t imaildir_log_open(const string_builder_t *dirpath,
     if(!log) ORIG(&e, E_NOMEM, "nomem");
     *log = (log_t){
         .iface = {
-            .get_uidvld = get_uidvld,
-            .set_uidvld = set_uidvld,
+            .get_uidvld_up = get_uidvld_up,
+            .get_uidvld_dn = get_uidvld_dn,
+            .set_uidvlds = set_uidvlds,
             .get_himodseq_up = get_himodseq_up,
             .set_himodseq_up = set_himodseq_up,
             .update_msg = update_msg,

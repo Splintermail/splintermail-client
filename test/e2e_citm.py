@@ -696,7 +696,7 @@ def test_append(cmd, maildir_root):
                 r2,
                 "2",
                 "OK",
-                require=[b"\\* [0-9]* EXISTS", b"asdf"],
+                require=[b"\\* [0-9]* EXISTS"],
             )
 
 

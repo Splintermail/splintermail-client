@@ -5,7 +5,7 @@ static unsigned int deliv_id_ver = 1;
 /* only *name is required to be non-NULL, in which case this becomes a
    validation function */
 derr_t maildir_name_parse(const dstr_t *name, unsigned long *epoch,
-        unsigned int *uid, size_t *len, dstr_t *host, dstr_t *info){
+        unsigned int *uid_up, size_t *len, dstr_t *host, dstr_t *info){
     derr_t e = E_OK;
 
     /* Maildir format: (cr.yp.to/proto/maildir.html)
@@ -21,13 +21,13 @@ derr_t maildir_name_parse(const dstr_t *name, unsigned long *epoch,
        HOST = hostname modified to not contain '/' or ':'
 
        // we define our own unique delivery id:
-       DELIV_ID = VER.UID.LEN
+       DELIV_ID = VER.UIDUP.LEN
 
        VER = version of the delivery id
 
        LEN = length of the message body
 
-       UID = UID of the message
+       UIDUP = uid_up of the message
 
        // example:                          variables:
        0123456789.1,522,3.my.computer:2,
@@ -81,10 +81,10 @@ derr_t maildir_name_parse(const dstr_t *name, unsigned long *epoch,
     PROP(&e, dstr_toul(&minor_tokens.data[0], &temp_epoch, 10) );
     if(epoch != NULL) *epoch = temp_epoch;
 
-    // second field is uid
-    unsigned int temp_uid;
-    PROP(&e, dstr_tou(&fields.data[1], &temp_uid, 10) );
-    if(uid != NULL) *uid = temp_uid;
+    // second field is uid_up
+    unsigned int temp_uid_up;
+    PROP(&e, dstr_tou(&fields.data[1], &temp_uid_up, 10) );
+    if(uid_up != NULL) *uid_up = temp_uid_up;
 
     // third field is length
     size_t temp_len;
@@ -126,11 +126,13 @@ derr_t maildir_name_mod_hostname(const dstr_t* host, dstr_t *out){
 }
 
 // info and flags are allowed to be NULL, but not host
-derr_t maildir_name_write(dstr_t *out, unsigned long epoch, unsigned int uid,
-        size_t len, const dstr_t *host, const dstr_t *info){
+derr_t maildir_name_write(dstr_t *out, unsigned long epoch,
+        unsigned int uid_up, size_t len, const dstr_t *host,
+        const dstr_t *info){
     derr_t e = E_OK;
 
-    PROP(&e, FMT(out, "%x.%x,%x,%x.", FU(epoch), FU(deliv_id_ver), FU(uid), FU(len)) );
+    PROP(&e, FMT(out, "%x.%x,%x,%x.",
+                FU(epoch), FU(deliv_id_ver), FU(uid_up), FU(len)) );
 
     PROP(&e, maildir_name_mod_hostname(host, out) );
 

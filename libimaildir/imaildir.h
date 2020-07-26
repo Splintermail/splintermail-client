@@ -118,6 +118,7 @@ struct imaildir_t {
     // the name of this box for SELECT purposes
     const dstr_t *name;
     unsigned int uid_validity;
+    unsigned int hi_uid_dn; // starts at 0 for empty boxes
     // mailbox flags
     ie_mflags_t mflags;
     // crypto for this box
@@ -166,7 +167,7 @@ struct imaildir_t {
 
     // did we open via imaildir_init_lite()?
     bool lite;
-    jsw_atree_t msgs;  // msg_base_t->node
+    jsw_atree_t msgs;  // msg_t->node, keyed by uid_up
     jsw_atree_t mods;  // msg_mod_t->node
     jsw_atree_t expunged;  // msg_expunge_t->node;
     maildir_log_i *log;
@@ -209,18 +210,21 @@ size_t imaildir_unregister_dn(dn_t *dn);
    format.
 */
 struct maildir_log_i {
-    unsigned int (*get_uidvld)(maildir_log_i*);
-    derr_t (*set_uidvld)(maildir_log_i*, unsigned int uidvld);
+    unsigned int (*get_uidvld_up)(maildir_log_i*);
+    unsigned int (*get_uidvld_dn)(maildir_log_i*);
+    derr_t (*set_uidvlds)(
+        maildir_log_i*, unsigned int uidvld_up, unsigned int uidvld_dn
+    );
 
     // the highest modseq we have synced from above, or 1 if we've seen nothing
     unsigned long (*get_himodseq_up)(maildir_log_i*);
     derr_t (*set_himodseq_up)(maildir_log_i*, unsigned long himodseq_up);
 
     // store the up-to-date message
-    derr_t (*update_msg)(maildir_log_i*, const msg_base_t *base);
+    derr_t (*update_msg)(maildir_log_i*, const msg_t *msg);
 
     // store the up-to-date expunge
-    derr_t (*update_expunge)(maildir_log_i*, msg_expunge_t *expunge);
+    derr_t (*update_expunge)(maildir_log_i*, const msg_expunge_t *expunge);
 
     // close and free the log
     void (*close)(maildir_log_i*);
@@ -246,29 +250,28 @@ derr_t imaildir_up_get_unfilled_msgs(imaildir_t *m, seq_set_builder_t *ssb);
 derr_t imaildir_up_get_unpushed_expunges(imaildir_t *m,
         seq_set_builder_t *ssb);
 
-derr_t imaildir_up_check_uidvld(imaildir_t *m, unsigned int uidvld);
+derr_t imaildir_up_check_uidvld_up(imaildir_t *m, unsigned int uidvld_up);
 
 derr_t imaildir_up_set_himodseq_up(imaildir_t *m, unsigned long himodseq);
 
 // return the msg if it exists and if it is expunged
-msg_base_t *imaildir_up_lookup_msg(imaildir_t *m, unsigned int uid,
+msg_t *imaildir_up_lookup_msg(imaildir_t *m, unsigned int uid_up,
         bool *expunged);
 
 // add a new message to the maildir
 derr_t imaildir_up_new_msg(imaildir_t *m, unsigned int uid, msg_flags_t flags,
-        msg_base_t **out);
+        msg_t **out);
 
 // update flags for an existing message
-derr_t imaildir_up_update_flags(imaildir_t *m, msg_base_t *base,
-        msg_flags_t flags);
+derr_t imaildir_up_update_flags(imaildir_t *m, msg_t *msg, msg_flags_t flags);
 
 // handle the static attributes from a FETCH
 derr_t imaildir_up_handle_static_fetch_attr(imaildir_t *m,
-        msg_base_t *base, const ie_fetch_resp_t *fetch);
+        msg_t *msg, const ie_fetch_resp_t *fetch);
 
 derr_t imaildir_up_initial_sync_complete(imaildir_t *m, up_t *up);
 
-derr_t imaildir_up_delete_msg(imaildir_t *m, unsigned int uid);
+derr_t imaildir_up_delete_msg(imaildir_t *m, unsigned int uid_up);
 
 // verify that we are allowed to download messages right now
 bool imaildir_up_allow_download(imaildir_t *m);
@@ -278,16 +281,16 @@ bool imaildir_up_allow_download(imaildir_t *m);
    mailbox and therefore relies less on the imaildir_t. */
 
 derr_t imaildir_dn_build_views(imaildir_t *m, jsw_atree_t *views,
-        unsigned int *max_uid, unsigned int *uidvld);
+        unsigned int *max_uid_dn, unsigned int *uidvld);
 
 // this will always consume or free req
 derr_t imaildir_dn_request_update(imaildir_t *m, update_req_t *req);
 
 // open a message in a thread-safe way; return a file descriptor
-derr_t imaildir_dn_open_msg(imaildir_t *m, unsigned int uid, int *fd);
+derr_t imaildir_dn_open_msg(imaildir_t *m, unsigned int uid_up, int *fd);
 
 // close a message in a thread-safe way; return the result of close()
-derr_t imaildir_dn_close_msg(imaildir_t *m, unsigned int uid, int *fd,
+derr_t imaildir_dn_close_msg(imaildir_t *m, unsigned int uid_up, int *fd,
         int *ret);
 
 /////////////////

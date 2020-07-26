@@ -1,18 +1,3 @@
-struct msg_base_ref_t;
-typedef struct msg_base_ref_t msg_base_ref_t;
-struct msg_base_t;
-typedef struct msg_base_t msg_base_t;
-struct msg_flags_t;
-typedef struct msg_flags_t msg_flags_t;
-struct msg_meta_t;
-typedef struct msg_meta_t msg_meta_t;
-struct msg_view_t;
-typedef struct msg_view_t msg_view_t;
-struct msg_expunge_t;
-typedef struct msg_expunge_t msg_expunge_t;
-struct msg_mod_t;
-typedef struct msg_mod_t msg_mod_t;
-
 // a modification event; there's one per message
 typedef enum {
     // a message was created or its metadata was modified
@@ -21,80 +6,62 @@ typedef enum {
     MOD_TYPE_EXPUNGE,
 } msg_mod_type_e;
 
-struct msg_mod_t {
+typedef struct {
     msg_mod_type_e type;
     unsigned long modseq;
-
     // for storage from within the imaildir_t
     jsw_anode_t node;
-};
+} msg_mod_t;
 DEF_CONTAINER_OF(msg_mod_t, node, jsw_anode_t);
 
 typedef enum {
-    MSG_BASE_UNFILLED,
-    MSG_BASE_FILLED,
-    MSG_BASE_EXPUNGED,
-} msg_base_state_e;
+    MSG_UNFILLED,
+    MSG_FILLED,
+    MSG_EXPUNGED,
+} msg_state_e;
 
-// immutable parts of an IMAP message, safe for reading via msg_view_t
-struct msg_base_ref_t {
-    unsigned int uid;
-    size_t length;
-    imap_time_t internaldate;
-};
-
-// the full IMAP message, owned by imaildir_t
-struct msg_base_t {
-    // immutable parts, exposed to accessor directly
-    msg_base_ref_t ref;
-    // mutable parts, accessor gets passed up-to-date copies directly
-    msg_meta_t *meta;
-    // the thread-safe parts, exposed to accessor via thread-safe getters:
-    subdir_type_e subdir;
-    dstr_t filename;
-    msg_base_state_e state;
-    int open_fds;
-    // for referencing by uid
-    jsw_anode_t node;
-};
-DEF_CONTAINER_OF(msg_base_t, ref, msg_base_ref_t);
-DEF_CONTAINER_OF(msg_base_t, node, jsw_anode_t);
-
-/* Metadata about a message, owned by imaildir_t but viewable by accessors.  A
-   new copy is created when it is updated.  Clients keep a pointer to this
-   structure, so reconciling an update means the client just updates their
-   pointer to the new structure. */
-struct msg_flags_t {
+typedef struct {
     bool answered:1;
     bool flagged:1;
     bool seen:1;
     bool draft:1;
     bool deleted:1;
-};
+} msg_flags_t;
 
-struct msg_meta_t {
-    unsigned int uid;
+// the full IMAP message, owned by imaildir_t
+typedef struct {
+    // immutable parts (after reaching FILLED state)
+    unsigned int uid_up;
+    unsigned int uid_dn;
+    size_t length;
+    imap_time_t internaldate;
+    // mutable parts
     msg_flags_t flags;
     msg_mod_t mod;
-    // for tracking lists of msg_meta_t's during updates
-    link_t link;  // meta_diff_t->new or meta_diff_t->old
-    // TODO: put storage stuff here when we do block allocation of msg_meta_t's
-};
-// DEF_CONTAINER_OF(msg_meta_t, flags, msg_flags_t);
-DEF_CONTAINER_OF(msg_meta_t, mod, msg_mod_t);
-DEF_CONTAINER_OF(msg_meta_t, link, link_t);
+    // internal parts
+    subdir_type_e subdir;
+    dstr_t filename;
+    msg_state_e state;
+    int open_fds;
+    // for referencing by uid_dn
+    jsw_anode_t node;
+} msg_t;
+DEF_CONTAINER_OF(msg_t, node, jsw_anode_t);
+DEF_CONTAINER_OF(msg_t, mod, msg_mod_t);
+
 
 // an accessor-owned view of a message
-struct msg_view_t {
+typedef struct {
     // recent flag is only given to one server accessor, to pass to one client
     bool recent;
-    const msg_base_ref_t *base;
-    /* this could technicaly be just a struct, but it'll be easier when I want
-       to support extension flags if I leave it as a pointer */
-    const msg_flags_t *flags;
+    unsigned int uid_up;
+    unsigned int uid_dn;
+    size_t length;
+    imap_time_t internaldate;
+    msg_flags_t flags;
     // for tracking the sequence ID sorted by UID
     jsw_anode_t node;
-};
+} msg_view_t;
 DEF_CONTAINER_OF(msg_view_t, node, jsw_anode_t);
 
 
@@ -105,13 +72,16 @@ typedef enum {
     MSG_EXPUNGE_PUSHED,
 } msg_expunge_state_e;
 
-struct msg_expunge_t {
-    unsigned int uid;
+typedef struct {
+    unsigned int uid_up;
+    /* uid_dn might be zero if we saw the uid_up but didn't download it before
+       it became expunged */
+    unsigned int uid_dn;
     msg_expunge_state_e state;
     msg_mod_t mod;
     // for storing in a jsw_atree of expunges
     jsw_anode_t node;
-};
+} msg_expunge_t;
 DEF_CONTAINER_OF(msg_expunge_t, node, jsw_anode_t);
 DEF_CONTAINER_OF(msg_expunge_t, mod, msg_mod_t);
 
@@ -128,7 +98,7 @@ typedef union {
     ie_store_cmd_t *uid_store;
     /* we only support UID EXPUNGE commands internally.  Only the dn_t knows
        which UIDs can be closed as a result of a given CLOSE command. */
-    ie_seq_set_t *uids;
+    ie_seq_set_t *uids_up;
 } update_req_val_u;
 
 // a request for an update
@@ -162,8 +132,8 @@ typedef enum {
 typedef union {
     // dn_t owns this
     msg_view_t *new;
-    // dn_t does not own this
-    const msg_meta_t *meta;
+    // dn_t owns this
+    msg_view_t *meta;
     // dn_t owns this
     msg_expunge_t *expunge;
     // dn_t owns this (only sent to the requester of the udpate)
@@ -181,36 +151,31 @@ typedef struct {
 } update_t;
 DEF_CONTAINER_OF(update_t, link, link_t);
 
-
-derr_t msg_meta_new(msg_meta_t **out, unsigned int uid, msg_flags_t flags,
+derr_t msg_new(msg_t **out, unsigned int uid_up, unsigned int uid_dn,
+        msg_state_e state, imap_time_t intdate, msg_flags_t flags,
         unsigned long modseq);
-void msg_meta_free(msg_meta_t **meta);
+void msg_free(msg_t **msg);
 
-// msg_base_t is restored from two places in a two-step process
-derr_t msg_base_new(msg_base_t **out, unsigned int uid, msg_base_state_e state,
-        imap_time_t intdate, msg_meta_t *meta);
-
-// makes a copy of name
-derr_t msg_base_set_file(msg_base_t *base, size_t len, subdir_type_e subdir,
+// (makes a copy of filename)
+derr_t msg_set_file(msg_t *msg, size_t len, subdir_type_e subdir,
         const dstr_t *filename);
 
-// deletes the file backing the msg_base_t
-derr_t msg_base_del_file(msg_base_t *base, const string_builder_t *basepath);
+// deletes the file backing the msg_t
+derr_t msg_del_file(msg_t *msg, const string_builder_t *basepath);
 
-// base doesn't own the meta; that must be handled separately
-void msg_base_free(msg_base_t **base);
 
-derr_t msg_view_new(msg_view_t **view, const msg_base_t *base);
+derr_t msg_view_new(msg_view_t **view, const msg_t *msg);
 void msg_view_free(msg_view_t **view);
 
-derr_t msg_expunge_new(msg_expunge_t **out, unsigned int uid,
-        msg_expunge_state_e state, unsigned long modseq);
+
+derr_t msg_expunge_new(msg_expunge_t **out, unsigned int uid_up,
+        unsigned int uid_dn, msg_expunge_state_e state, unsigned long modseq);
 void msg_expunge_free(msg_expunge_t **expunge);
 
 // update_req_store has a builder API
 update_req_t *update_req_store_new(derr_t *e, ie_store_cmd_t *uid_store,
         void *requester);
-update_req_t *update_req_expunge_new(derr_t *e, ie_seq_set_t *uids,
+update_req_t *update_req_expunge_new(derr_t *e, ie_seq_set_t *uids_up,
         void *requester);
 void update_req_free(update_req_t *req);
 
@@ -222,8 +187,7 @@ void update_free(update_t **update);
 
 
 // helper functions for writing debug information to buffers
-derr_t msg_base_write(const msg_base_t *base, dstr_t *out);
-derr_t msg_meta_write(const msg_meta_t *meta, dstr_t *out);
+derr_t msg_write(const msg_t *msg, dstr_t *out);
 derr_t msg_mod_write(const msg_mod_t *mod, dstr_t *out);
 derr_t msg_expunge_write(const msg_expunge_t *expunge, dstr_t *out);
 

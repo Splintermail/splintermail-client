@@ -655,23 +655,25 @@ References, continued:
     Now that we're in the imaildir_t development, we have lots more references.
 
     I'll use boxes to draw general thread boundaries around several objects:
-     _____________
-    |             |
-    | imap_engine |-------------- imap_session_t
-    |_____________|                 _____|_____
-         |        \_____           |     |     |
-         |              |          | fetcher_t |
-  imap_session_t   imap_session_t  |     |     |
-     ____|_____     ____|_____     |    up_t   |
-    |    |     |   |    |     |    |_____|_____|
-    | server_t |   | server_t |          |
-    |    |     |   |    |     |          |
-    |   dn_t   |   |   dn_t   |          |
-    |____|_____|   |____|_____|          |
-         |              |        ________|___
-         |              +-------|            |
-         |                      | imaildir_t |
-         +----------------------|____________|
+
+## UPDATE: THIS IS OUT OF DATE, see "Multi-threaded architecture"
+#    _____________
+#   |             |
+#   | imap_engine |-------------- imap_session_t
+#   |_____________|                 _____|_____
+#        |        \_____           |     |     |
+#        |              |          | fetcher_t |
+# imap_session_t   imap_session_t  |     |     |
+#    ____|_____     ____|_____     |    up_t   |
+#   |    |     |   |    |     |    |_____|_____|
+#   | server_t |   | server_t |          |
+#   |    |     |   |    |     |          |
+#   |   dn_t   |   |   dn_t   |          |
+#   |____|_____|   |____|_____|          |
+#        |              |        ________|___
+#        |              +-------|            |
+#        |                      | imaildir_t |
+#        +----------------------|____________|
 
     But the ownership structures are weird:
       - imap_sessions are owned by fetchers and servers
@@ -951,7 +953,7 @@ Message store thread safety:
     states like "deleted-by-one-but-downloading-for-another"), at the cost of
     not allowing download-on-request behavior.  That's ok though, since first
     we want to support the full IMAP spec, and we couldn't support SEARCH
-    properly without download-on-request behavior.
+    properly with download-on-request behavior.
 
     So a full table of possible message states and the resulting states might
     look like:
@@ -1345,3 +1347,36 @@ How does APPEND work?
 
     Yeah, this is the way to go for sure; the imaildir_t could fail and come
     back, or show up mid-APPEND, and it's all the same to us.
+
+UID Mapping:
+    Keep a local ordering of UIDs, with a mapping of local UIDs to remote UIDs.
+    This relieves us of having to synchronize our local source of truth
+    (modseq numbers) with the remote source of truth (uids).
+
+    So where do we use uid_up vs uid_dn?  This is the plan:
+
+      - msg_view_t's in the dn_t: sort by uid_dn, to make interacting with the
+        maildir_t as easy as possible.  Each view should have an up_t as well
+        so that it is easy for the dn_t to translate uid_dn to uid_up for the
+        imaildir.  This will be nice because the only part of the system which
+        would ever specify ranges of uid_dn's would be the mail client, which
+        will be talking to the dn_t, which is the only part of the system that
+        keeps a list of messages indexed by uid_dn.  The dn_t will therefore
+        also be repsonsible for converting from uid_dn to uid_up for all
+        communication.
+
+      - message files in the maildir: UID is not part of the maildir naming
+        spec, so we were already putting the uid_up into the custom unique
+        delivery identifier.  No change necessary.
+
+      - msg_t's in the imaildir_t: sort by uid_up, so that you can handle
+        UNFILLED messages.  Messages are only assigned uid_dn when they become
+        FILLED, so it is useful for the imaildir_t to deal with uid_up.  All
+        messages and expunges have an uid_up, but not all messages have a
+        uid_dn.
+
+      - lmdb metadata log: key by uid_up, for the same reason as the imaildir_t
+
+    A minor detail is that we also need to track a uidvld_dn as well, since in
+    the case of a corrupted local store, we won't be able to reliably
+    reconstruct the uids that we previously presented to the mail client.

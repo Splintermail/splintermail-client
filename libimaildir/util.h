@@ -7,10 +7,10 @@ A collection of structs and functions to help write imap clients and servers.
 
 #include "libimap/libimap.h"
 
-const void *msg_view_jsw_get(const jsw_anode_t *node);
-const void *msg_expunge_jsw_get(const jsw_anode_t *node);
-const void *msg_mod_jsw_get(const jsw_anode_t *node);
-const void *msg_base_jsw_get(const jsw_anode_t *node);
+const void *msg_view_jsw_get_uid_dn(const jsw_anode_t *node);
+const void *msg_expunge_jsw_get_uid_up(const jsw_anode_t *node);
+const void *msg_mod_jsw_get_modseq(const jsw_anode_t *node);
+const void *msg_jsw_get_uid_up(const jsw_anode_t *node);
 int jsw_cmp_modseq(const void *a, const void *b);
 int jsw_cmp_uid(const void *a, const void *b);
 

@@ -12,9 +12,9 @@ void up_free(up_t *up){
     if(!up) return;
 
     // free anything in the sequence_set_builder's
-    seq_set_builder_free(&up->uids_to_download);
-    seq_set_builder_free(&up->uids_to_expunge);
-    ie_seq_set_free(up->uids_being_expunged);
+    seq_set_builder_free(&up->uids_up_to_download);
+    seq_set_builder_free(&up->uids_up_to_expunge);
+    ie_seq_set_free(up->uids_up_being_expunged);
 }
 
 derr_t up_init(up_t *up, up_cb_i *cb, extensions_t *exts){
@@ -25,8 +25,8 @@ derr_t up_init(up_t *up, up_cb_i *cb, extensions_t *exts){
         .exts = exts,
     };
 
-    seq_set_builder_prep(&up->uids_to_download);
-    seq_set_builder_prep(&up->uids_to_expunge);
+    seq_set_builder_prep(&up->uids_up_to_download);
+    seq_set_builder_prep(&up->uids_up_to_expunge);
 
     link_init(&up->cbs);
     link_init(&up->link);
@@ -39,14 +39,14 @@ derr_t up_init(up_t *up, up_cb_i *cb, extensions_t *exts){
 void up_imaildir_select(
     up_t *up,
     const dstr_t *name,
-    unsigned int uidvld,
+    unsigned int uidvld_up,
     unsigned long himodseq_up
 ){
     // do some final initialization steps that can't fail
     up->selected = true;
     up->select.pending = true;
     up->select.name = name;
-    up->select.uidvld = uidvld;
+    up->select.uidvld_up = uidvld_up;
     up->select.himodseq = himodseq_up;
     hmsc_prep(&up->hmsc, himodseq_up);
 
@@ -85,7 +85,7 @@ void up_imaildir_have_local_file(up_t *up, unsigned int uid){
        don't need to worry about it reappearing in that list, because we only
        put things in that list if they are not a present in the the imaildir_t,
        which should already be populated */
-    seq_set_builder_del_val(&up->uids_to_download, uid);
+    seq_set_builder_del_val(&up->uids_up_to_download, uid);
 }
 
 void up_imaildir_hold_end(up_t *up){
@@ -198,30 +198,30 @@ static derr_t fetch_resp(up_t *up, const ie_fetch_resp_t *fetch){
 
     // do we already have this UID?
     bool expunged;
-    msg_base_t *base = imaildir_up_lookup_msg(up->m, fetch->uid, &expunged);
+    msg_t *msg = imaildir_up_lookup_msg(up->m, fetch->uid, &expunged);
 
     if(expunged){
         LOG_INFO("detected fetch for expunged UID, skipping\n");
         return e;
     }
 
-    if(!base){
+    if(!msg){
         // new UID
         msg_flags_t flags = msg_flags_from_fetch_flags(fetch->flags);
-        PROP(&e, imaildir_up_new_msg(up->m, fetch->uid, flags, &base) );
+        PROP(&e, imaildir_up_new_msg(up->m, fetch->uid, flags, &msg) );
 
         if(!fetch->extras){
-            PROP(&e, seq_set_builder_add_val(&up->uids_to_download,
+            PROP(&e, seq_set_builder_add_val(&up->uids_up_to_download,
                         fetch->uid) );
         }
     }else if(fetch->flags){
         // existing UID with update flags
         msg_flags_t flags = msg_flags_from_fetch_flags(fetch->flags);
-        PROP(&e, imaildir_up_update_flags(up->m, base, flags) );
+        PROP(&e, imaildir_up_update_flags(up->m, msg, flags) );
     }
 
     if(fetch->extras){
-        PROP(&e, imaildir_up_handle_static_fetch_attr(up->m, base, fetch) );
+        PROP(&e, imaildir_up_handle_static_fetch_attr(up->m, msg, fetch) );
     }
 
     // did we see a MODSEQ value?
@@ -244,20 +244,20 @@ static derr_t expunge_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
     }
 
     // mark all pushed expunges as pushed
-    ie_seq_set_t *uid_range = up->uids_being_expunged;
+    ie_seq_set_t *uid_range = up->uids_up_being_expunged;
     for(; uid_range != NULL; uid_range = uid_range->next){
         // get endpoints for this range (uid range must be concrete, no *'s)
         unsigned int max = MAX(uid_range->n1, uid_range->n2);
         unsigned int min = MIN(uid_range->n1, uid_range->n2);
 
         // use do/while loop to avoid infinite loop if max == UINT_MAX
-        unsigned int uid = min;
+        unsigned int uid_up = min;
         do {
-            PROP(&e, imaildir_up_delete_msg(up->m, uid) );
-        } while (max != uid++);
+            PROP(&e, imaildir_up_delete_msg(up->m, uid_up) );
+        } while (max != uid_up++);
     }
-    ie_seq_set_free(up->uids_being_expunged);
-    up->uids_being_expunged = NULL;
+    ie_seq_set_free(up->uids_up_being_expunged);
+    up->uids_up_being_expunged = NULL;
 
     PROP(&e, next_cmd(up, st_resp->code) );
 
@@ -268,7 +268,7 @@ static derr_t send_expunge(up_t *up){
     derr_t e = E_OK;
 
     // issue a UID EXPUNGE command to match the store command we just sent
-    ie_seq_set_t *uidseq = ie_seq_set_copy(&e, up->uids_being_expunged);
+    ie_seq_set_t *uidseq = ie_seq_set_copy(&e, up->uids_up_being_expunged);
     imap_cmd_arg_t arg = {.uid_expunge=uidseq};
 
     size_t tag = ++up->tag;
@@ -307,12 +307,12 @@ static derr_t send_deletions(up_t *up){
     derr_t e = E_OK;
 
     // save the seq_set we are going to delete as we need multiple copies of it
-    ie_seq_set_free(up->uids_being_expunged);
-    up->uids_being_expunged = seq_set_builder_extract(&e, &up->uids_to_expunge);
+    ie_seq_set_free(up->uids_up_being_expunged);
+    up->uids_up_being_expunged = seq_set_builder_extract(&e, &up->uids_up_to_expunge);
 
     // issue a UID STORE +FLAGS \deleted command with all the unpushed expunges
     bool uid_mode = true;
-    ie_seq_set_t *uidseq = ie_seq_set_copy(&e, up->uids_being_expunged);
+    ie_seq_set_t *uidseq = ie_seq_set_copy(&e, up->uids_up_being_expunged);
     ie_store_mods_t *mods = NULL;
     int sign = 1;
     bool silent = false;
@@ -410,7 +410,7 @@ static derr_t send_fetch(up_t *up){
     // issue a UID FETCH command
     bool uid_mode = true;
     // fetch all the messages we need to download
-    ie_seq_set_t *uidseq = seq_set_builder_extract(&e, &up->uids_to_download);
+    ie_seq_set_t *uidseq = seq_set_builder_extract(&e, &up->uids_up_to_download);
     // fetch UID, FLAGS, INTERNALDATE, MODSEQ, and BODY[]
     ie_fetch_attrs_t *attr = ie_fetch_attrs_new(&e);
     attr = ie_fetch_attrs_add_simple(&e, attr, IE_FETCH_ATTR_UID);
@@ -450,10 +450,10 @@ static derr_t vanished_resp(up_t *up, const ie_vanished_resp_t *vanished){
         unsigned int min = MIN(uid_range->n1, uid_range->n2);
 
         // use do/while loop to avoid infinite loop if max == UINT_MAX
-        unsigned int uid = min;
+        unsigned int uid_up = min;
         do {
-            PROP(&e, imaildir_up_delete_msg(up->m, uid) );
-        } while (max != uid++);
+            PROP(&e, imaildir_up_delete_msg(up->m, uid_up) );
+        } while (max != uid_up++);
     }
 
     return e;
@@ -489,13 +489,13 @@ static derr_t next_cmd(up_t *up, const ie_st_code_t *code){
     }
 
     // do we have UIDs to delete/expunge?
-    if(!seq_set_builder_isempty(&up->uids_to_expunge)){
+    if(!seq_set_builder_isempty(&up->uids_up_to_expunge)){
         PROP(&e, send_deletions(up) );
         return e;
     }
 
     // do we have message content to download?
-    if(!seq_set_builder_isempty(&up->uids_to_download)){
+    if(!seq_set_builder_isempty(&up->uids_up_to_download)){
         // are we allowed to download right now?
         if(imaildir_up_allow_download(up->m)){
             PROP(&e, send_fetch(up) );
@@ -546,29 +546,29 @@ static derr_t select_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
     // SELECT succeeded
     up->cb->selected(up->cb, NULL);
 
-    /* Add imaildir_t's unfilled UIDs to uids_to_download.  This doesn't have
+    /* Add imaildir_t's unfilled UIDs to uids_up_to_download.  This doesn't have
        to go here precisely, but it does have to happen *after* an up_t becomes
        the primary up_t, and it has to happen before the first next_cmd(), and
        it has to happen exactly once, so this is decent spot. */
-    PROP(&e, imaildir_up_get_unfilled_msgs(up->m, &up->uids_to_download) );
+    PROP(&e, imaildir_up_get_unfilled_msgs(up->m, &up->uids_up_to_download) );
     // do the same for unpushed expunges
-    PROP(&e, imaildir_up_get_unpushed_expunges(up->m, &up->uids_to_expunge) );
+    PROP(&e, imaildir_up_get_unpushed_expunges(up->m, &up->uids_up_to_expunge) );
 
     PROP(&e, next_cmd(up, st_resp->code) );
 
     return e;
 }
 
-static derr_t send_select(up_t *up, unsigned int uidvld,
+static derr_t send_select(up_t *up, unsigned int uidvld_up,
         unsigned long himodseq_up){
     derr_t e = E_OK;
 
     // use QRESYNC with select if we have a valid UIDVALIDITY and HIGHESTMODSEQ
     ie_select_params_t *params = NULL;
-    if(uidvld && himodseq_up){
+    if(uidvld_up && himodseq_up){
         ie_select_param_arg_t params_arg = {
             .qresync = {
-                .uidvld = uidvld,
+                .uidvld = uidvld_up,
                 .last_modseq = himodseq_up,
             }
         };
@@ -618,9 +618,11 @@ static derr_t untagged_ok(up_t *up, const ie_st_code_t *code,
 
             case IE_ST_CODE_UIDVLD:
                 // imaildir will reset file storage in case of a mismatch
-                PROP(&e, imaildir_up_check_uidvld(up->m, code->arg.uidvld) );
+                PROP(&e,
+                    imaildir_up_check_uidvld_up(up->m, code->arg.uidvld)
+                );
 
-                if(code->arg.uidvld != up->select.uidvld){
+                if(code->arg.uidvld != up->select.uidvld_up){
                     /* invalidate the original himodseq, which may be from an
                        old UIDVALIDITY */
                     hmsc_invalidate_starting_val(&up->hmsc);
@@ -815,7 +817,7 @@ derr_t up_do_work(up_t *up, bool *noop){
     if(up->select.pending){
         *noop = false;
         up->select.pending = false;
-        PROP(&e, send_select(up, up->select.uidvld, up->select.himodseq) );
+        PROP(&e, send_select(up, up->select.uidvld_up, up->select.himodseq) );
         return e;
     }
 

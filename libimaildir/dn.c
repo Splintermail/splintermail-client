@@ -3,28 +3,28 @@
 #include "uv_util.h"
 
 // forward declarations
-static derr_t get_uids_to_expunge(dn_t *dn, ie_seq_set_t **out);
+static derr_t get_uids_up_to_expunge(dn_t *dn, ie_seq_set_t **out);
 
 typedef struct {
-    unsigned int uid;
+    unsigned int uid_dn;
     msg_flags_t flags;
     jsw_anode_t node;  // dn_t->store->tree
 } exp_flags_t;
 DEF_CONTAINER_OF(exp_flags_t, node, jsw_anode_t);
 
-static const void *exp_flags_jsw_get(const jsw_anode_t *node){
+static const void *exp_flags_jsw_get_uid_dn(const jsw_anode_t *node){
     exp_flags_t *exp_flags = CONTAINER_OF(node, exp_flags_t, node);
-    return &exp_flags->uid;
+    return &exp_flags->uid_dn;
 }
 
-static derr_t exp_flags_new(exp_flags_t **out, unsigned int uid,
+static derr_t exp_flags_new(exp_flags_t **out, unsigned int uid_dn,
         msg_flags_t flags){
     derr_t e = E_OK;
     *out = NULL;
 
     exp_flags_t *exp_flags = malloc(sizeof(*exp_flags));
     if(!exp_flags) ORIG(&e, E_NOMEM, "nomem");
-    *exp_flags = (exp_flags_t){.uid = uid, .flags = flags};
+    *exp_flags = (exp_flags_t){.uid_dn = uid_dn, .flags = flags};
 
     *out = exp_flags;
 
@@ -80,9 +80,9 @@ derr_t dn_init(dn_t *dn, dn_cb_i *cb, extensions_t *exts){
 
     /* the view gets built during processing of the SELECT command, so that the
        CONDSTORE/QRESYNC extensions can be handled efficiently */
-    jsw_ainit(&dn->views, jsw_cmp_uid, msg_view_jsw_get);
+    jsw_ainit(&dn->views, jsw_cmp_uid, msg_view_jsw_get_uid_dn);
 
-    jsw_ainit(&dn->store.tree, jsw_cmp_uid, exp_flags_jsw_get);
+    jsw_ainit(&dn->store.tree, jsw_cmp_uid, exp_flags_jsw_get_uid_dn);
 
     return e;
 };
@@ -225,10 +225,10 @@ static derr_t send_pflags_resp(dn_t *dn){
     return e;
 }
 
-static derr_t send_uidnext_resp(dn_t *dn, unsigned int max_uid){
+static derr_t send_uidnext_resp(dn_t *dn, unsigned int max_uid_dn){
     derr_t e = E_OK;
 
-    ie_st_code_arg_t code_arg = {.uidnext = max_uid + 1};
+    ie_st_code_arg_t code_arg = {.uidnext = max_uid_dn + 1};
     ie_st_code_t *code = ie_st_code_new(&e, IE_ST_CODE_UIDNEXT, code_arg);
 
     DSTR_STATIC(msg, "get ready, it's coming");
@@ -245,10 +245,10 @@ static derr_t send_uidnext_resp(dn_t *dn, unsigned int max_uid){
     return e;
 }
 
-static derr_t send_uidvld_resp(dn_t *dn, unsigned int uidvld){
+static derr_t send_uidvld_resp(dn_t *dn, unsigned int uidvld_dn){
     derr_t e = E_OK;
 
-    ie_st_code_arg_t code_arg = { .uidvld = uidvld };
+    ie_st_code_arg_t code_arg = { .uidvld = uidvld_dn };
     ie_st_code_t *code = ie_st_code_new(&e, IE_ST_CODE_UIDVLD, code_arg);
 
     DSTR_STATIC(msg, "ride or die");
@@ -285,9 +285,11 @@ static derr_t select_cmd(dn_t *dn, const ie_dstr_t *tag,
         ORIG(&e, E_PARAM, "QRESYNC and CONDSTORE not supported");
     }
 
-    unsigned int max_uid;
-    unsigned int uidvld;
-    PROP(&e, imaildir_dn_build_views(dn->m, &dn->views, &max_uid, &uidvld) );
+    unsigned int max_uid_dn;
+    unsigned int uidvld_dn;
+    PROP(&e,
+        imaildir_dn_build_views(dn->m, &dn->views, &max_uid_dn, &uidvld_dn)
+    );
 
     // generate/send required SELECT responses
     PROP(&e, send_flags_resp(dn) );
@@ -295,8 +297,8 @@ static derr_t select_cmd(dn_t *dn, const ie_dstr_t *tag,
     PROP(&e, send_recent_resp(dn) );
     PROP(&e, send_unseen_resp(dn) );
     PROP(&e, send_pflags_resp(dn) );
-    PROP(&e, send_uidnext_resp(dn, max_uid) );
-    PROP(&e, send_uidvld_resp(dn, uidvld) );
+    PROP(&e, send_uidnext_resp(dn, max_uid_dn) );
+    PROP(&e, send_uidvld_resp(dn, uidvld_dn) );
 
     PROP(&e, send_ok(dn, tag, &DSTR_LIT("welcome in")) );
 
@@ -341,7 +343,7 @@ static derr_t search_cmd(dn_t *dn, const ie_dstr_t *tag,
     jsw_anode_t *node = jsw_atlast(&trav, &dn->views);
     msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
 
-    unsigned int uid_max = view->base->uid;
+    unsigned int uid_dn_max = view->uid_dn;
 
     // we'll calculate the sequence number as we go
     unsigned int seq = seq_max;
@@ -354,10 +356,10 @@ static derr_t search_cmd(dn_t *dn, const ie_dstr_t *tag,
 
         bool match;
         PROP_GO(&e, search_key_eval(search->search_key, view, seq, seq_max,
-                    uid_max, &match), fail);
+                    uid_dn_max, &match), fail);
 
         if(match){
-            unsigned int val = search->uid_mode ? view->base->uid : seq;
+            unsigned int val = search->uid_mode ? view->uid_dn : seq;
             if(!nums){
                 nums = ie_nums_new(&e, val);
                 CHECK_GO(&e, fail);
@@ -385,7 +387,7 @@ fail:
 
 // take a sequence set and create a UID seq set
 static derr_t copy_seq_to_uids(dn_t *dn, bool uid_mode,
-        const ie_seq_set_t *old, ie_seq_set_t **out){
+        const ie_seq_set_t *old, bool up, ie_seq_set_t **out){
     derr_t e = E_OK;
 
     *out = NULL;
@@ -397,19 +399,20 @@ static derr_t copy_seq_to_uids(dn_t *dn, bool uid_mode,
 
     jsw_anode_t *node;
 
-
     // get the last UID or last index, for replacing 0's we see in the seq_set
     // also get the starting inde
     unsigned int first;
     unsigned int last;
     if(uid_mode){
+        /* first and last will always be uid_dn's, since they are used to
+           iterate through the ie_seq_set_t *old, which is in terms of uid_dn */
         jsw_atrav_t trav;
         jsw_anode_t *node = jsw_atfirst(&trav, &dn->views);
         msg_view_t *first_view = CONTAINER_OF(node, msg_view_t, node);
-        first = first_view->base->uid;
+        first = first_view->uid_dn;
         node = jsw_atlast(&trav, &dn->views);
         msg_view_t *last_view = CONTAINER_OF(node, msg_view_t, node);
-        last = last_view->base->uid;
+        last = last_view->uid_dn;
     } else {
         // first sequence number is always 1
         first = 1;
@@ -424,18 +427,16 @@ static derr_t copy_seq_to_uids(dn_t *dn, bool uid_mode,
     unsigned int i = ie_seq_set_iter(&trav, old, first, last);
     for(; i != 0; i = ie_seq_set_next(&trav)){
         if(uid_mode){
-            // UID in mailbox?
+            // uid_dn in mailbox?
             node = jsw_afind(&dn->views, &i, NULL);
-            if(!node) continue;
-            PROP_GO(&e, seq_set_builder_add_val(&ssb, i), fail_ssb);
         }else{
             // sequence number in mailbox?
             node = jsw_aindex(&dn->views, (size_t)i - 1);
-            if(!node) continue;
-            msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
-            unsigned int uid = view->base->uid;
-            PROP_GO(&e, seq_set_builder_add_val(&ssb, uid), fail_ssb);
         }
+        if(!node) continue;
+        msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
+        unsigned int uid_out = up ? view->uid_up : view->uid_dn;
+        PROP_GO(&e, seq_set_builder_add_val(&ssb, uid_out), fail_ssb);
     }
 
     *out = seq_set_builder_extract(&e, &ssb);
@@ -453,10 +454,16 @@ static derr_t store_cmd(dn_t *dn, const ie_dstr_t *tag,
         const ie_store_cmd_t *store){
     derr_t e = E_OK;
 
-    ie_seq_set_t *uid_seq;
-    PROP(&e, copy_seq_to_uids(dn, store->uid_mode, store->seq_set, &uid_seq) );
+    // we need each uid_up for relaying the store command upwards
+    ie_seq_set_t *uid_up_seq;
+    PROP(&e,
+        copy_seq_to_uids(
+            dn, store->uid_mode, store->seq_set, true, &uid_up_seq
+        )
+    );
+
     // detect noop STOREs
-    if(!uid_seq){
+    if(!uid_up_seq){
         PROP(&e, dn_gather_updates(dn, store->uid_mode) );
         PROP(&e, send_ok(dn, tag, &DSTR_LIT("noop STORE command")) );
         return e;
@@ -470,19 +477,27 @@ static derr_t store_cmd(dn_t *dn, const ie_dstr_t *tag,
     dn->store.tag = ie_dstr_copy(&e, tag);
     CHECK_GO(&e, fail_dn_store);
 
+    // we need each uid_dn for building expected flags
+    ie_seq_set_t *uid_dn_seq;
+    PROP_GO(&e,
+        copy_seq_to_uids(
+            dn, store->uid_mode, store->seq_set, false, &uid_up_seq
+        ),
+    fail_dn_store);
+
     // figure out what all of the flags we expect to see are
+    msg_flags_t cmd_flags = msg_flags_from_flags(store->flags);
     ie_seq_set_trav_t trav;
-    unsigned int uid = ie_seq_set_iter(&trav, uid_seq, 0, 0);
-    for(; uid != 0; uid = ie_seq_set_next(&trav)){
-        jsw_anode_t *node = jsw_afind(&dn->views, &uid, NULL);
+    unsigned int uid_dn = ie_seq_set_iter(&trav, uid_dn_seq, 0, 0);
+    for(; uid_dn != 0; uid_dn = ie_seq_set_next(&trav)){
+        jsw_anode_t *node = jsw_afind(&dn->views, &uid_dn, NULL);
         if(!node){
-            ORIG_GO(&e, E_INTERNAL, "uid not found", fail_dn_store);
+            ORIG_GO(&e, E_INTERNAL, "uid_dn not found", fail_uids_dn);
         }
 
         msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
 
         msg_flags_t new_flags;
-        msg_flags_t cmd_flags = msg_flags_from_flags(store->flags);
         switch(store->sign){
             case 0:
                 // set flags exactly (new = cmd)
@@ -490,30 +505,33 @@ static derr_t store_cmd(dn_t *dn, const ie_dstr_t *tag,
                 break;
             case 1:
                 // add the marked flags (new = old | cmd)
-                new_flags = msg_flags_or(*view->flags, cmd_flags);
+                new_flags = msg_flags_or(view->flags, cmd_flags);
                 break;
             case -1:
                 // remove the marked flags (new = old & (~cmd))
-                new_flags = msg_flags_and(*view->flags,
+                new_flags = msg_flags_and(view->flags,
                         msg_flags_not(cmd_flags));
                 break;
             default:
-                ORIG_GO(&e, E_INTERNAL, "invalid store->sign", fail_dn_store);
+                ORIG_GO(&e, E_INTERNAL, "invalid store->sign", fail_uids_dn);
         }
 
-        // if we expect no difference in flags, omit this uid
-        if(msg_flags_eq(new_flags, *view->flags)) continue;
+        // if we expect no difference in flags, omit this uid_dn
+        if(msg_flags_eq(new_flags, view->flags)) continue;
 
         exp_flags_t *exp_flags;
-        PROP_GO(&e, exp_flags_new(&exp_flags, uid, new_flags) , fail_dn_store);
+        PROP_GO(&e,
+            exp_flags_new(&exp_flags, uid_dn, new_flags),
+        fail_uids_dn);
         jsw_ainsert(&dn->store.tree, &exp_flags->node);
     }
 
+    // done with uids_dn
+    ie_seq_set_free(STEAL(ie_seq_set_t, &uid_dn_seq));
 
-    // convert the the range to local uids
     ie_store_cmd_t *uid_store = ie_store_cmd_new(&e,
         true,
-        STEAL(ie_seq_set_t, &uid_seq),
+        STEAL(ie_seq_set_t, &uid_up_seq),
         ie_store_mods_copy(&e, store->mods),
         store->sign,
         store->silent,
@@ -531,9 +549,11 @@ static derr_t store_cmd(dn_t *dn, const ie_dstr_t *tag,
 
     return e;
 
+fail_uids_dn:
+    ie_seq_set_free(uid_dn_seq);
 fail_dn_store:
     dn_free_store(dn);
-    ie_seq_set_free(uid_seq);
+    ie_seq_set_free(uid_up_seq);
     return e;
 }
 
@@ -541,15 +561,15 @@ fail_dn_store:
 // a helper struct to lazily load the message body
 typedef struct {
     imaildir_t *m;
-    unsigned int uid;
+    unsigned int uid_up;
     ie_dstr_t *content;
     // the first taker gets *content; following takers get a copy
     bool taken;
     imf_t *imf;
 } loader_t;
 
-static loader_t loader_prep(imaildir_t *m, unsigned int uid){
-    return (loader_t){ .m = m, .uid = uid };
+static loader_t loader_prep(imaildir_t *m, unsigned int uid_up){
+    return (loader_t){ .m = m, .uid_up = uid_up };
 }
 
 static void loader_load(derr_t *e, loader_t *loader){
@@ -557,12 +577,14 @@ static void loader_load(derr_t *e, loader_t *loader){
     if(loader->content) return;
 
     int fd;
-    PROP_GO(e, imaildir_dn_open_msg(loader->m, loader->uid, &fd), fail);
+    PROP_GO(e, imaildir_dn_open_msg(loader->m, loader->uid_up, &fd), fail);
     loader->content = ie_dstr_new_from_fd(e, fd);
 
     // if imalidir fails in this call, this will overwrite e with E_IMAILDIR
     int ret;
-    PROP_GO(e, imaildir_dn_close_msg(loader->m, loader->uid, &fd, &ret), fail);
+    PROP_GO(e,
+        imaildir_dn_close_msg(loader->m, loader->uid_up, &fd, &ret),
+    fail);
     // ignore return value of close on read-only file descriptor
     (void)ret;
 
@@ -706,17 +728,17 @@ static ie_dstr_t *imf_copy_hdr_fields_not(derr_t *e, imf_t *imf,
 
 
 static derr_t send_fetch_resp(dn_t *dn, const ie_fetch_cmd_t *fetch,
-        unsigned int uid){
+        unsigned int uid_dn){
     derr_t e = E_OK;
 
     // get the view
     size_t index;
-    jsw_anode_t *node = jsw_afind(&dn->views, &uid, &index);
-    if(!node) ORIG(&e, E_INTERNAL, "uid missing");
+    jsw_anode_t *node = jsw_afind(&dn->views, &uid_dn, &index);
+    if(!node) ORIG(&e, E_INTERNAL, "uid_dn missing");
     msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
 
     // handle lazy loading of the content
-    loader_t loader = loader_prep(dn->m, uid);
+    loader_t loader = loader_prep(dn->m, view->uid_up);
 
     unsigned int seq_num;
     PROP(&e, index_to_seq_num(index, &seq_num) );
@@ -731,15 +753,15 @@ static derr_t send_fetch_resp(dn_t *dn, const ie_fetch_cmd_t *fetch,
 
     if(fetch->attr->flags){
         ie_fflags_t *ff = ie_fflags_new(&e);
-        if(view->flags->answered)
+        if(view->flags.answered)
             ff = ie_fflags_add_simple(&e, ff, IE_FFLAG_ANSWERED);
-        if(view->flags->flagged)
+        if(view->flags.flagged)
             ff = ie_fflags_add_simple(&e, ff, IE_FFLAG_FLAGGED);
-        if(view->flags->seen)
+        if(view->flags.seen)
             ff = ie_fflags_add_simple(&e, ff, IE_FFLAG_SEEN);
-        if(view->flags->draft)
+        if(view->flags.draft)
             ff = ie_fflags_add_simple(&e, ff, IE_FFLAG_DRAFT);
-        if(view->flags->deleted)
+        if(view->flags.deleted)
             ff = ie_fflags_add_simple(&e, ff, IE_FFLAG_DELETED);
         if(view->recent)
             ff = ie_fflags_add_simple(&e, ff, IE_FFLAG_RECENT);
@@ -747,12 +769,12 @@ static derr_t send_fetch_resp(dn_t *dn, const ie_fetch_cmd_t *fetch,
     }
 
     if(fetch->attr->intdate){
-        f = ie_fetch_resp_intdate(&e, f, view->base->internaldate);
+        f = ie_fetch_resp_intdate(&e, f, view->internaldate);
     }
 
     // UID is implcitly requested by all UID_FETCH commands
     if(fetch->attr->uid || fetch->uid_mode){
-        f = ie_fetch_resp_uid(&e, f, uid);
+        f = ie_fetch_resp_uid(&e, f, uid_dn);
     }
 
     if(fetch->attr->rfc822){
@@ -771,10 +793,10 @@ static derr_t send_fetch_resp(dn_t *dn, const ie_fetch_cmd_t *fetch,
     }
 
     if(fetch->attr->rfc822_size){
-        if(view->base->length > UINT_MAX){
+        if(view->length > UINT_MAX){
             TRACE_ORIG(&e, E_INTERNAL, "msg length exceeds UINT_MAX");
         }else{
-            unsigned int size = (unsigned int)view->base->length;
+            unsigned int size = (unsigned int)view->length;
             f = ie_fetch_resp_rfc822_size(&e, f, ie_nums_new(&e, size));
         }
     }
@@ -879,23 +901,26 @@ static derr_t fetch_cmd(dn_t *dn, const ie_dstr_t *tag,
         const ie_fetch_cmd_t *fetch){
     derr_t e = E_OK;
 
-    ie_seq_set_t *uid_seq;
-    PROP(&e, copy_seq_to_uids(dn, fetch->uid_mode, fetch->seq_set, &uid_seq) );
+    ie_seq_set_t *uid_dn_seq;
+    bool up = false;
+    PROP(&e,
+        copy_seq_to_uids(dn, fetch->uid_mode, fetch->seq_set, up, &uid_dn_seq)
+    );
 
     // TODO: support PEEK properly
 
-    // build a response for every uid requested
+    // build a response for every uid_dn requested
     ie_seq_set_trav_t trav;
-    unsigned int uid = ie_seq_set_iter(&trav, uid_seq, 0, 0);
-    for(; uid != 0; uid = ie_seq_set_next(&trav)){
-        PROP_GO(&e, send_fetch_resp(dn, fetch, uid), cu);
+    unsigned int uid_dn = ie_seq_set_iter(&trav, uid_dn_seq, 0, 0);
+    for(; uid_dn != 0; uid_dn = ie_seq_set_next(&trav)){
+        PROP_GO(&e, send_fetch_resp(dn, fetch, uid_dn), cu);
     }
 
     DSTR_STATIC(msg, "you didn't hear it from me");
     PROP_GO(&e, send_ok(dn, tag, &msg), cu);
 
 cu:
-    ie_seq_set_free(uid_seq);
+    ie_seq_set_free(uid_dn_seq);
 
     return e;
 }
@@ -904,10 +929,10 @@ cu:
 static derr_t expunge_cmd(dn_t *dn, const ie_dstr_t *tag){
     derr_t e = E_OK;
 
-    ie_seq_set_t *uids;
-    PROP(&e, get_uids_to_expunge(dn, &uids) );
+    ie_seq_set_t *uids_up;
+    PROP(&e, get_uids_up_to_expunge(dn, &uids_up) );
     // detect noop EXPUNGEs
-    if(!uids){
+    if(!uids_up){
         PROP(&e, dn_gather_updates(dn, true) );
         PROP(&e, send_ok(dn, tag, &DSTR_LIT("noop EXPUNGE command")) );
         return e;
@@ -921,7 +946,7 @@ static derr_t expunge_cmd(dn_t *dn, const ie_dstr_t *tag){
 
     // request an expunge update
     update_req_t *req =
-        update_req_expunge_new(&e, STEAL(ie_seq_set_t, &uids), dn);
+        update_req_expunge_new(&e, STEAL(ie_seq_set_t, &uids_up), dn);
     CHECK_GO(&e, fail);
     PROP_GO(&e, imaildir_dn_request_update(dn->m, req), fail);
 
@@ -929,7 +954,7 @@ static derr_t expunge_cmd(dn_t *dn, const ie_dstr_t *tag){
 
 fail:
     dn_free_expunge(dn);
-    ie_seq_set_free(uids);
+    ie_seq_set_free(uids_up);
     return e;
 }
 
@@ -1023,7 +1048,7 @@ cu_cmd:
 }
 
 // send an expunge for every message that we know of that is \Deleted
-static derr_t get_uids_to_expunge(dn_t *dn, ie_seq_set_t **out){
+static derr_t get_uids_up_to_expunge(dn_t *dn, ie_seq_set_t **out){
     derr_t e = E_OK;
     *out = NULL;
 
@@ -1034,9 +1059,9 @@ static derr_t get_uids_to_expunge(dn_t *dn, ie_seq_set_t **out){
     jsw_anode_t *node = jsw_atfirst(&atrav, &dn->views);
     for(; node; node = jsw_atnext(&atrav)){
         msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
-        if(view->flags->deleted){
-            unsigned int uid = view->base->uid;
-            PROP_GO(&e, seq_set_builder_add_val(&ssb, uid), fail_ssb);
+        if(view->flags.deleted){
+            unsigned int uid_up = view->uid_up;
+            PROP_GO(&e, seq_set_builder_add_val(&ssb, uid_up), fail_ssb);
         }
     }
 
@@ -1056,14 +1081,14 @@ derr_t dn_disconnect(dn_t *dn, bool expunge){
     if(expunge){
         /* calculate a UID EXPUNGE command that we would push to the server,
            and do not disconnect until that response comes in */
-        ie_seq_set_t *uids;
-        PROP(&e, get_uids_to_expunge(dn, &uids) );
-        if(!uids){
+        ie_seq_set_t *uids_up;
+        PROP(&e, get_uids_up_to_expunge(dn, &uids_up) );
+        if(!uids_up){
             // nothing to expunge, disconnect immediately
             PROP(&e, dn->cb->disconnected(dn->cb, NULL) );
         }else{
             // request an expunge update first
-            update_req_t *req = update_req_expunge_new(&e, uids, dn);
+            update_req_t *req = update_req_expunge_new(&e, uids_up, dn);
             CHECK(&e);
             dn->disconnect.state = DN_WAIT_WAITING;
             PROP(&e, imaildir_dn_request_update(dn->m, req) );
@@ -1121,34 +1146,34 @@ static derr_t send_expunge(dn_t *dn, unsigned int seq_num){
 
 // state for gathering updates
 typedef struct {
-    jsw_atree_t news;  // uid_t->node
-    jsw_atree_t metas;  // uid_t->node
-    jsw_atree_t expunges;  // uid_t->node
+    jsw_atree_t news;  // gathered_t->node
+    jsw_atree_t metas;  // gathered_t->node
+    jsw_atree_t expunges;  // gathered_t->node
     /* expunge updates can't be freed until after we have emitted messages for
        them, due to the fact that they have to be removed from the view at the
        time of emitting messages, and that act will alter the seq num of other
        messages, which we need to delay */
     link_t updates_to_free;
-    /* TODO: do I need to keep track of what the original metas were, so that
-             in cases of add/remove a flag we don't report anything?  If so, I
-             will have to add another struct here for tracking those somehow */
+    /* Choose not to keep track of what the original flags were.  This means in
+       the case of add/remove a flag we will report a FETCH which could be a
+       noop, but that's what dovecot does.  It also saves us another struct. */
 } gather_t;
 
 typedef struct {
-    unsigned int uid;
+    unsigned int uid_dn;
     jsw_anode_t node;
 } gathered_t;
 DEF_CONTAINER_OF(gathered_t, node, jsw_anode_t);
 
-static const void *gathered_jsw_get(const jsw_anode_t *node){
+static const void *gathered_jsw_get_uid_dn(const jsw_anode_t *node){
     const gathered_t *gathered = CONTAINER_OF(node, gathered_t, node);
-    return (void*)&gathered->uid;
+    return (void*)&gathered->uid_dn;
 }
 
 static void gather_prep(gather_t *gather){
-    jsw_ainit(&gather->news, jsw_cmp_uid, gathered_jsw_get);
-    jsw_ainit(&gather->metas, jsw_cmp_uid, gathered_jsw_get);
-    jsw_ainit(&gather->expunges, jsw_cmp_uid, gathered_jsw_get);
+    jsw_ainit(&gather->news, jsw_cmp_uid, gathered_jsw_get_uid_dn);
+    jsw_ainit(&gather->metas, jsw_cmp_uid, gathered_jsw_get_uid_dn);
+    jsw_ainit(&gather->expunges, jsw_cmp_uid, gathered_jsw_get_uid_dn);
     link_init(&gather->updates_to_free);
 }
 
@@ -1173,13 +1198,13 @@ static void gather_free(gather_t *gather){
     }
 }
 
-static derr_t gathered_new(gathered_t **out, unsigned int uid){
+static derr_t gathered_new(gathered_t **out, unsigned int uid_dn){
     derr_t e = E_OK;
     *out = NULL;
 
     gathered_t *gathered = malloc(sizeof(*gathered));
     if(!out) ORIG(&e, E_NOMEM, "nomem");
-    *gathered = (gathered_t){ .uid = uid };
+    *gathered = (gathered_t){ .uid_dn = uid_dn };
 
     *out = gathered;
 
@@ -1196,9 +1221,9 @@ static derr_t gather_update_new(dn_t *dn, gather_t *gather, update_t *update){
 
     msg_view_t *view = update->arg.new;
 
-    // remember that this uid is new
+    // remember that this uid_dn is new
     gathered_t *gathered;
-    PROP_GO(&e, gathered_new(&gathered, view->base->uid), cu);
+    PROP_GO(&e, gathered_new(&gathered, view->uid_dn), cu);
     jsw_ainsert(&gather->news, &gathered->node);
 
     // add the view to our views
@@ -1213,25 +1238,25 @@ cu:
 static derr_t gather_update_meta(dn_t *dn, gather_t *gather, update_t *update){
     derr_t e = E_OK;
 
-    const msg_meta_t *meta = update->arg.meta;
+    msg_view_t *view = update->arg.meta;
 
-    // remember that this uid is modified
-    if(!jsw_afind(&gather->metas, &meta->uid, NULL)){
+    // remember that this uid_dn is modified
+    if(!jsw_afind(&gather->metas, &view->uid_dn, NULL)){
         gathered_t *gathered;
-        PROP_GO(&e, gathered_new(&gathered, meta->uid), cu);
+        PROP_GO(&e, gathered_new(&gathered, view->uid_dn), cu);
         jsw_ainsert(&gather->metas, &gathered->node);
     }
 
-    // find our view of this uid
-    jsw_anode_t *node = jsw_afind(&dn->views, &meta->uid, NULL);
+    // remove the old view
+    jsw_anode_t *node = jsw_aerase(&dn->views, &view->uid_dn);
     if(!node){
         // This should never happen since we process messages in order
-        ORIG_GO(&e, E_INTERNAL, "missing uid", cu);
+        ORIG_GO(&e, E_INTERNAL, "missing uid_dn", cu);
     }
 
-    // update the meta in our view
-    msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
-    view->flags = &meta->flags;
+    // add the new view
+    jsw_ainsert(&dn->views, &view->node);
+    update->arg.new = NULL;
 
 cu:
     update_free(&update);
@@ -1248,7 +1273,7 @@ static derr_t gather_update_expunge(
 
     // remember that this uid is new
     gathered_t *gathered;
-    PROP_GO(&e, gathered_new(&gathered, expunge->uid), cu);
+    PROP_GO(&e, gathered_new(&gathered, expunge->uid_dn), cu);
     jsw_ainsert(&gather->expunges, &gathered->node);
 
     // removing the view happens later, so we don't affect the the seq numbers
@@ -1269,10 +1294,10 @@ static derr_t gather_send_responses(dn_t *dn, gather_t *gather){
     for(; node; node = jsw_atnext(&trav)){
         gathered_t *gathered = CONTAINER_OF(node, gathered_t, node);
 
-        node = jsw_aerase(&gather->news, &gathered->uid);
+        node = jsw_aerase(&gather->news, &gathered->uid_dn);
         if(node) gathered_free(CONTAINER_OF(node, gathered_t, node));
 
-        node = jsw_aerase(&gather->metas, &gathered->uid);
+        node = jsw_aerase(&gather->metas, &gathered->uid_dn);
         if(node) gathered_free(CONTAINER_OF(node, gathered_t, node));
     }
 
@@ -1281,7 +1306,7 @@ static derr_t gather_send_responses(dn_t *dn, gather_t *gather){
     for(; node; node = jsw_atnext(&trav)){
         gathered_t *gathered = CONTAINER_OF(node, gathered_t, node);
 
-        node = jsw_aerase(&gather->metas, &gathered->uid);
+        node = jsw_aerase(&gather->metas, &gathered->uid_dn);
         if(node) gathered_free(CONTAINER_OF(node, gathered_t, node));
     }
 
@@ -1290,17 +1315,17 @@ static derr_t gather_send_responses(dn_t *dn, gather_t *gather){
     for(; node; node = jsw_atnext(&trav)){
         gathered_t *gathered = CONTAINER_OF(node, gathered_t, node);
 
-        // find our view of this uid
+        // find our view of this uid_dn
         size_t index;
-        node = jsw_afind(&dn->views, &gathered->uid, &index);
-        if(!node) ORIG(&e, E_INTERNAL, "missing uid");
+        node = jsw_afind(&dn->views, &gathered->uid_dn, &index);
+        if(!node) ORIG(&e, E_INTERNAL, "missing uid_dn");
 
         msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
 
         unsigned int seq_num;
         PROP(&e, index_to_seq_num(index, &seq_num) );
         bool recent = false;
-        PROP(&e, send_flags_update(dn, seq_num, *view->flags, recent) );
+        PROP(&e, send_flags_update(dn, seq_num, view->flags, recent) );
     }
 
     // step 4: send expunge updates (in reverse order)
@@ -1308,14 +1333,14 @@ static derr_t gather_send_responses(dn_t *dn, gather_t *gather){
     for(; node; node = jsw_atprev(&trav)){
         gathered_t *gathered = CONTAINER_OF(node, gathered_t, node);
 
-        // find our view of this uid
+        // find our view of this uid_dn
         size_t index;
-        jsw_anode_t *node = jsw_afind(&dn->views, &gathered->uid, &index);
-        if(!node) ORIG(&e, E_INTERNAL, "missing uid");
+        jsw_anode_t *node = jsw_afind(&dn->views, &gathered->uid_dn, &index);
+        if(!node) ORIG(&e, E_INTERNAL, "missing uid_dn");
 
         // just remove and delete the view
         msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
-        jsw_aerase(&dn->views, &gathered->uid);
+        jsw_aerase(&dn->views, &gathered->uid_dn);
         msg_view_free(&view);
 
         unsigned int seq_num;
@@ -1386,22 +1411,22 @@ static derr_t send_store_resp_noupdate(dn_t *dn, const exp_flags_t *exp_flags){
     derr_t e = E_OK;
 
     size_t index;
-    jsw_anode_t *node = jsw_afind(&dn->views, &exp_flags->uid, &index);
+    jsw_anode_t *node = jsw_afind(&dn->views, &exp_flags->uid_dn, &index);
     if(!node){
         /* pretty sure this can't happen because this uid would have to appear
            as an update for it to have disappeared */
-        ORIG(&e, E_INTERNAL, "missing uid");
+        ORIG(&e, E_INTERNAL, "missing uid_dn");
     }
 
     msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
-    if(!msg_flags_eq(exp_flags->flags, *view->flags)){
+    if(!msg_flags_eq(exp_flags->flags, view->flags)){
         /* we expected an update but none happened.  I'm pretty sure this only
            happens if the thing got deleted; if it was updated and canceled it
            should have appeared as an update still, and since updates are
            serialized in the imaildir_t and we are only processing the updates
            up to our own update, there's no other possibilities */
         LOG_INFO("deleted message (%x) didn't accept flag change...?\n",
-                FU(exp_flags->uid));
+                FU(exp_flags->uid_dn));
         return e;
     }
 
@@ -1410,7 +1435,7 @@ static derr_t send_store_resp_noupdate(dn_t *dn, const exp_flags_t *exp_flags){
         unsigned int seq_num;
         PROP(&e, index_to_seq_num(index, &seq_num) );
 
-        PROP(&e, send_flags_update(dn, seq_num, *view->flags, view->recent) );
+        PROP(&e, send_flags_update(dn, seq_num, view->flags, view->recent) );
         return e;
     }
 
@@ -1419,33 +1444,34 @@ static derr_t send_store_resp_noupdate(dn_t *dn, const exp_flags_t *exp_flags){
     return e;
 }
 
-static derr_t send_store_resp_noexp(dn_t *dn, unsigned int uid){
+static derr_t send_store_resp_noexp(dn_t *dn, unsigned int uid_dn){
     derr_t e = E_OK;
 
     size_t index;
-    jsw_anode_t *node = jsw_afind(&dn->views, &uid, &index);
+    jsw_anode_t *node = jsw_afind(&dn->views, &uid_dn, &index);
     if(!node){
-        ORIG(&e, E_INTERNAL, "missing uid");
+        ORIG(&e, E_INTERNAL, "missing uid_dn");
     }
 
     msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
 
     unsigned int num;
     if(dn->store.uid_mode){
-        num = uid;
+        num = uid_dn;
     }else{
         PROP(&e, index_to_seq_num(index, &num) );
     }
 
-    PROP(&e, send_flags_update(dn, num, *view->flags, view->recent) );
+    PROP(&e, send_flags_update(dn, num, view->flags, view->recent) );
     return e;
 }
 
-static derr_t send_store_resp_expupdate(dn_t *dn, const exp_flags_t *exp_flags){
+static derr_t send_store_resp_expupdate(dn_t *dn,
+        const exp_flags_t *exp_flags){
     derr_t e = E_OK;
 
     size_t index;
-    jsw_anode_t *node = jsw_afind(&dn->views, &exp_flags->uid, &index);
+    jsw_anode_t *node = jsw_afind(&dn->views, &exp_flags->uid_dn, &index);
     if(!node){
         // the update must have deleted this message
         // (this is only possible if we handle the EXPUNGE commands promptly)
@@ -1455,21 +1481,21 @@ static derr_t send_store_resp_expupdate(dn_t *dn, const exp_flags_t *exp_flags){
 
     unsigned int num;
     if(dn->store.uid_mode){
-        num = exp_flags->uid;
+        num = exp_flags->uid_dn;
     }else{
         PROP(&e, index_to_seq_num(index, &num) );
     }
 
     msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
-    if(!msg_flags_eq(exp_flags->flags, *view->flags)){
+    if(!msg_flags_eq(exp_flags->flags, view->flags)){
         // a different update than we expected, always report it
-        PROP(&e, send_flags_update(dn, num, *view->flags, view->recent) );
+        PROP(&e, send_flags_update(dn, num, view->flags, view->recent) );
         return e;
     }
 
     // we expected this change, do we report it?
     if(!dn->store.silent){
-        PROP(&e, send_flags_update(dn, num, *view->flags, view->recent) );
+        PROP(&e, send_flags_update(dn, num, view->flags, view->recent) );
         return e;
     }
 
@@ -1478,42 +1504,42 @@ static derr_t send_store_resp_expupdate(dn_t *dn, const exp_flags_t *exp_flags){
     return e;
 }
 
-static derr_t send_store_resp(dn_t *dn, ie_seq_set_t *updated_uids,
+static derr_t send_store_resp(dn_t *dn, ie_seq_set_t *updated_uids_dn,
         ie_st_resp_t *st_resp){
     derr_t e = E_OK;
 
-    /* Send a FETCH response with all the updates.  Unless there was a .SILENT
+    /* Send a FETCH response with for each update.  Unless there was a .SILENT
        store, in which case we ignore those messages.  Unless there was an
        external update that caused one of those messages to be different than
        expected.
 
-       Walk the exp_flags_t's from the STORE command and the updated_uids
+       Walk the exp_flags_t's from the STORE command and the updated_uids_dn
        simlutaneously to figure out how to respond to each message. */
 
     jsw_atrav_t atrav;
     ie_seq_set_trav_t strav;
 
     exp_flags_t *exp_flags = NULL;
-    unsigned int updated_uid = 0;
+    unsigned int updated_uid_dn = 0;
 
     jsw_anode_t *node = jsw_atfirst(&atrav, &dn->store.tree);
     exp_flags = CONTAINER_OF(node, exp_flags_t, node);
-    updated_uid = ie_seq_set_iter(&strav, updated_uids, 0, 0);
+    updated_uid_dn = ie_seq_set_iter(&strav, updated_uids_dn, 0, 0);
 
     // quit when we reach the end of both lists
-    while(exp_flags || updated_uid){
-        if(updated_uid){
-            // either there's no more exp_flags or updated_uids is behind
-            if(!exp_flags || exp_flags->uid > updated_uid){
-                PROP_GO(&e, send_store_resp_noexp(dn, updated_uid), cu);
-                updated_uid = ie_seq_set_next(&strav);
+    while(exp_flags || updated_uid_dn){
+        if(updated_uid_dn){
+            // either there's no more exp_flags or updated_uids_dn is behind
+            if(!exp_flags || exp_flags->uid_dn > updated_uid_dn){
+                PROP_GO(&e, send_store_resp_noexp(dn, updated_uid_dn), cu);
+                updated_uid_dn = ie_seq_set_next(&strav);
                 continue;
             }
         }
 
         if(exp_flags){
-            // either there's no more updated_uids or exp_flags is behind
-            if(!updated_uid || updated_uid > exp_flags->uid){
+            // either there's no more updated_uids_dn or exp_flags is behind
+            if(!updated_uid_dn || updated_uid_dn > exp_flags->uid_dn){
                 PROP_GO(&e, send_store_resp_noupdate(dn, exp_flags), cu);
                 node = jsw_atnext(&atrav);
                 exp_flags = CONTAINER_OF(node, exp_flags_t, node);
@@ -1521,12 +1547,12 @@ static derr_t send_store_resp(dn_t *dn, ie_seq_set_t *updated_uids,
             }
         }
 
-        // otherwise, we know exp_flags->uid and updated_uid are valid and equal
+        // otherwise, exp_flags->uid_dn and updated_uid_dn are valid and equal
         PROP_GO(&e, send_store_resp_expupdate(dn, exp_flags), cu);
 
         node = jsw_atnext(&atrav);
         exp_flags = CONTAINER_OF(node, exp_flags_t, node);
-        updated_uid = ie_seq_set_next(&strav);
+        updated_uid_dn = ie_seq_set_next(&strav);
     }
 
     if(st_resp){
@@ -1544,29 +1570,29 @@ static derr_t send_store_resp(dn_t *dn, ie_seq_set_t *updated_uids,
     }
 
 cu:
-    ie_seq_set_free(updated_uids);
+    ie_seq_set_free(updated_uids_dn);
     ie_st_resp_free(st_resp);
     return e;
 }
 
 static derr_t process_meta_update_for_store(dn_t *dn, update_t *update,
-        seq_set_builder_t *ssb){
+        seq_set_builder_t *uids_dn_ssb){
     derr_t e = E_OK;
 
-    const msg_meta_t *meta = update->arg.meta;
+    msg_view_t *view = update->arg.meta;
 
-    // find our view of this uid
-    jsw_anode_t *node = jsw_afind(&dn->views, &meta->uid, NULL);
+    // remove the old view
+    jsw_anode_t *node = jsw_aerase(&dn->views, &view->uid_dn);
     if(!node){
-        // TODO: update a pending UPDATE_NEW message with this uid in it
-        ORIG_GO(&e, E_INTERNAL, "missing uid", cu);
+        // TODO: update a pending UPDATE_NEW message with this uid_dn in it
+        ORIG_GO(&e, E_INTERNAL, "missing uid_dn", cu);
     }
 
-    // update the meta in our view
-    msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
-    view->flags = &meta->flags;
+    // add the new view
+    jsw_ainsert(&dn->views, &view->node);
+    update->arg.new = NULL;
 
-    PROP_GO(&e, seq_set_builder_add_val(ssb, meta->uid), cu);
+    PROP_GO(&e, seq_set_builder_add_val(uids_dn_ssb, view->uid_dn), cu);
 
 cu:
     update_free(&update);
@@ -1576,9 +1602,9 @@ cu:
 static derr_t do_work_store(dn_t *dn){
     derr_t e = E_OK;
 
-    // prepare a list of updates we got
-    seq_set_builder_t ssb;
-    seq_set_builder_prep(&ssb);
+    // prepare a list of uid_dns updates we got
+    seq_set_builder_t uids_dn_ssb;
+    seq_set_builder_prep(&uids_dn_ssb);
 
     ie_st_resp_t *st_resp = NULL;
 
@@ -1596,7 +1622,7 @@ static derr_t do_work_store(dn_t *dn){
                 // process the event right now
                 link_remove(&update->link);
                 PROP_GO(&e,
-                    process_meta_update_for_store(dn, update, &ssb),
+                    process_meta_update_for_store(dn, update, &uids_dn_ssb),
                 cu);
                 break;
 
@@ -1616,17 +1642,17 @@ static derr_t do_work_store(dn_t *dn){
         if(last_update_to_process) break;
     }
 
-    ie_seq_set_t *updated_uids = seq_set_builder_extract(&e, &ssb);
+    ie_seq_set_t *updated_uids_dn = seq_set_builder_extract(&e, &uids_dn_ssb);
     CHECK_GO(&e, cu);
 
     // send the response to the store command
     PROP_GO(&e,
-        send_store_resp(dn, updated_uids, STEAL(ie_st_resp_t, &st_resp)),
+        send_store_resp(dn, updated_uids_dn, STEAL(ie_st_resp_t, &st_resp)),
     cu);
 
 cu:
     ie_st_resp_free(st_resp);
-    seq_set_builder_free(&ssb);
+    seq_set_builder_free(&uids_dn_ssb);
     dn_free_store(dn);
     return e;
 }

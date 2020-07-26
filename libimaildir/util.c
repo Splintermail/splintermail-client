@@ -2,24 +2,24 @@
 
 #include "libimaildir.h"
 
-const void *msg_view_jsw_get(const jsw_anode_t *node){
+const void *msg_view_jsw_get_uid_dn(const jsw_anode_t *node){
     const msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
-    return (void*)&view->base->uid;
+    return (void*)&view->uid_dn;
 }
 
-const void *msg_expunge_jsw_get(const jsw_anode_t *node){
+const void *msg_expunge_jsw_get_uid_up(const jsw_anode_t *node){
     const msg_expunge_t *expunge = CONTAINER_OF(node, msg_expunge_t, node);
-    return (void*)&expunge->uid;
+    return (void*)&expunge->uid_up;
 }
 
-const void *msg_mod_jsw_get(const jsw_anode_t *node){
+const void *msg_mod_jsw_get_modseq(const jsw_anode_t *node){
     const msg_mod_t *mod = CONTAINER_OF(node, msg_mod_t, node);
     return (void*)&mod->modseq;
 }
 
-const void *msg_base_jsw_get(const jsw_anode_t *node){
-    const msg_base_t *base = CONTAINER_OF(node, msg_base_t, node);
-    return (void*)&base->ref.uid;
+const void *msg_jsw_get_uid_up(const jsw_anode_t *node){
+    const msg_t *msg = CONTAINER_OF(node, msg_t, node);
+    return (void*)&msg->uid_up;
 }
 
 int jsw_cmp_modseq(const void *a, const void *b){
