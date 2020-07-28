@@ -1004,13 +1004,24 @@ static derr_t handle_one_command(server_t *server, imap_cmd_t *cmd){
             }
             break;
 
-        case IMAP_CMD_EXAMINE:
+        // commands supported by the dn_t
+        case IMAP_CMD_COPY:
         case IMAP_CMD_CHECK:
         case IMAP_CMD_EXPUNGE:
         case IMAP_CMD_SEARCH:
         case IMAP_CMD_FETCH:
         case IMAP_CMD_STORE:
-        case IMAP_CMD_COPY:
+            PROP_GO(&e,
+                assert_state(server, SELECTED, tag, &state_ok),
+            cu_cmd);
+            if(state_ok){
+                /* we know ahead of time that we are not in the SELECTED state,
+                   or we would not have gotten to here with these commands */
+                ORIG_GO(&e, E_INTERNAL, "Unhandled command", cu_cmd);
+            }
+            break;
+
+        case IMAP_CMD_EXAMINE:
         case IMAP_CMD_RENAME:
             ORIG_GO(&e, E_INTERNAL, "Unhandled command", cu_cmd);
 
