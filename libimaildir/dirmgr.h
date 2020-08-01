@@ -43,15 +43,6 @@ struct dirmgr_t {
 };
 DEF_CONTAINER_OF(dirmgr_t, imaildir_cb, imaildir_cb_i);
 
-// a smartpointer struct for a mailbox that has a message getting added to it
-typedef struct {
-    dirmgr_t *dm;
-    dstr_t name;
-    size_t count;
-    hash_elem_t h;  // dirmgr_t->holds
-} dirmgr_hold_t;
-DEF_CONTAINER_OF(dirmgr_hold_t, h, hash_elem_t);
-
 // path must be linked to long-lived objects
 derr_t dirmgr_init(dirmgr_t *dm, string_builder_t path,
         const keypair_t *keypair);
@@ -127,6 +118,16 @@ derr_t dirmgr_do_for_each_mbx(dirmgr_t *dm, const dstr_t *ref_name,
         for_each_mbx_hook_t hook, void *hook_data);
 
 
+// a smartpointer struct for a mailbox that has a message getting added to it
+// (forward declaration is in imaildir.h)
+struct dirmgr_hold_t {
+    dirmgr_t *dm;
+    dstr_t name;
+    size_t count;
+    hash_elem_t h;  // dirmgr_t->holds
+};
+DEF_CONTAINER_OF(dirmgr_hold_t, h, hash_elem_t);
+
 /* handling APPEND and COPY: up_t's have to NOT download any messages while we
    are are APPENDing or COPYing messages around on the server */
 
@@ -135,10 +136,13 @@ derr_t dirmgr_hold_new(dirmgr_t *dm, const dstr_t *name, dirmgr_hold_t **out);
 // finish holding a directory
 void dirmgr_hold_free(dirmgr_hold_t *hold);
 
+// this will rename or delete the file at *path
+// if uidvld is invalid, this will silently delete the file.
 derr_t dirmgr_hold_add_local_file(
     dirmgr_hold_t *hold,
     const string_builder_t *path,
-    unsigned int uid,
+    unsigned int uidvld_up,
+    unsigned int uid_up,
     size_t len,
     imap_time_t intdate,
     msg_flags_t flags

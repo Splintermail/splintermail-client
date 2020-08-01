@@ -52,8 +52,13 @@ static void dn_free_store(dn_t *dn){
 // free everything related to dn.expunge
 static void dn_free_expunge(dn_t *dn){
     dn->expunge.state = DN_WAIT_NONE;
-    ie_dstr_t *tag = STEAL(ie_dstr_t, &dn->expunge.tag);
-    ie_dstr_free(tag);
+    ie_dstr_free(STEAL(ie_dstr_t, &dn->expunge.tag));
+}
+
+// free everything related to dn.copy
+static void dn_free_copy(dn_t *dn){
+    dn->copy.state = DN_WAIT_NONE;
+    ie_dstr_free(STEAL(ie_dstr_t, &dn->copy.tag));
 }
 
 // free everything related to dn.disconnect
@@ -464,7 +469,7 @@ static derr_t store_cmd(dn_t *dn, const ie_dstr_t *tag,
 
     // detect noop STOREs
     if(!uid_up_seq){
-        PROP(&e, dn_gather_updates(dn, store->uid_mode) );
+        PROP(&e, dn_gather_updates(dn, store->uid_mode, NULL) );
         PROP(&e, send_ok(dn, tag, &DSTR_LIT("noop STORE command")) );
         return e;
     }
@@ -933,7 +938,7 @@ static derr_t expunge_cmd(dn_t *dn, const ie_dstr_t *tag){
     PROP(&e, get_uids_up_to_expunge(dn, &uids_up) );
     // detect noop EXPUNGEs
     if(!uids_up){
-        PROP(&e, dn_gather_updates(dn, true) );
+        PROP(&e, dn_gather_updates(dn, true, NULL) );
         PROP(&e, send_ok(dn, tag, &DSTR_LIT("noop EXPUNGE command")) );
         return e;
     }
@@ -954,6 +959,49 @@ static derr_t expunge_cmd(dn_t *dn, const ie_dstr_t *tag){
 
 fail:
     dn_free_expunge(dn);
+    ie_seq_set_free(uids_up);
+    return e;
+}
+
+
+static derr_t copy_cmd(dn_t *dn, const ie_dstr_t *tag,
+        const ie_copy_cmd_t *copy){
+    derr_t e = E_OK;
+
+    ie_seq_set_t *uids_up;
+    PROP(&e,
+        copy_seq_to_uids(dn, copy->uid_mode, copy->seq_set, true, &uids_up)
+    );
+
+    // detect noop COPYs
+    if(!uids_up){
+        PROP(&e, dn_gather_updates(dn, true, NULL) );
+        PROP(&e, send_ok(dn, tag, &DSTR_LIT("noop COPY command")) );
+        return e;
+    }
+
+    // reset the dn.expunge state
+    dn_free_copy(dn);
+    dn->copy.tag = ie_dstr_copy(&e, tag);
+    dn->copy.state = DN_WAIT_WAITING;
+    CHECK_GO(&e, fail);
+
+    // request a copy update
+    bool uid_mode = true;
+    ie_copy_cmd_t *copy_up = ie_copy_cmd_new(&e,
+        uid_mode,
+        STEAL(ie_seq_set_t, &uids_up),
+        ie_mailbox_copy(&e, copy->m)
+    );
+    update_req_t *req = update_req_copy_new(&e, copy_up, dn);
+    CHECK_GO(&e, fail);
+
+    PROP_GO(&e, imaildir_dn_request_update(dn->m, req), fail);
+
+    return e;
+
+fail:
+    dn_free_copy(dn);
     ie_seq_set_free(uids_up);
     return e;
 }
@@ -984,13 +1032,15 @@ derr_t dn_cmd(dn_t *dn, imap_cmd_t *cmd){
             break;
 
         case IMAP_CMD_SEARCH:
-            PROP_GO(&e, dn_gather_updates(dn, arg->search->uid_mode), cu_cmd);
+            PROP_GO(&e,
+                dn_gather_updates(dn, arg->search->uid_mode, NULL),
+            cu_cmd);
             PROP_GO(&e, search_cmd(dn, tag, arg->search), cu_cmd);
             break;
 
         case IMAP_CMD_CHECK:
         case IMAP_CMD_NOOP:
-            PROP_GO(&e, dn_gather_updates(dn, true), cu_cmd);
+            PROP_GO(&e, dn_gather_updates(dn, true, NULL), cu_cmd);
             PROP_GO(&e, send_ok(dn, tag, &DSTR_LIT("zzzzz...")), cu_cmd);
             break;
 
@@ -1000,18 +1050,21 @@ derr_t dn_cmd(dn_t *dn, imap_cmd_t *cmd){
             break;
 
         case IMAP_CMD_FETCH:
-            PROP_GO(&e, dn_gather_updates(dn, arg->fetch->uid_mode), cu_cmd);
+            PROP_GO(&e,
+                dn_gather_updates(dn, arg->fetch->uid_mode, NULL),
+            cu_cmd);
             PROP_GO(&e, fetch_cmd(dn, tag, arg->fetch), cu_cmd);
             break;
 
-        // things we need to support here
         case IMAP_CMD_EXPUNGE:
             // updates are handled after an UPDATE_SYNC
             PROP_GO(&e, expunge_cmd(dn, tag), cu_cmd);
             break;
 
         case IMAP_CMD_COPY:
-            ORIG_GO(&e, E_INTERNAL, "not yet implemented", cu_cmd);
+            // updates are handled after an UPDATE_SYNC
+            PROP_GO(&e, copy_cmd(dn, tag, arg->copy), cu_cmd);
+            break;
 
         // commands which must be handled externally
         case IMAP_CMD_CAPA:
@@ -1359,7 +1412,7 @@ static derr_t gather_send_responses(dn_t *dn, gather_t *gather){
 }
 
 // send unsolicited untagged responses for external updates to mailbox
-derr_t dn_gather_updates(dn_t *dn, bool allow_expunge){
+derr_t dn_gather_updates(dn_t *dn, bool allow_expunge, ie_st_resp_t **st_resp){
     derr_t e = E_OK;
 
     /* updates need to be processed in batches:
@@ -1394,17 +1447,32 @@ derr_t dn_gather_updates(dn_t *dn, bool allow_expunge){
 
             case UPDATE_SYNC:
                 // this must be the point up to which we are emitting messages
+                if(!st_resp){
+                    ORIG_GO(&e, E_INTERNAL, "got unexpected UPDATE_SYNC",  cu);
+                }
+                *st_resp = STEAL(ie_st_resp_t, &update->arg.sync);
                 link_remove(&update->link);
                 update_free(&update);
-                goto exit_loop;
+                goto got_update_sync;
         }
     }
-exit_loop:
+    // if we are here, ensure that no UPDATE_SYNC was expected
+    if(st_resp != NULL){
+        ORIG_GO(&e, E_INTERNAL, "did not find expected UPDATE_SYNC", cu);
+    }
+
+got_update_sync:
 
     PROP_GO(&e, gather_send_responses(dn, &gather), cu);
 
 cu:
     gather_free(&gather);
+
+    // only return a st_resp if we didn't hit an error
+    if(is_error(e)){
+        ie_st_resp_free(STEAL(ie_st_resp_t, st_resp));
+    }
+
     return e;
 }
 
@@ -1667,18 +1735,68 @@ static derr_t do_work_expunge(dn_t *dn){
 
     ie_st_resp_t *st_resp = NULL;
 
-    PROP_GO(&e, dn_gather_updates(dn, true), cu);
+    PROP_GO(&e, dn_gather_updates(dn, true, &st_resp), cu);
 
-    // done expunging
-    PROP_GO(&e,
-        send_ok(dn,
-            dn->expunge.tag,
-            &DSTR_LIT("I had Frankie whack 'em for ya")
-        ),
-    cu);
+    // create an st_resp if there was no error
+    if(!st_resp){
+        const dstr_t *msg = &DSTR_LIT("No one will know the difference");
+        ie_dstr_t *text = ie_dstr_new(&e, msg, KEEP_RAW);
+        ie_status_t status = IE_ST_OK;
+        st_resp = ie_st_resp_new(&e,
+            STEAL(ie_dstr_t, &dn->expunge.tag), status, NULL, text
+        );
+        CHECK_GO(&e, cu);
+    }else{
+        ie_dstr_free(st_resp->tag);
+        st_resp->tag = STEAL(ie_dstr_t, &dn->expunge.tag);
+    }
+
+    // build response
+    imap_resp_arg_t arg = {.status_type=STEAL(ie_st_resp_t, &st_resp)};
+    imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_STATUS_TYPE, arg);
+    resp = imap_resp_assert_writable(&e, resp, dn->exts);
+    CHECK_GO(&e, cu);
+
+    PROP_GO(&e, dn->cb->resp(dn->cb, resp), cu);
 
 cu:
     dn_free_expunge(dn);
+    ie_st_resp_free(st_resp);
+    return e;
+}
+
+
+static derr_t do_work_copy(dn_t *dn){
+    derr_t e = E_OK;
+
+    ie_st_resp_t *st_resp = NULL;
+
+    PROP_GO(&e, dn_gather_updates(dn, true, &st_resp), cu);
+
+    // create an st_resp if there was no error
+    if(!st_resp){
+        const dstr_t *msg = &DSTR_LIT("No one will know the difference");
+        ie_dstr_t *text = ie_dstr_new(&e, msg, KEEP_RAW);
+        ie_status_t status = IE_ST_OK;
+        st_resp = ie_st_resp_new(&e,
+            STEAL(ie_dstr_t, &dn->copy.tag), status, NULL, text
+        );
+        CHECK_GO(&e, cu);
+    }else{
+        ie_dstr_free(st_resp->tag);
+        st_resp->tag = STEAL(ie_dstr_t, &dn->copy.tag);
+    }
+
+    // build response
+    imap_resp_arg_t arg = {.status_type=STEAL(ie_st_resp_t, &st_resp)};
+    imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_STATUS_TYPE, arg);
+    resp = imap_resp_assert_writable(&e, resp, dn->exts);
+    CHECK_GO(&e, cu);
+
+    PROP_GO(&e, dn->cb->resp(dn->cb, resp), cu);
+
+cu:
+    dn_free_copy(dn);
     ie_st_resp_free(st_resp);
     return e;
 }
@@ -1733,6 +1851,11 @@ derr_t dn_do_work(dn_t *dn, bool *noop){
         PROP(&e, do_work_expunge(dn) );
     }
 
+    if(dn->copy.state == DN_WAIT_READY){
+        *noop = false;
+        PROP(&e, do_work_copy(dn) );
+    }
+
     if(dn->disconnect.state == DN_WAIT_READY){
         *noop = false;
         PROP(&e, do_work_disconnect(dn) );
@@ -1755,6 +1878,8 @@ void dn_imaildir_update(dn_t *dn, update_t *update){
             dn->store.state = DN_WAIT_READY;
         }else if(dn->expunge.state == DN_WAIT_WAITING){
             dn->expunge.state = DN_WAIT_READY;
+        }else if(dn->copy.state == DN_WAIT_WAITING){
+            dn->copy.state = DN_WAIT_READY;
         }else if(dn->disconnect.state == DN_WAIT_WAITING){
             dn->disconnect.state = DN_WAIT_READY;
         }else{
@@ -1783,5 +1908,6 @@ void dn_imaildir_preunregister(dn_t *dn){
 
     dn_free_store(dn);
     dn_free_expunge(dn);
+    dn_free_copy(dn);
     dn_free_disconnect(dn);
 }

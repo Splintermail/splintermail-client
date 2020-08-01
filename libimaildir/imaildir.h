@@ -105,9 +105,16 @@ typedef struct maildir_log_i maildir_log_i;
 struct imaildir_cb_i;
 typedef struct imaildir_cb_i imaildir_cb_i;
 
+// forward declaration of dirmgr_hold_t
+struct dirmgr_hold_t;
+typedef struct dirmgr_hold_t dirmgr_hold_t;
+
 struct imaildir_cb_i {
     // verify that we are allowed to download right now
     bool (*allow_download)(imaildir_cb_i*, imaildir_t*);
+    derr_t (*dirmgr_hold_new)(
+        imaildir_cb_i*, const dstr_t *name, dirmgr_hold_t **out
+    );
 };
 
 // IMAP maildir
@@ -164,6 +171,12 @@ struct imaildir_t {
     link_t relays;  // relay_t->link
     // the id in the tag of commands originating with us
     size_t tag;
+
+    // because we execute the file copying on behalf of the dn_t
+    struct {
+        // when
+        void *requester;
+    } copy;
 
     // did we open via imaildir_init_lite()?
     bool lite;
@@ -297,10 +310,12 @@ derr_t imaildir_dn_close_msg(imaildir_t *m, unsigned int uid_up, int *fd,
 // support for APPEND and COPY (without redownloading message)
 
 // add a file to an open imaildir_t (rename or remove path)
+// if uidvld is invalid, this will silently delete the file.
 derr_t imaildir_add_local_file(
     imaildir_t *m,
     const string_builder_t *path,
-    unsigned int uid,
+    unsigned int uidvld_up,
+    unsigned int uid_up,
     size_t len,
     imap_time_t intdate,
     msg_flags_t flags

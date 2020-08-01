@@ -460,6 +460,16 @@ static bool imaildir_cb_allow_download(imaildir_cb_i *cb, imaildir_t *m){
     return !hashmap_gets(&dm->holds, &mgd->name);
 }
 
+// part of the imaildir_cb_i
+static derr_t imaildir_dirmgr_hold_new(
+    imaildir_cb_i *cb, const dstr_t *name, dirmgr_hold_t **out
+){
+    derr_t e = E_OK;
+    dirmgr_t *dm = CONTAINER_OF(cb, dirmgr_t, imaildir_cb);
+    PROP(&e, dirmgr_hold_new(dm, name, out) );
+    return e;
+}
+
 derr_t dirmgr_init(dirmgr_t *dm, string_builder_t path,
         const keypair_t *keypair){
     derr_t e = E_OK;
@@ -474,6 +484,7 @@ derr_t dirmgr_init(dirmgr_t *dm, string_builder_t path,
         .path = path,
         .imaildir_cb = {
             .allow_download = imaildir_cb_allow_download,
+            .dirmgr_hold_new = imaildir_dirmgr_hold_new,
         },
     };
 
@@ -613,10 +624,12 @@ void dirmgr_hold_free(dirmgr_hold_t *hold){
 
 
 // this will rename or delete the file at *path
+// if uidvld is invalid, this will silently delete the file.
 derr_t dirmgr_hold_add_local_file(
     dirmgr_hold_t *hold,
     const string_builder_t *path,
-    unsigned int uid,
+    unsigned int uidvld_up,
+    unsigned int uid_up,
     size_t len,
     imap_time_t intdate,
     msg_flags_t flags
@@ -630,7 +643,9 @@ derr_t dirmgr_hold_add_local_file(
     if(h != NULL){
         managed_dir_t *mgd = CONTAINER_OF(h, managed_dir_t, h);
         PROP(&e,
-            imaildir_add_local_file(&mgd->m, path, uid, len, intdate, flags)
+            imaildir_add_local_file(
+                &mgd->m, path, uidvld_up, uid_up, len, intdate, flags
+            )
         );
         return e;
     }
@@ -647,7 +662,9 @@ derr_t dirmgr_hold_add_local_file(
     PROP_GO(&e, imaildir_init_lite(&m, dir_path), fail_path);
 
     PROP(&e,
-        imaildir_add_local_file(&m, path, uid, len, intdate, flags)
+        imaildir_add_local_file(
+            &m, path, uidvld_up, uid_up, len, intdate, flags
+        )
     );
 
     imaildir_free(&m);

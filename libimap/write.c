@@ -1368,14 +1368,14 @@ static derr_t st_code_skip_fill(skip_fill_t *sf, ie_st_code_t *code){
         case IE_ST_CODE_APPENDUID:
             PROP(&e, extension_assert_on(sf->exts, EXT_UIDPLUS) );
             STATIC_SKIP_FILL("APPENDUID ");
-            PROP(&e, nznum_skip_fill(sf, code->arg.appenduid.num) );
+            PROP(&e, nznum_skip_fill(sf, code->arg.appenduid.uidvld) );
             STATIC_SKIP_FILL(" ");
             PROP(&e, nznum_skip_fill(sf, code->arg.appenduid.uid) );
             break;
         case IE_ST_CODE_COPYUID:
             PROP(&e, extension_assert_on(sf->exts, EXT_UIDPLUS) );
             STATIC_SKIP_FILL("COPYUID ");
-            PROP(&e, nznum_skip_fill(sf, code->arg.copyuid.num) );
+            PROP(&e, nznum_skip_fill(sf, code->arg.copyuid.uidvld) );
             STATIC_SKIP_FILL(" ");
             PROP(&e, uid_set_skip_fill(sf, code->arg.copyuid.uids_in) );
             STATIC_SKIP_FILL(" ");

@@ -722,6 +722,62 @@ def test_append_to_nonexisting(cmd, maildir_root):
     assert not os.path.exists(bad_path), \
             "path to a non-existing directory exists after APPEND"
 
+
+def get_msg_count(write_q, read_q, box):
+    write_q.put(b"N STATUS %s (MESSAGES)\r\n"%box)
+    matches = wait_for_resp(
+        read_q,
+        "N",
+        "OK",
+        require=[b"\\* STATUS %s \\(MESSAGES ([0-9]*)\\)"%box],
+    )
+    return int(matches[0][1])
+
+
+def test_copy(cmd, maildir_root):
+    with Subproc(cmd) as subproc:
+        with _session(subproc) as (write_q, read_q):
+            # first count how many messages there are
+            inbox_count = get_msg_count(write_q, read_q, b"INBOX")
+            other_count = get_msg_count(write_q, read_q, b"\"Test Folder\"")
+
+            # figure on a paritally valid range
+            assert inbox_count > 2, "inbox too empty for test"
+            copy_range = (inbox_count - 1, inbox_count + 1)
+
+            write_q.put(b"1 SELECT INBOX\r\n")
+            wait_for_resp(read_q, "1", "OK")
+
+            # COPY to other mailbox
+            write_q.put(b"2 COPY %d:%d \"Test Folder\"\r\n"%copy_range)
+            wait_for_resp(read_q, "2", "OK")
+
+            # COPY to this mailbox, with partially valid range
+            write_q.put(b"3 COPY %d:%d INBOX\r\n"%copy_range)
+            wait_for_resp(
+                read_q,
+                "3",
+                "OK",
+                require=[b"\\* %d EXISTS"%(inbox_count+2)],
+            )
+
+            # COPY to nonexisting mailbox
+            write_q.put(b"4 COPY %d:%d asdf\r\n"%copy_range)
+            wait_for_resp(read_q, "4", "NO", require=[b"4 NO \\[TRYCREATE\\]"])
+
+            write_q.put(b"5 CLOSE\r\n")
+            wait_for_resp(read_q, "5", "OK")
+
+            # check counts
+            got = get_msg_count(write_q, read_q, b"INBOX")
+            exp = inbox_count + 2
+            assert exp == got, f"expected {exp} but got {got}"
+
+            got = get_msg_count(write_q, read_q, b"\"Test Folder\"")
+            exp = other_count + 2
+            assert exp == got, f"expected {exp} but got {got}"
+
+
 def test_terminate_with_open_connection(cmd, maildir_root):
     with Subproc(cmd) as subproc:
         with run_connection(subproc) as (write_q, read_q):
@@ -805,6 +861,7 @@ if __name__ == "__main__":
         test_passthru_selected,
         test_append,
         test_append_to_nonexisting,
+        test_copy,
         test_terminate_with_open_connection,
         test_terminate_with_open_session,
         test_terminate_with_open_mailbox,

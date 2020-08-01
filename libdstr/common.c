@@ -240,15 +240,17 @@ derr_t dstr_toi(const dstr_t* in, int* out, int base){
     errno = 0; long result = strtol(temp.data, &endptr, base);
     // check for error
     if(errno){
-        TRACE(&e, "%x: %x\n", FS("srtol"), FE(&errno));
+        TRACE(&e, "strtol(%x): %x\n", FD(in), FE(&errno));
         ORIG(&e, E_PARAM, "invalid number string");
     }
     // make sure everything was parsed
     if(endptr != &temp.data[temp.len]){
+        TRACE(&e, "input was \"%x\"\n", FD(in));
         ORIG(&e, E_PARAM, "invalid number string");
     }
     // check bounds
     if(result > INT_MAX || result < INT_MIN){
+        TRACE(&e, "input was \"%x\"\n", FD(in));
         ORIG(&e, E_PARAM, "number out of range");
     }
     // return value
@@ -273,15 +275,17 @@ derr_t dstr_tou(const dstr_t* in, unsigned int* out, int base){
     unsigned long result = strtoul(temp.data, &endptr, base);
     // check for error
     if(errno){
-        TRACE(&e, "%x: %x\n", FS("srtoul"), FE(&errno));
+        TRACE(&e, "srtoul(%x): %x\n", FD(in), FE(&errno));
         ORIG(&e, E_PARAM, "invalid number string");
     }
     // make sure everything was parsed
     if(endptr != &temp.data[temp.len]){
+        TRACE(&e, "input was \"%x\"\n", FD(in));
         ORIG(&e, E_PARAM, "invalid number string");
     }
     // check bounds
     if(result > UINT_MAX){
+        TRACE(&e, "input was \"%x\"\n", FD(in));
         ORIG(&e, E_PARAM, "number out of range");
     }
     // return value
@@ -305,11 +309,12 @@ derr_t dstr_tol(const dstr_t* in, long* out, int base){
     long result = strtol(temp.data, &endptr, base);
     // check for error
     if(errno){
-        TRACE(&e, "%x: %x\n", FS("srtol"), FE(&errno));
+        TRACE(&e, "srtol(%x): %x\n", FD(in), FE(&errno));
         ORIG(&e, E_PARAM, "invalid number string");
     }
     // make sure everything was parsed
     if(endptr != &temp.data[temp.len]){
+        TRACE(&e, "input was \"%x\"\n", FD(in));
         ORIG(&e, E_PARAM, "invalid number string");
     }
     // return value
@@ -334,11 +339,12 @@ derr_t dstr_toul(const dstr_t* in, unsigned long* out, int base){
     unsigned long result = strtoul(temp.data, &endptr, base);
     // check for error
     if(errno){
-        TRACE(&e, "%x: %x\n", FS("srtoul"), FE(&errno));
+        TRACE(&e, "srtoul(%x): %x\n", FD(in), FE(&errno));
         ORIG(&e, E_PARAM, "invalid number string");
     }
     // make sure everything was parsed
     if(endptr != &temp.data[temp.len]){
+        TRACE(&e, "input was \"%x\"\n", FD(in));
         ORIG(&e, E_PARAM, "invalid number string");
     }
     // return value
@@ -363,11 +369,12 @@ derr_t dstr_toll(const dstr_t* in, long long* out, int base){
     long long result = strtoll(temp.data, &endptr, base);
     // check for error
     if(errno){
-        TRACE(&e, "%x: %x\n", FS("srtoll"), FE(&errno));
+        TRACE(&e, "srtoll(%x): %x\n", FD(in), FE(&errno));
         ORIG(&e, E_PARAM, "invalid number string");
     }
     // make sure everything was parsed
     if(endptr != &temp.data[temp.len]){
+        TRACE(&e, "input was \"%x\"\n", FD(in));
         ORIG(&e, E_PARAM, "invalid number string");
     }
     // return value
@@ -392,11 +399,12 @@ derr_t dstr_toull(const dstr_t* in, unsigned long long* out, int base){
     unsigned long long result = strtoull(temp.data, &endptr, base);
     // check for error
     if(errno){
-        TRACE(&e, "%x: %x\n", FS("srtoull"), FE(&errno));
+        TRACE(&e, "srtoll(%x): %x\n", FD(in), FE(&errno));
         ORIG(&e, E_PARAM, "invalid number string");
     }
     // make sure everything was parsed
     if(endptr != &temp.data[temp.len]){
+        TRACE(&e, "input was \"%x\"\n", FD(in));
         ORIG(&e, E_PARAM, "invalid number string");
     }
     // return value
@@ -421,11 +429,12 @@ derr_t dstr_tof(const dstr_t* in, float* out){
     float result = strtof(temp.data, &endptr);
     // check for error
     if(errno){
-        TRACE(&e, "%x: %x\n", FS("srtof"), FE(&errno));
+        TRACE(&e, "srtof(%x): %x\n", FD(in), FE(&errno));
         ORIG(&e, E_PARAM, "invalid number string");
     }
     // make sure everything was parsed
     if(endptr != &temp.data[temp.len]){
+        TRACE(&e, "input was \"%x\"\n", FD(in));
         ORIG(&e, E_PARAM, "invalid number string");
     }
     // return value
@@ -450,11 +459,12 @@ derr_t dstr_tod(const dstr_t* in, double* out){
     double result = strtod(temp.data, &endptr);
     // check for error
     if(errno){
-        TRACE(&e, "%x: %x\n", FS("srtod"), FE(&errno));
+        TRACE(&e, "srtod(%x): %x\n", FD(in), FE(&errno));
         ORIG(&e, E_PARAM, "invalid number string");
     }
     // make sure everything was parsed
     if(endptr != &temp.data[temp.len]){
+        TRACE(&e, "input was \"%x\"\n", FD(in));
         ORIG(&e, E_PARAM, "invalid number string");
     }
     // return value
@@ -479,11 +489,12 @@ derr_t dstr_told(const dstr_t* in, long double* out){
     long double result = strtold(temp.data, &endptr);
     // check for error
     if(errno){
-        TRACE(&e, "%x: %x\n", FS("srtod"), FE(&errno));
+        TRACE(&e, "srtod(%x): %x\n", FD(in), FE(&errno));
         ORIG(&e, E_PARAM, "invalid number string");
     }
     // make sure everything was parsed
     if(endptr != &temp.data[temp.len]){
+        TRACE(&e, "input was \"%x\"\n", FD(in));
         ORIG(&e, E_PARAM, "invalid number string");
     }
     // return value
@@ -498,6 +509,7 @@ derr_t dstr_tosize(const dstr_t* in, size_t* out, int base){
 
 #if ULLLONG_MAX > SIZE_MAX
     if(temp > SIZE_MAX){
+        TRACE(&e, "input was \"%x\"\n", FD(in));
         ORIG(&e, E_PARAM, "number string too large for size_t");
     }
 #endif

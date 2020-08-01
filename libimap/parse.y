@@ -1199,12 +1199,12 @@ sc_uidnostick: UIDNOSTICK
 
 sc_appenduid: APPENDUID SP { MODE(NUM); } nznum[n] SP nznum[uid] sc_end
     { extension_assert_on_builder(E, p->exts, EXT_UIDPLUS);
-      ie_st_code_arg_t arg = {.appenduid={.num=$n, .uid=$uid}};
+      ie_st_code_arg_t arg = {.appenduid={.uidvld=$n, .uid=$uid}};
       $$ = ie_st_code_new(E, IE_ST_CODE_APPENDUID, arg); };
 
 sc_copyuid: COPYUID SP { MODE(NUM); } nznum[n] SP uid_set[in] SP uid_set[out] sc_end
     { extension_assert_on_builder(E, p->exts, EXT_UIDPLUS);
-      ie_st_code_arg_t arg = {.copyuid={.num=$n, .uids_in=$in, .uids_out=$out}};
+      ie_st_code_arg_t arg = {.copyuid={.uidvld=$n, .uids_in=$in, .uids_out=$out}};
       $$ = ie_st_code_new(E, IE_ST_CODE_COPYUID, arg); };
 
 

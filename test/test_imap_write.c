@@ -434,7 +434,7 @@ static derr_t test_imap_writer(void){
                             ie_st_code_new(&e,
                                 IE_ST_CODE_APPENDUID,
                                 (ie_st_code_arg_t){
-                                    .appenduid={.num=1, .uid=2},
+                                    .appenduid={.uidvld=1, .uid=2},
                                 }
                             ),
                             IE_DSTR("text")
@@ -454,8 +454,8 @@ static derr_t test_imap_writer(void){
                                 IE_ST_CODE_COPYUID,
                                 (ie_st_code_arg_t){
                                     .copyuid={
-                                        .num=1,
-                                        .uids_in=ie_seq_set_new(&e, 1, 2),
+                                        .uidvld=1,
+                                        .uids_in=ie_seq_set_new(&e, 1, 4),
                                         .uids_out=ie_seq_set_new(&e, 4, 8),
                                     },
                                 }
@@ -465,7 +465,7 @@ static derr_t test_imap_writer(void){
                     }
                 ),
                 .out=(size_chunk_out_t[]){
-                    {64, "* OK [COPYUID 1 1:2 4:8] text\r\n"},
+                    {64, "* OK [COPYUID 1 1:4 4:8] text\r\n"},
                     {0}
                 },
             },

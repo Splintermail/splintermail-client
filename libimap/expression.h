@@ -444,11 +444,11 @@ typedef union {
 
     // UIDPLUS extension
     struct {
-        unsigned int num;
+        unsigned int uidvld;
         unsigned int uid;
     } appenduid;
     struct {
-        unsigned int num;
+        unsigned int uidvld;
         ie_seq_set_t *uids_in;
         ie_seq_set_t *uids_out;
     } copyuid;
@@ -585,6 +585,7 @@ typedef struct {
     ie_seq_set_t *seq_set;
     ie_mailbox_t *m;
 } ie_copy_cmd_t;
+DEF_STEAL_PTR(ie_copy_cmd_t);
 
 typedef union {
     // nothing for plus

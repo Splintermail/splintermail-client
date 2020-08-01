@@ -163,11 +163,30 @@ fail:
     return NULL;
 }
 
+update_req_t *update_req_copy_new(derr_t *e, ie_copy_cmd_t *copy_up,
+        void *requester){
+    if(is_error(*e)) goto fail;
+
+    IE_MALLOC(e, update_req_t, req, fail);
+
+    req->requester = requester;
+    req->type = UPDATE_REQ_COPY;
+    req->val.copy_up = copy_up;
+    link_init(&req->link);
+
+    return req;
+
+fail:
+    ie_copy_cmd_free(copy_up);
+    return NULL;
+}
+
 void update_req_free(update_req_t *req){
     if(!req) return;
     switch(req->type){
         case UPDATE_REQ_STORE: ie_store_cmd_free(req->val.uid_store); break;
         case UPDATE_REQ_EXPUNGE: ie_seq_set_free(req->val.uids_up); break;
+        case UPDATE_REQ_COPY: ie_copy_cmd_free(req->val.copy_up); break;
     }
     free(req);
 }

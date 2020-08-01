@@ -89,6 +89,7 @@ DEF_CONTAINER_OF(msg_expunge_t, mod, msg_mod_t);
 typedef enum {
     UPDATE_REQ_STORE,
     UPDATE_REQ_EXPUNGE,
+    UPDATE_REQ_COPY,
 } update_req_type_e;
 
 typedef union {
@@ -99,6 +100,8 @@ typedef union {
     /* we only support UID EXPUNGE commands internally.  Only the dn_t knows
        which UIDs can be closed as a result of a given CLOSE command. */
     ie_seq_set_t *uids_up;
+    // we only support UID COPY internally
+    ie_copy_cmd_t *copy_up;
 } update_req_val_u;
 
 // a request for an update
@@ -176,6 +179,8 @@ void msg_expunge_free(msg_expunge_t **expunge);
 update_req_t *update_req_store_new(derr_t *e, ie_store_cmd_t *uid_store,
         void *requester);
 update_req_t *update_req_expunge_new(derr_t *e, ie_seq_set_t *uids_up,
+        void *requester);
+update_req_t *update_req_copy_new(derr_t *e, ie_copy_cmd_t *copy_up,
         void *requester);
 void update_req_free(update_req_t *req);
 

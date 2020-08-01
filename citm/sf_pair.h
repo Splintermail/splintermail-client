@@ -42,8 +42,6 @@ struct sf_pair_t {
         size_t len;
         imap_time_t intdate;
         msg_flags_t flags;
-        // this value is only determined after the APPEND succeeds
-        unsigned int uid;
     } append;
 
     server_t server;

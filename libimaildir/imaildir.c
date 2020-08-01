@@ -17,14 +17,17 @@ static derr_t distribute_update_expunge(imaildir_t *m,
         const msg_expunge_t *expunge, msg_t *msg);
 static void imaildir_fail(imaildir_t *m, derr_t error);
 
+struct relay_t;
+typedef struct relay_t relay_t;
 
-typedef derr_t (*relay_cb_f)(imaildir_t *m, const ie_st_resp_t *st_resp,
-        dn_t *requester);
+// a hook for work to do before replying to the requester
+// currently only used by COPY commands
+typedef derr_t (*relay_cb_f)(const relay_t *relay, const ie_st_resp_t *st_resp);
 
 /* relay_t is what the imaildir uses to track relayed commands.  It has all the
    information for responding to the original requester or for replaying the
    command on a new up_t, should the original one fail. */
-typedef struct {
+struct relay_t {
     imaildir_t *m;
     // keep a whole copy of the command in case we have to replay it
     imap_cmd_t *cmd;
@@ -32,8 +35,10 @@ typedef struct {
     dn_t *requester;
     // what do we do when we finish?
     relay_cb_f cb;
+    // if we were executing a COPY we also have to manage a HOLD
+    dirmgr_hold_t *hold;
     link_t link;  // imaildir_t->relays
-} relay_t;
+};
 DEF_CONTAINER_OF(relay_t, link, link_t);
 
 
@@ -62,6 +67,8 @@ fail:
 static void relay_free(relay_t *relay){
     if(!relay) return;
     imap_cmd_free(relay->cmd);
+    // in case this relay was for a COPY, release the dirmgr_hold_t we had
+    dirmgr_hold_free(relay->hold);
     free(relay);
 }
 
@@ -82,9 +89,10 @@ static derr_t relay_cmd_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
 
     dn_t *requester = relay->requester;
 
-    // done with this relay
-    link_remove(&relay->link);
-    relay_free(relay);
+    // check for work to do locally before handing responding to the dn_t
+    if(relay->cb){
+        PROP_GO(&e, relay->cb(relay, st_resp), cu);
+    }
 
     // is the requester still around for us to respond to?
     if(requester){
@@ -93,25 +101,32 @@ static derr_t relay_cmd_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
         if(st_resp->status != IE_ST_OK){
             // just pass the failure to the requester
             st_copy = ie_st_resp_copy(&e, st_resp);
-            CHECK_GO(&e, fail);
+            CHECK_GO(&e, cu);
         }
 
         update_arg_u arg = { .sync = st_copy };
         update_t *update = NULL;
-        PROP_GO(&e, update_new(&update, NULL, UPDATE_SYNC, arg), fail);
+        PROP_GO(&e, update_new(&update, NULL, UPDATE_SYNC, arg), cu);
 
         dn_imaildir_update(requester, update);
     }
 
-    return e;
+cu:
+    // done with this relay
+    link_remove(&relay->link);
+    relay_free(relay);
 
-fail:
-    /* we must close accessors who don't have a way to tell they are now
-       out-of-date */
-    imaildir_fail(relay->m, SPLIT(e));
-    /* now we must throw a special error since we are about to return
-       control to an accessor that probably just got closed */
-    RETHROW(&e, &e, E_IMAILDIR);
+    // handle failures
+    if(is_error(e)){
+        /* we must close accessors who don't have a way to tell they are now
+           out-of-date */
+        imaildir_fail(relay->m, SPLIT(e));
+        /* now we must throw a special error since we are about to return
+           control to an accessor that probably just got closed */
+        RETHROW(&e, &e, E_IMAILDIR);
+    }
+
+    return e;
 }
 
 // imaildir_cb_free is an imap_cmd_cb_free_f
@@ -169,7 +184,6 @@ static unsigned int next_uid_dn(imaildir_t *m){
 }
 
 
-// this is for the himodseq that we serve to clients
 static unsigned long himodseq_dn(imaildir_t *m){
     // TODO: handle noop modseq's that result from STORE-after-EXPUNGE's
     jsw_atrav_t trav;
@@ -181,6 +195,17 @@ static unsigned long himodseq_dn(imaildir_t *m){
 
     // if the mailbox is empty, return 1
     return 1;
+}
+
+static unsigned int hi_uid_up(imaildir_t *m){
+    jsw_atrav_t trav;
+    jsw_anode_t *node = jsw_atlast(&trav, &m->msgs);
+    if(node != NULL){
+        msg_t *msg = CONTAINER_OF(node, msg_t, node);
+        return msg->uid_up;
+    }
+
+    return 0;
 }
 
 
@@ -1517,8 +1542,6 @@ static derr_t relay_update_req_store(imaildir_t *m, update_req_t *req){
         }
     }
 
-    /* once we store the relay and return E_OK, any failures crash the whole
-       imaildir_t, instead of the dn_t */
     link_list_append(&m->relays, &relay->link);
 
     return e;
@@ -1531,8 +1554,7 @@ fail_relay:
 }
 
 
-static derr_t relay_update_req_expunge(imaildir_t *m,
-        update_req_t *req){
+static derr_t relay_update_req_expunge(imaildir_t *m, update_req_t *req){
     derr_t e = E_OK;
     dn_t *requester = req->requester;
 
@@ -1561,8 +1583,175 @@ static derr_t relay_update_req_expunge(imaildir_t *m,
         }
     }
 
-    /* once we store the relay and return E_OK, any failures crash the whole
-       imaildir_t, instead of the dn_t */
+    link_list_append(&m->relays, &relay->link);
+
+    return e;
+
+fail_cmd:
+    imap_cmd_free(cmd_copy);
+fail_relay:
+    relay_free(relay);
+    return e;
+}
+
+
+// copy one message from a COPY command into the target mailbox
+static derr_t copy_one_msg(
+    imaildir_t *m,
+    dirmgr_hold_t *hold,
+    unsigned int our_uid_up,
+    unsigned int their_uidvld_up,
+    unsigned int their_uid_up
+){
+    derr_t e = E_OK;
+
+    // make sure we have this uid
+    jsw_anode_t *node = jsw_afind(&m->msgs, &our_uid_up, NULL);
+    if(!node){
+        // this might happen if we sent a COPY but received a VANISHED
+        LOG_WARN("missing uid %x in COPYUID sequence\n", FU(our_uid_up));
+        return e;
+    }
+    msg_t *msg = CONTAINER_OF(node, msg_t, node);
+
+    // make sure the message has a file on disk
+    // (I think it should always have a file but we can tolerate if it doesn't)
+    if(msg->state != MSG_FILLED){
+        LOG_WARN("uid %x in COPYUID sequence is not FILLED\n", FU(our_uid_up));
+        return e;
+    }
+
+    // get the path to the local file
+    string_builder_t subdir_path = SUB(&m->path, msg->subdir);
+    string_builder_t msg_path = sb_append(&subdir_path, FD(&msg->filename));
+
+    // get a temporary file path
+    size_t tmp_id = imaildir_new_tmp_id(m);
+    DSTR_VAR(tmp_name, 32);
+    NOFAIL(&e, E_FIXEDSIZE, FMT(&tmp_name, "%x", FU(tmp_id)) );
+    string_builder_t tmp_dir = TMP(&m->path);
+    string_builder_t tmp_path = sb_append(&tmp_dir, FD(&tmp_name));
+
+    // copy the message on disk
+    PROP(&e, file_copy_path(&msg_path, &tmp_path, 0666) );
+
+    // finally, add the message to the maildir (which may actually be us)
+    PROP(&e,
+        dirmgr_hold_add_local_file(
+            hold,
+            &tmp_path,
+            their_uidvld_up,
+            their_uid_up,
+            msg->length,
+            msg->internaldate,
+            msg->flags
+        )
+    );
+
+    return e;
+}
+
+// relay_copy_cb is a relay_cb_f
+static derr_t relay_copy_cb(const relay_t *relay, const ie_st_resp_t *st_resp){
+    derr_t e = E_OK;
+    imaildir_t *m = relay->m;
+
+    // noop for non-OK responses
+    if(st_resp->status != IE_ST_OK){
+        return e;
+    }
+
+    // ensure that we have a COPYUID in the st_resp
+    if(!st_resp->code){
+        ORIG(&e, E_RESPONSE, "expected COPYUID in st_resp but got nothing");
+    }
+    if(st_resp->code->type != IE_ST_CODE_COPYUID){
+        TRACE(&e, "expected COPYUID in status response (%x) but got %x\n",
+            FU(IE_ST_CODE_COPYUID), FU(st_resp->code->type));
+        ORIG(&e, E_RESPONSE, "expected COPYUID  but got something else");
+    }
+
+    unsigned int their_uidvld_up = st_resp->code->arg.copyuid.uidvld;
+    const ie_seq_set_t *our_uids_up = st_resp->code->arg.copyuid.uids_in;
+    const ie_seq_set_t *their_uids_up = st_resp->code->arg.copyuid.uids_out;
+
+    // validate that both sequences are the same length
+    ie_seq_set_trav_t trav_in, trav_out;
+    // both sequences are required to be well-defined, so we can use 0's
+    unsigned int our_uid_up = ie_seq_set_iter(&trav_in, our_uids_up, 0, 0);
+    unsigned int their_uid_up = ie_seq_set_iter(&trav_out, their_uids_up, 0, 0);
+    while(our_uid_up && their_uid_up){
+        our_uid_up = ie_seq_set_next(&trav_in);
+        their_uid_up = ie_seq_set_next(&trav_out);
+    }
+    if(their_uid_up || our_uid_up){
+        ORIG(&e, E_RESPONSE, "COPYUID has mismatched ie_seq_set_t's")
+    }
+
+    /* Remember the highest uid_up.  This way, if we have a COPYUID that
+       exceeds the highest uid_up that we have *right now*, we don't try to
+       copy the wrong message, which could otherwise happen if we are both
+       the destination mailbox for the COPY */
+    unsigned int precopy_max_uid_up = hi_uid_up(m);
+
+    our_uid_up = ie_seq_set_iter(&trav_in, our_uids_up, 0, 0);
+    their_uid_up = ie_seq_set_iter(&trav_out, their_uids_up, 0, 0);
+    while(our_uid_up && their_uid_up){
+        if(our_uid_up > precopy_max_uid_up){
+            LOG_WARN("skipping uid %x in COPYUID sequence\n", FU(our_uid_up));
+        }
+
+        PROP(&e,
+            copy_one_msg(
+                m, relay->hold, our_uid_up, their_uidvld_up, their_uid_up
+            )
+        );
+
+        our_uid_up = ie_seq_set_next(&trav_in);
+        their_uid_up = ie_seq_set_next(&trav_out);
+    }
+
+    return e;
+}
+
+
+static derr_t relay_update_req_copy(imaildir_t *m, update_req_t *req){
+    derr_t e = E_OK;
+
+    dn_t *requester = req->requester;
+
+    // just relay a UID COPY command upwards
+    size_t tag = m->tag++;
+    ie_dstr_t *tag_str = write_tag(&e, tag);
+    imap_cmd_arg_t arg = { .copy = STEAL(ie_copy_cmd_t, &req->val.copy_up) };
+    imap_cmd_t *cmd = imap_cmd_new(&e, tag_str, IMAP_CMD_COPY, arg);
+    relay_t *relay = relay_new(&e, m, cmd, requester);
+    CHECK(&e);
+
+    // take a dirmgr_hold_t on the mailbox in question
+    PROP_GO(&e,
+        m->cb->dirmgr_hold_new(
+            m->cb, ie_mailbox_name(arg.copy->m), &relay->hold
+        ),
+    fail_relay);
+
+    relay->cb = relay_copy_cb;
+
+    imap_cmd_t *cmd_copy;
+    // relay through the primary up_t, only if the primary up_t is synced
+    if(!link_list_isempty(&m->ups)){
+        up_t *up = CONTAINER_OF(m->ups.next, up_t, link);
+        if(up->synced){
+            cmd_copy = imap_cmd_copy(&e, relay->cmd);
+            CHECK_GO(&e, fail_relay);
+
+            imaildir_cb_t *imaildir_cb = imaildir_cb_new(&e, relay, tag_str);
+            CHECK_GO(&e, fail_cmd);
+
+            up_imaildir_relay_cmd(up, cmd_copy, &imaildir_cb->cb);
+        }
+    }
+
     link_list_append(&m->relays, &relay->link);
 
     return e;
@@ -1579,8 +1768,6 @@ derr_t imaildir_dn_build_views(imaildir_t *m, jsw_atree_t *views,
         unsigned int *max_uid_dn, unsigned int *uidvld_dn){
     derr_t e = E_OK;
 
-    *max_uid_dn = 0;
-
     // make one view for every message present in the mailbox
     jsw_atrav_t trav;
     jsw_anode_t *node = jsw_atfirst(&trav, &m->msgs);
@@ -1588,19 +1775,12 @@ derr_t imaildir_dn_build_views(imaildir_t *m, jsw_atree_t *views,
         msg_t *msg = CONTAINER_OF(node, msg_t, node);
         // skip UNFILLED or EXPUNGED messages
         if(msg->state != MSG_FILLED) continue;
-        *max_uid_dn = MAX(*max_uid_dn, msg->uid_dn);
         msg_view_t *view;
         PROP(&e, msg_view_new(&view, msg) );
         jsw_ainsert(views, &view->node);
     }
 
-    // check the highest uid_dn in expunged tree
-    node = jsw_atlast(&trav, &m->expunged);
-    if(node){
-        msg_expunge_t *expunge = CONTAINER_OF(node, msg_expunge_t, node);
-        *max_uid_dn = MAX(*max_uid_dn, expunge->uid_dn);
-    }
-
+    *max_uid_dn = m->hi_uid_dn;
     *uidvld_dn = m->log->get_uidvld_dn(m->log);
 
     return e;
@@ -1621,6 +1801,11 @@ derr_t imaildir_dn_request_update(imaildir_t *m, update_req_t *req){
         case UPDATE_REQ_EXPUNGE:
             // TODO: also support local mailboxes
             PROP_GO(&e, relay_update_req_expunge(m, req), cu);
+            goto cu;
+
+        case UPDATE_REQ_COPY:
+            // TODO: also support local mailboxes
+            PROP_GO(&e, relay_update_req_copy(m, req), cu);
             goto cu;
     }
     ORIG_GO(&e, E_INTERNAL, "unrecognized update request", cu);
@@ -1691,15 +1876,23 @@ derr_t imaildir_dn_close_msg(imaildir_t *m, unsigned int uid_up, int *fd,
 
 
 // add a file to an open imaildir_t (rename or remove path)
+// if uidvld is invalid, this will silently delete the file.
 derr_t imaildir_add_local_file(
     imaildir_t *m,
     const string_builder_t *path,
+    unsigned int uidvld_up,
     unsigned int uid_up,
     size_t len,
     imap_time_t intdate,
     msg_flags_t flags
 ){
     derr_t e = E_OK;
+
+    if(m->log->get_uidvld_up(m->log) != uidvld_up){
+        // not techincally an error, but it should be rare, so print a warning
+        LOG_WARN("imaildir_add_local_file() called with invalid uidvld\n");
+        goto fail_path;
+    }
 
     msg_t *msg = NULL;
 

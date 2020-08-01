@@ -189,7 +189,8 @@ static derr_t sf_pair_append_resp(sf_pair_t *sf_pair){
     if(st_resp->code->type != IE_ST_CODE_APPENDUID){
         ORIG_GO(&e, E_RESPONSE, "expected APPENDUID in APPEND response", cu);
     }
-    sf_pair->append.uid = st_resp->code->arg.appenduid.uid;
+    unsigned int uidvld_up = st_resp->code->arg.appenduid.uidvld;
+    unsigned int uid_up = st_resp->code->arg.appenduid.uid;
 
     // get the path to the temporary file
     DSTR_VAR(file, 32);
@@ -203,7 +204,8 @@ static derr_t sf_pair_append_resp(sf_pair_t *sf_pair){
         dirmgr_hold_add_local_file(
             sf_pair->append.hold,
             &path,
-            sf_pair->append.uid,
+            uidvld_up,
+            uid_up,
             sf_pair->append.len,
             sf_pair->append.intdate,
             sf_pair->append.flags
