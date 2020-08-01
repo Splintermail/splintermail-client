@@ -33,14 +33,6 @@ typedef struct {
 DEF_CONTAINER_OF(managed_dir_t, h, hash_elem_t);
 DEF_CONTAINER_OF(managed_dir_t, m, imaildir_t);
 
-// a struct representing a mailbox that has a message getting added to it
-typedef struct {
-    dstr_t name;
-    size_t count;
-    hash_elem_t h;  // dirmgr_t->holds
-} dirmgr_hold_t;
-DEF_CONTAINER_OF(dirmgr_hold_t, h, hash_elem_t);
-
 struct dirmgr_t {
     string_builder_t path;
     const keypair_t *keypair;
@@ -50,6 +42,15 @@ struct dirmgr_t {
     size_t tmp_count;
 };
 DEF_CONTAINER_OF(dirmgr_t, imaildir_cb, imaildir_cb_i);
+
+// a smartpointer struct for a mailbox that has a message getting added to it
+typedef struct {
+    dirmgr_t *dm;
+    dstr_t name;
+    size_t count;
+    hash_elem_t h;  // dirmgr_t->holds
+} dirmgr_hold_t;
+DEF_CONTAINER_OF(dirmgr_hold_t, h, hash_elem_t);
 
 // path must be linked to long-lived objects
 derr_t dirmgr_init(dirmgr_t *dm, string_builder_t path,
@@ -125,22 +126,20 @@ typedef derr_t (*for_each_mbx_hook_t)(const dstr_t *name, bool has_ctn,
 derr_t dirmgr_do_for_each_mbx(dirmgr_t *dm, const dstr_t *ref_name,
         for_each_mbx_hook_t hook, void *hook_data);
 
+
 /* handling APPEND and COPY: up_t's have to NOT download any messages while we
    are are APPENDing or COPYing messages around on the server */
-derr_t dirmgr_hold_start(dirmgr_t *dirmgr, const dstr_t *name);
 
-// open the corresponding imaildir_t (if necessary) and add the file
-// call 0 or more times between dirmgr_hold_start() and dirmgr_hold_end()
-// this will rename or delete the file at *path
+// start holding a directory (*hold is a smart pointer)
+derr_t dirmgr_hold_new(dirmgr_t *dm, const dstr_t *name, dirmgr_hold_t **out);
+// finish holding a directory
+void dirmgr_hold_free(dirmgr_hold_t *hold);
+
 derr_t dirmgr_hold_add_local_file(
-    dirmgr_t *dm,
-    const dstr_t *name,
+    dirmgr_hold_t *hold,
     const string_builder_t *path,
     unsigned int uid,
     size_t len,
     imap_time_t intdate,
     msg_flags_t flags
 );
-
-// stop holding downloads on a directory
-void dirmgr_hold_end(dirmgr_t *dm, const dstr_t *name);

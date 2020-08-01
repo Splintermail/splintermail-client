@@ -3,13 +3,8 @@
 static void sf_pair_free_append(sf_pair_t *sf_pair){
     passthru_req_free(STEAL(passthru_req_t, &sf_pair->append.req));
     passthru_resp_free(STEAL(passthru_resp_t, &sf_pair->append.resp));
-    if(sf_pair->append.have_hold){
-        sf_pair->append.have_hold = false;
-        dirmgr_hold_end(
-            sf_pair->dirmgr, ie_mailbox_name(sf_pair->append.mailbox)
-        );
-    }
-    ie_mailbox_free(STEAL(ie_mailbox_t, &sf_pair->append.mailbox));
+    dirmgr_hold_free(sf_pair->append.hold);
+    sf_pair->append.hold = NULL;
     if(sf_pair->append.tmp_id){
         DSTR_VAR(file, 32);
         // this can't actually fail in practice
@@ -140,16 +135,15 @@ static derr_t sf_pair_append_req(sf_pair_t *sf_pair){
         // also pass that value to the server to ensure that we are synced
         append->time = sf_pair->append.intdate;
     }
-    sf_pair->append.mailbox = ie_mailbox_copy(&e, append->m);
-    CHECK_GO(&e, fail);
 
     // step 3: start a hold on the mailbox
     PROP_GO(&e,
-        dirmgr_hold_start(
-            sf_pair->dirmgr, ie_mailbox_name(sf_pair->append.mailbox)
+        dirmgr_hold_new(
+            sf_pair->dirmgr,
+            ie_mailbox_name(append->m),
+            &sf_pair->append.hold
         ),
     fail);
-    sf_pair->append.have_hold = true;
 
     // step 4: encrypt the text to all the keys we know of
     ie_dstr_t *content = ie_dstr_new_empty(&e);
@@ -207,8 +201,7 @@ static derr_t sf_pair_append_resp(sf_pair_t *sf_pair){
     // add the temporary file to the maildir
     PROP_GO(&e,
         dirmgr_hold_add_local_file(
-            sf_pair->dirmgr,
-            ie_mailbox_name(sf_pair->append.mailbox),
+            sf_pair->append.hold,
             &path,
             sf_pair->append.uid,
             sf_pair->append.len,

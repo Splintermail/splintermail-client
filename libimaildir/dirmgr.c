@@ -54,38 +54,6 @@ fail_malloc:
 // end of managed_dir_t functions
 
 
-// dirmgr_hold_t functions
-
-static derr_t dirmgr_hold_new(dirmgr_hold_t **out, const dstr_t *name){
-    derr_t e = E_OK;
-    *out = NULL;
-
-    dirmgr_hold_t *hold = malloc(sizeof(*hold));
-    if(!hold) ORIG(&e, E_NOMEM, "nomem");
-    *hold = (dirmgr_hold_t){
-        .count = 1,
-    };
-
-    PROP_GO(&e, dstr_copy(name, &hold->name), fail);
-
-    *out = hold;
-
-    return e;
-
-fail:
-    free(hold);
-    return e;
-}
-
-static void dirmgr_hold_free(dirmgr_hold_t *hold){
-    if(!hold) return;
-    dstr_free(&hold->name);
-    free(hold);
-}
-
-// end of dirmgr_hold_t functions
-
-
 ////////////////////
 // utility functions
 ////////////////////
@@ -591,32 +559,62 @@ size_t dirmgr_new_tmp_id(dirmgr_t *dirmgr){
 }
 
 
-derr_t dirmgr_hold_start(dirmgr_t *dm, const dstr_t *name){
+derr_t dirmgr_hold_new(dirmgr_t *dm, const dstr_t *name, dirmgr_hold_t **out){
     derr_t e = E_OK;
+    *out = NULL;
 
     // check if we already have a hold for this name
     hash_elem_t *h = hashmap_gets(&dm->holds, name);
     if(h != NULL){
         dirmgr_hold_t *hold = CONTAINER_OF(h, dirmgr_hold_t, h);
         hold->count++;
+        *out = hold;
         return e;
     }
 
     // create a new hold
-    dirmgr_hold_t *hold;
-    PROP(&e, dirmgr_hold_new(&hold, name) );
+    dirmgr_hold_t *hold = malloc(sizeof(*hold));
+    if(!hold) ORIG(&e, E_NOMEM, "nomem");
+    *hold = (dirmgr_hold_t){ .dm = dm, .count = 1 };
+
+    PROP_GO(&e, dstr_copy(name, &hold->name), fail);
 
     // add to hashmap (we checked this name was not in the hashmap)
     hashmap_sets(&dm->holds, &hold->name, &hold->h);
 
+    *out = hold;
+
     return e;
+
+fail:
+    free(hold);
+    return e;
+}
+
+
+void dirmgr_hold_free(dirmgr_hold_t *hold){
+    if(!hold) return;
+    if(--hold->count) return;
+
+    dirmgr_t *dm = hold->dm;
+
+    // if the imaildir is open, let it know the hold is over
+    hash_elem_t *h = hashmap_gets(&dm->dirs, &hold->name);
+    if(h != NULL){
+        managed_dir_t *mgd = CONTAINER_OF(h, managed_dir_t, h);
+        imaildir_hold_end(&mgd->m);
+    }
+
+    // remove from holds and free the hold
+    hashmap_del_elem(&dm->holds, &hold->h);
+    dstr_free(&hold->name);
+    free(hold);
 }
 
 
 // this will rename or delete the file at *path
 derr_t dirmgr_hold_add_local_file(
-    dirmgr_t *dm,
-    const dstr_t *name,
+    dirmgr_hold_t *hold,
     const string_builder_t *path,
     unsigned int uid,
     size_t len,
@@ -625,8 +623,10 @@ derr_t dirmgr_hold_add_local_file(
 ){
     derr_t e = E_OK;
 
+    dirmgr_t *dm = hold->dm;
+
     // check if there's already an imaildir open
-    hash_elem_t *h = hashmap_gets(&dm->dirs, name);
+    hash_elem_t *h = hashmap_gets(&dm->dirs, &hold->name);
     if(h != NULL){
         managed_dir_t *mgd = CONTAINER_OF(h, managed_dir_t, h);
         PROP(&e,
@@ -636,7 +636,7 @@ derr_t dirmgr_hold_add_local_file(
     }
 
     // make sure it exists on the filesystem
-    string_builder_t dir_path = sb_append(&dm->path, FD(name));
+    string_builder_t dir_path = sb_append(&dm->path, FD(&hold->name));
     PROP(&e, mkdirs_path(&dir_path, 0777) );
 
     // also ensure ctn exist
@@ -657,30 +657,4 @@ derr_t dirmgr_hold_add_local_file(
 fail_path:
     DROP_CMD( remove_path(path) );
     return e;
-}
-
-
-void dirmgr_hold_end(dirmgr_t *dm, const dstr_t *name){
-    // check if we already have a hold for this name
-    hash_elem_t *h = hashmap_gets(&dm->holds, name);
-    if(h == NULL){
-        LOG_ERROR("dirmgr_hold_t not found for %x\n", FD(name));
-        return;
-    }
-
-    dirmgr_hold_t *hold = CONTAINER_OF(h, dirmgr_hold_t, h);
-    if(--hold->count == 0){
-        // remove from holds and free the hold
-        hashmap_del_elem(&dm->holds, h);
-        dirmgr_hold_free(hold);
-
-        // if the imaildir is open, let it know the hold is over
-        hash_elem_t *h = hashmap_gets(&dm->dirs, name);
-        if(h != NULL){
-            managed_dir_t *mgd = CONTAINER_OF(h, managed_dir_t, h);
-            imaildir_hold_end(&mgd->m);
-        }
-    }
-
-    return;
 }

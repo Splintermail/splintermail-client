@@ -35,11 +35,10 @@ struct sf_pair_t {
         // req and resp correspond to different wakeup reasons
         passthru_req_t *req;
         passthru_resp_t *resp;
-        bool have_hold;
+        dirmgr_hold_t *hold;
         // tmp_id > 0 means the temporary file exists
         size_t tmp_id;
         // the following values must be snagged from the APPEND passthru_req
-        ie_mailbox_t *mailbox;
         size_t len;
         imap_time_t intdate;
         msg_flags_t flags;
