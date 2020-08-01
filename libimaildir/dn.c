@@ -481,7 +481,7 @@ static derr_t store_cmd(dn_t *dn, const ie_dstr_t *tag,
     ie_seq_set_t *uid_dn_seq;
     PROP_GO(&e,
         copy_seq_to_uids(
-            dn, store->uid_mode, store->seq_set, false, &uid_up_seq
+            dn, store->uid_mode, store->seq_set, false, &uid_dn_seq
         ),
     fail_dn_store);
 
@@ -1253,6 +1253,8 @@ static derr_t gather_update_meta(dn_t *dn, gather_t *gather, update_t *update){
         // This should never happen since we process messages in order
         ORIG_GO(&e, E_INTERNAL, "missing uid_dn", cu);
     }
+    msg_view_t *old_view = CONTAINER_OF(node, msg_view_t, node);
+    msg_view_free(&old_view);
 
     // add the new view
     jsw_ainsert(&dn->views, &view->node);
@@ -1587,6 +1589,8 @@ static derr_t process_meta_update_for_store(dn_t *dn, update_t *update,
         // TODO: update a pending UPDATE_NEW message with this uid_dn in it
         ORIG_GO(&e, E_INTERNAL, "missing uid_dn", cu);
     }
+    msg_view_t *old_view = CONTAINER_OF(node, msg_view_t, node);
+    msg_view_free(&old_view);
 
     // add the new view
     jsw_ainsert(&dn->views, &view->node);

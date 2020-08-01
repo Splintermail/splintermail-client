@@ -249,13 +249,15 @@ class Subproc:
         return self
 
     def __exit__(self, typ, *_):
-        dump_logs = typ is not None
         try:
             self.close()
         except:
-            dump_logs = True
+            if typ is None:
+                # enforce clean exit
+                fmt_failure(self.reader)
+                raise
 
-        if dump_logs:
+        if typ is not None:
             fmt_failure(self.reader)
 
     def start(self):
@@ -768,48 +770,60 @@ def test_terminate_with_open_mailbox(cmd, maildir_root):
 
 # Prepare a subdirectory
 @contextlib.contextmanager
-def maildir_root_copy(maildir_root_originals):
+def temp_maildir_root():
     tempdir = tempfile.mkdtemp()
     try:
-        dst = os.path.join(tempdir, os.path.basename(maildir_root_originals))
-        shutil.copytree(maildir_root_originals, dst)
-        yield dst
+        yield tempdir
     finally:
         shutil.rmtree(tempdir)
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        print("usage: %s /path/to/test/files"%(sys.argv[0]), file=sys.stderr)
+    if len(sys.argv) < 2:
+        print(
+            "usage: %s /path/to/test/files [PATTERN...]"%(sys.argv[0]),
+            file=sys.stderr
+        )
         sys.exit(1)
 
     test_files = sys.argv[1]
+    patterns = [p if p.startswith("^") else ".*" + p for p in sys.argv[2:]]
 
     tests = [
-        # test_start_kill,
-        # test_login_logout,
-        # test_select_logout,
-        # test_select_close,
-        # test_select_select,
-        # test_store,
-        # test_expunge,
-        # test_expunge_on_close,
-        # test_no_expunge_on_logout,
-        # test_noop,
-        # test_up_transition,
-        # test_passthru_unselected,
-        # test_passthru_selected,
+        test_start_kill,
+        test_login_logout,
+        test_select_logout,
+        test_select_close,
+        test_select_select,
+        test_store,
+        test_expunge,
+        test_expunge_on_close,
+        test_no_expunge_on_logout,
+        test_noop,
+        test_up_transition,
+        test_passthru_unselected,
+        test_passthru_selected,
         test_append,
         test_append_to_nonexisting,
-        # test_terminate_with_open_connection,
-        # test_terminate_with_open_session,
-        # test_terminate_with_open_mailbox,
+        test_terminate_with_open_connection,
+        test_terminate_with_open_session,
+        test_terminate_with_open_mailbox,
     ]
 
+    # filter tests by patterns from command line
+    if len(patterns) > 0:
+        tests = [
+            t for t in tests
+            if any(re.match(p, t.__name__) is not None for p in patterns)
+        ]
+
+    if len(tests) == 0:
+        print("no tests match any patterns", file=sys.stderr)
+        sys.exit(1)
+
     for test in tests:
-        with maildir_root_copy(
-            os.path.join(test_files, "e2e_citm", "maildir_root")
-        ) as maildir_root:
+        print(test.__name__ + "... ", end="", flush="true")
+        with temp_maildir_root() as maildir_root:
             cmd = [
                 "citm/citm",
                 # "--local-host", "127.0.0.1"
@@ -822,6 +836,11 @@ if __name__ == "__main__":
                 "--mail-key", os.path.join(test_files, "key_tool/key_m.pem"),
                 "--maildirs", maildir_root,
             ]
-        test(cmd, maildir_root)
+            try:
+                test(cmd, maildir_root)
+                print("PASS")
+            except:
+                print("FAIL")
+                raise
 
     print("PASS")

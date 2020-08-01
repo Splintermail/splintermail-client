@@ -1237,7 +1237,7 @@ static void send_unsent_updates(imaildir_t *m, link_t *unsent){
 
 // used for UPDATE_NEW and UPDATE_META
 static derr_t make_view_updates(imaildir_t *m, link_t *unsent,
-        const msg_t *msg){
+        const msg_t *msg, update_type_e update_type){
     derr_t e = E_OK;
 
     msg_view_t *view;
@@ -1248,7 +1248,7 @@ static derr_t make_view_updates(imaildir_t *m, link_t *unsent,
 
         update_arg_u arg = { .new = view };
         update_t *update;
-        PROP_GO(&e, update_new(&update, NULL, UPDATE_NEW, arg), fail_view);
+        PROP_GO(&e, update_new(&update, NULL, update_type, arg), fail_view);
 
         link_list_append(unsent, &update->link);
     }
@@ -1271,7 +1271,7 @@ static derr_t distribute_update_new(imaildir_t *m, const msg_t *msg){
     link_t unsent;
     link_init(&unsent);
 
-    PROP(&e, make_view_updates(m, &unsent, msg) );
+    PROP(&e, make_view_updates(m, &unsent, msg, UPDATE_NEW) );
 
     send_unsent_updates(m, &unsent);
 
@@ -1294,7 +1294,7 @@ static derr_t distribute_update_meta(imaildir_t *m, const msg_t *msg){
     link_t unsent;
     link_init(&unsent);
 
-    PROP(&e, make_view_updates(m, &unsent, msg) );
+    PROP(&e, make_view_updates(m, &unsent, msg, UPDATE_META) );
 
     send_unsent_updates(m, &unsent);
 
