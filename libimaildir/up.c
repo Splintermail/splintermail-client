@@ -47,7 +47,7 @@ void up_imaildir_select(
     up->select.pending = true;
     up->select.name = name;
     up->select.uidvld_up = uidvld_up;
-    up->select.himodseq = himodseq_up;
+    up->select.himodseq_up = himodseq_up;
     hmsc_prep(&up->hmsc, himodseq_up);
 
     // enqueue ourselves
@@ -817,7 +817,9 @@ derr_t up_do_work(up_t *up, bool *noop){
     if(up->select.pending){
         *noop = false;
         up->select.pending = false;
-        PROP(&e, send_select(up, up->select.uidvld_up, up->select.himodseq) );
+        PROP(&e,
+            send_select(up, up->select.uidvld_up, up->select.himodseq_up)
+        );
         return e;
     }
 

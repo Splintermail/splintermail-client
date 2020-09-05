@@ -77,7 +77,7 @@ struct up_t {
         bool pending;
         const dstr_t *name;
         unsigned int uidvld_up;
-        unsigned long himodseq;
+        unsigned long himodseq_up;
     } select;
 
     struct {
