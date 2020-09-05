@@ -30,14 +30,21 @@ struct up_cb_i {
 
 // pass a response from the remote imap server to the up_t
 derr_t up_resp(up_t *up, imap_resp_t *resp);
-// if the connection is in a SELECTED state, CLOSE it.
+// if the connection is in a SELECTED state, UNSELECT it.
 derr_t up_unselect(up_t *up);
 derr_t up_do_work(up_t *up, bool *noop);
 
 // the interface the up_t provides to the imaildir:
 
-// up_imaildir_select contains late-initialization information
+// up_imaildir_select/up_imaildir_examine contain late-initialization info
+// they can each be called multiple times in the lifetime of an up_t
 void up_imaildir_select(
+    up_t *up,
+    const dstr_t *name,
+    unsigned int uidvld_up,
+    unsigned long himodseq_up
+);
+void up_imaildir_examine(
     up_t *up,
     const dstr_t *name,
     unsigned int uidvld_up,
@@ -50,15 +57,21 @@ void up_imaildir_have_local_file(up_t *up, unsigned uid_up);
 // trigger any downloading work that needs to be done after a hold ends
 void up_imaildir_hold_end(up_t *up);
 
+typedef enum {
+    UP_STATE_PRESELECT = 0,
+    UP_STATE_SELECT_SENT,
+    UP_STATE_SELECTED,  // can transition to EXAMINED or UNSELECT_SENT
+    UP_STATE_EXAMINED,  // can transition to SELECTED or UNSELECT_SENT
+    UP_STATE_UNSELECT_SENT,
+} up_state_e;
+
 // up_t is all the state we have for an upwards connection
 struct up_t {
     imaildir_t *m;
     // the interfaced provided to us
     up_cb_i *cb;
-    // this connection's state
-    bool selected;
+    up_state_e state;
     bool synced;
-    bool unselect_sent;
     // did next_cmd choose not to send a command last time?
     bool need_next_cmd;
     // a tool for tracking the highestmodseq we have actually synced

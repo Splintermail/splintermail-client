@@ -42,13 +42,17 @@ void up_imaildir_select(
     unsigned int uidvld_up,
     unsigned long himodseq_up
 ){
-    // do some final initialization steps that can't fail
-    up->selected = true;
+    if(up->state == UP_STATE_PRESELECT){
+        /* we can't call hmsc prep on a secondary SELECT or EXAMINE because it
+           is possible that we still have modseq responses in flight.  Instead,
+           that should be called on the `* OK [CLOSED]` response. */
+        hmsc_prep(&up->hmsc, himodseq_up);
+    }
+
     up->select.pending = true;
     up->select.name = name;
     up->select.uidvld_up = uidvld_up;
     up->select.himodseq_up = himodseq_up;
-    hmsc_prep(&up->hmsc, himodseq_up);
 
     // enqueue ourselves
     up->cb->enqueue(up->cb);
@@ -178,7 +182,7 @@ static derr_t send_unselect(up_t *up){
 
     CHECK(&e);
 
-    up->unselect_sent = true;
+    up->state = UP_STATE_UNSELECT_SENT;
     PROP(&e, up_send_cmd(up, cmd, up_cb) );
 
     return e;
@@ -478,8 +482,8 @@ static derr_t next_cmd(up_t *up, const ie_st_code_t *code){
         PROP(&e, imaildir_up_set_himodseq_up(up->m, hmsc_now(&up->hmsc)) );
     }
 
-    // never send anything more after a close
-    if(up->unselect_sent) return e;
+    // never send anything more after an UNSELECT
+    if(up->state == UP_STATE_UNSELECT_SENT) return e;
 
     // finish imaildir bootstrap if we need to
     if(up->bootstrapping){
@@ -528,12 +532,9 @@ static derr_t select_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
 
     if(st_resp->status != IE_ST_OK){
         // handle the special case where the mail server doesn't have this dir
-        if(st_resp->status == IE_ST_NO){
-            up->m->rm_on_close = true;
-        }
-        up->selected = false;
+        up->m->rm_on_close = (st_resp->status == IE_ST_NO);
         // don't allow any more commands
-        up->unselect_sent = true;
+        up->state = UP_STATE_UNSELECT_SENT;
         // report the error
         ie_st_resp_t *st_resp_copy = ie_st_resp_copy(&e, st_resp);
         CHECK(&e);
@@ -541,6 +542,7 @@ static derr_t select_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
         return e;
     }
 
+    up->state = UP_STATE_SELECTED;
     up->m->rm_on_close = false;
 
     // SELECT succeeded
@@ -591,6 +593,7 @@ static derr_t send_select(up_t *up, unsigned int uidvld_up,
 
     CHECK(&e);
 
+    up->state = UP_STATE_SELECT_SENT;
     PROP(&e, up_send_cmd(up, cmd, up_cb) );
 
     return e;
@@ -797,9 +800,9 @@ cu_resp:
 derr_t up_unselect(up_t *up){
     derr_t e = E_OK;
 
-    if(!up->selected){
+    if(up->state == UP_STATE_PRESELECT){
         // don't allow any more commands
-        up->unselect_sent = true;
+        up->state = UP_STATE_UNSELECT_SENT;
         // signal that it's already done
         PROP(&e, up->cb->unselected(up->cb) );
         return e;
@@ -825,7 +828,7 @@ derr_t up_do_work(up_t *up, bool *noop){
 
     /* after we are synchronized, but until we send unselect, try to relay
        any commands that were requested of us by the imaildir_t */
-    while(up->synced && !up->unselect_sent
+    while(up->synced && up->state != UP_STATE_UNSELECT_SENT
             && !link_list_isempty(&up->relay.cmds)){
         *noop = false;
         link_t *link;
