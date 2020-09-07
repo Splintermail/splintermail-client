@@ -631,6 +631,16 @@ static derr_t send_passthru(fetcher_t *fetcher){
             // (nothing to do)
             break;
 
+        case PASSTHRU_RENAME:
+            // steal the imap command
+            imap_arg.rename = fetcher->passthru.req->arg.rename;
+            fetcher->passthru.req->arg.rename = NULL;
+            // set the imap type
+            imap_type = IMAP_CMD_RENAME;
+            // prepare the passthru arg
+            // (nothing to do)
+            break;
+
         case PASSTHRU_SUB:
             // steal the imap command
             imap_arg.sub = fetcher->passthru.req->arg.sub;

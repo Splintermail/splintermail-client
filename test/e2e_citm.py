@@ -605,8 +605,9 @@ def do_passthru_test(write_q, read_q):
         disallow=[b"\\* LSUB \\(.*\\) \"/\" INBOX"],
     )
 
-    # test CREATE and DELETE
+    # test CREATE, RENAME, and DELETE
     name = codecs.encode(b"deleteme_" + os.urandom(5), "hex_codec")
+    rename = codecs.encode(b"deleteme_" + os.urandom(5), "hex_codec")
 
     write_q.put(b"8 CREATE %s\r\n"%name)
     wait_for_resp(read_q, "8", "OK")
@@ -619,13 +620,16 @@ def do_passthru_test(write_q, read_q):
         require=[b"\\* LIST \\(.*\\) \"/\" %s"%name],
     )
 
-    write_q.put(b"10 DELETE %s\r\n"%name)
+    write_q.put(b"10 RENAME %s %s\r\n"%(name, rename))
     wait_for_resp(read_q, "10", "OK")
 
-    write_q.put(b"11 LIST \"\" *\r\n")
+    write_q.put(b"11 DELETE %s\r\n"%rename)
+    wait_for_resp(read_q, "11", "OK")
+
+    write_q.put(b"12 LIST \"\" *\r\n")
     wait_for_resp(
         read_q,
-        "11",
+        "12",
         "OK",
         disallow=[b"\\* LIST \\(.*\\) \"/\" %s"%name],
     )

@@ -85,6 +85,7 @@ void passthru_req_arg_free(passthru_type_e type, passthru_req_arg_u arg){
         case PASSTHRU_STATUS:   ie_status_cmd_free(arg.status); break;
         case PASSTHRU_CREATE:   ie_mailbox_free(arg.create); break;
         case PASSTHRU_DELETE:   ie_mailbox_free(arg.delete); break;
+        case PASSTHRU_RENAME:   ie_rename_cmd_free(arg.rename); break;
         case PASSTHRU_SUB:      ie_mailbox_free(arg.sub); break;
         case PASSTHRU_UNSUB:    ie_mailbox_free(arg.unsub); break;
         case PASSTHRU_APPEND:   ie_append_cmd_free(arg.append); break;
@@ -123,6 +124,7 @@ void passthru_resp_arg_free(passthru_type_e type, passthru_resp_arg_u arg){
         case PASSTHRU_STATUS:   ie_status_resp_free(arg.status); break;
         case PASSTHRU_CREATE:   break;
         case PASSTHRU_DELETE:   break;
+        case PASSTHRU_RENAME:   break;
         case PASSTHRU_SUB:      break;
         case PASSTHRU_UNSUB:    break;
         case PASSTHRU_APPEND:   break;

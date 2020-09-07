@@ -8,6 +8,9 @@ ever point to the same folder on the filesystem.
 
 */
 
+/* E_FROZEN is a temporary failure to open a mailbox. */
+extern derr_type_t E_FROZEN;
+
 struct dirmgr_t;
 typedef struct dirmgr_t dirmgr_t;
 
@@ -38,6 +41,7 @@ struct dirmgr_t {
     const keypair_t *keypair;
     hashmap_t dirs;  // managed_dir_t->h
     hashmap_t holds;  // dirmgr_hold_t->h
+    hashmap_t freezes;  // dirmgr_freeze_t->h
     imaildir_cb_i imaildir_cb;
     size_t tmp_count;
 };
@@ -96,21 +100,18 @@ derr_t dirmgr_open_dn(dirmgr_t *dm, const dstr_t *name, dn_t *dn);
 void dirmgr_close_up(dirmgr_t *dm, up_t *up);
 void dirmgr_close_dn(dirmgr_t *dm, dn_t *dn);
 
-// derr_t dirmgr_create(imaildir_t *root, const dstr_t *name);
+// you have to have a dirmgr_freeze_t to call this
+derr_t dirmgr_delete(dirmgr_t *dm, const dstr_t *name);
 
-// blocks until all accessors have unregistered and the files are deleted
-// derr_t imaildir_delete(imaildir_t *root, const dstr_t *name);
+/* check for invald names, including:
+   - sections named any of: . .. cur tmp new
+   - empty sections
+   - names starting or ending with /
+   - names containing newlines */
+bool dirmgr_name_valid(const dstr_t *name);
 
-// corresponds to RENAME command, non-INBOX semantics
-// derr_t imaildir_rename(imaildir_t *root, const dstr_t *name,
-//         const dstr_t *tgt);
-
-// corresponds to RENAME command, INBOX semantics
-// derr_t imaildir_rename_inbox(imaildir_t *root, const dstr_t *tgt);
-
-// corresponds to LIST command
-// derr_t imaildir_list(imaildir_t *root, ...);
-// derr_t imaildir_lsub(imaildir_t *root, ...);
+// you have to have a dirmgr_freeze_t on old and new to call this
+derr_t dirmgr_rename(dirmgr_t *dm, const dstr_t *old, const dstr_t *new);
 
 typedef derr_t (*for_each_mbx_hook_t)(const dstr_t *name, bool has_ctn,
         bool has_children, void *data);
@@ -147,3 +148,31 @@ derr_t dirmgr_hold_add_local_file(
     imap_time_t intdate,
     msg_flags_t flags
 );
+
+
+// like a hold, but with a freeze you can't even connect to a mailbox
+typedef struct {
+    dirmgr_t *dm;
+    dstr_t name;
+    size_t count;
+    hash_elem_t h;
+} dirmgr_freeze_t;
+DEF_CONTAINER_OF(dirmgr_freeze_t, h, hash_elem_t);
+
+/* this will shut down any accessors before it returns, which means that you
+   MUST NOT create a freeze on a mailbox you are connected to */
+//
+/* Technically, RENAMEs should be possible without freezing the mailbox, but
+   we'd have to have better control over the name of the mailbox in several
+   places.  Right now, I'm afraid there would be some weird and unpredictable
+   corner-cases, where you might decide a mailbox is not openable, (which marks
+   it for deletion), then you rename somethng into place, then you delete what
+   you just renamed.
+
+   The other complication is that I'm not at all confident that you can rename
+   a directory on windows while some folders inside that directory are open
+   (that would require further testing) */
+derr_t dirmgr_freeze_new(
+    dirmgr_t *dm, const dstr_t *name, dirmgr_freeze_t **out
+);
+void dirmgr_freeze_free(dirmgr_freeze_t *freeze);

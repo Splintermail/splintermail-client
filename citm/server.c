@@ -51,6 +51,11 @@ static void server_free_logout(server_t *server){
 void server_free(server_t *server){
     if(!server) return;
 
+    ie_mailbox_free(server->selected_mailbox);
+    dirmgr_freeze_free(server->freeze_deleting);
+    dirmgr_freeze_free(server->freeze_rename_old);
+    dirmgr_freeze_free(server->freeze_rename_new);
+
     // free any imap cmds or resps laying around
     link_t *link;
     while((link = link_list_pop_first(&server->unhandled_cmds))){
@@ -600,6 +605,64 @@ static derr_t login_cmd(server_t *server, const ie_dstr_t *tag,
     return e;
 }
 
+static derr_t pre_delete_passthru(server_t *server, const ie_dstr_t *tag,
+        const ie_mailbox_t *delete, bool *ok){
+    derr_t e = E_OK;
+
+    *ok = false;
+
+    const dstr_t *deleting = ie_mailbox_name(delete);
+    // can't DELETE a mailbox you are connected to
+    if(server->imap_state == SELECTED){
+        const dstr_t *opened = ie_mailbox_name(server->selected_mailbox);
+        if(!dstr_cmp(opened, deleting)){
+            DSTR_STATIC(msg, "unable to DELETE what is SELECTED");
+            PROP(&e, send_no(server, tag, &msg) );
+            return e;
+        }
+    }
+
+    // take out a freeze on the mailboxe in question
+    PROP(&e,
+        dirmgr_freeze_new(server->dirmgr, deleting, &server->freeze_deleting)
+    );
+
+    *ok = true;
+
+    return e;
+}
+
+static derr_t pre_rename_passthru(server_t *server, const ie_dstr_t *tag,
+        const ie_rename_cmd_t *rename, bool *ok){
+    derr_t e = E_OK;
+
+    *ok = false;
+
+    const dstr_t *old = ie_mailbox_name(rename->old);
+    const dstr_t *new = ie_mailbox_name(rename->new);
+    // can't RENAME to/from a mailbox you are connected to
+    if(server->imap_state == SELECTED){
+        const dstr_t *opened = ie_mailbox_name(server->selected_mailbox);
+        if(!dstr_cmp(opened, old) || !dstr_cmp(opened, new)){
+            DSTR_STATIC(msg, "unable to RENAME what is SELECTED");
+            PROP(&e, send_no(server, tag, &msg) );
+            return e;
+        }
+    }
+
+    // take out a freeze on the mailbox in question
+    PROP(&e,
+        dirmgr_freeze_new(server->dirmgr, old, &server->freeze_rename_old)
+    );
+    PROP(&e,
+        dirmgr_freeze_new(server->dirmgr, new, &server->freeze_rename_new)
+    );
+
+    *ok = true;
+
+    return e;
+}
+
 
 /* send_passthru_st_resp is the builder-api version of passthru_done that is
    easy to include in other passthru handlers */
@@ -669,7 +732,7 @@ static derr_t passthru_done(server_t *server, passthru_resp_t *passthru_resp){
     return e;
 }
 
-// list_done is a server->after_passthru_pause()
+// list_done is for after PASSTHRU_LIST
 static derr_t list_done(server_t *server, passthru_resp_t *passthru_resp){
     derr_t e = E_OK;
 
@@ -694,7 +757,7 @@ static derr_t list_done(server_t *server, passthru_resp_t *passthru_resp){
     return e;
 }
 
-// lsub_done is a server->after_passthru_pause()
+// lsub_done is for after PASSTHRU_LSUB
 static derr_t lsub_done(server_t *server, passthru_resp_t *passthru_resp){
     derr_t e = E_OK;
 
@@ -719,7 +782,7 @@ static derr_t lsub_done(server_t *server, passthru_resp_t *passthru_resp){
     return e;
 }
 
-// status_done is a server->after_passthru_pause()
+// status_done is for after PASSTHRU_STATUS
 static derr_t status_done(server_t *server, passthru_resp_t *passthru_resp){
     derr_t e = E_OK;
 
@@ -736,6 +799,49 @@ static derr_t status_done(server_t *server, passthru_resp_t *passthru_resp){
 
     send_passthru_st_resp(&e, server, passthru_resp);
     CHECK(&e);
+
+    return e;
+}
+
+// delete_done is for after PASSTHRU_DELETE
+static derr_t delete_done(server_t *server, passthru_resp_t *passthru_resp){
+    derr_t e = E_OK;
+
+    // actually delete the directory if the DELETE was successful
+    if(passthru_resp->st_resp->status == IE_ST_OK){
+        const dstr_t *name = &server->freeze_deleting->name;
+        PROP_GO(&e, dirmgr_delete(server->dirmgr, name), unfreeze);
+    }
+
+    send_passthru_st_resp(&e, server, passthru_resp);
+    CHECK_GO(&e, unfreeze);
+
+unfreeze:
+    dirmgr_freeze_free(server->freeze_deleting);
+    server->freeze_deleting = NULL;
+
+    return e;
+}
+
+// rename_done is for after PASSTHRU_DELETE
+static derr_t rename_done(server_t *server, passthru_resp_t *passthru_resp){
+    derr_t e = E_OK;
+
+    // actually rename the directory if the DELETE was successful
+    if(passthru_resp->st_resp->status == IE_ST_OK){
+        const dstr_t *old = &server->freeze_rename_old->name;
+        const dstr_t *new = &server->freeze_rename_new->name;
+        PROP_GO(&e, dirmgr_rename(server->dirmgr, old, new), unfreeze);
+    }
+
+    send_passthru_st_resp(&e, server, passthru_resp);
+    CHECK_GO(&e, unfreeze);
+
+unfreeze:
+    dirmgr_freeze_free(server->freeze_rename_old);
+    dirmgr_freeze_free(server->freeze_rename_new);
+    server->freeze_rename_old = NULL;
+    server->freeze_rename_new = NULL;
 
     return e;
 }
@@ -772,6 +878,11 @@ static derr_t passthru_cmd(server_t *server, const ie_dstr_t *tag,
             arg.delete = ie_mailbox_copy(&e, cmd->arg.delete);
             break;
 
+        case IMAP_CMD_RENAME:
+            type = PASSTHRU_RENAME;
+            arg.rename = ie_rename_cmd_copy(&e, cmd->arg.rename);
+            break;
+
         case IMAP_CMD_SUB:
             type = PASSTHRU_SUB;
             arg.sub = ie_mailbox_copy(&e, cmd->arg.sub);
@@ -796,7 +907,6 @@ static derr_t passthru_cmd(server_t *server, const ie_dstr_t *tag,
         case IMAP_CMD_LOGIN:
         case IMAP_CMD_SELECT:
         case IMAP_CMD_EXAMINE:
-        case IMAP_CMD_RENAME:
         case IMAP_CMD_CHECK:
         case IMAP_CMD_CLOSE:
         case IMAP_CMD_EXPUNGE:
@@ -849,6 +959,11 @@ static derr_t do_select(server_t *server, imap_cmd_t *select_cmd){
     fail_cmd);
 
     const dstr_t *dir_name = ie_mailbox_name(select_cmd->arg.select->m);
+
+    // remember what we connected to
+    ie_mailbox_free(server->selected_mailbox);
+    server->selected_mailbox = ie_mailbox_copy(&e, select_cmd->arg.select->m);
+    CHECK_GO(&e, fail_cmd)
 
     PROP_GO(&e, dirmgr_open_dn(server->dirmgr, dir_name, &server->dn),
             fail_dn);
@@ -965,6 +1080,7 @@ static derr_t handle_one_command(server_t *server, imap_cmd_t *cmd){
         case IMAP_CMD_STATUS:
         case IMAP_CMD_CREATE:
         case IMAP_CMD_DELETE:
+        case IMAP_CMD_RENAME:
         case IMAP_CMD_SUB:
         case IMAP_CMD_UNSUB:
         case IMAP_CMD_APPEND:
@@ -973,6 +1089,19 @@ static derr_t handle_one_command(server_t *server, imap_cmd_t *cmd){
                 PROP_GO(&e, send_invalid_state_resp(server, tag), cu_cmd);
                 break;
             }
+
+            bool ok = true;
+            if(cmd->type == IMAP_CMD_DELETE){
+                PROP_GO(&e,
+                    pre_delete_passthru(server, tag, cmd->arg.delete, &ok),
+                cu_cmd);
+            }else if(cmd->type == IMAP_CMD_RENAME){
+                PROP_GO(&e,
+                    pre_rename_passthru(server, tag, cmd->arg.rename, &ok),
+                cu_cmd);
+            }
+            if(!ok) break;
+
             PROP_GO(&e, passthru_cmd(server, tag, cmd), cu_cmd);
             break;
 
@@ -1030,9 +1159,6 @@ static derr_t handle_one_command(server_t *server, imap_cmd_t *cmd){
             }
             break;
 
-        case IMAP_CMD_RENAME:
-            ORIG_GO(&e, E_INTERNAL, "Unhandled command", cu_cmd);
-
         // unsupported extensions
         case IMAP_CMD_ENABLE:
         case IMAP_CMD_UNSELECT:
@@ -1065,6 +1191,7 @@ static bool intercept_cmd_type(imap_cmd_type_t type){
         case IMAP_CMD_STATUS:
         case IMAP_CMD_CREATE:
         case IMAP_CMD_DELETE:
+        case IMAP_CMD_RENAME:
         case IMAP_CMD_SUB:
         case IMAP_CMD_UNSUB:
         case IMAP_CMD_APPEND:
@@ -1079,7 +1206,6 @@ static bool intercept_cmd_type(imap_cmd_type_t type){
         case IMAP_CMD_STARTTLS:
         case IMAP_CMD_AUTH:
         case IMAP_CMD_LOGIN:
-        case IMAP_CMD_RENAME:
         case IMAP_CMD_CHECK:
         case IMAP_CMD_EXPUNGE:
         case IMAP_CMD_SEARCH:
@@ -1173,9 +1299,16 @@ static derr_t do_work_passthru(server_t *server, bool *noop){
             PROP(&e, status_done(server, resp) );
             break;
 
+        case PASSTHRU_DELETE:
+            PROP(&e, delete_done(server, resp) );
+            break;
+
+        case PASSTHRU_RENAME:
+            PROP(&e, rename_done(server, resp) );
+            break;
+
         // simple status-type responses
         case PASSTHRU_CREATE:
-        case PASSTHRU_DELETE:
         case PASSTHRU_SUB:
         case PASSTHRU_UNSUB:
         case PASSTHRU_APPEND:

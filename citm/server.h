@@ -82,8 +82,16 @@ struct server_t {
     link_t unhandled_cmds;  // imap_cmd_t->link
 
     imap_server_state_t imap_state;
+    /* remember what we have selected so we can't RENAME or DELETE it (more
+       specifically, so we don't try to open a dirmgr_freeze_t on it) */
+    ie_mailbox_t *selected_mailbox;
     bool greeting_allowed;
     bool saw_capas;
+
+    // freezes we might have
+    dirmgr_freeze_t *freeze_deleting;
+    dirmgr_freeze_t *freeze_rename_old;
+    dirmgr_freeze_t *freeze_rename_new;
 
     // the interface we feed to the imaildir for client communication
     dn_cb_i dn_cb;

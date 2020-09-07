@@ -7,6 +7,7 @@ typedef enum {
     PASSTHRU_STATUS,
     PASSTHRU_CREATE,
     PASSTHRU_DELETE,
+    PASSTHRU_RENAME,
     PASSTHRU_SUB,
     PASSTHRU_UNSUB,
     PASSTHRU_APPEND,
@@ -18,6 +19,7 @@ typedef union {
     ie_status_cmd_t *status;
     ie_mailbox_t *create;
     ie_mailbox_t *delete;
+    ie_rename_cmd_t *rename;
     ie_mailbox_t *sub;
     ie_mailbox_t *unsub;
     ie_append_cmd_t *append;
@@ -44,6 +46,7 @@ typedef union {
     ie_status_resp_t *status;
     // nothing for create
     // nothing for delete
+    // nothing for rename
     // nothing for sub
     // nothing for unsub
     // nothing for append

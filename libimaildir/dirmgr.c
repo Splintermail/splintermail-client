@@ -1,5 +1,7 @@
 #include "libimaildir.h"
 
+REGISTER_ERROR_TYPE(E_FROZEN, "E_FROZEN");
+
 static derr_t make_ctn(const string_builder_t *dir_path, mode_t mode);
 
 // managed_dir_t functions
@@ -381,6 +383,11 @@ derr_t dirmgr_do_for_each_mbx(dirmgr_t *dm, const dstr_t *ref_name,
 
 derr_t dirmgr_open_up(dirmgr_t *dm, const dstr_t *name, up_t *up){
     derr_t e = E_OK;
+
+    if(hashmap_gets(&dm->freezes, name) != NULL){
+        ORIG(&e, E_FROZEN, "mailbox is frozen");
+    }
+
     managed_dir_t *mgd;
 
     hash_elem_t *h = hashmap_gets(&dm->dirs, name);
@@ -405,6 +412,11 @@ derr_t dirmgr_open_up(dirmgr_t *dm, const dstr_t *name, up_t *up){
 
 derr_t dirmgr_open_dn(dirmgr_t *dm, const dstr_t *name, dn_t *dn){
     derr_t e = E_OK;
+
+    if(hashmap_gets(&dm->freezes, name) != NULL){
+        ORIG(&e, E_FROZEN, "mailbox is frozen");
+    }
+
     managed_dir_t *mgd;
 
     hash_elem_t *h = hashmap_gets(&dm->dirs, name);
@@ -452,6 +464,85 @@ void dirmgr_close_dn(dirmgr_t *dm, dn_t *dn){
     handle_empty_imaildir(dm, m);
 }
 
+/* check for invald names, including:
+   - sections named any of: . .. cur tmp new
+   - empty sections
+   - names starting or ending with /
+   - names containing newlines */
+bool dirmgr_name_valid(const dstr_t *name){
+    if(dstr_count(name, &DSTR_LIT("\0"))) return false;
+
+    LIST_VAR(dstr_t, split, 2);
+    DSTR_STATIC(sep, "/");
+    dstr_t elem;
+    dstr_t rest = dstr_sub(name, 0, name->len);
+
+    // check every element
+    do {
+        // can't throw E_FIXEDSIZE
+        DROP_CMD( dstr_split_soft(&rest, &sep, &split) );
+        elem = split.data[0];
+        rest = split.data[1];
+
+        if(elem.len == 0) return false;
+        if(elem.len > 255) return false;
+        if(!dstr_cmp(&elem, &DSTR_LIT("."))) return false;
+        if(!dstr_cmp(&elem, &DSTR_LIT(".."))) return false;
+        if(!dstr_cmp(&elem, &DSTR_LIT("cur"))) return false;
+        if(!dstr_cmp(&elem, &DSTR_LIT("tmp"))) return false;
+        if(!dstr_cmp(&elem, &DSTR_LIT("new"))) return false;
+    } while(split.len > 1);
+
+    return true;
+}
+
+// you have to have a dirmgr_freeze_t to call this
+derr_t dirmgr_delete(dirmgr_t *dm, const dstr_t *name){
+    derr_t e = E_OK;
+
+    if(!dirmgr_name_valid(name))
+        ORIG(&e, E_INTERNAL, "invalid name in dirmgr_delete");
+
+
+    string_builder_t dir_path = sb_append(&dm->path, FD(name));
+    bool exists;
+    PROP(&e, exists_path(&dir_path, &exists) );
+    if(exists){
+        PROP(&e, rm_rf_path(&dir_path) );
+    }
+
+    return e;
+}
+
+// you have to have a dirmgr_freeze_t on old and new to call this
+derr_t dirmgr_rename(dirmgr_t *dm, const dstr_t *old, const dstr_t *new){
+    derr_t e = E_OK;
+
+    if(!dirmgr_name_valid(old))
+        ORIG(&e, E_INTERNAL, "invalid name (old) in dirmgr_delete");
+    if(!dirmgr_name_valid(new))
+        ORIG(&e, E_INTERNAL, "invalid name (new) in dirmgr_delete");
+
+    string_builder_t src_path = sb_append(&dm->path, FD(old));
+    string_builder_t dst_path = sb_append(&dm->path, FD(new));
+
+    // delete dst_path
+    bool exists;
+    PROP(&e, exists_path(&dst_path, &exists) );
+    if(exists){
+        // TODO: this will not play nicely with hierarchical mailboxes
+        PROP(&e, rm_rf_path(&dst_path) );
+    }
+
+    // do the rename
+    PROP(&e, exists_path(&src_path, &exists) );
+    if(exists){
+        PROP(&e, rename_path(&src_path, &dst_path) );
+    }
+
+    return e;
+}
+
 // part of the imaildir_cb_i
 static bool imaildir_cb_allow_download(imaildir_cb_i *cb, imaildir_t *m){
     dirmgr_t *dm = CONTAINER_OF(cb, dirmgr_t, imaildir_cb);
@@ -489,10 +580,13 @@ derr_t dirmgr_init(dirmgr_t *dm, string_builder_t path,
     };
 
     PROP_GO(&e, hashmap_init(&dm->dirs), fail_dirs);
-    PROP(&e, hashmap_init(&dm->holds) );
+    PROP_GO(&e, hashmap_init(&dm->holds), fail_holds);
+    PROP(&e, hashmap_init(&dm->freezes) );
 
     return e;
 
+fail_holds:
+    hashmap_free(&dm->holds);
 fail_dirs:
     hashmap_free(&dm->dirs);
     return e;
@@ -561,6 +655,7 @@ void dirmgr_free(dirmgr_t *dm){
     prune_empty_dirs(&dm->path);
     hashmap_free(&dm->dirs);
     hashmap_free(&dm->holds);
+    hashmap_free(&dm->freezes);
 }
 
 
@@ -674,4 +769,51 @@ derr_t dirmgr_hold_add_local_file(
 fail_path:
     DROP_CMD( remove_path(path) );
     return e;
+}
+
+
+derr_t dirmgr_freeze_new(
+    dirmgr_t *dm, const dstr_t *name, dirmgr_freeze_t **out
+){
+    derr_t e = E_OK;
+    *out = NULL;
+
+    // check if we already have a hold for this name
+    hash_elem_t *h = hashmap_gets(&dm->freezes, name);
+    if(h != NULL){
+        dirmgr_freeze_t *freeze = CONTAINER_OF(h, dirmgr_freeze_t, h);
+        freeze->count++;
+        *out = freeze;
+        return e;
+    }
+
+    // create a new freeze
+    dirmgr_freeze_t *freeze = malloc(sizeof(*freeze));
+    if(!freeze) ORIG(&e, E_NOMEM, "nomem");
+    *freeze = (dirmgr_freeze_t){ .dm = dm, .count = 1 };
+
+    PROP_GO(&e, dstr_copy(name, &freeze->name), fail);
+
+    // add to hashmap (we checked this name was not in the hashmap)
+    hashmap_sets(&dm->freezes, &freeze->name, &freeze->h);
+
+    *out = freeze;
+
+    return e;
+
+fail:
+    free(freeze);
+    return e;
+}
+
+void dirmgr_freeze_free(dirmgr_freeze_t *freeze){
+    if(!freeze) return;
+    if(--freeze->count) return;
+
+    dirmgr_t *dm = freeze->dm;
+
+    // remove from freezes and free the freeze
+    hashmap_del_elem(&dm->freezes, &freeze->h);
+    dstr_free(&freeze->name);
+    free(freeze);
 }

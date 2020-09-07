@@ -1408,3 +1408,21 @@ SELECT/EXAMINE transitions
     The asymmetry is based on the fact that the fetcher_t provides the up_t but
     has limited control over what is passed through the up_t.  By contrast, the
     server is much more in control of what goes through the dn_t.
+
+RENAME non-INBOX
+  - apply some client-side validation
+      - valid character strings
+      - no '..' or '.' or such junk
+  - disconnect + freeze the source mailbox name
+  - disconnect + freeze the desination mailbox name
+      - almost certainly does not exist, in practice
+  - attempt to rename on the server
+  - if successful:
+      - delete destination mailbox if it exists
+      - rename source mailbox directory to destination
+      - release the freeze we took on the source and destination mailbox names
+  - else:
+      - release the freeze we took on the source and destination mailbox names
+
+RENAME INBOX
+  - not supported by dovecot, so we won't support it.

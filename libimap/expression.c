@@ -375,7 +375,7 @@ ie_mailbox_t *ie_mailbox_copy(derr_t *e, const ie_mailbox_t *old){
 
 
 // returns either the mailbox name, or a static dstr of "INBOX"
-const dstr_t *ie_mailbox_name(ie_mailbox_t *m){
+const dstr_t *ie_mailbox_name(const ie_mailbox_t *m){
     DSTR_STATIC(inbox, "INBOX");
     if(m->inbox) return &inbox;
     return &m->dstr;
