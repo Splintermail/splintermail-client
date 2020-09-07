@@ -767,7 +767,7 @@ static derr_t do_dstr_split(const dstr_t* text, const dstr_t* pattern,
         // try to append the new dstr_t to the list
         IF_PROP(&e, LIST_APPEND(dstr_t, out, new)){
             // check for soft failure case
-            if(soft && E_FIXEDSIZE){
+            if(soft && e.type == E_FIXEDSIZE){
                 DROP_VAR(&e);
                 // set the last token to point to the remainder of the text
                 if(out->len > 0){

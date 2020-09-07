@@ -191,26 +191,35 @@ static derr_t test_dstr_split(void){
     derr_t e = E_OK;
     LOG_INFO("----- test dstr_split -------------------\n");
     // text to split
-    DSTR_STATIC(text, "abcd efgh ijkl");
+    DSTR_STATIC(text, "abcd eeee fghi");
     DSTR_STATIC(pattern, " ");
     LIST_VAR(dstr_t, list, 32);
     PROP(&e, dstr_split(&text, &pattern,  &list) );
 
+    if(list.len != 3) ORIG(&e, E_VALUE, "FAIL");
     EXP_VS_GOT(&DSTR_LIT("abcd"), &list.data[0]);
-    EXP_VS_GOT(&DSTR_LIT("efgh"), &list.data[1]);
-    EXP_VS_GOT(&DSTR_LIT("ijkl"), &list.data[2]);
+    EXP_VS_GOT(&DSTR_LIT("eeee"), &list.data[1]);
+    EXP_VS_GOT(&DSTR_LIT("fghi"), &list.data[2]);
 
-    // see if splitting on the split pattern results in 2 empty strings
+    // see if splitting the pattern on itself results in 2 empty strings
     PROP(&e, dstr_split(&pattern, &pattern,  &list) );
-    if(list.len != 2){
-        ORIG(&e, E_VALUE, "FAIL");
-    }
-    if(list.data[0].len != 0){
-        ORIG(&e, E_VALUE, "FAIL");
-    }
-    if(list.data[1].len != 0){
-        ORIG(&e, E_VALUE, "FAIL");
-    }
+    if(list.len != 2) ORIG(&e, E_VALUE, "FAIL");
+    EXP_VS_GOT(&DSTR_LIT(""), &list.data[0]);
+    EXP_VS_GOT(&DSTR_LIT(""), &list.data[1]);
+
+    // make sure repeat patterns are respected
+    PROP(&e, dstr_split(&text, &DSTR_LIT("e"), &list) );
+    if(list.len != 5) ORIG(&e, E_VALUE, "FAIL");
+    EXP_VS_GOT(&DSTR_LIT("abcd "), &list.data[0]);
+    EXP_VS_GOT(&DSTR_LIT(""), &list.data[1]);
+    EXP_VS_GOT(&DSTR_LIT(""), &list.data[2]);
+    EXP_VS_GOT(&DSTR_LIT(""), &list.data[3]);
+    EXP_VS_GOT(&DSTR_LIT(" fghi"), &list.data[4]);
+
+    // make sure empty strings return empty strings
+    PROP(&e, dstr_split(&DSTR_LIT(""), &pattern, &list) );
+    if(list.len != 1) ORIG(&e, E_VALUE, "FAIL");
+    EXP_VS_GOT(&DSTR_LIT(""), &list.data[0]);
 
 cleanup:
     return e;
