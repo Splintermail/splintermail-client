@@ -357,6 +357,12 @@ def test_select_logout(cmd, maildir_root):
         pass
 
 
+def test_select_select(cmd, maildir_root):
+    with inbox(cmd) as (write_q, read_q):
+        write_q.put(b"1 select INBOX\r\n")
+        wait_for_resp(read_q, "1", "OK")
+
+
 def test_select_close(cmd, maildir_root):
     with inbox(cmd) as (write_q, read_q):
         write_q.put(b"1 close\r\n")
@@ -644,7 +650,7 @@ def test_append(cmd, maildir_root):
             write_q.put(b"hello world\r\n")
             wait_for_resp(read_q, "1", "OK")
 
-            # Log in to make sure that the thing we uploaded was sane
+            # SELECT to make sure that the thing we uploaded was sane
             write_q.put(b"1b select INBOX\r\n")
             wait_for_resp(read_q, "1b", "OK")
 
@@ -778,6 +784,80 @@ def test_copy(cmd, maildir_root):
             assert exp == got, f"expected {exp} but got {got}"
 
 
+def test_examine(cmd, maildir_root):
+    with Subproc(cmd) as subproc:
+        with _session(subproc) as (write_q, read_q):
+            # EXAMINE from unselected
+            write_q.put(b"1 EXAMINE INBOX\r\n")
+            wait_for_resp(read_q, "1", "OK")
+
+            # SELECT from EXAMINED
+            write_q.put(b"2 SELECT INBOX\r\n")
+            wait_for_resp(read_q, "2", "OK")
+
+            # Test STORE.
+            write_q.put(b"3 store 1 flags \\Seen\r\n")
+            wait_for_resp(read_q, "3", "OK")
+            write_q.put(b"4 fetch 1 flags\r\n")
+            wait_for_resp(
+                read_q,
+                "4",
+                "OK",
+                require=[b"\\* 1 FETCH \\(FLAGS \\(\\\\Seen\\)\\)"],
+            )
+
+            # EXAMINE from SELECTED
+            write_q.put(b"5 EXAMINE INBOX\r\n")
+            wait_for_resp(read_q, "5", "OK")
+
+        # Force one up_t to transition multiple times due to other up_t's
+        with _session(subproc) as (w1, r1), _session(subproc) as (w2, r2):
+            # EXAMINE on 1
+            w1.put(b"1a EXAMINE INBOX\r\n")
+            wait_for_resp(r1, "1a", "OK")
+
+            # SELECT on 2
+            w2.put(b"1b SELECT INBOX\r\n")
+            wait_for_resp(r2, "1b", "OK")
+
+            # Test STORE.
+            w2.put(b"2b store 1 -flags \\Seen\r\n")
+            wait_for_resp(r2, "2b", "OK")
+
+            w2.put(b"3b fetch 1 flags\r\n")
+            wait_for_resp(
+                r2,
+                "3b",
+                "OK",
+                require=[b"\\* 1 FETCH \\(FLAGS \\(\\)\\)"],
+            )
+
+            # EXAMINE on 2
+            w2.put(b"4b EXAMINE INBOX\r\n")
+            wait_for_resp(r2, "4b", "OK")
+
+            # SELECT on 2
+            w2.put(b"5b SELECT INBOX\r\n")
+            wait_for_resp(r2, "5b", "OK")
+
+            # UNSELECT on 2
+            w2.put(b"6b CLOSE INBOX\r\n")
+            wait_for_resp(r2, "6b", "OK")
+
+            # Introduce another connection
+            with _inbox(subproc) as (w3, r3):
+                # Test STORE.
+                w3.put(b"1c store 1 flags \\Seen\r\n")
+                wait_for_resp(r3, "1c", "OK")
+                w3.put(b"2c fetch 1 flags\r\n")
+                wait_for_resp(
+                    r3,
+                    "2c",
+                    "OK",
+                    require=[b"\\* 1 FETCH \\(FLAGS \\(\\\\Seen\\)\\)"],
+                )
+
+
 def test_terminate_with_open_connection(cmd, maildir_root):
     with Subproc(cmd) as subproc:
         with run_connection(subproc) as (write_q, read_q):
@@ -862,6 +942,7 @@ if __name__ == "__main__":
         test_append,
         test_append_to_nonexisting,
         test_copy,
+        test_examine,
         test_terminate_with_open_connection,
         test_terminate_with_open_session,
         test_terminate_with_open_mailbox,

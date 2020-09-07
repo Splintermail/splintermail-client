@@ -1380,3 +1380,31 @@ UID Mapping:
     A minor detail is that we also need to track a uidvld_dn as well, since in
     the case of a corrupted local store, we won't be able to reliably
     reconstruct the uids that we previously presented to the mail client.
+
+SELECT/EXAMINE transitions
+    We should choose SELECT for the up_t if any of the dn_t's connected via
+    SELECT.  But if the only SELECT dn_t disconnects, the up_t should
+    transition to EXAMINE for correctness.  Or if it reconnects, the up_t
+    must transition back to SELECT.
+
+    What has to be synchronized for us to correctly transition S->E?
+      - the relay commands?  Are there write-only ones that we would have to
+        land before the transition?  Or would the in-order-handling of imap
+        commands mean that no special work would be required?
+      - I think we would have to treat the S->E transition kind of like a CLOSE
+        where the dn_t that triggers the transition does not get an OK response
+        until after the S->E transition completes
+
+    Note that the fetcher will always formally unregister and reregister its
+    up_t; it's the simplest way for fetcher logic.  Those are the moments that
+    the up_t is freed/reinitialized.  However, the actual SELECT command always
+    comes from the imaildir_t, and a single lifetime of an up_t may have many
+    S->E transitions.
+
+    Interestingly, a dn_t has no need to handle S->E transitions, since the
+    server_t is always aware of potential transitions an will just unregister
+    and reregister the dn_t.
+
+    The asymmetry is based on the fact that the fetcher_t provides the up_t but
+    has limited control over what is passed through the up_t.  By contrast, the
+    server is much more in control of what goes through the dn_t.

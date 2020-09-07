@@ -375,10 +375,11 @@ static void server_cb_passthru_req(server_cb_i *server_cb,
 }
 
 // part of server_cb_i
-static void server_cb_select(server_cb_i *server_cb, ie_mailbox_t *m){
+static void server_cb_select(server_cb_i *server_cb, ie_mailbox_t *m,
+        bool examine){
     // printf("---- server_cb_select\n");
     sf_pair_t *sf_pair = CONTAINER_OF(server_cb, sf_pair_t, server_cb);
-    fetcher_select(&sf_pair->fetcher, m);
+    fetcher_select(&sf_pair->fetcher, m, examine);
 }
 
 

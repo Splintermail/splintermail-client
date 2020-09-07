@@ -36,19 +36,14 @@ derr_t up_do_work(up_t *up, bool *noop);
 
 // the interface the up_t provides to the imaildir:
 
-// up_imaildir_select/up_imaildir_examine contain late-initialization info
-// they can each be called multiple times in the lifetime of an up_t
+// up_imaildir_select contains late-initialization information
+// it can be called multiple times in the lifetime of an up_t
 void up_imaildir_select(
     up_t *up,
     const dstr_t *name,
     unsigned int uidvld_up,
-    unsigned long himodseq_up
-);
-void up_imaildir_examine(
-    up_t *up,
-    const dstr_t *name,
-    unsigned int uidvld_up,
-    unsigned long himodseq_up
+    unsigned long himodseq_up,
+    bool examine
 );
 void up_imaildir_relay_cmd(up_t *up, imap_cmd_t *cmd, imap_cmd_cb_t *cb);
 void up_imaildir_preunregister(up_t *up);
@@ -83,11 +78,12 @@ struct up_t {
     ie_seq_set_t *uids_up_being_expunged;
     // current tag
     size_t tag;
-    link_t cbs;  // imap_cmd_cb_t->link (may be up_cb_t or imaildir_cb_t)
+    link_t cbs;  // imap_cmd_cb_t->link (may be wrapped in an up_cb_t)
     link_t link;  // imaildir_t->access.ups
 
     struct {
         bool pending;
+        bool examine;
         const dstr_t *name;
         unsigned int uidvld_up;
         unsigned long himodseq_up;

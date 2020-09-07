@@ -26,6 +26,7 @@ static void fetcher_free_passthru(fetcher_t *fetcher){
 static void fetcher_free_select(fetcher_t *fetcher){
     ie_mailbox_free(fetcher->select.mailbox);
     fetcher->select.mailbox = NULL;
+    fetcher->select.examine = false;
 }
 
 void fetcher_free(fetcher_t *fetcher){
@@ -151,8 +152,9 @@ void fetcher_passthru_req(fetcher_t *fetcher, passthru_req_t *passthru_req){
     fetcher_enqueue(fetcher);
 }
 
-void fetcher_select(fetcher_t *fetcher, ie_mailbox_t *m){
+void fetcher_select(fetcher_t *fetcher, ie_mailbox_t *m, bool examine){
     fetcher->select.mailbox = m;
+    fetcher->select.examine = examine;
     fetcher_enqueue(fetcher);
 }
 

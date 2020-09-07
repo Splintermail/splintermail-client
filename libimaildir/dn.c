@@ -71,11 +71,12 @@ void dn_free(dn_t *dn){
     // actually there's nothing to free...
 }
 
-derr_t dn_init(dn_t *dn, dn_cb_i *cb, extensions_t *exts){
+derr_t dn_init(dn_t *dn, dn_cb_i *cb, extensions_t *exts, bool examine){
     derr_t e = E_OK;
 
     *dn = (dn_t){
         .cb = cb,
+        .examine = examine,
         .selected = false,
         .exts = exts,
     };
@@ -1013,12 +1014,22 @@ derr_t dn_cmd(dn_t *dn, imap_cmd_t *cmd){
 
     const ie_dstr_t *tag = cmd->tag;
     const imap_cmd_arg_t *arg = &cmd->arg;
+    bool select_like =
+        cmd->type == IMAP_CMD_SELECT || cmd->type == IMAP_CMD_EXAMINE;
 
-    if(cmd->type == IMAP_CMD_SELECT && dn->selected){
+    if(select_like && dn->selected){
+        // A dn_t is not able to
         ORIG_GO(&e, E_INTERNAL, "SELECT sent to selected dn_t", cu_cmd);
     }
-    if(cmd->type != IMAP_CMD_SELECT && !dn->selected){
+    if(!select_like && !dn->selected){
         ORIG_GO(&e, E_INTERNAL, "non-SELECT sent to unselected dn_t", cu_cmd);
+    }
+    if(select_like && dn->examine != (cmd->type == IMAP_CMD_EXAMINE)){
+        if(dn->examine){
+            ORIG_GO(&e, E_INTERNAL, "dn_t got SELECT, not EXAMINE", cu_cmd);
+        }else{
+            ORIG_GO(&e, E_INTERNAL, "dn_t got EXAMINE, not SELECT", cu_cmd);
+        }
     }
 
     switch(cmd->type){
@@ -1026,6 +1037,7 @@ derr_t dn_cmd(dn_t *dn, imap_cmd_t *cmd){
             PROP_GO(&e, send_plus(dn), cu_cmd);
             break;
 
+        case IMAP_CMD_EXAMINE:
         case IMAP_CMD_SELECT:
             PROP_GO(&e, select_cmd(dn, tag, arg->select), cu_cmd);
             dn->selected = true;
@@ -1073,7 +1085,6 @@ derr_t dn_cmd(dn_t *dn, imap_cmd_t *cmd){
         case IMAP_CMD_STARTTLS:
         case IMAP_CMD_AUTH:
         case IMAP_CMD_LOGIN:
-        case IMAP_CMD_EXAMINE:
         case IMAP_CMD_CREATE:
         case IMAP_CMD_DELETE:
         case IMAP_CMD_RENAME:
@@ -1910,4 +1921,8 @@ void dn_imaildir_preunregister(dn_t *dn){
     dn_free_expunge(dn);
     dn_free_copy(dn);
     dn_free_disconnect(dn);
+}
+
+bool dn_imaildir_examining(dn_t *dn){
+    return dn->examine;
 }

@@ -657,7 +657,8 @@ void imaildir_forceclose(imaildir_t *m){
 static void promote_up_to_primary(imaildir_t *m, up_t *up){
     unsigned int uidvld_up = m->log->get_uidvld_up(m->log);
     unsigned long himodseq_up = m->log->get_himodseq_up(m->log);
-    up_imaildir_select(up, m->name, uidvld_up, himodseq_up);
+    bool examine = !m->nwriters;
+    up_imaildir_select(up, m->name, uidvld_up, himodseq_up, examine);
 }
 
 void imaildir_register_up(imaildir_t *m, up_t *up){
@@ -689,6 +690,15 @@ void imaildir_register_dn(imaildir_t *m, dn_t *dn){
 
     /* final initialization step is when the downwards session calls
        dn_cmd() to send the SELECT command sent by the client */
+
+    if(!dn_imaildir_examining(dn)){
+        bool first_writer = (m->nwriters == 0);
+        m->nwriters++;
+        if(first_writer && !link_list_isempty(&m->ups)){
+            up_t *primary = CONTAINER_OF(m->ups.next, up_t, link);
+            promote_up_to_primary(m, primary);
+        }
+    }
 }
 
 size_t imaildir_unregister_up(up_t *up){
@@ -728,6 +738,15 @@ size_t imaildir_unregister_dn(dn_t *dn){
     LINK_FOR_EACH(relay, &m->relays, relay_t, link){
         if(relay->requester == dn){
             relay->requester = NULL;
+        }
+    }
+
+    if(!dn_imaildir_examining(dn)){
+        m->nwriters--;
+        bool last_writer = (m->nwriters == 0);
+        if(last_writer && !link_list_isempty(&m->ups)){
+            up_t *primary = CONTAINER_OF(m->ups.next, up_t, link);
+            promote_up_to_primary(m, primary);
         }
     }
 

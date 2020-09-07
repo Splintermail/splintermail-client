@@ -143,6 +143,8 @@ struct imaildir_t {
     /* The value of naccessors may not match the length of the accessor
        lists, particularly during the failing shutdown sequence. */
     size_t naccessors;
+    // one writer for every examine=false dn_t
+    size_t nwriters;
 
     /* if the primary up_t is disconnecting, we save commands that we would
        pass through it for the next up_t.  The UNSELECT is synchronous though,

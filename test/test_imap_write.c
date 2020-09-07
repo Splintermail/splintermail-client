@@ -818,6 +818,30 @@ static derr_t test_imap_writer(void){
                 },
             },
             {
+                // QRESYNC modifier with all the fields (on EXAMINE)
+                .cmd=imap_cmd_new(&e, IE_DSTR("tag"), IMAP_CMD_EXAMINE,
+                    (imap_cmd_arg_t){
+                        .examine=ie_select_cmd_new(&e,
+                            ie_mailbox_new_noninbox(&e, IE_DSTR("box")),
+                            ie_select_params_new(&e,
+                                IE_SELECT_PARAM_QRESYNC,
+                                (ie_select_param_arg_t){.qresync={
+                                    .uidvld = 7,
+                                    .last_modseq = 8,
+                                    .known_uids = ie_seq_set_new(&e, 1, 2),
+                                    .seq_keys = ie_seq_set_new(&e, 3, 4),
+                                    .uid_vals = ie_seq_set_new(&e, 5, 6),
+                                }}
+                            )
+                        ),
+                    }
+                ),
+                .out=(size_chunk_out_t[]){
+                    {64, "tag EXAMINE box (QRESYNC (7 8 1:2 (3:4 5:6)))\r\n"},
+                    {0}
+                },
+            },
+            {
                 .resp=imap_resp_new(&e, IMAP_RESP_STATUS_TYPE,
                     (imap_resp_arg_t){
                         .status_type=ie_st_resp_new(&e, NULL, IE_ST_OK,

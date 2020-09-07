@@ -45,7 +45,7 @@ struct server_cb_i {
 
     void (*login)(server_cb_i*, ie_login_cmd_t *login_cmd);
     void (*passthru_req)(server_cb_i*, passthru_req_t *passthru_req);
-    void (*select)(server_cb_i*, ie_mailbox_t *m);
+    void (*select)(server_cb_i*, ie_mailbox_t *m, bool examine);
 };
 
 // the server-provided interface to the sf_pair
@@ -115,6 +115,7 @@ struct server_t {
     // handling SELECT commands
     struct {
         select_state_e state;
+        bool examine;
         // we have to remember the whole command, not just the tag
         imap_cmd_t *cmd;
         ie_st_resp_t *st_resp;

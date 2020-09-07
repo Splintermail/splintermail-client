@@ -38,7 +38,7 @@ struct fetcher_cb_i {
 // the fetcher-provided interface to the sf_pair
 void fetcher_login(fetcher_t *fetcher, ie_login_cmd_t *login_cmd);
 void fetcher_passthru_req(fetcher_t *fetcher, passthru_req_t *passthru_req);
-void fetcher_select(fetcher_t *fetcher, ie_mailbox_t *m);
+void fetcher_select(fetcher_t *fetcher, ie_mailbox_t *m, bool examine);
 void fetcher_set_dirmgr(fetcher_t *fetcher, dirmgr_t *dirmgr);
 
 struct fetcher_t {
@@ -73,6 +73,7 @@ struct fetcher_t {
     link_t inflight_cmds;  // imap_cmd_cb_t->link
 
     imap_client_state_t imap_state;
+    dstr_t selected_name;
     bool saw_capas;
     bool enable_set;
 
@@ -92,6 +93,7 @@ struct fetcher_t {
 
     struct {
         ie_mailbox_t *mailbox;
+        bool examine;
     } select;
 
     // the interface we feed to the imaildir for server communication

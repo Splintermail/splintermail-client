@@ -40,7 +40,8 @@ void up_imaildir_select(
     up_t *up,
     const dstr_t *name,
     unsigned int uidvld_up,
-    unsigned long himodseq_up
+    unsigned long himodseq_up,
+    bool examine
 ){
     if(up->state == UP_STATE_PRESELECT){
         /* we can't call hmsc prep on a secondary SELECT or EXAMINE because it
@@ -50,6 +51,7 @@ void up_imaildir_select(
     }
 
     up->select.pending = true;
+    up->select.examine = examine;
     up->select.name = name;
     up->select.uidvld_up = uidvld_up;
     up->select.himodseq_up = himodseq_up;
@@ -542,7 +544,7 @@ static derr_t select_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
         return e;
     }
 
-    up->state = UP_STATE_SELECTED;
+    up->state = up->select.examine ? UP_STATE_EXAMINED : UP_STATE_SELECTED;
     up->m->rm_on_close = false;
 
     // SELECT succeeded
@@ -562,7 +564,7 @@ static derr_t select_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
 }
 
 static derr_t send_select(up_t *up, unsigned int uidvld_up,
-        unsigned long himodseq_up){
+        unsigned long himodseq_up, bool examine){
     derr_t e = E_OK;
 
     // use QRESYNC with select if we have a valid UIDVALIDITY and HIGHESTMODSEQ
@@ -581,11 +583,17 @@ static derr_t send_select(up_t *up, unsigned int uidvld_up,
     ie_dstr_t *name = ie_dstr_new(&e, up->select.name, KEEP_RAW);
     ie_mailbox_t *mailbox = ie_mailbox_new_noninbox(&e, name);
     ie_select_cmd_t *select = ie_select_cmd_new(&e, mailbox, params);
-    imap_cmd_arg_t arg = { .select=select, };
+    imap_cmd_arg_t arg;
+    if(examine){
+        arg = (imap_cmd_arg_t){ .examine=select };
+    }else{
+        arg = (imap_cmd_arg_t){ .select=select };
+    }
 
     size_t tag = ++up->tag;
     ie_dstr_t *tag_str = write_tag_up(&e, tag);
-    imap_cmd_t *cmd = imap_cmd_new(&e, tag_str, IMAP_CMD_SELECT, arg);
+    imap_cmd_type_t cmd_type = examine ? IMAP_CMD_EXAMINE : IMAP_CMD_SELECT;
+    imap_cmd_t *cmd = imap_cmd_new(&e, tag_str, cmd_type, arg);
     cmd = imap_cmd_assert_writable(&e, cmd, up->exts);
 
     // build the callback
@@ -593,8 +601,24 @@ static derr_t send_select(up_t *up, unsigned int uidvld_up,
 
     CHECK(&e);
 
-    up->state = UP_STATE_SELECT_SENT;
-    PROP(&e, up_send_cmd(up, cmd, up_cb) );
+    if(up->state == UP_STATE_PRESELECT){
+        // the first time, we send the SELECT immediately...
+        up->state = UP_STATE_SELECT_SENT;
+        PROP(&e, up_send_cmd(up, cmd, up_cb) );
+    }else{
+        /* ... otherwise we enque the SELECT operation with the relays.  This
+           is so that we can properly handle extra write operations in the
+           relay list which may be enqueued at the moment that we detect that
+           a SELECT->EXAMINE transition needs to happen.  An alternative would
+           be to have the imaildir trigger a flush of the operations that had
+           been requested by the SELECT before it disconnected, but that would
+           be more complexity than it is worth. */
+        link_list_append(&up->relay.cmds, &cmd->link);
+        link_list_append(&up->relay.cbs, &up_cb->cb.link);
+
+        // enqueue ourselves
+        up->cb->enqueue(up->cb);
+    }
 
     return e;
 }
@@ -603,6 +627,7 @@ static derr_t send_select(up_t *up, unsigned int uidvld_up,
 static derr_t untagged_ok(up_t *up, const ie_st_code_t *code,
         const dstr_t *text){
     derr_t e = E_OK;
+    (void)text;
 
     // Handle responses where the status code is what defines the behavior
     if(code != NULL){
@@ -667,8 +692,10 @@ static derr_t untagged_ok(up_t *up, const ie_st_code_t *code,
             case IE_ST_CODE_MODIFIED:
             // QRESYNC extension
             case IE_ST_CODE_CLOSED:
-                (void)text;
-                ORIG(&e, E_INTERNAL, "code not supported\n");
+                /* reset the hmsc (we should only receive this here when we are
+                   in the middle of a SELECT->EXAMINE-like transition, and this
+                   is the delayed hmsc_prep from up_imaildir_select() ) */
+                hmsc_prep(&up->hmsc, up->select.himodseq_up);
                 break;
         }
     }
@@ -821,7 +848,12 @@ derr_t up_do_work(up_t *up, bool *noop){
         *noop = false;
         up->select.pending = false;
         PROP(&e,
-            send_select(up, up->select.uidvld_up, up->select.himodseq_up)
+            send_select(
+                up,
+                up->select.uidvld_up,
+                up->select.himodseq_up,
+                up->select.examine
+            )
         );
         return e;
     }

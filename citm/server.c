@@ -10,7 +10,7 @@ static derr_t send_no(server_t *server, const ie_dstr_t *tag,
         const dstr_t *msg);
 static derr_t do_logout(server_t *server, ie_dstr_t *tag);
 static derr_t do_close(server_t *server, ie_dstr_t *tag);
-static derr_t request_select(server_t *server);
+static derr_t request_select(server_t *server, bool examine);
 static derr_t server_do_work(server_t *server, bool *noop);
 
 static void server_free_greet(server_t *server){
@@ -33,6 +33,7 @@ static void server_free_awaiting(server_t *server){
 
 static void server_free_select(server_t *server){
     server->select.state = SELECT_NONE;
+    server->select.examine = false;
     ie_st_resp_free(STEAL(ie_st_resp_t, &server->select.st_resp));
     imap_cmd_free(STEAL(imap_cmd_t, &server->select.cmd));
 }
@@ -253,7 +254,7 @@ static derr_t server_dn_disconnected(dn_cb_i *dn_cb, ie_st_resp_t *st_resp){
     }
 
     if(server->select.state == SELECT_DISCONNECTING){
-        PROP(&e, request_select(server) );
+        PROP(&e, request_select(server, server->select.examine) );
 
     }else if(server->logout.disconnecting){
         PROP(&e, do_logout(server, STEAL(ie_dstr_t, &server->logout.tag)) );
@@ -822,7 +823,7 @@ static derr_t passthru_cmd(server_t *server, const ie_dstr_t *tag,
 }
 
 // request permission from our owner to SELECT a mailbox
-static derr_t request_select(server_t *server){
+static derr_t request_select(server_t *server, bool examine){
     derr_t e = E_OK;
 
     const ie_mailbox_t *m = server->select.cmd->arg.select->m;
@@ -830,7 +831,7 @@ static derr_t request_select(server_t *server){
     CHECK(&e);
 
     server->select.state = SELECT_PENDING;
-    server->cb->select(server->cb, m_copy);
+    server->cb->select(server->cb, m_copy, examine);
 
     return e;
 }
@@ -840,7 +841,11 @@ static derr_t do_select(server_t *server, imap_cmd_t *select_cmd){
     derr_t e = E_OK;
 
     PROP_GO(&e,
-        dn_init(&server->dn, &server->dn_cb, &server->ctrl.exts),
+        dn_init(&server->dn,
+            &server->dn_cb,
+            &server->ctrl.exts,
+            server->select.examine
+        ),
     fail_cmd);
 
     const dstr_t *dir_name = ie_mailbox_name(select_cmd->arg.select->m);
@@ -907,6 +912,7 @@ static derr_t handle_one_command(server_t *server, imap_cmd_t *cmd){
     const imap_cmd_arg_t *arg = &cmd->arg;
     const ie_dstr_t *tag = cmd->tag;
     bool state_ok;
+    bool examine;
 
     switch(cmd->type){
         case IMAP_CMD_PLUS:
@@ -971,6 +977,8 @@ static derr_t handle_one_command(server_t *server, imap_cmd_t *cmd){
             break;
 
         case IMAP_CMD_SELECT:
+        case IMAP_CMD_EXAMINE:
+            examine = (cmd->type == IMAP_CMD_EXAMINE);
             if(server->imap_state != AUTHENTICATED
                     && server->imap_state != SELECTED){
                 PROP_GO(&e, send_invalid_state_resp(server, tag), cu_cmd);
@@ -979,6 +987,7 @@ static derr_t handle_one_command(server_t *server, imap_cmd_t *cmd){
 
             // we have to remember the whole command, not just the tag
             server->select.cmd = STEAL(imap_cmd_t, &cmd);
+            server->select.examine = examine;
 
             if(server->imap_state == SELECTED){
                 server->select.state = SELECT_DISCONNECTING;
@@ -988,7 +997,7 @@ static derr_t handle_one_command(server_t *server, imap_cmd_t *cmd){
                 /* Ask the sf_pair for permission to SELECT the folder.
                    Permission may not be grated if e.g. the fetcher finds out
                    the folder does not exist or if it is the keybox folder */
-                PROP_GO(&e, request_select(server), cu_cmd);
+                PROP_GO(&e, request_select(server, examine), cu_cmd);
             }
             break;
 
@@ -1021,7 +1030,6 @@ static derr_t handle_one_command(server_t *server, imap_cmd_t *cmd){
             }
             break;
 
-        case IMAP_CMD_EXAMINE:
         case IMAP_CMD_RENAME:
             ORIG_GO(&e, E_INTERNAL, "Unhandled command", cu_cmd);
 
@@ -1046,6 +1054,7 @@ static bool intercept_cmd_type(imap_cmd_type_t type){
             also passed into the maildir_dn as the first command, but not here)
             */
         case IMAP_CMD_SELECT:
+        case IMAP_CMD_EXAMINE:
 
         // CAPABILTIES can all be handled in one place
         case IMAP_CMD_CAPA:
@@ -1070,7 +1079,6 @@ static bool intercept_cmd_type(imap_cmd_type_t type){
         case IMAP_CMD_STARTTLS:
         case IMAP_CMD_AUTH:
         case IMAP_CMD_LOGIN:
-        case IMAP_CMD_EXAMINE:
         case IMAP_CMD_RENAME:
         case IMAP_CMD_CHECK:
         case IMAP_CMD_EXPUNGE:

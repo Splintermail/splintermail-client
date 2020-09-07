@@ -33,6 +33,7 @@ derr_t dn_do_work(dn_t *dn, bool *noop);
 void dn_imaildir_update(dn_t *dn, update_t *update);
 // we have to free the view as we unregister
 void dn_imaildir_preunregister(dn_t *dn);
+bool dn_imaildir_examining(dn_t *dn);
 
 typedef enum {
     DN_WAIT_NONE = 0,
@@ -45,6 +46,7 @@ struct dn_t {
     imaildir_t *m;
     // the interfaced provided to us
     dn_cb_i *cb;
+    bool examine;
     bool selected;
     link_t link;  // imaildir_t->access.dns
     // view of the mailbox; this order defines sequence numbers
@@ -87,5 +89,5 @@ struct dn_t {
 };
 DEF_CONTAINER_OF(dn_t, link, link_t);
 
-derr_t dn_init(dn_t *dn, dn_cb_i *cb, extensions_t *exts);
+derr_t dn_init(dn_t *dn, dn_cb_i *cb, extensions_t *exts, bool examine);
 void dn_free(dn_t *dn);
