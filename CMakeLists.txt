@@ -273,9 +273,7 @@ set(OBJ_TGTS
 )
 
 set(EXE_TGTS
-    # srvcli
     splintermail
-    leak
     encrypt_msg
     decrypt_msg
 )
@@ -358,9 +356,7 @@ obj_depend_obj(imap_engine engine imap)
 obj_depend_obj(imap_session loop tls_engine imap_engine uv_interface)
 
 # describe executables with dependencies
-# target_link_libraries(srvcli networking)
 target_link_libraries(splintermail ui console_input ditm key_tool)
-target_link_libraries(leak networking)
 target_link_libraries(encrypt_msg crypto)
 target_link_libraries(decrypt_msg crypto)
 
