@@ -90,6 +90,7 @@ elseif("${CMAKE_C_COMPILER_ID}" STREQUAL "MSVC")
 endif()
 # Set the updated compile definitions on the source file.
 set_property(SOURCE "${imap_parse_out}" PROPERTY COMPILE_OPTIONS ${opts})
+set_property(SOURCE "${imf_parse_out}" PROPERTY COMPILE_OPTIONS ${opts})
 
 add_library(
     imap
