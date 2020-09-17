@@ -24,7 +24,7 @@ set(imap_scan_in "${CMAKE_CURRENT_SOURCE_DIR}/scan.c")
 set(imap_scan_out "${PROJECT_BINARY_DIR}/imap_scan.gen.c")
 add_custom_command(
     OUTPUT "${imap_scan_out}"
-    COMMAND "${RE2C}" -W -Werror --storable-state -o "${imap_scan_out}" "${imap_scan_in}"
+    COMMAND "${RE2C}" -W -Werror -o "${imap_scan_out}" "${imap_scan_in}"
     DEPENDS "${imap_scan_in}"
     COMMENT "generating imap scanner" VERBATIM
     )

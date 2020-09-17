@@ -153,10 +153,6 @@ dstr_t imf_get_scannable(imf_scanner_t *scanner){
         in ABNF used to define the IMF "unstructured" type has been
         expanded to allow 8-byte values
 
-      - this scanner, unlike the imap scanner, does not support restorable
-        state; it expects to run on an entire buffer.  That means re2c runs
-        without the --storable-state option.
-
       - this scanner uses the EOF feature of re2c which does not seem to play
         nicely with multiple blocks, so each block has to be in a different
         function.  That means re2c runs with the --reusable option.  It also

@@ -65,9 +65,6 @@ derr_t imap_scanner_init(imap_scanner_t *scanner){
     // start position at beginning of buffer
     scanner->start = scanner->bytes.data;
 
-    // nothing to continue
-    scanner->continuing = false;
-
     // nothing to steal yet
     scanner->in_literal = false;
     scanner->literal_len = 0;
@@ -113,8 +110,6 @@ void imap_scanner_shrink(imap_scanner_t *scanner){
     // update all of the pointers in the scanner
     scanner->old_start -= offset;
     scanner->start -= offset;
-    scanner->cursor -= offset;
-    scanner->marker -= offset;
 }
 
 derr_t imap_scan(imap_scanner_t *scanner, scan_mode_t mode, bool *more,
@@ -145,19 +140,10 @@ derr_t imap_scan(imap_scanner_t *scanner, scan_mode_t mode, bool *more,
         scanner->literal_len -= steal_len;
         return E_OK;
     }
-#   define YYGETSTATE()  scanner->state
-#   define YYSETSTATE(s) { \
-        scanner->state = s; \
-        scanner->cursor = cursor; \
-        scanner->marker = marker; \
-        scanner->accept = yyaccept; \
-        scanner->yych = yych; \
-    }
 #   define YYSKIP() ++cursor
     // check before dereference.  Not efficient, but simple and always correct.
 #   define YYPEEK() 0; \
                 if(cursor == limit){ \
-                    scanner->continuing = 1; \
                     *more = true; \
                     return e; \
                 }else \
@@ -177,49 +163,32 @@ derr_t imap_scan(imap_scanner_t *scanner, scan_mode_t mode, bool *more,
     const char* cursor;
     const char* marker = NULL;
     const char* limit = scanner->bytes.data + scanner->bytes.len;
-    unsigned yyaccept;
-    char yych = 0;
 
-    // if we are continuing, restore jump to most recent re2c state
-    if(scanner->continuing){
-        cursor = scanner->cursor;
-        marker = scanner->marker;
-        yyaccept = scanner->accept;
-        yych = scanner->yych;
-        // clear the "continuing" flag
-        scanner->continuing = 0;
-        // jump into the correct state
-        /*!getstate:re2c*/
-    }
-    // otherwise start in whatever scanner mode the parser has set for us
-    else{
-        yyaccept = 0;
-        cursor = scanner->start;
-        switch(mode){
-            case SCAN_MODE_TAG:                 goto tag_mode;
-            case SCAN_MODE_COMMAND:             goto command_mode;
-            case SCAN_MODE_ATOM:                goto atom_mode;
-            case SCAN_MODE_FLAG:                goto flag_mode;
-            case SCAN_MODE_MFLAG:               goto mflag_mode;
-            case SCAN_MODE_QSTRING:             goto qstring_mode;
-            case SCAN_MODE_NUM:                 goto num_mode;
-            case SCAN_MODE_STATUS_CODE_CHECK:   goto status_code_check_mode;
-            case SCAN_MODE_STATUS_CODE:         goto status_code_mode;
-            case SCAN_MODE_STATUS_TEXT:         goto status_text_mode;
-            case SCAN_MODE_MAILBOX:             goto mailbox_mode;
-            case SCAN_MODE_ASTRING:             goto astring_mode;
-            case SCAN_MODE_NQCHAR:              goto nqchar_mode;
-            case SCAN_MODE_NSTRING:             goto nstring_mode;
-            case SCAN_MODE_STATUS_ATTR:         goto status_attr_mode;
-            case SCAN_MODE_FETCH:               goto fetch_mode;
-            case SCAN_MODE_DATETIME:            goto datetime_mode;
-            case SCAN_MODE_WILDCARD:            goto wildcard_mode;
-            case SCAN_MODE_SEQSET:              goto seqset_mode;
-            case SCAN_MODE_STORE:               goto store_mode;
-            case SCAN_MODE_SEARCH:              goto search_mode;
-            case SCAN_MODE_SELECT_PARAM:        goto select_param_mode;
-            case SCAN_MODE_MODSEQ:              goto modseq_mode;
-        }
+    cursor = scanner->start;
+    switch(mode){
+        case SCAN_MODE_TAG:                 goto tag_mode;
+        case SCAN_MODE_COMMAND:             goto command_mode;
+        case SCAN_MODE_ATOM:                goto atom_mode;
+        case SCAN_MODE_FLAG:                goto flag_mode;
+        case SCAN_MODE_MFLAG:               goto mflag_mode;
+        case SCAN_MODE_QSTRING:             goto qstring_mode;
+        case SCAN_MODE_NUM:                 goto num_mode;
+        case SCAN_MODE_STATUS_CODE_CHECK:   goto status_code_check_mode;
+        case SCAN_MODE_STATUS_CODE:         goto status_code_mode;
+        case SCAN_MODE_STATUS_TEXT:         goto status_text_mode;
+        case SCAN_MODE_MAILBOX:             goto mailbox_mode;
+        case SCAN_MODE_ASTRING:             goto astring_mode;
+        case SCAN_MODE_NQCHAR:              goto nqchar_mode;
+        case SCAN_MODE_NSTRING:             goto nstring_mode;
+        case SCAN_MODE_STATUS_ATTR:         goto status_attr_mode;
+        case SCAN_MODE_FETCH:               goto fetch_mode;
+        case SCAN_MODE_DATETIME:            goto datetime_mode;
+        case SCAN_MODE_WILDCARD:            goto wildcard_mode;
+        case SCAN_MODE_SEQSET:              goto seqset_mode;
+        case SCAN_MODE_STORE:               goto store_mode;
+        case SCAN_MODE_SEARCH:              goto search_mode;
+        case SCAN_MODE_SELECT_PARAM:        goto select_param_mode;
+        case SCAN_MODE_MODSEQ:              goto modseq_mode;
     }
 
     /*!re2c

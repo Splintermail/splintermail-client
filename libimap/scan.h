@@ -43,21 +43,10 @@ typedef struct {
     // buffer is twice the size of a network read
     dstr_t bytes;
     char bytes_buffer[8192];
-    // const char* limit;
-    // continued scan start position
-    const char* cursor;
-    // continued scan backup position
-    const char* marker;
-    // clean scan start position
+    // scan start position
     const char* start;
     // previous scanner start position (start of the last token)
     const char* old_start;
-    // part of continued scan state
-    int state;
-    bool accept;
-    char yych;
-    // for automatic continue handling
-    bool continuing;
     // for scanning literals
     bool in_literal;
     size_t literal_len;
