@@ -882,6 +882,7 @@ derr_t up_do_work(up_t *up, bool *noop){
     // check if we just need to call next_cmd
     if(up->need_next_cmd
             && imaildir_up_allow_download(up->m)){
+        up->need_next_cmd = false;
         PROP(&e, next_cmd(up, NULL) );
         return e;
     }
