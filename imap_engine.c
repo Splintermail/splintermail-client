@@ -403,34 +403,7 @@ fail:
     PASSED(e);
 }
 
-static void need_plus_cb(void *cb_data){
-    imape_data_t *id = cb_data;
-    derr_t e = E_OK;
-
-    // prepare the imap command
-    imap_cmd_arg_t cmd_arg = {0};
-    imap_cmd_t *cmd = imap_cmd_new(&e, NULL, IMAP_CMD_PLUS, cmd_arg);
-    CHECK_GO(&e, fail);
-
-    // prepare the imap event
-    imap_event_t *imap_ev;
-    imap_event_arg_u arg = { .cmd = cmd };
-
-    PROP_GO(&e, imap_event_new(&imap_ev, IMAP_EVENT_TYPE_CMD, arg, id), fail);
-
-    // pass the event downstream
-    id->downstream->pass_event(id->downstream, &imap_ev->ev);
-
-    return;
-
-fail:
-    id->session->close(id->session, e);
-    PASSED(e);
-};
-
-static imap_parser_cb_t imape_parser_cmd_cb = {
-    .cmd=cmd_cb, .need_plus=need_plus_cb,
-};
+static imap_parser_cb_t imape_parser_cmd_cb = { .cmd=cmd_cb };
 
 // parser callback for clients
 

@@ -4,7 +4,7 @@
 
 void imapyyerror(imap_parser_t *parser, char const *s){
     (void)parser;
-    printf("ERROR: %s\n", s);
+    PFMT("ERROR: %x: %x\n", FS(s), FD(parser->token));
 }
 
 derr_t imap_parser_init(

@@ -1059,6 +1059,10 @@ static derr_t do_imap_cmd_write(const imap_cmd_t *cmd, dstr_t *out,
     };
     skip_fill_t *sf = &skip_fill;
 
+    if(cmd->type == IMAP_CMD_PLUS_REQ){
+        ORIG(&e, E_INTERNAL, "IMAP_CMD_PLUS_REQ is not writable");
+    }
+
     imap_cmd_arg_t arg = cmd->arg;
 
     // the tag
@@ -1068,9 +1072,7 @@ static derr_t do_imap_cmd_write(const imap_cmd_t *cmd, dstr_t *out,
     STATIC_SKIP_FILL(" ");
 
     switch(cmd->type){
-        case IMAP_CMD_PLUS:
-            ORIG(&e, E_INTERNAL, "IMAP_CMD_PLUS is not a writable command");
-            break;
+        case IMAP_CMD_PLUS_REQ:  // already checked for this
 
         case IMAP_CMD_CAPA:
             STATIC_SKIP_FILL("CAPABILITY");

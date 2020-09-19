@@ -51,7 +51,7 @@ const dstr_t *ie_status_attr_to_dstr(ie_status_attr_t sa){
     return &IE_UNKNOWN_dstr;
 }
 
-DSTR_STATIC(IMAP_CMD_PLUS_dstr, "+");
+DSTR_STATIC(IMAP_CMD_PLUS_REQ_dstr, "+");
 DSTR_STATIC(IMAP_CMD_CAPA_dstr, "CAPABILITY");
 DSTR_STATIC(IMAP_CMD_NOOP_dstr, "NOOP");
 DSTR_STATIC(IMAP_CMD_LOGOUT_dstr, "LOGOUT");
@@ -81,7 +81,7 @@ DSTR_STATIC(IMAP_CMD_UNSELECT_dstr, "UNSELECT");
 
 const dstr_t *imap_cmd_type_to_dstr(imap_cmd_type_t type){
     switch(type){
-        case IMAP_CMD_PLUS:     return &IMAP_CMD_PLUS_dstr;
+        case IMAP_CMD_PLUS_REQ: return &IMAP_CMD_PLUS_REQ_dstr;
         case IMAP_CMD_CAPA:     return &IMAP_CMD_CAPA_dstr;
         case IMAP_CMD_NOOP:     return &IMAP_CMD_NOOP_dstr;
         case IMAP_CMD_LOGOUT:   return &IMAP_CMD_LOGOUT_dstr;
@@ -2412,7 +2412,7 @@ ie_copy_cmd_t *ie_copy_cmd_copy(derr_t *e, const ie_copy_cmd_t *old){
 
 static void imap_cmd_arg_free(imap_cmd_type_t type, imap_cmd_arg_t arg){
     switch(type){
-        case IMAP_CMD_PLUS:     break;
+        case IMAP_CMD_PLUS_REQ: break;
         case IMAP_CMD_CAPA:     break;
         case IMAP_CMD_NOOP:     break;
         case IMAP_CMD_LOGOUT:   break;
@@ -2473,7 +2473,7 @@ static imap_cmd_arg_t imap_cmd_arg_copy(derr_t *e, imap_cmd_type_t type,
         const imap_cmd_arg_t old){
     imap_cmd_arg_t arg = {0};
     switch(type){
-        case IMAP_CMD_PLUS:     break;
+        case IMAP_CMD_PLUS_REQ: break;
         case IMAP_CMD_CAPA:     break;
         case IMAP_CMD_NOOP:     break;
         case IMAP_CMD_LOGOUT:   break;

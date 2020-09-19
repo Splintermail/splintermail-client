@@ -1033,7 +1033,7 @@ derr_t dn_cmd(dn_t *dn, imap_cmd_t *cmd){
     }
 
     switch(cmd->type){
-        case IMAP_CMD_PLUS:
+        case IMAP_CMD_PLUS_REQ:
             PROP_GO(&e, send_plus(dn), cu_cmd);
             break;
 

@@ -114,15 +114,13 @@ static void cmd_cb(void *cb_data, derr_t error, imap_cmd_t *cmd){
         .unselect = EXT_STATE_ON,
     };
 
-    PROP_GO(&calls->error, imap_cmd_print(cmd, &calls->buf, &exts), done);
+    // IMAP_CMD_PLUS_REQ is not writable
+    if(cmd->type != IMAP_CMD_PLUS_REQ){
+        PROP_GO(&calls->error, imap_cmd_print(cmd, &calls->buf, &exts), done);
+    }
 
 done:
     imap_cmd_free(cmd);
-}
-
-static void need_plus(void *cb_data){
-    // ignore these
-    (void)cb_data;
 }
 
 static void resp_cb(void *cb_data, derr_t error, imap_resp_t *resp){
@@ -150,7 +148,7 @@ done:
     imap_resp_free(resp);
 }
 
-imap_parser_cb_t parser_cmd_cb = { .cmd=cmd_cb, .need_plus=need_plus };
+imap_parser_cb_t parser_cmd_cb = { .cmd=cmd_cb };
 imap_parser_cb_t parser_resp_cb = { .resp=resp_cb };
 
 typedef struct {
@@ -191,9 +189,9 @@ static derr_t do_test_scanner_and_parser(test_case_t *cases, size_t ncases,
         DROP_VAR(&calls.error);
         calls.buf.len = 0;
         // feed in the input
-        LOG_DEBUG("about to feed '%x'", FD(&cases[i].in));
+        LOG_DEBUG("about to feed '%x'\n", FD(&cases[i].in));
         PROP_GO(&e, imap_read(&reader, &cases[i].in), show_case);
-        LOG_DEBUG("fed '%x'", FD(&cases[i].in));
+        LOG_DEBUG("fed '%x'\n", FD(&cases[i].in));
         // check that there were no errors
         PROP_VAR_GO(&e, &calls.error, show_case);
         // check that the right calls were made
@@ -342,6 +340,11 @@ static derr_t test_scanner_and_parser(void){
                 .resp_calls=(int[]){IMAP_RESP_EXPUNGE, -1},
                 .buf=DSTR_LIT("* 41 EXPUNGE\r\n")
             },
+            {
+                .in=DSTR_LIT("+\r\n"),
+                .resp_calls=(int[]){IMAP_RESP_PLUS, -1},
+                .buf=DSTR_LIT("+\r\n")
+            },
         };
         size_t ncases = sizeof(cases) / sizeof(*cases);
         PROP(&e, do_test_scanner_and_parser(cases, ncases, true) );
@@ -459,7 +462,7 @@ static derr_t test_scanner_and_parser(void){
             },
             {
                 .in=DSTR_LIT("tag LOGIN \"asdf\" {11}\r\npass phrase\r\n"),
-                .cmd_calls=(int[]){IMAP_CMD_LOGIN, -1},
+                .cmd_calls=(int[]){IMAP_CMD_PLUS_REQ, IMAP_CMD_LOGIN, -1},
                 .buf=DSTR_LIT("tag LOGIN asdf \"pass phrase\"\r\n")
             },
             {
@@ -474,7 +477,7 @@ static derr_t test_scanner_and_parser(void){
             },
             {
                 .in=DSTR_LIT("tag EXAMINE {10}\r\nexamine_me\r\n"),
-                .cmd_calls=(int[]){IMAP_CMD_EXAMINE, -1},
+                .cmd_calls=(int[]){IMAP_CMD_PLUS_REQ, IMAP_CMD_EXAMINE, -1},
                 .buf=DSTR_LIT("tag EXAMINE examine_me\r\n")
             },
             {
@@ -543,7 +546,7 @@ static derr_t test_scanner_and_parser(void){
             },
             {
                 .in=DSTR_LIT("{11}\r\nhello imap1\r\n"),
-                .cmd_calls=(int[]){IMAP_CMD_APPEND, -1},
+                .cmd_calls=(int[]){IMAP_CMD_PLUS_REQ, IMAP_CMD_APPEND, -1},
                 .buf=DSTR_LIT("tag APPEND INBOX (\\Seen) \"11-Jan-1999 "
                     "00:11:22 +0500\" {11+}\r\nhello imap1\r\n")
             },
@@ -552,7 +555,7 @@ static derr_t test_scanner_and_parser(void){
             },
             {
                 .in=DSTR_LIT("{11}\r\nhello imap2\r\n"),
-                .cmd_calls=(int[]){IMAP_CMD_APPEND, -1},
+                .cmd_calls=(int[]){IMAP_CMD_PLUS_REQ, IMAP_CMD_APPEND, -1},
                 .buf=DSTR_LIT("tag APPEND INBOX () \"11-Jan-1999 "
                     "00:11:22 +0500\" {11+}\r\nhello imap2\r\n")
             },
@@ -561,13 +564,13 @@ static derr_t test_scanner_and_parser(void){
             },
             {
                 .in=DSTR_LIT("{11}\r\nhello imap3\r\n"),
-                .cmd_calls=(int[]){IMAP_CMD_APPEND, -1},
+                .cmd_calls=(int[]){IMAP_CMD_PLUS_REQ, IMAP_CMD_APPEND, -1},
                 .buf=DSTR_LIT("tag APPEND INBOX (\\Seen) "
                         "{11+}\r\nhello imap3\r\n")
             },
             {
                 .in=DSTR_LIT("tag APPEND inbox {11}\r\nhello imap4\r\n"),
-                .cmd_calls=(int[]){IMAP_CMD_APPEND, -1},
+                .cmd_calls=(int[]){IMAP_CMD_PLUS_REQ, IMAP_CMD_APPEND, -1},
                 .buf=DSTR_LIT("tag APPEND INBOX () {11+}\r\nhello imap4\r\n")
             },
             {
@@ -593,7 +596,7 @@ static derr_t test_scanner_and_parser(void){
             // test literal tokenizing/parsing
             {
                 .in=DSTR_LIT("tag APPEND inbox {0}\r\n\r\n"),
-                .cmd_calls=(int[]){IMAP_CMD_APPEND, -1},
+                .cmd_calls=(int[]){IMAP_CMD_PLUS_REQ, IMAP_CMD_APPEND, -1},
                 .buf=DSTR_LIT("tag APPEND INBOX () {0+}\r\n\r\n")
             },
         };

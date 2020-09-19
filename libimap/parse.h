@@ -1,7 +1,6 @@
 typedef struct {
     // command parsers must define *cmd and *need_plus
     void (*cmd)(void *cb_data, derr_t error, imap_cmd_t *cmd);
-    void (*need_plus)(void *cb_data);
     // response parsers must define *resp
     void (*resp)(void *cb_data, derr_t error, imap_resp_t *resp);
 } imap_parser_cb_t;

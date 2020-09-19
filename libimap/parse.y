@@ -27,8 +27,14 @@
         /* put scanner in literal mode */ \
         set_scanner_to_literal_mode(p, len); \
         if(!p->is_client){ \
-            /* send a plus token to the client */ \
-            p->cb.need_plus(p->cb_data); \
+            /* forward the plus request to the server */ \
+            /* (but leave p->error alone, since that error's lifetime is */ \
+            /*  tied to the liftime of a full imap line) */ \
+            derr_t e = E_OK; \
+            imap_cmd_arg_t arg = {0}; \
+            imap_cmd_t *cmd = imap_cmd_new(&e, NULL, IMAP_CMD_PLUS_REQ, arg); \
+            p->cb.cmd(p->cb_data, e, cmd); \
+            PASSED(e); \
         } \
     }
 
@@ -563,6 +569,8 @@
 %type <imap_resp> fetch_resp
 %type <imap_resp> enabled_resp
 %type <imap_resp> vanished_resp
+%type <imap_resp> plus_resp
+
 %destructor { imap_resp_free($$); } <imap_resp>
 
 %% /********** Grammar Section **********/
@@ -632,6 +640,7 @@ respcheck: %empty {
 
 response_: status_type_resp_tagged
          | untag SP untagged_resp[u] { $$ = $u; }
+         | plus_resp
 ;
 
 untagged_resp: status_type_resp_untagged
@@ -1453,6 +1462,12 @@ vanished_resp: VANISHED respcheck SP seq_set[s]
                   };
                   $$ = imap_resp_new(E, IMAP_RESP_VANISHED, arg); }
 ;
+
+/*** PLUS response ***/
+
+plus_resp: '+' respcheck
+    { $$ = imap_resp_new(E, IMAP_RESP_PLUS, (imap_resp_arg_t){0}); };
+
 
 /*** start of "helper" categories: ***/
 

@@ -898,7 +898,7 @@ static derr_t passthru_cmd(server_t *server, const ie_dstr_t *tag,
             arg.append = ie_append_cmd_copy(&e, cmd->arg.append);
             break;
 
-        case IMAP_CMD_PLUS:
+        case IMAP_CMD_PLUS_REQ:
         case IMAP_CMD_CAPA:
         case IMAP_CMD_NOOP:
         case IMAP_CMD_LOGOUT:
@@ -1030,7 +1030,7 @@ static derr_t handle_one_command(server_t *server, imap_cmd_t *cmd){
     bool examine;
 
     switch(cmd->type){
-        case IMAP_CMD_PLUS:
+        case IMAP_CMD_PLUS_REQ:
             PROP_GO(&e, send_plus(server), cu_cmd);
             break;
 
@@ -1201,7 +1201,7 @@ static bool intercept_cmd_type(imap_cmd_type_t type){
         case IMAP_CMD_CLOSE:
             return true;
 
-        case IMAP_CMD_PLUS:
+        case IMAP_CMD_PLUS_REQ:
         case IMAP_CMD_NOOP:
         case IMAP_CMD_STARTTLS:
         case IMAP_CMD_AUTH:

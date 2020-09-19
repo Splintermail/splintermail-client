@@ -221,7 +221,7 @@ tag_mode:
         *               { INVALID_TOKEN_ERROR; }
         eol             { *type = EOL; goto done; }
         tag             { *type = RAW; goto done; }
-        [ *]            { *type = *scanner->start; goto done; }
+        [ *+]           { *type = *scanner->start; goto done; }
     */
 
 command_mode:
