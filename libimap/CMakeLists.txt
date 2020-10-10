@@ -1,11 +1,3 @@
-if("${RE2C}" STREQUAL "")
-    set(RE2C "re2c")
-endif()
-
-if("${BISON}" STREQUAL "")
-    set(BISON "bison")
-endif()
-
 # non-generated sources
 set(raw_srcs
     expression.c
@@ -62,11 +54,11 @@ add_custom_command(
     )
 
 if("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU")
-    add_source_compile_option("${imap_parse_out}" "-Wno-sign-conversion")
-    add_source_compile_option("${imap_parse_out}" "-Wno-conversion")
+    source_compile_options("${imap_parse_out}" "-Wno-sign-conversion")
+    source_compile_options("${imap_parse_out}" "-Wno-conversion")
 elseif("${CMAKE_C_COMPILER_ID}" MATCHES "Clang")
-    add_source_compile_option("${imap_parse_out}" "-Wno-sign-conversion")
-    add_source_compile_option("${imap_parse_out}" "-Wno-conversion")
+    source_compile_options("${imap_parse_out}" "-Wno-sign-conversion")
+    source_compile_options("${imap_parse_out}" "-Wno-conversion")
 #elseif("${CMAKE_C_COMPILER_ID}" STREQUAL "MSVC")
 endif()
 
@@ -77,20 +69,19 @@ define_file_logname_for_source("${imf_scan_in}" "${imf_scan_out}")
 define_file_logname_for_source("${imf_parse_in}" "${imf_parse_out}")
 
 # Work around missing prototype and poor enum handling with bison 3.6:
-get_property(opts SOURCE "${imap_parse_out}" PROPERTY COMPILE_OPTIONS)
-# compiler- and target-specific flag adjustments
 if("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU")
-    list(APPEND opts "-Wno-missing-prototypes")
-    list(APPEND opts "-Wno-switch-enum")
+    source_compile_options("${imap_parse_out}" "-Wno-missing-prototypes")
+    source_compile_options("${imap_parse_out}" "-Wno-switch-enum")
+    source_compile_options("${imf_parse_out}" "-Wno-missing-prototypes")
+    source_compile_options("${imf_parse_out}" "-Wno-switch-enum")
 elseif("${CMAKE_C_COMPILER_ID}" MATCHES "Clang")
-    list(APPEND opts "-Wno-missing-prototypes")
-    list(APPEND opts "-Wno-switch-enum")
+    source_compile_options("${imap_parse_out}" "-Wno-missing-prototypes")
+    source_compile_options("${imap_parse_out}" "-Wno-switch-enum")
+    source_compile_options("${imf_parse_out}" "-Wno-missing-prototypes")
+    source_compile_options("${imf_parse_out}" "-Wno-switch-enum")
 elseif("${CMAKE_C_COMPILER_ID}" STREQUAL "MSVC")
     # flags for MVSC (VS 2017)
 endif()
-# Set the updated compile definitions on the source file.
-set_property(SOURCE "${imap_parse_out}" PROPERTY COMPILE_OPTIONS ${opts})
-set_property(SOURCE "${imf_parse_out}" PROPERTY COMPILE_OPTIONS ${opts})
 
 add_library(
     imap

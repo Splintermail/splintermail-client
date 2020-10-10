@@ -10,23 +10,6 @@
     if(a == b) return true; \
     if(!a || !b) return false
 
-// functional API for passing a parameter and erasing its original location
-#define DEF_STEAL_STRUCT(type) \
-    static inline type steal_##type(type *old){ \
-        type temp = *old; \
-        *old = (type){0}; \
-        return temp; \
-    }
-
-#define DEF_STEAL_PTR(type) \
-    static inline type *steal_##type(type **old){ \
-        type *temp = *old; \
-        *old = NULL; \
-        return temp; \
-    }
-
-#define STEAL(type, ptr) steal_##type(ptr)
-
 typedef struct ie_dstr_t {
     dstr_t dstr;
     struct ie_dstr_t *next;

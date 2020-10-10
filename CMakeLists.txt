@@ -24,6 +24,14 @@ if("${PYTHON_3_CMD}" STREQUAL "")
     set(PYTHON_3_CMD "python3")
 endif()
 
+if("${RE2C}" STREQUAL "")
+    set(RE2C "re2c")
+endif()
+
+if("${BISON}" STREQUAL "")
+    set(BISON "bison")
+endif()
+
 # inlcude OpenSSL
 if(APPLE OR WIN32)
     set(OPENSSL_USE_STATIC_LIBS TRUE)
@@ -159,6 +167,13 @@ function(default_compile_options tgt allow_asan)
 endfunction()
 
 
+function(source_compile_options src)
+    get_property(opts SOURCE "${src}" PROPERTY COMPILE_OPTIONS)
+    list(APPEND opts ${ARGN})
+    set_property(SOURCE "${src}" PROPERTY COMPILE_OPTIONS ${opts})
+endfunction()
+
+
 # Add -DFILE_BASENAME="logname" to the compile options for a source file.
 function(define_file_logname_for_source orig_sourcefile final_sourcefile)
     get_filename_component(projpath "${PROJECT_SOURCE_DIR}" ABSOLUTE)
@@ -192,13 +207,6 @@ function(define_file_logname_for_target targetname)
     foreach(sourcefile ${source_files})
         define_file_logname_for_source("${sourcefile}" "${sourcefile}")
     endforeach()
-endfunction()
-
-function(add_source_compile_option src opt)
-    get_property(opts SOURCE "${src}"
-        PROPERTY COMPILE_DEFINITIONS)
-    list(APPEND opts "${opt}")
-    set_property(SOURCE "${src}" PROPERTY COMPILE_OPTIONS "${opts}")
 endfunction()
 
 # tgt object depends on external library (propagate linking and includes)

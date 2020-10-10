@@ -28,6 +28,23 @@ typedef _Bool bool;
 #define CONTAINER_OF(ptr, structure, member) \
     structure ## _ ## member ## _container_of(ptr)
 
+// functional API for passing a pointer and erasing its original location
+#define DEF_STEAL_STRUCT(type) \
+    static inline type steal_##type(type *old){ \
+        type temp = *old; \
+        *old = (type){0}; \
+        return temp; \
+    }
+
+#define DEF_STEAL_PTR(type) \
+    static inline type *steal_##type(type **old){ \
+        type *temp = *old; \
+        *old = NULL; \
+        return temp; \
+    }
+
+#define STEAL(type, ptr) steal_##type(ptr)
+
 typedef struct {
     char* data;
     size_t size;
