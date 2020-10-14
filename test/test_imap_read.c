@@ -38,12 +38,6 @@
     Are there really no possible codepaths which don't call dstr_free exactly
     one time?
 
-    literals coming from email client need a '+' response
-
-    I am pretty sure that whenever I call YYACCEPT or use DOCATCH in an
-    end-of-rule code block I also need to free anything in that rule that has
-    a destructor (which wouldn't get called... I think)
-
     parser should confirm that there was only one mbx-list-sflag given
 
     partial <p1.p2> should enforce non-zeroness of p2
@@ -53,7 +47,7 @@
 */
 
 typedef struct {
-    size_t cmd_counts[IMAP_CMD_UNSELECT + 1];
+    size_t cmd_counts[IMAP_CMD_IDLE_DONE + 1];
     size_t resp_counts[IMAP_RESP_VANISHED + 1];
     // the error from a callback
     derr_t error;
@@ -112,6 +106,7 @@ static void cmd_cb(void *cb_data, derr_t error, imap_cmd_t *cmd){
         .condstore = EXT_STATE_ON,
         .qresync = EXT_STATE_ON,
         .unselect = EXT_STATE_ON,
+        .idle = EXT_STATE_ON,
     };
 
     // IMAP_CMD_PLUS_REQ is not writable
@@ -140,6 +135,7 @@ static void resp_cb(void *cb_data, derr_t error, imap_resp_t *resp){
         .condstore = EXT_STATE_ON,
         .qresync = EXT_STATE_ON,
         .unselect = EXT_STATE_ON,
+        .idle = EXT_STATE_ON,
     };
 
     PROP_GO(&calls->error, imap_resp_print(resp, &calls->buf, &exts), done);
@@ -174,6 +170,7 @@ static derr_t do_test_scanner_and_parser(test_case_t *cases, size_t ncases,
         .condstore = EXT_STATE_ON,
         .qresync = EXT_STATE_ON,
         .unselect = EXT_STATE_ON,
+        .idle = EXT_STATE_ON,
     };
 
     // init the reader
@@ -960,6 +957,23 @@ static derr_t test_scanner_and_parser(void){
                 .in=DSTR_LIT("tag UNSELECT\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_UNSELECT, -1},
                 .buf=DSTR_LIT("tag UNSELECT\r\n")
+            },
+        };
+        size_t ncases = sizeof(cases) / sizeof(*cases);
+        PROP(&e, do_test_scanner_and_parser(cases, ncases, false) );
+    }
+    // IDLE extension command
+    {
+        test_case_t cases[] = {
+            {
+                .in=DSTR_LIT("tag IDLE\r\n"),
+                .cmd_calls=(int[]){IMAP_CMD_IDLE, -1},
+                .buf=DSTR_LIT("tag IDLE\r\n")
+            },
+            {
+                .in=DSTR_LIT("DONE\r\n"),
+                .cmd_calls=(int[]){IMAP_CMD_IDLE_DONE, -1},
+                .buf=DSTR_LIT("DONE\r\n")
             },
         };
         size_t ncases = sizeof(cases) / sizeof(*cases);

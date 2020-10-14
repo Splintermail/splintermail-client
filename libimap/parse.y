@@ -29,7 +29,7 @@
         if(!p->is_client){ \
             /* forward the plus request to the server */ \
             /* (but leave p->error alone, since that error's lifetime is */ \
-            /*  tied to the liftime of a full imap line) */ \
+            /*  tied to the liftime of a full imap command) */ \
             derr_t e = E_OK; \
             imap_cmd_arg_t arg = {0}; \
             imap_cmd_t *cmd = imap_cmd_new(&e, NULL, IMAP_CMD_PLUS_REQ, arg); \
@@ -165,6 +165,8 @@
 %token UID
 %token ENABLE
 %token UNSELECT
+%token IDLE
+%token DONE
 
 /* responses */
 %token OK
@@ -551,6 +553,7 @@
 %type <imap_cmd> copy_cmd
 %type <imap_cmd> enable_cmd
 %type <imap_cmd> unselect_cmd
+%type <imap_cmd> idle_cmd
 %destructor { imap_cmd_free($$); } <imap_cmd>
 
 %type <imap_resp> response_
@@ -577,7 +580,7 @@
 
 line: command EOL { ACCEPT; }
     | response EOL { ACCEPT; }
-    | error EOL { MODE(TAG); YYABORT; }
+    | error EOL { ACCEPT; }
 ;
 
 command: command_[c]
@@ -621,6 +624,7 @@ command_: capa_cmd
         | copy_cmd
         | enable_cmd
         | unselect_cmd
+        | idle_cmd
 ;
 
 response: response_[r]
@@ -1107,6 +1111,32 @@ enable_cmd: tag SP ENABLE cmdcheck { MODE(ATOM); } SP capas_1[c]
 unselect_cmd: tag[t] SP UNSELECT cmdcheck
     { extension_assert_on_builder(E, p->exts, EXT_UNSELECT);
       $$ = imap_cmd_new(E, $t, IMAP_CMD_UNSELECT, (imap_cmd_arg_t){0}); };
+
+/*** IDLE command ***/
+idle_cmd:
+    tag[t] SP IDLE cmdcheck EOL
+    {
+        extension_assert_available_builder(E, p->exts, EXT_IDLE);
+        if(is_error(p->error)){
+            DROP_VAR(E);
+            imapyyerror(p, "IDLE not supported");
+            YYERROR;
+        }
+        /* forward the IDLE request to the server
+           (but leave p->error alone, since that error's lifetime is
+            tied to the liftime of a full imap command) */
+        derr_t e = E_OK;
+        ie_dstr_t *tag = ie_dstr_copy(&e, $t);
+        imap_cmd_arg_t arg = {0};
+        imap_cmd_t *cmd = imap_cmd_new(&e, tag, IMAP_CMD_IDLE, arg);
+        p->cb.cmd(p->cb_data, e, cmd);
+        PASSED(e);
+    }
+    DONE
+    {
+        imap_cmd_arg_t arg = { .idle_done = { .tag = $t, .ok = true }, };
+        $$ = imap_cmd_new(E, NULL, IMAP_CMD_IDLE_DONE, arg);
+    };
 
 
 /*** status-type responses.  Thanks for the the shitty grammar, IMAP4rev1 ***/

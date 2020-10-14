@@ -1096,6 +1096,12 @@ derr_t dn_cmd(dn_t *dn, imap_cmd_t *cmd){
         case IMAP_CMD_APPEND:
             ORIG_GO(&e, E_INTERNAL, "unexpected command in dn_t", cu_cmd);
 
+        // not yet supported
+        case IMAP_CMD_IDLE:
+        case IMAP_CMD_IDLE_DONE:
+            ORIG_GO(&e, E_INTERNAL, "not yet supported in dn_t", cu_cmd);
+            break;
+
         // unsupported extensions
         case IMAP_CMD_ENABLE:
         case IMAP_CMD_UNSELECT:

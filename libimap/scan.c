@@ -262,6 +262,7 @@ command_mode:
         'vanished'      { *type = VANISHED; goto done; }
         'earlier'       { *type = EARLIER; goto done; }
         'unselect'      { *type = UNSELECT; goto done; }
+        'idle'          { *type = IDLE; goto done; }
 
         'ok'            { *type = OK; goto done; }
         'no'            { *type = NO; goto done; }
@@ -271,6 +272,7 @@ command_mode:
         'flags'         { *type = FLAGS; goto done; }
         'exists'        { *type = EXISTS; goto done; }
         'recent'        { *type = RECENT; goto done; }
+        'done'          { *type = DONE; goto done; }
 
         num             { *type = NUM; goto done; }
     */

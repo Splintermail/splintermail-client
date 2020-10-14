@@ -78,6 +78,8 @@ DSTR_STATIC(IMAP_CMD_STORE_dstr, "STORE");
 DSTR_STATIC(IMAP_CMD_COPY_dstr, "COPY");
 DSTR_STATIC(IMAP_CMD_ENABLE_dstr, "ENABLE");
 DSTR_STATIC(IMAP_CMD_UNSELECT_dstr, "UNSELECT");
+DSTR_STATIC(IMAP_CMD_IDLE_dstr, "IDLE");
+DSTR_STATIC(IMAP_CMD_IDLE_DONE_dstr, "DONE");
 
 const dstr_t *imap_cmd_type_to_dstr(imap_cmd_type_t type){
     switch(type){
@@ -108,6 +110,8 @@ const dstr_t *imap_cmd_type_to_dstr(imap_cmd_type_t type){
         case IMAP_CMD_COPY:     return &IMAP_CMD_COPY_dstr;
         case IMAP_CMD_ENABLE:   return &IMAP_CMD_ENABLE_dstr;
         case IMAP_CMD_UNSELECT: return &IMAP_CMD_UNSELECT_dstr;
+        case IMAP_CMD_IDLE:     return &IMAP_CMD_IDLE_dstr;
+        case IMAP_CMD_IDLE_DONE:return &IMAP_CMD_IDLE_DONE_dstr;
     }
     return &IE_UNKNOWN_dstr;
 }
@@ -2439,6 +2443,8 @@ static void imap_cmd_arg_free(imap_cmd_type_t type, imap_cmd_arg_t arg){
         case IMAP_CMD_COPY:     ie_copy_cmd_free(arg.copy); break;
         case IMAP_CMD_ENABLE:   ie_dstr_free(arg.enable); break;
         case IMAP_CMD_UNSELECT: break;
+        case IMAP_CMD_IDLE:     break;
+        case IMAP_CMD_IDLE_DONE:ie_dstr_free(arg.idle_done.tag); break;
     }
 }
 
@@ -2500,6 +2506,11 @@ static imap_cmd_arg_t imap_cmd_arg_copy(derr_t *e, imap_cmd_type_t type,
         case IMAP_CMD_COPY:     arg.copy = ie_copy_cmd_copy(e, old.copy); break;
         case IMAP_CMD_ENABLE:   arg.enable = ie_dstr_copy(e, old.enable); break;
         case IMAP_CMD_UNSELECT: break;
+        case IMAP_CMD_IDLE:     break;
+        case IMAP_CMD_IDLE_DONE:
+            arg.idle_done.tag = ie_dstr_copy(e, arg.idle_done.tag);
+            arg.idle_done.ok = old.idle_done.ok;
+            break;
     }
     return arg;
 }

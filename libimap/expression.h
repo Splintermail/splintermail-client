@@ -505,6 +505,8 @@ typedef enum {
     IMAP_CMD_COPY,
     IMAP_CMD_ENABLE,
     IMAP_CMD_UNSELECT,
+    IMAP_CMD_IDLE,
+    IMAP_CMD_IDLE_DONE,
 } imap_cmd_type_t;
 
 typedef struct {
@@ -598,6 +600,13 @@ typedef union {
     ie_copy_cmd_t *copy;
     ie_dstr_t *enable;
     // nothing for unselect
+    // nothing for idle
+    struct {
+        // the tag for the IDLE command we are finishing
+        ie_dstr_t *tag;
+        // if the DONE was received as expected
+        bool ok;
+    } idle_done;
 } imap_cmd_arg_t;
 
 typedef struct {

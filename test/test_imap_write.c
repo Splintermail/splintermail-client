@@ -72,6 +72,7 @@ static derr_t do_writer_test(const test_case_t *tc){
             .condstore = EXT_STATE_ON,
             .qresync = EXT_STATE_ON,
             .unselect = EXT_STATE_ON,
+            .idle = EXT_STATE_ON,
         };
 
         if(tc->cmd != NULL){
@@ -906,6 +907,31 @@ static derr_t test_imap_writer(void){
         CHECK(&e);
         PROP(&e, do_writer_test_multi(cases, sizeof(cases)/sizeof(*cases)) );
     }
+    // IDLE extension
+    {
+        test_case_t cases[] = {
+            {
+                .cmd=imap_cmd_new(&e,
+                    IE_DSTR("tag"), IMAP_CMD_IDLE, (imap_cmd_arg_t){0}
+                ),
+                .out=(size_chunk_out_t[]){
+                    {64, "tag IDLE\r\n"},
+                    {0}
+                },
+            },
+            {
+                .cmd=imap_cmd_new(&e,
+                    NULL, IMAP_CMD_IDLE_DONE, (imap_cmd_arg_t){0}
+                ),
+                .out=(size_chunk_out_t[]){
+                    {64, "DONE\r\n"},
+                    {0}
+                },
+            },
+        };
+        CHECK(&e);
+        PROP(&e, do_writer_test_multi(cases, sizeof(cases)/sizeof(*cases)) );
+    }
     return e;
 }
 
@@ -922,6 +948,7 @@ static derr_t test_imap_print(void){
         .condstore = EXT_STATE_ON,
         .qresync = EXT_STATE_ON,
         .unselect = EXT_STATE_ON,
+        .idle = EXT_STATE_ON,
     };
 
     imap_cmd_t *cmd = imap_cmd_new(

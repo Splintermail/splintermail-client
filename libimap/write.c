@@ -1065,11 +1065,13 @@ static derr_t do_imap_cmd_write(const imap_cmd_t *cmd, dstr_t *out,
 
     imap_cmd_arg_t arg = cmd->arg;
 
-    // the tag
-    PROP(&e, tag_skip_fill(sf, &cmd->tag->dstr) );
-
-    // space after tag
-    STATIC_SKIP_FILL(" ");
+    // other than the DONE of IDLE, all commands are tagged
+    if(cmd->type != IMAP_CMD_IDLE_DONE){
+        // the tag
+        PROP(&e, tag_skip_fill(sf, &cmd->tag->dstr) );
+        // space after tag
+        STATIC_SKIP_FILL(" ");
+    }
 
     switch(cmd->type){
         case IMAP_CMD_PLUS_REQ:  // already checked for this
@@ -1286,6 +1288,16 @@ static derr_t do_imap_cmd_write(const imap_cmd_t *cmd, dstr_t *out,
         case IMAP_CMD_UNSELECT:
             PROP(&e, extension_assert_on(sf->exts, EXT_UNSELECT) );
             STATIC_SKIP_FILL("UNSELECT");
+            break;
+
+        case IMAP_CMD_IDLE:
+            PROP(&e, extension_assert_on(sf->exts, EXT_IDLE) );
+            STATIC_SKIP_FILL("IDLE");
+            break;
+
+        case IMAP_CMD_IDLE_DONE:
+            PROP(&e, extension_assert_on(sf->exts, EXT_IDLE) );
+            STATIC_SKIP_FILL("DONE");
             break;
 
         default:
