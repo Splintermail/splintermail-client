@@ -1260,9 +1260,9 @@ derr_t hex2bin(const dstr_t* hex, dstr_t* bin){
 // FMT()-related stuff below //
 ///////////////////////////////
 
-static inline derr_type_t dstr_append_uint(dstr_t* dstr, unsigned int val){
-    DSTR_VAR(buffer, 128);
-    int len = snprintf(buffer.data, buffer.size, "%.3u", val);
+static inline derr_type_t dstr_append_hex(dstr_t* dstr, unsigned char val){
+    DSTR_VAR(buffer, 8);
+    int len = snprintf(buffer.data, buffer.size, "%.2x", val);
     if(len < 0) return E_INTERNAL;
     buffer.len = (size_t)len;
     return dstr_append_quiet(dstr, &buffer);
@@ -1404,6 +1404,7 @@ derr_type_t fmthook_dstr_dbg(dstr_t* out, const void* arg){
     DSTR_STATIC(bs,"\\\\");
     DSTR_STATIC(pre,"\\x");
     DSTR_STATIC(tab,"\\t");
+    DSTR_STATIC(quote,"\\\"");
 
     derr_type_t type;
     for(size_t i = 0; i < in->len; i++){
@@ -1414,11 +1415,12 @@ derr_type_t fmthook_dstr_dbg(dstr_t* out, const void* arg){
         else if(c == '\0') type = dstr_append_quiet(out, &nc);
         else if(c == '\t') type = dstr_append_quiet(out, &tab);
         else if(c == '\\') type = dstr_append_quiet(out, &bs);
+        else if(c == '"') type = dstr_append_quiet(out, &quote);
         else if(u > 31 && u < 128) type = dstr_append_char(out, c);
         else {
             type = dstr_append_quiet(out, &pre);
             if(type) return type;
-            type = dstr_append_uint(out, u);
+            type = dstr_append_hex(out, u);
         }
         if(type) return type;
     }

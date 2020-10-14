@@ -452,7 +452,7 @@ static derr_t test_fmt(void){
     char t_char = 't';
     char t_cstr[] = "string";
     DSTR_STATIC(t_dstr, "dstring");
-    DSTR_STATIC(t_dstrd, "\0\n\r");
+    DSTR_STATIC(t_dstrd, "\0\n\r\\\"\x1f");
     unsigned int t_uint = 1234;
     unsigned long long t_luint = 12345678901234;
     int t_int = -1234;
@@ -464,7 +464,7 @@ static derr_t test_fmt(void){
     DSTR_VAR(errstr, 512);
     compat_strerror_r(errnum, errstr.data, errstr.size);
     exp.len = (size_t)snprintf(exp.data, exp.size,
-                              "t|string|dstring|\\0\\n\\r"
+                              "t|string|dstring|\\0\\n\\r\\\\\\\"\\x1f"
                               "|1234|12345678901234|-1234|-12345678901234"
                               "|3.140000|%%|%s", errstr.data);
 
