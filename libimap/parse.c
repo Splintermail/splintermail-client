@@ -3,7 +3,7 @@
 #include <imap_parse.tab.h>
 
 void imapyyerror(imap_parser_t *parser, char const *s){
-    (void)parser;
+    if(parser->freeing) return;
     PFMT("ERROR: %x: %x\n", FS(s), FD(parser->token));
 }
 
@@ -39,7 +39,40 @@ derr_t imap_parser_init(
     return e;
 }
 
+static void free_cmd_cb(void *cb_data, derr_t error, imap_cmd_t *cmd){
+    (void)cb_data;
+    DROP_VAR(&error);
+    imap_cmd_free(cmd);
+}
+
+static void free_resp_cb(void *cb_data, derr_t error, imap_resp_t *resp){
+    (void)cb_data;
+    DROP_VAR(&error);
+    imap_resp_free(resp);
+}
+
+static imap_parser_cb_t free_cbs = {
+    .cmd = free_cmd_cb,
+    .resp = free_resp_cb,
+};
+
 void imap_parser_free(imap_parser_t *parser){
+    /* calling yypstate_delete while the parse is in the middle of a rule
+       results in a memory leak, so we pass an invalid token to ensure the
+       parser always ends in a finished state.
+
+       This is pretty weird that we need to do more allocations in order to
+       not leak memory... but I believe that's the case.  If we are already
+       under memory exhaustion, then these calls should trigger bison to call
+       any necessary destructors, if we can rely on bison at all. */
+    parser->freeing = true;
+    parser->cb = free_cbs;
+    derr_t e = E_OK;
+    DSTR_STATIC(token, "");
+    PROP_GO(&e, imap_parse(parser, INVALID_TOKEN, &token), done);
+    PROP_GO(&e, imap_parse(parser, EOL, &token), done);
+done:
+    DROP_VAR(&e);
     imapyypstate_delete(parser->imapyyps);
     DROP_VAR(&parser->error);
 }

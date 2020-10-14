@@ -982,77 +982,33 @@ static derr_t test_scanner_and_parser(void){
     return e;
 }
 
-// static derr_t bad_capa(void *data, dstr_t capability){
-//     (void)data;
-//     LOG_ERROR("BAD CAPA %x\n", FD(&capability));
-//     derr_t e = E_OK;
-//     dstr_free(&capability);
-//     ORIG(&e, E_VALUE, "fake error");
-// }
-//
-//
-// static derr_t test_bison_destructors(void){
-//     /* Question: when I induce the parser code to call YYACCEPT, do any
-//        destructors get called? */
-//     // Test: force such a situation with a handle that always fails.
-//
-//     derr_t e;
-//     imap_parse_hooks_up_t hooks_up = {
-//         st_hook,
-//         // fail in capa
-//         capa_start, bad_capa, capa_end,
-//         pflag_resp,
-//         list_resp,
-//         lsub_resp,
-//         status_resp,
-//         flags_resp,
-//         exists_hook,
-//         recent_hook,
-//         expunge_hook,
-//         fetch_start,
-//             f_flags,
-//             f_rfc822_start,
-//                 NULL,
-//                 f_rfc822_qstr,
-//             f_rfc822_end,
-//             f_uid,
-//             f_intdate,
-//         fetch_end,
-//     };
-//     imap_parse_hooks_dn_t hooks_dn = {0};
-//
-//     // init the reader
-//     imap_reader_t reader;
-//     PROP(&e, imap_reader_init(&reader, hooks_dn, hooks_up, NULL) );
-//
-//     /* problems:
-//          - the "tag" does not get freed when I yypstate_delete() the parser if
-//            I haven't finished out a command
-//          - imap_parse() does not detect differences between parse errors and
-//            hook errors.
-//     */
-//
-//     // // leaks the tag due to not finish a command
-//     // DSTR_STATIC(input, "* OK [CAPABILITY IMAP4rev1]");
-//     // PROP_GO(&e, imap_read(&reader, &input), cu_reader);
-//
-//     // leaks a keep_atom, but I'm not totally sure why... maybe a preallocated one?
-//     DSTR_STATIC(input, "* OK [CAPABILITY IMAP4rev1]\r\n");
-//     PROP_GO(&e, imap_read(&reader, &input), cu_reader);
-//
-// cu_reader:
-//     imap_reader_free(&reader);
-//     return e;
-// }
+
+static derr_t test_bison_destructors(void){
+    /* Observation: calling yypstatate_delete() on the parse when a command
+       has not completed does not result in the destructor being called.
+
+       And that's dumb.  This test, when run with valgrind or asan, will fail
+       if our workaround is not working. */
+    derr_t e = E_OK;
+    test_case_t cases[] = {
+        {
+            .in=DSTR_LIT("tag FETCH *"),
+            .cmd_calls=(int[]){-1},
+            .buf=DSTR_LIT("")
+        },
+    };
+    size_t ncases = sizeof(cases) / sizeof(*cases);
+    PROP(&e, do_test_scanner_and_parser(cases, ncases, false) );
+    return e;
+}
 
 
 int main(int argc, char **argv){
     derr_t e = E_OK;
-    // parse options and set default log level
     PARSE_TEST_OPTIONS(argc, argv, NULL, LOG_LVL_ERROR);
 
     PROP_GO(&e, test_scanner_and_parser(), test_fail);
-    // PROP_GO(&e, test_bison_destructors(), test_fail);
+    PROP_GO(&e, test_bison_destructors(), test_fail);
 
     LOG_ERROR("PASS\n");
     return 0;
