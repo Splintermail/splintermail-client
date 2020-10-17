@@ -89,9 +89,8 @@ static derr_t assert_calls_equal(const calls_made_t *exp,
     return e;
 }
 
-static void cmd_cb(void *cb_data, derr_t error, imap_cmd_t *cmd){
+static void cmd_cb(void *cb_data, imap_cmd_t *cmd){
     calls_made_t *calls = cb_data;
-    PROP_GO(&calls->error, error, done);
 
     size_t max_type = sizeof(calls->cmd_counts) / sizeof(*calls->cmd_counts);
     if(cmd->type >= 0 && cmd->type < max_type){
@@ -109,8 +108,19 @@ static void cmd_cb(void *cb_data, derr_t error, imap_cmd_t *cmd){
         .idle = EXT_STATE_ON,
     };
 
-    // IMAP_CMD_PLUS_REQ is not writable
-    if(cmd->type != IMAP_CMD_PLUS_REQ){
+    // IMAP_CMD_ERROR has no writer normally, so we'll whip one up right now
+    if(cmd->type == IMAP_CMD_ERROR){
+        PROP_GO(&calls->error,
+            FMT(
+                &calls->buf,
+                "ERROR:%x %x\r\n",
+                cmd->tag ? FD(&cmd->tag->dstr) : FS("*"),
+                FD(&cmd->arg.error->dstr)
+            ),
+        done);
+    }
+    // IMAP_CMD_PLUS_REQ is totaly not writable
+    else if(cmd->type != IMAP_CMD_PLUS_REQ){
         PROP_GO(&calls->error, imap_cmd_print(cmd, &calls->buf, &exts), done);
     }
 
@@ -118,9 +128,8 @@ done:
     imap_cmd_free(cmd);
 }
 
-static void resp_cb(void *cb_data, derr_t error, imap_resp_t *resp){
+static void resp_cb(void *cb_data, imap_resp_t *resp){
     calls_made_t *calls = cb_data;
-    PROP_GO(&calls->error, error, done);
 
     size_t max_type = sizeof(calls->resp_counts) / sizeof(*calls->resp_counts);
     if(resp->type >= 0 && resp->type < max_type){
@@ -152,6 +161,7 @@ typedef struct {
     int *cmd_calls;
     int *resp_calls;
     dstr_t buf;
+    bool syntax_error;
 } test_case_t;
 
 static derr_t do_test_scanner_and_parser(test_case_t *cases, size_t ncases,
@@ -187,7 +197,16 @@ static derr_t do_test_scanner_and_parser(test_case_t *cases, size_t ncases,
         calls.buf.len = 0;
         // feed in the input
         LOG_DEBUG("about to feed '%x'\n", FD(&cases[i].in));
-        PROP_GO(&e, imap_read(&reader, &cases[i].in), show_case);
+        derr_t e2 = imap_read(&reader, &cases[i].in);
+        if(cases[i].syntax_error){
+            if(!is_error(e2)){
+                ORIG_GO(&e, E_VALUE, "expected syntax error", show_case);
+            }
+            CATCH(e2, E_PARAM){
+                DROP_VAR(&e2);
+            }
+        }
+        PROP_VAR_GO(&e, &e2, show_case);
         LOG_DEBUG("fed '%x'\n", FD(&cases[i].in));
         // check that there were no errors
         PROP_VAR_GO(&e, &calls.error, show_case);
@@ -200,7 +219,7 @@ static derr_t do_test_scanner_and_parser(test_case_t *cases, size_t ncases,
             exp.resp_counts[*t]++;
         }
         PROP_GO(&e, assert_calls_equal(&exp, &calls), show_case);
-        LOG_DEBUG("checked '%x'", FD(&cases[i].in));
+        LOG_DEBUG("checked '%x'\n", FD(&cases[i].in));
         continue;
 
     show_case:
@@ -215,7 +234,7 @@ cu_buf:
     return e;
 }
 
-static derr_t test_scanner_and_parser(void){
+static derr_t test_responses(void){
     derr_t e = E_OK;
     // Various responses, also some stream-parsing mechanics
     {
@@ -424,6 +443,12 @@ static derr_t test_scanner_and_parser(void){
         size_t ncases = sizeof(cases) / sizeof(*cases);
         PROP(&e, do_test_scanner_and_parser(cases, ncases, true) );
     }
+    return e;
+}
+
+
+static derr_t test_commands(void){
+    derr_t e = E_OK;
     // test imap commands
     {
         test_case_t cases[] = {
@@ -1003,12 +1028,85 @@ static derr_t test_bison_destructors(void){
 }
 
 
+static derr_t test_command_error_reporting(void){
+    derr_t e = E_OK;
+    test_case_t cases[] = {
+        // IDLE error, expect DONE but get something else
+        {
+            .in=DSTR_LIT("tag1 IDLE\r\ntag2 CLOSE\r\n"),
+            .cmd_calls=(int[]){IMAP_CMD_IDLE, IMAP_CMD_ERROR, -1},
+            .buf=DSTR_LIT(
+                "tag1 IDLE\r\n"
+                "ERROR:tag1 syntax error at input: tag2 CLOSE\\r\\n\r\n"
+            )
+        },
+        // next command works fine
+        {
+            .in=DSTR_LIT("tag3 CLOSE\r\n"),
+            .cmd_calls=(int[]){IMAP_CMD_CLOSE, -1},
+            .buf=DSTR_LIT("tag3 CLOSE\r\n")
+        },
+        // tagless error
+        {
+            .in=DSTR_LIT("(junk)\r\n"),
+            .cmd_calls=(int[]){IMAP_CMD_ERROR, -1},
+            .buf=DSTR_LIT("ERROR:* syntax error at input: (junk)\\r\\n\r\n"
+            )
+        },
+        // next command works fine
+        {
+            .in=DSTR_LIT("tag4 CLOSE\r\n"),
+            .cmd_calls=(int[]){IMAP_CMD_CLOSE, -1},
+            .buf=DSTR_LIT("tag4 CLOSE\r\n")
+        },
+        // complete command, then error
+        {
+            .in=DSTR_LIT("tag5 CLOSE ERR\r\n"),
+            .cmd_calls=(int[]){IMAP_CMD_ERROR, -1},
+            .buf=DSTR_LIT("ERROR:tag5 syntax error at input:  ERR\\r\\n\r\n"),
+        },
+        // tagged response in commands
+        {
+            .in=DSTR_LIT("tag5 OK ok\r\n"),
+            .cmd_calls=(int[]){IMAP_CMD_ERROR, -1},
+            .buf=DSTR_LIT("ERROR:tag5 syntax error at input: OK ok\\r\\n\r\n"),
+        },
+    };
+    size_t ncases = sizeof(cases) / sizeof(*cases);
+    PROP(&e, do_test_scanner_and_parser(cases, ncases, false) );
+    return e;
+}
+
+static derr_t test_response_error_reporting(void){
+    derr_t e = E_OK;
+    test_case_t cases[] = {
+        {
+            .in=DSTR_LIT("(junk)"),
+            .resp_calls=(int[]){-1},
+            .buf=DSTR_LIT(""),
+        },
+        {
+            .in=DSTR_LIT("\r\n"),
+            .resp_calls=(int[]){-1},
+            .buf=DSTR_LIT(""),
+            .syntax_error=true,
+        },
+    };
+    size_t ncases = sizeof(cases) / sizeof(*cases);
+    PROP(&e, do_test_scanner_and_parser(cases, ncases, true) );
+    return e;
+}
+
+
 int main(int argc, char **argv){
     derr_t e = E_OK;
     PARSE_TEST_OPTIONS(argc, argv, NULL, LOG_LVL_ERROR);
 
-    PROP_GO(&e, test_scanner_and_parser(), test_fail);
+    PROP_GO(&e, test_responses(), test_fail);
+    PROP_GO(&e, test_commands(), test_fail);
     PROP_GO(&e, test_bison_destructors(), test_fail);
+    PROP_GO(&e, test_command_error_reporting(), test_fail);
+    PROP_GO(&e, test_response_error_reporting(), test_fail);
 
     LOG_ERROR("PASS\n");
     return 0;

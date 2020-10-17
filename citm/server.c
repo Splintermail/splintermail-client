@@ -559,6 +559,22 @@ static derr_t send_greeting(server_t *server){
 }
 
 
+static derr_t send_invalid_cmd(server_t *server, imap_cmd_t *error_cmd){
+    derr_t e = E_OK;
+
+    // response will be tagged if we have a tag for it
+    ie_dstr_t *tag = STEAL(ie_dstr_t, &error_cmd->tag);
+    ie_dstr_t *text = STEAL(ie_dstr_t, &error_cmd->arg.error);
+    ie_st_resp_t *st_resp = ie_st_resp_new(&e, tag, IE_ST_BAD, NULL, text);
+    imap_resp_arg_t arg = {.status_type=st_resp};
+    imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_STATUS_TYPE, arg);
+    send_resp(&e, server, resp);
+    CHECK(&e);
+
+    return e;
+}
+
+
 static derr_t send_plus(server_t *server){
     derr_t e = E_OK;
 
@@ -898,6 +914,7 @@ static derr_t passthru_cmd(server_t *server, const ie_dstr_t *tag,
             arg.append = ie_append_cmd_copy(&e, cmd->arg.append);
             break;
 
+        case IMAP_CMD_ERROR:
         case IMAP_CMD_PLUS_REQ:
         case IMAP_CMD_CAPA:
         case IMAP_CMD_NOOP:
@@ -1032,6 +1049,10 @@ static derr_t handle_one_command(server_t *server, imap_cmd_t *cmd){
     bool examine;
 
     switch(cmd->type){
+        case IMAP_CMD_ERROR:
+            PROP_GO(&e, send_invalid_cmd(server, cmd), cu_cmd);
+            break;
+
         case IMAP_CMD_PLUS_REQ:
             PROP_GO(&e, send_plus(server), cu_cmd);
             break;
@@ -1190,7 +1211,9 @@ static bool intercept_cmd_type(imap_cmd_type_t type){
         case IMAP_CMD_SELECT:
         case IMAP_CMD_EXAMINE:
 
-        // CAPABILTIES can all be handled in one place
+        // handle some things all in one place for simplicity
+        case IMAP_CMD_ERROR:
+        case IMAP_CMD_PLUS_REQ:
         case IMAP_CMD_CAPA:
 
         // passthru commands
@@ -1209,7 +1232,6 @@ static bool intercept_cmd_type(imap_cmd_type_t type){
         case IMAP_CMD_CLOSE:
             return true;
 
-        case IMAP_CMD_PLUS_REQ:
         case IMAP_CMD_NOOP:
         case IMAP_CMD_STARTTLS:
         case IMAP_CMD_AUTH:

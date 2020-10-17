@@ -474,6 +474,31 @@ static derr_t test_fmt(void){
                 FU(t_uint), FU(t_luint), FI(t_int), FI(t_lint), FF(t_dub),
                 FE(&errnum)) );
     EXP_VS_GOT(&exp, &out);
+
+    #define TEST_FMT_TRUNC(expstr, fmtstr, ...) do { \
+        DSTR_VAR(out, 4); \
+        derr_t e2 = FMT(&out, fmtstr, __VA_ARGS__); \
+        CATCH(e2, E_FIXEDSIZE){ \
+            DROP_VAR(&e2); \
+        }else{ \
+            TRACE(&e, "expected E_FIXEDSIZE but got %x\n", \
+                    FD(error_to_dstr(e2.type))); \
+            DROP_VAR(&e2); \
+            ORIG(&e, E_VALUE, "FAIL") \
+        } \
+        dstr_t exp; \
+        DSTR_WRAP(exp, expstr, strlen(expstr), true); \
+        EXP_VS_GOT(&exp, &out); \
+    } while(0)
+
+
+    //             EXP      FMT         ARGS
+    TEST_FMT_TRUNC("1234",  "12345",    FI(567));
+    TEST_FMT_TRUNC("1256",  "12%x",     FD(&DSTR_LIT("567")));
+    // TODO: fix this so that snprintf doesn't forcibly null-terminate.
+    TEST_FMT_TRUNC("125",   "12%x",     FS("567"));
+    TEST_FMT_TRUNC("125",   "12%x",     FI(567));
+
 cleanup:
     return e;
 }

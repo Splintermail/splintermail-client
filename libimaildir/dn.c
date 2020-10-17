@@ -271,17 +271,6 @@ static derr_t send_uidvld_resp(dn_t *dn, unsigned int uidvld_dn){
     return e;
 }
 
-static derr_t send_plus(dn_t *dn){
-    derr_t e = E_OK;
-
-    imap_resp_arg_t arg = {0};
-    imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_PLUS, arg);
-    CHECK(&e);
-    PROP(&e, dn->cb->resp(dn->cb, resp) );
-
-    return e;
-}
-
 static derr_t select_cmd(dn_t *dn, const ie_dstr_t *tag,
         const ie_select_cmd_t *select){
     derr_t e = E_OK;
@@ -1033,10 +1022,6 @@ derr_t dn_cmd(dn_t *dn, imap_cmd_t *cmd){
     }
 
     switch(cmd->type){
-        case IMAP_CMD_PLUS_REQ:
-            PROP_GO(&e, send_plus(dn), cu_cmd);
-            break;
-
         case IMAP_CMD_EXAMINE:
         case IMAP_CMD_SELECT:
             PROP_GO(&e, select_cmd(dn, tag, arg->select), cu_cmd);
@@ -1079,6 +1064,8 @@ derr_t dn_cmd(dn_t *dn, imap_cmd_t *cmd){
             break;
 
         // commands which must be handled externally
+        case IMAP_CMD_ERROR:
+        case IMAP_CMD_PLUS_REQ:
         case IMAP_CMD_CAPA:
         case IMAP_CMD_LOGOUT:
         case IMAP_CMD_CLOSE:

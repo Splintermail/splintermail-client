@@ -478,6 +478,7 @@ typedef struct {
 // full command types
 
 typedef enum {
+    IMAP_CMD_ERROR,
     IMAP_CMD_PLUS_REQ,
     IMAP_CMD_CAPA,
     IMAP_CMD_NOOP,
@@ -573,6 +574,7 @@ typedef struct {
 DEF_STEAL_PTR(ie_copy_cmd_t);
 
 typedef union {
+    ie_dstr_t *error;
     // nothing for plus
     // nothing for capability
     // nothing for noop

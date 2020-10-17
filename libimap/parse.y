@@ -9,7 +9,31 @@
     // a YYACCEPT wrapper that resets some custom parser details
     #define ACCEPT \
         MODE(TAG); \
-        YYACCEPT
+        ie_dstr_free(STEAL(ie_dstr_t, &p->errtag)); \
+        ie_dstr_free(STEAL(ie_dstr_t, &p->errmsg)); \
+        YYACCEPT \
+
+    static void send_cmd(imap_parser_t *p, imap_cmd_t *cmd){
+        if(is_error(p->error)) return;
+        p->cb.cmd(p->cb_data, cmd);
+    }
+
+    static void send_resp(imap_parser_t *p, imap_resp_t *resp){
+        if(is_error(p->error)) return;
+        p->cb.resp(p->cb_data, resp);
+    }
+
+    static void handle_error(imap_parser_t *p, ie_dstr_t *tag){
+        // servers pass the error message to the client.
+        // clients let an error be raised
+        if(!p->freeing && !p->is_client){
+            imap_cmd_arg_t arg = { .error = STEAL(ie_dstr_t, &p->errmsg) };
+            imap_cmd_t *cmd = imap_cmd_new(E, tag, IMAP_CMD_ERROR, arg);
+            send_cmd(p, cmd);
+        }else{
+            ie_dstr_free(tag);
+        }
+    }
 
     // must be a macro because it has to be able to call YYERROR
     #define LITERAL_START { \
@@ -30,11 +54,9 @@
             /* forward the plus request to the server */ \
             /* (but leave p->error alone, since that error's lifetime is */ \
             /*  tied to the liftime of a full imap command) */ \
-            derr_t e = E_OK; \
             imap_cmd_arg_t arg = {0}; \
-            imap_cmd_t *cmd = imap_cmd_new(&e, NULL, IMAP_CMD_PLUS_REQ, arg); \
-            p->cb.cmd(p->cb_data, e, cmd); \
-            PASSED(e); \
+            imap_cmd_t *cmd = imap_cmd_new(E, NULL, IMAP_CMD_PLUS_REQ, arg); \
+            send_cmd(p, cmd); \
         } \
     }
 
@@ -104,12 +126,6 @@
             } \
         } \
     }
-
-    // the scanner only returns QCHAR with 1- or 2-char matches.
-    // the 2-char matches are \\ and \"
-    #define QCHAR_TO_CHAR \
-        (p->token->len == 1) ? p->token->data[0] : p->token->data[1]
-
 %}
 
 /* use a different prefix, to not overlap with the imf parser's prefix */
@@ -526,7 +542,7 @@
 %destructor { ie_fetch_resp_free($$); } <fetch_resp>
 
 
-%type <imap_cmd> command_
+%type <imap_cmd> command
 %type <imap_cmd> capa_cmd
 %type <imap_cmd> noop_cmd
 %type <imap_cmd> logout_cmd
@@ -556,7 +572,7 @@
 %type <imap_cmd> idle_cmd
 %destructor { imap_cmd_free($$); } <imap_cmd>
 
-%type <imap_resp> response_
+%type <imap_resp> response
 %type <imap_resp> untagged_resp
 %type <imap_resp> status_type_resp_tagged
 %type <imap_resp> status_type_resp_untagged
@@ -578,73 +594,76 @@
 
 %% /********** Grammar Section **********/
 
-line: command EOL { ACCEPT; }
-    | response EOL { ACCEPT; }
-    | error EOL { ACCEPT; }
+line: command[c] EOL {
+        send_cmd(p, $c);
+        ACCEPT;
+  } | response[r] EOL {
+        send_resp(p, $r);
+        ACCEPT;
+  /* various error cases */
+  } | command[c] error EOL {
+        handle_error(p, STEAL(ie_dstr_t, &$c->tag));
+        imap_cmd_free($c);
+        ACCEPT;
+  } | response[r] error EOL {
+        handle_error(p, NULL);
+        imap_resp_free($r);
+        ACCEPT;
+  } | tag error EOL {
+        handle_error(p, $tag);
+        ACCEPT;
+  } | error EOL {
+        handle_error(p, NULL);
+        ACCEPT;
+      }
 ;
-
-command: command_[c]
-{
-    // extract the error (if any), since we are about to pass it by value
-    derr_t error = p->error;
-    PASSED(p->error);
-    p->cb.cmd(p->cb_data, error, $c);
-};
 
 cmdcheck: %empty {
     if(p->is_client){
-        imapyyerror(p, "imap commands not allowed, only responses");
+        imapyyerror(p, "syntax error");
         YYERROR;
     }
 }
 
-command_: capa_cmd
-        | noop_cmd
-        | logout_cmd
-        | starttls_cmd
-        | authenticate_cmd
-        | login_cmd
-        | select_cmd
-        | examine_cmd
-        | create_cmd
-        | delete_cmd
-        | rename_cmd
-        | subscribe_cmd
-        | unsubscribe_cmd
-        | list_cmd
-        | lsub_cmd
-        | status_cmd
-        | append_cmd
-        | check_cmd
-        | close_cmd
-        | expunge_cmd
-        | search_cmd
-        | fetch_cmd
-        | store_cmd
-        | copy_cmd
-        | enable_cmd
-        | unselect_cmd
-        | idle_cmd
+command: capa_cmd
+       | noop_cmd
+       | logout_cmd
+       | starttls_cmd
+       | authenticate_cmd
+       | login_cmd
+       | select_cmd
+       | examine_cmd
+       | create_cmd
+       | delete_cmd
+       | rename_cmd
+       | subscribe_cmd
+       | unsubscribe_cmd
+       | list_cmd
+       | lsub_cmd
+       | status_cmd
+       | append_cmd
+       | check_cmd
+       | close_cmd
+       | expunge_cmd
+       | search_cmd
+       | fetch_cmd
+       | store_cmd
+       | copy_cmd
+       | enable_cmd
+       | unselect_cmd
+       | idle_cmd
 ;
-
-response: response_[r]
-{
-    // extract the error (if any), since are about to pass it by value
-    derr_t error = p->error;
-    PASSED(p->error);
-    p->cb.resp(p->cb_data, error, $r);
-};
 
 respcheck: %empty {
     if(!p->is_client){
-        imapyyerror(p, "imap responses not allowed, only commands");
+        imapyyerror(p, "syntax error");
         YYERROR;
     }
 }
 
-response_: status_type_resp_tagged
-         | untag SP untagged_resp[u] { $$ = $u; }
-         | plus_resp
+response: status_type_resp_tagged
+        | untag SP untagged_resp[u] { $$ = $u; }
+        | plus_resp
 ;
 
 untagged_resp: status_type_resp_untagged
@@ -1122,15 +1141,11 @@ idle_cmd:
             imapyyerror(p, "IDLE not supported");
             YYERROR;
         }
-        /* forward the IDLE request to the server
-           (but leave p->error alone, since that error's lifetime is
-            tied to the liftime of a full imap command) */
-        derr_t e = E_OK;
-        ie_dstr_t *tag = ie_dstr_copy(&e, $t);
+        // forward the IDLE request to the server
+        ie_dstr_t *tag = ie_dstr_copy(E, $t);
         imap_cmd_arg_t arg = {0};
-        imap_cmd_t *cmd = imap_cmd_new(&e, tag, IMAP_CMD_IDLE, arg);
-        p->cb.cmd(p->cb_data, e, cmd);
-        PASSED(e);
+        imap_cmd_t *cmd = imap_cmd_new(E, tag, IMAP_CMD_IDLE, arg);
+        send_cmd(p, cmd);
     }
     DONE
     {
@@ -1155,13 +1170,13 @@ idle_cmd:
    will not be accepted.  This seems like an acceptable sacrifice.
 */
 
-status_type_resp_tagged: tag SP st_type[tp] SP
+status_type_resp_tagged: tag SP st_type[tp] respcheck SP
                          { MODE(STATUS_CODE_CHECK); } st_code[c] st_text[tx]
     { imap_resp_arg_t arg;
       arg.status_type = ie_st_resp_new(E, $tag, $tp, $c, $tx);
       $$ = imap_resp_new(E, IMAP_RESP_STATUS_TYPE, arg); };
 
-status_type_resp_untagged: st_type[tp] SP
+status_type_resp_untagged: st_type[tp] respcheck SP
                           { MODE(STATUS_CODE_CHECK); } st_code[c] st_text[tx]
     { imap_resp_arg_t arg;
       arg.status_type = ie_st_resp_new(E, NULL, $tp, $c, $tx);
@@ -1313,7 +1328,11 @@ nqchar: prenqchar NIL                 { $$ = 0; MODE(MAILBOX); }
 
 prenqchar: %empty { MODE(NQCHAR); };
 
-qchar: QCHAR { $$ = QCHAR_TO_CHAR; };
+qchar: QCHAR {
+    // the scanner only returns QCHAR with 1- or 2-char matches.
+    // the 2-char matches are \\ and \"
+    $$ = (p->token->len == 1) ? p->token->data[0] : p->token->data[1];
+};
 
 /*** STATUS response ***/
 
@@ -1582,7 +1601,12 @@ astring: atom
        | string
 ;
 
-tag: atom[a] { $$ = $a; MODE(COMMAND); };
+tag: atom[a] {
+   // Keep track of the tag in case we have to report an error to the user.
+   p->errtag = $a;
+   $$ = ie_dstr_copy(E, $a);
+   MODE(COMMAND);
+};
 
 mailbox: prembx astring[a] { $$ = ie_mailbox_new_noninbox(E, $a); }
        | prembx INBOX       { $$ = ie_mailbox_new_inbox(E); }

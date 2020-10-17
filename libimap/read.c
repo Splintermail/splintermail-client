@@ -60,13 +60,7 @@ derr_t imap_read(imap_reader_t *reader, const dstr_t *input){
         // LOG_INFO("token is '%x' (%x)\n", FD_DBG(&token), FI(token_type));
 
         // call parser, which will call context-specific actions
-        derr_t e2 = imap_parse(&reader->parser, token_type, &token);
-        if(e2.type == E_PARAM){
-            dstr_t scannable = get_scannable(&reader->scanner);
-            TRACE(&e, "syntax error on input:\n%x%x\n(end of input)\n",
-                    FD_DBG(&token), FD_DBG(&scannable));
-        }
-        PROP(&e, e2);
+        PROP(&e, imap_parse(&reader->parser, token_type, &token) );
     }
 
     imap_scanner_shrink(&reader->scanner);

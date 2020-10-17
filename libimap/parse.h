@@ -1,8 +1,8 @@
 typedef struct {
     // command parsers must define *cmd
-    void (*cmd)(void *cb_data, derr_t error, imap_cmd_t *cmd);
+    void (*cmd)(void *cb_data, imap_cmd_t *cmd);
     // response parsers must define *resp
-    void (*resp)(void *cb_data, derr_t error, imap_resp_t *resp);
+    void (*resp)(void *cb_data, imap_resp_t *resp);
 } imap_parser_cb_t;
 
 typedef struct imap_parser_t {
@@ -28,6 +28,9 @@ typedef struct imap_parser_t {
     extensions_t *exts;
     // parse for commands or responses?
     bool is_client;
+    // servers track tag information and error message information here
+    ie_dstr_t *errtag;
+    ie_dstr_t *errmsg;
     // are we walking through the freeing process (syntax errors are silent)?
     bool freeing;
 } imap_parser_t;

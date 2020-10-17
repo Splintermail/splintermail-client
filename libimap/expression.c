@@ -51,6 +51,7 @@ const dstr_t *ie_status_attr_to_dstr(ie_status_attr_t sa){
     return &IE_UNKNOWN_dstr;
 }
 
+DSTR_STATIC(IMAP_CMD_ERROR_dstr, "ERROR");
 DSTR_STATIC(IMAP_CMD_PLUS_REQ_dstr, "+");
 DSTR_STATIC(IMAP_CMD_CAPA_dstr, "CAPABILITY");
 DSTR_STATIC(IMAP_CMD_NOOP_dstr, "NOOP");
@@ -83,6 +84,7 @@ DSTR_STATIC(IMAP_CMD_IDLE_DONE_dstr, "DONE");
 
 const dstr_t *imap_cmd_type_to_dstr(imap_cmd_type_t type){
     switch(type){
+        case IMAP_CMD_ERROR:    return &IMAP_CMD_ERROR_dstr;
         case IMAP_CMD_PLUS_REQ: return &IMAP_CMD_PLUS_REQ_dstr;
         case IMAP_CMD_CAPA:     return &IMAP_CMD_CAPA_dstr;
         case IMAP_CMD_NOOP:     return &IMAP_CMD_NOOP_dstr;
@@ -2416,6 +2418,7 @@ ie_copy_cmd_t *ie_copy_cmd_copy(derr_t *e, const ie_copy_cmd_t *old){
 
 static void imap_cmd_arg_free(imap_cmd_type_t type, imap_cmd_arg_t arg){
     switch(type){
+        case IMAP_CMD_ERROR:    ie_dstr_free(arg.error); break;
         case IMAP_CMD_PLUS_REQ: break;
         case IMAP_CMD_CAPA:     break;
         case IMAP_CMD_NOOP:     break;
@@ -2479,6 +2482,7 @@ static imap_cmd_arg_t imap_cmd_arg_copy(derr_t *e, imap_cmd_type_t type,
         const imap_cmd_arg_t old){
     imap_cmd_arg_t arg = {0};
     switch(type){
+        case IMAP_CMD_ERROR:    arg.error = ie_dstr_copy(e, old.error); break;
         case IMAP_CMD_PLUS_REQ: break;
         case IMAP_CMD_CAPA:     break;
         case IMAP_CMD_NOOP:     break;

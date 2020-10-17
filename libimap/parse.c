@@ -3,8 +3,27 @@
 #include <imap_parse.tab.h>
 
 void imapyyerror(imap_parser_t *parser, char const *s){
-    if(parser->freeing) return;
-    PFMT("ERROR: %x: %x\n", FS(s), FD(parser->token));
+    if(parser->freeing)
+        return;
+    // prepare message buffer
+    DSTR_VAR(buf, 64);
+    dstr_t scannable = get_scannable(parser->scanner);
+    DROP_CMD( FMT(&buf, "%x at input: %x%x", FS(s), FD_DBG(parser->token), FD_DBG(&scannable)) );
+    // truncate message
+    if(buf.len == buf.size){
+        buf.len = MIN(buf.len, buf.size - 4);
+        DROP_CMD( FMT(&buf, "...") );
+    }
+
+    if(!parser->is_client){
+        // servers report errors to the client
+        parser->errmsg = ie_dstr_new(&parser->error, &buf, KEEP_RAW);
+    }else{
+        /* clients immediately raise a derr_t error; we only talk to dovecot
+           so in practice any parsing error as a client is our bug */
+        TRACE(&parser->error, "%x\n", FD(&buf));
+        TRACE_ORIG(&parser->error, E_PARAM, "error parsing server response");
+    }
 }
 
 derr_t imap_parser_init(
@@ -39,15 +58,13 @@ derr_t imap_parser_init(
     return e;
 }
 
-static void free_cmd_cb(void *cb_data, derr_t error, imap_cmd_t *cmd){
+static void free_cmd_cb(void *cb_data, imap_cmd_t *cmd){
     (void)cb_data;
-    DROP_VAR(&error);
     imap_cmd_free(cmd);
 }
 
-static void free_resp_cb(void *cb_data, derr_t error, imap_resp_t *resp){
+static void free_resp_cb(void *cb_data, imap_resp_t *resp){
     (void)cb_data;
-    DROP_VAR(&error);
     imap_resp_free(resp);
 }
 
@@ -75,6 +92,8 @@ done:
     DROP_VAR(&e);
     imapyypstate_delete(parser->imapyyps);
     DROP_VAR(&parser->error);
+    ie_dstr_free(parser->errtag);
+    ie_dstr_free(parser->errmsg);
 }
 
 derr_t imap_parse(imap_parser_t *parser, int type, const dstr_t *token){
@@ -84,23 +103,25 @@ derr_t imap_parse(imap_parser_t *parser, int type, const dstr_t *token){
     switch(yyret){
         case 0:
             // YYACCEPT: parsing completed successfully; parser is reset
-            break;
+            PROP_VAR(&e, &parser->error);
+            return e;
         case YYPUSH_MORE:
             // parsing incomplete, but valid; parser not reset
-            break;
+            // delay errors until later
+            return e;
         case 1:
             // YYABORT or syntax invalid; parser is reset
-            ORIG(&e, E_PARAM, "invalid input");
+            PROP_VAR(&e, &parser->error);
+            // That should have been an error!
+            ORIG(&e, E_INTERNAL, "invalid input, but no error was thrown");
         case 2:
             // memory exhaustion; parser is reset
+            PROP_VAR(&e, &parser->error);
             ORIG(&e, E_NOMEM, "memory exhaustion during imapyypush_parse");
-        default:
-            // this should never happen
-            TRACE(&e, "imapyypush_parse() returned %x\n", FI(yyret));
-            ORIG(&e, E_INTERNAL, "unexpected imapyypush_parse() return value");
     }
-    PROP_VAR(&e, &parser->error);
-    return e;
+    // this should never happen
+    TRACE(&e, "imapyypush_parse() returned %x\n", FI(yyret));
+    ORIG(&e, E_INTERNAL, "unexpected imapyypush_parse() return value");
 }
 
 void set_scanner_to_literal_mode(imap_parser_t *parser, size_t len){

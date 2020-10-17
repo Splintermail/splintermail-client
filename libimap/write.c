@@ -1059,6 +1059,10 @@ static derr_t do_imap_cmd_write(const imap_cmd_t *cmd, dstr_t *out,
     };
     skip_fill_t *sf = &skip_fill;
 
+    if(cmd->type == IMAP_CMD_ERROR){
+        ORIG(&e, E_INTERNAL, "IMAP_CMD_ERROR is not writable");
+    }
+
     if(cmd->type == IMAP_CMD_PLUS_REQ){
         ORIG(&e, E_INTERNAL, "IMAP_CMD_PLUS_REQ is not writable");
     }
@@ -1074,7 +1078,10 @@ static derr_t do_imap_cmd_write(const imap_cmd_t *cmd, dstr_t *out,
     }
 
     switch(cmd->type){
-        case IMAP_CMD_PLUS_REQ:  // already checked for this
+        // Cases which cannot occur (we already checked)
+        case IMAP_CMD_ERROR:
+        case IMAP_CMD_PLUS_REQ:
+            break;
 
         case IMAP_CMD_CAPA:
             STATIC_SKIP_FILL("CAPABILITY");

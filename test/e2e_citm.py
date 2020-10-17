@@ -845,7 +845,7 @@ def test_examine(cmd, maildir_root):
             wait_for_resp(r2, "5b", "OK")
 
             # UNSELECT on 2
-            w2.put(b"6b CLOSE INBOX\r\n")
+            w2.put(b"6b CLOSE\r\n")
             wait_for_resp(r2, "6b", "OK")
 
             # Introduce another connection
@@ -908,6 +908,42 @@ def test_terminate_with_open_mailbox(cmd, maildir_root):
             assert p.poll() is not None, "SIGTERM was not handled fast enough"
 
 
+def test_syntax_errors(cmd, maildir_root):
+    with inbox(cmd) as (write_q, read_q):
+        # incomplete command
+        write_q.put(b"1 ERROR\r\n")
+        wait_for_resp(
+            read_q,
+            "1",
+            "BAD",
+            require=[br".*at input: ERROR\\r\\n.*"],
+        )
+        # complete command then error
+        write_q.put(b"2 CLOSE ERROR\r\n")
+        wait_for_resp(
+            read_q,
+            "2",
+            "BAD",
+            require=[br".*at input:  ERROR\\r\\n.*"],
+        )
+        # total junk
+        write_q.put(b"(junk)\r\n")
+        wait_for_resp(
+            read_q,
+            "*",
+            "BAD",
+            require=[br".*at input: \(junk\)\\r\\n.*"],
+        )
+        # a response
+        write_q.put(b"* SEARCH\r\n")
+        wait_for_resp(
+            read_q,
+            "*",
+            "BAD",
+            require=[br".*at input: SEARCH\\r\\n.*"],
+        )
+
+
 # Prepare a subdirectory
 @contextlib.contextmanager
 def temp_maildir_root():
@@ -950,6 +986,7 @@ if __name__ == "__main__":
         test_terminate_with_open_connection,
         test_terminate_with_open_session,
         test_terminate_with_open_mailbox,
+        test_syntax_errors,
     ]
 
     # filter tests by patterns from command line
