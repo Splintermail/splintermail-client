@@ -53,33 +53,37 @@ static derr_t test_imap_scan(void){
     PROP_GO(&e, FMT(&scanner.bytes, "tag O"), cu_scanner);
 
     // "tag O" -> TAG
-    e = imap_scan(&scanner, SCAN_MODE_TAG, &more, &token, &type);
+    e = imap_scan(&scanner, SCAN_MODE_STD, &more, &token, &type);
     EXPECT(E_NONE, false, RAW);
 
     // " O" -> ' '
-    e = imap_scan(&scanner, SCAN_MODE_COMMAND, &more, &token, &type);
+    e = imap_scan(&scanner, SCAN_MODE_STD, &more, &token, &type);
     EXPECT(E_NONE, false, ' ');
 
     // "O" -> MORE
-    e = imap_scan(&scanner, SCAN_MODE_COMMAND, &more, &token, &type);
+    e = imap_scan(&scanner, SCAN_MODE_STD, &more, &token, &type);
     EXPECT(E_NONE, true, 0);
 
     PROP_GO(&e, FMT(&scanner.bytes, "K"), cu_scanner);
 
-    // "OK" -> OK
-    e = imap_scan(&scanner, SCAN_MODE_COMMAND, &more, &token, &type);
-    EXPECT(E_NONE, false, OK);
+    // "OK" -> MORE (unsure if token continues)
+    e = imap_scan(&scanner, SCAN_MODE_STD, &more, &token, &type);
+    EXPECT(E_NONE, true, 0);
 
     PROP_GO(&e, FMT(&scanner.bytes, "\r"), cu_scanner);
 
+    // "OK\r" -> OK
+    e = imap_scan(&scanner, SCAN_MODE_STD, &more, &token, &type);
+    EXPECT(E_NONE, false, OK);
+
     // "\r" -> MORE
-    e = imap_scan(&scanner, SCAN_MODE_COMMAND, &more, &token, &type);
+    e = imap_scan(&scanner, SCAN_MODE_STD, &more, &token, &type);
     EXPECT(E_NONE, true, 0);
 
     PROP_GO(&e, FMT(&scanner.bytes, "\n"), cu_scanner);
 
     // "\r\n" -> EOL
-    e = imap_scan(&scanner, SCAN_MODE_COMMAND, &more, &token, &type);
+    e = imap_scan(&scanner, SCAN_MODE_STD, &more, &token, &type);
     EXPECT(E_NONE, false, EOL);
 
 cu_scanner:

@@ -16,8 +16,6 @@ typedef struct imap_parser_t {
     derr_t error;
     // the mode the scanner should be in while scanning the next token
     scan_mode_t scan_mode;
-    // the mode before the start of a qstring
-    scan_mode_t preqstr_mode;
     // the current token as a dstr_t, used in some cases by the parser
     const dstr_t *token;
     // should we keep the next thing we run across?

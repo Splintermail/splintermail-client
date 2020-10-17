@@ -2,56 +2,20 @@
 
 #include <imap_parse.tab.h>
 
-DSTR_STATIC(scan_mode_TAG_dstr, "SCAN_MODE_TAG");
-DSTR_STATIC(scan_mode_QSTRING_dstr, "SCAN_MODE_QSTRING");
-DSTR_STATIC(scan_mode_NUM_dstr, "SCAN_MODE_NUM");
-DSTR_STATIC(scan_mode_COMMAND_dstr, "SCAN_MODE_COMMAND");
-DSTR_STATIC(scan_mode_ATOM_dstr, "SCAN_MODE_ATOM");
-DSTR_STATIC(scan_mode_FLAG_dstr, "SCAN_MODE_FLAG");
-DSTR_STATIC(scan_mode_MFLAG_dstr, "SCAN_MODE_MFLAG");
+DSTR_STATIC(scan_mode_STD_dstr, "SCAN_MODE_STD");
 DSTR_STATIC(scan_mode_STATUS_CODE_CHECK_dstr, "SCAN_MODE_STATUS_CODE_CHECK");
-DSTR_STATIC(scan_mode_STATUS_CODE_dstr, "SCAN_MODE_STATUS_CODE");
-DSTR_STATIC(scan_mode_STATUS_TEXT_dstr, "SCAN_MODE_STATUS_TEXT");
-DSTR_STATIC(scan_mode_MAILBOX_dstr, "SCAN_MODE_MAILBOX");
-DSTR_STATIC(scan_mode_ASTRING_dstr, "SCAN_MODE_ASTRING");
-DSTR_STATIC(scan_mode_NQCHAR_dstr, "SCAN_MODE_NQCHAR");
-DSTR_STATIC(scan_mode_NSTRING_dstr, "SCAN_MODE_NSTRING");
-DSTR_STATIC(scan_mode_STATUS_ATTR_dstr, "SCAN_MODE_STATUS_ATTR");
-DSTR_STATIC(scan_mode_FETCH_dstr, "SCAN_MODE_FETCH");
 DSTR_STATIC(scan_mode_DATETIME_dstr, "SCAN_MODE_DATETIME");
-DSTR_STATIC(scan_mode_WILDCARD_dstr, "SCAN_MODE_WILDCARD");
-DSTR_STATIC(scan_mode_SEQSET_dstr, "SCAN_MODE_SEQSET");
-DSTR_STATIC(scan_mode_STORE_dstr, "SCAN_MODE_STORE");
-DSTR_STATIC(scan_mode_SEARCH_dstr, "SCAN_MODE_SEARCH");
-DSTR_STATIC(scan_mode_SELECT_PARAM_dstr, "SCAN_MODE_SELECT_PARAM");
-DSTR_STATIC(scan_mode_MODSEQ_dstr, "SCAN_MODE_MODSEQ");
+DSTR_STATIC(scan_mode_QSTRING_dstr, "SCAN_MODE_QSTRING");
+DSTR_STATIC(scan_mode_NQCHAR_dstr, "SCAN_MODE_NQCHAR");
 DSTR_STATIC(scan_mode_unk_dstr, "unknown scan mode");
 
 dstr_t* scan_mode_to_dstr(scan_mode_t mode){
     switch(mode){
-        case SCAN_MODE_TAG: return &scan_mode_TAG_dstr;
-        case SCAN_MODE_QSTRING: return &scan_mode_QSTRING_dstr;
-        case SCAN_MODE_NUM: return &scan_mode_NUM_dstr;
-        case SCAN_MODE_COMMAND: return &scan_mode_COMMAND_dstr;
-        case SCAN_MODE_ATOM: return &scan_mode_ATOM_dstr;
-        case SCAN_MODE_FLAG: return &scan_mode_FLAG_dstr;
-        case SCAN_MODE_MFLAG: return &scan_mode_MFLAG_dstr;
+        case SCAN_MODE_STD: return &scan_mode_STD_dstr;
         case SCAN_MODE_STATUS_CODE_CHECK: return &scan_mode_STATUS_CODE_CHECK_dstr;
-        case SCAN_MODE_STATUS_CODE: return &scan_mode_STATUS_CODE_dstr;
-        case SCAN_MODE_STATUS_TEXT: return &scan_mode_STATUS_TEXT_dstr;
-        case SCAN_MODE_MAILBOX: return &scan_mode_MAILBOX_dstr;
-        case SCAN_MODE_ASTRING: return &scan_mode_ASTRING_dstr;
-        case SCAN_MODE_NQCHAR: return &scan_mode_NQCHAR_dstr;
-        case SCAN_MODE_NSTRING: return &scan_mode_NSTRING_dstr;
-        case SCAN_MODE_STATUS_ATTR: return &scan_mode_STATUS_ATTR_dstr;
-        case SCAN_MODE_FETCH: return &scan_mode_FETCH_dstr;
         case SCAN_MODE_DATETIME: return &scan_mode_DATETIME_dstr;
-        case SCAN_MODE_WILDCARD: return &scan_mode_WILDCARD_dstr;
-        case SCAN_MODE_SEQSET: return &scan_mode_SEQSET_dstr;
-        case SCAN_MODE_STORE: return &scan_mode_STORE_dstr;
-        case SCAN_MODE_SEARCH: return &scan_mode_SEARCH_dstr;
-        case SCAN_MODE_SELECT_PARAM: return &scan_mode_SELECT_PARAM_dstr;
-        case SCAN_MODE_MODSEQ: return &scan_mode_MODSEQ_dstr;
+        case SCAN_MODE_QSTRING: return &scan_mode_QSTRING_dstr;
+        case SCAN_MODE_NQCHAR: return &scan_mode_NQCHAR_dstr;
         default: return &scan_mode_unk_dstr;
     }
 }
@@ -166,29 +130,11 @@ derr_t imap_scan(imap_scanner_t *scanner, scan_mode_t mode, bool *more,
 
     cursor = scanner->start;
     switch(mode){
-        case SCAN_MODE_TAG:                 goto tag_mode;
-        case SCAN_MODE_COMMAND:             goto command_mode;
-        case SCAN_MODE_ATOM:                goto atom_mode;
-        case SCAN_MODE_FLAG:                goto flag_mode;
-        case SCAN_MODE_MFLAG:               goto mflag_mode;
-        case SCAN_MODE_QSTRING:             goto qstring_mode;
-        case SCAN_MODE_NUM:                 goto num_mode;
+        case SCAN_MODE_STD:                 goto std_mode;
         case SCAN_MODE_STATUS_CODE_CHECK:   goto status_code_check_mode;
-        case SCAN_MODE_STATUS_CODE:         goto status_code_mode;
-        case SCAN_MODE_STATUS_TEXT:         goto status_text_mode;
-        case SCAN_MODE_MAILBOX:             goto mailbox_mode;
-        case SCAN_MODE_ASTRING:             goto astring_mode;
-        case SCAN_MODE_NQCHAR:              goto nqchar_mode;
-        case SCAN_MODE_NSTRING:             goto nstring_mode;
-        case SCAN_MODE_STATUS_ATTR:         goto status_attr_mode;
-        case SCAN_MODE_FETCH:               goto fetch_mode;
         case SCAN_MODE_DATETIME:            goto datetime_mode;
-        case SCAN_MODE_WILDCARD:            goto wildcard_mode;
-        case SCAN_MODE_SEQSET:              goto seqset_mode;
-        case SCAN_MODE_STORE:               goto store_mode;
-        case SCAN_MODE_SEARCH:              goto search_mode;
-        case SCAN_MODE_SELECT_PARAM:        goto select_param_mode;
-        case SCAN_MODE_MODSEQ:              goto modseq_mode;
+        case SCAN_MODE_QSTRING:             goto qstring_mode;
+        case SCAN_MODE_NQCHAR:              goto nqchar_mode;
     }
 
     /*!re2c
@@ -197,147 +143,150 @@ derr_t imap_scan(imap_scanner_t *scanner, scan_mode_t mode, bool *more,
         re2c:define:YYCTYPE = char;
 
         eol             = "\r"?"\n";
-        sp              = " ";
-        literal         = "{"[0-9]+"}\r\n";
-        tag             = [^(){%*+"\x00-\x1F\x7F\\ ]{1,32};
-        atom_spec       = [(){%*"\]\\ ];
-        atom            = [^(){%*"\x00-\x1F\x7F\]\\ ]{1,32};
-        astr_atom_spec  = [(){%*"\\ ];
-        astr_atom       = [^(){%*"\x00-\x1F\x7F\]\]\\ ]{1,32};
-        wild_atom_spec  = [(){"\\ ];
-        wild_atom       = [^(){"\x00-\x1F\x7F\\ ]{1,32};
-        flag            = "\\"[^(){%*"\x00-\x1F\x7F\]\\ ]+;
+        nullbyte        = "\x00";
         num             = [0-9]+;
-        qstring         = ( [^"\x00\r\n\\] | ("\\"[\\"]) ){1,32};
-        text_spec       = [ [\]];
-        text_atom       = [^\x00\r\n [\]]+;
+        raw             = [^(){%*"\x00-\x1F\x7F[\]\\ }+\-.:,<>0-9]{1,32};
+        non_crlf_ctl    = [\x01-\x09\x0B-\x0C\x0E\x1f\x7f];
         qchar           = [^"\x00\r\n\\] | "\\\\" | "\\\"";
-        nz_num          = [1-9][0-9]*;
+        qstring         = ( [^"\x00\r\n\\] | ("\\"[\\"]) ){1,32};
     */
 
-tag_mode:
-
+std_mode:
     /*!re2c
-        *               { INVALID_TOKEN_ERROR; }
-        eol             { *type = EOL; goto done; }
-        tag             { *type = RAW; goto done; }
-        [ *+]           { *type = *scanner->start; goto done; }
-    */
+        *                       { *type = *scanner->start; goto done; }
+        nullbyte                { *type = INVALID_TOKEN; goto done; }
+        non_crlf_ctl            { *type = NON_CRLF_CTL; goto done; }
+        eol                     { *type = EOL; goto done; }
 
-command_mode:
+        'alert'                 { *type = ALERT; goto done; }
+        'all'                   { *type = ALL; goto done; }
+        'answered'              { *type = ANSWERED; goto done; }
+        'append'                { *type = APPEND; goto done; }
+        'appenduid'             { *type = APPENDUID; goto done; }
+        'apr'                   { *type = APR; goto done; }
+        'aug'                   { *type = AUG; goto done; }
+        'authenticate'          { *type = AUTHENTICATE; goto done; }
+        'bad'                   { *type = BAD; goto done; }
+        'bcc'                   { *type = BCC; goto done; }
+        'before'                { *type = BEFORE; goto done; }
+        'bodystructure'         { *type = BODYSTRUCT; goto done; }
+        'body'                  { *type = BODY; goto done; }
+        'bye'                   { *type = BYE; goto done; }
+        'capability'            { *type = CAPA; goto done; }
+        'cc'                    { *type = CC; goto done; }
+        'changedsince'          { *type = CHGSINCE; goto done; }
+        'charset'               { *type = CHARSET; goto done; }
+        'check'                 { *type = CHECK; goto done; }
+        'closed'                { *type = CLOSED; goto done; }
+        'close'                 { *type = CLOSE; goto done; }
+        'condstore'             { *type = CONDSTORE; goto done; }
+        'copy'                  { *type = COPY; goto done; }
+        'copyuid'               { *type = COPYUID; goto done; }
+        'create'                { *type = CREATE; goto done; }
+        'dec'                   { *type = DEC; goto done; }
+        'deleted'               { *type = DELETED; goto done; }
+        'delete'                { *type = DELETE; goto done; }
+        'done'                  { *type = DONE; goto done; }
+        'draft'                 { *type = DRAFT; goto done; }
+        'earlier'               { *type = EARLIER; goto done; }
+        'enabled'               { *type = ENABLED; goto done; }
+        'enable'                { *type = ENABLE; goto done; }
+        'envelope'              { *type = ENVELOPE; goto done; }
+        'examine'               { *type = EXAMINE; goto done; }
+        'exists'                { *type = EXISTS; goto done; }
+        'expunge'               { *type = EXPUNGE; goto done; }
+        'fast'                  { *type = FAST; goto done; }
+        'feb'                   { *type = FEB; goto done; }
+        'fetch'                 { *type = FETCH; goto done; }
+        'fields'                { *type = FIELDS; goto done; }
+        'flagged'               { *type = FLAGGED; goto done; }
+        'flags'                 { *type = FLAGS; goto done; }
+        'from'                  { *type = FROM; goto done; }
+        'full'                  { *type = FULL; goto done; }
+        'header'                { *type = HEADER; goto done; }
+        'highestmodseq'         { *type = HIMODSEQ; goto done; }
+        'idle'                  { *type = IDLE; goto done; }
+        'inbox'                 { *type = INBOX; goto done; }
+        'internaldate'          { *type = INTDATE; goto done; }
+        'jan'                   { *type = JAN; goto done; }
+        'jul'                   { *type = JUL; goto done; }
+        'jun'                   { *type = JUN; goto done; }
+        'keyword'               { *type = KEYWORD; goto done; }
+        'larger'                { *type = LARGER; goto done; }
+        'list'                  { *type = LIST; goto done; }
+        'login'                 { *type = LOGIN; goto done; }
+        'logout'                { *type = LOGOUT; goto done; }
+        'lsub'                  { *type = LSUB; goto done; }
+        'marked'                { *type = MARKED; goto done; }
+        'mar'                   { *type = MAR; goto done; }
+        'may'                   { *type = MAY; goto done; }
+        'messages'              { *type = MESSAGES; goto done; }
+        'mime'                  { *type = MIME; goto done; }
+        'modified'              { *type = MODIFIED; goto done; }
+        'modseq'                { *type = MODSEQ; goto done; }
+        'new'                   { *type = NEW; goto done; }
+        'nil'                   { *type = NIL; goto done; }
+        'noinferiors'           { *type = NOINFERIORS; goto done; }
+        'nomodseq'              { *type = NOMODSEQ; goto done; }
+        'noop'                  { *type = NOOP; goto done; }
+        'noselect'              { *type = NOSELECT; goto done; }
+        'not'                   { *type = NOT; goto done; }
+        'no'                    { *type = NO; goto done; }
+        'nov'                   { *type = NOV; goto done; }
+        'oct'                   { *type = OCT; goto done; }
+        'ok'                    { *type = OK; goto done; }
+        'old'                   { *type = OLD; goto done; }
+        'on'                    { *type = ON; goto done; }
+        'or'                    { *type = OR; goto done; }
+        'parse'                 { *type = PARSE; goto done; }
+        'peek'                  { *type = PEEK; goto done; }
+        'permanentflags'        { *type = PERMFLAGS; goto done; }
+        'preauth'               { *type = PREAUTH; goto done; }
+        'priv'                  { *type = PRIV; goto done; }
+        'qresync'               { *type = QRESYNC; goto done; }
+        'read-only'             { *type = READ_ONLY; goto done; }
+        'read-write'            { *type = READ_WRITE; goto done; }
+        'recent'                { *type = RECENT; goto done; }
+        'rename'                { *type = RENAME; goto done; }
+        'rfc822'                { *type = RFC822; goto done; }
+        'search'                { *type = SEARCH; goto done; }
+        'seen'                  { *type = SEEN; goto done; }
+        'select'                { *type = SELECT; goto done; }
+        'sentbefore'            { *type = SENTBEFORE; goto done; }
+        'senton'                { *type = SENTON; goto done; }
+        'sentsince'             { *type = SENTSINCE; goto done; }
+        'sep'                   { *type = SEP; goto done; }
+        'shared'                { *type = SHARED; goto done; }
+        'silent'                { *type = SILENT; goto done; }
+        'since'                 { *type = SINCE; goto done; }
+        'size'                  { *type = SIZE; goto done; }
+        'smaller'               { *type = SMALLER; goto done; }
+        'starttls'              { *type = STARTTLS; goto done; }
+        'status'                { *type = STATUS; goto done; }
+        'store'                 { *type = STORE; goto done; }
+        'subject'               { *type = SUBJECT; goto done; }
+        'subscribe'             { *type = SUBSCRIBE; goto done; }
+        'text'                  { *type = TEXT; goto done; }
+        'to'                    { *type = TO; goto done; }
+        'trycreate'             { *type = TRYCREATE; goto done; }
+        'uidnext'               { *type = UIDNEXT; goto done; }
+        'uidnotsticky'          { *type = UIDNOSTICK; goto done; }
+        'uid'                   { *type = UID; goto done; }
+        'uidvalidity'           { *type = UIDVLD; goto done; }
+        'unanswered'            { *type = UNANSWERED; goto done; }
+        'unchangedsince'        { *type = UNCHGSINCE; goto done; }
+        'undeleted'             { *type = UNDELETED; goto done; }
+        'undraft'               { *type = UNDRAFT; goto done; }
+        'unflagged'             { *type = UNFLAGGED; goto done; }
+        'unkeyword'             { *type = UNKEYWORD; goto done; }
+        'unmarked'              { *type = UNMARKED; goto done; }
+        'unseen'                { *type = UNSEEN; goto done; }
+        'unselect'              { *type = UNSELECT; goto done; }
+        'unsubscribe'           { *type = UNSUBSCRIBE; goto done; }
+        'vanished'              { *type = VANISHED; goto done; }
 
-    /*!re2c
-        *               { INVALID_TOKEN_ERROR; }
-        eol             { *type = EOL; goto done; }
-        " "             { *type = *scanner->start; goto done; }
-        atom_spec       { *type = *scanner->start; goto done; }
-
-        'capability'    { *type = CAPA; goto done; }
-        'noop'          { *type = NOOP; goto done; }
-        'logout'        { *type = LOGOUT; goto done; }
-        'starttls'      { *type = STARTTLS; goto done; }
-        'authenticate'  { *type = AUTHENTICATE; goto done; }
-        'login'         { *type = LOGIN; goto done; }
-        'select'        { *type = SELECT; goto done; }
-        'examine'       { *type = EXAMINE; goto done; }
-        'create'        { *type = CREATE; goto done; }
-        'delete'        { *type = DELETE; goto done; }
-        'rename'        { *type = RENAME; goto done; }
-        'subscribe'     { *type = SUBSCRIBE; goto done; }
-        'unsubscribe'   { *type = UNSUBSCRIBE; goto done; }
-        'list'          { *type = LIST; goto done; }
-        'lsub'          { *type = LSUB; goto done; }
-        'status'        { *type = STATUS; goto done; }
-        'append'        { *type = APPEND; goto done; }
-        'check'         { *type = CHECK; goto done; }
-        'close'         { *type = CLOSE; goto done; }
-        'expunge'       { *type = EXPUNGE; goto done; }
-        'search'        { *type = SEARCH; goto done; }
-        'fetch'         { *type = FETCH; goto done; }
-        'store'         { *type = STORE; goto done; }
-        'copy'          { *type = COPY; goto done; }
-        'uid'           { *type = UID; goto done; }
-        'enable'        { *type = ENABLE; goto done; }
-        'enabled'       { *type = ENABLED; goto done; }
-        'vanished'      { *type = VANISHED; goto done; }
-        'earlier'       { *type = EARLIER; goto done; }
-        'unselect'      { *type = UNSELECT; goto done; }
-        'idle'          { *type = IDLE; goto done; }
-
-        'ok'            { *type = OK; goto done; }
-        'no'            { *type = NO; goto done; }
-        'bad'           { *type = BAD; goto done; }
-        'preauth'       { *type = PREAUTH; goto done; }
-        'bye'           { *type = BYE; goto done; }
-        'flags'         { *type = FLAGS; goto done; }
-        'exists'        { *type = EXISTS; goto done; }
-        'recent'        { *type = RECENT; goto done; }
-        'done'          { *type = DONE; goto done; }
-
-        num             { *type = NUM; goto done; }
-    */
-
-atom_mode:
-
-    /*!re2c
-        *               { INVALID_TOKEN_ERROR; }
-        atom_spec       { *type = *scanner->start; goto done; }
-        eol             { *type = EOL; goto done; }
-
-        atom            { *type = RAW; goto done; }
-    */
-
-qstring_mode:
-
-    /*!re2c
-        *               { INVALID_TOKEN_ERROR; }
-        eol             { *type = EOL; goto done; }
-        "\""            { *type = '"'; goto done; }
-        qstring         { *type = RAW; goto done; }
-    */
-
-num_mode:
-
-    /*!re2c
-        *               { INVALID_TOKEN_ERROR; }
-        eol             { *type = EOL; goto done; }
-        num             { *type = NUM; goto done; }
-        atom_spec       { *type = *scanner->start; goto done; }
-    */
-
-flag_mode:
-
-    /*!re2c
-        *               { INVALID_TOKEN_ERROR; }
-        atom_spec       { *type = *scanner->start; goto done; }
-        literal         { *type = LITERAL; goto done; }
-        eol             { *type = EOL; goto done; }
-
-        'answered'      { *type = ANSWERED; goto done; }
-        'flagged'       { *type = FLAGGED; goto done; }
-        'deleted'       { *type = DELETED; goto done; }
-        'seen'          { *type = SEEN; goto done; }
-        'draft'         { *type = DRAFT; goto done; }
-        'recent'        { *type = RECENT; goto done; }
-        "\\*"           { *type = ASTERISK_FLAG; goto done; }
-
-        atom            { *type = RAW; goto done; }
-    */
-
-mflag_mode:
-
-    /*!re2c
-        *               { INVALID_TOKEN_ERROR; }
-        atom_spec       { *type = *scanner->start; goto done; }
-        literal         { *type = LITERAL; goto done; }
-        eol             { *type = EOL; goto done; }
-
-        'noinferiors'   { *type = NOINFERIORS; goto done; }
-        'noselect'      { *type = NOSELECT; goto done; }
-        'marked'        { *type = MARKED; goto done; }
-        'unmarked'      { *type = UNMARKED; goto done; }
-
-        atom            { *type = RAW; goto done; }
+        num                     { *type = NUM; goto done; }
+        raw                     { *type = RAW; goto done; }
     */
 
 status_code_check_mode:
@@ -351,148 +300,11 @@ status_code_check_mode:
         *               { *type = NO_STATUS_CODE; goto done; }
     */
 
-status_code_mode:
-
-    /*!re2c
-        *               { INVALID_TOKEN_ERROR; }
-        atom_spec       { *type = *scanner->start; goto done; }
-        eol             { *type = EOL; goto done; }
-
-        'alert'         { *type = ALERT; goto done; }
-        'capability'    { *type = CAPA; goto done; }
-        'parse'         { *type = PARSE; goto done; }
-        'permanentflags'{ *type = PERMFLAGS; goto done; }
-        'read_only'     { *type = READ_ONLY; goto done; }
-        'read_write'    { *type = READ_WRITE; goto done; }
-        'trycreate'     { *type = TRYCREATE; goto done; }
-        'nomodseq'      { *type = NOMODSEQ; goto done; }
-        'uidnext'       { *type = UIDNEXT; goto done; }
-        'uidvalidity'   { *type = UIDVLD; goto done; }
-        'unseen'        { *type = UNSEEN; goto done; }
-
-        'uidnotsticky'  { *type = UIDNOSTICK; goto done; }
-        'appenduid'     { *type = APPENDUID; goto done; }
-        'copyuid'       { *type = COPYUID; goto done; }
-
-        'highestmodseq' { *type = HIMODSEQ; goto done; }
-        'modified'      { *type = MODIFIED; goto done; }
-
-        'closed'        { *type = CLOSED; goto done; }
-
-        atom            { *type = RAW; goto done; }
-    */
-
-status_text_mode:
-
-    /*!re2c
-        *               { INVALID_TOKEN_ERROR; }
-        eol             { *type = EOL; goto done; }
-        text_spec       { *type = *scanner->start; goto done; }
-        text_atom       { *type = RAW; goto done; }
-    */
-
-mailbox_mode:
-
-    /*!re2c
-        *               { INVALID_TOKEN_ERROR; }
-        astr_atom_spec  { *type = *scanner->start; goto done; }
-        literal         { *type = LITERAL; goto done; }
-        eol             { *type = EOL; goto done; }
-
-        'inbox'         { *type = INBOX; goto done; }
-
-        astr_atom       { *type = RAW; goto done; }
-    */
-
-astring_mode:
-
-    /*!re2c
-        *               { INVALID_TOKEN_ERROR; }
-        astr_atom_spec  { *type = *scanner->start; goto done; }
-        literal         { *type = LITERAL; goto done; }
-        eol             { *type = EOL; goto done; }
-
-        astr_atom       { *type = RAW; goto done; }
-    */
-
-nqchar_mode:
-
-    /*!re2c
-        *               { INVALID_TOKEN_ERROR; }
-        "\""            { *type = *scanner->start; goto done; }
-        qchar           { *type = QCHAR; goto done; }
-        'nil'           { *type = NIL; goto done; }
-        eol             { *type = EOL; goto done; }
-    */
-
-nstring_mode:
-
-    /*!re2c
-        *               { INVALID_TOKEN_ERROR; }
-        eol             { *type = EOL; goto done; }
-        literal         { *type = LITERAL; goto done; }
-        atom_spec       { *type = *scanner->start; goto done; }
-
-        'nil'           { *type = NIL; goto done; }
-    */
-
-status_attr_mode:
-
-    /*!re2c
-        *               { INVALID_TOKEN_ERROR; }
-        [() ]           { *type = *scanner->start; goto done; }
-        eol             { *type = EOL; goto done; }
-
-        num             { *type = NUM; goto done; }
-
-        'messages'      { *type = MESSAGES; goto done; }
-        'recent'        { *type = RECENT; goto done; }
-        'uidnext'       { *type = UIDNEXT; goto done; }
-        'uidvalidity'   { *type = UIDVLD; goto done; }
-        'unseen'        { *type = UNSEEN; goto done; }
-        'highestmodseq' { *type = HIMODSEQ; goto done; }
-    */
-
-fetch_mode:
-
-    /*!re2c
-        *               { INVALID_TOKEN_ERROR; }
-        [[\]()<>. ]     { *type = *scanner->start; goto done; }
-        eol             { *type = EOL; goto done; }
-
-        num             { *type = NUM; goto done; }
-
-        'flags'         { *type = FLAGS; goto done; }
-        'uid'           { *type = UID; goto done; }
-        'internaldate'  { *type = INTDATE; goto done; }
-        'rfc822'        { *type = RFC822; goto done; }
-        'rfc822.text'   { *type = RFC822_TEXT; goto done; }
-        'rfc822.header' { *type = RFC822_HEADER; goto done; }
-        'rfc822.size'   { *type = RFC822_SIZE; goto done; }
-        'envelope'      { *type = ENVELOPE; goto done; }
-        'body'          { *type = BODY; goto done; }
-        'bodystructure' { *type = BODYSTRUCT; goto done; }
-        'body.peek'     { *type = BODY_PEEK; goto done; }
-        'all'           { *type = ALL; goto done; }
-        'full'          { *type = FULL; goto done; }
-        'fast'          { *type = FAST; goto done; }
-        'mime'          { *type = MIME; goto done; }
-        'text'          { *type = TEXT; goto done; }
-        'header'        { *type = HEADER; goto done; }
-        'header.fields' { *type = HDR_FLDS; goto done; }
-        'header.fields.not' { *type = HDR_FLDS_NOT; goto done; }
-        'modseq'        { *type = MODSEQ; goto done; }
-        'changedsince'  { *type = CHGSINCE; goto done; }
-        'vanished'      { *type = VANISHED; goto done; }
-    */
-
 datetime_mode:
     // literal allowed since APPEND has an optional date_time then a literal
 
     /*!re2c
-        *               { INVALID_TOKEN_ERROR; }
-        literal         { *type = LITERAL; goto done; }
-        ["() :+-]       { *type = *scanner->start; goto done; }
+        *               { *type = *scanner->start; goto done; }
         [0-9]           { *type = DIGIT; goto done; }
         eol             { *type = EOL; goto done; }
 
@@ -510,116 +322,22 @@ datetime_mode:
         'dec'           { *type = DEC; goto done; }
     */
 
-wildcard_mode:
+qstring_mode:
 
     /*!re2c
-        *               { INVALID_TOKEN_ERROR; }
-        wild_atom_spec  { *type = *scanner->start; goto done; }
-        literal         { *type = LITERAL; goto done; }
+        *               { *type = *scanner->start; goto done; }
         eol             { *type = EOL; goto done; }
-
-        wild_atom       { *type = RAW; goto done; }
+        "\""            { *type = '"'; goto done; }
+        qstring         { *type = RAW; goto done; }
     */
 
-seqset_mode:
+nqchar_mode:
 
     /*!re2c
-        *               { INVALID_TOKEN_ERROR; }
-        [ *:,]          { *type = *scanner->start; goto done; }
+        *               { *type = *scanner->start; goto done; }
+        qchar           { *type = QCHAR; goto done; }
+        'nil'           { *type = NIL; goto done; }
         eol             { *type = EOL; goto done; }
-        atom_spec       { *type = *scanner->start; goto done; }
-
-        nz_num          { *type = NUM; goto done; }
-    */
-
-store_mode:
-
-    /*!re2c
-        *               { INVALID_TOKEN_ERROR; }
-        [ +-]           { *type = *scanner->start; goto done; }
-        eol             { *type = EOL; goto done; }
-        atom_spec       { *type = *scanner->start; goto done; }
-        num             { *type = NUM; goto done; }
-
-        'flags'         { *type = FLAGS; goto done; }
-        '.silent'       { *type = SILENT; goto done; }
-        'unchangedsince' { *type = UNCHGSINCE; goto done; }
-    */
-
-
-search_mode:
-
-    /*!re2c
-        *               { INVALID_TOKEN_ERROR; }
-        literal         { *type = LITERAL; goto done; }
-        num             { *type = NUM; goto done; }
-        eol             { *type = EOL; goto done; }
-        atom_spec       { *type = *scanner->start; goto done; }
-
-        'charset'       { *type = CHARSET; goto done; }
-        'all'           { *type = ALL; goto done; }
-        'answered'      { *type = ANSWERED; goto done; }
-        'bcc'           { *type = BCC; goto done; }
-        'before'        { *type = BEFORE; goto done; }
-        'body'          { *type = BODY; goto done; }
-        'cc'            { *type = CC; goto done; }
-        'deleted'       { *type = DELETED; goto done; }
-        'flagged'       { *type = FLAGGED; goto done; }
-        'from'          { *type = FROM; goto done; }
-        'keyword'       { *type = KEYWORD; goto done; }
-        'new'           { *type = NEW; goto done; }
-        'old'           { *type = OLD; goto done; }
-        'on'            { *type = ON; goto done; }
-        'recent'        { *type = RECENT; goto done; }
-        'seen'          { *type = SEEN; goto done; }
-        'since'         { *type = SINCE; goto done; }
-        'subject'       { *type = SUBJECT; goto done; }
-        'text'          { *type = TEXT; goto done; }
-        'to'            { *type = TO; goto done; }
-        'unanswered'    { *type = UNANSWERED; goto done; }
-        'undeleted'     { *type = UNDELETED; goto done; }
-        'unflagged'     { *type = UNFLAGGED; goto done; }
-        'unkeyword'     { *type = UNKEYWORD; goto done; }
-        'unseen'        { *type = UNSEEN; goto done; }
-        'draft'         { *type = DRAFT; goto done; }
-        'header'        { *type = HEADER; goto done; }
-        'larger'        { *type = LARGER; goto done; }
-        'not'           { *type = NOT; goto done; }
-        'or'            { *type = OR; goto done; }
-        'sentbefore'    { *type = SENTBEFORE; goto done; }
-        'senton'        { *type = SENTON; goto done; }
-        'sentsince'     { *type = SENTSINCE; goto done; }
-        'smaller'       { *type = SMALLER; goto done; }
-        'uid'           { *type = UID; goto done; }
-        'undraft'       { *type = UNDRAFT; goto done; }
-        'modseq'        { *type = MODSEQ; goto done; }
-        'priv'          { *type = PRIV; goto done; }
-        'shared'        { *type = SHARED; goto done; }
-    */
-
-select_param_mode:
-
-    /*!re2c
-        *               { INVALID_TOKEN_ERROR; }
-        eol             { *type = EOL; goto done; }
-        atom_spec       { *type = *scanner->start; goto done; }
-
-        'condstore'     { *type = CONDSTORE; goto done; }
-        'qresync'       { *type = QRESYNC; goto done; }
-
-        num             { *type = NUM; goto done; }
-    */
-
-modseq_mode:
-
-    /*!re2c
-        *               { INVALID_TOKEN_ERROR; }
-        eol             { *type = EOL; goto done; }
-        atom_spec       { *type = *scanner->start; goto done; }
-
-        'modseq'        { *type = MODSEQ; goto done; }
-
-        num             { *type = NUM; goto done; }
     */
 
     size_t start_offset, end_offset;

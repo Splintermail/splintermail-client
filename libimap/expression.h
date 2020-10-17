@@ -641,6 +641,11 @@ typedef enum {
 } imap_resp_type_t;
 
 typedef struct {
+    ie_st_code_t *code;
+    ie_dstr_t *text;
+} ie_plus_resp_t;
+
+typedef struct {
     ie_dstr_t *tag;
     ie_status_t status;
     ie_st_code_t *code;
@@ -681,7 +686,7 @@ typedef struct {
 } ie_vanished_resp_t;
 
 typedef struct {
-    // nothing for plus
+    ie_plus_resp_t *plus;
     ie_st_resp_t *status_type;
     ie_dstr_t *capa;
     ie_list_resp_t *list;
@@ -1093,6 +1098,11 @@ void imap_cmd_free(imap_cmd_t *cmd);
 imap_cmd_t *imap_cmd_copy(derr_t *e, const imap_cmd_t *old);
 
 // full responses
+
+ie_plus_resp_t *ie_plus_resp_new(derr_t *e, ie_st_code_t *code,
+        ie_dstr_t *text);
+void ie_plus_resp_free(ie_plus_resp_t *plus);
+ie_plus_resp_t *ie_plus_resp_copy(derr_t *e, const ie_plus_resp_t *old);
 
 ie_st_resp_t *ie_st_resp_new(derr_t *e, ie_dstr_t *tag, ie_status_t status,
         ie_st_code_t *code, ie_dstr_t *text);

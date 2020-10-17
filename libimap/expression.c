@@ -2530,6 +2530,42 @@ imap_cmd_t *imap_cmd_copy(derr_t *e, const imap_cmd_t *old){
 
 // full responses
 
+ie_plus_resp_t *ie_plus_resp_new(derr_t *e, ie_st_code_t *code,
+        ie_dstr_t *text){
+    if(is_error(*e)) goto fail;
+
+    IE_MALLOC(e, ie_plus_resp_t, plus, fail);
+
+    plus->code = code;
+    plus->text = text;
+
+    return plus;
+
+fail:
+    ie_st_code_free(code);
+    ie_dstr_free(text);
+    return NULL;
+}
+
+void ie_plus_resp_free(ie_plus_resp_t *plus){
+    if(!plus) return;
+    ie_st_code_free(plus->code);
+    ie_dstr_free(plus->text);
+    free(plus);
+}
+
+ie_plus_resp_t *ie_plus_resp_copy(derr_t *e, const ie_plus_resp_t *old){
+    if(!old) goto fail;
+
+    return ie_plus_resp_new(e,
+        ie_st_code_copy(e, old->code),
+        ie_dstr_copy(e, old->text)
+    );
+
+fail:
+    return NULL;
+}
+
 ie_st_resp_t *ie_st_resp_new(derr_t *e, ie_dstr_t *tag, ie_status_t status,
         ie_st_code_t *code, ie_dstr_t *text){
     if(is_error(*e)) goto fail;
@@ -2706,7 +2742,7 @@ void ie_vanished_resp_free(ie_vanished_resp_t *vanished){
 
 static void imap_resp_arg_free(imap_resp_type_t type, imap_resp_arg_t arg){
     switch(type){
-        case IMAP_RESP_PLUS:        break;
+        case IMAP_RESP_PLUS:        ie_plus_resp_free(arg.plus); break;
         case IMAP_RESP_STATUS_TYPE: ie_st_resp_free(arg.status_type); break;
         case IMAP_RESP_CAPA:        ie_dstr_free(arg.capa); break;
         case IMAP_RESP_LIST:        ie_list_resp_free(arg.list); break;

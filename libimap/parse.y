@@ -1,6 +1,7 @@
 %{
     #include <stdio.h>
     #include <libimap/libimap.h>
+    #include <limits.h>
 
     #define MODE(m) p->scan_mode = SCAN_MODE_ ## m
 
@@ -8,7 +9,7 @@
 
     // a YYACCEPT wrapper that resets some custom parser details
     #define ACCEPT \
-        MODE(TAG); \
+        MODE(STD); \
         ie_dstr_free(STEAL(ie_dstr_t, &p->errtag)); \
         ie_dstr_free(STEAL(ie_dstr_t, &p->errmsg)); \
         YYACCEPT \
@@ -36,72 +37,33 @@
     }
 
     // must be a macro because it has to be able to call YYERROR
-    #define LITERAL_START { \
-        /* get the numbers from the literal, ex: {5}\r\nBYTES */ \
-        /*                                       ^^^^^^^ -> LITERAL token */ \
-        dstr_t sub = dstr_sub(p->token, 1, p->token->len - 3); \
-        unsigned int len; \
-        derr_t e = dstr_tou(&sub, &len, 10); \
-        /* an error here is a proper syntax error */ \
+    #define PARSE_NUM(text, func, out) do { \
+        derr_t e = E_OK; \
+        if(!is_error(p->error)){ \
+            e = func(&(text)->dstr, out, 10); \
+        } \
+        ie_dstr_free(text); \
         if(is_error(e)){ \
             DROP_VAR(&e); \
             imapyyerror(p, "invalid number"); \
             YYERROR; \
         } \
+    } while(0)
+
+    #define NZ(num) { \
+        if(!(num)){ \
+            imapyyerror(p, "invalid number"); \
+            YYERROR; \
+        } \
+    }
+
+    #define LITERAL_START(len, sendplus) { \
         /* put scanner in literal mode */ \
-        set_scanner_to_literal_mode(p, len); \
-        if(!p->is_client){ \
-            /* forward the plus request to the server */ \
-            /* (but leave p->error alone, since that error's lifetime is */ \
-            /*  tied to the liftime of a full imap command) */ \
+        set_scanner_to_literal_mode(p, (len)); \
+        if((sendplus) && !p->is_client){ \
             imap_cmd_arg_t arg = {0}; \
             imap_cmd_t *cmd = imap_cmd_new(E, NULL, IMAP_CMD_PLUS_REQ, arg); \
             send_cmd(p, cmd); \
-        } \
-    }
-
-    #define PARSE_NUM(out){ \
-        unsigned int num ; \
-        derr_t e = dstr_tou(p->token, &num, 10); \
-        /* an error here is a proper syntax error */ \
-        if(is_error(e)){ \
-            DROP_VAR(&e); \
-            imapyyerror(p, "invalid number"); \
-            YYERROR; \
-        } \
-        (out) = num; \
-    }
-
-    #define PARSE_NZNUM(out){ \
-        PARSE_NUM(out); \
-        if((out) == 0){ \
-            imapyyerror(p, "invalid number (zero)"); \
-            YYERROR; \
-        } \
-    }
-
-    #define PARSE_MODSEQNUM(out){ \
-        unsigned long num ; \
-        derr_t e = dstr_toul(p->token, &num, 10); \
-        /* an error here is a proper syntax error */ \
-        if(is_error(e)){ \
-            DROP_VAR(&e); \
-            imapyyerror(p, "invalid number"); \
-            YYERROR; \
-        } \
-        /* 63-bit number; maximum value is 2^63 - 1 */ \
-        if((num) > 9223372036854775807UL){ \
-            imapyyerror(p, "invalid number (too big)"); \
-            YYERROR; \
-        } \
-        (out) = num; \
-    }
-
-    #define PARSE_NZMODSEQNUM(out){ \
-        PARSE_MODSEQNUM(out); \
-        if((out) == 0){ \
-            imapyyerror(p, "invalid number (zero)"); \
-            YYERROR; \
         } \
     }
 
@@ -146,6 +108,7 @@
 
 /* some generic types */
 %token RAW
+%token NON_CRLF_CTL
 %token NIL
 %token DIGIT
 %token NUM
@@ -270,20 +233,20 @@
 %token ENVELOPE
 %token INTDATE
 %token RFC822
-%token RFC822_TEXT
-%token RFC822_HEADER
-%token RFC822_SIZE
+/*     TEXT (listed elsewhere) */
+/*     HEADER (listed elsewhere) */
+%token SIZE
 %token BODYSTRUCT
 /*     BODY (listed above */
-%token BODY_PEEK
+%token PEEK
 /*     UID (listed above) */
 
 /* BODY[] section stuff */
 %token MIME
 /*     TEXT (listed above) */
 /*     HEADER (listed above) */
-%token HDR_FLDS
-%token HDR_FLDS_NOT
+%token FIELDS
+/*     NOT (listed elsewhere) */
 
 /* FLAGS */
 /*     ANSWERED (listed above) */
@@ -292,7 +255,6 @@
 /*     SEEN (listed above) */
 /*     DRAFT (listed above) */
 /*     RECENT (listed above) */
-%token ASTERISK_FLAG
 
 /* mailbox-specific flags */
 %token NOINFERIORS
@@ -347,7 +309,13 @@
 // no destructor for char type
 
 %type <dstr> tag
+%type <dstr> tag_
 %type <dstr> atom
+%type <dstr> atom_sc
+%type <dstr> atom_mbx
+%type <dstr> atom_flag
+%type <dstr> atom_fflag
+%type <dstr> atom_mflag
 %type <dstr> qstr
 %type <dstr> qstr_body
 %type <dstr> literal
@@ -356,8 +324,6 @@
 %type <dstr> astring
 %type <dstr> string
 %type <dstr> search_charset
-%type <dstr> search_astring
-%type <dstr> search_atom
 %type <dstr> header_list_1
 %type <dstr> st_text
 %type <dstr> sc_text
@@ -365,6 +331,9 @@
 %type <dstr> capas_1
 %type <dstr> f_rfc822
 %type <dstr> file_nstring
+%type <dstr> list_char_1
+%type <dstr> list_mailbox
+%type <dstr> num_str
 %destructor { ie_dstr_free($$); } <dstr>
 
 %type <fetch_resp_extra> f_extra
@@ -419,7 +388,6 @@
 %type <num> digit
 %type <num> twodigit
 %type <num> fourdigit
-%type <num> sc_num
 %type <num> date_month
 %type <num> date_day
 %type <num> date_day_fixed
@@ -681,7 +649,7 @@ untagged_resp: status_type_resp_untagged
              | vanished_resp
 ;
 
-untag: '*' { MODE(COMMAND); };
+untag: '*';
 
 /*** CAPABILITY command ***/
 
@@ -710,7 +678,7 @@ authenticate_cmd: tag SP AUTHENTICATE cmdcheck SP atom
 
 /*** LOGIN command ***/
 
-login_cmd: tag SP LOGIN cmdcheck SP { MODE(ASTRING); } astring[u] SP astring[p]
+login_cmd: tag SP LOGIN cmdcheck SP astring[u] SP astring[p]
     { imap_cmd_arg_t arg = {.login=ie_login_cmd_new(E, $u, $p)};
       $$ = imap_cmd_new(E, $tag, IMAP_CMD_LOGIN, arg); };
 
@@ -720,8 +688,8 @@ select_cmd: tag SP SELECT cmdcheck SP mailbox[m] select_params_0[p]
     { imap_cmd_arg_t arg = {.select=ie_select_cmd_new(E, $m, $p)};
       $$ = imap_cmd_new(E, $tag, IMAP_CMD_SELECT, arg); };
 
-select_params_0: %empty                                                { $$ = NULL; }
-               | SP { MODE(SELECT_PARAM); } '(' select_params_1[p] ')' { $$ = $p; }
+select_params_0: %empty                        { $$ = NULL; }
+               | SP '(' select_params_1[p] ')' { $$ = $p; }
 ;
 
 select_params_1: select_param[p]                        { $$ = $p; }
@@ -761,7 +729,7 @@ qresync_map: %empty                                  { $$.u=NULL; $$.k=NULL; $$.
 
 /*** EXAMINE command ***/
 
-examine_cmd: tag SP EXAMINE cmdcheck SP mailbox[m] { MODE(SELECT_PARAM); } select_params_0[p]
+examine_cmd: tag SP EXAMINE cmdcheck SP mailbox[m] select_params_0[p]
     { imap_cmd_arg_t arg = {.examine=ie_select_cmd_new(E, $m, $p)};
       $$ = imap_cmd_new(E, $tag, IMAP_CMD_EXAMINE, arg); };
 
@@ -797,20 +765,28 @@ unsubscribe_cmd: tag SP UNSUBSCRIBE cmdcheck SP mailbox[m]
 
 /*** LIST command ***/
 
-list_cmd: tag SP LIST cmdcheck SP mailbox[m] { MODE(WILDCARD); } SP astring[p]
+list_cmd: tag SP LIST cmdcheck SP mailbox[m] SP list_mailbox[p]
     { imap_cmd_arg_t arg = {.list=ie_list_cmd_new(E, $m, $p)};
       $$ = imap_cmd_new(E, $tag, IMAP_CMD_LIST, arg); };
 
+list_mailbox: string
+            | list_char_1;
+
+list_char: atom_char | '%' | '*';
+list_char_1: list_char                 { $$ = ie_dstr_new(E, p->token, KEEP_RAW); }
+           | list_char_1[l] list_char  { $$ = ie_dstr_append(E, $l, p->token, KEEP_RAW); }
+;
+
 /*** LSUB command ***/
 
-lsub_cmd: tag SP LSUB cmdcheck SP mailbox[m] { MODE(WILDCARD); } SP astring[p]
+lsub_cmd: tag SP LSUB cmdcheck SP mailbox[m] SP list_mailbox[p]
     { imap_cmd_arg_t arg = {.lsub=ie_list_cmd_new(E, $m, $p)};
       $$ = imap_cmd_new(E, $tag, IMAP_CMD_LSUB, arg); };
 
 /*** STATUS command ***/
 
 status_cmd: tag SP STATUS cmdcheck SP mailbox[m]
-          { MODE(STATUS_ATTR); } SP '(' s_attr_clist_1[sa] ')'
+          SP '(' s_attr_clist_1[sa] ')'
     { imap_cmd_arg_t arg = {.status=ie_status_cmd_new(E, $m, $sa)};
       $$ = imap_cmd_new(E, $tag, IMAP_CMD_STATUS, arg); };
 
@@ -821,8 +797,8 @@ s_attr_clist_1: s_attr_any[s]                        { $$ = $s; }
 /*** APPEND command ***/
 
 append_cmd: tag SP APPEND cmdcheck SP mailbox[m]
-          { MODE(FLAG); } SP append_flags[f] append_time[t]
-          { MODE(ASTRING); } literal[l]
+          SP append_flags[f] append_time[t]
+          literal[l]
     { imap_cmd_arg_t arg = {.append=ie_append_cmd_new(E, $m, $f, $t, $l)};
       $$ = imap_cmd_new(E, $tag, IMAP_CMD_APPEND, arg); };
 
@@ -863,18 +839,18 @@ uid_mode: %empty { $$ = false; }
 /*** SEARCH command ***/
 
 search_cmd: tag SP uid_mode[u] SEARCH cmdcheck SP
-            { MODE(SEARCH); } search_charset[c]
-            { MODE(SEARCH); } search_keys_1[k]
+            search_charset[c]
+            search_keys_1[k]
     { imap_cmd_arg_t arg = {.search=ie_search_cmd_new(E, $u, $c, $k)};
       $$ = imap_cmd_new(E, $tag, IMAP_CMD_SEARCH, arg); };
 
 search_charset: %empty { $$ = NULL; }
-              | CHARSET SP search_astring[s] SP { $$ = $s; MODE(SEARCH); }
+              | CHARSET SP astring[s] SP { $$ = $s; }
 ;
 
-search_keys_1: search_key[k]                     { $$ = $k; MODE(SEARCH); }
+search_keys_1: search_key[k]                     { $$ = $k; }
              | search_keys_1[a] SP search_key[b]
-               { $$ = ie_search_pair(E, IE_SEARCH_AND, $a, $b); MODE(SEARCH); }
+               { $$ = ie_search_pair(E, IE_SEARCH_AND, $a, $b); }
 ;
 
 search_key: ALL                         { $$ = ie_search_0(E, IE_SEARCH_ALL); }
@@ -891,15 +867,15 @@ search_key: ALL                         { $$ = ie_search_0(E, IE_SEARCH_ALL); }
           | UNSEEN                      { $$ = ie_search_0(E, IE_SEARCH_UNSEEN); }
           | DRAFT                       { $$ = ie_search_0(E, IE_SEARCH_DRAFT); }
           | UNDRAFT                     { $$ = ie_search_0(E, IE_SEARCH_UNDRAFT); }
-          | BCC SP search_astring[s]    { $$ = ie_search_dstr(E, IE_SEARCH_BCC, $s); }
-          | BODY SP search_astring[s]   { $$ = ie_search_dstr(E, IE_SEARCH_BODY, $s); }
-          | CC SP search_astring[s]     { $$ = ie_search_dstr(E, IE_SEARCH_CC, $s); }
-          | FROM SP search_astring[s]   { $$ = ie_search_dstr(E, IE_SEARCH_FROM, $s); }
-          | KEYWORD SP search_atom[s]   { $$ = ie_search_dstr(E, IE_SEARCH_KEYWORD, $s); }
-          | SUBJECT SP search_astring[s]{ $$ = ie_search_dstr(E, IE_SEARCH_SUBJECT, $s); }
-          | TEXT SP search_astring[s]   { $$ = ie_search_dstr(E, IE_SEARCH_TEXT, $s); }
-          | TO SP search_astring[s]     { $$ = ie_search_dstr(E, IE_SEARCH_TO, $s); }
-          | UNKEYWORD SP search_atom[s] { $$ = ie_search_dstr(E, IE_SEARCH_UNKEYWORD, $s); }
+          | BCC SP astring[s]           { $$ = ie_search_dstr(E, IE_SEARCH_BCC, $s); }
+          | BODY SP astring[s]          { $$ = ie_search_dstr(E, IE_SEARCH_BODY, $s); }
+          | CC SP astring[s]            { $$ = ie_search_dstr(E, IE_SEARCH_CC, $s); }
+          | FROM SP astring[s]          { $$ = ie_search_dstr(E, IE_SEARCH_FROM, $s); }
+          | KEYWORD SP atom[s]          { $$ = ie_search_dstr(E, IE_SEARCH_KEYWORD, $s); }
+          | SUBJECT SP astring[s]       { $$ = ie_search_dstr(E, IE_SEARCH_SUBJECT, $s); }
+          | TEXT SP astring[s]          { $$ = ie_search_dstr(E, IE_SEARCH_TEXT, $s); }
+          | TO SP astring[s]            { $$ = ie_search_dstr(E, IE_SEARCH_TO, $s); }
+          | UNKEYWORD SP atom[s]        { $$ = ie_search_dstr(E, IE_SEARCH_UNKEYWORD, $s); }
           | search_hdr
           | BEFORE SP search_date[d]    { $$ = ie_search_date(E, IE_SEARCH_BEFORE, $d); }
           | ON SP search_date[d]        { $$ = ie_search_date(E, IE_SEARCH_ON, $d); }
@@ -917,8 +893,8 @@ search_key: ALL                         { $$ = ie_search_0(E, IE_SEARCH_ALL); }
           | search_modseq
 ;
 
-search_hdr: HEADER SP search_astring[h] SP search_astring[v]
-          { $$ = ie_search_header(E, IE_SEARCH_HEADER, $h, $v); MODE(SEARCH); };
+search_hdr: HEADER SP astring[h] SP astring[v]
+          { $$ = ie_search_header(E, IE_SEARCH_HEADER, $h, $v); };
 
 search_or: OR SP search_key[a] SP search_key[b]
          { $$ = ie_search_pair(E, IE_SEARCH_OR, $a, $b); };
@@ -936,12 +912,8 @@ entry_type: PRIV    { $$ = IE_ENTRY_PRIV; }
           | ALL     { $$ = IE_ENTRY_ALL; }
 ;
 
-search_astring: { MODE(ASTRING); } astring[k] { $$ = $k; };
-
-search_atom: { MODE(ATOM); } atom[k] { $$ = $k; };
-
-search_date: pre_date '"' date '"' { $$ = $date; }
-           | pre_date date         { $$ = $date; }
+search_date: pre_date '"' date'"' post_date  { $$ = $date; }
+           | pre_date date post_date         { $$ = $date; }
 ;
 
 date_day: digit           { $$ = $digit; }
@@ -949,6 +921,7 @@ date_day: digit           { $$ = $digit; }
 ;
 
 pre_date: %empty { MODE(DATETIME); };
+post_date: %empty { MODE(STD); };
 
 date: date_day '-' date_month '-' fourdigit
       { $$ = (imap_time_t){.year  = $fourdigit,
@@ -958,7 +931,7 @@ date: date_day '-' date_month '-' fourdigit
 /*** FETCH command ***/
 
 fetch_cmd: tag SP uid_mode[u] FETCH cmdcheck SP seq_set[seq] SP
-           { MODE(FETCH); } fetch_attrs[attr] fetch_mods_0[mods]
+           fetch_attrs[attr] fetch_mods_0[mods]
     { imap_cmd_arg_t arg = {.fetch=ie_fetch_cmd_new(E, $u, $seq, $attr, $mods)};
       $$ = imap_cmd_new(E, $tag, IMAP_CMD_FETCH, arg);
       /* VANISHED can be used with UID mode and CHANGEDSINCE both active */
@@ -1010,21 +983,21 @@ fetch_attrs_1: fetch_attr
              | fetch_attrs_1[f] SP fetch_attr_extra[e]  { $$ = ie_fetch_attrs_add_extra(E, $f, $e); }
 ;
 
-fetch_attr_simple: ENVELOPE       { $$ = IE_FETCH_ATTR_ENVELOPE; }
-                 | FLAGS          { $$ = IE_FETCH_ATTR_FLAGS; }
-                 | INTDATE        { $$ = IE_FETCH_ATTR_INTDATE; }
-                 | UID            { $$ = IE_FETCH_ATTR_UID; }
-                 | RFC822         { $$ = IE_FETCH_ATTR_RFC822; }
-                 | RFC822_HEADER  { $$ = IE_FETCH_ATTR_RFC822_HEADER; }
-                 | RFC822_SIZE    { $$ = IE_FETCH_ATTR_RFC822_SIZE; }
-                 | RFC822_TEXT    { $$ = IE_FETCH_ATTR_RFC822_TEXT; }
-                 | BODYSTRUCT     { $$ = IE_FETCH_ATTR_BODYSTRUCT; }
-                 | BODY           { $$ = IE_FETCH_ATTR_BODY; }
-                 | MODSEQ         { $$ = IE_FETCH_ATTR_MODSEQ; }
+fetch_attr_simple: ENVELOPE           { $$ = IE_FETCH_ATTR_ENVELOPE; }
+                 | FLAGS              { $$ = IE_FETCH_ATTR_FLAGS; }
+                 | INTDATE            { $$ = IE_FETCH_ATTR_INTDATE; }
+                 | UID                { $$ = IE_FETCH_ATTR_UID; }
+                 | RFC822             { $$ = IE_FETCH_ATTR_RFC822; }
+                 | RFC822 '.' HEADER  { $$ = IE_FETCH_ATTR_RFC822_HEADER; }
+                 | RFC822 '.' SIZE    { $$ = IE_FETCH_ATTR_RFC822_SIZE; }
+                 | RFC822 '.' TEXT    { $$ = IE_FETCH_ATTR_RFC822_TEXT; }
+                 | BODYSTRUCT         { $$ = IE_FETCH_ATTR_BODYSTRUCT; }
+                 | BODY               { $$ = IE_FETCH_ATTR_BODY; }
+                 | MODSEQ             { $$ = IE_FETCH_ATTR_MODSEQ; }
 ;
 
-fetch_attr_extra: BODY '[' sect[s] ']' partial[p]      { $$ = ie_fetch_extra_new(E, false, $s, $p); }
-                | BODY_PEEK '[' sect[s] ']' partial[p] { $$ = ie_fetch_extra_new(E, true, $s, $p); }
+fetch_attr_extra: BODY '[' sect[s] ']' partial[p]          { $$ = ie_fetch_extra_new(E, false, $s, $p); }
+                | BODY '.' PEEK '[' sect[s] ']' partial[p] { $$ = ie_fetch_extra_new(E, true, $s, $p); }
 ;
 
 fetch_mods_0: %empty { $$ = NULL; }
@@ -1044,7 +1017,7 @@ fetch_mod: CHGSINCE SP nzmodseqnum[s]
                 ie_fetch_mod_arg_t arg = {0};
                 $$ = ie_fetch_mods_new(E, IE_FETCH_MOD_VANISHED, arg); }
 
-sect: _sect[s] { $$ = $s; MODE(FETCH); }
+sect: _sect[s] { $$ = $s; }
 
 _sect: %empty                         { $$ = NULL; }
      | sect_msgtxt[st]                { $$ = ie_sect_new(E, NULL, $st); }
@@ -1063,10 +1036,10 @@ sect_txt: sect_msgtxt
 sect_msgtxt: HEADER { $$ = ie_sect_txt_new(E, IE_SECT_HEADER, NULL); }
            | TEXT   { $$ = ie_sect_txt_new(E, IE_SECT_TEXT, NULL); }
 
-           | HDR_FLDS SP { MODE(ASTRING); } '(' header_list_1[h] ')'
+           | HEADER '.' FIELDS SP '(' header_list_1[h] ')'
                     { $$ = ie_sect_txt_new(E, IE_SECT_HDR_FLDS, $h); }
 
-           | HDR_FLDS_NOT SP { MODE(ASTRING); } '(' header_list_1[h] ')'
+           | HEADER '.' FIELDS '.' NOT SP '(' header_list_1[h] ')'
                     { $$ = ie_sect_txt_new(E, IE_SECT_HDR_FLDS_NOT, $h); }
 ;
 
@@ -1081,8 +1054,8 @@ partial: %empty                      { $$ = NULL; }
 /*** STORE command ***/
 
 store_cmd: tag SP uid_mode[u] STORE cmdcheck SP seq_set[seq]
-           { MODE(STORE); } SP store_mods_0[mods] store_sign[sign] FLAGS store_silent[silent]
-           { MODE(FLAG); } store_flags[f]
+           SP store_mods_0[mods] store_sign[sign] FLAGS store_silent[silent]
+           store_flags[f]
     { imap_cmd_arg_t arg;
       arg.store = ie_store_cmd_new(E, $u, $seq, $mods, $sign, $silent, $f);
       $$ = imap_cmd_new(E, $tag, IMAP_CMD_STORE, arg); };
@@ -1104,8 +1077,8 @@ store_sign: %empty  { $$ = 0; }
           | '+'     { $$ = 1; }
 ;
 
-store_silent: %empty    { $$ = false; }
-            | SILENT    { $$ = true; }
+store_silent: %empty     { $$ = false; }
+            | '.' SILENT { $$ = true; }
 ;
 
 store_flags: SP '(' flags_0[f] ')' { $$ = $f; }
@@ -1120,7 +1093,7 @@ copy_cmd: tag SP uid_mode[u] COPY cmdcheck SP seq_set[seq] SP mailbox[m]
 
 /*** ENABLE command ***/
 
-enable_cmd: tag SP ENABLE cmdcheck { MODE(ATOM); } SP capas_1[c]
+enable_cmd: tag SP ENABLE cmdcheck SP capas_1[c]
     { extension_assert_on_builder(E, p->exts, EXT_ENABLE);
       imap_cmd_arg_t arg = {.enable=$c};
       $$ = imap_cmd_new(E, $tag, IMAP_CMD_ENABLE, arg); };
@@ -1191,8 +1164,7 @@ st_type: OK       { $$ = IE_ST_OK; }
 
 /* YES_STATUS_CODE means we got a '['
    NO_STATUS_CODE means we got the start of the text */
-st_code: YES_STATUS_CODE { MODE(STATUS_CODE); }
-           st_code_[c] ']' SP { MODE(STATUS_TEXT); $$ = $c; }
+st_code: YES_STATUS_CODE { MODE(STD); } st_code_[c] ']' SP { $$ = $c; }
        | %empty { $$ = NULL; }
 
 st_code_: ALERT      { ie_st_code_arg_t arg = {0};
@@ -1205,12 +1177,12 @@ st_code_: ALERT      { ie_st_code_arg_t arg = {0};
                        $$ = ie_st_code_new(E, IE_ST_CODE_READ_WRITE, arg); }
         | TRYCREATE  { ie_st_code_arg_t arg = {0};
                        $$ = ie_st_code_new(E, IE_ST_CODE_TRYCREATE, arg); }
-        | UIDNEXT SP sc_num[n] { ie_st_code_arg_t arg = {.uidnext=$n};
-                                 $$ = ie_st_code_new(E, IE_ST_CODE_UIDNEXT, arg); }
-        | UIDVLD SP sc_num[n]  { ie_st_code_arg_t arg = {.uidvld=$n};
-                                 $$ = ie_st_code_new(E, IE_ST_CODE_UIDVLD, arg); }
-        | UNSEEN SP sc_num[n]  { ie_st_code_arg_t arg = {.unseen=$n};
-                                 $$ = ie_st_code_new(E, IE_ST_CODE_UNSEEN, arg); }
+        | UIDNEXT SP nznum[n] { ie_st_code_arg_t arg = {.uidnext=$n};
+                                $$ = ie_st_code_new(E, IE_ST_CODE_UIDNEXT, arg); }
+        | UIDVLD SP nznum[n]  { ie_st_code_arg_t arg = {.uidvld=$n};
+                                $$ = ie_st_code_new(E, IE_ST_CODE_UIDVLD, arg); }
+        | UNSEEN SP nznum[n]  { ie_st_code_arg_t arg = {.unseen=$n};
+                                $$ = ie_st_code_new(E, IE_ST_CODE_UNSEEN, arg); }
         | sc_pflags
         | sc_capa
         | sc_atom
@@ -1229,34 +1201,29 @@ st_code_: ALERT      { ie_st_code_arg_t arg = {0};
                    $$ = ie_st_code_new(E, IE_ST_CODE_CLOSED, arg); }
 ;
 
-sc_end: %empty { MODE(STATUS_CODE); }
-
-sc_num: { MODE(NUM); } nznum[n] sc_end { $$ = $n; };
-
-sc_pflags: PERMFLAGS { MODE(FLAG); } SP pflags[p] sc_end
+sc_pflags: PERMFLAGS SP pflags[p]
     { ie_st_code_arg_t arg = {.pflags=$p};
       $$ = ie_st_code_new(E, IE_ST_CODE_PERMFLAGS, arg); };
 
-sc_capa: CAPA { MODE(ATOM); } SP capas_1[c] sc_end
+sc_capa: CAPA SP capas_1[c]
     { ie_st_code_arg_t arg = {.capa=$c};
       $$ = ie_st_code_new(E, IE_ST_CODE_CAPA, arg); };
 
-sc_atom: atom[a] { MODE(STATUS_TEXT); } sc_text[t]
+sc_atom: atom_sc[a] sc_text[t]
     { ie_st_code_arg_t arg = {.atom={.name=$a, .text=$t}};
       $$ = ie_st_code_new(E, IE_ST_CODE_ATOM, arg); };
-
 
 sc_uidnostick: UIDNOSTICK
     { extension_assert_on_builder(E, p->exts, EXT_UIDPLUS);
       ie_st_code_arg_t arg = {0};
       $$ = ie_st_code_new(E, IE_ST_CODE_UIDNOSTICK, arg); };
 
-sc_appenduid: APPENDUID SP { MODE(NUM); } nznum[n] SP nznum[uid] sc_end
+sc_appenduid: APPENDUID SP nznum[n] SP nznum[uid]
     { extension_assert_on_builder(E, p->exts, EXT_UIDPLUS);
       ie_st_code_arg_t arg = {.appenduid={.uidvld=$n, .uid=$uid}};
       $$ = ie_st_code_new(E, IE_ST_CODE_APPENDUID, arg); };
 
-sc_copyuid: COPYUID SP { MODE(NUM); } nznum[n] SP uid_set[in] SP uid_set[out] sc_end
+sc_copyuid: COPYUID SP nznum[n] SP uid_set[in] SP uid_set[out]
     { extension_assert_on_builder(E, p->exts, EXT_UIDPLUS);
       ie_st_code_arg_t arg = {.copyuid={.uidvld=$n, .uids_in=$in, .uids_out=$out}};
       $$ = ie_st_code_new(E, IE_ST_CODE_COPYUID, arg); };
@@ -1267,12 +1234,12 @@ sc_nomodseq: NOMODSEQ
       ie_st_code_arg_t arg = {0};
       $$ = ie_st_code_new(E, IE_ST_CODE_NOMODSEQ, arg); }
 
-sc_himodseq: HIMODSEQ SP { MODE(NUM); } nzmodseqnum[n] sc_end
+sc_himodseq: HIMODSEQ SP nzmodseqnum[n]
     { extension_assert_on_builder(E, p->exts, EXT_CONDSTORE);
       ie_st_code_arg_t arg = {.himodseq=$n};
       $$ = ie_st_code_new(E, IE_ST_CODE_HIMODSEQ, arg); }
 
-sc_modified: MODIFIED SP seq_set[s] sc_end
+sc_modified: MODIFIED SP seq_set[s]
     { extension_assert_on_builder(E, p->exts, EXT_CONDSTORE);
       ie_st_code_arg_t arg = {.modified=$s};
       $$ = ie_st_code_new(E, IE_ST_CODE_MODIFIED, arg); };
@@ -1286,25 +1253,20 @@ sc_text_: st_txt_inner_char            { $$ = ie_dstr_new(E, p->token, KEEP_RAW)
         | sc_text_[t] st_txt_inner_char { $$ = ie_dstr_append(E, $t, p->token, KEEP_RAW); }
 ;
 
-st_txt_inner_char: ' '
-                 | '['
-                 | RAW
-;
+st_txt_inner_char: atom_char | '(' | ')' | '{' | '%' | '*' | SP | NON_CRLF_CTL | '"' | '\\';
 
 /* starting with NO_STATUS_CODE indicates we skipped the status code entirely;
    starting with st_txt_char indicates that we started after a status code */
-st_text: NO_STATUS_CODE         { MODE(STATUS_TEXT); $$ = ie_dstr_new(E, p->token, KEEP_RAW); }
+st_text: NO_STATUS_CODE         { MODE(STD); $$ = ie_dstr_new(E, p->token, KEEP_RAW); }
        | st_txt_char            { $$ = ie_dstr_new(E, p->token, KEEP_RAW); }
        | st_text[t] st_txt_char { $$ = ie_dstr_append(E, $t, p->token, KEEP_RAW); }
 ;
 
-st_txt_char: st_txt_inner_char
-           | ']'
-;
+st_txt_char: st_txt_inner_char | ']';
 
 /*** CAPABILITY response ***/
 
-capa_resp: CAPA respcheck { MODE(ATOM); } SP capas_1[c]
+capa_resp: CAPA respcheck SP capas_1[c]
     { imap_resp_arg_t arg = {.capa=$c};
       $$ = imap_resp_new(E, IMAP_RESP_CAPA, arg); };
 
@@ -1322,8 +1284,8 @@ lsub_resp: LSUB respcheck SP mflags[mf] SP nqchar SP mailbox[mbx]
       $$ = imap_resp_new(E, IMAP_RESP_LSUB, arg); };
 
 /* nqchar can't handle spaces, so an post-nqchar MODE() call is required */
-nqchar: prenqchar NIL                 { $$ = 0; MODE(MAILBOX); }
-      | prenqchar '"' qchar[q] '"'  { $$ = $q; MODE(MAILBOX); }
+nqchar: prenqchar NIL                 { $$ = 0; MODE(STD); }
+      | prenqchar '"' qchar[q] '"'  { $$ = $q; MODE(STD); }
 ;
 
 prenqchar: %empty { MODE(NQCHAR); };
@@ -1336,7 +1298,7 @@ qchar: QCHAR {
 
 /*** STATUS response ***/
 
-status_resp: STATUS respcheck SP mailbox[m] { MODE(STATUS_ATTR); } SP '(' s_attr_rlist_0[sa] ')'
+status_resp: STATUS respcheck SP mailbox[m] SP '(' s_attr_rlist_0[sa] ')'
     { imap_resp_arg_t arg = {.status=ie_status_resp_new(E, $m, $sa)};
       $$ = imap_resp_new(E, IMAP_RESP_STATUS, arg); };
 
@@ -1354,7 +1316,7 @@ s_attr_resp: s_attr_32[s] SP num[n]        { $$ = ie_status_attr_resp_new_32(E, 
 
 /*** FLAGS response ***/
 
-flags_resp: FLAGS respcheck SP { MODE(FLAG); } '(' flags_0[f] ')'
+flags_resp: FLAGS respcheck SP '(' flags_0[f] ')'
     { imap_resp_arg_t arg = {.flags=$f};
       $$ = imap_resp_new(E, IMAP_RESP_FLAGS, arg); };
 
@@ -1365,20 +1327,18 @@ search_resp: SEARCH respcheck
                               .search=ie_search_resp_new(E, NULL, false, 0),
                           };
                           $$ = imap_resp_new(E, IMAP_RESP_SEARCH, arg); }
-           | SEARCH respcheck pre_search_resp SP nums_1[n]
+           | SEARCH respcheck SP nums_1[n]
                         { imap_resp_arg_t arg = {
                               .search=ie_search_resp_new(E, $n, false, 0),
                           };
                           $$ = imap_resp_new(E, IMAP_RESP_SEARCH, arg); }
-           | SEARCH respcheck pre_search_resp SP nums_1[n] SP { MODE(MODSEQ); }
+           | SEARCH respcheck SP nums_1[n] SP
                 '(' MODSEQ SP nzmodseqnum[s] ')'
                         { extension_assert_on_builder(E, p->exts, EXT_CONDSTORE);
                           imap_resp_arg_t arg = {
                               .search=ie_search_resp_new(E, $n, true, $s),
                           };
                           $$ = imap_resp_new(E, IMAP_RESP_SEARCH, arg); };
-
-pre_search_resp: %empty { MODE(MODSEQ); };
 
 /*** EXISTS response ***/
 
@@ -1400,16 +1360,13 @@ expunge_resp: num SP EXPUNGE respcheck
 
 /*** FETCH response ***/
 
-fetch_resp: num[n] SP FETCH respcheck { MODE(FETCH); } SP '(' msg_attrs_0[ma] ')'
+fetch_resp: num[n] SP FETCH respcheck SP '(' msg_attrs_0[ma] ')'
     { imap_resp_arg_t arg = {.fetch=ie_fetch_resp_num(E, $ma, $n)};
       $$ = imap_resp_new(E, IMAP_RESP_FETCH, arg); };
 
 msg_attrs_0: %empty { $$ = NULL; }
            | msg_attrs_1
 ;
-
-/* "fetch mode" */
-fm: %empty { MODE(FETCH); };
 
 /* most of these get ignored completely, we only really need:
      - FLAGS
@@ -1418,52 +1375,51 @@ fm: %empty { MODE(FETCH); };
      - the fully body text
      - MODSEQ
    Anything else is going to be encrypted anyway. */
-msg_attrs_1: f_fflags[f] fm  { $$ = ie_fetch_resp_flags(E, ie_fetch_resp_new(E), $f); }
-           | f_uid[u] fm     { $$ = ie_fetch_resp_uid(E, ie_fetch_resp_new(E), $u); }
-           | f_intdate[d] fm { $$ = ie_fetch_resp_intdate(E, ie_fetch_resp_new(E), $d); }
-           | f_rfc822[r] fm  { $$ = ie_fetch_resp_rfc822(E, ie_fetch_resp_new(E), $r); }
-           | f_modseq[s] fm  { $$ = ie_fetch_resp_modseq(E, ie_fetch_resp_new(E), $s); }
-           | f_extra[e] fm   { $$ = ie_fetch_resp_add_extra(E, ie_fetch_resp_new(E), $e); }
-           | ign_msg_attr fm { $$ = ie_fetch_resp_new(E); }
+msg_attrs_1: f_fflags[f]  { $$ = ie_fetch_resp_flags(E, ie_fetch_resp_new(E), $f); }
+           | f_uid[u]     { $$ = ie_fetch_resp_uid(E, ie_fetch_resp_new(E), $u); }
+           | f_intdate[d] { $$ = ie_fetch_resp_intdate(E, ie_fetch_resp_new(E), $d); }
+           | f_rfc822[r]  { $$ = ie_fetch_resp_rfc822(E, ie_fetch_resp_new(E), $r); }
+           | f_modseq[s]  { $$ = ie_fetch_resp_modseq(E, ie_fetch_resp_new(E), $s); }
+           | f_extra[e]   { $$ = ie_fetch_resp_add_extra(E, ie_fetch_resp_new(E), $e); }
+           | ign_msg_attr { $$ = ie_fetch_resp_new(E); }
 
-           | msg_attrs_1[m] SP f_fflags[f] fm  { $$ = ie_fetch_resp_flags(E, $m, $f); }
-           | msg_attrs_1[m] SP f_uid[u] fm     { $$ = ie_fetch_resp_uid(E, $m, $u); }
-           | msg_attrs_1[m] SP f_intdate[d] fm { $$ = ie_fetch_resp_intdate(E, $m, $d); }
-           | msg_attrs_1[m] SP f_rfc822[r] fm  { $$ = ie_fetch_resp_rfc822(E, $m, $r); }
-           | msg_attrs_1[m] SP f_modseq[s] fm  { $$ = ie_fetch_resp_modseq(E, $m, $s); }
-           | msg_attrs_1[m] SP f_extra[e] fm   { $$ = ie_fetch_resp_add_extra(E, $m, $e); }
-           | msg_attrs_1[m] SP ign_msg_attr fm { $$ = $m; }
+           | msg_attrs_1[m] SP f_fflags[f]  { $$ = ie_fetch_resp_flags(E, $m, $f); }
+           | msg_attrs_1[m] SP f_uid[u]     { $$ = ie_fetch_resp_uid(E, $m, $u); }
+           | msg_attrs_1[m] SP f_intdate[d] { $$ = ie_fetch_resp_intdate(E, $m, $d); }
+           | msg_attrs_1[m] SP f_rfc822[r]  { $$ = ie_fetch_resp_rfc822(E, $m, $r); }
+           | msg_attrs_1[m] SP f_modseq[s]  { $$ = ie_fetch_resp_modseq(E, $m, $s); }
+           | msg_attrs_1[m] SP f_extra[e]   { $$ = ie_fetch_resp_add_extra(E, $m, $e); }
+           | msg_attrs_1[m] SP ign_msg_attr { $$ = $m; }
 ;
 
 /* we can parse these without throwing errors, but we ignore them */
-ign_msg_attr: ENVELOPE SP '(' { MODE(NSTRING); } envelope ')'
-            | RFC822_TEXT SP { MODE(NSTRING); } ign_nstring
-            | RFC822_HEADER SP { MODE(NSTRING); } ign_nstring
-            | RFC822_SIZE SP NUM
+ign_msg_attr: ENVELOPE SP '(' envelope ')'
+            | RFC822 '.' TEXT SP ign_nstring
+            | RFC822 '.' HEADER SP ign_nstring
+            | RFC822 '.' SIZE SP NUM
             /* don't even parse anything that starts with BODY */
 ;
 
 
-f_fflags: FLAGS SP { MODE(FLAG); } '(' fflags_0[f] ')' { $$ = $f; };
+f_fflags: FLAGS SP '(' fflags_0[f] ')' { $$ = $f; };
 
-f_rfc822: RFC822 SP { MODE(NSTRING); } file_nstring[r] { $$ = $r; };
+f_rfc822: RFC822 SP file_nstring[r] { $$ = $r; };
 
 /* of all the BODY[*] things, just support BODY[] */
-f_extra: BODY '[' ']' SP { MODE(NSTRING); } file_nstring[r]
+f_extra: BODY '[' ']' SP file_nstring[r]
     { $$ = ie_fetch_resp_extra_new(E, NULL, NULL, $r); };
 
-f_modseq: MODSEQ SP { MODE(MODSEQ); } '(' nzmodseqnum[s] ')'
+f_modseq: MODSEQ SP '(' nzmodseqnum[s] ')'
     { extension_assert_on_builder(E, p->exts, EXT_CONDSTORE);
       $$ = $s; };
 
 /* this will some day write to a file instead of memory, otherwise it would
    just be "nstring" type */
 file_nstring: NIL { $$ = ie_dstr_new_empty(E); }
-              | literal
-              | qstr
+              | string
 ;
 
-f_uid: UID SP { MODE(NUM); } num[n] { $$ = $n; };
+f_uid: UID SP num[n] { $$ = $n; };
 
 f_intdate: INTDATE SP date_time[d] { $$ = $d; };
 
@@ -1491,7 +1447,7 @@ ign_nstring: NIL
 
 /*** ENABLED response ***/
 
-enabled_resp: ENABLED respcheck { MODE(ATOM); } SP capas_1[c]
+enabled_resp: ENABLED respcheck SP capas_1[c]
     { extension_assert_on_builder(E, p->exts, EXT_ENABLE);
       imap_resp_arg_t arg = {.enabled=$c};
       $$ = imap_resp_new(E, IMAP_RESP_ENABLED, arg); };
@@ -1514,79 +1470,230 @@ vanished_resp: VANISHED respcheck SP seq_set[s]
 
 /*** PLUS response ***/
 
-plus_resp: '+' respcheck
-    { $$ = imap_resp_new(E, IMAP_RESP_PLUS, (imap_resp_arg_t){0}); };
+plus_resp: '+' respcheck SP st_code[c] st_text[tx]
+    { ie_plus_resp_t *plus = ie_plus_resp_new(E, $c, $tx);
+      imap_resp_arg_t arg = { .plus = plus };
+      $$ = imap_resp_new(E, IMAP_RESP_PLUS, arg); };
 
 
 /*** start of "helper" categories: ***/
-
-keyword: OK
-       | NO
-       | BAD
-       | PREAUTH
-       | BYE
-       | CAPA
-       | LIST
-       | LSUB
-       | STATUS
-       | FLAGS
-       | SEARCH
-       | EXISTS
-       | RECENT
-       | EXPUNGE
-       | FETCH
-       | ALERT
-       | PARSE
-       | PERMFLAGS
-       | READ_ONLY
-       | READ_WRITE
-       | TRYCREATE
-       | UIDNEXT
-       | UIDVLD
-       | UNSEEN
-       | MESSAGES
-       | NIL
-       | INBOX
+sc_keyword: ALERT
+          | APPENDUID
+          | CAPA
+          | CLOSED
+          | COPYUID
+          | HIMODSEQ
+          | MODIFIED
+          | NOMODSEQ
+          | PARSE
+          | PERMFLAGS
+          | READ_ONLY
+          | READ_WRITE
+          | TRYCREATE
+          | UIDNEXT
+          | UIDNOSTICK
+          | UIDVLD
+          | UNSEEN
 ;
 
-atom_like: RAW
-         | NUM
-         | keyword
+flag_keyword: ANSWERED
+            | DELETED
+            | DRAFT
+            | FLAGGED
+            | RECENT
+            | SEEN
 ;
 
-atom: RAW                { $$ = ie_dstr_new(E, p->token, KEEP_RAW); }
-    | atom[a] atom_like  { $$ = ie_dstr_append(E, $a, p->token, KEEP_RAW); }
+mflag_keyword: MARKED
+             | NOINFERIORS
+             | NOSELECT
+             | UNMARKED
 ;
 
-qstr: '"' preqstr qstr_body[q] '"' { p->scan_mode = p->preqstr_mode; $$ = $q; };
+mailbox_keyword: INBOX;
 
-preqstr: %empty { p->preqstr_mode = p->scan_mode; MODE(QSTRING); };
+misc_keyword: ALL
+            | APPEND
+            | APR
+            | AUG
+            | AUTHENTICATE
+            | BAD
+            | BCC
+            | BEFORE
+            | BODYSTRUCT
+            | BODY
+            | BYE
+            | CC
+            | CHGSINCE
+            | CHARSET
+            | CHECK
+            | CLOSE
+            | CONDSTORE
+            | COPY
+            | CREATE
+            | DEC
+            | DELETE
+            | DONE
+            | EARLIER
+            | ENABLED
+            | ENABLE
+            | ENVELOPE
+            | EXAMINE
+            | EXISTS
+            | EXPUNGE
+            | FAST
+            | FEB
+            | FETCH
+            | FIELDS
+            | FLAGS
+            | FROM
+            | FULL
+            | HEADER
+            | IDLE
+            | INTDATE
+            | JAN
+            | JUL
+            | JUN
+            | KEYWORD
+            | LARGER
+            | LIST
+            | LOGIN
+            | LOGOUT
+            | LSUB
+            | MAR
+            | MAY
+            | MESSAGES
+            | MIME
+            | MODSEQ
+            | NEW
+            | NIL
+            | NOOP
+            | NOT
+            | NO
+            | NOV
+            | OCT
+            | OK
+            | OLD
+            | ON
+            | OR
+            | PEEK
+            | PREAUTH
+            | PRIV
+            | QRESYNC
+            | RENAME
+            | RFC822
+            | SEARCH
+            | SELECT
+            | SENTBEFORE
+            | SENTON
+            | SENTSINCE
+            | SEP
+            | SHARED
+            | SILENT
+            | SINCE
+            | SIZE
+            | SMALLER
+            | STARTTLS
+            | STATUS
+            | STORE
+            | SUBJECT
+            | SUBSCRIBE
+            | TEXT
+            | TO
+            | UID
+            | UNANSWERED
+            | UNCHGSINCE
+            | UNDELETED
+            | UNDRAFT
+            | UNFLAGGED
+            | UNKEYWORD
+            | UNSELECT
+            | UNSUBSCRIBE
+            | VANISHED
+;
+
+keyword: sc_keyword | flag_keyword | mflag_keyword | mailbox_keyword | misc_keyword;
+
+raw: RAW | NUM | keyword;
+
+// punctuation that is sometimes meaningful but is allowed in atoms anyway
+atom_punc:  ':' | '.' | '}' | '[' | ',' | '<' | '>' | '-';
+atom_char: raw | atom_punc | '+';
+
+atom: atom_char          { $$ = ie_dstr_new(E, p->token, KEEP_RAW); }
+    | atom[a] atom_char  { $$ = ie_dstr_append(E, $a, p->token, KEEP_RAW); }
+;
+
+atom_sc_char: RAW | NUM | flag_keyword | mflag_keyword | mailbox_keyword | misc_keyword;
+atom_sc: atom_sc_char             { $$ = ie_dstr_new(E, p->token, KEEP_RAW); }
+       | atom_sc[a] atom_sc_char  { $$ = ie_dstr_append(E, $a, p->token, KEEP_RAW); }
+;
+
+atom_mbx_char: RAW | NUM | sc_keyword | flag_keyword | mflag_keyword | misc_keyword;
+atom_mbx: atom_mbx_char              { $$ = ie_dstr_new(E, p->token, KEEP_RAW); }
+        | atom_mbx[a] atom_mbx_char  { $$ = ie_dstr_append(E, $a, p->token, KEEP_RAW); }
+;
+
+atom_flag_char: RAW | NUM | RECENT | sc_keyword | mflag_keyword | mailbox_keyword | misc_keyword;
+atom_flag: atom_flag_char               { $$ = ie_dstr_new(E, p->token, KEEP_RAW); }
+         | atom_flag[a] atom_flag_char  { $$ = ie_dstr_append(E, $a, p->token, KEEP_RAW); }
+;
+
+atom_fflag_char: RAW | NUM | sc_keyword | mflag_keyword | mailbox_keyword | misc_keyword;
+atom_fflag: atom_fflag_char                { $$ = ie_dstr_new(E, p->token, KEEP_RAW); }
+          | atom_fflag[a] atom_fflag_char  { $$ = ie_dstr_append(E, $a, p->token, KEEP_RAW); }
+;
+
+atom_mflag_char: RAW | NUM | sc_keyword | flag_keyword | mailbox_keyword | misc_keyword;
+atom_mflag: atom_mflag_char                { $$ = ie_dstr_new(E, p->token, KEEP_RAW); }
+          | atom_mflag[a] atom_mflag_char  { $$ = ie_dstr_append(E, $a, p->token, KEEP_RAW); }
+;
+
+tag: tag_[t] {
+   // Keep track of the tag in case we have to report an error to the user.
+   p->errtag = $t;
+   $$ = ie_dstr_copy(E, $t);
+};
+
+tag_char: raw | atom_punc;
+tag_: tag_char           { $$ = ie_dstr_new(E, p->token, KEEP_RAW); }
+    | tag_[t] atom_char  { $$ = ie_dstr_append(E, $t, p->token, KEEP_RAW); }
+;
+
+
+qstr: '"' preqstr qstr_body[q] postqstr '"' { $$ = $q; };
+preqstr: %empty { MODE(QSTRING); };
+postqstr: %empty { MODE(STD); };
 
 qstr_body: %empty           { $$ = ie_dstr_new_empty(E); }
-         | qstr_body[q] RAW { $$ = ie_dstr_append(E, $q, p->token, KEEP_QSTRING); }
+         | qstr_body[q] raw { $$ = ie_dstr_append(E, $q, p->token, KEEP_QSTRING); }
 ;
 
-ign_qstr: '"' preqstr ign_qstr_body '"' { p->scan_mode = p->preqstr_mode; };
+ign_qstr: '"' preqstr ign_qstr_body postqstr '"';
 
 ign_qstr_body: %empty
-             | ign_qstr_body RAW
+             | ign_qstr_body raw
 ;
 
 
-literal: LITERAL { LITERAL_START; } literal_body_0[l]  LITERAL_END { $$ = $l; };
+literal_start: '{' num[n] '}' EOL { LITERAL_START($n, true); };
+
+//  literal: LITERAL { LITERAL_START; } literal_body_0[l]  LITERAL_END { $$ = $l; };
+literal: literal_start literal_body_0[l]  LITERAL_END { $$ = $l; };
 
 literal_body_0: %empty          { $$ = ie_dstr_new_empty(E); }
               | literal_body_1
 ;
 
-literal_body_1: RAW                   { $$ = ie_dstr_new(E, p->token, KEEP_RAW); }
-              | literal_body_1[l] RAW { $$ = ie_dstr_append(E, $l, p->token, KEEP_RAW); }
+literal_body_1: raw                   { $$ = ie_dstr_new(E, p->token, KEEP_RAW); }
+              | literal_body_1[l] raw { $$ = ie_dstr_append(E, $l, p->token, KEEP_RAW); }
 ;
 
-ign_literal: LITERAL { LITERAL_START; } ign_literal_body;
+// ign_literal: LITERAL { LITERAL_START; } ign_literal_body;
+ign_literal: literal_start ign_literal_body;
 
-ign_literal_body: RAW
-                | ign_literal_body RAW
+ign_literal_body: raw
+                | ign_literal_body raw
 ;
 
 string: qstr
@@ -1601,18 +1708,11 @@ astring: atom
        | string
 ;
 
-tag: atom[a] {
-   // Keep track of the tag in case we have to report an error to the user.
-   p->errtag = $a;
-   $$ = ie_dstr_copy(E, $a);
-   MODE(COMMAND);
-};
 
-mailbox: prembx astring[a] { $$ = ie_mailbox_new_noninbox(E, $a); }
-       | prembx INBOX       { $$ = ie_mailbox_new_inbox(E); }
+mailbox: string[m]   { $$ = ie_mailbox_new_noninbox(E, $m); }
+       | atom_mbx[m] { $$ = ie_mailbox_new_noninbox(E, $m); }
+       | INBOX       { $$ = ie_mailbox_new_inbox(E); }
 ;
-
-prembx: %empty { MODE(MAILBOX); };
 
 s_attr_32: MESSAGES    { $$ = IE_STATUS_ATTR_MESSAGES; }
          | RECENT      { $$ = IE_STATUS_ATTR_RECENT; }
@@ -1631,7 +1731,7 @@ s_attr_any: s_attr_32
 
 date_time: pre_date_time '"' date_day_fixed '-' date_month '-' fourdigit[y] SP
            twodigit[h] ':' twodigit[m] ':' twodigit[s] SP
-           sign twodigit[zh] twodigit[zm] '"'
+           sign twodigit[zh] twodigit[zm] post_date_time '"'
            { $$ = (imap_time_t){.year   = $y,
                                 .month  = $date_month,
                                 .day    = $date_day_fixed,
@@ -1642,6 +1742,7 @@ date_time: pre_date_time '"' date_day_fixed '-' date_month '-' fourdigit[y] SP
                                 .z_min  = $zm }; };
 
 pre_date_time: %empty { MODE(DATETIME); };
+post_date_time: %empty { MODE(STD); };
 
 date_day_fixed: ' ' digit       { $$ = $digit; }
               | digit digit     { $$ = 10*$1 + $2; }
@@ -1691,26 +1792,26 @@ twodigit: digit digit { $$ = 10*$1 + $2; };
 
 fourdigit: digit digit digit digit { $$ = 1000*$1 + 100*$2 + 10*$3 + $4; };
 
-num: NUM { PARSE_NUM($$); };
-nznum: NUM { PARSE_NZNUM($$); };
-modseqnum: NUM { PARSE_MODSEQNUM($$); };
-nzmodseqnum: NUM { PARSE_NZMODSEQNUM($$); };
+num_str: NUM             { $$ = ie_dstr_new(E, p->token, KEEP_RAW); }
+       | num_str[n] NUM  { $$ = ie_dstr_append(E, $n, p->token, KEEP_RAW); }
+;
 
-preseq: %empty { MODE(SEQSET); };
+num: num_str[n] { PARSE_NUM($n, dstr_tou, &$$); };
+nznum: num_str[n] { PARSE_NUM($n, dstr_tou, &$$); NZ($$); };
+modseqnum: num_str[n] { PARSE_NUM($n, dstr_toul, &$$); };
+nzmodseqnum: num_str[n] { PARSE_NUM($n, dstr_toul, &$$); NZ($$) };
 
 seq_spec: seq_num[n]                  { $$ = ie_seq_set_new(E, $n, $n); }
         | seq_num[n1] ':' seq_num[n2] { $$ = ie_seq_set_new(E, $n1, $n2); }
 ;
 
-seq_num: '*'    { $$ = 0; }
-       | nznum
-;
+seq_num: nznum | '*' { $$ = 0; };
 
 nums_1: num              { $$ = ie_nums_new(E, $num); }
       | nums_1[l] SP num { $$ = ie_nums_append(E, $l, ie_nums_new(E, $num)); }
 ;
 
-seq_set: preseq seq_spec[set]            { $$ = $set; }
+seq_set: seq_spec[set]                   { $$ = $set; }
        | seq_set[set] ',' seq_spec[spec] { $$ = ie_seq_set_append(E, $set, $spec); }
 ;
 
@@ -1719,7 +1820,7 @@ uid_spec: nznum[n]                { $$ = ie_seq_set_new(E, $n, $n); }
         | nznum[n1] ':' nznum[n2] { $$ = ie_seq_set_new(E, $n1, $n2); }
 ;
 
-uid_set: preseq uid_spec[set]            { $$ = $set; }
+uid_set: uid_spec[set]                   { $$ = $set; }
        | uid_set[set] ',' uid_spec[spec] { $$ = ie_seq_set_append(E, $set, $spec); }
 
 
@@ -1729,12 +1830,12 @@ flags_0: %empty     { $$ = NULL; }
        | flags_1
 ;
 
-flags_1: flag_simple[s]  { $$ = ie_flags_add_simple(E, ie_flags_new(E), $s); }
-       | '\\' atom[e]    { $$ = ie_flags_add_ext(E, ie_flags_new(E), $e); }
-       | atom [k]        { $$ = ie_flags_add_kw(E, ie_flags_new(E), $k); }
-       | flags_1[f] SP flag_simple[s] { $$ = ie_flags_add_simple(E, $f, $s); }
-       | flags_1[f] SP '\\' atom[e]   { $$ = ie_flags_add_ext(E, $f, $e); }
-       | flags_1[f] SP atom[k]        { $$ = ie_flags_add_kw(E, $f, $k); }
+flags_1: flag_simple[s]     { $$ = ie_flags_add_simple(E, ie_flags_new(E), $s); }
+       | '\\' atom_flag[e]  { $$ = ie_flags_add_ext(E, ie_flags_new(E), $e); }
+       | atom [k]           { $$ = ie_flags_add_kw(E, ie_flags_new(E), $k); }
+       | flags_1[f] SP flag_simple[s]    { $$ = ie_flags_add_simple(E, $f, $s); }
+       | flags_1[f] SP '\\' atom_flag[e] { $$ = ie_flags_add_ext(E, $f, $e); }
+       | flags_1[f] SP atom[k]           { $$ = ie_flags_add_kw(E, $f, $k); }
 ;
 
 flag_simple: '\\' ANSWERED { $$ = IE_FLAG_ANSWERED; }
@@ -1752,12 +1853,12 @@ pflags_0: %empty     { $$ = NULL; }
        | pflags_1
 ;
 
-pflags_1: pflag_simple[s]  { $$ = ie_pflags_add_simple(E, ie_pflags_new(E), $s); }
-        | '\\' atom[e]     { $$ = ie_pflags_add_ext(E, ie_pflags_new(E), $e); }
-        | atom [k]         { $$ = ie_pflags_add_kw(E, ie_pflags_new(E), $k); }
-        | pflags_1[pf] SP pflag_simple[s] { $$ = ie_pflags_add_simple(E, $pf, $s); }
-        | pflags_1[pf] SP '\\' atom[e]    { $$ = ie_pflags_add_ext(E, $pf, $e); }
-        | pflags_1[pf] SP atom[k]         { $$ = ie_pflags_add_kw(E, $pf, $k); }
+pflags_1: pflag_simple[s]   { $$ = ie_pflags_add_simple(E, ie_pflags_new(E), $s); }
+        | '\\' atom_flag[e] { $$ = ie_pflags_add_ext(E, ie_pflags_new(E), $e); }
+        | atom [k]          { $$ = ie_pflags_add_kw(E, ie_pflags_new(E), $k); }
+        | pflags_1[pf] SP pflag_simple[s]   { $$ = ie_pflags_add_simple(E, $pf, $s); }
+        | pflags_1[pf] SP '\\' atom_flag[e] { $$ = ie_pflags_add_ext(E, $pf, $e); }
+        | pflags_1[pf] SP atom[k]           { $$ = ie_pflags_add_kw(E, $pf, $k); }
 ;
 
 pflag_simple: '\\' ANSWERED { $$ = IE_PFLAG_ANSWERED; }
@@ -1765,7 +1866,7 @@ pflag_simple: '\\' ANSWERED { $$ = IE_PFLAG_ANSWERED; }
             | '\\' DELETED  { $$ = IE_PFLAG_DELETED; }
             | '\\' SEEN     { $$ = IE_PFLAG_SEEN; }
             | '\\' DRAFT    { $$ = IE_PFLAG_DRAFT; }
-            | ASTERISK_FLAG { $$ = IE_PFLAG_ASTERISK; }
+            | '\\' '*'      { $$ = IE_PFLAG_ASTERISK; }
 ;
 
 /* only one of these in a list */
@@ -1780,12 +1881,12 @@ fflags_0: %empty     { $$ = ie_fflags_new(E); }
         | fflags_1
 ;
 
-fflags_1: fflag_simple[s] { $$ = ie_fflags_add_simple(E, ie_fflags_new(E), $s); }
-        | '\\' atom[e]    { $$ = ie_fflags_add_ext(E, ie_fflags_new(E), $e); }
-        | atom [k]        { $$ = ie_fflags_add_kw(E, ie_fflags_new(E), $k); }
-        | fflags_1[f] SP fflag_simple[s] { $$ = ie_fflags_add_simple(E, $f, $s); }
-        | fflags_1[f] SP '\\' atom[e]    { $$ = ie_fflags_add_ext(E, $f, $e); }
-        | fflags_1[f] SP atom[k]         { $$ = ie_fflags_add_kw(E, $f, $k); }
+fflags_1: fflag_simple[s]    { $$ = ie_fflags_add_simple(E, ie_fflags_new(E), $s); }
+        | '\\' atom_fflag[e] { $$ = ie_fflags_add_ext(E, ie_fflags_new(E), $e); }
+        | atom [k]           { $$ = ie_fflags_add_kw(E, ie_fflags_new(E), $k); }
+        | fflags_1[f] SP fflag_simple[s]    { $$ = ie_fflags_add_simple(E, $f, $s); }
+        | fflags_1[f] SP '\\' atom_fflag[e] { $$ = ie_fflags_add_ext(E, $f, $e); }
+        | fflags_1[f] SP atom[k]            { $$ = ie_fflags_add_kw(E, $f, $k); }
 ;
 
 fflag_simple: '\\' ANSWERED { $$ = IE_FFLAG_ANSWERED; }
@@ -1798,18 +1899,18 @@ fflag_simple: '\\' ANSWERED { $$ = IE_FFLAG_ANSWERED; }
 
 /* mflags, only used by LIST and LSUB responses */
 
-mflags: { MODE(MFLAG); } '(' mflags_0[mf] ')' { $$ = $mf; };
+mflags: '(' mflags_0[mf] ')' { $$ = $mf; };
 
 mflags_0: %empty     { $$ = NULL; }
         | mflags_1
 ;
 
-mflags_1: '\\' NOINFERIORS { $$ = ie_mflags_add_noinf(E, ie_mflags_new(E)); }
-        | mflag_select[s]  { MFLAG_SELECT($$, ie_mflags_new(E), $s); }
-        | '\\' atom[e]     { $$ = ie_mflags_add_ext(E, ie_mflags_new(E), $e); }
-        | mflags_1[mf] SP '\\' NOINFERIORS { $$ = ie_mflags_add_noinf(E, $mf); }
-        | mflags_1[mf] SP mflag_select[s]  { MFLAG_SELECT($$, $mf, $s); }
-        | mflags_1[mf] SP '\\' atom[e]     { $$ = ie_mflags_add_ext(E, $mf, $e); }
+mflags_1: '\\' NOINFERIORS   { $$ = ie_mflags_add_noinf(E, ie_mflags_new(E)); }
+        | mflag_select[s]    { MFLAG_SELECT($$, ie_mflags_new(E), $s); }
+        | '\\' atom_mflag[e] { $$ = ie_mflags_add_ext(E, ie_mflags_new(E), $e); }
+        | mflags_1[mf] SP '\\' NOINFERIORS   { $$ = ie_mflags_add_noinf(E, $mf); }
+        | mflags_1[mf] SP mflag_select[s]    { MFLAG_SELECT($$, $mf, $s); }
+        | mflags_1[mf] SP '\\' atom_mflag[e] { $$ = ie_mflags_add_ext(E, $mf, $e); }
 ;
 
 SP: ' ';

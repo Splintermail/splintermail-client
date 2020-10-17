@@ -273,6 +273,16 @@ static derr_t test_responses(void){
                     " hi!\r\n")
             },
             {
+                .in=DSTR_LIT("* OK [READ-ONLY] hi!\r\n"),
+                .resp_calls=(int[]){IMAP_RESP_STATUS_TYPE, -1},
+                .buf=DSTR_LIT("* OK [READ-ONLY] hi!\r\n")
+            },
+            {
+                .in=DSTR_LIT("* OK [READ-WRITE] hi!\r\n"),
+                .resp_calls=(int[]){IMAP_RESP_STATUS_TYPE, -1},
+                .buf=DSTR_LIT("* OK [READ-WRITE] hi!\r\n")
+            },
+            {
                 .in=DSTR_LIT("* ok [parse] hi\r\n"),
                 .resp_calls=(int[]){IMAP_RESP_STATUS_TYPE, -1},
                 .buf=DSTR_LIT("* OK [PARSE] hi\r\n")
@@ -357,9 +367,9 @@ static derr_t test_responses(void){
                 .buf=DSTR_LIT("* 41 EXPUNGE\r\n")
             },
             {
-                .in=DSTR_LIT("+\r\n"),
+                .in=DSTR_LIT("+ OK\r\n"),
                 .resp_calls=(int[]){IMAP_RESP_PLUS, -1},
-                .buf=DSTR_LIT("+\r\n")
+                .buf=DSTR_LIT("+ OK\r\n")
             },
         };
         size_t ncases = sizeof(cases) / sizeof(*cases);

@@ -1341,10 +1341,10 @@ static derr_t st_code_skip_fill(skip_fill_t *sf, ie_st_code_t *code){
             STATIC_SKIP_FILL("PARSE");
             break;
         case IE_ST_CODE_READ_ONLY:
-            STATIC_SKIP_FILL("READ_ONLY");
+            STATIC_SKIP_FILL("READ-ONLY");
             break;
         case IE_ST_CODE_READ_WRITE:
-            STATIC_SKIP_FILL("READ_WRITE");
+            STATIC_SKIP_FILL("READ-WRITE");
             break;
         case IE_ST_CODE_TRYCREATE:
             STATIC_SKIP_FILL("TRYCREATE");
@@ -1687,6 +1687,12 @@ static derr_t do_imap_resp_write(const imap_resp_t *resp, dstr_t *out,
     switch(resp->type){
         case IMAP_RESP_PLUS:
             STATIC_SKIP_FILL("+");
+            STATIC_SKIP_FILL(" ");
+            if(arg.plus->code){
+                PROP(&e, st_code_skip_fill(sf, arg.plus->code) );
+                STATIC_SKIP_FILL(" ");
+            }
+            PROP(&e, text_skip_fill(sf, &arg.plus->text->dstr) );
             break;
 
         case IMAP_RESP_STATUS_TYPE:

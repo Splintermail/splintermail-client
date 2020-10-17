@@ -46,7 +46,7 @@ derr_t imap_parser_init(
         .error = E_OK,
         .keep = false,
         .keep_st_text = false,
-        .scan_mode = SCAN_MODE_TAG,
+        .scan_mode = SCAN_MODE_STD,
     };
 
     // init the bison parser

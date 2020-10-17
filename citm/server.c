@@ -578,7 +578,10 @@ static derr_t send_invalid_cmd(server_t *server, imap_cmd_t *error_cmd){
 static derr_t send_plus(server_t *server){
     derr_t e = E_OK;
 
-    imap_resp_arg_t arg = {0};
+    ie_st_code_t *code = NULL;
+    ie_dstr_t *text = ie_dstr_new(&e, &DSTR_LIT("OK"), KEEP_RAW);
+    ie_plus_resp_t *plus = ie_plus_resp_new(&e, code, text);
+    imap_resp_arg_t arg = { .plus = plus };
     imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_PLUS, arg);
     send_resp(&e, server, resp);
     CHECK(&e);
