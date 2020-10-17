@@ -586,6 +586,7 @@ typedef enum {
     FMT_CSTR,
     FMT_PTR,
     FMT_DSTR,
+    FMT_BOOL,
     FMT_EXT,
 } fmt_type_t;
 
@@ -602,6 +603,7 @@ typedef union {
     const char* cstr;
     const void* ptr;
     const dstr_t* dstr;
+    bool boolean;
     fmt_data_ext_t ext;
 } fmt_data_t;
 
@@ -665,6 +667,7 @@ static inline fmt_t FC(char arg){ return (fmt_t){FMT_CHAR, {.c = arg} }; }
 static inline fmt_t FS(const char* arg){ return (fmt_t){FMT_CSTR, {.cstr = arg} }; }
 static inline fmt_t FD(const dstr_t* arg){ return (fmt_t){FMT_DSTR, {.dstr = arg} }; }
 static inline fmt_t FP(const void* arg){ return (fmt_t){FMT_PTR, {.ptr = arg} }; }
+static inline fmt_t FB(bool arg){ return (fmt_t){FMT_BOOL, {.boolean = arg} }; }
 
 derr_type_t fmthook_dstr_dbg(dstr_t* out, const void* arg);
 

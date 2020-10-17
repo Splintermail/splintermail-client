@@ -1260,12 +1260,24 @@ derr_t hex2bin(const dstr_t* hex, dstr_t* bin){
 // FMT()-related stuff below //
 ///////////////////////////////
 
+/* fmt_dstr_append_quiet is just like dstr_append_quiet except when it fails
+   due to a size limit it will try to fill the buffer as much as possible
+   before returning the error */
+static inline derr_type_t fmt_dstr_append_quiet(dstr_t *dstr, const dstr_t *new_text){
+    derr_type_t type = dstr_append_quiet(dstr, new_text);
+    if(type != E_NONE && dstr->len < dstr->size){
+        dstr_t sub_text = dstr_sub(new_text, 0, dstr->size - dstr->len);
+        dstr_append_quiet(dstr, &sub_text);
+    }
+    return type;
+}
+
 static inline derr_type_t dstr_append_hex(dstr_t* dstr, unsigned char val){
     DSTR_VAR(buffer, 8);
     int len = snprintf(buffer.data, buffer.size, "%.2x", val);
     if(len < 0) return E_INTERNAL;
     buffer.len = (size_t)len;
-    return dstr_append_quiet(dstr, &buffer);
+    return fmt_dstr_append_quiet(dstr, &buffer);
 }
 static inline derr_type_t dstr_append_char(dstr_t* dstr, char val){
     derr_type_t type = dstr_grow_quiet(dstr, dstr->len+1);
@@ -1280,7 +1292,11 @@ static inline derr_type_t dstr_append_char(dstr_t* dstr, char val){
     sret = (size_t) ret; \
     if(sret + 1 > out->size - out->len){ \
         derr_type_t type = dstr_grow_quiet(out, out->len + sret + 1); \
-        if(type) return type; \
+        if(type){ \
+            /* allow the partially-written stuff to show */ \
+            out->len = out->size; \
+            return type; \
+        } \
         snprintf(out->data + out->len, out->size - out->len, fmtstr, arg); \
     } \
     out->len += sret
@@ -1296,7 +1312,11 @@ static inline derr_type_t fmt_arg(dstr_t* out, fmt_t arg){
         case FMT_CSTR: SNPRINTF_WITH_RETRY("%s", arg.data.cstr); break;
         case FMT_PTR: SNPRINTF_WITH_RETRY("%p", arg.data.ptr); break;
         case FMT_DSTR:
-            return dstr_append_quiet(out, arg.data.dstr);
+            return fmt_dstr_append_quiet(out, arg.data.dstr);
+        case FMT_BOOL:
+            return fmt_dstr_append_quiet(
+                out, arg.data.boolean ? &DSTR_LIT("true") : &DSTR_LIT("false")
+            );
         case FMT_EXT:
             return arg.data.ext.hook(out, arg.data.ext.arg);
     }
@@ -1410,15 +1430,15 @@ derr_type_t fmthook_dstr_dbg(dstr_t* out, const void* arg){
     for(size_t i = 0; i < in->len; i++){
         char c = in->data[i];
         unsigned char u = (unsigned char)in->data[i];
-        if     (c == '\r') type = dstr_append_quiet(out, &cr);
-        else if(c == '\n') type = dstr_append_quiet(out, &nl);
-        else if(c == '\0') type = dstr_append_quiet(out, &nc);
-        else if(c == '\t') type = dstr_append_quiet(out, &tab);
-        else if(c == '\\') type = dstr_append_quiet(out, &bs);
-        else if(c == '"') type = dstr_append_quiet(out, &quote);
+        if     (c == '\r') type = fmt_dstr_append_quiet(out, &cr);
+        else if(c == '\n') type = fmt_dstr_append_quiet(out, &nl);
+        else if(c == '\0') type = fmt_dstr_append_quiet(out, &nc);
+        else if(c == '\t') type = fmt_dstr_append_quiet(out, &tab);
+        else if(c == '\\') type = fmt_dstr_append_quiet(out, &bs);
+        else if(c == '"') type = fmt_dstr_append_quiet(out, &quote);
         else if(u > 31 && u < 128) type = dstr_append_char(out, c);
         else {
-            type = dstr_append_quiet(out, &pre);
+            type = fmt_dstr_append_quiet(out, &pre);
             if(type) return type;
             type = dstr_append_hex(out, u);
         }
@@ -1434,7 +1454,7 @@ derr_type_t fmthook_strerror(dstr_t* out, const void* arg){
     DSTR_VAR(temp, 512);
     compat_strerror_r(*err, temp.data, temp.size);
     temp.len = strnlen(temp.data, temp.size);
-    return dstr_append_quiet(out, &temp);
+    return fmt_dstr_append_quiet(out, &temp);
 }
 
 ////////////////////////////////
