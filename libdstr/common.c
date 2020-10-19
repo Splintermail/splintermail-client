@@ -229,11 +229,11 @@ derr_t dstr_toi(const dstr_t* in, int* out, int base){
     DSTR_VAR(temp, 128);
     derr_t e2 = dstr_copy(in, &temp);
     CATCH(e2, E_ANY){
-        RETHROW(&e, &e2, E_PARAM)
+        RETHROW(&e, &e2, E_PARAM);
     }
     e2 = dstr_null_terminate(&temp);
     CATCH(e2, E_ANY){
-        RETHROW(&e, &e2, E_PARAM)
+        RETHROW(&e, &e2, E_PARAM);
     }
     // now parse
     char* endptr;

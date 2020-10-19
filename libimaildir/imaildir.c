@@ -1704,7 +1704,7 @@ static derr_t relay_copy_cb(const relay_t *relay, const ie_st_resp_t *st_resp){
         their_uid_up = ie_seq_set_next(&trav_out);
     }
     if(their_uid_up || our_uid_up){
-        ORIG(&e, E_RESPONSE, "COPYUID has mismatched ie_seq_set_t's")
+        ORIG(&e, E_RESPONSE, "COPYUID has mismatched ie_seq_set_t's");
     }
 
     /* Remember the highest uid_up.  This way, if we have a COPYUID that

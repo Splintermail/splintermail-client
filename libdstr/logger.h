@@ -82,7 +82,7 @@ static inline derr_type_t pvt_trace_quiet(
 
 // ORIG() and friends set the derr_t.type and append to derr_t.msg
 
-#define TRACE_ORIG(e, code, message){ \
+#define TRACE_ORIG(e, code, message) do { \
     (e)->type = (code); \
     TRACE((e), \
         "ERROR: %x\n" \
@@ -90,17 +90,17 @@ static inline derr_type_t pvt_trace_quiet(
         FS(message), FD(error_to_dstr(code)), FS(FILE_BASENAME), \
         FS(__func__), FI(__LINE__) \
     ); \
-}
+} while(0)
 
-#define ORIG(e, _code, _message) { \
+#define ORIG(e, _code, _message) do { \
     TRACE_ORIG((e), (_code), (_message)); \
     return *(e); \
-}
+} while(0)
 
-#define ORIG_GO(e, _code, _message, _label) { \
+#define ORIG_GO(e, _code, _message, _label) do { \
     TRACE_ORIG((e), (_code), (_message)); \
     goto _label; \
-}
+} while(0)
 
 
 /* PROP() and friends merge two error contexts.  Typically, the first error
@@ -268,15 +268,15 @@ static inline void pvt_rethrow(derr_t *e, derr_t *e2, derr_type_t newtype,
         FS(file), FS(func), FI(line));
 }
 
-#define RETHROW(e, _new, _newtype) {\
+#define RETHROW(e, _new, _newtype) do {\
     pvt_rethrow((e), (_new), (_newtype), FILE_LOC); \
     return *(e); \
-}
+} while(0)
 
-#define RETHROW_GO(e, _new, _newtype, label) {\
+#define RETHROW_GO(e, _new, _newtype, label) do {\
     pvt_rethrow((e), (_new), (_newtype), FILE_LOC); \
     goto label; \
-}
+} while(0)
 
 /* NOFAIL will catch errors we have specifically prevented and turn them into
    E_INTERNAL errors */
@@ -391,4 +391,6 @@ static inline derr_t pvt_broadcast(derr_t *orig, const char *file,
 /* if you pass an error laterally, you need to reset it without freeing the
    message. It could be done manually but if I have any good ideas later for
    what to do here I want these instances to be marked identically. */
-#define PASSED(e) (e) = E_OK
+#define PASSED(e) do { \
+    (e) = E_OK; \
+} while(0)

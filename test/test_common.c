@@ -246,7 +246,7 @@ static derr_t test_dstr_split_soft(void){
         TRACE(&e, "expected E_FIXEDSIZE but got %x\n",
                 FD(error_to_dstr(e2.type)));
         DROP_VAR(&e2);
-        ORIG(&e, E_VALUE, "FAIL")
+        ORIG(&e, E_VALUE, "FAIL");
     }
 
     // retry with soft
@@ -484,7 +484,7 @@ static derr_t test_fmt(void){
             TRACE(&e, "expected E_FIXEDSIZE but got %x\n", \
                     FD(error_to_dstr(e2.type))); \
             DROP_VAR(&e2); \
-            ORIG(&e, E_VALUE, "FAIL") \
+            ORIG(&e, E_VALUE, "FAIL"); \
         } \
         dstr_t exp; \
         DSTR_WRAP(exp, expstr, strlen(expstr), true); \
@@ -556,7 +556,7 @@ static derr_t test_list_append_with_mem(void){
         TRACE(&e, "expected E_FIXEDSIZE but got %x\n",
                 FD(error_to_dstr(e2.type)));
         DROP_VAR(&e2);
-        ORIG(&e, E_VALUE, "FAIL")
+        ORIG(&e, E_VALUE, "FAIL");
     }
     EXP_VS_GOT(&ans_no_nt, &mem_fix);
 
@@ -578,7 +578,7 @@ static derr_t test_list_append_with_mem(void){
         TRACE(&e, "expected E_FIXEDSIZE but got %x\n",
                 FD(error_to_dstr(e2.type)));
         DROP_VAR(&e2);
-        ORIG(&e, E_VALUE, "FAIL")
+        ORIG(&e, E_VALUE, "FAIL");
     }
     EXP_VS_GOT(&ans_with_nt, &mem_fix);
 

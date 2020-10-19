@@ -14,7 +14,7 @@ static bool _auto_log_flush = false;
 derr_t logger_add_fileptr(log_level_t level, FILE* f){
     derr_t e = E_OK;
     if(fplist_len == sizeof(fplist)/sizeof(*fplist)){
-        ORIG(&e, E_FIXEDSIZE, "can't log to any more FILE*'s")
+        ORIG(&e, E_FIXEDSIZE, "can't log to any more FILE*'s");
     }
 
     fplist[fplist_len] = f;
@@ -28,7 +28,7 @@ derr_t logger_add_fileptr(log_level_t level, FILE* f){
 derr_t logger_add_filename(log_level_t level, const char* f){
     derr_t e = E_OK;
     if(fnlist_len == sizeof(fnlist)/sizeof(*fnlist)){
-        ORIG(&e, E_FIXEDSIZE, "can't log to any more file names")
+        ORIG(&e, E_FIXEDSIZE, "can't log to any more file names");
     }
 
     fnlist[fnlist_len] = f;
