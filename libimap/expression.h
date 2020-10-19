@@ -603,12 +603,7 @@ typedef union {
     ie_dstr_t *enable;
     // nothing for unselect
     // nothing for idle
-    struct {
-        // the tag for the IDLE command we are finishing
-        ie_dstr_t *tag;
-        // if the DONE was received as expected
-        bool ok;
-    } idle_done;
+    ie_dstr_t *idle_done;  // provided by the parser, not used by the writer
 } imap_cmd_arg_t;
 
 typedef struct {

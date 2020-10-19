@@ -10,21 +10,26 @@
     // a YYACCEPT wrapper that resets some custom parser details
     #define ACCEPT \
         MODE(STD); \
-        ie_dstr_free(STEAL(ie_dstr_t, &p->errtag)); \
         ie_dstr_free(STEAL(ie_dstr_t, &p->errmsg)); \
         YYACCEPT \
 
     static void send_cmd(imap_parser_t *p, imap_cmd_t *cmd){
-        if(is_error(p->error)) return;
+        if(is_error(p->error)){
+            imap_cmd_free(cmd);
+            return;
+        }
         p->cb.cmd(p->cb_data, cmd);
     }
 
     static void send_resp(imap_parser_t *p, imap_resp_t *resp){
-        if(is_error(p->error)) return;
+        if(is_error(p->error)){
+            imap_resp_free(resp);
+            return;
+        }
         p->cb.resp(p->cb_data, resp);
     }
 
-    static void handle_error(imap_parser_t *p, ie_dstr_t *tag){
+    static void handle_parse_error(imap_parser_t *p, ie_dstr_t *tag){
         // servers pass the error message to the client.
         // clients let an error be raised
         if(!p->freeing && !p->is_client){
@@ -309,7 +314,6 @@
 // no destructor for char type
 
 %type <dstr> tag
-%type <dstr> tag_
 %type <dstr> atom
 %type <dstr> atom_sc
 %type <dstr> atom_mbx
@@ -570,18 +574,18 @@ line: command[c] EOL {
         ACCEPT;
   /* various error cases */
   } | command[c] error EOL {
-        handle_error(p, STEAL(ie_dstr_t, &$c->tag));
+        handle_parse_error(p, STEAL(ie_dstr_t, &$c->tag));
         imap_cmd_free($c);
         ACCEPT;
   } | response[r] error EOL {
-        handle_error(p, NULL);
+        handle_parse_error(p, NULL);
         imap_resp_free($r);
         ACCEPT;
   } | tag error EOL {
-        handle_error(p, $tag);
+        handle_parse_error(p, $tag);
         ACCEPT;
   } | error EOL {
-        handle_error(p, NULL);
+        handle_parse_error(p, NULL);
         ACCEPT;
       }
 ;
@@ -1114,15 +1118,16 @@ idle_cmd:
             imapyyerror(p, "IDLE not supported");
             YYERROR;
         }
-        // forward the IDLE request to the server
+        // make a copy of the tag so that error handling can depend on the tag
         ie_dstr_t *tag = ie_dstr_copy(E, $t);
+        // forward the IDLE request to the server
         imap_cmd_arg_t arg = {0};
         imap_cmd_t *cmd = imap_cmd_new(E, tag, IMAP_CMD_IDLE, arg);
         send_cmd(p, cmd);
     }
     DONE
     {
-        imap_cmd_arg_t arg = { .idle_done = { .tag = $t, .ok = true }, };
+        imap_cmd_arg_t arg = { .idle_done = $t };
         $$ = imap_cmd_new(E, NULL, IMAP_CMD_IDLE_DONE, arg);
     };
 
@@ -1249,7 +1254,7 @@ sc_text: %empty         { $$ = NULL; }
        | SP sc_text_[t] { $$ = $t; }
 ;
 
-sc_text_: st_txt_inner_char            { $$ = ie_dstr_new(E, p->token, KEEP_RAW); }
+sc_text_: st_txt_inner_char             { $$ = ie_dstr_new(E, p->token, KEEP_RAW); }
         | sc_text_[t] st_txt_inner_char { $$ = ie_dstr_append(E, $t, p->token, KEEP_RAW); }
 ;
 
@@ -1649,15 +1654,9 @@ atom_mflag: atom_mflag_char                { $$ = ie_dstr_new(E, p->token, KEEP_
           | atom_mflag[a] atom_mflag_char  { $$ = ie_dstr_append(E, $a, p->token, KEEP_RAW); }
 ;
 
-tag: tag_[t] {
-   // Keep track of the tag in case we have to report an error to the user.
-   p->errtag = $t;
-   $$ = ie_dstr_copy(E, $t);
-};
-
 tag_char: raw | atom_punc;
-tag_: tag_char           { $$ = ie_dstr_new(E, p->token, KEEP_RAW); }
-    | tag_[t] atom_char  { $$ = ie_dstr_append(E, $t, p->token, KEEP_RAW); }
+tag: tag_char          { $$ = ie_dstr_new(E, p->token, KEEP_RAW); }
+   | tag[t] atom_char  { $$ = ie_dstr_append(E, $t, p->token, KEEP_RAW); }
 ;
 
 

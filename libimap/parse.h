@@ -26,8 +26,7 @@ typedef struct imap_parser_t {
     extensions_t *exts;
     // parse for commands or responses?
     bool is_client;
-    // servers track tag information and error message information here
-    ie_dstr_t *errtag;
+    // servers track error message here, for sending when the EOL comes in
     ie_dstr_t *errmsg;
     // are we walking through the freeing process (syntax errors are silent)?
     bool freeing;

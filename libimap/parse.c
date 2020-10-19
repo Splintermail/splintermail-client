@@ -92,7 +92,6 @@ done:
     DROP_VAR(&e);
     imapyypstate_delete(parser->imapyyps);
     DROP_VAR(&parser->error);
-    ie_dstr_free(parser->errtag);
     ie_dstr_free(parser->errmsg);
 }
 

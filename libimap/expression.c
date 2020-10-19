@@ -2447,7 +2447,7 @@ static void imap_cmd_arg_free(imap_cmd_type_t type, imap_cmd_arg_t arg){
         case IMAP_CMD_ENABLE:   ie_dstr_free(arg.enable); break;
         case IMAP_CMD_UNSELECT: break;
         case IMAP_CMD_IDLE:     break;
-        case IMAP_CMD_IDLE_DONE:ie_dstr_free(arg.idle_done.tag); break;
+        case IMAP_CMD_IDLE_DONE:ie_dstr_free(arg.idle_done); break;
     }
 }
 
@@ -2511,10 +2511,7 @@ static imap_cmd_arg_t imap_cmd_arg_copy(derr_t *e, imap_cmd_type_t type,
         case IMAP_CMD_ENABLE:   arg.enable = ie_dstr_copy(e, old.enable); break;
         case IMAP_CMD_UNSELECT: break;
         case IMAP_CMD_IDLE:     break;
-        case IMAP_CMD_IDLE_DONE:
-            arg.idle_done.tag = ie_dstr_copy(e, arg.idle_done.tag);
-            arg.idle_done.ok = old.idle_done.ok;
-            break;
+        case IMAP_CMD_IDLE_DONE:arg.idle_done = ie_dstr_copy(e, arg.idle_done); break;
     }
     return arg;
 }
