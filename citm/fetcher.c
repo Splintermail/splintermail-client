@@ -29,6 +29,11 @@ static void fetcher_free_select(fetcher_t *fetcher){
     fetcher->select.examine = false;
 }
 
+static void fetcher_free_idle_block(fetcher_t *fetcher){
+    fetcher->idle_block.sent = false;
+    fetcher->idle_block.done = false;
+}
+
 void fetcher_free(fetcher_t *fetcher){
     if(!fetcher) return;
 
@@ -198,10 +203,6 @@ static derr_t fetcher_up_cmd(up_cb_i *up_cb, imap_cmd_t *cmd){
     derr_t e = E_OK;
     fetcher_t *fetcher = CONTAINER_OF(up_cb, fetcher_t, up_cb);
 
-    /* Note: this callback can happen multiple times, even after a call to
-       up_unselect(), since it is possible the up_t has a list of requested
-       commands from the imaildir_t that it must first service */
-
     // for now, just submit all maildir_up commands blindly
     imap_event_t *imap_ev;
     PROP_GO(&e, imap_event_new(&imap_ev, fetcher, cmd), fail);
@@ -232,6 +233,12 @@ static void fetcher_up_synced(up_cb_i *up_cb){
     fetcher_t *fetcher = CONTAINER_OF(up_cb, fetcher_t, up_cb);
     fetcher->mbx_state = MBX_SYNCED;
     fetcher->cb->select_result(fetcher->cb, NULL);
+}
+
+static void fetcher_up_idle_blocked(up_cb_i *up_cb){
+    fetcher_t *fetcher = CONTAINER_OF(up_cb, fetcher_t, up_cb);
+    fetcher->idle_block.done = true;
+    fetcher_enqueue(fetcher);
 }
 
 static derr_t fetcher_up_unselected(up_cb_i *up_cb){
@@ -292,6 +299,7 @@ derr_t fetcher_init(
             .condstore = EXT_STATE_ON,
             .qresync = EXT_STATE_ON,
             .unselect = EXT_STATE_ON,
+            .idle = EXT_STATE_ON,
         },
         .is_client = true,
     };
@@ -300,6 +308,7 @@ derr_t fetcher_init(
         .cmd = fetcher_up_cmd,
         .selected = fetcher_up_selected,
         .synced = fetcher_up_synced,
+        .idle_blocked = fetcher_up_idle_blocked,
         .unselected = fetcher_up_unselected,
         .enqueue = fetcher_up_enqueue,
         .failure = fetcher_up_failure,
@@ -469,6 +478,7 @@ static derr_t select_mailbox(fetcher_t *fetcher){
 
     fetcher->imap_state = FETCHER_SELECTED;
     fetcher->mbx_state = MBX_SELECTING;
+    fetcher_free_idle_block(fetcher);
 
     // the up_t takes care of the rest
 
@@ -796,6 +806,7 @@ static derr_t check_capas(const ie_dstr_t *capas){
     bool found_condstore = false;
     bool found_qresync = false;
     bool found_unselect = false;
+    bool found_idle = false;
 
     for(const ie_dstr_t *capa = capas; capa != NULL; capa = capa->next){
         DSTR_VAR(buf, 32);
@@ -816,6 +827,8 @@ static derr_t check_capas(const ie_dstr_t *capas){
             found_qresync = true;
         }else if(dstr_cmp(&buf, extension_token(EXT_UNSELECT)) == 0){
             found_unselect = true;
+        }else if(dstr_cmp(&buf, extension_token(EXT_IDLE)) == 0){
+            found_idle = true;
         }
     }
 
@@ -842,6 +855,10 @@ static derr_t check_capas(const ie_dstr_t *capas){
     }
     if(!found_unselect){
         TRACE(&e, "missing capability: UNSELECT\n");
+        pass = false;
+    }
+    if(!found_idle){
+        TRACE(&e, "missing capability: IDLE\n");
         pass = false;
     }
 
@@ -1055,39 +1072,6 @@ static derr_t untagged_status_type(fetcher_t *fetcher, const ie_st_resp_t *st){
     return e;
 }
 
-static bool fetcher_passthru_more_work(fetcher_t *fetcher){
-    if(!fetcher->passthru.req) return false;
-    // don't consider a passthru command until we've called ENABLE
-    if(!fetcher->enable_set) return false;
-
-    // do we need to unselect something?
-    if(fetcher->imap_state == FETCHER_SELECTED
-            && fetcher->mbx_state < MBX_UNSELECTING){
-        return true;
-    }
-
-    // do we need to send something?
-    return fetcher->imap_state == FETCHER_AUTHENTICATED
-        && !fetcher->passthru.sent;
-}
-
-static bool fetcher_select_more_work(fetcher_t *fetcher){
-    if(!fetcher->select.mailbox) return false;
-    // don't consider a SELECT command until we've called ENABLE
-    if(!fetcher->enable_set) return false;
-    // don't consider a SELECT command without a dirmgr
-    if(!fetcher->dirmgr) return false;
-
-    // do we need to unselect something?
-    if(fetcher->imap_state == FETCHER_SELECTED
-            && fetcher->mbx_state < MBX_UNSELECTING){
-        return true;
-    }
-
-    // do we need to select something?
-    return fetcher->imap_state == FETCHER_AUTHENTICATED;
-}
-
 // we either need to consume the resp or free it
 static derr_t handle_one_response(fetcher_t *fetcher, imap_resp_t *resp){
     derr_t e = E_OK;
@@ -1137,35 +1121,62 @@ cu_resp:
     return e;
 }
 
-static derr_t fetcher_passthru_do_work(fetcher_t *fetcher){
+static derr_t fetcher_passthru_do_work(fetcher_t *fetcher, bool *noop){
     derr_t e = E_OK;
 
-    /* TODO: instead, wait until we have synchronized with the up_t so we don't
-             write in the middle whatever it is doing */
-    // unselect anything that is selected
-    if(fetcher->imap_state == FETCHER_SELECTED){
-        // try to transition towards FETCHER_AUTHENTICATED
-        fetcher->mbx_state = MBX_UNSELECTING;
-        PROP(&e, up_unselect(&fetcher->up) );
-        return e;
+    if(!fetcher->passthru.req || fetcher->passthru.sent) return e;
+
+    // don't consider a passthru command until we've called ENABLE
+    if(!fetcher->enable_set) return e;
+
+    /* make sure we are either disconnected from the mailbox or that we have
+       blocked IDLE commands so that we are safe to send passthru commands */
+    if(fetcher->mbx_state > MBX_NONE){
+        if(!fetcher->idle_block.done){
+            if(!fetcher->idle_block.sent){
+                *noop = false;
+                fetcher->idle_block.sent = true;
+                PROP(&e, up_idle_block(&fetcher->up) );
+            }
+            return e;
+        }
     }
 
+    *noop = false;
+    fetcher->passthru.sent = true;
     PROP(&e, send_passthru(fetcher) );
+    PROP(&e, up_idle_unblock(&fetcher->up) );
+    fetcher_free_idle_block(fetcher);
     return e;
 }
 
-static derr_t fetcher_select_do_work(fetcher_t *fetcher){
+static derr_t fetcher_select_do_work(fetcher_t *fetcher, bool *noop){
     derr_t e = E_OK;
 
-    // unselect anything that is selected
-    if(fetcher->imap_state == FETCHER_SELECTED){
+    if(!fetcher->select.mailbox) return e;
+
+    // don't consider a SELECT command until we've called ENABLE
+    if(!fetcher->enable_set) return e;
+
+    // don't consider a SELECT command without a dirmgr
+    if(!fetcher->dirmgr) return e;
+
+    // do we need to unselect something?
+    if(fetcher->imap_state == FETCHER_SELECTED
+            && fetcher->mbx_state < MBX_UNSELECTING){
         // try to transition towards FETCHER_AUTHENTICATED
         fetcher->mbx_state = MBX_UNSELECTING;
         PROP(&e, up_unselect(&fetcher->up) );
+        *noop = false;
         return e;
     }
 
-    PROP(&e, select_mailbox(fetcher) );
+    // do we need to select something?
+    if(fetcher->imap_state == FETCHER_AUTHENTICATED){
+        PROP(&e, select_mailbox(fetcher) );
+        *noop = false;
+        return e;
+    }
 
     return e;
 }
@@ -1255,16 +1266,10 @@ static derr_t fetcher_do_work(fetcher_t *fetcher, bool *noop){
     }
 
     // check if we have some passthru behavior to execute on
-    if(fetcher_passthru_more_work(fetcher)){
-        *noop = false;
-        PROP(&e, fetcher_passthru_do_work(fetcher) );
-    }
+    PROP(&e, fetcher_passthru_do_work(fetcher, noop) );
 
     // check if we have a select to execute on
-    if(fetcher_select_more_work(fetcher)){
-        *noop = false;
-        PROP(&e, fetcher_select_do_work(fetcher) );
-    }
+    PROP(&e, fetcher_select_do_work(fetcher, noop) );
 
     return e;
 };

@@ -714,6 +714,7 @@ static void send_passthru_st_resp(derr_t *e, server_t *server,
             case IE_ST_CODE_MODIFIED:
             // QRESYNC extension
             case IE_ST_CODE_CLOSED:
+                // hide extension codes
                 ie_st_code_free(
                     STEAL(ie_st_code_t, &passthru_resp->st_resp->code)
                 );

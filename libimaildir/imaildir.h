@@ -262,8 +262,7 @@ derr_t imaildir_log_rm(const string_builder_t *dirpath);
 /* these two are called during up_imaildir_select() for the up_t to populate
    its internal seq_set_builder_t's */
 derr_t imaildir_up_get_unfilled_msgs(imaildir_t *m, seq_set_builder_t *ssb);
-derr_t imaildir_up_get_unpushed_expunges(imaildir_t *m,
-        seq_set_builder_t *ssb);
+derr_t imaildir_up_get_unpushed_expunges(imaildir_t *m, ie_seq_set_t **out);
 
 derr_t imaildir_up_check_uidvld_up(imaildir_t *m, unsigned int uidvld_up);
 

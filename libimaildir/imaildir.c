@@ -770,9 +770,12 @@ derr_t imaildir_up_get_unfilled_msgs(imaildir_t *m, seq_set_builder_t *ssb){
     return e;
 }
 
-derr_t imaildir_up_get_unpushed_expunges(imaildir_t *m,
-        seq_set_builder_t *ssb){
+derr_t imaildir_up_get_unpushed_expunges(imaildir_t *m, ie_seq_set_t **out){
     derr_t e = E_OK;
+    *out = NULL;
+
+    seq_set_builder_t ssb;
+    seq_set_builder_prep(&ssb);
 
     jsw_atrav_t trav;
     jsw_anode_t *node = jsw_atfirst(&trav, &m->expunged);
@@ -780,9 +783,16 @@ derr_t imaildir_up_get_unpushed_expunges(imaildir_t *m,
         msg_expunge_t *expunge = CONTAINER_OF(node, msg_expunge_t, node);
         if(expunge->state != MSG_EXPUNGE_UNPUSHED) continue;
 
-        PROP(&e, seq_set_builder_add_val(ssb, expunge->uid_up) );
+        PROP_GO(&e, seq_set_builder_add_val(&ssb, expunge->uid_up), fail);
     }
 
+    *out = seq_set_builder_extract(&e, &ssb);
+    CHECK(&e);
+
+    return e;
+
+fail:
+    seq_set_builder_free(&ssb);
     return e;
 }
 

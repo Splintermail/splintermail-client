@@ -96,6 +96,11 @@ struct fetcher_t {
         bool examine;
     } select;
 
+    struct {
+        bool sent;
+        bool done;
+    } idle_block;
+
     // the interface we feed to the imaildir for server communication
     up_cb_i up_cb;
     up_t up;

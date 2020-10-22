@@ -176,7 +176,11 @@ static void imape_data_read_stuff(imape_data_t *id, const dstr_t *buffer){
 
     }
 
-    LOG_INFO("recv: %x", FD(buffer));
+    LOG_INFO(
+        "recv(%x): %x",
+        FS(id->control->is_client ? "up" : "dn"),
+        FD(buffer)
+    );
     PROP_GO(&e, imap_read(&id->reader, buffer), fail);
 
     return;
@@ -260,7 +264,11 @@ static void imape_data_write_stuff(imape_data_t *id){
         // send the write event
         id->write_ev->ev_type = EV_WRITE;
         {
-            LOG_INFO("send: %x", FD(&id->write_ev->buffer));
+            LOG_INFO(
+                "send(%x): %x",
+                FS(id->control->is_client ? "up" : "dn"),
+                FD(&id->write_ev->buffer)
+            );
         }
         id->imape->upstream->pass_event(id->imape->upstream, id->write_ev);
 

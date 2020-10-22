@@ -1426,3 +1426,18 @@ RENAME non-INBOX
 
 RENAME INBOX
   - not supported by dovecot, so we won't support it.
+
+Parallelism in up.c
+  - definitely no parallelism before bootstrap fetch
+  - possibly allow parallelism for fetching content
+      - having a chain of overlapping fetches would mean that you could have
+        maximum throughput even while supporting preemption mid-fetch
+      - this is definitely desirable
+  - deleting is limited in its parallelizability by only having one variable
+    for tracking uids_up_being_expunged.  I don't think this is really worth
+    working around, I think deletions are already batched.
+  - passthru commands could be run in parallel without issue
+  - idle obviously supports no parallelization
+
+  CONCLUSION
+    the client is really simple; there's only five different input types

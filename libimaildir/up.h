@@ -4,6 +4,39 @@ typedef struct up_t up_t;
 struct up_cb_i;
 typedef struct up_cb_i up_cb_i;
 
+/*
+    PARALLELISM IN UP_T:
+
+    The up_t is actually very simple.  There are 7 different types of commands
+    that get sent upwards:
+      - SELECT, which is really sent before anything else in the state machine
+      - bootstrap fetches (initial fetch of all metadata)
+      - deletions, from imaildir's initial unpushed expunges
+          - these are actually done in a STORE and an EXPUNGE command
+      - content fetch, either from:
+          - imaildir_t's initial unfilled uids
+          - newly seen uids
+      - relay commands, any of:
+          - a passthru command from the client, like LIST or LSUB
+          - a STORE command originating from the dn_t
+          - an EXPUNGE command originating from the dn_t
+      - IDLE command
+      - UNSELECT command, which is sent on request at literally any time
+          - though if an IDLE is present, a DONE should preceed it
+
+    Conclusions are:
+      - boostrap fetches are always run before other things
+      - initial deletions seem suspect... is this the right layer?  In any
+        case, making them serialized should be fine since it's sort of a weird
+        error case that won't arise nearly ever (without a MUA like mutt).
+      - content fetches can be fully parallelized without concern
+      - relay commands can be fully parallel, that's on the caller to handle
+      - IDLE obviously precludes anything else being parallel, and should only
+        be launched when nothing else is in flight
+      - UNSELECT state needs to be check in between any commands which trigger
+        other commands (such as the steps in the initial deletions)
+*/
+
 // the interface provided to up_t by its owner
 struct up_cb_i {
     // the up_t wants to pass an imap command over the wire
@@ -15,6 +48,8 @@ struct up_cb_i {
     // this event indicates the maildir finished an initial sync
     // (if this imaildir is already synced, the callback may be instant)
     void (*synced)(up_cb_i*);
+    // after up_idle_block; this callback is often instant
+    void (*idle_blocked)(up_cb_i*);
     // this event is a response to the up_unselect() call
     derr_t (*unselected)(up_cb_i*);
     // interaction with the imaildir_t has trigged some new work
@@ -30,6 +65,9 @@ struct up_cb_i {
 
 // pass a response from the remote imap server to the up_t
 derr_t up_resp(up_t *up, imap_resp_t *resp);
+// block IDLE commands based on some external state
+derr_t up_idle_block(up_t *up);
+derr_t up_idle_unblock(up_t *up);
 // if the connection is in a SELECTED state, UNSELECT it.
 derr_t up_unselect(up_t *up);
 derr_t up_do_work(up_t *up, bool *noop);
@@ -52,37 +90,37 @@ void up_imaildir_have_local_file(up_t *up, unsigned uid_up);
 // trigger any downloading work that needs to be done after a hold ends
 void up_imaildir_hold_end(up_t *up);
 
-typedef enum {
-    UP_STATE_PRESELECT = 0,
-    UP_STATE_SELECT_SENT,
-    UP_STATE_SELECTED,  // can transition to EXAMINED or UNSELECT_SENT
-    UP_STATE_EXAMINED,  // can transition to SELECTED or UNSELECT_SENT
-    UP_STATE_UNSELECT_SENT,
-} up_state_e;
-
 // up_t is all the state we have for an upwards connection
 struct up_t {
     imaildir_t *m;
     // the interfaced provided to us
     up_cb_i *cb;
-    up_state_e state;
     bool synced;
-    // did next_cmd choose not to send a command last time?
-    bool need_next_cmd;
     // a tool for tracking the highestmodseq we have actually synced
     himodseq_calc_t hmsc;
-    // handle initial synchronizations specially
-    bool bootstrapping;
     seq_set_builder_t uids_up_to_download;
-    seq_set_builder_t uids_up_to_expunge;
-    ie_seq_set_t *uids_up_being_expunged;
     // current tag
     size_t tag;
     link_t cbs;  // imap_cmd_cb_t->link (may be wrapped in an up_cb_t)
     link_t link;  // imaildir_t->access.ups
 
+    /* technically, advance_state is written to be callable at any time, but
+       only calling it when we asked to be enqueued makes debugging easier */
+    bool enqueued;
+
+    /* this is defined by the most recent SELECT/EXAMINE call; it may not have
+       finished its round trip yet */
+    bool examine;
+
     struct {
-        bool pending;
+        bool needed;
+        bool sent;
+    } unselect;
+
+    struct {
+        bool ready;
+        bool sent;
+        bool done;
         bool examine;
         const dstr_t *name;
         unsigned int uidvld_up;
@@ -90,10 +128,44 @@ struct up_t {
     } select;
 
     struct {
+        bool needed;
+        bool sent;
+        bool done;
+    } bootstrap;
+
+    struct {
+        bool store_sent;
+        bool store_done;
+        bool expunge_sent;
+        bool expunge_done;
+        ie_seq_set_t *uids_up;
+    } deletions;
+
+    struct {
+        seq_set_builder_t uids_up;
+        int in_flight;
+    } fetch;
+
+    struct {
+        bool needed;
+        bool examine;
+        unsigned int uidvld_up;
+        unsigned long himodseq_up;
+    } reselect;
+
+    struct {
         // cmds and cbs are synchronized lists
         link_t cmds;  // imap_cmd_t->link
         link_t cbs;  // imap_cmd_cb_t->link (from an imaildir_cb_t)
     } relay;
+
+    struct {
+        bool sent;
+        bool got_plus;
+        bool done_sent;
+        bool want_block;
+        bool blocked;
+    } idle;
 
     // *exts should point to somewhere else
     extensions_t *exts;

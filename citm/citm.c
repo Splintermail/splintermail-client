@@ -188,6 +188,46 @@ static void stop_loop_on_signal(int signum){
     loop_close(&loop, E_OK);
 }
 
+// defaults
+static const char *d_l_host   = "127.0.0.1";
+static const char *d_l_port   = "1993";
+static const char *d_r_host   = "127.0.0.1";
+static const char *d_r_port   = "993";
+static const char *d_tls_key  = "../c/test/files/ssl/good-key.pem";
+static const char *d_tls_cert = "../c/test/files/ssl/good-cert.pem";
+static const char *d_tls_dh   = "../c/test/files/ssl/dh_4096.pem";
+static const char *d_mail_key = "../c/test/files/key_tool/key_m.pem";
+DSTR_STATIC(d_maildirs, "/tmp/maildir_root");
+
+static void print_help(FILE *f){
+    DROP_CMD(
+        FFMT(f, NULL,
+            "usage: citm [OPTIONS]\n"
+            "\n"
+            "where OPTIONS are any of:\n"
+            "  -h, --help\n"
+            "      --local-host=ARG    (default: %x)\n"
+            "      --local-port=ARG    (default: %x)\n"
+            "      --remote-host=ARG   (default: %x)\n"
+            "      --remote-port=ARG   (default: %x)\n"
+            "      --tls-key=ARG       (default: %x)\n"
+            "      --tls-cert=ARG      (default: %x)\n"
+            "      --tls-dh=ARG        (default: %x)\n"
+            "      --mail-key=ARG      (default: %x)\n"
+            "      --maildirs=ARG      (default: %x)\n",
+            FS(d_l_host),
+            FS(d_l_port),
+            FS(d_r_host),
+            FS(d_r_port),
+            FS(d_tls_key),
+            FS(d_tls_cert),
+            FS(d_tls_dh),
+            FS(d_mail_key),
+            FD(&d_maildirs)
+        )
+    );
+}
+
 
 int main(int argc, char **argv){
     // ignore SIGPIPE, required to work with OpenSSL
@@ -199,29 +239,25 @@ int main(int argc, char **argv){
     signal(SIGPIPE, SIG_IGN);
 #endif
 
-    // defaults
-    const char *d_l_host   = "127.0.0.1";
-    const char *d_l_port   = "1993";
-    const char *d_r_host   = "127.0.0.1";
-    const char *d_r_port   = "993";
-    const char *d_tls_key  = "../c/test/files/ssl/good-key.pem";
-    const char *d_tls_cert = "../c/test/files/ssl/good-cert.pem";
-    const char *d_tls_dh   = "../c/test/files/ssl/dh_4096.pem";
-    const char *d_mail_key = "../c/test/files/key_tool/key_m.pem";
-    DSTR_STATIC(d_maildirs, "/tmp/maildir_root");
+    // add logger
+    logger_add_fileptr(LOG_LVL_INFO, stdout);
+    auto_log_flush(true);
+
 
     // options
-    opt_spec_t o_l_host   = {'\0', "local-host",  true, OPT_RETURN_INIT};
-    opt_spec_t o_l_port   = {'\0', "local-port",  true, OPT_RETURN_INIT};
-    opt_spec_t o_r_host   = {'\0', "remote-host", true, OPT_RETURN_INIT};
-    opt_spec_t o_r_port   = {'\0', "remote-port", true, OPT_RETURN_INIT};
-    opt_spec_t o_tls_key  = {'\0', "tls-key",     true, OPT_RETURN_INIT};
-    opt_spec_t o_tls_cert = {'\0', "tls-cert",    true, OPT_RETURN_INIT};
-    opt_spec_t o_tls_dh   = {'\0', "tls-dh",      true, OPT_RETURN_INIT};
-    opt_spec_t o_mail_key = {'\0', "mail-key",    true, OPT_RETURN_INIT};
-    opt_spec_t o_maildirs = {'\0', "maildirs",    true, OPT_RETURN_INIT};
+    opt_spec_t o_help     = {'h',  "help",        false, OPT_RETURN_INIT};
+    opt_spec_t o_l_host   = {'\0', "local-host",  true,  OPT_RETURN_INIT};
+    opt_spec_t o_l_port   = {'\0', "local-port",  true,  OPT_RETURN_INIT};
+    opt_spec_t o_r_host   = {'\0', "remote-host", true,  OPT_RETURN_INIT};
+    opt_spec_t o_r_port   = {'\0', "remote-port", true,  OPT_RETURN_INIT};
+    opt_spec_t o_tls_key  = {'\0', "tls-key",     true,  OPT_RETURN_INIT};
+    opt_spec_t o_tls_cert = {'\0', "tls-cert",    true,  OPT_RETURN_INIT};
+    opt_spec_t o_tls_dh   = {'\0', "tls-dh",      true,  OPT_RETURN_INIT};
+    opt_spec_t o_mail_key = {'\0', "mail-key",    true,  OPT_RETURN_INIT};
+    opt_spec_t o_maildirs = {'\0', "maildirs",    true,  OPT_RETURN_INIT};
 
     opt_spec_t* spec[] = {
+        &o_help,
         &o_l_host,
         &o_l_port,
         &o_r_host,
@@ -239,8 +275,14 @@ int main(int argc, char **argv){
         CATCH(e, E_ANY){
             DUMP(e);
             DROP_VAR(&e);
+            print_help(stderr);
             return 1;
         }
+    }
+
+    if(o_help.found){
+        print_help(stdout);
+        return 0;
     }
 
     // resolve options
@@ -253,10 +295,6 @@ int main(int argc, char **argv){
     const char *tls_dh = o_tls_dh.found ? o_tls_dh.val.data : d_tls_dh;
     const char *mail_key = o_mail_key.found ? o_mail_key.val.data : d_mail_key;
     const dstr_t *maildirs = o_maildirs.found ? &o_maildirs.val : &d_maildirs;
-
-    // add logger
-    logger_add_fileptr(LOG_LVL_INFO, stdout);
-    auto_log_flush(true);
 
     derr_t e = citm(
         l_host,

@@ -25,7 +25,6 @@ void sf_pair_free(sf_pair_t **old){
     if(sf_pair->registered_with_keyshare){
         keyshare_unregister(sf_pair->keyshare, &sf_pair->key_listener);
     }
-    sf_pair_free_append(sf_pair);
 
     link_t *link;
     while((link = link_list_pop_first(&sf_pair->keys))){
@@ -39,6 +38,8 @@ void sf_pair_free(sf_pair_t **old){
     dstr_free(&sf_pair->username);
     dstr_free(&sf_pair->password);
 
+    // TODO: it is possible that the server still has a wake_event_t in a queue!
+    // I'm not sure quite how but I hit it once
     server_free(&sf_pair->server);
     fetcher_free(&sf_pair->fetcher);
 
@@ -94,8 +95,6 @@ static imap_time_t imap_time_now(void){
         z_hour = (int)timezone / 3600;
         z_min = ABS((int)timezone - z_hour * 3600) / 60;
     }
-    PFMT("year %x, month %x, day %x\n",
-            FI(tm.tm_year), FI(tm.tm_mon + 1), FI(tm.tm_mday));
 
     return (imap_time_t){
         .year = tm.tm_year + 1900,
