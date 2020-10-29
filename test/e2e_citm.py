@@ -15,6 +15,8 @@ import threading
 import ssl
 import codecs
 import time
+import random
+import selectors
 
 all_tests = []
 
@@ -76,6 +78,7 @@ class IOThread(threading.Thread):
 class ReaderThread(IOThread):
     def __init__(self, closable, *arg):
         self.closable = closable
+        self.lock = threading.Lock()
         super().__init__(*arg)
 
     def run(self):
@@ -84,10 +87,15 @@ class ReaderThread(IOThread):
                 data = self.io.readline()
                 if len(data) == 0:
                     break
-                self.buffer.append(data)
+                with self.lock:
+                    self.buffer.append(data)
                 self.q.put(data)
         finally:
             self.q.put(None)
+
+    def inject_message(self, msg, end=b"\n"):
+        with self.lock:
+            self.buffer.append(msg + end)
 
     def quit(self, failed):
         if failed and self.closable is not None:
@@ -137,6 +145,344 @@ class WriterThread(IOThread):
 
     def quit(self, _):
         self.q.put(None)
+
+
+class TLS:
+    def __init__(self, sock, modify_fn, send_fn):
+        self.sock = sock
+        self.modify_fn = modify_fn
+        self.send_fn = send_fn
+
+        self.out = b""
+        self.handshake = False
+        self.read_wants_write = False
+        self.write_wants_read = False
+        self.registered = None
+
+    def advance_handshake(self, readable, writable):
+        try:
+            self.sock.do_handshake()
+        except ssl.SSLWantReadError:
+            self.modify(read=True, write=False)
+        except ssl.SSLWantWriteError:
+            self.modify(read=False, write=True)
+        else:
+            self.handshake = True
+            self.modify(read=True, write=len(self.out) > 0)
+
+    def advance_state(self, readable, writable):
+        if not self.handshake:
+            return self.advance_handshake(readable, writable)
+
+        if readable or (writable and self.read_wants_write):
+            try:
+                data = self.sock.recv(4096)
+            except ssl.SSLWantReadError:
+                self.modify(read=True, write=False)
+                return False
+            except ssl.SSLWantWriteError:
+                self.modify(read=False, write=True)
+                self.read_wants_write = True
+                return False
+
+            if not data:
+                return True
+
+            self.modify(read=True, write=len(self.out) > 0)
+            self.send_fn(data)
+
+        if writable or (readable and self.write_wants_read):
+            assert self.out, "nothing to write"
+            try:
+                written = self.sock.send(self.out)
+            except ssl.SSLWantReadError:
+                self.modify(read=True, write=False)
+                self.write_wants_read = True
+                return False
+            except ssl.SSLWantWriteError:
+                self.modify(read=False, write=True)
+                return False
+
+            if not written:
+                return True
+
+            self.out = self.out[written:]
+            self.modify(read=True, write=len(self.out) > 0)
+
+    def send(self, data):
+        self.out += data
+        if not self.handshake:
+            return
+        if self.read_wants_write:
+            return
+        if self.write_wants_read:
+            return
+        self.modify(read=True, write=len(self.out) > 0)
+
+    def modify(self, read, write):
+        if self.registered == (read, write):
+            return
+        self.registered = (read, write)
+
+        mask = 0
+        if read:
+            mask |= selectors.EVENT_READ
+        if write:
+            mask |= selectors.EVENT_WRITE
+        self.modify_fn(self.sock, mask)
+
+
+def peel_line(text):
+    if b"\n" not in text:
+        return None, text
+    i = text.index(b"\n") + 1
+    return text[:i], text[i:]
+
+
+class TLSPair:
+    def __init__(self, sel, local, remote):
+        self.sel = sel
+
+        self.closed = False
+
+        self.local_buf = b""
+        self.remote_buf = b""
+
+        self.cond = threading.Condition()
+        self.trap_response = None
+        self.trapped = False
+
+        self.local = TLS(local, self.modify_fn, self.local_data)
+        self.remote = TLS(remote, self.modify_fn, self.remote_data)
+        self.sel.register(local, selectors.EVENT_READ, self)
+        self.sel.register(remote, selectors.EVENT_WRITE, self)
+
+    def hook(self, sock, readable, writable):
+        if self.closed:
+            return
+        if sock == self.local.sock:
+            if self.local.advance_state(readable, writable):
+                self.close()
+        else:
+            if self.remote.advance_state(readable, writable):
+                self.close()
+
+    def close(self):
+        if self.closed:
+            return
+        self.closed = True
+        self.sel.unregister(self.local.sock)
+        self.sel.unregister(self.remote.sock)
+        self.local.sock.close()
+        self.remote.sock.close()
+
+    def remote_data(self, data):
+        """Forward a line at a time"""
+        self.local_buf += data
+        while not self.trapped:
+            line, self.local_buf = peel_line(self.local_buf)
+            if line is None:
+                break
+            # Do we need to trap this response?
+            if self.trap_response and re.match(self.trap_response, line):
+                with self.cond:
+                    self.trapped = True
+                    self.cond.notify()
+                self.local_buf = line + self.local_buf
+                break
+            self.local.send(line)
+
+    def local_data(self, data):
+        """Forward a line at a time"""
+        self.remote_buf += data
+        while True:
+            line, self.remote_buf = peel_line(self.remote_buf)
+            if line is None:
+                break
+            self.remote.send(line)
+
+    def modify_fn(self, sock, mask):
+        self.sel.modify(sock, mask, self)
+
+    # event loop function
+    def set_trap_response(self, pattern):
+        with self.cond:
+            self.trap_response = pattern
+            self.cond.notify()
+
+    # event loop function
+    def release_trap(self):
+        with self.cond:
+            self.trapped = False
+            self.trap_response = None
+            self.cond.notify()
+        self.remote_data(b"")
+
+    # main thread function
+    def wait_for_trap_start(self):
+        with self.cond:
+            while self.trap_response is None:
+                self.cond.wait()
+
+    # main thread function
+    def wait_for_trap(self):
+        with self.cond:
+            while not self.trapped:
+                self.cond.wait()
+
+    # main thread function
+    def wait_for_trap_end(self):
+        with self.cond:
+            while self.trapped:
+                self.cond.wait()
+
+
+class TLSSocketIntercept(threading.Thread):
+    def __init__(self, cmd):
+        self.closed = False
+
+        self.pairs = []
+
+        self.quitting = False
+        self.started = False
+
+        # configure command and gather host/port info
+        self.port = random.randint(32768, 60999)
+        self.cmd = [*cmd]
+        if "--remote-host" in cmd:
+            host_idx = cmd.index("--remote-host") + 1
+            self.remote_host = cmd[host_idx]
+            self.cmd[host_idx] = "127.0.0.1"
+        else:
+            self.remote_host = "127.0.0.1"
+            cmd += ["--remote-host", "127.0.0.1"]
+        if "--remote-port" in cmd:
+            port_idx = cmd.index("--remote-port") + 1
+            self.remote_port = int(cmd[port_idx])
+            self.cmd[port_idx] = str(self.port)
+        else:
+            self.remote_port = 993
+            cmd += ["--remote-port", str(self.port)]
+
+        # create a listener
+        self.listener = socket.socket()
+        self.listener.bind(("127.0.0.1", self.port))
+        self.listener.listen(5)
+
+        # create a control connection (must be TCP so select works on windows)
+        self.ctl_w = socket.socket()
+        self.ctl_w.connect(("127.0.0.1", self.port))
+
+        # accept the other side of the control connection
+        self.ctl_r, _ = self.listener.accept()
+        self.ctl_r.setblocking(False)
+
+        # configure event loop
+        self.sel = selectors.DefaultSelector()
+        self.sel.register(self.ctl_r, selectors.EVENT_READ)
+        self.listener.setblocking(False)
+        self.sel.register(self.listener, selectors.EVENT_READ)
+
+        super().__init__()
+
+    def ctl_ready(self):
+        msg = self.ctl_r.recv(4096)
+        if msg == b"quit":
+            self.quitting = True
+        if msg.startswith(b"trap:"):
+            pattern = msg[5:]
+            self.pairs[0].set_trap_response(pattern)
+        if msg == b"untrap":
+            self.pairs[0].release_trap()
+
+    def listener_ready(self):
+        local, _ = self.listener.accept()
+        local.setblocking(False)
+
+        # connect to remote
+        remote = socket.socket()
+        remote.connect((self.remote_host, self.remote_port))
+        remote.setblocking(False)
+
+        local = server_context().wrap_socket(
+            local, server_side=True, do_handshake_on_connect=False,
+        )
+
+        remote = client_context().wrap_socket(
+            remote,
+            server_hostname=self.remote_host,
+            do_handshake_on_connect=False,
+        )
+
+        pair = TLSPair(self.sel, local, remote)
+        self.pairs.append(pair)
+
+    def run(self):
+        while not self.quitting:
+            events = self.sel.select()
+            for key, mask in events:
+                readable = mask & selectors.EVENT_READ
+                writable = mask & selectors.EVENT_WRITE
+                if key.fileobj == self.listener:
+                    self.listener_ready()
+                    continue
+                if key.fileobj == self.ctl_r:
+                    self.ctl_ready()
+                    continue
+                # all other objects should register with their pair
+                assert isinstance(key.data, TLSPair)
+                key.data.hook(key.fileobj, readable, writable)
+
+    @contextlib.contextmanager
+    def trap_response(self, pattern):
+        """Meant to be called from the main thread"""
+        assert self.pairs, "nothing intercepted yet"
+        pair = self.pairs[0]
+
+        # notify the event loop of the trap
+        self.ctl_w.send(b"trap:" + pattern)
+
+        # wait for the event loop to acknowledge
+        pair.wait_for_trap_start()
+
+        try:
+            yield pair.wait_for_trap
+        finally:
+            self.ctl_w.send(b"untrap")
+            pair.wait_for_trap_end()
+
+    def __enter__(self):
+        if not self.started:
+            self.started = True
+            self.start()
+        return self
+
+    def __exit__(self, *arg):
+        self.close()
+
+    def close(self):
+        # To be called from the main thread only
+
+        if self.closed:
+            return
+        self.closed = True
+
+        self.quitting = True
+        if self.started:
+            self.ctl_w.send(b"quit")
+            self.join()
+
+        self.sel.unregister(self.listener)
+        self.listener.close()
+
+        self.sel.unregister(self.ctl_r)
+        self.ctl_r.close()
+        self.ctl_w.close()
+
+        for pair in self.pairs:
+            pair.close()
+
+        self.sel.close()
 
 
 # reader-writer
@@ -199,17 +545,36 @@ _client_context = None
 def client_context(cafile=None):
     global _client_context
 
-    if _client_context is None:
-        _client_context = ssl.create_default_context()
-        if cafile is not None:
-            _client_context.load_verify_locations(cafile=cafile)
-        # on some OS's ssl module loads certs automatically
-        if len(_client_context.get_ca_certs()) == 0:
-            # on others it doesn't
-            import certifi
-            _client_context.load_verify_locations(cafile=certifi.where())
+    if _client_context is not None:
+        return _client_context
+
+    _client_context = ssl.create_default_context()
+    if cafile is not None:
+        _client_context.load_verify_locations(cafile=cafile)
+    # on some OS's ssl module loads certs automatically
+    if len(_client_context.get_ca_certs()) == 0:
+        # on others it doesn't
+        import certifi
+        _client_context.load_verify_locations(cafile=certifi.where())
 
     return _client_context
+
+
+_server_context = None
+
+def server_context(cert=None, key=None):
+    global _server_context
+
+    if _server_context is not None:
+        return _server_context
+
+    assert cert is not None and key is not None, \
+        "server_context must be initialized with a cert and key"
+
+    _server_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+    _server_context.load_cert_chain(certfile=cert, keyfile=key)
+
+    return _server_context
 
 
 @contextlib.contextmanager
@@ -280,6 +645,9 @@ class Subproc:
         self.started = True
 
         wait_for_listener(self.out_q)
+
+    def inject_message(self, msg, end=b"\n"):
+        self.reader.inject_message(msg, end)
 
     def close(self, sig=signal.SIGTERM):
         if not self.started:
@@ -1012,6 +1380,85 @@ def test_idle(cmd, maildir_root):
 
 
 @register_test
+def test_intercept(cmd, maildir_root):
+    with TLSSocketIntercept(cmd) as intercept:
+        with Subproc(intercept.cmd) as subproc:
+            with _session(subproc) as rw:
+                with _session(subproc) as rw:
+                    with _session(subproc) as rw:
+                        pass
+
+
+@register_test
+def test_imaildir_hold(cmd, maildir_root):
+    with TLSSocketIntercept(cmd) as intercept:
+        with Subproc(intercept.cmd) as subproc:
+            # start hold before opening mailbox
+            with _session(subproc) as rw1, _session(subproc) as rw2:
+                # The first connection will be frozen to trap the inbox in a
+                # hold state.
+                rw1.put(b"1 APPEND INBOX {11}\r\n")
+                rw1.wait_for_match(b"\\+")
+
+                # The second connection will have the inbox open, but will not
+                # be able to see an EXISTS message since we can't downlad
+                rw2.put(b"1 SELECT INBOX\r\n")
+                rw2.wait_for_resp("1", "OK")
+                rw2.put(b"2 NOOP\r\n")
+                rw2.wait_for_resp("2", "OK")
+
+                with intercept.trap_response(b"^[^*]+ OK.*") as wait:
+                    # finish setting up the hold
+                    rw1.put(b"hello world\r\n")
+                    wait()
+
+                    # force some synchronization with the mail server but
+                    # expect to not see the * EXISTS message locally yet
+                    exists_pattern = br"\* [0-9]* EXIST"
+
+                    rw2.put(b"3 store 1 flags \\Seen\r\n")
+                    rw2.wait_for_resp("3", "OK", disallow=[exists_pattern])
+
+                # end the hold
+                rw1.wait_for_resp("1", "OK")
+
+                # expect the EXISTS
+                rw2.put(b"5 NOOP\r\n")
+                rw2.wait_for_resp("5", "OK", require=[exists_pattern])
+
+
+@register_test
+def test_initial_deletions(cmd, maildir_root):
+    inbox_path = os.path.join(maildir_root, USER, "INBOX", "cur")
+    with Subproc(cmd) as subproc:
+        # initial sync
+        with _inbox(subproc):
+            pass
+
+        # initial count, server side
+        with _session(subproc) as rw:
+            msgs = get_msg_count(rw, b"INBOX")
+            assert msgs > 0
+
+        # initial count, file side
+        names = os.listdir(inbox_path)
+        assert len(names) == msgs
+
+        # delete files
+        for name in names:
+            os.remove(os.path.join(inbox_path, name))
+
+        # re-sync
+        with _inbox(subproc):
+            pass
+
+        # initial count, server side
+        with _session(subproc) as rw:
+            msgs_now = get_msg_count(rw, b"INBOX")
+            assert msgs_now == 0, f"still have {msgs_now} of {msgs} messages"
+
+
+@register_test
 def prep_test_large_initial_download(cmd, maildir_root):
     with inbox(cmd) as rw:
         for i in range(10):
@@ -1064,6 +1511,11 @@ if __name__ == "__main__":
 
     test_files = sys.argv[1]
     patterns = [p if p.startswith("^") else ".*" + p for p in sys.argv[2:]]
+
+    # initialize the global server_context
+    cert = os.path.join(test_files, "ssl", "good-cert.pem")
+    key = os.path.join(test_files, "ssl", "good-key.pem")
+    _ = server_context(cert, key)
 
     if len(patterns) > 0:
         # filter tests by patterns from command line
