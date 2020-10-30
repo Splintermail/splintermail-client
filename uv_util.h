@@ -27,6 +27,14 @@ int uv_cancel_work(uv_work_t *work);
 
 void uv_async_close(uv_async_t* async, uv_close_cb close_cb);
 
+void uv_timer_close(uv_timer_t* timer, uv_close_cb close_cb);
+
+void uv_udp_close(uv_udp_t* udp, uv_close_cb close_cb);
+
+int uv_udp_bind_sockaddr_in(
+    uv_udp_t *udp, struct sockaddr_in *sai, unsigned int flags
+);
+
 // set environment variable to use more worker threads
 derr_t set_uv_threadpool_size(unsigned int min, unsigned int recommended);
 

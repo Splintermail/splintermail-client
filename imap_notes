@@ -1441,3 +1441,36 @@ Parallelism in up.c
 
   CONCLUSION
     the client is really simple; there's only five different input types
+
+Using IDLE to receive live key updates via IMAP
+  - I think we definitely want keys in the database
+  - We also would like to have free polling for keys in the database via IDLE
+  - We could write some daemon that synchronizes keys in the database with keys
+    on file
+  - The database already synchronizes across installations
+  - The daemon could be pretty dumb then
+  - Or, we could just do long polling.  That's looking better and better.
+  - Well... long polling just means that we have to get good streaming updates
+    to any of a gajillion clients.  If we only stream updates from the database
+    to one sync service on each machine, that sounds way more managable.  And
+    then IMAP already has mechanisms for good streaming to every client.
+  - The sync daemon would not even have to bother with watching the filesystem
+    for updates, because there's no reason to support deletions via IMAP.
+    Users will always delete keys via the cli or webui.  Uni-direction
+    synchronization is pretty doable for sure.
+  - Those mailboxes should be read-only for imap clients
+  - We will have to make sure to place the files in a way that dovecot likes.
+    LMTP looks like the right answer.
+  - We may have to disable dovecot synchronization of those mailboxes
+  - How would deletions work though?  You can't push a deletion through LMTP
+  - You could post a request for deletion and hope a client deletes it
+    eventually, but that doesn't reall offer prompt account cleanup, which I
+    think is an important privacy feature
+  - looks like doveadm is the tool for the job!
+
+    Conclusion:
+      - db insertion of a key will also insert a row into a syncable keys table
+      - db insertion will do a no-fail attempt to wake up the sync service
+      - sync service will wake up (either right then or periodically)
+      - sync service will see entries in the table, pass them over lmdb, and
+        then delete them from the database

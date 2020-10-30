@@ -30,6 +30,20 @@ void uv_async_close(uv_async_t* async, uv_close_cb close_cb){
     uv_close((uv_handle_t*)async, close_cb);
 }
 
+void uv_timer_close(uv_timer_t* timer, uv_close_cb close_cb){
+    uv_close((uv_handle_t*)timer, close_cb);
+}
+
+void uv_udp_close(uv_udp_t* udp, uv_close_cb close_cb){
+    uv_close((uv_handle_t*)udp, close_cb);
+}
+
+int uv_udp_bind_sockaddr_in(
+    uv_udp_t *udp, struct sockaddr_in *sai, unsigned int flags
+){
+    return uv_udp_bind(udp, (struct sockaddr*)sai, flags);
+}
+
 derr_t set_uv_threadpool_size(unsigned int min, unsigned int recommended){
     derr_t e = E_OK;
 
