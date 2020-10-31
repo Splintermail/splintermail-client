@@ -1,3 +1,12 @@
+# add a mysql_interface library
+add_library(mysql_helper mysql_helper.c)
+if("${MYSQL_INCLUDE_DIR}" STREQUAL "")
+    set(MYSQL_INCLUDE_DIR "/usr/include/mysql")
+endif()
+target_include_directories(mysql_helper PUBLIC ${MYSQL_INCLUDE_DIR})
+target_link_libraries(mysql_helper PUBLIC mysqlclient)
+
+
 add_obj_tgt(badbadbad_alert.c badbadbad_alert)
 # badbadbad_alert needs non-strict aliasing due to sockaddr_info business
 target_compile_options(badbadbad_alert_o PRIVATE -fno-strict-aliasing)
@@ -15,7 +24,7 @@ target_link_libraries(badbadbad badbadbad_alert dstr)
 add_executable(keysync keysync.c)
 default_compile_options(keysync TRUE)
 define_file_logname_for_target(keysync)
-target_link_libraries(keysync dstr uv_util uv_interface)
+target_link_libraries(keysync dstr uv_util uv_interface mysql_helper)
 
 find_package(Python3 COMPONENTS Development)
 Python3_add_library(pysm MODULE pysm.c)

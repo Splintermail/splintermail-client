@@ -373,20 +373,7 @@ if("${BUILD_SERVER_CODE}")
     add_subdirectory(server)
 
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DBUILD_SERVER_CODE=yes")
-
-    # set a default MYSQL include directory
-    if("${MYSQL_INCLUDE_DIR}" STREQUAL "")
-        set(MYSQL_INCLUDE_DIR "/usr/include/mysql")
-    endif()
-    target_include_directories(encrypt_msg PUBLIC ${MYSQL_INCLUDE_DIR})
-
-    # set a default MYSQL include directory
-    if(NOT "${MYSQL_LIBRARIES}" STREQUAL "")
-        target_link_libraries(encrypt_msg ${MYSQL_LIBRARIES})
-        set(MYSQL_INCLUDE_DIR "-I/usr/include/mysql")
-    endif()
-    target_link_libraries(encrypt_msg mysqlclient badbadbad_alert)
-    target_link_libraries(encrypt_msg badbadbad_alert)
+    target_link_libraries(encrypt_msg badbadbad_alert mysql_helper)
 endif()
 
 # OS-specific steps

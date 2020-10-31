@@ -9,19 +9,7 @@
 #include <openssl/evp.h>
 
 #ifdef BUILD_SERVER_CODE
-
-// mysql throws missing prototype error with gcc, so ignore that warning
-#ifdef __GNUC__
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wstrict-prototypes"
-#endif // __GNUC__
-
-#include <mysql.h>
-
-#ifdef __GNUC__
-#pragma GCC diagnostic pop
-#endif // __GNUC__
-
+#include "server/mysql_helper.h"
 #include "server/badbadbad_alert.h"
 #endif // BUILD_SERVER_CODE
 
@@ -32,9 +20,6 @@
 // this should only have to be 10, but just in case...
 #define MAX_ENCRYPTION_KEYS 32
 
-// an error in the SQL library
-derr_type_t E_SQL;
-REGISTER_ERROR_TYPE(E_SQL, "SQLERROR");
 // user has no keys (non-critical error)
 derr_type_t E_NOKEYS;
 REGISTER_ERROR_TYPE(E_NOKEYS, "NOKEYS");
