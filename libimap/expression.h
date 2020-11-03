@@ -661,8 +661,6 @@ DEF_CONTAINER_OF(ie_list_resp_t, node, jsw_anode_t);
 const void *ie_list_resp_get(const jsw_anode_t *node);
 // cmp does a simple alphanumeric sort
 int ie_list_resp_cmp(const void *a, const void *b);
-// for jsw_afind_ex
-int ie_list_resp_cmp_to_dstr(const void *list_resp, const void *dstr);
 
 typedef struct {
     ie_mailbox_t *m;

@@ -17,10 +17,13 @@
   a header comment, such as this one.
 */
 
-#define JSW_AHEIGHT_LIMIT 64 /* Tallest allowable tree */
+// some precanned cmp_f's
+int jsw_cmp_dstr(const void *a, const void *b);
+int jsw_cmp_int(const void *a, const void *b);
+int jsw_cmp_uint(const void *a, const void *b);
+int jsw_cmp_ulong(const void *a, const void *b);
 
-// same +/0/- semantics as strcmp but for sorting numbers
-#define JSW_NUM_CMP(a, b) ((a) < (b) ? -1 : (a) > (b))
+#define JSW_AHEIGHT_LIMIT 64 /* Tallest allowable tree */
 
 typedef struct jsw_anode {
   int               level;   /* Horizontal level for balance */
@@ -28,9 +31,9 @@ typedef struct jsw_anode {
   size_t count;              /* number of nodes in subtree */
 } jsw_anode_t;
 
-/* User-defined item handling */
+// cmp_f will compare two keys
 typedef int (*cmp_f) ( const void*, const void* );
-/* User-defined item handling */
+// get_f will fetch a key for the object that owns the node
 typedef const void *(*get_f) ( const jsw_anode_t* );
 
 typedef struct jsw_atree {

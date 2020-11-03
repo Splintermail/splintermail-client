@@ -86,9 +86,9 @@ derr_t dn_init(dn_t *dn, dn_cb_i *cb, extensions_t *exts, bool examine){
 
     /* the view gets built during processing of the SELECT command, so that the
        CONDSTORE/QRESYNC extensions can be handled efficiently */
-    jsw_ainit(&dn->views, jsw_cmp_uid, msg_view_jsw_get_uid_dn);
+    jsw_ainit(&dn->views, jsw_cmp_uint, msg_view_jsw_get_uid_dn);
 
-    jsw_ainit(&dn->store.tree, jsw_cmp_uid, exp_flags_jsw_get_uid_dn);
+    jsw_ainit(&dn->store.tree, jsw_cmp_uint, exp_flags_jsw_get_uid_dn);
 
     return e;
 };
@@ -1228,9 +1228,9 @@ static const void *gathered_jsw_get_uid_dn(const jsw_anode_t *node){
 }
 
 static void gather_prep(gather_t *gather){
-    jsw_ainit(&gather->news, jsw_cmp_uid, gathered_jsw_get_uid_dn);
-    jsw_ainit(&gather->metas, jsw_cmp_uid, gathered_jsw_get_uid_dn);
-    jsw_ainit(&gather->expunges, jsw_cmp_uid, gathered_jsw_get_uid_dn);
+    jsw_ainit(&gather->news, jsw_cmp_uint, gathered_jsw_get_uid_dn);
+    jsw_ainit(&gather->metas, jsw_cmp_uint, gathered_jsw_get_uid_dn);
+    jsw_ainit(&gather->expunges, jsw_cmp_uint, gathered_jsw_get_uid_dn);
     link_init(&gather->updates_to_free);
 }
 

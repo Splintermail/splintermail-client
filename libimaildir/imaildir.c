@@ -557,13 +557,13 @@ static derr_t imaildir_init_ex(imaildir_t *m, imaildir_cb_i *cb,
     link_init(&m->relays);
 
     // init msgs
-    jsw_ainit(&m->msgs, jsw_cmp_uid, msg_jsw_get_uid_up);
+    jsw_ainit(&m->msgs, jsw_cmp_uint, msg_jsw_get_uid_up);
 
     // init expunged
-    jsw_ainit(&m->expunged, jsw_cmp_uid, msg_expunge_jsw_get_uid_up);
+    jsw_ainit(&m->expunged, jsw_cmp_uint, msg_expunge_jsw_get_uid_up);
 
     // init mods
-    jsw_ainit(&m->mods, jsw_cmp_modseq, msg_mod_jsw_get_modseq);
+    jsw_ainit(&m->mods, jsw_cmp_ulong, msg_mod_jsw_get_modseq);
 
     // any remaining failures must result in a call to imaildir_free()
 

@@ -17,14 +17,9 @@ typedef struct {
 } binsrch_int_t;
 DEF_CONTAINER_OF(binsrch_int_t, anode, jsw_anode_t);
 
-static int cmp_binsrch_ints(const void *a, const void *b){
-    int aval = ((binsrch_int_t*)a)->value;
-    int bval = ((binsrch_int_t*)b)->value;
-    return JSW_NUM_CMP(aval, bval);
-}
-
 static const void *get_binsrch(const jsw_anode_t *node){
-    return CONTAINER_OF(node, binsrch_int_t, anode);
+    binsrch_int_t *b = CONTAINER_OF(node, binsrch_int_t, anode);
+    return &b->value;
 }
 
 static derr_t print_atree(const jsw_anode_t *node, size_t indent){
@@ -133,7 +128,7 @@ static derr_t do_test_atree(binsrch_int_t *ints, size_t num_ints){
     derr_t e = E_OK;
     // the andersson tree
     jsw_atree_t tree;
-    jsw_ainit(&tree, cmp_binsrch_ints, get_binsrch);
+    jsw_ainit(&tree, jsw_cmp_int, get_binsrch);
     // insert each element
     for(size_t i = 0; i < num_ints; i++){
         jsw_ainsert(&tree, &ints[i].anode);
@@ -208,7 +203,7 @@ static derr_t test_indicies(void){
     }
     // the andersson tree
     jsw_atree_t tree;
-    jsw_ainit(&tree, cmp_binsrch_ints, get_binsrch);
+    jsw_ainit(&tree, jsw_cmp_int, get_binsrch);
     // insert each element
     for(size_t i = 0; i < NUM_INTS; i++){
         jsw_ainsert(&tree, &ints[i].anode);
@@ -254,7 +249,7 @@ static derr_t test_apop(void){
     }
     // the andersson tree
     jsw_atree_t tree;
-    jsw_ainit(&tree, cmp_binsrch_ints, get_binsrch);
+    jsw_ainit(&tree, jsw_cmp_int, get_binsrch);
     // insert each element
     for(size_t i = 0; i < NUM_INTS; i++){
         jsw_ainsert(&tree, &ints[i].anode);
@@ -299,7 +294,7 @@ static derr_t test_atrav(void){
     }
     // the andersson tree
     jsw_atree_t tree;
-    jsw_ainit(&tree, cmp_binsrch_ints, get_binsrch);
+    jsw_ainit(&tree, jsw_cmp_int, get_binsrch);
     // insert each element
     for(size_t i = 0; i < NUM_INTS; i++){
         jsw_ainsert(&tree, &ints[i].anode);

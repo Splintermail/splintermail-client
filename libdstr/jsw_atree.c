@@ -16,6 +16,25 @@
 
 #include "libdstr.h"
 
+int jsw_cmp_dstr(const void *a, const void *b){
+    const dstr_t *da = a;
+    const dstr_t *db = b;
+    return dstr_cmp(da, db);
+}
+
+// same +/0/- semantics as strcmp but for sorting numbers
+#define JSW_NUM_CMP(a, b) ((a) < (b) ? -1 : (a) > (b))
+#define DEF_NUM_CMP(name, type) \
+    int name(const void *a, const void *b){ \
+        const type *ua = a; \
+        const type *ub = b; \
+        return JSW_NUM_CMP(*ua, *ub); \
+    }
+
+DEF_NUM_CMP(jsw_cmp_int, int)
+DEF_NUM_CMP(jsw_cmp_uint, unsigned int)
+DEF_NUM_CMP(jsw_cmp_ulong, unsigned long)
+
 /* Remove left horizontal links */
 #define skew(t) do {                                      \
   if ( t->link[0]->level == t->level && t->level != 0 ) { \

@@ -22,19 +22,6 @@ const void *msg_jsw_get_uid_up(const jsw_anode_t *node){
     return (void*)&msg->uid_up;
 }
 
-int jsw_cmp_modseq(const void *a, const void *b){
-    const unsigned long *modseqa = a;
-    const unsigned long *modseqb = b;
-    return JSW_NUM_CMP(*modseqa, *modseqb);
-}
-
-int jsw_cmp_uid(const void *a, const void *b){
-    const unsigned int *uida = a;
-    const unsigned int *uidb = b;
-    return JSW_NUM_CMP(*uida, *uidb);
-}
-
-
 derr_t index_to_seq_num(size_t index, unsigned int *seq_num){
     derr_t e = E_OK;
     *seq_num = 0;
@@ -105,17 +92,14 @@ bool hmsc_step(himodseq_calc_t *hmsc){
 
 /* seq_set_builder_t */
 
-static const void *ssbe_jsw_get(const jsw_anode_t *node){
-    return CONTAINER_OF(node, seq_set_builder_elem_t, node);
-}
-static int ssbe_jsw_cmp_n1(const void *a, const void *b){
-    const seq_set_builder_elem_t *ssbea = a;
-    const seq_set_builder_elem_t *ssbeb = b;
-    return JSW_NUM_CMP(ssbea->n1, ssbeb->n1);
+static const void *ssbe_jsw_get_n1(const jsw_anode_t *node){
+    const seq_set_builder_elem_t *ssbe =
+        CONTAINER_OF(node, seq_set_builder_elem_t, node);
+    return &ssbe->n1;
 }
 
 void seq_set_builder_prep(seq_set_builder_t *ssb){
-    jsw_ainit(ssb, ssbe_jsw_cmp_n1, ssbe_jsw_get);
+    jsw_ainit(ssb, jsw_cmp_uint, ssbe_jsw_get_n1);
 }
 
 // free all the nodes of the ssb

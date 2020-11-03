@@ -2641,21 +2641,13 @@ fail:
 
 // get_f for jsw_atree implementation
 const void *ie_list_resp_get(const jsw_anode_t *node){
-    return (void*)CONTAINER_OF(node, ie_list_resp_t, node);
+    const ie_list_resp_t *resp = CONTAINER_OF(node, ie_list_resp_t, node);
+    return ie_mailbox_name(resp->m);
 }
 
 // cmp_f for jsw_atree implementation
 int ie_list_resp_cmp(const void *a, const void *b){
-    const ie_list_resp_t *resp_a = a;
-    const ie_list_resp_t *resp_b = b;
-    return dstr_cmp(ie_mailbox_name(resp_a->m), ie_mailbox_name(resp_b->m));
-}
-
-// cmp_f for jsw_afind_ex, when you want to search via a simple dstr key
-int ie_list_resp_cmp_to_dstr(const void *list_resp, const void *dstr){
-    const ie_list_resp_t *a = list_resp;
-    const dstr_t *b = dstr;
-    return dstr_cmp(ie_mailbox_name(a->m), b);
+    return jsw_cmp_dstr(a, b);
 }
 
 ie_status_resp_t *ie_status_resp_new(derr_t *e, ie_mailbox_t *m,

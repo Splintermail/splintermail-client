@@ -144,14 +144,11 @@ static derr_t delete_extra_dir_checks(delete_extra_dirs_arg_t *arg,
     dstr_t* name;
     PROP(&e, sb_expand(maildir_name, &DSTR_LIT("/"), &stack, &heap, &name) );
 
-    // check LIST response using an alternate comparison function
-    cmp_f alt_cmp = ie_list_resp_cmp_to_dstr;
-
     // strip leading slash if any
     size_t start_idx = name->data[0] == '/' ? 1 : 0;
     dstr_t display_name = dstr_sub(name, start_idx, name->len);
 
-    *remote = (jsw_afind_ex(arg->tree, alt_cmp, &display_name, NULL) != NULL);
+    *remote = (jsw_afind(arg->tree, &display_name, NULL) != NULL);
 
     // check selected dirs
     hash_elem_t *h = hashmap_gets(&arg->dm->dirs, name);
