@@ -1319,6 +1319,8 @@ static inline derr_type_t fmt_arg(dstr_t* out, fmt_t arg){
             );
         case FMT_EXT:
             return arg.data.ext.hook(out, arg.data.ext.arg);
+        case FMT_EXT_NOCONST:
+            return arg.data.ext_noconst.hook(out, arg.data.ext_noconst.arg);
     }
     return E_NONE;
 }

@@ -588,12 +588,18 @@ typedef enum {
     FMT_DSTR,
     FMT_BOOL,
     FMT_EXT,
+    FMT_EXT_NOCONST,
 } fmt_type_t;
 
 typedef struct {
     const void* arg;
     derr_type_t (*hook)(dstr_t* out, const void* arg);
 } fmt_data_ext_t;
+
+typedef struct {
+    void* arg;
+    derr_type_t (*hook)(dstr_t* out, void* arg);
+} fmt_data_ext_noconst_t;
 
 typedef union {
     uintmax_t u;
@@ -605,6 +611,7 @@ typedef union {
     const dstr_t* dstr;
     bool boolean;
     fmt_data_ext_t ext;
+    fmt_data_ext_noconst_t ext_noconst;
 } fmt_data_t;
 
 typedef struct {

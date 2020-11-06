@@ -373,7 +373,7 @@ if("${BUILD_SERVER_CODE}")
     add_subdirectory(server)
 
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DBUILD_SERVER_CODE=yes")
-    target_link_libraries(encrypt_msg badbadbad_alert mysql_helper)
+    target_link_libraries(encrypt_msg badbadbad_alert mysql_util)
 endif()
 
 # OS-specific steps
@@ -476,6 +476,16 @@ if("${BUILD_TESTS}")
             "${PROJECT_SOURCE_DIR}/test/enc_dec.py"
             "${PROJECT_SOURCE_DIR}/test/files"
     )
+    if("${BUILD_SERVER_CODE}")
+        add_test(NAME "enc_dec_server"
+            COMMAND
+                "${PYTHON_3_CMD}"
+                "${PROJECT_SOURCE_DIR}/test/enc_dec.py"
+                "${PROJECT_SOURCE_DIR}/test/files"
+                "--server"
+        )
+
+    endif()
 
     # describe test executables with dependencies
     # target_link_libraries(test_common)
