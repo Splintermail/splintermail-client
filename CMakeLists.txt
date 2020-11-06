@@ -468,23 +468,25 @@ if("${BUILD_TESTS}")
         COMMAND
             "${PYTHON_3_CMD}"
             "${PROJECT_SOURCE_DIR}/test/e2e_citm.py"
-            "${PROJECT_SOURCE_DIR}/test/files"
     )
     add_test(NAME "enc_dec"
         COMMAND
             "${PYTHON_3_CMD}"
             "${PROJECT_SOURCE_DIR}/test/enc_dec.py"
-            "${PROJECT_SOURCE_DIR}/test/files"
     )
     if("${BUILD_SERVER_CODE}")
         add_test(NAME "enc_dec_server"
             COMMAND
                 "${PYTHON_3_CMD}"
                 "${PROJECT_SOURCE_DIR}/test/enc_dec.py"
-                "${PROJECT_SOURCE_DIR}/test/files"
                 "--server"
         )
 
+        add_test(NAME "test_migmysql"
+            COMMAND
+                "${PYTHON_3_CMD}"
+                "${PROJECT_SOURCE_DIR}/test/test_migmysql.py"
+        )
     endif()
 
     # describe test executables with dependencies

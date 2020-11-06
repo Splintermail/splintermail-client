@@ -8,24 +8,8 @@ import signal
 import subprocess
 import sys
 import time
-
-# TODO: this is so gross
-manage_sql_path = os.path.join(
-    os.path.dirname(os.path.realpath(__file__)),
-    "../../../idmpt/profiles/mail/mail/mysql"
-)
-sys.path.append(manage_sql_path)
-import manage_sql
-
-
-@contextlib.contextmanager
-def rm_on_exception(path):
-    try:
-        yield
-    except:
-        shutil.rmtree(path)
-        raise
-
+import argparse
+import tempfile
 
 class ScriptRunner:
     def __init__(self, sockpath):
@@ -53,6 +37,50 @@ class ScriptRunner:
             os.write(1, err)
             print("---- (end of mysql stderr)")
             raise ValueError("mysql failed")
+        return out
+
+
+def migmysql(
+    migmysql_path, migrations, level=None, socket=None, user=None, pwd=None
+):
+    assert migmysql_path is not None
+    assert migrations is not None
+
+    cmd = [migmysql_path, migrations]
+    if level is not None:
+        cmd += [str(level)]
+    if socket is not None:
+        cmd += ["--socket", socket]
+    if user is not None:
+        cmd += ["--user", user]
+    if pwd is not None:
+        cmd += ["--pass", pwd]
+    p = subprocess.Popen(
+        cmd,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    out, err = p.communicate()
+    ret = p.wait()
+    if ret != 0:
+        print("---- migmysql stdout", flush=True)
+        os.write(1, out)
+        print("---- (end of migmysql stdout)")
+        print("---- migmysql stderr", flush=True)
+        os.write(1, err)
+        print("---- (end of migmysql stderr)")
+        raise ValueError("migmysql failed")
+    return out, err
+
+
+@contextlib.contextmanager
+def rm_on_exception(path):
+    try:
+        yield
+    except:
+        shutil.rmtree(path)
+        raise
 
 
 def bootstrap_db(basedir):
@@ -93,24 +121,6 @@ def bootstrap_db(basedir):
     print("bootstrapping complete!")
 
 
-def configure_db(creds, sockpath):
-    with open(os.path.join(manage_sql_path, "mysqlconf.json")) as f:
-        dbconf = json.load(f)
-
-    patch = manage_sql.build_patch(creds, dbconf)
-
-    if not patch:
-        return
-
-    print("configuring database...")
-    ScriptRunner(sockpath).run(patch, None)
-    print("configuring done!")
-
-    patch = manage_sql.build_patch(creds, dbconf)
-    if patch:
-        raise ValueError("\n\x1b[31m"+patch+"\x1b[m")
-
-
 def wait_for_socket(sockpath):
     for i in range(1000):
         if os.path.exists(sockpath):
@@ -121,7 +131,10 @@ def wait_for_socket(sockpath):
 
 
 @contextlib.contextmanager
-def mariadb(basedir):
+def do_mariadb(basedir, migrations, migmysql_path):
+    assert migrations is None or migmysql_path, \
+            "migmysql_path must be provided if migrations is not None"
+
     with rm_on_exception(basedir):
         bootstrap_db(basedir)
 
@@ -129,15 +142,16 @@ def mariadb(basedir):
     sock = "mariadb.sock"
     sockpath = os.path.join(datadir, sock)
 
-    creds = manage_sql.Creds(host="localhost", unix_socket=sockpath)
-
     cmd = ["mariadbd", "--no-defaults", "--datadir", datadir, "--socket", sock]
     p = subprocess.Popen(cmd)#, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
     try:
         wait_for_socket(sockpath)
 
-        configure_db(creds, sockpath)
+        if migrations is not None:
+            print("migrating mysql...")
+            migmysql(migmysql_path, migrations, socket=sockpath)
+            print("migrating complete!")
 
         yield ScriptRunner(sockpath)
 
@@ -147,7 +161,60 @@ def mariadb(basedir):
         ret = p.wait()
 
 
+@contextlib.contextmanager
+def mariadb(basedir=None, migrations=None, migmysql_path=None):
+    tempdir = None
+    if basedir is None:
+        tempdir = tempfile.mkdtemp()
+        basedir = tempdir
+        print(f"using {tempdir}")
+
+    try:
+        with do_mariadb(basedir, migrations, migmysql_path) as runner:
+            yield runner
+    finally:
+        if tempfile is not None:
+            shutil.rmtree(tempdir)
+
+
+# When called directly, run the database in a configurable location.
 if __name__ == "__main__":
-    with mariadb("./mariadb") as creds:
+    parser = argparse.ArgumentParser(description='run mariadb as a user')
+    parser.add_argument(
+        "--migrations",
+        type=str,
+        default=None,
+        action="store",
+        help="migrations to run after starting the database",
+    )
+    parser.add_argument(
+        "--migmysql",
+        type=str,
+        default=None,
+        action="store",
+        help="required with --migrations when not running from build dir",
+    )
+    parser.add_argument(
+        "--persist-to",
+        type=str,
+        default=None,
+        action="store",
+        help="use persistent storage",
+    )
+
+    args = parser.parse_args()
+
+    basedir = args.persist_to
+    migrations = args.migrations
+    migmysql_path = args.migmysql
+    if migrations and not migmysql_path:
+        # assume we are running in the build directory
+        migmysql_path = "server/migmysql"
+        if not os.path.exists(migmysql_path):
+            raise ValueError(
+                "migmysql path could not be guessed and must be provided"
+            )
+
+    with mariadb(basedir, migrations, migmysql_path):
         while True:
             time.sleep(1000)

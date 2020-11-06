@@ -9,6 +9,9 @@ import threading
 import traceback
 import codecs
 
+parent_path = os.path.dirname(__file__)
+test_files = os.path.join(parent_path, "files")
+migrations = os.path.join(parent_path, "..", "server", "migrations")
 
 class ReaderThread(threading.Thread):
     def __init__(self, io):
@@ -139,14 +142,12 @@ def test_server_enc_dec(enc, dec, test_files, script_runner):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
+    if len(sys.argv) not in (1, 2):
         print(
-            "usage: %s /path/to/test/files [--server]"%(sys.argv[0]),
+            "usage: %s [--server]"%(sys.argv[0]),
             file=sys.stderr,
         )
         sys.exit(1)
-
-    test_files = sys.argv[1]
 
     enc = "./encrypt_msg"
     dec = "./decrypt_msg"
@@ -159,7 +160,8 @@ if __name__ == "__main__":
         pysm_path = "./server"
         sys.path.append(pysm_path)
         import pysm
-        with mariadb.mariadb("./mariadb") as script_runner:
+        migmysql_path = "./server/migmysql"
+        with mariadb.mariadb(None, migrations, migmysql_path) as script_runner:
             test_server_enc_dec(enc, dec, test_files, script_runner)
 
     print("PASS")

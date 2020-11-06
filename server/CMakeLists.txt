@@ -28,6 +28,11 @@ default_compile_options(keysync TRUE)
 define_file_logname_for_target(keysync)
 target_link_libraries(keysync dstr uv_util uv_interface badbadbad_alert mysql_util)
 
+add_executable(migmysql migmysql.c)
+default_compile_options(migmysql TRUE)
+define_file_logname_for_target(migmysql)
+target_link_libraries(migmysql dstr mysql_util)
+
 find_package(Python3 COMPONENTS Development)
 Python3_add_library(pysm MODULE pysm.c)
 default_compile_options(pysm FALSE)

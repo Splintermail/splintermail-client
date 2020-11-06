@@ -18,6 +18,8 @@ import time
 import random
 import selectors
 
+test_files = os.path.join(os.path.dirname(__file__), "files")
+
 all_tests = []
 
 def register_test(fn):
@@ -1502,15 +1504,14 @@ def temp_maildir_root():
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
+    if "--help" in sys.argv or "-h" in sys.argv:
         print(
             "usage: %s /path/to/test/files [PATTERN...]"%(sys.argv[0]),
             file=sys.stderr
         )
-        sys.exit(1)
+        sys.exit(0)
 
-    test_files = sys.argv[1]
-    patterns = [p if p.startswith("^") else ".*" + p for p in sys.argv[2:]]
+    patterns = [p if p.startswith("^") else ".*" + p for p in sys.argv[1:]]
 
     # initialize the global server_context
     cert = os.path.join(test_files, "ssl", "good-cert.pem")
