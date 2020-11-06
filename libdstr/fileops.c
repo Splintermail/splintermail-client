@@ -93,6 +93,95 @@ bool exists(const char* path){
     return ret == 0;
 }
 
+derr_t dstat(const char *path, struct stat *s, bool *exists){
+    derr_t e = E_OK;
+    if(exists) *exists = false;
+    *s = (struct stat){0};
+
+    int ret = stat(path, s);
+    if(ret != 0){
+        if(errno == ENOMEM){
+            ORIG(&e, E_NOMEM, "nomem");
+        }
+
+        // catch non-existent file errors only if exists != NULL
+        if(exists && (errno == ENOENT || errno == ENOTDIR)){
+            *exists = false;
+            return e;
+        }
+
+        TRACE(&e, "%x: %x\n", FS(path), FE(&errno));
+        ORIG(&e, E_OS, "failed in stat");
+    }
+
+    *exists = true;
+    return e;
+}
+
+derr_t is_file(const char *path, bool *res){
+    derr_t e = E_OK;
+    *res = false;
+
+    bool exists;
+    struct stat s;
+    PROP(&e, dstat(path, &s, &exists) );
+
+    *res = exists && !S_ISDIR(s.st_mode);
+
+    return e;
+}
+
+derr_t is_file_path(const string_builder_t *sb, bool *res){
+    derr_t e = E_OK;
+    DSTR_VAR(stack, 256);
+    dstr_t heap = {0};
+    dstr_t* path;
+    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
+
+    PROP_GO(&e, is_file(path->data, res), cu);
+
+cu:
+    dstr_free(&heap);
+    return e;
+}
+
+derr_t is_dir(const char *path, bool *res){
+    derr_t e = E_OK;
+    *res = false;
+
+    bool exists;
+    struct stat s;
+    PROP(&e, dstat(path, &s, &exists) );
+
+    *res = exists && S_ISDIR(s.st_mode);
+
+    return e;
+}
+
+derr_t is_dir_path(const string_builder_t *sb, bool *res){
+    derr_t e = E_OK;
+    DSTR_VAR(stack, 256);
+    dstr_t heap = {0};
+    dstr_t* path;
+    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
+
+    PROP_GO(&e, is_dir(path->data, res), cu);
+
+cu:
+    dstr_free(&heap);
+    return e;
+}
+
+// GNU semantics, not POSIX semantics
+dstr_t dstr_basename(const dstr_t *path){
+    // find the final slash
+    for(size_t ii = path->len; ii > 0; ii--){
+        if(path->data[ii - 1] != '/') continue;
+        return dstr_sub(path, ii, path->len);
+    }
+    return *path;
+}
+
 derr_t for_each_file_in_dir(const char* path, for_each_file_hook_t hook, void* userdata){
     derr_t e = E_OK;
 

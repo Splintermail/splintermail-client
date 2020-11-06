@@ -93,6 +93,40 @@ cu:
     return e;
 }
 
+static derr_t test_basename(void){
+    derr_t e = E_OK;
+
+    // test cases come straight from man 3 basename (but with GNU semantics)
+    LIST_STATIC(dstr_t, in_out_pairs,
+        DSTR_LIT("/usr/lib"),   DSTR_LIT("lib"),
+        DSTR_LIT("/usr/"),      DSTR_LIT(""),
+        DSTR_LIT("usr"),        DSTR_LIT("usr"),
+        DSTR_LIT("/"),          DSTR_LIT(""),
+        DSTR_LIT("."),          DSTR_LIT("."),
+        DSTR_LIT(".."),         DSTR_LIT(".."),
+    );
+
+    bool ok = true;
+
+    for(size_t i = 0; i < in_out_pairs.len; i+=2){
+        dstr_t in = in_out_pairs.data[i];
+        dstr_t exp = in_out_pairs.data[i+1];
+        dstr_t got = dstr_basename(&in);
+        if(dstr_cmp(&got, &exp) != 0){
+            TRACE(&e,
+                "dstr_basename(%x) returned '%x' but expected '%x'\n",
+                FD(&in), FD(&got), FD(&exp)
+            );
+            ok = false;
+        }
+    }
+    if(!ok){
+        ORIG(&e, E_VALUE, "dstr_basename failed");
+    }
+
+    return e;
+}
+
 
 int main(int argc, char** argv){
     derr_t e = E_OK;
@@ -101,6 +135,7 @@ int main(int argc, char** argv){
 
     PROP_GO(&e, test_mkdirs(), test_fail);
     PROP_GO(&e, test_mkdirs_failure_handling(), test_fail);
+    PROP_GO(&e, test_basename(), test_fail);
 
     LOG_ERROR("PASS\n");
     return 0;

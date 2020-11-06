@@ -18,6 +18,26 @@ bool file_rw_access(const char* path);
 
 bool exists(const char* path);
 
+// if exists == NULL, non-existing files will throw E_OS
+derr_t dstat(const char *path, struct stat *s, bool *exists);
+/* throws: E_NOMEM
+           E_OS */
+
+// non-existing files do not throw an error, but inaccessible files do
+derr_t is_file(const char *path, bool *res);
+derr_t is_file_path(const string_builder_t *sb, bool *res);
+/* throws: E_NOMEM
+           E_OS */
+
+// non-existing dirs do not throw an error, but inaccessible dirs do
+derr_t is_dir(const char *path, bool *res);
+derr_t is_dir_path(const string_builder_t *sb, bool *res);
+/* throws: E_NOMEM
+           E_OS */
+
+// GNU semantics, not POSIX semantics
+dstr_t dstr_basename(const dstr_t *path);
+
 // when for_each_file_in_dir() calls a hook, it always hands a null-terminated dstr_t
 // arguments are: (base, file, isdir, userdata)
 typedef derr_t (*for_each_file_hook_t)(const char*, const dstr_t*, bool, void*);
