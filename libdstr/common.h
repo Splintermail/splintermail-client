@@ -438,6 +438,9 @@ derr_t dstr_recode(const dstr_t* in,
 
 size_t dstr_count(const dstr_t* text, const dstr_t* pattern);
 
+bool dstr_beginswith(const dstr_t *str, const dstr_t *pattern);
+bool dstr_endswith(const dstr_t *str, const dstr_t *pattern);
+
 /*
 in:     dstr with text to copy
 out:    dstr to be copied/appended to
@@ -516,28 +519,6 @@ derr_t dstr_fread(FILE* f, dstr_t* buffer, size_t count, size_t* amnt_read);
 derr_type_t dstr_fwrite_quiet(FILE* f, const dstr_t* buffer);
 derr_t dstr_fwrite(FILE* f, const dstr_t* buffer);
 /*  throws : E_OS */
-
-// read/write an entire file to/from memory
-derr_t dstr_read_file(const char* filename, dstr_t* buffer);
-/*  throws : E_NOMEM (reading into *buffer)
-             E_FIXEDSIZE (reading into *buffer)
-             E_OS (reading)
-             E_OPEN */
-
-derr_t dstr_write_file(const char* filename, const dstr_t* buffer);
-/*  throws : E_OS
-             E_OPEN */
-
-derr_t dstr_fread_file(const char* filename, dstr_t* buffer);
-/*  throws : E_NOMEM (might be *buffer or might be the FILE* allocation)
-             E_FIXEDSIZE (reading into *buffer)
-             E_OS (reading)
-             E_OPEN */
-
-derr_t dstr_fwrite_file(const char* filename, const dstr_t* buffer);
-/*  throws : E_NOMEM (the FILE* allocation)
-             E_OS
-             E_OPEN */
 
 derr_t bin2b64(dstr_t* bin, dstr_t* b64, size_t line_width, bool force_end);
 /* throws: E_FIXEDSIZE (on output)
@@ -689,6 +670,14 @@ derr_type_t fmthook_strerror(dstr_t* out, const void* arg);
 static inline fmt_t FE(int* err){
     return (fmt_t){FMT_EXT, {.ext = {.arg = (const void*)err,
                                      .hook = fmthook_strerror} } };
+}
+
+// hex-encoded dstr
+derr_type_t fmthook_bin2hex(dstr_t* out, const void* arg);
+
+static inline fmt_t FX(const dstr_t *arg){
+    return (fmt_t){FMT_EXT, {.ext = {.arg = (const void*)arg,
+                                     .hook = fmthook_bin2hex} } };
 }
 
 // String Builder stuff below //

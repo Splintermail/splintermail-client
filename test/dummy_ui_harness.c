@@ -7,6 +7,7 @@
 #include <ditm.h>
 #include <networking.h>
 #include <console_input.h>
+#include <ui_harness.h>
 
 // ditm.h
 bool looked_good;
@@ -111,34 +112,33 @@ static inline bool fake_access(const char* path, enum access_mode_t mode){
     // otherwise assume all files exist and are readable
     return true;
 }
-bool dir_r_access(const char* path, bool create){
-    (void) create;
+
+static bool fake_dir_r_access(const char* path, bool create){
     return fake_access(path, create ? AM_CREATE : AM_ACCESS);
 }
-bool dir_w_access(const char* path, bool create){
-    (void) create;
+static bool fake_dir_w_access(const char* path, bool create){
     return fake_access(path, create ? AM_CREATE : AM_ACCESS);
 }
-bool dir_rw_access(const char* path, bool create){
-    (void) create;
+static bool fake_dir_rw_access(const char* path, bool create){
     return fake_access(path, create ? AM_CREATE : AM_ACCESS);
 }
-bool file_r_access(const char* path){
+static bool fake_file_r_access(const char* path){
     return fake_access(path, AM_ACCESS);
 }
-bool file_w_access(const char* path){
+static bool fake_file_w_access(const char* path){
     return fake_access(path, AM_ACCESS);
 }
-bool file_rw_access(const char* path){
+static bool fake_file_rw_access(const char* path){
     return fake_access(path, AM_ACCESS);
 }
-bool exists(const char* path){
+static bool fake_exists(const char* path){
     return fake_access(path, AM_EXIST);
 }
 
 char** users;
-derr_t for_each_file_in_dir(const char* path, for_each_file_hook_t hook,
-                            void* userdata){
+static derr_t fake_for_each_file_in_dir(
+    const char* path, for_each_file_hook_t hook, void* userdata
+){
     (void) path;
     derr_t e = E_OK;
     if(users == NULL){
@@ -152,6 +152,18 @@ derr_t for_each_file_in_dir(const char* path, for_each_file_hook_t hook,
     }
     return e;
 }
+
+// intercept all calls
+ui_harness_t harness = {
+    .dir_r_access = fake_dir_r_access,
+    .dir_w_access = fake_dir_w_access,
+    .dir_rw_access = fake_dir_rw_access,
+    .file_r_access = fake_file_r_access,
+    .file_w_access = fake_file_w_access,
+    .file_rw_access = fake_file_rw_access,
+    .exists = fake_exists,
+    .for_each_file_in_dir = fake_for_each_file_in_dir,
+};
 
 // networking.h
 derr_t ssl_library_init(void){

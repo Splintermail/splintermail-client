@@ -672,6 +672,20 @@ size_t dstr_count(const dstr_t* text, const dstr_t* pattern){
     return count;
 }
 
+bool dstr_beginswith(const dstr_t *str, const dstr_t *pattern){
+    if(!pattern->len) return true;
+    if(str->len < pattern->len) return false;
+    dstr_t sub = dstr_sub(str, 0, pattern->len);
+    return dstr_cmp(pattern, &sub) == 0;
+}
+
+bool dstr_endswith(const dstr_t *str, const dstr_t *pattern){
+    if(!pattern->len) return true;
+    if(str->len < pattern->len) return false;
+    dstr_t sub = dstr_sub(str, str->len - pattern->len, str->len);
+    return dstr_cmp(pattern, &sub) == 0;
+}
+
 derr_type_t dstr_grow_quiet(dstr_t *ds, size_t min_size){
     if(ds->size < min_size){
         // we can't realloc if out is fixed-size
@@ -990,100 +1004,14 @@ derr_type_t dstr_fwrite_quiet(FILE* f, const dstr_t* buffer){
 }
 derr_t dstr_fwrite(FILE* f, const dstr_t* buffer){
     derr_t e = E_OK;
+
     derr_type_t type = dstr_fwrite_quiet(f, buffer);
     if(type) ORIG(&e, type, "unable to write to FILE pointer");
+
     return e;
 }
 
-derr_t dstr_read_file(const char* filename, dstr_t* buffer){
-    derr_t e = E_OK;
-    int fd = compat_open(filename, O_RDONLY);
-    if(fd < 0){
-        TRACE(&e, "%x: %x\n", FS(filename), FE(&errno));
-        ORIG(&e, E_OPEN, "unable to open file");
-    }
-    while(true){
-        size_t amnt_read;
-        PROP_GO(&e, dstr_read(fd, buffer, 0, &amnt_read), cleanup);
-        // if we read nothing then we're done
-        if(amnt_read == 0){
-            break;
-        }
-        /* if we filled the buffer with text we should force the buffer to
-           reallocate and try again */
-        if(buffer->len == buffer->size){
-            PROP_GO(&e, dstr_grow(buffer, buffer->size * 2), cleanup);
-        }
-    }
-cleanup:
-    compat_close(fd);
-    return e;
-}
 
-derr_t dstr_write_file(const char* filename, const dstr_t* buffer){
-    derr_t e = E_OK;
-    int fd = compat_open(filename, O_WRONLY | O_CREAT | O_TRUNC, 0666);
-    if(fd < 0){
-        TRACE(&e, "%x: %x\n", FS(filename), FE(&errno));
-        ORIG(&e, E_OPEN, "unable to open file");
-    }
-    PROP_GO(&e, dstr_write(fd, buffer), cleanup);
-
-    int ret;
-cleanup:
-    ret = compat_close(fd);
-    // check for closing error
-    if(ret != 0 && !is_error(e)){
-        TRACE(&e, "compat_close(%x): %x\n", FS(filename), FE(&errno));
-        ORIG(&e, E_OS, "failed to write file");
-    }
-    return e;
-}
-
-derr_t dstr_fread_file(const char* filename, dstr_t* buffer){
-    derr_t e = E_OK;
-    FILE* f = compat_fopen(filename, "r");
-    if(!f){
-        TRACE(&e, "%x: %x\n", FS(filename), FE(&errno));
-        ORIG(&e, errno == ENOMEM ? E_NOMEM : E_OPEN, "unable to open file");
-    }
-    while(true){
-        size_t amnt_read;
-        PROP_GO(&e, dstr_fread(f, buffer, 0, &amnt_read), cleanup);
-        // if we read nothing then we're done
-        if(amnt_read == 0){
-            break;
-        }
-        /* if we filled the buffer with text we should force the buffer to
-           reallocate and try again */
-        if(buffer->len == buffer->size){
-            PROP_GO(&e, dstr_grow(buffer, buffer->size * 2), cleanup);
-        }
-    }
-cleanup:
-    fclose(f);
-    return e;
-}
-
-derr_t dstr_fwrite_file(const char* filename, const dstr_t* buffer){
-    derr_t e = E_OK;
-    FILE* f = compat_fopen(filename, "w");
-    if(!f){
-        TRACE(&e, "%x: %x\n", FS(filename), FE(&errno));
-        ORIG(&e, errno == ENOMEM ? E_NOMEM : E_OPEN, "unable to open file");
-    }
-    PROP_GO(&e, dstr_fwrite(f, buffer), cleanup);
-
-    int ret;
-cleanup:
-    ret = fclose(f);
-    // check for closing error
-    if(ret != 0 && !is_error(e)){
-        TRACE(&e, "fclose(%x): %x\n", FS(filename), FE(&errno));
-        ORIG(&e, E_OS, "failed to write file");
-    }
-    return e;
-}
 
 derr_t bin2b64(dstr_t* bin, dstr_t* b64, size_t line_width, bool force_end){
     derr_t e = E_OK;
@@ -1205,17 +1133,29 @@ derr_t b642bin(dstr_t* b64, dstr_t* bin){
     return e;
 }
 
-derr_t bin2hex(const dstr_t* bin, dstr_t* hex){
-    derr_t e = E_OK;
+static derr_type_t bin2hex_quiet(const dstr_t* bin, dstr_t* hex){
+    derr_type_t type;
     DSTR_VAR(temp, 3);
     temp.len = 2;
     for(size_t i = 0; i < bin->len; i++){
-        int ret = snprintf(temp.data, temp.size, "%.2x", (unsigned char)bin->data[i]);
+        int ret = snprintf(
+            temp.data, temp.size, "%.2x", (unsigned char)bin->data[i]
+        );
         if(ret != 2){
-            ORIG(&e, E_INTERNAL, "snprintf printed the wrong amount");
+            return E_INTERNAL;
         }
-        PROP(&e, dstr_append(hex, &temp) );
+        type = dstr_append_quiet(hex, &temp);
+        if(type != E_NONE) return type;
     }
+    return E_NONE;
+}
+derr_t bin2hex(const dstr_t* bin, dstr_t* hex){
+    derr_t e = E_OK;
+    derr_type_t type = bin2hex_quiet(bin, hex);
+    if(type == E_INTERNAL) ORIG(&e, type, "snprintf printed the wrong amount");
+    if(type == E_FIXEDSIZE) ORIG(&e, type, "output too short");
+    if(type == E_NOMEM) ORIG(&e, type, "failed to grow output");
+    if(type) ORIG(&e, type, "bin2hex failed");
     return e;
 }
 
@@ -1457,6 +1397,12 @@ derr_type_t fmthook_strerror(dstr_t* out, const void* arg){
     compat_strerror_r(*err, temp.data, temp.size);
     temp.len = strnlen(temp.data, temp.size);
     return fmt_dstr_append_quiet(out, &temp);
+}
+
+derr_type_t fmthook_bin2hex(dstr_t* out, const void* arg){
+    // cast the inpu
+    const dstr_t* bin = arg;
+    return bin2hex_quiet(bin, out);
 }
 
 ////////////////////////////////

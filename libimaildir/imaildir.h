@@ -300,12 +300,11 @@ derr_t imaildir_dn_build_views(imaildir_t *m, jsw_atree_t *views,
 // this will always consume or free req
 derr_t imaildir_dn_request_update(imaildir_t *m, update_req_t *req);
 
-// open a message in a thread-safe way; return a file descriptor
+// open a message in a view-safe way; return a file descriptor
 derr_t imaildir_dn_open_msg(imaildir_t *m, unsigned int uid_up, int *fd);
 
-// close a message in a thread-safe way; return the result of close()
-derr_t imaildir_dn_close_msg(imaildir_t *m, unsigned int uid_up, int *fd,
-        int *ret);
+// close a message in a view-safe way
+derr_t imaildir_dn_close_msg(imaildir_t *m, unsigned int uid_up, int *fd);
 
 /////////////////
 // support for APPEND and COPY (without redownloading message)

@@ -415,10 +415,10 @@ static derr_t do_test(unsigned int ctr){
     }
     // place initial files as necessary
     if(ctr & K){
-        PROP(&e, dstr_fwrite_file("_tktdir/device.pem", &privkey_m) );
+        PROP(&e, dstr_write_file("_tktdir/device.pem", &privkey_m) );
     }
     if(ctr & P){
-        PROP(&e, dstr_fwrite_file("_tktdir/peer_list.json", &old_peer_list) );
+        PROP(&e, dstr_write_file("_tktdir/peer_list.json", &old_peer_list) );
     }
 
     // allocate the key_tool
@@ -465,7 +465,7 @@ static derr_t do_test(unsigned int ctr){
     PROP_GO(&e, file_cmp_dstr("_tktdir/peer_list.json", &temp, &result), cu);
     if(result != 0){
         DSTR_VAR(ftemp, 2048);
-        dstr_fread_file("_tktdir/peer_list.json", &ftemp);
+        dstr_read_file("_tktdir/peer_list.json", &ftemp);
         TRACE(&e, "expected:\n%x\n-----\n"
                  "but got:\n%x\n-----\n", FD(&temp), FD(&ftemp));
         ORIG_GO(&e, E_VALUE, "peer_list.json did not match", cu);
@@ -476,7 +476,7 @@ static derr_t do_test(unsigned int ctr){
         PROP_GO(&e, file_cmp_dstr("_tktdir/device.pem", &privkey_m, &result), cu);
         if(result != 0){
             DSTR_VAR(ftemp, 2048);
-            dstr_fread_file("_tktdir/device.pem", &ftemp);
+            dstr_read_file("_tktdir/device.pem", &ftemp);
             TRACE(&e, "expected:\n%x-----\n"
                      "but got:\n%x-----\n", FD(&privkey_m), FD(&ftemp));
             ORIG_GO(&e, E_VALUE, "device.pem did not match", cu);
@@ -557,7 +557,7 @@ static derr_t test_peer_list_read_write(void){
     const char* new_name = "_tktdir/new_pl.json";
 
     // create the initial peer list
-    PROP(&e, dstr_fwrite_file(old_name, &old_peer_list) );
+    PROP(&e, dstr_write_file(old_name, &old_peer_list) );
 
     // read the list
     PROP(&e, key_tool_peer_list_load(&kt, old_name) );

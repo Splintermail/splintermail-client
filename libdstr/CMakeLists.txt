@@ -4,6 +4,7 @@ add_library(
     common.c
     logger.c
     fileops.c
+    netops.c
     json.c
     opt_parse.c
     win_compat.c

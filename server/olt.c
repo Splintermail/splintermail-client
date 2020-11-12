@@ -469,7 +469,7 @@ static derr_t read_perms_file(const string_builder_t* permsfile,
     derr_t e = E_OK;
     // read permissions file
     PROP(&e, dstr_new(perms, 4096) );
-    PROP_GO(&e, dstr_fread_path(permsfile, perms), fail_perms);
+    PROP_GO(&e, dstr_read_path(permsfile, perms), fail_perms);
     // ignore the trailing newline
     if(perms->data[perms->len - 1] == '\n') perms->len -= 1;
     // base of the perm_dir; a nameless directory

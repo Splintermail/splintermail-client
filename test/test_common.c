@@ -187,6 +187,65 @@ static derr_t test_dstr_count(void){
     return e;
 }
 
+typedef struct {
+    char *str;
+    char *pat;
+    bool begins;
+    bool ends;
+} begins_ends_case_t;
+
+static derr_t test_begin_end_with(void){
+    derr_t e = E_OK;
+    LOG_INFO("----- test_begin_end_with ---------------\n");
+    const begins_ends_case_t cases[] = {
+        {"asdf", "asdf", true, true},
+        {"asdf", "asdfg", false, false},
+        {"asdf", "", true, true},
+        {"", "a", false, false},
+        {"asdf", "as", true, false},
+        {"asdf", "df", false, true},
+        {"asdfa", "a", true, true},
+    };
+    size_t ncases = sizeof(cases) / sizeof(*cases);
+
+    bool fail = false;
+
+    for(size_t i = 0; i < ncases; i++){
+        begins_ends_case_t test = cases[i];
+        dstr_t str;
+        DSTR_WRAP(str, test.str, strlen(test.str), true);
+        dstr_t pattern;
+        DSTR_WRAP(pattern, test.pat, strlen(test.pat), true);
+        bool res = dstr_beginswith(&str, &pattern);
+        if(res != test.begins){
+            fail = true;
+            TRACE(&e,
+                "dstr_beginswith('%x','%x') returned %x instead of %x\n",
+                FD_DBG(&str),
+                FD_DBG(&pattern),
+                FB(res),
+                FB(test.begins),
+            );
+        }
+        res = dstr_endswith(&str, &pattern);
+        if(res != test.ends){
+            fail = true;
+            TRACE(&e,
+                "dstr_beginswith('%x','%x') returned %x instead of %x\n",
+                FD_DBG(&str),
+                FD_DBG(&pattern),
+                FB(res),
+                FB(test.ends),
+            );
+        }
+    }
+
+    if(fail){
+        ORIG(&e, E_VALUE, "some cases failed");
+    }
+    return e;
+}
+
 static derr_t test_dstr_split(void){
     derr_t e = E_OK;
     LOG_INFO("----- test dstr_split -------------------\n");
@@ -464,15 +523,16 @@ static derr_t test_fmt(void){
     DSTR_VAR(errstr, 512);
     compat_strerror_r(errnum, errstr.data, errstr.size);
     exp.len = (size_t)snprintf(exp.data, exp.size,
-                              "t|string|dstring|\\0\\n\\r\\\\\\\"\\x1f"
-                              "|1234|12345678901234|-1234|-12345678901234"
-                              "|3.140000|%%|%s", errstr.data);
+        "t|string|dstring|\\0\\n\\r\\\\\\\"\\x1f"
+        "|1234|12345678901234|-1234|-12345678901234"
+        "|3.140000|%%|%s|68656c6c6f", errstr.data
+    );
 
     DSTR_VAR(out, 4096);
-    PROP(&e, FMT(&out, "%x|%x|%x|%x|%x|%x|%x|%x|%x|%%|%x",
+    PROP(&e, FMT(&out, "%x|%x|%x|%x|%x|%x|%x|%x|%x|%%|%x|%x",
                 FC(t_char), FS(t_cstr), FD(&t_dstr), FD_DBG(&t_dstrd),
                 FU(t_uint), FU(t_luint), FI(t_int), FI(t_lint), FF(t_dub),
-                FE(&errnum)) );
+                FE(&errnum), FX(&DSTR_LIT("hello"))) );
     EXP_VS_GOT(&exp, &out);
 
     #define TEST_FMT_TRUNC(expstr, fmtstr, ...) do { \
@@ -655,6 +715,7 @@ int main(int argc, char** argv){
     PROP_GO(&e, test_dstr_sub(),             test_fail);
     PROP_GO(&e, test_dstr_find(),            test_fail);
     PROP_GO(&e, test_dstr_count(),           test_fail);
+    PROP_GO(&e, test_begin_end_with(),       test_fail);
     PROP_GO(&e, test_dstr_split(),           test_fail);
     PROP_GO(&e, test_dstr_split_soft(),      test_fail);
     PROP_GO(&e, test_dstr_tod(),             test_fail);

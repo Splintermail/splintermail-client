@@ -576,34 +576,6 @@ cu:
     return e;
 }
 
-derr_t dstr_fread_path(const string_builder_t* sb, dstr_t* buffer){
-    derr_t e = E_OK;
-    DSTR_VAR(stack, 256);
-    dstr_t heap = {0};
-    dstr_t* path;
-    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
-
-    PROP_GO(&e, dstr_fread_file(path->data, buffer), cu);
-
-cu:
-    dstr_free(&heap);
-    return e;
-}
-
-derr_t dstr_fwrite_path(const string_builder_t *sb, const dstr_t* buffer){
-    derr_t e = E_OK;
-    DSTR_VAR(stack, 256);
-    dstr_t heap = {0};
-    dstr_t* path;
-    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
-
-    PROP_GO(&e, dstr_fwrite_file(path->data, buffer), cu);
-
-cu:
-    dstr_free(&heap);
-    return e;
-}
-
 static inline derr_t do_stat_path(const string_builder_t* sb, struct stat* out,
                                   int* eno, bool l){
     derr_t e = E_OK;
@@ -953,54 +925,19 @@ cu:
     return e;
 }
 
-derr_t fopen_path(const string_builder_t *sb, const char *mode, FILE **out){
+derr_t drename(const char *src, const char *dst){
     derr_t e = E_OK;
-    DSTR_VAR(stack, 256);
-    dstr_t heap = {0};
-    dstr_t* path;
 
-    *out = NULL;
-
-    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
-
-    *out = compat_fopen(path->data, mode);
-    if(!out){
-        TRACE(&e, "%x: %x\n", FD(path), FE(&errno));
-        ORIG_GO(&e, errno == ENOMEM ? E_NOMEM : E_OPEN, "unable to open file",
-                cu);
+    int ret = rename(src, dst);
+    if(ret != 0){
+        TRACE(&e, "rename(%x, %x): %x\n", FS(src), FS(dst), FE(&errno));
+        ORIG(&e, errno == ENOMEM ? E_NOMEM : E_OS, "unable to rename file");
     }
 
-cu:
-    dstr_free(&heap);
     return e;
 }
 
-derr_t open_path(const string_builder_t *sb, int *out, int flags, ...){
-    derr_t e = E_OK;
-    DSTR_VAR(stack, 256);
-    dstr_t heap = {0};
-    dstr_t* path;
-
-    *out = -1;
-
-    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
-
-    if(flags & O_CREAT){
-        va_list ap;
-        va_start(ap, flags);
-        int mode =  va_arg(ap, int);
-        va_end(ap);
-        *out = compat_open(path->data, flags, mode);
-    }else{
-        *out = compat_open(path->data, flags);
-    }
-
-// cu:
-    dstr_free(&heap);
-    return e;
-}
-
-derr_t rename_path(const string_builder_t *src, const string_builder_t *dst){
+derr_t drename_path(const string_builder_t *src, const string_builder_t *dst){
     derr_t e = E_OK;
     DSTR_VAR(stack_src, 256);
     dstr_t heap_src = {0};
@@ -1013,17 +950,209 @@ derr_t rename_path(const string_builder_t *src, const string_builder_t *dst){
     PROP_GO(&e, sb_expand(dst, &slash, &stack_dst, &heap_dst, &path_dst),
             cu_src);
 
-    int ret = rename(path_src->data, path_dst->data);
-    if(ret != 0){
-        TRACE(&e, "rename(%x, %x): %x\n", FD(path_src), FD(path_dst),
-                FE(&errno));
-        ORIG_GO(&e, errno == ENOMEM ? E_NOMEM : E_OS, "unable to rename file",
-                cu_dst);
-    }
+    PROP_GO(&e, drename(path_src->data, path_dst->data), cu_dst);
 
 cu_dst:
     dstr_free(&heap_dst);
 cu_src:
     dstr_free(&heap_src);
+    return e;
+}
+
+derr_t dfopen(const char *path, const char *mode, FILE **out){
+    derr_t e = E_OK;
+
+    *out = compat_fopen(path, mode);
+    if(!out){
+        TRACE(&e, "fopen(%x): %x\n", FS(path), FE(&errno));
+        ORIG(&e, errno == ENOMEM ? E_NOMEM : E_OPEN, "unable to open file");
+    }
+
+    return e;
+}
+
+derr_t dfopen_path(const string_builder_t *sb, const char *mode, FILE **out){
+    derr_t e = E_OK;
+    DSTR_VAR(stack, 256);
+    dstr_t heap = {0};
+    dstr_t* path;
+
+    *out = NULL;
+
+    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
+
+    PROP_GO(&e, dfopen(path->data, mode, out), cu);
+
+cu:
+    dstr_free(&heap);
+    return e;
+}
+
+derr_t dopen(const char *path, int flags, int mode, int *fd){
+    derr_t e = E_OK;
+
+    *fd = compat_open(path, flags, mode);
+    if(*fd < 0){
+        if(errno == ENOMEM){
+            ORIG(&e, E_NOMEM, "no memory for open");
+        }
+        TRACE(&e, "open(%x): %x\n", FS(path), FE(&errno));
+        ORIG(&e, E_OPEN, "unable to open file");
+    }
+
+    return e;
+}
+
+derr_t dopen_path(const string_builder_t *sb, int flags, int mode, int *fd){
+    derr_t e = E_OK;
+
+    DSTR_VAR(stack, 256);
+    dstr_t heap = {0};
+    dstr_t* path;
+    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
+
+    PROP_GO(&e, dopen(path->data, flags, mode, fd), cu);
+
+cu:
+    dstr_free(&heap);
+    return e;
+}
+
+derr_t dfsync(int fd){
+    derr_t e = E_OK;
+
+    int ret = fsync(fd);
+    if(ret != 0){
+        TRACE(&e, "fsync: %x\n", FE(&errno));
+        ORIG(&e, E_OPEN, "fsync failed");
+    }
+
+    return e;
+}
+
+derr_t dffsync(FILE *f){
+    derr_t e = E_OK;
+
+    int ret = fflush(f);
+    if(ret != 0){
+        TRACE(&e, "fflush: %x\n", FE(&errno));
+        ORIG(&e, E_OPEN, "fflush failed");
+    }
+
+    ret = fsync(fileno(f));
+    if(ret != 0){
+        TRACE(&e, "fsync: %x\n", FE(&errno));
+        ORIG(&e, E_OPEN, "fsync failed");
+    }
+
+    return e;
+}
+
+derr_t dclose(int fd){
+    derr_t e = E_OK;
+
+    int ret = compat_close(fd);
+    if(ret){
+        TRACE(&e, "close: %x\n", FE(&errno));
+        ORIG(&e, E_OPEN, "close failed");
+    }
+
+    return e;
+}
+
+derr_t dfclose(FILE *f){
+    derr_t e = E_OK;
+
+    int ret = fclose(f);
+    if(ret){
+        TRACE(&e, "fclose: %x\n", FE(&errno));
+        ORIG(&e, E_OPEN, "fclose failed");
+    }
+
+    return e;
+}
+
+derr_t dstr_read_file(const char* filename, dstr_t* buffer){
+    derr_t e = E_OK;
+
+    int fd = compat_open(filename, O_RDONLY);
+    if(fd < 0){
+        TRACE(&e, "%x: %x\n", FS(filename), FE(&errno));
+        ORIG(&e, E_OPEN, "unable to open file");
+    }
+    while(true){
+        size_t amnt_read;
+        PROP_GO(&e, dstr_read(fd, buffer, 0, &amnt_read), cleanup);
+        // if we read nothing then we're done
+        if(amnt_read == 0){
+            break;
+        }
+        /* if we filled the buffer with text we should force the buffer to
+           reallocate and try again */
+        if(buffer->len == buffer->size){
+            PROP_GO(&e, dstr_grow(buffer, buffer->size * 2), cleanup);
+        }
+    }
+cleanup:
+    compat_close(fd);
+    return e;
+}
+
+derr_t dstr_read_path(const string_builder_t* sb, dstr_t* buffer){
+    derr_t e = E_OK;
+    DSTR_VAR(stack, 256);
+    dstr_t heap = {0};
+    dstr_t* path;
+    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
+
+    PROP_GO(&e, dstr_read_file(path->data, buffer), cu);
+
+cu:
+    dstr_free(&heap);
+    return e;
+}
+
+derr_t dstr_write_file(const char* filename, const dstr_t* buffer){
+    derr_t e = E_OK;
+
+    int fd = compat_open(filename, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    if(fd < 0){
+        TRACE(&e, "%x: %x\n", FS(filename), FE(&errno));
+        ORIG(&e, E_OPEN, "unable to open file");
+    }
+    PROP_GO(&e, dstr_write(fd, buffer), cleanup);
+
+    // ensure things are written to disk
+    PROP_GO(&e, dfsync(fd), cleanup);
+
+    int ret;
+cleanup:
+    ret = compat_close(fd);
+    // check for closing error
+    if(ret != 0 && !is_error(e)){
+        TRACE(&e, "compat_close(%x): %x\n", FS(filename), FE(&errno));
+        TRACE_ORIG(&e, E_OS, "failed to write file");
+    }
+    if(is_error(e)){
+        // make a feeble attempt to delete the file
+        ret = remove(filename);
+        LOG_ERROR(
+            "failed to remove failed file after failed write: %x\n", FE(&errno)
+        );
+    }
+    return e;
+}
+
+derr_t dstr_write_path(const string_builder_t *sb, const dstr_t* buffer){
+    derr_t e = E_OK;
+    DSTR_VAR(stack, 256);
+    dstr_t heap = {0};
+    dstr_t* path;
+    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
+
+    PROP_GO(&e, dstr_write_file(path->data, buffer), cu);
+
+cu:
+    dstr_free(&heap);
     return e;
 }

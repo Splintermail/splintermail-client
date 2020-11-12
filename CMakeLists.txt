@@ -270,6 +270,7 @@ set(OBJ_TGTS
     pop_server
     console_input
     ui
+    ui_harness
     engine
     uv_util
     loop
@@ -365,7 +366,7 @@ obj_depend_obj(imap_engine engine imap)
 obj_depend_obj(imap_session loop tls_engine imap_engine uv_interface)
 
 # describe executables with dependencies
-target_link_libraries(splintermail ui console_input ditm key_tool)
+target_link_libraries(splintermail ui ui_harness console_input ditm key_tool)
 target_link_libraries(encrypt_msg crypto)
 target_link_libraries(decrypt_msg crypto)
 

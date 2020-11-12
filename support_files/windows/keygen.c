@@ -152,7 +152,7 @@ int main(int argc, char** argv) {
     DSTR_VAR(ca_cert_file, 1024);
     FMT(&ca_cert_file, "%xQWER ca_name REWQ", FS(output_dir));
     DSTR_VAR(ca_cert, 4096);
-    PROP( dstr_fread_file(ca_cert_file.data, &ca_cert) );
+    PROP( dstr_read_file(ca_cert_file.data, &ca_cert) );
 
     DSTR_VAR(ssl_cert_file, 1024);
     FMT(&ssl_cert_file, "%xQWER cert_name REWQ", FS(output_dir));

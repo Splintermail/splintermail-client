@@ -962,7 +962,7 @@ static derr_t imaildir_decrypt(imaildir_t *m, const dstr_t *cipher,
 
     // create the file
     FILE *f;
-    PROP(&e, fopen_path(path, "w", &f) );
+    PROP(&e, dfopen_path(path, "w", &f) );
 
     // TODO: fix decrypter_t API to support const input strings
     // copy the content, just to work around the stream-only API of decrypter_t
@@ -989,6 +989,9 @@ static derr_t imaildir_decrypt(imaildir_t *m, const dstr_t *cipher,
     // write the file
     PROP_GO(&e, dstr_fwrite(f, &plain), cu_dc);
 
+    // ensure it is fully written
+    PROP_GO(&e, dffsync(f), cu_dc);
+
 cu_dc:
     decrypter_free(&dc);
 
@@ -998,19 +1001,17 @@ cu_plain:
 cu_copy:
     dstr_free(&copy);
 
-    int ret;
+    derr_t e2;
 cu_file:
-    ret = fclose(f);
+    e2 = dfclose(f);
     if(is_error(e)){
         DROP_CMD( remove_path(path) );
-    }else{
-        // check for closing error
-        if(ret != 0){
-            TRACE(&e, "fclose(%x): %x\n", FSB(path, &DSTR_LIT("/")),
-                    FE(&errno));
-            DROP_CMD( remove_path(path) );
-            ORIG(&e, E_OS, "failed to write file");
-        }
+        // ignore closing error
+        DROP_VAR(&e2);
+    }else if(is_error(e2)){
+        DROP_CMD( remove_path(path) );
+        // handle closing error
+        PROP_VAR(&e, &e2);
     }
 
     return e;
@@ -1051,7 +1052,7 @@ static derr_t place_file_fill_msg(imaildir_t *m, const string_builder_t *path,
     string_builder_t cur_path = sb_append(&cur_dir, FD(&cur_name));
 
     // move the file into place
-    PROP_GO(&e, rename_path(path, &cur_path), fail);
+    PROP_GO(&e, drename_path(path, &cur_path), fail);
 
     // mark msg as filled base
     PROP(&e, msg_set_file(msg, len, SUBDIR_CUR, &cur_name) );
@@ -1854,7 +1855,7 @@ cu:
     return e;
 }
 
-// open a message in a thread-safe way; return a file descriptor
+// open a message in a view-safe way; return a file descriptor
 derr_t imaildir_dn_open_msg(imaildir_t *m, unsigned int uid_up, int *fd){
     derr_t e = E_OK;
     *fd = -1;
@@ -1865,23 +1866,22 @@ derr_t imaildir_dn_open_msg(imaildir_t *m, unsigned int uid_up, int *fd){
 
     string_builder_t subdir_path = SUB(&m->path, msg->subdir);
     string_builder_t msg_path = sb_append(&subdir_path, FD(&msg->filename));
-    PROP(&e, open_path(&msg_path, fd, O_RDONLY) );
+    PROP(&e, dopen_path(&msg_path, O_RDONLY, 0, fd) );
 
     msg->open_fds++;
 
     return e;
 }
 
-// close a message in a thread-safe way; return the result of close()
-derr_t imaildir_dn_close_msg(imaildir_t *m, unsigned int uid_up, int *fd,
-        int *ret){
+// close a message in a view-safe way
+derr_t imaildir_dn_close_msg(imaildir_t *m, unsigned int uid_up, int *fd){
     derr_t e = E_OK;
     if(*fd < 0){
-        *ret = 0;
         return e;
     }
 
-    *ret = close(*fd);
+    // ignore return value of close on read-only file descriptor
+    close(*fd);
     *fd = -1;
 
     jsw_anode_t *node = jsw_afind(&m->msgs, &uid_up, NULL);

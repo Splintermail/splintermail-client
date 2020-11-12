@@ -576,12 +576,9 @@ static void loader_load(derr_t *e, loader_t *loader){
     loader->content = ie_dstr_new_from_fd(e, fd);
 
     // if imalidir fails in this call, this will overwrite e with E_IMAILDIR
-    int ret;
     PROP_GO(e,
-        imaildir_dn_close_msg(loader->m, loader->uid_up, &fd, &ret),
+        imaildir_dn_close_msg(loader->m, loader->uid_up, &fd),
     fail);
-    // ignore return value of close on read-only file descriptor
-    (void)ret;
 
 fail:
     return;

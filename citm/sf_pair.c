@@ -120,7 +120,7 @@ static derr_t sf_pair_append_req(sf_pair_t *sf_pair){
     string_builder_t tmp_path =
         sb_append(&sf_pair->dirmgr->path, FS("tmp"));
     string_builder_t path = sb_append(&tmp_path, FD(&file));
-    PROP_GO(&e, dstr_fwrite_path(&path, &append->content->dstr), fail);
+    PROP_GO(&e, dstr_write_path(&path, &append->content->dstr), fail);
 
     // step 2: copy some details from the APPEND command
     sf_pair->append.len = append->content->dstr.len;

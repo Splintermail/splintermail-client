@@ -71,7 +71,7 @@ derr_t key_tool_peer_list_load(key_tool_t* kt, const char* filename){
     kt->json.len = 0;
     kt->json_block.len = 0;
     // read the peer list file
-    e2 = dstr_fread_file(filename, &kt->json_block);
+    e2 = dstr_read_file(filename, &kt->json_block);
     CATCH(e2, E_OPEN, E_OS){
         RETHROW(&e, &e2, E_FS);
     }else PROP(&e, e2);

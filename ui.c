@@ -6,6 +6,7 @@
 #include <errno.h>
 
 #include "ui.h"
+#include "ui_harness.h"
 #include "libdstr/libdstr.h"
 #include "ditm.h"
 #include "api_client.h"
@@ -44,9 +45,9 @@ static derr_t load_os_config_files(dstr_t* config_text, opt_spec_t** spec,
     char* config_dir = getenv("XDG_CONFIG_HOME");
     if(config_dir){
         PROP(&e, FMT(&config_dir_conf, "%x/splintermail.conf", FS(config_dir)) );
-        if(file_r_access(config_dir_conf.data)){
+        if(harness.file_r_access(config_dir_conf.data)){
             config_dir_conf_start = config_text->len;
-            PROP(&e, dstr_fread_file(config_dir_conf.data, config_text) );
+            PROP(&e, dstr_read_file(config_dir_conf.data, config_text) );
             config_dir_conf_end = config_text->len;
         }
     }
@@ -55,17 +56,17 @@ static derr_t load_os_config_files(dstr_t* config_text, opt_spec_t** spec,
     char* home = getenv("HOME");
     if(home){
         PROP(&e, FMT(&home_dir_conf, "%x/.splintermail.conf", FS(home)) );
-        if(file_r_access(home_dir_conf.data)){
+        if(harness.file_r_access(home_dir_conf.data)){
             home_dir_conf_start = config_text->len;
-            PROP(&e, dstr_fread_file(home_dir_conf.data, config_text) );
+            PROP(&e, dstr_read_file(home_dir_conf.data, config_text) );
             home_dir_conf_end = config_text->len;
         }
     }
 
     // try to read /etc/splintermail.conf
-    if(file_r_access(default_conf.data)){
+    if(harness.file_r_access(default_conf.data)){
         default_conf_start = config_text->len;
-        PROP(&e, dstr_fread_file(default_conf.data, config_text) );
+        PROP(&e, dstr_read_file(default_conf.data, config_text) );
         default_conf_end = config_text->len;
     }
 
@@ -120,9 +121,9 @@ static derr_t load_os_config_files(dstr_t* config_text, opt_spec_t** spec,
     char* app_data = getenv("APPDATA");
     if(app_data){
         PROP(&e, FMT(&user_conf, "%x/splintermail/splintermail.conf", FS(app_data)) );
-        if(file_r_access(user_conf.data)){
+        if(harness.file_r_access(user_conf.data)){
             user_conf_start = config_text->len;
-            PROP(&e, dstr_fread_file(user_conf.data, config_text) );
+            PROP(&e, dstr_read_file(user_conf.data, config_text) );
             user_conf_end = config_text->len;
         }
     }
@@ -154,9 +155,9 @@ static derr_t load_os_config_files(dstr_t* config_text, opt_spec_t** spec,
         ORIG(&e, E_VALUE, "unable to get path of executable");
     }
     PROP(&e, FMT(&default_conf, "%x/splintermail.conf", FS(temp)) );
-    if(file_r_access(default_conf.data)){
+    if(harness.file_r_access(default_conf.data)){
         default_conf_start = config_text->len;
-        PROP(&e, dstr_fread_file(default_conf.data, config_text) );
+        PROP(&e, dstr_read_file(default_conf.data, config_text) );
         default_conf_end = config_text->len;
     }
 
@@ -194,7 +195,7 @@ static derr_t get_os_default_account_dir(dstr_t* account_dir, bool* account_dir_
     char* appdata = getenv("APPDATA");
     if(appdata){
         PROP(&e, FMT(account_dir, "%x/splintermail", FS(appdata)) );
-        *account_dir_access = dir_rw_access(account_dir->data, true);
+        *account_dir_access = harness.dir_rw_access(account_dir->data, true);
     }
 #else // not _WIN32
 #ifdef __APPLE__
@@ -202,24 +203,24 @@ static derr_t get_os_default_account_dir(dstr_t* account_dir, bool* account_dir_
     char* home = getenv("HOME");
     if(home){
         PROP(&e, FMT(account_dir, "%x/Library/splintermail", FS(home)) );
-        *account_dir_access = dir_rw_access(account_dir->data, true);
+        *account_dir_access = harness.dir_rw_access(account_dir->data, true);
     }
 #else
     // Linux default account_dir is $XDG_CACHE_HOME/splintermail
     char* cache = getenv("XDG_CACHE_HOME");
     if(cache){
         PROP(&e, FMT(account_dir, "%x/splintermail", FS(cache)) );
-        *account_dir_access = dir_rw_access(account_dir->data, true);
+        *account_dir_access = harness.dir_rw_access(account_dir->data, true);
     }else{
         // or $HOME/.cache/splintermail
         char* home = getenv("HOME");
         if(home){
             // first make sure there is a .cache directory
             PROP(&e, FMT(account_dir, "%x/.cache", FS(home)) );
-            if(dir_rw_access(account_dir->data, true)){
+            if(harness.dir_rw_access(account_dir->data, true)){
                 // then make sure there is a a splintermail subdir
                 PROP(&e, FMT(account_dir, "/splintermail") );
-                *account_dir_access = dir_rw_access(account_dir->data, true);
+                *account_dir_access = harness.dir_rw_access(account_dir->data, true);
             }
         }
     }
@@ -302,7 +303,7 @@ static derr_t check_api_token_register(const dstr_t* account_dir,
     DSTR_VAR(temp, 4096);
     PROP(&e, FMT(&temp, "%x/%x/noregister", FD(account_dir), FD(user)) );
     // if a noregister file exists, don't do anything
-    if(file_r_access(temp.data)){
+    if(harness.file_r_access(temp.data)){
         LOG_DEBUG("found noregister for user %x, not registering\n", FD(user));
         return e;
     }
@@ -318,7 +319,7 @@ static derr_t check_api_token_register(const dstr_t* account_dir,
             // make sure the user directory exists
             temp.len = 0;
             PROP(&e, FMT(&temp, "%x/%x", FD(account_dir), FD(user)) );
-            if(!dir_w_access(temp.data, true)){
+            if(!harness.dir_w_access(temp.data, true)){
                 LOG_DEBUG("no write access to save API token; not registering\n");
                 return e;
             }
@@ -331,7 +332,7 @@ static derr_t check_api_token_register(const dstr_t* account_dir,
             // make sure the user directory exists
             temp.len = 0;
             PROP(&e, FMT(&temp, "%x/%x", FD(account_dir), FD(user)) );
-            if(!dir_w_access(temp.data, true)){
+            if(!harness.dir_w_access(temp.data, true)){
                 LOG_DEBUG("no write access to save noregister; doing nothing\n");
                 return e;
             }
@@ -448,13 +449,13 @@ int do_main(int argc, char* argv[], bool windows_service){
         // this should never fail because o_config.val comes from argv
         PROP_GO(&e, dstr_null_terminate(&o_config.val), cu);
         // if `-c` or `--config` was specified, load that only
-        if(file_r_access(o_config.val.data) == false){
+        if(harness.file_r_access(o_config.val.data) == false){
             fprintf(stderr, "unable to access config file \"%s\"\n",
                             o_config.val.data);
             retval = 2;
             goto cu;
         }
-        PROP_GO(&e, dstr_fread_file(o_config.val.data, &config_text), cu);
+        PROP_GO(&e, dstr_read_file(o_config.val.data, &config_text), cu);
         PROP_GO(&e, conf_parse(&config_text, spec, speclen), cu);
     }else{
         // if no `-c` or `--config`, load the OS-specific file locations
@@ -581,7 +582,7 @@ int do_main(int argc, char* argv[], bool windows_service){
     if(o_account_dir.found){
         PROP_GO(&e, FMT(&account_dir, "%x", FD(&o_account_dir.val)), cu);
         // make sure we can access the account_dir
-        account_dir_access = dir_rw_access(account_dir.data, true);
+        account_dir_access = harness.dir_rw_access(account_dir.data, true);
     }else{
         // default is determined by OS and environment variables
         PROP_GO(&e, get_os_default_account_dir(&account_dir, &account_dir_access), cu);
@@ -605,8 +606,11 @@ int do_main(int argc, char* argv[], bool windows_service){
         // wrap "user" and "nfolders" in struct for the "for_each_file" hook
         struct user_search_data_t search_data = {&nfolders, &user};
         // loop through files in the folder in a platform-independent way
-        PROP_GO(&e, for_each_file_in_dir(account_dir.data, user_search_hook,
-                                      (void*)&search_data), cu);
+        PROP_GO(&e,
+            harness.for_each_file_in_dir(
+                account_dir.data, user_search_hook, (void*)&search_data
+            ),
+        cu);
         // make sure we got a username
         if(nfolders == 1){
             user_found = true;
@@ -630,11 +634,11 @@ int do_main(int argc, char* argv[], bool windows_service){
         // start the creds_path
         PROP_GO(&e, FMT(&creds_path, "%x/%x", FD(&account_dir), FD(&user)), cu);
         // if the folder doesn't exist, we know we can make it
-        if(!exists(creds_path.data)){
+        if(!harness.exists(creds_path.data)){
             user_dir_access = true;
             can_register = true;
         // if it does exist we must have rw access to it
-        }else if(dir_rw_access(creds_path.data, false)){
+        }else if(harness.dir_rw_access(creds_path.data, false)){
             user_dir_access = true;
         }else{
             e2 = FFMT(stderr, NULL, "Insufficient permissions for user directory %x; "
@@ -650,9 +654,9 @@ int do_main(int argc, char* argv[], bool windows_service){
         // complete the creds_path
         PROP_GO(&e, FMT(&creds_path, "/api_token.json"), cu);
         // check if the file already exists
-        if(exists(creds_path.data)){
+        if(harness.exists(creds_path.data)){
             // check if we have RW access to it
-            if(file_rw_access(creds_path.data)){
+            if(harness.file_rw_access(creds_path.data)){
                 /* no need to set can_register = true because we aren't
                    auto-deleting (or overwriting) bad files here. */
                 // can_register = true;

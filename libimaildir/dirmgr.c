@@ -534,7 +534,7 @@ derr_t dirmgr_rename(dirmgr_t *dm, const dstr_t *old, const dstr_t *new){
     // do the rename
     PROP(&e, exists_path(&src_path, &exists) );
     if(exists){
-        PROP(&e, rename_path(&src_path, &dst_path) );
+        PROP(&e, drename_path(&src_path, &dst_path) );
     }
 
     return e;

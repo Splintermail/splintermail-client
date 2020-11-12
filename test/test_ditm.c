@@ -608,13 +608,13 @@ static derr_t test_ignore_list(void){
 
     // read the result into memory
     DSTR_VAR(result, 4096);
-    PROP_GO(&e, dstr_fread_file("test_ignore_dir/ignore.json", &result), cu2);
+    PROP_GO(&e, dstr_read_file("test_ignore_dir/ignore.json", &result), cu2);
 
     // read the answer into memory
     path.len = 0;
     PROP_GO(&e, FMT(&path, "%x/ignore_list/out", FS(g_test_files)), cu2);
     DSTR_VAR(answer, 4096);
-    PROP_GO(&e, dstr_fread_file(path.data, &answer), cu2);
+    PROP_GO(&e, dstr_read_file(path.data, &answer), cu2);
 
     if(dstr_cmp(&result, &answer) != 0){
         ORIG_GO(&e, E_VALUE, "ignore list result did not match answer", cu2);

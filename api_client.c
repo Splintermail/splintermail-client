@@ -22,7 +22,7 @@ derr_t api_token_read(const char* path, api_token_t* token){
 
     // read the file into memory
     DSTR_VAR(creds, 1024);
-    e2 = dstr_fread_file(path, &creds);
+    e2 = dstr_read_file(path, &creds);
     // if we got a fixedsize error it is not a valid file
     CATCH(e2, E_FIXEDSIZE){
         LOG_WARN("api credential file seems too long, ignoring\n");

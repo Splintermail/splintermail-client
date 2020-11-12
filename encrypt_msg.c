@@ -244,7 +244,7 @@ static derr_t mysql_encrypt(const dstr_t *debug_sock){
     }else{
         // load the mysql config from a file
         DSTR_VAR(conf_text, 256);
-        PROP(&e, dstr_fread_file("/etc/encrypt_msg/encrypt_msg.conf", &conf_text) );
+        PROP(&e, dstr_read_file("/etc/encrypt_msg/encrypt_msg.conf", &conf_text) );
         // parse the file
         LIST_VAR(dstr_t, conf, 4);
         DSTR_STATIC(pattern, "\n");

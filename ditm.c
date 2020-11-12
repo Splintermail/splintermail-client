@@ -1404,7 +1404,7 @@ derr_t ignore_list_load(ignore_list_t* il, const dstr_t* userdir){
     }else PROP_GO(&e, e2, f_text);
 
     // read the file
-    e2 = dstr_fread_file(path.data, &text);
+    e2 = dstr_read_file(path.data, &text);
     // we can recover from not being able to open the file
     CATCH(e2, E_OPEN, E_OS){
         LOG_WARN("unable to load ignore.json\n");

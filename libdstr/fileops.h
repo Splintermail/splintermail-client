@@ -72,8 +72,6 @@ derr_t symlink_path(const string_builder_t* to, const string_builder_t* at);
 #endif // _WIN32
 
 derr_t chmod_path(const string_builder_t* sb, mode_t mode);
-derr_t dstr_fread_path(const string_builder_t* sb, dstr_t* buffer);
-derr_t dstr_fwrite_path(const string_builder_t* sb, const dstr_t* buffer);
 
 /* If *eno!=NULL then stat_path can only throw E_NOMEM */
 derr_t stat_path(const string_builder_t* sb, struct stat* out, int* eno);
@@ -102,7 +100,36 @@ derr_t file_copy_path(const string_builder_t* sb_from,
 derr_t touch(const char* path);
 derr_t touch_path(const string_builder_t* sb);
 
-derr_t fopen_path(const string_builder_t *sb, const char *mode, FILE **out);
-derr_t open_path(const string_builder_t *sb, int *out, int flags, ...);
+derr_t drename(const char *src, const char *dst);
+derr_t drename_path(const string_builder_t *src, const string_builder_t *dst);
 
-derr_t rename_path(const string_builder_t *src, const string_builder_t *dst);
+derr_t dfopen(const char *path, const char *mode, FILE **out);
+derr_t dfopen_path(const string_builder_t *sb, const char *mode, FILE **out);
+
+// avoid the vararg in libc's open()
+derr_t dopen(const char *path, int flags, int mode, int *fd);
+derr_t dopen_path(const string_builder_t *sb, int flags, int mode, int *out);
+
+derr_t dfsync(int fd);
+// combines fflush and fysnc
+derr_t dffsync(FILE *f);
+
+// for when you were going to check the error on close
+derr_t dclose(int fd);
+derr_t dfclose(FILE *f);
+
+// read an entire file to memory
+derr_t dstr_read_file(const char* filename, dstr_t* buffer);
+/*  throws : E_NOMEM (reading into *buffer)
+             E_FIXEDSIZE (reading into *buffer)
+             E_OS (reading)
+             E_OPEN */
+
+derr_t dstr_read_path(const string_builder_t* sb, dstr_t* buffer);
+
+// write an entire file from memory
+derr_t dstr_write_file(const char* filename, const dstr_t* buffer);
+/*  throws : E_OS
+             E_OPEN */
+
+derr_t dstr_write_path(const string_builder_t* sb, const dstr_t* buffer);

@@ -51,7 +51,7 @@ static derr_t script_new(
 
     // actually read the script from file
     string_builder_t fullpath = sb_append(path, FD(file));
-    PROP_GO(&e, dstr_fread_path(&fullpath, &script->content), fail_content);
+    PROP_GO(&e, dstr_read_path(&fullpath, &script->content), fail_content);
 
     *out = script;
     return e;
@@ -366,7 +366,7 @@ static derr_t mig_override(MYSQL *sql, const dstr_t *path){
     // read content of file
     dstr_t content;
     PROP(&e, dstr_new(&content, 256) );
-    PROP_GO(&e, dstr_fread_path(&SB(FD(path)), &content), cu);
+    PROP_GO(&e, dstr_read_path(&SB(FD(path)), &content), cu);
 
     DSTR_STATIC(query,
         "INSERT INTO migmysql (id, name, undo_script) VALUES (?,?,?)"

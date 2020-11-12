@@ -277,7 +277,7 @@ static derr_t test_conf_parse(void){
 
     // read one config file to make sure we are parsing right
     DSTR_VAR(text1, 4096);
-    PROP(&e, dstr_fread_file(goodconf.data, &text1) );
+    PROP(&e, dstr_read_file(goodconf.data, &text1) );
     PROP(&e, conf_parse(&text1, spec, speclen) );
     EXPECT("option1 hey there buddy\n"
            "option2 white   space\t test\n"
@@ -285,7 +285,7 @@ static derr_t test_conf_parse(void){
 
     // read another config file to make sure we don't overwrite existing values
     DSTR_VAR(text2, 4096);
-    PROP(&e, dstr_fread_file(goodconf2.data, &text2) );
+    PROP(&e, dstr_read_file(goodconf2.data, &text2) );
     PROP(&e, conf_parse(&text2, spec, speclen) );
     EXPECT("option1 hey there buddy\n"
            "option2 white   space\t test\n"
@@ -296,7 +296,7 @@ static derr_t test_conf_parse(void){
     // now make sure that we can't read any bad config files
     {
         DSTR_VAR(text, 4096);
-        PROP(&e, dstr_fread_file(badconf1.data, &text) );
+        PROP(&e, dstr_read_file(badconf1.data, &text) );
         e2 = conf_parse(&text, spec, speclen);
         CATCH(e2, E_VALUE){
             // we are expecting to puke on this input; do nothing
@@ -308,7 +308,7 @@ static derr_t test_conf_parse(void){
     }
     {
         DSTR_VAR(text, 4096);
-        PROP(&e, dstr_fread_file(badconf2.data, &text) );
+        PROP(&e, dstr_read_file(badconf2.data, &text) );
         e2 = conf_parse(&text, spec, speclen);
         CATCH(e2, E_VALUE){
             // we are expecting to puke on this input; do nothing
@@ -320,7 +320,7 @@ static derr_t test_conf_parse(void){
     }
     {
         DSTR_VAR(text, 4096);
-        PROP(&e, dstr_fread_file(badconf3.data, &text) );
+        PROP(&e, dstr_read_file(badconf3.data, &text) );
         e2 = conf_parse(&text, spec, speclen);
         CATCH(e2, E_VALUE){
             // we are expecting to puke on this input; do nothing
