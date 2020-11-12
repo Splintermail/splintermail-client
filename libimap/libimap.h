@@ -11,5 +11,6 @@
 #include "write.h"
 
 #include "imf.h"
+#include "smtp_resp.h"
 
 #endif // LIBIMAP_H

@@ -154,6 +154,17 @@ const dstr_t *imap_resp_type_to_dstr(imap_resp_type_t type){
 }
 
 
+dstr_t token_extend(dstr_t start, dstr_t end){
+    size_t len = (size_t)(end.data - start.data) + end.len;
+    return (dstr_t){
+        .data = start.data,
+        .len = len,
+        .size = len,
+        .fixed_size = true,
+    };
+}
+
+
 ie_dstr_t *ie_dstr_new_empty(derr_t *e){
     if(is_error(*e)) goto fail;
 
@@ -222,6 +233,20 @@ ie_dstr_t *ie_dstr_add(derr_t *e, ie_dstr_t *list, ie_dstr_t *new){
 fail:
     ie_dstr_free(list);
     ie_dstr_free(new);
+    return NULL;
+}
+
+ie_dstr_t *ie_dstr_concat(derr_t *e, ie_dstr_t *a, ie_dstr_t *b){
+    if(is_error(*e)) goto fail;
+
+    PROP_GO(e, dstr_append(&a->dstr, &b->dstr), fail);
+
+    ie_dstr_free(b);
+    return a;
+
+fail:
+    ie_dstr_free(a);
+    ie_dstr_free(b);
     return NULL;
 }
 

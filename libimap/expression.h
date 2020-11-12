@@ -788,6 +788,8 @@ const dstr_t *ie_status_attr_to_dstr(ie_status_attr_t sa);
 const dstr_t *imap_cmd_type_to_dstr(imap_cmd_type_t type);
 const dstr_t *imap_resp_type_to_dstr(imap_resp_type_t type);
 
+dstr_t token_extend(dstr_t start, dstr_t end);
+
 /* Bison-friendly API: errors are kept in the parser, all functions return
    an expression type, even functions which really just modify some other
    object.  This means that in error situations, we can easily call *_free() on
@@ -813,6 +815,8 @@ ie_dstr_t *ie_dstr_append(derr_t *e, ie_dstr_t *d, const dstr_t *token,
         keep_type_t type);
 // append to the linked list, not the string
 ie_dstr_t *ie_dstr_add(derr_t *e, ie_dstr_t *list, ie_dstr_t *new);
+// append the text of the second string to the first, then free the second
+ie_dstr_t *ie_dstr_concat(derr_t *e, ie_dstr_t *a, ie_dstr_t *b);
 void ie_dstr_free(ie_dstr_t *d);
 // free everything but the dstr_t
 void ie_dstr_free_shell(ie_dstr_t *d);

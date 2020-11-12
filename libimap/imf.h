@@ -38,8 +38,6 @@ typedef struct {
 } imf_t;
 DEF_STEAL_PTR(imf_t);
 
-dstr_t token_extend(dstr_t start, dstr_t end);
-
 imf_hdr_t *imf_hdr_new(derr_t *e, dstr_t bytes, dstr_t name,
         imf_hdr_type_e type, imf_hdr_arg_u arg);
 imf_hdr_t *imf_hdr_add(derr_t *e, imf_hdr_t *list, imf_hdr_t *new);

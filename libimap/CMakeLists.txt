@@ -5,6 +5,7 @@ set(raw_srcs
     parse.c
     read.c
     write.c
+    smtp_resp.c
 )
 
 foreach(src ${raw_srcs})
@@ -53,6 +54,18 @@ add_custom_command(
     COMMENT "generating imf parser" VERBATIM
     )
 
+# generate the smtp_resp parser
+set(smtp_resp_parse_in "${CMAKE_CURRENT_SOURCE_DIR}/smtp_resp.y")
+set(smtp_resp_parse_out "${PROJECT_BINARY_DIR}/smtp_resp.tab.c")
+set(bison_header "${PROJECT_BINARY_DIR}/smtp_resp.tab.h")
+add_custom_command(
+    OUTPUT "${smtp_resp_parse_out}" "${bison_header}"
+    COMMAND "${BISON}" -d -o "${smtp_resp_parse_out}" "${smtp_resp_parse_in}" --report=state
+    DEPENDS "${smtp_resp_parse_in}"
+    COMMENT "generating smtp_resp parser" VERBATIM
+)
+
+
 if("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU")
     source_compile_options("${imap_parse_out}" "-Wno-sign-conversion")
     source_compile_options("${imap_parse_out}" "-Wno-conversion")
@@ -68,17 +81,23 @@ define_file_logname_for_source("${imap_parse_in}" "${imap_parse_out}")
 define_file_logname_for_source("${imf_scan_in}" "${imf_scan_out}")
 define_file_logname_for_source("${imf_parse_in}" "${imf_parse_out}")
 
+define_file_logname_for_source("${smtp_resp_parse_in}" "${smtp_resp_parse_out}")
+
 # Work around missing prototype and poor enum handling with bison 3.6:
 if("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU")
     source_compile_options("${imap_parse_out}" "-Wno-missing-prototypes")
     source_compile_options("${imap_parse_out}" "-Wno-switch-enum")
     source_compile_options("${imf_parse_out}" "-Wno-missing-prototypes")
     source_compile_options("${imf_parse_out}" "-Wno-switch-enum")
+    source_compile_options("${smtp_resp_parse_out}" "-Wno-missing-prototypes")
+    source_compile_options("${smtp_resp_parse_out}" "-Wno-switch-enum")
 elseif("${CMAKE_C_COMPILER_ID}" MATCHES "Clang")
     source_compile_options("${imap_parse_out}" "-Wno-missing-prototypes")
     source_compile_options("${imap_parse_out}" "-Wno-switch-enum")
     source_compile_options("${imf_parse_out}" "-Wno-missing-prototypes")
     source_compile_options("${imf_parse_out}" "-Wno-switch-enum")
+    source_compile_options("${smtp_resp_parse_out}" "-Wno-missing-prototypes")
+    source_compile_options("${smtp_resp_parse_out}" "-Wno-switch-enum")
 elseif("${CMAKE_C_COMPILER_ID}" STREQUAL "MSVC")
     # flags for MVSC (VS 2017)
 endif()
@@ -91,6 +110,7 @@ add_library(
     "${imap_parse_out}"
     "${imf_scan_out}"
     "${imf_parse_out}"
+    "${smtp_resp_parse_out}"
 )
 target_link_libraries(imap dstr)
 default_compile_options(imap TRUE)

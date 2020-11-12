@@ -3,17 +3,6 @@
 #include <libimap/libimap.h>
 
 
-dstr_t token_extend(dstr_t start, dstr_t end){
-    size_t len = (size_t)(end.data - start.data) + end.len;
-    return (dstr_t){
-        .data = start.data,
-        .len = len,
-        .size = len,
-        .fixed_size = true,
-    };
-}
-
-
 static void imf_hdr_arg_free(imf_hdr_type_e type, imf_hdr_arg_u arg){
     switch(type){
         case IMF_HDR_UNSTRUCT: /* nothing to free */ (void)arg; break;
