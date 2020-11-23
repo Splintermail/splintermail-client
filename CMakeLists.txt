@@ -300,6 +300,7 @@ set(TEST_OBJ_TGTS
 set(TEST_EXE_TGTS
     test_common
     test_fileops
+    test_system
     test_pop_server
     test_ditm
     test_ditm_errors

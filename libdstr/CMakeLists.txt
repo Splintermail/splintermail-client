@@ -11,6 +11,7 @@ add_library(
     jsw_atree.c
     hashmap.c
     link.c
+    system.c
 )
 default_compile_options(dstr TRUE)
 define_file_logname_for_target(dstr)

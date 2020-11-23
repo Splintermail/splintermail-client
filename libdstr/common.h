@@ -174,6 +174,23 @@ derr_t dstr_new(dstr_t* ds, size_t size);
 
 void dstr_free(dstr_t* ds);
 
+// I thought of this but didn't implement it, because it is only safe to allow
+// this sort of auto-allocate usage if you zeroize the input parameters, so you
+// are not really getting rid of any "gotchas" at all.
+// /* A clean api for implementing things like sb_append which would have will
+//    have to make multiple calls to dstr_append.  If you are passed an
+//    unallocated output, and you fail several calls in, you want to ensure that
+//    you don't leave the output in a possibly-allocated state (which would be a
+//    pain in the ass for the caller).  However, you don't want to always allocate
+//    a local dstr_t because that would not work transparently with fixed-size
+//    dstr_t's.  So you call this at the beginning of your function, and then in
+//    error cases you free free_on_error, which will conveniently be NULL in cases
+//    where freeing the output is not necessary */
+// derr_t dstr_maybe_alloc_quiet(
+//     dstr_t *maybe_needs_alloc,
+//     dstr_t** free_on_error,
+// );
+
 // function "templates"
 #define LIST(type) list_ ## type
 #define LIST_NEW(type, list, num_items) list_ ## type ## _new(list, num_items)
@@ -327,6 +344,9 @@ derr_t dstr_grow(dstr_t* ds, size_t min_size);
 // note: it IS safe to do "a = dstr_sub(a, x, y)"
 dstr_t dstr_sub(const dstr_t* in, size_t start, size_t end);
 
+// this is the right api, use SIZE_MAX instead for 0 for end
+dstr_t dstr_sub2(const dstr_t in, size_t start, size_t end);
+
 // result is <0, =0, or >0 if a is <b, =b, or >b, respectively
 // Its just a byte comparison, its not UTF8-smart
 // because there's multiple ways to encode the same accent in UTF8
@@ -453,6 +473,9 @@ derr_t dstr_append(dstr_t* dstr, const dstr_t* new_text);
 /* throws: E_FIXEDSIZE
            E_NOMEM */
 
+// like dupstr
+derr_t dstr_dupstr(const dstr_t in, char** out);
+
 /* splits a dstr_t into a LIST(dstr_t) based on a single pattern.  The
    resulting dstr_t's in the output will all point into the original text */
 derr_t dstr_split(const dstr_t* text, const dstr_t* pattern,
@@ -469,6 +492,38 @@ derr_t dstr_split(const dstr_t* text, const dstr_t* pattern,
 derr_t dstr_split_soft(const dstr_t *text, const dstr_t *pattern,
         LIST(dstr_t)* out);
 /* throws : E_NOMEM */
+
+derr_t _dstr_split2(
+    const dstr_t text,
+    const dstr_t pattern,
+    size_t *len,
+    dstr_t **outs,
+    size_t nouts
+);
+#define dstr_split2(text, pattern, len, ...) \
+    _dstr_split2( \
+        (text), \
+        (pattern), \
+        (len), \
+        &(dstr_t*[]){&(dstr_t){0}, __VA_ARGS__}[1], \
+        sizeof((dstr_t*[]){&(dstr_t){0}, __VA_ARGS__}) / sizeof(dstr_t*) - 1 \
+    )
+
+void _dstr_split2_soft(
+    const dstr_t text,
+    const dstr_t pattern,
+    size_t *len,
+    dstr_t **outs,
+    size_t nouts
+);
+#define dstr_split2_soft(text, pattern, len, ...) \
+    _dstr_split2_soft( \
+        (text), \
+        (pattern), \
+        (len), \
+        &(dstr_t*[]){&(dstr_t){0}, __VA_ARGS__}[1], \
+        sizeof((dstr_t*[]){&(dstr_t){0}, __VA_ARGS__}) / sizeof(dstr_t*) - 1 \
+    )
 
 // remove bytes from the left side of the string
 // this will do memcpy or memmove appropriately
@@ -503,6 +558,11 @@ bool in_list(const dstr_t* val, const LIST(dstr_t)* list, size_t* idx);
    buffer.  dstr_read() will grow the buffer before it tries to read if
    necessary. */
 derr_t dstr_read(int fd, dstr_t* buffer, size_t count, size_t* amnt_read);
+/*  throws : E_NOMEM
+             E_FIXEDSIZE
+             E_OS */
+
+derr_t dstr_read_all(int fd, dstr_t *out);
 /*  throws : E_NOMEM
              E_FIXEDSIZE
              E_OS */

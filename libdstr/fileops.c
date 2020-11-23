@@ -118,6 +118,20 @@ derr_t dstat(const char *path, struct stat *s, bool *exists){
     return e;
 }
 
+derr_t dstat_path(const string_builder_t *sb, struct stat *s, bool *exists){
+    derr_t e = E_OK;
+    DSTR_VAR(stack, 256);
+    dstr_t heap = {0};
+    dstr_t* path;
+    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
+
+    PROP_GO(&e, dstat(path->data, s, exists), cu);
+
+cu:
+    dstr_free(&heap);
+    return e;
+}
+
 derr_t is_file(const char *path, bool *res){
     derr_t e = E_OK;
     *res = false;

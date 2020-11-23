@@ -108,6 +108,25 @@ dstr_t dstr_sub(const dstr_t* in, size_t start, size_t end){
     return out;
 }
 
+dstr_t dstr_sub2(const dstr_t in, size_t start, size_t end){
+    dstr_t out;
+
+    // decide start-offset
+    size_t so = MIN(in.len, start);
+    // decide end-offset
+    size_t eo = MIN(in.len, end);
+
+    // don't let eo < so
+    eo = MAX(so, eo);
+
+    out.data = in.data + so;
+    out.len = eo - so;
+    out.size = out.len;
+    out.fixed_size = true;
+
+    return out;
+}
+
 int dstr_cmp(const dstr_t* a, const dstr_t* b){
     // two NULL strings are considered matching
     if(!a->data && !b->data){
@@ -737,6 +756,19 @@ derr_t dstr_copy(const dstr_t* in, dstr_t* out){
     return e;
 }
 
+
+// like dupstr
+derr_t dstr_dupstr(const dstr_t in, char** out){
+    derr_t e = E_OK;
+    *out = NULL;
+
+    PROP(&e, dmalloc(in.len + 1, (void*)out) );
+    memcpy(*out, in.data, in.len);
+    (*out)[in.len] = '\0';
+
+    return e;
+}
+
 static derr_t do_dstr_split(const dstr_t* text, const dstr_t* pattern,
         LIST(dstr_t)* out, bool soft){
     derr_t e = E_OK;
@@ -814,6 +846,101 @@ derr_t dstr_split_soft(const dstr_t* text, const dstr_t* pattern,
     derr_t e = E_OK;
     PROP(&e, do_dstr_split(text, pattern, out, true) );
     return e;
+}
+
+static derr_t do_dstr_split2(
+    const dstr_t text,
+    const dstr_t pattern,
+    size_t *len_out,
+    dstr_t **outs,
+    size_t nouts,
+    bool soft
+){
+    derr_t e = E_OK;
+
+    // zeroize outputs
+    for(size_t i = 0; i < nouts; i++){
+        *outs[i] = (dstr_t){0};
+    }
+    // in the special case of nouts=2; len_out may be actually useless
+    if(len_out) *len_out = 0;
+    size_t len = 0;
+
+    if(nouts < 1){
+        ORIG(&e, E_FIXEDSIZE, "zero-length output array");
+    }
+
+    // get ready for dstr_find
+    // TODO: find a better way than this
+    dstr_t pat = dstr_sub2(pattern, 0, SIZE_MAX);
+    const LIST(dstr_t) patterns = {&pat, 1, 1, true};
+    char* position;
+
+    size_t word_start = 0;
+    size_t word_end;
+
+    bool should_continue = true;
+    while(should_continue){
+        // check if there's another string
+        dstr_t sub = dstr_sub2(text, word_start, text.len);
+        position = dstr_find(&sub, &patterns, NULL, NULL);
+
+        if(position != NULL){
+            // if we have a break, add a word to the list
+            word_end = (uintptr_t)position - (uintptr_t)text.data;
+        }else{
+            // if no more breaks, add one last word to the list
+            word_end = text.len;
+            should_continue = false;
+        }
+
+        // append the new dstr that points into the text
+        dstr_t new = dstr_sub2(text, word_start, word_end);
+
+        // check if the list is full
+        if(len == nouts){
+            if(soft){
+                // set the last token to point to the remainder of the text
+                dstr_t *last = outs[len-1];
+                last->len = text.len -
+                    ((uintptr_t)last->data - (uintptr_t)text.data);
+                // return without error
+                break;
+            }else{
+                ORIG(&e, E_FIXEDSIZE, "too many words");
+            }
+        }
+
+        *outs[len++] = new;
+
+        // get ready for the next dstr_find()
+        word_start = word_end + pattern.len;
+    }
+
+    if(len_out) *len_out = len;
+    return e;
+}
+
+derr_t _dstr_split2(
+    const dstr_t text,
+    const dstr_t pattern,
+    size_t *len,
+    dstr_t **outs,
+    size_t nouts
+){
+    derr_t e = E_OK;
+    PROP(&e, do_dstr_split2(text, pattern, len, outs, nouts, false) );
+    return e;
+}
+
+void _dstr_split2_soft(
+    const dstr_t text,
+    const dstr_t pattern,
+    size_t *len,
+    dstr_t **outs,
+    size_t nouts
+){
+    DROP_CMD( do_dstr_split2(text, pattern, len, outs, nouts, true) );
 }
 
 void dstr_leftshift(dstr_t* buffer, size_t count){
@@ -928,6 +1055,37 @@ derr_t dstr_read(int fd, dstr_t* buffer, size_t count, size_t* amnt_read){
     }
     buffer->len += (size_t)ar;
     if(amnt_read) *amnt_read = (size_t)ar;
+    return e;
+}
+
+derr_t dstr_read_all(int fd, dstr_t *out){
+    derr_t e = E_OK;
+
+    // prepare a revertable state
+    dstr_t *freeable = NULL;
+    size_t old_len = out->len;
+    if(out->size == 0){
+        PROP(&e, dstr_grow(out, 1024) );
+        freeable = out;
+    }
+
+    size_t amnt_read;
+    do {
+        size_t space = out->size - out->len;
+        if(!space){
+            PROP_GO(&e, dstr_grow(out, out->len * 2), fail);
+            space = out->len;
+        }
+
+        PROP_GO(&e, dstr_read(fd, out, 0, &amnt_read),  fail);
+    } while(amnt_read);
+
+    return e;
+
+fail:
+    // revert changes
+    dstr_free(freeable);
+    out->len = old_len;
     return e;
 }
 

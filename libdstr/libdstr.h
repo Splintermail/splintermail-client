@@ -9,6 +9,7 @@
 
 #include "common.h"
 
+#include "system.h"
 #include "fileops.h"
 #include "netops.h"
 #include "json.h"

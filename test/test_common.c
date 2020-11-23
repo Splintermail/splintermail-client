@@ -319,6 +319,83 @@ cleanup:
     return e;
 }
 
+static derr_t test_dstr_split2(void){
+    derr_t e = E_OK;
+    LOG_INFO("----- test dstr_split2 ------------------\n");
+    // text to split
+    DSTR_STATIC(text, "abcd eeee fghi");
+    DSTR_STATIC(pattern, " ");
+    dstr_t o0, o1, o2, o3, o4;
+    size_t len;
+    PROP(&e, dstr_split2(text, pattern, &len, &o0, &o1, &o2, &o3, &o4) );
+
+    if(len != 3) ORIG(&e, E_VALUE, "FAIL");
+    EXP_VS_GOT(&DSTR_LIT("abcd"), &o0);
+    EXP_VS_GOT(&DSTR_LIT("eeee"), &o1);
+    EXP_VS_GOT(&DSTR_LIT("fghi"), &o2);
+
+    // see if splitting the pattern on itself results in 2 empty strings
+    PROP(&e, dstr_split2(pattern, pattern, &len, &o0, &o1, &o2, &o3, &o4) );
+    if(len != 2) ORIG(&e, E_VALUE, "FAIL");
+    EXP_VS_GOT(&DSTR_LIT(""), &o0);
+    EXP_VS_GOT(&DSTR_LIT(""), &o1);
+
+    // make sure repeat patterns are respected
+    PROP(&e, dstr_split2(text, DSTR_LIT("e"), &len, &o0, &o1, &o2, &o3, &o4) );
+    if(len != 5) ORIG(&e, E_VALUE, "FAIL");
+    EXP_VS_GOT(&DSTR_LIT("abcd "), &o0);
+    EXP_VS_GOT(&DSTR_LIT(""), &o1);
+    EXP_VS_GOT(&DSTR_LIT(""), &o2);
+    EXP_VS_GOT(&DSTR_LIT(""), &o3);
+    EXP_VS_GOT(&DSTR_LIT(" fghi"), &o4);
+
+    // make sure empty strings return empty strings
+    PROP(&e, dstr_split2(DSTR_LIT(""), pattern, &len, &o0, &o1, &o2, &o3, &o4) );
+    if(len != 1) ORIG(&e, E_VALUE, "FAIL");
+    EXP_VS_GOT(&DSTR_LIT(""), &o0);
+
+cleanup:
+    return e;
+}
+
+static derr_t test_dstr_split2_soft(void){
+    derr_t e = E_OK;
+    LOG_INFO("----- test dstr_split2_soft -------------\n");
+    // text to split
+    DSTR_STATIC(text, "1 2 3 and all the rest");
+    DSTR_STATIC(pattern, " ");
+    dstr_t o0, o1, o2;
+
+    DSTR_STATIC(s0, "1");
+    DSTR_STATIC(s1, "2");
+    DSTR_STATIC(s2, "3 and all the rest");
+
+    // make sure we can't do a normal split
+    size_t len;
+    derr_t e2 = dstr_split2(text, pattern, &len, &o0, &o1, &o2);
+    CATCH(e2, E_FIXEDSIZE){
+        // we expect this, do nothing
+        DROP_VAR(&e2);
+    }else{
+        TRACE(&e, "expected E_FIXEDSIZE but got %x\n",
+                FD(error_to_dstr(e2.type)));
+        DROP_VAR(&e2);
+        ORIG(&e, E_VALUE, "FAIL");
+    }
+
+    // retry with soft
+    dstr_split2_soft(text, pattern, &len, &o0, &o1, &o2);
+    if(len != 3) ORIG(&e, E_VALUE, "FAIL");
+
+    EXP_VS_GOT(&s0, &o0);
+    EXP_VS_GOT(&s1, &o1);
+    EXP_VS_GOT(&s2, &o2);
+
+cleanup:
+    return e;
+}
+
+
 static derr_t test_dstr_tod(void){
     derr_t e = E_OK;
     LOG_INFO("----- test dstr_tod ---------------------\n");
@@ -718,6 +795,8 @@ int main(int argc, char** argv){
     PROP_GO(&e, test_begin_end_with(),       test_fail);
     PROP_GO(&e, test_dstr_split(),           test_fail);
     PROP_GO(&e, test_dstr_split_soft(),      test_fail);
+    PROP_GO(&e, test_dstr_split2(),          test_fail);
+    PROP_GO(&e, test_dstr_split2_soft(),     test_fail);
     PROP_GO(&e, test_dstr_tod(),             test_fail);
     PROP_GO(&e, test_dstr_leftshift(),       test_fail);
     PROP_GO(&e, test_list_append(),          test_fail);

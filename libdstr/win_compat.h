@@ -33,6 +33,9 @@
     #define compat_lseek _lseek
     #define compat_dup _dup
 
+    #define compat_environ _environ
+    #define compat_putenv _putenv
+
 #else // not _WIN32
 
     #include <unistd.h>
@@ -52,5 +55,8 @@
     #define compat_rmdir rmdir
     #define compat_lseek lseek
     #define compat_dup dup
+    #define compat_putenv putenv
+
+    #define compat_environ environ
 
 #endif // _WIN32
