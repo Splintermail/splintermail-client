@@ -818,6 +818,22 @@ derr_t exists_path(const string_builder_t* sb, bool* ret){
     return e;
 }
 
+derr_t dremove(const char* path){
+    derr_t e = E_OK;
+
+    int ret = remove(path);
+    if(ret != 0){
+        if(errno == ENOMEM){
+            ORIG(&e, E_NOMEM, "no memory for remove");
+        }else{
+            TRACE(&e, "remove(%x): %x\n", FS(path), FE(&errno));
+            ORIG(&e, E_FS, "unable to remove");
+        }
+    }
+
+    return e;
+}
+
 derr_t remove_path(const string_builder_t* sb){
     derr_t e = E_OK;
     DSTR_VAR(stack, 256);
@@ -825,15 +841,7 @@ derr_t remove_path(const string_builder_t* sb){
     dstr_t* path;
     PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
 
-    int ret = remove(path->data);
-    if(ret != 0){
-        if(errno == ENOMEM){
-            ORIG_GO(&e, E_NOMEM, "no memory for remove", cu);
-        }else{
-            TRACE(&e, "unable to remove %x: %x\n", FD(path), FE(&errno));
-            ORIG_GO(&e, E_FS, "unable to remove", cu);
-        }
-    }
+    PROP_GO(&e, dremove(path->data), cu);
 
 cu:
     dstr_free(&heap);

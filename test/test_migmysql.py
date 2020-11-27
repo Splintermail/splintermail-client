@@ -21,6 +21,7 @@ def main(migmysql_path):
                 assert b"\nsplintermail\n" in out, out.decode('utf8')
                 out = runner.run("show tables;", "splintermail")
                 assert b"\nasdf\n" not in out, out.decode('utf8')
+                assert b"\nasdf2\n" not in out, out.decode('utf8')
                 return
 
             if level == 1:
@@ -28,6 +29,7 @@ def main(migmysql_path):
                 assert b"\nsplintermail\n" in out, out.decode('utf8')
                 out = runner.run("show tables;", "splintermail")
                 assert b"\nasdf\n" in out, out.decode('utf8')
+                assert b"\nasdf2\n" not in out, out.decode('utf8')
                 out = runner.run("describe asdf;", "splintermail")
                 assert b"\nqwer\t" not in out, out.decode('utf8')
                 return
@@ -37,6 +39,17 @@ def main(migmysql_path):
                 assert b"\nsplintermail\n" in out, out.decode('utf8')
                 out = runner.run("show tables;", "splintermail")
                 assert b"\nasdf\n" in out, out.decode('utf8')
+                assert b"\nasdf2\n" not in out, out.decode('utf8')
+                out = runner.run("describe asdf;", "splintermail")
+                assert b"\nqwer\t" in out, out.decode('utf8')
+                return
+
+            if level == 3:
+                out = runner.run("show databases;", None)
+                assert b"\nsplintermail\n" in out, out.decode('utf8')
+                out = runner.run("show tables;", "splintermail")
+                assert b"\nasdf\n" in out, out.decode('utf8')
+                assert b"\nasdf2\n" in out, out.decode('utf8')
                 out = runner.run("describe asdf;", "splintermail")
                 assert b"\nqwer\t" in out, out.decode('utf8')
                 return
@@ -55,7 +68,7 @@ def main(migmysql_path):
         verify_level(-1)
 
         oldtgt = -1
-        for tgt in [0, 1, 2, 1, 0, 2, 0]:
+        for tgt in [0, 1, 2, 3, 2, 1, 0, 2, 0, 1, 3, 1]:
             print(f"transitioning from {oldtgt} to {tgt}")
             oldtgt = tgt
 

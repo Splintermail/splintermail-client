@@ -1,0 +1,7 @@
+#!/bin/sh
+
+# expect environment variables
+test -z "$SQL_DB" && exit 1
+test -z "$SQL_SOCK" && exit 1
+
+echo "drop table asdf2;"

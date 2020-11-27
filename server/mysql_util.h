@@ -81,6 +81,13 @@ derr_t sql_stmt_prepare(MYSQL_STMT *stmt, const dstr_t *query);
         .buffer_length = (dstr).len, \
     }
 
+#define BOOL_BIND(bind) \
+    (MYSQL_BIND){ \
+        .buffer_type = MYSQL_TYPE_TINY, \
+        .buffer = &(bind), \
+        .is_unsigned = true, \
+    }
+
 #define UINT_BIND(uint) \
     (MYSQL_BIND){ \
         /* c type of int really is MYSQL_TYPE_LONG */ \
@@ -97,6 +104,8 @@ derr_t _sql_stmt_bind_params(MYSQL_STMT *stmt, MYSQL_BIND *args, size_t nargs);
         &(MYSQL_BIND[]){(MYSQL_BIND){0}, __VA_ARGS__}[1], \
         sizeof((MYSQL_BIND[]){(MYSQL_BIND){0}, __VA_ARGS__}) / sizeof(MYSQL_BIND) - 1 \
     )
+
+derr_t sql_read_bit_dstr(const dstr_t *val, bool *out);
 
 derr_t sql_stmt_execute(MYSQL_STMT *stmt);
 

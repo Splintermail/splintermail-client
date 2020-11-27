@@ -1,7 +1,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <signal.h>
 #include <limits.h>
+#include <fcntl.h>
 
 #include "libdstr/libdstr.h"
 #include "mysql_util.h"
@@ -9,7 +11,6 @@
 typedef struct {
     const dstr_t *path;
     unsigned int tgt;
-    const dstr_t *back;
     const dstr_t *sock;
     const dstr_t *user;
     const dstr_t *pass;
@@ -17,64 +18,67 @@ typedef struct {
 } config_t;
 
 
-// container for local migration scripts on file
+// container for some migrations on file
 typedef struct {
     dstr_t file;
     string_builder_t path;
     dstr_t content;
     bool up;
+    // is the migration an executable (which should generate sql)?
+    bool exe;
     unsigned int id;
     jsw_anode_t node;
-} script_t;
-DEF_CONTAINER_OF(script_t, node, jsw_anode_t);
+} migration_t;
+DEF_CONTAINER_OF(migration_t, node, jsw_anode_t);
 
 // copies file and references path
-static derr_t script_new(
+static derr_t migration_new(
     const string_builder_t *path,
     const dstr_t *file,
     unsigned int id,
     bool up,
-    script_t **out
+    bool exe,
+    migration_t **out
 ){
     derr_t e = E_OK;
     *out = NULL;
 
-    script_t *script = malloc(sizeof(*script));
-    if(!script) ORIG(&e, E_NOMEM, "nomem");
-    *script = (script_t){ .up = up, .id = id };
+    migration_t *migration = malloc(sizeof(*migration));
+    if(!migration) ORIG(&e, E_NOMEM, "nomem");
+    *migration = (migration_t){ .up = up, .exe = exe, .id = id };
 
-    PROP_GO(&e, dstr_copy(file, &script->file), fail);
+    PROP_GO(&e, dstr_copy(file, &migration->file), fail);
 
-    script->path = sb_append(path, FD(&script->file));
+    migration->path = sb_append(path, FD(&migration->file));
 
-    PROP_GO(&e, dstr_new(&script->content, 256), fail_file);
+    PROP_GO(&e, dstr_new(&migration->content, 256), fail_file);
 
-    // actually read the script from file
+    // actually read the migration from file
     string_builder_t fullpath = sb_append(path, FD(file));
-    PROP_GO(&e, dstr_read_path(&fullpath, &script->content), fail_content);
+    PROP_GO(&e, dstr_read_path(&fullpath, &migration->content), fail_content);
 
-    *out = script;
+    *out = migration;
     return e;
 
 fail_content:
-    dstr_free(&script->content);
+    dstr_free(&migration->content);
 fail_file:
-    dstr_free(&script->file);
+    dstr_free(&migration->file);
 fail:
-    free(script);
+    free(migration);
     return e;
 }
 
-static void script_free(script_t *script){
-    dstr_free(&script->content);
-    dstr_free(&script->file);
-    free(script);
+static void migration_free(migration_t *migration){
+    dstr_free(&migration->content);
+    dstr_free(&migration->file);
+    free(migration);
 }
 
 // for jsw_atree_t
-static const void *script_get_uint(const jsw_anode_t *node){
-    script_t *script = CONTAINER_OF(node, script_t, node);
-    return &script->id;
+static const void *migration_get_uint(const jsw_anode_t *node){
+    migration_t *migration = CONTAINER_OF(node, migration_t, node);
+    return &migration->id;
 }
 
 
@@ -82,6 +86,7 @@ static const void *script_get_uint(const jsw_anode_t *node){
 typedef struct {
     unsigned int id;
     dstr_t name;
+    bool exe;
     dstr_t undo;
     jsw_anode_t node;
 } state_t;
@@ -91,6 +96,7 @@ DEF_CONTAINER_OF(state_t, node, jsw_anode_t);
 static derr_t state_new(
     unsigned int id,
     const dstr_t *name,
+    bool exe,
     const dstr_t *undo,
     state_t **out
 ){
@@ -99,7 +105,7 @@ static derr_t state_new(
 
     state_t *state = malloc(sizeof(*state));
     if(!state) ORIG(&e, E_NOMEM, "nomem");
-    *state = (state_t){ .id = id };
+    *state = (state_t){ .id = id, .exe = exe, };
 
     PROP_GO(&e, dstr_copy(name, &state->name), fail);
     PROP_GO(&e, dstr_copy(undo, &state->undo), fail_name);
@@ -126,7 +132,7 @@ static const void *state_get_uint(const jsw_anode_t *node){
     return &state->id;
 }
 
-///////// script file handling
+///////// migration file handling
 
 static bool endswith(const dstr_t *str, char *pattern){
     dstr_t check;
@@ -161,10 +167,20 @@ static dstr_t get_name(const dstr_t *file){
     if(split.len < 2) return (dstr_t){0};
     dstr_t post_hyphen = split.data[1];
 
-    // exclue the .dn.sql or .up.sql
-    if(post_hyphen.len < 7) return (dstr_t){0};
+    size_t len = post_hyphen.len;
 
-    return dstr_sub(&post_hyphen, 0, post_hyphen.len - 7);
+    // figure out what the end is
+    if(endswith(file, ".sql")){
+        // exclue the .dn.sql or .up.sql
+        if(len < 7) return (dstr_t){0};
+        len -= 7;
+    }else{
+        // exclue the .dn or .up
+        if(len < 3) return (dstr_t){0};
+        len -= 3;
+    }
+
+    return dstr_sub(&post_hyphen, 0, len);
 
 fail:
     DROP_VAR(&e);
@@ -186,22 +202,35 @@ static derr_t sql_file_hook(
 
     if(isdir) return e;
 
-    if(!endswith(file, ".sql")) return e;
+    if(
+        !endswith(file, ".sql")
+        && !endswith(file, ".up")
+        && !endswith(file, ".dn")
+    ) return e;
 
     bool up;
+    bool exe;
     if(endswith(file, ".up.sql")){
         up = true;
+        exe = false;
     }else if(endswith(file, ".dn.sql")){
         up = false;
+        exe = false;
+    }else if(endswith(file, ".up")){
+        up = true;
+        exe = true;
+    }else if(endswith(file, ".dn")){
+        up = false;
+        exe = true;
     }else{
-        TRACE(&gsd->e, "invalid sql file name: %x\n", FD(file));
+        TRACE(&gsd->e, "invalid migration file name: %x\n", FD(file));
         *gsd->ok = false;
         return e;
     }
 
     unsigned int id = get_id(file);
     if(!id){
-        TRACE(&gsd->e, "invalid sql file name: %x\n", FD(file));
+        TRACE(&gsd->e, "invalid migration file name: %x\n", FD(file));
         *gsd->ok = false;
         return e;
     }
@@ -218,7 +247,7 @@ static derr_t sql_file_hook(
     // check for duplicate ids
     jsw_anode_t *node = jsw_afind(tree, &id, NULL);
     if(node){
-        script_t *old = CONTAINER_OF(node, script_t, node);
+        migration_t *old = CONTAINER_OF(node, migration_t, node);
         TRACE(&gsd->e,
             "duplicated sql file ids: %x and %x\n", FD(file), FD(&old->file)
         );
@@ -229,7 +258,7 @@ static derr_t sql_file_hook(
     // check for duplicate names
     jsw_atrav_t trav;
     for(node = jsw_atfirst(&trav, tree); node; node = jsw_atnext(&trav)){
-        script_t *old = CONTAINER_OF(node, script_t, node);
+        migration_t *old = CONTAINER_OF(node, migration_t, node);
         dstr_t old_name = get_name(&old->file);
         if(dstr_cmp(&old_name, &name) == 0){
             TRACE(&gsd->e,
@@ -242,11 +271,11 @@ static derr_t sql_file_hook(
         }
     }
 
-    // finally, create a script
-    script_t *script;
-    PROP(&e, script_new(base, file, id, up, &script) );
+    // finally, create a migration
+    migration_t *migration;
+    PROP(&e, migration_new(base, file, id, up, exe, &migration) );
 
-    jsw_ainsert(tree, &script->node);
+    jsw_ainsert(tree, &migration->node);
 
     return e;
 }
@@ -257,15 +286,15 @@ static derr_t check_ups_vs_dns(get_sql_data_t *gsd){
     jsw_atrav_t trav;
     jsw_anode_t *node;
     for(node = jsw_atfirst(&trav, gsd->ups); node; node = jsw_atnext(&trav)){
-        script_t *up = CONTAINER_OF(node, script_t, node);
+        migration_t *up = CONTAINER_OF(node, migration_t, node);
         // find matching dn
         node = jsw_afind(gsd->dns, &up->id, NULL);
         if(!node){
-            TRACE(&gsd->e, "unmatched up script: %x\n", FD(&up->file));
+            TRACE(&gsd->e, "unmatched up migration: %x\n", FD(&up->file));
             *gsd->ok = false;
             continue;
         }
-        script_t *dn = CONTAINER_OF(node, script_t, node);
+        migration_t *dn = CONTAINER_OF(node, migration_t, node);
 
         // match names
         dstr_t up_name = get_name(&up->file);
@@ -282,10 +311,10 @@ static derr_t check_ups_vs_dns(get_sql_data_t *gsd){
 
     // reverse check
     for(node = jsw_atfirst(&trav, gsd->dns); node; node = jsw_atnext(&trav)){
-        script_t *dn = CONTAINER_OF(node, script_t, node);
+        migration_t *dn = CONTAINER_OF(node, migration_t, node);
         node = jsw_afind(gsd->ups, &dn->id, NULL);
         if(!node){
-            TRACE(&gsd->e, "unmatched dn script: %x\n", FD(&dn->file));
+            TRACE(&gsd->e, "unmatched dn migration: %x\n", FD(&dn->file));
             *gsd->ok = false;
         }
     }
@@ -320,16 +349,16 @@ fail:
 }
 
 
-static void limit_scripts(jsw_atree_t *tree, unsigned int tgt){
+static void limit_migrations(jsw_atree_t *tree, unsigned int tgt){
     jsw_atrav_t trav;
     jsw_anode_t *node = jsw_atlast(&trav, tree);
     while(node){
-        script_t *script = CONTAINER_OF(node, script_t, node);
-        if(script->id <= tgt){
+        migration_t *migration = CONTAINER_OF(node, migration_t, node);
+        if(migration->id <= tgt){
             break;
         }
         node = jsw_pop_atprev(&trav);
-        script_free(script);
+        migration_free(migration);
     }
 }
 
@@ -347,7 +376,8 @@ static derr_t mig_bootstrap(MYSQL *sql){
         "CREATE TABLE IF NOT EXISTS migmysql ("
         "    id INT PRIMARY KEY NOT NULL,"
         "    name VARCHAR(256) NOT NULL,"
-        "    undo_script BLOB NOT NULL"
+        "    exe BIT(1) NOT NULL,"
+        "    `undo` BLOB NOT NULL"
         ");\n"
     );
     PROP(&e, sql_exec_multi(sql, &script) );
@@ -362,6 +392,11 @@ static derr_t mig_override(MYSQL *sql, const dstr_t *path){
     dstr_t base = dstr_basename(path);
     dstr_t name = get_name(&base);
     unsigned int id = get_id(&base);
+    bool exe = !endswith(path, ".sql");
+
+    if(!id || !name.len){
+        ORIG(&e, E_PARAM, "filename seems invalid");
+    }
 
     // read content of file
     dstr_t content;
@@ -369,13 +404,14 @@ static derr_t mig_override(MYSQL *sql, const dstr_t *path){
     PROP_GO(&e, dstr_read_path(&SB(FD(path)), &content), cu);
 
     DSTR_STATIC(query,
-        "INSERT INTO migmysql (id, name, undo_script) VALUES (?,?,?)"
+        "INSERT INTO migmysql (id, name, exe, `undo`) VALUES (?,?,?,?)"
     );
     PROP_GO(&e,
         sql_bound_stmt(sql,
             &query,
             UINT_BIND(id),
             STRING_BIND(name),
+            BOOL_BIND(exe),
             BLOB_BIND(content)
         ),
     cu);
@@ -391,7 +427,7 @@ static derr_t get_mig_states(MYSQL *sql, jsw_atree_t *states){
     derr_t e = E_OK;
 
     PROP(&e,
-        sql_query(sql, &DSTR_LIT("SELECT id, name, undo_script FROM migmysql"))
+        sql_query(sql, &DSTR_LIT("SELECT id, name, exe, `undo` FROM migmysql"))
     );
 
     // get result
@@ -401,16 +437,19 @@ static derr_t get_mig_states(MYSQL *sql, jsw_atree_t *states){
     // loop through results
     MYSQL_ROW row;
     while((row = mysql_fetch_row(res))){
-        dstr_t idstr, name, undo;
+        dstr_t idstr, name, exestr, undo;
         PROP_GO(&e,
-            sql_read_row(res, &row, &idstr, &name, &undo),
+            sql_read_row(res, &row, &idstr, &name, &exestr, &undo),
         fail_loop);
 
         unsigned int id;
         PROP_GO(&e, dstr_tou(&idstr, &id, 10), fail_loop);
 
+        bool exe;
+        PROP_GO(&e, sql_read_bit_dstr(&exestr, &exe), fail_loop);
+
         state_t *state;
-        PROP(&e, state_new(id, &name, &undo, &state) );
+        PROP(&e, state_new(id, &name, exe, &undo, &state) );
 
         jsw_ainsert(states, &state->node);
     }
@@ -424,51 +463,222 @@ fail_loop:
 }
 
 
-static derr_t migmysql_apply_one(MYSQL *sql, script_t *up, script_t *dn){
+static derr_t urandom_bytes(dstr_t *out, size_t count){
     derr_t e = E_OK;
 
-    dstr_t name = get_name(&up->file);
-    LOG_INFO("-- applying %x:\n%x", FD(&name), FD(&up->content));
+    int fd;
+    PROP(&e, dopen("/dev/urandom", O_RDONLY, 0, &fd) );
 
-    // run the migration
-    PROP(&e, sql_exec_multi(sql, &up->content) );
+    size_t amnt_read;
+    PROP_GO(&e, dstr_read(fd, out, count, &amnt_read), cu);
 
-    // then, add an undo entry to the migmysql table via a prepared statement
-    DSTR_STATIC(query,
-        "INSERT INTO migmysql (id, name, undo_script) VALUES (?,?,?)"
-    );
-    PROP(&e,
-        sql_bound_stmt(sql,
-            &query,
-            UINT_BIND(dn->id),
-            STRING_BIND(name),
-            BLOB_BIND(dn->content)
-        )
-    );
+    if(amnt_read != count)
+        ORIG_GO(&e, E_OS, "wrong number of bytes", cu);
+
+cu:
+    close(fd);
 
     return e;
 }
 
-static derr_t migmysql_undo_one(MYSQL *sql, state_t *state){
+
+static derr_t write_content_file(const char *tempname, const dstr_t *content){
     derr_t e = E_OK;
 
-    LOG_INFO("-- reverting %x:\n%x", FD(&state->name), FD(&state->undo));
+    int fd;
+    // make it executable
+    PROP(&e, dopen(tempname, O_WRONLY | O_CREAT, 0700, &fd) );
+    PROP_GO(&e, dstr_write(fd, content), cu);
+    PROP_GO(&e, dfsync(fd), cu);
+
+cu:
+    close(fd);
+
+    return e;
+}
+
+
+static derr_t exec_content_child(
+    const config_t *config, const dstr_t tempname
+){
+    derr_t e = E_OK;
+
+    // pack settings into the environment
+    dstr_t sock = {0};
+    dstr_t user = {0};
+    dstr_t pass = {0};
+
+    dstr_t empty = DSTR_LIT("");
+    PROP(&e,
+        FMT(&sock, "SQL_SOCK=%x", FD(config->sock ? config->sock : &empty))
+    );
+    PROP(&e,
+        FMT(&user, "SQL_USER=%x", FD(config->user ? config->user : &empty))
+    );
+    PROP(&e,
+        FMT(&pass, "SQL_PASS=%x", FD(config->pass ? config->pass : &empty))
+    );
+
+    DSTR_STATIC(dbname, "SQL_DB=splintermail");
+
+    // provide a convenience SQL_CMD for shell scripts
+    dstr_t cmd = {0};
+    PROP(&e, FMT(&cmd, "SQL_CMD=mysql") );
+    if(config->sock){
+        PROP(&e, FMT(&cmd, " --socket \"$SQL_SOCK\"") );
+    }
+    if(config->user){
+        PROP(&e, FMT(&cmd, " --user \"$SQL_USER\"") );
+    }
+    if(config->pass){
+        PROP(&e, FMT(&cmd, " --password \"$SQL_PASS\"") );
+    }
+    PROP(&e, FMT(&cmd, " \"$SQL_DB\"") );
+
+    char **env;
+    PROP(&e, make_env(&env, NULL, sock, user, pass, dbname, cmd) );
+
+    // run the executable (no args)
+    e = _dexec(tempname, env, NULL, 0);
+
+    return e;
+}
+
+// return a pointer to the usable content, either content or exe_output
+// you must free exe_output after calling these, even on failure.
+static derr_t maybe_exec_content(
+    const config_t *config,
+    bool exe,
+    const dstr_t *content,
+    dstr_t *exe_output,
+    const dstr_t **out
+){
+    derr_t e = E_OK;
+
+    if(!exe){
+        *out = content;
+        return e;
+    }
+
+    *out = NULL;
+
+    // choose a default filename
+    DSTR_VAR(bin, 8);
+    PROP(&e, urandom_bytes(&bin, 8) );
+    DSTR_VAR(tempname, 64);
+    PROP(&e, FMT(&tempname, "/tmp/migmysql-%x", FX(&bin)) );
+
+    // write the tempfile
+    PROP_GO(&e, write_content_file(tempname.data, content), cu_file);
+
+    pid_t pid;
+    bool child;
+    int outfd;
+    PROP_GO(&e, dfork_ex(&pid, &child, &devnull, &outfd, NULL), cu_file);
+    if(child)
+        RUN_CHILD_PROC(exec_content_child(config, tempname), 3);
+
+    PROP_GO(&e, dstr_read_all(outfd, exe_output), cu_child);
+
+cu_child:
+    if(is_error(e)){
+        kill(pid, SIGKILL);
+    }
+    int exit_code;
+    PROP_GO(&e, dwait(pid, &exit_code, NULL), cu_file);
+    if(!is_error(e) && exit_code){
+        TRACE(&e, "executable exited with code %x\n", FI(exit_code));
+        ORIG_GO(&e, E_VALUE, "script failed", cu_file);
+    }
+
+cu_file:
+    DROP_CMD( dremove(tempname.data) );
+
+    if(!is_error(e)){
+        *out = exe_output;
+    }
+
+    return e;
+}
+
+
+static derr_t migmysql_apply_one(
+    const config_t *config, MYSQL *sql, migration_t *up, migration_t *dn
+){
+    derr_t e = E_OK;
+
+    dstr_t name = get_name(&up->file);
+    LOG_INFO("-- \x1b[32mapplying %x:\x1b[m\n", FD(&name));
+
+    dstr_t exe_output = {0};
+    const dstr_t *content = NULL;
+    PROP_GO(&e,
+        maybe_exec_content(
+            config, up->exe, &up->content, &exe_output, &content
+        ),
+    cu);
+
+    LOG_INFO("%x", FD(content));
+
+    // run the migration
+    PROP_GO(&e, sql_exec_multi(sql, content), cu);
+
+    // then, add an undo entry to the migmysql table via a prepared statement
+    DSTR_STATIC(query,
+        "INSERT INTO migmysql (id, name, exe, `undo`) VALUES (?,?,?,?)"
+    );
+    PROP_GO(&e,
+        sql_bound_stmt(sql,
+            &query,
+            UINT_BIND(dn->id),
+            STRING_BIND(name),
+            BOOL_BIND(dn->exe),
+            BLOB_BIND(dn->content)
+        ),
+    cu);
+
+cu:
+    dstr_free(&exe_output);
+
+    return e;
+}
+
+static derr_t migmysql_undo_one(
+    const config_t *config, MYSQL *sql, state_t *state
+){
+    derr_t e = E_OK;
+
+    LOG_INFO("-- \x1b[32mreverting %x:\x1b[m\n", FD(&state->name));
+
+    dstr_t exe_output = {0};
+    const dstr_t *content;
+    PROP(&e,
+        maybe_exec_content(
+            config, state->exe, &state->undo, &exe_output, &content
+        )
+    );
+
+    LOG_INFO("%x", FD(content));
 
     // apply the undo operation
-    PROP(&e, sql_exec_multi(sql, &state->undo) );
+    PROP_GO(&e, sql_exec_multi(sql, content), cu);
 
     // erase the state
-    PROP(&e,
+    PROP_GO(&e,
         sql_bound_stmt(sql,
             &DSTR_LIT("DELETE FROM migmysql where id = ?"),
             UINT_BIND(state->id)
-        )
-    );
+        ),
+    cu);
+
+cu:
+    dstr_free(&exe_output);
 
     return e;
 }
 
 static derr_t migmysql_apply(
+    const config_t *config,
     MYSQL *sql,
     jsw_atree_t *ups,
     jsw_atree_t *dns,
@@ -484,18 +694,18 @@ static derr_t migmysql_apply(
         state_t *state = CONTAINER_OF(node, state_t, node);
         if(jsw_afind(ups, &state->id, NULL))
             continue;
-        PROP(&e, migmysql_undo_one(sql, state) );
+        PROP(&e, migmysql_undo_one(config, sql, state) );
     }
 
     // apply yet-undone migration scripts
     for(node = jsw_atfirst(&trav, ups); node; node = jsw_atnext(&trav)){
-        script_t *up = CONTAINER_OF(node, script_t, node);
+        migration_t *up = CONTAINER_OF(node, migration_t, node);
         if(jsw_afind(states, &up->id, NULL))
             continue;
         node = jsw_afind(dns, &up->id, NULL);
-        if(!node) ORIG(&e, E_INTERNAL, "missing dn.sql for up.sql");
-        script_t *dn = CONTAINER_OF(node, script_t, node);
-        PROP(&e, migmysql_apply_one(sql, up, dn) );
+        if(!node) ORIG(&e, E_INTERNAL, "missing dn migration");
+        migration_t *dn = CONTAINER_OF(node, migration_t, node);
+        PROP(&e, migmysql_apply_one(config, sql, up, dn) );
     }
 
     return e;
@@ -533,21 +743,21 @@ static derr_t migmysql(const config_t *config){
     }
 
     jsw_atree_t ups, dns;
-    jsw_ainit(&ups, jsw_cmp_uint, script_get_uint);
-    jsw_ainit(&dns, jsw_cmp_uint, script_get_uint);
+    jsw_ainit(&ups, jsw_cmp_uint, migration_get_uint);
+    jsw_ainit(&dns, jsw_cmp_uint, migration_get_uint);
 
-    PROP_GO(&e, get_sql_files(config->path, &ups, &dns), cu_scripts);
+    PROP_GO(&e, get_sql_files(config->path, &ups, &dns), cu_migrations);
 
     // ignore anything higher than the target migration level
-    limit_scripts(&ups, config->tgt);
-    limit_scripts(&dns, config->tgt);
+    limit_migrations(&ups, config->tgt);
+    limit_migrations(&dns, config->tgt);
 
     jsw_atree_t states;
     jsw_ainit(&states, jsw_cmp_uint, state_get_uint);
 
     PROP_GO(&e, get_mig_states(&sql, &states), cu_states);
 
-    PROP_GO(&e, migmysql_apply(&sql, &ups, &dns, &states), cu_states);
+    PROP_GO(&e, migmysql_apply(config, &sql, &ups, &dns, &states), cu_states);
 
 cu_states:
     while((node = jsw_apop(&states))){
@@ -555,14 +765,14 @@ cu_states:
         state_free(state);
     }
 
-cu_scripts:
+cu_migrations:
     while((node = jsw_apop(&ups))){
-        script_t *script = CONTAINER_OF(node, script_t, node);
-        script_free(script);
+        migration_t *migration = CONTAINER_OF(node, migration_t, node);
+        migration_free(migration);
     }
     while((node = jsw_apop(&dns))){
-        script_t *script = CONTAINER_OF(node, script_t, node);
-        script_free(script);
+        migration_t *migration = CONTAINER_OF(node, migration_t, node);
+        migration_free(migration);
     }
 
 cu_sql:
@@ -598,7 +808,7 @@ int main(int argc, char **argv){
     // specify command line options
     opt_spec_t o_help = {'h', "help", false, OPT_RETURN_INIT};
     opt_spec_t o_debug = {'d', "debug", false, OPT_RETURN_INIT};
-    opt_spec_t o_sock = {'\0', "socket", true, OPT_RETURN_INIT};
+    opt_spec_t o_sock = {'s', "socket", true, OPT_RETURN_INIT};
     opt_spec_t o_user = {'\0', "user", true, OPT_RETURN_INIT};
     opt_spec_t o_pass = {'\0', "pass", true, OPT_RETURN_INIT};
     opt_spec_t o_host = {'\0', "host", true, OPT_RETURN_INIT};

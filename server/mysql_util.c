@@ -231,6 +231,21 @@ derr_t _sql_stmt_bind_params(MYSQL_STMT *stmt, MYSQL_BIND *args, size_t nargs){
     return e;
 }
 
+derr_t sql_read_bit_dstr(const dstr_t *val, bool *out){
+    derr_t e = E_OK;
+
+    *out = false;
+
+    if(val->len != 1){
+        TRACE(&e, "invalid length for bit string: %x\n", FU(val->len));
+        ORIG(&e, E_PARAM, "invalid length for bit string");
+    }
+
+    *out = !(val->data[0] == '\0');
+
+    return e;
+}
+
 derr_t sql_stmt_execute(MYSQL_STMT *stmt){
     derr_t e = E_OK;
 

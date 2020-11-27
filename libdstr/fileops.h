@@ -93,6 +93,7 @@ derr_t file_w_access_path(const string_builder_t* sb, bool* ret);
 derr_t file_rw_access_path(const string_builder_t* sb, bool* ret);
 
 derr_t exists_path(const string_builder_t* path, bool* ret);
+derr_t dremove(const char *path);
 derr_t remove_path(const string_builder_t* sb);
 
 /* mode is unused if the file already exists. Use chmod if you really need to
@@ -115,7 +116,7 @@ derr_t dopen(const char *path, int flags, int mode, int *fd);
 derr_t dopen_path(const string_builder_t *sb, int flags, int mode, int *out);
 
 derr_t dfsync(int fd);
-// combines fflush and fysnc
+// combines fflush and fsync
 derr_t dffsync(FILE *f);
 
 // for when you were going to check the error on close
