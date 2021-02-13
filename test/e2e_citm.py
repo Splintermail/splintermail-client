@@ -235,10 +235,10 @@ class TLS:
 
 
 def peel_line(text):
-    if b"\n" not in text:
+    idx = text.find(b'\n')
+    if idx < 0:
         return None, text
-    i = text.index(b"\n") + 1
-    return text[:i], text[i:]
+    return text[:idx+1], text[idx+1:]
 
 
 class TLSPair:

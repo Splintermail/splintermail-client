@@ -1474,3 +1474,73 @@ Using IDLE to receive live key updates via IMAP
       - sync service will wake up (either right then or periodically)
       - sync service will see entries in the table, pass them over lmdb, and
         then delete them from the database
+
+Account lifetimes and microservice interactions:
+    Deletion process:
+    # in an unrelated process:
+      - insert into deletions (state=0, "not ready for deleter")
+      - delete from accounts/aliases/devices/tokens
+      - set state=1 ("ready for deleter")
+    # in the deleter:
+      - see a state=1 deleter
+      - delete the user's mail directory
+      - (exit early if there is mail in the queue)
+      - remove the entry from the deleter table
+
+    Things the deleter needs to sync with:
+      - keysync: ensure keysync won't put mail in a mailbox
+      - postfix queue: flush queue for the user (so it isn't delivered to a new user)
+
+    # sessions that need kicking
+      - dovecot: ensure all imap/pop sessions are kicked (/var/run/dovecot/anvil owned by root)
+      - apache: log all php sessions out (/var/lib/php/sessions/ owned by www-data)
+      - postfix smtpd: ensure all smtp sessions are kicked
+            (this doesn't seem to be possible at all)
+
+    # Tricky issues:
+      - postfix: ensure no mail is between the sql user lookup and the queue
+          - We could fix this by routing mail by UIDs rather than by email;
+            that way when the out-of-date mail arrives the UID can be detected
+            as invalid.
+          - We could do tls-termination before postfix, and use that to
+            determined the logged-in user.  Then we could implement postfix
+            kicking at that layer.  That would effectively eliminate this
+            possibility
+          - We could to tcp interception (not tls termination), and then have a
+            mechanism for blocking until all existing connections have ended,
+            and use that to infer that the user under deletion can't have any
+            active smtp connections
+      - dovecot: ensure no mail is between the queue and the filesystem
+            Honestly, I would kind of doubt that this possibility even exists.
+      - dovecot: ensure that replicator refreshes it's list of existing users
+            I think if we can prevent incoming mail to the mailbox, this is
+            pretty irrelevant.
+
+    The following issues would all be resolved if we used UIDs to identify
+    accounts rather than emails:
+      - keyops; they could be delivered after deletion and nobody cares
+      - postfix queue: they could be delivered and nobody cares
+      - kicking php sessions; they would just cease to work
+      - postfix smtpd (receiving mail): they could be delivered and nobody cares
+      - the whole deleter service could be replaced by a chron job that deletes
+        dangling mailboxes
+      - dovecot replication could not cause any problems
+
+    You'd probably stil want:
+      - to kick dovecot sessions at some point
+
+    In fact, the only synchronization problem that would persist is:
+      - postfix smtpd (sending mail) could send on behalf of a
+        previously-existing user.  But this problem is not nearly as severe I
+        think; it's kind of inherent in smtp itself.
+
+    Keysync process:
+    # in an unrelated process:
+      - insert (email, pubkey, add) into keyops
+    # in keysync:
+      - see ops in keyops
+
+Questions about keysync:
+    How do I make the __keybox__ read-only?
+    How do I create the __keybox__ automatically?
+    If I create the mailbox, will dovecot automatically index it?
