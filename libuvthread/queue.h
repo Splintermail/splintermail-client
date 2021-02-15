@@ -1,10 +1,3 @@
-#ifndef QUEUE_H
-#define QUEUE_H
-
-#include <uv.h>
-
-#include "libdstr/libdstr.h"
-
 /* This queue has two APIs: a normal API and a callback API.  Both are
    thread-safe.  The normal API can optionally block waiting to pop an element
    or not.  (There is currently no support for blocking before pushing writes,
@@ -101,5 +94,3 @@ void queue_append(queue_t *q, link_t *elem);
 void queue_remove(queue_t *q, link_t *link);
 // Similar to queue_remove, but for unregistering a queue_cb_t
 void queue_remove_cb(queue_t *q, queue_cb_t *qcb);
-
-#endif // QUEUE_H

@@ -3,7 +3,7 @@
 
 #include "imap_engine.h"
 #include "libdstr/libdstr.h"
-#include "uv_util.h"
+#include "libuvthread/libuvthread.h"
 
 static void imape_data_onthread_start(imape_data_t *id);
 static void imape_data_onthread_close(imape_data_t *id);

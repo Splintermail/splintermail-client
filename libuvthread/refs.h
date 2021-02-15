@@ -1,10 +1,3 @@
-#ifndef REFS_T
-#define REFS_T
-
-#include <uv.h>
-
-#include "libdstr/libdstr.h"
-
 struct refs_t;
 typedef struct refs_t refs_t;
 
@@ -25,5 +18,3 @@ void refs_free(refs_t *refs);
 
 void ref_up(refs_t *refs);
 void ref_dn(refs_t *refs);
-
-#endif // REFS_T

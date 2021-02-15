@@ -4,7 +4,7 @@
 #include <pthread.h>
 
 #include <libdstr/libdstr.h>
-#include <queue.h>
+#include <libuvthread/libuvthread.h>
 #include <engine.h>
 #include <loop.h>
 #include <tls_engine.h>

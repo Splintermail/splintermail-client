@@ -1,6 +1,6 @@
 #include "libimaildir.h"
 
-#include "uv_util.h"
+#include "libuvthread/libuvthread.h"
 
 // forward declarations
 static derr_t get_uids_up_to_expunge(dn_t *dn, ie_seq_set_t **out);

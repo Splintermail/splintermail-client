@@ -5,7 +5,7 @@
 
 #include "libdstr/libdstr.h"
 #include "engine.h"
-#include "queue.h"
+#include "libuvthread/libuvthread.h"
 
 struct loop_t;
 typedef struct loop_t loop_t;

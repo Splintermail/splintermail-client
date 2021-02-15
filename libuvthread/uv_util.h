@@ -1,10 +1,3 @@
-#ifndef UV_UTIL
-#define UV_UTIL
-
-#include <uv.h>
-
-#include "libdstr/libdstr.h"
-
 // an unidentified error from libuv
 extern derr_type_t E_UV;
 
@@ -55,6 +48,3 @@ void async_handle_close_cb(uv_handle_t *handle);
 
 // derr_t-compatible initializers
 derr_t uv_util_mutex_init(uv_mutex_t *mutex);
-
-#endif // UV_UTIL
-

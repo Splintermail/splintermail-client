@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include "uv_util.h"
+#include "libuvthread/libuvthread.h"
 #include "libdstr/libdstr.h"
 
 #include "server/badbadbad_alert.h"

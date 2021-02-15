@@ -26,7 +26,7 @@ target_link_libraries(badbadbad badbadbad_alert dstr)
 add_executable(keysync keysync.c)
 default_compile_options(keysync TRUE)
 define_file_logname_for_target(keysync)
-target_link_libraries(keysync dstr uv_util uv_interface badbadbad_alert mysql_util)
+target_link_libraries(keysync dstr uvthread badbadbad_alert mysql_util)
 
 add_executable(migmysql migmysql.c)
 default_compile_options(migmysql TRUE)

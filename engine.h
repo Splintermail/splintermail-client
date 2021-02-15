@@ -1,7 +1,7 @@
 #ifndef ENGINE_H
 #define ENGINE_H
 
-#include "queue.h"
+#include "libuvthread/libuvthread.h"
 #include "libdstr/libdstr.h"
 
 /* This header defines some interfaces by which engines pass events to each

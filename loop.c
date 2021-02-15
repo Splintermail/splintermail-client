@@ -5,7 +5,7 @@
 
 #include "libdstr/libdstr.h"
 #include "loop.h"
-#include "uv_util.h"
+#include "libuvthread/libuvthread.h"
 
 static void loop_data_onthread_close(loop_data_t *ld);
 static void loop_pass_event(engine_t *loop_engine, event_t *event);

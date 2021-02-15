@@ -5,7 +5,7 @@
 
 #include <libdstr/libdstr.h>
 #include <networking.h>
-#include <queue.h>
+#include <libuvthread/libuvthread.h>
 
 // path to where the test files can be found
 extern const char* g_test_files;

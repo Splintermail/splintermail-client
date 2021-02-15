@@ -1,7 +1,7 @@
 #include <pthread.h>
 
 #include <libdstr/libdstr.h>
-#include <queue.h>
+#include <libuvthread/libuvthread.h>
 #include <networking.h>
 #include <loop.h>
 

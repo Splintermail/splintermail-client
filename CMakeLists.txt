@@ -38,16 +38,8 @@ if(APPLE OR WIN32)
 endif()
 find_package(OpenSSL REQUIRED)
 
-# include libuv
-add_library(uv_interface INTERFACE)
-# target_include_directories(libuv INTERFACE "${path/to/libuv/include}")
-if("${LIBUV_LIB}" STREQUAL "")
-    set(LIBUV_LIB "uv")
-endif()
-target_link_libraries(uv_interface INTERFACE "${LIBUV_LIB}")
-
 add_library(lmdb_interface INTERFACE)
-# target_include_directories(libuv INTERFACE "${path/to/liblmdb/include}")
+# target_include_directories(lmdb_interface INTERFACE "${path/to/liblmdb/include}")
 if("${LIBLMDB_LIB}" STREQUAL "")
     set(LIBLMDB_LIB "lmdb")
 endif()
@@ -254,6 +246,7 @@ include_directories("${PROJECT_SOURCE_DIR}")
 include_directories("${PROJECT_BINARY_DIR}")
 
 add_subdirectory(libdstr)
+add_subdirectory(libuvthread)
 add_subdirectory(libimap)
 add_subdirectory(libimaildir)
 add_subdirectory(citm)
@@ -272,12 +265,9 @@ set(OBJ_TGTS
     ui
     ui_harness
     engine
-    uv_util
     loop
     tls_engine
     imap_engine
-    queue
-    refs
     imap_session
 )
 
@@ -349,7 +339,7 @@ target_include_directories(ui_o PRIVATE ${OPENSSL_INCLUDE_DIR})
 
 # object inter-dependencies make exectuable dependencies easier to express:
 # objects with dummy interfaces must not be dependencies here
-obj_depend_obj(crypto refs ssl_errors dstr)
+obj_depend_obj(crypto ssl_errors dstr uvthread)
 obj_depend_obj(maildir dstr)
 obj_depend_obj(networking ssl_errors dstr)
 obj_depend_obj(pop_client networking)
@@ -357,14 +347,11 @@ obj_depend_obj(pop_server networking)
 obj_depend_obj(api_client networking crypto)
 obj_depend_obj(key_tool ssl_errors api_client crypto)
 obj_depend_obj(ditm pop_client pop_server maildir)
-obj_depend_obj(uv_util dstr)
-obj_depend_obj(queue uv_interface uv_util)
-obj_depend_obj(refs uv_interface uv_util)
-obj_depend_obj(engine queue)
+obj_depend_obj(engine uvthread)
 obj_depend_obj(loop engine)
 obj_depend_obj(tls_engine engine networking)
 obj_depend_obj(imap_engine engine imap)
-obj_depend_obj(imap_session loop tls_engine imap_engine uv_interface)
+obj_depend_obj(imap_session loop tls_engine imap_engine)
 
 # describe executables with dependencies
 target_link_libraries(splintermail ui ui_harness console_input ditm key_tool)
@@ -441,7 +428,7 @@ if("${BUILD_TESTS}")
     obj_depend_obj(fake_pop_server pop_server pop_client)
     obj_depend_obj(ditm_thread ditm dummy_key_tool)
     obj_depend_obj(dummy_key_tool crypto)
-    obj_depend_obj(fake_engine imap_session loop tls_engine imap_engine queue networking)
+    obj_depend_obj(fake_engine imap_session loop tls_engine imap_engine networking uvthread)
     # some dummy tools need openssl headers to compile... but not to link
     target_include_directories(dummy_key_tool_o PRIVATE ${OPENSSL_INCLUDE_DIR})
     target_include_directories(dummy_ui_harness_o PRIVATE ${OPENSSL_INCLUDE_DIR})
@@ -513,7 +500,7 @@ if("${BUILD_TESTS}")
     target_link_libraries(test_imap_write imap)
     # target_link_libraries(test_hashmap)
     target_link_libraries(test_loop fake_engine networking)
-    target_link_libraries(test_queue queue)
+    target_link_libraries(test_queue uvthread)
     target_link_libraries(test_tls_engine fake_engine)
     # target_link_libraries(test_link)
     target_link_libraries(test_maildir_name imaildir)
@@ -547,25 +534,6 @@ if("${BUILD_TESTS}")
         set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -pthread")
         set(CMAKE_LINK_FLAGS "${CMAKE_LINK_FLAGS} -pthread")
     endif()
-
-endif()
-
-
-# compiler- and target-specific flag adjustments
-if("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU")
-    # flags for gcc
-
-    # libuv needs non-strict aliasing
-    # see discussion here: https://github.com/libuv/libuv/issues/1230
-    target_compile_options(uv_util_o PRIVATE -fno-strict-aliasing)
-
-elseif("${CMAKE_C_COMPILER_ID}" MATCHES "Clang")
-    # flags common to "AppleClang" and "Clang"
-
-    target_compile_options(uv_util_o PRIVATE -fno-strict-aliasing)
-
-elseif("${CMAKE_C_COMPILER_ID}" STREQUAL "MSVC")
-    # flags for MVSC (VS 2017)
 
 endif()
 

@@ -1,6 +1,4 @@
-#include "queue.h"
-#include "libdstr/libdstr.h"
-#include "uv_util.h"
+#include "libuvthread.h"
 
 void queue_cb_prep(queue_cb_t *qcb){
     link_init(&qcb->link);

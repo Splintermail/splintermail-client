@@ -1,4 +1,5 @@
 #include "libdstr/libdstr.h"
+#include "libuvthread/libuvthread.h"
 #include "libimap/libimap.h"
 #include "libimaildir/libimaildir.h"
 
@@ -7,8 +8,6 @@ extern keypair_t *g_keypair;
 
 #include "manager.h"
 #include "imap_session.h"
-#include "uv_util.h"
-#include "refs.h"
 #include "loop.h"
 
 struct wake_event_t;

@@ -1,6 +1,4 @@
-#include "libdstr/libdstr.h"
-#include "refs.h"
-#include "uv_util.h"
+#include "libuvthread.h"
 
 derr_t refs_init(refs_t *refs, int starting_count, finalizer_t finalize){
     derr_t e = E_OK;

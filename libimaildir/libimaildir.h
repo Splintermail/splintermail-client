@@ -5,7 +5,7 @@
 
 #include "libdstr/libdstr.h"
 #include "libimap/libimap.h"
-#include "refs.h"
+#include "libuvthread/libuvthread.h"
 #include "crypto.h"
 
 struct imaildir_t;
