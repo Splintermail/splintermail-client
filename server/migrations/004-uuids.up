@@ -1,0 +1,83 @@
+#!/bin/sh
+
+set -e
+
+sql_sock_user_pass () {
+    mysql "$@" "$SQL_DB"
+}
+
+sql_sock_user () {
+    if [ -n "$SQL_PASS" ] ; then
+        sql_sock_user_pass --password "$SQL_PASS" "$@"
+    else
+        sql_sock_user_pass "$@"
+    fi
+}
+
+sql_sock () {
+    if [ -n "$SQL_USER" ] ; then
+        sql_sock_user --user "$SQL_USER" "$@"
+    else
+        sql_sock_user "$@"
+    fi
+}
+
+sql () {
+    if [ -n "$SQL_SOCK" ] ; then
+        sql_sock --socket "$SQL_SOCK" "$@"
+    else
+        sql_sock "$@"
+    fi
+}
+
+# all deletions must be completed
+if [ "$(echo "select count(*) from deletions" | sql --silent)" != "0" ] ; then
+    echo "deletions table is not empty, cannot migrate" >&2
+    exit 1
+fi
+
+# create a lookup table of oldstyle integer ids to newstyle random byte ids
+lut="$(
+    echo "select user_id from accounts" | sql --silent | while read id;
+    do
+        b64="$(cat /dev/urandom | head -c 32 | base64)"
+        echo "$id $b64"
+    done
+)"
+
+
+## BEGIN SCRIPT GENERATION
+
+# populate uuid columns in all tables
+for table in accounts aliases devices tokens ; do
+    echo "alter table $table add column user_uuid binary(32);"
+    echo "$lut" | while read id b64; do
+        echo "update $table set user_uuid = FROM_BASE64('$b64') where user_id = '$id';"
+    done
+    echo "alter table $table modify column user_uuid binary(32) not null;"
+done
+
+# new primary key in accounts table
+echo "alter table accounts drop primary key;"
+echo "alter table accounts add primary key (user_uuid);"
+
+# foreign key relations in non-accounts tables
+for table in aliases devices tokens ; do
+    echo "alter table $table add constraint fk_${table}_user_uuid
+          foreign key (user_uuid) references accounts (user_uuid);"
+done
+
+# drop the id columns in all tables
+for table in accounts aliases devices tokens ; do
+    echo "alter table $table drop column user_id;"
+done
+
+# drop the deletions table and recreate it for uuids
+echo '
+drop table deletions;
+create table deletions (
+    user_uuid binary(32) NOT NULL,
+    server_id int(11) NOT NULL,
+    primary key (user_uuid, server_id)
+);
+'
