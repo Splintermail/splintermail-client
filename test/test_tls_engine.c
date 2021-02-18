@@ -7,9 +7,8 @@
 
 #include <libdstr/libdstr.h>
 #include <libuvthread/libuvthread.h>
-#include <networking.h>
-#include <loop.h>
-#include <tls_engine.h>
+#include <libengine/libengine.h>
+#include <libcrypto/libcrypto.h>
 
 #include "test_utils.h"
 #include "fake_engine.h"

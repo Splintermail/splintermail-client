@@ -3,7 +3,7 @@
 
 #include "pop_client.h"
 #include "libdstr/libdstr.h"
-#include "networking.h"
+#include "libcrypto/libcrypto.h"
 
 #define CHUNK_SIZE 4096
 

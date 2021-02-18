@@ -1,6 +1,6 @@
 #include <openssl/err.h>
 
-#include "ssl_errors.h"
+#include "libcrypto.h"
 
 REGISTER_ERROR_TYPE(E_SSL, "SSLERROR");
 

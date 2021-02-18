@@ -4,8 +4,8 @@
 #include <uv.h>
 
 #include <libdstr/libdstr.h>
-#include <networking.h>
 #include <libuvthread/libuvthread.h>
+#include <libcrypto/libcrypto.h>
 
 // path to where the test files can be found
 extern const char* g_test_files;

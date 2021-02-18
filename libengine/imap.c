@@ -1,9 +1,7 @@
 #include <errno.h>
 #include <stdlib.h>
 
-#include "imap_engine.h"
-#include "libdstr/libdstr.h"
-#include "libuvthread/libuvthread.h"
+#include "libengine.h"
 
 static void imape_data_onthread_start(imape_data_t *id);
 static void imape_data_onthread_close(imape_data_t *id);

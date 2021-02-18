@@ -3,9 +3,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "libdstr/libdstr.h"
-#include "loop.h"
-#include "libuvthread/libuvthread.h"
+#include "libengine.h"
 
 static void loop_data_onthread_close(loop_data_t *ld);
 static void loop_pass_event(engine_t *loop_engine, event_t *event);

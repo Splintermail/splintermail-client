@@ -2,8 +2,8 @@
 #include <pthread.h>
 
 #include <libdstr/libdstr.h>
+#include <libcrypto/libcrypto.h>
 #include <pop_server.h>
-#include <networking.h>
 
 #include "test_utils.h"
 

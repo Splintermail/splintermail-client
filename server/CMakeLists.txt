@@ -1,4 +1,4 @@
-# add a mysql_interface library
+# add a mysql_util library
 add_library(mysql_util mysql_util.c)
 if("${MYSQL_INCLUDE_DIR}" STREQUAL "")
     set(MYSQL_INCLUDE_DIR "/usr/include/mysql")

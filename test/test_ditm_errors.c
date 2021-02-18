@@ -8,9 +8,8 @@
 #include <errno.h>
 
 #include <libdstr/libdstr.h>
+#include <libcrypto/libcrypto.h>
 #include <ditm.h>
-#include <networking.h>
-#include <ssl_errors.h>
 
 #include "fake_pop_server.h"
 #include "fake_api_server.h"

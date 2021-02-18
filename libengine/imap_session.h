@@ -1,16 +1,3 @@
-#ifndef IMAP_SESSION_H
-#define IMAP_SESSION_H
-
-#include <uv.h>
-
-#include "engine.h"
-#include "loop.h"
-#include "tls_engine.h"
-#include "imap_engine.h"
-#include "networking.h"
-#include "manager.h"
-#include "libimap/libimap.h"
-
 struct imap_session_t;
 typedef struct imap_session_t imap_session_t;
 
@@ -75,5 +62,3 @@ void imap_session_send_event(imap_session_t *s, event_t *ev);
 void imap_session_free(imap_session_t *s);
 
 void imap_session_close(session_t *session, derr_t error);
-
-#endif // IMAP_SESSION_H

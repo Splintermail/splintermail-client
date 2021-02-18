@@ -1,6 +1,4 @@
-#include "imap_session.h"
-#include "libdstr/libdstr.h"
-#include "libuvthread/libuvthread.h"
+#include "libengine.h"
 
 void imap_session_ref_up(imap_session_t *s){
     uv_mutex_lock(&s->mutex);

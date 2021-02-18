@@ -5,7 +5,7 @@
 #include <string.h>
 
 #include "libdstr/libdstr.h"
-#include "crypto.h"
+#include "libcrypto/libcrypto.h"
 
 int main(int argc, char** argv){
     derr_t e = E_OK;

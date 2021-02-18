@@ -3,8 +3,7 @@
 #include <errno.h>
 
 #include "libdstr/libdstr.h"
-#include "networking.h"
-#include "crypto.h"
+#include "libcrypto/libcrypto.h"
 #include "api_client.h"
 
 

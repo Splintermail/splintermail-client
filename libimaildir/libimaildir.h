@@ -6,7 +6,7 @@
 #include "libdstr/libdstr.h"
 #include "libimap/libimap.h"
 #include "libuvthread/libuvthread.h"
-#include "crypto.h"
+#include "libcrypto/libcrypto.h"
 
 struct imaildir_t;
 typedef struct imaildir_t imaildir_t;

@@ -2,8 +2,8 @@
 #define KEY_TOOL_H
 
 #include "libdstr/libdstr.h"
+#include "libcrypto/libcrypto.h"
 #include "api_client.h"
-#include "crypto.h"
 #include "fixed_lengths.h"
 
 /* The transition from user-managed keys to auto-managed keys was absolutely

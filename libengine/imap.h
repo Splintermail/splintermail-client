@@ -1,12 +1,3 @@
-#ifndef IMAP_ENGINE_H
-#define IMAP_ENGINE_H
-
-#include <uv.h>
-
-#include "libdstr/libdstr.h"
-#include "engine.h"
-#include "libimap/libimap.h"
-
 struct imape_t;
 typedef struct imape_t imape_t;
 struct imape_data_t;
@@ -105,5 +96,3 @@ typedef struct {
     imap_event_arg_u arg;
 } imap_event_t;
 DEF_CONTAINER_OF(imap_event_t, ev, event_t);
-
-#endif // IMAP_ENGINE_H

@@ -6,9 +6,9 @@
 #include <errno.h>
 
 #include <libdstr/libdstr.h>
+#include <libcrypto/libcrypto.h>
 #include <key_tool.h>
 #include <fixed_lengths.h>
-#include <networking.h>
 
 #include "fake_api_server.h"
 #include "test_utils.h"

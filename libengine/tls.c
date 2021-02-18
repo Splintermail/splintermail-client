@@ -1,12 +1,8 @@
 #include <openssl/ssl.h>
 #include <openssl/bio.h>
 #include <openssl/err.h>
-#include <uv.h>
 
-#include "tls_engine.h"
-#include "libdstr/libdstr.h"
-#include "ssl_errors.h"
-#include "libuvthread/libuvthread.h"
+#include "libengine.h"
 
 // forward declarations
 static void advance_state(tlse_data_t *td, event_t *read_out,

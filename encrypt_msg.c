@@ -14,7 +14,7 @@
 #endif // BUILD_SERVER_CODE
 
 #include "libdstr/libdstr.h"
-#include "crypto.h"
+#include "libcrypto/libcrypto.h"
 #include "fixed_lengths.h"
 
 // this should only have to be 10, but just in case...
@@ -98,7 +98,6 @@ cu_keys:
 }
 
 #ifdef BUILD_SERVER_CODE
-#include <ssl_errors.h>
 
 static void trace_sql_error(derr_t *e, MYSQL* sql){
     if(*mysql_error(sql)){

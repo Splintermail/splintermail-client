@@ -9,9 +9,7 @@
 #include <openssl/err.h>
 #include <openssl/opensslv.h>
 
-#include "networking.h"
-#include "libdstr/libdstr.h"
-#include "ssl_errors.h"
+#include "libcrypto.h"
 
 
 // forward declaration of function only exposed to tests

@@ -14,7 +14,7 @@
 #include <openssl/engine.h>
 
 #include <libdstr/libdstr.h>
-#include <crypto.h>
+#include <libcrypto/libcrypto.h>
 
 #include "test_utils.h"
 

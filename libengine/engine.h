@@ -1,9 +1,3 @@
-#ifndef ENGINE_H
-#define ENGINE_H
-
-#include "libuvthread/libuvthread.h"
-#include "libdstr/libdstr.h"
-
 /* This header defines some interfaces by which engines pass events to each
    other.  Hence the name "engine.h". */
 
@@ -177,5 +171,3 @@ void event_pool_free(queue_t *pool);
 // call queue_init(), allocate/append a bunch of events
 derr_t event_pool_init(queue_t *pool, size_t nevents,
         event_returner_t returner, void *returner_arg);
-
-#endif // ENGINE_H

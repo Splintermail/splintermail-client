@@ -1,5 +1,4 @@
-#include <networking.h>
-#include <libdstr/libdstr.h>
+#include <libcrypto/libcrypto.h>
 
 #include "fake_engine.h"
 

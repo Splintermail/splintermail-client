@@ -4,8 +4,8 @@
 #include "dummy_ui_harness.h"
 
 #include <libdstr/libdstr.h>
+#include <libcrypto/libcrypto.h>
 #include <ditm.h>
-#include <networking.h>
 #include <console_input.h>
 #include <ui_harness.h>
 

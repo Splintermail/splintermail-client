@@ -1,12 +1,6 @@
-#ifndef CRYPTO_H
-#define CRYPTO_H
-
 #include <sys/types.h>
 
 #include <openssl/rsa.h>
-
-#include "libdstr/libdstr.h"
-#include "fixed_lengths.h"
 
 #define CIPHER_TYPE EVP_aes_256_gcm()
 #define CIPHER_IV_LEN 12
@@ -213,5 +207,3 @@ void keyshare_del_key(keyshare_t *keyshare, const dstr_t *fingerprint);
 derr_t keyshare_register(keyshare_t *keyshare, key_listener_i *key_listener,
         link_t *initial_keys);
 void keyshare_unregister(keyshare_t *keyshare, key_listener_i *key_listener);
-
-#endif //CRYPTO_H

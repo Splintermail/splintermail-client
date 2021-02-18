@@ -2,7 +2,7 @@
 #define POP_SERVER_H
 
 #include "libdstr/libdstr.h"
-#include "networking.h"
+#include "libcrypto/libcrypto.h"
 
 typedef struct {
     // int arguments might be -1, meaning "no argument given"

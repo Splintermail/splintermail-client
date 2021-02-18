@@ -1,12 +1,3 @@
-#ifndef LOOP_H
-#define LOOP_H
-
-#include <uv.h>
-
-#include "libdstr/libdstr.h"
-#include "engine.h"
-#include "libuvthread/libuvthread.h"
-
 struct loop_t;
 typedef struct loop_t loop_t;
 struct loop_data_t;
@@ -164,5 +155,3 @@ enum loop_ref_reason_t {
 };
 
 dstr_t *loop_ref_reason_to_dstr(enum loop_ref_reason_t reason);
-
-#endif // LOOP_H

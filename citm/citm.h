@@ -2,13 +2,12 @@
 #include "libuvthread/libuvthread.h"
 #include "libimap/libimap.h"
 #include "libimaildir/libimaildir.h"
+#include "libengine/libengine.h"
 
 // TODO: proper key management
 extern keypair_t *g_keypair;
 
 #include "manager.h"
-#include "imap_session.h"
-#include "loop.h"
 
 struct wake_event_t;
 typedef struct wake_event_t wake_event_t;

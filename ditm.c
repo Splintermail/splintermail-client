@@ -8,8 +8,7 @@
 
 #include "ditm.h"
 #include "libdstr/libdstr.h"
-#include "networking.h"
-#include "ssl_errors.h"
+#include "libcrypto/libcrypto.h"
 
 
 #define UIDS_LENGTH 128

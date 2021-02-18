@@ -245,30 +245,27 @@ include_directories("${PROJECT_SOURCE_DIR}")
 # always include the binary directory (for including generated .h files)
 include_directories("${PROJECT_BINARY_DIR}")
 
+# add_library("${tgt}" INTERFACE)
+# target_sources("${tgt}" INTERFACE $<TARGET_OBJECTS:${tgt}_o>)
+
 add_subdirectory(libdstr)
 add_subdirectory(libuvthread)
+add_subdirectory(libcrypto)
 add_subdirectory(libimap)
 add_subdirectory(libimaildir)
+add_subdirectory(libengine)
 add_subdirectory(citm)
 
 set(OBJ_TGTS
     api_client
-    crypto
     ditm
     key_tool
     maildir
-    ssl_errors
-    networking
     pop_client
     pop_server
     console_input
     ui
     ui_harness
-    engine
-    loop
-    tls_engine
-    imap_engine
-    imap_session
 )
 
 set(EXE_TGTS
@@ -331,27 +328,17 @@ foreach(tgt ${EXE_TGTS})
     define_file_logname_for_target("${tgt}")
 endforeach()
 
-# some targets need OpenSSL headers
-obj_depend_lib(networking "${OPENSSL_INCLUDE_DIR}" "${OPENSSL_LIBRARIES}")
-obj_depend_lib(crypto "${OPENSSL_INCLUDE_DIR}" "${OPENSSL_LIBRARIES}")
 # ui has a full test harness, so it can't use the normal obj_depend_obj
 target_include_directories(ui_o PRIVATE ${OPENSSL_INCLUDE_DIR})
 
 # object inter-dependencies make exectuable dependencies easier to express:
 # objects with dummy interfaces must not be dependencies here
-obj_depend_obj(crypto ssl_errors dstr uvthread)
 obj_depend_obj(maildir dstr)
-obj_depend_obj(networking ssl_errors dstr)
-obj_depend_obj(pop_client networking)
-obj_depend_obj(pop_server networking)
-obj_depend_obj(api_client networking crypto)
-obj_depend_obj(key_tool ssl_errors api_client crypto)
+obj_depend_obj(pop_client crypto)
+obj_depend_obj(pop_server crypto)
+obj_depend_obj(api_client crypto)
+obj_depend_obj(key_tool api_client crypto)
 obj_depend_obj(ditm pop_client pop_server maildir)
-obj_depend_obj(engine uvthread)
-obj_depend_obj(loop engine)
-obj_depend_obj(tls_engine engine networking)
-obj_depend_obj(imap_engine engine imap)
-obj_depend_obj(imap_session loop tls_engine imap_engine)
 
 # describe executables with dependencies
 target_link_libraries(splintermail ui ui_harness console_input ditm key_tool)
@@ -368,33 +355,9 @@ endif()
 
 # OS-specific steps
 if(APPLE)
-    # include frameworks for networking.c
-    find_library(SECURITY NAMES Security)
-    find_library(COREFOUNDATION NAMES corefoundation)
-    target_link_libraries(networking INTERFACE "${SECURITY}")
-    target_link_libraries(networking INTERFACE "${COREFOUNDATION}")
+    # nothing top-level yet
 elseif(UNIX) # Linux steps
-    # Fedora Linux requires special PREFERRED_CIPHERS string
-    # Autodetect, unless overridden via command line
-    if("${USE_FEDORA_CIPHER_STRING}" STREQUAL "")
-        if(EXISTS "/etc/crypto-policies/config")
-            set(USE_FEDORA_CIPHER_STRING "true")
-        else()
-            set(USE_FEDORA_CIPHER_STRING "false")
-        endif()
-    endif()
-    if("${USE_FEDORA_CIPHER_STRING}")
-        # Set cipher string via compile definition...
-        set(newdef "PREFERRED_CIPHERS=\"PROFILE=SYSTEM\"")
-        # ... when compiling networking.c
-        get_property(defs SOURCE networking.c PROPERTY COMPILE_DEFINITIONS)
-        list(APPEND defs "${newdef}")
-        set_property(SOURCE networking.c PROPERTY COMPILE_DEFINITIONS ${defs})
-        # ... and through the networking interface library
-        get_property(defs TARGET networking PROPERTY INTERFACE_COMPILE_DEFINITIONS)
-        list(APPEND defs "${newdef}")
-        set_property(TARGET networking PROPERTY INTERFACE_COMPILE_DEFINITIONS ${defs})
-    endif()
+    # nothing top-level yet
 elseif(WIN32)
     # generate versioning information
     configure_file("${PROJECT_SOURCE_DIR}/support_files/windows/version.rc"
@@ -402,8 +365,6 @@ elseif(WIN32)
     # add versioning to splintermail.exe
     target_sources(splintermail INTERFACE "${PROJECT_BINARY_DIR}/version.rc")
     # additional dependencies for windows
-    target_link_libraries(networking INTERFACE crypt32 ws2_32 gdi32)
-    target_link_libraries(crypto INTERFACE crypt32 ws2_32 gdi32)
     obj_depend_lib(ui "" shlwapi)
 else()
     message(FATAL_ERROR "OS not detected")
@@ -424,11 +385,11 @@ if("${BUILD_TESTS}")
 
     # object intra-dependencies, make exectuable dependencies easier to express:
     # objects with dummy interfaces must not be dependencies here
-    obj_depend_obj(fake_api_server crypto networking)
+    obj_depend_obj(fake_api_server crypto)
     obj_depend_obj(fake_pop_server pop_server pop_client)
     obj_depend_obj(ditm_thread ditm dummy_key_tool)
     obj_depend_obj(dummy_key_tool crypto)
-    obj_depend_obj(fake_engine imap_session loop tls_engine imap_engine networking uvthread)
+    obj_depend_obj(fake_engine engine crypto)
     # some dummy tools need openssl headers to compile... but not to link
     target_include_directories(dummy_key_tool_o PRIVATE ${OPENSSL_INCLUDE_DIR})
     target_include_directories(dummy_ui_harness_o PRIVATE ${OPENSSL_INCLUDE_DIR})
@@ -490,7 +451,7 @@ if("${BUILD_TESTS}")
     target_link_libraries(test_pop_client pop_client fake_pop_server)
     target_link_libraries(test_crypto crypto)
     # target_link_libraries(test_opt_parse)
-    target_link_libraries(test_networking networking)
+    target_link_libraries(test_networking crypto)
     # target_link_libraries(test_json)
     target_link_libraries(test_key_tool key_tool test_utils fake_api_server)
     target_link_libraries(test_ui ui dummy_ui_harness)
@@ -499,7 +460,7 @@ if("${BUILD_TESTS}")
     target_link_libraries(test_imap_read imap)
     target_link_libraries(test_imap_write imap)
     # target_link_libraries(test_hashmap)
-    target_link_libraries(test_loop fake_engine networking)
+    target_link_libraries(test_loop fake_engine crypto)
     target_link_libraries(test_queue uvthread)
     target_link_libraries(test_tls_engine fake_engine)
     # target_link_libraries(test_link)

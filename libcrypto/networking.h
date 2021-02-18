@@ -1,8 +1,3 @@
-#ifndef NETWORKING_H
-#define NETWORKING_H
-
-#include "libdstr/libdstr.h"
-
 #include <openssl/bio.h>
 
 #ifndef PREFERRED_CIPHERS
@@ -68,5 +63,3 @@ derr_t connection_write(connection_t* conn, const dstr_t* dstr);
 /* throws E_CONN (broken connection) */
 
 void connection_close(connection_t* conn);
-
-#endif // NETWORKING_H

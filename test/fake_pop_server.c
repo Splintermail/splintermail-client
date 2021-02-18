@@ -5,8 +5,8 @@
 #include <errno.h>
 
 #include <libdstr/libdstr.h>
+#include <libcrypto/libcrypto.h>
 #include <pop_server.h>
-#include <networking.h>
 #include <pop_client.h>
 
 #include "fake_pop_server.h"

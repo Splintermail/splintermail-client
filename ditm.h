@@ -6,10 +6,10 @@ static const unsigned int DITM_VERSION_MINOR = 2;
 static const unsigned int DITM_VERSION_BUILD = 0;
 
 #include "libdstr/libdstr.h"
+#include "libcrypto/libcrypto.h"
 #include "maildir.h"
 #include "pop_client.h"
 #include "pop_server.h"
-#include "crypto.h"
 #include "key_tool.h"
 
 typedef struct {

@@ -5,11 +5,7 @@
 
 #include <libdstr/libdstr.h>
 #include <libuvthread/libuvthread.h>
-#include <engine.h>
-#include <loop.h>
-#include <tls_engine.h>
-#include <imap_engine.h>
-#include <imap_session.h>
+#include <libengine/libengine.h>
 
 /* reader-writer thread is an independent thread that just starts a connection,
    writes a bunch of shit, and tests that whatever was returned matches what

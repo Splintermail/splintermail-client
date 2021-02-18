@@ -2,7 +2,7 @@
 #define POP_CLIENT_H
 
 #include "libdstr/libdstr.h"
-#include "networking.h"
+#include "libcrypto/libcrypto.h"
 #include "fixed_lengths.h"
 
 typedef struct {

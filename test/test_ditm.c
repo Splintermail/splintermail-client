@@ -10,8 +10,8 @@
 #include <errno.h>
 
 #include <libdstr/libdstr.h>
+#include <libcrypto/libcrypto.h>
 #include <ditm.h>
-#include <networking.h>
 
 #include "ditm_thread.h"
 #include "fake_pop_server.h"

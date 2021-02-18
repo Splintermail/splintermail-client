@@ -15,10 +15,7 @@
 #include <openssl/hmac.h>
 #include <openssl/opensslv.h>
 
-#include "crypto.h"
-#include "libdstr/libdstr.h"
-#include "ssl_errors.h"
-#include "libuvthread/libuvthread.h"
+#include "libcrypto.h"
 
 
 #define FORMAT_VERSON 1

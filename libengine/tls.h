@@ -1,10 +1,3 @@
-#ifndef TLS_ENGINE_H
-#define TLS_ENGINE_H
-
-#include "libdstr/libdstr.h"
-#include "engine.h"
-#include "networking.h"
-
 /*
    The TLS engine is basically three engine-level resources and a bunch of
    session-level resources.  The drawing below illustrates how most of the
@@ -177,5 +170,3 @@ enum tlse_ref_reason_t {
 };
 
 dstr_t *tlse_ref_reason_to_dstr(enum tlse_ref_reason_t reason);
-
-#endif // TLS_ENGINE_H

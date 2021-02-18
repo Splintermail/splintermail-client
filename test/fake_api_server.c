@@ -4,8 +4,7 @@
 #include <pthread.h>
 
 #include <libdstr/libdstr.h>
-#include <crypto.h>
-#include <networking.h>
+#include <libcrypto/libcrypto.h>
 
 #include "test_utils.h"
 #include "fake_api_server.h"
