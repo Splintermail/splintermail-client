@@ -6,8 +6,19 @@ endif()
 default_compile_options(mysql_util TRUE)
 define_file_logname_for_target(mysql_util)
 target_include_directories(mysql_util PUBLIC ${MYSQL_INCLUDE_DIR})
-target_link_libraries(mysql_util PUBLIC mysqlclient)
+target_link_libraries(mysql_util PUBLIC dstr mysqlclient)
 
+# pre-defined splintermail queries
+add_library(libsmsql libsmsql.c)
+set_target_properties(libsmsql PROPERTIES OUTPUT_NAME smsql)
+default_compile_options(libsmsql TRUE)
+define_file_logname_for_target(libsmsql)
+target_link_libraries(libsmsql PUBLIC mysql_util)
+
+add_executable(smsql smsql.c)
+default_compile_options(smsql TRUE)
+define_file_logname_for_target(smsql)
+target_link_libraries(smsql PUBLIC libsmsql)
 
 add_obj_tgt(badbadbad_alert.c badbadbad_alert)
 # badbadbad_alert needs non-strict aliasing due to sockaddr_info business
