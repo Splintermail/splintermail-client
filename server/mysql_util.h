@@ -67,19 +67,23 @@ derr_t sql_stmt_init(MYSQL *sql, MYSQL_STMT **stmt);
 
 derr_t sql_stmt_prepare(MYSQL_STMT *stmt, const dstr_t *query);
 
-#define STRING_BIND(dstr) \
-    (MYSQL_BIND){ \
-        .buffer_type = MYSQL_TYPE_STRING, \
-        .buffer = (dstr).data, \
-        .buffer_length = (dstr).len, \
-    }
+static inline MYSQL_BIND STRING_BIND(dstr_t *dstr) {
+    return (MYSQL_BIND){
+        .buffer_type = MYSQL_TYPE_STRING,
+        .buffer = dstr->data,
+        .buffer_length = dstr->size,
+        .length = &dstr->len,
+    };
+}
 
-#define BLOB_BIND(dstr) \
-    (MYSQL_BIND){ \
-        .buffer_type = MYSQL_TYPE_BLOB, \
-        .buffer = (dstr).data, \
-        .buffer_length = (dstr).len, \
-    }
+static inline MYSQL_BIND BLOB_BIND(dstr_t *dstr) {
+    return (MYSQL_BIND){
+        .buffer_type = MYSQL_TYPE_BLOB,
+        .buffer = dstr->data,
+        .buffer_length = dstr->size,
+        .length = &dstr->len,
+    };
+}
 
 #define BOOL_BIND(bind) \
     (MYSQL_BIND){ \
@@ -105,6 +109,14 @@ derr_t _sql_stmt_bind_params(MYSQL_STMT *stmt, MYSQL_BIND *args, size_t nargs);
         sizeof((MYSQL_BIND[]){(MYSQL_BIND){0}, __VA_ARGS__}) / sizeof(MYSQL_BIND) - 1 \
     )
 
+derr_t _sql_stmt_bind_results(MYSQL_STMT *stmt, MYSQL_BIND *args, size_t nargs);
+#define sql_stmt_bind_results(stmt, ...) \
+    _sql_stmt_bind_results( \
+        (stmt), \
+        &(MYSQL_BIND[]){(MYSQL_BIND){0}, __VA_ARGS__}[1], \
+        sizeof((MYSQL_BIND[]){(MYSQL_BIND){0}, __VA_ARGS__}) / sizeof(MYSQL_BIND) - 1 \
+    )
+
 derr_t sql_read_bit_dstr(const dstr_t *val, bool *out);
 
 derr_t sql_stmt_execute(MYSQL_STMT *stmt);
@@ -116,6 +128,19 @@ derr_t _sql_bound_stmt(
     _sql_bound_stmt( \
         (sql), \
         (query), \
+        &(MYSQL_BIND[]){(MYSQL_BIND){0}, __VA_ARGS__}[1], \
+        sizeof((MYSQL_BIND[]){(MYSQL_BIND){0}, __VA_ARGS__}) / sizeof(MYSQL_BIND) - 1 \
+    )
+
+// returns ok=true if a row was received
+derr_t _sql_onerow_query(
+    MYSQL *mysql, const dstr_t *query, bool *ok, MYSQL_BIND *args, size_t nargs
+);
+#define sql_onerow_query(sql, query, ok, ...) \
+    _sql_onerow_query( \
+        (sql), \
+        (query), \
+        (ok), \
         &(MYSQL_BIND[]){(MYSQL_BIND){0}, __VA_ARGS__}[1], \
         sizeof((MYSQL_BIND[]){(MYSQL_BIND){0}, __VA_ARGS__}) / sizeof(MYSQL_BIND) - 1 \
     )

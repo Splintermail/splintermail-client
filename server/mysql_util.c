@@ -218,14 +218,36 @@ derr_t _sql_stmt_bind_params(MYSQL_STMT *stmt, MYSQL_BIND *args, size_t nargs){
     long unsigned int nparams = mysql_stmt_param_count(stmt);
     if(nparams != nargs){
         TRACE(&e, "expected %x params but got %x\n", FU(nargs), FU(nparams));
-        ORIG(&e, E_SQL, "wrong number of params");
+        ORIG(&e, E_INTERNAL, "wrong number of params");
     }
 
     // bind params
-    int ret = mysql_stmt_bind_param(stmt, args);
+    bool ret = mysql_stmt_bind_param(stmt, args);
     if(ret){
         TRACE(&e, "mysql_stmt_error: %x\n", FS(mysql_stmt_error(stmt)));
         ORIG(&e, E_SQL, "failed to bind params");
+    }
+
+    return e;
+}
+
+derr_t _sql_stmt_bind_results(
+    MYSQL_STMT *stmt, MYSQL_BIND *args, size_t nargs
+){
+    derr_t e = E_OK;
+
+    // ensure that we have the right field count before binding
+    long unsigned int nfields = mysql_stmt_field_count(stmt);
+    if(nfields != nargs){
+        TRACE(&e, "expected %x fields but got %x\n", FU(nargs), FU(nfields));
+        ORIG(&e, E_INTERNAL, "wrong number of fields");
+    }
+
+    // bind results
+    bool ret = mysql_stmt_bind_result(stmt, args);
+    if(ret){
+        TRACE(&e, "mysql_stmt_error: %x\n", FS(mysql_stmt_error(stmt)));
+        ORIG(&e, E_SQL, "failed to bind results");
     }
 
     return e;
@@ -269,11 +291,98 @@ derr_t _sql_bound_stmt(
     // prepare the statement
     PROP_GO(&e, sql_stmt_prepare(stmt, query), cu_stmt);
 
+    // ensure that the statement will not produce results
+    unsigned int nfields = mysql_stmt_field_count(stmt);
+    if(nfields > 0){
+        TRACE(&e, "expected no return fields but got %x\n", FU(nfields));
+        ORIG_GO(&e,
+            E_INTERNAL, "non-zero return fields in sql_bound_stmt()",
+        cu_stmt);
+    }
+
     // bind arguments
     PROP_GO(&e, _sql_stmt_bind_params(stmt, args, nargs), cu_stmt);
 
     // execute
     PROP_GO(&e, sql_stmt_execute(stmt), cu_stmt);
+
+cu_stmt:
+    mysql_stmt_close(stmt);
+    return e;
+}
+
+derr_t _sql_onerow_query(
+    MYSQL *sql, const dstr_t *query, bool *ok, MYSQL_BIND *args, size_t nargs
+){
+    derr_t e = E_OK;
+    *ok = false;
+
+    // create a statement object
+    MYSQL_STMT *stmt;
+    PROP(&e, sql_stmt_init(sql, &stmt) );
+
+    // prepare the statement
+    PROP_GO(&e, sql_stmt_prepare(stmt, query), cu_stmt);
+
+    // count input and output fields
+    long unsigned int ins = mysql_stmt_param_count(stmt);
+    unsigned int outs = mysql_stmt_field_count(stmt);
+
+    if(ins + outs != nargs){
+        TRACE(&e,
+            "sum of params (%x) and fields (%x) does not match the"
+            "number of args provided (%x)\n", FU(ins), FU(outs), FU(nargs));
+        ORIG_GO(&e,
+            E_INTERNAL, "param/field count mismatch",
+        cu_stmt);
+    }
+
+    if(outs == 0){
+        TRACE(&e, "expected return fields but got none\n");
+        ORIG_GO(&e,
+            E_INTERNAL, "zero return fields in sql_onerow_query()",
+        cu_stmt);
+    }
+
+    // bind arguments
+    PROP_GO(&e, _sql_stmt_bind_params(stmt, args, ins), cu_stmt);
+
+    // execute
+    PROP_GO(&e, sql_stmt_execute(stmt), cu_stmt);
+
+    // bind results
+    PROP_GO(&e, _sql_stmt_bind_results(stmt, &args[ins], outs), cu_stmt);
+
+    // always fetch all results
+    size_t nrows = 0;
+    bool had_trunc = false;
+    int ret;
+    while(true){
+        ret = mysql_stmt_fetch(stmt);
+        // break only for errors or NO_DATA
+        if(ret == 1 || ret == MYSQL_NO_DATA) break;
+        // check for truncated data
+        if(ret == MYSQL_DATA_TRUNCATED) had_trunc = true;
+        nrows++;
+    }
+
+   if(ret == 1){
+        // normal errors
+        TRACE(&e, "mysql_stmt_error: %x\n", FS(mysql_stmt_error(stmt)));
+        ORIG_GO(&e, E_SQL, "failed to fetch result", cu_stmt);
+    }
+
+    if(had_trunc){
+        // it is the caller's responsibility to guarantee this cannot happen
+        ORIG_GO(&e, E_INTERNAL, "truncated data detected", cu_stmt);
+    }
+
+    if(nrows > 1){
+        TRACE(&e, "expected 1 row but got %x\n", FU(nrows));
+        ORIG_GO(&e, E_SQL, "too many rows in sql_onerow_query()", cu_stmt);
+    }else if(nrows == 1){
+        *ok = true;
+    }
 
 cu_stmt:
     mysql_stmt_close(stmt);

@@ -410,9 +410,9 @@ static derr_t mig_override(MYSQL *sql, const dstr_t *path){
         sql_bound_stmt(sql,
             &query,
             UINT_BIND(id),
-            STRING_BIND(name),
+            STRING_BIND(&name),
             BOOL_BIND(exe),
-            BLOB_BIND(content)
+            BLOB_BIND(&content)
         ),
     cu);
 
@@ -631,9 +631,9 @@ static derr_t migmysql_apply_one(
         sql_bound_stmt(sql,
             &query,
             UINT_BIND(dn->id),
-            STRING_BIND(name),
+            STRING_BIND(&name),
             BOOL_BIND(dn->exe),
-            BLOB_BIND(dn->content)
+            BLOB_BIND(&dn->content)
         ),
     cu);
 
