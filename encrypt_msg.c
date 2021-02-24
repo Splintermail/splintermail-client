@@ -9,7 +9,7 @@
 #include <openssl/evp.h>
 
 #ifdef BUILD_SERVER_CODE
-#include "server/mysql_util.h"
+#include "server/mysql_util/mysql_util.h"
 #include "server/badbadbad_alert.h"
 #endif // BUILD_SERVER_CODE
 

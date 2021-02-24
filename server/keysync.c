@@ -5,7 +5,7 @@
 #include "libdstr/libdstr.h"
 
 #include "server/badbadbad_alert.h"
-#include "server/mysql_util.h"
+#include "server/mysql_util/mysql_util.h"
 
 typedef struct {
     const dstr_t *sock;

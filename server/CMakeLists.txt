@@ -1,12 +1,4 @@
-# add a mysql_util library
-add_library(mysql_util mysql_util.c)
-if("${MYSQL_INCLUDE_DIR}" STREQUAL "")
-    set(MYSQL_INCLUDE_DIR "/usr/include/mysql")
-endif()
-default_compile_options(mysql_util TRUE)
-define_file_logname_for_target(mysql_util)
-target_include_directories(mysql_util PUBLIC ${MYSQL_INCLUDE_DIR})
-target_link_libraries(mysql_util PUBLIC dstr mysqlclient)
+add_subdirectory(mysql_util)
 
 # pre-defined splintermail queries
 add_library(libsmsql libsmsql.c)
@@ -14,6 +6,18 @@ set_target_properties(libsmsql PROPERTIES OUTPUT_NAME smsql)
 default_compile_options(libsmsql TRUE)
 define_file_logname_for_target(libsmsql)
 target_link_libraries(libsmsql PUBLIC mysql_util)
+
+if("${CMAKE_BUILD_TYPE}" STREQUAL "debug")
+    # rebuild without asan
+    add_library(libsmsql_noasan libsmsql.c)
+    set_target_properties(libsmsql_noasan PROPERTIES OUTPUT_NAME smsql_noasan)
+    default_compile_options(libsmsql_noasan FALSE)
+    define_file_logname_for_target(libsmsql_noasan)
+    target_link_libraries(libsmsql_noasan PUBLIC mysql_util_noasan)
+else()
+    # release builds already have no asan
+    add_library(libsmsql_noasan ALIAS libsmsql)
+endif()
 
 add_executable(smsql smsql.c)
 default_compile_options(smsql TRUE)
@@ -44,11 +48,7 @@ default_compile_options(migmysql TRUE)
 define_file_logname_for_target(migmysql)
 target_link_libraries(migmysql dstr mysql_util)
 
-find_package(Python3 COMPONENTS Development)
-Python3_add_library(pysm MODULE pysm.c)
-default_compile_options(pysm FALSE)
-target_include_directories(pysm PRIVATE "${OPENSSL_INCLUDE_DIR}")
-target_link_libraries(pysm PRIVATE "${OPENSSL_LIBRARIES}")
+add_subdirectory(pysm)
 
 #############
 

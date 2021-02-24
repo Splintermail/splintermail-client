@@ -15,6 +15,8 @@
 
 #include "libdstr/libdstr.h"
 
+#include "binds.h"
+
 // an error in the SQL library
 extern derr_type_t E_SQL;
 
@@ -66,40 +68,6 @@ derr_t _sql_read_row(
 derr_t sql_stmt_init(MYSQL *sql, MYSQL_STMT **stmt);
 
 derr_t sql_stmt_prepare(MYSQL_STMT *stmt, const dstr_t *query);
-
-static inline MYSQL_BIND STRING_BIND(dstr_t *dstr) {
-    return (MYSQL_BIND){
-        .buffer_type = MYSQL_TYPE_STRING,
-        .buffer = dstr->data,
-        .buffer_length = dstr->size,
-        .length = &dstr->len,
-    };
-}
-
-static inline MYSQL_BIND BLOB_BIND(dstr_t *dstr) {
-    return (MYSQL_BIND){
-        .buffer_type = MYSQL_TYPE_BLOB,
-        .buffer = dstr->data,
-        .buffer_length = dstr->size,
-        .length = &dstr->len,
-    };
-}
-
-#define BOOL_BIND(bind) \
-    (MYSQL_BIND){ \
-        .buffer_type = MYSQL_TYPE_TINY, \
-        .buffer = &(bind), \
-        .is_unsigned = true, \
-    }
-
-#define UINT_BIND(uint) \
-    (MYSQL_BIND){ \
-        /* c type of int really is MYSQL_TYPE_LONG */ \
-        /* see: https://dev.mysql.com/doc/c-api/8.0/en/c-api-prepared-statement-type-codes.html */ \
-        .buffer_type = MYSQL_TYPE_LONG, \
-        .buffer = &(uint), \
-        .is_unsigned = true, \
-    }
 
 derr_t _sql_stmt_bind_params(MYSQL_STMT *stmt, MYSQL_BIND *args, size_t nargs);
 #define sql_stmt_bind_params(stmt, ...) \

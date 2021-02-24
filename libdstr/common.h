@@ -127,18 +127,18 @@ extern derr_type_t E_DEAD;       // attemped to use a two-phase lifetime object 
 
 // wrap an empty char[] with in a dstr_t
 #define DSTR_WRAP_ARRAY(dstr, buffer){ \
-    dstr.data = buffer; \
-    dstr.size = sizeof(buffer); \
-    dstr.len = 0; \
-    dstr.fixed_size = 1; \
+    (dstr).data = (buffer); \
+    (dstr).size = sizeof(buffer); \
+    (dstr).len = 0; \
+    (dstr).fixed_size = 1; \
 }
 
 // wrap a char* of known length in a dstr_t
 #define DSTR_WRAP(dstr, buffer, length, null_terminated){ \
-    dstr.data = buffer; \
-    dstr.size = length + null_terminated; \
-    dstr.len = length; \
-    dstr.fixed_size = 1; \
+    (dstr).data = (buffer); \
+    (dstr).size = (length) + (null_terminated); \
+    (dstr).len = (length); \
+    (dstr).fixed_size = 1; \
 }
 
 // declares an empty, fixed-size dstr_t on the stack

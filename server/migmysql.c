@@ -6,7 +6,7 @@
 #include <fcntl.h>
 
 #include "libdstr/libdstr.h"
-#include "mysql_util.h"
+#include "server/mysql_util/mysql_util.h"
 
 typedef struct {
     const dstr_t *path;
@@ -409,10 +409,10 @@ static derr_t mig_override(MYSQL *sql, const dstr_t *path){
     PROP_GO(&e,
         sql_bound_stmt(sql,
             &query,
-            UINT_BIND(id),
-            STRING_BIND(&name),
-            BOOL_BIND(exe),
-            BLOB_BIND(&content)
+            uint_bind_in(&id),
+            string_bind_in(&name),
+            bool_bind_in(&exe),
+            blob_bind_in(&content)
         ),
     cu);
 
@@ -630,10 +630,10 @@ static derr_t migmysql_apply_one(
     PROP_GO(&e,
         sql_bound_stmt(sql,
             &query,
-            UINT_BIND(dn->id),
-            STRING_BIND(&name),
-            BOOL_BIND(dn->exe),
-            BLOB_BIND(&dn->content)
+            uint_bind_in(&dn->id),
+            string_bind_in(&name),
+            bool_bind_in(&dn->exe),
+            blob_bind_in(&dn->content)
         ),
     cu);
 
@@ -667,7 +667,7 @@ static derr_t migmysql_undo_one(
     PROP_GO(&e,
         sql_bound_stmt(sql,
             &DSTR_LIT("DELETE FROM migmysql where id = ?"),
-            UINT_BIND(state->id)
+            uint_bind_in(&state->id)
         ),
     cu);
 
