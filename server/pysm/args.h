@@ -12,11 +12,12 @@ struct py_arg_t {
     const char *name;
     const char *fmt;
     void *param1;
-    void *param2;
+    bool need_size;
     bool optional;
     out_fn_t out_fn;
     void *out_src;
     void **out;
+    Py_ssize_t out_len;
 };
 
 // fixed size struct to get compiler errors if we exceed static sizes.

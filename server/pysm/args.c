@@ -4,8 +4,15 @@ static void _dstr_out_fn(py_arg_t arg){
     // typecast
     dstr_t *mem = arg.out_src;
     if(mem->data == NULL){
+        mem->len = 0;
+        mem->size = 0;
+        // set the dstr_t* output to NULL
         *arg.out = NULL;
     }else{
+        // capture the length
+        mem->len = arg.out_len < 0 ? 0 : (size_t)arg.out_len;
+        mem->size = mem->len;
+        // set the dstr_t* output to &mem
         *arg.out = mem;
     }
 }
@@ -13,17 +20,18 @@ static void _dstr_out_fn(py_arg_t arg){
 py_arg_t pyarg_dstr(dstr_t *mem, const dstr_t **out, const char *name){
     // technically no need to set mem for non-optional
     *mem = (dstr_t){0};
-    return (py_arg_t){
+    py_arg_t arg = {
         .type = PYARG_DSTR_TYPE,
         .name = name,
         .fmt = "s#",
         .param1 = &mem->data,
-        .param2 = &mem->len,
+        .need_size = true,
         .optional = false,
         .out_fn = _dstr_out_fn,
         .out_src = mem,
         .out = (void**)out,
     };
+    return arg;
 }
 
 py_arg_t pyarg_dstr_opt(
@@ -35,17 +43,18 @@ py_arg_t pyarg_dstr_opt(
     mem->size = mem->len + 1;
     mem->fixed_size = 1;
 
-    return (py_arg_t){
+    py_arg_t arg = {
         .type = PYARG_DSTR_TYPE,
         .name = name,
         .fmt = "s#",
         .param1 = &mem->data,
-        .param2 = &mem->len,
+        .need_size = true,
         .optional = true,
         .out_fn = _dstr_out_fn,
         .out_src = mem,
         .out = (void**)out,
     };
+    return arg;
 }
 
 py_arg_t pyarg_nullable_dstr(
@@ -53,17 +62,18 @@ py_arg_t pyarg_nullable_dstr(
 ){
     // technically no need to set mem for non-optional
     *mem = (dstr_t){0};
-    return (py_arg_t){
+    py_arg_t arg = {
         .type = PYARG_DSTR_TYPE,
         .name = name,
         .fmt = "z#",
         .param1 = &mem->data,
-        .param2 = &mem->len,
+        .need_size = true,
         .optional = false,
         .out_fn = _dstr_out_fn,
         .out_src = mem,
         .out = (void**)out,
     };
+    return arg;
 }
 
 py_arg_t pyarg_nullable_dstr_opt(
@@ -79,17 +89,18 @@ py_arg_t pyarg_nullable_dstr_opt(
         *mem = (dstr_t){0};
     }
 
-    return (py_arg_t){
+    py_arg_t arg = {
         .type = PYARG_DSTR_TYPE,
         .name = name,
         .fmt = "z#",
         .param1 = &mem->data,
-        .param2 = &mem->len,
+        .need_size = true,
         .optional = true,
         .out_fn = _dstr_out_fn,
         .out_src = mem,
         .out = (void**)out,
     };
+    return arg;
 }
 
 
@@ -169,7 +180,7 @@ derr_t pyarg_parse(PyObject *pyargs, PyObject *pykwds, py_args_t args) {
 
 #define ADD_PARAMS(arg) do{ \
     if(arg.param1 != NULL) params[nparams++] = arg.param1; \
-    if(arg.param2 != NULL) params[nparams++] = arg.param2; \
+    if(arg.need_size) params[nparams++] = &arg.out_len; \
 } while(0)
     ADD_PARAMS(args.a1);
     ADD_PARAMS(args.a2);

@@ -32,7 +32,33 @@ static derr_t get_uuid(MYSQL *sql, int argc, char **argv){
 
     PROP(&e, get_uuid_for_email(sql, &email, &uuid, &ok) );
     if(ok){
-        PFMT("%x\n", FX(&uuid));
+        PFMT("%x\n", FSID(&uuid));
+    }else{
+        FFMT(stderr, NULL, "no results\n");
+    }
+
+    return e;
+}
+
+static derr_t get_email(MYSQL *sql, int argc, char **argv){
+    derr_t e = E_OK;
+
+    if(argc != 1){
+        ORIG(&e, E_VALUE, "usage: get_email FSID\n");
+    }
+
+    dstr_t fsid = get_arg(argv, 0);
+
+    // convert fsid to uuid
+    DSTR_VAR(uuid, SMSQL_UUID_SIZE);
+    PROP(&e, to_uuid(&fsid, &uuid) );
+
+    DSTR_VAR(email, SMSQL_EMAIL_SIZE);
+    bool ok;
+
+    PROP(&e, get_email_for_uuid(sql, &uuid, &email, &ok) );
+    if(ok){
+        PFMT("%x\n", FD(&email));
     }else{
         FFMT(stderr, NULL, "no results\n");
     }
@@ -150,6 +176,7 @@ int main(int argc, char **argv){
     }
 
     LINK_ACTION("get_uuid", get_uuid);
+    LINK_ACTION("get_email", get_email);
 
     if(action == NULL){
         LOG_ERROR("command \"%x\" unknown\n", FD(&cmd));

@@ -5,6 +5,15 @@
 
 #include "pysm.h"
 
+#define BUILD_STRING(dstr) \
+    Py_BuildValue("s#", (dstr).data, (dstr).len)
+#define BUILD_OPTIONAL_STRING(dstr) \
+    Py_BuildValue("s#", (dstr).data ? (dstr).data : NULL, (dstr).len)
+#define BUILD_BYTES(dstr) \
+    Py_BuildValue("y#", (dstr).data, (dstr).len)
+#define BUILD_OPTIONAL_BYTES(dstr) \
+    Py_BuildValue("y#", (dstr).data ? (dstr).data : NULL, (dstr).len)
+
 REGISTER_ERROR_TYPE(E_NORAISE, "NORAISE");
 
 // main entrypoint for python module
@@ -112,7 +121,31 @@ static PyObject *py_smsql_get_uuid(
 
     PROP_GO(&e, get_uuid_for_email(&self->sql, email, &uuid, &ok), fail);
 
-    return Py_BuildValue("y#", ok ? uuid.data : NULL, uuid.len);
+    return BUILD_OPTIONAL_BYTES(uuid);
+
+fail:
+    raise_derr(&e);
+    return NULL;
+}
+
+static PyObject *py_smsql_get_email(
+    py_smsql_t *self, PyObject *args, PyObject *kwds
+){
+    derr_t e = E_OK;
+
+    dstr_t _uuid;
+    const dstr_t *uuid;
+    py_args_t spec = {
+        pyarg_dstr(&_uuid, &uuid, "uuid"),
+    };
+    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+
+    DSTR_VAR(email, SMSQL_EMAIL_SIZE);
+    bool ok;
+
+    PROP_GO(&e, get_email_for_uuid(&self->sql, uuid, &email, &ok), fail);
+
+    return BUILD_OPTIONAL_STRING(email);
 
 fail:
     raise_derr(&e);
@@ -150,6 +183,12 @@ static PyMethodDef py_smsql_methods[] = {
         .ml_flags = METH_VARARGS | METH_KEYWORDS,
         .ml_doc = "get a uuid for an email",
     },
+    {
+        .ml_name = "get_email",
+        .ml_meth = (PyCFunction)(void*)py_smsql_get_email,
+        .ml_flags = METH_VARARGS | METH_KEYWORDS,
+        .ml_doc = "get an email for a uuid",
+    },
     {NULL}, // sentinel
 };
 
@@ -168,6 +207,52 @@ static PyTypeObject py_smsql_type = {
     .tp_methods = py_smsql_methods,
     .tp_init = (initproc)py_smsql_init,
 };
+
+// helper fuctions
+
+static PyObject *pysm_to_fsid(PyObject *self, PyObject *args, PyObject *kwds){
+    (void)self;
+    derr_t e = E_OK;
+
+    dstr_t _uuid;
+    const dstr_t *uuid;
+    py_args_t spec = {
+        pyarg_dstr(&_uuid, &uuid, "uuid"),
+    };
+    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+
+    DSTR_VAR(fsid, SMSQL_FSID_SIZE);
+
+    PROP_GO(&e, to_fsid(uuid, &fsid), fail);
+
+    return BUILD_STRING(fsid);
+
+fail:
+    raise_derr(&e);
+    return NULL;
+}
+
+static PyObject *pysm_to_uuid(PyObject *self, PyObject *args, PyObject *kwds){
+    (void)self;
+    derr_t e = E_OK;
+
+    dstr_t _fsid;
+    const dstr_t *fsid;
+    py_args_t spec = {
+        pyarg_dstr(&_fsid, &fsid, "fsid"),
+    };
+    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+
+    DSTR_VAR(uuid, SMSQL_UUID_SIZE);
+
+    PROP_GO(&e, to_uuid(fsid, &uuid), fail);
+
+    return BUILD_BYTES(uuid);
+
+fail:
+    raise_derr(&e);
+    return NULL;
+}
 
 ////// old pysm
 
@@ -273,12 +358,27 @@ done:
     return PyBytes_FromStringAndSize((char*)fpr, fpr_len);
 }
 
+#define ARG_KWARG_FN_CAST(fn)\
+    (PyCFunction)(void(*)(void))(fn)
+
 static PyMethodDef pysm_methods[] = {
     {
         .ml_name = "hash_key",
         .ml_meth = pysm_hash_key,
         .ml_flags = METH_VARARGS,
         .ml_doc = "hash a PEM-encoded public key",
+    },
+    {
+        .ml_name = "to_fsid",
+        .ml_meth = ARG_KWARG_FN_CAST(pysm_to_fsid),
+        .ml_flags = METH_VARARGS | METH_KEYWORDS,
+        .ml_doc = "get an fsid for a uuid",
+    },
+    {
+        .ml_name = "to_uuid",
+        .ml_meth = ARG_KWARG_FN_CAST(pysm_to_uuid),
+        .ml_flags = METH_VARARGS | METH_KEYWORDS,
+        .ml_doc = "get a uuid from an fsid",
     },
     {0},  // sentinel
 };

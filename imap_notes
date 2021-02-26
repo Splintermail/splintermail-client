@@ -1472,7 +1472,7 @@ Using IDLE to receive live key updates via IMAP
       - db insertion of a key will also insert a row into a syncable keys table
       - db insertion will do a no-fail attempt to wake up the sync service
       - sync service will wake up (either right then or periodically)
-      - sync service will see entries in the table, pass them over lmdb, and
+      - sync service will see entries in the table, pass them over lmtp, and
         then delete them from the database
 
 Account lifetimes and microservice interactions:
@@ -1539,6 +1539,12 @@ Account lifetimes and microservice interactions:
       - insert (email, pubkey, add) into keyops
     # in keysync:
       - see ops in keyops
+
+    to do list:
+    x - track down all uses of sql
+      - fix all uses of sql
+      - migrate user folders when I migrate the database
+      - replace the deleter service with a chron job
 
 Questions about keysync:
     How do I make the __keybox__ read-only?

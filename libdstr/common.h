@@ -599,6 +599,10 @@ derr_t bin2b64_stream(
 );
 derr_t b642bin_stream(dstr_t* b64, dstr_t* bin);
 
+// simple math helpers
+size_t b642bin_output_len(size_t in);
+size_t bin2b64_output_len(size_t in);
+
 // these are not streaming functions; that is, they don't consume the input
 // however they only append to the output
 derr_t bin2hex(const dstr_t* bin, dstr_t* hex);

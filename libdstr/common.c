@@ -1170,7 +1170,6 @@ derr_t dstr_fwrite(FILE* f, const dstr_t* buffer){
     return e;
 }
 
-
 derr_type_t bin2b64_quiet(
     const dstr_t* bin,
     dstr_t* b64,
@@ -1182,6 +1181,7 @@ derr_type_t bin2b64_quiet(
     unsigned char ch[3];
     memset(ch, 0, sizeof(ch));
     size_t ch_idx = 0;
+    if(consumed) *consumed = 0;
 
     DSTR_STATIC(line_break, "\n");
 
@@ -1245,7 +1245,7 @@ derr_type_t bin2b64_quiet(
             }
         }
     }
-    *consumed = i;
+    if(consumed) *consumed = i;
     return E_NONE;
 }
 
@@ -1270,6 +1270,7 @@ derr_type_t b642bin_quiet(const dstr_t* b64, dstr_t* bin, size_t *consumed){
     int ch_idx = 0;
     int skip = 0;
     size_t total_read = 0;
+    if(consumed) *consumed = 0;
 
     for(size_t i = 0; i < b64->len; i++){
         char c = b64->data[i];
@@ -1309,7 +1310,7 @@ derr_type_t b642bin_quiet(const dstr_t* b64, dstr_t* bin, size_t *consumed){
             if(skip > 0) break;
         }
     }
-    *consumed = total_read;
+    if(consumed) *consumed = total_read;
     return E_NONE;
 }
 
@@ -1322,6 +1323,17 @@ derr_t b642bin_stream(dstr_t* b64, dstr_t* bin){
 
     dstr_leftshift(b64, consumed);
     return e;
+}
+
+size_t b642bin_output_len(size_t in){
+    // every four bytes return three output bytes
+    // in should always be divisble by 4, but we'll round up just in case.
+    return ((in + 3) / 4) * 3;
+}
+
+size_t bin2b64_output_len(size_t in){
+    // every three bytes (rounding up) return four output bytes
+    return ((in + 2) / 3) * 4;
 }
 
 static derr_type_t bin2hex_quiet(const dstr_t* bin, dstr_t* hex){
