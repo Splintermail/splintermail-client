@@ -57,7 +57,7 @@ static derr_t test_b64_encoders(void){
 
     // test bin2b64 without forcing the end output
     DSTR_VAR(encoded, 512);
-    PROP(&e, bin2b64(&bin, &encoded, 64, false) );
+    PROP(&e, bin2b64_stream(&bin, &encoded, 64, false) );
 
     // check the values
     if(bin.len != 16 || (unsigned char)bin.data[0] != 240){
@@ -69,7 +69,7 @@ static derr_t test_b64_encoders(void){
     }
 
     // test bin2b64 with forcing the end output
-    PROP(&e, bin2b64(&bin, &encoded, 64, true) );
+    PROP(&e, bin2b64_stream(&bin, &encoded, 64, true) );
 
     // check the values
     if(bin.len != 0){
@@ -82,7 +82,7 @@ static derr_t test_b64_encoders(void){
 
     // now decode the whole thing back to binary
     DSTR_VAR(decoded, 256);
-    PROP(&e, b642bin(&encoded, &decoded) );
+    PROP(&e, b642bin_stream(&encoded, &decoded) );
 
     result = dstr_cmp(&decoded, &orig);
     if(result != 0){
@@ -96,7 +96,7 @@ static derr_t test_b64_encoders(void){
     for(size_t i = 0; i < orig.len; i++){
         dstr_t sub = dstr_sub(&orig, i, i+1);
         PROP(&e, dstr_append(&bin, &sub) );
-        PROP(&e, bin2b64(&bin, &encoded, 64, i + 1 == orig.len) );
+        PROP(&e, bin2b64_stream(&bin, &encoded, 64, i + 1 == orig.len) );
     }
     result = dstr_cmp(&encoded, &base64_complete);
     if(result != 0){
@@ -107,7 +107,7 @@ static derr_t test_b64_encoders(void){
     for(size_t i = 0; i < encoded.len; i++){
         dstr_t sub = dstr_sub(&encoded, i, i+1);
         PROP(&e, dstr_append(&base64, &sub) );
-        PROP(&e, b642bin(&base64, &decoded) );
+        PROP(&e, b642bin_stream(&base64, &decoded) );
     }
     result = dstr_cmp(&decoded, &orig);
     if(result != 0){
@@ -117,7 +117,7 @@ static derr_t test_b64_encoders(void){
     // now one last time but on one line
     encoded.len = 0;
     PROP(&e, dstr_copy(&orig, &bin) );
-    PROP(&e, bin2b64(&bin, &encoded, 0, true) );
+    PROP(&e, bin2b64_stream(&bin, &encoded, 0, true) );
 
     result = dstr_cmp(&encoded, &base64_complete_oneline);
     if(result != 0){
@@ -192,7 +192,7 @@ static derr_t test_crypto(void){
     dstr_t sub;
     while(in.len){
         sub = dstr_sub(&in, 0, 1);
-        PROP_GO(&e, encrypter_update(&ec, &sub, &enc), cleanup_2);
+        PROP_GO(&e, encrypter_update_stream(&ec, &sub, &enc), cleanup_2);
         dstr_leftshift(&in, 1);
     }
 

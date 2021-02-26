@@ -580,13 +580,24 @@ derr_type_t dstr_fwrite_quiet(FILE* f, const dstr_t* buffer);
 derr_t dstr_fwrite(FILE* f, const dstr_t* buffer);
 /*  throws : E_OS */
 
-derr_t bin2b64(dstr_t* bin, dstr_t* b64, size_t line_width, bool force_end);
-/* throws: E_FIXEDSIZE (on output)
-           E_NOMEM     (on output) */
+derr_type_t bin2b64_quiet(
+    const dstr_t* bin,
+    dstr_t* b64,
+    size_t line_width,
+    bool force_end,
+    size_t *consumed
+);
+/* returns: E_FIXEDSIZE
+            E_NOMEM */
 
-derr_t b642bin(dstr_t* b64, dstr_t* bin);
-/* throws: E_FIXEDSIZE (on output)
-           E_NOMEM     (on output) */
+derr_type_t b642bin_quiet(const dstr_t* b64, dstr_t* bin, size_t *consumed);
+/* returns: E_FIXEDSIZE
+            E_NOMEM */
+
+derr_t bin2b64_stream(
+    dstr_t* bin, dstr_t* b64, size_t line_width, bool force_end
+);
+derr_t b642bin_stream(dstr_t* b64, dstr_t* bin);
 
 // these are not streaming functions; that is, they don't consume the input
 // however they only append to the output

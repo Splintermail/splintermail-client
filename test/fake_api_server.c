@@ -167,7 +167,7 @@ static void* fas_thread(void* arg){
 
         // now decode the payload (destroys the recv buffer)
         DSTR_VAR(body, 4096);
-        PROP_GO(&e, b642bin(&payload, &body), cleanup_6);
+        PROP_GO(&e, b642bin_stream(&payload, &body), cleanup_6);
         if(payload.len > 0){
             ORIG_GO(&e, E_VALUE, "bad base64 decode", cleanup_6);
         }

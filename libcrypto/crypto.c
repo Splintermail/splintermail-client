@@ -454,7 +454,7 @@ derr_t encrypter_start(encrypter_t* ec, link_t *keys, dstr_t* out){
     // append the version in base64
     // example output: "V:1\n" (version: 1)
     PROP_GO(&e, FMT(&ec->pre64, "V:%x\n", FI(FORMAT_VERSON)), fail_1);
-    PROP_GO(&e, bin2b64(&ec->pre64, out, B64_WIDTH, false), fail_1);
+    PROP_GO(&e, bin2b64_stream(&ec->pre64, out, B64_WIDTH, false), fail_1);
 
     // append each recipient and their encrypted key in base64
     // example output: "R:v-64:<sha256 hash>:256:<pubkey-encrypted msg key>
@@ -471,7 +471,7 @@ derr_t encrypter_start(encrypter_t* ec, link_t *keys, dstr_t* out){
                                  FI(ek_len[i]),
                                  FD(&ek_wrapper)), fail_1);
         // dump line
-        PROP_GO(&e, bin2b64(&ec->pre64, out, B64_WIDTH, false), fail_1);
+        PROP_GO(&e, bin2b64_stream(&ec->pre64, out, B64_WIDTH, false), fail_1);
 
         i++;
     }
@@ -482,7 +482,7 @@ derr_t encrypter_start(encrypter_t* ec, link_t *keys, dstr_t* out){
     DSTR_WRAP(iv_wrapper, (char*)iv, (size_t)iv_len, false);
     // note we are also appending the M: to start the message
     PROP_GO(&e, FMT(&ec->pre64, "IV:%x:%x\nM:", FI(iv_len), FD(&iv_wrapper)), fail_1);
-    PROP_GO(&e, bin2b64(&ec->pre64, out, B64_WIDTH, false), fail_1);
+    PROP_GO(&e, bin2b64_stream(&ec->pre64, out, B64_WIDTH, false), fail_1);
 
 cu:
     dstr_free(&eks_block);
@@ -494,7 +494,7 @@ fail_1:
     return e;
 }
 
-derr_t encrypter_update(encrypter_t* ec, dstr_t* in, dstr_t* out){
+derr_t encrypter_update(encrypter_t* ec, const dstr_t *in, dstr_t* out){
     derr_t e = E_OK;
 
     /* *pre64 should never have more that B64_CHUNK bytes leftover, because
@@ -525,17 +525,24 @@ derr_t encrypter_update(encrypter_t* ec, dstr_t* in, dstr_t* out){
         ec->pre64.len += (size_t)outlen;
 
         // flush pre64 to out
-        PROP_GO(&e, bin2b64(&ec->pre64, out, B64_WIDTH, false), fail);
+        PROP_GO(&e, bin2b64_stream(&ec->pre64, out, B64_WIDTH, false), fail);
     }
-
-    /* we always use all of dstr_t *in, but to be consistent with other api
-       functions we will "consume" the buffer */
-    in->len = 0;
 
     return e;
 
 fail:
     encrypter_reset(ec);
+    return e;
+}
+
+
+derr_t encrypter_update_stream(encrypter_t* ec, dstr_t* in, dstr_t* out){
+    derr_t e = E_OK;
+    PROP(&e, encrypter_update(ec, in, out) );
+
+    // we always use all of dstr_t *in
+    in->len = 0;
+
     return e;
 }
 
@@ -557,7 +564,7 @@ derr_t encrypter_finish(encrypter_t* ec, dstr_t* out){
     ec->pre64.len += (size_t)outlen;
 
     // flush pre64 to out, completely
-    PROP_GO(&e, bin2b64(&ec->pre64, out, B64_WIDTH, true), cleanup);
+    PROP_GO(&e, bin2b64_stream(&ec->pre64, out, B64_WIDTH, true), cleanup);
 
     // get the GCM tag
     DSTR_VAR(tag, CIPHER_TAG_LEN);
@@ -573,7 +580,7 @@ derr_t encrypter_finish(encrypter_t* ec, dstr_t* out){
     // base64-encode the tag
     DSTR_VAR(b64tag, CIPHER_TAG_LEN * 2);
     // e = PFMT("%x\n", FD_DBG(&tag)); DROP_VAR(&e);
-    PROP_GO(&e, bin2b64(&tag, &b64tag, 0, true), cleanup);
+    PROP_GO(&e, bin2b64_stream(&tag, &b64tag, 0, true), cleanup);
 
     // append the encoded tag on its own line, with '=' as a prefix
     PROP_GO(&e, FMT(out, "=%x\n", FD(&b64tag)), cleanup);
@@ -945,7 +952,7 @@ derr_t decrypter_update(decrypter_t* dc, dstr_t* in, dstr_t* out){
             // get a substring of the part of this line we want to decode
             sub = dstr_sub(&sub, 1, 0);
             // base64 the tag
-            e2 = b642bin(&sub, &dc->tag);
+            e2 = b642bin_stream(&sub, &dc->tag);
             // that should never error
             CATCH(e2, E_FIXEDSIZE){
                 RETHROW_GO(&e, &e2, E_PARAM, fail);
@@ -960,7 +967,7 @@ derr_t decrypter_update(decrypter_t* dc, dstr_t* in, dstr_t* out){
         read += sub.len;
 
         // now push *base64 through the decoder
-        NOFAIL_GO(&e, E_FIXEDSIZE, b642bin(&dc->base64, &dc->buffer), fail);
+        NOFAIL_GO(&e, E_FIXEDSIZE, b642bin_stream(&dc->base64, &dc->buffer), fail);
 
         // are we still parsing metadata?
         if(dc->message_started == false){

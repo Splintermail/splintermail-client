@@ -241,7 +241,7 @@ derr_t api_password_call(const char* host, unsigned int port, dstr_t* command,
        which autoparse the json value in the post body make the signing process
        undeterministic */
     DSTR_VAR(payload, 8192);
-    NOFAIL(&e, E_FIXEDSIZE, bin2b64(&body, &payload, 0, true) );
+    NOFAIL(&e, E_FIXEDSIZE, bin2b64_stream(&body, &payload, 0, true) );
 
     // build the authorization
     DSTR_VAR(user_pass, 256);
@@ -252,7 +252,7 @@ derr_t api_password_call(const char* host, unsigned int port, dstr_t* command,
     }else PROP(&e, e2);
 
     DSTR_VAR(up_b64, 384);
-    NOFAIL(&e, E_FIXEDSIZE, bin2b64(&user_pass, &up_b64, 0, true) );
+    NOFAIL(&e, E_FIXEDSIZE, bin2b64_stream(&user_pass, &up_b64, 0, true) );
 
     DSTR_VAR(headers, 512);
     NOFAIL(&e, E_FIXEDSIZE,
@@ -290,7 +290,7 @@ derr_t api_token_call(const char* host, unsigned int port, dstr_t* command,
        which autoparse the json value in the post body make the signing process
        undeterministic */
     DSTR_VAR(payload, 8192);
-    NOFAIL(&e, E_FIXEDSIZE, bin2b64(&body, &payload, 0, true) );
+    NOFAIL(&e, E_FIXEDSIZE, bin2b64_stream(&body, &payload, 0, true) );
 
     // sign the request
     DSTR_VAR(signature, 128);

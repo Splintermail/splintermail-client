@@ -53,7 +53,7 @@ static derr_t do_encryption(link_t *keys){
         }
 
         // encrypt what we read
-        PROP_GO(&e, encrypter_update(&enc, &in, &out), cleanup_enc);
+        PROP_GO(&e, encrypter_update_stream(&enc, &in, &out), cleanup_enc);
     }
 
     // finish the encryption

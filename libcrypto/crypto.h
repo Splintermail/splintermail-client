@@ -88,7 +88,8 @@ derr_t encrypter_new(encrypter_t* ec);
 void encrypter_free(encrypter_t* ec);
 // encrypter_start will make a copy of the keys (via keypair_copy)
 derr_t encrypter_start(encrypter_t* ec, link_t *keys, dstr_t* out);
-derr_t encrypter_update(encrypter_t* ec, dstr_t* in, dstr_t* out);
+derr_t encrypter_update(encrypter_t* ec, const dstr_t *in, dstr_t* out);
+derr_t encrypter_update_stream(encrypter_t* ec, dstr_t* in, dstr_t* out);
 derr_t encrypter_finish(encrypter_t* ec, dstr_t* out);
 
 derr_t decrypter_new(decrypter_t* dc);
