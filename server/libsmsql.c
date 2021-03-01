@@ -70,6 +70,39 @@ derr_type_t fmthook_fsid(dstr_t* out, const void* arg){
     return E_NONE;
 }
 
+// validation functions
+
+bool valid_username_chars(const dstr_t *username){
+    for(size_t i = 0; i < username->len; i++){
+        char c = username->data[i];
+        if(c >= 'a' && c <= 'z') continue;
+        if(c >= '0' && c <= '9') continue;
+        if(c == '.' || c == '-' || c == '_') continue;
+        return false;
+    }
+    return true;
+}
+
+derr_t valid_splintermail_email(const dstr_t *email){
+    derr_t e = E_OK;
+
+    // length
+    if(email->len > SMSQL_EMAIL_SIZE)
+        ORIG(&e, E_PARAM, "email too long");
+
+    // ends in @splintermail.com
+    DSTR_STATIC(suffix, "@splintermail.com");
+    if(!dstr_endswith(email, &suffix))
+        ORIG(&e, E_PARAM, "email must end in @splintermail.com");
+
+    // valid username
+    const dstr_t username = dstr_sub(email, 0, email->len - suffix.len);
+    if(!valid_username_chars(&username))
+        ORIG(&e, E_PARAM, "invalid characters in email");
+
+    return e;
+}
+
 // predefined queries
 
 derr_t get_uuid_for_email(
@@ -114,6 +147,67 @@ derr_t get_email_for_uuid(
             string_bind_out(email)
         )
     );
+
+    return e;
+}
+
+// query layer
+static derr_t _add_primary_alias(
+    MYSQL *sql, const dstr_t *uuid, const dstr_t *alias, bool *ok
+){
+    derr_t e = E_OK;
+
+    DSTR_STATIC(q1, "INSERT INTO emails (email) VALUES (?)");
+    PROP(&e, sql_bound_stmt(sql, &q1, string_bind_in(alias)) );
+
+    DSTR_STATIC(q2,
+        "INSERT INTO aliases (alias, paid, user_uuid) VALUES (?, ?, ?)"
+    );
+    bool paid = true;
+    PROP(&e,
+        sql_bound_stmt(sql,
+            &q2,
+            string_bind_in(alias),
+            bool_bind_in(&paid),
+            blob_bind_in(uuid),
+        )
+    );
+
+    *ok = true;
+
+    return e;
+
+}
+
+// transaction layer
+derr_t add_primary_alias(
+    MYSQL *sql, const dstr_t *uuid, const dstr_t *alias, bool *ok
+){
+    derr_t e = E_OK;
+    *ok = false;
+
+    PROP(&e, valid_splintermail_email(alias) );
+
+    PROP(&e, sql_txn_start(sql) );
+
+    derr_t e2 = _add_primary_alias(sql, uuid, alias, ok);
+    CATCH(e2, E_SQL_DUP){
+        DROP_VAR(&e2);
+        *ok = false;
+    }else PROP_GO(&e, e2, hard_fail);
+
+    if(*ok){
+        PROP(&e, sql_txn_commit(sql) );
+    }else{
+        // soft fail
+        PROP(&e, sql_txn_rollback(sql) );
+    }
+
+    return e;
+
+hard_fail:
+    sql_txn_abort(sql);
+    *ok = false;
 
     return e;
 }

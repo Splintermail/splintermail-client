@@ -33,7 +33,7 @@ typedef struct {
 } py_args_t;
 #define NARGS 8
 
-// str
+// str (or bytes)
 py_arg_t pyarg_dstr(dstr_t *mem, const dstr_t **out, const char *name);
 // str="default"
 py_arg_t pyarg_dstr_opt(dstr_t *mem, const dstr_t **out, const char *name, const char *_default);

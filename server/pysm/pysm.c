@@ -14,6 +14,14 @@
 #define BUILD_OPTIONAL_BYTES(dstr) \
     Py_BuildValue("y#", (dstr).data ? (dstr).data : NULL, (dstr).len)
 
+#define RETURN_BOOL(val) do { \
+    if(val){ \
+        Py_RETURN_TRUE; \
+    }else{ \
+        Py_RETURN_FALSE; \
+    } \
+} while(0)
+
 REGISTER_ERROR_TYPE(E_NORAISE, "NORAISE");
 
 // main entrypoint for python module
@@ -152,18 +160,44 @@ fail:
     return NULL;
 }
 
+static PyObject *py_smsql_add_primary_alias(
+    py_smsql_t *self, PyObject *args, PyObject *kwds
+){
+    derr_t e = E_OK;
+
+    dstr_t _uuid;
+    const dstr_t *uuid;
+    dstr_t _alias;
+    const dstr_t *alias;
+    py_args_t spec = {
+        pyarg_dstr(&_uuid, &uuid, "uuid"),
+        pyarg_dstr(&_alias, &alias, "alias"),
+    };
+    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+
+    bool ok;
+
+    PROP_GO(&e, add_primary_alias(&self->sql, uuid, alias, &ok), fail);
+
+    RETURN_BOOL(ok);
+
+fail:
+    raise_derr(&e);
+    return NULL;
+}
+
 static PyMethodDef py_smsql_methods[] = {
     {
         .ml_name = "connect",
         .ml_meth = (PyCFunction)(void*)py_smsql_connect,
         .ml_flags = METH_NOARGS,
-        .ml_doc = "connect to server",
+        .ml_doc = "Connect to server",
     },
     {
         .ml_name = "close",
         .ml_meth = (PyCFunction)(void*)py_smsql_close,
         .ml_flags = METH_NOARGS,
-        .ml_doc = "disconnect from server",
+        .ml_doc = "Disconnect from server",
     },
     {
         .ml_name = "__enter__",
@@ -181,13 +215,19 @@ static PyMethodDef py_smsql_methods[] = {
         .ml_name = "get_uuid",
         .ml_meth = (PyCFunction)(void*)py_smsql_get_uuid,
         .ml_flags = METH_VARARGS | METH_KEYWORDS,
-        .ml_doc = "get a uuid for an email",
+        .ml_doc = "Get a uuid for an email.  Returns None if not found.",
     },
     {
         .ml_name = "get_email",
         .ml_meth = (PyCFunction)(void*)py_smsql_get_email,
         .ml_flags = METH_VARARGS | METH_KEYWORDS,
-        .ml_doc = "get an email for a uuid",
+        .ml_doc = "Get an email for a uuid.  Returns None if not found.",
+    },
+    {
+        .ml_name = "add_primary_alias",
+        .ml_meth = (PyCFunction)(void*)py_smsql_add_primary_alias,
+        .ml_flags = METH_VARARGS | METH_KEYWORDS,
+        .ml_doc = "Add a primary alias for a uuid.  Returns True on success",
     },
     {NULL}, // sentinel
 };

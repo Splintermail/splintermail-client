@@ -16,6 +16,14 @@ static inline fmt_t FSID(const dstr_t* uuid){
                                      .hook = fmthook_fsid} } };
 }
 
+// validation functions
+
+// checks characters
+bool valid_username_chars(const dstr_t *username);
+
+// checks length, ending, and characters
+derr_t valid_splintermail_email(const dstr_t *email);
+
 // predefined queries
 
 #define SMSQL_UUID_SIZE 32
@@ -34,8 +42,14 @@ static inline fmt_t FSID(const dstr_t* uuid){
 derr_t get_uuid_for_email(
     MYSQL *sql, const dstr_t *email, dstr_t *uuid, bool *ok
 );
+
 derr_t get_email_for_uuid(
     MYSQL *sql, const dstr_t *uuid, dstr_t *email, bool *ok
 );
+
+derr_t add_primary_alias(
+    MYSQL *sql, const dstr_t *uuid, const dstr_t *alias, bool *ok
+);
+
 
 #endif // SM_SQL_H

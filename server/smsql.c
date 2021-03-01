@@ -19,7 +19,27 @@ static dstr_t get_arg(char **argv, size_t idx){
     return out;
 }
 
-static derr_t get_uuid(MYSQL *sql, int argc, char **argv){
+// handle (EMAIL|FSID)-like args
+static derr_t get_uuid_from_id(MYSQL *sql, const dstr_t *id, dstr_t *uuid){
+    derr_t e = E_OK;
+
+    // check for '@' characters
+    if(dstr_count(id, &DSTR_LIT("@")) > 0){
+        // probably email
+        bool ok = false;
+        PROP(&e, get_uuid_for_email(sql, id, uuid, &ok) );
+        if(!ok) ORIG(&e, E_PARAM, "no user for provided email");
+    }else{
+        // probably fsid
+        PROP(&e, to_uuid(id, uuid) );
+    }
+
+    return e;
+}
+
+//
+
+static derr_t get_uuid_action(MYSQL *sql, int argc, char **argv){
     derr_t e = E_OK;
 
     if(argc != 1){
@@ -40,7 +60,7 @@ static derr_t get_uuid(MYSQL *sql, int argc, char **argv){
     return e;
 }
 
-static derr_t get_email(MYSQL *sql, int argc, char **argv){
+static derr_t get_email_action(MYSQL *sql, int argc, char **argv){
     derr_t e = E_OK;
 
     if(argc != 1){
@@ -65,6 +85,31 @@ static derr_t get_email(MYSQL *sql, int argc, char **argv){
 
     return e;
 }
+
+static derr_t add_primary_alias_action(MYSQL *sql, int argc, char **argv){
+    derr_t e = E_OK;
+
+    if(argc != 2){
+        ORIG(&e, E_VALUE, "usage: add_primary_alias (EMAIL|FSID) ALIAS\n");
+    }
+
+    dstr_t id = get_arg(argv, 0);
+    dstr_t alias = get_arg(argv, 1);
+
+    DSTR_VAR(uuid, SMSQL_UUID_SIZE);
+    PROP(&e, get_uuid_from_id(sql, &id, &uuid) );
+    bool ok;
+    PROP(&e, add_primary_alias(sql, &uuid, &alias, &ok) );
+    if(ok){
+        PFMT("OK\n");
+    }else{
+        FFMT(stderr, NULL, "FAILURE\n");
+    }
+
+    return e;
+}
+
+//////
 
 static derr_t smsql(
     const dstr_t *sock,
@@ -175,8 +220,9 @@ int main(int argc, char **argv){
         action = act; \
     }
 
-    LINK_ACTION("get_uuid", get_uuid);
-    LINK_ACTION("get_email", get_email);
+    LINK_ACTION("get_uuid", get_uuid_action);
+    LINK_ACTION("get_email", get_email_action);
+    LINK_ACTION("add_primary_alias", add_primary_alias_action);
 
     if(action == NULL){
         LOG_ERROR("command \"%x\" unknown\n", FD(&cmd));
