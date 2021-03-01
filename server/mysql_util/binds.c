@@ -38,6 +38,7 @@ MYSQL_BIND blob_bind_out(dstr_t *dstr) {
 
 
 MYSQL_BIND bool_bind_in(const bool *val){
+    // inputs are integer-like
     return (MYSQL_BIND){
         .buffer_type = MYSQL_TYPE_TINY,
         .buffer = val,
@@ -46,10 +47,11 @@ MYSQL_BIND bool_bind_in(const bool *val){
 }
 
 MYSQL_BIND bool_bind_out(bool *val){
+    // outputs are char[]-like
     return (MYSQL_BIND){
-        .buffer_type = MYSQL_TYPE_TINY,
+        .buffer_type = MYSQL_TYPE_BIT,
         .buffer = val,
-        .is_unsigned = true,
+        .buffer_length = sizeof(*val),
     };
 }
 
