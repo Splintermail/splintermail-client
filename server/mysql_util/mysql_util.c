@@ -1,8 +1,39 @@
 #include <string.h>
+#include <mysqld_error.h>
 
 #include "mysql_util.h"
 
+#define TRACE_STMT(e, stmt) \
+    TRACE((e), \
+        "mysql_stmt_error(%x): %x\n", \
+        FU(mysql_stmt_errno((stmt))), \
+        FS(mysql_stmt_error((stmt))) \
+    )
+
+#define TRACE_SQL(e, sql) \
+    TRACE((e), \
+        "mysql_error(%x): %x\n", \
+        FU(mysql_errno((sql))), \
+        FSQL(sql) \
+    )
+
 REGISTER_ERROR_TYPE(E_SQL, "SQLERROR");
+REGISTER_ERROR_TYPE(E_SQL_DUP, "SQL_DUP_ERR");
+
+static derr_type_t _read_errno(unsigned int err){
+    switch(err){
+        case ER_DUP_ENTRY: return E_SQL_DUP;
+    }
+    return E_SQL;
+}
+
+static derr_type_t sql_err(MYSQL *sql){
+    return _read_errno(mysql_errno(sql));
+}
+
+static derr_type_t stmt_err(MYSQL_STMT *stmt){
+    return _read_errno(mysql_stmt_errno(stmt));
+}
 
 derr_type_t fmthook_sql_error(dstr_t* out, void* arg){
     MYSQL *sql = arg;
@@ -65,8 +96,8 @@ derr_t sql_connect_unix_ex(
         sql, null_host, sqluser, sqlpass, dbname, 0, sqlsock, 0
     );
     if(!mret){
-        TRACE(&e, "mysql_error: %x\n", FSQL(sql));
-        ORIG(&e, E_SQL, "unable to connect");
+        TRACE_SQL(&e, sql);
+        ORIG(&e, sql_err(sql), "unable to connect");
     }
 
     return e;
@@ -92,9 +123,9 @@ derr_t sql_query(MYSQL *sql, const dstr_t *query){
 
     int ret = mysql_real_query(sql, query->data, query->len ? query->len : 1);
     if(ret){
-        TRACE(&e, "mysql_error: %x\n", FSQL(sql));
+        TRACE_SQL(&e, sql);
         TRACE(&e, "while running: %x\n", FD(query));
-        ORIG(&e, E_SQL, "mysql_real_query failed");
+        ORIG(&e, sql_err(sql), "mysql_real_query failed");
     }
 
     return e;
@@ -107,8 +138,8 @@ derr_t sql_exec_multi(MYSQL *sql, const dstr_t *stmts){
     // multi-statements on
     int ret = mysql_set_server_option(sql, MYSQL_OPTION_MULTI_STATEMENTS_ON);
     if(ret){
-        TRACE(&e, "mysql_error: %x\n", FSQL(sql));
-        ORIG(&e, E_SQL, "failed to enable multi statement support");
+        TRACE_SQL(&e, sql);
+        ORIG(&e, sql_err(sql), "failed to enable multi statement support");
     }
 
     // execute the block of statements
@@ -125,8 +156,8 @@ derr_t sql_exec_multi(MYSQL *sql, const dstr_t *stmts){
             // current statement returned no data (still don't care)
         }else{
             // error; res should not have been NULL
-            TRACE(&e, "mysql_error: %x\n", FSQL(sql));
-            ORIG(&e, E_SQL, "error getting query result");
+            TRACE_SQL(&e, sql);
+            ORIG(&e, sql_err(sql), "error getting query result");
         }
         // more results? -1 = no, >0 = error, 0 = yes (keep looping)
         ret = mysql_next_result(sql);
@@ -135,16 +166,16 @@ derr_t sql_exec_multi(MYSQL *sql, const dstr_t *stmts){
             break;
         }else if(ret > 0){
             // error
-            TRACE(&e, "mysql_error: %x\n", FSQL(sql));
-            ORIG(&e, E_SQL, "error getting next result");
+            TRACE_SQL(&e, sql);
+            ORIG(&e, sql_err(sql), "error getting next result");
         }
     }
 
     // multi-statements off
     ret = mysql_set_server_option(sql, MYSQL_OPTION_MULTI_STATEMENTS_OFF);
     if(ret){
-        TRACE(&e, "mysql_error: %x\n", FSQL(sql));
-        ORIG(&e, E_SQL, "failed to disable multi statement support");
+        TRACE_SQL(&e, sql);
+        ORIG(&e, sql_err(sql), "failed to disable multi statement support");
     }
 
     return e;
@@ -156,8 +187,8 @@ derr_t sql_use_result(MYSQL *sql, MYSQL_RES **res){
 
     *res = mysql_use_result(sql);
     if(!*res){
-        TRACE(&e, "mysql_error: %x\n", FSQL(sql));
-        ORIG(&e, E_SQL, "mysql_use_result failed");
+        TRACE_SQL(&e, sql);
+        ORIG(&e, sql_err(sql), "mysql_use_result failed");
     }
 
     return e;
@@ -191,8 +222,8 @@ derr_t sql_stmt_init(MYSQL *sql, MYSQL_STMT **stmt){
 
     *stmt = mysql_stmt_init(sql);
     if(!*stmt){
-        TRACE(&e, "mysql_error: %x\n", FSQL(sql));
-        ORIG(&e, E_SQL, "failed to init new statment");
+        TRACE_SQL(&e, sql);
+        ORIG(&e, sql_err(sql), "failed to init new statment");
     }
 
     return e;
@@ -203,9 +234,9 @@ derr_t sql_stmt_prepare(MYSQL_STMT *stmt, const dstr_t *text){
 
     int ret = mysql_stmt_prepare(stmt, text->data, text->len);
     if(ret){
-        TRACE(&e, "mysql_stmt_error: %x\n", FS(mysql_stmt_error(stmt)));
+        TRACE_STMT(&e, stmt);
         TRACE(&e, "while preparing: %x\n", FD(text));
-        ORIG(&e, E_SQL, "failed to prepare statement");
+        ORIG(&e, stmt_err(stmt), "failed to prepare statement");
     }
 
     return e;
@@ -224,8 +255,8 @@ derr_t _sql_stmt_bind_params(MYSQL_STMT *stmt, MYSQL_BIND *args, size_t nargs){
     // bind params
     bool ret = mysql_stmt_bind_param(stmt, args);
     if(ret){
-        TRACE(&e, "mysql_stmt_error: %x\n", FS(mysql_stmt_error(stmt)));
-        ORIG(&e, E_SQL, "failed to bind params");
+        TRACE_STMT(&e, stmt);
+        ORIG(&e, stmt_err(stmt), "failed to bind params");
     }
 
     return e;
@@ -246,8 +277,8 @@ derr_t _sql_stmt_bind_results(
     // bind results
     bool ret = mysql_stmt_bind_result(stmt, args);
     if(ret){
-        TRACE(&e, "mysql_stmt_error: %x\n", FS(mysql_stmt_error(stmt)));
-        ORIG(&e, E_SQL, "failed to bind results");
+        TRACE_STMT(&e, stmt);
+        ORIG(&e, stmt_err(stmt), "failed to bind results");
     }
 
     return e;
@@ -272,8 +303,8 @@ derr_t sql_stmt_execute(MYSQL_STMT *stmt){
     derr_t e = E_OK;
 
     if(mysql_stmt_execute(stmt)){
-        TRACE(&e, "mysql_stmt_error: %x\n", FS(mysql_stmt_error(stmt)));
-        ORIG(&e, E_SQL, "failed to exec stmt");
+        TRACE_STMT(&e, stmt);
+        ORIG(&e, stmt_err(stmt), "failed to exec stmt");
     }
 
     return e;
@@ -368,8 +399,8 @@ derr_t _sql_onerow_query(
 
    if(ret == 1){
         // normal errors
-        TRACE(&e, "mysql_stmt_error: %x\n", FS(mysql_stmt_error(stmt)));
-        ORIG_GO(&e, E_SQL, "failed to fetch result", cu_stmt);
+        TRACE_STMT(&e, stmt);
+        ORIG_GO(&e, stmt_err(stmt), "failed to fetch result", cu_stmt);
     }
 
     if(had_trunc){
@@ -379,7 +410,9 @@ derr_t _sql_onerow_query(
 
     if(nrows > 1){
         TRACE(&e, "expected 1 row but got %x\n", FU(nrows));
-        ORIG_GO(&e, E_SQL, "too many rows in sql_onerow_query()", cu_stmt);
+        ORIG_GO(&e,
+            stmt_err(stmt), "too many rows in sql_onerow_query()",
+        cu_stmt);
     }else if(nrows == 1){
         *ok = true;
     }
@@ -387,4 +420,35 @@ derr_t _sql_onerow_query(
 cu_stmt:
     mysql_stmt_close(stmt);
     return e;
+}
+
+derr_t sql_txn_start(MYSQL *sql){
+    derr_t e = E_OK;
+    PROP(&e, sql_query(sql, &DSTR_LIT("START TRANSACTION")));
+    return e;
+}
+
+derr_t sql_txn_commit(MYSQL *sql){
+    derr_t e = E_OK;
+    PROP(&e, sql_query(sql, &DSTR_LIT("COMMIT")));
+    return e;
+}
+
+derr_t sql_txn_rollback(MYSQL *sql){
+    derr_t e = E_OK;
+    PROP(&e, sql_query(sql, &DSTR_LIT("ROLLBACK")));
+    return e;
+}
+
+// if txn rollback fails, it closes the mysql object
+void sql_txn_abort(MYSQL *sql){
+    derr_t e = E_OK;
+    IF_PROP(&e, sql_query(sql, &DSTR_LIT("ROLLBACK"))) {
+        // this seems by far most likely due to connection issues, so just
+        // drop the error; that will be obvious already.
+        DROP_VAR(&e);
+
+        // render the connection unusable
+        mysql_close(sql);
+    }
 }

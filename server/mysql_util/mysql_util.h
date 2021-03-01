@@ -19,6 +19,8 @@
 
 // an error in the SQL library
 extern derr_type_t E_SQL;
+// a 'duplicate entry' error
+extern derr_type_t E_SQL_DUP;
 
 derr_type_t fmthook_sql_error(dstr_t* out, void* arg);
 
@@ -112,5 +114,12 @@ derr_t _sql_onerow_query(
         &(MYSQL_BIND[]){(MYSQL_BIND){0}, __VA_ARGS__}[1], \
         sizeof((MYSQL_BIND[]){(MYSQL_BIND){0}, __VA_ARGS__}) / sizeof(MYSQL_BIND) - 1 \
     )
+
+derr_t sql_txn_start(MYSQL *sql);
+derr_t sql_txn_commit(MYSQL *sql);
+// ROLLBACK and let the caller handle errors
+derr_t sql_txn_rollback(MYSQL *sql);
+// closes sql if ROLLBACK fails; useful during error handling
+void sql_txn_abort(MYSQL *sql);
 
 #endif // MYSQL_HELPER_H
