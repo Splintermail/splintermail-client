@@ -151,8 +151,7 @@ derr_t get_email_for_uuid(
     return e;
 }
 
-// query layer
-static derr_t _add_primary_alias(
+static derr_t _add_primary_alias_txn(
     MYSQL *sql, const dstr_t *uuid, const dstr_t *alias, bool *ok
 ){
     derr_t e = E_OK;
@@ -179,7 +178,6 @@ static derr_t _add_primary_alias(
 
 }
 
-// transaction layer
 derr_t add_primary_alias(
     MYSQL *sql, const dstr_t *uuid, const dstr_t *alias, bool *ok
 ){
@@ -190,7 +188,7 @@ derr_t add_primary_alias(
 
     PROP(&e, sql_txn_start(sql) );
 
-    derr_t e2 = _add_primary_alias(sql, uuid, alias, ok);
+    derr_t e2 = _add_primary_alias_txn(sql, uuid, alias, ok);
     CATCH(e2, E_SQL_DUP){
         DROP_VAR(&e2);
         *ok = false;
@@ -208,6 +206,68 @@ derr_t add_primary_alias(
 hard_fail:
     sql_txn_abort(sql);
     *ok = false;
+
+    return e;
+}
+
+static derr_t _delete_alias_txn(
+    MYSQL *sql, const dstr_t *uuid, const dstr_t *alias, bool *deleted
+){
+    derr_t e = E_OK;
+
+    // find out if the alias was paid
+    DSTR_STATIC(q1, "SELECT paid FROM aliases WHERE alias=? AND user_uuid=?");
+    bool ok;
+    bool paid;
+    PROP(&e,
+        sql_onerow_query(
+            sql, &q1, &ok,
+            // params
+            string_bind_in(alias),
+            blob_bind_in(uuid),
+            // results
+            bool_bind_out(&paid))
+    );
+
+    if(!ok){
+        // no matching alias
+        return e;
+    }
+
+    DSTR_STATIC(q2, "DELETE FROM aliases WHERE alias=?");
+    PROP(&e, sql_bound_stmt(sql, &q2, string_bind_in(alias)) );
+
+    // delete from emails table last (for foriegn key constraints)
+    if(paid){
+        // only paid aliases get deleted from the emails table
+        DSTR_STATIC(q3, "DELETE FROM emails WHERE email=?");
+        PROP(&e, sql_bound_stmt(sql, &q3, string_bind_in(alias)) );
+    }
+
+    *deleted = true;
+
+    return e;
+
+}
+
+// transaction layer
+derr_t delete_alias(
+    MYSQL *sql, const dstr_t *uuid, const dstr_t *alias, bool *deleted
+){
+    derr_t e = E_OK;
+    *deleted = false;
+
+    PROP(&e, sql_txn_start(sql) );
+
+    PROP_GO(&e, _delete_alias_txn(sql, uuid, alias, deleted), hard_fail);
+
+    PROP(&e, sql_txn_commit(sql) );
+
+    return e;
+
+hard_fail:
+    sql_txn_abort(sql);
+    *deleted = false;
 
     return e;
 }

@@ -109,6 +109,29 @@ static derr_t add_primary_alias_action(MYSQL *sql, int argc, char **argv){
     return e;
 }
 
+static derr_t delete_alias_action(MYSQL *sql, int argc, char **argv){
+    derr_t e = E_OK;
+
+    if(argc != 2){
+        ORIG(&e, E_VALUE, "usage: delete_alias (EMAIL|FSID) ALIAS\n");
+    }
+
+    dstr_t id = get_arg(argv, 0);
+    dstr_t alias = get_arg(argv, 1);
+
+    DSTR_VAR(uuid, SMSQL_UUID_SIZE);
+    PROP(&e, get_uuid_from_id(sql, &id, &uuid) );
+    bool deleted;
+    PROP(&e, delete_alias(sql, &uuid, &alias, &deleted) );
+    if(deleted){
+        PFMT("DELETED\n");
+    }else{
+        PFMT("NOOP\n");
+    }
+
+    return e;
+}
+
 //////
 
 static derr_t smsql(
@@ -223,6 +246,7 @@ int main(int argc, char **argv){
     LINK_ACTION("get_uuid", get_uuid_action);
     LINK_ACTION("get_email", get_email_action);
     LINK_ACTION("add_primary_alias", add_primary_alias_action);
+    LINK_ACTION("delete_alias", delete_alias_action);
 
     if(action == NULL){
         LOG_ERROR("command \"%x\" unknown\n", FD(&cmd));

@@ -186,6 +186,32 @@ fail:
     return NULL;
 }
 
+static PyObject *py_smsql_delete_alias(
+    py_smsql_t *self, PyObject *args, PyObject *kwds
+){
+    derr_t e = E_OK;
+
+    dstr_t _uuid;
+    const dstr_t *uuid;
+    dstr_t _alias;
+    const dstr_t *alias;
+    py_args_t spec = {
+        pyarg_dstr(&_uuid, &uuid, "uuid"),
+        pyarg_dstr(&_alias, &alias, "alias"),
+    };
+    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+
+    bool deleted;
+
+    PROP_GO(&e, delete_alias(&self->sql, uuid, alias, &deleted), fail);
+
+    RETURN_BOOL(deleted);
+
+fail:
+    raise_derr(&e);
+    return NULL;
+}
+
 static PyMethodDef py_smsql_methods[] = {
     {
         .ml_name = "connect",
@@ -228,6 +254,12 @@ static PyMethodDef py_smsql_methods[] = {
         .ml_meth = (PyCFunction)(void*)py_smsql_add_primary_alias,
         .ml_flags = METH_VARARGS | METH_KEYWORDS,
         .ml_doc = "Add a primary alias for a uuid.  Returns True on success",
+    },
+    {
+        .ml_name = "delete_alias",
+        .ml_meth = (PyCFunction)(void*)py_smsql_delete_alias,
+        .ml_flags = METH_VARARGS | METH_KEYWORDS,
+        .ml_doc = "Delete an alias for a uuid.  Returns True if it happened.",
     },
     {NULL}, // sentinel
 };

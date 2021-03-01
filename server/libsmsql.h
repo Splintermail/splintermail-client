@@ -51,5 +51,9 @@ derr_t add_primary_alias(
     MYSQL *sql, const dstr_t *uuid, const dstr_t *alias, bool *ok
 );
 
+derr_t delete_alias(
+    MYSQL *sql, const dstr_t *uuid, const dstr_t *alias, bool *deleted
+);
+
 
 #endif // SM_SQL_H
