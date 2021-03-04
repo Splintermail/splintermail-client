@@ -115,6 +115,46 @@ derr_t _sql_onerow_query(
         sizeof((MYSQL_BIND[]){(MYSQL_BIND){0}, __VA_ARGS__}) / sizeof(MYSQL_BIND) - 1 \
     )
 
+/* combines the following calls:
+    - sql_stmt_init()
+    - sql_stmt_prepare()
+    - sql_stmt_bind_params()
+    - sql_stmt_execute()
+    - sql_stmt_bind_results()
+
+   you still have to call
+    - sql_stmt_fetch()
+    - mysql_stmt_close()
+*/
+derr_t _sql_multirow_stmt(
+    MYSQL *sql,
+    MYSQL_STMT **stmt,
+    const dstr_t *query,
+    MYSQL_BIND *args,
+    size_t nargs
+);
+
+#define sql_multirow_stmt(sql, stmt, query, ...) \
+    _sql_multirow_stmt( \
+        (sql), \
+        (stmt), \
+        (query), \
+        &(MYSQL_BIND[]){(MYSQL_BIND){0}, __VA_ARGS__}[1], \
+        sizeof((MYSQL_BIND[]){(MYSQL_BIND){0}, __VA_ARGS__}) / sizeof(MYSQL_BIND) - 1 \
+    )
+
+/* sets data into the previously-defined BINDs.
+
+   It's ok to stop fetching after calling this because you either have an sql
+   error during the fetch or an unrecoverable bug:
+
+   throws: E_SQL
+           E_INTERNAL (data truncation detected) */
+derr_t sql_stmt_fetch(MYSQL_STMT *stmt, bool *ok);
+
+// only useful in error handling; will destroy memory pointed to by BINDs
+void sql_stmt_fetchall(MYSQL_STMT *stmt);
+
 derr_t sql_txn_start(MYSQL *sql);
 derr_t sql_txn_commit(MYSQL *sql);
 // ROLLBACK and let the caller handle errors

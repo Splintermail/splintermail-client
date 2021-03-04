@@ -384,7 +384,7 @@ derr_t _sql_onerow_query(
     // bind results
     PROP_GO(&e, _sql_stmt_bind_results(stmt, &args[ins], outs), cu_stmt);
 
-    // always fetch all results
+    // always fetch all results to avoid the CR_COMMANDS_OUT_OF_SYNC error
     size_t nrows = 0;
     bool had_trunc = false;
     int ret;
@@ -420,6 +420,90 @@ derr_t _sql_onerow_query(
 cu_stmt:
     mysql_stmt_close(stmt);
     return e;
+}
+
+derr_t _sql_multirow_stmt(
+    MYSQL *sql,
+    MYSQL_STMT **stmt,
+    const dstr_t *query,
+    MYSQL_BIND *args,
+    size_t nargs
+){
+    derr_t e = E_OK;
+
+    // create a statement object
+    PROP(&e, sql_stmt_init(sql, stmt) );
+
+    // prepare the statement
+    PROP_GO(&e, sql_stmt_prepare(*stmt, query), fail);
+
+    // count input and output fields
+    long unsigned int ins = mysql_stmt_param_count(*stmt);
+    unsigned int outs = mysql_stmt_field_count(*stmt);
+
+    if(ins + outs != nargs){
+        TRACE(&e,
+            "sum of params (%x) and fields (%x) does not match the"
+            "number of args provided (%x)\n", FU(ins), FU(outs), FU(nargs));
+        ORIG_GO(&e,
+            E_INTERNAL, "param/field count mismatch",
+        fail);
+    }
+
+    if(outs == 0){
+        TRACE(&e, "expected return fields but got none\n");
+        ORIG_GO(&e,
+            E_INTERNAL, "zero return fields in sql_multirow_query()",
+        fail);
+    }
+
+    // bind arguments
+    PROP_GO(&e, _sql_stmt_bind_params(*stmt, args, ins), fail);
+
+    // execute
+    PROP_GO(&e, sql_stmt_execute(*stmt), fail);
+
+    // bind results
+    PROP_GO(&e, _sql_stmt_bind_results(*stmt, &args[ins], outs), fail);
+
+    return e;
+
+fail:
+    mysql_stmt_close(*stmt);
+    *stmt = NULL;
+    return e;
+}
+
+// sets data into the previously-defined BINDs.
+derr_t sql_stmt_fetch(MYSQL_STMT *stmt, bool *ok){
+    derr_t e = E_OK;
+    *ok = true;
+
+    int ret = mysql_stmt_fetch(stmt);
+
+    if(ret == 1){
+        TRACE_STMT(&e, stmt);
+        ORIG(&e, stmt_err(stmt), "failed to fetch result");
+    }
+
+    if(ret == MYSQL_DATA_TRUNCATED){
+        ORIG(&e, E_INTERNAL, "truncated data detected");
+    }
+
+    if(ret == MYSQL_NO_DATA){
+        *ok = false;
+    }
+
+    return e;
+}
+
+// only useful in error handling; will destroy memory pointed to by BINDs
+void sql_stmt_fetchall(MYSQL_STMT *stmt){
+    while(true){
+        int ret = mysql_stmt_fetch(stmt);
+        // break only for errors or NO_DATA
+        if(ret == 1 || ret == MYSQL_NO_DATA) break;
+    }
 }
 
 derr_t sql_txn_start(MYSQL *sql){
