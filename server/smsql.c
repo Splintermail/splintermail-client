@@ -86,6 +86,38 @@ static derr_t get_email_action(MYSQL *sql, int argc, char **argv){
     return e;
 }
 
+static derr_t list_aliases_action(MYSQL *sql, int argc, char **argv){
+    derr_t e = E_OK;
+
+    if(argc != 1){
+        ORIG(&e, E_VALUE, "usage: list_aliases (EMAIL|FSID)\n");
+    }
+
+    dstr_t id = get_arg(argv, 0);
+
+    DSTR_VAR(uuid, SMSQL_UUID_SIZE);
+    PROP(&e, get_uuid_from_id(sql, &id, &uuid) );
+
+    link_t aliases;
+    link_init(&aliases);
+    PROP(&e, list_aliases(sql, &uuid, &aliases) );
+    if(link_list_isempty(&aliases)){
+        PFMT("NO ALIASES\n");
+        return e;
+    }
+
+    link_t *link;
+    while((link = link_list_pop_first(&aliases))){
+        smsql_alias_t *alias = CONTAINER_OF(link, smsql_alias_t, link);
+        PFMT(
+            "%x (%x)\n", FD(&alias->alias), FS(alias->paid ? "paid" : "free")
+        );
+        smsql_alias_free(&alias);
+    }
+
+    return e;
+}
+
 static derr_t add_primary_alias_action(MYSQL *sql, int argc, char **argv){
     derr_t e = E_OK;
 
@@ -245,6 +277,7 @@ int main(int argc, char **argv){
 
     LINK_ACTION("get_uuid", get_uuid_action);
     LINK_ACTION("get_email", get_email_action);
+    LINK_ACTION("list_aliases", list_aliases_action);
     LINK_ACTION("add_primary_alias", add_primary_alias_action);
     LINK_ACTION("delete_alias", delete_alias_action);
 

@@ -47,6 +47,19 @@ derr_t get_email_for_uuid(
     MYSQL *sql, const dstr_t *uuid, dstr_t *email, bool *ok
 );
 
+typedef struct {
+    dstr_t alias;
+    bool paid;
+    link_t link;
+} smsql_alias_t;
+DEF_CONTAINER_OF(smsql_alias_t, link, link_t);
+
+derr_t smsql_alias_new(smsql_alias_t **out, const dstr_t *email, bool paid);
+void smsql_alias_free(smsql_alias_t **old);
+
+// returns a list of dstr_link_t's
+derr_t list_aliases(MYSQL *sql, const dstr_t *uuid, link_t *out);
+
 derr_t add_primary_alias(
     MYSQL *sql, const dstr_t *uuid, const dstr_t *alias, bool *ok
 );
@@ -54,6 +67,5 @@ derr_t add_primary_alias(
 derr_t delete_alias(
     MYSQL *sql, const dstr_t *uuid, const dstr_t *alias, bool *deleted
 );
-
 
 #endif // SM_SQL_H

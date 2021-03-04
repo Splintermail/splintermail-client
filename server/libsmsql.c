@@ -1,3 +1,5 @@
+#include <stdlib.h>
+
 #include "libsmsql.h"
 
 // helper functions
@@ -150,6 +152,90 @@ derr_t get_email_for_uuid(
 
     return e;
 }
+
+derr_t smsql_alias_new(smsql_alias_t **out, const dstr_t *email, bool paid){
+    derr_t e = E_OK;
+    *out = NULL;
+
+    smsql_alias_t *alias = malloc(sizeof(*alias));
+    if(!alias) ORIG(&e, E_NOMEM, "nomem");
+    *alias = (smsql_alias_t){.paid = paid};
+
+    link_init(&alias->link);
+
+    PROP_GO(&e, dstr_copy(email, &alias->alias), fail);
+
+    *out = alias;
+    return e;
+
+fail:
+    free(alias);
+    return e;
+}
+
+void smsql_alias_free(smsql_alias_t **old){
+    if(*old == NULL) return;
+    dstr_free(&(*old)->alias);
+    free(*old);
+    *old = NULL;
+}
+
+derr_t list_aliases(MYSQL *sql, const dstr_t *uuid, link_t *out){
+    derr_t e = E_OK;
+
+    MYSQL_STMT *stmt;
+
+    DSTR_VAR(alias_res, SMSQL_EMAIL_SIZE);
+    bool paid_res;
+
+    DSTR_STATIC(q1, "SELECT alias, paid from aliases where user_uuid=?");
+    PROP(&e,
+        sql_multirow_stmt(
+            sql, &stmt, &q1,
+            // parameters
+            blob_bind_in(uuid),
+            // results
+            string_bind_out(&alias_res),
+            bool_bind_out(&paid_res)
+        )
+    );
+
+    link_t list;
+    link_init(&list);
+    link_t *link;
+
+    while(true){
+        bool ok;
+        PROP_GO(&e, sql_stmt_fetch(stmt, &ok), fail_list);
+        if(!ok) break;
+
+        smsql_alias_t *alias;
+        PROP_GO(&e, smsql_alias_new(&alias, &alias_res, paid_res), loop_fail);
+        link_list_append(&list, &alias->link);
+
+        continue;
+
+    loop_fail:
+        sql_stmt_fetchall(stmt);
+        goto fail_list;
+    }
+
+    // set the output
+    link_list_append_list(out, &list);
+
+    mysql_stmt_close(stmt);
+
+    return e;
+
+fail_list:
+    while((link = link_list_pop_first(&list))){
+        smsql_alias_t *alias = CONTAINER_OF(link, smsql_alias_t, link);
+        smsql_alias_free(&alias);
+    }
+    mysql_stmt_close(stmt);
+    return e;
+}
+
 
 static derr_t _add_primary_alias_txn(
     MYSQL *sql, const dstr_t *uuid, const dstr_t *alias, bool *ok

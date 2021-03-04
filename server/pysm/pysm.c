@@ -6,13 +6,13 @@
 #include "pysm.h"
 
 #define BUILD_STRING(dstr) \
-    Py_BuildValue("s#", (dstr).data, (dstr).len)
+    Py_BuildValue("s#", (dstr).data, (Py_ssize_t)(dstr).len)
 #define BUILD_OPTIONAL_STRING(dstr) \
-    Py_BuildValue("s#", (dstr).data ? (dstr).data : NULL, (dstr).len)
+    Py_BuildValue("s#", (dstr).data ? (dstr).data : NULL, (Py_ssize_t)(dstr).len)
 #define BUILD_BYTES(dstr) \
-    Py_BuildValue("y#", (dstr).data, (dstr).len)
+    Py_BuildValue("y#", (dstr).data, (Py_ssize_t)(dstr).len)
 #define BUILD_OPTIONAL_BYTES(dstr) \
-    Py_BuildValue("y#", (dstr).data ? (dstr).data : NULL, (dstr).len)
+    Py_BuildValue("y#", (dstr).data ? (dstr).data : NULL, (Py_ssize_t)(dstr).len)
 
 #define RETURN_BOOL(val) do { \
     if(val){ \
@@ -160,6 +160,71 @@ fail:
     return NULL;
 }
 
+static PyObject *py_smsql_list_aliases(
+    py_smsql_t *self, PyObject *args, PyObject *kwds
+){
+    derr_t e = E_OK;
+
+    dstr_t _uuid;
+    const dstr_t *uuid;
+    py_args_t spec = {
+        pyarg_dstr(&_uuid, &uuid, "uuid"),
+    };
+    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+
+    link_t aliases;
+    link_init(&aliases);
+    PROP_GO(&e, list_aliases(&self->sql, uuid, &aliases), fail);
+
+    // count entries
+    Py_ssize_t count = 0;
+    link_t *link;
+    for(link = aliases.next; link != &aliases; link = link->next){
+        count++;
+    }
+
+    // create the output list
+    PyObject *py_list = PyList_New(count);
+    if(!py_list) ORIG_GO(&e, E_NOMEM, "nomem", fail_aliases);
+
+    count = 0;
+    // populate the output list
+    while((link = link_list_pop_first(&aliases))){
+        smsql_alias_t *alias = CONTAINER_OF(link, smsql_alias_t, link);
+
+        // build an output tuple of (alias, paid)
+        // s# (char*, Py_ssize_t) -> creates a string
+        // O (PyObject) -> increments and returns a PyObject
+        PyObject *tuple = Py_BuildValue(
+            "(s#, O)",
+            alias->alias.data, (Py_ssize_t)alias->alias.len,
+            alias->paid ? Py_True : Py_False
+        );
+
+        // always free the popped alias
+        smsql_alias_free(&alias);
+
+        // now check for errors
+        if(!tuple) ORIG_GO(&e, E_NOMEM, "nomem", fail_list);
+
+        // the SET_ITEM macro is only suitable for newly created, empty lists
+        PyList_SET_ITEM(py_list, count++, tuple);
+    }
+
+    return py_list;
+
+fail_list:
+    Py_DECREF(py_list);
+fail_aliases:
+    while((link = link_list_pop_first(&aliases))){
+        smsql_alias_t *alias = CONTAINER_OF(link, smsql_alias_t, link);
+        smsql_alias_free(&alias);
+    }
+fail:
+    raise_derr(&e);
+    return NULL;
+}
+
 static PyObject *py_smsql_add_primary_alias(
     py_smsql_t *self, PyObject *args, PyObject *kwds
 ){
@@ -250,10 +315,16 @@ static PyMethodDef py_smsql_methods[] = {
         .ml_doc = "Get an email for a uuid.  Returns None if not found.",
     },
     {
+        .ml_name = "list_aliases",
+        .ml_meth = (PyCFunction)(void*)py_smsql_list_aliases,
+        .ml_flags = METH_VARARGS | METH_KEYWORDS,
+        .ml_doc = "List aliases for a uuid.",
+    },
+    {
         .ml_name = "add_primary_alias",
         .ml_meth = (PyCFunction)(void*)py_smsql_add_primary_alias,
         .ml_flags = METH_VARARGS | METH_KEYWORDS,
-        .ml_doc = "Add a primary alias for a uuid.  Returns True on success",
+        .ml_doc = "Add a primary alias for a uuid.  Returns True on success.",
     },
     {
         .ml_name = "delete_alias",
