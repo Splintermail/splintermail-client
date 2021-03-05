@@ -118,6 +118,31 @@ static derr_t list_aliases_action(MYSQL *sql, int argc, char **argv){
     return e;
 }
 
+static derr_t add_random_alias_action(MYSQL *sql, int argc, char **argv){
+    derr_t e = E_OK;
+
+    if(argc != 1){
+        ORIG(&e, E_VALUE, "usage: add_random_alias (EMAIL|FSID)\n");
+    }
+
+    dstr_t id = get_arg(argv, 0);
+
+    DSTR_VAR(uuid, SMSQL_UUID_SIZE);
+    PROP(&e, get_uuid_from_id(sql, &id, &uuid) );
+
+    DSTR_VAR(alias, SMSQL_EMAIL_SIZE);
+
+    bool ok;
+    PROP(&e, add_random_alias(sql, &uuid, &alias, &ok) );
+    if(ok){
+        PFMT("%x\n", FD(&alias));
+    }else{
+        FFMT(stderr, NULL, "FAILURE: WOULD EXCEED MAX RANDOM ALIASES");
+    }
+
+    return e;
+}
+
 static derr_t add_primary_alias_action(MYSQL *sql, int argc, char **argv){
     derr_t e = E_OK;
 
@@ -278,6 +303,7 @@ int main(int argc, char **argv){
     LINK_ACTION("get_uuid", get_uuid_action);
     LINK_ACTION("get_email", get_email_action);
     LINK_ACTION("list_aliases", list_aliases_action);
+    LINK_ACTION("add_random_alias", add_random_alias_action);
     LINK_ACTION("add_primary_alias", add_primary_alias_action);
     LINK_ACTION("delete_alias", delete_alias_action);
 

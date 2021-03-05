@@ -102,7 +102,9 @@ derr_t _sql_bound_stmt(
         sizeof((MYSQL_BIND[]){(MYSQL_BIND){0}, __VA_ARGS__}) / sizeof(MYSQL_BIND) - 1 \
     )
 
-// returns ok=true if a row was received
+// raises an error if more than one row is received
+// if ok==NULL, raises an error if no row is received
+// if ok!=NULL, sets ok=bool(one row was received)
 derr_t _sql_onerow_query(
     MYSQL *mysql, const dstr_t *query, bool *ok, MYSQL_BIND *args, size_t nargs
 );

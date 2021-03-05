@@ -346,7 +346,7 @@ derr_t _sql_onerow_query(
     MYSQL *sql, const dstr_t *query, bool *ok, MYSQL_BIND *args, size_t nargs
 ){
     derr_t e = E_OK;
-    *ok = false;
+    if(ok) *ok = false;
 
     // create a statement object
     MYSQL_STMT *stmt;
@@ -414,7 +414,16 @@ derr_t _sql_onerow_query(
             stmt_err(stmt), "too many rows in sql_onerow_query()",
         cu_stmt);
     }else if(nrows == 1){
-        *ok = true;
+        if(ok) *ok = true;
+    }else{
+        // user set ok=NULL, meaning a result should be guaranteed
+        if(ok){
+            *ok=false;
+        }else{
+            ORIG(&e,
+                E_INTERNAL, "onerow query guaranteed a response but got none"
+            );
+        }
     }
 
 cu_stmt:

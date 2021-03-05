@@ -1,20 +1,23 @@
 add_subdirectory(mysql_util)
 add_subdirectory(petname)
 
-# pre-defined splintermail queries
-add_library(libsmsql libsmsql.c)
-set_target_properties(libsmsql PROPERTIES OUTPUT_NAME smsql)
-default_compile_options(libsmsql TRUE)
-define_file_logname_for_target(libsmsql)
-target_link_libraries(libsmsql PUBLIC mysql_util)
+macro(add_libsmsql asan)
+    add_library("libsmsql${asan}" libsmsql.c)
+    set_target_properties("libsmsql${asan}" PROPERTIES OUTPUT_NAME "smsql${asan}")
+    if("${asan}" STREQUAL "_noasan")
+        default_compile_options("libsmsql${asan}" FALSE)
+    else()
+        default_compile_options("libsmsql${asan}" TRUE)
+    endif()
+    define_file_logname_for_target("libsmsql${asan}")
+    target_link_libraries("libsmsql${asan}" PUBLIC "mysql_util${asan}" "petname${asan}")
+endmacro()
+
+add_libsmsql("")
 
 if("${CMAKE_BUILD_TYPE}" STREQUAL "debug")
     # rebuild without asan
-    add_library(libsmsql_noasan libsmsql.c)
-    set_target_properties(libsmsql_noasan PROPERTIES OUTPUT_NAME smsql_noasan)
-    default_compile_options(libsmsql_noasan FALSE)
-    define_file_logname_for_target(libsmsql_noasan)
-    target_link_libraries(libsmsql_noasan PUBLIC mysql_util_noasan)
+    add_libsmsql("_noasan")
 else()
     # release builds already have no asan
     add_library(libsmsql_noasan ALIAS libsmsql)

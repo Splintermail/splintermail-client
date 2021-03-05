@@ -3,6 +3,8 @@
 
 #include "mysql_util/mysql_util.h"
 
+#define MAX_RANDOM_ALIASES 1000
+
 // helper functions
 
 // same as the sql procedures
@@ -59,6 +61,10 @@ void smsql_alias_free(smsql_alias_t **old);
 
 // returns a list of dstr_link_t's
 derr_t list_aliases(MYSQL *sql, const dstr_t *uuid, link_t *out);
+
+derr_t add_random_alias(
+    MYSQL *sql, const dstr_t *uuid, dstr_t *alias, bool *ok
+);
 
 derr_t add_primary_alias(
     MYSQL *sql, const dstr_t *uuid, const dstr_t *alias, bool *ok

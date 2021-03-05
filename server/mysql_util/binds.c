@@ -74,3 +74,20 @@ MYSQL_BIND uint_bind_out(unsigned int *val){
         .is_unsigned = true,
     };
 }
+
+
+MYSQL_BIND uint64_bind_in(const uint64_t *val){
+    return (MYSQL_BIND){
+        .buffer_type = MYSQL_TYPE_LONGLONG,
+        .buffer = val,
+        .is_unsigned = true,
+    };
+}
+
+MYSQL_BIND uint64_bind_out(uint64_t *val){
+    return (MYSQL_BIND){
+        .buffer_type = MYSQL_TYPE_LONGLONG,
+        .buffer = val,
+        .is_unsigned = true,
+    };
+}

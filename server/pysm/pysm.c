@@ -7,12 +7,12 @@
 
 #define BUILD_STRING(dstr) \
     Py_BuildValue("s#", (dstr).data, (Py_ssize_t)(dstr).len)
-#define BUILD_OPTIONAL_STRING(dstr) \
-    Py_BuildValue("s#", (dstr).data ? (dstr).data : NULL, (Py_ssize_t)(dstr).len)
+#define BUILD_OPTIONAL_STRING(dstr, ok) \
+    Py_BuildValue("s#", (ok) ? (dstr).data : NULL, (Py_ssize_t)(dstr).len)
 #define BUILD_BYTES(dstr) \
     Py_BuildValue("y#", (dstr).data, (Py_ssize_t)(dstr).len)
-#define BUILD_OPTIONAL_BYTES(dstr) \
-    Py_BuildValue("y#", (dstr).data ? (dstr).data : NULL, (Py_ssize_t)(dstr).len)
+#define BUILD_OPTIONAL_BYTES(dstr, ok) \
+    Py_BuildValue("y#", (ok) ? (dstr).data : NULL, (Py_ssize_t)(dstr).len)
 
 #define RETURN_BOOL(val) do { \
     if(val){ \
@@ -129,7 +129,7 @@ static PyObject *py_smsql_get_uuid(
 
     PROP_GO(&e, get_uuid_for_email(&self->sql, email, &uuid, &ok), fail);
 
-    return BUILD_OPTIONAL_BYTES(uuid);
+    return BUILD_OPTIONAL_BYTES(uuid, ok);
 
 fail:
     raise_derr(&e);
@@ -153,7 +153,7 @@ static PyObject *py_smsql_get_email(
 
     PROP_GO(&e, get_email_for_uuid(&self->sql, uuid, &email, &ok), fail);
 
-    return BUILD_OPTIONAL_STRING(email);
+    return BUILD_OPTIONAL_STRING(email, ok);
 
 fail:
     raise_derr(&e);
@@ -220,6 +220,30 @@ fail_aliases:
         smsql_alias_t *alias = CONTAINER_OF(link, smsql_alias_t, link);
         smsql_alias_free(&alias);
     }
+fail:
+    raise_derr(&e);
+    return NULL;
+}
+
+static PyObject *py_smsql_add_random_alias(
+    py_smsql_t *self, PyObject *args, PyObject *kwds
+){
+    derr_t e = E_OK;
+
+    dstr_t _uuid;
+    const dstr_t *uuid;
+    py_args_t spec = {
+        pyarg_dstr(&_uuid, &uuid, "uuid"),
+    };
+    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+
+    DSTR_VAR(alias, SMSQL_EMAIL_SIZE);
+    bool ok;
+
+    PROP_GO(&e, add_random_alias(&self->sql, uuid, &alias, &ok), fail);
+
+    return BUILD_OPTIONAL_STRING(alias, ok);
+
 fail:
     raise_derr(&e);
     return NULL;
@@ -319,6 +343,13 @@ static PyMethodDef py_smsql_methods[] = {
         .ml_meth = (PyCFunction)(void*)py_smsql_list_aliases,
         .ml_flags = METH_VARARGS | METH_KEYWORDS,
         .ml_doc = "List aliases for a uuid.",
+    },
+    {
+        .ml_name = "add_random_alias",
+        .ml_meth = (PyCFunction)(void*)py_smsql_add_random_alias,
+        .ml_flags = METH_VARARGS | METH_KEYWORDS,
+        .ml_doc = "Add a random alias for a uuid.  "
+                  "Returns the alias, or None if max aliases was reached.",
     },
     {
         .ml_name = "add_primary_alias",

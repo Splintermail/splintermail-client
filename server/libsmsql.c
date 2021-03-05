@@ -1,6 +1,7 @@
 #include <stdlib.h>
 
 #include "libsmsql.h"
+#include "petname/petname.h"
 
 // helper functions
 
@@ -236,6 +237,90 @@ fail_list:
     return e;
 }
 
+static derr_t _add_random_alias_txn(
+        MYSQL *sql, const dstr_t *uuid, dstr_t *alias, bool *ok){
+    derr_t e = E_OK;
+
+    /* this count-then-append strategy is vulnerable to write-skew, but giving
+       some users a couple free aliases is just fine */
+    uint64_t count;
+    DSTR_STATIC(q1, "select COUNT(*) from aliases where user_uuid=?;");
+    PROP(&e,
+        sql_onerow_query(
+            sql, &q1, NULL, blob_bind_in(uuid), uint64_bind_out(&count)
+        )
+    );
+
+    if(count > MAX_RANDOM_ALIASES){
+        // too many aliases
+        *ok = false;
+        return e;
+    }
+
+    // try for an unused random alias
+    for(size_t limit = 0; limit < 1000; limit++){
+        DSTR_VAR(temp, SMSQL_EMAIL_SIZE);
+        PROP(&e, petname_email(&temp) );
+
+        // double-check that the email is valid
+        NOFAIL(&e, E_PARAM, valid_splintermail_email(&temp) );
+
+        DSTR_STATIC(q2, "INSERT INTO emails (email) VALUES (?)");
+        derr_t e2 = sql_bound_stmt(sql, &q2, string_bind_in(&temp));
+        CATCH(e2, E_SQL_DUP){
+            // chose a duplicate alias, try again
+            DROP_VAR(&e2);
+            continue;
+        }else PROP(&e, e2);
+
+        DSTR_STATIC(q3,
+            "INSERT INTO aliases (alias, paid, user_uuid) VALUES (?, ?, ?)"
+        );
+        bool paid = false;
+        PROP(&e,
+            sql_bound_stmt(sql,
+                &q3,
+                string_bind_in(&temp),
+                bool_bind_in(&paid),
+                blob_bind_in(uuid),
+            )
+        );
+
+        PROP(&e, dstr_append(alias, &temp) );
+
+        *ok = true;
+        return e;
+    }
+
+    ORIG(&e, E_INTERNAL, "failed to find an available alias");
+}
+
+derr_t add_random_alias(
+    MYSQL *sql, const dstr_t *uuid, dstr_t *alias, bool *ok
+){
+    derr_t e = E_OK;
+    *ok = false;
+
+    PROP(&e, sql_txn_start(sql) );
+
+    PROP_GO(&e, _add_random_alias_txn(sql, uuid, alias, ok), hard_fail);
+
+    if(*ok){
+        PROP(&e, sql_txn_commit(sql) );
+    }else{
+        // soft fail
+        PROP(&e, sql_txn_rollback(sql) );
+    }
+
+    return e;
+
+hard_fail:
+    sql_txn_abort(sql);
+    *ok = false;
+
+    return e;
+}
+
 
 static derr_t _add_primary_alias_txn(
     MYSQL *sql, const dstr_t *uuid, const dstr_t *alias, bool *ok
@@ -261,7 +346,6 @@ static derr_t _add_primary_alias_txn(
     *ok = true;
 
     return e;
-
 }
 
 derr_t add_primary_alias(
