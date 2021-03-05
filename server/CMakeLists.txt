@@ -1,4 +1,5 @@
 add_subdirectory(mysql_util)
+add_subdirectory(petname)
 
 # pre-defined splintermail queries
 add_library(libsmsql libsmsql.c)
