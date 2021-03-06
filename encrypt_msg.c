@@ -189,7 +189,7 @@ static derr_t get_keys(MYSQL* sql, unsigned int uid, link_t* keys){
         dstr_t pem;
         DSTR_WRAP(pem, row[1], lens[1], 0);
         keypair_t *kp;
-        PROP_GO(&e, keypair_from_pem(&kp, &pem), loop_end);
+        PROP_GO(&e, keypair_from_pubkey_pem(&kp, &pem), loop_end);
 
         // append key to output list
         link_list_append(keys, &kp->link);

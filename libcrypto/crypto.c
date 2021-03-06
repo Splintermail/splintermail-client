@@ -122,6 +122,87 @@ static void keypair_finalizer(refs_t *refs){
     free(_kp);
 }
 
+derr_t get_fingerprint(EVP_PKEY* pkey, dstr_t *out){
+    derr_t e = E_OK;
+
+    X509* x = X509_new();
+    if(!x){
+        trace_ssl_errors(&e);
+        ORIG(&e, E_NOMEM, "X509_new failed");
+    }
+
+    int ret = X509_set_pubkey(x, pkey);
+    if(ret != 1){
+        trace_ssl_errors(&e);
+        ORIG_GO(&e, E_SSL, "X509_set_pubkey failed", fail_x509);
+    }
+
+    // X509_pubkey_digest has a max output length and doesn't check at runtime
+    DSTR_VAR(fpr, EVP_MAX_MD_SIZE);
+
+    // get the fingerprint
+    unsigned int fpr_len;
+    const EVP_MD* type = EVP_sha256();
+    ret = X509_pubkey_digest(
+        x, type, (unsigned char*)fpr.data, &fpr_len
+    );
+    if(ret != 1){
+        trace_ssl_errors(&e);
+        ORIG_GO(&e, E_SSL, "X509_pubkey_digest failed", fail_x509);
+    }
+    fpr.len = fpr_len;
+
+    X509_free(x);
+
+    // copy to output
+    PROP(&e, dstr_append(out, &fpr) );
+    return e;
+
+fail_x509:
+    X509_free(x);
+    return e;
+}
+
+derr_t read_pem_encoded_pubkey(const dstr_t *pem, EVP_PKEY **out){
+    derr_t e = E_OK;
+    *out = NULL;
+
+    EVP_PKEY *pkey = EVP_PKEY_new();
+    if(!pkey){
+        trace_ssl_errors(&e);
+        ORIG(&e, E_NOMEM, "EVP_PKEY_new failed");
+    }
+
+    // make sure pem isn't too long for OpenSSL
+    if(pem->len > INT_MAX) ORIG(&e, E_PARAM, "pem is way too long");
+    int pemlen = (int)pem->len;
+
+    // wrap the pem-encoded key in an SSL memory BIO
+    BIO* pembio = BIO_new_mem_buf((void*)pem->data, pemlen);
+    if(!pembio){
+        trace_ssl_errors(&e);
+        ORIG_GO(&e, E_NOMEM, "unable to create BIO", fail_pkey);
+    }
+
+    // read the public key from the BIO (no password protection)
+    EVP_PKEY* temp;
+    temp = PEM_read_bio_PUBKEY(pembio, &pkey, NULL, NULL);
+    BIO_free(pembio);
+    if(!temp){
+        trace_ssl_errors(&e);
+        ORIG_GO(&e, E_PARAM, "failed to read public key", fail_pkey);
+    }
+
+    *out = pkey;
+
+    return e;
+
+fail_pkey:
+    EVP_PKEY_free(pkey);
+    return e;
+}
+
+// owns pkey and frees it on failure
 static derr_t keypair_new(keypair_t **out, EVP_PKEY* pkey){
     derr_t e = E_OK;
 
@@ -144,38 +225,11 @@ static derr_t keypair_new(keypair_t **out, EVP_PKEY* pkey){
     // initialize fingerprint
     PROP_GO(&e, dstr_new(&_kp->fingerprint, FL_FINGERPRINT), fail_ref_mem);
 
-    // now get ready to get the fingerprint of the key
-    X509* x = X509_new();
-    if(!x){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_NOMEM, "X509_new failed", fail_fpr);
-    }
-
-    int ret = X509_set_pubkey(x, pkey);
-    if(ret != 1){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "X509_set_pubkey failed", fail_x509);
-    }
-
-    // get the fingerprint
-    unsigned int fpr_len;
-    const EVP_MD* type = EVP_sha256();
-    ret = X509_pubkey_digest(
-        x, type, (unsigned char*)_kp->fingerprint.data, &fpr_len
-    );
-    if(ret != 1){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "X509_pubkey_digest failed", fail_x509);
-    }
-    _kp->fingerprint.len = fpr_len;
-
-    X509_free(x);
+    PROP_GO(&e, get_fingerprint(pkey, &_kp->fingerprint), fail_fpr);
 
     *out = kp;
     return e;
 
-fail_x509:
-    X509_free(x);
 fail_fpr:
     dstr_free(&_kp->fingerprint);
 fail_ref_mem:
@@ -229,45 +283,16 @@ fail_pkey:
     return e;
 }
 
-derr_t keypair_from_pem(keypair_t **out, const dstr_t *pem){
+derr_t keypair_from_pubkey_pem(keypair_t **out, const dstr_t *pem){
     derr_t e = E_OK;
 
     *out = NULL;
 
-    // try to allocate for the EVP_PKEY
-    EVP_PKEY *pkey = EVP_PKEY_new();
-    if(!pkey){
-        trace_ssl_errors(&e);
-        ORIG(&e, E_SSL, "EVP_PKEY_new failed");
-    }
-
-    // make sure pem isn't too long for OpenSSL
-    if(pem->len > INT_MAX)
-        ORIG(&e, E_VALUE, "pem is way too long");
-    int pemlen = (int)pem->len;
-
-    // wrap the pem-encoded key in an SSL memory BIO
-    BIO* pembio = BIO_new_mem_buf((void*)pem->data, pemlen);
-    if(!pembio){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "unable to create BIO", fail_pkey);
-    }
-
-    // read the public key from the BIO (no password protection)
-    EVP_PKEY* temp;
-    temp = PEM_read_bio_PUBKEY(pembio, &pkey, NULL, NULL);
-    BIO_free(pembio);
-    if(!temp){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "failed to read public key", fail_pkey);
-    }
+    EVP_PKEY *pkey;
+    PROP(&e, read_pem_encoded_pubkey(pem, &pkey) );
 
     PROP(&e, keypair_new(out, pkey) );
 
-    return e;
-
-fail_pkey:
-    EVP_PKEY_free(pkey);
     return e;
 }
 

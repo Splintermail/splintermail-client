@@ -306,7 +306,7 @@ static derr_t handle_new_key(const dstr_t* path, const dstr_t* arg,
     keypair_t *kp;
     DSTR_VAR(temp, 4096);
     PROP(&e, json_decode(arg, &temp) );
-    PROP(&e, keypair_from_pem(&kp, &temp) );
+    PROP(&e, keypair_from_pubkey_pem(&kp, &temp) );
     // get hex of the fingerprint
     DSTR_VAR(hexfpr, 2*FL_FINGERPRINT);
     PROP_GO(&e, bin2hex(kp->fingerprint, &hexfpr), cu);

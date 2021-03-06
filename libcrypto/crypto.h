@@ -69,13 +69,23 @@ derr_t gen_key(int bits, const char* keyfile);
            E_NOMEM
            E_OPEN (failed to open file for writing) */
 
+derr_t get_fingerprint(EVP_PKEY* pkey, dstr_t *out);
+/* throws: E_SSL (failure in setting pubkey or getting fingerprint)
+           E_NOMEM
+           E_FIXEDSIZE */
+
+derr_t read_pem_encoded_pubkey(const dstr_t *pem, EVP_PKEY **out);
+/* throws: E_PARAM (invalid key)
+           E_NOMEM
+           E_FIXEDSIZE */
+
 // keypair_load needs a matching keypair_free afterwards
 derr_t keypair_load(keypair_t **out, const char *keyfile);
 /* throws: E_SSL (anything with the SSL library)
            E_NOMEM
            E_OPEN (failed to open file for reading) */
 
-derr_t keypair_from_pem(keypair_t **out, const dstr_t *pem);
+derr_t keypair_from_pubkey_pem(keypair_t **out, const dstr_t *pem);
 void keypair_free(keypair_t **old);
 derr_t keypair_get_public_pem(keypair_t *kp, dstr_t *out);
 /* throws: E_NOMEM (either internally with the memory BIO or writing to *out)
