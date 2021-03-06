@@ -301,6 +301,176 @@ fail:
     return NULL;
 }
 
+// devices
+
+static PyObject *py_smsql_list_device_fprs(
+    py_smsql_t *self, PyObject *args, PyObject *kwds
+){
+    derr_t e = E_OK;
+
+    dstr_t _uuid;
+    const dstr_t *uuid;
+    py_args_t spec = {
+        pyarg_dstr(&_uuid, &uuid, "uuid"),
+    };
+    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+
+    link_t dstrs;
+    link_init(&dstrs);
+    PROP_GO(&e, list_device_fprs(&self->sql, uuid, &dstrs), fail);
+
+    // count entries
+    Py_ssize_t count = 0;
+    link_t *link;
+    for(link = dstrs.next; link != &dstrs; link = link->next){
+        count++;
+    }
+
+    // create the output list
+    PyObject *py_list = PyList_New(count);
+    if(!py_list) ORIG_GO(&e, E_NOMEM, "nomem", fail_dstrs);
+
+    count = 0;
+    // populate the output list
+    while((link = link_list_pop_first(&dstrs))){
+        smsql_dstr_t *dstr = CONTAINER_OF(link, smsql_dstr_t, link);
+
+        // build a list of strings
+        PyObject *py_str = BUILD_STRING(dstr->dstr);
+
+        // always free the popped dstr
+        smsql_dstr_free(&dstr);
+
+        // now check for errors
+        if(!py_str) ORIG_GO(&e, E_NOMEM, "nomem", fail_list);
+
+        // the SET_ITEM macro is only suitable for newly created, empty lists
+        PyList_SET_ITEM(py_list, count++, py_str);
+    }
+
+    return py_list;
+
+fail_list:
+    Py_DECREF(py_list);
+fail_dstrs:
+    while((link = link_list_pop_first(&dstrs))){
+        smsql_dstr_t *dstr = CONTAINER_OF(link, smsql_dstr_t, link);
+        smsql_dstr_free(&dstr);
+    }
+fail:
+    raise_derr(&e);
+    return NULL;
+}
+
+
+static PyObject *py_smsql_list_device_keys(
+    py_smsql_t *self, PyObject *args, PyObject *kwds
+){
+    derr_t e = E_OK;
+
+    dstr_t _uuid;
+    const dstr_t *uuid;
+    py_args_t spec = {
+        pyarg_dstr(&_uuid, &uuid, "uuid"),
+    };
+    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+
+    link_t dstrs;
+    link_init(&dstrs);
+    PROP_GO(&e, list_device_keys(&self->sql, uuid, &dstrs), fail);
+
+    // count entries
+    Py_ssize_t count = 0;
+    link_t *link;
+    for(link = dstrs.next; link != &dstrs; link = link->next){
+        count++;
+    }
+
+    // create the output list
+    PyObject *py_list = PyList_New(count);
+    if(!py_list) ORIG_GO(&e, E_NOMEM, "nomem", fail_dstrs);
+
+    count = 0;
+    // populate the output list
+    while((link = link_list_pop_first(&dstrs))){
+        smsql_dstr_t *dstr = CONTAINER_OF(link, smsql_dstr_t, link);
+
+        // build a list of strings
+        PyObject *py_str = BUILD_STRING(dstr->dstr);
+
+        // always free the popped dstr
+        smsql_dstr_free(&dstr);
+
+        // now check for errors
+        if(!py_str) ORIG_GO(&e, E_NOMEM, "nomem", fail_list);
+
+        // the SET_ITEM macro is only suitable for newly created, empty lists
+        PyList_SET_ITEM(py_list, count++, py_str);
+    }
+
+    return py_list;
+
+fail_list:
+    Py_DECREF(py_list);
+fail_dstrs:
+    while((link = link_list_pop_first(&dstrs))){
+        smsql_dstr_t *dstr = CONTAINER_OF(link, smsql_dstr_t, link);
+        smsql_dstr_free(&dstr);
+    }
+fail:
+    raise_derr(&e);
+    return NULL;
+}
+
+static PyObject *py_smsql_add_device(
+    py_smsql_t *self, PyObject *args, PyObject *kwds
+){
+    derr_t e = E_OK;
+
+    dstr_t _uuid;
+    const dstr_t *uuid;
+    dstr_t _pubkey;
+    const dstr_t *pubkey;
+    py_args_t spec = {
+        pyarg_dstr(&_uuid, &uuid, "uuid"),
+        pyarg_dstr(&_pubkey, &pubkey, "pubkey"),
+    };
+    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+
+    bool ok;
+    PROP_GO(&e, add_device(&self->sql, uuid, pubkey, &ok), fail);
+
+    RETURN_BOOL(ok);
+
+fail:
+    raise_derr(&e);
+    return NULL;
+}
+
+static PyObject *py_smsql_delete_device(
+    py_smsql_t *self, PyObject *args, PyObject *kwds
+){
+    derr_t e = E_OK;
+
+    dstr_t _uuid;
+    const dstr_t *uuid;
+    dstr_t _fpr;
+    const dstr_t *fpr;
+    py_args_t spec = {
+        pyarg_dstr(&_uuid, &uuid, "uuid"),
+        pyarg_dstr(&_fpr, &fpr, "fpr"),
+    };
+    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+
+    PROP_GO(&e, delete_device(&self->sql, uuid, fpr), fail);
+
+    Py_RETURN_NONE;
+
+fail:
+    raise_derr(&e);
+    return NULL;
+}
+
 static PyMethodDef py_smsql_methods[] = {
     {
         .ml_name = "connect",
@@ -362,6 +532,32 @@ static PyMethodDef py_smsql_methods[] = {
         .ml_meth = (PyCFunction)(void*)py_smsql_delete_alias,
         .ml_flags = METH_VARARGS | METH_KEYWORDS,
         .ml_doc = "Delete an alias for a uuid.  Returns True if it happened.",
+    },
+    {
+        .ml_name = "list_device_fprs",
+        .ml_meth = (PyCFunction)(void*)py_smsql_list_device_fprs,
+        .ml_flags = METH_VARARGS | METH_KEYWORDS,
+        .ml_doc = "Return a list of hex-encoded fingerprints.",
+    },
+    {
+        .ml_name = "list_device_keys",
+        .ml_meth = (PyCFunction)(void*)py_smsql_list_device_keys,
+        .ml_flags = METH_VARARGS | METH_KEYWORDS,
+        .ml_doc = "Return a list of pem-encoded public keys.",
+    },
+    {
+        .ml_name = "add_device",
+        .ml_meth = (PyCFunction)(void*)py_smsql_add_device,
+        .ml_flags = METH_VARARGS | METH_KEYWORDS,
+        .ml_doc = "Add a new device from a pem-encoded public key.  Returns "
+                  "True on success or False if max devices was reached."
+    },
+    {
+        .ml_name = "delete_device",
+        .ml_meth = (PyCFunction)(void*)py_smsql_delete_device,
+        .ml_flags = METH_VARARGS | METH_KEYWORDS,
+        .ml_doc = "Delete a device from its hex-encoded fingerprint.  "
+                  "Returns None.",
     },
     {NULL}, // sentinel
 };

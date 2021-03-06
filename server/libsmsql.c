@@ -1,5 +1,7 @@
 #include <stdlib.h>
 
+#include <openssl/evp.h>
+
 #include "libsmsql.h"
 #include "petname/petname.h"
 
@@ -153,6 +155,8 @@ derr_t get_email_for_uuid(
 
     return e;
 }
+
+// aliases
 
 derr_t smsql_alias_new(smsql_alias_t **out, const dstr_t *email, bool paid){
     derr_t e = E_OK;
@@ -417,10 +421,8 @@ static derr_t _delete_alias_txn(
     *deleted = true;
 
     return e;
-
 }
 
-// transaction layer
 derr_t delete_alias(
     MYSQL *sql, const dstr_t *uuid, const dstr_t *alias, bool *deleted
 ){
@@ -438,6 +440,297 @@ derr_t delete_alias(
 hard_fail:
     sql_txn_abort(sql);
     *deleted = false;
+
+    return e;
+}
+
+// devices
+
+//// will these ever become useful?
+// derr_t smsql_device_new(
+//     smsql_device_t **out, const dstr_t *public_key, const dstr_t *fingerprint
+// ){
+//     derr_t e = E_OK;
+//     *out = NULL;
+//
+//     smsql_device_t *device = DMALLOC_STRUCT_PTR(&e, device);
+//     CHECK(&e);
+//
+//     link_init(&device->link);
+//
+//     PROP_GO(&e, dstr_copy(public_key, &device->public_key), fail);
+//     PROP_GO(&e, dstr_copy(fingerprint, &device->fingerprint), fail_key);
+//
+//     *out = device;
+//     return e;
+//
+// fail_key:
+//     dstr_free(&device->public_key);
+// fail:
+//     free(device);
+//     return e;
+// }
+//
+// void smsql_device_free(smsql_device_t **old){
+//     smsql_device_t *device = *old;
+//     if(device == NULL) return;
+//     dstr_free(&device->fingerprint);
+//     dstr_free(&device->public_key);
+//     free(device);
+//     *old = NULL;
+// }
+
+derr_t smsql_dstr_new(smsql_dstr_t **out, const dstr_t *val){
+    derr_t e = E_OK;
+    *out = NULL;
+
+    smsql_dstr_t *dstr = DMALLOC_STRUCT_PTR(&e, dstr);
+    CHECK(&e);
+
+    link_init(&dstr->link);
+
+    PROP_GO(&e, dstr_copy(val, &dstr->dstr), fail);
+
+    *out = dstr;
+    return e;
+
+fail:
+    free(dstr);
+    return e;
+}
+
+void smsql_dstr_free(smsql_dstr_t **old){
+    smsql_dstr_t *dstr = *old;
+    if(dstr == NULL) return;
+    dstr_free(&dstr->dstr);
+    free(dstr);
+    *old = NULL;
+}
+
+derr_t list_device_fprs(MYSQL *sql, const dstr_t *uuid, link_t *out){
+    derr_t e = E_OK;
+
+    MYSQL_STMT *stmt;
+
+    DSTR_VAR(fpr_res, SMSQL_FPR_SIZE);
+
+    DSTR_STATIC(
+        q1, "SELECT fingerprint from devices where user_uuid=?"
+    );
+    PROP(&e,
+        sql_multirow_stmt(
+            sql, &stmt, &q1,
+            // parameters
+            blob_bind_in(uuid),
+            // results
+            string_bind_out(&fpr_res)
+        )
+    );
+
+    link_t list;
+    link_init(&list);
+    link_t *link;
+
+    while(true){
+        bool ok;
+        PROP_GO(&e, sql_stmt_fetch(stmt, &ok), fail_list);
+        if(!ok) break;
+
+        smsql_dstr_t *dstr;
+        PROP_GO(&e,
+            smsql_dstr_new(&dstr, &fpr_res),
+        loop_fail);
+
+        link_list_append(&list, &dstr->link);
+
+        continue;
+
+    loop_fail:
+        sql_stmt_fetchall(stmt);
+        goto fail_list;
+    }
+
+    // set the output
+    link_list_append_list(out, &list);
+
+    mysql_stmt_close(stmt);
+
+    return e;
+
+fail_list:
+    while((link = link_list_pop_first(&list))){
+        smsql_dstr_t *dstr = CONTAINER_OF(link, smsql_dstr_t, link);
+        smsql_dstr_free(&dstr);
+    }
+    mysql_stmt_close(stmt);
+    return e;
+}
+
+derr_t list_device_keys(MYSQL *sql, const dstr_t *uuid, link_t *out){
+    derr_t e = E_OK;
+
+    MYSQL_STMT *stmt;
+
+    DSTR_VAR(public_key_res, SMSQL_PUBKEY_SIZE);
+
+    DSTR_STATIC(
+        q1, "SELECT public_key from devices where user_uuid=?"
+    );
+    PROP(&e,
+        sql_multirow_stmt(
+            sql, &stmt, &q1,
+            // parameters
+            blob_bind_in(uuid),
+            // results
+            string_bind_out(&public_key_res)
+        )
+    );
+
+    link_t list;
+    link_init(&list);
+    link_t *link;
+
+    while(true){
+        bool ok;
+        PROP_GO(&e, sql_stmt_fetch(stmt, &ok), fail_list);
+        if(!ok) break;
+
+        smsql_dstr_t *dstr;
+        PROP_GO(&e,
+            smsql_dstr_new(&dstr, &public_key_res),
+        loop_fail);
+
+        link_list_append(&list, &dstr->link);
+
+        continue;
+
+    loop_fail:
+        sql_stmt_fetchall(stmt);
+        goto fail_list;
+    }
+
+    // set the output
+    link_list_append_list(out, &list);
+
+    mysql_stmt_close(stmt);
+
+    return e;
+
+fail_list:
+    while((link = link_list_pop_first(&list))){
+        smsql_dstr_t *dstr = CONTAINER_OF(link, smsql_dstr_t, link);
+        smsql_dstr_free(&dstr);
+    }
+    mysql_stmt_close(stmt);
+    return e;
+}
+
+static derr_t _add_device_locked(
+    MYSQL *sql,
+    const dstr_t *uuid,
+    const dstr_t *pubkey,
+    const dstr_t *fpr_hex,
+    bool *ok
+){
+    derr_t e = E_OK;
+
+    // not vulnerable to write skew since we have a write lock on the table
+    uint64_t count;
+    DSTR_STATIC(q1, "select COUNT(*) from devices where user_uuid=?;");
+    PROP(&e,
+        sql_onerow_query(
+            sql, &q1, NULL, blob_bind_in(uuid), uint64_bind_out(&count)
+        )
+    );
+
+    if(count >= MAX_DEVICES){
+        *ok = false;
+        return e;
+    }
+
+    DSTR_STATIC(
+        q2,
+        "INSERT INTO devices (user_uuid, public_key, fingerprint) "
+        "VALUES (?, ?, ?)"
+    );
+    PROP(&e,
+        sql_bound_stmt(
+            sql, &q2,
+            blob_bind_in(uuid),
+            string_bind_in(pubkey),
+            string_bind_in(fpr_hex)
+        )
+    );
+
+    *ok = true;
+
+    return e;
+}
+
+// validate, get fingerprint, and normalize a pem-encoded public key
+static derr_t _validate_for_add_device(
+    const dstr_t *pubkey, dstr_t *fpr_hex, dstr_t *norm
+){
+    derr_t e = E_OK;
+    // validate pkey
+    EVP_PKEY *pkey;
+    PROP(&e, read_pem_encoded_pubkey(pubkey, &pkey) );
+
+    // get fingerprint
+    DSTR_VAR(fpr, SMSQL_FPR_SIZE / 2);
+    PROP_GO(&e, get_fingerprint(pkey, &fpr), cu);
+
+    // hexify
+    PROP_GO(&e, bin2hex(&fpr, fpr_hex), cu);
+
+    // normalize the public key
+    PROP_GO(&e, get_public_pem(pkey, norm), cu);
+
+cu:
+    EVP_PKEY_free(pkey);
+    return e;
+}
+
+// take a PEM-encoded public key, validate it, and add it to an account
+derr_t add_device(
+    MYSQL *sql, const dstr_t *uuid, const dstr_t *pubkey, bool *ok
+){
+    derr_t e = E_OK;
+    *ok = false;
+
+    DSTR_VAR(fpr_hex, SMSQL_FPR_SIZE);
+    DSTR_VAR(norm, SMSQL_PUBKEY_SIZE);
+    PROP(&e, _validate_for_add_device(pubkey, &fpr_hex, &norm) );
+
+    // now do the locking
+    DSTR_STATIC(q1, "LOCK TABLES devices WRITE");
+    PROP(&e, sql_lock_statement(sql, &q1) );
+
+    PROP_GO(&e,
+        _add_device_locked(sql, uuid, pubkey, &fpr_hex, ok),
+    fail_lock);
+
+    PROP(&e, sql_unlock_all(sql) );
+
+    return e;
+
+fail_lock:
+    sql_abort_locks(sql);
+    return e;
+}
+
+derr_t delete_device(MYSQL *sql, const dstr_t *uuid, const dstr_t *fpr_hex){
+    derr_t e = E_OK;
+
+    DSTR_STATIC(q1, "DELETE FROM devices WHERE fingerprint=? AND user_uuid=?");
+    PROP(&e,
+        sql_bound_stmt(
+            sql, &q1,
+            // params
+            string_bind_in(fpr_hex),
+            blob_bind_in(uuid)
+        )
+    );
 
     return e;
 }

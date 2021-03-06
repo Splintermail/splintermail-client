@@ -137,7 +137,7 @@ static derr_t add_random_alias_action(MYSQL *sql, int argc, char **argv){
     if(ok){
         PFMT("%x\n", FD(&alias));
     }else{
-        FFMT(stderr, NULL, "FAILURE: WOULD EXCEED MAX RANDOM ALIASES");
+        FFMT(stderr, NULL, "FAILURE: WOULD EXCEED MAX RANDOM ALIASES\n");
     }
 
     return e;
@@ -185,6 +185,105 @@ static derr_t delete_alias_action(MYSQL *sql, int argc, char **argv){
     }else{
         PFMT("NOOP\n");
     }
+
+    return e;
+}
+
+static derr_t list_device_fprs_action(MYSQL *sql, int argc, char **argv){
+    derr_t e = E_OK;
+
+    if(argc != 1){
+        ORIG(&e, E_VALUE, "usage: list_device_fprs (EMAIL|FSID)\n");
+    }
+
+    dstr_t id = get_arg(argv, 0);
+
+    DSTR_VAR(uuid, SMSQL_UUID_SIZE);
+    PROP(&e, get_uuid_from_id(sql, &id, &uuid) );
+
+    link_t dstrs;
+    link_init(&dstrs);
+    PROP(&e, list_device_fprs(sql, &uuid, &dstrs) );
+
+    link_t *link;
+    while((link = link_list_pop_first(&dstrs))){
+        smsql_dstr_t *dstr = CONTAINER_OF(link, smsql_dstr_t, link);
+        PFMT("%x\n", FD(&dstr->dstr));
+        smsql_dstr_free(&dstr);
+    }
+
+    return e;
+}
+
+static derr_t list_device_keys_action(MYSQL *sql, int argc, char **argv){
+    derr_t e = E_OK;
+
+    if(argc != 1){
+        ORIG(&e, E_VALUE, "usage: list_device_keys (EMAIL|FSID)\n");
+    }
+
+    dstr_t id = get_arg(argv, 0);
+
+    DSTR_VAR(uuid, SMSQL_UUID_SIZE);
+    PROP(&e, get_uuid_from_id(sql, &id, &uuid) );
+
+    link_t dstrs;
+    link_init(&dstrs);
+    PROP(&e, list_device_keys(sql, &uuid, &dstrs) );
+
+    link_t *link;
+    while((link = link_list_pop_first(&dstrs))){
+        smsql_dstr_t *dstr = CONTAINER_OF(link, smsql_dstr_t, link);
+        PFMT("%x\n", FD(&dstr->dstr));
+        smsql_dstr_free(&dstr);
+    }
+
+    return e;
+}
+
+static derr_t add_device_action(MYSQL *sql, int argc, char **argv){
+    derr_t e = E_OK;
+
+    if(argc != 1){
+        ORIG(&e, E_VALUE, "usage: add_device (EMAIL|FSID) < pubkey.pem\n");
+    }
+
+    dstr_t id = get_arg(argv, 0);
+
+    DSTR_VAR(uuid, SMSQL_UUID_SIZE);
+    PROP(&e, get_uuid_from_id(sql, &id, &uuid) );
+
+    DSTR_VAR(pubkey, SMSQL_PUBKEY_SIZE);
+    PROP(&e, dstr_read_all(0, &pubkey) );
+
+    bool ok;
+    PROP(&e, add_device(sql, &uuid, &pubkey, &ok) );
+
+    if(ok){
+        PFMT("SUCCESS\n");
+    }else{
+        FFMT(stderr, NULL, "FAILURE: WOULD EXCEED MAX DEVICES\n");
+    }
+
+    return e;
+}
+
+static derr_t delete_device_action(MYSQL *sql, int argc, char **argv){
+    derr_t e = E_OK;
+
+    if(argc != 2){
+        ORIG(&e, E_VALUE, "usage: delete_device (EMAIL|FSID) FINGERPRINT\n");
+    }
+
+    dstr_t id = get_arg(argv, 0);
+    dstr_t fpr_hex = get_arg(argv, 1);
+
+    DSTR_VAR(uuid, SMSQL_UUID_SIZE);
+    PROP(&e, get_uuid_from_id(sql, &id, &uuid) );
+
+    PROP(&e, delete_device(sql, &uuid, &fpr_hex) );
+
+    PFMT("DONE\n");
 
     return e;
 }
@@ -306,6 +405,10 @@ int main(int argc, char **argv){
     LINK_ACTION("add_random_alias", add_random_alias_action);
     LINK_ACTION("add_primary_alias", add_primary_alias_action);
     LINK_ACTION("delete_alias", delete_alias_action);
+    LINK_ACTION("list_device_fprs", list_device_fprs_action);
+    LINK_ACTION("list_device_keys", list_device_keys_action);
+    LINK_ACTION("add_device", add_device_action);
+    LINK_ACTION("delete_device", delete_device_action);
 
     if(action == NULL){
         LOG_ERROR("command \"%x\" unknown\n", FD(&cmd));
