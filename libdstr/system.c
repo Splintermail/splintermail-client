@@ -4,14 +4,14 @@
 #include "libdstr.h"
 #include "errno.h"
 
-derr_t dmalloc(size_t size, void **out){
-    derr_t e = E_OK;
-
-    *out = malloc(size);
-    if(!out) ORIG(&e, E_NOMEM, "malloc() failed");
-    memset(*out, 0, size);
-
-    return e;
+void *dmalloc(derr_t *e, size_t n){
+    void *out =  malloc(n);
+    if(out == NULL) {
+        TRACE_ORIG(e, E_NOMEM, "nomem");
+    }else{
+        memset(out, 0, n);
+    }
+    return out;
 }
 
 dstr_t dgetenv(const dstr_t varname, bool *found){
@@ -324,8 +324,8 @@ derr_t _make_env(
         len += i;
     }
 
-    char **env;
-    PROP(&e, dmalloc((len + 1) * sizeof(*env), (void*)&env) );
+    char **env = dmalloc(&e, (len + 1) * sizeof(*env));
+    CHECK(&e);
     // explicitly null terminate, for paranoia
     env[len] = NULL;
 
@@ -477,8 +477,8 @@ derr_t _dexec(
     }
 
     // create a null-terminated argv array
-    char **argv;
-    PROP(&e, dmalloc((1 + nargs + 1) * sizeof(*argv), (void*)&argv) );
+    char **argv = dmalloc(&e, (1 + nargs + 1) * sizeof(*argv));
+    CHECK(&e);
     // explicitly null terminate, for paranoia
     argv[1 + nargs] = NULL;
 

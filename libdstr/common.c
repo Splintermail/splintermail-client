@@ -760,9 +760,10 @@ derr_t dstr_copy(const dstr_t* in, dstr_t* out){
 // like dupstr
 derr_t dstr_dupstr(const dstr_t in, char** out){
     derr_t e = E_OK;
-    *out = NULL;
 
-    PROP(&e, dmalloc(in.len + 1, (void*)out) );
+    *out = dmalloc(&e, in.len + 1);
+    CHECK(&e);
+
     memcpy(*out, in.data, in.len);
     (*out)[in.len] = '\0';
 

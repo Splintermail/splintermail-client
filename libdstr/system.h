@@ -1,4 +1,8 @@
-derr_t dmalloc(size_t size, void **out);
+// allocate memory and zeroize it.
+// dmalloc uses the builder api to avoid upsetting -Wstrict-aliasing
+void *dmalloc(derr_t *e, size_t n);
+// by far the most common malloc pattern in splintermail
+#define DMALLOC_STRUCT_PTR(e, var) dmalloc((e), sizeof(*(var)))
 
 // found can be NULL if an empty string is the same to you as "not present"
 dstr_t dgetenv(const dstr_t varname, bool *found);
