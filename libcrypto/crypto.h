@@ -87,6 +87,8 @@ derr_t keypair_load(keypair_t **out, const char *keyfile);
 
 derr_t keypair_from_pubkey_pem(keypair_t **out, const dstr_t *pem);
 void keypair_free(keypair_t **old);
+
+derr_t get_public_pem(EVP_PKEY *pkey, dstr_t *out);
 derr_t keypair_get_public_pem(keypair_t *kp, dstr_t *out);
 /* throws: E_NOMEM (either internally with the memory BIO or writing to *out)
            E_FIXEDSIZE (writing to *out)

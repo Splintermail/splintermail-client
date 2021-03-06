@@ -328,8 +328,9 @@ void keypair_free(keypair_t **old){
     *old = NULL;
 }
 
-derr_t keypair_get_public_pem(keypair_t* kp, dstr_t* out){
+derr_t get_public_pem(EVP_PKEY *pkey, dstr_t *out){
     derr_t e = E_OK;
+
     // first create a memory BIO for writing the key to
     BIO* bio = BIO_new(BIO_s_mem());
     if(!bio){
@@ -338,7 +339,7 @@ derr_t keypair_get_public_pem(keypair_t* kp, dstr_t* out){
     }
 
     // now write the public key to memory
-    int ret = PEM_write_bio_PUBKEY(bio, kp->pair);
+    int ret = PEM_write_bio_PUBKEY(bio, pkey);
     if(!ret){
         trace_ssl_errors(&e);
         ORIG_GO(&e, E_NOMEM, "failed to write public key", cleanup);
@@ -360,6 +361,12 @@ derr_t keypair_get_public_pem(keypair_t* kp, dstr_t* out){
 
 cleanup:
     BIO_free(bio);
+    return e;
+}
+
+derr_t keypair_get_public_pem(keypair_t* kp, dstr_t* out){
+    derr_t e = E_OK;
+    PROP(&e, get_public_pem(kp->pair, out) );
     return e;
 }
 
