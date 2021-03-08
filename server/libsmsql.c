@@ -723,14 +723,9 @@ fail_lock:
 derr_t delete_device(MYSQL *sql, const dstr_t *uuid, const dstr_t *fpr_hex){
     derr_t e = E_OK;
 
-    DSTR_STATIC(q1, "DELETE FROM devices WHERE fingerprint=? AND user_uuid=?");
+    DSTR_STATIC(q1, "DELETE FROM devices WHERE user_uuid=? AND fingerprint=?");
     PROP(&e,
-        sql_bound_stmt(
-            sql, &q1,
-            // params
-            string_bind_in(fpr_hex),
-            blob_bind_in(uuid)
-        )
+        sql_bound_stmt(sql, &q1, blob_bind_in(uuid), string_bind_in(fpr_hex))
     );
 
     return e;
