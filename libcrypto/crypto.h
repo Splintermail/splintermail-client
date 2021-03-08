@@ -143,6 +143,10 @@ derr_t hmac(const dstr_t* secret, const dstr_t* payload, dstr_t* hmac);
            E_INTERNAL */
 
 derr_t random_bytes(dstr_t* out, size_t nbytes);
+derr_t random_uint(uint32_t *out);
+derr_t random_uint_under(uint32_t end, uint32_t *out);
+derr_t random_uint64(uint64_t *out);
+derr_t random_uint64_under(uint64_t end, uint64_t *out);
 
 /* Example of our custom PEM-like format:
    (note that everything in betwen the PEM-like header/footer is base64 encoded

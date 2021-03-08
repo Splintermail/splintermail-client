@@ -1136,6 +1136,84 @@ derr_t random_bytes(dstr_t* out, size_t nbytes){
     return e;
 }
 
+derr_t random_uint(uint32_t *out){
+    derr_t e = E_OK;
+    *out = 0;
+
+    DSTR_VAR(buf, sizeof(*out));
+    PROP(&e, random_bytes(&buf, buf.size) );
+
+    *out = *((uint32_t*)buf.data);
+
+    return e;
+}
+
+derr_t random_uint_under(uint32_t end, uint32_t *out){
+    derr_t e = E_OK;
+
+    // integer division gives us the right answer:
+    // divisor = 11 / 10 = 1
+    // divisor = 19 / 10 = 1
+    // divisor = 20 / 10 = 2
+    // divisor = 29 / 10 = 2
+    // for the last case:
+    // for rand=29; 29 / 2 = 14, retry
+    // for rand=21; 21 / 2 = 10, retry
+    // for rand=20; 20 / 2 = 10, retry
+    // for rand=19; 19 / 2 = 9, good
+    // for rand=18; 18 / 2 = 9, good
+    // for rand=17; 17 / 2 = 8, good
+    uint32_t divisor = UINT32_MAX / end;
+
+    for(size_t limit = 0; limit < 100000; limit++){
+        DSTR_VAR(buf, sizeof(*out));
+        PROP(&e, random_bytes(&buf, buf.size) );
+
+        uint32_t temp = *((uint32_t*)buf.data) / divisor;
+
+        if(temp < end){
+            *out = temp;
+            return e;
+        }
+    }
+
+    TRACE(&e, "failed to find random number less than %x\n", FU(end));
+    ORIG(&e, E_INTERNAL, "10000 tries without success");
+}
+
+derr_t random_uint64(uint64_t *out){
+    derr_t e = E_OK;
+    *out = 0;
+
+    DSTR_VAR(buf, sizeof(*out));
+    PROP(&e, random_bytes(&buf, buf.size) );
+
+    *out = *((uint64_t*)buf.data);
+
+    return e;
+}
+
+derr_t random_uint64_under(uint64_t end, uint64_t *out){
+    derr_t e = E_OK;
+
+    uint64_t divisor = UINT64_MAX / end;
+
+    for(size_t limit = 0; limit < 100000; limit++){
+        DSTR_VAR(buf, sizeof(*out));
+        PROP(&e, random_bytes(&buf, buf.size) );
+
+        uint64_t temp = *((uint64_t*)buf.data) / divisor;
+
+        if(temp < end){
+            *out = temp;
+            return e;
+        }
+    }
+
+    TRACE(&e, "failed to find random number less than %x\n", FU(end));
+    ORIG(&e, E_INTERNAL, "10000 tries without success");
+}
+
 
 derr_t keyshare_init(keyshare_t *keyshare){
     derr_t e = E_OK;

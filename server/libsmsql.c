@@ -2,6 +2,7 @@
 
 #include <openssl/evp.h>
 
+#include "libcrypto/libcrypto.h"
 #include "libsmsql.h"
 #include "petname/petname.h"
 
