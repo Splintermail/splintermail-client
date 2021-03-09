@@ -191,6 +191,25 @@ static derr_t delete_alias_action(MYSQL *sql, int argc, char **argv){
     return e;
 }
 
+static derr_t delete_all_aliases_action(MYSQL *sql, int argc, char **argv){
+    derr_t e = E_OK;
+
+    if(argc != 1){
+        ORIG(&e, E_VALUE, "usage: delete_all_aliases (EMAIL|FSID)\n");
+    }
+
+    dstr_t id = get_arg(argv, 0);
+
+    DSTR_VAR(uuid, SMSQL_UUID_SIZE);
+    PROP(&e, get_uuid_from_id(sql, &id, &uuid) );
+
+    PROP(&e, delete_all_aliases(sql, &uuid) );
+
+    PFMT("DONE\n");
+
+    return e;
+}
+
 // devices
 
 static derr_t list_device_fprs_action(MYSQL *sql, int argc, char **argv){
@@ -482,6 +501,7 @@ int main(int argc, char **argv){
     LINK_ACTION("add_random_alias", add_random_alias_action);
     LINK_ACTION("add_primary_alias", add_primary_alias_action);
     LINK_ACTION("delete_alias", delete_alias_action);
+    LINK_ACTION("delete_all_aliases", delete_all_aliases_action);
     LINK_ACTION("list_device_fprs", list_device_fprs_action);
     LINK_ACTION("list_device_keys", list_device_keys_action);
     LINK_ACTION("add_device", add_device_action);

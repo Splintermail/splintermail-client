@@ -445,6 +445,64 @@ hard_fail:
     return e;
 }
 
+static derr_t _delete_all_aliases_txn(MYSQL *sql, const dstr_t *uuid){
+    derr_t e = E_OK;
+
+    link_t *link;
+
+    link_t aliases;
+    link_init(&aliases);
+
+    // list all aliases
+    PROP(&e, list_aliases(sql, uuid, &aliases) );
+
+    while(!link_list_isempty(&aliases)){
+        smsql_alias_t *alias = CONTAINER_OF(aliases.next, smsql_alias_t, link);
+
+        // delete all aliases, paid or free
+        DSTR_STATIC(q1, "DELETE FROM aliases WHERE alias=?");
+        PROP_GO(&e,
+            sql_bound_stmt(sql, &q1, string_bind_in(&alias->alias)),
+        cu);
+
+        if(alias->paid){
+            // paid aliases are also deleted from the emails table
+            DSTR_STATIC(q2, "DELETE FROM emails WHERE email=?");
+            PROP_GO(&e,
+                sql_bound_stmt(sql, &q2, string_bind_in(&alias->alias)),
+            cu);
+        }
+
+        link_list_pop_first(&aliases);
+        smsql_alias_free(&alias);
+    }
+
+cu:
+    while((link = link_list_pop_first(&aliases))){
+        smsql_alias_t *alias = CONTAINER_OF(link, smsql_alias_t, link);
+        smsql_alias_free(&alias);
+    }
+
+    return e;
+}
+
+derr_t delete_all_aliases(MYSQL *sql, const dstr_t *uuid){
+    derr_t e = E_OK;
+
+    PROP(&e, sql_txn_start(sql) );
+
+    PROP_GO(&e, _delete_all_aliases_txn(sql, uuid), hard_fail);
+
+    PROP(&e, sql_txn_commit(sql) );
+
+    return e;
+
+hard_fail:
+    sql_txn_abort(sql);
+
+    return e;
+}
+
 // devices
 
 //// will these ever become useful?

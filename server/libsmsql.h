@@ -82,6 +82,8 @@ derr_t delete_alias(
     MYSQL *sql, const dstr_t *uuid, const dstr_t *alias, bool *deleted
 );
 
+derr_t delete_all_aliases(MYSQL *sql, const dstr_t *uuid);
+
 // devices
 
 typedef struct {

@@ -302,6 +302,27 @@ fail:
     return NULL;
 }
 
+static PyObject *py_smsql_delete_all_aliases(
+    py_smsql_t *self, PyObject *args, PyObject *kwds
+){
+    derr_t e = E_OK;
+
+    dstr_t _uuid;
+    const dstr_t *uuid;
+    py_args_t spec = {
+        pyarg_dstr(&_uuid, &uuid, "uuid"),
+    };
+    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+
+    PROP_GO(&e, delete_all_aliases(&self->sql, uuid), fail);
+
+    Py_RETURN_NONE;
+
+fail:
+    raise_derr(&e);
+    return NULL;
+}
+
 // devices
 
 static PyObject *py_smsql_list_device_fprs(
@@ -644,6 +665,12 @@ static PyMethodDef py_smsql_methods[] = {
         .ml_meth = (PyCFunction)(void*)py_smsql_delete_alias,
         .ml_flags = METH_VARARGS | METH_KEYWORDS,
         .ml_doc = "Delete an alias for a uuid.  Returns True if it happened.",
+    },
+    {
+        .ml_name = "delete_all_aliases",
+        .ml_meth = (PyCFunction)(void*)py_smsql_delete_all_aliases,
+        .ml_flags = METH_VARARGS | METH_KEYWORDS,
+        .ml_doc = "Delete all aliases for a uuid.  Returns None.",
     },
     {
         .ml_name = "list_device_fprs",
