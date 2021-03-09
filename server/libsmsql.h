@@ -40,6 +40,7 @@ derr_t valid_splintermail_email(const dstr_t *email);
    tried using hex-encoding (~20 extra characters) way too many log messages
    got truncated and it was hard to debug the system. */
 #define SMSQL_FSID_SIZE 44
+#define SMSQL_APISECRET_SIZE 44
 #define SMSQL_EMAIL_SIZE 100
 #define SMSQL_PUBKEY_SIZE 1024
 /* FPR is hex-encoded, since it is a precomputed-for-convenience column that
@@ -118,5 +119,24 @@ derr_t add_device(
 );
 
 derr_t delete_device(MYSQL *sql, const dstr_t *uuid, const dstr_t *fpr_hex);
+
+// tokens
+
+typedef struct {
+    unsigned int uint;
+    link_t link;
+} smsql_uint_t;
+DEF_CONTAINER_OF(smsql_uint_t, link, link_t);
+
+derr_t smsql_uint_new(smsql_uint_t **out, unsigned int val);
+void smsql_uint_free(smsql_uint_t **old);
+
+derr_t list_tokens(MYSQL *sql, const dstr_t *uuid, link_t *out);
+
+derr_t add_token(
+    MYSQL *sql, const dstr_t *uuid, unsigned int *token, dstr_t *secret
+);
+
+derr_t delete_token(MYSQL *sql, const dstr_t *uuid, unsigned int token);
 
 #endif // SM_SQL_H

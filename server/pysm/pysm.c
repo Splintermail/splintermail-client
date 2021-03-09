@@ -31,7 +31,8 @@ static PyObject *pysm_error;
 
 // raise a python error from a derr_t.
 static void raise_derr(derr_t *e){
-    if(e->type == E_NORAISE){
+    if(e->type == E_NORAISE || PyErr_Occurred() != NULL){
+        // ignore E_NORAISE and prefer the already-set error if there is one
     }else{
         PyErr_SetString(
             pysm_error, e->msg.data ? e->msg.data : "empty e.msg"
@@ -471,6 +472,117 @@ fail:
     return NULL;
 }
 
+// tokens
+
+static PyObject *py_smsql_list_tokens(
+    py_smsql_t *self, PyObject *args, PyObject *kwds
+){
+    derr_t e = E_OK;
+
+    dstr_t _uuid;
+    const dstr_t *uuid;
+    py_args_t spec = {
+        pyarg_dstr(&_uuid, &uuid, "uuid"),
+    };
+    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+
+    link_t tokens;
+    link_init(&tokens);
+    PROP_GO(&e, list_tokens(&self->sql, uuid, &tokens), fail);
+
+    // count entries
+    Py_ssize_t count = 0;
+    link_t *link;
+    for(link = tokens.next; link != &tokens; link = link->next){
+        count++;
+    }
+
+    // create the output list
+    PyObject *py_list = PyList_New(count);
+    if(!py_list) ORIG_GO(&e, E_NOMEM, "nomem", fail_dstrs);
+
+    count = 0;
+    // populate the output list
+    while((link = link_list_pop_first(&tokens))){
+        smsql_uint_t *uint = CONTAINER_OF(link, smsql_uint_t, link);
+
+        // build a list of ints
+        PyObject *py_int = PyLong_FromUnsignedLong(uint->uint);
+
+        // always free the popped dstr
+        smsql_uint_free(&uint);
+
+        // now check for errors
+        if(!py_int) ORIG_GO(&e, E_NOMEM, "nomem", fail_list);
+
+        // the SET_ITEM macro is only suitable for newly created, empty lists
+        PyList_SET_ITEM(py_list, count++, py_int);
+    }
+
+    return py_list;
+
+fail_list:
+    Py_DECREF(py_list);
+fail_dstrs:
+    while((link = link_list_pop_first(&tokens))){
+        smsql_dstr_t *dstr = CONTAINER_OF(link, smsql_dstr_t, link);
+        smsql_dstr_free(&dstr);
+    }
+fail:
+    raise_derr(&e);
+    return NULL;
+}
+
+static PyObject *py_smsql_add_token(
+    py_smsql_t *self, PyObject *args, PyObject *kwds
+){
+    derr_t e = E_OK;
+
+    dstr_t _uuid;
+    const dstr_t *uuid;
+    py_args_t spec = {
+        pyarg_dstr(&_uuid, &uuid, "uuid"),
+    };
+    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+
+    unsigned int token;
+    DSTR_VAR(secret, SMSQL_APISECRET_SIZE);
+    PROP_GO(&e, add_token(&self->sql, uuid, &token, &secret), fail);
+
+    // I = unsigned int
+    // s# = string with length
+    return Py_BuildValue("(I, s#)", token, secret.data, (Py_ssize_t)secret.len);
+
+fail:
+    raise_derr(&e);
+    return NULL;
+}
+
+static PyObject *py_smsql_delete_token(
+    py_smsql_t *self, PyObject *args, PyObject *kwds
+){
+    derr_t e = E_OK;
+
+    dstr_t _uuid;
+    const dstr_t *uuid;
+    unsigned int token;
+    py_args_t spec = {
+        pyarg_dstr(&_uuid, &uuid, "uuid"),
+        pyarg_uint(&token, "token"),
+    };
+    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+
+    PROP_GO(&e, delete_token(&self->sql, uuid, token), fail);
+
+    Py_RETURN_NONE;
+
+fail:
+    raise_derr(&e);
+    return NULL;
+}
+
+////////
+
 static PyMethodDef py_smsql_methods[] = {
     {
         .ml_name = "connect",
@@ -558,6 +670,24 @@ static PyMethodDef py_smsql_methods[] = {
         .ml_flags = METH_VARARGS | METH_KEYWORDS,
         .ml_doc = "Delete a device from its hex-encoded fingerprint.  "
                   "Returns None.",
+    },
+    {
+        .ml_name = "list_tokens",
+        .ml_meth = (PyCFunction)(void*)py_smsql_list_tokens,
+        .ml_flags = METH_VARARGS | METH_KEYWORDS,
+        .ml_doc = "Return a list of tokens.",
+    },
+    {
+        .ml_name = "add_token",
+        .ml_meth = (PyCFunction)(void*)py_smsql_add_token,
+        .ml_flags = METH_VARARGS | METH_KEYWORDS,
+        .ml_doc = "Add a new token.  Returns a tuple of (token, secret)."
+    },
+    {
+        .ml_name = "delete_token",
+        .ml_meth = (PyCFunction)(void*)py_smsql_delete_token,
+        .ml_flags = METH_VARARGS | METH_KEYWORDS,
+        .ml_doc = "Delete a token.  Returns None.",
     },
     {NULL}, // sentinel
 };

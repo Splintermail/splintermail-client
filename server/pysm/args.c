@@ -104,6 +104,19 @@ py_arg_t pyarg_nullable_dstr_opt(
 }
 
 
+py_arg_t pyarg_uint(unsigned int *out, const char *name){
+    py_arg_t arg = {
+        .type = PYARG_UINT_TYPE,
+        .name = name,
+        .fmt = "I",
+        .param1 = out,
+        .need_size = false,
+        .optional = false,
+    };
+    return arg;
+}
+
+
 static derr_t _validate_and_fmt(int *state, py_arg_t arg, dstr_t *fmt_str){
     derr_t e = E_OK;
 

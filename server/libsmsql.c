@@ -730,3 +730,147 @@ derr_t delete_device(MYSQL *sql, const dstr_t *uuid, const dstr_t *fpr_hex){
 
     return e;
 }
+
+// tokens
+
+derr_t smsql_uint_new(smsql_uint_t **out, unsigned int val){
+    derr_t e = E_OK;
+    *out = NULL;
+
+    smsql_uint_t *uint = DMALLOC_STRUCT_PTR(&e, uint);
+    CHECK(&e);
+
+    link_init(&uint->link);
+    uint->uint = val;
+
+    *out = uint;
+
+    return e;
+}
+
+void smsql_uint_free(smsql_uint_t **old){
+    smsql_uint_t *uint = *old;
+    if(uint == NULL) return;
+    free(uint);
+    *old = NULL;
+}
+
+derr_t list_tokens(MYSQL *sql, const dstr_t *uuid, link_t *out){
+    derr_t e = E_OK;
+
+    MYSQL_STMT *stmt;
+
+    unsigned int token;
+
+    DSTR_STATIC(
+        q1, "SELECT token from tokens where user_uuid=?"
+    );
+    PROP(&e,
+        sql_multirow_stmt(
+            sql, &stmt, &q1,
+            // parameters
+            blob_bind_in(uuid),
+            // results
+            uint_bind_out(&token)
+        )
+    );
+
+    link_t list;
+    link_init(&list);
+    link_t *link;
+
+    while(true){
+        bool ok;
+        PROP_GO(&e, sql_stmt_fetch(stmt, &ok), fail_list);
+        if(!ok) break;
+
+        smsql_uint_t *uint;
+        PROP_GO(&e,
+            smsql_uint_new(&uint, token),
+        loop_fail);
+
+        link_list_append(&list, &uint->link);
+
+        continue;
+
+    loop_fail:
+        sql_stmt_fetchall(stmt);
+        goto fail_list;
+    }
+
+    // set the output
+    link_list_append_list(out, &list);
+
+    mysql_stmt_close(stmt);
+
+    return e;
+
+fail_list:
+    while((link = link_list_pop_first(&list))){
+        smsql_uint_t *uint = CONTAINER_OF(link, smsql_uint_t, link);
+        smsql_uint_free(&uint);
+    }
+    mysql_stmt_close(stmt);
+    return e;
+}
+
+static derr_t new_api_secret(dstr_t *secret){
+    derr_t e = E_OK;
+
+    DSTR_VAR(secret_bytes, 33);
+    PROP(&e, random_bytes(&secret_bytes, secret_bytes.size) );
+
+    PROP(&e, bin2b64(&secret_bytes, secret) );
+
+    return e;
+}
+
+derr_t add_token(
+    MYSQL *sql, const dstr_t *uuid, unsigned int *token, dstr_t *secret
+){
+    derr_t e = E_OK;
+    *token = 0;
+
+    // we only need one secret for all insertion tries
+    DSTR_VAR(secret_temp, SMSQL_APISECRET_SIZE);
+    PROP(&e, new_api_secret(&secret_temp) );
+
+    for(size_t limit = 0; limit < 1000; limit++){
+        unsigned int token_temp;
+        PROP(&e, random_uint(&token_temp) );
+
+        DSTR_STATIC(
+            q1,
+            "INSERT INTO tokens (user_uuid, token, secret) VALUES (?, ?, ?)"
+        );
+        derr_t e2 = sql_bound_stmt(
+            sql, &q1,
+            blob_bind_in(uuid),
+            uint_bind_in(&token_temp),
+            string_bind_in(&secret_temp)
+        );
+        CATCH(e2, E_SQL_DUP){
+            // chose a duplicate token, try again
+            DROP_VAR(&e2);
+            continue;
+        }else PROP(&e, e2);
+
+        PROP(&e, dstr_append(secret, &secret_temp) );
+        *token = token_temp;
+        return e;
+    }
+
+    ORIG(&e, E_INTERNAL, "failed to find an available token");
+}
+
+
+derr_t delete_token(MYSQL *sql, const dstr_t *uuid, unsigned int token){
+    derr_t e = E_OK;
+
+    DSTR_STATIC(q1, "DELETE FROM tokens WHERE user_uuid=? AND token=?");
+    PROP(&e,
+        sql_bound_stmt(sql, &q1, blob_bind_in(uuid), uint_bind_in(&token))
+    );
+
+    return e;
+}

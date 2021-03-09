@@ -86,6 +86,8 @@ static derr_t get_email_action(MYSQL *sql, int argc, char **argv){
     return e;
 }
 
+// aliases
+
 static derr_t list_aliases_action(MYSQL *sql, int argc, char **argv){
     derr_t e = E_OK;
 
@@ -189,6 +191,8 @@ static derr_t delete_alias_action(MYSQL *sql, int argc, char **argv){
     return e;
 }
 
+// devices
+
 static derr_t list_device_fprs_action(MYSQL *sql, int argc, char **argv){
     derr_t e = E_OK;
 
@@ -282,6 +286,79 @@ static derr_t delete_device_action(MYSQL *sql, int argc, char **argv){
     PROP(&e, get_uuid_from_id(sql, &id, &uuid) );
 
     PROP(&e, delete_device(sql, &uuid, &fpr_hex) );
+
+    PFMT("DONE\n");
+
+    return e;
+}
+
+// tokens
+
+static derr_t list_tokens_action(MYSQL *sql, int argc, char **argv){
+    derr_t e = E_OK;
+
+    if(argc != 1){
+        ORIG(&e, E_VALUE, "usage: list_tokens (EMAIL|FSID)\n");
+    }
+
+    dstr_t id = get_arg(argv, 0);
+
+    DSTR_VAR(uuid, SMSQL_UUID_SIZE);
+    PROP(&e, get_uuid_from_id(sql, &id, &uuid) );
+
+    link_t tokens;
+    link_init(&tokens);
+    PROP(&e, list_tokens(sql, &uuid, &tokens) );
+
+    link_t *link;
+    while((link = link_list_pop_first(&tokens))){
+        smsql_uint_t *uint = CONTAINER_OF(link, smsql_uint_t, link);
+        PFMT("%x\n", FU(uint->uint));
+        smsql_uint_free(&uint);
+    }
+
+    return e;
+}
+
+static derr_t add_token_action(MYSQL *sql, int argc, char **argv){
+    derr_t e = E_OK;
+
+    if(argc != 1){
+        ORIG(&e, E_VALUE, "usage: add_token (EMAIL|FSID)\n");
+    }
+
+    dstr_t id = get_arg(argv, 0);
+
+    DSTR_VAR(uuid, SMSQL_UUID_SIZE);
+    PROP(&e, get_uuid_from_id(sql, &id, &uuid) );
+
+    unsigned int token;
+    DSTR_VAR(secret, SMSQL_APISECRET_SIZE);
+
+    PROP(&e, add_token(sql, &uuid, &token, &secret) );
+
+    PFMT("token:%x, secret:%x\n", FU(token), FD(&secret));
+
+    return e;
+}
+
+static derr_t delete_token_action(MYSQL *sql, int argc, char **argv){
+    derr_t e = E_OK;
+
+    if(argc != 2){
+        ORIG(&e, E_VALUE, "usage: delete_token (EMAIL|FSID) TOKEN\n");
+    }
+
+    dstr_t id = get_arg(argv, 0);
+    dstr_t token_str = get_arg(argv, 1);
+
+    DSTR_VAR(uuid, SMSQL_UUID_SIZE);
+    PROP(&e, get_uuid_from_id(sql, &id, &uuid) );
+
+    unsigned int token;
+    PROP(&e, dstr_tou(&token_str, &token, 10) );
+
+    PROP(&e, delete_token(sql, &uuid, token) );
 
     PFMT("DONE\n");
 
@@ -409,6 +486,9 @@ int main(int argc, char **argv){
     LINK_ACTION("list_device_keys", list_device_keys_action);
     LINK_ACTION("add_device", add_device_action);
     LINK_ACTION("delete_device", delete_device_action);
+    LINK_ACTION("list_tokens", list_tokens_action);
+    LINK_ACTION("add_token", add_token_action);
+    LINK_ACTION("delete_token", delete_token_action);
 
     if(action == NULL){
         LOG_ERROR("command \"%x\" unknown\n", FD(&cmd));
