@@ -1249,6 +1249,15 @@ derr_type_t bin2b64_quiet(
     return E_NONE;
 }
 
+derr_t bin2b64(const dstr_t *bin, dstr_t *b64){
+    derr_t e = E_OK;
+
+    derr_type_t type = bin2b64_quiet(bin, b64, 0, true, NULL);
+    if(type) ORIG(&e, type, "failed to append to output");
+
+    return e;
+}
+
 derr_t bin2b64_stream(
     dstr_t* bin, dstr_t* b64, size_t line_width, bool force_end
 ){
@@ -1312,6 +1321,15 @@ derr_type_t b642bin_quiet(const dstr_t* b64, dstr_t* bin, size_t *consumed){
     }
     if(consumed) *consumed = total_read;
     return E_NONE;
+}
+
+derr_t b642bin(const dstr_t *b64, dstr_t *bin){
+    derr_t e = E_OK;
+
+    derr_type_t type = b642bin_quiet(b64, bin, NULL);
+    if(type) ORIG(&e, type, "failed to append to output");
+
+    return e;
 }
 
 derr_t b642bin_stream(dstr_t* b64, dstr_t* bin){

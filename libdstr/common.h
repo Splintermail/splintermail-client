@@ -594,9 +594,12 @@ derr_type_t b642bin_quiet(const dstr_t* b64, dstr_t* bin, size_t *consumed);
 /* returns: E_FIXEDSIZE
             E_NOMEM */
 
+derr_t bin2b64(const dstr_t *bin, dstr_t *b64);
 derr_t bin2b64_stream(
     dstr_t* bin, dstr_t* b64, size_t line_width, bool force_end
 );
+
+derr_t b642bin(const dstr_t *b64, dstr_t *bin);
 derr_t b642bin_stream(dstr_t* b64, dstr_t* bin);
 
 // simple math helpers
