@@ -141,4 +141,14 @@ derr_t add_token(
 
 derr_t delete_token(MYSQL *sql, const dstr_t *uuid, unsigned int token);
 
+// misc
+
+derr_t account_info(
+    MYSQL *sql,
+    const dstr_t *uuid,
+    size_t *num_devices,
+    size_t *num_primary_aliases,
+    size_t *num_random_aliases
+);
+
 #endif // SM_SQL_H

@@ -384,6 +384,35 @@ static derr_t delete_token_action(MYSQL *sql, int argc, char **argv){
     return e;
 }
 
+// misc
+
+static derr_t account_info_action(MYSQL *sql, int argc, char **argv){
+    derr_t e = E_OK;
+
+    if(argc != 1){
+        ORIG(&e, E_VALUE, "usage: account_info (EMAIL|FSID)\n");
+    }
+
+    dstr_t id = get_arg(argv, 0);
+
+    DSTR_VAR(uuid, SMSQL_UUID_SIZE);
+    PROP(&e, get_uuid_from_id(sql, &id, &uuid) );
+
+    size_t dvcs;
+    size_t paids;
+    size_t frees;
+    PROP(&e, account_info(sql, &uuid, &dvcs, &paids, &frees) );
+
+    PFMT(
+        "num_devices: %x, num_primary_aliases: %x, num_random_aliases: %x\n",
+        FU(dvcs), FU(paids), FU(frees)
+    );
+
+    PFMT("DONE\n");
+
+    return e;
+}
+
 //////
 
 static derr_t smsql(
@@ -509,6 +538,7 @@ int main(int argc, char **argv){
     LINK_ACTION("list_tokens", list_tokens_action);
     LINK_ACTION("add_token", add_token_action);
     LINK_ACTION("delete_token", delete_token_action);
+    LINK_ACTION("account_info", account_info_action);
 
     if(action == NULL){
         LOG_ERROR("command \"%x\" unknown\n", FD(&cmd));

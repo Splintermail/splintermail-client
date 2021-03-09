@@ -602,6 +602,38 @@ fail:
     return NULL;
 }
 
+// misc
+
+static PyObject *py_smsql_account_info(
+    py_smsql_t *self, PyObject *args, PyObject *kwds
+){
+    derr_t e = E_OK;
+
+    dstr_t _uuid;
+    const dstr_t *uuid;
+    py_args_t spec = {
+        pyarg_dstr(&_uuid, &uuid, "uuid"),
+    };
+    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+
+    size_t dvcs;
+    size_t paids;
+    size_t frees;
+
+    PROP_GO(&e, account_info(&self->sql, uuid, &dvcs, &paids, &frees), fail);
+
+    // k = unsigned long
+    return Py_BuildValue(
+        "(k, k, k)",
+        (unsigned long)dvcs,
+        (unsigned long)paids,
+        (unsigned long)frees
+    );
+
+fail:
+    raise_derr(&e);
+    return NULL;
+}
 ////////
 
 static PyMethodDef py_smsql_methods[] = {
@@ -715,6 +747,13 @@ static PyMethodDef py_smsql_methods[] = {
         .ml_meth = (PyCFunction)(void*)py_smsql_delete_token,
         .ml_flags = METH_VARARGS | METH_KEYWORDS,
         .ml_doc = "Delete a token.  Returns None.",
+    },
+    {
+        .ml_name = "account_info",
+        .ml_meth = (PyCFunction)(void*)py_smsql_account_info,
+        .ml_flags = METH_VARARGS | METH_KEYWORDS,
+        .ml_doc = "List account info.  Returns (num_devices, "
+                  "num_primary_aliases, num_random_aliases).",
     },
     {NULL}, // sentinel
 };

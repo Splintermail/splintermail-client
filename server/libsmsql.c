@@ -932,3 +932,44 @@ derr_t delete_token(MYSQL *sql, const dstr_t *uuid, unsigned int token){
 
     return e;
 }
+
+// misc
+
+derr_t account_info(
+    MYSQL *sql,
+    const dstr_t *uuid,
+    size_t *num_devices,
+    size_t *num_primary_aliases,
+    size_t *num_random_aliases
+){
+    derr_t e = E_OK;
+
+    /* count the devices table in a sub-query, but count aliases in a single
+       pass through the aliases table.
+
+       see stackoverflow.com/a/12789493/4951379
+       and stackoverflow.com/a/12789441/4951379 */
+    DSTR_STATIC(q1,
+        "SELECT"
+        "    (select COUNT(*) from devices where user_uuid=?) AS devices,"
+        "    sum(case when paid=true then 1 else 0 end) AS paids,"
+        "    sum(case when paid=false then 1 else 0 end) AS frees "
+        "FROM ("
+        "    select paid from aliases where user_uuid=?"
+        ") as x"
+    );
+    PROP(&e,
+        sql_onerow_query(
+            sql, &q1, NULL,
+            // params
+            blob_bind_in(uuid),
+            blob_bind_in(uuid),
+            // results
+            uint64_bind_out(num_devices),
+            uint64_bind_out(num_primary_aliases),
+            uint64_bind_out(num_random_aliases)
+        )
+    );
+
+    return e;
+}
