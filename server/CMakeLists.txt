@@ -10,7 +10,7 @@ macro(add_libsmsql asan)
         default_compile_options("libsmsql${asan}" TRUE)
     endif()
     define_file_logname_for_target("libsmsql${asan}")
-    target_link_libraries("libsmsql${asan}" PUBLIC "mysql_util${asan}" "petname${asan}")
+    target_link_libraries("libsmsql${asan}" PUBLIC "mysql_util${asan}" "petname${asan}" crypt)
 endmacro()
 
 add_libsmsql("")

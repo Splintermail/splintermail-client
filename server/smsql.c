@@ -86,6 +86,28 @@ static derr_t get_email_action(MYSQL *sql, int argc, char **argv){
     return e;
 }
 
+static derr_t hash_password_action(MYSQL *sql, int argc, char **argv){
+    derr_t e = E_OK;
+    (void)sql;
+
+    if(argc != 2){
+        ORIG(&e, E_VALUE, "usage: hash_password PASSWORD HEX_SALT\n");
+    }
+
+    dstr_t pass = get_arg(argv, 0);
+    dstr_t hex_salt = get_arg(argv, 1);
+
+    DSTR_VAR(salt, 8);
+    PROP(&e, hex2bin(&hex_salt, &salt) );
+
+    DSTR_VAR(hash, SMSQL_PASSWORD_HASH_SIZE);
+    PROP(&e, hash_password(&pass, 5000, &salt, &hash) );
+
+    PFMT("%x\n", FD(&hash));
+
+    return e;
+}
+
 // aliases
 
 static derr_t list_aliases_action(MYSQL *sql, int argc, char **argv){
@@ -413,6 +435,28 @@ static derr_t account_info_action(MYSQL *sql, int argc, char **argv){
     return e;
 }
 
+static derr_t validate_password_action(MYSQL *sql, int argc, char **argv){
+    derr_t e = E_OK;
+    (void)sql;
+
+    if(argc != 2){
+        ORIG(&e, E_VALUE, "usage: validate_password (EMAIL|FSID) PASSWORD\n");
+    }
+
+    dstr_t id = get_arg(argv, 0);
+    dstr_t pass = get_arg(argv, 1);
+
+    DSTR_VAR(uuid, SMSQL_UUID_SIZE);
+    PROP(&e, get_uuid_from_id(sql, &id, &uuid) );
+
+    bool ok;
+    PROP(&e, validate_user_password(sql, &uuid, &pass, &ok) );
+
+    PFMT("%x\n", FS(ok ? "CORRECT" : "INCORRECT") );
+
+    return e;
+}
+
 //////
 
 static derr_t smsql(
@@ -526,6 +570,7 @@ int main(int argc, char **argv){
 
     LINK_ACTION("get_uuid", get_uuid_action);
     LINK_ACTION("get_email", get_email_action);
+    LINK_ACTION("hash_password", hash_password_action);
     LINK_ACTION("list_aliases", list_aliases_action);
     LINK_ACTION("add_random_alias", add_random_alias_action);
     LINK_ACTION("add_primary_alias", add_primary_alias_action);
@@ -539,6 +584,7 @@ int main(int argc, char **argv){
     LINK_ACTION("add_token", add_token_action);
     LINK_ACTION("delete_token", delete_token_action);
     LINK_ACTION("account_info", account_info_action);
+    LINK_ACTION("validate_password", validate_password_action);
 
     if(action == NULL){
         LOG_ERROR("command \"%x\" unknown\n", FD(&cmd));

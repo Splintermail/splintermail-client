@@ -1,4 +1,6 @@
-#include <stdlib.h>
+#define _GNU_SOURCE  // for crypt_r
+#include <unistd.h>
+#include <crypt.h>
 
 #include <openssl/evp.h>
 
@@ -74,6 +76,169 @@ derr_type_t fmthook_fsid(dstr_t* out, const void* arg){
     derr_type_t type = to_fsid_quiet(uuid, out);
     if(type) return type;
     return E_NONE;
+}
+
+// basically just 8 random bytes
+derr_t random_password_salt(dstr_t *salt){
+    derr_t e = E_OK;
+    PROP(&e, random_bytes(salt, SMSQL_PASSWORD_SALT_SIZE) );
+    return e;
+}
+
+// fails with E_PARAM if the password is way too long
+derr_t hash_password(
+    const dstr_t *pass, unsigned int rounds, const dstr_t *salt, dstr_t *hash
+){
+    derr_t e = E_OK;
+
+    // we need a null-terminated password
+    DSTR_VAR(nt_pass, 128);
+    if(pass->len > nt_pass.size - 1){
+        ORIG(&e, E_PARAM, "password is way too long to be valid");
+    }
+    PROP(&e, dstr_append(&nt_pass, pass) );
+    PROP(&e, dstr_null_terminate(&nt_pass) );
+
+    /* crypt_gensalt() seems to behave in a strange way with regard to the
+       provided salt, and it's not part of any standard anyways, so we'll just
+       write the crypt() settings string ourselves */
+    DSTR_VAR(settings, 128);
+    PROP(&e, FMT(&settings, "$6$rounds=%x$%x$", FU(rounds), FX(salt)) );
+
+    /* `man 3 crypt` says that you the data struct is probably too big to
+       allocate on the stack.  crypt_ra() will allocate on the heap for
+       you but it is not available on debian, so we use crypt_r() instead. */
+    struct crypt_data *mem = DMALLOC_STRUCT_PTR(&e, mem);
+    CHECK(&e);
+
+    /* `man 3 crypt` indicates that crypt() and friends return some strange,
+       ancient return values, and you should basically always check errno. */
+    errno = 0;
+    char *result = crypt_r(nt_pass.data, settings.data, mem);
+    if(errno != 0){
+        TRACE(&e, "crypt failed: %x\n", FE(&errno));
+        ORIG_GO(&e, errno == ENOMEM ? E_NOMEM : E_OS, "crypt failed", cu);
+    }
+
+    PROP_GO(&e, FMT(hash, "%x", FS(result)), cu);
+
+cu:
+    free(mem);
+
+    return e;
+}
+
+// raises E_PARAM if the hash is malformed or otherwise not parsable
+// any outputs are allowed to be NULL without issue
+static derr_t _parse_hash(
+    const dstr_t *hash, unsigned int *rounds, dstr_t *salt, dstr_t *hash_result
+){
+    derr_t e = E_OK;
+
+    // example sha512 hash: $6$rounds=NN$hexsaltchars$passhashchars...
+    //                         ^^^^^^^^^^optional
+
+    if(!dstr_beginswith(hash, &DSTR_LIT("$6$"))){
+        ORIG(&e, E_PARAM, "hash is not a SHA512 hash, should start with $6$");
+    }
+
+    // split fields
+    LIST_VAR(dstr_t, fields, 5);
+    derr_t e2 = dstr_split(hash, &DSTR_LIT("$"), &fields);
+    CATCH(e2, E_FIXEDSIZE){
+        // too many fields, invalid hash
+        RETHROW(&e, &e2, E_PARAM);
+    } else PROP_VAR(&e, &e2);
+
+    if(fields.len != 4 && fields.len != 5){
+        ORIG(&e, E_PARAM, "hash is not a SHA512 hash, wrong number of fields");
+    }
+
+    dstr_t hex_salt;
+    dstr_t hash_result_temp;
+
+    if(fields.len == 4){
+        hex_salt = fields.data[2];
+        hash_result_temp = fields.data[3];
+        // default for algorithm
+        if(rounds) *rounds = 5000;
+    }else{
+        hex_salt = fields.data[3];
+        hash_result_temp = fields.data[4];
+        // parse rounds field
+        const dstr_t rounds_field = fields.data[2];
+        DSTR_STATIC(prefix, "rounds=");
+        if(!dstr_beginswith(&rounds_field, &prefix)){
+            ORIG(&e, E_PARAM, "hash has invalid 'rounds' field");
+        }
+        // get the numeric text for rounds
+        const dstr_t rounds_val = dstr_sub(
+            &rounds_field, prefix.len, rounds_field.len
+        );
+        unsigned int temp_rounds;
+        // parse the numeric text, which might raise E_PARAM for us
+        PROP(&e, dstr_tou(&rounds_val, &temp_rounds, 10) );
+        if(rounds) *rounds = temp_rounds;
+    }
+
+    if(salt) PROP(&e, hex2bin(&hex_salt, salt) );
+    if(hash_result) PROP(&e, dstr_append(hash_result, &hash_result_temp) );
+
+    return e;
+}
+
+// just the hash validation
+derr_t validate_password_hash(
+    const dstr_t *pass, const dstr_t *true_hash, bool *ok
+){
+    derr_t e = E_OK;
+    *ok = false;
+
+    unsigned int true_rounds;
+    DSTR_VAR(true_salt, SMSQL_PASSWORD_HASH_SIZE);
+    DSTR_VAR(true_hash_result, SMSQL_PASSWORD_HASH_SIZE);
+    // zeroize in preparation for the fixed-time comparision
+    for(size_t i = 0; i < SMSQL_PASSWORD_HASH_SIZE; i++){
+        true_hash_result.data[i] = '\0';
+    }
+
+    // the true hash is from our system and must be valid
+    NOFAIL(&e, E_ANY,
+        _parse_hash(true_hash, &true_rounds, &true_salt, &true_hash_result)
+    );
+
+    // raises E_PARAM on invalid password, which is a user input
+    DSTR_VAR(hash, SMSQL_PASSWORD_HASH_SIZE);
+    derr_t e2 = hash_password(pass, true_rounds, &true_salt, &hash);
+    CATCH(e2, E_PARAM){
+        DROP_VAR(&e2);
+        /* this will return too fast, but that's ok... "your password is not
+           even valid" is not information useful to a timing attack, especially
+           when the validator is open-source */
+        *ok = false;
+        return e;
+    }else PROP_VAR(&e, &e2);
+
+    DSTR_VAR(hash_result, SMSQL_PASSWORD_HASH_SIZE);
+    for(size_t i = 0; i < SMSQL_PASSWORD_HASH_SIZE; i++){
+        hash_result.data[i] = '\0';
+    }
+
+    // this should obviously be a valid hash since we just generated it
+    NOFAIL(&e, E_ANY,
+        _parse_hash(&hash, NULL, NULL, &hash_result)
+    );
+
+    // fixed-time string comparison
+    bool valid = true;
+    for(size_t i = 0; i < SMSQL_PASSWORD_HASH_SIZE; i++){
+        valid &= hash_result.data[i] == true_hash_result.data[i];
+    }
+    valid &= hash_result.len == true_hash_result.len;
+
+    *ok = valid;
+
+    return e;
 }
 
 // validation functions
@@ -970,6 +1135,31 @@ derr_t account_info(
             uint64_bind_out(num_random_aliases)
         )
     );
+
+    return e;
+}
+
+// validate a password for a user against the database
+derr_t validate_user_password(
+    MYSQL *sql, const dstr_t *uuid, const dstr_t *pass, bool *ok
+){
+    derr_t e = E_OK;
+    *ok = false;
+
+    DSTR_VAR(hash, SMSQL_PASSWORD_HASH_SIZE);
+
+    DSTR_STATIC(q1, "SELECT password FROM accounts WHERE user_uuid=?");
+    PROP(&e,
+        sql_onerow_query(
+            sql, &q1, NULL,
+            // param
+            blob_bind_in(uuid),
+            // result
+            string_bind_out(&hash)
+        )
+    );
+
+    PROP(&e, validate_password_hash(pass, &hash, ok) );
 
     return e;
 }

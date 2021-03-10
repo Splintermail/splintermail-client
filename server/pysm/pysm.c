@@ -634,6 +634,32 @@ fail:
     raise_derr(&e);
     return NULL;
 }
+
+static PyObject *py_smsql_validate_user_password(
+    py_smsql_t *self, PyObject *args, PyObject *kwds
+){
+    derr_t e = E_OK;
+
+    dstr_t _uuid;
+    const dstr_t *uuid;
+    dstr_t _pass;
+    const dstr_t *pass;
+    py_args_t spec = {
+        pyarg_dstr(&_uuid, &uuid, "uuid"),
+        pyarg_dstr(&_pass, &pass, "pass"),
+    };
+    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+
+    bool ok;
+    PROP_GO(&e, validate_user_password(&self->sql, uuid, pass, &ok), fail);
+
+    RETURN_BOOL(ok);
+
+fail:
+    raise_derr(&e);
+    return NULL;
+}
+
 ////////
 
 static PyMethodDef py_smsql_methods[] = {
@@ -754,6 +780,12 @@ static PyMethodDef py_smsql_methods[] = {
         .ml_flags = METH_VARARGS | METH_KEYWORDS,
         .ml_doc = "List account info.  Returns (num_devices, "
                   "num_primary_aliases, num_random_aliases).",
+    },
+    {
+        .ml_name = "validate_user_password",
+        .ml_meth = (PyCFunction)(void*)py_smsql_validate_user_password,
+        .ml_flags = METH_VARARGS | METH_KEYWORDS,
+        .ml_doc = "Validate a user's password.  Returns a bool.",
     },
     {NULL}, // sentinel
 };

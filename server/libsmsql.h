@@ -19,6 +19,19 @@ static inline fmt_t FSID(const dstr_t* uuid){
                                      .hook = fmthook_fsid} } };
 }
 
+// writes SMSQL_PASSWORD_SALT_SIZE bytes
+derr_t random_password_salt(dstr_t *salt);
+
+// sha512 password hash
+derr_t hash_password(
+    const dstr_t *pass, unsigned int rounds, const dstr_t *salt, dstr_t *hash
+);
+
+// just the hash validation
+derr_t validate_password_hash(
+    const dstr_t *pass, const dstr_t *true_hash, bool *ok
+);
+
 // validation functions
 
 // checks characters
@@ -26,6 +39,9 @@ bool valid_username_chars(const dstr_t *username);
 
 // checks length, ending, and characters
 derr_t valid_splintermail_email(const dstr_t *email);
+
+// checks length, characters, and no leading or trailing spaces
+derr_t valid_splintermail_password(const dstr_t *pass);
 
 // predefined queries
 
@@ -43,6 +59,8 @@ derr_t valid_splintermail_email(const dstr_t *email);
 #define SMSQL_APISECRET_SIZE 44
 #define SMSQL_EMAIL_SIZE 100
 #define SMSQL_PUBKEY_SIZE 1024
+#define SMSQL_PASSWORD_HASH_SIZE 128
+#define SMSQL_PASSWORD_SALT_SIZE 8
 /* FPR is hex-encoded, since it is a precomputed-for-convenience column that
    isn't very meaningful except for showing to users */
 #define SMSQL_FPR_SIZE 64
@@ -149,6 +167,11 @@ derr_t account_info(
     size_t *num_devices,
     size_t *num_primary_aliases,
     size_t *num_random_aliases
+);
+
+// validate a password for a user against the database
+derr_t validate_user_password(
+    MYSQL *sql, const dstr_t *uuid, const dstr_t *pass, bool *ok
 );
 
 #endif // SM_SQL_H
