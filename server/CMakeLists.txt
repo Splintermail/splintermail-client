@@ -53,6 +53,7 @@ define_file_logname_for_target(migmysql)
 target_link_libraries(migmysql dstr mysql_util)
 
 add_subdirectory(pysm)
+add_subdirectory(smphp)
 
 #############
 
