@@ -457,6 +457,27 @@ static derr_t validate_password_action(MYSQL *sql, int argc, char **argv){
     return e;
 }
 
+static derr_t change_password_action(MYSQL *sql, int argc, char **argv){
+    derr_t e = E_OK;
+    (void)sql;
+
+    if(argc != 2){
+        ORIG(&e, E_VALUE, "usage: change_password (EMAIL|FSID) PASSWORD\n");
+    }
+
+    dstr_t id = get_arg(argv, 0);
+    dstr_t pass = get_arg(argv, 1);
+
+    DSTR_VAR(uuid, SMSQL_UUID_SIZE);
+    PROP(&e, get_uuid_from_id(sql, &id, &uuid) );
+
+    PROP(&e, change_password(sql, &uuid, &pass) );
+
+    PFMT("DONE\n");
+
+    return e;
+}
+
 //////
 
 static derr_t smsql(
@@ -585,6 +606,7 @@ int main(int argc, char **argv){
     LINK_ACTION("delete_token", delete_token_action);
     LINK_ACTION("account_info", account_info_action);
     LINK_ACTION("validate_password", validate_password_action);
+    LINK_ACTION("change_password", change_password_action);
 
     if(action == NULL){
         LOG_ERROR("command \"%x\" unknown\n", FD(&cmd));

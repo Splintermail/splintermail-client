@@ -174,4 +174,8 @@ derr_t validate_user_password(
     MYSQL *sql, const dstr_t *uuid, const dstr_t *pass, bool *ok
 );
 
+/* the gateway should enforce a valid old password is provided before calling
+   this to change to the new password */
+derr_t change_password(MYSQL *sql, const dstr_t *uuid, const dstr_t *pass);
+
 #endif // SM_SQL_H

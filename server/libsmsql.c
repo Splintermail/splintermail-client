@@ -1163,3 +1163,27 @@ derr_t validate_user_password(
 
     return e;
 }
+
+
+/* the gateway should enforce a valid old password is provided before calling
+   this to change to the new password */
+derr_t change_password(MYSQL *sql, const dstr_t *uuid, const dstr_t *pass){
+    derr_t e = E_OK;
+
+    DSTR_VAR(salt, SMSQL_PASSWORD_SALT_SIZE);
+    PROP(&e, random_password_salt(&salt) );
+
+    DSTR_VAR(hash, SMSQL_PASSWORD_HASH_SIZE);
+    PROP(&e, hash_password(pass, 500000, &salt, &hash) );
+
+    DSTR_STATIC(q1, "UPDATE accounts SET password=? WHERE user_uuid=?");
+    PROP(&e,
+        sql_bound_stmt(
+            sql, &q1,
+            string_bind_out(&hash),
+            blob_bind_in(uuid)
+        )
+    );
+
+    return e;
+}

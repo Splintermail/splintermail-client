@@ -660,6 +660,30 @@ fail:
     return NULL;
 }
 
+static PyObject *py_smsql_change_password(
+    py_smsql_t *self, PyObject *args, PyObject *kwds
+){
+    derr_t e = E_OK;
+
+    dstr_t _uuid;
+    const dstr_t *uuid;
+    dstr_t _pass;
+    const dstr_t *pass;
+    py_args_t spec = {
+        pyarg_dstr(&_uuid, &uuid, "uuid"),
+        pyarg_dstr(&_pass, &pass, "pass"),
+    };
+    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+
+    PROP_GO(&e, change_password(&self->sql, uuid, pass), fail);
+
+    Py_RETURN_NONE;
+
+fail:
+    raise_derr(&e);
+    return NULL;
+}
+
 ////////
 
 static PyMethodDef py_smsql_methods[] = {
@@ -786,6 +810,12 @@ static PyMethodDef py_smsql_methods[] = {
         .ml_meth = (PyCFunction)(void*)py_smsql_validate_user_password,
         .ml_flags = METH_VARARGS | METH_KEYWORDS,
         .ml_doc = "Validate a user's password.  Returns a bool.",
+    },
+    {
+        .ml_name = "change_password",
+        .ml_meth = (PyCFunction)(void*)py_smsql_change_password,
+        .ml_flags = METH_VARARGS | METH_KEYWORDS,
+        .ml_doc = "Change a user's password.  Returns None.",
     },
     {NULL}, // sentinel
 };
