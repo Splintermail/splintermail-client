@@ -274,6 +274,47 @@ derr_t valid_splintermail_email(const dstr_t *email){
     return e;
 }
 
+bool valid_password_chars(const dstr_t *pass){
+    for(size_t i = 0; i < pass->len; i++){
+        char c = pass->data[i];
+        if(c >= 'a' && c <= 'z') continue;
+        if(c >= 'A' && c <= 'Z') continue;
+        if(c >= '0' && c <= '9') continue;
+        switch(c){
+            case ' ': case '`': case '~': case '!': case '@': case '#':
+            case '$': case '%': case '^': case '&': case '*': case '(':
+            case ')': case '-': case '=': case '_': case '+': case '[':
+            case ']': case '{': case '}': case '|': case ';': case '\\':
+            case ':': case '"': case ',': case '.': case '/': case '\'':
+            case '<': case '>': case '?':
+                continue;
+            default:
+                return false;
+        }
+    }
+    return true;
+}
+
+derr_t valid_splintermail_password(const dstr_t *pass){
+    derr_t e = E_OK;
+
+    if(pass->len > SMSQL_PASSWORD_SIZE)
+        ORIG(&e, E_PARAM, "password must not exceed 72 characters in length");
+
+    if(pass->len < 16)
+        ORIG(&e, E_PARAM, "password must be at least 16 characters in length");
+
+    if(!valid_password_chars(pass))
+        ORIG(&e, E_PARAM, "invalid characters in password");
+
+    if(pass->data[0] == ' ' || pass->data[pass->len-1] == ' '){
+        ORIG(&e, E_PARAM, "no leading or trailing spaces in password");
+    }
+
+    return e;
+}
+
+
 // predefined queries
 
 derr_t get_uuid_for_email(
@@ -1100,6 +1141,139 @@ derr_t delete_token(MYSQL *sql, const dstr_t *uuid, unsigned int token){
 
 // misc
 
+static derr_t _create_account_txn(
+    MYSQL *sql,
+    const dstr_t *email,
+    const dstr_t *pass_hash,
+    const dstr_t *uuid,
+    bool *ok
+){
+    derr_t e = E_OK;
+
+    DSTR_STATIC(q1, "INSERT INTO emails (email) VALUES (?)");
+    derr_t e2 = sql_bound_stmt(sql, &q1, string_bind_in(email));
+    CATCH(e2, E_SQL_DUP){
+        // duplicate email
+        DROP_VAR(&e2);
+        *ok = false;
+        return e;
+    }else PROP_VAR(&e, &e2);
+
+    // domain_id is hardcoded to 1="splintermail.com"
+    DSTR_STATIC(
+        q2,
+        "INSERT INTO accounts (email, password, user_uuid, domain_id)"
+        "VALUES (?, ?, ?, 1)"
+    );
+    PROP(&e,
+        sql_bound_stmt(
+            sql, &q2,
+            string_bind_in(email),
+            string_bind_in(pass_hash),
+            blob_bind_in(uuid)
+        )
+    );
+
+    *ok = true;
+
+    return e;
+}
+
+// gateway is responsible for quality checks on the email
+derr_t create_account(
+    MYSQL *sql,
+    const dstr_t *email,
+    const dstr_t *pass_hash,
+    bool *ok,
+    dstr_t *uuid
+){
+    derr_t e = E_OK;
+    *ok = false;
+
+    // set the uuid bytes in place, to ensure we don't fail after the txn
+    PROP(&e, random_bytes(uuid, SMSQL_UUID_SIZE) );
+
+    PROP(&e, sql_txn_start(sql) );
+
+    PROP_GO(&e,
+        _create_account_txn(sql, email, pass_hash, uuid, ok),
+    hard_fail);
+
+    if(*ok){
+        PROP(&e, sql_txn_commit(sql) );
+    }else{
+        // soft fail
+        PROP(&e, sql_txn_rollback(sql) );
+        uuid->len = 0;
+    }
+
+    return e;
+
+hard_fail:
+    sql_txn_abort(sql);
+    *ok = false;
+
+    return e;
+}
+
+static derr_t _delete_account_txn(
+    MYSQL *sql, const dstr_t *uuid, const dstr_t *email
+){
+    derr_t e = E_OK;
+
+    // delete all the users's aliases, deleting paid aliases from emails table
+    PROP(&e, _delete_all_aliases_txn(sql, uuid) );
+
+    {
+        DSTR_STATIC(q, "DELETE FROM tokens WHERE user_uuid = ?");
+        PROP(&e, sql_bound_stmt(sql, &q, blob_bind_in(uuid)) );
+    }
+
+    {
+        DSTR_STATIC(q, "DELETE FROM devices WHERE user_uuid = ?");
+        PROP(&e, sql_bound_stmt(sql, &q, blob_bind_in(uuid)) );
+    }
+
+    {
+        DSTR_STATIC(q, "DELETE FROM accounts WHERE user_uuid = ?");
+        PROP(&e, sql_bound_stmt(sql, &q, blob_bind_in(uuid)) );
+    }
+
+    {
+        DSTR_STATIC(q, "DELETE FROM emails WHERE email = ?");
+        PROP(&e, sql_bound_stmt(sql, &q, string_bind_in(email)) );
+    }
+
+    return e;
+}
+
+// gateway is responsible for ensuring a password is provided
+derr_t delete_account(MYSQL *sql, const dstr_t *uuid){
+    derr_t e = E_OK;
+
+    // start by getting this uuid's email
+    DSTR_VAR(email, SMSQL_EMAIL_SIZE);
+    bool ok;
+    PROP(&e, get_email_for_uuid(sql, uuid, &email, &ok) );
+    if(!ok){
+        // nothing to delete; more likely to be a bug than a race condition
+        ORIG(&e, E_INTERNAL, "no account matches uuid!");
+    }
+
+    PROP(&e, sql_txn_start(sql) );
+
+    PROP_GO(&e, _delete_account_txn(sql, uuid, &email), hard_fail);
+
+    PROP(&e, sql_txn_commit(sql) );
+
+    return e;
+
+hard_fail:
+    sql_txn_abort(sql);
+
+    return e;
+}
+
 derr_t account_info(
     MYSQL *sql,
     const dstr_t *uuid,
@@ -1174,7 +1348,7 @@ derr_t change_password(MYSQL *sql, const dstr_t *uuid, const dstr_t *pass){
     PROP(&e, random_password_salt(&salt) );
 
     DSTR_VAR(hash, SMSQL_PASSWORD_HASH_SIZE);
-    PROP(&e, hash_password(pass, 500000, &salt, &hash) );
+    PROP(&e, hash_password(pass, SMSQL_PASSWORD_SHA512_ROUNDS, &salt, &hash) );
 
     DSTR_STATIC(q1, "UPDATE accounts SET password=? WHERE user_uuid=?");
     PROP(&e,

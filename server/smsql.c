@@ -408,6 +408,61 @@ static derr_t delete_token_action(MYSQL *sql, int argc, char **argv){
 
 // misc
 
+static derr_t create_account_action(MYSQL *sql, int argc, char **argv){
+    derr_t e = E_OK;
+
+    if(argc != 2){
+        ORIG(&e, E_VALUE, "usage: create_account EMAIL PASSWORD\n");
+    }
+
+    dstr_t email = get_arg(argv, 0);
+    dstr_t pass = get_arg(argv, 1);
+
+    // validate inputs
+    PROP(&e, valid_splintermail_email(&email) );
+    PROP(&e, valid_splintermail_password(&pass) );
+
+    // hash password
+    DSTR_VAR(salt, SMSQL_PASSWORD_SALT_SIZE);
+    PROP(&e, random_password_salt(&salt) );
+    DSTR_VAR(hash, SMSQL_PASSWORD_HASH_SIZE);
+    PROP(&e,
+        hash_password(&pass, SMSQL_PASSWORD_SHA512_ROUNDS, &salt, &hash)
+    );
+
+    DSTR_VAR(uuid, SMSQL_UUID_SIZE);
+    bool ok;
+
+    PROP(&e, create_account(sql, &email, &hash, &ok, &uuid) );
+
+    if(ok){
+        PFMT("uuid: %x\n", FSID(&uuid));
+    }else{
+        FFMT(stderr, NULL, "FAILURE: EMAIL %x UNAVAILABLE\n", FD(&email));
+    }
+
+    return e;
+}
+
+static derr_t delete_account_action(MYSQL *sql, int argc, char **argv){
+    derr_t e = E_OK;
+
+    if(argc != 1){
+        ORIG(&e, E_VALUE, "usage: delete_account (EMAIL|FSID)\n");
+    }
+
+    dstr_t id = get_arg(argv, 0);
+
+    DSTR_VAR(uuid, SMSQL_UUID_SIZE);
+    PROP(&e, get_uuid_from_id(sql, &id, &uuid) );
+
+    PROP(&e, delete_account(sql, &uuid) );
+
+    PFMT("DONE\n");
+
+    return e;
+}
+
 static derr_t account_info_action(MYSQL *sql, int argc, char **argv){
     derr_t e = E_OK;
 
@@ -604,6 +659,8 @@ int main(int argc, char **argv){
     LINK_ACTION("list_tokens", list_tokens_action);
     LINK_ACTION("add_token", add_token_action);
     LINK_ACTION("delete_token", delete_token_action);
+    LINK_ACTION("create_account", create_account_action);
+    LINK_ACTION("delete_account", delete_account_action);
     LINK_ACTION("account_info", account_info_action);
     LINK_ACTION("validate_password", validate_password_action);
     LINK_ACTION("change_password", change_password_action);

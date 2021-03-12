@@ -40,6 +40,9 @@ bool valid_username_chars(const dstr_t *username);
 // checks length, ending, and characters
 derr_t valid_splintermail_email(const dstr_t *email);
 
+// checks characters
+bool valid_password_chars(const dstr_t *pass);
+
 // checks length, characters, and no leading or trailing spaces
 derr_t valid_splintermail_password(const dstr_t *pass);
 
@@ -61,6 +64,8 @@ derr_t valid_splintermail_password(const dstr_t *pass);
 #define SMSQL_PUBKEY_SIZE 1024
 #define SMSQL_PASSWORD_HASH_SIZE 128
 #define SMSQL_PASSWORD_SALT_SIZE 8
+#define SMSQL_PASSWORD_SHA512_ROUNDS 500000
+#define SMSQL_PASSWORD_SIZE 72
 /* FPR is hex-encoded, since it is a precomputed-for-convenience column that
    isn't very meaningful except for showing to users */
 #define SMSQL_FPR_SIZE 64
@@ -161,6 +166,18 @@ derr_t delete_token(MYSQL *sql, const dstr_t *uuid, unsigned int token);
 
 // misc
 
+// gateway is responsible for quality checks on the email
+derr_t create_account(
+    MYSQL *sql,
+    const dstr_t *email,
+    const dstr_t *pass_hash,
+    bool *ok,
+    dstr_t *uuid
+);
+
+// gateway is responsible for ensuring a password is provided
+derr_t delete_account(MYSQL *sql, const dstr_t *uuid);
+
 derr_t account_info(
     MYSQL *sql,
     const dstr_t *uuid,
@@ -176,6 +193,7 @@ derr_t validate_user_password(
 
 /* the gateway should enforce a valid old password is provided before calling
    this to change to the new password */
+// gateway is also responsible for quality checks on the password
 derr_t change_password(MYSQL *sql, const dstr_t *uuid, const dstr_t *pass);
 
 #endif // SM_SQL_H
