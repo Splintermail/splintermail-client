@@ -26,7 +26,7 @@ static derr_t get_uuid_from_id(MYSQL *sql, const dstr_t *id, dstr_t *uuid){
     // check for '@' characters
     if(dstr_count(id, &DSTR_LIT("@")) > 0){
         // probably email
-        bool ok = false;
+        bool ok;
         PROP(&e, get_uuid_for_email(sql, id, uuid, &ok) );
         if(!ok) ORIG(&e, E_PARAM, "no user for provided email");
     }else{

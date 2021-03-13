@@ -172,8 +172,8 @@ static derr_t _parse_hash(
             ORIG(&e, E_PARAM, "hash has invalid 'rounds' field");
         }
         // get the numeric text for rounds
-        const dstr_t rounds_val = dstr_sub(
-            &rounds_field, prefix.len, rounds_field.len
+        const dstr_t rounds_val = dstr_sub2(
+            rounds_field, prefix.len, rounds_field.len
         );
         unsigned int temp_rounds;
         // parse the numeric text, which might raise E_PARAM for us
@@ -266,8 +266,13 @@ derr_t valid_splintermail_email(const dstr_t *email){
     if(!dstr_endswith(email, &suffix))
         ORIG(&e, E_PARAM, "email must end in @splintermail.com");
 
+    const dstr_t username = dstr_sub2(*email, 0, email->len - suffix.len);
+
+    // non-empty username
+    if(username.len == 0)
+        ORIG(&e, E_PARAM, "empty username");
+
     // valid username
-    const dstr_t username = dstr_sub(email, 0, email->len - suffix.len);
     if(!valid_username_chars(&username))
         ORIG(&e, E_PARAM, "invalid characters in email");
 
@@ -321,6 +326,7 @@ derr_t get_uuid_for_email(
     MYSQL *sql, const dstr_t *email, dstr_t *uuid, bool *ok
 ){
     derr_t e = E_OK;
+    *ok = false;
     if(uuid->size < SMSQL_UUID_SIZE){
         ORIG(&e, E_FIXEDSIZE, "uuid output too short");
     }
