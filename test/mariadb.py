@@ -91,7 +91,8 @@ def bootstrap_db(basedir):
 
     print("bootstrapping mariadb...")
     os.makedirs(basedir, exist_ok=True)
-    cmd = ["mariadb-install-db", "--no-defaults", "--basedir", "."]
+    # on newer installs, mysql_install_db links to mariadb-install-db
+    cmd = ["mysql_install_db", "--no-defaults", "--basedir", "."]
     p = subprocess.Popen(
         cmd, cwd=basedir, stdout=subprocess.PIPE, stderr=subprocess.PIPE
     )
@@ -99,7 +100,7 @@ def bootstrap_db(basedir):
     success = True
     try:
         out, err = p.communicate(timeout=15)
-    except TimeoutExpired:
+    except subprocess.TimeoutExpired:
         success = False
         print("bootstrap timed out, killing process...")
         p.kill()
