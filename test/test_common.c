@@ -334,6 +334,13 @@ static derr_t test_dstr_split2(void){
     EXP_VS_GOT(&DSTR_LIT("eeee"), &o1);
     EXP_VS_GOT(&DSTR_LIT("fghi"), &o2);
 
+    // make sure that NULL outputs are properly ignored
+    PROP(&e, dstr_split2(text, pattern, NULL, &o0, NULL, &o2, &o3, &o4) );
+    EXP_VS_GOT(&DSTR_LIT("abcd"), &o0);
+    EXP_VS_GOT(&DSTR_LIT("fghi"), &o2);
+    EXP_VS_GOT(&DSTR_LIT(""), &o3);
+    EXP_VS_GOT(&DSTR_LIT(""), &o4);
+
     // see if splitting the pattern on itself results in 2 empty strings
     PROP(&e, dstr_split2(pattern, pattern, &len, &o0, &o1, &o2, &o3, &o4) );
     if(len != 2) ORIG(&e, E_VALUE, "FAIL");
@@ -390,6 +397,12 @@ static derr_t test_dstr_split2_soft(void){
     EXP_VS_GOT(&s0, &o0);
     EXP_VS_GOT(&s1, &o1);
     EXP_VS_GOT(&s2, &o2);
+
+    // make sure the final output can be NULL
+    dstr_split2_soft(text, pattern, &len, &o0, &o1, NULL);
+    if(len != 3) ORIG(&e, E_VALUE, "FAIL");
+    EXP_VS_GOT(&s0, &o0);
+    EXP_VS_GOT(&s1, &o1);
 
 cleanup:
     return e;

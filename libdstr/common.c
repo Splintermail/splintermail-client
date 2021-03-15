@@ -861,7 +861,9 @@ static derr_t do_dstr_split2(
 
     // zeroize outputs
     for(size_t i = 0; i < nouts; i++){
-        *outs[i] = (dstr_t){0};
+        if(outs[i] != NULL){
+            *outs[i] = (dstr_t){0};
+        }
     }
     // in the special case of nouts=2; len_out may be actually useless
     if(len_out) *len_out = 0;
@@ -903,8 +905,10 @@ static derr_t do_dstr_split2(
             if(soft){
                 // set the last token to point to the remainder of the text
                 dstr_t *last = outs[len-1];
-                last->len = text.len -
-                    ((uintptr_t)last->data - (uintptr_t)text.data);
+                if(last != NULL){
+                    last->len = text.len -
+                        ((uintptr_t)last->data - (uintptr_t)text.data);
+                }
                 // return without error
                 break;
             }else{
@@ -912,7 +916,10 @@ static derr_t do_dstr_split2(
             }
         }
 
-        *outs[len++] = new;
+        dstr_t *dest = outs[len++];
+        if(dest != NULL){
+            *dest = new;
+        }
 
         // get ready for the next dstr_find()
         word_start = word_end + pattern.len;
