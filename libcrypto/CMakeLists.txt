@@ -4,6 +4,7 @@ macro(add_crypto asan)
         networking.c
         crypto.c
         ssl_errors.c
+        cmp.c
     )
     target_include_directories("crypto${asan}" PUBLIC "${OPENSSL_INCLUDE_DIR}")
     # TODO: refactor this so you don't need libuv to include networking code?
@@ -45,6 +46,14 @@ macro(add_crypto asan)
 endmacro()
 
 add_crypto("")
+
+# cmp.c should not use any compiler optimizations to make absolutely sure it
+# is constant time.
+source_compile_options(cmp.c -U_FORTIFY_SOURCE -O0)
+
+# Uncomment to view the assember output so you can verify constant time.
+# (probably just build libcrypto_noasan and check cmp.s)
+# source_compile_options(cmp.c -Wa,-adhln=cmp.s -fverbose-asm -masm=intel)
 
 if("${CMAKE_BUILD_TYPE}" STREQUAL "debug")
     # rebuild without asan

@@ -6,6 +6,7 @@
 
 #include "../fixed_lengths.h"
 
+#include "cmp.h"
 #include "ssl_errors.h"
 #include "networking.h"
 #include "crypto.h"
