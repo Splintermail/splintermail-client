@@ -164,11 +164,4 @@ derr_t sql_txn_rollback(MYSQL *sql);
 // closes sql if ROLLBACK fails; useful during error handling
 void sql_txn_abort(MYSQL *sql);
 
-// run a statement that obtains some table lock
-derr_t sql_lock_statement(MYSQL *sql, const dstr_t *query);
-// runs UNLOCK TABLES
-derr_t sql_unlock_all(MYSQL *sql);
-// closes sql if UNLOCK TABLES fails
-void sql_abort_locks(MYSQL *sql);
-
 #endif // MYSQL_HELPER_H

@@ -545,35 +545,3 @@ void sql_txn_abort(MYSQL *sql){
         mysql_close(sql);
     }
 }
-
-
-derr_t sql_lock_statement(MYSQL *sql, const dstr_t *query){
-    derr_t e = E_OK;
-
-    // the lock statement must return no rows
-    PROP(&e, sql_query(sql, query) );
-
-    return e;
-}
-
-derr_t sql_unlock_all(MYSQL *sql){
-    derr_t e = E_OK;
-
-    DSTR_STATIC(q1, "UNLOCK TABLES");
-    PROP(&e, sql_query(sql, &q1) );
-
-    return e;
-}
-
-void sql_abort_locks(MYSQL *sql){
-    derr_t e = E_OK;
-
-    DSTR_STATIC(q1, "UNLOCK TABLES");
-    IF_PROP(&e, sql_query(sql, &q1) ){
-        DUMP(e);
-        DROP_VAR(&e);
-
-        // render the connection unusable
-        mysql_close(sql);
-    }
-}

@@ -148,21 +148,21 @@ derr_t delete_device(MYSQL *sql, const dstr_t *uuid, const dstr_t *fpr_hex);
 // tokens
 
 typedef struct {
-    unsigned int uint;
+    uint32_t uint;
     link_t link;
 } smsql_uint_t;
 DEF_CONTAINER_OF(smsql_uint_t, link, link_t);
 
-derr_t smsql_uint_new(smsql_uint_t **out, unsigned int val);
+derr_t smsql_uint_new(smsql_uint_t **out, uint32_t val);
 void smsql_uint_free(smsql_uint_t **old);
 
 derr_t list_tokens(MYSQL *sql, const dstr_t *uuid, link_t *out);
 
 derr_t add_token(
-    MYSQL *sql, const dstr_t *uuid, unsigned int *token, dstr_t *secret
+    MYSQL *sql, const dstr_t *uuid, uint32_t *token, dstr_t *secret
 );
 
-derr_t delete_token(MYSQL *sql, const dstr_t *uuid, unsigned int token);
+derr_t delete_token(MYSQL *sql, const dstr_t *uuid, uint32_t token);
 
 // misc
 

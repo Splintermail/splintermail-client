@@ -458,18 +458,22 @@ static derr_t _add_random_alias_txn(
         MYSQL *sql, const dstr_t *uuid, dstr_t *alias, bool *ok){
     derr_t e = E_OK;
 
-    /* this count-then-append strategy is vulnerable to write-skew, but giving
-       some users a couple free aliases is just fine */
-    uint64_t count;
-    DSTR_STATIC(q1, "select COUNT(*) from aliases where user_uuid=?;");
+    /* due to the FOR UPDATE this is not vulnerable to write skew, but it could
+       be a relatively long transaction, so it might be better to allow write
+       skew and just let users have a couple free aliasas once in a while */
+    unsigned int count;
+    DSTR_STATIC(
+        q1,
+        "SELECT num_random_aliases FROM accounts WHERE user_uuid=? FOR UPDATE;"
+    );
     PROP(&e,
         sql_onerow_query(
-            sql, &q1, NULL, blob_bind_in(uuid), uint64_bind_out(&count)
+            sql, &q1, NULL, blob_bind_in(uuid), uint_bind_out(&count)
         )
     );
 
-    if(count > MAX_RANDOM_ALIASES){
-        // too many aliases
+    if(count >= MAX_RANDOM_ALIASES){
+        // too many aliases already
         *ok = false;
         return e;
     }
@@ -500,6 +504,18 @@ static derr_t _add_random_alias_txn(
                 string_bind_in(&temp),
                 bool_bind_in(&paid),
                 blob_bind_in(uuid),
+            )
+        );
+
+        // increment num_paid_aliases in accounts
+        count++;
+        DSTR_STATIC(
+            q4,
+            "UPDATE accounts SET num_random_aliases=? WHERE user_uuid=?;"
+        );
+        PROP(&e,
+            sql_bound_stmt(
+                sql, &q4, uint_bind_in(&count), blob_bind_in(uuid)
             )
         );
 
@@ -896,7 +912,7 @@ fail_list:
     return e;
 }
 
-static derr_t _add_device_locked(
+static derr_t _add_device_txn(
     MYSQL *sql,
     const dstr_t *uuid,
     const dstr_t *pubkey,
@@ -905,9 +921,11 @@ static derr_t _add_device_locked(
 ){
     derr_t e = E_OK;
 
-    // not vulnerable to write skew since we have a write lock on the table
+    // not vulnerable to write skew since we use FOR UPDATE
     uint64_t count;
-    DSTR_STATIC(q1, "select COUNT(*) from devices where user_uuid=?;");
+    DSTR_STATIC(
+        q1, "SELECT COUNT(*) FROM devices WHERE user_uuid=? FOR UPDATE;"
+    );
     PROP(&e,
         sql_onerow_query(
             sql, &q1, NULL, blob_bind_in(uuid), uint64_bind_out(&count)
@@ -973,20 +991,23 @@ derr_t add_device(
     DSTR_VAR(norm, SMSQL_PUBKEY_SIZE);
     PROP(&e, _validate_for_add_device(pubkey, &fpr_hex, &norm) );
 
-    // now do the locking
-    DSTR_STATIC(q1, "LOCK TABLES devices WRITE");
-    PROP(&e, sql_lock_statement(sql, &q1) );
+    PROP(&e, sql_txn_start(sql) );
 
     PROP_GO(&e,
-        _add_device_locked(sql, uuid, pubkey, &fpr_hex, ok),
-    fail_lock);
+        _add_device_txn(sql, uuid, pubkey, &fpr_hex, ok),
+    hard_fail);
 
-    PROP(&e, sql_unlock_all(sql) );
+    if(*ok){
+        PROP(&e, sql_txn_commit(sql) );
+    }else{
+        PROP(&e, sql_txn_rollback(sql) );
+    }
 
     return e;
 
-fail_lock:
-    sql_abort_locks(sql);
+hard_fail:
+    sql_txn_abort(sql);
+
     return e;
 }
 
@@ -1003,7 +1024,7 @@ derr_t delete_device(MYSQL *sql, const dstr_t *uuid, const dstr_t *fpr_hex){
 
 // tokens
 
-derr_t smsql_uint_new(smsql_uint_t **out, unsigned int val){
+derr_t smsql_uint_new(smsql_uint_t **out, uint32_t val){
     derr_t e = E_OK;
     *out = NULL;
 
@@ -1030,7 +1051,7 @@ derr_t list_tokens(MYSQL *sql, const dstr_t *uuid, link_t *out){
 
     MYSQL_STMT *stmt;
 
-    unsigned int token;
+    uint32_t token;
 
     DSTR_STATIC(
         q1, "SELECT token from tokens where user_uuid=?"
@@ -1096,7 +1117,7 @@ static derr_t new_api_secret(dstr_t *secret){
 }
 
 derr_t add_token(
-    MYSQL *sql, const dstr_t *uuid, unsigned int *token, dstr_t *secret
+    MYSQL *sql, const dstr_t *uuid, uint32_t *token, dstr_t *secret
 ){
     derr_t e = E_OK;
     *token = 0;
@@ -1106,7 +1127,7 @@ derr_t add_token(
     PROP(&e, new_api_secret(&secret_temp) );
 
     for(size_t limit = 0; limit < 1000; limit++){
-        unsigned int token_temp;
+        uint32_t token_temp;
         PROP(&e, random_uint(&token_temp) );
 
         DSTR_STATIC(
@@ -1134,7 +1155,7 @@ derr_t add_token(
 }
 
 
-derr_t delete_token(MYSQL *sql, const dstr_t *uuid, unsigned int token){
+derr_t delete_token(MYSQL *sql, const dstr_t *uuid, uint32_t token){
     derr_t e = E_OK;
 
     DSTR_STATIC(q1, "DELETE FROM tokens WHERE user_uuid=? AND token=?");
