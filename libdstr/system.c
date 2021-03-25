@@ -42,6 +42,19 @@ dstr_t dgetenv(const dstr_t varname, bool *found){
     return (dstr_t){0};
 }
 
+derr_t dtime(time_t *out){
+    derr_t e = E_OK;
+
+    errno = 0;
+    time_t ret = time(out);
+    if(errno || ret == ((time_t)-1)){
+        TRACE(&e, "time(): %x\n", FE(&errno));
+        ORIG(&e, E_OS, "time() failed");
+    }
+
+    return e;
+}
+
 #ifndef _WIN32
 
 #include <sys/types.h>

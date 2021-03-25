@@ -9,6 +9,9 @@ dstr_t dgetenv(const dstr_t varname, bool *found);
 
 extern char **compat_environ;
 
+// sets time to epoch time or raises an error
+derr_t dtime(time_t *time);
+
 #ifndef _WIN32
 
 derr_t dpipe(int *read_fd, int *write_fd);

@@ -3,6 +3,7 @@
 
 #include <stdio.h>
 #include <stdint.h>
+#include <time.h>
 
 #include "jsw_atree.h"
 #include "win_compat.h"
