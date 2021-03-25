@@ -42,6 +42,28 @@ class SMPHP:
         p = subprocess.run(cmd, stdout=subprocess.PIPE, check=True)
         return p.stdout
 
+    def valid_email(self, email):
+        script = r"""
+            $error = smphp_valid_email("%s");
+            if($error === NULL){
+                print("internal server error");
+            }else{
+                print($error);
+            }
+        """%email
+        return self.run(script).decode('utf8')
+
+    def valid_password(self, password):
+        script = r"""
+            $error = smphp_valid_password("%s");
+            if($error === NULL){
+                print("internal server error");
+            }else{
+                print($error);
+            }
+        """%password
+        return self.run(script).decode('utf8')
+
     def create_account(self, email, password):
         script = r"""
             $error = smphp_create_account("%s", "%s");
@@ -131,6 +153,14 @@ def run_tests(php, smsql):
     assert error == "no leading or trailing spaces in password", error
     error = php.create_account(email, password + " ")
     assert error == "no leading or trailing spaces in password", error
+
+    # make smphp_valid_email works
+    error = php.valid_email("a"*200 + "@splintermail.com")
+    assert error == "email too long", error
+
+    # make smphp_valid_password works
+    error = php.valid_password("a"*73)
+    assert error == "password must not exceed 72 characters in length", error
 
 def main(php_bin):
     with mariadb.mariadb(None, migrations, migmysql_path) as script_runner:

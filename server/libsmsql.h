@@ -23,6 +23,7 @@ static inline fmt_t FSID(const dstr_t* uuid){
 derr_t random_password_salt(dstr_t *salt);
 
 // sha512 password hash
+// silently truncates passwords > 128 bytes before hashing
 derr_t hash_password(
     const dstr_t *pass, unsigned int rounds, const dstr_t *salt, dstr_t *hash
 );
@@ -38,12 +39,14 @@ derr_t validate_password_hash(
 bool valid_username_chars(const dstr_t *username);
 
 // checks length, ending, and characters
+// raise E_USERMSG on failure
 derr_t valid_splintermail_email(const dstr_t *email);
 
 // checks characters
 bool valid_password_chars(const dstr_t *pass);
 
 // checks length, characters, and no leading or trailing spaces
+// raise E_USERMSG on failure
 derr_t valid_splintermail_password(const dstr_t *pass);
 
 // predefined queries
@@ -70,6 +73,12 @@ derr_t valid_splintermail_password(const dstr_t *pass);
    isn't very meaningful except for showing to users */
 #define SMSQL_FPR_SIZE 64
 
+#define SMSQL_SESSION_HARD_TIMEOUT (24*60*60)
+#define SMSQL_SESSION_SOFT_TIMEOUT (30*60)
+#define SMSQL_CSRF_RANDOM_BYTES 33
+#define SMSQL_CSRF_SIZE 44
+#define SMSQL_CSRF_TIMEOUT (24*60*60)
+
 derr_t get_uuid_for_email(
     MYSQL *sql, const dstr_t *email, dstr_t *uuid, bool *ok
 );
@@ -93,13 +102,11 @@ void smsql_alias_free(smsql_alias_t **old);
 // returns a list of smsql_alias_t's
 derr_t list_aliases(MYSQL *sql, const dstr_t *uuid, link_t *out);
 
-derr_t add_random_alias(
-    MYSQL *sql, const dstr_t *uuid, dstr_t *alias, bool *ok
-);
+// throws E_USERMSG if max aliases reached
+derr_t add_random_alias(MYSQL *sql, const dstr_t *uuid, dstr_t *alias);
 
-derr_t add_primary_alias(
-    MYSQL *sql, const dstr_t *uuid, const dstr_t *alias, bool *ok
-);
+// throws E_USERMSG if max alias is unavailable
+derr_t add_primary_alias(MYSQL *sql, const dstr_t *uuid, const dstr_t *alias);
 
 derr_t delete_alias(
     MYSQL *sql, const dstr_t *uuid, const dstr_t *alias, bool *deleted
@@ -139,8 +146,9 @@ derr_t list_device_fprs(MYSQL *sql, const dstr_t *uuid, link_t *out);
 derr_t list_device_keys(MYSQL *sql, const dstr_t *uuid, link_t *out);
 
 // take a PEM-encoded public key, validate it, and add it to an account
+// raises E_USERMSG on failure
 derr_t add_device(
-    MYSQL *sql, const dstr_t *uuid, const dstr_t *pubkey, bool *ok
+    MYSQL *sql, const dstr_t *uuid, const dstr_t *pubkey, dstr_t *fpr
 );
 
 derr_t delete_device(MYSQL *sql, const dstr_t *uuid, const dstr_t *fpr_hex);
@@ -166,16 +174,15 @@ derr_t delete_token(MYSQL *sql, const dstr_t *uuid, uint32_t token);
 
 // misc
 
-// gateway is responsible for quality checks on the email
+// throws E_USERMSG on failure
 derr_t create_account(
     MYSQL *sql,
     const dstr_t *email,
-    const dstr_t *pass_hash,
-    bool *ok,
+    const dstr_t *pass,
     dstr_t *uuid
 );
 
-// gateway is responsible for ensuring a password is provided
+// gateway is responsible for ensuring a password is provided first
 derr_t delete_account(MYSQL *sql, const dstr_t *uuid);
 
 derr_t account_info(
@@ -191,9 +198,59 @@ derr_t validate_user_password(
     MYSQL *sql, const dstr_t *uuid, const dstr_t *pass, bool *ok
 );
 
-/* the gateway should enforce a valid old password is provided before calling
-   this to change to the new password */
-// gateway is also responsible for quality checks on the password
+// returns uuid or throws E_USERMSG on failure
+derr_t validate_login(
+    MYSQL *sql, const dstr_t *email, const dstr_t *pass, dstr_t *uuid
+);
+
+// validate a token against the database, returning uuid and email
+/* checks signature of payload against secret for token, but some higher-level
+   checks like "does the path in the payload match the API path" are the
+   responsibility of the gateway */
+// raises E_USERMSG on error
+derr_t validate_token_auth(
+    MYSQL *sql,
+    uint32_t token,
+    uint64_t nonce,
+    const dstr_t *payload,
+    const dstr_t *sig,
+    dstr_t *uuid
+);
+
+// the gateway should enforce a valid old password is provided first
+// throws E_USERMSG on invalid password
 derr_t change_password(MYSQL *sql, const dstr_t *uuid, const dstr_t *pass);
+
+// uses time() for the login and last_seen times.
+/* this API implies that you should always create a fresh session_id on login
+   (which is already a mandatory practice to avoid session fixation attacks) */
+derr_t add_session_auth(
+    MYSQL *sql, int server_id, const dstr_t *session_id, const dstr_t *uuid
+);
+
+derr_t session_logout(MYSQL *sql, int server_id, const dstr_t *session_id);
+
+/* check if a session id is valid, and get the user_uuid if it is.
+   valid sessions meet the following criteria:
+     - at least one row in the sessions table matches the session_id
+     - login time is not older than the hard-timeout
+     - last_seen time of any matching row is not older than the soft-timeout
+     - no matching row has the void bit set
+
+   Calling validate_session_auth() automatically updates the visited time
+   of the session */
+// throws E_USERMSG on bad sessions
+derr_t validate_session_auth(
+    MYSQL *sql, int server_id, const dstr_t *session_id, dstr_t *uuid
+);
+
+// new_csrf returns a token you can embed in a webpage
+derr_t new_csrf(
+    MYSQL *sql, int server_id, const dstr_t *session_id, dstr_t *csrf
+);
+
+// validate_csrf() just checks if the token was valid for this session
+// throws E_USERMSG on bad tokens
+derr_t validate_csrf(MYSQL *sql, const dstr_t *session_id, const dstr_t *csrf);
 
 #endif // SM_SQL_H

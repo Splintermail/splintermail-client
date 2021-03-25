@@ -3,6 +3,9 @@ typedef enum {
     PYARG_DSTR_TYPE,
     PYARG_NULLABLE_DSTR_TYPE,
     PYARG_UINT_TYPE,
+    PYARG_UINT64_TYPE,
+    PYARG_INT_TYPE,
+    PYARG_INT64_TYPE,
 } py_arg_type_e;
 
 struct py_arg_t;
@@ -45,5 +48,8 @@ py_arg_t pyarg_nullable_dstr_opt(dstr_t *mem, const dstr_t **out, const char *na
 
 // int
 py_arg_t pyarg_uint(unsigned int *out, const char *name);
+py_arg_t pyarg_uint64(uint64_t *out, const char *name);
+py_arg_t pyarg_int(int *out, const char *name);
+py_arg_t pyarg_int64(int64_t *out, const char *name);
 
 derr_t pyarg_parse(PyObject *pyargs, PyObject *pykwds, py_args_t args);

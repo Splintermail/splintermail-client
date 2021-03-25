@@ -85,7 +85,8 @@ derr_t random_password_salt(dstr_t *salt){
     return e;
 }
 
-// fails with E_PARAM if the password is way too long
+// sha512 password hash
+// silently truncates passwords > 128 bytes before hashing
 derr_t hash_password(
     const dstr_t *pass, unsigned int rounds, const dstr_t *salt, dstr_t *hash
 ){
@@ -93,10 +94,9 @@ derr_t hash_password(
 
     // we need a null-terminated password
     DSTR_VAR(nt_pass, 128);
-    if(pass->len > nt_pass.size - 1){
-        ORIG(&e, E_PARAM, "password is way too long to be valid");
-    }
-    PROP(&e, dstr_append(&nt_pass, pass) );
+    // a too-long password can't be valid, so we'll just silently truncate it
+    dstr_t sub = dstr_sub2(*pass, 0, nt_pass.size - 1);
+    PROP(&e, dstr_append(&nt_pass, &sub) );
     PROP(&e, dstr_null_terminate(&nt_pass) );
 
     /* crypt_gensalt() seems to behave in a strange way with regard to the
@@ -197,27 +197,18 @@ derr_t validate_password_hash(
     unsigned int true_rounds;
     DSTR_VAR(true_salt, SMSQL_PASSWORD_HASH_SIZE);
     DSTR_VAR(true_hash_result, SMSQL_PASSWORD_HASH_SIZE);
-    // zeroize in preparation for the fixed-time comparision
-    for(size_t i = 0; i < SMSQL_PASSWORD_HASH_SIZE; i++){
-        true_hash_result.data[i] = '\0';
-    }
 
     // the true hash is from our system and must be valid
     NOFAIL(&e, E_ANY,
         _parse_hash(true_hash, &true_rounds, &true_salt, &true_hash_result)
     );
 
-    // raises E_PARAM on invalid password, which is a user input
+    // raises E_USERPARAM on invalid password, which is a user input
+    /* this will return too fast on invalid passwords, but that's ok... "your
+       password is not even valid" is not information useful to a timing
+       attack, especially when the validator is open-source */
     DSTR_VAR(hash, SMSQL_PASSWORD_HASH_SIZE);
-    derr_t e2 = hash_password(pass, true_rounds, &true_salt, &hash);
-    CATCH(e2, E_PARAM){
-        DROP_VAR(&e2);
-        /* this will return too fast, but that's ok... "your password is not
-           even valid" is not information useful to a timing attack, especially
-           when the validator is open-source */
-        *ok = false;
-        return e;
-    }else PROP_VAR(&e, &e2);
+    PROP(&e, hash_password(pass, true_rounds, &true_salt, &hash) );
 
     DSTR_VAR(hash_result, SMSQL_PASSWORD_HASH_SIZE);
     for(size_t i = 0; i < SMSQL_PASSWORD_HASH_SIZE; i++){
@@ -225,18 +216,9 @@ derr_t validate_password_hash(
     }
 
     // this should obviously be a valid hash since we just generated it
-    NOFAIL(&e, E_ANY,
-        _parse_hash(&hash, NULL, NULL, &hash_result)
-    );
+    NOFAIL(&e, E_ANY, _parse_hash(&hash, NULL, NULL, &hash_result));
 
-    // fixed-time string comparison
-    bool valid = true;
-    for(size_t i = 0; i < SMSQL_PASSWORD_HASH_SIZE; i++){
-        valid &= hash_result.data[i] == true_hash_result.data[i];
-    }
-    valid &= hash_result.len == true_hash_result.len;
-
-    *ok = valid;
+    *ok = dstr_eq_consttime(&hash_result, &true_hash_result);
 
     return e;
 }
@@ -259,22 +241,22 @@ derr_t valid_splintermail_email(const dstr_t *email){
 
     // length
     if(email->len > SMSQL_EMAIL_SIZE)
-        ORIG(&e, E_PARAM, "email too long");
+        ORIG(&e, E_USERMSG, "email too long");
 
     // ends in @splintermail.com
     DSTR_STATIC(suffix, "@splintermail.com");
     if(!dstr_endswith(email, &suffix))
-        ORIG(&e, E_PARAM, "email must end in @splintermail.com");
+        ORIG(&e, E_USERMSG, "email must end in @splintermail.com");
 
     const dstr_t username = dstr_sub2(*email, 0, email->len - suffix.len);
 
     // non-empty username
     if(username.len == 0)
-        ORIG(&e, E_PARAM, "empty username");
+        ORIG(&e, E_USERMSG, "empty username");
 
     // valid username
     if(!valid_username_chars(&username))
-        ORIG(&e, E_PARAM, "invalid characters in email");
+        ORIG(&e, E_USERMSG, "invalid characters in email");
 
     return e;
 }
@@ -304,21 +286,24 @@ derr_t valid_splintermail_password(const dstr_t *pass){
     derr_t e = E_OK;
 
     if(pass->len > SMSQL_PASSWORD_SIZE)
-        ORIG(&e, E_PARAM, "password must not exceed 72 characters in length");
+        ORIG(
+            &e, E_USERMSG, "password must not exceed 72 characters in length"
+        );
 
     if(pass->len < 16)
-        ORIG(&e, E_PARAM, "password must be at least 16 characters in length");
+        ORIG(
+            &e, E_USERMSG, "password must be at least 16 characters in length"
+        );
 
     if(!valid_password_chars(pass))
-        ORIG(&e, E_PARAM, "invalid characters in password");
+        ORIG(&e, E_USERMSG, "invalid characters in password");
 
     if(pass->data[0] == ' ' || pass->data[pass->len-1] == ' '){
-        ORIG(&e, E_PARAM, "no leading or trailing spaces in password");
+        ORIG(&e, E_USERMSG, "no leading or trailing spaces in password");
     }
 
     return e;
 }
-
 
 // predefined queries
 
@@ -455,7 +440,8 @@ fail_list:
 }
 
 static derr_t _add_random_alias_txn(
-        MYSQL *sql, const dstr_t *uuid, dstr_t *alias, bool *ok){
+    MYSQL *sql, const dstr_t *uuid, dstr_t *alias
+){
     derr_t e = E_OK;
 
     /* due to the FOR UPDATE this is not vulnerable to write skew, but it could
@@ -473,9 +459,7 @@ static derr_t _add_random_alias_txn(
     );
 
     if(count >= MAX_RANDOM_ALIASES){
-        // too many aliases already
-        *ok = false;
-        return e;
+        ORIG(&e, E_USERMSG, "too many aliases already");
     }
 
     // try for an unused random alias
@@ -484,7 +468,7 @@ static derr_t _add_random_alias_txn(
         PROP(&e, petname_email(&temp) );
 
         // double-check that the email is valid
-        NOFAIL(&e, E_PARAM, valid_splintermail_email(&temp) );
+        NOFAIL(&e, E_USERMSG, valid_splintermail_email(&temp) );
 
         DSTR_STATIC(q2, "INSERT INTO emails (email) VALUES (?)");
         derr_t e2 = sql_bound_stmt(sql, &q2, string_bind_in(&temp));
@@ -521,42 +505,33 @@ static derr_t _add_random_alias_txn(
 
         PROP(&e, dstr_append(alias, &temp) );
 
-        *ok = true;
         return e;
     }
 
     ORIG(&e, E_INTERNAL, "failed to find an available alias");
 }
 
-derr_t add_random_alias(
-    MYSQL *sql, const dstr_t *uuid, dstr_t *alias, bool *ok
-){
+// throws E_USERMSG if max aliases reached
+derr_t add_random_alias(MYSQL *sql, const dstr_t *uuid, dstr_t *alias){
     derr_t e = E_OK;
-    *ok = false;
 
     PROP(&e, sql_txn_start(sql) );
 
-    PROP_GO(&e, _add_random_alias_txn(sql, uuid, alias, ok), hard_fail);
+    PROP_GO(&e, _add_random_alias_txn(sql, uuid, alias), hard_fail);
 
-    if(*ok){
-        PROP(&e, sql_txn_commit(sql) );
-    }else{
-        // soft fail
-        PROP(&e, sql_txn_rollback(sql) );
-    }
+    PROP(&e, sql_txn_commit(sql) );
 
     return e;
 
 hard_fail:
     sql_txn_abort(sql);
-    *ok = false;
 
     return e;
 }
 
 
 static derr_t _add_primary_alias_txn(
-    MYSQL *sql, const dstr_t *uuid, const dstr_t *alias, bool *ok
+    MYSQL *sql, const dstr_t *uuid, const dstr_t *alias
 ){
     derr_t e = E_OK;
 
@@ -567,48 +542,35 @@ static derr_t _add_primary_alias_txn(
         "INSERT INTO aliases (alias, paid, user_uuid) VALUES (?, ?, ?)"
     );
     bool paid = true;
-    PROP(&e,
-        sql_bound_stmt(sql,
-            &q2,
-            string_bind_in(alias),
-            bool_bind_in(&paid),
-            blob_bind_in(uuid),
-        )
+    derr_t e2 = sql_bound_stmt(sql,
+        &q2,
+        string_bind_in(alias),
+        bool_bind_in(&paid),
+        blob_bind_in(uuid),
     );
-
-    *ok = true;
+    CATCH(e2, E_SQL_DUP){
+        DROP_VAR(&e2);
+        ORIG(&e, E_USERMSG, "alias not available");
+    }else PROP_VAR(&e, &e2);
 
     return e;
 }
 
-derr_t add_primary_alias(
-    MYSQL *sql, const dstr_t *uuid, const dstr_t *alias, bool *ok
-){
+derr_t add_primary_alias(MYSQL *sql, const dstr_t *uuid, const dstr_t *alias){
     derr_t e = E_OK;
-    *ok = false;
 
     PROP(&e, valid_splintermail_email(alias) );
 
     PROP(&e, sql_txn_start(sql) );
 
-    derr_t e2 = _add_primary_alias_txn(sql, uuid, alias, ok);
-    CATCH(e2, E_SQL_DUP){
-        DROP_VAR(&e2);
-        *ok = false;
-    }else PROP_GO(&e, e2, hard_fail);
+    PROP_GO(&e, _add_primary_alias_txn(sql, uuid, alias), hard_fail);
 
-    if(*ok){
-        PROP(&e, sql_txn_commit(sql) );
-    }else{
-        // soft fail
-        PROP(&e, sql_txn_rollback(sql) );
-    }
+    PROP(&e, sql_txn_commit(sql) );
 
     return e;
 
 hard_fail:
     sql_txn_abort(sql);
-    *ok = false;
 
     return e;
 }
@@ -732,40 +694,6 @@ hard_fail:
 }
 
 // devices
-
-//// will these ever become useful?
-// derr_t smsql_device_new(
-//     smsql_device_t **out, const dstr_t *public_key, const dstr_t *fingerprint
-// ){
-//     derr_t e = E_OK;
-//     *out = NULL;
-//
-//     smsql_device_t *device = DMALLOC_STRUCT_PTR(&e, device);
-//     CHECK(&e);
-//
-//     link_init(&device->link);
-//
-//     PROP_GO(&e, dstr_copy(public_key, &device->public_key), fail);
-//     PROP_GO(&e, dstr_copy(fingerprint, &device->fingerprint), fail_key);
-//
-//     *out = device;
-//     return e;
-//
-// fail_key:
-//     dstr_free(&device->public_key);
-// fail:
-//     free(device);
-//     return e;
-// }
-//
-// void smsql_device_free(smsql_device_t **old){
-//     smsql_device_t *device = *old;
-//     if(device == NULL) return;
-//     dstr_free(&device->fingerprint);
-//     dstr_free(&device->public_key);
-//     free(device);
-//     *old = NULL;
-// }
 
 derr_t smsql_dstr_new(smsql_dstr_t **out, const dstr_t *val){
     derr_t e = E_OK;
@@ -916,8 +844,7 @@ static derr_t _add_device_txn(
     MYSQL *sql,
     const dstr_t *uuid,
     const dstr_t *pubkey,
-    const dstr_t *fpr_hex,
-    bool *ok
+    const dstr_t *fpr_hex
 ){
     derr_t e = E_OK;
 
@@ -933,8 +860,7 @@ static derr_t _add_device_txn(
     );
 
     if(count >= MAX_DEVICES){
-        *ok = false;
-        return e;
+        ORIG(&e, E_USERMSG, "max devices already reached");
     }
 
     DSTR_STATIC(
@@ -951,19 +877,22 @@ static derr_t _add_device_txn(
         )
     );
 
-    *ok = true;
-
     return e;
 }
 
 // validate, get fingerprint, and normalize a pem-encoded public key
+// raises E_USERMSG on failure
 static derr_t _validate_for_add_device(
     const dstr_t *pubkey, dstr_t *fpr_hex, dstr_t *norm
 ){
     derr_t e = E_OK;
+
     // validate pkey
     EVP_PKEY *pkey;
-    PROP(&e, read_pem_encoded_pubkey(pubkey, &pkey) );
+    IF_PROP(&e, read_pem_encoded_pubkey(pubkey, &pkey) ){
+        DROP_VAR(&e);
+        ORIG(&e, E_USERMSG, "invalid public key");
+    }
 
     // get fingerprint
     DSTR_VAR(fpr, SMSQL_FPR_SIZE / 2);
@@ -981,11 +910,11 @@ cu:
 }
 
 // take a PEM-encoded public key, validate it, and add it to an account
+// raises E_USERMSG on failure
 derr_t add_device(
-    MYSQL *sql, const dstr_t *uuid, const dstr_t *pubkey, bool *ok
+    MYSQL *sql, const dstr_t *uuid, const dstr_t *pubkey, dstr_t *fpr
 ){
     derr_t e = E_OK;
-    *ok = false;
 
     DSTR_VAR(fpr_hex, SMSQL_FPR_SIZE);
     DSTR_VAR(norm, SMSQL_PUBKEY_SIZE);
@@ -994,14 +923,12 @@ derr_t add_device(
     PROP(&e, sql_txn_start(sql) );
 
     PROP_GO(&e,
-        _add_device_txn(sql, uuid, pubkey, &fpr_hex, ok),
+        _add_device_txn(sql, uuid, &norm, &fpr_hex),
     hard_fail);
 
-    if(*ok){
-        PROP(&e, sql_txn_commit(sql) );
-    }else{
-        PROP(&e, sql_txn_rollback(sql) );
-    }
+    PROP_GO(&e, dstr_append(fpr, &fpr_hex), hard_fail);
+
+    PROP(&e, sql_txn_commit(sql) );
 
     return e;
 
@@ -1172,8 +1099,7 @@ static derr_t _create_account_txn(
     MYSQL *sql,
     const dstr_t *email,
     const dstr_t *pass_hash,
-    const dstr_t *uuid,
-    bool *ok
+    const dstr_t *uuid
 ){
     derr_t e = E_OK;
 
@@ -1182,8 +1108,7 @@ static derr_t _create_account_txn(
     CATCH(e2, E_SQL_DUP){
         // duplicate email
         DROP_VAR(&e2);
-        *ok = false;
-        return e;
+        ORIG(&e, E_USERMSG, "username not available");
     }else PROP_VAR(&e, &e2);
 
     // domain_id is hardcoded to 1="splintermail.com"
@@ -1201,44 +1126,41 @@ static derr_t _create_account_txn(
         )
     );
 
-    *ok = true;
-
     return e;
 }
 
-// gateway is responsible for quality checks on the email
+// throws E_USERMSG if email is taken
 derr_t create_account(
     MYSQL *sql,
     const dstr_t *email,
-    const dstr_t *pass_hash,
-    bool *ok,
+    const dstr_t *pass,
     dstr_t *uuid
 ){
     derr_t e = E_OK;
-    *ok = false;
 
-    // set the uuid bytes in place, to ensure we don't fail after the txn
+    // validate inputs
+    PROP(&e, valid_splintermail_email(email) );
+    PROP(&e, valid_splintermail_password(pass) );
+
+    DSTR_VAR(salt, SMSQL_PASSWORD_SALT_SIZE);
+    PROP(&e, random_password_salt(&salt) );
+
+    DSTR_VAR(hash, SMSQL_PASSWORD_HASH_SIZE);
+    PROP(&e, hash_password(pass, SMSQL_PASSWORD_SHA512_ROUNDS, &salt, &hash) );
+
+    // set the uuid bytes first, to ensure we don't fail after the txn
     PROP(&e, random_bytes(uuid, SMSQL_UUID_SIZE) );
 
     PROP(&e, sql_txn_start(sql) );
 
-    PROP_GO(&e,
-        _create_account_txn(sql, email, pass_hash, uuid, ok),
-    hard_fail);
+    PROP_GO(&e, _create_account_txn(sql, email, &hash, uuid), hard_fail);
 
-    if(*ok){
-        PROP(&e, sql_txn_commit(sql) );
-    }else{
-        // soft fail
-        PROP(&e, sql_txn_rollback(sql) );
-        uuid->len = 0;
-    }
+    PROP(&e, sql_txn_commit(sql) );
 
     return e;
 
 hard_fail:
     sql_txn_abort(sql);
-    *ok = false;
 
     return e;
 }
@@ -1365,11 +1287,120 @@ derr_t validate_user_password(
     return e;
 }
 
+// returns uuid or throws E_USERMSG on failure
+derr_t validate_login(
+    MYSQL *sql, const dstr_t *email, const dstr_t *pass, dstr_t *uuid
+){
+    derr_t e = E_OK;
 
-/* the gateway should enforce a valid old password is provided before calling
-   this to change to the new password */
+    bool ok;
+    PROP(&e, get_uuid_for_email(sql, email, uuid, &ok) );
+    if(!ok){
+        ORIG(&e, E_USERMSG, "bad credentials");
+    }
+
+    PROP(&e, validate_user_password(sql, uuid, pass, &ok) );
+    if(!ok){
+        ORIG(&e, E_USERMSG, "bad credentials");
+    }
+
+    return e;
+}
+
+static derr_t _validate_token_auth_txn(
+    MYSQL *sql,
+    uint32_t token,
+    uint64_t nonce,
+    const dstr_t *payload,
+    const dstr_t *sig,
+    dstr_t *uuid
+){
+    derr_t e = E_OK;
+
+    // check token ID (and get secret/nonce/uuid)
+    // use FOR UPDATE to prevent write skew on nonce (replay attacks):w
+    DSTR_VAR(secret, SMSQL_APISECRET_SIZE);
+    DSTR_VAR(temp_uuid, SMSQL_UUID_SIZE);
+    uint64_t old_nonce;
+    DSTR_STATIC(
+        q1,
+        "SELECT secret, user_uuid, nonce FROM tokens WHERE token=? FOR UPDATE"
+    );
+    bool ok;
+    PROP(&e,
+        sql_onerow_query(
+            sql, &q1, &ok,
+            // param
+            uint_bind_in(&token),
+            // result
+            blob_bind_out(&secret),
+            blob_bind_out(&temp_uuid),
+            uint64_bind_out(&old_nonce)
+        )
+    );
+    if(!ok){
+        ORIG(&e, E_USERMSG, "token not recognized");
+    }
+
+    // check signature
+    DSTR_VAR(true_sig, 256);
+    PROP(&e, hmac(&secret, payload, &true_sig) );
+    if(!dstr_eq_consttime(sig, &true_sig)){
+        ORIG(&e, E_USERMSG, "invalid signature");
+    }
+
+    // check/update nonce
+    if(nonce <= old_nonce){
+        ORIG(&e, E_USERMSG, "incorrect nonce");
+    }
+    DSTR_STATIC(q2, "UPDATE tokens SET nonce=? WHERE token=?");
+    PROP(&e,
+        sql_bound_stmt(sql, &q2, uint64_bind_in(&nonce), uint_bind_in(&token))
+    );
+
+    // valid!
+    PROP(&e, dstr_append(uuid, &temp_uuid) );
+
+    return e;
+}
+
+// validate a token against the database, returning uuid and email
+/* checks signature of payload against secret for token, but some higher-level
+   checks like "does the path in the payload match the API path" are the
+   responsibility of the gateway */
+// raises E_USERMSG on error
+derr_t validate_token_auth(
+    MYSQL *sql,
+    uint32_t token,
+    uint64_t nonce,
+    const dstr_t *payload,
+    const dstr_t *sig,
+    dstr_t *uuid
+){
+    derr_t e = E_OK;
+
+    PROP(&e, sql_txn_start(sql) );
+
+    PROP_GO(&e,
+        _validate_token_auth_txn(sql, token, nonce, payload, sig, uuid),
+    hard_fail);
+
+    PROP(&e, sql_txn_commit(sql) );
+
+    return e;
+
+hard_fail:
+    sql_txn_abort(sql);
+
+    return e;
+}
+
+// the gateway should enforce a valid old password is provided first
+// throws E_USERMSG on invalid password
 derr_t change_password(MYSQL *sql, const dstr_t *uuid, const dstr_t *pass){
     derr_t e = E_OK;
+
+    PROP(&e, valid_splintermail_password(pass) );
 
     DSTR_VAR(salt, SMSQL_PASSWORD_SALT_SIZE);
     PROP(&e, random_password_salt(&salt) );
@@ -1385,6 +1416,393 @@ derr_t change_password(MYSQL *sql, const dstr_t *uuid, const dstr_t *pass){
             blob_bind_in(uuid)
         )
     );
+
+    return e;
+}
+
+// uses time() for the login and last_seen times
+// this implies that you should always create a fresh session_id on login
+derr_t add_session_auth(
+    MYSQL *sql, int server_id, const dstr_t *session_id, const dstr_t *uuid
+){
+    derr_t e = E_OK;
+
+    time_t now;
+    PROP(&e, dtime(&now) );
+
+    DSTR_STATIC(
+        q1,
+        "INSERT INTO sessions ("
+        "   session_id, server_id, user_uuid, login, last_seen"
+        ") VALUES (?, ?, ?, ?, ?)"
+    );
+    PROP(&e,
+        sql_bound_stmt(
+            sql, &q1,
+            string_bind_in(session_id),
+            int_bind_in(&server_id),
+            blob_bind_in(uuid),
+            int64_bind_in(&now),
+            int64_bind_in(&now)
+        )
+    );
+
+    return e;
+}
+
+
+/* _do_logout_txn is used both by _session_logout_txn and, in the case of a
+   timeout, by _validate_session_auth, to ensure that a logout decision is
+   final */
+static derr_t _do_logout_txn(
+    MYSQL *sql,
+    int server_id,
+    const dstr_t *session_id,
+    const dstr_t *uuid,
+    time_t now,
+    bool saw_our_server_id
+){
+    derr_t e = E_OK;
+
+    if(saw_our_server_id){
+        // Update last_seen for our server_id
+        DSTR_STATIC(
+            q2,
+            "UPDATE sessions SET void=b'1' WHERE session_id=? AND server_id=?"
+        );
+        PROP(&e,
+            sql_bound_stmt(
+                sql, &q2,
+                string_bind_in(session_id),
+                int_bind_in(&server_id)
+            )
+        );
+    }else{
+        // Create a new row with void=true for our server_id
+        DSTR_STATIC(
+            q2,
+            "INSERT INTO sessions ("
+            "   session_id, server_id, user_uuid, login, last_seen, void"
+            ") VALUES (?, ?, ?, ?, ?, b'1')"
+        );
+        PROP(&e,
+            sql_bound_stmt(
+                sql, &q2,
+                string_bind_in(session_id),
+                int_bind_in(&server_id),
+                blob_bind_in(uuid),
+                int64_bind_in(&now),
+                int64_bind_in(&now),
+            )
+        );
+    }
+
+    return e;
+}
+
+
+static derr_t _session_logout_txn(
+    MYSQL *sql,
+    int server_id,
+    const dstr_t *session_id,
+    time_t now
+){
+    derr_t e = E_OK;
+
+    /* similar pattern to validation; an UPDATE isn't sufficient in case the
+       logout is happening on a new server so we have to SELECT then either
+       INSERT or UPDATE */
+    DSTR_STATIC(
+        q1,
+        "SELECT user_uuid, void, server_id "
+        "FROM sessions WHERE session_id=? FOR UPDATE"
+    );
+
+    // row fetch result values
+    DSTR_VAR(uuid_res, SMSQL_UUID_SIZE);
+    bool void_res = false;
+    int server_id_res = 0;
+
+    MYSQL_STMT *stmt;
+
+    PROP(&e,
+        sql_multirow_stmt(
+            sql, &stmt, &q1,
+            // parameters
+            string_bind_in(session_id),
+            // results
+            blob_bind_out(&uuid_res),
+            bool_bind_out(&void_res),
+            int_bind_out(&server_id_res)
+        )
+    );
+
+    // values calculated from multiple rows
+    bool saw_our_server_id = false;
+    bool session_voided = false;
+
+    while(true){
+        bool fetch_ok;
+        PROP_GO(&e, sql_stmt_fetch(stmt, &fetch_ok), cu);
+        if(!fetch_ok) break;
+        LOG_ERROR("got row server=%x void=%x\n", FI(server_id_res), FB(void_res));
+
+        if(server_id_res == server_id) saw_our_server_id = true;
+        if(void_res) session_voided = true;
+    }
+
+    // noop for already-voided sessions
+    if(session_voided) goto cu;
+
+    PROP_GO(&e,
+        _do_logout_txn(
+            sql, server_id, session_id, &uuid_res, now, saw_our_server_id
+        ),
+    cu);
+
+cu:
+    mysql_stmt_close(stmt);
+
+    return e;
+}
+
+derr_t session_logout(MYSQL *sql, int server_id, const dstr_t *session_id){
+    derr_t e = E_OK;
+
+    time_t now;
+    PROP(&e, dtime(&now) );
+
+    PROP(&e, sql_txn_start(sql) );
+
+    PROP_GO(&e,
+        _session_logout_txn(sql, server_id, session_id, now),
+    hard_fail);
+
+    PROP(&e, sql_txn_commit(sql) );
+
+    return e;
+
+hard_fail:
+    sql_txn_abort(sql);
+
+    return e;
+}
+
+static derr_t _validate_session_auth_txn(
+    MYSQL *sql,
+    int server_id,
+    const dstr_t *session_id,
+    time_t now,
+    dstr_t *uuid
+){
+    derr_t e = E_OK;
+
+    DSTR_STATIC(
+        q1,
+        "SELECT user_uuid, login, last_seen, void, server_id "
+        "FROM sessions WHERE session_id=? FOR UPDATE"
+    );
+
+    // row fetch result values
+    DSTR_VAR(uuid_res, SMSQL_UUID_SIZE);
+    time_t login_res = 0;
+    time_t last_seen_res = 0;
+    bool void_res = false;
+    int server_id_res = 0;
+
+    MYSQL_STMT *stmt;
+
+    PROP(&e,
+        sql_multirow_stmt(
+            sql, &stmt, &q1,
+            // parameters
+            string_bind_in(session_id),
+            // results
+            blob_bind_out(&uuid_res),
+            int64_bind_out(&login_res),
+            int64_bind_out(&last_seen_res),
+            bool_bind_out(&void_res),
+            int_bind_out(&server_id_res)
+        )
+    );
+
+    // values calculated from multiple rows
+    bool saw_any_row = false;
+    bool saw_our_server_id = false;
+    bool session_voided = false;
+    time_t last_seen = 0;
+
+    while(true){
+        bool fetch_ok;
+        PROP_GO(&e, sql_stmt_fetch(stmt, &fetch_ok), cu);
+        if(!fetch_ok) break;
+
+        saw_any_row = true;
+        if(server_id_res == server_id) saw_our_server_id = true;
+        if(void_res) session_voided = true;
+        if(last_seen_res > last_seen) last_seen = last_seen_res;
+    }
+
+    // detect non-existent sessions
+    if(!saw_any_row)
+        ORIG_GO(&e, E_USERMSG, "not logged in", cu);
+
+    // detect explicit logouts
+    if(session_voided)
+        ORIG_GO(&e, E_USERMSG, "not logged in", cu);
+
+    /* Check timeouts.  In the timeout case, enforce that the decision is final
+       by actually setting void=True in the database */
+    if(
+        now > login_res + SMSQL_SESSION_HARD_TIMEOUT
+        || now > last_seen + SMSQL_SESSION_SOFT_TIMEOUT
+    ){
+        PROP_GO(&e,
+            _do_logout_txn(
+                sql, server_id, session_id, &uuid_res, now, saw_our_server_id
+            ),
+        cu);
+        ORIG_GO(&e, E_USERMSG, "not logged in", cu);
+    }
+
+    if(saw_our_server_id){
+        // Update last_seen for our server_id
+        DSTR_STATIC(
+            q2,
+            "UPDATE sessions SET last_seen=? "
+            "WHERE session_id=? AND server_id=?"
+        );
+        PROP_GO(&e,
+            sql_bound_stmt(
+                sql, &q2,
+                int64_bind_in(&now),
+                string_bind_in(session_id),
+                int_bind_in(&server_id)
+            ),
+        cu);
+    }else{
+        // Create a new row with last_seen for our server_id
+        DSTR_STATIC(
+            q2,
+            "INSERT INTO sessions ("
+            "   session_id, server_id, user_uuid, login, last_seen"
+            ") VALUES (?, ?, ?, ?, ?)"
+        );
+        PROP_GO(&e,
+            sql_bound_stmt(
+                sql, &q2,
+                string_bind_in(session_id),
+                int_bind_in(&server_id),
+                blob_bind_in(&uuid_res),
+                int64_bind_in(&login_res),
+                int64_bind_in(&now)
+            ),
+        cu);
+    }
+
+    PROP_GO(&e, dstr_append(uuid, &uuid_res), cu);
+
+cu:
+    mysql_stmt_close(stmt);
+
+    return e;
+}
+
+/* check if a session id is valid, and get the user_uuid if it is.
+   valid sessions meet the following criteria:
+     - at least one row in the sessions table matches the session_id
+     - login time is not older than the hard-timeout
+     - last_seen time of any matching row is not older than the soft-timeout
+     - no matching row has the void bit set
+
+   Calling validate_session_auth() automatically updates the visited time
+   of the session */
+// throws E_USERMSG on bad sessions
+derr_t validate_session_auth(
+    MYSQL *sql, int server_id, const dstr_t *session_id, dstr_t *uuid
+){
+    derr_t e = E_OK;
+
+    time_t now;
+    PROP(&e, dtime(&now) );
+
+    PROP(&e, sql_txn_start(sql) );
+
+    PROP_GO(&e,
+        _validate_session_auth_txn(sql, server_id, session_id, now, uuid),
+    hard_fail);
+
+    PROP(&e, sql_txn_commit(sql) );
+
+    return e;
+
+hard_fail:
+    sql_txn_abort(sql);
+
+    return e;
+}
+
+// new_csrf returns a token you can embed in a webpage
+derr_t new_csrf(
+    MYSQL *sql, int server_id, const dstr_t *session_id, dstr_t *csrf
+){
+    derr_t e = E_OK;
+
+    time_t now;
+    PROP(&e, dtime(&now) );
+
+    DSTR_VAR(rando, SMSQL_CSRF_RANDOM_BYTES);
+    PROP(&e, random_bytes(&rando, rando.size) );
+
+    DSTR_VAR(temp, SMSQL_CSRF_SIZE);
+    PROP(&e, bin2b64(&rando, &temp) );
+
+    DSTR_STATIC(
+        q1,
+        "INSERT INTO csrf ("
+        "    csrf_id, server_id, session_id, created"
+        ") VALUES (?, ?, ?, ?)"
+    );
+    PROP(&e,
+        sql_bound_stmt(
+            sql, &q1,
+            string_bind_in(&temp),
+            int_bind_in(&server_id),
+            string_bind_in(session_id),
+            int64_bind_in(&now)
+        )
+    );
+
+    PROP(&e, dstr_append(csrf, &temp) );
+
+    return e;
+}
+
+// validate_csrf() just checks if the token was valid for this session
+// throws E_USERMSG on bad tokens
+derr_t validate_csrf(MYSQL *sql, const dstr_t *session_id, const dstr_t *csrf){
+    derr_t e = E_OK;
+
+    time_t now;
+    PROP(&e, dtime(&now) );
+
+    DSTR_STATIC(
+        q1, "SELECT created FROM csrf WHERE csrf_id=? AND session_id=?"
+    );
+    bool ok;
+    time_t created;
+    PROP(&e,
+        sql_onerow_query(
+            sql, &q1, &ok,
+            // params
+            string_bind_in(csrf),
+            string_bind_in(session_id),
+            int64_bind_out(&created)
+        )
+    );
+
+    if(!ok || now > created + SMSQL_CSRF_TIMEOUT)
+        ORIG(&e, E_USERMSG, "bad csrf token");
 
     return e;
 }

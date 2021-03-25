@@ -116,6 +116,41 @@ py_arg_t pyarg_uint(unsigned int *out, const char *name){
     return arg;
 }
 
+py_arg_t pyarg_uint64(uint64_t *out, const char *name){
+    py_arg_t arg = {
+        .type = PYARG_UINT64_TYPE,
+        .name = name,
+        .fmt = "k",
+        .param1 = out,
+        .need_size = false,
+        .optional = false,
+    };
+    return arg;
+}
+
+py_arg_t pyarg_int(int *out, const char *name){
+    py_arg_t arg = {
+        .type = PYARG_INT_TYPE,
+        .name = name,
+        .fmt = "i",
+        .param1 = out,
+        .need_size = false,
+        .optional = false,
+    };
+    return arg;
+}
+
+py_arg_t pyarg_int64(int64_t *out, const char *name){
+    py_arg_t arg = {
+        .type = PYARG_INT64_TYPE,
+        .name = name,
+        .fmt = "l",
+        .param1 = out,
+        .need_size = false,
+        .optional = false,
+    };
+    return arg;
+}
 
 static derr_t _validate_and_fmt(int *state, py_arg_t arg, dstr_t *fmt_str){
     derr_t e = E_OK;

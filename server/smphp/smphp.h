@@ -10,6 +10,7 @@ ZEND_TSRMLS_CACHE_EXTERN()
 
 ZEND_BEGIN_MODULE_GLOBALS(smphp)
     zend_string *sql_sock;
+    zend_long *server_id;
 ZEND_END_MODULE_GLOBALS(smphp)
 
 ZEND_EXTERN_MODULE_GLOBALS(smphp)

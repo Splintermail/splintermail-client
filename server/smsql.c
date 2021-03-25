@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 
 #include "libsmsql.h"
 
@@ -43,7 +44,7 @@ static derr_t get_uuid_action(MYSQL *sql, int argc, char **argv){
     derr_t e = E_OK;
 
     if(argc != 1){
-        ORIG(&e, E_VALUE, "usage: get_uuid EMAIL\n");
+        ORIG(&e, E_USERMSG, "usage: get_uuid EMAIL\n");
     }
 
     dstr_t email = get_arg(argv, 0);
@@ -64,7 +65,7 @@ static derr_t get_email_action(MYSQL *sql, int argc, char **argv){
     derr_t e = E_OK;
 
     if(argc != 1){
-        ORIG(&e, E_VALUE, "usage: get_email FSID\n");
+        ORIG(&e, E_USERMSG, "usage: get_email FSID\n");
     }
 
     dstr_t fsid = get_arg(argv, 0);
@@ -91,7 +92,7 @@ static derr_t hash_password_action(MYSQL *sql, int argc, char **argv){
     (void)sql;
 
     if(argc != 2){
-        ORIG(&e, E_VALUE, "usage: hash_password PASSWORD HEX_SALT\n");
+        ORIG(&e, E_USERMSG, "usage: hash_password PASSWORD HEX_SALT\n");
     }
 
     dstr_t pass = get_arg(argv, 0);
@@ -114,7 +115,7 @@ static derr_t list_aliases_action(MYSQL *sql, int argc, char **argv){
     derr_t e = E_OK;
 
     if(argc != 1){
-        ORIG(&e, E_VALUE, "usage: list_aliases (EMAIL|FSID)\n");
+        ORIG(&e, E_USERMSG, "usage: list_aliases (EMAIL|FSID)\n");
     }
 
     dstr_t id = get_arg(argv, 0);
@@ -146,7 +147,7 @@ static derr_t add_random_alias_action(MYSQL *sql, int argc, char **argv){
     derr_t e = E_OK;
 
     if(argc != 1){
-        ORIG(&e, E_VALUE, "usage: add_random_alias (EMAIL|FSID)\n");
+        ORIG(&e, E_USERMSG, "usage: add_random_alias (EMAIL|FSID)\n");
     }
 
     dstr_t id = get_arg(argv, 0);
@@ -156,13 +157,8 @@ static derr_t add_random_alias_action(MYSQL *sql, int argc, char **argv){
 
     DSTR_VAR(alias, SMSQL_EMAIL_SIZE);
 
-    bool ok;
-    PROP(&e, add_random_alias(sql, &uuid, &alias, &ok) );
-    if(ok){
-        PFMT("%x\n", FD(&alias));
-    }else{
-        FFMT(stderr, NULL, "FAILURE: WOULD EXCEED MAX RANDOM ALIASES\n");
-    }
+    PROP(&e, add_random_alias(sql, &uuid, &alias) );
+    PFMT("%x\n", FD(&alias));
 
     return e;
 }
@@ -171,7 +167,7 @@ static derr_t add_primary_alias_action(MYSQL *sql, int argc, char **argv){
     derr_t e = E_OK;
 
     if(argc != 2){
-        ORIG(&e, E_VALUE, "usage: add_primary_alias (EMAIL|FSID) ALIAS\n");
+        ORIG(&e, E_USERMSG, "usage: add_primary_alias (EMAIL|FSID) ALIAS\n");
     }
 
     dstr_t id = get_arg(argv, 0);
@@ -179,13 +175,8 @@ static derr_t add_primary_alias_action(MYSQL *sql, int argc, char **argv){
 
     DSTR_VAR(uuid, SMSQL_UUID_SIZE);
     PROP(&e, get_uuid_from_id(sql, &id, &uuid) );
-    bool ok;
-    PROP(&e, add_primary_alias(sql, &uuid, &alias, &ok) );
-    if(ok){
-        PFMT("OK\n");
-    }else{
-        FFMT(stderr, NULL, "FAILURE\n");
-    }
+    PROP(&e, add_primary_alias(sql, &uuid, &alias) );
+    PFMT("OK\n");
 
     return e;
 }
@@ -194,7 +185,7 @@ static derr_t delete_alias_action(MYSQL *sql, int argc, char **argv){
     derr_t e = E_OK;
 
     if(argc != 2){
-        ORIG(&e, E_VALUE, "usage: delete_alias (EMAIL|FSID) ALIAS\n");
+        ORIG(&e, E_USERMSG, "usage: delete_alias (EMAIL|FSID) ALIAS\n");
     }
 
     dstr_t id = get_arg(argv, 0);
@@ -217,7 +208,7 @@ static derr_t delete_all_aliases_action(MYSQL *sql, int argc, char **argv){
     derr_t e = E_OK;
 
     if(argc != 1){
-        ORIG(&e, E_VALUE, "usage: delete_all_aliases (EMAIL|FSID)\n");
+        ORIG(&e, E_USERMSG, "usage: delete_all_aliases (EMAIL|FSID)\n");
     }
 
     dstr_t id = get_arg(argv, 0);
@@ -238,7 +229,7 @@ static derr_t list_device_fprs_action(MYSQL *sql, int argc, char **argv){
     derr_t e = E_OK;
 
     if(argc != 1){
-        ORIG(&e, E_VALUE, "usage: list_device_fprs (EMAIL|FSID)\n");
+        ORIG(&e, E_USERMSG, "usage: list_device_fprs (EMAIL|FSID)\n");
     }
 
     dstr_t id = get_arg(argv, 0);
@@ -264,7 +255,7 @@ static derr_t list_device_keys_action(MYSQL *sql, int argc, char **argv){
     derr_t e = E_OK;
 
     if(argc != 1){
-        ORIG(&e, E_VALUE, "usage: list_device_keys (EMAIL|FSID)\n");
+        ORIG(&e, E_USERMSG, "usage: list_device_keys (EMAIL|FSID)\n");
     }
 
     dstr_t id = get_arg(argv, 0);
@@ -290,7 +281,7 @@ static derr_t add_device_action(MYSQL *sql, int argc, char **argv){
     derr_t e = E_OK;
 
     if(argc != 1){
-        ORIG(&e, E_VALUE, "usage: add_device (EMAIL|FSID) < pubkey.pem\n");
+        ORIG(&e, E_USERMSG, "usage: add_device (EMAIL|FSID) < pubkey.pem\n");
     }
 
     dstr_t id = get_arg(argv, 0);
@@ -301,14 +292,10 @@ static derr_t add_device_action(MYSQL *sql, int argc, char **argv){
     DSTR_VAR(pubkey, SMSQL_PUBKEY_SIZE);
     PROP(&e, dstr_read_all(0, &pubkey) );
 
-    bool ok;
-    PROP(&e, add_device(sql, &uuid, &pubkey, &ok) );
+    DSTR_VAR(fpr, SMSQL_FPR_SIZE);
+    PROP(&e, add_device(sql, &uuid, &pubkey, &fpr) );
 
-    if(ok){
-        PFMT("SUCCESS\n");
-    }else{
-        FFMT(stderr, NULL, "FAILURE: WOULD EXCEED MAX DEVICES\n");
-    }
+    PFMT("%x\n", FD(&fpr));
 
     return e;
 }
@@ -317,7 +304,7 @@ static derr_t delete_device_action(MYSQL *sql, int argc, char **argv){
     derr_t e = E_OK;
 
     if(argc != 2){
-        ORIG(&e, E_VALUE, "usage: delete_device (EMAIL|FSID) FINGERPRINT\n");
+        ORIG(&e, E_USERMSG, "usage: delete_device (EMAIL|FSID) FINGERPRINT\n");
     }
 
     dstr_t id = get_arg(argv, 0);
@@ -339,7 +326,7 @@ static derr_t list_tokens_action(MYSQL *sql, int argc, char **argv){
     derr_t e = E_OK;
 
     if(argc != 1){
-        ORIG(&e, E_VALUE, "usage: list_tokens (EMAIL|FSID)\n");
+        ORIG(&e, E_USERMSG, "usage: list_tokens (EMAIL|FSID)\n");
     }
 
     dstr_t id = get_arg(argv, 0);
@@ -365,7 +352,7 @@ static derr_t add_token_action(MYSQL *sql, int argc, char **argv){
     derr_t e = E_OK;
 
     if(argc != 1){
-        ORIG(&e, E_VALUE, "usage: add_token (EMAIL|FSID)\n");
+        ORIG(&e, E_USERMSG, "usage: add_token (EMAIL|FSID)\n");
     }
 
     dstr_t id = get_arg(argv, 0);
@@ -387,7 +374,7 @@ static derr_t delete_token_action(MYSQL *sql, int argc, char **argv){
     derr_t e = E_OK;
 
     if(argc != 2){
-        ORIG(&e, E_VALUE, "usage: delete_token (EMAIL|FSID) TOKEN\n");
+        ORIG(&e, E_USERMSG, "usage: delete_token (EMAIL|FSID) TOKEN\n");
     }
 
     dstr_t id = get_arg(argv, 0);
@@ -412,34 +399,17 @@ static derr_t create_account_action(MYSQL *sql, int argc, char **argv){
     derr_t e = E_OK;
 
     if(argc != 2){
-        ORIG(&e, E_VALUE, "usage: create_account EMAIL PASSWORD\n");
+        ORIG(&e, E_USERMSG, "usage: create_account EMAIL PASSWORD\n");
     }
 
     dstr_t email = get_arg(argv, 0);
     dstr_t pass = get_arg(argv, 1);
 
-    // validate inputs
-    PROP(&e, valid_splintermail_email(&email) );
-    PROP(&e, valid_splintermail_password(&pass) );
-
-    // hash password
-    DSTR_VAR(salt, SMSQL_PASSWORD_SALT_SIZE);
-    PROP(&e, random_password_salt(&salt) );
-    DSTR_VAR(hash, SMSQL_PASSWORD_HASH_SIZE);
-    PROP(&e,
-        hash_password(&pass, SMSQL_PASSWORD_SHA512_ROUNDS, &salt, &hash)
-    );
-
     DSTR_VAR(uuid, SMSQL_UUID_SIZE);
-    bool ok;
 
-    PROP(&e, create_account(sql, &email, &hash, &ok, &uuid) );
+    PROP(&e, create_account(sql, &email, &pass, &uuid) );
 
-    if(ok){
-        PFMT("uuid: %x\n", FSID(&uuid));
-    }else{
-        FFMT(stderr, NULL, "FAILURE: EMAIL %x UNAVAILABLE\n", FD(&email));
-    }
+    PFMT("uuid: %x\n", FSID(&uuid));
 
     return e;
 }
@@ -448,7 +418,7 @@ static derr_t delete_account_action(MYSQL *sql, int argc, char **argv){
     derr_t e = E_OK;
 
     if(argc != 1){
-        ORIG(&e, E_VALUE, "usage: delete_account (EMAIL|FSID)\n");
+        ORIG(&e, E_USERMSG, "usage: delete_account (EMAIL|FSID)\n");
     }
 
     dstr_t id = get_arg(argv, 0);
@@ -467,7 +437,7 @@ static derr_t account_info_action(MYSQL *sql, int argc, char **argv){
     derr_t e = E_OK;
 
     if(argc != 1){
-        ORIG(&e, E_VALUE, "usage: account_info (EMAIL|FSID)\n");
+        ORIG(&e, E_USERMSG, "usage: account_info (EMAIL|FSID)\n");
     }
 
     dstr_t id = get_arg(argv, 0);
@@ -495,7 +465,7 @@ static derr_t validate_password_action(MYSQL *sql, int argc, char **argv){
     (void)sql;
 
     if(argc != 2){
-        ORIG(&e, E_VALUE, "usage: validate_password (EMAIL|FSID) PASSWORD\n");
+        ORIG(&e, E_USERMSG, "usage: validate_password (EMAIL|FSID) PASSWORD\n");
     }
 
     dstr_t id = get_arg(argv, 0);
@@ -517,7 +487,7 @@ static derr_t change_password_action(MYSQL *sql, int argc, char **argv){
     (void)sql;
 
     if(argc != 2){
-        ORIG(&e, E_VALUE, "usage: change_password (EMAIL|FSID) PASSWORD\n");
+        ORIG(&e, E_USERMSG, "usage: change_password (EMAIL|FSID) PASSWORD\n");
     }
 
     dstr_t id = get_arg(argv, 0);
@@ -570,13 +540,29 @@ cu_sql_lib:
     return e;
 }
 
+typedef struct {
+    dstr_t name;
+    action_f action;
+} action_link_t;
+
+// list all actions
+static action_link_t action_links[128];
+static size_t nactions = 0;
+
 static void print_help(FILE *f){
     fprintf(f,
         "smsql: cli interface to predefined splintermail queries\n"
         "\n"
         "usage: smsql [OPTIONS] CMD\n"
         "\n"
-        "where OPTIONS are one of:\n"
+        "where CMD is one of:\n"
+    );
+    for(size_t i = 0; i < nactions; i++){
+        DROP_CMD( FFMT(f, NULL, "     %x\n", FD(&action_links[i].name)) );
+    }
+    fprintf(f,
+        "\n"
+        "and where OPTIONS are one of:\n"
         "  -h --help\n"
         "  -d --debug\n"
         "  -s --socket PATH     default: /var/run/mysqld/mysqld.sock\n"
@@ -589,6 +575,39 @@ static void print_help(FILE *f){
 
 int main(int argc, char **argv){
     derr_t e = E_OK;
+
+    size_t max_actions = sizeof(action_links) / sizeof(*action_links);
+
+#define LINK_ACTION(str, act) do { \
+    if(nactions == max_actions){ \
+        fprintf(stderr, "too many actions!\n"); \
+        exit(1); \
+    } \
+    action_links[nactions++] = (action_link_t){ \
+        .name = DSTR_LIT(str), .action = act \
+    }; \
+} while (0)
+    LINK_ACTION("get_uuid", get_uuid_action);
+    LINK_ACTION("get_email", get_email_action);
+    LINK_ACTION("hash_password", hash_password_action);
+    LINK_ACTION("list_aliases", list_aliases_action);
+    LINK_ACTION("add_random_alias", add_random_alias_action);
+    LINK_ACTION("add_primary_alias", add_primary_alias_action);
+    LINK_ACTION("delete_alias", delete_alias_action);
+    LINK_ACTION("delete_all_aliases", delete_all_aliases_action);
+    LINK_ACTION("list_device_fprs", list_device_fprs_action);
+    LINK_ACTION("list_device_keys", list_device_keys_action);
+    LINK_ACTION("add_device", add_device_action);
+    LINK_ACTION("delete_device", delete_device_action);
+    LINK_ACTION("list_tokens", list_tokens_action);
+    LINK_ACTION("add_token", add_token_action);
+    LINK_ACTION("delete_token", delete_token_action);
+    LINK_ACTION("create_account", create_account_action);
+    LINK_ACTION("delete_account", delete_account_action);
+    LINK_ACTION("account_info", account_info_action);
+    LINK_ACTION("validate_password", validate_password_action);
+    LINK_ACTION("change_password", change_password_action);
+#undef LINK_ACTION
 
     // specify command line options
     opt_spec_t o_help = {'h', "help", false, OPT_RETURN_INIT};
@@ -639,47 +658,30 @@ int main(int argc, char **argv){
 
     action_f action = NULL;
 
-#define LINK_ACTION(str, act) \
-    if(dstr_cmp(&cmd, &DSTR_LIT(str)) == 0){ \
-        action = act; \
+    for(size_t i = 0; i < nactions; i++){
+        if(dstr_cmp(&cmd, &action_links[i].name) == 0){
+            action = action_links[i].action;
+        }
     }
-
-    LINK_ACTION("get_uuid", get_uuid_action);
-    LINK_ACTION("get_email", get_email_action);
-    LINK_ACTION("hash_password", hash_password_action);
-    LINK_ACTION("list_aliases", list_aliases_action);
-    LINK_ACTION("add_random_alias", add_random_alias_action);
-    LINK_ACTION("add_primary_alias", add_primary_alias_action);
-    LINK_ACTION("delete_alias", delete_alias_action);
-    LINK_ACTION("delete_all_aliases", delete_all_aliases_action);
-    LINK_ACTION("list_device_fprs", list_device_fprs_action);
-    LINK_ACTION("list_device_keys", list_device_keys_action);
-    LINK_ACTION("add_device", add_device_action);
-    LINK_ACTION("delete_device", delete_device_action);
-    LINK_ACTION("list_tokens", list_tokens_action);
-    LINK_ACTION("add_token", add_token_action);
-    LINK_ACTION("delete_token", delete_token_action);
-    LINK_ACTION("create_account", create_account_action);
-    LINK_ACTION("delete_account", delete_account_action);
-    LINK_ACTION("account_info", account_info_action);
-    LINK_ACTION("validate_password", validate_password_action);
-    LINK_ACTION("change_password", change_password_action);
 
     if(action == NULL){
         LOG_ERROR("command \"%x\" unknown\n", FD(&cmd));
         print_help(stderr);
         return 1;
     }
-#undef LINK_ACTION
 
-    PROP_GO(&e,
-        smsql(
-            o_sock.found ? &o_sock.val : NULL,
-            o_user.found ? &o_user.val : NULL,
-            o_pass.found ? &o_pass.val : NULL,
-            action, newargc - 2, &argv[2]
-        ),
-    fail);
+    derr_t e2 = smsql(
+        o_sock.found ? &o_sock.val : NULL,
+        o_user.found ? &o_user.val : NULL,
+        o_pass.found ? &o_pass.val : NULL,
+        action, newargc - 2, &argv[2]
+    );
+    CATCH(e2, E_USERMSG){
+        DSTR_VAR(usermsg, 256);
+        consume_e_usermsg(&e2, &usermsg);
+        FFMT(stderr, NULL, "%x\n", FD(&usermsg));
+        return 1;
+    }else PROP_VAR_GO(&e, &e2, fail);
 
     return 0;
 

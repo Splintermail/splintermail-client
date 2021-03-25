@@ -15,6 +15,7 @@
 #include "libdstr/libdstr.h"
 #include "server/mysql_util/mysql_util.h"
 #include "server/libsmsql.h"
+#include "server/badbadbad_alert.h"
 
 #include "smphp.h"
 
@@ -31,10 +32,19 @@ ZEND_DECLARE_MODULE_GLOBALS(smphp)
 PHP_INI_BEGIN()
     STD_PHP_INI_ENTRY(
         "smphp.sql_sock",
-        "/var/run/sql/sock",
+        "/var/run/mysqld/mysql.sock",
         PHP_INI_SYSTEM,
         OnUpdateString,
         sql_sock,
+        zend_smphp_globals,
+        smphp_globals
+    )
+    STD_PHP_INI_ENTRY(
+        "smphp.server_id",
+        "-1",
+        PHP_INI_SYSTEM,
+        OnUpdateLong,
+        server_id,
         zend_smphp_globals,
         smphp_globals
     )
@@ -55,7 +65,7 @@ static zend_string *print_error(derr_t e_in){
 
     DSTR_STATIC(line_prefix, "ERROR: ");
     if(
-        e_in.type == E_PARAM
+        e_in.type == E_USERMSG
      && e_in.msg.data != NULL
      && dstr_beginswith(&e_in.msg, &line_prefix))
     {
@@ -75,12 +85,11 @@ static zend_string *print_error(derr_t e_in){
 #ifdef BUILD_DEBUG
     // debug builds: dump errors to stderr
     DUMP(e_in);
-#else
-    // production builds: report errors via badbadbad alerts
-    DSTR_VAR(summary, 128);
-    DROP_CMD( FMT(&e, "smphp: %x", FD(e_in->dstr)) );
-    badbadbad_alert(&summary, e_in.msg);
 #endif
+    // production AND debug builds: report errors via badbadbad alerts
+    DSTR_VAR(summary, 128);
+    DROP_CMD( FMT(&summary, "smphp: %x", FD(&e_in.msg)) );
+    badbadbad_alert(&summary, &e_in.msg);
     DROP_VAR(&e_in);
     /* just return NULL; the php code has to check for NULL values anyway,
        so there is no point in providing a generic fallback in two places */
@@ -88,39 +97,51 @@ static zend_string *print_error(derr_t e_in){
 }
 
 
-static derr_t _create_account(const dstr_t *email, const dstr_t *pass){
+static derr_t _sql_init(MYSQL *sql){
     derr_t e = E_OK;
 
-    // apply gateway checks
-    PROP(&e, valid_splintermail_email(email) );
-    PROP(&e, valid_splintermail_password(pass) );
-
-    MYSQL sql;
-    MYSQL* mret = mysql_init(&sql);
+    MYSQL* mret = mysql_init(sql);
     if(!mret){
         ORIG(&e, E_SQL, "unable to init mysql object");
     }
 
+    // connect with php.ini's sql_sock setting
     char *sql_sock = (char *)smphp_globals.sql_sock;
     dstr_t sock;
     DSTR_WRAP(sock, sql_sock, strlen(sql_sock), true);
-    PROP_GO(&e, sql_connect_unix(&sql, NULL, NULL, &sock), cu_sql);
+    PROP_GO(&e, sql_connect_unix(sql, NULL, NULL, &sock), fail);
 
-    DSTR_VAR(salt, SMSQL_PASSWORD_SALT_SIZE);
-    PROP_GO(&e, random_password_salt(&salt), cu_sql);
+    return e;
 
-    DSTR_VAR(hash, SMSQL_PASSWORD_HASH_SIZE);
-    PROP_GO(&e,
-        hash_password(pass, SMSQL_PASSWORD_SHA512_ROUNDS, &salt, &hash),
-    cu_sql);
+fail:
+    mysql_close(sql);
+    return e;
+}
 
-    bool ok;
+
+// consume a derr_t and report it via badbadbad
+static void _drop(derr_t e_in){
+    if(!is_error(e_in)) return;
+#ifdef BUILD_DEBUG
+    // debug builds: dump errors to stderr
+    DUMP(e_in);
+#endif
+    // production AND debug builds: report errors via badbadbad alerts
+    DSTR_VAR(summary, 128);
+    DROP_CMD( FMT(&summary, "smphp: %x", FD(&e_in.msg)) );
+    badbadbad_alert(&summary, &e_in.msg);
+    DROP_VAR(&e_in);
+}
+
+
+static derr_t _create_account(const dstr_t *email, const dstr_t *pass){
+    derr_t e = E_OK;
+
+    MYSQL sql;
+    PROP(&e, _sql_init(&sql) );
+
     DSTR_VAR(uuid, SMSQL_UUID_SIZE);
-    PROP_GO(&e, create_account(&sql, email, &hash, &ok, &uuid), cu_sql);
-
-    if(!ok){
-        ORIG_GO(&e, E_PARAM, "username not available", cu_sql);
-    }
+    PROP_GO(&e, create_account(&sql, email, pass, &uuid), cu_sql);
 
 cu_sql:
     mysql_close(&sql);
@@ -132,31 +153,129 @@ static derr_t _login(const dstr_t *email, const dstr_t *pass, dstr_t *uuid){
     derr_t e = E_OK;
 
     MYSQL sql;
-    MYSQL* mret = mysql_init(&sql);
-    if(!mret){
-        ORIG(&e, E_SQL, "unable to init mysql object");
-    }
+    PROP(&e, _sql_init(&sql) );
 
-    char *sql_sock = (char *)smphp_globals.sql_sock;
-    dstr_t sock;
-    DSTR_WRAP(sock, sql_sock, strlen(sql_sock), true);
-    PROP_GO(&e, sql_connect_unix(&sql, NULL, NULL, &sock), cu_sql);
+    PROP_GO(&e, validate_login(&sql, email, pass, uuid), cu_sql);
 
+cu_sql:
+    mysql_close(&sql);
+
+    return e;
+}
+
+static derr_t _add_session_auth(
+    int server_id, const dstr_t *session_id, const dstr_t *uuid
+){
+    derr_t e = E_OK;
+
+    MYSQL sql;
+    PROP(&e, _sql_init(&sql) );
+
+    PROP_GO(&e, add_session_auth(&sql, server_id, session_id, uuid), cu_sql);
+
+cu_sql:
+    mysql_close(&sql);
+
+    return e;
+}
+
+
+static derr_t _validate_session_auth(
+    int server_id, const dstr_t *session_id, dstr_t *email
+){
+    derr_t e = E_OK;
+
+    MYSQL sql;
+    PROP(&e, _sql_init(&sql) );
+
+    // validate session
+    DSTR_VAR(uuid, SMSQL_UUID_SIZE);
+    PROP_GO(&e,
+        validate_session_auth(&sql, server_id, session_id, &uuid),
+    cu_sql);
+
+    // lookup username (useful to php)
     bool ok;
-    PROP_GO(&e, get_uuid_for_email(&sql, email, uuid, &ok), cu_sql);
+    PROP_GO(&e, get_email_for_uuid(&sql, &uuid, email, &ok), cu_sql);
     if(!ok){
-        ORIG_GO(&e, E_PARAM, "invalid credentials", cu_sql);
-    }
-
-    PROP_GO(&e, validate_user_password(&sql, uuid, pass, &ok), cu_sql);
-    if(!ok){
-        ORIG_GO(&e, E_PARAM, "invalid credentials", cu_sql);
+        // this is possible in race conditions but it's more likely a bug
+        TRACE(&e, "session_id:%x uuid:%x", FD(session_id), FSID(&uuid));
+        ORIG_GO(&e, E_INTERNAL, "session but no account was found", cu_sql);
     }
 
 cu_sql:
     mysql_close(&sql);
 
     return e;
+}
+
+static derr_t _session_logout(int server_id, const dstr_t *session_id){
+    derr_t e = E_OK;
+
+    MYSQL sql;
+    PROP(&e, _sql_init(&sql) );
+
+    PROP_GO(&e, session_logout(&sql, server_id, session_id), cu_sql);
+
+cu_sql:
+    mysql_close(&sql);
+
+    return e;
+}
+
+
+static derr_t _new_csrf(
+    int server_id, const dstr_t *session_id, dstr_t *csrf
+){
+    derr_t e = E_OK;
+
+    MYSQL sql;
+    PROP(&e, _sql_init(&sql) );
+
+    PROP_GO(&e, new_csrf(&sql, server_id, session_id, csrf), cu_sql);
+
+cu_sql:
+    mysql_close(&sql);
+
+    return e;
+}
+
+// $error = smphp_valid_email(email: string)
+// $error === NULL means internal server error
+// $error !== "" means $error is a user-facing error
+// otherwise success
+PHP_FUNCTION(smphp_valid_email){
+    dstr_t email;
+
+    ZEND_PARSE_PARAMETERS_START(1, 1)
+        Z_PARAM_STRING(email.data, email.len)
+    ZEND_PARSE_PARAMETERS_END();
+
+    zend_string *error = print_error( valid_splintermail_email(&email) );
+    if(error != NULL){
+        RETURN_STR(error);
+    }
+
+    return;
+}
+
+// $error = smphp_valid_password(password: string)
+// $error === NULL means internal server error
+// $error !== "" means $error is a user-facing error
+// otherwise success
+PHP_FUNCTION(smphp_valid_password){
+    dstr_t password;
+
+    ZEND_PARSE_PARAMETERS_START(1, 1)
+        Z_PARAM_STRING(password.data, password.len)
+    ZEND_PARSE_PARAMETERS_END();
+
+    zend_string *error = print_error( valid_splintermail_password(&password) );
+    if(error != NULL){
+        RETURN_STR(error);
+    }
+
+    return;
 }
 
 // $error = smphp_create_account(email: string, pass: string)
@@ -208,7 +327,7 @@ PHP_FUNCTION(smphp_login){
     // write the UUID first so we know if to write the error string or not.
     zend_string *zuuid = zend_string_init(uuid.data, uuid.len, false);
     if(!zuuid){
-        // let $error and $hash be NULL by returning now.
+        // let $error and $uuid be NULL by returning now.
         return;
     }
 
@@ -219,6 +338,102 @@ PHP_FUNCTION(smphp_login){
     if(error != NULL){
         add_index_str(return_value, 1, error);
     }
+    return;
+}
+
+// smphp_add_session_auth(server_id: int, session_id: string, uuid: string)
+// (no return value)
+PHP_FUNCTION(smphp_add_session_auth){
+    long server_id;
+    dstr_t session_id;
+    dstr_t uuid;
+
+    ZEND_PARSE_PARAMETERS_START(3, 3)
+        Z_PARAM_LONG(server_id)
+        Z_PARAM_STRING(session_id.data, session_id.len)
+        Z_PARAM_STRING(uuid.data, uuid.len)
+    ZEND_PARSE_PARAMETERS_END();
+
+    if(server_id > INT_MAX || server_id < INT_MIN) return;
+
+    _drop( _add_session_auth((int)server_id, &session_id, &uuid) );
+}
+
+// smphp_validate_session_auth(
+//     server_id: int, session_id: string
+// ) -> email: Optional[string]
+PHP_FUNCTION(smphp_validate_session_auth){
+    long server_id;
+    dstr_t session_id;
+
+    ZEND_PARSE_PARAMETERS_START(2, 2)
+        Z_PARAM_LONG(server_id)
+        Z_PARAM_STRING(session_id.data, session_id.len)
+    ZEND_PARSE_PARAMETERS_END();
+
+    if(server_id > INT_MAX || server_id < INT_MIN) return;
+
+    derr_t e = E_OK;
+
+    DSTR_VAR(email, SMSQL_EMAIL_SIZE);
+    derr_t e2 = _validate_session_auth((int)server_id, &session_id, &email);
+    CATCH(e2, E_USERMSG){
+        // user is not logged in; drop the user message and return NULL
+        DROP_VAR(&e2);
+        // return NULL
+        return;
+    }else PROP_VAR_GO(&e, &e2, fail);
+
+    zend_string *out = zend_string_init(email.data, email.len, false);
+    if(out != NULL){
+        RETURN_STR(out);
+    }
+
+fail:
+    _drop(e);
+}
+
+// smphp_session_logout(server_id: int, session_id: string)
+// (no return value)
+PHP_FUNCTION(smphp_session_logout){
+    long server_id;
+    dstr_t session_id;
+
+    ZEND_PARSE_PARAMETERS_START(2, 2)
+        Z_PARAM_LONG(server_id)
+        Z_PARAM_STRING(session_id.data, session_id.len)
+    ZEND_PARSE_PARAMETERS_END();
+
+    if(server_id > INT_MAX || server_id < INT_MIN) return;
+
+    _drop( _session_logout((int)server_id, &session_id) );
+}
+
+
+// smphp_new_csrf(server_id: int, session_id: string) -> string
+PHP_FUNCTION(smphp_new_csrf){
+    long server_id;
+    dstr_t session_id;
+
+    ZEND_PARSE_PARAMETERS_START(2, 2)
+        Z_PARAM_LONG(server_id)
+        Z_PARAM_STRING(session_id.data, session_id.len)
+    ZEND_PARSE_PARAMETERS_END();
+
+    if(server_id > INT_MAX || server_id < INT_MIN) return;
+
+    derr_t e = E_OK;
+
+    DSTR_VAR(csrf, SMSQL_CSRF_SIZE);
+    PROP_GO(&e, _new_csrf((int)server_id, &session_id, &csrf), fail);
+
+    zend_string *out = zend_string_init(csrf.data, csrf.len, false);
+    if(out != NULL){
+        RETURN_STR(out);
+    }
+
+fail:
+    _drop(e);
     return;
 }
 
@@ -249,6 +464,14 @@ PHP_MINFO_FUNCTION(smphp){
     php_info_print_table_end();
 }
 
+ZEND_BEGIN_ARG_INFO(arginfo_smphp_valid_email, 1)
+    ZEND_ARG_INFO(0, email)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_INFO(arginfo_smphp_valid_password, 1)
+    ZEND_ARG_INFO(0, password)
+ZEND_END_ARG_INFO()
+
 ZEND_BEGIN_ARG_INFO(arginfo_smphp_create_account, 2)
     ZEND_ARG_INFO(0, email)
     ZEND_ARG_INFO(0, pass)
@@ -259,11 +482,40 @@ ZEND_BEGIN_ARG_INFO(arginfo_smphp_login, 2)
     ZEND_ARG_INFO(0, pass)
 ZEND_END_ARG_INFO()
 
+ZEND_BEGIN_ARG_INFO(arginfo_smphp_add_session_auth, 3)
+    ZEND_ARG_INFO(0, server_id)
+    ZEND_ARG_INFO(0, session_id)
+    ZEND_ARG_INFO(0, uuid)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_INFO(arginfo_smphp_validate_session_auth, 2)
+    ZEND_ARG_INFO(0, server_id)
+    ZEND_ARG_INFO(0, session_id)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_INFO(arginfo_smphp_session_logout, 2)
+    ZEND_ARG_INFO(0, server_id)
+    ZEND_ARG_INFO(0, session_id)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_INFO(arginfo_smphp_new_csrf, 2)
+    ZEND_ARG_INFO(0, server_id)
+    ZEND_ARG_INFO(0, session_id)
+ZEND_END_ARG_INFO()
+
+#define SMPHP_FE(fn) PHP_FE(smphp_ ## fn, arginfo_smphp_ ## fn)
 static const zend_function_entry smphp_functions[] = {
-    PHP_FE(smphp_create_account,  arginfo_smphp_create_account)
-    PHP_FE(smphp_login,           arginfo_smphp_login)
+    SMPHP_FE(valid_email)
+    SMPHP_FE(valid_password)
+    SMPHP_FE(create_account)
+    SMPHP_FE(login)
+    SMPHP_FE(add_session_auth)
+    SMPHP_FE(validate_session_auth)
+    SMPHP_FE(session_logout)
+    SMPHP_FE(new_csrf)
     PHP_FE_END
 };
+#undef SMPHP_FE
 
 zend_module_entry smphp_module_entry = {
     STANDARD_MODULE_HEADER,

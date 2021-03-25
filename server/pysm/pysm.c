@@ -28,11 +28,16 @@ REGISTER_ERROR_TYPE(E_NORAISE, "NORAISE");
 PyObject* PyInit_pysm(void);
 
 static PyObject *pysm_error;
+static PyObject *user_error;
 
 // raise a python error from a derr_t.
 static void raise_derr(derr_t *e){
     if(e->type == E_NORAISE || PyErr_Occurred() != NULL){
         // ignore E_NORAISE and prefer the already-set error if there is one
+    }else if(e->type == E_USERMSG){
+        DSTR_VAR(buf, 256);
+        consume_e_usermsg(e, &buf);
+        PyErr_SetString(user_error, buf.data);
     }else{
         PyErr_SetString(
             pysm_error, e->msg.data ? e->msg.data : "empty e.msg"
@@ -239,11 +244,10 @@ static PyObject *py_smsql_add_random_alias(
     PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
 
     DSTR_VAR(alias, SMSQL_EMAIL_SIZE);
-    bool ok;
 
-    PROP_GO(&e, add_random_alias(&self->sql, uuid, &alias, &ok), fail);
+    PROP_GO(&e, add_random_alias(&self->sql, uuid, &alias), fail);
 
-    return BUILD_OPTIONAL_STRING(alias, ok);
+    return BUILD_STRING(alias);
 
 fail:
     raise_derr(&e);
@@ -265,11 +269,9 @@ static PyObject *py_smsql_add_primary_alias(
     };
     PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
 
-    bool ok;
+    PROP_GO(&e, add_primary_alias(&self->sql, uuid, alias), fail);
 
-    PROP_GO(&e, add_primary_alias(&self->sql, uuid, alias, &ok), fail);
-
-    RETURN_BOOL(ok);
+    Py_RETURN_NONE;
 
 fail:
     raise_derr(&e);
@@ -459,10 +461,10 @@ static PyObject *py_smsql_add_device(
     };
     PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
 
-    bool ok;
-    PROP_GO(&e, add_device(&self->sql, uuid, pubkey, &ok), fail);
+    DSTR_VAR(fpr, SMSQL_FPR_SIZE);
+    PROP_GO(&e, add_device(&self->sql, uuid, pubkey, &fpr), fail);
 
-    RETURN_BOOL(ok);
+    return BUILD_STRING(fpr);
 
 fail:
     raise_derr(&e);
@@ -571,8 +573,8 @@ static PyObject *py_smsql_add_token(
     PROP_GO(&e, add_token(&self->sql, uuid, &token, &secret), fail);
 
     // I = unsigned int
-    // s# = string with length
-    return Py_BuildValue("(I, s#)", token, secret.data, (Py_ssize_t)secret.len);
+    // y# = bytes with length
+    return Py_BuildValue("(I, y#)", token, secret.data, (Py_ssize_t)secret.len);
 
 fail:
     raise_derr(&e);
@@ -603,6 +605,52 @@ fail:
 }
 
 // misc
+
+static PyObject *py_smsql_create_account(
+    py_smsql_t *self, PyObject *args, PyObject *kwds
+){
+    derr_t e = E_OK;
+
+    dstr_t _email;
+    const dstr_t *email;
+    dstr_t _pass;
+    const dstr_t *pass;
+    py_args_t spec = {
+        pyarg_dstr(&_email, &email, "email"),
+        pyarg_dstr(&_pass, &pass, "pass"),
+    };
+    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+
+    DSTR_VAR(uuid, SMSQL_UUID_SIZE);
+    PROP_GO(&e, create_account(&self->sql, email, pass, &uuid), fail);
+
+    return BUILD_BYTES(uuid);
+
+fail:
+    raise_derr(&e);
+    return NULL;
+}
+
+static PyObject *py_smsql_delete_account(
+    py_smsql_t *self, PyObject *args, PyObject *kwds
+){
+    derr_t e = E_OK;
+
+    dstr_t _uuid;
+    const dstr_t *uuid;
+    py_args_t spec = {
+        pyarg_dstr(&_uuid, &uuid, "uuid"),
+    };
+    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+
+    PROP_GO(&e, delete_account(&self->sql, uuid), fail);
+
+    Py_RETURN_NONE;
+
+fail:
+    raise_derr(&e);
+    return NULL;
+}
 
 static PyObject *py_smsql_account_info(
     py_smsql_t *self, PyObject *args, PyObject *kwds
@@ -635,25 +683,58 @@ fail:
     return NULL;
 }
 
-static PyObject *py_smsql_validate_user_password(
+static PyObject *py_smsql_validate_login(
     py_smsql_t *self, PyObject *args, PyObject *kwds
 ){
     derr_t e = E_OK;
 
-    dstr_t _uuid;
-    const dstr_t *uuid;
+    dstr_t _email;
+    const dstr_t *email;
     dstr_t _pass;
     const dstr_t *pass;
     py_args_t spec = {
-        pyarg_dstr(&_uuid, &uuid, "uuid"),
+        pyarg_dstr(&_email, &email, "email"),
         pyarg_dstr(&_pass, &pass, "pass"),
     };
     PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
 
-    bool ok;
-    PROP_GO(&e, validate_user_password(&self->sql, uuid, pass, &ok), fail);
+    DSTR_VAR(uuid, SMSQL_UUID_SIZE);
+    PROP_GO(&e, validate_login(&self->sql, email, pass, &uuid), fail);
 
-    RETURN_BOOL(ok);
+    return BUILD_BYTES(uuid);
+
+fail:
+    raise_derr(&e);
+    return NULL;
+}
+
+static PyObject *py_smsql_validate_token_auth(
+    py_smsql_t *self, PyObject *args, PyObject *kwds
+){
+    derr_t e = E_OK;
+
+    unsigned int token;
+    uint64_t nonce;
+    dstr_t _payload;
+    const dstr_t *payload;
+    dstr_t _signature;
+    const dstr_t *signature;
+    py_args_t spec = {
+        pyarg_uint(&token, "token"),
+        pyarg_uint64(&nonce, "nonce"),
+        pyarg_dstr(&_payload, &payload, "payload"),
+        pyarg_dstr(&_signature, &signature, "signature"),
+    };
+    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+
+    DSTR_VAR(uuid, SMSQL_UUID_SIZE);
+    PROP_GO(&e,
+        validate_token_auth(
+            &self->sql, token, nonce, payload, signature, &uuid
+        ),
+    fail);
+
+    return BUILD_BYTES(uuid);
 
 fail:
     raise_derr(&e);
@@ -683,6 +764,57 @@ fail:
     raise_derr(&e);
     return NULL;
 }
+
+static PyObject *py_smsql_validate_session_auth(
+    py_smsql_t *self, PyObject *args, PyObject *kwds
+){
+    derr_t e = E_OK;
+
+    int server_id;
+    dstr_t _session_id;
+    const dstr_t *session_id;
+    py_args_t spec = {
+        pyarg_int(&server_id, "server_id"),
+        pyarg_dstr(&_session_id, &session_id, "session_id"),
+    };
+    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+
+    DSTR_VAR(uuid, SMSQL_UUID_SIZE);
+    PROP_GO(&e,
+        validate_session_auth(&self->sql, server_id, session_id, &uuid),
+    fail);
+
+    return BUILD_BYTES(uuid);
+
+fail:
+    raise_derr(&e);
+    return NULL;
+}
+
+static PyObject *py_smsql_validate_csrf(
+    py_smsql_t *self, PyObject *args, PyObject *kwds
+){
+    derr_t e = E_OK;
+
+    dstr_t _session_id;
+    const dstr_t *session_id;
+    dstr_t _csrf;
+    const dstr_t *csrf;
+    py_args_t spec = {
+        pyarg_dstr(&_session_id, &session_id, "session_id"),
+        pyarg_dstr(&_csrf, &csrf, "csrf"),
+    };
+    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+
+    PROP_GO(&e, validate_csrf(&self->sql, session_id, csrf), fail);
+
+    Py_RETURN_NONE;
+
+fail:
+    raise_derr(&e);
+    return NULL;
+}
+
 
 ////////
 
@@ -727,20 +859,20 @@ static PyMethodDef py_smsql_methods[] = {
         .ml_name = "list_aliases",
         .ml_meth = (PyCFunction)(void*)py_smsql_list_aliases,
         .ml_flags = METH_VARARGS | METH_KEYWORDS,
-        .ml_doc = "List aliases for a uuid.",
+        .ml_doc = "List aliases for a uuid.  "
+                  "Returns list of (alias:str, paid:bool) tuples.",
     },
     {
         .ml_name = "add_random_alias",
         .ml_meth = (PyCFunction)(void*)py_smsql_add_random_alias,
         .ml_flags = METH_VARARGS | METH_KEYWORDS,
-        .ml_doc = "Add a random alias for a uuid.  "
-                  "Returns the alias, or None if max aliases was reached.",
+        .ml_doc = "Add a random alias for a uuid or raises pysm.UserError.",
     },
     {
         .ml_name = "add_primary_alias",
         .ml_meth = (PyCFunction)(void*)py_smsql_add_primary_alias,
         .ml_flags = METH_VARARGS | METH_KEYWORDS,
-        .ml_doc = "Add a primary alias for a uuid.  Returns True on success.",
+        .ml_doc = "Add a primary alias for a uuid or raises pysm.UserError.",
     },
     {
         .ml_name = "delete_alias",
@@ -771,7 +903,7 @@ static PyMethodDef py_smsql_methods[] = {
         .ml_meth = (PyCFunction)(void*)py_smsql_add_device,
         .ml_flags = METH_VARARGS | METH_KEYWORDS,
         .ml_doc = "Add a new device from a pem-encoded public key.  Returns "
-                  "True on success or False if max devices was reached."
+                  "fingerprint or raises pysm.UserError."
     },
     {
         .ml_name = "delete_device",
@@ -799,6 +931,24 @@ static PyMethodDef py_smsql_methods[] = {
         .ml_doc = "Delete a token.  Returns None.",
     },
     {
+        .ml_name = "create_account",
+        .ml_meth = (PyCFunction)(void*)py_smsql_create_account,
+        .ml_flags = METH_VARARGS | METH_KEYWORDS,
+        .ml_doc =
+            "create_account(\n"
+            "    email:str, password:str\n"
+            ") -> uuid:bytes\n"
+            "Creates an account, applying all quality checks.\n"
+            "\n"
+            "Raises pysm.UserError in failure",
+    },
+    {
+        .ml_name = "delete_account",
+        .ml_meth = (PyCFunction)(void*)py_smsql_delete_account,
+        .ml_flags = METH_VARARGS | METH_KEYWORDS,
+        .ml_doc = "delete_account(uuid:bytes) -> None",
+    },
+    {
         .ml_name = "account_info",
         .ml_meth = (PyCFunction)(void*)py_smsql_account_info,
         .ml_flags = METH_VARARGS | METH_KEYWORDS,
@@ -806,10 +956,29 @@ static PyMethodDef py_smsql_methods[] = {
                   "num_primary_aliases, num_random_aliases).",
     },
     {
-        .ml_name = "validate_user_password",
-        .ml_meth = (PyCFunction)(void*)py_smsql_validate_user_password,
+        .ml_name = "validate_login",
+        .ml_meth = (PyCFunction)(void*)py_smsql_validate_login,
         .ml_flags = METH_VARARGS | METH_KEYWORDS,
-        .ml_doc = "Validate a user's password.  Returns a bool.",
+        .ml_doc = "validate_login(email:str, pass:str) -> uuid:bytes\n"
+                  "Raises pysm.UserError on failure.",
+    },
+    {
+        .ml_name = "validate_token_auth",
+        .ml_meth = (PyCFunction)(void*)py_smsql_validate_token_auth,
+        .ml_flags = METH_VARARGS | METH_KEYWORDS,
+        .ml_doc =
+            "validate_token_auth(\n"
+            "    token:int,\n"
+            "    nonce:int,\n"
+            "    payload:bytes,\n"
+            "    signature:bytes\n"
+            ") -> uuid:bytes\n"
+            "\n"
+            "checks signature of payload against secret for token, but some "
+            "higher-level checks like \"does the path in the payload match "
+            "the API path\" are the responsibility of the gateway.\n"
+            "\n"
+            "Raises pysm.UserError on failure.",
     },
     {
         .ml_name = "change_password",
@@ -817,6 +986,28 @@ static PyMethodDef py_smsql_methods[] = {
         .ml_flags = METH_VARARGS | METH_KEYWORDS,
         .ml_doc = "Change a user's password.  Returns None.",
     },
+    {
+        .ml_name = "validate_session_auth",
+        .ml_meth = (PyCFunction)(void*)py_smsql_validate_session_auth,
+        .ml_flags = METH_VARARGS | METH_KEYWORDS,
+        .ml_doc =
+            "validate_session_auth(\n"
+            "    server_id:int,\n"
+            "    session_id:string,\n"
+            ") -> uuid: bytes\n"
+            "Check if a session is authenticated and update last_seen.  "
+            "session_id is just the SPLINTER_SESSION token value.  "
+            "Raises pysm.UserError on failure.",
+    },
+    {
+        .ml_name = "validate_csrf",
+        .ml_meth = (PyCFunction)(void*)py_smsql_validate_csrf,
+        .ml_flags = METH_VARARGS | METH_KEYWORDS,
+        .ml_doc =
+            "validate_csrf(session_id:string, csrf:string) -> None\n"
+            "Raises pysm.UserError on failure.",
+    },
+
     {NULL}, // sentinel
 };
 
@@ -876,6 +1067,50 @@ static PyObject *pysm_to_uuid(PyObject *self, PyObject *args, PyObject *kwds){
     PROP_GO(&e, to_uuid(fsid, &uuid), fail);
 
     return BUILD_BYTES(uuid);
+
+fail:
+    raise_derr(&e);
+    return NULL;
+}
+
+static PyObject *pysm_valid_email(
+    PyObject *self, PyObject *args, PyObject *kwds
+){
+    (void)self;
+    derr_t e = E_OK;
+
+    dstr_t _email;
+    const dstr_t *email;
+    py_args_t spec = {
+        pyarg_dstr(&_email, &email, "email"),
+    };
+    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+
+    PROP_GO(&e, valid_splintermail_email(email), fail);
+
+    Py_RETURN_NONE;
+
+fail:
+    raise_derr(&e);
+    return NULL;
+}
+
+static PyObject *pysm_valid_password(
+    PyObject *self, PyObject *args, PyObject *kwds
+){
+    (void)self;
+    derr_t e = E_OK;
+
+    dstr_t _password;
+    const dstr_t *password;
+    py_args_t spec = {
+        pyarg_dstr(&_password, &password, "password"),
+    };
+    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+
+    PROP_GO(&e, valid_splintermail_password(password), fail);
+
+    Py_RETURN_NONE;
 
 fail:
     raise_derr(&e);
@@ -1008,6 +1243,18 @@ static PyMethodDef pysm_methods[] = {
         .ml_flags = METH_VARARGS | METH_KEYWORDS,
         .ml_doc = "get a uuid from an fsid",
     },
+    {
+        .ml_name = "valid_email",
+        .ml_meth = ARG_KWARG_FN_CAST(pysm_valid_email),
+        .ml_flags = METH_VARARGS | METH_KEYWORDS,
+        .ml_doc = "Raises a pysm.UserError if email is invalid.",
+    },
+    {
+        .ml_name = "valid_password",
+        .ml_meth = ARG_KWARG_FN_CAST(pysm_valid_password),
+        .ml_flags = METH_VARARGS | METH_KEYWORDS,
+        .ml_doc = "Raises a pysm.UserError if password is invalid.",
+    },
     {0},  // sentinel
 };
 
@@ -1048,8 +1295,15 @@ PyObject* PyInit_pysm(void){
     ret = PyModule_AddObject(module, "PysmError", pysm_error);
     if(ret < 0) goto fail_pysm_error;
 
+    user_error = PyErr_NewException("pysm.UserError", NULL, NULL);
+    Py_INCREF(user_error);
+    ret = PyModule_AddObject(module, "UserError", user_error);
+    if(ret < 0) goto fail_user_error;
+
     return module;
 
+fail_user_error:
+    Py_DECREF((PyObject*)&user_error);
 fail_pysm_error:
     Py_DECREF((PyObject*)&pysm_error);
 fail_py_smsql:

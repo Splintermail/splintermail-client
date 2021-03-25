@@ -13,24 +13,35 @@ macro(add_libsmsql asan)
     target_link_libraries("libsmsql${asan}" PUBLIC "mysql_util${asan}" "petname${asan}" crypt)
 endmacro()
 
+macro(add_badbadbad_alert asan)
+    add_library("badbadbad_alert${asan}" badbadbad_alert.c)
+    if("${asan}" STREQUAL "_noasan")
+        default_compile_options("badbadbad_alert${asan}" FALSE)
+    else()
+        default_compile_options("badbadbad_alert${asan}" TRUE)
+    endif()
+    # badbadbad_alert needs non-strict aliasing due to sockaddr_info business
+    source_compile_options(badbadbad_alert.c -fno-strict-aliasing)
+    define_file_logname_for_target("badbadbad_alert${asan}")
+endmacro()
+
 add_libsmsql("")
+add_badbadbad_alert("")
 
 if("${CMAKE_BUILD_TYPE}" STREQUAL "debug")
     # rebuild without asan
     add_libsmsql("_noasan")
+    add_badbadbad_alert("_noasan")
 else()
     # release builds already have no asan
     add_library(libsmsql_noasan ALIAS libsmsql)
+    add_library(badbadbad_alert_noasan ALIAS badbadbad_alert)
 endif()
 
 add_executable(smsql smsql.c)
 default_compile_options(smsql TRUE)
 define_file_logname_for_target(smsql)
 target_link_libraries(smsql PUBLIC libsmsql)
-
-add_obj_tgt(badbadbad_alert.c badbadbad_alert)
-# badbadbad_alert needs non-strict aliasing due to sockaddr_info business
-target_compile_options(badbadbad_alert_o PRIVATE -fno-strict-aliasing)
 
 add_executable(olt olt.c)
 default_compile_options(olt TRUE)
