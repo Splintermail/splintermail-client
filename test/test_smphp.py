@@ -66,14 +66,20 @@ class SMPHP:
 
     def create_account(self, email, password):
         script = r"""
-            $error = smphp_create_account("%s", "%s");
+            list($uuid, $error) = smphp_create_account("%s", "%s");
+            print(base64_encode($uuid));
+            print("\n");
             if($error === NULL){
                 print("internal server error");
             }else{
                 print($error);
             }
         """%(email, password)
-        return self.run(script).decode('utf8')
+        lines = self.run(script).split(b"\n", 2)
+        assert len(lines) == 2, f"expected 2 lines but got {len(lines)}"
+        uuid = base64.b64decode(lines[0])
+        error = lines[1].decode('utf8')
+        return uuid, error
 
     def login(self, email, password):
         script = r"""
@@ -104,13 +110,13 @@ def run_tests(php, smsql):
 
     # login in to an account that does not exist
     _, error = php.login(email, password)
-    assert error == "invalid credentials", error
+    assert error == "bad credentials", error
 
     # create a new account without conflict
-    error = php.create_account(email, password)
+    uuid, error = php.create_account(email, password)
     assert error == "", error
     uuid_exp = smsql.get_uuid(email)
-    assert uuid_exp is not None, "account did not get created"
+    assert uuid == uuid_exp, "account did not get created properly"
 
     # login in to an account correctly
     uuid, error = php.login(email, password)
@@ -120,38 +126,38 @@ def run_tests(php, smsql):
 
     # login in to an account with the wrong password
     _, error = php.login(email, "")
-    assert error == "invalid credentials", error
+    assert error == "bad credentials", error
 
     # create an account with a username conflict
-    error = php.create_account(email, password)
+    _, error = php.create_account(email, password)
     assert error == "username not available", error
 
     # create an account with an alias conflict
     alias = smsql.add_random_alias(uuid)
     assert alias is not None
-    error = php.create_account(alias, password)
+    _, error = php.create_account(alias, password)
     assert error == "username not available", error
 
     # create an account with invalid email
-    error = php.create_account("a"*200 + "@splintermail.com", password)
+    _, error = php.create_account("a"*200 + "@splintermail.com", password)
     assert error == "email too long", error
-    error = php.create_account("asdf", password)
+    _, error = php.create_account("asdf", password)
     assert error == "email must end in @splintermail.com", error
-    error = php.create_account("@splintermail.com", password)
+    _, error = php.create_account("@splintermail.com", password)
     assert error == "empty username", error
-    error = php.create_account("ásdf@splintermail.com", password)
+    _, error = php.create_account("ásdf@splintermail.com", password)
     assert error == "invalid characters in email", error
 
     # create an account with invalid password
-    error = php.create_account(email, "a"*73)
+    _, error = php.create_account(email, "a"*73)
     assert error == "password must not exceed 72 characters in length", error
-    error = php.create_account(email, "a"*15)
+    _, error = php.create_account(email, "a"*15)
     assert error == "password must be at least 16 characters in length", error
-    error = php.create_account(email, "á"*16)
+    _, error = php.create_account(email, "á"*16)
     assert error == "invalid characters in password", error
-    error = php.create_account(email, " " + password)
+    _, error = php.create_account(email, " " + password)
     assert error == "no leading or trailing spaces in password", error
-    error = php.create_account(email, password + " ")
+    _, error = php.create_account(email, password + " ")
     assert error == "no leading or trailing spaces in password", error
 
     # make smphp_valid_email works

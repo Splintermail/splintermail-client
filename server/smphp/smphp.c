@@ -134,14 +134,15 @@ static void _drop(derr_t e_in){
 }
 
 
-static derr_t _create_account(const dstr_t *email, const dstr_t *pass){
+static derr_t _create_account(
+    const dstr_t *email, const dstr_t *pass, dstr_t *uuid
+){
     derr_t e = E_OK;
 
     MYSQL sql;
     PROP(&e, _sql_init(&sql) );
 
-    DSTR_VAR(uuid, SMSQL_UUID_SIZE);
-    PROP_GO(&e, create_account(&sql, email, pass, &uuid), cu_sql);
+    PROP_GO(&e, create_account(&sql, email, pass, uuid), cu_sql);
 
 cu_sql:
     mysql_close(&sql);
@@ -278,7 +279,7 @@ PHP_FUNCTION(smphp_valid_password){
     return;
 }
 
-// $error = smphp_create_account(email: string, pass: string)
+// list($uuid, $error) = smphp_create_account(email: string, pass: string)
 // $error === NULL means internal server error
 // $error !== "" means $error is a user-facing error
 // otherwise success
@@ -291,10 +292,33 @@ PHP_FUNCTION(smphp_create_account){
         Z_PARAM_STRING(pass.data, pass.len)
     ZEND_PARSE_PARAMETERS_END();
 
-    zend_string *error = print_error( _create_account(&email, &pass) );
-    if(error != NULL){
-        RETURN_STR(error);
+    DSTR_VAR(uuid, SMSQL_UUID_SIZE);
+    zend_string *error = print_error( _create_account(&email, &pass, &uuid) );
+    if(error == NULL){
+        return;
     }
+
+    ZVAL_ARR(return_value, zend_new_array(2));
+    /* if return_value is NULL then after:
+            list($error, $uuid) = smsql_create_account(email, pass);
+       php will print a warning about unknown keys and will set $error and
+       $uuid to NULL */
+    if(return_value == NULL){
+        return;
+    }
+
+    // write the UUID first so we know if to write the error string or not.
+    zend_string *zuuid = zend_string_init(uuid.data, uuid.len, false);
+    if(!zuuid){
+        // let $error and $uuid be NULL by returning now.
+        return;
+    }
+
+    // mysteriously, this doesn't return any status.
+    add_index_str(return_value, 0, zuuid);
+
+    // write the error
+    add_index_str(return_value, 1, error);
 
     return;
 }
@@ -314,6 +338,9 @@ PHP_FUNCTION(smphp_login){
 
     DSTR_VAR(uuid, SMSQL_UUID_SIZE);
     zend_string *error = print_error( _login(&email, &pass, &uuid) );
+    if(error == NULL){
+        return;
+    }
 
     ZVAL_ARR(return_value, zend_new_array(2));
     /* if return_value is NULL then after:
@@ -335,9 +362,8 @@ PHP_FUNCTION(smphp_login){
     add_index_str(return_value, 0, zuuid);
 
     // write the error
-    if(error != NULL){
-        add_index_str(return_value, 1, error);
-    }
+    add_index_str(return_value, 1, error);
+
     return;
 }
 
