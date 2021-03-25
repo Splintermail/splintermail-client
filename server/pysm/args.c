@@ -53,6 +53,8 @@ py_arg_t pyarg_dstr_opt(
         .out_fn = _dstr_out_fn,
         .out_src = mem,
         .out = (void**)out,
+        // also set out_len according to the default
+        .out_len = (Py_ssize_t)mem->len,
     };
     return arg;
 }
@@ -99,6 +101,8 @@ py_arg_t pyarg_nullable_dstr_opt(
         .out_fn = _dstr_out_fn,
         .out_src = mem,
         .out = (void**)out,
+        // also set out_len according to the default
+        .out_len = (Py_ssize_t)mem->len,
     };
     return arg;
 }
