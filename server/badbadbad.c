@@ -6,6 +6,8 @@
 int main(int argc, char** argv){
     derr_t e = E_OK;
 
+    DROP_CMD( logger_add_fileptr(LOG_LVL_DEBUG, stderr) );
+
     char* summary_str;
     if(argc > 1){
         summary_str = argv[1];
