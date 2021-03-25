@@ -291,7 +291,7 @@ derr_t sql_read_bit_dstr(const dstr_t *val, bool *out){
 
     if(val->len != 1){
         TRACE(&e, "invalid length for bit string: %x\n", FU(val->len));
-        ORIG(&e, E_PARAM, "invalid length for bit string");
+        ORIG(&e, E_INTERNAL, "invalid length for bit string");
     }
 
     *out = !(val->data[0] == '\0');
