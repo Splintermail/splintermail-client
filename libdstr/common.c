@@ -34,6 +34,7 @@ REGISTER_ERROR_TYPE(E_INTERNAL, "INTERNAL");
 REGISTER_ERROR_TYPE(E_FS, "FILESYSTEM");
 REGISTER_ERROR_TYPE(E_RESPONSE, "RESPONSE");
 REGISTER_ERROR_TYPE(E_DEAD, "DEAD");
+REGISTER_ERROR_TYPE(E_USERMSG, "USERMSG");
 
 // support for error type groups
 bool derr_type_group_matches(derr_type_t self, derr_type_t other){
@@ -56,6 +57,39 @@ const dstr_t *error_to_dstr(derr_type_t type){
         return &E_OK_dstr;
     }
     return type->dstr;
+}
+
+/* take an E_USERMSG message, copy the user message substring with truncation
+   and guaranteed null-termination to a buffer, and DROP_VAR the error.  buf
+   should be a fixed-size buffer on the stack */
+void consume_e_usermsg(derr_t *e, dstr_t *buf){
+    if(e->msg.data == NULL){
+        /* this only happens in the ENOMEM-after-real-user-facing-error case;
+           it's fine to just return an empty string in that case */
+        dstr_append_quiet(buf, &DSTR_LIT("(no error message!)"));
+        DROP_VAR(e);
+        return;
+    }
+
+    // use just the first line
+    dstr_t line;
+    dstr_split2_soft(e->msg, DSTR_LIT("\n"), NULL, &line, NULL);
+
+    dstr_t msg;
+
+    // strip the initial ERROR: string
+    DSTR_STATIC(line_prefix, "ERROR: ");
+    if(dstr_beginswith(&e->msg, &line_prefix)){
+        msg = dstr_sub(&line, line_prefix.len, line.len);
+    }else{
+        msg = line;
+    }
+
+    // truncate, with space for '\0'
+    msg = dstr_sub2(msg, 0, buf->size - 1);
+    dstr_append_quiet(buf, &msg);
+    dstr_null_terminate_quiet(buf);
+    DROP_VAR(e);
 }
 
 derr_type_t dstr_new_quiet(dstr_t *ds, size_t size){

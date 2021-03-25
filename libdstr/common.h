@@ -120,10 +120,16 @@ extern derr_type_t E_INTERNAL;   // a never-should-happen failure occured
 extern derr_type_t E_FS;         // a file system-related error
 extern derr_type_t E_RESPONSE;   // invalid response from something external
 extern derr_type_t E_DEAD;       // attemped to use a two-phase lifetime object after it died
+extern derr_type_t E_USERMSG;    // an error with a user-facing message (don't TRACE before it)
 
 /* for backwards compatibility with a LOT of code, E_OK is not part of the
    derr_type_t enum but is actually a derr_t struct with an empty message. */
 #define E_OK ((derr_t){.type = E_NONE})
+
+/* take an E_USERMSG message, copy the user message substring with truncation
+   and guaranteed null-termination to a buffer, and DROP_VAR the error.  buf
+   should be a fixed-size buffer on the stack */
+void consume_e_usermsg(derr_t *e, dstr_t *buf);
 
 // wrap an empty char[] with in a dstr_t
 #define DSTR_WRAP_ARRAY(dstr, buffer){ \
