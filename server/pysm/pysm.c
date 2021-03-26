@@ -118,6 +118,9 @@ static PyObject *py_smsql_exit(py_smsql_t *self, PyObject *args){
     Py_RETURN_NONE;
 }
 
+static char * const py_smsql_get_uuid_doc =
+    "get_uuid(email:str) -> uuid:Optional[bytes]\n"
+    "Get a uuid for an email.  Returns None if not found.";
 static PyObject *py_smsql_get_uuid(
     py_smsql_t *self, PyObject *args, PyObject *kwds
 ){
@@ -142,6 +145,9 @@ fail:
     return NULL;
 }
 
+static char * const py_smsql_get_email_doc =
+    "get_email(uuid:bytes) -> email:Optional[str]\n"
+    "Get an email for a uuid.  Returns None if not found.";
 static PyObject *py_smsql_get_email(
     py_smsql_t *self, PyObject *args, PyObject *kwds
 ){
@@ -166,6 +172,8 @@ fail:
     return NULL;
 }
 
+static char * const py_smsql_list_aliases_doc =
+    "list_aliases(uuid:bytes) -> List[Tuple[alias:str, paid:bool]]";
 static PyObject *py_smsql_list_aliases(
     py_smsql_t *self, PyObject *args, PyObject *kwds
 ){
@@ -231,6 +239,9 @@ fail:
     return NULL;
 }
 
+static char * const py_smsql_add_random_alias_doc =
+    "add_random_alias(uuid:bytes) -> alias:str\n"
+    "Add a random alias for a uuid or raises pysm.UserError.";
 static PyObject *py_smsql_add_random_alias(
     py_smsql_t *self, PyObject *args, PyObject *kwds
 ){
@@ -254,6 +265,9 @@ fail:
     return NULL;
 }
 
+static char * const py_smsql_add_primary_alias_doc =
+    "add_primary_alias(uuid:bytes, alias:str) -> None\n"
+    "Add a primary alias for a uuid or raises pysm.UserError.";
 static PyObject *py_smsql_add_primary_alias(
     py_smsql_t *self, PyObject *args, PyObject *kwds
 ){
@@ -278,6 +292,9 @@ fail:
     return NULL;
 }
 
+static char * const py_smsql_delete_alias_doc =
+    "delete_alias(uuid:bytes, alias:str) -> None\n"
+    "Delete an alias for a uuid.  Returns True if it happened.";
 static PyObject *py_smsql_delete_alias(
     py_smsql_t *self, PyObject *args, PyObject *kwds
 ){
@@ -304,6 +321,9 @@ fail:
     return NULL;
 }
 
+static char * const py_smsql_delete_all_aliases_doc =
+    "delete_all_aliases(uuid:str) -> None\n"
+    "Delete all aliases for a uuid.  Returns None.";
 static PyObject *py_smsql_delete_all_aliases(
     py_smsql_t *self, PyObject *args, PyObject *kwds
 ){
@@ -327,6 +347,9 @@ fail:
 
 // devices
 
+static char * const py_smsql_list_device_fprs_doc =
+    "list_device_fprs(uuid:str) -> List[fpr:str]\n"
+    "Return a list of hex-encoded fingerprints.";
 static PyObject *py_smsql_list_device_fprs(
     py_smsql_t *self, PyObject *args, PyObject *kwds
 ){
@@ -387,6 +410,9 @@ fail:
 }
 
 
+static char * const py_smsql_list_device_keys_doc =
+    "list_device_keys(uuid:bytes) -> List[pubkey:str]\n"
+    "Return a list of pem-encoded public keys.";
 static PyObject *py_smsql_list_device_keys(
     py_smsql_t *self, PyObject *args, PyObject *kwds
 ){
@@ -446,6 +472,10 @@ fail:
     return NULL;
 }
 
+static char * const py_smsql_add_device_doc =
+    "add_device(uuid:str, pubkey:str) -> fpr:str\n"
+    "Add a new device from a pem-encoded public key.\n"
+    "Returns fingerprint or raises pysm.UserError.";
 static PyObject *py_smsql_add_device(
     py_smsql_t *self, PyObject *args, PyObject *kwds
 ){
@@ -471,6 +501,9 @@ fail:
     return NULL;
 }
 
+static char * const py_smsql_delete_device_doc =
+    "delete_device(uuid:bytes, fpr:string) -> None\n"
+    "Delete a device from its hex-encoded fingerprint.";
 static PyObject *py_smsql_delete_device(
     py_smsql_t *self, PyObject *args, PyObject *kwds
 ){
@@ -497,6 +530,9 @@ fail:
 
 // tokens
 
+static char * const py_smsql_list_tokens_doc =
+    "list_tokens(uuid:bytes) -> List[token:int]"
+    "Return a list of tokens.";
 static PyObject *py_smsql_list_tokens(
     py_smsql_t *self, PyObject *args, PyObject *kwds
 ){
@@ -556,6 +592,8 @@ fail:
     return NULL;
 }
 
+static char * const py_smsql_add_token_doc =
+    "add_token(uuid:bytes) -> Tuple[token:str, secret:str]";
 static PyObject *py_smsql_add_token(
     py_smsql_t *self, PyObject *args, PyObject *kwds
 ){
@@ -573,14 +611,16 @@ static PyObject *py_smsql_add_token(
     PROP_GO(&e, add_token(&self->sql, uuid, &token, &secret), fail);
 
     // I = unsigned int
-    // y# = bytes with length
-    return Py_BuildValue("(I, y#)", token, secret.data, (Py_ssize_t)secret.len);
+    // s# = string with length
+    return Py_BuildValue("(I, s#)", token, secret.data, (Py_ssize_t)secret.len);
 
 fail:
     raise_derr(&e);
     return NULL;
 }
 
+static char * const py_smsql_delete_token_doc =
+    "delete_token(uuid:bytes) -> None";
 static PyObject *py_smsql_delete_token(
     py_smsql_t *self, PyObject *args, PyObject *kwds
 ){
@@ -606,6 +646,10 @@ fail:
 
 // misc
 
+static char * const py_smsql_create_account_doc =
+    "create_account(email:str, pass:str) -> uuid:bytes\n"
+    "Creates an account, applying all quality checks.\n"
+    "Raises pysm.UserError in failure";
 static PyObject *py_smsql_create_account(
     py_smsql_t *self, PyObject *args, PyObject *kwds
 ){
@@ -631,6 +675,8 @@ fail:
     return NULL;
 }
 
+static char * const py_smsql_delete_account_doc =
+    "delete_account(uuid:bytes) -> None";
 static PyObject *py_smsql_delete_account(
     py_smsql_t *self, PyObject *args, PyObject *kwds
 ){
@@ -652,6 +698,10 @@ fail:
     return NULL;
 }
 
+static char * const py_smsql_account_info_doc =
+    "account_info(uuid:bytes) -> (\n"
+    "   num_devices:int, num_primary_aliases:int, num_random_aliases:int\n"
+    ")";
 static PyObject *py_smsql_account_info(
     py_smsql_t *self, PyObject *args, PyObject *kwds
 ){
@@ -683,6 +733,9 @@ fail:
     return NULL;
 }
 
+static char * const py_smsql_validate_login_doc =
+    "validate_login(email:str, pass:str) -> uuid:bytes\n"
+    "Raises pysm.UserError on failure.";
 static PyObject *py_smsql_validate_login(
     py_smsql_t *self, PyObject *args, PyObject *kwds
 ){
@@ -708,6 +761,18 @@ fail:
     return NULL;
 }
 
+static char * const py_smsql_validate_token_auth_doc =
+    "validate_token_auth(\n"
+    "    token:int,\n"
+    "    nonce:int,\n"
+    "    payload:bytes,\n"
+    "    signature:bytes\n"
+    ") -> uuid:bytes\n"
+    "\n"
+    "checks signature of payload against secret for token, but some "
+    "higher-level checks like \"does the path in the payload match "
+    "the API path\" are the responsibility of the gateway.\n"
+    "Raises pysm.UserError on failure.";
 static PyObject *py_smsql_validate_token_auth(
     py_smsql_t *self, PyObject *args, PyObject *kwds
 ){
@@ -741,6 +806,8 @@ fail:
     return NULL;
 }
 
+static char * const py_smsql_change_password_doc =
+    "change_password(uuid:bytes, pass:str) -> None";
 static PyObject *py_smsql_change_password(
     py_smsql_t *self, PyObject *args, PyObject *kwds
 ){
@@ -765,6 +832,14 @@ fail:
     return NULL;
 }
 
+static char * const py_smsql_validate_session_auth_doc =
+    "validate_session_auth(\n"
+    "    server_id:int,\n"
+    "    session_id:str,\n"
+    ") -> uuid: bytes\n"
+    "Check if a session is authenticated and update last_seen.  "
+    "session_id is just the SPLINTER_SESSION token value.  "
+    "Raises pysm.UserError on failure.";
 static PyObject *py_smsql_validate_session_auth(
     py_smsql_t *self, PyObject *args, PyObject *kwds
 ){
@@ -791,6 +866,9 @@ fail:
     return NULL;
 }
 
+static char * const py_smsql_validate_csrf_doc =
+    "validate_csrf(session_id:str, csrf:str) -> None\n"
+    "Raises pysm.UserError on failure.";
 static PyObject *py_smsql_validate_csrf(
     py_smsql_t *self, PyObject *args, PyObject *kwds
 ){
@@ -847,165 +925,133 @@ static PyMethodDef py_smsql_methods[] = {
         .ml_name = "get_uuid",
         .ml_meth = (PyCFunction)(void*)py_smsql_get_uuid,
         .ml_flags = METH_VARARGS | METH_KEYWORDS,
-        .ml_doc = "Get a uuid for an email.  Returns None if not found.",
+        .ml_doc = py_smsql_get_uuid_doc,
     },
     {
         .ml_name = "get_email",
         .ml_meth = (PyCFunction)(void*)py_smsql_get_email,
         .ml_flags = METH_VARARGS | METH_KEYWORDS,
-        .ml_doc = "Get an email for a uuid.  Returns None if not found.",
+        .ml_doc = py_smsql_get_email_doc,
     },
     {
         .ml_name = "list_aliases",
         .ml_meth = (PyCFunction)(void*)py_smsql_list_aliases,
         .ml_flags = METH_VARARGS | METH_KEYWORDS,
-        .ml_doc = "List aliases for a uuid.  "
-                  "Returns list of (alias:str, paid:bool) tuples.",
+        .ml_doc = py_smsql_list_aliases_doc,
     },
     {
         .ml_name = "add_random_alias",
         .ml_meth = (PyCFunction)(void*)py_smsql_add_random_alias,
         .ml_flags = METH_VARARGS | METH_KEYWORDS,
-        .ml_doc = "Add a random alias for a uuid or raises pysm.UserError.",
+        .ml_doc = py_smsql_add_random_alias_doc,
     },
     {
         .ml_name = "add_primary_alias",
         .ml_meth = (PyCFunction)(void*)py_smsql_add_primary_alias,
         .ml_flags = METH_VARARGS | METH_KEYWORDS,
-        .ml_doc = "Add a primary alias for a uuid or raises pysm.UserError.",
+        .ml_doc = py_smsql_add_primary_alias_doc,
     },
     {
         .ml_name = "delete_alias",
         .ml_meth = (PyCFunction)(void*)py_smsql_delete_alias,
         .ml_flags = METH_VARARGS | METH_KEYWORDS,
-        .ml_doc = "Delete an alias for a uuid.  Returns True if it happened.",
+        .ml_doc = py_smsql_delete_alias_doc,
     },
     {
         .ml_name = "delete_all_aliases",
         .ml_meth = (PyCFunction)(void*)py_smsql_delete_all_aliases,
         .ml_flags = METH_VARARGS | METH_KEYWORDS,
-        .ml_doc = "Delete all aliases for a uuid.  Returns None.",
+        .ml_doc = py_smsql_delete_all_aliases_doc,
     },
     {
         .ml_name = "list_device_fprs",
         .ml_meth = (PyCFunction)(void*)py_smsql_list_device_fprs,
         .ml_flags = METH_VARARGS | METH_KEYWORDS,
-        .ml_doc = "Return a list of hex-encoded fingerprints.",
+        .ml_doc = py_smsql_list_device_fprs_doc,
     },
     {
         .ml_name = "list_device_keys",
         .ml_meth = (PyCFunction)(void*)py_smsql_list_device_keys,
         .ml_flags = METH_VARARGS | METH_KEYWORDS,
-        .ml_doc = "Return a list of pem-encoded public keys.",
+        .ml_doc = py_smsql_list_device_keys_doc,
     },
     {
         .ml_name = "add_device",
         .ml_meth = (PyCFunction)(void*)py_smsql_add_device,
         .ml_flags = METH_VARARGS | METH_KEYWORDS,
-        .ml_doc = "Add a new device from a pem-encoded public key.  Returns "
-                  "fingerprint or raises pysm.UserError."
+        .ml_doc = py_smsql_add_device_doc,
     },
     {
         .ml_name = "delete_device",
         .ml_meth = (PyCFunction)(void*)py_smsql_delete_device,
         .ml_flags = METH_VARARGS | METH_KEYWORDS,
-        .ml_doc = "Delete a device from its hex-encoded fingerprint.  "
-                  "Returns None.",
+        .ml_doc = py_smsql_delete_device_doc,
     },
     {
         .ml_name = "list_tokens",
         .ml_meth = (PyCFunction)(void*)py_smsql_list_tokens,
         .ml_flags = METH_VARARGS | METH_KEYWORDS,
-        .ml_doc = "Return a list of tokens.",
+        .ml_doc = py_smsql_list_tokens_doc,
     },
     {
         .ml_name = "add_token",
         .ml_meth = (PyCFunction)(void*)py_smsql_add_token,
         .ml_flags = METH_VARARGS | METH_KEYWORDS,
-        .ml_doc = "Add a new token.  Returns a tuple of (token, secret)."
+        .ml_doc = py_smsql_add_token_doc,
     },
     {
         .ml_name = "delete_token",
         .ml_meth = (PyCFunction)(void*)py_smsql_delete_token,
         .ml_flags = METH_VARARGS | METH_KEYWORDS,
-        .ml_doc = "Delete a token.  Returns None.",
+        .ml_doc = py_smsql_delete_token_doc,
     },
     {
         .ml_name = "create_account",
         .ml_meth = (PyCFunction)(void*)py_smsql_create_account,
         .ml_flags = METH_VARARGS | METH_KEYWORDS,
-        .ml_doc =
-            "create_account(\n"
-            "    email:str, password:str\n"
-            ") -> uuid:bytes\n"
-            "Creates an account, applying all quality checks.\n"
-            "\n"
-            "Raises pysm.UserError in failure",
+        .ml_doc = py_smsql_create_account_doc,
     },
     {
         .ml_name = "delete_account",
         .ml_meth = (PyCFunction)(void*)py_smsql_delete_account,
         .ml_flags = METH_VARARGS | METH_KEYWORDS,
-        .ml_doc = "delete_account(uuid:bytes) -> None",
+        .ml_doc = py_smsql_delete_account_doc,
     },
     {
         .ml_name = "account_info",
         .ml_meth = (PyCFunction)(void*)py_smsql_account_info,
         .ml_flags = METH_VARARGS | METH_KEYWORDS,
-        .ml_doc = "List account info.  Returns (num_devices, "
-                  "num_primary_aliases, num_random_aliases).",
+        .ml_doc = py_smsql_account_info_doc,
     },
     {
         .ml_name = "validate_login",
         .ml_meth = (PyCFunction)(void*)py_smsql_validate_login,
         .ml_flags = METH_VARARGS | METH_KEYWORDS,
-        .ml_doc = "validate_login(email:str, pass:str) -> uuid:bytes\n"
-                  "Raises pysm.UserError on failure.",
+        .ml_doc = py_smsql_validate_login_doc,
     },
     {
         .ml_name = "validate_token_auth",
         .ml_meth = (PyCFunction)(void*)py_smsql_validate_token_auth,
         .ml_flags = METH_VARARGS | METH_KEYWORDS,
-        .ml_doc =
-            "validate_token_auth(\n"
-            "    token:int,\n"
-            "    nonce:int,\n"
-            "    payload:bytes,\n"
-            "    signature:bytes\n"
-            ") -> uuid:bytes\n"
-            "\n"
-            "checks signature of payload against secret for token, but some "
-            "higher-level checks like \"does the path in the payload match "
-            "the API path\" are the responsibility of the gateway.\n"
-            "\n"
-            "Raises pysm.UserError on failure.",
+        .ml_doc = py_smsql_validate_token_auth_doc,
     },
     {
         .ml_name = "change_password",
         .ml_meth = (PyCFunction)(void*)py_smsql_change_password,
         .ml_flags = METH_VARARGS | METH_KEYWORDS,
-        .ml_doc = "Change a user's password.  Returns None.",
+        .ml_doc = py_smsql_change_password_doc,
     },
     {
         .ml_name = "validate_session_auth",
         .ml_meth = (PyCFunction)(void*)py_smsql_validate_session_auth,
         .ml_flags = METH_VARARGS | METH_KEYWORDS,
-        .ml_doc =
-            "validate_session_auth(\n"
-            "    server_id:int,\n"
-            "    session_id:string,\n"
-            ") -> uuid: bytes\n"
-            "Check if a session is authenticated and update last_seen.  "
-            "session_id is just the SPLINTER_SESSION token value.  "
-            "Raises pysm.UserError on failure.",
+        .ml_doc = py_smsql_validate_session_auth_doc,
     },
     {
         .ml_name = "validate_csrf",
         .ml_meth = (PyCFunction)(void*)py_smsql_validate_csrf,
         .ml_flags = METH_VARARGS | METH_KEYWORDS,
-        .ml_doc =
-            "validate_csrf(session_id:string, csrf:string) -> None\n"
-            "Raises pysm.UserError on failure.",
+        .ml_doc = py_smsql_validate_csrf_doc,
     },
 
     {NULL}, // sentinel
