@@ -471,7 +471,7 @@ static derr_t _add_random_alias_txn(
         NOFAIL(&e, E_USERMSG, valid_splintermail_email(&temp) );
 
         DSTR_STATIC(q2, "INSERT INTO emails (email) VALUES (?)");
-        derr_t e2 = sql_bound_stmt(sql, &q2, string_bind_in(&temp));
+        derr_t e2 = sql_norow_query(sql, &q2, NULL, string_bind_in(&temp));
         CATCH(e2, E_SQL_DUP){
             // chose a duplicate alias, try again
             DROP_VAR(&e2);
@@ -483,8 +483,9 @@ static derr_t _add_random_alias_txn(
         );
         bool paid = false;
         PROP(&e,
-            sql_bound_stmt(sql,
+            sql_norow_query(sql,
                 &q3,
+                NULL,
                 string_bind_in(&temp),
                 bool_bind_in(&paid),
                 blob_bind_in(uuid),
@@ -498,8 +499,8 @@ static derr_t _add_random_alias_txn(
             "UPDATE accounts SET num_random_aliases=? WHERE user_uuid=?;"
         );
         PROP(&e,
-            sql_bound_stmt(
-                sql, &q4, uint_bind_in(&count), blob_bind_in(uuid)
+            sql_norow_query(
+                sql, &q4, NULL, uint_bind_in(&count), blob_bind_in(uuid)
             )
         );
 
@@ -536,14 +537,15 @@ static derr_t _add_primary_alias_txn(
     derr_t e = E_OK;
 
     DSTR_STATIC(q1, "INSERT INTO emails (email) VALUES (?)");
-    PROP(&e, sql_bound_stmt(sql, &q1, string_bind_in(alias)) );
+    PROP(&e, sql_norow_query(sql, &q1, NULL, string_bind_in(alias)) );
 
     DSTR_STATIC(q2,
         "INSERT INTO aliases (alias, paid, user_uuid) VALUES (?, ?, ?)"
     );
     bool paid = true;
-    derr_t e2 = sql_bound_stmt(sql,
+    derr_t e2 = sql_norow_query(sql,
         &q2,
+        NULL,
         string_bind_in(alias),
         bool_bind_in(&paid),
         blob_bind_in(uuid),
@@ -600,13 +602,13 @@ static derr_t _delete_alias_txn(
     }
 
     DSTR_STATIC(q2, "DELETE FROM aliases WHERE alias=?");
-    PROP(&e, sql_bound_stmt(sql, &q2, string_bind_in(alias)) );
+    PROP(&e, sql_norow_query(sql, &q2, NULL, string_bind_in(alias)) );
 
     // delete from emails table last (for foriegn key constraints)
     if(paid){
         // only paid aliases get deleted from the emails table
         DSTR_STATIC(q3, "DELETE FROM emails WHERE email=?");
-        PROP(&e, sql_bound_stmt(sql, &q3, string_bind_in(alias)) );
+        PROP(&e, sql_norow_query(sql, &q3, NULL, string_bind_in(alias)) );
     }
 
     *deleted = true;
@@ -652,14 +654,14 @@ static derr_t _delete_all_aliases_txn(MYSQL *sql, const dstr_t *uuid){
         // delete all aliases, paid or free
         DSTR_STATIC(q1, "DELETE FROM aliases WHERE alias=?");
         PROP_GO(&e,
-            sql_bound_stmt(sql, &q1, string_bind_in(&alias->alias)),
+            sql_norow_query(sql, &q1, NULL, string_bind_in(&alias->alias)),
         cu);
 
         if(alias->paid){
             // paid aliases are also deleted from the emails table
             DSTR_STATIC(q2, "DELETE FROM emails WHERE email=?");
             PROP_GO(&e,
-                sql_bound_stmt(sql, &q2, string_bind_in(&alias->alias)),
+                sql_norow_query(sql, &q2, NULL, string_bind_in(&alias->alias)),
             cu);
         }
 
@@ -869,8 +871,8 @@ static derr_t _add_device_txn(
         "VALUES (?, ?, ?)"
     );
     PROP(&e,
-        sql_bound_stmt(
-            sql, &q2,
+        sql_norow_query(
+            sql, &q2, NULL,
             blob_bind_in(uuid),
             string_bind_in(pubkey),
             string_bind_in(fpr_hex)
@@ -943,7 +945,9 @@ derr_t delete_device(MYSQL *sql, const dstr_t *uuid, const dstr_t *fpr_hex){
 
     DSTR_STATIC(q1, "DELETE FROM devices WHERE user_uuid=? AND fingerprint=?");
     PROP(&e,
-        sql_bound_stmt(sql, &q1, blob_bind_in(uuid), string_bind_in(fpr_hex))
+        sql_norow_query(
+            sql, &q1, NULL, blob_bind_in(uuid), string_bind_in(fpr_hex)
+        )
     );
 
     return e;
@@ -1061,8 +1065,8 @@ derr_t add_token(
             q1,
             "INSERT INTO tokens (user_uuid, token, secret) VALUES (?, ?, ?)"
         );
-        derr_t e2 = sql_bound_stmt(
-            sql, &q1,
+        derr_t e2 = sql_norow_query(
+            sql, &q1, NULL,
             blob_bind_in(uuid),
             uint_bind_in(&token_temp),
             string_bind_in(&secret_temp)
@@ -1087,7 +1091,9 @@ derr_t delete_token(MYSQL *sql, const dstr_t *uuid, uint32_t token){
 
     DSTR_STATIC(q1, "DELETE FROM tokens WHERE user_uuid=? AND token=?");
     PROP(&e,
-        sql_bound_stmt(sql, &q1, blob_bind_in(uuid), uint_bind_in(&token))
+        sql_norow_query(
+            sql, &q1, NULL, blob_bind_in(uuid), uint_bind_in(&token)
+        )
     );
 
     return e;
@@ -1104,7 +1110,7 @@ static derr_t _create_account_txn(
     derr_t e = E_OK;
 
     DSTR_STATIC(q1, "INSERT INTO emails (email) VALUES (?)");
-    derr_t e2 = sql_bound_stmt(sql, &q1, string_bind_in(email));
+    derr_t e2 = sql_norow_query(sql, &q1, NULL, string_bind_in(email));
     CATCH(e2, E_SQL_DUP){
         // duplicate email
         DROP_VAR(&e2);
@@ -1118,8 +1124,8 @@ static derr_t _create_account_txn(
         "VALUES (?, ?, ?, 1)"
     );
     PROP(&e,
-        sql_bound_stmt(
-            sql, &q2,
+        sql_norow_query(
+            sql, &q2, NULL,
             string_bind_in(email),
             string_bind_in(pass_hash),
             blob_bind_in(uuid)
@@ -1175,22 +1181,22 @@ static derr_t _delete_account_txn(
 
     {
         DSTR_STATIC(q, "DELETE FROM tokens WHERE user_uuid = ?");
-        PROP(&e, sql_bound_stmt(sql, &q, blob_bind_in(uuid)) );
+        PROP(&e, sql_norow_query(sql, &q, NULL, blob_bind_in(uuid)) );
     }
 
     {
         DSTR_STATIC(q, "DELETE FROM devices WHERE user_uuid = ?");
-        PROP(&e, sql_bound_stmt(sql, &q, blob_bind_in(uuid)) );
+        PROP(&e, sql_norow_query(sql, &q, NULL, blob_bind_in(uuid)) );
     }
 
     {
         DSTR_STATIC(q, "DELETE FROM accounts WHERE user_uuid = ?");
-        PROP(&e, sql_bound_stmt(sql, &q, blob_bind_in(uuid)) );
+        PROP(&e, sql_norow_query(sql, &q, NULL, blob_bind_in(uuid)) );
     }
 
     {
         DSTR_STATIC(q, "DELETE FROM emails WHERE email = ?");
-        PROP(&e, sql_bound_stmt(sql, &q, string_bind_in(email)) );
+        PROP(&e, sql_norow_query(sql, &q, NULL, string_bind_in(email)) );
     }
 
     return e;
@@ -1355,7 +1361,9 @@ static derr_t _validate_token_auth_txn(
     }
     DSTR_STATIC(q2, "UPDATE tokens SET nonce=? WHERE token=?");
     PROP(&e,
-        sql_bound_stmt(sql, &q2, uint64_bind_in(&nonce), uint_bind_in(&token))
+        sql_norow_query(
+            sql, &q2, NULL, uint64_bind_in(&nonce), uint_bind_in(&token)
+        )
     );
 
     // valid!
@@ -1410,8 +1418,8 @@ derr_t change_password(MYSQL *sql, const dstr_t *uuid, const dstr_t *pass){
 
     DSTR_STATIC(q1, "UPDATE accounts SET password=? WHERE user_uuid=?");
     PROP(&e,
-        sql_bound_stmt(
-            sql, &q1,
+        sql_norow_query(
+            sql, &q1, NULL,
             string_bind_out(&hash),
             blob_bind_in(uuid)
         )
@@ -1437,8 +1445,8 @@ derr_t add_session_auth(
         ") VALUES (?, ?, ?, ?, ?)"
     );
     PROP(&e,
-        sql_bound_stmt(
-            sql, &q1,
+        sql_norow_query(
+            sql, &q1, NULL,
             string_bind_in(session_id),
             int_bind_in(&server_id),
             blob_bind_in(uuid),
@@ -1471,8 +1479,8 @@ static derr_t _do_logout_txn(
             "UPDATE sessions SET void=b'1' WHERE session_id=? AND server_id=?"
         );
         PROP(&e,
-            sql_bound_stmt(
-                sql, &q2,
+            sql_norow_query(
+                sql, &q2, NULL,
                 string_bind_in(session_id),
                 int_bind_in(&server_id)
             )
@@ -1486,8 +1494,8 @@ static derr_t _do_logout_txn(
             ") VALUES (?, ?, ?, ?, ?, b'1')"
         );
         PROP(&e,
-            sql_bound_stmt(
-                sql, &q2,
+            sql_norow_query(
+                sql, &q2, NULL,
                 string_bind_in(session_id),
                 int_bind_in(&server_id),
                 blob_bind_in(uuid),
@@ -1673,8 +1681,8 @@ static derr_t _validate_session_auth_txn(
             "WHERE session_id=? AND server_id=?"
         );
         PROP_GO(&e,
-            sql_bound_stmt(
-                sql, &q2,
+            sql_norow_query(
+                sql, &q2, NULL,
                 int64_bind_in(&now),
                 string_bind_in(session_id),
                 int_bind_in(&server_id)
@@ -1689,8 +1697,8 @@ static derr_t _validate_session_auth_txn(
             ") VALUES (?, ?, ?, ?, ?)"
         );
         PROP_GO(&e,
-            sql_bound_stmt(
-                sql, &q2,
+            sql_norow_query(
+                sql, &q2, NULL,
                 string_bind_in(session_id),
                 int_bind_in(&server_id),
                 blob_bind_in(&uuid_res),
@@ -1764,8 +1772,8 @@ derr_t new_csrf(
         ") VALUES (?, ?, ?, ?)"
     );
     PROP(&e,
-        sql_bound_stmt(
-            sql, &q1,
+        sql_norow_query(
+            sql, &q1, NULL,
             string_bind_in(&temp),
             int_bind_in(&server_id),
             string_bind_in(session_id),

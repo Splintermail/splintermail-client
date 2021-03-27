@@ -407,8 +407,9 @@ static derr_t mig_override(MYSQL *sql, const dstr_t *path){
         "INSERT INTO migmysql (id, name, exe, `undo`) VALUES (?,?,?,?)"
     );
     PROP_GO(&e,
-        sql_bound_stmt(sql,
+        sql_norow_query(sql,
             &query,
+            NULL,
             uint_bind_in(&id),
             string_bind_in(&name),
             bool_bind_in(&exe),
@@ -628,8 +629,9 @@ static derr_t migmysql_apply_one(
         "INSERT INTO migmysql (id, name, exe, `undo`) VALUES (?,?,?,?)"
     );
     PROP_GO(&e,
-        sql_bound_stmt(sql,
+        sql_norow_query(sql,
             &query,
+            NULL,
             uint_bind_in(&dn->id),
             string_bind_in(&name),
             bool_bind_in(&dn->exe),
@@ -665,8 +667,9 @@ static derr_t migmysql_undo_one(
 
     // erase the state
     PROP_GO(&e,
-        sql_bound_stmt(sql,
+        sql_norow_query(sql,
             &DSTR_LIT("DELETE FROM migmysql where id = ?"),
+            NULL,
             uint_bind_in(&state->id)
         ),
     cu);

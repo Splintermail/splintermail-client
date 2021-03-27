@@ -310,10 +310,33 @@ derr_t sql_stmt_execute(MYSQL_STMT *stmt){
     return e;
 }
 
-derr_t _sql_bound_stmt(
-    MYSQL *sql, const dstr_t *query, MYSQL_BIND *args, size_t nargs
+static derr_t _stmt_rows_affected(MYSQL_STMT *stmt, size_t *out){
+    derr_t e = E_OK;
+
+    my_ulonglong affected = mysql_stmt_affected_rows(stmt);
+    if(affected == ((my_ulonglong)-1)){
+        TRACE_STMT(&e, stmt);
+        ORIG(&e, stmt_err(stmt), "failed to get affected rows");
+    }
+
+    if(affected > SIZE_MAX){
+        ORIG(&e, E_INTERNAL, "too many results!");
+    }
+
+    *out = affected;
+
+    return e;
+}
+
+derr_t _sql_norow_query(
+    MYSQL *sql,
+    const dstr_t *query,
+    unsigned long *affected,
+    MYSQL_BIND *args,
+    size_t nargs
 ){
     derr_t e = E_OK;
+    if(affected) *affected = 0;
 
     // create a statement object
     MYSQL_STMT *stmt;
@@ -327,7 +350,7 @@ derr_t _sql_bound_stmt(
     if(nfields > 0){
         TRACE(&e, "expected no return fields but got %x\n", FU(nfields));
         ORIG_GO(&e,
-            E_INTERNAL, "non-zero return fields in sql_bound_stmt()",
+            E_INTERNAL, "non-zero return fields in sql_norow_query()",
         cu_stmt);
     }
 
@@ -336,6 +359,8 @@ derr_t _sql_bound_stmt(
 
     // execute
     PROP_GO(&e, sql_stmt_execute(stmt), cu_stmt);
+
+    if(affected) PROP_GO(&e, _stmt_rows_affected(stmt, affected), cu_stmt);
 
 cu_stmt:
     mysql_stmt_close(stmt);

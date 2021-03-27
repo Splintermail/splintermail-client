@@ -91,13 +91,18 @@ derr_t sql_read_bit_dstr(const dstr_t *val, bool *out);
 
 derr_t sql_stmt_execute(MYSQL_STMT *stmt);
 
-derr_t _sql_bound_stmt(
-    MYSQL *sql, const dstr_t *query, MYSQL_BIND *args, size_t nargs
+derr_t _sql_norow_query(
+    MYSQL *sql,
+    const dstr_t *query,
+    size_t *affected,
+    MYSQL_BIND *args,
+    size_t nargs
 );
-#define sql_bound_stmt(sql, query, ...) \
-    _sql_bound_stmt( \
+#define sql_norow_query(sql, query, affected, ...) \
+    _sql_norow_query( \
         (sql), \
         (query), \
+        (affected), \
         &(MYSQL_BIND[]){(MYSQL_BIND){0}, __VA_ARGS__}[1], \
         sizeof((MYSQL_BIND[]){(MYSQL_BIND){0}, __VA_ARGS__}) / sizeof(MYSQL_BIND) - 1 \
     )
