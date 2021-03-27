@@ -1075,6 +1075,47 @@ static PyTypeObject py_smsql_type = {
 
 // helper fuctions
 
+static char * const pysm_log_to_file_doc =
+    "log_to_file(path:str, level='info':str) -> None";
+static PyObject *pysm_log_to_file(
+    PyObject *self, PyObject *args, PyObject *kwds
+){
+    (void)self;
+    derr_t e = E_OK;
+
+    dstr_t _path;
+    const dstr_t *path;
+    dstr_t _level;
+    const dstr_t *level;
+    py_args_t spec = {
+        pyarg_dstr(&_path, &path, "path"),
+        pyarg_dstr_opt(&_level, &level, "level", "info"),
+    };
+
+    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+
+    log_level_t log_level = LOG_LVL_INFO;
+
+    // lame-ass string-to-enum conversion
+    char firstchar = level->len > 0 ? level->data[0] : '\0';
+    if(firstchar == 'd' || firstchar == 'D'){
+        log_level = LOG_LVL_DEBUG;
+    }else if(firstchar == 'w' || firstchar == 'W'){
+        log_level = LOG_LVL_WARN;
+    }else if(firstchar == 'e' || firstchar == 'E'){
+        log_level = LOG_LVL_ERROR;
+    }
+
+    PROP_GO(&e, logger_add_filename(log_level, path->data), fail);
+    LOG_DEBUG("logging to path %x\n", FD(path));
+
+    Py_RETURN_NONE;
+
+fail:
+    raise_derr(&e);
+    return NULL;
+}
+
 static PyObject *pysm_to_fsid(PyObject *self, PyObject *args, PyObject *kwds){
     (void)self;
     derr_t e = E_OK;
@@ -1276,6 +1317,12 @@ static PyMethodDef pysm_methods[] = {
         .ml_meth = pysm_hash_key,
         .ml_flags = METH_VARARGS,
         .ml_doc = "hash a PEM-encoded public key",
+    },
+    {
+        .ml_name = "log_to_file",
+        .ml_meth = ARG_KWARG_FN_CAST(pysm_log_to_file),
+        .ml_flags = METH_VARARGS | METH_KEYWORDS,
+        .ml_doc = pysm_log_to_file_doc,
     },
     {
         .ml_name = "to_fsid",
