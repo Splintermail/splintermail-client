@@ -921,6 +921,50 @@ fail:
     return NULL;
 }
 
+static char * const py_smsql_limit_check_doc =
+    "limit_check(uuid:bytes, recipients:int) -> (\n"
+    "    ok:bool, msg_sent:bool, limit:int\n"
+    ")\n"
+    "The caller is responsible for:\n"
+    "  - assert recipients < UINT_MAX (python's arg parsing allows overflow)\n"
+    "  - sending a limit message if ok=False and msg_sent=False\n"
+    "Therefore only policy.py (or tests) should ever use this.";
+static PyObject *py_smsql_limit_check(
+    py_smsql_t *self, PyObject *args, PyObject *kwds
+){
+    derr_t e = E_OK;
+
+    dstr_t _uuid;
+    const dstr_t *uuid;
+    unsigned int recipients;
+    py_args_t spec = {
+        pyarg_dstr(&_uuid, &uuid, "uuid"),
+        pyarg_uint(&recipients, "recipients"),
+    };
+    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+
+    bool ok;
+    bool msg_sent;
+    unsigned int limit;
+    PROP_GO(&e,
+        limit_check(&self->sql, uuid, recipients, &ok, &msg_sent, &limit),
+    fail);
+
+    // O = pyobject (boolean singletons)
+    // O = pyobject (boolean singletons)
+    // I = unsigned int
+    return Py_BuildValue(
+        "(O, O, I)",
+        ok ? Py_True : Py_False,
+        msg_sent ? Py_True : Py_False,
+        limit
+    );
+
+fail:
+    raise_derr(&e);
+    return NULL;
+}
+
 
 ////////
 
@@ -1086,6 +1130,12 @@ static PyMethodDef py_smsql_methods[] = {
         .ml_meth = (PyCFunction)(void*)py_smsql_user_owns_addr,
         .ml_flags = METH_VARARGS | METH_KEYWORDS,
         .ml_doc = py_smsql_user_owns_addr_doc,
+    },
+    {
+        .ml_name = "limit_check",
+        .ml_meth = (PyCFunction)(void*)py_smsql_limit_check,
+        .ml_flags = METH_VARARGS | METH_KEYWORDS,
+        .ml_doc = py_smsql_limit_check_doc,
     },
     {NULL}, // sentinel
 };

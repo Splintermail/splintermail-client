@@ -269,7 +269,7 @@ derr_t pyarg_parse(PyObject *pyargs, PyObject *pykwds, py_args_t args) {
             params[16],
             NULL)
     ){
-        ORIG(&e, E_NORAISE, "filled the pars args");
+        ORIG(&e, E_NORAISE, "failed to parse args");
     }
 
     // set outputs as necessary

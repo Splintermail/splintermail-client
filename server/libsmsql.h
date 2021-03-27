@@ -245,4 +245,22 @@ derr_t user_owns_address(
     MYSQL *sql, const dstr_t *uuid, const dstr_t *address, bool *ok
 );
 
+/* This will atomically check if the user is allowed to send to this many
+   recipients right now, and add recipients to the user's msg_count if so.
+   If not, this function will return ok=false.
+   If ok=true, msg_sent will also be true if this is the first time the query
+   failed today (the accounts.msg_true is set to true as well).
+
+   Therefore, only policy.py should ever call this function, as if ok and
+   msg_sent both come back false it is the caller's responsibility to send
+   the limit message. */
+derr_t limit_check(
+    MYSQL *sql,
+    const dstr_t *uuid,
+    unsigned int recipients,
+    bool *ok,
+    bool *msg_sent,
+    unsigned int *limit
+);
+
 #endif // SM_SQL_H

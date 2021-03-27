@@ -1851,3 +1851,94 @@ derr_t user_owns_address(
 
     return e;
 }
+
+static derr_t _limit_check_txn(
+    MYSQL *sql,
+    const dstr_t *uuid,
+    unsigned int recipients,
+    bool *ok,
+    bool *msg_sent,
+    unsigned int *limit
+){
+    derr_t e = E_OK;
+
+    // use FOR UPDATE to avoid write skew
+    unsigned int count;
+    DSTR_STATIC(
+        q1,
+        "SELECT daily_msg_limit, msg_count, limit_msg_sent "
+        "FROM accounts WHERE user_uuid=? FOR UPDATE;"
+    );
+    PROP(&e,
+        sql_onerow_query(
+            sql, &q1, NULL,
+            // params
+            blob_bind_in(uuid),
+            // results
+            uint_bind_out(limit),
+            uint_bind_out(&count),
+            bool_bind_out(msg_sent)
+        )
+    );
+
+    // check for overflow, then for limit
+    if(recipients > UINT_MAX - count || count + recipients > *limit){
+        // limit was hit; assume caller will send the limit message
+        DSTR_STATIC(q2,
+            "UPDATE accounts SET limit_msg_sent=b'1' WHERE user_uuid=?"
+        );
+        PROP(&e, sql_norow_query(sql, &q2, NULL, blob_bind_in(uuid)) );
+    }else{
+        // limit was not hit and overflow is not possible
+        count += recipients;
+        DSTR_STATIC(q2,
+            "UPDATE accounts SET msg_count=? WHERE user_uuid=?"
+        );
+        PROP(&e,
+            sql_norow_query(
+                sql, &q2, NULL, uint_bind_in(&count), blob_bind_in(uuid)
+            )
+        );
+        *ok = true;
+    }
+
+    return e;
+}
+
+/* This will atomically check if the user is allowed to send to this many
+   recipients right now, and add recipients to the user's msg_count if so.
+   If not, this function will return ok=false.
+   If ok=true, msg_sent will also be true if this is the first time the query
+   failed today (the accounts.msg_true is set to true as well).
+
+   Therefore, only policy.py should ever call this function, as if ok and
+   msg_sent both come back false it is the caller's responsibility to send
+   the limit message. */
+derr_t limit_check(
+    MYSQL *sql,
+    const dstr_t *uuid,
+    unsigned int recipients,
+    bool *ok,
+    bool *msg_sent,
+    unsigned int *limit
+){
+    derr_t e = E_OK;
+    *ok = false;
+    *msg_sent = false;
+
+    PROP(&e, sql_txn_start(sql) );
+
+    PROP_GO(&e,
+        _limit_check_txn(sql, uuid, recipients, ok, msg_sent, limit),
+    hard_fail);
+
+    // commit the txn even if ok=false as we are also updating msg_sent
+    PROP(&e, sql_txn_commit(sql) );
+
+    return e;
+
+hard_fail:
+    sql_txn_abort(sql);
+
+    return e;
+}
