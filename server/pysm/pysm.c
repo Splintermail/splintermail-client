@@ -894,6 +894,33 @@ fail:
     return NULL;
 }
 
+static char * const py_smsql_user_owns_addr_doc =
+    "user_owns_address(user_uuid:bytes, address:str) -> bool";
+static PyObject *py_smsql_user_owns_addr(
+    py_smsql_t *self, PyObject *args, PyObject *kwds
+){
+    derr_t e = E_OK;
+
+    dstr_t _uuid;
+    const dstr_t *uuid;
+    dstr_t _address;
+    const dstr_t *address;
+    py_args_t spec = {
+        pyarg_dstr(&_uuid, &uuid, "uuid"),
+        pyarg_dstr(&_address, &address, "address"),
+    };
+    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+
+    bool ok;
+    PROP_GO(&e, user_owns_address(&self->sql, uuid, address, &ok), fail);
+
+    RETURN_BOOL(ok);
+
+fail:
+    raise_derr(&e);
+    return NULL;
+}
+
 
 ////////
 
@@ -1053,6 +1080,12 @@ static PyMethodDef py_smsql_methods[] = {
         .ml_meth = (PyCFunction)(void*)py_smsql_validate_csrf,
         .ml_flags = METH_VARARGS | METH_KEYWORDS,
         .ml_doc = py_smsql_validate_csrf_doc,
+    },
+    {
+        .ml_name = "user_owns_address",
+        .ml_meth = (PyCFunction)(void*)py_smsql_user_owns_addr,
+        .ml_flags = METH_VARARGS | METH_KEYWORDS,
+        .ml_doc = py_smsql_user_owns_addr_doc,
     },
     {NULL}, // sentinel
 };

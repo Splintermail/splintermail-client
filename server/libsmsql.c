@@ -1821,3 +1821,33 @@ derr_t validate_csrf(MYSQL *sql, const dstr_t *session_id, const dstr_t *csrf){
 
     return e;
 }
+
+// returns true if uuid/address matches accounts.email or aliases.alias
+derr_t user_owns_address(
+    MYSQL *sql, const dstr_t *uuid, const dstr_t *address, bool *ok
+){
+    derr_t e = E_OK;
+    *ok = false;
+
+    DSTR_STATIC(q1,
+        "SELECT 1 FROM accounts WHERE user_uuid=? AND email=? "
+        "UNION "
+        "SELECT 1 FROM aliases WHERE user_uuid=? AND alias=?"
+    );
+
+    int one;
+    PROP(&e,
+        sql_onerow_query(
+            sql, &q1, ok,
+            // params
+            blob_bind_in(uuid),
+            string_bind_in(address),
+            blob_bind_in(uuid),
+            string_bind_in(address),
+            // results
+            int_bind_out(&one)
+        )
+    )
+
+    return e;
+}

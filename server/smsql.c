@@ -499,6 +499,29 @@ static derr_t change_password_action(MYSQL *sql, int argc, char **argv){
     return e;
 }
 
+
+static derr_t user_owns_address_action(MYSQL *sql, int argc, char **argv){
+    derr_t e = E_OK;
+    (void)sql;
+
+    if(argc != 2){
+        ORIG(&e, E_USERMSG, "usage: user_owns_address (EMAIL|FSID) ADDRESS\n");
+    }
+
+    dstr_t id = get_arg(argv, 0);
+    dstr_t address = get_arg(argv, 1);
+
+    DSTR_VAR(uuid, SMSQL_UUID_SIZE);
+    PROP(&e, get_uuid_from_id(sql, &id, &uuid) );
+
+    bool ok;
+    PROP(&e, user_owns_address(sql, &uuid, &address, &ok) );
+
+    PFMT("%x\n", FB(ok));
+
+    return e;
+}
+
 //////
 
 static derr_t smsql(
@@ -603,6 +626,7 @@ int main(int argc, char **argv){
     LINK_ACTION("account_info", account_info_action);
     LINK_ACTION("validate_password", validate_password_action);
     LINK_ACTION("change_password", change_password_action);
+    LINK_ACTION("user_owns_address", user_owns_address_action);
 #undef LINK_ACTION
 
     // specify command line options

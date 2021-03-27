@@ -124,20 +124,6 @@ DEF_CONTAINER_OF(smsql_dstr_t, link, link_t);
 derr_t smsql_dstr_new(smsql_dstr_t **out, const dstr_t *val);
 void smsql_dstr_free(smsql_dstr_t **old);
 
-//// will these ever become useful?
-// typedef struct {
-//     dstr_t public_key;
-//     // fingerprint is hex-encoded
-//     dstr_t fingerprint;
-//     link_t link;
-// } smsql_device_t;
-// DEF_CONTAINER_OF(smsql_device_t, link, link_t);
-//
-// derr_t smsql_device_new(
-//     smsql_device_t **out, const dstr_t *public_key, const dstr_t *fingerprint
-// );
-// void smsql_device_free(smsql_device_t **old);
-
 // returns a list of hex-encoded fingerprints (smsql_dstr_t's)
 derr_t list_device_fprs(MYSQL *sql, const dstr_t *uuid, link_t *out);
 
@@ -253,5 +239,10 @@ derr_t new_csrf(
 // validate_csrf() just checks if the token was valid for this session
 // throws E_USERMSG on bad tokens
 derr_t validate_csrf(MYSQL *sql, const dstr_t *session_id, const dstr_t *csrf);
+
+// returns true if uuid/address matches accounts.email or aliases.alias
+derr_t user_owns_address(
+    MYSQL *sql, const dstr_t *uuid, const dstr_t *address, bool *ok
+);
 
 #endif // SM_SQL_H
