@@ -105,12 +105,11 @@ derr_t list_aliases(MYSQL *sql, const dstr_t *uuid, link_t *out);
 // throws E_USERMSG if max aliases reached
 derr_t add_random_alias(MYSQL *sql, const dstr_t *uuid, dstr_t *alias);
 
-// throws E_USERMSG if max alias is unavailable
+// throws E_USERMSG if alias is unavailable
 derr_t add_primary_alias(MYSQL *sql, const dstr_t *uuid, const dstr_t *alias);
 
-derr_t delete_alias(
-    MYSQL *sql, const dstr_t *uuid, const dstr_t *alias, bool *deleted
-);
+// throws E_USERMSG if no alias matched
+derr_t delete_alias(MYSQL *sql, const dstr_t *uuid, const dstr_t *alias);
 
 derr_t delete_all_aliases(MYSQL *sql, const dstr_t *uuid);
 
@@ -146,11 +145,12 @@ derr_t list_device_fprs(MYSQL *sql, const dstr_t *uuid, link_t *out);
 derr_t list_device_keys(MYSQL *sql, const dstr_t *uuid, link_t *out);
 
 // take a PEM-encoded public key, validate it, and add it to an account
-// raises E_USERMSG on failure
+// raises E_USERMSG on invalid or duplicate key
 derr_t add_device(
     MYSQL *sql, const dstr_t *uuid, const dstr_t *pubkey, dstr_t *fpr
 );
 
+// throws E_USERMSG if no device matched
 derr_t delete_device(MYSQL *sql, const dstr_t *uuid, const dstr_t *fpr_hex);
 
 // tokens
@@ -170,6 +170,7 @@ derr_t add_token(
     MYSQL *sql, const dstr_t *uuid, uint32_t *token, dstr_t *secret
 );
 
+// throws E_USERMSG if no token matched
 derr_t delete_token(MYSQL *sql, const dstr_t *uuid, uint32_t token);
 
 // misc

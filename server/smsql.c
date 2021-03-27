@@ -193,13 +193,9 @@ static derr_t delete_alias_action(MYSQL *sql, int argc, char **argv){
 
     DSTR_VAR(uuid, SMSQL_UUID_SIZE);
     PROP(&e, get_uuid_from_id(sql, &id, &uuid) );
-    bool deleted;
-    PROP(&e, delete_alias(sql, &uuid, &alias, &deleted) );
-    if(deleted){
-        PFMT("DELETED\n");
-    }else{
-        PFMT("NOOP\n");
-    }
+    PROP(&e, delete_alias(sql, &uuid, &alias) );
+
+    PFMT("DELETED\n");
 
     return e;
 }

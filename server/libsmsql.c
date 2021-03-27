@@ -558,6 +558,7 @@ static derr_t _add_primary_alias_txn(
     return e;
 }
 
+// throws E_USERMSG if alias is unavailable
 derr_t add_primary_alias(MYSQL *sql, const dstr_t *uuid, const dstr_t *alias){
     derr_t e = E_OK;
 
@@ -578,7 +579,7 @@ hard_fail:
 }
 
 static derr_t _delete_alias_txn(
-    MYSQL *sql, const dstr_t *uuid, const dstr_t *alias, bool *deleted
+    MYSQL *sql, const dstr_t *uuid, const dstr_t *alias
 ){
     derr_t e = E_OK;
 
@@ -597,8 +598,7 @@ static derr_t _delete_alias_txn(
     );
 
     if(!ok){
-        // no matching alias
-        return e;
+        ORIG(&e, E_USERMSG, "no such alias");
     }
 
     DSTR_STATIC(q2, "DELETE FROM aliases WHERE alias=?");
@@ -611,20 +611,15 @@ static derr_t _delete_alias_txn(
         PROP(&e, sql_norow_query(sql, &q3, NULL, string_bind_in(alias)) );
     }
 
-    *deleted = true;
-
     return e;
 }
 
-derr_t delete_alias(
-    MYSQL *sql, const dstr_t *uuid, const dstr_t *alias, bool *deleted
-){
+derr_t delete_alias(MYSQL *sql, const dstr_t *uuid, const dstr_t *alias){
     derr_t e = E_OK;
-    *deleted = false;
 
     PROP(&e, sql_txn_start(sql) );
 
-    PROP_GO(&e, _delete_alias_txn(sql, uuid, alias, deleted), hard_fail);
+    PROP_GO(&e, _delete_alias_txn(sql, uuid, alias), hard_fail);
 
     PROP(&e, sql_txn_commit(sql) );
 
@@ -632,7 +627,6 @@ derr_t delete_alias(
 
 hard_fail:
     sql_txn_abort(sql);
-    *deleted = false;
 
     return e;
 }
@@ -870,14 +864,16 @@ static derr_t _add_device_txn(
         "INSERT INTO devices (user_uuid, public_key, fingerprint) "
         "VALUES (?, ?, ?)"
     );
-    PROP(&e,
-        sql_norow_query(
-            sql, &q2, NULL,
-            blob_bind_in(uuid),
-            string_bind_in(pubkey),
-            string_bind_in(fpr_hex)
-        )
+    derr_t e2 = sql_norow_query(
+        sql, &q2, NULL,
+        blob_bind_in(uuid),
+        string_bind_in(pubkey),
+        string_bind_in(fpr_hex)
     );
+    CATCH(e2, E_SQL_DUP){
+        DROP_VAR(&e);
+        ORIG(&e, E_USERMSG, "duplicate public key");
+    }else PROP_VAR(&e, &e2);
 
     return e;
 }
@@ -891,10 +887,11 @@ static derr_t _validate_for_add_device(
 
     // validate pkey
     EVP_PKEY *pkey;
-    IF_PROP(&e, read_pem_encoded_pubkey(pubkey, &pkey) ){
+    derr_t e2 = read_pem_encoded_pubkey(pubkey, &pkey);
+    CATCH(e2, E_PARAM){
         DROP_VAR(&e);
         ORIG(&e, E_USERMSG, "invalid public key");
-    }
+    }else PROP_VAR(&e, &e2);
 
     // get fingerprint
     DSTR_VAR(fpr, SMSQL_FPR_SIZE / 2);
@@ -943,12 +940,17 @@ hard_fail:
 derr_t delete_device(MYSQL *sql, const dstr_t *uuid, const dstr_t *fpr_hex){
     derr_t e = E_OK;
 
+    size_t affected;
     DSTR_STATIC(q1, "DELETE FROM devices WHERE user_uuid=? AND fingerprint=?");
     PROP(&e,
         sql_norow_query(
-            sql, &q1, NULL, blob_bind_in(uuid), string_bind_in(fpr_hex)
+            sql, &q1, &affected, blob_bind_in(uuid), string_bind_in(fpr_hex)
         )
     );
+
+    if(affected == 0){
+        ORIG(&e, E_USERMSG, "no such device");
+    }
 
     return e;
 }
@@ -1089,12 +1091,17 @@ derr_t add_token(
 derr_t delete_token(MYSQL *sql, const dstr_t *uuid, uint32_t token){
     derr_t e = E_OK;
 
+    size_t affected;
     DSTR_STATIC(q1, "DELETE FROM tokens WHERE user_uuid=? AND token=?");
     PROP(&e,
         sql_norow_query(
-            sql, &q1, NULL, blob_bind_in(uuid), uint_bind_in(&token)
+            sql, &q1, &affected, blob_bind_in(uuid), uint_bind_in(&token)
         )
     );
+
+    if(affected == 0){
+        ORIG(&e, E_USERMSG, "no such token");
+    }
 
     return e;
 }

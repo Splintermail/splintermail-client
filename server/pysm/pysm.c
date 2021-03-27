@@ -294,7 +294,7 @@ fail:
 
 static char * const py_smsql_delete_alias_doc =
     "delete_alias(uuid:bytes, alias:str) -> None\n"
-    "Delete an alias for a uuid.  Returns True if it happened.";
+    "Delete an alias for a uuid.  Raises pysm.UserError if no alias matched.";
 static PyObject *py_smsql_delete_alias(
     py_smsql_t *self, PyObject *args, PyObject *kwds
 ){
@@ -310,11 +310,9 @@ static PyObject *py_smsql_delete_alias(
     };
     PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
 
-    bool deleted;
+    PROP_GO(&e, delete_alias(&self->sql, uuid, alias), fail);
 
-    PROP_GO(&e, delete_alias(&self->sql, uuid, alias, &deleted), fail);
-
-    RETURN_BOOL(deleted);
+    Py_RETURN_NONE;
 
 fail:
     raise_derr(&e);
@@ -323,7 +321,7 @@ fail:
 
 static char * const py_smsql_delete_all_aliases_doc =
     "delete_all_aliases(uuid:str) -> None\n"
-    "Delete all aliases for a uuid.  Returns None.";
+    "Delete all aliases for a uuid.";
 static PyObject *py_smsql_delete_all_aliases(
     py_smsql_t *self, PyObject *args, PyObject *kwds
 ){
@@ -490,6 +488,7 @@ static PyObject *py_smsql_add_device(
         pyarg_dstr(&_pubkey, &pubkey, "pubkey"),
     };
     PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+    LOG_ERROR("pubkey: %x\n", FD(pubkey));
 
     DSTR_VAR(fpr, SMSQL_FPR_SIZE);
     PROP_GO(&e, add_device(&self->sql, uuid, pubkey, &fpr), fail);
@@ -503,7 +502,8 @@ fail:
 
 static char * const py_smsql_delete_device_doc =
     "delete_device(uuid:bytes, fpr:string) -> None\n"
-    "Delete a device from its hex-encoded fingerprint.";
+    "Delete a device from its hex-encoded fingerprint.\n"
+    "Raises pysm.UserError when no device matches.";
 static PyObject *py_smsql_delete_device(
     py_smsql_t *self, PyObject *args, PyObject *kwds
 ){
@@ -620,7 +620,8 @@ fail:
 }
 
 static char * const py_smsql_delete_token_doc =
-    "delete_token(uuid:bytes) -> None";
+    "delete_token(uuid:bytes) -> None\n"
+    "Raises pysm.UserError when no token matches";
 static PyObject *py_smsql_delete_token(
     py_smsql_t *self, PyObject *args, PyObject *kwds
 ){
@@ -1053,7 +1054,6 @@ static PyMethodDef py_smsql_methods[] = {
         .ml_flags = METH_VARARGS | METH_KEYWORDS,
         .ml_doc = py_smsql_validate_csrf_doc,
     },
-
     {NULL}, // sentinel
 };
 
