@@ -965,6 +965,26 @@ fail:
     return NULL;
 }
 
+static char * const py_smsql_gtid_current_pos_doc =
+    "gtid_current_pos() -> str";
+static PyObject *py_smsql_gtid_current_pos(
+    py_smsql_t *self, PyObject *args, PyObject *kwds
+){
+    derr_t e = E_OK;
+
+    py_args_t spec = {};
+    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+
+    DSTR_VAR(buf, 1024);
+    PROP_GO(&e, gtid_current_pos(&self->sql, &buf), fail);
+
+    return BUILD_STRING(buf);
+
+fail:
+    raise_derr(&e);
+    return NULL;
+}
+
 
 ////////
 
@@ -1136,6 +1156,12 @@ static PyMethodDef py_smsql_methods[] = {
         .ml_meth = (PyCFunction)(void*)py_smsql_limit_check,
         .ml_flags = METH_VARARGS | METH_KEYWORDS,
         .ml_doc = py_smsql_limit_check_doc,
+    },
+    {
+        .ml_name = "gtid_current_pos",
+        .ml_meth = (PyCFunction)(void*)py_smsql_gtid_current_pos,
+        .ml_flags = METH_VARARGS | METH_KEYWORDS,
+        .ml_doc = py_smsql_gtid_current_pos_doc,
     },
     {NULL}, // sentinel
 };

@@ -263,4 +263,8 @@ derr_t limit_check(
     unsigned int *limit
 );
 
+// used by health-check-service (hcs)
+// out must be pre-allocated
+derr_t gtid_current_pos(MYSQL *sql, dstr_t *out);
+
 #endif // SM_SQL_H

@@ -458,7 +458,6 @@ static derr_t account_info_action(MYSQL *sql, int argc, char **argv){
 
 static derr_t validate_password_action(MYSQL *sql, int argc, char **argv){
     derr_t e = E_OK;
-    (void)sql;
 
     if(argc != 2){
         ORIG(&e, E_USERMSG, "usage: validate_password (EMAIL|FSID) PASSWORD\n");
@@ -480,7 +479,6 @@ static derr_t validate_password_action(MYSQL *sql, int argc, char **argv){
 
 static derr_t change_password_action(MYSQL *sql, int argc, char **argv){
     derr_t e = E_OK;
-    (void)sql;
 
     if(argc != 2){
         ORIG(&e, E_USERMSG, "usage: change_password (EMAIL|FSID) PASSWORD\n");
@@ -502,7 +500,6 @@ static derr_t change_password_action(MYSQL *sql, int argc, char **argv){
 
 static derr_t user_owns_address_action(MYSQL *sql, int argc, char **argv){
     derr_t e = E_OK;
-    (void)sql;
 
     if(argc != 2){
         ORIG(&e, E_USERMSG, "usage: user_owns_address (EMAIL|FSID) ADDRESS\n");
@@ -518,6 +515,23 @@ static derr_t user_owns_address_action(MYSQL *sql, int argc, char **argv){
     PROP(&e, user_owns_address(sql, &uuid, &address, &ok) );
 
     PFMT("%x\n", FB(ok));
+
+    return e;
+}
+
+
+static derr_t gtid_current_pos_action(MYSQL *sql, int argc, char **argv){
+    derr_t e = E_OK;
+    (void)argv;
+
+    if(argc != 0){
+        ORIG(&e, E_USERMSG, "usage: gtid_current_pos\n");
+    }
+
+    DSTR_VAR(buf, 1024);
+    PROP(&e, gtid_current_pos(sql, &buf) );
+
+    PFMT("%x\n", FD(&buf));
 
     return e;
 }
@@ -627,6 +641,7 @@ int main(int argc, char **argv){
     LINK_ACTION("validate_password", validate_password_action);
     LINK_ACTION("change_password", change_password_action);
     LINK_ACTION("user_owns_address", user_owns_address_action);
+    LINK_ACTION("gtid_current_pos", gtid_current_pos_action);
 #undef LINK_ACTION
 
     // specify command line options

@@ -1942,3 +1942,14 @@ hard_fail:
 
     return e;
 }
+
+derr_t gtid_current_pos(MYSQL *sql, dstr_t *out){
+    derr_t e = E_OK;
+
+    DSTR_STATIC(query, "SELECT @@gtid_current_pos");
+    PROP(&e,
+        sql_onerow_query(sql, &query, NULL, string_bind_out(out))
+    );
+
+    return e;
+}
