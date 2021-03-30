@@ -350,7 +350,7 @@ if("${BUILD_SERVER_CODE}")
     add_subdirectory(server)
 
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DBUILD_SERVER_CODE=yes")
-    target_link_libraries(encrypt_msg badbadbad_alert mysql_util)
+    target_link_libraries(encrypt_msg badbadbad_alert mysql_util libsmsql)
 endif()
 
 # OS-specific steps
