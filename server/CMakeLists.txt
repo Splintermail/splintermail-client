@@ -63,6 +63,11 @@ default_compile_options(migmysql TRUE)
 define_file_logname_for_target(migmysql)
 target_link_libraries(migmysql dstr mysql_util)
 
+add_executable(gc_sessions gc_sessions.c)
+default_compile_options(gc_sessions TRUE)
+define_file_logname_for_target(gc_sessions)
+target_link_libraries(gc_sessions PUBLIC libsmsql badbadbad_alert)
+
 add_subdirectory(pysm)
 add_subdirectory(smphp)
 

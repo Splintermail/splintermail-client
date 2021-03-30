@@ -2057,3 +2057,36 @@ derr_t deletions_finished_one(MYSQL *sql, int server_id, const dstr_t *uuid){
 
     return e;
 }
+
+derr_t gc_sessions_and_csrf(MYSQL *sql, int server_id, time_t now){
+    derr_t e = E_OK;
+
+    if(now < SMSQL_SESSION_HARD_TIMEOUT){
+        ORIG(&e, E_INTERNAL, "now is way too old!");
+    }
+    long hard_limit = now - SMSQL_SESSION_HARD_TIMEOUT;
+    long soft_limit = now - SMSQL_SESSION_SOFT_TIMEOUT;
+
+    DSTR_STATIC(q1,
+        "DELETE FROM sessions WHERE server_id=? AND (login<? OR last_seen<?)"
+    );
+    PROP(&e,
+        sql_norow_query(
+            sql, &q1, NULL,
+            int_bind_in(&server_id),
+            int64_bind_in(&hard_limit),
+            int64_bind_in(&soft_limit)
+        )
+    );
+
+    DSTR_STATIC(q2, "DELETE FROM csrf WHERE server_id=? AND created<?");
+    PROP(&e,
+        sql_norow_query(
+            sql, &q2, NULL,
+            int_bind_in(&server_id),
+            int64_bind_in(&hard_limit)
+        )
+    );
+
+    return e;
+}

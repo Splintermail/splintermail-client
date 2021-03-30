@@ -279,4 +279,6 @@ derr_t deletions_peek_one(MYSQL *sql, int server_id, bool *ok, dstr_t *uuid);
 // remove a deletions entry for this server_id
 derr_t deletions_finished_one(MYSQL *sql, int server_id, const dstr_t *uuid);
 
+derr_t gc_sessions_and_csrf(MYSQL *sql, int server_id, time_t now);
+
 #endif // SM_SQL_H
