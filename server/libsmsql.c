@@ -1178,10 +1178,30 @@ hard_fail:
     return e;
 }
 
-static derr_t _delete_account_txn(
-    MYSQL *sql, const dstr_t *uuid, const dstr_t *email
-){
+static derr_t _delete_account_txn(MYSQL *sql, const dstr_t *uuid){
     derr_t e = E_OK;
+
+    // start by getting this uuid's email, with FOR UPDATE
+    DSTR_VAR(email, SMSQL_EMAIL_SIZE);
+    {
+        bool ok;
+        DSTR_STATIC(q,
+            "SELECT email FROM accounts WHERE user_uuid = ? FOR UPDATE"
+        );
+        PROP(&e,
+            sql_onerow_query(
+                sql, &q, &ok,
+                // params
+                blob_bind_in(uuid),
+                // results
+                string_bind_out(&email)
+            )
+        );
+        if(!ok){
+            // nothing to delete; more likely to be a bug than a race condition
+            ORIG(&e, E_INTERNAL, "no account matches uuid!");
+        }
+    }
 
     // delete all the users's aliases, deleting paid aliases from emails table
     PROP(&e, _delete_all_aliases_txn(sql, uuid) );
@@ -1203,28 +1223,20 @@ static derr_t _delete_account_txn(
 
     {
         DSTR_STATIC(q, "DELETE FROM emails WHERE email = ?");
-        PROP(&e, sql_norow_query(sql, &q, NULL, string_bind_in(email)) );
+        PROP(&e, sql_norow_query(sql, &q, NULL, string_bind_in(&email)) );
     }
 
     return e;
 }
 
 // gateway is responsible for ensuring a password is provided
+// gateway is also responsible for calling trigger_deleter(), below
 derr_t delete_account(MYSQL *sql, const dstr_t *uuid){
     derr_t e = E_OK;
 
-    // start by getting this uuid's email
-    DSTR_VAR(email, SMSQL_EMAIL_SIZE);
-    bool ok;
-    PROP(&e, get_email_for_uuid(sql, uuid, &email, &ok) );
-    if(!ok){
-        // nothing to delete; more likely to be a bug than a race condition
-        ORIG(&e, E_INTERNAL, "no account matches uuid!");
-    }
-
     PROP(&e, sql_txn_start(sql) );
 
-    PROP_GO(&e, _delete_account_txn(sql, uuid, &email), hard_fail);
+    PROP_GO(&e, _delete_account_txn(sql, uuid), hard_fail);
 
     PROP(&e, sql_txn_commit(sql) );
 
@@ -1949,6 +1961,98 @@ derr_t gtid_current_pos(MYSQL *sql, dstr_t *out){
     DSTR_STATIC(query, "SELECT @@gtid_current_pos");
     PROP(&e,
         sql_onerow_query(sql, &query, NULL, string_bind_out(out))
+    );
+
+    return e;
+}
+
+static derr_t _trigger_deleter_txn(MYSQL *sql, const dstr_t *uuid){
+    derr_t e = E_OK;
+
+    // read servers.conf
+    DSTR_VAR(buf, 1024);
+    PROP(&e, dstr_read_file("/etc/deleter/servers.conf", &buf) );
+
+    // for each server, insert one row into deletions
+    dstr_t text = buf;
+    while(true){
+        dstr_t line;
+        dstr_split2_soft(text, DSTR_LIT("\n"), NULL, &line, &text);
+        if(line.len == 0) break;
+
+        int server_id;
+        PROP(&e, dstr_toi(&line, &server_id, 10) );
+
+        DSTR_STATIC(q,
+            "INSERT INTO deletions (user_uuid, server_id) VALUES (?, ?)"
+        );
+        PROP(&e,
+            sql_norow_query(
+                sql, &q, NULL,
+                blob_bind_in(uuid),
+                int_bind_in(&server_id)
+            )
+        );
+    }
+
+    return e;
+}
+
+/* AFTER deleting an account, it is safe to try to trigger the deletions
+   service.  It is expected that the caller is tolerant of errors, since they
+   are often not fatal; the deleter will periodically GC any stray files. */
+derr_t trigger_deleter(MYSQL *sql, const dstr_t *uuid){
+    derr_t e = E_OK;
+
+    PROP(&e, sql_txn_start(sql) );
+
+    PROP_GO(&e, _trigger_deleter_txn(sql, uuid), hard_fail);
+
+    PROP(&e, sql_txn_commit(sql) );
+
+    return e;
+
+hard_fail:
+    sql_txn_abort(sql);
+
+    return e;
+}
+
+// get one uuid for this server to delete, if any exist
+derr_t deletions_peek_one(MYSQL *sql, int server_id, bool *ok, dstr_t *uuid){
+    derr_t e = E_OK;
+
+    DSTR_STATIC(q1,
+        "SELECT user_uuid FROM deletions WHERE server_id=? LIMIT 1"
+    );
+
+    PROP(&e,
+        sql_onerow_query(
+            sql, &q1, ok,
+            // params
+            int_bind_in(&server_id),
+            // results
+            blob_bind_out(uuid)
+        )
+    );
+
+    return e;
+}
+
+// remove a deletions entry for this server_id
+derr_t deletions_finished_one(MYSQL *sql, int server_id, const dstr_t *uuid){
+    derr_t e = E_OK;
+
+    DSTR_STATIC(q1,
+        "DELETE FROM deletions WHERE server_id=? AND user_uuid=?"
+    );
+
+    PROP(&e,
+        sql_norow_query(
+            sql, &q1, NULL,
+            int_bind_in(&server_id),
+            blob_bind_in(uuid)
+        )
     );
 
     return e;

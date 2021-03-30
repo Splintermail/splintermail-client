@@ -424,6 +424,11 @@ static derr_t delete_account_action(MYSQL *sql, int argc, char **argv){
 
     PROP(&e, delete_account(sql, &uuid) );
 
+    IF_PROP(&e, trigger_deleter(sql, &uuid) ){
+        DUMP(e);
+        DROP_VAR(&e);
+    }
+
     PFMT("DONE\n");
 
     return e;
@@ -665,12 +670,10 @@ int main(int argc, char **argv){
     size_t speclen = sizeof(spec) / sizeof(*spec);
     int newargc;
     // parse command line options
-    e = opt_parse(argc, argv, spec, speclen, &newargc);
-    if(is_error(e)){
-        logger_add_fileptr(LOG_LVL_ERROR, stderr);
-        DUMP(e);
-        DROP_VAR(&e);
-        return 2;
+    IF_PROP(&e, opt_parse(argc, argv, spec, speclen, &newargc) ){
+        print_help(stdout);
+        DROP_CMD( logger_add_fileptr(LOG_LVL_ERROR, stderr) );
+        goto fail;
     }
 
     // print help?
@@ -685,7 +688,11 @@ int main(int argc, char **argv){
     }
 
     // --debug
-    logger_add_fileptr(o_debug.found ? LOG_LVL_DEBUG : LOG_LVL_INFO, stderr);
+    PROP_GO(&e,
+        logger_add_fileptr(
+            o_debug.found ? LOG_LVL_DEBUG : LOG_LVL_INFO, stderr
+        ),
+    fail);
 
     // COMMAND
     dstr_t cmd;

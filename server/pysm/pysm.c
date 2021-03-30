@@ -320,7 +320,7 @@ fail:
 }
 
 static char * const py_smsql_delete_all_aliases_doc =
-    "delete_all_aliases(uuid:str) -> None\n"
+    "delete_all_aliases(uuid:bytes) -> None\n"
     "Delete all aliases for a uuid.";
 static PyObject *py_smsql_delete_all_aliases(
     py_smsql_t *self, PyObject *args, PyObject *kwds
@@ -346,7 +346,7 @@ fail:
 // devices
 
 static char * const py_smsql_list_device_fprs_doc =
-    "list_device_fprs(uuid:str) -> List[fpr:str]\n"
+    "list_device_fprs(uuid:bytes) -> List[fpr:str]\n"
     "Return a list of hex-encoded fingerprints.";
 static PyObject *py_smsql_list_device_fprs(
     py_smsql_t *self, PyObject *args, PyObject *kwds
@@ -471,7 +471,7 @@ fail:
 }
 
 static char * const py_smsql_add_device_doc =
-    "add_device(uuid:str, pubkey:str) -> fpr:str\n"
+    "add_device(uuid:bytes, pubkey:str) -> fpr:str\n"
     "Add a new device from a pem-encoded public key.\n"
     "Returns fingerprint or raises pysm.UserError.";
 static PyObject *py_smsql_add_device(
@@ -985,6 +985,78 @@ fail:
     return NULL;
 }
 
+static char * const py_smsql_trigger_deleter_doc =
+    "trigger_deleter(uuid:bytes) -> None";
+static PyObject *py_smsql_trigger_deleter(
+    py_smsql_t *self, PyObject *args, PyObject *kwds
+){
+    derr_t e = E_OK;
+
+    dstr_t _uuid;
+    const dstr_t *uuid;
+    py_args_t spec = {
+        pyarg_dstr(&_uuid, &uuid, "uuid"),
+    };
+    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+
+    PROP_GO(&e, trigger_deleter(&self->sql, uuid), fail);
+
+    Py_RETURN_NONE;
+
+fail:
+    raise_derr(&e);
+    return NULL;
+}
+
+static char * const py_smsql_deletions_peek_one_doc =
+    "deletions_peek_one(server_id:int) -> Optional[uuid:bytes]";
+static PyObject *py_smsql_deletions_peek_one(
+    py_smsql_t *self, PyObject *args, PyObject *kwds
+){
+    derr_t e = E_OK;
+
+    int server_id;
+    py_args_t spec = {
+        pyarg_int(&server_id, "server_id"),
+    };
+    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+
+    bool ok;
+    DSTR_VAR(uuid, SMSQL_UUID_SIZE);
+    PROP_GO(&e, deletions_peek_one(&self->sql, server_id, &ok, &uuid), fail);
+
+    return BUILD_OPTIONAL_BYTES(uuid, ok);
+
+fail:
+    raise_derr(&e);
+    return NULL;
+}
+
+static char * const py_smsql_deletions_finished_one_doc =
+    "deletions_finished_one(server_id:int, uuid:bytes) -> None";
+static PyObject *py_smsql_deletions_finished_one(
+    py_smsql_t *self, PyObject *args, PyObject *kwds
+){
+    derr_t e = E_OK;
+
+    int server_id;
+    dstr_t _uuid;
+    const dstr_t *uuid;
+    py_args_t spec = {
+        pyarg_int(&server_id, "server_id"),
+        pyarg_dstr(&_uuid, &uuid, "uuid"),
+    };
+    PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
+
+    PROP_GO(&e, deletions_finished_one(&self->sql, server_id, uuid), fail);
+
+    Py_RETURN_NONE;
+
+fail:
+    raise_derr(&e);
+    return NULL;
+}
+
 
 ////////
 
@@ -1162,6 +1234,24 @@ static PyMethodDef py_smsql_methods[] = {
         .ml_meth = (PyCFunction)(void*)py_smsql_gtid_current_pos,
         .ml_flags = METH_VARARGS | METH_KEYWORDS,
         .ml_doc = py_smsql_gtid_current_pos_doc,
+    },
+    {
+        .ml_name = "trigger_deleter",
+        .ml_meth = (PyCFunction)(void*)py_smsql_trigger_deleter,
+        .ml_flags = METH_VARARGS | METH_KEYWORDS,
+        .ml_doc = py_smsql_trigger_deleter_doc,
+    },
+    {
+        .ml_name = "deletions_peek_one",
+        .ml_meth = (PyCFunction)(void*)py_smsql_deletions_peek_one,
+        .ml_flags = METH_VARARGS | METH_KEYWORDS,
+        .ml_doc = py_smsql_deletions_peek_one_doc,
+    },
+    {
+        .ml_name = "deletions_finished_one",
+        .ml_meth = (PyCFunction)(void*)py_smsql_deletions_finished_one,
+        .ml_flags = METH_VARARGS | METH_KEYWORDS,
+        .ml_doc = py_smsql_deletions_finished_one_doc,
     },
     {NULL}, // sentinel
 };

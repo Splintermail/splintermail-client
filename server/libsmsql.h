@@ -170,6 +170,7 @@ derr_t create_account(
 );
 
 // gateway is responsible for ensuring a password is provided first
+// gateway is also responsible for calling trigger_deleter(), below
 derr_t delete_account(MYSQL *sql, const dstr_t *uuid);
 
 derr_t account_info(
@@ -266,5 +267,16 @@ derr_t limit_check(
 // used by health-check-service (hcs)
 // out must be pre-allocated
 derr_t gtid_current_pos(MYSQL *sql, dstr_t *out);
+
+/* AFTER deleting an account, it is safe to try to trigger the deletions
+   service.  It is expected that the caller is tolerant of errors, since they
+   are often not fatal; the deleter will periodically GC any stray files. */
+derr_t trigger_deleter(MYSQL *sql, const dstr_t *uuid);
+
+// get one uuid for this server to delete, if any exist
+derr_t deletions_peek_one(MYSQL *sql, int server_id, bool *ok, dstr_t *uuid);
+
+// remove a deletions entry for this server_id
+derr_t deletions_finished_one(MYSQL *sql, int server_id, const dstr_t *uuid);
 
 #endif // SM_SQL_H
