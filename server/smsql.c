@@ -541,6 +541,36 @@ static derr_t gtid_current_pos_action(MYSQL *sql, int argc, char **argv){
     return e;
 }
 
+static derr_t list_deletions_action(MYSQL *sql, int argc, char **argv){
+    derr_t e = E_OK;
+
+    if(argc != 1){
+        ORIG(&e, E_USERMSG, "usage: list_deletions SERVER_ID\n");
+    }
+
+    dstr_t server_id_str = get_arg(argv, 0);
+
+    int server_id;
+    PROP(&e, dstr_toi(&server_id_str, &server_id, 10) );
+
+    link_t uuids;
+    link_init(&uuids);
+    PROP(&e, list_deletions(sql, server_id, &uuids) );
+    if(link_list_isempty(&uuids)){
+        PFMT("nothing to delete\n");
+        return e;
+    }
+
+    link_t *link;
+    while((link = link_list_pop_first(&uuids))){
+        smsql_dstr_t *uuid = CONTAINER_OF(link, smsql_dstr_t, link);
+        PFMT("%x\n", FSID(&uuid->dstr));
+        smsql_dstr_free(&uuid);
+    }
+
+    return e;
+}
+
 //////
 
 static derr_t smsql(
@@ -647,6 +677,7 @@ int main(int argc, char **argv){
     LINK_ACTION("change_password", change_password_action);
     LINK_ACTION("user_owns_address", user_owns_address_action);
     LINK_ACTION("gtid_current_pos", gtid_current_pos_action);
+    LINK_ACTION("list_deletions", list_deletions_action);
 #undef LINK_ACTION
 
     // specify command line options

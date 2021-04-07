@@ -2018,24 +2018,58 @@ hard_fail:
     return e;
 }
 
-// get one uuid for this server to delete, if any exist
-derr_t deletions_peek_one(MYSQL *sql, int server_id, bool *ok, dstr_t *uuid){
+// returns a list of uuids to delete (smsql_dstr_t's)
+derr_t list_deletions(MYSQL *sql, int server_id, link_t *out){
     derr_t e = E_OK;
 
-    DSTR_STATIC(q1,
-        "SELECT user_uuid FROM deletions WHERE server_id=? LIMIT 1"
-    );
+    MYSQL_STMT *stmt;
 
+    DSTR_VAR(uuid_res, SMSQL_UUID_SIZE);
+
+    DSTR_STATIC(q1, "SELECT user_uuid FROM deletions WHERE server_id=?");
     PROP(&e,
-        sql_onerow_query(
-            sql, &q1, ok,
-            // params
+        sql_multirow_stmt(
+            sql, &stmt, &q1,
+            // parameters
             int_bind_in(&server_id),
             // results
-            blob_bind_out(uuid)
+            blob_bind_out(&uuid_res)
         )
     );
 
+    link_t list;
+    link_init(&list);
+    link_t *link;
+
+    while(true){
+        bool ok;
+        PROP_GO(&e, sql_stmt_fetch(stmt, &ok), fail_list);
+        if(!ok) break;
+
+        smsql_dstr_t *uuid;
+        PROP_GO(&e, smsql_dstr_new(&uuid, &uuid_res), loop_fail);
+        link_list_append(&list, &uuid->link);
+
+        continue;
+
+    loop_fail:
+        sql_stmt_fetchall(stmt);
+        goto fail_list;
+    }
+
+    // set the output
+    link_list_append_list(out, &list);
+
+    mysql_stmt_close(stmt);
+
+    return e;
+
+fail_list:
+    while((link = link_list_pop_first(&list))){
+        smsql_dstr_t *uuid = CONTAINER_OF(link, smsql_dstr_t, link);
+        smsql_dstr_free(&uuid);
+    }
+    mysql_stmt_close(stmt);
     return e;
 }
 
@@ -2061,9 +2095,7 @@ derr_t deletions_finished_one(MYSQL *sql, int server_id, const dstr_t *uuid){
 derr_t gc_sessions_and_csrf(MYSQL *sql, int server_id, time_t now){
     derr_t e = E_OK;
 
-    if(now < SMSQL_SESSION_HARD_TIMEOUT){
-        ORIG(&e, E_INTERNAL, "now is way too old!");
-    }
+    // time_t is signed so this can't underflow if now == 0
     long hard_limit = now - SMSQL_SESSION_HARD_TIMEOUT;
     long soft_limit = now - SMSQL_SESSION_SOFT_TIMEOUT;
 

@@ -273,8 +273,8 @@ derr_t gtid_current_pos(MYSQL *sql, dstr_t *out);
    are often not fatal; the deleter will periodically GC any stray files. */
 derr_t trigger_deleter(MYSQL *sql, const dstr_t *uuid);
 
-// get one uuid for this server to delete, if any exist
-derr_t deletions_peek_one(MYSQL *sql, int server_id, bool *ok, dstr_t *uuid);
+// returns a list of uuids to delete (smsql_dstr_t's)
+derr_t list_deletions(MYSQL *sql, int server_id, link_t *out);
 
 // remove a deletions entry for this server_id
 derr_t deletions_finished_one(MYSQL *sql, int server_id, const dstr_t *uuid);

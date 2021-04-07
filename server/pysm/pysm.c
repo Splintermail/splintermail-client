@@ -1008,9 +1008,9 @@ fail:
     return NULL;
 }
 
-static char * const py_smsql_deletions_peek_one_doc =
-    "deletions_peek_one(server_id:int) -> Optional[uuid:bytes]";
-static PyObject *py_smsql_deletions_peek_one(
+static char * const py_smsql_list_deletions_doc =
+    "list_deletions(server_id:int) -> List[uuid:bytes]";
+static PyObject *py_smsql_list_deletions(
     py_smsql_t *self, PyObject *args, PyObject *kwds
 ){
     derr_t e = E_OK;
@@ -1021,12 +1021,48 @@ static PyObject *py_smsql_deletions_peek_one(
     };
     PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
 
-    bool ok;
-    DSTR_VAR(uuid, SMSQL_UUID_SIZE);
-    PROP_GO(&e, deletions_peek_one(&self->sql, server_id, &ok, &uuid), fail);
+    link_t dstrs;
+    link_init(&dstrs);
+    PROP_GO(&e, list_deletions(&self->sql, server_id, &dstrs), fail);
 
-    return BUILD_OPTIONAL_BYTES(uuid, ok);
+    // count entries
+    Py_ssize_t count = 0;
+    link_t *link;
+    for(link = dstrs.next; link != &dstrs; link = link->next){
+        count++;
+    }
 
+    // create the output list
+    PyObject *py_list = PyList_New(count);
+    if(!py_list) ORIG_GO(&e, E_NOMEM, "nomem", fail_dstrs);
+
+    count = 0;
+    // populate the output list
+    while((link = link_list_pop_first(&dstrs))){
+        smsql_dstr_t *dstr = CONTAINER_OF(link, smsql_dstr_t, link);
+
+        // build a list of strings
+        PyObject *py_str = BUILD_BYTES(dstr->dstr);
+
+        // always free the popped dstr
+        smsql_dstr_free(&dstr);
+
+        // now check for errors
+        if(!py_str) ORIG_GO(&e, E_NOMEM, "nomem", fail_list);
+
+        // the SET_ITEM macro is only suitable for newly created, empty lists
+        PyList_SET_ITEM(py_list, count++, py_str);
+    }
+
+    return py_list;
+
+fail_list:
+    Py_DECREF(py_list);
+fail_dstrs:
+    while((link = link_list_pop_first(&dstrs))){
+        smsql_dstr_t *dstr = CONTAINER_OF(link, smsql_dstr_t, link);
+        smsql_dstr_free(&dstr);
+    }
 fail:
     raise_derr(&e);
     return NULL;
@@ -1242,10 +1278,10 @@ static PyMethodDef py_smsql_methods[] = {
         .ml_doc = py_smsql_trigger_deleter_doc,
     },
     {
-        .ml_name = "deletions_peek_one",
-        .ml_meth = (PyCFunction)(void*)py_smsql_deletions_peek_one,
+        .ml_name = "list_deletions",
+        .ml_meth = (PyCFunction)(void*)py_smsql_list_deletions,
         .ml_flags = METH_VARARGS | METH_KEYWORDS,
-        .ml_doc = py_smsql_deletions_peek_one_doc,
+        .ml_doc = py_smsql_list_deletions_doc,
     },
     {
         .ml_name = "deletions_finished_one",
