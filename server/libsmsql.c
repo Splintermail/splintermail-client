@@ -13,12 +13,17 @@ static derr_type_t to_fsid_quiet(const dstr_t *uuid, dstr_t *out){
     return type;
 }
 
-static derr_type_t unfsid_quiet(const dstr_t *fsid, dstr_t *out){
+static derr_type_t to_uuid_quiet(const dstr_t *fsid, dstr_t *out){
+    // make a copy so we don't violate the (implicit) const input constraint
+    DSTR_VAR(b64, SMSQL_FSID_SIZE);
+    derr_type_t type = dstr_append_quiet(&b64, fsid);
+    if(type) return type;
+
     // replace '-' with '/' to be valid base64
-    for(size_t i = 0; i < fsid->len; i++){
-        if(fsid->data[i] == '-') fsid->data[i] = '/';
+    for(size_t i = 0; i < b64.len; i++){
+        if(b64.data[i] == '-') b64.data[i] = '/';
     }
-    derr_type_t type = b642bin_quiet(fsid, out, NULL);
+    type = b642bin_quiet(&b64, out, NULL);
     if(type) return type;
     return type;
 }
@@ -32,7 +37,7 @@ derr_t to_fsid(const dstr_t *uuid, dstr_t *out){
 
 derr_t to_uuid(const dstr_t *uuid, dstr_t *out){
     derr_t e = E_OK;
-    derr_type_t type = unfsid_quiet(uuid, out);
+    derr_type_t type = to_uuid_quiet(uuid, out);
     if(type) ORIG(&e, type, "output error");
     return e;
 }
