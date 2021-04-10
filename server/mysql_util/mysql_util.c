@@ -57,7 +57,7 @@ derr_t sql_connect_unix_ex(
     const dstr_t *user,
     const dstr_t *pass,
     const dstr_t *sock,
-    const char *dbname
+    const dstr_t *db
 ){
     derr_t e = E_OK;
 
@@ -65,10 +65,12 @@ derr_t sql_connect_unix_ex(
     char *sqluser = NULL;
     char *sqlpass = NULL;
     char *sqlsock = "/var/run/mysqld/mysqld.sock";
+    char *sqldb = NULL;
 
     DSTR_VAR(d_sqluser, 256);
     DSTR_VAR(d_sqlpass, 256);
     DSTR_VAR(d_sqlsock, 256);
+    DSTR_VAR(d_sqldb, 256);
 
     // get null-terminated values, for mysql api
     if(user){
@@ -89,11 +91,17 @@ derr_t sql_connect_unix_ex(
         sqlsock = d_sqlsock.data;
     }
 
+    if(db){
+        PROP(&e, dstr_copy(db, &d_sqldb) );
+        PROP(&e, dstr_null_terminate(&d_sqldb) );
+        sqldb = d_sqldb.data;
+    }
+
     // NULL for host means "use unix socket"
     char *null_host = NULL;
 
     MYSQL *mret = mysql_real_connect(
-        sql, null_host, sqluser, sqlpass, dbname, 0, sqlsock, 0
+        sql, null_host, sqluser, sqlpass, sqldb, 0, sqlsock, 0
     );
     if(!mret){
         TRACE_SQL(&e, sql);
@@ -108,7 +116,9 @@ derr_t sql_connect_unix(
 ){
     derr_t e = E_OK;
 
-    PROP(&e, sql_connect_unix_ex(sql, user, pass, sock, "splintermail") );
+    DSTR_STATIC(db, "splintermail");
+
+    PROP(&e, sql_connect_unix_ex(sql, user, pass, sock, &db) );
 
     return e;
 }

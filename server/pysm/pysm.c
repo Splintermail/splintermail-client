@@ -54,6 +54,8 @@ static void py_smsql_dealloc(py_smsql_t *self){
 static int py_smsql_init(py_smsql_t *self, PyObject *args, PyObject *kwds){
     derr_t e = E_OK;
 
+    dstr_t _db;
+    const dstr_t *db;
     dstr_t _sock;
     const dstr_t *sock;
     dstr_t _user;
@@ -62,6 +64,7 @@ static int py_smsql_init(py_smsql_t *self, PyObject *args, PyObject *kwds){
     const dstr_t *pass;
 
     py_args_t spec = {
+        pyarg_nullable_dstr_opt(&_db, &db, "db", "splintermail"),
         pyarg_dstr_opt(&_sock, &sock, "sock", "/var/run/mysqld/mysqld.sock"),
         pyarg_nullable_dstr_opt(&_user, &user, "user", NULL),
         pyarg_nullable_dstr_opt(&_pass, &pass, "pass", NULL),
@@ -69,7 +72,7 @@ static int py_smsql_init(py_smsql_t *self, PyObject *args, PyObject *kwds){
 
     PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
 
-    PROP_GO(&e, smsql_init(self, *sock, user, pass), fail);
+    PROP_GO(&e, smsql_init(self, *sock, user, pass, db), fail);
 
     return 0;
 

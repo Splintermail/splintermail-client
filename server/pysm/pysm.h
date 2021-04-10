@@ -18,12 +18,18 @@ typedef struct {
     dstr_t user;
     bool _pass;
     dstr_t pass;
+    bool _db;
+    dstr_t db;
     bool _sql;
     MYSQL sql;
 } py_smsql_t;
 
 derr_t smsql_init(
-    py_smsql_t *self, const dstr_t sock, const dstr_t *user, const dstr_t *pass
+    py_smsql_t *self,
+    const dstr_t sock,
+    const dstr_t *user,
+    const dstr_t *pass,
+    const dstr_t *db
 );
 void smsql_deinit(py_smsql_t *self);
 

@@ -5,22 +5,36 @@
 #include "pysm.h"
 
 derr_t smsql_init(
-    py_smsql_t *self, const dstr_t sock, const dstr_t *user, const dstr_t *pass
+    py_smsql_t *self,
+    const dstr_t sock,
+    const dstr_t *user,
+    const dstr_t *pass,
+    const dstr_t *db
 ){
+    (void)db;
     derr_t e = E_OK;
 
-    dstr_copy(&sock, &self->sock);
+    PROP_GO(&e, dstr_copy(&sock, &self->sock), fail);
 
     if(user != NULL){
         self->_user = true;
-        dstr_copy(user, &self->user);
+        PROP_GO(&e, dstr_copy(user, &self->user), fail);
     }
 
     if(pass != NULL){
         self->_pass = true;
-        dstr_copy(pass, &self->pass);
+        PROP_GO(&e, dstr_copy(pass, &self->pass), fail);
     }
 
+    if(db != NULL){
+        self->_db = true;
+        PROP_GO(&e, dstr_copy(db, &self->db), fail);
+    }
+
+    return e;
+
+fail:
+    smsql_deinit(self);
     return e;
 }
 
@@ -28,6 +42,7 @@ void smsql_deinit(py_smsql_t *self){
     dstr_free(&self->sock);
     dstr_free(&self->user);
     dstr_free(&self->pass);
+    dstr_free(&self->db);
 
     if(self->_sql){
         mysql_close(&self->sql);
@@ -48,11 +63,12 @@ derr_t smsql_connect(py_smsql_t *self){
     }
 
     PROP_GO(&e,
-        sql_connect_unix(
+        sql_connect_unix_ex(
             &self->sql,
             self->_user ? &self->user : NULL,
             self->_pass ? &self->pass : NULL,
-            &self->sock
+            &self->sock,
+            self->_db ? &self->db : NULL
         ),
     fail_sql);
 

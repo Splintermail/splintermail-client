@@ -37,12 +37,13 @@ static inline fmt_t FSQL(MYSQL *sql){
 }
 
 // sock is allowed to be NULL (defaults to "/var/run/mysqld/mysqld.sock")
+// dbname can be NULL to not choose a database
 derr_t sql_connect_unix_ex(
     MYSQL *sql,
     const dstr_t *user,
     const dstr_t *pass,
     const dstr_t *sock,
-    const char *dbname
+    const dstr_t *db
 );
 
 derr_t sql_connect_unix(
