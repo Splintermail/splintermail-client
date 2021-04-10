@@ -127,7 +127,7 @@ static derr_t list_aliases_action(MYSQL *sql, int argc, char **argv){
     link_init(&aliases);
     PROP(&e, list_aliases(sql, &uuid, &aliases) );
     if(link_list_isempty(&aliases)){
-        PFMT("NO ALIASES\n");
+        FFMT(stderr, NULL, "NO ALIASES\n");
         return e;
     }
 
@@ -557,7 +557,7 @@ static derr_t list_deletions_action(MYSQL *sql, int argc, char **argv){
     link_init(&uuids);
     PROP(&e, list_deletions(sql, server_id, &uuids) );
     if(link_list_isempty(&uuids)){
-        PFMT("nothing to delete\n");
+        FFMT(stderr, NULL, "nothing to delete\n");
         return e;
     }
 
