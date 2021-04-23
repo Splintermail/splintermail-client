@@ -172,7 +172,7 @@ def main(php_bin):
     with mariadb.mariadb(None, migrations, migmysql_path) as script_runner:
         sock = script_runner.sockpath
         php = SMPHP(php_bin, sock)
-        with pysm.SMSQL(sock) as smsql:
+        with pysm.SMSQL(sock=sock) as smsql:
             run_tests(php, smsql)
     print("PASS")
 
