@@ -63,6 +63,16 @@ default_compile_options(gc_sessions TRUE)
 define_file_logname_for_target(gc_sessions)
 target_link_libraries(gc_sessions PUBLIC libsmsql badbadbad_alert)
 
+if("${DOVECOT_INCLUDE_DIR}" STREQUAL "")
+    set(DOVECOT_INCLUDE_DIR "/usr/include/dovecot")
+endif()
+add_library(xkeysync SHARED xkeysync.c)
+target_include_directories(xkeysync PRIVATE ${DOVECOT_INCLUDE_DIR})
+define_file_logname_for_target(xkeysync)
+set_target_properties("xkeysync" PROPERTIES OUTPUT_NAME "99_xkeysync_plugin")
+default_compile_options(xkeysync FALSE)
+target_link_libraries(xkeysync PRIVATE libsmsql_noasan dstr_noasan)
+
 add_subdirectory(pysm)
 add_subdirectory(smphp)
 

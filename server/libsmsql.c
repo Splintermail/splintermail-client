@@ -726,7 +726,9 @@ derr_t list_device_fprs(MYSQL *sql, const dstr_t *uuid, link_t *out){
     DSTR_VAR(fpr_res, SMSQL_FPR_SIZE);
 
     DSTR_STATIC(
-        q1, "SELECT fingerprint from devices where user_uuid=?"
+        q1,
+        "SELECT fingerprint FROM devices WHERE user_uuid=? "
+        "ORDER BY fingerprint"
     );
     PROP(&e,
         sql_multirow_stmt(
@@ -785,7 +787,9 @@ derr_t list_device_keys(MYSQL *sql, const dstr_t *uuid, link_t *out){
     DSTR_VAR(public_key_res, SMSQL_PUBKEY_SIZE);
 
     DSTR_STATIC(
-        q1, "SELECT public_key from devices where user_uuid=?"
+        q1,
+        "SELECT public_key FROM devices WHERE user_uuid=? "
+        "ORDER BY fingerprint"
     );
     PROP(&e,
         sql_multirow_stmt(
@@ -836,6 +840,31 @@ fail_list:
     return e;
 }
 
+derr_t get_device(
+    MYSQL *sql, const dstr_t *uuid, const dstr_t *fpr, dstr_t *key, bool *ok
+){
+    derr_t e = E_OK;
+    *ok = false;
+
+    DSTR_STATIC(
+        q1,
+        "SELECT public_key FROM devices where user_uuid=? AND fingerprint=?"
+    );
+    PROP(&e,
+        sql_onerow_query(
+            sql, &q1, ok,
+            // parameters
+            blob_bind_in(uuid),
+            string_bind_in(fpr),
+            // results
+            string_bind_out(key)
+        )
+    );
+
+    return e;
+
+}
+
 static derr_t _add_device_txn(
     MYSQL *sql,
     const dstr_t *uuid,
@@ -847,7 +876,7 @@ static derr_t _add_device_txn(
     // not vulnerable to write skew since we use FOR UPDATE
     uint64_t count;
     DSTR_STATIC(
-        q1, "SELECT COUNT(*) FROM devices WHERE user_uuid=? FOR UPDATE;"
+        q1, "SELECT COUNT(*) FROM devices WHERE user_uuid=? FOR UPDATE"
     );
     PROP(&e,
         sql_onerow_query(

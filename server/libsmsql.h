@@ -124,11 +124,18 @@ DEF_CONTAINER_OF(smsql_dstr_t, link, link_t);
 derr_t smsql_dstr_new(smsql_dstr_t **out, const dstr_t *val);
 void smsql_dstr_free(smsql_dstr_t **old);
 
-// returns a list of hex-encoded fingerprints (smsql_dstr_t's)
+/* returns a list of hex-encoded fingerprints (smsql_dstr_t's), ordered
+   by fingerprint */
 derr_t list_device_fprs(MYSQL *sql, const dstr_t *uuid, link_t *out);
 
-// returns a list of pem-encoded public keys (smsql_dstr_t's)
+/* returns a list of pem-encoded public keys (smsql_dstr_t's), ordered
+   by fingerprint */
 derr_t list_device_keys(MYSQL *sql, const dstr_t *uuid, link_t *out);
+
+// returns a user's device identified by a particular fingerprint
+derr_t get_device(
+    MYSQL *sql, const dstr_t *uuid, const dstr_t *fpr, dstr_t *key, bool *ok
+);
 
 // take a PEM-encoded public key, validate it, and add it to an account
 // raises E_USERMSG on invalid or duplicate key

@@ -273,6 +273,32 @@ static derr_t list_device_keys_action(MYSQL *sql, int argc, char **argv){
     return e;
 }
 
+static derr_t get_device_action(MYSQL *sql, int argc, char **argv){
+    derr_t e = E_OK;
+
+    if(argc != 2){
+        ORIG(&e, E_USERMSG, "usage: get_device (EMAIL|FSID) FPR\n");
+    }
+
+    dstr_t id = get_arg(argv, 0);
+    dstr_t fpr = get_arg(argv, 1);
+
+    DSTR_VAR(uuid, SMSQL_UUID_SIZE);
+    PROP(&e, get_uuid_from_id(sql, &id, &uuid) );
+
+    DSTR_VAR(pubkey, SMSQL_PUBKEY_SIZE);
+    bool ok;
+    PROP(&e, get_device(sql, &uuid, &fpr, &pubkey, &ok) );
+
+    if(ok){
+        PFMT("%x\n", FD(&pubkey));
+    }else{
+        FFMT(stderr, NULL, "no results\n");
+    }
+
+    return e;
+}
+
 static derr_t add_device_action(MYSQL *sql, int argc, char **argv){
     derr_t e = E_OK;
 
@@ -465,7 +491,9 @@ static derr_t validate_password_action(MYSQL *sql, int argc, char **argv){
     derr_t e = E_OK;
 
     if(argc != 2){
-        ORIG(&e, E_USERMSG, "usage: validate_password (EMAIL|FSID) PASSWORD\n");
+        ORIG(&e,
+            E_USERMSG, "usage: validate_password (EMAIL|FSID) PASSWORD\n"
+        );
     }
 
     dstr_t id = get_arg(argv, 0);
@@ -665,6 +693,7 @@ int main(int argc, char **argv){
     LINK_ACTION("delete_all_aliases", delete_all_aliases_action);
     LINK_ACTION("list_device_fprs", list_device_fprs_action);
     LINK_ACTION("list_device_keys", list_device_keys_action);
+    LINK_ACTION("get_device", get_device_action);
     LINK_ACTION("add_device", add_device_action);
     LINK_ACTION("delete_device", delete_device_action);
     LINK_ACTION("list_tokens", list_tokens_action);
