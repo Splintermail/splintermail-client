@@ -73,6 +73,13 @@ set_target_properties("xkeysync" PROPERTIES OUTPUT_NAME "99_xkeysync_plugin")
 default_compile_options(xkeysync FALSE)
 target_link_libraries(xkeysync PRIVATE libsmsql_noasan dstr_noasan)
 
+add_library(xkeyadd SHARED xkeyadd.c)
+target_include_directories(xkeyadd PRIVATE ${DOVECOT_INCLUDE_DIR})
+define_file_logname_for_target(xkeyadd)
+set_target_properties("xkeyadd" PROPERTIES OUTPUT_NAME "99_xkeyadd_plugin")
+default_compile_options(xkeyadd FALSE)
+target_link_libraries(xkeyadd PRIVATE libsmsql_noasan dstr_noasan)
+
 add_subdirectory(pysm)
 add_subdirectory(smphp)
 
