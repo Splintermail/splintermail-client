@@ -140,21 +140,20 @@ def do_mariadb(basedir, migrations, migmysql_path):
         bootstrap_db(basedir)
 
     datadir = os.path.join(basedir, "data")
-    sock = "mariadb.sock"
-    sockpath = os.path.join(datadir, sock)
+    sock = os.path.join(basedir, "mariadb.sock")
 
     cmd = ["mariadbd", "--no-defaults", "--datadir", datadir, "--socket", sock]
     p = subprocess.Popen(cmd)#, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
     try:
-        wait_for_socket(sockpath)
+        wait_for_socket(sock)
 
         if migrations is not None:
             print("migrating mysql...")
-            migmysql(migmysql_path, migrations, socket=sockpath)
+            migmysql(migmysql_path, migrations, socket=sock)
             print("migrating complete!")
 
-        yield ScriptRunner(sockpath)
+        yield ScriptRunner(sock)
 
     finally:
         print("sending SIGTERM to database")
@@ -167,6 +166,8 @@ def mariadb(basedir=None, migrations=None, migmysql_path=None):
     tempdir = None
     if basedir is None:
         tempdir = tempfile.mkdtemp()
+        # make the path to the socket world-accessible
+        os.chmod(tempdir, 0o755)
         basedir = tempdir
         print(f"using {tempdir}")
 
