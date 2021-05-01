@@ -508,6 +508,9 @@ typedef enum {
     IMAP_CMD_UNSELECT,
     IMAP_CMD_IDLE,
     IMAP_CMD_IDLE_DONE,
+    IMAP_CMD_XKEYSYNC,
+    IMAP_CMD_XKEYSYNC_DONE,
+    IMAP_CMD_XKEYADD,
 } imap_cmd_type_t;
 
 typedef struct {
@@ -603,7 +606,10 @@ typedef union {
     ie_dstr_t *enable;
     // nothing for unselect
     // nothing for idle
-    ie_dstr_t *idle_done;  // provided by the parser, not used by the writer
+    ie_dstr_t *idle_done;  // the tag that the DONE corresponds to
+    ie_dstr_t *xkeysync;  // a possibly-empty list of known fingerprints
+    ie_dstr_t *xkeysync_done; // the tag that the DONE corresponds to
+    ie_dstr_t *xkeyadd;  // the pubkey that we want to add
 } imap_cmd_arg_t;
 
 typedef struct {
@@ -633,6 +639,7 @@ typedef enum {
     IMAP_RESP_FETCH,
     IMAP_RESP_ENABLED,
     IMAP_RESP_VANISHED,
+    IMAP_RESP_XKEYSYNC,
 } imap_resp_type_t;
 
 typedef struct {
@@ -679,6 +686,12 @@ typedef struct {
 } ie_vanished_resp_t;
 
 typedef struct {
+    // exactly one will be defined
+    ie_dstr_t *created;  // a pubkey (always a literal)
+    ie_dstr_t *deleted;  // a fingerprint (always an atom)
+} ie_xkeysync_resp_t;
+
+typedef struct {
     ie_plus_resp_t *plus;
     ie_st_resp_t *status_type;
     ie_dstr_t *capa;
@@ -693,6 +706,7 @@ typedef struct {
     ie_fetch_resp_t *fetch;
     ie_dstr_t *enabled;
     ie_vanished_resp_t *vanished;
+    ie_xkeysync_resp_t *xkeysync;  // NULL corresponds to `XKEYSYNC OK` msg
 } imap_resp_arg_t;
 
 typedef struct {
@@ -1123,6 +1137,10 @@ void ie_search_resp_free(ie_search_resp_t *search);
 ie_vanished_resp_t *ie_vanished_resp_new(derr_t *e, bool earlier,
         ie_seq_set_t *seq_set);
 void ie_vanished_resp_free(ie_vanished_resp_t *vanished);
+
+ie_xkeysync_resp_t *ie_xkeysync_resp_new(derr_t *e, ie_dstr_t *created,
+        ie_dstr_t *deleted);
+void ie_xkeysync_resp_free(ie_xkeysync_resp_t *xkeysync);
 
 imap_resp_t *imap_resp_new(derr_t *e, imap_resp_type_t type,
         imap_resp_arg_t arg);

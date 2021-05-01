@@ -1113,6 +1113,7 @@ static derr_t handle_one_response(fetcher_t *fetcher, imap_resp_t *resp){
         case IMAP_RESP_RECENT:
         case IMAP_RESP_FETCH:
         case IMAP_RESP_VANISHED:
+        case IMAP_RESP_XKEYSYNC:
             ORIG_GO(&e, E_INTERNAL, "Invalid responses", cu_resp);
     }
 
@@ -1218,6 +1219,7 @@ static bool fetcher_intercept_resp(fetcher_t *fetcher,
         case IMAP_RESP_RECENT:
         case IMAP_RESP_FETCH:
         case IMAP_RESP_VANISHED:
+        case IMAP_RESP_XKEYSYNC:
             return false;
     }
     return false;

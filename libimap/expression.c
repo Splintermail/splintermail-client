@@ -81,39 +81,45 @@ DSTR_STATIC(IMAP_CMD_ENABLE_dstr, "ENABLE");
 DSTR_STATIC(IMAP_CMD_UNSELECT_dstr, "UNSELECT");
 DSTR_STATIC(IMAP_CMD_IDLE_dstr, "IDLE");
 DSTR_STATIC(IMAP_CMD_IDLE_DONE_dstr, "DONE");
+DSTR_STATIC(IMAP_CMD_XKEYSYNC_dstr, "XKEYSYNC");
+DSTR_STATIC(IMAP_CMD_XKEYSYNC_DONE_dstr, "DONE");
+DSTR_STATIC(IMAP_CMD_XKEYADD_dstr, "XKEYADD");
 
 const dstr_t *imap_cmd_type_to_dstr(imap_cmd_type_t type){
     switch(type){
-        case IMAP_CMD_ERROR:    return &IMAP_CMD_ERROR_dstr;
-        case IMAP_CMD_PLUS_REQ: return &IMAP_CMD_PLUS_REQ_dstr;
-        case IMAP_CMD_CAPA:     return &IMAP_CMD_CAPA_dstr;
-        case IMAP_CMD_NOOP:     return &IMAP_CMD_NOOP_dstr;
-        case IMAP_CMD_LOGOUT:   return &IMAP_CMD_LOGOUT_dstr;
-        case IMAP_CMD_STARTTLS: return &IMAP_CMD_STARTTLS_dstr;
-        case IMAP_CMD_AUTH:     return &IMAP_CMD_AUTH_dstr;
-        case IMAP_CMD_LOGIN:    return &IMAP_CMD_LOGIN_dstr;
-        case IMAP_CMD_SELECT:   return &IMAP_CMD_SELECT_dstr;
-        case IMAP_CMD_EXAMINE:  return &IMAP_CMD_EXAMINE_dstr;
-        case IMAP_CMD_CREATE:   return &IMAP_CMD_CREATE_dstr;
-        case IMAP_CMD_DELETE:   return &IMAP_CMD_DELETE_dstr;
-        case IMAP_CMD_RENAME:   return &IMAP_CMD_RENAME_dstr;
-        case IMAP_CMD_SUB:      return &IMAP_CMD_SUB_dstr;
-        case IMAP_CMD_UNSUB:    return &IMAP_CMD_UNSUB_dstr;
-        case IMAP_CMD_LIST:     return &IMAP_CMD_LIST_dstr;
-        case IMAP_CMD_LSUB:     return &IMAP_CMD_LSUB_dstr;
-        case IMAP_CMD_STATUS:   return &IMAP_CMD_STATUS_dstr;
-        case IMAP_CMD_APPEND:   return &IMAP_CMD_APPEND_dstr;
-        case IMAP_CMD_CHECK:    return &IMAP_CMD_CHECK_dstr;
-        case IMAP_CMD_CLOSE:    return &IMAP_CMD_CLOSE_dstr;
-        case IMAP_CMD_EXPUNGE:  return &IMAP_CMD_EXPUNGE_dstr;
-        case IMAP_CMD_SEARCH:   return &IMAP_CMD_SEARCH_dstr;
-        case IMAP_CMD_FETCH:    return &IMAP_CMD_FETCH_dstr;
-        case IMAP_CMD_STORE:    return &IMAP_CMD_STORE_dstr;
-        case IMAP_CMD_COPY:     return &IMAP_CMD_COPY_dstr;
-        case IMAP_CMD_ENABLE:   return &IMAP_CMD_ENABLE_dstr;
-        case IMAP_CMD_UNSELECT: return &IMAP_CMD_UNSELECT_dstr;
-        case IMAP_CMD_IDLE:     return &IMAP_CMD_IDLE_dstr;
-        case IMAP_CMD_IDLE_DONE:return &IMAP_CMD_IDLE_DONE_dstr;
+        case IMAP_CMD_ERROR:         return &IMAP_CMD_ERROR_dstr;
+        case IMAP_CMD_PLUS_REQ:      return &IMAP_CMD_PLUS_REQ_dstr;
+        case IMAP_CMD_CAPA:          return &IMAP_CMD_CAPA_dstr;
+        case IMAP_CMD_NOOP:          return &IMAP_CMD_NOOP_dstr;
+        case IMAP_CMD_LOGOUT:        return &IMAP_CMD_LOGOUT_dstr;
+        case IMAP_CMD_STARTTLS:      return &IMAP_CMD_STARTTLS_dstr;
+        case IMAP_CMD_AUTH:          return &IMAP_CMD_AUTH_dstr;
+        case IMAP_CMD_LOGIN:         return &IMAP_CMD_LOGIN_dstr;
+        case IMAP_CMD_SELECT:        return &IMAP_CMD_SELECT_dstr;
+        case IMAP_CMD_EXAMINE:       return &IMAP_CMD_EXAMINE_dstr;
+        case IMAP_CMD_CREATE:        return &IMAP_CMD_CREATE_dstr;
+        case IMAP_CMD_DELETE:        return &IMAP_CMD_DELETE_dstr;
+        case IMAP_CMD_RENAME:        return &IMAP_CMD_RENAME_dstr;
+        case IMAP_CMD_SUB:           return &IMAP_CMD_SUB_dstr;
+        case IMAP_CMD_UNSUB:         return &IMAP_CMD_UNSUB_dstr;
+        case IMAP_CMD_LIST:          return &IMAP_CMD_LIST_dstr;
+        case IMAP_CMD_LSUB:          return &IMAP_CMD_LSUB_dstr;
+        case IMAP_CMD_STATUS:        return &IMAP_CMD_STATUS_dstr;
+        case IMAP_CMD_APPEND:        return &IMAP_CMD_APPEND_dstr;
+        case IMAP_CMD_CHECK:         return &IMAP_CMD_CHECK_dstr;
+        case IMAP_CMD_CLOSE:         return &IMAP_CMD_CLOSE_dstr;
+        case IMAP_CMD_EXPUNGE:       return &IMAP_CMD_EXPUNGE_dstr;
+        case IMAP_CMD_SEARCH:        return &IMAP_CMD_SEARCH_dstr;
+        case IMAP_CMD_FETCH:         return &IMAP_CMD_FETCH_dstr;
+        case IMAP_CMD_STORE:         return &IMAP_CMD_STORE_dstr;
+        case IMAP_CMD_COPY:          return &IMAP_CMD_COPY_dstr;
+        case IMAP_CMD_ENABLE:        return &IMAP_CMD_ENABLE_dstr;
+        case IMAP_CMD_UNSELECT:      return &IMAP_CMD_UNSELECT_dstr;
+        case IMAP_CMD_IDLE:          return &IMAP_CMD_IDLE_dstr;
+        case IMAP_CMD_IDLE_DONE:     return &IMAP_CMD_IDLE_DONE_dstr;
+        case IMAP_CMD_XKEYSYNC:      return &IMAP_CMD_XKEYSYNC_dstr;
+        case IMAP_CMD_XKEYSYNC_DONE: return &IMAP_CMD_XKEYSYNC_DONE_dstr;
+        case IMAP_CMD_XKEYADD:       return &IMAP_CMD_XKEYADD_dstr;
     }
     return &IE_UNKNOWN_dstr;
 }
@@ -132,6 +138,7 @@ DSTR_STATIC(IMAP_RESP_RECENT_dstr, "RECENT");
 DSTR_STATIC(IMAP_RESP_FETCH_dstr, "FETCH");
 DSTR_STATIC(IMAP_RESP_ENABLED_dstr, "ENABLED");
 DSTR_STATIC(IMAP_RESP_VANISHED_dstr, "VANISHED");
+DSTR_STATIC(IMAP_RESP_XKEYSYNC_dstr, "XKEYSYNC");
 
 const dstr_t *imap_resp_type_to_dstr(imap_resp_type_t type){
     switch(type){
@@ -149,6 +156,7 @@ const dstr_t *imap_resp_type_to_dstr(imap_resp_type_t type){
         case IMAP_RESP_FETCH:       return &IMAP_RESP_FETCH_dstr;
         case IMAP_RESP_ENABLED:     return &IMAP_RESP_ENABLED_dstr;
         case IMAP_RESP_VANISHED:    return &IMAP_RESP_VANISHED_dstr;
+        case IMAP_RESP_XKEYSYNC:    return &IMAP_RESP_XKEYSYNC_dstr;
     }
     return &IE_UNKNOWN_dstr;
 }
@@ -2443,36 +2451,39 @@ ie_copy_cmd_t *ie_copy_cmd_copy(derr_t *e, const ie_copy_cmd_t *old){
 
 static void imap_cmd_arg_free(imap_cmd_type_t type, imap_cmd_arg_t arg){
     switch(type){
-        case IMAP_CMD_ERROR:    ie_dstr_free(arg.error); break;
-        case IMAP_CMD_PLUS_REQ: break;
-        case IMAP_CMD_CAPA:     break;
-        case IMAP_CMD_NOOP:     break;
-        case IMAP_CMD_LOGOUT:   break;
-        case IMAP_CMD_STARTTLS: break;
-        case IMAP_CMD_AUTH:     ie_dstr_free(arg.auth); break;
-        case IMAP_CMD_LOGIN:    ie_login_cmd_free(arg.login); break;
-        case IMAP_CMD_SELECT:   ie_select_cmd_free(arg.select); break;
-        case IMAP_CMD_EXAMINE:  ie_select_cmd_free(arg.examine); break;
-        case IMAP_CMD_CREATE:   ie_mailbox_free(arg.create); break;
-        case IMAP_CMD_DELETE:   ie_mailbox_free(arg.delete); break;
-        case IMAP_CMD_RENAME:   ie_rename_cmd_free(arg.rename); break;
-        case IMAP_CMD_SUB:      ie_mailbox_free(arg.sub); break;
-        case IMAP_CMD_UNSUB:    ie_mailbox_free(arg.unsub); break;
-        case IMAP_CMD_LIST:     ie_list_cmd_free(arg.list); break;
-        case IMAP_CMD_LSUB:     ie_list_cmd_free(arg.lsub); break;
-        case IMAP_CMD_STATUS:   ie_status_cmd_free(arg.status); break;
-        case IMAP_CMD_APPEND:   ie_append_cmd_free(arg.append); break;
-        case IMAP_CMD_CHECK:    break;
-        case IMAP_CMD_CLOSE:    break;
-        case IMAP_CMD_EXPUNGE:  ie_seq_set_free(arg.uid_expunge); break;
-        case IMAP_CMD_SEARCH:   ie_search_cmd_free(arg.search); break;
-        case IMAP_CMD_FETCH:    ie_fetch_cmd_free(arg.fetch); break;
-        case IMAP_CMD_STORE:    ie_store_cmd_free(arg.store); break;
-        case IMAP_CMD_COPY:     ie_copy_cmd_free(arg.copy); break;
-        case IMAP_CMD_ENABLE:   ie_dstr_free(arg.enable); break;
-        case IMAP_CMD_UNSELECT: break;
-        case IMAP_CMD_IDLE:     break;
-        case IMAP_CMD_IDLE_DONE:ie_dstr_free(arg.idle_done); break;
+        case IMAP_CMD_ERROR:         ie_dstr_free(arg.error); break;
+        case IMAP_CMD_PLUS_REQ:      break;
+        case IMAP_CMD_CAPA:          break;
+        case IMAP_CMD_NOOP:          break;
+        case IMAP_CMD_LOGOUT:        break;
+        case IMAP_CMD_STARTTLS:      break;
+        case IMAP_CMD_AUTH:          ie_dstr_free(arg.auth); break;
+        case IMAP_CMD_LOGIN:         ie_login_cmd_free(arg.login); break;
+        case IMAP_CMD_SELECT:        ie_select_cmd_free(arg.select); break;
+        case IMAP_CMD_EXAMINE:       ie_select_cmd_free(arg.examine); break;
+        case IMAP_CMD_CREATE:        ie_mailbox_free(arg.create); break;
+        case IMAP_CMD_DELETE:        ie_mailbox_free(arg.delete); break;
+        case IMAP_CMD_RENAME:        ie_rename_cmd_free(arg.rename); break;
+        case IMAP_CMD_SUB:           ie_mailbox_free(arg.sub); break;
+        case IMAP_CMD_UNSUB:         ie_mailbox_free(arg.unsub); break;
+        case IMAP_CMD_LIST:          ie_list_cmd_free(arg.list); break;
+        case IMAP_CMD_LSUB:          ie_list_cmd_free(arg.lsub); break;
+        case IMAP_CMD_STATUS:        ie_status_cmd_free(arg.status); break;
+        case IMAP_CMD_APPEND:        ie_append_cmd_free(arg.append); break;
+        case IMAP_CMD_CHECK:         break;
+        case IMAP_CMD_CLOSE:         break;
+        case IMAP_CMD_EXPUNGE:       ie_seq_set_free(arg.uid_expunge); break;
+        case IMAP_CMD_SEARCH:        ie_search_cmd_free(arg.search); break;
+        case IMAP_CMD_FETCH:         ie_fetch_cmd_free(arg.fetch); break;
+        case IMAP_CMD_STORE:         ie_store_cmd_free(arg.store); break;
+        case IMAP_CMD_COPY:          ie_copy_cmd_free(arg.copy); break;
+        case IMAP_CMD_ENABLE:        ie_dstr_free(arg.enable); break;
+        case IMAP_CMD_UNSELECT:      break;
+        case IMAP_CMD_IDLE:          break;
+        case IMAP_CMD_IDLE_DONE:     ie_dstr_free(arg.idle_done); break;
+        case IMAP_CMD_XKEYSYNC:      ie_dstr_free(arg.xkeysync); break;
+        case IMAP_CMD_XKEYSYNC_DONE: ie_dstr_free(arg.xkeysync_done); break;
+        case IMAP_CMD_XKEYADD:       ie_dstr_free(arg.xkeyadd); break;
     }
 }
 
@@ -2507,36 +2518,39 @@ static imap_cmd_arg_t imap_cmd_arg_copy(derr_t *e, imap_cmd_type_t type,
         const imap_cmd_arg_t old){
     imap_cmd_arg_t arg = {0};
     switch(type){
-        case IMAP_CMD_ERROR:    arg.error = ie_dstr_copy(e, old.error); break;
-        case IMAP_CMD_PLUS_REQ: break;
-        case IMAP_CMD_CAPA:     break;
-        case IMAP_CMD_NOOP:     break;
-        case IMAP_CMD_LOGOUT:   break;
-        case IMAP_CMD_STARTTLS: break;
-        case IMAP_CMD_AUTH:     arg.auth = ie_dstr_copy(e, old.auth); break;
-        case IMAP_CMD_LOGIN:    arg.login = ie_login_cmd_copy(e, old.login); break;
-        case IMAP_CMD_SELECT:   arg.select = ie_select_cmd_copy(e, old.select); break;
-        case IMAP_CMD_EXAMINE:  arg.examine = ie_select_cmd_copy(e, old.examine); break;
-        case IMAP_CMD_CREATE:   arg.create = ie_mailbox_copy(e, old.create); break;
-        case IMAP_CMD_DELETE:   arg.delete = ie_mailbox_copy(e, old.delete); break;
-        case IMAP_CMD_RENAME:   arg.rename = ie_rename_cmd_copy(e, old.rename); break;
-        case IMAP_CMD_SUB:      arg.sub = ie_mailbox_copy(e, old.sub); break;
-        case IMAP_CMD_UNSUB:    arg.unsub = ie_mailbox_copy(e, old.unsub); break;
-        case IMAP_CMD_LIST:     arg.list = ie_list_cmd_copy(e, old.list); break;
-        case IMAP_CMD_LSUB:     arg.lsub = ie_list_cmd_copy(e, old.lsub); break;
-        case IMAP_CMD_STATUS:   arg.status = ie_status_cmd_copy(e, old.status); break;
-        case IMAP_CMD_APPEND:   arg.append = ie_append_cmd_copy(e, old.append); break;
-        case IMAP_CMD_CHECK:    break;
-        case IMAP_CMD_CLOSE:    break;
-        case IMAP_CMD_EXPUNGE:  arg.uid_expunge = ie_seq_set_copy(e, old.uid_expunge); break;
-        case IMAP_CMD_SEARCH:   arg.search = ie_search_cmd_copy(e, arg.search); break;
-        case IMAP_CMD_FETCH:    arg.fetch = ie_fetch_cmd_copy(e, old.fetch); break;
-        case IMAP_CMD_STORE:    arg.store = ie_store_cmd_copy(e, old.store); break;
-        case IMAP_CMD_COPY:     arg.copy = ie_copy_cmd_copy(e, old.copy); break;
-        case IMAP_CMD_ENABLE:   arg.enable = ie_dstr_copy(e, old.enable); break;
-        case IMAP_CMD_UNSELECT: break;
-        case IMAP_CMD_IDLE:     break;
-        case IMAP_CMD_IDLE_DONE:arg.idle_done = ie_dstr_copy(e, arg.idle_done); break;
+        case IMAP_CMD_ERROR:         arg.error = ie_dstr_copy(e, old.error); break;
+        case IMAP_CMD_PLUS_REQ:      break;
+        case IMAP_CMD_CAPA:          break;
+        case IMAP_CMD_NOOP:          break;
+        case IMAP_CMD_LOGOUT:        break;
+        case IMAP_CMD_STARTTLS:      break;
+        case IMAP_CMD_AUTH:          arg.auth = ie_dstr_copy(e, old.auth); break;
+        case IMAP_CMD_LOGIN:         arg.login = ie_login_cmd_copy(e, old.login); break;
+        case IMAP_CMD_SELECT:        arg.select = ie_select_cmd_copy(e, old.select); break;
+        case IMAP_CMD_EXAMINE:       arg.examine = ie_select_cmd_copy(e, old.examine); break;
+        case IMAP_CMD_CREATE:        arg.create = ie_mailbox_copy(e, old.create); break;
+        case IMAP_CMD_DELETE:        arg.delete = ie_mailbox_copy(e, old.delete); break;
+        case IMAP_CMD_RENAME:        arg.rename = ie_rename_cmd_copy(e, old.rename); break;
+        case IMAP_CMD_SUB:           arg.sub = ie_mailbox_copy(e, old.sub); break;
+        case IMAP_CMD_UNSUB:         arg.unsub = ie_mailbox_copy(e, old.unsub); break;
+        case IMAP_CMD_LIST:          arg.list = ie_list_cmd_copy(e, old.list); break;
+        case IMAP_CMD_LSUB:          arg.lsub = ie_list_cmd_copy(e, old.lsub); break;
+        case IMAP_CMD_STATUS:        arg.status = ie_status_cmd_copy(e, old.status); break;
+        case IMAP_CMD_APPEND:        arg.append = ie_append_cmd_copy(e, old.append); break;
+        case IMAP_CMD_CHECK:         break;
+        case IMAP_CMD_CLOSE:         break;
+        case IMAP_CMD_EXPUNGE:       arg.uid_expunge = ie_seq_set_copy(e, old.uid_expunge); break;
+        case IMAP_CMD_SEARCH:        arg.search = ie_search_cmd_copy(e, arg.search); break;
+        case IMAP_CMD_FETCH:         arg.fetch = ie_fetch_cmd_copy(e, old.fetch); break;
+        case IMAP_CMD_STORE:         arg.store = ie_store_cmd_copy(e, old.store); break;
+        case IMAP_CMD_COPY:          arg.copy = ie_copy_cmd_copy(e, old.copy); break;
+        case IMAP_CMD_ENABLE:        arg.enable = ie_dstr_copy(e, old.enable); break;
+        case IMAP_CMD_UNSELECT:      break;
+        case IMAP_CMD_IDLE:          break;
+        case IMAP_CMD_IDLE_DONE:     arg.idle_done = ie_dstr_copy(e, arg.idle_done); break;
+        case IMAP_CMD_XKEYSYNC:      arg.xkeysync = ie_dstr_copy(e, arg.xkeysync); break;
+        case IMAP_CMD_XKEYSYNC_DONE: arg.xkeysync_done = ie_dstr_copy(e, arg.xkeysync_done); break;
+        case IMAP_CMD_XKEYADD:       arg.xkeyadd = ie_dstr_copy(e, arg.xkeyadd); break;
     }
     return arg;
 }
@@ -2754,6 +2768,30 @@ void ie_vanished_resp_free(ie_vanished_resp_t *vanished){
     free(vanished);
 }
 
+ie_xkeysync_resp_t *ie_xkeysync_resp_new(derr_t *e, ie_dstr_t *created,
+        ie_dstr_t *deleted){
+    if(is_error(*e)) goto fail;
+
+    IE_MALLOC(e, ie_xkeysync_resp_t, xkeysync, fail);
+
+    xkeysync->created = created;
+    xkeysync->deleted = deleted;
+
+    return xkeysync;
+
+fail:
+    ie_dstr_free(created);
+    ie_dstr_free(deleted);
+    return NULL;
+}
+
+void ie_xkeysync_resp_free(ie_xkeysync_resp_t *xkeysync){
+    if(!xkeysync) return;
+    ie_dstr_free(xkeysync->created);
+    ie_dstr_free(xkeysync->deleted);
+    free(xkeysync);
+}
+
 static void imap_resp_arg_free(imap_resp_type_t type, imap_resp_arg_t arg){
     switch(type){
         case IMAP_RESP_PLUS:        ie_plus_resp_free(arg.plus); break;
@@ -2770,6 +2808,7 @@ static void imap_resp_arg_free(imap_resp_type_t type, imap_resp_arg_t arg){
         case IMAP_RESP_FETCH:       ie_fetch_resp_free(arg.fetch); break;
         case IMAP_RESP_ENABLED:     ie_dstr_free(arg.enabled); break;
         case IMAP_RESP_VANISHED:    ie_vanished_resp_free(arg.vanished); break;
+        case IMAP_RESP_XKEYSYNC:    ie_xkeysync_resp_free(arg.xkeysync); break;
     }
 }
 

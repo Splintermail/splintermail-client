@@ -1069,8 +1069,8 @@ static derr_t do_imap_cmd_write(const imap_cmd_t *cmd, dstr_t *out,
 
     imap_cmd_arg_t arg = cmd->arg;
 
-    // other than the DONE of IDLE, all commands are tagged
-    if(cmd->type != IMAP_CMD_IDLE_DONE){
+    // other than the DONE of IDLE or XKEYSYNC, all commands are tagged
+    if(cmd->type != IMAP_CMD_IDLE_DONE && cmd->type != IMAP_CMD_XKEYSYNC_DONE){
         // the tag
         PROP(&e, tag_skip_fill(sf, &cmd->tag->dstr) );
         // space after tag
@@ -1305,6 +1305,26 @@ static derr_t do_imap_cmd_write(const imap_cmd_t *cmd, dstr_t *out,
         case IMAP_CMD_IDLE_DONE:
             PROP(&e, extension_assert_on(sf->exts, EXT_IDLE) );
             STATIC_SKIP_FILL("DONE");
+            break;
+
+        case IMAP_CMD_XKEYSYNC:
+            PROP(&e, extension_assert_on(sf->exts, EXT_XKEY) );
+            STATIC_SKIP_FILL("XKEYSYNC");
+            for(ie_dstr_t *d = arg.xkeysync; d != NULL; d = d->next){
+                STATIC_SKIP_FILL(" ");
+                PROP(&e, atom_skip_fill(sf, &d->dstr) );
+            }
+            break;
+
+        case IMAP_CMD_XKEYSYNC_DONE:
+            PROP(&e, extension_assert_on(sf->exts, EXT_XKEY) );
+            STATIC_SKIP_FILL("DONE");
+            break;
+
+        case IMAP_CMD_XKEYADD:
+            PROP(&e, extension_assert_on(sf->exts, EXT_XKEY) );
+            STATIC_SKIP_FILL("XKEYADD ");
+            PROP(&e, literal_skip_fill(sf, &arg.xkeyadd->dstr) );
             break;
 
         default:
@@ -1767,6 +1787,20 @@ static derr_t do_imap_resp_write(const imap_resp_t *resp, dstr_t *out,
                 STATIC_SKIP_FILL("(EARLIER) ");
             }
             PROP(&e, uid_set_skip_fill(sf, arg.vanished->uids) );
+            break;
+
+        case IMAP_RESP_XKEYSYNC:
+            PROP(&e, extension_assert_on(sf->exts, EXT_QRESYNC) );
+            STATIC_SKIP_FILL("XKEYSYNC ");
+            if(arg.xkeysync == NULL){
+                STATIC_SKIP_FILL("OK");
+            }else if(arg.xkeysync->created != NULL){
+                STATIC_SKIP_FILL("CREATED ");
+                PROP(&e, literal_skip_fill(sf, &arg.xkeysync->created->dstr) );
+            }else{
+                STATIC_SKIP_FILL("DELETED ");
+                PROP(&e, atom_skip_fill(sf, &arg.xkeysync->deleted->dstr) );
+            }
             break;
 
         default:

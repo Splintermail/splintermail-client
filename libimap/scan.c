@@ -183,6 +183,7 @@ std_mode:
         'copy'                  { *type = COPY; goto done; }
         'copyuid'               { *type = COPYUID; goto done; }
         'create'                { *type = CREATE; goto done; }
+        'created'               { *type = CREATED; goto done; }
         'dec'                   { *type = DEC; goto done; }
         'deleted'               { *type = DELETED; goto done; }
         'delete'                { *type = DELETE; goto done; }
@@ -284,6 +285,8 @@ std_mode:
         'unselect'              { *type = UNSELECT; goto done; }
         'unsubscribe'           { *type = UNSUBSCRIBE; goto done; }
         'vanished'              { *type = VANISHED; goto done; }
+        'xkeysync'              { *type = XKEYSYNC; goto done; }
+        'xkeyadd'               { *type = XKEYADD; goto done; }
 
         num                     { *type = NUM; goto done; }
         raw                     { *type = RAW; goto done; }

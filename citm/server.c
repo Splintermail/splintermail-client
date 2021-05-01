@@ -939,6 +939,9 @@ static derr_t passthru_cmd(server_t *server, const ie_dstr_t *tag,
         case IMAP_CMD_UNSELECT:
         case IMAP_CMD_IDLE:
         case IMAP_CMD_IDLE_DONE:
+        case IMAP_CMD_XKEYSYNC:
+        case IMAP_CMD_XKEYSYNC_DONE:
+        case IMAP_CMD_XKEYADD:
         default:
             ORIG(&e, E_INTERNAL, "illegal command type in passthru_cmd");
     }
@@ -1189,6 +1192,9 @@ static derr_t handle_one_command(server_t *server, imap_cmd_t *cmd){
         // not yet supported
         case IMAP_CMD_IDLE:
         case IMAP_CMD_IDLE_DONE:
+        case IMAP_CMD_XKEYSYNC:
+        case IMAP_CMD_XKEYSYNC_DONE:
+        case IMAP_CMD_XKEYADD:
             ORIG_GO(&e, E_INTERNAL, "Unhandled command", cu_cmd);
             break;
 
@@ -1250,6 +1256,9 @@ static bool intercept_cmd_type(imap_cmd_type_t type){
         case IMAP_CMD_UNSELECT:
         case IMAP_CMD_IDLE:
         case IMAP_CMD_IDLE_DONE:
+        case IMAP_CMD_XKEYSYNC:
+        case IMAP_CMD_XKEYSYNC_DONE:
+        case IMAP_CMD_XKEYADD:
         default:
             return false;
     }

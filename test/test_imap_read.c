@@ -47,8 +47,8 @@
 */
 
 typedef struct {
-    size_t cmd_counts[IMAP_CMD_IDLE_DONE + 1];
-    size_t resp_counts[IMAP_RESP_VANISHED + 1];
+    size_t cmd_counts[IMAP_CMD_XKEYADD + 1];
+    size_t resp_counts[IMAP_RESP_XKEYSYNC + 1];
     // the error from a callback
     derr_t error;
     // the value recorded by a callback
@@ -106,6 +106,7 @@ static void cmd_cb(void *cb_data, imap_cmd_t *cmd){
         .qresync = EXT_STATE_ON,
         .unselect = EXT_STATE_ON,
         .idle = EXT_STATE_ON,
+        .xkey = EXT_STATE_ON,
     };
 
     // IMAP_CMD_ERROR has no writer normally, so we'll whip one up right now
@@ -145,6 +146,7 @@ static void resp_cb(void *cb_data, imap_resp_t *resp){
         .qresync = EXT_STATE_ON,
         .unselect = EXT_STATE_ON,
         .idle = EXT_STATE_ON,
+        .xkey = EXT_STATE_ON,
     };
 
     PROP_GO(&calls->error, imap_resp_print(resp, &calls->buf, &exts), done);
@@ -181,6 +183,7 @@ static derr_t do_test_scanner_and_parser(test_case_t *cases, size_t ncases,
         .qresync = EXT_STATE_ON,
         .unselect = EXT_STATE_ON,
         .idle = EXT_STATE_ON,
+        .xkey = EXT_STATE_ON,
     };
 
     // init the reader
@@ -1013,6 +1016,60 @@ static derr_t test_commands(void){
         };
         size_t ncases = sizeof(cases) / sizeof(*cases);
         PROP(&e, do_test_scanner_and_parser(cases, ncases, false) );
+    }
+    // XKEY extension commands
+    {
+        test_case_t cases[] = {
+            {
+                .in=DSTR_LIT("tag XKEYSYNC\r\n"),
+                .cmd_calls=(int[]){IMAP_CMD_XKEYSYNC, -1},
+                .buf=DSTR_LIT("tag XKEYSYNC\r\n")
+            },
+            {
+                .in=DSTR_LIT("DONE\r\n"),
+                .cmd_calls=(int[]){IMAP_CMD_XKEYSYNC_DONE, -1},
+                .buf=DSTR_LIT("DONE\r\n")
+            },
+            {
+                .in=DSTR_LIT("tag XKEYSYNC fingerprint1 fingerprint2\r\n"),
+                .cmd_calls=(int[]){IMAP_CMD_XKEYSYNC, -1},
+                .buf=DSTR_LIT("tag XKEYSYNC fingerprint1 fingerprint2\r\n")
+            },
+            {
+                .in=DSTR_LIT("DONE\r\n"),
+                .cmd_calls=(int[]){IMAP_CMD_XKEYSYNC_DONE, -1},
+                .buf=DSTR_LIT("DONE\r\n")
+            },
+            {
+                .in=DSTR_LIT("tag XKEYADD {11}\r\nPUBLIC\nKEY\n\r\n"),
+                .cmd_calls=(int[]){IMAP_CMD_PLUS_REQ, IMAP_CMD_XKEYADD, -1},
+                .buf=DSTR_LIT("tag XKEYADD {11+}\r\nPUBLIC\nKEY\n\r\n")
+            },
+        };
+        size_t ncases = sizeof(cases) / sizeof(*cases);
+        PROP(&e, do_test_scanner_and_parser(cases, ncases, false) );
+    }
+    // XKEY extension responses
+    {
+        test_case_t cases[] = {
+            {
+                .in=DSTR_LIT("* XKEYSYNC CREATED {11}\r\nPUBLIC\nKEY\n\r\n"),
+                .resp_calls=(int[]){IMAP_RESP_XKEYSYNC, -1},
+                .buf=DSTR_LIT("* XKEYSYNC CREATED {11}\r\nPUBLIC\nKEY\n\r\n")
+            },
+            {
+                .in=DSTR_LIT("* XKEYSYNC DELETED fingerprint\r\n"),
+                .resp_calls=(int[]){IMAP_RESP_XKEYSYNC, -1},
+                .buf=DSTR_LIT("* XKEYSYNC DELETED fingerprint\r\n")
+            },
+            {
+                .in=DSTR_LIT("* XKEYSYNC OK\r\n"),
+                .resp_calls=(int[]){IMAP_RESP_XKEYSYNC, -1},
+                .buf=DSTR_LIT("* XKEYSYNC OK\r\n")
+            },
+        };
+        size_t ncases = sizeof(cases) / sizeof(*cases);
+        PROP(&e, do_test_scanner_and_parser(cases, ncases, true) );
     }
     return e;
 }

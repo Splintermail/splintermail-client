@@ -151,6 +151,8 @@
 %token UNSELECT
 %token IDLE
 %token DONE
+%token XKEYSYNC
+%token XKEYADD
 
 /* responses */
 %token OK
@@ -169,6 +171,7 @@
 /*     EXPUNGE (listed above) */
 /*     FETCH (listed above) */
 %token ENABLED
+/*     XKEYSYNC (listed above) */
 
 /* status-code stuff */
 %token YES_STATUS_CODE
@@ -309,6 +312,9 @@
 %token EARLIER
 %token QRESYNC
 
+/* XKEY extension */
+%token CREATED
+
 %type <ch> qchar
 %type <ch> nqchar
 // no destructor for char type
@@ -326,6 +332,7 @@
 %type <dstr> literal_body_0
 %type <dstr> literal_body_1
 %type <dstr> astring
+%type <dstr> astring_1
 %type <dstr> string
 %type <dstr> search_charset
 %type <dstr> header_list_1
@@ -338,6 +345,7 @@
 %type <dstr> list_char_1
 %type <dstr> list_mailbox
 %type <dstr> num_str
+%type <dstr> fprs
 %destructor { ie_dstr_free($$); } <dstr>
 
 %type <fetch_resp_extra> f_extra
@@ -542,6 +550,8 @@
 %type <imap_cmd> enable_cmd
 %type <imap_cmd> unselect_cmd
 %type <imap_cmd> idle_cmd
+%type <imap_cmd> xkeysync_cmd
+%type <imap_cmd> xkeyadd_cmd
 %destructor { imap_cmd_free($$); } <imap_cmd>
 
 %type <imap_resp> response
@@ -560,6 +570,8 @@
 %type <imap_resp> fetch_resp
 %type <imap_resp> enabled_resp
 %type <imap_resp> vanished_resp
+%type <imap_resp> xkeysync_resp
+%type <imap_resp> xkeysync_resp_
 %type <imap_resp> plus_resp
 
 %destructor { imap_resp_free($$); } <imap_resp>
@@ -624,6 +636,8 @@ command: capa_cmd
        | enable_cmd
        | unselect_cmd
        | idle_cmd
+       | xkeysync_cmd
+       | xkeyadd_cmd
 ;
 
 respcheck: %empty {
@@ -651,6 +665,7 @@ untagged_resp: status_type_resp_untagged
              | fetch_resp
              | enabled_resp
              | vanished_resp
+             | xkeysync_resp
 ;
 
 untag: '*';
@@ -1109,6 +1124,7 @@ unselect_cmd: tag[t] SP UNSELECT cmdcheck
       $$ = imap_cmd_new(E, $t, IMAP_CMD_UNSELECT, (imap_cmd_arg_t){0}); };
 
 /*** IDLE command ***/
+
 idle_cmd:
     tag[t] SP IDLE cmdcheck EOL
     {
@@ -1131,6 +1147,40 @@ idle_cmd:
         $$ = imap_cmd_new(E, NULL, IMAP_CMD_IDLE_DONE, arg);
     };
 
+/*** XKEYSYNC command ***/
+
+fprs: EOL                  { $$ = NULL; }
+    | SP astring_1[a] EOL  { $$ = $a; }
+;
+
+xkeysync_cmd:
+    tag[t] SP XKEYSYNC cmdcheck fprs
+    {
+        extension_assert_on_builder(E, p->exts, EXT_XKEY);
+        if(is_error(p->error)){
+            DROP_VAR(E);
+            imapyyerror(p, "XKEY not supported");
+            YYERROR;
+        }
+        // make a copy of the tag so that error handling can depend on the tag
+        ie_dstr_t *tag = ie_dstr_copy(E, $t);
+        // forward the XKEYSYNC request to the server
+        imap_cmd_arg_t arg = { .xkeysync = $fprs };
+        imap_cmd_t *cmd = imap_cmd_new(E, tag, IMAP_CMD_XKEYSYNC, arg);
+        send_cmd(p, cmd);
+    }
+    DONE
+    {
+        imap_cmd_arg_t arg = { .xkeysync_done = $t };
+        $$ = imap_cmd_new(E, NULL, IMAP_CMD_XKEYSYNC_DONE, arg);
+    };
+
+/*** XKEYADD command ***/
+
+xkeyadd_cmd: tag[t] SP XKEYADD cmdcheck SP astring[key]
+    { extension_assert_on_builder(E, p->exts, EXT_XKEY);
+      imap_cmd_arg_t arg = {.xkeyadd=$key};
+      $$ = imap_cmd_new(E, $t, IMAP_CMD_XKEYADD, arg); };
 
 /*** status-type responses.  Thanks for the the shitty grammar, IMAP4rev1 ***/
 
@@ -1473,6 +1523,26 @@ vanished_resp: VANISHED respcheck SP seq_set[s]
                   $$ = imap_resp_new(E, IMAP_RESP_VANISHED, arg); }
 ;
 
+/*** XKEYSYNC response ***/
+
+xkeysync_resp: XKEYSYNC respcheck SP xkeysync_resp_[r] { $$ = $r; };
+
+xkeysync_resp_: CREATED SP astring[c]
+                 { extension_assert_on_builder(E, p->exts, EXT_XKEY);
+                   ie_xkeysync_resp_t *xkeysync = ie_xkeysync_resp_new(E, $c, NULL);
+                   imap_resp_arg_t arg = { .xkeysync = xkeysync };
+                   $$ = imap_resp_new(E, IMAP_RESP_XKEYSYNC, arg); }
+              | DELETED SP astring[d]
+                 { extension_assert_on_builder(E, p->exts, EXT_XKEY);
+                   ie_xkeysync_resp_t *xkeysync = ie_xkeysync_resp_new(E, NULL, $d);
+                   imap_resp_arg_t arg = { .xkeysync = xkeysync };
+                   $$ = imap_resp_new(E, IMAP_RESP_XKEYSYNC, arg); }
+              | OK
+                 { extension_assert_on_builder(E, p->exts, EXT_XKEY);
+                   imap_resp_arg_t arg = {0};
+                   $$ = imap_resp_new(E, IMAP_RESP_XKEYSYNC, arg); }
+;
+
 /*** PLUS response ***/
 
 plus_resp: '+' respcheck SP st_code[c] st_text[tx]
@@ -1536,6 +1606,7 @@ misc_keyword: ALL
             | CONDSTORE
             | COPY
             | CREATE
+            | CREATED
             | DEC
             | DELETE
             | DONE
@@ -1615,6 +1686,8 @@ misc_keyword: ALL
             | UNSELECT
             | UNSUBSCRIBE
             | VANISHED
+            | XKEYADD
+            | XKEYSYNC
 ;
 
 keyword: sc_keyword | flag_keyword | mflag_keyword | mailbox_keyword | misc_keyword;
@@ -1705,6 +1778,10 @@ ign_string: ign_qstr
 
 astring: atom
        | string
+;
+
+astring_1: astring
+         | astring_1[l] SP astring[s]  { $$ = ie_dstr_add(E, $l, $s); }
 ;
 
 

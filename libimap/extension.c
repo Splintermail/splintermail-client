@@ -33,6 +33,10 @@ derr_t extension_assert_on(const extensions_t *exts,
             state = exts->idle;
             msg = "IDLE extension for IMAP is not available";
             break;
+        case EXT_XKEY:
+            state = exts->xkey;
+            msg = "XKEY extension for IMAP is not available";
+            break;
         default:
             ORIG(&e, E_INTERNAL, "invalid extension type");
     }
@@ -84,6 +88,10 @@ derr_t extension_assert_available(const extensions_t *exts,
             state = exts->idle;
             msg = "IDLE extension for IMAP is not available";
             break;
+        case EXT_XKEY:
+            state = exts->xkey;
+            msg = "XKEY extension for IMAP is not available";
+            break;
         default:
             ORIG(&e, E_INTERNAL, "invalid extension type");
     }
@@ -133,6 +141,10 @@ derr_t extension_trigger(extensions_t *exts, extension_e type){
             state = &exts->idle;
             msg = "IDLE extension for IMAP is not available";
             break;
+        case EXT_XKEY:
+            state = &exts->xkey;
+            msg = "XKEY extension for IMAP is not available";
+            break;
         default:
             ORIG(&e, E_INTERNAL, "invalid extension type");
     }
@@ -159,6 +171,7 @@ DSTR_STATIC(EXT_CONDSTORE_dstr, "CONDSTORE");
 DSTR_STATIC(EXT_QRESYNC_dstr, "QRESYNC");
 DSTR_STATIC(EXT_UNSELECT_dstr, "UNSELECT");
 DSTR_STATIC(EXT_IDLE_dstr, "IDLE");
+DSTR_STATIC(EXT_XKEY_dstr, "XKEY");
 DSTR_STATIC(EXT_unknown_dstr, "unknown");
 
 const dstr_t *extension_token(extension_e ext){
@@ -169,6 +182,7 @@ const dstr_t *extension_token(extension_e ext){
         case EXT_QRESYNC: return &EXT_QRESYNC_dstr;
         case EXT_UNSELECT: return &EXT_UNSELECT_dstr;
         case EXT_IDLE: return &EXT_IDLE_dstr;
+        case EXT_XKEY: return &EXT_XKEY_dstr;
     }
     return &EXT_unknown_dstr;
 }

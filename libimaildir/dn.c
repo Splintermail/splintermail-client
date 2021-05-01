@@ -1078,6 +1078,9 @@ derr_t dn_cmd(dn_t *dn, imap_cmd_t *cmd){
         case IMAP_CMD_LSUB:
         case IMAP_CMD_STATUS:
         case IMAP_CMD_APPEND:
+        case IMAP_CMD_XKEYSYNC:
+        case IMAP_CMD_XKEYSYNC_DONE:
+        case IMAP_CMD_XKEYADD:
             ORIG_GO(&e, E_INTERNAL, "unexpected command in dn_t", cu_cmd);
 
         // not yet supported

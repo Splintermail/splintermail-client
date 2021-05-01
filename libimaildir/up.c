@@ -1177,6 +1177,7 @@ derr_t up_resp(up_t *up, imap_resp_t *resp){
         case IMAP_RESP_CAPA:
         case IMAP_RESP_LIST:
         case IMAP_RESP_LSUB:
+        case IMAP_RESP_XKEYSYNC:
             TRACE(&e,
                 "saw response of type %x\n",
                 FD(imap_resp_type_to_dstr(resp->type))

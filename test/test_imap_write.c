@@ -73,6 +73,7 @@ static derr_t do_writer_test(const test_case_t *tc){
             .qresync = EXT_STATE_ON,
             .unselect = EXT_STATE_ON,
             .idle = EXT_STATE_ON,
+            .xkey = EXT_STATE_ON,
         };
 
         if(tc->cmd != NULL){
@@ -932,6 +933,101 @@ static derr_t test_imap_writer(void){
         CHECK(&e);
         PROP(&e, do_writer_test_multi(cases, sizeof(cases)/sizeof(*cases)) );
     }
+    // XKEY extension
+    {
+        test_case_t cases[] = {
+            // XKEYSYNC command with no fingerprints
+            {
+                .cmd=imap_cmd_new(&e,
+                    IE_DSTR("tag"), IMAP_CMD_XKEYSYNC, (imap_cmd_arg_t){0}
+                ),
+                .out=(size_chunk_out_t[]){
+                    {64, "tag XKEYSYNC\r\n"},
+                    {0}
+                },
+            },
+            // XKEYSYNC command with multiple fingerprints
+            {
+                .cmd=imap_cmd_new(&e,
+                    IE_DSTR("tag"),
+                    IMAP_CMD_XKEYSYNC,
+                    (imap_cmd_arg_t){
+                        .xkeysync = ie_dstr_add(&e,
+                            IE_DSTR("fingerprint1"),
+                            IE_DSTR("fingerprint2")
+                        ),
+                    }
+                ),
+                .out=(size_chunk_out_t[]){
+                    {64, "tag XKEYSYNC fingerprint1 fingerprint2\r\n"},
+                    {0}
+                },
+            },
+            {
+                .cmd=imap_cmd_new(&e,
+                    NULL, IMAP_CMD_XKEYSYNC_DONE, (imap_cmd_arg_t){0}
+                ),
+                .out=(size_chunk_out_t[]){
+                    {64, "DONE\r\n"},
+                    {0}
+                },
+            },
+            // * XKEYSYNC CREATED pubkey_literal
+            {
+                .resp=imap_resp_new(&e, IMAP_RESP_XKEYSYNC,
+                    (imap_resp_arg_t){
+                        .xkeysync=ie_xkeysync_resp_new(&e,
+                            IE_DSTR("PUBLIC\nKEY\n"), NULL
+                        ),
+                    }
+                ),
+                .out=(size_chunk_out_t[]){
+                    {64, "* XKEYSYNC CREATED {11}\r\nPUBLIC\nKEY\n\r\n"},
+                    {0}
+                },
+            },
+            // * XKEYSYNC DELETED fingerprint
+            {
+                .resp=imap_resp_new(&e, IMAP_RESP_XKEYSYNC,
+                    (imap_resp_arg_t){
+                        .xkeysync=ie_xkeysync_resp_new(&e,
+                            NULL, IE_DSTR("fingerprint")
+                        ),
+                    }
+                ),
+                .out=(size_chunk_out_t[]){
+                    {64, "* XKEYSYNC DELETED fingerprint\r\n"},
+                    {0}
+                },
+            },
+            // * XKEYSYNC OK
+            {
+                .resp=imap_resp_new(&e,
+                    IMAP_RESP_XKEYSYNC, (imap_resp_arg_t){0}
+                ),
+                .out=(size_chunk_out_t[]){
+                    {64, "* XKEYSYNC OK\r\n"},
+                    {0}
+                },
+            },
+            // XKEYADD pubkey_literal
+            {
+                .cmd=imap_cmd_new(&e,
+                    IE_DSTR("tag"),
+                    IMAP_CMD_XKEYADD,
+                    (imap_cmd_arg_t){
+                        .xkeyadd = IE_DSTR("PUBLIC\nKEY\n")
+                    }
+                ),
+                .out=(size_chunk_out_t[]){
+                    {64, "tag XKEYADD {11+}\r\nPUBLIC\nKEY\n\r\n"},
+                    {0}
+                },
+            },
+        };
+        CHECK(&e);
+        PROP(&e, do_writer_test_multi(cases, sizeof(cases)/sizeof(*cases)) );
+    }
     return e;
 }
 
@@ -949,6 +1045,7 @@ static derr_t test_imap_print(void){
         .qresync = EXT_STATE_ON,
         .unselect = EXT_STATE_ON,
         .idle = EXT_STATE_ON,
+        .xkey = EXT_STATE_ON,
     };
 
     imap_cmd_t *cmd = imap_cmd_new(
