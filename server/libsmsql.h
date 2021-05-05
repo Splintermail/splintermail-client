@@ -122,6 +122,7 @@ typedef struct {
 DEF_CONTAINER_OF(smsql_dstr_t, link, link_t);
 
 derr_t smsql_dstr_new(smsql_dstr_t **out, const dstr_t *val);
+derr_t smsql_dstr_new_cstr(smsql_dstr_t **out, const char *val);
 void smsql_dstr_free(smsql_dstr_t **old);
 
 /* returns a list of hex-encoded fingerprints (smsql_dstr_t's), ordered

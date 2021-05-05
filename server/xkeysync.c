@@ -3,7 +3,7 @@
 
     Syntax:
 
-        tag XKEYSYNC fingerprint [fingerprint ...]
+        tag XKEYSYNC [fingerprint ...]
 
             where the list of fingerprints is all fingerprints the client knows
 
@@ -80,9 +80,6 @@ struct cmd_xkeysync_context {
 
 static void xkeysync_add_keepalive_timeout(struct cmd_xkeysync_context *ctx);
 static void xkeysync_add_checker_timeout(struct cmd_xkeysync_context *ctx);
-static bool xkeysync_client_handle_input(
-    struct cmd_xkeysync_context *ctx, bool free_cmd
-);
 
 enum exit_msg {
     EXIT_EXPECTED_DONE = 0,
@@ -165,8 +162,8 @@ static derr_t report_changes(
     derr_t e = E_OK;
 
     struct client *client = ctx->client;
-
     // client_send_line(client, "* XKEYSYNC report");
+
     // walk through two sorted lists, looking for mismatches.
     smsql_dstr_t *old = list_first(old_head);
     smsql_dstr_t *new = list_first(new_head);
@@ -211,7 +208,9 @@ static derr_t report_changes(
 
 
 // returns true on error
-static bool xkeysync_check_now(struct cmd_xkeysync_context *ctx, bool *change_detected){
+static bool xkeysync_check_now(
+    struct cmd_xkeysync_context *ctx, bool *change_detected
+){
     derr_t e = E_OK;
 
     struct client *client = ctx->client;
@@ -274,7 +273,9 @@ done:
    Why do we sometimes free the cmd_context?  But sometimes we don't?
    For example, cmd_idle_continue() free it in some branches but not others.
 
-   And why does cmd-idle.c *literally ever* call client_destroy()? */
+   And why does cmd-idle.c *literally ever* call client_destroy()?
+
+   TODO: we never call client_destroy() now, I still don't get why you would */
 static void xkeysync_finish(
     struct cmd_xkeysync_context *ctx, enum exit_msg exit_msg, bool free_cmd
 ){
@@ -407,32 +408,39 @@ static void xkeysync_add_checker_timeout(struct cmd_xkeysync_context *ctx){
 #   endif // __GNUC__
 }
 
-static bool cmd_xkeysync_continue(struct client_command_context *cmd){
-    struct cmd_xkeysync_context *ctx = cmd->context;
-    struct client *client = cmd->client;
-
-    if(cmd->cancel){
-        xkeysync_finish(ctx, EXIT_INTERNAL_ERROR, false);
-        return true;
+/* hardcode the only string comparison we need to do, to avoid linking into
+   extra dovecot libraries */
+static enum exit_msg is_done(const char *s){
+    const char DONE[] = "DONE";
+    const char done[] = "done";
+    for(size_t i = 0; i < sizeof(DONE); i++){
+        if(s[i] != DONE[i] && s[i] != done[i]) return EXIT_EXPECTED_DONE;
     }
+    return EXIT_OK;
+}
 
-    if(client->output->closed){
-        xkeysync_finish(ctx, EXIT_INTERNAL_ERROR, false);
-        return true;
+// process read input and react to it.
+// return true if we should call client_continue_pending_input()
+static bool xkeysync_client_handle_input(
+    struct cmd_xkeysync_context *ctx, bool free_cmd
+){
+    const char *line;
+    while((line = i_stream_next_line(ctx->client->input)) != NULL){
+        if(ctx->client->input_skip_line){
+            ctx->client->input_skip_line = false;
+        } else {
+            xkeysync_finish(ctx, is_done(line), free_cmd);
+            // we're done with input, call client_continue_pending_input().
+            return true;
+        }
     }
-
-    // TODO: when does this get called?  It seems we always exit out of it but
-    // I don't fully understand if that's the right call.
-    fprintf(stderr, "cmd_xkeysync_continue() called for unknown reason!\n");
-
-    timeout_remove(&ctx->keepalive_to);
-    timeout_remove(&ctx->checker_to);
-    xkeysync_finish(ctx, EXIT_INTERNAL_ERROR, true);
-    client_command_free(&ctx->cmd);
-    return true;
+    return false;
 }
 
 // read input, or detect broken connections.  Routes to handle_input.
+/* return true if we should call client_continue_pending_input(), which
+   is roughly analgous to the toplevel command_func_t's "return true when you
+   are done" behavior */
 static bool xkeysync_client_input_more(struct cmd_xkeysync_context *ctx){
     struct client *client = ctx->client;
 
@@ -442,7 +450,8 @@ static bool xkeysync_client_input_more(struct cmd_xkeysync_context *ctx){
     switch(i_stream_read(client->input)){
         case -1: // disconnected
             client_disconnect(client, NULL);
-            // command is done
+            /* client_continue_pending_input() handles the disconnected case
+               specially somehow, and we should call it (cmd-idle.c does) */
             return true;
         case -2: // input buffer is full
             client->input_skip_line = true;
@@ -465,45 +474,41 @@ static bool xkeysync_client_input_more(struct cmd_xkeysync_context *ctx){
     return xkeysync_client_handle_input(ctx, true);
 }
 
-
-// callback on new inputs: route to input_more(), and maybe cleanup
+/* callback on new inputs: route to input_more(), and maybe call call
+   client_continue_pending_input() */
+/* client_continue_pending_input() means that you "did not consume all the
+   input there was" (according to folks on the dovecot mailing list) */
 static void xkeysync_client_input(struct cmd_xkeysync_context *ctx){
     struct client *client = ctx->client;
     if(xkeysync_client_input_more(ctx)){
-        if(client->disconnected){
-            client_destroy(client, NULL);
-        }else{
-            client_continue_pending_input(client);
-        }
+        client_continue_pending_input(client);
     }
 }
 
-/* hardcode the only string comparison we need to do, to avoid linking into
-   extra dovecot libraries */
-static enum exit_msg is_done(const char *s){
-    const char DONE[] = "DONE";
-    const char done[] = "done";
-    for(size_t i = 0; i < sizeof(DONE); i++){
-        if(s[i] != DONE[i] && s[i] != done[i]) return EXIT_EXPECTED_DONE;
-    }
-    return EXIT_OK;
-}
+/* cmd_xkeysync_continue is a "secondary" command_func_t, it's what we set as
+   the cmd->func after the command initially starts */
+static bool cmd_xkeysync_continue(struct client_command_context *cmd){
+    struct cmd_xkeysync_context *ctx = cmd->context;
+    struct client *client = cmd->client;
 
-// process read input and react to it.
-static bool xkeysync_client_handle_input(
-    struct cmd_xkeysync_context *ctx, bool free_cmd
-){
-    const char *line;
-    while((line = i_stream_next_line(ctx->client->input)) != NULL){
-        if(ctx->client->input_skip_line){
-            ctx->client->input_skip_line = false;
-        } else {
-            xkeysync_finish(ctx, is_done(line), free_cmd);
-            // we're done here.
-            return true;
-        }
+    if(cmd->cancel){
+        /* client_command_cancel() calls us with cmd->cancel == TRUE and always
+           calls client_command_free right afterwards, so we set free_cmd=false
+           here */
+        xkeysync_finish(ctx, EXIT_INTERNAL_ERROR, false);
+        return true;
     }
-    return false;
+
+    if(client->output->closed){
+        xkeysync_finish(ctx, EXIT_INTERNAL_ERROR, false);
+        return true;
+    }
+
+    // TODO: when does this get called?  It seems we always exit out of it but
+    // I don't fully understand if that's the right call.
+    fprintf(stderr, "cmd_xkeysync_continue() called for unknown reason!\n");
+    xkeysync_finish(ctx, EXIT_INTERNAL_ERROR, false);
+    return true;
 }
 
 // cmd_xkeysync is a command_func_t
@@ -517,32 +522,26 @@ static bool cmd_xkeysync(struct client_command_context *cmd){
     if(!client_read_args(cmd, 0, 0, &args))
         return false;
 
-    /* client_read_args returns a list with a special sentinal so it's always
-       safe to deref the first element */
-    if(!imap_arg_get_astring(&args[0], &arg)){
-        client_send_command_error(cmd, "invalid number");
-        /* turns out that client_send_command_error() sets the command
-           to a DONE state anyway, and imap-client.c:command_exec() will check
-           for that and ignore this return value.  cmd-select.c seems to return
-           false in these cases but cmd-fetch returns true.  I think true makes
-           more sense, though I guess it doesn't matter. */
-        return true;
-    }
+    link_t known_fprs;
+    link_init(&known_fprs);
 
-    if(!IMAP_ARG_IS_EOL(&args[1])){
-        client_send_command_error(cmd, "extra args");
-        return true;
+    for(size_t i = 0; !IMAP_ARG_IS_EOL(&args[i]); i++){
+        // validate arg
+        if(!imap_arg_get_astring(&args[0], &arg)
+                || strlen(arg) != SMSQL_FPR_SIZE){
+            client_send_command_error(cmd, "invalid fingerprint");
+            goto fail_fprs;
+        }
+        // remember arg
+        smsql_dstr_t *fpr;
+        IF_PROP(&e, smsql_dstr_new_cstr(&fpr, arg) ){
+            client_send_command_error(cmd, "failed to allocate in xkeysync");
+            goto fail_fprs;
+        }
+        link_list_append(&known_fprs, &fpr->link);
     }
 
     struct client *client = cmd->client;
-
-    // avoid dropping const qualifier with a little copy
-    DSTR_VAR(darg, 32);
-    IF_PROP(&e, FMT(&darg, "%x", FS(arg)) ){
-        DROP_VAR(&e);
-        client_send_command_error(cmd, "invalid number");
-        return true;
-    }
 
     // get the user's uuid from their FSID@x.splintermail.com login result
     DSTR_VAR(uuid, SMSQL_UUID_SIZE);
@@ -552,12 +551,10 @@ static bool cmd_xkeysync(struct client_command_context *cmd){
         memcpy(fsid.data, client->user->username, fsid.len);
     }
     IF_PROP(&e, to_uuid(&fsid, &uuid) ){
-        DUMP(e);
-        DROP_VAR(&e);
         client_send_command_error(
             cmd, "internal error: failed to decode user_uuid from login"
         );
-        return true;
+        goto fail_fprs;
     }
 
     // allocate a new ctx
@@ -566,14 +563,15 @@ static bool cmd_xkeysync(struct client_command_context *cmd){
     ctx->cmd = cmd;
     ctx->client = client;
     link_init(&ctx->known_fprs);
+    link_list_append_list(&ctx->known_fprs, &known_fprs);
 
     DSTR_WRAP_ARRAY(ctx->uuid, ctx->uuid_buffer);
-    IF_PROP(&e, dstr_copy(&ctx->uuid, &uuid) ){
-        // should never happen...
-        DUMP(e);
-        DROP_VAR(&e);
-        xkeysync_finish(ctx, EXIT_INTERNAL_ERROR, false);
-        return true;
+    IF_PROP(&e, dstr_copy(&uuid, &ctx->uuid) ){
+        // this can't happen
+        client_send_command_error(
+            cmd, "internal error: hit an unreachable error"
+        );
+        goto fail_ctx;
     }
 
     xkeysync_add_keepalive_timeout(ctx);
@@ -603,6 +601,14 @@ static bool cmd_xkeysync(struct client_command_context *cmd){
     o_stream_uncork(client->output);
 
     return xkeysync_client_handle_input(ctx, false);
+
+fail_ctx:
+    xkeysync_finish(ctx, EXIT_INTERNAL_ERROR, false);
+fail_fprs:
+    DUMP(e);
+    DROP_VAR(&e);
+    free_fpr_list(&known_fprs);
+    return true;
 }
 
 static const char *cmd_name = "XKEYSYNC";

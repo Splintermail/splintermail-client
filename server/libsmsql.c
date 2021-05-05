@@ -710,6 +710,25 @@ fail:
     return e;
 }
 
+derr_t smsql_dstr_new_cstr(smsql_dstr_t **out, const char *val){
+    derr_t e = E_OK;
+    *out = NULL;
+
+    smsql_dstr_t *dstr = DMALLOC_STRUCT_PTR(&e, dstr);
+    CHECK(&e);
+
+    link_init(&dstr->link);
+
+    PROP_GO(&e, FMT(&dstr->dstr, "%x", FS(val)), fail);
+
+    *out = dstr;
+    return e;
+
+fail:
+    free(dstr);
+    return e;
+}
+
 void smsql_dstr_free(smsql_dstr_t **old){
     smsql_dstr_t *dstr = *old;
     if(dstr == NULL) return;
