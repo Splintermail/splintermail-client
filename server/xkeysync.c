@@ -76,6 +76,7 @@ struct cmd_xkeysync_context {
     link_t known_fprs;
     dstr_t uuid;
     char uuid_buffer[SMSQL_UUID_SIZE];
+    int retries;
 };
 
 static void xkeysync_add_keepalive_timeout(struct cmd_xkeysync_context *ctx);
@@ -269,19 +270,12 @@ done:
     return retval;
 }
 
-/* I'm honestly very confused about some of the object lifetimes involved here.
-   Why do we sometimes free the cmd_context?  But sometimes we don't?
-   For example, cmd_idle_continue() free it in some branches but not others.
-
-   And why does cmd-idle.c *literally ever* call client_destroy()?
-
-   TODO: we never call client_destroy() now, I still don't get why you would */
+/* clean up our cmd_xkeysync_context and free the ctx->cmd if we finish in an
+   entrypoint other than a command_func_t */
 static void xkeysync_finish(
     struct cmd_xkeysync_context *ctx, enum exit_msg exit_msg, bool free_cmd
 ){
     struct client *client = ctx->client;
-
-    // TODO: are we sure that we get here in all cases?
 
     // clean up the ctx
     free_fpr_list(&ctx->known_fprs);
@@ -389,8 +383,14 @@ static void checker_timeout(struct cmd_xkeysync_context *ctx){
     o_stream_uncork(client->output);
 
     if(failure){
-        // TODO: free?  or don't free?
-        xkeysync_finish(ctx, EXIT_INTERNAL_ERROR, true);
+        // allow temporary failures gracefully
+        if(ctx->retries++ >= 5){
+            // free the command, since this is not a command_func_t entrypoint
+            xkeysync_finish(ctx, EXIT_INTERNAL_ERROR, true);
+        }
+    }else{
+        // reset retry count
+        ctx->retries = 0;
     }
 }
 
@@ -419,8 +419,7 @@ static enum exit_msg is_done(const char *s){
     return EXIT_OK;
 }
 
-// process read input and react to it.
-// return true if we should call client_continue_pending_input()
+// process input, return true if the command has finished
 static bool xkeysync_client_handle_input(
     struct cmd_xkeysync_context *ctx, bool free_cmd
 ){
@@ -429,19 +428,16 @@ static bool xkeysync_client_handle_input(
         if(ctx->client->input_skip_line){
             ctx->client->input_skip_line = false;
         } else {
+            // the first full line we recieve is always the only line of input
             xkeysync_finish(ctx, is_done(line), free_cmd);
-            // we're done with input, call client_continue_pending_input().
             return true;
         }
     }
     return false;
 }
 
-// read input, or detect broken connections.  Routes to handle_input.
-/* return true if we should call client_continue_pending_input(), which
-   is roughly analgous to the toplevel command_func_t's "return true when you
-   are done" behavior */
-static bool xkeysync_client_input_more(struct cmd_xkeysync_context *ctx){
+// callback on new inputs: process input and maybe trigger the next command
+static void xkeysync_client_input(struct cmd_xkeysync_context *ctx){
     struct client *client = ctx->client;
 
     client->last_input = ioloop_time;
@@ -452,37 +448,24 @@ static bool xkeysync_client_input_more(struct cmd_xkeysync_context *ctx){
             client_disconnect(client, NULL);
             /* client_continue_pending_input() handles the disconnected case
                specially somehow, and we should call it (cmd-idle.c does) */
-            return true;
+            goto cmd_finished;
         case -2: // input buffer is full
             client->input_skip_line = true;
             xkeysync_finish(ctx, EXIT_INTERNAL_ERROR, true);
-            return true;
+            goto cmd_finished;
     }
 
     // we read successfully!
 
-    /* cmd-idle.c checks if output got paused and, if it did, it freezes the
-       input io here and doesn't process input yet.  Then it checks for that
-       frozen condition when it sends output and unfreezes input */
-    /* Since we never return without having calculated and returned all of our
-       output, I don't think it's possible for us to have that situation.
-       Technically it would be nice to have a way to detect the case where
-       output gets backed up and disable further output until it is done
-       flushing, but realistically we don't write nearly enough output for that
-       to be a problem. */
-
-    return xkeysync_client_handle_input(ctx, true);
-}
-
-/* callback on new inputs: route to input_more(), and maybe call call
-   client_continue_pending_input() */
-/* client_continue_pending_input() means that you "did not consume all the
-   input there was" (according to folks on the dovecot mailing list) */
-static void xkeysync_client_input(struct cmd_xkeysync_context *ctx){
-    struct client *client = ctx->client;
-    if(xkeysync_client_input_more(ctx)){
-        client_continue_pending_input(client);
+    if(xkeysync_client_handle_input(ctx, true)){
+        goto cmd_finished;
     }
+
+    return;
+
+cmd_finished:
+    client_continue_pending_input(client);
+    return;
 }
 
 /* cmd_xkeysync_continue is a "secondary" command_func_t, it's what we set as
@@ -504,8 +487,8 @@ static bool cmd_xkeysync_continue(struct client_command_context *cmd){
         return true;
     }
 
-    // TODO: when does this get called?  It seems we always exit out of it but
-    // I don't fully understand if that's the right call.
+    /* TODO: when does this get called?  It seems we always exit out of it but
+       I don't fully understand if that's the right call */
     fprintf(stderr, "cmd_xkeysync_continue() called for unknown reason!\n");
     xkeysync_finish(ctx, EXIT_INTERNAL_ERROR, false);
     return true;
@@ -564,6 +547,7 @@ static bool cmd_xkeysync(struct client_command_context *cmd){
     ctx->client = client;
     link_init(&ctx->known_fprs);
     link_list_append_list(&ctx->known_fprs, &known_fprs);
+    ctx->retries = 0;
 
     DSTR_WRAP_ARRAY(ctx->uuid, ctx->uuid_buffer);
     IF_PROP(&e, dstr_copy(&uuid, &ctx->uuid) ){
