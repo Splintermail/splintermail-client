@@ -5,6 +5,7 @@
 #include "errno.h"
 
 void *dmalloc(derr_t *e, size_t n){
+    if(is_error(*e)) return NULL;
     void *out =  malloc(n);
     if(out == NULL) {
         TRACE_ORIG(e, E_NOMEM, "nomem");

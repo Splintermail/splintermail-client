@@ -1,12 +1,9 @@
 #include "citm.h"
 
 // foward declarations
-static derr_t send_login(fetcher_t *fetcher);
 static derr_t imap_event_new(imap_event_t **out, fetcher_t *fetcher,
         imap_cmd_t *cmd);
 static derr_t fetcher_do_work(fetcher_t *fetcher, bool *noop);
-
-fetcher_t *g_fetcher;
 
 static void fetcher_free_login(fetcher_t *fetcher){
     ie_login_cmd_free(fetcher->login.cmd);

@@ -21,5 +21,6 @@ DEF_CONTAINER_OF(wake_event_t, ev, event_t);
 #include "fetcher.h"
 #include "server.h"
 #include "sf_pair.h"
+#include "keysync.h"
 #include "user.h"
 #include "citm_engine.h"

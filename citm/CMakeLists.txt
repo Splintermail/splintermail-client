@@ -4,6 +4,7 @@ add_executable(
     passthru.c
     server.c
     fetcher.c
+    keysync.c
     user.c
     citm_engine.c
     sf_pair.c

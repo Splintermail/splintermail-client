@@ -739,6 +739,7 @@ static derr_t send_done(up_t *up){
     return e;
 }
 
+// need_done sends DONE if needed and returns true when it is safe to continue
 static derr_t need_done(up_t *up, bool *ok){
     derr_t e = E_OK;
 
@@ -820,7 +821,7 @@ static derr_t advance_state(up_t *up){
 
     bool ok;
 
-    // respond to asynchornous external APIs
+    // respond to asynchronous external APIs
     if(up->idle.want_block && !up->idle.blocked){
         PROP(&e, need_done(up, &ok) );
         if(ok){
@@ -882,6 +883,7 @@ static derr_t advance_state(up_t *up){
             PROP(&e, send_bootstrap(up) );
         }
         if(!up->bootstrap.done) return e;
+        up->bootstrap.needed = false;
     }
 
     // initial deletions
