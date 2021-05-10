@@ -264,6 +264,11 @@ static derr_t test_encode_decode(void){
 }
 
 int main(int argc, char** argv){
+
+#ifndef _WIN32
+    signal(SIGPIPE, SIG_IGN);
+#endif
+
     derr_t e = E_OK;
     // parse options and set default log level
     PARSE_TEST_OPTIONS(argc, argv, &g_test_files, LOG_LVL_WARN);
