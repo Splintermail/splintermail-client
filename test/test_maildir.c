@@ -186,7 +186,7 @@ static derr_t test_mod_hostname(void){
 }
 
 int main(int argc, char** argv){
-    derr_t e;
+    derr_t e = E_OK;
     // parse options and set default log level
     PARSE_TEST_OPTIONS(argc, argv, NULL, LOG_LVL_INFO);
 
