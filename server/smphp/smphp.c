@@ -201,7 +201,7 @@ static derr_t _validate_session_auth(
     if(!ok){
         // this is possible in race conditions but it's more likely a bug
         TRACE(&e, "session_id:%x uuid:%x", FD(session_id), FSID(&uuid));
-        ORIG_GO(&e, E_INTERNAL, "session but no account was found", cu_sql);
+        ORIG_GO(&e, E_INTERNAL, "session with no account was found", cu_sql);
     }
 
 cu_sql:

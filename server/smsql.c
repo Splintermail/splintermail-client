@@ -92,14 +92,11 @@ static derr_t hash_password_action(MYSQL *sql, int argc, char **argv){
     (void)sql;
 
     if(argc != 2){
-        ORIG(&e, E_USERMSG, "usage: hash_password PASSWORD HEX_SALT\n");
+        ORIG(&e, E_USERMSG, "usage: hash_password PASSWORD SALT\n");
     }
 
     dstr_t pass = get_arg(argv, 0);
-    dstr_t hex_salt = get_arg(argv, 1);
-
-    DSTR_VAR(salt, 8);
-    PROP(&e, hex2bin(&hex_salt, &salt) );
+    dstr_t salt = get_arg(argv, 1);
 
     DSTR_VAR(hash, SMSQL_PASSWORD_HASH_SIZE);
     PROP(&e, hash_password(&pass, 5000, &salt, &hash) );

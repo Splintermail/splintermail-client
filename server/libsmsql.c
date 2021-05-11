@@ -78,10 +78,12 @@ derr_type_t fmthook_fsid(dstr_t* out, const void* arg){
     return E_NONE;
 }
 
-// basically just 8 random bytes
+// writes SMSQL_PASSWORD_SALT_SIZE random ASCII bytes
 derr_t random_password_salt(dstr_t *salt){
     derr_t e = E_OK;
-    PROP(&e, random_bytes(salt, SMSQL_PASSWORD_SALT_SIZE) );
+    DSTR_VAR(temp, SMSQL_PASSWORD_SALT_SRC_SIZE);
+    PROP(&e, random_bytes(&temp, SMSQL_PASSWORD_SALT_SRC_SIZE) );
+    PROP(&e, bin2b64(&temp, salt) );
     return e;
 }
 
@@ -103,11 +105,11 @@ derr_t hash_password(
        provided salt, and it's not part of any standard anyways, so we'll just
        write the crypt() settings string ourselves */
     DSTR_VAR(settings, 128);
-    PROP(&e, FMT(&settings, "$6$rounds=%x$%x$", FU(rounds), FX(salt)) );
+    PROP(&e, FMT(&settings, "$6$rounds=%x$%x$", FU(rounds), FD(salt)) );
 
-    /* `man 3 crypt` says that you the data struct is probably too big to
-       allocate on the stack.  crypt_ra() will allocate on the heap for
-       you but it is not available on debian, so we use crypt_r() instead. */
+    /* `man 3 crypt` says that the data struct is probably too big to allocate
+       on the stack.  crypt_ra() will allocate on the heap for you but it is
+       not available on debian, so we use crypt_r() instead. */
     struct crypt_data *mem = DMALLOC_STRUCT_PTR(&e, mem);
     CHECK(&e);
 
@@ -135,7 +137,7 @@ static derr_t _parse_hash(
 ){
     derr_t e = E_OK;
 
-    // example sha512 hash: $6$rounds=NN$hexsaltchars$passhashchars...
+    // example sha512 hash: $6$rounds=NN$saltchars$passhashchars...
     //                         ^^^^^^^^^^optional
 
     if(!dstr_beginswith(hash, &DSTR_LIT("$6$"))){
@@ -154,16 +156,16 @@ static derr_t _parse_hash(
         ORIG(&e, E_PARAM, "hash is not a SHA512 hash, wrong number of fields");
     }
 
-    dstr_t hex_salt;
+    dstr_t salt_result;
     dstr_t hash_result_temp;
 
     if(fields.len == 4){
-        hex_salt = fields.data[2];
+        salt_result = fields.data[2];
         hash_result_temp = fields.data[3];
         // default for algorithm
         if(rounds) *rounds = 5000;
     }else{
-        hex_salt = fields.data[3];
+        salt_result = fields.data[3];
         hash_result_temp = fields.data[4];
         // parse rounds field
         const dstr_t rounds_field = fields.data[2];
@@ -181,7 +183,7 @@ static derr_t _parse_hash(
         if(rounds) *rounds = temp_rounds;
     }
 
-    if(salt) PROP(&e, hex2bin(&hex_salt, salt) );
+    if(salt) PROP(&e, dstr_append(salt, &salt_result) );
     if(hash_result) PROP(&e, dstr_append(hash_result, &hash_result_temp) );
 
     return e;

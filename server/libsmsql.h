@@ -19,7 +19,7 @@ static inline fmt_t FSID(const dstr_t* uuid){
                                      .hook = fmthook_fsid} } };
 }
 
-// writes SMSQL_PASSWORD_SALT_SIZE bytes
+// writes SMSQL_PASSWORD_SALT_SIZE random ASCII bytes
 derr_t random_password_salt(dstr_t *salt);
 
 // sha512 password hash
@@ -66,7 +66,9 @@ derr_t valid_splintermail_password(const dstr_t *pass);
 #define SMSQL_EMAIL_SIZE 100
 #define SMSQL_PUBKEY_SIZE 1024
 #define SMSQL_PASSWORD_HASH_SIZE 128
-#define SMSQL_PASSWORD_SALT_SIZE 8
+// the salt is generated from 12 random bytes and converted to hex
+#define SMSQL_PASSWORD_SALT_SRC_SIZE 12
+#define SMSQL_PASSWORD_SALT_SIZE (SMSQL_PASSWORD_SALT_SRC_SIZE * 4 / 3)
 #define SMSQL_PASSWORD_SHA512_ROUNDS 500000
 #define SMSQL_PASSWORD_SIZE 72
 /* FPR is hex-encoded, since it is a precomputed-for-convenience column that
