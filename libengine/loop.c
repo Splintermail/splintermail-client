@@ -287,9 +287,13 @@ static derr_t handle_write(loop_t *loop, loop_data_t *ld, event_t *ev){
     // wrap the event
     wrap_write(wr_wrap, ev);
 
+    /* passing `&wr_wrap->uv_buf` to uv_write causes  false-postive
+       stringop-overread warning with gcc */
+    uv_buf_t bufs[] = {wr_wrap->uv_buf};  // passing &wr_wrap->uv_buf
+
     // push write to socket
     int ret = uv_write(&wr_wrap->uv_write, (uv_stream_t*)ld->sock,
-                       &wr_wrap->uv_buf, 1, write_cb);
+                       bufs, 1, write_cb);
     if(ret < 0){
         TRACE(&e, "uv_write: %x\n", FUV(&ret));
         ORIG_GO(&e, uv_err_type(ret), "error adding write", unwrap);
