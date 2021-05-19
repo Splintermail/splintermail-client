@@ -59,7 +59,12 @@ static derr_t bind_via_gai(uv_tcp_t *srv, const char *addr, const char *svc){
     struct addrinfo *ai;
     int ret = getaddrinfo(addr, svc, &hints, &ai);
     if(ret != 0){
-        TRACE(&e, "getaddrinfo: %x\n", FS(gai_strerror(ret)));
+        TRACE(&e,
+            "getaddrinfo(name=%x, service=%x): %x\n",
+            FS(addr),
+            FS(svc),
+            FS(gai_strerror(ret))
+        );
         ORIG(&e, E_OS, "getaddrinfo failed");
     }
 
