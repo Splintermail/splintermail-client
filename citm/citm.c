@@ -191,13 +191,13 @@ static void stop_loop_on_signal(int signum){
 // defaults
 static const char *d_l_host   = "127.0.0.1";
 static const char *d_l_port   = "1993";
-static const char *d_r_host   = "127.0.0.1";
+static const char *d_r_host   = "127.0.0.1"; // TODO
 static const char *d_r_port   = "993";
-static const char *d_tls_key  = "../c/test/files/ssl/good-key.pem";
-static const char *d_tls_cert = "../c/test/files/ssl/good-cert.pem";
-static const char *d_tls_dh   = "../c/test/files/ssl/dh_4096.pem";
-static const char *d_mail_key = "../c/test/files/key_tool/key_m.pem";
-DSTR_STATIC(d_maildirs, "/tmp/maildir_root");
+static const char *d_tls_key  = "../c/test/files/ssl/good-key.pem"; // TODO
+static const char *d_tls_cert = "../c/test/files/ssl/good-cert.pem"; // TODO
+static const char *d_tls_dh   = "../c/test/files/ssl/dh_4096.pem"; // TODO
+static const char *d_mail_key = "../c/test/files/key_tool/key_m.pem"; // TODO
+DSTR_STATIC(d_maildirs, "/tmp/maildir_root"); // TODO
 
 static void print_help(FILE *f){
     DROP_CMD(

@@ -18,7 +18,15 @@ import time
 import random
 import selectors
 
-test_files = os.path.join(os.path.dirname(__file__), "files")
+import mariadb
+import dovecot
+
+pysm_path = "./server/pysm"
+sys.path.append(pysm_path)
+import pysm
+
+HERE = os.path.dirname(__file__)
+test_files = os.path.join(HERE, "files")
 
 all_tests = []
 
@@ -29,7 +37,11 @@ def register_test(fn):
 TIMEOUT = 0.5
 
 USER="test@splintermail.com"
-PASS="password"
+PASS="passwordpassword"
+
+# global values for the whole test
+HOST=None
+PORT=None
 
 def as_bytes(msg):
     if isinstance(msg, bytes):
@@ -611,6 +623,7 @@ def wait_for_listener(q):
             raise EOFError("did not find \"listener ready\" message")
         if line == b"listener ready\n":
             break
+        print('\x1b[31mmessage is:', line, '\x1b[m')
 
 
 class Subproc:
@@ -682,7 +695,7 @@ def _session(closable, host=None, port=None):
         rw.wait_for_match(b"\\* OK")
 
         rw.put(b"A login %s %s\r\n"%(USER.encode('utf8'), PASS.encode('utf8')))
-        rw.wait_for_match(b"A OK")
+        rw.wait_for_resp("A", "OK")
 
         yield rw
 
@@ -698,6 +711,27 @@ def session(cmd):
         with _session(subproc) as stuff:
             yield stuff
 
+@contextlib.contextmanager
+def temp_box(rw):
+    name = b"deleteme_" + codecs.encode(os.urandom(5), "hex_codec")
+    rw.put(b"B1 create %s\r\n"%name)
+    rw.wait_for_resp("B1", "OK")
+
+    yield name
+
+    # don't bother cleaning up in exception cases;
+    # there are some exceptions where you couldn't anyway.
+    rw.put(b"B2 delete %s\r\n"%name)
+    rw.wait_for_resp("B2", "OK")
+
+
+@contextlib.contextmanager
+def _inbox(closable):
+    with _session(closable) as rw:
+        rw.put(b"B select INBOX\r\n")
+        rw.wait_for_match(b"B OK")
+
+        yield rw
 
 @contextlib.contextmanager
 def _inbox(closable):
@@ -719,46 +753,53 @@ def inbox(cmd):
 #### tests
 
 @register_test
-def test_start_kill(cmd, maildir_root):
+def test_start_kill(cmd, maildir_root, **kwargs):
     with Subproc(cmd) as subproc:
         pass
 
 
 @register_test
-def test_login_logout(cmd, maildir_root):
+def test_login_logout(cmd, maildir_root, **kwargs):
     with session(cmd) as rw:
         pass
 
 
 @register_test
-def test_select_logout(cmd, maildir_root):
+def test_select_logout(cmd, maildir_root, **kwargs):
     with inbox(cmd) as rw:
         pass
 
 
 @register_test
-def test_select_select(cmd, maildir_root):
+def test_select_reselect(cmd, maildir_root, **kwargs):
     with inbox(cmd) as rw:
         rw.put(b"1 select INBOX\r\n")
         rw.wait_for_resp("1", "OK")
 
 
 @register_test
-def test_select_close(cmd, maildir_root):
+def test_select_close(cmd, maildir_root, **kwargs):
     with inbox(cmd) as rw:
         rw.put(b"1 close\r\n")
         rw.wait_for_resp("1", "OK")
 
 
 @register_test
-def test_select_select(cmd, maildir_root):
-    with inbox(cmd) as rw:
-        rw.put(b"1 select \"Test Folder\"\r\n")
-        rw.wait_for_resp("1", "OK")
-
+def test_select_select(cmd, maildir_root, **kwargs):
+    with session(cmd) as rw:
+        with temp_box(rw) as folder:
+            rw.put(b"1 select INBOX\r\n")
+            rw.wait_for_resp("1", "OK")
+            rw.put(b"2 select %s\r\n"%folder)
+            rw.wait_for_resp("2", "OK")
+            rw.put(b"3 close\r\n")
+            rw.wait_for_resp("3", "OK")
+            # TODO: remove this and still pass the test
+            rw.put(b"4 select INBOX\r\n")
+            rw.wait_for_resp("4", "OK")
 
 @register_test
-def test_store(cmd, maildir_root):
+def test_store(cmd, maildir_root, **kwargs):
     with inbox(cmd) as rw:
         rw.put(b"1 store 1 flags \\Seen\r\n")
         rw.wait_for_resp("1", "OK")
@@ -801,7 +842,7 @@ def get_uid(seq_num, rw):
 
 
 @register_test
-def test_expunge(cmd, maildir_root):
+def test_expunge(cmd, maildir_root, **kwargs):
     with inbox(cmd) as rw:
         uid1 = get_uid(1, rw)
         uid2 = get_uid(2, rw)
@@ -837,7 +878,7 @@ def test_expunge(cmd, maildir_root):
 
 
 @register_test
-def test_expunge_on_close(cmd, maildir_root):
+def test_expunge_on_close(cmd, maildir_root, **kwargs):
     with inbox(cmd) as rw:
         uid = get_uid(1, rw)
 
@@ -859,7 +900,7 @@ def test_expunge_on_close(cmd, maildir_root):
 
 
 @register_test
-def test_no_expunge_on_logout(cmd, maildir_root):
+def test_no_expunge_on_logout(cmd, maildir_root, **kwargs):
     with Subproc(cmd) as subproc:
         with _inbox(subproc) as rw:
             uid = get_uid(1, rw)
@@ -877,7 +918,7 @@ def test_no_expunge_on_logout(cmd, maildir_root):
 
 
 @register_test
-def test_noop(cmd, maildir_root):
+def test_noop(cmd, maildir_root, **kwargs):
     with Subproc(cmd) as subproc:
         with _inbox(subproc) as rw1, _inbox(subproc) as rw2:
             # empty flags for a few messages
@@ -913,7 +954,7 @@ def test_noop(cmd, maildir_root):
 
 
 @register_test
-def test_up_transition(cmd, maildir_root):
+def test_up_transition(cmd, maildir_root, **kwargs):
     with Subproc(cmd) as subproc:
         with _session(subproc) as rw1:
             with _session(subproc) as rw2:
@@ -1007,13 +1048,13 @@ def do_passthru_test(rw):
 
 
 @register_test
-def test_passthru_unselected(cmd, maildir_root):
+def test_passthru_unselected(cmd, maildir_root, **kwargs):
     with session(cmd) as rw:
         do_passthru_test(rw)
 
 
 @register_test
-def test_passthru_selected(cmd, maildir_root):
+def test_passthru_selected(cmd, maildir_root, **kwargs):
     with inbox(cmd) as rw:
         do_passthru_test(rw)
 
@@ -1031,7 +1072,7 @@ def get_highest_uid(mailbox, rw):
 
 
 @register_test
-def test_append(cmd, maildir_root):
+def test_append(cmd, maildir_root, **kwargs):
     with Subproc(cmd) as subproc:
         # APPEND while not open
         with _session(subproc) as rw:
@@ -1100,7 +1141,7 @@ def test_append(cmd, maildir_root):
 
 
 @register_test
-def test_append_to_nonexisting(cmd, maildir_root):
+def test_append_to_nonexisting(cmd, maildir_root, **kwargs):
     bad_path = os.path.join(maildir_root, USER, "asdf")
     assert not os.path.exists(bad_path), \
             "non-existing directory exists before APPEND"
@@ -1131,12 +1172,12 @@ def get_msg_count(rw, box):
 
 
 @register_test
-def test_copy(cmd, maildir_root):
-    with Subproc(cmd) as subproc:
-        with _session(subproc) as rw:
+def test_copy(cmd, maildir_root, **kwargs):
+    with session(cmd) as rw:
+        with temp_box(rw) as folder:
             # first count how many messages there are
             inbox_count = get_msg_count(rw, b"INBOX")
-            other_count = get_msg_count(rw, b"\"Test Folder\"")
+            other_count = get_msg_count(rw, folder)
 
             # figure on a paritally valid range
             assert inbox_count > 2, "inbox too empty for test"
@@ -1146,7 +1187,7 @@ def test_copy(cmd, maildir_root):
             rw.wait_for_resp("1", "OK")
 
             # COPY to other mailbox
-            rw.put(b"2 COPY %d:%d \"Test Folder\"\r\n"%copy_range)
+            rw.put(b"2 COPY %d:%d %s\r\n"%(*copy_range, folder))
             rw.wait_for_resp("2", "OK")
 
             # COPY to this mailbox, with partially valid range
@@ -1169,13 +1210,13 @@ def test_copy(cmd, maildir_root):
             exp = inbox_count + 2
             assert exp == got, f"expected {exp} but got {got}"
 
-            got = get_msg_count(rw, b"\"Test Folder\"")
+            got = get_msg_count(rw, folder)
             exp = other_count + 2
             assert exp == got, f"expected {exp} but got {got}"
 
 
 @register_test
-def test_examine(cmd, maildir_root):
+def test_examine(cmd, maildir_root, **kwargs):
     with Subproc(cmd) as subproc:
         with _session(subproc) as rw:
             # EXAMINE from unselected
@@ -1247,7 +1288,7 @@ def test_examine(cmd, maildir_root):
 
 
 @register_test
-def test_terminate_with_open_connection(cmd, maildir_root):
+def test_terminate_with_open_connection(cmd, maildir_root, **kwargs):
     with Subproc(cmd) as subproc:
         with run_connection(subproc) as rw:
             rw.wait_for_match(b"\\* OK")
@@ -1259,7 +1300,7 @@ def test_terminate_with_open_connection(cmd, maildir_root):
 
 
 @register_test
-def test_terminate_with_open_session(cmd, maildir_root):
+def test_terminate_with_open_session(cmd, maildir_root, **kwargs):
     with Subproc(cmd) as subproc:
         with run_connection(subproc) as rw:
             rw.wait_for_match(b"\\* OK")
@@ -1267,7 +1308,7 @@ def test_terminate_with_open_session(cmd, maildir_root):
             rw.put(
                 b"1 login %s %s\r\n"%(USER.encode('utf8'), PASS.encode('utf8'))
             )
-            rw.wait_for_match(b"1 OK")
+            rw.wait_for_resp("1", "OK")
 
             p = subproc.p
             p.send_signal(signal.SIGTERM)
@@ -1276,7 +1317,7 @@ def test_terminate_with_open_session(cmd, maildir_root):
 
 
 @register_test
-def test_terminate_with_open_mailbox(cmd, maildir_root):
+def test_terminate_with_open_mailbox(cmd, maildir_root, **kwargs):
     with Subproc(cmd) as subproc:
         with run_connection(subproc) as rw:
             rw.wait_for_match(b"\\* OK")
@@ -1284,7 +1325,7 @@ def test_terminate_with_open_mailbox(cmd, maildir_root):
             rw.put(
                 b"1 login %s %s\r\n"%(USER.encode('utf8'), PASS.encode('utf8'))
             )
-            rw.wait_for_match(b"1 OK")
+            rw.wait_for_resp("1", "OK")
 
             rw.put(b"2 select INBOX\r\n")
             rw.wait_for_match(b"2 OK")
@@ -1296,7 +1337,7 @@ def test_terminate_with_open_mailbox(cmd, maildir_root):
 
 
 @register_test
-def test_syntax_errors(cmd, maildir_root):
+def test_syntax_errors(cmd, maildir_root, **kwargs):
     with inbox(cmd) as rw:
         # incomplete command
         rw.put(b"1 ERROR\r\n")
@@ -1329,7 +1370,7 @@ def test_syntax_errors(cmd, maildir_root):
 
 
 @register_test
-def test_idle(cmd, maildir_root):
+def test_idle(cmd, maildir_root, **kwargs):
     with Subproc(cmd) as subproc:
         with _inbox(subproc) as rw1:
             # Add a message to the inbox
@@ -1344,7 +1385,8 @@ def test_idle(cmd, maildir_root):
             rw1.wait_for_resp("2a", "OK")
 
             # make a direct connection to dovecot
-            with _session(None, host="127.0.0.1", port=993) as rw2:
+            dovecot_port = kwargs["imaps_port"]
+            with _session(None, host="127.0.0.1", port=dovecot_port) as rw2:
                 user = USER.encode('utf8')
                 passwd = PASS.encode('utf8')
                 rw2.put(b"2b SELECT INBOX\r\n")
@@ -1382,7 +1424,7 @@ def test_idle(cmd, maildir_root):
 
 
 @register_test
-def test_intercept(cmd, maildir_root):
+def test_intercept(cmd, maildir_root, **kwargs):
     with TLSSocketIntercept(cmd) as intercept:
         with Subproc(intercept.cmd) as subproc:
             with _session(subproc) as rw:
@@ -1392,7 +1434,7 @@ def test_intercept(cmd, maildir_root):
 
 
 @register_test
-def test_imaildir_hold(cmd, maildir_root):
+def test_imaildir_hold(cmd, maildir_root, **kwargs):
     with TLSSocketIntercept(cmd) as intercept:
         with Subproc(intercept.cmd) as subproc:
             # start hold before opening mailbox
@@ -1430,7 +1472,7 @@ def test_imaildir_hold(cmd, maildir_root):
 
 
 @register_test
-def test_initial_deletions(cmd, maildir_root):
+def test_initial_deletions(cmd, maildir_root, **kwargs):
     inbox_path = os.path.join(maildir_root, USER, "INBOX", "cur")
     with Subproc(cmd) as subproc:
         # initial sync
@@ -1461,7 +1503,7 @@ def test_initial_deletions(cmd, maildir_root):
 
 
 @register_test
-def prep_test_large_initial_download(cmd, maildir_root):
+def prep_test_large_initial_download(cmd, maildir_root, **kwargs):
     with inbox(cmd) as rw:
         for i in range(10):
             tag = b"%d"%(i+1)
@@ -1472,21 +1514,21 @@ def prep_test_large_initial_download(cmd, maildir_root):
 
 
 @register_test
-def test_large_initial_download(cmd, maildir_root):
+def test_large_initial_download(cmd, maildir_root, **kwargs):
     with inbox(cmd) as rw:
         pass
 
 
 # delete the initial contents of the inbox
 # (otherwise it grows until it slows down tests unnecessarily)
-def prep_starting_inbox(cmd, maildir_root):
+def prep_starting_inbox(cmd, maildir_root, **kwargs):
     with inbox(cmd) as rw:
         rw.put(b"1 store 1:* flags \\Deleted\r\n")
         rw.wait_for_resp("1", "OK")
         rw.put(b"2 expunge\r\n")
         rw.wait_for_resp("2", "OK")
         for i in range(3, 10):
-            tag = str(2 + i).encode("ascii")
+            tag = str(i).encode("ascii")
             rw.put(b"%s APPEND INBOX {11}\r\n"%tag)
             rw.wait_for_match(b"\\+")
             rw.put(b"hello world\r\n")
@@ -1503,10 +1545,33 @@ def temp_maildir_root():
         shutil.rmtree(tempdir)
 
 
+@contextlib.contextmanager
+def dovecot_setup():
+    migrations = os.path.join(HERE, "..", "server", "migrations")
+    migmysql_path = os.path.join("server", "migmysql")
+    plugin_path = os.path.join("server")
+    print("starting dovecot on random port")
+    with mariadb.mariadb(
+        migrations=migrations, migmysql_path=migmysql_path
+    ) as runner:
+        # inject the test user
+        with pysm.SMSQL(sock=runner.sockpath) as smsql:
+            smsql.create_account(USER, PASS)
+        with dovecot.tempdir() as basedir:
+            with dovecot.Dovecot(
+                basedir=basedir,
+                sql_sock=runner.sockpath,
+                bind_addr="127.0.0.1",
+                plugin_path=plugin_path,
+            ) as imaps_port:
+                print(f"dovecot ready! ({imaps_port})")
+                yield imaps_port
+
+
 if __name__ == "__main__":
     if "--help" in sys.argv or "-h" in sys.argv:
         print(
-            "usage: %s /path/to/test/files [PATTERN...]"%(sys.argv[0]),
+            "usage: %s [PATTERN...]"%(sys.argv[0]),
             file=sys.stderr
         )
         sys.exit(0)
@@ -1531,26 +1596,37 @@ if __name__ == "__main__":
     else:
         tests = all_tests
 
-    for test in [prep_starting_inbox] + tests:
-        print(test.__name__ + "... ", end="", flush="true")
-        with temp_maildir_root() as maildir_root:
-            cmd = [
-                "citm/citm",
-                # "--local-host", "127.0.0.1"
-                "--local-port", "1993",
-                # "--remote-host", "127.0.0.1"
-                "--remote-port", "993",
-                "--tls-key", os.path.join(test_files, "ssl/good-key.pem"),
-                "--tls-cert", os.path.join(test_files, "ssl/good-cert.pem"),
-                "--tls-dh", os.path.join(test_files, "ssl/dh_4096.pem"),
-                "--mail-key", os.path.join(test_files, "key_tool/key_m.pem"),
-                "--maildirs", maildir_root,
-            ]
-            try:
-                test(cmd, maildir_root)
-                print("PASS")
-            except:
-                print("FAIL")
-                raise
+    with dovecot_setup() as imaps_port:
+        kwargs = {"imaps_port": imaps_port}
+        for test in [prep_starting_inbox] + tests:
+            print(test.__name__ + "... ", end="", flush="true")
+            with temp_maildir_root() as maildir_root:
+                cmd = [
+                    "citm/citm",
+                    "--local-host",
+                    "127.0.0.1",
+                    "--local-port",
+                    "1993",
+                    "--remote-host",
+                    "127.0.0.1",
+                    "--remote-port",
+                    str(imaps_port),
+                    "--tls-key",
+                    os.path.join(test_files, "ssl", "good-key.pem"),
+                    "--tls-cert",
+                    os.path.join(test_files, "ssl", "good-cert.pem"),
+                    "--tls-dh",
+                    os.path.join(test_files, "ssl", "dh_4096.pem"),
+                    "--mail-key",
+                    os.path.join(test_files, "key_tool", "key_m.pem"),
+                    "--maildirs",
+                    maildir_root,
+                ]
+                try:
+                    test(cmd, maildir_root, **kwargs)
+                    print("PASS")
+                except:
+                    print("FAIL")
+                    raise
 
     print("PASS")

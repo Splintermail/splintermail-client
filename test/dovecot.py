@@ -1,18 +1,17 @@
 #!/usr/bin/env python3
 
+import argparse
 import contextlib
-import json
+import grp
 import os
 import pwd
-import grp
+import random
 import shutil
 import signal
-import subprocess
-import sys
-import time
-import argparse
-import tempfile
 import socket
+import subprocess
+import tempfile
+import time
 
 import mariadb
 
@@ -54,6 +53,7 @@ class Dovecot:
 # A dovecot config for running locally, such as for testing.
 
 base_dir={self.basedir}/run
+state_dir={self.basedir}/state
 
 default_internal_user = {self.user}
 default_internal_group = {self.group}
@@ -214,8 +214,6 @@ password_query = SELECT TO_FSID(user_uuid) as username, 'x.splintermail.com' as 
             if p is not None:
                 p.wait()
                 p = None
-
-
 
     def close(self):
         if self.p is None:
