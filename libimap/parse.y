@@ -397,6 +397,7 @@
 
 %type <num> num
 %type <num> nznum
+%type <num> uid_nznum
 %type <num> digit
 %type <num> twodigit
 %type <num> fourdigit
@@ -1509,13 +1510,13 @@ enabled_resp: ENABLED respcheck SP capas_1[c]
 
 /*** VANISHED response ***/
 
-vanished_resp: VANISHED respcheck SP seq_set[s]
+vanished_resp: VANISHED respcheck SP uid_set[s]
                 { extension_assert_on_builder(E, p->exts, EXT_QRESYNC);
                   imap_resp_arg_t arg = {
                       .vanished=ie_vanished_resp_new(E, false, $s)
                   };
                   $$ = imap_resp_new(E, IMAP_RESP_VANISHED, arg); }
-             | VANISHED respcheck SP '(' EARLIER ')' SP seq_set[s]
+             | VANISHED respcheck SP '(' EARLIER ')' SP uid_set[s]
                 { extension_assert_on_builder(E, p->exts, EXT_QRESYNC);
                   imap_resp_arg_t arg = {
                       .vanished=ie_vanished_resp_new(E, true, $s)
@@ -1891,9 +1892,13 @@ seq_set: seq_spec[set]                   { $$ = $set; }
        | seq_set[set] ',' seq_spec[spec] { $$ = ie_seq_set_append(E, $set, $spec); }
 ;
 
+/* workaround a bug in dovecot v2.3.13-14 where UID EXPUNGE 1 returns
+   VANISHED 0:1 instead of VANISHED 1: just change the 0 to a 1 */
+uid_nznum: num_str[n] { PARSE_NUM($n, dstr_tou, &$$); if($$ == 0) $$ = 1; };
+
 /* uid_set is like seq_set except without '*' values */
-uid_spec: nznum[n]                { $$ = ie_seq_set_new(E, $n, $n); }
-        | nznum[n1] ':' nznum[n2] { $$ = ie_seq_set_new(E, $n1, $n2); }
+uid_spec: uid_nznum[n]                    { $$ = ie_seq_set_new(E, $n, $n); }
+        | uid_nznum[n1] ':' uid_nznum[n2] { $$ = ie_seq_set_new(E, $n1, $n2); }
 ;
 
 uid_set: uid_spec[set]                   { $$ = $set; }
