@@ -38,13 +38,6 @@ if(APPLE OR WIN32)
 endif()
 find_package(OpenSSL REQUIRED)
 
-add_library(lmdb_interface INTERFACE)
-# target_include_directories(lmdb_interface INTERFACE "${path/to/liblmdb/include}")
-if("${LIBLMDB_LIB}" STREQUAL "")
-    set(LIBLMDB_LIB "lmdb")
-endif()
-target_link_libraries(lmdb_interface INTERFACE "${LIBLMDB_LIB}")
-
 function(default_compile_options tgt allow_asan)
     # compiler-specific flags
     if("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU")

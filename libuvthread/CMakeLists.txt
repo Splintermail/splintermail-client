@@ -1,7 +1,11 @@
 # include libuv
 # target_include_directories(libuv INTERFACE "${path/to/libuv/include}")
+if("${LIBUV_INCLUDE}" STREQUAL "")
+    find_path(LIBUV_INCLUDE NAMES uv.h)
+endif()
+
 if("${LIBUV_LIB}" STREQUAL "")
-    set(LIBUV_LIB "uv")
+    find_library(LIBUV_LIB NAMES uv)
 endif()
 
 macro(add_uvthread asan)
@@ -11,6 +15,7 @@ macro(add_uvthread asan)
         refs.c
         queue.c
     )
+    target_include_directories("uvthread${asan}" PUBLIC "${LIBUV_INCLUDE}")
     target_link_libraries("uvthread${asan}" dstr "${LIBUV_LIB}")
     if("${asan}" STREQUAL "_noasan")
         default_compile_options("uvthread${asan}" FALSE)
