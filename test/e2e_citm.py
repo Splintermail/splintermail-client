@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import argparse
 import tempfile
 import contextlib
 import shutil
@@ -1569,32 +1570,27 @@ def dovecot_setup():
 
 
 if __name__ == "__main__":
-    if "--help" in sys.argv or "-h" in sys.argv:
-        print(
-            "usage: %s [PATTERN...]"%(sys.argv[0]),
-            file=sys.stderr
-        )
-        sys.exit(0)
-
-    patterns = [p if p.startswith("^") else ".*" + p for p in sys.argv[1:]]
+    parser = argparse.ArgumentParser()
+    parser.add_argument("patterns", nargs="*")
+    args = parser.parse_args()
 
     # initialize the global server_context
     cert = os.path.join(test_files, "ssl", "good-cert.pem")
     key = os.path.join(test_files, "ssl", "good-key.pem")
     _ = server_context(cert, key)
 
-    if len(patterns) > 0:
+    if len(args.patterns) == 0:
+        tests = all_tests
+    else:
         # filter tests by patterns from command line
         tests = [
             t for t in all_tests
-            if any(re.match(p, t.__name__) is not None for p in patterns)
+            if any(re.search(p, t.__name__) is not None for p in args.patterns)
         ]
 
         if len(tests) == 0:
             print("no tests match any patterns", file=sys.stderr)
             sys.exit(1)
-    else:
-        tests = all_tests
 
     with dovecot_setup() as imaps_port:
         kwargs = {"imaps_port": imaps_port}
