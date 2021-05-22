@@ -9,9 +9,12 @@
 
         DONE
 
-            to end the synchronization
+            to end the synchronization (only valid after '+ OK' response)
 
     Responses:
+        + OK
+            the initial sync is complete (there may have been no update ) and
+            the command can now be terminated by DONE
 
         * XKEYSYNC DELETED fingerprint
 
@@ -23,9 +26,8 @@
 
         * XKEYSYNC OK
 
-            a synchronization point; always sent after initial updates
-            (even in the case of no updates) and also sent after every
-            round of diffs, whenever any diffs are detected.
+            completes a "packet" of updates; sent anytime that any amount of
+            DELETED or CREATED events are detected/sent
 
     Code is patterned after dovecot/src/imap/cmd-idle.c, since the mechanics of
     XKEYSYNC (long-running, exitable with a DONE, etc) are very similar.
@@ -157,10 +159,10 @@ static derr_t report_changes(
     link_t *old_head,
     link_t *new_head,
     struct cmd_xkeysync_context *ctx,
-    MYSQL *sql,
-    bool *change_detected
+    MYSQL *sql
 ){
     derr_t e = E_OK;
+    bool change_detected = false;
 
     struct client *client = ctx->client;
     // client_send_line(client, "* XKEYSYNC report");
@@ -168,7 +170,6 @@ static derr_t report_changes(
     // walk through two sorted lists, looking for mismatches.
     smsql_dstr_t *old = list_first(old_head);
     smsql_dstr_t *new = list_first(new_head);
-    if(change_detected) *change_detected = false;
     while(old || new){
         int cmp = smsql_dstr_cmp(old, new);
         // {
@@ -189,15 +190,22 @@ static derr_t report_changes(
             // old < new, so old was deleted
             PROP(&e, report_one_deleted(&old->dstr, client) );
             old = list_next(old_head, old);
-            if(change_detected) *change_detected = true;
+            change_detected = true;
             continue;
         }else{
             // old > new, so new was created
             PROP(&e, report_one_created(&new->dstr, ctx, sql) );
             new = list_next(new_head, new);
-            if(change_detected) *change_detected = true;
+            change_detected = true;
             continue;
         }
+    }
+
+    // complete one "packet" of updates
+    if(change_detected){
+        client_send_line(ctx->client, "* XKEYSYNC OK");
+        // since we used the network, reset the keepalive timeout
+        xkeysync_add_keepalive_timeout(ctx);
     }
 
     // replace the old list with the new list on success
@@ -209,9 +217,7 @@ static derr_t report_changes(
 
 
 // returns true on error
-static bool xkeysync_check_now(
-    struct cmd_xkeysync_context *ctx, bool *change_detected
-){
+static bool xkeysync_check_now(struct cmd_xkeysync_context *ctx){
     derr_t e = E_OK;
 
     struct client *client = ctx->client;
@@ -250,7 +256,7 @@ static bool xkeysync_check_now(
     // }
 
     PROP_GO(&e,
-        report_changes(&ctx->known_fprs, &all_fprs, ctx, &sql, change_detected),
+        report_changes(&ctx->known_fprs, &all_fprs, ctx, &sql),
     cu_fprs);
 
 cu_fprs:
@@ -373,13 +379,7 @@ static void checker_timeout(struct cmd_xkeysync_context *ctx){
     // cmd-idle.c checks if ctx->client->output_cmd_lock here, too
 
     o_stream_cork(client->output);
-    bool change_detected;
-    bool failure = xkeysync_check_now(ctx, &change_detected);
-    if(!failure && change_detected){
-        client_send_line(client, "* XKEYSYNC OK");
-        // since we used the network, reset the keepalive timeout
-        xkeysync_add_keepalive_timeout(ctx);
-    }
+    bool failure = xkeysync_check_now(ctx);
     o_stream_uncork(client->output);
 
     if(failure){
@@ -558,8 +558,6 @@ static bool cmd_xkeysync(struct client_command_context *cmd){
         goto fail_ctx;
     }
 
-    xkeysync_add_keepalive_timeout(ctx);
-
     /* read input from client; we don't really need to support DONE but it
        best to have some way to cleanup our state, so we do support it.  That
        also lets us handle client disconnects easily. */
@@ -573,16 +571,18 @@ static bool cmd_xkeysync(struct client_command_context *cmd){
     o_stream_cork(client->output);
 
     // do the first check now
-    if(xkeysync_check_now(ctx, NULL)){
+    if(xkeysync_check_now(ctx)){
         o_stream_uncork(client->output);
         // first check failed
         xkeysync_finish(ctx, EXIT_INTERNAL_ERROR, false);
         return true;
     }
 
-    // initial synchronization point
-    client_send_line(client, "* XKEYSYNC OK");
+    // initial synchronization point; now it is ok to send DONE
+    client_send_line(client, "+ OK");
     o_stream_uncork(client->output);
+
+    xkeysync_add_keepalive_timeout(ctx);
 
     return xkeysync_client_handle_input(ctx, false);
 
