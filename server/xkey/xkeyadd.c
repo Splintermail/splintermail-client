@@ -12,35 +12,7 @@
         * NO max devices already reached
 */
 
-// compatibility with dovecot's build system:
-#define UOFF_T_LONG  // gcc reports that off_t is a `long int` on linux 64
-#define SSIZE_T_MAX SSIZE_MAX
-#define HAVE_SOCKLEN_T
-#define HAVE__BOOL
-#define HAVE_STRUCT_IOVEC
-#define FLEXIBLE_ARRAY_MEMBER  // c99 flexible array is allowed by gcc
-#define STATIC_ARRAY static  // c99 static array keyword is honored by gcc
-
-// Let dovecot do it's thing unfettered by our warnings.
-#ifdef __GNUC__
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wconversion"
-#pragma GCC diagnostic ignored "-Wsign-conversion"
-#pragma GCC diagnostic ignored "-Wstrict-prototypes"
-#endif // __GNUC__
-
-    #include "imap-common.h"
-    #include "imap-commands.h"
-    #include "imap-arg.h"
-
-#ifdef __GNUC__
-#pragma GCC diagnostic pop
-#endif // __GNUC__
-
-
-#include "libdstr/libdstr.h"
-#include "server/mysql_util/mysql_util.h"
-#include "server/libsmsql.h"
+#include "xkey.h"
 
 static derr_t add_key(
     const char *sock,
@@ -70,7 +42,7 @@ cu_sql:
 }
 
 // cmd_xkeyadd is a command_func_t
-static bool cmd_xkeyadd(struct client_command_context *cmd){
+bool cmd_xkeyadd(struct client_command_context *cmd){
     derr_t e = E_OK;
 
     struct client *client = cmd->client;
@@ -142,29 +114,4 @@ static bool cmd_xkeyadd(struct client_command_context *cmd){
     }
 
     return true;
-}
-
-static const char *cmd_name = "XKEYADD";
-
-// happily, our command is basically totally independent of mailboxes
-static const enum command_flags cmd_flags = 0
-// | COMMAND_FLAG_USES_SEQS
-// | COMMAND_FLAG_BREAKS_SEQS
-// | COMMAND_FLAG_USES_MAILBOX
-// | COMMAND_FLAG_REQUIRES_SYNC
-// | COMMAND_FLAG_USE_NONEXISTENT
-;
-
-// externally linkable plugin hooks
-
-void xkeyadd_plugin_init(struct module *module ATTR_UNUSED);
-void xkeyadd_plugin_init(struct module *module ATTR_UNUSED){
-    // hack: let xkeysync plugin configure mysql and logging
-    command_register(cmd_name, cmd_xkeyadd, cmd_flags);
-}
-
-void xkeyadd_plugin_deinit(void);
-void xkeyadd_plugin_deinit(void){
-    // hack: let xkeysync cleanup cleanup mysql and logging
-    command_unregister(cmd_name);
 }

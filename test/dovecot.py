@@ -37,7 +37,7 @@ class Dovecot:
         # pick a random port if not provided
         self.imaps_port = imaps_port or random.randint(6000, 2**16-1)
         # assume we are in the build directory if not provided
-        self.plugin_path = os.path.abspath(plugin_path or "server")
+        self.plugin_path = os.path.abspath(plugin_path or "server/xkey")
 
         # these aren't even configurable
         self.user = pwd.getpwuid(os.getuid()).pw_name
@@ -60,7 +60,7 @@ default_internal_group = {self.group}
 default_login_user = {self.user}
 
 mail_plugin_dir = {self.plugin_path}
-mail_plugins = xkeysync xkeyadd
+mail_plugins = xkey
 
 ssl_cert =<{HERE}/files/ssl/good-cert.pem
 ssl_key =<{HERE}/files/ssl/good-key.pem
@@ -260,7 +260,7 @@ if __name__ == "__main__":
             "migmysql is not built, or --build-dir must be specified"
         )
 
-    plugin_path = os.path.join(args.build_dir, "server")
+    plugin_path = os.path.join(args.build_dir, "server/xkey")
 
     with mariadb.mariadb(
         migrations=migrations, migmysql_path=migmysql_path
@@ -273,4 +273,5 @@ if __name__ == "__main__":
                 bind_addr="127.0.0.1",
                 plugin_path=plugin_path,
             ):
-                time.sleep(1000)
+                while True:
+                    time.sleep(1000)

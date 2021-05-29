@@ -33,40 +33,7 @@
     XKEYSYNC (long-running, exitable with a DONE, etc) are very similar.
 */
 
-// compatibility with dovecot's build system:
-#define UOFF_T_LONG  // gcc reports that off_t is a `long int` on linux 64
-#define SSIZE_T_MAX SSIZE_MAX
-#define HAVE_SOCKLEN_T
-#define HAVE__BOOL
-#define HAVE_STRUCT_IOVEC
-#define FLEXIBLE_ARRAY_MEMBER  // c99 flexible array is allowed by gcc
-#define STATIC_ARRAY static  // c99 static array keyword is honored by gcc
-
-// Let dovecot do it's thing unfettered by our warnings.
-#ifdef __GNUC__
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wconversion"
-#pragma GCC diagnostic ignored "-Wsign-conversion"
-#pragma GCC diagnostic ignored "-Wstrict-prototypes"
-#endif // __GNUC__
-
-    #include "imap-common.h"
-    #include "imap-commands.h"
-    #include "imap-arg.h"
-    #include "imap-keepalive.h"
-    #include "ioloop.h"
-    #include "ostream.h"
-    #include "istream.h"
-
-#ifdef __GNUC__
-#pragma GCC diagnostic pop
-#endif // __GNUC__
-
-
-#include "libdstr/libdstr.h"
-#include "server/mysql_util/mysql_util.h"
-#include "server/libsmsql.h"
-
+#include "xkey.h"
 
 struct cmd_xkeysync_context {
     struct client *client;
@@ -89,7 +56,6 @@ enum exit_msg {
     EXIT_OK = 1,
     EXIT_INTERNAL_ERROR,
 };
-
 
 static void free_fpr_list(link_t *fprs){
     link_t *link;
@@ -495,7 +461,7 @@ static bool cmd_xkeysync_continue(struct client_command_context *cmd){
 }
 
 // cmd_xkeysync is a command_func_t
-static bool cmd_xkeysync(struct client_command_context *cmd){
+bool cmd_xkeysync(struct client_command_context *cmd){
     derr_t e = E_OK;
 
     // struct client *client = cmd->client;
@@ -593,38 +559,4 @@ fail_fprs:
     DROP_VAR(&e);
     free_fpr_list(&known_fprs);
     return true;
-}
-
-static const char *cmd_name = "XKEYSYNC";
-
-// happily, our command is basically totally independent of mailboxes
-static const enum command_flags cmd_flags = 0
-// | COMMAND_FLAG_USES_SEQS
-// | COMMAND_FLAG_BREAKS_SEQS
-// | COMMAND_FLAG_USES_MAILBOX
-// | COMMAND_FLAG_REQUIRES_SYNC
-// | COMMAND_FLAG_USE_NONEXISTENT
-;
-
-// externally linkable plugin hooks
-
-void xkeysync_plugin_init(struct module *module ATTR_UNUSED);
-void xkeysync_plugin_init(struct module *module ATTR_UNUSED){
-    // configure libdstr logging
-    logger_add_fileptr(LOG_LVL_INFO, stderr);
-
-    // configure mysql library
-    int ret = mysql_library_init(0, NULL, NULL);
-    if(ret != 0){
-        fprintf(stderr, "unable to init mysql library!");
-    }
-
-    command_register(cmd_name, cmd_xkeysync, cmd_flags);
-}
-
-void xkeysync_plugin_deinit(void);
-void xkeysync_plugin_deinit(void){
-    logger_clear_outputs();
-    mysql_library_end();
-    command_unregister(cmd_name);
 }

@@ -1550,7 +1550,7 @@ def temp_maildir_root():
 def dovecot_setup():
     migrations = os.path.join(HERE, "..", "server", "migrations")
     migmysql_path = os.path.join("server", "migmysql")
-    plugin_path = os.path.join("server")
+    plugin_path = os.path.join("server", "xkey")
     print("starting dovecot on random port")
     with mariadb.mariadb(
         migrations=migrations, migmysql_path=migmysql_path
