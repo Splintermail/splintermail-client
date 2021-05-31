@@ -57,6 +57,48 @@ enum exit_msg {
     EXIT_INTERNAL_ERROR,
 };
 
+/* We only need to sort lists that the client sends us.  This is not an
+   efficient sort but realistically we only need to sort a few fprs.  We can
+   improve runtime performance by trying to be as fast as possible in the case
+   that the client pre-sorts the list, and then writing our client to pre-sort
+   the list. */
+static void sort_fprs(link_t *fprs){
+    // noop for zero- or one-length lists
+    if(fprs->next->next == fprs) return;
+
+    link_t temp;
+    link_init(&temp);
+
+    // start with the last element of fprs in temp
+    link_t *link = link_list_pop_last(fprs);
+    link_list_prepend(&temp, link);
+
+    // then repeatedly put the last item before the first item it comes before
+    while((link = link_list_pop_last(fprs))){
+        smsql_dstr_t *new = CONTAINER_OF(link, smsql_dstr_t, link);
+        smsql_dstr_t *old;
+        bool placed = false;
+        LINK_FOR_EACH(old, &temp, smsql_dstr_t, link){
+            if(dstr_cmp(&new->dstr, &old->dstr) > 0){
+                // new > old, keep going
+                continue;
+            }
+            // treat old as a list head, and append new to that list
+            // (same as inserting just before it in the list)
+            link_list_append(&old->link, &new->link);
+            placed = true;
+            break;
+        }
+        if(!placed){
+            // append new at the end of the whole list
+            link_list_append(&temp, &new->link);
+        }
+    }
+
+    // transfer all links back to fprs
+    link_list_append_list(fprs, &temp);
+}
+
 static void free_fpr_list(link_t *fprs){
     link_t *link;
     while((link = link_list_pop_first(fprs))){
@@ -131,7 +173,7 @@ static derr_t report_changes(
     bool change_detected = false;
 
     struct client *client = ctx->client;
-    // client_send_line(client, "* XKEYSYNC report");
+    // client_send_line(client, "* OK XKEYSYNC report_changes");
 
     // walk through two sorted lists, looking for mismatches.
     smsql_dstr_t *old = list_first(old_head);
@@ -141,8 +183,10 @@ static derr_t report_changes(
         // {
         //     DSTR_VAR(buf, 256);
         //     FMT(
-        //         &buf, "* XKEYSYNC old:%x, new=%x, cmp=%x",
-        //         FP(old), FP(new), FI(cmp)
+        //         &buf, "* OK XKEYSYNC old:%x, new=%x, cmp=%x",
+        //         old ? FD(&old->dstr) : FS("null"),
+        //         new ? FD(&new->dstr) : FS("null"),
+        //         FI(cmp)
         //     );
         //     client_send_line(client, buf.data);
         // }
@@ -209,16 +253,20 @@ static bool xkeysync_check_now(struct cmd_xkeysync_context *ctx){
     bool ok;
     PROP_GO(&e, get_email_for_uuid(&sql, &ctx->uuid, &email, &ok), cu_sql);
 
-    // get the keys from the database
+    // get the keys from the database (comes pre-sorted)
     link_t all_fprs;
     link_init(&all_fprs);
     PROP_GO(&e, list_device_fprs(&sql, &ctx->uuid, &all_fprs), cu_sql);
-    // smsql_dstr_t *fpr;
-    // LINK_FOR_EACH(fpr, &all_fprs, smsql_dstr_t, link){
-    //     // LOG_INFO("fpr: %x\n", FD(&fpr->dstr));
+    // {
     //     DSTR_VAR(buf, 256);
-    //     FMT(&buf, "* XKEYSYNC fpr: %x", FD(&fpr->dstr));
+    //     FMT(&buf, "* OK fpr list:");
     //     client_send_line(ctx->client, buf.data);
+    //     smsql_dstr_t *fpr;
+    //     LINK_FOR_EACH(fpr, &all_fprs, smsql_dstr_t, link){
+    //         DSTR_VAR(buf, 256);
+    //         FMT(&buf, "* OK     %x", FD(&fpr->dstr));
+    //         client_send_line(ctx->client, buf.data);
+    //     }
     // }
 
     PROP_GO(&e,
@@ -476,7 +524,7 @@ bool cmd_xkeysync(struct client_command_context *cmd){
 
     for(size_t i = 0; !IMAP_ARG_IS_EOL(&args[i]); i++){
         // validate arg
-        if(!imap_arg_get_astring(&args[0], &arg)
+        if(!imap_arg_get_astring(&args[i], &arg)
                 || strlen(arg) != SMSQL_FPR_SIZE){
             client_send_command_error(cmd, "invalid fingerprint");
             goto fail_fprs;
@@ -489,6 +537,9 @@ bool cmd_xkeysync(struct client_command_context *cmd){
         }
         link_list_append(&known_fprs, &fpr->link);
     }
+
+    // sort fprs from the client
+    sort_fprs(&known_fprs);
 
     struct client *client = cmd->client;
 
