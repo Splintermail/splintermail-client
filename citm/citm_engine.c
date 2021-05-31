@@ -19,8 +19,16 @@ static void citme_user_dying(user_cb_i *cb, user_t *caller, derr_t error){
     ref_dn(&citme->refs);
 }
 
-static derr_t citme_sf_pair_request_owner(sf_pair_cb_i *cb, sf_pair_t *sf_pair,
-            const dstr_t *name, const dstr_t *pass){
+static derr_t citme_sf_pair_request_owner(
+    sf_pair_cb_i *cb,
+    sf_pair_t *sf_pair,
+    imap_pipeline_t *p,
+    ssl_context_t *ctx_cli,
+    const char *remote_host,
+    const char *remote_svc,
+    const dstr_t *name,
+    const dstr_t *pass
+){
     derr_t e = E_OK;
 
     citme_t *citme = CONTAINER_OF(cb, citme_t, sf_pair_cb);
@@ -30,7 +38,18 @@ static derr_t citme_sf_pair_request_owner(sf_pair_cb_i *cb, sf_pair_t *sf_pair,
     user_t *user = CONTAINER_OF(h, user_t, h);
     if(!user){
         PROP(&e,
-            user_new(&user, &citme->user_cb, name, pass, citme->root)
+            user_new(
+                &user,
+                &citme->user_cb,
+                p,
+                ctx_cli,
+                remote_host,
+                remote_svc,
+                &citme->engine,
+                name,
+                pass,
+                citme->root
+            )
         );
         hash_elem_t *h = hashmap_sets(&citme->users, &user->name, &user->h);
         // just log this, it should never happen
@@ -103,39 +122,22 @@ static void citme_process_events(uv_work_t *req){
         event_t *ev = CONTAINER_OF(link, event_t, link);
         wake_event_t *wake_ev;
         imap_session_t *s;
-        server_t *server;
-        fetcher_t *fetcher;
+        citme_session_owner_t *so;
         switch(ev->ev_type){
            case EV_SESSION_CLOSE:
                 /* Asynchronous closures can only come from imap_session_t's
                    dying, which pass through both the server_t and fetcher_t */
                 s = CONTAINER_OF(ev->session, imap_session_t, session);
-                if(s->upwards){
-                    fetcher = CONTAINER_OF(s, fetcher_t, s);
-                    fetcher_close(fetcher, fetcher->session_dying_error);
-                    PASSED(fetcher->session_dying_error);
-                    // ref down for session
-                    ref_dn(&fetcher->refs);
-                }else{
-                    server = CONTAINER_OF(s, server_t, s);
-                    server_close(server, server->session_dying_error);
-                    PASSED(server->session_dying_error);
-                    // ref down for session
-                    ref_dn(&server->refs);
-                }
+                so = CONTAINER_OF(s, citme_session_owner_t, s);
+                so->session_owner.close(s);
                 break;
 
             case EV_READ:
                 // LOG_ERROR("citme: READ\n");
                 if(!citme->quitting){
                     s = CONTAINER_OF(ev->session, imap_session_t, session);
-                    if(s->upwards){
-                        fetcher = CONTAINER_OF(s, fetcher_t, s);
-                        fetcher_read_ev(fetcher, ev);
-                    }else{
-                        server = CONTAINER_OF(s, server_t, s);
-                        server_read_ev(server, ev);
-                    }
+                    so = CONTAINER_OF(s, citme_session_owner_t, s);
+                    so->session_owner.read_ev(s, ev);
                 }
                 ev->returner(ev);
                 break;

@@ -106,6 +106,20 @@ cleanup_1:
     return e;
 }
 
+derr_t gen_key_path(int bits, const string_builder_t *keypath){
+    derr_t e = E_OK;
+    DSTR_VAR(stack, 256);
+    dstr_t heap = {0};
+    dstr_t* path;
+    PROP(&e, sb_expand(keypath, &DSTR_LIT("/"), &stack, &heap, &path) );
+
+    PROP_GO(&e, gen_key(bits, path->data), cu);
+
+cu:
+    dstr_free(&heap);
+    return e;
+}
+
 // backing memory for a keypair_t
 typedef struct {
     EVP_PKEY *pair;
@@ -283,6 +297,20 @@ fail_pkey:
     return e;
 }
 
+derr_t keypair_load_path(keypair_t **out, const string_builder_t *keypath){
+    derr_t e = E_OK;
+    DSTR_VAR(stack, 256);
+    dstr_t heap = {0};
+    dstr_t* path;
+    PROP(&e, sb_expand(keypath, &DSTR_LIT("/"), &stack, &heap, &path) );
+
+    PROP_GO(&e, keypair_load(out, path->data), cu);
+
+cu:
+    dstr_free(&heap);
+    return e;
+}
+
 derr_t keypair_from_pubkey_pem(keypair_t **out, const dstr_t *pem){
     derr_t e = E_OK;
 
@@ -364,7 +392,7 @@ cleanup:
     return e;
 }
 
-derr_t keypair_get_public_pem(keypair_t* kp, dstr_t* out){
+derr_t keypair_get_public_pem(const keypair_t* kp, dstr_t* out){
     derr_t e = E_OK;
     PROP(&e, get_public_pem(kp->pair, out) );
     return e;

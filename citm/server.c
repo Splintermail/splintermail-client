@@ -282,6 +282,19 @@ static void server_dn_failure(dn_cb_i *dn_cb, derr_t error){
     PASSED(error);
 }
 
+static void server_session_owner_close(imap_session_t *s){
+    server_t *server = CONTAINER_OF(s, server_t, s);
+    server_close(server, server->session_dying_error);
+    PASSED(server->session_dying_error);
+    // ref down for session
+    ref_dn(&server->refs);
+}
+
+static void server_session_owner_read_ev(imap_session_t *s, event_t *ev){
+    server_t *server = CONTAINER_OF(s, server_t, s);
+    server_read_ev(server, ev);
+}
+
 
 derr_t server_init(
     server_t *server,
@@ -294,6 +307,10 @@ derr_t server_init(
     derr_t e = E_OK;
 
     *server = (server_t){
+        .session_owner = {
+            .close = server_session_owner_close,
+            .read_ev = server_session_owner_read_ev,
+        },
         .cb = cb,
         .pipeline = p,
         .engine = engine,

@@ -729,12 +729,10 @@ static derr_t send_done(up_t *up){
     imap_cmd_t *cmd = imap_cmd_new(&e, NULL, IMAP_CMD_IDLE_DONE, arg);
     cmd = imap_cmd_assert_writable(&e, cmd, up->exts);
 
-    // there is no up_cb; this only triggers the up_cb from send_idle()
-    up_cb_t *up_cb = NULL;
-
     CHECK(&e);
 
-    PROP(&e, up_send_cmd(up, cmd, up_cb) );
+    // there is no up_cb; this only triggers the up_cb from send_idle()
+    PROP(&e, up_send_cmd(up, cmd, NULL) );
 
     return e;
 }

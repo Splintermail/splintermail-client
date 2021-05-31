@@ -113,7 +113,7 @@ static derr_t sf_pair_append_req(sf_pair_t *sf_pair){
 
     ie_append_cmd_t *append = sf_pair->append.req->arg.append;
 
-    // step 1: write the unencrytped text to a file for saving
+    // step 1: write the unencrypted text to a file for saving
     sf_pair->append.tmp_id = dirmgr_new_tmp_id(sf_pair->dirmgr);
     DSTR_VAR(file, 32);
     PROP_GO(&e, FMT(&file, "%x", FU(sf_pair->append.tmp_id)), fail);
@@ -248,6 +248,10 @@ static void sf_pair_wakeup(wake_event_t *wake_ev){
             sf_pair->cb->request_owner(
                 sf_pair->cb,
                 sf_pair,
+                sf_pair->p,
+                sf_pair->ctx_cli,
+                sf_pair->remote_host,
+                sf_pair->remote_svc,
                 &sf_pair->username,
                 &sf_pair->password
             ),
@@ -464,6 +468,10 @@ derr_t sf_pair_new(
     *sf_pair = (sf_pair_t){
         .cb = cb,
         .engine = engine,
+        .p = p,
+        .ctx_cli = ctx_cli,
+        .remote_host = remote_host,
+        .remote_svc = remote_svc,
         .server_cb = {
             .dying = server_cb_dying,
             .release = server_cb_release,

@@ -264,6 +264,18 @@ static void fetcher_up_failure(up_cb_i *up_cb, derr_t error){
     PASSED(error);
 }
 
+static void fetcher_session_owner_close(imap_session_t *s){
+    fetcher_t *fetcher = CONTAINER_OF(s, fetcher_t, s);
+    fetcher_close(fetcher, fetcher->session_dying_error);
+    PASSED(fetcher->session_dying_error);
+    // ref down for session
+    ref_dn(&fetcher->refs);
+}
+
+static void fetcher_session_owner_read_ev(imap_session_t *s, event_t *ev){
+    fetcher_t *fetcher = CONTAINER_OF(s, fetcher_t, s);
+    fetcher_read_ev(fetcher, ev);
+}
 
 derr_t fetcher_init(
     fetcher_t *fetcher,
@@ -277,6 +289,10 @@ derr_t fetcher_init(
     derr_t e = E_OK;
 
     *fetcher = (fetcher_t){
+        .session_owner = {
+            .close = fetcher_session_owner_close,
+            .read_ev = fetcher_session_owner_read_ev,
+        },
         .cb = cb,
         .host = host,
         .svc = svc,
@@ -433,14 +449,14 @@ fail:
 
 // send a command and store its callback
 static void send_cmd(derr_t *e, fetcher_t *fetcher, imap_cmd_t *cmd,
-        imap_cmd_cb_t *cb){
+        fetcher_cb_t *fcb){
     if(is_error(*e)) goto fail;
 
     cmd = imap_cmd_assert_writable(e, cmd, &fetcher->ctrl.exts);
     CHECK_GO(e, fail);
 
     // store the callback
-    link_list_append(&fetcher->inflight_cmds, &cb->link);
+    link_list_append(&fetcher->inflight_cmds, &fcb->cb.link);
 
     // create a command event
     imap_event_t *imap_ev;
@@ -453,7 +469,7 @@ static void send_cmd(derr_t *e, fetcher_t *fetcher, imap_cmd_t *cmd,
 
 fail:
     imap_cmd_free(cmd);
-    cb->free(cb);
+    fetcher_cb_free(&fcb->cb);
 }
 
 static derr_t select_mailbox(fetcher_t *fetcher){
@@ -688,7 +704,7 @@ static derr_t send_passthru(fetcher_t *fetcher){
         fetcher_cb_new(&e, fetcher, tag_str, passthru_done, cmd);
 
     // store the callback and send the command
-    send_cmd(&e, fetcher, cmd, &fcb->cb);
+    send_cmd(&e, fetcher, cmd, fcb);
 
     return e;
 }
@@ -766,7 +782,7 @@ static derr_t send_enable(fetcher_t *fetcher){
     fetcher_cb_t *fcb = fetcher_cb_new(&e, fetcher, tag_str, enable_done, cmd);
 
     // store the callback and send the command
-    send_cmd(&e, fetcher, cmd, &fcb->cb);
+    send_cmd(&e, fetcher, cmd, fcb);
 
     return e;
 }
@@ -890,7 +906,7 @@ static derr_t send_capas(fetcher_t *fetcher){
     fetcher_cb_t *fcb = fetcher_cb_new(&e, fetcher, tag_str, capas_done, cmd);
 
     // store the callback and send the command
-    send_cmd(&e, fetcher, cmd, &fcb->cb);
+    send_cmd(&e, fetcher, cmd, fcb);
 
     return e;
 }
@@ -948,7 +964,7 @@ static derr_t send_login(fetcher_t *fetcher){
     fetcher_cb_t *fcb = fetcher_cb_new(&e, fetcher, tag_str, login_done, cmd);
 
     // store the callback and send the command
-    send_cmd(&e, fetcher, cmd, &fcb->cb);
+    send_cmd(&e, fetcher, cmd, fcb);
 
     return e;
 }

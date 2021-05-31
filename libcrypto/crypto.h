@@ -69,6 +69,8 @@ derr_t gen_key(int bits, const char* keyfile);
            E_NOMEM
            E_OPEN (failed to open file for writing) */
 
+derr_t gen_key_path(int bits, const string_builder_t *keypath);
+
 derr_t get_fingerprint(EVP_PKEY* pkey, dstr_t *out);
 /* throws: E_SSL (failure in setting pubkey or getting fingerprint)
            E_NOMEM
@@ -85,11 +87,13 @@ derr_t keypair_load(keypair_t **out, const char *keyfile);
            E_NOMEM
            E_OPEN (failed to open file for reading) */
 
+derr_t keypair_load_path(keypair_t **out, const string_builder_t *keypath);
+
 derr_t keypair_from_pubkey_pem(keypair_t **out, const dstr_t *pem);
 void keypair_free(keypair_t **old);
 
 derr_t get_public_pem(EVP_PKEY *pkey, dstr_t *out);
-derr_t keypair_get_public_pem(keypair_t *kp, dstr_t *out);
+derr_t keypair_get_public_pem(const keypair_t *kp, dstr_t *out);
 /* throws: E_NOMEM (either internally with the memory BIO or writing to *out)
            E_FIXEDSIZE (writing to *out)
            E_INTERNAL */
@@ -209,7 +213,7 @@ struct key_listener_i {
 DEF_CONTAINER_OF(key_listener_i, link, link_t);
 
 typedef struct {
-    link_t keys; // shared_keypair_t->link
+    link_t keys; // keypair_t->link
     link_t listeners; // key_listener_i->link
 } keyshare_t;
 

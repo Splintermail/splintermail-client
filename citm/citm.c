@@ -41,7 +41,8 @@ static derr_t conn_recvd(listener_spec_t *lspec, session_t **session){
             l->ctx_srv,
             l->ctx_cli,
             session
-        ) );
+        )
+    );
 
     // append managed to the server_mgr's list
     citme_add_sf_pair(l->citme, sf_pair);

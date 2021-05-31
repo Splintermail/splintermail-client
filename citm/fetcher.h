@@ -42,6 +42,11 @@ void fetcher_select(fetcher_t *fetcher, ie_mailbox_t *m, bool examine);
 void fetcher_set_dirmgr(fetcher_t *fetcher, dirmgr_t *dirmgr);
 
 struct fetcher_t {
+    /* these must come first because we must be able to cast the
+       imap_session_t* into a citme_session_owner_t* */
+    imap_session_t s;
+    citme_session_owner_i session_owner;
+
     fetcher_cb_i *cb;
     const char *host;
     const char *svc;
@@ -61,7 +66,6 @@ struct fetcher_t {
 
     // fetcher session
     manager_i session_mgr;
-    imap_session_t s;
     // parser callbacks and imap extesions
     imape_control_i ctrl;
 

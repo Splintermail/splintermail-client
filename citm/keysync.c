@@ -1,6 +1,6 @@
 #include "citm.h"
 
-// foward declarations
+// forward declarations
 static derr_t advance_state(keysync_t *ks);
 
 static void keysync_free_login(keysync_t *ks){
@@ -15,8 +15,7 @@ static void keysync_free_capas(keysync_t *ks){
 }
 
 static void keysync_free_xkeyadd(keysync_t *ks){
-    ie_dstr_free(ks->xkeyadd.key);
-    ks->xkeyadd.key = NULL;
+    ks->xkeyadd.needed = false;
 }
 
 static void keysync_free_xkeysync(keysync_t *ks){
@@ -28,6 +27,8 @@ static void keysync_free_xkeysync(keysync_t *ks){
 
 void keysync_free(keysync_t *ks){
     if(!ks) return;
+
+    keypair_free(&ks->my_keypair);
 
     ks->greeted = false;
     keysync_free_login(ks);
@@ -41,7 +42,7 @@ void keysync_free(keysync_t *ks){
         imap_resp_t *resp = CONTAINER_OF(link, imap_resp_t, link);
         imap_resp_free(resp);
     }
-    // free any remaining keysync_cb's
+    // free any remaining kcb's
     while((link = link_list_pop_first(&ks->inflight_cmds))){
         imap_cmd_cb_t *cb = CONTAINER_OF(link, imap_cmd_cb_t, link);
         cb->free(cb);
@@ -69,6 +70,9 @@ void keysync_close(keysync_t *ks, derr_t error){
     TRACE_PROP(&error);
     ks->cb->dying(ks->cb, error);
     PASSED(error);
+
+    // close down our connection
+    imap_session_close(&ks->s.session, E_OK);
 
     // drop lifetime reference
     ref_dn(&ks->refs);
@@ -116,11 +120,9 @@ static void keysync_wakeup(wake_event_t *wake_ev){
     // ref_dn for wake_ev
     ref_dn(&ks->refs);
     do_advance_state(ks);
-}
 
-void keysync_add_key(keysync_t *ks, ie_dstr_t **key){
-    ks->xkeyadd.key = STEAL(ie_dstr_t, key);
-    keysync_enqueue(ks);
+    // TODO: delete this or start using it somewhere
+    (void)keysync_enqueue;
 }
 
 // session_mgr
@@ -149,25 +151,43 @@ static void session_dead(manager_i *mgr, void *caller){
     ks->engine->pass_event(ks->engine, &ks->close_ev);
 }
 
+static void keysync_session_owner_close(imap_session_t *s){
+    keysync_t *ks = CONTAINER_OF(s, keysync_t, s);
+    keysync_close(ks, ks->session_dying_error);
+    PASSED(ks->session_dying_error);
+    // ref down for session
+    ref_dn(&ks->refs);
+}
+
+static void keysync_session_owner_read_ev(imap_session_t *s, event_t *ev){
+    keysync_t *ks = CONTAINER_OF(s, keysync_t, s);
+    keysync_read_ev(ks, ev);
+}
+
 
 derr_t keysync_init(
     keysync_t *ks,
     keysync_cb_i *cb,
+    imap_pipeline_t *p,
+    ssl_context_t *ctx_cli,
     const char *host,
     const char *svc,
-    const ie_login_cmd_t *login,
-    imap_pipeline_t *p,
     engine_t *engine,
-    ssl_context_t *ctx_cli
+    const dstr_t *user,
+    const dstr_t *pass,
+    const keypair_t *my_keypair,
+    const keyshare_t *peer_keys
 ){
     derr_t e = E_OK;
 
     *ks = (keysync_t){
+        .session_owner = {
+            .close = keysync_session_owner_close,
+            .read_ev = keysync_session_owner_read_ev,
+        },
         .cb = cb,
-        .host = host,
-        .svc = svc,
-        .pipeline = p,
         .engine = engine,
+        .peer_keys = peer_keys,
     };
 
     ks->session_mgr = (manager_i){
@@ -187,15 +207,19 @@ derr_t keysync_init(
     ks->wake_ev.ev.ev_type = EV_INTERNAL;
     ks->wake_ev.handler = keysync_wakeup;
 
-    ks->login.cmd = ie_login_cmd_copy(&e, login);
+    ie_dstr_t *ie_name = ie_dstr_new(&e, user, KEEP_RAW);
+    ie_dstr_t *ie_pass = ie_dstr_new(&e, pass, KEEP_RAW);
+    ks->login.cmd = ie_login_cmd_new(&e, ie_name, ie_pass);
     CHECK(&e);
 
+    PROP_GO(&e, keypair_copy(my_keypair, &ks->my_keypair), fail_login);
+
     // start with one lifetime reference and one imap_session_t reference
-    PROP_GO(&e, refs_init(&ks->refs, 2, keysync_finalize), fail_login);
+    PROP_GO(&e, refs_init(&ks->refs, 2, keysync_finalize), fail_my_keypair);
 
     // allocate memory for the session, but don't start it until later
     imap_session_alloc_args_t arg_up = {
-        ks->pipeline,
+        p,
         &ks->session_mgr,
         ctx_cli,
         &ks->ctrl,
@@ -207,6 +231,9 @@ derr_t keysync_init(
     PROP_GO(&e, imap_session_alloc_connect(&ks->s, &arg_up), fail_refs);
 
     return e;
+
+fail_my_keypair:
+    keypair_free(&ks->my_keypair);
 
 fail_login:
     ie_login_cmd_free(ks->login.cmd);
@@ -257,6 +284,7 @@ fail_malloc:
     free(kcb);
 fail:
     imap_cmd_free(cmd);
+    PFMT("failed! %x\n", FD(&e->msg));
     return NULL;
 }
 
@@ -310,7 +338,7 @@ fail:
 
 // send a command and store its callback
 static void send_cmd(
-    derr_t *e, keysync_t *ks, imap_cmd_t *cmd, imap_cmd_cb_t *cb
+    derr_t *e, keysync_t *ks, imap_cmd_t *cmd, keysync_cb_t *kcb
 ){
     if(is_error(*e)) goto fail;
 
@@ -318,9 +346,9 @@ static void send_cmd(
     CHECK_GO(e, fail);
 
     // some commands, like IMAP_CMD_XKEYSYNC_DONE, have no tag or callback
-    if(cb){
+    if(kcb){
         // store the callback
-        link_list_append(&ks->inflight_cmds, &cb->link);
+        link_list_append(&ks->inflight_cmds, &kcb->cb.link);
     }
 
     // create a command event
@@ -334,7 +362,7 @@ static void send_cmd(
 
 fail:
     imap_cmd_free(cmd);
-    cb->free(cb);
+    if(kcb) keysync_cb_free(&kcb->cb);
 }
 
 // capas_done is an imap_cmd_cb_call_f
@@ -417,7 +445,7 @@ static derr_t send_capas(keysync_t *ks){
     keysync_cb_t *kcb = keysync_cb_new(&e, ks, tag_str, capas_done, cmd);
 
     // store the callback and send the command
-    send_cmd(&e, ks, cmd, &kcb->cb);
+    send_cmd(&e, ks, cmd, kcb);
 
     CHECK(&e);
 
@@ -438,7 +466,6 @@ static derr_t login_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
         TRACE(&e,
             "keysync login failed: %x\n", FD(&st_resp->text->dstr)
         );
-        // XXX: make this a unique error type
         ORIG(&e, E_VALUE, "keysync failed to LOGIN");
     }
 
@@ -469,7 +496,7 @@ static derr_t send_login(keysync_t *ks){
     keysync_cb_t *kcb = keysync_cb_new(&e, ks, tag_str, login_done, cmd);
 
     // store the callback and send the command
-    send_cmd(&e, ks, cmd, &kcb->cb);
+    send_cmd(&e, ks, cmd, kcb);
     CHECK(&e);
 
     return e;
@@ -494,9 +521,7 @@ static derr_t untagged_ok(keysync_t *ks, const ie_st_code_t *code,
         }
     }
 
-    // TODO: this *certainly* should not throw an error
-    TRACE(&e, "unhandled * OK status message\n");
-    ORIG(&e, E_INTERNAL, "unhandled message");
+    LOG_DEBUG("Ignoring * OK message: %x\n", FD(text));
 
     return e;
 }
@@ -579,6 +604,46 @@ static derr_t plus_resp(keysync_t *ks){
 
     ks->xkeysync.got_plus = true;
 
+    // if we got a plus and we do not need an xkeyadd, that means we are synced
+    if(!ks->xkeyadd.needed && !ks->initial_sync_complete){
+        ks->cb->synced(ks->cb);
+    }
+
+    return e;
+}
+
+static derr_t xkeysync_resp(keysync_t *ks, const ie_xkeysync_resp_t *xkeysync){
+    derr_t e = E_OK;
+
+    if(!ks->xkeysync.sent){
+        ORIG(&e, E_RESPONSE, "got XKEYSYNC out of xkeysync state");
+    }
+
+    if(xkeysync == NULL) {
+        // * XKEYSYNC OK
+        // (ignored)
+    } else if(xkeysync->created != NULL){
+        // * XKEYSYNC CREATED ...
+        const dstr_t *pem = &xkeysync->created->dstr;
+        keypair_t *kp;
+        PROP(&e, keypair_from_pubkey_pem(&kp, pem) );
+        LOG_DEBUG("detected new keypair: %x\n", FX(kp->fingerprint) );
+        PROP(&e, ks->cb->key_created(ks->cb, &kp) );
+
+    } else if(xkeysync->deleted != NULL){
+        // * XKEYSYNC DELETED ...
+        const dstr_t *hex_fpr = &xkeysync->deleted->dstr;
+        // handle the case where the deleted key is my_keypair
+        DSTR_VAR(bin_fpr, 128);
+        PROP(&e, hex2bin(hex_fpr, &bin_fpr) );
+        if(dstr_cmp(&bin_fpr, ks->my_keypair->fingerprint) == 0){
+            ks->xkeyadd.needed = true;
+        } else {
+            // any other keypair deleted; just relay the info
+            ks->cb->key_deleted(ks->cb, hex_fpr);
+        }
+    }
+
     return e;
 }
 
@@ -609,7 +674,7 @@ static derr_t handle_one_response(keysync_t *ks, imap_resp_t *resp){
             break;
 
         case IMAP_RESP_XKEYSYNC:
-            ORIG_GO(&e, E_INTERNAL, "not ready for XKEYSYNC yet", cu_resp);
+            PROP_GO(&e, xkeysync_resp(ks, arg->xkeysync), cu_resp);
             break;
 
         case IMAP_RESP_LIST:
@@ -633,8 +698,8 @@ cu_resp:
 
 static derr_t xkeyadd_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
     derr_t e = E_OK;
-    keysync_cb_t *keysync_cb = CONTAINER_OF(cb, keysync_cb_t, cb);
-    keysync_t *ks = keysync_cb->ks;
+    keysync_cb_t *kcb = CONTAINER_OF(cb, keysync_cb_t, cb);
+    keysync_t *ks = kcb->ks;
     (void)ks;
 
     if(st_resp->status != IE_ST_OK){
@@ -644,22 +709,27 @@ static derr_t xkeyadd_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
     return e;
 }
 
-static derr_t send_xkeyadd(keysync_t *ks, ie_dstr_t **key){
+static derr_t send_xkeyadd(keysync_t *ks){
     derr_t e = E_OK;
+
+    // get the pem-encoded key to send
+    DSTR_VAR(pem, 2048);
+    PROP(&e, keypair_get_public_pem(ks->my_keypair, &pem) );
 
     // issue an XKEYADD command
     size_t tag = ++ks->tag;
     ie_dstr_t *tag_str = write_tag(&e, tag);
-    imap_cmd_arg_t arg = { .xkeyadd = STEAL(ie_dstr_t, key) };
+    ie_dstr_t *ie_pem = ie_dstr_new(&e, &pem, KEEP_RAW);
+    imap_cmd_arg_t arg = { .xkeyadd = ie_pem };
     imap_cmd_t *cmd = imap_cmd_new(&e, tag_str, IMAP_CMD_XKEYADD, arg);
     cmd = imap_cmd_assert_writable(&e, cmd, &ks->ctrl.exts);
 
     // build the callback
-    keysync_cb_t *keysync_cb = keysync_cb_new(&e,
+    keysync_cb_t *kcb = keysync_cb_new(&e,
         ks, tag_str, xkeyadd_done, cmd
     );
 
-    send_cmd(&e, ks, cmd, &keysync_cb->cb);
+    send_cmd(&e, ks, cmd, kcb);
     CHECK(&e);
 
     return e;
@@ -667,8 +737,8 @@ static derr_t send_xkeyadd(keysync_t *ks, ie_dstr_t **key){
 
 static derr_t xkeysync_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
     derr_t e = E_OK;
-    keysync_cb_t *keysync_cb = CONTAINER_OF(cb, keysync_cb_t, cb);
-    keysync_t *ks = keysync_cb->ks;
+    keysync_cb_t *kcb = CONTAINER_OF(cb, keysync_cb_t, cb);
+    keysync_t *ks = kcb->ks;
 
     if(st_resp->status != IE_ST_OK){
         ORIG(&e, E_RESPONSE, "xkeysync failed\n");
@@ -697,22 +767,40 @@ static derr_t send_done(keysync_t *ks){
     return e;
 }
 
+// builder API for ie_dstr_t's from binary fingerprints
+static ie_dstr_t *_build_fpr(derr_t *e, const dstr_t *bin_fpr){
+    if(is_error(*e)) return NULL;
+    DSTR_VAR(hex_fpr, 128);
+    IF_PROP(e, bin2hex(bin_fpr, &hex_fpr) ){ return NULL; }
+    return ie_dstr_new(e, &hex_fpr, KEEP_RAW);
+}
+
 static derr_t send_xkeysync(keysync_t *ks){
     derr_t e = E_OK;
 
-    // issue a XKEYSYNC command
+    // make a list of fingerprints we expect the server to have
+    ie_dstr_t *fprs = _build_fpr(&e, ks->my_keypair->fingerprint);
+    keypair_t *kp;
+    LINK_FOR_EACH(kp, &ks->peer_keys->keys, keypair_t, link){
+        // skip the duplicate fingerprint from the keyshare
+        if(dstr_cmp(kp->fingerprint, ks->my_keypair->fingerprint) == 0)
+            continue;
+        ie_dstr_add(&e, fprs, _build_fpr(&e, kp->fingerprint));
+    }
+
+    // issue an XKEYSYNC command
     size_t tag = ++ks->tag;
     ie_dstr_t *tag_str = write_tag(&e, tag);
-    imap_cmd_arg_t arg = {0};
+    imap_cmd_arg_t arg = { .xkeysync = fprs };
     imap_cmd_t *cmd = imap_cmd_new(&e, tag_str, IMAP_CMD_XKEYSYNC, arg);
     cmd = imap_cmd_assert_writable(&e, cmd, &ks->ctrl.exts);
 
     // build the callback
-    keysync_cb_t *keysync_cb = keysync_cb_new(&e,
+    keysync_cb_t *kcb = keysync_cb_new(&e,
         ks, tag_str, xkeysync_done, cmd
     );
 
-    send_cmd(&e, ks, cmd, &keysync_cb->cb);
+    send_cmd(&e, ks, cmd, kcb);
     CHECK(&e);
 
     ks->xkeysync.sent = true;
@@ -783,11 +871,13 @@ static derr_t advance_state(keysync_t *ks){
     }
 
     // do we have a key to add?
-    if(ks->xkeyadd.key != NULL){
+    if(ks->xkeyadd.needed){
         // may have to interrupt XKEYSYNC to call XKEYADD
         PROP(&e, need_done(ks, &ok) );
         if(!ok) return e;
-        PROP(&e, send_xkeyadd(ks, &ks->xkeyadd.key) );
+        PROP(&e, send_xkeyadd(ks) );
+        ks->xkeyadd.needed = false;
+        // fallthru
     }
 
     // otherwise, we should be in XKEYSYNC

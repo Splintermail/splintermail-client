@@ -7,8 +7,16 @@ typedef struct sf_pair_cb_i sf_pair_cb_i;
 struct sf_pair_cb_i {
     /* note that .set_owner() will actually change the callback pointer (it's a
        real transfer of ownership) */
-    derr_t (*request_owner)(sf_pair_cb_i*, sf_pair_t *sf_pair,
-            const dstr_t *name, const dstr_t *pass);
+    derr_t (*request_owner)(
+        sf_pair_cb_i*,
+        sf_pair_t *sf_pair,
+        imap_pipeline_t *p,
+        ssl_context_t *ctx_cli,
+        const char *remote_host,
+        const char *remote_svc,
+        const dstr_t *name,
+        const dstr_t *pass
+    );
     void (*dying)(sf_pair_cb_i*, sf_pair_t *sf_pair, derr_t error);
     void (*release)(sf_pair_cb_i*, sf_pair_t *sf_pair);
 };
@@ -23,6 +31,11 @@ struct sf_pair_t {
     sf_pair_cb_i *cb;
     void *owner;
     engine_t *engine;
+    // held to later pass to the request_owner() call
+    imap_pipeline_t *p;
+    ssl_context_t *ctx_cli;
+    const char *remote_host;
+    const char *remote_svc;
 
     wake_event_t wake_ev;
     bool enqueued;

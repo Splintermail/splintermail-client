@@ -10,21 +10,27 @@ struct keysync_cb_i {
     void (*dying)(keysync_cb_i*, derr_t error);
     void (*release)(keysync_cb_i*);
 
-    void (*key_added)(keysync_cb_i*, derr_t error);
+    // synced indicates the initial synchronization is complete
     void (*synced)(keysync_cb_i*);
-    void (*created)(keysync_cb_i*, ie_dstr_t *key);
-    void (*deleted)(keysync_cb_i*, ie_dstr_t *fpr);
+    // key_created must consume or free kp in all cases
+    derr_t (*key_created)(keysync_cb_i*, keypair_t **kp);
+    void (*key_deleted)(keysync_cb_i*, const dstr_t *fpr);
 };
 
-// the keysync-provided interface to the sf_pair (steals key)
-void keysync_add_key(keysync_t *ks, ie_dstr_t **key);
+// there is no keysync-provided interface to the sf_pair.
 
 struct keysync_t {
+    /* these must come first because we must be able to cast the
+       imap_session_t* into a citme_session_owner_t* */
+    imap_session_t s;
+    citme_session_owner_i session_owner;
+
     keysync_cb_i *cb;
-    const char *host;
-    const char *svc;
-    imap_pipeline_t *pipeline;
     engine_t *engine;
+    // this device's key, which keysync_t will ensure is on the server
+    keypair_t *my_keypair;
+    // other keys known to us
+    const keyshare_t *peer_keys;
 
     refs_t refs;
     wake_event_t wake_ev;
@@ -36,7 +42,6 @@ struct keysync_t {
 
     // keysync's imap_session_t
     manager_i session_mgr;
-    imap_session_t s;
     // parser callbacks and imap extesions
     imape_control_i ctrl;
 
@@ -62,8 +67,8 @@ struct keysync_t {
     } capas;
 
     struct {
-        // non-null when we have a key to add
-        ie_dstr_t *key;
+        // the only key we ever add is the my_keypair
+        bool needed;
     } xkeyadd;
 
     struct {
@@ -71,6 +76,9 @@ struct keysync_t {
         bool got_plus;
         bool done_sent;
     } xkeysync;
+
+    // only call synced once
+    bool initial_sync_complete;
 };
 DEF_CONTAINER_OF(keysync_t, refs, refs_t);
 DEF_CONTAINER_OF(keysync_t, wake_ev, wake_event_t);
@@ -80,17 +88,20 @@ DEF_CONTAINER_OF(keysync_t, session_mgr, manager_i);
 DEF_CONTAINER_OF(keysync_t, ctrl, imape_control_i);
 
 derr_t keysync_init(
-    keysync_t *keysync,
+    keysync_t *ks,
     keysync_cb_i *cb,
+    imap_pipeline_t *p,
+    ssl_context_t *ctx_cli,
     const char *host,
     const char *svc,
-    const ie_login_cmd_t *login,
-    imap_pipeline_t *p,
     engine_t *engine,
-    ssl_context_t *ctx_cli
+    const dstr_t *user,
+    const dstr_t *pass,
+    const keypair_t *my_keypair,
+    const keyshare_t *peer_keys
 );
-void keysync_start(keysync_t *keysync);
-void keysync_close(keysync_t *keysync, derr_t error);
-void keysync_free(keysync_t *keysync);
+void keysync_start(keysync_t *ks);
+void keysync_close(keysync_t *ks, derr_t error);
+void keysync_free(keysync_t *ks);
 
-void keysync_read_ev(keysync_t *keysync, event_t *ev);
+void keysync_read_ev(keysync_t *ks, event_t *ev);

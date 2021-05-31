@@ -56,6 +56,11 @@ void server_passthru_resp(server_t *server, passthru_resp_t *passthru_resp);
 void server_select_result(server_t *server, ie_st_resp_t *st_resp);
 
 struct server_t {
+    /* these must come first because we must be able to cast the
+       imap_session_t* into a citme_session_owner_t* */
+    imap_session_t s;
+    citme_session_owner_i session_owner;
+
     server_cb_i *cb;
     imap_pipeline_t *pipeline;
     engine_t *engine;
@@ -73,7 +78,6 @@ struct server_t {
 
     // server session
     manager_i session_mgr;
-    imap_session_t s;
     // parser callbacks and imap extesions
     imape_control_i ctrl;
 
