@@ -18,6 +18,8 @@ typedef enum {
     MSG_UNFILLED,
     MSG_FILLED,
     MSG_EXPUNGED,
+    // NOT4ME messages have a uid_up but no uid_dn
+    MSG_NOT4ME,
 } msg_state_e;
 
 typedef struct {

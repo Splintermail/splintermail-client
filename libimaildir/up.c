@@ -388,6 +388,11 @@ static derr_t fetch_resp(up_t *up, const ie_fetch_resp_t *fetch){
         return e;
     }
 
+    if(msg && msg->state == MSG_NOT4ME){
+        LOG_INFO("detected fetch for NOT4ME UID, skipping\n");
+        return e;
+    }
+
     if(!msg){
         // new UID
         msg_flags_t flags = msg_flags_from_fetch_flags(fetch->flags);

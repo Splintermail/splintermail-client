@@ -272,9 +272,12 @@ static derr_t add_msg_to_maildir(const string_builder_t *base,
         (4) msg in msgs with state UNFILLED:
                 we must have crashed after saving the file but before updating
                 the log, just set the state to FILLED
-        (5) msg in msgs with state FILLED:
+        (5) msg in msgs with state NOT4ME:
+                identical to 4
+                (currently a bug since we never get new keys for this to work)
+        (6) msg in msgs with state FILLED:
                 this is the most vanilla case, no special actions
-        (6) msg in msgs with state EXPUNGED:
+        (7) msg in msgs with state EXPUNGED:
                 not possible, the log can only produce msg_t's with state
                 UNFILLED or FILLED (otherwise it must produce a msg_expunge_t)
     */
@@ -298,8 +301,9 @@ static derr_t add_msg_to_maildir(const string_builder_t *base,
 
     switch(msg->state){
         case MSG_UNFILLED:
-            /* (4): this logic is comparable to that in handle_new_msg_file,
-                    except we do not need to rename a file into place */
+        case MSG_NOT4ME:
+            /* (4,5): this logic is comparable to that in handle_new_msg_file,
+                      except we do not need to rename a file into place */
             /* assign a new uid_dn, since we never saved (or distributed) the
                one we set before */
             msg->uid_dn = next_uid_dn(m);
@@ -312,11 +316,11 @@ static derr_t add_msg_to_maildir(const string_builder_t *base,
             PROP(&e, m->log->update_msg(m->log, msg) );
             break;
         case MSG_FILLED:
-            // (5) most vanilla case
+            // (6) most vanilla case
             PROP(&e, msg_set_file(msg, len, arg->subdir, name) );
             break;
         case MSG_EXPUNGED:
-            // (6)
+            // (7)
             LOG_ERROR("detected a msg_t in state EXPUNGED on startup\n");
             break;
     }
@@ -349,6 +353,10 @@ static derr_t handle_missing_file(imaildir_t *m, msg_t *msg,
     switch(msg->state){
         case MSG_UNFILLED:
             // nothing is wrong, it will be downloaded later by an up_t
+            break;
+
+        case MSG_NOT4ME:
+            // nothing is wrong, and nothing needs to be done
             break;
 
         case MSG_FILLED: {
@@ -805,7 +813,7 @@ derr_t imaildir_up_check_uidvld_up(imaildir_t *m, unsigned int uidvld_up){
 
     // TODO: puke if we have any connections downwards with built views
     /* TODO: this definitely feels like a place that the whole imaildir should
-             shot down if there is a failure (but maybe that is covered by the
+             shut down if there is a failure (but maybe that is covered by the
              previous case) */
     /* TODO: on windows, we'll have to ensure that nobody has any files
              open at all, because delete_all_msg_files() would fail */
@@ -1125,7 +1133,18 @@ derr_t imaildir_up_handle_static_fetch_attr(imaildir_t *m,
 
     // do the decryption
     size_t len = 0;
-    PROP(&e, imaildir_decrypt(m, &extra->content->dstr, &tmp_path, &len) );
+    derr_t e2 = imaildir_decrypt(m, &extra->content->dstr, &tmp_path, &len);
+    CATCH(e2, E_NOT4ME){
+        LOG_INFO("detected NOT4ME message\n");
+        DROP_VAR(&e2);
+        // delete the file we tried to create
+        DROP_CMD( rm_rf_path(&tmp_path) );
+        // update the state in memory + in the log
+        msg->state = MSG_NOT4ME;
+        PROP(&e, m->log->update_msg(m->log, msg) );
+        // nothing to distribute or to update
+        return e;
+    }else PROP_VAR(&e, &e2);
 
     // make the msg "real" in the maildir
     PROP(&e, handle_new_msg_file(m, &tmp_path, msg, len) );
@@ -1200,6 +1219,7 @@ derr_t imaildir_up_delete_msg(imaildir_t *m, unsigned int uid_up){
        EXPUNGED | NULL     | new PUSHED expunge     | yes   | no
        EXPUNGED | UNPUSHED | expunge -> PUSHED      | yes   | no
        EXPUNGED | PUSHED   | noop                   | no    | no
+       NOT4ME   | *        | N/A                    | -     | -
 
            1 = "update msg to EXPUNGED but only in memory"
            2 = impossible state

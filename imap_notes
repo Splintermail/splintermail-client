@@ -1539,3 +1539,26 @@ Questions about keysync:
           - more learning required
           - more unknowns unknowns
         Let's do it.
+
+Questions about MSG_NOT4ME state:
+    what happens if:
+      - you download/decrypt a message with key A
+      - key A gets deleted
+      - downloaded file gets deleted
+      - client tries to re-download the message?
+    I think as soon as the downloaded file gets deleted (without also deleting
+    the lmdb log), that would trigger an expunge of the message, so that's
+    a pretty easy case to handle.
+    an expunge.
+
+    The argument could be made that deleting the key should result in forcing
+    the user to re-download their mailbox, since we could no longer ensure
+    the contents of the mailbox matches as before.
+
+    There's probably something here about changing the uidvalidity when the
+    keys change though, because the contents of the mailbox will certainly
+    change.  Or maybe we should handle that case a bit more gracefully and just
+    mark things as expunged when we realize we don't have them and also that we
+    can't get them anymore.  I guess the simpler version of that is just what
+    we have right now, where they are marked as expunged immediately upon file
+    deletion.

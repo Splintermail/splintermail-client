@@ -273,17 +273,19 @@ static derr_t marshal_message(const msg_t *msg, dstr_t *out){
 
     out->len = 0;
 
-    // version : uid_dn : modseq : "u"nfilled or "f"illed : [flags] : date
+    // version : uid_dn : modseq : "u"nfilled/"f"illed/"n"ot4me : flags : date
     PROP(&e, FMT(out, "%x:%x:%x:", FD(&lmdb_format_version),
                 FU(msg->uid_dn), FU(msg->mod.modseq)) );
 
     // filled or unfilled?
     DSTR_STATIC(unfilled, "u");
     DSTR_STATIC(filled, "f");
+    DSTR_STATIC(not4me, "n");
     dstr_t *statechar = NULL;
     switch(msg->state){
         case MSG_UNFILLED: statechar = &unfilled; break;
         case MSG_FILLED: statechar = &filled; break;
+        case MSG_NOT4ME: statechar = &not4me; break;
         case MSG_EXPUNGED:
             ORIG(&e, E_INTERNAL, "can't log an EXPUNGED message");
     }
@@ -586,11 +588,11 @@ static derr_t read_one_message(unsigned int uid_up, unsigned int uid_dn,
         imap_time_t intdate, jsw_atree_t *msgs, jsw_atree_t *mods){
     derr_t e = E_OK;
 
-    /* a zero modseq value is only allowed for the UNFILLED state, and the
-       UNFILLED state requires a zero modseq value */
-    if(modseq && state == MSG_UNFILLED)
+    /* a zero modseq value is only allowed for the UNFILLED/NOT4ME states, and
+       those states require a zero modseq value */
+    if(modseq && (state == MSG_UNFILLED || state == MSG_NOT4ME))
         ORIG(&e, E_INTERNAL, "invalid nonzero modseq on UNFILLED message");
-    if(!modseq && state != MSG_UNFILLED)
+    if(!modseq && (state != MSG_UNFILLED && state != MSG_NOT4ME))
         ORIG(&e, E_INTERNAL, "invalid zero modseq on FILLED message");
 
     // allocate a new msg object
@@ -694,6 +696,7 @@ static derr_t read_one_value(unsigned int uid_up, dstr_t *value,
     }
     switch(fields.data[2].data[0]){
         case 'u':
+        case 'n':
         case 'f': {
             // we should have all of the fields
             if(fields.len != 5){
@@ -702,6 +705,8 @@ static derr_t read_one_value(unsigned int uid_up, dstr_t *value,
             msg_state_e state;
             if(fields.data[2].data[0] == 'u'){
                 state = MSG_UNFILLED;
+            }else if(fields.data[2].data[0] == 'n'){
+                state = MSG_NOT4ME;
             }else{
                 state = MSG_FILLED;
             }

@@ -249,6 +249,7 @@ derr_t msg_write(const msg_t *msg, dstr_t *out){
         case MSG_UNFILLED: state_str = DSTR_LIT("unfilled"); break;
         case MSG_FILLED:   state_str = DSTR_LIT("filled");   break;
         case MSG_EXPUNGED: state_str = DSTR_LIT("expunged"); break;
+        case MSG_NOT4ME:   state_str = DSTR_LIT("not4me");   break;
     }
 
     PROP(&e, FMT(out, "msg:%x(up):%x(dn):%x:%x/%x:",
