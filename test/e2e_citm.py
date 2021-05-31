@@ -802,32 +802,38 @@ def test_select_select(cmd, maildir_root, **kwargs):
 @register_test
 def test_store(cmd, maildir_root, **kwargs):
     with inbox(cmd) as rw:
-        rw.put(b"1 store 1 flags \\Seen\r\n")
+        # make sure there is at least one message present
+        rw.put(b"1 APPEND INBOX {11}\r\n")
+        rw.wait_for_match(b"\\+")
+        rw.put(b"hello world\r\n")
         rw.wait_for_resp("1", "OK")
 
-        rw.put(b"2 fetch 1 flags\r\n")
+        rw.put(b"2 store 1 flags \\Seen\r\n")
+        rw.wait_for_resp("2", "OK")
+
+        rw.put(b"3 fetch 1 flags\r\n")
         rw.wait_for_resp(
-            "2",
+            "3",
             "OK",
             require=[b"\\* 1 FETCH \\(FLAGS \\(\\\\Seen\\)\\)"],
         )
 
-        rw.put(b"3 store 1 -flags \\Seen\r\n")
-        rw.wait_for_resp("3", "OK")
+        rw.put(b"4 store 1 -flags \\Seen\r\n")
+        rw.wait_for_resp("4", "OK")
 
-        rw.put(b"4 fetch 1 flags\r\n")
+        rw.put(b"5 fetch 1 flags\r\n")
         rw.wait_for_resp(
-            "4",
+            "5",
             "OK",
             require=[b"\\* 1 FETCH \\(FLAGS \\(\\)\\)"],
         )
 
         # noop store (for seq num = UINT_MAX-1)
-        rw.put(b"5 store 4294967294 flags \\Seen\r\n")
+        rw.put(b"6 store 4294967294 flags \\Seen\r\n")
         rw.wait_for_resp(
-            "5",
+            "6",
             "OK",
-            require=[b"5 OK noop STORE"],
+            require=[b"6 OK noop STORE"],
             disallow=[b"\\* [0-9]* FLAGS"],
         )
 
