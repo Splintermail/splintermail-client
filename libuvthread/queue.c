@@ -159,7 +159,7 @@ unlock:
 // Similar to queue_remove, but for unregistering a queue_cb_t
 void queue_remove_cb(queue_t *q, queue_cb_t *qcb){
     uv_mutex_lock(&q->mutex);
-    if(qcb->link.next != &qcb->link) goto unlock;
+    if(qcb->link.next == &qcb->link) goto unlock;
     link_remove(&qcb->link);
     qcb->q = NULL;
 unlock:
