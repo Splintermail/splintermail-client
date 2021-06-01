@@ -796,6 +796,7 @@ def test_select_select(cmd, maildir_root, **kwargs):
             rw.put(b"3 close\r\n")
             rw.wait_for_resp("3", "OK")
             # TODO: remove this and still pass the test
+            # underlying bug is that an up_t is not being disconnected
             rw.put(b"4 select INBOX\r\n")
             rw.wait_for_resp("4", "OK")
 
@@ -803,10 +804,7 @@ def test_select_select(cmd, maildir_root, **kwargs):
 def test_store(cmd, maildir_root, **kwargs):
     with inbox(cmd) as rw:
         # make sure there is at least one message present
-        rw.put(b"1 APPEND INBOX {11}\r\n")
-        rw.wait_for_match(b"\\+")
-        rw.put(b"hello world\r\n")
-        rw.wait_for_resp("1", "OK")
+        append_messages(rw, 1)
 
         rw.put(b"2 store 1 flags \\Seen\r\n")
         rw.wait_for_resp("2", "OK")
@@ -851,6 +849,9 @@ def get_uid(seq_num, rw):
 @register_test
 def test_expunge(cmd, maildir_root, **kwargs):
     with inbox(cmd) as rw:
+        # make sure there are at least two messages present
+        append_messages(rw, 2)
+
         uid1 = get_uid(1, rw)
         uid2 = get_uid(2, rw)
 
@@ -887,6 +888,9 @@ def test_expunge(cmd, maildir_root, **kwargs):
 @register_test
 def test_expunge_on_close(cmd, maildir_root, **kwargs):
     with inbox(cmd) as rw:
+        # make sure there is at least one message present
+        append_messages(rw, 1)
+
         uid = get_uid(1, rw)
 
         rw.put(b"1 store 1 flags \\Deleted\r\n")
@@ -910,6 +914,9 @@ def test_expunge_on_close(cmd, maildir_root, **kwargs):
 def test_no_expunge_on_logout(cmd, maildir_root, **kwargs):
     with Subproc(cmd) as subproc:
         with _inbox(subproc) as rw:
+            # make sure there is at least one message present
+            append_messages(rw, 1)
+
             uid = get_uid(1, rw)
 
             rw.put(b"1 store 1 flags \\Deleted\r\n")
@@ -928,6 +935,9 @@ def test_no_expunge_on_logout(cmd, maildir_root, **kwargs):
 def test_noop(cmd, maildir_root, **kwargs):
     with Subproc(cmd) as subproc:
         with _inbox(subproc) as rw1, _inbox(subproc) as rw2:
+            # make sure there are at least three messages present
+            append_messages(rw1, 3)
+
             # empty flags for a few messages
             rw1.put(b"1a store 1:3 flags ()\r\n")
             rw1.wait_for_resp("1a", "OK")
@@ -1480,7 +1490,7 @@ def test_imaildir_hold(cmd, maildir_root, **kwargs):
 
 @register_test
 def test_initial_deletions(cmd, maildir_root, **kwargs):
-    inbox_path = os.path.join(maildir_root, USER, "INBOX", "cur")
+    inbox_path = os.path.join(maildir_root, USER, "mail", "INBOX", "cur")
     with Subproc(cmd) as subproc:
         # initial sync
         with _inbox(subproc):
@@ -1525,6 +1535,20 @@ def test_large_initial_download(cmd, maildir_root, **kwargs):
     with inbox(cmd) as rw:
         pass
 
+
+def append_messages(rw, count, box="INBOX"):
+    for n in range(count):
+        tag = b"PRE%d"%n
+        rw.put(b"PRE%d APPEND %s {11}\r\n"%(n, as_bytes(box)))
+        rw.wait_for_match(b"\\+")
+        rw.put(b"hello world\r\n")
+        rw.wait_for_resp(b"PRE%d"%n, "OK")
+
+    # TODO: remove this and still pass tests
+    # underlying bug is that APPEND is not allowing the * 1 EXISTS update
+    # (probably no passthru commands are allowing it)
+    rw.put(b"PRE NOOP\r\n")
+    rw.wait_for_resp("PRE", "OK")
 
 # delete the initial contents of the inbox
 # (otherwise it grows until it slows down tests unnecessarily)
@@ -1599,10 +1623,15 @@ if __name__ == "__main__":
             sys.exit(1)
 
     with dovecot_setup() as imaps_port:
-        kwargs = {"imaps_port": imaps_port}
-        for test in [prep_starting_inbox] + tests:
-            print(test.__name__ + "... ", end="", flush="true")
-            with temp_maildir_root() as maildir_root:
+        with temp_maildir_root() as maildir_root:
+            kwargs = {"imaps_port": imaps_port}
+            for test in tests:
+                # clean up the mail before each test, but leave the keys alone
+                userpath = os.path.join(maildir_root, USER)
+                mailpath = os.path.join(userpath, "mail")
+                shutil.rmtree(mailpath, ignore_errors=True)
+
+                print(test.__name__ + "... ", end="", flush="true")
                 cmd = [
                     "citm/citm",
                     "--local-host",
