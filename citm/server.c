@@ -706,6 +706,14 @@ static void send_passthru_st_resp(derr_t *e, server_t *server,
         passthru_resp_t *passthru_resp){
     if(is_error(*e)) goto cu;
 
+    /* just before sending the response, check if we are connected to a dn_t
+       and if so, gather any pending updates */
+    if(server->imap_state == SELECTED){
+        /* always allow EXPUNGE updates, since the only FETCH, STORE, and
+           SEARCH forbid sending EXPUNGEs */
+        PROP_GO(e, dn_gather_updates(&server->dn, true, NULL), cu);
+    }
+
     // filter out unsupported extensions
     if(passthru_resp->st_resp->code){
         switch(passthru_resp->st_resp->code->type){

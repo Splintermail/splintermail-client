@@ -1109,7 +1109,8 @@ def test_append(cmd, maildir_root, **kwargs):
             rw.put(b"1 APPEND INBOX {11}\r\n")
             rw.wait_for_match(b"\\+")
             rw.put(b"hello world\r\n")
-            rw.wait_for_resp("1", "OK")
+            # require that APPEND-while-selected returns an EXISTS response
+            rw.wait_for_resp("1", "OK", require=[b"\\* [0-9]+ EXISTS"])
 
             assert int(get_uid("*", rw)) == uid_start + 2
 
@@ -1125,7 +1126,7 @@ def test_append(cmd, maildir_root, **kwargs):
             rw2.wait_for_resp(
                 "1",
                 "OK",
-                require=[b"\\* [0-9]* EXISTS"],
+                require=[b"\\* [0-9]+ EXISTS"],
             )
 
             rw2.put(b"2 APPEND INBOX {11}\r\n")
@@ -1138,7 +1139,7 @@ def test_append(cmd, maildir_root, **kwargs):
             rw1.wait_for_resp(
                 "2",
                 "OK",
-                require=[b"\\* [0-9]* EXISTS"],
+                require=[b"\\* [0-9]+ EXISTS"],
             )
 
         # APPEND from an unrelated connection while open
@@ -1543,12 +1544,6 @@ def append_messages(rw, count, box="INBOX"):
         rw.wait_for_match(b"\\+")
         rw.put(b"hello world\r\n")
         rw.wait_for_resp(b"PRE%d"%n, "OK")
-
-    # TODO: remove this and still pass tests
-    # underlying bug is that APPEND is not allowing the * 1 EXISTS update
-    # (probably no passthru commands are allowing it)
-    rw.put(b"PRE NOOP\r\n")
-    rw.wait_for_resp("PRE", "OK")
 
 # delete the initial contents of the inbox
 # (otherwise it grows until it slows down tests unnecessarily)
