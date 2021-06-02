@@ -1285,7 +1285,11 @@ static bool intercept_cmd_type(imap_cmd_type_t type){
 static derr_t server_await_if_async(server_t *server, imap_cmd_t *cmd){
     derr_t e = E_OK;
 
-    if(cmd->type == IMAP_CMD_STORE){
+    if(
+        cmd->type == IMAP_CMD_STORE
+        || cmd->type == IMAP_CMD_EXPUNGE
+        || cmd->type == IMAP_CMD_COPY
+    ){
         server->await.tag = ie_dstr_copy(&e, cmd->tag);
         CHECK_GO(&e, fail);
     }

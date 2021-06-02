@@ -1743,7 +1743,7 @@ static derr_t do_work_expunge(dn_t *dn){
 
     // create an st_resp if there was no error
     if(!st_resp){
-        const dstr_t *msg = &DSTR_LIT("No one will know the difference");
+        const dstr_t *msg = &DSTR_LIT("may they be cursed forever");
         ie_dstr_t *text = ie_dstr_new(&e, msg, KEEP_RAW);
         ie_status_t status = IE_ST_OK;
         st_resp = ie_st_resp_new(&e,

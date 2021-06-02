@@ -20,7 +20,12 @@ struct dn_cb_i {
 
 // (the first one must be the SELECT)
 derr_t dn_cmd(dn_t *dn, imap_cmd_t *cmd);
-// some commands are handled externally but should still trigger server updates
+/* Some commands are handled externally but should still trigger server
+   updates.  Note that the st_resp should always be NULL for synchronous
+   commands, like NOOP or UID FETCH where the full response is generated in a
+   single call to dn_cmd().  It should never be NULL for asynchronously
+   handled commands, like STORE, EXPUNGE, or COPY, which each must go through
+   an up_t before they can respond downwards */
 derr_t dn_gather_updates(dn_t *dn, bool allow_expunge, ie_st_resp_t **st_resp);
 /* CLOSE is sometimes explicit and sometimes not (LOGOUT), but any such command
    triggers a dn_disconnect */

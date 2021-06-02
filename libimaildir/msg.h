@@ -131,6 +131,13 @@ typedef enum {
     // a newly expunged message
     UPDATE_EXPUNGE,
     // a synchronization message with a ie_st_resp_t IFF there was a failure
+    /* this is only used for asynchronously handled messages, like those
+       triggered by UPDATE_REQ_STORE or UPDATE_REQ_EXPUNGE.  Synchronously
+       handled messages gather all updates for a dn_t at the time the command
+       is processed, but with async messages you need a barrier to prevent
+       updates created after the processing of the async message from
+       accidentally going out with the async message */
+    // TODO: figure out why pass out "future" updates was even a problem.
     UPDATE_SYNC,
 } update_type_e;
 
