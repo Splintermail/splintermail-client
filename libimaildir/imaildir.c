@@ -964,18 +964,18 @@ derr_t imaildir_up_update_flags(imaildir_t *m, msg_t *msg, msg_flags_t flags){
     return e;
 }
 
-static derr_t imaildir_decrypt(imaildir_t *m, const dstr_t *cipher,
-        const string_builder_t *path, size_t *len){
+static derr_t imaildir_decrypt(
+    imaildir_t *m,
+    const dstr_t *cipher,
+    const string_builder_t *path,
+    size_t *len
+){
     derr_t e = E_OK;
-
-    // create the file
-    FILE *f;
-    PROP(&e, dfopen_path(path, "w", &f) );
 
     // TODO: fix decrypter_t API to support const input strings
     // copy the content, just to work around the stream-only API of decrypter_t
     dstr_t copy;
-    PROP_GO(&e, dstr_new(&copy, cipher->len), cu_file);
+    PROP(&e, dstr_new(&copy, cipher->len) );
     PROP_GO(&e, dstr_copy(cipher, &copy), cu_copy);
 
     dstr_t plain;
@@ -994,11 +994,8 @@ static derr_t imaildir_decrypt(imaildir_t *m, const dstr_t *cipher,
 
     if(len) *len = plain.len;
 
-    // write the file
-    PROP_GO(&e, dstr_fwrite(f, &plain), cu_dc);
-
-    // ensure it is fully written
-    PROP_GO(&e, dffsync(f), cu_dc);
+    // write the file to disk
+    PROP_GO(&e, dstr_write_path(path, &plain), cu_dc);
 
 cu_dc:
     decrypter_free(&dc);
@@ -1009,19 +1006,140 @@ cu_plain:
 cu_copy:
     dstr_free(&copy);
 
-    derr_t e2;
-cu_file:
-    e2 = dfclose(f);
-    if(is_error(e)){
-        DROP_CMD( remove_path(path) );
-        // ignore closing error
-        DROP_VAR(&e2);
-    }else if(is_error(e2)){
-        DROP_CMD( remove_path(path) );
-        // handle closing error
-        PROP_VAR(&e, &e2);
+    return e;
+}
+
+// mangle subject line of unencrypted messages to show there was a problem
+static derr_t mangle_unencrypted(
+    const dstr_t *msg,
+    const string_builder_t *path,
+    size_t *len
+){
+    derr_t e = E_OK;
+    if(len) *len = 0;
+
+    // subject line if none was provided:
+    DSTR_STATIC(subj_entire, "Subject: NOT ENCRYPTED: (no subject)");
+
+    // patterns for either either the subject line or end-of-headers
+    LIST_PRESET(
+        dstr_t,
+        subj,
+        DSTR_LIT("\nSubject:"),
+        DSTR_LIT("\r\n\r\n"),
+        DSTR_LIT("\n\n")
+    );
+
+    // search for the patterns
+    size_t which;
+    size_t partial;
+    char* pos = dstr_find(msg, &subj, &which, &partial);
+    if(!pos){
+        /* if we didn't find the end of headers, the message is fucked; just
+           leave it alone */
+        PROP(&e, dstr_write_path(path, msg) );
+        if(len) *len = msg->len;
+        return e;
     }
 
+    dstr_t copy;
+    PROP(&e, dstr_new(&copy, msg->len + subj_entire.len) );
+
+    // if we found the end-of-headers but not the subject, insert fake subject
+    if(which == 1 || which == 2){
+        // if we didn't find a subject, insert one
+        size_t headers_end = (uintptr_t)(pos - msg->data);
+        // write to the end of headers
+        dstr_t pre = dstr_sub2(*msg, 0, headers_end);
+        PROP_GO(&e, dstr_append(&copy, &pre), cu);
+        // get the native len break
+        dstr_t nlb = dstr_sub2(
+            subj.data[which], 0, subj.data[which].len / 2
+        );
+        PROP_GO(&e, dstr_append(&copy, &nlb), cu);
+        // write the missing subject line
+        PROP_GO(&e, dstr_append(&copy, &subj_entire), cu);
+        // write the rest of the msg
+        dstr_t post = dstr_sub2(*msg, headers_end, msg->len);
+        PROP_GO(&e, dstr_append(&copy, &post), cu);
+    }
+    // if we found the subject line, mangle it
+    else if(which == 0){
+        size_t subj_end = (uintptr_t)(pos - msg->data) + subj.data[which].len;
+        // write to the end of "Subject:"
+        dstr_t pre = dstr_sub2(*msg, 0, subj_end);
+        PROP_GO(&e, dstr_append(&copy, &pre), cu);
+        // write the warning
+        PROP_GO(&e, dstr_append(&copy, &DSTR_LIT(" NOT ENCRYPTED:")), cu);
+        // write the rest of the message
+        dstr_t post = dstr_sub2(*msg, subj_end, msg->len);
+        PROP_GO(&e, dstr_append(&copy, &post), cu);
+    }
+
+    PROP_GO(&e, dstr_write_path(path, &copy), cu);
+
+    if(len) *len = copy.len;
+
+cu:
+    dstr_free(&copy);
+    return e;
+}
+
+// when imaildir_decrypt fails, we give the user the broken message
+static derr_t mangle_corrupted(
+    const dstr_t *msg,
+    const string_builder_t *path,
+    size_t *len
+){
+    derr_t e = E_OK;
+    if(len) *len = 0;
+
+    // get the current time
+    time_t epoch = time(NULL);
+    // c99 doesn't allow for the rentrant localtime_r(), and its not a big deal
+    struct tm* tret = localtime(&epoch);
+    if(tret == NULL){
+        TRACE(&e, "%x: %x\n", FS("localtime"), FE(&errno));
+        ORIG(&e, E_INTERNAL, "error converting epoch time to time struct");
+    }
+    struct tm tnow = *tret;
+    // print human-readable date to a buffer
+    char d[128];
+    size_t dlen;
+    dlen = strftime(d, sizeof(d), "%a, %d %b %Y %H:%M:%S %z", &tnow);
+    if(dlen == 0){
+        TRACE(&e, "%x: %x\n", FS("strftime"), FE(&errno));
+        ORIG(&e, E_INTERNAL, "error formatting time string");
+    }
+
+    DSTR_STATIC(
+        fmtstr,
+        "From: CITM <citm@localhost>\r\n"
+        "To: Local User <email_user@localhost>\r\n"
+        "Date: %x\r\n"
+        "Subject: CITM failed to decrypt message\r\n"
+        "\r\n"
+        "The following message appears to be corrupted"
+        " and cannot be decrypted:\r\n"
+        "\r\n"
+    );
+
+    dstr_t copy;
+    PROP(&e, dstr_new(&copy, msg->len + (fmtstr.len - 2) + dlen) );
+
+    // dump headers to message
+    PROP_GO(&e, FMT(&copy, fmtstr.data, FS(d)), cu);
+
+    // dump original message as the body
+    PROP_GO(&e, dstr_append(&copy, msg), cu);
+
+    // write file
+    PROP_GO(&e, dstr_write_path(path, &copy), cu);
+
+    if(len) *len = copy.len;
+
+cu:
+    dstr_free(&copy);
     return e;
 }
 
@@ -1131,20 +1249,37 @@ derr_t imaildir_up_handle_static_fetch_attr(imaildir_t *m,
     string_builder_t tmp_dir = TMP(&m->path);
     string_builder_t tmp_path = sb_append(&tmp_dir, FD(&tmp_name));
 
-    // do the decryption
     size_t len = 0;
-    derr_t e2 = imaildir_decrypt(m, &extra->content->dstr, &tmp_path, &len);
-    CATCH(e2, E_NOT4ME){
-        LOG_INFO("detected NOT4ME message\n");
-        DROP_VAR(&e2);
-        // delete the file we tried to create
-        DROP_CMD( rm_rf_path(&tmp_path) );
-        // update the state in memory + in the log
-        msg->state = MSG_NOT4ME;
-        PROP(&e, m->log->update_msg(m->log, msg) );
-        // nothing to distribute or to update
-        return e;
-    }else PROP_VAR(&e, &e2);
+
+    // detect if the message is even encrypted
+    DSTR_STATIC(enc_header, "-----BEGIN SPLINTERMAIL MESSAGE-----");
+    bool encrypted = dstr_beginswith(&extra->content->dstr, &enc_header);
+    if(encrypted){
+        // do the decryption
+        derr_t e2 = imaildir_decrypt(
+            m, &extra->content->dstr, &tmp_path, &len
+        );
+        CATCH(e2, E_NOT4ME){
+            LOG_INFO("detected NOT4ME message\n");
+            DROP_VAR(&e2);
+            // update the state in memory and in the log
+            msg->state = MSG_NOT4ME;
+            PROP(&e, m->log->update_msg(m->log, msg) );
+            // nothing to distribute or to update
+            return e;
+        }else CATCH(e2, E_SSL, E_PARAM){
+            // decryption errors, pass the broken message to the user
+            DROP_VAR(&e2);
+            PROP(&e,
+                mangle_corrupted(&extra->content->dstr, &tmp_path, &len)
+            );
+        }else PROP_VAR(&e, &e2);
+    }else{
+        // message is not even encrypted
+        PROP(&e,
+            mangle_unencrypted(&extra->content->dstr, &tmp_path, &len)
+        );
+    }
 
     // make the msg "real" in the maildir
     PROP(&e, handle_new_msg_file(m, &tmp_path, msg, len) );

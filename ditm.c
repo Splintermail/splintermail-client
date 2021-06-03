@@ -1063,7 +1063,7 @@ derr_t ditm_mangle_unencrypted(int infd, int outfd, size_t* outlen){
         char* pos = dstr_find(&buffer, &subj, &which, &partial);
         if(!pos){
             // if we found nothing, write all but the partial match
-            dstr_t sub = dstr_sub(&buffer, 0, buffer.len - partial);
+            dstr_t sub = dstr_sub2(buffer, 0, buffer.len - partial);
             PROP(&e, dstr_write(outfd, &sub) );
             *outlen += sub.len;
             dstr_leftshift(&buffer, buffer.len - partial);
@@ -1097,7 +1097,7 @@ derr_t ditm_mangle_unencrypted(int infd, int outfd, size_t* outlen){
         if(which == 0){
             size_t subj_end = (uintptr_t)(pos - buffer.data) + subj.data[which].len;
             // write to the end of "Subject:"
-            dstr_t pre = dstr_sub(&buffer, 0, subj_end);
+            dstr_t pre = dstr_sub2(buffer, 0, subj_end);
             PROP(&e, dstr_write(outfd, &pre) );
             *outlen += pre.len;
             // write the warning

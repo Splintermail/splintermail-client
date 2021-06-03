@@ -552,7 +552,8 @@ class RW:
                     break
             else:
                 raise ValueError(f"required pattern ({req}) not found")
-        return req_matches
+        # return all matches, and all the content but the tagged status line
+        return req_matches, b"".join(recvd[:-1])
 
 
 _client_context = None
@@ -838,7 +839,7 @@ def test_store(cmd, maildir_root, **kwargs):
 
 def get_uid(seq_num, rw):
     rw.put(b"U fetch %s UID\r\n"%str(seq_num).encode("ascii"))
-    matches = rw.wait_for_resp(
+    matches, _ = rw.wait_for_resp(
         "U",
         "OK",
         require=[b"\\* [0-9]* FETCH \\(UID ([0-9]*)\\)"],
@@ -1181,7 +1182,7 @@ def test_append_to_nonexisting(cmd, maildir_root, **kwargs):
 
 def get_msg_count(rw, box):
     rw.put(b"N STATUS %s (MESSAGES)\r\n"%box)
-    matches = rw.wait_for_resp(
+    matches, _ = rw.wait_for_resp(
         "N",
         "OK",
         require=[b"\\* STATUS %s \\(MESSAGES ([0-9]*)\\)"%box],
@@ -1405,8 +1406,6 @@ def test_idle(cmd, maildir_root, **kwargs):
             # make a direct connection to dovecot
             dovecot_port = kwargs["imaps_port"]
             with _session(None, host="127.0.0.1", port=dovecot_port) as rw2:
-                user = USER.encode('utf8')
-                passwd = PASS.encode('utf8')
                 rw2.put(b"2b SELECT INBOX\r\n")
                 rw2.wait_for_resp("2b", "OK")
 
@@ -1537,28 +1536,176 @@ def test_large_initial_download(cmd, maildir_root, **kwargs):
         pass
 
 
+@register_test
+def test_mangling(cmd, maildir_root, **kwargs):
+    # Dovecot mangles APPENDED messages to use \r\n instead of \n, so there's
+    # no e2e way to test the non-\r\n message mangling
+
+    # unencryped messages get 'NOT ENCRYPTED: ' prepended to their subject
+    unenc = (
+        b"To: you\r\n"
+        b"From: me\r\n"
+        b"Subject: top secret\r\n"
+        b"\r\n"
+        b"Hey!\r\n"
+        b"\r\n"
+        b"Let's meet at the place later.\r\n"
+    )
+    unenc_exp = (
+        b"To: you\r\n"
+        b"From: me\r\n"
+        b"Subject: NOT ENCRYPTED: top secret\r\n"
+        b"\r\n"
+        b"Hey!\r\n"
+        b"\r\n"
+        b"Let's meet at the place later.\r\n"
+    )
+
+    # unencryped messages with no subject get a whole new subject
+    nosubj = (
+        b"To: you\r\n"
+        b"From: me\r\n"
+        b"\r\n"
+        b"Hey!\r\n"
+        b"\r\n"
+        b"Let's meet at the place later.\r\n"
+    )
+    nosubj_exp = (
+        b"To: you\r\n"
+        b"From: me\r\n"
+        b"Subject: NOT ENCRYPTED: (no subject)\r\n"
+        b"\r\n"
+        b"Hey!\r\n"
+        b"\r\n"
+        b"Let's meet at the place later.\r\n"
+    )
+
+    # we pass broken, unencrypted messages through untouched
+    broken = (
+        b"Hey!\r\n"
+        b"Let's meet at the place later.\r\n"
+    )
+    broken_exp = broken
+
+    # messages that appear encrypted but can't be decrypted get a whole header
+    # (E_PARAM error; message can't be parsed)
+    corrupted_hdr = (
+        b"From: CITM <citm@localhost>\r\n"
+        b"To: Local User <email_user@localhost>\r\n"
+        b"Date: ..., .. ... .... ........ .....\r\n"
+        b"Subject: CITM failed to decrypt message\r\n"
+        b"\r\n"
+        b"The following message appears to be corrupted"
+        b" and cannot be decrypted:\r\n"
+        b"\r\n"
+    )
+
+    noparse = (
+        b"-----BEGIN SPLINTERMAIL MESSAGE-----\r\n"
+        b"-----END SPLINTERMAIL MESSAGE-----\r\n"
+    )
+
+    noparse_exp = (
+        corrupted_hdr +
+        b"-----BEGIN SPLINTERMAIL MESSAGE-----\r\n"
+        b"-----END SPLINTERMAIL MESSAGE-----\r\n"
+    )
+
+    # messages that appear encrypted but are invalid (E_PARAM)
+    # (delayed because the right keys get generated later)
+    def make_enc():
+        cmd = [
+            "./encrypt_msg",
+            os.path.join(maildir_root, USER, "keys", "mykey.pem"),
+        ]
+        p = subprocess.run(cmd, input=unenc, capture_output=True)
+        assert p.returncode == 0, f"encrypt_msg failed: {p.stderr}"
+
+        # convert to \r\n-endings
+        enc = p.stdout.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
+
+        # mess up the checksum
+        if enc[-45] == b"A":
+            enc = enc[:-45] + b"a" + enc[-45 + 1:]
+        else:
+            enc = enc[:-45] + b"A" + enc[-45 + 1:]
+
+        enc_exp = corrupted_hdr + enc
+
+        return enc, enc_exp
+
+    with Subproc(cmd) as subproc:
+        # initial sync
+        with _inbox(subproc):
+            pass
+
+        enc, enc_exp = make_enc()
+
+        # initial msg count
+        with _session(subproc) as rw:
+            msgs = get_msg_count(rw, b"INBOX")
+
+        # inject messages directly to dovecot
+        dovecot_port = kwargs["imaps_port"]
+        with _session(None, host="127.0.0.1", port=dovecot_port) as rw:
+            for i, msg in enumerate(
+                [unenc, nosubj, broken, noparse, enc]
+            ):
+                rw.put(b"A%d APPEND INBOX {%d}\r\n"%(i, len(msg)))
+                rw.wait_for_match(b"\\+")
+                rw.put(msg + b"\r\n")
+                _, recvd = rw.wait_for_resp(b"A%d"%i, "OK")
+
+        # resync
+        with _inbox(subproc):
+            pass
+
+        # count again
+        with _session(subproc) as rw:
+            new = get_msg_count(rw, b"INBOX") - msgs
+            assert (new) == 5, f"expected 5 new messages, got {(new)}"
+
+        # check contents
+        with _inbox(subproc) as rw:
+            for i, exp in enumerate(
+                [unenc_exp, nosubj_exp, broken_exp, noparse_exp, enc_exp]
+            ):
+                # fetch the i'th new message and compare it to what we expect
+                seq = msgs + 1 + i
+                rw.put(b"%d fetch %d RFC822\r\n"%(i, seq))
+                _, recvd = rw.wait_for_resp(b"%d"%i, "OK")
+                exp_resp = b"* %d FETCH (RFC822 {%d}\r\n%s)"%(
+                    seq, len(exp), exp
+                )
+                exp_pat = (
+                    exp_resp.replace(b"(", b"\\(")
+                    .replace(b")", b"\\)")
+                    .replace(b"{", b"\\{")
+                    .replace(b"}", b"\\}")
+                    .replace(b"*", b"\\*")
+                    .replace(b"+", b"\\+")
+                )
+                assert re.match(exp_pat, recvd), (
+                    f"did not match\n    {exp_pat}\nagainst\n    {recvd}"
+                )
+
+@register_test
+def test_mangle_corrupted(cmd, maildir_root, **kwargs):
+    dovecot_port = kwargs["imaps_port"]
+    with _session(None, host="127.0.0.1", port=dovecot_port) as rw2:
+        user = USER.encode('utf8')
+        passwd = PASS.encode('utf8')
+        rw2.put(b"2b SELECT INBOX\r\n")
+        rw2.wait_for_resp("2b", "OK")
+    with inbox(cmd) as rw:
+        pass
+
 def append_messages(rw, count, box="INBOX"):
     for n in range(count):
-        tag = b"PRE%d"%n
         rw.put(b"PRE%d APPEND %s {11}\r\n"%(n, as_bytes(box)))
         rw.wait_for_match(b"\\+")
         rw.put(b"hello world\r\n")
         rw.wait_for_resp(b"PRE%d"%n, "OK")
-
-# delete the initial contents of the inbox
-# (otherwise it grows until it slows down tests unnecessarily)
-def prep_starting_inbox(cmd, maildir_root, **kwargs):
-    with inbox(cmd) as rw:
-        rw.put(b"1 store 1:* flags \\Deleted\r\n")
-        rw.wait_for_resp("1", "OK")
-        rw.put(b"2 expunge\r\n")
-        rw.wait_for_resp("2", "OK")
-        for i in range(3, 10):
-            tag = str(i).encode("ascii")
-            rw.put(b"%s APPEND INBOX {11}\r\n"%tag)
-            rw.wait_for_match(b"\\+")
-            rw.put(b"hello world\r\n")
-            rw.wait_for_resp(tag, "OK")
 
 
 # Prepare a subdirectory
