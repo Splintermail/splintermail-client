@@ -7,19 +7,30 @@ const void *msg_view_jsw_get_uid_dn(const jsw_anode_t *node){
     return (void*)&view->uid_dn;
 }
 
-const void *msg_expunge_jsw_get_uid_up(const jsw_anode_t *node){
-    const msg_expunge_t *expunge = CONTAINER_OF(node, msg_expunge_t, node);
-    return (void*)&expunge->uid_up;
-}
-
 const void *msg_mod_jsw_get_modseq(const jsw_anode_t *node){
     const msg_mod_t *mod = CONTAINER_OF(node, msg_mod_t, node);
     return (void*)&mod->modseq;
 }
 
-const void *msg_jsw_get_uid_up(const jsw_anode_t *node){
+const void *msg_jsw_get_msg_key(const jsw_anode_t *node){
     const msg_t *msg = CONTAINER_OF(node, msg_t, node);
-    return (void*)&msg->uid_up;
+    return (void*)&msg->key;
+}
+
+const void *expunge_jsw_get_msg_key(const jsw_anode_t *node){
+    const msg_expunge_t *expunge = CONTAINER_OF(node, msg_expunge_t, node);
+    return (void*)&expunge->key;
+}
+
+int jsw_cmp_msg_key(const void *a, const void *b){
+    // each msg_t has either a uid_local or a uid_up; the other will be zero
+    // we just sort blindly by one, then by the other if the first is zero
+    const msg_key_t *ka = a;
+    const msg_key_t *kb = b;
+    // (imaildir's count_local_msgs depends on sorting by uid_up first)
+    int result = jsw_cmp_uint(&ka->uid_up, &kb->uid_up);
+    if(result != 0) return result;
+    return jsw_cmp_uint(&ka->uid_local, &kb->uid_local);
 }
 
 derr_t index_to_seq_num(size_t index, unsigned int *seq_num){

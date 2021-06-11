@@ -801,40 +801,20 @@ def test_select_select(cmd, maildir_root, **kwargs):
             rw.put(b"4 select INBOX\r\n")
             rw.wait_for_resp("4", "OK")
 
-@register_test
-def test_store(cmd, maildir_root, **kwargs):
-    with inbox(cmd) as rw:
-        # make sure there is at least one message present
-        append_messages(rw, 1)
 
-        rw.put(b"2 store 1 flags \\Seen\r\n")
-        rw.wait_for_resp("2", "OK")
-
-        rw.put(b"3 fetch 1 flags\r\n")
-        rw.wait_for_resp(
-            "3",
-            "OK",
-            require=[b"\\* 1 FETCH \\(FLAGS \\(\\\\Seen\\)\\)"],
-        )
-
-        rw.put(b"4 store 1 -flags \\Seen\r\n")
-        rw.wait_for_resp("4", "OK")
-
-        rw.put(b"5 fetch 1 flags\r\n")
-        rw.wait_for_resp(
-            "5",
-            "OK",
-            require=[b"\\* 1 FETCH \\(FLAGS \\(\\)\\)"],
-        )
-
-        # noop store (for seq num = UINT_MAX-1)
-        rw.put(b"6 store 4294967294 flags \\Seen\r\n")
-        rw.wait_for_resp(
-            "6",
-            "OK",
-            require=[b"6 OK noop STORE"],
-            disallow=[b"\\* [0-9]* FLAGS"],
-        )
+def inject_local_msg(maildir_root):
+    cmd = [
+        "./inject_local_msg",
+        "--root",
+        maildir_root,
+        "--user",
+        USER,
+        "--mailbox",
+        "INBOX",
+    ]
+    msg = b"hello world!\r\n"
+    p = subprocess.run(cmd, input=msg, stdout=subprocess.PIPE, check=True)
+    return int(p.stdout.strip())
 
 
 def get_uid(seq_num, rw):
@@ -848,13 +828,93 @@ def get_uid(seq_num, rw):
 
 
 @register_test
+def test_store(cmd, maildir_root, **kwargs):
+    def require_line(uid, flag_str):
+        flags = []
+        if "s" in flag_str:
+            flags.append(b"\\\\Seen")
+        if "a" in flag_str:
+            flags.append(b"\\\\Answered")
+        if "d" in flag_str:
+            flags.append(b"\\\\Draft")
+        return b"".join(
+            [
+                b"\\* [0-9]+ FETCH \\(FLAGS \\(",
+                b" ".join(flags),
+                b"\\) UID %d\\)"%uid
+            ]
+        )
+
+    def assert_flags(rw, tag, state):
+        uids = list(state.keys())
+        rw.put(b"%s uid fetch %d:%d flags\r\n"%(tag, min(uids), max(uids)))
+        rw.wait_for_resp(
+            tag,
+            "OK",
+            require=[require_line(k, v) for k, v in state.items()],
+        )
+
+    # inject a couple local uids
+    l1 = inject_local_msg(maildir_root)
+    l2 = inject_local_msg(maildir_root)
+
+    with inbox(cmd) as rw:
+        # make sure there is at least one message present
+        append_messages(rw, 2)
+
+        u2 = int(get_uid("*", rw))
+        u1 = u2 - 1
+
+        # make sure we counted right; we expect l1 -> l2 -> u1 -> u2
+        assert int(u1) == l2 + 1, f"u1 != l2+1 ({int(u1)}!={l2+1})"
+
+        # pure uid_up case
+        rw.put(b"2 uid store %d:%d flags \\Seen\r\n"%(u1, u2))
+        rw.wait_for_resp("2", "OK")
+        assert_flags(rw, b"3", {l1: "", l2: "", u1: "s", u2: "s"})
+
+        # pure uid_local case
+        rw.put(b"5 uid store %d:%d +flags \\Answered\r\n"%(l1, l2))
+        rw.wait_for_resp("5", "OK")
+        assert_flags(rw, b"6", {l1: "a", l2: "a", u1: "s", u2: "s"})
+
+        # mixed uid_up/uid_local case
+        rw.put(b"7 uid store %d:%d -flags \\Seen\r\n"%(l1, u2))
+        rw.wait_for_resp("7", "OK")
+        assert_flags(rw, b"8", {l1: "a", l2: "a", u1: "", u2: ""})
+
+        rw.put(b"7 uid store %d:%d flags \\Draft\r\n"%(l1, u2))
+        rw.wait_for_resp("7", "OK")
+        assert_flags(rw, b"8", {l1: "d", l2: "d", u1: "d", u2: "d"})
+
+        # noop store (for seq num = UINT_MAX-1)
+        rw.put(b"6 store 4294967294 flags \\Seen\r\n")
+        rw.wait_for_resp(
+            "6",
+            "OK",
+            require=[b"6 OK noop STORE"],
+            disallow=[b"\\* [0-9]* FLAGS"],
+        )
+
+
+@register_test
 def test_expunge(cmd, maildir_root, **kwargs):
+    def assert_expunged(rw, tag, uid):
+        # confirm neither UID is still present
+        rw.put(b"%s search UID %d\r\n"%(tag, u1))
+        rw.wait_for_resp(
+            tag,
+            "OK",
+            disallow=[b"\\* SEARCH [0-9]*"],
+        )
+
+    # the 'pure uid_up' case
     with inbox(cmd) as rw:
         # make sure there are at least two messages present
         append_messages(rw, 2)
 
-        uid1 = get_uid(1, rw)
-        uid2 = get_uid(2, rw)
+        u1 = int(get_uid(1, rw))
+        u2 = int(get_uid(2, rw))
 
         # expunge two messages and confirm they report back in reverse order
         rw.put(b"1 store 1:2 flags \\Deleted\r\n")
@@ -870,20 +930,66 @@ def test_expunge(cmd, maildir_root, **kwargs):
             ],
         )
 
-        # confirm neither UID is still present
-        rw.put(b"3 search UID %s\r\n"%uid1)
+        assert_expunged(rw, b"3", u1)
+        assert_expunged(rw, b"4", u2)
+
+    # inject a few local uids
+    l1 = inject_local_msg(maildir_root)
+    l2 = inject_local_msg(maildir_root)
+    l3 = inject_local_msg(maildir_root)
+    l4 = inject_local_msg(maildir_root)
+
+    # the 'pure uid_local' case
+    with inbox(cmd) as rw:
+        # expunge two messages and confirm they report back in reverse order
+        rw.put(b"1 uid store %d:%d flags \\Deleted\r\n"%(l1, l2))
+        rw.wait_for_resp("1", "OK")
+
+        rw.put(b"2 expunge\r\n")
         rw.wait_for_resp(
-            "3",
+            "2",
             "OK",
-            disallow=[b"\\* SEARCH [0-9]*"],
+            require=[
+                # note: these are sequence numbers
+                b"\\* 2 EXPUNGE",
+                b"\\* 1 EXPUNGE",
+            ],
         )
 
-        rw.put(b"4 search UID %s\r\n"%uid2)
+        assert_expunged(rw, b"3", l1)
+        assert_expunged(rw, b"4", l2)
+
+    # the "mixed uid_up and uid_local" case
+    with inbox(cmd) as rw:
+        # make sure there are at least two uid_up messages present
+        append_messages(rw, 2)
+
+        u2 = int(get_uid('*', rw))
+        u1 = u2 - 1
+
+        # make sure we counted right; we expect l3 -> l4 -> u1 -> u2
+        assert int(u1) == l4 + 1, f"u1 != l4+1 ({int(u1)}!={l4+1})"
+
+        # expunge two messages and confirm they report back in reverse order
+        rw.put(b"1 uid store %d:%d flags \\Deleted\r\n"%(l3, u2))
+        rw.wait_for_resp("1", "OK")
+
+        rw.put(b"2 expunge\r\n")
         rw.wait_for_resp(
-            "4",
+            "2",
             "OK",
-            disallow=[b"\\* SEARCH [0-9]*"],
+            require=[
+                b"\\* 4 EXPUNGE",
+                b"\\* 3 EXPUNGE",
+                b"\\* 2 EXPUNGE",
+                b"\\* 1 EXPUNGE",
+            ],
         )
+
+        assert_expunged(rw, b"3", l3)
+        assert_expunged(rw, b"4", l4)
+        assert_expunged(rw, b"5", u1)
+        assert_expunged(rw, b"6", u2)
 
 
 @register_test
@@ -1192,18 +1298,31 @@ def get_msg_count(rw, box):
 
 @register_test
 def test_copy(cmd, maildir_root, **kwargs):
+    # inject a couple local uids
+    l1 = inject_local_msg(maildir_root)
+    l2 = inject_local_msg(maildir_root)
+
     with session(cmd) as rw:
+        # pure uid_up cases
         with temp_box(rw) as folder:
             # first count how many messages there are
             inbox_count = get_msg_count(rw, b"INBOX")
-            other_count = get_msg_count(rw, folder)
-
-            # figure on a paritally valid range
-            assert inbox_count > 2, "inbox too empty for test"
-            copy_range = (inbox_count - 1, inbox_count + 1)
 
             rw.put(b"1 SELECT INBOX\r\n")
             rw.wait_for_resp("1", "OK")
+
+            # add a couple uid_up messages
+            append_messages(rw, 2)
+            inbox_count += 2
+
+            u2 = int(get_uid("*", rw))
+            u1 = u2 - 1
+
+            # make sure we counted right; we expect l1 -> l2 -> u1 -> u2
+            assert int(u1) == l2 + 1, f"u1 != l2+1 ({int(u1)}!={l2+1})"
+
+            # figure on a partially valid range
+            copy_range = (inbox_count - 1, inbox_count + 1)
 
             # COPY to other mailbox
             rw.put(b"2 COPY %d:%d %s\r\n"%(*copy_range, folder))
@@ -1227,11 +1346,82 @@ def test_copy(cmd, maildir_root, **kwargs):
             # check counts
             got = get_msg_count(rw, b"INBOX")
             exp = inbox_count + 2
-            assert exp == got, f"expected {exp} but got {got}"
+            assert got == exp, f"expected {exp} but got {got}"
 
             got = get_msg_count(rw, folder)
-            exp = other_count + 2
-            assert exp == got, f"expected {exp} but got {got}"
+            exp = 2
+            assert got == exp, f"expected {exp} but got {got}"
+
+        # pure uid_local
+        with temp_box(rw) as folder:
+            rw.put(b"1 SELECT INBOX\r\n")
+            rw.wait_for_resp("1", "OK")
+
+            copy_range = (l1, l2)
+
+            # COPY to other mailbox
+            rw.put(b"2 UID COPY %d:%d %s\r\n"%(*copy_range, folder))
+            rw.wait_for_resp("2", "OK")
+
+            # COPY to this mailbox
+            rw.put(b"3 UID COPY %d:%d INBOX\r\n"%copy_range)
+            rw.wait_for_resp(
+                "3",
+                "OK",
+                require=[b"\\* %d EXISTS"%(inbox_count+4)],
+            )
+
+            # TODO: fix the automatic mailbox creation on local COPY
+            # # COPY to nonexisting mailbox
+            # rw.put(b"4 UID COPY %d:%d asdf\r\n"%copy_range)
+            # rw.wait_for_resp("4", "NO", require=[b"4 NO \\[TRYCREATE\\]"])
+
+            rw.put(b"5 CLOSE\r\n")
+            rw.wait_for_resp("5", "OK")
+
+            # check counts
+            got = get_msg_count(rw, b"INBOX")
+            exp = inbox_count + 4
+            assert got == exp, f"expected {exp} but got {got}"
+
+            got = get_msg_count(rw, folder)
+            exp = 2
+            assert got == exp, f"expected {exp} but got {got}"
+
+        # mixed uid_up/uid_local
+        with temp_box(rw) as folder:
+            rw.put(b"1 SELECT INBOX\r\n")
+            rw.wait_for_resp("1", "OK")
+
+            copy_range = (l1, u2)
+
+            # COPY to other mailbox
+            rw.put(b"2 UID COPY %d:%d %s\r\n"%(*copy_range, folder))
+            rw.wait_for_resp("2", "OK")
+
+            # COPY to this mailbox
+            rw.put(b"3 UID COPY %d:%d INBOX\r\n"%copy_range)
+            rw.wait_for_resp(
+                "3",
+                "OK",
+                require=[b"\\* %d EXISTS"%(inbox_count+8)],
+            )
+
+            # COPY to nonexisting mailbox
+            rw.put(b"4 UID COPY %d:%d asdf\r\n"%copy_range)
+            rw.wait_for_resp("4", "NO", require=[b"4 NO \\[TRYCREATE\\]"])
+
+            rw.put(b"5 CLOSE\r\n")
+            rw.wait_for_resp("5", "OK")
+
+            # check counts
+            got = get_msg_count(rw, b"INBOX")
+            exp = inbox_count + 8
+            assert got == exp, f"expected {exp} but got {got}"
+
+            got = get_msg_count(rw, folder)
+            exp = 2
+            assert got == exp, f"expected {exp} but got {got}"
 
 
 @register_test

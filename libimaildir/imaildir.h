@@ -120,12 +120,14 @@ struct imaildir_cb_i {
 // IMAP maildir
 struct imaildir_t {
     imaildir_cb_i *cb;
+    bool initialized;
     // path to this maildir on the filesystem
     string_builder_t path;
     // the name of this box for SELECT purposes
     const dstr_t *name;
     unsigned int uid_validity;
     unsigned int hi_uid_dn; // starts at 0 for empty boxes
+    unsigned int hi_uid_local; // starts at 0 for empty boxes
     // mailbox flags
     ie_mflags_t mflags;
     // crypto for this box
@@ -182,7 +184,7 @@ struct imaildir_t {
 
     // did we open via imaildir_init_lite()?
     bool lite;
-    jsw_atree_t msgs;  // msg_t->node, keyed by uid_up
+    jsw_atree_t msgs;  // msg_t->node, keyed by msg->key
     jsw_atree_t mods;  // msg_mod_t->node
     jsw_atree_t expunged;  // msg_expunge_t->node;
     maildir_log_i *log;
@@ -196,8 +198,8 @@ struct imaildir_t {
 derr_t imaildir_init(imaildir_t *m, imaildir_cb_i *cb, string_builder_t path,
         const dstr_t *name, const keypair_t *keypair);
 
-/* open an imaildir without reading files on disk.  The imaildir is only
-   allowed to be used for imaildir_add_local_file() */
+/* open an imaildir without reading files on disk.  The imaildir can
+   only be used for imaildir_add_local_file() and imaildir_get_uidvld_up */
 derr_t imaildir_init_lite(imaildir_t *m, string_builder_t path);
 
 // free must only be called if the maildir has no accessors
@@ -301,25 +303,34 @@ derr_t imaildir_dn_build_views(imaildir_t *m, jsw_atree_t *views,
 derr_t imaildir_dn_request_update(imaildir_t *m, update_req_t *req);
 
 // open a message in a view-safe way; return a file descriptor
-derr_t imaildir_dn_open_msg(imaildir_t *m, unsigned int uid_up, int *fd);
+derr_t imaildir_dn_open_msg(imaildir_t *m, const msg_key_t key, int *fd);
 
 // close a message in a view-safe way
-derr_t imaildir_dn_close_msg(imaildir_t *m, unsigned int uid_up, int *fd);
+derr_t imaildir_dn_close_msg(imaildir_t *m, const msg_key_t key, int *fd);
 
 /////////////////
 // support for APPEND and COPY (without redownloading message)
 
 // add a file to an open imaildir_t (rename or remove path)
-// if uidvld is invalid, this will silently delete the file.
 derr_t imaildir_add_local_file(
     imaildir_t *m,
     const string_builder_t *path,
-    unsigned int uidvld_up,
+    // uid_up should be zero to indicate the file is only local
     unsigned int uid_up,
     size_t len,
     imap_time_t intdate,
-    msg_flags_t flags
+    msg_flags_t flags,
+    unsigned int *uid_dn_out
 );
+
+/* COPY and APPEND logic should use this value to decide if they should discard
+   local files rather than add them to the imaildir */
+unsigned int imaildir_get_uidvld_up(imaildir_t *m);
 
 // the dirmgr should call this, not the owner of the hold
 void imaildir_hold_end(imaildir_t *m);
+
+// take a STATUS response from the server and correct for local info
+derr_t imaildir_process_status_resp(
+    imaildir_t *m, ie_status_attr_resp_t in, ie_status_attr_resp_t *out
+);

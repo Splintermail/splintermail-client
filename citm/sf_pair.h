@@ -57,6 +57,11 @@ struct sf_pair_t {
         msg_flags_t flags;
     } append;
 
+    struct {
+        // we only post-process the STATUS responses
+        passthru_resp_t *resp;
+    } status;
+
     server_t server;
     fetcher_t fetcher;
 

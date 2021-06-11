@@ -18,6 +18,11 @@ static void sf_pair_free_append(sf_pair_t *sf_pair){
     return;
 }
 
+static void sf_pair_free_status(sf_pair_t *sf_pair){
+    passthru_resp_free(STEAL(passthru_resp_t, &sf_pair->status.resp));
+    return;
+}
+
 void sf_pair_free(sf_pair_t **old){
     sf_pair_t *sf_pair = *old;
     if(!sf_pair) return;
@@ -35,6 +40,7 @@ void sf_pair_free(sf_pair_t **old){
     // free state generated at runtime
     ie_login_cmd_free(sf_pair->login_cmd);
     sf_pair_free_append(sf_pair);
+    sf_pair_free_status(sf_pair);
     dstr_free(&sf_pair->username);
     dstr_free(&sf_pair->password);
 
@@ -176,6 +182,7 @@ fail:
 
 static derr_t sf_pair_append_resp(sf_pair_t *sf_pair){
     derr_t e = E_OK;
+    imaildir_t *m = NULL;
 
     const ie_st_resp_t *st_resp = sf_pair->append.resp->st_resp;
 
@@ -198,18 +205,29 @@ static derr_t sf_pair_append_resp(sf_pair_t *sf_pair){
         sb_append(&sf_pair->dirmgr->path, FS("tmp"));
     string_builder_t path = sb_append(&tmp_path, FD(&file));
 
-    // add the temporary file to the maildir
+    // get the imaildir we would add this file to
     PROP_GO(&e,
-        dirmgr_hold_add_local_file(
-            sf_pair->append.hold,
-            &path,
-            uidvld_up,
-            uid_up,
-            sf_pair->append.len,
-            sf_pair->append.intdate,
-            sf_pair->append.flags
-        ),
+        dirmgr_hold_get_imaildir(sf_pair->append.hold, &m),
     cu);
+
+    if(uidvld_up != imaildir_get_uidvld_up(m)){
+        // imaildir's uidvld is out-of-date, just delete the temp file
+        LOG_WARN("detected APPEND with mismatched UIDVALIDITY\n");
+        DROP_CMD( remove_path(&path) );
+    }else{
+        // add the temp file to the maildir
+        PROP_GO(&e,
+            imaildir_add_local_file(
+                m,
+                &path,
+                uid_up,
+                sf_pair->append.len,
+                sf_pair->append.intdate,
+                sf_pair->append.flags,
+                NULL
+            ),
+        cu);
+    }
 
     // done with temporary file
     sf_pair->append.tmp_id = 0;
@@ -220,7 +238,40 @@ relay:
     );
 
 cu:
+    dirmgr_hold_release_imaildir(sf_pair->append.hold, &m);
     sf_pair_free_append(sf_pair);
+
+    return e;
+}
+
+static derr_t sf_pair_status_resp(sf_pair_t *sf_pair){
+    derr_t e = E_OK;
+
+    const ie_st_resp_t *st_resp = sf_pair->status.resp->st_resp;
+
+    if(st_resp->status != IE_ST_OK){
+        // just relay and cleanup
+        goto relay;
+    }
+
+    // post-process the STATUS response; the server's values will be wrong
+    const ie_status_resp_t *resp = sf_pair->status.resp->arg.status;
+    const dstr_t *name = ie_mailbox_name(resp->m);
+    ie_status_attr_resp_t new;
+    PROP_GO(&e,
+        dirmgr_process_status_resp(sf_pair->dirmgr, name, resp->sa, &new),
+    cu);
+
+    // modify the response before relaying it downwards
+    sf_pair->status.resp->arg.status->sa = new;
+
+relay:
+    server_passthru_resp(
+        &sf_pair->server, STEAL(passthru_resp_t, &sf_pair->status.resp)
+    );
+
+cu:
+    sf_pair_free_status(sf_pair);
 
     return e;
 }
@@ -295,6 +346,8 @@ static void sf_pair_wakeup(wake_event_t *wake_ev){
         PROP_GO(&e, sf_pair_append_req(sf_pair), fail);
     }else if(sf_pair->append.resp){
         PROP_GO(&e, sf_pair_append_resp(sf_pair), fail);
+    }else if(sf_pair->status.resp){
+        PROP_GO(&e, sf_pair_status_resp(sf_pair), fail);
     }else{
         LOG_ERROR("sf_pair_wakeup() for no reason\n");
     }
@@ -430,8 +483,14 @@ static void fetcher_cb_passthru_resp(fetcher_cb_i *fetcher_cb,
     // printf("---- fetcher_cb_passthru_resp\n");
     sf_pair_t *sf_pair = CONTAINER_OF(fetcher_cb, sf_pair_t, fetcher_cb);
     if(passthru_resp->type == PASSTHRU_APPEND){
-        // intercept APPEND responses, and process them asynchronously
+        // intercept APPEND responses and process them asynchronously
         sf_pair->append.resp = passthru_resp;
+        sf_pair_enqueue(sf_pair);
+        return;
+    }
+    if(passthru_resp->type == PASSTHRU_STATUS){
+        // intercept STATUS responses and process them asynchronously
+        sf_pair->status.resp = passthru_resp;
         sf_pair_enqueue(sf_pair);
         return;
     }

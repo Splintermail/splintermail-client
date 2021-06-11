@@ -267,6 +267,7 @@ set(EXE_TGTS
     splintermail
     encrypt_msg
     decrypt_msg
+    inject_local_msg
 )
 
 set(TEST_OBJ_TGTS
@@ -339,6 +340,7 @@ obj_depend_obj(ditm pop_client pop_server maildir)
 target_link_libraries(splintermail ui ui_harness console_input ditm key_tool)
 target_link_libraries(encrypt_msg crypto)
 target_link_libraries(decrypt_msg crypto)
+target_link_libraries(inject_local_msg imaildir)
 
 # decide if we are building server code
 if("${BUILD_SERVER_CODE}")

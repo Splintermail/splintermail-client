@@ -30,10 +30,21 @@ typedef struct {
     bool deleted:1;
 } msg_flags_t;
 
+// msg_key_t is the unique descriptor to a message
+// (only one of uid_up/uid_local may be defined)
+typedef struct {
+    unsigned int uid_up;
+    unsigned int uid_local;
+} msg_key_t;
+
+// macro for looking up messages in jsw_afind, etc
+#define KEY_UP(val) ((msg_key_t){.uid_up=val})
+#define KEY_LOCAL(val) ((msg_key_t){.uid_local=val})
+
 // the full IMAP message, owned by imaildir_t
 typedef struct {
     // immutable parts (after reaching FILLED state)
-    unsigned int uid_up;
+    msg_key_t key;
     unsigned int uid_dn;
     size_t length;
     imap_time_t internaldate;
@@ -56,7 +67,7 @@ DEF_CONTAINER_OF(msg_t, mod, msg_mod_t);
 typedef struct {
     // recent flag is only given to one server accessor, to pass to one client
     bool recent;
-    unsigned int uid_up;
+    msg_key_t key;
     unsigned int uid_dn;
     size_t length;
     imap_time_t internaldate;
@@ -75,7 +86,7 @@ typedef enum {
 } msg_expunge_state_e;
 
 typedef struct {
-    unsigned int uid_up;
+    msg_key_t key;
     /* uid_dn might be zero if we saw the uid_up but didn't download it before
        it became expunged */
     unsigned int uid_dn;
@@ -87,6 +98,29 @@ typedef struct {
 DEF_CONTAINER_OF(msg_expunge_t, node, jsw_anode_t);
 DEF_CONTAINER_OF(msg_expunge_t, mod, msg_mod_t);
 
+// msg_key_list_t is a list of key ranges
+typedef struct msg_key_list_t {
+    msg_key_t key;
+    struct msg_key_list_t *next;
+} msg_key_list_t;
+DEF_STEAL_PTR(msg_key_list_t);
+
+/* msg_store_cmd_t is like ie_store_cmd_t but uses msg_key_list_t instead of
+   ie_seq_set_t, and uid_mode is irrelevant */
+typedef struct {
+    msg_key_list_t *keys;
+    ie_store_mods_t *mods;
+    int sign;
+    bool silent;
+    ie_flags_t *flags;
+} msg_store_cmd_t;
+
+/* msg_copy_cmd_t is like ie_copy_cmd_t but uses msg_key_list_t instead of
+   ie_seq_set_t, and uid_mode is irrelevant */
+typedef struct {
+    msg_key_list_t *keys;
+    ie_mailbox_t *m;
+} msg_copy_cmd_t;
 
 typedef enum {
     UPDATE_REQ_STORE,
@@ -95,15 +129,15 @@ typedef enum {
 } update_req_type_e;
 
 typedef union {
-    /* this store command must use UIDs, even if it originated as one with
-       sequence numbers.  That calculation must happen in the dn_t, since the
-       translation must be done against the current view of that accessor. */
-    ie_store_cmd_t *uid_store;
+    /* the dn_t translates either sequence numbers or uid_dn's to msg_key's
+       and passes this msg_store_cmd_t to the imaildir_t */
+    msg_store_cmd_t *msg_store;
     /* we only support UID EXPUNGE commands internally.  Only the dn_t knows
-       which UIDs can be closed as a result of a given CLOSE command. */
-    ie_seq_set_t *uids_up;
-    // we only support UID COPY internally
-    ie_copy_cmd_t *copy_up;
+       which msg_keys can be closed as a result of a given CLOSE command. */
+    msg_key_list_t *msg_keys;
+    /* the dn_t translates either sequence numbers or uid_dn's to msg_key's
+       and passes this msg_copy_cmd_t to the imaildir_t */
+    msg_copy_cmd_t *msg_copy;
 } update_req_val_u;
 
 // a request for an update
@@ -163,7 +197,7 @@ typedef struct {
 } update_t;
 DEF_CONTAINER_OF(update_t, link, link_t);
 
-derr_t msg_new(msg_t **out, unsigned int uid_up, unsigned int uid_dn,
+derr_t msg_new(msg_t **out, msg_key_t key, unsigned int uid_dn,
         msg_state_e state, imap_time_t intdate, msg_flags_t flags,
         unsigned long modseq);
 void msg_free(msg_t **msg);
@@ -180,16 +214,43 @@ derr_t msg_view_new(msg_view_t **view, const msg_t *msg);
 void msg_view_free(msg_view_t **view);
 
 
-derr_t msg_expunge_new(msg_expunge_t **out, unsigned int uid_up,
-        unsigned int uid_dn, msg_expunge_state_e state, unsigned long modseq);
+derr_t msg_expunge_new(
+    msg_expunge_t **out,
+    msg_key_t key,
+    unsigned int uid_dn,
+    msg_expunge_state_e state,
+    unsigned long modseq
+);
 void msg_expunge_free(msg_expunge_t **expunge);
 
+// builder api
+msg_key_list_t *msg_key_list_new(
+    derr_t *e, const msg_key_t key, msg_key_list_t *tail
+);
+void msg_key_list_free(msg_key_list_t *keys);
+
+// builder api
+msg_store_cmd_t *msg_store_cmd_new(
+    derr_t *e, msg_key_list_t *keys,
+    ie_store_mods_t *mods,
+    int sign,
+    bool silent,
+    ie_flags_t *flags
+);
+void msg_store_cmd_free(msg_store_cmd_t *store);
+
+// builder api
+msg_copy_cmd_t *msg_copy_cmd_new(
+    derr_t *e, msg_key_list_t *keys, ie_mailbox_t *m
+);
+void msg_copy_cmd_free(msg_copy_cmd_t *copy);
+
 // update_req_store has a builder API
-update_req_t *update_req_store_new(derr_t *e, ie_store_cmd_t *uid_store,
+update_req_t *update_req_store_new(derr_t *e, msg_store_cmd_t *msg_store,
         void *requester);
-update_req_t *update_req_expunge_new(derr_t *e, ie_seq_set_t *uids_up,
+update_req_t *update_req_expunge_new(derr_t *e, msg_key_list_t *msg_keys,
         void *requester);
-update_req_t *update_req_copy_new(derr_t *e, ie_copy_cmd_t *copy_up,
+update_req_t *update_req_copy_new(derr_t *e, msg_copy_cmd_t *msg_copy,
         void *requester);
 void update_req_free(update_req_t *req);
 

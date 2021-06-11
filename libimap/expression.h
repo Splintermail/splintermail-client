@@ -120,6 +120,7 @@ typedef struct {
     ie_dstr_t *keywords;
     ie_dstr_t *extensions;
 } ie_flags_t;
+DEF_STEAL_PTR(ie_flags_t);
 
 // pflags, only used by PERMANENTFLAGS code of status-type response
 
@@ -376,6 +377,7 @@ typedef struct ie_store_mods_t {
     ie_store_mod_arg_t arg;
     struct ie_store_mods_t *next;
 } ie_store_mods_t;
+DEF_STEAL_PTR(ie_store_mods_t);
 
 // Status-type-related things
 

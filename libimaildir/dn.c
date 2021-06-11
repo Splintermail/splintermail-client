@@ -3,7 +3,7 @@
 #include "libuvthread/libuvthread.h"
 
 // forward declarations
-static derr_t get_uids_up_to_expunge(dn_t *dn, ie_seq_set_t **out);
+static derr_t get_msg_keys_to_expunge(dn_t *dn, msg_key_list_t **out);
 
 typedef struct {
     unsigned int uid_dn;
@@ -380,9 +380,15 @@ fail:
     return e;
 }
 
-// take a sequence set and create a UID seq set
-static derr_t copy_seq_to_uids(dn_t *dn, bool uid_mode,
-        const ie_seq_set_t *old, bool up, ie_seq_set_t **out){
+/* Take a sequence set and create a "canonical" uid_dn seq set.
+   A "canonical" set means it is well-ordered, has no duplicates, and every
+   value in the seq set is present in the dn_t's view. */
+static derr_t seq_set_to_canonical_uids_dn(
+    dn_t *dn,
+    bool uid_mode,
+    const ie_seq_set_t *old,
+    ie_seq_set_t **out
+){
     derr_t e = E_OK;
 
     *out = NULL;
@@ -395,7 +401,7 @@ static derr_t copy_seq_to_uids(dn_t *dn, bool uid_mode,
     jsw_anode_t *node;
 
     // get the last UID or last index, for replacing 0's we see in the seq_set
-    // also get the starting inde
+    // also get the starting index
     unsigned int first;
     unsigned int last;
     if(uid_mode){
@@ -430,7 +436,7 @@ static derr_t copy_seq_to_uids(dn_t *dn, bool uid_mode,
         }
         if(!node) continue;
         msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
-        unsigned int uid_out = up ? view->uid_up : view->uid_dn;
+        unsigned int uid_out = view->uid_dn;
         PROP_GO(&e, seq_set_builder_add_val(&ssb, uid_out), fail_ssb);
     }
 
@@ -444,25 +450,62 @@ fail_ssb:
     return e;
 }
 
-
-static derr_t store_cmd(dn_t *dn, const ie_dstr_t *tag,
-        const ie_store_cmd_t *store){
+// uids_dn must be a canonical uid_dn list
+static derr_t uids_dn_to_msg_keys(
+    dn_t *dn, const ie_seq_set_t *uids_dn, msg_key_list_t **out
+){
     derr_t e = E_OK;
 
-    // we need each uid_up for relaying the store command upwards
-    ie_seq_set_t *uid_up_seq;
+    *out = NULL;
+    msg_key_list_t *keys = NULL;
+
+    // no need for first or last since uids_dn is canonicalized
+    ie_seq_set_trav_t trav;
+    unsigned int i = ie_seq_set_iter(&trav, uids_dn, 0, 0);
+    for(; i != 0; i = ie_seq_set_next(&trav)){
+        // uid_dn in mailbox?
+        jsw_anode_t *node = jsw_afind(&dn->views, &i, NULL);
+        if(!node){
+            ORIG_GO(&e, E_INTERNAL, "canonical list has missing uid", cu);
+        }
+        msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
+        keys = msg_key_list_new(&e, view->key, keys);
+        CHECK_GO(&e, cu);
+    }
+
+    *out = keys;
+
+cu:
+    if(is_error(e)) msg_key_list_free(keys);
+    return e;
+}
+
+
+static derr_t store_cmd(
+    dn_t *dn, const ie_dstr_t *tag, const ie_store_cmd_t *store
+){
+    derr_t e = E_OK;
+
+    ie_seq_set_t *uids_dn = NULL;
+    msg_key_list_t *keys = NULL;
+
+    // we need each msg_keys for relaying the store command upwards
+    // start by canonicalizing the uids_dn
     PROP(&e,
-        copy_seq_to_uids(
-            dn, store->uid_mode, store->seq_set, true, &uid_up_seq
+        seq_set_to_canonical_uids_dn(
+            dn, store->uid_mode, store->seq_set, &uids_dn
         )
     );
 
     // detect noop STOREs
-    if(!uid_up_seq){
+    if(!uids_dn){
         PROP(&e, dn_gather_updates(dn, store->uid_mode, NULL) );
         PROP(&e, send_ok(dn, tag, &DSTR_LIT("noop STORE command")) );
         return e;
     }
+
+    // convert to msg_keys
+    PROP_GO(&e, uids_dn_to_msg_keys(dn, uids_dn, &keys), cu);
 
     // reset the dn.store state
     dn_free_store(dn);
@@ -470,24 +513,16 @@ static derr_t store_cmd(dn_t *dn, const ie_dstr_t *tag,
     dn->store.silent = store->silent;
 
     dn->store.tag = ie_dstr_copy(&e, tag);
-    CHECK_GO(&e, fail_dn_store);
-
-    // we need each uid_dn for building expected flags
-    ie_seq_set_t *uid_dn_seq;
-    PROP_GO(&e,
-        copy_seq_to_uids(
-            dn, store->uid_mode, store->seq_set, false, &uid_dn_seq
-        ),
-    fail_dn_store);
+    CHECK_GO(&e, cu);
 
     // figure out what all of the flags we expect to see are
     msg_flags_t cmd_flags = msg_flags_from_flags(store->flags);
     ie_seq_set_trav_t trav;
-    unsigned int uid_dn = ie_seq_set_iter(&trav, uid_dn_seq, 0, 0);
+    unsigned int uid_dn = ie_seq_set_iter(&trav, uids_dn, 0, 0);
     for(; uid_dn != 0; uid_dn = ie_seq_set_next(&trav)){
         jsw_anode_t *node = jsw_afind(&dn->views, &uid_dn, NULL);
         if(!node){
-            ORIG_GO(&e, E_INTERNAL, "uid_dn not found", fail_uids_dn);
+            ORIG_GO(&e, E_INTERNAL, "uid_dn not found", cu);
         }
 
         msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
@@ -508,7 +543,7 @@ static derr_t store_cmd(dn_t *dn, const ie_dstr_t *tag,
                         msg_flags_not(cmd_flags));
                 break;
             default:
-                ORIG_GO(&e, E_INTERNAL, "invalid store->sign", fail_uids_dn);
+                ORIG_GO(&e, E_INTERNAL, "invalid store->sign", cu);
         }
 
         // if we expect no difference in flags, omit this uid_dn
@@ -517,38 +552,30 @@ static derr_t store_cmd(dn_t *dn, const ie_dstr_t *tag,
         exp_flags_t *exp_flags;
         PROP_GO(&e,
             exp_flags_new(&exp_flags, uid_dn, new_flags),
-        fail_uids_dn);
+        cu);
         jsw_ainsert(&dn->store.tree, &exp_flags->node);
     }
 
-    // done with uids_dn
-    ie_seq_set_free(STEAL(ie_seq_set_t, &uid_dn_seq));
-
-    ie_store_cmd_t *uid_store = ie_store_cmd_new(&e,
-        true,
-        STEAL(ie_seq_set_t, &uid_up_seq),
+    msg_store_cmd_t *msg_store = msg_store_cmd_new(&e,
+        STEAL(msg_key_list_t, &keys),
         ie_store_mods_copy(&e, store->mods),
         store->sign,
         store->silent,
         ie_flags_copy(&e, store->flags)
     );
 
-    // now send the uid_store to the imaildir_t
-    update_req_t *req = update_req_store_new(&e, uid_store, dn);
+    // now send the msg_store to the imaildir_t
+    update_req_t *req = update_req_store_new(&e, msg_store, dn);
 
-    CHECK_GO(&e, fail_dn_store);
+    CHECK_GO(&e, cu);
 
-    // at this point, it may be better to leave the dn_store in-tact
     dn->store.state = DN_WAIT_WAITING;
-    PROP(&e, imaildir_dn_request_update(dn->m, req) );
+    PROP_GO(&e, imaildir_dn_request_update(dn->m, req), cu);
 
-    return e;
+cu:
+    msg_key_list_free(keys);
+    ie_seq_set_free(uids_dn);
 
-fail_uids_dn:
-    ie_seq_set_free(uid_dn_seq);
-fail_dn_store:
-    dn_free_store(dn);
-    ie_seq_set_free(uid_up_seq);
     return e;
 }
 
@@ -556,15 +583,15 @@ fail_dn_store:
 // a helper struct to lazily load the message body
 typedef struct {
     imaildir_t *m;
-    unsigned int uid_up;
+    msg_key_t key;
     ie_dstr_t *content;
     // the first taker gets *content; following takers get a copy
     bool taken;
     imf_t *imf;
 } loader_t;
 
-static loader_t loader_prep(imaildir_t *m, unsigned int uid_up){
-    return (loader_t){ .m = m, .uid_up = uid_up };
+static loader_t loader_prep(imaildir_t *m, msg_key_t key){
+    return (loader_t){ .m = m, .key = key };
 }
 
 static void loader_load(derr_t *e, loader_t *loader){
@@ -572,12 +599,12 @@ static void loader_load(derr_t *e, loader_t *loader){
     if(loader->content) return;
 
     int fd;
-    PROP_GO(e, imaildir_dn_open_msg(loader->m, loader->uid_up, &fd), fail);
+    PROP_GO(e, imaildir_dn_open_msg(loader->m, loader->key, &fd), fail);
     loader->content = ie_dstr_new_from_fd(e, fd);
 
     // if imalidir fails in this call, this will overwrite e with E_IMAILDIR
     PROP_GO(e,
-        imaildir_dn_close_msg(loader->m, loader->uid_up, &fd),
+        imaildir_dn_close_msg(loader->m, loader->key, &fd),
     fail);
 
 fail:
@@ -730,7 +757,7 @@ static derr_t send_fetch_resp(dn_t *dn, const ie_fetch_cmd_t *fetch,
     msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
 
     // handle lazy loading of the content
-    loader_t loader = loader_prep(dn->m, view->uid_up);
+    loader_t loader = loader_prep(dn->m, view->key);
 
     unsigned int seq_num;
     PROP(&e, index_to_seq_num(index, &seq_num) );
@@ -893,17 +920,18 @@ static derr_t fetch_cmd(dn_t *dn, const ie_dstr_t *tag,
         const ie_fetch_cmd_t *fetch){
     derr_t e = E_OK;
 
-    ie_seq_set_t *uid_dn_seq;
-    bool up = false;
+    ie_seq_set_t *uids_dn;
     PROP(&e,
-        copy_seq_to_uids(dn, fetch->uid_mode, fetch->seq_set, up, &uid_dn_seq)
+        seq_set_to_canonical_uids_dn(
+            dn, fetch->uid_mode, fetch->seq_set, &uids_dn
+        )
     );
 
     // TODO: support PEEK properly
 
     // build a response for every uid_dn requested
     ie_seq_set_trav_t trav;
-    unsigned int uid_dn = ie_seq_set_iter(&trav, uid_dn_seq, 0, 0);
+    unsigned int uid_dn = ie_seq_set_iter(&trav, uids_dn, 0, 0);
     for(; uid_dn != 0; uid_dn = ie_seq_set_next(&trav)){
         PROP_GO(&e, send_fetch_resp(dn, fetch, uid_dn), cu);
     }
@@ -912,7 +940,7 @@ static derr_t fetch_cmd(dn_t *dn, const ie_dstr_t *tag,
     PROP_GO(&e, send_ok(dn, tag, &msg), cu);
 
 cu:
-    ie_seq_set_free(uid_dn_seq);
+    ie_seq_set_free(uids_dn);
 
     return e;
 }
@@ -921,10 +949,10 @@ cu:
 static derr_t expunge_cmd(dn_t *dn, const ie_dstr_t *tag){
     derr_t e = E_OK;
 
-    ie_seq_set_t *uids_up;
-    PROP(&e, get_uids_up_to_expunge(dn, &uids_up) );
+    msg_key_list_t *keys;
+    PROP(&e, get_msg_keys_to_expunge(dn, &keys) );
     // detect noop EXPUNGEs
-    if(!uids_up){
+    if(!keys){
         PROP(&e, dn_gather_updates(dn, true, NULL) );
         PROP(&e, send_ok(dn, tag, &DSTR_LIT("noop EXPUNGE command")) );
         return e;
@@ -938,7 +966,7 @@ static derr_t expunge_cmd(dn_t *dn, const ie_dstr_t *tag){
 
     // request an expunge update
     update_req_t *req =
-        update_req_expunge_new(&e, STEAL(ie_seq_set_t, &uids_up), dn);
+        update_req_expunge_new(&e, STEAL(msg_key_list_t, &keys), dn);
     CHECK_GO(&e, fail);
     PROP_GO(&e, imaildir_dn_request_update(dn->m, req), fail);
 
@@ -946,7 +974,7 @@ static derr_t expunge_cmd(dn_t *dn, const ie_dstr_t *tag){
 
 fail:
     dn_free_expunge(dn);
-    ie_seq_set_free(uids_up);
+    msg_key_list_free(keys);
     return e;
 }
 
@@ -955,41 +983,46 @@ static derr_t copy_cmd(dn_t *dn, const ie_dstr_t *tag,
         const ie_copy_cmd_t *copy){
     derr_t e = E_OK;
 
-    ie_seq_set_t *uids_up;
+    ie_seq_set_t *uids_dn = NULL;
+    msg_key_list_t *keys = NULL;
+
+    // get the canonical uids_dn
     PROP(&e,
-        copy_seq_to_uids(dn, copy->uid_mode, copy->seq_set, true, &uids_up)
+        seq_set_to_canonical_uids_dn(
+            dn, copy->uid_mode, copy->seq_set, &uids_dn
+        )
     );
 
     // detect noop COPYs
-    if(!uids_up){
+    if(!uids_dn){
         PROP(&e, dn_gather_updates(dn, true, NULL) );
         PROP(&e, send_ok(dn, tag, &DSTR_LIT("noop COPY command")) );
-        return e;
+        goto cu;
     }
 
-    // reset the dn.expunge state
+    // get the msg_keys
+    PROP_GO(&e, uids_dn_to_msg_keys(dn, uids_dn, &keys), cu);
+
+    // reset the dn.copy state
     dn_free_copy(dn);
     dn->copy.tag = ie_dstr_copy(&e, tag);
     dn->copy.state = DN_WAIT_WAITING;
-    CHECK_GO(&e, fail);
+    CHECK_GO(&e, cu);
 
     // request a copy update
-    bool uid_mode = true;
-    ie_copy_cmd_t *copy_up = ie_copy_cmd_new(&e,
-        uid_mode,
-        STEAL(ie_seq_set_t, &uids_up),
+    msg_copy_cmd_t *msg_copy = msg_copy_cmd_new(&e,
+        STEAL(msg_key_list_t, &keys),
         ie_mailbox_copy(&e, copy->m)
     );
-    update_req_t *req = update_req_copy_new(&e, copy_up, dn);
-    CHECK_GO(&e, fail);
+    update_req_t *req = update_req_copy_new(&e, msg_copy, dn);
+    CHECK_GO(&e, cu);
 
-    PROP_GO(&e, imaildir_dn_request_update(dn->m, req), fail);
+    PROP_GO(&e, imaildir_dn_request_update(dn->m, req), cu);
 
-    return e;
+cu:
+    ie_seq_set_free(uids_dn);
+    msg_key_list_free(keys);
 
-fail:
-    dn_free_copy(dn);
-    ie_seq_set_free(uids_up);
     return e;
 }
 
@@ -1105,30 +1138,28 @@ cu_cmd:
 }
 
 // send an expunge for every message that we know of that is \Deleted
-static derr_t get_uids_up_to_expunge(dn_t *dn, ie_seq_set_t **out){
+static derr_t get_msg_keys_to_expunge(dn_t *dn, msg_key_list_t **out){
     derr_t e = E_OK;
     *out = NULL;
 
-    seq_set_builder_t ssb;
-    seq_set_builder_prep(&ssb);
+    msg_key_list_t *keys = NULL;
 
     jsw_atrav_t atrav;
     jsw_anode_t *node = jsw_atfirst(&atrav, &dn->views);
     for(; node; node = jsw_atnext(&atrav)){
         msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
         if(view->flags.deleted){
-            unsigned int uid_up = view->uid_up;
-            PROP_GO(&e, seq_set_builder_add_val(&ssb, uid_up), fail_ssb);
+            keys = msg_key_list_new(&e, view->key, keys);
+            CHECK_GO(&e, fail);
         }
     }
 
-    *out = seq_set_builder_extract(&e, &ssb);
-    CHECK(&e);
+    *out = keys;
 
     return e;
 
-fail_ssb:
-    seq_set_builder_free(&ssb);
+fail:
+    msg_key_list_free(keys);
     return e;
 }
 
@@ -1138,14 +1169,14 @@ derr_t dn_disconnect(dn_t *dn, bool expunge){
     if(expunge){
         /* calculate a UID EXPUNGE command that we would push to the server,
            and do not disconnect until that response comes in */
-        ie_seq_set_t *uids_up;
-        PROP(&e, get_uids_up_to_expunge(dn, &uids_up) );
-        if(!uids_up){
+        msg_key_list_t *keys;
+        PROP(&e, get_msg_keys_to_expunge(dn, &keys) );
+        if(!keys){
             // nothing to expunge, disconnect immediately
             PROP(&e, dn->cb->disconnected(dn->cb, NULL) );
         }else{
             // request an expunge update first
-            update_req_t *req = update_req_expunge_new(&e, uids_up, dn);
+            update_req_t *req = update_req_expunge_new(&e, keys, dn);
             CHECK(&e);
             dn->disconnect.state = DN_WAIT_WAITING;
             PROP(&e, imaildir_dn_request_update(dn->m, req) );

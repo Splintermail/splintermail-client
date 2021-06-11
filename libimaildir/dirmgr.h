@@ -126,6 +126,10 @@ struct dirmgr_hold_t {
     dstr_t name;
     size_t count;
     hash_elem_t h;  // dirmgr_t->holds
+
+    /* remember if get_imaildir() called imaildir_open_lite so we know if we
+       should close it on release_imaildir() */
+    bool close_on_release;
 };
 DEF_CONTAINER_OF(dirmgr_hold_t, h, hash_elem_t);
 
@@ -137,17 +141,16 @@ derr_t dirmgr_hold_new(dirmgr_t *dm, const dstr_t *name, dirmgr_hold_t **out);
 // finish holding a directory
 void dirmgr_hold_free(dirmgr_hold_t *hold);
 
-// this will rename or delete the file at *path
-// if uidvld is invalid, this will silently delete the file.
-derr_t dirmgr_hold_add_local_file(
-    dirmgr_hold_t *hold,
-    const string_builder_t *path,
-    unsigned int uidvld_up,
-    unsigned int uid_up,
-    size_t len,
-    imap_time_t intdate,
-    msg_flags_t flags
-);
+/* you MUST call dirmgr_hold_release_imaildir() in the same scope!
+   (this API exists only to make multiple calls to dirmgr_hold_add_local_file
+   reasonably efficient)
+
+   Also note that the imaildir returned may have been opened with
+   imaildir_open_lite, so the only safe calls against it are
+   imaildir_add_local_file and imaildir_get_uidvld */
+derr_t dirmgr_hold_get_imaildir(dirmgr_hold_t *hold, imaildir_t **out);
+
+void dirmgr_hold_release_imaildir(dirmgr_hold_t *hold, imaildir_t **m);
 
 
 // like a hold, but with a freeze you can't even connect to a mailbox
@@ -176,3 +179,11 @@ derr_t dirmgr_freeze_new(
     dirmgr_t *dm, const dstr_t *name, dirmgr_freeze_t **out
 );
 void dirmgr_freeze_free(dirmgr_freeze_t *freeze);
+
+// take a STATUS response from the server and correct for local info
+derr_t dirmgr_process_status_resp(
+    dirmgr_t *dm,
+    const dstr_t *name,
+    ie_status_attr_resp_t in,
+    ie_status_attr_resp_t *out
+);

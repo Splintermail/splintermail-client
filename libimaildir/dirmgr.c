@@ -442,7 +442,7 @@ static void handle_empty_imaildir(dirmgr_t *dm, imaildir_t *m){
     hashmap_del_elem(&dm->dirs, &mgd->h);
     managed_dir_free(&mgd);
 
-    // TODO: handle non-MGD_STATE_OPEN here
+    // TODO: handle non-MSG_STATE_OPEN here
 }
 
 void dirmgr_close_up(dirmgr_t *dm, up_t *up){
@@ -715,18 +715,10 @@ void dirmgr_hold_free(dirmgr_hold_t *hold){
 }
 
 
-// this will rename or delete the file at *path
-// if uidvld is invalid, this will silently delete the file.
-derr_t dirmgr_hold_add_local_file(
-    dirmgr_hold_t *hold,
-    const string_builder_t *path,
-    unsigned int uidvld_up,
-    unsigned int uid_up,
-    size_t len,
-    imap_time_t intdate,
-    msg_flags_t flags
-){
+// you MUST call dirmgr_hold_release_imaildir() in the same scope!
+derr_t dirmgr_hold_get_imaildir(dirmgr_hold_t *hold, imaildir_t **out){
     derr_t e = E_OK;
+    *out = NULL;
 
     dirmgr_t *dm = hold->dm;
 
@@ -734,11 +726,8 @@ derr_t dirmgr_hold_add_local_file(
     hash_elem_t *h = hashmap_gets(&dm->dirs, &hold->name);
     if(h != NULL){
         managed_dir_t *mgd = CONTAINER_OF(h, managed_dir_t, h);
-        PROP(&e,
-            imaildir_add_local_file(
-                &mgd->m, path, uidvld_up, uid_up, len, intdate, flags
-            )
-        );
+        *out = &mgd->m;
+        hold->close_on_release = false;
         return e;
     }
 
@@ -750,22 +739,29 @@ derr_t dirmgr_hold_add_local_file(
     PROP(&e, make_ctn(&dir_path, 0777) );
 
     // open a new temporary imaildir_t
-    imaildir_t m;
-    PROP_GO(&e, imaildir_init_lite(&m, dir_path), fail_path);
+    *out = DMALLOC_STRUCT_PTR(&e, *out);
+    CHECK(&e);
 
-    PROP(&e,
-        imaildir_add_local_file(
-            &m, path, uidvld_up, uid_up, len, intdate, flags
-        )
-    );
+    PROP_GO(&e, imaildir_init_lite(*out, dir_path), fail);
 
-    imaildir_free(&m);
+    hold->close_on_release = true;
 
     return e;
 
-fail_path:
-    DROP_CMD( remove_path(path) );
+fail:
+    free(*out);
+    *out = NULL;
     return e;
+}
+
+
+void dirmgr_hold_release_imaildir(dirmgr_hold_t *hold, imaildir_t **m){
+    if(*m == NULL) return;
+    if(hold->close_on_release){
+        imaildir_free(*m);
+        free(*m);
+    }
+    *m = NULL;
 }
 
 
@@ -775,7 +771,7 @@ derr_t dirmgr_freeze_new(
     derr_t e = E_OK;
     *out = NULL;
 
-    // check if we already have a hold for this name
+    // check if we already have a freeze for this name
     hash_elem_t *h = hashmap_gets(&dm->freezes, name);
     if(h != NULL){
         dirmgr_freeze_t *freeze = CONTAINER_OF(h, dirmgr_freeze_t, h);
@@ -813,4 +809,49 @@ void dirmgr_freeze_free(dirmgr_freeze_t *freeze){
     hashmap_del_elem(&dm->freezes, &freeze->h);
     dstr_free(&freeze->name);
     free(freeze);
+}
+
+// take a STATUS response from the server and correct for local info
+derr_t dirmgr_process_status_resp(
+    dirmgr_t *dm,
+    const dstr_t *name,
+    ie_status_attr_resp_t in,
+    ie_status_attr_resp_t *out
+){
+    derr_t e = E_OK;
+
+    ie_status_attr_resp_t new = {0};
+    *out = new;
+
+    imaildir_t m_stack = {0};
+    imaildir_t *m = NULL;
+
+    // check if there's already an imaildir open
+    hash_elem_t *h = hashmap_gets(&dm->dirs, name);
+    if(h != NULL){
+        managed_dir_t *mgd = CONTAINER_OF(h, managed_dir_t, h);
+        m = &mgd->m;
+    }else{
+        // make sure it exists on the filesystem
+        /* we know it's a valid folder since the server sent us a STATUS
+           response for this folder, so it's ok to create a mailbox here */
+        string_builder_t dir_path = sb_append(&dm->path, FD(name));
+        PROP_GO(&e, mkdirs_path(&dir_path, 0777), cu);
+
+        // also ensure ctn exist
+        PROP_GO(&e, make_ctn(&dir_path, 0777), cu);
+
+        PROP_GO(&e, imaildir_init_lite(&m_stack, dir_path), cu);
+
+        m = &m_stack;
+    }
+
+    PROP_GO(&e, imaildir_process_status_resp(m, in, &new), cu);
+
+    *out = new;
+
+cu:
+    imaildir_free(&m_stack);
+
+    return e;
 }

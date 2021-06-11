@@ -1,6 +1,6 @@
 #include "libimaildir.h"
 
-derr_t msg_new(msg_t **out, unsigned int uid_up, unsigned int uid_dn,
+derr_t msg_new(msg_t **out, msg_key_t key, unsigned int uid_dn,
         msg_state_e state, imap_time_t intdate, msg_flags_t flags,
         unsigned long modseq){
     derr_t e = E_OK;
@@ -10,7 +10,7 @@ derr_t msg_new(msg_t **out, unsigned int uid_up, unsigned int uid_dn,
     if(msg == NULL) ORIG(&e, E_NOMEM, "no mem");
 
     *msg = (msg_t){
-        .uid_up = uid_up,
+        .key = key,
         .uid_dn = uid_dn,
         .internaldate = intdate,
         .flags = flags,
@@ -80,7 +80,7 @@ derr_t msg_view_new(msg_view_t **view, const msg_t *msg){
     *view = malloc(sizeof(**view));
     if(*view == NULL) ORIG(&e, E_NOMEM, "no mem");
     **view = (msg_view_t){
-        .uid_up = msg->uid_up,
+        .key = msg->key,
         .uid_dn = msg->uid_dn,
         .length = msg->length,
         .internaldate = msg->internaldate,
@@ -96,15 +96,20 @@ void msg_view_free(msg_view_t **view){
     *view = NULL;
 }
 
-derr_t msg_expunge_new(msg_expunge_t **out, unsigned int uid_up,
-        unsigned int uid_dn, msg_expunge_state_e state, unsigned long modseq){
+derr_t msg_expunge_new(
+    msg_expunge_t **out,
+    msg_key_t key,
+    unsigned int uid_dn,
+    msg_expunge_state_e state,
+    unsigned long modseq
+){
     derr_t e = E_OK;
     *out = NULL;
 
     msg_expunge_t *expunge = malloc(sizeof(*expunge));
     if(expunge == NULL) ORIG(&e, E_NOMEM, "no mem");
     *expunge = (msg_expunge_t){
-        .uid_up = uid_up,
+        .key = key,
         .uid_dn = uid_dn,
         .state = state,
         .mod = {
@@ -124,69 +129,164 @@ void msg_expunge_free(msg_expunge_t **expunge){
     *expunge = NULL;
 }
 
+// builder api
+msg_key_list_t *msg_key_list_new(
+    derr_t *e, const msg_key_t key, msg_key_list_t *tail
+){
+    if(is_error(*e)) goto fail;
+    IE_MALLOC(e, msg_key_list_t, keys, fail);
+    *keys = (msg_key_list_t){
+        .key = key,
+        .next = tail,
+    };
+    return keys;
+
+fail:
+    msg_key_list_free(tail);
+    return NULL;
+}
+
+void msg_key_list_free(msg_key_list_t *keys){
+    while(keys){
+        msg_key_list_t *freeme = keys;
+        keys = keys->next;
+        free(freeme);
+    }
+}
+
+// builder api
+msg_store_cmd_t *msg_store_cmd_new(
+    derr_t *e, msg_key_list_t *keys,
+    ie_store_mods_t *mods,
+    int sign,
+    bool silent,
+    ie_flags_t *flags
+){
+    if(is_error(*e)) goto fail;
+    IE_MALLOC(e, msg_store_cmd_t, store, fail);
+    *store = (msg_store_cmd_t){
+        .keys = keys,
+        .mods = mods,
+        .sign = sign,
+        .silent = silent,
+        .flags = flags,
+    };
+    return store;
+
+fail:
+    msg_key_list_free(keys);
+    ie_store_mods_free(mods);
+    ie_flags_free(flags);
+    return NULL;
+}
+
+void msg_store_cmd_free(msg_store_cmd_t *store){
+    if(!store) return;
+    msg_key_list_free(store->keys);
+    ie_store_mods_free(store->mods);
+    ie_flags_free(store->flags);
+    free(store);
+}
+
+// builder api
+msg_copy_cmd_t *msg_copy_cmd_new(
+    derr_t *e, msg_key_list_t *keys, ie_mailbox_t *m
+){
+    if(is_error(*e)) goto fail;
+    IE_MALLOC(e, msg_copy_cmd_t, copy, fail);
+    *copy = (msg_copy_cmd_t){
+        .keys = keys,
+        .m = m,
+    };
+    return copy;
+
+fail:
+    msg_key_list_free(keys);
+    ie_mailbox_free(m);
+    return NULL;
+}
+
+void msg_copy_cmd_free(msg_copy_cmd_t *copy){
+    if(!copy) return;
+    msg_key_list_free(copy->keys);
+    ie_mailbox_free(copy->m);
+    free(copy);
+}
 
 // update_req_store has a builder API
-update_req_t *update_req_store_new(derr_t *e, ie_store_cmd_t *uid_store,
+update_req_t *update_req_store_new(derr_t *e, msg_store_cmd_t *msg_store,
         void *requester){
     if(is_error(*e)) goto fail;
 
     IE_MALLOC(e, update_req_t, req, fail);
 
-    req->requester = requester;
-    req->type = UPDATE_REQ_STORE;
-    req->val.uid_store = uid_store;
+    *req = (update_req_t){
+        .requester = requester,
+        .type = UPDATE_REQ_STORE,
+        .val = {
+            .msg_store = msg_store,
+        },
+    };
     link_init(&req->link);
 
     return req;
 
 fail:
-    ie_store_cmd_free(uid_store);
+    msg_store_cmd_free(msg_store);
     return NULL;
 }
 
 // update_req_expunge has a builder API
-update_req_t *update_req_expunge_new(derr_t *e, ie_seq_set_t *uids_up,
+update_req_t *update_req_expunge_new(derr_t *e, msg_key_list_t *msg_keys,
         void *requester){
     if(is_error(*e)) goto fail;
 
     IE_MALLOC(e, update_req_t, req, fail);
 
-    req->requester = requester;
-    req->type = UPDATE_REQ_EXPUNGE;
-    req->val.uids_up = uids_up;
+    *req = (update_req_t){
+        .requester = requester,
+        .type = UPDATE_REQ_EXPUNGE,
+        .val = {
+            .msg_keys = msg_keys,
+        },
+    };
     link_init(&req->link);
 
     return req;
 
 fail:
-    ie_seq_set_free(uids_up);
+    msg_key_list_free(msg_keys);
     return NULL;
 }
 
-update_req_t *update_req_copy_new(derr_t *e, ie_copy_cmd_t *copy_up,
+update_req_t *update_req_copy_new(derr_t *e, msg_copy_cmd_t *msg_copy,
         void *requester){
     if(is_error(*e)) goto fail;
 
     IE_MALLOC(e, update_req_t, req, fail);
 
-    req->requester = requester;
-    req->type = UPDATE_REQ_COPY;
-    req->val.copy_up = copy_up;
+    *req = (update_req_t){
+        .requester = requester,
+        .type = UPDATE_REQ_COPY,
+        .val = {
+            .msg_copy = msg_copy,
+        },
+    };
     link_init(&req->link);
 
     return req;
 
 fail:
-    ie_copy_cmd_free(copy_up);
+    msg_copy_cmd_free(msg_copy);
     return NULL;
 }
 
 void update_req_free(update_req_t *req){
     if(!req) return;
     switch(req->type){
-        case UPDATE_REQ_STORE: ie_store_cmd_free(req->val.uid_store); break;
-        case UPDATE_REQ_EXPUNGE: ie_seq_set_free(req->val.uids_up); break;
-        case UPDATE_REQ_COPY: ie_copy_cmd_free(req->val.copy_up); break;
+        case UPDATE_REQ_STORE: msg_store_cmd_free(req->val.msg_store); break;
+        case UPDATE_REQ_EXPUNGE: msg_key_list_free(req->val.msg_keys); break;
+        case UPDATE_REQ_COPY: msg_copy_cmd_free(req->val.msg_copy); break;
     }
     free(req);
 }
@@ -253,7 +353,7 @@ derr_t msg_write(const msg_t *msg, dstr_t *out){
     }
 
     PROP(&e, FMT(out, "msg:%x(up):%x(dn):%x:%x/%x:",
-                FU(msg->uid_up),
+                FU(msg->key.uid_up),
                 FU(msg->uid_dn),
                 FD(&state_str),
                 FD(&msg->filename),
@@ -277,8 +377,8 @@ derr_t msg_expunge_write(const msg_expunge_t *expunge, dstr_t *out){
     PROP(&e,
         FMT(out,
             "expunge:%x(up):%x(dn):%x",
-            FU(expunge->uid_up),
-            FU(expunge->uid_up),
+            FU(expunge->key.uid_up),
+            FU(expunge->uid_dn),
             FU(expunge->mod.modseq))
     );
 

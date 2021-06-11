@@ -37,6 +37,8 @@ struct relay_t {
     relay_cb_f cb;
     // if we were executing a COPY we also have to manage a HOLD
     dirmgr_hold_t *hold;
+    // we may have local files to process after a relayed command completes
+    msg_key_list_t *locals;
     link_t link;  // imaildir_t->relays
 };
 DEF_CONTAINER_OF(relay_t, link, link_t);
@@ -69,6 +71,7 @@ static void relay_free(relay_t *relay){
     imap_cmd_free(relay->cmd);
     // in case this relay was for a COPY, release the dirmgr_hold_t we had
     dirmgr_hold_free(relay->hold);
+    msg_key_list_free(relay->locals);
     free(relay);
 }
 
@@ -129,6 +132,21 @@ cu:
     return e;
 }
 
+/* local_only_update_sync is how we respond to e.g. an update_req_t for a COPY
+   containing only local uids; there's no need for an asynchronous relay */
+static derr_t local_only_update_sync(dn_t *requester){
+    derr_t e = E_OK;
+
+    ie_st_resp_t *st_resp = NULL;
+    update_arg_u arg = { .sync = st_resp };
+    update_t *update = NULL;
+    PROP(&e, update_new(&update, NULL, UPDATE_SYNC, arg) );
+
+    dn_imaildir_update(requester, update);
+
+    return e;
+}
+
 // imaildir_cb_free is an imap_cmd_cb_free_f
 static void imaildir_cb_free(imap_cmd_cb_t *cb){
     if(!cb) return;
@@ -178,9 +196,19 @@ static void detect_hi_uid_dn(imaildir_t *m, unsigned int uid_dn){
     }
 }
 
+static void detect_hi_uid_local(imaildir_t *m, unsigned int uid_local){
+    if(uid_local > m->hi_uid_local){
+        m->hi_uid_local = uid_local;
+    }
+}
+
 
 static unsigned int next_uid_dn(imaildir_t *m){
     return ++m->hi_uid_dn;
+}
+
+static unsigned int next_uid_local(imaildir_t *m){
+    return ++m->hi_uid_local;
 }
 
 
@@ -195,17 +223,6 @@ static unsigned long himodseq_dn(imaildir_t *m){
 
     // if the mailbox is empty, return 1
     return 1;
-}
-
-static unsigned int hi_uid_up(imaildir_t *m){
-    jsw_atrav_t trav;
-    jsw_anode_t *node = jsw_atlast(&trav, &m->msgs);
-    if(node != NULL){
-        msg_t *msg = CONTAINER_OF(node, msg_t, node);
-        return msg->uid_up;
-    }
-
-    return 0;
 }
 
 
@@ -249,11 +266,11 @@ static derr_t add_msg_to_maildir(const string_builder_t *base,
     if(is_dir) return e;
 
     // extract uids and metadata from filename
-    unsigned int uid_up;
+    msg_key_t key;
     size_t len;
 
     derr_t e2 =
-        maildir_name_parse(name, NULL, &uid_up, &len, NULL, NULL);
+        maildir_name_parse(name, NULL, &key, &len, NULL, NULL);
     CATCH(e2, E_PARAM){
         // TODO: Don't ignore bad filenames; add them as "need to be sync'd"
         DROP_VAR(&e2);
@@ -281,12 +298,11 @@ static derr_t add_msg_to_maildir(const string_builder_t *base,
                 not possible, the log can only produce msg_t's with state
                 UNFILLED or FILLED (otherwise it must produce a msg_expunge_t)
     */
-
     // grab the metadata we loaded from the persistent cache
-    jsw_anode_t *node = jsw_afind(&m->msgs, &uid_up, NULL);
+    jsw_anode_t *node = jsw_afind(&m->msgs, &key, NULL);
     if(node == NULL){
         // ok, check expunged files
-        node = jsw_afind(&m->expunged, &uid_up, NULL);
+        node = jsw_afind(&m->expunged, &key, NULL);
         if(!node){
             // (1)
             ORIG(&e, E_INTERNAL, "UID on file not in cache anywhere");
@@ -340,8 +356,13 @@ static derr_t handle_missing_file(imaildir_t *m, msg_t *msg,
           - msg is also in expunged:
                 not possible; the log can only produce one struct or the other
           - msg has state UNFILLED:
-                nothing is wrong, we just haven't downloaded it yet.  It will
-                be downloaded later by an up_t.
+                if msg has uid_up:
+                    nothing is wrong, we just haven't downloaded it yet.  It
+                    will be downloaded later by an up_t.
+                if msg has uid_local:
+                    the saving logic must have crashed after updating the log
+                    but before writing the file, and there's no real recovery.
+                    Still a noop.
           - msg in msgs with state FILLED:
                 this file was deleted by the user, consider it an EXPUNGE.  It
                 will be pushed later by an up_t.
@@ -353,6 +374,7 @@ static derr_t handle_missing_file(imaildir_t *m, msg_t *msg,
     switch(msg->state){
         case MSG_UNFILLED:
             // nothing is wrong, it will be downloaded later by an up_t
+            // (or it was a local msg and we can't recover the content)
             break;
 
         case MSG_NOT4ME:
@@ -361,7 +383,7 @@ static derr_t handle_missing_file(imaildir_t *m, msg_t *msg,
 
         case MSG_FILLED: {
             // treat this like an EXPUNGE
-            unsigned int uid_up = msg->uid_up;
+            msg_key_t key = msg->key;
             unsigned int uid_dn = msg->uid_dn;
 
             // no modseq until expunge is PUSHED
@@ -370,7 +392,7 @@ static derr_t handle_missing_file(imaildir_t *m, msg_t *msg,
             // create new unpushed expunge, it will be pushed later by an up_t
             msg_expunge_state_e state = MSG_EXPUNGE_UNPUSHED;
             PROP(&e,
-                msg_expunge_new(&expunge, uid_up, uid_dn, state, modseq)
+                msg_expunge_new(&expunge, key, uid_dn, state, modseq)
             );
 
             // add expunge to log
@@ -479,18 +501,20 @@ static derr_t imaildir_read_cache_and_files(imaildir_t *m, bool read_files){
         PROP(&e, imaildir_print_msgs(m) );
     }
 
-    // detect all of the uid_dn's
+    // detect all of the uid_dn's and uid_local's
     jsw_atrav_t trav;
     jsw_anode_t *node = jsw_atfirst(&trav, &m->msgs);
     for(; node != NULL; node = jsw_atnext(&trav)){
         msg_t *msg = CONTAINER_OF(node, msg_t, node);
         detect_hi_uid_dn(m, msg->uid_dn);
+        detect_hi_uid_local(m, msg->key.uid_local);
     }
 
     node = jsw_atfirst(&trav, &m->expunged);
     for(; node != NULL; node = jsw_atnext(&trav)){
         msg_expunge_t *expunge = CONTAINER_OF(node, msg_expunge_t, node);
         detect_hi_uid_dn(m, expunge->uid_dn);
+        detect_hi_uid_local(m, expunge->key.uid_local);
     }
 
     return e;
@@ -551,6 +575,7 @@ static derr_t imaildir_init_ex(imaildir_t *m, imaildir_cb_i *cb,
     }
 
     *m = (imaildir_t){
+        .initialized = true,
         .cb = cb,
         .path = path,
         .name = name,
@@ -565,10 +590,10 @@ static derr_t imaildir_init_ex(imaildir_t *m, imaildir_cb_i *cb,
     link_init(&m->relays);
 
     // init msgs
-    jsw_ainit(&m->msgs, jsw_cmp_uint, msg_jsw_get_uid_up);
+    jsw_ainit(&m->msgs, jsw_cmp_msg_key, msg_jsw_get_msg_key);
 
     // init expunged
-    jsw_ainit(&m->expunged, jsw_cmp_uint, msg_expunge_jsw_get_uid_up);
+    jsw_ainit(&m->expunged, jsw_cmp_msg_key, expunge_jsw_get_msg_key);
 
     // init mods
     jsw_ainit(&m->mods, jsw_cmp_ulong, msg_mod_jsw_get_modseq);
@@ -595,8 +620,11 @@ derr_t imaildir_init(imaildir_t *m, imaildir_cb_i *cb, string_builder_t path,
 }
 
 
-/* open an imaildir without reading files on disk.  The imaildir is only
-   allowed to be used for imaildir_add_local_file() */
+/* open an imaildir without reading files on disk.  The imaildir can
+   only be used for:
+    - imaildir_add_local_file()
+    - imaildir_get_uidvld_up()
+    - imaildir_process_status_resp() */
 derr_t imaildir_init_lite(imaildir_t *m, string_builder_t path){
     derr_t e = E_OK;
 
@@ -627,7 +655,9 @@ static void free_trees(imaildir_t *m){
 
 // free must only be called if the maildir has no accessors
 void imaildir_free(imaildir_t *m){
-    if(!m) return;
+    if(!m || !m->initialized) return;
+    m->initialized = false;
+
     DROP_CMD(imaildir_print_msgs(m) );
 
     // if we weren't already closed, we definitely are now
@@ -771,8 +801,10 @@ derr_t imaildir_up_get_unfilled_msgs(imaildir_t *m, seq_set_builder_t *ssb){
     for(; node != NULL; node = jsw_atnext(&trav)){
         msg_t *msg = CONTAINER_OF(node, msg_t, node);
         if(msg->state != MSG_UNFILLED) continue;
+        // UNFILLLED uid_local messages are not important to the up_t
+        if(msg->key.uid_up == 0) continue;
 
-        PROP(&e, seq_set_builder_add_val(ssb, msg->uid_up) );
+        PROP(&e, seq_set_builder_add_val(ssb, msg->key.uid_up) );
     }
 
     return e;
@@ -790,8 +822,10 @@ derr_t imaildir_up_get_unpushed_expunges(imaildir_t *m, ie_seq_set_t **out){
     for(; node != NULL; node = jsw_atnext(&trav)){
         msg_expunge_t *expunge = CONTAINER_OF(node, msg_expunge_t, node);
         if(expunge->state != MSG_EXPUNGE_UNPUSHED) continue;
+        // UNPUSHED shouldn't happen for uid_local messages, but whatever
+        if(expunge->key.uid_up == 0) continue;
 
-        PROP_GO(&e, seq_set_builder_add_val(&ssb, expunge->uid_up), fail);
+        PROP_GO(&e, seq_set_builder_add_val(&ssb, expunge->key.uid_up), fail);
     }
 
     *out = seq_set_builder_extract(&e, &ssb);
@@ -868,11 +902,11 @@ msg_t *imaildir_up_lookup_msg(imaildir_t *m, unsigned int uid_up,
     msg_t *msg;
 
     // check for the UID in msgs
-    jsw_anode_t *node = jsw_afind(&m->msgs, &uid_up, NULL);
+    jsw_anode_t *node = jsw_afind(&m->msgs, &KEY_UP(uid_up), NULL);
     if(!node){
         msg = NULL;
         // check if it is expunged
-        *expunged = (jsw_afind(&m->expunged, &uid_up, NULL) != NULL);
+        *expunged = (jsw_afind(&m->expunged, &KEY_UP(uid_up), NULL) != NULL);
     }else{
         msg = CONTAINER_OF(node, msg_t, node);
         *expunged = (msg->state == MSG_EXPUNGED);
@@ -898,7 +932,9 @@ derr_t imaildir_up_new_msg(imaildir_t *m, unsigned int uid_up,
     // modseq = 0 unti lafter we download the message
     long unsigned int modseq = 0;
 
-    PROP(&e, msg_new(&msg, uid_up, uid_dn, state, intdate, flags, modseq) );
+    PROP(&e,
+        msg_new(&msg, KEY_UP(uid_up), uid_dn, state, intdate, flags, modseq)
+    );
 
     // add message to log
     PROP_GO(&e, m->log->update_msg(m->log, msg), fail);
@@ -1171,7 +1207,7 @@ static derr_t place_file_fill_msg(imaildir_t *m, const string_builder_t *path,
     DSTR_VAR(cur_name, 255);
     PROP_GO(&e,
         maildir_name_write(
-            &cur_name, epoch, msg->uid_up, len, &hostname, NULL
+            &cur_name, epoch, msg->key, len, &hostname, NULL
         ),
     fail);
     string_builder_t cur_dir = CUR(&m->path);
@@ -1336,7 +1372,9 @@ fail:
     return e;
 }
 
-derr_t imaildir_up_delete_msg(imaildir_t *m, unsigned int uid_up){
+/* delete_msg is either triggered by imaildir_up_delete_msg() or by a dn_t
+   expunging a uid_local message */
+static derr_t delete_msg(imaildir_t *m, msg_key_t key){
     derr_t e = E_OK;
 
     /* Possible situations:
@@ -1368,11 +1406,11 @@ derr_t imaildir_up_delete_msg(imaildir_t *m, unsigned int uid_up){
     */
 
     // look for an existing msg_t
-    jsw_anode_t *node = jsw_afind(&m->msgs, &uid_up, NULL);
+    jsw_anode_t *node = jsw_afind(&m->msgs, &key, NULL);
     msg_t *msg = CONTAINER_OF(node, msg_t, node);
 
     // look for an existing msg_expunge_t
-    node = jsw_afind(&m->expunged, &uid_up, NULL);
+    node = jsw_afind(&m->expunged, &key, NULL);
     msg_expunge_t *expunge = CONTAINER_OF(node, msg_expunge_t, node);
 
     // make decisions on what to do
@@ -1398,7 +1436,7 @@ derr_t imaildir_up_delete_msg(imaildir_t *m, unsigned int uid_up){
     if(!expunge){
         msg_expunge_state_e state = MSG_EXPUNGE_PUSHED;
         unsigned int uid_dn = msg ? msg->uid_dn : 0;
-        PROP(&e, msg_expunge_new(&expunge, uid_up, uid_dn, state, 0) );
+        PROP(&e, msg_expunge_new(&expunge, key, uid_dn, state, 0) );
         jsw_ainsert(&m->expunged, &expunge->node);
     }
 
@@ -1415,6 +1453,14 @@ derr_t imaildir_up_delete_msg(imaildir_t *m, unsigned int uid_up){
     if(distribute){
         PROP(&e, distribute_update_expunge(m, expunge, msg) );
     }
+
+    return e;
+}
+
+derr_t imaildir_up_delete_msg(imaildir_t *m, unsigned int uid_up){
+    derr_t e = E_OK;
+
+    PROP(&e, delete_msg(m, KEY_UP(uid_up)) );
 
     return e;
 }
@@ -1529,7 +1575,7 @@ static void remove_and_delete_msg(imaildir_t *m, msg_t *msg){
     if(msg->mod.modseq){
         jsw_aerase(&m->mods, &msg->mod.modseq);
     }
-    jsw_aerase(&m->msgs, &msg->uid_up);
+    jsw_aerase(&m->msgs, &msg->key);
     msg_free(&msg);
 }
 
@@ -1576,7 +1622,7 @@ static derr_t make_expunge_updates(imaildir_t *m, link_t *unsent,
         PROP_GO(&e,
             msg_expunge_new(
                 &copy,
-                expunge->uid_up,
+                expunge->key,
                 expunge->uid_dn,
                 expunge->state,
                 expunge->mod.modseq
@@ -1641,59 +1687,90 @@ fail:
 }
 
 
-// calculate the response to an UPDATE_REQ_STORE locally
-static derr_t service_update_req_store(imaildir_t *m, update_req_t *req){
-    derr_t e = E_OK;
-    const ie_store_cmd_t *uid_store = req->val.uid_store;
+// create a ie_seq_set_t* from the uids up in a msg_key_list_t
+// (modifies keys_ptr in place)
+static ie_seq_set_t *uids_up_from_keys(derr_t *e, msg_key_list_t **head){
+    if(is_error(*e)) return NULL;
 
-    // iterate through all of the UIDs from the STORE command
-    const ie_seq_set_t *seq_set = uid_store->seq_set;
-    for(; seq_set != NULL; seq_set = seq_set->next){
-        // iterate through the UIDs in the range
-        unsigned int a = MIN(seq_set->n1, seq_set->n2);
-        unsigned int b = MAX(seq_set->n1, seq_set->n2);
-        unsigned int i = a;
-        do {
-            // check if we have this UID
-            jsw_anode_t *node = jsw_afind(&m->msgs, &i, NULL);
-            if(!node) continue;
-            // get the old flags
-            msg_t *msg = CONTAINER_OF(node, msg_t, node);
-            msg_flags_t old_flags = msg->flags;
-            // calculate the new flags
-            msg_flags_t new_flags;
-            msg_flags_t cmd_flags = msg_flags_from_flags(uid_store->flags);
-            switch(uid_store->sign){
-                case 0:
-                    // set flags exactly (new = cmd)
-                    new_flags = cmd_flags;
-                    break;
-                case 1:
-                    // add the marked flags (new = old | cmd)
-                    new_flags = msg_flags_or(old_flags, cmd_flags);
-                    break;
-                case -1:
-                    // remove the marked flags (new = old & (~cmd))
-                    new_flags = msg_flags_and(old_flags,
-                            msg_flags_not(cmd_flags));
-                    break;
-                default:
-                    ORIG(&e, E_INTERNAL, "invalid uid_store->sign");
-            }
+    seq_set_builder_t ssb;
+    seq_set_builder_prep(&ssb);
 
-            PROP(&e, update_msg_flags(m, msg, new_flags) );
+    // pointer to here
+    msg_key_list_t *p = *head;
+    // who points to here?
+    msg_key_list_t **pp = head;
 
-            // phew!
-        } while(i++ != b);
+    while(p){
+        unsigned int uid_up = p->key.uid_up;
+        if(uid_up == 0){
+            // ignore non-uid_up keys
+            pp = &p->next;
+            p = p->next;
+            continue;
+        }
+
+        PROP_GO(e, seq_set_builder_add_val(&ssb, uid_up), fail);
+
+        // pop the key from the list
+        msg_key_list_t *next = STEAL(msg_key_list_t, &p->next);
+        msg_key_list_free(p);
+        *pp = next;
+        p = next;
     }
 
-    // respond to the requester
-    dn_t *requester = req->requester;
-    update_arg_u arg = { .sync = NULL };
-    update_t *update = NULL;
-    PROP(&e, update_new(&update, NULL, UPDATE_SYNC, arg) );
+    return seq_set_builder_extract(e, &ssb);
 
-    dn_imaildir_update(requester, update);
+fail:
+    seq_set_builder_free(&ssb);
+    return NULL;
+}
+
+
+// calculate the response to an UPDATE_REQ_STORE locally
+static derr_t local_store(imaildir_t *m, const msg_store_cmd_t *store){
+    derr_t e = E_OK;
+
+    // iterate through all of the local keys in the STORE command
+    for(msg_key_list_t *k = store->keys; k != NULL; k = k->next){
+        if(k->key.uid_local == 0){
+            // these should have been sorted out aleady
+            LOG_ERROR("found non-local uid in keys for local_store()!\n");
+            continue;
+        }
+
+        // check if we have this UID
+        jsw_anode_t *node = jsw_afind(&m->msgs, &k->key, NULL);
+        if(!node){
+            // the dn_t's view should never have msg_keys that we don't
+            LOG_WARN("missing key in local_store()!\n");
+            continue;
+        }
+        // get the old flags
+        msg_t *msg = CONTAINER_OF(node, msg_t, node);
+        msg_flags_t old_flags = msg->flags;
+        // calculate the new flags
+        msg_flags_t new_flags;
+        msg_flags_t cmd_flags = msg_flags_from_flags(store->flags);
+        switch(store->sign){
+            case 0:
+                // set flags exactly (new = cmd)
+                new_flags = cmd_flags;
+                break;
+            case 1:
+                // add the marked flags (new = old | cmd)
+                new_flags = msg_flags_or(old_flags, cmd_flags);
+                break;
+            case -1:
+                // remove the marked flags (new = old & (~cmd))
+                new_flags = msg_flags_and(old_flags,
+                        msg_flags_not(cmd_flags));
+                break;
+            default:
+                ORIG(&e, E_INTERNAL, "invalid store->sign");
+        }
+
+        PROP(&e, update_msg_flags(m, msg, new_flags) );
+    }
 
     return e;
 }
@@ -1702,12 +1779,30 @@ static derr_t relay_update_req_store(imaildir_t *m, update_req_t *req){
     derr_t e = E_OK;
     dn_t *requester = req->requester;
 
-    // just relay the STORE command upwards
+    // sort out uid_up's from uid_locals
+    ie_seq_set_t *uids_up = uids_up_from_keys(&e, &req->val.msg_store->keys);
+
+    // do the local STORE immediately (unlike COPY)
+    PROP_GO(&e, local_store(m, req->val.msg_store), fail_uids_up);
+
+    // handle the case where the STORE was purely local
+    if(!uids_up){
+        PROP(&e, local_only_update_sync(requester) );
+        return e;
+    }
+
+    // relay the STORE command upwards
     size_t tag = m->tag++;
     ie_dstr_t *tag_str = write_tag(&e, tag);
-    imap_cmd_arg_t arg = {
-        .store = STEAL(ie_store_cmd_t, &req->val.uid_store)
-    };
+    bool uid_mode = true;
+    ie_store_mods_t *mods = STEAL(ie_store_mods_t, &req->val.msg_store->mods);
+    int sign = req->val.msg_store->sign;
+    bool silent = req->val.msg_store->silent;
+    ie_flags_t *flags = STEAL(ie_flags_t, &req->val.msg_store->flags);
+    ie_store_cmd_t *store = ie_store_cmd_new(
+        &e, uid_mode, STEAL(ie_seq_set_t, &uids_up), mods, sign, silent, flags
+    );
+    imap_cmd_arg_t arg = { .store = store };
     imap_cmd_t *cmd = imap_cmd_new(&e, tag_str, IMAP_CMD_STORE, arg);
     relay_t *relay = relay_new(&e, m, cmd, requester);
     CHECK(&e);
@@ -1735,20 +1830,48 @@ fail_cmd:
     imap_cmd_free(cmd_copy);
 fail_relay:
     relay_free(relay);
+fail_uids_up:
+    ie_seq_set_free(uids_up);
     return e;
 }
 
+static derr_t local_expunge(imaildir_t *m, msg_key_list_t *keys){
+    derr_t e = E_OK;
+
+    for(msg_key_list_t *k = keys; k != NULL; k = k->next){
+        if(k->key.uid_local == 0){
+            // these should have been sorted out aleady
+            LOG_ERROR("found non-local uid in keys for local_expunge()!\n");
+            continue;
+        }
+
+        PROP(&e, delete_msg(m, k->key) );
+    }
+
+    return e;
+}
 
 static derr_t relay_update_req_expunge(imaildir_t *m, update_req_t *req){
     derr_t e = E_OK;
     dn_t *requester = req->requester;
 
-    // just relay a UID EXPUNGE command upwards
+    // sort out uid_up's from uid_locals
+    ie_seq_set_t *uids_up = uids_up_from_keys(&e, &req->val.msg_keys);
+
+    /* unlike COPY, where we delay the local COPY until the remote COPY is
+       successful, we do the local EXPUNGE immediately */
+    PROP_GO(&e, local_expunge(m, req->val.msg_keys), fail_uids_up);
+
+    // handle the case where the EXPUNGE was purely local
+    if(!uids_up){
+        PROP(&e, local_only_update_sync(requester) );
+        return e;
+    }
+
+    // relay a UID EXPUNGE command upwards
     size_t tag = m->tag++;
     ie_dstr_t *tag_str = write_tag(&e, tag);
-    imap_cmd_arg_t arg = {
-        .uid_expunge = STEAL(ie_seq_set_t, &req->val.uids_up)
-    };
+    imap_cmd_arg_t arg = { .uid_expunge = STEAL(ie_seq_set_t, &uids_up) };
     imap_cmd_t *cmd = imap_cmd_new(&e, tag_str, IMAP_CMD_EXPUNGE, arg);
     relay_t *relay = relay_new(&e, m, cmd, requester);
     CHECK(&e);
@@ -1776,6 +1899,8 @@ fail_cmd:
     imap_cmd_free(cmd_copy);
 fail_relay:
     relay_free(relay);
+fail_uids_up:
+    ie_seq_set_free(uids_up);
     return e;
 }
 
@@ -1783,18 +1908,22 @@ fail_relay:
 // copy one message from a COPY command into the target mailbox
 static derr_t copy_one_msg(
     imaildir_t *m,
-    dirmgr_hold_t *hold,
-    unsigned int our_uid_up,
-    unsigned int their_uidvld_up,
-    unsigned int their_uid_up
+    // the imaidilr you got from dirmgr_hold_get_imaildir (might be m!)
+    imaildir_t *hold_m,
+    msg_key_t src_key,
+    // dst_uid_up should be zero to indicate the file is only local
+    unsigned int dst_uid_up
 ){
     derr_t e = E_OK;
 
     // make sure we have this uid
-    jsw_anode_t *node = jsw_afind(&m->msgs, &our_uid_up, NULL);
+    jsw_anode_t *node = jsw_afind(&m->msgs, &src_key, NULL);
     if(!node){
         // this might happen if we sent a COPY but received a VANISHED
-        LOG_WARN("missing uid %x in COPYUID sequence\n", FU(our_uid_up));
+        LOG_WARN(
+            "missing uid up:%x/local:%x in COPYUID sequence\n",
+            FU(src_key.uid_up), FU(src_key.uid_local)
+        );
         return e;
     }
     msg_t *msg = CONTAINER_OF(node, msg_t, node);
@@ -1802,7 +1931,10 @@ static derr_t copy_one_msg(
     // make sure the message has a file on disk
     // (I think it should always have a file but we can tolerate if it doesn't)
     if(msg->state != MSG_FILLED){
-        LOG_WARN("uid %x in COPYUID sequence is not FILLED\n", FU(our_uid_up));
+        LOG_WARN(
+            "missing uid up:%x/local:%x in COPYUID sequence is not FILLED\n",
+            FU(src_key.uid_up), FU(src_key.uid_local)
+        );
         return e;
     }
 
@@ -1822,21 +1954,64 @@ static derr_t copy_one_msg(
 
     // finally, add the message to the maildir (which may actually be us)
     PROP(&e,
-        dirmgr_hold_add_local_file(
-            hold,
+        imaildir_add_local_file(
+            hold_m,
             &tmp_path,
-            their_uidvld_up,
-            their_uid_up,
+            dst_uid_up,
             msg->length,
             msg->internaldate,
-            msg->flags
+            msg->flags,
+            NULL
         )
     );
 
     return e;
 }
 
-// relay_copy_cb is a relay_cb_f
+// local_copy will call copy_one_msg for each uid_local
+static derr_t local_copy(
+    imaildir_t *m,
+    const msg_key_list_t *keys,
+    imaildir_t *hold_m
+){
+    derr_t e = E_OK;
+
+    for(const msg_key_list_t *k = keys; k != NULL; k = k->next){
+        if(k->key.uid_local == 0){
+            // these should have been sorted out aleady
+            LOG_ERROR("found non-local uid in keys for local_copy()!\n");
+            continue;
+        }
+
+        PROP(&e, copy_one_msg(m, hold_m, k->key, 0) );
+    }
+
+    return e;
+}
+
+/* when we aren't doing the local_copy as part of a larger relay command, we
+   have to manage our own dirmgr_hold */
+static derr_t local_copy_with_hold(
+    imaildir_t *m, const msg_key_list_t *keys, const dstr_t *name
+){
+    derr_t e = E_OK;
+
+    dirmgr_hold_t *hold;
+    PROP(&e, m->cb->dirmgr_hold_new(m->cb, name, &hold) );
+
+    imaildir_t *hold_m;
+    PROP_GO(&e, dirmgr_hold_get_imaildir(hold, &hold_m), cu_hold);
+
+    PROP_GO(&e, local_copy(m, keys, hold_m), cu_hold_m);
+
+cu_hold_m:
+    dirmgr_hold_release_imaildir(hold, &hold_m);
+cu_hold:
+    dirmgr_hold_free(hold);
+    return e;
+}
+
+// relay_copy_cb is a relay_cb_f; it will call copy_one_msg for each uid_up
 static derr_t relay_copy_cb(const relay_t *relay, const ie_st_resp_t *st_resp){
     derr_t e = E_OK;
     imaildir_t *m = relay->m;
@@ -1856,45 +2031,41 @@ static derr_t relay_copy_cb(const relay_t *relay, const ie_st_resp_t *st_resp){
         ORIG(&e, E_RESPONSE, "expected COPYUID  but got something else");
     }
 
-    unsigned int their_uidvld_up = st_resp->code->arg.copyuid.uidvld;
-    const ie_seq_set_t *our_uids_up = st_resp->code->arg.copyuid.uids_in;
-    const ie_seq_set_t *their_uids_up = st_resp->code->arg.copyuid.uids_out;
+    unsigned int uidvld = st_resp->code->arg.copyuid.uidvld;
+    const ie_seq_set_t *src_uids_up = st_resp->code->arg.copyuid.uids_in;
+    const ie_seq_set_t *dst_uids_up = st_resp->code->arg.copyuid.uids_out;
 
-    // validate that both sequences are the same length
-    ie_seq_set_trav_t trav_in, trav_out;
-    // both sequences are required to be well-defined, so we can use 0's
-    unsigned int our_uid_up = ie_seq_set_iter(&trav_in, our_uids_up, 0, 0);
-    unsigned int their_uid_up = ie_seq_set_iter(&trav_out, their_uids_up, 0, 0);
-    while(our_uid_up && their_uid_up){
-        our_uid_up = ie_seq_set_next(&trav_in);
-        their_uid_up = ie_seq_set_next(&trav_out);
-    }
-    if(their_uid_up || our_uid_up){
-        ORIG(&e, E_RESPONSE, "COPYUID has mismatched ie_seq_set_t's");
+    imaildir_t *hold_m;
+    dirmgr_hold_get_imaildir(relay->hold, &hold_m);
+
+    if(uidvld != imaildir_get_uidvld_up(hold_m)){
+        LOG_WARN("detected COPY with mismatched UIDVALIDITY\n");
+        goto cu;
     }
 
-    /* Remember the highest uid_up.  This way, if we have a COPYUID that
-       exceeds the highest uid_up that we have *right now*, we don't try to
-       copy the wrong message, which could otherwise happen if we are both
-       the destination mailbox for the COPY */
-    unsigned int precopy_max_uid_up = hi_uid_up(m);
+    /* both sequences are required to be well-defined (by the COPYUID rfc)
+       so we can use 0's here */
+    ie_seq_set_trav_t src_trav, dst_trav;
+    unsigned int src_uid_up = ie_seq_set_iter(&src_trav, src_uids_up, 0, 0);
+    unsigned int dst_uid_up = ie_seq_set_iter(&dst_trav, dst_uids_up, 0, 0);
+    while(src_uid_up && dst_uid_up){
+        PROP_GO(&e,
+            copy_one_msg(m, hold_m, KEY_UP(src_uid_up), dst_uid_up),
+        cu);
 
-    our_uid_up = ie_seq_set_iter(&trav_in, our_uids_up, 0, 0);
-    their_uid_up = ie_seq_set_iter(&trav_out, their_uids_up, 0, 0);
-    while(our_uid_up && their_uid_up){
-        if(our_uid_up > precopy_max_uid_up){
-            LOG_WARN("skipping uid %x in COPYUID sequence\n", FU(our_uid_up));
-        }
-
-        PROP(&e,
-            copy_one_msg(
-                m, relay->hold, our_uid_up, their_uidvld_up, their_uid_up
-            )
-        );
-
-        our_uid_up = ie_seq_set_next(&trav_in);
-        their_uid_up = ie_seq_set_next(&trav_out);
+        src_uid_up = ie_seq_set_next(&src_trav);
+        dst_uid_up = ie_seq_set_next(&dst_trav);
     }
+    // verify the lengths matched
+    if(dst_uid_up || src_uid_up){
+        ORIG_GO(&e, E_RESPONSE, "COPYUID has mismatched ie_seq_set_t's", cu);
+    }
+
+    // finally, copy any local files that were part of the request
+    PROP_GO(&e, local_copy(m, relay->locals, hold_m), cu);
+
+cu:
+    dirmgr_hold_release_imaildir(relay->hold, &hold_m);
 
     return e;
 }
@@ -1905,10 +2076,23 @@ static derr_t relay_update_req_copy(imaildir_t *m, update_req_t *req){
 
     dn_t *requester = req->requester;
 
-    // just relay a UID COPY command upwards
+    // sort out uid_up's from uid_locals
+    ie_seq_set_t *uids_up = uids_up_from_keys(&e, &req->val.msg_copy->keys);
+
+    if(uids_up == NULL){
+        // this is the local-copy-only case
+        const dstr_t *name = ie_mailbox_name(req->val.msg_copy->m);
+        PROP(&e, local_copy_with_hold(m, req->val.msg_copy->keys, name) );
+        PROP(&e, local_only_update_sync(requester) );
+        return e;
+    }
+
+    // relay a UID COPY command upwards
     size_t tag = m->tag++;
     ie_dstr_t *tag_str = write_tag(&e, tag);
-    imap_cmd_arg_t arg = { .copy = STEAL(ie_copy_cmd_t, &req->val.copy_up) };
+    ie_mailbox_t *mailbox = ie_mailbox_copy(&e, req->val.msg_copy->m);
+    ie_copy_cmd_t *copy = ie_copy_cmd_new(&e, true, uids_up, mailbox);
+    imap_cmd_arg_t arg = { .copy = copy };
     imap_cmd_t *cmd = imap_cmd_new(&e, tag_str, IMAP_CMD_COPY, arg);
     relay_t *relay = relay_new(&e, m, cmd, requester);
     CHECK(&e);
@@ -1919,6 +2103,10 @@ static derr_t relay_update_req_copy(imaildir_t *m, update_req_t *req){
             m->cb, ie_mailbox_name(arg.copy->m), &relay->hold
         ),
     fail_relay);
+
+    // steal the local keys we need to copy after the relay command finishes
+    msg_key_list_t *locals = STEAL(msg_key_list_t, &req->val.msg_copy->keys);
+    relay->locals = locals;
 
     relay->cb = relay_copy_cb;
 
@@ -1978,18 +2166,14 @@ derr_t imaildir_dn_request_update(imaildir_t *m, update_req_t *req){
     // calculate the new views and pass a copy to every dn_t
     switch(req->type){
         case UPDATE_REQ_STORE:
-            // TODO: support either local or relayed mailboxes
-            (void)service_update_req_store;
             PROP_GO(&e, relay_update_req_store(m, req), cu);
             goto cu;
 
         case UPDATE_REQ_EXPUNGE:
-            // TODO: also support local mailboxes
             PROP_GO(&e, relay_update_req_expunge(m, req), cu);
             goto cu;
 
         case UPDATE_REQ_COPY:
-            // TODO: also support local mailboxes
             PROP_GO(&e, relay_update_req_copy(m, req), cu);
             goto cu;
     }
@@ -2011,12 +2195,12 @@ cu:
 }
 
 // open a message in a view-safe way; return a file descriptor
-derr_t imaildir_dn_open_msg(imaildir_t *m, unsigned int uid_up, int *fd){
+derr_t imaildir_dn_open_msg(imaildir_t *m, const msg_key_t key, int *fd){
     derr_t e = E_OK;
     *fd = -1;
 
-    jsw_anode_t *node = jsw_afind(&m->msgs, &uid_up, NULL);
-    if(!node) ORIG(&e, E_INTERNAL, "uid_up missing");
+    jsw_anode_t *node = jsw_afind(&m->msgs, &key, NULL);
+    if(!node) ORIG(&e, E_INTERNAL, "msg_key missing");
     msg_t *msg = CONTAINER_OF(node, msg_t, node);
 
     string_builder_t subdir_path = SUB(&m->path, msg->subdir);
@@ -2029,7 +2213,7 @@ derr_t imaildir_dn_open_msg(imaildir_t *m, unsigned int uid_up, int *fd){
 }
 
 // close a message in a view-safe way
-derr_t imaildir_dn_close_msg(imaildir_t *m, unsigned int uid_up, int *fd){
+derr_t imaildir_dn_close_msg(imaildir_t *m, const msg_key_t key, int *fd){
     derr_t e = E_OK;
     if(*fd < 0){
         return e;
@@ -2039,10 +2223,12 @@ derr_t imaildir_dn_close_msg(imaildir_t *m, unsigned int uid_up, int *fd){
     close(*fd);
     *fd = -1;
 
-    jsw_anode_t *node = jsw_afind(&m->msgs, &uid_up, NULL);
+    jsw_anode_t *node = jsw_afind(&m->msgs, &key, NULL);
     if(!node){
         // imaildir is in an inconsistent state
-        TRACE_ORIG(&e, E_INTERNAL, "uid_up missing during imaildir_close_msg");
+        TRACE_ORIG(&e,
+            E_INTERNAL, "msg_key missing during imaildir_dn_close_msg"
+        );
         imaildir_fail(m, SPLIT(e));
         RETHROW(&e, &e, E_IMAILDIR);
     }else{
@@ -2060,23 +2246,20 @@ derr_t imaildir_dn_close_msg(imaildir_t *m, unsigned int uid_up, int *fd){
 
 
 // add a file to an open imaildir_t (rename or remove path)
-// if uidvld is invalid, this will silently delete the file.
 derr_t imaildir_add_local_file(
     imaildir_t *m,
     const string_builder_t *path,
-    unsigned int uidvld_up,
+    // uid_up should be zero to indicate the file is only local
     unsigned int uid_up,
     size_t len,
     imap_time_t intdate,
-    msg_flags_t flags
+    msg_flags_t flags,
+    unsigned int *uid_dn_out
 ){
     derr_t e = E_OK;
 
-    if(m->log->get_uidvld_up(m->log) != uidvld_up){
-        // not techincally an error, but it should be rare, so print a warning
-        LOG_WARN("imaildir_add_local_file() called with invalid uidvld\n");
-        goto fail_path;
-    }
+    // build an appropriate message key
+    msg_key_t key = uid_up > 0 ? KEY_UP(uid_up) : KEY_LOCAL(next_uid_local(m));
 
     msg_t *msg = NULL;
 
@@ -2086,7 +2269,7 @@ derr_t imaildir_add_local_file(
     unsigned long modseq = 0;
     msg_state_e state = MSG_UNFILLED;
     PROP_GO(&e,
-        msg_new(&msg, uid_up, uid_dn, state, intdate, flags, modseq),
+        msg_new(&msg, key, uid_dn, state, intdate, flags, modseq),
     fail_path);
 
     // put the UNFILLED msg in msgs right away
@@ -2100,20 +2283,28 @@ derr_t imaildir_add_local_file(
     // make the message "real" in the maildir
     PROP(&e, handle_new_msg_file(m, path, msg, len) );
 
-    // let the primary up_t know about the uid we don't need to download
-    if(!link_list_isempty(&m->ups)){
-        up_t *up = CONTAINER_OF(m->ups.next, up_t, link);
-        up_imaildir_have_local_file(up, uid_up);
+    if(uid_up > 0){
+        // let the primary up_t know about the uid we don't need to download
+        if(!link_list_isempty(&m->ups)){
+            up_t *up = CONTAINER_OF(m->ups.next, up_t, link);
+            up_imaildir_have_local_file(up, uid_up);
+        }
     }
 
     // finally, push an update to the dn_t's
     PROP(&e, distribute_update_new(m, msg) );
+
+    if(uid_dn_out != NULL) *uid_dn_out = msg->uid_dn;
 
     return e;
 
 fail_path:
     DROP_CMD( remove_path(path) );
     return e;
+}
+
+unsigned int imaildir_get_uidvld_up(imaildir_t *m){
+    return m->log->get_uidvld_up(m->log);
 }
 
 // the dirmgr should call this, not the owner of the hold
@@ -2123,4 +2314,58 @@ void imaildir_hold_end(imaildir_t *m){
         up_t *up = CONTAINER_OF(m->ups.next, up_t, link);
         up_imaildir_hold_end(up);
     }
+}
+
+// TODO: write the range-limited jsw_atree traversal so this is not O(N)
+static unsigned int count_local_msgs(imaildir_t *m){
+    unsigned int count = 0;
+    jsw_atrav_t trav;
+    jsw_anode_t *node = jsw_atfirst(&trav, &m->msgs);
+    for(; node; node = jsw_atnext(&trav) ){
+        msg_t *msg = CONTAINER_OF(node, msg_t, node);
+        /* we know that all uid_local's appear in the front, based on the
+           msg_key_t cmp function */
+        if(msg->key.uid_local == 0) break;
+        count++;
+    }
+    return count;
+}
+
+// take a STATUS response from the server and correct for local info
+derr_t imaildir_process_status_resp(
+    imaildir_t *m, ie_status_attr_resp_t in, ie_status_attr_resp_t *out
+){
+    derr_t e = E_OK;
+
+    ie_status_attr_resp_t new = { .attrs = in.attrs };
+
+    if(in.attrs & IE_STATUS_ATTR_MESSAGES){
+        // the message count should be what the server reports + local msgs
+        /* note that this may be a lite imaildir which is not in sync, so
+           it is not safe to trust our own count of uid_up msgs */
+        new.messages = in.messages + count_local_msgs(m);
+    }
+    if(in.attrs & IE_STATUS_ATTR_RECENT){
+        // TODO: support /Recent
+        new.recent = 0;
+    }
+    if(in.attrs & IE_STATUS_ATTR_UIDNEXT){
+        new.uidnext = m->hi_uid_dn + 1;
+    }
+    if(in.attrs & IE_STATUS_ATTR_UIDVLD){
+        new.uidvld = m->log->get_uidvld_dn(m->log);
+    }
+    if(in.attrs & IE_STATUS_ATTR_UNSEEN){
+        // TODO: support /Unseen
+        new.unseen = 0;
+    }
+    if(in.attrs & IE_STATUS_ATTR_HIMODSEQ){
+        /* this shouldn't be possible in a relayed command, but this isn't
+           we should enforce that */
+        new.himodseq = himodseq_dn(m);
+    }
+
+    *out = new;
+
+    return e;
 }

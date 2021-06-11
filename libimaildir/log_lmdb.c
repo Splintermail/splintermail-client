@@ -131,17 +131,19 @@ fail_txn:
 typedef enum {
     LMDB_KEY_UIDVLDS,      // "v" for "validity"
     LMDB_KEY_HIMODSEQUP,  // "h" for "high"
-    LMDB_KEY_UIDUP,       // "m" for "message"
+    LMDB_KEY_MSG,       // "m" for "message"
 } lmdb_key_type_e;
 
 typedef union {
-    unsigned int uid_up;
+    msg_key_t msg_key;
 } lmdb_key_arg_u;
 
 typedef struct {
     lmdb_key_type_e type;
     lmdb_key_arg_u arg;
 } lmdb_key_t;
+
+#define LMDB_KEY_MAX_LEN 64
 
 static derr_t lmdb_key_marshal(lmdb_key_t *lk, dstr_t *out){
     derr_t e = E_OK;
@@ -154,8 +156,13 @@ static derr_t lmdb_key_marshal(lmdb_key_t *lk, dstr_t *out){
         case LMDB_KEY_HIMODSEQUP:
             PROP(&e, FMT(out, "h") );
             break;
-        case LMDB_KEY_UIDUP:
-            PROP(&e, FMT(out, "m.%x", FU(lk->arg.uid_up)) );
+        case LMDB_KEY_MSG:
+            PROP(&e,
+                FMT(out, "m.%x.%x",
+                    FU(lk->arg.msg_key.uid_up),
+                    FU(lk->arg.msg_key.uid_local)
+                )
+            );
     }
     return e;
 }
@@ -168,8 +175,6 @@ static derr_t lmdb_key_unmarshal(const dstr_t *key, lmdb_key_t *lk){
     if(key->len < 1){
         ORIG(&e, E_VALUE, "zero-length key in database");
     }
-
-    lmdb_key_arg_u arg = {0};
 
     switch(key->data[0]){
         case 'v':
@@ -191,17 +196,29 @@ static derr_t lmdb_key_unmarshal(const dstr_t *key, lmdb_key_t *lk){
             };
             break;
         case 'm':
-            // check the validity of the uid_up part of the key
-            if(key->len < 3){
-                ORIG(&e, E_VALUE, "zero-length msg uid_up in key in database");
+            {
+                // split on "."s
+                dstr_t m;
+                dstr_t uid_up;
+                dstr_t uid_local;
+                size_t len;
+                PROP(&e,
+                    dstr_split2(
+                        *key, DSTR_LIT("."), &len, &m, &uid_up, &uid_local
+                    )
+                );
+                if(len != 3){
+                    ORIG(&e, E_VALUE, "invalid msg_key_t in key in database");
+                }
+
+                lmdb_key_arg_u arg = {0};
+                PROP(&e, dstr_tou(&uid_up, &arg.msg_key.uid_up, 10) );
+                PROP(&e, dstr_tou(&uid_local, &arg.msg_key.uid_local, 10) );
+                *lk = (lmdb_key_t){
+                    .type = LMDB_KEY_MSG,
+                    .arg = arg,
+                };
             }
-            // parse the uid_up
-            dstr_t uidstr = dstr_sub(key, 2, key->len);
-            PROP(&e, dstr_tou(&uidstr, &arg.uid_up, 10) );
-            *lk = (lmdb_key_t){
-                .type = LMDB_KEY_UIDUP,
-                .arg = arg,
-            };
             break;
         default:
             ORIG(&e, E_VALUE, "invalid key in database");
@@ -362,7 +379,7 @@ static derr_t set_uidvlds(
     lmdb_key_t lk = {
         .type = LMDB_KEY_UIDVLDS,
     };
-    DSTR_VAR(key, 32);
+    DSTR_VAR(key, LMDB_KEY_MAX_LEN);
     PROP_GO(&e, lmdb_key_marshal(&lk, &key), cu_txn);
 
     MDB_val db_key = {
@@ -420,7 +437,7 @@ static derr_t set_himodseq_up(maildir_log_i* iface,
     lmdb_key_t lk = {
         .type = LMDB_KEY_HIMODSEQUP,
     };
-    DSTR_VAR(key, 32);
+    DSTR_VAR(key, LMDB_KEY_MAX_LEN);
     PROP_GO(&e, lmdb_key_marshal(&lk, &key), cu_txn);
 
     MDB_val db_key = {
@@ -469,12 +486,12 @@ static derr_t update_msg(maildir_log_i* iface, const msg_t *msg){
 
     // serialize the key
     lmdb_key_t lk = {
-        .type = LMDB_KEY_UIDUP,
+        .type = LMDB_KEY_MSG,
         .arg = {
-            .uid_up = msg->uid_up,
+            .msg_key = msg->key,
         },
     };
-    DSTR_VAR(key, 32);
+    DSTR_VAR(key, LMDB_KEY_MAX_LEN);
     PROP_GO(&e, lmdb_key_marshal(&lk, &key), cu_txn);
 
     MDB_val db_key = {
@@ -521,12 +538,12 @@ static derr_t update_expunge(maildir_log_i* iface,
 
     // serialize the key
     lmdb_key_t lk = {
-        .type = LMDB_KEY_UIDUP,
+        .type = LMDB_KEY_MSG,
         .arg = {
-            .uid_up = expunge->uid_up,
+            .msg_key = expunge->key,
         },
     };
-    DSTR_VAR(key, 32);
+    DSTR_VAR(key, LMDB_KEY_MAX_LEN);
     PROP_GO(&e, lmdb_key_marshal(&lk, &key), cu_txn);
 
     MDB_val db_key = {
@@ -583,9 +600,16 @@ static derr_t read_uidvlds(log_t *log, const dstr_t *value){
     return e;
 }
 
-static derr_t read_one_message(unsigned int uid_up, unsigned int uid_dn,
-        msg_state_e state, unsigned long modseq, msg_flags_t flags,
-        imap_time_t intdate, jsw_atree_t *msgs, jsw_atree_t *mods){
+static derr_t read_one_message(
+    msg_key_t key,
+    unsigned int uid_dn,
+    msg_state_e state,
+    unsigned long modseq,
+    msg_flags_t flags,
+    imap_time_t intdate,
+    jsw_atree_t *msgs,
+    jsw_atree_t *mods
+){
     derr_t e = E_OK;
 
     /* a zero modseq value is only allowed for the UNFILLED/NOT4ME states, and
@@ -597,7 +621,7 @@ static derr_t read_one_message(unsigned int uid_up, unsigned int uid_dn,
 
     // allocate a new msg object
     msg_t *msg;
-    PROP(&e, msg_new(&msg, uid_up, uid_dn, state, intdate, flags, modseq) );
+    PROP(&e, msg_new(&msg, key, uid_dn, state, intdate, flags, modseq) );
 
     // insert msg into mods
     if(uid_dn){
@@ -610,14 +634,19 @@ static derr_t read_one_message(unsigned int uid_up, unsigned int uid_dn,
     return e;
 }
 
-static derr_t read_one_expunge(unsigned int uid_up, unsigned int uid_dn,
-        msg_expunge_state_e state, unsigned long modseq, jsw_atree_t *expunged,
-        jsw_atree_t *mods){
+static derr_t read_one_expunge(
+    msg_key_t key,
+    unsigned int uid_dn,
+    msg_expunge_state_e state,
+    unsigned long modseq,
+    jsw_atree_t *expunged,
+    jsw_atree_t *mods
+){
     derr_t e = E_OK;
 
     // allocate a new meta object
     msg_expunge_t *expunge;
-    PROP(&e, msg_expunge_new(&expunge, uid_up, uid_dn, state, modseq) );
+    PROP(&e, msg_expunge_new(&expunge, key, uid_dn, state, modseq) );
 
     // add to mods
     if(uid_dn){
@@ -665,7 +694,7 @@ static derr_t parse_flags(const dstr_t *flags_str, msg_flags_t *flags){
     return e;
 }
 
-static derr_t read_one_value(unsigned int uid_up, dstr_t *value,
+static derr_t read_one_value(msg_key_t key, dstr_t *value,
         jsw_atree_t *msgs, jsw_atree_t *expunged, jsw_atree_t *mods){
     derr_t e = E_OK;
 
@@ -715,8 +744,11 @@ static derr_t read_one_value(unsigned int uid_up, dstr_t *value,
             imap_time_t intdate;
             PROP(&e, parse_date(&fields.data[4], &intdate) );
             // submit parsed values
-            PROP(&e, read_one_message(uid_up, uid_dn, state, modseq, flags,
-                        intdate, msgs, mods) );
+            PROP(&e,
+                read_one_message(
+                    key, uid_dn, state, modseq, flags, intdate, msgs, mods
+                )
+            );
         } break;
 
         case 'e':
@@ -728,8 +760,9 @@ static derr_t read_one_value(unsigned int uid_up, dstr_t *value,
                 state = MSG_EXPUNGE_PUSHED;
             }
             // submit parsed values
-            PROP(&e, read_one_expunge(uid_up, uid_dn, state, modseq, expunged,
-                        mods) );
+            PROP(&e,
+                read_one_expunge(key, uid_dn, state, modseq, expunged, mods)
+            );
         } break;
         default: ORIG(&e, E_VALUE, "unparsable lmdb line");
     }
@@ -780,10 +813,13 @@ static derr_t read_all_keys(log_t *log, jsw_atree_t *msgs,
                 log->himodseq_up = himodseq_up;
             } break;
 
-            case LMDB_KEY_UIDUP: {
-                // read this ui this value to the relevant structs
-                PROP_GO(&e, read_one_value(lk.arg.uid_up, &value, msgs,
-                            expunged, mods), cu_cursor);
+            case LMDB_KEY_MSG: {
+                // read this value to the relevant structs
+                PROP_GO(&e,
+                    read_one_value(
+                        lk.arg.msg_key, &value, msgs, expunged, mods
+                    ),
+                cu_cursor);
             } break;
         }
 
