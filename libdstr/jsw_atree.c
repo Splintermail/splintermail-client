@@ -274,6 +274,9 @@ jsw_anode_t *jsw_aerase ( jsw_atree_t *tree, const void *val )
 }
 
 jsw_anode_t *jsw_apop ( jsw_atree_t *tree ){
+  // handle zeroized trees safely
+  if(tree->root == NULL) return NULL;
+
   if ( tree->root == &tree->nil )
     return NULL;
 
@@ -310,6 +313,9 @@ jsw_anode_t *jsw_aindex ( jsw_atree_t *tree, size_t idx )
 static jsw_anode_t *start ( jsw_atrav_t *trav,
   jsw_atree_t *tree, int dir )
 {
+  // handle zeroized trees safely
+  if(tree->root == NULL) return NULL;
+
   trav->tree = tree;
   trav->it = tree->root;
   trav->top = 0;
