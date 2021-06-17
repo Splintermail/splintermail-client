@@ -817,6 +817,15 @@ def inject_local_msg(maildir_root):
     return int(p.stdout.strip())
 
 
+def get_seq_num(uid, rw):
+    rw.put(b"S UID fetch %d UID\r\n"%uid)
+    matches, _ = rw.wait_for_resp(
+        "S",
+        "OK",
+        require=[b"\\* ([0-9]*) FETCH.*"],
+    )
+    return matches[0][1]
+
 def get_uid(seq_num, rw):
     rw.put(b"U fetch %s UID\r\n"%str(seq_num).encode("ascii"))
     matches, _ = rw.wait_for_resp(
@@ -900,7 +909,6 @@ def test_store(cmd, maildir_root, **kwargs):
 @register_test
 def test_expunge(cmd, maildir_root, **kwargs):
     def assert_expunged(rw, tag, uid):
-        # confirm neither UID is still present
         rw.put(b"%s search UID %d\r\n"%(tag, u1))
         rw.wait_for_resp(
             tag,
@@ -913,11 +921,12 @@ def test_expunge(cmd, maildir_root, **kwargs):
         # make sure there are at least two messages present
         append_messages(rw, 2)
 
-        u1 = int(get_uid(1, rw))
-        u2 = int(get_uid(2, rw))
+        u2 = int(get_uid("*", rw))
+        u1 = u2 - 1
+        seq_base = int(get_seq_num(u1, rw))
 
         # expunge two messages and confirm they report back in reverse order
-        rw.put(b"1 store 1:2 flags \\Deleted\r\n")
+        rw.put(b"1 store %d:%d flags \\Deleted\r\n"%(seq_base, seq_base+1))
         rw.wait_for_resp("1", "OK")
 
         rw.put(b"2 expunge\r\n")
@@ -925,8 +934,8 @@ def test_expunge(cmd, maildir_root, **kwargs):
             "2",
             "OK",
             require=[
-                b"\\* 2 EXPUNGE",
-                b"\\* 1 EXPUNGE",
+                b"\\* %d EXPUNGE"%(seq_base+1),
+                b"\\* %d EXPUNGE"%seq_base,
             ],
         )
 
@@ -950,9 +959,8 @@ def test_expunge(cmd, maildir_root, **kwargs):
             "2",
             "OK",
             require=[
-                # note: these are sequence numbers
-                b"\\* 2 EXPUNGE",
-                b"\\* 1 EXPUNGE",
+                b"\\* %d EXPUNGE"%(seq_base+1),
+                b"\\* %d EXPUNGE"%seq_base,
             ],
         )
 
@@ -979,10 +987,10 @@ def test_expunge(cmd, maildir_root, **kwargs):
             "2",
             "OK",
             require=[
-                b"\\* 4 EXPUNGE",
-                b"\\* 3 EXPUNGE",
-                b"\\* 2 EXPUNGE",
-                b"\\* 1 EXPUNGE",
+                b"\\* %d EXPUNGE"%(seq_base+3),
+                b"\\* %d EXPUNGE"%(seq_base+2),
+                b"\\* %d EXPUNGE"%(seq_base+1),
+                b"\\* %d EXPUNGE"%seq_base,
             ],
         )
 
@@ -1298,6 +1306,10 @@ def get_msg_count(rw, box):
 
 @register_test
 def test_copy(cmd, maildir_root, **kwargs):
+    # sync the inbox before injecting uids (so the local messages are appended)
+    with inbox(cmd):
+        pass
+
     # inject a couple local uids
     l1 = inject_local_msg(maildir_root)
     l2 = inject_local_msg(maildir_root)
