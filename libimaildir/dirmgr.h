@@ -38,7 +38,7 @@ DEF_CONTAINER_OF(managed_dir_t, m, imaildir_t);
 
 struct dirmgr_t {
     string_builder_t path;
-    const keypair_t *keypair;
+    imaildir_hooks_i *imaildir_hooks;
     hashmap_t dirs;  // managed_dir_t->h
     hashmap_t holds;  // dirmgr_hold_t->h
     hashmap_t freezes;  // dirmgr_freeze_t->h
@@ -48,8 +48,9 @@ struct dirmgr_t {
 DEF_CONTAINER_OF(dirmgr_t, imaildir_cb, imaildir_cb_i);
 
 // path must be linked to long-lived objects
-derr_t dirmgr_init(dirmgr_t *dm, string_builder_t path,
-        const keypair_t *keypair);
+derr_t dirmgr_init(
+    dirmgr_t *dm, string_builder_t path, imaildir_hooks_i *hooks
+);
 
 /* dirmgr_free can only be called when no maildirs are opened.  There isn't a
    mechanism for forcing all of them to close, so the dirmgr lifetime should

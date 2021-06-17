@@ -1,3 +1,5 @@
+#include <stdlib.h>
+
 #include "libimaildir.h"
 
 derr_t msg_new(msg_t **out, msg_key_t key, unsigned int uid_dn,

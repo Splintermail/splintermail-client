@@ -1,3 +1,5 @@
+#include <stdlib.h>
+
 #include "libimaildir.h"
 
 static unsigned int deliv_id_ver = 1;

@@ -1,3 +1,5 @@
+#include <stdlib.h>
+
 #include "libimaildir.h"
 
 #include "libuvthread/libuvthread.h"

@@ -117,10 +117,33 @@ struct imaildir_cb_i {
     );
 };
 
+/* libimaildir shouldn't have splintermail crypto hardcoded into it, so we
+   customize that behavior in imaildir_hooks_i.
+
+   The hooks differs from imaildir_cb_i because imaildir_cb_i is _required_ and
+   is basically always provided by a dirmgr_t, wheras imaildir_hooks_i probably
+   is passed through from some higher level.
+
+   In the imaildir_t, hooks is allowed to be NULL, as are its elements */
+struct imaildir_hooks_i;
+typedef struct imaildir_hooks_i imaildir_hooks_i;
+struct imaildir_hooks_i {
+    /* process_msg can modify a message before saving it, and if ignore is set
+       to true, the imaildir_t will remember that the message is not for us */
+    derr_t (*process_msg)(
+        imaildir_hooks_i*,
+        const string_builder_t *path,
+        const dstr_t *content,
+        size_t *len,
+        bool *ignore
+    );
+};
+
 // IMAP maildir
 struct imaildir_t {
     imaildir_cb_i *cb;
     bool initialized;
+    imaildir_hooks_i *hooks;
     // path to this maildir on the filesystem
     string_builder_t path;
     // the name of this box for SELECT purposes
@@ -130,8 +153,6 @@ struct imaildir_t {
     unsigned int hi_uid_local; // starts at 0 for empty boxes
     // mailbox flags
     ie_mflags_t mflags;
-    // crypto for this box
-    const keypair_t *keypair;
     // has this imaildir synced yet? (subsequent sync's don't send updates)
     bool synced;
 
@@ -195,8 +216,14 @@ struct imaildir_t {
 };
 
 // open a maildir at path, path and name must be linked to long-lived objects
-derr_t imaildir_init(imaildir_t *m, imaildir_cb_i *cb, string_builder_t path,
-        const dstr_t *name, const keypair_t *keypair);
+derr_t imaildir_init(
+    imaildir_t *m,
+    imaildir_cb_i *cb,
+    string_builder_t path,
+    const dstr_t *name,
+    // hooks is allowed to be NULL, as are the elements of hooks
+    imaildir_hooks_i *hooks
+);
 
 /* open an imaildir without reading files on disk.  The imaildir can
    only be used for imaildir_add_local_file() and imaildir_get_uidvld_up */

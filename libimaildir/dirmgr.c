@@ -1,3 +1,5 @@
+#include <stdlib.h>
+
 #include "libimaildir.h"
 
 REGISTER_ERROR_TYPE(E_FROZEN, "E_FROZEN");
@@ -38,7 +40,7 @@ static derr_t managed_dir_new(managed_dir_t **out, dirmgr_t *dm,
     string_builder_t path = sb_append(&dm->path, FD(&mgd->name));
     PROP_GO(&e,
         imaildir_init(
-            &mgd->m, &dm->imaildir_cb, path, &mgd->name, dm->keypair
+            &mgd->m, &dm->imaildir_cb, path, &mgd->name, dm->imaildir_hooks
         ),
     fail_name);
 
@@ -558,8 +560,9 @@ static derr_t imaildir_dirmgr_hold_new(
     return e;
 }
 
-derr_t dirmgr_init(dirmgr_t *dm, string_builder_t path,
-        const keypair_t *keypair){
+derr_t dirmgr_init(
+    dirmgr_t *dm, string_builder_t path, imaildir_hooks_i *imaildir_hooks
+){
     derr_t e = E_OK;
 
     // first, make sure we can prepare the filesystem how we like it
@@ -568,7 +571,7 @@ derr_t dirmgr_init(dirmgr_t *dm, string_builder_t path,
     PROP(&e, empty_dir(&tmp_path) );
 
     *dm = (dirmgr_t){
-        .keypair = keypair,
+        .imaildir_hooks = imaildir_hooks,
         .path = path,
         .imaildir_cb = {
             .allow_download = imaildir_cb_allow_download,

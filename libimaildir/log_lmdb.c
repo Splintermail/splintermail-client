@@ -1,5 +1,7 @@
-#include <lmdb.h>
+#include <stdlib.h>
 #include <string.h>
+
+#include <lmdb.h>
 
 #include "libimaildir.h"
 

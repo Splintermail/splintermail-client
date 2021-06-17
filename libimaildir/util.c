@@ -1,3 +1,5 @@
+#include <stdlib.h>
+
 #include "libdstr/libdstr.h"
 
 #include "libimaildir.h"

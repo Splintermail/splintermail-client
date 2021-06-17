@@ -10,6 +10,7 @@
 #include <unistd.h>
 
 #include <libdstr/libdstr.h>
+#include <libcrypto/libcrypto.h>
 #include <libimaildir/libimaildir.h>
 
 // stolen from citm/user.c
@@ -46,7 +47,7 @@ static derr_t _load_or_gen_mykey(
     return e;
 }
 
-static derr_t prepare_msg(
+static derr_t encrypt_msg(
     const dstr_t msg, keypair_t *key, const string_builder_t *path
 ){
     derr_t e = E_OK;
@@ -112,7 +113,7 @@ static derr_t inject_local_msg(
     PROP_GO(&e, _load_or_gen_mykey(&key_path, &mykey), cu);
 
     // create a dirmgr
-    PROP_GO(&e, dirmgr_init(&dm, mail_path, mykey), cu);
+    PROP_GO(&e, dirmgr_init(&dm, mail_path, NULL), cu);
 
     // get a hold on a mailbox
     PROP_GO(&e, dirmgr_hold_new(&dm, &mailbox, &hold), cu);
@@ -121,7 +122,7 @@ static derr_t inject_local_msg(
     PROP_GO(&e, dirmgr_hold_get_imaildir(hold, &m), cu);
 
     // encrypt the message to a file
-    PROP_GO(&e, prepare_msg(msg, mykey, &msg_path), cu);
+    PROP_GO(&e, encrypt_msg(msg, mykey, &msg_path), cu);
 
     // inject the message
     imap_time_t intdate = {0};
