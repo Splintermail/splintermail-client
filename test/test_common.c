@@ -755,6 +755,7 @@ cleanup:
 
 static derr_t test_string_builder(void){
     derr_t e = E_OK;
+    LOG_INFO("----- test string_builder ---------------\n");
 
     string_builder_t sb0 = SB(FS("0"));
     string_builder_t sb1 = sb_append(&sb0, FS("1"));
@@ -794,6 +795,28 @@ cleanup:
     return e;
 }
 
+static derr_t test_zeroized(void){
+    dstr_t d = {0};
+    LIST(dstr_t) ds;
+
+    derr_t e = E_OK;
+
+    LOG_INFO("----- test zeroized ---------------------\n");
+
+    dstr_free(&d);
+    PROP_GO(&e, dstr_new(&d, 8), cleanup);
+    dstr_free(&d);
+
+    LIST_FREE(dstr_t, &ds);
+    PROP_GO(&e, LIST_NEW(dstr_t, &ds, 8), cleanup);
+    LIST_FREE(dstr_t, &ds);
+
+cleanup:
+    dstr_free(&d);
+    LIST_FREE(dstr_t, &ds);
+    return e;
+}
+
 int main(int argc, char** argv){
     derr_t e = E_OK;
     // parse options and set default log level
@@ -819,6 +842,7 @@ int main(int argc, char** argv){
     PROP_GO(&e, test_snprintf_of_fmt(),      test_fail);
     PROP_GO(&e, test_list_append_with_mem(), test_fail);
     PROP_GO(&e, test_string_builder(),       test_fail);
+    PROP_GO(&e, test_zeroized(),             test_fail);
 
     int exitval;
 test_fail:

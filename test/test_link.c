@@ -76,6 +76,28 @@ static derr_t test_link_append_to_other_list(void){
     return e;
 }
 
+static derr_t test_zeroized(void){
+    derr_t e = E_OK;
+
+    link_t link = {0};
+
+    if(!link_list_isempty(&link)){
+        ORIG(&e, E_VALUE, "zeroized list should be empty");
+    }
+
+    // check on common operations while other objects are freed
+    if(link_list_pop_first(&link) != NULL){
+        ORIG(&e, E_VALUE, "zeroized list should return NULL from pop_first()");
+    }
+    if(link_list_pop_last(&link) != NULL){
+        ORIG(&e, E_VALUE, "zeroized list should return NULL from pop_last()");
+    }
+
+    link_remove(&link);
+
+    return e;
+}
+
 int main(int argc, char** argv){
     derr_t e = E_OK;
     // parse options and set default log level
@@ -83,6 +105,7 @@ int main(int argc, char** argv){
 
     PROP_GO(&e, test_link(), test_fail);
     PROP_GO(&e, test_link_append_to_other_list(), test_fail);
+    PROP_GO(&e, test_zeroized(), test_fail);
 
     LOG_ERROR("PASS\n");
     return 0;

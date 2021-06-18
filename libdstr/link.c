@@ -52,6 +52,9 @@ void link_list_append_list(link_t *recip, link_t *donor){
 }
 
 link_t *link_list_pop_first(link_t *head){
+    // safe to call on a zeroized link
+    if(head->next == NULL) return NULL;
+
     link_t *first = head->next;
     if(first == head){
         return NULL;
@@ -61,6 +64,9 @@ link_t *link_list_pop_first(link_t *head){
 }
 
 link_t *link_list_pop_last(link_t *head){
+    // safe to call on a zeroized link
+    if(head->next == NULL) return NULL;
+
     link_t *last = head->prev;
     if(last == head){
         return NULL;
@@ -70,6 +76,9 @@ link_t *link_list_pop_last(link_t *head){
 }
 
 void link_remove(link_t *link){
+    // safe to call on a zeroized link
+    if(link->next == NULL) return;
+
     // for a link not in a list, this will reduce to link->prev = link->prev
     link->next->prev = link->prev;
     link->prev->next = link->next;
@@ -78,5 +87,6 @@ void link_remove(link_t *link){
 }
 
 bool link_list_isempty(link_t *head){
-    return head == head->next;
+    // safe to call on a zeroized link
+    return head == head->next || head->next == NULL;
 }

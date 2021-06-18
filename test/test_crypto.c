@@ -423,6 +423,27 @@ cu_file:
     return e;
 }
 
+static derr_t test_zeroized(void){
+    decrypter_t dc = {0};
+    encrypter_t ec = {0};
+
+    derr_t e = E_OK;
+
+    decrypter_free(&dc);
+    encrypter_free(&ec);
+
+    PROP_GO(&e, decrypter_new(&dc), cu);
+    decrypter_free(&dc);
+
+    PROP_GO(&e, encrypter_new(&ec), cu);
+    encrypter_free(&ec);
+
+cu:
+    decrypter_free(&dc);
+    encrypter_free(&ec);
+    return e;
+}
+
 int main(int argc, char** argv){
     derr_t e = E_OK;
     // parse options and set default log level
@@ -435,6 +456,7 @@ int main(int argc, char** argv){
     PROP_GO(&e, test_crypto(), test_fail);
     PROP_GO(&e, test_keypair(), test_fail);
     PROP_GO(&e, test_keyshare(), test_fail);
+    PROP_GO(&e, test_zeroized(), test_fail);
 
     LOG_ERROR("PASS\n");
     crypto_library_close();
