@@ -468,7 +468,6 @@ static void fetcher_cb_login_result(fetcher_cb_i *fetcher_cb,
     sf_pair_t *sf_pair = CONTAINER_OF(fetcher_cb, sf_pair_t, fetcher_cb);
 
     if(login_result){
-        // the set_owner call can fail, so enqueue the work
         sf_pair->login_result = true;
         sf_pair_enqueue(sf_pair);
     }else{

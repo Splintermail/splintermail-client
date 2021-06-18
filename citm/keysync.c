@@ -606,7 +606,7 @@ static derr_t plus_resp(keysync_t *ks){
 
     // if we got a plus and we do not need an xkeyadd, that means we are synced
     if(!ks->xkeyadd.needed && !ks->initial_sync_complete){
-        ks->cb->synced(ks->cb);
+        PROP(&e, ks->cb->synced(ks->cb) );
     }
 
     return e;

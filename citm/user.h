@@ -67,3 +67,4 @@ derr_t user_new(
 
 void user_add_sf_pair(user_t *user, sf_pair_t *sf_pair);
 void user_remove_sf_pair(user_t *user, sf_pair_t *sf_pair);
+derr_t user_mailbox_synced(user_t *user, const dstr_t mailbox);

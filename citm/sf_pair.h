@@ -5,8 +5,6 @@ typedef struct sf_pair_cb_i sf_pair_cb_i;
 
 // the interface the server/fetcher needs from its owner
 struct sf_pair_cb_i {
-    /* note that .set_owner() will actually change the callback pointer (it's a
-       real transfer of ownership) */
     derr_t (*request_owner)(
         sf_pair_cb_i*,
         sf_pair_t *sf_pair,
@@ -16,6 +14,9 @@ struct sf_pair_cb_i {
         const char *remote_svc,
         const dstr_t *name,
         const dstr_t *pass
+    );
+    derr_t (*mailbox_synced)(
+        sf_pair_cb_i*, sf_pair_t *sf_pair, const dstr_t mailbox
     );
     void (*dying)(sf_pair_cb_i*, sf_pair_t *sf_pair, derr_t error);
     void (*release)(sf_pair_cb_i*, sf_pair_t *sf_pair);

@@ -132,6 +132,7 @@ struct imaildir_hooks_i {
        to true, the imaildir_t will remember that the message is not for us */
     derr_t (*process_msg)(
         imaildir_hooks_i*,
+        const dstr_t *mailbox,
         const string_builder_t *path,
         const dstr_t *content,
         size_t *len,

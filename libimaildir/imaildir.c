@@ -1124,7 +1124,12 @@ derr_t imaildir_up_handle_static_fetch_attr(imaildir_t *m,
         // post-process the downloaded message
         PROP(&e,
             m->hooks->process_msg(
-                m->hooks, &tmp_path, &extra->content->dstr, &len, &ignore
+                m->hooks,
+                m->name,
+                &tmp_path,
+                &extra->content->dstr,
+                &len,
+                &ignore
             )
         );
     } else {

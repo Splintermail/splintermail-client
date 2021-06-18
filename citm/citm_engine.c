@@ -63,6 +63,23 @@ static derr_t citme_sf_pair_request_owner(
 }
 
 
+static derr_t citme_sf_pair_mailbox_synced(
+    sf_pair_cb_i *cb, sf_pair_t *sf_pair, const dstr_t mailbox
+){
+    derr_t e = E_OK;
+    (void)cb;
+
+    if(!sf_pair->owner){
+        ORIG(&e, E_INTERNAL, "got mailbox_synced from sf_pair with no owner");
+    }
+
+    user_t *user = sf_pair->owner;
+    PROP(&e, user_mailbox_synced(user, mailbox) );
+
+    return e;
+}
+
+
 static void citme_sf_pair_dying(sf_pair_cb_i *cb, sf_pair_t *sf_pair,
         derr_t error){
     citme_t *citme = CONTAINER_OF(cb, citme_t, sf_pair_cb);
@@ -201,6 +218,7 @@ derr_t citme_init(
 
         .sf_pair_cb = {
             .request_owner = citme_sf_pair_request_owner,
+            .mailbox_synced = citme_sf_pair_mailbox_synced,
             .dying = citme_sf_pair_dying,
             .release = citme_sf_pair_release,
         },

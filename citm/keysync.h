@@ -11,7 +11,7 @@ struct keysync_cb_i {
     void (*release)(keysync_cb_i*);
 
     // synced indicates the initial synchronization is complete
-    void (*synced)(keysync_cb_i*);
+    derr_t (*synced)(keysync_cb_i*);
     // key_created must consume or free kp in all cases
     derr_t (*key_created)(keysync_cb_i*, keypair_t **kp);
     void (*key_deleted)(keysync_cb_i*, const dstr_t *fpr);
