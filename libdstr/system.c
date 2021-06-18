@@ -1,5 +1,6 @@
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "libdstr.h"
 #include "errno.h"
@@ -54,6 +55,26 @@ derr_t dtime(time_t *out){
     }
 
     return e;
+}
+
+derr_t dtimezone(long int *tz){
+#ifndef _WIN32 // UNIX
+    derr_t e = E_OK;
+    // be sure the extern variable is correct, even though this is inefficient
+    tzset();
+    *tz = timezone;
+    return e;
+#else // WINDOWS
+    derr_t e = E_OK;
+    // https://docs.microsoft.com/en-us/cpp/c-runtime-library/reference/get-timezone
+    error_t error = _get_timezone(tz);
+    if(error != 0){
+        // I see no docs at all about what error_t means
+        TRACE(&e, "_get_timezone returned error_t=%x\n", FI(error));
+        ORIG(&e, E_OS, "_get_timezone failed");
+    }
+    return e;
+#endif
 }
 
 #ifndef _WIN32

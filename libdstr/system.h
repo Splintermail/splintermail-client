@@ -12,6 +12,9 @@ extern char **compat_environ;
 // sets time to epoch time or raises an error
 derr_t dtime(time_t *time);
 
+// get the timezone (offset from UTC in seconds)
+derr_t dtimezone(long int *tz);
+
 #ifndef _WIN32
 
 derr_t dpipe(int *read_fd, int *write_fd);
