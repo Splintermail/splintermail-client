@@ -33,6 +33,7 @@ static void user_finalize(refs_t *refs){
     dirmgr_free(&user->dirmgr);
     keyshare_free(&user->keyshare);
     keypair_free(&user->my_keypair);
+    fpr_watcher_free(&user->fpr_watcher);
     dstr_free(&user->name);
     dstr_free(&user->pass);
     refs_free(&user->refs);
@@ -475,10 +476,19 @@ derr_t user_new(
     user->mail_path = sb_append(&user->path, FS("mail"));
     user->key_path = sb_append(&user->path, FS("keys"));
 
+    // string_builder_t sb = sb_append(&user->path, FS("fingerprints"));
+    // PFMT("initializing watcher: %x\n", FSB(&sb, &DSTR_LIT("/")));
+    PROP_GO(&e,
+        fpr_watcher_init(
+            &user->fpr_watcher,
+            sb_append(&user->path, FS("fingerprints"))
+        ),
+    fail_pass);
+
     // load or create my_keypair
     PROP_GO(&e,
         _load_or_gen_mykey(&user->key_path, &user->my_keypair),
-    fail_pass);
+    fail_fpr_watcher);
 
     // populate keyshare
     PROP_GO(&e, keyshare_init(&user->keyshare), fail_keypair);
@@ -526,6 +536,8 @@ fail_keyshare:
     keyshare_free(&user->keyshare);
 fail_keypair:
     keypair_free(&user->my_keypair);
+fail_fpr_watcher:
+    fpr_watcher_free(&user->fpr_watcher);
 fail_pass:
     dstr_free(&user->pass);
 fail_name:

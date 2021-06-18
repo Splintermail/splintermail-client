@@ -310,6 +310,7 @@ set(TEST_EXE_TGTS
     test_imf_scan
     test_imf_parse
     test_smtp_resp
+    test_fpr_watcher
 )
 
 # objects become OBJECT libraries, but are accessed through INTERFACE libraries
@@ -411,6 +412,12 @@ if("${BUILD_TESTS}")
             COMMAND ${valgrind_cmd} "./${tgt}" "${PROJECT_SOURCE_DIR}/test/files")
     endforeach()
 
+    # hack: there isn't a library for fpr_watcher, so we just compile it right
+    # into the test binary.
+    target_sources(test_fpr_watcher PRIVATE citm/fpr_watcher.c)
+    default_compile_options(test_fpr_watcher TRUE)
+    define_file_logname_for_target(test_fpr_watcher)
+
     # add some python-based end-to-end tests
     add_test(NAME "e2e_citm"
         COMMAND
@@ -466,6 +473,8 @@ if("${BUILD_TESTS}")
     target_link_libraries(test_imf_scan imap)
     target_link_libraries(test_imf_parse imap)
     target_link_libraries(test_smtp_resp imap)
+    target_link_libraries(test_fpr_watcher dstr)
+
 
     if(WIN32)
         # make sure the user provided the location of Pthreads

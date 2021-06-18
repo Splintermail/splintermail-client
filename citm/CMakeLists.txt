@@ -8,6 +8,7 @@ add_executable(
     user.c
     citm_engine.c
     sf_pair.c
+    fpr_watcher.c
 )
 target_link_libraries(citm engine dstr imaildir)
 default_compile_options(citm TRUE)

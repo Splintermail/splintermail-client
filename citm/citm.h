@@ -33,5 +33,6 @@ DEF_CONTAINER_OF(citme_session_owner_t, s, imap_session_t);
 #include "server.h"
 #include "sf_pair.h"
 #include "keysync.h"
+#include "fpr_watcher.h"
 #include "user.h"
 #include "citm_engine.h"

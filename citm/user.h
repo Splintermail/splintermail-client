@@ -29,6 +29,9 @@ struct user_t {
     keyshare_t keyshare;
     bool initial_keysync_complete;
 
+    // logic for client-side 'new key' checks
+    fpr_watcher_t fpr_watcher;
+
     keysync_cb_i keysync_cb;
     // a manager_i for the keysync_t
     manager_i keysync_mgr;
