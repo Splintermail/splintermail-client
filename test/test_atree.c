@@ -402,6 +402,32 @@ static derr_t test_atrav(void){
     return e;
 }
 
+/* a zeriozed object should be safe to iterate through, since that is a common
+   operation in freeing other objects */
+static derr_t test_iter_zeroized(void){
+    derr_t e = E_OK;
+
+    jsw_atree_t tree = {0};
+
+    jsw_atrav_t trav;
+    jsw_anode_t *node = jsw_atfirst(&trav, &tree);
+    if(node != NULL){
+        ORIG(&e, E_VALUE, "zeroized tree should return NULL when iterated" );
+    }
+
+    node = jsw_atlast(&trav, &tree);
+    if(node != NULL){
+        ORIG(&e, E_VALUE, "zeroized tree should return NULL when iterated" );
+    }
+
+    node = jsw_apop(&tree);
+    if(node != NULL){
+        ORIG(&e, E_VALUE, "zeroized tree should return NULL for jsw_apop" );
+    }
+
+    return e;
+}
+
 int main(int argc, char** argv){
     derr_t e = E_OK;
     // parse options and set default log level
@@ -416,6 +442,7 @@ int main(int argc, char** argv){
     PROP_GO(&e, test_indicies(), test_fail);
     PROP_GO(&e, test_apop(), test_fail);
     PROP_GO(&e, test_atrav(), test_fail);
+    PROP_GO(&e, test_iter_zeroized(), test_fail);
 
     LOG_ERROR("PASS\n");
     return 0;

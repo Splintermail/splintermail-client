@@ -13,6 +13,7 @@
       4) Bug in jsw_aerase:
            Search for successor should save the path
 */
+#include <stdlib.h>
 
 #include "libdstr.h"
 
@@ -442,4 +443,36 @@ jsw_anode_t *jsw_pop_atnext( jsw_atrav_t *trav )
 jsw_anode_t *jsw_pop_atprev( jsw_atrav_t *trav )
 {
     return pop_move ( trav, 0 );
+}
+
+// jsw-wrapped types
+
+const void *jsw_str_get_dstr(const jsw_anode_t *node){
+    const jsw_str_t *str = CONTAINER_OF(node, jsw_str_t, node);
+    return &str->dstr;
+}
+
+derr_t jsw_str_new(const dstr_t bin, jsw_str_t **out){
+    derr_t e = E_OK;
+    *out = NULL;
+
+    jsw_str_t *str = DMALLOC_STRUCT_PTR(&e, str);
+    CHECK(&e);
+
+    PROP_GO(&e, dstr_copy(&bin, &str->dstr), fail);
+
+    *out = str;
+    return e;
+
+fail:
+    free(str);
+    return e;
+}
+
+void jsw_str_free(jsw_str_t **old){
+    jsw_str_t *str = *old;
+    if(!str) return;
+    dstr_free(&str->dstr);
+    free(str);
+    *old = NULL;
 }

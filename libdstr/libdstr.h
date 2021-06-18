@@ -5,7 +5,6 @@
 #include <stdint.h>
 #include <time.h>
 
-#include "jsw_atree.h"
 #include "win_compat.h"
 
 #include "common.h"
@@ -18,6 +17,7 @@
 #include "logger.h"
 #include "opt_parse.h"
 #include "hashmap.h"
+#include "jsw_atree.h"
 
 
 #endif // LIBDSTR_H

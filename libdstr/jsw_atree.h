@@ -101,3 +101,14 @@ jsw_anode_t *jsw_at_ge_ex ();
 /* like atnext/atprev except the current value is removed from the tree */
 jsw_anode_t *jsw_pop_atnext( jsw_atrav_t *trav );
 jsw_anode_t *jsw_pop_atprev( jsw_atrav_t *trav );
+
+// jsw-friendly wrapper types
+typedef struct {
+    dstr_t dstr;
+    jsw_anode_t node;
+} jsw_str_t;
+DEF_CONTAINER_OF(jsw_str_t, node, jsw_anode_t);
+
+const void *jsw_str_get_dstr(const jsw_anode_t *node);
+derr_t jsw_str_new(const dstr_t bin, jsw_str_t **out);
+void jsw_str_free(jsw_str_t **old);
