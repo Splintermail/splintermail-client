@@ -3,8 +3,7 @@
 #include <limits.h>
 
 #include <libdstr/libdstr.h>
-// include fpr_watcher private header directly, just for testing
-#include <citm/fpr_watcher.h>
+#include <libcitm/libcitm.h>
 
 #include "test_utils.h"
 

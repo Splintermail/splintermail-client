@@ -757,6 +757,7 @@ def inbox(cmd):
 @register_test
 def test_start_kill(cmd, maildir_root, **kwargs):
     with Subproc(cmd) as subproc:
+        print('started!')
         pass
 
 
@@ -1992,8 +1993,6 @@ if __name__ == "__main__":
                     os.path.join(test_files, "ssl", "good-cert.pem"),
                     "--tls-dh",
                     os.path.join(test_files, "ssl", "dh_4096.pem"),
-                    "--mail-key",
-                    os.path.join(test_files, "key_tool", "key_m.pem"),
                     "--maildirs",
                     maildir_root,
                 ]

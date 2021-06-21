@@ -1,4 +1,4 @@
-#include "citm.h"
+#include "libcitm.h"
 
 // forward declarations
 static derr_t advance_state(keysync_t *ks);

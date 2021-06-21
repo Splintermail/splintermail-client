@@ -36,3 +36,4 @@ DEF_CONTAINER_OF(citme_session_owner_t, s, imap_session_t);
 #include "fpr_watcher.h"
 #include "user.h"
 #include "citm_engine.h"
+#include "citm.h"

@@ -1,4 +1,4 @@
-#include "citm.h"
+#include "libcitm.h"
 
 // forward declarations
 static derr_t imap_event_new(imap_event_t **out, server_t *server,

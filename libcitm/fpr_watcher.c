@@ -1,4 +1,4 @@
-#include "citm.h"
+#include "libcitm.h"
 
 #define FPRS_TMP_PATH(p) sb_append(p, FS("fprs_seen"))
 #define FPRS_PATH(p) sb_append(p, FS("fprs_seen"))

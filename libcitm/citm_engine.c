@@ -1,4 +1,4 @@
-#include "citm.h"
+#include "libcitm.h"
 
 // part of user_cb_i
 static void citme_user_dying(user_cb_i *cb, user_t *caller, derr_t error){
