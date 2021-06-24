@@ -291,4 +291,9 @@ derr_t deletions_finished_one(MYSQL *sql, int server_id, const dstr_t *uuid);
 
 derr_t gc_sessions_and_csrf(MYSQL *sql, int server_id, time_t now);
 
+// sysadmin utils
+
+// returns a list of smsql_dstr_t's
+derr_t list_users(MYSQL *sql, link_t *out);
+
 #endif // SM_SQL_H

@@ -2172,3 +2172,61 @@ derr_t gc_sessions_and_csrf(MYSQL *sql, int server_id, time_t now){
 
     return e;
 }
+
+// sysadmin utils
+
+// returns a list of smsql_dstr_t's
+derr_t list_users(MYSQL *sql, link_t *out){
+    derr_t e = E_OK;
+
+    MYSQL_STMT *stmt;
+
+    DSTR_VAR(user_res, SMSQL_EMAIL_SIZE);
+
+    DSTR_STATIC(q1, "SELECT email FROM accounts ORDER BY email");
+    PROP(&e,
+        sql_multirow_stmt(
+            sql, &stmt, &q1,
+            // results
+            string_bind_out(&user_res)
+        )
+    );
+
+    link_t list;
+    link_init(&list);
+    link_t *link;
+
+    while(true){
+        bool ok;
+        PROP_GO(&e, sql_stmt_fetch(stmt, &ok), fail_list);
+        if(!ok) break;
+
+        smsql_dstr_t *dstr;
+        PROP_GO(&e,
+            smsql_dstr_new(&dstr, &user_res),
+        loop_fail);
+
+        link_list_append(&list, &dstr->link);
+
+        continue;
+
+    loop_fail:
+        sql_stmt_fetchall(stmt);
+        goto fail_list;
+    }
+
+    // set the output
+    link_list_append_list(out, &list);
+
+    mysql_stmt_close(stmt);
+
+    return e;
+
+fail_list:
+    while((link = link_list_pop_first(&list))){
+        smsql_dstr_t *dstr = CONTAINER_OF(link, smsql_dstr_t, link);
+        smsql_dstr_free(&dstr);
+    }
+    mysql_stmt_close(stmt);
+    return e;
+}

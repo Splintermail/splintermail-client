@@ -596,6 +596,34 @@ static derr_t list_deletions_action(MYSQL *sql, int argc, char **argv){
     return e;
 }
 
+// sysadmin utils
+
+static derr_t list_users_action(MYSQL *sql, int argc, char **argv){
+    derr_t e = E_OK;
+    (void)argv;
+
+    if(argc != 0){
+        ORIG(&e, E_USERMSG, "usage: list_users\n");
+    }
+
+    link_t users;
+    link_init(&users);
+    PROP(&e, list_users(sql, &users) );
+    if(link_list_isempty(&users)){
+        FFMT(stderr, NULL, "(none)\n");
+        return e;
+    }
+
+    link_t *link;
+    while((link = link_list_pop_first(&users))){
+        smsql_dstr_t *user = CONTAINER_OF(link, smsql_dstr_t, link);
+        PFMT("%x\n", FD(&user->dstr));
+        smsql_dstr_free(&user);
+    }
+
+    return e;
+}
+
 //////
 
 static derr_t smsql(
@@ -704,6 +732,7 @@ int main(int argc, char **argv){
     LINK_ACTION("user_owns_address", user_owns_address_action);
     LINK_ACTION("gtid_current_pos", gtid_current_pos_action);
     LINK_ACTION("list_deletions", list_deletions_action);
+    LINK_ACTION("list_users", list_users_action);
 #undef LINK_ACTION
 
     // specify command line options
