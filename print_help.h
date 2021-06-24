@@ -3,10 +3,10 @@ static void print_help(void){
 "splintermail: client application for Splintermail.com users\n"
 "\n"
 "  The `splintermail` application serves two purposes:\n"
-"    1) It implements the \"decrypter-in-the-middle\" (DITM) model, which is the\n"
-"       glue that connects an email client on your computer to the fully\n"
-"       encrypted email stored on the Splintermail.com server.  In DITM mode this\n"
-"       application will host a POP3 server on your local machine which your\n"
+"    1) It implements the \"crypto-in-the-middle\" (CITM) model, which is the glue\n"
+"       that connects an email client on your computer to the fully encrypted\n"
+"       email stored on the Splintermail.com server.  In CITM mode this\n"
+"       application will host an IMAP server on your local machine which your\n"
 "       email client can connect to.\n"
 "    2) It is a tool for controlling your account on the command line, instead of\n"
 "       going to the Splintermail.com website.\n"
@@ -29,22 +29,24 @@ static void print_help(void){
 
 "\n"
 
-"OPTIONS, ditm-specific:\n"
+"OPTIONS, citm-specific:\n"
 
 "\n"
 
-"     --pop-port PORT   Port number for the local POP3 server.             \n"
-"                       Default: 1995                                      \n"
-"  -d --ditm-dir DIR    Where to store decrypted emails and account info.  \n"
-"                       Default: /var/lib/splintermail                     \n"
-"  -l --logfile FILE    Location of the log file.                          \n"
-"                       Default: ${ditm-dir}/ditm_log                      \n"
-"  -L --no-logfile      No log file should be kept. Good for systemd, which\n"
-"                       keeps logs based on stdin and stdout.              \n"
-"     --cert CERT       TLS certificate for the local POP3 server.         \n"
-"                       Default: ${ditm-dir}/ditm-127.0.0.1-cert.pem       \n"
-"     --key KEY         TLS key for the local POP3 server.                 \n"
-"                       Default: ${ditm-dir}/ditm-127.0.0.1-key.pem        \n"
+"     --listen-port PORT     Port number for the local IMAP server.              \n"
+"                            Default: 1993                                       \n"
+"     --listen-addr ADDR     Bind address for the local IMAP server.             \n"
+"                            Default: 127.0.0.1                                  \n"
+"  -d --splintermail-dir DIR Where to store decrypted emails and account info.   \n"
+"                            Default: /var/lib/splintermail                      \n"
+"  -l --logfile FILE         Location of the log file.                           \n"
+"                            Default: ${splintermail-dir}/citm_log               \n"
+"  -L --no-logfile           No log file should be kept. Good for systemd, which \n"
+"                            keeps logs based on stdin and stdout.               \n"
+"     --cert CERT            TLS certificate for the local IMAP server.          \n"
+"                            Default: ${splintermail-dir}/citm-127.0.0.1-cert.pem\n"
+"     --key KEY              TLS key for the local IMAP server.                  \n"
+"                            Default: ${splintermail-dir}/citm-127.0.0.1-key.pem \n"
 
 "\n"
 
@@ -98,7 +100,7 @@ static void print_help(void){
 
 "\n"
 
-"    DITM Email Storage:\n"
+"    CITM Email Storage:\n"
 
 "        By default, `splintermail` will parse the following config files in\n"
 "        order, giving higher precedence to values found earlier in the search:\n"
