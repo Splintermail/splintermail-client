@@ -60,7 +60,6 @@ default_internal_group = {self.group}
 default_login_user = {self.user}
 
 mail_plugin_dir = {self.plugin_path}
-mail_plugins = xkey
 
 ssl_cert =<{HERE}/files/ssl/good-cert.pem
 ssl_key =<{HERE}/files/ssl/good-key.pem
@@ -88,6 +87,21 @@ service imap-login {{
 }}
 
 # no chroot
+service pop3-login {{
+    chroot =
+    user = $default_internal_user
+    # disable non-ssl pop3
+    inet_listener pop3 {{
+        address =
+        port = 0
+    }}
+    inet_listener pop3s {{
+        address = 127.0.0.1
+        port = 2995
+    }}
+}}
+
+# no chroot
 service stats {{
     chroot =
 }}
@@ -97,7 +111,6 @@ service anvil {{
     chroot =
 }}
 
-protocols = imap lmtp
 ssl = required
 
 # include FSID characters
@@ -124,6 +137,8 @@ userdb {{
 }}
 
 protocol imap {{
+    # xkey only works with imap
+    mail_plugins = $mail_plugins xkey
 }}
 
 protocols = imap # pop3 lmtp
