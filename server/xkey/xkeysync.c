@@ -380,6 +380,7 @@ static void xkeysync_add_keepalive_timeout(struct cmd_xkeysync_context *ctx){
 #   ifdef __GNUC__
 #   pragma GCC diagnostic push
 #   pragma GCC diagnostic ignored "-Wvla"
+#   pragma GCC diagnostic ignored "-Wconversion"
 #   endif // __GNUC__
     ctx->keepalive_to = timeout_add(interval, keepalive_timeout, ctx);
 #   ifdef __GNUC__
@@ -415,6 +416,7 @@ static void xkeysync_add_checker_timeout(struct cmd_xkeysync_context *ctx){
 #   ifdef __GNUC__
 #   pragma GCC diagnostic push
 #   pragma GCC diagnostic ignored "-Wvla"
+#   pragma GCC diagnostic ignored "-Wconversion"
 #   endif // __GNUC__
     ctx->checker_to = timeout_add(interval, checker_timeout, ctx);
 #   ifdef __GNUC__

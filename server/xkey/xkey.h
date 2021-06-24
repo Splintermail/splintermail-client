@@ -1,20 +1,14 @@
-// compatibility with dovecot's build system:
-#define UOFF_T_LONG  // gcc reports that off_t is a `long int` on linux 64
-#define SSIZE_T_MAX SSIZE_MAX
-#define HAVE_SOCKLEN_T
-#define HAVE__BOOL
-#define HAVE_STRUCT_IOVEC
-#define FLEXIBLE_ARRAY_MEMBER  // c99 flexible array is allowed by gcc
-#define STATIC_ARRAY static  // c99 static array keyword is honored by gcc
-
 // Let dovecot do it's thing unfettered by our warnings.
 #ifdef __GNUC__
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wconversion"
 #pragma GCC diagnostic ignored "-Wsign-conversion"
 #pragma GCC diagnostic ignored "-Wstrict-prototypes"
+#pragma GCC diagnostic ignored "-Wunused-parameter"
+#pragma GCC diagnostic ignored "-Wformat="
 #endif // __GNUC__
 
+    #include "config.h"
     #include "imap-common.h"
     #include "imap-commands.h"
     #include "imap-arg.h"
