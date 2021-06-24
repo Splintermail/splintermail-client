@@ -5,20 +5,23 @@
 #include <signal.h>
 #include <errno.h>
 
+#include "libdstr/libdstr.h"
+#include "libcitm/citm.h"
+
 #include "ui.h"
 #include "ui_harness.h"
-#include "libdstr/libdstr.h"
 #include "ditm.h"
 #include "api_client.h"
 #include "console_input.h"
 #include "print_help.h"
 
 
+
 // default ditm directory
 #ifndef _WIN32
-DSTR_STATIC(os_default_ditm_dir, "/var/lib/splintermail");
+DSTR_STATIC(os_default_sm_dir, "/var/lib/splintermail");
 #else
-DSTR_STATIC(os_default_ditm_dir, "C:/ProgramData/splintermail");
+DSTR_STATIC(os_default_sm_dir, "C:/ProgramData/splintermail");
 #endif
 
 
@@ -244,8 +247,6 @@ static derr_t user_search_hook(const char* base, const dstr_t* file,
     // sort out folders that don't end contain exactly one "@"
     DSTR_STATIC(arroba, "@");
     if(dstr_count(file, &arroba) != 1) return e;
-    // sort out folders with too long of names (no point in throwing an error)
-    if(file->len > search_data->user->size) return e;
     // store the name of the folder
     if(*search_data->nfolders == 0){
         PROP(&e, dstr_copy(file, search_data->user) );
@@ -351,234 +352,65 @@ static derr_t check_api_token_register(const dstr_t* account_dir,
     return e;
 }
 
-// ugh... abstracting main() feels dirty.  Thanks, Windows.
-int do_main(int argc, char* argv[], bool windows_service){
+/* find device keys from ditm and copy them for citm, so ditm users don't have
+   to register new keys when the switch to citm. */
+static derr_t migrate_ditm_keys_hook(
+    const string_builder_t *base,
+    const dstr_t* file,
+    bool isdir,
+    void* userdata
+){
     derr_t e = E_OK;
-    int retval = 0;
-    // ignore SIGPIPE, required to work with OpenSSL
-    // see https://mta.openssl.org/pipermail/openssl-users/2017-May/005776.html
-    // (but SIGPIPE doesnt exist in windows)
-#ifndef _WIN32
-    signal(SIGPIPE, SIG_IGN);
-#endif
+    (void)userdata;
 
-    // setup the ssl library (application-wide step)
-    PROP_GO(&e, ssl_library_init(), fail);
+    // ignore regular files
+    if(!isdir) return e;
+    // sort out folders that don't end contain exactly one "@"
+    if(dstr_count(file, &DSTR_LIT("@")) != 1) return e;
 
-    DSTR_VAR(logfile_path, 4096);
-    dstr_t config_text;
-    memset(&config_text, 0, sizeof(config_text));
+    // check for a key to migrate
+    string_builder_t ditm_user = sb_append(base, FD(file));
+    string_builder_t src = sb_append(&ditm_user, FS("device.pem"));
+    bool ok;
+    PROP(&e, exists_path(&src, &ok) );
+    if(!ok) return e;
 
-    // set up options to be parsed
-    // options common to ditm and the api_client
-    opt_spec_t o_help       = {'h',  "help",       false, OPT_RETURN_INIT};
-    opt_spec_t o_version    = {'v',  "version",    false, OPT_RETURN_INIT};
-    opt_spec_t o_debug      = {'D',  "debug",      false, OPT_RETURN_INIT};
-    opt_spec_t o_config     = {'c',  "config",     true,  OPT_RETURN_INIT};
-    opt_spec_t o_dump_conf  = {'\0', "dump-conf",  false, OPT_RETURN_INIT};
-    // options specific to ditm
-    opt_spec_t o_port       = {'\0', "pop-port",   true,  OPT_RETURN_INIT};
-    opt_spec_t o_ditm_dir   = {'d',  "ditm-dir",   true,  OPT_RETURN_INIT};
-    opt_spec_t o_logfile    = {'l',  "logfile",    true,  OPT_RETURN_INIT};
-    opt_spec_t o_no_logfile = {'L',  "no-logfile", false, OPT_RETURN_INIT};
-    opt_spec_t o_cert       = {'\0', "cert",       true,  OPT_RETURN_INIT};
-    opt_spec_t o_key        = {'\0', "key",        true,  OPT_RETURN_INIT};
-    // options specific to the api_client
-    opt_spec_t o_user       = {'u',  "user",       true,  OPT_RETURN_INIT};
-    opt_spec_t o_account_dir= {'a',  "account-dir",true,  OPT_RETURN_INIT};
-#ifdef BUILD_DEBUG
-    // debug-only options
-    opt_spec_t o_r_host     = {'\0', "remote-host",     true, OPT_RETURN_INIT};
-    opt_spec_t o_r_pop_port = {'\0', "remote-pop-port", true, OPT_RETURN_INIT};
-    opt_spec_t o_r_api_port = {'\0', "remote-api-port", true, OPT_RETURN_INIT};
-#endif // BUILD_DEBUG
+    // check if a migration is unnecessary
+    string_builder_t citm_path = sb_append(base, FS("citm"));
+    string_builder_t citm_user = sb_append(&citm_path, FD(file));
+    string_builder_t user_keys = sb_append(&citm_user, FS("keys"));
+    string_builder_t dst = sb_append(&user_keys, FS("mykey.pem"));
+    PROP(&e, exists_path(&dst, &ok) );
+    if(ok) return e;
 
-    opt_spec_t* spec[] = {&o_help,
-                          &o_version,
-                          &o_debug,
-                          &o_config,
-                          &o_dump_conf,
-                          &o_port,
-                          &o_ditm_dir,
-                          &o_logfile,
-                          &o_no_logfile,
-                          &o_cert,
-                          &o_key,
-                          &o_user,
-                          &o_account_dir,
-#ifdef BUILD_DEBUG
-                          &o_r_host,
-                          &o_r_pop_port,
-                          &o_r_api_port,
-#endif // BUILD_DEBUG
-                         };
-    size_t speclen = sizeof(spec) / sizeof(*spec);
-    int newargc;
+    // do the migration
+    PROP(&e, mkdirs_path(&user_keys, 0700) );
+    PROP(&e, file_copy_path(&src, &dst, 0600) );
 
-    // parse options
-    derr_t e2 = opt_parse(argc, argv, spec, speclen, &newargc);
-    CATCH(e2, E_ANY){
-        DROP_VAR(&e2);
-        fprintf(stderr, "try `%s --help` for usage\n", argv[0]);
-        retval = 1;
-        goto cu;
-    }
+    return e;
+}
 
-    // help option
-    if(o_help.found){
-        print_help();
-        retval = 0;
-        goto cu;
-    }
+static derr_t api_command_main(
+    const opt_spec_t o_account_dir,
+    const opt_spec_t o_user,
+    int newargc,
+    char **argv,
+    const char *rhost,
+    unsigned int api_port,
+    int *retval
+){
+    dstr_t account_dir = {0};
+    dstr_t user = {0};
+    dstr_t creds_path = {0};
+    dstr_t argument_var = {0};
+    dstr_t password = {0};
+    dstr_t new_password = {0};
+    dstr_t confirm_password = {0};
 
-    // version option
-    if(o_version.found){
-        printf("%d.%d.%d\n", DITM_VERSION_MAJOR, DITM_VERSION_MINOR,
-                             DITM_VERSION_BUILD);
-        retval = 0;
-        goto cu;
-    }
-
-    /* dump_conf option should not be respected if it is found in a config file
-       so we store the after-command-line-parsing value now but dump later */
-    bool should_dump_config = (o_dump_conf.found != 0);
-
-    // load up config files
-    PROP_GO(&e, dstr_new(&config_text, 4096), cu);
-    if(o_config.found){
-        // this should never fail because o_config.val comes from argv
-        PROP_GO(&e, dstr_null_terminate(&o_config.val), cu);
-        // if `-c` or `--config` was specified, load that only
-        if(harness.file_r_access(o_config.val.data) == false){
-            fprintf(stderr, "unable to access config file \"%s\"\n",
-                            o_config.val.data);
-            retval = 2;
-            goto cu;
-        }
-        PROP_GO(&e, dstr_read_file(o_config.val.data, &config_text), cu);
-        PROP_GO(&e, conf_parse(&config_text, spec, speclen), cu);
-    }else{
-        // if no `-c` or `--config`, load the OS-specific file locations
-        PROP_GO(&e, load_os_config_files(&config_text, spec, speclen), cu);
-    }
-
-    // if we had --dump_conf on the command line, this is where we dump config
-    if(should_dump_config){
-        opt_fdump(spec, speclen, stdout, NULL);
-        retval = 0;
-        goto cu;
-    }
-
-    // in all other cases we need more than one argument
-    if(!windows_service && newargc < 2){
-        fprintf(stderr, "you must specify \"ditm\" or an api command\n");
-        fprintf(stderr, "try `%s --help` for usage\n", argv[0]);
-        retval = 3;
-        goto cu;
-    }
-
-    // debug printing
-    log_level_t log_level = o_debug.found ? LOG_LVL_DEBUG : LOG_LVL_INFO;
-
-    // always print to stderr
-    logger_add_fileptr(log_level, stderr);
-
-    // ditm_dir option
-    DSTR_VAR(ditm_dir, 4096);
-    if(o_ditm_dir.found){
-        PROP_GO(&e, FMT(&ditm_dir, "%x", FD(&o_ditm_dir.val)), cu);
-    }else{
-        PROP_GO(&e, FMT(&ditm_dir, "%x", FD(&os_default_ditm_dir)), cu);
-    }
-
-#ifdef BUILD_DEBUG
-    // debug options
-    DSTR_VAR(r_host_d, 256);
-    if(o_r_host.found){
-        PROP_GO(&e, FMT(&r_host_d, "%x", FD(&o_r_host.val)), cu);
-    }else{
-        PROP_GO(&e, FMT(&r_host_d, "splintermail.com"), cu);
-    }
-    const char* rhost = r_host_d.data;
-
-    unsigned int api_port = 443;
-    if(o_r_api_port.found){
-        PROP_GO(&e, dstr_tou(&o_r_api_port.val, &api_port, 10), cu);
-    }
-
-    unsigned int pop_port = 995;
-    if(o_r_pop_port.found){
-        PROP_GO(&e, dstr_tou(&o_r_pop_port.val, &pop_port, 10), cu);
-    }
-#else
-    const char* rhost = "splintermail.com";
-    unsigned int api_port = 443;
-    unsigned int pop_port = 995;
-#endif // BUILD_DEBUG
-
-    //////////////// now handle the ditm-specific options
-
-    if(windows_service || strcmp("ditm", argv[1]) == 0){
-
-        // port option
-        unsigned int port = 1995;
-        if(o_port.found){
-            // intelligently convert port to a number
-            e2 = dstr_tou(&o_port.val, &port, 10);
-            if(is_error(e2) || port < 1 || port > 65535){
-                DROP_VAR(&e2);
-                fprintf(stderr, "invalid port number\n");
-                fprintf(stderr, "try `%s --help` for usage\n", argv[0]);
-                retval = 4;
-                goto cu;
-            }
-        }
-
-        // then print to a log file, unless --no-logfile is specifed
-        if(o_logfile.found > o_no_logfile.found){
-            PROP_GO(&e, FMT(&logfile_path, "%x", FD(&o_logfile.val)), cu);
-            logger_add_filename(log_level, logfile_path.data);
-        }
-        // log file defaults to on, in ${ditm_dir}/ditm_log
-        else if(o_logfile.found == 0 && o_no_logfile.found == 0){
-            PROP_GO(&e, FMT(&logfile_path, "%x/ditm_log", FD(&ditm_dir)), cu);
-            logger_add_filename(log_level, logfile_path.data);
-        }
-
-        // get certificate path
-        DSTR_VAR(cert, 4096);
-        char* cert_arg = NULL;
-        if(o_cert.found){
-            PROP_GO(&e, FMT(&cert, "%x", FD(&o_cert.val)), cu);
-            cert_arg = cert.data;
-        }
-
-        // get key path
-        DSTR_VAR(key, 4096);
-        char* key_arg = NULL;
-        if(o_key.found){
-            PROP_GO(&e, FMT(&key, "%x", FD(&o_key.val)), cu);
-            key_arg = key.data;
-        }
-
-#ifdef _WIN32
-        if(windows_service == true){
-            ReportSvcStatus( SERVICE_RUNNING, NO_ERROR, 0 );
-        }
-#endif
-
-        PROP_GO(&e, ditm_loop(rhost, pop_port, ditm_dir.data, port,
-                          rhost, api_port, cert_arg, key_arg), cu);
-
-        retval = 0;
-        goto cu;
-    }
-
-    //////////////// now handle the api client options
+    derr_t e = E_OK;
 
     // account_dir option
     bool account_dir_access = false;
-    DSTR_VAR(account_dir, 4096);
     if(o_account_dir.found){
         PROP_GO(&e, FMT(&account_dir, "%x", FD(&o_account_dir.val)), cu);
         // make sure we can access the account_dir
@@ -589,13 +421,16 @@ int do_main(int argc, char* argv[], bool windows_service){
     }
 
     if(!account_dir_access){
-        e2 = FFMT(stderr, NULL, "account directory %x not found or not "
-                "accessible; API token access disabled\n", FD(&account_dir));
-        DROP_VAR(&e2);
+        DROP_CMD(
+            FFMT(stderr, NULL,
+                "account directory %x not found or not "
+                "accessible; API token access disabled\n",
+                FD(&account_dir)
+            )
+        );
     }
 
     // figure out who our user is
-    DSTR_VAR(user, 256);
     bool user_found = false;
     if(o_user.found){
         PROP_GO(&e, FMT(&user, "%x", FD(&o_user.val)), cu);
@@ -619,7 +454,7 @@ int do_main(int argc, char* argv[], bool windows_service){
     if(!user_found){
         fprintf(stderr, "Unable to determine user and --user not specified\n");
         fprintf(stderr, "try `%s --help` for usage\n", argv[0]);
-        retval = 5;
+        *retval = 5;
         goto cu;
     }
 
@@ -627,7 +462,6 @@ int do_main(int argc, char* argv[], bool windows_service){
     /* this step is necessary because we don't want to create a folder for
        the user until they choose to register an API token or say they never
        want to register */
-    DSTR_VAR(creds_path, 4096);
     bool user_dir_access = false;
     bool can_register = false; // have permissions to save an token?
     if(account_dir_access){
@@ -641,9 +475,12 @@ int do_main(int argc, char* argv[], bool windows_service){
         }else if(harness.dir_rw_access(creds_path.data, false)){
             user_dir_access = true;
         }else{
-            e2 = FFMT(stderr, NULL, "Insufficient permissions for user directory %x; "
-                               "API token access disabled\n", FD(&creds_path));
-            DROP_VAR(&e2);
+            DROP_CMD(
+                FFMT(stderr, NULL,
+                    "Insufficient permissions for user directory %x; "
+                    "API token access disabled\n", FD(&creds_path)
+                )
+            );
         }
     }
 
@@ -661,7 +498,7 @@ int do_main(int argc, char* argv[], bool windows_service){
                    auto-deleting (or overwriting) bad files here. */
                 // can_register = true;
                 // now see if we have a good token on file
-                e2 = api_token_read(creds_path.data, &token);
+                derr_t e2 = api_token_read(creds_path.data, &token);
                 CATCH(e2, E_PARAM, E_INTERNAL){
                     DROP_VAR(&e2);
                     // broken token, warn user
@@ -694,7 +531,6 @@ int do_main(int argc, char* argv[], bool windows_service){
     dstr_t command;
     DSTR_WRAP(command, argv[1], strlen(argv[1]), true);
     // get the argument if it exists
-    DSTR_VAR(argument_var, 1024);
     dstr_t* argument = NULL;
     if(newargc > 2){
         dstr_t argv2;
@@ -722,20 +558,17 @@ int do_main(int argc, char* argv[], bool windows_service){
     if(dstr_cmp(&command, &delete_all_aliases) == 0) need_password = true;
 
     // request any passwords that are needed
-    DSTR_VAR(password, 256);
-    DSTR_VAR(new_password, 256);
     if(dstr_cmp(&command, &change_password) == 0){
         // we will need to submit this API request with a password
         need_password = true;
         // prompt for passwords
-        DSTR_VAR(confirm_password, 256);
         PROP_GO(&e, user_prompt("Old Splintermail.com Account Password:", &password, true), cu);
         PROP_GO(&e, user_prompt("New Password:", &new_password, true), cu);
         PROP_GO(&e, user_prompt("Confirm Password:", &confirm_password, true), cu);
         // make sure confirmation was valid
         if(dstr_cmp(&new_password, &confirm_password) != 0){
             DROP_CMD( FFMT(stderr, NULL, "Password confirmation failed.\n") );
-            retval = 6;
+            *retval = 6;
             goto cu;
         }
         // set the argument for the API call
@@ -752,12 +585,13 @@ int do_main(int argc, char* argv[], bool windows_service){
         PROP_GO(&e, check_api_token_register(&account_dir, &user, &do_reg), cu);
         if(do_reg){
             // do the registration
-            e2 = register_api_token(rhost, api_port, &user, &password,
-                                       creds_path.data);
+            derr_t e2 = register_api_token(
+                rhost, api_port, &user, &password, creds_path.data
+            );
             CATCH(e2, E_ANY){
                 DROP_VAR(&e2);
                 LOG_ERROR("failed to register API token with server\n");
-                retval = 7;
+                *retval = 7;
                 goto cu;
             }
         }
@@ -784,7 +618,7 @@ int do_main(int argc, char* argv[], bool windows_service){
         // verify confirmation
         if(dstr_cmp(&temp, &confirmation) != 0){
             fprintf(stderr, "confirmation failed, aborting.\n");
-            retval = 8;
+            *retval = 8;
             goto cu;
         }
     }
@@ -797,8 +631,12 @@ int do_main(int argc, char* argv[], bool windows_service){
     LIST_VAR(json_t, json, 256);
 
     if(need_password){
-        PROP_GO(&e, api_password_call(rhost, api_port, &command, argument, &user,
-                                   &password, &code, &reason, &recv, &json), cu);
+        PROP_GO(&e,
+            api_password_call(
+                rhost, api_port, &command, argument, &user, &password, &code,
+                &reason, &recv, &json
+            ),
+        cu);
     }else{
         // update nonce
         token.nonce++;
@@ -813,7 +651,7 @@ int do_main(int argc, char* argv[], bool windows_service){
             if(ret != 0){
                 DROP_CMD( FFMT(stderr, NULL, "Error removing token: %x\n", FE(&errno)) );
             }
-            retval = 9;
+            *retval = 9;
             goto cu;
         }
     }
@@ -821,7 +659,7 @@ int do_main(int argc, char* argv[], bool windows_service){
 
     if(code < 200 || code > 299){
         DROP_CMD( FFMT(stderr, NULL, "api request rejected: %x %x\n", FI(code), FD(&reason)) );
-        retval = 10;
+        *retval = 10;
         goto cu;
     }
 
@@ -836,23 +674,514 @@ int do_main(int argc, char* argv[], bool windows_service){
         PROP_GO(&e, j_to_dstr(jk(jroot, "contents"), &contents), cu);
         DROP_CMD( FFMT(stderr, NULL, "REST API call failed: \"%x\"\n", FD(&contents)) );
         DROP_VAR(&e);
-        retval = 11;
+        *retval = 11;
         goto cu;
     }
 
     // now dump the return json
     PROP_GO(&e, json_fdump(stdout, jk(jroot, "contents") ), cu);
 
+    *retval = 0;
+
 cu:
-    dstr_free(&config_text);
+    dstr_free(&account_dir);
+    dstr_free(&user);
+    dstr_free(&creds_path);
+    dstr_free(&argument_var);
+    dstr_free(&password);
+    dstr_free(&new_password);
+    dstr_free(&confirm_password);
+    return e;
+}
+
+// returns zero when the all options provided are all allowed
+static int _limit_options(
+    const char *action,
+    opt_spec_t **spec,
+    size_t speclen,
+    opt_spec_t **allowed,
+    size_t nallowed
+){
+    int failed = 0;
+
+    for(size_t i = 0; i < speclen; i++){
+        opt_spec_t *opt = spec[i];
+        if(!opt->found) goto next_opt;
+        for(size_t j = 0; j < nallowed; j++){
+            if(opt == allowed[j]) goto next_opt;
+        }
+
+        if(opt->oshort == '\0'){
+            fprintf(stderr,
+                "--%s is not an allowed option for %s\n",
+                opt->olong,
+                action
+            );
+        }else{
+            fprintf(stderr,
+                "-%c/--%s is not an allowed option for %s\n",
+                opt->oshort,
+                opt->olong,
+                action
+            );
+        }
+        failed += 1;
+
+    next_opt:
+        continue;
+    }
+
+    return failed;
+}
+#define limit_options(action, spec, speclen, /* allowed options: */ ...) \
+    _limit_options( \
+        action, \
+        spec, \
+        speclen, \
+        &(opt_spec_t*[]){NULL, __VA_ARGS__}[1], \
+        sizeof((opt_spec_t*[]){NULL, __VA_ARGS__})/sizeof(opt_spec_t*) - 1 \
+    )
+
+// ugh... abstracting main() feels dirty.  Thanks, Windows.
+int do_main(int argc, char* argv[], bool windows_service){
+    dstr_t config_text = {0};
+    dstr_t logfile_path = {0};
+    dstr_t local_host = {0};
+    dstr_t local_svc = {0};
+    dstr_t cert = {0};
+    dstr_t key = {0};
+    dstr_t remote_svc = {0};
+    dstr_t sm_dir = {0};
+
+    derr_t e = E_OK;
+    int retval = 0;
+    // ignore SIGPIPE, required to work with OpenSSL
+    // see https://mta.openssl.org/pipermail/openssl-users/2017-May/005776.html
+    // (but SIGPIPE doesnt exist in windows)
+#ifndef _WIN32
+    signal(SIGPIPE, SIG_IGN);
+#endif
+
+    // setup the ssl library (application-wide step)
+    PROP_GO(&e, ssl_library_init(), fail);
+
+    // set up options to be parsed
+    // options independent of subcommand
+    opt_spec_t o_help       = {'h',  "help",       false, OPT_RETURN_INIT};
+    opt_spec_t o_version    = {'v',  "version",    false, OPT_RETURN_INIT};
+    opt_spec_t o_dump_conf  = {'\0', "dump-conf",  false, OPT_RETURN_INIT};
+    // common options
+    opt_spec_t o_debug      = {'D',  "debug",      false, OPT_RETURN_INIT};
+    opt_spec_t o_config     = {'c',  "config",     true,  OPT_RETURN_INIT};
+    // ditm options
+    opt_spec_t o_pop_port   = {'\0', "pop-port",   true,  OPT_RETURN_INIT};
+    opt_spec_t o_ditm_dir   = {'\0', "ditm-dir",   true,  OPT_RETURN_INIT};  // can accept --splintermail-dir
+    // citm options
+    opt_spec_t o_lstn_port  = {'\0', "listen-port",true,  OPT_RETURN_INIT};
+    opt_spec_t o_lstn_addr  = {'\0', "listen-addr",true,  OPT_RETURN_INIT};
+    // citm and ditm options
+    opt_spec_t o_sm_dir     = {'d',  "splintermail-dir",true,OPT_RETURN_INIT};
+    opt_spec_t o_logfile    = {'l',  "logfile",    true,  OPT_RETURN_INIT};
+    opt_spec_t o_no_logfile = {'L',  "no-logfile", false, OPT_RETURN_INIT};
+    opt_spec_t o_cert       = {'\0', "cert",       true,  OPT_RETURN_INIT};
+    opt_spec_t o_key        = {'\0', "key",        true,  OPT_RETURN_INIT};
+    // options specific to the api_client
+    opt_spec_t o_user       = {'u',  "user",       true,  OPT_RETURN_INIT};
+    opt_spec_t o_account_dir= {'a',  "account-dir",true,  OPT_RETURN_INIT};
+#ifdef BUILD_DEBUG
+    // debug-only options
+    opt_spec_t o_r_host     = {'\0', "remote-host",     true, OPT_RETURN_INIT};
+    opt_spec_t o_r_pop_port = {'\0', "remote-pop-port", true, OPT_RETURN_INIT};
+    opt_spec_t o_r_imap_port= {'\0', "remote-imap-port", true, OPT_RETURN_INIT};
+    opt_spec_t o_r_api_port = {'\0', "remote-api-port", true, OPT_RETURN_INIT};
+#endif // BUILD_DEBUG
+
+    //                    option               citm  ditm  api_client
+    opt_spec_t* spec[] = {&o_help,          // -     -     -
+                          &o_version,       // -     -     -
+                          &o_dump_conf,     // -     -     -
+                          &o_debug,         // y     y     y
+                          &o_config,        // y     y     y
+                          &o_pop_port,      // n     y     n
+                          &o_ditm_dir,      // n     y     n  // can accept o_sm_dir
+                          &o_lstn_port,     // y     n     n
+                          &o_lstn_addr,     // y     n     n
+                          &o_sm_dir,        // y     y     n
+                          &o_logfile,       // y     y     n
+                          &o_no_logfile,    // y     y     n
+                          &o_cert,          // y     y     n
+                          &o_key,           // y     y     n
+                          &o_user,          // n     n     y
+                          &o_account_dir,   // n     n     y
+#ifdef BUILD_DEBUG
+                          &o_r_host,        // y     y     y
+                          &o_r_pop_port,    // n     y     n
+                          &o_r_imap_port,   // y     n     y
+                          &o_r_api_port,    // n     y     y
+#endif // BUILD_DEBUG
+                         };
+    size_t speclen = sizeof(spec) / sizeof(*spec);
+    int newargc;
+
+    // parse options
+    derr_t e2 = opt_parse(argc, argv, spec, speclen, &newargc);
+    CATCH(e2, E_ANY){
+        DROP_VAR(&e2);
+        fprintf(stderr, "try `%s --help` for usage\n", argv[0]);
+        retval = 1;
+        goto cu;
+    }
+
+    // help option
+    if(o_help.found){
+        print_help();
+        retval = 0;
+        goto cu;
+    }
+
+    // version option
+    if(o_version.found){
+        printf("%d.%d.%d\n", DITM_VERSION_MAJOR, DITM_VERSION_MINOR,
+                             DITM_VERSION_BUILD);
+        retval = 0;
+        goto cu;
+    }
+
+
+    /* dump_conf option should not be respected if it is found in a config file
+       so we store the after-command-line-parsing value now but dump later */
+    bool should_dump_config = (o_dump_conf.found != 0);
+
+    if(!should_dump_config){
+        /* limit options before loading the config, so the config can have
+           options useful to multiple commands without causing errors */
+        if(windows_service || (newargc > 1 && strcmp("citm", argv[1]) == 0)){
+            bool failed = limit_options(
+                "splintermail citm", spec, speclen,
+                &o_debug, &o_config,
+                #ifdef BUILD_DEBUG
+                &o_r_host, &o_r_imap_port,
+                #endif
+                &o_lstn_port, &o_lstn_addr, &o_sm_dir, &o_logfile,
+                &o_no_logfile, &o_cert, &o_key,
+            );
+            if(failed){
+                retval = 1;
+                goto cu;
+            }
+        }else if(newargc > 1 && strcmp("ditm", argv[1]) == 0){
+            bool failed = limit_options(
+                "splintermail ditm", spec, speclen,
+                &o_debug, &o_config,
+                #ifdef BUILD_DEBUG
+                &o_r_host, &o_r_pop_port, &o_r_api_port,
+                #endif
+                &o_pop_port, &o_ditm_dir, &o_sm_dir, &o_logfile, &o_no_logfile,
+                &o_cert, &o_key
+            );
+            if(failed){
+                retval = 1;
+                goto cu;
+            }
+        }else{
+            bool failed = limit_options(
+                "splintermail api commands", spec, speclen,
+                &o_debug, &o_config,
+                #ifdef BUILD_DEBUG
+                &o_r_api_port,
+                #endif
+                &o_user, &o_account_dir
+            );
+            if(failed){
+                retval = 1;
+                goto cu;
+            }
+        }
+    }
+
+    // load up config files
+    if(o_config.found){
+        // this should never fail because o_config.val comes from argv
+        PROP_GO(&e, dstr_null_terminate(&o_config.val), cu);
+        // if `-c` or `--config` was specified, load that only
+        if(harness.file_r_access(o_config.val.data) == false){
+            fprintf(stderr, "unable to access config file \"%s\"\n",
+                            o_config.val.data);
+            retval = 2;
+            goto cu;
+        }
+        PROP_GO(&e, dstr_read_file(o_config.val.data, &config_text), cu);
+        PROP_GO(&e, conf_parse(&config_text, spec, speclen), cu);
+    }else{
+        // if no `-c` or `--config`, load the OS-specific file locations
+        PROP_GO(&e, load_os_config_files(&config_text, spec, speclen), cu);
+    }
+
+    // if we had --dump_conf on the command line, this is where we dump config
+    if(should_dump_config){
+        opt_fdump(spec, speclen, stdout, NULL);
+        retval = 0;
+        goto cu;
+    }
+
+    // in all other cases we need more than one argument
+    if(!windows_service && newargc < 2){
+        fprintf(stderr, "you must specify \"citm\" or an api command\n");
+        fprintf(stderr, "try `%s --help` for usage\n", argv[0]);
+        retval = 3;
+        goto cu;
+    }
+
+    // debug printing
+    log_level_t log_level = o_debug.found ? LOG_LVL_DEBUG : LOG_LVL_INFO;
+
+    // always print to stderr
+    logger_add_fileptr(log_level, stderr);
+
+    // --splintermail-dir option
+    if(o_sm_dir.found){
+        PROP_GO(&e, FMT(&sm_dir, "%x", FD(&o_sm_dir.val)), cu);
+    }else if(o_ditm_dir.found){
+        // --ditm-dir used to have -d (now --splintermail-dir does)
+        PROP_GO(&e, FMT(&sm_dir, "%x", FD(&o_ditm_dir.val)), cu);
+    }else{
+        PROP_GO(&e, FMT(&sm_dir, "%x", FD(&os_default_sm_dir)), cu);
+    }
+    string_builder_t sm_dir_path = SB(FD(&sm_dir));
+
+#ifdef BUILD_DEBUG
+    // debug options
+    DSTR_VAR(r_host_d, 256);
+    if(o_r_host.found){
+        PROP_GO(&e, FMT(&r_host_d, "%x", FD(&o_r_host.val)), cu);
+    }else{
+        PROP_GO(&e, FMT(&r_host_d, "splintermail.com"), cu);
+    }
+    const char* rhost = r_host_d.data;
+
+    unsigned int api_port = 443;
+    if(o_r_api_port.found){
+        PROP_GO(&e, dstr_tou(&o_r_api_port.val, &api_port, 10), cu);
+    }
+
+    unsigned int pop_port = 995;
+    if(o_r_pop_port.found){
+        PROP_GO(&e, dstr_tou(&o_r_pop_port.val, &pop_port, 10), cu);
+    }
+
+    unsigned int imap_port = 993;
+    if(o_r_imap_port.found){
+        PROP_GO(&e, dstr_tou(&o_r_imap_port.val, &imap_port, 10), cu);
+    }
+#else
+    const char* rhost = "splintermail.com";
+    unsigned int api_port = 443;
+    unsigned int pop_port = 995;
+    unsigned int pop_port = 995;
+    unsigned int imap_port = 993;
+#endif // BUILD_DEBUG
+
+    //////////////// handle the citm-specific options
+
+    if(windows_service || strcmp("citm", argv[1]) == 0){
+        // then print to a log file, unless --no-logfile is specifed
+        if(o_logfile.found > o_no_logfile.found){
+            PROP_GO(&e, FMT(&logfile_path, "%x", FD(&o_logfile.val)), cu);
+            logger_add_filename(log_level, logfile_path.data);
+        }
+        // log file defaults to on, in ${sm_dir}/ditm_log
+        else if(o_logfile.found == 0 && o_no_logfile.found == 0){
+            PROP_GO(&e, FMT(&logfile_path, "%x/citm_log", FD(&sm_dir)), cu);
+            logger_add_filename(log_level, logfile_path.data);
+        }
+
+        if(o_lstn_addr.found){
+            PROP_GO(&e, FMT(&local_host, "%x", FD(&o_lstn_addr.val)), cu);
+        }else{
+            PROP_GO(&e, FMT(&local_host, "127.0.0.1"), cu);
+        }
+
+        if(o_lstn_port.found){
+            PROP_GO(&e, FMT(&local_svc, "%x", FD(&o_lstn_port.val)), cu);
+        }else{
+            PROP_GO(&e, FMT(&local_svc, "1993"), cu);
+        }
+
+        // get certificate path
+        if(o_cert.found){
+            PROP_GO(&e, FMT(&cert, "%x", FD(&o_cert.val)), cu);
+        }else{
+            // look for the default certificate
+            bool ok;
+            string_builder_t path = sb_append(
+                &sm_dir_path, FS("citm-127.0.0.1-cert.pem")
+            );
+            PROP_GO(&e, exists_path(&path, &ok), cu);
+            if(!ok){
+                // detect the pre-citm certificate, if present
+                path = sb_append(&sm_dir_path, FS("ditm-127.0.0.1-cert.pem"));
+                PROP_GO(&e, exists_path(&path, &ok), cu);
+            }
+            if(!ok){
+                DROP_CMD(
+                    FFMT(stderr, NULL,
+                        "did not find certificate file in %x, "
+                        "please re-install splintermail or provide a "
+                        "certificate explictly via --cert",
+                        FD(&sm_dir)
+                    )
+                );
+                retval = 12;
+                goto cu;
+            }
+            PROP_GO(&e, sb_to_dstr(&path, &DSTR_LIT("/"), &cert), cu);
+        }
+
+        // get key path
+        if(o_key.found){
+            PROP_GO(&e, FMT(&key, "%x", FD(&o_key.val)), cu);
+        }else{
+            // look for the default key
+            bool ok;
+            string_builder_t path = sb_append(
+                &sm_dir_path, FS("citm-127.0.0.1-key.pem")
+            );
+            PROP_GO(&e, exists_path(&path, &ok), cu);
+            if(!ok){
+                // detect the pre-citm key, if present
+                path = sb_append(&sm_dir_path, FS("ditm-127.0.0.1-key.pem"));
+                PROP_GO(&e, exists_path(&path, &ok), cu);
+            }
+            if(!ok){
+                DROP_CMD(
+                    FFMT(stderr, NULL,
+                        "did not find key file in %x, please re-install "
+                        "splintermail or provide a key explictly via --key",
+                        FD(&sm_dir)
+                    )
+                );
+                retval = 13;
+                goto cu;
+            }
+            PROP_GO(&e, sb_to_dstr(&path, &DSTR_LIT("/"), &key), cu);
+        }
+
+        // migrate pre-citm device keys for use with citm
+        PROP_GO(&e,
+            for_each_file_in_dir2(&sm_dir_path, migrate_ditm_keys_hook, NULL),
+        cu);
+
+        PROP_GO(&e, FMT(&remote_svc, "%x", FU(imap_port)), cu);
+
+        string_builder_t citm_path = sb_append(&sm_dir_path, FS("citm"));
+
+#ifdef _WIN32
+        if(windows_service == true){
+            ReportSvcStatus( SERVICE_RUNNING, NO_ERROR, 0 );
+        }
+#endif
+
+        PROP_GO(&e,
+            citm(
+                local_host.data,
+                local_svc.data,
+                key.data,
+                cert.data,
+                NULL,  // const char *dh
+                rhost,
+                remote_svc.data,
+                &citm_path,
+                false  // bool indicate_ready
+            ),
+        cu);
+
+        retval = 0;
+
+        goto cu;
+    }
+
+    //////////////// keep legacy ditm behavior as a fallback, for now
+
+    if(strcmp("ditm", argv[1]) == 0){
+
+        // port option
+        unsigned int port = 1995;
+        if(o_pop_port.found){
+            // intelligently convert port to a number
+            e2 = dstr_tou(&o_pop_port.val, &port, 10);
+            if(is_error(e2) || port < 1 || port > 65535){
+                DROP_VAR(&e2);
+                fprintf(stderr, "invalid port number\n");
+                fprintf(stderr, "try `%s --help` for usage\n", argv[0]);
+                retval = 4;
+                goto cu;
+            }
+        }
+
+        // then print to a log file, unless --no-logfile is specifed
+        if(o_logfile.found > o_no_logfile.found){
+            PROP_GO(&e, FMT(&logfile_path, "%x", FD(&o_logfile.val)), cu);
+            logger_add_filename(log_level, logfile_path.data);
+        }
+        // log file defaults to on, in ${sm_dir}/ditm_log
+        else if(o_logfile.found == 0 && o_no_logfile.found == 0){
+            PROP_GO(&e, FMT(&logfile_path, "%x/ditm_log", FD(&sm_dir)), cu);
+            logger_add_filename(log_level, logfile_path.data);
+        }
+
+        // get certificate path
+        char* cert_arg = NULL;
+        if(o_cert.found){
+            PROP_GO(&e, FMT(&cert, "%x", FD(&o_cert.val)), cu);
+            cert_arg = cert.data;
+        }
+
+        // get key path
+        char* key_arg = NULL;
+        if(o_key.found){
+            PROP_GO(&e, FMT(&key, "%x", FD(&o_key.val)), cu);
+            key_arg = key.data;
+        }
+
+        PROP_GO(&e, ditm_loop(rhost, pop_port, sm_dir.data, port,
+                          rhost, api_port, cert_arg, key_arg), cu);
+
+        retval = 0;
+        goto cu;
+    }
+
+    //////////////// now handle the api client options
+
+
+    PROP_GO(&e,
+        api_command_main(
+            o_account_dir, o_user, newargc, argv, rhost, api_port, &retval
+        ),
+    cu);
+
+    //////////////// now clean up
+
+cu:
     ssl_library_close();
 fail:
-    // if we have an uncaught error return 255
+
+    // if we have an uncaught error return 127
     if(is_error(e)){
         DUMP(e);
         DROP_VAR(&e);
-        return 255;
+        retval = 127;
     }
+
+    // free memory after DUMP, since logfile_path will be read during DUMP
+    dstr_free(&config_text);
+    dstr_free(&logfile_path);
+    dstr_free(&local_host);
+    dstr_free(&local_svc);
+    dstr_free(&cert);
+    dstr_free(&key);
+    dstr_free(&remote_svc);
+    dstr_free(&sm_dir);
+
     return retval;
 }
 

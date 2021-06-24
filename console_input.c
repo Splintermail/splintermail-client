@@ -9,9 +9,8 @@
 #include <conio.h>
 derr_t get_password(dstr_t* password){
     derr_t e = E_OK;
-    // empty the password
-    password->len = 0;
-    for(size_t i = 0; i < password->size - 1; i++){
+    DSTR_VAR(buf, 256);
+    for(size_t i = 0; i < buf.size - 1; i++){
         // _getch() will not allow the character to be echoed
         // it will also not catch Ctrl-C characters
         // https://msdn.microsoft.com/en-us/library/078sfkak.aspx
@@ -31,7 +30,7 @@ derr_t get_password(dstr_t* password){
                     // visually erase one asterisk
                     fprintf(stderr, "\b \b");
                     i -= 2;
-                    password->len -= 1;
+                    buf.len -= 1;
                 }
                 break;
             case '\r':
@@ -39,19 +38,21 @@ derr_t get_password(dstr_t* password){
                 linebreak = true;
                 break;
             default:
-                password->data[i] = (char)c;
-                password->len += 1;
+                buf.data[i] = (char)c;
+                buf.len += 1;
                 fprintf(stderr, "*");
         }
         if(linebreak) break;
     }
-    PROP(& dstr_null_terminate(password) );
+    PROP(&e, dstr_copy(&buf, password) );
+    PROP(&e, dstr_null_terminate(password) );
     return e;
 }
 #else
 #include <termios.h>
 derr_t get_password(dstr_t* password){
     derr_t e = E_OK;
+    DSTR_VAR(buf, 256);
     int ret;
     tcflag_t old_lflag = 0; // CLANG wrongly thinks this might be uninitialized
     struct termios tios;
@@ -79,23 +80,29 @@ derr_t get_password(dstr_t* password){
 
     // get password
     // this is a pretty safe cast
-    char* s = fgets(password->data, (int)password->size, stdin);
-    if(s != password->data){
-        ORIG(&e, E_OS, "fgets failed");
+    char* s = fgets(buf.data, (int)buf.size, stdin);
+    if(s != buf.data){
+        ORIG_GO(&e, E_OS, "fgets failed", cu);
     }
     // remove the newline from the end of the password
-    password->len = strlen(password->data) - 1;
+    buf.len = strlen(buf.data) - 1;
     // print the newline that didn't get echoed
-    PROP(&e, FFMT(stderr, NULL, "\n") );
+    PROP_GO(&e, FFMT(stderr, NULL, "\n"), cu);
     fflush(stderr);
 
+    PROP_GO(&e, dstr_copy(&buf, password), cu);
+    PROP_GO(&e, dstr_null_terminate(password), cu);
+
+cu:
     if(ttymode){
         // reset terminal settings
         tios.c_lflag = old_lflag;
         ret = tcsetattr(0, TCSANOW, &tios);
         if(ret != 0){
             TRACE(&e, "%x: %x\n", FS("tcsetattr"), FE(&errno));
-            ORIG(&e, E_OS, "failed to set terminal settings");
+            TRACE_ORIG(&e, E_OS, "failed to set terminal settings");
+            DUMP(e);
+            DROP_VAR(&e);
         }
     }
     return e;
@@ -105,10 +112,13 @@ derr_t get_password(dstr_t* password){
 
 derr_t get_string(dstr_t* out){
     derr_t e = E_OK;
-    char* s = fgets(out->data, (int)out->size, stdin);
-    if(s != out->data){
+    DSTR_VAR(buf, 1024);
+    char* s = fgets(buf.data, (int)buf.size, stdin);
+    if(s != buf.data){
         ORIG(&e, E_OS, "fgets failed");
     }
-    out->len = strlen(out->data) - 1;
+    buf.len = strlen(buf.data) - 1;
+    PROP(&e, dstr_copy(&buf, out) );
+    PROP(&e, dstr_null_terminate(out) );
     return e;
 }

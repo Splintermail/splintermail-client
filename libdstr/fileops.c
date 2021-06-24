@@ -1102,6 +1102,10 @@ derr_t dstr_read_file(const char* filename, dstr_t* buffer){
         TRACE(&e, "%x: %x\n", FS(filename), FE(&errno));
         ORIG(&e, E_OPEN, "unable to open file");
     }
+    // if the buffer is intially full, grow it before we start dstr_read()
+    if(buffer->len == buffer->size){
+        PROP_GO(&e, dstr_grow(buffer, buffer->len + 4096), cleanup);
+    }
     while(true){
         size_t amnt_read;
         PROP_GO(&e, dstr_read(fd, buffer, 0, &amnt_read), cleanup);

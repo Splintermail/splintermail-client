@@ -338,7 +338,7 @@ obj_depend_obj(key_tool api_client crypto)
 obj_depend_obj(ditm pop_client pop_server maildir)
 
 # describe executables with dependencies
-target_link_libraries(splintermail ui ui_harness console_input ditm key_tool)
+target_link_libraries(splintermail ui ui_harness console_input ditm key_tool libcitm)
 target_link_libraries(encrypt_msg crypto)
 target_link_libraries(decrypt_msg crypto)
 target_link_libraries(inject_local_msg imaildir crypto)

@@ -49,6 +49,30 @@ derr_t ditm_loop(const char* rhost, unsigned int rport,
     return DLA->to_return;
 }
 
+// libcitm/citm.h
+derr_t citm(
+    const char *local_host,
+    const char *local_svc,
+    const char *key,
+    const char *cert,
+    const char *dh,
+    const char *remote_host,
+    const char *remote_svc,
+    const string_builder_t *maildir_root,
+    bool indicate_ready
+){
+    (void)local_host;
+    (void)local_svc;
+    (void)key;
+    (void)cert;
+    (void)dh;
+    (void)remote_host;
+    (void)remote_svc;
+    (void)maildir_root;
+    (void)indicate_ready;
+    return E_OK;
+}
+
 // fileops.h
 // a list of folders which will be created
 char** creatables;

@@ -245,7 +245,7 @@ int main(int argc, char** argv){
         PROP_GO(&e, FMT(&configpath, "%x/test_ui/testconf", FS(g_test_files)), fail);
         // prepare the expected stdout
         DSTR_VAR(expect_out, 4096);
-        PROP_GO(&e, FMT(&expect_out, "config %x\ndump-conf\nditm-dir 12345\n",
+        PROP_GO(&e, FMT(&expect_out, "dump-conf\nconfig %x\nditm-dir 12345\n",
                                   FD(&configpath)), fail);
         test_case.test_name = "config";
         test_case.expect_out = expect_out.data;
@@ -323,7 +323,7 @@ int main(int argc, char** argv){
         PROP_GO(&e, run_test_case(test_case), fail);
 
         test_case.test_name = "ditm uncaught error";
-        test_case.expect_return = 255;
+        test_case.expect_return = 127;
         test_case.ditm_loop_args.to_return = (derr_t){.type=E_INTERNAL};
         test_case.argv = (char*[]){SM, "ditm", NULL};
         PROP_GO(&e, run_test_case(test_case), fail);
