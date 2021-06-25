@@ -279,10 +279,14 @@ cu_fprs:
 cu_sql:
     mysql_close(&sql);
 
+    bool retval;
 done:
-    DUMP(e);
-    bool retval = is_error(e);
-    DROP_VAR(&e);
+    retval = is_error(e);
+    if(is_error(e)){
+        badbadbad_alert(&DSTR_LIT("error in xkeysync_check_now()"), &e.msg);
+        DUMP(e);
+        DROP_VAR(&e);
+    }
 
     // always come back later
     xkeysync_add_checker_timeout(ctx);
@@ -608,6 +612,7 @@ bool cmd_xkeysync(struct client_command_context *cmd){
 fail_ctx:
     xkeysync_finish(ctx, EXIT_INTERNAL_ERROR, false);
 fail_fprs:
+    badbadbad_alert(&DSTR_LIT("error in cmd_xkeysync"), &e.msg);
     DUMP(e);
     DROP_VAR(&e);
     free_fpr_list(&known_fprs);

@@ -103,8 +103,9 @@ bool cmd_xkeyadd(struct client_command_context *cmd){
         consume_e_usermsg(&e2, &buf);
         client_send_tagline(cmd, buf.data);
     }else CATCH(e2, E_ANY){
-        DUMP(e);
-        DROP_VAR(&e);
+        badbadbad_alert(&DSTR_LIT("error in cmd_xkeyadd()"), &e2.msg);
+        DUMP(e2);
+        DROP_VAR(&e2);
         client_send_command_error(cmd, "internal server failure");
     }else{
         // success case

@@ -25,6 +25,7 @@
 #include "libdstr/libdstr.h"
 #include "server/mysql_util/mysql_util.h"
 #include "server/libsmsql.h"
+#include "server/badbadbad_alert.h"
 
 bool cmd_xkeysync(struct client_command_context *cmd);
 bool cmd_xkeyadd(struct client_command_context *cmd);
