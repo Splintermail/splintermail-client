@@ -921,7 +921,7 @@ static derr_t _add_device_txn(
         string_bind_in(fpr_hex)
     );
     CATCH(e2, E_SQL_DUP){
-        DROP_VAR(&e);
+        DROP_VAR(&e2);
         ORIG(&e, E_USERMSG, "duplicate public key");
     }else PROP_VAR(&e, &e2);
 
@@ -939,7 +939,7 @@ static derr_t _validate_for_add_device(
     EVP_PKEY *pkey;
     derr_t e2 = read_pem_encoded_pubkey(pubkey, &pkey);
     CATCH(e2, E_PARAM){
-        DROP_VAR(&e);
+        DROP_VAR(&e2);
         ORIG(&e, E_USERMSG, "invalid public key");
     }else PROP_VAR(&e, &e2);
 
