@@ -141,6 +141,17 @@ static derr_t test_imap_writer(void){
                 },
             },
             {
+                .cmd=imap_cmd_new(&e,
+                    IE_DSTR("astring-chars:.}[],<>"),
+                    IMAP_CMD_CAPA,
+                    no_arg
+                ),
+                .out=(size_chunk_out_t[]){
+                    {64, "astring-chars:.}[],<> CAPABILITY\r\n"},
+                    {0}
+                },
+            },
+            {
                 .cmd=imap_cmd_new(&e, IE_DSTR("tag"), IMAP_CMD_NOOP, no_arg),
                 .out=(size_chunk_out_t[]){
                     {64, "tag NOOP\r\n"},
@@ -216,13 +227,15 @@ static derr_t test_imap_writer(void){
                 .cmd=imap_cmd_new(&e, IE_DSTR("tag"), IMAP_CMD_SELECT,
                     (imap_cmd_arg_t){
                         .select=ie_select_cmd_new(&e,
-                            ie_mailbox_new_noninbox(&e, IE_DSTR("box")),
+                            ie_mailbox_new_noninbox(&e,
+                                IE_DSTR("astring-chars:.}[],<>")
+                            ),
                             NULL
                         ),
                     }
                 ),
                 .out=(size_chunk_out_t[]){
-                    {64, "tag SELECT box\r\n"},
+                    {64, "tag SELECT astring-chars:.}[],<>\r\n"},
                     {0}
                 },
             },

@@ -286,7 +286,7 @@ static derr_t tag_skip_fill(skip_fill_t *sf, const dstr_t *in){
     derr_t e = E_OK;
     for(size_t i = 0; i < in->len; i++){
         switch(in->data[i]){
-            // anything with non-atom chars is invalid
+            // anything with non-astring-chars is invalid (or '+')
             case '(':
             case ')':
             case '{':
@@ -295,9 +295,8 @@ static derr_t tag_skip_fill(skip_fill_t *sf, const dstr_t *in){
             case '*':
             case '"':
             case '\\':
-            case ']':
             case '+':
-                TRACE(&e, "unable to print '%x' in atom\n", FC(in->data[i]));
+                TRACE(&e, "unable to print '%x' in tag\n", FC(in->data[i]));
                 ORIG(&e, E_PARAM, "invalid tag");
             default:
                 // CTL characters

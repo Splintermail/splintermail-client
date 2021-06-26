@@ -471,6 +471,11 @@ static derr_t test_commands(void){
                 .buf=DSTR_LIT("tag CAPABILITY\r\n")
             },
             {
+                .in=DSTR_LIT("astring-chars-tag:.}[],<> CAPABILITY\r\n"),
+                .cmd_calls=(int[]){IMAP_CMD_CAPA, -1},
+                .buf=DSTR_LIT("astring-chars-tag:.}[],<> CAPABILITY\r\n")
+            },
+            {
                 .in=DSTR_LIT("tag NOOP\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_NOOP, -1},
                 .buf=DSTR_LIT("tag NOOP\r\n")
@@ -503,12 +508,17 @@ static derr_t test_commands(void){
             {
                 .in=DSTR_LIT("tag SELECT inbox\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_SELECT, -1},
-                .buf=DSTR_LIT("tag SELECT INBOX\r\n")
+                .buf=DSTR_LIT("tag SELECT INBOX\r\n"),
             },
             {
                 .in=DSTR_LIT("tag SELECT \"crAZY boX\"\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_SELECT, -1},
-                .buf=DSTR_LIT("tag SELECT \"crAZY boX\"\r\n")
+                .buf=DSTR_LIT("tag SELECT \"crAZY boX\"\r\n"),
+            },
+            {
+                .in=DSTR_LIT("tag SELECT astring-chars-box:.}[],<>+\r\n"),
+                .cmd_calls=(int[]){IMAP_CMD_SELECT, -1},
+                .buf=DSTR_LIT("tag SELECT astring-chars-box:.}[],<>+\r\n"),
             },
             {
                 .in=DSTR_LIT("tag EXAMINE {10}\r\nexamine_me\r\n"),

@@ -322,7 +322,8 @@
 %type <dstr> tag
 %type <dstr> atom
 %type <dstr> atom_sc
-%type <dstr> atom_mbx
+%type <dstr> astring_mbox
+%type <dstr> astring_atom
 %type <dstr> atom_flag
 %type <dstr> atom_fflag
 %type <dstr> atom_mflag
@@ -1696,41 +1697,53 @@ keyword: sc_keyword | flag_keyword | mflag_keyword | mailbox_keyword | misc_keyw
 raw: RAW | NUM | keyword;
 
 // punctuation that is sometimes meaningful but is allowed in atoms anyway
-atom_punc:  ':' | '.' | '}' | '[' | ',' | '<' | '>' | '-';
-atom_char: raw | atom_punc | '+';
+tag_punc:  ':' | '.' | '}' | '[' | ',' | '<' | '>' | '-';
+atom_punc: tag_punc | '+';
+atom_char: raw | atom_punc;
 
 atom: atom_char          { $$ = ie_dstr_new(E, p->token, KEEP_RAW); }
     | atom[a] atom_char  { $$ = ie_dstr_append(E, $a, p->token, KEEP_RAW); }
 ;
 
-atom_sc_char: RAW | NUM | flag_keyword | mflag_keyword | mailbox_keyword | misc_keyword;
+atom_sc_char: RAW | NUM | atom_punc | flag_keyword | mflag_keyword | mailbox_keyword | misc_keyword;
 atom_sc: atom_sc_char             { $$ = ie_dstr_new(E, p->token, KEEP_RAW); }
        | atom_sc[a] atom_sc_char  { $$ = ie_dstr_append(E, $a, p->token, KEEP_RAW); }
 ;
 
-atom_mbx_char: RAW | NUM | sc_keyword | flag_keyword | mflag_keyword | misc_keyword;
-atom_mbx: atom_mbx_char              { $$ = ie_dstr_new(E, p->token, KEEP_RAW); }
-        | atom_mbx[a] atom_mbx_char  { $$ = ie_dstr_append(E, $a, p->token, KEEP_RAW); }
-;
-
-atom_flag_char: RAW | NUM | RECENT | sc_keyword | mflag_keyword | mailbox_keyword | misc_keyword;
+atom_flag_char: RAW | NUM | atom_punc | RECENT | sc_keyword | mflag_keyword | mailbox_keyword | misc_keyword;
 atom_flag: atom_flag_char               { $$ = ie_dstr_new(E, p->token, KEEP_RAW); }
          | atom_flag[a] atom_flag_char  { $$ = ie_dstr_append(E, $a, p->token, KEEP_RAW); }
 ;
 
-atom_fflag_char: RAW | NUM | sc_keyword | mflag_keyword | mailbox_keyword | misc_keyword;
+atom_fflag_char: RAW | NUM | atom_punc | sc_keyword | mflag_keyword | mailbox_keyword | misc_keyword;
 atom_fflag: atom_fflag_char                { $$ = ie_dstr_new(E, p->token, KEEP_RAW); }
           | atom_fflag[a] atom_fflag_char  { $$ = ie_dstr_append(E, $a, p->token, KEEP_RAW); }
 ;
 
-atom_mflag_char: RAW | NUM | sc_keyword | flag_keyword | mailbox_keyword | misc_keyword;
+atom_mflag_char: RAW | NUM | atom_punc | sc_keyword | flag_keyword | mailbox_keyword | misc_keyword;
 atom_mflag: atom_mflag_char                { $$ = ie_dstr_new(E, p->token, KEEP_RAW); }
           | atom_mflag[a] atom_mflag_char  { $$ = ie_dstr_append(E, $a, p->token, KEEP_RAW); }
 ;
 
-tag_char: raw | atom_punc;
-tag: tag_char          { $$ = ie_dstr_new(E, p->token, KEEP_RAW); }
-   | tag[t] atom_char  { $$ = ie_dstr_append(E, $t, p->token, KEEP_RAW); }
+
+// characters allowed in astring but not atom
+resp_specials: ']';
+astring_atom_char: atom_char
+                 | resp_specials
+;
+astring_atom: astring_atom_char                  { $$ = ie_dstr_new(E, p->token, KEEP_RAW); }
+            | astring_atom[a] astring_atom_char  { $$ = ie_dstr_append(E, $a, p->token, KEEP_RAW); }
+;
+
+// tag is ASTRING-CHAR except '+'
+tag_char: raw | tag_punc | resp_specials;
+tag: tag_char         { $$ = ie_dstr_new(E, p->token, KEEP_RAW); }
+   | tag[t] tag_char  { $$ = ie_dstr_append(E, $t, p->token, KEEP_RAW); }
+;
+
+astring_mbx_char: RAW | NUM | atom_punc | resp_specials | sc_keyword | flag_keyword | mflag_keyword | misc_keyword;
+astring_mbox: astring_mbx_char                  { $$ = ie_dstr_new(E, p->token, KEEP_RAW); }
+            | astring_mbox[a] astring_mbx_char  { $$ = ie_dstr_append(E, $a, p->token, KEEP_RAW); }
 ;
 
 
@@ -1777,7 +1790,7 @@ ign_string: ign_qstr
           | ign_literal
 ;
 
-astring: atom
+astring: astring_atom
        | string
 ;
 
@@ -1786,9 +1799,9 @@ astring_1: astring
 ;
 
 
-mailbox: string[m]   { $$ = ie_mailbox_new_noninbox(E, $m); }
-       | atom_mbx[m] { $$ = ie_mailbox_new_noninbox(E, $m); }
-       | INBOX       { $$ = ie_mailbox_new_inbox(E); }
+mailbox: string[m]       { $$ = ie_mailbox_new_noninbox(E, $m); }
+       | astring_mbox[m] { $$ = ie_mailbox_new_noninbox(E, $m); }
+       | INBOX           { $$ = ie_mailbox_new_inbox(E); }
 ;
 
 s_attr_32: MESSAGES    { $$ = IE_STATUS_ATTR_MESSAGES; }
