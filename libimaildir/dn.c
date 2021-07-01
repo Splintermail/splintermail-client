@@ -7,6 +7,168 @@
 // forward declarations
 static derr_t get_msg_keys_to_expunge(dn_t *dn, msg_key_list_t **out);
 
+
+// a helper struct to lazily load the message body
+typedef struct {
+    imaildir_t *m;
+    msg_key_t key;
+    int fd;
+    bool eof;
+    ie_dstr_t *content;
+    bool taken; // the first taker gets *content; following takers get a copy
+    imf_reader_t *reader;
+    dstr_off_t hdr_bytes;
+    imf_hdr_t *hdrs;
+    imf_t *imf;
+} loader_t;
+
+static loader_t loader_prep(imaildir_t *m, msg_key_t key){
+    return (loader_t){ .m = m, .key = key, .fd = -1 };
+}
+
+// get the next 4096 bytes of data from the file
+// returns the amount read (0 means eof or error)
+static size_t _loader_read(derr_t *e, loader_t *loader){
+    if(is_error(*e)) goto fail;
+    if(loader->eof) return 0;
+
+    if(loader->fd == -1){
+        PROP_GO(e,
+            imaildir_dn_open_msg(loader->m, loader->key, &loader->fd),
+        fail);
+        loader->content = ie_dstr_new_empty(e);
+        CHECK_GO(e, fail);
+    }
+
+    // read 4096 chunks at a time
+    size_t amnt_read;
+    PROP_GO(e,
+        dstr_read(loader->fd, &loader->content->dstr, 4096, &amnt_read),
+    fail);
+    if(amnt_read == 0) loader->eof = true;
+
+    return amnt_read;
+
+fail:
+    return 0;
+}
+
+static void _loader_read_all(derr_t *e, loader_t *loader){
+    while(!is_error(*e) && !loader->eof){
+        _loader_read(e, loader);
+    }
+}
+
+// // get the content but don't take ownership
+// static ie_dstr_t *loader_get_content(derr_t *e, loader_t *loader){
+//     if(is_error(*e)) goto fail;
+//
+//     _loader_read_all(e, loader);
+//     CHECK_GO(e, fail);
+//
+//     return loader->content;
+//
+// fail:
+//     return NULL;
+// }
+
+// take ownership of the content (or a copy if the original is spoken for)
+static ie_dstr_t *loader_take_content(derr_t *e, loader_t *loader){
+    if(is_error(*e)) goto fail;
+
+    _loader_read_all(e, loader);
+
+    if(loader->taken){
+        return ie_dstr_copy(e, loader->content);
+    }
+
+    loader->taken = true;
+    return loader->content;
+
+fail:
+    return NULL;
+}
+
+// a closure around _loader_read, for imf_scanner_t
+static derr_t _loader_read_fn(void *data, size_t *amnt_read){
+    derr_t e = E_OK;
+    *amnt_read = _loader_read(&e, (loader_t*)data);
+    CHECK(&e);
+    return e;
+}
+
+static const imf_hdr_t *loader_parse_hdrs(derr_t *e, loader_t *loader){
+    if(is_error(*e)) goto fail;
+    // pre-parsed content may be just the headers or the whole imf
+    if(loader->hdrs) return loader->hdrs;
+    if(loader->imf) return loader->imf->hdr;
+
+    if(!loader->content){
+        // read at least one chunk so we have a valid loader->content
+        _loader_read(e, loader);
+        CHECK_GO(e, fail);
+    }
+
+    // otherwise we have to set up a reader and parse the headers
+    PROP_GO(e,
+        imf_reader_new(
+            &loader->reader,
+            &loader->content->dstr,
+            _loader_read_fn,
+            (void*)loader
+        ),
+    fail);
+
+    PROP_GO(e,
+        imf_reader_parse_headers(
+            loader->reader, &loader->hdrs, &loader->hdr_bytes
+        ),
+    fail);
+
+    return loader->hdrs;
+
+fail:
+    return NULL;
+}
+
+// parse the content into an imf_t
+static const imf_t *loader_parse_imf(derr_t *e, loader_t *loader){
+    if(is_error(*e)) goto fail;
+    if(loader->imf) return loader->imf;
+
+    // always do the headers first
+    loader_parse_hdrs(e, loader);
+    CHECK_GO(e, fail);
+
+    PROP_GO(e,
+        imf_reader_parse_body(loader->reader, &loader->hdrs, &loader->imf),
+    fail);
+
+    return loader->imf;
+
+fail:
+    return NULL;
+}
+
+static void loader_close(derr_t *e, loader_t *loader){
+    imf_hdr_free(loader->hdrs);
+    imf_free(loader->imf);
+    imf_reader_free(&loader->reader);
+    loader->imf = NULL;
+    if(!loader->taken){
+        ie_dstr_free(loader->content);
+    }
+    loader->content = NULL;
+
+    // if imalidir fails in this call, this will overwrite e with E_IMAILDIR
+    PROP_GO(e,
+        imaildir_dn_close_msg(loader->m, loader->key, &loader->fd),
+    fail);
+
+fail:
+    return;
+}
+
 typedef struct {
     unsigned int uid_dn;
     msg_flags_t flags;
@@ -321,6 +483,23 @@ static derr_t send_search_resp(dn_t *dn, ie_nums_t *nums){
     return e;
 }
 
+// a closure around loader_parse_hdrs for search_key_eval()
+static derr_t _loader_parse_hdrs_fn(void *data, const imf_hdr_t **hdrs){
+    derr_t e = E_OK;
+    *hdrs = loader_parse_hdrs(&e, (loader_t*)data);
+    CHECK(&e);
+    return e;
+}
+
+
+// a closure around loader_parse_hdrs for search_key_eval()
+static derr_t _loader_parse_imf_fn(void *data, const imf_t **imf){
+    derr_t e = E_OK;
+    *imf = loader_parse_imf(&e, (loader_t*)data);
+    CHECK(&e);
+    return e;
+}
+
 static derr_t search_cmd(dn_t *dn, const ie_dstr_t *tag,
         const ie_search_cmd_t *search){
     derr_t e = E_OK;
@@ -582,116 +761,38 @@ cu:
 }
 
 
-// a helper struct to lazily load the message body
-typedef struct {
-    imaildir_t *m;
-    msg_key_t key;
-    ie_dstr_t *content;
-    // the first taker gets *content; following takers get a copy
-    bool taken;
-    imf_t *imf;
-} loader_t;
-
-static loader_t loader_prep(imaildir_t *m, msg_key_t key){
-    return (loader_t){ .m = m, .key = key };
-}
-
-static void loader_load(derr_t *e, loader_t *loader){
-    if(is_error(*e)) goto fail;
-    if(loader->content) return;
-
-    int fd;
-    PROP_GO(e, imaildir_dn_open_msg(loader->m, loader->key, &fd), fail);
-    loader->content = ie_dstr_new_from_fd(e, fd);
-
-    // if imalidir fails in this call, this will overwrite e with E_IMAILDIR
-    PROP_GO(e,
-        imaildir_dn_close_msg(loader->m, loader->key, &fd),
-    fail);
-
-fail:
-    return;
-}
-
-// get the content but don't take ownership
-static ie_dstr_t *loader_get(derr_t *e, loader_t *loader){
-    if(is_error(*e)) goto fail;
-
-    loader_load(e, loader);
-    return loader->content;
-
-fail:
-    return NULL;
-}
-
-// take ownership of the content (or a copy if the original is spoken for)
-static ie_dstr_t *loader_take(derr_t *e, loader_t *loader){
-    if(is_error(*e)) goto fail;
-
-    loader_load(e, loader);
-    if(loader->taken){
-        return ie_dstr_copy(e, loader->content);
-    }
-
-    loader->taken = true;
-    return loader->content;
-
-fail:
-    return NULL;
-}
-
-// parse the content into an imf_t
-static imf_t *loader_parse(derr_t *e, loader_t *loader){
-    if(is_error(*e)) goto fail;
-    if(loader->imf) return loader->imf;
-
-    loader->imf = imf_parse_builder(e, loader_get(e, loader));
-    return loader->imf;
-
-fail:
-    return NULL;
-}
-
-static void loader_free(loader_t *loader){
-    imf_free(loader->imf);
-    loader->imf = NULL;
-    if(!loader->taken){
-        ie_dstr_free(loader->content);
-    }
-    loader->content = NULL;
-}
-
-
-static ie_dstr_t *imf_copy_body(derr_t *e, imf_t *imf){
+static ie_dstr_t *imf_copy_body(derr_t *e, const imf_t *imf){
     if(is_error(*e)) return NULL;
     if(!imf->body) return ie_dstr_new_empty(e);
-    return ie_dstr_new(e, &imf->body->bytes, KEEP_RAW);
+    dstr_t bytes = dstr_from_off(imf->body->bytes);
+    return ie_dstr_new(e, &bytes, KEEP_RAW);
 }
 
 
-static ie_dstr_t *imf_copy_hdrs(derr_t *e, imf_t *imf){
+// this is really just for nested imf's
+static ie_dstr_t *imf_copy_hdrs(derr_t *e, const imf_t *imf){
     if(is_error(*e)) return NULL;
-    return ie_dstr_new(e, &imf->hdr_bytes, KEEP_RAW);
+    dstr_t bytes = dstr_from_off(imf->hdr_bytes);
+    return ie_dstr_new(e, &bytes, KEEP_RAW);
 }
 
 
-static const dstr_t *imf_posthdr_empty_line(derr_t *e, imf_t *imf){
+static const dstr_t *posthdr_empty_line(
+    const imf_hdr_t *last_hdr, dstr_off_t hdr_bytes
+){
     /* for some odd reason the IMAP standard says that HEADER.FIELDS and
        HEADER.FIELDS.NOT responses need to include the empty line after the
        headers, if one exists */
-    static dstr_t none = (dstr_t){0};
-    static dstr_t crlf = DSTR_LIT("\r\n");
-    static dstr_t lf = DSTR_LIT("\n");
-    if(is_error(*e)) return &none;
+    static const dstr_t none = (dstr_t){0};
+    static const dstr_t crlf = DSTR_LIT("\r\n");
+    static const dstr_t lf = DSTR_LIT("\n");
 
-    // find the last hdr
-    imf_hdr_t *hdr = imf->hdr;
-    while(hdr->next) hdr = hdr->next;
-
-    // get a dstr of just the separator bytes
-    dstr_t last_hdr_and_sep = token_extend(hdr->bytes, imf->hdr_bytes);
-    dstr_t sep =
-        dstr_sub(&last_hdr_and_sep, hdr->bytes.len, last_hdr_and_sep.len);
+    // separator bytes: end of the last header to end of hdr_bytes
+    dstr_t sep = dstr_sub2(
+        *hdr_bytes.buf,
+        last_hdr->bytes.start + last_hdr->bytes.len,
+        hdr_bytes.start + hdr_bytes.len
+    );
     if(sep.len == 0){
         return &none;
     }
@@ -702,49 +803,77 @@ static const dstr_t *imf_posthdr_empty_line(derr_t *e, imf_t *imf){
 }
 
 
-static ie_dstr_t *imf_copy_hdr_fields(derr_t *e, imf_t *imf,
-        const ie_dstr_t *names){
+static ie_dstr_t *copy_hdr_fields(
+    derr_t *e,
+    const imf_hdr_t *hdrs,
+    dstr_off_t hdr_bytes,
+    const ie_dstr_t *names
+){
     if(is_error(*e)) return NULL;
 
     ie_dstr_t *out = ie_dstr_new_empty(e);
-    const imf_hdr_t *hdr = imf->hdr;
+    const imf_hdr_t *hdr = hdrs;
     for( ; hdr; hdr = hdr->next){
         const ie_dstr_t *name = names;
         for( ; name; name = name->next){
-            if(dstr_icmp(&hdr->name, &name->dstr) == 0){
-                out = ie_dstr_append(e, out, &hdr->bytes, KEEP_RAW);
+            if(dstr_icmp2(dstr_from_off(hdr->name), name->dstr) == 0){
+                dstr_t hdr_bytes = dstr_from_off(hdr->bytes);
+                out = ie_dstr_append(e, out, &hdr_bytes, KEEP_RAW);
                 break;
             }
         }
     }
     // include any post-header separator line
-    out = ie_dstr_append(e, out, imf_posthdr_empty_line(e, imf), KEEP_RAW);
+    const dstr_t *sep = posthdr_empty_line(hdr, hdr_bytes);
+    out = ie_dstr_append(e, out, sep, KEEP_RAW);
     return out;
 }
 
 
-static ie_dstr_t *imf_copy_hdr_fields_not(derr_t *e, imf_t *imf,
-        const ie_dstr_t *names){
+static ie_dstr_t *copy_hdr_fields_not(
+    derr_t *e,
+    const imf_hdr_t *hdrs,
+    dstr_off_t hdr_bytes,
+    const ie_dstr_t *names
+){
     if(is_error(*e)) return NULL;
 
     ie_dstr_t *out = ie_dstr_new_empty(e);
-    const imf_hdr_t *hdr = imf->hdr;
+    const imf_hdr_t *hdr = hdrs;
     for( ; hdr; hdr = hdr->next){
         const ie_dstr_t *name = names;
         bool keep = true;
         for( ; name; name = name->next){
-            if(dstr_icmp(&hdr->name, &name->dstr) == 0){
+            if(dstr_icmp2(dstr_from_off(hdr->name), name->dstr) == 0){
                 keep = false;
                 break;
             }
         }
         if(keep){
-            out = ie_dstr_append(e, out, &hdr->bytes, KEEP_RAW);
+            dstr_t hdr_bytes = dstr_from_off(hdr->bytes);
+            out = ie_dstr_append(e, out, &hdr_bytes, KEEP_RAW);
         }
     }
     // include any post-header separator line
-    out = ie_dstr_append(e, out, imf_posthdr_empty_line(e, imf), KEEP_RAW);
+    const dstr_t *sep = posthdr_empty_line(hdr, hdr_bytes);
+    out = ie_dstr_append(e, out, sep, KEEP_RAW);
     return out;
+}
+
+// imf_t-level wrapper
+static ie_dstr_t *imf_copy_hdr_fields(
+    derr_t *e, const imf_t *imf, const ie_dstr_t *names
+){
+    if(is_error(*e)) return NULL;
+    return copy_hdr_fields(e, imf->hdr, imf->hdr_bytes, names);
+}
+
+// imf_t-level wrapper
+static ie_dstr_t *imf_copy_hdr_fields_not(
+    derr_t *e, const imf_t *imf, const ie_dstr_t *names
+){
+    if(is_error(*e)) return NULL;
+    return copy_hdr_fields_not(e, imf->hdr, imf->hdr_bytes, names);
 }
 
 
@@ -758,11 +887,11 @@ static derr_t send_fetch_resp(dn_t *dn, const ie_fetch_cmd_t *fetch,
     if(!node) ORIG(&e, E_INTERNAL, "uid_dn missing");
     msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
 
-    // handle lazy loading of the content
-    loader_t loader = loader_prep(dn->m, view->key);
-
     unsigned int seq_num;
     PROP(&e, index_to_seq_num(index, &seq_num) );
+
+    // handle lazy loading of the content
+    loader_t loader = loader_prep(dn->m, view->key);
 
     // build a fetch response
     ie_fetch_resp_t *f = ie_fetch_resp_new(&e);
@@ -800,16 +929,18 @@ static derr_t send_fetch_resp(dn_t *dn, const ie_fetch_cmd_t *fetch,
 
     if(fetch->attr->rfc822){
         // take ownership of the content
-        f = ie_fetch_resp_rfc822(&e, f, loader_take(&e, &loader));
+        f = ie_fetch_resp_rfc822(&e, f, loader_take_content(&e, &loader));
     }
 
     if(fetch->attr->rfc822_header){
-        imf_t *imf = loader_parse(&e, &loader);
-        f = ie_fetch_resp_rfc822_hdr(&e, f, imf_copy_hdrs(&e, imf));
+        // parse the headers but just take the hdr_bytes
+        loader_parse_hdrs(&e, &loader);
+        dstr_t text = dstr_from_off(loader.hdr_bytes);
+        f = ie_fetch_resp_rfc822_hdr(&e, f, ie_dstr_new(&e, &text, KEEP_RAW));
     }
 
     if(fetch->attr->rfc822_text){
-        imf_t *imf = loader_parse(&e, &loader);
+        const imf_t *imf = loader_parse_imf(&e, &loader);
         f = ie_fetch_resp_rfc822_text(&e, f, imf_copy_body(&e, imf));
     }
 
@@ -832,12 +963,43 @@ static derr_t send_fetch_resp(dn_t *dn, const ie_fetch_cmd_t *fetch,
         ie_sect_t *sect = extra->sect;
         if(!sect){
             // BODY[] by itself
-            content_resp = loader_take(&e, &loader);
+            content_resp = loader_take_content(&e, &loader);
+
+        /* optimization clause: detect cases where we don't have to read the
+           whole message at all.  These cases meet the following criteria:
+             - no sect_part specified (no nested imf's)
+             - sect_txt is specified
+             - only concerned with content of headers */
+        }else if(
+            sect->sect_part == NULL
+            && sect->sect_txt != NULL
+            && (
+                sect->sect_txt->type == IE_SECT_HEADER
+                || sect->sect_txt->type == IE_SECT_HDR_FLDS
+                || sect->sect_txt->type == IE_SECT_HDR_FLDS_NOT
+            )
+        ){
+            // parse just the headers
+            const imf_hdr_t *hdrs = loader_parse_hdrs(&e, &loader);
+            if(sect->sect_txt->type == IE_SECT_HEADER){
+                dstr_t bytes = dstr_from_off(loader.hdr_bytes);
+                content_resp = ie_dstr_new(&e, &bytes, KEEP_RAW);
+            }else if(sect->sect_txt->type == IE_SECT_HDR_FLDS){
+                content_resp = copy_hdr_fields(
+                    &e, hdrs, loader.hdr_bytes, sect->sect_txt->headers
+                );
+            }else{  // IE_SECT_HDR_FLDS_NOT
+                content_resp = copy_hdr_fields_not(
+                    &e, hdrs, loader.hdr_bytes, sect->sect_txt->headers
+                );
+            }
+
+        // general clause: starts by parsing the whole message
         }else{
             // first parse the whole message
-            imf_t *root_imf = loader_parse(&e, &loader);
+            const imf_t *root_imf = loader_parse_imf(&e, &loader);
 
-            imf_t *imf = root_imf;
+            const imf_t *imf = root_imf;
             if(sect->sect_part){
                 // we don't parse MIME parts yet
                 TRACE_ORIG(&e, E_INTERNAL, "not implemented");
@@ -908,7 +1070,7 @@ static derr_t send_fetch_resp(dn_t *dn, const ie_fetch_cmd_t *fetch,
 
     resp = imap_resp_assert_writable(&e, resp, dn->exts);
 
-    loader_free(&loader);
+    loader_close(&e, &loader);
 
     CHECK(&e);
 
