@@ -161,37 +161,49 @@ dstr_t dstr_sub2(const dstr_t in, size_t start, size_t end){
     return out;
 }
 
-int dstr_cmp(const dstr_t* a, const dstr_t* b){
+// case-insensitive character
+static char ichar(char c){
+    if(c >= 'a' && c <= 'z') return (char)(c - 32);
+    return c;
+}
+
+static char noichar(char c){
+    return c;
+}
+
+static int do_dstr_cmp2(const dstr_t a, const dstr_t b, bool sensitive){
     // two NULL strings are considered matching
-    if(!a->data && !b->data){
+    if(!a.data && !b.data){
         return 0;
     }
     // as are two zero-length strings
-    if(a->len == 0 && b->len == 0){
+    if(a.len == 0 && b.len == 0){
         return 0;
     }
     // but one NULL and one not are not matching
-    if(!a->data || !b->data){
-        return a->data ? *a->data : *b->data;
+    if(!a.data || !b.data){
+        return a.data ? *a.data : *b.data;
     }
     // don't read past the end of either string
-    size_t max = MIN(a->len, b->len);
+    size_t max = MIN(a.len, b.len);
+
+    char (*char_fn)(char) = sensitive ? noichar : ichar;
 
     for(size_t i = 0; i < max; i++){
-        char ca = a->data[i];
-        char cb = b->data[i];
+        char ca = char_fn(a.data[i]);
+        char cb = char_fn(b.data[i]);
         if(ca != cb){
             return ca - cb;
         }
     }
 
     // one string might be longer than the other
-    if(a->len > b->len){
-        int ca = (int)(a->data[b->len]);
+    if(a.len > b.len){
+        int ca = (int)(char_fn(a.data[b.len]));
         return ca;
     }
-    if(b->len > a->len){
-        int cb = (int)(b->data[a->len]);
+    if(b.len > a.len){
+        int cb = (int)(char_fn(b.data[a.len]));
         return -cb;
     }
 
@@ -199,46 +211,20 @@ int dstr_cmp(const dstr_t* a, const dstr_t* b){
     return 0;
 }
 
-int dstr_icmp(const dstr_t* a, const dstr_t* b){
-    // two NULL strings are considered matching
-    if(!a->data && !b->data){
-        return 0;
-    }
-    // as are two zero-length strings
-    if(a->len == 0 && b->len == 0){
-        return 0;
-    }
-    // but one NULL and one not are not matching
-    if(!a->data || !b->data){
-        return a->data ? *a->data : *b->data;
-    }
-    // don't read past the end of either string
-    size_t max = MIN(a->len, b->len);
+int dstr_cmp(const dstr_t *a, const dstr_t *b){
+    return do_dstr_cmp2(*a, *b, true);
+}
 
-    for(size_t i = 0; i < max; i++){
-        char ca = a->data[i];
-        char cb = b->data[i];
-        if(ca >= 'a' && ca <= 'z') ca = (char)(ca - 32);
-        if(cb >= 'a' && cb <= 'z') cb = (char)(cb - 32);
-        if(ca != cb){
-            return ca - cb;
-        }
-    }
+int dstr_cmp2(const dstr_t a, const dstr_t b){
+    return do_dstr_cmp2(a, b, true);
+}
 
-    // one string might be longer than the other
-    if(a->len > b->len){
-        int ca = (int)(a->data[b->len]);
-        if(ca >= 'a' && ca <= 'z') ca = (char)(ca - 32);
-        return ca;
-    }
-    if(b->len > a->len){
-        int cb = (int)(b->data[a->len]);
-        if(cb >= 'a' && cb <= 'z') cb = (char)(cb - 32);
-        return -cb;
-    }
+int dstr_icmp(const dstr_t *a, const dstr_t *b){
+    return do_dstr_cmp2(*a, *b, false);
+}
 
-    // strings match
-    return 0;
+int dstr_icmp2(const dstr_t a, const dstr_t b){
+    return do_dstr_cmp2(a, b, false);
 }
 
 void dstr_upper(dstr_t* text){
@@ -702,14 +688,17 @@ derr_t dstr_recode(const dstr_t* in,
     return e;
 }
 
-size_t dstr_count(const dstr_t* text, const dstr_t* pattern){
+static size_t do_dstr_count2(
+    const dstr_t text, const dstr_t pattern, bool sensitive
+){
+    char (*char_fn)(char) = sensitive ? noichar : ichar;
     size_t count = 0;
-    for(size_t i = 0; i + pattern->len <= text->len; i++){
+    for(size_t i = 0; i + pattern.len <= text.len; i++){
         // we know from loop boundary there's always room for a full match
         // so now we can safely just check the whole pattern
         bool match = true;
-        for(size_t j = 0; j < pattern->len; j++){
-            if(text->data[i + j] != pattern->data[j]){
+        for(size_t j = 0; j < pattern.len; j++){
+            if(char_fn(text.data[i + j]) != char_fn(pattern.data[j])){
                 // nope, not a match.  Continue search from i
                 match = false;
                 break;
@@ -719,10 +708,22 @@ size_t dstr_count(const dstr_t* text, const dstr_t* pattern){
             count++;
             // no need to search anymore until end of current pattern
             // (compensating for the fact that the loop adds 1 to i)
-            i += pattern->len - 1;
+            i += pattern.len - 1;
         }
     }
     return count;
+}
+
+size_t dstr_count(const dstr_t* text, const dstr_t* pattern){
+    return do_dstr_count2(*text, *pattern, true);
+}
+
+size_t dstr_count2(const dstr_t text, const dstr_t pattern){
+    return do_dstr_count2(text, pattern, true);
+}
+
+size_t dstr_icount2(const dstr_t text, const dstr_t pattern){
+    return do_dstr_count2(text, pattern, false);
 }
 
 bool dstr_beginswith(const dstr_t *str, const dstr_t *pattern){

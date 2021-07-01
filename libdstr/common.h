@@ -356,10 +356,12 @@ dstr_t dstr_sub2(const dstr_t in, size_t start, size_t end);
 // result is <0, =0, or >0 if a is <b, =b, or >b, respectively
 // Its just a byte comparison, its not UTF8-smart
 // because there's multiple ways to encode the same accent in UTF8
-int dstr_cmp(const dstr_t* a, const dstr_t* b);
+int dstr_cmp(const dstr_t *a, const dstr_t *b);
+int dstr_cmp2(const dstr_t a, const dstr_t b);
 
 // case-insensitive
-int dstr_icmp(const dstr_t* a, const dstr_t* b);
+int dstr_icmp(const dstr_t *a, const dstr_t *b);
+int dstr_icmp2(const dstr_t a, const dstr_t b);
 
 // Not UTF8-smart at all
 void dstr_upper(dstr_t* text);
@@ -463,6 +465,10 @@ derr_t dstr_recode(const dstr_t* in,
              E_FIXEDSIZE */
 
 size_t dstr_count(const dstr_t* text, const dstr_t* pattern);
+size_t dstr_count2(const dstr_t text, const dstr_t pattern);
+
+// case-insensitive
+size_t dstr_icount2(const dstr_t text, const dstr_t pattern);
 
 bool dstr_beginswith(const dstr_t *str, const dstr_t *pattern);
 bool dstr_endswith(const dstr_t *str, const dstr_t *pattern);
