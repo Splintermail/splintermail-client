@@ -6,18 +6,17 @@
 
     #define E (&p->error)
 
-    // track locations as dstr_t's of the base dstr_t
+    // track locations as dstr_off_t's of the base dstr_t
     // (based on `info bison`: "3.5.3 Default action for Locations"
     #define YYLLOC_DEFAULT(cur, rhs, n) \
     do { \
         if(n) { \
-            (cur) = token_extend(YYRHSLOC(rhs, 1), YYRHSLOC(rhs, n)); \
+            (cur) = token_extend2(YYRHSLOC(rhs, 1), YYRHSLOC(rhs, n)); \
         } else { \
-            (cur) = (dstr_t){ \
-                .data = YYRHSLOC(rhs, 0).data, \
+            (cur) = (dstr_off_t){ \
+                .buf = YYRHSLOC(rhs, 0).buf, \
+                .start = 0, \
                 .len = 0, \
-                .size = 0, \
-                .fixed_size = true, \
             }; \
         } \
     } while (0)
@@ -30,7 +29,7 @@
 %define api.value.type {imf_expr_t}
 /* track locations as dstr_t's */
 %locations
-%define api.location.type {dstr_t}
+%define api.location.type {dstr_off_t}
 /* reentrant */
 %define api.pure full
 /* push parser */
@@ -51,6 +50,7 @@
 %token UNSTRUCT
 %token BODY
 
+// returned as an intermediate result
 %type <hdr> hdrs
 %type <hdr> hdrs_0
 %type <hdr> hdrs_1
@@ -62,9 +62,15 @@
 
 %% /* Grammar Section */
 
-imf: hdrs[h] body[b] DONE
-   { dstr_t bytes = token_extend(@h, @b);
-     p->imf = imf_new(E, bytes, @h, $h, $b); YYACCEPT; }
+imf: hdrs_ body[b] DONE
+   { dstr_off_t off = token_extend2(p->hdr_bytes, @b);
+     p->imf = imf_new(E, off, p->hdr_bytes, STEAL(imf_hdr_t, &p->hdrs), $b); YYACCEPT; }
+
+// an intermediate result we sometimes return to the caller
+hdrs_: hdrs[h] {
+    p->hdr_bytes = @h;
+    p->hdrs = $h;
+}
 
 hdrs: hdrs_0[h] EOL { $$ = $h; MODE(BODY); };
 
@@ -78,9 +84,9 @@ hdrs_1: hdr                { $$ = $hdr; }
 
 // right now we don't parse any structured headers
 hdr: HDRNAME[name] ':' { MODE(UNSTRUCT); } hdrval[val]
-    { dstr_t bytes = token_extend(@name, @val);
+    { dstr_off_t off = token_extend2(@name, @val);
       imf_hdr_arg_u arg = { .unstruct = @val };
-      $$ = imf_hdr_new(E, bytes, @name, IMF_HDR_UNSTRUCT, arg); }
+      $$ = imf_hdr_new(E, off, @name, IMF_HDR_UNSTRUCT, arg); }
 ;
 
 // At the start of every new line, we either have folding white space or a new header

@@ -7,6 +7,7 @@
 #include "test_utils.h"
 
 #define EXPECT(exp_error, exp_type, exp_token_cstr) { \
+    dstr_t token_dstr = dstr_from_off(token); \
     dstr_t exp_token; \
     DSTR_WRAP(exp_token, exp_token_cstr, strlen(exp_token_cstr), true); \
     if(exp_error != e.type){ \
@@ -18,7 +19,7 @@
         if(exp_error == E_NONE){ \
             TRACE(&e, "on input: '%x'\n", FD_DBG(&scannable));  \
         }else{ \
-            TRACE(&e, "on input: '%x%x'\n", FD_DBG(&token), FD_DBG(&scannable));  \
+            TRACE(&e, "on input: '%x%x'\n", FD_DBG(&token_dstr), FD_DBG(&scannable));  \
         } \
         ORIG_GO(&e, E_VALUE, "unexpected status", cu_scanner); \
     } \
@@ -30,15 +31,15 @@
                 FI(exp_type), FI(type)); \
         /* write the last token + scannable */ \
         dstr_t scannable = imf_get_scannable(&scanner); \
-        TRACE(&e, "on input: '%x%x'\n", FD_DBG(&token), FD_DBG(&scannable));  \
+        TRACE(&e, "on input: '%x%x'\n", FD_DBG(&token_dstr), FD_DBG(&scannable));  \
         ORIG_GO(&e, E_VALUE, "unexpected token type", cu_scanner); \
     } \
-    if(exp_error == E_NONE && dstr_cmp(&token, &exp_token) != 0){ \
+    if(exp_error == E_NONE && dstr_cmp(&token_dstr, &exp_token) != 0){ \
         TRACE(&e, "expected token \"%x\" but got token \"%x\"\n", \
-                FD_DBG(&exp_token), FD_DBG(&token)); \
+                FD_DBG(&exp_token), FD_DBG(&token_dstr)); \
         /* write the last token + scannable */ \
         dstr_t scannable = imf_get_scannable(&scanner); \
-        TRACE(&e, "on input: '%x%x'\n", FD_DBG(&token), FD_DBG(&scannable));  \
+        TRACE(&e, "on input: '%x%x'\n", FD_DBG(&token_dstr), FD_DBG(&scannable));  \
         ORIG_GO(&e, E_VALUE, "unexpected token type", cu_scanner); \
     } \
 }
@@ -57,9 +58,9 @@ static derr_t test_imf_scan(void){
     );
 
     imf_scanner_t scanner;
-    PROP(&e, imf_scanner_init(&scanner, &imf_msg) );
+    PROP(&e, imf_scanner_init(&scanner, &imf_msg, NULL, NULL) );
 
-    dstr_t token;
+    dstr_off_t token;
     int type;
 
     e = imf_scan(&scanner, IMF_SCAN_HDR, &token, &type);
@@ -109,7 +110,7 @@ static derr_t test_imf_scan(void){
     EXPECT(E_NONE, DONE, "");
 
     // ensure that the token dstr points to just after the end of the buffer
-    if(token.data != imf_msg.data + imf_msg.len){
+    if(token.start != imf_msg.len){
         ORIG_GO(&e, E_VALUE, "DONE token not valid", cu_scanner);
     }
 
@@ -128,7 +129,7 @@ static derr_t test_overrun(void){
     derr_t e = E_OK;
 
     imf_scanner_t scanner;
-    dstr_t token;
+    dstr_off_t token;
     int type;
 
 #define DSTR_STUB(var, cstr, label) \
@@ -147,22 +148,22 @@ static derr_t test_overrun(void){
     DSTR_STUB(body3, "body3\n", cu_body2);
     DSTR_STUB(body4, "body4\r\n", cu_body3);
 
-    PROP_GO(&e, imf_scanner_init(&scanner, &d_body1), cu_bodies);
+    PROP_GO(&e, imf_scanner_init(&scanner, &d_body1, NULL, NULL), cu_bodies);
     e = imf_scan(&scanner, IMF_SCAN_BODY, &token, &type);
     EXPECT(E_NONE, BODY, "body1");
     imf_scanner_free(&scanner);
 
-    PROP_GO(&e, imf_scanner_init(&scanner, &d_body2), cu_bodies);
+    PROP_GO(&e, imf_scanner_init(&scanner, &d_body2, NULL, NULL), cu_bodies);
     e = imf_scan(&scanner, IMF_SCAN_BODY, &token, &type);
     EXPECT(E_NONE, BODY, "body2\r");
     imf_scanner_free(&scanner);
 
-    PROP_GO(&e, imf_scanner_init(&scanner, &d_body3), cu_bodies);
+    PROP_GO(&e, imf_scanner_init(&scanner, &d_body3, NULL, NULL), cu_bodies);
     e = imf_scan(&scanner, IMF_SCAN_BODY, &token, &type);
     EXPECT(E_NONE, BODY, "body3\n");
     imf_scanner_free(&scanner);
 
-    PROP_GO(&e, imf_scanner_init(&scanner, &d_body4), cu_bodies);
+    PROP_GO(&e, imf_scanner_init(&scanner, &d_body4, NULL, NULL), cu_bodies);
     e = imf_scan(&scanner, IMF_SCAN_BODY, &token, &type);
     EXPECT(E_NONE, BODY, "body4\r\n");
     imf_scanner_free(&scanner);

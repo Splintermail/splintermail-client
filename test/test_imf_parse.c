@@ -5,9 +5,11 @@
 
 static bool imf_hdr_arg_eq(imf_hdr_type_e type, imf_hdr_arg_u a,
         imf_hdr_arg_u b){
+    dstr_t da = dstr_from_off(a.unstruct);
+    dstr_t db = dstr_from_off(b.unstruct);
     switch(type){
         case IMF_HDR_UNSTRUCT:
-            return dstr_cmp(&a.unstruct, &b.unstruct) == 0;
+            return dstr_cmp(&da, &db) == 0;
             break;
     }
     return false;
@@ -15,8 +17,12 @@ static bool imf_hdr_arg_eq(imf_hdr_type_e type, imf_hdr_arg_u a,
 
 static bool imf_hdr_eq(const imf_hdr_t *a, const imf_hdr_t *b){
     IE_EQ_PTR_CHECK(a, b);
-    return dstr_cmp(&a->bytes, &b->bytes) == 0
-        && dstr_cmp(&a->name, &b->name) == 0
+    dstr_t abytes = dstr_from_off(a->bytes);
+    dstr_t bbytes = dstr_from_off(b->bytes);
+    dstr_t aname = dstr_from_off(a->name);
+    dstr_t bname = dstr_from_off(b->name);
+    return dstr_cmp(&abytes, &bbytes) == 0
+        && dstr_cmp(&aname, &bname) == 0
         && a->type == b->type
         && imf_hdr_arg_eq(a->type, a->arg, b->arg)
         && imf_hdr_eq(a->next, b->next);
@@ -36,15 +42,21 @@ static bool imf_body_arg_eq(imf_body_type_e type, imf_body_arg_u a,
 
 static bool imf_body_eq(const imf_body_t *a, const imf_body_t *b){
     IE_EQ_PTR_CHECK(a, b);
-    return dstr_cmp(&a->bytes, &b->bytes) == 0
+    dstr_t abytes = dstr_from_off(a->bytes);
+    dstr_t bbytes = dstr_from_off(b->bytes);
+    return dstr_cmp(&abytes, &bbytes) == 0
         && a->type == b->type
         && imf_body_arg_eq(a->type, a->arg, b->arg);
 }
 
 static bool imf_eq(const imf_t *a, const imf_t *b){
     IE_EQ_PTR_CHECK(a, b);
-    return dstr_cmp(&a->bytes, &b->bytes) == 0
-        && dstr_cmp(&a->hdr_bytes, &b->hdr_bytes) == 0
+    dstr_t abytes = dstr_from_off(a->bytes);
+    dstr_t bbytes = dstr_from_off(b->bytes);
+    dstr_t ahdr_bytes = dstr_from_off(a->hdr_bytes);
+    dstr_t bhdr_bytes = dstr_from_off(b->hdr_bytes);
+    return dstr_cmp(&abytes, &bbytes) == 0
+        && dstr_cmp(&ahdr_bytes, &bhdr_bytes) == 0
         && imf_hdr_eq(a->hdr, b->hdr)
         && imf_body_eq(a->body, b->body);
 }
@@ -61,6 +73,8 @@ static derr_t test_imf_parse(void){
         "body\r\n"
         "unfinished line"
     );
+
+    # define DSTR_OFF(dstr) (dstr_off_t){.buf=&dstr, .start=0, .len=dstr.len}
 
     dstr_t hdr1_name = DSTR_LIT("header-1");
     dstr_t hdr1_val = DSTR_LIT(" value-1\r\n");
@@ -79,29 +93,29 @@ static derr_t test_imf_parse(void){
 
     // build the expected values
     imf_hdr_t *hdr = imf_hdr_new(&e,
-        hdr1_bytes,
-        hdr1_name,
+        DSTR_OFF(hdr1_bytes),
+        DSTR_OFF(hdr1_name),
         IMF_HDR_UNSTRUCT,
-        (imf_hdr_arg_u){ .unstruct = hdr1_val }
+        (imf_hdr_arg_u){ .unstruct = DSTR_OFF(hdr1_val) }
     );
 
     hdr = imf_hdr_add(&e,
         hdr,
         imf_hdr_new(&e,
-            hdr2_bytes,
-            hdr2_name,
+            DSTR_OFF(hdr2_bytes),
+            DSTR_OFF(hdr2_name),
             IMF_HDR_UNSTRUCT,
-            (imf_hdr_arg_u){ .unstruct = hdr2_val }
+            (imf_hdr_arg_u){ .unstruct = DSTR_OFF(hdr2_val) }
         )
     );
 
     imf_body_t *body = imf_body_new(&e,
-        body_bytes,
+        DSTR_OFF(body_bytes),
         IMF_BODY_UNSTRUCT,
         (imf_body_arg_u){}
     );
 
-    imf_t *exp = imf_new(&e, msg, hdr_bytes, hdr, body);
+    imf_t *exp = imf_new(&e, DSTR_OFF(msg), DSTR_OFF(hdr_bytes), hdr, body);
     CHECK(&e);
 
     imf_t *got;
