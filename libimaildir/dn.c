@@ -525,14 +525,32 @@ static derr_t search_cmd(dn_t *dn, const ie_dstr_t *tag,
     unsigned int seq = seq_max;
 
     ie_nums_t *nums = NULL;
+    loader_t loader;
 
     // check every message in the view in reverse order
     for(; node != NULL; node = jsw_atprev(&trav)){
         view = CONTAINER_OF(node, msg_view_t, node);
 
+        loader_prep(dn->m, view->key);
+
         bool match;
-        PROP_GO(&e, search_key_eval(search->search_key, view, seq, seq_max,
-                    uid_dn_max, &match), fail);
+        PROP_GO(&e,
+            search_key_eval(
+                search->search_key,
+                view,
+                seq,
+                seq_max,
+                uid_dn_max,
+                _loader_parse_hdrs_fn,
+                &loader,
+                _loader_parse_imf_fn,
+                &loader,
+                &match
+            ),
+        fail);
+
+        loader_close(&e, &loader);
+        CHECK_GO(&e, fail);
 
         if(match){
             unsigned int val = search->uid_mode ? view->uid_dn : seq;
@@ -557,6 +575,8 @@ static derr_t search_cmd(dn_t *dn, const ie_dstr_t *tag,
     return e;
 
 fail:
+    // possibly override the failure with E_IMAILDIR
+    loader_close(&e, &loader);
     ie_nums_free(nums);
     return e;
 }

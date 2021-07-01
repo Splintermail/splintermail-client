@@ -6,7 +6,13 @@ typedef struct {
     unsigned int seq;
     unsigned int seq_max;
     unsigned int uid_dn_max;
+    // get a read-only copy of either headers or whole body, must be idempotent
+    derr_t (*get_hdrs)(void*, const imf_hdr_t**);
+    void *get_hdrs_data;
+    derr_t (*get_imf)(void*, const imf_t**);
+    void *get_imf_data;
 } search_args_t;
+
 
 static bool get_recent(const msg_view_t *view){
     // TODO: support \Recent flag
@@ -30,7 +36,39 @@ static bool in_seq_set(unsigned int val, const ie_seq_set_t *seq_set,
 }
 
 
-static derr_t do_eval(const search_args_t *args, size_t lvl,
+static derr_t search_headers(
+    search_args_t *args, const dstr_t name, const dstr_t value, bool *out
+){
+    derr_t e = E_OK;
+    *out = false;
+
+    const imf_hdr_t *hdrs;
+    PROP(&e, args->get_hdrs(args->get_hdrs_data, &hdrs) );
+
+    // find a matching header field
+    for(const imf_hdr_t *hdr = hdrs; hdr; hdr = hdr->next){
+        // does this header name match?
+        dstr_t hname = dstr_from_off(hdr->name);
+        if(dstr_icmp2(hname, name) == 0){
+            // is the search key present in the header value?
+            dstr_t searchable;
+            switch(hdr->type){
+                case IMF_HDR_UNSTRUCT:
+                    searchable = dstr_from_off(hdr->arg.unstruct);
+                    break;
+            }
+            if(dstr_icount2(searchable, value) > 0){
+                *out = true;
+                return e;
+            }
+        }
+    }
+
+    return e;
+}
+
+
+static derr_t do_eval(search_args_t *args, size_t lvl,
         const ie_search_key_t *key, bool *out){
     derr_t e = E_OK;
 
@@ -95,25 +133,49 @@ static derr_t do_eval(const search_args_t *args, size_t lvl,
             } break;
 
         case IE_SEARCH_UID:
-            *out = in_seq_set(
-                view->uid_dn, param.seq_set, args->uid_dn_max
-            );
+            *out = in_seq_set(view->uid_dn, param.seq_set, args->uid_dn_max);
             break;
 
         case IE_SEARCH_SEQ_SET:     // uses param.seq_set
-            *out = in_seq_set(args->seq, param.seq_set,args-> seq_max);
+            *out = in_seq_set(args->seq, param.seq_set, args->seq_max);
             break;
 
-        case IE_SEARCH_SUBJECT:     // uses param.dstr
-        case IE_SEARCH_BCC:         // uses param.dstr
-        case IE_SEARCH_BODY:        // uses param.dstr
-        case IE_SEARCH_CC:          // uses param.dstr
-        case IE_SEARCH_FROM:        // uses param.dstr
+        #define HEADER_SEARCH(hdrname) \
+            PROP(&e, \
+                search_headers(args, DSTR_LIT(hdrname), param.dstr->dstr, out \
+                ) \
+            )
+        // use param.dstr
+        case IE_SEARCH_SUBJECT: HEADER_SEARCH("Subject"); break;
+        case IE_SEARCH_BCC: HEADER_SEARCH("Bcc"); break;
+        case IE_SEARCH_CC: HEADER_SEARCH("Cc"); break;
+        case IE_SEARCH_FROM: HEADER_SEARCH("From"); break;
+        case IE_SEARCH_TO: HEADER_SEARCH("To"); break;
+        #undef HEADER_SEARCH
+
         case IE_SEARCH_KEYWORD:     // uses param.dstr
-        case IE_SEARCH_TEXT:        // uses param.dstr
-        case IE_SEARCH_TO:          // uses param.dstr
+            // we don't support keyword flags
+            *out = false;
+            break;
+
         case IE_SEARCH_UNKEYWORD:   // uses param.dstr
+            // we don't support keyword flags
+            *out = true;
+            break;
+
         case IE_SEARCH_HEADER:      // uses param.header
+            PROP(&e,
+                search_headers(
+                    args,
+                    param.header.name->dstr,
+                    param.header.value->dstr,
+                    out
+                )
+            );
+            break;
+
+        case IE_SEARCH_BODY:        // uses param.dstr
+        case IE_SEARCH_TEXT:        // uses param.dstr
         case IE_SEARCH_BEFORE:      // uses param.date
         case IE_SEARCH_ON:          // uses param.date
         case IE_SEARCH_SINCE:       // uses param.date
@@ -130,9 +192,19 @@ static derr_t do_eval(const search_args_t *args, size_t lvl,
     return e;
 }
 
-derr_t search_key_eval(const ie_search_key_t *key, const msg_view_t *view,
-        unsigned int seq, unsigned int seq_max, unsigned int uid_dn_max,
-        bool *out){
+derr_t search_key_eval(
+    const ie_search_key_t *key,
+    const msg_view_t *view,
+    unsigned int seq,
+    unsigned int seq_max,
+    unsigned int uid_dn_max,
+    // get a read-only copy of either headers or whole body, must be idempotent
+    derr_t (*get_hdrs)(void*, const imf_hdr_t**),
+    void *get_hdrs_data,
+    derr_t (*get_imf)(void*, const imf_t**),
+    void *get_imf_data,
+    bool *out
+){
     derr_t e = E_OK;
 
     search_args_t args = {
@@ -140,6 +212,11 @@ derr_t search_key_eval(const ie_search_key_t *key, const msg_view_t *view,
         .seq = seq,
         .seq_max = seq_max,
         .uid_dn_max = uid_dn_max,
+        // message is parsed lazily
+        .get_hdrs = get_hdrs,
+        .get_hdrs_data = get_hdrs_data,
+        .get_imf = get_imf,
+        .get_imf_data = get_imf_data,
     };
     PROP(&e, do_eval(&args, 0, key, out) );
 
