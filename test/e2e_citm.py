@@ -1978,7 +1978,7 @@ if __name__ == "__main__":
 
                 print(test.__name__ + "... ", end="", flush="true")
                 cmd = [
-                    "citm/citm",
+                    "libcitm/citm",
                     "--local-host",
                     "127.0.0.1",
                     "--local-port",

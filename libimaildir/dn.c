@@ -522,13 +522,13 @@ static derr_t search_cmd(dn_t *dn, const ie_dstr_t *tag,
     unsigned int seq = seq_max;
 
     ie_nums_t *nums = NULL;
-    loader_t loader;
+    loader_t loader = {0};
 
     // check every message in the view in reverse order
     for(; node != NULL; node = jsw_atprev(&trav)){
         view = CONTAINER_OF(node, msg_view_t, node);
 
-        loader_prep(dn->m, view->key);
+        loader = loader_prep(dn->m, view->key);
 
         bool match;
         PROP_GO(&e,
