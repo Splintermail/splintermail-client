@@ -1903,6 +1903,25 @@ def test_mangle_corrupted(cmd, maildir_root, **kwargs):
     with inbox(cmd) as rw:
         pass
 
+@register_test
+def test_search(cmd, maildir_root, **kwargs):
+    with inbox(cmd) as rw:
+        # append a message that is sure to break the imf parsing
+        append_messages(rw, 1)
+
+        # append a message with known contents
+        msg = b"My-Header: My Value\r\n\r\nhello world\r\n"
+        rw.put(b"1 APPEND INBOX {%d}\r\n"%len(msg))
+        rw.wait_for_match(b"\\+")
+        rw.put(msg + b"\r\n")
+        rw.wait_for_resp("1", "OK")
+
+        # Get that UID
+        uid = int(get_uid("*", rw))
+
+        rw.put(b"2 UID SEARCH HEADER My-Header \"My Value\"\r\n")
+        rw.wait_for_resp("2", "OK", require=[b"\\* SEARCH %d"%uid])
+
 def append_messages(rw, count, box="INBOX"):
     for n in range(count):
         rw.put(b"PRE%d APPEND %s {11}\r\n"%(n, as_bytes(box)))
