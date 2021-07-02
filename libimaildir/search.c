@@ -153,6 +153,49 @@ static derr_t do_eval(search_args_t *args, size_t lvl,
         case IE_SEARCH_TO: HEADER_SEARCH("To"); break;
         #undef HEADER_SEARCH
 
+        case IE_SEARCH_BODY: {      // uses param.dstr
+                // search just the body
+                const imf_t *imf;
+                PROP(&e, args->get_imf(args->get_imf_data, &imf) );
+                if(!imf->body){
+                    *out = false;
+                    break;
+                }
+
+                dstr_t searchable = {0};
+                switch(imf->body->type){
+                    case IMF_BODY_UNSTRUCT:
+                        searchable = dstr_from_off(imf->body->bytes);
+                        break;
+                }
+                *out = dstr_icount2(searchable, param.dstr->dstr) > 0;
+            } break;
+
+        case IE_SEARCH_TEXT: {      // uses param.dstr
+                const dstr_t tgt = param.dstr->dstr;
+                // search the headers first, then search the body if necessary
+                const imf_hdrs_t *hdrs;
+                PROP(&e, args->get_hdrs(args->get_hdrs_data, &hdrs) );
+                dstr_t searchable = dstr_from_off(hdrs->bytes);
+                if(dstr_icount2(searchable, tgt) > 0){
+                    *out = true;
+                    break;
+                }
+
+                // remember how far we already searched
+                size_t hdrs_end = hdrs->bytes.start + hdrs->bytes.len;
+
+                const imf_t *imf;
+                PROP(&e, args->get_imf(args->get_imf_data, &imf) );
+                /* avoid searching things we already searched, allowing for
+                   boundary conditions */
+                size_t start = hdrs_end - MIN(hdrs_end, tgt.len);
+                size_t end = imf->bytes.start + imf->bytes.len;
+                searchable = dstr_sub2(dstr_from_off(imf->bytes), start, end);
+
+                *out = dstr_icount2(searchable, param.dstr->dstr) > 0;
+            } break;
+
         case IE_SEARCH_KEYWORD:     // uses param.dstr
             // we don't support keyword flags
             *out = false;
@@ -174,8 +217,6 @@ static derr_t do_eval(search_args_t *args, size_t lvl,
             );
             break;
 
-        case IE_SEARCH_BODY:        // uses param.dstr
-        case IE_SEARCH_TEXT:        // uses param.dstr
         case IE_SEARCH_BEFORE:      // uses param.date
         case IE_SEARCH_ON:          // uses param.date
         case IE_SEARCH_SINCE:       // uses param.date

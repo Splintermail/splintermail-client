@@ -190,6 +190,62 @@ static derr_t test_search(void){
             .key = ie_search_dstr(&e, IE_SEARCH_UNKEYWORD, NULL),
             .expect = true,
         },
+        {
+            .name = "TEXT (present)",
+            .key = ie_search_dstr(&e, IE_SEARCH_TEXT, IE_DSTR("SOME TEXT")),
+            .content = DSTR_LIT(
+                "My-Header: SOME TEXT\r\n"
+                "\r\n"
+                "My body\r\n"
+            ),
+            .expect = true,
+
+        },
+        {
+            .name = "TEXT (overlaps separator)",
+            .key = ie_search_dstr(&e,
+                IE_SEARCH_TEXT, IE_DSTR("SOME\r\n\r\nTEXT")
+            ),
+            .content = DSTR_LIT(
+                "My-Header: SOME\r\n"
+                "\r\n"
+                "TEXT. My body\r\n"
+            ),
+            .expect = true,
+
+        },
+        {
+            .name = "TEXT (not present)",
+            .key = ie_search_dstr(&e, IE_SEARCH_TEXT, IE_DSTR("SOME TEXT")),
+            .content = DSTR_LIT(
+                "My-Header: other TEXT\r\n"
+                "\r\n"
+                "My body\r\n"
+            ),
+            .expect = false,
+        },
+        {
+            .name = "BODY (present)",
+            .key = ie_search_dstr(&e, IE_SEARCH_BODY, IE_DSTR("SOME TEXT")),
+            .content = DSTR_LIT(
+                "My-Header: OTHER TEXT\r\n"
+                "\r\n"
+                "My body\r\n"
+                "SOME TEXT\r\n"
+            ),
+            .expect = true,
+
+        },
+        {
+            .name = "BODY (not present)",
+            .key = ie_search_dstr(&e, IE_SEARCH_BODY, IE_DSTR("SOME TEXT")),
+            .content = DSTR_LIT(
+                "My-Header: SOME TEXT\r\n"
+                "\r\n"
+                "My body\r\n"
+            ),
+            .expect = false,
+        },
 
         // seq_set-parameter search key cases
         {
@@ -316,8 +372,6 @@ static derr_t test_search(void){
         // IE_SEARCH_NEW,         // no param
         // IE_SEARCH_OLD,         // no param
         // IE_SEARCH_RECENT,      // no param
-        // IE_SEARCH_TEXT,        // uses param.dstr
-        // IE_SEARCH_BODY,        // uses param.dstr
         // IE_SEARCH_BEFORE,      // uses param.date
         // IE_SEARCH_ON,          // uses param.date
         // IE_SEARCH_SINCE,       // uses param.date
