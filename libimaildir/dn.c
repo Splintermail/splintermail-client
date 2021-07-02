@@ -17,8 +17,7 @@ typedef struct {
     ie_dstr_t *content;
     bool taken; // the first taker gets *content; following takers get a copy
     imf_reader_t *reader;
-    dstr_off_t hdr_bytes;
-    imf_hdr_t *hdrs;
+    imf_hdrs_t *hdrs;
     imf_t *imf;
 } loader_t;
 
@@ -97,11 +96,11 @@ static derr_t _loader_read_fn(void *data, size_t *amnt_read){
     return e;
 }
 
-static const imf_hdr_t *loader_parse_hdrs(derr_t *e, loader_t *loader){
+static const imf_hdrs_t *loader_parse_hdrs(derr_t *e, loader_t *loader){
     if(is_error(*e)) goto fail;
     // pre-parsed content may be just the headers or the whole imf
     if(loader->hdrs) return loader->hdrs;
-    if(loader->imf) return loader->imf->hdr;
+    if(loader->imf) return loader->imf->hdrs;
 
     if(!loader->content){
         // read at least one chunk so we have a valid loader->content
@@ -120,9 +119,7 @@ static const imf_hdr_t *loader_parse_hdrs(derr_t *e, loader_t *loader){
     fail);
 
     PROP_GO(e,
-        imf_reader_parse_headers(
-            loader->reader, &loader->hdrs, &loader->hdr_bytes
-        ),
+        imf_reader_parse_headers(loader->reader, &loader->hdrs),
     fail);
 
     return loader->hdrs;
@@ -151,7 +148,7 @@ fail:
 }
 
 static void loader_close(derr_t *e, loader_t *loader){
-    imf_hdr_free(loader->hdrs);
+    imf_hdrs_free(loader->hdrs);
     imf_free(loader->imf);
     imf_reader_free(&loader->reader);
     loader->imf = NULL;
@@ -484,7 +481,7 @@ static derr_t send_search_resp(dn_t *dn, ie_nums_t *nums){
 }
 
 // a closure around loader_parse_hdrs for search_key_eval()
-static derr_t _loader_parse_hdrs_fn(void *data, const imf_hdr_t **hdrs){
+static derr_t _loader_parse_hdrs_fn(void *data, const imf_hdrs_t **hdrs){
     derr_t e = E_OK;
     *hdrs = loader_parse_hdrs(&e, (loader_t*)data);
     CHECK(&e);
@@ -792,47 +789,20 @@ static ie_dstr_t *imf_copy_body(derr_t *e, const imf_t *imf){
 // this is really just for nested imf's
 static ie_dstr_t *imf_copy_hdrs(derr_t *e, const imf_t *imf){
     if(is_error(*e)) return NULL;
-    dstr_t bytes = dstr_from_off(imf->hdr_bytes);
+    dstr_t bytes = dstr_from_off(imf->hdrs->bytes);
     return ie_dstr_new(e, &bytes, KEEP_RAW);
-}
-
-
-static const dstr_t *posthdr_empty_line(
-    const imf_hdr_t *last_hdr, dstr_off_t hdr_bytes
-){
-    /* for some odd reason the IMAP standard says that HEADER.FIELDS and
-       HEADER.FIELDS.NOT responses need to include the empty line after the
-       headers, if one exists */
-    static const dstr_t none = (dstr_t){0};
-    static const dstr_t crlf = DSTR_LIT("\r\n");
-    static const dstr_t lf = DSTR_LIT("\n");
-
-    // separator bytes: end of the last header to end of hdr_bytes
-    dstr_t sep = dstr_sub2(
-        *hdr_bytes.buf,
-        last_hdr->bytes.start + last_hdr->bytes.len,
-        hdr_bytes.start + hdr_bytes.len
-    );
-    if(sep.len == 0){
-        return &none;
-    }
-    if(dstr_cmp(&sep, &lf) == 0){
-        return &lf;
-    }
-    return &crlf;
 }
 
 
 static ie_dstr_t *copy_hdr_fields(
     derr_t *e,
-    const imf_hdr_t *hdrs,
-    dstr_off_t hdr_bytes,
+    const imf_hdrs_t *hdrs,
     const ie_dstr_t *names
 ){
     if(is_error(*e)) return NULL;
 
     ie_dstr_t *out = ie_dstr_new_empty(e);
-    const imf_hdr_t *hdr = hdrs;
+    const imf_hdr_t *hdr = hdrs->hdr;
     for( ; hdr; hdr = hdr->next){
         const ie_dstr_t *name = names;
         for( ; name; name = name->next){
@@ -844,22 +814,21 @@ static ie_dstr_t *copy_hdr_fields(
         }
     }
     // include any post-header separator line
-    const dstr_t *sep = posthdr_empty_line(hdr, hdr_bytes);
-    out = ie_dstr_append(e, out, sep, KEEP_RAW);
+    dstr_t sep = dstr_from_off(hdrs->sep);
+    out = ie_dstr_append(e, out, &sep, KEEP_RAW);
     return out;
 }
 
 
 static ie_dstr_t *copy_hdr_fields_not(
     derr_t *e,
-    const imf_hdr_t *hdrs,
-    dstr_off_t hdr_bytes,
+    const imf_hdrs_t *hdrs,
     const ie_dstr_t *names
 ){
     if(is_error(*e)) return NULL;
 
     ie_dstr_t *out = ie_dstr_new_empty(e);
-    const imf_hdr_t *hdr = hdrs;
+    const imf_hdr_t *hdr = hdrs->hdr;
     for( ; hdr; hdr = hdr->next){
         const ie_dstr_t *name = names;
         bool keep = true;
@@ -875,8 +844,8 @@ static ie_dstr_t *copy_hdr_fields_not(
         }
     }
     // include any post-header separator line
-    const dstr_t *sep = posthdr_empty_line(hdr, hdr_bytes);
-    out = ie_dstr_append(e, out, sep, KEEP_RAW);
+    dstr_t sep = dstr_from_off(hdrs->sep);
+    out = ie_dstr_append(e, out, &sep, KEEP_RAW);
     return out;
 }
 
@@ -885,7 +854,7 @@ static ie_dstr_t *imf_copy_hdr_fields(
     derr_t *e, const imf_t *imf, const ie_dstr_t *names
 ){
     if(is_error(*e)) return NULL;
-    return copy_hdr_fields(e, imf->hdr, imf->hdr_bytes, names);
+    return copy_hdr_fields(e, imf->hdrs, names);
 }
 
 // imf_t-level wrapper
@@ -893,7 +862,7 @@ static ie_dstr_t *imf_copy_hdr_fields_not(
     derr_t *e, const imf_t *imf, const ie_dstr_t *names
 ){
     if(is_error(*e)) return NULL;
-    return copy_hdr_fields_not(e, imf->hdr, imf->hdr_bytes, names);
+    return copy_hdr_fields_not(e, imf->hdrs, names);
 }
 
 
@@ -953,9 +922,9 @@ static derr_t send_fetch_resp(dn_t *dn, const ie_fetch_cmd_t *fetch,
     }
 
     if(fetch->attr->rfc822_header){
-        // parse the headers but just take the hdr_bytes
-        loader_parse_hdrs(&e, &loader);
-        dstr_t text = dstr_from_off(loader.hdr_bytes);
+        // parse the headers and copy the header byes
+        const imf_hdrs_t *hdrs = loader_parse_hdrs(&e, &loader);
+        dstr_t text = dstr_from_off(hdrs->bytes);
         f = ie_fetch_resp_rfc822_hdr(&e, f, ie_dstr_new(&e, &text, KEEP_RAW));
     }
 
@@ -1000,17 +969,17 @@ static derr_t send_fetch_resp(dn_t *dn, const ie_fetch_cmd_t *fetch,
             )
         ){
             // parse just the headers
-            const imf_hdr_t *hdrs = loader_parse_hdrs(&e, &loader);
+            const imf_hdrs_t *hdrs = loader_parse_hdrs(&e, &loader);
             if(sect->sect_txt->type == IE_SECT_HEADER){
-                dstr_t bytes = dstr_from_off(loader.hdr_bytes);
+                dstr_t bytes = dstr_from_off(hdrs->bytes);
                 content_resp = ie_dstr_new(&e, &bytes, KEEP_RAW);
             }else if(sect->sect_txt->type == IE_SECT_HDR_FLDS){
                 content_resp = copy_hdr_fields(
-                    &e, hdrs, loader.hdr_bytes, sect->sect_txt->headers
+                    &e, hdrs, sect->sect_txt->headers
                 );
             }else{  // IE_SECT_HDR_FLDS_NOT
                 content_resp = copy_hdr_fields_not(
-                    &e, hdrs, loader.hdr_bytes, sect->sect_txt->headers
+                    &e, hdrs, sect->sect_txt->headers
                 );
             }
 

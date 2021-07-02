@@ -8,6 +8,7 @@ typedef union {
     dstr_off_t unstruct;
 } imf_hdr_arg_u;
 
+// a single header
 typedef struct imf_hdr_t {
     dstr_off_t bytes;
     dstr_off_t name;
@@ -15,7 +16,14 @@ typedef struct imf_hdr_t {
     imf_hdr_arg_u arg;
     struct imf_hdr_t *next;
 } imf_hdr_t;
-DEF_STEAL_PTR(imf_hdr_t);
+
+// all the headers in a message
+typedef struct imf_hdrs_t {
+    dstr_off_t bytes;
+    dstr_off_t sep; // just the empty separator line
+    imf_hdr_t *hdr;
+} imf_hdrs_t;
+DEF_STEAL_PTR(imf_hdrs_t);
 
 typedef enum {
     IMF_BODY_UNSTRUCT,   // unstructured, or maybe just unparsed
@@ -33,8 +41,7 @@ typedef struct imf_body_t {
 
 typedef struct {
     dstr_off_t bytes;
-    dstr_off_t hdr_bytes;
-    imf_hdr_t *hdr;
+    imf_hdrs_t *hdrs;
     imf_body_t *body;
 } imf_t;
 DEF_STEAL_PTR(imf_t);
@@ -49,6 +56,14 @@ imf_hdr_t *imf_hdr_new(
 imf_hdr_t *imf_hdr_add(derr_t *e, imf_hdr_t *list, imf_hdr_t *new);
 void imf_hdr_free(imf_hdr_t *hdr);
 
+imf_hdrs_t *imf_hdrs_new(
+    derr_t *e,
+    dstr_off_t bytes,
+    dstr_off_t sep,
+    imf_hdr_t *hdr
+);
+void imf_hdrs_free(imf_hdrs_t *hdrs);
+
 imf_body_t *imf_body_new(
     derr_t *e,
     dstr_off_t bytes,
@@ -60,8 +75,7 @@ void imf_body_free(imf_body_t *body);
 imf_t *imf_new(
     derr_t *e,
     dstr_off_t bytes,
-    dstr_off_t hdr_bytes,
-    imf_hdr_t *hdr,
+    imf_hdrs_t *hdrs,
     imf_body_t *body
 );
 void imf_free(imf_t *imf);
@@ -69,6 +83,7 @@ void imf_free(imf_t *imf);
 // final union type for bison
 typedef union {
     imf_hdr_t *hdr;
+    imf_hdrs_t *hdrs;
     imf_body_t *body;
     imf_t *imf;
 } imf_expr_t;
@@ -127,8 +142,7 @@ struct imf_parser_t {
     // the current token as a dstr_off_t, used in some cases by the parser
     const dstr_off_t *token;
     // intermediate result of parsing
-    imf_hdr_t *hdrs;
-    dstr_off_t hdr_bytes;
+    imf_hdrs_t *hdrs;
     // the final result of parsing
     imf_t *imf;
 };
@@ -149,9 +163,9 @@ derr_t imf_reader_new(
 void imf_reader_free(imf_reader_t **old);
 
 // you can only call these once each, in order:
-derr_t imf_reader_parse_headers(imf_reader_t *r, imf_hdr_t **out, dstr_off_t *hdr_bytes);
+derr_t imf_reader_parse_headers(imf_reader_t *r, imf_hdrs_t **out);
 // *in should be exactly the *out from parse_headers()
-derr_t imf_reader_parse_body(imf_reader_t *r, imf_hdr_t **in, imf_t **out);
+derr_t imf_reader_parse_body(imf_reader_t *r, imf_hdrs_t **in, imf_t **out);
 
 // completely parse an in-memory message
 derr_t imf_parse(const dstr_t *msg, imf_t **out);

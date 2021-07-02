@@ -7,7 +7,7 @@ derr_t search_key_eval(
     unsigned int seq_max,
     unsigned int uid_dn_max,
     // get a read-only copy of either headers or whole body, must be idempotent
-    derr_t (*get_hdrs)(void*, const imf_hdr_t**),
+    derr_t (*get_hdrs)(void*, const imf_hdrs_t**),
     void *get_hdrs_data,
     derr_t (*get_imf)(void*, const imf_t**),
     void *get_imf_data,

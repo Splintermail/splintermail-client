@@ -55,6 +55,33 @@ void imf_hdr_free(imf_hdr_t *hdr){
     free(hdr);
 }
 
+imf_hdrs_t *imf_hdrs_new(
+    derr_t *e,
+    dstr_off_t bytes,
+    dstr_off_t sep,
+    imf_hdr_t *hdr
+){
+    if(is_error(*e)) goto fail;
+
+    IE_MALLOC(e, imf_hdrs_t, hdrs, fail);
+
+    hdrs->bytes = bytes;
+    hdrs->sep = sep;
+    hdrs->hdr = hdr;
+
+    return hdrs;
+
+fail:
+    imf_hdr_free(hdr);
+    return NULL;
+}
+
+void imf_hdrs_free(imf_hdrs_t *hdrs){
+    if(!hdrs) return;
+    imf_hdr_free(hdrs->hdr);
+    free(hdrs);
+}
+
 static void imf_body_arg_free(imf_body_type_e type, imf_body_arg_u arg){
     switch(type){
         case IMF_BODY_UNSTRUCT: /* nothing to free */ (void)arg; break;
@@ -91,8 +118,7 @@ void imf_body_free(imf_body_t *body){
 imf_t *imf_new(
     derr_t *e,
     dstr_off_t bytes,
-    dstr_off_t hdr_bytes,
-    imf_hdr_t *hdr,
+    imf_hdrs_t *hdrs,
     imf_body_t *body
 ){
     if(is_error(*e)) goto fail;
@@ -100,21 +126,20 @@ imf_t *imf_new(
     IE_MALLOC(e, imf_t, imf, fail);
 
     imf->bytes = bytes;
-    imf->hdr_bytes = hdr_bytes;
-    imf->hdr = hdr;
+    imf->hdrs = hdrs;
     imf->body = body;
 
     return imf;
 
 fail:
-    imf_hdr_free(hdr);
+    imf_hdrs_free(hdrs);
     imf_body_free(body);
     return NULL;
 }
 
 void imf_free(imf_t *imf){
     if(!imf) return;
-    imf_hdr_free(imf->hdr);
+    imf_hdrs_free(imf->hdrs);
     imf_body_free(imf->body);
     free(imf);
 }
@@ -306,7 +331,7 @@ static void imf_parser_free(imf_parser_t *parser){
     imfyypstate_delete(parser->imfyyps);
     DROP_VAR(&parser->error);
     imf_free(parser->imf);
-    imf_hdr_free(parser->hdrs);
+    imf_hdrs_free(parser->hdrs);
     *parser = (imf_parser_t){0};
 }
 
@@ -391,27 +416,23 @@ static derr_t _imf_reader_parse(imf_reader_t *r, bool just_headers){
     return e;
 }
 
-derr_t imf_reader_parse_headers(
-    imf_reader_t *r, imf_hdr_t **out, dstr_off_t *hdr_bytes
-){
+derr_t imf_reader_parse_headers(imf_reader_t *r, imf_hdrs_t **out){
     derr_t e = E_OK;
     *out = NULL;
-    if(hdr_bytes) *hdr_bytes = (dstr_off_t){0};
 
     PROP(&e, _imf_reader_parse(r, true) );
 
-    *out = STEAL(imf_hdr_t, &r->parser.hdrs);
-    if(hdr_bytes) *hdr_bytes = r->parser.hdr_bytes;
+    *out = STEAL(imf_hdrs_t, &r->parser.hdrs);
 
     return e;
 }
 
 // *in should be exactly the *out from parse_headers()
-derr_t imf_reader_parse_body(imf_reader_t *r, imf_hdr_t **in, imf_t **out){
+derr_t imf_reader_parse_body(imf_reader_t *r, imf_hdrs_t **in, imf_t **out){
     derr_t e = E_OK;
     *out = NULL;
 
-    r->parser.hdrs = STEAL(imf_hdr_t, in);
+    r->parser.hdrs = STEAL(imf_hdrs_t, in);
 
     PROP(&e, _imf_reader_parse(r, false) );
 
@@ -423,21 +444,21 @@ derr_t imf_reader_parse_body(imf_reader_t *r, imf_hdr_t **in, imf_t **out){
 // parses a static buffer
 derr_t imf_parse(const dstr_t *msg, imf_t **out){
     imf_reader_t *r = NULL;
-    imf_hdr_t *hdrs = NULL;
+    imf_hdrs_t *hdrs = NULL;
     imf_t *imf = NULL;
 
     derr_t e = E_OK;
     *out = NULL;
 
     PROP_GO(&e, imf_reader_new(&r, msg, NULL, NULL), cu);
-    PROP_GO(&e, imf_reader_parse_headers(r, &hdrs, NULL), cu);
+    PROP_GO(&e, imf_reader_parse_headers(r, &hdrs), cu);
     PROP_GO(&e, imf_reader_parse_body(r, &hdrs, &imf), cu);
 
     *out = STEAL(imf_t, &imf);
 
 cu:
     imf_reader_free(&r);
-    imf_hdr_free(hdrs);
+    imf_hdrs_free(hdrs);
     imf_free(imf);
 
     return e;

@@ -17,9 +17,9 @@ typedef struct {
 } test_case_t;
 
 // closure to give to search; *data is just an imf_t
-static derr_t _get_hdrs(void *data, const imf_hdr_t **out){
+static derr_t _get_hdrs(void *data, const imf_hdrs_t **out){
     derr_t e = E_OK;
-    *out = data ? ((imf_t*)data)->hdr : NULL;
+    *out = data ? ((imf_t*)data)->hdrs : NULL;
     return e;
 }
 

@@ -51,7 +51,8 @@
 %token BODY
 
 // returned as an intermediate result
-%type <hdr> hdrs
+%type <hdrs> hdrs
+
 %type <hdr> hdrs_0
 %type <hdr> hdrs_1
 %type <hdr> hdr
@@ -62,17 +63,18 @@
 
 %% /* Grammar Section */
 
-imf: hdrs_ body[b] DONE
-   { dstr_off_t off = token_extend2(p->hdr_bytes, @b);
-     p->imf = imf_new(E, off, p->hdr_bytes, STEAL(imf_hdr_t, &p->hdrs), $b); YYACCEPT; }
+imf: hdrs_ body[b] DONE {
+   dstr_off_t bytes = token_extend2(p->hdrs->bytes, @b);
+   p->imf = imf_new(E, bytes, STEAL(imf_hdrs_t, &p->hdrs), $b); YYACCEPT;
+};
 
 // an intermediate result we sometimes return to the caller
-hdrs_: hdrs[h] {
-    p->hdr_bytes = @h;
-    p->hdrs = $h;
-}
+hdrs_: hdrs[h] { p->hdrs = $h; };
 
-hdrs: hdrs_0[h] EOL { $$ = $h; MODE(BODY); };
+hdrs: hdrs_0[h] EOL[sep] {
+   dstr_off_t bytes = token_extend2(@h, @sep);
+    $$ = imf_hdrs_new(E, bytes, @sep, $h); MODE(BODY);
+};
 
 hdrs_0: EOL       { $$ = NULL; }
       | hdrs_1
@@ -84,9 +86,9 @@ hdrs_1: hdr                { $$ = $hdr; }
 
 // right now we don't parse any structured headers
 hdr: HDRNAME[name] ':' { MODE(UNSTRUCT); } hdrval[val]
-    { dstr_off_t off = token_extend2(@name, @val);
+    { dstr_off_t bytes = token_extend2(@name, @val);
       imf_hdr_arg_u arg = { .unstruct = @val };
-      $$ = imf_hdr_new(E, off, @name, IMF_HDR_UNSTRUCT, arg); }
+      $$ = imf_hdr_new(E, bytes, @name, IMF_HDR_UNSTRUCT, arg); }
 ;
 
 // At the start of every new line, we either have folding white space or a new header
