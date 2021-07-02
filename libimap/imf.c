@@ -223,7 +223,7 @@ derr_t imf_scan(
 ){
     size_t idx = scanner->start_idx;
 
-    /*!rules:re2c
+    /*!re2c
         re2c:flags:input = custom;
         re2c:define:YYCTYPE = int;
 

@@ -11,10 +11,8 @@ typedef struct {
     // buffer is twice the size of a network read
     dstr_t bytes;
     char bytes_buffer[8192];
-    // scan start position
+    // scan start position (start of the token)
     const char* start;
-    // previous scanner start position (start of the last token)
-    const char* old_start;
     // for scanning literals
     bool in_literal;
     size_t literal_len;

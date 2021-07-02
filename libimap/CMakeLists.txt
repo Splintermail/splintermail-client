@@ -38,7 +38,7 @@ set(imf_scan_in "${CMAKE_CURRENT_SOURCE_DIR}/imf.c")
 set(imf_scan_out "${PROJECT_BINARY_DIR}/imf.gen.c")
 add_custom_command(
     OUTPUT "${imf_scan_out}"
-    COMMAND "${RE2C}" -W -Werror --reusable -o "${imf_scan_out}" "${imf_scan_in}"
+    COMMAND "${RE2C}" -W -Werror -o "${imf_scan_out}" "${imf_scan_in}"
     DEPENDS "${imf_scan_in}"
     COMMENT "generating imf scanner" VERBATIM
     )

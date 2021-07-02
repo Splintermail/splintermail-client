@@ -69,10 +69,9 @@ dstr_t steal_bytes(imap_scanner_t *scanner, size_t to_steal){
 
 void imap_scanner_shrink(imap_scanner_t *scanner){
     // (this is always safe because "start" is always within the bytes buffer)
-    size_t offset = (size_t)(scanner->old_start - scanner->bytes.data);
+    size_t offset = (size_t)(scanner->start - scanner->bytes.data);
     dstr_leftshift(&scanner->bytes, offset);
-    // update all of the pointers in the scanner
-    scanner->old_start -= offset;
+    // update all the pointers in the scanner
     scanner->start -= offset;
 }
 
@@ -345,17 +344,17 @@ nqchar_mode:
 
     size_t start_offset, end_offset;
 done:
-    // mark everything done until here
-    scanner->old_start = scanner->start;
-    scanner->start = cursor;
-
     // get the token bounds
-    // this is safe; start and old_start are always within the bytes buffer
-    start_offset = (size_t)(scanner->old_start - scanner->bytes.data);
-    end_offset = (size_t)(scanner->start - scanner->bytes.data);
+    // this is safe; start is always within the bytes buffer
+    start_offset = (size_t)(scanner->start - scanner->bytes.data);
+    end_offset = (size_t)(cursor - scanner->bytes.data);
     /* TODO: does this work for all cases? Won't sometimes *cursor point to the
              last character of a token, and sometimes it will point to the
              character after a token? */
     *token_out = dstr_sub(&scanner->bytes, start_offset, end_offset);
+
+    // mark everything done until here
+    scanner->start = cursor;
+
     return e;
 }
