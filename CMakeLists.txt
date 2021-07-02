@@ -311,6 +311,7 @@ set(TEST_EXE_TGTS
     test_imf_parse
     test_smtp_resp
     test_fpr_watcher
+    test_search
 )
 
 # objects become OBJECT libraries, but are accessed through INTERFACE libraries
@@ -468,6 +469,7 @@ if("${BUILD_TESTS}")
     target_link_libraries(test_imf_parse imap)
     target_link_libraries(test_smtp_resp imap)
     target_link_libraries(test_fpr_watcher libcitm)
+    target_link_libraries(test_search imaildir)
 
 
     if(WIN32)
