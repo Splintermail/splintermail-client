@@ -49,7 +49,8 @@ static derr_t test_imf_scan(void){
     derr_t e = E_OK;
 
     dstr_t imf_msg = DSTR_LIT(
-        "header-1: value-1\r\n"
+        // make sure to allow tabs mid-line
+        "header-1: \tvalue-1\r\n"
         "header-2: value-2\r\n"
         "  folded-value\r\n"
         "\r\n"
@@ -70,7 +71,7 @@ static derr_t test_imf_scan(void){
     EXPECT(E_NONE, ':', ":");
 
     e = imf_scan(&scanner, IMF_SCAN_UNSTRUCT, &token, &type);
-    EXPECT(E_NONE, UNSTRUCT, " value-1");
+    EXPECT(E_NONE, UNSTRUCT, " \tvalue-1");
 
     e = imf_scan(&scanner, IMF_SCAN_UNSTRUCT, &token, &type);
     EXPECT(E_NONE, EOL, "\r\n");

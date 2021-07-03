@@ -230,7 +230,7 @@ derr_t imf_scan(
         eol             = "\r"?"\n";
         ws              = [ \x09]+;
         hdrname         = [^\x00-\x20:]+;
-        unstruct        = [^\x00-\x19]+;
+        unstruct        = [\x09\x20-\xff]+;
         body            = [\x00-\xff]+;
     */
 
@@ -304,9 +304,39 @@ done:
 // parser
 
 void imfyyerror(dstr_off_t *imfyyloc, imf_parser_t *parser, char const *s){
-    (void)imfyyloc;
-    (void)parser;
-    LOG_ERROR("ERROR: %x\n", FS(s));
+    const dstr_t bytes = *parser->scanner->bytes;
+
+    // aim for 80 characters of context
+    size_t head_len = MIN(imfyyloc->start, 40);
+    size_t token_len = MIN(imfyyloc->len, 80 - head_len);
+    size_t tail_len = 80 - MIN(80, head_len + token_len);
+
+    dstr_t head = dstr_sub2(bytes, imfyyloc->start - head_len, imfyyloc->start);
+    dstr_t token = dstr_sub2(bytes, imfyyloc->start, imfyyloc->start + token_len);
+    dstr_t tail = dstr_sub2(bytes, imfyyloc->start + token_len, imfyyloc->start + token_len + tail_len);
+
+    // longest DBG char is \xNN, or 4 chars, and we have two lines of len 80
+    // 80 * 4 = 320
+    DSTR_VAR(buf, 512);
+    DROP_CMD( FMT(&buf, "    %x", FD_DBG(&head)) );
+    size_t nspaces = buf.len;
+    DROP_CMD( FMT(&buf, "%x", FD_DBG(&token)) );
+    size_t ncarets = buf.len - nspaces;
+    DROP_CMD( FMT(&buf, "%x\n", FD_DBG(&tail)) );
+
+    // spaces
+    size_t oldlen = buf.len;
+    for(size_t i = 0; i < nspaces && oldlen + i < buf.size; i++){
+        buf.data[buf.len++] = ' ';
+    }
+
+    // carets
+    oldlen = buf.len;
+    for(size_t i = 0; i < ncarets && oldlen + i < buf.size; i++){
+        buf.data[buf.len++] = '^';
+    }
+
+    LOG_ERROR("Error parsing email message: %x:\n%x\n", FS(s), FD(&buf));
 }
 
 static derr_t imf_parser_init(imf_parser_t *parser, imf_scanner_t *scanner){
