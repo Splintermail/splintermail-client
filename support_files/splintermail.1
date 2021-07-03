@@ -8,7 +8,7 @@
 .SH SYNOPSIS
 \"
 .B splintermail
-ditm [OPTIONS]
+citm [OPTIONS]
 .PP
 .B splintermail
 API_COMMAND [OPTIONS]
@@ -21,10 +21,10 @@ QWER ["call", "man_escapes",
 QWER ["regex",["join","\n",
         ["for", "option", "opts_common", ["call", "manopt", {"o":"option"}]]
      ], "-", "\\-"]REWQ
-.SS DITM-specific options:
+.SS CITM-specific options:
 \d
 QWER ["regex",["join","\n",
-        ["for", "option", "opts_ditm", ["call", "manopt", {"o":"option"}]]
+        ["for", "option", "opts_citm", ["call", "manopt", {"o":"option"}]]
      ], "-", "\\-"]REWQ
 .SS API_COMMAND-specific options:
 \d
@@ -89,9 +89,9 @@ QWER["join","\n",["for", "apicmd", "apis_account",
 \"
 QWER ["call",["get","man","1bullets2"],{"s":"config"}] REWQ
 \"
-.SS DITM Email Storage
+.SS CITM Email Storage
 \"
-QWER ["call",["get","man","1bullets2"],{"s":"ditm"}] REWQ
+QWER ["call",["get","man","1bullets2"],{"s":"citm"}] REWQ
 \"
 .SS Per-User API Tokens
 \"

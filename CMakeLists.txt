@@ -831,21 +831,44 @@ elseif(UNIX)
 
     # files to install, common to all OS's
     # files for /usr/share/splintermail
-    install(FILES "${supp_dir}/openssl.cnf"
+    set(supp_build "${PROJECT_BINARY_DIR}/support_files")
+    preprocessed_copy("${supp_dir}/openssl.cnf" "${supp_build}/openssl.cnf")
+    preprocessed_copy("${supp_dir}/keygen.sh" "${supp_build}/keygen.sh")
+    preprocessed_copy("${supp_dir}/splintermail.conf" "${supp_build}/splintermail.conf")
+    preprocessed_copy("${supp_dir}/completions/bash/splintermail" "${supp_build}/completions/bash/splintermail")
+    preprocessed_copy("${supp_dir}/completions/zsh/_splintermail" "${supp_build}/completions/zsh/_splintermail")
+    preprocessed_copy("${supp_dir}/linux/splintermail.service" "${supp_build}/linux/splintermail.service")
+    preprocessed_copy("${supp_dir}/splintermail.1" "${supp_build}/splintermail.1")
+    add_custom_target(pp_openssl_cnf ALL DEPENDS "${supp_build}/openssl.cnf")
+    add_custom_target(pp_keygen_sh ALL DEPENDS "${supp_build}/keygen.sh")
+    add_custom_target(pp_splintermail_conf ALL DEPENDS "${supp_build}/splintermail.conf")
+    add_custom_target(pp_completions_bash ALL DEPENDS "${supp_build}/completions/bash/splintermail")
+    add_custom_target(pp_completions_zsh ALL DEPENDS "${supp_build}/completions/zsh/_splintermail")
+    add_custom_target(pp_man ALL DEPENDS "${supp_build}/splintermail.1")
+
+    configure_file(
+        "${supp_dir}/linux/splintermail.service"
+        "${supp_build}/linux/splintermail.service.temp"
+        @ONLY
+    )
+    add_custom_target(pp_splintermail_service ALL DEPENDS "${supp_build}/linux/splintermail.service.temp")
+
+
+    install(FILES "${supp_build}/openssl.cnf"
         DESTINATION "share/splintermail")
-    install(FILES "${supp_dir}/keygen.sh"
+    install(FILES "${supp_build}/keygen.sh"
         DESTINATION "share/splintermail"
         PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE
                     GROUP_READ GROUP_EXECUTE
                     WORLD_READ WORLD_EXECUTE)
     # default config file
-    install(FILES "${supp_dir}/splintermail.conf"
+    install(FILES "${supp_build}/splintermail.conf"
         DESTINATION "/etc")
     # bash completion file
-    install(FILES "${supp_dir}/completions/bash/splintermail"
+    install(FILES "${supp_build}/completions/bash/splintermail"
         DESTINATION "share/bash-completion/completions")
     # man page
-    # set("man_in" "${supp_dir}/splintermail.1")
+    # set("man_in" "${supp_build}/splintermail.1")
     # set("man_gz" "${PROJECT_BINARY_DIR}/splintermail.1.gz")
     # add_custom_command(
     #     OUTPUT "${man_gz}"
@@ -855,29 +878,29 @@ elseif(UNIX)
     #     )
     # add_custom_target(man ALL DEPENDS "${man_gz}")
     # install(FILES "${man_gz}" DESTINATION "share/man/man1")
-    install(FILES "${supp_dir}/splintermail.1" DESTINATION "share/man/man1")
+    install(FILES "${supp_build}/splintermail.1" DESTINATION "share/man/man1")
 
     # custom install files, for building installers
     if("${PACKAGE_FOR}" STREQUAL "DEBIAN")
         # zsh completion file
-        install(FILES "${supp_dir}/completions/zsh/_splintermail"
+        install(FILES "${supp_build}/completions/zsh/_splintermail"
             DESTINATION "share/zsh/vendor-completions")
         # systemd service is handled automatically by debian packaging scripts
         # license is handled automatically as well
     elseif("${PACKAGE_FOR}" STREQUAL "RHEL")
         # zsh completion file
-        install(FILES "${supp_dir}/completions/zsh/_splintermail"
+        install(FILES "${supp_build}/completions/zsh/_splintermail"
             DESTINATION "share/zsh/site-functions")
         # systemd service
-        install(FILES "${supp_dir}/linux/splintermail.service"
+        install(FILES "${supp_build}/linux/splintermail.service"
             DESTINATION "lib/systemd/system")
         # licence handled automatically by .spec file
     elseif("${PACKAGE_FOR}" STREQUAL "ARCH")
         # zsh completion file
-        install(FILES "${supp_dir}/completions/zsh/_splintermail"
+        install(FILES "${supp_build}/completions/zsh/_splintermail"
             DESTINATION "share/zsh/site-functions")
         # systemd service
-        install(FILES "${supp_dir}/linux/splintermail.service"
+        install(FILES "${supp_build}/linux/splintermail.service"
             DESTINATION "lib/systemd/system")
         # licence
         install(FILES "UNLICENSE"
