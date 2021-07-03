@@ -30,6 +30,16 @@ static void up_free_reselect(up_t *up){
     up->reselect.examine = false;
     up->reselect.uidvld_up = 0;
     up->reselect.himodseq_up = 0;
+    // these lists should be empty in all cases by now, but just in case:
+    link_t *link;
+    while((link = link_list_pop_first(&up->reselect.cbs))){
+        imap_cmd_cb_t *cb = CONTAINER_OF(link, imap_cmd_cb_t, link);
+        cb->free(cb);
+    }
+    while((link = link_list_pop_first(&up->reselect.cmds))){
+        imap_cmd_t *cmd = CONTAINER_OF(link, imap_cmd_t, link);
+        imap_cmd_free(cmd);
+    }
 }
 
 static void up_free_idle(up_t *up){
@@ -63,6 +73,8 @@ derr_t up_init(up_t *up, up_cb_i *cb, extensions_t *exts){
     link_init(&up->link);
     link_init(&up->relay.cmds);
     link_init(&up->relay.cbs);
+    link_init(&up->reselect.cmds);
+    link_init(&up->reselect.cbs);
 
     return e;
 };
@@ -104,8 +116,16 @@ void up_imaildir_select(
 
 void up_imaildir_relay_cmd(up_t *up, imap_cmd_t *cmd, imap_cmd_cb_t *cb){
     // just remember these for later
-    link_list_append(&up->relay.cmds, &cmd->link);
-    link_list_append(&up->relay.cbs, &cb->link);
+    if(up->reselect.needed){
+        /* special case: if we plan on reselecting, put these in a secondary
+           queue until the reselect command is prepared */
+        link_list_append(&up->reselect.cmds, &cmd->link);
+        link_list_append(&up->reselect.cbs, &cb->link);
+    }else{
+        // otherwise they go in the normal queue
+        link_list_append(&up->relay.cmds, &cmd->link);
+        link_list_append(&up->relay.cbs, &cb->link);
+    }
 
     // enqueue ourselves
     up->enqueued = true;
@@ -124,6 +144,14 @@ void up_imaildir_preunregister(up_t *up){
         cb->free(cb);
     }
     while((link = link_list_pop_first(&up->relay.cmds))){
+        imap_cmd_t *cmd = CONTAINER_OF(link, imap_cmd_t, link);
+        imap_cmd_free(cmd);
+    }
+    while((link = link_list_pop_first(&up->reselect.cbs))){
+        imap_cmd_cb_t *cb = CONTAINER_OF(link, imap_cmd_cb_t, link);
+        cb->free(cb);
+    }
+    while((link = link_list_pop_first(&up->reselect.cmds))){
         imap_cmd_t *cmd = CONTAINER_OF(link, imap_cmd_t, link);
         imap_cmd_free(cmd);
     }
@@ -368,6 +396,10 @@ static derr_t enqueue_reselect(up_t *up, unsigned int uidvld_up,
        complexity than it is worth. */
     link_list_append(&up->relay.cmds, &cmd->link);
     link_list_append(&up->relay.cbs, &up_cb->cb.link);
+
+    // send any delayed relay commands too
+    link_list_append_list(&up->relay.cmds, &up->reselect.cmds);
+    link_list_append_list(&up->relay.cbs, &up->reselect.cbs);
 
     return e;
 }
@@ -920,6 +952,7 @@ static derr_t advance_state(up_t *up){
         // (this simplifies the state machine and lets us set up->examine here)
         PROP(&e, need_done(up, &ok) );
         if(!ok) return e;
+        // this will also add any delayed relays to the main relay enqueue
         PROP(&e,
             enqueue_reselect(
                 up,

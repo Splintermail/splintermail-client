@@ -147,10 +147,26 @@ struct up_t {
     } fetch;
 
     struct {
+        /* reselect logic is a bit complex.  For correctness, it must be
+           enqueued with the relay commands, because the relay commands can
+           include e.g. a STORE command that depends on the reselect transition
+           to occur first.
+
+           The easy-but-ugly way to guarantee this is to have separate queues
+           for post-reselect cbs and cmds.  Relays recieved while we expect to
+           send a reselect get appended to that delayed queue.
+
+           Overall, this saves us from having to keep track of multiple
+           in-flight reselects, which would be a PITA. */
         bool needed;
         bool examine;
         unsigned int uidvld_up;
         unsigned long himodseq_up;
+
+        // delayed relays; if relays arrive before we
+        link_t cmds;  // imap_cmd_t->link
+        link_t cbs;  // imap_cmd_cb_t->link (from an imaildir_cb_t)
+
     } reselect;
 
     struct {
