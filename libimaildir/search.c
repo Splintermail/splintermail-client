@@ -43,7 +43,13 @@ static derr_t search_headers(
     *out = false;
 
     const imf_hdrs_t *hdrs;
-    PROP(&e, args->get_hdrs(args->get_hdrs_data, &hdrs) );
+    IF_PROP(&e, args->get_hdrs(args->get_hdrs_data, &hdrs) ){
+        TRACE(&e, "failed to parse message for header SEARCH\n");
+        DUMP(e);
+        DROP_VAR(&e);
+        *out = false;
+        return e;
+    }
 
     // find a matching header field
     for(const imf_hdr_t *hdr = hdrs->hdr; hdr; hdr = hdr->next){
@@ -156,7 +162,13 @@ static derr_t do_eval(search_args_t *args, size_t lvl,
         case IE_SEARCH_BODY: {      // uses param.dstr
                 // search just the body
                 const imf_t *imf;
-                PROP(&e, args->get_imf(args->get_imf_data, &imf) );
+                IF_PROP(&e, args->get_imf(args->get_imf_data, &imf) ){
+                    TRACE(&e, "failed to parse message for SEARCH BODY\n");
+                    DUMP(e);
+                    DROP_VAR(&e);
+                    *out = false;
+                    break;
+                }
                 if(!imf->body){
                     *out = false;
                     break;
@@ -175,7 +187,13 @@ static derr_t do_eval(search_args_t *args, size_t lvl,
                 const dstr_t tgt = param.dstr->dstr;
                 // search the headers first, then search the body if necessary
                 const imf_hdrs_t *hdrs;
-                PROP(&e, args->get_hdrs(args->get_hdrs_data, &hdrs) );
+                IF_PROP(&e, args->get_hdrs(args->get_hdrs_data, &hdrs) ){
+                    TRACE(&e, "failed to parse message for SEARCH TEXT\n");
+                    DUMP(e);
+                    DROP_VAR(&e);
+                    *out = false;
+                    break;
+                }
                 dstr_t searchable = dstr_from_off(hdrs->bytes);
                 if(dstr_icount2(searchable, tgt) > 0){
                     *out = true;
@@ -186,7 +204,13 @@ static derr_t do_eval(search_args_t *args, size_t lvl,
                 size_t hdrs_end = hdrs->bytes.start + hdrs->bytes.len;
 
                 const imf_t *imf;
-                PROP(&e, args->get_imf(args->get_imf_data, &imf) );
+                IF_PROP(&e, args->get_imf(args->get_imf_data, &imf) ){
+                    TRACE(&e, "failed to parse message for SEARCH TEXT\n");
+                    DUMP(e);
+                    DROP_VAR(&e);
+                    *out = false;
+                    break;
+                }
                 /* avoid searching things we already searched, allowing for
                    boundary conditions */
                 size_t start = hdrs_end - MIN(hdrs_end, tgt.len);

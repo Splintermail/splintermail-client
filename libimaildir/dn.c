@@ -572,9 +572,16 @@ static derr_t search_cmd(dn_t *dn, const ie_dstr_t *tag,
     return e;
 
 fail:
-    // possibly override the failure with E_IMAILDIR
-    loader_close(&e, &loader);
+    {
+        derr_t e2 = E_OK;
+        loader_close(&e2, &loader);
+        // prefer the E_IMAILDIR error
+        MERGE_VAR(&e2, &e, "closing lazy-loaded message fd");
+        // but store it at e
+        e = e2;
+    }
     ie_nums_free(nums);
+
     return e;
 }
 
