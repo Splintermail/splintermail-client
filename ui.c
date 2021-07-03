@@ -977,7 +977,6 @@ int do_main(int argc, char* argv[], bool windows_service){
     const char* rhost = "splintermail.com";
     unsigned int api_port = 443;
     unsigned int pop_port = 995;
-    unsigned int pop_port = 995;
     unsigned int imap_port = 993;
 #endif // BUILD_DEBUG
 
