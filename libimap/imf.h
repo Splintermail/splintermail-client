@@ -23,7 +23,7 @@ typedef struct imf_hdrs_t {
     dstr_off_t sep; // just the empty separator line
     imf_hdr_t *hdr;
 } imf_hdrs_t;
-DEF_STEAL_PTR(imf_hdrs_t);
+DEF_STEAL_PTR(imf_hdrs_t)
 
 typedef enum {
     IMF_BODY_UNSTRUCT,   // unstructured, or maybe just unparsed
@@ -31,6 +31,7 @@ typedef enum {
 
 typedef union {
     // nothing for UNSTRUCT
+    int _unused;
 } imf_body_arg_u;
 
 typedef struct imf_body_t {
@@ -44,7 +45,7 @@ typedef struct {
     imf_hdrs_t *hdrs;
     imf_body_t *body;
 } imf_t;
-DEF_STEAL_PTR(imf_t);
+DEF_STEAL_PTR(imf_t)
 
 imf_hdr_t *imf_hdr_new(
     derr_t *e,

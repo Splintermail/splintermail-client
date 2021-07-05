@@ -142,10 +142,10 @@ static inline bool pvt_prop(derr_t *e, derr_t code,
 
 // command can also be just a raw error code.
 #define PROP(e, code) \
-    if(pvt_prop(e, code, FILE_LOC)){ return *(e); }
+     do { if(pvt_prop(e, code, FILE_LOC)) { return *(e); } } while(0)
 
 #define PROP_GO(e, code, _label) \
-    if(pvt_prop(e, code, FILE_LOC)){ goto _label; }
+     do { if(pvt_prop(e, code, FILE_LOC)) { goto _label; } } while(0)
 
 #define TRACE_PROP(e) \
     do { IF_PROP(e, *e){} } while(0)
@@ -163,10 +163,10 @@ static inline bool pvt_prop_var(derr_t *e, derr_t *e2,
     if(pvt_prop_var(e, e2, FILE_LOC))
 
 #define PROP_VAR(e, e2) \
-    if(pvt_prop_var(e, e2, FILE_LOC)){ return *(e); }
+    do { if(pvt_prop_var(e, e2, FILE_LOC)){ return *(e); } } while(0)
 
 #define PROP_VAR_GO(e, e2, _label) \
-    if(pvt_prop_var(e, e2, FILE_LOC)){ goto _label; }
+    do { if(pvt_prop_var(e, e2, FILE_LOC)){ goto _label; } } while(0)
 
 #define TRACE_PROP_VAR(e, e2) \
     do { IF_PROP_VAR(e, e2){} } while(0)
@@ -185,10 +185,10 @@ static inline bool pvt_check(derr_t *e,
 }
 
 #define CHECK(e) \
-    if(pvt_check(e, FILE_LOC)){ return *(e); }
+    do { if(pvt_check(e, FILE_LOC)){ return *(e); } } while(0)
 
 #define CHECK_GO(e, label) \
-    if(pvt_check(e, FILE_LOC)){ goto label; }
+    do { if(pvt_check(e, FILE_LOC)){ goto label; } } while(0)
 
 /* CATCH is almost always for checking the secondary error context, e2, to
    do some analysis before dropping it or merging it into the main error
@@ -293,11 +293,13 @@ static inline bool pvt_nofail(derr_t *e, derr_type_t mask, derr_t cmd,
     return pvt_prop(e, cmd, file, func, line);
 }
 
-#define NOFAIL(e, error_mask, cmd) \
-    if(pvt_nofail((e), (error_mask), (cmd), FILE_LOC)){ return *(e); }
+#define NOFAIL(e, error_mask, cmd) do { \
+    if(pvt_nofail((e), (error_mask), (cmd), FILE_LOC)){ return *(e); } \
+} while(0)
 
-#define NOFAIL_GO(e, error_mask, cmd, label) \
-    if(pvt_nofail((e), (error_mask), (cmd), FILE_LOC)){ goto label; }
+#define NOFAIL_GO(e, error_mask, cmd, label) do { \
+    if(pvt_nofail((e), (error_mask), (cmd), FILE_LOC)){ goto label; } \
+} while(0)
 
 /* MERGE and friends don't do control flow because they are only used when
    gathering errors from multiple threads.

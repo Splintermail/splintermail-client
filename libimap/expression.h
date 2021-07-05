@@ -14,14 +14,14 @@ typedef struct ie_dstr_t {
     dstr_t dstr;
     struct ie_dstr_t *next;
 } ie_dstr_t;
-DEF_STEAL_PTR(ie_dstr_t);
+DEF_STEAL_PTR(ie_dstr_t)
 
 typedef struct {
     bool inbox;
     // dstr.data is non-null only if inbox is false
     dstr_t dstr;
 } ie_mailbox_t;
-DEF_STEAL_PTR(ie_mailbox_t);
+DEF_STEAL_PTR(ie_mailbox_t)
 
 typedef enum {
     IE_STATUS_ATTR_MESSAGES = 1,
@@ -60,7 +60,7 @@ typedef struct ie_seq_set_t {
     unsigned int n2;
     struct ie_seq_set_t *next;
 } ie_seq_set_t;
-DEF_STEAL_PTR(ie_seq_set_t);
+DEF_STEAL_PTR(ie_seq_set_t)
 
 void ie_seq_set_free(ie_seq_set_t *s);
 
@@ -79,6 +79,7 @@ typedef enum {
 
 typedef union {
     // nothing for condstore
+    int _condstore;
     struct {
         unsigned int uidvld;
         unsigned long last_modseq;
@@ -120,7 +121,7 @@ typedef struct {
     ie_dstr_t *keywords;
     ie_dstr_t *extensions;
 } ie_flags_t;
-DEF_STEAL_PTR(ie_flags_t);
+DEF_STEAL_PTR(ie_flags_t)
 
 // pflags, only used by PERMANENTFLAGS code of status-type response
 
@@ -377,7 +378,7 @@ typedef struct ie_store_mods_t {
     ie_store_mod_arg_t arg;
     struct ie_store_mods_t *next;
 } ie_store_mods_t;
-DEF_STEAL_PTR(ie_store_mods_t);
+DEF_STEAL_PTR(ie_store_mods_t)
 
 // Status-type-related things
 
@@ -447,7 +448,7 @@ typedef struct {
     ie_st_code_type_t type;
     ie_st_code_arg_t arg;
 } ie_st_code_t;
-DEF_STEAL_PTR(ie_st_code_t);
+DEF_STEAL_PTR(ie_st_code_t)
 
 // FETCH responses
 
@@ -519,7 +520,7 @@ typedef struct {
     ie_dstr_t *user;
     ie_dstr_t *pass;
 } ie_login_cmd_t;
-DEF_STEAL_PTR(ie_login_cmd_t);
+DEF_STEAL_PTR(ie_login_cmd_t)
 
 typedef struct {
     ie_mailbox_t *m;
@@ -569,14 +570,14 @@ typedef struct {
     bool silent;
     ie_flags_t *flags;
 } ie_store_cmd_t;
-DEF_STEAL_PTR(ie_store_cmd_t);
+DEF_STEAL_PTR(ie_store_cmd_t)
 
 typedef struct {
     bool uid_mode;
     ie_seq_set_t *seq_set;
     ie_mailbox_t *m;
 } ie_copy_cmd_t;
-DEF_STEAL_PTR(ie_copy_cmd_t);
+DEF_STEAL_PTR(ie_copy_cmd_t)
 
 typedef union {
     ie_dstr_t *error;
@@ -621,8 +622,8 @@ typedef struct {
     // storage
     link_t link;
 } imap_cmd_t;
-DEF_CONTAINER_OF(imap_cmd_t, link, link_t);
-DEF_STEAL_PTR(imap_cmd_t);
+DEF_CONTAINER_OF(imap_cmd_t, link, link_t)
+DEF_STEAL_PTR(imap_cmd_t)
 
 // full response types
 
@@ -655,7 +656,7 @@ typedef struct {
     ie_st_code_t *code;
     ie_dstr_t *text;
 } ie_st_resp_t;
-DEF_STEAL_PTR(ie_st_resp_t);
+DEF_STEAL_PTR(ie_st_resp_t)
 
 typedef struct {
     ie_mflags_t *mflags;
@@ -664,7 +665,7 @@ typedef struct {
     // for a sorted list of many responses together, not used by parser
     jsw_anode_t node;
 } ie_list_resp_t;
-DEF_CONTAINER_OF(ie_list_resp_t, node, jsw_anode_t);
+DEF_CONTAINER_OF(ie_list_resp_t, node, jsw_anode_t)
 
 // get_f and cmp_f for jsw_atree implementation
 const void *ie_list_resp_get(const jsw_anode_t *node);
@@ -717,8 +718,8 @@ typedef struct {
     // storage
     link_t link;
 } imap_resp_t;
-DEF_CONTAINER_OF(imap_resp_t, link, link_t);
-DEF_STEAL_PTR(imap_resp_t);
+DEF_CONTAINER_OF(imap_resp_t, link, link_t)
+DEF_STEAL_PTR(imap_resp_t)
 
 // final union type for bison
 typedef union {

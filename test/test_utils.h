@@ -7,7 +7,7 @@
 
 // if a test ever needs extra CLI options a VA_ARG could be added to this macro
 // if you need to get the test_files_path, that arg should be type const char**
-#define PARSE_TEST_OPTIONS(argc, argv, test_files_path, default_lvl){ \
+#define PARSE_TEST_OPTIONS(argc, argv, test_files_path, default_lvl) do { \
     log_level_t lvl = default_lvl; \
     const char** tfp = test_files_path; \
     /* get logger level */ \
@@ -63,7 +63,7 @@ print_usage: \
     } \
     /* add logger */ \
     logger_add_fileptr(lvl, stdout); \
-}
+} while(0)
 
 derr_t file_cmp(const char* fa, const char* fb, int* result);
 derr_t file_cmp_dstr(const char* fa, const dstr_t* b, int* result);

@@ -290,8 +290,8 @@ typedef struct {
     bool l2_add;
     bool l2_del;
 } test_keyshare_vars_t;
-DEF_CONTAINER_OF(test_keyshare_vars_t, l1, key_listener_i);
-DEF_CONTAINER_OF(test_keyshare_vars_t, l2, key_listener_i);
+DEF_CONTAINER_OF(test_keyshare_vars_t, l1, key_listener_i)
+DEF_CONTAINER_OF(test_keyshare_vars_t, l2, key_listener_i)
 
 static void l1_add(key_listener_i *l1, keypair_t *kp){
    test_keyshare_vars_t *vars = CONTAINER_OF(l1, test_keyshare_vars_t, l1);

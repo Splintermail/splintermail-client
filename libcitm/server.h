@@ -145,13 +145,13 @@ struct server_t {
         ie_dstr_t *tag;
     } logout;
 };
-DEF_CONTAINER_OF(server_t, refs, refs_t);
-DEF_CONTAINER_OF(server_t, wake_ev, wake_event_t);
-DEF_CONTAINER_OF(server_t, close_ev, event_t);
-DEF_CONTAINER_OF(server_t, s, imap_session_t);
-DEF_CONTAINER_OF(server_t, dn_cb, dn_cb_i);
-DEF_CONTAINER_OF(server_t, session_mgr, manager_i);
-DEF_CONTAINER_OF(server_t, ctrl, imape_control_i);
+DEF_CONTAINER_OF(server_t, refs, refs_t)
+DEF_CONTAINER_OF(server_t, wake_ev, wake_event_t)
+DEF_CONTAINER_OF(server_t, close_ev, event_t)
+DEF_CONTAINER_OF(server_t, s, imap_session_t)
+DEF_CONTAINER_OF(server_t, dn_cb, dn_cb_i)
+DEF_CONTAINER_OF(server_t, session_mgr, manager_i)
+DEF_CONTAINER_OF(server_t, ctrl, imape_control_i)
 
 derr_t server_init(
     server_t *server,

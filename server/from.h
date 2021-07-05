@@ -13,7 +13,7 @@ typedef struct {
     dstr_t text;
     link_t link;
 } lstr_t;
-DEF_CONTAINER_OF(lstr_t, link, link_t);
+DEF_CONTAINER_OF(lstr_t, link, link_t)
 
 lstr_t *lstr_concat(derr_t *e, lstr_t *a, lstr_t *b);
 lstr_t *lstr_set_text(derr_t *e, lstr_t *lstr, dstr_t text);

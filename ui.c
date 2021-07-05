@@ -733,13 +733,13 @@ static int _limit_options(
 
     return failed;
 }
-#define limit_options(action, spec, speclen, /* allowed options: */ ...) \
+#define limit_options(action, spec, speclen, ok_opts) \
     _limit_options( \
         action, \
         spec, \
         speclen, \
-        &(opt_spec_t*[]){NULL, __VA_ARGS__}[1], \
-        sizeof((opt_spec_t*[]){NULL, __VA_ARGS__})/sizeof(opt_spec_t*) - 1 \
+        ok_opts, \
+        sizeof(ok_opts) / sizeof(*ok_opts) \
     )
 
 // ugh... abstracting main() feels dirty.  Thanks, Windows.
@@ -856,41 +856,47 @@ int do_main(int argc, char* argv[], bool windows_service){
         /* limit options before loading the config, so the config can have
            options useful to multiple commands without causing errors */
         if(windows_service || (newargc > 1 && strcmp("citm", argv[1]) == 0)){
-            bool failed = limit_options(
-                "splintermail citm", spec, speclen,
+            opt_spec_t *ok_opts[] = {
                 &o_debug, &o_config,
                 #ifdef BUILD_DEBUG
                 &o_r_host, &o_r_imap_port,
                 #endif
                 &o_lstn_port, &o_lstn_addr, &o_sm_dir, &o_logfile,
                 &o_no_logfile, &o_cert, &o_key,
+            };
+            bool failed = limit_options(
+                "splintermail citm", spec, speclen, ok_opts
             );
             if(failed){
                 retval = 1;
                 goto cu;
             }
         }else if(newargc > 1 && strcmp("ditm", argv[1]) == 0){
-            bool failed = limit_options(
-                "splintermail ditm", spec, speclen,
+            opt_spec_t *ok_opts[] = {
                 &o_debug, &o_config,
                 #ifdef BUILD_DEBUG
                 &o_r_host, &o_r_pop_port, &o_r_api_port,
                 #endif
                 &o_pop_port, &o_ditm_dir, &o_sm_dir, &o_logfile, &o_no_logfile,
                 &o_cert, &o_key
+            };
+            bool failed = limit_options(
+                "splintermail ditm", spec, speclen, ok_opts
             );
             if(failed){
                 retval = 1;
                 goto cu;
             }
         }else{
-            bool failed = limit_options(
-                "splintermail api commands", spec, speclen,
+            opt_spec_t *ok_opts[] = {
                 &o_debug, &o_config,
                 #ifdef BUILD_DEBUG
                 &o_r_api_port,
                 #endif
                 &o_user, &o_account_dir
+            };
+            bool failed = limit_options(
+                "splintermail api commands", spec, speclen, ok_opts
             );
             if(failed){
                 retval = 1;

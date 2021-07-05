@@ -55,14 +55,14 @@
         } \
     } while(0)
 
-    #define NZ(num) { \
+    #define NZ(num) do { \
         if(!(num)){ \
             imapyyerror(p, "invalid number"); \
             YYERROR; \
         } \
-    }
+    } while(0)
 
-    #define LITERAL_START(len, sendplus) { \
+    #define LITERAL_START(len, sendplus) do { \
         /* put scanner in literal mode */ \
         set_scanner_to_literal_mode(p, (len)); \
         if((sendplus) && !p->is_client){ \
@@ -70,10 +70,10 @@
             imap_cmd_t *cmd = imap_cmd_new(E, NULL, IMAP_CMD_PLUS_REQ, arg); \
             send_cmd(p, cmd); \
         } \
-    }
+    } while(0)
 
     // make sure we don't get two selectability flags
-    #define MFLAG_SELECT(out, _mf, selectability) { \
+    #define MFLAG_SELECT(out, _mf, selectability) do { \
         /* _mf might be a function; just call it once */ \
         ie_mflags_t *mf = (_mf); \
         if(is_error(p->error)){ \
@@ -92,7 +92,7 @@
                 (out) = mf; \
             } \
         } \
-    }
+    } while(0)
 %}
 
 /* use a different prefix, to not overlap with the imf parser's prefix */
@@ -1889,7 +1889,7 @@ num_str: NUM             { $$ = ie_dstr_new(E, p->token, KEEP_RAW); }
 num: num_str[n] { PARSE_NUM($n, dstr_tou, &$$); };
 nznum: num_str[n] { PARSE_NUM($n, dstr_tou, &$$); NZ($$); };
 modseqnum: num_str[n] { PARSE_NUM($n, dstr_toul, &$$); };
-nzmodseqnum: num_str[n] { PARSE_NUM($n, dstr_toul, &$$); NZ($$) };
+nzmodseqnum: num_str[n] { PARSE_NUM($n, dstr_toul, &$$); NZ($$); };
 
 seq_spec: seq_num[n]                  { $$ = ie_seq_set_new(E, $n, $n); }
         | seq_num[n1] ':' seq_num[n2] { $$ = ie_seq_set_new(E, $n1, $n2); }

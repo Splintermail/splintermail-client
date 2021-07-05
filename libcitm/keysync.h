@@ -80,12 +80,12 @@ struct keysync_t {
     // only call synced once
     bool initial_sync_complete;
 };
-DEF_CONTAINER_OF(keysync_t, refs, refs_t);
-DEF_CONTAINER_OF(keysync_t, wake_ev, wake_event_t);
-DEF_CONTAINER_OF(keysync_t, close_ev, event_t);
-DEF_CONTAINER_OF(keysync_t, s, imap_session_t);
-DEF_CONTAINER_OF(keysync_t, session_mgr, manager_i);
-DEF_CONTAINER_OF(keysync_t, ctrl, imape_control_i);
+DEF_CONTAINER_OF(keysync_t, refs, refs_t)
+DEF_CONTAINER_OF(keysync_t, wake_ev, wake_event_t)
+DEF_CONTAINER_OF(keysync_t, close_ev, event_t)
+DEF_CONTAINER_OF(keysync_t, s, imap_session_t)
+DEF_CONTAINER_OF(keysync_t, session_mgr, manager_i)
+DEF_CONTAINER_OF(keysync_t, ctrl, imape_control_i)
 
 derr_t keysync_init(
     keysync_t *ks,

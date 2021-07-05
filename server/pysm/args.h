@@ -13,14 +13,14 @@ typedef struct py_arg_t py_arg_t;
 typedef void (*out_fn_t)(py_arg_t);
 struct py_arg_t {
     py_arg_type_e type;
-    const char *name;
-    const char *fmt;
+    char *name;
+    char *fmt;
     void *param1;
     bool need_size;
     bool optional;
     out_fn_t out_fn;
     void *out_src;
-    void **out;
+    const void **out;
     Py_ssize_t out_len;
 };
 
@@ -38,18 +38,18 @@ typedef struct {
 #define NARGS 8
 
 // str (or bytes)
-py_arg_t pyarg_dstr(dstr_t *mem, const dstr_t **out, const char *name);
+py_arg_t pyarg_dstr(dstr_t *mem, const dstr_t **out, char *name);
 // str="default"
-py_arg_t pyarg_dstr_opt(dstr_t *mem, const dstr_t **out, const char *name, const char *_default);
+py_arg_t pyarg_dstr_opt(dstr_t *mem, const dstr_t **out, char *name, char *_default);
 // Optional[str]
-py_arg_t pyarg_nullable_dstr(dstr_t *mem, const dstr_t **out, const char *name);
+py_arg_t pyarg_nullable_dstr(dstr_t *mem, const dstr_t **out, char *name);
 // Optional[str] = value
-py_arg_t pyarg_nullable_dstr_opt(dstr_t *mem, const dstr_t **out, const char *name, const char *_default);
+py_arg_t pyarg_nullable_dstr_opt(dstr_t *mem, const dstr_t **out, char *name, char *_default);
 
 // int
-py_arg_t pyarg_uint(unsigned int *out, const char *name);
-py_arg_t pyarg_uint64(uint64_t *out, const char *name);
-py_arg_t pyarg_int(int *out, const char *name);
-py_arg_t pyarg_int64(int64_t *out, const char *name);
+py_arg_t pyarg_uint(unsigned int *out, char *name);
+py_arg_t pyarg_uint64(uint64_t *out, char *name);
+py_arg_t pyarg_int(int *out, char *name);
+py_arg_t pyarg_int64(int64_t *out, char *name);
 
 derr_t pyarg_parse(PyObject *pyargs, PyObject *pykwds, py_args_t args);

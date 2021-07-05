@@ -13,6 +13,7 @@ macro(add_dstr_library name asan)
         hashmap.c
         link.c
         system.c
+        net.c
     )
     define_file_logname_for_target("${name}")
     default_compile_options("${name}" "${asan}")
@@ -26,4 +27,13 @@ if("${CMAKE_BUILD_TYPE}" STREQUAL "debug")
 else()
     # release builds already have no asan
     add_library(dstr_noasan ALIAS dstr)
+endif()
+
+if("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU")
+    # gcc: noop
+elseif("${CMAKE_C_COMPILER_ID}" MATCHES "Clang")
+    # struct sockaddr and friends have weird casting semantics
+    source_compile_options(net.c -Wno-cast-align)
+elseif("${CMAKE_C_COMPILER_ID}" STREQUAL "MSVC")
+    # msvc: noop
 endif()

@@ -12,7 +12,7 @@ typedef struct {
     // for storage from within the imaildir_t
     jsw_anode_t node;
 } msg_mod_t;
-DEF_CONTAINER_OF(msg_mod_t, node, jsw_anode_t);
+DEF_CONTAINER_OF(msg_mod_t, node, jsw_anode_t)
 
 typedef enum {
     MSG_UNFILLED,
@@ -59,8 +59,8 @@ typedef struct {
     // for referencing by uid_dn
     jsw_anode_t node;
 } msg_t;
-DEF_CONTAINER_OF(msg_t, node, jsw_anode_t);
-DEF_CONTAINER_OF(msg_t, mod, msg_mod_t);
+DEF_CONTAINER_OF(msg_t, node, jsw_anode_t)
+DEF_CONTAINER_OF(msg_t, mod, msg_mod_t)
 
 
 // an accessor-owned view of a message
@@ -75,7 +75,7 @@ typedef struct {
     // for tracking the sequence ID sorted by UID
     jsw_anode_t node;
 } msg_view_t;
-DEF_CONTAINER_OF(msg_view_t, node, jsw_anode_t);
+DEF_CONTAINER_OF(msg_view_t, node, jsw_anode_t)
 
 
 typedef enum {
@@ -95,15 +95,15 @@ typedef struct {
     // for storing in a jsw_atree of expunges
     jsw_anode_t node;
 } msg_expunge_t;
-DEF_CONTAINER_OF(msg_expunge_t, node, jsw_anode_t);
-DEF_CONTAINER_OF(msg_expunge_t, mod, msg_mod_t);
+DEF_CONTAINER_OF(msg_expunge_t, node, jsw_anode_t)
+DEF_CONTAINER_OF(msg_expunge_t, mod, msg_mod_t)
 
 // msg_key_list_t is a list of key ranges
 typedef struct msg_key_list_t {
     msg_key_t key;
     struct msg_key_list_t *next;
 } msg_key_list_t;
-DEF_STEAL_PTR(msg_key_list_t);
+DEF_STEAL_PTR(msg_key_list_t)
 
 /* msg_store_cmd_t is like ie_store_cmd_t but uses msg_key_list_t instead of
    ie_seq_set_t, and uid_mode is irrelevant */
@@ -195,7 +195,7 @@ typedef struct {
     // for storing pending updates
     link_t link;  // up_t->pending_updates or dn_t->pending_updates
 } update_t;
-DEF_CONTAINER_OF(update_t, link, link_t);
+DEF_CONTAINER_OF(update_t, link, link_t)
 
 derr_t msg_new(msg_t **out, msg_key_t key, unsigned int uid_dn,
         msg_state_e state, imap_time_t intdate, msg_flags_t flags,

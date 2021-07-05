@@ -30,7 +30,7 @@ typedef struct {
     ie_dstr_t *tag;
     passthru_req_arg_u arg;
 } passthru_req_t;
-DEF_STEAL_PTR(passthru_req_t);
+DEF_STEAL_PTR(passthru_req_t)
 
 typedef struct {
     jsw_atree_t tree;  // ie_list_resp_t->node
@@ -51,7 +51,7 @@ typedef union {
     // nothing for unsub
     // nothing for append
 } passthru_resp_arg_u;
-DEF_STEAL_STRUCT(passthru_resp_arg_u);
+DEF_STEAL_STRUCT(passthru_resp_arg_u)
 
 typedef struct {
     passthru_type_e type;
@@ -61,7 +61,7 @@ typedef struct {
     // the passed-thru tagged status-type response (ignore the wrong tag)
     ie_st_resp_t *st_resp;
 } passthru_resp_t;
-DEF_STEAL_PTR(passthru_resp_t);
+DEF_STEAL_PTR(passthru_resp_t)
 
 passthru_list_resp_t *passthru_list_resp_new(derr_t *e);
 void passthru_list_resp_free(passthru_list_resp_t *passthru_list_resp);

@@ -42,7 +42,7 @@ struct relay_t {
     msg_key_list_t *locals;
     link_t link;  // imaildir_t->relays
 };
-DEF_CONTAINER_OF(relay_t, link, link_t);
+DEF_CONTAINER_OF(relay_t, link, link_t)
 
 
 // builder api
@@ -83,7 +83,7 @@ typedef struct {
     relay_t *relay;
     imap_cmd_cb_t cb;
 } imaildir_cb_t;
-DEF_CONTAINER_OF(imaildir_cb_t, cb, imap_cmd_cb_t);
+DEF_CONTAINER_OF(imaildir_cb_t, cb, imap_cmd_cb_t)
 
 // relay_cmd_done is an imap_cmd_cb_call_f
 static derr_t relay_cmd_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
@@ -1391,7 +1391,7 @@ typedef struct {
     msg_t *old;
     refs_t refs;
 } old_msg_t;
-DEF_CONTAINER_OF(old_msg_t, refs, refs_t);
+DEF_CONTAINER_OF(old_msg_t, refs, refs_t)
 
 // clean up the msg_t and it's file after an expunge
 static void remove_and_delete_msg(imaildir_t *m, msg_t *msg){

@@ -351,53 +351,53 @@ derr_t json_parse(LIST(json_t)* json, dstr_t* text){
             else if(state == A2 && c == ']')
                 state = jclose(text, i, &current);
             // any other character
-            else UNEXPECTED;
+            else UNEXPECTED
             break;
         // true states
-        case T2: S if(c == 'r') state = T3; else UNEXPECTED; break;
-        case T3: S if(c == 'u') state = T4; else UNEXPECTED; break;
+        case T2: S if(c == 'r') state = T3; else UNEXPECTED break;
+        case T3: S if(c == 'u') state = T4; else UNEXPECTED break;
         case T4: S
             if(c == 'e') state = jclose(text, i, &current);
-            else UNEXPECTED;
+            else UNEXPECTED
             break;
         // false states
-        case F2: S if(c == 'a') state = F3; else UNEXPECTED; break;
-        case F3: S if(c == 'l') state = F4; else UNEXPECTED; break;
-        case F4: S if(c == 's') state = F5; else UNEXPECTED; break;
+        case F2: S if(c == 'a') state = F3; else UNEXPECTED break;
+        case F3: S if(c == 'l') state = F4; else UNEXPECTED break;
+        case F4: S if(c == 's') state = F5; else UNEXPECTED break;
         case F5: S
             if(c == 'e') state = jclose(text, i, &current);
-            else UNEXPECTED;
+            else UNEXPECTED
             break;
         // null states
-        case X2: S if(c == 'u') state = X3; else UNEXPECTED; break;
-        case X3: S if(c == 'l') state = X4; else UNEXPECTED; break;
+        case X2: S if(c == 'u') state = X3; else UNEXPECTED break;
+        case X3: S if(c == 'l') state = X4; else UNEXPECTED break;
         case X4: S
             if(c == 'l') state = jclose(text, i, &current);
-            else UNEXPECTED;
+            else UNEXPECTED
             break;
         // string states
         case S2: S
             if(c == '"') state = jclose(text, i, &current);
             else if (c == '\\') state = S3;
             else if(u >= 32) {}
-            else UNEXPECTED;
+            else UNEXPECTED
             break;
         case S3: S
             if(c == '"' || c == 'f' || c == '/' || c == 'b'
                         || c == 'n' || c == 'r' || c == 't' || c == '\\')
                 state = S2;
             else if(c == 'u') state = S4;
-            else UNEXPECTED;
+            else UNEXPECTED
             break;
-        case S4: S if(is_hex(c)) state = S5; else UNEXPECTED; break;
-        case S5: S if(is_hex(c)) state = S6; else UNEXPECTED; break;
-        case S6: S if(is_hex(c)) state = S7; else UNEXPECTED; break;
-        case S7: S if(is_hex(c)) state = S2; else UNEXPECTED; break;
+        case S4: S if(is_hex(c)) state = S5; else UNEXPECTED break;
+        case S5: S if(is_hex(c)) state = S6; else UNEXPECTED break;
+        case S6: S if(is_hex(c)) state = S7; else UNEXPECTED break;
+        case S7: S if(is_hex(c)) state = S2; else UNEXPECTED break;
         // number states
         case N2: S
             if(c == '0') state = N6;
             else if(c >= '1' && c <= '9') state = N3;
-            else UNEXPECTED;
+            else UNEXPECTED
             break;
         case N3: S
             if(c == '.') state = N4;
@@ -408,7 +408,7 @@ derr_t json_parse(LIST(json_t)* json, dstr_t* text){
             break;
         case N4: S
             if(c >= '0' && c <= '9') state = N5;
-            else UNEXPECTED;
+            else UNEXPECTED
             break;
         case N5: S
             if(c >= '0' && c <= '9') state = N5;
@@ -425,11 +425,11 @@ derr_t json_parse(LIST(json_t)* json, dstr_t* text){
         case N7: S
             if(c >= '0' && c <= '9') state = N9;
             else if(c == '+' || c == '-') state = N8;
-            else UNEXPECTED;
+            else UNEXPECTED
             break;
         case N8: S
             if(c >= '0' && c <= '9') state = N9;
-            else UNEXPECTED;
+            else UNEXPECTED
             break;
         case N9: S
             if(c >= '0' && c <= '9') state = N9;
@@ -442,25 +442,25 @@ derr_t json_parse(LIST(json_t)* json, dstr_t* text){
                 PROP(&e, jopen(json, JSON_STRING, text, i, &current, &state));
             }else if(c == '}') state = jclose(text, i, &current);
             else if(is_whitespace(c)){ /* skip whitespace */ }
-            else UNEXPECTED;
+            else UNEXPECTED
             break;
         case O3: S
             if(c == ':') state = O4;
             else if(is_whitespace(c)){}
-            else UNEXPECTED;
+            else UNEXPECTED
             break;
         // state O4 is identical to state V1
         case O5: S
             if(c == ',') state = O6;
             else if(c == '}') state = jclose(text, i, &current);
             else if(is_whitespace(c)){ /* skip whitespace */ }
-            else UNEXPECTED;
+            else UNEXPECTED
             break;
         case O6: S
             if(c == '"'){
                 PROP(&e, jopen(json, JSON_STRING, text, i, &current, &state));
             }else if(is_whitespace(c)){ /* skip whitespace */ }
-            else UNEXPECTED;
+            else UNEXPECTED
             break;
         // array states
         // state A2 is almost identical to V1, so they are handled together
@@ -468,12 +468,12 @@ derr_t json_parse(LIST(json_t)* json, dstr_t* text){
             if(c == ',') state = A4;
             else if(c == ']') state = jclose(text, i, &current);
             else if(is_whitespace(c)){ /* skip whitespace */ }
-            else UNEXPECTED;
+            else UNEXPECTED
             break;
         // state A4 is identical to state V1
         // validate the whole string, even after root value is closed
         case JSON_DONE: S
-            if(!is_whitespace(c)) UNEXPECTED;
+            if(!is_whitespace(c)) UNEXPECTED
             break;
         case JSON_BAD_STATE:
             ORIG(&e, E_INTERNAL, "JSON parser in a bad state");
@@ -564,7 +564,7 @@ derr_t json_fdump(FILE* f, json_t j){
     bool need_indent = false;
     while(tries-- && this){
         json_t* next = NULL; // defined to prevent MSVC from complaining falsely
-        DOINDENT;
+        DOINDENT
         switch(this->type){
             case JSON_ARRAY:
                 PROP(&e, FFMT(f, NULL, "[ ") );
@@ -627,7 +627,7 @@ derr_t json_fdump(FILE* f, json_t j){
             // is it it the last element of an array?
             if(this->parent->type == JSON_ARRAY){
                 indent -= 2;
-                DOINDENT;
+                DOINDENT
                 PROP(&e, FFMT(f, NULL, "]") );
                 next = this->parent->next;
                 this = this->parent;
@@ -646,7 +646,7 @@ derr_t json_fdump(FILE* f, json_t j){
                 // if there is not another key:
                 else{
                     indent -= 2;
-                    DOINDENT;
+                    DOINDENT
                     PROP(&e, FFMT(f, NULL, "}") );
                     next = this->parent->parent->next;
                     this = this->parent->parent;
@@ -749,56 +749,56 @@ derr_t j_to_dstr(json_t json, dstr_t* out){
 
 derr_t jtoi(json_t json, int* out){
     derr_t e = E_OK;
-    NUMBER_CHECK;
+    NUMBER_CHECK
     // if we already validated the number, E_PARAM is our internal failure
     NOFAIL(&e, E_PARAM, dstr_toi(&json.token, out, 10) );
     return e;
 }
 derr_t jtou(json_t json, unsigned int* out){
     derr_t e = E_OK;
-    NUMBER_CHECK;
+    NUMBER_CHECK
     // if we already validated the number, E_PARAM is our internal failure
     NOFAIL(&e, E_PARAM, dstr_tou(&json.token, out, 10) );
     return e;
 }
 derr_t jtol(json_t json, long* out){
     derr_t e = E_OK;
-    NUMBER_CHECK;
+    NUMBER_CHECK
     // if we already validated the number, E_PARAM is our internal failure
     NOFAIL(&e, E_PARAM, dstr_tol(&json.token, out, 10) );
     return e;
 }
 derr_t jtoul(json_t json, unsigned long* out){
     derr_t e = E_OK;
-    NUMBER_CHECK;
+    NUMBER_CHECK
     // if we already validated the number, E_PARAM is our internal failure
     NOFAIL(&e, E_PARAM, dstr_toul(&json.token, out, 10) );
     return e;
 }
 derr_t jtoll(json_t json, long long* out){
     derr_t e = E_OK;
-    NUMBER_CHECK;
+    NUMBER_CHECK
     // if we already validated the number, E_PARAM is our internal failure
     NOFAIL(&e, E_PARAM, dstr_toll(&json.token, out, 10) );
     return e;
 }
 derr_t jtoull(json_t json, unsigned long long* out){
     derr_t e = E_OK;
-    NUMBER_CHECK;
+    NUMBER_CHECK
     // if we already validated the number, E_PARAM is our internal failure
     NOFAIL(&e, E_PARAM, dstr_toull(&json.token, out, 10) );
     return e;
 }
 derr_t jtof(json_t json, float* out){
     derr_t e = E_OK;
-    NUMBER_CHECK;
+    NUMBER_CHECK
     // if we already validated the number, E_PARAM is our internal failure
     NOFAIL(&e, E_PARAM, dstr_tof(&json.token, out) );
     return e;
 }
 derr_t jtod(json_t json, double* out){
     derr_t e = E_OK;
-    NUMBER_CHECK;
+    NUMBER_CHECK
     // if we already validated the number, E_PARAM is our internal failure
     NOFAIL(&e, E_PARAM, dstr_tod(&json.token, out) );
     return e;

@@ -346,7 +346,7 @@ derr_t fetcher_init(
         fetcher->engine,
         host,
         svc,
-        (terminal_t){},
+        (terminal_t){0},
     };
     PROP_GO(&e, imap_session_alloc_connect(&fetcher->s, &arg_up), fail_refs);
 
@@ -368,7 +368,7 @@ typedef struct {
     fetcher_t *fetcher;
     imap_cmd_cb_t cb;
 } fetcher_cb_t;
-DEF_CONTAINER_OF(fetcher_cb_t, cb, imap_cmd_cb_t);
+DEF_CONTAINER_OF(fetcher_cb_t, cb, imap_cmd_cb_t)
 
 // fetcher_cb_free is an imap_cmd_cb_free_f
 static void fetcher_cb_free(imap_cmd_cb_t *cb){
@@ -1287,4 +1287,4 @@ static derr_t fetcher_do_work(fetcher_t *fetcher, bool *noop){
     PROP(&e, fetcher_select_do_work(fetcher, noop) );
 
     return e;
-};
+}

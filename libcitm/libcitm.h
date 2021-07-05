@@ -12,7 +12,7 @@ struct wake_event_t {
     event_t ev;
     void (*handler)(wake_event_t *wake_ev);
 };
-DEF_CONTAINER_OF(wake_event_t, ev, event_t);
+DEF_CONTAINER_OF(wake_event_t, ev, event_t)
 
 /* a struct for passing EV_READ and EV_SESSION_CLOSE events through the citme
    without having to know which type of object the sessions belong to */
@@ -26,7 +26,7 @@ typedef struct {
     imap_session_t s;
     citme_session_owner_i session_owner;
 } citme_session_owner_t;
-DEF_CONTAINER_OF(citme_session_owner_t, s, imap_session_t);
+DEF_CONTAINER_OF(citme_session_owner_t, s, imap_session_t)
 
 #include "passthru.h"
 #include "fetcher.h"

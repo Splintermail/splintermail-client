@@ -6,7 +6,7 @@
 #include <api_client.h>
 
 // Shitty MSVC preprocessor won't let us stack __VA_ARGS__ macros
-#define UH_OH(fstr, ...) { \
+#define UH_OH(fstr, ...) do { \
     /* register that we recieved an error */ \
     looked_good = false; \
     /* previously was derr_t error = FMT(&reason_log, __VA_ARGS__); */ \
@@ -14,7 +14,7 @@
                   fstr, \
                   (const fmt_t[]){FI(1), __VA_ARGS__}, \
                   sizeof((const fmt_t[]){FI(1), __VA_ARGS__})/sizeof(fmt_t)); \
-}
+} while(0)
 
 
 // global "everything looked good that run" variable

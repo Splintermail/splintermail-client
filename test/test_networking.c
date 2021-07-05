@@ -398,7 +398,7 @@ exit:
 }
 
 #define EXPECT_ERRORS(eclient, eserver) \
-    { \
+    do { \
         bool keep_going = true; \
         if(eclient != errors.client.type){ \
             TRACE(&e, "expected client to return %x but got %x\n", \
@@ -428,7 +428,7 @@ exit:
             ORIG(&e, E_VALUE, "test failed: returned wrong values"); \
         } \
         LOG_INFO("-- test passed\n"); \
-    }
+    } while(0)
 
 static derr_t test_ssl_client(void){
     derr_t e = E_OK;

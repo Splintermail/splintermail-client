@@ -21,7 +21,7 @@ struct imape_t {
     event_t *quit_ev;
     size_t nwrite_events;
 };
-DEF_CONTAINER_OF(imape_t, engine, engine_t);
+DEF_CONTAINER_OF(imape_t, engine, engine_t)
 
 // TODO: make this interface all functions and no data
 // (this should happen with a revamp of how extensions are handled)
@@ -95,4 +95,4 @@ typedef struct {
     imap_event_type_e type;
     imap_event_arg_u arg;
 } imap_event_t;
-DEF_CONTAINER_OF(imap_event_t, ev, event_t);
+DEF_CONTAINER_OF(imap_event_t, ev, event_t)

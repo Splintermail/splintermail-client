@@ -27,7 +27,7 @@ struct imap_session_t {
 };
 DEF_CONTAINER_OF(imap_session_t, session, session_t)
 
-typedef struct {} terminal_t;
+typedef struct {int _unused;} terminal_t;
 
 typedef struct {
     imap_pipeline_t *pipeline;

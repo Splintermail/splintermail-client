@@ -18,7 +18,7 @@ typedef struct {
     const dstr_t *fingerprint;
     link_t link;
 } keypair_t;
-DEF_CONTAINER_OF(keypair_t, link, link_t);
+DEF_CONTAINER_OF(keypair_t, link, link_t)
 
 typedef struct {
     EVP_CIPHER_CTX* ctx;
@@ -210,7 +210,7 @@ struct key_listener_i {
     void (*del)(key_listener_i*, const dstr_t *fingerprint);
     link_t link;  // keyshare_t->listeners
 };
-DEF_CONTAINER_OF(key_listener_i, link, link_t);
+DEF_CONTAINER_OF(key_listener_i, link, link_t)
 
 typedef struct {
     link_t keys; // keypair_t->link

@@ -119,7 +119,7 @@ static derr_t test_imf_parse(void){
     imf_body_t *body = imf_body_new(&e,
         DSTR_OFF(body_bytes),
         IMF_BODY_UNSTRUCT,
-        (imf_body_arg_u){}
+        (imf_body_arg_u){0}
     );
 
     imf_t *exp = imf_new(&e, DSTR_OFF(msg), hdrs, body);

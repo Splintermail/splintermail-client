@@ -1,4 +1,4 @@
-const char *adjectives[] = {
+static const char *adjectives[] = {
     "abandoned_",
     "abnormal_",
     "admirable_",

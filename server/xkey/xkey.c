@@ -11,7 +11,7 @@ static const enum command_flags no_cmd_flags = 0
 
 /* we only need a reference to the module so we can check if it has been added
    or not when modifying the capability string */
-struct module *xkey_module = NULL;
+static struct module *xkey_module = NULL;
 static imap_client_created_func_t *next_hook_client_created;
 
 // add XKEY to the capability list

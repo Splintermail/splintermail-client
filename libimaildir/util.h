@@ -66,7 +66,7 @@ struct imap_cmd_cb_t {
     imap_cmd_cb_free_f free;
     link_t link;
 };
-DEF_CONTAINER_OF(imap_cmd_cb_t, link, link_t);
+DEF_CONTAINER_OF(imap_cmd_cb_t, link, link_t)
 
 void imap_cmd_cb_init(derr_t *e, imap_cmd_cb_t *cb, const ie_dstr_t *tag,
         imap_cmd_cb_call_f call, imap_cmd_cb_free_f free);
@@ -127,7 +127,7 @@ typedef struct {
     unsigned int n2;
     jsw_anode_t node;
 } seq_set_builder_elem_t;
-DEF_CONTAINER_OF(seq_set_builder_elem_t, node, jsw_anode_t);
+DEF_CONTAINER_OF(seq_set_builder_elem_t, node, jsw_anode_t)
 
 void seq_set_builder_prep(seq_set_builder_t *ssb);
 

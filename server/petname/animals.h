@@ -1,4 +1,4 @@
-const char *animals[] = {
+static const char *animals[] = {
     "aardvark",
     "albatross",
     "alligator",

@@ -33,7 +33,7 @@ typedef struct write_wrapper_t {
     // libuv-style buffer (points into event_t)
     uv_buf_t uv_buf;
 } write_wrapper_t;
-DEF_CONTAINER_OF(write_wrapper_t, link, link_t);
+DEF_CONTAINER_OF(write_wrapper_t, link, link_t)
 
 void write_wrapper_prep(write_wrapper_t *wr_wrap, loop_t *loop);
 
@@ -45,7 +45,8 @@ typedef struct {
     char buffer[4096];
     event_t event;
 } read_wrapper_t;
-DEF_CONTAINER_OF(read_wrapper_t, event, event_t);
+DEF_CONTAINER_OF(read_wrapper_t, buffer, char)
+DEF_CONTAINER_OF(read_wrapper_t, event, event_t)
 
 // the socket_engine and event loop, one per pipeline
 struct loop_t {
@@ -66,7 +67,7 @@ struct loop_t {
     // error passed by loop_close
     derr_t error;
 };
-DEF_CONTAINER_OF(loop_t, engine, engine_t);
+DEF_CONTAINER_OF(loop_t, engine, engine_t)
 
 // per-session data struct
 struct loop_data_t {
@@ -102,7 +103,7 @@ struct loop_data_t {
     struct addrinfo *gai_aiptr;
     uv_connect_t connect_req;
 };
-DEF_CONTAINER_OF(loop_data_t, read_pause_qcb, queue_cb_t);
+DEF_CONTAINER_OF(loop_data_t, read_pause_qcb, queue_cb_t)
 
 // Per-listener specificiation.
 struct listener_spec_t {

@@ -8,7 +8,7 @@ typedef struct {
     smtp_resp_code_t code;
     ie_dstr_t *text;
 } smtp_resp_t;
-DEF_STEAL_STRUCT(smtp_resp_t);
+DEF_STEAL_STRUCT(smtp_resp_t)
 
 void smtp_resp_free(smtp_resp_t *resp);
 

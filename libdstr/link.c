@@ -3,7 +3,7 @@
 void link_init(link_t *l){
     l->prev = l;
     l->next = l;
-};
+}
 
 void link_list_prepend(link_t *head, link_t *link){
     // require explicit safety, but don't leave a footgun laying around

@@ -975,7 +975,7 @@ static PyObject *py_smsql_gtid_current_pos(
 ){
     derr_t e = E_OK;
 
-    py_args_t spec = {};
+    py_args_t spec = {0};
     PROP_GO(&e, pyarg_parse(args, kwds, spec), fail);
 
     DSTR_VAR(buf, 1024);
@@ -1466,6 +1466,7 @@ static PyObject *pysm_hash_key(PyObject *self, PyObject *args){
     int error = 0;
     // this is where we would store errors
     char errstr[1024];
+    unsigned int fpr_len = 0;
 
     // get string with the PEM_key in it
     const char *pemcert;
@@ -1523,7 +1524,6 @@ static PyObject *pysm_hash_key(PyObject *self, PyObject *args){
 
     // get the fingerprint
     unsigned char fpr[EVP_MAX_MD_SIZE];
-    unsigned int fpr_len;
     const EVP_MD* type = EVP_sha256();
     ret = X509_pubkey_digest(x, type, fpr, &fpr_len);
     if(ret != 1){

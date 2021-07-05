@@ -12,7 +12,7 @@ typedef struct {
     link_t link;
     queue_cb_t qcb;
 } qtest_t;
-DEF_CONTAINER_OF(qtest_t, link, link_t);
+DEF_CONTAINER_OF(qtest_t, link, link_t)
 
 static derr_t test_queue_simple(void){
     derr_t e = E_OK;
@@ -101,13 +101,13 @@ cu_q:
     return e;
 }
 
-size_t pre_wait_calls = 0;
+static size_t pre_wait_calls = 0;
 static void pre_wait_cb(queue_cb_t *qcb_data){
     (void)qcb_data;
     pre_wait_calls++;
 }
 
-size_t new_data_calls = 0;
+static size_t new_data_calls = 0;
 static void new_data_cb(queue_cb_t* qcb_data, link_t *new_data){
     (void)qcb_data; (void)new_data;
     new_data_calls++;
@@ -156,7 +156,7 @@ cu_q:
     return e;
 }
 
-size_t first_pops = 0;
+static size_t first_pops = 0;
 static void *first_popper_thread(void *arg){
     queue_t *q = arg;
     qtest_t *qtest;
@@ -166,7 +166,7 @@ static void *first_popper_thread(void *arg){
     } while(qtest->id != 4);
     return NULL;
 }
-size_t last_pops = 0;
+static size_t last_pops = 0;
 static void *last_popper_thread(void *arg){
     queue_t *q = arg;
     qtest_t *qtest;

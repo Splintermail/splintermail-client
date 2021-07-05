@@ -1,11 +1,16 @@
 // Let dovecot do it's thing unfettered by our warnings.
 #ifdef __GNUC__
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wconversion"
-#pragma GCC diagnostic ignored "-Wsign-conversion"
-#pragma GCC diagnostic ignored "-Wstrict-prototypes"
-#pragma GCC diagnostic ignored "-Wunused-parameter"
-#pragma GCC diagnostic ignored "-Wformat="
+#  pragma GCC diagnostic push
+#  pragma GCC diagnostic ignored "-Wconversion"
+#  pragma GCC diagnostic ignored "-Wsign-conversion"
+#  pragma GCC diagnostic ignored "-Wstrict-prototypes"
+#  pragma GCC diagnostic ignored "-Wunused-parameter"
+#  ifdef __clang__
+#    pragma GCC diagnostic ignored "-Wextra-semi"
+#    pragma GCC diagnostic ignored "-Wcast-qual"
+#  else
+#    pragma GCC diagnostic ignored "-Wformat="
+#  endif // __clang__
 #endif // __GNUC__
 
     #include "config.h"

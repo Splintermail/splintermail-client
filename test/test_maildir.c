@@ -67,14 +67,14 @@ static derr_t gen_fake_emails(maildir_t* mdir){
     return e;
 }
 
-#define EXP_VS_GOT(exp, got, str_type) { \
+#define EXP_VS_GOT(exp, got, str_type) do { \
     int result = dstr_cmp(exp, got); \
     if(result != 0){ \
         PROP(&e, PFMT("expected \"%x\"\n" \
                            "but got: \"%x\"\n", FD(exp), FD(got)) ); \
         ORIG(&e, E_VALUE, "mismatching " str_type); \
     } \
-}
+} while(0)
 
 static derr_t test_maildir(void){
     derr_t e = E_OK;

@@ -44,7 +44,6 @@ static void simple_close_cb(uv_handle_t *handle){
     free(handle);
 }
 
-
 static derr_t bind_via_gai(uv_tcp_t *srv, const char *addr, const char *svc){
     derr_t e = E_OK;
 
@@ -71,14 +70,14 @@ static derr_t bind_via_gai(uv_tcp_t *srv, const char *addr, const char *svc){
     // bind to something
     struct addrinfo *p;
     for(p = ai; p != NULL; p = p->ai_next){
-        struct sockaddr_in *sin = (struct sockaddr_in*)p->ai_addr;
-        LOG_DEBUG("binding to ip addr %x\n", FS(inet_ntoa(sin->sin_addr)));
+        LOG_DEBUG("binding to %x\n", FNTOP(p->ai_addr));
 
         ret = uv_tcp_bind(srv, p->ai_addr, 0);
         if(ret < 0){
             // build up an error log, although we might not keep it
-            TRACE(&e, "failed to bind to %x: %x\n",
-                    FS(inet_ntoa(sin->sin_addr)), FUV(&ret));
+            TRACE(&e,
+                "failed to bind to %x: %x\n", FNTOP(p->ai_addr), FUV(&ret)
+            );
             continue;
         }
 
@@ -157,7 +156,7 @@ static void read_cb(uv_stream_t *stream, ssize_t ssize_read,
     // the uv_loop_t has a pointer to our own loop_t
     loop_t *loop = stream->loop->data;
     // wuuut??  The char* in uv_buf_t is secretly a read_wrapper_t!!
-    read_wrapper_t * rd_wrap = (read_wrapper_t*)buf->base;
+    read_wrapper_t * rd_wrap = CONTAINER_OF(buf->base, read_wrapper_t, buffer);
     event_t *ev = rd_wrap ? &rd_wrap->event : NULL;
 
     /* possible situations:
@@ -304,7 +303,7 @@ static derr_t handle_write(loop_t *loop, loop_data_t *ld, event_t *ev){
         ORIG_GO(&e, uv_err_type(ret), "error adding write", unwrap);
     }
 
-    return e;;
+    return e;
 
 unwrap:
     unwrap_write(wr_wrap);
@@ -983,6 +982,8 @@ derr_t loop_init(loop_t *loop, size_t num_read_events,
         size_t num_write_wrappers, engine_t *downstream){
     derr_t e = E_OK;
 
+    link_t *link = NULL;
+
     // init loop
     int ret = uv_loop_init(&loop->uv_loop);
     if(ret < 0){
@@ -1073,7 +1074,6 @@ derr_t loop_init(loop_t *loop, size_t num_read_events,
 
     return e;
 
-    link_t *link;
 fail_wr_wraps:
     // free all of the buffers
     while((link = queue_pop_first(&loop->write_wrappers, false))){

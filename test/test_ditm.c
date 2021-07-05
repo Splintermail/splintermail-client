@@ -25,7 +25,7 @@ const char* g_test_files;
 DSTR_STATIC(multi_line_end, "\r\n.\r\n");
 DSTR_STATIC(line_end, "\r\n");
 
-#define EXPECT_RESPONSE(namestr, exp){ \
+#define EXPECT_RESPONSE(namestr, exp) do { \
     int result; \
     /* read from the socket */ \
     recv->len = 0; \
@@ -41,9 +41,9 @@ DSTR_STATIC(line_end, "\r\n");
                  "but got:  %x\n", FD(&exp), FD(recv)); \
         ORIG(&e, E_VALUE, "incorrect " namestr " response" ); \
     } \
-}
+} while(0)
 
-#define EXPECT_MULTI_RESPONSE(namestr, exp_1, exp_body){ \
+#define EXPECT_MULTI_RESPONSE(namestr, exp_1, exp_body) do { \
     int result; \
     /* read from the socket */ \
     recv->len = 0; \
@@ -82,7 +82,7 @@ DSTR_STATIC(line_end, "\r\n");
         TRACE(&e, "length %x vs %x\n", FU(exp_body.len), FU(body.len)); \
         ORIG(&e, E_VALUE, "incorrect response" ); \
     } \
-}
+} while(0)
 
 static derr_t list_of_tests_1(LIST(dstr_t)* ans, dstr_t* recv, dstr_t* buffer,
                               connection_t* conn){

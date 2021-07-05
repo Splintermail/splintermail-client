@@ -111,13 +111,8 @@ derr_t imap_scan(imap_scanner_t *scanner, scan_mode_t mode, bool *more,
                     return e; \
                 }else \
                     yych = *(cursor)
-#   define YYBACKUP() marker = cursor;
-#   define YYRESTORE() cursor = marker;
-
-/*  we used to throw an error on invalid tokens, but good parsing also means
-    good error recovery.  That's hard, but bison already does it really well,
-    so instead of throwing an error, pass the error along to bison */
-#   define INVALID_TOKEN_ERROR { *type = INVALID_TOKEN; goto done; }
+#   define YYBACKUP() marker = cursor
+#   define YYRESTORE() cursor = marker
 
     derr_t e = E_OK;
 
@@ -294,9 +289,9 @@ std_mode:
 status_code_check_mode:
     // TODO: how far does this * expand?  does it always stop at the first char?
     /*!re2c
-        "\x00"          { INVALID_TOKEN_ERROR; }
-        "\n"            { INVALID_TOKEN_ERROR; }
-        "\r"            { INVALID_TOKEN_ERROR; }
+        "\x00"          { *type = INVALID_TOKEN; goto done; }
+        "\n"            { *type = INVALID_TOKEN; goto done; }
+        "\r"            { *type = INVALID_TOKEN; goto done; }
         eol             { *type = EOL; goto done; }
         "["             { *type = YES_STATUS_CODE; goto done; }
         *               { *type = NO_STATUS_CODE; goto done; }
@@ -342,16 +337,18 @@ nqchar_mode:
         eol             { *type = EOL; goto done; }
     */
 
-    size_t start_offset, end_offset;
 done:
-    // get the token bounds
-    // this is safe; start is always within the bytes buffer
-    start_offset = (size_t)(scanner->start - scanner->bytes.data);
-    end_offset = (size_t)(cursor - scanner->bytes.data);
-    /* TODO: does this work for all cases? Won't sometimes *cursor point to the
-             last character of a token, and sometimes it will point to the
-             character after a token? */
-    *token_out = dstr_sub(&scanner->bytes, start_offset, end_offset);
+    {
+        size_t start_offset, end_offset;
+        // get the token bounds
+        // this is safe; start is always within the bytes buffer
+        start_offset = (size_t)(scanner->start - scanner->bytes.data);
+        end_offset = (size_t)(cursor - scanner->bytes.data);
+        /* TODO: does this work for all cases? Won't sometimes *cursor point to the
+                 last character of a token, and sometimes it will point to the
+                 character after a token? */
+        *token_out = dstr_sub(&scanner->bytes, start_offset, end_offset);
+    }
 
     // mark everything done until here
     scanner->start = cursor;

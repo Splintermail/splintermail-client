@@ -17,7 +17,7 @@ static void _dstr_out_fn(py_arg_t arg){
     }
 }
 
-py_arg_t pyarg_dstr(dstr_t *mem, const dstr_t **out, const char *name){
+py_arg_t pyarg_dstr(dstr_t *mem, const dstr_t **out, char *name){
     // technically no need to set mem for non-optional
     *mem = (dstr_t){0};
     py_arg_t arg = {
@@ -29,13 +29,13 @@ py_arg_t pyarg_dstr(dstr_t *mem, const dstr_t **out, const char *name){
         .optional = false,
         .out_fn = _dstr_out_fn,
         .out_src = mem,
-        .out = (void**)out,
+        .out = (const void**)out,
     };
     return arg;
 }
 
 py_arg_t pyarg_dstr_opt(
-    dstr_t *mem, const dstr_t **out, const char *name, const char *_default
+    dstr_t *mem, const dstr_t **out, char *name, char *_default
 ){
     // set default value as backup
     mem->data = _default;
@@ -52,7 +52,7 @@ py_arg_t pyarg_dstr_opt(
         .optional = true,
         .out_fn = _dstr_out_fn,
         .out_src = mem,
-        .out = (void**)out,
+        .out = (const void**)out,
         // also set out_len according to the default
         .out_len = (Py_ssize_t)mem->len,
     };
@@ -60,7 +60,7 @@ py_arg_t pyarg_dstr_opt(
 }
 
 py_arg_t pyarg_nullable_dstr(
-    dstr_t *mem, const dstr_t **out, const char *name
+    dstr_t *mem, const dstr_t **out, char *name
 ){
     // technically no need to set mem for non-optional
     *mem = (dstr_t){0};
@@ -73,13 +73,13 @@ py_arg_t pyarg_nullable_dstr(
         .optional = false,
         .out_fn = _dstr_out_fn,
         .out_src = mem,
-        .out = (void**)out,
+        .out = (const void**)out,
     };
     return arg;
 }
 
 py_arg_t pyarg_nullable_dstr_opt(
-    dstr_t *mem, const dstr_t **out, const char *name, const char *_default
+    dstr_t *mem, const dstr_t **out, char *name, char *_default
 ){
     if(_default != NULL){
         // set default value as backup
@@ -100,7 +100,7 @@ py_arg_t pyarg_nullable_dstr_opt(
         .optional = true,
         .out_fn = _dstr_out_fn,
         .out_src = mem,
-        .out = (void**)out,
+        .out = (const void**)out,
         // also set out_len according to the default
         .out_len = (Py_ssize_t)mem->len,
     };
@@ -108,7 +108,7 @@ py_arg_t pyarg_nullable_dstr_opt(
 }
 
 
-py_arg_t pyarg_uint(unsigned int *out, const char *name){
+py_arg_t pyarg_uint(unsigned int *out, char *name){
     py_arg_t arg = {
         .type = PYARG_UINT_TYPE,
         .name = name,
@@ -120,7 +120,7 @@ py_arg_t pyarg_uint(unsigned int *out, const char *name){
     return arg;
 }
 
-py_arg_t pyarg_uint64(uint64_t *out, const char *name){
+py_arg_t pyarg_uint64(uint64_t *out, char *name){
     py_arg_t arg = {
         .type = PYARG_UINT64_TYPE,
         .name = name,
@@ -132,7 +132,7 @@ py_arg_t pyarg_uint64(uint64_t *out, const char *name){
     return arg;
 }
 
-py_arg_t pyarg_int(int *out, const char *name){
+py_arg_t pyarg_int(int *out, char *name){
     py_arg_t arg = {
         .type = PYARG_INT_TYPE,
         .name = name,
@@ -144,7 +144,7 @@ py_arg_t pyarg_int(int *out, const char *name){
     return arg;
 }
 
-py_arg_t pyarg_int64(int64_t *out, const char *name){
+py_arg_t pyarg_int64(int64_t *out, char *name){
     py_arg_t arg = {
         .type = PYARG_INT64_TYPE,
         .name = name,
@@ -266,7 +266,6 @@ derr_t pyarg_parse(PyObject *pyargs, PyObject *pykwds, py_args_t args) {
             params[13],
             params[14],
             params[15],
-            params[16],
             NULL)
     ){
         ORIG(&e, E_NORAISE, "failed to parse args");

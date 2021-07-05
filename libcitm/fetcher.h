@@ -113,13 +113,13 @@ struct fetcher_t {
     bool maildir_connected;
     fetcher_mailbox_state_e mbx_state;
 };
-DEF_CONTAINER_OF(fetcher_t, refs, refs_t);
-DEF_CONTAINER_OF(fetcher_t, wake_ev, wake_event_t);
-DEF_CONTAINER_OF(fetcher_t, close_ev, event_t);
-DEF_CONTAINER_OF(fetcher_t, s, imap_session_t);
-DEF_CONTAINER_OF(fetcher_t, up_cb, up_cb_i);
-DEF_CONTAINER_OF(fetcher_t, session_mgr, manager_i);
-DEF_CONTAINER_OF(fetcher_t, ctrl, imape_control_i);
+DEF_CONTAINER_OF(fetcher_t, refs, refs_t)
+DEF_CONTAINER_OF(fetcher_t, wake_ev, wake_event_t)
+DEF_CONTAINER_OF(fetcher_t, close_ev, event_t)
+DEF_CONTAINER_OF(fetcher_t, s, imap_session_t)
+DEF_CONTAINER_OF(fetcher_t, up_cb, up_cb_i)
+DEF_CONTAINER_OF(fetcher_t, session_mgr, manager_i)
+DEF_CONTAINER_OF(fetcher_t, ctrl, imape_control_i)
 
 derr_t fetcher_init(
     fetcher_t *fetcher,

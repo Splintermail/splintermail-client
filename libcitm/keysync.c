@@ -226,7 +226,7 @@ derr_t keysync_init(
         ks->engine,
         host,
         svc,
-        (terminal_t){},
+        (terminal_t){0},
     };
     PROP_GO(&e, imap_session_alloc_connect(&ks->s, &arg_up), fail_refs);
 
@@ -254,7 +254,7 @@ typedef struct {
     keysync_t *ks;
     imap_cmd_cb_t cb;
 } keysync_cb_t;
-DEF_CONTAINER_OF(keysync_cb_t, cb, imap_cmd_cb_t);
+DEF_CONTAINER_OF(keysync_cb_t, cb, imap_cmd_cb_t)
 
 // keysync_cb_free is an imap_cmd_cb_free_f
 static void keysync_cb_free(imap_cmd_cb_t *cb){

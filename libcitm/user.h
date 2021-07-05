@@ -44,10 +44,10 @@ struct user_t {
     bool closed;
     bool canceled;
 };
-DEF_CONTAINER_OF(user_t, imaildir_hooks, imaildir_hooks_i);
-DEF_CONTAINER_OF(user_t, keysync_cb, keysync_cb_i);
-DEF_CONTAINER_OF(user_t, h, hash_elem_t);
-DEF_CONTAINER_OF(user_t, refs, refs_t);
+DEF_CONTAINER_OF(user_t, imaildir_hooks, imaildir_hooks_i)
+DEF_CONTAINER_OF(user_t, keysync_cb, keysync_cb_i)
+DEF_CONTAINER_OF(user_t, h, hash_elem_t)
+DEF_CONTAINER_OF(user_t, refs, refs_t)
 
 
 // makes a copy of name, pass

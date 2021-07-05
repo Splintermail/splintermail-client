@@ -14,7 +14,7 @@ typedef struct {
     up_t *up;
     imap_cmd_cb_t cb;
 } up_cb_t;
-DEF_CONTAINER_OF(up_cb_t, cb, imap_cmd_cb_t);
+DEF_CONTAINER_OF(up_cb_t, cb, imap_cmd_cb_t)
 
 static void up_free_deletions(up_t *up){
     ie_seq_set_free(STEAL(ie_seq_set_t, &up->deletions.uids_up) );
@@ -77,7 +77,7 @@ derr_t up_init(up_t *up, up_cb_i *cb, extensions_t *exts){
     link_init(&up->reselect.cbs);
 
     return e;
-};
+}
 
 void up_imaildir_select(
     up_t *up,

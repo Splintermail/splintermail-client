@@ -25,7 +25,7 @@ static char* expect_inj_msg_subj;
 DSTR_STATIC(multi_line_end, "\r\n.\r\n");
 DSTR_STATIC(line_end, "\r\n");
 
-#define EXPECT_RESPONSE(namestr, exp){ \
+#define EXPECT_RESPONSE(namestr, exp) do { \
     int result; \
     /* read from the socket */ \
     recv->len = 0; \
@@ -41,9 +41,9 @@ DSTR_STATIC(line_end, "\r\n");
                  "but got:  %x\n", FD(exp), FD(recv)); \
         ORIG(&e, E_VALUE, "incorrect " namestr " response" ); \
     } \
-}
+} while(0)
 
-#define EXPECT_MULTI_RESPONSE(namestr, exp_1, exp_body, exact_match){ \
+#define EXPECT_MULTI_RESPONSE(namestr, exp_1, exp_body, exact_match) do { \
     int result; \
     /* read from the socket */ \
     recv->len = 0; \
@@ -103,7 +103,7 @@ DSTR_STATIC(line_end, "\r\n");
             ORIG(&e, E_VALUE, "incorrect response" ); \
         } \
     } \
-}
+} while(0)
 
 typedef derr_t(*test_func)(dstr_t*, dstr_t*, connection_t*);
 
@@ -163,12 +163,12 @@ cu_recv:
     return e;
 }
 
-#define EXPECT_GREETING { \
+#define EXPECT_GREETING do { \
     DSTR_STATIC(expect, "+OK DITM ready.\r\n"); \
     EXPECT_RESPONSE("greeting", &expect); \
-}
+} while(0)
 
-#define DO_LOGIN { \
+#define DO_LOGIN do { \
     /* USER command */ \
     DSTR_VAR(temp, 64); \
     PROP(&e, FMT(&temp, "USER %x\r\n", FS(g_username)) ); \
@@ -181,23 +181,23 @@ cu_recv:
     PROP(&e, connection_write(conn, &temp) ); \
     DSTR_STATIC(expect2, "+OK Logged in.\r\n"); \
     EXPECT_RESPONSE("login", &expect2); \
-}
+} while(0)
 
-#define DO_QUIT { \
+#define DO_QUIT do { \
     DSTR_STATIC(temp, "QUIT\r\n"); \
     PROP(&e, connection_write(conn, &temp) ); \
     DSTR_STATIC(expect, "+OK Goodbye, my love.\r\n"); \
     EXPECT_RESPONSE("quit", &expect); \
-}
+} while(0)
 
-#define CHECK_INJECTED_MESSAGE { \
+#define CHECK_INJECTED_MESSAGE do { \
     PROP(&e, connection_write(conn, &DSTR_LIT("RETR 1\r\n")) ); \
     dstr_t subj; \
     DSTR_WRAP(subj, expect_inj_msg_subj, strlen(expect_inj_msg_subj), true); \
     EXPECT_MULTI_RESPONSE("RETR 1", NULL, &subj, false); \
-}
+} while(0)
 
-#define CONNECTION_SHOULD_BE_BROKEN { \
+#define CONNECTION_SHOULD_BE_BROKEN do { \
     /* well, first a write so in case of a failed test we don't hang */ \
     DSTR_STATIC(arbitrary_value, "LIST\r\n"); \
     derr_t e2 = connection_write(conn, &arbitrary_value); \
@@ -210,7 +210,7 @@ cu_recv:
         TRACE(&e2, "Expected E_CONN but got %x\n", FD(error_to_dstr(e.type))); \
         RETHROW(&e, &e2, E_VALUE); \
     } \
-}
+} while(0)
 
 static derr_t test_case_a(dstr_t* recv, dstr_t* buffer, connection_t* conn){
     (void)buffer;

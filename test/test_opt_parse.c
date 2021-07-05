@@ -15,7 +15,7 @@ static int same_as(const char* a, const char* b){
     return (strcmp(a, b) == 0);
 }
 
-#define EXPECT(r, fa, fb, fc, fd, vc, vd) { \
+#define EXPECT(r, fa, fb, fc, fd, vc, vd) do { \
     if(ret.type != r) { \
         TRACE(&e, "return value: expected %x, got %x\n", \
                 FD(error_to_dstr(r)), FD(error_to_dstr(ret.type))); \
@@ -68,7 +68,7 @@ static int same_as(const char* a, const char* b){
             ORIG(&e, E_VALUE, "wrong option value"); \
         } \
     } \
-}
+} while(0)
 
 static derr_t test_opt_parse(void){
     derr_t e = E_OK;
@@ -234,7 +234,7 @@ static derr_t test_opt_parse(void){
 }
 
 #undef EXPECT
-#define EXPECT(_exp) { \
+#define EXPECT(_exp) do { \
     DSTR_STATIC(exp, _exp); \
     DSTR_VAR(out, 4096); \
     PROP(&e, opt_dump(spec, speclen, &out) ); \
@@ -244,7 +244,7 @@ static derr_t test_opt_parse(void){
                  "but got:  %x\n", FD(&exp), FD(&out)); \
         ORIG(&e, E_VALUE, "test fail"); \
     } \
-}
+} while(0)
 
 static derr_t test_conf_parse(void){
     derr_t e = E_OK;

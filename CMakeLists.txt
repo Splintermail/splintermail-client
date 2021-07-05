@@ -1,8 +1,9 @@
 cmake_minimum_required(VERSION 3.1.0)
-project(splintermail
+project(
+    splintermail
     LANGUAGES C
     VERSION 0.2.0
-    )
+)
 
 set(MAINTAINER_NAME "Splintermail Dev")
 set(MAINTAINER_EMAIL "dev@splintermail.com")
@@ -86,28 +87,34 @@ function(default_compile_options tgt allow_asan)
         target_compile_options("${tgt}" PRIVATE "-Wno-unused-command-line-argument")
         target_compile_options("${tgt}" PRIVATE "-Wno-overlength-strings")
         target_compile_options("${tgt}" PRIVATE "-Wno-shadow")
+        target_compile_options("${tgt}" PRIVATE "-Wno-disabled-macro-expansion")
+        target_compile_options("${tgt}" PRIVATE "-Wno-covered-switch-default")
+        target_compile_options("${tgt}" PRIVATE "-Wno-unreachable-code-break")
         target_compile_options("${tgt}" PRIVATE "-Wvla")
         target_compile_options("${tgt}" PRIVATE "-fstrict-aliasing")
         target_compile_options("${tgt}" PRIVATE "-O2")
         # add some compiler hardening flags
         target_compile_options("${tgt}" PRIVATE "-Wformat" "-Wformat-security" "-Werror=format-security")
         target_compile_options("${tgt}" PRIVATE "-D_FORTIFY_SOURCE")
-        target_compile_options("${tgt}" PRIVATE "-fstack-protector-strong")
-        target_compile_options("${tgt}" PRIVATE "-fPIE")
+        # target_compile_options("${tgt}" PRIVATE "-fstack-protector-strong")
+        target_compile_options("${tgt}" PRIVATE "-fPIE" "-fPIC" "-Wno-unused-command-line-argument")
         target_link_options("${tgt}" PRIVATE "-pie")
         if("${CMAKE_C_COMPILER_ID}" STREQUAL "Clang")
             # clang options not apparently supported on AppleClang:
             target_link_options("${tgt}" PRIVATE "-Wl,-z,relro")
             target_link_options("${tgt}" PRIVATE "-Wl,-z,now")
-            # control flow integrity
-            target_compile_options("${tgt}" PRIVATE "-fsanitize=cfi")
-            # test for integer overflow
-            target_compile_options("${tgt}" PRIVATE "-fsanitize=integer")
-            # stack-based buffer overrun protection
-            target_compile_options("${tgt}" PRIVATE "-fsanitize=safe-stack")
+            target_compile_options("${tgt}" PRIVATE "-fvisibility=default")
             if(("${CMAKE_BUILD_TYPE}" STREQUAL "debug") AND ("${allow_asan}"))
                 target_compile_options("${tgt}" PRIVATE "-fsanitize=address" "-fno-omit-frame-pointer")
                 target_link_options("${tgt}" PRIVATE "-fsanitize=address" "-fno-omit-frame-pointer")
+                # control flow integrity
+                target_compile_options("${tgt}" PRIVATE "-fsanitize=cfi")
+                target_compile_options("${tgt}" PRIVATE "-flto")
+                target_link_options("${tgt}" PRIVATE "-flto")
+                # test for integer overflow
+                target_compile_options("${tgt}" PRIVATE "-fsanitize=integer")
+                # stack-based buffer overrun protection (not compatible with fsanitize=address)
+                # target_compile_options("${tgt}" PRIVATE "-fsanitize=safe-stack")
             endif()
         endif()
 

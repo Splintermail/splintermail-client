@@ -1909,7 +1909,7 @@ derr_t user_owns_address(
             // results
             int_bind_out(&one)
         )
-    )
+    );
 
     return e;
 }

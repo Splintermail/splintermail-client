@@ -29,7 +29,7 @@ typedef struct {
     unsigned int id;
     jsw_anode_t node;
 } migration_t;
-DEF_CONTAINER_OF(migration_t, node, jsw_anode_t);
+DEF_CONTAINER_OF(migration_t, node, jsw_anode_t)
 
 // copies file and references path
 static derr_t migration_new(
@@ -90,7 +90,7 @@ typedef struct {
     dstr_t undo;
     jsw_anode_t node;
 } state_t;
-DEF_CONTAINER_OF(state_t, node, jsw_anode_t);
+DEF_CONTAINER_OF(state_t, node, jsw_anode_t)
 
 // copies name and undo
 static derr_t state_new(

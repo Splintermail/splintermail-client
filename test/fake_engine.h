@@ -44,13 +44,13 @@ typedef struct {
     // cbrw or echo?
     bool is_cbrw;
 } tagged_mgr_t;
-DEF_CONTAINER_OF(tagged_mgr_t, mgr, manager_i);
+DEF_CONTAINER_OF(tagged_mgr_t, mgr, manager_i)
 
 typedef struct {
     tagged_mgr_t tmgr;
     imap_session_t s;
 } echo_session_mgr_t;
-DEF_CONTAINER_OF(echo_session_mgr_t, tmgr, tagged_mgr_t);
+DEF_CONTAINER_OF(echo_session_mgr_t, tmgr, tagged_mgr_t)
 
 derr_t echo_session_mgr_new(echo_session_mgr_t **out,
         imap_session_alloc_args_t args);
@@ -92,7 +92,7 @@ typedef struct {
     tagged_mgr_t tmgr;
     bool dying;
 } cb_reader_writer_t;
-DEF_CONTAINER_OF(cb_reader_writer_t, tmgr, tagged_mgr_t);
+DEF_CONTAINER_OF(cb_reader_writer_t, tmgr, tagged_mgr_t)
 
 // returns the first WRITE event, or NULL if there was an error
 derr_t cb_reader_writer_init(cb_reader_writer_t *cbrw, size_t id,
@@ -107,7 +107,7 @@ typedef struct {
     engine_t engine;
     queue_t event_q;
 } fake_engine_t;
-DEF_CONTAINER_OF(fake_engine_t, engine, engine_t);
+DEF_CONTAINER_OF(fake_engine_t, engine, engine_t)
 
 derr_t fake_engine_init(fake_engine_t *fake_engine);
 void fake_engine_free(fake_engine_t *fake_engine);

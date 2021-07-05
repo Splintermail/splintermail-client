@@ -370,7 +370,7 @@ PHP_FUNCTION(smphp_login){
 // smphp_add_session_auth(server_id: int, session_id: string, uuid: string)
 // (no return value)
 PHP_FUNCTION(smphp_add_session_auth){
-    long server_id;
+    long server_id = 0;
     dstr_t session_id;
     dstr_t uuid;
 
@@ -389,7 +389,7 @@ PHP_FUNCTION(smphp_add_session_auth){
 //     server_id: int, session_id: string
 // ) -> email: Optional[string]
 PHP_FUNCTION(smphp_validate_session_auth){
-    long server_id;
+    long server_id = 0;
     dstr_t session_id;
 
     ZEND_PARSE_PARAMETERS_START(2, 2)
@@ -422,7 +422,7 @@ fail:
 // smphp_session_logout(server_id: int, session_id: string)
 // (no return value)
 PHP_FUNCTION(smphp_session_logout){
-    long server_id;
+    long server_id = 0;
     dstr_t session_id;
 
     ZEND_PARSE_PARAMETERS_START(2, 2)
@@ -438,7 +438,7 @@ PHP_FUNCTION(smphp_session_logout){
 
 // smphp_new_csrf(server_id: int, session_id: string) -> string
 PHP_FUNCTION(smphp_new_csrf){
-    long server_id;
+    long server_id = 0;
     dstr_t session_id;
 
     ZEND_PARSE_PARAMETERS_START(2, 2)

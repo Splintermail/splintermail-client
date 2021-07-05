@@ -546,7 +546,7 @@ derr_t dstr_tosize(const dstr_t* in, size_t* out, int base){
     unsigned long long temp;
     PROP(&e, dstr_toull(in, &temp, base) );
 
-#if ULLLONG_MAX > SIZE_MAX
+#if ULLONG_MAX > SIZE_MAX
     if(temp > SIZE_MAX){
         TRACE(&e, "input was \"%x\"\n", FD(in));
         ORIG(&e, E_PARAM, "number string too large for size_t");
@@ -1466,7 +1466,7 @@ derr_t hex2bin(const dstr_t* hex, dstr_t* bin){
 /* fmt_dstr_append_quiet is just like dstr_append_quiet except when it fails
    due to a size limit it will try to fill the buffer as much as possible
    before returning the error */
-static inline derr_type_t fmt_dstr_append_quiet(dstr_t *dstr, const dstr_t *new_text){
+derr_type_t fmt_dstr_append_quiet(dstr_t *dstr, const dstr_t *new_text){
     derr_type_t type = dstr_append_quiet(dstr, new_text);
     if(type != E_NONE && dstr->len < dstr->size){
         dstr_t sub_text = dstr_sub(new_text, 0, dstr->size - dstr->len);

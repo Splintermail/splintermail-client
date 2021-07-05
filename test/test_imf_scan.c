@@ -6,7 +6,7 @@
 
 #include "test_utils.h"
 
-#define EXPECT(exp_error, exp_type, exp_token_cstr) { \
+#define EXPECT(exp_error, exp_type, exp_token_cstr) do { \
     dstr_t token_dstr = dstr_from_off(token); \
     dstr_t exp_token; \
     DSTR_WRAP(exp_token, exp_token_cstr, strlen(exp_token_cstr), true); \
@@ -42,7 +42,7 @@
         TRACE(&e, "on input: '%x%x'\n", FD_DBG(&token_dstr), FD_DBG(&scannable));  \
         ORIG_GO(&e, E_VALUE, "unexpected token type", cu_scanner); \
     } \
-}
+} while(0)
 
 
 static derr_t test_imf_scan(void){

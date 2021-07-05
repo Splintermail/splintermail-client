@@ -18,10 +18,10 @@ typedef struct {
     event_t *quit_ev;
     bool quitting;
 } citme_t;
-DEF_CONTAINER_OF(citme_t, sf_pair_cb, sf_pair_cb_i);
-DEF_CONTAINER_OF(citme_t, user_cb, user_cb_i);
-DEF_CONTAINER_OF(citme_t, engine, engine_t);
-DEF_CONTAINER_OF(citme_t, refs, refs_t);
+DEF_CONTAINER_OF(citme_t, sf_pair_cb, sf_pair_cb_i)
+DEF_CONTAINER_OF(citme_t, user_cb, user_cb_i)
+DEF_CONTAINER_OF(citme_t, engine, engine_t)
+DEF_CONTAINER_OF(citme_t, refs, refs_t)
 
 derr_t citme_add_to_loop(citme_t *citme, uv_loop_t *loop);
 

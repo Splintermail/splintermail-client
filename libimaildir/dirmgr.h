@@ -33,8 +33,8 @@ typedef struct {
     // keep a copy of the dictionary key
     dstr_t name;
 } managed_dir_t;
-DEF_CONTAINER_OF(managed_dir_t, h, hash_elem_t);
-DEF_CONTAINER_OF(managed_dir_t, m, imaildir_t);
+DEF_CONTAINER_OF(managed_dir_t, h, hash_elem_t)
+DEF_CONTAINER_OF(managed_dir_t, m, imaildir_t)
 
 struct dirmgr_t {
     string_builder_t path;
@@ -45,7 +45,7 @@ struct dirmgr_t {
     imaildir_cb_i imaildir_cb;
     size_t tmp_count;
 };
-DEF_CONTAINER_OF(dirmgr_t, imaildir_cb, imaildir_cb_i);
+DEF_CONTAINER_OF(dirmgr_t, imaildir_cb, imaildir_cb_i)
 
 // path must be linked to long-lived objects
 derr_t dirmgr_init(
@@ -132,7 +132,7 @@ struct dirmgr_hold_t {
        should close it on release_imaildir() */
     bool close_on_release;
 };
-DEF_CONTAINER_OF(dirmgr_hold_t, h, hash_elem_t);
+DEF_CONTAINER_OF(dirmgr_hold_t, h, hash_elem_t)
 
 /* handling APPEND and COPY: up_t's have to NOT download any messages while we
    are are APPENDing or COPYing messages around on the server */
@@ -161,7 +161,7 @@ typedef struct {
     size_t count;
     hash_elem_t h;
 } dirmgr_freeze_t;
-DEF_CONTAINER_OF(dirmgr_freeze_t, h, hash_elem_t);
+DEF_CONTAINER_OF(dirmgr_freeze_t, h, hash_elem_t)
 
 /* this will shut down any accessors before it returns, which means that you
    MUST NOT create a freeze on a mailbox you are connected to */

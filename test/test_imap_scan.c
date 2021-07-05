@@ -4,7 +4,7 @@
 
 #include "test_utils.h"
 
-#define EXPECT(exp_error, exp_more, exp_type) { \
+#define EXPECT(exp_error, exp_more, exp_type) do { \
     if(exp_error != e.type){ \
         TRACE(&e, "mismatched status, expected %x, but got %x,\n", \
                 FD(error_to_dstr(exp_error)), \
@@ -37,7 +37,7 @@
         TRACE(&e, "on input: '%x%x'\n", FD(&token), FD(&scannable));  \
         ORIG_GO(&e, E_VALUE, "unexpected token type", cu_scanner); \
     } \
-}
+} while(0)
 
 static derr_t test_imap_scan(void){
     derr_t e = E_OK;

@@ -15,7 +15,7 @@ typedef struct {
     jsw_anode_t anode;
     unsigned char magic;
 } binsrch_int_t;
-DEF_CONTAINER_OF(binsrch_int_t, anode, jsw_anode_t);
+DEF_CONTAINER_OF(binsrch_int_t, anode, jsw_anode_t)
 
 static const void *get_binsrch(const jsw_anode_t *node){
     binsrch_int_t *b = CONTAINER_OF(node, binsrch_int_t, anode);

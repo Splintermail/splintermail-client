@@ -7,13 +7,13 @@
 
 #include "test_utils.h"
 
-#define EXP_VS_GOT(exp, got) { \
+#define EXP_VS_GOT(exp, got) do { \
     if(exp != got){ \
         TRACE(&e, "expected: %x\n" \
                  "but got:  %x\n", FU(exp), FU(got)); \
         ORIG_GO(&e, E_VALUE, "test fail", cleanup); \
     } \
-}
+} while(0)
 
 static derr_t test_seq_set_iter(void){
     derr_t e = E_OK;

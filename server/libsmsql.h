@@ -96,7 +96,7 @@ typedef struct {
     bool paid;
     link_t link;
 } smsql_alias_t;
-DEF_CONTAINER_OF(smsql_alias_t, link, link_t);
+DEF_CONTAINER_OF(smsql_alias_t, link, link_t)
 
 derr_t smsql_alias_new(smsql_alias_t **out, const dstr_t *email, bool paid);
 void smsql_alias_free(smsql_alias_t **old);
@@ -121,7 +121,7 @@ typedef struct {
     dstr_t dstr;
     link_t link;
 } smsql_dstr_t;
-DEF_CONTAINER_OF(smsql_dstr_t, link, link_t);
+DEF_CONTAINER_OF(smsql_dstr_t, link, link_t)
 
 derr_t smsql_dstr_new(smsql_dstr_t **out, const dstr_t *val);
 derr_t smsql_dstr_new_cstr(smsql_dstr_t **out, const char *val);
@@ -155,7 +155,7 @@ typedef struct {
     uint32_t uint;
     link_t link;
 } smsql_uint_t;
-DEF_CONTAINER_OF(smsql_uint_t, link, link_t);
+DEF_CONTAINER_OF(smsql_uint_t, link, link_t)
 
 derr_t smsql_uint_new(smsql_uint_t **out, uint32_t val);
 void smsql_uint_free(smsql_uint_t **old);

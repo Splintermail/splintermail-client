@@ -91,14 +91,14 @@ struct sf_pair_t {
     link_t citme_link; // citme_t->sf_pairs
     link_t user_link; // user_t->sf_pairs
 };
-DEF_CONTAINER_OF(sf_pair_t, wake_ev, wake_event_t);
-DEF_CONTAINER_OF(sf_pair_t, refs, refs_t);
-DEF_CONTAINER_OF(sf_pair_t, children, refs_t);
-DEF_CONTAINER_OF(sf_pair_t, citme_link, link_t);
-DEF_CONTAINER_OF(sf_pair_t, user_link, link_t);
-DEF_CONTAINER_OF(sf_pair_t, server_cb, server_cb_i);
-DEF_CONTAINER_OF(sf_pair_t, fetcher_cb, fetcher_cb_i);
-DEF_CONTAINER_OF(sf_pair_t, key_listener, key_listener_i);
+DEF_CONTAINER_OF(sf_pair_t, wake_ev, wake_event_t)
+DEF_CONTAINER_OF(sf_pair_t, refs, refs_t)
+DEF_CONTAINER_OF(sf_pair_t, children, refs_t)
+DEF_CONTAINER_OF(sf_pair_t, citme_link, link_t)
+DEF_CONTAINER_OF(sf_pair_t, user_link, link_t)
+DEF_CONTAINER_OF(sf_pair_t, server_cb, server_cb_i)
+DEF_CONTAINER_OF(sf_pair_t, fetcher_cb, fetcher_cb_i)
+DEF_CONTAINER_OF(sf_pair_t, key_listener, key_listener_i)
 
 derr_t sf_pair_new(
     sf_pair_t **out,

@@ -11,7 +11,7 @@ typedef struct {
     imape_worker_t imape_worker;
     // right now there is nothing else
 } imap_worker_t;
-DEF_CONTAINER_OF(imap_worker_t, imape_worker, imape_worker_t);
+DEF_CONTAINER_OF(imap_worker_t, imape_worker, imape_worker_t)
 
 
 static void worker_free(imape_worker_t *worker){

@@ -63,7 +63,7 @@ struct log_t {
     unsigned int uidvld_dn;
     unsigned long himodseq_up;
 };
-DEF_CONTAINER_OF(log_t, iface, maildir_log_i);
+DEF_CONTAINER_OF(log_t, iface, maildir_log_i)
 
 static derr_t lmdb_env_open_path(const string_builder_t *dirpath,
         MDB_env **env){

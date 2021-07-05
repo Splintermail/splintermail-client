@@ -6,22 +6,22 @@
 
 const void *msg_view_jsw_get_uid_dn(const jsw_anode_t *node){
     const msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
-    return (void*)&view->uid_dn;
+    return (const void*)&view->uid_dn;
 }
 
 const void *msg_mod_jsw_get_modseq(const jsw_anode_t *node){
     const msg_mod_t *mod = CONTAINER_OF(node, msg_mod_t, node);
-    return (void*)&mod->modseq;
+    return (const void*)&mod->modseq;
 }
 
 const void *msg_jsw_get_msg_key(const jsw_anode_t *node){
     const msg_t *msg = CONTAINER_OF(node, msg_t, node);
-    return (void*)&msg->key;
+    return (const void*)&msg->key;
 }
 
 const void *expunge_jsw_get_msg_key(const jsw_anode_t *node){
     const msg_expunge_t *expunge = CONTAINER_OF(node, msg_expunge_t, node);
-    return (void*)&expunge->key;
+    return (const void*)&expunge->key;
 }
 
 int jsw_cmp_msg_key(const void *a, const void *b){

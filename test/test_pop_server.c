@@ -180,7 +180,7 @@ cleanup:
     return NULL;
 }
 
-#define EXPECT_RESPONSE(namestr, string){ \
+#define EXPECT_RESPONSE(namestr, string) do { \
     /* read from the socket */ \
     DSTR_VAR(recv, 4096); \
     PROP_GO(&e, connection_read(&conn, &recv, NULL), cleanup_3); \
@@ -188,10 +188,10 @@ cleanup:
     result = dstr_cmp(&string, &recv); \
     if(result != 0) \
         ORIG_GO(&e, E_VALUE, "incorrect " namestr " response", cleanup_3); \
-    }
+    } while(0)
 
-#define EXPECT_HOOK_RESPONSE(namestr, hook, string){ \
-    EXPECT_RESPONSE(namestr, string) \
+#define EXPECT_HOOK_RESPONSE(namestr, hook, string) do { \
+    EXPECT_RESPONSE(namestr, string); \
     if(called != hook) \
         ORIG_GO(&e, E_VALUE, namestr " not called", cleanup_3); \
     /* make sure it was the only hook called */ \
@@ -200,7 +200,7 @@ cleanup:
     /* reset hooks */ \
     called = CLEARED; \
     last_called = CLEARED; \
-}
+} while(0)
 
 static derr_t test_pop_server(void){
     derr_t e = E_OK;

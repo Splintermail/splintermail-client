@@ -171,7 +171,7 @@ typedef struct {
     msg_flags_t flags;
     jsw_anode_t node;  // dn_t->store->tree
 } exp_flags_t;
-DEF_CONTAINER_OF(exp_flags_t, node, jsw_anode_t);
+DEF_CONTAINER_OF(exp_flags_t, node, jsw_anode_t)
 
 static const void *exp_flags_jsw_get_uid_dn(const jsw_anode_t *node){
     exp_flags_t *exp_flags = CONTAINER_OF(node, exp_flags_t, node);
@@ -252,7 +252,7 @@ derr_t dn_init(dn_t *dn, dn_cb_i *cb, extensions_t *exts, bool examine){
     jsw_ainit(&dn->store.tree, jsw_cmp_uint, exp_flags_jsw_get_uid_dn);
 
     return e;
-};
+}
 
 //// TODO: unify these send_* functions with the ones in sm_serve_logic?
 
@@ -1411,11 +1411,11 @@ typedef struct {
     unsigned int uid_dn;
     jsw_anode_t node;
 } gathered_t;
-DEF_CONTAINER_OF(gathered_t, node, jsw_anode_t);
+DEF_CONTAINER_OF(gathered_t, node, jsw_anode_t)
 
 static const void *gathered_jsw_get_uid_dn(const jsw_anode_t *node){
     const gathered_t *gathered = CONTAINER_OF(node, gathered_t, node);
-    return (void*)&gathered->uid_dn;
+    return (const void*)&gathered->uid_dn;
 }
 
 static void gather_prep(gather_t *gather){

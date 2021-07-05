@@ -63,7 +63,8 @@ static derr_t assert_calls_equal(const calls_made_t *exp,
     for(i = 0; i < sizeof(exp->cmd_counts) / sizeof(*exp->cmd_counts); i++){
         if(exp->cmd_counts[i] != got->cmd_counts[i]){
             TRACE(&e, "expected %x %x command(s), but got %x\n",
-                    FU(exp->cmd_counts[i]), FD(imap_cmd_type_to_dstr(i)),
+                    FU(exp->cmd_counts[i]),
+                    FD(imap_cmd_type_to_dstr((imap_cmd_type_t)i)),
                     FU(got->cmd_counts[i]));
             pass = false;
         }
@@ -72,7 +73,8 @@ static derr_t assert_calls_equal(const calls_made_t *exp,
     for(i = 0; i < sizeof(exp->resp_counts) / sizeof(*exp->resp_counts); i++){
         if(exp->resp_counts[i] != got->resp_counts[i]){
             TRACE(&e, "expected %x %x response(s), but got %x\n",
-                    FU(exp->resp_counts[i]), FD(imap_resp_type_to_dstr(i)),
+                    FU(exp->resp_counts[i]),
+                    FD(imap_resp_type_to_dstr((imap_resp_type_t)i)),
                     FU(got->resp_counts[i]));
             pass = false;
         }
@@ -93,7 +95,7 @@ static void cmd_cb(void *cb_data, imap_cmd_t *cmd){
     calls_made_t *calls = cb_data;
 
     size_t max_type = sizeof(calls->cmd_counts) / sizeof(*calls->cmd_counts);
-    if(cmd->type >= 0 && cmd->type < max_type){
+    if(cmd->type < max_type){
         calls->cmd_counts[cmd->type]++;
     }else{
         LOG_ERROR("got command of unknown type %x\n", FU(cmd->type));
@@ -133,7 +135,7 @@ static void resp_cb(void *cb_data, imap_resp_t *resp){
     calls_made_t *calls = cb_data;
 
     size_t max_type = sizeof(calls->resp_counts) / sizeof(*calls->resp_counts);
-    if(resp->type >= 0 && resp->type < max_type){
+    if(resp->type < max_type){
         calls->resp_counts[resp->type]++;
     }else{
         LOG_ERROR("got response of unknown type %x\n", FU(resp->type));
@@ -155,8 +157,8 @@ done:
     imap_resp_free(resp);
 }
 
-imap_parser_cb_t parser_cmd_cb = { .cmd=cmd_cb };
-imap_parser_cb_t parser_resp_cb = { .resp=resp_cb };
+static imap_parser_cb_t parser_cmd_cb = { .cmd=cmd_cb };
+static imap_parser_cb_t parser_resp_cb = { .resp=resp_cb };
 
 typedef struct {
     dstr_t in;

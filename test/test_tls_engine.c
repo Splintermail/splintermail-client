@@ -20,16 +20,16 @@
 // path to where the test files can be found
 static const char* g_test_files;
 
-unsigned int listen_port = 12348;
-const char *host = "127.0.0.1";
-const char *port_str = "12348";
+static unsigned int listen_port = 12348;
+static const char *host = "127.0.0.1";
+static const char *port_str = "12348";
 
 typedef struct {
     imap_pipeline_t pipeline;
     ssl_context_t *ssl_ctx;
     listener_spec_t lspec;
 } test_lspec_t;
-DEF_CONTAINER_OF(test_lspec_t, lspec, listener_spec_t);
+DEF_CONTAINER_OF(test_lspec_t, lspec, listener_spec_t)
 
 static derr_t conn_recvd(listener_spec_t *lspec, session_t **session){
     derr_t e = E_OK;
@@ -44,7 +44,7 @@ static derr_t conn_recvd(listener_spec_t *lspec, session_t **session){
         NULL, // imape_data's downstream
         NULL, // host
         NULL, // service
-        (terminal_t){},
+        (terminal_t){0},
     };
 
     echo_session_mgr_t *esm;
@@ -200,7 +200,7 @@ static derr_t test_tlse(void){
         NULL, // imape_data's downstream
         host,
         port_str,
-        (terminal_t){},
+        (terminal_t){0},
     };
 
     session_cb_data_t cb_data = {

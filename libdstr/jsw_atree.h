@@ -107,7 +107,7 @@ typedef struct {
     dstr_t dstr;
     jsw_anode_t node;
 } jsw_str_t;
-DEF_CONTAINER_OF(jsw_str_t, node, jsw_anode_t);
+DEF_CONTAINER_OF(jsw_str_t, node, jsw_anode_t)
 
 const void *jsw_str_get_dstr(const jsw_anode_t *node);
 derr_t jsw_str_new(const dstr_t bin, jsw_str_t **out);

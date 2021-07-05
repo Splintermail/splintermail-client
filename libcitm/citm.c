@@ -18,7 +18,7 @@ typedef struct {
     ssl_context_t *ctx_cli;
     listener_spec_t lspec;
 } citm_lspec_t;
-DEF_CONTAINER_OF(citm_lspec_t, lspec, listener_spec_t);
+DEF_CONTAINER_OF(citm_lspec_t, lspec, listener_spec_t)
 
 
 static derr_t conn_recvd(listener_spec_t *lspec, session_t **session){

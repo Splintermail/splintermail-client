@@ -274,11 +274,8 @@ int main(int argc, char** argv){
 
 cleanup_ssl:
     crypto_library_close();
-    int exitval;
 exit:
 #ifdef BUILD_SERVER_CODE
-    // determine exit code, since we will DROP any error before exiting
-    exitval = (is_error(e));
     // any error at all is badbadbad
     CATCH(e, E_ANY){
         // write errors to logfile
@@ -293,6 +290,7 @@ exit:
     // the non-server case; report all errors
     DUMP(e);
 #endif
+    int exitval = is_error(e);
     DROP_VAR(&e);
     return exitval;
 }

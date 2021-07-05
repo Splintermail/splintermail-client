@@ -52,8 +52,8 @@ derr_t from_scan(from_scanner_t *scanner, bool one_byte_mode, dstr_t *token_out,
 
     #define  YYPEEK()         peek(scanner->bytes, idx)
     #define  YYSKIP()         peek(scanner->bytes, ++idx)
-    #define  YYBACKUP()       mark = idx;
-    #define  YYRESTORE()      idx = mark;
+    #define  YYBACKUP()       mark = idx
+    #define  YYRESTORE()      idx = mark
     // #define  YYBACKUPCTX()    YYCTXMARKER = YYCURSOR
     // #define  YYRESTORECTX()   YYCURSOR = YYCTXMARKER
     // #define  YYRESTORERAG(t)  YYCURSOR = t
@@ -127,11 +127,12 @@ derr_t from_scan(from_scanner_t *scanner, bool one_byte_mode, dstr_t *token_out,
     }
 
 
-    size_t start_offset, end_offset;
-    const char *old_start;
 done:
     // catch EOF condition since debian buster's re2c v1.1.1 has no eof support
     if(*type == -1) *type = DONE;
+
+    size_t start_offset, end_offset;
+    const char *old_start;
 
     // mark everything done until here
     old_start = scanner->start;
@@ -161,12 +162,12 @@ dstr_t token_extend(dstr_t start, dstr_t end){
 
 void append_raw(derr_t *e, dstr_t *out, const dstr_t raw){
     if(is_error(*e)) return;
-    IF_PROP(e, dstr_append(out, &raw) ){};
+    IF_PROP(e, dstr_append(out, &raw) ){}
 }
 
 void append_space(derr_t *e, dstr_t *out){
     if(is_error(*e)) return;
-    IF_PROP(e, dstr_append(out, &DSTR_LIT(" ")) ){};
+    IF_PROP(e, dstr_append(out, &DSTR_LIT(" ")) ){}
 }
 
 void fromyyerror(dstr_t *fromyyloc, from_parser_t *parser, char const *s){

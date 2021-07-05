@@ -12,15 +12,15 @@
 #define WRITES_PER_THREAD 10000
 #define NUM_READ_EVENTS_PER_LOOP 4
 
-const char *host = "127.0.0.1";
-const char *port = "12347";
-unsigned int listen_port = 12347;
+static const char *host = "127.0.0.1";
+static const char *port = "12347";
+static unsigned int listen_port = 12347;
 
 typedef struct {
     imap_pipeline_t pipeline;
     listener_spec_t lspec;
 } test_lspec_t;
-DEF_CONTAINER_OF(test_lspec_t, lspec, listener_spec_t);
+DEF_CONTAINER_OF(test_lspec_t, lspec, listener_spec_t)
 
 static derr_t conn_recvd(listener_spec_t *lspec, session_t **session){
     derr_t e = E_OK;
@@ -35,7 +35,7 @@ static derr_t conn_recvd(listener_spec_t *lspec, session_t **session){
         NULL, // imape_data's downstream
         NULL, // host
         NULL, // service
-        (terminal_t){},
+        (terminal_t){0},
     };
 
     echo_session_mgr_t *esm;
@@ -156,7 +156,7 @@ static derr_t test_loop(void){
         NULL, // imape_data's downstream
         host,
         port,
-        (terminal_t){},
+        (terminal_t){0},
     };
 
     session_cb_data_t cb_data = {

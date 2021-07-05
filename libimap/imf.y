@@ -106,6 +106,6 @@ hdrval: hdr_eol
 // right now only unstruct bodies are supported
 body: %empty     { $$ = NULL; }
     | BODY[b]
-        { imf_body_arg_u arg = {};
+        { imf_body_arg_u arg = {0};
           $$ = imf_body_new(E, @b, IMF_BODY_UNSTRUCT, arg); }
 ;

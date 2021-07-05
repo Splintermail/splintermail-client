@@ -1824,7 +1824,9 @@ ie_status_attr_resp_t ie_status_attr_resp_new_32(derr_t *e,
         ie_status_attr_t attr, unsigned int n){
     if(is_error(*e)) goto fail;
 
-    ie_status_attr_resp_t retval = (ie_status_attr_resp_t){.attrs=attr};
+    ie_status_attr_resp_t retval = (ie_status_attr_resp_t){
+        .attrs = (unsigned char)attr,
+    };
     switch(attr){
         case IE_STATUS_ATTR_MESSAGES: retval.messages = n; break;
         case IE_STATUS_ATTR_RECENT: retval.recent = n; break;
@@ -1845,7 +1847,9 @@ ie_status_attr_resp_t ie_status_attr_resp_new_64(derr_t *e,
         ie_status_attr_t attr, unsigned long n){
     if(is_error(*e)) goto fail;
 
-    ie_status_attr_resp_t retval = (ie_status_attr_resp_t){.attrs=attr};
+    ie_status_attr_resp_t retval = (ie_status_attr_resp_t){
+        .attrs = (unsigned char)attr,
+    };
     switch(attr){
         case IE_STATUS_ATTR_MESSAGES:
         case IE_STATUS_ATTR_RECENT:

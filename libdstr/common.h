@@ -1,5 +1,3 @@
-#include <stddef.h>
-#include <stdbool.h>
 #undef bool
 typedef _Bool bool;
 
@@ -132,20 +130,20 @@ extern derr_type_t E_USERMSG;    // an error with a user-facing message (don't T
 void consume_e_usermsg(derr_t *e, dstr_t *buf);
 
 // wrap an empty char[] with in a dstr_t
-#define DSTR_WRAP_ARRAY(dstr, buffer){ \
+#define DSTR_WRAP_ARRAY(dstr, buffer) do { \
     (dstr).data = (buffer); \
     (dstr).size = sizeof(buffer); \
     (dstr).len = 0; \
     (dstr).fixed_size = 1; \
-}
+} while(0)
 
 // wrap a char* of known length in a dstr_t
-#define DSTR_WRAP(dstr, buffer, length, null_terminated){ \
+#define DSTR_WRAP(dstr, buffer, length, null_terminated) do { \
     (dstr).data = (buffer); \
     (dstr).size = (length) + (null_terminated); \
     (dstr).len = (length); \
     (dstr).fixed_size = 1; \
-}
+} while(0)
 
 // declares an empty, fixed-size dstr_t on the stack
 #define DSTR_VAR(name, size) char name ## _buffer[size]; \
@@ -648,6 +646,11 @@ static inline char uchar_to_char(unsigned char u){
 }
 
 // String Formatting functions below //
+
+/* fmt_dstr_append_quiet is just like dstr_append_quiet except when it fails
+   due to a size limit it will try to fill the buffer as much as possible
+   before returning the error */
+derr_type_t fmt_dstr_append_quiet(dstr_t *dstr, const dstr_t *new_text);
 
 typedef enum {
     FMT_UINT,

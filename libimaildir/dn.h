@@ -92,7 +92,7 @@ struct dn_t {
 
     extensions_t *exts;
 };
-DEF_CONTAINER_OF(dn_t, link, link_t);
+DEF_CONTAINER_OF(dn_t, link, link_t)
 
 derr_t dn_init(dn_t *dn, dn_cb_i *cb, extensions_t *exts, bool examine);
 void dn_free(dn_t *dn);

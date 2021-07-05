@@ -116,7 +116,7 @@ cu:
         imap_resp_free(cases[i].resp);
     }
     return e;
-};
+}
 
 #define CHECK_ERROR_AND_RUN_TEST \
     CHECK(&e); \
@@ -613,7 +613,7 @@ static derr_t test_imap_writer(void){
                             ie_mailbox_new_noninbox(&e, IE_DSTR("box")),
                             ie_select_params_new(&e,
                                 IE_SELECT_PARAM_CONDSTORE,
-                                (ie_select_param_arg_t){}
+                                (ie_select_param_arg_t){0}
                             )
                         ),
                     }

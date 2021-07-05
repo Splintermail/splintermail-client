@@ -59,14 +59,14 @@ cleanup:
     return e;
 }
 
-#define EXP_VS_GOT(exp, got) { \
+#define EXP_VS_GOT(exp, got) do { \
     int result = dstr_cmp(exp, got); \
     if(result != 0){ \
         TRACE(&e, "expected: %x\n" \
                  "but got:  %x\n", FD(exp), FD(got)); \
         ORIG(&e, E_VALUE, "test fail"); \
     } \
-}
+} while(0)
 
 static derr_t test_encode_decode(void){
     derr_t e = E_OK;

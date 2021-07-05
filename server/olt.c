@@ -45,10 +45,10 @@ LIST_FUNCTIONS(mode_t)
 
 
 // cache UID and GID lookups
-LIST(dstr_t) uid_cache;
-LIST(uid_t) uid_results;
-LIST(dstr_t) gid_cache;
-LIST(gid_t) gid_results;
+static LIST(dstr_t) uid_cache;
+static LIST(uid_t) uid_results;
+static LIST(dstr_t) gid_cache;
+static LIST(gid_t) gid_results;
 
 
 static derr_t get_uid(const dstr_t* name, uid_t* uid){
@@ -338,8 +338,10 @@ cu_lines:
 
 
 // like common.c's in_list() but with an additional level of dereference
-static inline bool in_dir_list(const dstr_t* val, const LIST(directory)* list,
-                               size_t* idx){
+static inline bool in_dir_list(
+    const dstr_t* val, const LIST(directory)* list, size_t* idx
+){
+    if(idx) *idx = 0;
     for(size_t i = 0; i < list->len; i++){
         int result = dstr_cmp(val, &list->data[i].name);
         if(result == 0){
@@ -374,7 +376,7 @@ static derr_t check_tree_hook(const string_builder_t* base, const dstr_t* file,
     string_builder_t fullpath = sb_append(base, FD(file));
     // make sure regular files are 1:1
     if(!isdir){
-        size_t idx;
+        size_t idx = 0;
         if(!in_list(file, &data->perm_dir->files, &idx)){
            LOG_ERROR("%x: not in permissions file\n",
                      FSB(&fullpath, &slash));
@@ -546,7 +548,7 @@ static derr_t delete_from_perms(const directory* del, const directory* keep,
         PROP(&e, exists_path(&dpath, &dexists) );
         if(!dexists) continue;
         // skip files in "keep", if keep is defined
-        size_t idx;
+        size_t idx = 0;
         // in_keep is false if keep == NULL
         bool in_keep = keep ? in_dir_list(&d->name, &keep->dirs, &idx) : false;
         if(in_keep){
@@ -838,7 +840,7 @@ static derr_t do_olt(const char* permsfile, const char* overlay,
     PROP_GO(&e, handle_deletions(permsfile, &perm_dir, &dest_sb, &update), cu);
 
     // if a stamp was provided, but doesn't exist, install everything
-    bool force_install = false;;
+    bool force_install = false;
     if(stamp && !exists(stamp)){
         force_install = true;
     }

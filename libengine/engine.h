@@ -142,8 +142,8 @@ struct event_t {
                       pipeline is only sent a WRITE_DONE when its data is
                       actually sent over the wire */
 };
-DEF_CONTAINER_OF(event_t, link, link_t);
-DEF_CONTAINER_OF(event_t, qcb, queue_cb_t);
+DEF_CONTAINER_OF(event_t, link, link_t)
+DEF_CONTAINER_OF(event_t, qcb, queue_cb_t)
 
 // Does not set session, or callbacks, or init the buffer.
 void event_prep(event_t *ev, event_returner_t returner, void *returner_arg);

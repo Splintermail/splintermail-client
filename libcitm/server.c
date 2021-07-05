@@ -356,7 +356,7 @@ derr_t server_init(
         server->engine,   // engine_t
         NULL, // host
         NULL, // svc
-        (terminal_t){},
+        (terminal_t){0},
     };
     PROP_GO(&e, imap_session_alloc_accept(&server->s, &arg_dn), fail_refs);
 
@@ -1014,10 +1014,11 @@ static derr_t do_select(server_t *server, imap_cmd_t *select_cmd){
     // remember what we connected to
     ie_mailbox_free(server->selected_mailbox);
     server->selected_mailbox = ie_mailbox_copy(&e, select_cmd->arg.select->m);
-    CHECK_GO(&e, fail_cmd)
+    CHECK_GO(&e, fail_cmd);
 
-    PROP_GO(&e, dirmgr_open_dn(server->dirmgr, dir_name, &server->dn),
-            fail_dn);
+    PROP_GO(&e,
+        dirmgr_open_dn(server->dirmgr, dir_name, &server->dn),
+    fail_dn);
 
     server->imap_state = SELECTED;
 
@@ -1474,4 +1475,4 @@ derr_t server_do_work(server_t *server, bool *noop){
     // no do_work_logout because that's always resolved in a dn_t callback
 
     return e;
-};
+}

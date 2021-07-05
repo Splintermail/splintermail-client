@@ -16,7 +16,7 @@ typedef struct {
     dstr_t d;
     hash_elem_t he;
 } hashable_t;
-DEF_CONTAINER_OF(hashable_t, he, hash_elem_t);
+DEF_CONTAINER_OF(hashable_t, he, hash_elem_t)
 
 static derr_t test_hashmap(void){
     derr_t e = E_OK;

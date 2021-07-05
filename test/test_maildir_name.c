@@ -3,22 +3,22 @@
 
 #include "test_utils.h"
 
-#define EXP_VS_GOT_DSTR(exp, got) { \
+#define EXP_VS_GOT_DSTR(exp, got) do { \
     int result = dstr_cmp(exp, got); \
     if(result != 0){ \
         TRACE(&e, "expected: %x\n" \
                  "but got:  %x\n", FD(exp), FD(got)); \
         ORIG_GO(&e, E_VALUE, "test fail", cleanup); \
     } \
-}
+} while(0)
 
-#define EXP_VS_GOT_SIMPLE(exp, got, fmt_func) { \
+#define EXP_VS_GOT_SIMPLE(exp, got, fmt_func) do { \
     if(exp != got){ \
         TRACE(&e, "expected: %x\n" \
                  "but got:  %x\n", fmt_func(exp), fmt_func(got)); \
         ORIG_GO(&e, E_VALUE, "test fail", cleanup); \
     } \
-}
+} while(0)
 
 static derr_t test_parse_valid(void){
     derr_t e = E_OK;

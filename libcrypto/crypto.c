@@ -126,8 +126,8 @@ typedef struct {
     dstr_t fingerprint;
     refs_t refs;
 } _keypair_t;
-DEF_CONTAINER_OF(_keypair_t, fingerprint, dstr_t);
-DEF_CONTAINER_OF(_keypair_t, refs, refs_t);
+DEF_CONTAINER_OF(_keypair_t, fingerprint, dstr_t)
+DEF_CONTAINER_OF(_keypair_t, refs, refs_t)
 
 static void keypair_finalizer(refs_t *refs){
     _keypair_t *_kp = CONTAINER_OF(refs, _keypair_t, refs);
@@ -777,7 +777,7 @@ static derr_t decrypter_parse_metadata(decrypter_t* dc){
                 if(!pos){
                     if(leftover.len <= 4){
                         // we might not have all of the line yet
-                        return e;;
+                        return e;
                     }
                     ORIG(&e, E_PARAM, "failed to parse version");
                 }
@@ -801,7 +801,7 @@ static derr_t decrypter_parse_metadata(decrypter_t* dc){
                 if(!pos){
                     if(leftover.len <= 5){
                         // we might not have all of the line yet
-                        return e;;
+                        return e;
                     }
                     ORIG(&e, E_PARAM, "failed to parse R line");
                 }
@@ -815,7 +815,7 @@ static derr_t decrypter_parse_metadata(decrypter_t* dc){
                 // make sure we have enough bytes left (including separator)
                 if(leftover.len < hash_len + 1){
                     // we don't have the whole line
-                    return e;;
+                    return e;
                 }
                 // otherwise read the hash of the key
                 dstr_t hash;
@@ -832,7 +832,7 @@ static derr_t decrypter_parse_metadata(decrypter_t* dc){
                 if(!pos){
                     if(leftover.len <= 5){
                         // we might not have all of the line yet
-                        return e;;
+                        return e;
                     }
                     ORIG(&e, E_PARAM, "failed to parse R line");
                 }
@@ -879,7 +879,7 @@ static derr_t decrypter_parse_metadata(decrypter_t* dc){
                 if(!pos){
                     if(leftover.len <= 5){
                         // we might not have all of the line yet
-                        return e;;
+                        return e;
                     }
                     ORIG(&e, E_PARAM, "failed to parse IV line");
                 }
@@ -893,7 +893,7 @@ static derr_t decrypter_parse_metadata(decrypter_t* dc){
                 // make sure we have enough bytes left (including separator)
                 if(leftover.len < iv_len + 1){
                     // we don't have the whole line
-                    return e;;
+                    return e;
                 }
                 // otherwise read the iv
                 dstr_t iv;
@@ -1171,7 +1171,7 @@ derr_t random_uint(uint32_t *out){
     DSTR_VAR(buf, sizeof(*out));
     PROP(&e, random_bytes(&buf, buf.size) );
 
-    *out = *((uint32_t*)buf.data);
+    memcpy(out, buf.data, sizeof(*out));
 
     return e;
 }
@@ -1197,7 +1197,9 @@ derr_t random_uint_under(uint32_t end, uint32_t *out){
         DSTR_VAR(buf, sizeof(*out));
         PROP(&e, random_bytes(&buf, buf.size) );
 
-        uint32_t temp = *((uint32_t*)buf.data) / divisor;
+        uint32_t temp;
+        memcpy(&temp, buf.data, sizeof(temp));
+        temp /= divisor;
 
         if(temp < end){
             *out = temp;
@@ -1216,7 +1218,7 @@ derr_t random_uint64(uint64_t *out){
     DSTR_VAR(buf, sizeof(*out));
     PROP(&e, random_bytes(&buf, buf.size) );
 
-    *out = *((uint64_t*)buf.data);
+    memcpy(out, buf.data, sizeof(*out));
 
     return e;
 }
@@ -1230,7 +1232,9 @@ derr_t random_uint64_under(uint64_t end, uint64_t *out){
         DSTR_VAR(buf, sizeof(*out));
         PROP(&e, random_bytes(&buf, buf.size) );
 
-        uint64_t temp = *((uint64_t*)buf.data) / divisor;
+        uint64_t temp;
+        memcpy(&temp, buf.data, sizeof(temp));
+        temp /= divisor;
 
         if(temp < end){
             *out = temp;

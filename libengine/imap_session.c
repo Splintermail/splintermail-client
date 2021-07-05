@@ -43,7 +43,7 @@ static void imap_session_ref_down_loop(session_t *session, int reason){
     for(size_t i = 0; i < LOOP_REF_MAXIMUM; i++){
         if(s->loop_refs[i] < 0){
             LOG_ERROR("negative loop ref of type %x!\n",
-                      FD(loop_ref_reason_to_dstr(i)));
+                      FD(loop_ref_reason_to_dstr((enum loop_ref_reason_t)i)));
         }
     }
     imap_session_ref_down(s);
@@ -61,7 +61,7 @@ static void imap_session_ref_down_tlse(session_t *session, int reason){
     for(size_t i = 0; i < TLSE_REF_MAXIMUM; i++){
         if(s->tlse_refs[i] < 0){
             LOG_ERROR("negative tlse ref of type %x!\n",
-                      FD(tlse_ref_reason_to_dstr(i)));
+                      FD(tlse_ref_reason_to_dstr((enum tlse_ref_reason_t)i)));
         }
     }
     imap_session_ref_down(s);
@@ -82,7 +82,7 @@ static void imap_session_ref_down_imape(session_t *session, int reason){
     for(size_t i = 0; i < IMAPE_REF_MAXIMUM; i++){
         if(s->imape_refs[i] < 0){
             LOG_ERROR("negative imape ref of type %x!\n",
-                      FD(imape_ref_reason_to_dstr(i)));
+                      FD(imape_ref_reason_to_dstr((enum imape_ref_reason_t)i)));
         }
     }
     uv_mutex_unlock(&s->mutex);

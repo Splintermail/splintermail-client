@@ -7,3 +7,13 @@ define_file_logname_for_target(xkey)
 set_target_properties("xkey" PROPERTIES OUTPUT_NAME "99_xkey_plugin")
 default_compile_options(xkey FALSE)
 target_link_libraries(xkey PRIVATE libsmsql_noasan badbadbad_alert_noasan dstr_noasan)
+
+if("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU")
+    # flags for gcc
+elseif("${CMAKE_C_COMPILER_ID}" MATCHES "Clang")
+    source_compile_options(xkeysync.c "-Wno-language-extension-token")
+    source_compile_options(xkeysync.c "-Wno-gnu-folding-constant")
+    source_compile_options(xkey.c "-Wno-assign-enum")
+elseif("${CMAKE_C_COMPILER_ID}" STREQUAL "MSVC")
+    # flags for MVSC (VS 2017)
+endif()

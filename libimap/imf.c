@@ -239,8 +239,6 @@ derr_t imf_scan(
     #define YYFILL() fill(&e2, scanner)
     // this is a buffer limit check, not an EOF check
     #define YYLESSTHAN(n) scanner->bytes->len - idx < n
-    // Pass errors to bison
-    #define INVALID_TOKEN_ERROR { *type = INVALID_TOKEN; goto done; }
 
     derr_t e = E_OK;
     derr_t e2 = E_OK;
@@ -254,7 +252,7 @@ derr_t imf_scan(
                 // it just triggers a length check
                 re2c:eof = 0;
 
-                *               { INVALID_TOKEN_ERROR; }
+                *               { *type = INVALID_TOKEN; goto done; }
                 $               { *type = DONE; goto done; }
                 eol             { *type = EOL; goto done; }
                 hdrname         { *type = HDRNAME; goto done; }
@@ -265,7 +263,7 @@ derr_t imf_scan(
 
         case IMF_SCAN_UNSTRUCT:
             /*!re2c
-                *               { INVALID_TOKEN_ERROR; }
+                *               { *type = INVALID_TOKEN; goto done; }
                 $               { *type = DONE; goto done; }
                 unstruct        { *type = UNSTRUCT; goto done; }
                 eol             { *type = EOL; goto done; }

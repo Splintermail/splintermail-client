@@ -487,7 +487,7 @@ static derr_t flags_skip_fill(skip_fill_t *sf, ie_flags_t *flags){
     }
     for(ie_dstr_t *d = flags->extensions; d != NULL; d = d->next){
         LEAD_SP;
-        STATIC_SKIP_FILL("\\")
+        STATIC_SKIP_FILL("\\");
         PROP(&e, atom_skip_fill(sf, &d->dstr) );
     }
     return e;
@@ -509,7 +509,7 @@ static derr_t pflags_skip_fill(skip_fill_t *sf, ie_pflags_t *pflags){
     }
     for(ie_dstr_t *d = pflags->extensions; d != NULL; d = d->next){
         LEAD_SP;
-        STATIC_SKIP_FILL("\\")
+        STATIC_SKIP_FILL("\\");
         PROP(&e, atom_skip_fill(sf, &d->dstr) );
     }
     return e;
@@ -531,7 +531,7 @@ static derr_t fflags_skip_fill(skip_fill_t *sf, ie_fflags_t *fflags){
     }
     for(ie_dstr_t *d = fflags->extensions; d != NULL; d = d->next){
         LEAD_SP;
-        STATIC_SKIP_FILL("\\")
+        STATIC_SKIP_FILL("\\");
         PROP(&e, atom_skip_fill(sf, &d->dstr) );
     }
     return e;
@@ -560,7 +560,7 @@ static derr_t mflags_skip_fill(skip_fill_t *sf, ie_mflags_t *mflags){
     }
     for(ie_dstr_t *d = mflags->extensions; d != NULL; d = d->next){
         LEAD_SP;
-        STATIC_SKIP_FILL("\\")
+        STATIC_SKIP_FILL("\\");
         PROP(&e, atom_skip_fill(sf, &d->dstr) );
     }
     return e;
@@ -1220,7 +1220,7 @@ static derr_t do_imap_cmd_write(const imap_cmd_t *cmd, dstr_t *out,
             PROP(&e, fetch_attr_skip_fill(sf, arg.fetch->attr) );
             if(arg.fetch->mods != NULL){
                 STATIC_SKIP_FILL(" ");
-                PROP(&e, fetch_mods_skip_fill(sf, arg.fetch->mods) )
+                PROP(&e, fetch_mods_skip_fill(sf, arg.fetch->mods) );
             }
             // validate that VANISHED is used correctly
             bool chgsince = false;
@@ -1254,7 +1254,7 @@ static derr_t do_imap_cmd_write(const imap_cmd_t *cmd, dstr_t *out,
             PROP(&e, seq_set_skip_fill(sf, arg.store->seq_set) );
             if(arg.store->mods != NULL){
                 STATIC_SKIP_FILL(" ");
-                PROP(&e, store_mods_skip_fill(sf, arg.store->mods) )
+                PROP(&e, store_mods_skip_fill(sf, arg.store->mods) );
             }
             STATIC_SKIP_FILL(" ");
             // [+|-]FLAGS[.SILENT]
@@ -1370,7 +1370,7 @@ static derr_t st_code_skip_fill(skip_fill_t *sf, ie_st_code_t *code){
             break;
         case IE_ST_CODE_UIDNEXT:
             STATIC_SKIP_FILL("UIDNEXT ");
-            PROP(&e, nznum_skip_fill(sf, code->arg.uidnext) )
+            PROP(&e, nznum_skip_fill(sf, code->arg.uidnext) );
             break;
         case IE_ST_CODE_UIDVLD:
             STATIC_SKIP_FILL("UIDVALIDITY ");
