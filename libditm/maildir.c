@@ -4,8 +4,7 @@
 #include <time.h>
 #include <fcntl.h>
 
-#include "maildir.h"
-#include "libdstr/libdstr.h"
+#include "libditm/libditm.h"
 
 
 #define HOSTNAME_COMPONENT_MAX_LEN 32

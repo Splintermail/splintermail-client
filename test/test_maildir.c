@@ -3,7 +3,7 @@
 #include <errno.h>
 
 #include <libdstr/libdstr.h>
-#include <maildir.h>
+#include <libditm/libditm.h>
 
 #include "test_utils.h"
 

@@ -1,8 +1,6 @@
 #include <string.h>
 
-#include "libdstr/libdstr.h"
-#include "libcrypto/libcrypto.h"
-#include "pop_server.h"
+#include "libditm/libditm.h"
 
 #define BUFFER_SIZE 4096
 

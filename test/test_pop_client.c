@@ -2,8 +2,7 @@
 #include <time.h>
 
 #include <libdstr/libdstr.h>
-#include <pop_client.h>
-#include <pop_server.h>
+#include <libditm/libditm.h>
 
 #include "fake_pop_server.h"
 #include "test_utils.h"

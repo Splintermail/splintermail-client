@@ -9,7 +9,7 @@
 
 #include <libdstr/libdstr.h>
 #include <libcrypto/libcrypto.h>
-#include <ditm.h>
+#include <libditm/libditm.h>
 
 #include "fake_pop_server.h"
 #include "fake_api_server.h"
@@ -509,6 +509,8 @@ int main(int argc, char** argv){
     derr_t e = E_OK;
     // parse options and set default log level
     PARSE_TEST_OPTIONS(argc, argv, &g_test_files, LOG_LVL_INFO);
+
+    inject_dummy_key_tool();
 
     signal(SIGINT, sig_handler);
     // if not on windows, OpenSSL requires us to ignore SIGPIPE

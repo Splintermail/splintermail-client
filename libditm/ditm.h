@@ -1,16 +1,6 @@
-#ifndef DITM_H
-#define DITM_H
-
 static const unsigned int DITM_VERSION_MAJOR = 0;
 static const unsigned int DITM_VERSION_MINOR = 2;
 static const unsigned int DITM_VERSION_BUILD = 0;
-
-#include "libdstr/libdstr.h"
-#include "libcrypto/libcrypto.h"
-#include "maildir.h"
-#include "pop_client.h"
-#include "pop_server.h"
-#include "key_tool.h"
 
 typedef struct {
     LIST(dstr_t) list;
@@ -78,5 +68,3 @@ derr_t ignore_list_write(ignore_list_t* il, const dstr_t* userdir);
 
 derr_t ignore_list_add(ignore_list_t* il, const dstr_t* uid);
 bool ignore_list_should_ignore(ignore_list_t* il, const dstr_t* uid);
-
-#endif //DITM_H

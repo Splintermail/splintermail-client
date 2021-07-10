@@ -61,7 +61,6 @@ function(default_compile_options tgt allow_asan)
         target_compile_options("${tgt}" PRIVATE "-fstack-protector-strong")
         target_compile_options("${tgt}" PRIVATE "-fPIE" "-fPIC")
         target_compile_options("${tgt}" PRIVATE "-O2" "-D_FORTIFY_SOURCE=2")
-        target_link_libraries("${tgt}" PRIVATE "-pie")
         target_link_libraries("${tgt}" PRIVATE "-Wl,-z,relro")
         target_link_libraries("${tgt}" PRIVATE "-Wl,-z,now")
         target_link_libraries("${tgt}" PRIVATE "-Wl,-z,noexecstack")
@@ -70,6 +69,11 @@ function(default_compile_options tgt allow_asan)
         if(("${CMAKE_BUILD_TYPE}" STREQUAL "debug") AND ("${allow_asan}"))
             target_compile_options("${tgt}" PRIVATE "-fsanitize=address" "-fno-omit-frame-pointer")
             target_link_libraries("${tgt}" PRIVATE "-fsanitize=address" "-fno-omit-frame-pointer")
+        endif()
+        # executables only:
+        get_target_property(tgt_type "${tgt}" TYPE)
+        if("${tgt_type}" STREQUAL "EXECUTABLE")
+            target_link_libraries("${tgt}" PRIVATE "-pie")
         endif()
 
     elseif("${CMAKE_C_COMPILER_ID}" MATCHES "Clang")
@@ -98,7 +102,6 @@ function(default_compile_options tgt allow_asan)
         target_compile_options("${tgt}" PRIVATE "-D_FORTIFY_SOURCE")
         # target_compile_options("${tgt}" PRIVATE "-fstack-protector-strong")
         target_compile_options("${tgt}" PRIVATE "-fPIE" "-fPIC" "-Wno-unused-command-line-argument")
-        target_link_libraries("${tgt}" PRIVATE "-pie")
         if("${CMAKE_C_COMPILER_ID}" STREQUAL "Clang")
             # clang options not apparently supported on AppleClang:
             target_link_libraries("${tgt}" PRIVATE "-Wl,-z,relro")
@@ -116,6 +119,11 @@ function(default_compile_options tgt allow_asan)
                 # stack-based buffer overrun protection (not compatible with fsanitize=address)
                 # target_compile_options("${tgt}" PRIVATE "-fsanitize=safe-stack")
             endif()
+        endif()
+        # executables only:
+        get_target_property(tgt_type "${tgt}" TYPE)
+        if("${}" STREQUAL "EXECUTABLE")
+            target_link_libraries("${tgt}" PRIVATE "-pie")
         endif()
 
     elseif("${CMAKE_C_COMPILER_ID}" STREQUAL "MSVC")
@@ -253,22 +261,29 @@ include_directories("${PROJECT_BINARY_DIR}")
 add_subdirectory(libdstr)
 add_subdirectory(libuvthread)
 add_subdirectory(libcrypto)
+add_subdirectory(libditm)
 add_subdirectory(libimap)
 add_subdirectory(libimaildir)
 add_subdirectory(libengine)
 add_subdirectory(libcitm)
 
-set(OBJ_TGTS
-    api_client
-    ditm
-    key_tool
-    maildir
-    pop_client
-    pop_server
-    console_input
-    ui
-    ui_harness
-)
+add_library(api_client api_client.c)
+define_file_logname_for_target(api_client)
+default_compile_options(api_client TRUE)
+target_link_libraries(api_client PUBLIC crypto)
+
+add_library(console_input console_input.c)
+define_file_logname_for_target(console_input)
+default_compile_options(console_input TRUE)
+
+add_library(ui_harness ui_harness.c)
+define_file_logname_for_target(ui_harness)
+default_compile_options(ui_harness TRUE)
+
+add_library(ui ui.c)
+define_file_logname_for_target(ui)
+default_compile_options(ui TRUE)
+target_link_libraries(ui PUBLIC ui_harness api_client crypto dstr)
 
 set(EXE_TGTS
     splintermail
@@ -277,55 +292,6 @@ set(EXE_TGTS
     inject_local_msg
 )
 
-set(TEST_OBJ_TGTS
-    dummy_key_tool
-    dummy_ui_harness
-    fake_api_server
-    fake_pop_server
-    ditm_thread
-    test_utils
-    fake_engine
-)
-
-set(TEST_EXE_TGTS
-    test_common
-    test_fileops
-    test_system
-    test_pop_server
-    test_ditm
-    test_ditm_errors
-    test_maildir
-    test_logger
-    test_pop_client
-    test_crypto
-    test_opt_parse
-    test_networking
-    test_json
-    test_ui
-    test_key_tool
-    test_atree
-    test_imap_scan
-    test_imap_read
-    test_imap_write
-    test_hashmap
-    test_loop
-    test_queue
-    test_tls_engine
-    test_link
-    test_maildir_name
-    test_imap_expression
-    test_imf_scan
-    test_imf_parse
-    test_smtp_resp
-    test_fpr_watcher
-    test_search
-)
-
-# objects become OBJECT libraries, but are accessed through INTERFACE libraries
-foreach(tgt ${OBJ_TGTS})
-    add_obj_tgt("${tgt}.c" "${tgt}")
-endforeach()
-
 # add executables
 foreach(tgt ${EXE_TGTS})
     add_executable("${tgt}" "${tgt}.c")
@@ -333,20 +299,8 @@ foreach(tgt ${EXE_TGTS})
     define_file_logname_for_target("${tgt}")
 endforeach()
 
-# ui has a full test harness, so it can't use the normal obj_depend_obj
-target_include_directories(ui_o PRIVATE ${OPENSSL_INCLUDE_DIR})
-
-# object inter-dependencies make exectuable dependencies easier to express:
-# objects with dummy interfaces must not be dependencies here
-obj_depend_obj(maildir dstr)
-obj_depend_obj(pop_client crypto)
-obj_depend_obj(pop_server crypto)
-obj_depend_obj(api_client crypto)
-obj_depend_obj(key_tool api_client crypto)
-obj_depend_obj(ditm pop_client pop_server maildir)
-
 # describe executables with dependencies
-target_link_libraries(splintermail PRIVATE ui ui_harness console_input ditm key_tool libcitm)
+target_link_libraries(splintermail PRIVATE ui console_input ditm libcitm)
 target_link_libraries(encrypt_msg PRIVATE crypto)
 target_link_libraries(decrypt_msg PRIVATE crypto)
 target_link_libraries(inject_local_msg PRIVATE imaildir crypto)
@@ -376,135 +330,9 @@ else()
     message(FATAL_ERROR "OS not detected")
 endif()
 
-#### define tests
 if("${BUILD_TESTS}")
     enable_testing()
-
-    # OBJECT FILES (so they aren't being recompiled over and over)
-    foreach(tgt ${TEST_OBJ_TGTS})
-        add_library("${tgt}_o" OBJECT "test/${tgt}.c")
-        default_compile_options("${tgt}_o" TRUE)
-        define_file_logname_for_target("${tgt}_o")
-        add_library("${tgt}" INTERFACE)
-        target_sources("${tgt}" INTERFACE $<TARGET_OBJECTS:${tgt}_o>)
-    endforeach()
-
-    # object intra-dependencies, make exectuable dependencies easier to express:
-    # objects with dummy interfaces must not be dependencies here
-    obj_depend_obj(fake_api_server crypto)
-    obj_depend_obj(fake_pop_server pop_server pop_client)
-    obj_depend_obj(ditm_thread ditm dummy_key_tool)
-    obj_depend_obj(dummy_key_tool crypto)
-    obj_depend_obj(fake_engine engine crypto)
-    # some dummy tools need openssl headers to compile... but not to link
-    target_include_directories(dummy_key_tool_o PRIVATE ${OPENSSL_INCLUDE_DIR})
-    target_include_directories(dummy_ui_harness_o PRIVATE ${OPENSSL_INCLUDE_DIR})
-
-    if("${USE_VALGRIND}")
-        set(valgrind_cmd valgrind --quiet
-                                  --leak-check=full
-                                  --show-leak-kinds=all
-                                  --errors-for-leak-kinds=all
-                                  --error-exitcode=255)
-    endif()
-
-    # add test executables, tests and INCLUDE the root directory
-    foreach(tgt ${TEST_EXE_TGTS})
-        add_executable("${tgt}" "test/${tgt}.c")
-        default_compile_options("${tgt}" TRUE)
-        define_file_logname_for_target("${tgt}")
-        # all exectuables use opt_parse
-        target_link_libraries("${tgt}" PRIVATE dstr)
-        # add test
-        add_test(NAME "do_${tgt}"
-            COMMAND ${valgrind_cmd} "./${tgt}" "${PROJECT_SOURCE_DIR}/test/files")
-    endforeach()
-
-    # add some python-based end-to-end tests
-    add_test(NAME "e2e_citm"
-        COMMAND
-            "${PYTHON_3_CMD}"
-            "${PROJECT_SOURCE_DIR}/test/e2e_citm.py"
-    )
-    add_test(NAME "enc_dec"
-        COMMAND
-            "${PYTHON_3_CMD}"
-            "${PROJECT_SOURCE_DIR}/test/enc_dec.py"
-    )
-    if("${BUILD_SERVER_CODE}")
-        add_test(NAME "enc_dec_server"
-            COMMAND
-                "${PYTHON_3_CMD}"
-                "${PROJECT_SOURCE_DIR}/test/enc_dec.py"
-                "--server"
-        )
-
-        add_test(NAME "test_migmysql"
-            COMMAND
-                "${PYTHON_3_CMD}"
-                "${PROJECT_SOURCE_DIR}/test/test_migmysql.py"
-        )
-    endif()
-
-    # describe test executables with dependencies
-    # target_link_libraries(test_common)
-    # target_link_libraries(test_fileops)
-    target_link_libraries(test_pop_server PRIVATE pop_server)
-    target_link_libraries(test_ditm PRIVATE ditm_thread fake_pop_server)
-    target_link_libraries(test_ditm_errors PRIVATE ditm_thread fake_pop_server test_utils)
-    target_link_libraries(test_maildir PRIVATE maildir)
-    # target_link_libraries(test_logger) PRIVATE
-    target_link_libraries(test_pop_client PRIVATE pop_client fake_pop_server)
-    target_link_libraries(test_crypto PRIVATE crypto)
-    # target_link_libraries(test_opt_parse) PRIVATE
-    target_link_libraries(test_networking PRIVATE crypto)
-    # target_link_libraries(test_json) PRIVATE
-    target_link_libraries(test_key_tool PRIVATE key_tool test_utils fake_api_server)
-    target_link_libraries(test_ui PRIVATE ui dummy_ui_harness)
-    # target_link_libraries(test_atree) PRIVATE
-    target_link_libraries(test_imap_scan PRIVATE imap)
-    target_link_libraries(test_imap_read PRIVATE imap)
-    target_link_libraries(test_imap_write PRIVATE imap)
-    # target_link_libraries(test_hashmap) PRIVATE
-    target_link_libraries(test_loop PRIVATE fake_engine crypto)
-    target_link_libraries(test_queue PRIVATE uvthread)
-    target_link_libraries(test_tls_engine PRIVATE fake_engine)
-    # target_link_libraries(test_link) PRIVATE
-    target_link_libraries(test_maildir_name PRIVATE imaildir)
-    target_link_libraries(test_imap_expression PRIVATE imap)
-    target_link_libraries(test_imf_scan PRIVATE imap)
-    target_link_libraries(test_imf_parse PRIVATE imap)
-    target_link_libraries(test_smtp_resp PRIVATE imap)
-    target_link_libraries(test_fpr_watcher PRIVATE libcitm)
-    target_link_libraries(test_search PRIVATE imaildir)
-
-
-    if(WIN32)
-        # make sure the user provided the location of Pthreads
-        if("${PTHREAD_ROOT_DIR}" STREQUAL "")
-            message(FATAL_ERROR "If building for windows and BUILD_TESTS=yes, "
-                                "then PTHREAD_ROOT_DIR must be specified.")
-        endif()
-
-        set(PT_incl "${PTHREAD_ROOT_DIR}/include")
-        set(PT_lib "${PTHREAD_ROOT_DIR}/lib/$ENV{VSCMD_ARG_TGT_ARCH}/pthreadVC2.lib")
-        add_library(winpthread INTERFACE)
-        target_include_directories(winpthread INTERFACE "${PT_incl}")
-        target_link_libraries(winpthread INTERFACE "${PT_lib}")
-        obj_depend_obj(fake_api_server winpthread)
-        obj_depend_obj(fake_pop_server winpthread)
-        obj_depend_obj(ditm_thread winpthread)
-        target_link_libraries(test_networking PUBLIC winpthread)
-        target_link_libraries(test_pop_server PUBLIC winpthread)
-        target_link_libraries(test_ui PUBLIC winpthread)
-        # not necessary with the winpthread INTERFACE library:
-        # obj_depend_lib(fake_api_server "${PT_incl}" "${PT_lib}")
-        # obj_depend_lib(fake_pop_server "${PT_incl}" "${PT_lib}")
-    else()
-        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -pthread")
-        set(CMAKE_LINK_FLAGS "${CMAKE_LINK_FLAGS} -pthread")
-    endif()
-
+    add_subdirectory(test)
 endif()
 
 

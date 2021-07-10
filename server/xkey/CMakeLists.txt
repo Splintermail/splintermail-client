@@ -6,7 +6,7 @@ target_include_directories(xkey PRIVATE ${DOVECOT_INCLUDE_DIR})
 define_file_logname_for_target(xkey)
 set_target_properties("xkey" PROPERTIES OUTPUT_NAME "99_xkey_plugin")
 default_compile_options(xkey FALSE)
-target_link_libraries(xkey PRIVATE libsmsql_noasan badbadbad_alert_noasan dstr_noasan)
+target_link_libraries(xkey PUBLIC libsmsql_noasan badbadbad_alert_noasan dstr_noasan)
 
 if("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU")
     # flags for gcc

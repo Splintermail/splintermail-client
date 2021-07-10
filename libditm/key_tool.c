@@ -1,6 +1,7 @@
 #include <errno.h>
 
-#include "key_tool.h"
+#include "libditm/libditm.h"
+#include "api_client.h"
 
 /* throws: E_NOMEM
            E_INTERNAL
@@ -63,7 +64,7 @@ static derr_t key_tool_register_key(key_tool_t* kt,
     return e;
 }
 
-derr_t key_tool_peer_list_load(key_tool_t* kt, const char* filename){
+static derr_t key_tool_peer_list_load(key_tool_t* kt, const char* filename){
     derr_t e = E_OK;
     derr_t e2;
     kt->json.len = 0;
@@ -105,7 +106,7 @@ derr_t key_tool_peer_list_load(key_tool_t* kt, const char* filename){
     return e;
 }
 
-derr_t key_tool_peer_list_write(key_tool_t* kt, const char* filename){
+static derr_t key_tool_peer_list_write(key_tool_t* kt, const char* filename){
     derr_t e = E_OK;
     FILE* f = compat_fopen(filename, "w");
     if(!f){
@@ -142,7 +143,7 @@ cleanup:
     return e;
 }
 
-derr_t key_tool_new(key_tool_t* kt, const dstr_t* dir, int def_key_bits){
+static derr_t key_tool_new(key_tool_t* kt, const dstr_t* dir, int def_key_bits){
     derr_t e = E_OK;
     derr_t e2;
     // store the dir
@@ -244,7 +245,7 @@ fail_1:
     return e;
 }
 
-void key_tool_free(key_tool_t* kt){
+static void key_tool_free(key_tool_t* kt){
     decrypter_free(&kt->dc);
 
     // free all dstr_t's in new_peer_list
@@ -328,7 +329,7 @@ static derr_t call_list_devices(key_tool_t* kt, const char* host,
     return e;
 }
 
-derr_t key_tool_update(key_tool_t* kt, const char* host, unsigned int port,
+static derr_t key_tool_update(key_tool_t* kt, const char* host, unsigned int port,
                        const dstr_t* user, const dstr_t* pass){
     derr_t e = E_OK;
     derr_t e2;
@@ -497,7 +498,7 @@ derr_t key_tool_update(key_tool_t* kt, const char* host, unsigned int port,
     return e;
 }
 
-derr_t key_tool_check_recips(key_tool_t* kt, LIST(dstr_t)* recips){
+static derr_t key_tool_check_recips(key_tool_t* kt, LIST(dstr_t)* recips){
     derr_t e = E_OK;
 
     // do nothing if we had no peer list on file
@@ -551,7 +552,7 @@ derr_t key_tool_check_recips(key_tool_t* kt, LIST(dstr_t)* recips){
     return e;
 }
 
-derr_t key_tool_decrypt(key_tool_t* kt, int infd, int outfd, size_t* outlen){
+static derr_t key_tool_decrypt(key_tool_t* kt, int infd, int outfd, size_t* outlen){
     derr_t e = E_OK;
     derr_t e2;
     DSTR_VAR(recips_block, FL_DEVICES * FL_FINGERPRINT);
@@ -609,3 +610,14 @@ derr_t key_tool_decrypt(key_tool_t* kt, int infd, int outfd, size_t* outlen){
     PROP(&e, key_tool_check_recips(kt, &recips) );
     return e;
 }
+
+// non-test harness
+key_tool_harness_t key_tool = {
+    key_tool_new,
+    key_tool_free,
+    key_tool_update,
+    key_tool_decrypt,
+    key_tool_peer_list_load,
+    key_tool_peer_list_write,
+    key_tool_check_recips,
+};

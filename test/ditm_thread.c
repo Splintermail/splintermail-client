@@ -8,7 +8,7 @@
 
 #include <libdstr/libdstr.h>
 #include <libcrypto/libcrypto.h>
-#include <ditm.h>
+#include <libditm/libditm.h>
 
 #include "ditm_thread.h"
 

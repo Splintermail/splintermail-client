@@ -5,7 +5,7 @@
 #include <pthread.h>
 
 #include <libdstr/libdstr.h>
-#include <ditm.h>
+#include <libditm/libditm.h>
 
 // path to where the test files can be found
 extern const char* g_test_files;

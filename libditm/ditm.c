@@ -6,9 +6,7 @@
 #include <errno.h>
 #include <stdint.h>
 
-#include "ditm.h"
-#include "libdstr/libdstr.h"
-#include "libcrypto/libcrypto.h"
+#include "libditm/libditm.h"
 
 
 #define UIDS_LENGTH 128
@@ -64,7 +62,7 @@ static derr_t loginhook_error_sensitive_part(ditm_t *ditm, bool *status_ok,
 
     // initialize the key_tool
     key_tool_t kt;
-    PROP(&e, key_tool_new(&kt, userdir, 4096) );
+    PROP(&e, key_tool.new(&kt, userdir, 4096) );
 
     // load the ignore list
     ignore_list_t il;
@@ -116,13 +114,13 @@ static derr_t loginhook_error_sensitive_part(ditm_t *ditm, bool *status_ok,
     PROP_GO(&e, ignore_list_write(&il, userdir), cu_il);
 
     // update the key_tool
-    PROP_GO(&e, key_tool_update(&kt, ditm->api_host, ditm->api_port,
+    PROP_GO(&e, key_tool.update(&kt, ditm->api_host, ditm->api_port,
                             username, password), cu_il);
 
 cu_il:
     ignore_list_free(&il);
 cu_kt:
-    key_tool_free(&kt);
+    key_tool.free(&kt);
 
     return e;
 }
@@ -205,7 +203,7 @@ static derr_t loginhook(void* arg, const dstr_t* username,
     }
 
     CATCH(e2, E_PARAM){
-        /* E_PARAM comes from key_tool_update, and it means username, password,
+        /* E_PARAM comes from key_tool.update, and it means username, password,
            or host is too long, but we know username and password are valid...
            since we just checked with the server */
         /* this is really not a likely error to happen since the api_host is
@@ -940,7 +938,7 @@ static derr_t ditm_download_new_message(ditm_t* ditm, key_tool_t* kt,
     bool encrypted = (dstr_cmp(&first_bytes, &enc_header) == 0);
     // handle encrypted mail
     if(encrypted){
-        e2 = key_tool_decrypt(kt, t1fd, t2fd, &t2len);
+        e2 = key_tool.decrypt(kt, t1fd, t2fd, &t2len);
         CATCH(e2, E_NOT4ME){
             // message encrypted but not for us, we'll have to ignore it
             DROP_VAR(&e2);

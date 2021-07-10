@@ -1,5 +1,5 @@
-#ifndef LIBDSTR_H
-#define LIBDSTR_H
+#ifndef LIBDITM_H
+#define LIBDITM_H
 
 #include <stdio.h>
 #include <stdint.h>
@@ -25,4 +25,5 @@
 #include "jsw_atree.h"
 
 
-#endif // LIBDSTR_H
+#endif // LIBDITM_H
+

@@ -3,7 +3,7 @@
 
 #include <libdstr/libdstr.h>
 #include <libcrypto/libcrypto.h>
-#include <pop_server.h>
+#include <libditm/libditm.h>
 
 #include "test_utils.h"
 

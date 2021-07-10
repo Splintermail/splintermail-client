@@ -1,10 +1,3 @@
-#ifndef POP_CLIENT_H
-#define POP_CLIENT_H
-
-#include "libdstr/libdstr.h"
-#include "libcrypto/libcrypto.h"
-#include "fixed_lengths.h"
-
 typedef struct {
     connection_t conn;
     char response_buffer[POP_CLIENT_CHUNK_SIZE];
@@ -85,5 +78,3 @@ derr_t pop_client_get_body(pop_client_t* pc, dstr_t* body,
 
 derr_t pop3_decode(dstr_t* in, dstr_t* out, bool* found_end);
 derr_t pop3_encode(dstr_t* in, dstr_t* out, bool force_end);
-
-#endif //POP_CLIENT_H

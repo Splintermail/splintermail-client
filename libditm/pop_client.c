@@ -1,9 +1,7 @@
 #include <string.h>
 #include <stdint.h>
 
-#include "pop_client.h"
-#include "libdstr/libdstr.h"
-#include "libcrypto/libcrypto.h"
+#include "libditm/libditm.h"
 
 #define CHUNK_SIZE 4096
 

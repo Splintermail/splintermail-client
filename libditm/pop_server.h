@@ -1,9 +1,3 @@
-#ifndef POP_SERVER_H
-#define POP_SERVER_H
-
-#include "libdstr/libdstr.h"
-#include "libcrypto/libcrypto.h"
-
 typedef struct {
     // int arguments might be -1, meaning "no argument given"
     // unsigned int arguments will never be -1
@@ -34,5 +28,3 @@ typedef struct {
 derr_t pop_server_loop(pop_server_t* ps, void* arg);
 derr_t pop_server_send_dstr(pop_server_t* ps, const dstr_t* buffer);
 derr_t pop_server_parse_tokens(pop_server_t* ps, const LIST(dstr_t)* tokens);
-
-#endif //POP_SERVER_H

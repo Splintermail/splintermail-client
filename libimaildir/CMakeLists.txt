@@ -20,6 +20,6 @@ add_library(
     search.c
 )
 target_include_directories(imaildir PRIVATE "${LIBLMDB_INCLUDE}")
-target_link_libraries(imaildir PUBLIC dstr uvthread imap "${LIBLMDB_LIB}")
+target_link_libraries(imaildir PRIVATE dstr uvthread imap "${LIBLMDB_LIB}")
 default_compile_options(imaildir TRUE)
 define_file_logname_for_target(imaildir)

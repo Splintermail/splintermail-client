@@ -1,5 +1,6 @@
-#include <key_tool.h>
 #include <libdstr/libdstr.h>
+#include <libcrypto/libcrypto.h>
+#include <libditm/libditm.h>
 
 #include "dummy_key_tool.h"
 
@@ -7,7 +8,7 @@ extern const char* g_test_files;
 derr_type_t key_tool_update_should_return = E_NONE;
 derr_type_t key_tool_new_should_return = E_NONE;
 
-derr_t key_tool_new(key_tool_t* kt, const dstr_t* dir, int def_key_bits){
+static derr_t key_tool_new(key_tool_t* kt, const dstr_t* dir, int def_key_bits){
     derr_t e = E_OK;
 
     if(key_tool_new_should_return != E_NONE){
@@ -35,12 +36,12 @@ fail_1:
     return e;
 }
 
-void key_tool_free(key_tool_t* kt){
+static void key_tool_free(key_tool_t* kt){
     decrypter_free(&kt->dc);
     keypair_free(&kt->key);
 }
 
-derr_t key_tool_update(key_tool_t* kt, const char* host, unsigned int port,
+static derr_t key_tool_update(key_tool_t* kt, const char* host, unsigned int port,
                        const dstr_t* user, const dstr_t* pass){
     // suppress unused parameter warning
     (void) kt;
@@ -51,7 +52,7 @@ derr_t key_tool_update(key_tool_t* kt, const char* host, unsigned int port,
     return (derr_t){.type=key_tool_update_should_return};
 }
 
-derr_t key_tool_decrypt(key_tool_t* kt, int infd, int outfd, size_t* outlen){
+static derr_t key_tool_decrypt(key_tool_t* kt, int infd, int outfd, size_t* outlen){
     derr_t e = E_OK;
 
     DSTR_VAR(recips_block, FL_DEVICES * FL_FINGERPRINT);
@@ -82,4 +83,14 @@ derr_t key_tool_decrypt(key_tool_t* kt, int infd, int outfd, size_t* outlen){
     *outlen += outbuf.len;
     outbuf.len = 0;
     return e;
+}
+
+// inject test harness
+void inject_dummy_key_tool(void){
+    key_tool = (key_tool_harness_t){
+        .new = key_tool_new,
+        .free = key_tool_free,
+        .update = key_tool_update,
+        .decrypt = key_tool_decrypt,
+    };
 }

@@ -6,8 +6,7 @@
 
 #include <libdstr/libdstr.h>
 #include <libcrypto/libcrypto.h>
-#include <pop_server.h>
-#include <pop_client.h>
+#include <libditm/libditm.h>
 
 #include "fake_pop_server.h"
 

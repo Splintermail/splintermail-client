@@ -7,10 +7,10 @@
 
 #include "libdstr/libdstr.h"
 #include "libcitm/citm.h"
+#include "libditm/libditm.h"
 
 #include "ui.h"
 #include "ui_harness.h"
-#include "ditm.h"
 #include "api_client.h"
 #include "console_input.h"
 #include "print_help.h"

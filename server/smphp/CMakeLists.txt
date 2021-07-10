@@ -36,7 +36,7 @@ target_include_directories(
     "${PHP_INCLUDE_DIR}/ext"
     "${PHP_INCLUDE_DIR}/ext/date/lib"
 )
-target_link_libraries(smphp PRIVATE libsmsql_noasan badbadbad_alert_noasan)
+target_link_libraries(smphp PUBLIC libsmsql_noasan badbadbad_alert_noasan)
 define_file_logname_for_target(smphp)
 
 # just smphp.so, not libsmsphp.o

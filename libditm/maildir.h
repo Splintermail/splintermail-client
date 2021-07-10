@@ -1,8 +1,3 @@
-#ifndef MAILDIR_H
-#define MAILDIR_H
-
-#include "libdstr/libdstr.h"
-
 typedef struct {
     char path_buffer[4096];
     dstr_t path;
@@ -55,5 +50,3 @@ derr_t maildir_delete_message(maildir_t* mdir, size_t index);
 derr_t maildir_mod_hostname(const dstr_t* host, dstr_t* mod);
 /* throws: E_FIXEDSIZE (from dstr_recode)
            E_NOMEM     (from dstr_recode) */
-
-#endif // MAILDIR_H

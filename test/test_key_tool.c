@@ -7,8 +7,7 @@
 
 #include <libdstr/libdstr.h>
 #include <libcrypto/libcrypto.h>
-#include <key_tool.h>
-#include <fixed_lengths.h>
+#include <libditm/libditm.h>
 
 #include "fake_api_server.h"
 #include "test_utils.h"
@@ -382,14 +381,14 @@ static derr_t decrypt_by_counter(key_tool_t* kt, unsigned int ctr){
         TRACE(&e, "%x: %x\n", FS("_tktdir/trash"), FE(&errno));
         ORIG_GO(&e, E_OS, "unable to open trash file", cu1);
     }
-    // now make sure we get the right response from key_tool_decrypt
+    // now make sure we get the right response from key_tool.decrypt
     size_t len;
-    derr_t err = key_tool_decrypt(kt, from, to, &len);
+    derr_t err = key_tool.decrypt(kt, from, to, &len);
     derr_type_t exp_e = decrypt_result_from_counter(ctr);
     if(err.type != exp_e){
         TRACE(&e, "expected %x but got %x\n",
                   FD(error_to_dstr(exp_e)), FD(error_to_dstr(err.type)));
-        ORIG_GO(&e, E_VALUE, "key_tool_decrypt returned wrong status", fail);
+        ORIG_GO(&e, E_VALUE, "key_tool.decrypt returned wrong status", fail);
     fail:
         MERGE_CMD(&e, err, "decryption error");
         // don't DROP a merged error
@@ -425,7 +424,7 @@ static derr_t do_test(unsigned int ctr){
     key_tool_t kt;
     DSTR_STATIC(tempdir, "_tktdir");
     // absurdly small RSA key size makes for reasonably fast testing
-    PROP(&e, key_tool_new(&kt, &tempdir, 512) );
+    PROP(&e, key_tool.new(&kt, &tempdir, 512) );
 
     // do the specified decryption
     PROP_GO(&e, decrypt_by_counter(&kt, ctr), cu);
@@ -440,7 +439,7 @@ static derr_t do_test(unsigned int ctr){
     // update the key tool
     DSTR_STATIC(user, "user@splintermail.com");
     DSTR_STATIC(pass, "top_secr3t");
-    PROP_GO(&e, key_tool_update(&kt, "127.0.0.1", fas_api_port, &user, &pass), cu);
+    PROP_GO(&e, key_tool.update(&kt, "127.0.0.1", fas_api_port, &user, &pass), cu);
 
     // make sure we got all the calls we thought we would
     PROP_GO(&e, fas_assert_done(), cu);
@@ -484,7 +483,7 @@ static derr_t do_test(unsigned int ctr){
     }
 
 cu:
-    key_tool_free(&kt);
+    key_tool.free(&kt);
     return e;
 }
 
@@ -560,10 +559,10 @@ static derr_t test_peer_list_read_write(void){
     PROP(&e, dstr_write_file(old_name, &old_peer_list) );
 
     // read the list
-    PROP(&e, key_tool_peer_list_load(&kt, old_name) );
+    PROP(&e, key_tool.peer_list_load(&kt, old_name) );
 
     // write the list
-    PROP_GO(&e, key_tool_peer_list_write(&kt, new_name), cleanup);
+    PROP_GO(&e, key_tool.peer_list_write(&kt, new_name), cleanup);
 
     // compare the files
     int result;

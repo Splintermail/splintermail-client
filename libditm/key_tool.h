@@ -1,11 +1,3 @@
-#ifndef KEY_TOOL_H
-#define KEY_TOOL_H
-
-#include "libdstr/libdstr.h"
-#include "libcrypto/libcrypto.h"
-#include "api_client.h"
-#include "fixed_lengths.h"
-
 /* The transition from user-managed keys to auto-managed keys was absolutely
    necessary from a user interface point of view.  However the resulting
    auto-managed key system is inherently complicated.  That's why it has been
@@ -174,46 +166,49 @@ typedef struct {
     decrypter_t dc;
 } key_tool_t;
 
-derr_t key_tool_new(key_tool_t* kt, const dstr_t* dir, int def_key_bits);
-/* throws: E_FS
-           E_INTERNAL (implies SSL errors)
-           E_NOMEM */
+// overridable for a test harness
+typedef struct {
+    derr_t (*new)(key_tool_t* kt, const dstr_t* dir, int def_key_bits);
+    /* throws: E_FS
+               E_INTERNAL (implies SSL errors)
+               E_NOMEM */
 
-void key_tool_free(key_tool_t* kt);
+    void (*free)(key_tool_t* kt);
 
-derr_t key_tool_update(key_tool_t* kt, const char* host, unsigned int port,
-                       const dstr_t* user, const dstr_t* pass);
-/* throws: E_NOMEM (on fopen)
-           E_FS
-           E_OS (reading/writing an opened file)
-           E_INTERNAL
-           E_RESPONSE (bad response from the API server)
-           E_PARAM (host, username, or password too long)
-           E_SSL (bad server certificate)
-           E_CONN (failed or broken connection with server) */
+    derr_t (*update)(key_tool_t* kt, const char* host, unsigned int port,
+                           const dstr_t* user, const dstr_t* pass);
+    /* throws: E_NOMEM (on fopen)
+               E_FS
+               E_OS (reading/writing an opened file)
+               E_INTERNAL
+               E_RESPONSE (bad response from the API server)
+               E_PARAM (host, username, or password too long)
+               E_SSL (bad server certificate)
+               E_CONN (failed or broken connection with server) */
 
-derr_t key_tool_decrypt(key_tool_t* kt, int infd, int outfd, size_t* outlen);
-/* throws: E_NOMEM
-           E_OS (read/write from already-opened file)
-           E_INTERNAL
-           E_PARAM (from decrypter, bad message)
-           E_NOT4ME (from decrypter)
-           E_FS (unable to write token) */
+    derr_t (*decrypt)(key_tool_t* kt, int infd, int outfd, size_t* outlen);
+    /* throws: E_NOMEM
+               E_OS (read/write from already-opened file)
+               E_INTERNAL
+               E_PARAM (from decrypter, bad message)
+               E_NOT4ME (from decrypter)
+               E_FS (unable to write token) */
 
-// functions which are exposed for testing and should not otherwise be called
-derr_t key_tool_peer_list_load(key_tool_t* kt, const char* filename);
-/* throws: E_NOMEM
-           E_FS (failed to open/read file)
-           E_PARAM (bad json found in file)
-           */
+    // functions which are exposed for testing and should not otherwise be called
+    derr_t (*peer_list_load)(key_tool_t* kt, const char* filename);
+    /* throws: E_NOMEM
+               E_FS (failed to open/read file)
+               E_PARAM (bad json found in file)
+               */
 
-derr_t key_tool_peer_list_write(key_tool_t* kt, const char* filename);
-/* throws: E_FS    (from fopen)
-           E_NOMEM (from fopen)
-           E_OS (fwrite)
-           E_INTERNAL */
+    derr_t (*peer_list_write)(key_tool_t* kt, const char* filename);
+    /* throws: E_FS    (from fopen)
+               E_NOMEM (from fopen)
+               E_OS (fwrite)
+               E_INTERNAL */
 
-derr_t key_tool_check_recips(key_tool_t* kt, LIST(dstr_t)* recips);
-/* throws: E_NOMEM */
+    derr_t (*check_recips)(key_tool_t* kt, LIST(dstr_t)* recips);
+    /* throws: E_NOMEM */
+} key_tool_harness_t;
 
-#endif // KEY_TOOL_H
+extern key_tool_harness_t key_tool;

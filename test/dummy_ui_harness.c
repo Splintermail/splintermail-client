@@ -5,7 +5,7 @@
 
 #include <libdstr/libdstr.h>
 #include <libcrypto/libcrypto.h>
-#include <ditm.h>
+#include <libditm/libditm.h>
 #include <console_input.h>
 #include <ui_harness.h>
 
