@@ -22,8 +22,8 @@ macro(add_crypto asan)
         # include frameworks for networking.c
         find_library(SECURITY NAMES Security)
         find_library(COREFOUNDATION NAMES corefoundation)
-        target_link_libraries("crypto${asan}" "${SECURITY}")
-        target_link_libraries("crypto${asan}" "${COREFOUNDATION}")
+        target_link_libraries("crypto${asan}" PUBLIC "${SECURITY}")
+        target_link_libraries("crypto${asan}" PUBLIC "${COREFOUNDATION}")
     elseif(UNIX) # Linux steps
         # Fedora Linux requires special PREFERRED_CIPHERS string
         # Autodetect, unless overridden via command line

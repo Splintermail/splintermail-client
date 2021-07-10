@@ -53,17 +53,17 @@ target_link_libraries(smsql PUBLIC libsmsql)
 add_executable(olt olt.c)
 default_compile_options(olt TRUE)
 define_file_logname_for_target(olt)
-target_link_libraries(olt dstr)
+target_link_libraries(olt PUBLIC dstr)
 
 add_executable(badbadbad badbadbad.c)
 default_compile_options(badbadbad TRUE)
 define_file_logname_for_target(badbadbad)
-target_link_libraries(badbadbad badbadbad_alert dstr)
+target_link_libraries(badbadbad PUBLIC badbadbad_alert dstr)
 
 add_executable(migmysql migmysql.c)
 default_compile_options(migmysql TRUE)
 define_file_logname_for_target(migmysql)
-target_link_libraries(migmysql dstr mysql_util)
+target_link_libraries(migmysql PUBLIC dstr mysql_util)
 
 add_executable(gc_sessions gc_sessions.c)
 default_compile_options(gc_sessions TRUE)
@@ -102,7 +102,7 @@ define_file_logname_for_source("${from_parse_in}" "${from_parse_out}")
 
 add_executable(from "${from_scan_out}" "${from_parse_out}")
 default_compile_options(from TRUE)
-target_link_libraries(from dstr)
+target_link_libraries(from PUBLIC dstr)
 
 # Work around missing prototype and poor enum handling with bison 3.6:
 if("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU")

@@ -112,5 +112,5 @@ add_library(
     "${imf_parse_out}"
     "${smtp_resp_parse_out}"
 )
-target_link_libraries(imap dstr)
+target_link_libraries(imap PUBLIC dstr)
 default_compile_options(imap TRUE)
