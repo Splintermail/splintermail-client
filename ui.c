@@ -1032,7 +1032,7 @@ int do_main(int argc, char* argv[], bool windows_service){
                     FFMT(stderr, NULL,
                         "did not find certificate file in %x, "
                         "please re-install splintermail or provide a "
-                        "certificate explictly via --cert",
+                        "certificate explictly via --cert\n",
                         FD(&sm_dir)
                     )
                 );
@@ -1061,7 +1061,7 @@ int do_main(int argc, char* argv[], bool windows_service){
                 DROP_CMD(
                     FFMT(stderr, NULL,
                         "did not find key file in %x, please re-install "
-                        "splintermail or provide a key explictly via --key",
+                        "splintermail or provide a key explictly via --key\n",
                         FD(&sm_dir)
                     )
                 );
