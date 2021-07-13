@@ -10,7 +10,7 @@ add_library(
     fpr_watcher.c
     citm.c
 )
-target_link_libraries(libcitm PRIVATE engine dstr imaildir)
+target_link_libraries(libcitm PUBLIC engine dstr imaildir)
 set_target_properties("libcitm" PROPERTIES OUTPUT_NAME "citm")
 default_compile_options(libcitm TRUE)
 define_file_logname_for_target(libcitm)
@@ -19,6 +19,6 @@ add_executable(
     citm
     main.c
 )
-target_link_libraries(citm PRIVATE libcitm)
+target_link_libraries(citm PUBLIC libcitm)
 default_compile_options(citm TRUE)
 define_file_logname_for_target(citm)
