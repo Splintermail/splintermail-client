@@ -594,18 +594,17 @@ cu_winstore:
 static void sec_perror(derr_t *e, OSStatus err){
     CFStringRef str = SecCopyErrorMessageString(err, NULL);
     if(!str){
-        TRACE(&e, "failed to get error message\n");
+        TRACE(e, "failed to get error message\n");
     }
     const char* buf;
     buf = CFStringGetCStringPtr(str, kCFStringEncodingUTF8);
-    TRACE(&e, "%x\n", FS(buf));
+    TRACE(e, "%x\n", FS(buf));
     CFRelease(str);
 }
 
 
 derr_t ssl_context_load_from_os(ssl_context_t* ctx){
     derr_t e = E_OK;
-    derr_t e2;
     // start building a certificate store
     X509_STORE* store = X509_STORE_new();
     if(!store){
@@ -740,7 +739,7 @@ derr_t ssl_context_load_from_os(ssl_context_t* ctx){
 
     cu_x:
         X509_free(x);
-        if(error) goto cu_results;
+        if(is_error(e)) goto cu_results;
     }
 
     // now add store to the context
@@ -765,7 +764,7 @@ cu_kc_sysroot:
 
 cu_store:
     // don't cleanup cu_store, it will be cleaned up automatically later
-    if(error) X509_STORE_free(store);
+    if(is_error(e)) X509_STORE_free(store);
 
     return e;
 }

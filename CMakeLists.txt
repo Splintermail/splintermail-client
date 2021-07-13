@@ -33,8 +33,8 @@ if("${BISON}" STREQUAL "")
     set(BISON "bison")
 endif()
 
-# inlcude OpenSSL
-if(APPLE OR WIN32)
+# include OpenSSL
+if("${BUILD_STATIC}")
     set(OPENSSL_USE_STATIC_LIBS TRUE)
 endif()
 find_package(OpenSSL REQUIRED)
@@ -118,6 +118,12 @@ function(default_compile_options tgt allow_asan)
                 target_compile_options("${tgt}" PRIVATE "-fsanitize=integer")
                 # stack-based buffer overrun protection (not compatible with fsanitize=address)
                 # target_compile_options("${tgt}" PRIVATE "-fsanitize=safe-stack")
+            endif()
+        else()
+            # Apple-only.  Not sure where it thinks it's cross-compiling from.
+            # This should only fire for local source builds.
+            if(NOT "${BUILD_STATIC}")
+                target_compile_options("${tgt}" PRIVATE "-Wno-poison-system-directories")
             endif()
         endif()
         # executables only:
