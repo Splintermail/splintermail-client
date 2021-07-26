@@ -596,7 +596,7 @@ def server_context(cert=None, key=None):
 @contextlib.contextmanager
 def run_connection(closable, host=None, port=None):
     host = host or "127.0.0.1"
-    port = port or 1993
+    port = port or 2993
     with socket.socket() as sock:
         sock.connect((host, port))
         tls = client_context().wrap_socket(sock, server_hostname=host)
@@ -2001,7 +2001,7 @@ if __name__ == "__main__":
                     "--local-host",
                     "127.0.0.1",
                     "--local-port",
-                    "1993",
+                    "2993",
                     "--remote-host",
                     "127.0.0.1",
                     "--remote-port",
