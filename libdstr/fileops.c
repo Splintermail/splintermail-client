@@ -1070,6 +1070,46 @@ derr_t dffsync(FILE *f){
     return e;
 }
 
+derr_t dfseek(FILE *f, long offset, int whence){
+    derr_t e = E_OK;
+
+    int ret = fseek(f, offset, whence);
+    if(ret != 0){
+        TRACE(&e, "fseek: %x\n", FE(&errno));
+        ORIG(&e, E_OS, "fseek failed");
+    }
+
+    return e;
+}
+
+derr_t dfgetc(FILE *f, int *c){
+    derr_t e = E_OK;
+
+    *c = fgetc(f);
+    if(*c == EOF){
+        int error = ferror(f);
+        if(error){
+            TRACE(&e, "fgetc: %x\n", FE(&error));
+            ORIG(&e, E_OS, "fgetc failed");
+        }
+    }
+
+    return e;
+}
+
+derr_t dfputc(FILE *f, int c){
+    derr_t e = E_OK;
+
+    int ret = fputc(c, f);
+    if(ret == EOF){
+        int error = ferror(f);
+        TRACE(&e, "fputc: %x\n", FE(&error));
+        ORIG(&e, E_OS, "fputc failed");
+    }
+
+    return e;
+}
+
 derr_t dclose(int fd){
     derr_t e = E_OK;
 

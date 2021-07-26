@@ -119,6 +119,12 @@ derr_t dfsync(int fd);
 // combines fflush and fsync
 derr_t dffsync(FILE *f);
 
+derr_t dfseek(FILE *f, long offset, int whence);
+
+// checks for errors, passes EOF untouched
+derr_t dfgetc(FILE *f, int *c);
+derr_t dfputc(FILE *f, int c);
+
 // for when you were going to check the error on close
 derr_t dclose(int fd);
 derr_t dfclose(FILE *f);

@@ -447,3 +447,33 @@ hash_elem_t *hashmap_pop_next(hashmap_trav_t *trav){
     // found nothing
     return NULL;
 }
+
+derr_t map_str_str_new(
+    const dstr_t key, const dstr_t val, map_str_str_t **out
+){
+    derr_t e = E_OK;
+    *out = NULL;
+
+    map_str_str_t *mss = DMALLOC_STRUCT_PTR(&e, mss);
+    CHECK(&e);
+
+    PROP_GO(&e, dstr_copy(&key, &mss->key), fail);
+    PROP_GO(&e, dstr_copy(&val, &mss->val), fail);
+
+    *out = mss;
+
+    return e;
+
+fail:
+    map_str_str_free(&mss);
+    return e;
+}
+
+void map_str_str_free(map_str_str_t **old){
+    map_str_str_t *mss = *old;
+    if(!mss) return;
+    dstr_free(&mss->key);
+    dstr_free(&mss->val);
+    free(mss);
+    *old = NULL;
+}

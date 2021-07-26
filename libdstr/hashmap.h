@@ -59,3 +59,17 @@ hash_elem_t *hashmap_next(hashmap_trav_t *trav);
 // "pop"ing iterators, also remove objects from the hashmap
 hash_elem_t *hashmap_pop_iter(hashmap_trav_t *trav, hashmap_t *h);
 hash_elem_t *hashmap_pop_next(hashmap_trav_t *trav);
+
+// hashmap-friendly wrapper types
+typedef struct {
+    dstr_t key;
+    dstr_t val;
+    hash_elem_t elem;
+} map_str_str_t;
+DEF_CONTAINER_OF(map_str_str_t, elem, hash_elem_t)
+DEF_STEAL_PTR(map_str_str_t)
+
+derr_t map_str_str_new(
+    const dstr_t key, const dstr_t val, map_str_str_t **out
+);
+void map_str_str_free(map_str_str_t **old);
