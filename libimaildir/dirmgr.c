@@ -331,7 +331,7 @@ static derr_t handle_each_mbx(const string_builder_t* base,
     if(dstr_cmp(file, &DSTR_LIT("cur")) == 0) return e;
     if(dstr_cmp(file, &DSTR_LIT("tmp")) == 0) return e;
     if(dstr_cmp(file, &DSTR_LIT("new")) == 0) return e;
-    if(dstr_cmp(file, &DSTR_LIT(".cache.lmdb")) == 0) return e;
+    if(dstr_cmp(file, &DSTR_LIT(".cache")) == 0) return e;
 
     for_each_mbx_arg_t *prev_arg = userdata;
     prev_arg->found_child = true;

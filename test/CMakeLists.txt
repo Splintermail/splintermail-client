@@ -66,6 +66,7 @@ set(TEST_EXE_TGTS
     test_smtp_resp
     test_fpr_watcher
     test_search
+    test_log_file
 )
 
 if("${USE_VALGRIND}")
@@ -117,6 +118,7 @@ target_link_libraries(test_imf_parse PRIVATE imap)
 target_link_libraries(test_smtp_resp PRIVATE imap)
 target_link_libraries(test_fpr_watcher PRIVATE libcitm)
 target_link_libraries(test_search PRIVATE imaildir)
+target_link_libraries(test_log_file PRIVATE imaildir test_utils)
 
 # add some python-based end-to-end tests
 add_test(NAME "e2e_citm"

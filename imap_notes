@@ -1375,7 +1375,7 @@ UID Mapping:
         messages and expunges have an uid_up, but not all messages have a
         uid_dn.
 
-      - lmdb metadata log: key by uid_up, for the same reason as the imaildir_t
+      - metadata log: key by uid_up, for the same reason as the imaildir_t
 
     A minor detail is that we also need to track a uidvld_dn as well, since in
     the case of a corrupted local store, we won't be able to reliably
@@ -1547,9 +1547,8 @@ Questions about MSG_NOT4ME state:
       - downloaded file gets deleted
       - client tries to re-download the message?
     I think as soon as the downloaded file gets deleted (without also deleting
-    the lmdb log), that would trigger an expunge of the message, so that's
-    a pretty easy case to handle.
-    an expunge.
+    the log), that would trigger an expunge of the message, so that's a pretty
+    easy case to handle.
 
     The argument could be made that deleting the key should result in forcing
     the user to re-download their mailbox, since we could no longer ensure

@@ -275,12 +275,12 @@ struct maildir_log_i {
     void (*close)(maildir_log_i*);
 };
 
-// this must be implemented by some backend, currently only lmdb
+// this must be implemented by the log backend
 derr_t imaildir_log_open(const string_builder_t *dirpath,
         jsw_atree_t *msgs_out, jsw_atree_t *expunged_out,
         jsw_atree_t *mods_out, maildir_log_i **log_out);
 
-// this must be implemented by some backend, currently only lmdb
+// this must be implemented by the log backend
 derr_t imaildir_log_rm(const string_builder_t *dirpath);
 
 
