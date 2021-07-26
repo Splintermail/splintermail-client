@@ -172,6 +172,8 @@ static void print_help(FILE *f){
 int main(int argc, char **argv){
     derr_t e = E_OK;
 
+    DROP_CMD( logger_add_fileptr(LOG_LVL_INFO, stderr) );
+
     // options
     opt_spec_t o_help     = {'h',  "help",        false, OPT_RETURN_INIT};
     opt_spec_t o_root     = {'r',  "root",        true,  OPT_RETURN_INIT};
