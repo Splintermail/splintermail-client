@@ -391,7 +391,7 @@ static derr_t set_uidvlds(
 
     // serialize the value
     DSTR_VAR(value, 64);
-    PROP_GO(&e, FMT(&value, "%x:", FU(uidvld_up), FU(uidvld_dn)), cu_txn);
+    PROP_GO(&e, FMT(&value, "%x:%x", FU(uidvld_up), FU(uidvld_dn)), cu_txn);
 
     MDB_val db_value = {
         .mv_size = value.len,
@@ -811,7 +811,7 @@ static derr_t read_all_keys(log_t *log, jsw_atree_t *msgs,
             case LMDB_KEY_HIMODSEQUP: {
                 // store the himodseq_up value in memory
                 unsigned long himodseq_up;
-                PROP(&e, dstr_toul(&value, &himodseq_up, 10) );
+                PROP_GO(&e, dstr_toul(&value, &himodseq_up, 10), cu_cursor);
                 log->himodseq_up = himodseq_up;
             } break;
 
