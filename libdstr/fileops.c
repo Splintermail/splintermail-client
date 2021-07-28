@@ -631,7 +631,7 @@ derr_t lstat_path(const string_builder_t* sb, struct stat* out, int* eno){
     return e;
 }
 
-static derr_t do_mkdir(const char *path, mode_t mode, bool soft){
+derr_t dmkdir(const char *path, mode_t mode, bool soft){
     derr_t e = E_OK;
 
     int ret = compat_mkdir(path, mode);
@@ -667,7 +667,7 @@ derr_t mkdir_path(const string_builder_t* sb, mode_t mode, bool soft){
     dstr_t* path;
     PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
 
-    PROP_GO(&e, do_mkdir(path->data, mode, soft), cu);
+    PROP_GO(&e, dmkdir(path->data, mode, soft), cu);
 
 cu:
     dstr_free(&heap);
@@ -716,7 +716,7 @@ derr_t mkdirs_path(const string_builder_t* sb, mode_t mode){
             cpath = dirname(cpath);
         }
         // create the ith parent
-        PROP_GO(&e, do_mkdir(cpath, mode, true), fail);
+        PROP_GO(&e, dmkdir(cpath, mode, true), fail);
         // remember the first directory we made for failure handling
         if(first_created < 0){
             first_created = i;

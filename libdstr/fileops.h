@@ -81,6 +81,7 @@ derr_t chmod_path(const string_builder_t* sb, mode_t mode);
 derr_t stat_path(const string_builder_t* sb, struct stat* out, int* eno);
 derr_t lstat_path(const string_builder_t* sb, struct stat* out, int* eno);
 
+derr_t dmkdir(const char *path, mode_t mode, bool soft);
 derr_t mkdir_path(const string_builder_t* sb, mode_t mode, bool soft);
 derr_t mkdirs_path(const string_builder_t* sb, mode_t mode);
 

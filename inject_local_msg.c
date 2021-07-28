@@ -104,7 +104,7 @@ static derr_t inject_local_msg(
     // root/user/mail
     string_builder_t mail_path = sb_append(&user_path, FS("mail"));
     // root/PID
-    string_builder_t msg_path = sb_append(&root, FI(getpid()));
+    string_builder_t msg_path = sb_append(&root, FI(compat_getpid()));
 
     PROP(&e, mkdirs_path(&key_path, 0700) );
     PROP(&e, mkdirs_path(&mail_path, 0700) );
