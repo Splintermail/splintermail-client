@@ -39,3 +39,29 @@ cleanup_1:
     dstr_free(&a);
     return e;
 }
+
+// makedir_temp creates a uniquely named temporary directory in PWD.
+derr_t mkdir_temp(const char *prefix, dstr_t *path){
+    derr_t e = E_OK;
+
+    // gross, but whatever.
+    static int count = 0;
+
+    DSTR_VAR(buf, 256);
+
+    PROP(&e,
+        FMT(&buf, "%x-%x-%x", FS(prefix), FI(compat_getpid()), FI(count++))
+    );
+
+    PROP(&e, dmkdir(buf.data, 0777, false) );
+
+    PROP_GO(&e, dstr_grow(path, buf.len + 1), fail);
+    PROP_GO(&e, dstr_append(path, &buf), fail);
+    PROP_GO(&e, dstr_null_terminate(path), fail);
+
+    return e;
+
+fail:
+    DROP_CMD( rm_rf(buf.data) );
+    return e;
+}

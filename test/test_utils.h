@@ -68,6 +68,9 @@ print_usage: \
 derr_t file_cmp(const char* fa, const char* fb, int* result);
 derr_t file_cmp_dstr(const char* fa, const dstr_t* b, int* result);
 
+// makedir_temp creates a uniquely named temporary directory in PWD
+derr_t mkdir_temp(const char *prefix, dstr_t *path);
+
 // these are really only used in tests, so right now they are not in common.h:
 #define LIST_STATIC_VAR(type, name, num_items) \
     static type name ## _buffer[num_items]; \
@@ -78,5 +81,73 @@ derr_t file_cmp_dstr(const char* fa, const dstr_t* b, int* result);
 #define DSTR_STATIC_VAR(name, size) \
     static char name ## _buffer[size]; \
     static dstr_t name = { name ## _buffer, size, 0, 1 }
+
+// EXPECT helpers
+
+#define EXPECT_U(e, name, got, exp) do { \
+    uintmax_t _got = (got); \
+    uintmax_t _exp = (exp); \
+    if(_got != (uintmax_t)_exp){ \
+        TRACE(e, \
+            "expected %x == %x but got %x\n", FS(name), FU(_exp),  FU(_got) \
+        ); \
+        ORIG(e, E_VALUE, "wrong value"); \
+    } \
+} while(0)
+
+#define EXPECT_U_GO(e, name, got, exp, label) do { \
+    uintmax_t _got = (got); \
+    uintmax_t _exp = (exp); \
+    if(_got != (uintmax_t)_exp){ \
+        TRACE(e, \
+            "expected %x == %x but got %x\n", FS(name), FU(_exp),  FU(_got) \
+        ); \
+        ORIG_GO(e, E_VALUE, "wrong value", label); \
+    } \
+} while(0)
+
+#define EXPECT_I(e, name, got, exp) do { \
+    intmax_t _got = (got); \
+    intmax_t _exp = (exp); \
+    if(_got != _exp){ \
+        TRACE(e, \
+            "expected %x == %x but got %x\n", FS(name), FI(_exp),  FI(_got) \
+        ); \
+        ORIG(e, E_VALUE, "wrong value"); \
+    } \
+} while(0)
+
+#define EXPECT_I_GO(e, name, got, exp, label) do { \
+    intmax_t _got = (got); \
+    intmax_t _exp = (exp); \
+    if(_got != _exp){ \
+        TRACE(e, \
+            "expected %x == %x but got %x\n", FS(name), FI(_exp),  FI(_got) \
+        ); \
+        ORIG_GO(e, E_VALUE, "wrong value", label); \
+    } \
+} while(0)
+
+#define EXPECT_B(e, name, got, exp) do { \
+    bool _got = (got); \
+    bool _exp = (exp); \
+    if(_got != _exp){ \
+        TRACE(e, \
+            "expected %x == %x but got %x\n", FS(name), FI(_exp),  FI(_got) \
+        ); \
+        ORIG(e, E_VALUE, "wrong value"); \
+    } \
+} while(0)
+
+#define EXPECT_B_GO(e, name, got, exp, label) do { \
+    bool _got = (got); \
+    bool _exp = (exp); \
+    if(_got != _exp){ \
+        TRACE(e, \
+            "expected %x == %x but got %x\n", FS(name), FB(_exp),  FB(_got) \
+        ); \
+        ORIG_GO(e, E_VALUE, "wrong value", label); \
+    } \
+} while(0)
 
 #endif // TEST_UTILS_H
