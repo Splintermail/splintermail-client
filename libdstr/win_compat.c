@@ -10,15 +10,13 @@
 
 #include <sys/stat.h>
 
-// no point in seeing MSVC warnings in other MS's own damn code
-#pragma warning(push, 0)
-#include <windows.h>
-#include <io.h>
-#include <share.h>
-#include <direct.h>
-#pragma warning(pop)
 
 #include "libdstr.h"
+
+// no point in seeing MSVC warnings in other MS's own damn code
+#pragma warning(push, 0)
+#include <share.h>
+#pragma warning(pop)
 
 void win_perror(void){
     char buf[256];

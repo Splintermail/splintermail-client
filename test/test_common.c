@@ -797,7 +797,7 @@ cleanup:
 
 static derr_t test_zeroized(void){
     dstr_t d = {0};
-    LIST(dstr_t) ds;
+    LIST(dstr_t) ds = {0};
 
     derr_t e = E_OK;
 

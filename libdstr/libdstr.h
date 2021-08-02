@@ -7,7 +7,6 @@
 #include <stddef.h>
 #include <limits.h>
 #include <stdbool.h>
-#include <arpa/inet.h>
 
 #include "win_compat.h"
 

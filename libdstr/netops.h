@@ -5,7 +5,7 @@
 
 derr_t dsock(int domain, int type, int protocol, int *fd);
 
-#ifdef _WIN32
+#ifndef _WIN32
 
 derr_t dconnect_unix(int sockfd, const dstr_t *path);
 

@@ -5,6 +5,127 @@
 
 #include "test_utils.h"
 
+
+static derr_t test_dirname_basename(void){
+    derr_t e = E_OK;
+
+    // test cases come straight from man 3 basename
+    struct {
+        char *in;          char *dir;   char *base;
+    } cases[] = {
+        {"/usr/lib/",      "/usr",      "lib"},
+        {"/usr/lib",       "/usr",      "lib"},
+        {"/usr/",          "/",         "usr"},
+        {"/usr//lib//",    "/usr",      "lib"},
+        {"/usr//lib",      "/usr",      "lib"},
+        {"/usr//",         "/",         "usr"},
+        {"usr",            ".",         "usr"},
+        {"/",              "/",         "/"},
+        {".",              ".",         "."},
+        {"..",             ".",         ".."},
+        {"",               ".",         "."},
+
+        #ifdef _WIN32 // WINDOWS
+        {"\\usr\\lib",     "\\usr",     "lib"},
+        {"\\usr\\",        "\\",        "usr"},
+        {"\\",             "\\",        "\\"},
+        {"C:\\usr\\lib",   "C:\\usr",   "lib"},
+        {"C:\\usr\\",      "C:\\",      "usr"},
+        {"C:\\",           "C:\\",      "C:\\"},
+        {"C:/usr/lib",     "C:/usr",    "lib"},
+        {"C:/usr/",        "C:/",       "usr"},
+        {"C:/",            "C:/",       "C:/"},
+        {"C:",             "C:",        "C:"},
+
+        {"C:usr/lib/",     "C:usr",     "lib"},
+        {"C:usr/lib",      "C:usr",     "lib"},
+        {"C:usr/",         "C:",        "usr"},
+        {"C:usr",          "C:",        "usr"},
+        {"C:usr\\lib\\",   "C:usr",     "lib"},
+        {"C:usr\\lib",     "C:usr",     "lib"},
+        {"C:usr\\",        "C:",        "usr"},
+        {"C:usr",          "C:",        "usr"},
+
+        // UNC paths: \\ + server + sharename = a volume
+        // (docs.microsoft.com/en-us/dotnet/standard/io/file-path-formats)
+        {"\\\\srv\\shr\\a\\b", "\\\\srv\\shr\\a", "b"},
+        {"\\\\srv\\shr\\a\\", "\\\\srv\\shr", "a"},
+        {"\\\\srv\\shr\\a", "\\\\srv\\shr", "a"},
+        {"\\\\srv\\shr\\", "\\\\srv\\shr", "\\\\srv\\shr"},
+        {"\\\\srv\\shr", "\\\\srv\\shr", "\\\\srv\\shr"},
+        {"\\\\srv\\C$\\a\\b", "\\\\srv\\C$\\a", "b"},
+        {"\\\\srv\\C$\\a\\", "\\\\srv\\C$", "a"},
+        {"\\\\srv\\C$\\a", "\\\\srv\\C$", "a"},
+        {"\\\\srv\\C$\\", "\\\\srv\\C$", "\\\\srv\\C$"},
+        // DOS device paths
+        {"\\\\.\\C:\\a\\b", "\\\\.\\C:\\a", "b"},
+        {"\\\\?\\C:\\a\\b", "\\\\?\\C:\\a", "b"},
+        {"\\\\.\\C:\\a\\",        "\\\\.\\C:", "a"},
+        {"\\\\.\\C:\\a",          "\\\\.\\C:", "a"},
+        {"\\\\.\\C:\\",              "\\\\.\\C:", "\\\\.\\C:"},
+        {"\\\\.\\Volume{UUID}\\a\\b", "\\\\.\\Volume{UUID}\\a", "b"},
+        {"\\\\.\\Volume{UUID}\\a\\", "\\\\.\\Volume{UUID}", "a"},
+        {"\\\\.\\Volume{UUID}\\a", "\\\\.\\Volume{UUID}", "a"},
+        {"\\\\.\\Volume{UUID}", "\\\\.\\Volume{UUID}", "\\\\.\\Volume{UUID}"},
+        // UNC-forms of of DOS device paths
+        {"\\\\.\\UNC\\srv\\shr\\a\\b", "\\\\.\\UNC\\srv\\shr\\a", "b"},
+        {"\\\\.\\UNC\\srv\\shr\\a\\", "\\\\.\\UNC\\srv\\shr", "a"},
+        {"\\\\.\\UNC\\srv\\shr\\a", "\\\\.\\UNC\\srv\\shr", "a"},
+        {"\\\\.\\UNC\\srv\\shr\\", "\\\\.\\UNC\\srv\\shr", "\\\\.\\UNC\\srv\\shr"},
+        {"\\\\.\\UNC\\srv\\shr", "\\\\.\\UNC\\srv\\shr", "\\\\.\\UNC\\srv\\shr"},
+
+        #else // UNIX
+        {"\\usr\\lib",     ".",         "\\usr\\lib"},
+        {"\\usr\\",        ".",         "\\usr\\"},
+        {"\\",             ".",         "\\"},
+        {"C:\\usr\\lib",   ".",         "C:\\usr\\lib"},
+        {"C:\\usr\\",      ".",         "C:\\usr\\"},
+        {"C:\\",           ".",         "C:\\"},
+        {"C:/usr/lib",     "C:/usr",    "lib"},
+        {"C:/usr/",        "C:",        "usr"},
+        {"C:/",            ".",         "C:"},
+        {"C:",             ".",         "C:"},
+        #endif
+    };
+    size_t ncases = sizeof(cases)/sizeof(*cases);
+
+    bool ok = true;
+
+    for(size_t i = 0; i < ncases; i++){
+        dstr_t in, base, dir;
+
+        DSTR_WRAP(in, cases[i].in, strlen(cases[i].in), true);
+        DSTR_WRAP(base, cases[i].base, strlen(cases[i].base), true);
+        DSTR_WRAP(dir, cases[i].dir, strlen(cases[i].dir), true);
+
+        bool case_ok = true;
+
+        dstr_t gotdir = ddirname(in);
+        if(dstr_cmp2(gotdir, dir) != 0){
+            case_ok = false;
+            ok = false;
+        }
+
+        dstr_t gotbase = dbasename(in);
+        if(dstr_cmp2(gotbase, base) != 0){
+            case_ok = false;
+            ok = false;
+        }
+
+        if(!case_ok){
+            TRACE(&e,
+                "\"%x\" became (%x, %x) but expected (%x, %x)\n",
+                FD(&in), FD(&gotdir), FD(&gotbase), FD(&dir), FD(&base)
+            );
+        }
+    }
+    if(!ok){
+        ORIG(&e, E_VALUE, "dbasename/ddirname failed");
+    }
+
+    return e;
+}
+
 static derr_t do_test_mkdirs(const string_builder_t *mk_path,
         const string_builder_t *del_path, mode_t mode){
     derr_t e = E_OK;
@@ -47,6 +168,7 @@ static derr_t test_mkdirs(void){
 static derr_t test_mkdirs_failure_handling(void){
     derr_t e = E_OK;
 
+#ifndef _WIN32 // UNIX
     // test failure deletion behavior by making the second mkdir fail via mode
     string_builder_t base = SB(FS("test_mkdirs"));
     string_builder_t mid = sb_append(&base, FS("a/b/c"));
@@ -62,7 +184,7 @@ static derr_t test_mkdirs_failure_handling(void){
     bool dir_exists;
     PROP_GO(&e, exists_path(&path1, &dir_exists), cu);
     if(!dir_exists){
-        ORIG_GO(&e, E_VALUE, "unable to create on unsuable dir", cu);
+        ORIG_GO(&e, E_VALUE, "unable to create on unusable dir", cu);
     }
 
     // now clean that one up and try to make two of them
@@ -90,40 +212,7 @@ static derr_t test_mkdirs_failure_handling(void){
 
 cu:
     DROP_CMD( rm_rf_path(&base) );
-    return e;
-}
-
-static derr_t test_basename(void){
-    derr_t e = E_OK;
-
-    // test cases come straight from man 3 basename (but with GNU semantics)
-    LIST_STATIC(dstr_t, in_out_pairs,
-        DSTR_LIT("/usr/lib"),   DSTR_LIT("lib"),
-        DSTR_LIT("/usr/"),      DSTR_LIT(""),
-        DSTR_LIT("usr"),        DSTR_LIT("usr"),
-        DSTR_LIT("/"),          DSTR_LIT(""),
-        DSTR_LIT("."),          DSTR_LIT("."),
-        DSTR_LIT(".."),         DSTR_LIT(".."),
-    );
-
-    bool ok = true;
-
-    for(size_t i = 0; i < in_out_pairs.len; i+=2){
-        dstr_t in = in_out_pairs.data[i];
-        dstr_t exp = in_out_pairs.data[i+1];
-        dstr_t got = dstr_basename(&in);
-        if(dstr_cmp(&got, &exp) != 0){
-            TRACE(&e,
-                "dstr_basename(%x) returned '%x' but expected '%x'\n",
-                FD(&in), FD(&got), FD(&exp)
-            );
-            ok = false;
-        }
-    }
-    if(!ok){
-        ORIG(&e, E_VALUE, "dstr_basename failed");
-    }
-
+#endif
     return e;
 }
 
@@ -133,9 +222,9 @@ int main(int argc, char** argv){
     // parse options and set default log level
     PARSE_TEST_OPTIONS(argc, argv, NULL, LOG_LVL_INFO);
 
+    PROP_GO(&e, test_dirname_basename(), test_fail);
     PROP_GO(&e, test_mkdirs(), test_fail);
     PROP_GO(&e, test_mkdirs_failure_handling(), test_fail);
-    PROP_GO(&e, test_basename(), test_fail);
 
     LOG_ERROR("PASS\n");
     return 0;

@@ -389,7 +389,7 @@ static derr_t mig_bootstrap(MYSQL *sql){
 static derr_t mig_override(MYSQL *sql, const dstr_t *path){
     derr_t e = E_OK;
 
-    dstr_t base = dstr_basename(path);
+    dstr_t base = dbasename(*path);
     dstr_t name = get_name(&base);
     unsigned int id = get_id(&base);
     bool exe = !endswith(path, ".sql");
@@ -865,7 +865,7 @@ int main(int argc, char **argv){
             LOG_ERROR("--override provided but %x is not a file\n", FD(&path));
             return 1;
         }
-        dstr_t base = dstr_basename(&path);
+        dstr_t base = dbasename(path);
         dstr_t name = get_name(&base);
         unsigned int id = get_id(&base);
         if(!endswith(&base, ".dn.sql") || !name.len || !id){

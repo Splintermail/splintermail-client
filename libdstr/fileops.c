@@ -186,14 +186,205 @@ cu:
     return e;
 }
 
-// GNU semantics, not POSIX semantics
-dstr_t dstr_basename(const dstr_t *path){
-    // find the final slash
-    for(size_t ii = path->len; ii > 0; ii--){
-        if(path->data[ii - 1] != '/') continue;
-        return dstr_sub(path, ii, path->len);
+// filepath utilities
+
+static bool _is_sep(char c){
+    #ifndef _WIN32 // UNIX
+    return c == '/';
+    #else // WINDOWS
+    return c == '/' || c == '\\';
+    #endif
+}
+
+// returns the number of trailing seps at the end of path, excluding tail
+static size_t _get_trailing_sep(const dstr_t path, size_t tail){
+    size_t out = 0;
+    for(; out + tail < path.len; out++){
+        if(!_is_sep(path.data[path.len - tail -1 - out])) return out;
     }
-    return *path;
+    return out;
+}
+
+// returns the number of trailing non-seps at the end of path, excluding tail
+static size_t _get_trailing_nonsep(const dstr_t path, size_t tail){
+    size_t out = 0;
+    for(; out + tail < path.len; out++){
+        if(_is_sep(path.data[path.len - tail - 1 - out])) return out;
+    }
+    return out;
+}
+
+#ifdef _WIN32 // WINDOWS
+
+// returns number of seps at start of path, exlcuding start
+static size_t _get_sep(const dstr_t path, size_t start){
+    size_t out = 0;
+    for(; start + out < path.len; out++){
+        if(!_is_sep(path.data[start + out])) return out;
+    }
+    return out;
+}
+
+// returns number of non-seps at start of path, exlcuding start
+static size_t _get_non_sep(const dstr_t path, size_t start){
+    size_t out = 0;
+    for(; start + out < path.len; out++){
+        if(_is_sep(path.data[start + out])) return out;
+    }
+    return out;
+}
+
+// returns 0 if not found, 2 for relative, 3 for absolute
+static size_t _get_letter_drive(
+    const dstr_t path, size_t start, bool colon, bool include_sep
+){
+    if(start > path.len || path.len - start < 2) return 0;
+    char c = path.data[start];
+    if(!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'))) return 0;
+    if(path.data[start + 1] != (colon ? ':' : '$')) return 0;
+    if(include_sep && path.len - start > 2 && _is_sep(path.data[start + 2])){
+        return 3;
+    }
+    return 2;
+}
+
+// returns 0 if not found, else (3 + one or more trailing slashes)
+static size_t _get_dos_device_indicator(const dstr_t path){
+    if(path.len < 4) return 0;
+    if(!_is_sep(path.data[0])) return 0;
+    if(!_is_sep(path.data[1])) return 0;
+    char c = path.data[2];
+    if(c != '.' && c != '?') return 0;
+    size_t seps = _get_sep(path, 3);
+    if(!seps) return 0;
+    return 3 + seps;
+}
+
+// returns 0 if not found, else 2
+static size_t _get_unc_indicator(const dstr_t path){
+    size_t sep = _get_sep(path, 0);
+    return sep == 2 ? 2 : 0;
+}
+
+// return 0 or (3 + one or more trailing slashes)
+static size_t _get_dos_unc_indicator(const dstr_t path, size_t start){
+    dstr_t unc = dstr_sub2(path, start, start + 3);
+    if(dstr_icmp2(unc, DSTR_LIT("unc")) != 0) return 0;
+    size_t seps = _get_sep(path, start + 3);
+    if(!seps) return 0;
+    return 3 + seps;
+}
+
+// returns 0 if not found or the text including server\share or server\c$[\]
+static size_t _get_unc(const dstr_t path, size_t start){
+    size_t server = _get_non_sep(path, start);
+    if(!server) return 0;
+    size_t sep = _get_sep(path, start + server);
+    if(!sep) return 0;
+    // check for the server\c$ case
+    size_t drive = _get_letter_drive(path, start + server + sep, false, false);
+    if(drive) return (start + server + sep);
+    // otherwise expect the server\share case
+    size_t share = _get_non_sep(path, start + server + sep);
+    if(!share) return 0;
+    return server + sep + share;
+}
+
+#endif
+
+/* read the atomic part of a path string, the part which is unmodified by both
+   the dirname and the basename.  In Unix, that's just a leading '/'.  In
+   Windows, it takes many forms:
+    - C:                    drive letter (relative path form)
+    - C:/                   drive letter (absolute path form)
+
+    - \\server\share        a UNC path to a shared directory
+    - \\server\C$           a UNC path to a drive
+                              (the docs reference some sort of relative
+                               version, but that seems like a myth; I can't
+                               `ls` any relative version in powershell)
+
+    - \\.\VOL               a DOS device path (VOL could be C: or Volume{UUID})
+    - \\?\VOL               another form of DOS device path
+    - \\.\UNC\server\share  a DOS device to a UNC path to a shared directory
+    - \\.\UNC\server\C$     a DOS device to a UNC path to a drive */
+static size_t _get_volume(const dstr_t path){
+#ifdef _WIN32 // WINDOWS
+    // letter-drive case: C:
+    size_t letter_drive = _get_letter_drive(path, 0, true, true);
+    if(letter_drive){
+        return letter_drive;
+    }
+
+    // DOS device case: \\.\UNC or \\.\DRIVE
+    size_t dos_dev = _get_dos_device_indicator(path);
+    if(dos_dev){
+        // DOS-UNC case
+        size_t dos_unc_indicator = _get_dos_unc_indicator(path, dos_dev);
+        if(dos_unc_indicator){
+            size_t unc = _get_unc(path, dos_dev + dos_unc_indicator);
+            if(!unc) return 0;
+            return dos_dev + dos_unc_indicator + unc;
+        }
+        // DOS-VOLUME case, don't bother checking the volume
+        size_t volume = _get_non_sep(path, dos_dev);
+        if(!volume) return 0;
+        return dos_dev + volume;
+    }
+
+    // UNC case: \\server\share
+    size_t unc_indicator = _get_unc_indicator(path);
+    if(unc_indicator){
+        size_t unc = _get_unc(path, unc_indicator);
+        if(!unc) 0;
+        return unc_indicator + unc;
+    }
+#endif
+
+    // absolute path
+    if(path.len && _is_sep(path.data[0])) return 1;
+    return 0;
+}
+
+static dstr_t _get_path_part(const dstr_t path, bool wantdir){
+    // special case: empty string
+    if(path.len == 0) return DSTR_LIT(".");
+    // special case: "."
+    if(dstr_cmp2(path, DSTR_LIT(".")) == 0) return path;
+
+    // we never break down the volume and we never include it
+    size_t volume = _get_volume(path);
+    dstr_t nonvol = dstr_sub2(path, volume, path.len);
+
+    // we never consider a trailing sep
+    size_t tsep = _get_trailing_sep(nonvol, 0);
+
+    // special case: only the volume [+trailing sep]
+    if(tsep == nonvol.len) return dstr_sub2(path, 0, volume);
+
+    // drop the base and the joiner for the base (if any)
+    size_t base = _get_trailing_nonsep(nonvol, tsep);
+    size_t joiner = _get_trailing_sep(nonvol, tsep + base);
+    size_t dir = nonvol.len - tsep - base - joiner;
+    if(wantdir){
+        // special case: just a basename
+        if(volume + dir == 0){
+            return DSTR_LIT(".");
+        }
+        return dstr_sub2(path, 0, volume + dir);
+    }else{
+        return dstr_sub2(
+            path, volume + dir + joiner, volume + dir + joiner + base
+        );
+    }
+}
+
+dstr_t ddirname(const dstr_t path){
+    return _get_path_part(path, true);
+}
+
+dstr_t dbasename(const dstr_t path){
+    return _get_path_part(path, false);
 }
 
 derr_t for_each_file_in_dir(const char* path, for_each_file_hook_t hook, void* userdata){
@@ -206,7 +397,7 @@ derr_t for_each_file_in_dir(const char* path, for_each_file_hook_t hook, void* u
     derr_t e2 = FMT(&search, "%x/*", FS(path));
     CATCH(e2, E_FIXEDSIZE){
         TRACE(&e2, "path too long\n");
-        RETHROW(&e, &e2 E_FS);
+        RETHROW(&e, &e2, E_FS);
     }else PROP(&e, e2);
 
     HANDLE hFind = FindFirstFile(search.data, &ffd);
@@ -383,7 +574,46 @@ cu:
 // the string-builder-based version of for_each_file
 derr_t for_each_file_in_dir2(const string_builder_t* path,
                              for_each_file_hook2_t hook, void* userdata){
+#ifdef _WIN32
+    DSTR_VAR(stack, 256);
+    dstr_t heap = {0};
+
     derr_t e = E_OK;
+
+    // search spec is "path/*"
+    string_builder_t search_spec = sb_append(path, FS("*"));
+    dstr_t *search = NULL;
+    PROP(&e, sb_expand(&search_spec, &slash, &stack, &heap, &search) );
+
+    WIN32_FIND_DATA ffd;
+    HANDLE hFind = FindFirstFile(search->data, &ffd);
+    if(hFind == INVALID_HANDLE_VALUE){
+        win_perror();
+        ORIG_GO(&e, E_FS, "FindFirstFile() failed", cu_heap);
+    }
+
+    do{
+        bool isdir = (ffd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY);
+        if(isdir){
+            // make sure it is not . or ..
+            if(strncmp(ffd.cFileName, dot, 2) == 0) continue;
+            if(strncmp(ffd.cFileName, dotdot, 3) == 0) continue;
+        }
+        // get dstr_t from the filename, it must be null-terminated
+        dstr_t dfile;
+        DSTR_WRAP(dfile, ffd.cFileName, strlen(ffd.cFileName), true);
+        PROP_GO(&e, hook(path, &dfile, isdir, userdata), cu_hfind);
+    } while(FindNextFile(hFind, &ffd) != 0);
+
+cu_hfind:
+    FindClose(hFind);
+cu_heap:
+    dstr_free(&heap);
+    return e;
+
+#else // not _WIN32
+    derr_t e = E_OK;
+
     DIR* d;
     PROP(&e, opendir_path(path, &d) );
 
@@ -412,6 +642,7 @@ derr_t for_each_file_in_dir2(const string_builder_t* path,
 cleanup:
     closedir(d);
     return e;
+#endif
 }
 
 
@@ -601,7 +832,11 @@ static inline derr_t do_stat_path(const string_builder_t* sb, struct stat* out,
     errno = 0;
     int ret;
     if(l){
+        #ifdef _WIN32
+        ORIG_GO(&e, E_INTERNAL, "windows does not have lstat", cu);
+        # else
         ret = lstat(path->data, out);
+        #endif
     }else{
         ret = stat(path->data, out);
     }
@@ -687,40 +922,37 @@ derr_t mkdirs_path(const string_builder_t* sb, mode_t mode){
     }
 
     // count how many parent directories to make by repeated calls to dirname
-    char *cpath = path->data;
-    size_t cpath_len = path->len;
+    dstr_t tpath = *path;
+    size_t tpath_len = tpath.len;
     int nparents = 0;
     while(true){
-        cpath = dirname(cpath);
-        if(exists(path->data)){
+        tpath = ddirname(tpath);
+        bool ok;
+        PROP_GO(&e, exists_path(&SB(FD(&tpath)), &ok), cu);
+        if(ok){
             // no need to make this parent
             break;
         }
-        if(strlen(cpath) == cpath_len){
+        if(tpath.len == tpath_len){
             // we've arrived at the most root path, either / or .
             nparents--;
             break;
         }
-        cpath_len = strlen(cpath);
+        tpath_len = tpath.len;
         nparents++;
     }
 
-    int first_created = -1;
+    int ncreated = 0;
 
     for(int i = nparents; i >= 0; i--){
         // repair the path
-        PROP_GO(&e, sb_expand(sb, &slash, &stack, &heap, &path), cu);
-        // get the ith parent
-        cpath = path->data;
+        tpath = *path;
         for(int j = 0; j < i; j++){
-            cpath = dirname(cpath);
+            tpath = ddirname(tpath);
         }
         // create the ith parent
-        PROP_GO(&e, dmkdir(cpath, mode, true), fail);
-        // remember the first directory we made for failure handling
-        if(first_created < 0){
-            first_created = i;
-        }
+        PROP_GO(&e, mkdir_path(&SB(FD(&tpath)), mode, true), fail);
+        ncreated++;
     }
 
     // the 0th parent was the full path, so we are done
@@ -730,21 +962,14 @@ cu:
 
 fail:
     // attempt to delete any folders we created
-    if(first_created >= 0){
-        derr_t e2 = sb_expand(sb, &slash, &stack, &heap, &path);
-        if(is_error(e2)){
-            // well, we tried
-            DROP_VAR(&e2);
-        }else{
-            // get the highest parent we created and delete it
-            cpath = path->data;
-            for(int j = 0; j < nparents; j++){
-                cpath = dirname(cpath);
-            }
-            DROP_CMD( rm_rf(cpath) );
+    for(int i = 0; i < ncreated; i++){
+        // repair the path
+        tpath = *path;
+        for(int j = 0; j < (nparents - i); j++){
+            tpath = ddirname(tpath);
         }
+        DROP_CMD( remove_path(&SB(FD(&tpath))) );
     }
-    dstr_free(&heap);
     return e;
 }
 
@@ -1043,7 +1268,7 @@ cu:
 derr_t dfsync(int fd){
     derr_t e = E_OK;
 
-    int ret = fsync(fd);
+    int ret = compat_fsync(fd);
     if(ret != 0){
         TRACE(&e, "fsync: %x\n", FE(&errno));
         ORIG(&e, E_OPEN, "fsync failed");
@@ -1061,11 +1286,14 @@ derr_t dffsync(FILE *f){
         ORIG(&e, E_OPEN, "fflush failed");
     }
 
-    ret = fsync(fileno(f));
+    #ifndef _WIN32
+    // windows fflush() already does this
+    ret = compat_fsync(fileno(f));
     if(ret != 0){
         TRACE(&e, "fsync: %x\n", FE(&errno));
         ORIG(&e, E_OPEN, "fsync failed");
     }
+    #endif
 
     return e;
 }

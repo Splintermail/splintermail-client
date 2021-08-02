@@ -39,8 +39,29 @@ derr_t is_dir_path(const string_builder_t *sb, bool *res);
 /* throws: E_NOMEM
            E_OS */
 
-// GNU semantics, not POSIX semantics
-dstr_t dstr_basename(const dstr_t *path);
+/* More POSIXy semantics than GNUy semantics.
+
+   Components of a file path:
+
+    C:/   path/to   /     file      /
+    ^^^   ^^^^^^^   ^     ^^^^      ^
+    vol   dir     joiner  base   trailing separator
+
+    (p="present")
+    vol  dir  base | dirname()   basename()
+    ---------------------------|---------------------
+    p    p    p    | vol + dir | base
+    p    -    p    | vol       | base
+    p    -    -    | vol       | vol
+    -    p    p    | dir       | base
+    -    -    p    | '.'       | base
+    -    -    -    | '.'       | '.'
+
+   In unix, the only possible volume is '/'.  In Windows, there are many
+   possible volumes.  Windows also honors '\\' as a separator.
+*/
+dstr_t ddirname(const dstr_t path);
+dstr_t dbasename(const dstr_t path);
 
 // when for_each_file_in_dir() calls a hook, it always hands a null-terminated dstr_t
 // arguments are: (base, file, isdir, userdata)
@@ -79,7 +100,9 @@ derr_t chmod_path(const string_builder_t* sb, mode_t mode);
 
 /* If *eno!=NULL then stat_path can only throw E_NOMEM */
 derr_t stat_path(const string_builder_t* sb, struct stat* out, int* eno);
+#ifndef _WIN32
 derr_t lstat_path(const string_builder_t* sb, struct stat* out, int* eno);
+#endif // _WIN32
 
 derr_t dmkdir(const char *path, mode_t mode, bool soft);
 derr_t mkdir_path(const string_builder_t* sb, mode_t mode, bool soft);

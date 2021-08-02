@@ -67,10 +67,10 @@ derr_t dtimezone(long int *tz){
 #else // WINDOWS
     derr_t e = E_OK;
     // https://docs.microsoft.com/en-us/cpp/c-runtime-library/reference/get-timezone
-    error_t error = _get_timezone(tz);
-    if(error != 0){
+    int ret = _get_timezone(tz);
+    if(ret != 0){
         // I see no docs at all about what error_t means
-        TRACE(&e, "_get_timezone returned error_t=%x\n", FI(error));
+        TRACE(&e, "_get_timezone: %x\n", FE(&errno));
         ORIG(&e, E_OS, "_get_timezone failed");
     }
     return e;
