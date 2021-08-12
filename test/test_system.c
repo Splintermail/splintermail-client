@@ -215,10 +215,9 @@ int main(int argc, char** argv){
     // parse options and set default log level
     PARSE_TEST_OPTIONS(argc, argv, NULL, LOG_LVL_INFO);
 
-    signal(SIGPIPE, SIG_IGN);
-
     PROP_GO(&e, test_dgetenv(), test_fail);
 #ifndef _WIN32
+    signal(SIGPIPE, SIG_IGN);
     PROP_GO(&e, test_fork_ex_pipes(), test_fail);
     PROP_GO(&e, test_fork_ex_devnull(), test_fail);
     PROP_GO(&e, test_extend_subproc_env(true), test_fail);

@@ -336,7 +336,7 @@ static size_t _get_volume(const dstr_t path){
     size_t unc_indicator = _get_unc_indicator(path);
     if(unc_indicator){
         size_t unc = _get_unc(path, unc_indicator);
-        if(!unc) 0;
+        if(!unc) return 0;
         return unc_indicator + unc;
     }
 #endif

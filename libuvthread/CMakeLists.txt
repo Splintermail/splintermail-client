@@ -35,7 +35,8 @@ macro(add_uvthread asan)
         # flags common to "AppleClang" and "Clang"
         target_compile_options("uvthread${asan}" PRIVATE -fno-strict-aliasing)
     elseif("${CMAKE_C_COMPILER_ID}" STREQUAL "MSVC")
-        # flags for MVSC (VS 2017)
+        # additional dependencies for windows
+        target_link_libraries("uvthread${asan}" PUBLIC ws2_32 iphlpapi userenv)
     endif()
 endmacro()
 

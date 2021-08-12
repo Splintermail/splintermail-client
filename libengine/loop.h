@@ -42,6 +42,8 @@ void write_wrapper_prep(write_wrapper_t *wr_wrap, loop_t *loop);
    can recover the original struct because the dstr_t element of the event_t
    points back to the head of this struct. */
 typedef struct {
+    /* Note: there's a conversion from size_t to uint32_t in loop.c::allocator,
+       which is currently safe due to the hard-coded 4096 length here */
     char buffer[4096];
     event_t event;
 } read_wrapper_t;

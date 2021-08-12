@@ -25,12 +25,12 @@ int main(int argc, char** argv) {
     }
 
     // do the deletion
-    PROP_GO(e, rm_rf(argv[1]), fail);
+    PROP_GO(&e, rm_rf(argv[1]), fail);
 
     return 0;
 
 fail:
     DUMP(e);
-    DROP(e);
+    DROP_VAR(&e);
     return 1;
 }

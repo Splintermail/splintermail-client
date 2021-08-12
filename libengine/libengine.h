@@ -6,12 +6,12 @@
 #include "libcrypto/libcrypto.h"
 #include "libimap/libimap.h"
 
-#include "../manager.h"
+#include "manager.h"
 
-#include "engine.h"
-#include "loop.h"
-#include "tls.h"
-#include "imap.h"
-#include "imap_session.h"
+#include "libengine/engine.h"
+#include "libengine/loop.h"
+#include "libengine/tls.h"
+#include "libengine/imap.h"
+#include "libengine/imap_session.h"
 
 #endif // LIBENGINE_H

@@ -12,6 +12,6 @@ add_library(
     util.c
     search.c
 )
-target_link_libraries(imaildir PRIVATE dstr uvthread imap)
+target_link_libraries(imaildir PUBLIC dstr uvthread imap)
 default_compile_options(imaildir TRUE)
 define_file_logname_for_target(imaildir)

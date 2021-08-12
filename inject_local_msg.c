@@ -7,7 +7,6 @@
 #include <sys/stat.h>
 #include <signal.h>
 #include <stdlib.h>
-#include <unistd.h>
 
 #include <libdstr/libdstr.h>
 #include <libcrypto/libcrypto.h>

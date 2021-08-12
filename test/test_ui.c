@@ -16,7 +16,7 @@
 static pthread_t ar_pthread;
 static pthread_mutex_t ar_mutex;
 static dstr_t ar_buffer;
-static derr_t ar_return = E_OK;
+static derr_t ar_return = {0};
 
 static void* async_reader_thread(void* arg){
     int* fd = (int*)arg;

@@ -6,6 +6,7 @@
 #include <libdstr/libdstr.h>
 #include <libcrypto/libcrypto.h>
 #include <libditm/libditm.h>
+
 #include <console_input.h>
 #include <ui_harness.h>
 
@@ -202,7 +203,7 @@ void ssl_library_close(void){
 // api_client.h
 api_token_t* token_to_read;
 bool find_token;
-derr_t read_token_error = E_OK;
+derr_t read_token_error = {0};
 derr_t api_token_read(const char* path, api_token_t* token){
     (void)path;
     derr_t e = E_OK;

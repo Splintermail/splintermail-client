@@ -1,6 +1,7 @@
 #ifndef FAKE_ENGINE_H
 #define FAKE_ENGINE_H
 
+#define HAVE_STRUCT_TIMESPEC
 #include <pthread.h>
 
 #include <libdstr/libdstr.h>

@@ -110,23 +110,17 @@ static derr_t test_empty_iter(void){
     // pre-init iterate
     hashmap_t h = {0};
     elem = hashmap_iter(&trav, &h);
-    for( ; elem; elem = hashmap_next(&trav)){
-        ORIG(&e, E_VALUE, "iterated too many elements");
-    }
+    if(elem) ORIG(&e, E_VALUE, "iterated too many elements");
 
     // post-init iterate
     PROP(&e, hashmap_init(&h) );
     elem = hashmap_iter(&trav, &h);
-    for( ; elem; elem = hashmap_next(&trav)){
-        ORIG_GO(&e, E_VALUE, "iterated too many elements", fail_h);
-    }
+    if(elem) ORIG_GO(&e, E_VALUE, "iterated too many elements", fail_h);
 
     // post-free iterate
     hashmap_free(&h);
     elem = hashmap_iter(&trav, &h);
-    for( ; elem; elem = hashmap_next(&trav)){
-        ORIG(&e, E_VALUE, "iterated too many elements");
-    }
+    if(elem) ORIG(&e, E_VALUE, "iterated too many elements");
 
 fail_h:
     // double-free check

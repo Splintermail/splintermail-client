@@ -464,7 +464,9 @@ static derr_t populate_msgs(imaildir_t *m){
 
 static derr_t imaildir_print_msgs(imaildir_t *m){
     derr_t e = E_OK;
-    return e;  // don't print
+    (void)m;
+
+#if FALSE // don't print
 
     LOG_INFO("msgs:\n");
     jsw_atrav_t trav;
@@ -486,6 +488,8 @@ static derr_t imaildir_print_msgs(imaildir_t *m){
         LOG_INFO("    %x\n", FD(&buffer));
     }
     LOG_INFO("----\n");
+
+#endif
 
     return e;
 }
@@ -1028,12 +1032,11 @@ static derr_t place_file_fill_msg(imaildir_t *m, const string_builder_t *path,
 
     // get epochtime
     time_t tloc;
-    time_t tret = time(&tloc);
-    if(tret < 0){
-        // if this fails... just use zero
+    IF_PROP(&e, dtime(&tloc) ){
+        DROP_VAR(&e);
+        // just use zero
         tloc = ((time_t) 0);
     }
-
     uint64_t epoch = (uint64_t)tloc;
 
     // figure the new path
@@ -1164,9 +1167,9 @@ derr_t imaildir_up_initial_sync_complete(imaildir_t *m, up_t *up){
     if(!m->synced){
         m->synced = true;
         // send the signal to all the conn_up's
-        up_t *up;
-        LINK_FOR_EACH(up, &m->ups, up_t, link){
-            up->cb->synced(up->cb);
+        up_t *_up;
+        LINK_FOR_EACH(_up, &m->ups, up_t, link){
+            _up->cb->synced(up->cb);
         }
     }
 
@@ -2047,7 +2050,7 @@ derr_t imaildir_dn_close_msg(imaildir_t *m, const msg_key_t key, int *fd){
     }
 
     // ignore return value of close on read-only file descriptor
-    close(*fd);
+    compat_close(*fd);
     *fd = -1;
 
     jsw_anode_t *node = jsw_afind(&m->msgs, &key, NULL);

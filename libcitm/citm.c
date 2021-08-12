@@ -3,10 +3,10 @@
 
 #include "libcitm.h"
 
-static loop_t loop;
-static tlse_t tlse;
-static imape_t imape;
-static citme_t citme;
+static loop_t g_loop;
+static tlse_t g_tlse;
+static imape_t g_imape;
+static citme_t g_citme;
 
 
 typedef struct {
@@ -67,22 +67,26 @@ static derr_t build_pipeline(imap_pipeline_t *pipeline, citme_t *citme){
     PROP(&e, set_uv_threadpool_size(nworkers + 3, nworkers + 7) );
 
     // initialize loop
-    PROP(&e, loop_init(&loop, 5, 5, &tlse.engine) );
+    PROP(&e, loop_init(&g_loop, 5, 5, &g_tlse.engine) );
 
     // intialize TLS engine
-    PROP_GO(&e, tlse_init(&tlse, 5, 5, &loop.engine, &imape.engine), fail);
-    PROP_GO(&e, tlse_add_to_loop(&tlse, &loop.uv_loop), fail);
+    PROP_GO(&e,
+        tlse_init(&g_tlse, 5, 5, &g_loop.engine, &g_imape.engine),
+    fail);
+    PROP_GO(&e, tlse_add_to_loop(&g_tlse, &g_loop.uv_loop), fail);
 
     // initialize IMAP engine
-    PROP_GO(&e, imape_init(&imape, 5, &tlse.engine, &citme->engine), fail);
-    PROP_GO(&e, imape_add_to_loop(&imape, &loop.uv_loop), fail);
+    PROP_GO(&e,
+        imape_init(&g_imape, 5, &g_tlse.engine, &citme->engine),
+    fail);
+    PROP_GO(&e, imape_add_to_loop(&g_imape, &g_loop.uv_loop), fail);
 
-    PROP_GO(&e, citme_add_to_loop(citme, &loop.uv_loop), fail);
+    PROP_GO(&e, citme_add_to_loop(citme, &g_loop.uv_loop), fail);
 
     *pipeline = (imap_pipeline_t){
-        .loop=&loop,
-        .tlse=&tlse,
-        .imape=&imape,
+        .loop=&g_loop,
+        .tlse=&g_tlse,
+        .imape=&g_imape,
     };
 
     return e;
@@ -102,7 +106,7 @@ static void stop_loop_on_signal(int signum){
     if(hard_exit) exit(1);
     hard_exit = true;
     // launch an asynchronous loop abort
-    loop_close(&loop, E_OK);
+    loop_close(&g_loop, E_OK);
 }
 
 
@@ -128,9 +132,11 @@ derr_t citm(
 
     imap_pipeline_t pipeline;
 
-    PROP_GO(&e, citme_init(&citme, maildir_root, &imape.engine), cu_ctx_cli);
+    PROP_GO(&e,
+        citme_init(&g_citme, maildir_root, &g_imape.engine
+    ), cu_ctx_cli);
 
-    PROP_GO(&e, build_pipeline(&pipeline, &citme), cu_citme);
+    PROP_GO(&e, build_pipeline(&pipeline, &g_citme), cu_citme);
 
     /* After building the pipeline, we must run the pipeline if we want to
        cleanup nicely.  That means that we can't follow the normal cleanup
@@ -142,7 +148,7 @@ derr_t citm(
         .remote_host = remote_host,
         .remote_svc = remote_svc,
         .pipeline = &pipeline,
-        .citme = &citme,
+        .citme = &g_citme,
         .ctx_srv = &ctx_srv,
         .ctx_cli = &ctx_cli,
         .lspec = {
@@ -151,7 +157,7 @@ derr_t citm(
             .conn_recvd = conn_recvd,
         },
     };
-    PROP_GO(&e, loop_add_listener(&loop, &citm_lspec.lspec), fail);
+    PROP_GO(&e, loop_add_listener(&g_loop, &citm_lspec.lspec), fail);
 
     // install signal handlers before indicating we are launching the loop
     signal(SIGINT, stop_loop_on_signal);
@@ -166,18 +172,18 @@ derr_t citm(
 
 fail:
     if(is_error(e)){
-        loop_close(&loop, e);
+        loop_close(&g_loop, e);
         // The loop will pass us this error back after loop_run.
         PASSED(e);
     }
 
     // run the loop
-    PROP_GO(&e, loop_run(&loop), cu);
+    PROP_GO(&e, loop_run(&g_loop), cu);
 
 cu:
     free_pipeline(&pipeline);
 cu_citme:
-    citme_free(&citme);
+    citme_free(&g_citme);
 cu_ctx_cli:
     ssl_context_free(&ctx_cli);
 cu_ctx_srv:

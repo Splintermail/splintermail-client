@@ -1,7 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 
 #include "libengine.h"
 
@@ -12,7 +11,7 @@ static void loop_pass_event(engine_t *loop_engine, event_t *event);
 static void wrap_write(write_wrapper_t *wr_wrap, event_t *ev){
     wr_wrap->ev = ev;
     wr_wrap->uv_buf.base = ev->buffer.data;
-    wr_wrap->uv_buf.len = ev->buffer.len;
+    wr_wrap->uv_buf.len = (unsigned long)ev->buffer.len;
 }
 
 
@@ -136,7 +135,8 @@ static void allocator(uv_handle_t *handle, size_t suggest, uv_buf_t *buf){
     // otherwise, return the buffer we just got
     // (note that buffer.data points to the char[] in a read_wrapper_t)
     buf->base = ev->buffer.data;
-    buf->len = ev->buffer.size;
+    // buffer.size is fixed at 4096 due to read_wrapper_t
+    buf->len = (unsigned long)ev->buffer.size;
 
     // store the session pointer and upref
     ev->session = ld->session;

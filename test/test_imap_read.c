@@ -95,7 +95,7 @@ static void cmd_cb(void *cb_data, imap_cmd_t *cmd){
     calls_made_t *calls = cb_data;
 
     size_t max_type = sizeof(calls->cmd_counts) / sizeof(*calls->cmd_counts);
-    if(cmd->type < max_type){
+    if((size_t)cmd->type < max_type){
         calls->cmd_counts[cmd->type]++;
     }else{
         LOG_ERROR("got command of unknown type %x\n", FU(cmd->type));
@@ -135,7 +135,7 @@ static void resp_cb(void *cb_data, imap_resp_t *resp){
     calls_made_t *calls = cb_data;
 
     size_t max_type = sizeof(calls->resp_counts) / sizeof(*calls->resp_counts);
-    if(resp->type < max_type){
+    if((size_t)resp->type < max_type){
         calls->resp_counts[resp->type]++;
     }else{
         LOG_ERROR("got response of unknown type %x\n", FU(resp->type));

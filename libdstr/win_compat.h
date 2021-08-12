@@ -1,7 +1,7 @@
 #ifdef _WIN32
     // I'm not making this up.
     #define WIN32_LEAN_AND_MEAN
-    // no point in seeing MSVC warnings in other MS's own damn code
+    // no point in seeing MSVC warnings in MS's own damn code
     #pragma warning(push, 0)
     #include <windows.h>
     #include <direct.h>
@@ -14,15 +14,23 @@
     #define S_ISDIR(mode)  (((mode) & S_IFMT) == S_IFDIR)
 
     // for compat_access()
+#ifndef X_OK
     #define X_OK 00
     #define R_OK 02
     #define W_OK 04
+#endif
 
-    #define ssize_t int
+    // same behavior as libuv, to allow including in either order:
+    #ifndef _SSIZE_T_
+    #ifndef _SSIZE_T_DEFINED
+    typedef intptr_t ssize_t;
+    # define SSIZE_MAX INTPTR_MAX
+    #endif
+    #endif
 
     void win_perror(void);
-    int compat_read(int fd, void *buf, size_t count);
-    int compat_write(int fd, const void *buf, size_t count);
+    ssize_t compat_read(int fd, void *buf, size_t count);
+    ssize_t compat_write(int fd, const void *buf, size_t count);
     int compat_open(const char* pathname, int flags, ...);
     int compat_chmod(const char* pathname, int mode);
     int compat_close(int fd);
@@ -32,12 +40,12 @@
     int compat_mkdir(const char* name, int mode);
     int compat_strerror_r(int errnum, char* buf, size_t buflen);
     int compat_pipe(int* pfds);
+    int compat_getpid(void);
 
     // use the "new" functions... with same prototypes and behaviors
     #define compat_rmdir _rmdir
     #define compat_lseek _lseek
     #define compat_dup _dup
-    #define compat_getpid _getpid
     #define compat_fsync _commit
     #define compat_tzset _tzset
     extern long timezone;

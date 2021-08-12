@@ -4,7 +4,7 @@
 #include "libdstr/libdstr.h"
 #include "libuvthread/libuvthread.h"
 
-#include "../fixed_lengths.h"
+#include "fixed_lengths.h"
 
 #include "cmp.h"
 #include "ssl_errors.h"

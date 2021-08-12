@@ -7,13 +7,14 @@
 #include <fcntl.h>
 #include <stdint.h>
 #include <stdarg.h>
+#include <process.h>
 
 #include <sys/stat.h>
 
 
 #include "libdstr.h"
 
-// no point in seeing MSVC warnings in other MS's own damn code
+// no point in seeing MSVC warnings in MS's own damn code
 #pragma warning(push, 0)
 #include <share.h>
 #pragma warning(pop)
@@ -31,14 +32,14 @@ void win_perror(void){
 
 FILE* compat_fopen(const char* pathname, const char* mode);
 
-int compat_read(int fd, void *buf, size_t count){
+ssize_t compat_read(int fd, void *buf, size_t count){
     unsigned int uicount = (unsigned int)MIN(UINT_MAX, count);
-    return _read(fd, buf, uicount);
+    return (ssize_t)_read(fd, buf, uicount);
 }
 
-int compat_write(int fd, const void *buf, size_t count){
+ssize_t compat_write(int fd, const void *buf, size_t count){
     unsigned int uicount = (unsigned int)MIN(UINT_MAX, count);
-    return _write(fd, buf, uicount);
+    return (ssize_t)_write(fd, buf, uicount);
 }
 
 int compat_open(const char* pathname, int flags, ...){
@@ -132,6 +133,11 @@ int compat_strerror_r(int errnum, char* buf, size_t buflen){
 int compat_pipe(int* pfds){
     // https://docs.microsoft.com/en-us/cpp/c-runtime-library/reference/pipe
     return _pipe(pfds, 2, _O_BINARY);
+}
+
+int compat_getpid(void){
+    // this is in a separate function to reduce global includes (process.h)
+    return _getpid();
 }
 
 #else // not _WIN32

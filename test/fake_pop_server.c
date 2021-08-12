@@ -23,8 +23,8 @@ static pthread_mutex_t fps_mutex;
 static pthread_cond_t  fps_cond;
 
 // easy way to return value from a thread
-static derr_t thread_error = E_OK;
-static derr_t test_error = E_OK;
+static derr_t thread_error = {0};
+static derr_t test_error = {0};
 
 static bool keep_going = true;
 

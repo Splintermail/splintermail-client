@@ -10,7 +10,7 @@ static derr_t orig_something(void){
     ORIG(&e, E_VALUE, "generated error");
 }
 
-// a function that propagates somethign that always fails
+// a function that propagates something that always fails
 static derr_t prop_something(void){
     derr_t e = E_OK;
     PROP(&e, orig_something());

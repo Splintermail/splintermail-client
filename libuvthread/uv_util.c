@@ -22,23 +22,23 @@ derr_type_t fmthook_uv_error(dstr_t* out, const void* arg){
     return E_NONE;
 }
 
-int uv_cancel_work(uv_work_t *work){
+int duv_cancel_work(uv_work_t *work){
     return uv_cancel((uv_req_t*)work);
 }
 
-void uv_async_close(uv_async_t* async, uv_close_cb close_cb){
+void duv_async_close(uv_async_t* async, uv_close_cb close_cb){
     uv_close((uv_handle_t*)async, close_cb);
 }
 
-void uv_timer_close(uv_timer_t* timer, uv_close_cb close_cb){
+void duv_timer_close(uv_timer_t* timer, uv_close_cb close_cb){
     uv_close((uv_handle_t*)timer, close_cb);
 }
 
-void uv_udp_close(uv_udp_t* udp, uv_close_cb close_cb){
+void duv_udp_close(uv_udp_t* udp, uv_close_cb close_cb){
     uv_close((uv_handle_t*)udp, close_cb);
 }
 
-int uv_udp_bind_sockaddr_in(
+int duv_udp_bind_sockaddr_in(
     uv_udp_t *udp, struct sockaddr_in *sai, unsigned int flags
 ){
     return uv_udp_bind(udp, (struct sockaddr*)sai, flags);
@@ -116,7 +116,7 @@ void async_handle_close_cb(uv_handle_t *handle){
 }
 
 
-derr_t uv_util_mutex_init(uv_mutex_t *mutex){
+derr_t duv_mutex_init(uv_mutex_t *mutex){
     derr_t e = E_OK;
     int ret = uv_mutex_init(mutex);
     if(ret < 0){

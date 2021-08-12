@@ -57,7 +57,7 @@ static derr_t search_headers(
         dstr_t hname = dstr_from_off(hdr->name);
         if(dstr_icmp2(hname, name) == 0){
             // is the search key present in the header value?
-            dstr_t searchable;
+            dstr_t searchable = {0};
             switch(hdr->type){
                 case IMF_HDR_UNSTRUCT:
                     searchable = dstr_from_off(hdr->arg.unstruct);

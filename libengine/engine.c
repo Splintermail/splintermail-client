@@ -36,6 +36,9 @@ derr_t event_pool_init(queue_t *pool, size_t nevents,
         *ev = (event_t){0};
         event_prep(ev, returner, returner_arg);
         // allocate dstr_t
+        /* Note: there is a cast from size_t -> uint64 in loop.c::unwrap_write,
+           which is made safe by this buffer size being hard-coded to a safe
+           size */
         PROP_GO(&e, dstr_new(&ev->buffer, 4096), fail_ev);
         // append to list
         queue_append(pool, &ev->link);

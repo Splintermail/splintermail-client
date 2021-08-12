@@ -3,6 +3,7 @@
    but would require using the openssl binary and a fork/exec, which is not
    cross-platform. */
 
+#define HAVE_STRUCT_TIMESPEC
 #include <pthread.h>
 
 #include <libdstr/libdstr.h>

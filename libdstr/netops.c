@@ -3,6 +3,9 @@
 
 #include "libdstr.h"
 
+#ifndef _WIN32
+#include <sys/un.h>
+
 derr_t dsock(int domain, int type, int protocol, int *fd){
     derr_t e = E_OK;
 
@@ -14,9 +17,6 @@ derr_t dsock(int domain, int type, int protocol, int *fd){
 
     return e;
 }
-
-#ifndef _WIN32
-#include <sys/un.h>
 
 static derr_t dsockaddr_un(
     const dstr_t *path,

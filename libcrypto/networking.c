@@ -1,3 +1,5 @@
+#include "libcrypto.h"
+
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -9,7 +11,6 @@
 #include <openssl/err.h>
 #include <openssl/opensslv.h>
 
-#include "libcrypto.h"
 
 
 // forward declaration of function only exposed to tests
@@ -566,7 +567,7 @@ derr_t ssl_context_load_from_os(ssl_context_t* ctx){
 
     cu_x:
         X509_free(x);
-        if(error) goto cu_store;
+        if(is_error(e)) goto cu_store;
     }
 
     // now add store to the context

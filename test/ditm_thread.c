@@ -14,9 +14,9 @@
 
 
 // if the thread fails
-static derr_t thread_error = E_OK;
+static derr_t thread_error = {0};
 // the result of just one test
-static derr_t test_error = E_OK;
+static derr_t test_error = {0};
 
 // path to where the test files can be found
 extern const char* g_test_files;

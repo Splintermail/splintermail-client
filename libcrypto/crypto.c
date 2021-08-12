@@ -1290,16 +1290,16 @@ derr_t keyshare_add_key(keyshare_t *keyshare, const keypair_t *kp){
     // pass out all the copies
     LINK_FOR_EACH(key_listener, &keyshare->listeners, key_listener_i, link){
         link = link_list_pop_first(&copies);
-        keypair_t *kp = CONTAINER_OF(link, keypair_t, link);
-        key_listener->add(key_listener, kp);
+        keypair_t *_kp = CONTAINER_OF(link, keypair_t, link);
+        key_listener->add(key_listener, _kp);
     }
 
     return e;
 
 fail:
     while((link = link_list_pop_first(&copies))){
-        keypair_t *kp = CONTAINER_OF(link, keypair_t, link);
-        keypair_free(&kp);
+        keypair_t *_kp = CONTAINER_OF(link, keypair_t, link);
+        keypair_free(&_kp);
     }
     keypair_free(&ours);
     return e;

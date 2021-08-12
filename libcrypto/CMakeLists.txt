@@ -49,7 +49,12 @@ add_crypto("")
 
 # cmp.c should not use any compiler optimizations to make absolutely sure it
 # is constant time.
+if(WIN32)
+source_compile_options(cmp.c -U_FORTIFY_SOURCE /Od)
+else()
 source_compile_options(cmp.c -U_FORTIFY_SOURCE -O0)
+endif()
+
 
 # Uncomment to view the assember output so you can verify constant time.
 # (probably just build libcrypto_noasan and check cmp.s)
