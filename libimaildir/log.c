@@ -275,8 +275,8 @@ derr_t parse_value(
     unsigned int uid_dn;
     PROP(&e, dstr_tou(&d_uid_dn, &uid_dn, 10) );
 
-    unsigned long modseq;
-    PROP(&e, dstr_toul(&d_modseq, &modseq, 10) );
+    uint64_t modseq;
+    PROP(&e, dstr_tou64(&d_modseq, &modseq, 10) );
 
     // check if this uid was expunged or still exists
     if(d_state.len != 1){

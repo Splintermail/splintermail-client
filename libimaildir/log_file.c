@@ -21,7 +21,7 @@ typedef struct {
     // numeric values, cached in memory
     unsigned int uidvld_up;
     unsigned int uidvld_dn;
-    unsigned long himodseq_up;
+    uint64_t himodseq_up;
 } log_t;
 DEF_CONTAINER_OF(log_t, iface, maildir_log_i)
 
@@ -188,12 +188,12 @@ static derr_t set_uidvlds(
 }
 
 // the highest modseq we have synced from above, or 1 if we've seen nothing
-static unsigned long get_himodseq_up(maildir_log_i *iface){
+static uint64_t get_himodseq_up(maildir_log_i *iface){
     log_t *log = CONTAINER_OF(iface, log_t, iface);
     return log->himodseq_up;
 }
 
-static derr_t set_himodseq_up(maildir_log_i *iface, unsigned long himodseq_up){
+static derr_t set_himodseq_up(maildir_log_i *iface, uint64_t himodseq_up){
     derr_t e = E_OK;
     log_t *log = CONTAINER_OF(iface, log_t, iface);
 
@@ -415,7 +415,7 @@ static derr_t read_all_keys(
             case LOG_KEY_HIMODSEQUP:
                 if(log->himodseq_up > 0) log->updates++;
                 // store the himodseq_up value in memory
-                PROP(&e, dstr_toul(&val, &log->himodseq_up, 10) );
+                PROP(&e, dstr_tou64(&val, &log->himodseq_up, 10) );
                 break;
 
             case LOG_KEY_MSG:

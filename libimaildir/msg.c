@@ -4,7 +4,7 @@
 
 derr_t msg_new(msg_t **out, msg_key_t key, unsigned int uid_dn,
         msg_state_e state, imap_time_t intdate, msg_flags_t flags,
-        unsigned long modseq){
+        uint64_t modseq){
     derr_t e = E_OK;
 
     // allocate the new msg
@@ -103,7 +103,7 @@ derr_t msg_expunge_new(
     msg_key_t key,
     unsigned int uid_dn,
     msg_expunge_state_e state,
-    unsigned long modseq
+    uint64_t modseq
 ){
     derr_t e = E_OK;
     *out = NULL;

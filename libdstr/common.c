@@ -5,6 +5,7 @@
 #include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
+#include <inttypes.h>
 
 #include "libdstr.h"
 
@@ -438,7 +439,7 @@ derr_t dstr_toull(const dstr_t* in, unsigned long long* out, int base){
     unsigned long long result = strtoull(temp.data, &endptr, base);
     // check for error
     if(errno){
-        TRACE(&e, "srtoll(%x): %x\n", FD(in), FE(&errno));
+        TRACE(&e, "srtoull(%x): %x\n", FD(in), FE(&errno));
         ORIG(&e, E_PARAM, "invalid number string");
     }
     // make sure everything was parsed
@@ -448,6 +449,41 @@ derr_t dstr_toull(const dstr_t* in, unsigned long long* out, int base){
     }
     // return value
     *out = result;
+    return e;
+}
+derr_t dstr_tou64(const dstr_t* in, uint64_t* out, int base){
+    derr_t e = E_OK;
+    // copy the version into a null-terminated string to read into atof()
+    DSTR_VAR(temp, 128);
+    derr_t e2 = dstr_copy(in, &temp);
+    CATCH(e2, E_ANY){
+        RETHROW(&e, &e2, E_PARAM);
+    }
+    e2 = dstr_null_terminate(&temp);
+    CATCH(e2, E_ANY){
+        RETHROW(&e, &e2, E_PARAM);
+    }
+    // now parse
+    char* endptr;
+    errno = 0;
+    uintmax_t result = strtoumax(temp.data, &endptr, base);
+    // check for error
+    if(errno){
+        TRACE(&e, "srtoull(%x): %x\n", FD(in), FE(&errno));
+        ORIG(&e, E_PARAM, "invalid number string");
+    }
+    // make sure everything was parsed
+    if(endptr != &temp.data[temp.len]){
+        TRACE(&e, "input was \"%x\"\n", FD(in));
+        ORIG(&e, E_PARAM, "invalid number string");
+    }
+    // check bounds
+    if(result > UINT64_MAX){
+        TRACE(&e, "input was \"%x\"\n", FD(in));
+        ORIG(&e, E_PARAM, "number out of range");
+    }
+    // return value
+    *out = (uint64_t)result;
     return e;
 }
 derr_t dstr_tof(const dstr_t* in, float* out){

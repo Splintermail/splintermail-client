@@ -8,7 +8,7 @@ static unsigned int deliv_id_ver = 1;
    validation function */
 derr_t maildir_name_parse(
     const dstr_t *name,
-    unsigned long *epoch,
+    uint64_t *epoch,
     msg_key_t *key,
     size_t *len,
     dstr_t *host,
@@ -106,8 +106,8 @@ derr_t maildir_name_parse(
     }
 
     // parse epoch
-    unsigned long temp_epoch;
-    PROP(&e, dstr_toul(&minor_tokens.data[0], &temp_epoch, 10) );
+    uint64_t temp_epoch;
+    PROP(&e, dstr_tou64(&minor_tokens.data[0], &temp_epoch, 10) );
     if(epoch != NULL) *epoch = temp_epoch;
 
     // parse uid_up/uid_local
@@ -168,7 +168,7 @@ derr_t maildir_name_mod_hostname(const dstr_t* host, dstr_t *out){
 // info and flags are allowed to be NULL, but not host
 derr_t maildir_name_write(
     dstr_t *out,
-    unsigned long epoch,
+    uint64_t epoch,
     msg_key_t key,
     size_t len,
     const dstr_t *host,

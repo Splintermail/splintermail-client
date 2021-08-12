@@ -213,7 +213,7 @@ static unsigned int next_uid_local(imaildir_t *m){
 }
 
 
-static unsigned long himodseq_dn(imaildir_t *m){
+static uint64_t himodseq_dn(imaildir_t *m){
     // TODO: handle noop modseq's that result from STORE-after-EXPUNGE's
     jsw_atrav_t trav;
     jsw_anode_t *node = jsw_atlast(&trav, &m->mods);
@@ -388,7 +388,7 @@ static derr_t handle_missing_file(imaildir_t *m, msg_t *msg,
             unsigned int uid_dn = msg->uid_dn;
 
             // no modseq until expunge is PUSHED
-            unsigned long modseq = 0;
+            uint64_t modseq = 0;
 
             // create new unpushed expunge, it will be pushed later by an up_t
             msg_expunge_state_e state = MSG_EXPUNGE_UNPUSHED;
@@ -706,7 +706,7 @@ void imaildir_forceclose(imaildir_t *m){
 
 static void promote_up_to_primary(imaildir_t *m, up_t *up){
     unsigned int uidvld_up = m->log->get_uidvld_up(m->log);
-    unsigned long himodseq_up = m->log->get_himodseq_up(m->log);
+    uint64_t himodseq_up = m->log->get_himodseq_up(m->log);
     bool examine = !m->nwriters;
     up_imaildir_select(up, m->name, uidvld_up, himodseq_up, examine);
 }
@@ -903,7 +903,7 @@ derr_t imaildir_up_check_uidvld_up(imaildir_t *m, unsigned int uidvld_up){
 }
 
 // this is for the himodseq when we sync from the server
-derr_t imaildir_up_set_himodseq_up(imaildir_t *m, unsigned long himodseq){
+derr_t imaildir_up_set_himodseq_up(imaildir_t *m, uint64_t himodseq){
     derr_t e = E_OK;
     PROP(&e, m->log->set_himodseq_up(m->log, himodseq) );
     return e;
@@ -942,7 +942,7 @@ derr_t imaildir_up_new_msg(imaildir_t *m, unsigned int uid_up,
     unsigned int uid_dn = 0;
 
     // modseq = 0 unti lafter we download the message
-    long unsigned int modseq = 0;
+    uint64_t modseq = 0;
 
     PROP(&e,
         msg_new(&msg, KEY_UP(uid_up), uid_dn, state, intdate, flags, modseq)
@@ -978,7 +978,7 @@ static derr_t update_msg_flags(imaildir_t *m, msg_t *msg, msg_flags_t flags){
     }
 
     // get the next highest modseq
-    unsigned long modseq = himodseq_dn(m) + 1;
+    uint64_t modseq = himodseq_dn(m) + 1;
 
     // remove from mods, if it is there
     if(msg->mod.modseq){
@@ -1034,7 +1034,7 @@ static derr_t place_file_fill_msg(imaildir_t *m, const string_builder_t *path,
         tloc = ((time_t) 0);
     }
 
-    unsigned long epoch = (unsigned long)tloc;
+    uint64_t epoch = (uint64_t)tloc;
 
     // figure the new path
     DSTR_VAR(cur_name, 255);
@@ -2093,7 +2093,7 @@ derr_t imaildir_add_local_file(
     /* write the UNFILLED msg to the log; the loading logic will puke if we put
        the file in place and crash without having written the metadata first */
     unsigned int uid_dn = 0;
-    unsigned long modseq = 0;
+    uint64_t modseq = 0;
     msg_state_e state = MSG_UNFILLED;
     PROP_GO(&e,
         msg_new(&msg, key, uid_dn, state, intdate, flags, modseq),

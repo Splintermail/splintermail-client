@@ -8,7 +8,7 @@ typedef enum {
 
 typedef struct {
     msg_mod_type_e type;
-    unsigned long modseq;
+    uint64_t modseq;
     // for storage from within the imaildir_t
     jsw_anode_t node;
 } msg_mod_t;
@@ -199,7 +199,7 @@ DEF_CONTAINER_OF(update_t, link, link_t)
 
 derr_t msg_new(msg_t **out, msg_key_t key, unsigned int uid_dn,
         msg_state_e state, imap_time_t intdate, msg_flags_t flags,
-        unsigned long modseq);
+        uint64_t modseq);
 void msg_free(msg_t **msg);
 
 // (makes a copy of filename)
@@ -219,7 +219,7 @@ derr_t msg_expunge_new(
     msg_key_t key,
     unsigned int uid_dn,
     msg_expunge_state_e state,
-    unsigned long modseq
+    uint64_t modseq
 );
 void msg_expunge_free(msg_expunge_t **expunge);
 

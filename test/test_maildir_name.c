@@ -25,7 +25,7 @@ static derr_t test_parse_valid(void){
 
     // uid_up example
     DSTR_STATIC(name, "0123456789.1,456,0,123.my.host.name:2,S");
-    unsigned long epoch, epoch_ans = 123456789;
+    uint64_t epoch, epoch_ans = 123456789;
     size_t len, len_ans = 123;
     msg_key_t key, key_ans = KEY_UP(456);
     DSTR_VAR(host, 32);
@@ -33,8 +33,9 @@ static derr_t test_parse_valid(void){
     DSTR_VAR(info, 32);
     DSTR_STATIC(info_ans, "2,S");
 
-    PROP(&e, maildir_name_parse(&name, &epoch, &key, &len, &host,
-                &info) );
+    PROP(&e,
+        maildir_name_parse(&name, &epoch, &key, &len, &host, &info)
+    );
 
     EXP_VS_GOT_SIMPLE(epoch_ans, epoch, FU);
     EXP_VS_GOT_SIMPLE(key.uid_up, key_ans.uid_up, FU);

@@ -1888,8 +1888,8 @@ num_str: NUM             { $$ = ie_dstr_new(E, p->token, KEEP_RAW); }
 
 num: num_str[n] { PARSE_NUM($n, dstr_tou, &$$); };
 nznum: num_str[n] { PARSE_NUM($n, dstr_tou, &$$); NZ($$); };
-modseqnum: num_str[n] { PARSE_NUM($n, dstr_toul, &$$); };
-nzmodseqnum: num_str[n] { PARSE_NUM($n, dstr_toul, &$$); NZ($$); };
+modseqnum: num_str[n] { PARSE_NUM($n, dstr_tou64, &$$); };
+nzmodseqnum: num_str[n] { PARSE_NUM($n, dstr_tou64, &$$); NZ($$); };
 
 seq_spec: seq_num[n]                  { $$ = ie_seq_set_new(E, $n, $n); }
         | seq_num[n1] ':' seq_num[n2] { $$ = ie_seq_set_new(E, $n1, $n2); }

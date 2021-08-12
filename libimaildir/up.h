@@ -80,7 +80,7 @@ void up_imaildir_select(
     up_t *up,
     const dstr_t *name,
     unsigned int uidvld_up,
-    unsigned long himodseq_up,
+    uint64_t himodseq_up,
     bool examine
 );
 void up_imaildir_relay_cmd(up_t *up, imap_cmd_t *cmd, imap_cmd_cb_t *cb);
@@ -124,7 +124,7 @@ struct up_t {
         bool examine;
         const dstr_t *name;
         unsigned int uidvld_up;
-        unsigned long himodseq_up;
+        uint64_t himodseq_up;
     } select;
 
     struct {
@@ -161,7 +161,7 @@ struct up_t {
         bool needed;
         bool examine;
         unsigned int uidvld_up;
-        unsigned long himodseq_up;
+        uint64_t himodseq_up;
 
         // delayed relays; if relays arrive before we
         link_t cmds;  // imap_cmd_t->link

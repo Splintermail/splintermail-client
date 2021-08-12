@@ -234,7 +234,7 @@ static derr_t parse_and_register(const char* base, const dstr_t* fname,
 
     // the first field is the length, the second field is the UID
     size_t length;
-    e2 = dstr_toul(&fields.data[0], &length, 10);
+    e2 = dstr_tosize(&fields.data[0], &length, 10);
     CATCH(e2, E_PARAM){
         // not a number string
         DROP_VAR(&e2);

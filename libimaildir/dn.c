@@ -467,7 +467,7 @@ static derr_t send_search_resp(dn_t *dn, ie_nums_t *nums){
 
     // TODO: support modseq here
     bool modseq_present = false;
-    unsigned long modseqnum = 0;
+    uint64_t modseqnum = 0;
     ie_search_resp_t *search = ie_search_resp_new(&e, nums, modseq_present,
             modseqnum);
     imap_resp_arg_t arg = {.search=search};

@@ -65,21 +65,21 @@ void imap_cmd_cb_free(imap_cmd_cb_t *cb){
 
 /* himdodeq_calc_t */
 
-void hmsc_prep(himodseq_calc_t *hmsc, unsigned long starting_val){
+void hmsc_prep(himodseq_calc_t *hmsc, uint64_t starting_val){
     *hmsc = (himodseq_calc_t){
         .now = starting_val,
     };
 }
 
-unsigned long hmsc_now(himodseq_calc_t *hmsc){
+uint64_t hmsc_now(himodseq_calc_t *hmsc){
     return hmsc->now;
 }
 
-void hmsc_saw_ok_code(himodseq_calc_t *hmsc, unsigned long val){
+void hmsc_saw_ok_code(himodseq_calc_t *hmsc, uint64_t val){
     hmsc->from_ok_code = val;
 }
 
-void hmsc_saw_fetch(himodseq_calc_t *hmsc, unsigned long val){
+void hmsc_saw_fetch(himodseq_calc_t *hmsc, uint64_t val){
     // only keep it if it is higher
     hmsc->from_fetch = MAX(hmsc->from_fetch, val);
 }
@@ -90,7 +90,7 @@ void hmsc_invalidate_starting_val(himodseq_calc_t *hmsc){
 
 // gather whatever we saw since the last tagged response return if it changed
 bool hmsc_step(himodseq_calc_t *hmsc){
-    unsigned long old = hmsc->now;
+    uint64_t old = hmsc->now;
     if(hmsc->from_ok_code){
         hmsc->now = hmsc->from_ok_code;
     }else if(hmsc->from_fetch){

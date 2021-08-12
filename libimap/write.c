@@ -585,7 +585,7 @@ static derr_t nznum_skip_fill(skip_fill_t *sf, unsigned int num){
     return e;
 }
 
-static derr_t modseqnum_skip_fill(skip_fill_t *sf, unsigned long num){
+static derr_t modseqnum_skip_fill(skip_fill_t *sf, uint64_t num){
     derr_t e = E_OK;
     // 63-bit number; maximum value is 2^63 - 1
     if(num > 9223372036854775807UL){
@@ -597,7 +597,7 @@ static derr_t modseqnum_skip_fill(skip_fill_t *sf, unsigned long num){
     return e;
 }
 
-static derr_t nzmodseqnum_skip_fill(skip_fill_t *sf, unsigned long num){
+static derr_t nzmodseqnum_skip_fill(skip_fill_t *sf, uint64_t num){
     derr_t e = E_OK;
     if(!num){
         ORIG(&e, E_PARAM, "invalid zero in non-zero number");

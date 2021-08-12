@@ -262,8 +262,8 @@ struct maildir_log_i {
     );
 
     // the highest modseq we have synced from above, or 1 if we've seen nothing
-    unsigned long (*get_himodseq_up)(maildir_log_i*);
-    derr_t (*set_himodseq_up)(maildir_log_i*, unsigned long himodseq_up);
+    uint64_t (*get_himodseq_up)(maildir_log_i*);
+    derr_t (*set_himodseq_up)(maildir_log_i*, uint64_t himodseq_up);
 
     // store the up-to-date message
     derr_t (*update_msg)(maildir_log_i*, const msg_t *msg);
@@ -296,7 +296,7 @@ derr_t imaildir_up_get_unpushed_expunges(imaildir_t *m, ie_seq_set_t **out);
 
 derr_t imaildir_up_check_uidvld_up(imaildir_t *m, unsigned int uidvld_up);
 
-derr_t imaildir_up_set_himodseq_up(imaildir_t *m, unsigned long himodseq);
+derr_t imaildir_up_set_himodseq_up(imaildir_t *m, uint64_t himodseq);
 
 // return the msg if it exists and if it is expunged
 msg_t *imaildir_up_lookup_msg(imaildir_t *m, unsigned int uid_up,

@@ -83,7 +83,7 @@ void up_imaildir_select(
     up_t *up,
     const dstr_t *name,
     unsigned int uidvld_up,
-    unsigned long himodseq_up,
+    uint64_t himodseq_up,
     bool examine
 ){
     if(!up->select.ready){
@@ -296,7 +296,7 @@ static derr_t select_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
 static derr_t build_select(
     up_t *up,
     unsigned int uidvld_up,
-    unsigned long himodseq_up,
+    uint64_t himodseq_up,
     bool examine,
     imap_cmd_cb_call_f cb_fn,
     imap_cmd_t **cmd_out,
@@ -341,7 +341,7 @@ static derr_t build_select(
 }
 
 static derr_t send_select(up_t *up, unsigned int uidvld_up,
-        unsigned long himodseq_up, bool examine){
+        uint64_t himodseq_up, bool examine){
     derr_t e = E_OK;
 
     imap_cmd_t *cmd;
@@ -375,7 +375,7 @@ static derr_t reselect_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
 }
 
 static derr_t enqueue_reselect(up_t *up, unsigned int uidvld_up,
-        unsigned long himodseq_up, bool examine){
+        uint64_t himodseq_up, bool examine){
     derr_t e = E_OK;
 
     imap_cmd_t *cmd;

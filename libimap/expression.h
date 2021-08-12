@@ -39,7 +39,7 @@ typedef struct {
     unsigned int uidnext;
     unsigned int uidvld;
     unsigned int unseen;
-    unsigned long himodseq;
+    uint64_t himodseq;
 } ie_status_attr_resp_t;
 
 typedef struct {
@@ -82,7 +82,7 @@ typedef union {
     int _condstore;
     struct {
         unsigned int uidvld;
-        unsigned long last_modseq;
+        uint64_t last_modseq;
         // list of known uids is optional; can't contain '*'
         ie_seq_set_t *known_uids;
         // seq-to-uid mapping is optional; neither can contain '*'
@@ -258,7 +258,7 @@ typedef struct {
     // can be NULL
     ie_search_modseq_ext_t *ext;
     // can be zero
-    unsigned long modseq;
+    uint64_t modseq;
 } ie_search_modseq_t;
 
 union ie_search_param_t {
@@ -355,7 +355,7 @@ typedef enum {
 } ie_fetch_mod_type_t;
 
 typedef struct {
-    unsigned long chgsince;
+    uint64_t chgsince;
     // nothing for vanished
 } ie_fetch_mod_arg_t;
 
@@ -370,7 +370,7 @@ typedef enum {
 } ie_store_mod_type_t;
 
 typedef struct {
-    unsigned long unchgsince;
+    uint64_t unchgsince;
 } ie_store_mod_arg_t;
 
 typedef struct ie_store_mods_t {
@@ -440,7 +440,7 @@ typedef union {
     } copyuid;
 
     // CONDSTORE extensions
-    unsigned long himodseq;
+    uint64_t himodseq;
     ie_seq_set_t *modified;
 } ie_st_code_arg_t;
 
@@ -474,7 +474,7 @@ typedef struct {
     ie_dstr_t *rfc822_hdr;
     ie_dstr_t *rfc822_text;
     ie_nums_t *rfc822_size;
-    unsigned long modseq;
+    uint64_t modseq;
     ie_fetch_resp_extra_t *extras;
 } ie_fetch_resp_t;
 
@@ -680,7 +680,7 @@ typedef struct {
 typedef struct {
     ie_nums_t *nums;
     bool modseq_present;
-    unsigned long modseqnum;
+    uint64_t modseqnum;
 } ie_search_resp_t;
 
 typedef struct {
@@ -731,7 +731,7 @@ typedef union {
     ie_status_attr_resp_t status_attr_resp; // status attributes with args
     imap_time_t time;
     unsigned int num;
-    unsigned long modseqnum;
+    uint64_t modseqnum;
     char ch;
     int sign;
     bool boolean;
@@ -780,7 +780,7 @@ typedef union {
     // structures which only exist to simplify the bison grammar
     struct {
         unsigned int uidvld;
-        unsigned long last_modseq;
+        uint64_t last_modseq;
     } qresync_required;
     struct {
         // known "u"ids
@@ -975,7 +975,7 @@ ie_search_modseq_ext_t *ie_search_modseq_ext_copy(derr_t *e,
         const ie_search_modseq_ext_t *old);
 
 ie_search_key_t *ie_search_modseq(derr_t *e, ie_search_modseq_ext_t *ext,
-        unsigned long modseq);
+        uint64_t modseq);
 
 // fetch attr construction
 
@@ -1022,7 +1022,7 @@ ie_partial_t *ie_partial_copy(derr_t *e, const ie_partial_t *old);
 
 // store mod construction
 
-ie_store_mods_t *ie_store_mods_unchgsince(derr_t *e, unsigned long unchgsince);
+ie_store_mods_t *ie_store_mods_unchgsince(derr_t *e, uint64_t unchgsince);
 ie_store_mods_t *ie_store_mods_add(derr_t *e, ie_store_mods_t *list,
         ie_store_mods_t *mod);
 void ie_store_mods_free(ie_store_mods_t *mods);
@@ -1040,7 +1040,7 @@ ie_st_code_t *ie_st_code_copy(derr_t *e, const ie_st_code_t *old);
 ie_status_attr_resp_t ie_status_attr_resp_new_32(derr_t *e,
         ie_status_attr_t attr, unsigned int n);
 ie_status_attr_resp_t ie_status_attr_resp_new_64(derr_t *e,
-        ie_status_attr_t attr, unsigned long n);
+        ie_status_attr_t attr, uint64_t n);
 ie_status_attr_resp_t ie_status_attr_resp_add(ie_status_attr_resp_t resp,
         ie_status_attr_resp_t new);
 
@@ -1070,7 +1070,7 @@ ie_fetch_resp_t *ie_fetch_resp_rfc822_text(derr_t *e, ie_fetch_resp_t *f,
 ie_fetch_resp_t *ie_fetch_resp_rfc822_size(derr_t *e, ie_fetch_resp_t *f,
         ie_nums_t *rfc_822size);
 ie_fetch_resp_t *ie_fetch_resp_modseq(derr_t *e, ie_fetch_resp_t *f,
-        unsigned long modseq);
+        uint64_t modseq);
 ie_fetch_resp_t *ie_fetch_resp_add_extra(derr_t *e, ie_fetch_resp_t *f,
         ie_fetch_resp_extra_t *extra);
 
@@ -1154,7 +1154,7 @@ void ie_status_resp_free(ie_status_resp_t *status);
 ie_status_resp_t *ie_status_resp_copy(derr_t *e, const ie_status_resp_t *old);
 
 ie_search_resp_t *ie_search_resp_new(derr_t *e, ie_nums_t *nums,
-        bool modseq_present, unsigned long modseqnum);
+        bool modseq_present, uint64_t modseqnum);
 void ie_search_resp_free(ie_search_resp_t *search);
 
 ie_vanished_resp_t *ie_vanished_resp_new(derr_t *e, bool earlier,

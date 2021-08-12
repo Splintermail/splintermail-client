@@ -2,7 +2,7 @@
    validation function */
 derr_t maildir_name_parse(
     const dstr_t *name,
-    unsigned long *epoch,
+    uint64_t *epoch,
     msg_key_t *key,
     size_t *len,
     dstr_t *host,
@@ -19,7 +19,7 @@ derr_t maildir_name_mod_hostname(const dstr_t* host, dstr_t *out);
 // info and flags are allowed to be NULL, but not host
 derr_t maildir_name_write(
     dstr_t *out,
-    unsigned long epoch,
+    uint64_t epoch,
     msg_key_t key,
     size_t len,
     const dstr_t *host,

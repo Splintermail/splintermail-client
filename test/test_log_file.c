@@ -229,7 +229,7 @@ static derr_t test_log_file(void){
     PROP_GO(&e,
         imaildir_log_open(&dirpath, &msgs, &expunged, &mods, &log),
     cu);
-    for(unsigned long i = nlines; i < 999; i++){
+    for(uint64_t i = nlines; i < 999; i++){
         PROP_GO(&e, log->set_himodseq_up(log, i), cu);
     }
     log->close(log);

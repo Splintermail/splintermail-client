@@ -96,18 +96,18 @@ void imap_cmd_cb_free(imap_cmd_cb_t *cb);
 
 typedef struct {
     // the current value (as of last tagged response)
-    unsigned long now;
+    uint64_t now;
     // first priority, if nonzero
-    unsigned long from_ok_code;
+    uint64_t from_ok_code;
     // second priority, if nonzero
-    unsigned long from_fetch;
+    uint64_t from_fetch;
 } himodseq_calc_t;
 
-void hmsc_prep(himodseq_calc_t *hmsc, unsigned long starting_val);
+void hmsc_prep(himodseq_calc_t *hmsc, uint64_t starting_val);
 
-unsigned long hmsc_now(himodseq_calc_t *hmsc);
-void hmsc_saw_ok_code(himodseq_calc_t *hmsc, unsigned long val);
-void hmsc_saw_fetch(himodseq_calc_t *hmsc, unsigned long val);
+uint64_t hmsc_now(himodseq_calc_t *hmsc);
+void hmsc_saw_ok_code(himodseq_calc_t *hmsc, uint64_t val);
+void hmsc_saw_fetch(himodseq_calc_t *hmsc, uint64_t val);
 
 // we found out the initial himodseq was never valid
 void hmsc_invalidate_starting_val(himodseq_calc_t *hmsc);

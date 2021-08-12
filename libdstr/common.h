@@ -375,6 +375,7 @@ derr_t dstr_tol(const dstr_t* in, long* out, int base);
 derr_t dstr_toul(const dstr_t* in, unsigned long* out, int base);
 derr_t dstr_toll(const dstr_t* in, long long* out, int base);
 derr_t dstr_toull(const dstr_t* in, unsigned long long* out, int base);
+derr_t dstr_tou64(const dstr_t* in, uint64_t* out, int base);
 derr_t dstr_tof(const dstr_t* in, float* out);
 derr_t dstr_tod(const dstr_t* in, double* out);
 derr_t dstr_told(const dstr_t* in, long double* out);

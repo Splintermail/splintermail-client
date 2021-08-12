@@ -1246,7 +1246,7 @@ ie_search_modseq_ext_t *ie_search_modseq_ext_copy(derr_t *e,
 }
 
 ie_search_key_t *ie_search_modseq(derr_t *e, ie_search_modseq_ext_t *ext,
-        unsigned long modseq){
+        uint64_t modseq){
     if(is_error(*e)) goto fail;
     NEW_SEARCH_KEY;
     s->type = IE_SEARCH_MODSEQ;
@@ -1645,7 +1645,7 @@ ie_partial_t *ie_partial_copy(derr_t *e, const ie_partial_t *old){
 
 // store mod construction
 
-ie_store_mods_t *ie_store_mods_unchgsince(derr_t *e, unsigned long unchgsince){
+ie_store_mods_t *ie_store_mods_unchgsince(derr_t *e, uint64_t unchgsince){
     if(is_error(*e)) goto fail;
 
     IE_MALLOC(e, ie_store_mods_t, mods, fail);
@@ -1844,7 +1844,7 @@ fail:
 }
 
 ie_status_attr_resp_t ie_status_attr_resp_new_64(derr_t *e,
-        ie_status_attr_t attr, unsigned long n){
+        ie_status_attr_t attr, uint64_t n){
     if(is_error(*e)) goto fail;
 
     ie_status_attr_resp_t retval = (ie_status_attr_resp_t){
@@ -2061,7 +2061,7 @@ fail:
 
 
 ie_fetch_resp_t *ie_fetch_resp_modseq(derr_t *e, ie_fetch_resp_t *f,
-        unsigned long modseq){
+        uint64_t modseq){
     if(is_error(*e)) goto fail;
 
     if(f->modseq != 0){
@@ -2728,7 +2728,7 @@ fail:
 }
 
 ie_search_resp_t *ie_search_resp_new(derr_t *e, ie_nums_t *nums,
-        bool modseq_present, unsigned long modseqnum){
+        bool modseq_present, uint64_t modseqnum){
     if(is_error(*e)) goto fail;
 
     IE_MALLOC(e, ie_search_resp_t, search, fail);
