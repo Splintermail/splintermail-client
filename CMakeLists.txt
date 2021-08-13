@@ -1,4 +1,31 @@
-cmake_minimum_required(VERSION 3.1.0)
+if(NOT WIN32)
+    cmake_minimum_required(VERSION 3.1.0)
+else()
+    # Windows + cmake pukes if you can't use target_link_options (3.13.0), and
+    # also CMP0091 is really nice (3.15.0).  Plus windows users would have to
+    # install CMake manually, so there's no old package managers to support.
+    cmake_minimum_required(VERSION 3.15.0)
+
+    # statically link against Visual C++ library
+    # (because vc_redist distributing is insanity, and this "just works")
+    cmake_policy(SET CMP0091 NEW)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+
+    # Strip the /MDd, /MD, and /W3 flags, which we always override.
+    foreach(flag_var CMAKE_C_FLAGS CMAKE_C_FLAGS_DEBUG CMAKE_C_FLAGS_RELEASE
+            CMAKE_C_FLAGS_MINSIZEREL CMAKE_C_FLAGS_RELWITHDEBINFO)
+        if(${flag_var} MATCHES "/MDd")
+            string(REGEX REPLACE "/MDd" "" ${flag_var} "${${flag_var}}")
+        endif()
+        if(${flag_var} MATCHES "/MD")
+            string(REGEX REPLACE "/MD" "" ${flag_var} "${${flag_var}}")
+        endif()
+        if(${flag_var} MATCHES "/W3")
+            string(REGEX REPLACE "/W3" "" ${flag_var} "${${flag_var}}")
+        endif()
+    endforeach()
+endif()
+
 project(
     splintermail
     LANGUAGES C
@@ -37,7 +64,23 @@ endif()
 if("${BUILD_STATIC}")
     set(OPENSSL_USE_STATIC_LIBS TRUE)
 endif()
+if(NOT "${OPENSSL_ROOT_DIR}" STREQUAL "")
+    # prepare to validate that find_package respected OPENSSL_ROOT_DIR
+    # otherwise sometimes random builds laying around will get picked up
+    get_filename_component(requested_ssl "${OPENSSL_ROOT_DIR}" ABSOLUTE)
+endif()
 find_package(OpenSSL REQUIRED)
+if(NOT "${requested_ssl}" STREQUAL "")
+    get_filename_component(chosen_ssl "${OPENSSL_INCLUDE_DIR}" ABSOLUTE)
+    string(FIND "${chosen_ssl}" "${requested_ssl}" relpath_idx)
+    if(NOT "${relpath_idx}" EQUAL "0")
+        message("for source file: ${final_sourcefile}")
+        message("chosen OPENSSL_ROOT is: ${chosen_ssl}")
+        message("requested OPENSSL_ROOT is: ${requested_ssl}")
+        message( FATAL_ERROR "find_package did not respect OPENSSL_ROOT_DIR")
+    endif()
+endif()
+
 
 function(default_compile_options tgt allow_asan)
     # compiler-specific flags
@@ -135,8 +178,10 @@ function(default_compile_options tgt allow_asan)
     elseif("${CMAKE_C_COMPILER_ID}" STREQUAL "MSVC")
         # flags for MVSC (VS 2017)
         # see https://docs.microsoft.com/en-us/cpp/error-messages/compiler-warnings
-        target_compile_options("${tgt}" PRIVATE "/W4")     # treat warnings as errors
-        target_compile_options("${tgt}" PRIVATE "/Wall")
+        target_compile_options("${tgt}" PRIVATE "/W4") # show all the warnings
+        target_compile_options("${tgt}" PRIVATE "/Wall") # no, really, show all of them
+        target_compile_options("${tgt}" PRIVATE "/WX") # warnings are errors
+        target_compile_options("${tgt}" PRIVATE "/wd4214") # ANSI compliance: non-int bitfields
         target_compile_options("${tgt}" PRIVATE "/wd4221") # ANSI compliance
         target_compile_options("${tgt}" PRIVATE "/wd4204") # ANSI compliance
         target_compile_options("${tgt}" PRIVATE "/wd4820") # byte padded structs
@@ -150,25 +195,19 @@ function(default_compile_options tgt allow_asan)
         target_compile_options("${tgt}" PRIVATE "/wd4738") # float stored in mem not reg
         target_compile_options("${tgt}" PRIVATE "/wd4738") # float stored in mem not reg
         target_compile_options("${tgt}" PRIVATE "/wd4456") # local vars shadow prev vars
+        target_compile_options("${tgt}" PRIVATE "/wd5031") # bad #pragma warning(push)
+        target_compile_options("${tgt}" PRIVATE "/wd5032") # bad #pragma warning(pop)
         # These "unsafe" functions are just standard C functions
         target_compile_options("${tgt}" PRIVATE "/D_CRT_SECURE_NO_WARNINGS")
-        target_compile_options("${tgt}" PRIVATE "/O2")
         # add some compiler hardening flags
         target_compile_options("${tgt}" PRIVATE "/sdl")
         target_compile_options("${tgt}" PRIVATE "/GS")
         target_compile_options("${tgt}" PRIVATE "/DYNAMICBASE")
         target_compile_options("${tgt}" PRIVATE "/guard:cf")
-        target_link_libraries("${tgt}" PRIVATE "/DYNAMICBASE")
-        target_link_libraries("${tgt}" PRIVATE "/GUARD:CF")
-        target_link_libraries("${tgt}" PRIVATE "/NXCOMPAT")
-        # statically link against Visual C++ library
-        # (because vc_redist distributing is insanity, and this "just works")
-        foreach(flag_var CMAKE_C_FLAGS CMAKE_C_FLAGS_DEBUG CMAKE_C_FLAGS_RELEASE
-                CMAKE_C_FLAGS_MINSIZEREL CMAKE_C_FLAGS_RELWITHDEBINFO)
-           if(${flag_var} MATCHES "/MD")
-              string(REGEX REPLACE "/MD" "/MT" ${flag_var} "${${flag_var}}")
-           endif(${flag_var} MATCHES "/MD")
-        endforeach(flag_var)
+        target_link_options("${tgt}" PRIVATE "/DYNAMICBASE")
+        target_link_options("${tgt}" PRIVATE "/GUARD:CF")
+        target_link_options("${tgt}" PRIVATE "/NXCOMPAT")
+
     else()
         message(FATAL_ERROR "compiler not detected...")
     endif()
@@ -217,52 +256,10 @@ function(define_file_logname_for_target targetname)
     endforeach()
 endfunction()
 
-# tgt object depends on external library (propagate linking and includes)
-function(obj_depend_lib tgt includes libs)
-    if(NOT "${includes}" STREQUAL "")
-        # compile object with new includes
-        target_include_directories("${tgt}_o" PUBLIC ${includes})
-        # compile dependent objects with new includes
-        target_include_directories("${tgt}" INTERFACE ${includes})
-    endif()
-    if(NOT "${libs}" STREQUAL "")
-        # link dependent objects with new libraries
-        target_link_libraries("${tgt}" INTERFACE ${libs})
-    endif()
-endfunction()
-
-# tgt object depends on another object (propagate linking and includes)
-function(obj_depend_obj tgt)
-    foreach(dep ${ARGN})
-        get_target_property(incl "${dep}" INTERFACE_INCLUDE_DIRECTORIES)
-        if(NOT "${incl}" MATCHES ".*NOTFOUND")
-            # if the INTERFACE library has an include, we need it to compile
-            target_include_directories("${tgt}_o" PUBLIC ${incl})
-            target_include_directories("${tgt}" INTERFACE ${incl})
-        endif()
-    endforeach()
-    target_link_libraries("${tgt}" INTERFACE ${ARGN})
-endfunction()
-
-# for adding an interface library, which might be generated
-# (extra arguments become extra file dependencies)
-function(add_obj_tgt file tgt)
-    # create the object library itself
-    add_library("${tgt}_o" OBJECT "${file}")
-    default_compile_options("${tgt}_o" TRUE)
-    define_file_logname_for_target("${tgt}_o")
-    # create an interface library whose dependents will link against the object
-    add_library("${tgt}" INTERFACE)
-    target_sources("${tgt}" INTERFACE $<TARGET_OBJECTS:${tgt}_o> ${ARGN})
-endfunction()
-
 # always include the source directory (for compiling generated .c files)
 include_directories("${PROJECT_SOURCE_DIR}")
 # always include the binary directory (for including generated .h files)
 include_directories("${PROJECT_BINARY_DIR}")
-
-# add_library("${tgt}" INTERFACE)
-# target_sources("${tgt}" INTERFACE $<TARGET_OBJECTS:${tgt}_o>)
 
 add_subdirectory(libdstr)
 add_subdirectory(libuvthread)
@@ -331,7 +328,7 @@ elseif(WIN32)
     # add versioning to splintermail.exe
     target_sources(splintermail INTERFACE "${PROJECT_BINARY_DIR}/version.rc")
     # additional dependencies for windows
-    obj_depend_lib(ui "" shlwapi)
+    target_link_libraries(ui PUBLIC shlwapi)
 else()
     message(FATAL_ERROR "OS not detected")
 endif()
@@ -760,15 +757,15 @@ elseif(WIN32)
     preprocessed_copy("${keygen_src_in}" "${keygen_src_out}")
     add_executable(keygen "${keygen_src_out}")
     default_compile_options(keygen FALSE)
-    define_file_logname_for_target(keygen)
-    target_link_libraries(keygen PRIVATE fileops)
+    define_file_logname_for_source("${keygen_src_in}" "${keygen_src_out}")
+    target_link_libraries(keygen PRIVATE dstr)
     list(APPEND tgt_deps keygen)
 
     # rm_rf.exe (will be embedded in installer for uninstallation)
     add_executable(rm_rf "${supp_dir}/windows/rm_rf.c")
     default_compile_options(rm_rf FALSE)
     define_file_logname_for_target(rm_rf)
-    target_link_libraries(rm_rf PRIVATE fileops)
+    target_link_libraries(rm_rf PRIVATE dstr)
     list(APPEND tgt_deps rm_rf)
 
     # copy files into installer directory
