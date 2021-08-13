@@ -7,6 +7,10 @@ void *dmalloc(derr_t *e, size_t n);
 // found can be NULL if an empty string is the same to you as "not present"
 dstr_t dgetenv(const dstr_t varname, bool *found);
 
+// no option to not overwrite
+derr_t dsetenv(const dstr_t name, const dstr_t value);
+derr_t dunsetenv(const dstr_t name);
+
 // sets time to epoch time or raises an error
 derr_t dtime(time_t *time);
 

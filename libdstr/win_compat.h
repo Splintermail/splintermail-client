@@ -41,7 +41,6 @@
     #define compat_fsync _commit
 
     #define compat_environ _environ
-    #define compat_putenv _putenv
 
     // what sort of weird-ass magic is MSVC doing that this is required?
     /* it's like some sort of lazy-include, where if these appear as types
@@ -77,7 +76,6 @@
 
 
     #define compat_environ environ
-    #define compat_putenv putenv
 
     extern char **compat_environ;
 

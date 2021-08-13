@@ -19,18 +19,18 @@ static derr_t test_dgetenv(void){
     if(dummy.len)
         ORIG(&e, E_VALUE, "nonempty-return value when variable did not exist");
 
-    if(compat_putenv("DUMMY="))
-        ORIG(&e, E_VALUE, "failed to update environment");
+    PROP(&e, dsetenv(DSTR_LIT("DUMMY"), DSTR_LIT("")) );
 
+#ifndef _WIN32 // UNIX (windows putenv() unsets empty env vars)
     // variable is empty
     dummy = dgetenv(DSTR_LIT("DUMMY"), &found);
     if(!found)
         ORIG(&e, E_VALUE, "found=false when variable did exist");
     if(dummy.len)
         ORIG(&e, E_VALUE, "nonempty-return value when variable was empty");
+#endif
 
-    if(compat_putenv("DUMMY=dummy"))
-        ORIG(&e, E_VALUE, "failed to update environment");
+    PROP(&e, dsetenv(DSTR_LIT("DUMMY"), DSTR_LIT("dummy")) );
 
     // variable is non-empty
     dummy = dgetenv(DSTR_LIT("DUMMY"), &found);
@@ -163,8 +163,7 @@ static derr_t test_extend_subproc_env(bool extend){
     derr_t e = E_OK;
 
     // set an environment variable
-    if(compat_putenv("DUMMY=dummy"))
-        ORIG(&e, E_VALUE, "failed to update environment");
+    PROP(&e, dsetenv(DSTR_LIT("DUMMY"), DSTR_LIT("dummy")) );
 
     pid_t pid;
     bool child;

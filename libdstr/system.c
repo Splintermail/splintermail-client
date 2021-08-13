@@ -44,6 +44,169 @@ dstr_t dgetenv(const dstr_t varname, bool *found){
     return (dstr_t){0};
 }
 
+derr_t dsetenv(const dstr_t name, const dstr_t value){
+#ifdef _WIN32 // WINDOWS
+
+    /* windows' putenv takes a copy of the string passed in, so in windows we
+       use putenv to set environment variables */
+    dstr_t heap = {0};
+
+    derr_t e = E_OK;
+
+    DSTR_VAR(stack, 256);
+    dstr_t* buf;
+
+    size_t len = name.len + 1 + value.len;
+    if(len < stack.size){
+        buf = &stack;
+    }else{
+        PROP_GO(&e, dstr_new(&heap, len), cu);
+        buf = &heap;
+    }
+
+    PROP_GO(&e, FMT(buf, "%x=%x", FD(&name), FD(&value)), cu);
+
+    int ret = _putenv(buf->data);
+    if(ret){
+        TRACE(&e, "putenv(\"%x=...\"): %x\n", FD_DBG(&name), FE(&errno));
+        ORIG_GO(&e, E_OS, "putenv failed", cu);
+    }
+
+cu:
+    dstr_free(&heap);
+    return e;
+
+#else // UNIX
+
+    /* unix's putenv would use the string right in the environ, which would be
+       crazy, so in unix we use setenv */
+    dstr_t heap_name = {0};
+    dstr_t heap_value = {0};
+
+    derr_t e = E_OK;
+
+    DSTR_VAR(stack_name, 256);
+    DSTR_VAR(stack_value, 256);
+
+    char *n, *v;
+
+    if(name.size > name.len && name.data[name.len] == '\0'){
+        // dstr is null-terminated already
+        n = name.data;
+    }else if(name.len < stack_name.size){
+        // dstr fits on the stack
+        PROP_GO(&e, dstr_append(&stack_name, &name), cu);
+        PROP_GO(&e, dstr_null_terminate(&stack_name), cu);
+        n = stack_name.data;
+    }else{
+        // dstr goes on the heap
+        PROP_GO(&e, dstr_new(&heap_name, name.len + 1), cu);
+        PROP_GO(&e, dstr_append(&stack_name, &name), cu);
+        PROP_GO(&e, dstr_null_terminate(&stack_name), cu);
+        n = heap_name.data;
+    }
+
+    if(value.size > value.len && value.data[value.len] == '\0'){
+        v = value.data;
+    }else if(value.len < stack_value.size){
+        PROP_GO(&e, dstr_append(&stack_value, &value), cu);
+        PROP_GO(&e, dstr_null_terminate(&stack_value), cu);
+        v = stack_value.data;
+    }else{
+        PROP_GO(&e, dstr_new(&heap_value, value.len + 1), cu);
+        PROP_GO(&e, dstr_append(&stack_value, &value), cu);
+        PROP_GO(&e, dstr_null_terminate(&stack_value), cu);
+        v = heap_value.data;
+    }
+
+    // always overwrite
+    int ret = setenv(n, v, 1);
+    if(ret){
+        TRACE(&e, "setenv(%x, ...): %x\n", FD_DBG(&name), FE(&errno));
+        ORIG_GO(&e, E_OS, "setenv failed", cu);
+    }
+
+cu:
+    dstr_free(&heap_name);
+    dstr_free(&heap_value);
+    return e;
+
+#endif
+}
+
+derr_t dunsetenv(const dstr_t name){
+#ifdef _WIN32 // WINDOWS
+
+    // windows uses putenv("varname=") to clear the environment
+    dstr_t heap = {0};
+
+    derr_t e = E_OK;
+
+    DSTR_VAR(stack, 256);
+    dstr_t* buf;
+
+    size_t len = name.len + 1;
+    if(len < stack.size){
+        buf = &stack;
+    }else{
+        PROP_GO(&e, dstr_new(&heap, len), cu);
+        buf = &heap;
+    }
+
+    PROP_GO(&e, FMT(buf, "%x=", FD(&name)), cu);
+
+    int ret = _putenv(buf->data);
+    if(ret){
+        TRACE(&e, "putenv(\"%x=\"): %x\n", FD_DBG(&name), FE(&errno));
+        ORIG_GO(&e, E_OS, "putenv failed", cu);
+    }
+
+cu:
+    dstr_free(&heap);
+    return e;
+
+#else // UNIX
+
+    /* unix's putenv would use the string right in the environ, which would be
+       crazy, so in unix we use setenv */
+    dstr_t heap_name = {0};
+
+    derr_t e = E_OK;
+
+    DSTR_VAR(stack_name, 256);
+
+    char *n;
+
+    if(name.size > name.len && name.data[name.len] == '\0'){
+        // dstr is null-terminated already
+        n = name.data;
+    }else if(name.len < stack_name.size){
+        // dstr fits on the stack
+        PROP_GO(&e, dstr_append(&stack_name, &name), cu);
+        PROP_GO(&e, dstr_null_terminate(&stack_name), cu);
+        n = stack_name.data;
+    }else{
+        // dstr goes on the heap
+        PROP_GO(&e, dstr_new(&heap_name, name.len + 1), cu);
+        PROP_GO(&e, dstr_append(&stack_name, &name), cu);
+        PROP_GO(&e, dstr_null_terminate(&stack_name), cu);
+        n = heap_name.data;
+    }
+
+    // always overwrite
+    int ret = unsetenv(n);
+    if(ret){
+        TRACE(&e, "unsetenv(%x): %x\n", FD_DBG(&name), FE(&errno));
+        ORIG_GO(&e, E_OS, "setenv failed", cu);
+    }
+
+cu:
+    dstr_free(&heap_name);
+    return e;
+
+#endif
+}
+
 derr_t dtime(time_t *out){
     derr_t e = E_OK;
 

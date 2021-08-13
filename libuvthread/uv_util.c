@@ -97,14 +97,9 @@ derr_t set_uv_threadpool_size(unsigned int min, unsigned int recommended){
     }
 
     // now set the environment variable
-    DSTR_VAR(str, 32);
+    DSTR_VAR(str, 64);
     PROP(&e, FMT(&str, "%x", FU(target_size)) );
-    int ret = setenv("UV_THREADPOOL_SIZE", str.data, true);
-    if(ret != 0){
-        TRACE(&e, "setenv: %x\n", FE(&errno));
-        ORIG(&e, E_OS, "unable to set UV_THREADPOOL_SIZE environment "
-                "variable");
-    }
+    PROP(&e, dsetenv(DSTR_LIT("UV_THREADPOOL_SIZE"), str) );
 
     return e;
 }
