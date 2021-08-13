@@ -71,13 +71,16 @@ static void do_ssl_read(tlse_data_t *td, event_t **read_out){
         ORIG_GO(&e, E_SSL, "unable to read after the TLS close_notify alert",
                 close_session);
     }
+    if((*read_out)->buffer.size > INT_MAX){
+        ORIG_GO(&e, E_INTERNAL, "buffer is way too big", close_session);
+    }
     // attempt an SSL_read()
-    size_t amnt_read;
-    int ret = SSL_read_ex(td->ssl, (*read_out)->buffer.data,
-                          (*read_out)->buffer.size, &amnt_read);
+    int ret = SSL_read(
+        td->ssl, (*read_out)->buffer.data, (int)(*read_out)->buffer.size
+    );
     // success means we pass the read downstream
-    if(ret == 1){
-        (*read_out)->buffer.len = amnt_read;
+    if(ret > 0){
+        (*read_out)->buffer.len = (size_t)ret;
         (*read_out)->ev_type = EV_READ;
         (*read_out)->session = td->session;
         td->ref_up(td->session, TLSE_REF_READ);
@@ -125,10 +128,13 @@ close_session:
 static void do_ssl_write(tlse_data_t *td){
     derr_t e = E_OK;
     // attempt an SSL_write
-    size_t written;
-    int ret = SSL_write_ex(td->ssl, td->write_in->buffer.data,
-                           td->write_in->buffer.len, &written);
-    if(ret != 1){
+    if(td->write_in->buffer.len > INT_MAX){
+        ORIG_GO(&e, E_INTERNAL, "buffer is way too big", close_session);
+    }
+    int ret = SSL_write(
+        td->ssl, td->write_in->buffer.data, (int)td->write_in->buffer.len
+    );
+    if(ret < 1){
         switch(SSL_get_error(td->ssl, ret)){
             case SSL_ERROR_WANT_READ:
                 // if we WANT_READ but we already got EOF that is an error
@@ -182,22 +188,18 @@ static void do_write_out(tlse_data_t *td, event_t **write_out){
     derr_t e = E_OK;
     tlse_t *tlse = td->tlse;
     // copy the bytes from the write BIO into the new write buffer
-    size_t amnt_read;
-    int ret = BIO_read_ex(td->rawout, (*write_out)->buffer.data,
-                          (*write_out)->buffer.size, &amnt_read);
-    if(ret != 1 || amnt_read == 0){
+    if((*write_out)->buffer.size > INT_MAX){
+        ORIG_GO(&e, E_INTERNAL, "buffer is way too big", fail);
+    }
+    int ret = BIO_read(
+        td->rawout, (*write_out)->buffer.data, (int)(*write_out)->buffer.size
+    );
+    if(ret < 1){
         trace_ssl_errors(&e);
-        TRACE_ORIG(&e, E_SSL, "reading from memory buffer failed");
-        td->session->close(td->session, e);
-        PASSED(e);
-        td->tls_state = TLS_STATE_CLOSED;
-        abandon_write_out(write_out);
-        *write_out = NULL;
-        td->tls_state = TLS_STATE_IDLE;
-        return;
+        ORIG_GO(&e, E_SSL, "reading from memory buffer failed", fail);
     }
     // store the length read from rawout
-    (*write_out)->buffer.len = amnt_read;
+    (*write_out)->buffer.len = (size_t)ret;
     // pass the write buffer along
     (*write_out)->ev_type = EV_WRITE;
     (*write_out)->session = td->session;
@@ -215,6 +217,16 @@ static void do_write_out(tlse_data_t *td, event_t **write_out){
     *write_out = NULL;
     // optimistically return to idle state; it might kick us back to wfewb
     td->tls_state = TLS_STATE_IDLE;
+    return;
+
+fail:
+    td->session->close(td->session, e);
+    PASSED(e);
+    td->tls_state = TLS_STATE_CLOSED;
+    abandon_write_out(write_out);
+    *write_out = NULL;
+    td->tls_state = TLS_STATE_IDLE;
+    return;
 }
 
 
@@ -280,14 +292,19 @@ static bool enter_idle(tlse_data_t *td, event_t **read_out){
             }
             if(td->read_in->buffer.len > 0){
                 // write input buffer to rawin
-                size_t written;
-                int ret = BIO_write_ex(td->rawin, td->read_in->buffer.data,
-                                       td->read_in->buffer.len, &written);
+                if(td->read_in->buffer.len > INT_MAX){
+                    ORIG_GO(&e, E_INTERNAL, "buffer is way too big", fail);
+                }
+                int ret = BIO_write(
+                    td->rawin,
+                    td->read_in->buffer.data,
+                    (int)td->read_in->buffer.len
+                );
                 if(ret < 1){
                     trace_ssl_errors(&e);
                     ORIG_GO(&e, E_SSL, "writing to BIO failed", fail);
                 }
-                if(written != td->read_in->buffer.len){
+                if((size_t)ret != td->read_in->buffer.len){
                     trace_ssl_errors(&e);
                     ORIG_GO(&e, E_NOMEM, "BIO rejected some bytes!", fail);
                 }
