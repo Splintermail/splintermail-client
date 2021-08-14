@@ -47,4 +47,11 @@ extern async_spec_t no_cleanup_async_spec;
 void async_handle_close_cb(uv_handle_t *handle);
 
 // derr_t-compatible initializers
-derr_t duv_mutex_init(uv_mutex_t *mutex);
+derr_t duv_loop_init(uv_loop_t *loop);
+derr_t duv_run(uv_loop_t *loop);
+derr_t duv_queue_work(
+    uv_loop_t *loop,
+    uv_work_t *req,
+    uv_work_cb work_cb,
+    uv_after_work_cb after_work_cb
+);

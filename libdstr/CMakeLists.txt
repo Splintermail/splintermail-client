@@ -17,6 +17,12 @@ macro(add_dstr_library name asan)
     )
     define_file_logname_for_target("${name}")
     default_compile_options("${name}" "${asan}")
+
+    if(NOT WIN32)
+        target_compile_options("${name}" PRIVATE "-pthread")
+        target_link_libraries("${name}" PUBLIC "-pthread")
+    endif()
+
 endmacro()
 
 add_dstr_library(dstr TRUE)

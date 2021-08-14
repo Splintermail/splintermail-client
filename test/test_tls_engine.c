@@ -3,9 +3,6 @@
    but would require using the openssl binary and a fork/exec, which is not
    cross-platform. */
 
-#define HAVE_STRUCT_TIMESPEC
-#include <pthread.h>
-
 #include <libdstr/libdstr.h>
 #include <libuvthread/libuvthread.h>
 #include <libengine/libengine.h>
@@ -106,9 +103,9 @@ loop_handle_error:
     }
 
     // signal to the main thread
-    pthread_mutex_lock(ctx->mutex);
-    pthread_cond_signal(ctx->cond);
-    pthread_mutex_unlock(ctx->mutex);
+    dmutex_lock(ctx->mutex);
+    dcond_signal(ctx->cond);
+    dmutex_unlock(ctx->mutex);
 
     // run the loop
     PROP_GO(&e, loop_run(&ctx->loop), cu_loop);
@@ -124,9 +121,9 @@ done:
     MERGE_VAR(&ctx->error, &e, "test_tls_engine:loop_thread");
 
     // signal to the main thread, in case we are exiting early
-    pthread_mutex_lock(ctx->mutex);
-    pthread_cond_signal(ctx->cond);
-    pthread_mutex_unlock(ctx->mutex);
+    dmutex_lock(ctx->mutex);
+    dcond_signal(ctx->cond);
+    dmutex_unlock(ctx->mutex);
 
     return NULL;
 }
@@ -138,32 +135,31 @@ static derr_t test_tlse(void){
     PROP(&e, ssl_context_new_client(&ssl_ctx_client) );
 
     // get the conditional variable and mutex ready
-    pthread_cond_t cond;
-    pthread_cond_init(&cond, NULL);
-    pthread_mutex_t mutex;
+    dcond_t cond;
+    PROP_GO(&e, dcond_init(&cond), cu_ssl_ctx_client);
+    dmutex_t mutex;
     bool unlock_mutex_on_error = false;
-    if(pthread_mutex_init(&mutex, NULL)){
-        perror("mutex_init");
-        ORIG_GO(&e, E_NOMEM, "failed to allocate mutex", cu_ssl_ctx_client);
-    }
+    PROP_GO(&e, dmutex_init(&mutex), cu_cond);
 
     // get the event queue ready
     fake_engine_t fake_engine;
     PROP_GO(&e, fake_engine_init(&fake_engine), cu_mutex);
 
     // start the loop thread
-    pthread_mutex_lock(&mutex);
+    dmutex_lock(&mutex);
     unlock_mutex_on_error = true;
     test_context_t test_ctx = {
         .downstream = &fake_engine.engine,
         .mutex = &mutex,
         .cond = &cond,
     };
-    pthread_create(&test_ctx.thread, NULL, loop_thread, &test_ctx);
+    PROP_GO(&e,
+        dthread_create(&test_ctx.thread, loop_thread, &test_ctx),
+    cu_mutex);
 
     // wait for loop to be set up
-    pthread_cond_wait(&cond, &mutex);
-    pthread_mutex_unlock(&mutex);
+    dcond_wait(&cond, &mutex);
+    dmutex_unlock(&mutex);
     unlock_mutex_on_error = false;
 
     if(test_ctx.error.type != E_NONE){
@@ -174,7 +170,7 @@ static derr_t test_tlse(void){
     // start up a few threads
     reader_writer_context_t threads[NUM_THREADS];
     size_t threads_ready = 0;
-    for(size_t i = 0; i < sizeof(threads) / sizeof(*threads); i++){
+    for(size_t i = 0; i < NUM_THREADS; i++){
         threads[i] = (reader_writer_context_t){
             .error = E_OK,
             .thread_id = i,
@@ -186,8 +182,11 @@ static derr_t test_tlse(void){
             .threads_ready = &threads_ready,
             .use_tls = true,
         };
-        pthread_create(&threads[i].thread, NULL,
-                       reader_writer_thread, &threads[i]);
+        PROP_GO(&e,
+            dthread_create(
+                &threads[i].thread, reader_writer_thread, &threads[i]
+            ),
+        join_test_thread);
     }
 
     imap_session_alloc_args_t session_connect_args = {
@@ -204,27 +203,30 @@ static derr_t test_tlse(void){
         (terminal_t){0},
     };
 
-    session_cb_data_t cb_data = {
-        .test_ctx = &test_ctx,
-        .error = E_OK,
-        .ssl_ctx_client = &ssl_ctx_client,
-        .num_threads = NUM_THREADS,
-        .writes_per_thread = WRITES_PER_THREAD,
-        .session_connect_args = session_connect_args,
-    };
+    session_cb_data_t *cb_data;
+    PROP_GO(&e, session_cb_data_new(NUM_THREADS, &cb_data), join_test_thread);
+    cb_data->test_ctx = &test_ctx;
+    cb_data->error = E_OK;
+    cb_data->ssl_ctx_client = &ssl_ctx_client;
+    cb_data->num_threads = NUM_THREADS;
+    cb_data->writes_per_thread = WRITES_PER_THREAD;
+    cb_data->session_connect_args = session_connect_args;
 
     // catch error from fake_engine_run
     MERGE_CMD(&e, fake_engine_run(&fake_engine, &test_ctx.tlse.engine,
-                &cb_data, &test_ctx.loop), "fake_engine_run");
+                cb_data, &test_ctx.loop), "fake_engine_run");
 
     // join all the threads
-    for(size_t i = 0; i < sizeof(threads) / sizeof(*threads); i++){
-        pthread_join(threads[i].thread, NULL);
+    for(size_t i = 0; i < NUM_THREADS; i++){
+        dthread_join(&threads[i].thread);
         // check for error
         MERGE_VAR(&e, &threads[i].error, "test thread");
     }
+
+    session_cb_data_free(&cb_data);
+
 join_test_thread:
-    pthread_join(test_ctx.thread, NULL);
+    dthread_join(&test_ctx.thread);
     MERGE_VAR(&e, &test_ctx.error, "test context");
     // now that we know nobody will close the loop, we are safe to free it
     loop_free(&test_ctx.loop);
@@ -232,8 +234,11 @@ join_test_thread:
     // clean up the queue
     fake_engine_free(&fake_engine);
 cu_mutex:
-    if(unlock_mutex_on_error) pthread_mutex_unlock(&mutex);
-    pthread_mutex_destroy(&mutex);
+    if(unlock_mutex_on_error) dmutex_unlock(&mutex);
+    dmutex_free(&mutex);
+
+cu_cond:
+    dcond_free(&cond);
 
 cu_ssl_ctx_client:
     ssl_context_free(&ssl_ctx_client);
@@ -242,16 +247,12 @@ cu_ssl_ctx_client:
 
 int main(int argc, char** argv){
     derr_t e = E_OK;
+    // parse options and set default log level
+    PARSE_TEST_OPTIONS(argc, argv, &g_test_files, LOG_LVL_INFO);
 
-    // ignore SIGPIPE, required to work with OpenSSL
-    // see https://mta.openssl.org/pipermail/openssl-users/2017-May/005776.html
-    // (but SIGPIPE doesnt exist in windows)
 #ifndef _WIN32
     signal(SIGPIPE, SIG_IGN);
 #endif
-
-    // parse options and set default log level
-    PARSE_TEST_OPTIONS(argc, argv, &g_test_files, LOG_LVL_INFO);
 
     PROP_GO(&e, test_tlse(), test_fail);
 

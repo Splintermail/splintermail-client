@@ -56,7 +56,7 @@ struct loop_t {
     uv_loop_t uv_loop;
     uv_async_t loop_event_passer;
     uv_async_t loop_closer;
-    uv_mutex_t mutex;
+    dmutex_t mutex;
     // for pushing reads to the next engine
     queue_t read_events;
     // write reqs, for wrapping incoming write event_t's with libuv stuff

@@ -65,8 +65,8 @@ struct queue_t {
     size_t len;
     // head of the list of things waiting for data
     link_t awaiting;
-    uv_mutex_t mutex;
-    uv_cond_t cond;
+    dmutex_t mutex;
+    dcond_t cond;
 };
 
 // helper function to set up a queue_cb_t

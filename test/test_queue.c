@@ -1,6 +1,3 @@
-#define HAVE_STRUCT_TIMESPEC
-#include <pthread.h>
-
 #include <libdstr/libdstr.h>
 #include <libuvthread/libuvthread.h>
 
@@ -192,10 +189,10 @@ static derr_t test_queue_blocking(void){
     queue_t q;
     PROP(&e, queue_init(&q) );
 
-    pthread_t consumer;
+    dthread_t consumer;
 
     // spawn consumer thread
-    pthread_create(&consumer, NULL, first_popper_thread, &q);
+    dthread_create(&consumer, first_popper_thread, &q);
     // only append elements (non-FIFO behavior is difficult to test)
     queue_append(&q, &qlist[0].link);
     queue_append(&q, &qlist[1].link);
@@ -204,7 +201,7 @@ static derr_t test_queue_blocking(void){
     // send the "special" element, consumer thread will quit
     queue_append(&q, &qlist[4].link);
     // join thread
-    pthread_join(consumer, NULL);
+    dthread_join(&consumer);
 
     if(first_pops != 5){
         TRACE(&e, "expected %x but got %x\n", FU(5), FU(first_pops));
@@ -212,7 +209,7 @@ static derr_t test_queue_blocking(void){
     }
 
     // spawn thread again
-    pthread_create(&consumer, NULL, last_popper_thread, &q);
+    dthread_create(&consumer, last_popper_thread, &q);
     // only prepend elements (non-FIFO behavior is difficult to test)
     queue_prepend(&q, &qlist[0].link);
     queue_prepend(&q, &qlist[1].link);
@@ -221,7 +218,7 @@ static derr_t test_queue_blocking(void){
     // send the "special" element, consumer thread will quit
     queue_prepend(&q, &qlist[4].link);
     // join thread
-    pthread_join(consumer, NULL);
+    dthread_join(&consumer);
 
     if(last_pops != 5){
         TRACE(&e, "expected %x but got %x\n", FU(5), FU(last_pops));

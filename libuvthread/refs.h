@@ -4,7 +4,7 @@ typedef struct refs_t refs_t;
 typedef void (*finalizer_t)(refs_t*);
 
 struct refs_t {
-    uv_mutex_t mutex;
+    dmutex_t mutex;
     int count;
     // call finalize when count goes to zero, must not be NULL
     finalizer_t finalize;

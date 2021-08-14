@@ -1,7 +1,5 @@
 #include <stdio.h>
 #include <string.h>
-#define HAVE_STRUCT_TIMESPEC
-#include <pthread.h>
 #include <fcntl.h>
 #include <sys/types.h>
 #include <sys/stat.h>

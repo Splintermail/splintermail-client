@@ -9,7 +9,7 @@ typedef struct {
 
 struct imap_session_t {
     session_t session;
-    uv_mutex_t mutex;
+    dmutex_t mutex;
     int refs;
     bool closed;
     // engines

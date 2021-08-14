@@ -1,9 +1,6 @@
 #ifndef DITM_THREAD_H
 #define DITM_THREAD_H
 
-#define HAVE_STRUCT_TIMESPEC
-#include <pthread.h>
-
 #include <libdstr/libdstr.h>
 #include <libditm/libditm.h>
 

@@ -55,7 +55,7 @@ derr_t set_uv_threadpool_size(unsigned int min, unsigned int recommended){
     // libuv offers a maximum 128 threads
     if(recommended > 128){
         ORIG(&e, E_PARAM, "invalid UV_THREADPOOL_SIZE settings; "
-                "min > recommended");
+                "recommended > 128");
     }
 
     // prefer the recommended size
@@ -116,12 +116,39 @@ void async_handle_close_cb(uv_handle_t *handle){
 }
 
 
-derr_t duv_mutex_init(uv_mutex_t *mutex){
+derr_t duv_loop_init(uv_loop_t *loop){
     derr_t e = E_OK;
-    int ret = uv_mutex_init(mutex);
+
+    int ret = uv_loop_init(loop);
     if(ret < 0){
-        TRACE(&e, "uv_mutex_init: %x\n", FUV(&ret));
-        ORIG(&e, uv_err_type(ret), "error initializing mutex");
+        TRACE(&e, "uv_loop_init: %x\n", FUV(&ret));
+        ORIG(&e, uv_err_type(ret), "error initializing loop");
+    }
+
+    return e;
+}
+
+derr_t duv_run(uv_loop_t *loop){
+    derr_t e = E_OK;
+    int ret = uv_run(loop, UV_RUN_DEFAULT);
+    if(ret < 0){
+        TRACE(&e, "uv_run: %x\n", FUV(&ret));
+        ORIG(&e, uv_err_type(ret), "uv_run error");
+    }
+    return e;
+}
+
+derr_t duv_queue_work(
+    uv_loop_t *loop,
+    uv_work_t *req,
+    uv_work_cb work_cb,
+    uv_after_work_cb after_work_cb
+){
+    derr_t e = E_OK;
+    int ret = uv_queue_work(loop, req, work_cb, after_work_cb);
+    if(ret < 0){
+        TRACE(&e, "uv_queue_work: %x\n", FUV(&ret));
+        ORIG(&e, uv_err_type(ret), "uv_queue_work error");
     }
     return e;
 }

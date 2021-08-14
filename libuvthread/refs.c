@@ -13,23 +13,19 @@ derr_t refs_init(refs_t *refs, int starting_count, finalizer_t finalize){
         .freed = false,
     };
 
-    int ret = uv_mutex_init(&refs->mutex);
-    if(ret < 0){
-        TRACE(&e, "uv_mutex_init: %x\n", FUV(&ret));
-        ORIG(&e, uv_err_type(ret), "error initializing mutex");
-    }
+    PROP(&e, dmutex_init(&refs->mutex) );
 
     return e;
 }
 
 void refs_free(refs_t *refs){
-    uv_mutex_destroy(&refs->mutex);
+    dmutex_free(&refs->mutex);
 }
 
 void ref_up(refs_t *refs){
-    uv_mutex_lock(&refs->mutex);
+    dmutex_lock(&refs->mutex);
     refs->count++;
-    uv_mutex_unlock(&refs->mutex);
+    dmutex_unlock(&refs->mutex);
 }
 
 void ref_dn(refs_t *refs){
@@ -38,13 +34,13 @@ void ref_dn(refs_t *refs){
         LOG_ERROR("negative refcount detected!!\n");
     }
 
-    uv_mutex_lock(&refs->mutex);
+    dmutex_lock(&refs->mutex);
     int new_count = --(refs->count);
-    uv_mutex_unlock(&refs->mutex);
+    dmutex_unlock(&refs->mutex);
 
     if(new_count > 0) return;
 
-    uv_mutex_destroy(&refs->mutex);
+    dmutex_free(&refs->mutex);
     refs->freed = true;
     refs->finalize(refs);
 }

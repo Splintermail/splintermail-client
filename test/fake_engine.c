@@ -32,19 +32,19 @@ void *reader_writer_thread(void *arg){
     }
 
     // check if we are the last thread ready
-    pthread_mutex_lock(ctx->mutex);
+    dmutex_lock(ctx->mutex);
     (*ctx->threads_ready)++;
     // last thread signals the others
     if(*ctx->threads_ready == ctx->num_threads){
-        pthread_cond_broadcast(ctx->cond);
+        dcond_broadcast(ctx->cond);
     }
     // other threads wait for the last one
     else{
         while(*ctx->threads_ready < ctx->num_threads){
-            pthread_cond_wait(ctx->cond, ctx->mutex);
+            dcond_wait(ctx->cond, ctx->mutex);
         }
     }
-    pthread_mutex_unlock(ctx->mutex);
+    dmutex_unlock(ctx->mutex);
 
     // open a connection
     connection_t conn;
@@ -101,6 +101,7 @@ static void echo_session_dying(manager_i *mgr, void *caller, derr_t error){
     tagged_mgr_t *tmgr = CONTAINER_OF(mgr, tagged_mgr_t, mgr);
     echo_session_mgr_t *esm = CONTAINER_OF(tmgr, echo_session_mgr_t, tmgr);
     if(is_error(error)){
+        TRACE(&error, "closing loop due to error in session\n");
         loop_close(esm->s.pipeline->loop, error);
         PASSED(error);
     }
@@ -315,6 +316,36 @@ derr_t fake_engine_get_write_event(engine_t *engine, dstr_t *text,
 fail:
     free(ev);
     return e;
+}
+
+derr_t session_cb_data_new(size_t nthreads, session_cb_data_t **out){
+    derr_t e = E_OK;
+    *out = NULL;
+
+    session_cb_data_t *cb_data = DMALLOC_STRUCT_PTR(&e, cb_data);
+    CHECK(&e);
+    *cb_data = (session_cb_data_t){0};
+
+    cb_data->cb_reader_writers = dmalloc(&e,
+        sizeof(*cb_data->cb_reader_writers) * nthreads
+    );
+    CHECK_GO(&e, fail);
+
+    *out = cb_data;
+
+    return e;
+
+fail:
+    free(cb_data);
+    return e;
+}
+
+void session_cb_data_free(session_cb_data_t **old){
+    session_cb_data_t *cb_data = *old;
+    if(!old) return;
+    free(cb_data->cb_reader_writers);
+    free(cb_data);
+    *old = NULL;
 }
 
 static derr_t launch_second_half_of_test(session_cb_data_t *cb_data,

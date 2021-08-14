@@ -1013,11 +1013,7 @@ derr_t loop_init(loop_t *loop, size_t num_read_events,
              have to call uv_close() on them and execute the loop to let the
              close_cb's get called, and then we would return the error. */
 
-    ret = uv_mutex_init(&loop->mutex);
-    if(ret < 0){
-        TRACE(&e, "uv_mutex_init: %x\n", FUV(&ret));
-        ORIG_GO(&e, uv_err_type(ret), "error initializing mutex", fail_loop);
-    }
+    PROP_GO(&e, dmutex_init(&loop->mutex), fail_loop);
 
     // init read wrapper list
     PROP_GO(&e, queue_init(&loop->read_events), fail_mutex);
@@ -1089,7 +1085,7 @@ fail_rd_wraps:
     }
     queue_free(&loop->read_events);
 fail_mutex:
-    uv_mutex_destroy(&loop->mutex);
+    dmutex_free(&loop->mutex);
 fail_loop:
     uv_loop_close(&loop->uv_loop);
     return e;
@@ -1114,7 +1110,7 @@ void loop_free(loop_t *loop){
         free(rd_wrap);
     }
     queue_free(&loop->read_events);
-    uv_mutex_destroy(&loop->mutex);
+    dmutex_free(&loop->mutex);
     int ret = uv_loop_close(&loop->uv_loop);
     if(ret != 0){
         LOG_ERROR("uv_loop_close: %x\n", FUV(&ret));
@@ -1161,13 +1157,13 @@ static void loop_pass_event(engine_t *loop_engine, event_t *event){
 
 
 void loop_close(loop_t *loop, derr_t error){
-    uv_mutex_lock(&loop->mutex);
+    dmutex_lock(&loop->mutex);
     // preserve the first-passed error
     MERGE_VAR(&loop->error, &error, "loop_close error");
     // only call async_send once
     bool do_quit = !loop->quitting;
     loop->quitting = true;
-    uv_mutex_unlock(&loop->mutex);
+    dmutex_unlock(&loop->mutex);
 
     if(!do_quit) return;
 

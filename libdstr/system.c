@@ -271,6 +271,185 @@ derr_t dlocaltime(time_t t, struct tm *tm){
 #endif
 }
 
+#ifndef _WIN32 // UNIX
+
+#include <pthread.h>
+
+derr_t dthread_create(dthread_t *thread, void *(*fn)(void*), void *arg){
+    derr_t e = E_OK;
+
+    int ret = pthread_create(thread, NULL, fn, arg);
+    if(ret != 0){
+        TRACE(&e, "pthread_create: %x\n", FE(&errno));
+        ORIG(&e, E_OS, "pthread_create failed");
+    }
+
+    return e;
+}
+
+void *dthread_join(dthread_t *thread){
+    void *result;
+    pthread_join(*thread, &result);
+    return result;
+}
+
+derr_t dmutex_init(dmutex_t *mutex){
+    derr_t e = E_OK;
+    int ret = pthread_mutex_init(mutex, NULL);
+    if(ret){
+        TRACE(&e, "pthread_mutex_init: %x\n", FE(&errno));
+        ORIG(&e,
+            errno == ENOMEM ? E_NOMEM : E_OS, "pthread_mutex_init failed"
+        );
+    }
+    return e;
+}
+
+void dmutex_free(dmutex_t *mutex){
+    pthread_mutex_destroy(mutex);
+}
+
+void dmutex_lock(dmutex_t *mutex){
+    // skip error checks; fancy mutex patterns are not supported
+    pthread_mutex_lock(mutex);
+}
+
+void dmutex_unlock(dmutex_t *mutex){
+    pthread_mutex_unlock(mutex);
+}
+
+derr_t dcond_init(dcond_t *cond){
+    derr_t e = E_OK;
+    int ret = pthread_cond_init(cond, NULL);
+    if(ret){
+        TRACE(&e, "pthread_cond_init: %x\n", FE(&errno));
+        ORIG(&e, errno == ENOMEM ? E_NOMEM : E_OS, "pthread_cond_init failed");
+    }
+    return e;
+}
+
+void dcond_free(dcond_t *cond){
+    pthread_cond_destroy(cond);
+}
+
+void dcond_wait(dcond_t *cond, dmutex_t *mutex){
+    pthread_cond_wait(cond, mutex);
+}
+
+void dcond_signal(dcond_t *cond){
+    pthread_cond_signal(cond);
+}
+
+void dcond_broadcast(dcond_t *cond){
+    pthread_cond_broadcast(cond);
+}
+
+#else // WINDOWS
+
+#include <process.h>
+#include <stdio.h>
+
+derr_t dmutex_init(dmutex_t *mutex){
+    // yes, this really returns no value
+    // docs.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-initializecriticalsection
+    InitializeCriticalSection(mutex);
+    return E_OK;
+}
+
+void dmutex_free(dmutex_t *mutex){
+    DeleteCriticalSection(mutex);
+}
+
+void dmutex_lock(dmutex_t *mutex){
+    EnterCriticalSection(mutex);
+}
+
+void dmutex_unlock(dmutex_t *mutex){
+    LeaveCriticalSection(mutex);
+}
+
+derr_t dcond_init(dcond_t *cond){
+    // yes, this really returns no value
+    // docs.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-initializeconditionvariable
+    InitializeConditionVariable(cond);
+    return E_OK;
+}
+
+void dcond_free(dcond_t *cond){
+    // windows doesn't have any cleanup function
+    (void)cond;
+}
+
+void dcond_wait(dcond_t *cond, dmutex_t *mutex){
+    SleepConditionVariableCS(cond, mutex, INFINITE);
+}
+
+void dcond_signal(dcond_t *cond){
+    WakeConditionVariable(cond);
+}
+
+void dcond_broadcast(dcond_t *cond){
+    WakeAllConditionVariable(cond);
+}
+
+static void exec_pthread_fn(void *arg){
+    dthread_t *thread = arg;
+    thread->result = thread->fn(thread->arg) ;
+
+    /* It seems to be a race condition to call WaitForSingleObject on a thread;
+       if the thread exits first, the wait hangs.  Presumably this is due to
+       _endthread() being called automatically and calling CloseHandle() in
+       turn.  But who knows.  Instead we'll just approximate joining. */
+    dmutex_lock(&thread->mutex);
+    thread->exited = true;
+    dcond_broadcast(&thread->cond);
+    dmutex_unlock(&thread->mutex);
+}
+
+derr_t dthread_create(dthread_t *thread, void *(*fn)(void*), void *arg){
+    derr_t e = E_OK;
+    *thread = (dthread_t){ .fn = fn, .arg = arg };
+
+    PROP(&e, dmutex_init(&thread->mutex) );
+    PROP_GO(&e, dcond_init(&thread->cond), fail_mutex);
+
+    uintptr_t uret = _beginthread(exec_pthread_fn, 0, thread);
+    if(uret == (uintptr_t)-1){
+        TRACE(&e, "_beginthread: %x\n", FE(&errno));
+        ORIG_GO(&e, E_OS, "_beginthread failed", fail_cond);
+    }
+    thread->h = (HANDLE)uret;
+
+    return e;
+
+fail_cond:
+    dcond_free(&thread->cond);
+fail_mutex:
+    dmutex_free(&thread->mutex);
+    return e;
+}
+
+void *dthread_join(dthread_t *thread){
+    // safe against double-joins
+    if(!thread->exited){
+        // wait for the thread to exit (it cleans itself up)
+        dmutex_lock(&thread->mutex);
+        while(!thread->exited){
+            dcond_wait(&thread->cond, &thread->mutex);
+        }
+        dmutex_unlock(&thread->mutex);
+
+        // clean up our dthread_t
+        thread->h = NULL;
+        dcond_free(&thread->cond);
+        dmutex_free(&thread->mutex);
+    }
+
+    return thread->result;
+}
+
+#endif
+
 #ifndef _WIN32
 
 #include <sys/types.h>

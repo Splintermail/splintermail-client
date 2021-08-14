@@ -24,8 +24,8 @@ typedef struct {
     connection_t conn;
     // the big, growing response buffer
     dstr_t resp;
-    uv_mutex_t resp_mutex;
-    uv_cond_t resp_cond; // for fic_get_resp
+    dmutex_t resp_mutex;
+    dcond_t resp_cond; // for fic_get_resp
     // a smaller, reader-owned buffer
     dstr_t resp_chunk;
     // issued but unexecuted commands

@@ -1,9 +1,6 @@
 #ifndef FAKE_ENGINE_H
 #define FAKE_ENGINE_H
 
-#define HAVE_STRUCT_TIMESPEC
-#include <pthread.h>
-
 #include <libdstr/libdstr.h>
 #include <libuvthread/libuvthread.h>
 #include <libengine/libengine.h>
@@ -27,9 +24,9 @@
 typedef struct {
     derr_t error;
     size_t thread_id;
-    pthread_t thread;
-    pthread_mutex_t *mutex;
-    pthread_cond_t *cond;
+    dthread_t thread;
+    dmutex_t *mutex;
+    dcond_t *cond;
     size_t num_threads;
     size_t writes_per_thread;
     size_t *threads_ready;
@@ -37,7 +34,7 @@ typedef struct {
     bool use_tls;
 } reader_writer_context_t;
 
-// a pthread function, always returns NULL
+// a dthread function, always returns NULL
 void *reader_writer_thread(void *reader_writer_context);
 
 typedef struct {
@@ -118,15 +115,15 @@ derr_t fake_engine_get_write_event(engine_t *engine, dstr_t *text,
 
 // for launching the loop thread
 typedef struct {
-    pthread_t thread;
+    dthread_t thread;
     loop_t loop;
     tlse_t tlse;
     imape_t imape;
     ssl_context_t ssl_ctx;
     engine_t *downstream;
     derr_t error;
-    pthread_mutex_t *mutex;
-    pthread_cond_t *cond;
+    dmutex_t *mutex;
+    dcond_t *cond;
 } test_context_t;
 
 // for tracking the second half of the test
@@ -135,8 +132,7 @@ typedef struct {
     size_t nEOF;
     test_context_t *test_ctx;
     derr_t error;
-    // there won't be more than 128 threads... right?
-    cb_reader_writer_t cb_reader_writers[128];
+    cb_reader_writer_t *cb_reader_writers;
     ssl_context_t *ssl_ctx_client;
     size_t num_threads;
     size_t writes_per_thread;
@@ -144,6 +140,9 @@ typedef struct {
     const char *port;
     imap_session_alloc_args_t session_connect_args;
 } session_cb_data_t;
+
+derr_t session_cb_data_new(size_t nthreads, session_cb_data_t **out);
+void session_cb_data_free(session_cb_data_t **old);
 
 derr_t fake_engine_run(fake_engine_t *fe, engine_t *upstream,
         session_cb_data_t *cb_data, loop_t *loop);

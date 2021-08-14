@@ -1,6 +1,3 @@
-#define HAVE_STRUCT_TIMESPEC
-#include <pthread.h>
-
 #include <libdstr/libdstr.h>
 #include <libcrypto/libcrypto.h>
 #include <libditm/libditm.h>
@@ -27,8 +24,8 @@ static hook_t last_called = CLEARED;
 static long int g_index;
 static unsigned int g_lines;
 
-static pthread_mutex_t server_mutex;
-static pthread_cond_t server_cond;
+static dmutex_t server_mutex;
+static dcond_t server_cond;
 
 // path to where the test files can be found
 static const char* g_test_files;
@@ -146,9 +143,9 @@ static void* server_thread(void* arg){
 early_fail:
     thread_return = e;
     // no matter what, signal the main thread
-    pthread_mutex_lock(&server_mutex);
-    pthread_cond_signal(&server_cond);
-    pthread_mutex_unlock(&server_mutex);
+    dmutex_lock(&server_mutex);
+    dcond_signal(&server_cond);
+    dmutex_unlock(&server_mutex);
     // exit with error if necessary
     if(thread_return.type) goto cleanup;
 
@@ -205,18 +202,18 @@ cleanup:
 static derr_t test_pop_server(void){
     derr_t e = E_OK;
 
-    pthread_cond_init(&server_cond, NULL);
-    pthread_mutex_init(&server_mutex, NULL);
-    pthread_t thread;
+    PROP(&e, dcond_init(&server_cond) );
+    PROP_GO(&e, dmutex_init(&server_mutex), fail_cond);
+    dthread_t thread;
 
     // lock so the server doesn't signal before we are waiting
-    pthread_mutex_lock(&server_mutex);
+    dmutex_lock(&server_mutex);
     // start the server
-    pthread_create(&thread, NULL, server_thread, NULL);
+    PROP_GO(&e, dthread_create(&thread, server_thread, NULL), fail_mutex);
     // now wait the server to be ready
-    pthread_cond_wait(&server_cond, &server_mutex);
+    dcond_wait(&server_cond, &server_mutex);
     // unlock mutex
-    pthread_mutex_unlock(&server_mutex);
+    dmutex_unlock(&server_mutex);
 
     // prepare the SSL context
     ssl_context_t ctx;
@@ -312,9 +309,16 @@ cleanup_3:
 cleanup_2:
     ssl_context_free(&ctx);
 cleanup_1:
-    pthread_join(thread, NULL);
-    pthread_mutex_destroy(&server_mutex);
-    pthread_cond_destroy(&server_cond);
+    dthread_join(&thread);
+    dmutex_free(&server_mutex);
+    dcond_free(&server_cond);
+    return e;
+
+fail_mutex:
+    dmutex_unlock(&server_mutex);
+    dmutex_free(&server_mutex);
+fail_cond:
+    dcond_free(&server_cond);
     return e;
 }
 

@@ -1,7 +1,5 @@
 #include <string.h>
 #include <fcntl.h>
-#define HAVE_STRUCT_TIMESPEC
-#include <pthread.h>
 #include <errno.h>
 
 #include <libdstr/libdstr.h>
@@ -19,8 +17,8 @@ unsigned int fps_ver_min = 2;
 unsigned int fps_ver_bld = 0;
 
 // for communicating when the fake_pop_server is ready
-static pthread_mutex_t fps_mutex;
-static pthread_cond_t  fps_cond;
+static dmutex_t fps_mutex;
+static dcond_t  fps_cond;
 
 // easy way to return value from a thread
 static derr_t thread_error = {0};
@@ -30,29 +28,29 @@ static bool keep_going = true;
 
 static bool test_start = false;
 void fps_start_test(void){
-    pthread_mutex_lock(&fps_mutex);
+    dmutex_lock(&fps_mutex);
     test_start = true;
-    pthread_cond_signal(&fps_cond);
-    pthread_mutex_unlock(&fps_mutex);
+    dcond_signal(&fps_cond);
+    dmutex_unlock(&fps_mutex);
 }
 
 void fps_done(void){
-    pthread_mutex_lock(&fps_mutex);
+    dmutex_lock(&fps_mutex);
     test_start = true;
     keep_going = false;
-    pthread_cond_signal(&fps_cond);
-    pthread_mutex_unlock(&fps_mutex);
+    dcond_signal(&fps_cond);
+    dmutex_unlock(&fps_mutex);
 }
 
 static bool test_end = false;
 derr_t fps_end_test(void){
-    pthread_mutex_lock(&fps_mutex);
+    dmutex_lock(&fps_mutex);
     if(!test_end){
         // wait for fps thread to finish with its connection
-        pthread_cond_wait(&fps_cond, &fps_mutex);
+        dcond_wait(&fps_cond, &fps_mutex);
     }
     test_end = false;
-    pthread_mutex_unlock(&fps_mutex);
+    dmutex_unlock(&fps_mutex);
     // hand back the test_error and erase the local copy of it
     derr_t retval = test_error;
     PASSED(test_error);
@@ -362,20 +360,20 @@ static void* fake_pop_server_thread(void* arg){
     LOG_INFO("FPS ready for incoming connections\n");
 fail_early:
     // no matter what, signal the main thread
-    pthread_mutex_lock(&fps_mutex);
-    pthread_cond_signal(&fps_cond);
-    pthread_mutex_unlock(&fps_mutex);
+    dmutex_lock(&fps_mutex);
+    dcond_signal(&fps_cond);
+    dmutex_unlock(&fps_mutex);
     // return error if necessary
     if(is_error(*e)) goto cleanup_1;
 
     while(keep_going){
         // wait for main thread to let us start
-        pthread_mutex_lock(&fps_mutex);
+        dmutex_lock(&fps_mutex);
         if(!test_start){
-            pthread_cond_wait(&fps_cond, &fps_mutex);
+            dcond_wait(&fps_cond, &fps_mutex);
         }
         test_start = false;
-        pthread_mutex_unlock(&fps_mutex);
+        dmutex_unlock(&fps_mutex);
         // make sure we haven't been cancelled
         if(!keep_going) break;
 
@@ -410,14 +408,14 @@ cleanup_3:
         LOG_INFO("FPS connection closed\n");
 
         // end-of-test
-        pthread_mutex_lock(&fps_mutex);
+        dmutex_lock(&fps_mutex);
         // save a copy of thread_error as this test's test_error
         TRACE_PROP_VAR(&test_error, &thread_error);
         // continue for the next test with a clean thread_error
         DROP_VAR(&thread_error);
         test_end = true;
-        pthread_cond_signal(&fps_cond);
-        pthread_mutex_unlock(&fps_mutex);
+        dcond_signal(&fps_cond);
+        dmutex_unlock(&fps_mutex);
     }
 
 cleanup_2:
@@ -428,33 +426,42 @@ cleanup_1:
     return NULL;
 }
 
-static pthread_t fps_thread;
+static dthread_t fps_thread;
 
 derr_t fake_pop_server_start(fake_pop_server_t* fps){
     derr_t e = E_OK;
     // prepare for the cond_wait
-    pthread_cond_init(&fps_cond, NULL);
-    pthread_mutex_init(&fps_mutex, NULL);
+    PROP(&e, dcond_init(&fps_cond) );
+    PROP_GO(&e, dmutex_init(&fps_mutex), fail_fps_cond);
 
     // lock so the server doesn't signal before we are waiting
-    pthread_mutex_lock(&fps_mutex);
+    dmutex_lock(&fps_mutex);
     // start the server
-    pthread_create(&fps_thread, NULL, fake_pop_server_thread, fps);
+    PROP_GO(&e,
+        dthread_create(&fps_thread, fake_pop_server_thread, fps),
+    fail_fps_mutex);
     // now wait the server to be ready
-    pthread_cond_wait(&fps_cond, &fps_mutex);
+    dcond_wait(&fps_cond, &fps_mutex);
     // unlock mutex
-    pthread_mutex_unlock(&fps_mutex);
+    dmutex_unlock(&fps_mutex);
 
     // if the thread is failed, join it and return its error
     if(is_error(thread_error)){
         return fake_pop_server_join();
     }
     return e;
+
+fail_fps_mutex:
+    dmutex_unlock(&fps_mutex);
+    dmutex_free(&fps_mutex);
+fail_fps_cond:
+    dcond_free(&fps_cond);
+    return e;
 }
 
 derr_t fake_pop_server_join(void){
-    pthread_join(fps_thread, NULL);
-    pthread_mutex_destroy(&fps_mutex);
-    pthread_cond_destroy(&fps_cond);
+    dthread_join(&fps_thread);
+    dmutex_free(&fps_mutex);
+    dcond_free(&fps_cond);
     return thread_error;
 }

@@ -1,20 +1,17 @@
-#define HAVE_STRUCT_TIMESPEC
-#include <pthread.h>
 #include <errno.h>
-
-#include "dummy_ui_harness.h"
-#include "test_utils.h"
 
 #include <libdstr/libdstr.h>
 #include <ui.h>
+
+#include "dummy_ui_harness.h"
+#include "test_utils.h"
 
 #define TEST_LOG_LEVEL LOG_LVL_DEBUG
 
 #define SM "splintermail"
 
 // read from our process's dup'd stdout asynchronously:
-static pthread_t ar_pthread;
-static pthread_mutex_t ar_mutex;
+static dthread_t ar_thread;
 static dstr_t ar_buffer;
 static derr_t ar_return = {0};
 
@@ -33,9 +30,7 @@ static void* async_reader_thread(void* arg){
             ORIG_GO(&e, E_OS, "read failed during test", done);
         }
         // add that one character to the buffer
-        pthread_mutex_lock(&ar_mutex);
         e2 = FMT(&ar_buffer, "%x", FC(c));
-        pthread_mutex_unlock(&ar_mutex);
         PROP_GO(&e, e2, done);
     }
 done:
@@ -47,18 +42,14 @@ static derr_t start_async_reader(int* fd){
     derr_t e = E_OK;
     // allocate our buffer
     PROP(&e, dstr_new(&ar_buffer, 8192) );
-    // init the mutex
-    pthread_mutex_init(&ar_mutex, NULL);
     // start the thread
-    pthread_create(&ar_pthread, NULL, async_reader_thread, (void*)fd);
+    PROP(&e, dthread_create(&ar_thread, async_reader_thread, (void*)fd) );
     return e;
 }
 
 static derr_t stop_async_reader(dstr_t** out){
     // join the thread
-    pthread_join(ar_pthread, NULL);
-    // destroy mutex
-    pthread_mutex_destroy(&ar_mutex);
+    dthread_join(&ar_thread);
     // pass buffer
     *out = &ar_buffer;
     return ar_return;
@@ -203,18 +194,8 @@ cleanup:
 }
 
 
-int main(int argc, char** argv){
+static derr_t run_all_cases(void){
     derr_t e = E_OK;
-    PARSE_TEST_OPTIONS(argc, argv, &g_test_files, LOG_LVL_INFO);
-
-    logger_add_fileptr(TEST_LOG_LEVEL, stderr);
-    PROP_GO(&e, dstr_new(&reason_log, 4096), fail_0);
-    // first save the stdout file descriptor
-    real_stdout_fd = compat_dup(1);
-    if(real_stdout_fd < 0){
-        perror("dup");
-        goto fail;
-    }
 
     // non-ditm, non-api call tests
     {
@@ -222,81 +203,81 @@ int main(int argc, char** argv){
 
         test_case.test_name = "help";
         test_case.argv = (char*[]){SM, "--help", NULL};
-        PROP_GO(&e, run_test_case(test_case), fail);
+        PROP(&e, run_test_case(test_case) );
         test_case.argv = (char*[]){SM, "-h", NULL};
-        PROP_GO(&e, run_test_case(test_case), fail);
+        PROP(&e, run_test_case(test_case) );
 
         test_case.test_name = "dump-conf";
         test_case.expect_out = "dump-conf\n";
         test_case.argv = (char*[]){SM, "--dump-conf", NULL};
-        PROP_GO(&e, run_test_case(test_case), fail);
+        PROP(&e, run_test_case(test_case) );
         test_case.expect_out = NULL;
 
         test_case.test_name = "version";
         test_case.expect_out = "0.2.0\n";
         test_case.argv = (char*[]){SM, "--version", NULL};
-        PROP_GO(&e, run_test_case(test_case), fail);
+        PROP(&e, run_test_case(test_case) );
         test_case.argv = (char*[]){SM, "-v", NULL};
-        PROP_GO(&e, run_test_case(test_case), fail);
+        PROP(&e, run_test_case(test_case) );
         test_case.expect_out = NULL;
 
         // prep a config file
         DSTR_VAR(configpath, 4096);
-        PROP_GO(&e, FMT(&configpath, "%x/test_ui/testconf", FS(g_test_files)), fail);
+        PROP(&e, FMT(&configpath, "%x/test_ui/testconf", FS(g_test_files)) );
         // prepare the expected stdout
         DSTR_VAR(expect_out, 4096);
-        PROP_GO(&e, FMT(&expect_out, "dump-conf\nconfig %x\nditm-dir 12345\n",
-                                  FD(&configpath)), fail);
+        PROP(&e, FMT(&expect_out, "dump-conf\nconfig %x\nditm-dir 12345\n",
+                                  FD(&configpath)) );
         test_case.test_name = "config";
         test_case.expect_out = expect_out.data;
         test_case.argv = (char*[]){SM, "--config", configpath.data, "--dump-conf", NULL};
-        PROP_GO(&e, run_test_case(test_case), fail);
+        PROP(&e, run_test_case(test_case) );
         test_case.argv = (char*[]){SM, "-c", configpath.data, "--dump-conf", NULL};
-        PROP_GO(&e, run_test_case(test_case), fail);
+        PROP(&e, run_test_case(test_case) );
         test_case.expect_out = NULL;
 
 
         test_case.test_name = "reject bad options";
         test_case.expect_return = 1;
         test_case.argv = (char*[]){SM, "ditm", "--avseij", NULL};
-        PROP_GO(&e, run_test_case(test_case), fail);
+        PROP(&e, run_test_case(test_case) );
         test_case.argv = (char*[]){SM, "ditm", "-z", NULL};
-        PROP_GO(&e, run_test_case(test_case), fail);
+        PROP(&e, run_test_case(test_case) );
         test_case.argv = (char*[]){SM, "ditm", "--pop-port", NULL};
-        PROP_GO(&e, run_test_case(test_case), fail);
+        PROP(&e, run_test_case(test_case) );
 
         test_case.test_name = "reject non-existent config file";
         test_case.expect_return = 2;
         test_case.argv = (char*[]){SM, "-c", "fake_file", NULL};
-        PROP_GO(&e, run_test_case(test_case), fail);
+        PROP(&e, run_test_case(test_case) );
 
         test_case.test_name = "missing positional args";
         test_case.expect_return = 3;
         test_case.argv = (char*[]){SM, NULL};
-        PROP_GO(&e, run_test_case(test_case), fail);
+        PROP(&e, run_test_case(test_case) );
 
         test_case.test_name = "invalid pop-port numbers";
         test_case.expect_return = 4;
         test_case.argv = (char*[]){SM, "--pop-port", "0", "ditm", NULL};
-        PROP_GO(&e, run_test_case(test_case), fail);
+        PROP(&e, run_test_case(test_case) );
         test_case.argv = (char*[]){SM, "--pop-port", "65536", "ditm", NULL};
-        PROP_GO(&e, run_test_case(test_case), fail);
+        PROP(&e, run_test_case(test_case) );
 
         test_case.test_name = "need --user flag";
         test_case.expect_return = 5;
         test_case.users = (char*[]){NULL};
         test_case.argv = (char*[]){SM, "list_aliases", NULL};
-        PROP_GO(&e, run_test_case(test_case), fail);
+        PROP(&e, run_test_case(test_case) );
         test_case.users = (char*[]){"a@fqdn", "b@fqdn", NULL};
         test_case.argv = (char*[]){SM, "list_aliases", NULL};
-        PROP_GO(&e, run_test_case(test_case), fail);
+        PROP(&e, run_test_case(test_case) );
         test_case.users = NULL;
 
         test_case.test_name = "password confirmation fails";
         test_case.expect_return = 6;
         test_case.passwords = (char*[]){"a", "b", "c", NULL};
         test_case.argv = (char*[]){SM, "-u", "a", "change_password", NULL};
-        PROP_GO(&e, run_test_case(test_case), fail);
+        PROP(&e, run_test_case(test_case) );
         test_case.passwords = NULL;
 
     }
@@ -320,38 +301,38 @@ int main(int argc, char** argv){
 
         test_case.test_name = "ditm basic test";
         test_case.argv = (char*[]){SM, "ditm", NULL};
-        PROP_GO(&e, run_test_case(test_case), fail);
+        PROP(&e, run_test_case(test_case) );
 
         test_case.test_name = "ditm uncaught error";
         test_case.expect_return = 127;
         test_case.ditm_loop_args.to_return = (derr_t){.type=E_INTERNAL};
         test_case.argv = (char*[]){SM, "ditm", NULL};
-        PROP_GO(&e, run_test_case(test_case), fail);
+        PROP(&e, run_test_case(test_case) );
         test_case.expect_return = 0;
         test_case.ditm_loop_args.to_return = E_OK;
 
         test_case.test_name = "ditm pop-port";
         test_case.ditm_loop_args.port = 1234;
         test_case.argv = (char*[]){SM, "ditm", "--pop-port", "1234", NULL};
-        PROP_GO(&e, run_test_case(test_case), fail);
+        PROP(&e, run_test_case(test_case) );
         test_case.ditm_loop_args.port = 1995;
 
         test_case.test_name = "ditm ditm-dir";
         test_case.ditm_loop_args.ditm_dir = "some_dir";
         test_case.argv = (char*[]){SM, "ditm", "--ditm-dir", "some_dir", NULL};
-        PROP_GO(&e, run_test_case(test_case), fail);
+        PROP(&e, run_test_case(test_case) );
         test_case.ditm_loop_args.ditm_dir = NULL;
 
         test_case.test_name = "ditm cert";
         test_case.ditm_loop_args.cert = "some_file";
         test_case.argv = (char*[]){SM, "ditm", "--cert", "some_file", NULL};
-        PROP_GO(&e, run_test_case(test_case), fail);
+        PROP(&e, run_test_case(test_case) );
         test_case.ditm_loop_args.cert = NULL;
 
         test_case.test_name = "ditm key";
         test_case.ditm_loop_args.key = "some_file";
         test_case.argv = (char*[]){SM, "ditm", "--key", "some_file", NULL};
-        PROP_GO(&e, run_test_case(test_case), fail);
+        PROP(&e, run_test_case(test_case) );
         test_case.ditm_loop_args.key = NULL;
     }
 
@@ -409,21 +390,21 @@ int main(int argc, char** argv){
 
         test_case.test_name = "basic token test";
         test_case.argv = (char*[]){SM, "list_aliases", NULL};
-        PROP_GO(&e, run_test_case(test_case), fail);
+        PROP(&e, run_test_case(test_case) );
 
         test_case.test_name = "delete useless token test";
         test_case.argv = (char*[]){SM, "list_aliases", NULL};
         test_case.api_token_args.code = 403;
         test_case.expect_return = 9;
         test_case.expect_out = NULL;
-        PROP_GO(&e, run_test_case(test_case), fail);
+        PROP(&e, run_test_case(test_case) );
 
         test_case.test_name = "misc failure test";
         test_case.argv = (char*[]){SM, "list_aliases", NULL};
         test_case.api_token_args.code = 500;
         test_case.expect_return = 10;
         test_case.expect_out = NULL;
-        PROP_GO(&e, run_test_case(test_case), fail);
+        PROP(&e, run_test_case(test_case) );
     }
 
     // test API COMMAND args, api_password_call(), no register
@@ -452,7 +433,7 @@ int main(int argc, char** argv){
         test_case.users = NULL;
         test_case.passwords = (char*[]){"pass", NULL};
         test_case.argv = (char*[]){SM, "-a", "fake_file", "--user", "user@fqdn", "list_aliases", NULL};
-        PROP_GO(&e, run_test_case(test_case), fail);
+        PROP(&e, run_test_case(test_case) );
 
         // case "A", different variety
         test_case.test_name = "bad permissions user_dir";
@@ -460,7 +441,7 @@ int main(int argc, char** argv){
         test_case.api_password_args.user = "no.perms.user@fqdn";
         test_case.passwords = (char*[]){"pass", NULL};
         test_case.argv = (char*[]){SM, "list_aliases", NULL};
-        PROP_GO(&e, run_test_case(test_case), fail);
+        PROP(&e, run_test_case(test_case) );
 
         // case "C" -> noreg ("W")
         test_case.test_name = "bad creds";
@@ -470,7 +451,7 @@ int main(int argc, char** argv){
         test_case.read_token_error = (derr_t){E_PARAM};
         test_case.passwords = (char*[]){"pass", NULL};
         test_case.argv = (char*[]){SM, "list_aliases", NULL};
-        PROP_GO(&e, run_test_case(test_case), fail);
+        PROP(&e, run_test_case(test_case) );
         test_case.find_token = false;
         test_case.read_token_error = E_OK;
 
@@ -480,7 +461,7 @@ int main(int argc, char** argv){
         test_case.api_password_args.user = "no.creds.access.user@fqdn";
         test_case.passwords = (char*[]){"pass", NULL};
         test_case.argv = (char*[]){SM, "list_aliases", NULL};
-        PROP_GO(&e, run_test_case(test_case), fail);
+        PROP(&e, run_test_case(test_case) );
 
         // case "E" -> noreg ("W")
         test_case.test_name = "no creds yet";
@@ -489,7 +470,7 @@ int main(int argc, char** argv){
         test_case.api_password_args.user = "noreg.user@fqdn";
         test_case.passwords = (char*[]){"pass", NULL};
         test_case.argv = (char*[]){SM, "list_aliases", NULL};
-        PROP_GO(&e, run_test_case(test_case), fail);
+        PROP(&e, run_test_case(test_case) );
         test_case.creatables = NULL;
 
         // case "X" (via "E", "Z")
@@ -502,7 +483,7 @@ int main(int argc, char** argv){
         test_case.passwords = (char*[]){"pass", NULL};
         test_case.strings = (char*[]){"q", "r", "s", "n", NULL};
         test_case.argv = (char*[]){SM, "list_aliases", NULL};
-        PROP_GO(&e, run_test_case(test_case), fail);
+        PROP(&e, run_test_case(test_case) );
         test_case.creatables = NULL;
 
     }
@@ -541,7 +522,7 @@ int main(int argc, char** argv){
             .argv = (char*[]){SM, "list_aliases", NULL},
             .expect_out = "\"ok\"\n",
         };
-        PROP_GO(&e, run_test_case(test_case), fail);
+        PROP(&e, run_test_case(test_case) );
     }
 
     // Situations where we even if we have a token (Case "B") we need_password
@@ -572,30 +553,30 @@ int main(int argc, char** argv){
         test_case.test_name = "add device test";
         test_case.passwords = (char*[]){"pass", NULL};
         test_case.argv = (char*[]){SM, "add_device", NULL};
-        PROP_GO(&e, run_test_case(test_case), fail);
+        PROP(&e, run_test_case(test_case) );
 
         test_case.test_name = "add token test";
         test_case.passwords = (char*[]){"pass", NULL};
         test_case.argv = (char*[]){SM, "add_token", NULL};
-        PROP_GO(&e, run_test_case(test_case), fail);
+        PROP(&e, run_test_case(test_case) );
 
         test_case.test_name = "delete all mail test";
         test_case.passwords = (char*[]){"pass", NULL};
         test_case.strings = (char*[]){"I really want to do this", NULL};
         test_case.argv = (char*[]){SM, "delete_all_mail", NULL};
-        PROP_GO(&e, run_test_case(test_case), fail);
+        PROP(&e, run_test_case(test_case) );
 
         test_case.test_name = "delete all aliases test";
         test_case.passwords = (char*[]){"pass", NULL};
         test_case.strings = (char*[]){"I really want to do this", NULL};
         test_case.argv = (char*[]){SM, "delete_all_aliases", NULL};
-        PROP_GO(&e, run_test_case(test_case), fail);
+        PROP(&e, run_test_case(test_case) );
 
         test_case.test_name = "delete account test";
         test_case.passwords = (char*[]){"pass", NULL};
         test_case.strings = (char*[]){"I really want to do this", NULL};
         test_case.argv = (char*[]){SM, "delete_account", NULL};
-        PROP_GO(&e, run_test_case(test_case), fail);
+        PROP(&e, run_test_case(test_case) );
 
         test_case.test_name = "failed confirmation test";
         test_case.passwords = (char*[]){"pass", NULL};
@@ -604,8 +585,27 @@ int main(int argc, char** argv){
         test_case.call_api_password = false;
         test_case.expect_out = NULL;
         test_case.expect_return = 8;
-        PROP_GO(&e, run_test_case(test_case), fail);
+        PROP(&e, run_test_case(test_case) );
     }
+
+    return e;
+}
+
+
+int main(int argc, char** argv){
+    derr_t e = E_OK;
+    PARSE_TEST_OPTIONS(argc, argv, &g_test_files, LOG_LVL_INFO);
+
+    logger_add_fileptr(TEST_LOG_LEVEL, stderr);
+    PROP_GO(&e, dstr_new(&reason_log, 4096), fail_0);
+    // first save the stdout file descriptor
+    real_stdout_fd = compat_dup(1);
+    if(real_stdout_fd < 0){
+        perror("dup");
+        goto fail;
+    }
+
+    PROP_GO(&e, run_all_cases(), fail);
 
     LOG_ERROR("PASS\n");
     dstr_free(&reason_log);

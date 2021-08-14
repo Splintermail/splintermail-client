@@ -1,6 +1,4 @@
-#define HAVE_STRUCT_TIMESPEC
 #include <signal.h>
-#include <pthread.h>
 
 #include <openssl/ssl.h>
 #include <openssl/bio.h>
@@ -77,9 +75,9 @@ typedef struct {
     // these options only apply to non-vanilla servers:
     unsigned long ssl_types;
     // automatically handled values
-    pthread_t thread;
-    pthread_mutex_t mutex;
-    pthread_cond_t cond;
+    dthread_t thread;
+    dmutex_t mutex;
+    dcond_t cond;
     // return values
     derr_t error;
 } server_spec_t;
@@ -225,9 +223,9 @@ ctx_fail:
 
 signal_client:
     // no matter what, signal the main thread
-    pthread_mutex_lock(&spec->mutex);
-    pthread_cond_signal(&spec->cond);
-    pthread_mutex_unlock(&spec->mutex);
+    dmutex_lock(&spec->mutex);
+    dcond_signal(&spec->cond);
+    dmutex_unlock(&spec->mutex);
     // return error if necessary
     if(is_error(*e)){
         goto c_ctx;
@@ -259,10 +257,10 @@ static derr_t ssl_server_join(server_spec_t* spec){
     // not planning on having a loop anymore
     // if(spec->in_loop){
     // join the thread
-    pthread_join(spec->thread, NULL);
+    dthread_join(&spec->thread);
     // cleanup the mutex and conditional variable
-    pthread_mutex_destroy(&spec->mutex);
-    pthread_cond_destroy(&spec->cond);
+    dmutex_free(&spec->mutex);
+    dcond_free(&spec->cond);
     return spec->error;
 }
 
@@ -270,22 +268,30 @@ static derr_t ssl_server_start(server_spec_t* spec){
     derr_t e = E_OK;
 
     // prepare for the cond_wait
-    pthread_cond_init(&spec->cond, NULL);
-    pthread_mutex_init(&spec->mutex, NULL);
+    PROP(&e, dcond_init(&spec->cond) );
+    PROP_GO(&e, dmutex_init(&spec->mutex), fail_cond);
     // lock so the server doesn't signal before we are waiting
-    pthread_mutex_lock(&spec->mutex);
+    dmutex_lock(&spec->mutex);
     // start the server
-    pthread_create(&spec->thread, NULL, ssl_server_thread, (void*)spec);
+    PROP_GO(&e,
+        dthread_create(&spec->thread, ssl_server_thread, (void*)spec),
+    fail_mutex);
     // now wait the server to be ready
-    pthread_cond_wait(&spec->cond, &spec->mutex);
+    dcond_wait(&spec->cond, &spec->mutex);
     // unlock mutex
-    pthread_mutex_unlock(&spec->mutex);
+    dmutex_unlock(&spec->mutex);
 
     // if the server is about to puke, just join() it right now
     if(spec->error.type){
         return ssl_server_join(spec);
     }
 
+    return e;
+
+fail_cond:
+    dcond_free(&spec->cond);
+fail_mutex:
+    dmutex_free(&spec->mutex);
     return e;
 }
 
@@ -294,7 +300,9 @@ typedef struct {
     derr_t server;
 } derr_pair_t;
 
-static derr_pair_t do_ssl_test(server_spec_t* srv_spec, client_spec_t* cli_spec){
+static derr_pair_t do_ssl_test(
+    server_spec_t* srv_spec, client_spec_t* cli_spec
+){
     derr_t e = E_OK;
     derr_t server_error = E_OK;
 

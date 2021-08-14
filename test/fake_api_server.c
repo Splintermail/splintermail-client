@@ -1,7 +1,5 @@
 #include <string.h>
 #include <stdlib.h>
-#define HAVE_STRUCT_TIMESPEC
-#include <pthread.h>
 
 #include <libdstr/libdstr.h>
 #include <libcrypto/libcrypto.h>
@@ -28,8 +26,8 @@ DSTR_STATIC(exit_cmd, "EXIT");
 DSTR_STATIC(exit_msg, "\nContent-Length: 4\r\n\r\nEXIT");
 
 // for communicating when the fake_pop_server is ready
-static pthread_mutex_t fas_mutex;
-static pthread_cond_t  fas_cond;
+static dmutex_t fas_mutex;
+static dcond_t  fas_cond;
 
 // easy way to return value from a thread
 static derr_t thread_return;
@@ -37,19 +35,19 @@ static derr_t thread_return;
 #define Q_DEPTH 8
 
 // mutex-protected expected values
-static pthread_mutex_t exp_mutex;
+static dmutex_t exp_mutex;
 LIST_STATIC_VAR(dstr_t, exp_paths, Q_DEPTH);
 LIST_STATIC_VAR(dstr_t, exp_args, Q_DEPTH);
 LIST_STATIC_VAR(exp_hook_t, exp_hooks, Q_DEPTH);
 LIST_STATIC_VAR(uint, exp_ctrs, Q_DEPTH);
 
 // mutex-protected pre-written response
-static pthread_mutex_t resp_mutex;
+static dmutex_t resp_mutex;
 LIST_STATIC_VAR(int, resp_codes, Q_DEPTH);
 LIST_STATIC_VAR(dstr_t, responses, Q_DEPTH);
 
 // the fake api server thread
-static pthread_t g_thread;
+static dthread_t g_thread;
 
 static derr_t fas_recieve_request(connection_t* conn, dstr_t* recv,
                                   dstr_t* payload){
@@ -142,9 +140,9 @@ static void* fas_thread(void* arg){
     LOG_INFO("Fake API Server ready for incoming connections\n");
 
     // signal the main thread
-    pthread_mutex_lock(&fas_mutex);
-    pthread_cond_signal(&fas_cond);
-    pthread_mutex_unlock(&fas_mutex);
+    dmutex_lock(&fas_mutex);
+    dcond_signal(&fas_cond);
+    dmutex_unlock(&fas_mutex);
 
     in_loop = true;
     bool should_continue = true;
@@ -252,9 +250,9 @@ cleanup_2:
 cleanup_1:
     thread_return = e;
     // signal the main thread, in case of early exit
-    pthread_mutex_lock(&fas_mutex);
-    pthread_cond_signal(&fas_cond);
-    pthread_mutex_unlock(&fas_mutex);
+    dmutex_lock(&fas_mutex);
+    dcond_signal(&fas_cond);
+    dmutex_unlock(&fas_mutex);
 
     LOG_INFO("fas exiting: %x\n", FD(error_to_dstr(e.type)) );
     return NULL;
@@ -272,21 +270,32 @@ derr_t fas_start(void){
     exp_ctrs.len = 0;
 
     // prepare for protecting read/write of expected calls and responses
-    pthread_mutex_init(&exp_mutex, NULL);
-    pthread_mutex_init(&resp_mutex, NULL);
+    PROP(&e, dmutex_init(&exp_mutex) );
+    PROP_GO(&e, dmutex_init(&resp_mutex), fail_exp_mutex);
     // prepare for the cond_wait
-    pthread_cond_init(&fas_cond, NULL);
-    pthread_mutex_init(&fas_mutex, NULL);
+    PROP_GO(&e, dcond_init(&fas_cond), fail_resp_mutex);
+    PROP_GO(&e, dmutex_init(&fas_mutex), fail_fas_cond);
 
     // lock so the server doesn't signal before we are waiting
-    pthread_mutex_lock(&fas_mutex);
+    dmutex_lock(&fas_mutex);
     // start the server
-    pthread_create(&g_thread, NULL, fas_thread, NULL);
+    PROP_GO(&e, dthread_create(&g_thread, fas_thread, NULL), fail_fas_mutex);
     // now wait the server to be ready
-    pthread_cond_wait(&fas_cond, &fas_mutex);
+    dcond_wait(&fas_cond, &fas_mutex);
     // unlock mutex
-    pthread_mutex_unlock(&fas_mutex);
+    dmutex_unlock(&fas_mutex);
 
+    return e;
+
+fail_fas_mutex:
+    dmutex_unlock(&fas_mutex);
+    dmutex_free(&fas_mutex);
+fail_fas_cond:
+    dcond_free(&fas_cond);
+fail_resp_mutex:
+    dmutex_free(&resp_mutex);
+fail_exp_mutex:
+    dmutex_free(&exp_mutex);
     return e;
 }
 
@@ -300,7 +309,7 @@ static derr_t fas_send_exit_command(void){
     PROP_GO(&e, connection_new_ssl(&conn, &ctx, "127.0.0.1", fas_api_port), cu1);
     PROP_GO(&e, connection_write(&conn, &exit_msg), cu2);
     // wait for fas thread to exit
-    pthread_join(g_thread, NULL);
+    dthread_join(&g_thread);
 cu2:
     connection_close(&conn);
 cu1:
@@ -316,15 +325,17 @@ derr_t fas_join(void){
         e = fas_send_exit_command();
         if(is_error(e)){
             TRACE(&e, "error shutting down fake_api_server nicely\n");
-            pthread_cancel(g_thread);
+            DUMP(e);
+            DROP_VAR(&e);
+            exit(1);
         }
     }
-    pthread_join(g_thread, NULL);
+    dthread_join(&g_thread);
 
-    pthread_mutex_destroy(&fas_mutex);
-    pthread_cond_destroy(&fas_cond);
-    pthread_mutex_destroy(&resp_mutex);
-    pthread_mutex_destroy(&exp_mutex);
+    dmutex_free(&fas_mutex);
+    dcond_free(&fas_cond);
+    dmutex_free(&resp_mutex);
+    dmutex_free(&exp_mutex);
     // free expect lists
     for(size_t i = 0; i < exp_args.len; i++){
         dstr_free(&exp_args.data[i]);
@@ -350,7 +361,7 @@ derr_t fas_expect_put(const dstr_t* path, const dstr_t* arg,
                       exp_hook_t hook, unsigned int counter){
     derr_t e = E_OK;
     // lock the response mutex
-    pthread_mutex_lock(&exp_mutex);
+    dmutex_lock(&exp_mutex);
 
     // copy the path
     dstr_t c;
@@ -375,7 +386,7 @@ derr_t fas_expect_put(const dstr_t* path, const dstr_t* arg,
     PROP_GO(&e, LIST_APPEND(uint, &exp_ctrs, counter), fail_6);
 
 
-    pthread_mutex_unlock(&exp_mutex);
+    dmutex_unlock(&exp_mutex);
     return e;
 
 fail_6:
@@ -389,7 +400,7 @@ fail_3:
 fail_2:
     dstr_free(&c);
 fail_1:
-    pthread_mutex_unlock(&resp_mutex);
+    dmutex_unlock(&resp_mutex);
     return e;
 }
 
@@ -397,7 +408,7 @@ derr_t fas_expect_get(dstr_t* path, dstr_t* arg,
                       exp_hook_t* hook, unsigned int* counter){
     derr_t e = E_OK;
     // lock the response mutex
-    pthread_mutex_lock(&exp_mutex);
+    dmutex_lock(&exp_mutex);
 
     if(exp_paths.len == 0){
         ORIG_GO(&e, E_VALUE, "no expect to pop", cleanup);
@@ -426,14 +437,14 @@ derr_t fas_expect_get(dstr_t* path, dstr_t* arg,
     LIST_DELETE(uint, &exp_ctrs, 0);
 
 cleanup:
-    pthread_mutex_unlock(&exp_mutex);
+    dmutex_unlock(&exp_mutex);
     return e;
 }
 
 derr_t fas_response_put(int code, const dstr_t* response){
     derr_t e = E_OK;
     // lock the response mutex
-    pthread_mutex_lock(&resp_mutex);
+    dmutex_lock(&resp_mutex);
 
     // push the code
     PROP_GO(&e, LIST_APPEND(int, &resp_codes, code), fail_1);
@@ -448,7 +459,7 @@ derr_t fas_response_put(int code, const dstr_t* response){
     // push the response
     PROP_GO(&e, LIST_APPEND(dstr_t, &responses, resp), fail_3);
 
-    pthread_mutex_unlock(&resp_mutex);
+    dmutex_unlock(&resp_mutex);
     return e;
 
 fail_3:
@@ -457,14 +468,14 @@ fail_2:
     // remove what was added to resp_codes
     resp_codes.len--;
 fail_1:
-    pthread_mutex_unlock(&resp_mutex);
+    dmutex_unlock(&resp_mutex);
     return e;
 }
 
 derr_t fas_response_get(int* code, dstr_t* response){
     derr_t e = E_OK;
     // lock the response mutex
-    pthread_mutex_lock(&resp_mutex);
+    dmutex_lock(&resp_mutex);
 
     if(responses.len == 0){
         ORIG_GO(&e, E_VALUE, "no response to pop", cleanup);
@@ -483,7 +494,7 @@ derr_t fas_response_get(int* code, dstr_t* response){
     LIST_DELETE(int, &resp_codes, 0);
 
 cleanup:
-    pthread_mutex_unlock(&resp_mutex);
+    dmutex_unlock(&resp_mutex);
     return e;
 }
 

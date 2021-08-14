@@ -8,19 +8,9 @@ static void uv_perror(const char *prefix, int code){
 derr_t fic_create(fic_t *fic, const dstr_t *url, unsigned short port){
     derr_t error;
     // mutex
-    int ret = uv_mutex_init(&fic->resp_mutex);
-    if(ret < 0){
-        uv_perror("uv_mutex_init", ret);
-        error = (ret == UV_ENOMEM) ? E_NOMEM : E_UV;
-        ORIG(error, "failed in uv_mutex_init");
-    }
+    PROP(&e, dmutex_init(&fic->resp_mutex) );
     // cond
-    ret = uv_cond_init(&fic->resp_cond);
-    if(ret < 0){
-        uv_perror("uv_cond_init", ret);
-        error = (ret == UV_ENOMEM) ? E_NOMEM : E_UV;
-        ORIG_GO(&error, "failed in uv_cond_init", fail_mutex);
-    }
+    PROP_GO(&e, dcond_init(&fic->resp_cond), fail_mutex);
     // allocate read buffers
     PROP_GO(& dstr_new(&fic->resp, 4096), fail_cond);
     PROP_GO(& dstr_new(&fic->resp_chunk, 4096), fail_resp);
@@ -52,9 +42,9 @@ fail_resp_chunk:
 fail_resp:
     dstr_free(&fic->resp);
 fail_cond:
-    uv_cond_destroy(&fic->resp_cond);
+    dcond_free(&fic->resp_cond);
 fail_mutex:
-    uv_mutex_destroy(&fic->resp_mutex);
+    dmutex_free(&fic->resp_mutex);
     return error;
 }
 
@@ -105,8 +95,8 @@ derr_t fic_destroy(fic_t *fic){
     queue_free(&fic->cmd_q);
     dstr_free(&fic->resp_chunk);
     dstr_free(&fic->resp);
-    uv_cond_destroy(&fic->resp_cond);
-    uv_mutex_destroy(&fic->resp_mutex);
+    dcond_free(&fic->resp_cond);
+    dmutex_free(&fic->resp_mutex);
     return any_error;
 }
 

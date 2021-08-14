@@ -99,7 +99,7 @@ target_link_libraries(test_maildir PRIVATE ditm)
 target_link_libraries(test_pop_client PRIVATE fake_pop_server)
 target_link_libraries(test_crypto PRIVATE crypto)
 # target_link_libraries(test_opt_parse) PRIVATE
-target_link_libraries(test_networking PRIVATE crypto)
+target_link_libraries(test_networking PRIVATE crypto uvthread)
 # target_link_libraries(test_json) PRIVATE
 target_link_libraries(test_key_tool PRIVATE ditm test_utils fake_api_server)
 target_link_libraries(test_ui PRIVATE ui dummy_ui_harness)
@@ -149,34 +149,4 @@ if("${BUILD_SERVER_CODE}")
             "${PROJECT_SOURCE_DIR}/test/test_migmysql.py"
         WORKING_DIRECTORY "${PROJECT_BINARY_DIR}"
     )
-endif()
-
-
-if(WIN32)
-    # make sure the user provided the location of Pthreads
-    if("${PTHREAD_ROOT_DIR}" STREQUAL "")
-        message(FATAL_ERROR "If building for windows and BUILD_TESTS=yes, "
-                            "then PTHREAD_ROOT_DIR must be specified.")
-    endif()
-
-    set(PT_incl "${PTHREAD_ROOT_DIR}/include")
-    set(PT_lib "${PTHREAD_ROOT_DIR}/lib/$ENV{VSCMD_ARG_TGT_ARCH}/pthreadVC2.lib")
-    add_library(winpthread INTERFACE)
-    target_include_directories(winpthread INTERFACE "${PT_incl}")
-    target_link_libraries(winpthread INTERFACE "${PT_lib}")
-    target_link_libraries(fake_api_server PUBLIC winpthread)
-    target_link_libraries(fake_pop_server PUBLIC winpthread)
-    target_link_libraries(ditm_thread PUBLIC winpthread)
-    target_link_libraries(test_networking PUBLIC winpthread)
-    target_link_libraries(test_pop_server PUBLIC winpthread)
-    target_link_libraries(test_ui PUBLIC winpthread)
-    target_link_libraries(fake_engine PUBLIC winpthread)
-    target_link_libraries(test_crypto PUBLIC winpthread)
-    target_link_libraries(test_queue PUBLIC winpthread)
-    # not necessary with the winpthread INTERFACE library:
-    # obj_depend_lib(fake_api_server "${PT_incl}" "${PT_lib}")
-    # obj_depend_lib(fake_pop_server "${PT_incl}" "${PT_lib}")
-else()
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -pthread")
-    set(CMAKE_LINK_FLAGS "${CMAKE_LINK_FLAGS} -pthread")
 endif()

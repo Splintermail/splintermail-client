@@ -1,17 +1,17 @@
 #include "libengine.h"
 
 void imap_session_ref_up(imap_session_t *s){
-    uv_mutex_lock(&s->mutex);
+    dmutex_lock(&s->mutex);
     ++s->refs;
     // LOG_DEBUG("ref_up (%x)\n", FI(s->refs));
-    uv_mutex_unlock(&s->mutex);
+    dmutex_unlock(&s->mutex);
 }
 
 void imap_session_ref_down(imap_session_t *s){
-    uv_mutex_lock(&s->mutex);
+    dmutex_lock(&s->mutex);
     int refs = --s->refs;
     // LOG_DEBUG("ref_down (%x)\n", FI(s->refs));
-    uv_mutex_unlock(&s->mutex);
+    dmutex_unlock(&s->mutex);
 
     if(refs > 0) return;
 
@@ -28,7 +28,7 @@ void imap_session_free(imap_session_t *s){
     // imape_data does not need freeing
 
     // free our own resources
-    uv_mutex_destroy(&s->mutex);
+    dmutex_free(&s->mutex);
 }
 
 // only called by loop thread
@@ -70,14 +70,14 @@ static void imap_session_ref_down_tlse(session_t *session, int reason){
 // only called by imape thread
 static void imap_session_ref_up_imape(session_t *session, int reason){
     imap_session_t *s = CONTAINER_OF(session, imap_session_t, session);
-    uv_mutex_lock(&s->mutex);
+    dmutex_lock(&s->mutex);
     s->imape_refs[reason]++;
-    uv_mutex_unlock(&s->mutex);
+    dmutex_unlock(&s->mutex);
     imap_session_ref_up(s);
 }
 static void imap_session_ref_down_imape(session_t *session, int reason){
     imap_session_t *s = CONTAINER_OF(session, imap_session_t, session);
-    uv_mutex_lock(&s->mutex);
+    dmutex_lock(&s->mutex);
     s->imape_refs[reason]--;
     for(size_t i = 0; i < IMAPE_REF_MAXIMUM; i++){
         if(s->imape_refs[i] < 0){
@@ -85,17 +85,17 @@ static void imap_session_ref_down_imape(session_t *session, int reason){
                       FD(imape_ref_reason_to_dstr((enum imape_ref_reason_t)i)));
         }
     }
-    uv_mutex_unlock(&s->mutex);
+    dmutex_unlock(&s->mutex);
     imap_session_ref_down(s);
 }
 
 
 void imap_session_close(session_t *session, derr_t error){
     imap_session_t *s = CONTAINER_OF(session, imap_session_t, session);
-    uv_mutex_lock(&s->mutex);
+    dmutex_lock(&s->mutex);
     bool do_close = !s->closed;
     s->closed = true;
-    uv_mutex_unlock(&s->mutex);
+    dmutex_unlock(&s->mutex);
 
     if(!do_close){
         /* TODO: find some way to gather secondary errors, since we already
@@ -133,11 +133,7 @@ static derr_t imap_session_do_alloc(imap_session_t *s,
     *s = (imap_session_t){ .upwards = upwards };
 
     // session prestart
-    int ret = uv_mutex_init(&s->mutex);
-    if(ret < 0){
-        TRACE(&e, "uv_mutex_init: %x\n", FUV(&ret));
-        ORIG(&e, uv_err_type(ret), "error initializing mutex");
-    }
+    PROP(&e, dmutex_init(&s->mutex) );
     // startup protection
     s->refs = 1;
     s->closed = false;
