@@ -1,3 +1,5 @@
+#include <string.h>
+
 #include "libcitm.h"
 
 static void user_close(user_t *user, derr_t error){
@@ -45,29 +47,18 @@ static derr_t gen_msg_header(
 ){
     derr_t e = E_OK;
 
-    *intdate = (imap_time_t){0};
-
-    // get the current time
     time_t epoch;
-    PROP(&e, dtime(&epoch) );
-    // c99 doesn't allow for the rentrant localtime_r(), and its not a big deal
-    struct tm* tret = localtime(&epoch);
-    if(tret == NULL){
-        TRACE(&e, "%x: %x\n", FS("localtime"), FE(&errno));
-        ORIG(&e, E_OS, "error converting epoch time to time struct");
-    }
-    struct tm tnow = *tret;
-    // print human-readable date to a buffer
-    char d[128];
-    size_t len;
-    len = strftime(d, sizeof(d), "%a, %d %b %Y %H:%M:%S %z", &tnow);
-    if(len == 0){
-        TRACE(&e, "%x: %x\n", FS("strftime"), FE(&errno));
-        ORIG(&e, E_OS, "error formatting time string");
+    e = dtime(&epoch);
+    CATCH(e, E_ANY){
+        TRACE(&e, "ignoring failure of dtime()\n");
+        DUMP(e);
+        DROP_VAR(&e);
+        epoch = 0;
     }
 
-    long int tz;
-    PROP(&e, dtimezone(&tz) );
+    char buf[128];
+    const char *date_field = get_date_field(buf, sizeof(buf), epoch);
+    *intdate = imap_time_now(epoch);
 
     PROP(&e,
         FMT(out,
@@ -76,29 +67,10 @@ static derr_t gen_msg_header(
             "Date: %x\r\n"
             "Subject: %x\r\n"
             "\r\n",
-            FS(d),
+            FS(date_field),
             FD(&subj)
         )
     );
-
-
-    // libc defines timezone as negative of what it should be
-    long int tz_hour = -(int)(tz/60/60);
-    // do mod-math on the positive-signed value
-    long int tz_pos = tz * (tz > 0 ? 1 : -1);
-    long int tz_min = (int)((tz_pos % 60*60) / 60);
-
-    // imap_time_t is 1-indexed for some values
-    *intdate = (imap_time_t){
-        .year  = tnow.tm_year,
-        .month = tnow.tm_mon + 1,  // imap_time_t is 1-indexed
-        .day = tnow.tm_mday,  // struct tm is also 1-indexed
-        .hour = tnow.tm_hour,
-        .min = tnow.tm_min,
-        .sec = tnow.tm_sec,
-        .z_hour = (int)tz_hour,
-        .z_min = (int)tz_min,
-    };
 
     return e;
 }
@@ -456,23 +428,9 @@ static derr_t mangle_corrupted(
     derr_t e = E_OK;
     if(len) *len = 0;
 
-    // get the current time
-    time_t epoch = time(NULL);
-    // c99 doesn't allow for the rentrant localtime_r(), and its not a big deal
-    struct tm* tret = localtime(&epoch);
-    if(tret == NULL){
-        TRACE(&e, "%x: %x\n", FS("localtime"), FE(&errno));
-        ORIG(&e, E_INTERNAL, "error converting epoch time to time struct");
-    }
-    struct tm tnow = *tret;
-    // print human-readable date to a buffer
-    char d[128];
-    size_t dlen;
-    dlen = strftime(d, sizeof(d), "%a, %d %b %Y %H:%M:%S %z", &tnow);
-    if(dlen == 0){
-        TRACE(&e, "%x: %x\n", FS("strftime"), FE(&errno));
-        ORIG(&e, E_INTERNAL, "error formatting time string");
-    }
+    char buf[128];
+    const char *date_field = get_date_field(buf, sizeof(buf), (time_t)-1);
+    size_t dlen = strlen(date_field);
 
     DSTR_STATIC(
         fmtstr,
@@ -490,7 +448,7 @@ static derr_t mangle_corrupted(
     PROP(&e, dstr_new(&copy, msg->len + (fmtstr.len - 2) + dlen) );
 
     // dump headers to message
-    PROP_GO(&e, FMT(&copy, fmtstr.data, FS(d)), cu);
+    PROP_GO(&e, FMT(&copy, fmtstr.data, FS(date_field)), cu);
 
     // dump original message as the body
     PROP_GO(&e, dstr_append(&copy, msg), cu);

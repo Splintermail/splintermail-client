@@ -77,42 +77,6 @@ void sf_pair_close(sf_pair_t *sf_pair, derr_t error){
     PASSED(error);
 }
 
-static imap_time_t imap_time_now(void){
-    // get epochtime
-    time_t epoch;
-    time_t time_ret = time(&epoch);
-    if(time_ret < 0){
-        // if this fails... just use zero
-        epoch = ((time_t) 0);
-    }
-
-    // convert to struct tm
-    struct tm tm, *localtime_ret;
-    localtime_ret = localtime_r(&epoch, &tm);
-    if(localtime_ret != &tm){
-        return (imap_time_t){0};
-    }
-
-    // get the timezone, sets extern long timezone to a signed second offset
-    tzset();
-    int z_hour = 0;
-    int z_min = 0;
-    if(timezone < 3600 * 24 && timezone > -3600 * 24){
-        z_hour = (int)timezone / 3600;
-        z_min = ABS((int)timezone - z_hour * 3600) / 60;
-    }
-
-    return (imap_time_t){
-        .year = tm.tm_year + 1900,
-        .month = tm.tm_mon + 1,
-        .day = tm.tm_mday,
-        .min = tm.tm_min,
-        .sec = tm.tm_sec,
-        .z_hour = z_hour,
-        .z_min = z_min,
-    };
-}
-
 // we will modify the content of the append command directly
 static derr_t sf_pair_append_req(sf_pair_t *sf_pair){
     derr_t e = E_OK;
@@ -136,7 +100,7 @@ static derr_t sf_pair_append_req(sf_pair_t *sf_pair){
         sf_pair->append.intdate = append->time;
     }else{
         // use the time right now
-        sf_pair->append.intdate = imap_time_now();
+        sf_pair->append.intdate = imap_time_now((time_t)-1);
         // also pass that value to the server to ensure that we are synced
         append->time = sf_pair->append.intdate;
     }

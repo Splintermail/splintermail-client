@@ -9,6 +9,7 @@ add_library(
     sf_pair.c
     fpr_watcher.c
     citm.c
+    date.c
 )
 target_link_libraries(libcitm PUBLIC engine dstr imaildir)
 set_target_properties("libcitm" PROPERTIES OUTPUT_NAME "citm")

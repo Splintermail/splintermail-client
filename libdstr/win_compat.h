@@ -39,6 +39,8 @@
     #define compat_dup _dup
     #define compat_getpid _getpid
     #define compat_fsync _commit
+    #define compat_tzset _tzset
+    extern long timezone;
 
     #define compat_environ _environ
 
@@ -72,8 +74,8 @@
     #define compat_lseek lseek
     #define compat_dup dup
     #define compat_getpid getpid
-    #define compat_fsync
-
+    #define compat_fsync fsync
+    #define compat_tzset tzset
 
     #define compat_environ environ
 

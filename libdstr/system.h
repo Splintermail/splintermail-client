@@ -17,6 +17,9 @@ derr_t dtime(time_t *time);
 // get the timezone (offset from UTC in seconds)
 derr_t dtimezone(long int *tz);
 
+// localtime_r in unix or localtime_s in windows
+derr_t dlocaltime(time_t t, struct tm *tm);
+
 #ifndef _WIN32
 
 derr_t dpipe(int *read_fd, int *write_fd);

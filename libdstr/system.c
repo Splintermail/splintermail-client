@@ -220,11 +220,19 @@ derr_t dtime(time_t *out){
     return e;
 }
 
+static bool _tz_is_set = false;
+static void _ensure_tzset(void){
+    // this is not thread-safe, but tzset() seems to be so this seems ok
+    if(!_tz_is_set){
+        _tz_is_set = true;
+        compat_tzset();
+    }
+}
+
 derr_t dtimezone(long int *tz){
 #ifndef _WIN32 // UNIX
     derr_t e = E_OK;
-    // be sure the extern variable is correct, even though this is inefficient
-    tzset();
+    _ensure_tzset();
     *tz = timezone;
     return e;
 #else // WINDOWS
@@ -235,6 +243,29 @@ derr_t dtimezone(long int *tz){
         // I see no docs at all about what error_t means
         TRACE(&e, "_get_timezone: %x\n", FE(&errno));
         ORIG(&e, E_OS, "_get_timezone failed");
+    }
+    return e;
+#endif
+}
+
+// localtime_r in unix or localtime_s in windows
+derr_t dlocaltime(time_t t, struct tm *tm){
+#ifndef _WIN32 // UNIX
+    derr_t e = E_OK;
+    _ensure_tzset();
+    struct tm *tret = localtime_r(&t, tm);
+    if(tret == NULL){
+        TRACE(&e, "localtime_r(%x): %x\n", FI(t), FE(&errno));
+        ORIG(&e, E_OS, "localtime_r failed");
+    }
+    return e;
+#else
+    derr_t e = E_OK;
+    _ensure_tzset();
+    int ret = localtime_s(tm, &t);
+    if(ret){
+        TRACE(&e, "localtime_s(%x): %x\n", FI(t), FE(&ret));
+        ORIG(&e, E_OS, "localtime_s failed");
     }
     return e;
 #endif

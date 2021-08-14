@@ -1129,14 +1129,10 @@ derr_t ditm_mangle_unencrypted(int infd, int outfd, size_t* outlen){
 derr_t ditm_mangle_corrupted(int infd, int outfd, size_t* outlen){
     derr_t e = E_OK;
     // get the current time
-    time_t epoch = time(NULL);
-    // c99 doesn't allow for the rentrant localtime_r(), and its not a big deal
-    struct tm* tret = localtime(&epoch);
-    if(tret == NULL){
-        TRACE(&e, "%x: %x\n", FS("localtime"), FE(&errno));
-        ORIG(&e, E_INTERNAL, "error converting epoch time to time struct");
-    }
-    struct tm tnow = *tret;
+    time_t epoch;
+    PROP(&e, dtime(&epoch) );
+    struct tm tnow;
+    PROP(&e, dlocaltime(epoch, &tnow) );
     // print human-readable date to a buffer
     char d[128];
     size_t len;
@@ -1182,14 +1178,10 @@ derr_t ditm_mangle_corrupted(int infd, int outfd, size_t* outlen){
 derr_t ditm_inject_message(ditm_t* ditm, const dstr_t* subj, const dstr_t* msg){
     derr_t e = E_OK;
     // get the current time
-    time_t epoch = time(NULL);
-    // c99 doesn't allow for the rentrant localtime_r(), and its not a big deal
-    struct tm* tret = localtime(&epoch);
-    if(tret == NULL){
-        TRACE(&e, "%x: %x\n", FS("localtime"), FE(&errno));
-        ORIG(&e, E_OS, "error converting epoch time to time struct");
-    }
-    struct tm tnow = *tret;
+    time_t epoch;
+    PROP(&e, dtime(&epoch) );
+    struct tm tnow;
+    PROP(&e, dlocaltime(epoch, &tnow) );
     // print human-readable date to a buffer
     char d[128];
     size_t len;

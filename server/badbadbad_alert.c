@@ -60,15 +60,11 @@ static derr_t get_tag(dstr_t* tag){
 
 static derr_t get_timestamp(dstr_t* ts){
     derr_t e = E_OK;
-    time_t epoch = time(NULL);
-    // get a date string
-    // c99 doesn't allow for the rentrant localtime_r(), and its not a big deal
-    struct tm* tret = localtime(&epoch);
-    if(tret == NULL){
-        TRACE(&e, "error getting timestamp: %x\n", FE(&errno));
-        ORIG(&e, E_OS, "failed in get_timestamp");
-    }
-    struct tm tnow = *tret;
+    time_t epoch;
+    PROP(&e, dtime(&epoch) );
+    struct tm tnow;
+    PROP(&e, dlocaltime(epoch, &tnow) );
+
     // print human-readable date to a buffer
     char d[128];
     size_t len;
