@@ -98,6 +98,11 @@ struct loop_data_t {
     engine_data_state_t state;
     event_t start_ev;
     event_t close_ev;
+    /* EOF event: a preallocated buffer, since under some circumstances
+       (ECONNRESET in windows, for instance) we can't afford to allocate a
+       new buffer upon receipt without complex error handling */
+    event_t eof_ev;
+    bool eof_sent;
     // for upwards connections
     uv_getaddrinfo_t gai_req;
     struct addrinfo hints;
@@ -106,6 +111,7 @@ struct loop_data_t {
     uv_connect_t connect_req;
 };
 DEF_CONTAINER_OF(loop_data_t, read_pause_qcb, queue_cb_t)
+DEF_CONTAINER_OF(loop_data_t, eof_ev, event_t)
 
 // Per-listener specificiation.
 struct listener_spec_t {

@@ -146,6 +146,13 @@ static void allocator(uv_handle_t *handle, size_t suggest, uv_buf_t *buf){
 }
 
 
+static void eof_ev_returner(event_t *ev){
+    loop_data_t *ld = CONTAINER_OF(ev, loop_data_t, eof_ev);
+    ld->eof_sent = false;
+    ld->ref_down(ev->session, LOOP_REF_READ);
+}
+
+
 static void read_cb(uv_stream_t *stream, ssize_t ssize_read,
                     const uv_buf_t *buf){
     derr_t e = E_OK;
@@ -156,85 +163,75 @@ static void read_cb(uv_stream_t *stream, ssize_t ssize_read,
     // the uv_loop_t has a pointer to our own loop_t
     loop_t *loop = stream->loop->data;
     // wuuut??  The char* in uv_buf_t is secretly a read_wrapper_t!!
-    read_wrapper_t * rd_wrap = CONTAINER_OF(buf->base, read_wrapper_t, buffer);
+    read_wrapper_t *rd_wrap = CONTAINER_OF(buf->base, read_wrapper_t, buffer);
+    // when ssize_read < 0, buf might or might not be a valid buffer!
+    // (seems to vary by OS)
     event_t *ev = rd_wrap ? &rd_wrap->event : NULL;
 
-    /* possible situations:
-         - ld->state = DATA_STATE_CLOSED: downref and return buffer to queue
-         - UV_ENOBUFS: pause socket and return
-         - num_read = 0: docs say it's equivalent to EAGAIN or EWOULDBLOCK
-         - read error: close session
-         - EOF: pass an empty, error-free buffer down the pipe
-         - normal message: pass the normal message
-    */
+    // handle error cases
+    if(ssize_read < 1){
+        // no error is equivalent to EAGAIN or EWOULDBLOCK (harmeless)
+        if(ssize_read == 0) goto return_ev;
+        // UV_ENOBUFS means that the read needs to be paused
+        if(ssize_read == UV_ENOBUFS){
+            // pause reading
+            int ret = uv_read_stop((uv_stream_t*)(ld->sock));
+            if(ret < 0){
+                TRACE(&e, "uv_read_stop: %x\n", FUV(&ret));
+                ORIG_GO(&e, uv_err_type(ret), "error pausing read", return_ev);
+            }
+            goto return_ev;
+        }
+        // ECANCELED means the read was canceled and memory is being returned
+        if(ssize_read == UV_ECANCELED) goto return_ev;
+        // EOF and ECONNRESET trigger sending the preallocated EOF event
+        if(ssize_read == UV_EOF || ssize_read == UV_ECONNRESET){
+            if(!ld->eof_sent){
+                ld->eof_sent = true;
+                event_prep(&ld->eof_ev, eof_ev_returner, NULL);
+                ld->eof_ev.session = ld->session;
+                ld->eof_ev.ev_type = EV_READ;
+                ld->ref_up(ld->session, LOOP_REF_READ);
+                loop->downstream->pass_event(loop->downstream, &ld->eof_ev);
+            }
+            goto return_ev;
+        }
+        // otherwise the error is real
+        int uv_ret = (int)ssize_read;
+        TRACE(&e, "error from read_cb: %x\n", FUV(&uv_ret));
+        ORIG_GO(&e, E_CONN, "error from read_cb", return_ev);
+    }
 
     if(ld->state == DATA_STATE_CLOSED){
         // no need to pass read around, the session is already dead.
-        goto return_buffer;
-    }
-
-    // check for UV_ENOBUFS condition, the only case where we have no read buf
-    if(ssize_read == UV_ENOBUFS){
-        // pause reading
-        int ret = uv_read_stop((uv_stream_t*)(ld->sock));
-        if(ret < 0){
-            TRACE(&e, "uv_read_stop: %x\n", FUV(&ret));
-            TRACE_ORIG(&e, uv_err_type(ret), "error pausing read");
-            ld->session->close(ld->session, e);
-            PASSED(e);
-            loop_data_onthread_close(ld);
-        }
+        ev->session = NULL;
+        queue_append(&loop->read_events, &ev->link);
+        ld->ref_down(ld->session, LOOP_REF_READ);
         return;
     }
 
-    // if zero bytes read but no error, return the buffer if we have one
-    // (it's not totally clear from docs if both cases are even possible)
-    if(ssize_read == 0){
-        if(!buf->base){
-            return;
-        }else{
-            /* equivalent to EAGAIN or EWOULDBLOCK.  Not sure what causes it
-               but it is not harmful and it is easily handled. */
-            goto return_buffer;
-        }
-    }
-
-    // if the socket was canceled, just return the buffer to the pool
-    if(ssize_read == UV_ECANCELED){
-        goto return_buffer;
-    }
-
-    // check for non-EOF read error
-    if(ssize_read < 0 && ssize_read != UV_EOF){
-        ev->buffer.len = 0;
-        ORIG_GO(&e, E_CONN, "error from read_cb", return_buffer);
-    }
-
-    // at this point, we are definitely going to pass the event downstream
-
-    // check for EOF
-    if(ssize_read == UV_EOF){
-        ev->buffer.len = 0;
-    }else{
-        // now safe to cast
-        ev->buffer.len = (size_t)ssize_read;
-    }
-
+    // now safe to cast
+    ev->buffer.len = (size_t)ssize_read;
     // pass the buffer down the pipeline
     ev->ev_type = EV_READ;
     // ev->session already set and upref'd in allocator
     loop->downstream->pass_event(loop->downstream, ev);
     return;
 
-return_buffer:
-    ev->session = NULL;
-    queue_append(&loop->read_events, &ev->link);
-    ld->ref_down(ld->session, LOOP_REF_READ);
+return_ev:
     // if there was an error, close the session
     if(is_error(e)){
         ld->session->close(ld->session, e);
         PASSED(e);
         loop_data_onthread_close(ld);
+    }
+    /* if there is an event for this buffer, always free it last, since it
+       has a ref_down in it */
+    if(ev){
+        // return the buffer if it did exist
+        ev->session = NULL;
+        queue_append(&loop->read_events, &ev->link);
+        ld->ref_down(ld->session, LOOP_REF_READ);
     }
     return;
 }
