@@ -5,38 +5,73 @@
 
 #include "test_utils.h"
 
-derr_t file_cmp(const char* fa, const char* fb, int* result){
+derr_t file_cmp(
+    const char* fa, const char* fb, bool normalize_line_ends, int* result
+){
+    dstr_t a = {0};
+    dstr_t anorm = {0};
+    dstr_t b = {0};
+    dstr_t bnorm = {0};
+
     derr_t e = E_OK;
-    // allocate memory
-    dstr_t a;
-    PROP(&e, dstr_new(&a, 4096) );
-    dstr_t b;
-    PROP_GO(&e, dstr_new(&b, 4096), cleanup_1);
-    // read files in
-    PROP_GO(&e, dstr_read_file(fa, &a), cleanup_2);
-    PROP_GO(&e, dstr_read_file(fb, &b), cleanup_2);
 
-    *result = dstr_cmp(&a, &b);
+    *result = -1;
 
-cleanup_2:
+    PROP_GO(&e, dstr_new(&a, 4096), cu);
+    PROP_GO(&e, dstr_new(&b, 4096), cu);
+
+    PROP_GO(&e, dstr_read_file(fa, &a), cu);
+    PROP_GO(&e, dstr_read_file(fb, &b), cu);
+
+    if(normalize_line_ends){
+        PROP_GO(&e, dstr_new(&anorm, 4096), cu);
+        PROP_GO(&e, dstr_new(&bnorm, 4096), cu);
+
+        LIST_PRESET(dstr_t, find, DSTR_LIT("\r\n"));
+        LIST_PRESET(dstr_t, repl, DSTR_LIT("\n"));
+
+        PROP_GO(&e, dstr_recode(&a, &anorm, &find, &repl, false), cu);
+        PROP_GO(&e, dstr_recode(&b, &bnorm, &find, &repl, false), cu);
+
+        *result = dstr_cmp(&anorm, &bnorm);
+    }else{
+        *result = dstr_cmp(&a, &b);
+    }
+
+cu:
+    dstr_free(&bnorm);
     dstr_free(&b);
-cleanup_1:
+    dstr_free(&anorm);
     dstr_free(&a);
     return e;
 }
 
-derr_t file_cmp_dstr(const char* fa, const dstr_t* b, int* result){
+derr_t file_cmp_dstr(
+    const char* fa, const dstr_t* b, bool normalize_line_ends, int* result
+){
+    dstr_t a = {0};
+    dstr_t anorm = {0};
+
     derr_t e = E_OK;
-    // allocate memory
-    dstr_t a;
-    PROP(&e, dstr_new(&a, 4096) );
-    // read files in
-    PROP_GO(&e, dstr_read_file(fa, &a), cleanup_1);
+    *result = -1;
 
-    *result = dstr_cmp(&a, b);
+    PROP_GO(&e, dstr_new(&a, 4096), cu);
 
-cleanup_1:
+    PROP_GO(&e, dstr_read_file(fa, &a), cu);
+
+    if(normalize_line_ends){
+        LIST_PRESET(dstr_t, find, DSTR_LIT("\r\n"));
+        LIST_PRESET(dstr_t, repl, DSTR_LIT("\n"));
+        PROP_GO(&e, dstr_recode(&a, &anorm, &find, &repl, false), cu);
+        *result = dstr_cmp(&anorm, b);
+    }else{
+        *result = dstr_cmp(&a, b);
+    }
+
+
+cu:
     dstr_free(&a);
+    dstr_free(&anorm);
     return e;
 }
 

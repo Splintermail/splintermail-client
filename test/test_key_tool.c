@@ -461,7 +461,9 @@ static derr_t do_test(unsigned int ctr){
     int result;
     // compare both of the output files
     PROP_GO(&e, build_peer_list_result(ctr, &temp), cu);
-    PROP_GO(&e, file_cmp_dstr("_tktdir/peer_list.json", &temp, &result), cu);
+    PROP_GO(&e,
+        file_cmp_dstr("_tktdir/peer_list.json", &temp, true, &result),
+    cu);
     if(result != 0){
         DSTR_VAR(ftemp, 2048);
         dstr_read_file("_tktdir/peer_list.json", &ftemp);
@@ -472,7 +474,9 @@ static derr_t do_test(unsigned int ctr){
 
     // only compare device.pem if we already had a key
     if(ctr & K){
-        PROP_GO(&e, file_cmp_dstr("_tktdir/device.pem", &privkey_m, &result), cu);
+        PROP_GO(&e,
+            file_cmp_dstr("_tktdir/device.pem", &privkey_m, true, &result),
+        cu);
         if(result != 0){
             DSTR_VAR(ftemp, 2048);
             dstr_read_file("_tktdir/device.pem", &ftemp);
@@ -566,7 +570,7 @@ static derr_t test_peer_list_read_write(void){
 
     // compare the files
     int result;
-    PROP_GO(&e, file_cmp(old_name, new_name, &result), cleanup);
+    PROP_GO(&e, file_cmp(old_name, new_name, true, &result), cleanup);
     if(result != 0){
         ORIG_GO(&e, E_VALUE, "peer_list files don't match", cleanup);
     }

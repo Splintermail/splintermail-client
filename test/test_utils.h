@@ -65,8 +65,12 @@ print_usage: \
     logger_add_fileptr(lvl, stdout); \
 } while(0)
 
-derr_t file_cmp(const char* fa, const char* fb, int* result);
-derr_t file_cmp_dstr(const char* fa, const dstr_t* b, int* result);
+derr_t file_cmp(
+    const char* fa, const char* fb, bool normalize_line_ends, int* result
+);
+derr_t file_cmp_dstr(
+    const char* fa, const dstr_t* b, bool normalize_line_ends, int* result
+);
 
 // makedir_temp creates a uniquely named temporary directory in PWD
 derr_t mkdir_temp(const char *prefix, dstr_t *path);
@@ -149,5 +153,98 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
         ORIG_GO(e, E_VALUE, "wrong value", label); \
     } \
 } while(0)
+
+// single line output for short strings
+#define EXPECT_D(e, name, got, exp) do { \
+    dstr_t *_got = (got); \
+    dstr_t *_exp = (exp); \
+    if(dstr_cmp(_got, _exp) != 0){ \
+        TRACE(e, \
+            "expected %x == %x but got %x\n", \
+            FS(name), FD_DBG(_exp), FD_DBG(_got) \
+        ); \
+        ORIG(e, E_VALUE, "wrong value"); \
+    } \
+} while (0)
+
+#define EXPECT_D_GO(e, name, got, exp, label) do { \
+    dstr_t *_got = (got); \
+    dstr_t *_exp = (exp); \
+    if(dstr_cmp(_got, _exp) != 0){ \
+        TRACE(e, \
+            "expected %x == %x but got %x\n", \
+            FS(name), FD_DBG(_exp), FD_DBG(_got) \
+        ); \
+        ORIG_GO(e, E_VALUE, "wrong value", label); \
+    } \
+} while (0)
+
+// triple line output for mid-length strings
+#define EXPECT_D3(e, name, got, exp) do { \
+    dstr_t *_got = (got); \
+    dstr_t *_exp = (exp); \
+    if(dstr_cmp(_got, _exp) != 0){ \
+        TRACE(e, \
+            "for value '%x'\n" \
+            "expected: %x\n" \
+            "but got:  %x\n", \
+            FS(name), FD_DBG(_exp), FD_DBG(_got) \
+        ); \
+        ORIG(e, E_VALUE, "wrong value"); \
+    } \
+} while (0)
+
+#define EXPECT_D3_GO(e, name, got, exp, label) do { \
+    dstr_t *_got = (got); \
+    dstr_t *_exp = (exp); \
+    if(dstr_cmp(_got, _exp) != 0){ \
+        TRACE(e, \
+            "for value '%x'\n" \
+            "expected: %x\n" \
+            "but got:  %x\n", \
+            FS(name), FD_DBG(_exp), FD_DBG(_got) \
+        ); \
+        ORIG_GO(e, E_VALUE, "wrong value", label); \
+    } \
+} while (0)
+
+// multiline string support
+#define EXPECT_DM(e, name, got, exp) do { \
+    dstr_t *_got = (got); \
+    dstr_t *_exp = (exp); \
+    if(dstr_cmp(_got, _exp) != 0){ \
+        char *_line_end = "\n";  \
+        if(dstr_endswith(_got, &DSTR_LIT("\n"))) \
+            if(dstr_endswith(_exp, &DSTR_LIT("\n"))) \
+                _line_end = ""; \
+        TRACE(e, \
+            "-- for value '%x', expected:\n" \
+            "%x%x" \
+            "-- but got:\n" \
+            "%x%x", \
+            FS(name), FD(_exp), FS(_line_end), FD(_got), FS(_line_end) \
+        ); \
+        ORIG(e, E_VALUE, "wrong value"); \
+    } \
+} while (0)
+
+#define EXPECT_DM_GO(e, name, got, exp, label) do { \
+    dstr_t *_got = (got); \
+    dstr_t *_exp = (exp); \
+    if(dstr_cmp(_got, _exp) != 0){ \
+        char *_line_end = "\n";  \
+        if(dstr_endswith(_got, &DSTR_LIT("\n"))) \
+            if(dstr_endswith(_exp, &DSTR_LIT("\n"))) \
+                _line_end = ""; \
+        TRACE(e, \
+            "-- for value '%x', expected:\n" \
+            "%x%x" \
+            "-- but got:\n" \
+            "%x%x", \
+            FS(name), FD(_exp), FS(_line_end), FD(_got), FS(_line_end) \
+        ); \
+        ORIG_GO(e, E_VALUE, "wrong value", label); \
+    } \
+} while (0)
 
 #endif // TEST_UTILS_H

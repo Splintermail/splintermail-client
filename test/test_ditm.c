@@ -608,15 +608,21 @@ static derr_t test_ignore_list(void){
     DSTR_VAR(result, 4096);
     PROP_GO(&e, dstr_read_file("test_ignore_dir/ignore.json", &result), cu2);
 
+    // with fopen(..., "w"), windows will turn \n into \r\n
+    /* the json parser can handle that just fine, so just normalize the result
+       during the test */
+    DSTR_VAR(normalized, 4096);
+    LIST_PRESET(dstr_t, find, DSTR_LIT("\r\n"));
+    LIST_PRESET(dstr_t, repl, DSTR_LIT("\n"));
+    PROP_GO(&e, dstr_recode(&result, &normalized, &find, &repl, false), cu2);
+
     // read the answer into memory
     path.len = 0;
     PROP_GO(&e, FMT(&path, "%x/ignore_list/out", FS(g_test_files)), cu2);
     DSTR_VAR(answer, 4096);
     PROP_GO(&e, dstr_read_file(path.data, &answer), cu2);
 
-    if(dstr_cmp(&result, &answer) != 0){
-        ORIG_GO(&e, E_VALUE, "ignore list result did not match answer", cu2);
-    }
+    EXPECT_D3_GO(&e, "ignore list", &normalized, &answer, cu2);
 
 cu2:
     ignore_list_free(&il);
