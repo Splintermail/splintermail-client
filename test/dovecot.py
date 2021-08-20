@@ -30,7 +30,6 @@ class Dovecot:
     ):
         assert not args, "all args must be kwargs"
         assert basedir, "basedir is required"
-        assert basedir, "basedir is required"
         self.basedir = os.path.abspath(basedir)
         self.sql_sock = os.path.abspath(sql_sock)
         self.bind_addr = bind_addr

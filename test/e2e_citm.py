@@ -19,13 +19,6 @@ import time
 import random
 import selectors
 
-import mariadb
-import dovecot
-
-pysm_path = "./server/pysm"
-sys.path.append(pysm_path)
-import pysm
-
 HERE = os.path.dirname(__file__)
 test_files = os.path.join(HERE, "files")
 
@@ -623,7 +616,7 @@ def wait_for_listener(q):
         line = q.get()
         if line is None:
             raise EOFError("did not find \"listener ready\" message")
-        if line == b"listener ready\n":
+        if b"listener ready" in line:
             break
         print('\x1b[31mmessage is:', line, '\x1b[m')
 
@@ -1821,7 +1814,9 @@ def test_mangling(cmd, maildir_root, **kwargs):
             "./encrypt_msg",
             os.path.join(maildir_root, USER, "keys", "mykey.pem"),
         ]
-        p = subprocess.run(cmd, input=unenc, capture_output=True)
+        p = subprocess.run(
+            cmd, input=unenc, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        )
         assert p.returncode == 0, f"encrypt_msg failed: {p.stderr}"
 
         # convert to \r\n-endings
@@ -1942,10 +1937,16 @@ def temp_maildir_root():
 
 @contextlib.contextmanager
 def dovecot_setup():
+    import mariadb
+    import dovecot
+
+    pysm_path = "server/pysm"
+    sys.path.append(pysm_path)
+    import pysm
+
     migrations = os.path.join(HERE, "..", "server", "migrations")
     migmysql_path = os.path.join("server", "migmysql")
     plugin_path = os.path.join("server", "xkey")
-    print("starting dovecot on random port")
     with mariadb.mariadb(
         migrations=migrations, migmysql_path=migmysql_path
     ) as runner:
@@ -1966,6 +1967,7 @@ def dovecot_setup():
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("patterns", nargs="*")
+    parser.add_argument("--proxy")
     args = parser.parse_args()
 
     # initialize the global server_context
@@ -1986,7 +1988,17 @@ if __name__ == "__main__":
             print("no tests match any patterns", file=sys.stderr)
             sys.exit(1)
 
-    with dovecot_setup() as imaps_port:
+    if args.proxy is not None:
+        import proxy
+        proxy_spec = proxy.read_spec(args.proxy)
+        imaps_port = 12385
+        dovecot_ctx_mgr = proxy.ProxyClient(
+            proxy_spec, ("127.0.0.1", imaps_port)
+        )
+    else:
+        dovecot_ctx_mgr = dovecot_setup()
+
+    with dovecot_ctx_mgr as imaps_port:
         with temp_maildir_root() as maildir_root:
             kwargs = {"imaps_port": imaps_port}
             for test in tests:
