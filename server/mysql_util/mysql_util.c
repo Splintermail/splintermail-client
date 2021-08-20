@@ -44,10 +44,10 @@ derr_type_t fmthook_sql_error(dstr_t* out, void* arg){
     }
     size_t len = strlen(msg);
     // make sure the message will fit
-    derr_type_t type = dstr_grow_quiet(out, out->len + len);
+    derr_type_t type = dstr_grow_quiet(out, out->len + len + 1);
     if(type) return type;
     // copy the message
-    memcpy(out->data + out->len, msg, len);
+    memcpy(out->data + out->len, msg, len + 1);
     out->len += len;
     return E_NONE;
 }
