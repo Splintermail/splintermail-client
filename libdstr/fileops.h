@@ -116,6 +116,7 @@ derr_t file_r_access_path(const string_builder_t* sb, bool* ret);
 derr_t file_w_access_path(const string_builder_t* sb, bool* ret);
 derr_t file_rw_access_path(const string_builder_t* sb, bool* ret);
 
+derr_t dexists(const char *path, bool *exists);
 derr_t exists_path(const string_builder_t* path, bool* ret);
 derr_t dremove(const char *path);
 derr_t remove_path(const string_builder_t* sb);
@@ -129,8 +130,15 @@ derr_t file_copy_path(const string_builder_t* sb_from,
 derr_t touch(const char* path);
 derr_t touch_path(const string_builder_t* sb);
 
+// drename() wraps rename(), which will not overwrite in windows
 derr_t drename(const char *src, const char *dst);
 derr_t drename_path(const string_builder_t *src, const string_builder_t *dst);
+
+// this is just rename() in unix, but windows requires a special API
+derr_t drename_atomic(const char *src, const char *dst);
+derr_t drename_atomic_path(
+    const string_builder_t *src, const string_builder_t *dst
+);
 
 derr_t dfopen(const char *path, const char *mode, FILE **out);
 derr_t dfopen_path(const string_builder_t *sb, const char *mode, FILE **out);

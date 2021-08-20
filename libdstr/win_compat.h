@@ -29,6 +29,16 @@
     #endif
 
     void win_perror(void);
+
+    derr_type_t fmthook_win_error(dstr_t* out, const void* arg);
+
+    static inline fmt_t FWINERR(void){
+        return (fmt_t){
+            FMT_EXT_NOCONST,
+            { .ext = { .arg = NULL, .hook = fmthook_win_error } }
+        };
+    }
+
     ssize_t compat_read(int fd, void *buf, size_t count);
     ssize_t compat_write(int fd, const void *buf, size_t count);
     int compat_open(const char* pathname, int flags, ...);

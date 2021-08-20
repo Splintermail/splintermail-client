@@ -8,9 +8,9 @@
 #include <limits.h>
 #include <stdbool.h>
 
-#include "win_compat.h"
-
 #include "common.h"
+
+#include "win_compat.h"
 
 #include "system.h"
 #include "net.h"

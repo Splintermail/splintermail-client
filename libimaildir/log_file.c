@@ -127,7 +127,7 @@ static derr_t maybe_compact(log_t *log){
     f = NULL;
 
     // rename the new file into place
-    PROP_GO(&e, drename_path(&tmppath, &path), cu);
+    PROP_GO(&e, drename_atomic_path(&tmppath, &path), cu);
 
     // reset the counts in the log_t
     log->lines = lines;
@@ -512,7 +512,7 @@ derr_t imaildir_log_open(
         fclose(f2);
         f2 = NULL;
 
-        PROP_GO(&e, drename_path(&tmppath, &path), cu);
+        PROP_GO(&e, drename_atomic_path(&tmppath, &path), cu);
     }
 
     // reopen the file for appending

@@ -1,6 +1,6 @@
 #include "libcitm.h"
 
-#define FPRS_TMP_PATH(p) sb_append(p, FS("fprs_seen"))
+#define FPRS_TMP_PATH(p) sb_append(p, FS("fprs_seen.tmp"))
 #define FPRS_PATH(p) sb_append(p, FS("fprs_seen"))
 #define SYNCED_TMP_PATH(p) sb_append(p, FS("mailboxes_synced.tmp"))
 #define SYNCED_PATH(p) sb_append(p, FS("mailboxes_synced"))
@@ -28,7 +28,7 @@ static derr_t save_fprs(jsw_atree_t *fprs, const string_builder_t *path){
 
     // move it into place
     string_builder_t fprs_path = FPRS_PATH(path);
-    PROP_GO(&e, drename_path(&tmp_path, &fprs_path), cu);
+    PROP_GO(&e, drename_atomic_path(&tmp_path, &fprs_path), cu);
 
 cu:
     dstr_free(&out);
@@ -114,7 +114,7 @@ static derr_t save_synced(jsw_atree_t *synced, const string_builder_t *path){
 
     // move it into place
     string_builder_t synced_path = SYNCED_PATH(path);
-    PROP_GO(&e, drename_path(&tmp_path, &synced_path), cu);
+    PROP_GO(&e, drename_atomic_path(&tmp_path, &synced_path), cu);
 
 cu:
     dstr_free(&out);

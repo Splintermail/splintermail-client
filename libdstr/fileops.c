@@ -1030,6 +1030,15 @@ derr_t file_rw_access_path(const string_builder_t* sb, bool* ret){
     return e;
 }
 
+derr_t dexists(const char *path, bool *exists){
+    derr_t e = E_OK;
+
+    struct stat s;
+    PROP(&e, dstat(path, &s, exists) );
+
+    return e;
+}
+
 derr_t exists_path(const string_builder_t* sb, bool* ret){
     derr_t e = E_OK;
     DSTR_VAR(stack, 256);
@@ -1202,6 +1211,59 @@ derr_t drename_path(const string_builder_t *src, const string_builder_t *dst){
 cu_dst:
     dstr_free(&heap_dst);
 cu_src:
+    dstr_free(&heap_src);
+    return e;
+}
+
+derr_t drename_atomic(const char *src, const char *dst){
+#ifndef _WIN32 // UNIX
+    derr_t e = E_OK;
+    PROP(&e, drename(src, dst) );
+    return e;
+#else // WINDOWS
+    derr_t e = E_OK;
+
+    /* when the file doesn't exist, just use rename.  ReplaceFile() fails if
+       the file doesn't exist yet */
+    bool ok;
+    PROP(&e, dexists(dst, &ok) );
+    if(!ok){
+        PROP(&e, drename(src, dst) );
+        return e;
+    }
+
+    /* Windows has a few APIs that folks peddle as atomic (see
+       https://stackoverflow.com/q/167414) but MS itself suggests using the
+       ReplaceFile() API. */
+    // https://docs.microsoft.com/en-us/windows/win32/fileio/deprecation-of-txf
+    // no backup or flags, and two (!) NULL reserved values
+    int ret = ReplaceFileA(dst, src, NULL, 0, NULL, NULL);
+    if(ret == 0){
+        TRACE(&e, "ReplaceFileA(%x -> %x): %x\n", FS(src), FS(dst), FWINERR());
+        ORIG(&e, E_OS, "ReplaceFileA failed");
+    }
+    return e;
+#endif
+}
+
+derr_t drename_atomic_path(
+    const string_builder_t *src, const string_builder_t *dst
+){
+    DSTR_VAR(stack_src, 256);
+    dstr_t heap_src = {0};
+    dstr_t* path_src = NULL;
+    DSTR_VAR(stack_dst, 256);
+    dstr_t heap_dst = {0};
+    dstr_t* path_dst = NULL;
+
+    derr_t e = E_OK;
+
+    PROP_GO(&e, sb_expand(src, &slash, &stack_src, &heap_src, &path_src), cu);
+    PROP_GO(&e, sb_expand(dst, &slash, &stack_dst, &heap_dst, &path_dst), cu);
+    PROP_GO(&e, drename_atomic(path_src->data, path_dst->data), cu);
+
+cu:
+    dstr_free(&heap_dst);
     dstr_free(&heap_src);
     return e;
 }

@@ -21,13 +21,34 @@
 
 void win_perror(void){
     char buf[256];
+    size_t buflen = sizeof(buf) / sizeof(*buf);
     DWORD winerr = GetLastError();
     winerr = FormatMessageA(
                 FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
                 NULL, GetLastError(), MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-                buf, (sizeof(buf) / sizeof(*buf)), NULL);
-    buf[sizeof(buf) - 1] = '\0';
-    LOG_ERROR("%x", FS(buf));
+                buf, (DWORD)buflen, NULL);
+    buf[buflen - 1] = '\0';
+    LOG_ERROR("%x\n", FS(buf));
+}
+
+derr_type_t fmthook_win_error(dstr_t* out, const void* arg){
+    (void)arg;
+    char buf[256];
+    size_t buflen = sizeof(buf) / sizeof(*buf);
+    DWORD winerr = GetLastError();
+    winerr = FormatMessageA(
+                FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+                NULL, GetLastError(), MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+                buf, (DWORD)buflen, NULL);
+    buf[buflen - 1] = '\0';
+    size_t len = strlen(buf);
+    // make sure the message will fit
+    derr_type_t type = dstr_grow_quiet(out, out->len + len + 1);
+    if(type) return type;
+    // copy the message
+    memcpy(out->data + out->len, buf, len + 1);
+    out->len += len;
+    return E_NONE;
 }
 
 FILE* compat_fopen(const char* pathname, const char* mode);
