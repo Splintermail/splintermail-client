@@ -642,6 +642,9 @@ int main(int argc, char** argv){
     inject_dummy_key_tool();
 
     signal(SIGINT, sig_handler);
+#ifndef _WIN32 // UNIX
+    signal(SIGPIPE, SIG_IGN);
+#endif
 
     PROP_GO(&e, ssl_library_init(), test_fail);
 

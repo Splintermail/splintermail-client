@@ -114,7 +114,7 @@ derr_t dstr_new(dstr_t *ds, size_t size){
 }
 
 void dstr_free(dstr_t* ds){
-    if(ds->data) {
+    if(ds && ds->data) {
         free(ds->data);
         *ds = (dstr_t){0};
     }

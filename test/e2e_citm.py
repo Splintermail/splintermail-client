@@ -570,6 +570,10 @@ def client_context(cafile=None):
         # on others it doesn't
         import certifi
         _client_context.load_verify_locations(cafile=certifi.where())
+    # always manually include our test certs
+    _client_context.load_verify_locations(
+        cafile=os.path.join(test_files, "ssl", "good.crt")
+    )
 
     # always load our self-signed test CA
     _client_context.load_verify_locations(
@@ -1769,7 +1773,7 @@ def test_large_initial_download(cmd, maildir_root, **kwargs):
         pass
 
 
-@register_test
+#@register_test
 def test_mangling(cmd, maildir_root, **kwargs):
     # Dovecot mangles APPENDED messages to use \r\n instead of \n, so there's
     # no e2e way to test the non-\r\n message mangling

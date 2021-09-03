@@ -291,8 +291,9 @@ class Expression(Parsable):
     """
     Each Expression will generate one function in the parser.
     """
-    def __init__(self, name):
+    def __init__(self, name, typ=None):
         self.name = name
+        self.type = typ
         self.seq = Sequence(self.name + ".seq")
         self.scopes = [self.seq]
         self.nbranches = 0
@@ -405,22 +406,24 @@ class Grammar:
         self.exprs[name] = e
         return e
 
-def print_label(state):
-    print("yy" + str(state) + ":")
-    print("    call->state = " + str(state) + ";")
-
-def goto(state):
-    return "goto yy" + str(state);
-
 def gen_token_check(first):
-    return "TOKEN_IN(*token, 0, " + ",".join(t for t in first if t is not None) + ")"
+    return "token_in(*token, 0, " + ",".join(t for t in first if t is not None) + ")"
 
 class C:
     """
-    An object with all the methods for generating C code.
+   An object with all the methods for generating C code.
     """
     def __init__(self):
         pass
+
+    def nstack(self, obj):
+        """Count how much stack space we need for every entry."""
+        if isinstance(obj, Token):
+            return 1
+        if isinstance(obj, Expression):
+            return 1
+        # other Parsables don't get to store their state on the stack
+        return 0
 
     def nstates(self, obj):
         """Count how many states we need for every entry."""
@@ -438,7 +441,7 @@ class C:
             return 2
         raise RuntimeError("unrecognized object type: " + type(obj).__name__)
 
-    def gen(self, obj, state):
+    def gen(self, obj, state, stack, tag=None):
         """Generate code to match an object."""
         if isinstance(obj, Token):
             print("    // match a " + obj.title + " token")
@@ -449,7 +452,7 @@ class C:
             print("    if(*token != " + obj.title + ") SYNTAX_ERROR;")
             print("    TAKE_TOKEN;")
             print("")
-            return state + self.nstates(obj)
+            return state + self.nstates(obj), stack
 
         if isinstance(obj, Maybe):
             print("    // maybe match " + obj.title)
@@ -462,7 +465,7 @@ class C:
             print("    }")
             print("")
             self.gen(obj.seq, state+1)
-            return state + self.nstates(obj)
+            return state + self.nstates(obj), stack
 
         if isinstance(obj, ZeroOrMore):
             print("    // match zero or more " + obj.title)
@@ -479,7 +482,7 @@ class C:
             print("    goto yy" + str(state) + ";")
             print("yy" + str(state+self.nstates(obj)-1) + ":")
             print("")
-            return state + self.nstates(obj)
+            return state + self.nstates(obj), stack
 
         if isinstance(obj, Sequence):
             print("    printf(\"SEQUENCE " + obj.title + "\\n\");")
@@ -508,7 +511,7 @@ class C:
                 print("    goto yy" + str(state+self.nstates(obj)-1) + ";")
             print("yy"+ str(state+self.nstates(obj)-1) + ":")
 
-            return state + self.nstates(obj)
+            return state + self.nstates(obj), stack
 
         if isinstance(obj, Expression):
             # code generated when calling this function
@@ -520,7 +523,7 @@ class C:
             print("yy" + str(state + 1) + ":")
             print("    // USER CODE")
             print("")
-            return state + self.nstates(obj)
+            return state + self.nstates(obj), stack
 
         raise RuntimeError("unrecognized object type: " + type(obj).__name__)
 
@@ -543,7 +546,14 @@ class C:
             print("        case " + str(n) + ": goto yy" + str(n) + ";")
         print("    }")
         print("")
-        self.gen(expr.seq, 0)
+        if expr.type is not None:
+            print("    size_t stack = call_pos+1");
+            print("    #define $$ (p->stack[call_pos-1]." + expr.type + ")")
+
+        self.gen(expr.seq, 0, 0)
+
+        if expr.type is not None:
+            print("    #undef $$")
         print("    return call->prev;")
         print("}")
         print("")
@@ -632,8 +642,6 @@ class C:
                 va_end(ap);
                 return false;
             }
-
-            #define TOKEN_IN(t, n, ...) token_in(t, n, __VA_ARGS__)
 
             #define SYNTAX_ERROR exit(4)
 

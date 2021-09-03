@@ -86,10 +86,8 @@ static derr_t test_fork_ex_pipes(void){
     PROP_GO(&e, dstr_read_all(std_out, &out), cu_child);
     PROP_GO(&e, dstr_read_all(std_err, &err), cu_child);
 
-    if(dstr_cmp(&out, &msg) != 0)
-        ORIG(&e, E_VALUE, "wrong msg on stdout");
-    if(dstr_cmp(&err, &msg) != 0)
-        ORIG(&e, E_VALUE, "wrong msg on stdout");
+    EXPECT_DM(&e, "stderr", &err, &msg);
+    EXPECT_DM(&e, "stdout", &out, &msg);
 
 cu_child:
     if(is_error(e)){
