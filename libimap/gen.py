@@ -484,13 +484,13 @@ class C:
         if isinstance(obj, Maybe):
             return self.nstates(obj.seq) + 1
         if isinstance(obj, ZeroOrMore):
-            return self.nstates(obj.seq) + 2
+            return self.nstates(obj.seq) + 1
         if isinstance(obj, Sequence):
             return sum(self.nstates(t) for t, _, _ in obj.terms)
         if isinstance(obj, Branches):
-            return sum(self.nstates(b) for b in obj.branches) + 2
+            return sum(self.nstates(b) for b in obj.branches) + 1
         if isinstance(obj, Expression):
-            return 2
+            return 1
         raise RuntimeError("unrecognized object type: " + type(obj).__name__)
 
     def gen(self, obj, state, stack, var, tag=None):
@@ -498,9 +498,9 @@ class C:
         if isinstance(obj, Token):
             print("    // match a " + obj.title + " token")
             print("    " + self.mask_set(obj.get_first()) + ";")
-            print("yy" + str(state) + ":")
             print("    call->state = " + str(state) + ";")
             print("    AWAIT_TOKEN;")
+            print("yy" + str(state) + ":")
             print("    if(*token != " + obj.title + ") SYNTAX_ERROR;")
             print("    *token = _NOT_A_TOKEN;")
             print("    p->semstack[call->stack + " + str(stack) + "] = sem;")
@@ -509,14 +509,15 @@ class C:
 
         if isinstance(obj, Maybe):
             print("    // maybe match " + obj.title)
-            print("yy" + str(state) + ":")
             print("    call->state = " + str(state) + ";")
             print("    AWAIT_TOKEN;")
+            print("yy" + str(state) + ":")
             print("    if(!" + self.token_check(obj.get_first()) + "){")
             print("        " + self.mask_set(obj.get_first()) + ";")
-            print("        goto yy" + str(state+self.nstates(obj)) + ";")
+            print("        goto yy" + str(state) + "_done;")
             print("    }")
             self.gen(obj.seq, state+1, stack, var)
+            print("yy" + str(state) + "_done:")
             return state + self.nstates(obj), stack
 
         if isinstance(obj, ZeroOrMore):
@@ -526,61 +527,69 @@ class C:
             print("    AWAIT_TOKEN;")
             print("    if(!" + self.token_check(obj.get_first()) + "){")
             print("        " + self.mask_set(obj.get_first()) + ";")
-            print("        goto yy" + str(state+self.nstates(obj)-1) + ";")
+            print("        goto yy" + str(state) + "_done;")
             print("    }")
             print("")
             self.gen(obj.seq, state + 1, stack, var)
             print("    // try matching another " + obj.title)
             print("    goto yy" + str(state) + ";")
-            print("yy" + str(state+self.nstates(obj)-1) + ":")
+            print("yy" + str(state) + "_done:")
             return state + self.nstates(obj), stack
 
         if isinstance(obj, Sequence):
             var.new_scope()
             for c in obj.precode:
                 print(textwrap.indent(textwrap.dedent(c), "    "))
-            for t, tag, code in obj.terms:
+            for i, (t, tag, code) in enumerate(obj.terms):
                 if tag is not None:
                     assert isinstance(t, (Token, Expression)), "wrong type for tag: " + type(t).__name__
                     assert t.type is not None, "obj " + t.title + " has tag " + tag + " but no type!"
                     var.define(tag, t.type, stack)
                 state, stack = self.gen(t, state, stack, var, tag)
+                if code:
+                    print("    // USER CODE")
                 for c in code:
                     print(textwrap.indent(textwrap.dedent(c), "    "))
+                if i+1 != len(obj.terms):
+                    print("")
             var.pop_scope()
             return state, stack
 
         if isinstance(obj, Branches):
             print("    // match branches " + obj.title)
-            print("yy" + str(state) + ":")
             print("    call->state = " + str(state) + ";")
             print("    AWAIT_TOKEN;")
+            print("yy" + str(state) + ":")
             print("    switch(*token){")
             bstate = state + 1
-            for b in obj.branches:
+            for i, b in enumerate(obj.branches):
                 for t in b.get_first():
-                    print("        case " + t + ": goto yy" + str(bstate) + ";")
+                    print(
+                        "        case " + t + ": goto yy"
+                        + str(state) + "_br_" + str(i) + ";"
+                    )
                 bstate += self.nstates(b)
             print("        default:")
             print("            " + self.mask_set(obj.get_first()) + ";")
             print("            SYNTAX_ERROR;")
             print("    }")
+            print("")
             # branch parsing
             bstate = state + 1
-            for b in obj.branches:
+            for i, b in enumerate(obj.branches):
+                print("yy" + str(state) + "_br_" + str(i) + ":")
                 bstate, stack = self.gen(b, bstate, stack, var)
-                print("    goto yy" + str(state+self.nstates(obj)-1) + ";")
-            print("yy"+ str(state+self.nstates(obj)-1) + ":")
+                print("    goto yy" + str(state) + "_done;")
+                print("")
+            print("yy"+ str(state) + "_done:")
             return state + self.nstates(obj), stack
 
         if isinstance(obj, Expression):
             # code generated when calling this function
             print("    // match " + obj.title)
-            print("yy" + str(state) + ":")
-            print("    call->state = " + str(state + 1) + ";")
+            print("    call->state = " + str(state) + ";")
             print("    CALL(" + self.parse_fn(obj) + ", " + str(stack) + ");")
-            print("yy" + str(state + 1) + ":")
-            print("    // USER CODE")
+            print("yy" + str(state) + ":")
             return state + self.nstates(obj), stack + 1
 
         raise RuntimeError("unrecognized object type: " + type(obj).__name__)
@@ -601,16 +610,17 @@ class C:
         # Jump to state.
         print("    switch(call->state){")
         print("        case " + str(0) + ": break;")
-        for n in range(1, self.nstates(expr.seq)):
-            print("        case " + str(n) + ": goto yy" + str(n) + ";")
+        for n in range(self.nstates(expr.seq)):
+            print("        case " + str(n+1) + ": goto yy" + str(n+1) + ";")
         print("    }")
         print("")
         var = C.Variables()
         if expr.type is not None:
             var.define("$", expr.type, 0)
 
+        # state starts at 1, since 0 is only the first time we're called
         # stack starts at 1, since we have always allocate the output
-        self.gen(expr.seq, 0, 1, var)
+        self.gen(expr.seq, 1, 1, var)
 
         var.pop_scope()
         print("    // cleanup this call");
@@ -899,30 +909,29 @@ class C:
 
                 int tokens[] = {
                     NUM, 18,
-                    DIV, 0,
-                    LPAREN, 0,
+                    PLUS, 0,
                     NUM, 6,
-                    DIV, 0,
-                    NUM, 3,
-                    RPAREN, 0,
                     EOL, 0,
                 };
                 size_t ntokens = sizeof(tokens) / sizeof(*tokens);
 
                 bool ok = false;
                 for(size_t i = 0; i < ntokens; i += 2){
-                    if(ok){
-                        printf("got OK too early!\n");
-                        return 1;
-                    }
                     // printf("feeding %s\n", token_name(tokens[i]));
                     sem_t sem = {.val.i = tokens[i+1]};
                     parse_line(&p, tokens[i], sem, &ok);
-                }
 
-                if(!ok){
-                    printf("didn't get OK afterwards!\n");
-                    return 1;
+                    if(tokens[i] == EOL){
+                        if(!ok){
+                            printf("didn't get OK afterwards!\n");
+                            return 1;
+                        }
+                    }else{
+                        if(ok){
+                            printf("got OK too early!\n");
+                            return 1;
+                        }
+                    }
                 }
 
                 return 0;
