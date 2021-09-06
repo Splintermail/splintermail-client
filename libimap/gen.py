@@ -1,6 +1,5 @@
 import abc
 import contextlib
-import re
 import textwrap
 
 
@@ -47,8 +46,9 @@ class Parsable(metaclass=abc.ABCMeta):
 
 
 class Token(Parsable):
-    def __init__(self, name):
+    def __init__(self, name, typ=None):
         self.name = name
+        self.type = typ
 
     @property
     def title(self):
@@ -76,8 +76,11 @@ class Maybe(Parsable):
     def title(self):
         return "maybe(" + self.name + ")"
 
-    def add_term(self, term):
-        self.seq.add_term(term)
+    def add_term(self, term, tag=None):
+        self.seq.add_term(term, tag)
+
+    def add_code(self, code):
+        self.seq.add_code(code)
 
     @cacheable
     def get_first(self, prev=None):
@@ -104,8 +107,11 @@ class ZeroOrMore(Parsable):
         self.name = name
         self.seq = Sequence(self.name + '.seq')
 
-    def add_term(self, term):
-        self.seq.add_term(term)
+    def add_term(self, term, tag=None):
+        self.seq.add_term(term, tag)
+
+    def add_code(self, code):
+        self.seq.add_code(code)
 
     @property
     def title(self):
@@ -137,10 +143,18 @@ class Sequence(Parsable):
     def __init__(self, name):
         self.name = name
         self.scopes = [self]
+        self.precode = []
+        # tuples of (Parsable, tag=None, code=[])
         self.terms = []
 
-    def add_term(self, term):
-        self.terms.append(term)
+    def add_term(self, term, tag=None):
+        self.terms.append((term, tag, []))
+
+    def add_code(self, code):
+        if not self.terms:
+            self.precode.append(code)
+        else:
+            self.terms[-1][2].append(code)
 
     @property
     def title(self):
@@ -157,7 +171,7 @@ class Sequence(Parsable):
         """
         prev = add_to_prev(prev, self.name, "get_first")
         first = set()
-        for term in self.terms:
+        for term, _, _ in self.terms:
             term_first = term.get_first(list(prev))
             # detect conflicts in .check(), not here.
             first = first.union(term_first)
@@ -183,7 +197,7 @@ class Sequence(Parsable):
         """
         prev = add_to_prev(prev, self.name, "get_disallowed_after")
         disallowed = set()
-        for term in reversed(self.terms):
+        for term, _, _ in reversed(self.terms):
             term_disallowed = term.get_disallowed_after(list(prev))
             disallowed = disallowed.union(term_disallowed)
             # if None is not in this term's disallowed, we have our answer
@@ -207,7 +221,7 @@ class Sequence(Parsable):
         prev = {self.name}
 
         disallowed = set()
-        for i, term in enumerate(self.terms):
+        for i, (term, _, _) in enumerate(self.terms):
             term_first = term.get_first(list(prev))
             # Ignore None when checking for conflicts
             disallowed = disallowed.difference({None})
@@ -237,11 +251,17 @@ class Branches(Parsable):
     def title(self):
         return self.name
 
-    def add_term(self, term):
+    def add_term(self, term, tag=None):
         assert self._branch is not None, (
             "inside a branches() context, but not any branch() subcontext!"
         )
-        self._branch.add_term(term)
+        self._branch.add_term(term, tag)
+
+    def add_code(self, code):
+        assert self._branch is not None, (
+            "inside a branches() context, but not any branch() subcontext!"
+        )
+        self._branch.add_code(code)
 
     @contextlib.contextmanager
     def branch(self):
@@ -308,11 +328,11 @@ class Expression(Parsable):
         return self
 
     def match(self, term, tag=None):
-        self.scopes[-1].add_term(term)
+        self.scopes[-1].add_term(term, tag)
         return term
 
     @contextlib.contextmanager
-    def zero_or_more(self, tag=None):
+    def zero_or_more(self):
         term = ZeroOrMore(self.name + '.zom' + str(self.nzom))
         self.nzom += 1
         self.scopes.append(term)
@@ -321,7 +341,7 @@ class Expression(Parsable):
         self.scopes[-1].add_term(term)
 
     @contextlib.contextmanager
-    def maybe(self, tag=None):
+    def maybe(self):
         term = Maybe()
         self.scopes.append(term)
         yield term
@@ -329,7 +349,7 @@ class Expression(Parsable):
         self.scopes[-1].add_term(term)
 
     @contextlib.contextmanager
-    def branches(self, tag=None):
+    def branches(self):
         term = Branches(self.name + '.br' + str(self.nbranches))
         self.nbranches += 1
         self.scopes.append(term)
@@ -338,18 +358,7 @@ class Expression(Parsable):
         self.scopes[-1].add_term(term)
 
     def exec(self, code):
-        pass
-        # variables = re.findall("\\$[a-zA-Z_][a-zA-Z0-9_]*", code)
-        # for v in variables:
-        #     name = v[1:]
-        #     assert name in self.named_terms
-
-        # # TODO: sort by longest name first to avoid bad substitutions!
-        # code = code.replace("$$", "(stack)")
-        # for name, term in self.named_terms.items():
-        #     code = code.replace("$" + name, "(" + str(term) + ")")
-
-        # print("        " + code)
+        self.scopes[-1].add_code(code)
 
     # Non-user-facing methods.
 
@@ -406,24 +415,67 @@ class Grammar:
         self.exprs[name] = e
         return e
 
-def gen_token_check(first):
-    return "token_in(*token, 0, " + ",".join(t for t in first if t is not None) + ")"
-
 class C:
     """
    An object with all the methods for generating C code.
     """
-    def __init__(self):
-        pass
 
-    def nstack(self, obj):
-        """Count how much stack space we need for every entry."""
+    class Variables:
+        def __init__(self):
+            # a list of lists of available variables
+            self.scopes = [[]]
+
+        def new_scope(self):
+            self.scopes.append([])
+
+        def define(self, tag, typ, pos):
+            for scope in self.scopes:
+                assert tag not in scope, "tag " + tag + " shadows another tag"
+            print("    #define $" + tag + " (p->semstack[call->stack + " + str(pos) + "].val." + typ + ")")
+            self.scopes[-1].append(tag)
+
+        def pop_scope(self):
+            popped = self.scopes.pop()
+            for tag in popped:
+                print("    #undef $" + tag)
+
+
+    def token_check(self, first):
+        t = sorted(t for t in first if t is not None)
+        return "token_in(*token, " + str(len(t)) + ", " + ", ".join(t) + ")"
+
+    def mask_set(self, tokens):
+        t = sorted(t for t in tokens if t is not None)
+        return "mask_set(p->mask, " + str(len(t)) + ", " + ", ".join(t) + ")"
+
+    def stackpersist(self, obj):
+        """Return the persistent created during a match to obj."""
         if isinstance(obj, Token):
             return 1
         if isinstance(obj, Expression):
             return 1
-        # other Parsables don't get to store their state on the stack
         return 0
+
+    def stackmax(self, obj):
+        """Return the maximum stack size during a match to obj."""
+        if isinstance(obj, Token):
+            return 1
+        if isinstance(obj, Expression):
+            return 1
+        if isinstance(obj, Maybe):
+            return self.stackmax(obj.seq)
+        if isinstance(obj, ZeroOrMore):
+            return self.stackmax(obj.seq)
+        if isinstance(obj, Branches):
+            return max(self.stackmax(b) for b in obj.branches)
+        if isinstance(obj, Sequence):
+            persist = 0
+            peak = 0
+            for t, _, _ in obj.terms:
+                peak = max(peak, persist + self.stackmax(t))
+                persist += self.stackpersist(t)
+            return peak
+        raise RuntimeError("unrecognized object type: " + type(obj).__name__)
 
     def nstates(self, obj):
         """Count how many states we need for every entry."""
@@ -434,66 +486,73 @@ class C:
         if isinstance(obj, ZeroOrMore):
             return self.nstates(obj.seq) + 2
         if isinstance(obj, Sequence):
-            return sum(self.nstates(t) for t in obj.terms)
+            return sum(self.nstates(t) for t, _, _ in obj.terms)
         if isinstance(obj, Branches):
             return sum(self.nstates(b) for b in obj.branches) + 2
         if isinstance(obj, Expression):
             return 2
         raise RuntimeError("unrecognized object type: " + type(obj).__name__)
 
-    def gen(self, obj, state, stack, tag=None):
+    def gen(self, obj, state, stack, var, tag=None):
         """Generate code to match an object."""
         if isinstance(obj, Token):
             print("    // match a " + obj.title + " token")
+            print("    " + self.mask_set(obj.get_first()) + ";")
             print("yy" + str(state) + ":")
-            print("    printf(\"TOKEN " + obj.title + "\\n\");")
             print("    call->state = " + str(state) + ";")
             print("    AWAIT_TOKEN;")
             print("    if(*token != " + obj.title + ") SYNTAX_ERROR;")
-            print("    TAKE_TOKEN;")
-            print("")
-            return state + self.nstates(obj), stack
+            print("    *token = _NOT_A_TOKEN;")
+            print("    p->semstack[call->stack + " + str(stack) + "] = sem;")
+            print("    mask_clear(p->mask);")
+            return state + self.nstates(obj), stack + 1
 
         if isinstance(obj, Maybe):
             print("    // maybe match " + obj.title)
             print("yy" + str(state) + ":")
-            print("    printf(\"MAYBE\\n\");")
             print("    call->state = " + str(state) + ";")
             print("    AWAIT_TOKEN;")
-            print("    if(!" + gen_token_check(obj.get_first()) + "){")
+            print("    if(!" + self.token_check(obj.get_first()) + "){")
+            print("        " + self.mask_set(obj.get_first()) + ";")
             print("        goto yy" + str(state+self.nstates(obj)) + ";")
             print("    }")
-            print("")
-            self.gen(obj.seq, state+1)
+            self.gen(obj.seq, state+1, stack, var)
             return state + self.nstates(obj), stack
 
         if isinstance(obj, ZeroOrMore):
             print("    // match zero or more " + obj.title)
             print("yy" + str(state) + ":")
-            print("    printf(\"ZERO_OR_MORE " + obj.title + "\\n\");")
             print("    call->state = " + str(state) + ";")
             print("    AWAIT_TOKEN;")
-            print("    if(!" + gen_token_check(obj.get_first()) + "){")
+            print("    if(!" + self.token_check(obj.get_first()) + "){")
+            print("        " + self.mask_set(obj.get_first()) + ";")
             print("        goto yy" + str(state+self.nstates(obj)-1) + ";")
             print("    }")
             print("")
-            self.gen(obj.seq, state + 1)
+            self.gen(obj.seq, state + 1, stack, var)
             print("    // try matching another " + obj.title)
             print("    goto yy" + str(state) + ";")
             print("yy" + str(state+self.nstates(obj)-1) + ":")
-            print("")
             return state + self.nstates(obj), stack
 
         if isinstance(obj, Sequence):
-            print("    printf(\"SEQUENCE " + obj.title + "\\n\");")
-            for t in obj.terms:
-                state = self.gen(t, state)
-            return state
+            var.new_scope()
+            for c in obj.precode:
+                print(textwrap.indent(textwrap.dedent(c), "    "))
+            for t, tag, code in obj.terms:
+                if tag is not None:
+                    assert isinstance(t, (Token, Expression)), "wrong type for tag: " + type(t).__name__
+                    assert t.type is not None, "obj " + t.title + " has tag " + tag + " but no type!"
+                    var.define(tag, t.type, stack)
+                state, stack = self.gen(t, state, stack, var, tag)
+                for c in code:
+                    print(textwrap.indent(textwrap.dedent(c), "    "))
+            var.pop_scope()
+            return state, stack
 
         if isinstance(obj, Branches):
             print("    // match branches " + obj.title)
             print("yy" + str(state) + ":")
-            print("    printf(\"BRANCHES " + obj.title + "\\n\");")
             print("    call->state = " + str(state) + ";")
             print("    AWAIT_TOKEN;")
             print("    switch(*token){")
@@ -502,28 +561,27 @@ class C:
                 for t in b.get_first():
                     print("        case " + t + ": goto yy" + str(bstate) + ";")
                 bstate += self.nstates(b)
-            print("        default: SYNTAX_ERROR;")
+            print("        default:")
+            print("            " + self.mask_set(obj.get_first()) + ";")
+            print("            SYNTAX_ERROR;")
             print("    }")
             # branch parsing
             bstate = state + 1
             for b in obj.branches:
-                bstate = self.gen(b, bstate)
+                bstate, stack = self.gen(b, bstate, stack, var)
                 print("    goto yy" + str(state+self.nstates(obj)-1) + ";")
             print("yy"+ str(state+self.nstates(obj)-1) + ":")
-
             return state + self.nstates(obj), stack
 
         if isinstance(obj, Expression):
             # code generated when calling this function
-            print("    printf(\"EXPRESSION " + obj.title + "\\n\");")
             print("    // match " + obj.title)
             print("yy" + str(state) + ":")
             print("    call->state = " + str(state + 1) + ";")
-            print("    CALL(" + self.parse_fn(obj) + ");")
+            print("    CALL(" + self.parse_fn(obj) + ", " + str(stack) + ");")
             print("yy" + str(state + 1) + ":")
             print("    // USER CODE")
-            print("")
-            return state + self.nstates(obj), stack
+            return state + self.nstates(obj), stack + 1
 
         raise RuntimeError("unrecognized object type: " + type(obj).__name__)
 
@@ -532,40 +590,51 @@ class C:
         return "_parse_" + expr.title
 
     def declare_fn(self, expr):
-        print("static size_t " + self.parse_fn(expr) + "(PARSE_FN_ARGS);")
+        print("static void " + self.parse_fn(expr) + "(PARSE_FN_ARGS);")
 
     def define_fn(self, expr):
         """Generate the function definition for an Expression."""
-        print("static size_t " + self.parse_fn(expr) + "(PARSE_FN_ARGS){")
-        print("    call_t *call = &p->stack[call_pos].call;")
-        # print("    size_t stack = call_pos;")
-        print("")
+        var = []
+        print("static void " + self.parse_fn(expr) + "(PARSE_FN_ARGS){")
+        # Ensure we have enough stack space to operate.
+        print("    assert_sems_available(p, " + str(1 + self.stackmax(expr.seq)) + ");")
         # Jump to state.
         print("    switch(call->state){")
-        for n in range(self.nstates(expr.seq)):
+        print("        case " + str(0) + ": break;")
+        for n in range(1, self.nstates(expr.seq)):
             print("        case " + str(n) + ": goto yy" + str(n) + ";")
         print("    }")
         print("")
+        var = C.Variables()
         if expr.type is not None:
-            print("    size_t stack = call_pos+1");
-            print("    #define $$ (p->stack[call_pos-1]." + expr.type + ")")
+            var.define("$", expr.type, 0)
 
-        self.gen(expr.seq, 0, 0)
+        # stack starts at 1, since we have always allocate the output
+        self.gen(expr.seq, 0, 1, var)
 
-        if expr.type is not None:
-            print("    #undef $$")
-        print("    return call->prev;")
+        var.pop_scope()
+        print("    // cleanup this call");
+        print("    free_sems(p, call->stack+1);")
+        print("    p->callslen--;");
+        print("    return;")
         print("}")
         print("")
 
     def gen_file(self, g):
         names = sorted(g.exprs)
 
+        # check all of the expressions
+        for name in names:
+            expr = g.exprs[name]
+            expr.check()
+
         print(textwrap.dedent("""
             #include <stdio.h>
             #include <stdbool.h>
             #include <stdlib.h>
             #include <stdarg.h>
+            #include <stdint.h>
+            #include <string.h>
         """.strip("\n")))
 
         print("typedef enum {")
@@ -581,97 +650,185 @@ class C:
         print(textwrap.dedent(r"""
             struct imf_parser_t;
             typedef struct imf_parser_t imf_parser_t;
+            struct call_t;
+            typedef struct call_t call_t;
+            struct sem_t;
+            typedef struct sem_t sem_t;
 
-            typedef size_t (*parse_fn_t)(imf_parser_t *, size_t, imf_token_t*);
+            #define PARSE_FN_ARGS \
+                call_t *call, imf_parser_t *p, imf_token_t *token, sem_t sem
 
-            typedef struct {
+            typedef void (*parse_fn_t)(PARSE_FN_ARGS);
+
+            struct call_t {
                 // a function to call
                 parse_fn_t fn;
 
-                // the point on the stack where we previously were
-                int prev;
+                // our starting position in the semstack
+                int stack;
 
                 // our position in the call
                 int state;
-            } call_t;
-
-            typedef union {
-                call_t call;
-            } imf_stack_t;
-
-            struct imf_parser_t {
-                imf_stack_t *stack;
-                size_t stacklen;
-                size_t stackmax;
-                size_t call;
             };
 
-            imf_stack_t *stack_append(imf_parser_t *p){
-                if(p->stacklen == p->stackmax){
-                    return NULL;
-                }
-                return &p->stack[p->stacklen++];
+            struct sem_t {
+                int type;
+                // value
+                union {
+                    int i;
+                } val;
+                // location
+                struct {
+                    size_t start;
+                    size_t end;
+                } loc;
+            };
+
+            #define MASKLEN 1
+
+            static void mask_clear(unsigned char *mask){
+                memset(mask, 0, MASKLEN);
             }
 
-            #define CALL(_fn) do { \
-                imf_stack_t *s = stack_append(p); \
-                if(!s) exit(1); \
-                s->call = (call_t){ .fn = _fn, .prev = call_pos }; \
-                return call_pos + 1; \
+            // accepts `n` ints, representing token values
+            static void mask_set(unsigned char *mask, size_t n, ...){
+                va_list ap;
+                va_start(ap, n);
+
+                for(size_t i = 0; i < n; i++){
+                    int t = va_arg(ap, int);
+                    mask[t/8] |= ((unsigned char)1) << (t%8);
+                }
+
+                va_end(ap);
+            }
+
+            static const char *token_name(int t);
+
+            static void mask_print(unsigned char *mask, char *joiner){
+                bool first = true;
+                for(int i = 0; i < MASKLEN; i++){
+                    for(int j = 0; j < 8; j++){
+                        if(!(mask[i] & ((unsigned char)1)<<j)) continue;
+                        printf(
+                            "%s%s",
+                            first ? (first=false,"") : joiner,
+                            token_name(i*8+j)
+                        );
+                    }
+                }
+            }
+
+            struct imf_parser_t {
+                // stack of calls
+                call_t *callstack;
+                size_t callslen;
+                size_t callsmax;
+                // stack of semvals
+                sem_t *semstack;
+                size_t semslen;
+                size_t semsmax;
+                // a mask of all possible tokens
+                unsigned char mask[MASKLEN];
+            };
+
+            call_t *calls_append(imf_parser_t *p){
+                if(p->callslen == p->callsmax){
+                    printf("callstack overflow!\n");
+                    exit(1);
+                }
+                return &p->callstack[p->callslen++];
+            }
+
+            void assert_sems_available(imf_parser_t *p, size_t n){
+                if(p->semslen + n >= p->semsmax){
+                    printf("semstack overflow!\n");
+                    exit (1);
+                }
+            }
+
+            sem_t *sems_append(imf_parser_t *p){
+                if(p->semslen == p->semsmax){
+                    printf("semstack overflow!\n");
+                    exit(1);
+                }
+                return &p->semstack[p->semslen++];
+            }
+
+            void free_sems(imf_parser_t *p, size_t first){
+                for(size_t i = first; i < p->semsmax; i++){
+                    // TODO: actually free stuff
+                    p->semstack[i] = (sem_t){0};
+                }
+            }
+
+            static const char *_fn_name(parse_fn_t fn);
+
+            static void print_stack(imf_parser_t *p){
+                for(size_t i = 0; i < p->callslen; i++){
+                    call_t call = p->callstack[i];
+                    printf("parsing %s (%d)\n", _fn_name(call.fn), call.state);
+                }
+
+            }
+
+            #define CALL(_fn, _stack) do { \
+                /* allocate call */ \
+                call_t *subcall = calls_append(p); \
+                *subcall = (call_t){ .fn = _fn,  .stack = call->stack + _stack }; \
+                return; \
             } while(0)
 
             #define AWAIT_TOKEN do { \
-                if(!*token) return call_pos; \
-            } while(0)
-
-            #define TAKE_TOKEN do { \
-                *token = _NOT_A_TOKEN; \
+                if(!*token) return; \
             } while(0)
 
             bool token_in(imf_token_t token, size_t n, ...){
                 va_list ap;
                 va_start(ap, n);
 
+                bool out = false;
                 for(size_t i = 0; i < n; i++){
-                    if(token == va_arg(ap, int)){
-                        va_end(ap);
-                        return true;
-                    }
+                    if(token != va_arg(ap, int)) continue;
+                    out = true;
+                    break;
                 }
 
                 va_end(ap);
-                return false;
+                return out;
             }
 
-            #define SYNTAX_ERROR exit(4)
+            #define SYNTAX_ERROR do { \
+                printf("syntax error!\n"); \
+                print_stack(p); \
+                printf("expected one of: {"); \
+                mask_print(p->mask, ","); \
+                printf("} but got %s\n", token_name(*token)); \
+                exit(1); \
+            } while(0)
 
             void do_parse(
                 imf_parser_t *p,
                 parse_fn_t entrypoint,
                 imf_token_t token,
+                sem_t sem,
                 bool *ok
             ){
                 *ok = false;
 
-                if(p->call == 0){
-                    // first token
-                    imf_stack_t *s = stack_append(p);
-                    s = stack_append(p);
-                    if(!s) exit(1);
-                    s->call = (call_t){ .fn = entrypoint, .prev = 0 };
-                    p->call = 1;
+                if(p->callslen == 0){
+                    // first token, initialize the call
+                    call_t *call = calls_append(p);
+                    *call = (call_t){
+                        .fn = entrypoint, .stack = p->semslen-1
+                    };
                 }
 
-                while(p->call){
-                    printf("calling!\n");
-                    size_t last = p->call;
-                    call_t *call = &p->stack[p->call].call;
-                    p->call = call->fn(p, p->call, &token);
-                    if(p->call == (size_t)-1){
-                        // error!
-                        p->call = 0;
-                        exit(2);
-                    }else if(p->call == last){
+                while(p->callslen){
+                    size_t last = p->callslen;
+                    call_t *call = &p->callstack[p->callslen-1];
+                    call->fn(call, p, &token, sem);
+                    if(p->callslen == last){
                         // pause until the next token
                         return;
                     }
@@ -680,15 +837,7 @@ class C:
                 // parsed everything!
                 *ok = true;
             }
-
-            #define PARSE_FN_ARGS \
-                imf_parser_t *p, size_t call_pos, imf_token_t *token
         """.strip('\n')))
-
-        # check all of the expressions
-        for name in names:
-            expr = g.exprs[name]
-            expr.check()
 
         # declare functions
         for name in names:
@@ -696,6 +845,32 @@ class C:
             if not isinstance(expr, Expression):
                 continue
             self.declare_fn(expr)
+        print("")
+
+        print("static const char *token_name(int t){")
+        print("    switch(t){")
+        for name in names:
+            expr = g.exprs[name]
+            if not isinstance(expr, Token):
+                continue
+            print("        case " + name + ": return \"" +name+ "\";")
+        print("        default: return \"unknown\";")
+        print("    }")
+        print("}")
+        print("")
+
+        # get function names
+        print("static const char *_fn_name(parse_fn_t fn){")
+        for name in names:
+            expr = g.exprs[name]
+            if not isinstance(expr, Expression):
+                continue
+            print(
+                "    if(fn == " + self.parse_fn(expr) + ")"
+                + " return \""+self.parse_fn(expr)+"\";"
+            )
+        print("    return \"unknown\";")
+        print("}")
         print("")
 
         # define functions
@@ -706,30 +881,43 @@ class C:
             self.define_fn(expr)
 
         print(textwrap.dedent(r"""
-            void parse_expr(imf_parser_t *p, imf_token_t token, bool *ok){
-                do_parse(p, _parse_expr, token, ok);
+            void parse_line(imf_parser_t *p, imf_token_t token, sem_t sem, bool *ok){
+                do_parse(p, _parse_line, token, sem, ok);
             }
 
             int main(int argc, char **argv){
-                imf_stack_t stack[100];
-                size_t max = sizeof(stack) / sizeof(*stack);
-                imf_parser_t p = { .stack = stack, .stackmax = 100 };
+                call_t calls[100];
+                sem_t sems[100];
+                size_t callsmax = sizeof(calls) / sizeof(*calls);
+                size_t semsmax = sizeof(sems) / sizeof(*sems);
+                imf_parser_t p = {
+                    .callstack = calls,
+                    .callsmax = callsmax,
+                    .semstack = sems,
+                    .semsmax = semsmax,
+                };
 
                 int tokens[] = {
-                    NUM,
-                    PLUS,
-                    NUM,
-                    EOL,
+                    NUM, 18,
+                    DIV, 0,
+                    LPAREN, 0,
+                    NUM, 6,
+                    DIV, 0,
+                    NUM, 3,
+                    RPAREN, 0,
+                    EOL, 0,
                 };
                 size_t ntokens = sizeof(tokens) / sizeof(*tokens);
 
                 bool ok = false;
-                for(size_t i = 0; i < ntokens; i++){
+                for(size_t i = 0; i < ntokens; i += 2){
                     if(ok){
                         printf("got OK too early!\n");
                         return 1;
                     }
-                    parse_expr(&p, tokens[i], &ok);
+                    // printf("feeding %s\n", token_name(tokens[i]));
+                    sem_t sem = {.val.i = tokens[i+1]};
+                    parse_line(&p, tokens[i], sem, &ok);
                 }
 
                 if(!ok){
