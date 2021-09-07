@@ -44,6 +44,10 @@ class Parsable(metaclass=abc.ABCMeta):
     def get_disallowed_after(self, prev=None):
         pass
 
+    @abc.abstractmethod
+    def check(self):
+        pass
+
 
 class Token(Parsable):
     def __init__(self, name, typ=None):
@@ -101,6 +105,11 @@ class Maybe(Parsable):
         # always include None, since this term may be missing
         return disallowed.union(first).union({None})
 
+    @cacheable
+    def check(self):
+        self.seq.check()
+
+
 
 class ZeroOrMore(Parsable):
     def __init__(self, name):
@@ -135,111 +144,10 @@ class ZeroOrMore(Parsable):
         # always include None, since this term may be missing
         return disallowed.union(first).union({None})
 
-
-class Sequence(Parsable):
-    """
-    A sequence of terms which must be matched consecutively.
-    """
-    def __init__(self, name):
-        self.name = name
-        self.scopes = [self]
-        self.precode = []
-        # tuples of (Parsable, tag=None, code=[])
-        self.terms = []
-
-    def add_term(self, term, tag=None):
-        self.terms.append((term, tag, []))
-
-    def add_code(self, code):
-        if not self.terms:
-            self.precode.append(code)
-        else:
-            self.terms[-1][2].append(code)
-
-    @property
-    def title(self):
-        return self.name
-
-    @cacheable
-    def get_first(self, prev=None):
-        """
-        Get the list of all tokens that this expression could start with.
-
-        Ex: at runtime, when are processing a .maybe(), we need to be able to
-        look ahead one token and know if that token can be the first token
-        of this expression.
-        """
-        prev = add_to_prev(prev, self.name, "get_first")
-        first = set()
-        for term, _, _ in self.terms:
-            term_first = term.get_first(list(prev))
-            # detect conflicts in .check(), not here.
-            first = first.union(term_first)
-            # if None is not in the set, we have our answer.
-            if None not in first:
-                break
-            # if None is in the set, check the next term too.
-            first.remove(None)
-        else:
-            # restore the None from the final term_first
-            first.add(None)
-
-        return frozenset(first)
-
-    @cacheable
-    def get_disallowed_after(self, prev=None):
-        """
-        Get the list of all tokens which would cause ambiguities after this
-        expression.
-
-        Ex. a maybe(EOL) term could not be followed by a match(EOL) term; it
-        would be ambiguous if an EOL matched to the maybe() or the match().
-        """
-        prev = add_to_prev(prev, self.name, "get_disallowed_after")
-        disallowed = set()
-        for term, _, _ in reversed(self.terms):
-            term_disallowed = term.get_disallowed_after(list(prev))
-            disallowed = disallowed.union(term_disallowed)
-            # if None is not in this term's disallowed, we have our answer
-            if None not in disallowed:
-                break
-            # if None is in the set, check the next term too
-            disallowed.remove(None)
-        else:
-            # restore the None from the final term_disallowed
-            disallowed.add(None)
-
-        return frozenset(disallowed)
-
     @cacheable
     def check(self):
-        """
-        At generation time, we need to ensure that for every Term in the
-        expression, there is never a point where the lookahead token could
-        possibly match the next token.
-        """
-        prev = {self.name}
+        self.seq.check()
 
-        disallowed = set()
-        for i, (term, _, _) in enumerate(self.terms):
-            term_first = term.get_first(list(prev))
-            # Ignore None when checking for conflicts
-            disallowed = disallowed.difference({None})
-            conflicts = disallowed.intersection(term_first)
-            if conflicts:
-                raise FirstFollow(
-                    "FIRST/FOLLOW conflicts:" + str(conflicts) + "\n"
-                    "found while checking expression " + self.title + "\n"
-                    "at least one token that starts " + term.title + "\n"
-                    "is disallowed by that point."
-                )
-            term_disallowed = term.get_disallowed_after(list(prev))
-            if None in term_disallowed:
-                # disallowed should grow
-                disallowed = disallowed.union(term_disallowed)
-            else:
-                # disallowed is reset
-                disallowed = term_disallowed
 
 class Branches(Parsable):
     def __init__(self, name):
@@ -307,6 +215,164 @@ class Branches(Parsable):
             first = first.union(branch_first)
 
 
+class Recovery(Parsable):
+    def __init__(self, name, code):
+        self.name = name
+        self.code = code
+        self.seq = Sequence(self.name + '.seq')
+        self.after = None
+
+    def add_term(self, term, tag=None):
+        self.seq.add_term(term, tag)
+
+    def add_code(self, code):
+        self.seq.add_code(code)
+
+    def set_after(self, after):
+        assert self.after is None, "can't call set_after() twice!"
+        self.after = after
+
+    @property
+    def title(self):
+        return "recovery(" + self.name + ")"
+
+    @cacheable
+    def get_first(self, prev):
+        return self.seq.get_first(prev)
+
+    @cacheable
+    def get_disallowed_after(self, prev):
+        return self.seq.get_disallowed_after(prev)
+
+    @cacheable
+    def check(self):
+        self.seq.check()
+
+
+class Sequence(Parsable):
+    """
+    A sequence of terms which must be matched consecutively.
+    """
+    def __init__(self, name):
+        self.name = name
+        self.scopes = [self]
+        self.precode = []
+        # tuples of (Parsable, tag=None, code=[])
+        self.terms = []
+
+    def add_term(self, term, tag=None):
+        self.terms.append((term, tag, []))
+
+    def add_code(self, code):
+        if not self.terms:
+            self.precode.append(code)
+        else:
+            self.terms[-1][2].append(code)
+
+    @property
+    def title(self):
+        return self.name
+
+    def get_first_ex(self, start, prev):
+        """
+        Get the list of all tokens that this expression could start with.
+
+        Ex: at runtime, when are processing a .maybe(), we need to be able to
+        look ahead one token and know if that token can be the first token
+        of this expression.
+        """
+        prev = add_to_prev(prev, self.name, "get_first")
+        first = set()
+        for term, _, _ in self.terms[start:]:
+            term_first = term.get_first(list(prev))
+            # detect conflicts in .check(), not here.
+            first = first.union(term_first)
+            # if None is not in the set, we have our answer.
+            if None not in first:
+                break
+            # if None is in the set, check the next term too.
+            first.remove(None)
+        else:
+            # restore the None from the final term_first
+            first.add(None)
+
+        return frozenset(first)
+
+    @cacheable
+    def get_first(self, prev=None):
+        return self.get_first_ex(0, prev)
+
+    @cacheable
+    def get_disallowed_after(self, prev=None):
+        """
+        Get the list of all tokens which would cause ambiguities after this
+        expression.
+
+        Ex. a maybe(EOL) term could not be followed by a match(EOL) term; it
+        would be ambiguous if an EOL matched to the maybe() or the match().
+        """
+        prev = add_to_prev(prev, self.name, "get_disallowed_after")
+        disallowed = set()
+        for term, _, _ in reversed(self.terms):
+            term_disallowed = term.get_disallowed_after(list(prev))
+            disallowed = disallowed.union(term_disallowed)
+            # if None is not in this term's disallowed, we have our answer
+            if None not in disallowed:
+                break
+            # if None is in the set, check the next term too
+            disallowed.remove(None)
+        else:
+            # restore the None from the final term_disallowed
+            disallowed.add(None)
+
+        return frozenset(disallowed)
+
+    @cacheable
+    def check(self):
+        """
+        At generation time, we need to ensure that for every Term in the
+        expression, there is never a point where the lookahead token could
+        possibly match the next token.
+        """
+        prev = {self.name}
+
+        for term, _, _ in self.terms:
+            # don't allow recursion
+            if not isinstance(term, Expression):
+                term.check()
+
+        disallowed = set()
+        for i, (term, _, _) in enumerate(self.terms):
+            term_first = term.get_first(list(prev))
+            # Ignore None when checking for conflicts
+            disallowed = disallowed.difference({None})
+            conflicts = disallowed.intersection(term_first)
+            if conflicts:
+                raise FirstFollow(
+                    "FIRST/FOLLOW conflicts:" + str(conflicts) + "\n"
+                    "found while checking expression " + self.title + "\n"
+                    "at least one token that starts " + term.title + "\n"
+                    "is disallowed by that point."
+                )
+            term_disallowed = term.get_disallowed_after(list(prev))
+            if None in term_disallowed:
+                # disallowed should grow
+                disallowed = disallowed.union(term_disallowed)
+            else:
+                # disallowed is reset
+                disallowed = term_disallowed
+
+            # Special case: check Recovery terms and call their set_after().
+            if isinstance(term, Recovery):
+                after_recovery = self.get_first_ex(i+1, None)
+                if None in after_recovery:
+                    raise ValueError(
+                        "a Recovery must be followed by a never-empty match "
+                        "within the same Sequence"
+                    )
+                term.set_after(after_recovery)
+
+
 class Expression(Parsable):
     """
     Each Expression will generate one function in the parser.
@@ -318,6 +384,7 @@ class Expression(Parsable):
         self.scopes = [self.seq]
         self.nbranches = 0
         self.nzom = 0
+        self.nrec = 0
 
     # API for defining the grammar.
 
@@ -332,6 +399,14 @@ class Expression(Parsable):
         return term
 
     @contextlib.contextmanager
+    def maybe(self):
+        term = Maybe()
+        self.scopes.append(term)
+        yield term
+        self.scopes.pop()
+        self.scopes[-1].add_term(term)
+
+    @contextlib.contextmanager
     def zero_or_more(self):
         term = ZeroOrMore(self.name + '.zom' + str(self.nzom))
         self.nzom += 1
@@ -341,17 +416,18 @@ class Expression(Parsable):
         self.scopes[-1].add_term(term)
 
     @contextlib.contextmanager
-    def maybe(self):
-        term = Maybe()
+    def branches(self):
+        term = Branches(self.name + '.br' + str(self.nbranches))
+        self.nbranches += 1
         self.scopes.append(term)
         yield term
         self.scopes.pop()
         self.scopes[-1].add_term(term)
 
     @contextlib.contextmanager
-    def branches(self):
-        term = Branches(self.name + '.br' + str(self.nbranches))
-        self.nbranches += 1
+    def recovery(self, code):
+        term = Recovery(self.name + ".recovery" + str(self.nrec), code)
+        self.nrec += 1
         self.scopes.append(term)
         yield term
         self.scopes.pop()
@@ -415,9 +491,10 @@ class Grammar:
         self.exprs[name] = e
         return e
 
+
 class C:
     """
-   An object with all the methods for generating C code.
+    An object with all the methods for generating C code.
     """
 
     class Variables:
@@ -468,6 +545,8 @@ class C:
             return self.stackmax(obj.seq)
         if isinstance(obj, Branches):
             return max(self.stackmax(b) for b in obj.branches)
+        if isinstance(obj, Recovery):
+            return self.stackmax(obj.seq)
         if isinstance(obj, Sequence):
             persist = 0
             peak = 0
@@ -485,10 +564,12 @@ class C:
             return self.nstates(obj.seq) + 1
         if isinstance(obj, ZeroOrMore):
             return self.nstates(obj.seq) + 1
-        if isinstance(obj, Sequence):
-            return sum(self.nstates(t) for t, _, _ in obj.terms)
         if isinstance(obj, Branches):
             return sum(self.nstates(b) for b in obj.branches) + 1
+        if isinstance(obj, Recovery):
+            return self.nstates(obj.seq) + 1
+        if isinstance(obj, Sequence):
+            return sum(self.nstates(t) for t, _, _ in obj.terms)
         if isinstance(obj, Expression):
             return 1
         raise RuntimeError("unrecognized object type: " + type(obj).__name__)
@@ -502,8 +583,8 @@ class C:
             print("    AWAIT_TOKEN;")
             print("yy" + str(state) + ":")
             print("    if(*token != " + obj.title + ") SYNTAX_ERROR;")
-            print("    *token = _NOT_A_TOKEN;")
             print("    p->semstack[call->stack + " + str(stack) + "] = sem;")
+            print("    CONSUME_TOKEN;")
             print("    mask_clear(p->mask);")
             return state + self.nstates(obj), stack + 1
 
@@ -536,25 +617,6 @@ class C:
             print("yy" + str(state) + "_done:")
             return state + self.nstates(obj), stack
 
-        if isinstance(obj, Sequence):
-            var.new_scope()
-            for c in obj.precode:
-                print(textwrap.indent(textwrap.dedent(c), "    "))
-            for i, (t, tag, code) in enumerate(obj.terms):
-                if tag is not None:
-                    assert isinstance(t, (Token, Expression)), "wrong type for tag: " + type(t).__name__
-                    assert t.type is not None, "obj " + t.title + " has tag " + tag + " but no type!"
-                    var.define(tag, t.type, stack)
-                state, stack = self.gen(t, state, stack, var, tag)
-                if code:
-                    print("    // USER CODE")
-                for c in code:
-                    print(textwrap.indent(textwrap.dedent(c), "    "))
-                if i+1 != len(obj.terms):
-                    print("")
-            var.pop_scope()
-            return state, stack
-
         if isinstance(obj, Branches):
             print("    // match branches " + obj.title)
             print("    call->state = " + str(state) + ";")
@@ -584,6 +646,46 @@ class C:
             print("yy"+ str(state) + "_done:")
             return state + self.nstates(obj), stack
 
+        if isinstance(obj, Recovery):
+            assert obj.after is not None, ".set_after() was never called"
+            print("    // prepare for recovery " + obj.title)
+            print("    call->recover = " + str(state) + ";")
+            print("")
+            self.gen(obj.seq, state + 1, stack, var)
+            print("")
+            print("    goto yy" + str(state) + "_done;")
+            print("yy"+ str(state) + ":")
+            print("    // recovery: consume all tokens until a valid one")
+            print("    AWAIT_TOKEN;")
+            print("    if(!" + self.token_check(obj.after) + "){")
+            print("        CONSUME_TOKEN;")
+            print("        return 0;")
+            print("    }")
+            if obj.code is not None:
+                print("    // USER CODE")
+                print(textwrap.indent(textwrap.dedent(obj.code), "    "))
+            print("yy"+ str(state) + "_done:")
+            return state + self.nstates(obj), stack
+
+        if isinstance(obj, Sequence):
+            var.new_scope()
+            for c in obj.precode:
+                print(textwrap.indent(textwrap.dedent(c), "    "))
+            for i, (t, tag, code) in enumerate(obj.terms):
+                if tag is not None:
+                    assert isinstance(t, (Token, Expression)), "wrong type for tag: " + type(t).__name__
+                    assert t.type is not None, "obj " + t.title + " has tag " + tag + " but no type!"
+                    var.define(tag, t.type, stack)
+                state, stack = self.gen(t, state, stack, var, tag)
+                if code:
+                    print("    // USER CODE")
+                for c in code:
+                    print(textwrap.indent(textwrap.dedent(c), "    "))
+                if i+1 != len(obj.terms):
+                    print("")
+            var.pop_scope()
+            return state, stack
+
         if isinstance(obj, Expression):
             # code generated when calling this function
             print("    // match " + obj.title)
@@ -599,12 +701,12 @@ class C:
         return "_parse_" + expr.title
 
     def declare_fn(self, expr):
-        print("static void " + self.parse_fn(expr) + "(PARSE_FN_ARGS);")
+        print("static int " + self.parse_fn(expr) + "(PARSE_FN_ARGS);")
 
     def define_fn(self, expr):
         """Generate the function definition for an Expression."""
         var = []
-        print("static void " + self.parse_fn(expr) + "(PARSE_FN_ARGS){")
+        print("static int " + self.parse_fn(expr) + "(PARSE_FN_ARGS){")
         # Ensure we have enough stack space to operate.
         print("    assert_sems_available(p, " + str(1 + self.stackmax(expr.seq)) + ");")
         # Jump to state.
@@ -626,7 +728,7 @@ class C:
         print("    // cleanup this call");
         print("    free_sems(p, call->stack+1);")
         print("    p->callslen--;");
-        print("    return;")
+        print("    return 0;")
         print("}")
         print("")
 
@@ -668,7 +770,7 @@ class C:
             #define PARSE_FN_ARGS \
                 call_t *call, imf_parser_t *p, imf_token_t *token, sem_t sem
 
-            typedef void (*parse_fn_t)(PARSE_FN_ARGS);
+            typedef int (*parse_fn_t)(PARSE_FN_ARGS);
 
             struct call_t {
                 // a function to call
@@ -679,6 +781,9 @@ class C:
 
                 // our position in the call
                 int state;
+
+                // the state to enter if we have to recover
+                int recover;
             };
 
             struct sem_t {
@@ -786,12 +891,14 @@ class C:
                 /* allocate call */ \
                 call_t *subcall = calls_append(p); \
                 *subcall = (call_t){ .fn = _fn,  .stack = call->stack + _stack }; \
-                return; \
+                return 0; \
             } while(0)
 
-            #define AWAIT_TOKEN do { \
-                if(!*token) return; \
-            } while(0)
+            #define AWAIT_TOKEN \
+                if(!*token) return 0
+
+            #define CONSUME_TOKEN \
+                *token = _NOT_A_TOKEN
 
             bool token_in(imf_token_t token, size_t n, ...){
                 va_list ap;
@@ -814,7 +921,7 @@ class C:
                 printf("expected one of: {"); \
                 mask_print(p->mask, ","); \
                 printf("} but got %s\n", token_name(*token)); \
-                exit(1); \
+                return 1; \
             } while(0)
 
             void do_parse(
@@ -837,10 +944,26 @@ class C:
                 while(p->callslen){
                     size_t last = p->callslen;
                     call_t *call = &p->callstack[p->callslen-1];
-                    call->fn(call, p, &token, sem);
-                    if(p->callslen == last){
-                        // pause until the next token
-                        return;
+                    int syntax_error = call->fn(call, p, &token, sem);
+                    if(!syntax_error){
+                        if(p->callslen == last){
+                            // pause until the next token
+                            return;
+                        }
+                        continue;
+                    }
+                    // syntax error; pop from the stack until we can recover
+                    while(p->callslen){
+                        call_t *call = &p->callstack[p->callslen-1];
+                        if(call->recover){
+                            // this call has a recovery state we can enter
+                            call->state = call->recover;
+                            call->recover = 0;
+                            break;
+                        }else{
+                            free_sems(p, call->stack);
+                            p->callslen--;
+                        }
                     }
                 }
 
@@ -908,9 +1031,19 @@ class C:
                 };
 
                 int tokens[] = {
+                    NUM, 0,
+                    PLUS, 0,
+                    LPAREN, 0,
+                    NUM, 0,
+                    NUM, 0,
+                    RPAREN, 0,
+                    EOL, 0,
+
                     NUM, 18,
                     PLUS, 0,
+                    LPAREN, 0,
                     NUM, 6,
+                    RPAREN, 0,
                     EOL, 0,
                 };
                 size_t ntokens = sizeof(tokens) / sizeof(*tokens);

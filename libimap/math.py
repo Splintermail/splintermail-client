@@ -1,10 +1,11 @@
 # a small grammar for basic math expressions
 
-# mult_op =  ( '*' | "/" );
+# mult_op =  ( '*' | "/" );            # branch syntax
 # sum_op =  ( '+' | '-' );
 # factor =  ( NUM | '(' expr ')' );
 # term =  factor *[ mult_op factor];
-# expr = term *[ sum_op term ];
+# expr = term *[ sum_op term ];        # zero-or-more syntax
+# line = < expr > EOL;                 # error handling syntax
 
 ### In-line code
 
@@ -28,28 +29,8 @@
 #
 # expr:i = term:t1 { $$ = $t1}
 #          *[ sum_op:s term:t2 { $$ += $s * $t2; } ];
-
-### Error handling
-
-## try/catch semantics for errors?
-# fatctor = ( NUM | '(' <expr:e> ')' { $e = ??; } )  # unclear semantics
-
-## function-level error handling
-# maybe_expr:error = expr  # what is the semantic value of the maybe?
-
-## No, you really need the error state as its own branch.
-## The branch structure already can't have its own semantic value, making this
-## the most semantically clear behavior:
 #
-# line = (
-# | expr:e { p->out = $e; }
-# | error { printf("error\n"); }
-# ) EOL;
-#
-## This is obnoxious for the implementation because the error state is
-## certainly going to be at the function call level, meaning that error
-## handling will be different between function calls vs in the branch itself.
-## Maybe the preprocessor can help us.
+# line = <expr> { printf("bad expr\n"); } EOL;
 
 import gen
 
@@ -121,13 +102,14 @@ def expr(e):
         e.match(sum_op, "s")
         e.match(term, "t2")
         e.exec("$$ += $s * $t2;")
-    # TODO: enforce that any top-level parser has a clear endpoint
 
 @g.expr
 def line(e):
-    e.match(expr, "expr")
+    with e.recovery(r'printf("bad expression\n");'):
+        e.match(expr, "e")
+        e.exec(r'printf("expr = %d\n", $e);')
     e.match(EOL)
-    e.exec(r'printf("expr = %d\n", $expr);')
+    # TODO: enforce that any top-level parser has a clear endpoint
 
 # Add semantic types (no idiomatic way yet)
 NUM.type = "i"
