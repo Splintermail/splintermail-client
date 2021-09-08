@@ -1,6 +1,7 @@
 import abc
 import contextlib
 import textwrap
+import re
 
 
 class FirstFirst(Exception):
@@ -127,7 +128,7 @@ class ZeroOrMore(Parsable):
         return "zero_or_more(" + self.name + ")"
 
     @cacheable
-    def get_first(self, prev):
+    def get_first(self, prev=None):
         prev = add_to_prev(prev, self.name, "get_first")
         first = self.seq.get_first(prev)
         assert None not in first, "invalid .zero_or_more() on maybe-empty expression: " + self.seq.title
@@ -237,7 +238,7 @@ class Recovery(Parsable):
         return "recovery(" + self.name + ")"
 
     @cacheable
-    def get_first(self, prev):
+    def get_first(self, prev=None):
         return self.seq.get_first(prev)
 
     @cacheable
@@ -491,6 +492,218 @@ class Grammar:
         self.exprs[name] = e
         return e
 
+    def sorted_tokens(self):
+        for name in sorted(self.exprs.keys()):
+            expr = self.exprs[name]
+            if isinstance(expr, Token):
+                yield name, expr
+
+    def sorted_expressions(self):
+        for name in sorted(self.exprs.keys()):
+            expr = self.exprs[name]
+            if isinstance(expr, Expression):
+                yield name, expr
+
+    def check(self):
+        for _, expr in self.sorted_expressions():
+            expr.check()
+
+
+class Python:
+    """
+    An object with all the methods for generating Python code.
+    """
+
+    def print_code(self, code, i):
+        if code is None:
+            return
+        code = re.sub("\\$\\$", "out", code)
+        code = re.sub("\\$", "yy_", code)
+        print(textwrap.indent(textwrap.dedent(code), i))
+
+    def token_list(self, tokens):
+        tokens = sorted(t for t in tokens if t is not None)
+        if len(tokens) > 1:
+            return "(" + ", ".join(tokens) + ")"
+        else:
+            return "(" + tokens[0] + ",)"
+
+    def if_token_in(self, tokens, i, pos=0):
+        token_list = self.token_list(tokens)
+        lead = "if" if pos == 0 else "elif"
+        print(i + lead + " (yield from tokens.peek()) in " + token_list + ":")
+
+    def if_token_not_in(self, tokens, i, pos=0):
+        token_list = self.token_list(tokens)
+        lead = "if" if pos == 0 else "elif"
+        print(i + lead + " (yield from tokens.peek()) not in " + token_list + ":")
+
+    def while_token_in(self, tokens, i):
+        token_list = self.token_list(tokens)
+        print(i + "while (yield from tokens.peek()) in " + token_list + ":")
+
+    def while_token_not_in(self, tokens, i):
+        token_list = self.token_list(tokens)
+        print(i + "while (yield from tokens.peek()) not in " + token_list + ":")
+
+    def gen(self, obj, tag, i):
+        if isinstance(obj, Token):
+            print(i + "if (yield from tokens.peek()) != " + obj.title + ":")
+            print(i + "    raise SyntaxError()")
+            if tag is not None:
+                print(i + "yy_" + tag + " = (yield from next(tokens)).val")
+            else:
+                print(i + "yield from next(tokens)")
+            return
+
+        if isinstance(obj, Maybe):
+            self.if_token_in(obj.get_first(), i)
+            self.gen(obj.seq, None, i+"    ")
+            return
+
+        if isinstance(obj, ZeroOrMore):
+            self.while_token_in(obj.get_first(), i)
+            self.gen(obj.seq, None, i+"    ")
+            return
+
+        if isinstance(obj, Branches):
+            for n, seq in enumerate(obj.branches):
+                self.if_token_in(seq.get_first(), i, pos=n)
+                self.gen(seq, None, i+"    ")
+            return
+
+        if isinstance(obj, Recovery):
+            print(i + "try:")
+            self.gen(obj.seq, None, i+"    ")
+            self.if_token_not_in(obj.after, i+"    ")
+            print(i + "        raise SyntaxError()")
+            print(i + "except SyntaxError:")
+            self.while_token_not_in(obj.after, i+"    ")
+            print(i + "        yield from next(tokens)")
+            self.print_code(obj.code, i+"    ")
+            return
+
+        if isinstance(obj, Sequence):
+            for c in obj.precode:
+                self.print_code(c, i)
+                print(textwrap.indent(textwrap.dedent(c), i))
+            for term, tag, code in obj.terms:
+                self.gen(term, tag, i)
+                for c in code:
+                    self.print_code(c, i)
+            return
+
+        if isinstance(obj, Expression):
+            if tag is not None:
+                print(i + "yy_" + tag + " = yield from parse_" + obj.title + "(tokens)")
+            else:
+                print(i + "yield from parse_" + obj.title + "()")
+            return
+
+        raise RuntimeError("unrecognized object type: " + type(obj).__name__)
+
+    def define_fn(self, expr):
+        print("def parse_" + expr.title + "(tokens):")
+        print("    out = None")
+        self.gen(expr.seq, None, i="    ")
+        print("    return out")
+
+    def gen_file(self, g):
+        print(textwrap.dedent(r"""
+            class SyntaxError(Exception):
+                pass
+
+            class Token:
+                def __init__(self, typ, val=None):
+                    self.type = typ
+                    self.val = val
+
+            class TokenStream:
+                def __init__(self):
+                    self.first = None
+
+                def peek(self):
+                    if self.first is None:
+                        self.first = yield
+                    return self.first.type
+
+                def __next__(self):
+                    if self.first:
+                        out = self.first
+                        self.first = None
+                        return out
+                    t = yield
+                    return t
+        """.strip("\n")), end="")
+
+        for i, (name, _) in enumerate(g.sorted_tokens()):
+            print(name + " = " + str(i))
+        print("")
+
+        for name, expr in g.sorted_expressions():
+            self.define_fn(expr)
+            print("")
+
+
+        print(textwrap.dedent(r"""
+            class Parser:
+                def __init__(self, fn=parse_line):
+                    self.fn = fn
+                    self.tokens = TokenStream()
+                    self.out = None
+                    self.gen = self.mkgen()
+
+                def mkgen(self):
+                    def _gen():
+                        self.out = yield from self.fn(self.tokens)
+                    gen = _gen()
+                    next(gen)
+                    return gen
+
+                def feed(self, t):
+                    try:
+                        return self.gen.send(t)
+                    except StopIteration:
+                        out = self.out
+                        self.out = None
+                        self.gen = self.mkgen()
+                        return out
+
+            if __name__ == "__main__":
+                p = Parser()
+                for token in [
+                    Token(NUM, 18),
+                    Token(DIV),
+                    Token(LPAREN),
+                    Token(NUM, 6),
+                    Token(DIV),
+                    Token(NUM, 3),
+                    Token(RPAREN),
+                    Token(EOL),
+
+                    Token(NUM, 18),
+                    Token(DIV),
+                    Token(LPAREN),
+                    Token(NUM, 6),
+                    Token(DIV),
+                    Token(NUM, 3),
+                    Token(RPAREN),
+                    Token(EOL),
+
+                    Token(NUM, 18),
+                    Token(DIV),
+                    Token(LPAREN),
+                    Token(NUM, 6),
+                    Token(DIV),
+                    Token(NUM, 3),
+                    Token(RPAREN),
+                    Token(RPAREN),
+                    Token(RPAREN),
+                    Token(EOL),
+                ]:
+                    v = p.feed(token)
+        """.strip("\n")), end="")
+
 
 class C:
     """
@@ -653,6 +866,7 @@ class C:
             print("")
             self.gen(obj.seq, state + 1, stack, var)
             print("")
+            print("    call->recover = 0;")
             print("    goto yy" + str(state) + "_done;")
             print("yy"+ str(state) + ":")
             print("    // recovery: consume all tokens until a valid one")
@@ -733,13 +947,6 @@ class C:
         print("")
 
     def gen_file(self, g):
-        names = sorted(g.exprs)
-
-        # check all of the expressions
-        for name in names:
-            expr = g.exprs[name]
-            expr.check()
-
         print(textwrap.dedent("""
             #include <stdio.h>
             #include <stdbool.h>
@@ -751,11 +958,8 @@ class C:
 
         print("typedef enum {")
         print("    _NOT_A_TOKEN = 0,")
-        for name in names:
-            tok = g.exprs[name]
-            if not isinstance(tok, Token):
-                continue
-            print("    " + tok.title + ",")
+        for _, token in g.sorted_tokens():
+            print("    " + token.title + ",")
         print("} imf_token_t;")
         print("")
 
@@ -973,19 +1177,13 @@ class C:
         """.strip('\n')))
 
         # declare functions
-        for name in names:
-            expr = g.exprs[name]
-            if not isinstance(expr, Expression):
-                continue
+        for _, expr in g.sorted_expressions():
             self.declare_fn(expr)
         print("")
 
         print("static const char *token_name(int t){")
         print("    switch(t){")
-        for name in names:
-            expr = g.exprs[name]
-            if not isinstance(expr, Token):
-                continue
+        for name, _ in g.sorted_tokens():
             print("        case " + name + ": return \"" +name+ "\";")
         print("        default: return \"unknown\";")
         print("    }")
@@ -994,10 +1192,7 @@ class C:
 
         # get function names
         print("static const char *_fn_name(parse_fn_t fn){")
-        for name in names:
-            expr = g.exprs[name]
-            if not isinstance(expr, Expression):
-                continue
+        for _, expr in g.sorted_expressions():
             print(
                 "    if(fn == " + self.parse_fn(expr) + ")"
                 + " return \""+self.parse_fn(expr)+"\";"
@@ -1007,10 +1202,7 @@ class C:
         print("")
 
         # define functions
-        for name in names:
-            expr = g.exprs[name]
-            if not isinstance(expr, Expression):
-                continue
+        for _, expr in g.sorted_expressions():
             self.define_fn(expr)
 
         print(textwrap.dedent(r"""

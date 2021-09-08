@@ -119,4 +119,6 @@ mult_op.type = "i"
 sum_op.type = "i"
 expr.type = "i"
 
+g.check()
+
 gen.C().gen_file(g)
