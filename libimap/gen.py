@@ -75,7 +75,7 @@ class Token(Parsable):
 class Maybe(Parsable):
     def __init__(self, name):
         self.name = name
-        self.seq = Sequential(self.name + ".seq")
+        self.seq = Sequence(self.name + ".seq")
 
     @property
     def title(self):
@@ -383,8 +383,9 @@ class Expression(Parsable):
         self.type = typ
         self.seq = Sequence(self.name + ".seq")
         self.scopes = [self.seq]
-        self.nbranches = 0
+        self.nmaybe = 0
         self.nzom = 0
+        self.nbranches = 0
         self.nrec = 0
 
     # API for defining the grammar.
@@ -401,7 +402,8 @@ class Expression(Parsable):
 
     @contextlib.contextmanager
     def maybe(self):
-        term = Maybe()
+        term = Maybe(self.name + '.maybe' + str(self.nmaybe))
+        self.nmaybe += 1
         self.scopes.append(term)
         yield term
         self.scopes.pop()
@@ -528,6 +530,11 @@ class Python:
         else:
             return "(" + tokens[0] + ",)"
 
+    def user_args(self, u):
+        if not u:
+            return ""
+        return ", " + ", ".join(u)
+
     def if_token_in(self, tokens, i, pos=0):
         token_list = self.token_list(tokens)
         lead = "if" if pos == 0 else "elif"
@@ -546,7 +553,7 @@ class Python:
         token_list = self.token_list(tokens)
         print(i + "while (yield from tokens.peek()) not in " + token_list + ":")
 
-    def gen(self, obj, tag, i):
+    def gen(self, obj, tag, u, i):
         if isinstance(obj, Token):
             print(i + "if (yield from tokens.peek()) != " + obj.title + ":")
             print(i + "    raise SyntaxError()")
@@ -558,23 +565,23 @@ class Python:
 
         if isinstance(obj, Maybe):
             self.if_token_in(obj.get_first(), i)
-            self.gen(obj.seq, None, i+"    ")
+            self.gen(obj.seq, None, u, i+"    ")
             return
 
         if isinstance(obj, ZeroOrMore):
             self.while_token_in(obj.get_first(), i)
-            self.gen(obj.seq, None, i+"    ")
+            self.gen(obj.seq, None, u, i+"    ")
             return
 
         if isinstance(obj, Branches):
             for n, seq in enumerate(obj.branches):
                 self.if_token_in(seq.get_first(), i, pos=n)
-                self.gen(seq, None, i+"    ")
+                self.gen(seq, None, u, i+"    ")
             return
 
         if isinstance(obj, Recovery):
             print(i + "try:")
-            self.gen(obj.seq, None, i+"    ")
+            self.gen(obj.seq, None, u, i+"    ")
             self.if_token_not_in(obj.after, i+"    ")
             print(i + "        raise SyntaxError()")
             print(i + "except SyntaxError:")
@@ -588,27 +595,29 @@ class Python:
                 self.print_code(c, i)
                 print(textwrap.indent(textwrap.dedent(c), i))
             for term, tag, code in obj.terms:
-                self.gen(term, tag, i)
+                self.gen(term, tag, u, i)
                 for c in code:
                     self.print_code(c, i)
             return
 
         if isinstance(obj, Expression):
             if tag is not None:
-                print(i + "yy_" + tag + " = yield from parse_" + obj.title + "(tokens)")
+                print(
+                    i + "yy_" + tag + " = yield from parse_" + obj.title +
+                    "(tokens" + self.user_args(u) + ")")
             else:
                 print(i + "yield from parse_" + obj.title + "()")
             return
 
         raise RuntimeError("unrecognized object type: " + type(obj).__name__)
 
-    def define_fn(self, expr):
-        print("def parse_" + expr.title + "(tokens):")
+    def define_fn(self, expr, u):
+        print("def parse_" + expr.title + "(tokens" + self.user_args(u) + "):")
         print("    out = None")
-        self.gen(expr.seq, None, i="    ")
+        self.gen(expr.seq, None, u, i="    ")
         print("    return out")
 
-    def gen_file(self, g):
+    def gen_file(self, g, u=()):
         print(textwrap.dedent(r"""
             class SyntaxError(Exception):
                 pass
@@ -641,13 +650,17 @@ class Python:
         print("")
 
         for name, expr in g.sorted_expressions():
-            self.define_fn(expr)
+            self.define_fn(expr, u)
             print("")
 
+        YOU ARE HERE: you arent sure what to do about repeat parsing.
+        sometimes it seems like a good idea, sometimes it doesnt.
+        Wouldnt you want to pass in a new Grammar object into your meta.py
+        parser for every instance of a doc?  Whats a good api for that?
 
-        print(textwrap.dedent(r"""
-            class Parser:
-                def __init__(self, fn=parse_line):
+        print("class Parser:")
+        print("    def __init__(self" + self.user_args(u) + ", fn=parse_line):")
+        print(textwrap.indent(textwrap.dedent(r"""
                     self.fn = fn
                     self.tokens = TokenStream()
                     self.out = None
@@ -664,45 +677,12 @@ class Python:
                     try:
                         return self.gen.send(t)
                     except StopIteration:
+                        self.gen = None
                         out = self.out
                         self.out = None
                         self.gen = self.mkgen()
                         return out
-
-            if __name__ == "__main__":
-                p = Parser()
-                for token in [
-                    Token(NUM, 18),
-                    Token(DIV),
-                    Token(LPAREN),
-                    Token(NUM, 6),
-                    Token(DIV),
-                    Token(NUM, 3),
-                    Token(RPAREN),
-                    Token(EOL),
-
-                    Token(NUM, 18),
-                    Token(DIV),
-                    Token(LPAREN),
-                    Token(NUM, 6),
-                    Token(DIV),
-                    Token(NUM, 3),
-                    Token(RPAREN),
-                    Token(EOL),
-
-                    Token(NUM, 18),
-                    Token(DIV),
-                    Token(LPAREN),
-                    Token(NUM, 6),
-                    Token(DIV),
-                    Token(NUM, 3),
-                    Token(RPAREN),
-                    Token(RPAREN),
-                    Token(RPAREN),
-                    Token(EOL),
-                ]:
-                    v = p.feed(token)
-        """.strip("\n")), end="")
+        """.strip("\n")), "    "), end="")
 
 
 class C:
