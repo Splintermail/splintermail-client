@@ -1006,7 +1006,8 @@ static derr_t post_cmd_done(up_t *up, const ie_st_code_t *code){
        needed, even if the QRESYNC didn't happen due to a UIDVALIDITY
        issue.  After the bootstrap fetch, our own himodseq will match the
        what the server reported after the SELECT */
-    if(!up->bootstrap.needed && hmsc_step(&up->hmsc)){
+    bool bootstrap_pending = up->bootstrap.needed && !up->bootstrap.done;
+    if(!bootstrap_pending && hmsc_step(&up->hmsc)){
         PROP(&e, imaildir_up_set_himodseq_up(up->m, hmsc_now(&up->hmsc)) );
     }
 
