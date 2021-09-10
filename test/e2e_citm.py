@@ -566,6 +566,11 @@ def client_context(cafile=None):
         import certifi
         _client_context.load_verify_locations(cafile=certifi.where())
 
+    # always load our self-signed test CA
+    _client_context.load_verify_locations(
+        os.path.join(test_files, "ssl", "good.crt")
+    )
+
     return _client_context
 
 
