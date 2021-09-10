@@ -167,8 +167,6 @@ cu:
 
 #else // UNIX
 
-    /* unix's putenv would use the string right in the environ, which would be
-       crazy, so in unix we use setenv */
     dstr_t heap_name = {0};
 
     derr_t e = E_OK;
@@ -450,11 +448,12 @@ void *dthread_join(dthread_t *thread){
 
 #endif
 
-#ifndef _WIN32
+#ifndef _WIN32 // UNIX-only
 
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <sys/resource.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <signal.h>
@@ -658,42 +657,25 @@ derr_t dwait(pid_t pid, int *exit_code, int *signum){
     return e;
 }
 
-static derr_t _close_extra_fd(
-    const string_builder_t *base, const dstr_t *file, bool isdir, void *data
-){
-    derr_t e = E_OK;
-
-    (void)base;
-    int starting_at = *((int*)data);
-
-    if(isdir) return e;
-
-    int fd;
-    PROP_GO(&e, dstr_toi(file, &fd, 10), fail);
-
-    if(fd < starting_at) return e;
-
-    // none of the possible errors of close are relevant here
-    close(fd);
-
-    return e;
-
-fail:
-    LOG_WARN("/proc/self/fd contained non-int filename %x\n", FD(file));
-    DROP_VAR(&e);
-    return e;
-}
-
 derr_t close_extra_fds(int starting_at){
     derr_t e = E_OK;
 
-    // first close the lowest file descriptor, then ignore it thereafter.
-    // (so that we don't accidentally close our own DIR* while we iterate)
-    close(starting_at);
-    starting_at++;
+    if(starting_at < 0){
+        ORIG(&e, E_PARAM, "starting_at must be >= 0");
+    }
 
-    string_builder_t fd_dir = SB(FS("/proc/self/fd"));
-    PROP(&e, for_each_file_in_dir2(&fd_dir, _close_extra_fd, &starting_at) );
+    // brute-force close all the file descriptors we could possibly have open
+    struct rlimit rl;
+    int ret = getrlimit(RLIMIT_NOFILE, &rl);
+    if(ret != 0){
+        TRACE(&e, "getrlimit(): %x\n", FE(&errno));
+        ORIG(&e, E_OS, "getrlimit failed");
+    }
+
+    for(int fd = starting_at; (unsigned int)fd < rl.rlim_cur; fd++){
+        close(fd);
+    }
+    errno = 0;
 
     return e;
 }
