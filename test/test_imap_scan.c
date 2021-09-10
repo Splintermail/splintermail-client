@@ -1,6 +1,6 @@
 #include <libdstr/libdstr.h>
 #include <libimap/libimap.h>
-#include <imap_parse.tab.h>
+#include <libimap/generated/parse.tab.h>
 
 #include "test_utils.h"
 

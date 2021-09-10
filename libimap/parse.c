@@ -1,6 +1,6 @@
 #include "libimap.h"
 
-#include <imap_parse.tab.h>
+#include "generated/parse.tab.h"
 
 void imapyyerror(imap_parser_t *parser, char const *s){
     if(parser->freeing)

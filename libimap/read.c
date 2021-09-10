@@ -1,6 +1,6 @@
 #include "libimap.h"
 
-#include "imap_parse.tab.h"
+#include "generated/parse.tab.h"
 
 derr_t imap_reader_init(imap_reader_t *reader, extensions_t *exts,
         imap_parser_cb_t cb, void *cb_data, bool is_client){

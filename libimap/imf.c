@@ -1,6 +1,6 @@
 #include <stdlib.h>
 
-#include <libimap/libimap.h>
+#include "libimap/libimap.h"
 
 
 static void imf_hdr_arg_free(imf_hdr_type_e type, imf_hdr_arg_u arg){
@@ -174,7 +174,7 @@ dstr_t imf_get_scannable(imf_scanner_t *scanner){
     return dstr_sub(scanner->bytes, scanner->start_idx, 0);
 }
 
-#include <imf.tab.h>
+#include "libimap/generated/imf.tab.h"
 
 // rfc 5322 (IMF) and rfc 5234 (ABNF)
 

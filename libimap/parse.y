@@ -131,7 +131,7 @@
 %token SELECT
 %token EXAMINE
 %token CREATE
-%token DELETE
+%token DELETE_
 %token RENAME
 %token SUBSCRIBE
 %token UNSUBSCRIBE
@@ -243,7 +243,7 @@
 %token RFC822
 /*     TEXT (listed elsewhere) */
 /*     HEADER (listed elsewhere) */
-%token SIZE
+%token SIZE_
 %token BODYSTRUCT
 /*     BODY (listed above */
 %token PEEK
@@ -762,7 +762,7 @@ create_cmd: tag SP CREATE cmdcheck SP mailbox[m]
 
 /*** DELETE command ***/
 
-delete_cmd: tag SP DELETE cmdcheck SP mailbox[m]
+delete_cmd: tag SP DELETE_ cmdcheck SP mailbox[m]
     { imap_cmd_arg_t arg = {.delete=$m};
       $$ = imap_cmd_new(E, $tag, IMAP_CMD_DELETE, arg); };
 
@@ -1010,7 +1010,7 @@ fetch_attr_simple: ENVELOPE           { $$ = IE_FETCH_ATTR_ENVELOPE; }
                  | UID                { $$ = IE_FETCH_ATTR_UID; }
                  | RFC822             { $$ = IE_FETCH_ATTR_RFC822; }
                  | RFC822 '.' HEADER  { $$ = IE_FETCH_ATTR_RFC822_HEADER; }
-                 | RFC822 '.' SIZE    { $$ = IE_FETCH_ATTR_RFC822_SIZE; }
+                 | RFC822 '.' SIZE_   { $$ = IE_FETCH_ATTR_RFC822_SIZE; }
                  | RFC822 '.' TEXT    { $$ = IE_FETCH_ATTR_RFC822_TEXT; }
                  | BODYSTRUCT         { $$ = IE_FETCH_ATTR_BODYSTRUCT; }
                  | BODY               { $$ = IE_FETCH_ATTR_BODY; }
@@ -1453,7 +1453,7 @@ msg_attrs_1: f_fflags[f]  { $$ = ie_fetch_resp_flags(E, ie_fetch_resp_new(E), $f
 ign_msg_attr: ENVELOPE SP '(' envelope ')'
             | RFC822 '.' TEXT SP ign_nstring
             | RFC822 '.' HEADER SP ign_nstring
-            | RFC822 '.' SIZE SP NUM
+            | RFC822 '.' SIZE_ SP NUM
             /* don't even parse anything that starts with BODY */
 ;
 
@@ -1610,7 +1610,7 @@ misc_keyword: ALL
             | CREATE
             | CREATED
             | DEC
-            | DELETE
+            | DELETE_
             | DONE
             | EARLIER
             | ENABLED
@@ -1669,7 +1669,7 @@ misc_keyword: ALL
             | SHARED
             | SILENT
             | SINCE
-            | SIZE
+            | SIZE_
             | SMALLER
             | STARTTLS
             | STATUS

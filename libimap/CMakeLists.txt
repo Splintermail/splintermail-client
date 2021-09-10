@@ -12,59 +12,66 @@ foreach(src ${raw_srcs})
     define_file_logname_for_source("${src}" "${src}")
 endforeach()
 
-# generate the imap scanner
-set(imap_scan_in "${CMAKE_CURRENT_SOURCE_DIR}/scan.c")
-set(imap_scan_out "${PROJECT_BINARY_DIR}/imap_scan.gen.c")
-add_custom_command(
-    OUTPUT "${imap_scan_out}"
-    COMMAND "${RE2C}" -W -Werror -o "${imap_scan_out}" "${imap_scan_in}"
-    DEPENDS "${imap_scan_in}"
-    COMMENT "generating imap scanner" VERBATIM
+set(HERE "${CMAKE_CURRENT_SOURCE_DIR}")
+set(GEN "${HERE}/generated")
+
+set(imap_scan_in "${HERE}/scan.c")
+set(imap_scan_out "${GEN}/scan.gen.c")
+set(imf_scan_in "${HERE}/imf.c")
+set(imf_scan_out "${GEN}/imf.gen.c")
+set(imap_parse_in "${HERE}/parse.y")
+set(imap_parse_out "${GEN}/parse.tab.c")
+set(imf_parse_in "${HERE}/imf.y")
+set(imf_parse_out "${GEN}/imf.tab.c")
+set(smtp_resp_parse_in "${HERE}/smtp_resp.y")
+set(smtp_resp_parse_out "${GEN}/smtp_resp.tab.c")
+
+if(NOT "${RE2C}" STREQUAL "NONE")
+    # generate the imap scanner
+    add_custom_command(
+        OUTPUT "${imap_scan_out}"
+        COMMAND "${RE2C}" -W -Werror -o "${imap_scan_out}" "${imap_scan_in}"
+        DEPENDS "${imap_scan_in}"
+        COMMENT "generating imap scanner" VERBATIM
+        )
+
+    # generate the imf scanner
+    add_custom_command(
+        OUTPUT "${imf_scan_out}"
+        COMMAND "${RE2C}" -W -Werror -o "${imf_scan_out}" "${imf_scan_in}"
+        DEPENDS "${imf_scan_in}"
+        COMMENT "generating imf scanner" VERBATIM
+        )
+endif()
+
+if(NOT "${BISON}" STREQUAL "NONE")
+    # generate the imap parser
+    set(bison_header "${GEN}/parse.tab.h")
+    add_custom_command(
+        OUTPUT "${imap_parse_out}" "${bison_header}"
+        COMMAND "${BISON}" -d -o "${imap_parse_out}" "${imap_parse_in}" --report=state
+        DEPENDS "${imap_parse_in}"
+        COMMENT "generating imap parser" VERBATIM
+        )
+
+    # generate the imf parser
+    set(bison_header "${GEN}/imf.tab.h")
+    add_custom_command(
+        OUTPUT "${imf_parse_out}" "${bison_header}"
+        COMMAND "${BISON}" -d -o "${imf_parse_out}" "${imf_parse_in}" --report=state
+        DEPENDS "${imf_parse_in}"
+        COMMENT "generating imf parser" VERBATIM
+        )
+
+    # generate the smtp_resp parser
+    set(bison_header "${GEN}/smtp_resp.tab.h")
+    add_custom_command(
+        OUTPUT "${smtp_resp_parse_out}" "${bison_header}"
+        COMMAND "${BISON}" -d -o "${smtp_resp_parse_out}" "${smtp_resp_parse_in}" --report=state
+        DEPENDS "${smtp_resp_parse_in}"
+        COMMENT "generating smtp_resp parser" VERBATIM
     )
-
-# generate the imap parser
-set(imap_parse_in "${CMAKE_CURRENT_SOURCE_DIR}/parse.y")
-set(imap_parse_out "${PROJECT_BINARY_DIR}/imap_parse.tab.c")
-set(bison_header "${PROJECT_BINARY_DIR}/imap_parse.tab.h")
-add_custom_command(
-    OUTPUT "${imap_parse_out}" "${bison_header}"
-    COMMAND "${BISON}" -d -o "${imap_parse_out}" "${imap_parse_in}" --report=state
-    DEPENDS "${imap_parse_in}"
-    COMMENT "generating imap parser" VERBATIM
-    )
-
-# generate the imf scanner
-set(imf_scan_in "${CMAKE_CURRENT_SOURCE_DIR}/imf.c")
-set(imf_scan_out "${PROJECT_BINARY_DIR}/imf.gen.c")
-add_custom_command(
-    OUTPUT "${imf_scan_out}"
-    COMMAND "${RE2C}" -W -Werror -o "${imf_scan_out}" "${imf_scan_in}"
-    DEPENDS "${imf_scan_in}"
-    COMMENT "generating imf scanner" VERBATIM
-    )
-
-# generate the imf parser
-set(imf_parse_in "${CMAKE_CURRENT_SOURCE_DIR}/imf.y")
-set(imf_parse_out "${PROJECT_BINARY_DIR}/imf.tab.c")
-set(bison_header "${PROJECT_BINARY_DIR}/imf.tab.h")
-add_custom_command(
-    OUTPUT "${imf_parse_out}" "${bison_header}"
-    COMMAND "${BISON}" -d -o "${imf_parse_out}" "${imf_parse_in}" --report=state
-    DEPENDS "${imf_parse_in}"
-    COMMENT "generating imf parser" VERBATIM
-    )
-
-# generate the smtp_resp parser
-set(smtp_resp_parse_in "${CMAKE_CURRENT_SOURCE_DIR}/smtp_resp.y")
-set(smtp_resp_parse_out "${PROJECT_BINARY_DIR}/smtp_resp.tab.c")
-set(bison_header "${PROJECT_BINARY_DIR}/smtp_resp.tab.h")
-add_custom_command(
-    OUTPUT "${smtp_resp_parse_out}" "${bison_header}"
-    COMMAND "${BISON}" -d -o "${smtp_resp_parse_out}" "${smtp_resp_parse_in}" --report=state
-    DEPENDS "${smtp_resp_parse_in}"
-    COMMENT "generating smtp_resp parser" VERBATIM
-)
-
+endif()
 
 if("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU")
     source_compile_options("${imap_parse_out}" "-Wno-sign-conversion")
@@ -100,6 +107,8 @@ elseif("${CMAKE_C_COMPILER_ID}" MATCHES "Clang")
     source_compile_options("${smtp_resp_parse_out}" "-Wno-switch-enum")
 elseif("${CMAKE_C_COMPILER_ID}" STREQUAL "MSVC")
     # flags for MVSC (VS 2017)
+    source_compile_options("${imap_parse_out}" "/wd4244")  # int->uint conversion
+    source_compile_options("${imf_parse_out}" "/wd4702")  # unreachable code
 endif()
 
 add_library(

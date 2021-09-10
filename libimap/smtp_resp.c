@@ -1,6 +1,6 @@
-#include <libimap/libimap.h>
+#include "libimap/libimap.h"
 
-#include <smtp_resp.tab.h>
+#include "libimap/generated/smtp_resp.tab.h"
 
 
 static derr_t smtp_resp_parser_init(

@@ -2,7 +2,7 @@
 
 #include <libdstr/libdstr.h>
 #include <libimap/libimap.h>
-#include <imf.tab.h>
+#include <libimap/generated/imf.tab.h>
 
 #include "test_utils.h"
 

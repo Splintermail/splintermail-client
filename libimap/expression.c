@@ -209,8 +209,8 @@ ie_dstr_t *ie_dstr_append(derr_t *e, ie_dstr_t *d, const dstr_t *token,
     if(is_error(*e)) goto fail;
 
     // patterns for recoding the quoted strings
-    LIST_STATIC(dstr_t, find, DSTR_LIT("\\\\"), DSTR_LIT("\\\""));
-    LIST_STATIC(dstr_t, repl, DSTR_LIT("\\"),   DSTR_LIT("\""));
+    LIST_PRESET(dstr_t, find, DSTR_LIT("\\\\"), DSTR_LIT("\\\""));
+    LIST_PRESET(dstr_t, repl, DSTR_LIT("\\"),   DSTR_LIT("\""));
     switch(type){
         case KEEP_RAW:
             // no escapes or fancy shit necessary, just append

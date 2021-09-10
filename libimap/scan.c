@@ -1,6 +1,6 @@
-#include <libimap/libimap.h>
+#include "libimap/libimap.h"
 
-#include <imap_parse.tab.h>
+#include "libimap/generated/parse.tab.h"
 
 DSTR_STATIC(scan_mode_STD_dstr, "SCAN_MODE_STD");
 DSTR_STATIC(scan_mode_STATUS_CODE_CHECK_dstr, "SCAN_MODE_STATUS_CODE_CHECK");
@@ -180,7 +180,7 @@ std_mode:
         'created'               { *type = CREATED; goto done; }
         'dec'                   { *type = DEC; goto done; }
         'deleted'               { *type = DELETED; goto done; }
-        'delete'                { *type = DELETE; goto done; }
+        'delete'                { *type = DELETE_; goto done; }
         'done'                  { *type = DONE; goto done; }
         'draft'                 { *type = DRAFT; goto done; }
         'earlier'               { *type = EARLIER; goto done; }
@@ -254,7 +254,7 @@ std_mode:
         'shared'                { *type = SHARED; goto done; }
         'silent'                { *type = SILENT; goto done; }
         'since'                 { *type = SINCE; goto done; }
-        'size'                  { *type = SIZE; goto done; }
+        'size'                  { *type = SIZE_; goto done; }
         'smaller'               { *type = SMALLER; goto done; }
         'starttls'              { *type = STARTTLS; goto done; }
         'status'                { *type = STATUS; goto done; }
