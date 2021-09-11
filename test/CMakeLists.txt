@@ -121,19 +121,29 @@ target_link_libraries(test_fpr_watcher PRIVATE libcitm)
 target_link_libraries(test_search PRIVATE imaildir)
 target_link_libraries(test_log_file PRIVATE imaildir test_utils)
 
-# add some python-based end-to-end tests
+# add some python-based tests
+
+set(test_proxy_cmd "${PYTHON_3_CMD}" "${PROJECT_SOURCE_DIR}/test/e2e_citm.py")
+if(NOT "${USE_TEST_PROXY}" STREQUAL "")
+    # let some linux machine run dovecot and mysql for us
+    list(APPEND test_proxy_cmd "--proxy" "${USE_TEST_PROXY}")
+endif()
+if(WIN32)
+    # ctest needs some protection against the strange windows SIGINT behavior
+    list(APPEND test_proxy_cmd "--extra-subproc")
+endif()
 add_test(NAME "e2e_citm"
-    COMMAND
-        "${PYTHON_3_CMD}"
-        "${PROJECT_SOURCE_DIR}/test/e2e_citm.py"
+    COMMAND ${test_proxy_cmd}
     WORKING_DIRECTORY "${PROJECT_BINARY_DIR}"
 )
+
 add_test(NAME "enc_dec"
     COMMAND
         "${PYTHON_3_CMD}"
         "${PROJECT_SOURCE_DIR}/test/enc_dec.py"
     WORKING_DIRECTORY "${PROJECT_BINARY_DIR}"
 )
+
 if("${BUILD_SERVER_CODE}")
     add_test(NAME "enc_dec_server"
         COMMAND

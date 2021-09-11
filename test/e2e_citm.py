@@ -28,7 +28,7 @@ def register_test(fn):
     all_tests.append(fn)
     return fn
 
-TIMEOUT = 0.5
+TIMEOUT = 2.5
 
 USER="test@splintermail.com"
 PASS="passwordpassword"
@@ -119,7 +119,10 @@ class SocketReaderThread(IOThread):
         buf = b""
         try:
             while True:
-                data = self.io.recv(4096)
+                try:
+                    data = self.io.recv(4096)
+                except ConnectionResetError:
+                    break
                 # check for EOF
                 if len(data) == 0:
                     break
@@ -192,6 +195,8 @@ class TLS:
                 self.modify(read=False, write=True)
                 self.read_wants_write = True
                 return False
+            except ConnectionResetError:
+                return True
 
             if not data:
                 return True
@@ -626,6 +631,35 @@ def wait_for_listener(q):
         print('\x1b[31mmessage is:', line, '\x1b[m')
 
 
+# SIGINT is weird in windows.  When we send it to our subproces, we also get it
+# ourselves some time later.  Just count expected ones and raise an error if
+# we detect the user sent one to us.
+if sys.platform == "win32":
+
+    _expect_sigints = 0
+    _recvd_sigints = 0
+
+    _old_sigint_handler = None
+
+    def _handle_sigint(*arg):
+        global _recvd_sigints
+        _recvd_sigints += 1
+        if _recvd_sigints > _expect_sigints:
+            _old_sigint_handler(*arg)
+
+    _old_sigint_handler = signal.signal(signal.SIGINT, _handle_sigint)
+
+    def send_sigint(p):
+        global _expect_sigints
+        _expect_sigints += 1
+        p.send_signal(signal.CTRL_C_EVENT)
+
+else:
+
+    def send_sigint(p):
+        p.send_signal(signal.SIGINT)
+
+
 class Subproc:
     def __init__(self, cmd):
         self.started = False
@@ -664,7 +698,7 @@ class Subproc:
     def inject_message(self, msg, end=b"\n"):
         self.reader.inject_message(msg, end)
 
-    def close(self, sig=signal.SIGTERM):
+    def close(self):
         if not self.started:
             return
 
@@ -673,8 +707,7 @@ class Subproc:
         self.closed = True
 
         try:
-            if sig is not None:
-                self.p.send_signal(sig)
+            send_sigint(self.p)
 
             try:
                 self.p.wait(TIMEOUT)
@@ -755,7 +788,6 @@ def inbox(cmd):
 @register_test
 def test_start_kill(cmd, maildir_root, **kwargs):
     with Subproc(cmd) as subproc:
-        print('started!')
         pass
 
 
@@ -1514,9 +1546,9 @@ def test_terminate_with_open_connection(cmd, maildir_root, **kwargs):
             rw.wait_for_match(b"\\* OK")
 
             p = subproc.p
-            p.send_signal(signal.SIGTERM)
+            send_sigint(p)
             p.wait(TIMEOUT)
-            assert p.poll() is not None, "SIGTERM was not handled fast enough"
+            assert p.poll() is not None, "SIGINT was not handled fast enough"
 
 
 @register_test
@@ -1531,9 +1563,9 @@ def test_terminate_with_open_session(cmd, maildir_root, **kwargs):
             rw.wait_for_resp("1", "OK")
 
             p = subproc.p
-            p.send_signal(signal.SIGTERM)
+            send_sigint(p)
             p.wait(TIMEOUT)
-            assert p.poll() is not None, "SIGTERM was not handled fast enough"
+            assert p.poll() is not None, "SIGINT was not handled fast enough"
 
 
 @register_test
@@ -1551,9 +1583,9 @@ def test_terminate_with_open_mailbox(cmd, maildir_root, **kwargs):
             rw.wait_for_match(b"2 OK")
 
             p = subproc.p
-            p.send_signal(signal.SIGTERM)
+            send_sigint(p)
             p.wait(TIMEOUT)
-            assert p.poll() is not None, "SIGTERM was not handled fast enough"
+            assert p.poll() is not None, "SIGINT was not handled fast enough"
 
 
 @register_test
@@ -1973,7 +2005,26 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("patterns", nargs="*")
     parser.add_argument("--proxy")
+    parser.add_argument("--extra-subproc", action="store_true")
     args = parser.parse_args()
+
+    if args.extra_subproc:
+        assert sys.platform == "win32", "--extra-subproc is only for windows"
+        # In windows, we can create an extra layer of subprocess in a new
+        # subprocess group to protect the calling process from our crazy
+        # SIGINT behavior, as we try to exercise the shutdown behavior of the
+        # citm loop.
+        cmd = [sys.executable, __file__]
+        if args.proxy:
+            cmd += ["--proxy", args.proxy]
+        cmd += args.patterns
+        print("extra subproc!", cmd)
+        creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
+        creationflags |= subprocess.CREATE_NEW_CONSOLE
+        p = subprocess.Popen(
+            cmd, creationflags=creationflags,
+        )
+        exit(p.wait())
 
     # initialize the global server_context
     cert = os.path.join(test_files, "ssl", "good-cert.pem")
@@ -2040,3 +2091,4 @@ if __name__ == "__main__":
                     raise
 
     print("PASS")
+    time.sleep(1)
