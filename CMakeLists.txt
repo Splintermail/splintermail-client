@@ -29,7 +29,7 @@ endif()
 project(
     splintermail
     LANGUAGES C
-    VERSION 0.2.0
+    VERSION 0.3.0
 )
 
 set(MAINTAINER_NAME "Splintermail Dev")
@@ -428,8 +428,8 @@ if(APPLE)
     set(bashcomp_out "${payload}/usr/local/etc/bash_completion.d/splintermail")
     set(zshcomp_in "${supp_dir}/completions/zsh/_splintermail")
     set(zshcomp_out "${payload}/usr/local/etc/zsh/site-functions/_splintermail")
-    set(plist_in "${supp_dir}/osx/com.splintermail.ditm.plist")
-    set(plist_out "${payload}/Library/LaunchDaemons/com.splintermail.ditm.plist")
+    set(plist_in "${supp_dir}/osx/com.splintermail.citm.plist")
+    set(plist_out "${payload}/Library/LaunchDaemons/com.splintermail.citm.plist")
     set(man_in "${supp_dir}/splintermail.1")
     set(man_out "${payload}/usr/local/share/man/man1/splintermail.1.gz")
     preprocessed_copy("${preuninstall_in}" "${preuninstall_out}")
@@ -524,8 +524,12 @@ elseif(UNIX)
     file(GLOB src_files
         RELATIVE "${PROJECT_SOURCE_DIR}"
         "${PROJECT_SOURCE_DIR}/CMakeLists.txt"
+        "${PROJECT_SOURCE_DIR}/lib*/CMakeLists.txt"
+        "${PROJECT_SOURCE_DIR}/test/CMakeLists.txt"
         "${PROJECT_SOURCE_DIR}/*.c"
         "${PROJECT_SOURCE_DIR}/*.h"
+        "${PROJECT_SOURCE_DIR}/lib*/*.c"
+        "${PROJECT_SOURCE_DIR}/lib*/*.h"
         "${PROJECT_SOURCE_DIR}/test/*.c"
         "${PROJECT_SOURCE_DIR}/test/*.h"
         "${PROJECT_SOURCE_DIR}/support_files/splintermail.conf"

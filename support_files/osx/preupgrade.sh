@@ -7,6 +7,6 @@
 set -e
 
 # stop / disable the launchd service
-launchctl unload -w "/Library/LaunchDaemons/com.splintermail.ditm.plist" || true
+launchctl unload -w "/Library/LaunchDaemons/com.splintermail.citm.plist" || true
 
 exit 0

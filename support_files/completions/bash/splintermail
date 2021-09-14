@@ -145,10 +145,10 @@ REWQ
         return
     fi
 
-    # if we have no arguments so far, offer an DITM or an API command
+    # if we have no arguments so far, offer a CITM or an API command
     if [ "${#prevargs[@]}" -eq 0 ] ; then
         choices=(
-            "ditm:Run the local decrypting email server"
+            "citm:Run the local decrypting email server"
 QWER
 ["prefix", "            \"", ["postfix","\"",
     ["join", "\n", ["for", "api", "apilist",

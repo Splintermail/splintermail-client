@@ -53,22 +53,32 @@ cd build
 # create service user
 getent group splintermail >/dev/null || groupadd -r splintermail
 getent passwd splintermail >/dev/null || \
-    useradd -r -g splintermail -d "QWER ditm_dir REWQ" -s /sbin/nologin \
+    useradd -r -g splintermail -d "QWER sm_dir REWQ" -s /sbin/nologin \
     -c "Splintermail service account" splintermail
-# create the ditm directory
-if [ ! -d "QWER ditm_dir REWQ" ] ; then
-    mkdir -p "QWER ditm_dir REWQ"
-    chmod 700 "QWER ditm_dir REWQ"
-    chown -R splintermail:splintermail "QWER ditm_dir REWQ"
+# create the splintermail directory
+if [ ! -d "QWER sm_dir REWQ" ] ; then
+    mkdir -p "QWER sm_dir REWQ"
+    chmod 700 "QWER sm_dir REWQ"
+    chown -R splintermail:splintermail "QWER sm_dir REWQ"
+fi
+# migrate old certificates from v0.2 installations
+if [ -f "QWER sm_dir REWQ/QWER old_cert_name REWQ" ] ; then
+    mv "QWER sm_dir REWQ/QWER old_cert_name REWQ" "QWER sm_dir REWQ/QWER cert_name REWQ"
+fi
+if [ -f "QWER sm_dir REWQ/QWER old_key_name REWQ" ] ; then
+    mv "QWER sm_dir REWQ/QWER old_key_name REWQ" "QWER sm_dir REWQ/QWER key_name REWQ"
+fi
+if [ -f "QWER sm_dir REWQ/QWER old_ca_name REWQ" ] ; then
+    mv "QWER sm_dir REWQ/QWER old_ca_name REWQ" "QWER sm_dir REWQ/QWER ca_name REWQ"
 fi
 # generate the SSL certificates, if they don't exist already
-if [ ! -f "QWER ditm_dir REWQ/QWER cert_name REWQ" ] \
-        || [ ! -f "QWER ditm_dir REWQ/QWER key_name REWQ" ] \
-        || [ ! -f "QWER ditm_dir REWQ/QWER ca_name REWQ" ] ; then
+if [ ! -f "QWER sm_dir REWQ/QWER cert_name REWQ" ] \
+        || [ ! -f "QWER sm_dir REWQ/QWER key_name REWQ" ] \
+        || [ ! -f "QWER sm_dir REWQ/QWER ca_name REWQ" ] ; then
     # generate the files
-    sh "QWER share_dir REWQ/keygen.sh" "QWER share_dir REWQ/openssl.cnf" "QWER ditm_dir REWQ"
+    sh "QWER share_dir REWQ/keygen.sh" "QWER share_dir REWQ/openssl.cnf" "QWER sm_dir REWQ"
     # trust the generated certificate authority
-    cp "QWER ditm_dir REWQ/QWER cert_name REWQ" "/etc/pki/ca-trust/source/anchors/"
+    cp "QWER sm_dir REWQ/QWER cert_name REWQ" "/etc/pki/ca-trust/source/anchors/"
     update-ca-trust extract
 fi
 exit 0
@@ -86,8 +96,8 @@ exit 0
 if [ "$1" == 0 ] ; then
     rm "/etc/pki/ca-trust/source/anchors/QWER ca_name REWQ" \
         && update-ca-trust extract || true
-    # remove the ditm directory
-    rm -rf "QWER ditm_dir REWQ"
+    # remove the splintermail directory
+    rm -rf "QWER sm_dir REWQ"
 fi
 exit 0
 

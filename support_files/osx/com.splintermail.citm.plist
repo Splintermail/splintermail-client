@@ -3,13 +3,13 @@
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.splintermail.ditm</string>
+  <string>com.splintermail.citm</string>
   <key>ProgramArguments</key>
   <array>
     <string>/usr/local/bin/splintermail</string>
-    <string>ditm</string>
+    <string>citm</string>
   </array>
-  <!-- DITM has no launchd integration, it accepts its own connections -->
+  <!-- CITM has no launchd integration, it accepts its own connections -->
   <key>KeepAlive</key>
   <true/>
   <!-- not a gui application -->

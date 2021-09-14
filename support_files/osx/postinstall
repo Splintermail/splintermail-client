@@ -4,10 +4,13 @@ set -e
 
 # useful variables
 share_dir="QWER share_dir REWQ"
-ditm_dir="QWER ditm_dir REWQ"
-ca_file="$ditm_dir/QWER ca_name REWQ"
-key_file="$ditm_dir/QWER key_name REWQ"
-cert_file="$ditm_dir/QWER cert_name REWQ"
+sm_dir="QWER sm_dir REWQ"
+old_ca_file="$sm_dir/QWER old_ca_name REWQ"
+old_key_file="$sm_dir/QWER old_key_name REWQ"
+old_cert_file="$sm_dir/QWER old_cert_name REWQ"
+ca_file="$sm_dir/QWER ca_name REWQ"
+key_file="$sm_dir/QWER key_name REWQ"
+cert_file="$sm_dir/QWER cert_name REWQ"
 
 # get hash of original default config file
 orig_config="$share_dir/splintermail.conf.orig"
@@ -58,14 +61,25 @@ if ! dscl . list /Users | grep -q '^_splintermail$' ; then
     dscl . -create /Users/_splintermail UserShell /usr/bin/false
     dscl . -create /Users/_splintermail UniqueID $uid
     dscl . -create /Users/_splintermail PrimaryGroupID $uid
-    dscl . -create /Users/_splintermail RealName "Splintermail DITM Daemon"
+    dscl . -create /Users/_splintermail RealName "Splintermail Daemon"
 fi
 
-# make the ditm directory
-if [ ! -d "$ditm_dir" ] ; then
-    mkdir -p "$ditm_dir"
-    chmod 700 "$ditm_dir"
-    chown -R _splintermail:_splintermail "$ditm_dir"
+# make the splintermail directory
+if [ ! -d "$sm_dir" ] ; then
+    mkdir -p "$sm_dir"
+    chmod 700 "$sm_dir"
+    chown -R _splintermail:_splintermail "$sm_dir"
+fi
+
+# migrate old certificates from v0.2 installations
+if [ -f "$old_cert_file" ] ; then
+    mv "$old_cert_file" "$cert_file"
+fi
+if [ -f "$old_key_file" ] ; then
+    mv "$old_key_file" "$key_file"
+fi
+if [ -f "$old_ca_file" ] ; then
+    mv "$old_ca_file" "$ca_file"
 fi
 
 # generate the SSL certificates, if they don't exist already
@@ -75,7 +89,7 @@ if [ ! -f "$cert_file" ] || [ ! -f "$key_file" ] || [ ! -f "$ca_file" ] ; then
         security remove-trusted-cert -d "$ca_file" || true
     fi
     # now generate the files
-    sh "$share_dir/keygen.sh" "$share_dir/openssl.cnf" "$ditm_dir"
+    sh "$share_dir/keygen.sh" "$share_dir/openssl.cnf" "$sm_dir"
     # trust the generated certificate authority
     security add-trusted-cert -d -r trustRoot \
         -k "/Library/Keychains/System.keychain" \
@@ -85,6 +99,6 @@ if [ ! -f "$cert_file" ] || [ ! -f "$key_file" ] || [ ! -f "$ca_file" ] ; then
 fi
 
 # enable/start the launchd service
-launchctl load -w "/Library/LaunchDaemons/com.splintermail.ditm.plist"
+launchctl load -w "/Library/LaunchDaemons/com.splintermail.citm.plist"
 
 exit 0

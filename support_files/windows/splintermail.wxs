@@ -168,9 +168,9 @@
       <!-- "ProgramData" -->
       <Directory Id='CommonAppDataFolder'>
         <!-- My comapany's folder -->
-        <Directory Id='splintermail_ditm_dir' Name='splintermail'>
+        <Directory Id='splintermail_dir' Name='splintermail'>
           <!--create the folder-->
-          <Component Id='splintermail_ditm_dir_component'
+          <Component Id='splintermail_dir_component'
                      Guid='7e787993-3803-4664-bdab-63bad30e1abc'>
             <CreateFolder />
           </Component>
@@ -201,7 +201,7 @@
     <!--this exectutable also untrusts old keys before it creates new ones-->
     <CustomAction Id='keygen_action'
                   FileKey='keygen_file'
-                  ExeCommand='"[INSTALLDIR]openssl.exe" "[INSTALLDIR]openssl.cnf" "[splintermail_ditm_dir]\"'
+                  ExeCommand='"[INSTALLDIR]openssl.exe" "[INSTALLDIR]openssl.cnf" "[splintermail_dir]\"'
                   Execute='deferred'
                   Return='check'
                   HideTarget='no'
@@ -220,7 +220,7 @@
     <Binary Id="rm_rf_binary" SourceFile="../rm_rf.exe"/>
     <CustomAction Id='delete_data_action'
                   BinaryKey='rm_rf_binary'
-                  ExeCommand='"[splintermail_ditm_dir]\"'
+                  ExeCommand='"[splintermail_dir]\"'
                   Execute='deferred'
                   Return='check'
                   HideTarget='no'
@@ -256,7 +256,7 @@
 
     <Feature Id='Complete' Level='1'>
       <ComponentRef Id='splintermail_component' />
-      <ComponentRef Id='splintermail_ditm_dir_component' />
+      <ComponentRef Id='splintermail_dir_component' />
       <ComponentRef Id='original_splintermail_conf_component' />
       <ComponentRef Id='splintermail_conf_component' />
       <ComponentRef Id='keygen_component' />
