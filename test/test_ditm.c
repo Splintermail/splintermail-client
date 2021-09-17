@@ -633,6 +633,9 @@ cu1:
 
 int main(int argc, char** argv){
     derr_t e = E_OK;
+#ifndef _WIN32
+    signal(SIGPIPE, SIG_IGN);
+#endif
     // parse options and set default log level
     PARSE_TEST_OPTIONS(argc, argv, &g_test_files, LOG_LVL_INFO);
 

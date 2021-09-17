@@ -11,10 +11,11 @@ endmacro()
 
 add_petname("")
 
-if("${CMAKE_BUILD_TYPE}" STREQUAL "debug")
-    # rebuild without asan
-    add_petname("_noasan")
-else()
+if(DISABLE_ASAN)
+    message(FATAL_ERROR "disabled asan??")
     # release builds already have no asan
     add_library(petname_noasan ALIAS petname)
+else()
+    # rebuild without asan
+    add_petname("_noasan")
 endif()

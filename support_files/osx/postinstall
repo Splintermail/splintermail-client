@@ -68,7 +68,7 @@ fi
 if [ ! -d "$sm_dir" ] ; then
     mkdir -p "$sm_dir"
     chmod 700 "$sm_dir"
-    chown -R _splintermail:_splintermail "$sm_dir"
+    chown _splintermail:_splintermail "$sm_dir"
 fi
 
 # migrate old certificates from v0.2 installations

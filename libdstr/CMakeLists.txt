@@ -27,12 +27,12 @@ endmacro()
 
 add_dstr_library(dstr TRUE)
 
-if("${CMAKE_BUILD_TYPE}" STREQUAL "debug")
-    # rebuild without asan
-    add_dstr_library(dstr_noasan FALSE)
-else()
+if(DISABLE_ASAN)
     # release builds already have no asan
     add_library(dstr_noasan ALIAS dstr)
+else()
+    # rebuild without asan
+    add_dstr_library(dstr_noasan FALSE)
 endif()
 
 if("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU")

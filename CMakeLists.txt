@@ -36,14 +36,11 @@ set(MAINTAINER_NAME "Splintermail Dev")
 set(MAINTAINER_EMAIL "dev@splintermail.com")
 set(MAINTAINER "${MAINTAINER_NAME} <${MAINTAINER_EMAIL}>")
 
-# configure qwerrewq.json with Project version and such
-# (not necessary under certain packaging situations)
-if(EXISTS "${PROJECT_SOURCE_DIR}/support_files/qwerrewq.json")
-    configure_file("${PROJECT_SOURCE_DIR}/support_files/qwerrewq.json"
-        "${PROJECT_BINARY_DIR}/qwerrewq.json" @ONLY)
-endif()
+set(supp_dir "${PROJECT_SOURCE_DIR}/support_files")
+set(bin_dir "${PROJECT_BINARY_DIR}")
 
-if("${CMAKE_BUILD_TYPE}" STREQUAL "debug")
+string(TOLOWER "${CMAKE_BUILD_TYPE}" lowerbuild)
+if("${lowerbuild}" STREQUAL "debug")
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DBUILD_DEBUG")
 endif()
 
@@ -58,6 +55,22 @@ endif()
 
 if("${BISON}" STREQUAL "")
     set(BISON "bison")
+endif()
+
+if("${REGEN_SRC}" STREQUAL "")
+    set(REGEN_SRC "true")
+endif()
+
+if(APPLE)
+    if("${MUNKIPKG}" STREQUAL "")
+        set(MUNKIPKG "munkipkg")
+    endif()
+endif()
+
+if("${DISABLE_ASAN}" STREQUAL "")
+    if(NOT "${lowerbuild}" STREQUAL "debug")
+        set(DISABLE_ASAN TRUE)
+    endif()
 endif()
 
 # include OpenSSL
@@ -81,6 +94,32 @@ if(NOT "${requested_ssl}" STREQUAL "")
     endif()
 endif()
 
+# set preprocessor to qwerrewq
+set(PP "${supp_dir}/qwerrewq")
+# set preprocessor config file to qwerrewq.json
+configure_file("${supp_dir}/qwerrewq.json" "${bin_dir}/qwerrewq.json" @ONLY)
+set(PPCONF "${bin_dir}/qwerrewq.json")
+# set the preprocessor dynamic value for the operating system
+if(APPLE)
+    SET(OS_DYN "OSX")
+elseif(UNIX)
+    SET(OS_DYN "LINUX")
+elseif(WIN32)
+    SET(OS_DYN "WINDOWS")
+endif()
+
+# extra arguments become extra dependencies
+function(preprocessed_copy input output)
+    get_filename_component(output_dir "${output}" DIRECTORY)
+    add_custom_command(
+        OUTPUT "${output}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${output_dir}"
+        COMMAND "${PYTHON_3_CMD}" "${PP}" "${PPCONF}" "${input}" "${output}"
+                "--" "OS=${OS_DYN}"
+        DEPENDS "${input}" "${PP}" "${PPCONF}" ${ARGN}
+        COMMENT "prepocessing ${input}" VERBATIM
+        )
+endfunction()
 
 function(default_compile_options tgt allow_asan)
     # compiler-specific flags
@@ -109,7 +148,7 @@ function(default_compile_options tgt allow_asan)
         target_link_libraries("${tgt}" PRIVATE "-Wl,-z,noexecstack")
         # this just gets ignored
         # target_link_libraries("${tgt}" PRIVATE "-z noexecheap")
-        if(("${CMAKE_BUILD_TYPE}" STREQUAL "debug") AND ("${allow_asan}"))
+        if(NOT DISABLE_ASAN AND ("${allow_asan}"))
             target_compile_options("${tgt}" PRIVATE "-fsanitize=address" "-fno-omit-frame-pointer")
             target_link_libraries("${tgt}" PRIVATE "-fsanitize=address" "-fno-omit-frame-pointer")
         endif()
@@ -150,7 +189,7 @@ function(default_compile_options tgt allow_asan)
             target_link_libraries("${tgt}" PRIVATE "-Wl,-z,relro")
             target_link_libraries("${tgt}" PRIVATE "-Wl,-z,now")
             target_compile_options("${tgt}" PRIVATE "-fvisibility=default")
-            if(("${CMAKE_BUILD_TYPE}" STREQUAL "debug") AND ("${allow_asan}"))
+            if(NOT DISABLE_ASAN AND ("${allow_asan}"))
                 target_compile_options("${tgt}" PRIVATE "-fsanitize=address" "-fno-omit-frame-pointer")
                 target_link_libraries("${tgt}" PRIVATE "-fsanitize=address" "-fno-omit-frame-pointer")
                 # control flow integrity
@@ -223,6 +262,16 @@ endfunction()
 
 # Add -DFILE_BASENAME="logname" to the compile options for a source file.
 function(define_file_logname_for_source orig_sourcefile final_sourcefile)
+    # detect if it has been set already
+    get_property(defs SOURCE "${final_sourcefile}"
+        PROPERTY COMPILE_DEFINITIONS)
+    foreach(def ${defs})
+        string(FIND "${def}" "FILE_BASENAME=" idx)
+        if("${idx}" EQUAL "0")
+            return()
+        endif()
+    endforeach()
+
     get_filename_component(projpath "${PROJECT_SOURCE_DIR}" ABSOLUTE)
     string(LENGTH "${projpath}" projpath_len)
     math(EXPR projpath_rm_len "${projpath_len} + 1")
@@ -238,8 +287,6 @@ function(define_file_logname_for_source orig_sourcefile final_sourcefile)
     endif()
     # Remove the projpath and a trailing '/' from the sourcefile path
     string(SUBSTRING "${srcpath}" "${projpath_rm_len}" -1 logname)
-    get_property(defs SOURCE "${final_sourcefile}"
-        PROPERTY COMPILE_DEFINITIONS)
     list(APPEND defs "FILE_BASENAME=\"${logname}\"")
     # Set the updated compile definitions on the source file.
     set_property(
@@ -283,26 +330,32 @@ add_library(ui_harness ui_harness.c)
 define_file_logname_for_target(ui_harness)
 default_compile_options(ui_harness TRUE)
 
-add_library(ui ui.c)
+set(print_help_in "${CMAKE_SOURCE_DIR}/print_help.h.in")
+set(print_help_out "${CMAKE_BINARY_DIR}/print_help.h")
+preprocessed_copy("${print_help_in}" "${print_help_out}")
+define_file_logname_for_source("${print_help_in}" "${print_help_out}")
+
+add_library(ui ui.c "${print_help_out}")
 define_file_logname_for_target(ui)
 default_compile_options(ui TRUE)
 target_link_libraries(ui PUBLIC ui_harness api_client crypto dstr)
 
-set(EXE_TGTS
-    splintermail
-    encrypt_msg
-    decrypt_msg
-    inject_local_msg
-)
+add_executable(splintermail splintermail.c)
+default_compile_options(splintermail TRUE)
+define_file_logname_for_target(splintermail)
 
-# add executables
-foreach(tgt ${EXE_TGTS})
-    add_executable("${tgt}" "${tgt}.c")
-    default_compile_options("${tgt}" TRUE)
-    define_file_logname_for_target("${tgt}")
-endforeach()
+add_executable(encrypt_msg encrypt_msg.c)
+default_compile_options(encrypt_msg TRUE)
+define_file_logname_for_target(encrypt_msg)
 
-# describe executables with dependencies
+add_executable(decrypt_msg decrypt_msg.c)
+default_compile_options(decrypt_msg TRUE)
+define_file_logname_for_target(decrypt_msg)
+
+add_executable(inject_local_msg inject_local_msg.c)
+default_compile_options(inject_local_msg TRUE)
+define_file_logname_for_target(inject_local_msg)
+
 target_link_libraries(splintermail PRIVATE ui console_input ditm libcitm)
 target_link_libraries(encrypt_msg PRIVATE crypto)
 target_link_libraries(decrypt_msg PRIVATE crypto)
@@ -323,7 +376,7 @@ elseif(UNIX) # Linux steps
     # nothing top-level yet
 elseif(WIN32)
     # generate versioning information
-    configure_file("${PROJECT_SOURCE_DIR}/support_files/windows/version.rc"
+    configure_file("${supp_dir}/windows/version.rc"
         "${PROJECT_BINARY_DIR}/version.rc")
     # add versioning to splintermail.exe
     target_sources(splintermail INTERFACE "${PROJECT_BINARY_DIR}/version.rc")
@@ -349,25 +402,6 @@ install(TARGETS splintermail DESTINATION bin)
 #### BINARY INSTALLERS
 ###############################################################################
 
-# some useful variables
-set(supp_dir "${PROJECT_SOURCE_DIR}/support_files")
-set(bin_dir "${PROJECT_BINARY_DIR}")
-
-# functions take input files and copy them into OS-specific file trees
-
-# set preprocessor to qwerrewq
-set(PP "${supp_dir}/qwerrewq")
-# set preprocessor config file to qwerrewq.json
-set(PPCONF "${PROJECT_BINARY_DIR}/qwerrewq.json")
-# set the preprocessor dynamic value for the operating system
-if(APPLE)
-    SET(OS_DYN "OSX")
-elseif(UNIX)
-    SET(OS_DYN "LINUX")
-elseif(WIN32)
-    SET(OS_DYN "WINDOWS")
-endif()
-
 function(binary_copy input output)
     get_filename_component(output_dir "${output}" DIRECTORY)
     add_custom_command(
@@ -379,22 +413,7 @@ function(binary_copy input output)
         )
 endfunction()
 
-# extra arguments become extra dependencies
-function(preprocessed_copy input output)
-    get_filename_component(output_dir "${output}" DIRECTORY)
-    add_custom_command(
-        OUTPUT "${output}"
-        COMMAND ${CMAKE_COMMAND} -E make_directory "${output_dir}"
-        COMMAND "${PYTHON_3_CMD}" "${PP}" "${PPCONF}" "${input}" "${output}"
-                "--" "OS=${OS_DYN}" "BUILD_DIR=${PROJECT_BINARY_DIR}"
-                     "SRC_DIR=${PROJECT_SOURCE_DIR}"
-        DEPENDS "${input}" "${PP}" "${PPCONF}" ${ARGN}
-        COMMENT "prepocessing ${input}" VERBATIM
-        )
-endfunction()
-
 if(APPLE)
-
     # add installer-specific files
     set(conf "${supp_dir}/splintermail.conf")
     set(preinstall_in "${supp_dir}/osx/preinstall")
@@ -463,7 +482,7 @@ if(APPLE)
     set(raw_installer "${PROJECT_BINARY_DIR}/installer/build/install_splintermail-${PROJECT_VERSION}.pkg")
     add_custom_command(
         OUTPUT "${raw_installer}"
-        COMMAND munkipkg --quiet installer
+        COMMAND "${MUKIPKG}" --quiet installer
         DEPENDS ${file_deps} ${tgt_deps}
         COMMENT "creating raw installer" VERBATIM
         )
@@ -506,7 +525,7 @@ if(APPLE)
     set(uninstaller_out "uninstaller/build/uninstall_splintermail.pkg")
     add_custom_command(
         OUTPUT "${uninstaller_out}"
-        COMMAND munkipkg --quiet uninstaller
+        COMMAND "${MUKIPKG}" --quiet uninstaller
         DEPENDS "${preinstall_out}" "${postinstall_out}" "${buildinfo_out}"
         COMMENT "creating uninstaller" VERBATIM
         )
@@ -518,59 +537,105 @@ if(APPLE)
     add_dependencies(installer uninstaller)
 
 elseif(UNIX)
+    # linux source install
+    set(supp_build "${PROJECT_BINARY_DIR}/support_files")
+    preprocessed_copy("${supp_dir}/openssl.cnf" "${supp_build}/openssl.cnf")
+    preprocessed_copy("${supp_dir}/keygen.sh" "${supp_build}/keygen.sh")
+    preprocessed_copy("${supp_dir}/splintermail.conf" "${supp_build}/splintermail.conf")
+    preprocessed_copy("${supp_dir}/completions/bash/splintermail" "${supp_build}/completions/bash/splintermail")
+    preprocessed_copy("${supp_dir}/completions/zsh/_splintermail" "${supp_build}/completions/zsh/_splintermail")
+    preprocessed_copy("${supp_dir}/linux/splintermail.service" "${supp_build}/linux/splintermail.service")
+    preprocessed_copy("${supp_dir}/splintermail.1" "${supp_build}/splintermail.1")
+    preprocessed_copy("${supp_dir}/linux/splintermail.service" "${supp_build}/linux/splintermail.service")
+    add_custom_target(pp_openssl_cnf ALL DEPENDS "${supp_build}/openssl.cnf")
+    add_custom_target(pp_keygen_sh ALL DEPENDS "${supp_build}/keygen.sh")
+    add_custom_target(pp_splintermail_conf ALL DEPENDS "${supp_build}/splintermail.conf")
+    add_custom_target(pp_completions_bash ALL DEPENDS "${supp_build}/completions/bash/splintermail")
+    add_custom_target(pp_completions_zsh ALL DEPENDS "${supp_build}/completions/zsh/_splintermail")
+    add_custom_target(pp_man ALL DEPENDS "${supp_build}/splintermail.1")
+    add_custom_target(pp_splintermail_service ALL DEPENDS "${supp_build}/linux/splintermail.service")
 
-    # the linux packagers work with a tarball as a least-common-denominator
-    # list all files for source tarball:
-    file(GLOB src_files
-        RELATIVE "${PROJECT_SOURCE_DIR}"
-        "${PROJECT_SOURCE_DIR}/CMakeLists.txt"
-        "${PROJECT_SOURCE_DIR}/lib*/CMakeLists.txt"
-        "${PROJECT_SOURCE_DIR}/test/CMakeLists.txt"
-        "${PROJECT_SOURCE_DIR}/*.c"
-        "${PROJECT_SOURCE_DIR}/*.h"
-        "${PROJECT_SOURCE_DIR}/lib*/*.c"
-        "${PROJECT_SOURCE_DIR}/lib*/*.h"
-        "${PROJECT_SOURCE_DIR}/test/*.c"
-        "${PROJECT_SOURCE_DIR}/test/*.h"
-        "${PROJECT_SOURCE_DIR}/support_files/splintermail.conf"
-        "${PROJECT_SOURCE_DIR}/support_files/linux/splintermail.service"
-        "${PROJECT_SOURCE_DIR}/support_files/completions/bash/*"
-        "${PROJECT_SOURCE_DIR}/support_files/completions/zsh/*"
-        "${PROJECT_SOURCE_DIR}/support_files/keygen.sh"
-        "${PROJECT_SOURCE_DIR}/support_files/openssl.cnf"
-        "${PROJECT_SOURCE_DIR}/support_files/splintermail.1"
-        "${PROJECT_SOURCE_DIR}/UNLICENSE"
+    install(FILES "${supp_build}/openssl.cnf"
+        DESTINATION "share/splintermail")
+
+    install(FILES "${supp_build}/keygen.sh"
+        DESTINATION "share/splintermail"
+        PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE
+                    GROUP_READ GROUP_EXECUTE
+                    WORLD_READ WORLD_EXECUTE)
+
+    # bash completion file
+    install(FILES "${supp_build}/completions/bash/splintermail"
+        DESTINATION "share/bash-completion/completions")
+
+    # zsh completion file
+    if("${PACKAGE_FOR}" STREQUAL "DEBIAN")
+        install(FILES "${supp_build}/completions/zsh/_splintermail"
+            DESTINATION "share/zsh/vendor-completions")
+    elseif("${PACKAGE_FOR}" STREQUAL "RHEL")
+        install(FILES "${supp_build}/completions/zsh/_splintermail"
+            DESTINATION "share/zsh/site-functions")
+    elseif("${PACKAGE_FOR}" STREQUAL "ARCH")
+        install(FILES "${supp_build}/completions/zsh/_splintermail"
+            DESTINATION "share/zsh/site-functions")
+    elseif(EXISTS "/usr/share/zsh/vendor-completions")
+        # autodetect: debian-like
+        install(FILES "${supp_build}/completions/zsh/_splintermail"
+            DESTINATION "share/zsh/vendor-completions")
+    else()
+        # autodetect: non-debian-like
+        install(FILES "${supp_build}/completions/zsh/_splintermail"
+            DESTINATION "share/zsh/site-functions")
+    endif()
+
+    # man page
+    set("man_in" "${supp_build}/splintermail.1")
+    set("man_gz" "${supp_build}/splintermail.1.gz")
+    add_custom_command(
+        OUTPUT "${man_gz}"
+        COMMAND cat "${man_in}"
+                | gzip > "${man_gz}.temp"
+                && mv "${man_gz}.temp" "${man_gz}"
+        DEPENDS "${man_in}"
+        COMMENT "gzipping man page" VERBATIM
         )
+    add_custom_target(man ALL DEPENDS "${man_gz}")
+    install(FILES "${man_gz}" DESTINATION "share/man/man1")
 
-    # copy source files into a directory for tarballing
-    set(src_copy_dir "${PROJECT_BINARY_DIR}/installer/splintermail-${PROJECT_VERSION}")
-    foreach(file ${src_files})
-        set(tempout "${src_copy_dir}/${file}")
-        preprocessed_copy( "${PROJECT_SOURCE_DIR}/${file}" "${tempout}")
-        list(APPEND src_copies "${tempout}")
-    endforeach()
+    if(NOT "${PACKAGE_FOR}" STREQUAL "")
+        # default config file, only installed when we are building packages
+        install(FILES "${supp_build}/splintermail.conf" DESTINATION "/etc")
+    endif()
 
+    # custom install files, for building installers
+    if("${PACKAGE_FOR}" STREQUAL "DEBIAN")
+        # systemd service is handled automatically by debian packaging scripts
+        # license is handled automatically as well
+    elseif("${PACKAGE_FOR}" STREQUAL "RHEL")
+        # systemd service
+        install(FILES "${supp_build}/linux/splintermail.service"
+            DESTINATION "lib/systemd/system")
+        # licence handled automatically by .spec file
+    elseif("${PACKAGE_FOR}" STREQUAL "ARCH")
+        # systemd service
+        install(FILES "${supp_build}/linux/splintermail.service"
+            DESTINATION "lib/systemd/system")
+        # licence
+        install(FILES "UNLICENSE"
+            DESTINATION "share/licenses/splintermail")
+    endif()
 
     if("${PACKAGE_FOR}" STREQUAL "DEBIAN")
-
-        # create the tarball of the source files
-        set(srctar "${PROJECT_BINARY_DIR}/installer/splintermail_${PROJECT_VERSION}.orig.tar.gz")
-        add_custom_command(
-            OUTPUT "${srctar}"
-            COMMAND tar -czf "${srctar}" "splintermail-${PROJECT_VERSION}"
-            DEPENDS ${src_copies}
-            WORKING_DIRECTORY "${PROJECT_BINARY_DIR}/installer"
-            COMMENT "building debian-friendly source tarball" VERBATIM
-            )
-
         # copy the required debian files
-        set(debdir "${src_copy_dir}/debian")
+        set(debdir "${PROJECT_BINARY_DIR}/installer/debian")
         foreach(file "postinst" "postrm" "control" "rules" "changelog" "compat" "source/format")
             preprocessed_copy("${supp_dir}/debian/${file}" "${debdir}/${file}")
             list(APPEND debfiles "${debdir}/${file}")
         endforeach()
         preprocessed_copy("${PROJECT_SOURCE_DIR}/UNLICENSE" "${debdir}/copyright")
         list(APPEND debfiles "${debdir}/copyright")
+        preprocessed_copy("${supp_dir}/debian/makefile" "${PROJECT_BINARY_DIR}/installer/makefile")
+        list(APPEND debfiles "${PROJECT_BINARY_DIR}/installer/makefile")
 
         # copy the systemd service over
         set(svcfile_in "${supp_dir}/linux/splintermail.service")
@@ -581,15 +646,16 @@ elseif(UNIX)
         # run some debian commands
         execute_process(COMMAND dpkg --print-architecture OUTPUT_VARIABLE debarch)
         string(STRIP "${debarch}" debarch)
-        set(debpkg "${PROJECT_BINARY_DIR}/installer/splintermail_${PROJECT_VERSION}-1_${debarch}.deb")
+        set(debpkg "${PROJECT_BINARY_DIR}/splintermail_${PROJECT_VERSION}-1_${debarch}.deb")
         add_custom_command(
             OUTPUT "${debpkg}"
-            COMMAND debuild -us -uc
-            DEPENDS "${srctar}" ${debfiles}
-            WORKING_DIRECTORY "${src_copy_dir}"
+            COMMAND debuild -i -us -uc -b
+            DEPENDS ${debfiles}
+            WORKING_DIRECTORY "${PROJECT_BINARY_DIR}/installer"
             COMMENT "building debian package" VERBATIM
             )
-        add_custom_target(installer DEPENDS "${debpkg}")
+        add_custom_command(OUTPUT pkgname COMMAND echo "${debpkg}" > pkgname)
+        add_custom_target(installer DEPENDS "${debpkg}" pkgname)
 
         # unpack it all
         set(unpack_stamp "${PROJECT_BINARY_DIR}/installer/stamp.unpacked")
@@ -603,17 +669,6 @@ elseif(UNIX)
         add_custom_target(unpacked DEPENDS "${unpack_stamp}")
 
     elseif("${PACKAGE_FOR}" STREQUAL "RHEL")
-
-        # tarball into desired location
-        set(srctar "$ENV{HOME}/rpmbuild/SOURCES/splintermail-${PROJECT_VERSION}.tar.gz")
-        add_custom_command(
-            OUTPUT "${srctar}"
-            COMMAND tar -czf "${srctar}" "splintermail-${PROJECT_VERSION}"
-            DEPENDS ${src_copies}
-            WORKING_DIRECTORY "${PROJECT_BINARY_DIR}/installer"
-            COMMENT "building source tarball" VERBATIM
-            )
-
         # preprocess spec file
         set(specin "${supp_dir}/rpm/splintermail.spec")
         set(specout "${PROJECT_BINARY_DIR}/installer/splintermail.spec")
@@ -624,28 +679,25 @@ elseif(UNIX)
         execute_process(COMMAND rpm --eval "%{?dist}" OUTPUT_VARIABLE builderdist)
         string(STRIP "${rpmarch}" rpmarch)
         string(STRIP "${builderdist}" builderdist)
-        set(rpmout "$ENV{HOME}/rpmbuild/RPMS/${rpmarch}/splintermail-${PROJECT_VERSION}-1${builderdist}.${rpmarch}.rpm")
+        set(rpmname "splintermail-${PROJECT_VERSION}-1${builderdist}.${rpmarch}.rpm")
+        set(rpmout "$ENV{HOME}/rpmbuild/RPMS/${rpmarch}/${rpmname}")
+        set(rpmfinal "${PROJECT_BINARY_DIR}/installer/${rpmname}")
         add_custom_command(
-            OUTPUT "${rpmout}"
+            OUTPUT "${rpmfinal}"
+            # this will fail on errors
+            COMMAND rpmlint --info "${specout}"
+            # this will fail on warnings
+            COMMAND sh -c "! (rpmlint '${specout}' 2>&1 | grep -q ': W:')"
             COMMAND rpmbuild  -bb "${specout}"
-            DEPENDS "${srctar}" "${specout}"
+            COMMAND mv "${rpmout}" "${rpmfinal}"
+            DEPENDS "${specout}"
             COMMENT "building RPM package" VERBATIM
             )
-        add_custom_target(installer DEPENDS "${rpmout}")
+        add_custom_command(OUTPUT pkgname COMMAND echo "${rpmfinal}" > pkgname)
+        add_custom_target(installer DEPENDS "${rpmfinal}" pkgname)
 
     elseif("${PACKAGE_FOR}" STREQUAL "ARCH")
-
-        # create the tarball of the source files
-        set(srctar "${PROJECT_BINARY_DIR}/installer/splintermail-${PROJECT_VERSION}.tar.gz")
-        add_custom_command(
-            OUTPUT "${srctar}"
-            COMMAND tar -czf "${srctar}" "splintermail-${PROJECT_VERSION}"
-            DEPENDS ${src_copies}
-            WORKING_DIRECTORY "${PROJECT_BINARY_DIR}/installer"
-            COMMENT "building debian-friendly source tarball" VERBATIM
-            )
-
-        # preprocess PKGBUILD and splintermail.install
+        # copy the PKGBUILD with the dummy build system
         set(pkgbuild_in "${supp_dir}/archlinux/PKGBUILD")
         set(pkgbuild_out "${PROJECT_BINARY_DIR}/installer/PKGBUILD")
         set(install_in "${supp_dir}/archlinux/splintermail.install")
@@ -659,94 +711,13 @@ elseif(UNIX)
         add_custom_command(
             OUTPUT "${pkgout}"
             COMMAND makepkg -f
-            DEPENDS "${srctar}" "${pkgbuild_out}" "${install_out}"
+            DEPENDS "${pkgbuild_out}" "${install_out}"
             WORKING_DIRECTORY "${PROJECT_BINARY_DIR}/installer"
             COMMENT "building Archlinux package" VERBATIM
             )
-        add_custom_target(installer DEPENDS "${pkgout}")
+        add_custom_command(OUTPUT pkgname COMMAND echo "${pkgout}" > pkgname)
+        add_custom_target(installer DEPENDS "${pkgout}" pkgname)
 
-    endif()
-
-    # Linux install locations
-    # The actual installation should pull post-qwerrewq-processed files from
-    # the tarball, which means the build scripts don't depend on python3
-
-    # files to install, common to all OS's
-    # files for /usr/share/splintermail
-    set(supp_build "${PROJECT_BINARY_DIR}/support_files")
-    preprocessed_copy("${supp_dir}/openssl.cnf" "${supp_build}/openssl.cnf")
-    preprocessed_copy("${supp_dir}/keygen.sh" "${supp_build}/keygen.sh")
-    preprocessed_copy("${supp_dir}/splintermail.conf" "${supp_build}/splintermail.conf")
-    preprocessed_copy("${supp_dir}/completions/bash/splintermail" "${supp_build}/completions/bash/splintermail")
-    preprocessed_copy("${supp_dir}/completions/zsh/_splintermail" "${supp_build}/completions/zsh/_splintermail")
-    preprocessed_copy("${supp_dir}/linux/splintermail.service" "${supp_build}/linux/splintermail.service")
-    preprocessed_copy("${supp_dir}/splintermail.1" "${supp_build}/splintermail.1")
-    add_custom_target(pp_openssl_cnf ALL DEPENDS "${supp_build}/openssl.cnf")
-    add_custom_target(pp_keygen_sh ALL DEPENDS "${supp_build}/keygen.sh")
-    add_custom_target(pp_splintermail_conf ALL DEPENDS "${supp_build}/splintermail.conf")
-    add_custom_target(pp_completions_bash ALL DEPENDS "${supp_build}/completions/bash/splintermail")
-    add_custom_target(pp_completions_zsh ALL DEPENDS "${supp_build}/completions/zsh/_splintermail")
-    add_custom_target(pp_man ALL DEPENDS "${supp_build}/splintermail.1")
-
-    configure_file(
-        "${supp_dir}/linux/splintermail.service"
-        "${supp_build}/linux/splintermail.service.temp"
-        @ONLY
-    )
-    add_custom_target(pp_splintermail_service ALL DEPENDS "${supp_build}/linux/splintermail.service.temp")
-
-
-    install(FILES "${supp_build}/openssl.cnf"
-        DESTINATION "share/splintermail")
-    install(FILES "${supp_build}/keygen.sh"
-        DESTINATION "share/splintermail"
-        PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE
-                    GROUP_READ GROUP_EXECUTE
-                    WORLD_READ WORLD_EXECUTE)
-    # default config file
-    install(FILES "${supp_build}/splintermail.conf"
-        DESTINATION "/etc")
-    # bash completion file
-    install(FILES "${supp_build}/completions/bash/splintermail"
-        DESTINATION "share/bash-completion/completions")
-    # man page
-    # set("man_in" "${supp_build}/splintermail.1")
-    # set("man_gz" "${PROJECT_BINARY_DIR}/splintermail.1.gz")
-    # add_custom_command(
-    #     OUTPUT "${man_gz}"
-    #     COMMAND "cat ${man_in}" | gzip > "${man_gz}"
-    #     DEPENDS "${man_in}"
-    #     COMMENT "gzipping man page" VERBATIM
-    #     )
-    # add_custom_target(man ALL DEPENDS "${man_gz}")
-    # install(FILES "${man_gz}" DESTINATION "share/man/man1")
-    install(FILES "${supp_build}/splintermail.1" DESTINATION "share/man/man1")
-
-    # custom install files, for building installers
-    if("${PACKAGE_FOR}" STREQUAL "DEBIAN")
-        # zsh completion file
-        install(FILES "${supp_build}/completions/zsh/_splintermail"
-            DESTINATION "share/zsh/vendor-completions")
-        # systemd service is handled automatically by debian packaging scripts
-        # license is handled automatically as well
-    elseif("${PACKAGE_FOR}" STREQUAL "RHEL")
-        # zsh completion file
-        install(FILES "${supp_build}/completions/zsh/_splintermail"
-            DESTINATION "share/zsh/site-functions")
-        # systemd service
-        install(FILES "${supp_build}/linux/splintermail.service"
-            DESTINATION "lib/systemd/system")
-        # licence handled automatically by .spec file
-    elseif("${PACKAGE_FOR}" STREQUAL "ARCH")
-        # zsh completion file
-        install(FILES "${supp_build}/completions/zsh/_splintermail"
-            DESTINATION "share/zsh/site-functions")
-        # systemd service
-        install(FILES "${supp_build}/linux/splintermail.service"
-            DESTINATION "lib/systemd/system")
-        # licence
-        install(FILES "UNLICENSE"
-            DESTINATION "share/licenses/splintermail")
     endif()
 
 elseif(WIN32)
@@ -849,25 +820,3 @@ elseif(WIN32)
     endif()
 
 endif()
-
-
-###############################################################################
-#### GENERATED SOURCE CODE (outputs of which will be held under git)
-###############################################################################
-
-# these outputs will be held under git
-
-if("${REGEN_SRC}")
-    set(print_help_in "${PROJECT_SOURCE_DIR}/print_help.h.in")
-    set(print_help_out "${PROJECT_SOURCE_DIR}/print_help.h")
-    preprocessed_copy("${print_help_in}" "${print_help_out}")
-    add_custom_target(gen_src_code DEPENDS "${print_help_out}")
-    add_dependencies(splintermail gen_src_code)
-
-    set(man_in "${supp_dir}/splintermail.1")
-    set(man_out "${PROJECT_BINARY_DIR}/splintermail.1")
-    preprocessed_copy("${man_in}" "${man_out}")
-    add_custom_target(manpage DEPENDS "${man_out}")
-    add_dependencies(installer manpage)
-endif()
-

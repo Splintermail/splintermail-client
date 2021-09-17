@@ -35,7 +35,7 @@ macro(add_crypto asan)
             endif()
         endif()
         if("${USE_FEDORA_CIPHER_STRING}")
-            target_compile_definitions("crypto${asan}" "PREFERRED_CIPHERS=\"PROFILE=SYSTEM\"")
+            target_compile_definitions("crypto${asan}" PRIVATE "PREFERRED_CIPHERS=\"PROFILE=SYSTEM\"")
         endif()
     elseif(WIN32)
         # additional dependencies for windows
@@ -46,6 +46,14 @@ macro(add_crypto asan)
 endmacro()
 
 add_crypto("")
+
+if(DISABLE_ASAN)
+    # release builds already have no asan
+    add_library(crypto_noasan ALIAS crypto)
+else()
+    # rebuild without asan
+    add_crypto("_noasan")
+endif()
 
 # cmp.c should not use any compiler optimizations to make absolutely sure it
 # is constant time.
@@ -59,11 +67,3 @@ endif()
 # Uncomment to view the assember output so you can verify constant time.
 # (probably just build libcrypto_noasan and check cmp.s)
 # source_compile_options(cmp.c -Wa,-adhln=cmp.s -fverbose-asm -masm=intel)
-
-if("${CMAKE_BUILD_TYPE}" STREQUAL "debug")
-    # rebuild without asan
-    add_crypto("_noasan")
-else()
-    # release builds already have no asan
-    add_library(crypto_noasan ALIAS crypto)
-endif()

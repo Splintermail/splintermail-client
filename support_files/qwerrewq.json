@@ -3,6 +3,9 @@
  "pkgvermaj":"@PROJECT_VERSION_MAJOR@",
  "pkgvermin":"@PROJECT_VERSION_MINOR@",
  "pkgverbld":"@PROJECT_VERSION_PATCH@",
+ "install_prefix":"@CMAKE_INSTALL_PREFIX@",
+ "build_dir":"@PROJECT_BINARY_DIR@",
+ "src_dir":"@PROJECT_SOURCE_DIR@",
  "version":["printf","%s.%s.%s","pkgvermaj","pkgvermin","pkgverbld"],
 
  "Pkg Name":"Splintermail",

@@ -16,12 +16,12 @@ endmacro()
 
 add_mysql_util("")
 
-if("${CMAKE_BUILD_TYPE}" STREQUAL "debug")
-    # rebuild without asan
-    add_mysql_util("_noasan")
-else()
+if(DISABLE_ASAN)
     # release builds already have no asan
     add_library(mysql_util_noasan ALIAS mysql_util)
+else()
+    # rebuild without asan
+    add_mysql_util("_noasan")
 endif()
 
 # Pretend `const` qualifiers are possible with bound parameters.

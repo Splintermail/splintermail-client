@@ -1,5 +1,14 @@
 #!/usr/bin/make -f
 QWER["chmod","755"]REWQ
 
+# Since this packaging script is itself executed within pre-configured and
+# pre-built build directory, we want to modify the default build sequence:
+#  - no dh_auto_clean; we _want_ to package what we just built
+#  - no dh_auto_configure; this build is pre-configured
+#  - hijack dh_auto_build; reuse the existing build command
+#  - no dh_auto_test; we already tested
+#
+# Note this is all done in the makefile.
+
 %:
 	dh $@ --with-systemd

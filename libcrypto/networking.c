@@ -772,38 +772,32 @@ cu_store:
 
 #else // not __APPLE__
 
-static void log_errors_as(log_level_t lvl){
-    unsigned long e;
-    while( (e = ERR_get_error()) ){
-        char buffer[256];
-        ERR_error_string_n(e, buffer, sizeof(buffer));
-        LOG_AS(lvl, "OpenSSL error: %x\n", FS(buffer));
-    }
-}
-
 // code for loading OS CA certificates in Linux
 derr_t ssl_context_load_from_os(ssl_context_t* ctx){
     derr_t e = E_OK;
+
+    bool ok;
     // archlinux and debian location
     char* location = "/etc/ssl/certs/ca-certificates.crt";
+    PROP(&e, dexists(location, &ok) );
+    if(!ok){
+        // fedora location
+        location = "/etc/pki/tls/certs/ca-bundle.crt";
+        PROP(&e, dexists(location, &ok) );
+        if(!ok){
+            ORIG(&e, E_SSL, "could not find any verify locations");
+        }
+    }
+
+    LOG_DEBUG("chose verify_location: %x\n", FS(location));
+
     int ret = SSL_CTX_load_verify_locations(ctx->ctx, location, NULL);
     if(ret != 1){
-        log_errors_as(LOG_LVL_DEBUG);
-        LOG_DEBUG("failed to load verify_location: %x\n", FS(location));
-    }else{
-        return e;
+        TRACE(&e, "failed to load verify_location: %x\n", FS(location));
+        trace_ssl_errors(&e);
+        ORIG(&e, E_SSL, "failed to load verify_location");
     }
-    // fedora location
-    location = "/etc/pki/tls/certs/ca-bundle.crt";
-    ret = SSL_CTX_load_verify_locations(ctx->ctx, location, NULL);
-    if(ret != 1){
-        log_errors_as(LOG_LVL_DEBUG);
-        LOG_DEBUG("failed to load verify_location: %x\n", FS(location));
-    }else{
-        return e;
-    }
-    // if we are here we didn't load anything
-    ORIG(&e, E_SSL, "could not load any verify locations");
+    return e;
 }
 
 #endif // __APPLE__

@@ -1,9 +1,9 @@
 [Unit]
-Description=Splintermail CITM downloads completely encrypted emails from the Splintermail.com server, decrypts them locally, and presents a local IMAP interface to an email client.
+Description=splintermail CITM server.
 
 [Service]
 Type=simple
-ExecStart=@CMAKE_INSTALL_PREFIX@/bin/splintermail citm
+ExecStart=QWER install_prefix REWQ/bin/splintermail citm
 StandardOutput=syslog
 StandardError=syslog
 Restart=on-failure

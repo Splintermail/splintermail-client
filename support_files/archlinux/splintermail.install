@@ -21,7 +21,7 @@ post_install() {
     if [ ! -d "$sm_dir" ] ; then
         mkdir -p "$sm_dir" || return 2
         chmod 700 "$sm_dir" || return 3
-        chown -R splintermail:splintermail "$sm_dir" || return 4
+        chown splintermail:splintermail "$sm_dir" || return 4
     fi
 
     # migrate old certificates from v0.2 installations

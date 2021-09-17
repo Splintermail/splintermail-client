@@ -42,10 +42,10 @@ endmacro()
 
 add_uvthread("")
 
-if("${CMAKE_BUILD_TYPE}" STREQUAL "debug")
-    # rebuild without asan
-    add_uvthread("_noasan")
-else()
+if(DISABLE_ASAN)
     # release builds already have no asan
     add_library(uvthread_noasan ALIAS uvthread)
+else()
+    # rebuild without asan
+    add_uvthread("_noasan")
 endif()

@@ -35,14 +35,14 @@ endmacro()
 add_libsmsql("")
 add_badbadbad_alert("")
 
-if("${CMAKE_BUILD_TYPE}" STREQUAL "debug")
-    # rebuild without asan
-    add_libsmsql("_noasan")
-    add_badbadbad_alert("_noasan")
-else()
+if(DISABLE_ASAN)
     # release builds already have no asan
     add_library(libsmsql_noasan ALIAS libsmsql)
     add_library(badbadbad_alert_noasan ALIAS badbadbad_alert)
+else()
+    # rebuild without asan
+    add_libsmsql("_noasan")
+    add_badbadbad_alert("_noasan")
 endif()
 
 add_executable(smsql smsql.c)

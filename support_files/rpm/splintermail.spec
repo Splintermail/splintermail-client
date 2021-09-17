@@ -2,12 +2,11 @@ Name:           splintermail
 Vendor:         Splintermail, LLC
 Version:        QWER version REWQ
 Release:        1%{?dist}
-BuildArch:      %{_arch}
 Summary:        QWER pkgdescr_short REWQ
 
 License:    Unlicense
 URL:        https://github.com/splintermail/splintermail-client
-Source:     %{name}-%{version}.tar.gz
+# No `Source:`, we're using a pre-configured source and build directory
 
 BuildRequires:  cmake openssl-devel systemd
 Requires(post): shadow-utils openssl
@@ -19,19 +18,17 @@ QWER ["call", "pkgdescr_long", {"width":"72"}] REWQ
 %global debug_package %{nil}
 
 %prep
-%setup -q
+# If we used a "Source:" tag, normal setup would be:
+#%%setup -q
+# But we only need to ensure that the %%license directive works.
+cp "QWER src_dir REWQ/UNLICENSE" .
 
 %build
-mkdir build
-cd build
-cmake -DCMAKE_INSTALL_PREFIX=/usr -DPACKAGE_FOR=RHEL ../
-make %{?_smp_mflags}
-strip -s splintermail
-
+cmake --build "QWER build_dir REWQ"
+strip -s "QWER build_dir REWQ/splintermail"
 
 %install
-cd build
-%make_install PREFIX=/usr
+DESTDIR="%{buildroot}" cmake --build "QWER build_dir REWQ" --target install
 
 
 %files
@@ -59,7 +56,7 @@ getent passwd splintermail >/dev/null || \
 if [ ! -d "QWER sm_dir REWQ" ] ; then
     mkdir -p "QWER sm_dir REWQ"
     chmod 700 "QWER sm_dir REWQ"
-    chown -R splintermail:splintermail "QWER sm_dir REWQ"
+    chown splintermail:splintermail "QWER sm_dir REWQ"
 fi
 # migrate old certificates from v0.2 installations
 if [ -f "QWER sm_dir REWQ/QWER old_cert_name REWQ" ] ; then
