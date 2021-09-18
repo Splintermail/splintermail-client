@@ -47,13 +47,16 @@
     FILE* compat_fopen(const char* pathname, const char* mode);
     int compat_access(const char *path, int amode);
     int compat_gethostname(char* name, size_t len);
-    int compat_mkdir(const char* name, int mode);
+    int compat_mkdir(const char* name, unsigned int mode);
+    // compat_remove works on directories the way remove() works in unix
+    int compat_remove(const char* name);
     int compat_strerror_r(int errnum, char* buf, size_t buflen);
     int compat_pipe(int* pfds);
     int compat_getpid(void);
 
     // use the "new" functions... with same prototypes and behaviors
     #define compat_rmdir _rmdir
+    #define compat_unlink _unlink
     #define compat_lseek _lseek
     #define compat_dup _dup
     #define compat_fsync _commit
@@ -86,6 +89,8 @@
     #define compat_access access
     #define compat_gethostname gethostname
     #define compat_mkdir mkdir
+    #define compat_remove remove
+    #define compat_unlink unlink
     #define compat_strerror_r strerror_r
     #define compat_pipe pipe
     #define compat_rmdir rmdir

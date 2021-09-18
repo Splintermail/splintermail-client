@@ -141,9 +141,22 @@ int compat_gethostname(char* name, size_t len){
     return (ret != 0) ? 0 : -1;
 }
 
-int compat_mkdir(const char* name, int mode){
+int compat_mkdir(const char* name, unsigned int mode){
     (void)mode;
     return _mkdir(name);
+}
+
+// compat_remove works on directories the way remove() works in unix
+int compat_remove(const char* name){
+    struct stat s;
+    int ret = stat(name, &s);
+    if(ret) return -1;
+
+    if(S_ISDIR(s.st_mode)){
+        return _rmdir(name);
+    }else{
+        return remove(name);
+    }
 }
 
 int compat_strerror_r(int errnum, char* buf, size_t buflen){

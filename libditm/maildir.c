@@ -472,7 +472,7 @@ derr_t maildir_delete_message(maildir_t* mdir, size_t index){
     // delete the file
     DSTR_VAR(path, 4096);
     PROP(&e, FMT(&path, "%x%x", FD(&mdir->path), FD(filename)) );
-    int ret = remove(path.data);
+    int ret = compat_unlink(path.data);
     if(ret != 0){
         TRACE(&e, "%x: %x\n", FD(&path), FE(&errno));
         ORIG(&e, E_OS, "unable to delete message from maildir");

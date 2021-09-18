@@ -647,7 +647,7 @@ static derr_t api_command_main(
         if(code == 401 || code == 403){
             DROP_CMD( FFMT(stderr, NULL, "API Token rejected, deleting token.  Run this "
                                "command again to generate a new token.\n") );
-            int ret = remove(creds_path.data);
+            int ret = compat_unlink(creds_path.data);
             if(ret != 0){
                 DROP_CMD( FFMT(stderr, NULL, "Error removing token: %x\n", FE(&errno)) );
             }

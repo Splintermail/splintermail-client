@@ -7,6 +7,10 @@
 
 #include "libdstr.h"
 
+fileops_harness_t fileops_harness = {
+    .mkdir = compat_mkdir,
+};
+
 static char* dot = ".";
 static char* dotdot = "..";
 DSTR_STATIC(slash, "/");
@@ -22,7 +26,7 @@ static inline bool do_dir_access(const char* path, bool create, int flags){
             return false;
         }
         // we might be able to create the directory
-        ret = compat_mkdir(path, 0770);
+        ret = fileops_harness.mkdir(path, 0770);
         if(ret != 0){
             LOG_DEBUG("%x: %x\n", FS(path), FE(&errno));
             LOG_DEBUG("%x: unable to stat or create directory\n", FS(path));
@@ -499,7 +503,7 @@ static derr_t rm_rf_hook(const char* base, const dstr_t* file,
             ORIG(&e, E_OS, "failed to remove file");
         }
         // now delete the file
-        ret = remove(path.data);
+        ret = compat_unlink(path.data);
         if(ret != 0){
             TRACE(&e, "%x: %x\n", FS(path.data), FE(&errno));
             ORIG(&e, E_OS, "failed to remove file");
@@ -530,7 +534,7 @@ derr_t rm_rf(const char* path){
         }
     }else{
         // otherwise delete just this file
-        ret = remove(path);
+        ret = compat_unlink(path);
         if(ret != 0){
             TRACE(&e, "%x: %x\n", FS(path), FE(&errno));
             ORIG(&e, E_OS, "failed to remove file");
@@ -869,7 +873,7 @@ derr_t lstat_path(const string_builder_t* sb, struct stat* out, int* eno){
 derr_t dmkdir(const char *path, mode_t mode, bool soft){
     derr_t e = E_OK;
 
-    int ret = compat_mkdir(path, mode);
+    int ret = fileops_harness.mkdir(path, mode);
     if(ret != 0){
         if(errno == ENOMEM){
             ORIG(&e, E_NOMEM, "no memory for mkdir");
@@ -962,13 +966,13 @@ cu:
 
 fail:
     // attempt to delete any folders we created
-    for(int i = 0; i < ncreated; i++){
+    for(int i = ncreated - 1; i >= 0; i--){
         // repair the path
         tpath = *path;
         for(int j = 0; j < (nparents - i); j++){
             tpath = ddirname(tpath);
         }
-        DROP_CMD( remove_path(&SB(FD(&tpath))) );
+        DROP_CMD( drmdir_path(&SB(FD(&tpath))) );
     }
     return e;
 }
@@ -1055,7 +1059,7 @@ derr_t exists_path(const string_builder_t* sb, bool* ret){
 derr_t dremove(const char* path){
     derr_t e = E_OK;
 
-    int ret = remove(path);
+    int ret = compat_remove(path);
     if(ret != 0){
         if(errno == ENOMEM){
             ORIG(&e, E_NOMEM, "no memory for remove");
@@ -1081,6 +1085,67 @@ cu:
     dstr_free(&heap);
     return e;
 }
+
+derr_t dunlink(const char *path){
+    derr_t e = E_OK;
+
+    int ret = compat_unlink(path);
+    if(ret != 0){
+        if(errno == ENOMEM){
+            ORIG(&e, E_NOMEM, "no memory for unlink");
+        }else{
+            TRACE(&e, "unlink(%x): %x\n", FS(path), FE(&errno));
+            ORIG(&e, E_FS, "unable to unlink");
+        }
+    }
+
+    return e;
+}
+
+derr_t dunlink_path(const string_builder_t* sb){
+    derr_t e = E_OK;
+    DSTR_VAR(stack, 256);
+    dstr_t heap = {0};
+    dstr_t* path;
+    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
+
+    PROP_GO(&e, dunlink(path->data), cu);
+
+cu:
+    dstr_free(&heap);
+    return e;
+}
+
+derr_t drmdir(const char *path){
+    derr_t e = E_OK;
+
+    int ret = compat_rmdir(path);
+    if(ret != 0){
+        if(errno == ENOMEM){
+            ORIG(&e, E_NOMEM, "no memory for rmdir");
+        }else{
+            TRACE(&e, "rmdir(%x): %x\n", FS(path), FE(&errno));
+            ORIG(&e, E_FS, "unable to rmdir");
+        }
+    }
+
+    return e;
+}
+
+derr_t drmdir_path(const string_builder_t* sb){
+    derr_t e = E_OK;
+    DSTR_VAR(stack, 256);
+    dstr_t heap = {0};
+    dstr_t* path;
+    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
+
+    PROP_GO(&e, drmdir(path->data), cu);
+
+cu:
+    dstr_free(&heap);
+    return e;
+}
+
 
 derr_t file_copy(const char* from, const char* to, mode_t mode){
     derr_t e = E_OK;
@@ -1491,7 +1556,7 @@ cleanup:
     }
     if(is_error(e)){
         // make a feeble attempt to delete the file
-        ret = remove(filename);
+        ret = compat_unlink(filename);
         LOG_ERROR(
             "failed to remove failed file after failed write: %x\n", FE(&errno)
         );

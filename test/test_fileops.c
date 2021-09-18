@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <string.h>
+#include <errno.h>
 
 #include <libdstr/libdstr.h>
 
@@ -164,40 +165,45 @@ static derr_t test_mkdirs(void){
     return e;
 }
 
+static fileops_harness_t old_harness;
+
+static int test_mkdir(const char *path, unsigned int mode){
+    if(strcmp(path, "test_mkdirs/a/b/c/d/e/f") == 0){
+        printf("rejecting mkdir(%s)\n", path);
+        errno = ENOMEM;
+        return -1;
+    }
+    printf("allowing mkdir(%s)\n", path);
+    return old_harness.mkdir(path, mode);
+}
 
 static derr_t test_mkdirs_failure_handling(void){
     derr_t e = E_OK;
+    // save the old harness before proceeding
+    old_harness = fileops_harness;
+    fileops_harness = (fileops_harness_t){
+        .mkdir = test_mkdir,
+    };
 
-#ifndef _WIN32 // UNIX
     // test failure deletion behavior by making the second mkdir fail via mode
     string_builder_t base = SB(FS("test_mkdirs"));
     string_builder_t mid = sb_append(&base, FS("a/b/c"));
 
+    // By the end, d/ will have been created but should be deleted on cleanup
     string_builder_t path1 = sb_append(&mid, FS("d"));
     string_builder_t path2 = sb_append(&path1, FS("e/f"));
 
-    // make a usable directory which should not be deleted after the failure
+    // make a directory which should not be deleted after the failure
     PROP_GO(&e, mkdirs_path(&mid, 0755), cu);
 
-    // make sure that we can make one unusuable directory, so the test is valid
-    PROP_GO(&e, mkdirs_path(&path1, 0444), cu);
-    bool dir_exists;
-    PROP_GO(&e, exists_path(&path1, &dir_exists), cu);
-    if(!dir_exists){
-        ORIG_GO(&e, E_VALUE, "unable to create on unusable dir", cu);
-    }
-
-    // now clean that one up and try to make two of them
-    PROP_GO(&e, rm_rf_path(&path1), cu);
-
-    // we know the first one will work but the second one should fail
-    derr_t e2 = mkdirs_path(&path2, 0444);
+    derr_t e2 = mkdirs_path(&path2, 0755);
     if(!is_error(e2)){
         ORIG_GO(&e, E_VALUE, "failed to fail to nest unusable dirs", cu);
     }
     DROP_VAR(&e2);
 
     // make sure that the mid directory was not deleted
+    bool dir_exists;
     PROP_GO(&e, exists_path(&mid, &dir_exists), cu);
     if(!dir_exists){
         // This is a *REALLY REALLY* bad failure
@@ -212,7 +218,8 @@ static derr_t test_mkdirs_failure_handling(void){
 
 cu:
     DROP_CMD( rm_rf_path(&base) );
-#endif
+    // restore the original harness
+    fileops_harness = old_harness;
     return e;
 }
 

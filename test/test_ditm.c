@@ -448,7 +448,7 @@ cu4:
     dstr_free(&answer);
 cu3:
     compat_close(temp);
-    remove("do_test_mangle.temp");
+    compat_unlink("do_test_mangle.temp");
 cu2:
     compat_close(outfd);
 cu1:
@@ -556,9 +556,9 @@ static derr_t test_mangle_corrupted(void){
     // do the test
     PROP_GO(&e, do_test_mangle(infile, outfile, ditm_mangle_corrupted), cu2);
 cu2:
-    remove(outfile);
+    compat_unlink(outfile);
 cu1:
-    remove(infile);
+    compat_unlink(infile);
     return e;
 }
 

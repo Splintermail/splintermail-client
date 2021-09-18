@@ -7,6 +7,13 @@
     #include <utime.h>
 #endif
 
+// certain filesystem calls are interceptable, for the purpose of testing.
+typedef struct {
+    int (*mkdir)(const char *path, unsigned int mode);
+} fileops_harness_t;
+
+extern fileops_harness_t fileops_harness;
+
 // if (create == true), these functions will attempt to create the directory
 bool dir_r_access(const char* path, bool create);
 bool dir_w_access(const char* path, bool create);
@@ -120,6 +127,10 @@ derr_t dexists(const char *path, bool *exists);
 derr_t exists_path(const string_builder_t* path, bool* ret);
 derr_t dremove(const char *path);
 derr_t remove_path(const string_builder_t* sb);
+derr_t dunlink(const char *path);
+derr_t dunlink_path(const string_builder_t* sb);
+derr_t drmdir(const char *path);
+derr_t drmdir_path(const string_builder_t* sb);
 
 /* mode is unused if the file already exists. Use chmod if you really need to
    set the mode.  Also mode will be modified by umask via compat_open() */

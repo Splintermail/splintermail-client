@@ -165,7 +165,7 @@ static derr_t test_crypto(void){
     // load the keys that are now written to a file
     keypair_t *kp;
     PROP_GO(&e, keypair_load(&kp, keyfile), cu_file);
-    remove(keyfile);
+    compat_unlink(keyfile);
 
     DSTR_VAR(pubkey_pem, 4096);
     PROP(&e, keypair_get_public_pem(kp, &pubkey_pem) );
@@ -237,7 +237,7 @@ cleanup_1:
     keypair_free(&kp);
 cu_file:
     // delete the temporary file
-    remove(keyfile);
+    compat_unlink(keyfile);
     return e;
 }
 
@@ -249,7 +249,7 @@ static derr_t test_keypair(void){
 
     keypair_t *kp;
     PROP_GO(&e, keypair_load(&kp, keyfile), cu_file);
-    remove(keyfile);
+    compat_unlink(keyfile);
 
     // read the public key as PEM text
     DSTR_VAR(pem1, 4096);
@@ -277,7 +277,7 @@ cu_kp:
     keypair_free(&kp);
 cu_file:
     // delete the temporary file
-    remove(keyfile);
+    compat_unlink(keyfile);
     return e;
 }
 
@@ -343,11 +343,11 @@ static derr_t test_keyshare(void){
     // build a couple random keys
     PROP_GO(&e, gen_key(1024, keyfile), cu_file);
     PROP_GO(&e, keypair_load(&kp1, keyfile), cu_file);
-    remove(keyfile);
+    compat_unlink(keyfile);
 
     PROP_GO(&e, gen_key(1024, keyfile), cu_kp1);
     PROP_GO(&e, keypair_load(&kp2, keyfile), cu_kp1);
-    remove(keyfile);
+    compat_unlink(keyfile);
 
     // create a keyshare
     keyshare_t keyshare;
@@ -419,7 +419,7 @@ cu_kp1:
     keypair_free(&kp2);
     // delete the temporary file
 cu_file:
-    remove(keyfile);
+    compat_unlink(keyfile);
     return e;
 }
 

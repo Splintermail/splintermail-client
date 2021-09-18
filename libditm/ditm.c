@@ -988,7 +988,7 @@ close_t1:
     compat_close(t1fd);
 
     // in all cases we are done with t1, so delete it
-    int ret = remove(t1path.data);
+    int ret = compat_unlink(t1path.data);
     if(ret != 0){
         LOG_ERROR("%x: %x\n", FS(t1path.data), FE(&errno));
         LOG_ERROR("failed to cleanup temporary file\n");
@@ -996,7 +996,7 @@ close_t1:
 
     // if we have an uncaught error, delete t2 and propagate
     if(is_error(e)){
-        ret = remove(t2path.data);
+        ret = compat_unlink(t2path.data);
         if(ret != 0){
             LOG_ERROR("%x: %x\n", FS(t2path.data), FE(&errno));
             LOG_ERROR("failed to cleanup temporary file\n");
@@ -1026,7 +1026,7 @@ close_t1:
         // add to ignore list
         PROP(&e, ignore_list_add(il, uid) );
         // delete t2
-        ret = remove(t2path.data);
+        ret = compat_unlink(t2path.data);
         if(ret != 0){
             LOG_ERROR("%x: %x\n", FS(t2path.data), FE(&errno));
             LOG_ERROR("failed to cleanup temporary file\n");
@@ -1235,7 +1235,7 @@ fail_tfd:
 fail_deletions:
     ditm->deletions.len -= 1;
 fail_temp:
-    remove(temp.data);
+    compat_unlink(temp.data);
     return e;
 }
 
