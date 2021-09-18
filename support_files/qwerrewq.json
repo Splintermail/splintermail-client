@@ -23,6 +23,10 @@
                   ["wrap", "width", "  ", "     ", ["get","pdl","p2"]],
                   ["wrap", "width", "  ", "     ", ["get","pdl","p3"]]
                  ]]],
+ "printf_escape":[
+   {"text":null},
+   ["regex", "text", "\\\\", "\\\\\\\\", "\"", "\\\"", "%", "%%"]
+ ],
  "pdl":{"p1":"The `splintermail` application serves two purposes:",
          "p2":"1) It implements the \"crypto-in-the-middle\" (CITM) model, which is the glue that connects an email client on your computer to the fully encrypted email stored on the Splintermail.com server.  In CITM mode this application will host an IMAP server on your local machine which your email client can connect to.",
          "p3":"2) It is a tool for controlling your account on the command line, instead of going to the Splintermail.com website."
@@ -43,22 +47,25 @@
                       ]],
  "print_help":{
      "opts_from_list":[{"l":null},
-         ["prepost", "\"", "\\n\"", ["regex",
+         ["prepost", "\"", "\\n\"", ["call", "printf_escape", {"text":
               ["expand", ["for", "opt", "l",
                                  ["call", "optrow", {"o":"opt"}]
-                         ], "table"],
-          "\"", "\\\""]
-     ]],
+                         ], "table"]
+         }]]
+     ],
      "1bullet2":[{"s":null},["prepost", "\"", "\\n\"",
-        ["join","\n",["list",
-           ["wrap", "79", "        ", "        ", ["get","man","files","config","1"]],
-           "",
-           ["prepost", "            ", "",
-               ["join", "\n", ["get","man","files","config","bullets"]]],
-           "",
-           ["wrap", "79", "        ", "        ", ["get","man","files","config","2"]]
-        ]]]],
-    "os_specific_body":
+        ["call", "printf_escape", {"text":
+          ["join","\n",["list",
+             ["wrap", "79", "        ", "        ", ["get","man","files","config","1"]],
+             "",
+             ["prepost", "            ", "",
+                 ["join", "\n", ["get","man","files","config","bullets"]]],
+             "",
+             ["wrap", "79", "        ", "        ", ["get","man","files","config","2"]]
+          ]]
+        }]]
+     ],
+     "os_specific_body":
         ["join","\n\n", ["list",
             "\"OPTIONS:\\n\"",
             "\"\\n\"",
@@ -75,7 +82,7 @@
             "\"API_COMMANDS:\\n\"",
             "\"\\n\"",
             ["prepost", "\"", "\\n\"",
-                    ["regex",
+                    ["call", "printf_escape", {"text":
                       ["expand", ["for", "a", "apilist",
                         ["list", ["printf", "  %-23s",
                                     ["printf", "%s %s",
@@ -86,8 +93,9 @@
                                             ["get", "apis", "a", "short"],
                                             ["get", "apis", "a", "long"]]]
                                     ]
-                                 ], "table"],
-                      "\"", "\\\""]],
+                                 ], "table"]
+                    }]
+            ],
             "\"\\n\"",
             "\"FILES:\\n\"",
             "\"    Config Files:\\n\"",
@@ -98,7 +106,8 @@
             "\"\\n\"",
             "\"    Per-User API Tokens:\\n\"",
             ["call",["get","print_help","1bullet2"],{"s":"accounts"}]
-        ]]
+        ]
+    ]
  },
  "opts":{"--help":{"short":"-h",
                    "arg":"",

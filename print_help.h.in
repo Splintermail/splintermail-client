@@ -3,7 +3,9 @@ static void print_help(void){
 "splintermail: QWER pkgdescr_short REWQ\n"
 "\n"
 QWER ["prepost", "\"  ", "\\n\"",
-        ["regex", ["call", "pkgdescr_long", {"width":"78"}], "\"", "\\\""]
+        ["call", "printf_escape", {"text":
+            ["call", "pkgdescr_long", {"width":"78"}]
+        }]
      ] REWQ
 "\n"
 "usage: splintermail ditm [OPTIONS]\n"

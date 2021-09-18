@@ -63,7 +63,7 @@ def read_jelly(jelly, filein, exp_val=False):
     # ["strip", JELLY]
     # ["expand", LIST, FUNC_NAME[, FUNC_ARG,...] ]
     # ["join", JOINER, LIST_OF_PROB_STRINGS ] (null values get skipped)
-    # ["regex", JELLY, {"in":"out"}[, {"in":"out"},...] ]
+    # ["regex", JELLY, "in", "out"[, "in", "out",...] ]
     # ["lower", JELLY]
     # ["chmod", STRING ]
     # prefix/postfix is separated from wrap because it makes nested formatting simpler
