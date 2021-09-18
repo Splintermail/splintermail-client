@@ -217,9 +217,10 @@ class Branches(Parsable):
 
 
 class Recovery(Parsable):
-    def __init__(self, name, code):
+    def __init__(self, name, code=None):
         self.name = name
-        self.code = code
+        # allow defining the recovery code upfront
+        self.code = [] if code is None else [code]
         self.seq = Sequence(self.name + '.seq')
         self.after = None
 
@@ -228,6 +229,9 @@ class Recovery(Parsable):
 
     def add_code(self, code):
         self.seq.add_code(code)
+
+    def add_recovery_code(self, c):
+        self.code.append(c)
 
     def set_after(self, after):
         assert self.after is None, "can't call set_after() twice!"
@@ -461,6 +465,20 @@ class Grammar:
     def __init__(self):
         self.exprs = {}
 
+    def get_name(self, name):
+        """
+        Creates a name if it doesn't yet exist.  Mostly for the meta parser.
+        """
+        if name in self.exprs:
+            return self.exprs[name]
+        if name[0].upper() == name[0]:
+            # starts uppercase, we guess it's a token
+            e = self.token(name)
+        else:
+            # starts lowercase, we guess it's a expression
+            e = self.expr(name)
+        return e
+
     def expr(self, val):
         if isinstance(val, str):
             # Forward declaration case:
@@ -488,9 +506,9 @@ class Grammar:
             fn(e)
         return e
 
-    def token(self, name):
+    def token(self, name, typ=None):
         assert name not in self.exprs
-        e = Token(name)
+        e = Token(name, typ)
         self.exprs[name] = e
         return e
 
@@ -524,15 +542,18 @@ class Python:
         print(textwrap.indent(textwrap.dedent(code), i))
 
     def token_list(self, tokens):
+        assert tokens
         tokens = sorted(t for t in tokens if t is not None)
         if len(tokens) > 1:
             return "(" + ", ".join(tokens) + ")"
         else:
             return "(" + tokens[0] + ",)"
 
-    def user_args(self, u):
+    def user_args(self, u, after=False):
         if not u:
             return ""
+        if after:
+            return ", ".join(u) + ","
         return ", " + ", ".join(u)
 
     def if_token_in(self, tokens, i, pos=0):
@@ -577,6 +598,8 @@ class Python:
             for n, seq in enumerate(obj.branches):
                 self.if_token_in(seq.get_first(), i, pos=n)
                 self.gen(seq, None, u, i+"    ")
+            print(i + "else:")
+            print(i + "    raise SyntaxError()")
             return
 
         if isinstance(obj, Recovery):
@@ -587,13 +610,13 @@ class Python:
             print(i + "except SyntaxError:")
             self.while_token_not_in(obj.after, i+"    ")
             print(i + "        yield from next(tokens)")
-            self.print_code(obj.code, i+"    ")
+            for c in obj.code:
+                self.print_code(c, i+"    ")
             return
 
         if isinstance(obj, Sequence):
             for c in obj.precode:
                 self.print_code(c, i)
-                print(textwrap.indent(textwrap.dedent(c), i))
             for term, tag, code in obj.terms:
                 self.gen(term, tag, u, i)
                 for c in code:
@@ -606,7 +629,7 @@ class Python:
                     i + "yy_" + tag + " = yield from parse_" + obj.title +
                     "(tokens" + self.user_args(u) + ")")
             else:
-                print(i + "yield from parse_" + obj.title + "()")
+                print(i + "yield from parse_" + obj.title + "(tokens" + self.user_args(u) + ")")
             return
 
         raise RuntimeError("unrecognized object type: " + type(obj).__name__)
@@ -617,7 +640,7 @@ class Python:
         self.gen(expr.seq, None, u, i="    ")
         print("    return out")
 
-    def gen_file(self, g, u=()):
+    def gen_file(self, g, u=(), *, fn="None"):
         print(textwrap.dedent(r"""
             class SyntaxError(Exception):
                 pass
@@ -626,6 +649,9 @@ class Python:
                 def __init__(self, typ, val=None):
                     self.type = typ
                     self.val = val
+
+                def __str__(self):
+                    return "Token(" + str(self.type) + ", " + str(self.val) + ")"
 
             class TokenStream:
                 def __init__(self):
@@ -653,27 +679,30 @@ class Python:
             self.define_fn(expr, u)
             print("")
 
-        YOU ARE HERE: you arent sure what to do about repeat parsing.
-        sometimes it seems like a good idea, sometimes it doesnt.
-        Wouldnt you want to pass in a new Grammar object into your meta.py
-        parser for every instance of a doc?  Whats a good api for that?
-
         print("class Parser:")
-        print("    def __init__(self" + self.user_args(u) + ", fn=parse_line):")
+        print("    def __init__(")
+        print("        self" + self.user_args(u) + ", fn=" + fn + ", repeat=False")
+        print("    ):")
         print(textwrap.indent(textwrap.dedent(r"""
+                    assert fn is not None, "fn is a required keyword argument"
                     self.fn = fn
                     self.tokens = TokenStream()
                     self.out = None
+                    self.user_args = (""" + self.user_args(u, after=True) + """)
                     self.gen = self.mkgen()
+                    self.repeat = repeat
+                    self.done = False
 
                 def mkgen(self):
                     def _gen():
-                        self.out = yield from self.fn(self.tokens)
+                        self.out = yield from self.fn(self.tokens, *self.user_args)
                     gen = _gen()
                     next(gen)
                     return gen
 
                 def feed(self, t):
+                    if self.done:
+                        raise RuntimeError("parser is already done!")
                     try:
                         return self.gen.send(t)
                     except StopIteration:
@@ -681,6 +710,8 @@ class Python:
                         out = self.out
                         self.out = None
                         self.gen = self.mkgen()
+                        if not self.repeat:
+                            self.done = True
                         return out
         """.strip("\n")), "    "), end="")
 
@@ -857,7 +888,8 @@ class C:
             print("    }")
             if obj.code is not None:
                 print("    // USER CODE")
-                print(textwrap.indent(textwrap.dedent(obj.code), "    "))
+                for c in obj.code:
+                    print(textwrap.indent(textwrap.dedent(c), "    "))
             print("yy"+ str(state) + "_done:")
             return state + self.nstates(obj), stack
 

@@ -1,0 +1,70 @@
+## You don't actually have to declare tokens, unless you want to set types.
+## Since we're using the python parser, the types are ignored anyway.
+# EOL;
+# NUM;
+# PLUS;
+# MINUS;
+# MULT;
+# DIV;
+# LPAREN;
+# RPAREN;
+
+mult_op = (
+| MULT {$$=1}
+| DIV {$$=0}
+);
+
+sum_op = (
+| PLUS {$$=1}
+| MINUS {$$=-1}
+);
+
+factor = (
+| NUM:n {$$=$n}
+| LPAREN expr:e RPAREN {$$=$e}
+);
+
+term =
+    factor:f1 {$$=$f1}
+    [
+        mult_op:m
+        factor:f2
+        {$$=$$*$f2 if $m else $$/$f2}
+    ]*
+;
+
+expr =
+    term:t1 {$$=$t1}
+    [
+        sum_op:s
+        term:t2
+        {$$=$$ + $s*$t2}
+    ]*
+;
+
+line =
+    <
+        expr:e { $$ = $e }
+    > {{ print("(bad line)") }}
+    EOL;
+
+{{
+    if __name__ == "__main__":
+        tokens = [
+            Token(PLUS),
+            Token(EOL),
+            Token(NUM, 18),
+            Token(DIV),
+            Token(NUM, 6),
+            Token(DIV),
+            Token(NUM, 3),
+            Token(EOL),
+        ]
+        p = Parser(parse_line, repeat=True)
+        for t in tokens:
+            val = p.feed(t)
+            if val is not None:
+                print(val)
+
+}}
+

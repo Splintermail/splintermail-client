@@ -5,12 +5,13 @@ try:
     g = gen.Grammar()
     X = g.token("X")
 
-    @g.seq
+    @g.expr
     def a(e):
-        e.maybe(X)
+        with e.maybe():
+            e.match(X)
         e.match(X)
 
-    g.gen()
+    g.check()
     1/0
 except gen.FirstFollow as e:
     pass
@@ -21,13 +22,15 @@ try:
     X = g.token("X")
     Y = g.token("Y")
 
-    @g.seq
+    @g.expr
     def a(e):
-        e.maybe(X)
-        e.zero_or_more(Y)
+        with e.maybe():
+            e.match(X)
+        with e.zero_or_more():
+            e.match(Y)
         e.match(X)
 
-    g.gen()
+    g.check()
     1/0
 except gen.FirstFollow as e:
     pass
@@ -38,25 +41,27 @@ try:
     X = g.token("X")
     Y = g.token("Y")
 
-    @g.seq
+    @g.expr
     def a(e):
-        e.maybe(X)
+        with e.maybe():
+            e.match(X)
 
-    @g.seq
+    @g.expr
     def b(e):
-        e.zero_or_more(Y)
+        with e.zero_or_more():
+            e.match(Y)
 
-    @g.seq
+    @g.expr
     def c(e):
         e.match(X)
 
-    @g.seq
+    @g.expr
     def d(e):
         e.match(a)
         e.match(b)
         e.match(c)
 
-    g.gen()
+    g.check()
     1/0
 except gen.FirstFollow as e:
     pass
@@ -69,22 +74,31 @@ X = g.token("X")
 Y = g.token("Y")
 Z = g.token("Z")
 
-@g.seq
+@g.expr
 def a(e):
-    e.maybe(W)
-    e.maybe(X)
-    e.maybe(Y)
-    e.maybe(Z)
+    with e.maybe():
+        e.match(W)
+    with e.maybe():
+        e.match(X)
+    with e.maybe():
+        e.match(Y)
+    with e.maybe():
+        e.match(Z)
 
-@g.seq
+@g.expr
 def b(e):
-    e.maybe(W)
-    e.maybe(X)
+    with e.maybe():
+        e.match(W)
+    with e.maybe():
+        e.match(X)
     e.match(Y)
-    e.maybe(Z)
+    with e.maybe():
+        e.match(Z)
 
 assert a.get_first() == {"W", "X", "Y", "Z", None}
 assert a.get_disallowed_after() == {"W", "X", "Y", "Z", None}
 
 assert b.get_first() == {"W", "X", "Y"}
 assert b.get_disallowed_after() == {"Z"}
+
+print("PASS")
