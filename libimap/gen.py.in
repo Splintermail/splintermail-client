@@ -1,7 +1,10 @@
 import abc
+import argparse
 import contextlib
-import textwrap
+import io
 import re
+import sys
+import textwrap
 
 
 class FirstFirst(Exception):
@@ -72,6 +75,12 @@ class Token(Parsable):
         pass
 
 
+class Snippet:
+    def __init__(self, text, tag=None):
+        self.text = text
+        self.tag = tag
+
+
 class Maybe(Parsable):
     def __init__(self, name):
         self.name = name
@@ -84,8 +93,8 @@ class Maybe(Parsable):
     def add_term(self, term, tag=None):
         self.seq.add_term(term, tag)
 
-    def add_code(self, code):
-        self.seq.add_code(code)
+    def add_code(self, code, tag=None):
+        self.seq.add_code(code, tag)
 
     @cacheable
     def get_first(self, prev=None):
@@ -120,8 +129,8 @@ class ZeroOrMore(Parsable):
     def add_term(self, term, tag=None):
         self.seq.add_term(term, tag)
 
-    def add_code(self, code):
-        self.seq.add_code(code)
+    def add_code(self, code, tag=None):
+        self.seq.add_code(code, tag)
 
     @property
     def title(self):
@@ -166,11 +175,11 @@ class Branches(Parsable):
         )
         self._branch.add_term(term, tag)
 
-    def add_code(self, code):
+    def add_code(self, code, tag=None):
         assert self._branch is not None, (
             "inside a branches() context, but not any branch() subcontext!"
         )
-        self._branch.add_code(code)
+        self._branch.add_code(code, tag)
 
     @contextlib.contextmanager
     def branch(self):
@@ -217,21 +226,21 @@ class Branches(Parsable):
 
 
 class Recovery(Parsable):
-    def __init__(self, name, code=None):
+    def __init__(self, name, code=None, tag=None):
         self.name = name
         # allow defining the recovery code upfront
-        self.code = [] if code is None else [code]
+        self.code = [] if code is None else [Snippet(code, tag)]
         self.seq = Sequence(self.name + '.seq')
         self.after = None
 
     def add_term(self, term, tag=None):
         self.seq.add_term(term, tag)
 
-    def add_code(self, code):
-        self.seq.add_code(code)
+    def add_code(self, code, tag=None):
+        self.seq.add_code(code, tag)
 
-    def add_recovery_code(self, c):
-        self.code.append(c)
+    def add_recovery_code(self, code, tag=None):
+        self.code.append(Snippet(code, tag))
 
     def set_after(self, after):
         assert self.after is None, "can't call set_after() twice!"
@@ -268,11 +277,11 @@ class Sequence(Parsable):
     def add_term(self, term, tag=None):
         self.terms.append((term, tag, []))
 
-    def add_code(self, code):
+    def add_code(self, code, tag=None):
         if not self.terms:
-            self.precode.append(code)
+            self.precode.append(Snippet(code, tag))
         else:
-            self.terms[-1][2].append(code)
+            self.terms[-1][2].append(Snippet(code, tag))
 
     @property
     def title(self):
@@ -432,16 +441,16 @@ class Expression(Parsable):
         self.scopes[-1].add_term(term)
 
     @contextlib.contextmanager
-    def recovery(self, code):
-        term = Recovery(self.name + ".recovery" + str(self.nrec), code)
+    def recovery(self, code=None, tag=None):
+        term = Recovery(self.name + ".recovery" + str(self.nrec), code, tag)
         self.nrec += 1
         self.scopes.append(term)
         yield term
         self.scopes.pop()
         self.scopes[-1].add_term(term)
 
-    def exec(self, code):
-        self.scopes[-1].add_code(code)
+    def exec(self, code, tag=None):
+        self.scopes[-1].add_code(code, tag)
 
     # Non-user-facing methods.
 
@@ -533,13 +542,27 @@ class Python:
     """
     An object with all the methods for generating Python code.
     """
+    def __init__(self, *, prefix="", code_tag="py"):
+        self.prefix = prefix
+        self.code_tag = code_tag
 
-    def print_code(self, code, i):
+    def print_code(self, code, i, f):
         if code is None:
             return
-        code = re.sub("\\$\\$", "out", code)
-        code = re.sub("\\$", "yy_", code)
-        print(textwrap.indent(textwrap.dedent(code), i))
+        for c in code:
+            if c.tag in (None, self.code_tag):
+                print(i + "# USER CODE", file=f)
+                break
+        for c in code:
+            if c.tag in (None, self.code_tag):
+                text = re.sub("\\$\\$", "out", c.text)
+                text = re.sub("\\$", "yy_", text)
+                print(textwrap.indent(textwrap.dedent(text), i), file=f)
+
+    def fn_name(self, title):
+        if not self.prefix:
+            return "_parse_" + title
+        return "_" + self.prefix + "_parse_" + title
 
     def token_list(self, tokens):
         assert tokens
@@ -556,104 +579,111 @@ class Python:
             return ", ".join(u) + ","
         return ", " + ", ".join(u)
 
-    def if_token_in(self, tokens, i, pos=0):
+    def if_token_in(self, tokens, i, f, pos=0):
         token_list = self.token_list(tokens)
         lead = "if" if pos == 0 else "elif"
-        print(i + lead + " (yield from tokens.peek()) in " + token_list + ":")
+        print(i + lead + " (yield from tokens.peek()) in " + token_list + ":", file=f)
 
-    def if_token_not_in(self, tokens, i, pos=0):
+    def if_token_not_in(self, tokens, i, f, pos=0):
         token_list = self.token_list(tokens)
         lead = "if" if pos == 0 else "elif"
-        print(i + lead + " (yield from tokens.peek()) not in " + token_list + ":")
+        print(i + lead + " (yield from tokens.peek()) not in " + token_list + ":", file=f)
 
-    def while_token_in(self, tokens, i):
+    def while_token_in(self, tokens, i, f):
         token_list = self.token_list(tokens)
-        print(i + "while (yield from tokens.peek()) in " + token_list + ":")
+        print(i + "while (yield from tokens.peek()) in " + token_list + ":", file=f)
 
-    def while_token_not_in(self, tokens, i):
+    def while_token_not_in(self, tokens, i, f):
         token_list = self.token_list(tokens)
-        print(i + "while (yield from tokens.peek()) not in " + token_list + ":")
+        print(i + "while (yield from tokens.peek()) not in " + token_list + ":", file=f)
 
-    def gen(self, obj, tag, u, i):
+    def gen(self, obj, tag, u, i, f):
         if isinstance(obj, Token):
-            print(i + "if (yield from tokens.peek()) != " + obj.title + ":")
-            print(i + "    raise SyntaxError()")
+            print(i + "if (yield from tokens.peek()) != " + obj.title + ":", file=f)
+            print(i + "    raise SyntaxError()", file=f)
             if tag is not None:
-                print(i + "yy_" + tag + " = (yield from next(tokens)).val")
+                print(i + "yy_" + tag + " = (yield from next(tokens)).val", file=f)
             else:
-                print(i + "yield from next(tokens)")
+                print(i + "yield from next(tokens)", file=f)
             return
 
         if isinstance(obj, Maybe):
-            self.if_token_in(obj.get_first(), i)
-            self.gen(obj.seq, None, u, i+"    ")
+            self.if_token_in(obj.get_first(), i, f)
+            self.gen(obj.seq, None, u, i+"    ", f)
             return
 
         if isinstance(obj, ZeroOrMore):
-            self.while_token_in(obj.get_first(), i)
-            self.gen(obj.seq, None, u, i+"    ")
+            self.while_token_in(obj.get_first(), i, f)
+            self.gen(obj.seq, None, u, i+"    ", f)
             return
 
         if isinstance(obj, Branches):
             for n, seq in enumerate(obj.branches):
-                self.if_token_in(seq.get_first(), i, pos=n)
-                self.gen(seq, None, u, i+"    ")
-            print(i + "else:")
-            print(i + "    raise SyntaxError()")
+                self.if_token_in(seq.get_first(), i, f, pos=n)
+                self.gen(seq, None, u, i+"    ", f)
+            print(i + "else:", file=f)
+            print(i + "    raise SyntaxError()", file=f)
             return
 
         if isinstance(obj, Recovery):
-            print(i + "try:")
-            self.gen(obj.seq, None, u, i+"    ")
-            self.if_token_not_in(obj.after, i+"    ")
-            print(i + "        raise SyntaxError()")
-            print(i + "except SyntaxError:")
-            self.while_token_not_in(obj.after, i+"    ")
-            print(i + "        yield from next(tokens)")
-            for c in obj.code:
-                self.print_code(c, i+"    ")
+            print(i + "try:", file=f)
+            self.gen(obj.seq, None, u, i+"    ", f)
+            self.if_token_not_in(obj.after, i+"    ", f)
+            print(i + "        raise SyntaxError()", file=f)
+            print(i + "except SyntaxError:", file=f)
+            self.while_token_not_in(obj.after, i+"    ", f)
+            print(i + "        yield from next(tokens)", file=f)
+            self.print_code(obj.code, i+"    ", f)
             return
 
         if isinstance(obj, Sequence):
-            for c in obj.precode:
-                self.print_code(c, i)
+            self.print_code(obj.precode, i, f)
             for term, tag, code in obj.terms:
-                self.gen(term, tag, u, i)
-                for c in code:
-                    self.print_code(c, i)
+                self.gen(term, tag, u, i, f)
+                self.print_code(code, i, f)
             return
 
         if isinstance(obj, Expression):
             if tag is not None:
                 print(
-                    i + "yy_" + tag + " = yield from parse_" + obj.title +
-                    "(tokens" + self.user_args(u) + ")")
+                    i + "yy_" + tag + " = yield from "
+                    + self.fn_name(obj.title) +
+                    "(tokens" + self.user_args(u) + ")"
+                , file=f)
             else:
-                print(i + "yield from parse_" + obj.title + "(tokens" + self.user_args(u) + ")")
+                print(
+                    i + "yield from from " + self.fn_name(obj.title) +
+                    "(tokens" + self.user_args(u) + ")"
+                , file=f)
             return
 
         raise RuntimeError("unrecognized object type: " + type(obj).__name__)
 
-    def define_fn(self, expr, u):
-        print("def parse_" + expr.title + "(tokens" + self.user_args(u) + "):")
-        print("    out = None")
-        self.gen(expr.seq, None, u, i="    ")
-        print("    return out")
+    def define_fn(self, expr, u, f):
+        print(
+            "def " + self.fn_name(expr.title) +
+            "(tokens" + self.user_args(u) + "):"
+        , file=f)
+        print("    out = None", file=f)
+        self.gen(expr.seq, None, u, "    ", f)
+        print("    return out", file=f)
 
-    def gen_file(self, g, u=(), *, fn="None"):
+    def gen_file(self, g, default, *, user_args=(), file=None):
+        u = user_args
+        f = file
         print(textwrap.dedent(r"""
-            class SyntaxError(Exception):
+            class """ + self.prefix + """SyntaxError(Exception):
                 pass
 
-            class Token:
+            class """ + self.prefix + '''Token:
                 def __init__(self, typ, val=None):
                     self.type = typ
                     self.val = val
 
                 def __str__(self):
-                    return "Token(" + str(self.type) + ", " + str(self.val) + ")"
+                    return "''' + self.prefix + '''Token(" + str(self.type) + ", " + str(self.val) + ")"
 
-            class TokenStream:
+            class ''' + self.prefix + """TokenStream:
                 def __init__(self):
                     self.first = None
 
@@ -669,24 +699,24 @@ class Python:
                         return out
                     t = yield
                     return t
-        """.strip("\n")), end="")
+        """.strip("\n")), end="", file=f)
 
         for i, (name, _) in enumerate(g.sorted_tokens()):
-            print(name + " = " + str(i))
-        print("")
+            print(name + " = " + str(i), file=f)
+        print("", file=f)
 
         for name, expr in g.sorted_expressions():
-            self.define_fn(expr, u)
-            print("")
+            self.define_fn(expr, u, f)
+            print("", file=f)
 
-        print("class Parser:")
-        print("    def __init__(")
-        print("        self" + self.user_args(u) + ", fn=" + fn + ", repeat=False")
-        print("    ):")
+        print("class " + self.prefix + "Parser:", file=f)
+        print("    def __init__(", file=f)
+        print("        self" + self.user_args(u) + ", fn=" + self.fn_name(default) + ", repeat=False", file=f)
+        print("    ):", file=f)
         print(textwrap.indent(textwrap.dedent(r"""
                     assert fn is not None, "fn is a required keyword argument"
                     self.fn = fn
-                    self.tokens = TokenStream()
+                    self.tokens = """ + self.prefix + """TokenStream()
                     self.out = None
                     self.user_args = (""" + self.user_args(u, after=True) + """)
                     self.gen = self.mkgen()
@@ -713,7 +743,7 @@ class Python:
                         if not self.repeat:
                             self.done = True
                         return out
-        """.strip("\n")), "    "), end="")
+        """.strip("\n")), "    "), end="", file=f)
 
 
 class C:
@@ -740,6 +770,19 @@ class C:
             for tag in popped:
                 print("    #undef $" + tag)
 
+    def __init__(self, *, code_tag="c"):
+        self.code_tag = code_tag
+
+    def print_code(self, code):
+        if code is None:
+            return
+        for c in code:
+            if c.tag in (None, "c"):
+                print("    // USER CODE")
+                break
+        for c in code:
+            if c.tag in (None, "c"):
+                print(textwrap.indent(textwrap.dedent(c.text), "    "))
 
     def token_check(self, first):
         t = sorted(t for t in first if t is not None)
@@ -886,27 +929,20 @@ class C:
             print("        CONSUME_TOKEN;")
             print("        return 0;")
             print("    }")
-            if obj.code is not None:
-                print("    // USER CODE")
-                for c in obj.code:
-                    print(textwrap.indent(textwrap.dedent(c), "    "))
+            self.print_code(obj.code)
             print("yy"+ str(state) + "_done:")
             return state + self.nstates(obj), stack
 
         if isinstance(obj, Sequence):
             var.new_scope()
-            for c in obj.precode:
-                print(textwrap.indent(textwrap.dedent(c), "    "))
+            self.print_code(obj.precode)
             for i, (t, tag, code) in enumerate(obj.terms):
                 if tag is not None:
                     assert isinstance(t, (Token, Expression)), "wrong type for tag: " + type(t).__name__
                     assert t.type is not None, "obj " + t.title + " has tag " + tag + " but no type!"
                     var.define(tag, t.type, stack)
                 state, stack = self.gen(t, state, stack, var, tag)
-                if code:
-                    print("    // USER CODE")
-                for c in code:
-                    print(textwrap.indent(textwrap.dedent(c), "    "))
+                self.print_code(code)
                 if i+1 != len(obj.terms):
                     print("")
             var.pop_scope()
@@ -1274,3 +1310,357 @@ class C:
                 return 0;
             }
         """.strip("\n")), end="")
+
+
+### Meta Parser ###
+
+class ParsedName:
+    def __init__(self, name, tag):
+        self.name = name
+        self.tag = tag
+
+    def process(self, g, e):
+        e.match(g.get_name(self.name), self.tag)
+
+class ParsedBranches:
+    def __init__(self):
+        self.branches = []
+
+    def process(self, g, e):
+        with e.branches() as b:
+            for parsed_branch in self.branches:
+                with b.branch():
+                    parsed_branch.process(g, e)
+
+class ParsedRecovery:
+    def __init__(self, sub):
+        self.sub = sub
+        self.code = []
+
+    def process(self, g, e):
+        with e.recovery() as r:
+            self.sub.process(g, e)
+        for c in self.code:
+            r.add_recovery_code(c)
+
+class ParsedGroup:
+    def __init__(self, sub):
+        self.sub = sub
+        self.m = "1"
+        self.code = []
+
+    def process(self, g, e):
+        if self.m == "1":
+            self.sub.process(g, e)
+        elif self.m == "?":
+            with e.maybe():
+                self.sub.process(g, e)
+        elif self.m == "*":
+            with e.zero_or_more():
+                self.sub.process(g, e)
+        else:
+            raise RuntimeError("unrecognized multiplier: " + str(self.m))
+        for c in self.code:
+            e.exec(c)
+
+class ParsedSequence:
+    def __init__(self):
+        self.precode = []
+        self.terms = []
+
+    def process(self, g, e):
+        for c in self.precode:
+            e.exec(c)
+        for term in self.terms:
+            term.process(g, e)
+
+class ParsedDoc:
+    def __init__(self):
+        self.precode = []
+        self.defs = []
+        self.postcode = []
+
+    def build_grammar(self):
+        g = Grammar()
+
+        # first declare all tokens and expressions
+        for name, val in self.defs:
+            if val is None:
+                _ = g.token(name.name, name.tag)
+            else:
+                e = g.expr(name.name)
+                e.type = name.tag
+
+        # then define all the expressions
+        for name, val in self.defs:
+            if val is None:
+                continue
+            e = g.get_name(name.name)
+            val.process(g, e)
+
+        g.check()
+
+        return self.precode, g, self.postcode
+
+# BEGIN GENERATED CODE
+# END GENERATED CODE
+
+class CharStream:
+    def __init__(self):
+        self._lookahead = []
+
+    def peek(self, index=0):
+        while len(self._lookahead) <= index:
+            temp = yield
+            self._lookahead.append(temp)
+        return self._lookahead[index]
+
+    def __next__(self):
+        if self._lookahead:
+            return self._lookahead.pop()
+        temp = yield
+        return temp
+
+    def empty(self):
+        return not self._lookahead
+
+class Discard:
+    pass
+
+class Tokenizer:
+    def __init__(self):
+        self.cs = CharStream()
+        self.out = []
+
+        def _gen():
+            yield from self._tokenize_many()
+        self.gen = _gen()
+        next(self.gen)
+
+    def feed(self, c):
+        if self.gen is None:
+            raise RuntimeError("tokenizer is already done!")
+
+        if c is None:
+            try:
+                # This should finish the generator.
+                self.gen.send(None)
+                raise RuntimeError("tokenizer failed to exit after None")
+            except StopIteration:
+                return self.out
+
+        self.gen.send(c)
+        out = self.out
+        self.out = []
+        return out
+
+    def _tokenize_many(self):
+        while True:
+            token = yield from self._tokenize()
+            if token is None:
+                break
+            if isinstance(token, Discard):
+                continue
+            self.out.append(token)
+
+    def _tokenize(self):
+        c = yield from self.cs.peek()
+
+        if c is None:
+            return None
+
+        if c in " \r\n\t":
+            return (yield from self._ignore_whitespace())
+
+        if c in "#":
+            return (yield from self._ignore_comment())
+
+        singles = {
+            "*": ASTERISK,
+            ":": COLON,
+            "=": EQ,
+            "<": LANGLE,
+            "[": LBRACKET,
+            "(": LPAREN,
+            "|": PIPE,
+            ">": RANGLE,
+            "]": RBRACKET,
+            ")": RPAREN,
+            ";": SEMI,
+        }
+        if c in singles:
+            yield from next(self.cs)
+            return MetaToken(singles[c], c)
+
+        if c == "{":
+            return (yield from self._tokenize_code())
+
+        if c in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_":
+            return (yield from self._tokenize_text())
+
+        raise RuntimeError("invalid character in tokenizer" + str(ord(c)))
+
+    def _ignore_whitespace(self):
+        # discard the rest of the line
+        while True:
+            c = yield from self.cs.peek()
+            if c is None or c not in " \r\n\t":
+                break
+            yield from next(self.cs)
+        return Discard()
+
+    def _ignore_comment(self):
+        # discard the rest of the line
+        while True:
+            c = yield from self.cs.peek()
+            if c is None or c in "\r\n":
+                break
+            yield from next(self.cs)
+        return Discard()
+
+    def _tokenize_code(self):
+        # Some number of leading '{' chars which we discard...
+        count = 0
+        while True:
+            c = yield from self.cs.peek()
+            if c != "{":
+                break
+            yield from next(self.cs)
+            count += 1
+
+        # ... and code body, which we keep...
+        text = ""
+        while True:
+            c = yield from self.cs.peek()
+            if c is None:
+                raise RuntimeError("unterminated code block:\n" + text)
+            if c != "}":
+                text += yield from next(self.cs)
+                continue
+
+            # ... and a matching number of closing '}' chars which we discard.
+            matched = 1
+            while matched < count:
+                c = yield from self.cs.peek(matched)
+                if c != "}":
+                    break
+                matched += 1
+
+            if matched != count:
+                # oops, these were actually part of the code body
+                for _ in range(matched):
+                    text += yield from next(self.cs)
+                continue
+
+            # discard these, they're not part of the code body
+            for _ in range(matched):
+                yield from next(self.cs)
+            return MetaToken(CODE, text)
+
+    def _tokenize_text(self):
+        text = ""
+        while True:
+            c = yield from self.cs.peek()
+            if c is None:
+                break
+            if c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_0123456789":
+                break
+            text += yield from next(self.cs)
+        return MetaToken(TEXT, text)
+
+    def iter(self, chars):
+        def _chars(self):
+            yield from chars
+            yield None
+
+        for c in chars:
+            tokens = self.feed(c)
+            if tokens is None:
+                break
+            yield from tokens
+        yield MetaToken(EOF, "")
+
+
+@contextlib.contextmanager
+def read_template(template, tag="GENERATED CODE", file=None):
+    if template is None:
+        yield
+        return
+
+    with open(template) as f:
+        lines = iter(f)
+        # passtru pre-tag lines
+        for line in lines:
+            print(line, end="", file=file)
+            if "BEGIN " + tag in line:
+                break
+        else:
+            print('did not find "BEGIN ' + tag + '" line in template!', file=sys.stderr)
+            sys.exit(1)
+
+        # discard inter-tag lines
+        for line in lines:
+            if "END " in line:
+                yield  # generated code gets printed here
+                print(line, end="", file=file)
+                break
+        else:
+            print('did not find "END ' + tag + '" line in template!', file=sys.stderr)
+            sys.exit(1)
+
+        # passtru post-tag lines
+        for line in lines:
+            print(line, end="", file=file)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("input", nargs="?")
+    parser.add_argument("-t", "--template")
+    parser.add_argument("-T", "--template-tag", default="GENERATED CODE")
+    parser.add_argument("-o", "--output")
+    parser.add_argument("-c", "--check", action="store_true")
+    args = parser.parse_args()
+
+    assert not args.check or args.output, "--check requires --output"
+
+    if args.input is None:
+        text = sys.stdin.read()
+    else:
+        with open(args.input) as f:
+            text = f.read()
+
+    out = io.StringIO()
+    with read_template(args.template, args.template_tag, out):
+        parser = MetaParser()
+
+        for t in Tokenizer().iter(text):
+            # the last time this is called it should return non-None
+            parsed_doc = parser.feed(t)
+
+        assert parsed_doc, "didn't get a doc!"
+
+        precode, g, postcode = parsed_doc.build_grammar()
+
+        generator = Python()
+
+        generator.print_code(precode, "", out)
+
+        # TODO: find a better way to configure the root a grammar
+        generator.gen_file(g, "line", file=out)
+
+        generator.print_code(postcode, "", out)
+
+    if args.check:
+        with open(args.output) as f:
+            old = f.read()
+        if out.getvalue() == old:
+            sys.exit(0)
+        print(args.output + " would be modified", file=sys.stderr)
+        sys.exit(1)
+
+    if args.output is not None:
+        with open(args.output, "w") as f:
+            f.write(out.getvalue())
+    else:
+        print(out.getvalue(), end="", flush=True)

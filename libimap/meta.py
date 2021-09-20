@@ -1,11 +1,16 @@
 import textwrap
 
+# start with a clean gen.py, since we need to import it ourselves
+with open("gen.py.in") as fin:
+    with open("gen.py", "w") as fout:
+        fout.write(fin.read())
+
 import gen
 
 # Example grammar:
 #
 # EOL;
-# NUM:i;
+# NUM;
 # PLUS;
 # MINUS;
 # MULT;
@@ -143,7 +148,7 @@ def doc(e):
     with e.zero_or_more():
         # pre-code
         e.match(CODE, "code")
-        e.exec("$$.precode.append($code)")
+        e.exec("$$.precode.append(Snippet($code))")
 
     e.match(definition, "def")
     e.exec("$$.defs.append($def)")
@@ -154,307 +159,12 @@ def doc(e):
     with e.zero_or_more():
         # post-code
         e.match(CODE, "code")
-        e.exec("$$.postcode.append($code)")
+        e.exec("$$.postcode.append(Snippet($code))")
 
     e.match(EOF)
 
 g.check()
 
-print("import sys")
-print("import textwrap")
-print("")
-print("import gen")
-print("")
-print(textwrap.dedent(r"""
-class ParsedName:
-    def __init__(self, name, tag):
-        self.name = name
-        self.tag = tag
-
-    def process(self, g, e):
-        e.match(g.get_name(self.name), self.tag)
-
-class ParsedBranches:
-    def __init__(self):
-        self.branches = []
-
-    def process(self, g, e):
-        with e.branches() as b:
-            for parsed_branch in self.branches:
-                with b.branch():
-                    parsed_branch.process(g, e)
-
-class ParsedRecovery:
-    def __init__(self, sub):
-        self.sub = sub
-        self.code = []
-
-    def process(self, g, e):
-        with e.recovery(None) as r:
-            self.sub.process(g, e)
-        for c in self.code:
-            r.add_recovery_code(c)
-
-class ParsedGroup:
-    def __init__(self, sub):
-        self.sub = sub
-        self.m = "1"
-        self.code = []
-
-    def process(self, g, e):
-        if self.m == "1":
-            self.sub.process(g, e)
-        elif self.m == "?":
-            with e.maybe():
-                self.sub.process(g, e)
-        elif self.m == "*":
-            with e.zero_or_more():
-                self.sub.process(g, e)
-        else:
-            raise RuntimeError("unrecognized multiplier: " + str(self.m))
-        for c in self.code:
-            e.exec(c)
-
-class ParsedSequence:
-    def __init__(self):
-        self.precode = []
-        self.terms = []
-
-    def process(self, g, e):
-        for c in self.precode:
-            e.exec(c)
-        for term in self.terms:
-            term.process(g, e)
-
-class ParsedDoc:
-    def __init__(self):
-        self.precode = []
-        self.defs = []
-        self.postcode = []
-
-    def generate(self, generator):
-        g = gen.Grammar()
-
-        # first declare all tokens and expressions
-        for name, val in self.defs:
-            if val is None:
-                _ = g.token(name.name, name.tag)
-            else:
-                e = g.expr(name.name)
-                e.type = name.tag
-
-        # then define all the expressions
-        for name, val in self.defs:
-            if val is None:
-                continue
-            e = g.get_name(name.name)
-            val.process(g, e)
-
-        g.check()
-
-        # then generate the code
-        for c in self.precode:
-            print(textwrap.dedent(c))
-
-        generator.gen_file(g)
-
-        for c in self.postcode:
-            print(textwrap.dedent(c))
-"""))
-
-gen.Python().gen_file(g, fn="parse_doc")
-
-print("")
-print(textwrap.dedent(r"""
-class CharStream:
-    def __init__(self):
-        self._lookahead = []
-
-    def peek(self, index=0):
-        while len(self._lookahead) <= index:
-            temp = yield
-            self._lookahead.append(temp)
-        return self._lookahead[index]
-
-    def __next__(self):
-        if self._lookahead:
-            return self._lookahead.pop()
-        temp = yield
-        return temp
-
-    def empty(self):
-        return not self._lookahead
-
-class Discard:
-    pass
-
-class Tokenizer:
-    def __init__(self):
-        self.cs = CharStream()
-        self.out = []
-
-        def _gen():
-            yield from self._tokenize_many()
-        self.gen = _gen()
-        next(self.gen)
-
-    def feed(self, c):
-        if self.gen is None:
-            raise RuntimeError("tokenizer is already done!")
-
-        if c is None:
-            try:
-                # This should finish the generator.
-                self.gen.send(None)
-                raise RuntimeError("tokenizer failed to exit after None")
-            except StopIteration:
-                return self.out
-
-        self.gen.send(c)
-        out = self.out
-        self.out = []
-        return out
-
-    def _tokenize_many(self):
-        while True:
-            token = yield from self._tokenize()
-            if token is None:
-                break
-            if isinstance(token, Discard):
-                continue
-            self.out.append(token)
-
-    def _tokenize(self):
-        c = yield from self.cs.peek()
-
-        if c is None:
-            return None
-
-        if c in " \r\n\t":
-            return (yield from self._ignore_whitespace())
-
-        if c in "#":
-            return (yield from self._ignore_comment())
-
-        singles = {
-            "*": ASTERISK,
-            ":": COLON,
-            "=": EQ,
-            "<": LANGLE,
-            "[": LBRACKET,
-            "(": LPAREN,
-            "|": PIPE,
-            ">": RANGLE,
-            "]": RBRACKET,
-            ")": RPAREN,
-            ";": SEMI,
-        }
-        if c in singles:
-            yield from next(self.cs)
-            return Token(singles[c], c)
-
-        if c == "{":
-            return (yield from self._tokenize_code())
-
-        if c in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_":
-            return (yield from self._tokenize_text())
-
-        raise RuntimeError("invalid character in tokenizer" + str(ord(c)))
-
-    def _ignore_whitespace(self):
-        # discard the rest of the line
-        while True:
-            c = yield from self.cs.peek()
-            if c is None or c not in " \r\n\t":
-                break
-            yield from next(self.cs)
-        return Discard()
-
-    def _ignore_comment(self):
-        # discard the rest of the line
-        while True:
-            c = yield from self.cs.peek()
-            if c is None or c in "\r\n":
-                break
-            yield from next(self.cs)
-        return Discard()
-
-    def _tokenize_code(self):
-        # Some number of leading '{' chars which we discard...
-        count = 0
-        while True:
-            c = yield from self.cs.peek()
-            if c != "{":
-                break
-            yield from next(self.cs)
-            count += 1
-
-        # ... and code body, which we keep...
-        text = ""
-        while True:
-            c = yield from self.cs.peek()
-            if c is None:
-                raise RuntimeError("unterminated code block:\n" + text)
-            if c != "}":
-                text += yield from next(self.cs)
-                continue
-
-            # ... and a matching number of closing '}' chars which we discard.
-            matched = 1
-            while matched < count:
-                c = yield from self.cs.peek(matched)
-                if c != "}":
-                    break
-                matched += 1
-
-            if matched != count:
-                # oops, these were actually part of the code body
-                for _ in range(matched):
-                    text += yield from next(self.cs)
-                continue
-
-            # discard these, they're not part of the code body
-            for _ in range(matched):
-                yield from next(self.cs)
-            return Token(CODE, text)
-
-    def _tokenize_text(self):
-        text = ""
-        while True:
-            c = yield from self.cs.peek()
-            if c is None:
-                break
-            if c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_0123456789":
-                break
-            text += yield from next(self.cs)
-        return Token(TEXT, text)
-
-    def iter(self, chars):
-        def _chars(self):
-            yield from chars
-            yield None
-
-        for c in chars:
-            tokens = self.feed(c)
-            if tokens is None:
-                break
-            yield from tokens
-        yield Token(EOF, "")
-
-if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        print("usage: " + sys.argv[0] + " FILE > OUT", file=sys.stderr)
-        sys.exit(1)
-
-    with open(sys.argv[1]) as f:
-        text = f.read()
-
-    parser = Parser()
-
-    for t in Tokenizer().iter(text):
-        # the last time this is called it should return non-None
-        parsed_doc = parser.feed(t)
-    assert parsed_doc, "didn't get a doc!"
-
-    g = parsed_doc.generate(gen.Python())
-"""))
+with open("gen.py", "w") as f:
+    with gen.read_template("gen.py.in", file=f):
+        gen.Python(prefix="Meta").gen_file(g, "doc", file=f)

@@ -60,11 +60,10 @@ line =
             Token(NUM, 3),
             Token(EOL),
         ]
-        p = Parser(parse_line, repeat=True)
+        p = Parser(repeat=True)
         for t in tokens:
             val = p.feed(t)
             if val is not None:
                 print(val)
-
 }}
 
