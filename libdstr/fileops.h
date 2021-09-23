@@ -1,5 +1,4 @@
 #ifdef _WIN32
-    typedef unsigned int mode_t;
     #include <sys/utime.h>
 #else
     #include <dirent.h>
@@ -9,7 +8,7 @@
 
 // certain filesystem calls are interceptable, for the purpose of testing.
 typedef struct {
-    int (*mkdir)(const char *path, unsigned int mode);
+    int (*mkdir)(const char *path, mode_t mode);
 } fileops_harness_t;
 
 extern fileops_harness_t fileops_harness;

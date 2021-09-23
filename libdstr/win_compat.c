@@ -141,7 +141,7 @@ int compat_gethostname(char* name, size_t len){
     return (ret != 0) ? 0 : -1;
 }
 
-int compat_mkdir(const char* name, unsigned int mode){
+int compat_mkdir(const char* name, mode_t mode){
     (void)mode;
     return _mkdir(name);
 }

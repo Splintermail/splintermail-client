@@ -13,6 +13,8 @@
 
     #define S_ISDIR(mode)  (((mode) & S_IFMT) == S_IFDIR)
 
+    typedef unsigned int mode_t;
+
     // for compat_access()
 #ifndef X_OK
     #define X_OK 00
@@ -47,7 +49,7 @@
     FILE* compat_fopen(const char* pathname, const char* mode);
     int compat_access(const char *path, int amode);
     int compat_gethostname(char* name, size_t len);
-    int compat_mkdir(const char* name, unsigned int mode);
+    int compat_mkdir(const char* name, mode_t mode);
     // compat_remove works on directories the way remove() works in unix
     int compat_remove(const char* name);
     int compat_strerror_r(int errnum, char* buf, size_t buflen);

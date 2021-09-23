@@ -167,7 +167,7 @@ static derr_t test_mkdirs(void){
 
 static fileops_harness_t old_harness;
 
-static int test_mkdir(const char *path, unsigned int mode){
+static int test_mkdir(const char *path, mode_t mode){
     if(strcmp(path, "test_mkdirs/a/b/c/d/e/f") == 0){
         printf("rejecting mkdir(%s)\n", path);
         errno = ENOMEM;
