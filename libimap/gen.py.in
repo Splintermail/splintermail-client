@@ -598,6 +598,12 @@ class Python:
         print(i + "while (yield from tokens.peek()) not in " + token_list + ":", file=f)
 
     def gen(self, obj, tag, u, i, f):
+        try:
+            self._gen(obj, tag, u, i, f)
+        except Exception as e:
+            raise RuntimeError("generating for " + obj.title) from e
+
+    def _gen(self, obj, tag, u, i, f):
         if isinstance(obj, Token):
             print(i + "if (yield from tokens.peek()) != " + obj.title + ":", file=f)
             print(i + "    raise SyntaxError()", file=f)
@@ -672,7 +678,7 @@ class Python:
         u = user_args
         f = file
         print(textwrap.dedent(r"""
-            class """ + self.prefix + """SyntaxError(Exception):
+            class """.lstrip("\n") + self.prefix + """SyntaxError(Exception):
                 pass
 
             class """ + self.prefix + '''Token:
@@ -699,7 +705,7 @@ class Python:
                         return out
                     t = yield
                     return t
-        """.strip("\n")), end="", file=f)
+        """), file=f)
 
         for i, (name, _) in enumerate(g.sorted_tokens()):
             print(name + " = " + str(i), file=f)
@@ -1322,11 +1328,24 @@ class ParsedName:
     def process(self, g, e):
         e.match(g.get_name(self.name), self.tag)
 
+class ParsedSnippet:
+    def __init__(self, text, tag=None):
+        self.text = text
+        self.tag = tag
+
+    def process(self, g, e):
+        e.exec(self.text, self.tag)
+
 class ParsedBranches:
     def __init__(self):
         self.branches = []
 
     def process(self, g, e):
+        # Collapse single-branch expressions.
+        if len(self.branches) == 1:
+            self.branches[0].process(g, e)
+            return
+
         with e.branches() as b:
             for parsed_branch in self.branches:
                 with b.branch():
@@ -1340,39 +1359,33 @@ class ParsedRecovery:
     def process(self, g, e):
         with e.recovery() as r:
             self.sub.process(g, e)
-        for c in self.code:
-            r.add_recovery_code(c)
+            for c in self.code:
+                r.add_recovery_code(c.text, c.tag)
 
-class ParsedGroup:
-    def __init__(self, sub):
-        self.sub = sub
-        self.m = "1"
-        self.code = []
+class ParsedMultiplier:
+    def __init__(self, term, multiplier):
+        self.term = term
+        self.multiplier = multiplier
 
     def process(self, g, e):
-        if self.m == "1":
-            self.sub.process(g, e)
-        elif self.m == "?":
+        if self.multiplier == "1":
+            self.term.process(g, e)
+        elif self.multiplier == "?":
             with e.maybe():
-                self.sub.process(g, e)
-        elif self.m == "*":
+                self.term.process(g, e)
+        elif self.multiplier == "*":
             with e.zero_or_more():
-                self.sub.process(g, e)
+                self.term.process(g, e)
         else:
-            raise RuntimeError("unrecognized multiplier: " + str(self.m))
-        for c in self.code:
-            e.exec(c)
+            raise RuntimeError("unrecognized multiplier: " + str(self.multiplier))
 
 class ParsedSequence:
     def __init__(self):
-        self.precode = []
-        self.terms = []
+        self.elems = []
 
     def process(self, g, e):
-        for c in self.precode:
-            e.exec(c)
-        for term in self.terms:
-            term.process(g, e)
+        for elem in self.elems:
+            elem.process(g, e)
 
 class ParsedDoc:
     def __init__(self):
@@ -1483,6 +1496,7 @@ class Tokenizer:
             "[": LBRACKET,
             "(": LPAREN,
             "|": PIPE,
+            "?": QUESTION,
             ">": RANGLE,
             "]": RBRACKET,
             ")": RPAREN,

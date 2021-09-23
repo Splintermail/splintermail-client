@@ -9,44 +9,47 @@
 # LPAREN;
 # RPAREN;
 
-mult_op = (
+# mult_op = MULT | DIV;
+# sum_op = PLUS | MINUS;
+# factor = NUM | LPAREN expr RPAREN;
+# term = factor *(mult_op factor);
+# expr = term *(sum_op term);
+# line = < expr > EOL;
+
+mult_op =
 | MULT {$$=1}
 | DIV {$$=0}
-);
+;
 
-sum_op = (
+sum_op =
 | PLUS {$$=1}
 | MINUS {$$=-1}
-);
+;
 
-factor = (
+factor =
 | NUM:n {$$=$n}
 | LPAREN expr:e RPAREN {$$=$e}
-);
+;
 
 term =
     factor:f1 {$$=$f1}
-    [
+    *(
         mult_op:m
         factor:f2
         {$$=$$*$f2 if $m else $$/$f2}
-    ]*
+    )
 ;
 
 expr =
     term:t1 {$$=$t1}
-    [
+    *(
         sum_op:s
         term:t2
         {$$=$$ + $s*$t2}
-    ]*
+    )
 ;
 
-line =
-    <
-        expr:e { $$ = $e }
-    > {{ print("(bad line)") }}
-    EOL;
+line = < expr:e { $$ = $e } ?  { print("bad line") } > EOL;
 
 {{
     if __name__ == "__main__":
@@ -66,4 +69,3 @@ line =
             if val is not None:
                 print(val)
 }}
-
