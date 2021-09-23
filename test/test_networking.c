@@ -405,14 +405,14 @@ exit:
     return (derr_pair_t){.client=e, .server=server_error};
 }
 
-#define EXPECT_ERRORS(eclient, eserver) \
+#define EXPECT_ERRORS(name, eclient, eserver) \
     do { \
-        bool keep_going = true; \
+        bool test_passed = true; \
         if(eclient != errors.client.type){ \
             TRACE(&e, "expected client to return %x but got %x\n", \
                       FD(error_to_dstr(eclient)), \
                       FD(error_to_dstr(errors.client.type))); \
-            keep_going = false; \
+            test_passed = false; \
             if(errors.client.type){ \
                 TRACE(&e, "client trace:\n%x\n", FD(&errors.client.msg)); \
             } \
@@ -424,7 +424,7 @@ exit:
             TRACE(&e, "expected server to return %x but got %x\n", \
                       FD(error_to_dstr(eserver)), \
                       FD(error_to_dstr(errors.server.type))); \
-            keep_going = false; \
+            test_passed = false; \
             if(errors.server.type){ \
                 TRACE(&e, "server trace:\n%x\n", FD(&errors.server.msg)); \
             } \
@@ -432,72 +432,81 @@ exit:
         if(errors.server.type){ \
             DROP_VAR(&errors.server); \
         } \
-        if(keep_going == false){ \
-            ORIG(&e, E_VALUE, "test failed: returned wrong values"); \
+        if(test_passed){ \
+            LOG_INFO("-- %x: PASS\n", FS(name)); \
+        }else{ \
+            LOG_ERROR("-- %x: FAILED\n", FS(name)); \
+            TRACE_ORIG(&e, E_VALUE, "test failed"); \
+            DUMP(e); \
+            DROP_VAR(&e); \
+            LOG_ERROR("---------------------\n"); \
+            TRACE(&e_summary, "failed test: %x\n", FS(name)); \
+            any_failed = true; \
         } \
-        LOG_INFO("-- test passed\n"); \
     } while(0)
 
 static derr_t test_ssl_client(void){
     derr_t e = E_OK;
+    bool any_failed = false;
+    derr_t e_summary = E_OK;
     // basic test, vanilla client and server
     {
-        LOG_INFO("\n-- testing vanilla client vs vanilla server\n");
+        char *name = "vanilla client vs vanilla server";
         server_spec_t srv_spec = {.vanilla=true, .port=2010};
         client_spec_t cli_spec = {.vanilla=true};
         derr_pair_t errors = do_ssl_test(&srv_spec, &cli_spec);
-        EXPECT_ERRORS(E_NONE, E_NONE);
+        EXPECT_ERRORS(name, E_NONE, E_NONE);
     }
     // client tests, vanilla client and custom servers
     {
-        LOG_INFO("\n-- testing vanilla client vs SSLv2 server\n");
+        char *name = "vanilla client vs SSLv2 server";
         unsigned long ssl_types = NOPROTOCOLS ^ NOSSL2;
         server_spec_t srv_spec = {.vanilla=false, .port=2010, .ssl_types=ssl_types};
         client_spec_t cli_spec = {.vanilla=true};
         derr_pair_t errors = do_ssl_test(&srv_spec, &cli_spec);
-        EXPECT_ERRORS(E_CONN, E_CONN);
+        EXPECT_ERRORS(name, E_CONN, E_CONN);
     }
     {
-        LOG_INFO("\n-- testing vanilla client vs SSLv3 server\n");
+        char *name = "vanilla client vs SSLv3 server";
         unsigned long ssl_types = NOPROTOCOLS ^ NOSSL3;
         server_spec_t srv_spec = {.vanilla=false, .port=2010, .ssl_types=ssl_types};
         client_spec_t cli_spec = {.vanilla=true};
         derr_pair_t errors = do_ssl_test(&srv_spec, &cli_spec);
-        EXPECT_ERRORS(E_CONN, E_CONN);
+        EXPECT_ERRORS(name, E_CONN, E_CONN);
     }
     {
-        LOG_INFO("\n-- testing vanilla client vs TLSv1-only server\n");
+        char *name = "vanilla client vs TLSv1-only server";
         unsigned long ssl_types = NOPROTOCOLS ^ NOTLS1;
         server_spec_t srv_spec = {.vanilla=false, .port=2010, .ssl_types=ssl_types};
         client_spec_t cli_spec = {.vanilla=true};
         derr_pair_t errors = do_ssl_test(&srv_spec, &cli_spec);
-        EXPECT_ERRORS(E_NONE, E_NONE);
+        EXPECT_ERRORS(name, E_CONN, E_CONN);
     }
     {
-        LOG_INFO("\n-- testing vanilla client vs TLSv1.1-only server\n");
+        char *name = "vanilla client vs TLSv1.1-only server";
         unsigned long ssl_types = NOPROTOCOLS ^ NOTLS11;
         server_spec_t srv_spec = {.vanilla=false, .port=2010, .ssl_types=ssl_types};
         client_spec_t cli_spec = {.vanilla=true};
         derr_pair_t errors = do_ssl_test(&srv_spec, &cli_spec);
-        EXPECT_ERRORS(E_NONE, E_NONE);
+        EXPECT_ERRORS(name, E_CONN, E_CONN);
     }
     {
-        LOG_INFO("\n-- testing vanilla client vs TLSv1.2-only server\n");
+        char *name = "vanilla client vs TLSv1.2-only server";
         unsigned long ssl_types = NOPROTOCOLS ^ NOTLS12;
         server_spec_t srv_spec = {.vanilla=false, .port=2010, .ssl_types=ssl_types};
         client_spec_t cli_spec = {.vanilla=true};
         derr_pair_t errors = do_ssl_test(&srv_spec, &cli_spec);
-        EXPECT_ERRORS(E_NONE, E_NONE);
+        EXPECT_ERRORS(name, E_NONE, E_NONE);
     }
     // OpenSSL 1.1.1 has TLSv1.3
 #if OPENSSL_VERSION_NUMBER >= 0x10101000L
     {
-        LOG_INFO("\n-- testing vanilla client vs TLSv1.3-only server\n");
+        char *name = "vanilla client vs TLSv1.3-only server";
         unsigned long ssl_types = NOPROTOCOLS ^ NOTLS13;
         server_spec_t srv_spec = {.vanilla=false, .port=2010, .ssl_types=ssl_types};
         client_spec_t cli_spec = {.vanilla=true};
         derr_pair_t errors = do_ssl_test(&srv_spec, &cli_spec);
-        EXPECT_ERRORS(E_NONE, E_NONE);
+        EXPECT_ERRORS(name, E_NONE, E_NONE);
     }
 #endif
     // server tests, custom clients and vanilla server
@@ -508,78 +517,82 @@ static derr_t test_ssl_client(void){
        tests, so we won't erase them until OpenSSL 1.1.0 is ubiquitous. */
 #if OPENSSL_VERSION_NUMBER < 0x10100000L
     {
-        LOG_INFO("\n-- testing SSLv2 client vs vanilla server\n");
+        char *name = "SSLv2 client vs vanilla server";
         server_spec_t srv_spec = {.vanilla=true, .port=2010};
         unsigned long ssl_types = NOPROTOCOLS ^ NOSSL2;
         client_spec_t cli_spec = {.vanilla=false, .ssl_types=ssl_types};
         derr_pair_t errors = do_ssl_test(&srv_spec, &cli_spec);
-        EXPECT_ERRORS(E_CONN, E_CONN);
+        EXPECT_ERRORS(name, E_CONN, E_CONN);
     }
     {
-        LOG_INFO("\n-- testing SSLv3 client vs vanilla server\n");
+        char *name = "SSLv3 client vs vanilla server";
         server_spec_t srv_spec = {.vanilla=true, .port=2010};
         unsigned long ssl_types = NOPROTOCOLS ^ NOSSL3;
         client_spec_t cli_spec = {.vanilla=false, .ssl_types=ssl_types};
         derr_pair_t errors = do_ssl_test(&srv_spec, &cli_spec);
-        EXPECT_ERRORS(E_CONN, E_CONN);
+        EXPECT_ERRORS(name, E_CONN, E_CONN);
     }
 #endif
     {
-        LOG_INFO("\n-- testing TLSv1 client vs vanilla server\n");
+        char *name = "TLSv1 client vs vanilla server";
         server_spec_t srv_spec = {.vanilla=true, .port=2010};
         unsigned long ssl_types = NOPROTOCOLS ^ NOTLS1;
         client_spec_t cli_spec = {.vanilla=false, .ssl_types=ssl_types};
         derr_pair_t errors = do_ssl_test(&srv_spec, &cli_spec);
-        EXPECT_ERRORS(E_NONE, E_NONE);
+        EXPECT_ERRORS(name, E_CONN, E_CONN);
     }
     {
-        LOG_INFO("\n-- testing TLSv1.1 client vs vanilla server\n");
+        char *name = "TLSv1.1 client vs vanilla server";
         server_spec_t srv_spec = {.vanilla=true, .port=2010};
         unsigned long ssl_types = NOPROTOCOLS ^ NOTLS11;
         client_spec_t cli_spec = {.vanilla=false, .ssl_types=ssl_types};
         derr_pair_t errors = do_ssl_test(&srv_spec, &cli_spec);
-        EXPECT_ERRORS(E_NONE, E_NONE);
+        EXPECT_ERRORS(name, E_CONN, E_CONN);
     }
     {
-        LOG_INFO("\n-- testing TLSv1.2 client vs vanilla server\n");
+        char *name = "TLSv1.2 client vs vanilla server";
         server_spec_t srv_spec = {.vanilla=true, .port=2010};
         unsigned long ssl_types = NOPROTOCOLS ^ NOTLS12;
         client_spec_t cli_spec = {.vanilla=false, .ssl_types=ssl_types};
         derr_pair_t errors = do_ssl_test(&srv_spec, &cli_spec);
-        EXPECT_ERRORS(E_NONE, E_NONE);
+        EXPECT_ERRORS(name, E_NONE, E_NONE);
     }
     // OpenSSL 1.1.1 has TLSv1.3
 #if OPENSSL_VERSION_NUMBER >= 0x10101000L
     {
-        LOG_INFO("\n-- testing TLSv1.3 client vs vanilla server\n");
+        char *name = "TLSv1.3 client vs vanilla server";
         server_spec_t srv_spec = {.vanilla=true, .port=2010};
         unsigned long ssl_types = NOPROTOCOLS ^ NOTLS13;
         client_spec_t cli_spec = {.vanilla=false, .ssl_types=ssl_types};
         derr_pair_t errors = do_ssl_test(&srv_spec, &cli_spec);
-        EXPECT_ERRORS(E_NONE, E_NONE);
+        EXPECT_ERRORS(name, E_NONE, E_NONE);
     }
 #endif
     // more client testing: make sure bad server certs are properly rejected
     {
-        LOG_INFO("\n-- testing vanilla client vs expired cert\n");
+        char *name = "vanilla client vs expired cert";
         server_spec_t srv_spec = {.vanilla=true, .port=2010, .keypair="expired"};
         client_spec_t cli_spec = {.vanilla=true};
         derr_pair_t errors = do_ssl_test(&srv_spec, &cli_spec);
-        EXPECT_ERRORS(E_SSL, E_CONN);
+        EXPECT_ERRORS(name, E_SSL, E_CONN);
     }
     {
-        LOG_INFO("\n-- testing vanilla client vs wronghost cert\n");
+        char *name = "vanilla client vs wronghost cert";
         server_spec_t srv_spec = {.vanilla=true, .port=2010, .keypair="wronghost"};
         client_spec_t cli_spec = {.vanilla=true};
         derr_pair_t errors = do_ssl_test(&srv_spec, &cli_spec);
-        EXPECT_ERRORS(E_SSL, E_CONN);
+        EXPECT_ERRORS(name, E_SSL, E_CONN);
     }
     {
-        LOG_INFO("\n-- testing vanilla client vs unknown cert\n");
+        char *name = "vanilla client vs unknown cert";
         server_spec_t srv_spec = {.vanilla=true, .port=2010, .keypair="unknown"};
         client_spec_t cli_spec = {.vanilla=true};
         derr_pair_t errors = do_ssl_test(&srv_spec, &cli_spec);
-        EXPECT_ERRORS(E_SSL, E_CONN);
+        EXPECT_ERRORS(name, E_SSL, E_CONN);
+    }
+
+    if(any_failed){
+        ORIG(&e_summary, E_VALUE, "some tests failed");
     }
 
     return e;

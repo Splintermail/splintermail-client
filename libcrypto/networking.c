@@ -11,6 +11,31 @@
 #include <openssl/err.h>
 #include <openssl/opensslv.h>
 
+static derr_t set_safe_protocol(SSL_CTX *ctx){
+    derr_t e = E_OK;
+
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+    // pre-1.1.0
+    long opts = SSL_OP_NO_SSLv2
+              | SSL_OP_NO_SSLv3
+              | SSL_OP_NO_TLSv1
+              | SSL_OP_NO_TLSv1_1;
+    long lret = SSL_CTX_set_options(ctx->ctx, opts);
+    if(!(lret & opts)){
+        trace_ssl_errors(&e);
+        ORIG(&e, E_SSL, "failed to limit SSL protocols");
+    }
+#else
+    // post-1.1.0
+    long lret = SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
+    if(lret != 1){
+        trace_ssl_errors(&e);
+        ORIG(&e, E_SSL, "failed to limit SSL protocols");
+    }
+#endif
+
+    return e;
+}
 
 
 // forward declaration of function only exposed to tests
@@ -133,13 +158,6 @@ derr_t ssl_context_new_client(ssl_context_t* ctx){
         trace_ssl_errors(&e);
         ORIG(&e, E_NOMEM, "failed to create SSL context");
     }
-    // restrict client to only settle on TLS
-    lret = SSL_CTX_set_options(ctx->ctx, SSL_OP_NO_SSLv2
-                                              | SSL_OP_NO_SSLv3);
-    if(!(lret & (SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3))){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "failed to limit SSL methods", cleanup);
-    }
 #else
     // openssl 1.1.0 API
     const SSL_METHOD* meth = TLS_client_method();
@@ -150,6 +168,7 @@ derr_t ssl_context_new_client(ssl_context_t* ctx){
         ORIG(&e, E_NOMEM, "failed to create SSL context");
     }
 #endif
+    PROP_GO(&e, set_safe_protocol(ctx->ctx), cleanup);
 
     // load SSL certificate location
     PROP_GO(&e, ssl_context_load_from_os(ctx), cleanup);
@@ -207,13 +226,6 @@ derr_t ssl_context_new_server(ssl_context_t* ctx, const char* certfile,
         trace_ssl_errors(&e);
         ORIG(&e, E_NOMEM, "failed to create SSL context");
     }
-    // restrict server to only settle on TLS
-    lret = SSL_CTX_set_options(ctx->ctx, SSL_OP_NO_SSLv2
-                                              | SSL_OP_NO_SSLv3);
-    if(!(lret & (SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3))){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "failed to limit SSL methods", cleanup);
-    }
     long ulret;
 #else
     // openssl 1.1.0 API
@@ -227,6 +239,7 @@ derr_t ssl_context_new_server(ssl_context_t* ctx, const char* certfile,
     }
     unsigned long ulret;
 #endif
+    PROP_GO(&e, set_safe_protocol(ctx->ctx), cleanup);
 
     // set key and cert
     int ret = SSL_CTX_use_certificate_chain_file(ctx->ctx, certfile);
