@@ -1242,7 +1242,7 @@ fail_temp:
 static listener_t listener = {.bio=NULL};
 static bool should_continue = true;
 
-void ditm_signal_handler(int signum){
+static void ditm_signal_handler(int signum){
     (void) signum;
     //if(signum == SIGINT || signum == SIGTERM){
         LOG_ERROR("caught signal\n");

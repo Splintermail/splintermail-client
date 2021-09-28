@@ -855,7 +855,7 @@ int do_main(int argc, char* argv[], bool windows_service){
     if(!should_dump_config){
         /* limit options before loading the config, so the config can have
            options useful to multiple commands without causing errors */
-        if(windows_service || (newargc > 1 && strcmp("citm", argv[1]) == 0)){
+        if((newargc > 1 && strcmp("citm", argv[1]) == 0)){
             opt_spec_t *ok_opts[] = {
                 &o_debug, &o_config,
                 #ifdef BUILD_DEBUG

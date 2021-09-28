@@ -1,6 +1,6 @@
 #include "libdstr/libdstr.h"
 #include "ui.h"
-#include "libditm/libditm.h"
+#include "libcitm/libcitm.h"
 
 #ifndef _WIN32
 
@@ -16,7 +16,7 @@ VOID WINAPI SvcCtrlHandler( DWORD dwCtrl ){
             // announce we are gonna try and stop
             ReportSvcStatus(SERVICE_STOP_PENDING, NO_ERROR, 0);
              // Signal the service to stop
-            ditm_signal_handler(0);
+            stop_loop_on_signal(0);
             return;
 
         case SERVICE_CONTROL_INTERROGATE:

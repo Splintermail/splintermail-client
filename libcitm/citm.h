@@ -9,3 +9,6 @@ derr_t citm(
    const string_builder_t *maildir_root,
    bool indicate_ready
 );
+
+// this is exposed so that the windows service-handler can call it manually
+void stop_loop_on_signal(int signum);

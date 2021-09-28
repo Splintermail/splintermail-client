@@ -45,8 +45,6 @@ derr_t ditm_mangle_corrupted(int infd, int outfd, size_t* outlen);
 
 derr_t ditm_inject_message(ditm_t* ditm, const dstr_t* subj, const dstr_t* msg);
 
-void ditm_signal_handler(int signum);
-
 derr_t ditm_loop(const char* rhost, unsigned int rport,
                  const char* ditm_dir, unsigned int port,
                  const char* api_host, unsigned int api_port,

@@ -100,7 +100,7 @@ fail:
 
 
 static bool hard_exit = false;
-static void stop_loop_on_signal(int signum){
+void stop_loop_on_signal(int signum){
     (void) signum;
     LOG_ERROR("caught signal\n");
     if(hard_exit) exit(1);
