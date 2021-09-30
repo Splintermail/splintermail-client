@@ -482,10 +482,11 @@ if(APPLE)
     set(raw_installer "${PROJECT_BINARY_DIR}/installer/build/install_splintermail-${PROJECT_VERSION}.pkg")
     add_custom_command(
         OUTPUT "${raw_installer}"
-        COMMAND "${MUKIPKG}" --quiet installer
+        COMMAND "${MUNKIPKG}" --quiet installer
         DEPENDS ${file_deps} ${tgt_deps}
         COMMENT "creating raw installer" VERBATIM
         )
+    add_custom_target(raw_installer DEPENDS "${raw_installer}")
 
     # files and command for actually building the "final" installer
     set(resources "${PROJECT_BINARY_DIR}/installer/resources")
@@ -508,7 +509,7 @@ if(APPLE)
         )
 
     # finally, create the installer target
-    add_custom_target(installer DEPENDS "${installer_out}")
+    add_custom_target(installer DEPENDS raw_installer "${installer_out}")
 
     # also create the uninstaller
     set(preinstall_in "${supp_dir}/osx/uninstaller-pre")
@@ -525,7 +526,7 @@ if(APPLE)
     set(uninstaller_out "uninstaller/build/uninstall_splintermail.pkg")
     add_custom_command(
         OUTPUT "${uninstaller_out}"
-        COMMAND "${MUKIPKG}" --quiet uninstaller
+        COMMAND "${MUNKIPKG}" --quiet uninstaller
         DEPENDS "${preinstall_out}" "${postinstall_out}" "${buildinfo_out}"
         COMMENT "creating uninstaller" VERBATIM
         )
@@ -707,7 +708,7 @@ elseif(UNIX)
 
         # execute makepkg
         set(pkg_arch "x86_64")
-        set(pkgout "${PROJECT_BINARY_DIR}/installer/splintermail-${PROJECT_VERSION}-1-${pkg_arch}.pkg.tar.xz")
+        set(pkgout "${PROJECT_BINARY_DIR}/installer/splintermail-${PROJECT_VERSION}-1-${pkg_arch}.pkg.tar.zst")
         add_custom_command(
             OUTPUT "${pkgout}"
             COMMAND makepkg -f
@@ -816,7 +817,7 @@ elseif(WIN32)
             DEPENDS "${bwixobj}" "${msi_out}" "${msi32}"
             WORKING_DIRECTORY "${PROJECT_BINARY_DIR}/installer"
             )
-        add_custom_target(bundle DEPENDS "${bundle_out}")
+        add_custom_target(installer DEPENDS "${bundle_out}")
     endif()
 
 endif()

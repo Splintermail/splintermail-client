@@ -25,8 +25,8 @@ echo "$rootca" | "QWER["join", "\" \"", "sign_csr_args"]REWQ"
 # turn the certificate into a proper chain
 cat "QWER["get","keygen","ca_path"]REWQ" >> "QWER["get","keygen","cert_path"]REWQ"
 
-# cleanup unecessary files
-rm -f "$outdir/$(echo QWER ca_name REWQ | sed -e 's/\..*//').srl"
+# cleanup unecessary files (srl naming is unreliable across platforms)
+rm -f "$outdir/$(echo QWER ca_name REWQ | sed -e 's/[^a-z].*//')"*.srl
 rm -f "$outdir/sig_req.csr"
 
 unset rootca

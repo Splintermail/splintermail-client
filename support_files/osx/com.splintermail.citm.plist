@@ -19,6 +19,6 @@
   <key>UserName</key>
   <string>_splintermail</string>
   <!-- <key>StandardErrorPath</key>
-  <string>HOME/.ditm/ditm_log.stderr</string> -->
+  <string>HOME/.citm/citm_log.stderr</string> -->
 </dict>
 </plist>

@@ -46,13 +46,59 @@ derr_t do_popen(const char* args, const dstr_t* input, dstr_t* output){
     return e;
 }
 
+// for_each_file_in_dir2 version of:
+//  rm -f "$outdir/$(echo QWER ca_name REWQ | sed -e 's/[^a-z].*//')"*.srl
+static derr_t remove_srl(
+    const string_builder_t *base, const dstr_t *file, bool isdir, void *arg
+){
+    (void)arg;
+    derr_t e = E_OK;
+
+    if(isdir) return e;
+    if(!dstr_endswith(file, &DSTR_LIT(".srl"))) return e;
+
+    // check prefix manually
+    DSTR_STATIC(ca_name, "QWER ca_name REWQ");
+    for(size_t i = 0; i < ca_name.len && i < file->len; i++){
+        char c = ca_name.data[i];
+        if(c < 'a' || c > 'z'){
+            // prefix ended; this is a match
+            break;
+        }
+        if(file->data[i] != c){
+            // no match
+            return e;
+        }
+    }
+
+    string_builder_t path = sb_append(base, FD(file));
+    PROP(&e, dunlink_path(&path) );
+
+    return e;
+}
+
+
 derr_t keygen_main(int argc, char **argv){
     derr_t e = E_OK;
 
     // log to stdout
     logger_add_fileptr(LOG_LVL_DEBUG, stdout);
-    // // also log to a log file
-    // logger_add_filename(LOG_LVL_DEBUG, "C:/testlog");
+
+    // also log to a log file in %TEMP%
+    bool ok;
+    dstr_t temp = dgetenv(DSTR_LIT("TEMP"), &ok);
+    DSTR_VAR(logfile, 256);
+    if(!ok){
+        LOG_ERROR("$TEMP not set\n");
+    }else{
+        IF_PROP(&e, FMT(&logfile, "%x\\splintermail-keygen.log", FD(&temp)) ){
+            TRACE(&e, "unable to configure to logfile in %TEMP%\n");
+            DUMP(e);
+            DROP_VAR(&e);
+        }else{
+            logger_add_filename(LOG_LVL_DEBUG, logfile.data);
+        }
+    }
 
     LOG_DEBUG("keygen called like this:\n");
     for(int i = 0; i < argc; i++){
@@ -74,19 +120,19 @@ derr_t keygen_main(int argc, char **argv){
 
     bool gen_needed = false;
     // check if we already have the certificate authority
-    DSTR_VAR(temp, 256);
-    PROP(&e, FMT(&temp, "%xQWER ca_name REWQ", FS(output_dir)) );
-    gen_needed |= !file_r_access(temp.data);
+    DSTR_VAR(path, 256);
+    PROP(&e, FMT(&path, "%xQWER ca_name REWQ", FS(output_dir)) );
+    gen_needed |= !file_r_access(path.data);
 
     // check if we already have the key
-    temp.len = 0;
-    PROP(&e, FMT(&temp, "%xQWER key_name REWQ", FS(output_dir)) );
-    gen_needed |= !file_r_access(temp.data);
+    path.len = 0;
+    PROP(&e, FMT(&path, "%xQWER key_name REWQ", FS(output_dir)) );
+    gen_needed |= !file_r_access(path.data);
 
     // check if we already have the cert
-    temp.len = 0;
-    PROP(&e, FMT(&temp, "%xQWER cert_name REWQ", FS(output_dir)) );
-    gen_needed |= !file_r_access(temp.data);
+    path.len = 0;
+    PROP(&e, FMT(&path, "%xQWER cert_name REWQ", FS(output_dir)) );
+    gen_needed |= !file_r_access(path.data);
 
     // if we don't need to continue... don't continue
     if(gen_needed == false){
@@ -200,16 +246,9 @@ derr_t keygen_main(int argc, char **argv){
 
     // cleanup unecessary files
     {
-        // rm -f "$outdir/$(echo QWER ca_name REWQ | sed -e 's/\..*//').srl"
-        DSTR_VAR(srlname, 256);
-        FMT(&srlname, "QWER ca_name REWQ");
-        srlname.len -= 4;
-        DSTR_STATIC(new_ext, ".srl");
-        PROP(&e, dstr_append(&srlname, &new_ext) );
-
-        DSTR_VAR(fname, 1024);
-        PROP(&e, FMT(&fname, "%x%x", FS(output_dir), FD(&srlname)) );
-        PROP(&e, dremove(fname.data) );
+        // rm -f "$outdir/$(echo QWER ca_name REWQ | sed -e 's/[^a-z].*//')"*.srl
+        string_builder_t output_path = SB(FS(output_dir));
+        PROP(&e, for_each_file_in_dir2(&output_path, remove_srl, NULL));
     }
     {
         // rm -f "$outdir/sig_req.csr"

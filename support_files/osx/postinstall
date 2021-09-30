@@ -94,8 +94,6 @@ if [ ! -f "$cert_file" ] || [ ! -f "$key_file" ] || [ ! -f "$ca_file" ] ; then
     security add-trusted-cert -d -r trustRoot \
         -k "/Library/Keychains/System.keychain" \
         "$ca_file"
-    # make sure splintermail can read them
-    chown _splintermail:_splintermail "$ca_file" "$key_file" "$cert_file"
 fi
 
 # enable/start the launchd service

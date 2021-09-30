@@ -76,8 +76,8 @@
                       KeyPath='yes'/>
                 <ServiceInstall Id='serviceinstall'
                                 Name='splintermail'
-                                DisplayName='Splintermail DITM'
-                                Description='Splintermail Decrypter-in-the-Middle'
+                                DisplayName='Splintermail CITM'
+                                Description='Splintermail Crypto-in-the-Middle'
                                 Start='auto'
                                 Vital='yes'
                                 ErrorControl='normal'
@@ -216,7 +216,7 @@
                   HideTarget='no'
                   Impersonate='no'/>
 
-    <!--delete the ditm directory entirely-->
+    <!--delete the splintermail directory entirely-->
     <Binary Id="rm_rf_binary" SourceFile="../rm_rf.exe"/>
     <CustomAction Id='delete_data_action'
                   BinaryKey='rm_rf_binary'
@@ -231,7 +231,7 @@
       <Custom Action='keygen_action' After="InstallFiles">
         NOT REMOVE
       </Custom>
-      <!--delete the ditm directory only on uninstall-->
+      <!--delete the splintermail directory only on uninstall-->
       <Custom Action='delete_data_action' Before="InstallFinalize">
         (REMOVE="ALL") AND (NOT UPGRADINGPRODUCTCODE)
       </Custom>

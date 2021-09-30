@@ -5,7 +5,7 @@
 #
 
 # stop / disable the launchd service
-launchctl unload -w "/Library/LaunchDaemons/com.splintermail.citm.plist"
+launchctl unload -w "/Library/LaunchDaemons/com.splintermail.citm.plist" || true
 
 # get hash of original file
 orig_config="QWER share_dir REWQ/splintermail.conf.orig"
@@ -28,7 +28,7 @@ rm -f "$orig_config"
 
 # before deleting the old CA, attempt to untrust it
 if [ -f "QWER sm_dir REWQ/QWER ca_name REWQ" ] ; then
-    security remove-trusted-cert -d "QWER sm_dir REWQ/QWER ca_name REWQ"
+    security remove-trusted-cert -d "QWER sm_dir REWQ/QWER ca_name REWQ" || true
 fi
 
 # delete the data folder (not handled by installer)

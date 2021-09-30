@@ -6,7 +6,7 @@ post_install() {
     fi
 
     local share_dir sm_dir
-    local lold_ca_file old_key_file old_cert_file
+    local old_ca_file old_key_file old_cert_file
     local ca_file key_file cert_file
     share_dir="QWER share_dir REWQ"
     sm_dir="QWER sm_dir REWQ"
@@ -35,20 +35,24 @@ post_install() {
         mv "$old_ca_file" "$ca_file" || return 7
     fi
 
+    # remove the cert_file that may accidentally have been installed in 0.2.0
+    if [ -f "/etc/ca-certificates/trust-source/anchors/QWER old_cert_name REWQ" ] ; then
+        rm "/etc/ca-certificates/trust-source/anchors/QWER old_cert_name REWQ" || return 8
+        update-ca-trust extract || return 9
+    fi
+
     # generate the SSL certificates, if they don't exist already
     if [ ! -f "$cert_file" ] || [ ! -f "$key_file" ] || [ ! -f "$ca_file" ] ; then
         # generate the files
         sh "QWER share_dir REWQ/keygen.sh" "QWER share_dir REWQ/openssl.cnf" \
-                "$sm_dir" || return 8
+                "$sm_dir" || return 10
         # trust the generated certificate authority
-        cp "$cert_file" "/etc/ca-certificates/trust-source/anchors/" \
-                || return 9
-        update-ca-trust extract || return 10
+        cp "$ca_file" "/etc/ca-certificates/trust-source/anchors/" \
+                || return 11
+        update-ca-trust extract || return 12
         # make sure splintermail can read them
         chown splintermail:splintermail \
-                "$cert_file" \
-                "$key_file" \
-                "$ca_file" || return 11
+                "$cert_file" "$key_file" "$ca_file" || return 13
     fi
 
 }
@@ -63,11 +67,21 @@ post_upgrade() {
     fi
 }
 
+pre_remove() {
+    # if splintermail.service is active, stop it
+    if systemctl is-active splintermail.service >/dev/null ; then
+        systemctl stop splintermail.service || true
+    fi
+    systemctl daemon-reload || true
+}
+
 post_remove() {
     oldversion="$1"
+    # remove the cert_file that may accidentally have been installed in 0.2.0
+    rm -f "/etc/ca-certificates/trust-source/anchors/QWER old_cert_name REWQ"
     # untrust the certificate generated at install
-    rm "/etc/ca-certificates/trust-source/anchors/QWER ca_name REWQ" \
-    && update-ca-trust extract || true
+    rm -f "/etc/ca-certificates/trust-source/anchors/QWER ca_name REWQ"
+    update-ca-trust extract || true
     # delete files
     rm -rf "QWER sm_dir REWQ" || true
     # delete service user

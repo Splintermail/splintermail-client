@@ -68,14 +68,23 @@ fi
 if [ -f "QWER sm_dir REWQ/QWER old_ca_name REWQ" ] ; then
     mv "QWER sm_dir REWQ/QWER old_ca_name REWQ" "QWER sm_dir REWQ/QWER ca_name REWQ"
 fi
+# remove the cert_file that may accidentally have been installed in 0.2.0
+if [ -f "/etc/pki/ca-trust/source/anchors/QWER old_cert_name REWQ" ] ; then
+    rm "/etc/pki/ca-trust/source/anchors/QWER old_cert_name REWQ" \
+        && update-ca-trust extract || true
+fi
 # generate the SSL certificates, if they don't exist already
 if [ ! -f "QWER sm_dir REWQ/QWER cert_name REWQ" ] \
         || [ ! -f "QWER sm_dir REWQ/QWER key_name REWQ" ] \
         || [ ! -f "QWER sm_dir REWQ/QWER ca_name REWQ" ] ; then
     # generate the files
     sh "QWER share_dir REWQ/keygen.sh" "QWER share_dir REWQ/openssl.cnf" "QWER sm_dir REWQ"
+    # make sure splintermail can read them
+    chown splintermail:splintermail "QWER sm_dir REWQ/QWER ca_name REWQ"
+    chown splintermail:splintermail "QWER sm_dir REWQ/QWER cert_name REWQ"
+    chown splintermail:splintermail "QWER sm_dir REWQ/QWER key_name REWQ"
     # trust the generated certificate authority
-    cp "QWER sm_dir REWQ/QWER cert_name REWQ" "/etc/pki/ca-trust/source/anchors/"
+    cp "QWER sm_dir REWQ/QWER ca_name REWQ" "/etc/pki/ca-trust/source/anchors/"
     update-ca-trust extract
 fi
 exit 0
@@ -89,12 +98,18 @@ exit 0
 # upgrade if $1=1, uninstall if $1==0
 # this restarts the service if it is running
 %systemd_postun_with_restart splintermail.service
+# remove the cert_file that may accidentally have been installed in 0.2.0
+if [ -f "/etc/pki/ca-trust/source/anchors/QWER old_cert_name REWQ" ] ; then
+    rm "/etc/pki/ca-trust/source/anchors/QWER old_cert_name REWQ" \
+        && update-ca-trust extract || true
+fi
 # untrust the certificate generated at install
 if [ "$1" == 0 ] ; then
+    # (remove the cert_file that may accidentally have been installed in 0.2.0)
     rm "/etc/pki/ca-trust/source/anchors/QWER ca_name REWQ" \
         && update-ca-trust extract || true
     # remove the splintermail directory
-    rm -rf "QWER sm_dir REWQ"
+    rm -rf "QWER sm_dir REWQ" || true
 fi
 exit 0
 
