@@ -330,8 +330,8 @@ add_library(ui_harness ui_harness.c)
 define_file_logname_for_target(ui_harness)
 default_compile_options(ui_harness TRUE)
 
-set(print_help_in "${CMAKE_SOURCE_DIR}/print_help.h.in")
-set(print_help_out "${CMAKE_BINARY_DIR}/print_help.h")
+set(print_help_in "${PROJECT_SOURCE_DIR}/print_help.h.in")
+set(print_help_out "${PROJECT_BINARY_DIR}/print_help.h")
 preprocessed_copy("${print_help_in}" "${print_help_out}")
 define_file_logname_for_source("${print_help_in}" "${print_help_out}")
 
