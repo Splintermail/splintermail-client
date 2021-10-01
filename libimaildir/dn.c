@@ -158,9 +158,10 @@ static void loader_close(derr_t *e, loader_t *loader){
     loader->content = NULL;
 
     // if imalidir fails in this call, this will overwrite e with E_IMAILDIR
-    PROP_GO(e,
-        imaildir_dn_close_msg(loader->m, loader->key, &loader->fd),
-    fail);
+    derr_t e2 = imaildir_dn_close_msg(loader->m, loader->key, &loader->fd);
+    if(is_error(e2)){
+        PROP_VAR_GO(e, &e2, fail);
+    }
 
 fail:
     return;
