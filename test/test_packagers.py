@@ -419,6 +419,9 @@ class OSXTestSuite(BSDTestSuite):
         self.has_rageclean = False
 
     def assert_ca_is_trusted(self):
+        # check by trying to connect to the server, or else the certificate
+        # lifetime policy won't actually apply
+        cmd = ('security', 'verify-cert', 'https://127.0.0.1:1993')
         cmd = ('security', 'dump-trust-settings', '-d')
         p = Popen(cmd, stdout=PIPE)
         out = p.stdout.read()
@@ -427,6 +430,7 @@ class OSXTestSuite(BSDTestSuite):
         assert b"splintermail.localhost" in out, out.decode('utf8')
 
     def assert_ca_not_trusted(self):
+        # unlike assert_ca_is_trusted, we can't assume the server is running
         cmd = ('security', 'dump-trust-settings', '-d')
         p = Popen(cmd, stdout=PIPE)
         out = p.stdout.read()

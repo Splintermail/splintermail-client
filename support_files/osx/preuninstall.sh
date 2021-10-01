@@ -26,10 +26,8 @@ fi
 # delete the default config file (not handled by installer)
 rm -f "$orig_config"
 
-# before deleting the old CA, attempt to untrust it
-if [ -f "QWER sm_dir REWQ/QWER ca_name REWQ" ] ; then
-    security remove-trusted-cert -d "QWER sm_dir REWQ/QWER ca_name REWQ" || true
-fi
+# before attempt to untrust/delete the old certificate it
+security delete-certificate -c "QWER ca_common_name REWQ" || true
 
 # delete the data folder (not handled by installer)
 rm -rf "QWER sm_dir REWQ"
