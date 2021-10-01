@@ -12,7 +12,6 @@ endmacro()
 add_petname("")
 
 if(DISABLE_ASAN)
-    message(FATAL_ERROR "disabled asan??")
     # release builds already have no asan
     add_library(petname_noasan ALIAS petname)
 else()
