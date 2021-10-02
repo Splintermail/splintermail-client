@@ -538,220 +538,6 @@ class Grammar:
             expr.check()
 
 
-class Python:
-    """
-    An object with all the methods for generating Python code.
-    """
-    def __init__(self, *, prefix="", code_tag="py"):
-        self.prefix = prefix
-        self.code_tag = code_tag
-
-    def print_code(self, code, i, f):
-        if code is None:
-            return
-        for c in code:
-            if c.tag in (None, self.code_tag):
-                print(i + "# USER CODE", file=f)
-                break
-        for c in code:
-            if c.tag in (None, self.code_tag):
-                text = re.sub("\\$\\$", "out", c.text)
-                text = re.sub("\\$", "yy_", text)
-                print(textwrap.indent(textwrap.dedent(text), i), file=f)
-
-    def fn_name(self, title):
-        if not self.prefix:
-            return "_parse_" + title
-        return "_" + self.prefix + "_parse_" + title
-
-    def token_list(self, tokens):
-        assert tokens
-        tokens = sorted(t for t in tokens if t is not None)
-        if len(tokens) > 1:
-            return "(" + ", ".join(tokens) + ")"
-        else:
-            return "(" + tokens[0] + ",)"
-
-    def user_args(self, u, after=False):
-        if not u:
-            return ""
-        if after:
-            return ", ".join(u) + ","
-        return ", " + ", ".join(u)
-
-    def if_token_in(self, tokens, i, f, pos=0):
-        token_list = self.token_list(tokens)
-        lead = "if" if pos == 0 else "elif"
-        print(i + lead + " (yield from tokens.peek()) in " + token_list + ":", file=f)
-
-    def if_token_not_in(self, tokens, i, f, pos=0):
-        token_list = self.token_list(tokens)
-        lead = "if" if pos == 0 else "elif"
-        print(i + lead + " (yield from tokens.peek()) not in " + token_list + ":", file=f)
-
-    def while_token_in(self, tokens, i, f):
-        token_list = self.token_list(tokens)
-        print(i + "while (yield from tokens.peek()) in " + token_list + ":", file=f)
-
-    def while_token_not_in(self, tokens, i, f):
-        token_list = self.token_list(tokens)
-        print(i + "while (yield from tokens.peek()) not in " + token_list + ":", file=f)
-
-    def gen(self, obj, tag, u, i, f):
-        try:
-            self._gen(obj, tag, u, i, f)
-        except Exception as e:
-            raise RuntimeError("generating for " + obj.title) from e
-
-    def _gen(self, obj, tag, u, i, f):
-        if isinstance(obj, Token):
-            print(i + "if (yield from tokens.peek()) != " + obj.title + ":", file=f)
-            print(i + "    raise SyntaxError()", file=f)
-            if tag is not None:
-                print(i + "yy_" + tag + " = (yield from next(tokens)).val", file=f)
-            else:
-                print(i + "yield from next(tokens)", file=f)
-            return
-
-        if isinstance(obj, Maybe):
-            self.if_token_in(obj.get_first(), i, f)
-            self.gen(obj.seq, None, u, i+"    ", f)
-            return
-
-        if isinstance(obj, ZeroOrMore):
-            self.while_token_in(obj.get_first(), i, f)
-            self.gen(obj.seq, None, u, i+"    ", f)
-            return
-
-        if isinstance(obj, Branches):
-            for n, seq in enumerate(obj.branches):
-                self.if_token_in(seq.get_first(), i, f, pos=n)
-                self.gen(seq, None, u, i+"    ", f)
-            print(i + "else:", file=f)
-            print(i + "    raise SyntaxError()", file=f)
-            return
-
-        if isinstance(obj, Recovery):
-            print(i + "try:", file=f)
-            self.gen(obj.seq, None, u, i+"    ", f)
-            self.if_token_not_in(obj.after, i+"    ", f)
-            print(i + "        raise SyntaxError()", file=f)
-            print(i + "except SyntaxError:", file=f)
-            self.while_token_not_in(obj.after, i+"    ", f)
-            print(i + "        yield from next(tokens)", file=f)
-            self.print_code(obj.code, i+"    ", f)
-            return
-
-        if isinstance(obj, Sequence):
-            self.print_code(obj.precode, i, f)
-            for term, tag, code in obj.terms:
-                self.gen(term, tag, u, i, f)
-                self.print_code(code, i, f)
-            return
-
-        if isinstance(obj, Expression):
-            if tag is not None:
-                print(
-                    i + "yy_" + tag + " = yield from "
-                    + self.fn_name(obj.title) +
-                    "(tokens" + self.user_args(u) + ")"
-                , file=f)
-            else:
-                print(
-                    i + "yield from from " + self.fn_name(obj.title) +
-                    "(tokens" + self.user_args(u) + ")"
-                , file=f)
-            return
-
-        raise RuntimeError("unrecognized object type: " + type(obj).__name__)
-
-    def define_fn(self, expr, u, f):
-        print(
-            "def " + self.fn_name(expr.title) +
-            "(tokens" + self.user_args(u) + "):"
-        , file=f)
-        print("    out = None", file=f)
-        self.gen(expr.seq, None, u, "    ", f)
-        print("    return out", file=f)
-
-    def gen_file(self, g, default, *, user_args=(), file=None):
-        u = user_args
-        f = file
-        print(textwrap.dedent(r"""
-            class """.lstrip("\n") + self.prefix + """SyntaxError(Exception):
-                pass
-
-            class """ + self.prefix + '''Token:
-                def __init__(self, typ, val=None):
-                    self.type = typ
-                    self.val = val
-
-                def __str__(self):
-                    return "''' + self.prefix + '''Token(" + str(self.type) + ", " + str(self.val) + ")"
-
-            class ''' + self.prefix + """TokenStream:
-                def __init__(self):
-                    self.first = None
-
-                def peek(self):
-                    if self.first is None:
-                        self.first = yield
-                    return self.first.type
-
-                def __next__(self):
-                    if self.first:
-                        out = self.first
-                        self.first = None
-                        return out
-                    t = yield
-                    return t
-        """), file=f)
-
-        for i, (name, _) in enumerate(g.sorted_tokens()):
-            print(name + " = " + str(i), file=f)
-        print("", file=f)
-
-        for name, expr in g.sorted_expressions():
-            self.define_fn(expr, u, f)
-            print("", file=f)
-
-        print("class " + self.prefix + "Parser:", file=f)
-        print("    def __init__(", file=f)
-        print("        self" + self.user_args(u) + ", fn=" + self.fn_name(default) + ", repeat=False", file=f)
-        print("    ):", file=f)
-        print(textwrap.indent(textwrap.dedent(r"""
-                    assert fn is not None, "fn is a required keyword argument"
-                    self.fn = fn
-                    self.tokens = """ + self.prefix + """TokenStream()
-                    self.out = None
-                    self.user_args = (""" + self.user_args(u, after=True) + """)
-                    self.gen = self.mkgen()
-                    self.repeat = repeat
-                    self.done = False
-
-                def mkgen(self):
-                    def _gen():
-                        self.out = yield from self.fn(self.tokens, *self.user_args)
-                    gen = _gen()
-                    next(gen)
-                    return gen
-
-                def feed(self, t):
-                    if self.done:
-                        raise RuntimeError("parser is already done!")
-                    try:
-                        return self.gen.send(t)
-                    except StopIteration:
-                        self.gen = None
-                        out = self.out
-                        self.out = None
-                        self.gen = self.mkgen()
-                        if not self.repeat:
-                            self.done = True
-                        return out
-        """.strip("\n")), "    "), end="", file=f)
-
-
 class C:
     """
     An object with all the methods for generating C code.
@@ -1318,6 +1104,221 @@ class C:
         """.strip("\n")), end="")
 
 
+class Python:
+    """
+    An object with all the methods for generating Python code.
+    """
+    def __init__(self, *, prefix="", code_tag="py"):
+        self.prefix = prefix
+        self.code_tag = code_tag
+
+    def print_code(self, code, i, f):
+        if code is None:
+            return
+        for c in code:
+            if c.tag in (None, self.code_tag):
+                print(i + "# USER CODE", file=f)
+                break
+        for c in code:
+            if c.tag in (None, self.code_tag):
+                text = re.sub("\\$\\$", "out", c.text)
+                text = re.sub("\\$", "yy_", text)
+                print(textwrap.indent(textwrap.dedent(text), i), file=f)
+
+    def fn_name(self, title):
+        if not self.prefix:
+            return "_parse_" + title
+        return "_" + self.prefix + "_parse_" + title
+
+    def token_list(self, tokens):
+        assert tokens
+        tokens = sorted(t for t in tokens if t is not None)
+        if len(tokens) > 1:
+            return "(" + ", ".join(tokens) + ")"
+        else:
+            return "(" + tokens[0] + ",)"
+
+    def user_args(self, u, after=False):
+        if not u:
+            return ""
+        if after:
+            return ", ".join(u) + ","
+        return ", " + ", ".join(u)
+
+    def if_token_in(self, tokens, i, f, pos=0):
+        token_list = self.token_list(tokens)
+        lead = "if" if pos == 0 else "elif"
+        print(i + lead + " (yield from tokens.peek()) in " + token_list + ":", file=f)
+
+    def if_token_not_in(self, tokens, i, f, pos=0):
+        token_list = self.token_list(tokens)
+        lead = "if" if pos == 0 else "elif"
+        print(i + lead + " (yield from tokens.peek()) not in " + token_list + ":", file=f)
+
+    def while_token_in(self, tokens, i, f):
+        token_list = self.token_list(tokens)
+        print(i + "while (yield from tokens.peek()) in " + token_list + ":", file=f)
+
+    def while_token_not_in(self, tokens, i, f):
+        token_list = self.token_list(tokens)
+        print(i + "while (yield from tokens.peek()) not in " + token_list + ":", file=f)
+
+    def gen(self, obj, tag, u, i, f):
+        try:
+            self._gen(obj, tag, u, i, f)
+        except Exception as e:
+            raise RuntimeError("generating for " + obj.title) from e
+
+    def _gen(self, obj, tag, u, i, f):
+        if isinstance(obj, Token):
+            print(i + "if (yield from tokens.peek()) != " + obj.title + ":", file=f)
+            print(i + "    raise SyntaxError()", file=f)
+            if tag is not None:
+                print(i + "yy_" + tag + " = (yield from next(tokens)).val", file=f)
+            else:
+                print(i + "yield from next(tokens)", file=f)
+            return
+
+        if isinstance(obj, Maybe):
+            self.if_token_in(obj.get_first(), i, f)
+            self.gen(obj.seq, None, u, i+"    ", f)
+            return
+
+        if isinstance(obj, ZeroOrMore):
+            self.while_token_in(obj.get_first(), i, f)
+            self.gen(obj.seq, None, u, i+"    ", f)
+            return
+
+        if isinstance(obj, Branches):
+            for n, seq in enumerate(obj.branches):
+                self.if_token_in(seq.get_first(), i, f, pos=n)
+                self.gen(seq, None, u, i+"    ", f)
+            print(i + "else:", file=f)
+            print(i + "    raise SyntaxError()", file=f)
+            return
+
+        if isinstance(obj, Recovery):
+            print(i + "try:", file=f)
+            self.gen(obj.seq, None, u, i+"    ", f)
+            self.if_token_not_in(obj.after, i+"    ", f)
+            print(i + "        raise SyntaxError()", file=f)
+            print(i + "except SyntaxError:", file=f)
+            self.while_token_not_in(obj.after, i+"    ", f)
+            print(i + "        yield from next(tokens)", file=f)
+            self.print_code(obj.code, i+"    ", f)
+            return
+
+        if isinstance(obj, Sequence):
+            self.print_code(obj.precode, i, f)
+            for term, tag, code in obj.terms:
+                self.gen(term, tag, u, i, f)
+                self.print_code(code, i, f)
+            return
+
+        if isinstance(obj, Expression):
+            if tag is not None:
+                print(
+                    i + "yy_" + tag + " = yield from "
+                    + self.fn_name(obj.title) +
+                    "(tokens" + self.user_args(u) + ")"
+                , file=f)
+            else:
+                print(
+                    i + "yield from from " + self.fn_name(obj.title) +
+                    "(tokens" + self.user_args(u) + ")"
+                , file=f)
+            return
+
+        raise RuntimeError("unrecognized object type: " + type(obj).__name__)
+
+    def define_fn(self, expr, u, f):
+        print(
+            "def " + self.fn_name(expr.title) +
+            "(tokens" + self.user_args(u) + "):"
+        , file=f)
+        print("    out = None", file=f)
+        self.gen(expr.seq, None, u, "    ", f)
+        print("    return out", file=f)
+
+    def gen_file(self, g, default, *, user_args=(), file=None):
+        u = user_args
+        f = file
+        print(textwrap.dedent(r"""
+            class """.lstrip("\n") + self.prefix + """SyntaxError(Exception):
+                pass
+
+            class """ + self.prefix + '''Token:
+                def __init__(self, typ, val=None, loc=None):
+                    self.type = typ
+                    self.val = val
+                    self.loc = loc
+
+                def __str__(self):
+                    return "''' + self.prefix + '''Token(%s, %s)"%(str(self.type), str(self.val))
+
+            class ''' + self.prefix + """TokenStream:
+                def __init__(self):
+                    self.first = None
+
+                def peek(self):
+                    if self.first is None:
+                        self.first = yield
+                    return self.first.type
+
+                def __next__(self):
+                    if self.first:
+                        out = self.first
+                        self.first = None
+                        return out
+                    t = yield
+                    return t
+        """), file=f)
+
+        for i, (name, _) in enumerate(g.sorted_tokens()):
+            print(name + " = " + str(i), file=f)
+        print("", file=f)
+
+        for name, expr in g.sorted_expressions():
+            self.define_fn(expr, u, f)
+            print("", file=f)
+
+        print("class " + self.prefix + "Parser:", file=f)
+        print("    def __init__(", file=f)
+        print("        self" + self.user_args(u) + ", fn=" + self.fn_name(default) + ", repeat=False", file=f)
+        print("    ):", file=f)
+        print(textwrap.indent(textwrap.dedent(r"""
+                    assert fn is not None, "fn is a required keyword argument"
+                    self.fn = fn
+                    self.tokens = """ + self.prefix + """TokenStream()
+                    self.out = None
+                    self.user_args = (""" + self.user_args(u, after=True) + """)
+                    self.gen = self.mkgen()
+                    self.repeat = repeat
+                    self.done = False
+
+                def mkgen(self):
+                    def _gen():
+                        self.out = yield from self.fn(self.tokens, *self.user_args)
+                    gen = _gen()
+                    next(gen)
+                    return gen
+
+                def feed(self, t):
+                    if self.done:
+                        raise RuntimeError("parser is already done!")
+                    try:
+                        return self.gen.send(t)
+                    except StopIteration:
+                        self.gen = None
+                        out = self.out
+                        self.out = None
+                        self.gen = self.mkgen()
+                        if not self.repeat:
+                            self.done = True
+                        return out
+        """.strip("\n")), "    "), end="", file=f)
+
+
 ### Meta Parser ###
 
 class ParsedName:
@@ -1447,6 +1448,7 @@ class Tokenizer:
 
         def _gen():
             yield from self._tokenize_many()
+
         self.gen = _gen()
         next(self.gen)
 
