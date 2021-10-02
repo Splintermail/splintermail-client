@@ -542,39 +542,107 @@ class C:
     """
     An object with all the methods for generating C code.
     """
+    code_tag = "c"
 
     class Variables:
-        def __init__(self):
+        def __init__(self, semval, semloc):
             # a list of lists of available variables
             self.scopes = [[]]
+            self.semval = semval
+            self.semloc = semloc
 
         def new_scope(self):
             self.scopes.append([])
 
-        def define(self, tag, typ, pos):
+        def define(self, tag, typ, pos, f):
             for scope in self.scopes:
                 assert tag not in scope, "tag " + tag + " shadows another tag"
-            print("    #define $" + tag + " (p->semstack[call->stack + " + str(pos) + "].val." + typ + ")")
+            suffix = "OUT" if tag == "$" else "_" + tag
+            if self.semval:
+                print(
+                    "    #define YYVAL" + suffix
+                    + " (p->semstack[call->stack + " + str(pos) + "].val." + typ + ")",
+                    file=f,
+                )
+            if self.semloc:
+                print(
+                    "    #define YYLOC" + suffix
+                    + " (p->semstack[call->stack + " + str(pos) + "].loc." + typ + ")",
+                    file=f,
+                )
             self.scopes[-1].append(tag)
 
-        def pop_scope(self):
+        def pop_scope(self, f):
             popped = self.scopes.pop()
             for tag in popped:
-                print("    #undef $" + tag)
+                suffix = "OUT" if tag == "$" else "_" + tag
+                if self.semval:
+                    print("    #undef YYVAL" + suffix, file=f)
+                if self.semloc:
+                    print("    #undef YYPOS" + suffix, file=f)
 
-    def __init__(self, *, code_tag="c"):
-        self.code_tag = code_tag
+    def __init__(
+        self,
+        *,
+        # required kwargs
+        root,
+        # optional kwargs
+        user_args=(),
+        semval_type=None,
+        semloc_type=None,
+        span_fn=None,
+    ):
+        self.root = root
+        self.semval_type=semval_type
+        assert bool(semloc_type) + bool(span_fn) in (0, 2), (
+            "semloc_type and span_fn must be both set or both unset"
+        )
+        self.semloc_type=semloc_type
+        self.span_fn=span_fn
+        self.u = (
+            user_args.split(",") if isinstance(user_args, str) else user_args
+        )
 
-    def print_code(self, code):
+    def print_code(self, code, i, f, v=None):
         if code is None:
             return
         for c in code:
             if c.tag in (None, "c"):
-                print("    // USER CODE")
+                print(i + "// USER CODE", file=f)
                 break
         for c in code:
             if c.tag in (None, "c"):
-                print(textwrap.indent(textwrap.dedent(c.text), "    "))
+                # print(textwrap.indent(c.text, i), file=f)
+                text = re.sub("\\$\\$", "YYVALOUT", c.text)
+                text = re.sub("\\$([a-zA-Z_][a-zA-Z0-9_]*)", "YYVAL_\\1", text)
+                text = re.sub("@@", "YYVALOUT", text)
+                text = re.sub("@([a-zA-Z_][a-zA-Z0-9_]*)", "YYLOC_\\1", text)
+                print(textwrap.indent(text, i), file=f)
+
+        # # Check all references are in-scope (currently done by compiler)
+        # for c in code:
+        #     if c.tag in (None, self.code_tag):
+        #         errors = []
+        #         # check scoping of references
+        #         matches = re.findall("\\$([a-zA-Z_][a-zA-Z0-9_]*)", c.text)
+        #         for m in matches:
+        #             if not v:
+        #                 errors.append("$" + m)
+        #                 continue
+        #             for scope in v.scopes:
+        #                 if m in scope:
+        #                     break
+        #             else:
+        #                 errors.append("$" + m)
+        #         if errors:
+        #             avail = []
+        #             if v:
+        #                 for scope in v.scopes:
+        #                     avail += list(scope)
+        #             raise ValueError(
+        #                 "found one or more references (" + str(matches) + ") "
+        #                 "not valid in the current scope (" + str(avail) + ")"
+        #             )
 
     def token_check(self, first):
         t = sorted(t for t in first if t is not None)
@@ -633,119 +701,119 @@ class C:
             return 1
         raise RuntimeError("unrecognized object type: " + type(obj).__name__)
 
-    def gen(self, obj, state, stack, var, tag=None):
+    def gen(self, obj, state, stack, var, f, tag=None):
         """Generate code to match an object."""
         if isinstance(obj, Token):
-            print("    // match a " + obj.title + " token")
-            print("    " + self.mask_set(obj.get_first()) + ";")
-            print("    call->state = " + str(state) + ";")
-            print("    AWAIT_TOKEN;")
-            print("yy" + str(state) + ":")
-            print("    if(*token != " + obj.title + ") SYNTAX_ERROR;")
-            print("    p->semstack[call->stack + " + str(stack) + "] = sem;")
-            print("    CONSUME_TOKEN;")
-            print("    mask_clear(p->mask);")
+            print("    // match a " + obj.title + " token", file=f)
+            print("    " + self.mask_set(obj.get_first()) + ";", file=f)
+            print("    call->state = " + str(state) + ";", file=f)
+            print("    AWAIT_TOKEN;", file=f)
+            print("yy" + str(state) + ":", file=f)
+            print("    if(*token != " + obj.title + ") SYNTAX_ERROR;", file=f)
+            print("    p->semstack[call->stack + " + str(stack) + "] = sem;", file=f)
+            print("    CONSUME_TOKEN;", file=f)
+            print("    mask_clear(p->mask);", file=f)
             return state + self.nstates(obj), stack + 1
 
         if isinstance(obj, Maybe):
-            print("    // maybe match " + obj.title)
-            print("    call->state = " + str(state) + ";")
-            print("    AWAIT_TOKEN;")
-            print("yy" + str(state) + ":")
-            print("    if(!" + self.token_check(obj.get_first()) + "){")
-            print("        " + self.mask_set(obj.get_first()) + ";")
-            print("        goto yy" + str(state) + "_done;")
-            print("    }")
-            self.gen(obj.seq, state+1, stack, var)
-            print("yy" + str(state) + "_done:")
+            print("    // maybe match " + obj.title, file=f)
+            print("    call->state = " + str(state) + ";", file=f)
+            print("    AWAIT_TOKEN;", file=f)
+            print("yy" + str(state) + ":", file=f)
+            print("    if(!" + self.token_check(obj.get_first()) + "){", file=f)
+            print("        " + self.mask_set(obj.get_first()) + ";", file=f)
+            print("        goto yy" + str(state) + "_done;", file=f)
+            print("    }", file=f)
+            self.gen(obj.seq, state+1, stack, var, f)
+            print("yy" + str(state) + "_done:", file=f)
             return state + self.nstates(obj), stack
 
         if isinstance(obj, ZeroOrMore):
-            print("    // match zero or more " + obj.title)
-            print("yy" + str(state) + ":")
-            print("    call->state = " + str(state) + ";")
-            print("    AWAIT_TOKEN;")
-            print("    if(!" + self.token_check(obj.get_first()) + "){")
-            print("        " + self.mask_set(obj.get_first()) + ";")
-            print("        goto yy" + str(state) + "_done;")
-            print("    }")
-            print("")
-            self.gen(obj.seq, state + 1, stack, var)
-            print("    // try matching another " + obj.title)
-            print("    goto yy" + str(state) + ";")
-            print("yy" + str(state) + "_done:")
+            print("    // match zero or more " + obj.title, file=f)
+            print("yy" + str(state) + ":", file=f)
+            print("    call->state = " + str(state) + ";", file=f)
+            print("    AWAIT_TOKEN;", file=f)
+            print("    if(!" + self.token_check(obj.get_first()) + "){", file=f)
+            print("        " + self.mask_set(obj.get_first()) + ";", file=f)
+            print("        goto yy" + str(state) + "_done;", file=f)
+            print("    }", file=f)
+            print("", file=f)
+            self.gen(obj.seq, state + 1, stack, var, f)
+            print("    // try matching another " + obj.title, file=f)
+            print("    goto yy" + str(state) + ";", file=f)
+            print("yy" + str(state) + "_done:", file=f)
             return state + self.nstates(obj), stack
 
         if isinstance(obj, Branches):
-            print("    // match branches " + obj.title)
-            print("    call->state = " + str(state) + ";")
-            print("    AWAIT_TOKEN;")
-            print("yy" + str(state) + ":")
-            print("    switch(*token){")
+            print("    // match branches " + obj.title, file=f)
+            print("    call->state = " + str(state) + ";", file=f)
+            print("    AWAIT_TOKEN;", file=f)
+            print("yy" + str(state) + ":", file=f)
+            print("    switch(*token){", file=f)
             bstate = state + 1
             for i, b in enumerate(obj.branches):
                 for t in b.get_first():
                     print(
                         "        case " + t + ": goto yy"
                         + str(state) + "_br_" + str(i) + ";"
-                    )
+                    , file=f)
                 bstate += self.nstates(b)
-            print("        default:")
-            print("            " + self.mask_set(obj.get_first()) + ";")
-            print("            SYNTAX_ERROR;")
-            print("    }")
-            print("")
+            print("        default:", file=f)
+            print("            " + self.mask_set(obj.get_first()) + ";", file=f)
+            print("            SYNTAX_ERROR;", file=f)
+            print("    }", file=f)
+            print("", file=f)
             # branch parsing
             bstate = state + 1
             for i, b in enumerate(obj.branches):
-                print("yy" + str(state) + "_br_" + str(i) + ":")
-                bstate, stack = self.gen(b, bstate, stack, var)
-                print("    goto yy" + str(state) + "_done;")
-                print("")
-            print("yy"+ str(state) + "_done:")
+                print("yy" + str(state) + "_br_" + str(i) + ":", file=f)
+                bstate, stack = self.gen(b, bstate, stack, var, f)
+                print("    goto yy" + str(state) + "_done;", file=f)
+                print("", file=f)
+            print("yy"+ str(state) + "_done:", file=f)
             return state + self.nstates(obj), stack
 
         if isinstance(obj, Recovery):
             assert obj.after is not None, ".set_after() was never called"
-            print("    // prepare for recovery " + obj.title)
-            print("    call->recover = " + str(state) + ";")
-            print("")
-            self.gen(obj.seq, state + 1, stack, var)
-            print("")
-            print("    call->recover = 0;")
-            print("    goto yy" + str(state) + "_done;")
-            print("yy"+ str(state) + ":")
-            print("    // recovery: consume all tokens until a valid one")
-            print("    AWAIT_TOKEN;")
-            print("    if(!" + self.token_check(obj.after) + "){")
-            print("        CONSUME_TOKEN;")
-            print("        return 0;")
-            print("    }")
-            self.print_code(obj.code)
-            print("yy"+ str(state) + "_done:")
+            print("    // prepare for recovery " + obj.title, file=f)
+            print("    call->recover = " + str(state) + ";", file=f)
+            print("", file=f)
+            self.gen(obj.seq, state + 1, stack, var, f)
+            print("", file=f)
+            print("    call->recover = 0;", file=f)
+            print("    goto yy" + str(state) + "_done;", file=f)
+            print("yy"+ str(state) + ":", file=f)
+            print("    // recovery: consume all tokens until a valid one", file=f)
+            print("    AWAIT_TOKEN;", file=f)
+            print("    if(!" + self.token_check(obj.after) + "){", file=f)
+            print("        CONSUME_TOKEN;", file=f)
+            print("        return 0;", file=f)
+            print("    }", file=f)
+            self.print_code(obj.code, "    ", f, var)
+            print("yy"+ str(state) + "_done:", file=f)
             return state + self.nstates(obj), stack
 
         if isinstance(obj, Sequence):
             var.new_scope()
-            self.print_code(obj.precode)
+            self.print_code(obj.precode, "    ", f, var)
             for i, (t, tag, code) in enumerate(obj.terms):
                 if tag is not None:
                     assert isinstance(t, (Token, Expression)), "wrong type for tag: " + type(t).__name__
                     assert t.type is not None, "obj " + t.title + " has tag " + tag + " but no type!"
-                    var.define(tag, t.type, stack)
-                state, stack = self.gen(t, state, stack, var, tag)
-                self.print_code(code)
+                    var.define(tag, t.type, stack, f)
+                state, stack = self.gen(t, state, stack, var, f, tag)
+                self.print_code(code, "    ", f, var)
                 if i+1 != len(obj.terms):
-                    print("")
-            var.pop_scope()
+                    print("", file=f)
+            var.pop_scope(f)
             return state, stack
 
         if isinstance(obj, Expression):
             # code generated when calling this function
-            print("    // match " + obj.title)
-            print("    call->state = " + str(state) + ";")
-            print("    CALL(" + self.parse_fn(obj) + ", " + str(stack) + ");")
-            print("yy" + str(state) + ":")
+            print("    // match " + obj.title, file=f)
+            print("    call->state = " + str(state) + ";", file=f)
+            print("    CALL(" + self.parse_fn(obj) + ", " + str(stack) + ");", file=f)
+            print("yy" + str(state) + ":", file=f)
             return state + self.nstates(obj), stack + 1
 
         raise RuntimeError("unrecognized object type: " + type(obj).__name__)
@@ -754,39 +822,41 @@ class C:
         """Get the generated function name for an Expression."""
         return "_parse_" + expr.title
 
-    def declare_fn(self, expr):
-        print("static int " + self.parse_fn(expr) + "(PARSE_FN_ARGS);")
+    def declare_fn(self, expr, f):
+        print("static int " + self.parse_fn(expr) + "(PARSE_FN_ARGS);", file=f)
 
-    def define_fn(self, expr):
+    def define_fn(self, expr, f):
         """Generate the function definition for an Expression."""
         var = []
-        print("static int " + self.parse_fn(expr) + "(PARSE_FN_ARGS){")
+        print("static int " + self.parse_fn(expr) + "(PARSE_FN_ARGS){", file=f)
         # Ensure we have enough stack space to operate.
-        print("    assert_sems_available(p, " + str(1 + self.stackmax(expr.seq)) + ");")
+        print("    assert_sems_available(p, " + str(1 + self.stackmax(expr.seq)) + ");", file=f)
         # Jump to state.
-        print("    switch(call->state){")
-        print("        case " + str(0) + ": break;")
+        print("    switch(call->state){", file=f)
+        print("        case " + str(0) + ": break;", file=f)
         for n in range(self.nstates(expr.seq)):
-            print("        case " + str(n+1) + ": goto yy" + str(n+1) + ";")
-        print("    }")
-        print("")
-        var = C.Variables()
+            print("        case " + str(n+1) + ": goto yy" + str(n+1) + ";", file=f)
+        print("    }", file=f)
+        print("", file=f)
+        var = C.Variables(semval=self.semval_type, semloc=self.semloc_type)
         if expr.type is not None:
-            var.define("$", expr.type, 0)
+            var.define("$", expr.type, 0, f)
 
         # state starts at 1, since 0 is only the first time we're called
         # stack starts at 1, since we have always allocate the output
-        self.gen(expr.seq, 1, 1, var)
+        self.gen(expr.seq, 1, 1, var, f)
 
-        var.pop_scope()
-        print("    // cleanup this call");
-        print("    free_sems(p, call->stack+1);")
-        print("    p->callslen--;");
-        print("    return 0;")
-        print("}")
-        print("")
+        var.pop_scope(f)
+        print("    // cleanup this call", file=f);
+        print("    free_sems(p, call->stack+1);", file=f)
+        print("    p->callslen--;", file=f);
+        print("    return 0;", file=f)
+        print("}", file=f)
+        print("", file=f)
 
-    def gen_file(self, g):
+    def gen_file(self, g, precode=None, postcode=None, file=None):
+        f = file
+        self.print_code(precode, "", f)
         print(textwrap.dedent("""
             #include <stdio.h>
             #include <stdbool.h>
@@ -794,14 +864,14 @@ class C:
             #include <stdarg.h>
             #include <stdint.h>
             #include <string.h>
-        """.strip("\n")))
+        """.strip("\n")), file=f)
 
-        print("typedef enum {")
-        print("    _NOT_A_TOKEN = 0,")
+        print("typedef enum {", file=f)
+        print("    _NOT_A_TOKEN = 0,", file=f)
         for _, token in g.sorted_tokens():
-            print("    " + token.title + ",")
-        print("} imf_token_t;")
-        print("")
+            print("    " + token.title + ",", file=f)
+        print("} imf_token_t;", file=f)
+        print("", file=f)
 
         print(textwrap.dedent(r"""
             struct imf_parser_t;
@@ -829,22 +899,31 @@ class C:
                 // the state to enter if we have to recover
                 int recover;
             };
+            """).strip('\n'), file=f)
 
-            struct sem_t {
-                int type;
-                // value
-                union {
-                    int i;
-                } val;
-                // location
-                struct {
-                    size_t start;
-                    size_t end;
-                } loc;
-            };
+        print("", file=f)
+        print("struct sem_t {", file=f)
+        print("    int type;", file=f)
+        if self.semval_type:
+            print("    // semantic value", file=f)
+            print("    " + self.semval_type + " val;", file=f)
+        else:
+            print("    // no semantic value; semval_type not configured", file=f)
 
-            #define MASKLEN 1
+        if self.semloc_type:
+            print("    // semantic location", file=f)
+            print("    " + self.semloc_type + " val;", file=f)
+        else:
+            print("    // no semantic location; semloc_type not configured", file=f)
+        print("};", file=f)
+        print("", file=f)
 
+        masklen = (len([t for t in g.sorted_tokens()]) + 7) // 8
+        print("// we need MASKLEN chars to have one bit per token", file=f)
+        print("#define MASKLEN %d"%masklen, file=f)
+        print("", file=f)
+
+        print(textwrap.dedent(r"""
             static void mask_clear(unsigned char *mask){
                 memset(mask, 0, MASKLEN);
             }
@@ -1014,94 +1093,44 @@ class C:
                 // parsed everything!
                 *ok = true;
             }
-        """.strip('\n')))
+        """).strip('\n'), file=f)
 
         # declare functions
         for _, expr in g.sorted_expressions():
-            self.declare_fn(expr)
-        print("")
+            self.declare_fn(expr, f)
+        print("", file=f)
 
-        print("static const char *token_name(int t){")
-        print("    switch(t){")
+        print("static const char *token_name(int t){", file=f)
+        print("    switch(t){", file=f)
         for name, _ in g.sorted_tokens():
-            print("        case " + name + ": return \"" +name+ "\";")
-        print("        default: return \"unknown\";")
-        print("    }")
-        print("}")
-        print("")
+            print("        case " + name + ": return \"" +name+ "\";", file=f)
+        print("        default: return \"unknown\";", file=f)
+        print("    }", file=f)
+        print("}", file=f)
+        print("", file=f)
 
         # get function names
-        print("static const char *_fn_name(parse_fn_t fn){")
+        print("static const char *_fn_name(parse_fn_t fn){", file=f)
         for _, expr in g.sorted_expressions():
             print(
                 "    if(fn == " + self.parse_fn(expr) + ")"
                 + " return \""+self.parse_fn(expr)+"\";"
-            )
-        print("    return \"unknown\";")
-        print("}")
-        print("")
+            , file=f)
+        print("    return \"unknown\";", file=f)
+        print("}", file=f)
+        print("", file=f)
 
         # define functions
         for _, expr in g.sorted_expressions():
-            self.define_fn(expr)
+            self.define_fn(expr, f)
 
-        print(textwrap.dedent(r"""
-            void parse_line(imf_parser_t *p, imf_token_t token, sem_t sem, bool *ok){
-                do_parse(p, _parse_line, token, sem, ok);
+        print(textwrap.dedent("""
+            void parse_""" + self.root + """(imf_parser_t *p, imf_token_t token, sem_t sem, bool *ok){
+                do_parse(p, _parse_""" + self.root + """, token, sem, ok);
             }
+        """).strip('\n'), file=f)
 
-            int main(int argc, char **argv){
-                call_t calls[100];
-                sem_t sems[100];
-                size_t callsmax = sizeof(calls) / sizeof(*calls);
-                size_t semsmax = sizeof(sems) / sizeof(*sems);
-                imf_parser_t p = {
-                    .callstack = calls,
-                    .callsmax = callsmax,
-                    .semstack = sems,
-                    .semsmax = semsmax,
-                };
-
-                int tokens[] = {
-                    NUM, 0,
-                    PLUS, 0,
-                    LPAREN, 0,
-                    NUM, 0,
-                    NUM, 0,
-                    RPAREN, 0,
-                    EOL, 0,
-
-                    NUM, 18,
-                    PLUS, 0,
-                    LPAREN, 0,
-                    NUM, 6,
-                    RPAREN, 0,
-                    EOL, 0,
-                };
-                size_t ntokens = sizeof(tokens) / sizeof(*tokens);
-
-                bool ok = false;
-                for(size_t i = 0; i < ntokens; i += 2){
-                    // printf("feeding %s\n", token_name(tokens[i]));
-                    sem_t sem = {.val.i = tokens[i+1]};
-                    parse_line(&p, tokens[i], sem, &ok);
-
-                    if(tokens[i] == EOL){
-                        if(!ok){
-                            printf("didn't get OK afterwards!\n");
-                            return 1;
-                        }
-                    }else{
-                        if(ok){
-                            printf("got OK too early!\n");
-                            return 1;
-                        }
-                    }
-                }
-
-                return 0;
-            }
-        """.strip("\n")), end="")
+        self.print_code(postcode, "", f)
 
 
 class Python:
@@ -1117,12 +1146,12 @@ class Python:
         root,
         # optional keywords
         prefix="",
-        span_fn_name=None,
+        span_fn=None,
         user_args=(),
     ):
         self.root = root
         self.prefix = prefix
-        self.span_fn_name = span_fn_name
+        self.span_fn = span_fn
         self.u = user_args.split(",") if isinstance(user_args, str) else user_args
 
     def print_code(self, code, i, f):
@@ -1138,7 +1167,7 @@ class Python:
                 text = re.sub("\\$([a-zA-Z_][a-zA-Z0-9_]*)", "(yy_\\1.val)", text)
                 text = re.sub("@@", "(out.loc)", text)
                 text = re.sub("@([a-zA-Z_][a-zA-Z0-9_]*)", "(yy_\\1.loc)", text)
-                print(textwrap.indent(textwrap.dedent(text), i), file=f)
+                print(textwrap.indent(text, i), file=f)
 
     def syntax_error(self, loc, i, f):
         print(i + "raise " + self.prefix + "SyntaxError(" + loc + ")", file=f)
@@ -1307,12 +1336,12 @@ class Python:
                     return t
         """), file=f)
 
-        if self.span_fn_name is not None:
+        if self.span_fn is not None:
             print(textwrap.dedent("""
                 def _""".lstrip("\n") + self.prefix + """_span(loc, token_loc):
                     if loc is None:
                         return token_loc
-                    return """ + self.span_fn_name + """(loc, token_loc)
+                    return """ + self.span_fn + """(loc, token_loc)
             """), file=f)
 
         for i, (name, _) in enumerate(g.sorted_tokens()):

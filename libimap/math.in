@@ -1,7 +1,23 @@
+{{
+    #include <stdio.h>
+
+    typedef union {
+        int i;
+    } math_val_t;
+
+    typedef struct {
+        size_t start;
+        size_t end;
+    } math_loc_t;
+
+    math_loc_t math_span(math_loc_t loc, math_loc_t token_loc){
+        return (math_loc_t){.start = loc.start, .end = token_loc.end};
+    }
+}}:c
+
 ## You don't actually have to declare tokens, unless you want to set types.
-## Since we're using the python parser, the types are ignored anyway.
 # EOL;
-# NUM;
+NUM:i;
 # PLUS;
 # MINUS;
 # MULT;
@@ -16,40 +32,49 @@
 # expr = term *(sum_op term);
 # line = < expr > EOL;
 
-mult_op =
-| MULT {$$=1}
-| DIV {$$=0}
+mult_op:i =
+| MULT {$$=1;}
+| DIV {$$=0;}
 ;
 
-sum_op =
-| PLUS {$$=1}
-| MINUS {$$=-1}
+sum_op:i =
+| PLUS {$$=1;}
+| MINUS {$$=-1;}
 ;
 
-factor =
-| NUM:n {$$=$n}
-| LPAREN expr:e RPAREN {$$=$e}
+factor:i =
+| NUM:n {$$=$n;}
+| LPAREN expr:e RPAREN {$$=$e;}
 ;
 
-term =
-    factor:f1 {$$=$f1}
+term:i =
+    factor:f1 {$$=$f1;}
     *(
         mult_op:m
         factor:f2
-        {$$=$$*$f2 if $m else $$/$f2}
+        {$$=$$*$f2 if $m else $$/$f2}:py
+        {$$=$m ? $$*$f2 : $$/$f2;}:c
     )
 ;
 
-expr =
-    term:t1 {$$=$t1}
+expr:i =
+    term:t1 {$$=$t1;}
     *(
         sum_op:s
         term:t2
-        {$$=$$ + $s*$t2}
+        {$$=$$ + $s*$t2;}
     )
 ;
 
-line = < expr:e { $$ = $e } ?  { print("bad line") } > EOL;
+line =
+    <
+        expr:e
+        { $$ = $e; }:py
+        { printf("line=%d\n", $e); }:c
+    ?
+        { print("bad line") }:py
+        { printf("bad line\n"); }:c
+    > EOL;
 
 {{
     if __name__ == "__main__":
@@ -68,4 +93,50 @@ line = < expr:e { $$ = $e } ?  { print("bad line") } > EOL;
             expr = p.feed(t)
             if expr is not None:
                 print(expr.val)
-}}
+}}:py
+
+{{
+    int main(int argc, char **argv){
+        call_t calls[100];
+        sem_t sems[100];
+        size_t callsmax = sizeof(calls) / sizeof(*calls);
+        size_t semsmax = sizeof(sems) / sizeof(*sems);
+        imf_parser_t p = {
+            .callstack = calls,
+            .callsmax = callsmax,
+            .semstack = sems,
+            .semsmax = semsmax,
+        };
+
+        int tokens[] = {
+            NUM, 18,
+            DIV, 0,
+            NUM, 6,
+            DIV, 0,
+            NUM, 3,
+            EOL, 0,
+        };
+        size_t ntokens = sizeof(tokens) / sizeof(*tokens);
+
+        bool ok = false;
+        for(size_t i = 0; i < ntokens; i += 2){
+            // printf("feeding %s\n", token_name(tokens[i]));
+            sem_t sem = {.val.i = tokens[i+1]};
+            parse_line(&p, tokens[i], sem, &ok);
+
+            if(tokens[i] == EOL){
+                if(!ok){
+                    printf("didn't get OK afterwards!\n");
+                    return 1;
+                }
+            }else{
+                if(ok){
+                    printf("got OK too early!\n");
+                    return 1;
+                }
+            }
+        }
+
+        return 0;
+    }
+}}:c

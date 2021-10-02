@@ -78,7 +78,7 @@ def name(e):
 @g.expr
 def code(e):
     e.match(CODE, "text")
-    e.exec("$$ = ParsedSnippet($text)")
+    e.exec("$$ = ParsedSnippet(textwrap.dedent($text).strip('\\n'))")
     with e.maybe():
         e.match(COLON)
         e.match(TEXT, "tag")
@@ -203,4 +203,4 @@ g.check()
 
 with open("gen.py", "w") as f:
     with gen.read_template("gen.py.in", file=f):
-        gen.Python(root="doc", prefix="Meta", span_fn_name="text_span").gen_file(g, file=f)
+        gen.Python(root="doc", prefix="Meta", span_fn="text_span").gen_file(g, file=f)
