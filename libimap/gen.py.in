@@ -1497,7 +1497,7 @@ class CharStream:
 
     def __next__(self):
         if self._lookahead:
-            c = self._lookahead.pop()
+            c = self._lookahead.pop(0)
         else:
             c = yield
         # newlines are considered the end of this current line

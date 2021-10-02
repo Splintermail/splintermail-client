@@ -101,4 +101,10 @@ assert a.get_disallowed_after() == {"W", "X", "Y", "Z", None}
 assert b.get_first() == {"W", "X", "Y"}
 assert b.get_disallowed_after() == {"Z"}
 
+# testing MetaTokenizer
+text = r"{{{ hi {{hello}} bye }}}"
+tokens = [t.type for t in gen.Tokenizer().iter(text)]
+assert tokens == [gen.CODE, gen.EOF], tokens
+
+
 print("PASS")
