@@ -15,6 +15,10 @@
     }
 }}:c
 
+%generator c
+%kwarg root line
+%destructor i { printf("hi\n"); }
+
 ## You don't actually have to declare tokens, unless you want to set types.
 # EOL;
 NUM:i;

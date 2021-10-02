@@ -1460,11 +1460,50 @@ class ParsedSequence:
         for elem in self.elems:
             elem.process(g, e)
 
+class ParsedGenerator:
+    def __init__(self, name):
+        self.name = name
+
+class ParsedKwarg:
+    def __init__(self, key, value, tag=None):
+        self.key = key
+        self.value = value
+        self.tag = tag
+
+class ParsedDestructor:
+    def __init__(self, typ, snippet, tag=None):
+        self.type = typ
+        self.snippet = snippet
+        self.tag = tag
+
 class ParsedDoc:
     def __init__(self):
         self.precode = []
         self.defs = []
         self.postcode = []
+        # directive handling
+        self.generator = None
+        self.kwargs = []
+        self.destructors = []
+
+    def add_conf(self, conf):
+        if isinstance(conf, ParsedGenerator):
+            if self.generator is not None:
+                raise RuntimeError("received multiple %generator directives")
+            self.generator = conf.name
+            return
+
+        if isinstance(conf, ParsedKwarg):
+            self.kwargs.append(conf)
+            return
+
+        if isinstance(conf, ParsedDestructor):
+            self.destructors.append(conf)
+            return
+
+        # definitions
+        self.defs.append(conf)
+
 
     def build_grammar(self):
         g = Grammar()
@@ -1600,6 +1639,7 @@ class Tokenizer:
             "<": LANGLE,
             "[": LBRACKET,
             "(": LPAREN,
+            "%": PERCENT,
             "|": PIPE,
             "?": QUESTION,
             ">": RANGLE,
@@ -1695,7 +1735,13 @@ class Tokenizer:
             text += c
             if start is None:
                 start = loc
-        return MetaToken(TEXT, text, TextSpan(start, loc))
+        keywords = {
+            "generator": GENERATOR,
+            "kwarg": KWARG,
+            "destructor": DESTRUCTOR,
+        }
+        typ = keywords.get(text, TEXT)
+        return MetaToken(typ, text, TextSpan(start, loc))
 
     def iter(self, chars):
         def _chars(self):
@@ -1751,7 +1797,7 @@ if __name__ == "__main__":
     parser.add_argument("-T", "--template-tag", default="GENERATED CODE")
     parser.add_argument("-o", "--output")
     parser.add_argument("-c", "--check", action="store_true")
-    parser.add_argument("-g", "--generator", default="python")
+    parser.add_argument("-g", "--generator")
     parser.add_argument("kwarg", nargs="*")
     args = parser.parse_args()
 
@@ -1783,14 +1829,29 @@ if __name__ == "__main__":
 
         precode, g, postcode = parsed_doc.val.build_grammar()
 
+        # TODO: support importing a user-defined generator at runtime
+        generator_name = parsed_doc.val.generator
+        if args.generator:
+            # cli --generator overrides %generator directive
+            generator_name = args.generator
+        assert generator_name is not None, "neither --generator nor %generator was found"
+        generator_cls = {"py": Python, "c": C}[generator_name]
+
         kwargs = {}
+        # extract %kwarg directives
+        for kwarg in parsed_doc.val.kwargs:
+            if kwarg.tag not in (None, generator_cls.code_tag):
+                continue
+            assert kwarg.key not in kwargs, "got multiple %%kwarg for key '%s'"%kwarg.key
+            kwargs[kwarg.key] = kwarg.value
+
+        # cli kwargs override %kwarg directives
         for kwarg in args.kwarg:
             assert "=" in kwarg, "kwarg '%s' is not of the form KEY=VALUE"%kwarg
             k, v = kwarg.split("=", 1)
             kwargs[k] = v
-        # TODO: support importing a user-defined generator at runtime
-        assert args.generator in ("python", "c"), "--generator must be c or python"
-        generator = {"python": Python, "c": C}[args.generator](**kwargs)
+
+        generator = generator_cls(**kwargs)
 
         generator.gen_file(g, precode=precode, postcode=postcode, file=out)
 

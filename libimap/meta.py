@@ -27,8 +27,9 @@ import gen
 
 # Meta grammar is:
 #
-# doc = *code def *def *code;
+# doc = *code conf *conf *code;
 # code = CODE [COLON TEXT:tag]
+# conf = directive | def;
 # def = name (SEMI | EQ branches SEMI);
 # name = TEXT:name [COLON TEXT:tag];
 # branches =
@@ -44,6 +45,11 @@ import gen
 # | LBRACKET branches RBRACKET
 # | LANGLE branches QUESTION *code RANGLE
 # ;
+# directive = PERCENT (
+#   | GENERATOR TEXT:generator
+#   | GENERATOR_ARG [COLON TEXT:tag] TEXT:key TEXT:value  # TODO: support ATOM
+#   | DESTRUCTOR [COLON TEXT:tag] TEXT:type CODE
+# );
 
 g = gen.Grammar()
 
@@ -59,9 +65,14 @@ RBRACKET = g.token("RBRACKET")
 LANGLE = g.token("LANGLE")
 RANGLE = g.token("RANGLE")
 PIPE = g.token("PIPE")
+PERCENT = g.token("PERCENT")
 CODE = g.token("CODE")
 SEMI = g.token("SEMI")
 EOF = g.token("EOF")
+
+GENERATOR = g.token("GENERATOR")
+KWARG = g.token("KWARG")
+DESTRUCTOR = g.token("DESTRUCTOR")
 
 # Forward declaration.
 branches = g.expr("branches")
@@ -162,6 +173,25 @@ def branches(e):
                 e.match(seq, "seq")
                 e.exec("$$.branches.append($seq)")
 
+@g.expr
+def directive(e):
+    e.match(PERCENT)
+    with e.branches() as b:
+        with b.branch():
+            e.match(GENERATOR)
+            e.match(TEXT, "name")
+            e.exec("$$ = ParsedGenerator($name)")
+        with b.branch():
+            e.match(KWARG)
+            e.match(TEXT, "key")
+            e.match(TEXT, "value")
+            e.exec("$$ = ParsedKwarg($key, $value)")
+        with b.branch():
+            e.match(DESTRUCTOR)
+            e.match(TEXT, "type")
+            e.match(CODE, "text")
+            e.exec("snippet = ParsedSnippet(textwrap.dedent($text).strip('\\n'))")
+            e.exec("$$ = ParsedDestructor($type, snippet)")
 
 @g.expr
 def definition(e):
@@ -179,6 +209,16 @@ def definition(e):
             e.exec("""$$ = ($name, None)""")
 
 @g.expr
+def conf(e):
+    with e.branches() as b:
+        with b.branch():
+            e.match(directive, "d")
+            e.exec("$$ = $d")
+        with b.branch():
+            e.match(definition, "d")
+            e.exec("$$ = $d")
+
+@g.expr
 def doc(e):
     e.exec("$$ = ParsedDoc()")
     with e.zero_or_more():
@@ -186,11 +226,11 @@ def doc(e):
         e.match(code, "code")
         e.exec("$$.precode.append($code)")
 
-    e.match(definition, "def")
-    e.exec("$$.defs.append($def)")
+    e.match(conf, "conf")
+    e.exec("$$.add_conf($conf)")
     with e.zero_or_more():
-        e.match(definition, "def")
-        e.exec("$$.defs.append($def)")
+        e.match(conf, "conf")
+        e.exec("$$.add_conf($conf)")
 
     with e.zero_or_more():
         # post-code
