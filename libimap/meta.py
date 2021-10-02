@@ -203,4 +203,4 @@ g.check()
 
 with open("gen.py", "w") as f:
     with gen.read_template("gen.py.in", file=f):
-        gen.Python(prefix="Meta").gen_file(g, "doc", file=f)
+        gen.Python(prefix="Meta", span_fn_name="text_span").gen_file(g, "doc", file=f)

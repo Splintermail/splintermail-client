@@ -1108,8 +1108,9 @@ class Python:
     """
     An object with all the methods for generating Python code.
     """
-    def __init__(self, *, prefix="", code_tag="py"):
+    def __init__(self, *, prefix="", span_fn_name=None, code_tag="py"):
         self.prefix = prefix
+        self.span_fn_name = span_fn_name
         self.code_tag = code_tag
 
     def print_code(self, code, i, f):
@@ -1121,9 +1122,14 @@ class Python:
                 break
         for c in code:
             if c.tag in (None, self.code_tag):
-                text = re.sub("\\$\\$", "out", c.text)
-                text = re.sub("\\$", "yy_", text)
+                text = re.sub("\\$\\$", "(out.val)", c.text)
+                text = re.sub("\\$([a-zA-Z_][a-zA-Z0-9_]*)", "(yy_\\1.val)", text)
+                text = re.sub("@@", "(out.loc)", text)
+                text = re.sub("@([a-zA-Z_][a-zA-Z0-9_]*)", "(yy_\\1.loc)", text)
                 print(textwrap.indent(textwrap.dedent(text), i), file=f)
+
+    def syntax_error(self, loc, i, f):
+        print(i + "raise " + self.prefix + "SyntaxError(" + loc + ")", file=f)
 
     def fn_name(self, title):
         if not self.prefix:
@@ -1172,9 +1178,9 @@ class Python:
     def _gen(self, obj, tag, u, i, f):
         if isinstance(obj, Token):
             print(i + "if (yield from tokens.peek()) != " + obj.title + ":", file=f)
-            print(i + "    raise SyntaxError()", file=f)
+            self.syntax_error("(yield from next(tokens)).loc", i + "    ", f)
             if tag is not None:
-                print(i + "yy_" + tag + " = (yield from next(tokens)).val", file=f)
+                print(i + "yy_" + tag + " = (yield from next(tokens))", file=f)
             else:
                 print(i + "yield from next(tokens)", file=f)
             return
@@ -1194,15 +1200,15 @@ class Python:
                 self.if_token_in(seq.get_first(), i, f, pos=n)
                 self.gen(seq, None, u, i+"    ", f)
             print(i + "else:", file=f)
-            print(i + "    raise SyntaxError()", file=f)
+            self.syntax_error("(yield from next(tokens)).loc", i + "    ", f)
             return
 
         if isinstance(obj, Recovery):
             print(i + "try:", file=f)
             self.gen(obj.seq, None, u, i+"    ", f)
             self.if_token_not_in(obj.after, i+"    ", f)
-            print(i + "        raise SyntaxError()", file=f)
-            print(i + "except SyntaxError:", file=f)
+            print(i + "        raise " + self.prefix + "SyntaxError()", file=f)
+            print(i + "except " + self.prefix + "SyntaxError:", file=f)
             self.while_token_not_in(obj.after, i+"    ", f)
             print(i + "        yield from next(tokens)", file=f)
             self.print_code(obj.code, i+"    ", f)
@@ -1236,7 +1242,7 @@ class Python:
             "def " + self.fn_name(expr.title) +
             "(tokens" + self.user_args(u) + "):"
         , file=f)
-        print("    out = None", file=f)
+        print("    out = " + self.prefix + "Expression()", file=f)
         self.gen(expr.seq, None, u, "    ", f)
         print("    return out", file=f)
 
@@ -1245,7 +1251,19 @@ class Python:
         f = file
         print(textwrap.dedent(r"""
             class """.lstrip("\n") + self.prefix + """SyntaxError(Exception):
-                pass
+                def __init__(self, loc=None):
+                    self.loc = loc
+
+                def __repr__(self):
+                    return str(self.loc)
+
+            class """ + self.prefix + '''Expression:
+                def __init__(self, val=None, loc=None):
+                    self.val = val
+                    self.loc = loc
+
+                def __repr__(self):
+                    return "''' + self.prefix + """Expression(val=%s)"%(str(self.val))
 
             class """ + self.prefix + '''Token:
                 def __init__(self, typ, val=None, loc=None):
@@ -1253,7 +1271,7 @@ class Python:
                     self.val = val
                     self.loc = loc
 
-                def __str__(self):
+                def __repr__(self):
                     return "''' + self.prefix + '''Token(%s, %s)"%(str(self.type), str(self.val))
 
             class ''' + self.prefix + """TokenStream:
@@ -1273,6 +1291,14 @@ class Python:
                     t = yield
                     return t
         """), file=f)
+
+        if self.span_fn_name is not None:
+            print(textwrap.dedent("""
+                def _""".lstrip("\n") + self.prefix + """_span(loc, token_loc):
+                    if loc is None:
+                        return token_loc
+                    return """ + self.span_fn_name + """(loc, token_loc)
+            """), file=f)
 
         for i, (name, _) in enumerate(g.sorted_tokens()):
             print(name + " = " + str(i), file=f)
@@ -1419,9 +1445,32 @@ class ParsedDoc:
 # BEGIN GENERATED CODE
 # END GENERATED CODE
 
+class TextLocation:
+    def __init__(self, line, char):
+        self.line = line
+        self.char = char
+
+    def __repr__(self):
+        return "(line=%d, char=%d)"%(self.line, self.char)
+
+class TextSpan:
+    def __init__(self, start, end):
+        self.start = start
+        self.end = end
+
+    def __repr__(self):
+        return "(start=%s, end=%s)"%(self.start, self.end)
+
+def text_span(loc, token_loc):
+    return TextSpan(loc.start, token_loc.end)
+
 class CharStream:
     def __init__(self):
         self._lookahead = []
+        # We start in line 1, char 1.
+        self.line = 1
+        # char is a position within this line
+        self.char = 1
 
     def peek(self, index=0):
         while len(self._lookahead) <= index:
@@ -1431,9 +1480,17 @@ class CharStream:
 
     def __next__(self):
         if self._lookahead:
-            return self._lookahead.pop()
-        temp = yield
-        return temp
+            c = self._lookahead.pop()
+        else:
+            c = yield
+        # newlines are considered the end of this current line
+        loc = TextLocation(self.line, self.char)
+        if c == '\n':
+            self.line += 1
+            self.char = 1
+        else:
+            self.char += 1
+        return c, loc
 
     def empty(self):
         return not self._lookahead
@@ -1505,8 +1562,8 @@ class Tokenizer:
             ";": SEMI,
         }
         if c in singles:
-            yield from next(self.cs)
-            return MetaToken(singles[c], c)
+            _, loc = yield from next(self.cs)
+            return MetaToken(singles[c], c, TextSpan(loc, loc))
 
         if c == "{":
             return (yield from self._tokenize_code())
@@ -1537,11 +1594,14 @@ class Tokenizer:
     def _tokenize_code(self):
         # Some number of leading '{' chars which we discard...
         count = 0
+        start = None
         while True:
             c = yield from self.cs.peek()
             if c != "{":
                 break
-            yield from next(self.cs)
+            _, loc = yield from next(self.cs)
+            if start is None:
+                start = loc
             count += 1
 
         # ... and code body, which we keep...
@@ -1551,7 +1611,8 @@ class Tokenizer:
             if c is None:
                 raise RuntimeError("unterminated code block:\n" + text)
             if c != "}":
-                text += yield from next(self.cs)
+                c, loc = yield from next(self.cs)
+                text += c
                 continue
 
             # ... and a matching number of closing '}' chars which we discard.
@@ -1565,24 +1626,30 @@ class Tokenizer:
             if matched != count:
                 # oops, these were actually part of the code body
                 for _ in range(matched):
-                    text += yield from next(self.cs)
+                    c, _ = yield from next(self.cs)
+                    text += c
                 continue
 
             # discard these, they're not part of the code body
             for _ in range(matched):
-                yield from next(self.cs)
-            return MetaToken(CODE, text)
+                _, loc = yield from next(self.cs)
+            return MetaToken(CODE, text, TextSpan(start, loc))
 
     def _tokenize_text(self):
         text = ""
+        start = None
+        loc = None
         while True:
             c = yield from self.cs.peek()
             if c is None:
                 break
             if c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_0123456789":
                 break
-            text += yield from next(self.cs)
-        return MetaToken(TEXT, text)
+            c, loc = yield from next(self.cs)
+            text += c
+            if start is None:
+                start = loc
+        return MetaToken(TEXT, text, TextSpan(start, loc))
 
     def iter(self, chars):
         def _chars(self):
@@ -1594,28 +1661,30 @@ class Tokenizer:
             if tokens is None:
                 break
             yield from tokens
-        yield MetaToken(EOF, "")
+        yield MetaToken(EOF, "", None)
 
 
 @contextlib.contextmanager
 def read_template(template, tag="GENERATED CODE", file=None):
     if template is None:
-        yield
+        yield 0
         return
 
     with open(template) as f:
-        lines = iter(f)
+        lines = iter(enumerate(f))
+        start_offset = 0
         # passtru pre-tag lines
-        for line in lines:
+        for i, line in lines:
             print(line, end="", file=file)
             if "BEGIN " + tag in line:
+                start_offset = i + 1
                 break
         else:
             print('did not find "BEGIN ' + tag + '" line in template!', file=sys.stderr)
             sys.exit(1)
 
         # discard inter-tag lines
-        for line in lines:
+        for _, line in lines:
             if "END " in line:
                 yield  # generated code gets printed here
                 print(line, end="", file=file)
@@ -1625,7 +1694,7 @@ def read_template(template, tag="GENERATED CODE", file=None):
             sys.exit(1)
 
         # passtru post-tag lines
-        for line in lines:
+        for _, line in lines:
             print(line, end="", file=file)
 
 
@@ -1647,16 +1716,24 @@ if __name__ == "__main__":
             text = f.read()
 
     out = io.StringIO()
-    with read_template(args.template, args.template_tag, out):
+    with read_template(args.template, args.template_tag, out) as start_offset:
         parser = MetaParser()
 
-        for t in Tokenizer().iter(text):
-            # the last time this is called it should return non-None
-            parsed_doc = parser.feed(t)
+        try:
+            for t in Tokenizer().iter(text):
+                # the last time this is called it should return non-None
+                parsed_doc = parser.feed(t)
+        except MetaSyntaxError as e:
+            line = start_offset + e.loc.start.line
+            char = e.loc.start.char
+            print("syntax error at line=%d, char=%d:"%(line, char), file=sys.stderr)
+            print(text.splitlines()[e.loc.start.line - 1].strip(), file=sys.stderr)
+            print(" "*(char - 1) + "^", file=sys.stderr)
+            exit(1)
 
         assert parsed_doc, "didn't get a doc!"
 
-        precode, g, postcode = parsed_doc.build_grammar()
+        precode, g, postcode = parsed_doc.val.build_grammar()
 
         generator = Python()
 

@@ -65,7 +65,7 @@ line = < expr:e { $$ = $e } ?  { print("bad line") } > EOL;
         ]
         p = Parser(repeat=True)
         for t in tokens:
-            val = p.feed(t)
-            if val is not None:
-                print(val)
+            expr = p.feed(t)
+            if expr is not None:
+                print(expr.val)
 }}
