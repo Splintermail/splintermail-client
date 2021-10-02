@@ -1108,10 +1108,22 @@ class Python:
     """
     An object with all the methods for generating Python code.
     """
-    def __init__(self, *, prefix="", span_fn_name=None, code_tag="py"):
+    code_tag = "py"
+
+    def __init__(
+        self,
+        *,
+        # required keywords
+        root,
+        # optional keywords
+        prefix="",
+        span_fn_name=None,
+        user_args=(),
+    ):
+        self.root = root
         self.prefix = prefix
         self.span_fn_name = span_fn_name
-        self.code_tag = code_tag
+        self.u = user_args.split(",") if isinstance(user_args, str) else user_args
 
     def print_code(self, code, i, f):
         if code is None:
@@ -1246,9 +1258,12 @@ class Python:
         self.gen(expr.seq, None, u, "    ", f)
         print("    return out", file=f)
 
-    def gen_file(self, g, default, *, user_args=(), file=None):
-        u = user_args
+    def gen_file(
+        self, g, *, precode=None, postcode=None, file=None
+    ):
         f = file
+        u = self.u
+        self.print_code(precode, "", f)
         print(textwrap.dedent(r"""
             class """.lstrip("\n") + self.prefix + """SyntaxError(Exception):
                 def __init__(self, loc=None):
@@ -1310,7 +1325,7 @@ class Python:
 
         print("class " + self.prefix + "Parser:", file=f)
         print("    def __init__(", file=f)
-        print("        self" + self.user_args(u) + ", fn=" + self.fn_name(default) + ", repeat=False", file=f)
+        print("        self" + self.user_args(u) + ", fn=" + self.fn_name(self.root) + ", repeat=False", file=f)
         print("    ):", file=f)
         print(textwrap.indent(textwrap.dedent(r"""
                     assert fn is not None, "fn is a required keyword argument"
@@ -1343,6 +1358,8 @@ class Python:
                             self.done = True
                         return out
         """.strip("\n")), "    "), end="", file=f)
+
+        self.print_code(postcode, "", f)
 
 
 ### Meta Parser ###
@@ -1705,6 +1722,8 @@ if __name__ == "__main__":
     parser.add_argument("-T", "--template-tag", default="GENERATED CODE")
     parser.add_argument("-o", "--output")
     parser.add_argument("-c", "--check", action="store_true")
+    parser.add_argument("-g", "--generator", default="python")
+    parser.add_argument("kwarg", nargs="*")
     args = parser.parse_args()
 
     assert not args.check or args.output, "--check requires --output"
@@ -1735,14 +1754,16 @@ if __name__ == "__main__":
 
         precode, g, postcode = parsed_doc.val.build_grammar()
 
-        generator = Python()
+        kwargs = {}
+        for kwarg in args.kwarg:
+            assert "=" in kwarg, "kwarg '%s' is not of the form KEY=VALUE"%kwarg
+            k, v = kwarg.split("=", 1)
+            kwargs[k] = v
+        # TODO: support importing a user-defined generator at runtime
+        assert args.generator in ("python", "c"), "--generator must be c or python"
+        generator = {"python": Python, "c": C}[args.generator](**kwargs)
 
-        generator.print_code(precode, "", out)
-
-        # TODO: find a better way to configure the root a grammar
-        generator.gen_file(g, "line", file=out)
-
-        generator.print_code(postcode, "", out)
+        generator.gen_file(g, precode=precode, postcode=postcode, file=out)
 
     if args.check:
         with open(args.output) as f:
