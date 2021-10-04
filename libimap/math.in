@@ -16,8 +16,15 @@
 }}:c
 
 %generator c
-%kwarg root line
-%destructor i { printf("hi\n"); }
+%kwarg:c root line
+%kwarg:c prefix math
+%kwarg:c semval_type math_val_t
+%kwarg:c semloc_type math_val_t
+%kwarg:c span_fn math_span
+%destructor:c i { printf("hi\n"); }
+
+%kwarg:py root line
+%kwarg:py prefix Math
 
 ## You don't actually have to declare tokens, unless you want to set types.
 # EOL;
@@ -83,16 +90,17 @@ line =
 {{
     if __name__ == "__main__":
         tokens = [
-            Token(PLUS),
-            Token(EOL),
-            Token(NUM, 18),
-            Token(DIV),
-            Token(NUM, 6),
-            Token(DIV),
-            Token(NUM, 3),
-            Token(EOL),
+            MathToken(PLUS),
+            MathToken(EOL),
+
+            MathToken(NUM, 18),
+            MathToken(DIV),
+            MathToken(NUM, 6),
+            MathToken(DIV),
+            MathToken(NUM, 3),
+            MathToken(EOL),
         ]
-        p = Parser(repeat=True)
+        p = MathParser(repeat=True)
         for t in tokens:
             expr = p.feed(t)
             if expr is not None:
@@ -101,11 +109,11 @@ line =
 
 {{
     int main(int argc, char **argv){
-        call_t calls[100];
-        sem_t sems[100];
+        math_call_t calls[100];
+        math_sem_t sems[100];
         size_t callsmax = sizeof(calls) / sizeof(*calls);
         size_t semsmax = sizeof(sems) / sizeof(*sems);
-        imf_parser_t p = {
+        math_parser_t p = {
             .callstack = calls,
             .callsmax = callsmax,
             .semstack = sems,
@@ -113,6 +121,9 @@ line =
         };
 
         int tokens[] = {
+            PLUS, 0,
+            EOL, 0,
+
             NUM, 18,
             DIV, 0,
             NUM, 6,
@@ -125,7 +136,10 @@ line =
         bool ok = false;
         for(size_t i = 0; i < ntokens; i += 2){
             // printf("feeding %s\n", token_name(tokens[i]));
-            sem_t sem = {.val.i = tokens[i+1]};
+            math_sem_t sem = {
+                .type = MATH_SEMTYPE_i,
+                .val.i = tokens[i+1],
+            };
             parse_line(&p, tokens[i], sem, &ok);
 
             if(tokens[i] == EOL){

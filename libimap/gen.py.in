@@ -5,6 +5,7 @@ import io
 import re
 import sys
 import textwrap
+import string
 
 
 class FirstFirst(Exception):
@@ -548,8 +549,8 @@ class C:
         def __init__(self, semval, semloc):
             # a list of lists of available variables
             self.scopes = [[]]
-            self.semval = semval
-            self.semloc = semloc
+            self.semval = bool(semval)
+            self.semloc = bool(semloc)
 
         def new_scope(self):
             self.scopes.append([])
@@ -579,7 +580,7 @@ class C:
                 if self.semval:
                     print("    #undef YYVAL" + suffix, file=f)
                 if self.semloc:
-                    print("    #undef YYPOS" + suffix, file=f)
+                    print("    #undef YYLOC" + suffix, file=f)
 
     def __init__(
         self,
@@ -588,10 +589,13 @@ class C:
         root,
         # optional kwargs
         user_args=(),
+        prefix="",
         semval_type=None,
         semloc_type=None,
         span_fn=None,
     ):
+        self.prefix = prefix or ""
+        self.prefix_ = (prefix + "_") if prefix else ""
         self.root = root
         self.semval_type=semval_type
         assert bool(semloc_type) + bool(span_fn) in (0, 2), (
@@ -603,12 +607,33 @@ class C:
             user_args.split(",") if isinstance(user_args, str) else user_args
         )
 
+        # build a default mapping
+        args_str = ", ".join(self.u)
+        self.varmap = {
+            "prefix": self.prefix,
+            "prefix_": self.prefix_,
+            "PREFIX_": self.prefix_.upper(),
+            "user_args": args_str,
+            "_user_args": "" if not args_str else ", " + args_str,
+            "root": self.root,
+        }
+
+    def sub(self, s, mapping=None):
+        mapping = mapping or {}
+        return string.Template(s).substitute(**self.varmap, **mapping)
+
+    def fprint(self, f, s):
+        print(self.sub(s), file=f)
+
+    def fprint_multi(self, f, s):
+        print(textwrap.dedent(self.sub(s)).strip("\n"), file=f)
+
     def print_code(self, code, i, f, v=None):
         if code is None:
             return
         for c in code:
             if c.tag in (None, "c"):
-                print(i + "// USER CODE", file=f)
+                self.fprint(f, i + "// USER CODE")
                 break
         for c in code:
             if c.tag in (None, "c"):
@@ -617,7 +642,7 @@ class C:
                 text = re.sub("\\$([a-zA-Z_][a-zA-Z0-9_]*)", "YYVAL_\\1", text)
                 text = re.sub("@@", "YYVALOUT", text)
                 text = re.sub("@([a-zA-Z_][a-zA-Z0-9_]*)", "YYLOC_\\1", text)
-                print(textwrap.indent(text, i), file=f)
+                self.fprint(f, textwrap.indent(text, i))
 
         # # Check all references are in-scope (currently done by compiler)
         # for c in code:
@@ -830,7 +855,7 @@ class C:
         var = []
         print("static int " + self.parse_fn(expr) + "(PARSE_FN_ARGS){", file=f)
         # Ensure we have enough stack space to operate.
-        print("    assert_sems_available(p, " + str(1 + self.stackmax(expr.seq)) + ");", file=f)
+        print("    assert_" + self.prefix_ + "sems_available(p, " + str(1 + self.stackmax(expr.seq)) + ");", file=f)
         # Jump to state.
         print("    switch(call->state){", file=f)
         print("        case " + str(0) + ": break;", file=f)
@@ -854,7 +879,9 @@ class C:
         print("}", file=f)
         print("", file=f)
 
-    def gen_file(self, g, precode=None, postcode=None, file=None):
+    def gen_file(
+        self, g, *, destructors, precode=None, postcode=None, file=None
+    ):
         f = file
         self.print_code(precode, "", f)
         print(textwrap.dedent("""
@@ -870,25 +897,28 @@ class C:
         print("    _NOT_A_TOKEN = 0,", file=f)
         for _, token in g.sorted_tokens():
             print("    " + token.title + ",", file=f)
-        print("} imf_token_t;", file=f)
+        print("} " + self.prefix_ + "token_t;", file=f)
         print("", file=f)
 
-        print(textwrap.dedent(r"""
-            struct imf_parser_t;
-            typedef struct imf_parser_t imf_parser_t;
-            struct call_t;
-            typedef struct call_t call_t;
-            struct sem_t;
-            typedef struct sem_t sem_t;
+        self.fprint_multi(f, r"""
+            struct ${prefix_}parser_t;
+            typedef struct ${prefix_}parser_t ${prefix_}parser_t;
+            struct ${prefix_}call_t;
+            typedef struct ${prefix_}call_t ${prefix_}call_t;
+            struct ${prefix_}sem_t;
+            typedef struct ${prefix_}sem_t ${prefix_}sem_t;
 
             #define PARSE_FN_ARGS \
-                call_t *call, imf_parser_t *p, imf_token_t *token, sem_t sem
+                ${prefix_}call_t *call, \
+                ${prefix_}parser_t *p, \
+                ${prefix_}token_t *token, \
+                ${prefix_}sem_t sem
 
-            typedef int (*parse_fn_t)(PARSE_FN_ARGS);
+            typedef int (*${prefix_}parse_fn_t)(PARSE_FN_ARGS);
 
-            struct call_t {
+            struct ${prefix_}call_t {
                 // a function to call
-                parse_fn_t fn;
+                ${prefix_}parse_fn_t fn;
 
                 // our starting position in the semstack
                 int stack;
@@ -899,10 +929,18 @@ class C:
                 // the state to enter if we have to recover
                 int recover;
             };
-            """).strip('\n'), file=f)
+            """)
+
+        all_semantic_types = set(e.type for e in g.exprs.values() if e.type)
+        self.fprint(f, "")
+        self.fprint(f, "typedef enum {")
+        self.fprint(f, "    ${PREFIX_}NO_SEMTYPE = 0,")
+        for typ in all_semantic_types:
+            self.fprint(f, "    ${PREFIX_}SEMTYPE_%s,"%typ)
+        self.fprint(f, "} ${prefix_}sem_type_e;")
 
         print("", file=f)
-        print("struct sem_t {", file=f)
+        print("struct " + self.prefix_ + "sem_t {", file=f)
         print("    int type;", file=f)
         if self.semval_type:
             print("    // semantic value", file=f)
@@ -912,7 +950,7 @@ class C:
 
         if self.semloc_type:
             print("    // semantic location", file=f)
-            print("    " + self.semloc_type + " val;", file=f)
+            print("    " + self.semloc_type + " loc;", file=f)
         else:
             print("    // no semantic location; semloc_type not configured", file=f)
         print("};", file=f)
@@ -923,7 +961,7 @@ class C:
         print("#define MASKLEN %d"%masklen, file=f)
         print("", file=f)
 
-        print(textwrap.dedent(r"""
+        print(textwrap.dedent(self.sub(r"""
             static void mask_clear(unsigned char *mask){
                 memset(mask, 0, MASKLEN);
             }
@@ -957,20 +995,20 @@ class C:
                 }
             }
 
-            struct imf_parser_t {
+            struct ${prefix_}parser_t {
                 // stack of calls
-                call_t *callstack;
+                ${prefix_}call_t *callstack;
                 size_t callslen;
                 size_t callsmax;
                 // stack of semvals
-                sem_t *semstack;
+                ${prefix_}sem_t *semstack;
                 size_t semslen;
                 size_t semsmax;
                 // a mask of all possible tokens
                 unsigned char mask[MASKLEN];
             };
 
-            call_t *calls_append(imf_parser_t *p){
+            ${prefix_}call_t *calls_append(${prefix_}parser_t *p){
                 if(p->callslen == p->callsmax){
                     printf("callstack overflow!\n");
                     exit(1);
@@ -978,42 +1016,34 @@ class C:
                 return &p->callstack[p->callslen++];
             }
 
-            void assert_sems_available(imf_parser_t *p, size_t n){
+            void assert_${prefix_}sems_available(${prefix_}parser_t *p, size_t n){
                 if(p->semslen + n >= p->semsmax){
                     printf("semstack overflow!\n");
                     exit (1);
                 }
             }
 
-            sem_t *sems_append(imf_parser_t *p){
-                if(p->semslen == p->semsmax){
-                    printf("semstack overflow!\n");
-                    exit(1);
-                }
-                return &p->semstack[p->semslen++];
-            }
-
-            void free_sems(imf_parser_t *p, size_t first){
+            void free_sems(${prefix_}parser_t *p, size_t first){
                 for(size_t i = first; i < p->semsmax; i++){
                     // TODO: actually free stuff
-                    p->semstack[i] = (sem_t){0};
+                    p->semstack[i] = (${prefix_}sem_t){0};
                 }
             }
 
-            static const char *_fn_name(parse_fn_t fn);
+            static const char *_${prefix_}fn_name(${prefix_}parse_fn_t fn);
 
-            static void print_stack(imf_parser_t *p){
+            static void print_stack(${prefix_}parser_t *p){
                 for(size_t i = 0; i < p->callslen; i++){
-                    call_t call = p->callstack[i];
-                    printf("parsing %s (%d)\n", _fn_name(call.fn), call.state);
+                    ${prefix_}call_t call = p->callstack[i];
+                    printf("parsing %s (%d)\n", _${prefix_}fn_name(call.fn), call.state);
                 }
 
             }
 
             #define CALL(_fn, _stack) do { \
                 /* allocate call */ \
-                call_t *subcall = calls_append(p); \
-                *subcall = (call_t){ .fn = _fn,  .stack = call->stack + _stack }; \
+                ${prefix_}call_t *subcall = calls_append(p); \
+                *subcall = (${prefix_}call_t){ .fn = _fn,  .stack = call->stack + _stack }; \
                 return 0; \
             } while(0)
 
@@ -1023,7 +1053,7 @@ class C:
             #define CONSUME_TOKEN \
                 *token = _NOT_A_TOKEN
 
-            bool token_in(imf_token_t token, size_t n, ...){
+            bool token_in(${prefix_}token_t token, size_t n, ...){
                 va_list ap;
                 va_start(ap, n);
 
@@ -1048,25 +1078,25 @@ class C:
             } while(0)
 
             void do_parse(
-                imf_parser_t *p,
-                parse_fn_t entrypoint,
-                imf_token_t token,
-                sem_t sem,
+                ${prefix_}parser_t *p,
+                ${prefix_}parse_fn_t entrypoint,
+                ${prefix_}token_t token,
+                ${prefix_}sem_t sem,
                 bool *ok
             ){
                 *ok = false;
 
                 if(p->callslen == 0){
                     // first token, initialize the call
-                    call_t *call = calls_append(p);
-                    *call = (call_t){
+                    ${prefix_}call_t *call = calls_append(p);
+                    *call = (${prefix_}call_t){
                         .fn = entrypoint, .stack = p->semslen-1
                     };
                 }
 
                 while(p->callslen){
                     size_t last = p->callslen;
-                    call_t *call = &p->callstack[p->callslen-1];
+                    ${prefix_}call_t *call = &p->callstack[p->callslen-1];
                     int syntax_error = call->fn(call, p, &token, sem);
                     if(!syntax_error){
                         if(p->callslen == last){
@@ -1077,7 +1107,7 @@ class C:
                     }
                     // syntax error; pop from the stack until we can recover
                     while(p->callslen){
-                        call_t *call = &p->callstack[p->callslen-1];
+                        ${prefix_}call_t *call = &p->callstack[p->callslen-1];
                         if(call->recover){
                             // this call has a recovery state we can enter
                             call->state = call->recover;
@@ -1093,7 +1123,7 @@ class C:
                 // parsed everything!
                 *ok = true;
             }
-        """).strip('\n'), file=f)
+        """)).strip('\n'), file=f)
 
         # declare functions
         for _, expr in g.sorted_expressions():
@@ -1110,7 +1140,7 @@ class C:
         print("", file=f)
 
         # get function names
-        print("static const char *_fn_name(parse_fn_t fn){", file=f)
+        print(self.sub("static const char *_${prefix_}fn_name(${prefix_}parse_fn_t fn){"), file=f)
         for _, expr in g.sorted_expressions():
             print(
                 "    if(fn == " + self.parse_fn(expr) + ")"
@@ -1124,11 +1154,11 @@ class C:
         for _, expr in g.sorted_expressions():
             self.define_fn(expr, f)
 
-        print(textwrap.dedent("""
-            void parse_""" + self.root + """(imf_parser_t *p, imf_token_t token, sem_t sem, bool *ok){
+        print(textwrap.dedent(self.sub("""
+            void parse_$root(${prefix_}parser_t *p, ${prefix_}token_t token, ${prefix_}sem_t sem, bool *ok){
                 do_parse(p, _parse_""" + self.root + """, token, sem, ok);
             }
-        """).strip('\n'), file=f)
+        """)).strip('\n'), file=f)
 
         self.print_code(postcode, "", f)
 
@@ -1288,8 +1318,13 @@ class Python:
         print("    return out", file=f)
 
     def gen_file(
-        self, g, *, precode=None, postcode=None, file=None
+        self, g, *, destructors=None, precode=None, postcode=None, file=None
     ):
+        if destructors:
+            print(
+                "warning: destructors argument will be ignored in python",
+                file=sys.stderr
+            )
         f = file
         u = self.u
         self.print_code(precode, "", f)
@@ -1465,16 +1500,16 @@ class ParsedGenerator:
         self.name = name
 
 class ParsedKwarg:
-    def __init__(self, key, value, tag=None):
-        self.key = key
-        self.value = value
-        self.tag = tag
+    def __init__(self):
+        self.key = None
+        self.value = None
+        self.tag = None
 
 class ParsedDestructor:
-    def __init__(self, typ, snippet, tag=None):
-        self.type = typ
-        self.snippet = snippet
-        self.tag = tag
+    def __init__(self):
+        self.type = None
+        self.snippet = None
+        self.tag = None
 
 class ParsedDoc:
     def __init__(self):
@@ -1851,9 +1886,25 @@ if __name__ == "__main__":
             k, v = kwarg.split("=", 1)
             kwargs[k] = v
 
+        # extract destructors
+        destructors = {}
+        for destructor in parsed_doc.val.destructors:
+            if destructor.tag not in (None, generator_cls.code_tag):
+                continue
+            assert destructor.type not in destructors, (
+                "got multiple %%destructors for type '%s'"%destructor.type
+            )
+            destructors[destructor.type] = destructor.snippet
+
         generator = generator_cls(**kwargs)
 
-        generator.gen_file(g, precode=precode, postcode=postcode, file=out)
+        generator.gen_file(
+            g,
+            precode=precode,
+            postcode=postcode,
+            destructors=destructors,
+            file=out,
+        )
 
     if args.check:
         with open(args.output) as f:

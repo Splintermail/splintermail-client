@@ -183,15 +183,26 @@ def directive(e):
             e.exec("$$ = ParsedGenerator($name)")
         with b.branch():
             e.match(KWARG)
+            e.exec("$$ = ParsedKwarg()")
+            with e.maybe():
+                e.match(COLON)
+                e.match(TEXT, "tag")
+                e.exec("$$.tag = $tag")
             e.match(TEXT, "key")
+            e.exec("$$.key = $key")
             e.match(TEXT, "value")
-            e.exec("$$ = ParsedKwarg($key, $value)")
+            e.exec("$$.value = $value")
         with b.branch():
             e.match(DESTRUCTOR)
+            e.exec("$$ = ParsedDestructor()")
+            with e.maybe():
+                e.match(COLON)
+                e.match(TEXT, "tag")
+                e.exec("$$.tag = $tag")
             e.match(TEXT, "type")
+            e.exec("$$.type = $type")
             e.match(CODE, "text")
-            e.exec("snippet = ParsedSnippet(textwrap.dedent($text).strip('\\n'))")
-            e.exec("$$ = ParsedDestructor($type, snippet)")
+            e.exec("$$.snippet = ParsedSnippet(textwrap.dedent($text).strip('\\n'))")
 
 @g.expr
 def definition(e):
