@@ -48,7 +48,8 @@ import gen
 # directive = PERCENT (
 #   | GENERATOR TEXT:generator
 #   | GENERATOR_ARG [COLON TEXT:tag] TEXT:key TEXT:value  # TODO: support ATOM
-#   | DESTRUCTOR [COLON TEXT:tag] TEXT:type CODE
+#   | TYPE [COLON TEXT:tag] TEXT:spec CODE:destructor
+#   | ROOT [COLON TEXT:tag] TEXT:spec
 # );
 
 g = gen.Grammar()
@@ -72,7 +73,8 @@ EOF = g.token("EOF")
 
 GENERATOR = g.token("GENERATOR")
 KWARG = g.token("KWARG")
-DESTRUCTOR = g.token("DESTRUCTOR")
+TYPE = g.token("TYPE")
+ROOT = g.token("ROOT")
 
 # Forward declaration.
 branches = g.expr("branches")
@@ -193,16 +195,27 @@ def directive(e):
             e.match(TEXT, "value")
             e.exec("$$.value = $value")
         with b.branch():
-            e.match(DESTRUCTOR)
-            e.exec("$$ = ParsedDestructor()")
+            e.match(TYPE)
+            e.exec("$$ = ParsedType()")
             with e.maybe():
                 e.match(COLON)
                 e.match(TEXT, "tag")
                 e.exec("$$.tag = $tag")
-            e.match(TEXT, "type")
-            e.exec("$$.type = $type")
-            e.match(CODE, "text")
-            e.exec("$$.snippet = ParsedSnippet(textwrap.dedent($text).strip('\\n'))")
+            e.match(TEXT, "name")
+            e.exec("$$.name = $name")
+            e.match(CODE, "spec")
+            e.exec("$$.spec = $spec.strip()")
+            e.match(CODE, "destructor")
+            e.exec("$$.destructor = textwrap.dedent($destructor).strip('\\n')")
+        with b.branch():
+            e.match(ROOT)
+            e.exec("$$ = ParsedRoot()")
+            with e.maybe():
+                e.match(COLON)
+                e.match(TEXT, "tag")
+                e.exec("$$.tag = $tag")
+            e.match(TEXT, "name")
+            e.exec("$$.name = $name")
 
 @g.expr
 def definition(e):
@@ -254,4 +267,4 @@ g.check()
 
 with open("gen.py", "w") as f:
     with gen.read_template("gen.py.in", file=f):
-        gen.Python(root="doc", prefix="Meta", span_fn="text_span").gen_file(g, file=f)
+        gen.Python(grammar=g, file=f, roots=["doc"], prefix="Meta", span_fn="text_span").gen_file()

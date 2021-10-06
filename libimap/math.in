@@ -1,10 +1,6 @@
 {{
     #include <stdio.h>
 
-    typedef union {
-        int i;
-    } math_val_t;
-
     typedef struct {
         size_t start;
         size_t end;
@@ -15,15 +11,15 @@
     }
 }}:c
 
-%generator c
-%kwarg:c root line
-%kwarg:c prefix math
-%kwarg:c semval_type math_val_t
-%kwarg:c semloc_type math_val_t
-%kwarg:c span_fn math_span
-%destructor:c i { printf("hi\n"); }
+%root line
+%root factor
 
-%kwarg:py root line
+%generator c
+%kwarg:c prefix math
+%kwarg:c semloc_type math_loc_t
+%kwarg:c span_fn math_span
+%type:c i { int } { printf("hi\n"); }
+
 %kwarg:py prefix Math
 
 ## You don't actually have to declare tokens, unless you want to set types.
@@ -100,7 +96,7 @@ line =
             MathToken(NUM, 3),
             MathToken(EOL),
         ]
-        p = MathParser(repeat=True)
+        p = MathlineParser(repeat=True)
         for t in tokens:
             expr = p.feed(t)
             if expr is not None:
@@ -136,11 +132,9 @@ line =
         bool ok = false;
         for(size_t i = 0; i < ntokens; i += 2){
             // printf("feeding %s\n", token_name(tokens[i]));
-            math_sem_t sem = {
-                .type = MATH_SEMTYPE_i,
-                .val.i = tokens[i+1],
-            };
-            parse_line(&p, tokens[i], sem, &ok);
+            math_val_t val = { .i = tokens[i+1] };
+            math_loc_t loc = {i, i+1};
+            parse_line(&p, tokens[i], val, loc, NULL, &ok);
 
             if(tokens[i] == EOL){
                 if(!ok){

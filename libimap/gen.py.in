@@ -546,66 +546,86 @@ class C:
     code_tag = "c"
 
     class Variables:
-        def __init__(self, semval, semloc):
+        def __init__(self, fprint_fn, semloc):
             # a list of lists of available variables
             self.scopes = [[]]
-            self.semval = bool(semval)
             self.semloc = bool(semloc)
+            self.fprint = fprint_fn
 
         def new_scope(self):
             self.scopes.append([])
 
-        def define(self, tag, typ, pos, f):
+        def define(self, tag, typ, pos):
             for scope in self.scopes:
                 assert tag not in scope, "tag " + tag + " shadows another tag"
             suffix = "OUT" if tag == "$" else "_" + tag
-            if self.semval:
-                print(
-                    "    #define YYVAL" + suffix
-                    + " (p->semstack[call->stack + " + str(pos) + "].val." + typ + ")",
-                    file=f,
-                )
+            self.fprint(
+                "    #define YYVAL" + suffix
+                + " (p->semstack[call->stack + " + str(pos) + "].val." + typ + ")",
+            )
             if self.semloc:
-                print(
+                self.fprint(
                     "    #define YYLOC" + suffix
                     + " (p->semstack[call->stack + " + str(pos) + "].loc." + typ + ")",
-                    file=f,
                 )
             self.scopes[-1].append(tag)
 
-        def pop_scope(self, f):
+        def pop_scope(self):
             popped = self.scopes.pop()
             for tag in popped:
                 suffix = "OUT" if tag == "$" else "_" + tag
-                if self.semval:
-                    print("    #undef YYVAL" + suffix, file=f)
+                self.fprint("    #undef YYVAL" + suffix)
                 if self.semloc:
-                    print("    #undef YYLOC" + suffix, file=f)
+                    self.fprint("    #undef YYLOC" + suffix)
 
     def __init__(
         self,
+        grammar,
+        roots,
+        file,
         *,
-        # required kwargs
-        root,
-        # optional kwargs
-        user_args=(),
+        precode=None,
+        postcode=None,
+        types=(),
         prefix="",
-        semval_type=None,
+        user_args=(),
         semloc_type=None,
         span_fn=None,
     ):
+        self.grammar = grammar
+        self.file = file
+
+        assert roots, "you must specify at least one %root"
+        self.roots = roots
+
+        self.precode = precode
+        self.postcode = postcode
+
+        all_detected_types = set(e.type for e in g.exprs.values() if e.type)
+        all_defined_types = set(t[0] for t in types)
+        missing_defs = all_detected_types.difference(all_defined_types)
+        extra_defs = all_defined_types.difference(all_detected_types)
+        if missing_defs or extra_defs:
+            raise RuntimeError(
+                "detected missing %%types [%s] and unused %%types [%s]"%(
+                    ','.join(missing_defs), ','.join(extra_defs)
+                )
+            )
+        self.types = types
+        self.typemap = {t[0]: (t[1], t[2]) for t in types}
+
         self.prefix = prefix or ""
+
+        self.u = (
+            user_args.split(",") if isinstance(user_args, str) else user_args
+        )
+
         self.prefix_ = (prefix + "_") if prefix else ""
-        self.root = root
-        self.semval_type=semval_type
         assert bool(semloc_type) + bool(span_fn) in (0, 2), (
             "semloc_type and span_fn must be both set or both unset"
         )
         self.semloc_type=semloc_type
         self.span_fn=span_fn
-        self.u = (
-            user_args.split(",") if isinstance(user_args, str) else user_args
-        )
 
         # build a default mapping
         args_str = ", ".join(self.u)
@@ -615,34 +635,44 @@ class C:
             "PREFIX_": self.prefix_.upper(),
             "user_args": args_str,
             "_user_args": "" if not args_str else ", " + args_str,
-            "root": self.root,
+            "semloc_type": self.semloc_type,
         }
 
-    def sub(self, s, mapping=None):
-        mapping = mapping or {}
-        return string.Template(s).substitute(**self.varmap, **mapping)
+        self._extra_vars = {}
 
-    def fprint(self, f, s):
-        print(self.sub(s), file=f)
+    def sub(self, s):
+        return string.Template(s).substitute(**self.varmap, **self._extra_vars)
 
-    def fprint_multi(self, f, s):
-        print(textwrap.dedent(self.sub(s)).strip("\n"), file=f)
+    def fprint(self, s):
+        print(self.sub(s), file=self.file)
 
-    def print_code(self, code, i, f, v=None):
+    def fprint_multi(self, s):
+        print(textwrap.dedent(self.sub(s)).strip("\n"), file=self.file)
+
+    @contextlib.contextmanager
+    def extra_vars(self, **mapping):
+        old_vars = dict(**self._extra_vars)
+        self._extra_vars.update(mapping)
+        try:
+            yield
+        finally:
+            self._extra_vars = old_vars
+
+    def print_code(self, code, i, v=None):
         if code is None:
             return
         for c in code:
             if c.tag in (None, "c"):
-                self.fprint(f, i + "// USER CODE")
+                self.fprint(i + "// USER CODE")
                 break
         for c in code:
             if c.tag in (None, "c"):
-                # print(textwrap.indent(c.text, i), file=f)
+                # self.fprint(textwrap.indent(c.text, i))
                 text = re.sub("\\$\\$", "YYVALOUT", c.text)
                 text = re.sub("\\$([a-zA-Z_][a-zA-Z0-9_]*)", "YYVAL_\\1", text)
                 text = re.sub("@@", "YYVALOUT", text)
                 text = re.sub("@([a-zA-Z_][a-zA-Z0-9_]*)", "YYLOC_\\1", text)
-                self.fprint(f, textwrap.indent(text, i))
+                self.fprint(textwrap.indent(text, i))
 
         # # Check all references are in-scope (currently done by compiler)
         # for c in code:
@@ -726,119 +756,119 @@ class C:
             return 1
         raise RuntimeError("unrecognized object type: " + type(obj).__name__)
 
-    def gen(self, obj, state, stack, var, f, tag=None):
+    def gen(self, obj, state, stack, var, tag=None):
         """Generate code to match an object."""
         if isinstance(obj, Token):
-            print("    // match a " + obj.title + " token", file=f)
-            print("    " + self.mask_set(obj.get_first()) + ";", file=f)
-            print("    call->state = " + str(state) + ";", file=f)
-            print("    AWAIT_TOKEN;", file=f)
-            print("yy" + str(state) + ":", file=f)
-            print("    if(*token != " + obj.title + ") SYNTAX_ERROR;", file=f)
-            print("    p->semstack[call->stack + " + str(stack) + "] = sem;", file=f)
-            print("    CONSUME_TOKEN;", file=f)
-            print("    mask_clear(p->mask);", file=f)
+            self.fprint("    // match a " + obj.title + " token")
+            self.fprint("    " + self.mask_set(obj.get_first()) + ";")
+            self.fprint("    call->state = " + str(state) + ";")
+            self.fprint("    AWAIT_TOKEN;")
+            self.fprint("yy" + str(state) + ":")
+            self.fprint("    if(*token != " + obj.title + ") SYNTAX_ERROR;")
+            self.fprint("    p->semstack[call->stack + " + str(stack) + "] = sem;")
+            self.fprint("    CONSUME_TOKEN;")
+            self.fprint("    mask_clear(p->mask);")
             return state + self.nstates(obj), stack + 1
 
         if isinstance(obj, Maybe):
-            print("    // maybe match " + obj.title, file=f)
-            print("    call->state = " + str(state) + ";", file=f)
-            print("    AWAIT_TOKEN;", file=f)
-            print("yy" + str(state) + ":", file=f)
-            print("    if(!" + self.token_check(obj.get_first()) + "){", file=f)
-            print("        " + self.mask_set(obj.get_first()) + ";", file=f)
-            print("        goto yy" + str(state) + "_done;", file=f)
-            print("    }", file=f)
-            self.gen(obj.seq, state+1, stack, var, f)
-            print("yy" + str(state) + "_done:", file=f)
+            self.fprint("    // maybe match " + obj.title)
+            self.fprint("    call->state = " + str(state) + ";")
+            self.fprint("    AWAIT_TOKEN;")
+            self.fprint("yy" + str(state) + ":")
+            self.fprint("    if(!" + self.token_check(obj.get_first()) + "){")
+            self.fprint("        " + self.mask_set(obj.get_first()) + ";")
+            self.fprint("        goto yy" + str(state) + "_done;")
+            self.fprint("    }")
+            self.gen(obj.seq, state+1, stack, var)
+            self.fprint("yy" + str(state) + "_done:")
             return state + self.nstates(obj), stack
 
         if isinstance(obj, ZeroOrMore):
-            print("    // match zero or more " + obj.title, file=f)
-            print("yy" + str(state) + ":", file=f)
-            print("    call->state = " + str(state) + ";", file=f)
-            print("    AWAIT_TOKEN;", file=f)
-            print("    if(!" + self.token_check(obj.get_first()) + "){", file=f)
-            print("        " + self.mask_set(obj.get_first()) + ";", file=f)
-            print("        goto yy" + str(state) + "_done;", file=f)
-            print("    }", file=f)
-            print("", file=f)
-            self.gen(obj.seq, state + 1, stack, var, f)
-            print("    // try matching another " + obj.title, file=f)
-            print("    goto yy" + str(state) + ";", file=f)
-            print("yy" + str(state) + "_done:", file=f)
+            self.fprint("    // match zero or more " + obj.title)
+            self.fprint("yy" + str(state) + ":")
+            self.fprint("    call->state = " + str(state) + ";")
+            self.fprint("    AWAIT_TOKEN;")
+            self.fprint("    if(!" + self.token_check(obj.get_first()) + "){")
+            self.fprint("        " + self.mask_set(obj.get_first()) + ";")
+            self.fprint("        goto yy" + str(state) + "_done;")
+            self.fprint("    }")
+            self.fprint("")
+            self.gen(obj.seq, state + 1, stack, var)
+            self.fprint("    // try matching another " + obj.title)
+            self.fprint("    goto yy" + str(state) + ";")
+            self.fprint("yy" + str(state) + "_done:")
             return state + self.nstates(obj), stack
 
         if isinstance(obj, Branches):
-            print("    // match branches " + obj.title, file=f)
-            print("    call->state = " + str(state) + ";", file=f)
-            print("    AWAIT_TOKEN;", file=f)
-            print("yy" + str(state) + ":", file=f)
-            print("    switch(*token){", file=f)
+            self.fprint("    // match branches " + obj.title)
+            self.fprint("    call->state = " + str(state) + ";")
+            self.fprint("    AWAIT_TOKEN;")
+            self.fprint("yy" + str(state) + ":")
+            self.fprint("    switch(*token){")
             bstate = state + 1
             for i, b in enumerate(obj.branches):
                 for t in b.get_first():
-                    print(
+                    self.fprint(
                         "        case " + t + ": goto yy"
                         + str(state) + "_br_" + str(i) + ";"
-                    , file=f)
+                    )
                 bstate += self.nstates(b)
-            print("        default:", file=f)
-            print("            " + self.mask_set(obj.get_first()) + ";", file=f)
-            print("            SYNTAX_ERROR;", file=f)
-            print("    }", file=f)
-            print("", file=f)
+            self.fprint("        default:")
+            self.fprint("            " + self.mask_set(obj.get_first()) + ";")
+            self.fprint("            SYNTAX_ERROR;")
+            self.fprint("    }")
+            self.fprint("")
             # branch parsing
             bstate = state + 1
             for i, b in enumerate(obj.branches):
-                print("yy" + str(state) + "_br_" + str(i) + ":", file=f)
-                bstate, stack = self.gen(b, bstate, stack, var, f)
-                print("    goto yy" + str(state) + "_done;", file=f)
-                print("", file=f)
-            print("yy"+ str(state) + "_done:", file=f)
+                self.fprint("yy" + str(state) + "_br_" + str(i) + ":")
+                bstate, stack = self.gen(b, bstate, stack, var)
+                self.fprint("    goto yy" + str(state) + "_done;")
+                self.fprint("")
+            self.fprint("yy"+ str(state) + "_done:")
             return state + self.nstates(obj), stack
 
         if isinstance(obj, Recovery):
             assert obj.after is not None, ".set_after() was never called"
-            print("    // prepare for recovery " + obj.title, file=f)
-            print("    call->recover = " + str(state) + ";", file=f)
-            print("", file=f)
-            self.gen(obj.seq, state + 1, stack, var, f)
-            print("", file=f)
-            print("    call->recover = 0;", file=f)
-            print("    goto yy" + str(state) + "_done;", file=f)
-            print("yy"+ str(state) + ":", file=f)
-            print("    // recovery: consume all tokens until a valid one", file=f)
-            print("    AWAIT_TOKEN;", file=f)
-            print("    if(!" + self.token_check(obj.after) + "){", file=f)
-            print("        CONSUME_TOKEN;", file=f)
-            print("        return 0;", file=f)
-            print("    }", file=f)
-            self.print_code(obj.code, "    ", f, var)
-            print("yy"+ str(state) + "_done:", file=f)
+            self.fprint("    // prepare for recovery " + obj.title)
+            self.fprint("    call->recover = " + str(state) + ";")
+            self.fprint("")
+            self.gen(obj.seq, state + 1, stack, var)
+            self.fprint("")
+            self.fprint("    call->recover = 0;")
+            self.fprint("    goto yy" + str(state) + "_done;")
+            self.fprint("yy"+ str(state) + ":")
+            self.fprint("    // recovery: consume all tokens until a valid one")
+            self.fprint("    AWAIT_TOKEN;")
+            self.fprint("    if(!" + self.token_check(obj.after) + "){")
+            self.fprint("        CONSUME_TOKEN;")
+            self.fprint("        return 0;")
+            self.fprint("    }")
+            self.print_code(obj.code, "    ", var)
+            self.fprint("yy"+ str(state) + "_done:")
             return state + self.nstates(obj), stack
 
         if isinstance(obj, Sequence):
             var.new_scope()
-            self.print_code(obj.precode, "    ", f, var)
+            self.print_code(obj.precode, "    ", var)
             for i, (t, tag, code) in enumerate(obj.terms):
                 if tag is not None:
                     assert isinstance(t, (Token, Expression)), "wrong type for tag: " + type(t).__name__
                     assert t.type is not None, "obj " + t.title + " has tag " + tag + " but no type!"
-                    var.define(tag, t.type, stack, f)
-                state, stack = self.gen(t, state, stack, var, f, tag)
-                self.print_code(code, "    ", f, var)
+                    var.define(tag, t.type, stack)
+                state, stack = self.gen(t, state, stack, var, tag)
+                self.print_code(code, "    ", var)
                 if i+1 != len(obj.terms):
-                    print("", file=f)
-            var.pop_scope(f)
+                    self.fprint("")
+            var.pop_scope()
             return state, stack
 
         if isinstance(obj, Expression):
             # code generated when calling this function
-            print("    // match " + obj.title, file=f)
-            print("    call->state = " + str(state) + ";", file=f)
-            print("    CALL(" + self.parse_fn(obj) + ", " + str(stack) + ");", file=f)
-            print("yy" + str(state) + ":", file=f)
+            self.fprint("    // match " + obj.title)
+            self.fprint("    call->state = " + str(state) + ";")
+            self.fprint("    CALL(" + self.parse_fn(obj) + ", " + str(stack) + ");")
+            self.fprint("yy" + str(state) + ":")
             return state + self.nstates(obj), stack + 1
 
         raise RuntimeError("unrecognized object type: " + type(obj).__name__)
@@ -847,60 +877,105 @@ class C:
         """Get the generated function name for an Expression."""
         return "_parse_" + expr.title
 
-    def declare_fn(self, expr, f):
-        print("static int " + self.parse_fn(expr) + "(PARSE_FN_ARGS);", file=f)
+    def declare_fn(self, expr):
+        self.fprint("static int " + self.parse_fn(expr) + "(PARSE_FN_ARGS);")
 
-    def define_fn(self, expr, f):
+    def define_fn(self, expr):
         """Generate the function definition for an Expression."""
         var = []
-        print("static int " + self.parse_fn(expr) + "(PARSE_FN_ARGS){", file=f)
+        self.fprint("static int " + self.parse_fn(expr) + "(PARSE_FN_ARGS){")
         # Ensure we have enough stack space to operate.
-        print("    assert_" + self.prefix_ + "sems_available(p, " + str(1 + self.stackmax(expr.seq)) + ");", file=f)
+        self.fprint("    assert_" + self.prefix_ + "sems_available(p, " + str(1 + self.stackmax(expr.seq)) + ");")
         # Jump to state.
-        print("    switch(call->state){", file=f)
-        print("        case " + str(0) + ": break;", file=f)
+        self.fprint("    switch(call->state){")
+        self.fprint("        case " + str(0) + ": break;")
         for n in range(self.nstates(expr.seq)):
-            print("        case " + str(n+1) + ": goto yy" + str(n+1) + ";", file=f)
-        print("    }", file=f)
-        print("", file=f)
-        var = C.Variables(semval=self.semval_type, semloc=self.semloc_type)
+            self.fprint("        case " + str(n+1) + ": goto yy" + str(n+1) + ";")
+        self.fprint("    }")
+        self.fprint("")
+        var = C.Variables(self.fprint, semloc=self.semloc_type)
         if expr.type is not None:
-            var.define("$", expr.type, 0, f)
+            var.define("$", expr.type, 0)
 
         # state starts at 1, since 0 is only the first time we're called
         # stack starts at 1, since we have always allocate the output
-        self.gen(expr.seq, 1, 1, var, f)
+        self.gen(expr.seq, 1, 1, var)
 
-        var.pop_scope(f)
-        print("    // cleanup this call", file=f);
-        print("    free_sems(p, call->stack+1);", file=f)
-        print("    p->callslen--;", file=f);
-        print("    return 0;", file=f)
-        print("}", file=f)
-        print("", file=f)
+        var.pop_scope()
+        self.fprint("    // cleanup this call");
+        self.fprint("    free_sems(p, call->stack+1);")
+        self.fprint("    p->callslen--;");
+        self.fprint("    return 0;")
+        self.fprint("}")
+        self.fprint("")
 
-    def gen_file(
-        self, g, *, destructors, precode=None, postcode=None, file=None
-    ):
-        f = file
-        self.print_code(precode, "", f)
-        print(textwrap.dedent("""
+    def define_user_api(self, root):
+        tokens_have_value = any(
+            t.type is not None for _, t in self.grammar.sorted_tokens()
+        )
+
+        type_name = self.grammar.exprs[root].type
+        type_spec = None
+        if type_name:
+            type_spec = self.typemap[type_name][0]
+
+        with self.extra_vars(
+            root=root, type_name=type_name, type_spec=type_spec
+        ):
+            self.fprint("void parse_$root(")
+            self.fprint("    ${prefix_}parser_t *p,")
+            self.fprint("    ${prefix_}token_t token,")
+            if tokens_have_value:
+                self.fprint("    ${prefix_}val_t val,")
+            if self.semloc_type:
+                self.fprint("    $semloc_type loc,")
+            if type_spec:
+                self.fprint("    $type_spec *val_out,")
+            if self.semloc_type:
+                self.fprint("    $semloc_type *loc_out,")
+            self.fprint("    bool *ok")
+            self.fprint("){")
+            self.fprint("    ${prefix_}sem_t sem = {")
+            if tokens_have_value:
+                self.fprint("        .val = val,")
+            if self.semloc_type:
+                self.fprint("        .loc = loc,")
+            self.fprint("    };")
+            self.fprint("    ${prefix_}sem_t sem_out = {0};")
+            self.fprint("    ${prefix_}do_parse(p, _parse_$root, token, sem, &sem_out, ok);")
+            if type_spec or self.semloc_type:
+                self.fprint("    if(!*ok) return;")
+            if self.semloc_type:
+                self.fprint("    if(loc_out){")
+                self.fprint("        *loc_out = sem_out.loc;")
+                self.fprint("    }")
+            if type_spec:
+                self.fprint("    if(val_out){")
+                self.fprint("        *val_out = sem_out.val.$type_name;")
+                self.fprint("    }else{")
+                self.fprint("        // TODO: free semantic value")
+                self.fprint("    }")
+            self.fprint("}")
+
+    def gen_file(self):
+        self.print_code(self.precode, "")
+        self.fprint_multi("""
             #include <stdio.h>
             #include <stdbool.h>
             #include <stdlib.h>
             #include <stdarg.h>
             #include <stdint.h>
             #include <string.h>
-        """.strip("\n")), file=f)
+        """)
 
-        print("typedef enum {", file=f)
-        print("    _NOT_A_TOKEN = 0,", file=f)
-        for _, token in g.sorted_tokens():
-            print("    " + token.title + ",", file=f)
-        print("} " + self.prefix_ + "token_t;", file=f)
-        print("", file=f)
+        self.fprint("typedef enum {")
+        self.fprint("    _NOT_A_TOKEN = 0,")
+        for _, token in self.grammar.sorted_tokens():
+            self.fprint("    %s,"%token.title)
+        self.fprint("} ${prefix_}token_t;")
+        self.fprint("")
 
-        self.fprint_multi(f, r"""
+        self.fprint_multi(r"""
             struct ${prefix_}parser_t;
             typedef struct ${prefix_}parser_t ${prefix_}parser_t;
             struct ${prefix_}call_t;
@@ -929,39 +1004,41 @@ class C:
                 // the state to enter if we have to recover
                 int recover;
             };
-            """)
+        """)
 
-        all_semantic_types = set(e.type for e in g.exprs.values() if e.type)
-        self.fprint(f, "")
-        self.fprint(f, "typedef enum {")
-        self.fprint(f, "    ${PREFIX_}NO_SEMTYPE = 0,")
-        for typ in all_semantic_types:
-            self.fprint(f, "    ${PREFIX_}SEMTYPE_%s,"%typ)
-        self.fprint(f, "} ${prefix_}sem_type_e;")
+        self.fprint("")
+        self.fprint("typedef enum {")
+        self.fprint("    ${PREFIX_}NO_SEMTYPE = 0,")
+        for name, _, __ in types:
+            self.fprint("    ${PREFIX_}SEMTYPE_%s,"%name)
+        self.fprint("} ${prefix_}sem_type_e;")
 
-        print("", file=f)
-        print("struct " + self.prefix_ + "sem_t {", file=f)
-        print("    int type;", file=f)
-        if self.semval_type:
-            print("    // semantic value", file=f)
-            print("    " + self.semval_type + " val;", file=f)
-        else:
-            print("    // no semantic value; semval_type not configured", file=f)
+        self.fprint("")
+        self.fprint("typedef struct {")
+        for name, spec, __ in types:
+            self.fprint("    %s %s;"%(spec, name))
+        self.fprint("} ${prefix_}val_t;")
+
+        self.fprint("")
+        self.fprint("struct ${prefix_}sem_t {")
+        self.fprint("    int type;")
+        self.fprint("    // semantic value")
+        self.fprint("    ${prefix_}val_t val;")
 
         if self.semloc_type:
-            print("    // semantic location", file=f)
-            print("    " + self.semloc_type + " loc;", file=f)
+            self.fprint("    // semantic location")
+            self.fprint("    " + self.semloc_type + " loc;")
         else:
-            print("    // no semantic location; semloc_type not configured", file=f)
-        print("};", file=f)
-        print("", file=f)
+            self.fprint("    // no semantic location; semloc_type not configured")
+        self.fprint("};")
+        self.fprint("")
 
-        masklen = (len([t for t in g.sorted_tokens()]) + 7) // 8
-        print("// we need MASKLEN chars to have one bit per token", file=f)
-        print("#define MASKLEN %d"%masklen, file=f)
-        print("", file=f)
+        masklen = (len([t for t in self.grammar.sorted_tokens()]) + 7) // 8
+        self.fprint("// we need MASKLEN chars to have one bit per token")
+        self.fprint("#define MASKLEN %d"%masklen)
+        self.fprint("")
 
-        print(textwrap.dedent(self.sub(r"""
+        self.fprint_multi(r"""
             static void mask_clear(unsigned char *mask){
                 memset(mask, 0, MASKLEN);
             }
@@ -1077,11 +1154,12 @@ class C:
                 return 1; \
             } while(0)
 
-            void do_parse(
+            void ${prefix_}do_parse(
                 ${prefix_}parser_t *p,
                 ${prefix_}parse_fn_t entrypoint,
                 ${prefix_}token_t token,
                 ${prefix_}sem_t sem,
+                ${prefix_}sem_t *sem_out,
                 bool *ok
             ){
                 *ok = false;
@@ -1123,44 +1201,43 @@ class C:
                 // parsed everything!
                 *ok = true;
             }
-        """)).strip('\n'), file=f)
+        """)
 
         # declare functions
-        for _, expr in g.sorted_expressions():
-            self.declare_fn(expr, f)
-        print("", file=f)
+        for _, expr in self.grammar.sorted_expressions():
+            self.declare_fn(expr)
+        self.fprint("")
 
-        print("static const char *token_name(int t){", file=f)
-        print("    switch(t){", file=f)
-        for name, _ in g.sorted_tokens():
-            print("        case " + name + ": return \"" +name+ "\";", file=f)
-        print("        default: return \"unknown\";", file=f)
-        print("    }", file=f)
-        print("}", file=f)
-        print("", file=f)
+        self.fprint("static const char *token_name(int t){")
+        self.fprint("    switch(t){")
+        for name, _ in self.grammar.sorted_tokens():
+            self.fprint("        case " + name + ": return \"" +name+ "\";")
+        self.fprint("        default: return \"unknown\";")
+        self.fprint("    }")
+        self.fprint("}")
+        self.fprint("")
 
         # get function names
-        print(self.sub("static const char *_${prefix_}fn_name(${prefix_}parse_fn_t fn){"), file=f)
-        for _, expr in g.sorted_expressions():
-            print(
+        self.fprint(self.sub("static const char *_${prefix_}fn_name(${prefix_}parse_fn_t fn){"))
+        for _, expr in self.grammar.sorted_expressions():
+            self.fprint(
                 "    if(fn == " + self.parse_fn(expr) + ")"
                 + " return \""+self.parse_fn(expr)+"\";"
-            , file=f)
-        print("    return \"unknown\";", file=f)
-        print("}", file=f)
-        print("", file=f)
+            )
+        self.fprint("    return \"unknown\";")
+        self.fprint("}")
+        self.fprint("")
 
         # define functions
-        for _, expr in g.sorted_expressions():
-            self.define_fn(expr, f)
+        for _, expr in self.grammar.sorted_expressions():
+            self.define_fn(expr)
 
-        print(textwrap.dedent(self.sub("""
-            void parse_$root(${prefix_}parser_t *p, ${prefix_}token_t token, ${prefix_}sem_t sem, bool *ok){
-                do_parse(p, _parse_""" + self.root + """, token, sem, ok);
-            }
-        """)).strip('\n'), file=f)
+        # define user apis
+        for root in self.roots:
+            self.define_user_api(root)
+            self.fprint("")
 
-        self.print_code(postcode, "", f)
+        self.print_code(self.postcode, "")
 
 
 class Python:
@@ -1171,25 +1248,73 @@ class Python:
 
     def __init__(
         self,
+        grammar,
+        roots,
+        file,
         *,
-        # required keywords
-        root,
-        # optional keywords
+        precode=None,
+        postcode=None,
+        types=(),
         prefix="",
-        span_fn=None,
         user_args=(),
+        span_fn=None,
     ):
-        self.root = root
+        self.grammar = grammar
+        self.file = file
+        self.roots = roots
+        self.precode = precode
+        self.postcode = postcode
+        if types:
+            print(
+                "warning: %type directives are ignored by the python generator",
+                file=sys.stderr
+            )
         self.prefix = prefix
+        self.prefix_ = (prefix + "_") if prefix else ""
         self.span_fn = span_fn
         self.u = user_args.split(",") if isinstance(user_args, str) else user_args
 
-    def print_code(self, code, i, f):
+        # build a default mapping
+        args_str = ", ".join(self.u)
+        self.varmap = {
+            "prefix": self.prefix,
+            "prefix_": self.prefix_,
+            "u": args_str,
+            "_u": "" if not args_str else ", " + args_str,
+            "u_": "" if not args_str else args_str + ", ",
+        }
+        if span_fn is not None:
+            self.varmap["span_fn"] = span_fn
+
+        self._extra_vars = {}
+
+    def sub(self, s):
+        return string.Template(s).substitute(**self.varmap, **self._extra_vars)
+
+    def fprint(self, s):
+        print(self.sub(s), file=self.file)
+
+    def fprint_multi(self, s, i=""):
+        print(
+            textwrap.indent(textwrap.dedent(self.sub(s)).strip("\n"), i),
+            file=self.file,
+        )
+
+    @contextlib.contextmanager
+    def extra_vars(self, **mapping):
+        old_vars = dict(**self._extra_vars)
+        self._extra_vars.update(mapping)
+        try:
+            yield
+        finally:
+            self._extra_vars = old_vars
+
+    def print_code(self, code, i):
         if code is None:
             return
         for c in code:
             if c.tag in (None, self.code_tag):
-                print(i + "# USER CODE", file=f)
+                self.fprint(i + "# USER CODE")
                 break
         for c in code:
             if c.tag in (None, self.code_tag):
@@ -1197,15 +1322,10 @@ class Python:
                 text = re.sub("\\$([a-zA-Z_][a-zA-Z0-9_]*)", "(yy_\\1.val)", text)
                 text = re.sub("@@", "(out.loc)", text)
                 text = re.sub("@([a-zA-Z_][a-zA-Z0-9_]*)", "(yy_\\1.loc)", text)
-                print(textwrap.indent(text, i), file=f)
+                self.fprint_multi(text, i)
 
-    def syntax_error(self, loc, i, f):
-        print(i + "raise " + self.prefix + "SyntaxError(" + loc + ")", file=f)
-
-    def fn_name(self, title):
-        if not self.prefix:
-            return "_parse_" + title
-        return "_" + self.prefix + "_parse_" + title
+    def syntax_error(self, loc, i):
+        self.fprint(i + "raise ${prefix}SyntaxError("+ loc + ")")
 
     def token_list(self, tokens):
         assert tokens
@@ -1215,195 +1335,111 @@ class Python:
         else:
             return "(" + tokens[0] + ",)"
 
-    def user_args(self, u, after=False):
-        if not u:
-            return ""
-        if after:
-            return ", ".join(u) + ","
-        return ", " + ", ".join(u)
-
-    def if_token_in(self, tokens, i, f, pos=0):
+    def if_token_in(self, tokens, i, pos=0):
         token_list = self.token_list(tokens)
         lead = "if" if pos == 0 else "elif"
-        print(i + lead + " (yield from tokens.peek()) in " + token_list + ":", file=f)
+        with self.extra_vars(token_list=token_list, lead=lead):
+            self.fprint(i + "$lead (yield from tokens.peek()) in $token_list:")
 
-    def if_token_not_in(self, tokens, i, f, pos=0):
+    def if_token_not_in(self, tokens, i, pos=0):
         token_list = self.token_list(tokens)
         lead = "if" if pos == 0 else "elif"
-        print(i + lead + " (yield from tokens.peek()) not in " + token_list + ":", file=f)
+        with self.extra_vars(token_list=token_list, lead=lead):
+            self.fprint(i + "$lead (yield from tokens.peek()) not in $token_list:")
 
-    def while_token_in(self, tokens, i, f):
+    def while_token_in(self, tokens, i):
         token_list = self.token_list(tokens)
-        print(i + "while (yield from tokens.peek()) in " + token_list + ":", file=f)
+        with self.extra_vars(token_list=token_list):
+            self.fprint(i + "while (yield from tokens.peek()) in $token_list:")
 
-    def while_token_not_in(self, tokens, i, f):
+    def while_token_not_in(self, tokens, i):
         token_list = self.token_list(tokens)
-        print(i + "while (yield from tokens.peek()) not in " + token_list + ":", file=f)
+        with self.extra_vars(token_list=token_list):
+            self.fprint(i + "while (yield from tokens.peek()) not in $token_list:")
 
-    def gen(self, obj, tag, u, i, f):
+    def gen(self, obj, tag, i):
         try:
-            self._gen(obj, tag, u, i, f)
+            with self.extra_vars(
+                title=obj.title,
+                tag_eq="" if not tag else "yy_%s = "%tag,
+            ):
+                self._gen(obj, tag, i)
         except Exception as e:
             raise RuntimeError("generating for " + obj.title) from e
 
-    def _gen(self, obj, tag, u, i, f):
+    def _gen(self, obj, tag, i):
         if isinstance(obj, Token):
-            print(i + "if (yield from tokens.peek()) != " + obj.title + ":", file=f)
-            self.syntax_error("(yield from next(tokens)).loc", i + "    ", f)
-            if tag is not None:
-                print(i + "yy_" + tag + " = (yield from next(tokens))", file=f)
-            else:
-                print(i + "yield from next(tokens)", file=f)
+            self.fprint(i + "if (yield from tokens.peek()) != $title:")
+            self.syntax_error("(yield from next(tokens)).loc", i + "    ")
+            self.fprint(i + "$tag_eq(yield from next(tokens))")
             return
 
         if isinstance(obj, Maybe):
-            self.if_token_in(obj.get_first(), i, f)
-            self.gen(obj.seq, None, u, i+"    ", f)
+            self.if_token_in(obj.get_first(), i)
+            self.gen(obj.seq, None, i+"    ")
             return
 
         if isinstance(obj, ZeroOrMore):
-            self.while_token_in(obj.get_first(), i, f)
-            self.gen(obj.seq, None, u, i+"    ", f)
+            self.while_token_in(obj.get_first(), i)
+            self.gen(obj.seq, None, i+"    ")
             return
 
         if isinstance(obj, Branches):
             for n, seq in enumerate(obj.branches):
-                self.if_token_in(seq.get_first(), i, f, pos=n)
-                self.gen(seq, None, u, i+"    ", f)
-            print(i + "else:", file=f)
-            self.syntax_error("(yield from next(tokens)).loc", i + "    ", f)
+                self.if_token_in(seq.get_first(), i, pos=n)
+                self.gen(seq, None, i+"    ")
+            self.fprint(i + "else:")
+            self.syntax_error("(yield from next(tokens)).loc", i + "    ")
             return
 
         if isinstance(obj, Recovery):
-            print(i + "try:", file=f)
-            self.gen(obj.seq, None, u, i+"    ", f)
-            self.if_token_not_in(obj.after, i+"    ", f)
-            print(i + "        raise " + self.prefix + "SyntaxError()", file=f)
-            print(i + "except " + self.prefix + "SyntaxError:", file=f)
-            self.while_token_not_in(obj.after, i+"    ", f)
-            print(i + "        yield from next(tokens)", file=f)
-            self.print_code(obj.code, i+"    ", f)
+            self.fprint(i + "try:")
+            self.gen(obj.seq, None, i+"    ")
+            self.if_token_not_in(obj.after, i+"    ")
+            self.fprint(i + "        raise ${prefix}SyntaxError()")
+            self.fprint(i + "except ${prefix}SyntaxError:")
+            self.while_token_not_in(obj.after, i+"    ")
+            self.fprint(i + "        yield from next(tokens)")
+            self.print_code(obj.code, i+"    ")
             return
 
         if isinstance(obj, Sequence):
-            self.print_code(obj.precode, i, f)
+            self.print_code(obj.precode, i)
             for term, tag, code in obj.terms:
-                self.gen(term, tag, u, i, f)
-                self.print_code(code, i, f)
+                self.gen(term, tag, i)
+                self.print_code(code, i)
             return
 
         if isinstance(obj, Expression):
-            if tag is not None:
-                print(
-                    i + "yy_" + tag + " = yield from "
-                    + self.fn_name(obj.title) +
-                    "(tokens" + self.user_args(u) + ")"
-                , file=f)
-            else:
-                print(
-                    i + "yield from from " + self.fn_name(obj.title) +
-                    "(tokens" + self.user_args(u) + ")"
-                , file=f)
+            self.fprint(
+                i + "${tag_eq}yield from _${prefix_}parse_$title(tokens${_u})"
+            )
             return
 
         raise RuntimeError("unrecognized object type: " + type(obj).__name__)
 
-    def define_fn(self, expr, u, f):
-        print(
-            "def " + self.fn_name(expr.title) +
-            "(tokens" + self.user_args(u) + "):"
-        , file=f)
-        print("    out = " + self.prefix + "Expression()", file=f)
-        self.gen(expr.seq, None, u, "    ", f)
-        print("    return out", file=f)
+    def define_fn(self, expr):
+        with self.extra_vars(title=expr.title):
+            self.fprint("def _${prefix_}parse_$title(tokens${_u}):")
+            self.fprint("    out = ${prefix}Expression()")
+            self.gen(expr.seq, None, "    ")
+            self.fprint("    return out")
 
-    def gen_file(
-        self, g, *, destructors=None, precode=None, postcode=None, file=None
-    ):
-        if destructors:
-            print(
-                "warning: destructors argument will be ignored in python",
-                file=sys.stderr
-            )
-        f = file
-        u = self.u
-        self.print_code(precode, "", f)
-        print(textwrap.dedent(r"""
-            class """.lstrip("\n") + self.prefix + """SyntaxError(Exception):
-                def __init__(self, loc=None):
-                    self.loc = loc
-
-                def __repr__(self):
-                    return str(self.loc)
-
-            class """ + self.prefix + '''Expression:
-                def __init__(self, val=None, loc=None):
-                    self.val = val
-                    self.loc = loc
-
-                def __repr__(self):
-                    return "''' + self.prefix + """Expression(val=%s)"%(str(self.val))
-
-            class """ + self.prefix + '''Token:
-                def __init__(self, typ, val=None, loc=None):
-                    self.type = typ
-                    self.val = val
-                    self.loc = loc
-
-                def __repr__(self):
-                    return "''' + self.prefix + '''Token(%s, %s)"%(str(self.type), str(self.val))
-
-            class ''' + self.prefix + """TokenStream:
-                def __init__(self):
-                    self.first = None
-
-                def peek(self):
-                    if self.first is None:
-                        self.first = yield
-                    return self.first.type
-
-                def __next__(self):
-                    if self.first:
-                        out = self.first
-                        self.first = None
-                        return out
-                    t = yield
-                    return t
-        """), file=f)
-
-        if self.span_fn is not None:
-            print(textwrap.dedent("""
-                def _""".lstrip("\n") + self.prefix + """_span(loc, token_loc):
-                    if loc is None:
-                        return token_loc
-                    return """ + self.span_fn + """(loc, token_loc)
-            """), file=f)
-
-        for i, (name, _) in enumerate(g.sorted_tokens()):
-            print(name + " = " + str(i), file=f)
-        print("", file=f)
-
-        for name, expr in g.sorted_expressions():
-            self.define_fn(expr, u, f)
-            print("", file=f)
-
-        print("class " + self.prefix + "Parser:", file=f)
-        print("    def __init__(", file=f)
-        print("        self" + self.user_args(u) + ", fn=" + self.fn_name(self.root) + ", repeat=False", file=f)
-        print("    ):", file=f)
-        print(textwrap.indent(textwrap.dedent(r"""
-                    assert fn is not None, "fn is a required keyword argument"
-                    self.fn = fn
-                    self.tokens = """ + self.prefix + """TokenStream()
+    def define_user_api(self, root):
+        with self.extra_vars(root=root):
+            self.fprint_multi("""
+            class ${prefix}${root}Parser:
+                def __init__(self${_u}, repeat=False):
+                    self.tokens = ${prefix}TokenStream()
                     self.out = None
-                    self.user_args = (""" + self.user_args(u, after=True) + """)
+                    self.args = ($u_)
                     self.gen = self.mkgen()
                     self.repeat = repeat
                     self.done = False
 
                 def mkgen(self):
                     def _gen():
-                        self.out = yield from self.fn(self.tokens, *self.user_args)
+                        self.out = yield from _${prefix_}parse_$root(self.tokens, *self.args)
                     gen = _gen()
                     next(gen)
                     return gen
@@ -1421,9 +1457,79 @@ class Python:
                         if not self.repeat:
                             self.done = True
                         return out
-        """.strip("\n")), "    "), end="", file=f)
+            """)
 
-        self.print_code(postcode, "", f)
+    def gen_file(self):
+        self.print_code(self.precode, "")
+        if self.precode:
+            self.fprint("")
+
+        self.fprint_multi(r"""
+            class ${prefix}SyntaxError(Exception):
+                def __init__(self, loc=None):
+                    self.loc = loc
+
+                def __repr__(self):
+                    return str(self.loc)
+
+            class ${prefix}Expression:
+                def __init__(self, val=None, loc=None):
+                    self.val = val
+                    self.loc = loc
+
+                def __repr__(self):
+                    return "${prefix}Expression(val=%s)"%(str(self.val))
+
+            class ${prefix}Token:
+                def __init__(self, typ, val=None, loc=None):
+                    self.type = typ
+                    self.val = val
+                    self.loc = loc
+
+                def __repr__(self):
+                    return "''' + self.prefix + '''Token(%s, %s)"%(str(self.type), str(self.val))
+
+            class ${prefix}TokenStream:
+                def __init__(self):
+                    self.first = None
+
+                def peek(self):
+                    if self.first is None:
+                        self.first = yield
+                    return self.first.type
+
+                def __next__(self):
+                    if self.first:
+                        out = self.first
+                        self.first = None
+                        return out
+                    t = yield
+                    return t
+        """)
+        self.fprint("")
+
+        if self.span_fn is not None:
+            self.fprint_multi("""
+                def _${prefix_}span(loc, token_loc):
+                    if loc is None:
+                        return token_loc
+                    return $span_fn(loc, token_loc)
+            """)
+            self.fprint("")
+
+        for i, (name, _) in enumerate(self.grammar.sorted_tokens()):
+            self.fprint(name + " = " + str(i))
+        self.fprint("")
+
+        for name, expr in self.grammar.sorted_expressions():
+            self.define_fn(expr)
+            self.fprint("")
+
+        for root in self.roots:
+            self.define_user_api(root)
+            self.fprint("")
+
+        self.print_code(self.postcode, "")
 
 
 ### Meta Parser ###
@@ -1505,10 +1611,16 @@ class ParsedKwarg:
         self.value = None
         self.tag = None
 
-class ParsedDestructor:
+class ParsedRoot:
     def __init__(self):
-        self.type = None
-        self.snippet = None
+        self.name = None
+        self.tag = None
+
+class ParsedType:
+    def __init__(self):
+        self.name = None
+        self.code = None
+        self.destructor = None
         self.tag = None
 
 class ParsedDoc:
@@ -1519,7 +1631,8 @@ class ParsedDoc:
         # directive handling
         self.generator = None
         self.kwargs = []
-        self.destructors = []
+        self.roots = []
+        self.types = []
 
     def add_conf(self, conf):
         if isinstance(conf, ParsedGenerator):
@@ -1527,18 +1640,19 @@ class ParsedDoc:
                 raise RuntimeError("received multiple %generator directives")
             self.generator = conf.name
             return
-
         if isinstance(conf, ParsedKwarg):
             self.kwargs.append(conf)
             return
-
-        if isinstance(conf, ParsedDestructor):
-            self.destructors.append(conf)
+        if isinstance(conf, ParsedType):
+            self.types.append(conf)
             return
-
-        # definitions
-        self.defs.append(conf)
-
+        if isinstance(conf, ParsedRoot):
+            self.roots.append(conf)
+            return
+        if isinstance(conf, tuple):
+            self.defs.append(conf)
+            return
+        raise RuntimeError("unkown conf of type %s"%type(conf).__name__)
 
     def build_grammar(self):
         g = Grammar()
@@ -1560,7 +1674,7 @@ class ParsedDoc:
 
         g.check()
 
-        return self.precode, g, self.postcode
+        return g
 
 # BEGIN GENERATED CODE
 # END GENERATED CODE
@@ -1773,7 +1887,8 @@ class Tokenizer:
         keywords = {
             "generator": GENERATOR,
             "kwarg": KWARG,
-            "destructor": DESTRUCTOR,
+            "type": TYPE,
+            "root": ROOT,
         }
         typ = keywords.get(text, TEXT)
         return MetaToken(typ, text, TextSpan(start, loc))
@@ -1833,6 +1948,7 @@ if __name__ == "__main__":
     parser.add_argument("-o", "--output")
     parser.add_argument("-c", "--check", action="store_true")
     parser.add_argument("-g", "--generator")
+    parser.add_argument("-a", "--action", default="gen_file")
     parser.add_argument("kwarg", nargs="*")
     args = parser.parse_args()
 
@@ -1846,7 +1962,7 @@ if __name__ == "__main__":
 
     out = io.StringIO()
     with read_template(args.template, args.template_tag, out) as start_offset:
-        parser = MetaParser()
+        parser = MetadocParser()
 
         try:
             for t in Tokenizer().iter(text):
@@ -1862,10 +1978,12 @@ if __name__ == "__main__":
 
         assert parsed_doc, "didn't get a doc!"
 
-        precode, g, postcode = parsed_doc.val.build_grammar()
+        parsed_doc = parsed_doc.val
+
+        g = parsed_doc.build_grammar()
 
         # TODO: support importing a user-defined generator at runtime
-        generator_name = parsed_doc.val.generator
+        generator_name = parsed_doc.generator
         if args.generator:
             # cli --generator overrides %generator directive
             generator_name = args.generator
@@ -1874,7 +1992,7 @@ if __name__ == "__main__":
 
         kwargs = {}
         # extract %kwarg directives
-        for kwarg in parsed_doc.val.kwargs:
+        for kwarg in parsed_doc.kwargs:
             if kwarg.tag not in (None, generator_cls.code_tag):
                 continue
             assert kwarg.key not in kwargs, "got multiple %%kwarg for key '%s'"%kwarg.key
@@ -1886,25 +2004,48 @@ if __name__ == "__main__":
             k, v = kwarg.split("=", 1)
             kwargs[k] = v
 
-        # extract destructors
-        destructors = {}
-        for destructor in parsed_doc.val.destructors:
-            if destructor.tag not in (None, generator_cls.code_tag):
+        # extract types
+        types = []
+        type_names = set()
+        for t in parsed_doc.types:
+            if t.tag not in (None, generator_cls.code_tag):
                 continue
-            assert destructor.type not in destructors, (
-                "got multiple %%destructors for type '%s'"%destructor.type
+            assert t.name not in type_names, (
+                "got multiple '%%type %s' directives"%t.name
             )
-            destructors[destructor.type] = destructor.snippet
+            types.append((t.name, t.spec, t.destructor))
 
-        generator = generator_cls(**kwargs)
+        # extract roots
+        roots = []
+        root_names = set()
+        for r in parsed_doc.roots:
+            if r.tag not in (None, generator_cls.code_tag):
+                continue
+            assert r.name not in root_names, (
+                "got multiple '%%root %s' directives"%r.name
+            )
+            roots.append(r.name)
 
-        generator.gen_file(
+        generator = generator_cls(
             g,
-            precode=precode,
-            postcode=postcode,
-            destructors=destructors,
-            file=out,
+            roots,
+            out,
+            types=types,
+            precode=parsed_doc.precode,
+            postcode=parsed_doc.postcode,
+            **kwargs,
         )
+
+        try:
+            action = getattr(generator, args.action)
+        except AttributeError:
+            print(
+                "error: generator class '%s' has no method matching the given "
+                "--action ('%s')"%(generator_cls.__name__, args.action),
+                file=sys.stderr
+            )
+            sys.exit(1)
+        action()
 
     if args.check:
         with open(args.output) as f:
