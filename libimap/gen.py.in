@@ -750,7 +750,7 @@ class C:
 
     def mask_set(self, tokens):
         t = sorted(t for t in tokens if t is not None)
-        return "mask_set(p->mask, " + str(len(t)) + ", " + ", ".join(t) + ")"
+        return "${prefix_}mask_set(p->mask, " + str(len(t)) + ", " + ", ".join(t) + ")"
 
     def stackpersist(self, obj):
         """Return the persistent created during a match to obj."""
@@ -812,7 +812,7 @@ class C:
             self.fprint("    if(*token != " + obj.title + ") SYNTAX_ERROR;")
             self.fprint("    p->semstack[call->stack + " + str(stack) + "] = sem;")
             self.fprint("    ${PREFIX_}CONSUME_TOKEN;")
-            self.fprint("    mask_clear(p->mask);")
+            self.fprint("    ${prefix_}mask_clear(p->mask);")
             return state + self.nstates(obj), stack + 1
 
         if isinstance(obj, Maybe):
@@ -967,7 +967,7 @@ class C:
         with self.extra_vars(
             root=root, type_name=type_name, type_spec=type_spec
         ):
-            self.fprint("${prefix_}status_t parse_$root(")
+            self.fprint("${prefix_}status_t ${prefix_}parse_$root(")
             params = []
             params.append("    ${prefix_}parser_t *p")
             params.append("    ${prefix_}token_t token")
@@ -1104,17 +1104,17 @@ class C:
         self.fprint("}")
 
         masklen = (len([t for t in self.grammar.sorted_tokens()]) + 7) // 8
-        self.fprint("// we need MASKLEN chars to have one bit per token")
-        self.fprint("#define MASKLEN %d"%masklen)
+        self.fprint("// we need ${PREFIX_}MASKLEN chars to have one bit per token")
+        self.fprint("#define ${PREFIX_}MASKLEN %d"%masklen)
 
         self.fprint("")
         self.fprint_multi(r"""
-            static void mask_clear(unsigned char *mask){
-                memset(mask, 0, MASKLEN);
+            static void ${prefix_}mask_clear(unsigned char *mask){
+                memset(mask, 0, ${PREFIX_}MASKLEN);
             }
 
             // accepts `n` ints, representing token values
-            static void mask_set(unsigned char *mask, size_t n, ...){
+            static void ${prefix_}mask_set(unsigned char *mask, size_t n, ...){
                 va_list ap;
                 va_start(ap, n);
 
@@ -1126,17 +1126,17 @@ class C:
                 va_end(ap);
             }
 
-            static const char *token_name(int t);
+            static const char *${prefix_}token_name(int t);
 
-            static void mask_print(unsigned char *mask, char *joiner){
+            static void ${prefix_}mask_print(unsigned char *mask, char *joiner){
                 bool first = true;
-                for(int i = 0; i < MASKLEN; i++){
+                for(int i = 0; i < ${PREFIX_}MASKLEN; i++){
                     for(int j = 0; j < 8; j++){
                         if(!(mask[i] & ((unsigned char)1)<<j)) continue;
                         printf(
                             "%s%s",
                             first ? (first=false,"") : joiner,
-                            token_name(i*8+j)
+                            ${prefix_}token_name(i*8+j)
                         );
                     }
                 }
@@ -1154,7 +1154,7 @@ class C:
                 // track which semvals are in use
                 size_t semsused;
                 // a mask of all possible tokens
-                unsigned char mask[MASKLEN];
+                unsigned char mask[${PREFIX_}MASKLEN];
             };
 
             ${prefix_}call_t *${prefix_}calls_append(${prefix_}parser_t *p){
@@ -1176,6 +1176,52 @@ class C:
                     ${prefix_}sem_free(&p->semstack[i]);
                 }
                 p->semsused = first;
+            }
+
+            #define ${PREFIX_}ONSTACK_PARSER(name, _callsmax, _semsmax) \
+                ${prefix_}call_t name##calls[_callsmax] = {0}; \
+                ${prefix_}sem_t name##sems[_semsmax] = {0}; \
+                ${prefix_}parser_t name = (${prefix_}parser_t){ \
+                    .callstack = name##calls, \
+                    .callsmax = _callsmax, \
+                    .semstack = name##sems, \
+                    .semsmax = _semsmax, \
+                }
+
+            void ${prefix_}parser_reset(${prefix_}parser_t *p){
+                ${prefix_}free_sems(p, 0);
+                p->semslen = 0;
+                p->callslen = 0;
+                ${prefix_}mask_clear(p->mask);
+            }
+
+            void ${prefix_}parser_free(${prefix_}parser_t **pp){
+                ${prefix_}parser_t *p = *pp;
+                if(!p) return;
+                ${prefix_}parser_reset(p);
+                free(p->callstack);
+                free(p->semstack);
+                free(p);
+                *pp = NULL;
+            }
+
+            ${prefix_}parser_t *${prefix_}parser_new(size_t callsmax, size_t semsmax){
+                ${prefix_}parser_t *p = malloc(sizeof(*p));
+                *p = (${prefix_}parser_t){
+                    .callstack = malloc(sizeof(p->callstack[0]) * callsmax),
+                    .callsmax = callsmax,
+                    .semstack = malloc(sizeof(p->semstack[0]) * callsmax),
+                    .semsmax = semsmax,
+                };
+
+                if(!p->callstack || !p->semstack){
+                    ${prefix_}parser_free(&p);
+                }else{
+                    memset(p->callstack, 0, sizeof(p->callstack[0]) * callsmax);
+                    memset(p->semstack, 0, sizeof(p->semstack[0]) * callsmax);
+                }
+
+                return p;
             }
 
             static const char *_${prefix_}fn_name(${prefix_}parse_fn_t fn);
@@ -1220,8 +1266,8 @@ class C:
                 printf("syntax error!\n"); \
                 print_stack(p); \
                 printf("expected one of: {"); \
-                mask_print(p->mask, ","); \
-                printf("} but got %s\n", token_name(*token)); \
+                ${prefix_}mask_print(p->mask, ","); \
+                printf("} but got %s\n", ${prefix_}token_name(*token)); \
                 return 1; \
             } while(0)
 
@@ -1286,7 +1332,7 @@ class C:
             self.declare_fn(expr)
         self.fprint("")
 
-        self.fprint("static const char *token_name(int t){")
+        self.fprint("static const char *${prefix_}token_name(int t){")
         self.fprint("    switch(t){")
         for name, _ in self.grammar.sorted_tokens():
             self.fprint("        case " + name + ": return \"" +name+ "\";")

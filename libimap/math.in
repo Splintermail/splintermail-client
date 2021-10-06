@@ -105,16 +105,8 @@ line =
 
 {{
     int main(int argc, char **argv){
-        math_call_t calls[100];
-        math_sem_t sems[100];
-        size_t callsmax = sizeof(calls) / sizeof(*calls);
-        size_t semsmax = sizeof(sems) / sizeof(*sems);
-        math_parser_t p = {
-            .callstack = calls,
-            .callsmax = callsmax,
-            .semstack = sems,
-            .semsmax = semsmax,
-        };
+        math_parser_t *p = math_parser_new(100, 100);
+        if(!p) return 2;
 
         int tokens[] = {
             PLUS, 0,
@@ -130,10 +122,11 @@ line =
         size_t ntokens = sizeof(tokens) / sizeof(*tokens);
 
         for(size_t i = 0; i < ntokens; i += 2){
-            // printf("feeding %s\n", token_name(tokens[i]));
+            // printf("feeding %s\n", math_token_name(tokens[i]));
+
             math_val_t val = { .i = tokens[i+1] };
             math_loc_t loc = {i, i+1};
-            math_status_t status = parse_line(&p, tokens[i], val, loc, NULL);
+            math_status_t status = math_parse_line(p, tokens[i], val, loc, NULL);
             if(status > MATH_STATUS_DONE){
                 printf("got bad status! %d\n", status);
             }
@@ -141,16 +134,21 @@ line =
             if(tokens[i] == EOL){
                 if(status != MATH_STATUS_DONE){
                     printf("didn't get STATUS_DONE afterwards!\n");
-                    return 1;
+                    goto fail;
                 }
             }else{
                 if(status == MATH_STATUS_DONE){
                     printf("got MATH_STATUS_DONE too early!\n");
-                    return 1;
+                    goto fail;
                 }
             }
         }
 
+        math_parser_free(&p);
         return 0;
+
+    fail:
+        math_parser_free(&p);
+        return 1;
     }
 }}:c
