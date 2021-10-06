@@ -646,7 +646,7 @@ class C:
         self.precode = precode
         self.postcode = postcode
 
-        all_detected_types = set(e.type for e in g.exprs.values() if e.type)
+        all_detected_types = set(e.type for e in self.grammar.exprs.values() if e.type)
         all_defined_types = set(t[0] for t in types)
         missing_defs = all_detected_types.difference(all_defined_types)
         extra_defs = all_defined_types.difference(all_detected_types)
@@ -1068,13 +1068,13 @@ class C:
         self.fprint("")
         self.fprint("typedef enum {")
         self.fprint("    ${PREFIX_}NO_SEMTYPE = 0,")
-        for name, _, __ in types:
+        for name, _, __ in self.types:
             self.fprint("    ${PREFIX_}SEMTYPE_%s,"%name)
         self.fprint("} ${prefix_}sem_type_e;")
 
         self.fprint("")
         self.fprint("typedef union {")
-        for name, spec, _ in types:
+        for name, spec, _ in self.types:
             self.fprint("    %s %s;"%(spec, name))
         self.fprint("} ${prefix_}val_t;")
 
@@ -1095,7 +1095,7 @@ class C:
         self.fprint("void ${prefix_}sem_free(${prefix_}sem_t *sem){")
         self.fprint("    switch(sem->type){")
         self.fprint("        case ${PREFIX_}NO_SEMTYPE: break;")
-        for name, spec, destructor in types:
+        for name, spec, destructor in self.types:
             self.fprint("       case ${PREFIX_}SEMTYPE_%s: {"%name)
             self.print_code(destructor, "           ")
             self.fprint("       } break;")
@@ -2018,28 +2018,10 @@ def read_template(template, tag="GENERATED CODE", file=None):
             print(line, end="", file=file)
 
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("input", nargs="?")
-    parser.add_argument("-t", "--template")
-    parser.add_argument("-T", "--template-tag", default="GENERATED CODE")
-    parser.add_argument("-o", "--output")
-    parser.add_argument("-c", "--check", action="store_true")
-    parser.add_argument("-g", "--generator")
-    parser.add_argument("-a", "--action", default="gen_file")
-    parser.add_argument("kwarg", nargs="*")
-    args = parser.parse_args()
-
-    assert not args.check or args.output, "--check requires --output"
-
-    if args.input is None:
-        text = sys.stdin.read()
-    else:
-        with open(args.input) as f:
-            text = f.read()
-
-    out = io.StringIO()
-    with read_template(args.template, args.template_tag, out) as start_offset:
+def gen(
+    grammar_text, out, template, template_tag, generator, action, cli_kwargs
+):
+    with read_template(template, template_tag, out) as start_offset:
         parser = MetadocParser()
 
         try:
@@ -2062,9 +2044,9 @@ if __name__ == "__main__":
 
         # TODO: support importing a user-defined generator at runtime
         generator_name = parsed_doc.generator
-        if args.generator:
+        if generator:
             # cli --generator overrides %generator directive
-            generator_name = args.generator
+            generator_name = generator
         assert generator_name is not None, "neither --generator nor %generator was found"
         generator_cls = {"py": Python, "c": C}[generator_name]
 
@@ -2077,7 +2059,7 @@ if __name__ == "__main__":
             kwargs[kwarg.key] = kwarg.value
 
         # cli kwargs override %kwarg directives
-        for kwarg in args.kwarg:
+        for kwarg in cli_kwargs:
             assert "=" in kwarg, "kwarg '%s' is not of the form KEY=VALUE"%kwarg
             k, v = kwarg.split("=", 1)
             kwargs[k] = v
@@ -2115,15 +2097,48 @@ if __name__ == "__main__":
         )
 
         try:
-            action = getattr(generator, args.action)
+            action = getattr(generator, action)
         except AttributeError:
             print(
                 "error: generator class '%s' has no method matching the given "
-                "--action ('%s')"%(generator_cls.__name__, args.action),
+                "--action ('%s')"%(generator_cls.__name__, action),
                 file=sys.stderr
             )
             sys.exit(1)
         action()
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("input", nargs="?")
+    parser.add_argument("-t", "--template")
+    parser.add_argument("-T", "--template-tag", default="GENERATED CODE")
+    parser.add_argument("-o", "--output")
+    parser.add_argument("-c", "--check", action="store_true")
+    parser.add_argument("-g", "--generator")
+    parser.add_argument("-a", "--action", default="gen_file")
+    parser.add_argument("kwarg", nargs="*")
+    args = parser.parse_args()
+
+    assert not args.check or args.output, "--check requires --output"
+
+    if args.input is None:
+        text = sys.stdin.read()
+    else:
+        with open(args.input) as f:
+            text = f.read()
+
+    out = io.StringIO()
+
+    gen(
+        grammar_text=text,
+        out=out,
+        template=args.template,
+        template_tag=args.template_tag,
+        generator=args.generator,
+        action=args.action,
+        cli_kwargs=args.kwarg,
+    )
 
     if args.check:
         with open(args.output) as f:
