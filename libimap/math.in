@@ -129,21 +129,23 @@ line =
         };
         size_t ntokens = sizeof(tokens) / sizeof(*tokens);
 
-        bool ok = false;
         for(size_t i = 0; i < ntokens; i += 2){
             // printf("feeding %s\n", token_name(tokens[i]));
             math_val_t val = { .i = tokens[i+1] };
             math_loc_t loc = {i, i+1};
-            parse_line(&p, tokens[i], val, loc, NULL, &ok);
+            math_status_t status = parse_line(&p, tokens[i], val, loc, NULL);
+            if(status > MATH_STATUS_DONE){
+                printf("got bad status! %d\n", status);
+            }
 
             if(tokens[i] == EOL){
-                if(!ok){
-                    printf("didn't get OK afterwards!\n");
+                if(status != MATH_STATUS_DONE){
+                    printf("didn't get STATUS_DONE afterwards!\n");
                     return 1;
                 }
             }else{
-                if(ok){
-                    printf("got OK too early!\n");
+                if(status == MATH_STATUS_DONE){
+                    printf("got MATH_STATUS_DONE too early!\n");
                     return 1;
                 }
             }

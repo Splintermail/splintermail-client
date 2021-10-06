@@ -206,7 +206,15 @@ def directive(e):
             e.match(CODE, "spec")
             e.exec("$$.spec = $spec.strip()")
             e.match(CODE, "destructor")
-            e.exec("$$.destructor = textwrap.dedent($destructor).strip('\\n')")
+            # Most other code snippets are lists with tags, so even though
+            # there's only CODE block and no tag, we'll use the same format.
+            e.exec("""
+                $$.destructor = [
+                    ParsedSnippet(
+                        textwrap.dedent($destructor).strip('\\n')
+                    )
+                ]
+            """)
         with b.branch():
             e.match(ROOT)
             e.exec("$$ = ParsedRoot()")
