@@ -27,9 +27,9 @@ import gen
 
 # Meta grammar is:
 #
-# doc = *code conf *conf *code;
+# doc = *code stmt *stmt *code;
 # code = CODE [COLON TEXT:tag]
-# conf = directive | def;
+# stmt = directive | def;
 # def = name (SEMI | EQ branches SEMI);
 # name = TEXT:name [COLON TEXT:tag];
 # branches =
@@ -48,7 +48,7 @@ import gen
 # directive = PERCENT (
 #   | GENERATOR TEXT:generator
 #   | GENERATOR_ARG [COLON TEXT:tag] TEXT:key TEXT:value  # TODO: support ATOM
-#   | TYPE [COLON TEXT:tag] TEXT:spec CODE:destructor
+#   | TYPE [COLON TEXT:tag] TEXT:spec [CODE:destructor]
 #   | ROOT [COLON TEXT:tag] TEXT:spec
 # );
 
@@ -205,16 +205,17 @@ def directive(e):
             e.exec("$$.name = $name")
             e.match(CODE, "spec")
             e.exec("$$.spec = $spec.strip()")
-            e.match(CODE, "destructor")
-            # Most other code snippets are lists with tags, so even though
-            # there's only CODE block and no tag, we'll use the same format.
-            e.exec("""
-                $$.destructor = [
-                    ParsedSnippet(
-                        textwrap.dedent($destructor).strip('\\n')
-                    )
-                ]
-            """)
+            with e.maybe():
+                e.match(CODE, "destructor")
+                # most other code snippets are lists with tags, so even though
+                # there's only CODE block and no tag, we'll use the same format
+                e.exec("""
+                    $$.destructor = [
+                        ParsedSnippet(
+                            textwrap.dedent($destructor).strip('\\n')
+                        )
+                    ]
+                """)
         with b.branch():
             e.match(ROOT)
             e.exec("$$ = ParsedRoot()")
@@ -224,6 +225,7 @@ def directive(e):
                 e.exec("$$.tag = $tag")
             e.match(TEXT, "name")
             e.exec("$$.name = $name")
+    e.match(SEMI)
 
 @g.expr
 def definition(e):
@@ -241,7 +243,7 @@ def definition(e):
             e.exec("""$$ = ($name, None)""")
 
 @g.expr
-def conf(e):
+def stmt(e):
     with e.branches() as b:
         with b.branch():
             e.match(directive, "d")
@@ -258,11 +260,11 @@ def doc(e):
         e.match(code, "code")
         e.exec("$$.precode.append($code)")
 
-    e.match(conf, "conf")
-    e.exec("$$.add_conf($conf)")
+    e.match(stmt, "stmt")
+    e.exec("$$.add_stmt($stmt)")
     with e.zero_or_more():
-        e.match(conf, "conf")
-        e.exec("$$.add_conf($conf)")
+        e.match(stmt, "stmt")
+        e.exec("$$.add_stmt($stmt)")
 
     with e.zero_or_more():
         # post-code

@@ -11,16 +11,16 @@
     }
 }}:c
 
-%root line
-%root factor
+%root line;
+%root factor;
 
-%generator c
-%kwarg:c prefix math
-%kwarg:c semloc_type math_loc_t
-%kwarg:c span_fn math_span
-%type:c i { int } { printf("hi\n"); }
+%generator c;
+%kwarg:c prefix math;
+%kwarg:c semloc_type math_loc_t;
+%kwarg:c span_fn math_span;
+%type:c i { int };
 
-%kwarg:py prefix Math
+%kwarg:py prefix Math;
 
 ## You don't actually have to declare tokens, unless you want to set types.
 # EOL;
