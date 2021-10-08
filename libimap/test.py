@@ -123,8 +123,6 @@ def run_e2e_test(grammar_text):
 
         p = Popen(["./a.out"])
         assert p.wait() == 0, p.wait()
-        os.remove("a.out")
-        os.remove("test.c")
     else:
         cflags=("-g",)
         p = Popen([cc, *cflags, "test.c"])
@@ -141,8 +139,8 @@ def run_e2e_test(grammar_text):
         )
         p = Popen(cmd)
         assert p.wait() == 0, p.wait()
-        os.remove("test.c")
-        os.remove("a.out")
+    os.remove("test.c")
+    os.remove("a.out")
 
 # test the C generator; make sure everything is always freed, with a grammar
 # whose side effects never free anything
@@ -320,6 +318,136 @@ int main(int argc, char **argv){
     return ret;
 }
 }}
+""")
+
+
+# test the C generator's location tracking
+run_e2e_test(r"""
+{{
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+
+char *steal(char **in){
+    char *out = *in;
+    *in = NULL;
+    return out;
+}
+
+char *myappend(char *a, char joiner, char *b){
+    a = realloc(a, strlen(a) + 1 + strlen(b) + 1);
+    sprintf(a + strlen(a), "%c%s", joiner, b);
+    free(b);
+    return a;
+}
+
+typedef struct {
+    int start;
+    int end;
+} loc_t;
+
+loc_t span(loc_t start, loc_t end){
+    return (loc_t){start.start, end.end};
+}
+
+void check_location(char *val, loc_t loc);
+
+}}
+
+%type str {char*} {/*printf("freeing %s\n", $$);*/ free($$);};
+%root sum;
+%kwarg semloc_type loc_t;
+%kwarg span_fn span;
+
+STR:str;
+
+sum:str =
+    diff:a {check_location($a, @a); $$ = steal(&$a);}
+    *( PLUS diff:b {check_location($b, @b); $$ = myappend($$, '+', steal(&$b));} )
+    _EOF
+;
+
+diff:str =
+    STR:a {check_location($a, @a); $$ = steal(&$a);}
+    *( MINUS STR:b {check_location($b, @b); $$ = myappend($$, '-', steal(&$b));} )
+;
+
+{{{
+int main(int argc, char **argv){
+    ONSTACK_PARSER(p, 2, 7);
+
+    struct {int tok; loc_t loc; char *str;} tokens[] = {
+        {STR, (loc_t){1,1}, strdup("QWER")},
+        {PLUS, (loc_t){2,2}},
+        {STR, (loc_t){3,3}, strdup("ASDF")},
+        {PLUS, (loc_t){4,4}},
+        {STR, (loc_t){5,5}, strdup("ZXVC")},
+        {MINUS, (loc_t){6,6}},
+        {STR, (loc_t){7,7}, strdup("qwer")},
+        {MINUS, (loc_t){8,8}},
+        {STR, (loc_t){9,9}, strdup("asdf")},
+        {MINUS, (loc_t){10,10}},
+        {STR, (loc_t){10,10}, strdup("zxvc")},
+        {_EOF, (loc_t){11,11}},
+    };
+    size_t ntokens = sizeof(tokens)/sizeof(*tokens);
+
+    char *out;
+    loc_t loc;
+    status_t status = STATUS_OK;
+    size_t i = 0;
+    while(!status && i < ntokens){
+        // printf("feeding %s (%s)\n", token_name(tokens[i].tok), tokens[i].str);
+        status = parse_sum(
+            &p, tokens[i].tok, (val_t){.str=tokens[i].str}, tokens[i].loc, &out, &loc
+        );
+        i++;
+    }
+
+    if(i != ntokens || status != STATUS_DONE){
+        fprintf(stderr, "bad exit conditions %d\n", (int)status);
+        return 1;
+    }
+
+    check_location(out, loc);
+    char *exp = "QWER+ASDF+ZXVC-qwer-asdf-zxvc";
+    int ret = !!strcmp(out, exp);
+    if(ret){
+        fprintf(stderr, "expected: %s\n", exp);
+        fprintf(stderr, "but got : %s\n", out);
+    }
+    free(out);
+
+    return ret;
+}
+
+void check_location(char *val, loc_t loc){
+    char locstr[32];
+    sprintf(locstr, "%d:%d", loc.start, loc.end);
+    // printf("loc = %s, text = %s\n", locstr, val);
+
+    #define CHECKLOC(_val, _loc) do {\
+        if(val && strcmp(val, _val) == 0 && strcmp(locstr, _loc) != 0) { \
+            fprintf(stderr, "for string %s:\n", _val); \
+            fprintf(stderr, "    expected: %s\n", _loc); \
+            fprintf(stderr, "    but got : %s\n", locstr); \
+            exit(1); \
+        } \
+    } while(0)
+
+    CHECKLOC("QWER", "1:1");
+    CHECKLOC("ASDF", "3:3");
+    CHECKLOC("ZXCV", "5:5");
+    CHECKLOC("qwer", "7:7");
+    CHECKLOC("asdf", "9:9");
+    CHECKLOC("zxcv", "11:11");
+    CHECKLOC("ZXVC-qwer-asdf-zxvc", "5:10");
+    CHECKLOC("QWER+ASDF+ZXVC-qwer-asdf-zxvc", "1:11");
+
+    #undef CHECKLOC
+}
+
+}}}
 """)
 
 print("PASS")

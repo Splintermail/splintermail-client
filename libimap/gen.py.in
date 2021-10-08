@@ -22,13 +22,14 @@ TODO:
      optional end token
    - disallow roots which don't have a concrete ending token; the user api
      doesn't support it
+   - improve comments of generated code to show a metagrammar summary
 
  - C:
    - give compiler source line hints
-   - location tracking
    - support nested recovery blocks within a function (or detect it and puke)
    - disallow roots which don't have a concrete ending token; the user api
      doesn't support it
+   - improve comments of generated code to show a metagrammar summary
 
  - Grammar:
    -
@@ -611,7 +612,7 @@ class C:
             if self.semloc:
                 self.fprint(
                     "    #define YYLOC" + suffix
-                    + " (p->semstack[call->stack + " + str(pos) + "].loc." + typ + ")",
+                    + " (p->semstack[call->stack + %d].loc)"%pos,
                 )
             self.scopes[-1].append(tag)
 
@@ -681,6 +682,7 @@ class C:
             "user_args": args_str,
             "_user_args": "" if not args_str else ", " + args_str,
             "semloc_type": self.semloc_type,
+            "span_fn": self.span_fn,
         }
 
         self._extra_vars = {}
@@ -720,7 +722,9 @@ class C:
                 # self.fprint(textwrap.indent(c.text, i))
                 text = re.sub("\\$\\$", "YYVALOUT", c.text)
                 text = re.sub("\\$([a-zA-Z_][a-zA-Z0-9_]*)", "YYVAL_\\1", text)
-                text = re.sub("@@", "YYVALOUT", text)
+                # actually, we don't support reading the location of the output
+                # because it's not clear to user code when it's ready
+                ## text = re.sub("@@", "YYLOCOUT", text)
                 text = re.sub("@([a-zA-Z_][a-zA-Z0-9_]*)", "YYLOC_\\1", text)
                 self.fprint(textwrap.indent(text, i))
 
@@ -806,6 +810,12 @@ class C:
             self.fprint("    p->semstack[call->stack + " + str(stack) + "] = sem;")
             self.fprint("    ${PREFIX_}CONSUME_TOKEN;")
             self.fprint("    ${prefix_}mask_clear(p->mask);")
+            if self.semloc_type:
+                if self.want_first_loc:
+                    self.want_first_loc = False
+                    self.fprint("    call->loc_start = sem.loc;")
+                self.fprint("    call->loc_end = sem.loc;")
+
             return state + self.nstates(obj), stack + 1
 
         if isinstance(obj, Maybe):
@@ -909,6 +919,11 @@ class C:
             self.fprint("    call->state = " + str(state) + ";")
             self.fprint("    ${PREFIX_}CALL(%s, %d);"%(self.parse_fn(obj), stack))
             self.fprint("yy" + str(state) + ":")
+            if self.semloc_type:
+                if self.want_first_loc:
+                    self.want_first_loc = False
+                    self.fprint("    call->loc_start = p->semstack[%d].loc;"%stack)
+                self.fprint("    call->loc_end = p->semstack[%d].loc;"%stack)
             return state + self.nstates(obj), stack + 1
 
         raise RuntimeError("unrecognized object type: " + type(obj).__name__)
@@ -933,7 +948,6 @@ class C:
         self.fprint("")
         # Ensure we have enough stack space to operate.
         x = 1 + self.stackmax(expr.seq)
-        # self.fprint(r'    printf("%s wants %%zu + %%zu sems\n", call->stack, %d);'%(expr.title,x))
         self.fprint("    if(!${prefix_}sems_available(p, call->stack + %d)){"%x)
         self.fprint("        return ${PREFIX_}STATUS_SEMSTACK_OVERFLOW;")
         self.fprint("    }")
@@ -942,11 +956,18 @@ class C:
         if expr.type is not None:
             var.define("$", expr.type, 0)
             self.fprint("    p->semstack[call->stack].type = ${PREFIX_}SEMTYPE_%s;"%expr.type)
+        if self.semloc_type:
+            self.want_first_loc = True
 
         # state starts at 1, since 0 is only the first time we're called
         # stack starts at 1, since we always allocate the output
         self.gen(expr.seq, 1, 1, var)
 
+        if self.semloc_type:
+            # calculate the overall location
+            self.fprint("    p->semstack[call->stack].loc = $span_fn(")
+            self.fprint("        call->loc_start, call->loc_end")
+            self.fprint("    );")
         var.pop_scope()
         self.fprint("    p->callslen--;");
         self.fprint("    return 0;")
@@ -1080,8 +1101,15 @@ class C:
 
                 // the state to enter if we have to recover
                 int recover;
-            };
         """)
+        if self.semloc_type:
+            self.fprint("")
+            self.fprint("    // the first location that matches this call")
+            self.fprint("    $semloc_type loc_start;")
+            self.fprint("")
+            self.fprint("    // the last location that matches this call")
+            self.fprint("    $semloc_type loc_end;")
+        self.fprint("};")
 
         self.fprint("")
         self.fprint("typedef union {")
@@ -1459,7 +1487,9 @@ class Python:
             if c.tag in (None, self.code_tag):
                 text = re.sub("\\$\\$", "(out.val)", c.text)
                 text = re.sub("\\$([a-zA-Z_][a-zA-Z0-9_]*)", "(yy_\\1.val)", text)
-                text = re.sub("@@", "(out.loc)", text)
+                # actually, we don't support reading the location of the output
+                # because it's not clear to user code when it's ready
+                ## text = re.sub("@@", "(out.loc)", text)
                 text = re.sub("@([a-zA-Z_][a-zA-Z0-9_]*)", "(yy_\\1.loc)", text)
                 self.fprint_multi(text, i)
 
@@ -2101,7 +2131,7 @@ def gen(
             line = start_offset + e.loc.start.line
             char = e.loc.start.char
             print("syntax error at line=%d, char=%d:"%(line, char), file=sys.stderr)
-            print(grammar_text.splitlines()[e.loc.start.line - 1].strip(), file=sys.stderr)
+            print(grammar_text.splitlines()[e.loc.start.line - 1].rstrip('\n'), file=sys.stderr)
             print(" "*(char - 1) + "^", file=sys.stderr)
             exit(1)
 
