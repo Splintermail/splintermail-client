@@ -1,3 +1,4 @@
+# this file is the example grammar for testing the c and python generators
 {{
     #include <stdio.h>
 

@@ -1,7 +1,17 @@
+import sys
 import textwrap
 
+if len(sys.argv) < 2:
+    print(
+        "usage: %s /path/to/gen.py.in"%sys.argv[0],
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+INFILE = sys.argv[1]
+
 # start with a clean gen.py, since we need to import it ourselves
-with open("gen.py.in") as fin:
+with open(INFILE) as fin:
     with open("gen.py", "w") as fout:
         fout.write(fin.read())
 
@@ -281,6 +291,13 @@ def doc(e):
 
 g.check()
 
+
 with open("gen.py", "w") as f:
-    with gen.read_template("gen.py.in", file=f):
-        gen.Python(grammar=g, file=f, roots=["doc"], prefix="Meta", span_fn="text_span").gen_file()
+    with gen.read_template(INFILE, file=f):
+        gen.Python(
+            grammar=g,
+            file=f,
+            roots=["doc"],
+            prefix="Meta",
+            span_fn="text_span",
+        ).gen_file()

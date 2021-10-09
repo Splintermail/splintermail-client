@@ -308,6 +308,8 @@ include_directories("${PROJECT_SOURCE_DIR}")
 # always include the binary directory (for including generated .h files)
 include_directories("${PROJECT_BINARY_DIR}")
 
+add_subdirectory(tools)
+
 add_subdirectory(libdstr)
 add_subdirectory(libuvthread)
 add_subdirectory(libcrypto)
@@ -362,7 +364,7 @@ target_link_libraries(decrypt_msg PRIVATE crypto)
 target_link_libraries(inject_local_msg PRIVATE imaildir crypto)
 
 # decide if we are building server code
-if("${BUILD_SERVER_CODE}")
+if(BUILD_SERVER_CODE)
     add_subdirectory(server)
 
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DBUILD_SERVER_CODE=yes")
@@ -386,7 +388,7 @@ else()
     message(FATAL_ERROR "OS not detected")
 endif()
 
-if("${BUILD_TESTS}")
+if(BUILD_TESTS)
     enable_testing()
     add_subdirectory(test)
 endif()
