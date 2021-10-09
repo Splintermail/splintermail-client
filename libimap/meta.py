@@ -51,6 +51,12 @@ import gen
 #   | TYPE [COLON TEXT:tag] TEXT:spec [CODE:destructor]
 #   | ROOT [COLON TEXT:tag] TEXT:spec
 # );
+#
+# priority of operators:
+#  - parens, maybes, errors (unambiguous)
+#  - multipliers
+#  - sequences
+#  - branches
 
 g = gen.Grammar()
 
