@@ -210,7 +210,7 @@ int main(int argc, char **argv){
     while(!status && i < ntokens){
         // printf("feeding %s (%s)\n", token_name(tokens[i].tok), tokens[i].str);
         status = parse_sum(
-            &p, tokens[i].tok, (val_t){.str=tokens[i].str}, &out
+            &p, tokens[i].tok, (val_u){.str=tokens[i].str}, &out
         );
         i++;
     }
@@ -297,7 +297,7 @@ int main(int argc, char **argv){
     while(!status && i < ntokens){
         // printf("feeding %s (%s)\n", token_name(tokens[i].tok), tokens[i].str);
         status = parse_sum(
-            &p, tokens[i].tok, (val_t){.str=tokens[i].str}, &out
+            &p, tokens[i].tok, (val_u){.str=tokens[i].str}, &out
         );
         i++;
     }
@@ -399,7 +399,7 @@ int main(int argc, char **argv){
     while(!status && i < ntokens){
         // printf("feeding %s (%s)\n", token_name(tokens[i].tok), tokens[i].str);
         status = parse_sum(
-            &p, tokens[i].tok, (val_t){.str=tokens[i].str}, tokens[i].loc, &out, &loc
+            &p, tokens[i].tok, (val_u){.str=tokens[i].str}, tokens[i].loc, &out, &loc
         );
         i++;
     }

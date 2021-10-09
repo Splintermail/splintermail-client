@@ -33,6 +33,16 @@ NUM:i;
 # LPAREN;
 # RPAREN;
 
+# Like sqlite's lemon.c parser generator, We support a %fallback directive.
+# It is useful for allowing keywords in the grammar to additionally match as
+# normal identfiers.  sqlite does it to allow identifiers which might conflict
+# with obscure sql keywords.  Importantly, the fallback token type is only
+# allowed in cases where the primary type would be a syntax error. In our math
+# example, we'll have a couple 'keynumbers' which can also be normal numbers.
+ZERO:i;
+ONE:i;
+%fallback NUM ZERO ONE;
+
 # mult_op = MULT | DIV;
 # sum_op = PLUS | MINUS;
 # factor = NUM | LPAREN expr RPAREN;
@@ -118,6 +128,10 @@ line =
             NUM, 6,
             DIV, 0,
             NUM, 3,
+            PLUS, 0,
+            ZERO, 0,
+            PLUS, 0,
+            ONE, 1,
             EOL, 0,
         };
         size_t ntokens = sizeof(tokens) / sizeof(*tokens);
@@ -125,7 +139,7 @@ line =
         for(size_t i = 0; i < ntokens; i += 2){
             // printf("feeding %s\n", math_token_name(tokens[i]));
 
-            math_val_t val = { .i = tokens[i+1] };
+            math_val_u val = { .i = tokens[i+1] };
             math_loc_t loc = {i, i+1};
             math_status_t status = math_parse_line(p, tokens[i], val, loc, NULL);
             if(status > MATH_STATUS_DONE){

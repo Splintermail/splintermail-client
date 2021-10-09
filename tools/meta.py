@@ -1,3 +1,4 @@
+import os
 import sys
 import textwrap
 
@@ -58,9 +59,10 @@ import gen
 # directive = PERCENT (
 #   | GENERATOR TEXT:generator
 #   | GENERATOR_ARG [COLON TEXT:tag] TEXT:key TEXT:value  # TODO: support ATOM
-#   | TYPE [COLON TEXT:tag] TEXT:spec [CODE:destructor]
+#   | TYPE [COLON TEXT:tag] CODE:spec [CODE:destructor]
 #   | ROOT [COLON TEXT:tag] TEXT:spec
-# );
+#   | FALLBACK TEXT:to < TEXT:from *(TEXT:from);
+# ) SEMI;
 #
 # priority of operators:
 #  - parens, maybes, errors (unambiguous)
@@ -91,6 +93,7 @@ GENERATOR = g.token("GENERATOR")
 KWARG = g.token("KWARG")
 TYPE = g.token("TYPE")
 ROOT = g.token("ROOT")
+FALLBACK = g.token("FALLBACK")
 
 # Forward declaration.
 branches = g.expr("branches")
@@ -241,6 +244,20 @@ def directive(e):
                 e.exec("$$.tag = $tag")
             e.match(TEXT, "name")
             e.exec("$$.name = $name")
+        with b.branch():
+            e.match(FALLBACK)
+            e.exec("$$ = ParsedFallback()")
+            with e.maybe():
+                e.match(COLON)
+                e.match(TEXT, "tag")
+                e.exec("$$.tag = $tag")
+            e.match(TEXT, "to")
+            e.exec("$$.to_type = $to")
+            e.match(TEXT, "a")
+            e.exec("$$.from_types.append($a)")
+            with e.zero_or_more():
+                e.match(TEXT, "b")
+                e.exec("$$.from_types.append($b)")
     e.match(SEMI)
 
 @g.expr
@@ -301,3 +318,4 @@ with open("gen.py", "w") as f:
             prefix="Meta",
             span_fn="text_span",
         ).gen_file()
+    os.chmod("gen.py", 0o755)
