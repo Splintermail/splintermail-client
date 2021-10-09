@@ -29,7 +29,6 @@ TODO:
    - reject nested recovery blocks
    - reject roots which don't have a concrete ending token; the user api
      doesn't support it
-   - set @$ before the final codeblock
 
  - Grammar:
    - use source-order everywhere
@@ -626,12 +625,22 @@ class C:
                         suffix, pos, typ
                     ),
                 )
-            if self.semloc:
+            if self.semloc and tag != "$":
                 self.fprint(
                     "    #define YYLOC" + suffix
                     + " (p->semstack[call->stack + %d].loc)"%pos,
                 )
             self.scopes[-1].append((tag, typ))
+
+        def define_final_loc(self):
+            """
+            We delay defining the final location because it isn't set until
+            just before the last code block of an expression, so it wouldn't
+            be sensible to read or write it before then.
+            """
+            self.fprint(
+                "    #define YYLOCOUT (p->semstack[call->stack + 0].loc)"
+            )
 
         def pop_scope(self):
             popped = self.scopes.pop()
@@ -747,10 +756,8 @@ class C:
             if c.tag in (None, "c"):
                 # self.fprint(textwrap.indent(c.text, i))
                 text = re.sub("\\$\\$", "YYVALOUT", c.text)
+                text = re.sub("@\\$", "YYLOCOUT", text)
                 text = re.sub("\\$([a-zA-Z_][a-zA-Z0-9_]*)", "YYVAL_\\1", text)
-                # actually, we don't support reading the location of the output
-                # because it's not clear to user code when it's ready
-                ## text = re.sub("@@", "YYLOCOUT", text)
                 text = re.sub("@([a-zA-Z_][a-zA-Z0-9_]*)", "YYLOC_\\1", text)
                 self.fprint(textwrap.indent(text, i))
 
@@ -842,7 +849,7 @@ class C:
             return 1
         raise RuntimeError("unrecognized object type: " + type(obj).__name__)
 
-    def gen(self, obj, state, stack, var, tag=None):
+    def gen(self, obj, state, stack, var, tag=None, capture_final_loc=False):
         """Generate code to match an object."""
         if isinstance(obj, Token):
             self.fprint("    // " + obj.summary())
@@ -965,8 +972,15 @@ class C:
                     assert isinstance(t, (Token, Expression)), "wrong type for tag: " + type(t).__name__
                     var.define(tag, t.type, stack)
                 state, stack = self.gen(t, state, stack, var, tag)
+                is_last = i+1 == len(obj.terms)
+                # calculate the overall location before the final code block
+                if is_last and capture_final_loc and self.semloc_type:
+                    var.define_final_loc()
+                    self.fprint("    p->semstack[call->stack].loc = $span_fn(")
+                    self.fprint("        call->loc_start, call->loc_end")
+                    self.fprint("    );")
                 self.print_code(code, "    ")
-                if i+1 != len(obj.terms):
+                if not is_last:
                     self.fprint("")
             var.pop_scope()
             self.fprint("    ${prefix_}free_sems(p, call->stack+%d);"%oldstack)
@@ -1016,19 +1030,16 @@ class C:
             var.define("$", expr.type, 0)
             self.fprint("    p->semstack[call->stack].type = ${PREFIX_}SEMTYPE_%s;"%expr.type)
         if self.semloc_type:
+            # a globally variable to capture the first location we match
+            # against, either a Token or an Expression
             self.want_first_loc = True
         self.fprint("")
 
         # state starts at 1, since 0 is only the first time we're called
         # stack starts at 1, since we always allocate the output
-        self.gen(expr.seq, 1, 1, var)
+        self.gen(expr.seq, 1, 1, var, capture_final_loc=True)
 
         self.fprint("")
-        if self.semloc_type:
-            # calculate the overall location
-            self.fprint("    p->semstack[call->stack].loc = $span_fn(")
-            self.fprint("        call->loc_start, call->loc_end")
-            self.fprint("    );")
         var.pop_scope()
         self.fprint("    p->callslen--;");
         self.fprint("    return 0;")
@@ -1550,10 +1561,8 @@ class Python:
         for c in code:
             if c.tag in (None, self.code_tag):
                 text = re.sub("\\$\\$", "(out.val)", c.text)
+                text = re.sub("@\\$", "(out.loc)", text)
                 text = re.sub("\\$([a-zA-Z_][a-zA-Z0-9_]*)", "(yy_\\1.val)", text)
-                # actually, we don't support reading the location of the output
-                # because it's not clear to user code when it's ready
-                ## text = re.sub("@@", "(out.loc)", text)
                 text = re.sub("@([a-zA-Z_][a-zA-Z0-9_]*)", "(yy_\\1.loc)", text)
                 self.fprint_multi(text, i)
 
