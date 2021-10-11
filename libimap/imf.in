@@ -1,0 +1,253 @@
+# imf grammar
+#  rfc5322: imf
+#  rfc5335: utf8 extensions to imf
+#  rfc5234: general ANBF
+#  rfc2045: mime, part 1/5, mime-related headers
+
+%generator c;
+%root body;
+%root hdrs;
+%root hdrs;
+%root from_field;
+%root mime_version_field;
+%root content_type_field;
+%kwarg prefix imf;
+
+%type hdr {imf_hdr_t*} {imf_hdr_free($$));};
+%type hdrs {imf_hdrs_t*} {imf_hdrs_free($$));};
+
+### ENTIRE DOCUMENTS ###
+# treat all headers unstructured
+# structured things can be parsed in a second pass
+# don't bother parsing the body itself; it's always just "what's left".  If
+# after the first pass we detect that the body contains an imf-like structure,
+# we might end up parsing it in a second pass (again, just the headers).
+
+hdrs:hdrs =
+    hdr:h
+    *(hdr:h2 { $h = imf_hdr_add(e, $h, $h2); } )
+    eol:sep
+    { $$ = imf_hdrs_new(e, @$, @sep, STEAL(imf_hdr_t, &$hdr)); }
+;
+
+unstruct_val = [UNSTRUCT];
+
+hdr:hdr =
+    HDRNAME:n
+    COLON
+    unstruct_val:v
+    eol
+    *(
+        WS
+        [UNSTRUCT:v2 {@v = token_extend2(@v, @v2);}]
+        eol
+    )
+    { $$ = imf_hdr_new(e, @$, @n, @v); }
+;
+
+### IMF BASICS ###
+
+# from ANBF rfc (rfc5234):
+# WSP = \t SPACE
+# VCHAR = 0x21 - 0x7E
+# CTL = 0x00 - 0x1F , 0x7F
+
+# Support CRLF or plain LF
+eol = [CR] LF;
+
+# FWS: [*WS eol] WS *WS
+# obs-FWS: WS *WS *(eol WS *WS)
+# FWS allows for eol-ws instead of ws-eol-ws.
+# obs-FWS allows for multiple consecutive folds.
+# We allow a superset of both.
+# Note that fws wouldn't be safe to use if you were _expecting_ an EOL; the
+# repeat point would be wrong.  But since we have a two-step parser, when we
+# parse a structured header, we've already excluded the header-terminating EOL
+# from the text we examine, so we can safely ignore that issue.
+fws = [eol] WS;
+
+# ctext is VCHAR except ()\
+# obs-ctext adds control characters except \0 \r \n \t SPACE
+# utf8-ctext adds UTF8
+# sum total is: UTF8 or ASCII except ( ) \\ \0 \r \n \t SPACE
+# XXX fill me in
+ctext;
+
+# comment: again we allow consecutive folds, out of lazieness and leniency
+comment = LPAREN *(fws | ctext | quoted_pair | comment) RPAREN;
+
+# cfws: again we allow consecutive folds.
+cfws = (fws | comment) *(fws | comment);
+
+# "maybe break"
+xbr = *cfws;
+
+# ATOMs are always joined by cfws
+# ALPHA DIGIT UTF8 !#$%&'*+-/=?^_`{|}~
+# XXX fill me in
+ATOM;
+
+# dot-atom is atoms joined by '.' but _not_ cfws
+# dot-atom itself is always joined by cfws
+dot_atom = ATOM *(DOT ATOM);
+
+# qtext is VCHAR except "\
+# obs-qtext adds control characters except \0 \r \n \t SPACE
+# utf8-qtext adds UTF8
+# sum total is: UTF8 or ASCII except \\ " \0 \r \n \t SPACE
+# XXX fill me in
+qtext;
+
+# quoted-pair is backslash followed by VCHAR or WSP
+# obs-qp adds control characters except \r and \n
+# utf8-quoted-par adds UTF8
+# obs-qp actually allows \r and \n, which is insane.  And since
+# the unstructured parser can't handle that, so we just ignore that reality.
+# The sum total is backslash then "anything but \r or \n"
+# XXX fill me in
+qp;
+
+quoted_pair = BACKSLASH qp;
+
+qcontent = qtext | quoted_pair;
+
+# quoted_string is always joined by fws
+quoted_string = DQUOTE *fws *(qcontent *fws) DQUOTE;
+
+# word is always joined by cfws
+word = ATOM | quoted_string;
+
+# phrase is just a bunch of words
+# obs-phrase adds the possibility of "." as well, but not at the beginning
+phrase_xbr = word *(xbr (DOT | word));
+
+# right now only unstruct bodies are supported
+body = [BODY];
+
+### From-related things ###
+
+# local-part is dot-atom | quoted-string
+# obs-local-part allows word *(DOT word), which adds cfws
+# We'll support a superset of those, which allows for leading and trailing DOT
+# In fact, we're so lazy, we just let local_part be a phrase.
+local_part_xbr = phrase_xbr;
+
+# dtext is VCHAR except [ ] \
+# obs-dtext adds control characters except \0 \r \n \t SPACE
+# obs-dtext also allows qp
+# there is not a utf8-dtext, but we allow UTF8 out of laziness
+# sum total is: qp or UTF8 or ascii except [ ] \ \0 \r \n \t SPACE
+dtext;
+
+# domain_literal is always joined by cfws
+domain_literal = LBRACKET *fws *(dtext *fws) RBRACKET;
+
+# domain is dot-atom | domain-literal
+# obs-domain uses atoms joined by ".", which allows for cfws
+# sum total is "."-joined atoms
+domain_xbr = ATOM xbr *((DOT | ATOM) xbr) | domain_literal xbr;
+
+addr_spec_xbr = local_part_xbr ARUBA xbr domain_xbr;
+
+# always joined by cfws
+obs_route =
+    # any number of leading commas
+    *(COMMA xbr)
+    # at least one domain
+    ARRUBA xbr domain_xbr
+    # followed by more commas, possibly with more domains
+    *(COMMA xbr [ARRUBA xbr domain_xbr])
+    # terminating in a colon
+    COLON
+;
+
+# angle_addr is always joined by cfws
+# angle-addr is < addr-spec >
+# obs-angle-addr adds < [obs-route] addr-spec >
+# utf8 adds alt-address, which is non-utf8, but we allow it to be utf8 too.
+# technically, alt-address can't appear with obs-route, but whatever.
+alt_addr = LANGLE xbr addr_spec_xbr RANGLE;
+angle_addr = LANGLE xbr [obs_route xbr] addr_spec_xbr [alt_addr xbr] RANGLE;
+
+mailbox_xbr =
+    phrase_xbr (
+        | angle_addr xbr  # named address
+        | ARUBA xbr domain_xbr  # bare address
+    )
+;
+
+# mailbox-list is mailbox *(COMMA mailbox); never empty, no double commas
+# obs-mbox-list allows for double commas
+# obs-group-list further allows for empty lists, with just commas
+# here, we assume the list is non-empty and has no leading commas, but we'll
+# allow those in the definition of group.
+mailbox_list_xbr = mailbox_xbr *(COMMA xbr [mailbox_xbr]);
+
+# group is always joined by cfws
+group = phrase_xbr COLON xbr *(COMMA xbr) [mailbox_list_xbr] SEMI;
+
+# by definition: address = mailbox | group
+# but we need to factor out the phrase/local-part common to all branches
+# TODO: wait can you have a bare angle-address??
+address_or_group_xbr =
+    phrase_xbr (
+        | COLON xbr *(COMMA xbr) [mailbox_list_xbr] SEMI xbr # group
+        | angle_addr xbr # named address
+        | ARUBA xbr domain_xbr # bare address
+    )
+;
+
+# address-list is non-empty and no leading/trailing/double commas
+# obs-addr-list allows leading/trailing/double commas, but not an empty list
+address_list_xbr = *(COMMA xbr) address_or_group_xbr *(COMMA xbr [address_or_group_xbr]);
+
+# roots:
+from_field = mailbox_list_xbr;
+
+### MIME-related things ###
+
+# always joined by cfws
+# rfc2045: token is VCHAR except ()<>@,;:\"/[]?=
+# which is ATOM, adding DOT and removing /=?
+# (we'll assume all of UTF8 is fine too)
+# XXX: fill me in
+TOKEN;
+
+# always joined by cfws
+# rfc2045: type = discrete-type / composite-type
+# we actually only care about composite types
+typ = MESSAGE | MULTIPART | TOKEN;
+# for subtype, we only parse out the known subtypes we care about
+# RFC822: message/rfc822 for embedded imf messages
+# DIGEST: multipart/digest changes the default content-type to message/rfc822
+subtype = RFC822 | DIGEST | TOKEN;
+
+# always joined by cfws
+param_value = (TOKEN | quoted_string);
+param = TOKEN:attr xbr EQ xbr param_value;
+
+# note that 7BIT, 8BIT, and BINARY indicate that no encoding has been applied
+# defaults to 7BIT, when not present
+# note that BINARY is not really valid in email, due to smtp restrictions
+# also note that multipart messages cannot be encoded, so since we only care
+# about composite messages, we don't care terribly much about this field.
+## mechanism = (7BIT | 8BIT | BINARY | QUOTED_PRINTABLE | BASE64 | token);
+## content_transfer_encoding_field = xbr mechanism xbr;
+
+# multipart-body can't be parsed by a generated parser due to the dynamic
+# nature of the boundary, but it's very easy to split the bodies by hand and
+# use a generated parser for the inner parts.
+## multipart-body =
+##   preamble boundary
+##   body-part (*boundary body-part)
+##   end-boundary epilogue
+
+# body-part is what appears between two boundary lines
+# like the overall imf, it requires two-pass parsing, as the parsing of the
+# body depends on the semantic values of the headers in the message.
+## body_part = hdrs;
+
+# roots:
+mime_version_field = xbr NUM xbr DOT xbr NUM;
+
+content_type_field = xbr typ xbr SLASH xbr subtype xbr *(SEMI xbr param xbr);

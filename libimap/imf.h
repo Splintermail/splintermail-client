@@ -1,19 +1,10 @@
 // Internet Message Format (IMF) parser, aka "email message format parser"
 
-typedef enum {
-    IMF_HDR_UNSTRUCT,   // unstructured, or maybe just unparsed
-} imf_hdr_type_e;
-
-typedef union {
-    dstr_off_t unstruct;
-} imf_hdr_arg_u;
-
 // a single header
 typedef struct imf_hdr_t {
     dstr_off_t bytes;
     dstr_off_t name;
-    imf_hdr_type_e type;
-    imf_hdr_arg_u arg;
+    dstr_off_t value;
     struct imf_hdr_t *next;
 } imf_hdr_t;
 
@@ -25,25 +16,10 @@ typedef struct imf_hdrs_t {
 } imf_hdrs_t;
 DEF_STEAL_PTR(imf_hdrs_t)
 
-typedef enum {
-    IMF_BODY_UNSTRUCT,   // unstructured, or maybe just unparsed
-} imf_body_type_e;
-
-typedef union {
-    // nothing for UNSTRUCT
-    int _unused;
-} imf_body_arg_u;
-
-typedef struct imf_body_t {
-    dstr_off_t bytes;
-    imf_body_type_e type;
-    imf_body_arg_u arg;
-} imf_body_t;
-
 typedef struct {
     dstr_off_t bytes;
     imf_hdrs_t *hdrs;
-    imf_body_t *body;
+    dstr_off_t body;
 } imf_t;
 DEF_STEAL_PTR(imf_t)
 
@@ -51,8 +27,7 @@ imf_hdr_t *imf_hdr_new(
     derr_t *e,
     dstr_off_t bytes,
     dstr_off_t name,
-    imf_hdr_type_e type,
-    imf_hdr_arg_u arg
+    dstr_off_t value,
 );
 imf_hdr_t *imf_hdr_add(derr_t *e, imf_hdr_t *list, imf_hdr_t *new);
 void imf_hdr_free(imf_hdr_t *hdr);
@@ -65,19 +40,11 @@ imf_hdrs_t *imf_hdrs_new(
 );
 void imf_hdrs_free(imf_hdrs_t *hdrs);
 
-imf_body_t *imf_body_new(
-    derr_t *e,
-    dstr_off_t bytes,
-    imf_body_type_e type,
-    imf_body_arg_u arg
-);
-void imf_body_free(imf_body_t *body);
-
 imf_t *imf_new(
     derr_t *e,
     dstr_off_t bytes,
     imf_hdrs_t *hdrs,
-    imf_body_t *body
+    dstr_off_t body
 );
 void imf_free(imf_t *imf);
 
@@ -85,7 +52,6 @@ void imf_free(imf_t *imf);
 typedef union {
     imf_hdr_t *hdr;
     imf_hdrs_t *hdrs;
-    imf_body_t *body;
     imf_t *imf;
 } imf_expr_t;
 
