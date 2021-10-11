@@ -568,7 +568,7 @@ class Grammar:
             fn = val
             name = fn.__name__
 
-        assert name not in self.exprs
+        assert name not in self.exprs, name
         e = Expression(name)
         self.exprs[name] = e
         if fn is not None:
