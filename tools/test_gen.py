@@ -95,11 +95,12 @@ def b(e):
     with e.maybe():
         e.match(Z)
 
-assert a.get_first() == {"W", "X", "Y", "Z", None}
-assert a.get_disallowed_after() == {"W", "X", "Y", "Z", None}
+assert a.seq.get_first() == {"W", "X", "Y", "Z", None}
+assert a.seq.get_disallowed_after() == {"W", "X", "Y", "Z", None}
 
-assert b.get_first() == {"W", "X", "Y"}
-assert b.get_disallowed_after() == {"Z"}
+assert b.seq.get_first() == {"W", "X", "Y"}
+assert b.seq.get_disallowed_after() == {"Z"}
+
 
 # testing MetaTokenizer
 text = r"{{{ hi {{hello}} bye }}}"

@@ -16,12 +16,10 @@ gen.py is in alpha, and is still missing some key features.
 
 TODO:
  - Python:
-   - location tracking for expressions (right now only the tokenizer has it)
    - some state tracking, to avoid duplicate token checks
-   - introduce a lookahead variable, to improve readability of generated code
+   - support fallback
    - reject roots which don't have a concrete ending token; the user api
      doesn't support it
-   - support fallback
 
  - C:
    - give compiler source line hints
@@ -52,15 +50,97 @@ import sys
 import textwrap
 import string
 
+class TextLocation:
+    def __init__(self, line, char):
+        self.line = line
+        self.char = char
 
-class FirstFirst(Exception):
+    def __repr__(self):
+        return "(line=%d, char=%d)"%(self.line, self.char)
+
+def render_location(loc, body, underline=True):
+    lines = body.splitlines()
+
+    # Note that values in loc are always 1-indexed.
+    if loc.start.line == -1:
+        start_line = len(lines)-1
+        start_char = len(lines[-1])
+        end_line = len(lines)
+        end_char = len(lines[-1]) + 1
+        out = "end-of-file:\n"
+    else:
+        start_line = loc.start.line - 1
+        start_char = loc.start.char - 1
+        end_line = loc.end.line
+        end_char = loc.end.char
+        out = "line=%d, char=%d:\n"%(loc.start.line, loc.start.char)
+
+    for i in range(start_line, end_line):
+        line = lines[i]
+        out += line + "\n"
+        if not underline:
+            continue
+        caret_start = start_char if i == start_line else 0
+        caret_end = end_char if i+1 == end_line else len(line)
+        out += " "*caret_start + "^"*(caret_end - caret_start) + "\n"
+
+    return out.rstrip("\n")
+
+class RenderedError(Exception):
     pass
 
-class FirstFollow(Exception):
+class GrammarError(Exception):
     pass
+
+class FirstFirst(GrammarError):
+    def __init__(self, parent, conflicts):
+        self.parent = parent
+        self.conflicts = conflicts
+
+    def render(self, body):
+        out = "FIRST/FIRST conflict detected in (%s):\n"%self.parent.summary()
+        if self.parent.loc is not None:
+            out += "at " + render_location(self.parent.loc, body) + "\n"
+
+        for branchlist, tokens in self.conflicts.items():
+            out += "token(s) [%s] "%(", ".join(tokens))
+            out += "match multiple branches:\n"
+            for b in branchlist:
+                out += "  - " + b.summary() + "\n"
+
+        return out.rstrip('\n')
+
+class FirstFollow(GrammarError):
+    def __init__(self, term, conflicts):
+        self.term = term
+        self.conflicts = conflicts
+
+    def render(self, body):
+        out = "FIRST/FOLLOW conflicts: [%s]\n"%(",".join(self.conflicts))
+        if self.term.loc is not None:
+            out += "at " + render_location(self.term.loc, body) + "\n"
+        out += "at least one token that starts %s is disallowed by then."%(
+            self.term.summary()
+        )
+        return out
 
 class InfiniteRecursion(Exception):
     pass
+
+class PossiblyEmpty(GrammarError):
+    def __init__(self, msg, summary, loc):
+        self.msg = msg
+        self.summary = summary
+        self.loc = loc
+
+    def render(self, body):
+        out = "invalid %s on maybe-empty expression (%s)"%(
+            self.msg, self.summary
+        )
+        if self.loc is not None:
+            out += "\n" + render_location(self.loc, body)
+        return out
+
 
 def add_to_prev(prev, name, call):
     if prev is None:
@@ -89,6 +169,18 @@ PRIORITY_SEQUENCE = 2
 PRIORITY_MULTIPLIER = 3
 
 
+class Definition:
+    """Only Tokens and Expressions are Definitions"""
+    name: str
+
+
+class Token(Definition):
+    def __init__(self, name, typ=None, loc=None):
+        self.name = name
+        self.type = typ
+        self.loc = loc
+
+
 class Parsable(metaclass=abc.ABCMeta):
     @abc.abstractmethod
     def summary(self, parent_priority=PRIORITY_UNAMBIGUOUS):
@@ -107,37 +199,52 @@ class Parsable(metaclass=abc.ABCMeta):
         pass
 
 
-class Token(Parsable):
-    def __init__(self, name, typ=None):
-        self.name = name
-        self.type = typ
+class Reference(Parsable):
+    """
+    Points to a Definition (either a Token or an Experiment).
+
+    Token.loc and Expriment.loc point to definitions, but Reference.loc points
+    to the location of a reference.
+    """
+    def __init__(self, defn, loc=None):
+        assert isinstance(defn, (Token, Expression)), type(defn).__name__
+        self.defn = defn
+        self.loc = loc
 
     def summary(self, parent_priority=PRIORITY_UNAMBIGUOUS):
-        return self.name
+        return self.defn.name
 
     @cacheable
     def get_first(self, prev=None):
-        return {self.name}
+        if isinstance(self.defn, Token):
+            return {self.defn.name}
+        return self.defn.seq.get_first(prev)
 
     @cacheable
     def get_disallowed_after(self, prev=None):
-        return set()
+        if isinstance(self.defn, Token):
+            return set()
+        return self.defn.seq.get_disallowed_after(prev)
 
     @cacheable
     def check(self):
-        pass
+        if isinstance(self.defn, Token):
+            return
+        return self.defn.seq.check()
 
 
 class Snippet:
-    def __init__(self, text, tag=None):
+    def __init__(self, text, tag=None, loc=None):
         self.text = text
         self.tag = tag
+        self.loc = loc
 
 
 class Maybe(Parsable):
-    def __init__(self, name):
+    def __init__(self, name, loc=None):
         self.name = name
         self.seq = Sequence(self.name + ".seq")
+        self.loc = loc
 
     def summary(self, parent_priority=PRIORITY_UNAMBIGUOUS):
         return "[" + self.seq.summary(PRIORITY_UNAMBIGUOUS) + "]"
@@ -153,17 +260,20 @@ class Maybe(Parsable):
         prev = add_to_prev(prev, self.name, "get_first")
         first = self.seq.get_first(prev)
         # TODO: is this necessary at all?
-        assert None not in first, "invalid .maybe() on maybe-empty expression"
+        if None in first:
+            raise PossiblyEmpty(".maybe()", self.seq.summary(), self.loc)
         return first.union({None})
 
     @cacheable
     def get_disallowed_after(self, prev):
         prev = add_to_prev(prev, self.name, "get_disallowed_after")
         disallowed = self.seq.get_disallowed_after(prev)
-        assert None not in disallowed, "invalid .maybe() on maybe-empty expression"
+        if None in disallowed:
+            raise PossiblyEmpty(".maybe", self.seq.summary(), self.loc)
         # since this might not exist, we disallow the this expression's first as well
         first = self.seq.get_first()
-        assert None not in first, "invalid .maybe() on maybe-empty expression"
+        if None in first:
+            raise PossiblyEmpty(".maybe", self.seq.summary(), self.loc)
         # always include None, since this term may be missing
         return disallowed.union(first).union({None})
 
@@ -173,9 +283,10 @@ class Maybe(Parsable):
 
 
 class ZeroOrMore(Parsable):
-    def __init__(self, name):
+    def __init__(self, name, loc=None):
         self.name = name
         self.seq = Sequence(self.name + '.seq')
+        self.loc = loc
 
     def add_term(self, term, tag=None):
         self.seq.add_term(term, tag)
@@ -190,20 +301,21 @@ class ZeroOrMore(Parsable):
     def get_first(self, prev=None):
         prev = add_to_prev(prev, self.name, "get_first")
         first = self.seq.get_first(prev)
-        assert None not in first, (
-            "invalid .zero_or_more() on maybe-empty expression: "
-            + self.seq.summary()
-        )
+        if None in first:
+            raise PossiblyEmpty(".zero_or_more()", self.seq.summary(), self.loc)
         return first.union({None})
 
     @cacheable
     def get_disallowed_after(self, prev):
         prev = add_to_prev(prev, self.name, "get_disallowed_after")
         disallowed = self.seq.get_disallowed_after(prev)
+        if None in disallowed:
+            raise PossiblyEmpty(".zero_or_more()", self.seq.summary(), self.loc)
         assert None not in disallowed, "invalid .maybe() on maybe-empty expression"
         # since this might not exist, we disallow the this expression's first as well
         first = self.seq.get_first(prev)
-        assert None not in first, "invalid .maybe() on maybe-empty expression"
+        if None in first:
+            raise PossiblyEmpty(".zero_or_more()", self.seq.summary(), self.loc)
         # always include None, since this term may be missing
         return disallowed.union(first).union({None})
 
@@ -213,10 +325,11 @@ class ZeroOrMore(Parsable):
 
 
 class Branches(Parsable):
-    def __init__(self, name):
+    def __init__(self, name, loc=None):
         self.name = name
         self.branches = []
         self._branch = None
+        self.loc = loc
 
     def summary(self, parent_priority=PRIORITY_UNAMBIGUOUS):
         out = " | ".join(b.summary(PRIORITY_BRANCHES) for b in self.branches)
@@ -265,30 +378,38 @@ class Branches(Parsable):
 
     @cacheable
     def check(self):
-        first = set()
+        # if any tokens map to multiple branches, that's a first/first conflict
+        token_to_branch = {}
         for branch in self.branches:
             branch.check()
 
             # no possibly-empty branches
             branch_first = branch.get_first()
-            assert None not in branch_first
+            if None in branch_first:
+                raise PossiblyEmpty("branch", branch.summary(), branch.loc)
 
-            # Ensure that no branches begin with the same tokens
-            conflicts = first.intersection(branch_first)
-            assert not conflicts, (
-                "FIRST/FIRST conflicts for tokens [%s]"%(",".join(conflicts))
-            )
+            for t in branch_first:
+                token_to_branch.setdefault(t, []).append(branch)
 
-            first = first.union(branch_first)
+        conflicts= {}
+        for t, branchlist in token_to_branch.items():
+            if len(branchlist) > 1:
+                conflicts.setdefault(tuple(branchlist), []).append(t)
+
+        if not conflicts:
+            return
+
+        raise FirstFirst(self, conflicts)
 
 
 class Recovery(Parsable):
-    def __init__(self, name, code=None, tag=None):
+    def __init__(self, name, code=None, tag=None, loc=None):
         self.name = name
         # allow defining the recovery code upfront
         self.code = [] if code is None else [Snippet(code, tag)]
         self.seq = Sequence(self.name + '.seq')
         self.after = None
+        self.loc = loc
 
     def add_term(self, term, tag=None):
         self.seq.add_term(term, tag)
@@ -323,12 +444,13 @@ class Sequence(Parsable):
     """
     A sequence of terms which must be matched consecutively.
     """
-    def __init__(self, name):
+    def __init__(self, name, loc=None):
         self.name = name
         self.scopes = [self]
         self.precode = []
         # tuples of (Parsable, tag=None, code=[])
         self.terms = []
+        self.loc = loc
 
     def add_term(self, term, tag=None):
         self.terms.append((term, tag, []))
@@ -412,8 +534,10 @@ class Sequence(Parsable):
 
         for term, _, _ in self.terms:
             # don't allow recursion
-            if not isinstance(term, Expression):
-                term.check()
+            if isinstance(term, Reference):
+                if isinstance(term.defn, Expression):
+                    continue
+            term.check()
 
         disallowed = set()
         for i, (term, _, _) in enumerate(self.terms):
@@ -422,13 +546,7 @@ class Sequence(Parsable):
             disallowed = disallowed.difference({None})
             conflicts = disallowed.intersection(term_first)
             if conflicts:
-                raise FirstFollow(
-                    "FIRST/FOLLOW conflicts: [%s]\n"%(",".join(conflicts)) +
-                    "found while checking expression: %s\n"%self.summary() +
-                    "at least one token that starts term[%d] (%s)\n"%(
-                        i, term.summary()
-                    ) + "is disallowed by that point."
-                )
+                raise FirstFollow(term, conflicts)
             term_disallowed = term.get_disallowed_after(list(prev))
             if None in term_disallowed:
                 # disallowed should grow
@@ -448,35 +566,34 @@ class Sequence(Parsable):
                 term.set_after(after_recovery)
 
 
-class Expression(Parsable):
+class Expression(Definition):
     """
     Each Expression will generate one function in the parser.
     """
-    def __init__(self, name, typ=None):
+    def __init__(self, name, typ=None, loc=None, body_loc=None):
         self.name = name
         self.type = typ
-        self.seq = Sequence(self.name + ".seq")
+        self.seq = Sequence(self.name + ".seq", loc=body_loc)
         self.scopes = [self.seq]
         self.nmaybe = 0
         self.nzom = 0
         self.nbranches = 0
         self.nrec = 0
-
-    # API for defining the grammar.
+        self.loc = loc
 
     def __call__(self, fn):
-        """Provide a definition for a fowards-declared expression"""
+        """Provide a definition for a forwards-declared expression"""
         assert fn.__name__ == self.name, fn.__name__ + " != " + self.name
         fn(self)
         return self
 
-    def match(self, term, tag=None):
-        self.scopes[-1].add_term(term, tag)
+    def match(self, term, tag=None, loc=None):
+        self.scopes[-1].add_term(Reference(term, loc), tag)
         return term
 
     @contextlib.contextmanager
-    def maybe(self):
-        term = Maybe(self.name + '.maybe' + str(self.nmaybe))
+    def maybe(self, loc=None):
+        term = Maybe(self.name + '.maybe' + str(self.nmaybe), loc)
         self.nmaybe += 1
         self.scopes.append(term)
         yield term
@@ -484,8 +601,8 @@ class Expression(Parsable):
         self.scopes[-1].add_term(term)
 
     @contextlib.contextmanager
-    def zero_or_more(self):
-        term = ZeroOrMore(self.name + '.zom' + str(self.nzom))
+    def zero_or_more(self, loc=None):
+        term = ZeroOrMore(self.name + '.zom' + str(self.nzom), loc)
         self.nzom += 1
         self.scopes.append(term)
         yield term
@@ -493,8 +610,8 @@ class Expression(Parsable):
         self.scopes[-1].add_term(term)
 
     @contextlib.contextmanager
-    def branches(self):
-        term = Branches(self.name + '.br' + str(self.nbranches))
+    def branches(self, loc=None):
+        term = Branches(self.name + '.br' + str(self.nbranches), loc)
         self.nbranches += 1
         self.scopes.append(term)
         yield term
@@ -502,8 +619,10 @@ class Expression(Parsable):
         self.scopes[-1].add_term(term)
 
     @contextlib.contextmanager
-    def recovery(self, code=None, tag=None):
-        term = Recovery(self.name + ".recovery" + str(self.nrec), code, tag)
+    def recovery(self, code=None, tag=None, loc=None):
+        term = Recovery(
+            self.name + ".recovery" + str(self.nrec), code, tag, loc
+        )
         self.nrec += 1
         self.scopes.append(term)
         yield term
@@ -512,22 +631,6 @@ class Expression(Parsable):
 
     def exec(self, code, tag=None):
         self.scopes[-1].add_code(code, tag)
-
-    # Non-user-facing methods.
-
-    def summary(self, parent_priority=PRIORITY_UNAMBIGUOUS):
-        return self.name
-
-    def get_first(self, prev=None):
-        # Refer to our Sequence.
-        return self.seq.get_first(prev)
-
-    def get_disallowed_after(self, prev=None):
-        # Refer to our Sequence.
-        return self.seq.get_disallowed_after(prev)
-
-    def check(self):
-        return self.seq.check()
 
 
 class Grammar:
@@ -575,9 +678,9 @@ class Grammar:
             fn(e)
         return e
 
-    def token(self, name, typ=None):
+    def token(self, name, typ=None, loc=None):
         assert name not in self.exprs
-        e = Token(name, typ)
+        e = Token(name, typ, loc)
         self.exprs[name] = e
         return e
 
@@ -594,8 +697,26 @@ class Grammar:
                 yield name, expr
 
     def check(self):
-        for _, expr in self.sorted_expressions():
-            expr.check()
+        # first make sure everything is defined, or the checks become confusing
+        undefined = set()
+        for name, expr in self.sorted_expressions():
+            if not expr.seq.terms:
+                undefined.add(name)
+        if undefined:
+            # TODO: report these with locations to where they're referenced.
+            raise RenderedError(
+                "found referenced expression(s) with no definition: %s"%(
+                    str(sorted(undefined))
+                )
+            )
+
+        for name, expr in self.sorted_expressions():
+            expr.seq.check()
+            # detect auto-created expressions with no definition
+            if not expr.seq.terms:
+                raise RenderedError(
+                    "expression %s referenced but never defined"%name
+                )
 
 
 class C:
@@ -680,7 +801,7 @@ class C:
         missing_defs = all_detected_types.difference(all_defined_types)
         extra_defs = all_defined_types.difference(all_detected_types)
         if missing_defs or extra_defs:
-            raise RuntimeError(
+            raise RenderedError(
                 "detected missing %%types [%s] and unused %%types [%s]"%(
                     ','.join(missing_defs), ','.join(extra_defs)
                 )
@@ -802,17 +923,13 @@ class C:
 
     def stackpersist(self, obj):
         """Return the persistent created during a match to obj."""
-        if isinstance(obj, Token):
-            return 1
-        if isinstance(obj, Expression):
+        if isinstance(obj, Reference):
             return 1
         return 0
 
     def stackmax(self, obj):
         """Return the maximum stack size during a match to obj."""
-        if isinstance(obj, Token):
-            return 1
-        if isinstance(obj, Expression):
+        if isinstance(obj, Reference):
             return 1
         if isinstance(obj, Maybe):
             return self.stackmax(obj.seq)
@@ -833,7 +950,7 @@ class C:
 
     def nstates(self, obj):
         """Count how many states we need for every entry."""
-        if isinstance(obj, Token):
+        if isinstance(obj, Reference):
             return 1
         if isinstance(obj, Maybe):
             return self.nstates(obj.seq) + 1
@@ -845,31 +962,45 @@ class C:
             return self.nstates(obj.seq) + 1
         if isinstance(obj, Sequence):
             return sum(self.nstates(t) for t, _, _ in obj.terms)
-        if isinstance(obj, Expression):
-            return 1
         raise RuntimeError("unrecognized object type: " + type(obj).__name__)
 
-    def gen(self, obj, state, stack, var, tag=None, capture_final_loc=False):
+    def gen(self, obj, state, stack, var, tag=None, want_final_loc=False):
         """Generate code to match an object."""
-        if isinstance(obj, Token):
-            self.fprint("    // " + obj.summary())
-            self.fprint("    call->state = " + str(state) + ";")
-            self.fprint("    ${PREFIX_}AWAIT_TOKEN;")
-            self.fprint("yy" + str(state) + ":")
-            self.fprint("    if(!" + self.token_check(obj.get_first()) + "){")
-            self.fprint("        " + self.mask_set(obj.get_first()) + ";")
-            self.fprint("        SYNTAX_ERROR;")
-            self.fprint("    }")
-            self.fprint("    p->semstack[call->stack + " + str(stack) + "] = sem;")
-            self.fprint("    ${PREFIX_}CONSUME_TOKEN;")
-            self.fprint("    ${prefix_}mask_clear(p->mask);")
-            if self.semloc_type:
-                if self.want_first_loc:
-                    self.want_first_loc = False
-                    self.fprint("    call->loc_start = sem.loc;")
-                self.fprint("    call->loc_end = sem.loc;")
+        if isinstance(obj, Reference):
+            if isinstance(obj.defn, Token):
+                self.fprint("    // " + obj.summary())
+                self.fprint("    call->state = " + str(state) + ";")
+                self.fprint("    ${PREFIX_}AWAIT_TOKEN;")
+                self.fprint("yy" + str(state) + ":")
+                self.fprint("    if(!" + self.token_check(obj.get_first()) + "){")
+                self.fprint("        " + self.mask_set(obj.get_first()) + ";")
+                self.fprint("        SYNTAX_ERROR;")
+                self.fprint("    }")
+                self.fprint("    p->semstack[call->stack + " + str(stack) + "] = sem;")
+                self.fprint("    ${PREFIX_}CONSUME_TOKEN;")
+                self.fprint("    ${prefix_}mask_clear(p->mask);")
+                if self.semloc_type:
+                    if self.want_first_loc:
+                        self.want_first_loc = False
+                        self.fprint("    call->loc_start = sem.loc;")
+                    self.fprint("    call->loc_end = sem.loc;")
 
-            return state + self.nstates(obj), stack + 1
+                return state + self.nstates(obj), stack + 1
+
+            if isinstance(obj.defn, Expression):
+                # code generated when calling this function
+                self.fprint("    // " + obj.summary())
+                self.fprint("    call->state = " + str(state) + ";")
+                self.fprint("    ${PREFIX_}CALL(%s, %d);"%(self.parse_fn(obj.defn), stack))
+                self.fprint("yy" + str(state) + ":")
+                if self.semloc_type:
+                    if self.want_first_loc:
+                        self.want_first_loc = False
+                        self.fprint("    call->loc_start = p->semstack[%d].loc;"%stack)
+                    self.fprint("    call->loc_end = p->semstack[%d].loc;"%stack)
+                return state + self.nstates(obj), stack + 1
+
+            raise RuntimeError("unrecognized reference type: " + type(obj.defn).__name__)
 
         if isinstance(obj, Maybe):
             self.fprint("    // " + obj.summary())
@@ -969,35 +1100,22 @@ class C:
             self.print_code(obj.precode, "    ")
             for i, (t, tag, code) in enumerate(obj.terms):
                 if tag is not None:
-                    assert isinstance(t, (Token, Expression)), "wrong type for tag: " + type(t).__name__
-                    var.define(tag, t.type, stack)
+                    assert isinstance(t, Reference), "wrong type for tag: " + type(t).__name__
+                    var.define(tag, t.defn.type, stack)
                 state, stack = self.gen(t, state, stack, var, tag)
-                is_last = i+1 == len(obj.terms)
+                final = i+1 == len(obj.terms)
                 # calculate the overall location before the final code block
-                if is_last and capture_final_loc and self.semloc_type:
+                if final and want_final_loc and self.semloc_type:
                     var.define_final_loc()
                     self.fprint("    p->semstack[call->stack].loc = $span_fn(")
                     self.fprint("        call->loc_start, call->loc_end")
                     self.fprint("    );")
                 self.print_code(code, "    ")
-                if not is_last:
+                if not final:
                     self.fprint("")
             var.pop_scope()
             self.fprint("    ${prefix_}free_sems(p, call->stack+%d);"%oldstack)
             return state, stack
-
-        if isinstance(obj, Expression):
-            # code generated when calling this function
-            self.fprint("    // " + obj.summary())
-            self.fprint("    call->state = " + str(state) + ";")
-            self.fprint("    ${PREFIX_}CALL(%s, %d);"%(self.parse_fn(obj), stack))
-            self.fprint("yy" + str(state) + ":")
-            if self.semloc_type:
-                if self.want_first_loc:
-                    self.want_first_loc = False
-                    self.fprint("    call->loc_start = p->semstack[%d].loc;"%stack)
-                self.fprint("    call->loc_end = p->semstack[%d].loc;"%stack)
-            return state + self.nstates(obj), stack + 1
 
         raise RuntimeError("unrecognized object type: " + type(obj).__name__)
 
@@ -1037,7 +1155,7 @@ class C:
 
         # state starts at 1, since 0 is only the first time we're called
         # stack starts at 1, since we always allocate the output
-        self.gen(expr.seq, 1, 1, var, capture_final_loc=True)
+        self.gen(expr.seq, 1, 1, var, want_final_loc=True)
 
         self.fprint("")
         var.pop_scope()
@@ -1561,13 +1679,16 @@ class Python:
         for c in code:
             if c.tag in (None, self.code_tag):
                 text = re.sub("\\$\\$", "(out.val)", c.text)
-                text = re.sub("@\\$", "(out.loc)", text)
+                if self.span_fn:
+                    text = re.sub("@\\$", "(out.loc)", text)
                 text = re.sub("\\$([a-zA-Z_][a-zA-Z0-9_]*)", "(yy_\\1.val)", text)
-                text = re.sub("@([a-zA-Z_][a-zA-Z0-9_]*)", "(yy_\\1.loc)", text)
+                if self.span_fn:
+                    text = re.sub("@([a-zA-Z_][a-zA-Z0-9_]*)", "(yy_\\1.loc)", text)
                 self.fprint_multi(text, i)
 
     def syntax_error(self, loc, i):
-        self.fprint(i + "raise ${prefix}SyntaxError(loc="+ loc + ")")
+        args = "" if not self.span_fn else ("loc=" + loc)
+        self.fprint(i + "raise ${prefix}SyntaxError("+ args + ")")
 
     def token_list(self, tokens):
         assert tokens
@@ -1599,23 +1720,40 @@ class Python:
         with self.extra_vars(token_list=token_list):
             self.fprint(i + "while (yield from tokens.peek()) not in $token_list:")
 
-    def gen(self, obj, tag, i):
+    def gen(self, obj, tag, i, want_final_loc=False):
         try:
-            name = obj.name if isinstance(obj, (Expression, Token)) else None
+            name = obj.defn.name if isinstance(obj, Reference) else None
             with self.extra_vars(
                 name=name,
-                tag_eq="" if not tag else "yy_%s = "%tag,
+                tag="" if not tag else "yy_%s"%tag,
             ):
-                self._gen(obj, tag, i)
+                self._gen(obj, tag, i, want_final_loc)
         except Exception as e:
             raise RuntimeError("generating for " + obj.summary()) from e
 
-    def _gen(self, obj, tag, i):
-        if isinstance(obj, Token):
-            self.fprint(i + "if (yield from tokens.peek()) != $name:")
-            self.syntax_error("(yield from next(tokens)).loc", i + "    ")
-            self.fprint(i + "$tag_eq(yield from next(tokens))")
-            return
+    def _gen(self, obj, tag, i, want_final_loc):
+        if isinstance(obj, Reference):
+            if isinstance(obj.defn, Token):
+                self.fprint(i + "val = (yield from next(tokens))")
+                self.fprint(i + "if val.type != $name:")
+                self.syntax_error("val.loc", i + "    ")
+                if self.span_fn:
+                    self.fprint(i + "out.loc = _${prefix_}span(out.loc, val.loc)")
+                if tag:
+                    self.fprint(i + "$tag = val")
+                return
+
+            if isinstance(obj.defn, Expression):
+                self.fprint(
+                    i + "val = (yield from _${prefix_}parse_$name(tokens${_u}))"
+                )
+                if self.span_fn:
+                    self.fprint(i + "out.loc = _${prefix_}span(out.loc, val.loc)")
+                if tag:
+                    self.fprint(i + "$tag = val")
+                return
+
+            raise RuntimeError("unrecognized reference type: " + type(obj.defn).__name__)
 
         if isinstance(obj, Maybe):
             self.if_token_in(obj.get_first(), i)
@@ -1651,12 +1789,6 @@ class Python:
             for term, tag, code in obj.terms:
                 self.gen(term, tag, i)
                 self.print_code(code, i)
-            return
-
-        if isinstance(obj, Expression):
-            self.fprint(
-                i + "${tag_eq}yield from _${prefix_}parse_$name(tokens${_u})"
-            )
             return
 
         raise RuntimeError("unrecognized object type: " + type(obj).__name__)
@@ -1731,7 +1863,7 @@ class Python:
                     self.loc = loc
 
                 def __repr__(self):
-                    return "''' + self.prefix + '''Token(%s, %s)"%(str(self.type), str(self.val))
+                    return "${prefix}Token(%s, %s)"%(str(self.type), str(self.val))
 
             class ${prefix}TokenStream:
                 def __init__(self):
@@ -1757,6 +1889,8 @@ class Python:
                 def _${prefix_}span(loc, token_loc):
                     if loc is None:
                         return token_loc
+                    if token_loc is None:
+                        return loc
                     return $span_fn(loc, token_loc)
             """)
             self.fprint("")
@@ -1779,17 +1913,23 @@ class Python:
 ### Meta Parser ###
 
 class ParsedName:
-    def __init__(self, name, tag):
+    def __init__(self, name, loc):
         self.name = name
-        self.tag = tag
+        self.tag = None
+        self.loc = loc
 
     def process(self, g, e):
-        e.match(g.get_name(self.name), self.tag)
+        x = g.get_name(self.name)
+        if x.loc is None:
+            # implicit initialization, set a location
+            x.loc = self.loc
+        e.match(x, self.tag, self.loc)
 
 class ParsedSnippet:
-    def __init__(self, text, tag=None):
+    def __init__(self, text, loc):
         self.text = text
-        self.tag = tag
+        self.tag = None
+        self.loc = loc
 
     def process(self, g, e):
         e.exec(self.text, self.tag)
@@ -1797,6 +1937,7 @@ class ParsedSnippet:
 class ParsedBranches:
     def __init__(self):
         self.branches = []
+        self.loc = None
 
     def process(self, g, e):
         # Collapse single-branch expressions.
@@ -1804,7 +1945,7 @@ class ParsedBranches:
             self.branches[0].process(g, e)
             return
 
-        with e.branches() as b:
+        with e.branches(self.loc) as b:
             for parsed_branch in self.branches:
                 with b.branch():
                     parsed_branch.process(g, e)
@@ -1813,9 +1954,10 @@ class ParsedRecovery:
     def __init__(self, sub):
         self.sub = sub
         self.code = []
+        self.loc = None
 
     def process(self, g, e):
-        with e.recovery() as r:
+        with e.recovery(loc=self.loc) as r:
             self.sub.process(g, e)
             for c in self.code:
                 r.add_recovery_code(c.text, c.tag)
@@ -1824,15 +1966,16 @@ class ParsedMultiplier:
     def __init__(self, term, multiplier):
         self.term = term
         self.multiplier = multiplier
+        self.loc = None
 
     def process(self, g, e):
         if self.multiplier == "1":
             self.term.process(g, e)
         elif self.multiplier == "?":
-            with e.maybe():
+            with e.maybe(self.loc):
                 self.term.process(g, e)
         elif self.multiplier == "*":
-            with e.zero_or_more():
+            with e.zero_or_more(self.loc):
                 self.term.process(g, e)
         else:
             raise RuntimeError("unrecognized multiplier: " + str(self.multiplier))
@@ -1840,6 +1983,7 @@ class ParsedMultiplier:
 class ParsedSequence:
     def __init__(self):
         self.elems = []
+        self.loc = None
 
     def process(self, g, e):
         for elem in self.elems:
@@ -1848,23 +1992,27 @@ class ParsedSequence:
 class ParsedGenerator:
     def __init__(self, name):
         self.name = name
+        self.loc = None
 
 class ParsedKwarg:
     def __init__(self):
         self.key = None
         self.value = None
         self.tag = None
+        self.loc = None
 
 class ParsedRoot:
     def __init__(self):
         self.name = None
         self.tag = None
+        self.loc = None
 
 class ParsedFallback:
     def __init__(self):
         self.to_type = None
         self.tag = None
         self.from_types = []
+        self.loc = None
 
 class ParsedType:
     def __init__(self):
@@ -1872,6 +2020,7 @@ class ParsedType:
         self.code = None
         self.destructor = None
         self.tag = None
+        self.loc = None
 
 class ParsedDoc:
     def __init__(self):
@@ -1890,7 +2039,7 @@ class ParsedDoc:
     def add_stmt(self, stmt):
         if isinstance(stmt, ParsedGenerator):
             if self.generator is not None:
-                raise RuntimeError("received multiple %generator directives")
+                raise RenderedError("received multiple %generator directives")
             self.generator = stmt.name
             return
         if isinstance(stmt, ParsedKwarg):
@@ -1916,10 +2065,11 @@ class ParsedDoc:
         # first declare all tokens and expressions
         for name, val in self.defs:
             if val is None:
-                _ = g.token(name.name, name.tag)
+                _ = g.token(name.name, name.tag, name.loc)
             else:
                 e = g.expr(name.name)
                 e.type = name.tag
+                e.loc = text_span(name.loc, val.loc)
 
         # then define all the expressions
         for name, val in self.defs:
@@ -1928,20 +2078,10 @@ class ParsedDoc:
             e = g.get_name(name.name)
             val.process(g, e)
 
-        g.check()
-
         return g
 
 # BEGIN GENERATED CODE
 # END GENERATED CODE
-
-class TextLocation:
-    def __init__(self, line, char):
-        self.line = line
-        self.char = char
-
-    def __repr__(self):
-        return "(line=%d, char=%d)"%(self.line, self.char)
 
 class TextSpan:
     def __init__(self, start, end):
@@ -2102,7 +2242,7 @@ class Tokenizer:
         while True:
             c = yield from self.cs.peek()
             if c is None:
-                raise RuntimeError("unterminated code block:\n" + text)
+                raise RenderedError("unterminated code block:\n" + text)
             if c != "}":
                 c, loc = yield from next(self.cs)
                 text += c
@@ -2153,16 +2293,14 @@ class Tokenizer:
         return MetaToken(typ, text, TextSpan(start, loc))
 
     def iter(self, chars):
-        def _chars(self):
-            yield from chars
-            yield None
-
         for c in chars:
             tokens = self.feed(c)
             if tokens is None:
                 break
             yield from tokens
-        yield MetaToken(EOF, "", None)
+
+        eof_loc = TextLocation(line=-1, char=-1)
+        yield MetaToken(EOF, "", TextSpan(eof_loc, eof_loc))
 
 
 @contextlib.contextmanager
@@ -2199,6 +2337,44 @@ def read_template(template, tag="GENERATED CODE", file=None):
             print(line, end="", file=file)
 
 
+def parse_doc(grammar_text):
+    parser = MetadocParser()
+
+    try:
+        for t in Tokenizer().iter(grammar_text):
+            # the last time this is called it should return non-None
+            parsed_doc = parser.feed(t)
+    except MetaSyntaxError as e:
+        msg = "syntax error at " + render_location(e.loc, grammar_text)
+        raise RenderedError(msg) from e
+
+    assert parsed_doc, "didn't get a doc!"
+
+    return parsed_doc.val
+
+def inspect_def(g, name, body):
+    if name not in g.exprs:
+        return "no object in grammar by name of '%s'"%name
+    obj = g.exprs[name]
+    if isinstance(obj, Token):
+        out = "token %s:\n"%name
+        if obj.loc is not None:
+            out += textwrap.indent(
+                "defined at " + render_location(obj.loc, body), "    "
+            )
+        return out
+    out = "expression %s = %s\n"%(name, obj.seq.summary())
+    out += "    first: [%s]\n"%(",".join(str(f) for f in obj.seq.get_first()))
+    out += "    disallowed_after: [%s]\n"%(
+        ",".join(str(f) for f in obj.seq.get_disallowed_after())
+    )
+    if obj.loc is not None:
+        out += textwrap.indent(
+            "defined at " + render_location(obj.loc, body, underline=False),
+            "    ",
+        )
+    return out
+
 def gen(
     grammar_text,
     generator,
@@ -2207,27 +2383,23 @@ def gen(
     template_tag=None,
     action="gen_file",
     cli_kwargs=(),
+    inspect=(),
 ):
     with read_template(template, template_tag, out) as start_offset:
-        parser = MetadocParser()
-
-        try:
-            for t in Tokenizer().iter(grammar_text):
-                # the last time this is called it should return non-None
-                parsed_doc = parser.feed(t)
-        except MetaSyntaxError as e:
-            line = start_offset + e.loc.start.line
-            char = e.loc.start.char
-            print("syntax error at line=%d, char=%d:"%(line, char), file=sys.stderr)
-            print(grammar_text.splitlines()[e.loc.start.line - 1].rstrip('\n'), file=sys.stderr)
-            print(" "*(char - 1) + "^", file=sys.stderr)
-            exit(1)
-
-        assert parsed_doc, "didn't get a doc!"
-
-        parsed_doc = parsed_doc.val
+        parsed_doc = parse_doc(grammar_text)
 
         g = parsed_doc.build_grammar()
+
+        for i in inspect:
+            print(inspect_def(g, i, grammar_text), file=sys.stderr)
+        if inspect:
+            print(file=sys.stderr)
+
+        try:
+            g.check()
+        except GrammarError as e:
+            msg = e.render(grammar_text)
+            raise RenderedError(msg) from e
 
         # TODO: support importing a user-defined generator at runtime
         generator_name = parsed_doc.generator
@@ -2356,6 +2528,7 @@ if __name__ == "__main__":
     parser.add_argument("-c", "--check", action="store_true")
     parser.add_argument("-g", "--generator")
     parser.add_argument("-a", "--action", default="gen_file")
+    parser.add_argument("-I", "--inspect", action="append", default=[])
     parser.add_argument("kwarg", nargs="*")
     args = parser.parse_args()
 
@@ -2369,15 +2542,20 @@ if __name__ == "__main__":
 
     out = io.StringIO()
 
-    gen(
-        grammar_text=text,
-        generator=args.generator,
-        out=out,
-        template=args.template,
-        template_tag=args.template_tag,
-        action=args.action,
-        cli_kwargs=args.kwarg,
-    )
+    try:
+        gen(
+            grammar_text=text,
+            generator=args.generator,
+            out=out,
+            template=args.template,
+            template_tag=args.template_tag,
+            action=args.action,
+            cli_kwargs=args.kwarg,
+            inspect=args.inspect,
+        )
+    except RenderedError as e:
+        print(e, file=sys.stderr)
+        sys.exit(1)
 
     if args.check:
         with open(args.output) as f:

@@ -101,34 +101,38 @@ branches = g.expr("branches")
 @g.expr
 def name(e):
     e.match(TEXT, "name")
-    e.exec("$$ = ParsedName($name, None)")
+    e.exec("$$ = ParsedName($name, @name)")
     with e.maybe():
         e.match(COLON)
         e.match(TEXT, "tag")
         e.exec("$$.tag = $tag")
+        e.exec("$$.loc = text_span($$.loc, @tag)")
 
 @g.expr
 def code(e):
     e.match(CODE, "text")
-    e.exec("$$ = ParsedSnippet(textwrap.dedent($text).strip('\\n'))")
+    e.exec("$$ = ParsedSnippet(textwrap.dedent($text).strip('\\n'), @text)")
     with e.maybe():
         e.match(COLON)
         e.match(TEXT, "tag")
         e.exec("$$.tag = $tag")
+        e.exec("$$.loc = text_span($$.loc, @tag)")
 
 @g.expr
 def term(e):
     with e.branches() as b:
         with b.branch():
-            e.match(ASTERISK)
+            e.match(ASTERISK, "m")
             with e.branches() as b2:
                 with b2.branch():
                     e.match(TEXT, "name")
                     e.exec("$$ = ParsedMultiplier(ParsedName($name, None), '*')")
+                    e.exec("$$.loc = text_span(@m, @name)")
                 with b2.branch():
                     e.match(LPAREN)
                     e.match(branches, "branches")
                     e.exec("$$ = ParsedMultiplier($branches, '*')")
+                    e.exec("$$.loc = text_span(@m, @branches)")
                     e.match(RPAREN)
         with b.branch():
             e.match(name, "name")
@@ -139,19 +143,21 @@ def term(e):
             e.exec("$$ = $branches")
             e.match(RPAREN)
         with b.branch():
-            e.match(LBRACKET)
+            e.match(LBRACKET, "l")
             e.match(branches, "branches")
             e.exec("$$ = ParsedMultiplier($branches, '?')")
-            e.match(RBRACKET)
+            e.match(RBRACKET, "r")
+            e.exec("$$.loc = text_span(@l, @r)")
         with b.branch():
-            e.match(LANGLE)
+            e.match(LANGLE, "l")
             e.match(branches, "branches")
             e.exec("$$ = ParsedRecovery($branches)")
             e.match(QUESTION)
             with e.zero_or_more():
                 e.match(code, "code")
                 e.exec("$$.code.append($code)")
-            e.match(RANGLE)
+            e.match(RANGLE, "r")
+            e.exec("$$.loc = text_span(@l, @r)")
 
 @g.expr
 def seq(e):
@@ -159,24 +165,30 @@ def seq(e):
     with e.zero_or_more():
         e.match(code, "precode")
         e.exec("$$.elems.append($precode)")
+        e.exec("$$.loc = _Meta_span($$.loc, @precode)")
     e.match(term, "term")
     e.exec("$$.elems.append($term)")
+    e.exec("$$.loc = _Meta_span($$.loc, @term)")
     with e.zero_or_more():
         e.match(code, "code")
         e.exec("$$.elems.append($code)")
+        e.exec("$$.loc = text_span($$.loc, @code)")
     with e.zero_or_more():
         e.match(term, "term")
         e.exec("$$.elems.append($term)")
+        e.exec("$$.loc = text_span($$.loc, @term)")
         with e.zero_or_more():
             e.match(code, "code")
             e.exec("$$.elems.append($code)")
+            e.exec("$$.loc = text_span($$.loc, @code)")
 
 @branches
 def branches(e):
     e.exec("$$ = ParsedBranches()")
     with e.branches() as b:
         with b.branch():
-            e.match(PIPE)
+            e.match(PIPE, "p")
+            e.exec("$$.loc = @p")
             e.match(seq, "seq")
             e.exec("$$.branches.append($seq)")
             e.match(PIPE)
@@ -186,17 +198,20 @@ def branches(e):
                 e.match(PIPE)
                 e.match(seq, "seq")
                 e.exec("$$.branches.append($seq)")
+                e.exec("$$.loc = text_span($$.loc, @seq)")
         with b.branch():
             e.match(seq, "seq")
             e.exec("$$.branches.append($seq)")
+            e.exec("$$.loc = @seq")
             with e.zero_or_more():
                 e.match(PIPE)
                 e.match(seq, "seq")
                 e.exec("$$.branches.append($seq)")
+                e.exec("$$.loc = text_span($$.loc, @seq)")
 
 @g.expr
 def directive(e):
-    e.match(PERCENT)
+    e.match(PERCENT, "p")
     with e.branches() as b:
         with b.branch():
             e.match(GENERATOR)
@@ -231,7 +246,8 @@ def directive(e):
                 e.exec("""
                     $$.destructor = [
                         ParsedSnippet(
-                            textwrap.dedent($destructor).strip('\\n')
+                            textwrap.dedent($destructor).strip('\\n'),
+                            @destructor,
                         )
                     ]
                 """)
@@ -258,7 +274,8 @@ def directive(e):
             with e.zero_or_more():
                 e.match(TEXT, "b")
                 e.exec("$$.from_types.append($b)")
-    e.match(SEMI)
+    e.match(SEMI, 's')
+    e.exec("$$.loc = text_span(@p, @s)")
 
 @g.expr
 def definition(e):
