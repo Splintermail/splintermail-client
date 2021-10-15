@@ -162,13 +162,14 @@ def term(e):
 @g.expr
 def seq(e):
     e.exec("$$ = ParsedSequence()")
+    e.exec("$$.loc = text_zero_loc(tokens.last_loc)")
     with e.zero_or_more():
         e.match(code, "precode")
         e.exec("$$.elems.append($precode)")
-        e.exec("$$.loc = _Meta_span($$.loc, @precode)")
+        e.exec("$$.loc = text_span($$.loc, @precode)")
     e.match(term, "term")
     e.exec("$$.elems.append($term)")
-    e.exec("$$.loc = _Meta_span($$.loc, @term)")
+    e.exec("$$.loc = text_span($$.loc, @term)")
     with e.zero_or_more():
         e.match(code, "code")
         e.exec("$$.elems.append($code)")
@@ -334,5 +335,6 @@ with open("gen.py", "w") as f:
             roots=["doc"],
             prefix="Meta",
             span_fn="text_span",
+            zero_loc_fn="text_zero_loc",
         ).gen_file()
     os.chmod("gen.py", 0o755)

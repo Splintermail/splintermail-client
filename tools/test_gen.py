@@ -351,6 +351,11 @@ loc_t span(loc_t start, loc_t end){
     return (loc_t){start.start, end.end};
 }
 
+loc_t zero_loc(const loc_t *prev){
+    int val = prev ? prev->end + 1 : 0;
+    return (loc_t){val, val};
+}
+
 void check_location(char *val, loc_t loc);
 
 }}
@@ -359,6 +364,7 @@ void check_location(char *val, loc_t loc);
 %root sum;
 %kwarg semloc_type loc_t;
 %kwarg span_fn span;
+%kwarg zero_loc_fn zero_loc;
 
 STR:str;
 

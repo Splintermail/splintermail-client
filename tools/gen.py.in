@@ -33,7 +33,6 @@ TODO:
    - support 1* in addition to *
 
  - Meta parser:
-   - location tracking (for compiler source line hints)
    - support an %include directive?
 
  - gen.py cli:
@@ -49,14 +48,6 @@ import re
 import sys
 import textwrap
 import string
-
-class TextLocation:
-    def __init__(self, line, char):
-        self.line = line
-        self.char = char
-
-    def __repr__(self):
-        return "(line=%d, char=%d)"%(self.line, self.char)
 
 def render_location(loc, body, underline=True):
     lines = body.splitlines()
@@ -786,6 +777,7 @@ class C:
         user_args=(),
         semloc_type=None,
         span_fn=None,
+        zero_loc_fn=None,
     ):
         self.grammar = grammar
         self.file = file
@@ -822,11 +814,12 @@ class C:
         )
 
         self.prefix_ = (prefix + "_") if prefix else ""
-        assert bool(semloc_type) + bool(span_fn) in (0, 2), (
-            "semloc_type and span_fn must be both set or both unset"
+        assert bool(semloc_type)+bool(span_fn)+bool(zero_loc_fn) in (0, 3), (
+            "semloc_type, span_fn, and zero_loc_fn must be all set or all unset"
         )
-        self.semloc_type=semloc_type
-        self.span_fn=span_fn
+        self.semloc_type = semloc_type
+        self.span_fn = span_fn
+        self.zero_loc_fn = zero_loc_fn
 
         # build a default mapping
         args_str = ", ".join(self.u)
@@ -838,6 +831,7 @@ class C:
             "_user_args": "" if not args_str else ", " + args_str,
             "semloc_type": self.semloc_type,
             "span_fn": self.span_fn,
+            "zero_loc_fn": self.zero_loc_fn,
             "PARSE_FN_ARGS": self.prefix_.upper() + "PARSE_FN_ARGS",
         }
 
@@ -880,7 +874,8 @@ class C:
                 text = re.sub("@\\$", "YYLOCOUT", text)
                 text = re.sub("\\$([a-zA-Z_][a-zA-Z0-9_]*)", "YYVAL_\\1", text)
                 text = re.sub("@([a-zA-Z_][a-zA-Z0-9_]*)", "YYLOC_\\1", text)
-                self.fprint(textwrap.indent(text, i))
+                # don't use fprint; we shouldn't be subbing in internal vars
+                print(textwrap.indent(text, i), file=self.file)
 
     def print_destructor(self, code, lhv, i):
         if code is None:
@@ -974,16 +969,14 @@ class C:
                 self.fprint("yy" + str(state) + ":")
                 self.fprint("    if(!" + self.token_check(obj.get_first()) + "){")
                 self.fprint("        " + self.mask_set(obj.get_first()) + ";")
-                self.fprint("        SYNTAX_ERROR;")
+                self.fprint("        ${PREFIX_}SYNTAX_ERROR;")
                 self.fprint("    }")
                 self.fprint("    p->semstack[call->stack + " + str(stack) + "] = sem;")
+                self.fprint("#ifdef ${PREFIX_}HAVE_SEMLOC")
+                self.fprint("    ${prefix_}process_matched_loc(p, call, sem.loc);")
+                self.fprint("#endif")
                 self.fprint("    ${PREFIX_}CONSUME_TOKEN;")
                 self.fprint("    ${prefix_}mask_clear(p->mask);")
-                if self.semloc_type:
-                    if self.want_first_loc:
-                        self.want_first_loc = False
-                        self.fprint("    call->loc_start = sem.loc;")
-                    self.fprint("    call->loc_end = sem.loc;")
 
                 return state + self.nstates(obj), stack + 1
 
@@ -993,11 +986,11 @@ class C:
                 self.fprint("    call->state = " + str(state) + ";")
                 self.fprint("    ${PREFIX_}CALL(%s, %d);"%(self.parse_fn(obj.defn), stack))
                 self.fprint("yy" + str(state) + ":")
-                if self.semloc_type:
-                    if self.want_first_loc:
-                        self.want_first_loc = False
-                        self.fprint("    call->loc_start = p->semstack[%d].loc;"%stack)
-                    self.fprint("    call->loc_end = p->semstack[%d].loc;"%stack)
+                self.fprint("#ifdef ${PREFIX_}HAVE_SEMLOC")
+                self.fprint("    ${prefix_}process_matched_loc(p,")
+                self.fprint("        call, p->semstack[call->stack + %d].loc"%stack)
+                self.fprint("    );")
+                self.fprint("#endif")
                 return state + self.nstates(obj), stack + 1
 
             raise RuntimeError("unrecognized reference type: " + type(obj.defn).__name__)
@@ -1061,7 +1054,7 @@ class C:
                 bstate += self.nstates(b)
             self.fprint("        default:")
             self.fprint("            " + self.mask_set(obj.get_first()) + ";")
-            self.fprint("            SYNTAX_ERROR;")
+            self.fprint("            ${PREFIX_}SYNTAX_ERROR;")
             self.fprint("    }")
             self.fprint("")
             # branch parsing
@@ -1105,11 +1098,20 @@ class C:
                 state, stack = self.gen(t, state, stack, var, tag)
                 final = i+1 == len(obj.terms)
                 # calculate the overall location before the final code block
-                if final and want_final_loc and self.semloc_type:
+                if final and want_final_loc:
+                    self.fprint_multi(r"""
+                    #ifdef ${PREFIX_}HAVE_SEMLOC
+                        // calculate the final location before the final user action
+                        if(call->have_loc){
+                            p->semstack[call->stack].loc = $span_fn(
+                                call->loc_start, call->loc_end
+                            );
+                        }else{
+                            p->semstack[call->stack].loc = $zero_loc_fn(p->prev);
+                        }
+                    #endif
+                    """)
                     var.define_final_loc()
-                    self.fprint("    p->semstack[call->stack].loc = $span_fn(")
-                    self.fprint("        call->loc_start, call->loc_end")
-                    self.fprint("    );")
                 self.print_code(code, "    ")
                 if not final:
                     self.fprint("")
@@ -1147,10 +1149,6 @@ class C:
         if expr.type is not None:
             var.define("$", expr.type, 0)
             self.fprint("    p->semstack[call->stack].type = ${PREFIX_}SEMTYPE_%s;"%expr.type)
-        if self.semloc_type:
-            # a globally variable to capture the first location we match
-            # against, either a Token or an Expression
-            self.want_first_loc = True
         self.fprint("")
 
         # state starts at 1, since 0 is only the first time we're called
@@ -1217,6 +1215,8 @@ class C:
 
     def gen_file(self):
         self.print_code(self.precode, "")
+        if self.semloc_type:
+            self.fprint("#define ${PREFIX_}HAVE_SEMLOC")
         self.fprint_multi("""
             #include <stdio.h>
             #include <stdbool.h>
@@ -1291,15 +1291,19 @@ class C:
 
                 // the state to enter if we have to recover
                 int recover;
+
+            #ifdef ${PREFIX_}HAVE_SEMLOC
+                // if we have matched anything yet
+                bool have_loc;
+
+                // the first location that matches this call
+                $semloc_type loc_start;
+
+                // the last location that matches this call
+                $semloc_type loc_end;
+            #endif
+            };
         """)
-        if self.semloc_type:
-            self.fprint("")
-            self.fprint("    // the first location that matches this call")
-            self.fprint("    $semloc_type loc_start;")
-            self.fprint("")
-            self.fprint("    // the last location that matches this call")
-            self.fprint("    $semloc_type loc_end;")
-        self.fprint("};")
 
         self.fprint("")
         self.fprint("typedef union {")
@@ -1308,17 +1312,18 @@ class C:
         self.fprint("} ${prefix_}val_u;")
 
         self.fprint("")
-        self.fprint("struct ${prefix_}sem_t {")
-        self.fprint("    ${prefix_}sem_type_e type;")
-        self.fprint("    // semantic value")
-        self.fprint("    ${prefix_}val_u val;")
+        self.fprint_multi("""
+            struct ${prefix_}sem_t {
+                ${prefix_}sem_type_e type;
+                // semantic value
+                ${prefix_}val_u val;
 
-        if self.semloc_type:
-            self.fprint("    // semantic location")
-            self.fprint("    " + self.semloc_type + " loc;")
-        else:
-            self.fprint("    // no semantic location; semloc_type not configured")
-        self.fprint("};")
+            #ifdef ${PREFIX_}HAVE_SEMLOC
+                // semantic location
+                $semloc_type loc;
+            #endif
+            };
+        """)
 
         self.fprint("")
         self.fprint("void ${prefix_}sem_free(${prefix_}sem_t *sem){")
@@ -1383,6 +1388,12 @@ class C:
                 size_t semsmax;
                 // a mask of all possible tokens
                 unsigned char mask[${PREFIX_}MASKLEN];
+            #ifdef ${PREFIX_}HAVE_SEMLOC
+                // the last location we accepted
+                $semloc_type last;
+                // either NULL or points to .last
+                $semloc_type *prev;
+            #endif
             };
 
             ${prefix_}call_t *${prefix_}calls_append(${prefix_}parser_t *p){
@@ -1451,7 +1462,7 @@ class C:
 
             static const char *_${prefix_}fn_name(${prefix_}parse_f fn);
 
-            static void print_stack(${prefix_}parser_t *p){
+            static void ${prefix_}print_stack(${prefix_}parser_t *p){
                 for(size_t i = 0; i < p->callslen; i++){
                     ${prefix_}call_t call = p->callstack[i];
                     printf("parsing %s (%d)\n", _${prefix_}fn_name(call.fn), call.state);
@@ -1462,7 +1473,10 @@ class C:
             #define ${PREFIX_}CALL(_fn, _stack) do { \
                 ${prefix_}call_t *subcall = ${prefix_}calls_append(p); \
                 if(!subcall) return ${PREFIX_}STATUS_CALLSTACK_OVERFLOW; \
-                *subcall = (${prefix_}call_t){ .fn = _fn,  .stack = call->stack + _stack }; \
+                *subcall = (${prefix_}call_t){ \
+                    .fn = _fn, \
+                    .stack = call->stack + _stack, \
+                }; \
                 return 0; \
             } while(0)
 
@@ -1472,7 +1486,7 @@ class C:
             #define ${PREFIX_}CONSUME_TOKEN \
                 *token = _${PREFIX_}NOT_A_TOKEN
 
-            bool ${prefix_}token_in(${prefix_}token_e token, size_t n, ...){
+            static bool ${prefix_}token_in(${prefix_}token_e token, size_t n, ...){
                 va_list ap;
                 va_start(ap, n);
 
@@ -1487,14 +1501,28 @@ class C:
                 return out;
             }
 
-            #define SYNTAX_ERROR do { \
+            #define ${PREFIX_}SYNTAX_ERROR do { \
                 printf("syntax error!\n"); \
-                print_stack(p); \
+                ${prefix_}print_stack(p); \
                 printf("expected one of: {"); \
                 ${prefix_}mask_print(p->mask, ","); \
                 printf("} but got %s\n", ${prefix_}token_name(*token)); \
                 return 1; \
             } while(0)
+
+            #ifdef ${PREFIX_}HAVE_SEMLOC
+            static void ${prefix_}process_matched_loc(
+                ${prefix_}parser_t *p, ${prefix_}call_t *call, $semloc_type matched
+            ){
+                if(!call->have_loc){
+                    call->loc_start = matched;
+                    call->have_loc = true;
+                }
+                call->loc_end = matched;
+                p->last = matched;
+                p->prev = &p->last;
+            }
+            #endif
 
             ${prefix_}status_t ${prefix_}do_parse(
                 ${prefix_}parser_t *p,
@@ -1508,6 +1536,10 @@ class C:
                     if(!${prefix_}sems_available(p, 1)){
                         return ${PREFIX_}STATUS_SEMSTACK_OVERFLOW;
                     }
+            #ifdef ${PREFIX_}HAVE_SEMLOC
+                    // initialize the location tracking
+                    p->prev = NULL;
+            #endif
                     // initialize the first call
                     ${prefix_}call_t *call = ${prefix_}calls_append(p);
                     if(!call) return ${PREFIX_}STATUS_CALLSTACK_OVERFLOW;
@@ -1613,6 +1645,7 @@ class Python:
         prefix="",
         user_args=(),
         span_fn=None,
+        zero_loc_fn=None,
     ):
         self.grammar = grammar
         self.file = file
@@ -1631,7 +1664,11 @@ class Python:
             )
         self.prefix = prefix
         self.prefix_ = (prefix + "_") if prefix else ""
+        assert bool(span_fn) + bool(zero_loc_fn) in (0, 2), (
+            "span_fn and zero_loc_fn must be both set or both unset"
+        )
         self.span_fn = span_fn
+        self.zero_loc_fn = zero_loc_fn
         self.u = user_args.split(",") if isinstance(user_args, str) else user_args
 
         # build a default mapping
@@ -1642,9 +1679,9 @@ class Python:
             "u": args_str,
             "_u": "" if not args_str else ", " + args_str,
             "u_": "" if not args_str else args_str + ", ",
+            "span_fn": self.span_fn,
+            "zero_loc_fn": self.zero_loc_fn,
         }
-        if span_fn is not None:
-            self.varmap["span_fn"] = span_fn
 
         self._extra_vars = {}
 
@@ -1684,7 +1721,11 @@ class Python:
                 text = re.sub("\\$([a-zA-Z_][a-zA-Z0-9_]*)", "(yy_\\1.val)", text)
                 if self.span_fn:
                     text = re.sub("@([a-zA-Z_][a-zA-Z0-9_]*)", "(yy_\\1.loc)", text)
-                self.fprint_multi(text, i)
+                # don't use fprint; we shouldn't be subbing in internal vars
+                print(
+                    textwrap.indent(textwrap.dedent(text).strip("\n"), i),
+                    file=self.file,
+                )
 
     def syntax_error(self, loc, i):
         args = "" if not self.span_fn else ("loc=" + loc)
@@ -1734,21 +1775,23 @@ class Python:
     def _gen(self, obj, tag, i, want_final_loc):
         if isinstance(obj, Reference):
             if isinstance(obj.defn, Token):
+                self.fprint(i + "# " + obj.summary())
                 self.fprint(i + "val = (yield from next(tokens))")
                 self.fprint(i + "if val.type != $name:")
                 self.syntax_error("val.loc", i + "    ")
                 if self.span_fn:
-                    self.fprint(i + "out.loc = _${prefix_}span(out.loc, val.loc)")
+                    self.fprint(i + "out.loc = $span_fn(out.loc, val.loc)")
                 if tag:
                     self.fprint(i + "$tag = val")
                 return
 
             if isinstance(obj.defn, Expression):
+                self.fprint(i + "# " + obj.summary())
                 self.fprint(
                     i + "val = (yield from _${prefix_}parse_$name(tokens${_u}))"
                 )
                 if self.span_fn:
-                    self.fprint(i + "out.loc = _${prefix_}span(out.loc, val.loc)")
+                    self.fprint(i + "out.loc = $span_fn(out.loc, val.loc)")
                 if tag:
                     self.fprint(i + "$tag = val")
                 return
@@ -1756,16 +1799,19 @@ class Python:
             raise RuntimeError("unrecognized reference type: " + type(obj.defn).__name__)
 
         if isinstance(obj, Maybe):
+            self.fprint(i + "# " + obj.summary())
             self.if_token_in(obj.get_first(), i)
             self.gen(obj.seq, None, i+"    ")
             return
 
         if isinstance(obj, ZeroOrMore):
+            self.fprint(i + "# " + obj.summary())
             self.while_token_in(obj.get_first(), i)
             self.gen(obj.seq, None, i+"    ")
             return
 
         if isinstance(obj, Branches):
+            self.fprint(i + "# " + obj.summary())
             for n, seq in enumerate(obj.branches):
                 self.if_token_in(seq.get_first(), i, pos=n)
                 self.gen(seq, None, i+"    ")
@@ -1774,6 +1820,7 @@ class Python:
             return
 
         if isinstance(obj, Recovery):
+            self.fprint(i + "# " + obj.summary())
             self.fprint(i + "try:")
             self.gen(obj.seq, None, i+"    ")
             self.if_token_not_in(obj.after, i+"    ")
@@ -1798,6 +1845,8 @@ class Python:
             self.fprint("# $name = $summary")
             self.fprint("def _${prefix_}parse_$name(tokens${_u}):")
             self.fprint("    out = ${prefix}Expression()")
+            if self.span_fn:
+                self.fprint("    out.loc = $zero_loc_fn(tokens.last_loc)")
             self.gen(expr.seq, None, "    ")
             self.fprint("    return out")
 
@@ -1868,6 +1917,8 @@ class Python:
             class ${prefix}TokenStream:
                 def __init__(self):
                     self.first = None
+                    self.last_loc = None
+                    self.count = 0
 
                 def peek(self):
                     if self.first is None:
@@ -1878,22 +1929,13 @@ class Python:
                     if self.first:
                         out = self.first
                         self.first = None
-                        return out
-                    t = yield
-                    return t
+                    else:
+                        out = yield
+                    self.count += 1
+                    self.last_loc = out.loc
+                    return out
         """)
         self.fprint("")
-
-        if self.span_fn is not None:
-            self.fprint_multi("""
-                def _${prefix_}span(loc, token_loc):
-                    if loc is None:
-                        return token_loc
-                    if token_loc is None:
-                        return loc
-                    return $span_fn(loc, token_loc)
-            """)
-            self.fprint("")
 
         for i, (name, _) in enumerate(self.grammar.sorted_tokens()):
             self.fprint(name + " = " + str(i))
@@ -2083,6 +2125,14 @@ class ParsedDoc:
 # BEGIN GENERATED CODE
 # END GENERATED CODE
 
+class TextLocation:
+    def __init__(self, line, char):
+        self.line = line
+        self.char = char
+
+    def __repr__(self):
+        return "(line=%d, char=%d)"%(self.line, self.char)
+
 class TextSpan:
     def __init__(self, start, end):
         self.start = start
@@ -2093,6 +2143,13 @@ class TextSpan:
 
 def text_span(loc, token_loc):
     return TextSpan(loc.start, token_loc.end)
+
+def text_zero_loc(prev):
+    if prev is None:
+        pos = TextLocation(0, 0)
+    else:
+        pos = TextLocation(prev.end.line, prev.end.char+1)
+    return TextSpan(pos, pos)
 
 class CharStream:
     def __init__(self):

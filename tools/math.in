@@ -10,7 +10,29 @@
     math_loc_t math_span(math_loc_t loc, math_loc_t token_loc){
         return (math_loc_t){.start = loc.start, .end = token_loc.end};
     }
+
+    math_loc_t math_zero_loc(math_loc_t *prev){
+        size_t old_end = prev ? prev->end : 0;
+        return (math_loc_t){ .start = old_end, .end = old_end };
+    }
 }}:c
+
+{{
+    class MathSpan:
+        def __init__(self, start, end):
+            self.start = start
+            self.end = end
+
+        def __str__(self):
+            return "%d--%d"%(self.start, self.end)
+
+    def math_span(a, b):
+        return MathSpan(a.start, b.end)
+
+    def math_zero_loc(prev):
+        loc = prev and prev.end or 0
+        return MathSpan(loc, loc)
+}}:py
 
 %root line;
 %root factor;
@@ -19,9 +41,12 @@
 %kwarg:c prefix math;
 %kwarg:c semloc_type math_loc_t;
 %kwarg:c span_fn math_span;
+%kwarg:c zero_loc_fn math_zero_loc;
 %type:c i { int };
 
 %kwarg:py prefix Math;
+%kwarg:py span_fn math_span;
+%kwarg:py zero_loc_fn math_zero_loc;
 
 ## You don't actually have to declare tokens, unless you want to set types.
 # EOL;
@@ -60,9 +85,17 @@ sum_op:i =
 | MINUS {$$=-1;}
 ;
 
+# This is really here to test zero location behavior
+maybe_negative:i = {$$=1;} [NEGATIVE {$$=-1;}]
+    {print("maybe_negative", $$, @$)}:py
+;
+
 factor:i =
-| NUM:n {$$=$n;}
-| LPAREN expr:e RPAREN {$$=$e;}
+    maybe_negative:m (
+        | NUM:n {$$=$m*$n;}
+        | LPAREN expr:e RPAREN {$$=$m*$e;}
+    )
+    {print("factor", $$, @$)}:py
 ;
 
 term:i =
@@ -73,6 +106,7 @@ term:i =
         {$$=$$*$f2 if $m else $$/$f2}:py
         {$$=$m ? $$*$f2 : $$/$f2;}:c
     )
+    {print("term", $$, @$)}:py
 ;
 
 expr:i =
@@ -82,6 +116,7 @@ expr:i =
         term:t2
         {$$=$$ + $s*$t2;}
     )
+    {print("expr", $$, @$)}:py
 ;
 
 line =
@@ -92,20 +127,22 @@ line =
     ?
         { print("bad line") }:py
         { printf("bad line\n"); }:c
-    > EOL;
+    > EOL
+    {print("line", $$, @$)}:py
+;
 
 {{
     if __name__ == "__main__":
         tokens = [
-            MathToken(PLUS),
-            MathToken(EOL),
+            MathToken(PLUS,    loc=MathSpan(0, 1)),
+            MathToken(EOL,     loc=MathSpan(1, 2)),
 
-            MathToken(NUM, 18),
-            MathToken(DIV),
-            MathToken(NUM, 6),
-            MathToken(DIV),
-            MathToken(NUM, 3),
-            MathToken(EOL),
+            MathToken(NUM, 18, loc=MathSpan(2, 3)),
+            MathToken(DIV,     loc=MathSpan(3, 4)),
+            MathToken(NUM, 6,  loc=MathSpan(4, 5)),
+            MathToken(DIV,     loc=MathSpan(5, 6)),
+            MathToken(NUM, 3,  loc=MathSpan(6, 7)),
+            MathToken(EOL,     loc=MathSpan(7, 8)),
         ]
         p = MathlineParser(repeat=True)
         for t in tokens:
@@ -137,10 +174,10 @@ line =
         size_t ntokens = sizeof(tokens) / sizeof(*tokens);
 
         for(size_t i = 0; i < ntokens; i += 2){
-            // printf("feeding %s\n", math_token_name(tokens[i]));
+            // printf("feeding %s @ %zu\n", math_token_name(tokens[i]), i/2);
 
             math_val_u val = { .i = tokens[i+1] };
-            math_loc_t loc = {i, i+1};
+            math_loc_t loc = {i/2, i/2+1};
             math_status_t status = math_parse_line(p, tokens[i], val, loc, NULL);
             if(status > MATH_STATUS_DONE){
                 printf("got bad status! %d\n", status);
