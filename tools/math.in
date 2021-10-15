@@ -47,6 +47,7 @@
 %kwarg:py prefix Math;
 %kwarg:py span_fn math_span;
 %kwarg:py zero_loc_fn math_zero_loc;
+%type:py i { int };
 
 ## You don't actually have to declare tokens, unless you want to set types.
 # EOL;

@@ -710,6 +710,130 @@ class Grammar:
                 )
 
 
+class Types:
+    """The result of all of the %type directives in a grammar."""
+    def __init__(self, types):
+        self.types = types
+        self.typemap = {t.name: t for t in types}
+
+    def __getitem__(self, value):
+        return self.typemap[value]
+
+    def source_ordered(self):
+        yield from iter(self.types)
+
+
+def extract_types(parsed_types, grammar, tag):
+    typelist = []
+    type_names = set()
+    for t in parsed_types:
+        if t.tag not in (None, tag):
+            continue
+        assert t.name not in type_names, (
+            "got multiple '%%type %s' directives"%t.name
+        )
+        typelist.append(t)
+        type_names.add(t.name)
+    detected = set(e.type for e in grammar.exprs.values() if e.type)
+    missing_defs = detected.difference(type_names)
+    extra_defs = type_names.difference(detected)
+    if missing_defs or extra_defs:
+        raise RenderedError(
+            "detected missing %%types [%s] and unused %%types [%s]"%(
+                ','.join(missing_defs), ','.join(extra_defs)
+            )
+        )
+    return Types(typelist)
+
+
+def extract_fallbacks(parsed_fallbacks, grammar, tag):
+    fallbacklist = []
+    to_types = set()
+    fallback_keys = []
+    for f in parsed_fallbacks:
+        if f.tag not in (None, tag):
+            continue
+        assert f.to_type not in to_types, (
+            "got duplicate %%fallback %s ..."%f.to_type
+        )
+        assert f.to_type in grammar.exprs, (
+            "'%%fallback %s ...': %s is not a known token type"%(
+                f.to_type, f.to_type
+            )
+        )
+        assert isinstance(grammar.exprs[f.to_type], Token), (
+            "'%%fallback %s ...': %s is an expression, not a token"%(
+                f.to_type, f.to_type
+            )
+        )
+        to_types.add(f.to_type)
+        for from_type in f.from_types:
+            assert from_type in grammar.exprs, (
+                "'%%fallback %s %s': %s is not a known token type"%(
+                    f.to_type, from_type, from_type
+                )
+            )
+            assert isinstance(grammar.exprs[from_type], Token), (
+                "'%%fallback %s %s': %s is an expression, not a token"%(
+                    f.to_type, from_type, from_type
+                )
+            )
+        fallbacklist.append((f.to_type, f.from_types))
+
+    fallbackmap = {to: froms for to, froms in fallbacklist}
+    for token_name, _ in grammar.sorted_tokens():
+        # no missing entries in fallbackmap
+        fallbackmap.setdefault(token_name, [])
+
+    # fallbacks should be modeled as a tree, i.e. any type can only fallback
+    # into one parent type (though that parent type might itself fallback to
+    # another type)
+    from_type_map = {}
+    for to_type, from_types in fallbackmap.items():
+        for from_type in from_types:
+            from_type_map.setdefault(from_type, []).append(to_type)
+    conflicts = {f: t for f, t in from_type_map.items() if len(t) > 1}
+    if conflicts:
+        msg = "Detected types which can %fallback to multiple other types:\n"
+        for from_type, to_types in conflicts.items():
+            msg += "  - [%s] <- %s\n"%(", ".join(to_types), from_type)
+        raise RenderedError(msg.rstrip('\n'))
+
+    def detect_circular_fallbacks(fallbackmap, to_type=None, path=None):
+        if to_type is None:
+            # entrypoint to recursion
+            for to_type in fallbackmap:
+                detect_circular_fallbacks(fallbackmap, to_type, (to_type,))
+            return
+
+        # inside of recursion
+        for from_type in fallbackmap[to_type]:
+            # to be the most helpful, only print when we have the exact loop
+            if from_type == path[0]:
+                path = (*path, from_type)
+                raise RenderedError(
+                    "detected circular %%fallback: %s"%(" <- ".join(path))
+                )
+            # but always quit the recursion after any loop
+            if from_type in path:
+                return
+            detect_circular_fallbacks(fallbackmap, from_type, (*path, from_type))
+
+    detect_circular_fallbacks(fallbackmap)
+
+    # expand + sort fallbacks
+    def get_recursive(fallbackmap, value):
+        from_types = fallbackmap[value]
+        out = list(from_types)
+        for from_type in from_types:
+            out += get_recursive(fallbackmap, from_type)
+        return sorted(out)
+
+    expanded = {t: get_recursive(fallbackmap, t) for t in fallbackmap}
+    return expanded
+
+
+
 class C:
     """
     An object with all the methods for generating C code.
@@ -772,7 +896,7 @@ class C:
         precode=None,
         postcode=None,
         types=(),
-        fallbacks=(),
+        fallbacks=None,
         prefix="",
         user_args=(),
         semloc_type=None,
@@ -787,25 +911,8 @@ class C:
 
         self.precode = precode
         self.postcode = postcode
-
-        all_detected_types = set(e.type for e in self.grammar.exprs.values() if e.type)
-        all_defined_types = set(t[0] for t in types)
-        missing_defs = all_detected_types.difference(all_defined_types)
-        extra_defs = all_defined_types.difference(all_detected_types)
-        if missing_defs or extra_defs:
-            raise RenderedError(
-                "detected missing %%types [%s] and unused %%types [%s]"%(
-                    ','.join(missing_defs), ','.join(extra_defs)
-                )
-            )
         self.types = types
-        self.typemap = {t[0]: (t[1], t[2]) for t in types}
-
-        self.fallbacks = fallbacks
-        self.fallbackmap = {to: froms for to, froms in fallbacks}
-        for token_name, _ in self.grammar.sorted_tokens():
-            # no missing entries in fallbackmap
-            self.fallbackmap.setdefault(token_name, [])
+        self.fallbacks = fallbacks or {}
 
         self.prefix = prefix or ""
 
@@ -901,7 +1008,7 @@ class C:
         t = sorted(t for t in tokens if t is not None)
         # fallback tokens
         f = sorted(
-            i for tt in t for i in self.fallbackmap[tt] if i not in t
+            i for tt in t for i in self.fallbacks[tt] if i not in t
         )
         nargs, args = self._token_list_args(t, f)
         return "${prefix_}token_in(*token, %d, %s)"%(nargs, args)
@@ -911,7 +1018,7 @@ class C:
         t = sorted(t for t in tokens if t is not None)
         # fallback tokens
         f = sorted(
-            i for tt in t for i in self.fallbackmap[tt] if i not in t
+            i for tt in t for i in self.fallbacks[tt] if i not in t
         )
         nargs, args = self._token_list_args(t, f)
         return "${prefix_}mask_set(p->mask, %d, %s)"%(nargs, args)
@@ -1040,7 +1147,7 @@ class C:
             for b in obj.branches:
                 for t in b.get_first():
                     fallback_types[t] = [
-                        f for f in self.fallbackmap[t]
+                        f for f in self.fallbacks[t]
                         if f not in primary_types
                     ]
             # emit case statements
@@ -1166,7 +1273,7 @@ class C:
         type_name = self.grammar.exprs[root].type
         type_spec = None
         if type_name:
-            type_spec = self.typemap[type_name][0]
+            type_spec = self.types[type_name].spec
 
         with self.extra_vars(
             root=root, type_name=type_name, type_spec=type_spec
@@ -1235,8 +1342,8 @@ class C:
         self.fprint("")
         self.fprint("typedef enum {")
         self.fprint("    ${PREFIX_}NO_SEMTYPE = 0,")
-        for name, _, __ in self.types:
-            self.fprint("    ${PREFIX_}SEMTYPE_%s,"%name)
+        for t in self.types.source_ordered():
+            self.fprint("    ${PREFIX_}SEMTYPE_%s,"%t.name)
         self.fprint("} ${prefix_}sem_type_e;")
 
         if self.tokens_have_value:
@@ -1307,8 +1414,8 @@ class C:
 
         self.fprint("")
         self.fprint("typedef union {")
-        for name, spec, _ in self.types:
-            self.fprint("    %s %s;"%(spec, name))
+        for t in self.types.source_ordered():
+            self.fprint("    %s %s;"%(t.spec, t.name))
         self.fprint("} ${prefix_}val_u;")
 
         self.fprint("")
@@ -1329,10 +1436,10 @@ class C:
         self.fprint("void ${prefix_}sem_free(${prefix_}sem_t *sem){")
         self.fprint("    switch(sem->type){")
         self.fprint("        case ${PREFIX_}NO_SEMTYPE: break;")
-        for name, spec, destructor in self.types:
-            self.fprint("        case ${PREFIX_}SEMTYPE_%s: {"%name)
+        for t in self.types.source_ordered():
+            self.fprint("        case ${PREFIX_}SEMTYPE_%s: {"%t.name)
             self.print_destructor(
-                destructor, lhv="(sem->val.%s)"%name, i="           "
+                t.destructor, lhv="(sem->val.%s)"%t.name, i="           "
             )
             self.fprint("        } break;")
         self.fprint("    }")
@@ -1640,8 +1747,8 @@ class Python:
         *,
         precode=None,
         postcode=None,
-        types=(),
-        fallbacks=(),
+        types=None,
+        fallbacks=None,
         prefix="",
         user_args=(),
         span_fn=None,
@@ -2480,17 +2587,6 @@ def gen(
             k, v = kwarg.split("=", 1)
             kwargs[k] = v
 
-        # extract types
-        types = []
-        type_names = set()
-        for t in parsed_doc.types:
-            if t.tag not in (None, generator_cls.code_tag):
-                continue
-            assert t.name not in type_names, (
-                "got multiple '%%type %s' directives"%t.name
-            )
-            types.append((t.name, t.spec, t.destructor))
-
         # extract roots
         roots = []
         root_names = set()
@@ -2510,48 +2606,13 @@ def gen(
             )
             roots.append(r.name)
 
+        # extract types
+        types = extract_types(parsed_doc.types, g, generator_cls.code_tag)
+
         # extract fallbacks
-        fallbacks = []
-        to_types = set()
-        fallback_keys = []
-        rev_fallbacks = {}
-        for f in parsed_doc.fallbacks:
-            if f.tag not in (None, generator_cls.code_tag):
-                continue
-            assert f.to_type not in to_types, (
-                "got duplicate %%fallback %s ..."%f.to_type
-            )
-            assert f.to_type in g.exprs, (
-                "'%%fallback %s ...': %s is not a known token type"%(
-                    f.to_type, f.to_type
-                )
-            )
-            assert isinstance(g.exprs[f.to_type], Token), (
-                "'%%fallback %s ...': %s is an expression, not a token"%(
-                    f.to_type, f.to_type
-                )
-            )
-            to_types.add(f.to_type)
-            for from_type in f.from_types:
-                assert from_type not in rev_fallbacks, (
-                    "got conflicting %%fallbacks: '%%fallback %s %s' "
-                    "vs '%%fallback %s %s'"%(
-                        rev_fallbacks[from_type], f.to_type,
-                        f.to_type, from_type,
-                    )
-                )
-                assert from_type in g.exprs, (
-                    "'%%fallback %s %s': %s is not a known token type"%(
-                        f.to_type, from_type, from_type
-                    )
-                )
-                assert isinstance(g.exprs[from_type], Token), (
-                    "'%%fallback %s %s': %s is an expression, not a token"%(
-                        f.to_type, from_type, from_type
-                    )
-                )
-                rev_fallbacks[from_type] = f.to_type
-            fallbacks.append((f.to_type, f.from_types))
+        fallbacks = extract_fallbacks(
+            parsed_doc.fallbacks, g, generator_cls.code_tag
+        )
 
         generator = generator_cls(
             g,

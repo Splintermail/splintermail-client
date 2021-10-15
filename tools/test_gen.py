@@ -108,6 +108,53 @@ tokens = [t.type for t in gen.Tokenizer().iter(text)]
 assert tokens == [gen.CODE, gen.EOF], tokens
 
 
+# test extract_fallbacks (tree expansion)
+grammar_text = """
+%fallback WORD A B C;
+%fallback THING WORD;
+asdf = THING WORD A B C;
+"""
+parsed_doc = gen.parse_doc(grammar_text)
+g = parsed_doc.build_grammar()
+exp = {
+    "WORD": {"A", "B", "C"},
+    "THING": {"WORD", "A", "B", "C"},
+    "A": set(),
+    "B": set(),
+    "C": set(),
+}
+got = gen.extract_fallbacks(parsed_doc.fallbacks, g, None)
+got = {k: set(v) for k, v in got.items()}
+assert got == exp, '\ngot: ' + str(got) + '\nexp: ' + str(exp)
+
+# test extract_fallbacks (multi-parent rejection)
+grammar_text = """
+%fallback WORD A B C;
+%fallback THING WORD C;
+asdf = THING WORD A B C;
+"""
+parsed_doc = gen.parse_doc(grammar_text)
+g = parsed_doc.build_grammar()
+try:
+    raise ValueError(gen.extract_fallbacks(parsed_doc.fallbacks, g, None))
+except gen.RenderedError as e:
+    assert "fallback to multiple other types" in str(e), e
+
+# test extract_fallbacks (multi-parent rejection)
+grammar_text = """
+%fallback A B;
+%fallback B C;
+%fallback C A;
+asdf = A B C;
+"""
+parsed_doc = gen.parse_doc(grammar_text)
+g = parsed_doc.build_grammar()
+try:
+    raise ValueError(gen.extract_fallbacks(parsed_doc.fallbacks, g, None))
+except gen.RenderedError as e:
+    assert "detected circular %fallback" in str(e), e
+
+
 def run_e2e_test(grammar_text):
     with open("test.c", "w") as f:
         gen.gen(grammar_text, 'c', f)
