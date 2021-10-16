@@ -110,31 +110,41 @@ assert tokens == [gen.CODE, gen.EOF], tokens
 
 # test extract_fallbacks (tree expansion)
 grammar_text = """
-%fallback WORD A B C;
-%fallback THING WORD;
-asdf = THING WORD A B C;
+%fallback LETTER A B C;
+%fallback WORD LETTER;
+asdf = WORD LETTER A B C;
 """
 parsed_doc = gen.parse_doc(grammar_text)
-g = parsed_doc.build_grammar()
+g = parsed_doc.build_grammar(grammar_text)
 exp = {
-    "WORD": {"A", "B", "C"},
-    "THING": {"WORD", "A", "B", "C"},
+    "LETTER": {"A", "B", "C"},
+    "WORD": {"LETTER", "A", "B", "C"},
     "A": set(),
     "B": set(),
     "C": set(),
 }
-got = gen.extract_fallbacks(parsed_doc.fallbacks, g, None)
-got = {k: set(v) for k, v in got.items()}
-assert got == exp, '\ngot: ' + str(got) + '\nexp: ' + str(exp)
+fallbackmap = gen.extract_fallbacks(parsed_doc.fallbacks, g, None)
+assert fallbackmap == exp, '\ngot: ' + str(got) + '\nexp: ' + str(exp)
+fallbacks = gen.Fallbacks(fallbackmap)
+got = fallbacks.fallback_set("WORD", ["WORD"])
+assert got == {"LETTER", "A", "B", "C"}, got
+got = fallbacks.fallback_set("WORD", ["WORD", "A"])
+assert got == {"LETTER", "B", "C"}, got
+got = fallbacks.fallback_set("A", ["WORD", "A"])
+assert got == set(), got
+got = fallbacks.fallback_set("WORD", ["WORD", "LETTER"])
+assert got == set(), got
+got = fallbacks.fallback_set("LETTER", ["WORD", "LETTER"])
+assert got == {"A", "B", "C"}, got
 
 # test extract_fallbacks (multi-parent rejection)
 grammar_text = """
-%fallback WORD A B C;
-%fallback THING WORD C;
-asdf = THING WORD A B C;
+%fallback LETTER A B C;
+%fallback WORD LETTER C;
+asdf = WORD LETTER A B C;
 """
 parsed_doc = gen.parse_doc(grammar_text)
-g = parsed_doc.build_grammar()
+g = parsed_doc.build_grammar(grammar_text)
 try:
     raise ValueError(gen.extract_fallbacks(parsed_doc.fallbacks, g, None))
 except gen.RenderedError as e:
@@ -148,11 +158,27 @@ grammar_text = """
 asdf = A B C;
 """
 parsed_doc = gen.parse_doc(grammar_text)
-g = parsed_doc.build_grammar()
+g = parsed_doc.build_grammar(grammar_text)
 try:
     raise ValueError(gen.extract_fallbacks(parsed_doc.fallbacks, g, None))
 except gen.RenderedError as e:
     assert "detected circular %fallback" in str(e), e
+
+# test conflicts caused by fallback
+grammar_text = """
+%fallback A B;
+asdf = *A B;
+"""
+parsed_doc = gen.parse_doc(grammar_text)
+g = parsed_doc.build_grammar(grammar_text)
+g.check()
+fallbackmap = gen.extract_fallbacks(parsed_doc.fallbacks, g, None)
+fallbacks = gen.Fallbacks(fallbackmap)
+try:
+    g.check(fallbacks=fallbacks)
+    1/0
+except gen.FirstFollow:
+    pass
 
 
 def run_e2e_test(grammar_text):

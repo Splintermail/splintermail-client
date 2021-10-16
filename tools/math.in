@@ -87,16 +87,13 @@ sum_op:i =
 ;
 
 # This is really here to test zero location behavior
-maybe_negative:i = {$$=1;} [NEGATIVE {$$=-1;}]
-    {print("maybe_negative", $$, @$)}:py
-;
+maybe_negative:i = {$$=1;} [NEGATIVE {$$=-1;}];
 
 factor:i =
     maybe_negative:m (
         | NUM:n {$$=$m*$n;}
         | LPAREN expr:e RPAREN {$$=$m*$e;}
     )
-    {print("factor", $$, @$)}:py
 ;
 
 term:i =
@@ -107,7 +104,6 @@ term:i =
         {$$=$$*$f2 if $m else $$/$f2}:py
         {$$=$m ? $$*$f2 : $$/$f2;}:c
     )
-    {print("term", $$, @$)}:py
 ;
 
 expr:i =
@@ -117,7 +113,6 @@ expr:i =
         term:t2
         {$$=$$ + $s*$t2;}
     )
-    {print("expr", $$, @$)}:py
 ;
 
 line =
@@ -129,7 +124,6 @@ line =
         { print("bad line") }:py
         { printf("bad line\n"); }:c
     > EOL
-    {print("line", $$, @$)}:py
 ;
 
 {{

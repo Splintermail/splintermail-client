@@ -31,6 +31,7 @@ TODO:
  - Grammar:
    - use source-order everywhere
    - support 1* in addition to *
+   - configurable strictness for fallback-caused first/first, first/follow
 
  - Meta parser:
    - support an %include directive?
@@ -38,6 +39,7 @@ TODO:
  - gen.py cli:
    - support importing generators from external python files
    - allow for input templates, so you can have one file with an embedded grammar
+   - configurable strictness for fallback-caused first/first, first/follow
 """
 
 import abc
@@ -81,12 +83,19 @@ class RenderedError(Exception):
     pass
 
 class GrammarError(Exception):
-    pass
+    def __init__(self, text=None):
+        self.text = text
+
+    def __str__(self):
+        if self.text is not None:
+            return self.render(self.text)
+        return super().__str__()
 
 class FirstFirst(GrammarError):
     def __init__(self, parent, conflicts):
         self.parent = parent
         self.conflicts = conflicts
+        super().__init__()
 
     def render(self, body):
         out = "FIRST/FIRST conflict detected in (%s):\n"%self.parent.summary()
@@ -102,9 +111,16 @@ class FirstFirst(GrammarError):
         return out.rstrip('\n')
 
 class FirstFollow(GrammarError):
-    def __init__(self, term, conflicts):
+    def __init__(self, term, conflicts, due_to_fallbacks=False):
         self.term = term
         self.conflicts = conflicts
+        self.due_to_fallbacks = due_to_fallbacks
+        super().__init__()
+
+    def __str__(self):
+        if self.text is not None:
+            return self.render(self.text)
+        return super().__str__()
 
     def render(self, body):
         out = "FIRST/FOLLOW conflicts: [%s]\n"%(",".join(self.conflicts))
@@ -113,6 +129,8 @@ class FirstFollow(GrammarError):
         out += "at least one token that starts %s is disallowed by then."%(
             self.term.summary()
         )
+        if self.due_to_fallbacks:
+            out += "\n(note: this conflict only arises due to fallbacks)"
         return out
 
 class InfiniteRecursion(Exception):
@@ -123,6 +141,7 @@ class PossiblyEmpty(GrammarError):
         self.msg = msg
         self.summary = summary
         self.loc = loc
+        super().__init__()
 
     def render(self, body):
         out = "invalid %s on maybe-empty expression (%s)"%(
@@ -131,6 +150,160 @@ class PossiblyEmpty(GrammarError):
         if self.loc is not None:
             out += "\n" + render_location(self.loc, body)
         return out
+
+
+class Fallbacks:
+    """
+    The result of all of the %fallback directives in a grammar.
+    This is handled by the Grammar itself, rather than having every parser
+    generator handle it.  This allows for conflict detection and it makes the
+    generators a little easier to write.
+    """
+    def __init__(self, fallbackmap):
+        self.fallbackmap = fallbackmap
+
+    def __getitem__(self, value):
+        """
+        Return the set of all fallbacks that apply to a given token.
+        """
+        return self.fallbackmap[value]
+
+    def get(self, key, default=None):
+        return self.fallbackmap.get(key, default)
+
+    def fallback_set(self, primary, exclude):
+        """
+        Return the fallbacks that apply to a given primary, in the presence
+        of the other possible primary matches 'exclude'.
+
+        Note that primary can appear in exclude without affecting the output.
+
+        Also note that exclusions are hierarchical.
+
+        Example: with the following fallback directives:
+
+            %fallback LETTER A B C;
+            %fallback WORD LETTER;
+
+        EXPRESSION      PRIMARY  EXCLUDE         RESULT
+        ----------------------------------------------------------
+        WORD            WORD     [WORD]          {LETTER, A, B, C}
+
+        WORD | A        WORD     [WORD, A]       {LETTER, B, C}
+        WORD | A        A        [WORD, A]       {}
+
+        WORD | LETTER   WORD     [WORD, LETTER]  {}
+        WORD | LETTER   LETTER   [WORD, LETTER]  {A, B, C}
+        """
+        out = self.fallbackmap[primary]
+        out = out.difference(set(exclude))
+        for ex in exclude:
+            if ex == primary:
+                # allow primary to appear in exclude, but ignore it.
+                continue
+            if primary in self.fallbackmap[ex]:
+                # general things cannot cause exclusions on specific things
+                continue
+            out = out.difference(self.fallbackmap[ex])
+        return out
+
+    def all_fallbacks(self, tokens):
+        """
+        Get a list of all fallbacks for some set of tokens.
+        """
+        out = set()
+        for t in tokens:
+            if t is not None:
+                out = out.union(self.fallbackmap[t])
+        out = out.difference(set(tokens))
+        return out
+
+
+def extract_fallbacks(parsed_fallbacks, grammar, tag):
+    fallbacklist = []
+    to_types = set()
+    fallback_keys = []
+    for f in parsed_fallbacks:
+        if f.tag not in (None, tag):
+            continue
+        assert f.to_type not in to_types, (
+            "got duplicate %%fallback %s ..."%f.to_type
+        )
+        assert f.to_type in grammar.exprs, (
+            "'%%fallback %s ...': %s is not a known token type"%(
+                f.to_type, f.to_type
+            )
+        )
+        assert isinstance(grammar.exprs[f.to_type], Token), (
+            "'%%fallback %s ...': %s is an expression, not a token"%(
+                f.to_type, f.to_type
+            )
+        )
+        to_types.add(f.to_type)
+        for from_type in f.from_types:
+            assert from_type in grammar.exprs, (
+                "'%%fallback %s %s': %s is not a known token type"%(
+                    f.to_type, from_type, from_type
+                )
+            )
+            assert isinstance(grammar.exprs[from_type], Token), (
+                "'%%fallback %s %s': %s is an expression, not a token"%(
+                    f.to_type, from_type, from_type
+                )
+            )
+        fallbacklist.append((f.to_type, f.from_types))
+
+    fallbackmap = {to: froms for to, froms in fallbacklist}
+    for token_name, _ in grammar.sorted_tokens():
+        # no missing entries in fallbackmap
+        fallbackmap.setdefault(token_name, [])
+
+    # fallbacks should be modeled as a tree, i.e. any type can only fallback
+    # into one parent type (though that parent type might itself fallback to
+    # another type)
+    from_type_map = {}
+    for to_type, from_types in fallbackmap.items():
+        for from_type in from_types:
+            from_type_map.setdefault(from_type, []).append(to_type)
+    conflicts = {f: t for f, t in from_type_map.items() if len(t) > 1}
+    if conflicts:
+        msg = "Detected types which can %fallback to multiple other types:\n"
+        for from_type, to_types in conflicts.items():
+            msg += "  - [%s] <- %s\n"%(", ".join(to_types), from_type)
+        raise RenderedError(msg.rstrip('\n'))
+
+    def detect_circular_fallbacks(fallbackmap, to_type=None, path=None):
+        if to_type is None:
+            # entrypoint to recursion
+            for to_type in fallbackmap:
+                detect_circular_fallbacks(fallbackmap, to_type, (to_type,))
+            return
+
+        # inside of recursion
+        for from_type in fallbackmap[to_type]:
+            # to be the most helpful, only print when we have the exact loop
+            if from_type == path[0]:
+                path = (*path, from_type)
+                raise RenderedError(
+                    "detected circular %%fallback: %s"%(" <- ".join(path))
+                )
+            # but always quit the recursion after any loop
+            if from_type in path:
+                return
+            detect_circular_fallbacks(fallbackmap, from_type, (*path, from_type))
+
+    detect_circular_fallbacks(fallbackmap)
+
+    # expand fallbacks, convert to sets
+    def get_recursive(fallbackmap, value):
+        from_types = fallbackmap[value]
+        out = set(from_types)
+        for from_type in from_types:
+            out = out.union(get_recursive(fallbackmap, from_type))
+        return out
+
+    expanded = {t: get_recursive(fallbackmap, t) for t in fallbackmap}
+    return expanded
 
 
 def add_to_prev(prev, name, call):
@@ -142,14 +315,33 @@ def add_to_prev(prev, name, call):
         )
     return list(prev) + [name]
 
-def cacheable(fn):
-    cache = None
-    prop = "_cached_" + fn.__name__
-    def _fn(self, *args, **kwargs):
-        if not hasattr(self, prop):
-            setattr(self, prop, fn(self, *args, **kwargs))
-        return getattr(self, prop)
-    return _fn
+def cacheable(*args):
+    if len(args) == 1 and callable(args[0]):
+        # direct call case
+        fn = args[0]
+        prop = "_cached_" + fn.__name__
+        def _fn(self, *args, **kwargs):
+            if not hasattr(self, prop):
+                setattr(self, prop, fn(self, *args, **kwargs))
+            return getattr(self, prop)
+        return _fn
+    else:
+        # parameterizable cache case
+        # make sure you declare fn(self, ..., *, PARAM=None) or it won't work
+        # inspect would be better but this works for our use-case
+        def decorator(fn):
+            keys = args
+            prop = "_cached_" + fn.__name__
+            def _fn(self, *args, **kwargs):
+                if not hasattr(self, prop):
+                    setattr(self, prop, {})
+                cache = getattr(self, prop)
+                cache_key = frozenset(kwargs.get(k) for k in keys)
+                if cache_key not in cache:
+                    cache[cache_key] = fn(self, *args, **kwargs)
+                return cache[cache_key]
+            return _fn
+        return decorator
 
 
 # When printing summaries, if you want to print something with a lower
@@ -186,7 +378,7 @@ class Parsable(metaclass=abc.ABCMeta):
         pass
 
     @abc.abstractmethod
-    def check(self):
+    def check(self, *, fallbacks=None):
         pass
 
 
@@ -217,11 +409,10 @@ class Reference(Parsable):
             return set()
         return self.defn.seq.get_disallowed_after(prev)
 
-    @cacheable
-    def check(self):
-        if isinstance(self.defn, Token):
-            return
-        return self.defn.seq.check()
+    @cacheable("fallbacks")
+    def check(self, *, fallbacks=None):
+        # The reference itself needs no checking.
+        return
 
 
 class Snippet:
@@ -265,12 +456,12 @@ class Maybe(Parsable):
         first = self.seq.get_first()
         if None in first:
             raise PossiblyEmpty(".maybe", self.seq.summary(), self.loc)
-        # always include None, since this term may be missing
+        # always include None to indicate that this term may be empty
         return disallowed.union(first).union({None})
 
-    @cacheable
-    def check(self):
-        self.seq.check()
+    @cacheable("fallbacks")
+    def check(self, *, fallbacks=None):
+        self.seq.check(fallbacks=fallbacks)
 
 
 class ZeroOrMore(Parsable):
@@ -302,17 +493,16 @@ class ZeroOrMore(Parsable):
         disallowed = self.seq.get_disallowed_after(prev)
         if None in disallowed:
             raise PossiblyEmpty(".zero_or_more()", self.seq.summary(), self.loc)
-        assert None not in disallowed, "invalid .maybe() on maybe-empty expression"
         # since this might not exist, we disallow the this expression's first as well
         first = self.seq.get_first(prev)
         if None in first:
             raise PossiblyEmpty(".zero_or_more()", self.seq.summary(), self.loc)
-        # always include None, since this term may be missing
+        # always include None, to indicate this term may be empty
         return disallowed.union(first).union({None})
 
-    @cacheable
-    def check(self):
-        self.seq.check()
+    @cacheable("fallbacks")
+    def check(self, *, fallbacks=None):
+        self.seq.check(fallbacks=fallbacks)
 
 
 class Branches(Parsable):
@@ -363,16 +553,17 @@ class Branches(Parsable):
         prev = list(prev) + [self.name]
         disallowed = set()
         for branch in self.branches:
-            disallowed = disallowed.union(branch.get_disallowed_after(list(prev)))
-
+            disallowed = disallowed.union(
+                branch.get_disallowed_after(list(prev))
+            )
         return frozenset(disallowed)
 
-    @cacheable
-    def check(self):
+    @cacheable("fallbacks")
+    def check(self, *, fallbacks=None):
         # if any tokens map to multiple branches, that's a first/first conflict
         token_to_branch = {}
         for branch in self.branches:
-            branch.check()
+            branch.check(fallbacks=fallbacks)
 
             # no possibly-empty branches
             branch_first = branch.get_first()
@@ -386,11 +577,8 @@ class Branches(Parsable):
         for t, branchlist in token_to_branch.items():
             if len(branchlist) > 1:
                 conflicts.setdefault(tuple(branchlist), []).append(t)
-
-        if not conflicts:
-            return
-
-        raise FirstFirst(self, conflicts)
+        if conflicts:
+            raise FirstFirst(self, conflicts)
 
 
 class Recovery(Parsable):
@@ -426,9 +614,9 @@ class Recovery(Parsable):
     def get_disallowed_after(self, prev):
         return self.seq.get_disallowed_after(prev)
 
-    @cacheable
-    def check(self):
-        self.seq.check()
+    @cacheable("fallbacks")
+    def check(self, *, fallbacks=None):
+        self.seq.check(fallbacks=fallbacks)
 
 
 class Sequence(Parsable):
@@ -514,8 +702,8 @@ class Sequence(Parsable):
 
         return frozenset(disallowed)
 
-    @cacheable
-    def check(self):
+    @cacheable("fallbacks")
+    def check(self, *, fallbacks=None):
         """
         At generation time, we need to ensure that for every Term in the
         expression, there is never a point where the lookahead token could
@@ -524,11 +712,7 @@ class Sequence(Parsable):
         prev = {self.name}
 
         for term, _, _ in self.terms:
-            # don't allow recursion
-            if isinstance(term, Reference):
-                if isinstance(term.defn, Expression):
-                    continue
-            term.check()
+            term.check(fallbacks=fallbacks)
 
         disallowed = set()
         for i, (term, _, _) in enumerate(self.terms):
@@ -538,6 +722,19 @@ class Sequence(Parsable):
             conflicts = disallowed.intersection(term_first)
             if conflicts:
                 raise FirstFollow(term, conflicts)
+            if fallbacks is not None:
+                # Predict where fallbacks would expand either the disallowed
+                # set or the term_first set to cause conflicts.
+                def expand(tokens):
+                    out = set(tokens)
+                    for t in tokens:
+                        out = out.union(fallbacks.get(t, set()))
+                    return out
+                disallowed_ex = expand(disallowed)
+                term_first_ex = expand(term_first)
+                conflicts = disallowed_ex.intersection(term_first_ex)
+                if conflicts:
+                    raise FirstFollow(term, conflicts, due_to_fallbacks=True)
             term_disallowed = term.get_disallowed_after(list(prev))
             if None in term_disallowed:
                 # disallowed should grow
@@ -625,8 +822,9 @@ class Expression(Definition):
 
 
 class Grammar:
-    def __init__(self):
+    def __init__(self, text=None):
         self.exprs = {}
+        self.text = text
 
     def get_name(self, name):
         """
@@ -687,7 +885,7 @@ class Grammar:
             if isinstance(expr, Expression):
                 yield name, expr
 
-    def check(self):
+    def check(self, *, fallbacks=None):
         # first make sure everything is defined, or the checks become confusing
         undefined = set()
         for name, expr in self.sorted_expressions():
@@ -702,7 +900,12 @@ class Grammar:
             )
 
         for name, expr in self.sorted_expressions():
-            expr.seq.check()
+            try:
+                expr.seq.check(fallbacks=fallbacks)
+            except GrammarError as e:
+                # inject the full text of the grammar, if we have it
+                e.text = self.text
+                raise
             # detect auto-created expressions with no definition
             if not expr.seq.terms:
                 raise RenderedError(
@@ -744,94 +947,6 @@ def extract_types(parsed_types, grammar, tag):
             )
         )
     return Types(typelist)
-
-
-def extract_fallbacks(parsed_fallbacks, grammar, tag):
-    fallbacklist = []
-    to_types = set()
-    fallback_keys = []
-    for f in parsed_fallbacks:
-        if f.tag not in (None, tag):
-            continue
-        assert f.to_type not in to_types, (
-            "got duplicate %%fallback %s ..."%f.to_type
-        )
-        assert f.to_type in grammar.exprs, (
-            "'%%fallback %s ...': %s is not a known token type"%(
-                f.to_type, f.to_type
-            )
-        )
-        assert isinstance(grammar.exprs[f.to_type], Token), (
-            "'%%fallback %s ...': %s is an expression, not a token"%(
-                f.to_type, f.to_type
-            )
-        )
-        to_types.add(f.to_type)
-        for from_type in f.from_types:
-            assert from_type in grammar.exprs, (
-                "'%%fallback %s %s': %s is not a known token type"%(
-                    f.to_type, from_type, from_type
-                )
-            )
-            assert isinstance(grammar.exprs[from_type], Token), (
-                "'%%fallback %s %s': %s is an expression, not a token"%(
-                    f.to_type, from_type, from_type
-                )
-            )
-        fallbacklist.append((f.to_type, f.from_types))
-
-    fallbackmap = {to: froms for to, froms in fallbacklist}
-    for token_name, _ in grammar.sorted_tokens():
-        # no missing entries in fallbackmap
-        fallbackmap.setdefault(token_name, [])
-
-    # fallbacks should be modeled as a tree, i.e. any type can only fallback
-    # into one parent type (though that parent type might itself fallback to
-    # another type)
-    from_type_map = {}
-    for to_type, from_types in fallbackmap.items():
-        for from_type in from_types:
-            from_type_map.setdefault(from_type, []).append(to_type)
-    conflicts = {f: t for f, t in from_type_map.items() if len(t) > 1}
-    if conflicts:
-        msg = "Detected types which can %fallback to multiple other types:\n"
-        for from_type, to_types in conflicts.items():
-            msg += "  - [%s] <- %s\n"%(", ".join(to_types), from_type)
-        raise RenderedError(msg.rstrip('\n'))
-
-    def detect_circular_fallbacks(fallbackmap, to_type=None, path=None):
-        if to_type is None:
-            # entrypoint to recursion
-            for to_type in fallbackmap:
-                detect_circular_fallbacks(fallbackmap, to_type, (to_type,))
-            return
-
-        # inside of recursion
-        for from_type in fallbackmap[to_type]:
-            # to be the most helpful, only print when we have the exact loop
-            if from_type == path[0]:
-                path = (*path, from_type)
-                raise RenderedError(
-                    "detected circular %%fallback: %s"%(" <- ".join(path))
-                )
-            # but always quit the recursion after any loop
-            if from_type in path:
-                return
-            detect_circular_fallbacks(fallbackmap, from_type, (*path, from_type))
-
-    detect_circular_fallbacks(fallbackmap)
-
-    # expand + sort fallbacks
-    def get_recursive(fallbackmap, value):
-        from_types = fallbackmap[value]
-        out = list(from_types)
-        for from_type in from_types:
-            out += get_recursive(fallbackmap, from_type)
-        return sorted(out)
-
-    expanded = {t: get_recursive(fallbackmap, t) for t in fallbackmap}
-    return expanded
-
 
 
 class C:
@@ -912,7 +1027,7 @@ class C:
         self.precode = precode
         self.postcode = postcode
         self.types = types
-        self.fallbacks = fallbacks or {}
+        self.fallbacks = fallbacks
 
         self.prefix = prefix or ""
 
@@ -1007,9 +1122,7 @@ class C:
         # primary tokens
         t = sorted(t for t in tokens if t is not None)
         # fallback tokens
-        f = sorted(
-            i for tt in t for i in self.fallbacks[tt] if i not in t
-        )
+        f = self.fallbacks and sorted(self.fallbacks.all_fallbacks(t)) or []
         nargs, args = self._token_list_args(t, f)
         return "${prefix_}token_in(*token, %d, %s)"%(nargs, args)
 
@@ -1017,9 +1130,7 @@ class C:
         # primary tokens
         t = sorted(t for t in tokens if t is not None)
         # fallback tokens
-        f = sorted(
-            i for tt in t for i in self.fallbacks[tt] if i not in t
-        )
+        f = self.fallbacks and sorted(self.fallbacks.all_fallbacks(t)) or []
         nargs, args = self._token_list_args(t, f)
         return "${prefix_}mask_set(p->mask, %d, %s)"%(nargs, args)
 
@@ -1139,23 +1250,18 @@ class C:
             self.fprint("    switch(*token){")
             bstate = state + 1
             # detect primary types
-            primary_types = set(
+            primaries = set(
                 t for b in obj.branches for t in b.get_first()
             )
-            # detect fallback types
-            fallback_types = {}
-            for b in obj.branches:
-                for t in b.get_first():
-                    fallback_types[t] = [
-                        f for f in self.fallbacks[t]
-                        if f not in primary_types
-                    ]
             # emit case statements
             for i, b in enumerate(obj.branches):
                 for t in b.get_first():
-                    primary_types.add(t)
                     label = "yy%d_br_%d"%(state, i)
-                    for f in fallback_types.get(t, []):
+                    fallbacks = set()
+                    if self.fallbacks:
+                        # calculate fallback types
+                        fallbacks = self.fallbacks.fallback_set(t, primaries)
+                    for f in sorted(fallbacks):
                         self.fprint("        case %s: // fallback"%f)
                     self.fprint("        case %s: goto %s;"%(t, label))
                 bstate += self.nstates(b)
@@ -1715,7 +1821,7 @@ class C:
         for _, expr in self.grammar.sorted_expressions():
             self.fprint(
                 "    if(fn == " + self.parse_fn(expr) + ")"
-                + " return \""+self.parse_fn(expr)+"\";"
+                + " return \""+expr.name+"\";"
             )
         self.fprint("    return \"unknown\";")
         self.fprint("}")
@@ -2208,8 +2314,8 @@ class ParsedDoc:
             return
         raise RuntimeError("unknown statement of type %s"%type(stmt).__name__)
 
-    def build_grammar(self):
-        g = Grammar()
+    def build_grammar(self, text=None):
+        g = Grammar(text=text)
 
         # first declare all tokens and expressions
         for name, val in self.defs:
@@ -2552,7 +2658,7 @@ def gen(
     with read_template(template, template_tag, out) as start_offset:
         parsed_doc = parse_doc(grammar_text)
 
-        g = parsed_doc.build_grammar()
+        g = parsed_doc.build_grammar(grammar_text)
 
         for i in inspect:
             print(inspect_def(g, i, grammar_text), file=sys.stderr)
@@ -2610,9 +2716,10 @@ def gen(
         types = extract_types(parsed_doc.types, g, generator_cls.code_tag)
 
         # extract fallbacks
-        fallbacks = extract_fallbacks(
+        fallbackmap = extract_fallbacks(
             parsed_doc.fallbacks, g, generator_cls.code_tag
         )
+        fallbacks = Fallbacks(fallbackmap)
 
         generator = generator_cls(
             g,
