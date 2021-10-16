@@ -279,7 +279,7 @@ int main(int argc, char **argv){
     size_t ntokens = sizeof(tokens)/sizeof(*tokens);
 
     char *out;
-    status_t status = STATUS_OK;
+    status_e status = STATUS_OK;
     size_t i = 0;
     while(!status && i < ntokens){
         // printf("feeding %s (%s)\n", token_name(tokens[i].tok), tokens[i].str);
@@ -366,7 +366,7 @@ int main(int argc, char **argv){
     size_t ntokens = sizeof(tokens)/sizeof(*tokens);
 
     char *out;
-    status_t status = STATUS_OK;
+    status_e status = STATUS_OK;
     size_t i = 0;
     while(!status && i < ntokens){
         // printf("feeding %s (%s)\n", token_name(tokens[i].tok), tokens[i].str);
@@ -474,7 +474,7 @@ int main(int argc, char **argv){
 
     char *out;
     loc_t loc;
-    status_t status = STATUS_OK;
+    status_e status = STATUS_OK;
     size_t i = 0;
     while(!status && i < ntokens){
         // printf("feeding %s (%s)\n", token_name(tokens[i].tok), tokens[i].str);

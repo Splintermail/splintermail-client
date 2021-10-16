@@ -173,7 +173,7 @@ line =
 
             math_val_u val = { .i = tokens[i+1] };
             math_loc_t loc = {i/2, i/2+1};
-            math_status_t status = math_parse_line(p, tokens[i], val, loc, NULL);
+            math_status_e status = math_parse_line(p, tokens[i], val, loc, NULL);
             if(status > MATH_STATUS_DONE){
                 printf("got bad status! %d\n", status);
             }
