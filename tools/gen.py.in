@@ -17,7 +17,6 @@ gen.py is in alpha, and is still missing some key features.
 TODO:
  - Python:
    - some state tracking, to avoid duplicate token checks
-   - support fallback
    - reject roots which don't have a concrete ending token; the user api
      doesn't support it
 
@@ -207,14 +206,17 @@ class Fallbacks:
             out = out.difference(self.fallbackmap[ex])
         return out
 
-    def all_fallbacks(self, tokens):
+    def all_fallbacks(self, tokens, exclude=()):
         """
         Get a list of all fallbacks for some set of tokens.
         """
         out = set()
+        # as with fallback_set(), ignore excluded primaries
+        exclude = set(exclude).difference(set(tokens))
         for t in tokens:
             if t is not None:
-                out = out.union(self.fallbackmap[t])
+                out = out.union(self.fallback_set(t, exclude))
+        # primaries are never, ever fallbacks
         out = out.difference(set(tokens))
         return out
 
@@ -1898,11 +1900,8 @@ class Python:
                 "warning: %type directives are ignored by the python generator",
                 file=sys.stderr
             )
-        if fallbacks:
-            print(
-                "warning: %fallback directives are ignored by the python generator",
-                file=sys.stderr
-            )
+        self.fallbacks = fallbacks
+
         self.prefix = prefix
         self.prefix_ = (prefix + "_") if prefix else ""
         assert bool(span_fn) + bool(zero_loc_fn) in (0, 2), (
@@ -1972,33 +1971,33 @@ class Python:
         args = "" if not self.span_fn else ("loc=" + loc)
         self.fprint(i + "raise ${prefix}SyntaxError("+ args + ")")
 
-    def token_list(self, tokens):
+    def token_list(self, tokens, fallbacks=()):
         assert tokens
-        tokens = sorted(t for t in tokens if t is not None)
+        tokens = sorted(t for t in tokens if t is not None) + sorted(fallbacks)
         if len(tokens) > 1:
             return "(" + ", ".join(tokens) + ")"
         else:
             return "(" + tokens[0] + ",)"
 
-    def if_token_in(self, tokens, i, pos=0):
-        token_list = self.token_list(tokens)
+    def if_token_in(self, tokens, fallbacks, i, pos=0):
+        token_list = self.token_list(tokens, fallbacks)
         lead = "if" if pos == 0 else "elif"
         with self.extra_vars(token_list=token_list, lead=lead):
             self.fprint(i + "$lead (yield from tokens.peek()) in $token_list:")
 
-    def if_token_not_in(self, tokens, i, pos=0):
-        token_list = self.token_list(tokens)
+    def if_token_not_in(self, tokens, fallbacks, i, pos=0):
+        token_list = self.token_list(tokens, fallbacks)
         lead = "if" if pos == 0 else "elif"
         with self.extra_vars(token_list=token_list, lead=lead):
             self.fprint(i + "$lead (yield from tokens.peek()) not in $token_list:")
 
-    def while_token_in(self, tokens, i):
-        token_list = self.token_list(tokens)
+    def while_token_in(self, tokens, fallbacks, i):
+        token_list = self.token_list(tokens, fallbacks)
         with self.extra_vars(token_list=token_list):
             self.fprint(i + "while (yield from tokens.peek()) in $token_list:")
 
-    def while_token_not_in(self, tokens, i):
-        token_list = self.token_list(tokens)
+    def while_token_not_in(self, tokens, fallbacks, i):
+        token_list = self.token_list(tokens, fallbacks)
         with self.extra_vars(token_list=token_list):
             self.fprint(i + "while (yield from tokens.peek()) not in $token_list:")
 
@@ -2016,9 +2015,11 @@ class Python:
     def _gen(self, obj, tag, i, want_final_loc):
         if isinstance(obj, Reference):
             if isinstance(obj.defn, Token):
+                tokens = {obj.defn.name}.union(self.fallbacks[obj.defn.name])
+                token_list = self.token_list(tokens)
                 self.fprint(i + "# " + obj.summary())
                 self.fprint(i + "val = (yield from next(tokens))")
-                self.fprint(i + "if val.type != $name:")
+                self.fprint(i + "if val.type not in %s:"%token_list)
                 self.syntax_error("val.loc", i + "    ")
                 if self.span_fn:
                     self.fprint(i + "out.loc = $span_fn(out.loc, val.loc)")
@@ -2041,20 +2042,27 @@ class Python:
 
         if isinstance(obj, Maybe):
             self.fprint(i + "# " + obj.summary())
-            self.if_token_in(obj.get_first(), i)
+            t = obj.get_first()
+            f = self.fallbacks.all_fallbacks(t)
+            self.if_token_in(t, f, i)
             self.gen(obj.seq, None, i+"    ")
             return
 
         if isinstance(obj, ZeroOrMore):
             self.fprint(i + "# " + obj.summary())
-            self.while_token_in(obj.get_first(), i)
+            t = obj.get_first()
+            f = self.fallbacks.all_fallbacks(t)
+            self.while_token_in(t, f, i)
             self.gen(obj.seq, None, i+"    ")
             return
 
         if isinstance(obj, Branches):
             self.fprint(i + "# " + obj.summary())
+            exclude = obj.get_first()
             for n, seq in enumerate(obj.branches):
-                self.if_token_in(seq.get_first(), i, pos=n)
+                t = seq.get_first()
+                f = self.fallbacks.all_fallbacks(t, exclude)
+                self.if_token_in(t, f, i, pos=n)
                 self.gen(seq, None, i+"    ")
             self.fprint(i + "else:")
             self.syntax_error("(yield from next(tokens)).loc", i + "    ")
@@ -2064,10 +2072,12 @@ class Python:
             self.fprint(i + "# " + obj.summary())
             self.fprint(i + "try:")
             self.gen(obj.seq, None, i+"    ")
-            self.if_token_not_in(obj.after, i+"    ")
+            t = obj.after
+            f = self.fallbacks.all_fallbacks(t)
+            self.if_token_not_in(t, f, i+"    ")
             self.fprint(i + "        raise ${prefix}SyntaxError()")
             self.fprint(i + "except ${prefix}SyntaxError:")
-            self.while_token_not_in(obj.after, i+"    ")
+            self.while_token_not_in(t, f, i+"    ")
             self.fprint(i + "        yield from next(tokens)")
             self.print_code(obj.code, i+"    ")
             return

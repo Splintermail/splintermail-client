@@ -93,6 +93,7 @@ factor:i =
     maybe_negative:m (
         | NUM:n {$$=$m*$n;}
         | LPAREN expr:e RPAREN {$$=$m*$e;}
+        | ONE {$$=1;}
     )
 ;
 
@@ -132,12 +133,16 @@ line =
             MathToken(PLUS,    loc=MathSpan(0, 1)),
             MathToken(EOL,     loc=MathSpan(1, 2)),
 
-            MathToken(NUM, 18, loc=MathSpan(2, 3)),
-            MathToken(DIV,     loc=MathSpan(3, 4)),
-            MathToken(NUM, 6,  loc=MathSpan(4, 5)),
-            MathToken(DIV,     loc=MathSpan(5, 6)),
-            MathToken(NUM, 3,  loc=MathSpan(6, 7)),
-            MathToken(EOL,     loc=MathSpan(7, 8)),
+            MathToken(NUM,  18, loc=MathSpan(2, 3)),
+            MathToken(DIV,      loc=MathSpan(3, 4)),
+            MathToken(NUM,  6,  loc=MathSpan(4, 5)),
+            MathToken(DIV,      loc=MathSpan(5, 6)),
+            MathToken(NUM,  3,  loc=MathSpan(6, 7)),
+            MathToken(PLUS,     loc=MathSpan(7, 8)),
+            MathToken(ZERO, 0,  loc=MathSpan(8, 9)),
+            MathToken(PLUS,     loc=MathSpan(9, 10)),
+            MathToken(ONE,  1,  loc=MathSpan(10, 11)),
+            MathToken(EOL,      loc=MathSpan(11, 12)),
         ]
         p = MathlineParser(repeat=True)
         for t in tokens:

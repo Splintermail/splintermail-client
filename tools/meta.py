@@ -58,10 +58,10 @@ import gen
 # ;
 # directive = PERCENT (
 #   | GENERATOR TEXT:generator
-#   | GENERATOR_ARG [COLON TEXT:tag] TEXT:key TEXT:value  # TODO: support ATOM
+#   | KWARG [COLON TEXT:tag] TEXT:key TEXT:value  # TODO: support ATOM
 #   | TYPE [COLON TEXT:tag] CODE:spec [CODE:destructor]
 #   | ROOT [COLON TEXT:tag] TEXT:spec
-#   | FALLBACK TEXT:to < TEXT:from *(TEXT:from);
+#   | FALLBACK TEXT:to TEXT:from *(TEXT:from);
 # ) SEMI;
 #
 # priority of operators:
@@ -328,11 +328,21 @@ g.check()
 
 
 with open("gen.py", "w") as f:
+    fallbackmap = {
+        "TEXT": set(
+            ("GENERATOR", "KWARG", "TYPE", "ROOT", "FALLBACK")
+        )
+    }
+    for token_name, _ in g.sorted_tokens():
+        # no missing entries in fallbackmap
+        fallbackmap.setdefault(token_name, set())
+
     with gen.read_template(INFILE, file=f):
         gen.Python(
             grammar=g,
             file=f,
             roots=["doc"],
+            fallbacks=gen.Fallbacks(fallbackmap),
             prefix="Meta",
             span_fn="text_span",
             zero_loc_fn="text_zero_loc",
