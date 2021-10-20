@@ -119,9 +119,7 @@ g = parsed_doc.build_grammar(grammar_text)
 exp = {
     "LETTER": {"A", "B", "C"},
     "WORD": {"LETTER", "A", "B", "C"},
-    "A": set(),
-    "B": set(),
-    "C": set(),
+    "A": set(), "B": set(), "C": set(),
 }
 fallbackmap = gen.extract_fallbacks(parsed_doc.fallbacks, g, None)
 assert fallbackmap == exp, '\ngot: ' + str(got) + '\nexp: ' + str(exp)
@@ -136,6 +134,46 @@ got = fallbacks.fallback_set("WORD", ["WORD", "LETTER"])
 assert got == set(), got
 got = fallbacks.fallback_set("LETTER", ["WORD", "LETTER"])
 assert got == {"A", "B", "C"}, got
+
+# test all_fallbacks (tree expansion)
+grammar_text = """
+%fallback LETTER A B C;
+%fallback NUM N1 N2 N3;
+%fallback WORD LETTER NUM;
+thing1 = LETTER | N2;
+thing2 = NUM | A;
+thing3 = WORD | C;
+asdf = (thing1 | thing2 | thing3) B N1 N3;
+"""
+parsed_doc = gen.parse_doc(grammar_text)
+g = parsed_doc.build_grammar(grammar_text)
+fallbackmap = gen.extract_fallbacks(parsed_doc.fallbacks, g, None)
+exp = {
+    "LETTER": {"A", "B", "C"},
+    "NUM": {"N1", "N2", "N3"},
+    "WORD": {"LETTER", "A", "B", "C", "NUM", "N1", "N2", "N3"},
+    "A": set(), "B": set(), "C": set(), "N1": set(), "N2": set(), "N3": set(),
+}
+assert fallbackmap == exp, fallbackmap
+fallbacks = gen.Fallbacks(fallbackmap)
+# first look at thing1, thing2, and thing3 directly
+thing1 = g.exprs["thing1"].seq.get_first()
+thing2 = g.exprs["thing2"].seq.get_first()
+thing3 = g.exprs["thing3"].seq.get_first()
+got = fallbacks.all_fallbacks(thing1)
+assert got == {"A", "B", "C"}, got
+got = fallbacks.all_fallbacks(thing2)
+assert got == {"N1", "N2", "N3"}, got
+got = fallbacks.all_fallbacks(thing3)
+assert got == {"LETTER", "A", "B", "NUM", "N1", "N2", "N3"}, got
+# now imagine we are looking at the branch statement in `asdf`
+exclude = g.exprs["asdf"].seq.get_first()
+got = fallbacks.all_fallbacks(thing1, exclude)
+assert got == {"B"}, got
+got = fallbacks.all_fallbacks(thing2, exclude)
+assert got == {"N1", "N3"}, got
+got = fallbacks.all_fallbacks(thing3, exclude)
+assert got == set(), got
 
 # test extract_fallbacks (multi-parent rejection)
 grammar_text = """
