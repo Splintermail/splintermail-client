@@ -38,16 +38,18 @@
 %root factor;
 
 %generator c;
-%kwarg:c prefix math;
+%prefix:c math;
 %kwarg:c semloc_type math_loc_t;
 %kwarg:c span_fn math_span;
 %kwarg:c zero_loc_fn math_zero_loc;
 %type:c i { int };
+%param:c user_param { void* };
 
-%kwarg:py prefix Math;
+%prefix:py Math;
 %kwarg:py span_fn math_span;
 %kwarg:py zero_loc_fn math_zero_loc;
 %type:py i { int };
+%param:py user_param;
 
 ## You don't actually have to declare tokens, unless you want to set types.
 # EOL;
@@ -144,7 +146,7 @@ line =
             MathToken(ONE,  1,  loc=MathSpan(10, 11)),
             MathToken(EOL,      loc=MathSpan(11, 12)),
         ]
-        p = MathlineParser(repeat=True)
+        p = MathlineParser(None, repeat=True)
         for t in tokens:
             expr = p.feed(t)
             if expr is not None:
@@ -157,19 +159,19 @@ line =
         if(!p) return 2;
 
         int tokens[] = {
-            PLUS, 0,
-            EOL, 0,
+            MATH_PLUS, 0,
+            MATH_EOL, 0,
 
-            NUM, 18,
-            DIV, 0,
-            NUM, 6,
-            DIV, 0,
-            NUM, 3,
-            PLUS, 0,
-            ZERO, 0,
-            PLUS, 0,
-            ONE, 1,
-            EOL, 0,
+            MATH_NUM, 18,
+            MATH_DIV, 0,
+            MATH_NUM, 6,
+            MATH_DIV, 0,
+            MATH_NUM, 3,
+            MATH_PLUS, 0,
+            MATH_ZERO, 0,
+            MATH_PLUS, 0,
+            MATH_ONE, 1,
+            MATH_EOL, 0,
         };
         size_t ntokens = sizeof(tokens) / sizeof(*tokens);
 
@@ -178,12 +180,12 @@ line =
 
             math_val_u val = { .i = tokens[i+1] };
             math_loc_t loc = {i/2, i/2+1};
-            math_status_e status = math_parse_line(p, tokens[i], val, loc, NULL);
+            math_status_e status = math_parse_line(p, NULL, tokens[i], val, loc, NULL);
             if(status > MATH_STATUS_DONE){
                 printf("got bad status! %d\n", status);
             }
 
-            if(tokens[i] == EOL){
+            if(tokens[i] == MATH_EOL){
                 if(status != MATH_STATUS_DONE){
                     printf("didn't get STATUS_DONE afterwards!\n");
                     goto fail;

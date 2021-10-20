@@ -61,7 +61,9 @@ import gen
 #   | KWARG [COLON TEXT:tag] TEXT:key TEXT:value  # TODO: support ATOM
 #   | TYPE [COLON TEXT:tag] CODE:spec [CODE:destructor]
 #   | ROOT [COLON TEXT:tag] TEXT:spec
-#   | FALLBACK TEXT:to TEXT:from *(TEXT:from);
+#   | FALLBACK [COLON TEXT:tag] TEXT:to TEXT:from *(TEXT:from);
+#   | PARAM [COLON TEXT:tag] TEXT:name [CODE:type];
+#   | PREFIX [COLON TEXT:tag] TEXT:prefix;
 # ) SEMI;
 #
 # priority of operators:
@@ -94,6 +96,8 @@ KWARG = g.token("KWARG")
 TYPE = g.token("TYPE")
 ROOT = g.token("ROOT")
 FALLBACK = g.token("FALLBACK")
+PARAM = g.token("PARAM")
+PREFIX = g.token("PREFIX")
 
 # Forward declaration.
 branches = g.expr("branches")
@@ -275,6 +279,27 @@ def directive(e):
             with e.zero_or_more():
                 e.match(TEXT, "b")
                 e.exec("$$.from_types.append($b)")
+        with b.branch():
+            e.match(PARAM)
+            e.exec("$$ = ParsedParam()")
+            with e.maybe():
+                e.match(COLON)
+                e.match(TEXT, "tag")
+                e.exec("$$.tag = $tag")
+            e.match(TEXT, "name")
+            e.exec("$$.name = $name")
+            with e.maybe():
+                e.match(CODE, "type")
+                e.exec("$$.type = $type")
+        with b.branch():
+            e.match(PREFIX)
+            e.exec("$$ = ParsedPrefix()")
+            with e.maybe():
+                e.match(COLON)
+                e.match(TEXT, "tag")
+                e.exec("$$.tag = $tag")
+            e.match(TEXT, "prefix")
+            e.exec("$$.prefix = $prefix")
     e.match(SEMI, 's')
     e.exec("$$.loc = text_span(@p, @s)")
 
@@ -329,22 +354,31 @@ g.check()
 
 with open("gen.py", "w") as f:
     fallbackmap = {
-        "TEXT": set(
-            ("GENERATOR", "KWARG", "TYPE", "ROOT", "FALLBACK")
-        )
+        "TEXT": {
+            "GENERATOR", "KWARG", "TYPE", "ROOT", "FALLBACK", "PARAM", "PREFIX"
+        }
     }
     for token_name, _ in g.sorted_tokens():
         # no missing entries in fallbackmap
         fallbackmap.setdefault(token_name, set())
+    fallbacks = gen.Fallbacks(fallbackmap)
+
+    types = gen.Types([])
 
     with gen.read_template(INFILE, file=f):
-        gen.Python(
+
+        ctx = gen.GeneratorContext(
             grammar=g,
-            file=f,
             roots=["doc"],
-            fallbacks=gen.Fallbacks(fallbackmap),
             prefix="Meta",
-            span_fn="text_span",
-            zero_loc_fn="text_zero_loc",
-        ).gen_file()
+            file=f,
+            precode=[],
+            postcode=[],
+            types=types,
+            fallbacks=fallbacks,
+            params=[],
+        )
+
+        p = gen.Python(ctx, span_fn="text_span", zero_loc_fn="text_zero_loc")
+        p.gen_file()
     os.chmod("gen.py", 0o755)

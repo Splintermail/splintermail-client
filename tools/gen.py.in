@@ -951,6 +951,34 @@ def extract_types(parsed_types, grammar, tag):
     return Types(typelist)
 
 
+class GeneratorContext:
+    """
+    A parameter given to a generator class.  Append-only for easy forwards
+    compatibility of generator implementations.
+    """
+    def __init__(
+        self,
+        grammar,
+        roots,
+        prefix,
+        file,
+        precode,
+        postcode,
+        types,
+        fallbacks,
+        params,
+    ):
+        self.grammar = grammar
+        self.roots = roots
+        self.file = file
+        self.prefix = prefix
+        self.precode = precode
+        self.postcode = postcode
+        self.types = types
+        self.fallbacks = fallbacks
+        self.params = params
+
+
 class C:
     """
     An object with all the methods for generating C code.
@@ -1006,38 +1034,24 @@ class C:
 
     def __init__(
         self,
-        grammar,
-        roots,
-        file,
+        ctx,
         *,
-        precode=None,
-        postcode=None,
-        types=(),
-        fallbacks=None,
-        prefix="",
-        user_args=(),
         semloc_type=None,
         span_fn=None,
         zero_loc_fn=None,
     ):
-        self.grammar = grammar
-        self.file = file
+        self.grammar = ctx.grammar
+        self.file = ctx.file
+        assert ctx.roots, "you must specify at least one %root"
+        self.roots = ctx.roots
+        self.precode = ctx.precode
+        self.postcode = ctx.postcode
+        self.types = ctx.types
+        self.fallbacks = ctx.fallbacks
+        self.prefix = ctx.prefix
+        self.params = ctx.params
 
-        assert roots, "you must specify at least one %root"
-        self.roots = roots
-
-        self.precode = precode
-        self.postcode = postcode
-        self.types = types
-        self.fallbacks = fallbacks
-
-        self.prefix = prefix or ""
-
-        self.u = (
-            user_args.split(",") if isinstance(user_args, str) else user_args
-        )
-
-        self.prefix_ = (prefix + "_") if prefix else ""
+        self.prefix_ = (self.prefix + "_") if self.prefix else ""
         assert bool(semloc_type)+bool(span_fn)+bool(zero_loc_fn) in (0, 3), (
             "semloc_type, span_fn, and zero_loc_fn must be all set or all unset"
         )
@@ -1046,23 +1060,31 @@ class C:
         self.zero_loc_fn = zero_loc_fn
 
         # build a default mapping
-        args_str = ", ".join(self.u)
+        params_str = ""
+        args_str = ""
+        voids_str = ""
+        for p in self.params:
+            params_str += ",\n    %s %s"%(p.type.strip(), p.name)
+            args_str += ", " + p.name
+            voids_str += " (void)%s;"%p.name
         self.varmap = {
             "prefix": self.prefix,
             "prefix_": self.prefix_,
             "PREFIX_": self.prefix_.upper(),
-            "user_args": args_str,
-            "_user_args": "" if not args_str else ", " + args_str,
+            "params": params_str,
+            "args": args_str,
+            "voids": voids_str,
             "semloc_type": self.semloc_type,
             "span_fn": self.span_fn,
             "zero_loc_fn": self.zero_loc_fn,
             "parse_fn_args": (
                 "\n    %scall_t *call,"
-                "\n    %sparser_t *p,"
+                "\n    %sparser_t *p"
+                "%s,"
                 "\n    %stoken_e *token,"
                 "\n    %ssem_t sem"
                 "\n"
-            )%(self.prefix_, self.prefix_, self.prefix_, self.prefix_),
+            )%(self.prefix_, self.prefix_, params_str, self.prefix_, self.prefix_),
         }
 
         self._extra_vars = {}
@@ -1075,8 +1097,8 @@ class C:
     def sub(self, s):
         return string.Template(s).substitute(**self.varmap, **self._extra_vars)
 
-    def fprint(self, s):
-        print(self.sub(s), file=self.file)
+    def fprint(self, s, **kwargs):
+        print(self.sub(s), file=self.file, **kwargs)
 
     def fprint_multi(self, s):
         print(self.sub(textwrap.dedent(s).strip("\n")), file=self.file)
@@ -1121,9 +1143,9 @@ class C:
                 self.fprint(textwrap.indent(text, i))
 
     def _token_list_args(self, t, f):
-        out = ", ".join(t)
+        out = ", ".join(map(lambda x: "${PREFIX_}"+x, t))
         if f:
-            out += ", /*fallback*/ " + ", ".join(f)
+            out += ", /*fallback*/ " + ", ".join(map(lambda x: "${PREFIX_}"+x, f))
         return len(t) + len(f), out
 
     def token_check(self, tokens):
@@ -1270,8 +1292,8 @@ class C:
                         # calculate fallback types
                         fallbacks = self.fallbacks.fallback_set(t, primaries)
                     for f in sorted(fallbacks):
-                        self.fprint("        case %s: // fallback"%f)
-                    self.fprint("        case %s: goto %s;"%(t, label))
+                        self.fprint("        case ${PREFIX_}%s: // fallback"%f)
+                    self.fprint("        case ${PREFIX_}%s: goto %s;"%(t, label))
                 bstate += self.nstates(b)
             self.fprint("        default:")
             self.fprint("            " + self.mask_set(obj.get_first()) + ";")
@@ -1344,7 +1366,7 @@ class C:
 
     def parse_fn(self, expr):
         """Get the generated function name for an Expression."""
-        return "_parse_" + expr.name
+        return "_${prefix_}parse_" + expr.name
 
     def declare_fn(self, expr):
         self.fprint(
@@ -1358,6 +1380,7 @@ class C:
         self.fprint(
             "static ${prefix_}status_e %s($parse_fn_args){"%self.parse_fn(expr)
         )
+        self.fprint("(void)token; (void)sem;$voids")
         # Jump to state.
         self.fprint("    switch(call->state){")
         self.fprint("        case " + str(0) + ": break;")
@@ -1397,34 +1420,32 @@ class C:
             root=root, type_name=type_name, type_spec=type_spec
         ):
             self.fprint("${prefix_}status_e ${prefix_}parse_$root(")
-            params = []
-            params.append("    ${prefix_}parser_t *p")
-            params.append("    ${prefix_}token_e token")
+            self.fprint("    ${prefix_}parser_t *p", end="")
+            self.fprint("$params", end="")
+            self.fprint(",\n    ${prefix_}token_e token", end="")
             if self.tokens_have_value:
-                params.append("    ${prefix_}val_u val")
+                self.fprint(",\n    ${prefix_}val_u val", end="")
             if self.semloc_type:
-                params.append("    $semloc_type loc")
+                self.fprint(",\n    $semloc_type loc", end="")
             if type_spec:
-                params.append("    $type_spec *val_out")
+                self.fprint(",\n    $type_spec *val_out", end="")
             if self.semloc_type:
-                params.append("    $semloc_type *loc_out")
-            for p in params[:-1]:
-                self.fprint(p + ",")
-            self.fprint(params[-1])
+                self.fprint(",\n    $semloc_type *loc_out", end="")
+            self.fprint("")
             if header:
                 self.fprint(");")
                 return
             self.fprint("){")
             self.fprint("    ${prefix_}sem_t sem = {")
-            self.fprint("        .type = _${prefix_}token_types[token],")
             if self.tokens_have_value:
+                self.fprint("        .type = _${prefix_}token_types[token],")
                 self.fprint("        .val = val,")
             if self.semloc_type:
                 self.fprint("        .loc = loc,")
             self.fprint("    };")
             self.fprint("    ${prefix_}sem_t sem_out = {0};")
-            self.fprint("    ${prefix_}status_e status = ${prefix_}do_parse(")
-            self.fprint("        p, _parse_$root, token, sem, &sem_out")
+            self.fprint("    ${prefix_}status_e status = _${prefix_}do_parse(")
+            self.fprint("        p, _${prefix_}parse_$root$args, token, sem, &sem_out")
             self.fprint("    );")
             if type_spec or self.semloc_type:
                 self.fprint("    if(status != ${PREFIX_}STATUS_DONE) return status;")
@@ -1442,6 +1463,10 @@ class C:
             self.fprint("}")
 
     def gen_header(self):
+        """
+        Generate a .h file exposing types and functions that are meaningful to
+        external modules.
+        """
         if self.semloc_type:
             self.fprint("#define ${PREFIX_}HAVE_SEMLOC")
             self.fprint("")
@@ -1449,7 +1474,7 @@ class C:
         self.fprint("typedef enum {")
         self.fprint("    _${PREFIX_}NOT_A_TOKEN = 0,")
         for _, token in self.grammar.sorted_tokens():
-            self.fprint("    %s,"%token.name)
+            self.fprint("    ${PREFIX_}%s,"%token.name)
         self.fprint("} ${prefix_}token_e;")
 
         self.fprint("")
@@ -1487,13 +1512,13 @@ class C:
                 // a function to call
                 ${prefix_}parse_f fn;
                 // our starting position in the semstack
-                int stack;
+                size_t stack;
                 // a count of how many sems we'll need
-                int nsems;
+                size_t nsems;
                 // our position in the call
-                int state;
+                size_t state;
                 // the state to enter if we have to recover
-                int recover;
+                size_t recover;
             #ifdef ${PREFIX_}HAVE_SEMLOC
                 // if we have matched anything yet
                 int have_loc;
@@ -1554,13 +1579,13 @@ class C:
             void ${prefix_}parser_reset(${prefix_}parser_t *p);
 
             // define a fixed-size parser, backed by stack memory
-            #define ${PREFIX_}ONSTACK_PARSER(name, _callsmax, _semsmax) \
-                ${prefix_}call_t name##calls[_callsmax] = {0}; \
-                ${prefix_}sem_t name##sems[_semsmax] = {0}; \
-                ${prefix_}parser_t name = (${prefix_}parser_t){ \
-                    .callstack = name##calls, \
+            #define ${PREFIX_}ONSTACK_PARSER(_name, _callsmax, _semsmax) \
+                ${prefix_}call_t _name##calls[_callsmax] = {0}; \
+                ${prefix_}sem_t _name##sems[_semsmax] = {0}; \
+                ${prefix_}parser_t _name = (${prefix_}parser_t){ \
+                    .callstack = _name##calls, \
                     .callsmax = _callsmax, \
-                    .semstack = name##sems, \
+                    .semstack = _name##sems, \
                     .semsmax = _semsmax, \
                 }
 
@@ -1572,7 +1597,18 @@ class C:
             self.fprint("")
             self.define_user_api(root, header=True)
 
-    def gen_file(self):
+    def gen_body(self):
+        """
+        Generate a .c file which will not compile without the header file being
+        included in a code block or template of some sort.
+        """
+        self.gen_file(embed_header=False)
+
+    def gen_file(self, embed_header=True):
+        """
+        Generate a standalone file with the headerfile and the body of
+        definitions in the same file (not #include necessary).
+        """
         self.print_code(self.precode, "")
 
         self.fprint_multi("""
@@ -1583,8 +1619,9 @@ class C:
             #include <string.h>
         """)
 
-        self.fprint("")
-        self.gen_header()
+        if embed_header:
+            self.fprint("")
+            self.gen_header()
 
         if self.tokens_have_value:
             self.fprint("")
@@ -1618,14 +1655,14 @@ class C:
                 memset(mask, 0, ${PREFIX_}MASKLEN);
             }
 
-            // accepts `n` ints, representing token values
+            // accepts `n` token types
             static void ${prefix_}mask_set(unsigned char *mask, size_t n, ...){
                 va_list ap;
                 va_start(ap, n);
 
                 for(size_t i = 0; i < n; i++){
-                    int t = va_arg(ap, int);
-                    mask[t/8] |= ((unsigned char)1) << (t%8);
+                    int t = va_arg(ap, ${prefix_}token_e);
+                    mask[t/8] |= (unsigned char)(1 << (t%8));
                 }
 
                 va_end(ap);
@@ -1707,7 +1744,7 @@ class C:
             static void ${prefix_}print_stack(${prefix_}parser_t *p){
                 for(size_t i = 0; i < p->callslen; i++){
                     ${prefix_}call_t call = p->callstack[i];
-                    printf("parsing %s (%d)\n", _${prefix_}fn_name(call.fn), call.state);
+                    printf("parsing %s (%zu)\n", _${prefix_}fn_name(call.fn), call.state);
                 }
 
             }
@@ -1728,14 +1765,14 @@ class C:
             #define ${PREFIX_}CONSUME_TOKEN \
                 *token = _${PREFIX_}NOT_A_TOKEN
 
-            // returns 0 or 1
+            // accepts `n` token types returns 0 or 1
             static int ${prefix_}token_in(${prefix_}token_e token, size_t n, ...){
                 va_list ap;
                 va_start(ap, n);
 
                 int out = 0;
                 for(size_t i = 0; i < n; i++){
-                    if(token != va_arg(ap, int)) continue;
+                    if(token != va_arg(ap, ${prefix_}token_e)) continue;
                     out = 1;
                     break;
                 }
@@ -1767,9 +1804,9 @@ class C:
             }
             #endif
 
-            ${prefix_}status_e ${prefix_}do_parse(
+            static ${prefix_}status_e _${prefix_}do_parse(
                 ${prefix_}parser_t *p,
-                ${prefix_}parse_f entrypoint,
+                ${prefix_}parse_f entrypoint$params,
                 ${prefix_}token_e token,
                 ${prefix_}sem_t sem,
                 ${prefix_}sem_t *sem_out
@@ -1792,7 +1829,7 @@ class C:
                 while(p->callslen){
                     size_t last = p->callslen;
                     ${prefix_}call_t *call = &p->callstack[p->callslen-1];
-                    ${prefix_}status_e status = call->fn(call, p, &token, sem);
+                    ${prefix_}status_e status = call->fn(call, p$args, &token, sem);
                     if(status > ${PREFIX_}STATUS_SYNTAX_ERROR){
                         // CALLSTACK_OVERFLOW or SEMSTACK_OVERFLOW
                         return status;
@@ -1840,7 +1877,7 @@ class C:
         self.fprint("static const char *${prefix_}token_name(int t){")
         self.fprint("    switch(t){")
         for name, _ in self.grammar.sorted_tokens():
-            self.fprint("        case " + name + ": return \"" +name+ "\";")
+            self.fprint("        case ${PREFIX_}" + name + ": return \"" +name+ "\";")
         self.fprint("        default: return \"unknown\";")
         self.fprint("    }")
         self.fprint("}")
@@ -1877,39 +1914,41 @@ class Python:
 
     def __init__(
         self,
-        grammar,
-        roots,
-        file,
+        ctx,
         *,
-        precode=None,
-        postcode=None,
-        types=None,
-        fallbacks=None,
-        prefix="",
-        user_args=(),
         span_fn=None,
         zero_loc_fn=None,
     ):
-        self.grammar = grammar
-        self.file = file
-        self.roots = roots
-        self.precode = precode
-        self.postcode = postcode
-        if types:
+        self.grammar = ctx.grammar
+        self.file = ctx.file
+        assert ctx.roots, "you must specify at least one %root"
+        self.roots = ctx.roots
+        self.precode = ctx.precode
+        self.postcode = ctx.postcode
+        self.types = ctx.types
+        self.fallbacks = ctx.fallbacks
+        self.prefix = ctx.prefix
+        self.params = ctx.params
+
+        if list(self.types.source_ordered()):
             print(
                 "warning: %type directives are ignored by the python generator",
                 file=sys.stderr
             )
-        self.fallbacks = fallbacks
 
-        self.prefix = prefix
-        self.prefix_ = (prefix + "_") if prefix else ""
+        self.prefix_ = (self.prefix + "_") if self.prefix else ""
         assert bool(span_fn) + bool(zero_loc_fn) in (0, 2), (
             "span_fn and zero_loc_fn must be both set or both unset"
         )
         self.span_fn = span_fn
         self.zero_loc_fn = zero_loc_fn
-        self.u = user_args.split(",") if isinstance(user_args, str) else user_args
+        if any(p.type for p in self.params):
+            print(
+                "warning: the type argument of %param directive is ignored "
+                "by the python generator",
+                file=sys.stderr
+            )
+        self.u = [p.name for p in self.params]
 
         # build a default mapping
         args_str = ", ".join(self.u)
@@ -2307,6 +2346,19 @@ class ParsedFallback:
         self.from_types = []
         self.loc = None
 
+class ParsedParam:
+    def __init__(self):
+        self.tag = None
+        self.name = None
+        self.type = None
+        self.loc = None
+
+class ParsedPrefix:
+    def __init__(self):
+        self.tag = None
+        self.prefix = None
+        self.loc = None
+
 class ParsedType:
     def __init__(self):
         self.name = None
@@ -2322,12 +2374,12 @@ class ParsedDoc:
         self.postcode = []
         # directive handling
         self.generator = None
+        self.prefixes = []
         self.kwargs = []
         self.roots = []
         self.types = []
         self.fallbacks = []
-        # map of { from_type: to_type }
-        self.rev_fallbacks = {}
+        self.params = []
 
     def add_stmt(self, stmt):
         if isinstance(stmt, ParsedGenerator):
@@ -2346,6 +2398,12 @@ class ParsedDoc:
             return
         if isinstance(stmt, ParsedFallback):
             self.fallbacks.append(stmt)
+            return
+        if isinstance(stmt, ParsedParam):
+            self.params.append(stmt)
+            return
+        if isinstance(stmt, ParsedPrefix):
+            self.prefixes.append(stmt)
             return
         if isinstance(stmt, tuple):
             self.defs.append(stmt)
@@ -2596,6 +2654,8 @@ class Tokenizer:
             "type": TYPE,
             "root": ROOT,
             "fallback": FALLBACK,
+            "param": PARAM,
+            "prefix": PREFIX,
         }
         typ = keywords.get(text, TEXT)
         return MetaToken(typ, text, TextSpan(start, loc))
@@ -2749,6 +2809,17 @@ def gen(
                 )
             )
             roots.append(r.name)
+            root_names.add(r.name)
+
+        # extract params
+        params = []
+        names = set()
+        for p in parsed_doc.params:
+            if p.tag not in (None, generator_cls.code_tag):
+                continue
+            assert p.name not in names, "got multiple '%%param %s' directives"%p.name
+            names.add(p.name)
+            params.append(p)
 
         # extract types
         types = extract_types(parsed_doc.types, g, generator_cls.code_tag)
@@ -2759,16 +2830,27 @@ def gen(
         )
         fallbacks = Fallbacks(fallbackmap)
 
-        generator = generator_cls(
-            g,
-            roots,
-            out,
-            types=types,
-            fallbacks=fallbacks,
+        # extract prefix
+        prefix = None
+        for p in parsed_doc.prefixes:
+            if p.tag not in (None, generator_cls.code_tag):
+                continue
+            assert prefix is None, "got multiple %prefix directives"
+            prefix = p.prefix
+
+        ctx = GeneratorContext(
+            grammar=g,
+            roots=roots,
+            prefix=prefix or "",
+            file=out,
             precode=parsed_doc.precode,
             postcode=parsed_doc.postcode,
-            **kwargs,
+            types=types,
+            fallbacks=fallbacks,
+            params=params,
         )
+
+        generator = generator_cls(ctx, **kwargs)
 
         try:
             action = getattr(generator, action)
