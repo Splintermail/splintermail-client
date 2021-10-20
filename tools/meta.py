@@ -365,12 +365,15 @@ with open("gen.py", "w") as f:
 
     types = gen.Types([])
 
-    with gen.read_template(INFILE, file=f):
+    with gen.read_template(INFILE, file=f) as dst_offset:
 
         ctx = gen.GeneratorContext(
             grammar=g,
             roots=["doc"],
             prefix="Meta",
+            src=None,
+            dst=None,
+            dst_offset=dst_offset,
             file=f,
             precode=[],
             postcode=[],

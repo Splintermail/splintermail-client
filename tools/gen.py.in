@@ -21,7 +21,6 @@ TODO:
      doesn't support it
 
  - C:
-   - give compiler source line hints
    - some state tracking, to avoid duplicate token checks
    - reject nested recovery blocks
    - reject roots which don't have a concrete ending token; the user api
@@ -34,6 +33,7 @@ TODO:
 
  - Meta parser:
    - support an %include directive?
+   - only create Snippets when the tag matches (no more generator-side filter)
 
  - gen.py cli:
    - support importing generators from external python files
@@ -436,8 +436,8 @@ class Maybe(Parsable):
     def add_term(self, term, tag=None):
         self.seq.add_term(term, tag)
 
-    def add_code(self, code, tag=None):
-        self.seq.add_code(code, tag)
+    def add_code(self, code, tag=None, loc=None):
+        self.seq.add_code(code, tag, loc)
 
     @cacheable
     def get_first(self, prev=None):
@@ -475,8 +475,8 @@ class ZeroOrMore(Parsable):
     def add_term(self, term, tag=None):
         self.seq.add_term(term, tag)
 
-    def add_code(self, code, tag=None):
-        self.seq.add_code(code, tag)
+    def add_code(self, code, tag=None, loc=None):
+        self.seq.add_code(code, tag, loc)
 
     def summary(self, parent_priority=PRIORITY_UNAMBIGUOUS):
         return "*" + self.seq.summary(PRIORITY_MULTIPLIER)
@@ -526,11 +526,11 @@ class Branches(Parsable):
         )
         self._branch.add_term(term, tag)
 
-    def add_code(self, code, tag=None):
+    def add_code(self, code, tag=None, loc=None):
         assert self._branch is not None, (
             "inside a branches() context, but not any branch() subcontext!"
         )
-        self._branch.add_code(code, tag)
+        self._branch.add_code(code, tag, loc)
 
     @contextlib.contextmanager
     def branch(self):
@@ -595,8 +595,8 @@ class Recovery(Parsable):
     def add_term(self, term, tag=None):
         self.seq.add_term(term, tag)
 
-    def add_code(self, code, tag=None):
-        self.seq.add_code(code, tag)
+    def add_code(self, code, tag=None, loc=None):
+        self.seq.add_code(code, tag, loc)
 
     def add_recovery_code(self, code, tag=None):
         self.code.append(Snippet(code, tag))
@@ -636,11 +636,11 @@ class Sequence(Parsable):
     def add_term(self, term, tag=None):
         self.terms.append((term, tag, []))
 
-    def add_code(self, code, tag=None):
+    def add_code(self, code, tag=None, loc=None):
         if not self.terms:
-            self.precode.append(Snippet(code, tag))
+            self.precode.append(Snippet(code, tag, loc))
         else:
-            self.terms[-1][2].append(Snippet(code, tag))
+            self.terms[-1][2].append(Snippet(code, tag, loc))
 
     def summary(self, parent_priority=PRIORITY_UNAMBIGUOUS):
         if len(self.terms) == 1:
@@ -819,8 +819,8 @@ class Expression(Definition):
         self.scopes.pop()
         self.scopes[-1].add_term(term)
 
-    def exec(self, code, tag=None):
-        self.scopes[-1].add_code(code, tag)
+    def exec(self, code, tag=None, loc=None):
+        self.scopes[-1].add_code(code, tag, loc)
 
 
 class Grammar:
@@ -962,6 +962,9 @@ class GeneratorContext:
         roots,
         prefix,
         file,
+        src,
+        dst,
+        dst_offset,
         precode,
         postcode,
         types,
@@ -970,6 +973,9 @@ class GeneratorContext:
     ):
         self.grammar = grammar
         self.roots = roots
+        self.src = src
+        self.dst = dst
+        self.dst_offset = dst_offset
         self.file = file
         self.prefix = prefix
         self.precode = precode
@@ -1050,6 +1056,8 @@ class C:
         self.fallbacks = ctx.fallbacks
         self.prefix = ctx.prefix
         self.params = ctx.params
+        self.src = ctx.src
+        self.dst = ctx.dst
 
         self.prefix_ = (self.prefix + "_") if self.prefix else ""
         assert bool(semloc_type)+bool(span_fn)+bool(zero_loc_fn) in (0, 3), (
@@ -1093,15 +1101,21 @@ class C:
             t.type is not None for _, t in self.grammar.sorted_tokens()
         )
 
+        self.lines = ctx.dst_offset or 0
+
 
     def sub(self, s):
         return string.Template(s).substitute(**self.varmap, **self._extra_vars)
 
     def fprint(self, s, **kwargs):
-        print(self.sub(s), file=self.file, **kwargs)
+        text = self.sub(s)
+        print(text, file=self.file, **kwargs)
+        self.lines += text.count("\n") + kwargs.get("end", "\n").count("\n")
 
     def fprint_multi(self, s):
-        print(self.sub(textwrap.dedent(s).strip("\n")), file=self.file)
+        text = self.sub(textwrap.dedent(s).strip("\n"))
+        print(text, file=self.file)
+        self.lines += text.count("\n") + 1
 
     @contextlib.contextmanager
     def extra_vars(self, **mapping):
@@ -1121,13 +1135,25 @@ class C:
                 break
         for c in code:
             if c.tag in (None, "c"):
-                # self.fprint(textwrap.indent(c.text, i))
-                text = re.sub("\\$\\$", "YYVALOUT", c.text)
-                text = re.sub("@\\$", "YYLOCOUT", text)
-                text = re.sub("\\$([a-zA-Z_][a-zA-Z0-9_]*)", "YYVAL_\\1", text)
-                text = re.sub("@([a-zA-Z_][a-zA-Z0-9_]*)", "YYLOC_\\1", text)
-                # don't use fprint; we shouldn't be subbing in internal vars
-                print(textwrap.indent(text, i), file=self.file)
+                with self.line_hints(c.loc):
+                    # self.fprint(textwrap.indent(c.text, i))
+                    text = re.sub("\\$\\$", "YYVALOUT", c.text)
+                    text = re.sub("@\\$", "YYLOCOUT", text)
+                    text = re.sub("\\$([a-zA-Z_][a-zA-Z0-9_]*)", "YYVAL_\\1", text)
+                    text = re.sub("@([a-zA-Z_][a-zA-Z0-9_]*)", "YYLOC_\\1", text)
+                    # don't use fprint; we shouldn't be subbing in internal vars
+                    text = textwrap.indent(text, i)
+                    print(text, file=self.file)
+                    self.lines += text.count("\n") + 1
+
+    @contextlib.contextmanager
+    def line_hints(self, loc):
+        if loc and self.src and self.dst:
+            self.fprint('#line %d "%s"'%(loc.start.line, self.src))
+            yield
+            self.fprint('#line %d "%s"'%(self.lines+2, self.dst))
+        else:
+            yield
 
     def print_destructor(self, code, lhv, i):
         if code is None:
@@ -1138,9 +1164,12 @@ class C:
                 break
         for c in code:
             if c.tag in (None, "c"):
-                # self.fprint(textwrap.indent(c.text, i))
-                text = re.sub("\\$\\$", lhv, c.text)
-                self.fprint(textwrap.indent(text, i))
+                with self.line_hints(c.loc):
+                    text = re.sub("\\$\\$", lhv, c.text)
+                    # don't use fprint; we shouldn't be subbing in internal vars
+                    text = textwrap.indent(text, i)
+                    print(text, file=self.file)
+                    self.lines += text.count("\n") + 1
 
     def _token_list_args(self, t, f):
         out = ", ".join(map(lambda x: "${PREFIX_}"+x, t))
@@ -2264,7 +2293,7 @@ class ParsedSnippet:
         self.loc = loc
 
     def process(self, g, e):
-        e.exec(self.text, self.tag)
+        e.exec(self.text, self.tag, self.loc)
 
 class ParsedBranches:
     def __init__(self):
@@ -2752,6 +2781,8 @@ def gen(
     action="gen_file",
     cli_kwargs=(),
     inspect=(),
+    src=None,
+    dst=None,
 ):
     with read_template(template, template_tag, out) as start_offset:
         parsed_doc = parse_doc(grammar_text)
@@ -2842,6 +2873,9 @@ def gen(
             grammar=g,
             roots=roots,
             prefix=prefix or "",
+            src=src,
+            dst=dst,
+            dst_offset=start_offset,
             file=out,
             precode=parsed_doc.precode,
             postcode=parsed_doc.postcode,
@@ -2897,6 +2931,8 @@ if __name__ == "__main__":
             action=args.action,
             cli_kwargs=args.kwarg,
             inspect=args.inspect,
+            src=args.input,
+            dst=args.output,
         )
     except RenderedError as e:
         print(e, file=sys.stderr)
