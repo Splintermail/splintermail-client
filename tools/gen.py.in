@@ -25,11 +25,16 @@ TODO:
    - reject nested recovery blocks
    - reject roots which don't have a concrete ending token; the user api
      doesn't support it
+   - generate #define's whenever recursion does not prevent it:
+      - MAX_CALLSTACK_SIZE  // overall
+      - MAX_SEMSTACK_SIZE  // overall
+      - MAX_<ROOT>_CALLSTACK_SIZE  // one for each %root
+      - MAX_<ROOT>_SEMSTACK_SIZE  // one for each %root
 
  - Grammar:
    - use source-order everywhere
-   - support 1* in addition to *
    - configurable strictness for fallback-caused first/first, first/follow
+   - tooling to determined if a root is recursive
 
  - Meta parser:
    - support an %include directive?
@@ -424,53 +429,41 @@ class Snippet:
         self.loc = loc
 
 
-class Maybe(Parsable):
-    def __init__(self, name, loc=None):
+class Repeat(Parsable):
+    def __init__(self, name, rmin, rmax, loc=None):
         self.name = name
+        if rmax is not None and rmin > rmax:
+            raise ValueError(
+                "rmin must not exceed rmax (rmin=%d, rmax=%d)"%(rmin, rmax)
+            )
+        if rmin < 0:
+            raise ValueError(
+                "rmin must be non-negative (rmin=%d)"%rmin
+            )
+        if rmax == 0:
+            raise ValueError(
+                "rmax must be greater than zero (rmax=%d)"%rmax
+            )
+        self.rmin = rmin
+        self.rmax = rmax
         self.seq = Sequence(self.name + ".seq")
         self.loc = loc
+        # When implementing generators, there are certain properties of
+        # certain cases which make them easier to generate code for:
+        if (rmin, rmax) == (0, 1):
+            # maybe case: only branch logic, no repeat or counting
+            self.type = "maybe"
+        elif (rmin, rmax) == (0, None):
+            # zero-or-more case: repeat and branch logic, but no counting
+            self.type = "zero_or_more"
+        else:
+            # general case: repeat and branch and counting required
+            self.type = "general"
 
-    def summary(self, parent_priority=PRIORITY_UNAMBIGUOUS):
-        return "[" + self.seq.summary(PRIORITY_UNAMBIGUOUS) + "]"
-
-    def add_term(self, term, tag=None):
-        self.seq.add_term(term, tag)
-
-    def add_code(self, code, tag=None, loc=None):
-        self.seq.add_code(code, tag, loc)
-
-    @cacheable
-    def get_first(self, prev=None):
-        prev = add_to_prev(prev, self.name, "get_first")
-        first = self.seq.get_first(prev)
-        # TODO: is this necessary at all?
-        if None in first:
-            raise PossiblyEmpty(".maybe()", self.seq.summary(), self.loc)
-        return first.union({None})
-
-    @cacheable
-    def get_disallowed_after(self, prev):
-        prev = add_to_prev(prev, self.name, "get_disallowed_after")
-        disallowed = self.seq.get_disallowed_after(prev)
-        if None in disallowed:
-            raise PossiblyEmpty(".maybe", self.seq.summary(), self.loc)
-        # since this might not exist, we disallow the this expression's first as well
-        first = self.seq.get_first()
-        if None in first:
-            raise PossiblyEmpty(".maybe", self.seq.summary(), self.loc)
-        # always include None to indicate that this term may be empty
-        return disallowed.union(first).union({None})
-
-    @cacheable("fallbacks")
-    def check(self, *, fallbacks=None):
-        self.seq.check(fallbacks=fallbacks)
-
-
-class ZeroOrMore(Parsable):
-    def __init__(self, name, loc=None):
-        self.name = name
-        self.seq = Sequence(self.name + '.seq')
-        self.loc = loc
+        if (rmin, rmax) == (0, 1):
+            self.err_op = "maybe operator"
+        else:
+            self.err_op = "repetition operator"
 
     def add_term(self, term, tag=None):
         self.seq.add_term(term, tag)
@@ -479,28 +472,46 @@ class ZeroOrMore(Parsable):
         self.seq.add_code(code, tag, loc)
 
     def summary(self, parent_priority=PRIORITY_UNAMBIGUOUS):
-        return "*" + self.seq.summary(PRIORITY_MULTIPLIER)
+        if self.type == "maybe":
+            return "[" + self.seq.summary(PRIORITY_UNAMBIGUOUS) + "]"
+        if self.type == "zero_or_more":
+            return "*" + self.seq.summary(PRIORITY_MULTIPLIER)
+        if self.rmax is None:
+            # an "N or more" statement
+            return "%d*"%self.rmin + self.seq.summary(PRIORITY_MULTIPLIER)
+        # an "N to M" statement
+        return "%d*%d(%s)"%(
+            self.rmin, self.rmax, self.seq.summary(PRIORITY_UNAMBIGUOUS)
+        )
 
     @cacheable
     def get_first(self, prev=None):
         prev = add_to_prev(prev, self.name, "get_first")
         first = self.seq.get_first(prev)
         if None in first:
-            raise PossiblyEmpty(".zero_or_more()", self.seq.summary(), self.loc)
-        return first.union({None})
+            raise PossiblyEmpty(self.err_op, self.seq.summary(), self.loc)
+        if self.rmin == 0:
+            # include None to indicate a maybe-empty expresssion
+            first = first.union({None})
+        return first
 
     @cacheable
     def get_disallowed_after(self, prev):
         prev = add_to_prev(prev, self.name, "get_disallowed_after")
         disallowed = self.seq.get_disallowed_after(prev)
         if None in disallowed:
-            raise PossiblyEmpty(".zero_or_more()", self.seq.summary(), self.loc)
+            raise PossiblyEmpty(self.err_op, self.seq.summary(), self.loc)
         # since this might not exist, we disallow the this expression's first as well
         first = self.seq.get_first(prev)
         if None in first:
-            raise PossiblyEmpty(".zero_or_more()", self.seq.summary(), self.loc)
-        # always include None, to indicate this term may be empty
-        return disallowed.union(first).union({None})
+            raise PossiblyEmpty(self.err_op, self.seq.summary(), self.loc)
+        if self.rmin != self.rmax:
+            # variable repeat: disallow our own first
+            disallowed = disallowed.union(first)
+        if self.rmin == 0:
+            # include None to indicate a maybe-empty expresssion
+            disallowed = disallowed.union({None})
+        return disallowed
 
     @cacheable("fallbacks")
     def check(self, *, fallbacks=None):
@@ -765,8 +776,7 @@ class Expression(Definition):
         self.type = typ
         self.seq = Sequence(self.name + ".seq", loc=body_loc)
         self.scopes = [self.seq]
-        self.nmaybe = 0
-        self.nzom = 0
+        self.nrpt = 0
         self.nbranches = 0
         self.nrec = 0
         self.loc = loc
@@ -782,18 +792,9 @@ class Expression(Definition):
         return term
 
     @contextlib.contextmanager
-    def maybe(self, loc=None):
-        term = Maybe(self.name + '.maybe' + str(self.nmaybe), loc)
-        self.nmaybe += 1
-        self.scopes.append(term)
-        yield term
-        self.scopes.pop()
-        self.scopes[-1].add_term(term)
-
-    @contextlib.contextmanager
-    def zero_or_more(self, loc=None):
-        term = ZeroOrMore(self.name + '.zom' + str(self.nzom), loc)
-        self.nzom += 1
+    def repeat(self, rmin, rmax, loc=None):
+        term = Repeat(self.name + '.repeat' + str(self.nrpt), rmin, rmax, loc)
+        self.nrpt += 1
         self.scopes.append(term)
         yield term
         self.scopes.pop()
@@ -1102,6 +1103,7 @@ class C:
         )
 
         self.lines = ctx.dst_offset or 0
+        self.ncounters = 0
 
 
     def sub(self, s):
@@ -1203,14 +1205,14 @@ class C:
         """Return the maximum stack size during a match to obj."""
         if isinstance(obj, Reference):
             return 1
-        if isinstance(obj, Maybe):
-            return self.stackmax(obj.seq)
-        if isinstance(obj, ZeroOrMore):
+        if isinstance(obj, Repeat):
+            # when we need to count repeats, we do that on the semstack
+            extra = 1 if obj.type == "general" else 0
+            return self.stackmax(obj.seq) + extra
+        if isinstance(obj, Recovery):
             return self.stackmax(obj.seq)
         if isinstance(obj, Branches):
             return max(self.stackmax(b) for b in obj.branches)
-        if isinstance(obj, Recovery):
-            return self.stackmax(obj.seq)
         if isinstance(obj, Sequence):
             persist = 0
             peak = 0
@@ -1224,14 +1226,10 @@ class C:
         """Count how many states we need for every entry."""
         if isinstance(obj, Reference):
             return 1
-        if isinstance(obj, Maybe):
-            return self.nstates(obj.seq) + 1
-        if isinstance(obj, ZeroOrMore):
+        if isinstance(obj, (Repeat, Recovery)):
             return self.nstates(obj.seq) + 1
         if isinstance(obj, Branches):
             return sum(self.nstates(b) for b in obj.branches) + 1
-        if isinstance(obj, Recovery):
-            return self.nstates(obj.seq) + 1
         if isinstance(obj, Sequence):
             return sum(self.nstates(t) for t, _, _ in obj.terms)
         raise RuntimeError("unrecognized object type: " + type(obj).__name__)
@@ -1272,34 +1270,81 @@ class C:
 
             raise RuntimeError("unrecognized reference type: " + type(obj.defn).__name__)
 
-        if isinstance(obj, Maybe):
-            self.fprint("    // " + obj.summary())
-            self.fprint("    call->state = " + str(state) + ";")
-            self.fprint("    ${PREFIX_}AWAIT_TOKEN;")
-            self.fprint("yy" + str(state) + ":")
-            self.fprint("    if(!" + self.token_check(obj.get_first()) + "){")
-            self.fprint("        " + self.mask_set(obj.get_first()) + ";")
-            self.fprint("        goto yy" + str(state) + "_done;")
-            self.fprint("    }")
-            self.gen(obj.seq, state+1, stack, var)
-            self.fprint("yy" + str(state) + "_done:")
-            return state + self.nstates(obj), stack
+        if isinstance(obj, Repeat):
+            if obj.type == "maybe":
+                # no looping or counting required
+                self.fprint("    // " + obj.summary())
+                self.fprint("    call->state = " + str(state) + ";")
+                self.fprint("    ${PREFIX_}AWAIT_TOKEN;")
+                self.fprint("yy" + str(state) + ":")
+                self.fprint("    if(!" + self.token_check(obj.get_first()) + "){")
+                self.fprint("        " + self.mask_set(obj.get_first()) + ";")
+                self.fprint("        goto yy" + str(state) + "_done;")
+                self.fprint("    }")
+                self.gen(obj.seq, state+1, stack, var)
+                self.fprint("yy" + str(state) + "_done:")
+                return state + self.nstates(obj), stack
 
-        if isinstance(obj, ZeroOrMore):
-            self.fprint("    // " + obj.summary())
-            self.fprint("yy" + str(state) + ":")
-            self.fprint("    call->state = " + str(state) + ";")
-            self.fprint("    ${PREFIX_}AWAIT_TOKEN;")
-            self.fprint("    if(!" + self.token_check(obj.get_first()) + "){")
-            self.fprint("        " + self.mask_set(obj.get_first()) + ";")
-            self.fprint("        goto yy" + str(state) + "_done;")
-            self.fprint("    }")
-            self.fprint("")
-            self.gen(obj.seq, state + 1, stack, var)
-            self.fprint("    // try for another " + obj.summary())
-            self.fprint("    goto yy" + str(state) + ";")
-            self.fprint("yy" + str(state) + "_done:")
-            return state + self.nstates(obj), stack
+            if obj.type == "zero_or_more":
+                # looping, but no coutning required
+                self.fprint("    // " + obj.summary())
+                self.fprint("yy" + str(state) + ":")
+                self.fprint("    call->state = " + str(state) + ";")
+                self.fprint("    ${PREFIX_}AWAIT_TOKEN;")
+                self.fprint("    if(!" + self.token_check(obj.get_first()) + "){")
+                self.fprint("        " + self.mask_set(obj.get_first()) + ";")
+                self.fprint("        goto yy" + str(state) + "_done;")
+                self.fprint("    }")
+                self.fprint("")
+                self.gen(obj.seq, state + 1, stack, var)
+                self.fprint("    // try for another " + obj.summary())
+                self.fprint("    goto yy" + str(state) + ";")
+                self.fprint("yy" + str(state) + "_done:")
+                return state + self.nstates(obj), stack
+
+            # arbitrary repeat; looping and counting required.
+            # This means we need an extra a semantic value
+            counter = "p->semstack[call->stack + %d].val._yy_counter"%stack
+            COUNTER = "COUNTER_%d"%self.ncounters
+            self.ncounters += 1
+            with self.extra_vars(
+                state=state,
+                counter=counter,
+                COUNTER=COUNTER,
+                rmin=obj.rmin,
+                rmax=obj.rmax
+            ):
+                self.fprint("    // " + obj.summary())
+                self.fprint("    #define $COUNTER ($counter)")
+                self.fprint("    $COUNTER = 0;")
+                self.fprint("yy$state:")
+                self.fprint("    call->state = $state;")
+                self.fprint("    ${PREFIX_}AWAIT_TOKEN;")
+                self.fprint("    if(!" + self.token_check(obj.get_first()) + "){")
+                self.fprint("        " + self.mask_set(obj.get_first()) + ";")
+                if obj.rmin > 0:
+                    self.fprint("        if($COUNTER < $rmin){")
+                    self.fprint("            // minimum repetition not met")
+                    self.fprint("            ${PREFIX_}SYNTAX_ERROR;")
+                    self.fprint("        }")
+                self.fprint("        goto yy${state}_done;")
+                self.fprint("    }")
+                self.fprint("    $COUNTER++;")
+                self.fprint("")
+                self.gen(obj.seq, state + 1, stack + 1, var)
+                if obj.rmax is None:
+                    self.fprint("    // try for another " + obj.summary())
+                    self.fprint("    goto yy$state;")
+                else:
+                    self.fprint("    if($COUNTER < $rmax){")
+                    self.fprint("        // try for another " + obj.summary())
+                    self.fprint("        goto yy$state;")
+                    self.fprint("    }")
+                self.fprint("yy${state}_done:")
+                self.fprint("    // clear our counter")
+                self.fprint("    $COUNTER = 0;")
+                self.fprint("    #undef $COUNTER")
+                return state + self.nstates(obj), stack
 
         if isinstance(obj, Branches):
             self.fprint("    // " + obj.summary())
@@ -1404,6 +1449,7 @@ class C:
 
     def define_fn(self, expr):
         """Generate the function definition for an Expression."""
+        self.ncounters = 0
         var = []
         self.fprint("// %s = %s;"%(expr.name, expr.seq.summary()))
         self.fprint(
@@ -1579,6 +1625,7 @@ class C:
 
         self.fprint("")
         self.fprint("typedef union {")
+        self.fprint("    int _yy_counter;")
         for t in self.types.source_ordered():
             self.fprint("    %s %s;"%(t.spec, t.name))
         self.fprint("} ${prefix_}val_u;")
@@ -1993,6 +2040,9 @@ class Python:
 
         self._extra_vars = {}
 
+        # give every counter a unique name
+        self.ncounters = 0
+
     def sub(self, s):
         return string.Template(s).substitute(**self.varmap, **self._extra_vars)
 
@@ -2059,10 +2109,11 @@ class Python:
         with self.extra_vars(token_list=token_list, lead=lead):
             self.fprint(i + "$lead (yield from tokens.peek()) not in $token_list:")
 
-    def while_token_in(self, tokens, fallbacks, i):
+    def while_token_in(self, tokens, fallbacks, i, pre=None):
         token_list = self.token_list(tokens, fallbacks)
-        with self.extra_vars(token_list=token_list):
-            self.fprint(i + "while (yield from tokens.peek()) in $token_list:")
+        pre = pre and (pre+" or ") or ""
+        with self.extra_vars(token_list=token_list, pre=pre):
+            self.fprint(i + "while $pre(yield from tokens.peek()) in $token_list:")
 
     def while_token_not_in(self, tokens, fallbacks, i):
         token_list = self.token_list(tokens, fallbacks)
@@ -2108,20 +2159,40 @@ class Python:
 
             raise RuntimeError("unrecognized reference type: " + type(obj.defn).__name__)
 
-        if isinstance(obj, Maybe):
-            self.fprint(i + "# " + obj.summary())
-            t = obj.get_first()
-            f = self.fallbacks.all_fallbacks(t)
-            self.if_token_in(t, f, i)
-            self.gen(obj.seq, None, i+"    ")
-            return
+        if isinstance(obj, Repeat):
+            if obj.type == "maybe":
+                self.fprint(i + "# " + obj.summary())
+                t = obj.get_first()
+                f = self.fallbacks.all_fallbacks(t)
+                self.if_token_in(t, f, i)
+                self.gen(obj.seq, None, i+"    ")
+                return
 
-        if isinstance(obj, ZeroOrMore):
-            self.fprint(i + "# " + obj.summary())
-            t = obj.get_first()
-            f = self.fallbacks.all_fallbacks(t)
-            self.while_token_in(t, f, i)
-            self.gen(obj.seq, None, i+"    ")
+            if obj.type == "zero_or_more":
+                self.fprint(i + "# " + obj.summary())
+                t = obj.get_first()
+                f = self.fallbacks.all_fallbacks(t)
+                self.while_token_in(t, f, i)
+                self.gen(obj.seq, None, i+"    ")
+                return
+
+            # general case
+            counter = "count%d"%self.ncounters
+            self.ncounters += 1
+            with self.extra_vars(
+                counter=counter, rmin=obj.rmin, rmax=obj.rmax
+            ):
+                self.fprint(i + "# " + obj.summary())
+                self.fprint(i + "$counter = 0")
+                if obj.rmin:
+                    pre = "%s < %d"%(counter, obj.rmin)
+                else:
+                    pre = None
+                t = obj.get_first()
+                f = self.fallbacks.all_fallbacks(t)
+                self.while_token_in(t, f, i, pre)
+                self.fprint(i + "    $counter += 1")
+                self.gen(obj.seq, None, i+"    ")
             return
 
         if isinstance(obj, Branches):
@@ -2160,6 +2231,8 @@ class Python:
         raise RuntimeError("unrecognized object type: " + type(obj).__name__)
 
     def define_fn(self, expr):
+        # reset counter naming
+        self.ncounters = 0
         with self.extra_vars(name=expr.name, summary=expr.seq.summary()):
             self.fprint("# $name = $summary")
             self.fprint("def _${prefix_}parse_$name(tokens${_u}):")
@@ -2323,23 +2396,16 @@ class ParsedRecovery:
             for c in self.code:
                 r.add_recovery_code(c.text, c.tag)
 
-class ParsedMultiplier:
-    def __init__(self, term, multiplier):
-        self.term = term
-        self.multiplier = multiplier
+class ParsedRepeat:
+    def __init__(self):
+        self.term = None
+        self.rmin = 0
+        self.rmax = None
         self.loc = None
 
     def process(self, g, e):
-        if self.multiplier == "1":
+        with e.repeat(self.rmin, self.rmax):
             self.term.process(g, e)
-        elif self.multiplier == "?":
-            with e.maybe(self.loc):
-                self.term.process(g, e)
-        elif self.multiplier == "*":
-            with e.zero_or_more(self.loc):
-                self.term.process(g, e)
-        else:
-            raise RuntimeError("unrecognized multiplier: " + str(self.multiplier))
 
 class ParsedSequence:
     def __init__(self):
@@ -2594,6 +2660,9 @@ class Tokenizer:
         if c == "{":
             return (yield from self._tokenize_code())
 
+        if c in "0123456789":
+            return (yield from self._tokenize_num())
+
         if c in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_":
             return (yield from self._tokenize_text())
 
@@ -2662,6 +2731,22 @@ class Tokenizer:
             for _ in range(matched):
                 _, loc = yield from next(self.cs)
             return MetaToken(CODE, text, TextSpan(start, loc))
+
+    def _tokenize_num(self):
+        text = ""
+        start = None
+        loc = None
+        while True:
+            c = yield from self.cs.peek()
+            if c is None:
+                break
+            if c not in "0123456789":
+                break
+            c, loc = yield from next(self.cs)
+            text += c
+            if start is None:
+                start = loc
+        return MetaToken(NUM, int(text), TextSpan(start, loc))
 
     def _tokenize_text(self):
         text = ""

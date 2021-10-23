@@ -38,19 +38,20 @@ import gen
 
 # Meta grammar is:
 #
-# doc = *code stmt *stmt *code;
+# doc = *code 1*stmt *code;
 # code = CODE [COLON TEXT:tag]
 # stmt = directive | def;
 # def = name (SEMI | EQ branches SEMI);
 # name = TEXT:name [COLON TEXT:tag];
 # branches =
-# | PIPE seq PIPE SEQ *(PIPE seq)
-# | seq *(PIPE SEQ)
+# | 1*(PIPE seq)
+# | seq *(PIPE seq)  # allows for the convert-to-seq case
 # ;
-# seq = *code term *code *(term *code);
+# seq = *code 1*(term *code);
 # term =
-# | ASTERISK (TEXT | LPAREN branches RPAREN)  # disallow *thing:tag,
-#                                             # since the :tag would be useless
+# | [NUM] ASTERISK [NUM] (TEXT | LPAREN branches RPAREN)  # disallow *thing:tag
+#                                                         # since the :tag
+#                                                         # would be useless
 # | name
 # | LPAREN branches RPAREN
 # | LBRACKET branches RBRACKET
@@ -75,6 +76,7 @@ import gen
 g = gen.Grammar()
 
 TEXT = g.token("TEXT")
+NUM = g.token("NUM")
 COLON = g.token("COLON")
 EQ = g.token("EQ")
 ASTERISK = g.token("ASTERISK")
@@ -106,7 +108,7 @@ branches = g.expr("branches")
 def name(e):
     e.match(TEXT, "name")
     e.exec("$$ = ParsedName($name, @name)")
-    with e.maybe():
+    with e.repeat(0, 1):
         e.match(COLON)
         e.match(TEXT, "tag")
         e.exec("$$.tag = $tag")
@@ -116,7 +118,7 @@ def name(e):
 def code(e):
     e.match(CODE, "text")
     e.exec("$$ = ParsedSnippet(textwrap.dedent($text).strip('\\n'), @text)")
-    with e.maybe():
+    with e.repeat(0, 1):
         e.match(COLON)
         e.match(TEXT, "tag")
         e.exec("$$.tag = $tag")
@@ -126,16 +128,25 @@ def code(e):
 def term(e):
     with e.branches() as b:
         with b.branch():
+            e.exec("$$ = ParsedRepeat()")
+            with e.repeat(0, 1):
+                e.match(NUM, "n")
+                e.exec("$$.rmin = $n")
+                e.exec("$$.loc = @n")
             e.match(ASTERISK, "m")
+            e.exec("$$.loc = $$.loc or @m")
+            with e.repeat(0, 1):
+                e.match(NUM, "n")
+                e.exec("$$.rmax = $n")
             with e.branches() as b2:
                 with b2.branch():
                     e.match(TEXT, "name")
-                    e.exec("$$ = ParsedMultiplier(ParsedName($name, None), '*')")
+                    e.exec("$$.term = ParsedName($name, None)")
                     e.exec("$$.loc = text_span(@m, @name)")
                 with b2.branch():
                     e.match(LPAREN)
                     e.match(branches, "branches")
-                    e.exec("$$ = ParsedMultiplier($branches, '*')")
+                    e.exec("$$.term = $branches")
                     e.exec("$$.loc = text_span(@m, @branches)")
                     e.match(RPAREN)
         with b.branch():
@@ -149,7 +160,10 @@ def term(e):
         with b.branch():
             e.match(LBRACKET, "l")
             e.match(branches, "branches")
-            e.exec("$$ = ParsedMultiplier($branches, '?')")
+            e.exec("$$ = ParsedRepeat()")
+            e.exec("$$.term = $branches")
+            e.exec("$$.rmin = 0")
+            e.exec("$$.rmax = 1")
             e.match(RBRACKET, "r")
             e.exec("$$.loc = text_span(@l, @r)")
         with b.branch():
@@ -157,7 +171,7 @@ def term(e):
             e.match(branches, "branches")
             e.exec("$$ = ParsedRecovery($branches)")
             e.match(QUESTION)
-            with e.zero_or_more():
+            with e.repeat(0, None):
                 e.match(code, "code")
                 e.exec("$$.code.append($code)")
             e.match(RANGLE, "r")
@@ -166,23 +180,17 @@ def term(e):
 @g.expr
 def seq(e):
     e.exec("$$ = ParsedSequence()")
-    e.exec("$$.loc = text_zero_loc(tokens.last_loc)")
-    with e.zero_or_more():
+    with e.repeat(0, None):
         e.match(code, "precode")
         e.exec("$$.elems.append($precode)")
-        e.exec("$$.loc = text_span($$.loc, @precode)")
-    e.match(term, "term")
-    e.exec("$$.elems.append($term)")
-    e.exec("$$.loc = text_span($$.loc, @term)")
-    with e.zero_or_more():
-        e.match(code, "code")
-        e.exec("$$.elems.append($code)")
-        e.exec("$$.loc = text_span($$.loc, @code)")
-    with e.zero_or_more():
+        e.exec("$$.loc = $$.loc or @precode")
+
+    with e.repeat(1, None):
         e.match(term, "term")
+        e.exec("$$.loc = $$.loc or @term")
         e.exec("$$.elems.append($term)")
         e.exec("$$.loc = text_span($$.loc, @term)")
-        with e.zero_or_more():
+        with e.repeat(0, None):
             e.match(code, "code")
             e.exec("$$.elems.append($code)")
             e.exec("$$.loc = text_span($$.loc, @code)")
@@ -192,15 +200,9 @@ def branches(e):
     e.exec("$$ = ParsedBranches()")
     with e.branches() as b:
         with b.branch():
-            e.match(PIPE, "p")
-            e.exec("$$.loc = @p")
-            e.match(seq, "seq")
-            e.exec("$$.branches.append($seq)")
-            e.match(PIPE)
-            e.match(seq, "seq")
-            e.exec("$$.branches.append($seq)")
-            with e.zero_or_more():
-                e.match(PIPE)
+            with e.repeat(1, None):
+                e.match(PIPE,"p")
+                e.exec("$$.loc = $$.loc or @p")
                 e.match(seq, "seq")
                 e.exec("$$.branches.append($seq)")
                 e.exec("$$.loc = text_span($$.loc, @seq)")
@@ -208,7 +210,7 @@ def branches(e):
             e.match(seq, "seq")
             e.exec("$$.branches.append($seq)")
             e.exec("$$.loc = @seq")
-            with e.zero_or_more():
+            with e.repeat(0, None):
                 e.match(PIPE)
                 e.match(seq, "seq")
                 e.exec("$$.branches.append($seq)")
@@ -225,7 +227,7 @@ def directive(e):
         with b.branch():
             e.match(KWARG)
             e.exec("$$ = ParsedKwarg()")
-            with e.maybe():
+            with e.repeat(0, 1):
                 e.match(COLON)
                 e.match(TEXT, "tag")
                 e.exec("$$.tag = $tag")
@@ -236,7 +238,7 @@ def directive(e):
         with b.branch():
             e.match(TYPE)
             e.exec("$$ = ParsedType()")
-            with e.maybe():
+            with e.repeat(0, 1):
                 e.match(COLON)
                 e.match(TEXT, "tag")
                 e.exec("$$.tag = $tag")
@@ -244,7 +246,7 @@ def directive(e):
             e.exec("$$.name = $name")
             e.match(CODE, "spec")
             e.exec("$$.spec = $spec.strip()")
-            with e.maybe():
+            with e.repeat(0, 1):
                 e.match(CODE, "destructor")
                 # most other code snippets are lists with tags, so even though
                 # there's only CODE block and no tag, we'll use the same format
@@ -259,7 +261,7 @@ def directive(e):
         with b.branch():
             e.match(ROOT)
             e.exec("$$ = ParsedRoot()")
-            with e.maybe():
+            with e.repeat(0, 1):
                 e.match(COLON)
                 e.match(TEXT, "tag")
                 e.exec("$$.tag = $tag")
@@ -268,7 +270,7 @@ def directive(e):
         with b.branch():
             e.match(FALLBACK)
             e.exec("$$ = ParsedFallback()")
-            with e.maybe():
+            with e.repeat(0, 1):
                 e.match(COLON)
                 e.match(TEXT, "tag")
                 e.exec("$$.tag = $tag")
@@ -276,25 +278,25 @@ def directive(e):
             e.exec("$$.to_type = $to")
             e.match(TEXT, "a")
             e.exec("$$.from_types.append($a)")
-            with e.zero_or_more():
+            with e.repeat(0, None):
                 e.match(TEXT, "b")
                 e.exec("$$.from_types.append($b)")
         with b.branch():
             e.match(PARAM)
             e.exec("$$ = ParsedParam()")
-            with e.maybe():
+            with e.repeat(0, 1):
                 e.match(COLON)
                 e.match(TEXT, "tag")
                 e.exec("$$.tag = $tag")
             e.match(TEXT, "name")
             e.exec("$$.name = $name")
-            with e.maybe():
+            with e.repeat(0, 1):
                 e.match(CODE, "type")
                 e.exec("$$.type = $type")
         with b.branch():
             e.match(PREFIX)
             e.exec("$$ = ParsedPrefix()")
-            with e.maybe():
+            with e.repeat(0, 1):
                 e.match(COLON)
                 e.match(TEXT, "tag")
                 e.exec("$$.tag = $tag")
@@ -331,18 +333,16 @@ def stmt(e):
 @g.expr
 def doc(e):
     e.exec("$$ = ParsedDoc()")
-    with e.zero_or_more():
+    with e.repeat(0, None):
         # pre-code
         e.match(code, "code")
         e.exec("$$.precode.append($code)")
 
-    e.match(stmt, "stmt")
-    e.exec("$$.add_stmt($stmt)")
-    with e.zero_or_more():
+    with e.repeat(1, None):
         e.match(stmt, "stmt")
         e.exec("$$.add_stmt($stmt)")
 
-    with e.zero_or_more():
+    with e.repeat(0, None):
         # post-code
         e.match(code, "code")
         e.exec("$$.postcode.append($code)")

@@ -7,7 +7,7 @@ try:
 
     @g.expr
     def a(e):
-        with e.maybe():
+        with e.repeat(0, 1):
             e.match(X)
         e.match(X)
 
@@ -24,9 +24,9 @@ try:
 
     @g.expr
     def a(e):
-        with e.maybe():
+        with e.repeat(0, 1):
             e.match(X)
-        with e.zero_or_more():
+        with e.repeat(0, None):
             e.match(Y)
         e.match(X)
 
@@ -43,12 +43,12 @@ try:
 
     @g.expr
     def a(e):
-        with e.maybe():
+        with e.repeat(0, 1):
             e.match(X)
 
     @g.expr
     def b(e):
-        with e.zero_or_more():
+        with e.repeat(0, None):
             e.match(Y)
 
     @g.expr
@@ -66,6 +66,34 @@ try:
 except gen.FirstFollow as e:
     pass
 
+# same thing, but with a non-zero-rmin repeat
+try:
+    g = gen.Grammar()
+    X = g.token("X")
+
+    @g.expr
+    def a(e):
+        with e.repeat(4, 5):
+            e.match(X)
+        e.match(X)
+
+    g.check()
+    1/0
+except gen.FirstFollow as e:
+    pass
+
+# fixed-number repeats do not cause an no issue
+g = gen.Grammar()
+X = g.token("X")
+
+@g.expr
+def a(e):
+    with e.repeat(5, 5):
+        e.match(X)
+    e.match(X)
+
+g.check()
+
 
 # Unit tests
 g = gen.Grammar()
@@ -76,23 +104,23 @@ Z = g.token("Z")
 
 @g.expr
 def a(e):
-    with e.maybe():
+    with e.repeat(0, 1):
         e.match(W)
-    with e.maybe():
+    with e.repeat(0, 1):
         e.match(X)
-    with e.maybe():
+    with e.repeat(0, 1):
         e.match(Y)
-    with e.maybe():
+    with e.repeat(0, 1):
         e.match(Z)
 
 @g.expr
 def b(e):
-    with e.maybe():
+    with e.repeat(0, 1):
         e.match(W)
-    with e.maybe():
+    with e.repeat(0, 1):
         e.match(X)
     e.match(Y)
-    with e.maybe():
+    with e.repeat(0, 1):
         e.match(Z)
 
 assert a.seq.get_first() == {"W", "X", "Y", "Z", None}
@@ -566,6 +594,123 @@ void check_location(char *val, loc_t loc){
 }
 
 }}}
+""")
+
+
+# test the C generator's counted repeats
+run_e2e_test(r"""
+%root short;
+%root perfect;
+%root runon;
+short = *4WORD DOT;
+perfect = 5*5WORD DOT;
+runon = 5*WORD DOT;
+
+{{
+#include <stdbool.h>
+
+int main(int argc, char **argv){
+    ONSTACK_PARSER(p, 1, 4);
+
+    char *out;
+    status_e status = STATUS_OK;
+    size_t i = 0;
+
+    // test the short parser
+    for(size_t n = 0; n <= 5; n++){
+        parser_reset(&p);
+        bool finish = true;
+        for(size_t i = 0; i < n; i++){
+            status = parse_short(&p, WORD);
+            // first four tokens always work
+            if(i < 4 && status != STATUS_OK){
+                fprintf(stderr, "short failed on %zu/%zu: %d\n", i+1, n, (int)status);
+                return 1;
+            }
+            // after 4 tokens, always fails
+            if(i >= 4){
+                if(status != STATUS_SYNTAX_ERROR){
+                    fprintf(stderr, "short allowed %zu/%zu\n", i+1, n);
+                    return 1;
+                }
+                finish = false;
+                break;
+            }
+        }
+        if(finish){
+            status = parse_short(&p, DOT);
+            if(status != STATUS_DONE){
+                fprintf(stderr, "short did not finish %zu\n", n);
+                return 1;
+            }
+        }
+    }
+
+    // test the perfect parser
+    for(size_t n = 0; n <= 6; n++){
+        parser_reset(&p);
+        bool finish = true;
+        for(size_t i = 0; i < n; i++){
+            status = parse_perfect(&p, WORD);
+            // first five tokens always work
+            if(i < 5 && status != STATUS_OK){
+                fprintf(stderr, "perfect failed on %zu/%zu: %d\n", i+1, n, (int)status);
+                return 1;
+            }
+            // after 5 tokens, always fails
+            if(i >= 5){
+                if(status != STATUS_SYNTAX_ERROR){
+                    fprintf(stderr, "perfect allowed %zu/%zu\n", i+1, n);
+                    return 1;
+                }
+                finish = false;
+                break;
+            }
+        }
+        if(finish){
+            status = parse_perfect(&p, DOT);
+            if(n == 5){
+                if(status != STATUS_DONE){
+                    fprintf(stderr, "perfect did not finish %zu\n", n);
+                    return 1;
+                }
+            }else{
+                if(status != STATUS_SYNTAX_ERROR){
+                    fprintf(stderr, "perfect finished %zu\n", n);
+                    return 1;
+                }
+            }
+        }
+    }
+
+    // test the runon parser
+    for(size_t n = 0; n <= 20; n++){
+        parser_reset(&p);
+        for(size_t i = 0; i < n; i++){
+            status = parse_runon(&p, WORD);
+            // WORD tokens are always accepted
+            if(status != STATUS_OK){
+                fprintf(stderr, "runon failed on %zu/%zu: %d\n", i+1, n, (int)status);
+                return 1;
+            }
+        }
+        status = parse_runon(&p, DOT);
+        if(n < 5){
+            if(status != STATUS_SYNTAX_ERROR){
+                fprintf(stderr, "runon finished %zu\n", n);
+                return 1;
+            }
+        }else{
+            if(status != STATUS_DONE){
+                fprintf(stderr, "runon did not finish %zu\n", n);
+                return 1;
+            }
+        }
+    }
+
+    return 0;
+}
+}}
 """)
 
 print("PASS")
