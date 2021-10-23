@@ -25,16 +25,10 @@ TODO:
    - reject nested recovery blocks
    - reject roots which don't have a concrete ending token; the user api
      doesn't support it
-   - generate #define's whenever recursion does not prevent it:
-      - MAX_CALLSTACK_SIZE  // overall
-      - MAX_SEMSTACK_SIZE  // overall
-      - MAX_<ROOT>_CALLSTACK_SIZE  // one for each %root
-      - MAX_<ROOT>_SEMSTACK_SIZE  // one for each %root
 
  - Grammar:
    - use source-order everywhere
    - configurable strictness for fallback-caused first/first, first/follow
-   - tooling to determined if a root is recursive
 
  - Meta parser:
    - support an %include directive?
@@ -138,7 +132,9 @@ class FirstFollow(GrammarError):
         return out
 
 class InfiniteRecursion(Exception):
-    pass
+    def __init__(self, path, *args):
+        self.path = path
+        super().__init__(*args)
 
 class PossiblyEmpty(GrammarError):
     def __init__(self, msg, summary, loc):
@@ -318,6 +314,7 @@ def add_to_prev(prev, name, call):
         prev = []
     if name in prev:
         raise InfiniteRecursion(
+            list(prev) + [name],
             "circular " + call + "() detected in " + name + ": " + str(prev)
         )
     return list(prev) + [name]
@@ -823,6 +820,45 @@ class Expression(Definition):
     def exec(self, code, tag=None, loc=None):
         self.scopes[-1].add_code(code, tag, loc)
 
+    def recurses(self, prev=None):
+        """
+        Return None if parsing this root includes any recursion at all, or
+        the path by which it does recurse.
+        """
+        if prev is None:
+            # top-level: user call, return None or a recursion path
+            try:
+                self.recurses([])
+            except InfiniteRecursion as e:
+                return e.path
+        else:
+            # inner-level: either raise an error or don't
+            prev = add_to_prev(prev, self.name, "recurses")
+
+            def _recurses(obj):
+                if isinstance(obj, Reference):
+                    if isinstance(obj.defn, Expression):
+                        return obj.defn.recurses(prev)
+                    elif isinstance(obj.defn, Token):
+                        return
+                    raise ValueError(
+                        "unknown defn type: %s"%type(obj.defn).__name__
+                    )
+                elif isinstance(obj, (Repeat, Recovery)):
+                    return _recurses(obj.seq)
+                elif isinstance(obj, Branches):
+                    for b in obj.branches:
+                        _recurses(b)
+                    return
+                elif isinstance(obj, Sequence):
+                    for term, _, _ in obj.terms:
+                        _recurses(term)
+                    return
+                raise ValueError(
+                    "unknown term type: %s"%type(term).__name__
+                )
+
+            _recurses(self.seq)
 
 class Grammar:
     def __init__(self, text=None):
@@ -914,7 +950,6 @@ class Grammar:
                 raise RenderedError(
                     "expression %s referenced but never defined"%name
                 )
-
 
 class Types:
     """The result of all of the %type directives in a grammar."""
@@ -1105,6 +1140,8 @@ class C:
         self.lines = ctx.dst_offset or 0
         self.ncounters = 0
 
+        self.semstackmaxes = {}
+        self.callstackmaxes = {}
 
     def sub(self, s):
         return string.Template(s).substitute(**self.varmap, **self._extra_vars)
@@ -1221,6 +1258,89 @@ class C:
                 persist += self.stackpersist(t)
             return peak
         raise RuntimeError("unrecognized object type: " + type(obj).__name__)
+
+    def callstackmax(self, root):
+        """
+        Calculate the maximum total depth of calls that could be required when
+        parsing a root.  Returns None when root contains a recursion.
+        """
+        if root.name in self.callstackmaxes:
+            return self.callstackmaxes[root.name]
+
+        if root.recurses() is not None:
+            self.semstackmaxes[root.name] = None
+            self.callstackmaxes[root.name] = None
+            return None
+
+        def _callstackmax(obj):
+            if isinstance(obj, Reference):
+                if isinstance(obj.defn, Expression):
+                    return self.callstackmax(obj.defn)
+                elif isinstance(obj.defn, Token):
+                    return 0
+                raise ValueError(
+                    "unknown term type: %s"%type(term).__name__
+                )
+            elif isinstance(obj, (Repeat, Recovery)):
+                return _callstackmax(obj.seq)
+            elif isinstance(obj, Branches):
+                return max(_callstackmax(b) for b in obj.branches)
+            elif isinstance(obj, Sequence):
+                return max(_callstackmax(term) for term, _, _ in obj.terms)
+            raise ValueError(
+                "unknown term type: %s"%type(term).__name__
+            )
+
+        # Count the root expression as well.
+        out = 1 + _callstackmax(root.seq)
+        self.callstackmaxes[root.name] = out
+        return out
+
+    def semstackmax(self, root):
+        """
+        Calculate the maximum total depth of sems that could be required when
+        parsing a root.  Returns None when root contains a recursion.
+        """
+        if root.name in self.semstackmaxes:
+            return self.semstackmaxes[root.name]
+
+        if root.recurses() is not None:
+            self.semstackmaxes[root.name] = None
+            self.callstackmaxes[root.name] = None
+            return None
+
+        def _semstackmax(obj):
+            if isinstance(obj, Reference):
+                if isinstance(obj.defn, Expression):
+                    return self.semstackmax(obj.defn)
+                elif isinstance(obj.defn, Token):
+                    return 1
+                raise ValueError(
+                    "unknown term type: %s"%type(term).__name__
+                )
+            elif isinstance(obj, Repeat):
+                # when we need to count repeats, we do that on the semstack
+                extra = 1 if obj.type == "general" else 0
+                return _semstackmax(obj.seq) + extra
+            elif isinstance(obj, Recovery):
+                return _semstackmax(obj.seq)
+            elif isinstance(obj, Branches):
+                return max(_semstackmax(b) for b in obj.branches)
+            elif isinstance(obj, Sequence):
+                persist = 0
+                peak = 0
+                for t, _, _ in obj.terms:
+                    peak = max(peak, persist + _semstackmax(t))
+                    persist += self.stackpersist(t)
+                return peak
+            raise ValueError(
+                "unknown term type: %s"%type(term).__name__
+            )
+
+        # Count the root's $$ as well.
+        out = 1 + _semstackmax(root.seq)
+        self.semstackmaxes[root.name] = out
+        return out
 
     def nstates(self, obj):
         """Count how many states we need for every entry."""
@@ -1671,6 +1791,22 @@ class C:
         # define user apis
         for root in self.roots:
             self.fprint("")
+            # Check for statically-determined stack sizes.
+            expr = self.grammar.exprs[root]
+            if not expr.recurses():
+                cmax = self.callstackmax(expr)
+                smax = self.semstackmax(expr)
+                with self.extra_vars(
+                    root=root, ROOT=root.upper(), cmax=cmax, smax=smax
+                ):
+                    self.fprint(
+                        "// the definition of $root is non-recursive, and so you can"
+                    )
+                    self.fprint(
+                        "// use the following values without risk of stack overflows"
+                    )
+                    self.fprint("#define ${PREFIX_}${ROOT}_MAX_CALLSTACK $cmax")
+                    self.fprint("#define ${PREFIX_}${ROOT}_MAX_SEMSTACK $smax")
             self.define_user_api(root, header=True)
 
     def gen_body(self):
@@ -2850,6 +2986,7 @@ def inspect_def(g, name, body):
     out += "    disallowed_after: [%s]\n"%(
         ",".join(str(f) for f in obj.seq.get_disallowed_after())
     )
+    out += "    recursion path: %s\n"%str(obj.recurses())
     if obj.loc is not None:
         out += textwrap.indent(
             "defined at " + render_location(obj.loc, body, underline=False),
