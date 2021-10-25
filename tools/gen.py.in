@@ -1498,7 +1498,8 @@ class C:
             bstate = state + 1
             for i, b in enumerate(obj.branches):
                 self.fprint("yy" + str(state) + "_br_" + str(i) + ":")
-                bstate, stack = self.gen(b, bstate, stack, var)
+                # bstate advances between branches, but stack resets each time
+                bstate, _ = self.gen(b, bstate, stack, var)
                 self.fprint("    goto yy" + str(state) + "_done;")
                 self.fprint("")
             self.fprint("yy"+ str(state) + "_done:")
