@@ -371,6 +371,15 @@ class Token(Definition):
 class Parsable(metaclass=abc.ABCMeta):
     @abc.abstractmethod
     def summary(self, parent_priority=PRIORITY_UNAMBIGUOUS):
+        """Print a human-readable summary of this grammar element."""
+        pass
+
+    @abc.abstractmethod
+    def state_map(self, parent_priority=PRIORITY_UNAMBIGUOUS):
+        """
+        Return a dict mapping the Parsable you are currently parsing to a
+        string representation of your parsing location.
+        """
         pass
 
     @abc.abstractmethod
@@ -400,6 +409,9 @@ class Reference(Parsable):
 
     def summary(self, parent_priority=PRIORITY_UNAMBIGUOUS):
         return self.defn.name
+
+    def state_map(self, parent_priority=PRIORITY_UNAMBIGUOUS):
+        return {self: ". " + self.defn.name}
 
     @cacheable
     def get_first(self, prev=None):
@@ -481,6 +493,26 @@ class Repeat(Parsable):
             self.rmin, self.rmax, self.seq.summary(PRIORITY_UNAMBIGUOUS)
         )
 
+    def state_map(self, parent_priority=PRIORITY_UNAMBIGUOUS):
+        if self.type == "maybe":
+            pre, post = "[", "]"
+            parent_priority = PRIORITY_UNAMBIGUOUS
+        elif self.type == "zero_or_more":
+            pre, post = "*", ""
+            parent_priority = PRIORITY_MULTIPLIER
+        elif self.rmax is None:
+            # an "N or more" statement
+            pre, post = "%d*"%self.rmin, ""
+            parent_priority = PRIORITY_MULTIPLIER
+        else:
+            # an "N to M" statement
+            pre, post = "%d*%d"%(self.rmin, self.rmax), ""
+            parent_priority = PRIORITY_MULTIPLIER
+        out = {self: ". " + self.summary()}
+        for k, v in self.seq.state_map(parent_priority).items():
+            out[k] = pre + v + post
+        return out
+
     @cacheable
     def get_first(self, prev=None):
         prev = add_to_prev(prev, self.name, "get_first")
@@ -526,6 +558,24 @@ class Branches(Parsable):
         out = " | ".join(b.summary(PRIORITY_BRANCHES) for b in self.branches)
         if parent_priority >= PRIORITY_BRANCHES:
             out = "(" + out + ")"
+        return out
+
+    def state_map(self, parent_priority=PRIORITY_UNAMBIGUOUS):
+        out = {self: ". (" + self.summary() + ")"}
+        for i, b in enumerate(self.branches):
+            pre = " | ".join(bb.summary(PRIORITY_SEQUENCE) for bb in self.branches[:i])
+            if pre:
+                pre += " | "
+            post = " | ".join(bb.summary(PRIORITY_SEQUENCE) for bb in self.branches[i+1:])
+            if post:
+                post = " | " + post
+
+            if parent_priority >= PRIORITY_BRANCHES:
+                pre = "(" + pre
+                post = post + ")"
+
+            for k, v in b.state_map(PRIORITY_BRANCHES).items():
+                out[k] = pre + v + post
         return out
 
     def add_term(self, term, tag=None):
@@ -616,6 +666,12 @@ class Recovery(Parsable):
     def summary(self, parent_priority=PRIORITY_UNAMBIGUOUS):
         return "<" + self.seq.summary(PRIORITY_UNAMBIGUOUS) + " ? ... >"
 
+    def state_map(self, parent_priority=PRIORITY_UNAMBIGUOUS):
+        out = {self,  "<" + self.seq.summary(PRIORITY_UNAMBIGUOUS) + " ? . >"}
+        for k, v in self.seq.state_map(PRIORITY_UNAMBIGUOUS):
+            out[k] = "<" + v + "? >"
+        return out
+
     @cacheable
     def get_first(self, prev=None):
         return self.seq.get_first(prev)
@@ -656,6 +712,27 @@ class Sequence(Parsable):
         out = " ".join(t.summary(PRIORITY_SEQUENCE) for t, _, _ in self.terms)
         if parent_priority > PRIORITY_SEQUENCE:
             out = "(" + out + ")"
+        return out
+
+    def state_map(self, parent_priority=PRIORITY_UNAMBIGUOUS):
+        out = {self: ". " + self.summary(PRIORITY_SEQUENCE)}
+        if len(self.terms) == 1:
+            out.update(self.terms[0][0].state_map())
+            return out
+        for i, (t, _, _) in enumerate(self.terms):
+            # calculate error strings
+            pre = " ".join(tt.summary(PRIORITY_SEQUENCE) for tt,_,_ in self.terms[:i])
+            if pre:
+                pre += " "
+            post = " ".join(tt.summary(PRIORITY_SEQUENCE) for tt,_,_ in self.terms[i+1:])
+            if post:
+                post = " " + post
+            if parent_priority > PRIORITY_SEQUENCE:
+                pre = "(" + pre
+                post = post + ")"
+
+            for k, v in t.state_map(PRIORITY_SEQUENCE).items():
+                out[k] = pre + v + post
         return out
 
     def get_first_ex(self, start, prev):
@@ -1139,6 +1216,7 @@ class C:
 
         self.lines = ctx.dst_offset or 0
         self.ncounters = 0
+        self.state_map = None
 
         self.semstackmaxes = {}
         self.callstackmaxes = {}
@@ -1360,6 +1438,7 @@ class C:
             if isinstance(obj.defn, Token):
                 self.fprint("    // " + obj.summary())
                 self.fprint("    call->state = " + str(state) + ";")
+                self.fprint("    call->summary = \"" + self.state_map[obj] + "\";")
                 self.fprint("    ${PREFIX_}AWAIT_TOKEN;")
                 self.fprint("yy" + str(state) + ":")
                 self.fprint("    if(!" + self.token_check(obj.get_first()) + "){")
@@ -1372,13 +1451,13 @@ class C:
                 self.fprint("#endif")
                 self.fprint("    ${PREFIX_}CONSUME_TOKEN;")
                 self.fprint("    ${prefix_}mask_clear(p->mask);")
-
                 return state + self.nstates(obj), stack + 1
 
             if isinstance(obj.defn, Expression):
                 # code generated when calling this function
                 self.fprint("    // " + obj.summary())
                 self.fprint("    call->state = " + str(state) + ";")
+                self.fprint("    call->summary = \"" + self.state_map[obj] + "\";")
                 self.fprint("    ${PREFIX_}CALL(%s, %d);"%(self.parse_fn(obj.defn), stack))
                 self.fprint("yy" + str(state) + ":")
                 self.fprint("#ifdef ${PREFIX_}HAVE_SEMLOC")
@@ -1395,6 +1474,7 @@ class C:
                 # no looping or counting required
                 self.fprint("    // " + obj.summary())
                 self.fprint("    call->state = " + str(state) + ";")
+                self.fprint("    call->summary = \"" + self.state_map[obj] + "\";")
                 self.fprint("    ${PREFIX_}AWAIT_TOKEN;")
                 self.fprint("yy" + str(state) + ":")
                 self.fprint("    if(!" + self.token_check(obj.get_first()) + "){")
@@ -1406,10 +1486,11 @@ class C:
                 return state + self.nstates(obj), stack
 
             if obj.type == "zero_or_more":
-                # looping, but no coutning required
+                # looping, but no counting required
                 self.fprint("    // " + obj.summary())
                 self.fprint("yy" + str(state) + ":")
                 self.fprint("    call->state = " + str(state) + ";")
+                self.fprint("    call->summary = \"" + self.state_map[obj] + "\";")
                 self.fprint("    ${PREFIX_}AWAIT_TOKEN;")
                 self.fprint("    if(!" + self.token_check(obj.get_first()) + "){")
                 self.fprint("        " + self.mask_set(obj.get_first()) + ";")
@@ -1439,6 +1520,7 @@ class C:
                 self.fprint("    $COUNTER = 0;")
                 self.fprint("yy$state:")
                 self.fprint("    call->state = $state;")
+                self.fprint("    call->summary = \"" + self.state_map[obj] + "\";")
                 self.fprint("    ${PREFIX_}AWAIT_TOKEN;")
                 self.fprint("    if(!" + self.token_check(obj.get_first()) + "){")
                 self.fprint("        " + self.mask_set(obj.get_first()) + ";")
@@ -1469,6 +1551,7 @@ class C:
         if isinstance(obj, Branches):
             self.fprint("    // " + obj.summary())
             self.fprint("    call->state = " + str(state) + ";")
+            self.fprint("    call->summary = \"" + self.state_map[obj] + "\";")
             self.fprint("    ${PREFIX_}AWAIT_TOKEN;")
             self.fprint("yy" + str(state) + ":")
             self.fprint("    switch(*token){")
@@ -1516,6 +1599,7 @@ class C:
             self.fprint("    goto yy" + str(state) + "_done;")
             self.fprint("yy"+ str(state) + ":")
             self.fprint("    // recovery: consume all tokens until a valid one")
+            self.fprint("    call->summary = \"" + self.state_map[obj] + "\";")
             self.fprint("    ${PREFIX_}AWAIT_TOKEN;")
             self.fprint("    if(!" + self.token_check(obj.after) + "){")
             self.fprint("        ${PREFIX_}CONSUME_TOKEN;")
@@ -1571,6 +1655,7 @@ class C:
     def define_fn(self, expr):
         """Generate the function definition for an Expression."""
         self.ncounters = 0
+        self.state_map = expr.seq.state_map()
         var = []
         self.fprint("// %s = %s;"%(expr.name, expr.seq.summary()))
         self.fprint(
@@ -1713,6 +1798,8 @@ class C:
                 size_t nsems;
                 // our position in the call
                 size_t state;
+                // always set when we pause execution
+                const char *summary;
                 // the state to enter if we have to recover
                 size_t recover;
             #ifdef ${PREFIX_}HAVE_SEMLOC
@@ -1957,7 +2044,7 @@ class C:
             static void ${prefix_}print_stack(${prefix_}parser_t *p){
                 for(size_t i = 0; i < p->callslen; i++){
                     ${prefix_}call_t call = p->callstack[i];
-                    printf("parsing %s (%zu)\n", _${prefix_}fn_name(call.fn), call.state);
+                    printf("parsing %s (%s)\n", _${prefix_}fn_name(call.fn), call.summary);
                 }
 
             }
@@ -2097,7 +2184,9 @@ class C:
         self.fprint("")
 
         # get function names
-        self.fprint(self.sub("static const char *_${prefix_}fn_name(${prefix_}parse_f fn){"))
+        self.fprint(
+            "static const char *_${prefix_}fn_name(${prefix_}parse_f fn){"
+        )
         for _, expr in self.grammar.sorted_expressions():
             self.fprint(
                 "    if(fn == " + self.parse_fn(expr) + ")"
