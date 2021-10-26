@@ -64,7 +64,6 @@ set(TEST_EXE_TGTS
     test_imap_expression
     test_imf_scan
     test_imf_parse
-    test_smtp_resp
     test_fpr_watcher
     test_search
     test_log_file
@@ -116,7 +115,6 @@ target_link_libraries(test_maildir_name PRIVATE imaildir)
 target_link_libraries(test_imap_expression PRIVATE imap)
 target_link_libraries(test_imf_scan PRIVATE imap)
 target_link_libraries(test_imf_parse PRIVATE imap)
-target_link_libraries(test_smtp_resp PRIVATE imap)
 target_link_libraries(test_fpr_watcher PRIVATE libcitm)
 target_link_libraries(test_search PRIVATE imaildir)
 target_link_libraries(test_log_file PRIVATE imaildir test_utils)
