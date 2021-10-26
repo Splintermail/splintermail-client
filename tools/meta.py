@@ -16,6 +16,9 @@ with open(INFILE) as fin:
     with open("gen.py", "w") as fout:
         fout.write(fin.read())
 
+# some environments don't import from . by default
+if "" not in sys.path:
+    sys.path = [""] + sys.path
 import gen
 
 # Example grammar:

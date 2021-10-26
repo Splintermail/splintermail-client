@@ -1723,6 +1723,8 @@ class C:
                 self.fprint("        .val = val,")
             if self.semloc_type:
                 self.fprint("        .loc = loc,")
+            if not self.tokens_have_value and not self.semloc_type:
+                self.fprint("        0")
             self.fprint("    };")
             self.fprint("    ${prefix_}sem_t sem_out = {0};")
             self.fprint("    ${prefix_}status_e status = _${prefix_}do_parse(")
@@ -1961,14 +1963,14 @@ class C:
                 va_start(ap, n);
 
                 for(size_t i = 0; i < n; i++){
-                    int t = va_arg(ap, ${prefix_}token_e);
+                    ${prefix_}token_e t = va_arg(ap, ${prefix_}token_e);
                     mask[t/8] |= (unsigned char)(1 << (t%8));
                 }
 
                 va_end(ap);
             }
 
-            static const char *${prefix_}token_name(int t);
+            static const char *${prefix_}token_name(${prefix_}token_e t);
 
             static void ${prefix_}mask_print(unsigned char *mask, char *joiner){
                 int first = 1;
@@ -1977,9 +1979,10 @@ class C:
                         if(!(mask[i] & ((unsigned char)1)<<j)) continue;
                         printf(
                             "%s%s",
-                            first ? (first=0,"") : joiner,
-                            ${prefix_}token_name(i*8+j)
+                            first ? "": joiner,
+                            ${prefix_}token_name((${prefix_}token_e)(i*8+j))
                         );
+                        first = 0;
                     }
                 }
             }
@@ -2163,7 +2166,7 @@ class C:
 
                 // parsed everything!
                 *sem_out = p->semstack[0];
-                p->semstack[0] = (${prefix_}sem_t){};
+                p->semstack[0] = (${prefix_}sem_t){0};
                 ${prefix_}parser_reset(p);
                 return ${PREFIX_}STATUS_DONE;
             }
@@ -2174,7 +2177,7 @@ class C:
             self.declare_fn(expr)
         self.fprint("")
 
-        self.fprint("static const char *${prefix_}token_name(int t){")
+        self.fprint("static const char *${prefix_}token_name(${prefix_}token_e t){")
         self.fprint("    switch(t){")
         for name, _ in self.grammar.sorted_tokens():
             self.fprint("        case ${PREFIX_}" + name + ": return \"" +name+ "\";")

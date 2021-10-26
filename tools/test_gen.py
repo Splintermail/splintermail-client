@@ -1,3 +1,6 @@
+import sys
+if "" not in sys.path:
+    sys.path = [""] + sys.path
 import gen
 
 # illegal: first term might start with X or be empty, second term starts with X
@@ -247,40 +250,66 @@ except gen.FirstFollow:
     pass
 
 
+# figure out a compiler to use
+from subprocess import Popen, PIPE, DEVNULL
+import os
+def detect_on_path(cmd):
+    try:
+        Popen(cmd, stdout=DEVNULL, stderr=DEVNULL).wait()
+        return True
+    except FileNotFoundError:
+        return False
+
+if detect_on_path(["cl.exe"]):
+    cc = "cl.exe"
+else:
+    assert detect_on_path(["gcc"]), "gcc not found"
+    cc = "gcc"
+
 def run_e2e_test(grammar_text):
     with open("test.c", "w") as f:
         gen.gen(grammar_text, 'c', f)
 
-    from subprocess import Popen, PIPE
-    import os
-
-    cc = "gcc"
-    asan = True
-    if asan:
-        cflags=("-g", "-fsanitize=address", "-fno-omit-frame-pointer")
-        p = Popen([cc, *cflags, "test.c"])
+    if cc == "cl.exe":
+        p = Popen([cc, "test.c"])
         assert p.wait() == 0, p.wait()
 
-        p = Popen(["./a.out"])
-        assert p.wait() == 0, p.wait()
-    else:
-        cflags=("-g",)
-        p = Popen([cc, *cflags, "test.c"])
-        assert p.wait() == 0, p.wait()
-
-        cmd = (
-            "valgrind",
-            "--quiet",
-            "--leak-check=full",
-            "--show-leak-kinds=all",
-            "--errors-for-leak-kinds=all",
-            "--error-exitcode=255",
-            "./a.out",
-        )
+        cmd = ("test.exe",)
         p = Popen(cmd)
         assert p.wait() == 0, p.wait()
-    os.remove("test.c")
-    os.remove("a.out")
+
+        os.remove("test.c")
+        os.remove("test.obj")
+        os.remove("test.exe")
+
+    else:
+        assert cc == "gcc", cc
+        asan = True
+        if asan:
+            cflags=("-g", "-fsanitize=address", "-fno-omit-frame-pointer")
+            p = Popen([cc, *cflags, "test.c"])
+            assert p.wait() == 0, p.wait()
+
+            p = Popen(["./a.out"])
+            assert p.wait() == 0, p.wait()
+        else:
+            cflags=("-g",)
+            p = Popen([cc, *cflags, "test.c"])
+            assert p.wait() == 0, p.wait()
+
+            cmd = (
+                "valgrind",
+                "--quiet",
+                "--leak-check=full",
+                "--show-leak-kinds=all",
+                "--errors-for-leak-kinds=all",
+                "--error-exitcode=255",
+                "./a.out",
+            )
+            p = Popen(cmd)
+            assert p.wait() == 0, p.wait()
+        os.remove("test.c")
+        os.remove("a.out")
 
 # test the C generator; make sure everything is always freed, with a grammar
 # whose side effects never free anything
