@@ -16,12 +16,11 @@ gen.py is in alpha, and is still missing some key features.
 
 TODO:
  - Python:
-   - some state tracking, to avoid duplicate token checks
+   - honor prematched to avoid certain duplicate token checks
    - reject roots which don't have a concrete ending token; the user api
      doesn't support it
 
  - C:
-   - some state tracking, to avoid duplicate token checks
    - reject nested recovery blocks
    - reject roots which don't have a concrete ending token; the user api
      doesn't support it
@@ -42,6 +41,7 @@ TODO:
    - support importing generators from external python files
    - allow for input templates, so you can have one file with an embedded grammar
    - configurable strictness for fallback-caused first/first, first/follow
+   - come up with a better name than gen.py
 """
 
 import abc
@@ -410,6 +410,7 @@ class Reference(Parsable):
         assert isinstance(defn, (Token, Expression)), type(defn).__name__
         self.defn = defn
         self.loc = loc
+        self.prematched = None
 
     def summary(self, parent_priority=PRIORITY_UNAMBIGUOUS):
         return self.defn.name
@@ -477,6 +478,7 @@ class Repeat(Parsable):
             self.err_op = "maybe operator"
         else:
             self.err_op = "repetition operator"
+        self.prematched = None
 
     def add_term(self, term, tag=None):
         self.seq.add_term(term, tag)
@@ -557,6 +559,7 @@ class Branches(Parsable):
         self.branches = []
         self._branch = None
         self.loc = loc
+        self.prematched = None
 
     def summary(self, parent_priority=PRIORITY_UNAMBIGUOUS):
         out = " | ".join(b.summary(PRIORITY_BRANCHES) for b in self.branches)
@@ -653,6 +656,7 @@ class Recovery(Parsable):
         self.seq = Sequence(self.name + '.seq')
         self.after = None
         self.loc = loc
+        self.prematched = None
 
     def add_term(self, term, tag=None):
         self.seq.add_term(term, tag)
@@ -700,6 +704,7 @@ class Sequence(Parsable):
         # tuples of (Parsable, tag=None, code=[])
         self.terms = []
         self.loc = loc
+        self.prematched = None
 
     def add_term(self, term, tag=None):
         self.terms.append((term, tag, []))
@@ -1031,6 +1036,41 @@ class Grammar:
                 raise RenderedError(
                     "expression %s referenced but never defined"%name
                 )
+
+            # trigger the prematched checks
+            self._set_prematched(expr.seq, False)
+
+    def _set_prematched(self, obj, prematched):
+        if isinstance(obj, Reference):
+            obj.prematched = prematched
+            return
+        if isinstance(obj, Repeat):
+            # only maybe-types (not real repeats) can ever be prematched
+            obj.prematched = obj.type == "maybe" and prematched
+            # but contents of the repeat are always prematched
+            self._set_prematched(obj.seq, True)
+            return
+        if isinstance(obj, Recovery):
+            obj.prematched = prematched
+            self._set_prematched(obj.seq, prematched)
+            return
+        if isinstance(obj, Branches):
+            obj.prematched = prematched
+            for b in obj.branches:
+                # every branch is always prematched
+                self._set_prematched(b, True)
+            return
+        if isinstance(obj, Sequence):
+            obj.prematched = prematched
+            # the first term may prematched, but only if it is concrete
+            if None in obj.terms[0][0].get_first():
+                prematched = False
+            for t, _, _ in obj.terms:
+                self._set_prematched(t, prematched)
+                # Subsequent terms are never prematched
+                prematched = False
+            return
+        raise RuntimeError("unrecognized object type: " + type(obj).__name__)
 
 class Types:
     """The result of all of the %type directives in a grammar."""
@@ -1427,41 +1467,42 @@ class C:
         self.semstackmaxes[root.name] = out
         return out
 
-    def nstates(self, obj):
-        """Count how many states we need for every entry."""
-        if isinstance(obj, Reference):
-            return 1
-        if isinstance(obj, (Repeat, Recovery)):
-            return self.nstates(obj.seq) + 1
-        if isinstance(obj, Branches):
-            return sum(self.nstates(b) for b in obj.branches) + 1
-        if isinstance(obj, Sequence):
-            return sum(self.nstates(t) for t, _, _ in obj.terms)
-        raise RuntimeError("unrecognized object type: " + type(obj).__name__)
+    @contextlib.contextmanager
+    def delay_output(self):
+        old_file = self.file
+        self.file = io.StringIO()
+
+        try:
+            yield self.file
+        finally:
+            self.file = old_file
 
     def gen(self, obj, state, stack, var, tag=None, want_final_loc=False):
         """Generate code to match an object."""
         if isinstance(obj, Reference):
             if isinstance(obj.defn, Token):
-                self.fprint("    // " + obj.summary())
-                self.fprint("    call->state = " + str(state) + ";")
-                self.fprint("    call->summary = \"" + self.state_map[obj] + "\";")
-                self.fprint("    ${PREFIX_}AWAIT_TOKEN;")
-                self.fprint("yy" + str(state) + ":")
-                self.fprint("    if(!" + self.token_check(obj.get_first()) + "){")
-                self.fprint("        " + self.mask_set(obj.get_first()) + ";")
-                self.fprint("        ${PREFIX_}SYNTAX_ERROR(*token, sem);")
-                self.fprint("    }")
+                if obj.prematched:
+                    self.fprint("    // prematched: " + obj.summary())
+                else:
+                    self.fprint("    // " + obj.summary())
+                    self.fprint("    call->state = " + str(state) + ";")
+                    self.fprint("    call->summary = \"" + self.state_map[obj] + "\";")
+                    self.fprint("    ${PREFIX_}AWAIT_TOKEN;")
+                    self.fprint("yy" + str(state) + ":")
+                    self.fprint("    if(!" + self.token_check(obj.get_first()) + "){")
+                    self.fprint("        " + self.mask_set(obj.get_first()) + ";")
+                    self.fprint("        ${PREFIX_}SYNTAX_ERROR(*token, sem);")
+                    self.fprint("    }")
+                    state += 1
                 self.fprint("    p->semstack[call->stack + " + str(stack) + "] = sem;")
                 self.fprint("#ifdef ${PREFIX_}HAVE_SEMLOC")
                 self.fprint("    ${prefix_}process_matched_loc(p, call, sem.loc);")
                 self.fprint("#endif")
                 self.fprint("    ${PREFIX_}CONSUME_TOKEN;")
                 self.fprint("    ${prefix_}mask_clear(p->mask);")
-                return state + self.nstates(obj), stack + 1
+                return state, stack + 1
 
             if isinstance(obj.defn, Expression):
-                # code generated when calling this function
                 self.fprint("    // " + obj.summary())
                 self.fprint("    call->state = " + str(state) + ";")
                 self.fprint("    call->summary = \"" + self.state_map[obj] + "\";")
@@ -1472,28 +1513,35 @@ class C:
                 self.fprint("        call, p->semstack[call->stack + %d].loc"%stack)
                 self.fprint("    );")
                 self.fprint("#endif")
-                return state + self.nstates(obj), stack + 1
+                return state + 1, stack + 1
 
             raise RuntimeError("unrecognized reference type: " + type(obj.defn).__name__)
 
         if isinstance(obj, Repeat):
             if obj.type == "maybe":
                 # no looping or counting required
-                self.fprint("    // " + obj.summary())
-                self.fprint("    call->state = " + str(state) + ";")
-                self.fprint("    call->summary = \"" + self.state_map[obj] + "\";")
-                self.fprint("    ${PREFIX_}AWAIT_TOKEN;")
-                self.fprint("yy" + str(state) + ":")
-                self.fprint("    if(!" + self.token_check(obj.get_first()) + "){")
-                self.fprint("        " + self.mask_set(obj.get_first()) + ";")
-                self.fprint("        goto yy" + str(state) + "_done;")
-                self.fprint("    }")
-                self.gen(obj.seq, state+1, stack, var)
-                self.fprint("yy" + str(state) + "_done:")
-                return state + self.nstates(obj), stack
+                if obj.prematched:
+                    self.fprint("    // prematched: " + obj.summary())
+                    tstate = state
+                else:
+                    self.fprint("    // " + obj.summary())
+                    self.fprint("    call->state = " + str(state) + ";")
+                    self.fprint("    call->summary = \"" + self.state_map[obj] + "\";")
+                    self.fprint("    ${PREFIX_}AWAIT_TOKEN;")
+                    self.fprint("yy" + str(state) + ":")
+                    self.fprint("    if(!" + self.token_check(obj.get_first()) + "){")
+                    self.fprint("        " + self.mask_set(obj.get_first()) + ";")
+                    self.fprint("        goto yy" + str(state) + "_done;")
+                    self.fprint("    }")
+                    tstate = state + 1
+                tstate, _ = self.gen(obj.seq, tstate, stack, var)
+                if not obj.prematched:
+                    self.fprint("yy" + str(state) + "_done:")
+                return tstate, stack
 
             if obj.type == "zero_or_more":
                 # looping, but no counting required
+                # ignore prematched since we always need a check
                 self.fprint("    // " + obj.summary())
                 self.fprint("yy" + str(state) + ":")
                 self.fprint("    call->state = " + str(state) + ";")
@@ -1504,14 +1552,15 @@ class C:
                 self.fprint("        goto yy" + str(state) + "_done;")
                 self.fprint("    }")
                 self.fprint("")
-                self.gen(obj.seq, state + 1, stack, var)
+                tstate, _ = self.gen(obj.seq, state + 1, stack, var)
                 self.fprint("    // try for another " + obj.summary())
                 self.fprint("    goto yy" + str(state) + ";")
                 self.fprint("yy" + str(state) + "_done:")
-                return state + self.nstates(obj), stack
+                return tstate, stack
 
             # arbitrary repeat; looping and counting required.
-            # This means we need an extra a semantic value
+            # This means we need an extra semantic value.
+            # ignore prematched since we always need a check
             counter = "p->semstack[call->stack + %d].val._yy_counter"%stack
             COUNTER = "COUNTER_%d"%self.ncounters
             self.ncounters += 1
@@ -1540,7 +1589,7 @@ class C:
                 self.fprint("    }")
                 self.fprint("    $COUNTER++;")
                 self.fprint("")
-                self.gen(obj.seq, state + 1, stack + 1, var)
+                tstate, _ = self.gen(obj.seq, state + 1, stack + 1, var)
                 if obj.rmax is None:
                     self.fprint("    // try for another " + obj.summary())
                     self.fprint("    goto yy$state;")
@@ -1553,16 +1602,22 @@ class C:
                 self.fprint("    // clear our counter")
                 self.fprint("    $COUNTER = 0;")
                 self.fprint("    #undef $COUNTER")
-                return state + self.nstates(obj), stack
+                return tstate, stack
 
         if isinstance(obj, Branches):
-            self.fprint("    // " + obj.summary())
-            self.fprint("    call->state = " + str(state) + ";")
-            self.fprint("    call->summary = \"" + self.state_map[obj] + "\";")
-            self.fprint("    ${PREFIX_}AWAIT_TOKEN;")
-            self.fprint("yy" + str(state) + ":")
+            if obj.prematched:
+                # if empty branches are ever allowed, remember to fix this
+                assert None not in obj.get_first(), "fixme"
+                self.fprint("    // prematched: " + obj.summary())
+                bstate = state
+            else:
+                self.fprint("    // " + obj.summary())
+                self.fprint("    call->state = " + str(state) + ";")
+                self.fprint("    call->summary = \"" + self.state_map[obj] + "\";")
+                self.fprint("    ${PREFIX_}AWAIT_TOKEN;")
+                self.fprint("yy" + str(state) + ":")
+                bstate = state + 1
             self.fprint("    switch(*token){")
-            bstate = state + 1
             # detect primary types
             primaries = set(
                 t for b in obj.branches for t in b.get_first()
@@ -1578,14 +1633,12 @@ class C:
                     for f in sorted(fallbacks):
                         self.fprint("        case ${PREFIX_}%s: // fallback"%f)
                     self.fprint("        case ${PREFIX_}%s: goto %s;"%(t, label))
-                bstate += self.nstates(b)
             self.fprint("        default:")
             self.fprint("            " + self.mask_set(obj.get_first()) + ";")
             self.fprint("            ${PREFIX_}SYNTAX_ERROR(*token, sem);")
             self.fprint("    }")
             self.fprint("")
             # branch parsing
-            bstate = state + 1
             for i, b in enumerate(obj.branches):
                 self.fprint("yy" + str(state) + "_br_" + str(i) + ":")
                 # bstate advances between branches, but stack resets each time
@@ -1593,14 +1646,14 @@ class C:
                 self.fprint("    goto yy" + str(state) + "_done;")
                 self.fprint("")
             self.fprint("yy"+ str(state) + "_done:")
-            return state + self.nstates(obj), stack
+            return bstate, stack
 
         if isinstance(obj, Recovery):
             assert obj.after is not None, ".set_after() was never called"
             self.fprint("    // " + obj.summary())
             self.fprint("    call->recover = " + str(state) + ";")
             self.fprint("")
-            self.gen(obj.seq, state + 1, stack, var)
+            tstate, _ = self.gen(obj.seq, state + 1, stack, var)
             self.fprint("")
             self.fprint("    call->recover = 0;")
             self.fprint("    goto yy" + str(state) + "_done;")
@@ -1614,7 +1667,7 @@ class C:
             self.fprint("    }")
             self.print_code(obj.code, "    ")
             self.fprint("yy"+ str(state) + "_done:")
-            return state + self.nstates(obj), stack
+            return tstate, stack
 
         if isinstance(obj, Sequence):
             oldstack = stack
@@ -1663,7 +1716,23 @@ class C:
         """Generate the function definition for an Expression."""
         self.ncounters = 0
         self.state_map = expr.seq.state_map()
-        var = []
+
+        # We need to know how many states there will be, but those are counted
+        # during generation of the function body.
+        with self.delay_output() as delayed_out:
+            var = C.Variables(self.fprint, semloc=self.semloc_type)
+            if expr.type is not None:
+                var.define("$", expr.type, 0)
+                self.fprint("    p->semstack[call->stack].type = ${PREFIX_}SEMTYPE_%s;"%expr.type)
+            self.fprint("")
+
+            # state starts at 1, since 0 is only the first time we're called
+            # stack starts at 1, since we always allocate the output
+            nstates, _ = self.gen(expr.seq, 1, 1, var, want_final_loc=True)
+
+            self.fprint("")
+            var.pop_scope()
+
         self.fprint("// %s = %s;"%(expr.name, expr.seq.summary()))
         self.fprint(
             "static ${prefix_}status_e %s($parse_fn_args){"%self.parse_fn(expr)
@@ -1672,7 +1741,7 @@ class C:
         # Jump to state.
         self.fprint("    switch(call->state){")
         self.fprint("        case " + str(0) + ": break;")
-        for n in range(self.nstates(expr.seq)):
+        for n in range(nstates-1):
             self.fprint("        case " + str(n+1) + ": goto yy" + str(n+1) + ";")
         self.fprint("    }")
         # Ensure we have enough stack space to operate.
@@ -1681,18 +1750,9 @@ class C:
         self.fprint("        return ${PREFIX_}STATUS_SEMSTACK_OVERFLOW;")
         self.fprint("    }")
         self.fprint("    call->nsems = %d;"%x)
-        var = C.Variables(self.fprint, semloc=self.semloc_type)
-        if expr.type is not None:
-            var.define("$", expr.type, 0)
-            self.fprint("    p->semstack[call->stack].type = ${PREFIX_}SEMTYPE_%s;"%expr.type)
-        self.fprint("")
 
-        # state starts at 1, since 0 is only the first time we're called
-        # stack starts at 1, since we always allocate the output
-        self.gen(expr.seq, 1, 1, var, want_final_loc=True)
+        self.fprint(delayed_out.getvalue(), end="")
 
-        self.fprint("")
-        var.pop_scope()
         self.fprint("    p->callslen--;");
         self.fprint("    return 0;")
         self.fprint("}")
