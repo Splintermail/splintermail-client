@@ -25,6 +25,10 @@ TODO:
    - reject nested recovery blocks
    - reject roots which don't have a concrete ending token; the user api
      doesn't support it
+   - header ordering vs body ordering is awkward.  E.g. you need some things
+     to occur after header code but before body code (error handlers).
+     Currently only solvable with extra-forward declarations (a hack) or with
+     separate header and body generation (shouldn't be a hard requirement)
 
  - Grammar:
    - use source-order everywhere
@@ -1158,6 +1162,7 @@ class C:
         semloc_type=None,
         span_fn=None,
         zero_loc_fn=None,
+        error_fn=None,
     ):
         self.grammar = ctx.grammar
         self.file = ctx.file
@@ -1179,6 +1184,7 @@ class C:
         self.semloc_type = semloc_type
         self.span_fn = span_fn
         self.zero_loc_fn = zero_loc_fn
+        self.error_fn = error_fn
 
         # build a default mapping
         params_str = ""
@@ -1198,6 +1204,7 @@ class C:
             "semloc_type": self.semloc_type,
             "span_fn": self.span_fn,
             "zero_loc_fn": self.zero_loc_fn,
+            "error_fn": self.error_fn or "%shandle_syntax_error"%self.prefix_,
             "parse_fn_args": (
                 "\n    %scall_t *call,"
                 "\n    %sparser_t *p"
@@ -1443,7 +1450,7 @@ class C:
                 self.fprint("yy" + str(state) + ":")
                 self.fprint("    if(!" + self.token_check(obj.get_first()) + "){")
                 self.fprint("        " + self.mask_set(obj.get_first()) + ";")
-                self.fprint("        ${PREFIX_}SYNTAX_ERROR;")
+                self.fprint("        ${PREFIX_}SYNTAX_ERROR(*token, sem);")
                 self.fprint("    }")
                 self.fprint("    p->semstack[call->stack + " + str(stack) + "] = sem;")
                 self.fprint("#ifdef ${PREFIX_}HAVE_SEMLOC")
@@ -1527,7 +1534,7 @@ class C:
                 if obj.rmin > 0:
                     self.fprint("        if($COUNTER < $rmin){")
                     self.fprint("            // minimum repetition not met")
-                    self.fprint("            ${PREFIX_}SYNTAX_ERROR;")
+                    self.fprint("            ${PREFIX_}SYNTAX_ERROR(*token, sem);")
                     self.fprint("        }")
                 self.fprint("        goto yy${state}_done;")
                 self.fprint("    }")
@@ -1574,7 +1581,7 @@ class C:
                 bstate += self.nstates(b)
             self.fprint("        default:")
             self.fprint("            " + self.mask_set(obj.get_first()) + ";")
-            self.fprint("            ${PREFIX_}SYNTAX_ERROR;")
+            self.fprint("            ${PREFIX_}SYNTAX_ERROR(*token, sem);")
             self.fprint("    }")
             self.fprint("")
             # branch parsing
@@ -1855,6 +1862,9 @@ class C:
 
             // USER API
 
+            // get a (read-only) string with the name of a token
+            const char *${prefix_}token_name(${prefix_}token_e t);
+
             // allocate a new fixed-size parser, backed by heap memory
             ${prefix_}parser_t *${prefix_}parser_new(size_t callsmax, size_t semsmax);
 
@@ -1874,6 +1884,18 @@ class C:
                     .semstack = _name##sems, \
                     .semsmax = _semsmax, \
                 }
+
+            // during a syntax error, print the parsing stack
+            int ${prefix_}snprint_stack(char *buf, size_t limit, ${prefix_}parser_t *p);
+            int ${prefix_}fprint_stack(FILE *f, ${prefix_}parser_t *p);
+
+            // during a syntax error, print the expected tokens
+            int ${prefix_}snprint_mask(
+                char *buf, size_t limit, const unsigned char *mask, const char *joiner
+            );
+            int ${prefix_}fprint_mask(
+                FILE *f, const unsigned char *mask, const char *joiner
+            );
 
             // ROOT PARSERS
         """)
@@ -1919,6 +1941,7 @@ class C:
             #include <stdarg.h>
             #include <stdint.h>
             #include <string.h>
+            #include <limits.h>
         """)
 
         if embed_header:
@@ -1970,21 +1993,53 @@ class C:
                 va_end(ap);
             }
 
-            static const char *${prefix_}token_name(${prefix_}token_e t);
-
-            static void ${prefix_}mask_print(unsigned char *mask, char *joiner){
+            int ${prefix_}snprint_mask(
+                char *buf, size_t limit, const unsigned char *mask, const char *joiner
+            ){
+                int allowed = limit > INT_MAX ? INT_MAX : (int)limit;
+                int written = 0;
                 int first = 1;
                 for(int i = 0; i < ${PREFIX_}MASKLEN; i++){
                     for(int j = 0; j < 8; j++){
                         if(!(mask[i] & ((unsigned char)1)<<j)) continue;
-                        printf(
+                        int w = snprintf(
+                            buf + written,
+                            (size_t)(allowed - written),
                             "%s%s",
                             first ? "": joiner,
                             ${prefix_}token_name((${prefix_}token_e)(i*8+j))
                         );
+                        if(w < 0){
+                            if(limit) buf[limit-1] = '\0';
+                            return w;
+                        }
+                        written += w;
                         first = 0;
                     }
                 }
+                if(limit) buf[limit-1] = '\0';
+                return written;
+            }
+
+            int ${prefix_}fprint_mask(
+                FILE *f, const unsigned char *mask, const char *joiner
+            ){
+                int written = 0;
+                int first = 1;
+                for(int i = 0; i < ${PREFIX_}MASKLEN; i++){
+                    for(int j = 0; j < 8; j++){
+                        if(!(mask[i] & ((unsigned char)1)<<j)) continue;
+                        int w = fprintf(
+                            f, "%s%s",
+                            first ? "": joiner,
+                            ${prefix_}token_name((${prefix_}token_e)(i*8+j))
+                        );
+                        if(w < 0) return w;
+                        written += w;
+                        first = 0;
+                    }
+                }
+                return written;
             }
 
             static ${prefix_}call_t *${prefix_}calls_append(${prefix_}parser_t *p){
@@ -2044,12 +2099,38 @@ class C:
 
             static const char *_${prefix_}fn_name(${prefix_}parse_f fn);
 
-            static void ${prefix_}print_stack(${prefix_}parser_t *p){
+            int ${prefix_}snprint_stack(char *buf, size_t limit, ${prefix_}parser_t *p){
+                int allowed = limit > INT_MAX ? INT_MAX : (int)limit;
+                int written = 0;
                 for(size_t i = 0; i < p->callslen; i++){
                     ${prefix_}call_t call = p->callstack[i];
-                    printf("parsing %s (%s)\n", _${prefix_}fn_name(call.fn), call.summary);
+                    int w = snprintf(
+                        buf + written,
+                        (size_t)(allowed - written),
+                        "parsing %s (%s)\n",
+                        _${prefix_}fn_name(call.fn), call.summary
+                    );
+                    if(w < 0){
+                        if(limit) buf[limit-1] = '\0';
+                        return w;
+                    }
+                    written += w;
                 }
+                if(limit) buf[limit-1] = '\0';
+                return written;
+            }
 
+            int ${prefix_}fprint_stack(FILE *f, ${prefix_}parser_t *p){
+                int written = 0;
+                for(size_t i = 0; i < p->callslen; i++){
+                    ${prefix_}call_t call = p->callstack[i];
+                    int w = fprintf(
+                        f, "parsing %s (%s)\n",
+                        _${prefix_}fn_name(call.fn), call.summary
+                    );
+                    if(w < 0) return w;
+                }
+                return written;
             }
 
             #define ${PREFIX_}CALL(_fn, _stack) do { \
@@ -2084,13 +2165,15 @@ class C:
                 return out;
             }
 
-            #define ${PREFIX_}SYNTAX_ERROR do { \
-                printf("syntax error!\n"); \
-                ${prefix_}print_stack(p); \
-                printf("expected one of: {"); \
-                ${prefix_}mask_print(p->mask, ","); \
-                printf("} but got %s\n", ${prefix_}token_name(*token)); \
-                return 1; \
+            #define ${PREFIX_}SYNTAX_ERROR(_token, _sem) do { \
+                $error_fn( \
+                    p$args, \
+                    _token, \
+                    _sem, \
+                    (const unsigned char*)p->mask, \
+                    (const char*)call->summary \
+                ); \
+                return ${PREFIX_}STATUS_SYNTAX_ERROR; \
             } while(0)
 
             #ifdef ${PREFIX_}HAVE_SEMLOC
@@ -2172,12 +2255,32 @@ class C:
             }
         """)
 
+        if self.error_fn is None:
+            # default error function
+            self.fprint("")
+            self.fprint_multi(r"""
+                static void $error_fn(
+                    ${prefix_}parser_t *p$params,
+                    ${prefix_}token_e token,
+                    ${prefix_}sem_t sem,
+                    const unsigned char *expected_mask,
+                    const char *loc_summary
+                ){
+                    (void)sem; (void)loc_summary;$voids
+                    fprintf(stderr, "syntax error!\n");
+                    ${prefix_}fprint_stack(stderr, p);
+                    fprintf(stderr, "expected one of: {");
+                    ${prefix_}fprint_mask(stderr, expected_mask, ",");
+                    fprintf(stderr, "} but got %s\n", ${prefix_}token_name(token));
+                }
+            """)
+
         # declare functions
         for _, expr in self.grammar.sorted_expressions():
             self.declare_fn(expr)
         self.fprint("")
 
-        self.fprint("static const char *${prefix_}token_name(${prefix_}token_e t){")
+        self.fprint("const char *${prefix_}token_name(${prefix_}token_e t){")
         self.fprint("    switch(t){")
         for name, _ in self.grammar.sorted_tokens():
             self.fprint("        case ${PREFIX_}" + name + ": return \"" +name+ "\";")

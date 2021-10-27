@@ -627,16 +627,51 @@ void check_location(char *val, loc_t loc){
 
 
 # test the C generator's counted repeats
+# also test custom error handlers
 run_e2e_test(r"""
+{{
+// extra-forward declarations, to get around ordering issues
+struct parser_t;
+typedef struct parser_t parser_t;
+struct sem_t;
+typedef struct sem_t sem_t;
+
+static void handle_error(
+    parser_t *p,
+    int token,
+    sem_t sem,
+    const unsigned char *expected_mask,
+    const char *loc_summary
+);
+}}
+
 %root short;
 %root perfect;
 %root runon;
+%kwarg error_fn handle_error;
 short = *4WORD DOT;
 perfect = 5*5WORD DOT;
 runon = 5*WORD DOT;
 
 {{
 #include <stdbool.h>
+
+static void handle_error(
+    parser_t *p,
+    int token,
+    sem_t sem,
+    const unsigned char *expected_mask,
+    const char *loc_summary
+){
+    char maskbuf[1024];
+    snprint_mask(maskbuf, sizeof(maskbuf), expected_mask, "|");
+    fprintf(stderr,
+        "syntax error @(%s): expected one of (%s) but got %s\n",
+        loc_summary,
+        maskbuf,
+        token_name(token)
+    );
+}
 
 int main(int argc, char **argv){
     ONSTACK_PARSER(p, 1, 4);
