@@ -2,7 +2,6 @@
 
 #include <libdstr/libdstr.h>
 #include <libimap/libimap.h>
-#include <libimap/generated/imf.tab.h>
 
 #include "test_utils.h"
 
@@ -15,13 +14,13 @@
                 FD(error_to_dstr(exp_error)), \
                 FD(error_to_dstr(e.type))); \
         /* write either the scannable or the the last token + scannable */ \
-        dstr_t scannable = imf_get_scannable(&scanner); \
+        dstr_t scannable = imf_get_scannable(&s); \
         if(exp_error == E_NONE){ \
             TRACE(&e, "on input: '%x'\n", FD_DBG(&scannable));  \
         }else{ \
             TRACE(&e, "on input: '%x%x'\n", FD_DBG(&token_dstr), FD_DBG(&scannable));  \
         } \
-        ORIG_GO(&e, E_VALUE, "unexpected status", cu_scanner); \
+        ORIG_GO(&e, E_VALUE, "unexpected status", cu); \
     } \
     CATCH(e, E_ANY){ \
         DROP_VAR(&e); \
@@ -30,17 +29,17 @@
         TRACE(&e, "unexpected token type: expected %x, got %x\n", \
                 FI(exp_type), FI(type)); \
         /* write the last token + scannable */ \
-        dstr_t scannable = imf_get_scannable(&scanner); \
+        dstr_t scannable = imf_get_scannable(&s); \
         TRACE(&e, "on input: '%x%x'\n", FD_DBG(&token_dstr), FD_DBG(&scannable));  \
-        ORIG_GO(&e, E_VALUE, "unexpected token type", cu_scanner); \
+        ORIG_GO(&e, E_VALUE, "unexpected token type", cu); \
     } \
     if(exp_error == E_NONE && dstr_cmp(&token_dstr, &exp_token) != 0){ \
         TRACE(&e, "expected token \"%x\" but got token \"%x\"\n", \
                 FD_DBG(&exp_token), FD_DBG(&token_dstr)); \
         /* write the last token + scannable */ \
-        dstr_t scannable = imf_get_scannable(&scanner); \
+        dstr_t scannable = imf_get_scannable(&s); \
         TRACE(&e, "on input: '%x%x'\n", FD_DBG(&token_dstr), FD_DBG(&scannable));  \
-        ORIG_GO(&e, E_VALUE, "unexpected token type", cu_scanner); \
+        ORIG_GO(&e, E_VALUE, "unexpected token type", cu); \
     } \
 } while(0)
 
@@ -50,75 +49,96 @@ static derr_t test_imf_scan(void){
 
     dstr_t imf_msg = DSTR_LIT(
         // make sure to allow tabs mid-line
-        "header-1: \tvalue-1\r\n"
-        "header-2: value-2\r\n"
+        "header-1: \tvalue-A\r\n"
+        "header-2: value-B\r\n"
         "  folded-value\r\n"
         "\r\n"
         "body\r\n"
         "unfinished line"
     );
 
-    imf_scanner_t scanner;
-    PROP(&e, imf_scanner_init(&scanner, &imf_msg, NULL, NULL) );
+    imf_scanner_t s = imf_scanner_prep(&imf_msg, NULL, NULL);
 
     dstr_off_t token;
-    int type;
+    imf_token_e type;
 
-    e = imf_scan(&scanner, IMF_SCAN_HDR, &token, &type);
-    EXPECT(E_NONE, HDRNAME, "header-1");
+    e = imf_scan(&s, &token, &type);
+    EXPECT(E_NONE, IMF_TEXT, "header-");
 
-    e = imf_scan(&scanner, IMF_SCAN_HDR, &token, &type);
-    EXPECT(E_NONE, ':', ":");
+    e = imf_scan(&s, &token, &type);
+    EXPECT(E_NONE, IMF_NUM, "1");
 
-    e = imf_scan(&scanner, IMF_SCAN_UNSTRUCT, &token, &type);
-    EXPECT(E_NONE, UNSTRUCT, " \tvalue-1");
+    e = imf_scan(&s, &token, &type);
+    EXPECT(E_NONE, IMF_COLON, ":");
 
-    e = imf_scan(&scanner, IMF_SCAN_UNSTRUCT, &token, &type);
-    EXPECT(E_NONE, EOL, "\r\n");
+    e = imf_scan(&s, &token, &type);
+    EXPECT(E_NONE, IMF_WS, " \t");
 
-    e = imf_scan(&scanner, IMF_SCAN_HDR, &token, &type);
-    EXPECT(E_NONE, HDRNAME, "header-2");
+    e = imf_scan(&s, &token, &type);
+    EXPECT(E_NONE, IMF_TEXT, "value-A");
 
-    e = imf_scan(&scanner, IMF_SCAN_HDR, &token, &type);
-    EXPECT(E_NONE, ':', ":");
+    e = imf_scan(&s, &token, &type);
+    EXPECT(E_NONE, IMF_EOL, "\r\n");
 
-    e = imf_scan(&scanner, IMF_SCAN_UNSTRUCT, &token, &type);
-    EXPECT(E_NONE, UNSTRUCT, " value-2");
+    e = imf_scan(&s, &token, &type);
+    EXPECT(E_NONE, IMF_TEXT, "header-");
 
-    e = imf_scan(&scanner, IMF_SCAN_UNSTRUCT, &token, &type);
-    EXPECT(E_NONE, EOL, "\r\n");
+    e = imf_scan(&s, &token, &type);
+    EXPECT(E_NONE, IMF_NUM, "2");
 
-    e = imf_scan(&scanner, IMF_SCAN_HDR, &token, &type);
-    EXPECT(E_NONE, WS, "  ");
+    e = imf_scan(&s, &token, &type);
+    EXPECT(E_NONE, IMF_COLON, ":");
 
-    e = imf_scan(&scanner, IMF_SCAN_UNSTRUCT, &token, &type);
-    EXPECT(E_NONE, UNSTRUCT, "folded-value");
+    e = imf_scan(&s, &token, &type);
+    EXPECT(E_NONE, IMF_WS, " ");
 
-    e = imf_scan(&scanner, IMF_SCAN_UNSTRUCT, &token, &type);
-    EXPECT(E_NONE, EOL, "\r\n");
+    e = imf_scan(&s, &token, &type);
+    EXPECT(E_NONE, IMF_TEXT, "value-B");
 
-    e = imf_scan(&scanner, IMF_SCAN_HDR, &token, &type);
-    EXPECT(E_NONE, EOL, "\r\n");
+    e = imf_scan(&s, &token, &type);
+    EXPECT(E_NONE, IMF_EOL, "\r\n");
 
-    e = imf_scan(&scanner, IMF_SCAN_BODY, &token, &type);
-    EXPECT(E_NONE, BODY, "body\r\nunfinished line");
+    e = imf_scan(&s, &token, &type);
+    EXPECT(E_NONE, IMF_WS, "  ");
 
-    e = imf_scan(&scanner, IMF_SCAN_UNSTRUCT, &token, &type);
-    EXPECT(E_NONE, DONE, "");
+    e = imf_scan(&s, &token, &type);
+    EXPECT(E_NONE, IMF_TEXT, "folded-value");
+
+    e = imf_scan(&s, &token, &type);
+    EXPECT(E_NONE, IMF_EOL, "\r\n");
+
+    e = imf_scan(&s, &token, &type);
+    EXPECT(E_NONE, IMF_EOL, "\r\n");
+
+    e = imf_scan(&s, &token, &type);
+    EXPECT(E_NONE, IMF_TEXT, "body");
+
+    e = imf_scan(&s, &token, &type);
+    EXPECT(E_NONE, IMF_EOL, "\r\n");
+
+    e = imf_scan(&s, &token, &type);
+    EXPECT(E_NONE, IMF_TEXT, "unfinished");
+
+    e = imf_scan(&s, &token, &type);
+    EXPECT(E_NONE, IMF_WS, " ");
+
+    e = imf_scan(&s, &token, &type);
+    EXPECT(E_NONE, IMF_TEXT, "line");
+
+    e = imf_scan(&s, &token, &type);
+    EXPECT(E_NONE, IMF_EOF, "");
 
     // repeat scans keep returning IMF_SCAN_UNSTRUCT
-    e = imf_scan(&scanner, IMF_SCAN_UNSTRUCT, &token, &type);
-    EXPECT(E_NONE, DONE, "");
+    e = imf_scan(&s, &token, &type);
+    EXPECT(E_NONE, IMF_EOF, "");
 
     // ensure that the token dstr points to just after the end of the buffer
     if(token.start != imf_msg.len){
-        ORIG_GO(&e, E_VALUE, "DONE token not valid", cu_scanner);
+        ORIG_GO(&e, E_VALUE, "EOF token not valid", cu);
     }
 
-cu_scanner:
-    imf_scanner_free(&scanner);
-    // test safe against double-free
-    imf_scanner_free(&scanner);
+cu:
+    // noop
     return e;
 }
 
@@ -126,12 +146,12 @@ cu_scanner:
 static derr_t test_overrun(void){
     /* I caught a memory access exception reading the first byte after a
        128-byte-long message.  Construct a dstr_t that has no extra bytes
-       in order to expose end-of-buffer overruns in the scanner */
+       in order to expose end-of-buffer overruns in the s */
     derr_t e = E_OK;
 
-    imf_scanner_t scanner;
+    imf_scanner_t s;
     dstr_off_t token;
-    int type;
+    imf_token_e type;
 
 #define DSTR_STUB(var, cstr, label) \
     char *var = malloc(strlen(cstr)); \
@@ -144,42 +164,41 @@ static derr_t test_overrun(void){
     }; \
     memcpy(d_##var.data, cstr, strlen(cstr))
 
-    DSTR_STUB(body1, "body1", done);
-    DSTR_STUB(body2, "body2\r", cu_body1);
-    DSTR_STUB(body3, "body3\n", cu_body2);
-    DSTR_STUB(body4, "body4\r\n", cu_body3);
+    DSTR_STUB(text1, "", done);
+    DSTR_STUB(text2, "\r", cu_text1);
+    DSTR_STUB(text3, "\n", cu_text2);
+    DSTR_STUB(text4, "\r\n", cu_text3);
 
-    PROP_GO(&e, imf_scanner_init(&scanner, &d_body1, NULL, NULL), cu_bodies);
-    e = imf_scan(&scanner, IMF_SCAN_BODY, &token, &type);
-    EXPECT(E_NONE, BODY, "body1");
-    imf_scanner_free(&scanner);
+    s = imf_scanner_prep(&d_text1, NULL, NULL);
+    e = imf_scan(&s, &token, &type);
+    EXPECT(E_NONE, IMF_EOF, "");
 
-    PROP_GO(&e, imf_scanner_init(&scanner, &d_body2, NULL, NULL), cu_bodies);
-    e = imf_scan(&scanner, IMF_SCAN_BODY, &token, &type);
-    EXPECT(E_NONE, BODY, "body2\r");
-    imf_scanner_free(&scanner);
+    s = imf_scanner_prep(&d_text2, NULL, NULL);
+    e = imf_scan(&s, &token, &type);
+    EXPECT(E_NONE, IMF_EOL, "\r");
+    e = imf_scan(&s, &token, &type);
+    EXPECT(E_NONE, IMF_EOF, "");
 
-    PROP_GO(&e, imf_scanner_init(&scanner, &d_body3, NULL, NULL), cu_bodies);
-    e = imf_scan(&scanner, IMF_SCAN_BODY, &token, &type);
-    EXPECT(E_NONE, BODY, "body3\n");
-    imf_scanner_free(&scanner);
+    s = imf_scanner_prep(&d_text3, NULL, NULL);
+    e = imf_scan(&s, &token, &type);
+    EXPECT(E_NONE, IMF_EOL, "\n");
+    e = imf_scan(&s, &token, &type);
+    EXPECT(E_NONE, IMF_EOF, "");
 
-    PROP_GO(&e, imf_scanner_init(&scanner, &d_body4, NULL, NULL), cu_bodies);
-    e = imf_scan(&scanner, IMF_SCAN_BODY, &token, &type);
-    EXPECT(E_NONE, BODY, "body4\r\n");
-    imf_scanner_free(&scanner);
+    s = imf_scanner_prep(&d_text4, NULL, NULL);
+    e = imf_scan(&s, &token, &type);
+    EXPECT(E_NONE, IMF_EOL, "\r\n");
+    e = imf_scan(&s, &token, &type);
+    EXPECT(E_NONE, IMF_EOF, "");
 
-cu_scanner:
-    imf_scanner_free(&scanner);
-
-cu_bodies:
-    free(body4);
-cu_body3:
-    free(body3);
-cu_body2:
-    free(body2);
-cu_body1:
-    free(body1);
+cu:
+    free(text4);
+cu_text3:
+    free(text3);
+cu_text2:
+    free(text2);
+cu_text1:
+    free(text1);
 done:
     return e;
 }

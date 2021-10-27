@@ -37,7 +37,7 @@ static derr_t do_test_search(const test_case_t c, bool *ok){
     derr_t e = E_OK;
 
     if(c.content.len > 0){
-        PROP_GO(&e, imf_parse(&c.content, &imf), cu);
+        PROP_GO(&e, imf_parse(&c.content, NULL, NULL, NULL, &imf), cu);
     }
 
     // if unset, use sane values for seq/uid

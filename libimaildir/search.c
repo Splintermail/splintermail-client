@@ -57,12 +57,7 @@ static derr_t search_headers(
         dstr_t hname = dstr_from_off(hdr->name);
         if(dstr_icmp2(hname, name) == 0){
             // is the search key present in the header value?
-            dstr_t searchable = {0};
-            switch(hdr->type){
-                case IMF_HDR_UNSTRUCT:
-                    searchable = dstr_from_off(hdr->arg.unstruct);
-                    break;
-            }
+            dstr_t searchable = dstr_from_off(hdr->value);
             if(dstr_icount2(searchable, value) > 0){
                 *out = true;
                 return e;
@@ -169,17 +164,8 @@ static derr_t do_eval(search_args_t *args, size_t lvl,
                     *out = false;
                     break;
                 }
-                if(!imf->body){
-                    *out = false;
-                    break;
-                }
 
-                dstr_t searchable = {0};
-                switch(imf->body->type){
-                    case IMF_BODY_UNSTRUCT:
-                        searchable = dstr_from_off(imf->body->bytes);
-                        break;
-                }
+                dstr_t searchable = dstr_from_off(imf->body);
                 *out = dstr_icount2(searchable, param.dstr->dstr) > 0;
             } break;
 

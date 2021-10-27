@@ -16,7 +16,6 @@ typedef struct {
     bool eof;
     ie_dstr_t *content;
     bool taken; // the first taker gets *content; following takers get a copy
-    imf_reader_t *reader;
     imf_hdrs_t *hdrs;
     imf_t *imf;
 } loader_t;
@@ -108,18 +107,13 @@ static const imf_hdrs_t *loader_parse_hdrs(derr_t *e, loader_t *loader){
         CHECK_GO(e, fail);
     }
 
-    // otherwise we have to set up a reader and parse the headers
     PROP_GO(e,
-        imf_reader_new(
-            &loader->reader,
+        imf_hdrs_parse(
             &loader->content->dstr,
             _loader_read_fn,
-            (void*)loader
+            (void*)loader,
+            &loader->hdrs
         ),
-    fail);
-
-    PROP_GO(e,
-        imf_reader_parse_headers(loader->reader, &loader->hdrs),
     fail);
 
     return loader->hdrs;
@@ -133,12 +127,20 @@ static const imf_t *loader_parse_imf(derr_t *e, loader_t *loader){
     if(is_error(*e)) goto fail;
     if(loader->imf) return loader->imf;
 
-    // always do the headers first
-    loader_parse_hdrs(e, loader);
-    CHECK_GO(e, fail);
+    if(!loader->content){
+        // read at least one chunk so we have a valid loader->content
+        _loader_read(e, loader);
+        CHECK_GO(e, fail);
+    }
 
     PROP_GO(e,
-        imf_reader_parse_body(loader->reader, &loader->hdrs, &loader->imf),
+        imf_parse(
+            &loader->content->dstr,
+            _loader_read_fn,
+            (void*)loader,
+            &loader->hdrs,
+            &loader->imf
+        ),
     fail);
 
     return loader->imf;
@@ -150,7 +152,6 @@ fail:
 static void loader_close(derr_t *e, loader_t *loader){
     imf_hdrs_free(loader->hdrs);
     imf_free(loader->imf);
-    imf_reader_free(&loader->reader);
     loader->imf = NULL;
     if(!loader->taken){
         ie_dstr_free(loader->content);
@@ -788,8 +789,7 @@ cu:
 
 static ie_dstr_t *imf_copy_body(derr_t *e, const imf_t *imf){
     if(is_error(*e)) return NULL;
-    if(!imf->body) return ie_dstr_new_empty(e);
-    dstr_t bytes = dstr_from_off(imf->body->bytes);
+    dstr_t bytes = dstr_from_off(imf->body);
     return ie_dstr_new(e, &bytes, KEEP_RAW);
 }
 

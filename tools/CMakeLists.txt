@@ -20,6 +20,7 @@ function(gen_parser tgt grammar cfile hfile)
         OUTPUT "${cfile}"
         COMMAND "${PYTHON_3_CMD}" "${gen_py_out}"
                 "${grammar}" -o "${cfile}"
+                --action gen_body
         DEPENDS "${grammar}" "${gen_py_out}"
         COMMENT "generating parser ${cfile}" VERBATIM
     )
@@ -47,20 +48,20 @@ endif()
 # decide if we plan to pass `-W -Werror` to re2c (released in 0.15.0)
 execute_process(
     COMMAND "${RE2C}" "--version"
-    OUTPUT_VARIABLE re2c_version
+    OUTPUT_VARIABLE RE2C_VERSION
 )
-string(REGEX REPLACE "re2c ([0-9.]*).*" "\\1" re2c_version "${re2c_version}")
-if("${re2c_version}" VERSION_GREATER_EQUAL "0.15")
-    set(re2c_flags "-W" "-Werror")
-else()
-    set(re2c_flags "")
+string(REGEX REPLACE "re2c ([0-9.]*).*" "\\1" RE2C_VERSION "${RE2C_VERSION}")
+set(RE2C_FLAGS "--input" "custom")
+if("${RE2C_VERSION}" VERSION_GREATER_EQUAL "0.15")
+    list(APPEND RE2C_FLAGS "-W" "-Werror")
 endif()
-set(re2c_flags "${re2c_flags}" PARENT_SCOPE)
+set(RE2C_VERSION "${RE2C_VERSION}" PARENT_SCOPE)
+set(RE2C_FLAGS "${RE2C_FLAGS}" PARENT_SCOPE)
 
 function(re2c tgt input output)
     add_custom_command(
         OUTPUT "${output}"
-        COMMAND "${RE2C}" ${re2c_flags} -o "${output}" "${input}"
+        COMMAND "${RE2C}" ${RE2C_FLAGS} -o "${output}" "${input}"
         DEPENDS "${input}"
         COMMENT "generating scanner ${output}" VERBATIM
     )

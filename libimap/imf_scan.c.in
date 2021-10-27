@@ -1,0 +1,167 @@
+#include <libimap/libimap.h>
+
+imf_scanner_t imf_scanner_prep(
+    // bytes can be reallocated but it must not otherwise change
+    const dstr_t *bytes,
+    // if read_fn is not NULL, it should extend *bytes and return amnt_read
+    derr_t (*read_fn)(void*, size_t*),
+    void *read_fn_data
+){
+    return (imf_scanner_t){
+        .bytes = bytes,
+        .start_idx = 0,
+        .read_fn = read_fn,
+        .read_fn_data = read_fn_data,
+    };
+}
+
+dstr_t imf_get_scannable(imf_scanner_t *scanner){
+    return dstr_sub(scanner->bytes, scanner->start_idx, 0);
+}
+
+/* scanner for:
+       rfc 5322 (IMF, unstructured headers and from header)
+       rfc 5234 (ABNF)
+       rfc 5335 (utf8 updates to IMF)
+       rfc 2045 (mime, part 1/5, mime-related headers)
+
+    notes:
+      - this re2c spec has been tested as far back as re2c 0.14.3 (centos8)
+
+      - utf8 is only loosely validated according to the patterns in rfc5335
+
+      - non-utf8 8-bit values are distinguished from valid utf8.
+
+      - for robustness, all line-ending types (CR/CRLF/LF/LFCR) are supported,
+        even though rfc 5322 mandates CRLF.
+*/
+
+/* peek either returns a nul byte (which is a valid token) or a character,
+   meeting re2c's need for lookahead and our need for const substrings */
+static unsigned char peek(const dstr_t *text, size_t idx){
+    return idx < text->len ? ((unsigned char*)text->data)[idx] : '\0';
+}
+
+// returns 0 on success, nonzero on eof or error
+static int fill(derr_t *e, imf_scanner_t *scanner){
+    if(scanner->read_fn == NULL){
+        // no read_fn provided
+        return -1;
+    }
+
+    if(is_error(*e)) return -1;
+
+    size_t amnt_read;
+    IF_PROP(e, scanner->read_fn(scanner->read_fn_data, &amnt_read) ){
+        return -1;
+    }
+
+    // ignore EOF here; peek will return '\0's and we will detect that.
+    return 0;
+}
+
+derr_t imf_scan(
+    imf_scanner_t *scanner,
+    dstr_off_t *token_out,
+    imf_token_e *type
+){
+    derr_t e = E_OK;
+    derr_t e2 = E_OK;
+
+    size_t idx = scanner->start_idx;
+    size_t backup_idx = 0;
+
+    #define YYPEEK() peek(scanner->bytes, idx)
+    #define YYSKIP() peek(scanner->bytes, ++idx)
+    #define YYFILL(n) fill(&e2, scanner)
+    // this is a buffer limit check, not an EOF check
+    #define YYLESSTHAN(n) scanner->bytes->len - idx < n
+    #define YYBACKUP() backup_idx = idx;
+    #define YYRESTORE() idx = backup_idx;
+    #define YYCTYPE unsigned char
+
+    /*!re2c
+        u_2          = [\xc2-\xdf] [\x80-\xbf];
+        u_3a         = "\xe0" [\xa0-\xbf] [\x80-\xbf];
+        u_3b         = [\xe1-\xec] [\x80-\xbf]{2};
+        u_3c         = "\xed" [\x80-\x9f] [\x80-\xbf];
+        u_3d         = [\xee-\xef] [\x80-\xbf]{2};
+        u_4a         = "\xf0" [\x90-\xbf] [\x80-\xbf]{2};
+        u_4b         = [\xf1-\xf3] [\x80-\xbf]{3};
+        u_4c         = "\xf4" [\x80-\x8f] [\x80-\xbf]{2};
+
+        utf8         = u_2|u_3a|u_3b|u_3c|u_3d|u_4a|u_4b|u_4c;
+        eightbit     = [\x80-\xFF];
+
+        ascii_text   = [!#$%&'*+A-Z^_`a-z{|}~-];
+        nil          = "\x00";
+        tab          = "\x09";
+        lf           = "\x0a";
+        cr           = "\x0d";
+        non_ws_ctrl  = [\x01-\x08\x0b\x0c\x0e-\x1f\x7f];
+        ws           = tab|" ";
+        eol          = (lf cr?)|(cr lf?);
+        num          = [0-9];
+
+        nil          { *type = IMF_NIL; goto done; }
+        eol          { *type = IMF_EOL; goto done; }
+        ws+          { *type = IMF_WS; goto done; }
+        non_ws_ctrl  { *type = IMF_NON_WS_CTRL; goto done; }
+        "."          { *type = IMF_DOT; goto done; }
+        "("          { *type = IMF_RPAREN; goto done; }
+        ")"          { *type = IMF_LPAREN; goto done; }
+        "<"          { *type = IMF_LANGLE; goto done; }
+        ">"          { *type = IMF_RANGLE; goto done; }
+        "["          { *type = IMF_LBRACKET; goto done; }
+        "]"          { *type = IMF_RBRACKET; goto done; }
+        "@"          { *type = IMF_ARUBA; goto done; }
+        ","          { *type = IMF_COMMA; goto done; }
+        ";"          { *type = IMF_SEMI; goto done; }
+        ":"          { *type = IMF_COLON; goto done; }
+        "\\"         { *type = IMF_BACKSLASH; goto done; }
+        "\""         { *type = IMF_DQUOTE; goto done; }
+        "/"          { *type = IMF_SLASH; goto done; }
+        "?"          { *type = IMF_QUESTION; goto done; }
+        "="          { *type = IMF_EQ; goto done; }
+
+        'rfc822'     { *type = IMF_RFC822; goto done; }
+        'message'    { *type = IMF_MESSAGE; goto done; }
+        'multipart'  { *type = IMF_MULTIPART; goto done; }
+        'digest'     { *type = IMF_DIGEST; goto done; }
+
+        num+         { *type = IMF_NUM; goto done; }
+        ascii_text+  { *type = IMF_TEXT; goto done; }
+        utf8+        { *type = IMF_UTF8; goto done; }
+
+        // disallow multi-character non-utf8 eight-bit strings, for quoted-pair
+        eightbit     { *type = IMF_EIGHTBIT; goto done; }
+    */
+
+done:
+    // check for read errors first
+    PROP_VAR(&e, &e2);
+
+    // detect EOF; when peek() returns '\0' and idx points out of the buffer
+    if(*type == IMF_NIL && idx >= scanner->bytes->len){
+        *type = IMF_EOF;
+        *token_out = (dstr_off_t){
+            .buf = scanner->bytes,
+            .start = scanner->start_idx,
+            .len = 0,
+        };
+        scanner->start_idx = scanner->bytes->len;
+        return e;
+    }
+
+    // get the token bounds
+    *token_out = (dstr_off_t){
+        .buf = scanner->bytes,
+        .start = scanner->start_idx,
+        .len = idx - scanner->start_idx,
+    };
+
+    // mark everything done until here
+    scanner->start_idx = idx;
+
+    return e;
+}

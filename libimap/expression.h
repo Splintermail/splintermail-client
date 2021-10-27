@@ -813,7 +813,7 @@ typedef struct {
     size_t len;
 } dstr_off_t;
 
-static inline dstr_off_t token_extend2(dstr_off_t start, dstr_off_t end){
+static inline dstr_off_t dstr_off_extend(dstr_off_t start, dstr_off_t end){
     return (dstr_off_t){
         .buf = start.buf,
         .start = start.start,
