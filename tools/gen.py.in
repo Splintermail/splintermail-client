@@ -423,6 +423,31 @@ class Parsable(metaclass=abc.ABCMeta):
         pass
 
 
+class Parameter:
+    """
+    A maybe-typed parameter in the definition of an function-like-expression.
+    """
+    def __init__(self, name, typ, loc):
+        self.name = name
+        self.type = typ
+        self.loc = loc
+
+
+class Argument:
+    """
+    A value passed to a function-like-expression.
+
+    Points to either a Reference or a Parameter.  Type is inferred based on
+    what it points to.
+    """
+    def __init__(self, name, src, loc):
+        assert isinstance(src, (Parameter, Reference)), type(src).__name__
+        self.name = name
+        self.src = src
+        self.loc = loc
+        self.type = src.type
+
+
 class Reference(Parsable):
     """
     Points to a Definition (either a Token or an Experiment).
@@ -430,14 +455,23 @@ class Reference(Parsable):
     Token.loc and Expriment.loc point to definitions, but Reference.loc points
     to the location of a reference.
     """
-    def __init__(self, defn, loc=None):
+    def __init__(self, defn, args=None, tag=None, loc=None):
         assert isinstance(defn, (Token, Expression)), type(defn).__name__
+        assert args is None or isinstance(defn, Expression)
         self.defn = defn
+        self.args = args or []
+        self.tag = tag
         self.loc = loc
         self.prematched = None
 
     def summary(self, parent_priority=PRIORITY_UNAMBIGUOUS):
-        return self.defn.name
+        argstr = ""
+        if self.args:
+            argstr = "!(" + ','.join(a.tag for a in self.args) + ")"
+        tagstr = ""
+        if self.tag:
+            tagstr = ":" + self.tag
+        return self.defn.name + argstr + tagstr
 
     def state_map(self, parent_priority=PRIORITY_UNAMBIGUOUS):
         return {self: ". " + self.defn.name}
@@ -504,8 +538,8 @@ class Repeat(Parsable):
             self.err_op = "repetition operator"
         self.prematched = None
 
-    def add_term(self, term, tag=None):
-        self.seq.add_term(term, tag)
+    def add_term(self, term):
+        self.seq.add_term(term)
 
     def add_code(self, code, tag=None, loc=None):
         self.seq.add_code(code, tag, loc)
@@ -578,7 +612,7 @@ class Repeat(Parsable):
         if self.rmin != self.rmax and (self.rmax is None or self.rmax > 1):
             seq_first = self.seq.get_first(None)
             seq_disallowed = self.seq.get_disallowed_after(None)
-            conflicts = seq_first.intersection(seq_disallowed).difference({None})
+            conflicts = seq_first.intersection(seq_disallowed)
             if conflicts:
                 raise FirstFollow(self, conflicts)
             if fallbacks is not None:
@@ -591,7 +625,7 @@ class Repeat(Parsable):
                     return out
                 seq_disallowed = expand(seq_disallowed)
                 seq_first = expand(seq_first)
-                conflicts = seq_disallowed.intersection(term_first_ex)
+                conflicts = seq_first.intersection(seq_disallowed)
                 if conflicts:
                     raise FirstFollow(self, conflicts, due_to_fallbacks=True)
 
@@ -627,11 +661,11 @@ class Branches(Parsable):
                 out[k] = pre + v + post
         return out
 
-    def add_term(self, term, tag=None):
+    def add_term(self, term):
         assert self._branch is not None, (
             "inside a branches() context, but not any branch() subcontext!"
         )
-        self._branch.add_term(term, tag)
+        self._branch.add_term(term)
 
     def add_code(self, code, tag=None, loc=None):
         assert self._branch is not None, (
@@ -700,8 +734,8 @@ class Recovery(Parsable):
         self.loc = loc
         self.prematched = None
 
-    def add_term(self, term, tag=None):
-        self.seq.add_term(term, tag)
+    def add_term(self, term):
+        self.seq.add_term(term)
 
     def add_code(self, code, tag=None, loc=None):
         self.seq.add_code(code, tag, loc)
@@ -743,24 +777,24 @@ class Sequence(Parsable):
         self.name = name
         self.scopes = [self]
         self.precode = []
-        # tuples of (Parsable, tag=None, code=[])
+        # tuples of (Parsable, code=[])
         self.terms = []
         self.loc = loc
         self.prematched = None
 
-    def add_term(self, term, tag=None):
-        self.terms.append((term, tag, []))
+    def add_term(self, term):
+        self.terms.append((term, []))
 
     def add_code(self, code, tag=None, loc=None):
         if not self.terms:
             self.precode.append(Snippet(code, tag, loc))
         else:
-            self.terms[-1][2].append(Snippet(code, tag, loc))
+            self.terms[-1][1].append(Snippet(code, tag, loc))
 
     def summary(self, parent_priority=PRIORITY_UNAMBIGUOUS):
         if len(self.terms) == 1:
             return self.terms[0][0].summary(parent_priority)
-        out = " ".join(t.summary(PRIORITY_SEQUENCE) for t, _, _ in self.terms)
+        out = " ".join(t.summary(PRIORITY_SEQUENCE) for t, _ in self.terms)
         if parent_priority > PRIORITY_SEQUENCE:
             out = "(" + out + ")"
         return out
@@ -770,12 +804,12 @@ class Sequence(Parsable):
         if len(self.terms) == 1:
             out.update(self.terms[0][0].state_map())
             return out
-        for i, (t, _, _) in enumerate(self.terms):
+        for i, (t, _) in enumerate(self.terms):
             # calculate error strings
-            pre = " ".join(tt.summary(PRIORITY_SEQUENCE) for tt,_,_ in self.terms[:i])
+            pre = " ".join(tt.summary(PRIORITY_SEQUENCE) for tt,_ in self.terms[:i])
             if pre:
                 pre += " "
-            post = " ".join(tt.summary(PRIORITY_SEQUENCE) for tt,_,_ in self.terms[i+1:])
+            post = " ".join(tt.summary(PRIORITY_SEQUENCE) for tt,_ in self.terms[i+1:])
             if post:
                 post = " " + post
             if parent_priority > PRIORITY_SEQUENCE:
@@ -796,7 +830,7 @@ class Sequence(Parsable):
         """
         prev = add_to_prev(prev, self.name, "get_first")
         first = set()
-        for term, _, _ in self.terms[start:]:
+        for term, _ in self.terms[start:]:
             term_first = term.get_first(list(prev))
             # detect conflicts in .check(), not here.
             first = first.union(term_first)
@@ -826,7 +860,7 @@ class Sequence(Parsable):
         """
         prev = add_to_prev(prev, self.name, "get_disallowed_after")
         disallowed = set()
-        for term, _, _ in reversed(self.terms):
+        for term, _ in reversed(self.terms):
             term_disallowed = term.get_disallowed_after(list(prev))
             disallowed = disallowed.union(term_disallowed)
             # if None is not in this term's disallowed, we have our answer
@@ -849,11 +883,11 @@ class Sequence(Parsable):
         """
         prev = {self.name}
 
-        for term, _, _ in self.terms:
+        for term, _ in self.terms:
             term.check(fallbacks=fallbacks)
 
         disallowed = set()
-        for i, (term, _, _) in enumerate(self.terms):
+        for i, (term, _) in enumerate(self.terms):
             term_first = term.get_first(list(prev))
             # Ignore None when checking for conflicts
             disallowed = disallowed.difference({None})
@@ -898,6 +932,7 @@ class Expression(Definition):
     """
     def __init__(self, name, typ=None, loc=None, body_loc=None):
         self.name = name
+        self.params = []
         self.type = typ
         self.seq = Sequence(self.name + ".seq", loc=body_loc)
         self.scopes = [self.seq]
@@ -912,8 +947,9 @@ class Expression(Definition):
         fn(self)
         return self
 
-    def match(self, term, tag=None, loc=None):
-        self.scopes[-1].add_term(Reference(term, loc), tag)
+    def match(self, term, tag=None, loc=None, args=None):
+        term = Reference(term, args=args, tag=tag, loc=loc)
+        self.scopes[-1].add_term(term)
         return term
 
     @contextlib.contextmanager
@@ -979,7 +1015,7 @@ class Expression(Definition):
                         _recurses(b)
                     return
                 elif isinstance(obj, Sequence):
-                    for term, _, _ in obj.terms:
+                    for term, _ in obj.terms:
                         _recurses(term)
                     return
                 raise ValueError(
@@ -1107,7 +1143,7 @@ class Grammar:
             # the first term may prematched, but only if it is concrete
             if None in obj.terms[0][0].get_first():
                 prematched = False
-            for t, _, _ in obj.terms:
+            for t, _ in obj.terms:
                 self._set_prematched(t, prematched)
                 # Subsequent terms are never prematched
                 prematched = False
@@ -1420,7 +1456,7 @@ class C:
         if isinstance(obj, Sequence):
             persist = 0
             peak = 0
-            for t, _, _ in obj.terms:
+            for t, _ in obj.terms:
                 peak = max(peak, persist + self.stackmax(t))
                 persist += self.stackpersist(t)
             return peak
@@ -1453,7 +1489,7 @@ class C:
             elif isinstance(obj, Branches):
                 return max(_callstackmax(b) for b in obj.branches)
             elif isinstance(obj, Sequence):
-                return max(_callstackmax(term) for term, _, _ in obj.terms)
+                return max(_callstackmax(term) for term, _ in obj.terms)
             raise ValueError(
                 "unknown term type: %s"%type(term).__name__
             )
@@ -1496,7 +1532,7 @@ class C:
             elif isinstance(obj, Sequence):
                 persist = 0
                 peak = 0
-                for t, _, _ in obj.terms:
+                for t, _ in obj.terms:
                     peak = max(peak, persist + _semstackmax(t))
                     persist += self.stackpersist(t)
                 return peak
@@ -1541,9 +1577,9 @@ class C:
         if isinstance(obj, Recovery):
             return 1 + self.nstates(obj.seq)
         if isinstance(obj, Sequence):
-            return sum(self.nstates(t) for t,_,_ in obj.terms)
+            return sum(self.nstates(t) for t,_ in obj.terms)
 
-    def gen(self, obj, state, stack, var, tag=None, want_final_loc=False):
+    def gen(self, obj, state, stack, var, want_final_loc=False):
         """Generate code to match an object."""
         if isinstance(obj, Reference):
             if isinstance(obj.defn, Token):
@@ -1739,11 +1775,10 @@ class C:
             oldstack = stack
             var.new_scope()
             self.print_code(obj.precode, "    ")
-            for i, (t, tag, code) in enumerate(obj.terms):
-                if tag is not None:
-                    assert isinstance(t, Reference), "wrong type for tag: " + type(t).__name__
-                    var.define(tag, t.defn.type, stack)
-                state, stack = self.gen(t, state, stack, var, tag)
+            for i, (t, code) in enumerate(obj.terms):
+                if isinstance(t, Reference) and t.tag is not None:
+                    var.define(t.tag, t.defn.type, stack)
+                state, stack = self.gen(t, state, stack, var)
                 final = i+1 == len(obj.terms)
                 # calculate the overall location before the final code block
                 if final and want_final_loc:
@@ -2577,18 +2612,15 @@ class Python:
         with self.extra_vars(token_list=token_list):
             self.fprint(i + "while (yield from tokens.peek()) not in $token_list:")
 
-    def gen(self, obj, tag, i, want_final_loc=False):
+    def gen(self, obj, i, want_final_loc=False):
         try:
             name = obj.defn.name if isinstance(obj, Reference) else None
-            with self.extra_vars(
-                name=name,
-                tag="" if not tag else "yy_%s"%tag,
-            ):
-                self._gen(obj, tag, i, want_final_loc)
+            with self.extra_vars(name=name):
+                self._gen(obj, i, want_final_loc)
         except Exception as e:
             raise RuntimeError("generating for " + obj.summary()) from e
 
-    def _gen(self, obj, tag, i, want_final_loc):
+    def _gen(self, obj, i, want_final_loc):
         if isinstance(obj, Reference):
             if isinstance(obj.defn, Token):
                 tokens = {obj.defn.name}.union(self.fallbacks[obj.defn.name])
@@ -2599,8 +2631,8 @@ class Python:
                 self.syntax_error("val.loc", i + "    ")
                 if self.span_fn:
                     self.fprint(i + "out.loc = $span_fn(out.loc, val.loc)")
-                if tag:
-                    self.fprint(i + "$tag = val")
+                if obj.tag:
+                    self.fprint(i + "yy_%s = val"%obj.tag)
                 return
 
             if isinstance(obj.defn, Expression):
@@ -2610,8 +2642,8 @@ class Python:
                 )
                 if self.span_fn:
                     self.fprint(i + "out.loc = $span_fn(out.loc, val.loc)")
-                if tag:
-                    self.fprint(i + "$tag = val")
+                if obj.tag:
+                    self.fprint(i + "yy_%s = val"%obj.tag)
                 return
 
             raise RuntimeError("unrecognized reference type: " + type(obj.defn).__name__)
@@ -2622,7 +2654,7 @@ class Python:
                 t = obj.get_first()
                 f = self.fallbacks.all_fallbacks(t)
                 self.if_token_in(t, f, i)
-                self.gen(obj.seq, None, i+"    ")
+                self.gen(obj.seq, i+"    ")
                 return
 
             if obj.type == "zero_or_more":
@@ -2630,7 +2662,7 @@ class Python:
                 t = obj.get_first()
                 f = self.fallbacks.all_fallbacks(t)
                 self.while_token_in(t, f, i)
-                self.gen(obj.seq, None, i+"    ")
+                self.gen(obj.seq, i+"    ")
                 return
 
             # general case
@@ -2649,7 +2681,7 @@ class Python:
                 f = self.fallbacks.all_fallbacks(t)
                 self.while_token_in(t, f, i, pre)
                 self.fprint(i + "    $counter += 1")
-                self.gen(obj.seq, None, i+"    ")
+                self.gen(obj.seq, i+"    ")
             return
 
         if isinstance(obj, Branches):
@@ -2659,7 +2691,7 @@ class Python:
                 t = seq.get_first()
                 f = self.fallbacks.all_fallbacks(t, exclude)
                 self.if_token_in(t, f, i, pos=n)
-                self.gen(seq, None, i+"    ")
+                self.gen(seq, i+"    ")
             self.fprint(i + "else:")
             self.syntax_error("(yield from next(tokens)).loc", i + "    ")
             return
@@ -2667,7 +2699,7 @@ class Python:
         if isinstance(obj, Recovery):
             self.fprint(i + "# " + obj.summary())
             self.fprint(i + "try:")
-            self.gen(obj.seq, None, i+"    ")
+            self.gen(obj.seq, i+"    ")
             t = obj.after
             f = self.fallbacks.all_fallbacks(t)
             self.if_token_not_in(t, f, i+"    ")
@@ -2680,8 +2712,8 @@ class Python:
 
         if isinstance(obj, Sequence):
             self.print_code(obj.precode, i)
-            for term, tag, code in obj.terms:
-                self.gen(term, tag, i)
+            for term, code in obj.terms:
+                self.gen(term, i)
                 self.print_code(code, i)
             return
 
@@ -2696,7 +2728,7 @@ class Python:
             self.fprint("    out = ${prefix}Expression()")
             if self.span_fn:
                 self.fprint("    out.loc = $zero_loc_fn(tokens.last_loc)")
-            self.gen(expr.seq, None, "    ")
+            self.gen(expr.seq, "    ")
             self.fprint("    return out")
 
     def define_user_api(self, root):
@@ -2804,17 +2836,35 @@ class Python:
 ### Meta Parser ###
 
 class ParsedName:
-    def __init__(self, name, loc):
+    def __init__(self, name, loc, *, tag=None, args=None):
         self.name = name
-        self.tag = None
         self.loc = loc
+        self.tag = tag
+        self.args = args
 
-    def process(self, g, e):
+    def process(self, g, e, scope):
         x = g.get_name(self.name)
         if x.loc is None:
             # implicit initialization, set a location
             x.loc = self.loc
-        e.match(x, self.tag, self.loc)
+        args = None
+        if self.args:
+            args = []
+            for arg in self.args:
+                if arg.name not in scope:
+                    raise MetaSyntaxError(
+                        "no tag to match arg %s in this scope"%arg.name,
+                        self.loc
+                    )
+                args.append(scope[arg.name])
+        ref = e.match(x, self.tag, self.loc, args)
+        if self.tag is None:
+            return
+        if self.tag in scope:
+            raise MetaSyntaxError(
+                "tag %s shadows earlier definition"%self.tag, self.loc
+            )
+        scope[self.tag] = ref
 
 class ParsedSnippet:
     def __init__(self, text, loc):
@@ -2822,7 +2872,7 @@ class ParsedSnippet:
         self.tag = None
         self.loc = loc
 
-    def process(self, g, e):
+    def process(self, g, e, scope):
         e.exec(self.text, self.tag, self.loc)
 
 class ParsedBranches:
@@ -2830,16 +2880,16 @@ class ParsedBranches:
         self.branches = []
         self.loc = None
 
-    def process(self, g, e):
+    def process(self, g, e, scope):
         # Collapse single-branch expressions.
         if len(self.branches) == 1:
-            self.branches[0].process(g, e)
+            self.branches[0].process(g, e, scope)
             return
 
         with e.branches(self.loc) as b:
             for parsed_branch in self.branches:
                 with b.branch():
-                    parsed_branch.process(g, e)
+                    parsed_branch.process(g, e, scope)
 
 class ParsedRecovery:
     def __init__(self, sub):
@@ -2847,9 +2897,9 @@ class ParsedRecovery:
         self.code = []
         self.loc = None
 
-    def process(self, g, e):
+    def process(self, g, e, scope):
         with e.recovery(loc=self.loc) as r:
-            self.sub.process(g, e)
+            self.sub.process(g, e, scope)
             for c in self.code:
                 r.add_recovery_code(c.text, c.tag)
 
@@ -2860,18 +2910,20 @@ class ParsedRepeat:
         self.rmax = None
         self.loc = None
 
-    def process(self, g, e):
+    def process(self, g, e, scope):
         with e.repeat(self.rmin, self.rmax):
-            self.term.process(g, e)
+            self.term.process(g, e, scope)
 
 class ParsedSequence:
     def __init__(self):
         self.elems = []
         self.loc = None
 
-    def process(self, g, e):
+    def process(self, g, e, scope):
+        # We enter a new scope in every Sequence.
+        scope = dict(**scope)
         for elem in self.elems:
-            elem.process(g, e)
+            elem.process(g, e, scope)
 
 class ParsedGenerator:
     def __init__(self, name):
@@ -2973,13 +3025,18 @@ class ParsedDoc:
                 e = g.expr(name.name)
                 e.type = name.tag
                 e.loc = text_span(name.loc, val.loc)
+                if name.args is not None:
+                    e.params = [
+                        Parameter(a.name, a.tag, a.loc) for a in name.args
+                    ]
 
         # then define all the expressions
         for name, val in self.defs:
             if val is None:
                 continue
             e = g.get_name(name.name)
-            val.process(g, e)
+            scope = {p.name: p for p in e.params}
+            val.process(g, e, scope)
 
         return g
 
@@ -3109,6 +3166,8 @@ class Tokenizer:
             "]": RBRACKET,
             ")": RPAREN,
             ";": SEMI,
+            "!": BANG,
+            ",": COMMA,
         }
         if c in singles:
             _, loc = yield from next(self.cs)

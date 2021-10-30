@@ -44,30 +44,42 @@ import gen
 # doc = *code 1*stmt *code;
 # code = CODE [COLON TEXT:tag]
 # stmt = directive | def;
-# def = name (SEMI | EQ branches SEMI);
-# name = TEXT:name [COLON TEXT:tag];
+# xtag = [COLON TEXT:tag];
+# params = LPAREN TEXT xtag 1*(COMMA TEXT xtag) RPAREN;
+# xparams = [params];
+# args = BANG LPAREN TEXT 1*(COMMA TEXT) RPAREN;
+# xargs = [args];
+# ref = TEXT:name [xargs] xtag;
+# def =
+#   TEXT:name
+#   xparams:params
+#   xtag:tag (
+#     | EQ 1*stmt SEMI
+#     | SEMI  # disallow $params
+#   );
 # branches =
 # | 1*(PIPE seq)
 # | seq *(PIPE seq)  # allows for the convert-to-seq case
 # ;
 # seq = *code 1*(term *code);
 # term =
-# | [NUM] ASTERISK [NUM] (TEXT | LPAREN branches RPAREN)  # disallow *thing:tag
-#                                                         # since the :tag
-#                                                         # would be useless
-# | name
+# | [NUM] ASTERISK [NUM] (
+#     | ref # disallow a tag on this ref
+#     | LPAREN branches RPAREN
+#   )
+# | ref
 # | LPAREN branches RPAREN
 # | LBRACKET branches RBRACKET
 # | LANGLE branches QUESTION *code RANGLE
 # ;
 # directive = PERCENT (
 #   | GENERATOR TEXT:generator
-#   | KWARG [COLON TEXT:tag] TEXT:key TEXT:value  # TODO: support ATOM
+#   | KWARG [COLON TEXT:tag] TEXT:key TEXT:value
 #   | TYPE [COLON TEXT:tag] CODE:spec [CODE:destructor]
 #   | ROOT [COLON TEXT:tag] TEXT:spec
-#   | FALLBACK [COLON TEXT:tag] TEXT:to TEXT:from *(TEXT:from);
-#   | PARAM [COLON TEXT:tag] TEXT:name [CODE:type];
-#   | PREFIX [COLON TEXT:tag] TEXT:prefix;
+#   | FALLBACK [COLON TEXT:tag] TEXT:to TEXT:from *(TEXT:from)
+#   | PARAM [COLON TEXT:tag] TEXT:name [CODE:type]
+#   | PREFIX [COLON TEXT:tag] TEXT:prefix
 # ) SEMI;
 #
 # priority of operators:
@@ -75,6 +87,12 @@ import gen
 #  - multipliers
 #  - sequences
 #  - branches
+
+# TODO: support some mechanism to allow a single trailing comma:
+# # Can we support right recursion?
+# args = TEXT:name [COMMA [arg_list]];
+# # Can this be supported?  Can it be analyzed?
+# args = TEXT:name 1*(COMMA (arg_list | %return ));
 
 g = gen.Grammar()
 
@@ -94,6 +112,8 @@ PIPE = g.token("PIPE")
 PERCENT = g.token("PERCENT")
 CODE = g.token("CODE")
 SEMI = g.token("SEMI")
+BANG = g.token("BANG")
+COMMA = g.token("COMMA")
 EOF = g.token("EOF")
 
 GENERATOR = g.token("GENERATOR")
@@ -108,14 +128,55 @@ PREFIX = g.token("PREFIX")
 branches = g.expr("branches")
 
 @g.expr
-def name(e):
-    e.match(TEXT, "name")
-    e.exec("$$ = ParsedName($name, @name)")
+def xtag(e):
     with e.repeat(0, 1):
         e.match(COLON)
         e.match(TEXT, "tag")
-        e.exec("$$.tag = $tag")
-        e.exec("$$.loc = text_span($$.loc, @tag)")
+        e.exec("$$ = $tag")
+
+@g.expr
+def params(e):
+    e.match(LPAREN)
+    e.match(TEXT, "n")
+    e.match(xtag, "t")
+    e.exec("$$ = [ParsedName($n, text_span(@n, @t), tag=$t)]")
+    with e.repeat(0, None):
+        e.match(COMMA)
+        e.match(TEXT, "n2")
+        e.match(xtag, "t2")
+        e.exec("$$.append(ParsedName($n2, text_span(@n2, @t2), tag=$t2))")
+    e.match(RPAREN)
+
+@g.expr
+def args(e):
+    e.match(BANG)
+    e.match(LPAREN)
+    e.match(TEXT, "n")
+    e.exec("$$ = [ParsedName($n, @n)]")
+    with e.repeat(0, None):
+        e.match(COMMA)
+        e.match(TEXT, "n2")
+        e.exec("$$.append(ParsedName($n2, @n2))")
+    e.match(RPAREN)
+
+@g.expr
+def xparams(e):
+    with e.repeat(0, 1):
+        e.match(params, "x")
+        e.exec("$$ = $x")
+
+@g.expr
+def xargs(e):
+    with e.repeat(0, 1):
+        e.match(args, "x")
+        e.exec("$$ = $x")
+
+@g.expr
+def ref(e):
+    e.match(TEXT, "n")
+    e.match(xargs, "a")
+    e.match(xtag, "t")
+    e.exec("$$ = ParsedName($n, text_span(@n, @t), tag=$t, args=$a)")
 
 @g.expr
 def code(e):
@@ -143,9 +204,17 @@ def term(e):
                 e.exec("$$.rmax = $n")
             with e.branches() as b2:
                 with b2.branch():
-                    e.match(TEXT, "name")
-                    e.exec("$$.term = ParsedName($name, None)")
-                    e.exec("$$.loc = text_span(@m, @name)")
+                    e.match(ref, "ref")
+                    e.exec("""
+                        if $ref.tag is not None:
+                            raise MetaSyntaxError(
+                                "illegal tag with bare multiplier; a tag here "
+                                "would not be accessible from any scope",
+                                @ref.tag
+                            )
+                        $$.term = $ref
+                        $$.loc = text_span(@m, @ref)
+                    """)
                 with b2.branch():
                     e.match(LPAREN)
                     e.match(branches, "branches")
@@ -153,8 +222,8 @@ def term(e):
                     e.exec("$$.loc = text_span(@m, @branches)")
                     e.match(RPAREN)
         with b.branch():
-            e.match(name, "name")
-            e.exec("$$ = $name")
+            e.match(ref, "ref")
+            e.exec("$$ = $ref")
         with b.branch():
             e.match(LPAREN)
             e.match(branches, "branches")
@@ -310,18 +379,25 @@ def directive(e):
 
 @g.expr
 def definition(e):
-    e.match(name, "name")
+    e.match(TEXT, "n")
+    e.match(xparams, "p")
+    e.match(xtag, "t")
     with e.branches() as b:
         with b.branch():
             # expression
             e.match(EQ)
-            e.match(branches, "branches")
+            e.match(branches, "b")
             e.match(SEMI)
-            e.exec("""$$ = ($name, $branches)""")
+            e.exec("$$ = (ParsedName($n, text_span(@n, @t), tag=$t, args=$p), $b)")
         with b.branch():
+            e.exec("""
+                if $p is not None:
+                    msg = "you cannot set parameters on a token"
+                    raise MetaSyntaxError(msg, @p)
+            """)
             # explicit token declaration
             e.match(SEMI)
-            e.exec("""$$ = ($name, None)""")
+            e.exec("$$ = (ParsedName($n, text_span(@n, @t), tag=$t), None)")
 
 @g.expr
 def stmt(e):
