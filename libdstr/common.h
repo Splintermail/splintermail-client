@@ -351,6 +351,31 @@ dstr_t dstr_sub(const dstr_t* in, size_t start, size_t end);
 // this is the right api, use SIZE_MAX instead for 0 for end
 dstr_t dstr_sub2(const dstr_t in, size_t start, size_t end);
 
+dstr_t _dstr_lstrip_chars(const dstr_t in, const char *chars, size_t n);
+#define dstr_lstrip_chars(in, ...) \
+    _dstr_lstrip_chars( \
+        (in), \
+        &(const char[]){'\0', __VA_ARGS__}[1], \
+        sizeof((char[]){'\0', __VA_ARGS__}) / sizeof(char) - 1 \
+    )
+
+dstr_t _dstr_rstrip_chars(const dstr_t in, const char *chars, size_t n);
+#define dstr_rstrip_chars(in, ...) \
+    _dstr_rstrip_chars( \
+        (in), \
+        &(const char[]){'\0', __VA_ARGS__}[1], \
+        sizeof((char[]){'\0', __VA_ARGS__}) / sizeof(char) - 1 \
+    )
+
+dstr_t _dstr_strip_chars(const dstr_t in, const char *chars, size_t n);
+#define dstr_strip_chars(in, ...) \
+    _dstr_strip_chars( \
+        (in), \
+        &(const char[]){'\0', __VA_ARGS__}[1], \
+        sizeof((char[]){'\0', __VA_ARGS__}) / sizeof(char) - 1 \
+    )
+
+
 // result is <0, =0, or >0 if a is <b, =b, or >b, respectively
 // Its just a byte comparison, its not UTF8-smart
 // because there's multiple ways to encode the same accent in UTF8

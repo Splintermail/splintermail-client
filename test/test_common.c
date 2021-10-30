@@ -11,8 +11,8 @@
 #define EXP_VS_GOT(exp, got) do { \
     int result = dstr_cmp(exp, got); \
     if(result != 0){ \
-        TRACE(&e, "expected: %x\n" \
-                 "but got:  %x\n", FD(exp), FD(got)); \
+        TRACE(&e, "expected: '%x'\n" \
+                 "but got:  '%x'\n", FD_DBG(exp), FD_DBG(got)); \
         ORIG_GO(&e, E_VALUE, "test fail", cleanup); \
     } \
 } while(0)
@@ -125,7 +125,47 @@ static derr_t test_dstr_sub(void){
         ORIG(&e, E_VALUE, "non-trivial start and end points fail");
     }
     return e;
+}
 
+static derr_t test_dstr_strip(void){
+    derr_t e = E_OK;
+    LOG_INFO("----- test dstr_strip -------------------\n");
+    dstr_t in = DSTR_LIT("  \nhello world  \n");
+    // lstrip
+    {
+        dstr_t got = dstr_lstrip_chars(in, ' ');
+        dstr_t exp = DSTR_LIT("\nhello world  \n");
+        EXP_VS_GOT(&exp, &got);
+    }
+    {
+        dstr_t got = dstr_lstrip_chars(in, ' ', '\n');
+        dstr_t exp = DSTR_LIT("hello world  \n");
+        EXP_VS_GOT(&exp, &got);
+    }
+    // rstrip
+    {
+        dstr_t got = dstr_rstrip_chars(in, ' ');
+        dstr_t exp = DSTR_LIT("  \nhello world  \n");
+        EXP_VS_GOT(&exp, &got);
+    }
+    {
+        dstr_t got = dstr_rstrip_chars(in, ' ', '\n');
+        dstr_t exp = DSTR_LIT("  \nhello world");
+        EXP_VS_GOT(&exp, &got);
+    }
+    // strip
+    {
+        dstr_t got = dstr_strip_chars(in, ' ');
+        dstr_t exp = DSTR_LIT("\nhello world  \n");
+        EXP_VS_GOT(&exp, &got);
+    }
+    {
+        dstr_t got = dstr_strip_chars(in, ' ', '\n');
+        dstr_t exp = DSTR_LIT("hello world");
+        EXP_VS_GOT(&exp, &got);
+    }
+cleanup:
+    return e;
 }
 
 static derr_t test_dstr_find(void){
@@ -826,6 +866,7 @@ int main(int argc, char** argv){
     PROP_GO(&e, test_dstr_icmp(),            test_fail);
     PROP_GO(&e, test_dstr_grow(),            test_fail);
     PROP_GO(&e, test_dstr_sub(),             test_fail);
+    PROP_GO(&e, test_dstr_strip(),           test_fail);
     PROP_GO(&e, test_dstr_find(),            test_fail);
     PROP_GO(&e, test_dstr_count(),           test_fail);
     PROP_GO(&e, test_begin_end_with(),       test_fail);

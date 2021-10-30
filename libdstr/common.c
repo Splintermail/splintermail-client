@@ -162,6 +162,42 @@ dstr_t dstr_sub2(const dstr_t in, size_t start, size_t end){
     return out;
 }
 
+dstr_t _dstr_lstrip_chars(const dstr_t in, const char *chars, size_t n){
+    dstr_t out = in;
+    while(out.len){
+        char c = out.data[0];
+        bool found = false;
+        for(size_t i = 0; i < n; i++){
+            if(c != chars[i]) continue;
+            out = dstr_sub2(out, 1, out.len);
+            found = true;
+            break;
+        }
+        if(!found) break;
+    }
+    return out;
+}
+
+dstr_t _dstr_rstrip_chars(const dstr_t in, const char *chars, size_t n){
+    dstr_t out = in;
+    while(out.len){
+        char c = out.data[out.len-1];
+        bool found = false;
+        for(size_t i = 0; i < n; i++){
+            if(c != chars[i]) continue;
+            out.len--;
+            found = true;
+            break;
+        }
+        if(!found) break;
+    }
+    return out;
+}
+
+dstr_t _dstr_strip_chars(const dstr_t in, const char *chars, size_t n){
+    return _dstr_lstrip_chars(_dstr_rstrip_chars(in, chars, n), chars, n);
+}
+
 // case-insensitive character
 static char ichar(char c){
     if(c >= 'a' && c <= 'z') return (char)(c - 32);
