@@ -32,6 +32,30 @@ TODO:
  - Grammar:
    - use source-order everywhere
    - configurable strictness for fallback-caused first/first, first/follow
+   - support paramaterized expressions to reduce side-effect duplication:
+
+       addr_spec = TEXT ARUBA TEXT;          # user@domain
+       angle_addr = LANGLE addr_spec RANGLE; # <user@domain>
+       named_addr = TEXT angle_addr;         # "Name" <user@domain>
+       # conflict, TEXT might mean addr_spec or named_addr:
+       mailbox = addr_spec | angle_addr | named_addr;
+
+       # solved:
+       _addr_spec (text) = ARUBA TEXT;
+       angle_addr = LANGLE addr_spec RANGLE;
+       _named_addr (text) = angle_addr;
+
+       mailbox =
+        | TEXT:t (
+            | _addr_spec(t)
+            | _named_addr(t)
+          )
+        | angle_addr
+       ;
+
+       # if you need the bare objects somewhere else:
+       addr_spec = TEXT:t _addr_spec(t);
+       named_addr = TEXT:t _named_addr(t)
 
  - Meta parser:
    - support an %include directive?
