@@ -1501,6 +1501,30 @@ class C:
         finally:
             self.file = old_file
 
+    def nstates(self, obj):
+        # Hack: logic here mirrors gen, but without generating anything
+        if isinstance(obj, Reference):
+            if isinstance(obj.defn, Token):
+                return int(not obj.prematched)
+            if isinstance(obj.defn, Expression):
+                return 1
+            raise RuntimeError("unrecognized reference type: " + type(obj.defn).__name__)
+        if isinstance(obj, Repeat):
+            if obj.type == "maybe":
+                return int(not obj.prematched) + self.nstates(obj.seq)
+            if obj.type == "zero_or_more":
+                return 1 + self.nstates(obj.seq)
+            return 1 + self.nstates(obj.seq)
+        if isinstance(obj, Branches):
+            return (
+                int(not obj.prematched)
+                + sum(self.nstates(b) for b in obj.branches)
+            )
+        if isinstance(obj, Recovery):
+            return 1 + self.nstates(obj.seq)
+        if isinstance(obj, Sequence):
+            return sum(self.nstates(t) for t,_,_ in obj.terms)
+
     def gen(self, obj, state, stack, var, tag=None, want_final_loc=False):
         """Generate code to match an object."""
         if isinstance(obj, Reference):
@@ -1741,21 +1765,7 @@ class C:
         self.ncounters = 0
         self.state_map = expr.seq.state_map()
 
-        # We need to know how many states there will be, but those are counted
-        # during generation of the function body.
-        with self.delay_output() as delayed_out:
-            var = C.Variables(self.fprint, semloc=self.semloc_type)
-            if expr.type is not None:
-                var.define("$", expr.type, 0)
-                self.fprint("    p->semstack[call->stack].type = ${PREFIX_}SEMTYPE_%s;"%expr.type)
-            self.fprint("")
-
-            # state starts at 1, since 0 is only the first time we're called
-            # stack starts at 1, since we always allocate the output
-            nstates, _ = self.gen(expr.seq, 1, 1, var, want_final_loc=True)
-
-            self.fprint("")
-            var.pop_scope()
+        exp_nstates = 1 + self.nstates(expr.seq)
 
         self.fprint("// %s = %s;"%(expr.name, expr.seq.summary()))
         self.fprint(
@@ -1765,7 +1775,7 @@ class C:
         # Jump to state.
         self.fprint("    switch(call->state){")
         self.fprint("        case " + str(0) + ": break;")
-        for n in range(nstates-1):
+        for n in range(exp_nstates-1):
             self.fprint("        case " + str(n+1) + ": goto yy" + str(n+1) + ";")
         self.fprint("    }")
         # Ensure we have enough stack space to operate.
@@ -1775,7 +1785,20 @@ class C:
         self.fprint("    }")
         self.fprint("    call->nsems = %d;"%x)
 
-        self.fprint(delayed_out.getvalue(), end="")
+        var = C.Variables(self.fprint, semloc=self.semloc_type)
+        if expr.type is not None:
+            var.define("$", expr.type, 0)
+            self.fprint("    p->semstack[call->stack].type = ${PREFIX_}SEMTYPE_%s;"%expr.type)
+        self.fprint("")
+
+        # state starts at 1, since 0 is only the first time we're called
+        # stack starts at 1, since we always allocate the output
+        nstates, _ = self.gen(expr.seq, 1, 1, var, want_final_loc=True)
+        # make sure self.nstates() agrees with self.gen()
+        assert nstates == exp_nstates, "%d != %d"%(nstates, exp_nstates)
+
+        self.fprint("")
+        var.pop_scope()
 
         self.fprint("    p->callslen--;");
         self.fprint("    return 0;")
