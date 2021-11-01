@@ -108,8 +108,8 @@ derr_t imf_scan(
         ws+          { *type = IMF_WS; goto done; }
         non_ws_ctrl  { *type = IMF_NON_WS_CTRL; goto done; }
         "."          { *type = IMF_DOT; goto done; }
-        "("          { *type = IMF_RPAREN; goto done; }
-        ")"          { *type = IMF_LPAREN; goto done; }
+        "("          { *type = IMF_LPAREN; goto done; }
+        ")"          { *type = IMF_RPAREN; goto done; }
         "<"          { *type = IMF_LANGLE; goto done; }
         ">"          { *type = IMF_RANGLE; goto done; }
         "["          { *type = IMF_LBRACKET; goto done; }
@@ -164,4 +164,14 @@ done:
     scanner->start_idx = idx;
 
     return e;
+}
+
+void imf_scan_builder(
+    derr_t *e,
+    imf_scanner_t *scanner,
+    dstr_off_t *token_out,
+    imf_token_e *type
+){
+    if(is_error(*e)) return;
+    IF_PROP(e, imf_scan(scanner, token_out, type)){}
 }

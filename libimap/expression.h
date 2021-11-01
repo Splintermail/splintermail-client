@@ -452,6 +452,33 @@ DEF_STEAL_PTR(ie_st_code_t)
 
 // FETCH responses
 
+typedef struct ie_addr_t {
+    ie_dstr_t *name; // this holds the imf "phrase" after remvoing imf quoting
+    // ie_dstr_t *route; // imf no longer allows this in addresses, always NIL
+    ie_dstr_t *mailbox;  /* NIL means "end of group" syntax.
+                            Otherwise if host is NIL, holds group name.
+                            Otherwise, holds imf "local-part" after removing
+                            imf quoting */
+    ie_dstr_t *host;  // NIL means 'group' syntax, otherwise domain name
+    struct ie_addr_t *next;
+} ie_addr_t;
+DEF_STEAL_PTR(ie_addr_t);
+
+typedef struct {
+    // each field may be NULL, which will render as "NIL"
+    ie_dstr_t *date;
+    ie_dstr_t *subj;
+    ie_addr_t *from;
+    ie_addr_t *sender;
+    ie_addr_t *reply_to;
+    ie_addr_t *to;
+    ie_addr_t *cc;
+    ie_addr_t *bcc;
+    // structurally should be a list, but IMAP wants a single string
+    ie_dstr_t *in_reply_to;
+    ie_dstr_t *msg_id;
+} ie_envelope_t;
+
 typedef struct ie_fetch_resp_extra_t {
     // section, or the part in the "[]", NULL if not present
     ie_sect_t *sect;
@@ -474,6 +501,7 @@ typedef struct {
     ie_dstr_t *rfc822_hdr;
     ie_dstr_t *rfc822_text;
     ie_nums_t *rfc822_size;
+    ie_envelope_t *envelope;
     uint64_t modseq;
     ie_fetch_resp_extra_t *extras;
 } ie_fetch_resp_t;
@@ -694,7 +722,7 @@ typedef struct {
     ie_dstr_t *deleted;  // a fingerprint (always an atom)
 } ie_xkeysync_resp_t;
 
-typedef struct {
+typedef union {
     ie_plus_resp_t *plus;
     ie_st_resp_t *status_type;
     ie_dstr_t *capa;
@@ -844,12 +872,20 @@ static inline dstr_t dstr_from_off(const dstr_off_t off){
 /* qstrings are allocated when the quote is found, which is before the first
    token of the qstring is available, so we allocate an empty dstr */
 ie_dstr_t *ie_dstr_new_empty(derr_t *e);
-// the content of the token is taken directly from the parser_t
-// also, parser->keep is read by ie_dstr_new, and nothing is allocated if !keep
 ie_dstr_t *ie_dstr_new(derr_t *e, const dstr_t *token, keep_type_t type);
+ie_dstr_t *ie_dstr_new2(derr_t *e, const dstr_t token);
+static inline ie_dstr_t *ie_dstr_from_off(derr_t *e, const dstr_off_t token){
+    return ie_dstr_new2(e, dstr_from_off(token));
+}
 // append to the string, not the linked list
 ie_dstr_t *ie_dstr_append(derr_t *e, ie_dstr_t *d, const dstr_t *token,
         keep_type_t type);
+ie_dstr_t *ie_dstr_append2(derr_t *e, ie_dstr_t *d, const dstr_t token);
+static inline ie_dstr_t *ie_dstr_append_from_off(
+    derr_t *e, ie_dstr_t *d, const dstr_off_t token
+){
+    return ie_dstr_append2(e, d, dstr_from_off(token));
+}
 // append to the linked list, not the string
 ie_dstr_t *ie_dstr_add(derr_t *e, ie_dstr_t *list, ie_dstr_t *new);
 // append the text of the second string to the first, then free the second
@@ -1046,6 +1082,29 @@ ie_status_attr_resp_t ie_status_attr_resp_add(ie_status_attr_resp_t resp,
 
 // FETCH responses
 
+ie_addr_t *ie_addr_new(
+    derr_t *e, ie_dstr_t *name, ie_dstr_t *mailbox, ie_dstr_t *host
+);
+void ie_addr_free(ie_addr_t *addr);
+ie_addr_t *ie_addr_set_name(derr_t *e, ie_addr_t *addr, ie_dstr_t *name);
+ie_addr_t *ie_addr_add(derr_t *e, ie_addr_t *list, ie_addr_t *addr);
+
+ie_envelope_t *ie_envelope_new(
+    derr_t *e,
+    ie_dstr_t *date,
+    ie_dstr_t *subj,
+    ie_addr_t *from,
+    ie_addr_t *sender,
+    ie_addr_t *reply_to,
+    ie_addr_t *to,
+    ie_addr_t *cc,
+    ie_addr_t *bcc,
+    ie_dstr_t *in_reply_to,
+    ie_dstr_t *msg_id
+);
+DEF_STEAL_PTR(ie_envelope_t)
+void ie_envelope_free(ie_envelope_t *env);
+
 ie_fetch_resp_extra_t *ie_fetch_resp_extra_new(derr_t *e, ie_sect_t *sect,
         ie_nums_t *offset, ie_dstr_t *content);
 void ie_fetch_resp_extra_free(ie_fetch_resp_extra_t *extra);
@@ -1069,6 +1128,8 @@ ie_fetch_resp_t *ie_fetch_resp_rfc822_text(derr_t *e, ie_fetch_resp_t *f,
         ie_dstr_t *rfc822_text);
 ie_fetch_resp_t *ie_fetch_resp_rfc822_size(derr_t *e, ie_fetch_resp_t *f,
         ie_nums_t *rfc_822size);
+ie_fetch_resp_t *ie_fetch_resp_envelope(derr_t *e, ie_fetch_resp_t *f,
+        ie_envelope_t *env);
 ie_fetch_resp_t *ie_fetch_resp_modseq(derr_t *e, ie_fetch_resp_t *f,
         uint64_t modseq);
 ie_fetch_resp_t *ie_fetch_resp_add_extra(derr_t *e, ie_fetch_resp_t *f,

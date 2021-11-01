@@ -79,9 +79,24 @@ derr_t imf_scan(
     imf_token_e *type
 );
 
+void imf_scan_builder(
+    derr_t *e,
+    imf_scanner_t *scanner,
+    dstr_off_t *token_out,
+    imf_token_e *type
+);
+
 // parser
 
-// void imfyyerror(dstr_off_t *imfyyloc, imf_parser_t *parser, char const *s);
+void imf_handle_error(
+    imf_parser_t *p,
+    derr_t *E,
+    const dstr_t *buf,
+    imf_token_e token,
+    imf_sem_t sem,
+    const unsigned char *expected_mask,
+    const char *loc_summary
+);
 
 // completely parse an in-memory message
 derr_t imf_parse(
@@ -98,3 +113,6 @@ derr_t imf_hdrs_parse(
     void *read_fn_data,
     imf_hdrs_t **out
 );
+
+// individual field handling
+ie_envelope_t *read_envelope_info(derr_t *e, const imf_hdrs_t *hdrs);

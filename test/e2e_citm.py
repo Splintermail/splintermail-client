@@ -1,23 +1,24 @@
 #!/usr/bin/env python3
 
 import argparse
-import tempfile
+import codecs
 import contextlib
-import shutil
-import sys
-import traceback
-import signal
 import os
 import queue
-import socket
-import re
-import subprocess
-import threading
-import ssl
-import codecs
-import time
 import random
+import re
 import selectors
+import shutil
+import signal
+import socket
+import ssl
+import subprocess
+import sys
+import tempfile
+import textwrap
+import threading
+import time
+import traceback
 
 HERE = os.path.dirname(__file__)
 test_files = os.path.join(HERE, "files")
@@ -1957,6 +1958,68 @@ def test_search(cmd, maildir_root, **kwargs):
 
         rw.put(b"2 UID SEARCH HEADER My-Header \"My Value\"\r\n")
         rw.wait_for_resp("2", "OK", require=[b"\\* SEARCH %d"%uid])
+
+@register_test
+def test_fetch(cmd, maildir_root, **kwargs):
+    with inbox(cmd) as rw:
+        # append a message with known contents
+        msg = (
+            b"Return-Path: <no-reply@junkdomain.com>\r\n"
+            b"Delivered-To: unknown\r\n"
+            b"Received: from localhost; 4 July 1776 00:00:00 -0000\r\n"
+            b"Delivered-To: junk@junkdomain.com\r\n"
+            b"Received: 	(using TLSv1.2 with cipher ROT13)\r\n"
+            b"	(No client certificate requested)\r\n"
+            b"	by junkdomain.com (Postfix) with ESMTPS id AAAAAAAAAA\r\n"
+            b"	for <junk@junkdomain.com>; Sat, 4 July 1776 00:00:00 -0000 (GMT)\r\n"
+            b"Authentication-Results: junkdomain.com;\r\n"
+            b"	dkim=pass (1024-bit key; unprotected)\r\n"
+            b"	header.d=list.junkdomain.com header.i=@list.junkdomain.com\r\n"
+            b"	header.b=\"AAAAAAAA\";\r\n"
+            b"	dkim-atps=neutral\r\n"
+            b"DKIM-Signature: v=1; d=list.junkdomain.com; s=x;\r\n"
+            b"	h=Date:Message-Id:Reply-To:From:MIME-VersionSubject:To; bh=AAAAAAAA;\r\n"
+            b"	b=AAAAAAAA;\r\n"
+            b"Received: from root by list.junkdomain.com with local (Exim 4.80)\r\n"
+            b"	(envelope-from <no-reply@junkdomain.com>)\r\n"
+            b"	id AAAAAA-AAAAAA-AA\r\n"
+            b"	for junk@junkdomain.com; Sat, 4 July 1776 00:00:00 -0000\r\n"
+            b"To: junk@junkdomain.com\r\n"
+            b"Subject: Hi there, this is a junk message!\r\n"
+            b"Mime-Version: 1.0\r\n"
+            b"From: Junk Name <junk@junkdomain.com>\r\n"
+            b"Reply-To: junkreplyto@junkdomain.com\r\n"
+            b"Sender: Different Junk Name <notjunk@junkdomain.com>\r\n"
+            b"Message-Id: <ABCDEFG-HIJKLM-NO@list.junkdomain.com>\r\n"
+            b"Date: Sat, 4 July 1776 00:00:00 -0000\r\n"
+            b"\r\n"
+            b"msg.\r\n"
+        )
+        rw.put(b"1 APPEND INBOX {%d}\r\n"%len(msg))
+        rw.wait_for_match(b"\\+")
+        rw.put(msg + b"\r\n")
+        rw.wait_for_resp("1", "OK")
+
+        # Get that UID
+        uid = int(get_uid("*", rw))
+
+        rw.put(b"2 UID FETCH %d (ENVELOPE)\r\n"%uid)
+        env_date = b"4 July 1776 00:00:00 -0000"
+        env_subj = b"Hi there, this is a junk message!"
+        rw.wait_for_resp("2", "OK", require=[
+            b"\\* [0-9]+ FETCH \\(UID %d ENVELOPE \\("%uid
+            + b"\"Sat, 4 July 1776 00:00:00 -0000\" "
+            + b"\"Hi there, this is a junk message!\" "
+            + b"\\(\"Junk Name\" NIL \"junk\" \"junkdomain.com\"\\) "
+            + b"\\(\"Different Junk Name\" NIL \"notjunk\" \"junkdomain.com\"\\) "
+            + b"\\(NIL NIL \"junkreplyto\" \"junkdomain.com\"\\) "
+            + b"\\(NIL NIL \"junk\" \"junkdomain.com\"\\) "
+            + b"NIL "
+            + b"NIL "
+            + b"NIL "
+            + b"\"<ABCDEFG-HIJKLM-NO@list.junkdomain.com>\""
+            + b"\\)\\)"
+        ])
 
 def append_messages(rw, count, box="INBOX"):
     for n in range(count):

@@ -1558,6 +1558,55 @@ static derr_t search_resp_skip_fill(skip_fill_t *sf, ie_search_resp_t *search){
     STATIC_SKIP_FILL(")");
     return e;
 }
+
+static derr_t addr_skip_fill(skip_fill_t *sf, ie_addr_t *addr){
+    derr_t e = E_OK;
+    if(!addr) {
+        STATIC_SKIP_FILL("NIL");
+        return e;
+    }
+    STATIC_SKIP_FILL("(");
+    bool sp = false;
+    for(ie_addr_t *p = addr; p; p = p->next){
+        LEAD_SP;
+        nstring_skip_fill(sf, p->name);
+        // We never parse or render the route.
+        STATIC_SKIP_FILL(" NIL ");
+        nstring_skip_fill(sf, p->mailbox);
+        STATIC_SKIP_FILL(" ");
+        nstring_skip_fill(sf, p->host);
+    }
+    STATIC_SKIP_FILL(")");
+    return e;
+}
+
+static derr_t envelope_skip_fill(skip_fill_t *sf, ie_envelope_t *envelope){
+    derr_t e = E_OK;
+    STATIC_SKIP_FILL("(");
+    PROP(&e, nstring_skip_fill(sf, envelope->date) );
+    STATIC_SKIP_FILL(" ");
+    PROP(&e, nstring_skip_fill(sf, envelope->subj) );
+    STATIC_SKIP_FILL(" ");
+    PROP(&e, addr_skip_fill(sf, envelope->from) );
+    STATIC_SKIP_FILL(" ");
+    PROP(&e, addr_skip_fill(sf, envelope->sender) );
+    STATIC_SKIP_FILL(" ");
+    PROP(&e, addr_skip_fill(sf, envelope->reply_to) );
+    STATIC_SKIP_FILL(" ");
+    PROP(&e, addr_skip_fill(sf, envelope->to) );
+    STATIC_SKIP_FILL(" ");
+    PROP(&e, addr_skip_fill(sf, envelope->cc) );
+    STATIC_SKIP_FILL(" ");
+    PROP(&e, addr_skip_fill(sf, envelope->bcc) );
+    STATIC_SKIP_FILL(" ");
+    PROP(&e, nstring_skip_fill(sf, envelope->in_reply_to) );
+    STATIC_SKIP_FILL(" ");
+    PROP(&e, nstring_skip_fill(sf, envelope->msg_id) );
+    STATIC_SKIP_FILL(")");
+
+    return e;
+}
+
 /*
     typedef struct ie_fetch_resp_extra_t {
         // section, or the part in the "[]", NULL if not present
@@ -1671,6 +1720,11 @@ static derr_t fetch_resp_skip_fill(skip_fill_t *sf, ie_fetch_resp_t *fetch){
         LEAD_SP;
         STATIC_SKIP_FILL("RFC822.SIZE ");
         PROP(&e, num_skip_fill(sf, fetch->rfc822_size->num) );
+    }
+    if(fetch->envelope){
+        LEAD_SP;
+        STATIC_SKIP_FILL("ENVELOPE ");
+        PROP(&e, envelope_skip_fill(sf, fetch->envelope) );
     }
     if(fetch->modseq){
         PROP(&e, extension_assert_on(sf->exts, EXT_CONDSTORE) );

@@ -896,7 +896,11 @@ static derr_t send_fetch_resp(dn_t *dn, const ie_fetch_cmd_t *fetch,
     // the num is always a sequence number, even in case of a UID FETCH
     f = ie_fetch_resp_num(&e, f, seq_num);
 
-    if(fetch->attr->envelope) TRACE_ORIG(&e, E_INTERNAL, "not implemented");
+    if(fetch->attr->envelope){
+        const imf_hdrs_t *hdrs = loader_parse_hdrs(&e, &loader);
+        ie_envelope_t *envelope = read_envelope_info(&e, hdrs);
+        f = ie_fetch_resp_envelope(&e, f, envelope);
+    }
 
     if(fetch->attr->flags){
         ie_fflags_t *ff = ie_fflags_new(&e);

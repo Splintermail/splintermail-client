@@ -204,9 +204,28 @@ fail:
     return NULL;
 }
 
+ie_dstr_t *ie_dstr_new2(derr_t *e, const dstr_t token){
+    if(is_error(*e)) goto fail;
+
+    IE_MALLOC(e, ie_dstr_t, d, fail);
+
+    // allocate dstr
+    PROP_GO(e, dstr_copy(&token, &d->dstr), fail_malloc);
+
+    d->next = NULL;
+
+    return d;
+
+fail_malloc:
+    free(d);
+fail:
+    return NULL;
+}
+
 ie_dstr_t *ie_dstr_append(derr_t *e, ie_dstr_t *d, const dstr_t *token,
         keep_type_t type){
     if(is_error(*e)) goto fail;
+    if(!d) d = ie_dstr_new(e, token, type);
 
     // patterns for recoding the quoted strings
     LIST_PRESET(dstr_t, find, DSTR_LIT("\\\\"), DSTR_LIT("\\\""));
@@ -229,8 +248,22 @@ fail:
     return NULL;
 }
 
+ie_dstr_t *ie_dstr_append2(derr_t *e, ie_dstr_t *d, const dstr_t token){
+    if(is_error(*e)) goto fail;
+    if(!d) return ie_dstr_new2(e, token);
+
+    PROP_GO(e, dstr_append(&d->dstr, &token), fail);
+
+    return d;
+
+fail:
+    ie_dstr_free(d);
+    return NULL;
+}
+
 ie_dstr_t *ie_dstr_add(derr_t *e, ie_dstr_t *list, ie_dstr_t *new){
     if(is_error(*e)) goto fail;
+    if(!list) return new;
 
     ie_dstr_t **last = &list->next;
     while(*last != NULL) last = &(*last)->next;
@@ -246,6 +279,7 @@ fail:
 
 ie_dstr_t *ie_dstr_concat(derr_t *e, ie_dstr_t *a, ie_dstr_t *b){
     if(is_error(*e)) goto fail;
+    if(!a) return b;
 
     PROP_GO(e, dstr_append(&a->dstr, &b->dstr), fail);
 
@@ -1881,6 +1915,124 @@ ie_status_attr_resp_t ie_status_attr_resp_add(ie_status_attr_resp_t resp,
 
 // FETCH responses
 
+ie_addr_t *ie_addr_new(
+    derr_t *e, ie_dstr_t *name, ie_dstr_t *mailbox, ie_dstr_t *host
+){
+    if(is_error(*e)) goto fail;
+
+    IE_MALLOC(e, ie_addr_t, addr, fail);
+
+    addr->name = name;
+    addr->mailbox = mailbox;
+    addr->host = host;
+    addr->next = NULL;
+
+    return addr;
+
+fail:
+    ie_dstr_free(name);
+    ie_dstr_free(mailbox);
+    ie_dstr_free(host);
+    return NULL;
+}
+
+void ie_addr_free(ie_addr_t *addr){
+    if(!addr) return;
+    ie_dstr_free(addr->name);
+    ie_dstr_free(addr->mailbox);
+    ie_dstr_free(addr->host);
+    ie_addr_free(addr->next);
+    free(addr);
+}
+
+ie_addr_t *ie_addr_set_name(derr_t *e, ie_addr_t *addr, ie_dstr_t *name){
+    if(is_error(*e)) goto fail;
+
+    ie_dstr_free(addr->name);
+    addr->name = name;
+
+    return addr;
+
+fail:
+    ie_addr_free(addr);
+    ie_dstr_free(name);
+    return NULL;
+}
+
+ie_addr_t *ie_addr_add(derr_t *e, ie_addr_t *list, ie_addr_t *addr){
+    if(is_error(*e)) goto fail;
+
+    ie_addr_t **last = &list;
+    while(*last != NULL) last = &(*last)->next;
+    *last = addr;
+
+    return list;
+
+fail:
+    ie_addr_free(list);
+    ie_addr_free(addr);
+    return NULL;
+}
+
+ie_envelope_t *ie_envelope_new(
+    derr_t *e,
+    ie_dstr_t *date,
+    ie_dstr_t *subj,
+    ie_addr_t *from,
+    ie_addr_t *sender,
+    ie_addr_t *reply_to,
+    ie_addr_t *to,
+    ie_addr_t *cc,
+    ie_addr_t *bcc,
+    ie_dstr_t *in_reply_to,
+    ie_dstr_t *msg_id
+){
+    if(is_error(*e)) goto fail;
+
+    IE_MALLOC(e, ie_envelope_t, env, fail);
+
+    env->date = date;
+    env->subj = subj;
+    env->from = from;
+    env->sender = sender;
+    env->reply_to = reply_to;
+    env->to = to;
+    env->cc = cc;
+    env->bcc = bcc;
+    env->in_reply_to = in_reply_to;
+    env->msg_id = msg_id;
+
+    return env;
+
+fail:
+    ie_dstr_free(date);
+    ie_dstr_free(subj);
+    ie_addr_free(from);
+    ie_addr_free(sender);
+    ie_addr_free(reply_to);
+    ie_addr_free(to);
+    ie_addr_free(cc);
+    ie_addr_free(bcc);
+    ie_dstr_free(in_reply_to);
+    ie_dstr_free(msg_id);
+    return NULL;
+}
+
+void ie_envelope_free(ie_envelope_t *env){
+    if(!env) return;
+    ie_dstr_free(env->date);
+    ie_dstr_free(env->subj);
+    ie_addr_free(env->from);
+    ie_addr_free(env->sender);
+    ie_addr_free(env->reply_to);
+    ie_addr_free(env->to);
+    ie_addr_free(env->cc);
+    ie_addr_free(env->bcc);
+    ie_dstr_free(env->in_reply_to);
+    ie_dstr_free(env->msg_id);
+    free(env);
+}
+
 ie_fetch_resp_extra_t *ie_fetch_resp_extra_new(derr_t *e, ie_sect_t *sect,
         ie_nums_t *offset, ie_dstr_t *content){
     if(is_error(*e)) goto fail;
@@ -1926,6 +2078,7 @@ void ie_fetch_resp_free(ie_fetch_resp_t *f){
     ie_dstr_free(f->rfc822_hdr);
     ie_dstr_free(f->rfc822_text);
     ie_nums_free(f->rfc822_size);
+    ie_envelope_free(f->envelope);
     ie_fetch_resp_extra_free(f->extras);
     free(f);
 }
@@ -2059,6 +2212,23 @@ fail:
     return NULL;
 }
 
+ie_fetch_resp_t *ie_fetch_resp_envelope(derr_t *e, ie_fetch_resp_t *f,
+        ie_envelope_t *env){
+    if(is_error(*e)) goto fail;
+
+    if(f->envelope != NULL){
+        ORIG_GO(e, E_INTERNAL, "got two envelopes's from one FETCH", fail);
+    }
+
+    f->envelope = env;
+
+    return f;
+
+fail:
+    ie_envelope_free(env);
+    ie_fetch_resp_free(f);
+    return NULL;
+}
 
 ie_fetch_resp_t *ie_fetch_resp_modseq(derr_t *e, ie_fetch_resp_t *f,
         uint64_t modseq){

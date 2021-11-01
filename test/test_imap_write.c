@@ -398,6 +398,68 @@ static derr_t test_imap_writer(void){
                     {0}
                 },
             },
+            {
+                .resp=imap_resp_new(&e, IMAP_RESP_FETCH,
+                    (imap_resp_arg_t){
+                        .fetch=ie_fetch_resp_envelope(&e,
+                            ie_fetch_resp_num(&e,
+                                ie_fetch_resp_new(&e),
+                                5
+                            ),
+                            ie_envelope_new(&e,
+                                IE_DSTR("date-string"),
+                                IE_DSTR("subj-string"),
+                                ie_addr_new(&e,
+                                    IE_DSTR("Froam"),
+                                    IE_DSTR("fr"),
+                                    IE_DSTR("om.com")
+                                ),
+                                ie_addr_new(&e,
+                                    IE_DSTR("Sendy"),
+                                    IE_DSTR("send"),
+                                    IE_DSTR("er.com")
+                                ),
+                                ie_addr_new(&e,
+                                    IE_DSTR("Replyton"),
+                                    IE_DSTR("reply"),
+                                    IE_DSTR("to.com")
+                                ),
+                                ie_addr_new(&e,
+                                    IE_DSTR("T. Owens"),
+                                    IE_DSTR("t"),
+                                    IE_DSTR("o.com")
+                                ),
+                                ie_addr_new(&e,
+                                    IE_DSTR("Ceecee"),
+                                    IE_DSTR("c"),
+                                    IE_DSTR("c.com")
+                                ),
+                                ie_addr_new(&e,
+                                    IE_DSTR("cEeCeE"),
+                                    IE_DSTR("blind"),
+                                    IE_DSTR("cc.com")
+                                ),
+                                NULL,
+                                IE_DSTR("<msg_id@msgids.com>")
+                            )
+                        ),
+                    }
+                ),
+                .out=(size_chunk_out_t[]){
+                    {1024, "* 5 FETCH (ENVELOPE ("
+                           "\"date-string\" \"subj-string\" "
+                           "(\"Froam\" NIL \"fr\" \"om.com\") "
+                           "(\"Sendy\" NIL \"send\" \"er.com\") "
+                           "(\"Replyton\" NIL \"reply\" \"to.com\") "
+                           "(\"T. Owens\" NIL \"t\" \"o.com\") "
+                           "(\"Ceecee\" NIL \"c\" \"c.com\") "
+                           "(\"cEeCeE\" NIL \"blind\" \"cc.com\") "
+                           "NIL "
+                           "\"<msg_id@msgids.com>\""
+                           "))\r\n"},
+                    {0}
+                },
+            },
         };
         CHECK(&e);
         PROP(&e, do_writer_test_multi(cases, sizeof(cases)/sizeof(*cases)) );
