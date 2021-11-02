@@ -560,7 +560,6 @@ class Repeat(Parsable):
         disallowed = self.seq.get_disallowed_after(prev)
         if None in disallowed:
             raise PossiblyEmpty(self.err_op, self.seq.summary(), self.loc)
-        # since this might not exist, we disallow the this expression's first as well
         first = self.seq.get_first(prev)
         if None in first:
             raise PossiblyEmpty(self.err_op, self.seq.summary(), self.loc)
@@ -575,7 +574,26 @@ class Repeat(Parsable):
     @cacheable("fallbacks")
     def check(self, *, fallbacks=None):
         self.seq.check(fallbacks=fallbacks)
-
+        # any variable-number repeat with rmax > 1 can conflict with itself.
+        if self.rmin != self.rmax and (self.rmax is None or self.rmax > 1):
+            seq_first = self.seq.get_first(None)
+            seq_disallowed = self.seq.get_disallowed_after(None)
+            conflicts = seq_first.intersection(seq_disallowed).difference({None})
+            if conflicts:
+                raise FirstFollow(self, conflicts)
+            if fallbacks is not None:
+                # Predict where fallbacks would expand either the disallowed
+                # set or the term_first set to cause conflicts.
+                def expand(tokens):
+                    out = set(tokens)
+                    for t in tokens:
+                        out = out.union(fallbacks.get(t, set()))
+                    return out
+                seq_disallowed = expand(seq_disallowed)
+                seq_first = expand(seq_first)
+                conflicts = seq_disallowed.intersection(term_first_ex)
+                if conflicts:
+                    raise FirstFollow(self, conflicts, due_to_fallbacks=True)
 
 class Branches(Parsable):
     def __init__(self, name, loc=None):
@@ -699,8 +717,8 @@ class Recovery(Parsable):
         return "<" + self.seq.summary(PRIORITY_UNAMBIGUOUS) + " ? ... >"
 
     def state_map(self, parent_priority=PRIORITY_UNAMBIGUOUS):
-        out = {self,  "<" + self.seq.summary(PRIORITY_UNAMBIGUOUS) + " ? . >"}
-        for k, v in self.seq.state_map(PRIORITY_UNAMBIGUOUS):
+        out = {self: "<" + self.seq.summary(PRIORITY_UNAMBIGUOUS) + " ? . >"}
+        for k, v in self.seq.state_map(PRIORITY_UNAMBIGUOUS).items():
             out[k] = "<" + v + "? >"
         return out
 

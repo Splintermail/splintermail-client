@@ -85,7 +85,24 @@ try:
 except gen.FirstFollow as e:
     pass
 
-# fixed-number repeats do not cause an no issue
+# same thing, but where the repeat conflicts with itself
+try:
+    g = gen.Grammar()
+    X = g.token("X")
+
+    @g.expr
+    def a(e):
+        with e.repeat(0, None):
+            e.match(X)
+            with e.repeat(0, 1):
+                e.match(X)
+
+    g.check()
+    1/0
+except gen.FirstFollow as e:
+    pass
+
+# fixed-number repeats do not cause an issue
 g = gen.Grammar()
 X = g.token("X")
 
