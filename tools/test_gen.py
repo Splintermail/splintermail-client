@@ -149,6 +149,40 @@ assert a.seq.get_disallowed_after() == {"W", "X", "Y", "Z", None}
 assert b.seq.get_first() == {"W", "X", "Y"}
 assert b.seq.get_disallowed_after() == {"Z"}
 
+# empty expressions: various legal forms
+grammar_text = """
+a = %empty;  # explicit empty
+b = {};  # side-effect only
+c = B | %empty;  # in a branch, explicit
+d = B | {};  # in a branch, side-effect only
+e = A (B | %empty);  # in a branch, explicit
+f = A (B | {});  # in a branch, side-effect only
+"""
+parsed_doc = gen.parse_doc(grammar_text)
+g = parsed_doc.build_grammar(grammar_text)
+g.check()
+for key, first in (
+    ("a", {None}),
+    ("b", {None}),
+    ("c", {"B", None}),
+    ("d", {"B", None}),
+):
+    got = g.exprs[key].seq.get_first()
+    assert got == first, (key, got)
+
+branches = g.exprs["d"].seq.terms[0][0]
+assert len(branches.branches) == 1
+assert branches.default is not None
+
+got = g.exprs["a"].seq.get_disallowed_after()
+assert got == {None}, got
+got = g.exprs["b"].seq.get_disallowed_after()
+assert got == {None}, got
+got = g.exprs["e"].seq.get_disallowed_after()
+assert got == {"B"}, got
+got = g.exprs["f"].seq.get_disallowed_after()
+assert got == {"B"}, got
+
 
 # testing MetaTokenizer
 text = r"{{{ hi {{hello}} bye }}}"
@@ -291,7 +325,7 @@ else:
     assert detect_on_path(["gcc"]), "gcc not found"
     cc = "gcc"
 
-def run_e2e_test(grammar_text):
+def run_c_e2e_test(grammar_text):
     with open("test.c", "w") as f:
         gen.gen(grammar_text, 'c', f)
 
@@ -336,6 +370,15 @@ def run_e2e_test(grammar_text):
         os.remove("test.c")
         os.remove("a.out")
 
+def run_py_e2e_test(grammar_text):
+    with open("test.py", "w") as f:
+        gen.gen(grammar_text, 'py', f)
+
+    p = Popen((sys.executable, "test.py"))
+    assert p.wait() == 0, p.wait()
+
+    os.remove("test.py")
+
 def sparse_enforce_policy(
     g,
     no_nested_recovery=False,
@@ -378,8 +421,92 @@ errors = sparse_enforce_policy(g, no_extra_args=True)
 if not errors:
     raise ValueError("errors expected but not found")
 
+# test empty branches in the C generator
+run_c_e2e_test(r"""
+%root maybe_num;
+%type i {int};
+
+NUM:i;
+
+maybe_num:i = (NUM:n {$$=$n;} | {$$=7;}) EOL;
+
+{{{
+
+struct token {
+    token_e tok;
+    int val;
+    int exp;
+};
+
+int do_test(struct token *tokens, size_t ntokens, int exp){
+    ONSTACK_PARSER(p, 10, 10);
+
+    status_e status = STATUS_OK;
+    size_t i = 0;
+    int out;
+    while(!status && i < ntokens){
+        status = parse_maybe_num(
+            &p, tokens[i].tok, (val_u){.i=tokens[i].val}, &out
+        );
+        i++;
+    }
+
+    if(i != ntokens || status != STATUS_DONE){
+        fprintf(stderr, "bad exit conditions %d\n", (int)status);
+        return 1;
+    }
+
+    if(out != exp){
+        fprintf(stderr, "bad out: %d != %d\n", out, exp);
+        return 1;
+    }
+
+    return 0;
+}
+
+int main(int argc, char **argv){
+
+    struct token t1[] = { {NUM, 11}, {EOL, 0}, };
+    size_t nt1 = sizeof(t1)/sizeof(*t1);
+
+    struct token t2[] = { {EOL, 0}, };
+    size_t nt2 = sizeof(t2)/sizeof(*t2);
+
+
+    int wrong = 0;
+    wrong += do_test(t1, nt1, 11);
+    wrong += do_test(t2, nt2, 7);
+
+    return wrong;
+}
+}}}
+""")
+
+# test empty branches in the Python generator
+run_py_e2e_test(r"""
+%root maybe_num;
+%type i {int};
+
+NUM:i;
+
+maybe_num:i = (NUM:n {$$=$n;} | {$$=7;}) EOL;
+
+{{
+if __name__ == "__main__":
+    tokens = [
+        (Token(NUM, 11), None),
+        (Token(EOL), 11),
+        (Token(EOL), 7),
+    ]
+    p = maybe_numParser(repeat=True)
+    for t, exp in tokens:
+        expr = p.feed(t)
+        assert (expr and expr.val) == exp, (t, exp, expr)
+}}
+""")
+
 # test function-like expressions (valid)
-run_e2e_test(r"""
+run_c_e2e_test(r"""
 {{
 typedef struct {
     int start;
@@ -411,14 +538,14 @@ NUM:i;
 
 locate_num(x) = JUNK { numloc = @x; };
 save_num(x:i) = locate_num!(x) { saved = $x++; };
-pass_num(p:i) = { passed=$p; } save_num!(p);
+pass_num(p:i) = { passed=$p; fprintf(stderr, "set passed\n"); } save_num!(p);
 num = NUM:n pass_num!(n) { finalized = $n; };
 
 {{{
 int main(int argc, char **argv){
     ONSTACK_PARSER(p, 10, 10);
 
-    struct {int tok; int val; loc_t loc} tokens[] = {
+    struct {int tok; int val; loc_t loc;} tokens[] = {
         {NUM, 7, {1,1}},
         {JUNK, 0, {2,2}},
     };
@@ -468,7 +595,7 @@ int main(int argc, char **argv){
 
 # test the C generator; make sure everything is always freed, with a grammar
 # whose side effects never free anything
-run_e2e_test(r"""
+run_c_e2e_test(r"""
 {{
 #include <stdlib.h>
 #include <string.h>
@@ -559,7 +686,7 @@ int main(int argc, char **argv){
 
 # Run a similar test, only this time the side-effects always free semantic
 # values, so we're checking for double-frees.
-run_e2e_test(r"""
+run_c_e2e_test(r"""
 {{
 #include <stdlib.h>
 #include <string.h>
@@ -646,7 +773,7 @@ int main(int argc, char **argv){
 
 
 # test the C generator's location tracking
-run_e2e_test(r"""
+run_c_e2e_test(r"""
 {{
 #include <stdlib.h>
 #include <string.h>
@@ -783,7 +910,7 @@ void check_location(char *val, loc_t loc){
 
 # test the C generator's counted repeats
 # also test custom error handlers
-run_e2e_test(r"""
+run_c_e2e_test(r"""
 {{
 // extra-forward declarations, to get around ordering issues
 struct parser_t;

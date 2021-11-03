@@ -32,30 +32,6 @@ TODO:
  - Grammar:
    - use source-order everywhere
    - configurable strictness for fallback-caused first/first, first/follow
-   - support paramaterized expressions to reduce side-effect duplication:
-
-       addr_spec = TEXT ARUBA TEXT;          # user@domain
-       angle_addr = LANGLE addr_spec RANGLE; # <user@domain>
-       named_addr = TEXT angle_addr;         # "Name" <user@domain>
-       # conflict, TEXT might mean addr_spec or named_addr:
-       mailbox = addr_spec | angle_addr | named_addr;
-
-       # solved:
-       _addr_spec (text) = ARUBA TEXT;
-       angle_addr = LANGLE addr_spec RANGLE;
-       _named_addr (text) = angle_addr;
-
-       mailbox =
-        | TEXT:t (
-            | _addr_spec(t)
-            | _named_addr(t)
-          )
-        | angle_addr
-       ;
-
-       # if you need the bare objects somewhere else:
-       addr_spec = TEXT:t _addr_spec(t);
-       named_addr = TEXT:t _named_addr(t)
 
  - Meta parser:
    - support an %include directive?
@@ -179,6 +155,25 @@ class PossiblyEmpty(GrammarError):
             out += "\n" + render_location(self.loc, body)
         return out
 
+class MultipleEmptyBranches(GrammarError):
+    def __init__(self, obj, empties):
+        self.obj = obj
+        self.empties = empties
+        super().__init__()
+
+    def render(self, body):
+        out = "multiple empty/maybe-empty branches in (%s)"%self.obj.summary()
+        if self.obj.loc is not None:
+            out += "\nat " + render_location(self.obj.loc, body)
+        for empty in self.empties:
+            if empty.get_first() == {None}:
+                out += "\nempty:       %s"%empty.summary()
+            else:
+                out += "\nmaybe-empty: %s"%empty.summary()
+            if empty.loc is not None:
+                out += "\nat " + render_location(empty.loc, body)
+        return out
+
 
 class Fallbacks:
     """
@@ -226,6 +221,8 @@ class Fallbacks:
         out = self.fallbackmap[primary]
         out = out.difference(set(exclude))
         for ex in exclude:
+            if ex is None:
+                continue
             if ex == primary:
                 # allow primary to appear in exclude, but ignore it.
                 continue
@@ -547,6 +544,9 @@ class Repeat(Parsable):
     def add_term(self, term):
         self.seq.add_term(term)
 
+    def set_seq_loc(self, loc):
+        self.seq.set_seq_loc(loc)
+
     def add_code(self, code, tag=None, loc=None):
         self.seq.add_code(code, tag, loc)
 
@@ -642,6 +642,8 @@ class Branches(Parsable):
         self._branch = None
         self.loc = loc
         self.prematched = None
+        self._default_known = False
+        self._default = None
 
     def summary(self, parent_priority=PRIORITY_UNAMBIGUOUS):
         out = " | ".join(b.summary(PRIORITY_BRANCHES) for b in self.branches)
@@ -652,10 +654,14 @@ class Branches(Parsable):
     def state_map(self, parent_priority=PRIORITY_UNAMBIGUOUS):
         out = {self: ". (" + self.summary() + ")"}
         for i, b in enumerate(self.branches):
-            pre = " | ".join(bb.summary(PRIORITY_SEQUENCE) for bb in self.branches[:i])
+            pre = " | ".join(
+                bb.summary(PRIORITY_SEQUENCE) for bb in self.branches[:i]
+            )
             if pre:
                 pre += " | "
-            post = " | ".join(bb.summary(PRIORITY_SEQUENCE) for bb in self.branches[i+1:])
+            post = " | ".join(
+                bb.summary(PRIORITY_SEQUENCE) for bb in self.branches[i+1:]
+            )
             if post:
                 post = " | " + post
 
@@ -673,6 +679,12 @@ class Branches(Parsable):
         )
         self._branch.add_term(term)
 
+    def set_seq_loc(self, loc):
+        assert self._branch is not None, (
+            "inside a branches() context, but not any branch() subcontext!"
+        )
+        self._branch.set_seq_loc(loc)
+
     def add_code(self, code, tag=None, loc=None):
         assert self._branch is not None, (
             "inside a branches() context, but not any branch() subcontext!"
@@ -687,13 +699,41 @@ class Branches(Parsable):
         self.branches.append(self._branch)
         self._branch = None
 
+    @property
+    def default(self):
+        assert self._default_known, "can't call .default before .get_first()"
+        return self._default
+
+    def __len__(self):
+        assert self._default_known, "can't call .__len__ before .get_first()"
+        return len(self.branches) + int(self._default is not None)
+
+    @property
+    def branches_and_default(self):
+        assert self._default_known, (
+            "can't call .branches_and_default before .get_first()"
+        )
+        out = list(self.branches)
+        if self._default is not None:
+            out.append(self._default)
+        return out
+
     @cacheable
     def get_first(self, prev=None):
         prev = add_to_prev(prev, self.name, "get_first")
         first = set()
+        empties = []
         for branch in self.branches:
-            first = first.union(branch.get_first(list(prev)))
-
+            bfirst = branch.get_first(list(prev))
+            if None in bfirst:
+                empties.append(branch)
+            first = first.union(bfirst)
+        if len(empties) > 1:
+            raise MultipleEmptyBranches(self, empties)
+        if len(empties) == 1:
+            self._default = empties[0]
+            self.branches.remove(empties[0])
+        self._default_known = True
         return frozenset(first)
 
     @cacheable
@@ -705,20 +745,29 @@ class Branches(Parsable):
             disallowed = disallowed.union(
                 branch.get_disallowed_after(list(prev))
             )
+        first = self.get_first()
+        if None in first:
+            # If we have an empty branch, our first is also disallowed after
+            disallowed = disallowed.union(first)
         return frozenset(disallowed)
 
     @cacheable("fallbacks")
     def check(self, *, fallbacks=None):
+        # Populate all the get_firsts
+        self.get_first()
         # if any tokens map to multiple branches, that's a first/first conflict
         token_to_branch = {}
         for branch in self.branches:
             branch.check(fallbacks=fallbacks)
-
-            # no possibly-empty branches
             branch_first = branch.get_first()
-            if None in branch_first:
-                raise PossiblyEmpty("branch", branch.summary(), branch.loc)
+            # we already processed empty branches
+            assert None not in branch_first, (self.summary(), branch_first)
+            for t in branch_first:
+                token_to_branch.setdefault(t, []).append(branch)
 
+        if self.default:
+            branch_first = self.default.get_first()
+            branch_first = branch_first.difference({None})
             for t in branch_first:
                 token_to_branch.setdefault(t, []).append(branch)
 
@@ -742,6 +791,9 @@ class Recovery(Parsable):
 
     def add_term(self, term):
         self.seq.add_term(term)
+
+    def set_seq_loc(self, loc):
+        self.seq.set_seq_loc(loc)
 
     def add_code(self, code, tag=None, loc=None):
         self.seq.add_code(code, tag, loc)
@@ -791,13 +843,21 @@ class Sequence(Parsable):
     def add_term(self, term):
         self.terms.append((term, []))
 
+    def set_seq_loc(self, loc):
+        self.loc = loc
+
     def add_code(self, code, tag=None, loc=None):
         if not self.terms:
             self.precode.append(Snippet(code, tag, loc))
         else:
             self.terms[-1][1].append(Snippet(code, tag, loc))
 
+    def isempty(self):
+        return len(self.terms) == 0
+
     def summary(self, parent_priority=PRIORITY_UNAMBIGUOUS):
+        if self.isempty():
+            return "%empty"
         if len(self.terms) == 1:
             return self.terms[0][0].summary(parent_priority)
         out = " ".join(t.summary(PRIORITY_SEQUENCE) for t, _ in self.terms)
@@ -946,12 +1006,17 @@ class Expression(Definition):
         self.nbranches = 0
         self.nrec = 0
         self.loc = loc
+        self.defined = False
 
     def __call__(self, fn):
         """Provide a definition for a forwards-declared expression"""
         assert fn.__name__ == self.name, fn.__name__ + " != " + self.name
         fn(self)
+        self.defined = True
         return self
+
+    def set_seq_loc(self, loc):
+        self.scopes[-1].set_seq_loc(loc)
 
     def match(self, term, tag=None, loc=None, args=None):
         term = Reference(term, args=args, tag=tag, loc=loc)
@@ -1090,6 +1155,7 @@ class Grammar:
         self.exprs[name] = e
         if fn is not None:
             fn(e)
+            e.defined = True
         return e
 
     def token(self, name, typ=None, loc=None):
@@ -1114,7 +1180,7 @@ class Grammar:
         # first make sure everything is defined, or the checks become confusing
         undefined = set()
         for name, expr in self.sorted_expressions():
-            if not expr.seq.terms:
+            if not expr.defined:
                 undefined.add(name)
         if undefined:
             # TODO: report these with locations to where they're referenced.
@@ -1132,7 +1198,7 @@ class Grammar:
                 e.text = self.text
                 raise
             # detect auto-created expressions with no definition
-            if not expr.seq.terms:
+            if not expr.defined:
                 raise RenderedError(
                     "expression %s referenced but never defined"%name
                 )
@@ -1159,11 +1225,14 @@ class Grammar:
             for b in obj.branches:
                 # every branch is always prematched
                 self._set_prematched(b, True)
+            # the default branch is not though
+            if obj.default is not None:
+                self._set_prematched(obj.default, False)
             return
         if isinstance(obj, Sequence):
             obj.prematched = prematched
             # the first term may prematched, but only if it is concrete
-            if None in obj.terms[0][0].get_first():
+            if len(obj.terms) and None in obj.terms[0][0].get_first():
                 prematched = False
             for t, _ in obj.terms:
                 self._set_prematched(t, prematched)
@@ -1901,10 +1970,7 @@ class C:
                 self.fprint("yy" + str(state) + ":")
                 bstate = state + 1
             self.fprint("    switch(*token){")
-            # detect primary types
-            primaries = set(
-                t for b in obj.branches for t in b.get_first()
-            )
+            primaries = obj.get_first()
             # emit case statements
             for i, b in enumerate(obj.branches):
                 for t in b.get_first():
@@ -1916,17 +1982,23 @@ class C:
                     for f in sorted(fallbacks):
                         self.fprint("        case ${PREFIX_}%s: // fallback"%f)
                     self.fprint("        case ${PREFIX_}%s: goto %s;"%(t, label))
-            self.fprint("        default:")
-            self.fprint("            " + self.mask_set(obj.get_first()) + ";")
-            self.fprint("            ${PREFIX_}SYNTAX_ERROR(*token, sem);")
+            if obj.default is not None:
+                i += 1
+                label = "yy%d_br_%d"%(state, i)
+                self.fprint("        default: goto %s;"%label)
+            else:
+                self.fprint("        default:")
+                self.fprint("            " + self.mask_set(obj.get_first()) + ";")
+                self.fprint("            ${PREFIX_}SYNTAX_ERROR(*token, sem);")
             self.fprint("    }")
             self.fprint("")
             # branch parsing
-            for i, b in enumerate(obj.branches):
-                self.fprint("yy" + str(state) + "_br_" + str(i) + ":")
+            for i, b in enumerate(obj.branches_and_default):
+                label = "yy%d_br_%d"%(state, i)
+                self.fprint(label + ":")
                 # bstate advances between branches, but stack resets each time
                 bstate, _ = self.gen(b, bstate, stack, var)
-                self.fprint("    goto yy" + str(state) + "_done;")
+                self.fprint("    goto yy%d_done;"%state)
                 self.fprint("")
             self.fprint("yy"+ str(state) + "_done:")
             return bstate, stack
@@ -1939,8 +2011,8 @@ class C:
             tstate, _ = self.gen(obj.seq, state + 1, stack, var)
             self.fprint("")
             self.fprint("    call->recover = 0;")
-            self.fprint("    goto yy" + str(state) + "_done;")
-            self.fprint("yy"+ str(state) + ":")
+            self.fprint("    goto yy%d_done;"%state)
+            self.fprint("yy%d:"%state)
             self.fprint("    // recovery: consume all tokens until a valid one")
             self.fprint("    call->summary = \"" + self.state_map[obj] + "\";")
             self.fprint("    ${PREFIX_}AWAIT_TOKEN;")
@@ -1949,7 +2021,7 @@ class C:
             self.fprint("        return 0;")
             self.fprint("    }")
             self.print_code(obj.code, "    ")
-            self.fprint("yy"+ str(state) + "_done:")
+            self.fprint("yy%d_done:"%state)
             return tstate, stack
 
         if isinstance(obj, Sequence):
@@ -2894,7 +2966,10 @@ class Python:
                 self.if_token_in(t, f, i, pos=n)
                 self.gen(seq, i+"    ")
             self.fprint(i + "else:")
-            self.syntax_error("(yield from next(tokens)).loc", i + "    ")
+            if obj.default is not None:
+                self.gen(obj.default, i+"    ")
+            else:
+                self.syntax_error("(yield from next(tokens)).loc", i + "    ")
             return
 
         if isinstance(obj, Recovery):
@@ -3122,6 +3197,7 @@ class ParsedSequence:
 
     def process(self, g, e, scope):
         # We enter a new scope in every Sequence.
+        e.set_seq_loc(self.loc)
         scope = dict(**scope)
         for elem in self.elems:
             elem.process(g, e, scope)
@@ -3236,6 +3312,7 @@ class ParsedDoc:
             if val is None:
                 continue
             e = g.get_name(name.name)
+            e.defined = True
             scope = {p.name: p for p in e.params}
             val.process(g, e, scope)
 
@@ -3254,6 +3331,8 @@ class TextLocation:
 
 class TextSpan:
     def __init__(self, start, end):
+        assert start is None or isinstance(start, TextLocation), start
+        assert end is None or isinstance(end, TextLocation), end
         self.start = start
         self.end = end
 
@@ -3360,7 +3439,6 @@ class Tokenizer:
             "<": LANGLE,
             "[": LBRACKET,
             "(": LPAREN,
-            "%": PERCENT,
             "|": PIPE,
             "?": QUESTION,
             ">": RANGLE,
@@ -3376,6 +3454,9 @@ class Tokenizer:
 
         if c == "{":
             return (yield from self._tokenize_code())
+
+        if c == "%":
+            return (yield from self._tokenize_directive())
 
         if c in "0123456789":
             return (yield from self._tokenize_num())
@@ -3465,6 +3546,39 @@ class Tokenizer:
                 start = loc
         return MetaToken(NUM, int(text), TextSpan(start, loc))
 
+    def _tokenize_directive(self):
+        # consume the lead '%'
+        text, start = yield from next(self.cs)
+        end = start
+        while True:
+            c = yield from self.cs.peek()
+            if c is None:
+                break
+            if c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ":
+                break
+            c, end = yield from next(self.cs)
+            text += c
+
+        loc = TextSpan(start, end)
+
+        keywords = {
+            "%generator": GENERATOR,
+            "%kwarg": KWARG,
+            "%type": TYPE,
+            "%root": ROOT,
+            "%fallback": FALLBACK,
+            "%param": PARAM,
+            "%prefix": PREFIX,
+            "%empty": EMPTY,
+            # "%break": BREAK,
+        }
+
+        if text not in keywords:
+            msg = "invalid directive in tokenizer: " + str(text.encode('utf8'))
+            raise MetaSyntaxError(msg, loc)
+
+        return MetaToken(keywords[text], text, loc)
+
     def _tokenize_text(self):
         text = ""
         start = None
@@ -3479,17 +3593,7 @@ class Tokenizer:
             text += c
             if start is None:
                 start = loc
-        keywords = {
-            "generator": GENERATOR,
-            "kwarg": KWARG,
-            "type": TYPE,
-            "root": ROOT,
-            "fallback": FALLBACK,
-            "param": PARAM,
-            "prefix": PREFIX,
-        }
-        typ = keywords.get(text, TEXT)
-        return MetaToken(typ, text, TextSpan(start, loc))
+        return MetaToken(TEXT, text, TextSpan(start, loc))
 
     def iter(self, chars):
         for c in chars:

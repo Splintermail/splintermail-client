@@ -72,7 +72,7 @@ import gen
 # | LBRACKET branches RBRACKET
 # | LANGLE branches QUESTION *code RANGLE
 # ;
-# directive = PERCENT (
+# directive = (
 #   | GENERATOR TEXT:generator
 #   | KWARG [COLON TEXT:tag] TEXT:key TEXT:value
 #   | TYPE [COLON TEXT:tag] CODE:spec [CODE:destructor]
@@ -109,7 +109,6 @@ RBRACKET = g.token("RBRACKET")
 LANGLE = g.token("LANGLE")
 RANGLE = g.token("RANGLE")
 PIPE = g.token("PIPE")
-PERCENT = g.token("PERCENT")
 CODE = g.token("CODE")
 SEMI = g.token("SEMI")
 BANG = g.token("BANG")
@@ -123,6 +122,8 @@ ROOT = g.token("ROOT")
 FALLBACK = g.token("FALLBACK")
 PARAM = g.token("PARAM")
 PREFIX = g.token("PREFIX")
+EMPTY = g.token("EMPTY")
+BREAK = g.token("BREAK")
 
 # Forward declaration.
 branches = g.expr("branches")
@@ -249,23 +250,48 @@ def term(e):
             e.match(RANGLE, "r")
             e.exec("$$.loc = text_span(@l, @r)")
 
+# seq =
+# | %empty
+# | code [(%break | *(term [code])]
+# | 1*(term [code])
+# )
+
 @g.expr
 def seq(e):
     e.exec("$$ = ParsedSequence()")
-    with e.repeat(0, None):
-        e.match(code, "precode")
-        e.exec("$$.elems.append($precode)")
-        e.exec("$$.loc = $$.loc or @precode")
-
-    with e.repeat(1, None):
-        e.match(term, "term")
-        e.exec("$$.loc = $$.loc or @term")
-        e.exec("$$.elems.append($term)")
-        e.exec("$$.loc = text_span($$.loc, @term)")
-        with e.repeat(0, None):
+    with e.branches() as b:
+        with b.branch():
+            e.match(EMPTY, "empty")
+            e.exec("$$.loc = @empty")
+        with b.branch():
             e.match(code, "code")
             e.exec("$$.elems.append($code)")
-            e.exec("$$.loc = text_span($$.loc, @code)")
+            e.exec("$$.loc = @code")
+            with e.repeat(0, 1):
+                with e.branches() as b2:
+                    with b2.branch():
+                        e.match(BREAK, "break")
+                        e.exec("$$.loc = text_span($$.loc, @break)")
+                        e.exec("raise NotImplementedError()")
+                    with b2.branch():
+                        with e.repeat(1, None):
+                            e.match(term, "term")
+                            e.exec("$$.elems.append($term)")
+                            e.exec("$$.loc = text_span($$.loc, @term)")
+                            with e.repeat(0, None):
+                                e.match(code, "code")
+                                e.exec("$$.elems.append($code)")
+                                e.exec("$$.loc = text_span($$.loc, @code)")
+        with b.branch():
+            with e.repeat(1, None):
+                e.match(term, "term")
+                e.exec("$$.loc = $$.loc or @term")
+                e.exec("$$.elems.append($term)")
+                e.exec("$$.loc = text_span($$.loc, @term)")
+                with e.repeat(0, None):
+                    e.match(code, "code")
+                    e.exec("$$.elems.append($code)")
+                    e.exec("$$.loc = text_span($$.loc, @code)")
 
 @branches
 def branches(e):
@@ -290,15 +316,16 @@ def branches(e):
 
 @g.expr
 def directive(e):
-    e.match(PERCENT, "p")
     with e.branches() as b:
         with b.branch():
-            e.match(GENERATOR)
+            e.match(GENERATOR, "kw")
             e.match(TEXT, "name")
             e.exec("$$ = ParsedGenerator($name)")
+            e.exec("$$.loc = @kw")
         with b.branch():
-            e.match(KWARG)
+            e.match(KWARG, "kw")
             e.exec("$$ = ParsedKwarg()")
+            e.exec("$$.loc = @kw")
             with e.repeat(0, 1):
                 e.match(COLON)
                 e.match(TEXT, "tag")
@@ -308,8 +335,9 @@ def directive(e):
             e.match(TEXT, "value")
             e.exec("$$.value = $value")
         with b.branch():
-            e.match(TYPE)
+            e.match(TYPE, "kw")
             e.exec("$$ = ParsedType()")
+            e.exec("$$.loc = @kw")
             with e.repeat(0, 1):
                 e.match(COLON)
                 e.match(TEXT, "tag")
@@ -331,8 +359,9 @@ def directive(e):
                     ]
                 """)
         with b.branch():
-            e.match(ROOT)
+            e.match(ROOT, "kw")
             e.exec("$$ = ParsedRoot()")
+            e.exec("$$.loc = @kw")
             with e.repeat(0, 1):
                 e.match(COLON)
                 e.match(TEXT, "tag")
@@ -340,8 +369,9 @@ def directive(e):
             e.match(TEXT, "name")
             e.exec("$$.name = $name")
         with b.branch():
-            e.match(FALLBACK)
+            e.match(FALLBACK, "kw")
             e.exec("$$ = ParsedFallback()")
+            e.exec("$$.loc = @kw")
             with e.repeat(0, 1):
                 e.match(COLON)
                 e.match(TEXT, "tag")
@@ -354,8 +384,9 @@ def directive(e):
                 e.match(TEXT, "b")
                 e.exec("$$.from_types.append($b)")
         with b.branch():
-            e.match(PARAM)
+            e.match(PARAM, "kw")
             e.exec("$$ = ParsedParam()")
+            e.exec("$$.loc = @kw")
             with e.repeat(0, 1):
                 e.match(COLON)
                 e.match(TEXT, "tag")
@@ -366,8 +397,9 @@ def directive(e):
                 e.match(CODE, "type")
                 e.exec("$$.type = $type")
         with b.branch():
-            e.match(PREFIX)
+            e.match(PREFIX, "kw")
             e.exec("$$ = ParsedPrefix()")
+            e.exec("$$.loc = @kw")
             with e.repeat(0, 1):
                 e.match(COLON)
                 e.match(TEXT, "tag")
@@ -375,7 +407,7 @@ def directive(e):
             e.match(TEXT, "prefix")
             e.exec("$$.prefix = $prefix")
     e.match(SEMI, 's')
-    e.exec("$$.loc = text_span(@p, @s)")
+    e.exec("$$.loc = text_span($$.loc, @s)")
 
 @g.expr
 def definition(e):
