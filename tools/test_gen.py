@@ -267,6 +267,14 @@ except gen.FirstFollow:
     pass
 
 
+def run_failure_test(exception, grammar_text):
+    try:
+        with open("test.c", "w") as f:
+            gen.gen(grammar_text, 'c', f)
+        1/0
+    except exception:
+        pass
+
 # figure out a compiler to use
 from subprocess import Popen, PIPE, DEVNULL
 import os
@@ -327,6 +335,136 @@ def run_e2e_test(grammar_text):
             assert p.wait() == 0, p.wait()
         os.remove("test.c")
         os.remove("a.out")
+
+def sparse_enforce_policy(
+    g,
+    no_nested_recovery=False,
+    no_params=False,
+    no_extra_args=False,
+    no_missing_args=False,
+    no_untyped_params=False,
+    no_arg_param_type_mismatch=False,
+    no_arg_type_downgrade=False,
+    no_arg_type_upgrade=False,
+):
+    return g.enforce_policy(
+        no_nested_recovery=no_nested_recovery,
+        no_params=no_params,
+        no_extra_args=no_extra_args,
+        no_missing_args=no_missing_args,
+        no_untyped_params=no_untyped_params,
+        no_arg_param_type_mismatch=no_arg_param_type_mismatch,
+        no_arg_type_downgrade=no_arg_type_downgrade,
+        no_arg_type_upgrade=no_arg_type_upgrade,
+    )
+
+# function-like expressions: enforce arg/param match counts
+grammar_text = """
+expr1 = A:a B:b expr2!(a, b);
+expr2(a, b, c) = A B C;
+"""
+parsed_doc = gen.parse_doc(grammar_text)
+g = parsed_doc.build_grammar(grammar_text)
+errors = sparse_enforce_policy(g, no_missing_args=True)
+if not errors:
+    raise ValueError("errors expected but not found")
+grammar_text = """
+expr1 = A:a B:b expr2!(a, b);
+expr2(a) = A B C;
+"""
+parsed_doc = gen.parse_doc(grammar_text)
+g = parsed_doc.build_grammar(grammar_text)
+errors = sparse_enforce_policy(g, no_extra_args=True)
+if not errors:
+    raise ValueError("errors expected but not found")
+
+# test function-like expressions (valid)
+run_e2e_test(r"""
+{{
+typedef struct {
+    int start;
+    int end;
+} loc_t;
+
+loc_t span(loc_t start, loc_t end){
+    return (loc_t){start.start, end.end};
+}
+
+loc_t zero_loc(const loc_t *prev){
+    int val = prev ? prev->end + 1 : 0;
+    return (loc_t){val, val};
+}
+
+static int saved = 0;
+static int passed = 0;
+static int finalized = 0;
+loc_t numloc = {0};
+}}
+
+%root num;
+%type i {int};
+%kwarg semloc_type loc_t;
+%kwarg span_fn span;
+%kwarg zero_loc_fn zero_loc;
+
+NUM:i;
+
+locate_num(x) = JUNK { numloc = @x; };
+save_num(x:i) = locate_num!(x) { saved = $x++; };
+pass_num(p:i) = { passed=$p; } save_num!(p);
+num = NUM:n pass_num!(n) { finalized = $n; };
+
+{{{
+int main(int argc, char **argv){
+    ONSTACK_PARSER(p, 10, 10);
+
+    struct {int tok; int val; loc_t loc} tokens[] = {
+        {NUM, 7, {1,1}},
+        {JUNK, 0, {2,2}},
+    };
+    size_t ntokens = sizeof(tokens)/sizeof(*tokens);
+
+    char *out;
+    status_e status = STATUS_OK;
+    size_t i = 0;
+    while(!status && i < ntokens){
+        status = parse_num(
+            &p, tokens[i].tok, (val_u){.i=tokens[i].val}, tokens[i].loc, NULL
+        );
+        i++;
+    }
+
+    if(i != ntokens || status != STATUS_DONE){
+        fprintf(stderr, "bad exit conditions %d\n", (int)status);
+        return 1;
+    }
+
+    int wrong = 0;
+    if(saved != 7){
+        fprintf(stderr, "saved: %d, not 7\n", saved);
+        wrong++;
+    }
+    if(passed != 7){
+        fprintf(stderr, "passed: %d, not 7\n", passed);
+        wrong++;
+    }
+    if(finalized != 8){
+        fprintf(stderr, "finalized: %d, not 8\n", finalized);
+        wrong++;
+    }
+    if(numloc.start != 1){
+        fprintf(stderr, "numloc.start: %d, not 1\n", numloc.start);
+        wrong++;
+    }
+    if(numloc.end != 1){
+        fprintf(stderr, "numloc.end: %d, not 1\n", numloc.end);
+        wrong++;
+    }
+
+    return wrong;
+}
+}}}
+""")
 
 # test the C generator; make sure everything is always freed, with a grammar
 # whose side effects never free anything

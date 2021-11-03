@@ -431,6 +431,9 @@ class Parameter:
         self.name = name
         self.type = typ
         self.loc = loc
+        # When used as a argument, Parameter is used by its name.
+        self.argname = name
+        self.argtype = typ
 
 
 class Argument:
@@ -445,7 +448,7 @@ class Argument:
         self.name = name
         self.src = src
         self.loc = loc
-        self.type = src.type
+        self.type = src.argtype
 
 
 class Reference(Parsable):
@@ -463,11 +466,14 @@ class Reference(Parsable):
         self.tag = tag
         self.loc = loc
         self.prematched = None
+        # When used as a argument, Reference is used by its tag.
+        self.argname = tag
+        self.argtype = defn.type
 
     def summary(self, parent_priority=PRIORITY_UNAMBIGUOUS):
         argstr = ""
         if self.args:
-            argstr = "!(" + ','.join(a.tag for a in self.args) + ")"
+            argstr = "!(" + ', '.join(a.argname for a in self.args) + ")"
         tagstr = ""
         if self.tag:
             tagstr = ":" + self.tag
@@ -984,6 +990,22 @@ class Expression(Definition):
     def exec(self, code, tag=None, loc=None):
         self.scopes[-1].add_code(code, tag, loc)
 
+    def summary(self):
+        # summary of a reference to the Expression, not the whole expression.
+        paramstr = ""
+        if self.params:
+            pstrs = []
+            for p in self.params:
+                pstr = p.name
+                if p.type is not None:
+                    pstr += ":" + p.type
+                pstrs.append(pstr)
+            paramstr = "(" + ', '.join(pstrs) + ")"
+        typestr = ""
+        if self.type:
+            typestr = ":" + self.type
+        return self.name + paramstr + typestr + " = " + self.seq.summary()
+
     def recurses(self, prev=None):
         """
         Return None if parsing this root includes any recursion at all, or
@@ -1150,6 +1172,122 @@ class Grammar:
             return
         raise RuntimeError("unrecognized object type: " + type(obj).__name__)
 
+
+    # Let the generator choose which requirements to enforce.
+    def enforce_policy(
+        self,
+        *,
+        no_nested_recovery,  # no recovery-inside-recovery
+        no_params,  # disallow function-like expressions
+        no_extra_args,  # disallow too-many args in function-like expression
+        no_missing_args,  # disallow too-few args
+        no_untyped_params,  # disallow parameters with no type
+        no_arg_param_type_mismatch,  # typed args to typed parameters must match
+        no_arg_type_downgrade,  # disallow typed args to untyped parameters
+        no_arg_type_upgrade,  # disallow untyped args to typed parameters
+    ):
+
+        in_recovery = None
+        def _no_nested_recovery_enter(recovery):
+            nonlocal in_recovery
+            if no_nested_recovery:
+                return []
+            if in_recovery:
+                return [("nested recovery not allowed", in_recovery.loc, recovery.loc)]
+            in_recovery = recovery
+            return []
+
+        def _no_nested_recovery_reset():
+            nonlocal in_recovery
+            in_recovery = None
+
+        def _no_params_expr(expr):
+            if not no_params or not expr.params:
+                return []
+            return [("function-like expressions not allowed", expr.loc)]
+
+        def _no_params_ref(ref):
+            if not no_params or not ref.args:
+                return []
+            return [("function-like expressions not allowed", ref.loc)]
+
+        def _no_extra_args(ref, expr):
+            if not no_extra_args or len(ref.args) <= len(expr.params):
+                return []
+            return [("extra args not allowed", ref.loc, expr.loc)]
+
+        def _no_missing_args(ref, expr):
+            if not no_missing_args or len(ref.args) >= len(expr.params):
+                return []
+            return [("missing args not allowed", ref.loc, expr.loc)]
+
+        def _no_untyped_params(expr):
+            if not no_untyped_params or all(p.type for p in expr.params):
+                return []
+            return [("untyped params not allowed", p.loc)]
+
+        def _no_arg_param_type_mismatch(arg, param):
+            if not no_missing_args:
+                return []
+            if not arg.argtype or not param.argtype or arg.argtype == param.argtype:
+                return []
+            return [("arg/param type mismatch not allowed", arg.loc, param.loc)]
+
+        def _no_arg_type_downgrade(arg, param):
+            if not no_arg_type_downgrade or param.argtype or not arg.argtype:
+                return []
+            return [("arg type downgrade not allowed", arg.loc, param.loc)]
+
+        def _no_arg_type_upgrade(arg, param):
+            if not no_arg_type_upgrade or arg.argtype or not param.argtype:
+                return []
+            return [("arg type upgrade not allowed", arg.loc, param.loc)]
+
+        def _enforce(obj):
+            out = []
+            if isinstance(obj, Reference):
+                if isinstance(obj.defn, Token):
+                    return out
+                if isinstance(obj.defn, Expression):
+                    out += _no_params_ref(obj)
+                    out += _no_extra_args(obj, obj.defn)
+                    out += _no_missing_args(obj, obj.defn)
+                    for i in range(min(len(obj.args), len(obj.defn.params))):
+                        arg = obj.args[i]
+                        param = obj.defn.params[i]
+                        out += _no_arg_param_type_mismatch(arg, param)
+                        out += _no_arg_type_downgrade(arg, param)
+                        out += _no_arg_type_upgrade(arg, param)
+                    return out
+                raise RuntimeError("unrecognized ref: " + type(obj.defn).__name__)
+            if isinstance(obj, Repeat):
+                out += _enforce(obj.seq)
+                return out
+            if isinstance(obj, Recovery):
+                _no_nested_recovery()
+                out += _enforce(obj.seq)
+                _no_nested_recovery_reset()
+                return out
+            if isinstance(obj, Branches):
+                out = []
+                for b in obj.branches:
+                    out += _enforce(b)
+                return out
+            if isinstance(obj, Sequence):
+                out = []
+                for t, _ in obj.terms:
+                    out += _enforce(t)
+                return out
+            raise RuntimeError("unrecognized object type: " + type(obj).__name__)
+
+        out = []
+        for _, expr in self.sorted_expressions():
+            out += _no_params_expr(expr)
+            out += _no_untyped_params(expr)
+            out += _enforce(expr.seq)
+        return out
+
+
 class Types:
     """The result of all of the %type directives in a grammar."""
     def __init__(self, types):
@@ -1228,31 +1366,54 @@ class C:
 
     class Variables:
         def __init__(self, fprint_fn, semloc):
-            # a list of lists of available variables
-            self.scopes = [[]]
+            # a list of maps of variables to tuples of (ptr, undefs)
+            self.scopes = [{}]
             self.semloc = bool(semloc)
             self.fprint = fprint_fn
 
         def new_scope(self):
-            self.scopes.append([])
+            self.scopes.append({})
 
-        def define(self, tag, typ, pos):
+        def pointer(self, tag):
+            for scope in self.scopes:
+                if tag in scope:
+                    return scope[tag][0]
+            raise KeyError(tag)
+
+        def define_term(self, tag, typ, pos):
+            ptr = "call->stack + %d"%pos
+            self._define(tag, typ, ptr, [])
+
+        def define_param(self, name, typ, pos):
+            # params have a pointer-like behavior; their semstack value
+            # corresponds to a pointer to another semstack value.
+            self.fprint(
+                "    #define YYPTR_" + name
+                + " (p->semstack[call->stack + %d].val._yy_pointer)"%pos
+            )
+            ptr = "YYPTR_"+name
+            undefs = ["    #undef YYPTR_" + name]
+            self._define(name, typ, ptr, undefs)
+
+        def _define(self, tag, typ, ptr, undefs):
             for scope in self.scopes:
                 assert tag not in scope, "tag " + tag + " shadows another tag"
             suffix = "OUT" if tag == "$" else "_" + tag
             if typ is not None:
                 self.fprint(
-                    "    #define YYVAL%s "
-                    "(p->semstack[call->stack + %d].val.%s)"%(
-                        suffix, pos, typ
+                    "    #define YYVAL%s (p->semstack[%s].val.%s)"%(
+                        suffix, ptr, typ
                     ),
                 )
+                undefs.append("    #undef YYVAL" + suffix)
             if self.semloc and tag != "$":
                 self.fprint(
                     "    #define YYLOC" + suffix
-                    + " (p->semstack[call->stack + %d].loc)"%pos,
+                    + " (p->semstack[%s].loc)"%ptr,
                 )
-            self.scopes[-1].append((tag, typ))
+                undefs.append("    #undef YYLOC" + suffix)
+            self.scopes[-1][tag] = (ptr, undefs)
+
 
         def define_final_loc(self):
             """
@@ -1266,12 +1427,9 @@ class C:
 
         def pop_scope(self):
             popped = self.scopes.pop()
-            for tag, typ in popped:
-                suffix = "OUT" if tag == "$" else "_" + tag
-                if typ is not None:
-                    self.fprint("    #undef YYVAL" + suffix)
-                if self.semloc:
-                    self.fprint("    #undef YYLOC" + suffix)
+            for _, undefs in popped.values():
+                for undef in undefs:
+                    self.fprint(undef)
 
     def __init__(
         self,
@@ -1294,6 +1452,20 @@ class C:
         self.params = ctx.params
         self.src = ctx.src
         self.dst = ctx.dst
+
+        # enforce grammar policies
+        errors = self.grammar.enforce_policy(
+            no_nested_recovery=True,
+            no_params=False,
+            no_extra_args=True,
+            no_missing_args=True,
+            no_untyped_params=False,
+            no_arg_param_type_mismatch=True,
+            no_arg_type_downgrade=False,
+            no_arg_type_upgrade=True,
+        )
+        if errors:
+            raise RuntimeError(errors)
 
         self.prefix_ = (self.prefix + "_") if self.prefix else ""
         assert bool(semloc_type)+bool(span_fn)+bool(zero_loc_fn) in (0, 3), (
@@ -1606,16 +1778,25 @@ class C:
 
             if isinstance(obj.defn, Expression):
                 self.fprint("    // " + obj.summary())
-                self.fprint("    call->state = " + str(state) + ";")
-                self.fprint("    call->summary = \"" + self.state_map[obj] + "\";")
+                self.fprint("    call->state = %d;"%state)
+                self.fprint("    call->summary = \"%s\";"%self.state_map[obj])
                 self.fprint("    ${PREFIX_}CALL(%s, %d);"%(self.parse_fn(obj.defn), stack))
+                if obj.args:
+                    self.fprint("    // prepare args to function-like expression")
+                for i, arg in enumerate(obj.args):
+                    self.fprint(
+                        "    p->semstack[call->stack + %d].val._yy_pointer = %s;"%(
+                            stack + 1 + i, var.pointer(arg.argname)
+                        )
+                    )
+                self.fprint("    return ${PREFIX_}STATUS_OK;")
                 self.fprint("yy" + str(state) + ":")
                 self.fprint("#ifdef ${PREFIX_}HAVE_SEMLOC")
                 self.fprint("    ${prefix_}process_matched_loc(p,")
                 self.fprint("        call, p->semstack[call->stack + %d].loc"%stack)
                 self.fprint("    );")
                 self.fprint("#endif")
-                return state + 1, stack + 1
+                return state + 1, stack + 1 + len(obj.defn.params)
 
             raise RuntimeError("unrecognized reference type: " + type(obj.defn).__name__)
 
@@ -1777,7 +1958,7 @@ class C:
             self.print_code(obj.precode, "    ")
             for i, (t, code) in enumerate(obj.terms):
                 if isinstance(t, Reference) and t.tag is not None:
-                    var.define(t.tag, t.defn.type, stack)
+                    var.define_term(t.tag, t.defn.type, stack)
                 state, stack = self.gen(t, state, stack, var)
                 final = i+1 == len(obj.terms)
                 # calculate the overall location before the final code block
@@ -1820,7 +2001,7 @@ class C:
 
         exp_nstates = 1 + self.nstates(expr.seq)
 
-        self.fprint("// %s = %s;"%(expr.name, expr.seq.summary()))
+        self.fprint("// %s;"%(expr.summary()))
         self.fprint(
             "static ${prefix_}status_e %s($parse_fn_args){"%self.parse_fn(expr)
         )
@@ -1839,14 +2020,20 @@ class C:
         self.fprint("    call->nsems = %d;"%x)
 
         var = C.Variables(self.fprint, semloc=self.semloc_type)
+        stack = 0;
+        # expose $$ and @$
+        var.define_term("$", expr.type, stack)
+        stack += 1
         if expr.type is not None:
-            var.define("$", expr.type, 0)
             self.fprint("    p->semstack[call->stack].type = ${PREFIX_}SEMTYPE_%s;"%expr.type)
+        # expose each parameter
+        for param in expr.params:
+            var.define_param(param.name, param.type, stack)
+            stack += 1
         self.fprint("")
 
         # state starts at 1, since 0 is only the first time we're called
-        # stack starts at 1, since we always allocate the output
-        nstates, _ = self.gen(expr.seq, 1, 1, var, want_final_loc=True)
+        nstates, _ = self.gen(expr.seq, 1, stack, var, want_final_loc=True)
         # make sure self.nstates() agrees with self.gen()
         assert nstates == exp_nstates, "%d != %d"%(nstates, exp_nstates)
 
@@ -2003,6 +2190,7 @@ class C:
         self.fprint("")
         self.fprint("typedef union {")
         self.fprint("    int _yy_counter;")
+        self.fprint("    size_t _yy_pointer;")
         for t in self.types.source_ordered():
             self.fprint("    %s %s;"%(t.spec, t.name))
         self.fprint("} ${prefix_}val_u;")
@@ -2300,7 +2488,6 @@ class C:
                     .fn = _fn, \
                     .stack = call->stack + _stack, \
                 }; \
-                return 0; \
             } while(0)
 
             #define ${PREFIX_}AWAIT_TOKEN \
@@ -2497,6 +2684,20 @@ class Python:
         self.fallbacks = ctx.fallbacks
         self.prefix = ctx.prefix
         self.params = ctx.params
+
+        # enforce grammar policies
+        errors = self.grammar.enforce_policy(
+            no_nested_recovery=False,
+            no_params=True,
+            no_extra_args=True,
+            no_missing_args=True,
+            no_untyped_params=False,
+            no_arg_param_type_mismatch=False,
+            no_arg_type_downgrade=False,
+            no_arg_type_upgrade=False,
+        )
+        if errors:
+            raise RuntimeError(errors)
 
         if list(self.types.source_ordered()):
             print(
@@ -2722,8 +2923,8 @@ class Python:
     def define_fn(self, expr):
         # reset counter naming
         self.ncounters = 0
-        with self.extra_vars(name=expr.name, summary=expr.seq.summary()):
-            self.fprint("# $name = $summary")
+        with self.extra_vars(name=expr.name, summary=expr.summary()):
+            self.fprint("# $summary")
             self.fprint("def _${prefix_}parse_$name(tokens${_u}):")
             self.fprint("    out = ${prefix}Expression()")
             if self.span_fn:
