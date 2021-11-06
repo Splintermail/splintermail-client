@@ -3,6 +3,82 @@ if "" not in sys.path:
     sys.path = [""] + sys.path
 import gen
 
+
+def sparse_enforce_policy(
+    g,
+    no_nested_recovery=False,
+    no_params=False,
+    no_extra_args=False,
+    no_missing_args=False,
+    no_untyped_params=False,
+    no_arg_param_type_mismatch=False,
+    no_arg_type_downgrade=False,
+    no_arg_type_upgrade=False,
+    no_fallback_first_follows=False,
+):
+    return g.enforce_policy(
+        no_nested_recovery=no_nested_recovery,
+        no_params=no_params,
+        no_extra_args=no_extra_args,
+        no_missing_args=no_missing_args,
+        no_untyped_params=no_untyped_params,
+        no_arg_param_type_mismatch=no_arg_param_type_mismatch,
+        no_arg_type_downgrade=no_arg_type_downgrade,
+        no_arg_type_upgrade=no_arg_type_upgrade,
+        no_fallback_first_follows=no_fallback_first_follows,
+    )
+
+# Unit tests
+g = gen.Grammar()
+W = g.token("W")
+X = g.token("X")
+Y = g.token("Y")
+Z = g.token("Z")
+
+@g.expr
+def a(e):
+    with e.repeat(0, 1):
+        e.match(W)
+    with e.repeat(0, 1):
+        e.match(X)
+    with e.repeat(0, 1):
+        e.match(Y)
+    with e.repeat(0, 1):
+        e.match(Z)
+
+@g.expr
+def b(e):
+    with e.repeat(0, 1):
+        e.match(W)
+    with e.repeat(0, 1):
+        e.match(X)
+    e.match(Y)
+    with e.repeat(0, 1):
+        e.match(Z)
+
+@g.expr
+def c(e):
+    with e.branches() as br:
+        with br.branch():
+            e.match(W)
+            e.match(X)
+        with br.branch():
+            e.match(Y)
+            with e.repeat(1, 2):
+                e.match(Z)
+
+g.compile()
+
+assert a.seq.first_ex == {"W", "X", "Y", "Z", None}, a.seq.first_ex
+assert a.seq.disallowed_after == {"W", "X", "Y", "Z"}, a.seq.disallowed_after
+
+assert b.seq.first_ex == {"W", "X", "Y"}, b.seq.first_ex
+assert b.seq.disallowed_after == {"Z"}, b.seq.disallowed_after
+
+assert c.seq.first_ex == {"W", "Y"}, c.seq.first_ex
+assert c.seq.disallowed_after == {"Z"}, c.seq.disallowed_after
+
+
 # illegal: first term might start with X or be empty, second term starts with X
 try:
     g = gen.Grammar()
@@ -115,40 +191,6 @@ def a(e):
 g.check()
 
 
-# Unit tests
-g = gen.Grammar()
-W = g.token("W")
-X = g.token("X")
-Y = g.token("Y")
-Z = g.token("Z")
-
-@g.expr
-def a(e):
-    with e.repeat(0, 1):
-        e.match(W)
-    with e.repeat(0, 1):
-        e.match(X)
-    with e.repeat(0, 1):
-        e.match(Y)
-    with e.repeat(0, 1):
-        e.match(Z)
-
-@g.expr
-def b(e):
-    with e.repeat(0, 1):
-        e.match(W)
-    with e.repeat(0, 1):
-        e.match(X)
-    e.match(Y)
-    with e.repeat(0, 1):
-        e.match(Z)
-
-assert a.seq.get_first() == {"W", "X", "Y", "Z", None}
-assert a.seq.get_disallowed_after() == {"W", "X", "Y", "Z", None}
-
-assert b.seq.get_first() == {"W", "X", "Y"}
-assert b.seq.get_disallowed_after() == {"Z"}
-
 # empty expressions: various legal forms
 grammar_text = """
 a = %empty;  # explicit empty
@@ -161,27 +203,26 @@ f = A (B | {});  # in a branch, side-effect only
 parsed_doc = gen.parse_doc(grammar_text)
 g = parsed_doc.build_grammar(grammar_text)
 g.check()
-for key, first in (
-    ("a", {None}),
-    ("b", {None}),
-    ("c", {"B", None}),
-    ("d", {"B", None}),
+for key, first, maybe_empty, always_empty, disallowed_after in (
+    ("a", set(), True, True, set()),
+    ("b", set(), True, True, set()),
+    ("c", {"B"}, True, False, {"B"}),
+    ("d", {"B"}, True, False, {"B"}),
+    ("e", {"A"}, False, False, {"B"}),
+    ("f", {"A"}, False, False, {"B"}),
 ):
-    got = g.exprs[key].seq.get_first()
+    got = g.exprs[key].seq.first
     assert got == first, (key, got)
+    got = g.exprs[key].seq.maybe_empty
+    assert got == maybe_empty, (key, got)
+    got = g.exprs[key].seq.always_empty
+    assert got == always_empty, (key, got)
+    got = g.exprs[key].seq.disallowed_after
+    assert got == disallowed_after, (key, got)
 
 branches = g.exprs["d"].seq.terms[0][0]
 assert len(branches.branches) == 1
 assert branches.default is not None
-
-got = g.exprs["a"].seq.get_disallowed_after()
-assert got == {None}, got
-got = g.exprs["b"].seq.get_disallowed_after()
-assert got == {None}, got
-got = g.exprs["e"].seq.get_disallowed_after()
-assert got == {"B"}, got
-got = g.exprs["f"].seq.get_disallowed_after()
-assert got == {"B"}, got
 
 
 # testing MetaTokenizer
@@ -239,9 +280,9 @@ exp = {
 assert fallbackmap == exp, fallbackmap
 fallbacks = gen.Fallbacks(fallbackmap)
 # first look at thing1, thing2, and thing3 directly
-thing1 = g.exprs["thing1"].seq.get_first()
-thing2 = g.exprs["thing2"].seq.get_first()
-thing3 = g.exprs["thing3"].seq.get_first()
+thing1 = g.exprs["thing1"].seq.first_ex
+thing2 = g.exprs["thing2"].seq.first_ex
+thing3 = g.exprs["thing3"].seq.first_ex
 got = fallbacks.all_fallbacks(thing1)
 assert got == {"A", "B", "C"}, got
 got = fallbacks.all_fallbacks(thing2)
@@ -249,7 +290,7 @@ assert got == {"N1", "N2", "N3"}, got
 got = fallbacks.all_fallbacks(thing3)
 assert got == {"LETTER", "A", "B", "NUM", "N1", "N2", "N3"}, got
 # now imagine we are looking at the branch statement in `asdf`
-exclude = g.exprs["asdf"].seq.get_first()
+exclude = g.exprs["asdf"].seq.first_ex
 got = fallbacks.all_fallbacks(thing1, exclude)
 assert got == {"B"}, got
 got = fallbacks.all_fallbacks(thing2, exclude)
@@ -291,11 +332,12 @@ asdf = *A B;
 """
 parsed_doc = gen.parse_doc(grammar_text)
 g = parsed_doc.build_grammar(grammar_text)
-g.check()
 fallbackmap = gen.extract_fallbacks(parsed_doc.fallbacks, g, None)
 fallbacks = gen.Fallbacks(fallbackmap)
+g.fallbacks = fallbacks
+g.check()
 try:
-    g.check(fallbacks=fallbacks)
+    sparse_enforce_policy(g, no_fallback_first_follows=True)
     1/0
 except gen.FirstFollow:
     pass
@@ -378,28 +420,6 @@ def run_py_e2e_test(grammar_text):
     assert p.wait() == 0, p.wait()
 
     os.remove("test.py")
-
-def sparse_enforce_policy(
-    g,
-    no_nested_recovery=False,
-    no_params=False,
-    no_extra_args=False,
-    no_missing_args=False,
-    no_untyped_params=False,
-    no_arg_param_type_mismatch=False,
-    no_arg_type_downgrade=False,
-    no_arg_type_upgrade=False,
-):
-    return g.enforce_policy(
-        no_nested_recovery=no_nested_recovery,
-        no_params=no_params,
-        no_extra_args=no_extra_args,
-        no_missing_args=no_missing_args,
-        no_untyped_params=no_untyped_params,
-        no_arg_param_type_mismatch=no_arg_param_type_mismatch,
-        no_arg_type_downgrade=no_arg_type_downgrade,
-        no_arg_type_upgrade=no_arg_type_upgrade,
-    )
 
 # function-like expressions: enforce arg/param match counts
 grammar_text = """

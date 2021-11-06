@@ -61,7 +61,11 @@ import gen
 # | 1*(PIPE seq)
 # | seq *(PIPE seq)  # allows for the convert-to-seq case
 # ;
-# seq = *code 1*(term *code);
+# seq =
+# | %empty
+# | code [(%break | *(term [code])]
+# | 1*(term [code])
+# )
 # term =
 # | [NUM] ASTERISK [NUM] (
 #     | ref # disallow a tag on this ref
@@ -92,7 +96,7 @@ import gen
 # # Can we support right recursion?
 # args = TEXT:name [COMMA [arg_list]];
 # # Can this be supported?  Can it be analyzed?
-# args = TEXT:name 1*(COMMA (arg_list | %return ));
+# args = TEXT:name 1*(COMMA (arg_list | %break ));
 
 g = gen.Grammar()
 
@@ -249,12 +253,6 @@ def term(e):
                 e.exec("$$.code.append($code)")
             e.match(RANGLE, "r")
             e.exec("$$.loc = text_span(@l, @r)")
-
-# seq =
-# | %empty
-# | code [(%break | *(term [code])]
-# | 1*(term [code])
-# )
 
 @g.expr
 def seq(e):

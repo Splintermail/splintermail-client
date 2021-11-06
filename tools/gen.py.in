@@ -31,7 +31,11 @@ TODO:
 
  - Grammar:
    - use source-order everywhere
-   - configurable strictness for fallback-caused first/first, first/follow
+   - support %break
+      - toplevel %break ok
+      - otherwise must be in non-maybe repeat
+      - only one level of break supported for now
+      - support one empty branch in branches
 
  - Meta parser:
    - support an %include directive?
@@ -40,7 +44,6 @@ TODO:
  - gen.py cli:
    - support importing generators from external python files
    - allow for input templates, so you can have one file with an embedded grammar
-   - configurable strictness for fallback-caused first/first, first/follow
    - come up with a better name than gen.py
 """
 
@@ -119,11 +122,6 @@ class FirstFollow(GrammarError):
         self.due_to_fallbacks = due_to_fallbacks
         super().__init__()
 
-    def __str__(self):
-        if self.text is not None:
-            return self.render(self.text)
-        return super().__str__()
-
     def render(self, body):
         out = "FIRST/FOLLOW conflicts: [%s]\n"%(",".join(self.conflicts))
         if self.term.loc is not None:
@@ -135,10 +133,49 @@ class FirstFollow(GrammarError):
             out += "\n(note: this conflict only arises due to fallbacks)"
         return out
 
+class EarlyBreak(GrammarError):
+    def __init__(self, term):
+        self.term = term
+        super().__init__()
+
+    def render(self, body):
+        out = (
+            "out-of-place %break statement; it is possible for the following "
+            "subgrammar to match %break before anything else (use a maybe "
+            "operator ([...]) instead):\n" + self.term.summary()
+            + "\nat " + render_location(self.term.loc, body)
+        )
+        return out
+
+class BreakNotLast(GrammarError):
+    def __init__(self, seq, term):
+        self.seq = seq
+        self.term = term
+        super().__init__()
+
+    def render(self, body):
+        out = (
+            "%break statement in middle of sequence prevents further tokens "
+            "from ever matching:\n" + self.term.summary()
+            + "\nat " + render_location(self.term.loc, body)
+        )
+        return out
+
 class InfiniteRecursion(Exception):
-    def __init__(self, path, *args):
-        self.path = path
-        super().__init__(*args)
+    def __init__(self, exprs, extra):
+        self.exprs = exprs
+        self.extra = extra
+
+    def __str__(self):
+        try:
+            out = "\n" + "\n".join(
+                "%s may start with %s: %s"%(e.name, enext.name, e.seq.summary())
+                for e, enext in zip(self.exprs, self.exprs[1:]+[self.extra])
+            )
+            out += "\nand %s causes an infinite recursion"%self.extra.name
+            return out
+        except e:
+            return "no error"
 
 class PossiblyEmpty(GrammarError):
     def __init__(self, msg, summary, loc):
@@ -166,7 +203,7 @@ class MultipleEmptyBranches(GrammarError):
         if self.obj.loc is not None:
             out += "\nat " + render_location(self.obj.loc, body)
         for empty in self.empties:
-            if empty.get_first() == {None}:
+            if empty.always_empty:
                 out += "\nempty:       %s"%empty.summary()
             else:
                 out += "\nmaybe-empty: %s"%empty.summary()
@@ -221,8 +258,6 @@ class Fallbacks:
         out = self.fallbackmap[primary]
         out = out.difference(set(exclude))
         for ex in exclude:
-            if ex is None:
-                continue
             if ex == primary:
                 # allow primary to appear in exclude, but ignore it.
                 continue
@@ -240,11 +275,11 @@ class Fallbacks:
         # as with fallback_set(), ignore excluded primaries
         exclude = set(exclude).difference(set(tokens))
         for t in tokens:
-            if t is not None:
-                out = out.union(self.fallback_set(t, exclude))
+            out = out.union(self.fallback_set(t, exclude))
         # primaries are never, ever fallbacks
         out = out.difference(set(tokens))
         return out
+
 
 
 def extract_fallbacks(parsed_fallbacks, grammar, tag):
@@ -334,15 +369,12 @@ def extract_fallbacks(parsed_fallbacks, grammar, tag):
     return expanded
 
 
-def add_to_prev(prev, name, call):
+def add_to_prev(prev, expr):
     if prev is None:
         prev = []
-    if name in prev:
-        raise InfiniteRecursion(
-            list(prev) + [name],
-            "circular " + call + "() detected in " + name + ": " + str(prev)
-        )
-    return list(prev) + [name]
+    if expr in prev:
+        raise InfiniteRecursion(list(prev), expr)
+    return list(prev) + [expr]
 
 def cacheable(*args):
     if len(args) == 1 and callable(args[0]):
@@ -394,6 +426,17 @@ class Token(Definition):
 
 
 class Parsable(metaclass=abc.ABCMeta):
+    def __init__(self):
+        # properties which get configured by the grammar.compile()
+        self.first = None  # tokens
+        self.first_ex = None  # tokens or None or %break
+        self.maybe_empty = None  # bool
+        self.always_empty = None  # bool
+        self.disallowed_after = None  # tuple of (disallowed, recurse)
+        self.maybe_breaks = None  # bool
+        self.always_breaks = None  # bool
+        self.prematched = None  # bool
+
     @abc.abstractmethod
     def summary(self, parent_priority=PRIORITY_UNAMBIGUOUS):
         """Print a human-readable summary of this grammar element."""
@@ -405,18 +448,6 @@ class Parsable(metaclass=abc.ABCMeta):
         Return a dict mapping the Parsable you are currently parsing to a
         string representation of your parsing location.
         """
-        pass
-
-    @abc.abstractmethod
-    def get_first(self, prev=None):
-        pass
-
-    @abc.abstractmethod
-    def get_disallowed_after(self, prev=None):
-        pass
-
-    @abc.abstractmethod
-    def check(self, *, fallbacks=None):
         pass
 
 
@@ -456,13 +487,13 @@ class Reference(Parsable):
     to the location of a reference.
     """
     def __init__(self, defn, args=None, tag=None, loc=None):
+        super().__init__()
         assert isinstance(defn, (Token, Expression)), type(defn).__name__
         assert args is None or isinstance(defn, Expression)
         self.defn = defn
         self.args = args or []
         self.tag = tag
         self.loc = loc
-        self.prematched = None
         # When used as a argument, Reference is used by its tag.
         self.argname = tag
         self.argtype = defn.type
@@ -479,23 +510,6 @@ class Reference(Parsable):
     def state_map(self, parent_priority=PRIORITY_UNAMBIGUOUS):
         return {self: ". " + self.defn.name}
 
-    @cacheable
-    def get_first(self, prev=None):
-        if isinstance(self.defn, Token):
-            return {self.defn.name}
-        return self.defn.seq.get_first(prev)
-
-    @cacheable
-    def get_disallowed_after(self, prev=None):
-        if isinstance(self.defn, Token):
-            return set()
-        return self.defn.seq.get_disallowed_after(prev)
-
-    @cacheable("fallbacks")
-    def check(self, *, fallbacks=None):
-        # The reference itself needs no checking.
-        return
-
 
 class Snippet:
     def __init__(self, text, tag=None, loc=None):
@@ -506,6 +520,7 @@ class Snippet:
 
 class Repeat(Parsable):
     def __init__(self, name, rmin, rmax, loc=None):
+        super().__init__()
         self.name = name
         if rmax is not None and rmin > rmax:
             raise ValueError(
@@ -539,7 +554,6 @@ class Repeat(Parsable):
             self.err_op = "maybe operator"
         else:
             self.err_op = "repetition operator"
-        self.prematched = None
 
     def add_term(self, term):
         self.seq.add_term(term)
@@ -583,65 +597,13 @@ class Repeat(Parsable):
             out[k] = pre + v + post
         return out
 
-    @cacheable
-    def get_first(self, prev=None):
-        prev = add_to_prev(prev, self.name, "get_first")
-        first = self.seq.get_first(prev)
-        if None in first:
-            raise PossiblyEmpty(self.err_op, self.seq.summary(), self.loc)
-        if self.rmin == 0:
-            # include None to indicate a maybe-empty expresssion
-            first = first.union({None})
-        return first
-
-    @cacheable
-    def get_disallowed_after(self, prev):
-        prev = add_to_prev(prev, self.name, "get_disallowed_after")
-        disallowed = self.seq.get_disallowed_after(prev)
-        if None in disallowed:
-            raise PossiblyEmpty(self.err_op, self.seq.summary(), self.loc)
-        first = self.seq.get_first(prev)
-        if None in first:
-            raise PossiblyEmpty(self.err_op, self.seq.summary(), self.loc)
-        if self.rmin != self.rmax:
-            # variable repeat: disallow our own first
-            disallowed = disallowed.union(first)
-        if self.rmin == 0:
-            # include None to indicate a maybe-empty expresssion
-            disallowed = disallowed.union({None})
-        return disallowed
-
-    @cacheable("fallbacks")
-    def check(self, *, fallbacks=None):
-        self.seq.check(fallbacks=fallbacks)
-        # any variable-number repeat with rmax > 1 can conflict with itself.
-        if self.rmin != self.rmax and (self.rmax is None or self.rmax > 1):
-            seq_first = self.seq.get_first(None)
-            seq_disallowed = self.seq.get_disallowed_after(None)
-            conflicts = seq_first.intersection(seq_disallowed)
-            if conflicts:
-                raise FirstFollow(self, conflicts)
-            if fallbacks is not None:
-                # Predict where fallbacks would expand either the disallowed
-                # set or the term_first set to cause conflicts.
-                def expand(tokens):
-                    out = set(tokens)
-                    for t in tokens:
-                        out = out.union(fallbacks.get(t, set()))
-                    return out
-                seq_disallowed = expand(seq_disallowed)
-                seq_first = expand(seq_first)
-                conflicts = seq_first.intersection(seq_disallowed)
-                if conflicts:
-                    raise FirstFollow(self, conflicts, due_to_fallbacks=True)
-
 class Branches(Parsable):
     def __init__(self, name, loc=None):
+        super().__init__()
         self.name = name
         self.branches = []
         self._branch = None
         self.loc = loc
-        self.prematched = None
         self._default_known = False
         self._default = None
 
@@ -701,93 +663,33 @@ class Branches(Parsable):
 
     @property
     def default(self):
-        assert self._default_known, "can't call .default before .get_first()"
+        assert self._default_known, "can't call .default compiling grammar"
         return self._default
 
     def __len__(self):
-        assert self._default_known, "can't call .__len__ before .get_first()"
+        assert self._default_known, "can't call .__len__ compiling grammar"
         return len(self.branches) + int(self._default is not None)
 
     @property
     def branches_and_default(self):
         assert self._default_known, (
-            "can't call .branches_and_default before .get_first()"
+            "can't call .branches_and_default compiling grammar"
         )
         out = list(self.branches)
         if self._default is not None:
             out.append(self._default)
         return out
 
-    @cacheable
-    def get_first(self, prev=None):
-        prev = add_to_prev(prev, self.name, "get_first")
-        first = set()
-        empties = []
-        for branch in self.branches:
-            bfirst = branch.get_first(list(prev))
-            if None in bfirst:
-                empties.append(branch)
-            first = first.union(bfirst)
-        if len(empties) > 1:
-            raise MultipleEmptyBranches(self, empties)
-        if len(empties) == 1:
-            self._default = empties[0]
-            self.branches.remove(empties[0])
-        self._default_known = True
-        return frozenset(first)
-
-    @cacheable
-    def get_disallowed_after(self, prev):
-        prev = add_to_prev(prev, self.name, "get_disallowed_after")
-        prev = list(prev) + [self.name]
-        disallowed = set()
-        for branch in self.branches:
-            disallowed = disallowed.union(
-                branch.get_disallowed_after(list(prev))
-            )
-        first = self.get_first()
-        if None in first:
-            # If we have an empty branch, our first is also disallowed after
-            disallowed = disallowed.union(first)
-        return frozenset(disallowed)
-
-    @cacheable("fallbacks")
-    def check(self, *, fallbacks=None):
-        # Populate all the get_firsts
-        self.get_first()
-        # if any tokens map to multiple branches, that's a first/first conflict
-        token_to_branch = {}
-        for branch in self.branches:
-            branch.check(fallbacks=fallbacks)
-            branch_first = branch.get_first()
-            # we already processed empty branches
-            assert None not in branch_first, (self.summary(), branch_first)
-            for t in branch_first:
-                token_to_branch.setdefault(t, []).append(branch)
-
-        if self.default:
-            branch_first = self.default.get_first()
-            branch_first = branch_first.difference({None})
-            for t in branch_first:
-                token_to_branch.setdefault(t, []).append(branch)
-
-        conflicts= {}
-        for t, branchlist in token_to_branch.items():
-            if len(branchlist) > 1:
-                conflicts.setdefault(tuple(branchlist), []).append(t)
-        if conflicts:
-            raise FirstFirst(self, conflicts)
-
 
 class Recovery(Parsable):
     def __init__(self, name, code=None, tag=None, loc=None):
+        super().__init__()
         self.name = name
         # allow defining the recovery code upfront
         self.code = [] if code is None else [Snippet(code, tag)]
         self.seq = Sequence(self.name + '.seq')
         self.after = None
         self.loc = loc
-        self.prematched = None
 
     def add_term(self, term):
         self.seq.add_term(term)
@@ -814,31 +716,19 @@ class Recovery(Parsable):
             out[k] = "<" + v + "? >"
         return out
 
-    @cacheable
-    def get_first(self, prev=None):
-        return self.seq.get_first(prev)
-
-    @cacheable
-    def get_disallowed_after(self, prev):
-        return self.seq.get_disallowed_after(prev)
-
-    @cacheable("fallbacks")
-    def check(self, *, fallbacks=None):
-        self.seq.check(fallbacks=fallbacks)
-
 
 class Sequence(Parsable):
     """
     A sequence of terms which must be matched consecutively.
     """
     def __init__(self, name, loc=None):
+        super().__init__()
         self.name = name
         self.scopes = [self]
         self.precode = []
         # tuples of (Parsable, code=[])
         self.terms = []
         self.loc = loc
-        self.prematched = None
 
     def add_term(self, term):
         self.terms.append((term, []))
@@ -886,110 +776,6 @@ class Sequence(Parsable):
                 out[k] = pre + v + post
         return out
 
-    def get_first_ex(self, start, prev):
-        """
-        Get the list of all tokens that this expression could start with.
-
-        Ex: at runtime, when are processing a .maybe(), we need to be able to
-        look ahead one token and know if that token can be the first token
-        of this expression.
-        """
-        prev = add_to_prev(prev, self.name, "get_first")
-        first = set()
-        for term, _ in self.terms[start:]:
-            term_first = term.get_first(list(prev))
-            # detect conflicts in .check(), not here.
-            first = first.union(term_first)
-            # if None is not in the set, we have our answer.
-            if None not in first:
-                break
-            # if None is in the set, check the next term too.
-            first.remove(None)
-        else:
-            # restore the None from the final term_first
-            first.add(None)
-
-        return frozenset(first)
-
-    @cacheable
-    def get_first(self, prev=None):
-        return self.get_first_ex(0, prev)
-
-    @cacheable
-    def get_disallowed_after(self, prev=None):
-        """
-        Get the list of all tokens which would cause ambiguities after this
-        expression.
-
-        Ex. a maybe(EOL) term could not be followed by a match(EOL) term; it
-        would be ambiguous if an EOL matched to the maybe() or the match().
-        """
-        prev = add_to_prev(prev, self.name, "get_disallowed_after")
-        disallowed = set()
-        for term, _ in reversed(self.terms):
-            term_disallowed = term.get_disallowed_after(list(prev))
-            disallowed = disallowed.union(term_disallowed)
-            # if None is not in this term's disallowed, we have our answer
-            if None not in disallowed:
-                break
-            # if None is in the set, check the next term too
-            disallowed.remove(None)
-        else:
-            # restore the None from the final term_disallowed
-            disallowed.add(None)
-
-        return frozenset(disallowed)
-
-    @cacheable("fallbacks")
-    def check(self, *, fallbacks=None):
-        """
-        At generation time, we need to ensure that for every Term in the
-        expression, there is never a point where the lookahead token could
-        possibly match the next token.
-        """
-        prev = {self.name}
-
-        for term, _ in self.terms:
-            term.check(fallbacks=fallbacks)
-
-        disallowed = set()
-        for i, (term, _) in enumerate(self.terms):
-            term_first = term.get_first(list(prev))
-            # Ignore None when checking for conflicts
-            disallowed = disallowed.difference({None})
-            conflicts = disallowed.intersection(term_first)
-            if conflicts:
-                raise FirstFollow(term, conflicts)
-            if fallbacks is not None:
-                # Predict where fallbacks would expand either the disallowed
-                # set or the term_first set to cause conflicts.
-                def expand(tokens):
-                    out = set(tokens)
-                    for t in tokens:
-                        out = out.union(fallbacks.get(t, set()))
-                    return out
-                disallowed_ex = expand(disallowed)
-                term_first_ex = expand(term_first)
-                conflicts = disallowed_ex.intersection(term_first_ex)
-                if conflicts:
-                    raise FirstFollow(term, conflicts, due_to_fallbacks=True)
-            term_disallowed = term.get_disallowed_after(list(prev))
-            if None in term_disallowed:
-                # disallowed should grow
-                disallowed = disallowed.union(term_disallowed)
-            else:
-                # disallowed is reset
-                disallowed = term_disallowed
-
-            # Special case: check Recovery terms and call their set_after().
-            if isinstance(term, Recovery):
-                after_recovery = self.get_first_ex(i+1, None)
-                if None in after_recovery:
-                    raise ValueError(
-                        "a Recovery must be followed by a never-empty match "
-                        "within the same Sequence"
-                    )
-                term.set_after(after_recovery)
 
 
 class Expression(Definition):
@@ -1007,6 +793,7 @@ class Expression(Definition):
         self.nrec = 0
         self.loc = loc
         self.defined = False
+        self.recurses = None
 
     def __call__(self, fn):
         """Provide a definition for a forwards-declared expression"""
@@ -1056,7 +843,6 @@ class Expression(Definition):
         self.scopes[-1].add_code(code, tag, loc)
 
     def summary(self):
-        # summary of a reference to the Expression, not the whole expression.
         paramstr = ""
         if self.params:
             pstrs = []
@@ -1071,50 +857,12 @@ class Expression(Definition):
             typestr = ":" + self.type
         return self.name + paramstr + typestr + " = " + self.seq.summary()
 
-    def recurses(self, prev=None):
-        """
-        Return None if parsing this root includes any recursion at all, or
-        the path by which it does recurse.
-        """
-        if prev is None:
-            # top-level: user call, return None or a recursion path
-            try:
-                self.recurses([])
-            except InfiniteRecursion as e:
-                return e.path
-        else:
-            # inner-level: either raise an error or don't
-            prev = add_to_prev(prev, self.name, "recurses")
-
-            def _recurses(obj):
-                if isinstance(obj, Reference):
-                    if isinstance(obj.defn, Expression):
-                        return obj.defn.recurses(prev)
-                    elif isinstance(obj.defn, Token):
-                        return
-                    raise ValueError(
-                        "unknown defn type: %s"%type(obj.defn).__name__
-                    )
-                elif isinstance(obj, (Repeat, Recovery)):
-                    return _recurses(obj.seq)
-                elif isinstance(obj, Branches):
-                    for b in obj.branches:
-                        _recurses(b)
-                    return
-                elif isinstance(obj, Sequence):
-                    for term, _ in obj.terms:
-                        _recurses(term)
-                    return
-                raise ValueError(
-                    "unknown term type: %s"%type(term).__name__
-                )
-
-            _recurses(self.seq)
-
 class Grammar:
     def __init__(self, text=None):
         self.exprs = {}
         self.text = text
+        self.compiled = False
+        self.fallbacks = None
 
     def get_name(self, name):
         """
@@ -1176,7 +924,9 @@ class Grammar:
             if isinstance(expr, Expression):
                 yield name, expr
 
-    def check(self, *, fallbacks=None):
+    def compile(self):
+        if self.compiled:
+            return
         # first make sure everything is defined, or the checks become confusing
         undefined = set()
         for name, expr in self.sorted_expressions():
@@ -1190,21 +940,206 @@ class Grammar:
                 )
             )
 
+        # In the first pass, we detect infinite recursions in the grammar,
+        # and set the .first of all expressions.  We aren't able to get
+        # the .first of all objects easily, so we do that in a second pass.
         for name, expr in self.sorted_expressions():
-            try:
-                expr.seq.check(fallbacks=fallbacks)
-            except GrammarError as e:
-                # inject the full text of the grammar, if we have it
-                e.text = self.text
-                raise
-            # detect auto-created expressions with no definition
-            if not expr.defined:
-                raise RenderedError(
-                    "expression %s referenced but never defined"%name
-                )
+            _ = self._get_first(expr.seq, [expr])
+        for name, expr in self.sorted_expressions():
+            _ = self._get_first_all(expr.seq)
 
-            # trigger the prematched checks
+        for name, expr in self.sorted_expressions():
             self._set_prematched(expr.seq, False)
+
+        for name, expr in self.sorted_expressions():
+            _ = self._get_disallowed(expr.seq)
+
+        for name, expr in self.sorted_expressions():
+            expr.recurses = self._get_recurses(expr)
+
+        self.compiled = True
+
+    def _set_first(self, obj, out):
+        assert obj.first_ex is None, obj.summary()
+        out = frozenset(out)
+        obj.first_ex = out
+        obj.first = out.difference({None, "%break"})
+        obj.maybe_empty = None in out
+        obj.always_empty = out == {None}
+        return out
+
+    def _get_first(self, obj, prev):
+        if obj.first_ex is not None:
+            return obj.first_ex
+        if isinstance(obj, Reference):
+            if isinstance(obj.defn, Token):
+                out = {obj.defn.name}
+                return self._set_first(obj, out)
+            if isinstance(obj.defn, Expression):
+                if obj.defn.seq.first_ex is not None:
+                    # no need to recurse, avoid raising an error
+                    return self._set_first(obj, obj.defn.seq.first_ex)
+                prev = add_to_prev(prev, obj.defn)
+                out = self._get_first(obj.defn.seq, prev)
+                return self._set_first(obj, out)
+            raise RuntimeError("unrecognized ref: " + type(obj.defn).__name__)
+        if isinstance(obj, Repeat):
+            out = self._get_first(obj.seq, prev)
+            if obj.rmin == 0:
+                # include None to indicate a maybe-empty expresssion
+                out = out.union({None})
+            return self._set_first(obj, out)
+        if isinstance(obj, Recovery):
+            out = self._get_first(obj.seq, prev)
+            return self._set_first(obj, out)
+        if isinstance(obj, Branches):
+            # first visit every branch
+            for branch in obj.branches:
+                self._get_first(branch, prev)
+            # now do some analysis
+            out = set()
+            empties = []
+            for branch in obj.branches:
+                bfirst = branch.first_ex
+                if None in bfirst:
+                    empties.append(branch)
+                out = out.union(bfirst)
+            if len(empties) > 1:
+                raise MultipleEmptyBranches(obj, empties)
+            if len(empties) == 1:
+                obj._default = empties[0]
+                obj.branches.remove(empties[0])
+            obj._default_known = True
+            return self._set_first(obj, out)
+        if isinstance(obj, Sequence):
+            # only visit only what we need to, to allow for legal recursion
+            out = {None}
+            for term, _ in obj.terms:
+                term_first = self._get_first(term, prev)
+                out = out.union(term_first)
+                if not term.maybe_empty:
+                    # Remove None from the overall result.
+                    out = out.difference({None})
+                    break
+            # cache the result, allowing recursion through this object
+            out = self._set_first(obj, out)
+            return out
+        raise RuntimeError("unrecognized object type: " + type(obj).__name__)
+
+    def _get_first_all(self, obj):
+        # always visit this object
+        self._get_first(obj, [])
+        # also visit any sub-objects
+        if isinstance(obj, Reference):
+            return
+        if isinstance(obj, Repeat):
+            self._get_first_all(obj.seq)
+            return
+        if isinstance(obj, Recovery):
+            self._get_first_all(obj.seq)
+            return
+        if isinstance(obj, Branches):
+            for branch in obj.branches_and_default:
+                self._get_first_all(branch)
+            return
+        if isinstance(obj, Sequence):
+            for term, _ in obj.terms:
+                self._get_first_all(term)
+                assert term.first is not None, (obj.summary(), term.summary())
+            return
+        raise RuntimeError("unrecognized object type: " + type(obj).__name__)
+
+    def _set_disallowed(self, obj, out, recursed):
+        # only cache values if we never recursed, otherwise some of the deeper
+        # expressions will have incomplete views of what is disallowed
+        if not recursed:
+            out = frozenset(out)
+            obj.disallowed_after = out
+        return out
+
+    def _get_disallowed(self, obj, recursed=frozenset()):
+        """
+        Return tokens which are not allowed to follow this object.
+
+        Note that we detect recursions and ignore them; this is safe because
+        s.union(s) is always just s.  So if:
+
+            a = X [b];
+            b = Y [a];
+
+        then disallowed(a) = b.first.union(disallowed(b))
+        and  disallowed(b) = a.first.union(disallowed(a))
+
+        so if you expand disallowed(a) you'd get:
+
+            disallowed(a) = b.first.union(disallowed(b))
+                          = {Y}.union(disallowed(b))
+                          = {Y}.union({X}.union(disallowed(a)))
+                          = {Y}.union({X})  # since s.union(s) == s
+        """
+        if obj.disallowed_after is not None:
+            return obj.disallowed_after
+        if isinstance(obj, Reference):
+            if isinstance(obj.defn, Token):
+                return self._set_disallowed(obj, set(), recursed)
+            if isinstance(obj.defn, Expression):
+                # detect and ignore recursion
+                if recursed and obj.defn in recursed:
+                    return frozenset()
+                recursed = recursed.union({obj.defn})
+                out = self._get_disallowed(obj.defn.seq, recursed)
+                return self._set_disallowed(obj, out, recursed)
+            raise RuntimeError("unrecognized ref: " + type(obj.defn).__name__)
+        if isinstance(obj, Repeat):
+            out = self._get_disallowed(obj.seq, recursed)
+            if obj.rmin != obj.rmax:
+                # variable repeat: disallow our own first
+                out = out.union(obj.first)
+            return self._set_disallowed(obj, out, recursed)
+        if isinstance(obj, Recovery):
+            out = self._get_disallowed(obj.seq, recursed)
+            return self._set_disallowed(obj, out, recursed)
+        if isinstance(obj, Branches):
+            out = set()
+            for branch in obj.branches_and_default:
+                out = out.union(self._get_disallowed(branch, recursed))
+            if obj.maybe_empty:
+                # disallow our own first as well
+                out = out.union(obj.first)
+            return self._set_disallowed(obj, out, recursed)
+        if isinstance(obj, Sequence):
+            # We walk forward through the sequence tracking what might be
+            # disallowed in `temp`.  We commit temp to out once at the end of
+            # the sequence, and any time that something might start with a
+            # %break.  Additionally, if a term might have a %break, we commit
+            # that term's disallowed as well.
+            out = set()
+            temp = set()
+            for term, _ in obj.terms:
+                # TODO: support %break here
+                """
+                a = W [X] (Y [Z] %break | A B [C] | %break) D;
+                              b1            b2        b3
+
+                ## Look, you can't evaluate disallowed() without knowing the
+                ## scope of your break:
+                # disallowed(b1) = Z
+                # disallowed(b2) = C
+                # disallowed(b3) = {}
+                # disallowed(b) = Z, C
+                # disallowed(a) = X, Z  <- X because %break is in b.first
+                                        include Z because it's disallowed in b1
+                                        but how do we know to exclude C?
+                """
+                if term.maybe_empty:
+                    temp = temp.union(term.first)
+                else:
+                    temp = set()
+                temp = temp.union(self._get_disallowed(term, recursed))
+            # end of sequence:
+            out = out.union(temp)
+            return self._set_disallowed(obj, out, recursed)
+        raise RuntimeError("unrecognized object type: " + type(obj).__name__)
 
     def _set_prematched(self, obj, prematched):
         if isinstance(obj, Reference):
@@ -1232,12 +1167,139 @@ class Grammar:
         if isinstance(obj, Sequence):
             obj.prematched = prematched
             # the first term may prematched, but only if it is concrete
-            if len(obj.terms) and None in obj.terms[0][0].get_first():
+            if len(obj.terms) and obj.terms[0][0].maybe_empty:
                 prematched = False
             for t, _ in obj.terms:
                 self._set_prematched(t, prematched)
                 # Subsequent terms are never prematched
                 prematched = False
+            return
+        raise RuntimeError("unrecognized object type: " + type(obj).__name__)
+
+    def _get_recurses(self, expr):
+        class RecursionFound(Exception):
+            def __init__(exc, path):
+                exc.path = path
+
+        def _recurses(obj, path):
+            if isinstance(obj, Reference):
+                if isinstance(obj.defn, Expression):
+                    if obj.defn.name in path:
+                        raise RecursionFound(list(path) + [obj.defn.name])
+                    _recurses(obj.defn.seq, list(path) + [obj.defn.name])
+                    return
+                if isinstance(obj.defn, Token):
+                    return
+                raise ValueError(
+                    "unknown defn type: %s"%type(obj.defn).__name__
+                )
+            if isinstance(obj, (Repeat, Recovery)):
+                return _recurses(obj.seq, path)
+            if isinstance(obj, Branches):
+                for b in obj.branches:
+                    _recurses(b, path)
+                return
+            if isinstance(obj, Sequence):
+                for term, _ in obj.terms:
+                    _recurses(term, path)
+                return
+            raise ValueError(
+                "unknown term type: %s"%type(term).__name__
+            )
+
+        try:
+            _recurses(expr.seq, [expr.name])
+        except RecursionFound as e:
+            return e.path
+        return None
+
+    def check(self):
+        # compile if we haven't already
+        self.compile()
+        for name, expr in self.sorted_expressions():
+            try:
+                self._check(expr.seq)
+            except GrammarError as e:
+                # inject the full text of the grammar, if we have it
+                e.text = self.text
+                raise
+            # detect auto-created expressions with no definition
+            if not expr.defined:
+                raise RenderedError(
+                    "expression %s referenced but never defined"%name
+                )
+
+            # trigger the prematched checks
+            self._set_prematched(expr.seq, False)
+
+
+    def _check(self, obj):
+        if isinstance(obj, Reference):
+            # references need no matches
+            return
+        if isinstance(obj, Repeat):
+            self._check(obj.seq)
+            # any variable-number repeat with rmax > 1 can conflict with itself.
+            if obj.rmin != obj.rmax and (obj.rmax is None or obj.rmax > 1):
+                first = obj.seq.first
+                disallowed = obj.seq.disallowed_after
+                conflicts = first.intersection(disallowed)
+                if conflicts:
+                    raise FirstFollow(obj, conflicts)
+            if obj.seq.maybe_empty:
+                raise PossiblyEmpty(obj.err_op, obj.seq.summary(), obj.loc)
+            return
+        if isinstance(obj, Recovery):
+            return self._check(obj.seq)
+        if isinstance(obj, Branches):
+            token_to_branch = {}
+            for b in obj.branches_and_default:
+                # check eaach individual branch
+                self._check(b)
+                for t in b.first:
+                    token_to_branch.setdefault(t, []).append(b)
+            # then detect first/first conflicts
+            conflicts= {}
+            for t, branchlist in token_to_branch.items():
+                if len(branchlist) > 1:
+                    conflicts.setdefault(tuple(branchlist), []).append(t)
+            if conflicts:
+                raise FirstFirst(obj, conflicts)
+            return
+        if isinstance(obj, Sequence):
+            for term, _ in obj.terms:
+                # check individual terms
+                self._check(term)
+            # Detect %breaks which are not last.
+            for term, _ in obj.terms[:-1]:
+                if term.always_breaks:
+                    BreakNotLast(obj, term)
+            # Walk through the sequence, looking for First/Follow conflicts.
+            disallowed = set()
+            for i, (term, _) in enumerate(obj.terms):
+                conflicts = disallowed.intersection(term.first)
+                if conflicts:
+                    raise FirstFollow(term, conflicts)
+                if term.maybe_empty:
+                    disallowed = disallowed.union(term.first)
+                else:
+                    disallowed = self._get_disallowed(term)
+
+                # Special case: check Recovery terms and call their set_after().
+                if isinstance(term, Recovery):
+                    empty_after = True
+                    after = frozenset()
+                    for t, _ in obj.terms[i+1:]:
+                        after = after.union(t.first)
+                        if not t.maybe_empty:
+                            empty_after = False
+                            break
+                    if empty_after:
+                        raise ValueError(
+                            "a Recovery must be followed by a never-empty match "
+                            "within the same Sequence"
+                        )
+                    term.set_after(after)
             return
         raise RuntimeError("unrecognized object type: " + type(obj).__name__)
 
@@ -1254,6 +1316,7 @@ class Grammar:
         no_arg_param_type_mismatch,  # typed args to typed parameters must match
         no_arg_type_downgrade,  # disallow typed args to untyped parameters
         no_arg_type_upgrade,  # disallow untyped args to typed parameters
+        no_fallback_first_follows,  # disallow first/follow due to fallbacks
     ):
 
         in_recovery = None
@@ -1312,6 +1375,53 @@ class Grammar:
                 return []
             return [("arg type upgrade not allowed", arg.loc, param.loc)]
 
+        def _no_fallback_first_follow_repeat(repeat):
+            if not no_fallback_first_follows or self.fallbacks is None:
+                return []
+            # only variable-number repeats with rmax > 1 can self-conflict
+            if obj.rmin == obj.rmax or (obj.rmax and obj.rmax == 1):
+                return []
+            first = obj.seq.first
+            disallowed = obj.seq.disallowed_after
+            # Predict where fallbacks would expand either the disallowed
+            # set or the term_first set to cause conflicts.
+            def expand(tokens):
+                out = set(tokens)
+                for t in tokens:
+                    out = out.union(self.fallbacks.get(t, set()))
+                return out
+            first = expand(first)
+            disallowed = expand(disallowed)
+            conflicts = first.intersection(disallowed)
+            if conflicts:
+                # TODO: emit tuples, like the other policies
+                raise FirstFollow(self, conflicts, due_to_fallbacks=True)
+            return []
+
+        def _no_fallback_first_follow_seq(seq):
+            if not no_fallback_first_follows or self.fallbacks is None:
+                return []
+            disallowed = set()
+            for i, (term, _) in enumerate(seq.terms):
+                # Predict where fallbacks would expand either the disallowed
+                # set or the term_first set to cause conflicts.
+                def expand(tokens):
+                    out = set(tokens)
+                    for t in tokens:
+                        out = out.union(self.fallbacks.get(t, set()))
+                    return out
+                disallowed_ex = expand(disallowed)
+                term_first_ex = expand(term.first)
+                conflicts = disallowed_ex.intersection(term_first_ex)
+                if conflicts:
+                    # TODO: emit tuples, like the other policies
+                    raise FirstFollow(term, conflicts, due_to_fallbacks=True)
+                if term.maybe_empty:
+                    disallowed = disallowed.union(term.first)
+                else:
+                    disallowed = self._get_disallowed(term)
+            return []
+
         def _enforce(obj):
             out = []
             if isinstance(obj, Reference):
@@ -1330,10 +1440,11 @@ class Grammar:
                     return out
                 raise RuntimeError("unrecognized ref: " + type(obj.defn).__name__)
             if isinstance(obj, Repeat):
+                out += _no_fallback_first_follow_repeat(obj)
                 out += _enforce(obj.seq)
                 return out
             if isinstance(obj, Recovery):
-                _no_nested_recovery()
+                _no_nested_recovery_enter(obj)
                 out += _enforce(obj.seq)
                 _no_nested_recovery_reset()
                 return out
@@ -1343,6 +1454,7 @@ class Grammar:
                     out += _enforce(b)
                 return out
             if isinstance(obj, Sequence):
+                out += _no_fallback_first_follow_seq(obj)
                 out = []
                 for t, _ in obj.terms:
                     out += _enforce(t)
@@ -1532,6 +1644,7 @@ class C:
             no_arg_param_type_mismatch=True,
             no_arg_type_downgrade=False,
             no_arg_type_upgrade=True,
+            no_fallback_first_follows=True,
         )
         if errors:
             raise RuntimeError(errors)
@@ -1662,7 +1775,7 @@ class C:
 
     def token_check(self, tokens):
         # primary tokens
-        t = sorted(t for t in tokens if t is not None)
+        t = sorted(tokens)
         # fallback tokens
         f = self.fallbacks and sorted(self.fallbacks.all_fallbacks(t)) or []
         nargs, args = self._token_list_args(t, f)
@@ -1670,7 +1783,7 @@ class C:
 
     def mask_set(self, tokens):
         # primary tokens
-        t = sorted(t for t in tokens if t is not None)
+        t = sorted(tokens)
         # fallback tokens
         f = self.fallbacks and sorted(self.fallbacks.all_fallbacks(t)) or []
         nargs, args = self._token_list_args(t, f)
@@ -1711,7 +1824,7 @@ class C:
         if root.name in self.callstackmaxes:
             return self.callstackmaxes[root.name]
 
-        if root.recurses() is not None:
+        if root.recurses is not None:
             self.semstackmaxes[root.name] = None
             self.callstackmaxes[root.name] = None
             return None
@@ -1748,7 +1861,7 @@ class C:
         if root.name in self.semstackmaxes:
             return self.semstackmaxes[root.name]
 
-        if root.recurses() is not None:
+        if root.recurses is not None:
             self.semstackmaxes[root.name] = None
             self.callstackmaxes[root.name] = None
             return None
@@ -1832,8 +1945,8 @@ class C:
                     self.fprint("    call->summary = \"" + self.state_map[obj] + "\";")
                     self.fprint("    ${PREFIX_}AWAIT_TOKEN;")
                     self.fprint("yy" + str(state) + ":")
-                    self.fprint("    if(!" + self.token_check(obj.get_first()) + "){")
-                    self.fprint("        " + self.mask_set(obj.get_first()) + ";")
+                    self.fprint("    if(!" + self.token_check(obj.first) + "){")
+                    self.fprint("        " + self.mask_set(obj.first) + ";")
                     self.fprint("        ${PREFIX_}SYNTAX_ERROR(*token, sem);")
                     self.fprint("    }")
                     state += 1
@@ -1881,8 +1994,8 @@ class C:
                     self.fprint("    call->summary = \"" + self.state_map[obj] + "\";")
                     self.fprint("    ${PREFIX_}AWAIT_TOKEN;")
                     self.fprint("yy" + str(state) + ":")
-                    self.fprint("    if(!" + self.token_check(obj.get_first()) + "){")
-                    self.fprint("        " + self.mask_set(obj.get_first()) + ";")
+                    self.fprint("    if(!" + self.token_check(obj.first) + "){")
+                    self.fprint("        " + self.mask_set(obj.first) + ";")
                     self.fprint("        goto yy" + str(state) + "_done;")
                     self.fprint("    }")
                     tstate = state + 1
@@ -1899,8 +2012,8 @@ class C:
                 self.fprint("    call->state = " + str(state) + ";")
                 self.fprint("    call->summary = \"" + self.state_map[obj] + "\";")
                 self.fprint("    ${PREFIX_}AWAIT_TOKEN;")
-                self.fprint("    if(!" + self.token_check(obj.get_first()) + "){")
-                self.fprint("        " + self.mask_set(obj.get_first()) + ";")
+                self.fprint("    if(!" + self.token_check(obj.first) + "){")
+                self.fprint("        " + self.mask_set(obj.first) + ";")
                 self.fprint("        goto yy" + str(state) + "_done;")
                 self.fprint("    }")
                 self.fprint("")
@@ -1930,8 +2043,8 @@ class C:
                 self.fprint("    call->state = $state;")
                 self.fprint("    call->summary = \"" + self.state_map[obj] + "\";")
                 self.fprint("    ${PREFIX_}AWAIT_TOKEN;")
-                self.fprint("    if(!" + self.token_check(obj.get_first()) + "){")
-                self.fprint("        " + self.mask_set(obj.get_first()) + ";")
+                self.fprint("    if(!" + self.token_check(obj.first) + "){")
+                self.fprint("        " + self.mask_set(obj.first) + ";")
                 if obj.rmin > 0:
                     self.fprint("        if($COUNTER < $rmin){")
                     self.fprint("            // minimum repetition not met")
@@ -1958,8 +2071,6 @@ class C:
 
         if isinstance(obj, Branches):
             if obj.prematched:
-                # if empty branches are ever allowed, remember to fix this
-                assert None not in obj.get_first(), "fixme"
                 self.fprint("    // prematched: " + obj.summary())
                 bstate = state
             else:
@@ -1970,10 +2081,10 @@ class C:
                 self.fprint("yy" + str(state) + ":")
                 bstate = state + 1
             self.fprint("    switch(*token){")
-            primaries = obj.get_first()
+            primaries = obj.first
             # emit case statements
             for i, b in enumerate(obj.branches):
-                for t in b.get_first():
+                for t in b.first:
                     label = "yy%d_br_%d"%(state, i)
                     fallbacks = set()
                     if self.fallbacks:
@@ -1988,7 +2099,7 @@ class C:
                 self.fprint("        default: goto %s;"%label)
             else:
                 self.fprint("        default:")
-                self.fprint("            " + self.mask_set(obj.get_first()) + ";")
+                self.fprint("            " + self.mask_set(obj.first) + ";")
                 self.fprint("            ${PREFIX_}SYNTAX_ERROR(*token, sem);")
             self.fprint("    }")
             self.fprint("")
@@ -2325,7 +2436,7 @@ class C:
             self.fprint("")
             # Check for statically-determined stack sizes.
             expr = self.grammar.exprs[root]
-            if not expr.recurses():
+            if not expr.recurses:
                 cmax = self.callstackmax(expr)
                 smax = self.semstackmax(expr)
                 with self.extra_vars(
@@ -2767,6 +2878,7 @@ class Python:
             no_arg_param_type_mismatch=False,
             no_arg_type_downgrade=False,
             no_arg_type_upgrade=False,
+            no_fallback_first_follows=True,
         )
         if errors:
             raise RuntimeError(errors)
@@ -2924,7 +3036,7 @@ class Python:
         if isinstance(obj, Repeat):
             if obj.type == "maybe":
                 self.fprint(i + "# " + obj.summary())
-                t = obj.get_first()
+                t = obj.first
                 f = self.fallbacks.all_fallbacks(t)
                 self.if_token_in(t, f, i)
                 self.gen(obj.seq, i+"    ")
@@ -2932,7 +3044,7 @@ class Python:
 
             if obj.type == "zero_or_more":
                 self.fprint(i + "# " + obj.summary())
-                t = obj.get_first()
+                t = obj.first
                 f = self.fallbacks.all_fallbacks(t)
                 self.while_token_in(t, f, i)
                 self.gen(obj.seq, i+"    ")
@@ -2950,7 +3062,7 @@ class Python:
                     pre = "%s < %d"%(counter, obj.rmin)
                 else:
                     pre = None
-                t = obj.get_first()
+                t = obj.first
                 f = self.fallbacks.all_fallbacks(t)
                 self.while_token_in(t, f, i, pre)
                 self.fprint(i + "    $counter += 1")
@@ -2959,9 +3071,9 @@ class Python:
 
         if isinstance(obj, Branches):
             self.fprint(i + "# " + obj.summary())
-            exclude = obj.get_first()
+            exclude = obj.first
             for n, seq in enumerate(obj.branches):
-                t = seq.get_first()
+                t = seq.first
                 f = self.fallbacks.all_fallbacks(t, exclude)
                 self.if_token_in(t, f, i, pos=n)
                 self.gen(seq, i+"    ")
@@ -3316,6 +3428,8 @@ class ParsedDoc:
             scope = {p.name: p for p in e.params}
             val.process(g, e, scope)
 
+        g.compile()
+
         return g
 
 # BEGIN GENERATED CODE
@@ -3570,7 +3684,7 @@ class Tokenizer:
             "%param": PARAM,
             "%prefix": PREFIX,
             "%empty": EMPTY,
-            # "%break": BREAK,
+            "%break": BREAK,
         }
 
         if text not in keywords:
@@ -3667,11 +3781,11 @@ def inspect_def(g, name, body):
             )
         return out
     out = "expression %s = %s\n"%(name, obj.seq.summary())
-    out += "    first: [%s]\n"%(",".join(str(f) for f in obj.seq.get_first()))
+    out += "    first: [%s]\n"%(",".join(str(f) for f in obj.seq.first))
     out += "    disallowed_after: [%s]\n"%(
-        ",".join(str(f) for f in obj.seq.get_disallowed_after())
+        ",".join(str(f) for f in obj.seq.disallowed_after)
     )
-    out += "    recursion path: %s\n"%str(obj.recurses())
+    out += "    recursion path: %s\n"%str(obj.recurses)
     if obj.loc is not None:
         out += textwrap.indent(
             "defined at " + render_location(obj.loc, body, underline=False),
