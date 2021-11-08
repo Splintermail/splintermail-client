@@ -31,11 +31,9 @@ TODO:
 
  - Grammar:
    - use source-order everywhere
-   - support %break
-      - toplevel %break ok
-      - otherwise must be in non-maybe repeat
-      - only one level of break supported for now
-      - support one empty branch in branches
+   - support %return
+   - support %break in loops
+      - support labeled loops
 
  - Meta parser:
    - support an %include directive?
@@ -133,21 +131,7 @@ class FirstFollow(GrammarError):
             out += "\n(note: this conflict only arises due to fallbacks)"
         return out
 
-class EarlyBreak(GrammarError):
-    def __init__(self, term):
-        self.term = term
-        super().__init__()
-
-    def render(self, body):
-        out = (
-            "out-of-place %break statement; it is possible for the following "
-            "subgrammar to match %break before anything else (use a maybe "
-            "operator ([...]) instead):\n" + self.term.summary()
-            + "\nat " + render_location(self.term.loc, body)
-        )
-        return out
-
-class BreakNotLast(GrammarError):
+class ReturnNotLast(GrammarError):
     def __init__(self, seq, term):
         self.seq = seq
         self.term = term
@@ -155,7 +139,7 @@ class BreakNotLast(GrammarError):
 
     def render(self, body):
         out = (
-            "%break statement in middle of sequence prevents further tokens "
+            "%return statement in middle of sequence prevents further tokens "
             "from ever matching:\n" + self.term.summary()
             + "\nat " + render_location(self.term.loc, body)
         )
@@ -369,42 +353,6 @@ def extract_fallbacks(parsed_fallbacks, grammar, tag):
     return expanded
 
 
-def add_to_prev(prev, expr):
-    if prev is None:
-        prev = []
-    if expr in prev:
-        raise InfiniteRecursion(list(prev), expr)
-    return list(prev) + [expr]
-
-def cacheable(*args):
-    if len(args) == 1 and callable(args[0]):
-        # direct call case
-        fn = args[0]
-        prop = "_cached_" + fn.__name__
-        def _fn(self, *args, **kwargs):
-            if not hasattr(self, prop):
-                setattr(self, prop, fn(self, *args, **kwargs))
-            return getattr(self, prop)
-        return _fn
-    else:
-        # parameterizable cache case
-        # make sure you declare fn(self, ..., *, PARAM=None) or it won't work
-        # inspect would be better but this works for our use-case
-        def decorator(fn):
-            keys = args
-            prop = "_cached_" + fn.__name__
-            def _fn(self, *args, **kwargs):
-                if not hasattr(self, prop):
-                    setattr(self, prop, {})
-                cache = getattr(self, prop)
-                cache_key = frozenset(kwargs.get(k) for k in keys)
-                if cache_key not in cache:
-                    cache[cache_key] = fn(self, *args, **kwargs)
-                return cache[cache_key]
-            return _fn
-        return decorator
-
-
 # When printing summaries, if you want to print something with a lower
 # priority than your surrounding context, you need parens.
 PRIORITY_UNAMBIGUOUS = 0
@@ -433,8 +381,8 @@ class Parsable(metaclass=abc.ABCMeta):
         self.maybe_empty = None  # bool
         self.always_empty = None  # bool
         self.disallowed_after = None  # tuple of (disallowed, recurse)
-        self.maybe_breaks = None  # bool
-        self.always_breaks = None  # bool
+        self.maybe_returns = None  # bool
+        self.always_returns = None  # bool
         self.prematched = None  # bool
 
     @abc.abstractmethod
@@ -449,6 +397,31 @@ class Parsable(metaclass=abc.ABCMeta):
         string representation of your parsing location.
         """
         pass
+
+
+class Return(Parsable):
+    """
+    A control-flow statement, which completes any expression as soon as it
+    is encountered.  This allows you to convert a right recursion into a
+    single function.  Imagine a list of arguments, joined by comma, with
+    possible trailing comma:
+
+        arg_list = arg [COMMA [arg_list]];
+
+    can be written as:
+
+        arg_list = arg *(COMMA (arg | %return);
+    """
+
+    def __init__(self, loc=None):
+        super().__init__()
+        self.loc = loc
+
+    def summary(self, parent_priority=PRIORITY_UNAMBIGUOUS):
+        return "%return"
+
+    def state_map(self, parent_priority=PRIORITY_UNAMBIGUOUS):
+        return {self: ". %return"}
 
 
 class Parameter:
@@ -519,9 +492,8 @@ class Snippet:
 
 
 class Repeat(Parsable):
-    def __init__(self, name, rmin, rmax, loc=None):
+    def __init__(self, rmin, rmax, loc=None):
         super().__init__()
-        self.name = name
         if rmax is not None and rmin > rmax:
             raise ValueError(
                 "rmin must not exceed rmax (rmin=%d, rmax=%d)"%(rmin, rmax)
@@ -536,7 +508,7 @@ class Repeat(Parsable):
             )
         self.rmin = rmin
         self.rmax = rmax
-        self.seq = Sequence(self.name + ".seq")
+        self.seq = Sequence()
         self.loc = loc
         # When implementing generators, there are certain properties of
         # certain cases which make them easier to generate code for:
@@ -598,9 +570,8 @@ class Repeat(Parsable):
         return out
 
 class Branches(Parsable):
-    def __init__(self, name, loc=None):
+    def __init__(self, loc=None):
         super().__init__()
-        self.name = name
         self.branches = []
         self._branch = None
         self.loc = loc
@@ -656,7 +627,7 @@ class Branches(Parsable):
     @contextlib.contextmanager
     def branch(self):
         assert self._branch is None, "can't nest calls to branch"
-        self._branch = Sequence(self.name + '[' + str(len(self.branches)) + ']')
+        self._branch = Sequence()
         yield
         self.branches.append(self._branch)
         self._branch = None
@@ -682,12 +653,11 @@ class Branches(Parsable):
 
 
 class Recovery(Parsable):
-    def __init__(self, name, code=None, tag=None, loc=None):
+    def __init__(self, code=None, tag=None, loc=None):
         super().__init__()
-        self.name = name
         # allow defining the recovery code upfront
         self.code = [] if code is None else [Snippet(code, tag)]
-        self.seq = Sequence(self.name + '.seq')
+        self.seq = Sequence()
         self.after = None
         self.loc = loc
 
@@ -721,9 +691,8 @@ class Sequence(Parsable):
     """
     A sequence of terms which must be matched consecutively.
     """
-    def __init__(self, name, loc=None):
+    def __init__(self, loc=None):
         super().__init__()
-        self.name = name
         self.scopes = [self]
         self.precode = []
         # tuples of (Parsable, code=[])
@@ -742,11 +711,8 @@ class Sequence(Parsable):
         else:
             self.terms[-1][1].append(Snippet(code, tag, loc))
 
-    def isempty(self):
-        return len(self.terms) == 0
-
     def summary(self, parent_priority=PRIORITY_UNAMBIGUOUS):
-        if self.isempty():
+        if len(self.terms) == 0:
             return "%empty"
         if len(self.terms) == 1:
             return self.terms[0][0].summary(parent_priority)
@@ -786,11 +752,8 @@ class Expression(Definition):
         self.name = name
         self.params = []
         self.type = typ
-        self.seq = Sequence(self.name + ".seq", loc=body_loc)
+        self.seq = Sequence()
         self.scopes = [self.seq]
-        self.nrpt = 0
-        self.nbranches = 0
-        self.nrec = 0
         self.loc = loc
         self.defined = False
         self.recurses = None
@@ -810,10 +773,14 @@ class Expression(Definition):
         self.scopes[-1].add_term(term)
         return term
 
+    def return_early(self, loc=None):
+        term = Return(loc)
+        self.scopes[-1].add_term(term)
+        return term
+
     @contextlib.contextmanager
     def repeat(self, rmin, rmax, loc=None):
-        term = Repeat(self.name + '.repeat' + str(self.nrpt), rmin, rmax, loc)
-        self.nrpt += 1
+        term = Repeat(rmin, rmax, loc)
         self.scopes.append(term)
         yield term
         self.scopes.pop()
@@ -821,8 +788,7 @@ class Expression(Definition):
 
     @contextlib.contextmanager
     def branches(self, loc=None):
-        term = Branches(self.name + '.br' + str(self.nbranches), loc)
-        self.nbranches += 1
+        term = Branches(loc)
         self.scopes.append(term)
         yield term
         self.scopes.pop()
@@ -830,10 +796,7 @@ class Expression(Definition):
 
     @contextlib.contextmanager
     def recovery(self, code=None, tag=None, loc=None):
-        term = Recovery(
-            self.name + ".recovery" + str(self.nrec), code, tag, loc
-        )
-        self.nrec += 1
+        term = Recovery(code, tag, loc)
         self.scopes.append(term)
         yield term
         self.scopes.pop()
@@ -951,8 +914,13 @@ class Grammar:
         for name, expr in self.sorted_expressions():
             self._set_prematched(expr.seq, False)
 
+        # In the first pass, due to some tricks of recursion, we are not able
+        # to actually set the .disallowed for expression references.  We can
+        # do that in a second pass though.
         for name, expr in self.sorted_expressions():
             _ = self._get_disallowed(expr.seq)
+        for name, expr in self.sorted_expressions():
+            _ = self._get_disallowed_all(expr.seq)
 
         for name, expr in self.sorted_expressions():
             expr.recurses = self._get_recurses(expr)
@@ -963,7 +931,7 @@ class Grammar:
         assert obj.first_ex is None, obj.summary()
         out = frozenset(out)
         obj.first_ex = out
-        obj.first = out.difference({None, "%break"})
+        obj.first = out.difference({None})
         obj.maybe_empty = None in out
         obj.always_empty = out == {None}
         return out
@@ -971,6 +939,8 @@ class Grammar:
     def _get_first(self, obj, prev):
         if obj.first_ex is not None:
             return obj.first_ex
+        if isinstance(obj, Return):
+            return self._set_first(obj, {None})
         if isinstance(obj, Reference):
             if isinstance(obj.defn, Token):
                 out = {obj.defn.name}
@@ -979,8 +949,9 @@ class Grammar:
                 if obj.defn.seq.first_ex is not None:
                     # no need to recurse, avoid raising an error
                     return self._set_first(obj, obj.defn.seq.first_ex)
-                prev = add_to_prev(prev, obj.defn)
-                out = self._get_first(obj.defn.seq, prev)
+                if obj.defn in prev:
+                    raise InfiniteRecursion(prev, obj.defn)
+                out = self._get_first(obj.defn.seq, list(prev) + [obj.defn])
                 return self._set_first(obj, out)
             raise RuntimeError("unrecognized ref: " + type(obj.defn).__name__)
         if isinstance(obj, Repeat):
@@ -1030,6 +1001,8 @@ class Grammar:
         # always visit this object
         self._get_first(obj, [])
         # also visit any sub-objects
+        if isinstance(obj, Return):
+            return
         if isinstance(obj, Reference):
             return
         if isinstance(obj, Repeat):
@@ -1050,14 +1023,20 @@ class Grammar:
         raise RuntimeError("unrecognized object type: " + type(obj).__name__)
 
     def _set_disallowed(self, obj, out, recursed):
+        out = frozenset(out)
         # only cache values if we never recursed, otherwise some of the deeper
         # expressions will have incomplete views of what is disallowed
         if not recursed:
-            out = frozenset(out)
             obj.disallowed_after = out
         return out
 
-    def _get_disallowed(self, obj, recursed=frozenset()):
+    def _get_disallowed(
+        self,
+        obj,
+        recursed=frozenset(),
+        disallowed=None,
+        handle_return=None,
+    ):
         """
         Return tokens which are not allowed to follow this object.
 
@@ -1079,69 +1058,126 @@ class Grammar:
         """
         if obj.disallowed_after is not None:
             return obj.disallowed_after
+        if isinstance(obj, Return):
+            # always register disallowed the moment that we see the %return
+            handle_return(disallowed)
+            # But technically nothing is disallowed after a %return, because
+            # nothing may follow a %return.  Imagine:
+            #
+            #    b = (A | B [C] %return | %empty) D;
+            #
+            # After calling handle_return() on disallowed={"C"}, the middle
+            # branch should return an empty set, because C is not disallowed
+            # after the branch (just before D), since that is not a valid
+            # execution path.
+            return self._set_disallowed(obj, frozenset(), recursed)
         if isinstance(obj, Reference):
             if isinstance(obj.defn, Token):
-                return self._set_disallowed(obj, set(), recursed)
+                # a token match always resets disallowed
+                return self._set_disallowed(obj, frozenset(), recursed)
             if isinstance(obj.defn, Expression):
                 # detect and ignore recursion
                 if recursed and obj.defn in recursed:
                     return frozenset()
+                # otherwise enter a new function's scope
                 recursed = recursed.union({obj.defn})
-                out = self._get_disallowed(obj.defn.seq, recursed)
+                expr_disallowed = self._get_disallowed(
+                    obj.defn.seq, recursed, None, None
+                )
+                if obj.maybe_empty:
+                    out = disallowed.union(expr_disallowed)
+                else:
+                    out = expr_disallowed
                 return self._set_disallowed(obj, out, recursed)
             raise RuntimeError("unrecognized ref: " + type(obj.defn).__name__)
         if isinstance(obj, Repeat):
-            out = self._get_disallowed(obj.seq, recursed)
+            out = self._get_disallowed(
+                obj.seq, recursed, disallowed, handle_return
+            )
+            if obj.rmin == 0:
+                # we might be empty; therefore we always preserve disallowed
+                out = out.union(disallowed)
             if obj.rmin != obj.rmax:
                 # variable repeat: disallow our own first
                 out = out.union(obj.first)
             return self._set_disallowed(obj, out, recursed)
         if isinstance(obj, Recovery):
-            out = self._get_disallowed(obj.seq, recursed)
+            # no effect on disallowed
+            out = self._get_disallowed(
+                obj.seq, recursed, disallowed, handle_return
+            )
             return self._set_disallowed(obj, out, recursed)
         if isinstance(obj, Branches):
-            out = set()
-            for branch in obj.branches_and_default:
-                out = out.union(self._get_disallowed(branch, recursed))
+            out = frozenset()
             if obj.maybe_empty:
-                # disallow our own first as well
-                out = out.union(obj.first)
+                # include our own first in the initial disallowed; it will
+                # be used by any initial branches which contain only a %return
+                disallowed = disallowed.union(obj.first)
+            for branch in obj.branches_and_default:
+                out = out.union(self._get_disallowed(
+                    branch, recursed, disallowed, handle_return
+                ))
+            if obj.maybe_empty:
+                # since an empty branch with a %return won't pass along our
+                # own first from the initial disallowed, we always include it
+                # here as well.
+                #
+                # Imagine:
+                #
+                #    b = (A | %return) B;
+                #
+                # Without this step, an A would not be disallowed after the
+                # branch statement.
+                out = disallowed.union(disallowed)
             return self._set_disallowed(obj, out, recursed)
         if isinstance(obj, Sequence):
-            # We walk forward through the sequence tracking what might be
-            # disallowed in `temp`.  We commit temp to out once at the end of
-            # the sequence, and any time that something might start with a
-            # %break.  Additionally, if a term might have a %break, we commit
-            # that term's disallowed as well.
-            out = set()
-            temp = set()
-            for term, _ in obj.terms:
-                # TODO: support %break here
-                """
-                a = W [X] (Y [Z] %break | A B [C] | %break) D;
-                              b1            b2        b3
+            out = frozenset()
+            disallowed = disallowed or frozenset()
 
-                ## Look, you can't evaluate disallowed() without knowing the
-                ## scope of your break:
-                # disallowed(b1) = Z
-                # disallowed(b2) = C
-                # disallowed(b3) = {}
-                # disallowed(b) = Z, C
-                # disallowed(a) = X, Z  <- X because %break is in b.first
-                                        include Z because it's disallowed in b1
-                                        but how do we know to exclude C?
-                """
-                if term.maybe_empty:
-                    temp = temp.union(term.first)
-                else:
-                    temp = set()
-                temp = temp.union(self._get_disallowed(term, recursed))
+            if handle_return is None:
+                # top-level sequence in an expression; we create our own
+                # return handler.
+                def handle_return(disallowed):
+                    nonlocal out
+                    out = out.union(disallowed)
+
+            for term, _ in obj.terms:
+                disallowed = self._get_disallowed(
+                    term, recursed, disallowed, handle_return
+                )
             # end of sequence:
-            out = out.union(temp)
+            out = out.union(disallowed)
             return self._set_disallowed(obj, out, recursed)
         raise RuntimeError("unrecognized object type: " + type(obj).__name__)
 
+    def _get_disallowed_all(self, obj):
+        """
+        Second pass of processing disallowed_after; just set disallowed for
+        expression references.
+        """
+        if isinstance(obj, Return):
+            return
+        if isinstance(obj, Reference):
+            if isinstance(obj.defn, Expression):
+                obj.disallowed_after = obj.defn.seq.disallowed_after
+            return
+        if isinstance(obj, Repeat):
+            return self._get_disallowed_all(obj.seq)
+        if isinstance(obj, Recovery):
+            return self._get_disallowed_all(obj.seq)
+        if isinstance(obj, Branches):
+            for b in obj.branches:
+                self._get_disallowed_all(b)
+            return
+        if isinstance(obj, Sequence):
+            for t, _ in obj.terms:
+                self._get_disallowed_all(t)
+            return
+        raise RuntimeError("unrecognized object type: " + type(obj).__name__)
+
     def _set_prematched(self, obj, prematched):
+        if isinstance(obj, Return):
+            return
         if isinstance(obj, Reference):
             obj.prematched = prematched
             return
@@ -1182,6 +1218,8 @@ class Grammar:
                 exc.path = path
 
         def _recurses(obj, path):
+            if isinstance(obj, Return):
+                return
             if isinstance(obj, Reference):
                 if isinstance(obj.defn, Expression):
                     if obj.defn.name in path:
@@ -1234,8 +1272,11 @@ class Grammar:
 
 
     def _check(self, obj):
+        if isinstance(obj, Return):
+            # the return itself needs no checks
+            return
         if isinstance(obj, Reference):
-            # references need no matches
+            # the reference itself needs no checks
             return
         if isinstance(obj, Repeat):
             self._check(obj.seq)
@@ -1270,10 +1311,10 @@ class Grammar:
             for term, _ in obj.terms:
                 # check individual terms
                 self._check(term)
-            # Detect %breaks which are not last.
+            # Detect %return which are not last.
             for term, _ in obj.terms[:-1]:
-                if term.always_breaks:
-                    BreakNotLast(obj, term)
+                if term.always_returns:
+                    ReturnNotLast(obj, term)
             # Walk through the sequence, looking for First/Follow conflicts.
             disallowed = set()
             for i, (term, _) in enumerate(obj.terms):
@@ -1283,7 +1324,7 @@ class Grammar:
                 if term.maybe_empty:
                     disallowed = disallowed.union(term.first)
                 else:
-                    disallowed = self._get_disallowed(term)
+                    disallowed = term.disallowed_after
 
                 # Special case: check Recovery terms and call their set_after().
                 if isinstance(term, Recovery):
@@ -1424,6 +1465,8 @@ class Grammar:
 
         def _enforce(obj):
             out = []
+            if isinstance(obj, Return):
+                return out
             if isinstance(obj, Reference):
                 if isinstance(obj.defn, Token):
                     return out
@@ -1797,6 +1840,8 @@ class C:
 
     def stackmax(self, obj):
         """Return the maximum stack size during a match to obj."""
+        if isinstance(obj, Return):
+            return 0
         if isinstance(obj, Reference):
             return 1
         if isinstance(obj, Repeat):
@@ -1830,6 +1875,8 @@ class C:
             return None
 
         def _callstackmax(obj):
+            if isinstance(obj, Return):
+                return 0
             if isinstance(obj, Reference):
                 if isinstance(obj.defn, Expression):
                     return self.callstackmax(obj.defn)
@@ -1867,6 +1914,8 @@ class C:
             return None
 
         def _semstackmax(obj):
+            if isinstance(obj, Return):
+                return 0
             if isinstance(obj, Reference):
                 if isinstance(obj.defn, Expression):
                     return self.semstackmax(obj.defn)
@@ -1911,6 +1960,8 @@ class C:
 
     def nstates(self, obj):
         # Hack: logic here mirrors gen, but without generating anything
+        if isinstance(obj, Return):
+            return 0
         if isinstance(obj, Reference):
             if isinstance(obj.defn, Token):
                 return int(not obj.prematched)
@@ -1935,6 +1986,8 @@ class C:
 
     def gen(self, obj, state, stack, var, want_final_loc=False):
         """Generate code to match an object."""
+        if isinstance(obj, Return):
+            1/0
         if isinstance(obj, Reference):
             if isinstance(obj.defn, Token):
                 if obj.prematched:
@@ -3007,6 +3060,8 @@ class Python:
 
     def _gen(self, obj, i, want_final_loc):
         if isinstance(obj, Reference):
+            if isinstance(obj, Return):
+                1/0
             if isinstance(obj.defn, Token):
                 tokens = {obj.defn.name}.union(self.fallbacks[obj.defn.name])
                 token_list = self.token_list(tokens)
@@ -3253,6 +3308,13 @@ class ParsedName:
                 "tag %s shadows earlier definition"%self.tag, self.loc
             )
         scope[self.tag] = ref
+
+class ParsedReturn:
+    def __init__(self, loc):
+        self.loc = loc
+
+    def process(self, g, e, scope):
+        e.return_early(self.loc)
 
 class ParsedSnippet:
     def __init__(self, text, loc):
@@ -3684,7 +3746,7 @@ class Tokenizer:
             "%param": PARAM,
             "%prefix": PREFIX,
             "%empty": EMPTY,
-            "%break": BREAK,
+            "%return": RETURN,
         }
 
         if text not in keywords:

@@ -61,11 +61,11 @@ import gen
 # | 1*(PIPE seq)
 # | seq *(PIPE seq)  # allows for the convert-to-seq case
 # ;
-# seq =
-# | %empty
-# | code [(%break | *(term [code])]
-# | 1*(term [code])
-# )
+# seq = [code] (
+#  | %empty [code]
+#  | %return [code]
+#  | 1*(term [code]) [%return [code]];
+# );
 # term =
 # | [NUM] ASTERISK [NUM] (
 #     | ref # disallow a tag on this ref
@@ -91,12 +91,6 @@ import gen
 #  - multipliers
 #  - sequences
 #  - branches
-
-# TODO: support some mechanism to allow a single trailing comma:
-# # Can we support right recursion?
-# args = TEXT:name [COMMA [arg_list]];
-# # Can this be supported?  Can it be analyzed?
-# args = TEXT:name 1*(COMMA (arg_list | %break ));
 
 g = gen.Grammar()
 
@@ -127,7 +121,7 @@ FALLBACK = g.token("FALLBACK")
 PARAM = g.token("PARAM")
 PREFIX = g.token("PREFIX")
 EMPTY = g.token("EMPTY")
-BREAK = g.token("BREAK")
+RETURN = g.token("RETURN")
 
 # Forward declaration.
 branches = g.expr("branches")
@@ -257,36 +251,40 @@ def term(e):
 @g.expr
 def seq(e):
     e.exec("$$ = ParsedSequence()")
+    with e.repeat(0, 1):
+        e.match(code, "code")
+        e.exec("$$.loc = @code")
+        e.exec("$$.elems.append($code)")
     with e.branches() as b:
         with b.branch():
             e.match(EMPTY, "empty")
-            e.exec("$$.loc = @empty")
-        with b.branch():
-            e.match(code, "code")
-            e.exec("$$.elems.append($code)")
-            e.exec("$$.loc = @code")
+            e.exec("$$.loc = text_span($$.loc or @empty, @empty)")
             with e.repeat(0, 1):
-                with e.branches() as b2:
-                    with b2.branch():
-                        e.match(BREAK, "break")
-                        e.exec("$$.loc = text_span($$.loc, @break)")
-                        e.exec("raise NotImplementedError()")
-                    with b2.branch():
-                        with e.repeat(1, None):
-                            e.match(term, "term")
-                            e.exec("$$.elems.append($term)")
-                            e.exec("$$.loc = text_span($$.loc, @term)")
-                            with e.repeat(0, None):
-                                e.match(code, "code")
-                                e.exec("$$.elems.append($code)")
-                                e.exec("$$.loc = text_span($$.loc, @code)")
+                e.match(code, "code")
+                e.exec("$$.elems.append($code)")
+                e.exec("$$.loc = text_span($$.loc, @code)")
+        with b.branch():
+            e.match(RETURN, "return")
+            e.exec("$$.loc = text_span($$.loc or @return, @return)")
+            e.exec("$$.elems.append(ParsedReturn(@return))")
+            with e.repeat(0, 1):
+                e.match(code, "code")
+                e.exec("$$.elems.append($code)")
+                e.exec("$$.loc = text_span($$.loc, @code)")
         with b.branch():
             with e.repeat(1, None):
                 e.match(term, "term")
-                e.exec("$$.loc = $$.loc or @term")
                 e.exec("$$.elems.append($term)")
-                e.exec("$$.loc = text_span($$.loc, @term)")
+                e.exec("$$.loc = text_span($$.loc or @term, @term)")
                 with e.repeat(0, None):
+                    e.match(code, "code")
+                    e.exec("$$.elems.append($code)")
+                    e.exec("$$.loc = text_span($$.loc, @code)")
+            with e.repeat(0, 1):
+                e.match(RETURN, "return")
+                e.exec("$$.loc = text_span($$.loc, @return)")
+                e.exec("$$.elems.append(ParsedReturn(@return))")
+                with e.repeat(0, 1):
                     e.match(code, "code")
                     e.exec("$$.elems.append($code)")
                     e.exec("$$.loc = text_span($$.loc, @code)")

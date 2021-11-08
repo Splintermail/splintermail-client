@@ -194,22 +194,16 @@ g.check()
 # empty expressions: various legal forms
 grammar_text = """
 a = %empty;  # explicit empty
-b = {};  # side-effect only
-c = B | %empty;  # in a branch, explicit
-d = B | {};  # in a branch, side-effect only
-e = A (B | %empty);  # in a branch, explicit
-f = A (B | {});  # in a branch, side-effect only
+b = B | %empty;  # in a branch, explicit
+c = A (B | %empty);  # in a branch, explicit
 """
 parsed_doc = gen.parse_doc(grammar_text)
 g = parsed_doc.build_grammar(grammar_text)
 g.check()
 for key, first, maybe_empty, always_empty, disallowed_after in (
     ("a", set(), True, True, set()),
-    ("b", set(), True, True, set()),
-    ("c", {"B"}, True, False, {"B"}),
-    ("d", {"B"}, True, False, {"B"}),
-    ("e", {"A"}, False, False, {"B"}),
-    ("f", {"A"}, False, False, {"B"}),
+    ("b", {"B"}, True, False, {"B"}),
+    ("c", {"A"}, False, False, {"B"}),
 ):
     got = g.exprs[key].seq.first
     assert got == first, (key, got)
@@ -220,9 +214,36 @@ for key, first, maybe_empty, always_empty, disallowed_after in (
     got = g.exprs[key].seq.disallowed_after
     assert got == disallowed_after, (key, got)
 
-branches = g.exprs["d"].seq.terms[0][0]
+branches = g.exprs["b"].seq.terms[0][0]
 assert len(branches.branches) == 1
 assert branches.default is not None
+
+# %return handling
+grammar_text = """
+a = [X] ([Y] %return | B) (Z %return | %empty);
+b = ARG *(COMMA (ARG | %return));
+c = A *(COMMA (A | X Y %return));
+d = (A | B [C] %return | %empty) D;
+e = A B %return;
+f = (A | %return) [C];
+g = (A | B %return) [C];
+h = (A | B [D] %return) [C];
+"""
+parsed_doc = gen.parse_doc(grammar_text)
+g = parsed_doc.build_grammar(grammar_text)
+g.check()
+for key, maybe_empty, disallowed_after in (
+    ("a", True, {"X", "Y", "B", "Z"}),
+    ("b", False, {"ARG", "COMMA"}),
+    ("c", False, {"COMMA"}),
+    ("d", False, {"C"}),
+    ("e", False, set()),
+    ("f", True, {"A", "C"}),
+    ("g", False, {"C"}),
+    ("h", False, {"D", "C"}),
+):
+    got = g.exprs[key].seq.disallowed_after
+    assert got == disallowed_after, (key, got)
 
 
 # testing MetaTokenizer
@@ -448,7 +469,7 @@ run_c_e2e_test(r"""
 
 NUM:i;
 
-maybe_num:i = (NUM:n {$$=$n;} | {$$=7;}) EOL;
+maybe_num:i = (NUM:n {$$=$n;} | %empty {$$=7;}) EOL;
 
 {{{
 
@@ -509,7 +530,7 @@ run_py_e2e_test(r"""
 
 NUM:i;
 
-maybe_num:i = (NUM:n {$$=$n;} | {$$=7;}) EOL;
+maybe_num:i = (NUM:n {$$=$n;} | %empty {$$=7;}) EOL;
 
 {{
 if __name__ == "__main__":
