@@ -31,7 +31,6 @@ TODO:
 
  - Grammar:
    - use source-order everywhere
-   - support %return
    - support %break in loops
       - support labeled loops
 
@@ -114,14 +113,17 @@ class FirstFirst(GrammarError):
         return out.rstrip('\n')
 
 class FirstFollow(GrammarError):
-    def __init__(self, term, conflicts, due_to_fallbacks=False):
+    def __init__(self, parent, term, conflicts, due_to_fallbacks=False):
+        self.parent = parent
         self.term = term
         self.conflicts = conflicts
         self.due_to_fallbacks = due_to_fallbacks
         super().__init__()
 
     def render(self, body):
-        out = "FIRST/FOLLOW conflicts: [%s]\n"%(",".join(self.conflicts))
+        out = "FIRST/FOLLOW conflicts [%s] in (%s)\n"%(
+            ",".join(self.conflicts), self.parent.summary()
+        )
         if self.term.loc is not None:
             out += "at " + render_location(self.term.loc, body) + "\n"
         out += "at least one token that starts %s is disallowed by then."%(
@@ -138,11 +140,14 @@ class ReturnNotLast(GrammarError):
         super().__init__()
 
     def render(self, body):
+        out = self.term.summary()
         out = (
             "%return statement in middle of sequence prevents further tokens "
             "from ever matching:\n" + self.term.summary()
-            + "\nat " + render_location(self.term.loc, body)
         )
+        if self.term.loc is not None:
+            out += "\nat " + render_location(self.term.loc, body)
+        out += "\nin: " + self.seq.summary()
         return out
 
 class InfiniteRecursion(Exception):
@@ -579,21 +584,24 @@ class Branches(Parsable):
         self._default = None
 
     def summary(self, parent_priority=PRIORITY_UNAMBIGUOUS):
-        out = " | ".join(b.summary(PRIORITY_BRANCHES) for b in self.branches)
+        out = " | ".join(
+            b.summary(PRIORITY_BRANCHES) for b in self.branches_and_default
+        )
         if parent_priority >= PRIORITY_BRANCHES:
             out = "(" + out + ")"
         return out
 
     def state_map(self, parent_priority=PRIORITY_UNAMBIGUOUS):
         out = {self: ". (" + self.summary() + ")"}
-        for i, b in enumerate(self.branches):
+        all_branches = self.branches_and_default
+        for i, b in enumerate(all_branches):
             pre = " | ".join(
-                bb.summary(PRIORITY_SEQUENCE) for bb in self.branches[:i]
+                bb.summary(PRIORITY_SEQUENCE) for bb in all_branches[:i]
             )
             if pre:
                 pre += " | "
             post = " | ".join(
-                bb.summary(PRIORITY_SEQUENCE) for bb in self.branches[i+1:]
+                bb.summary(PRIORITY_SEQUENCE) for bb in all_branches[i+1:]
             )
             if post:
                 post = " | " + post
@@ -689,34 +697,81 @@ class Recovery(Parsable):
 
 class Sequence(Parsable):
     """
-    A sequence of terms which must be matched consecutively.
+    A sequence of terms which must be matched consecutively.  Side effects
+    may appear before, in between, or after the parsable terms.
+
+    The final term might be a Return, in which case there will not be a side
+    effect after it.
+
+    After compiling, there are three attributes designed to make implementing a
+    generator easy:
+
+      - returns: A bool to indicate if this sequence ended in a %return.
+
+      - finalcode: A list of Snippets which would execute after the last term
+            is matched.  If this is the top-level sequence in an expression,
+            these snippets may expect that the final output location has been
+            calculated.
+
+      - prefinalcode: a list of all Parsable terms or side effects except not
+            including the finalcode (if any) or the Return (if any).
     """
     def __init__(self, loc=None):
         super().__init__()
         self.scopes = [self]
-        self.precode = []
-        # tuples of (Parsable, code=[])
-        self.terms = []
+        # each item is either a list of Snippets or a Parsable
+        self.items = []
         self.loc = loc
+        # defined after self._compile():
+        self.prefinalcode = None
+        self.finalcode = None
+        self.returns = None
+
+    @property
+    def terms(self):
+        """A list of just the Parsable terms in items."""
+        return [i for i in self.items if isinstance(i, Parsable)]
+
+    def _compile(self):
+        self.prefinalcode = []
+        self.returns = False
+        code = None
+        for item in self.items:
+            if isinstance(item, list):
+                # don't know if this code is finalcode or not yet
+                assert code is None, ("ungrouped side-effects", self.summary())
+                code = item
+            elif not isinstance(item, Return):
+                # code must not be final code
+                if code is not None:
+                    self.prefinalcode.append(code)
+                    code = None
+                self.prefinalcode.append(item)
+            elif isinstance(item, Return):
+                self.returns = True
+            else:
+                raise ValueError("unable to process items", self.items)
+        self.finalcode = code or []
 
     def add_term(self, term):
-        self.terms.append((term, []))
+        self.items.append(term)
+        #self.terms.append((term, []))
 
     def set_seq_loc(self, loc):
         self.loc = loc
 
     def add_code(self, code, tag=None, loc=None):
-        if not self.terms:
-            self.precode.append(Snippet(code, tag, loc))
-        else:
-            self.terms[-1][1].append(Snippet(code, tag, loc))
+        if self.items and isinstance(self.items[-1], list):
+            self.items[-1].append(Snippet(code, tag, loc))
+            return
+        self.items.append([Snippet(code, tag, loc)])
 
     def summary(self, parent_priority=PRIORITY_UNAMBIGUOUS):
         if len(self.terms) == 0:
             return "%empty"
         if len(self.terms) == 1:
-            return self.terms[0][0].summary(parent_priority)
-        out = " ".join(t.summary(PRIORITY_SEQUENCE) for t, _ in self.terms)
+            return self.terms[0].summary(parent_priority)
+        out = " ".join(t.summary(PRIORITY_SEQUENCE) for t in self.terms)
         if parent_priority > PRIORITY_SEQUENCE:
             out = "(" + out + ")"
         return out
@@ -724,14 +779,14 @@ class Sequence(Parsable):
     def state_map(self, parent_priority=PRIORITY_UNAMBIGUOUS):
         out = {self: ". " + self.summary(PRIORITY_SEQUENCE)}
         if len(self.terms) == 1:
-            out.update(self.terms[0][0].state_map())
+            out.update(self.terms[0].state_map())
             return out
-        for i, (t, _) in enumerate(self.terms):
+        for i, t in enumerate(self.terms):
             # calculate error strings
-            pre = " ".join(tt.summary(PRIORITY_SEQUENCE) for tt,_ in self.terms[:i])
+            pre = " ".join(tt.summary(PRIORITY_SEQUENCE) for tt in self.terms[:i])
             if pre:
                 pre += " "
-            post = " ".join(tt.summary(PRIORITY_SEQUENCE) for tt,_ in self.terms[i+1:])
+            post = " ".join(tt.summary(PRIORITY_SEQUENCE) for tt in self.terms[i+1:])
             if post:
                 post = " " + post
             if parent_priority > PRIORITY_SEQUENCE:
@@ -913,6 +968,7 @@ class Grammar:
 
         for name, expr in self.sorted_expressions():
             self._set_prematched(expr.seq, False)
+            _ = self._get_returns(expr.seq)
 
         # In the first pass, due to some tricks of recursion, we are not able
         # to actually set the .disallowed for expression references.  We can
@@ -985,7 +1041,7 @@ class Grammar:
         if isinstance(obj, Sequence):
             # only visit only what we need to, to allow for legal recursion
             out = {None}
-            for term, _ in obj.terms:
+            for term in obj.terms:
                 term_first = self._get_first(term, prev)
                 out = out.union(term_first)
                 if not term.maybe_empty:
@@ -1016,9 +1072,12 @@ class Grammar:
                 self._get_first_all(branch)
             return
         if isinstance(obj, Sequence):
-            for term, _ in obj.terms:
+            for term in obj.terms:
                 self._get_first_all(term)
                 assert term.first is not None, (obj.summary(), term.summary())
+            # Rather than re-traverse the tree again, we just include this
+            # miscellaneous step right here:
+            obj._compile()
             return
         raise RuntimeError("unrecognized object type: " + type(obj).__name__)
 
@@ -1117,18 +1176,6 @@ class Grammar:
                 out = out.union(self._get_disallowed(
                     branch, recursed, disallowed, handle_return
                 ))
-            if obj.maybe_empty:
-                # since an empty branch with a %return won't pass along our
-                # own first from the initial disallowed, we always include it
-                # here as well.
-                #
-                # Imagine:
-                #
-                #    b = (A | %return) B;
-                #
-                # Without this step, an A would not be disallowed after the
-                # branch statement.
-                out = disallowed.union(disallowed)
             return self._set_disallowed(obj, out, recursed)
         if isinstance(obj, Sequence):
             out = frozenset()
@@ -1141,7 +1188,7 @@ class Grammar:
                     nonlocal out
                     out = out.union(disallowed)
 
-            for term, _ in obj.terms:
+            for term in obj.terms:
                 disallowed = self._get_disallowed(
                     term, recursed, disallowed, handle_return
                 )
@@ -1170,7 +1217,7 @@ class Grammar:
                 self._get_disallowed_all(b)
             return
         if isinstance(obj, Sequence):
-            for t, _ in obj.terms:
+            for t in obj.terms:
                 self._get_disallowed_all(t)
             return
         raise RuntimeError("unrecognized object type: " + type(obj).__name__)
@@ -1203,13 +1250,49 @@ class Grammar:
         if isinstance(obj, Sequence):
             obj.prematched = prematched
             # the first term may prematched, but only if it is concrete
-            if len(obj.terms) and obj.terms[0][0].maybe_empty:
+            if len(obj.terms) and obj.terms[0].maybe_empty:
                 prematched = False
-            for t, _ in obj.terms:
+            for t in obj.terms:
                 self._set_prematched(t, prematched)
                 # Subsequent terms are never prematched
                 prematched = False
             return
+        raise RuntimeError("unrecognized object type: " + type(obj).__name__)
+
+    def _set_returns(self, obj, maybe, always):
+        obj.maybe_returns = maybe
+        obj.always_returns = always
+        return maybe, always
+
+    def _get_returns(self, obj):
+        if isinstance(obj, Return):
+            return self._set_returns(obj, True, True)
+        if isinstance(obj, Reference):
+            return self._set_returns(obj, False, False)
+        if isinstance(obj, Repeat):
+            maybe, always = self._get_returns(obj.seq)
+            if obj.rmin == 0:
+                always = False
+            return self._set_returns(obj, maybe, always)
+        if isinstance(obj, Recovery):
+            out = self._get_returns(obj.seq)
+            return self._set_returns(obj, *out)
+        if isinstance(obj, Branches):
+            maybe = False
+            always = True
+            for b in obj.branches:
+                bmaybe, balways = self._get_returns(b)
+                maybe = maybe or bmaybe
+                always = always and balways
+            return self._set_returns(obj, maybe, always)
+        if isinstance(obj, Sequence):
+            maybe = False
+            always = False
+            for t in obj.terms:
+                tmaybe, talways = self._get_returns(t)
+                maybe = maybe or tmaybe
+                always = always or talways
+            return self._set_returns(obj, maybe, always)
         raise RuntimeError("unrecognized object type: " + type(obj).__name__)
 
     def _get_recurses(self, expr):
@@ -1238,7 +1321,7 @@ class Grammar:
                     _recurses(b, path)
                 return
             if isinstance(obj, Sequence):
-                for term, _ in obj.terms:
+                for term in obj.terms:
                     _recurses(term, path)
                 return
             raise ValueError(
@@ -1256,7 +1339,7 @@ class Grammar:
         self.compile()
         for name, expr in self.sorted_expressions():
             try:
-                self._check(expr.seq)
+                self._check(expr, expr.seq)
             except GrammarError as e:
                 # inject the full text of the grammar, if we have it
                 e.text = self.text
@@ -1271,7 +1354,7 @@ class Grammar:
             self._set_prematched(expr.seq, False)
 
 
-    def _check(self, obj):
+    def _check(self, expr, obj):
         if isinstance(obj, Return):
             # the return itself needs no checks
             return
@@ -1279,24 +1362,24 @@ class Grammar:
             # the reference itself needs no checks
             return
         if isinstance(obj, Repeat):
-            self._check(obj.seq)
+            self._check(expr, obj.seq)
             # any variable-number repeat with rmax > 1 can conflict with itself.
             if obj.rmin != obj.rmax and (obj.rmax is None or obj.rmax > 1):
                 first = obj.seq.first
                 disallowed = obj.seq.disallowed_after
                 conflicts = first.intersection(disallowed)
                 if conflicts:
-                    raise FirstFollow(obj, conflicts)
+                    raise FirstFollow(expr, obj, conflicts)
             if obj.seq.maybe_empty:
                 raise PossiblyEmpty(obj.err_op, obj.seq.summary(), obj.loc)
             return
         if isinstance(obj, Recovery):
-            return self._check(obj.seq)
+            return self._check(expr, obj.seq)
         if isinstance(obj, Branches):
             token_to_branch = {}
             for b in obj.branches_and_default:
                 # check eaach individual branch
-                self._check(b)
+                self._check(expr, b)
                 for t in b.first:
                     token_to_branch.setdefault(t, []).append(b)
             # then detect first/first conflicts
@@ -1308,19 +1391,19 @@ class Grammar:
                 raise FirstFirst(obj, conflicts)
             return
         if isinstance(obj, Sequence):
-            for term, _ in obj.terms:
+            for term in obj.terms:
                 # check individual terms
-                self._check(term)
+                self._check(expr, term)
             # Detect %return which are not last.
-            for term, _ in obj.terms[:-1]:
+            for term in obj.terms[:-1]:
                 if term.always_returns:
-                    ReturnNotLast(obj, term)
+                    raise ReturnNotLast(obj, term)
             # Walk through the sequence, looking for First/Follow conflicts.
             disallowed = set()
-            for i, (term, _) in enumerate(obj.terms):
+            for i, term in enumerate(obj.terms):
                 conflicts = disallowed.intersection(term.first)
                 if conflicts:
-                    raise FirstFollow(term, conflicts)
+                    raise FirstFollow(expr, term, conflicts)
                 if term.maybe_empty:
                     disallowed = disallowed.union(term.first)
                 else:
@@ -1330,7 +1413,7 @@ class Grammar:
                 if isinstance(term, Recovery):
                     empty_after = True
                     after = frozenset()
-                    for t, _ in obj.terms[i+1:]:
+                    for t in obj.terms[i+1:]:
                         after = after.union(t.first)
                         if not t.maybe_empty:
                             empty_after = False
@@ -1416,7 +1499,7 @@ class Grammar:
                 return []
             return [("arg type upgrade not allowed", arg.loc, param.loc)]
 
-        def _no_fallback_first_follow_repeat(repeat):
+        def _no_fallback_first_follow_repeat(expr, repeat):
             if not no_fallback_first_follows or self.fallbacks is None:
                 return []
             # only variable-number repeats with rmax > 1 can self-conflict
@@ -1436,14 +1519,16 @@ class Grammar:
             conflicts = first.intersection(disallowed)
             if conflicts:
                 # TODO: emit tuples, like the other policies
-                raise FirstFollow(self, conflicts, due_to_fallbacks=True)
+                raise FirstFollow(
+                    expr, repeat, conflicts, due_to_fallbacks=True
+                )
             return []
 
-        def _no_fallback_first_follow_seq(seq):
+        def _no_fallback_first_follow_seq(expr, seq):
             if not no_fallback_first_follows or self.fallbacks is None:
                 return []
             disallowed = set()
-            for i, (term, _) in enumerate(seq.terms):
+            for i, term in enumerate(seq.terms):
                 # Predict where fallbacks would expand either the disallowed
                 # set or the term_first set to cause conflicts.
                 def expand(tokens):
@@ -1456,14 +1541,16 @@ class Grammar:
                 conflicts = disallowed_ex.intersection(term_first_ex)
                 if conflicts:
                     # TODO: emit tuples, like the other policies
-                    raise FirstFollow(term, conflicts, due_to_fallbacks=True)
+                    raise FirstFollow(
+                        expr, term, conflicts, due_to_fallbacks=True
+                    )
                 if term.maybe_empty:
                     disallowed = disallowed.union(term.first)
                 else:
                     disallowed = self._get_disallowed(term)
             return []
 
-        def _enforce(obj):
+        def _enforce(expr, obj):
             out = []
             if isinstance(obj, Return):
                 return out
@@ -1483,24 +1570,24 @@ class Grammar:
                     return out
                 raise RuntimeError("unrecognized ref: " + type(obj.defn).__name__)
             if isinstance(obj, Repeat):
-                out += _no_fallback_first_follow_repeat(obj)
-                out += _enforce(obj.seq)
+                out += _no_fallback_first_follow_repeat(expr, obj)
+                out += _enforce(expr, obj.seq)
                 return out
             if isinstance(obj, Recovery):
                 _no_nested_recovery_enter(obj)
-                out += _enforce(obj.seq)
+                out += _enforce(expr, obj.seq)
                 _no_nested_recovery_reset()
                 return out
             if isinstance(obj, Branches):
                 out = []
                 for b in obj.branches:
-                    out += _enforce(b)
+                    out += _enforce(expr, b)
                 return out
             if isinstance(obj, Sequence):
-                out += _no_fallback_first_follow_seq(obj)
+                out += _no_fallback_first_follow_seq(expr, obj)
                 out = []
-                for t, _ in obj.terms:
-                    out += _enforce(t)
+                for t in obj.terms:
+                    out += _enforce(expr, t)
                 return out
             raise RuntimeError("unrecognized object type: " + type(obj).__name__)
 
@@ -1508,7 +1595,7 @@ class Grammar:
         for _, expr in self.sorted_expressions():
             out += _no_params_expr(expr)
             out += _no_untyped_params(expr)
-            out += _enforce(expr.seq)
+            out += _enforce(expr, expr.seq)
         return out
 
 
@@ -1855,7 +1942,7 @@ class C:
         if isinstance(obj, Sequence):
             persist = 0
             peak = 0
-            for t, _ in obj.terms:
+            for t in obj.terms:
                 peak = max(peak, persist + self.stackmax(t))
                 persist += self.stackpersist(t)
             return peak
@@ -1890,7 +1977,7 @@ class C:
             elif isinstance(obj, Branches):
                 return max(_callstackmax(b) for b in obj.branches)
             elif isinstance(obj, Sequence):
-                return max(_callstackmax(term) for term, _ in obj.terms)
+                return max(_callstackmax(term) for term in obj.terms)
             raise ValueError(
                 "unknown term type: %s"%type(term).__name__
             )
@@ -1935,7 +2022,7 @@ class C:
             elif isinstance(obj, Sequence):
                 persist = 0
                 peak = 0
-                for t, _ in obj.terms:
+                for t in obj.terms:
                     peak = max(peak, persist + _semstackmax(t))
                     persist += self.stackpersist(t)
                 return peak
@@ -1982,12 +2069,10 @@ class C:
         if isinstance(obj, Recovery):
             return 1 + self.nstates(obj.seq)
         if isinstance(obj, Sequence):
-            return sum(self.nstates(t) for t,_ in obj.terms)
+            return sum(self.nstates(t) for t in obj.terms)
 
     def gen(self, obj, state, stack, var, want_final_loc=False):
         """Generate code to match an object."""
-        if isinstance(obj, Return):
-            1/0
         if isinstance(obj, Reference):
             if isinstance(obj.defn, Token):
                 if obj.prematched:
@@ -2191,32 +2276,46 @@ class C:
         if isinstance(obj, Sequence):
             oldstack = stack
             var.new_scope()
-            self.print_code(obj.precode, "    ")
-            for i, (t, code) in enumerate(obj.terms):
-                if isinstance(t, Reference) and t.tag is not None:
-                    var.define_term(t.tag, t.defn.type, stack)
-                state, stack = self.gen(t, state, stack, var)
-                final = i+1 == len(obj.terms)
-                # calculate the overall location before the final code block
-                if final and want_final_loc:
-                    self.fprint_multi(r"""
-                    #ifdef ${PREFIX_}HAVE_SEMLOC
-                        // calculate the final location before the final user action
-                        if(call->have_loc){
-                            p->semstack[call->stack].loc = $span_fn(
-                                call->loc_start, call->loc_end
-                            );
-                        }else{
-                            p->semstack[call->stack].loc = $zero_loc_fn(p->prev);
-                        }
-                    #endif
-                    """)
-                    var.define_final_loc()
-                self.print_code(code, "    ")
-                if not final:
+            for item in obj.prefinalcode:
+                if isinstance(item, Parsable):
+                    # parsable term
+                    if isinstance(item, Reference) and item.tag is not None:
+                        var.define_term(item.tag, item.defn.type, stack)
+                    state, stack = self.gen(item, state, stack, var)
+                else:
+                    # side-effect
+                    self.print_code(item, "    ")
                     self.fprint("")
+
+            if obj.returns or want_final_loc:
+                self.fprint_multi(r"""
+                #ifdef ${PREFIX_}HAVE_SEMLOC
+                    // calculate the final location before the final user action
+                    if(call->have_loc){
+                        p->semstack[call->stack].loc = $span_fn(
+                            call->loc_start, call->loc_end
+                        );
+                    }else{
+                        p->semstack[call->stack].loc = $zero_loc_fn(p->prev);
+                    }
+                #endif
+                """)
+                var.define_final_loc()
+
+            self.print_code(obj.finalcode, "    ")
+
             var.pop_scope()
+
+            if obj.returns:
+                self.fprint("    // explicit %return");
+                self.fprint("    goto expression_end;");
+
+            if want_final_loc:
+                self.fprint("    goto expression_end;");
+                self.fprint("expression_end:");
             self.fprint("    ${prefix_}free_sems(p, call->stack+%d);"%oldstack)
+
+
             return state, stack
 
         raise RuntimeError("unrecognized object type: " + type(obj).__name__)
@@ -3060,8 +3159,6 @@ class Python:
 
     def _gen(self, obj, i, want_final_loc):
         if isinstance(obj, Reference):
-            if isinstance(obj, Return):
-                1/0
             if isinstance(obj.defn, Token):
                 tokens = {obj.defn.name}.union(self.fallbacks[obj.defn.name])
                 token_list = self.token_list(tokens)
@@ -3154,10 +3251,15 @@ class Python:
             return
 
         if isinstance(obj, Sequence):
-            self.print_code(obj.precode, i)
-            for term, code in obj.terms:
-                self.gen(term, i)
-                self.print_code(code, i)
+            for item in obj.prefinalcode:
+                if isinstance(item, Parsable):
+                    self.gen(item, i)
+                else:
+                    self.print_code(item, i)
+            self.print_code(obj.finalcode, i)
+            if obj.returns:
+                self.fprint("# explicit %return")
+                self.fprint(i + "return out")
             return
 
         raise RuntimeError("unrecognized object type: " + type(obj).__name__)

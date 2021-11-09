@@ -63,8 +63,8 @@ import gen
 # ;
 # seq = [code] (
 #  | %empty [code]
-#  | %return [code]
-#  | 1*(term [code]) [%return [code]];
+#  | %return
+#  | 1*(term [code]) [%return];
 # );
 # term =
 # | [NUM] ASTERISK [NUM] (
@@ -267,10 +267,6 @@ def seq(e):
             e.match(RETURN, "return")
             e.exec("$$.loc = text_span($$.loc or @return, @return)")
             e.exec("$$.elems.append(ParsedReturn(@return))")
-            with e.repeat(0, 1):
-                e.match(code, "code")
-                e.exec("$$.elems.append($code)")
-                e.exec("$$.loc = text_span($$.loc, @code)")
         with b.branch():
             with e.repeat(1, None):
                 e.match(term, "term")
@@ -284,10 +280,6 @@ def seq(e):
                 e.match(RETURN, "return")
                 e.exec("$$.loc = text_span($$.loc, @return)")
                 e.exec("$$.elems.append(ParsedReturn(@return))")
-                with e.repeat(0, 1):
-                    e.match(code, "code")
-                    e.exec("$$.elems.append($code)")
-                    e.exec("$$.loc = text_span($$.loc, @code)")
 
 @branches
 def branches(e):

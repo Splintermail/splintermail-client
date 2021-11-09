@@ -190,7 +190,6 @@ def a(e):
 
 g.check()
 
-
 # empty expressions: various legal forms
 grammar_text = """
 a = %empty;  # explicit empty
@@ -214,7 +213,7 @@ for key, first, maybe_empty, always_empty, disallowed_after in (
     got = g.exprs[key].seq.disallowed_after
     assert got == disallowed_after, (key, got)
 
-branches = g.exprs["b"].seq.terms[0][0]
+branches = g.exprs["b"].seq.terms[0]
 assert len(branches.branches) == 1
 assert branches.default is not None
 
@@ -244,6 +243,37 @@ for key, maybe_empty, disallowed_after in (
 ):
     got = g.exprs[key].seq.disallowed_after
     assert got == disallowed_after, (key, got)
+
+# early %returns are invalid
+grammar_text = """
+a = A B C 1*(D E %return) F;
+b = A B C (D E %return | E %return) F;
+"""
+parsed_doc = gen.parse_doc(grammar_text)
+g = parsed_doc.build_grammar(grammar_text)
+g.compile()
+assert g.exprs["a"].seq.terms[3].always_returns
+assert g.exprs["b"].seq.terms[3].always_returns
+try:
+    g.check()
+    1/0
+except gen.ReturnNotLast:
+    pass
+
+
+# %returns can prevent first/follow conflicts on repeats
+grammar_text = """
+a = *(1*A (COMMA | %return));
+b = 1*A (COMMA | %return);
+"""
+parsed_doc = gen.parse_doc(grammar_text)
+g = parsed_doc.build_grammar(grammar_text)
+g.compile()
+g.check()
+try:
+    pass
+except gen.ReturnNotLast:
+    pass
 
 
 # testing MetaTokenizer
@@ -543,6 +573,105 @@ if __name__ == "__main__":
     for t, exp in tokens:
         expr = p.feed(t)
         assert (expr and expr.val) == exp, (t, exp, expr)
+}}
+""")
+
+# test %return statements in the C generator
+run_c_e2e_test(r"""
+%root tuple;
+
+tuple_body = ITEM *(COMMA (ITEM | %return));
+tuple = LPAREN [tuple_body] RPAREN;
+
+{{{
+int main(int argc, char **argv){
+    ONSTACK_PARSER(p, 10, 10);
+    status_e status = STATUS_OK;
+
+    for(size_t n = 0; n < 5; n++){
+        status = parse_tuple(&p, LPAREN);
+        if(status != STATUS_OK){
+            fprintf(stderr, "bad status after LPAREN: %d\n", (int)status);
+            return 1;
+        }
+
+        for(size_t i = 0; i < n; i++){
+            token_e token = i%2==0 ? ITEM : COMMA;
+            status = parse_tuple(&p, token);
+            if(status != STATUS_OK){
+                fprintf(stderr,
+                    "bad status after %s: %d\n",
+                    i%2==0 ? "ITEM" : "COMMA",
+                    (int)status
+                );
+                return 1;
+            }
+        }
+
+        status = parse_tuple(&p, RPAREN);
+        if(status != STATUS_DONE){
+            fprintf(stderr, "bad status after RPAREN: %d\n", (int)status);
+            return 1;
+        }
+    }
+
+
+    // feed double commas
+    status = parse_tuple(&p, LPAREN);
+    if(status != STATUS_OK){
+        fprintf(stderr, "bad status after LPAREN: %d\n", (int)status);
+        return 1;
+    }
+    status = parse_tuple(&p, ITEM);
+    if(status != STATUS_OK){
+        fprintf(stderr, "bad status after ITEM: %d\n", (int)status);
+        return 1;
+    }
+    status = parse_tuple(&p, COMMA);
+    if(status != STATUS_OK){
+        fprintf(stderr, "bad status after COMMA: %d\n", (int)status);
+        return 1;
+    }
+    status = parse_tuple(&p, COMMA);
+    if(status != STATUS_SYNTAX_ERROR){
+        fprintf(stderr, "bad status after double-COMMA: %d\n", (int)status);
+        return 1;
+    }
+
+    return 0;
+}
+}}}
+""")
+
+
+# test %return statements in the Python generator
+run_py_e2e_test(r"""
+%root tuple;
+
+tuple_body = ITEM *(COMMA (ITEM | %return));
+tuple = LPAREN [tuple_body] RPAREN;
+
+{{
+if __name__ == "__main__":
+    p = tupleParser(repeat=True)
+    for n in range(5):
+        p.feed(Token(LPAREN))
+        for i in range(n):
+            if i%2 == 0:
+                p.feed(Token(ITEM))
+            else:
+                p.feed(Token(COMMA))
+        p.feed(Token(RPAREN))
+
+    # feed double commas
+    p.feed(Token(LPAREN))
+    p.feed(Token(ITEM))
+    p.feed(Token(COMMA))
+    try:
+        p.feed(Token(COMMA))
+        raise ValueError("expected SyntaxError")
+    except SyntaxError:
+        pass
 }}
 """)
 
