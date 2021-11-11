@@ -1750,6 +1750,7 @@ class C:
         span_fn=None,
         zero_loc_fn=None,
         error_fn=None,
+        debug=False,
     ):
         self.grammar = ctx.grammar
         self.file = ctx.file
@@ -1787,6 +1788,12 @@ class C:
         self.span_fn = span_fn
         self.zero_loc_fn = zero_loc_fn
         self.error_fn = error_fn
+        assert isinstance(debug, (bool, str)), type(debug).__name__
+        if isinstance(debug, bool):
+            self.debug = debug
+        else:
+            assert debug.lower() in ("true", "false"), debug
+            self.debug = debug.lower == "true"
 
         # build a default mapping
         params_str = ""
@@ -2314,6 +2321,9 @@ class C:
                 self.fprint("    goto expression_end;");
                 self.fprint("expression_end:");
             self.fprint("    ${prefix_}free_sems(p, call->stack+%d);"%oldstack)
+            self.fprint("    #ifdef ${PREFIX_}GEN_DEBUG")
+            self.fprint("    MEMCHECK_SCOPE_END(%d);"%oldstack)
+            self.fprint("    #endif")
 
 
             return state, stack
@@ -2353,6 +2363,10 @@ class C:
         self.fprint("        return ${PREFIX_}STATUS_SEMSTACK_OVERFLOW;")
         self.fprint("    }")
         self.fprint("    call->nsems = %d;"%x)
+        self.fprint("    #ifdef ${PREFIX_}GEN_DEBUG")
+        self.fprint("    MEMCHECK_CALL_START(%d);"%len(expr.params))
+        self.fprint("    #endif")
+        self.fprint("")
 
         var = C.Variables(self.fprint, semloc=self.semloc_type)
         stack = 0;
@@ -2375,6 +2389,9 @@ class C:
         self.fprint("")
         var.pop_scope()
 
+        self.fprint("    #ifdef ${PREFIX_}GEN_DEBUG")
+        self.fprint("    MEMCHECK_CALL_END(%d);"%len(expr.params))
+        self.fprint("    #endif")
         self.fprint("    p->callslen--;");
         self.fprint("    return 0;")
         self.fprint("}")
@@ -2441,6 +2458,9 @@ class C:
         """
         if self.semloc_type:
             self.fprint("#define ${PREFIX_}HAVE_SEMLOC")
+        if self.debug:
+            self.fprint("#define ${PREFIX_}GEN_DEBUG")
+        if self.debug or self.semloc_type:
             self.fprint("")
 
         self.fprint("typedef enum {")
@@ -2630,6 +2650,128 @@ class C:
         if embed_header:
             self.fprint("")
             self.gen_header()
+
+        self.fprint("")
+        self.fprint_multi(r"""
+            #ifdef ${PREFIX_}GEN_DEBUG
+            static int memcheck_iszeroized(void *vsem){
+                char *csem = vsem;
+                for(size_t i = 0; i < sizeof(${prefix_}sem_t); i++){
+                    if(csem[i] != 0) return 0;
+                }
+                return 1;
+            }
+            #endif
+
+            #define MEMCHECK_CALL_START(_nargs) do { \
+                int failed = 0; \
+                for(size_t i = call->stack; i < p->semsmax; i++){ \
+                    if(i-call->stack > 0 && i-call->stack <= _nargs) continue; \
+                    if(memcheck_iszeroized(&p->semstack[i])) continue; \
+                    if(failed) { \
+                        fprintf(stderr, ", %zu", i); \
+                        continue; \
+                    } \
+                    failed = 1; \
+                    fprintf(stderr, \
+                        "memcheck_iszeroized failed " \
+                        "at start of function!\n" \
+                    ); \
+                    ${prefix_}fprint_stack(stderr, p); \
+                    fprintf(stderr, \
+                        "call->fn=%s\n" \
+                        "call->stack=%zu\n" \
+                        "call->nsems=%zu\n" \
+                        "call->nargs=%d\n" \
+                        "failure(s) at: %zu", \
+                        _${prefix_}fn_name(call->fn), \
+                        call->stack, \
+                        call->nsems, \
+                        (int)_nargs, \
+                        i \
+                    ); \
+                } \
+                if(failed){ \
+                    fprintf(stderr, \
+                        "\nthis is a bug in the parser generator, " \
+                        "please report it!\n" \
+                    ); \
+                    exit(2); \
+                } \
+            } while(0) \
+
+            #define MEMCHECK_CALL_END(_nargs) do { \
+                int failed = 0; \
+                for(size_t i = call->stack + 1; i < p->semsmax; i++){ \
+                    if(memcheck_iszeroized(&p->semstack[i])) continue; \
+                    if(failed) { \
+                        fprintf(stderr, ", %zu", i); \
+                        continue; \
+                    } \
+                    failed = 1; \
+                    fprintf(stderr, \
+                        "memcheck_iszeroized failed " \
+                        "at end of function!\n" \
+                    ); \
+                    ${prefix_}fprint_stack(stderr, p); \
+                    fprintf(stderr, \
+                        "call->fn=%s\n" \
+                        "call->stack=%zu\n" \
+                        "call->nsems=%zu\n" \
+                        "call->nargs=%d\n" \
+                        "failure(s) at: %zu", \
+                        _${prefix_}fn_name(call->fn), \
+                        call->stack, \
+                        call->nsems, \
+                        (int)_nargs, \
+                        i \
+                    ); \
+                } \
+                if(failed){ \
+                    fprintf(stderr, \
+                        "\nthis is a bug in the parser generator, " \
+                        "please report it!\n" \
+                    ); \
+                    exit(2); \
+                } \
+            } while(0) \
+
+            #define MEMCHECK_SCOPE_END(_oldstack) do { \
+                int failed = 0; \
+                for(size_t i = call->stack + _oldstack; i < p->semsmax; i++){ \
+                    if(memcheck_iszeroized(&p->semstack[i])) continue; \
+                    if(failed) { \
+                        fprintf(stderr, ", %zu", i); \
+                        continue; \
+                    } \
+                    failed = 1; \
+                    fprintf(stderr, \
+                        "memcheck_iszeroized failed " \
+                        "at end of scope!\n" \
+                    ); \
+                    ${prefix_}fprint_stack(stderr, p); \
+                    fprintf(stderr, \
+                        "call->fn=%s\n" \
+                        "call->stack=%zu\n" \
+                        "call->nsems=%zu\n" \
+                        "oldstack=%d\n" \
+                        "failure(s) at: %zu", \
+                        _${prefix_}fn_name(call->fn), \
+                        call->stack, \
+                        call->nsems, \
+                        (int)_oldstack, \
+                        i \
+                    ); \
+                } \
+                if(failed){ \
+                    fprintf(stderr, \
+                        "\nthis is a bug in the parser generator, " \
+                        "please report it!\n" \
+                    ); \
+                    exit(2); \
+                } \
+            } while(0) \
+        """)
 
         if self.tokens_have_value:
             self.fprint("")
