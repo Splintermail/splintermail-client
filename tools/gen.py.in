@@ -12,13 +12,14 @@ parsers.  gen.py's plugin architecture doesn't place requirements on the
 properties of language generators, so custom language generators are allowed to
 be simpler than the embedded generators, as desired.
 
-gen.py is in alpha, and is still missing some key features.
+gen.py is in beta, and may not be completely stable.
 
 TODO:
  - Python:
    - honor prematched to avoid certain duplicate token checks
    - reject roots which don't have a concrete ending token; the user api
      doesn't support it
+   - support expr!(args)
 
  - C:
    - reject nested recovery blocks
