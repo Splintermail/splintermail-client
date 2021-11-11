@@ -1213,7 +1213,7 @@ class Grammar:
         if isinstance(obj, Recovery):
             return self._get_disallowed_all(obj.seq)
         if isinstance(obj, Branches):
-            for b in obj.branches:
+            for b in obj.branches_and_default:
                 self._get_disallowed_all(b)
             return
         if isinstance(obj, Sequence):
@@ -1280,7 +1280,7 @@ class Grammar:
         if isinstance(obj, Branches):
             maybe = False
             always = True
-            for b in obj.branches:
+            for b in obj.branches_and_default:
                 bmaybe, balways = self._get_returns(b)
                 maybe = maybe or bmaybe
                 always = always and balways
@@ -1317,7 +1317,7 @@ class Grammar:
             if isinstance(obj, (Repeat, Recovery)):
                 return _recurses(obj.seq, path)
             if isinstance(obj, Branches):
-                for b in obj.branches:
+                for b in obj.branches_and_default:
                     _recurses(b, path)
                 return
             if isinstance(obj, Sequence):
@@ -1580,7 +1580,7 @@ class Grammar:
                 return out
             if isinstance(obj, Branches):
                 out = []
-                for b in obj.branches:
+                for b in obj.branches_and_default:
                     out += _enforce(expr, b)
                 return out
             if isinstance(obj, Sequence):
@@ -1703,7 +1703,8 @@ class C:
                 + " (p->semstack[call->stack + %d].val._yy_pointer)"%pos
             )
             ptr = "YYPTR_"+name
-            undefs = ["    #undef YYPTR_" + name]
+            undefs = ["    YYPTR_" + name + " = 0;"]
+            undefs += ["    #undef YYPTR_" + name]
             self._define(name, typ, ptr, undefs)
 
         def _define(self, tag, typ, ptr, undefs):
@@ -1945,7 +1946,7 @@ class C:
         if isinstance(obj, Recovery):
             return self.stackmax(obj.seq)
         if isinstance(obj, Branches):
-            return max(self.stackmax(b) for b in obj.branches)
+            return max(self.stackmax(b) for b in obj.branches_and_default)
         if isinstance(obj, Sequence):
             persist = 0
             peak = 0
@@ -1982,8 +1983,10 @@ class C:
             elif isinstance(obj, (Repeat, Recovery)):
                 return _callstackmax(obj.seq)
             elif isinstance(obj, Branches):
-                return max(_callstackmax(b) for b in obj.branches)
+                return max(_callstackmax(b) for b in obj.branches_and_default)
             elif isinstance(obj, Sequence):
+                if not obj.terms:
+                    return 0
                 return max(_callstackmax(term) for term in obj.terms)
             raise ValueError(
                 "unknown term type: %s"%type(term).__name__
@@ -2025,7 +2028,7 @@ class C:
             elif isinstance(obj, Recovery):
                 return _semstackmax(obj.seq)
             elif isinstance(obj, Branches):
-                return max(_semstackmax(b) for b in obj.branches)
+                return max(_semstackmax(b) for b in obj.branches_and_default)
             elif isinstance(obj, Sequence):
                 persist = 0
                 peak = 0
@@ -2037,8 +2040,8 @@ class C:
                 "unknown term type: %s"%type(term).__name__
             )
 
-        # Count the root's $$ as well.
-        out = 1 + _semstackmax(root.seq)
+        # Count the root's $$ and the parameters as well.
+        out = 1 + len(root.params) + _semstackmax(root.seq)
         self.semstackmaxes[root.name] = out
         return out
 
@@ -2071,7 +2074,7 @@ class C:
         if isinstance(obj, Branches):
             return (
                 int(not obj.prematched)
-                + sum(self.nstates(b) for b in obj.branches)
+                + sum(self.nstates(b) for b in obj.branches_and_default)
             )
         if isinstance(obj, Recovery):
             return 1 + self.nstates(obj.seq)
@@ -2123,7 +2126,9 @@ class C:
                 self.fprint("        call, p->semstack[call->stack + %d].loc"%stack)
                 self.fprint("    );")
                 self.fprint("#endif")
-                return state + 1, stack + 1 + len(obj.defn.params)
+                # we don't count stack elements for the params, because those
+                # belong to the function we are about to call
+                return state + 1, stack + 1
 
             raise RuntimeError("unrecognized reference type: " + type(obj.defn).__name__)
 
@@ -2358,7 +2363,7 @@ class C:
             self.fprint("        case " + str(n+1) + ": goto yy" + str(n+1) + ";")
         self.fprint("    }")
         # Ensure we have enough stack space to operate.
-        x = 1 + self.stackmax(expr.seq)
+        x = 1 + len(expr.params) + self.stackmax(expr.seq)
         self.fprint("    if(!${prefix_}sems_available(p, call->stack + %d)){"%x)
         self.fprint("        return ${PREFIX_}STATUS_SEMSTACK_OVERFLOW;")
         self.fprint("    }")
@@ -2487,8 +2492,8 @@ class C:
                 ${PREFIX_}STATUS_OK = 0,
                 ${PREFIX_}STATUS_DONE,
                 ${PREFIX_}STATUS_SYNTAX_ERROR,
-                ${PREFIX_}STATUS_SEMSTACK_OVERFLOW,
                 ${PREFIX_}STATUS_CALLSTACK_OVERFLOW,
+                ${PREFIX_}STATUS_SEMSTACK_OVERFLOW,
             } ${prefix_}status_e;
 
             struct ${prefix_}call_t;

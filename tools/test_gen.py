@@ -495,6 +495,7 @@ if not errors:
 # test empty branches in the C generator
 run_c_e2e_test(r"""
 %root maybe_num;
+%kwarg debug true;
 %type i {int};
 
 NUM:i;
@@ -579,6 +580,7 @@ if __name__ == "__main__":
 # test %return statements in the C generator
 run_c_e2e_test(r"""
 %root tuple;
+%kwarg debug true;
 
 tuple_body = ITEM *(COMMA (ITEM | %return));
 tuple = LPAREN [tuple_body] RPAREN;
@@ -703,6 +705,7 @@ loc_t numloc = {0};
 %kwarg semloc_type loc_t;
 %kwarg span_fn span;
 %kwarg zero_loc_fn zero_loc;
+%kwarg debug true;
 
 NUM:i;
 
@@ -791,6 +794,7 @@ char *myappend(char *a, char joiner, char *b, char *tag){
 
 %type str {char*} {/*printf("freeing %s\n", $$);*/ free($$);};
 %root sum;
+%kwarg debug true;
 
 STR:str;
 
@@ -878,6 +882,7 @@ char *myappend(char *a, char joiner, char *b){
 
 %type str {char*} {free($$);};
 %root sum;
+%kwarg debug true;
 
 STR:str;
 
@@ -985,6 +990,7 @@ void check_location(char *val, loc_t loc);
 %kwarg semloc_type loc_t;
 %kwarg span_fn span;
 %kwarg zero_loc_fn zero_loc;
+%kwarg debug true;
 
 STR:str;
 
@@ -1101,6 +1107,7 @@ static void handle_error(
 %root perfect;
 %root runon;
 %kwarg error_fn handle_error;
+%kwarg debug true;
 short = *4WORD DOT;
 perfect = 5*5WORD DOT;
 runon = 5*WORD DOT;
@@ -1227,6 +1234,149 @@ int main(int argc, char **argv){
     return 0;
 }
 }}
+""")
+
+
+# try cover as much code as possible to exercise the memcheck.
+# simultaneously, try even harder to trigger a memory leak.
+run_c_e2e_test(r"""
+{{
+#include <stdlib.h>
+#include <string.h>
+
+// extra-forward declarations, to get around ordering issues
+struct parser_t;
+typedef struct parser_t parser_t;
+struct sem_t;
+typedef struct sem_t sem_t;
+
+static void handle_error(
+    parser_t *p,
+    int token,
+    sem_t sem,
+    const unsigned char *expected_mask,
+    const char *loc_summary
+);
+}}
+
+%type str {char*} {fprintf(stderr, "freeing %s\n", $$); free($$);};
+%kwarg error_fn handle_error;
+%kwarg debug true;
+%root line;
+
+WORD:str;
+X:str;
+Y:str;
+
+start:str = %empty {$$=strdup("hi");};
+arglist(s:str):str = {$$=strdup("hi");} WORD 3*(COMMA (WORD | %return));
+expr(s:str):str = {$$=strdup("hi");} WORD LPAREN arglist!(s) RPAREN;
+line:str = {$$=strdup("hi");} start:s (
+    expr!(s) | [X] start start [Y] start
+) EOL %return;
+
+{{{
+static void handle_error(
+    parser_t *p,
+    int token,
+    sem_t sem,
+    const unsigned char *expected_mask,
+    const char *loc_summary
+){
+    char maskbuf[1024];
+    snprint_mask(maskbuf, sizeof(maskbuf), expected_mask, "|");
+    fprintf(stderr,
+        "syntax error @(%s): expected one of (%s) but got %s\n",
+        loc_summary,
+        maskbuf,
+        token_name(token)
+    );
+}
+
+int do_test(parser_t *p,  token_e *tokens, size_t ntokens){
+    int wrong = 0;
+    for(size_t n = 1; n <= ntokens; n++){
+        for(size_t i = 0; i < n; i++){
+            char *strval = NULL;
+            if(tokens[i]==WORD) strval = strdup("WORD");
+            if(tokens[i]==X) strval = strdup("X");
+            if(tokens[i]==Y) strval = strdup("Y");
+            // fprintf(stderr, "feeding %s\n", token_name(tokens[i]));
+            val_u val = { .str = strval };
+            char *out = NULL;
+            status_e status = parse_line(p, tokens[i], val, &out);
+            status_e expected = i+1 == ntokens ? STATUS_DONE : STATUS_OK;
+            if(status == STATUS_DONE){ free(out); }
+            if(status != expected){
+                fprintf(stderr,
+                    "(i=%zu, n=%zu) bad status after %s: %d, expected %d\n",
+                    i,
+                    n,
+                    token_name(tokens[i]),
+                    (int)status,
+                    (int)expected
+                );
+                wrong += 1;
+                break;
+            }
+        }
+        // fprintf(stderr, "reset!\n");
+        parser_reset(p);
+    }
+    return wrong;
+}
+
+int main(int argc, char **argv){
+    ONSTACK_PARSER(p, LINE_MAX_CALLSTACK, LINE_MAX_SEMSTACK);
+    int wrong = 0;
+    {
+        token_e tokens[] = {
+            WORD,
+            LPAREN,
+            WORD, COMMA,
+            WORD, COMMA,
+            WORD, COMMA,
+            WORD, COMMA,
+            WORD, COMMA,
+            RPAREN,
+            EOL,
+        };
+        size_t ntokens = sizeof(tokens) / sizeof(*tokens);
+        wrong += do_test(&p, tokens, ntokens);
+
+        // remove the last comma to hit the %return
+        tokens[ntokens-3] = tokens[ntokens-2];
+        tokens[ntokens-2] = tokens[ntokens-1];
+        ntokens--;
+        wrong += do_test(&p, tokens, ntokens);
+    }
+
+    // Pass through the default branch in different ways
+    {
+        token_e tokens[] = {X, Y, EOL};
+        size_t ntokens = sizeof(tokens) / sizeof(*tokens);
+        wrong += do_test(&p, tokens, ntokens);
+    }
+    {
+        token_e tokens[] = {X, EOL};
+        size_t ntokens = sizeof(tokens) / sizeof(*tokens);
+        wrong += do_test(&p, tokens, ntokens);
+    }
+    {
+        token_e tokens[] = {Y, EOL};
+        size_t ntokens = sizeof(tokens) / sizeof(*tokens);
+        wrong += do_test(&p, tokens, ntokens);
+    }
+    {
+        token_e tokens[] = {EOL};
+        size_t ntokens = sizeof(tokens) / sizeof(*tokens);
+        wrong += do_test(&p, tokens, ntokens);
+    }
+
+
+    return wrong;
+}
+}}}
 """)
 
 print("PASS")
