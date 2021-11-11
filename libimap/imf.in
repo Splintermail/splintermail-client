@@ -243,7 +243,7 @@ fws = [EOL] WS;
 # obs-ctext adds control characters except \0 \r \n \t SPACE
 # utf8-ctext adds UTF8
 # sum total is: UTF8 or ASCII except ( ) \\ \0 \r \n \t SPACE
-ctext = 1*(
+ctext =
 # | NIL
 # | EOL
 # | WS
@@ -268,20 +268,20 @@ ctext = 1*(
 | UTF8
 | EIGHTBIT
 | NUM
-);
+;
 
 # comment: again we allow consecutive folds, out of lazieness and leniency
-comment = LPAREN *(fws | ctext | quoted_pair | comment) RPAREN;
+comment = LPAREN *(fws | ctext | ign_quoted_pair | comment) RPAREN;
 
 # cfws: again we allow consecutive folds.
 cfws = 1*(fws | comment);
 
 # "maybe break"
-xbr:bool = *(cfws {$$ = true;});
+xbr:bool = [cfws {$$ = true;}];
 
 # atom is always joined by cfws
 # ALPHA DIGIT UTF8 !#$%&'*+-/=?^_`{|}~
-atom = 1*(
+atom_base = (
 | SLASH
 | QUESTION
 | EQ
@@ -290,16 +290,29 @@ atom = 1*(
 | EIGHTBIT
 | NUM
 );
+atom = 1*atom_base;
 
 # dot-atom is atoms joined by '.' but _not_ cfws
 # dot-atom itself is always joined by cfws
 dot_atom = atom *(DOT atom);
 
+empty_dstr:dstr = %empty {$$ = ie_dstr_new_empty(E);};
+null_dstr:dstr = %empty;
+
+# the standard is not clear about the semantic value of FWS in quoted strings.
+# in some places it says "runs of FWS between lexical tokens are treated as a
+# single space" and in other places it says that the "CLRF in any FWS that
+# appear that appear within the quoted-string are invisible", i.e. that the
+# space after the fold are allowed.
+#
+# In this case, I think we can assume that the more specific guidance applies.
+qfws(base:dstr) = [EOL] WS:w {$base = ie_dstr_append_from_off(E, $base, @w);};
+
 # qtext is VCHAR except "\
 # obs-qtext adds control characters except \0 \r \n \t SPACE
 # utf8-qtext adds UTF8
 # sum total is: UTF8 or ASCII except \\ " \0 \r \n \t SPACE
-qtext = 1*(
+_qtext =
 # | NIL
 # | EOL
 # | WS
@@ -324,7 +337,8 @@ qtext = 1*(
 | UTF8
 | EIGHTBIT
 | NUM
-);
+;
+qtext(base:dstr) = _qtext:q {$base = ie_dstr_append_from_off(E, $base, @q);};
 
 # quoted-pair is backslash followed by VCHAR or WSP
 # obs-qp adds control characters except \r and \n
@@ -364,43 +378,31 @@ escapable =
 | EIGHTBIT
 | NUM
 ;
-quoted_pair:dstr = BACKSLASH escapable:esc { $$ = ie_dstr_from_off(E, @esc); };
-
-qcontent_part = qtext | quoted_pair;
-qcontent:dstr = 1*(qcontent_part:q {$$ = ie_dstr_append_from_off(E, $$, @q);});
+ign_quoted_pair = BACKSLASH escapable;
+quoted_pair(base:dstr) =
+    BACKSLASH escapable:esc
+    {$base = ie_dstr_append_from_off(E, $base, @esc);}
+;
 
 # quoted_string is always joined by cfws
-quoted_string:dstr =
+# "any combination of qtext, quoted pair, or fws"
+quoted_string_append(base:dstr) =
     DQUOTE
-    # any number of folds convert to just one space
-    [fws *fws {$$ = ie_dstr_append2(E, $$, DSTR_LIT(" "));}]
     *(
-        qcontent:q {$$ = ie_dstr_concat(E, $$, STEAL(ie_dstr_t, &$q));}
-        # any number of folds convert to just one space
-        [fws *fws {$$ = ie_dstr_append2(E, $$, DSTR_LIT(" "));}]
+      | qtext!(base)
+      | quoted_pair!(base)
+      | qfws!(base)
     )
-    DQUOTE;
-
-# word is always joined by cfws
-word:dstr = (
-    | atom:a           {$$ = ie_dstr_from_off(E, @a);}
-    | quoted_string:q  {$$ = STEAL(ie_dstr_t, &$q);}
-);
-
-# phrase is just a bunch of words
-# obs-phrase adds the possibility of "." as well, but not at the beginning
-phrase_xbr:dstr =
-    word:w {$$ = STEAL(ie_dstr_t, &$w); }
-    *(
-        (
-          | cfws {$$ = ie_dstr_append2(E, $$, DSTR_LIT(" "));}
-          | DOT {$$ = ie_dstr_append2(E, $$, DSTR_LIT("."));}
-        )
-        [word:w2 {$$ = ie_dstr_concat(E, $$, STEAL(ie_dstr_t, &$w2));}]
-    )
-    # Remove trailing whitespace.
-    {$$->dstr.len = dstr_rstrip_chars($$->dstr, ' ').len;}
+    DQUOTE
 ;
+quoted_string:dstr =
+    empty_dstr:out
+    quoted_string_append!(out)
+    {$$ = STEAL(ie_dstr_t, &$out);}
+;
+
+# We actually don't ever support a plain phrase_xbr; it's always factored out
+# phrase_xbr:dstr = 1*( (atom_base|DOT|quoted_string) xbr);
 
 ### From-related things ###
 
@@ -408,28 +410,64 @@ phrase_xbr:dstr =
 # obs-local-part allows word *(DOT word), which adds cfws
 # We'll support a superset of those, which allows for leading and trailing DOT
 # In fact, we're so lazy, we just let local_part be a phrase.
-# Also that for local_part, obsolete folds should not result in a space.
+# Also note that for local_part, obsolete folds should not result in a space.
 local_part_xbr:dstr =
-    word:w {$$ = STEAL(ie_dstr_t, &$w); }
-    *(
-        (
-          | cfws # ignore spaces
-          | DOT {$$ = ie_dstr_append2(E, $$, DSTR_LIT("."));}
-        )
-        [word:w2 {$$ = ie_dstr_concat(E, $$, STEAL(ie_dstr_t, &$w2));}]
+    empty_dstr:out
+    local_part_xbr_append!(out)
+    {$$ = STEAL(ie_dstr_t, &$out);}
+;
+local_part_xbr_append(out:dstr) =
+    1*(
+        lp_chunk_append!(out)
+        (cfws | %return)
     )
 ;
 # Since we can't always distinguish local part or phrase until afterwards,
 # we'll build something that can be post-processed.
 local_part_or_phrase_xbr:dstr =
-    word:w {$$ = STEAL(ie_dstr_t, &$w); }
-    *(
+    null_dstr:out
+    1*(
+        lp_chunk_add!(out)
         (
-          | cfws {$$ = ie_dstr_add(E, $$, ie_dstr_new2(E, DSTR_LIT(" ")));}
-          | DOT {$$ = ie_dstr_add(E, $$, ie_dstr_new2(E, DSTR_LIT(".")));}
+          | lp_cfws_add!(out)
+          | {$$ = STEAL(ie_dstr_t, &$out);} %return
         )
-        [word:w2 {$$ = ie_dstr_add(E, $$, STEAL(ie_dstr_t, &$w2));}]
     )
+    {$$ = STEAL(ie_dstr_t, &$out);}
+;
+# a chunk for one ie_dstr_append:
+lp_atom_dot = [DOT] 1*(atom (DOT | %return));
+lp_atom_dot_append(out:dstr) =
+    lp_atom_dot:x
+    {$out = ie_dstr_append_from_off(E, $out, @x);}
+;
+# a chunk for one ie_dstr_add:
+lp_chunk_append(out:dstr) =
+    [quoted_string_append!(out)]
+    1*(
+        lp_atom_dot_append!(out)
+        (quoted_string_append!(out) | %return)
+    )
+;
+lp_chunk:dstr =
+    empty_dstr:out
+    lp_chunk_append!(out)
+    {$$ = STEAL(ie_dstr_t, &$out);}
+;
+lp_chunk_add(list:dstr) =
+    lp_chunk:c
+    {$list = ie_dstr_add(E, $list, STEAL(ie_dstr_t, &$c));}
+;
+lp_cfws_add(list:dstr) =
+    cfws
+    {$list = ie_dstr_add(E, $list, ie_dstr_new2(E, DSTR_LIT(" ")));}
+;
+# post-process local_part_or_phrase_xbr
+with_spaces(lpp:dstr):dstr =
+    %empty {$$ = with_spaces(E, STEAL(ie_dstr_t, &$lpp));}
+;
+without_spaces(lpp:dstr):dstr =
+    %empty {$$ = without_spaces(E, STEAL(ie_dstr_t, &$lpp));}
 ;
 
 # dtext is VCHAR except [ ] \
@@ -464,15 +502,25 @@ dtext = 1*(
 | NUM
 );
 
-# domain_literal is always joined by cfws
-domain_literal:dstr =
-    LBRACKET {$$ = ie_dstr_new2(E, DSTR_LIT("["));}
+domain_literal_body:dstr =
+    {$$ = ie_dstr_new2(E, DSTR_LIT("["));}
     *fws
     *(
         dtext:d {$$ = ie_dstr_append_from_off(E, $$, @d);}
-        *fws
+        (
+          | 1*fws
+          | %return
+        )
     )
-    RBRACKET {$$ = ie_dstr_append2(E, $$, DSTR_LIT("]"));}
+;
+
+# domain_literal is always joined by cfws
+domain_literal:dstr =
+    LBRACKET
+    domain_literal_body:b
+      {{ $$ = STEAL(ie_dstr_t, &$b);
+         $$ = ie_dstr_append2(E, $$, DSTR_LIT("]")); }}
+    RBRACKET
 ;
 
 # domain is dot-atom | domain-literal
@@ -492,12 +540,16 @@ domain_xbr:dstr =
 ;
 
 # addr_spec: always use local_part_xbr (skipping spaces)
-ign_addr_spec_xbr = local_part_xbr:l ARUBA xbr domain_xbr:d;
-addr_spec_xbr:addr = local_part_xbr:l ARUBA xbr domain_xbr:d
+ign_addr_spec_xbr = local_part_xbr ARUBA xbr domain_xbr;
+addr_spec_xbr:addr = local_part_xbr:l _addr_spec_xbr!(l):a
+    {{ $$ = STEAL(ie_addr_t, &$a); }}
+;
+# _addr_spec_xbr: for when you've already parsed the local_part_or_phrase
+_addr_spec_xbr(l:dstr):addr = ARUBA xbr domain_xbr:d
     {{  $$ = ie_addr_new(E,
-            NULL,                  // name
-            STEAL(ie_dstr_t, &$l), // mailbox
-            STEAL(ie_dstr_t, &$d)  // domain
+            NULL,                   // name
+            STEAL(ie_dstr_t, &$l),  // mailbox
+            STEAL(ie_dstr_t, &$d)   // domain
         );
     }}
 ;
@@ -527,22 +579,26 @@ angle_addr:addr =
     { $$ = STEAL(ie_addr_t, &$a); }
 ;
 
+# _named_addr always ends up with the name factored out
+_named_addr(name:dstr):addr = angle_addr:addr
+    {{  $$ = ie_addr_set_name(E,
+            STEAL(ie_addr_t, &$addr),
+            STEAL(ie_dstr_t, &$name)
+        );
+    }}
+;
+
 mailbox_xbr:addr =
   | local_part_or_phrase_xbr:p (
-      | angle_addr:a xbr  # named address
-        {$$ = ie_addr_set_name(E,
-              STEAL(ie_addr_t, &$a),
-              with_spaces(E, STEAL(ie_dstr_t, &$p))
-          ); }
-      | ARUBA xbr domain_xbr:d  # bare address
-        { $$ = ie_addr_new(E,
-              NULL,
-              without_spaces(E, STEAL(ie_dstr_t, &$p)),
-              STEAL(ie_dstr_t, &$d)
-          ); }
+      # named address
+      | with_spaces!(p):n
+        _named_addr!(n):a xbr { $$ = STEAL(ie_addr_t, &$a); }
+      # bare address
+      | without_spaces!(p):lp
+        _addr_spec_xbr!(lp):a { $$ = STEAL(ie_addr_t, &$a); }
     )
-  | angle_addr:a xbr  # bare angle address
-    { $$ = STEAL(ie_addr_t, &$a); }
+  # bare angle address
+  | angle_addr:a xbr { $$ = STEAL(ie_addr_t, &$a); }
 ;
 
 # mailbox-list is mailbox *(COMMA mailbox); never empty, no double commas
@@ -565,47 +621,34 @@ mailbox_list_xbr:addr =
 # - one address with NULL host and mailbox set to the group name
 # - any number of normal addresses, which are group memebers
 # - one address with NULL mailbox, which is the end of the group.
-# (this is never used, but is deconstructed into addr_or_grp_xbr)
-# group:addr =
-#     phrase_xbr:p  {$$ = ie_addr_new(E, NULL, STEAL(ie_dstr_t, &$p), NULL);}
-#     COLON xbr *(COMMA xbr)
-#     [mailbox_list_xbr:m  {$$ = ie_addr_add(E, $$, STEAL(ie_addr_t, &$m));}]
-#     SEMI
-#     {$$ = ie_addr_add(E, $$, ie_addr_new(E, NULL, NULL, NULL));}
-# ;
+# (this is only used in addr_or_grp_xbr, where the name is factored out)
+_group(name:dstr):addr =
+    {$$ = ie_addr_new(E, NULL, STEAL(ie_dstr_t, &$name), NULL);}
+    COLON xbr *(COMMA xbr)
+    [mailbox_list_xbr:m  {$$ = ie_addr_add(E, $$, STEAL(ie_addr_t, &$m));}]
+    SEMI
+    {$$ = ie_addr_add(E, $$, ie_addr_new(E, NULL, NULL, NULL));}
+;
 
 # by definition: address = mailbox | group
 # but we need to factor out the phrase/local-part common to all branches
 addr_or_grp_xbr:addr =
   | local_part_or_phrase_xbr:p (
-      # group (with its weird ENVELOPE structure)
-      | {$$ = ie_addr_new(E,
-              NULL, with_spaces(E, STEAL(ie_dstr_t, &$p)), NULL
-           );}
-        COLON xbr *(COMMA xbr)
-        [mailbox_list_xbr:m {ie_addr_add(E, $$, STEAL(ie_addr_t, &$m));}]
-        SEMI xbr
-        {$$ = ie_addr_add(E, $$, ie_addr_new(E, NULL, NULL, NULL));}
-
+      # group
+      | with_spaces!(p):n
+        _group!(n):g xbr
+        {$$ = STEAL(ie_addr_t, &$g);}
       # named address
-      | angle_addr:a xbr
-        {$$ = ie_addr_set_name(E,
-              STEAL(ie_addr_t, &$a),
-              with_spaces(E, STEAL(ie_dstr_t, &$p))
-          ); }
-
+      | with_spaces!(p):n
+        _named_addr!(n):a xbr
+        { $$ = STEAL(ie_addr_t, &$a); }
       # bare address
-      | ARUBA xbr domain_xbr:d
-        {$$ = ie_addr_new(E,
-              NULL,
-              without_spaces(E, STEAL(ie_dstr_t, &$p)),
-              STEAL(ie_dstr_t, &$d)
-          ); }
+      | without_spaces!(p):lp
+        _addr_spec_xbr!(lp):a
+        { $$ = STEAL(ie_addr_t, &$a); }
     )
-
   # bare angle address
-  | angle_addr:a xbr
-    { $$ = STEAL(ie_addr_t, &$a); }
+  | angle_addr:a xbr { $$ = STEAL(ie_addr_t, &$a); }
 ;
 
 # address-list is non-empty and no leading/trailing/double commas

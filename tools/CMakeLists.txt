@@ -16,19 +16,23 @@ add_custom_command(
 add_custom_target(gen_py DEPENDS "gen.py")
 
 function(gen_parser tgt grammar cfile hfile)
+    string(TOLOWER "${CMAKE_BUILD_TYPE}" lowerbuild)
+    if("${lowerbuild}" STREQUAL "debug")
+        set(DEBUG_FLAG "debug=true")
+    else()
+        set(DEBUG_FLAG "")
+    endif()
     add_custom_command(
         OUTPUT "${cfile}"
-        COMMAND "${PYTHON_3_CMD}" "${gen_py_out}"
-                "${grammar}" -o "${cfile}"
-                --action gen_body
+        COMMAND "${PYTHON_3_CMD}" "${gen_py_out}" -o "${cfile}"
+                --action gen_body "${grammar}" ${DEBUG_FLAG}
         DEPENDS "${grammar}" "${gen_py_out}"
         COMMENT "generating parser ${cfile}" VERBATIM
     )
     add_custom_command(
         OUTPUT "${hfile}"
-        COMMAND "${PYTHON_3_CMD}" "${gen_py_out}"
-                "${grammar}" -o "${hfile}"
-                --action gen_header
+        COMMAND "${PYTHON_3_CMD}" "${gen_py_out}" -o "${hfile}"
+                --action gen_header "${grammar}" ${DEBUG_FLAG}
         DEPENDS "${grammar}" "${gen_py_out}"
         COMMENT "generating parser header ${hfile}" VERBATIM
     )
