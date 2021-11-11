@@ -1,22 +1,34 @@
 #include <libimap/libimap.h>
 
+#include <stdlib.h>
+
 imf_scanner_t imf_scanner_prep(
     // bytes can be reallocated but it must not otherwise change
     const dstr_t *bytes,
+    // where to start in the buffer
+    size_t start_idx,
+    // when NULL, look to bytes for our length check
+    const size_t *fixed_length,
     // if read_fn is not NULL, it should extend *bytes and return amnt_read
+    // (read_fn and fixed_length are exclusive)
     derr_t (*read_fn)(void*, size_t*),
     void *read_fn_data
 ){
+    if(read_fn != NULL && fixed_length != NULL){
+        LOG_ERROR("imf_scanner_prep: read_fn and fixed_length both set!\n");
+        exit(3);
+    }
     return (imf_scanner_t){
         .bytes = bytes,
-        .start_idx = 0,
+        .start_idx = start_idx,
+        .fixed_end = fixed_length ? start_idx + *fixed_length : (size_t)-1,
         .read_fn = read_fn,
         .read_fn_data = read_fn_data,
     };
 }
 
-dstr_t imf_get_scannable(imf_scanner_t *scanner){
-    return dstr_sub(scanner->bytes, scanner->start_idx, 0);
+dstr_t imf_get_scannable(imf_scanner_t *s){
+    return dstr_sub(s->bytes, s->start_idx, s->fixed_end);
 }
 
 /* scanner for:
@@ -38,13 +50,13 @@ dstr_t imf_get_scannable(imf_scanner_t *scanner){
 
 /* peek either returns a nul byte (which is a valid token) or a character,
    meeting re2c's need for lookahead and our need for const substrings */
-static unsigned char peek(const dstr_t *text, size_t idx){
-    return idx < text->len ? ((unsigned char*)text->data)[idx] : '\0';
+static unsigned char peek(const dstr_t *text, size_t end, size_t idx){
+    return idx < end ? ((unsigned char*)text->data)[idx] : '\0';
 }
 
 // returns 0 on success, nonzero on eof or error
-static int fill(derr_t *e, imf_scanner_t *scanner){
-    if(scanner->read_fn == NULL){
+static int fill(derr_t *e, imf_scanner_t *s, size_t *end){
+    if(s->read_fn == NULL){
         // no read_fn provided
         return -1;
     }
@@ -52,30 +64,32 @@ static int fill(derr_t *e, imf_scanner_t *scanner){
     if(is_error(*e)) return -1;
 
     size_t amnt_read;
-    IF_PROP(e, scanner->read_fn(scanner->read_fn_data, &amnt_read) ){
+    IF_PROP(e, s->read_fn(s->read_fn_data, &amnt_read) ){
         return -1;
     }
+    *end = s->bytes->len;
 
     // ignore EOF here; peek will return '\0's and we will detect that.
     return 0;
 }
 
 derr_t imf_scan(
-    imf_scanner_t *scanner,
+    imf_scanner_t *s,
     dstr_off_t *token_out,
     imf_token_e *type
 ){
     derr_t e = E_OK;
     derr_t e2 = E_OK;
 
-    size_t idx = scanner->start_idx;
+    size_t idx = s->start_idx;
     size_t backup_idx = 0;
+    size_t end = s->fixed_end!=(size_t)-1 ? s->fixed_end : s->bytes->len;
 
-    #define YYPEEK() peek(scanner->bytes, idx)
-    #define YYSKIP() peek(scanner->bytes, ++idx)
-    #define YYFILL(n) fill(&e2, scanner)
+    #define YYPEEK() peek(s->bytes, end, idx)
+    #define YYSKIP() peek(s->bytes, end, ++idx)
+    #define YYFILL(n) fill(&e2, s, &end)
     // this is a buffer limit check, not an EOF check
-    #define YYLESSTHAN(n) scanner->bytes->len - idx < n
+    #define YYLESSTHAN(n) end - idx < n
     #define YYBACKUP() backup_idx = idx;
     #define YYRESTORE() idx = backup_idx;
     #define YYCTYPE unsigned char
@@ -142,36 +156,36 @@ done:
     PROP_VAR(&e, &e2);
 
     // detect EOF; when peek() returns '\0' and idx points out of the buffer
-    if(*type == IMF_NIL && idx >= scanner->bytes->len){
+    if(*type == IMF_NIL && idx >= end){
         *type = IMF_EOF;
         *token_out = (dstr_off_t){
-            .buf = scanner->bytes,
-            .start = scanner->start_idx,
+            .buf = s->bytes,
+            .start = s->start_idx,
             .len = 0,
         };
-        scanner->start_idx = scanner->bytes->len;
+        s->start_idx = end;
         return e;
     }
 
     // get the token bounds
     *token_out = (dstr_off_t){
-        .buf = scanner->bytes,
-        .start = scanner->start_idx,
-        .len = idx - scanner->start_idx,
+        .buf = s->bytes,
+        .start = s->start_idx,
+        .len = idx - s->start_idx,
     };
 
     // mark everything done until here
-    scanner->start_idx = idx;
+    s->start_idx = idx;
 
     return e;
 }
 
 void imf_scan_builder(
     derr_t *e,
-    imf_scanner_t *scanner,
+    imf_scanner_t *s,
     dstr_off_t *token_out,
     imf_token_e *type
 ){
     if(is_error(*e)) return;
-    IF_PROP(e, imf_scan(scanner, token_out, type)){}
+    IF_PROP(e, imf_scan(s, token_out, type)){}
 }

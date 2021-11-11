@@ -57,7 +57,7 @@ static derr_t test_imf_scan(void){
         "unfinished line"
     );
 
-    imf_scanner_t s = imf_scanner_prep(&imf_msg, NULL, NULL);
+    imf_scanner_t s = imf_scanner_prep(&imf_msg, 0, NULL, NULL, NULL);
 
     dstr_off_t token;
     imf_token_e type;
@@ -169,23 +169,23 @@ static derr_t test_overrun(void){
     DSTR_STUB(text3, "\n", cu_text2);
     DSTR_STUB(text4, "\r\n", cu_text3);
 
-    s = imf_scanner_prep(&d_text1, NULL, NULL);
+    s = imf_scanner_prep(&d_text1, 0, NULL, NULL, NULL);
     e = imf_scan(&s, &token, &type);
     EXPECT(E_NONE, IMF_EOF, "");
 
-    s = imf_scanner_prep(&d_text2, NULL, NULL);
+    s = imf_scanner_prep(&d_text2, 0, NULL, NULL, NULL);
     e = imf_scan(&s, &token, &type);
     EXPECT(E_NONE, IMF_EOL, "\r");
     e = imf_scan(&s, &token, &type);
     EXPECT(E_NONE, IMF_EOF, "");
 
-    s = imf_scanner_prep(&d_text3, NULL, NULL);
+    s = imf_scanner_prep(&d_text3, 0, NULL, NULL, NULL);
     e = imf_scan(&s, &token, &type);
     EXPECT(E_NONE, IMF_EOL, "\n");
     e = imf_scan(&s, &token, &type);
     EXPECT(E_NONE, IMF_EOF, "");
 
-    s = imf_scanner_prep(&d_text4, NULL, NULL);
+    s = imf_scanner_prep(&d_text4, 0, NULL, NULL, NULL);
     e = imf_scan(&s, &token, &type);
     EXPECT(E_NONE, IMF_EOL, "\r\n");
     e = imf_scan(&s, &token, &type);

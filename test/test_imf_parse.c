@@ -175,7 +175,7 @@ cu:
 #define imf_parse_go(e, in, name, out, label) do { \
     CHECK_GO(e, label); \
     IMF_ONSTACK_PARSER(p, 20, 100); \
-    imf_scanner_t s = imf_scanner_prep(&in, NULL, NULL); \
+    imf_scanner_t s = imf_scanner_prep(&in, 0, NULL, NULL, NULL); \
     bool should_continue = true; \
     imf_token_e token_type; \
     do { \

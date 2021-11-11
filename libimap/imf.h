@@ -58,6 +58,8 @@ typedef struct {
     const dstr_t *bytes;
     // start of the last scanned token
     size_t start_idx;
+    // fixed_end is (size_t)-1 if you should use bytes->len directly
+    size_t fixed_end;
     // a closure for reading more into *bytes (might be NULL)
     derr_t (*read_fn)(void*, size_t*);
     void *read_fn_data;
@@ -66,7 +68,12 @@ typedef struct {
 imf_scanner_t imf_scanner_prep(
     // bytes can be reallocated but it must not otherwise change
     const dstr_t *bytes,
+    // where to start in the buffer
+    size_t start_idx,
+    // when NULL, look to bytes for our length check
+    const size_t *fixed_length,
     // if read_fn is not NULL, it should extend *bytes and return amnt_read
+    // (read_fn and fixed_length are exclusive)
     derr_t (*read_fn)(void*, size_t*),
     void *read_fn_data
 );
@@ -98,7 +105,7 @@ void imf_handle_error(
     const char *loc_summary
 );
 
-// completely parse an in-memory message
+// parse a whole message in a dstr_t (with possible read_fn)
 derr_t imf_parse(
     const dstr_t *msg,
     derr_t (*read_fn)(void*, size_t*),  // NULL for fully-loaded msg
@@ -107,12 +114,23 @@ derr_t imf_parse(
     imf_t **out
 );
 
+// parse a whole message in a dstr_off_t
+derr_t imf_parse_sub(
+    const dstr_off_t *bytes,
+    imf_hdrs_t **hdrs,  // optional, to provide pre-parsed headers. Consumed.
+    imf_t **out
+);
+
+// parse headers in a dstr_t (with possible read_fn)
 derr_t imf_hdrs_parse(
     const dstr_t *msg,
     derr_t (*read_fn)(void*, size_t*),
     void *read_fn_data,
     imf_hdrs_t **out
 );
+
+// parse headers in a dstr_off_t
+derr_t imf_hdrs_parse_sub(const dstr_off_t *bytes, imf_hdrs_t **out);
 
 // individual field handling
 ie_envelope_t *read_envelope_info(derr_t *e, const imf_hdrs_t *hdrs);

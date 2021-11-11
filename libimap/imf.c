@@ -188,37 +188,70 @@ void imf_handle_error(
 //     LOG_ERROR("Error parsing email message: %x:\n%x\n", FS(s), FD(&buf));
 // }
 
-static derr_t _read_all(derr_t (*read_fn)(void*, size_t*), void *read_fn_data){
+static derr_t do_imf_hdrs_parse(
+    const dstr_t *msg,
+    imf_scanner_t *s,
+    imf_hdrs_t **out
+){
     derr_t e = E_OK;
+    *out = NULL;
 
-    if(read_fn == NULL) return e;
+    IMF_ONSTACK_PARSER(p, IMF_HDRS_MAX_CALLSTACK, IMF_HDRS_MAX_SEMSTACK);
 
-    size_t amnt_read;
+    imf_token_e token_type = 0;
     do {
-        PROP(&e, read_fn(read_fn_data, &amnt_read) );
-    } while(amnt_read > 0);
+        dstr_off_t token;
+        PROP(&e, imf_scan(s, &token, &token_type) );
+
+        imf_status_e status = imf_parse_hdrs(
+            &p, &e, msg, token_type, token, out, NULL
+        );
+        CHECK_GO(&e, done);
+
+        switch(status){
+            case IMF_STATUS_OK: continue;
+            case IMF_STATUS_DONE: goto done;
+            case IMF_STATUS_SYNTAX_ERROR:
+                ORIG_GO(&e, E_PARAM, "syntax error", done);
+
+            case IMF_STATUS_CALLSTACK_OVERFLOW:
+                ORIG_GO(&e,
+                    E_INTERNAL, "imf_parse_headers() CALLSTACK_OVERFLOW", done
+                );
+
+            case IMF_STATUS_SEMSTACK_OVERFLOW:
+                ORIG_GO(&e,
+                    E_INTERNAL, "imf_parse_headers() SEMSTACK_OVERFLOW", done
+                );
+        }
+    } while(token_type != IMF_EOF);
+
+done:
+    if(is_error(e)){
+        imf_hdrs_free(STEAL(imf_hdrs_t, out));
+    }
+    imf_parser_reset(&p);
 
     return e;
 }
 
-// completely parse an in-memory message
-derr_t imf_parse(
+static derr_t do_imf_parse(
     const dstr_t *msg,
-    derr_t (*read_fn)(void*, size_t*),  // NULL for fully-loaded msg
-    void *read_fn_data,                 // NULL for fully-loaded msg
+    size_t start_idx,
+    const size_t *fixed_length,
     imf_hdrs_t **hdrs,  // optional, to provide pre-parsed headers. Consumed.
     imf_t **out
 ){
     derr_t e = E_OK;
     *out = NULL;
 
-    // we'll need the whole message no matter what
-    PROP(&e, _read_all(read_fn, read_fn_data) );
-
     imf_hdrs_t *_hdrs = hdrs ? STEAL(imf_hdrs_t, hdrs) : NULL;
     if(_hdrs == NULL){
-        // already read the whole message
-        PROP(&e, imf_hdrs_parse(msg, NULL, NULL, &_hdrs) );
+        // haven't parsed headers yet
+        imf_scanner_t s = imf_scanner_prep(
+            msg, start_idx, fixed_length, NULL, NULL
+        );
+        PROP(&e, do_imf_hdrs_parse(msg, &s, &_hdrs));
     }
 
     dstr_off_t bytes = { .buf = msg, .start = 0, .len = msg->len };
@@ -234,6 +267,52 @@ derr_t imf_parse(
     return e;
 }
 
+static derr_t _read_all(derr_t (*read_fn)(void*, size_t*), void *read_fn_data){
+    derr_t e = E_OK;
+
+    if(read_fn == NULL) return e;
+
+    size_t amnt_read;
+    do {
+        PROP(&e, read_fn(read_fn_data, &amnt_read) );
+    } while(amnt_read > 0);
+
+    return e;
+}
+
+// parse a whole message in a dstr_t (with possible read_fn)
+derr_t imf_parse(
+    const dstr_t *msg,
+    derr_t (*read_fn)(void*, size_t*),  // NULL for fully-loaded msg
+    void *read_fn_data,                 // NULL for fully-loaded msg
+    imf_hdrs_t **hdrs,  // optional, to provide pre-parsed headers. Consumed.
+    imf_t **out
+){
+    derr_t e = E_OK;
+
+    // we'll need the whole message no matter what
+    PROP(&e, _read_all(read_fn, read_fn_data) );
+
+    PROP(&e, do_imf_parse(msg, 0, NULL, hdrs, out) );
+    return e;
+}
+
+// parse a whole message in a dstr_off_t
+derr_t imf_parse_sub(
+    const dstr_off_t *bytes,
+    imf_hdrs_t **hdrs,  // optional, to provide pre-parsed headers. Consumed.
+    imf_t **out
+){
+    derr_t e = E_OK;
+    PROP(&e,
+        do_imf_parse(
+            bytes->buf, bytes->start, &bytes->len, hdrs, out
+        )
+    );
+    return e;
+}
+
+// parse headers in a dstr_t (with possible read_fn)
 derr_t imf_hdrs_parse(
     const dstr_t *msg,
     derr_t (*read_fn)(void*, size_t*),
@@ -241,44 +320,21 @@ derr_t imf_hdrs_parse(
     imf_hdrs_t **out
 ){
     derr_t e = E_OK;
-    *out = NULL;
 
-    IMF_ONSTACK_PARSER(p, IMF_HDRS_MAX_CALLSTACK, IMF_HDRS_MAX_SEMSTACK);
-    imf_scanner_t s = imf_scanner_prep(msg, read_fn, read_fn_data);
+    imf_scanner_t s = imf_scanner_prep(msg, 0, NULL, read_fn, read_fn_data);
+    PROP(&e, do_imf_hdrs_parse(msg, &s, out) );
 
-    imf_token_e token_type = 0;
-    do {
-        dstr_off_t token;
-        PROP(&e, imf_scan(&s, &token, &token_type) );
+    return e;
+}
 
-        imf_status_e status = imf_parse_hdrs(
-            &p, &e, msg, token_type, token, out, NULL
-        );
-        CHECK_GO(&e, done);
+// parse headers in a dstr_off_t
+derr_t imf_hdrs_parse_sub(const dstr_off_t *bytes, imf_hdrs_t **out){
+    derr_t e = E_OK;
 
-        switch(status){
-            case IMF_STATUS_OK: continue;
-            case IMF_STATUS_DONE: goto done;
-            case IMF_STATUS_SYNTAX_ERROR:
-                ORIG_GO(&e, E_PARAM, "syntax error", done);
-
-            case IMF_STATUS_SEMSTACK_OVERFLOW:
-                ORIG_GO(&e,
-                    E_INTERNAL, "imf_parse_headers() SEMSTACK_OVERFLOW", done
-                );
-
-            case IMF_STATUS_CALLSTACK_OVERFLOW:
-                ORIG_GO(&e,
-                    E_INTERNAL, "imf_parse_headers() CALLSTACK_OVERFLOW", done
-                );
-        }
-    } while(token_type != IMF_EOF);
-
-done:
-    if(is_error(e)){
-        imf_hdrs_free(STEAL(imf_hdrs_t, out));
-    }
-    imf_parser_reset(&p);
+    imf_scanner_t s = imf_scanner_prep(
+        bytes->buf, bytes->start, &bytes->len, NULL, NULL
+    );
+    PROP(&e, do_imf_hdrs_parse(bytes->buf, &s, out) );
 
     return e;
 }
@@ -361,7 +417,7 @@ ie_envelope_t *read_envelope_info(derr_t *e, const imf_hdrs_t *hdrs){
     #define imf_parse_or_nil(e, out, name, parse_fn) do { \
         if(is_error(*e)) break; \
         if(!out##_field.len) break; \
-        imf_scanner_t s = imf_scanner_prep(&out##_field, NULL, NULL); \
+        imf_scanner_t s = imf_scanner_prep(&out##_field, 0, NULL, NULL, NULL); \
         bool should_continue = true; \
         imf_token_e token_type; \
         do { \
