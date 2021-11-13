@@ -65,6 +65,20 @@ static bool assert_dstr_eq(
     return false;
 }
 
+static bool assert_dstr_off_eq(
+    derr_t *e,
+    const string_builder_t path,
+    const dstr_off_t exp,
+    const dstr_off_t got
+){
+    dstr_t d_exp = dstr_from_off(exp);
+    dstr_t d_got = dstr_from_off(got);
+    if(dstr_cmp2(d_exp, d_got) == 0) return true;
+    TRACE(e, "%x: expected: '%x'\n", FPATH, FD_DBG(&d_exp));
+    TRACE(e, "%x: but got:  '%x'\n", FPATH, FD_DBG(&d_got));
+    return false;
+}
+
 static bool assert_addr_eq(
     derr_t *e,
     const string_builder_t path,
@@ -97,6 +111,34 @@ static bool assert_envelope_eq(
     ok &= ASSERT_FIELD(addr, bcc);
     ok &= ASSERT_FIELD(dstr, in_reply_to);
     ok &= ASSERT_FIELD(dstr, msg_id);
+    return ok;
+}
+
+static bool assert_mime_param_eq(
+    derr_t *e,
+    const string_builder_t path,
+    const mime_param_t *exp,
+    const mime_param_t *got
+){
+    ASSERT_PTR_MATCH;
+    bool ok = true;
+    ok &= ASSERT_FIELD(dstr, key);
+    ok &= ASSERT_FIELD(dstr, val);
+    ok &= ASSERT_FIELD(mime_param, next);
+    return ok;
+}
+
+static bool assert_mime_content_type_eq(
+    derr_t *e,
+    const string_builder_t path,
+    const mime_content_type_t *exp,
+    const mime_content_type_t *got
+){
+    ASSERT_PTR_MATCH;
+    bool ok = true;
+    ok &= ASSERT_FIELD(dstr, typestr);
+    ok &= ASSERT_FIELD(dstr, subtypestr);
+    ok &= ASSERT_FIELD(mime_param, params);
     return ok;
 }
 
@@ -387,8 +429,6 @@ static derr_t test_read_envelope_info(void){
     imf_hdrs_t *hdrs = NULL;
     ie_envelope_t *got1 = NULL;
     ie_envelope_t *exp1 = NULL;
-    imap_resp_t *resp_exp = NULL;
-    imap_resp_t *resp_got = NULL;
 
     derr_t e = E_OK;
 
@@ -465,9 +505,270 @@ cu:
     imf_hdrs_free(hdrs);
     ie_envelope_free(got1);
     ie_envelope_free(exp1);
-    imap_resp_free(resp_exp);
-    imap_resp_free(resp_got);
 
+    return e;
+}
+
+
+static derr_t test_read_mime_info(void){
+    imf_hdrs_t *hdrs = NULL;
+    mime_content_type_t *got = NULL;
+    mime_content_type_t *exp = NULL;
+
+    derr_t e = E_OK;
+
+    // normal mime headers
+    {
+        DSTR_STATIC(msg,
+            "MIME-Version: 1.0\r\n"
+            "Content-Type: major/minor; key1=val1; key2=val2\r\n"
+        );
+        PROP_GO(&e, imf_hdrs_parse(&msg, NULL, NULL, &hdrs), cu);
+        got = read_mime_info(&e, hdrs, DSTR_LIT("text"), DSTR_LIT("plain"));
+        exp = mime_content_type_new(&e,
+            ie_dstr_new2(&e, DSTR_LIT("major")),
+            ie_dstr_new2(&e, DSTR_LIT("minor")),
+            mime_param_add(&e,
+                mime_param_new(&e,
+                    ie_dstr_new2(&e, DSTR_LIT("key1")),
+                    ie_dstr_new2(&e, DSTR_LIT("val1"))
+                ),
+                mime_param_new(&e,
+                    ie_dstr_new2(&e, DSTR_LIT("key2")),
+                    ie_dstr_new2(&e, DSTR_LIT("val2"))
+                )
+            )
+        );
+        CHECK_GO(&e, cu);
+        ASSERT_GO(mime_content_type, &e, &msg, exp, got, cu);
+        imf_hdrs_free(STEAL(imf_hdrs_t, &hdrs));
+        mime_content_type_free(STEAL(mime_content_type_t, &got));
+        mime_content_type_free(STEAL(mime_content_type_t, &exp));
+    }
+
+    // missing headers
+    {
+        DSTR_STATIC(msg, "");
+        PROP_GO(&e, imf_hdrs_parse(&msg, NULL, NULL, &hdrs), cu);
+        got = read_mime_info(&e, hdrs, DSTR_LIT("some"), DSTR_LIT("value"));
+        exp = mime_content_type_new(&e,
+            ie_dstr_new2(&e, DSTR_LIT("some")),
+            ie_dstr_new2(&e, DSTR_LIT("value")),
+            NULL
+        );
+        CHECK_GO(&e, cu);
+        ASSERT_GO(mime_content_type, &e, &msg, exp, got, cu);
+        imf_hdrs_free(STEAL(imf_hdrs_t, &hdrs));
+        mime_content_type_free(STEAL(mime_content_type_t, &got));
+        mime_content_type_free(STEAL(mime_content_type_t, &exp));
+    }
+
+    // invalid headers
+    {
+        DSTR_STATIC(msg,
+            "MIME-Version: 1\r\n"
+            "Content-Type: HI!\r\n"
+        );
+        PROP_GO(&e, imf_hdrs_parse(&msg, NULL, NULL, &hdrs), cu);
+        got = read_mime_info(&e, hdrs, DSTR_LIT("text"), DSTR_LIT("plain"));
+        exp = mime_content_type_new(&e,
+            ie_dstr_new2(&e, DSTR_LIT("text")),
+            ie_dstr_new2(&e, DSTR_LIT("plain")),
+            NULL
+        );
+        CHECK_GO(&e, cu);
+        ASSERT_GO(mime_content_type, &e, &msg, exp, got, cu);
+        imf_hdrs_free(STEAL(imf_hdrs_t, &hdrs));
+        mime_content_type_free(STEAL(mime_content_type_t, &got));
+        mime_content_type_free(STEAL(mime_content_type_t, &exp));
+    }
+
+cu:
+    imf_hdrs_free(hdrs);
+    mime_content_type_free(got);
+    mime_content_type_free(exp);
+
+    return e;
+}
+
+#define OFF_LIT(str) \
+    (dstr_off_t){ .buf = &DSTR_LIT(str), .start = 0, .len = (sizeof(str)-1) }
+
+static derr_t test_get_multipart_index(void){
+    derr_t e = E_OK;
+    dstr_off_t msg;
+    dstr_off_t got;
+    dstr_off_t exp;
+    bool missing;
+
+    #define ASSERT_MISSING if(!missing) ORIG(&e, E_VALUE, "fail")
+    #define ASSERT_NOT_MISSING if(missing) ORIG(&e, E_VALUE, "fail")
+
+    // a full multipart message
+    {
+        DSTR_STATIC(bdry, "uniquestring");
+        msg = OFF_LIT(
+            "preamble\r\n"
+            "\r\n"
+            "--uniquestring\r\n"
+            "Content-Type: text/plain; charset=\"UTF-8\"\r\n"
+            "\r\n"
+            "Hi there.\r\n"
+            "\r\n"
+            "How are you?.\r\n"
+            "\r\n"
+            "--uniquestring\r\n"
+            "Content-Type: text/html; charset=\"UTF-8\"\r\n"
+            "Content-Transfer-Encoding: quoted-printable\r\n"
+            "\r\n"
+            "<div>Hi there.</div>=\r\n"
+            "<br>=\r\n"
+            "<div>How are you?.</div>=\r\n"
+            "\r\n"
+            "--uniquestring--\r\n"
+            "\r\n"
+            "epilogue\r\n"
+        );
+        got = get_multipart_index(msg, bdry, 0, &missing);
+        ASSERT_MISSING;
+
+        got = get_multipart_index(msg, bdry, 1, &missing);
+        ASSERT_NOT_MISSING;
+        exp = OFF_LIT(
+            "Content-Type: text/plain; charset=\"UTF-8\"\r\n"
+            "\r\n"
+            "Hi there.\r\n"
+            "\r\n"
+            "How are you?.\r\n"
+        );
+        ASSERT_GO(dstr_off, &e, msg.buf, exp, got, done);
+
+        got = get_multipart_index(msg, bdry, 2, &missing);
+        ASSERT_NOT_MISSING;
+        exp = OFF_LIT(
+            "Content-Type: text/html; charset=\"UTF-8\"\r\n"
+            "Content-Transfer-Encoding: quoted-printable\r\n"
+            "\r\n"
+            "<div>Hi there.</div>=\r\n"
+            "<br>=\r\n"
+            "<div>How are you?.</div>=\r\n"
+        );
+        ASSERT_GO(dstr_off, &e, msg.buf, exp, got, done);
+
+        got = get_multipart_index(msg, bdry, 3, &missing);
+        ASSERT_MISSING;
+        got = get_multipart_index(msg, bdry, 4, &missing);
+        ASSERT_MISSING;
+    }
+
+
+    // with no preamble/epilogue, and with pre-body-part EOLs
+    {
+        DSTR_STATIC(bdry, "uniquestring");
+        msg = OFF_LIT(
+            "--uniquestring\r\n"
+            "\r\n"
+            "\r\n"
+            "part1!\r\n"
+            "\r\n"
+            "\r\n"
+            "--uniquestring\r\n"
+            "\r\n"
+            "\r\n"
+            "part2!\r\n"
+            "\r\n"
+            "\r\n"
+            "--uniquestring--"
+        );
+        got = get_multipart_index(msg, bdry, 0, &missing);
+        ASSERT_MISSING;
+
+        got = get_multipart_index(msg, bdry, 1, &missing);
+        ASSERT_NOT_MISSING;
+        exp = OFF_LIT(
+            "\r\n"
+            "\r\n"
+            "part1!\r\n"
+            "\r\n"
+        );
+        ASSERT_GO(dstr_off, &e, msg.buf, exp, got, done);
+
+        got = get_multipart_index(msg, bdry, 2, &missing);
+        ASSERT_NOT_MISSING;
+        exp = OFF_LIT(
+            "\r\n"
+            "\r\n"
+            "part2!\r\n"
+            "\r\n"
+        );
+        ASSERT_GO(dstr_off, &e, msg.buf, exp, got, done);
+
+        got = get_multipart_index(msg, bdry, 3, &missing);
+        ASSERT_MISSING;
+        got = get_multipart_index(msg, bdry, 4, &missing);
+        ASSERT_MISSING;
+    }
+
+    // same, but with LFCR line endings
+    {
+        DSTR_STATIC(bdry, "uniquestring");
+        msg = OFF_LIT(
+            "--uniquestring\n\r\n\r\n\r"
+            "part1!\n\r\n\r\n\r"
+            "--uniquestring\n\r\n\r\n\r"
+            "part2!\n\r\n\r\n\r"
+            "--uniquestring--"
+        );
+        got = get_multipart_index(msg, bdry, 0, &missing);
+        ASSERT_MISSING;
+
+        got = get_multipart_index(msg, bdry, 1, &missing);
+        ASSERT_NOT_MISSING;
+        exp = OFF_LIT("\n\r\n\rpart1!\n\r\n\r");
+        ASSERT_GO(dstr_off, &e, msg.buf, exp, got, done);
+
+        got = get_multipart_index(msg, bdry, 2, &missing);
+        ASSERT_NOT_MISSING;
+        exp = OFF_LIT("\n\r\n\rpart2!\n\r\n\r");
+        ASSERT_GO(dstr_off, &e, msg.buf, exp, got, done);
+
+        got = get_multipart_index(msg, bdry, 3, &missing);
+        ASSERT_MISSING;
+        got = get_multipart_index(msg, bdry, 4, &missing);
+        ASSERT_MISSING;
+    }
+
+    // same, but with LF line endings
+    {
+        DSTR_STATIC(bdry, "uniquestring");
+        msg = OFF_LIT(
+            "--uniquestring\r"
+            "\r\r"
+            "part1!\r\r\r"
+            "--uniquestring\r\r\r"
+            "part2!\r\r\r"
+            "--uniquestring--"
+        );
+        got = get_multipart_index(msg, bdry, 0, &missing);
+        ASSERT_MISSING;
+
+        got = get_multipart_index(msg, bdry, 1, &missing);
+        ASSERT_NOT_MISSING;
+        exp = OFF_LIT("\r\rpart1!\r\r");
+        ASSERT_GO(dstr_off, &e, msg.buf, exp, got, done);
+
+        got = get_multipart_index(msg, bdry, 2, &missing);
+        ASSERT_NOT_MISSING;
+        exp = OFF_LIT("\r\rpart2!\r\r");
+        ASSERT_GO(dstr_off, &e, msg.buf, exp, got, done);
+
+        got = get_multipart_index(msg, bdry, 3, &missing);
+        ASSERT_MISSING;
+        got = get_multipart_index(msg, bdry, 4, &missing);
+        ASSERT_MISSING;
+    }
+
+done:
     return e;
 }
 
@@ -480,6 +781,9 @@ int main(int argc, char** argv){
     PROP_GO(&e, test_parse_from_field(), test_fail);
     PROP_GO(&e, test_parse_to_field(), test_fail);
     PROP_GO(&e, test_read_envelope_info(), test_fail);
+    PROP_GO(&e, test_read_mime_info(), test_fail);
+    PROP_GO(&e, test_get_multipart_index(), test_fail);
+    //PROP_GO(&e, test_get_submessage(), test_fail);
 
     LOG_ERROR("PASS\n");
     return 0;

@@ -90,6 +90,9 @@ static ie_dstr_t *without_spaces(derr_t *E, ie_dstr_t *list){
 %type addr {ie_addr_t*} {ie_addr_free($$);};
 %type dstr {ie_dstr_t*} {ie_dstr_free($$);};
 %type bool {bool};
+%type ver {mime_version_t};
+%type param {mime_param_t*} {mime_param_free($$);};
+%type content_type {mime_content_type_t*} {mime_content_type_free($$);};
 
 # non-keyword tokens
 NIL;
@@ -135,9 +138,11 @@ DIGEST;
 # header separator might be missing in some non-compliant bodyless messages
 eoh = EOL | EOF;
 
+hdrs_0:hdr =
+    *(hdr:h { $$ = imf_hdr_add(E, $$, STEAL(imf_hdr_t, &$h)); } )
+;
 hdrs:hdrs =
-    hdr:h
-    *(hdr:h2 { $h = imf_hdr_add(E, $h, STEAL(imf_hdr_t, &$h2)); } )
+    hdrs_0:h
     eoh:sep
     { $$ = imf_hdrs_new(E, @$, @sep, STEAL(imf_hdr_t, &$h)); }
 ;
@@ -716,15 +721,45 @@ token = 1*(
 # always joined by cfws
 # rfc2045: type = discrete-type / composite-type
 # we actually only care about composite types
-typ = MESSAGE | MULTIPART | token;
+type = MESSAGE | MULTIPART | token;
 # for subtype, we only parse out the known subtypes we care about
 # RFC822: message/rfc822 for embedded imf messages
 # DIGEST: multipart/digest changes the default content-type to message/rfc822
 subtype = RFC822 | DIGEST | token;
 
 # always joined by cfws
-param_value = (token | quoted_string);
-param = token:attr xbr EQ xbr param_value;
+param_value:dstr =
+  | token:t          {$$ = ie_dstr_from_off(E, @t);}
+  | quoted_string:q  {$$ = STEAL(ie_dstr_t, &$q);}
+;
+
+# always joined by cfws
+param:param =
+    token:k xbr EQ xbr param_value:v
+    {{  $$ = mime_param_new(E,
+            ie_dstr_from_off(E, @k),
+            STEAL(ie_dstr_t, &$v)
+        );
+    }}
+;
+
+params_xbr:param =
+    *(
+        SEMI xbr param:p xbr
+        {$$ = mime_param_add(E, $$, STEAL(mime_param_t, &$p));}
+    )
+;
+
+# always joined by cfws
+content_type_xbr:content_type =
+    type:type xbr SLASH xbr subtype:subtype xbr params_xbr:p
+    {{  $$ = mime_content_type_new(E,
+            ie_dstr_from_off(E, @type),
+            ie_dstr_from_off(E, @subtype),
+            STEAL(mime_param_t, &$p)
+        );
+    }}
+;
 
 # note that 7BIT, 8BIT, and BINARY indicate that no encoding has been applied
 # defaults to 7BIT, when not present
@@ -750,6 +785,20 @@ param = token:attr xbr EQ xbr param_value;
 # body depends on the semantic values of the headers in the message.
 ## body_part = hdrs;
 
+# always joined by cfws
+# mime_version: pretty simple.
+mime_version:ver =
+    NUM:maj xbr DOT xbr NUM:min
+    {{ bool ok;
+       $$ = mime_version_parse(@maj, @min, &ok);
+       if(!ok) return IMF_STATUS_SYNTAX_ERROR;
+    }}
+;
+
 # roots:
-mime_version_field = xbr NUM xbr DOT xbr NUM;
-content_type_field = xbr typ xbr SLASH xbr subtype xbr *(SEMI xbr param xbr);
+mime_version_field:ver = xbr mime_version:ver xbr EOF {$$ = $ver;};
+
+content_type_field:content_type =
+    xbr content_type_xbr:ct EOF
+    {$$ = STEAL(mime_content_type_t, &$ct);}
+;

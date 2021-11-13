@@ -474,7 +474,6 @@
 %destructor { ie_sect_txt_free($$); } <sect_txt>
 
 %type <sect> sect
-%type <sect> _sect
 %destructor { ie_sect_free($$); } <sect>
 
 %type <partial> partial
@@ -1038,12 +1037,10 @@ fetch_mod: CHGSINCE SP nzmodseqnum[s]
                 ie_fetch_mod_arg_t arg = {0};
                 $$ = ie_fetch_mods_new(E, IE_FETCH_MOD_VANISHED, arg); }
 
-sect: _sect[s] { $$ = $s; }
-
-_sect: %empty                         { $$ = NULL; }
-     | sect_msgtxt[st]                { $$ = ie_sect_new(E, NULL, $st); }
-     | sect_part[sp]                  { $$ = ie_sect_new(E, $sp, NULL); }
-     | sect_part[sp] '.' sect_txt[st] { $$ = ie_sect_new(E, $sp, $st); }
+sect: %empty                         { $$ = NULL; }
+    | sect_msgtxt[st]                { $$ = ie_sect_new(E, NULL, $st); }
+    | sect_part[sp]                  { $$ = ie_sect_new(E, $sp, NULL); }
+    | sect_part[sp] '.' sect_txt[st] { $$ = ie_sect_new(E, $sp, $st); }
 ;
 
 sect_part: num                  { $$ = ie_sect_part_new(E, $num); }

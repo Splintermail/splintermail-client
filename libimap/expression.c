@@ -263,9 +263,8 @@ fail:
 
 ie_dstr_t *ie_dstr_add(derr_t *e, ie_dstr_t *list, ie_dstr_t *new){
     if(is_error(*e)) goto fail;
-    if(!list) return new;
 
-    ie_dstr_t **last = &list->next;
+    ie_dstr_t **last = &list;
     while(*last != NULL) last = &(*last)->next;
     *last = new;
 
@@ -486,7 +485,7 @@ ie_select_params_t *ie_select_params_add(derr_t *e, ie_select_params_t *list,
         ie_select_params_t *new){
     if(is_error(*e)) goto fail;
 
-    ie_select_params_t **last = &list->next;
+    ie_select_params_t **last = &list;
     while(*last != NULL) last = &(*last)->next;
     *last = new;
 
@@ -922,7 +921,7 @@ ie_seq_set_t *ie_seq_set_append(derr_t *e, ie_seq_set_t *set,
         ie_seq_set_t *next){
     if(is_error(*e)) goto fail;
 
-    ie_seq_set_t **last = &set->next;
+    ie_seq_set_t **last = &set;
     while(*last != NULL) last = &(*last)->next;
     *last = next;
 
@@ -1037,7 +1036,7 @@ fail:
 ie_nums_t *ie_nums_append(derr_t *e, ie_nums_t *nums, ie_nums_t *next){
     if(is_error(*e)) goto fail;
 
-    ie_nums_t **last = &nums->next;
+    ie_nums_t **last = &nums;
     while(*last != NULL) last = &(*last)->next;
     *last = next;
 
@@ -1569,7 +1568,7 @@ ie_sect_part_t *ie_sect_part_add(derr_t *e, ie_sect_part_t *sp,
         ie_sect_part_t *num){
     if(is_error(*e)) goto fail;
 
-    ie_sect_part_t **last = &sp->next;
+    ie_sect_part_t **last = &sp;
     while(*last != NULL) last = &(*last)->next;
     *last = num;
 
