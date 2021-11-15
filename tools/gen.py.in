@@ -1939,7 +1939,14 @@ class C:
         if isinstance(obj, Return):
             return 0
         if isinstance(obj, Reference):
-            return 1
+            if isinstance(obj.defn, Token):
+                return 1
+            if isinstance(obj.defn, Expression):
+                # include the parameters which are set before making the call
+                return 1 + len(obj.defn.params)
+            raise ValueError(
+                "unknown reference type: %s"%type(term).__name__
+            )
         if isinstance(obj, Repeat):
             # when we need to count repeats, we do that on the semstack
             extra = 1 if obj.type == "general" else 0
@@ -1979,7 +1986,7 @@ class C:
                 elif isinstance(obj.defn, Token):
                     return 0
                 raise ValueError(
-                    "unknown term type: %s"%type(term).__name__
+                    "unknown reference type: %s"%type(term).__name__
                 )
             elif isinstance(obj, (Repeat, Recovery)):
                 return _callstackmax(obj.seq)
