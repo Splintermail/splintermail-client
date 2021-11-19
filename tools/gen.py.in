@@ -2074,17 +2074,13 @@ class C:
                 return 1
             raise RuntimeError("unrecognized reference type: " + type(obj.defn).__name__)
         if isinstance(obj, Repeat):
-            if obj.type == "maybe":
-                return int(not obj.prematched) + self.nstates(obj.seq)
-            if obj.type == "zero_or_more":
-                return 1 + self.nstates(obj.seq)
+            # even if we are prematched, we still reserve a state for ourselves
             return 1 + self.nstates(obj.seq)
         if isinstance(obj, Branches):
-            return (
-                int(not obj.prematched)
-                + sum(self.nstates(b) for b in obj.branches_and_default)
-            )
+            # even if we are prematched, we still reserve a state for ourselves
+            return 1 + sum(self.nstates(b) for b in obj.branches_and_default)
         if isinstance(obj, Recovery):
+            # even if we are prematched, we still reserve a state for ourselves
             return 1 + self.nstates(obj.seq)
         if isinstance(obj, Sequence):
             return sum(self.nstates(t) for t in obj.terms)
@@ -2145,7 +2141,8 @@ class C:
                 # no looping or counting required
                 if obj.prematched:
                     self.fprint("    // prematched: " + obj.summary())
-                    tstate = state
+                    self.fprint("yy" + str(state) + ":")
+                    tstate = state + 1
                 else:
                     self.fprint("    // " + obj.summary())
                     self.fprint("    call->state = " + str(state) + ";")
@@ -2230,7 +2227,8 @@ class C:
         if isinstance(obj, Branches):
             if obj.prematched:
                 self.fprint("    // prematched: " + obj.summary())
-                bstate = state
+                self.fprint("yy" + str(state) + ":")
+                bstate = state + 1
             else:
                 self.fprint("    // " + obj.summary())
                 self.fprint("    call->state = " + str(state) + ";")
