@@ -2265,7 +2265,9 @@ class C:
                 self.fprint(label + ":")
                 # bstate advances between branches, but stack resets each time
                 bstate, _ = self.gen(b, bstate, stack, var)
-                self.fprint("    goto yy%d_done;"%state)
+                # avoid unreachable code
+                if not b.always_returns:
+                    self.fprint("    goto yy%d_done;"%state)
                 self.fprint("")
             self.fprint("yy"+ str(state) + "_done:")
             return bstate, stack
@@ -2331,10 +2333,13 @@ class C:
             if want_final_loc:
                 self.fprint("    goto expression_end;");
                 self.fprint("expression_end:");
-            self.fprint("    ${prefix_}free_sems(p, call->stack+%d);"%oldstack)
-            self.fprint("    #ifdef ${PREFIX_}GEN_DEBUG")
-            self.fprint("    MEMCHECK_SCOPE_END(%d);"%oldstack)
-            self.fprint("    #endif")
+
+            # avoid unreachable code
+            if want_final_loc or not obj.returns:
+                self.fprint("    ${prefix_}free_sems(p, call->stack+%d);"%oldstack)
+                self.fprint("    #ifdef ${PREFIX_}GEN_DEBUG")
+                self.fprint("    MEMCHECK_SCOPE_END(%d);"%oldstack)
+                self.fprint("    #endif")
 
 
             return state, stack
