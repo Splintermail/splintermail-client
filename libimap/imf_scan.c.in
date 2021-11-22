@@ -18,6 +18,7 @@ imf_scanner_t imf_scanner_prep(
         LOG_ERROR("imf_scanner_prep: read_fn and fixed_length both set!\n");
         exit(3);
     }
+
     return (imf_scanner_t){
         .bytes = bytes,
         .start_idx = start_idx,
@@ -107,7 +108,8 @@ derr_t imf_scan(
         utf8         = u_2|u_3a|u_3b|u_3c|u_3d|u_4a|u_4b|u_4c;
         eightbit     = [\x80-\xFF];
 
-        ascii_text   = [!#$%&'*+A-Z^_`a-z{|}~-];
+        alpha        = [A-Za-z];
+        sym          = [!#$%&'*+^_`{|}~-];
         nil          = "\x00";
         tab          = "\x09";
         lf           = "\x0a";
@@ -137,6 +139,7 @@ derr_t imf_scan(
         "/"          { *type = IMF_SLASH; goto done; }
         "?"          { *type = IMF_QUESTION; goto done; }
         "="          { *type = IMF_EQ; goto done; }
+        "-"          { *type = IMF_DASH; goto done; }
 
         'rfc822'     { *type = IMF_RFC822; goto done; }
         'message'    { *type = IMF_MESSAGE; goto done; }
@@ -144,7 +147,8 @@ derr_t imf_scan(
         'digest'     { *type = IMF_DIGEST; goto done; }
 
         num+         { *type = IMF_NUM; goto done; }
-        ascii_text+  { *type = IMF_TEXT; goto done; }
+        alpha+       { *type = IMF_ALPHA; goto done; }
+        sym+         { *type = IMF_SYM; goto done; }
         utf8+        { *type = IMF_UTF8; goto done; }
 
         // disallow multi-character non-utf8 eight-bit strings, for quoted-pair

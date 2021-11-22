@@ -3,13 +3,21 @@
 #  rfc5335: utf8 extensions to imf
 #  rfc5234: general ANBF
 #  rfc2045: mime, part 1/5, mime-related headers
+#  rfc2047: mime, part 3/5, mime parameter encoding
+#  rfc1864: content-md5 header
+#  rfc2183: content-disposition header
+#  rfc3066: language tags
+#  rfc3282: content-language header
+#  rfc2557: content-location header
 
 {{#include <libimap/libimap.h>
 
 // note that *prev might be NULL but *buf must point to the scanner's bytes.
-static inline dstr_off_t dstr_off_zero(dstr_off_t *prev, const dstr_t *buf){
+static inline dstr_off_t dstr_off_zero(
+    dstr_off_t *prev, const dstr_t *buf, size_t skip
+){
     if(prev == NULL){
-        return (dstr_off_t){ .buf = buf, .start = 0, .len = 0 };
+        return (dstr_off_t){ .buf = buf, .start = skip, .len = 0 };
     }
     return (dstr_off_t){
         .buf = prev->buf,
@@ -18,8 +26,8 @@ static inline dstr_off_t dstr_off_zero(dstr_off_t *prev, const dstr_t *buf){
     };
 }
 
-// steal %param buf via a macro
-#define DSTR_OFF_ZERO(prev) dstr_off_zero(prev, buf)
+// steal %param buf and %param skip via a macro
+#define DSTR_OFF_ZERO(prev) dstr_off_zero(prev, buf, skip)
 
 // for local_part_or_phrase_xbr
 static ie_dstr_t *with_spaces(derr_t *E, ie_dstr_t *list){
@@ -67,6 +75,7 @@ static ie_dstr_t *without_spaces(derr_t *E, ie_dstr_t *list){
 %prefix imf;
 %param E {derr_t *};
 %param buf {const dstr_t *};
+%param skip {size_t};
 
 %kwarg semloc_type dstr_off_t;
 %kwarg span_fn dstr_off_extend;
@@ -74,6 +83,8 @@ static ie_dstr_t *without_spaces(derr_t *E, ie_dstr_t *list){
 %kwarg error_fn imf_handle_error;
 
 %root hdrs;
+%root unstruct_field;
+%root subj_field; # alias for unstruct_field
 %root from_field;
 %root sender_field;
 %root reply_to_field;
@@ -84,6 +95,13 @@ static ie_dstr_t *without_spaces(derr_t *E, ie_dstr_t *list){
 %root msg_id_field;
 %root mime_version_field;
 %root content_type_field;
+%root content_transfer_encoding_field; # alias for single_token_field
+%root content_id_field;
+%root content_disposition_field;
+%root content_md5_field;
+%root content_language_field;
+%root content_location_field;
+%root content_description_field; # alias for unstruct_field
 
 %type hdr {imf_hdr_t*} {imf_hdr_free($$);};
 %type hdrs {imf_hdrs_t*} {imf_hdrs_free($$);};
@@ -93,6 +111,7 @@ static ie_dstr_t *without_spaces(derr_t *E, ie_dstr_t *list){
 %type ver {mime_version_t};
 %type param {mime_param_t*} {mime_param_free($$);};
 %type content_type {mime_content_type_t*} {mime_content_type_free($$);};
+%type disp {ie_body_disp_t*} {ie_body_disp_free($$);};
 
 # non-keyword tokens
 NIL;
@@ -115,18 +134,26 @@ DQUOTE;
 SLASH;
 QUESTION;
 EQ;
-TEXT;
+DASH;
+ALPHA;
+NUM;
+SYM;
 UTF8;
 EIGHTBIT;
-NUM;
 EOF;
+
+# ALPHANUM is a psuedotoken that we allow any time we allow ALPHA and NUM,
+# since we can have keywords (even RFC822) fallback to this.
+ALPHANUM;
 
 # keyword tokens
 MESSAGE;
 MULTIPART;
 RFC822;
 DIGEST;
-%fallback TEXT NUM MESSAGE MULTIPART RFC822 DIGEST;
+
+%fallback ALPHA MESSAGE MULTIPART DIGEST;
+%fallback ALPHANUM ALPHA NUM RFC822;
 
 ### ENTIRE DOCUMENTS ###
 # treat all headers unstructured
@@ -170,21 +197,22 @@ field_name = 1*(
 | SLASH
 | QUESTION
 | EQ
-| TEXT
+| DASH
+| ALPHANUM
+| SYM
 | UTF8
 | EIGHTBIT
-| NUM
 );
 
 # rfc5322: unstructured is VCHAR+WSP (can be joined by fws)
 # obs-unstruct allows any number of LF or CR which do not form a CRLF, which is
-# absolutely insane.  We don't allow that.  Otherwise, unstructured fields can
-# contain anything they want.  Note that the FWS is handled by the definition
-# of hdr, not here.
+# absolutely insane.  We don't allow that.  Otherwise, obs-unstruct fields can
+# contain anything they want.
+# Note that the folds and WS are not handled here.
 unstruct =
 | NIL
 # | EOL
-| WS
+# | WS
 | NON_WS_CTRL
 | DOT
 | RPAREN
@@ -202,13 +230,14 @@ unstruct =
 | SLASH
 | QUESTION
 | EQ
-| TEXT
+| DASH
+| ALPHANUM
+| SYM
 | UTF8
 | EIGHTBIT
-| NUM
 ;
 
-xunstruct = *unstruct;
+xunstruct = *(unstruct|WS);
 
 # rfc5322: header fields cannot have whitespace before the colon
 # obs-optional allows that though, so we allow it
@@ -225,6 +254,27 @@ hdr:hdr =
     )
     { $$ = imf_hdr_new(E, @$, @n, @v); }
 ;
+
+# rfc5322's text is identical to our approximation of obs-unstruct.
+# In this grammar, we only text to "parse" an unstructured header which just
+# collapses folds into a single space.
+text = unstruct *(unstruct | WS);
+
+unstruct_field_base:dstr =
+    {$$ = ie_dstr_new_empty(E);}
+    *WS  # ignore leading whitespace
+    [text:t1  {$$ = ie_dstr_append_from_off(E, $$, @t1);}]
+    *(
+        # folds become one space:
+        1*(EOL 1*WS)  {$$ = ie_dstr_append2(E, $$, DSTR_LIT(" "));}
+        (
+          | text:t2  {$$ = ie_dstr_append_from_off(E, $$, @t2);}
+          | %return  # it's ok to end with a fold
+        )
+    )
+;
+unstruct_field:dstr = unstruct_field_base:u EOF  {$$ = STEAL(ie_dstr_t, &$u);};
+subj_field:dstr = unstruct_field:u  {$$ = STEAL(ie_dstr_t, &$u);};
 
 ### IMF BASICS ###
 
@@ -269,10 +319,11 @@ ctext =
 | SLASH
 | QUESTION
 | EQ
-| TEXT
+| DASH
+| ALPHANUM
+| SYM
 | UTF8
 | EIGHTBIT
-| NUM
 ;
 
 # comment: again we allow consecutive folds, out of lazieness and leniency
@@ -286,15 +337,33 @@ xbr:bool = [cfws {$$ = true;}];
 
 # atom is always joined by cfws
 # ALPHA DIGIT UTF8 !#$%&'*+-/=?^_`{|}~
-atom_base = (
+atom_base =
+# | NIL
+# | EOL
+# | WS
+# | NON_WS_CTRL
+# | DOT
+# | RPAREN
+# | LPAREN
+# | LANGLE
+# | RANGLE
+# | LBRACKET
+# | RBRACKET
+# | ARUBA
+# | COMMA
+# | SEMI
+# | COLON
+# | BACKSLASH
+# | DQUOTE
 | SLASH
 | QUESTION
 | EQ
-| TEXT
+| DASH
+| ALPHANUM
+| SYM
 | UTF8
 | EIGHTBIT
-| NUM
-);
+;
 atom = 1*atom_base;
 
 # dot-atom is atoms joined by '.' but _not_ cfws
@@ -338,10 +407,11 @@ _qtext =
 | SLASH
 | QUESTION
 | EQ
-| TEXT
+| DASH
+| ALPHANUM
+| SYM
 | UTF8
 | EIGHTBIT
-| NUM
 ;
 qtext(base:dstr) = _qtext:q {$base = ie_dstr_append_from_off(E, $base, @q);};
 
@@ -378,10 +448,11 @@ escapable =
 | SLASH
 | QUESTION
 | EQ
-| TEXT
+| DASH
+| ALPHANUM
+| SYM
 | UTF8
 | EIGHTBIT
-| NUM
 ;
 ign_quoted_pair = BACKSLASH escapable;
 quoted_pair(base:dstr) =
@@ -501,10 +572,11 @@ dtext = 1*(
 | SLASH
 | QUESTION
 | EQ
-| TEXT
+| DASH
+| ALPHANUM
+| SYM
 | UTF8
 | EIGHTBIT
-| NUM
 );
 
 domain_literal_body:dstr =
@@ -711,11 +783,31 @@ in_reply_to_field:dstr = xbr msg_ids_xbr:m EOF  {$$ = STEAL(ie_dstr_t, &$m);};
 # which is atom, adding DOT and removing /=?
 # (we'll assume all of UTF8 is fine too)
 token = 1*(
+# | NIL
+# | EOL
+# | WS
+# | NON_WS_CTRL
 | DOT
-| TEXT
+# | RPAREN
+# | LPAREN
+# | LANGLE
+# | RANGLE
+# | LBRACKET
+# | RBRACKET
+# | ARUBA
+# | COMMA
+# | SEMI
+# | COLON
+# | BACKSLASH
+# | DQUOTE
+# | SLASH
+# | QUESTION
+# | EQ
+| DASH
+| ALPHANUM
+| SYM
 | UTF8
 | EIGHTBIT
-| NUM
 );
 
 # always joined by cfws
@@ -761,17 +853,6 @@ content_type_xbr:content_type =
     }}
 ;
 
-# note that 7BIT, 8BIT, and BINARY indicate that no encoding has been applied
-# defaults to 7BIT, when not present
-# note that BINARY is not really valid in email, due to smtp restrictions
-# also note that multipart messages cannot be encoded, so since we only care
-# about composite messages, we don't care terribly much about this field.
-# TODO: rfc5335 allows message/global-type messages to have encoding, but I
-# don't know if it's widely-used enough to have to deal with.  I'll leave out
-# support for it for now and fix it if anybody notices.
-## mechanism = (7BIT | 8BIT | BINARY | QUOTED_PRINTABLE | BASE64 | token);
-## content_transfer_encoding_field = xbr mechanism xbr;
-
 # multipart-body can't be parsed by a generated parser due to the dynamic
 # nature of the boundary, but it's very easy to split the bodies by hand and
 # use a generated parser for the inner parts.
@@ -801,4 +882,142 @@ mime_version_field:ver = xbr mime_version:ver xbr EOF {$$ = $ver;};
 content_type_field:content_type =
     xbr content_type_xbr:ct EOF
     {$$ = STEAL(mime_content_type_t, &$ct);}
+;
+
+single_token_field:dstr = xbr token:t xbr EOF  {$$ = ie_dstr_from_off(E, @t);};
+
+# note that 7BIT, 8BIT, and BINARY indicate that no encoding has been applied
+# defaults to 7BIT, when not present
+# note that BINARY is not really valid in email, due to smtp restrictions.
+# also note that multipart messages cannot be encoded.
+# TODO: rfc5335 allows message/global-type messages to have encoding, but I
+# don't know if it's widely-used enough to have to deal with.  I'll leave out
+# support for it for now and fix it if anybody notices.
+# mechanism = (7BIT | 8BIT | BINARY | QUOTED_PRINTABLE | BASE64 | token);
+# content_transfer_encoding_field:dstr =
+#     xbr mechanism:m xbr
+#     {$$ = ie_dstr_from_off(E, @m);}
+# ;
+content_transfer_encoding_field:dstr = single_token_field:s  {$$ = STEAL(ie_dstr_t, &$s);};
+
+b64_md5 =
+| NIL
+| EOL
+| WS
+| NON_WS_CTRL
+| DOT
+| RPAREN
+| LPAREN
+| LANGLE
+| RANGLE
+| LBRACKET
+| RBRACKET
+| ARUBA
+| COMMA
+| SEMI
+| COLON
+# | BACKSLASH
+# | DQUOTE
+| SLASH
+# | QUESTION
+| EQ
+| DASH
+| ALPHANUM
+| SYM
+# | UTF8
+# | EIGHTBIT
+;
+
+# we could be more strict here if md5 weren't a joke
+content_md5_field:dstr = xbr atom:a xbr EOF  {$$ = ie_dstr_from_off(E, @a);};
+
+# content_id is syntactically identical to msg_id
+content_id_field:dstr = msg_id_field:m  {$$ = STEAL(ie_dstr_t, &$m);};
+
+# rfc2183: Content-Disposition
+content_disposition_field:disp =
+    xbr token:t xbr params_xbr:p EOF
+    {{  $$ = ie_body_disp_new(E,
+            ie_dstr_from_off(E, @t),
+            STEAL(mime_param_t, &$p)
+        );
+    }}
+;
+
+# rfc3066: language tags
+primary_subtag = 1*ALPHA;
+secondary_subtag = 1*(ALPHANUM);
+lang_tag = primary_subtag *(DASH secondary_subtag);
+
+# rfc3282: Content-Language
+langs_xbr:dstr =
+    lang_tag:l  {$$ = ie_dstr_from_off(E, @l);}
+    xbr
+    *(
+        COMMA xbr lang_tag:l2 xbr
+        {$$ = ie_dstr_add(E, $$, ie_dstr_from_off(E, @l2));}
+    )
+;
+content_language_field:dstr =
+    xbr langs_xbr:l EOF
+    {$$ = STEAL(ie_dstr_t, &$l);}
+;
+
+# rfc2557: Content-Location
+# The URI in Content-Location seems to allow nearly anything allowed in an imf
+# header, with a particular folding scheme.
+# The list of unsafe characters is: CTRL SP < > " # % { } \ \ ^ ~ [ ] `
+# We'll be generous though, and only disallow a few things
+uri_base = 1*(
+# | NIL
+# | EOL
+# | WS
+# | NON_WS_CTRL
+| DOT
+# | RPAREN
+# | LPAREN
+| LANGLE
+| RANGLE
+| LBRACKET
+| RBRACKET
+| ARUBA
+| COMMA
+| SEMI
+| COLON
+| BACKSLASH
+| DQUOTE
+| SLASH
+| QUESTION
+| EQ
+| DASH
+| ALPHANUM
+| SYM
+| UTF8
+| EIGHTBIT
+)
+;
+# simply discard all whitespace
+uri:dstr =
+    uri_base:u1  {$$ = ie_dstr_from_off(E, @u1);}
+    *(
+        1*(EOL|WS) (
+          | uri_base:u2 {$$ = ie_dstr_append_from_off(E, $$, @u2);}
+          | %return
+        )
+    )
+;
+
+# cfws appears before/after uri, but not within
+content_location_field:dstr =
+    xbr uri:u [comment xbr] EOF
+    {$$ = STEAL(ie_dstr_t, &$u);}
+;
+
+# rfc2045: Content-Description is just *text.  Technically that means that it
+# cannot include a linebreak, but I'm assuming I'll see that in the wild.
+# It can't contain comments because text can contain unmatched parens.
+# So we choose to treat it as another unstruct field.
+content_description_field:dstr =
+    unstruct_field:u
+    {$$ = STEAL(ie_dstr_t, &$u);}
 ;

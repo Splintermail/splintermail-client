@@ -287,12 +287,12 @@ static derr_t send_ok(dn_t *dn, const ie_dstr_t *tag,
     return e;
 }
 
-// static derr_t send_no(dn_t *dn, const ie_dstr_t *tag,
-//         const dstr_t *msg){
-//     derr_t e = E_OK;
-//     PROP(&e, send_st_resp(dn, tag, msg, IE_ST_NO) );
-//     return e;
-// }
+static derr_t send_no(dn_t *dn, const ie_dstr_t *tag,
+        const dstr_t *msg){
+    derr_t e = E_OK;
+    PROP(&e, send_st_resp(dn, tag, msg, IE_ST_NO) );
+    return e;
+}
 
 static derr_t send_bad(dn_t *dn, const ie_dstr_t *tag,
         const dstr_t *msg){
@@ -787,21 +787,6 @@ cu:
 }
 
 
-static ie_dstr_t *imf_copy_body(derr_t *e, const imf_t *imf){
-    if(is_error(*e)) return NULL;
-    dstr_t bytes = dstr_from_off(imf->body);
-    return ie_dstr_new(e, &bytes, KEEP_RAW);
-}
-
-
-// this is really just for nested imf's
-static ie_dstr_t *imf_copy_hdrs(derr_t *e, const imf_t *imf){
-    if(is_error(*e)) return NULL;
-    dstr_t bytes = dstr_from_off(imf->hdrs->bytes);
-    return ie_dstr_new(e, &bytes, KEEP_RAW);
-}
-
-
 static ie_dstr_t *copy_hdr_fields(
     derr_t *e,
     const imf_hdrs_t *hdrs,
@@ -874,9 +859,177 @@ static ie_dstr_t *imf_copy_hdr_fields_not(
 }
 
 
+// returns true if the request is not actually fetchable
+/* (mostly in its own function because the memory freeing requirements of the
+   of the calling code are complex) */
+static bool build_sect_txt_content_resp(
+    derr_t *e,
+    const ie_sect_txt_t *sect_txt,
+    const dstr_off_t bytes,
+    const dstr_off_t mime_hdrs,
+    const imf_t *imf,
+    ie_dstr_t **content_resp_out
+){
+    *content_resp_out = NULL;
+    if(is_error(*e)) return false;
+
+    if(!sect_txt){
+        /* A missing sect_text indicates the whole submessage:
+           ex: 1.2.3 */
+        *content_resp_out = ie_dstr_from_off(e, bytes);
+        return false;
+    }
+
+    switch(sect_txt->type){
+        case IE_SECT_MIME:
+            *content_resp_out = ie_dstr_from_off(e, mime_hdrs);
+            break;
+
+        case IE_SECT_TEXT:
+            if(!imf) return true;
+            // just the body of the message
+            *content_resp_out = ie_dstr_from_off(e, imf->body);
+            break;
+
+        case IE_SECT_HEADER:
+            if(!imf) return true;
+            // just the headers of the message
+            *content_resp_out = ie_dstr_from_off(e, imf->hdrs->bytes);
+            break;
+
+        case IE_SECT_HDR_FLDS:
+            if(!imf) return true;
+            // just the headers of the message
+            *content_resp_out = imf_copy_hdr_fields(
+                e, imf, sect_txt->headers
+            );
+            break;
+
+        case IE_SECT_HDR_FLDS_NOT:
+            // just the headers of the message
+            *content_resp_out = imf_copy_hdr_fields_not(
+                e, imf, sect_txt->headers
+            );
+            break;
+    }
+
+    return false;
+}
+
+
+static ie_fetch_resp_t *build_fetch_resp_extra(
+    derr_t *e,
+    ie_fetch_resp_t *f,
+    ie_fetch_extra_t *extra,
+    loader_t *loader,
+    bool *part_missing
+){
+    ie_dstr_t *content_resp = NULL;
+
+    *part_missing = false;
+    if(is_error(*e)) goto fail;
+
+    ie_sect_t *sect = extra->sect;
+    if(!sect){
+        // BODY[] by itself
+        content_resp = loader_take_content(e, loader);
+
+    /* optimization clause: detect cases where we don't have to read the
+       whole message at all.  These cases meet the following criteria:
+         - no sect_part specified (no nested imf's)
+         - sect_txt is specified
+         - only concerned with content of headers */
+    }else if(
+        sect->sect_part == NULL
+        && sect->sect_txt != NULL
+        && (
+            sect->sect_txt->type == IE_SECT_HEADER
+            || sect->sect_txt->type == IE_SECT_HDR_FLDS
+            || sect->sect_txt->type == IE_SECT_HDR_FLDS_NOT
+        )
+    ){
+        // parse just the headers
+        const imf_hdrs_t *hdrs = loader_parse_hdrs(e, loader);
+        if(sect->sect_txt->type == IE_SECT_HEADER){
+            dstr_t bytes = dstr_from_off(hdrs->bytes);
+            content_resp = ie_dstr_new(e, &bytes, KEEP_RAW);
+        }else if(sect->sect_txt->type == IE_SECT_HDR_FLDS){
+            content_resp = copy_hdr_fields(
+                e, hdrs, sect->sect_txt->headers
+            );
+        }else{  // IE_SECT_HDR_FLDS_NOT
+            content_resp = copy_hdr_fields_not(
+                e, hdrs, sect->sect_txt->headers
+            );
+        }
+
+    // general clause: parse the whole message up front
+    }else{
+        // first read the whole message into memory
+        const imf_t *root_imf = loader_parse_imf(e, loader);
+
+        /* if present, the sect part marks which submessage to fetch from:
+           ex: 1.2.3.MIME
+               ^^^^^       */
+        dstr_off_t bytes;
+        dstr_off_t mime_hdrs;
+        const imf_t *imf;
+        imf_t *heap_imf; // always free...
+        bool missing = imf_get_submessage(e,
+            root_imf, sect->sect_part, &bytes, &mime_hdrs, &imf, &heap_imf
+        );
+        if(!missing){
+            /* if present, the sect txt marks what to fetch from the message:
+                   1.2.3.MIME
+                         ^^^^  */
+            missing = build_sect_txt_content_resp(e,
+                sect->sect_txt, bytes, mime_hdrs, imf, &content_resp
+            );
+        }
+
+        // ... always free:
+        imf_free(heap_imf);
+
+        CHECK_GO(e, fail);
+
+        if(missing){
+            *part_missing = true;
+            return f;
+        }
+    }
+
+    ie_nums_t *offset = NULL;
+    if(extra->partial){
+        // replace content_resp with a substring of the content_resp
+        size_t start = extra->partial->a;  // a = starting byte
+        size_t end = start + extra->partial->b;  // b = length
+        dstr_t sub = ie_dstr_sub(content_resp, start, end);
+        ie_dstr_t *temp = content_resp;
+        content_resp = ie_dstr_new(e, &sub, KEEP_RAW);
+        ie_dstr_free(temp);
+        // in the response, only the start offset is specified
+        offset = ie_nums_new(e, extra->partial->a);
+    }
+
+    // extend the fetch_resp
+    ie_sect_t *sect_resp = ie_sect_copy(e, sect);
+    ie_fetch_resp_extra_t *extra_resp =
+        ie_fetch_resp_extra_new(e, sect_resp, offset, content_resp);
+    f = ie_fetch_resp_add_extra(e, f, extra_resp);
+
+    return f;
+
+fail:
+    ie_fetch_resp_free(f);
+    ie_dstr_free(content_resp);
+    return NULL;
+}
+
+
 static derr_t send_fetch_resp(dn_t *dn, const ie_fetch_cmd_t *fetch,
-        unsigned int uid_dn){
+        unsigned int uid_dn, bool *part_missing){
     derr_t e = E_OK;
+    *part_missing = false;
 
     // get the view
     size_t index;
@@ -942,7 +1095,7 @@ static derr_t send_fetch_resp(dn_t *dn, const ie_fetch_cmd_t *fetch,
 
     if(fetch->attr->rfc822_text){
         const imf_t *imf = loader_parse_imf(&e, &loader);
-        f = ie_fetch_resp_rfc822_text(&e, f, imf_copy_body(&e, imf));
+        f = ie_fetch_resp_rfc822_text(&e, f, ie_dstr_from_off(&e, imf->body));
     }
 
     if(fetch->attr->rfc822_size){
@@ -954,115 +1107,26 @@ static derr_t send_fetch_resp(dn_t *dn, const ie_fetch_cmd_t *fetch,
         }
     }
 
-    if(fetch->attr->body) TRACE_ORIG(&e, E_INTERNAL, "not implemented"); // means BODY, not BODY[]
-    if(fetch->attr->bodystruct) TRACE_ORIG(&e, E_INTERNAL, "not implemented");
+    // BODY, not BODY[]
+    if(fetch->attr->body){
+        const imf_t *root_imf = loader_parse_imf(&e, &loader);
+        /* for simplicity we always parse bodystructure, even though for BODY
+           fetches we don't send the BODYSTRUCTURE extension data */
+        ie_body_t *body = imf_bodystructure(&e, root_imf);
+        f = ie_fetch_resp_body(&e, f, body);
+    }
+
+    if(fetch->attr->bodystruct){
+        const imf_t *root_imf = loader_parse_imf(&e, &loader);
+        ie_body_t *body = imf_bodystructure(&e, root_imf);
+        f = ie_fetch_resp_bodystruct(&e, f, body);
+    }
+
     if(fetch->attr->modseq) TRACE_ORIG(&e, E_INTERNAL, "not implemented");
 
     ie_fetch_extra_t *extra = fetch->attr->extras;
     for( ; extra; extra = extra->next){
-        ie_dstr_t *content_resp = NULL;
-        ie_sect_t *sect = extra->sect;
-        if(!sect){
-            // BODY[] by itself
-            content_resp = loader_take_content(&e, &loader);
-
-        /* optimization clause: detect cases where we don't have to read the
-           whole message at all.  These cases meet the following criteria:
-             - no sect_part specified (no nested imf's)
-             - sect_txt is specified
-             - only concerned with content of headers */
-        }else if(
-            sect->sect_part == NULL
-            && sect->sect_txt != NULL
-            && (
-                sect->sect_txt->type == IE_SECT_HEADER
-                || sect->sect_txt->type == IE_SECT_HDR_FLDS
-                || sect->sect_txt->type == IE_SECT_HDR_FLDS_NOT
-            )
-        ){
-            // parse just the headers
-            const imf_hdrs_t *hdrs = loader_parse_hdrs(&e, &loader);
-            if(sect->sect_txt->type == IE_SECT_HEADER){
-                dstr_t bytes = dstr_from_off(hdrs->bytes);
-                content_resp = ie_dstr_new(&e, &bytes, KEEP_RAW);
-            }else if(sect->sect_txt->type == IE_SECT_HDR_FLDS){
-                content_resp = copy_hdr_fields(
-                    &e, hdrs, sect->sect_txt->headers
-                );
-            }else{  // IE_SECT_HDR_FLDS_NOT
-                content_resp = copy_hdr_fields_not(
-                    &e, hdrs, sect->sect_txt->headers
-                );
-            }
-
-        // general clause: starts by parsing the whole message
-        }else{
-            // first parse the whole message
-            const imf_t *root_imf = loader_parse_imf(&e, &loader);
-
-            const imf_t *imf = root_imf;
-            if(sect->sect_part){
-                // we don't parse MIME parts yet
-                TRACE_ORIG(&e, E_INTERNAL, "not implemented");
-                // TODO: point *imf at whatever relevant submessage
-            }
-
-            if(sect->sect_txt){
-                switch(sect->sect_txt->type){
-                    case IE_SECT_MIME:
-                        // if MIME is used, then ie_sect_t.sect_part != NULL
-                        TRACE_ORIG(&e, E_INTERNAL, "not implemented");
-                        break;
-
-                    case IE_SECT_TEXT:
-                        // just the body of the message
-                        content_resp = imf_copy_body(&e, imf);
-                        break;
-
-                    case IE_SECT_HEADER:
-                        // just the headers of the message
-                        content_resp = imf_copy_hdrs(&e, imf);
-                        break;
-
-                    case IE_SECT_HDR_FLDS:
-                        // just the headers of the message
-                        content_resp = imf_copy_hdr_fields(
-                            &e, imf, sect->sect_txt->headers
-                        );
-                        break;
-
-                    case IE_SECT_HDR_FLDS_NOT:
-                        // just the headers of the message
-                        content_resp = imf_copy_hdr_fields_not(
-                            &e, imf, sect->sect_txt->headers
-                        );
-                        break;
-                }
-            }else{
-                /* TODO: for now, since we don't support sect->sect_part, this
-                   can't happen non-null.
-
-                   But I don't know what to put here when we do support it. */
-                TRACE_ORIG(&e, E_INTERNAL, "not implemented");
-            }
-        }
-
-        ie_nums_t *offset = NULL;
-        if(extra->partial){
-            // replace content_resp with a substring of the content_resp
-            dstr_t sub = ie_dstr_sub(content_resp,
-                    extra->partial->a, extra->partial->b);
-            ie_dstr_t *temp = content_resp;
-            content_resp = ie_dstr_new(&e, &sub, KEEP_RAW);
-            ie_dstr_free(temp);
-            offset = ie_nums_new(&e, extra->partial->a);
-        }
-
-        // extend the fetch_resp
-        ie_sect_t *sect_resp = ie_sect_copy(&e, sect);
-        ie_fetch_resp_extra_t *extra_resp =
-            ie_fetch_resp_extra_new(&e, sect_resp, offset, content_resp);
-        f = ie_fetch_resp_add_extra(&e, f, extra_resp);
+        f = build_fetch_resp_extra(&e, f, extra, &loader, part_missing);
     }
 
     // finally, send the fetch response
@@ -1097,12 +1161,20 @@ static derr_t fetch_cmd(dn_t *dn, const ie_dstr_t *tag,
     // build a response for every uid_dn requested
     ie_seq_set_trav_t trav;
     unsigned int uid_dn = ie_seq_set_iter(&trav, uids_dn, 0, 0);
+    bool any_missing = false;
     for(; uid_dn != 0; uid_dn = ie_seq_set_next(&trav)){
-        PROP_GO(&e, send_fetch_resp(dn, fetch, uid_dn), cu);
+        bool part_missing = false;
+        PROP_GO(&e, send_fetch_resp(dn, fetch, uid_dn, &part_missing), cu);
+        any_missing |= part_missing;
     }
 
-    DSTR_STATIC(msg, "you didn't hear it from me");
-    PROP_GO(&e, send_ok(dn, tag, &msg), cu);
+    if(!any_missing){
+        DSTR_STATIC(msg, "you didn't hear it from me");
+        PROP_GO(&e, send_ok(dn, tag, &msg), cu);
+    }else{
+        DSTR_STATIC(msg, "some requested subparts were missing");
+        PROP_GO(&e, send_no(dn, tag, &msg), cu);
+    }
 
 cu:
     ie_seq_set_free(uids_dn);

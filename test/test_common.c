@@ -127,6 +127,37 @@ static derr_t test_dstr_sub(void){
     return e;
 }
 
+static derr_t test_dstr_sub2(void){
+    derr_t e = E_OK;
+    LOG_INFO("----- test dstr_sub2 --------------------\n");
+    DSTR_STATIC(full, "0123456789");
+    dstr_t sub;
+    int result;
+    // test trivial endpoints (start to end)
+    sub = dstr_sub2(full, 0, (size_t)-1);
+    result = dstr_cmp2(sub, full);
+    if(result != 0){
+        ORIG(&e, E_VALUE, "trivial endpoint fail");
+    }
+    // test non-trivial startpoint to end
+    DSTR_STATIC(a, "3456789");
+    sub = dstr_sub2(full, 3, (size_t)-1);
+    result = dstr_cmp2(sub, a);
+    if(result != 0){
+        TRACE(&e, "got '%x'\n", FD(&sub));
+        ORIG(&e, E_VALUE, "non-trivial startpoint to end fail");
+    }
+    // test non-trivial start and end points
+    DSTR_STATIC(b, "567");
+    sub = dstr_sub2(full, 5, 8);
+    result = dstr_cmp2(sub, b);
+    if(result != 0){
+        TRACE(&e, "got '%x'\n", FD(&sub));
+        ORIG(&e, E_VALUE, "non-trivial start and end points fail");
+    }
+    return e;
+}
+
 static derr_t test_dstr_strip(void){
     derr_t e = E_OK;
     LOG_INFO("----- test dstr_strip -------------------\n");
@@ -866,6 +897,7 @@ int main(int argc, char** argv){
     PROP_GO(&e, test_dstr_icmp(),            test_fail);
     PROP_GO(&e, test_dstr_grow(),            test_fail);
     PROP_GO(&e, test_dstr_sub(),             test_fail);
+    PROP_GO(&e, test_dstr_sub2(),            test_fail);
     PROP_GO(&e, test_dstr_strip(),           test_fail);
     PROP_GO(&e, test_dstr_find(),            test_fail);
     PROP_GO(&e, test_dstr_count(),           test_fail);

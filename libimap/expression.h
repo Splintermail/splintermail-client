@@ -10,6 +10,12 @@
     if(a == b) return true; \
     if(!a || !b) return false
 
+// forward declarations for imf.h:
+struct mime_param_t;
+typedef struct mime_param_t mime_param_t;
+struct mime_content_type_t;
+typedef struct mime_content_type_t mime_content_type_t;
+
 typedef struct ie_dstr_t {
     dstr_t dstr;
     struct ie_dstr_t *next;
@@ -283,6 +289,7 @@ typedef struct ie_sect_part_t {
     unsigned int n;
     struct ie_sect_part_t *next;
 } ie_sect_part_t;
+DEF_STEAL_PTR(ie_sect_part_t)
 
 typedef enum {
     IE_SECT_MIME, // if MIME is used, then ie_sect_t.sect_part != NULL
@@ -462,7 +469,7 @@ typedef struct ie_addr_t {
     ie_dstr_t *host;  // NIL means 'group' syntax, otherwise domain name
     struct ie_addr_t *next;
 } ie_addr_t;
-DEF_STEAL_PTR(ie_addr_t);
+DEF_STEAL_PTR(ie_addr_t)
 
 typedef struct {
     // each field may be NULL, which will render as "NIL"
@@ -479,12 +486,47 @@ typedef struct {
     ie_dstr_t *msg_id;
 } ie_envelope_t;
 
+typedef struct {
+    ie_dstr_t *disp;
+    mime_param_t *params; // may be NULL
+} ie_body_disp_t;
+DEF_STEAL_PTR(ie_body_disp_t)
+
+typedef enum {
+    IE_BODY_MULTI,
+    IE_BODY_TEXT,
+    IE_BODY_MESSAGE,
+    IE_BODY_BASIC,
+} ie_body_type_t;
+
+// used for both BODY and BODYSTRUCTURE (just rendered differently)
+struct ie_body_t;
+typedef struct ie_body_t ie_body_t;
+
+struct ie_body_t {
+    ie_body_type_t type;
+    mime_content_type_t *content_type;  // Content-Type
+    ie_body_t *multiparts;
+    ie_body_t *next; // only defined if this is in another body's .mutliparts
+    ie_dstr_t *content_id;  // Content-Id
+    ie_dstr_t *description;  // Content-Description
+    ie_dstr_t *content_transfer_encoding;  // Content-Transfer-Encoding
+    unsigned int nbytes;  // encoded length, not unencoded length
+    ie_envelope_t *envelope;
+    ie_body_t *msgbody;
+    unsigned int nlines;
+    ie_dstr_t *md5;  // Content-MD5
+    ie_body_disp_t *disposition;  // Content-Disposition
+    ie_dstr_t *lang;  // Content-Language
+    ie_dstr_t *location; // Content-Location
+};
+DEF_STEAL_PTR(ie_body_t)
+
 typedef struct ie_fetch_resp_extra_t {
     // section, or the part in the "[]", NULL if not present
     ie_sect_t *sect;
     // the <p1> from the <p1.p2> partial of the request
     ie_nums_t *offset;
-    // TODO: support BODYSTRUCTURE response
     ie_dstr_t *content;
     struct ie_fetch_resp_extra_t *next;
 } ie_fetch_resp_extra_t;
@@ -502,6 +544,8 @@ typedef struct {
     ie_dstr_t *rfc822_text;
     ie_nums_t *rfc822_size;
     ie_envelope_t *envelope;
+    ie_body_t *body;
+    ie_body_t *bodystruct;
     uint64_t modseq;
     ie_fetch_resp_extra_t *extras;
 } ie_fetch_resp_t;
@@ -852,6 +896,7 @@ static inline dstr_off_t dstr_off_extend(dstr_off_t start, dstr_off_t end){
 // materialize a dstr_off into something usable
 // (result valid until mem is reallocated)
 static inline dstr_t dstr_from_off(const dstr_off_t off){
+    if(!off.buf) return (dstr_t){0};
     return dstr_sub2(*off.buf, off.start, off.start + off.len);
 }
 
@@ -1105,6 +1150,66 @@ ie_envelope_t *ie_envelope_new(
 DEF_STEAL_PTR(ie_envelope_t)
 void ie_envelope_free(ie_envelope_t *env);
 
+ie_body_disp_t *ie_body_disp_new(
+    derr_t *e, ie_dstr_t *disp, mime_param_t *params // params may be NULL
+);
+void ie_body_disp_free(ie_body_disp_t *disp);
+
+void ie_body_free(ie_body_t *body);
+ie_body_t *ie_body_multi_new(
+    derr_t *e,
+    mime_content_type_t *content_type, // type must be MULTIPART
+    ie_body_t *multiparts,
+    // extension data:
+    ie_body_disp_t *disposition,
+    ie_dstr_t *lang,
+    ie_dstr_t *location
+);
+ie_body_t *ie_body_text_new(
+    derr_t *e,
+    mime_content_type_t *content_type,  // type must be TEXT
+    ie_dstr_t *content_id,
+    ie_dstr_t *description,
+    ie_dstr_t *content_transfer_encoding,  // defaults to "7BIT" in write.c
+    unsigned int nbytes,
+    unsigned int nlines,
+    // extension data:
+    ie_dstr_t *md5,
+    ie_body_disp_t *disposition,
+    ie_dstr_t *lang,
+    ie_dstr_t *location
+);
+ie_body_t *ie_body_msg_new(
+    derr_t *e,
+    mime_content_type_t *content_type,  // type/subtype must be MESSAGE/RFC822
+    ie_dstr_t *content_id,
+    ie_dstr_t *description,
+    ie_dstr_t *content_transfer_encoding,  // defaults to "7BIT" in write.c
+    unsigned int nbytes,
+    ie_envelope_t *envelope,
+    ie_body_t *msgbody,
+    unsigned int nlines,
+    // extension data:
+    ie_dstr_t *md5,
+    ie_body_disp_t *disposition,
+    ie_dstr_t *lang,
+    ie_dstr_t *location
+);
+ie_body_t *ie_body_basic_new(
+    derr_t *e,
+    mime_content_type_t *content_type,
+    ie_dstr_t *content_id,
+    ie_dstr_t *description,
+    ie_dstr_t *content_transfer_encoding,  // defaults to "7BIT" in write.c
+    unsigned int nbytes,
+    // extension data:
+    ie_dstr_t *md5,
+    ie_body_disp_t *disposition,
+    ie_dstr_t *lang,
+    ie_dstr_t *location
+);
+ie_body_t *ie_body_add(derr_t *e, ie_body_t *list, ie_body_t *new);
+
 ie_fetch_resp_extra_t *ie_fetch_resp_extra_new(derr_t *e, ie_sect_t *sect,
         ie_nums_t *offset, ie_dstr_t *content);
 void ie_fetch_resp_extra_free(ie_fetch_resp_extra_t *extra);
@@ -1130,6 +1235,10 @@ ie_fetch_resp_t *ie_fetch_resp_rfc822_size(derr_t *e, ie_fetch_resp_t *f,
         ie_nums_t *rfc_822size);
 ie_fetch_resp_t *ie_fetch_resp_envelope(derr_t *e, ie_fetch_resp_t *f,
         ie_envelope_t *env);
+ie_fetch_resp_t *ie_fetch_resp_body(derr_t *e, ie_fetch_resp_t *f,
+        ie_body_t *body);
+ie_fetch_resp_t *ie_fetch_resp_bodystruct(derr_t *e, ie_fetch_resp_t *f,
+        ie_body_t *bodystruct);
 ie_fetch_resp_t *ie_fetch_resp_modseq(derr_t *e, ie_fetch_resp_t *f,
         uint64_t modseq);
 ie_fetch_resp_t *ie_fetch_resp_add_extra(derr_t *e, ie_fetch_resp_t *f,

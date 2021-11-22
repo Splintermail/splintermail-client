@@ -63,7 +63,10 @@ static derr_t test_imf_scan(void){
     imf_token_e type;
 
     e = imf_scan(&s, &token, &type);
-    EXPECT(E_NONE, IMF_TEXT, "header-");
+    EXPECT(E_NONE, IMF_ALPHA, "header");
+
+    e = imf_scan(&s, &token, &type);
+    EXPECT(E_NONE, IMF_DASH, "-");
 
     e = imf_scan(&s, &token, &type);
     EXPECT(E_NONE, IMF_NUM, "1");
@@ -75,13 +78,22 @@ static derr_t test_imf_scan(void){
     EXPECT(E_NONE, IMF_WS, " \t");
 
     e = imf_scan(&s, &token, &type);
-    EXPECT(E_NONE, IMF_TEXT, "value-A");
+    EXPECT(E_NONE, IMF_ALPHA, "value");
+
+    e = imf_scan(&s, &token, &type);
+    EXPECT(E_NONE, IMF_DASH, "-");
+
+    e = imf_scan(&s, &token, &type);
+    EXPECT(E_NONE, IMF_ALPHA, "A");
 
     e = imf_scan(&s, &token, &type);
     EXPECT(E_NONE, IMF_EOL, "\r\n");
 
     e = imf_scan(&s, &token, &type);
-    EXPECT(E_NONE, IMF_TEXT, "header-");
+    EXPECT(E_NONE, IMF_ALPHA, "header");
+
+    e = imf_scan(&s, &token, &type);
+    EXPECT(E_NONE, IMF_DASH, "-");
 
     e = imf_scan(&s, &token, &type);
     EXPECT(E_NONE, IMF_NUM, "2");
@@ -93,7 +105,13 @@ static derr_t test_imf_scan(void){
     EXPECT(E_NONE, IMF_WS, " ");
 
     e = imf_scan(&s, &token, &type);
-    EXPECT(E_NONE, IMF_TEXT, "value-B");
+    EXPECT(E_NONE, IMF_ALPHA, "value");
+
+    e = imf_scan(&s, &token, &type);
+    EXPECT(E_NONE, IMF_DASH, "-");
+
+    e = imf_scan(&s, &token, &type);
+    EXPECT(E_NONE, IMF_ALPHA, "B");
 
     e = imf_scan(&s, &token, &type);
     EXPECT(E_NONE, IMF_EOL, "\r\n");
@@ -102,7 +120,13 @@ static derr_t test_imf_scan(void){
     EXPECT(E_NONE, IMF_WS, "  ");
 
     e = imf_scan(&s, &token, &type);
-    EXPECT(E_NONE, IMF_TEXT, "folded-value");
+    EXPECT(E_NONE, IMF_ALPHA, "folded");
+
+    e = imf_scan(&s, &token, &type);
+    EXPECT(E_NONE, IMF_DASH, "-");
+
+    e = imf_scan(&s, &token, &type);
+    EXPECT(E_NONE, IMF_ALPHA, "value");
 
     e = imf_scan(&s, &token, &type);
     EXPECT(E_NONE, IMF_EOL, "\r\n");
@@ -111,24 +135,24 @@ static derr_t test_imf_scan(void){
     EXPECT(E_NONE, IMF_EOL, "\r\n");
 
     e = imf_scan(&s, &token, &type);
-    EXPECT(E_NONE, IMF_TEXT, "body");
+    EXPECT(E_NONE, IMF_ALPHA, "body");
 
     e = imf_scan(&s, &token, &type);
     EXPECT(E_NONE, IMF_EOL, "\r\n");
 
     e = imf_scan(&s, &token, &type);
-    EXPECT(E_NONE, IMF_TEXT, "unfinished");
+    EXPECT(E_NONE, IMF_ALPHA, "unfinished");
 
     e = imf_scan(&s, &token, &type);
     EXPECT(E_NONE, IMF_WS, " ");
 
     e = imf_scan(&s, &token, &type);
-    EXPECT(E_NONE, IMF_TEXT, "line");
+    EXPECT(E_NONE, IMF_ALPHA, "line");
 
     e = imf_scan(&s, &token, &type);
     EXPECT(E_NONE, IMF_EOF, "");
 
-    // repeat scans keep returning IMF_SCAN_UNSTRUCT
+    // repeat scans keep returning IMF_EOF
     e = imf_scan(&s, &token, &type);
     EXPECT(E_NONE, IMF_EOF, "");
 
@@ -139,6 +163,30 @@ static derr_t test_imf_scan(void){
 
 cu:
     // noop
+    return e;
+}
+
+static derr_t test_scan_substring(void){
+    derr_t e = E_OK;
+
+    dstr_t fulltext = DSTR_LIT("..........atom..........");
+
+    size_t length = 4;
+    imf_scanner_t s = imf_scanner_prep(&fulltext, 10, &length, NULL, NULL);
+
+    dstr_off_t token;
+    imf_token_e type;
+
+    e = imf_scan(&s, &token, &type);
+    EXPECT(E_NONE, IMF_ALPHA, "atom");
+
+    e = imf_scan(&s, &token, &type);
+    EXPECT(E_NONE, IMF_EOF, "");
+
+    e = imf_scan(&s, &token, &type);
+    EXPECT(E_NONE, IMF_EOF, "");
+
+cu:
     return e;
 }
 
@@ -209,6 +257,7 @@ int main(int argc, char** argv){
     PARSE_TEST_OPTIONS(argc, argv, NULL, LOG_LVL_DEBUG);
 
     PROP_GO(&e, test_imf_scan(), test_fail);
+    PROP_GO(&e, test_scan_substring(), test_fail);
     PROP_GO(&e, test_overrun(), test_fail);
 
     LOG_ERROR("PASS\n");

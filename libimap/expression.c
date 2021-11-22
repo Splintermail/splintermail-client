@@ -2032,6 +2032,193 @@ void ie_envelope_free(ie_envelope_t *env){
     free(env);
 }
 
+ie_body_disp_t *ie_body_disp_new(
+    derr_t *e, ie_dstr_t *disp, mime_param_t *params
+){
+    if(is_error(*e)) goto fail;
+
+    IE_MALLOC(e, ie_body_disp_t, body_disp, fail);
+
+    body_disp->disp = disp;
+    body_disp->params = params;
+
+    return body_disp;
+
+fail:
+    ie_dstr_free(disp);
+    mime_param_free(params);
+    return NULL;
+}
+
+void ie_body_disp_free(ie_body_disp_t *disp){
+    if(!disp) return;
+    ie_dstr_free(disp->disp);
+    mime_param_free(disp->params);
+    free(disp);
+}
+
+static void do_ie_body_free(ie_body_t body){
+    mime_content_type_free(body.content_type);
+    ie_body_free(body.multiparts);
+    ie_body_free(body.next);
+    ie_dstr_free(body.content_id);
+    ie_dstr_free(body.description);
+    ie_dstr_free(body.content_transfer_encoding);
+    ie_envelope_free(body.envelope);
+    ie_body_free(body.msgbody);
+    ie_dstr_free(body.md5);
+    ie_body_disp_free(body.disposition);
+    ie_dstr_free(body.lang);
+    ie_dstr_free(body.location);
+}
+
+void ie_body_free(ie_body_t *body){
+    if(!body) return;
+    do_ie_body_free(*body);
+    free(body);
+}
+
+static ie_body_t *do_ie_body_new(derr_t *e, ie_body_t base){
+    if(is_error(*e)) goto fail;
+
+    IE_MALLOC(e, ie_body_t, body, fail);
+
+    *body = base;
+
+    return body;
+
+fail:
+    do_ie_body_free(base);
+    return NULL;
+}
+
+ie_body_t *ie_body_multi_new(
+    derr_t *e,
+    mime_content_type_t *content_type,  // type must be MULTIPART
+    ie_body_t *multiparts,
+    // extension data:
+    ie_body_disp_t *disposition,
+    ie_dstr_t *lang,
+    ie_dstr_t *location
+){
+    ie_body_t base = {
+        .type = IE_BODY_MULTI,
+        .content_type = content_type,
+        .multiparts = multiparts,
+        .disposition = disposition,
+        .lang = lang,
+        .location = location,
+    };
+    return do_ie_body_new(e, base);
+}
+
+ie_body_t *ie_body_text_new(
+    derr_t *e,
+    mime_content_type_t *content_type,  // type must be TEXT
+    ie_dstr_t *content_id,
+    ie_dstr_t *description,
+    ie_dstr_t *content_transfer_encoding,  // defaults to "7BIT" in write.c
+    unsigned int nbytes,
+    unsigned int nlines,
+    // extension data:
+    ie_dstr_t *md5,
+    ie_body_disp_t *disposition,
+    ie_dstr_t *lang,
+    ie_dstr_t *location
+){
+    ie_body_t base = {
+        .type = IE_BODY_TEXT,
+        .content_type = content_type,
+        .content_id = content_id,
+        .description = description,
+        .content_transfer_encoding = content_transfer_encoding,
+        .nbytes = nbytes,
+        .nlines = nlines,
+        .md5 = md5,
+        .disposition = disposition,
+        .lang = lang,
+        .location = location,
+    };
+    return do_ie_body_new(e, base);
+}
+
+ie_body_t *ie_body_msg_new(
+    derr_t *e,
+    mime_content_type_t *content_type,  // type/subtype must be MESSAGE/RFC822
+    ie_dstr_t *content_id,
+    ie_dstr_t *description,
+    ie_dstr_t *content_transfer_encoding,  // defaults to "7BIT" in write.c
+    unsigned int nbytes,
+    ie_envelope_t *envelope,
+    ie_body_t *msgbody,
+    unsigned int nlines,
+    // extension data:
+    ie_dstr_t *md5,
+    ie_body_disp_t *disposition,
+    ie_dstr_t *lang,
+    ie_dstr_t *location
+){
+    ie_body_t base = {
+        .type = IE_BODY_MESSAGE,
+        .content_type = content_type,
+        .content_id = content_id,
+        .description = description,
+        .content_transfer_encoding = content_transfer_encoding,
+        .nbytes = nbytes,
+        .envelope = envelope,
+        .msgbody = msgbody,
+        .nlines = nlines,
+        .md5 = md5,
+        .disposition = disposition,
+        .lang = lang,
+        .location = location,
+    };
+    return do_ie_body_new(e, base);
+}
+
+ie_body_t *ie_body_basic_new(
+    derr_t *e,
+    mime_content_type_t *content_type,
+    ie_dstr_t *content_id,
+    ie_dstr_t *description,
+    ie_dstr_t *content_transfer_encoding,  // defaults to "7BIT" in write.c
+    unsigned int nbytes,
+    // extension data:
+    ie_dstr_t *md5,
+    ie_body_disp_t *disposition,
+    ie_dstr_t *lang,
+    ie_dstr_t *location
+){
+    ie_body_t base = {
+        .type = IE_BODY_BASIC,
+        .content_type = content_type,
+        .content_id = content_id,
+        .description = description,
+        .content_transfer_encoding = content_transfer_encoding,
+        .nbytes = nbytes,
+        .md5 = md5,
+        .disposition = disposition,
+        .lang = lang,
+        .location = location,
+    };
+    return do_ie_body_new(e, base);
+}
+
+ie_body_t *ie_body_add(derr_t *e, ie_body_t *list, ie_body_t *new){
+    if(is_error(*e)) goto fail;
+
+    ie_body_t **last = &list;
+    while(*last != NULL) last = &(*last)->next;
+    *last = new;
+
+    return list;
+
+fail:
+    ie_body_free(list);
+    ie_body_free(new);
+    return NULL;
+}
+
 ie_fetch_resp_extra_t *ie_fetch_resp_extra_new(derr_t *e, ie_sect_t *sect,
         ie_nums_t *offset, ie_dstr_t *content){
     if(is_error(*e)) goto fail;
@@ -2077,6 +2264,8 @@ void ie_fetch_resp_free(ie_fetch_resp_t *f){
     ie_dstr_free(f->rfc822_hdr);
     ie_dstr_free(f->rfc822_text);
     ie_nums_free(f->rfc822_size);
+    ie_body_free(f->body);
+    ie_body_free(f->bodystruct);
     ie_envelope_free(f->envelope);
     ie_fetch_resp_extra_free(f->extras);
     free(f);
@@ -2225,6 +2414,42 @@ ie_fetch_resp_t *ie_fetch_resp_envelope(derr_t *e, ie_fetch_resp_t *f,
 
 fail:
     ie_envelope_free(env);
+    ie_fetch_resp_free(f);
+    return NULL;
+}
+
+ie_fetch_resp_t *ie_fetch_resp_body(derr_t *e, ie_fetch_resp_t *f,
+        ie_body_t *body){
+    if(is_error(*e)) goto fail;
+
+    if(f->body != NULL){
+        ORIG_GO(e, E_INTERNAL, "got two body's from one FETCH", fail);
+    }
+
+    f->body = body;
+
+    return f;
+
+fail:
+    ie_body_free(body);
+    ie_fetch_resp_free(f);
+    return NULL;
+}
+
+ie_fetch_resp_t *ie_fetch_resp_bodystruct(derr_t *e, ie_fetch_resp_t *f,
+        ie_body_t *bodystruct){
+    if(is_error(*e)) goto fail;
+
+    if(f->bodystruct != NULL){
+        ORIG_GO(e, E_INTERNAL, "got two bodystruct's from one FETCH", fail);
+    }
+
+    f->bodystruct = bodystruct;
+
+    return f;
+
+fail:
+    ie_body_free(bodystruct);
     ie_fetch_resp_free(f);
     return NULL;
 }

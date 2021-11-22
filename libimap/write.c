@@ -1607,17 +1607,157 @@ static derr_t envelope_skip_fill(skip_fill_t *sf, ie_envelope_t *envelope){
     return e;
 }
 
-/*
-    typedef struct ie_fetch_resp_extra_t {
-        // section, or the part in the "[]", NULL if not present
-        ie_sect_t *sect;
-        // the <p1> from the <p1.p2> partial of the request
-        ie_nums_t *offset;
-        // TODO: support BODYSTRUCTURE response
-        ie_dstr_t *content;
-        struct ie_fetch_resp_extra_t *next;
-    } ie_fetch_resp_extra_t;
-*/
+static derr_t body_params_skip_fill(
+    skip_fill_t *sf, const mime_param_t *params
+){
+    derr_t e = E_OK;
+
+    if(!params){
+        STATIC_SKIP_FILL("NIL");
+        return e;
+    }
+
+    bool sp = false;
+    STATIC_SKIP_FILL("(");
+    for(const mime_param_t *p = params; p; p = p->next){
+        LEAD_SP;
+        PROP(&e, string_skip_fill(sf, &p->key->dstr) );
+        LEAD_SP;
+        PROP(&e, string_skip_fill(sf, &p->val->dstr) );
+    }
+    STATIC_SKIP_FILL(")");
+
+    return e;
+}
+
+static derr_t body_disp_skip_fill(skip_fill_t *sf, const ie_body_disp_t *disp){
+    derr_t e = E_OK;
+
+    if(!disp){
+        STATIC_SKIP_FILL("NIL");
+        return e;
+    }
+
+    STATIC_SKIP_FILL("(");
+    PROP(&e, string_skip_fill(sf, &disp->disp->dstr) );
+    STATIC_SKIP_FILL(" ");
+    PROP(&e, body_params_skip_fill(sf, disp->params) );
+    STATIC_SKIP_FILL(")");
+
+    return e;
+}
+
+
+static derr_t body_lang_skip_fill(skip_fill_t *sf, const ie_dstr_t *lang){
+    derr_t e = E_OK;
+
+    // not present
+    if(!lang){
+        STATIC_SKIP_FILL("NIL");
+        return e;
+    }
+
+    // a single lang
+    if(!lang->next){
+        PROP(&e, string_skip_fill(sf, &lang->dstr) );
+        return e;
+    }
+
+    // a list of langs
+    bool sp = false;
+    STATIC_SKIP_FILL("(");
+    for(const ie_dstr_t *l = lang; l; l = l->next){
+        LEAD_SP;
+        PROP(&e, string_skip_fill(sf, &l->dstr) );
+    }
+    STATIC_SKIP_FILL(")");
+
+    return e;
+}
+
+static derr_t body_skip_fill(skip_fill_t *sf, const ie_body_t *body, bool with_ext){
+    derr_t e = E_OK;
+
+    bool sp = false;
+    STATIC_SKIP_FILL("(");
+
+    // mime_type: all non-multipart types
+    if(body->type != IE_BODY_MULTI){
+        LEAD_SP;
+        PROP(&e, string_skip_fill(sf, &body->content_type->typestr->dstr) );
+    }
+
+    // multiparts: only multipart types
+    if(body->type == IE_BODY_MULTI){
+        LEAD_SP;
+        for(const ie_body_t *sub = body->multiparts; sub; sub = sub->next){
+            // no space between body parts
+            PROP(&e, body_skip_fill(sf, sub, with_ext) );
+        }
+    }
+
+    // mime_subtype: all body types
+    LEAD_SP;
+    PROP(&e, string_skip_fill(sf, &body->content_type->subtypestr->dstr) );
+
+    // mime_params: non-multipart=always, multipart=with_ext
+    if(with_ext || body->type != IE_BODY_MULTI){
+        LEAD_SP;
+        PROP(&e, body_params_skip_fill(sf, body->content_type->params) );
+    }
+
+    // content_id, description, encoding, nbytes: non-multipart=always
+    if(body->type != IE_BODY_MULTI){
+        LEAD_SP;
+        PROP(&e, nstring_skip_fill(sf, body->content_id) );
+        LEAD_SP;
+        PROP(&e, nstring_skip_fill(sf, body->description) );
+        LEAD_SP;
+        if(!body->content_transfer_encoding){
+            STATIC_SKIP_FILL("\"7BIT\"");  // the default value
+        }else{
+            PROP(&e,
+                string_skip_fill(sf, &body->content_transfer_encoding->dstr)
+            );
+        }
+        LEAD_SP;
+        PROP(&e, num_skip_fill(sf, body->nbytes) );
+    }
+
+    // envelope, msgbody: only message/rfc822 bodies
+    if(body->type == IE_BODY_MESSAGE){
+        LEAD_SP;
+        PROP(&e, envelope_skip_fill(sf, body->envelope) );
+        LEAD_SP;
+        PROP(&e, body_skip_fill(sf, body->msgbody, with_ext) );
+    }
+
+    // nlines: message/rfc822 and text/* bodies
+    if(body->type == IE_BODY_MESSAGE || body->type == IE_BODY_TEXT){
+        LEAD_SP;
+        PROP(&e, num_skip_fill(sf, body->nlines) );
+    }
+
+    // md5: extension data for non-message types
+    if(with_ext && body->type != IE_BODY_MULTI){
+        LEAD_SP;
+        PROP(&e, nstring_skip_fill(sf, body->md5) );
+    }
+
+    // disposition, lang, location: common extension data
+    if(with_ext){
+        LEAD_SP;
+        PROP(&e, body_disp_skip_fill(sf, body->disposition) );
+        LEAD_SP;
+        PROP(&e, body_lang_skip_fill(sf, body->lang) );
+        LEAD_SP;
+        PROP(&e, nstring_skip_fill(sf, body->location) );
+    }
+
+    STATIC_SKIP_FILL(")");
+
+    return e;
+}
 
 static derr_t fetch_resp_extra_skip_fill(skip_fill_t *sf,
         ie_fetch_resp_extra_t *extra){
@@ -1725,6 +1865,16 @@ static derr_t fetch_resp_skip_fill(skip_fill_t *sf, ie_fetch_resp_t *fetch){
         LEAD_SP;
         STATIC_SKIP_FILL("ENVELOPE ");
         PROP(&e, envelope_skip_fill(sf, fetch->envelope) );
+    }
+    if(fetch->body){
+        LEAD_SP;
+        STATIC_SKIP_FILL("BODY ");
+        PROP(&e, body_skip_fill(sf, fetch->body, false) );
+    }
+    if(fetch->bodystruct){
+        LEAD_SP;
+        STATIC_SKIP_FILL("BODYSTRUCTURE ");
+        PROP(&e, body_skip_fill(sf, fetch->bodystruct, true) );
     }
     if(fetch->modseq){
         PROP(&e, extension_assert_on(sf->exts, EXT_CONDSTORE) );

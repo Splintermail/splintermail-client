@@ -19,7 +19,7 @@ typedef struct {
     size_chunk_out_t *out;
 } test_case_t;
 
-#define IE_DSTR(text) ie_dstr_new(&e, &DSTR_LIT(text), KEEP_RAW)
+#define IE_DSTR(text) ie_dstr_new2(&e, DSTR_LIT(text))
 
 static derr_t do_writer_test(const test_case_t *tc){
     derr_t e = E_OK;
@@ -457,6 +457,338 @@ static derr_t test_imap_writer(void){
                            "NIL "
                            "\"<msg_id@msgids.com>\""
                            "))\r\n"},
+                    {0}
+                },
+            },
+        };
+        CHECK(&e);
+        PROP(&e, do_writer_test_multi(cases, sizeof(cases)/sizeof(*cases)) );
+    }
+    // BODY and BODYSTRUCT responses
+    #define TEXT_PLAIN(id) \
+        ie_body_text_new(&e, \
+            mime_content_type_new(&e, \
+                IE_DSTR("text"), IE_DSTR("plain"), NULL \
+            ), \
+            IE_DSTR(id "id"), /* content-id */ \
+            IE_DSTR(id "descr"), /* content-description */ \
+            IE_DSTR(id "txenc"), /* content-transfer-encoding */ \
+            192, /* nbytes */ \
+            1, /* nlines */ \
+            IE_DSTR(id "md5"), /* content-md5 */ \
+            ie_body_disp_new(&e, \
+                IE_DSTR(id "disp"), \
+                mime_param_add(&e, \
+                    mime_param_new(&e, \
+                        IE_DSTR("p.k1"), \
+                        IE_DSTR("p.v1") \
+                    ), \
+                    mime_param_new(&e, \
+                        IE_DSTR("p.k2"), \
+                        IE_DSTR("p.v2") \
+                    ) \
+                ) \
+            ), /* content-disposition */ \
+            IE_DSTR(id "lang"), /* content-language */ \
+            IE_DSTR(id "loc") /* content-location */ \
+        )
+    #define APPLICATION_JUNK(id) \
+        ie_body_basic_new(&e, \
+            mime_content_type_new(&e, \
+                IE_DSTR("application"), IE_DSTR("junk"), NULL \
+            ), \
+            IE_DSTR(id "id"), /* content-id */ \
+            IE_DSTR(id "descr"), /* content-description */ \
+            NULL, /* content-transfer-encoding */ \
+            192, /* nbytes */ \
+            IE_DSTR(id "md5"), /* content-md5 */ \
+            ie_body_disp_new(&e, \
+                IE_DSTR(id "disp"), NULL \
+            ), /* content-disposition */ \
+            ie_dstr_add(&e, \
+                IE_DSTR(id "l1"), IE_DSTR(id "l2") \
+            ), /* content-language */ \
+            IE_DSTR(id "loc") /* content-location */ \
+        )
+    #define MESSAGE_RFC822(id, msgbody) \
+        ie_body_msg_new(&e, \
+            mime_content_type_new(&e, \
+                IE_DSTR("message"), IE_DSTR("rfc822"), NULL \
+            ), \
+            IE_DSTR(id "id"), /* content-id */ \
+            IE_DSTR(id "descr"), /* content-description */ \
+            IE_DSTR(id "txenc"), /* content-transfer-encoding */ \
+            255, /* nbytes */ \
+            ie_envelope_new(&e, \
+                NULL, /* date */ \
+                NULL, /* subject */ \
+                NULL, /* from */ \
+                NULL, /* sender */ \
+                NULL, /* reply_to */ \
+                NULL, /* to */ \
+                NULL, /* cc */ \
+                NULL, /* bcc */ \
+                NULL, /* in_reply_to */ \
+                NULL  /* msg_i */ \
+            ), /* envelope */ \
+            msgbody, /* msgbody */ \
+            22, /* nlines */ \
+            IE_DSTR(id "md5"), /* content-md5 */ \
+            ie_body_disp_new(&e, \
+                IE_DSTR(id "disp"), NULL \
+            ), /* content-disposition */ \
+            IE_DSTR(id "lang"), /* content-language */ \
+            IE_DSTR(id "loc") /* content-location */ \
+        )
+        #define NILENV "(NIL NIL NIL NIL NIL NIL NIL NIL NIL NIL) "
+    #define MULTIPART_MIXED(id, multiparts) \
+        ie_body_multi_new(&e, \
+            mime_content_type_new(&e, \
+                IE_DSTR("multipart"), \
+                IE_DSTR("mixed"), \
+                mime_param_new(&e, \
+                    IE_DSTR("boundary"), \
+                    IE_DSTR(id"uuid-str") \
+                ) \
+            ), \
+            multiparts, \
+            ie_body_disp_new(&e, \
+                IE_DSTR(id "disp"), NULL \
+            ), /* content-disposition */ \
+            NULL, /* content-language */ \
+            IE_DSTR(id "loc") /* content-location */ \
+        )
+    {
+        test_case_t cases[] = {
+            // text/plain BODY
+            {
+                .resp=imap_resp_new(&e, IMAP_RESP_FETCH,
+                    (imap_resp_arg_t){
+                        .fetch=ie_fetch_resp_body(&e,
+                            ie_fetch_resp_num(&e,
+                                ie_fetch_resp_new(&e),
+                                5
+                            ),
+                            TEXT_PLAIN("")
+                        ),
+                    }
+                ),
+                .out=(size_chunk_out_t[]){
+                    {1024, "* 5 FETCH (BODY "
+                           "(\"text\" \"plain\" NIL \"id\" \"descr\" "
+                            "\"txenc\" 192 1)"
+                           ")\r\n"},
+                    {0}
+                },
+            },
+            // text/plain BODYSTRUCT
+            {
+                .resp=imap_resp_new(&e, IMAP_RESP_FETCH,
+                    (imap_resp_arg_t){
+                        .fetch=ie_fetch_resp_bodystruct(&e,
+                            ie_fetch_resp_num(&e,
+                                ie_fetch_resp_new(&e),
+                                5
+                            ),
+                            TEXT_PLAIN("")
+                        ),
+                    }
+                ),
+                .out=(size_chunk_out_t[]){
+                    {1024, "* 5 FETCH (BODYSTRUCTURE "
+                           "(\"text\" \"plain\" NIL \"id\" \"descr\" "
+                           "\"txenc\" 192 1 \"md5\" (\"disp\" (\"p.k1\" "
+                           "\"p.v1\" \"p.k2\" \"p.v2\")) \"lang\" \"loc\")"
+                           ")\r\n"},
+                    {0}
+                },
+            },
+            // basic BODY
+            {
+                .resp=imap_resp_new(&e, IMAP_RESP_FETCH,
+                    (imap_resp_arg_t){
+                        .fetch=ie_fetch_resp_body(&e,
+                            ie_fetch_resp_num(&e,
+                                ie_fetch_resp_new(&e),
+                                6
+                            ),
+                            APPLICATION_JUNK("")
+                        ),
+                    }
+                ),
+                .out=(size_chunk_out_t[]){
+                    {1024, "* 6 FETCH (BODY "
+                           "(\"application\" \"junk\" NIL \"id\" \"descr\" "
+                            "\"7BIT\" 192)"
+                            ")\r\n"},
+                    {0}
+                },
+            },
+            // basic BODYSTRUCT
+            {
+                .resp=imap_resp_new(&e, IMAP_RESP_FETCH,
+                    (imap_resp_arg_t){
+                        .fetch=ie_fetch_resp_bodystruct(&e,
+                            ie_fetch_resp_num(&e,
+                                ie_fetch_resp_new(&e),
+                                6
+                            ),
+                            APPLICATION_JUNK("")
+                        ),
+                    }
+                ),
+                .out=(size_chunk_out_t[]){
+                    {1024, "* 6 FETCH (BODYSTRUCTURE "
+                           "(\"application\" \"junk\" NIL \"id\" \"descr\" "
+                           "\"7BIT\" 192 \"md5\" (\"disp\" NIL) "
+                           "(\"l1\" \"l2\") \"loc\")"
+                           ")\r\n"},
+                    {0}
+                },
+            },
+            // message/rfc822 BODY
+            {
+                .resp=imap_resp_new(&e, IMAP_RESP_FETCH,
+                    (imap_resp_arg_t){
+                        .fetch=ie_fetch_resp_body(&e,
+                            ie_fetch_resp_num(&e,
+                                ie_fetch_resp_new(&e),
+                                6
+                            ),
+                            MESSAGE_RFC822("m1",
+                                MESSAGE_RFC822("m2",
+                                    TEXT_PLAIN("")
+                                )
+                            )
+                        ),
+                    }
+                ),
+                .out=(size_chunk_out_t[]){
+                    {1024, "* 6 FETCH (BODY "
+                           "(\"message\" \"rfc822\" NIL \"m1id\" \"m1descr\" "
+                           "\"m1txenc\" 255 "
+                           NILENV
+                           // >>
+                           "(\"message\" \"rfc822\" NIL \"m2id\" \"m2descr\" "
+                           "\"m2txenc\" 255 "
+                           NILENV
+                           // >>
+                           "(\"text\" \"plain\" NIL \"id\" \"descr\" "
+                           "\"txenc\" 192 1)"
+                           // <<
+                           " 22)"
+                           // <<
+                           " 22)"
+                           ")\r\n"},
+                    {0}
+                },
+            },
+            // message/rfc822 BODYSTRUCT
+            {
+                .resp=imap_resp_new(&e, IMAP_RESP_FETCH,
+                    (imap_resp_arg_t){
+                        .fetch=ie_fetch_resp_bodystruct(&e,
+                            ie_fetch_resp_num(&e,
+                                ie_fetch_resp_new(&e),
+                                6
+                            ),
+                            MESSAGE_RFC822("m1",
+                                MESSAGE_RFC822("m2",
+                                    TEXT_PLAIN("")
+                                )
+                            )
+                        ),
+                    }
+                ),
+                .out=(size_chunk_out_t[]){
+                    {1024, "* 6 FETCH (BODYSTRUCTURE "
+                           "(\"message\" \"rfc822\" NIL \"m1id\" \"m1descr\" "
+                           "\"m1txenc\" 255 "
+                           NILENV
+                           // >>
+                           "(\"message\" \"rfc822\" NIL \"m2id\" \"m2descr\" "
+                           "\"m2txenc\" 255 "
+                           NILENV
+                           // >>
+                           "(\"text\" \"plain\" NIL \"id\" \"descr\" "
+                           "\"txenc\" 192 1 \"md5\" (\"disp\" (\"p.k1\" "
+                           "\"p.v1\" \"p.k2\" \"p.v2\")) \"lang\" \"loc\")"
+                           // <<
+                           " 22 \"m2md5\" (\"m2disp\" NIL) \"m2lang\" "
+                           "\"m2loc\")"
+                           // <<
+                           " 22 \"m1md5\" (\"m1disp\" NIL) \"m1lang\" "
+                           "\"m1loc\")"
+                           ")\r\n"},
+                    {0}
+                },
+            },
+            // multipart/mixed BODY
+            {
+                .resp=imap_resp_new(&e, IMAP_RESP_FETCH,
+                    (imap_resp_arg_t){
+                        .fetch=ie_fetch_resp_body(&e,
+                            ie_fetch_resp_num(&e,
+                                ie_fetch_resp_new(&e),
+                                6
+                            ),
+                            MULTIPART_MIXED("",
+                                ie_body_add(&e,
+                                    TEXT_PLAIN(""),
+                                    APPLICATION_JUNK("")
+                                )
+                            )
+                        ),
+                    }
+                ),
+                .out=(size_chunk_out_t[]){
+                    {1024, "* 6 FETCH (BODY "
+                           "("
+                           // >>
+                           "(\"text\" \"plain\" NIL \"id\" \"descr\" "
+                           "\"txenc\" 192 1)"
+                           //
+                           "(\"application\" \"junk\" NIL \"id\" \"descr\" "
+                            "\"7BIT\" 192)"
+                           // <<
+                           " \"mixed\")"
+                           ")\r\n"},
+                    {0}
+                },
+            },
+            // multipart/mixed BODYSTRUCT
+            {
+                .resp=imap_resp_new(&e, IMAP_RESP_FETCH,
+                    (imap_resp_arg_t){
+                        .fetch=ie_fetch_resp_bodystruct(&e,
+                            ie_fetch_resp_num(&e,
+                                ie_fetch_resp_new(&e),
+                                6
+                            ),
+                            MULTIPART_MIXED("",
+                                ie_body_add(&e,
+                                    TEXT_PLAIN(""),
+                                    APPLICATION_JUNK("")
+                                )
+                            )
+                        ),
+                    }
+                ),
+                .out=(size_chunk_out_t[]){
+                    {1024, "* 6 FETCH (BODYSTRUCTURE "
+                           "("
+                           // >>
+                           "(\"text\" \"plain\" NIL \"id\" \"descr\" "
+                           "\"txenc\" 192 1 \"md5\" (\"disp\" (\"p.k1\" "
+                           "\"p.v1\" \"p.k2\" \"p.v2\")) \"lang\" \"loc\")"
+                           //
+                           "(\"application\" \"junk\" NIL \"id\" \"descr\" "
+                           "\"7BIT\" 192 \"md5\" (\"disp\" NIL) "
+                           "(\"l1\" \"l2\") \"loc\")"
+                           // <<
+                           " \"mixed\" (\"boundary\" \"uuid-str\") "
+                           "(\"disp\" NIL) NIL \"loc\")"
+                           ")\r\n"},
                     {0}
                 },
             },

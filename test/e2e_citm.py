@@ -1960,7 +1960,7 @@ def test_search(cmd, maildir_root, **kwargs):
         rw.wait_for_resp("2", "OK", require=[b"\\* SEARCH %d"%uid])
 
 @register_test
-def test_fetch(cmd, maildir_root, **kwargs):
+def test_fetch_envelope(cmd, maildir_root, **kwargs):
     with inbox(cmd) as rw:
         # append a message with known contents
         msg = (
@@ -2000,7 +2000,7 @@ def test_fetch(cmd, maildir_root, **kwargs):
         rw.put(msg + b"\r\n")
         rw.wait_for_resp("1", "OK")
 
-        # Get that UID
+        # get that UID
         uid = int(get_uid("*", rw))
 
         rw.put(b"2 UID FETCH %d (ENVELOPE)\r\n"%uid)
@@ -2020,6 +2020,126 @@ def test_fetch(cmd, maildir_root, **kwargs):
             + b"\"<ABCDEFG-HIJKLM-NO@list.junkdomain.com>\""
             + b"\\)\\)"
         ])
+
+
+@register_test
+def test_fetch_body(cmd, maildir_root, **kwargs):
+    with inbox(cmd) as rw:
+        # append a message with known contents
+        msg = (
+            b"Mime-Version: 1.0\r\n"
+            b"Content-Type: multipart/mixed; boundary=\"root-boundary\"\r\n"
+            b"Subject: root message\r\n"
+            b"\r\n"
+            b"--root-boundary\r\n"
+            # part 1: text/plain
+            b"\r\n"
+            b"Root Body, part 1.\r\n"
+            b"\r\n"
+            b"--root-boundary\r\n"
+            # part 2: a message/rfc822 with a text/plain body
+            b"Content-Type: message/rfc822\r\n"
+            b"\r\n"
+            b"Subject: sub message\r\n"
+            b"\r\n"
+            # part 2.1 (via the special dereference case): text/plain
+            b"Sub body.\r\n"
+            b"\r\n"
+            b"--root-boundary\r\n"
+            # part 3: a message/rfc822 with a multipart body
+            b"Content-Type: message/rfc822\r\n"
+            b"\r\n"
+            b"Subject: sub message\r\n"
+            b"Content-Type: multipart/mixed; boundary=\"sub-boundary\"\r\n"
+            b"\r\n"
+            b"--sub-boundary\r\n"
+            # part 3.1: text/plain
+            b"\r\n"
+            b"Sub-Sub Body 1.\r\n"
+            b"\r\n"
+            b"--sub-boundary\r\n"
+            # part 3.2: text/plain
+            b"\r\n"
+            b"Sub-Sub Body 2.\r\n"
+            b"\r\n"
+            b"--sub-boundary--\r\n"
+            b"\r\n"
+            b"--root-boundary--\r\n"
+        )
+        rw.put(b"1 APPEND INBOX {%d}\r\n"%len(msg))
+        rw.wait_for_match(b"\\+")
+        rw.put(msg + b"\r\n")
+        rw.wait_for_resp("1", "OK")
+
+        # get that UID
+        uid = int(get_uid("*", rw))
+
+        # first, request a few invalid body requests
+        for i, req in enumerate([b"0", b"4", b"2.2", b"2.1.1", b"1.1"]):
+            rw.put(b"invalid%d UID FETCH %d BODY[%s]\r\n"%(i, uid,req))
+            rw.wait_for_resp("invalid%d"%i, "NO")
+
+        # requesting BODY[MIME] is not allowed by imap for some reason
+        rw.put(b"2 UID FETCH %d BODY[MIME]\r\n"%uid)
+        rw.wait_for_resp("2", "BAD")
+
+        # request the BODY for the message
+        rw.put(b"3 UID FETCH %d BODY\r\n"%uid)
+        rw.wait_for_resp("3", "OK")
+
+        # request the BODYSTRUCTURE for the message
+        rw.put(b"4 UID FETCH %d BODYSTRUCTURE\r\n"%uid)
+        rw.wait_for_resp("4", "OK")
+
+        # broken mime: missing boundary parameter
+        msg = (
+            b"Mime-Version: 1.0\r\n"
+            b"Content-Type: multipart/mixed\r\n"
+            b"\r\n"
+            b"---\r\n"
+            b"\r\n"
+            b"hi!\n"
+            b"\r\n"
+            b"-----\r\n"
+        )
+        rw.put(b"5 APPEND INBOX {%d}\r\n"%len(msg))
+        rw.wait_for_match(b"\\+")
+        rw.put(msg + b"\r\n")
+        rw.wait_for_resp("5", "OK")
+        uid = int(get_uid("*", rw))
+
+        # BODY will show the one defaulted part
+        rw.put(b"6 UID FETCH %d BODY\r\n"%uid)
+        rw.wait_for_resp("6", "OK", require=[
+            b'.*BODY \\(\\("text" "plain" \\("charset" "us-ascii"\\) NIL NIL '
+            b'"7BIT" 0 0\\) "mixed"\\).*',
+        ])
+
+        # the one defaulted part is fetchable
+        rw.put(b"7 UID FETCH %d BODY[1]\r\n"%uid)
+        rw.wait_for_resp("7", "OK", require=[b'.*BODY\\[1\\] ""\\).*'])
+
+        # broken mime again: this time, zero body parts
+        msg = (
+            b"Mime-Version: 1.0\r\n"
+            b"Content-Type: multipart/mixed; boundary=\"-\"\r\n"
+            b"\r\n"
+            b"some prelude, but no boundary.\r\n"
+        )
+        rw.put(b"7 APPEND INBOX {%d}\r\n"%len(msg))
+        rw.wait_for_match(b"\\+")
+        rw.put(msg + b"\r\n")
+        rw.wait_for_resp("7", "OK")
+        uid = int(get_uid("*", rw))
+
+        rw.put(b"8 UID FETCH %d BODY\r\n"%uid)
+        rw.wait_for_resp("8", "OK", require=[
+            b'.*BODY \\(\\("text" "plain" \\("charset" "us-ascii"\\) NIL NIL '
+            b'"7BIT" 0 0\\) "mixed"\\).*',
+        ])
+
+        rw.put(b"9 UID FETCH %d BODY[1]\r\n"%uid)
+        rw.wait_for_resp("9", "OK", require=[b'.*BODY\\[1\\] ""\\).*'])
 
 def append_messages(rw, count, box="INBOX"):
     for n in range(count):
@@ -2088,10 +2208,11 @@ if __name__ == "__main__":
         print("extra subproc!", cmd)
         creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
         creationflags |= subprocess.CREATE_NEW_CONSOLE
-        p = subprocess.Popen(
-            cmd, creationflags=creationflags,
-        )
-        exit(p.wait())
+        with open("e2e_citm_log", "w") as f:
+            p = subprocess.Popen(
+                cmd, creationflags=creationflags, stdout=f, stderr=f
+            )
+            exit(p.wait())
 
     # initialize the global server_context
     cert = os.path.join(test_files, "ssl", "good-cert.pem")

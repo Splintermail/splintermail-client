@@ -63,6 +63,7 @@ typedef enum {
     MIME_TYPE_OTHER,
     MIME_TYPE_MESSAGE,
     MIME_TYPE_MULTIPART,
+    MIME_TYPE_TEXT,
 } mime_type_e;
 
 typedef enum {
@@ -71,27 +72,27 @@ typedef enum {
     MIME_SUBTYPE_DIGEST,
 } mime_subtype_e;
 
-struct mime_param_t;
-typedef struct mime_param_t mime_param_t;
+// forward declaration in expression.h
 struct mime_param_t {
     ie_dstr_t *key;
     ie_dstr_t *val;
     mime_param_t *next;
 };
-DEF_STEAL_PTR(mime_param_t);
+DEF_STEAL_PTR(mime_param_t)
 
 mime_param_t *mime_param_new(derr_t *e, ie_dstr_t *key, ie_dstr_t *val);
 void mime_param_free(mime_param_t *p);
 mime_param_t *mime_param_add(derr_t *e, mime_param_t *list, mime_param_t *new);
 
-typedef struct {
+// forward declaration in expression.h
+struct mime_content_type_t {
     mime_type_e type;
     mime_subtype_e subtype;
     ie_dstr_t *typestr;
     ie_dstr_t *subtypestr;
     mime_param_t *params;
-} mime_content_type_t;
-DEF_STEAL_PTR(mime_content_type_t);
+};
+DEF_STEAL_PTR(mime_content_type_t)
 
 mime_content_type_t *mime_content_type_new(
     derr_t *e,
@@ -151,6 +152,7 @@ void imf_handle_error(
     imf_parser_t *p,
     derr_t *E,
     const dstr_t *buf,
+    size_t skip,
     imf_token_e token,
     imf_sem_t sem,
     const unsigned char *expected_mask,
@@ -189,25 +191,41 @@ ie_envelope_t *read_envelope_info(derr_t *e, const imf_hdrs_t *hdrs);
 
 // MIME message parsing
 
-mime_content_type_t *read_mime_info(
+mime_content_type_t *read_mime_content_type(
     derr_t *e,
     const imf_hdrs_t *hdrs,
     dstr_t default_type,
     dstr_t default_subtype
 );
 
+derr_t read_bodystruct_info(
+    const imf_hdrs_t *hdrs,
+    dstr_t default_type,
+    dstr_t default_subtype,
+    mime_content_type_t **content_type_out,
+    ie_dstr_t **content_id_out,
+    ie_dstr_t **description_out,
+    ie_dstr_t **content_transfer_encoding_out,
+    ie_dstr_t **md5_out,
+    ie_body_disp_t **disposition_out,
+    ie_dstr_t **lang_out,
+    ie_dstr_t **location_out
+);
+
 dstr_off_t get_multipart_index(
     dstr_off_t bytes,
+    size_t skip,
     const dstr_t boundary,
     unsigned int index,
-    bool *missing
+    bool *missing,
+    size_t *next_skip
 );
 
 // Returns true if the submessage is missing.
 // root_imf: the imf_t for the entire email message.
 // sect_part: the section part we are looking for (may be NULL).
 // bytes: the actual content of the submessage.
-// mime_hdrs: when returning false, the parsed mime headers the submessage.
+// mime_hdrs: when returning false, the bytes of the relevant mime headers.
 // imf: if the submsg has an imf format, it is automatically parsed for you.
 // heap_imf: when returning false, if heap_imf is set you'll need to free it.
 bool imf_get_submessage(
@@ -215,7 +233,10 @@ bool imf_get_submessage(
     const imf_t *root_imf,
     const ie_sect_part_t *sect_part,
     dstr_off_t *bytes_out,
-    imf_hdrs_t **mime_hdrs_out,
+    dstr_off_t *mime_hdrs_out,
     const imf_t **imf_out,
     imf_t **heap_imf_out
 );
+
+// build the entire ie_body_t for a top-level message.
+ie_body_t *imf_bodystructure(derr_t *e, const imf_t *root_imf);
