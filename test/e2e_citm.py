@@ -1083,6 +1083,50 @@ def test_no_expunge_on_logout(cmd, maildir_root, **kwargs):
 
 
 @register_test
+def test_store_and_fetch_after_expunged(cmd, maildir_root, **kwargs):
+    with Subproc(cmd) as subproc:
+        with _inbox(subproc) as rw1:
+            # create a message we'll keep and one we'll expunge
+            append_messages(rw1, 2)
+            delete_id = get_msg_count(rw1, b"INBOX")
+            keep_id = delete_id - 1
+
+            # let session 2 take a snapshot of inbox
+            with _inbox(subproc) as rw2:
+                # delete from session 1
+                rw1.put(b"1 store %d flags \\Deleted\r\n"%delete_id)
+                rw1.wait_for_resp("1", "OK")
+
+                rw1.put(b"2 expunge\r\n")
+                rw1.wait_for_resp(
+                    "2", "OK", require=[b"\\* %d EXPUNGE"%delete_id]
+                )
+
+                # store from session 2
+                rw2.put(b"1 store %d,%d flags \\Seen\r\n"%(delete_id, keep_id))
+                rw2.wait_for_resp(
+                    "1",
+                    "OK",
+                    require=[
+                        b"\\* %d FETCH \\(FLAGS \\(\\\\Seen\\)\\)"%delete_id,
+                        b"\\* %d FETCH \\(FLAGS \\(\\\\Seen\\)\\)"%keep_id,
+                    ]
+                )
+
+                # fetch deleted body from session 2
+                rw2.put(b"2 fetch %d body[]\r\n"%(delete_id))
+                rw2.wait_for_resp(
+                    "2",
+                    "OK",
+                    require=[
+                        b'\\* %d FETCH \\(BODY\\[\\] "hello world"\\)'%(
+                            delete_id,
+                        )
+                    ]
+                )
+
+
+@register_test
 def test_noop(cmd, maildir_root, **kwargs):
     with Subproc(cmd) as subproc:
         with _inbox(subproc) as rw1, _inbox(subproc) as rw2:

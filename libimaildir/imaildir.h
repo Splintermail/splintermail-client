@@ -152,6 +152,7 @@ struct imaildir_t {
     unsigned int uid_validity;
     unsigned int hi_uid_dn; // starts at 0 for empty boxes
     unsigned int hi_uid_local; // starts at 0 for empty boxes
+    uint64_t himodseq_dn; // starts at 1 for empty boxes
     // mailbox flags
     ie_mflags_t mflags;
     // has this imaildir synced yet? (subsequent sync's don't send updates)
@@ -206,9 +207,23 @@ struct imaildir_t {
 
     // did we open via imaildir_init_lite()?
     bool lite;
+
+    /* Every message which exists at this moment, or which existed when the
+       mailbox was opened will be in this tree.  Messages which were expunged
+       already when the mailbox was open will not be in msgs. */
     jsw_atree_t msgs;  // msg_t->node, keyed by msg->key
+
+    /* Every message in msgs which is FILLED or EXPUNGED should have an entry
+       in the mods tree.  These will also be the messages with a uid_dn.
+       UNFILLED/NOT4ME messages will not be present here.  Also, all expunges
+       with a uid_dn will be present here.  Expunges based on UNFILLED or
+       NOT4ME messages will not have a uid_dn, and will not be present. */
     jsw_atree_t mods;  // msg_mod_t->node
+
+    /* Every expunges, pushed or unpushed, will be in this tree.  Of those, all
+       expunges with a uid_dn will also appear in mods. */
     jsw_atree_t expunged;  // msg_expunge_t->node;
+
     maildir_log_i *log;
     // the latest serial of things we put in /tmp
     size_t tmp_count;
@@ -265,6 +280,12 @@ struct maildir_log_i {
     uint64_t (*get_himodseq_up)(maildir_log_i*);
     derr_t (*set_himodseq_up)(maildir_log_i*, uint64_t himodseq_up);
 
+    /* A modseq we gave to a client but didn't log to file.  Primarily when we
+       accept STORE commands to already-EXPUNGED messages.  This is only useful
+       when considered with the implicit himodseq_dn values, the ones
+       observable in the log file itself. */
+    derr_t (*set_explicit_modseq_dn)(maildir_log_i*, uint64_t modseq_dn);
+
     // store the up-to-date message
     derr_t (*update_msg)(maildir_log_i*, const msg_t *msg);
 
@@ -276,9 +297,14 @@ struct maildir_log_i {
 };
 
 // this must be implemented by the log backend
-derr_t imaildir_log_open(const string_builder_t *dirpath,
-        jsw_atree_t *msgs_out, jsw_atree_t *expunged_out,
-        jsw_atree_t *mods_out, maildir_log_i **log_out);
+derr_t imaildir_log_open(
+    const string_builder_t *dirpath,
+    jsw_atree_t *msgs_out,
+    jsw_atree_t *expunged_out,
+    jsw_atree_t *mods_out,
+    uint64_t *himodseq_dn_out,
+    maildir_log_i **log_out
+);
 
 // this must be implemented by the log backend
 derr_t imaildir_log_rm(const string_builder_t *dirpath);

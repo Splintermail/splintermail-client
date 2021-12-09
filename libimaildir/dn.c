@@ -1572,18 +1572,18 @@ static derr_t gather_update_meta(dn_t *dn, gather_t *gather, update_t *update){
         jsw_ainsert(&gather->metas, &gathered->node);
     }
 
-    // remove the old view
+    // remove the old view, if there is one
+    /* (there might not be if this is an update to an expunge message where we
+        have already accepted the expunge) */
     jsw_anode_t *node = jsw_aerase(&dn->views, &view->uid_dn);
-    if(!node){
-        // This should never happen since we process messages in order
-        ORIG_GO(&e, E_INTERNAL, "missing uid_dn", cu);
-    }
-    msg_view_t *old_view = CONTAINER_OF(node, msg_view_t, node);
-    msg_view_free(&old_view);
+    if(node){
+        msg_view_t *old_view = CONTAINER_OF(node, msg_view_t, node);
+        msg_view_free(&old_view);
 
-    // add the new view
-    jsw_ainsert(&dn->views, &view->node);
-    update->arg.new = NULL;
+        // add the new view
+        jsw_ainsert(&dn->views, &view->node);
+        update->arg.new = NULL;
+    }
 
 cu:
     update_free(&update);
@@ -1762,11 +1762,13 @@ static derr_t send_store_resp_noupdate(dn_t *dn, const exp_flags_t *exp_flags){
 
     msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
     if(!msg_flags_eq(exp_flags->flags, view->flags)){
-        /* we expected an update but none happened.  I'm pretty sure this only
+        /* We expected an update but none happened.  I'm pretty sure this only
            happens if the thing got deleted; if it was updated and canceled it
            should have appeared as an update still, and since updates are
            serialized in the imaildir_t and we are only processing the updates
-           up to our own update, there's no other possibilities */
+           up to our own update, there's no other possibilities.  Note that if
+           we deleted it ourselves the imaildir would have intercepted it and
+           shown us a fake flag change. */
         LOG_INFO("deleted message (%x) didn't accept flag change...?\n",
                 FU(exp_flags->uid_dn));
         return e;
@@ -1923,20 +1925,20 @@ static derr_t process_meta_update_for_store(dn_t *dn, update_t *update,
 
     msg_view_t *view = update->arg.meta;
 
-    // remove the old view
+    // remove the old view, if there is one
+    /* (there might not be if this is an update to an expunge message where we
+        have already accepted the expunge) */
     jsw_anode_t *node = jsw_aerase(&dn->views, &view->uid_dn);
-    if(!node){
-        // TODO: update a pending UPDATE_NEW message with this uid_dn in it
-        ORIG_GO(&e, E_INTERNAL, "missing uid_dn", cu);
+    if(node){
+        msg_view_t *old_view = CONTAINER_OF(node, msg_view_t, node);
+        msg_view_free(&old_view);
+
+        // add the new view
+        jsw_ainsert(&dn->views, &view->node);
+        update->arg.new = NULL;
+
+        PROP_GO(&e, seq_set_builder_add_val(uids_dn_ssb, view->uid_dn), cu);
     }
-    msg_view_t *old_view = CONTAINER_OF(node, msg_view_t, node);
-    msg_view_free(&old_view);
-
-    // add the new view
-    jsw_ainsert(&dn->views, &view->node);
-    update->arg.new = NULL;
-
-    PROP_GO(&e, seq_set_builder_add_val(uids_dn_ssb, view->uid_dn), cu);
 
 cu:
     update_free(&update);

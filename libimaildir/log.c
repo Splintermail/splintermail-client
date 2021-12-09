@@ -14,6 +14,9 @@ derr_t log_key_marshal(log_key_t *lk, dstr_t *out){
         case LOG_KEY_HIMODSEQUP:
             PROP(&e, FMT(out, "h") );
             break;
+        case LOG_KEY_MODSEQDN:
+            PROP(&e, FMT(out, "d") );
+            break;
         case LOG_KEY_MSG:
             PROP(&e,
                 FMT(out, "m.%x.%x",
@@ -21,6 +24,7 @@ derr_t log_key_marshal(log_key_t *lk, dstr_t *out){
                     FU(lk->arg.msg_key.uid_local)
                 )
             );
+            break;
     }
     return e;
 }
@@ -51,6 +55,15 @@ derr_t log_key_unmarshal(const dstr_t *key, log_key_t *lk){
             }
             *lk = (log_key_t){
                 .type = LOG_KEY_HIMODSEQUP,
+            };
+            break;
+        case 'd':
+            // make sure the key has nothing else
+            if(key->len > 1){
+                ORIG(&e, E_VALUE, "modseqdn key is too long in database");
+            }
+            *lk = (log_key_t){
+                .type = LOG_KEY_MODSEQDN,
             };
             break;
         case 'm':

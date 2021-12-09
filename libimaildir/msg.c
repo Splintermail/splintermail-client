@@ -156,6 +156,14 @@ void msg_key_list_free(msg_key_list_t *keys){
     }
 }
 
+msg_key_list_t *msg_key_list_pop(msg_key_list_t **keys){
+    if(!*keys) return NULL;
+    msg_key_list_t *new = STEAL(msg_key_list_t, &(*keys)->next);
+    msg_key_list_t *out = *keys;
+    *keys = new;
+    return out;
+}
+
 // builder api
 msg_store_cmd_t *msg_store_cmd_new(
     derr_t *e, msg_key_list_t *keys,

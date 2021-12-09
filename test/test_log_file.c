@@ -127,14 +127,20 @@ static derr_t test_log_file(void){
     PROP_GO(&e, msg_new(&m4, KEY_UP(4), 4, MSG_FILLED, t4, f4, 4), cu);
     PROP_GO(&e, msg_new(&m5, KEY_UP(5), 5, MSG_FILLED, t5, f5, 5), cu);
 
+    uint64_t himodseq_dn;
+
     // open a logfile
     PROP_GO(&e,
-        imaildir_log_open(&dirpath, &msgs, &expunged, &mods, &log),
+        imaildir_log_open(
+            &dirpath, &msgs, &expunged, &mods, &himodseq_dn, &log
+        ),
     cu);
 
     EXPECT_U_GO(&e, "msgs.size", msgs.size, 0, cu);
     EXPECT_U_GO(&e, "expunged.size", expunged.size, 0, cu);
     EXPECT_U_GO(&e, "mods.size", mods.size, 0, cu);
+    EXPECT_U_GO(&e, "msgs.size", msgs.size, 0, cu);
+    EXPECT_U_GO(&e, "himodseq_dn", himodseq_dn, 1, cu);
 
     // add some entries
     log->set_uidvlds(log, 7, 8);
@@ -155,7 +161,9 @@ static derr_t test_log_file(void){
     log = NULL;
     free_trees(&msgs, &expunged, &mods);
     PROP_GO(&e,
-        imaildir_log_open(&dirpath, &msgs, &expunged, &mods, &log),
+        imaildir_log_open(
+            &dirpath, &msgs, &expunged, &mods, &himodseq_dn, &log
+        ),
     cu);
 
     // things must be be persisted
@@ -170,8 +178,9 @@ static derr_t test_log_file(void){
     EXPECT_MSG_GO(&e, "m3", GET_MSG(3), m3, cu);
     EXPECT_MSG_GO(&e, "m4", GET_MSG(4), m4, cu);
     EXPECT_MSG_GO(&e, "m5", GET_MSG(5), m5, cu);
+    EXPECT_U_GO(&e, "himodseq_dn", himodseq_dn, 5, cu);
 
-    // now update two messages and expunge three mesages
+    // now update two messages, expunge three mesages, and an explicit modseq_dn
     m1->flags.draft = true;
     m1->mod.modseq = 10;
     m2->flags.draft = true;
@@ -190,13 +199,16 @@ static derr_t test_log_file(void){
     PROP_GO(&e, log->update_expunge(log, e3), cu);
     PROP_GO(&e, log->update_expunge(log, e4), cu);
     PROP_GO(&e, log->update_expunge(log, e5), cu);
+    PROP_GO(&e, log->set_explicit_modseq_dn(log, 17), cu);
 
     // close the file, repoen it
     log->close(log);
     log = NULL;
     free_trees(&msgs, &expunged, &mods);
     PROP_GO(&e,
-        imaildir_log_open(&dirpath, &msgs, &expunged, &mods, &log),
+        imaildir_log_open(
+            &dirpath, &msgs, &expunged, &mods, &himodseq_dn, &log
+        ),
     cu);
 
     // things must be be persisted
@@ -211,6 +223,7 @@ static derr_t test_log_file(void){
     EXPECT_EXPUNGE_GO(&e, "e3", GET_EXPUNGE(3), e3, cu);
     EXPECT_EXPUNGE_GO(&e, "e4", GET_EXPUNGE(4), e4, cu);
     EXPECT_EXPUNGE_GO(&e, "e5", GET_EXPUNGE(5), e5, cu);
+    EXPECT_U_GO(&e, "himodseq_dn", himodseq_dn, 17, cu);
 
     // close the file
     log->close(log);
@@ -227,7 +240,9 @@ static derr_t test_log_file(void){
 
     // reopen, and add up to 999 lines, mostly updates
     PROP_GO(&e,
-        imaildir_log_open(&dirpath, &msgs, &expunged, &mods, &log),
+        imaildir_log_open(
+            &dirpath, &msgs, &expunged, &mods, &himodseq_dn, &log
+        ),
     cu);
     for(uint64_t i = nlines; i < 999; i++){
         PROP_GO(&e, log->set_himodseq_up(log, i), cu);
@@ -244,7 +259,9 @@ static derr_t test_log_file(void){
 
     // trigger compaction
     PROP_GO(&e,
-        imaildir_log_open(&dirpath, &msgs, &expunged, &mods, &log),
+        imaildir_log_open(
+            &dirpath, &msgs, &expunged, &mods, &himodseq_dn, &log
+        ),
     cu);
     PROP_GO(&e, log->set_himodseq_up(log, 1000), cu);
     log->close(log);
@@ -255,11 +272,13 @@ static derr_t test_log_file(void){
     filebuf.len = 0;
     PROP_GO(&e, dstr_read_path(&path, &filebuf), cu);
     nlines = dstr_count2(filebuf, DSTR_LIT("\n"));
-    EXPECT_U_GO(&e, "linecount after compaction", nlines, 7, cu);
+    EXPECT_U_GO(&e, "linecount after compaction", nlines, 8, cu);
 
     // verify contents
     PROP_GO(&e,
-        imaildir_log_open(&dirpath, &msgs, &expunged, &mods, &log),
+        imaildir_log_open(
+            &dirpath, &msgs, &expunged, &mods, &himodseq_dn, &log
+        ),
     cu);
     EXPECT_U_GO(&e, "log.get_uidvld_up()", log->get_uidvld_up(log), 7, cu);
     EXPECT_U_GO(&e, "log.get_uidvld_dn()", log->get_uidvld_dn(log), 8, cu);
@@ -272,6 +291,7 @@ static derr_t test_log_file(void){
     EXPECT_EXPUNGE_GO(&e, "e3", GET_EXPUNGE(3), e3, cu);
     EXPECT_EXPUNGE_GO(&e, "e4", GET_EXPUNGE(4), e4, cu);
     EXPECT_EXPUNGE_GO(&e, "e5", GET_EXPUNGE(5), e5, cu);
+    EXPECT_U_GO(&e, "himodseq_dn", himodseq_dn, 17, cu);
 
 cu:
     dstr_free(&filebuf);

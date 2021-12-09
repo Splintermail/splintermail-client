@@ -218,6 +218,28 @@ static derr_t set_himodseq_up(maildir_log_i *iface, uint64_t himodseq_up){
     return e;
 }
 
+static derr_t set_explicit_modseq_dn(maildir_log_i *iface, uint64_t modseq_dn){
+    derr_t e = E_OK;
+    log_t *log = CONTAINER_OF(iface, log_t, iface);
+
+    // prepare a line
+    DSTR_VAR(buf, MAX_LINE_LEN);
+    log_key_t lk = { .type = LOG_KEY_MODSEQDN };
+    PROP(&e, log_key_marshal(&lk, &buf) );
+    PROP(&e, FMT(&buf, "|%x\n", FU(modseq_dn)) );
+
+    // write a line
+    PROP(&e, dstr_fwrite(log->f, &buf) );
+    PROP(&e, dffsync(log->f) );
+
+    // assume all new lines are updates for now (it's close enough to true)
+    log->lines++;
+    log->updates++;
+    PROP(&e, maybe_compact(log) );
+
+    return e;
+}
+
 // store the up-to-date message
 static derr_t update_msg(maildir_log_i *iface, const msg_t *msg){
     derr_t e = E_OK;
@@ -348,6 +370,7 @@ static derr_t read_all_keys(
     jsw_atree_t *msgs,
     jsw_atree_t *expunged,
     jsw_atree_t *mods,
+    uint64_t *himodseq_dn,
     long *valid_len,
     bool *want_trunc
 ){
@@ -356,6 +379,7 @@ static derr_t read_all_keys(
     char buf[MAX_LINE_LEN];
     *valid_len = 0;
     *want_trunc = false;
+    *himodseq_dn = 1;
 
     while(true){
         // read one line
@@ -418,15 +442,35 @@ static derr_t read_all_keys(
                 PROP(&e, dstr_tou64(&val, &log->himodseq_up, 10) );
                 break;
 
+            case LOG_KEY_MODSEQDN:
+                if(log->himodseq_up > 0) log->updates++;
+                uint64_t temp;
+                PROP(&e, dstr_tou64(&val, &temp, 10) );
+                *himodseq_dn = MAX(*himodseq_dn, temp);
+                break;
+
             case LOG_KEY_MSG:
                 // read this value to the relevant structs
                 PROP(&e,
                     read_one_value(
-                        log, lk.arg.msg_key, &val, msgs, expunged, mods
+                        log,
+                        lk.arg.msg_key,
+                        &val,
+                        msgs,
+                        expunged,
+                        mods
                     )
                 );
                 break;
         }
+    }
+
+    // get the highest modseq we saw in the messages
+    jsw_atrav_t trav;
+    jsw_anode_t *node = jsw_atlast(&trav, mods);
+    if(node){
+        msg_mod_t *mod = CONTAINER_OF(node, msg_mod_t, node);
+        *himodseq_dn = MAX(*himodseq_dn, mod->modseq);
     }
 
     return e;
@@ -437,6 +481,7 @@ derr_t imaildir_log_open(
     jsw_atree_t *msgs_out,
     jsw_atree_t *expunged_out,
     jsw_atree_t *mods_out,
+    uint64_t *himodseq_dn_out,
     maildir_log_i **log_out
 ){
     log_t *log = NULL;
@@ -458,6 +503,7 @@ derr_t imaildir_log_open(
             .set_uidvlds = set_uidvlds,
             .get_himodseq_up = get_himodseq_up,
             .set_himodseq_up = set_himodseq_up,
+            .set_explicit_modseq_dn = set_explicit_modseq_dn,
             .update_msg = update_msg,
             .update_expunge = update_expunge,
             .close = iface_close,
@@ -479,7 +525,14 @@ derr_t imaildir_log_open(
     long valid_len;
     PROP_GO(&e,
         read_all_keys(
-            log, f, msgs_out, expunged_out, mods_out, &valid_len, &want_trunc
+            log,
+            f,
+            msgs_out,
+            expunged_out,
+            mods_out,
+            himodseq_dn_out,
+            &valid_len,
+            &want_trunc
         ),
     cu);
 

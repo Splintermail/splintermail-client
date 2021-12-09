@@ -15,10 +15,11 @@ typedef struct {
 DEF_CONTAINER_OF(msg_mod_t, node, jsw_anode_t)
 
 typedef enum {
+    // UNFILLED messages have a uid_up but no uid_dn or modseq
     MSG_UNFILLED,
     MSG_FILLED,
     MSG_EXPUNGED,
-    // NOT4ME messages have a uid_up but no uid_dn
+    // NOT4ME messages have a uid_up but no uid_dn or modseq
     MSG_NOT4ME,
 } msg_state_e;
 
@@ -171,7 +172,7 @@ typedef enum {
        is processed, but with async messages you need a barrier to prevent
        updates created after the processing of the async message from
        accidentally going out with the async message */
-    // TODO: figure out why pass out "future" updates was even a problem.
+    // TODO: figure out why passing out "future" updates was even a problem.
     UPDATE_SYNC,
 } update_type_e;
 
@@ -228,6 +229,8 @@ msg_key_list_t *msg_key_list_new(
     derr_t *e, const msg_key_t key, msg_key_list_t *tail
 );
 void msg_key_list_free(msg_key_list_t *keys);
+// separate/return the front of the list
+msg_key_list_t *msg_key_list_pop(msg_key_list_t **keys);
 
 // builder api
 msg_store_cmd_t *msg_store_cmd_new(

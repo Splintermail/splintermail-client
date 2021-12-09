@@ -1,9 +1,10 @@
 // log.h is not imported as part of libimaildir.h
 
 typedef enum {
-    LOG_KEY_UIDVLDS,      // "v" for "validity"
+    LOG_KEY_UIDVLDS,     // "v" for "validity"
     LOG_KEY_HIMODSEQUP,  // "h" for "high"
-    LOG_KEY_MSG,       // "m" for "message"
+    LOG_KEY_MODSEQDN,    // "d" for "down"
+    LOG_KEY_MSG,         // "m" for "message"
 } log_key_type_e;
 
 typedef union {
