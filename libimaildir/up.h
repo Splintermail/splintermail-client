@@ -33,8 +33,8 @@ typedef struct up_cb_i up_cb_i;
       - relay commands can be fully parallel, that's on the caller to handle
       - IDLE obviously precludes anything else being parallel, and should only
         be launched when nothing else is in flight
-      - UNSELECT state needs to be check in between any commands which trigger
-        other commands (such as the steps in the initial deletions)
+      - UNSELECT state needs to be checked in between any commands which
+        trigger other commands (such as the steps in the initial deletions)
 */
 
 // the interface provided to up_t by its owner

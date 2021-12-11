@@ -977,7 +977,7 @@ static derr_t advance_state(up_t *up){
         up->synced = true;
         PROP(&e, imaildir_up_initial_sync_complete(up->m, up) );
     }
-    // no value in IDLE before we finish an initial sync
+    // don't IDLE before we finish an initial sync
     if(!up->synced) return e;
 
     // check for in-flight commands of any type

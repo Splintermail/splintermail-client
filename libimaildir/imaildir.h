@@ -369,7 +369,7 @@ derr_t imaildir_dn_close_msg(imaildir_t *m, const msg_key_t key, int *fd);
 derr_t imaildir_add_local_file(
     imaildir_t *m,
     const string_builder_t *path,
-    // uid_up should be zero to indicate the file is only local
+    // a zero uid_up indicates the file is only local
     unsigned int uid_up,
     size_t len,
     imap_time_t intdate,

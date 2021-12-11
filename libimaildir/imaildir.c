@@ -2168,7 +2168,7 @@ derr_t imaildir_dn_close_msg(imaildir_t *m, const msg_key_t key, int *fd){
 derr_t imaildir_add_local_file(
     imaildir_t *m,
     const string_builder_t *path,
-    // uid_up should be zero to indicate the file is only local
+    // a zero uid_up indicates the file is only local
     unsigned int uid_up,
     size_t len,
     imap_time_t intdate,
@@ -2180,21 +2180,34 @@ derr_t imaildir_add_local_file(
     // build an appropriate message key
     msg_key_t key = uid_up > 0 ? KEY_UP(uid_up) : KEY_LOCAL(next_uid_local(m));
 
-    /* it is the up_t's responsibility to never create a msg_t for any message
-       during a hold, so that this never tramples an existing msg_t */
-    msg_t *msg = NULL;
+    /* there is a *very* remote possibility that the up_t has already received
+       a flag update for this message, before we even ended the hold, in which
+       case the existing flags are newer than the ones we set in APPEND */
+    jsw_anode_t *node = jsw_afind(&m->msgs, &key, NULL);
+    msg_t *msg = CONTAINER_OF(node, msg_t, node);
+    if(msg){
+        /* we are guaranteed the message is not filled since up_t can't
+           download message contents during a hold, so uid_dn and msg->modseq
+           must be 0 */
 
-    /* write the UNFILLED msg to the log; the loading logic will puke if we put
-       the file in place and crash without having written the metadata first */
-    unsigned int uid_dn = 0;
-    uint64_t modseq = 0;
-    msg_state_e state = MSG_UNFILLED;
-    PROP_GO(&e,
-        msg_new(&msg, key, uid_dn, state, intdate, flags, modseq),
-    fail_path);
+        // update static attributes
+        msg->internaldate = intdate;
 
-    // put the UNFILLED msg in msgs right away
-    jsw_ainsert(&m->msgs, &msg->node);
+        // ignore the initial flags and trust whatever the up_t saw
+
+    }else{
+        /* write the UNFILLED msg to the log; the loading logic will puke if we
+           put the file in place and crash without having written the metadata
+           first */
+        unsigned int uid_dn = 0;
+        uint64_t modseq = 0;
+        msg_state_e state = MSG_UNFILLED;
+        PROP_GO(&e,
+            msg_new(&msg, key, uid_dn, state, intdate, flags, modseq),
+        fail_path);
+
+        jsw_ainsert(&m->msgs, &msg->node);
+    }
 
     /* TODO: throw an E_IMAILDIR here, since this message would not be detected
        as needing to be downloaded by the up_t, and I'd rather shut down this
