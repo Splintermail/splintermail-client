@@ -175,12 +175,17 @@ struct up_t {
         link_t cbs;  // imap_cmd_cb_t->link (from an imaildir_cb_t)
     } relay;
 
+    /* when our owner wants to take control over the connection for a passthru
+       command, it will block our IDLE so that it doesn't send mid-command */
+    struct {
+        bool want;
+        bool active;
+    } idle_block;
+
     struct {
         bool sent;
         bool got_plus;
         bool done_sent;
-        bool want_block;
-        bool blocked;
     } idle;
 
     // *exts should point to somewhere else

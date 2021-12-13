@@ -42,12 +42,15 @@ static void up_free_reselect(up_t *up){
     }
 }
 
+static void up_free_idle_block(up_t *up){
+    up->idle_block.want = false;
+    up->idle_block.active = false;
+}
+
 static void up_free_idle(up_t *up){
     up->idle.sent = false;
     up->idle.got_plus = false;
     up->idle.done_sent = false;
-    up->idle.want_block = false;
-    up->idle.blocked = false;
 }
 
 void up_free(up_t *up){
@@ -56,6 +59,7 @@ void up_free(up_t *up){
     up_free_deletions(up);
     up_free_fetch(up);
     up_free_reselect(up);
+    up_free_idle_block(up);
     up_free_idle(up);
 }
 
@@ -859,10 +863,10 @@ static derr_t advance_state(up_t *up){
     bool ok;
 
     // respond to asynchronous external APIs
-    if(up->idle.want_block && !up->idle.blocked){
+    if(up->idle_block.want && !up->idle_block.active){
         PROP(&e, need_done(up, &ok) );
         if(ok){
-            up->idle.blocked = true;
+            up->idle_block.active = true;
             up->cb->idle_blocked(up->cb);
         }
     }
@@ -983,7 +987,7 @@ static derr_t advance_state(up_t *up){
     // check for in-flight commands of any type
     if(!link_list_isempty(&up->cbs)) return e;
 
-    if(!up->idle.sent && !up->idle.want_block){
+    if(!up->idle.sent && !up->idle_block.want){
         up->idle.sent = true;
         // issue an IDLE command
         PROP(&e, send_idle(up) );
@@ -1235,7 +1239,7 @@ cu_resp:
 derr_t up_idle_block(up_t *up){
     derr_t e = E_OK;
 
-    up->idle.want_block = true;
+    up->idle_block.want = true;
     PROP(&e, advance_state(up) );
 
     return e;
@@ -1244,8 +1248,7 @@ derr_t up_idle_block(up_t *up){
 derr_t up_idle_unblock(up_t *up){
     derr_t e = E_OK;
 
-    up->idle.want_block = false;
-    up->idle.blocked = false;
+    up_free_idle_block(up);
     PROP(&e, advance_state(up) );
 
     return e;
