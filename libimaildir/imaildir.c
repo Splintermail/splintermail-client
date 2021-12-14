@@ -762,6 +762,9 @@ size_t imaildir_unregister_up(up_t *up){
 
     up_imaildir_preunregister(up);
 
+    // revoke all access
+    up->m = NULL;
+
     // don't do additional handling during a force_close
     if(m->closed) return --m->naccessors;
 
@@ -783,6 +786,9 @@ size_t imaildir_unregister_dn(dn_t *dn){
     imaildir_t *m = dn->m;
 
     dn_imaildir_preunregister(dn);
+
+    // revoke all access
+    dn->m = NULL;
 
     if(!m->closed){
         // remove from its list

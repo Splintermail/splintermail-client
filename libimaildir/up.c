@@ -93,7 +93,8 @@ void up_imaildir_select(
     if(!up->select.ready){
         // initial select
 
-        hmsc_prep(&up->hmsc, himodseq_up);
+        up->himodseq_up_seen = himodseq_up;
+        up->himodseq_up_committed = himodseq_up;
 
         up->select.ready = true;
         up->select.examine = examine;
@@ -103,9 +104,9 @@ void up_imaildir_select(
     }else{
         // reSELECT
 
-        /* we can't call hmsc prep on a secondary SELECT or EXAMINE because it
-           is possible that we still have modseq responses in flight.  Instead,
-           that is called on the `* OK [CLOSED]` response. */
+        /* we can't initialize our himodseq values on a secondary SELECT or
+           EXAMINE because it is possible that we still have modseq responses
+           in flight.  Instead, we wait until the `* OK [CLOSED]` response. */
 
         up->reselect.needed = true;
         up->reselect.examine = examine;
@@ -172,6 +173,10 @@ void up_imaildir_have_local_file(up_t *up, unsigned int uid){
 void up_imaildir_hold_end(up_t *up){
     up->enqueued = true;
     up->cb->enqueue(up->cb);
+}
+
+static void himodseq_observe(up_t *up, uint64_t observation){
+    up->himodseq_up_seen = MAX(up->himodseq_up_seen, observation);
 }
 
 static ie_dstr_t *write_tag_up(derr_t *e, size_t tag){
@@ -453,7 +458,7 @@ static derr_t fetch_resp(up_t *up, const ie_fetch_resp_t *fetch){
 
     // did we see a MODSEQ value?
     if(fetch->modseq > 0){
-        hmsc_saw_fetch(&up->hmsc, fetch->modseq);
+        himodseq_observe(up, fetch->modseq);
     }
 
     return e;
@@ -999,21 +1004,27 @@ static derr_t advance_state(up_t *up){
 static derr_t post_cmd_done(up_t *up, const ie_st_code_t *code){
     derr_t e = E_OK;
 
+    // we may have been unregistered in a cmd cb
+    if(up->m == NULL) return e;
+
     // check the last command's status-type response for a HIMODSEQ
     if(code && code->type == IE_ST_CODE_HIMODSEQ){
-        hmsc_saw_ok_code(&up->hmsc, code->arg.himodseq);
+        himodseq_observe(up, code->arg.himodseq);
     }
 
-    // do we need to cache a newer, fresher modseq value?
-    /* if we need a bootstrap fetch, don't step or reset the hmsc; the
-       state it accumulates during the SELECT (QRESYNC ...) is still
-       needed, even if the QRESYNC didn't happen due to a UIDVALIDITY
-       issue.  After the bootstrap fetch, our own himodseq will match the
-       what the server reported after the SELECT */
-    bool bootstrap_pending = up->bootstrap.needed && !up->bootstrap.done;
-    if(!bootstrap_pending && hmsc_step(&up->hmsc)){
-        PROP(&e, imaildir_up_set_himodseq_up(up->m, hmsc_now(&up->hmsc)) );
-    }
+    // skip noop commits
+    if(up->himodseq_up_committed == up->himodseq_up_seen) return e;
+
+    /* if we know that there are messages which exist but which we haven't
+       logged (even as UNFILLED), either due to a new mailbox, a UIDVALIDITY
+       mismatch, or due to an EXISTS response, we can't commit our himodseq_up
+       seen to persistent storage yet */
+    if(up->bootstrap.needed && !up->bootstrap.done) return e;
+
+    // commit the himodseq we've seen to persistent storage
+    PROP(&e, imaildir_up_set_himodseq_up(up->m, up->himodseq_up_seen) );
+
+    up->himodseq_up_committed = up->himodseq_up_seen;
 
     return e;
 }
@@ -1046,11 +1057,12 @@ static derr_t untagged_ok(up_t *up, const ie_st_code_t *code,
                 );
 
                 if(code->arg.uidvld != up->select.uidvld_up){
-                    /* invalidate the original himodseq, which may be from an
+                    /* invalidate our himodseq seen, which may be from an
                        old UIDVALIDITY */
-                    hmsc_invalidate_starting_val(&up->hmsc);
-                    /* start with a bootstrap fetch and don't step the hmsc or
-                       save the himodseq to the log yet */
+                    up->himodseq_up_seen = 0;
+                    up->himodseq_up_committed = 0;
+                    /* start with a bootstrap fetch and don't commit any
+                       himodseq values to the log yet */
                     up->bootstrap.needed = true;
                 }
                 break;
@@ -1060,8 +1072,7 @@ static derr_t untagged_ok(up_t *up, const ie_st_code_t *code,
                 break;
 
             case IE_ST_CODE_HIMODSEQ:
-                // tell our himodseq calculator what we saw
-                hmsc_saw_ok_code(&up->hmsc, code->arg.himodseq);
+                himodseq_observe(up, code->arg.himodseq);
                 break;
 
             case IE_ST_CODE_UNSEEN:
@@ -1075,10 +1086,12 @@ static derr_t untagged_ok(up_t *up, const ie_st_code_t *code,
 
             // QRESYNC extension
             case IE_ST_CODE_CLOSED:
-                /* reset the hmsc (we should only receive this here when we are
-                   in the middle of a SELECT->EXAMINE-like transition, and this
-                   is the delayed hmsc_prep from up_imaildir_select() ) */
-                hmsc_prep(&up->hmsc, up->reselect.himodseq_up);
+                /* reset the himodseq values (we should only receive this here
+                   when we are in the middle of a SELECT->EXAMINE-like
+                   transition, and this is the delayed initialization from
+                   up_imaildir_select() ) */
+                up->himodseq_up_seen = up->reselect.himodseq_up;
+                up->himodseq_up_committed = up->reselect.himodseq_up;
                 break;
 
             case IE_ST_CODE_ALERT:

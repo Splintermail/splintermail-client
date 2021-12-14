@@ -96,8 +96,19 @@ struct up_t {
     // the interfaced provided to us
     up_cb_i *cb;
     bool synced;
-    // a tool for tracking the highestmodseq we have actually synced
-    himodseq_calc_t hmsc;
+    // track the highest modseq value we see from any source
+    uint64_t himodseq_up_seen;
+    /* After any command is complete, we can commit the highest modseq we've
+       seen to persistent storage, so long as we do not have new messages to
+       find (before the first bootstrap or after an EXISTS response).
+
+       There are also a few cases where we will do this in the middle of an
+       IDLE command.
+
+       Note that this is only safe because we never emit plain FETCH, STORE, or
+       COPY commands, as those cause EXPUNGEs to be witheld, which in turn
+       causes the himodseq to become unnecessarily complex to interpret. */
+    uint64_t himodseq_up_committed;
     seq_set_builder_t uids_up_to_download;
     // current tag
     size_t tag;
