@@ -43,6 +43,12 @@ def as_bytes(msg):
         return msg
     return msg.encode("utf8")
 
+class StatusError(Exception):
+    pass
+
+class RequiredError(Exception):
+    pass
+
 class DisallowedError(Exception):
     pass
 
@@ -539,7 +545,7 @@ class RW:
             if line.startswith(tag + b" "):
                 # end of command response
                 if not line.startswith(tag + b" " + status):
-                    raise ValueError(f"needed {status}, got: {line}")
+                    raise StatusError(f"needed {status}, got: {line}")
                 break
         # return the first match of every required pattern
         req_matches = []
@@ -550,7 +556,7 @@ class RW:
                     req_matches.append(match)
                     break
             else:
-                raise ValueError(f"required pattern ({req}) not found")
+                raise RequiredError(f"required pattern ({req}) not found")
         # return all matches, and all the content but the tagged status line
         return req_matches, b"".join(recvd[:-1])
 
@@ -1288,6 +1294,7 @@ def test_append(cmd, maildir_root, **kwargs):
     with Subproc(cmd) as subproc:
         # APPEND while not open
         with _session(subproc) as rw:
+            append_messages(rw, 1)
             uid_start = get_highest_uid(b"INBOX", rw)
 
             rw.put(b"1 APPEND INBOX {11}\r\n")
@@ -1337,7 +1344,7 @@ def test_append(cmd, maildir_root, **kwargs):
                 require=[b"\\* [0-9]+ EXISTS"],
             )
 
-        # APPEND from an unrelated connection while open
+        # APPEND from an unrelated citm connection while open
         with _session(subproc) as rw1, _inbox(subproc) as rw2:
             rw1.put(b"1 APPEND INBOX {11}\r\n")
             rw1.wait_for_match(b"\\+")
@@ -1351,6 +1358,69 @@ def test_append(cmd, maildir_root, **kwargs):
                 "OK",
                 require=[b"\\* [0-9]* EXISTS"],
             )
+
+        # APPEND from a totally unrelated connection, not passing through citm
+        with _inbox(subproc) as rw:
+            with _session(
+                None, host="127.0.0.1", port=kwargs["imaps_port"]
+            ) as rwx:
+                # APPEND from the unrelated connection
+                append_messages(rwx, 1)
+
+            # append a non-local message to guarantee STORE commands will cause
+            # relays to the mail server
+            nonlocal_uid = uid_start
+
+            # The up_t should require 3 round-trip relays to guarantee that the
+            # new message is downloaded and given to the dn_t:
+            # - after 1, the EXISTS must have been seen
+            # - after 2, the detection fetch is sent and received, because we
+            #            know that the detection fetch is sent before another
+            #            relay is sent (and therefore the response is back
+            #            before the relay response is back)
+            # - after 3, the content fetch is sent and recieved as well, but
+            #            the update_t with the new message may not be included
+            #            by the dn_t yet.
+            # - now a NOOP should certainly show the EXISTS response if it
+            #   hasn't arrived earlier
+
+            # do relay commands by storing flags on a nonlocal message
+            for i, flag in enumerate([b"Seen", b"Answered", b"Draft"]):
+                tag = b"x%d"%i
+                rw.put(b"%s store %d flags \\%s\r\n"%(tag, nonlocal_uid, flag))
+                try:
+                    rw.wait_for_resp(
+                        tag, "OK", require=[b"\\* [0-9]* EXISTS"]
+                    )
+                    break
+                except RequiredError:
+                    pass
+            else:
+                # if we haven't seen the EXISTS yet, a noop shall surely work
+                rw.put(b"1 NOOP\r\n")
+                rw.wait_for_resp("1", "OK", require=[b"\\* [0-9]* EXISTS"])
+
+            # Append from the direct connection again, this time with a timer
+            # instead of round-trips to test that the up_t's IDLE works
+            with _session(
+                None, host="127.0.0.1", port=kwargs["imaps_port"]
+            ) as rwx:
+                append_messages(rwx, 1)
+
+            # allow up to 3 seconds
+            for i in range(2):
+                time.sleep(1)
+                tag = b"y%d"%i
+                rw.put(b"%s NOOP\r\n"%tag)
+                try:
+                    rw.wait_for_resp(tag, "OK", require=[b"\\* [0-9]* EXISTS"])
+                    break
+                except RequiredError:
+                    pass
+            else:
+                time.sleep(1)
+                rw.put(b"2 NOOP\r\n")
+                rw.wait_for_resp("2", "OK", require=[b"\\* [0-9]* EXISTS"])
 
 
 @register_test

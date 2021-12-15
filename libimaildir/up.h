@@ -10,7 +10,7 @@ typedef struct up_cb_i up_cb_i;
     The up_t is actually very simple.  There are 7 different types of commands
     that get sent upwards:
       - SELECT, which is really sent before anything else in the state machine
-      - bootstrap fetches (initial fetch of all metadata)
+      - detection fetches (detect messages with just their metadata)
       - deletions, from imaildir's initial unpushed expunges
           - these are actually done in a STORE and an EXPUNGE command
       - content fetch, either from:
@@ -25,7 +25,7 @@ typedef struct up_cb_i up_cb_i;
           - though if an IDLE is present, a DONE should preceed it
 
     Conclusions are:
-      - boostrap fetches are always run before other things
+      - initial "boostrap" detection fetch is always run before other things
       - initial deletions seem suspect... is this the right layer?  In any
         case, making them serialized should be fine since it's sort of a weird
         error case that won't arise nearly ever (without a MUA like mutt).
@@ -138,10 +138,19 @@ struct up_t {
         uint64_t himodseq_up;
     } select;
 
+    /* a "bootstrap" triggers the behavior of a SELECT (QRESYNC ...) when our
+       UIDVALIDITY was correct and our HIGHESTMODSEQ was zero.  It sends a
+       detection fetch with CHANGEDSINCE 1.
+
+       The bootstrap should be invoked anytime that we had the wrong
+       UIDVALIDITY, either because it is an initial synchronization and we
+       didn't know the UIDVALIDITY at all, or because it changed on us.
+
+       After the bootstrap is complete, our state should correctly represent
+       the HIGHESTMODSEQ value reported after the SELECT. */
     struct {
         bool needed;
         bool sent;
-        bool done;
     } bootstrap;
 
     struct {
@@ -151,6 +160,29 @@ struct up_t {
         bool expunge_done;
         ie_seq_set_t *uids_up;
     } deletions;
+
+    struct {
+        // nonzero chgsince means we saw an EXISTS
+        uint64_t chgsince;
+        /* The repeat flag is set if we see an EXISTS response while chgsince
+           is set.  It will cause us to do a second detect fetch immediately
+           after the first finishes, without allowing any room for committing
+           the himodseq to persistent storage.
+
+           This is because an EXISTS response in the middle of our detect
+           fetch response means that our fetch was incomplete.  This is easily
+           observable.
+
+           Technically, the detect fetch can be pipelined and it is probably
+           safe to only set the repeat flag if the EXISTS response happens
+           while in the fetch response.  An EXISTS response in the middle of
+           an earlier response which arrives after we send the detect fetch
+           command but before the fetch response starts probably does not need
+           to trigger a repeat, but that's very hard to verify, so we do the
+           simple and bulletproof thing, and repeat in that case anyway. */
+        bool inflight;
+        bool repeat;
+    } detect;
 
     struct {
         seq_set_builder_t uids_up;
@@ -177,7 +209,6 @@ struct up_t {
         // delayed relays; if relays arrive before we
         link_t cmds;  // imap_cmd_t->link
         link_t cbs;  // imap_cmd_cb_t->link (from an imaildir_cb_t)
-
     } reselect;
 
     struct {

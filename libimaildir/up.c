@@ -16,6 +16,11 @@ typedef struct {
 } up_cb_t;
 DEF_CONTAINER_OF(up_cb_t, cb, imap_cmd_cb_t)
 
+static void up_free_bootstrap(up_t *up){
+    up->bootstrap.needed = false;
+    up->bootstrap.sent = false;
+}
+
 static void up_free_deletions(up_t *up){
     ie_seq_set_free(STEAL(ie_seq_set_t, &up->deletions.uids_up) );
 }
@@ -56,6 +61,7 @@ static void up_free_idle(up_t *up){
 void up_free(up_t *up){
     if(!up) return;
 
+    up_free_bootstrap(up);
     up_free_deletions(up);
     up_free_fetch(up);
     up_free_reselect(up);
@@ -237,6 +243,20 @@ static derr_t up_send_cmd(up_t *up, imap_cmd_t *cmd, up_cb_t *up_cb){
     return e;
 }
 
+static derr_t maybe_break_idle(up_t *up){
+    derr_t e = E_OK;
+
+    // only continue if there's actually an IDLE to break
+    if(!up->idle.sent || up->idle.done_sent) return e;
+
+    // if we are in a hold, there's no point in breaking out until afterwards
+    if(!imaildir_up_allow_download(up->m)) return e;
+
+    PROP(&e, advance_state(up) );
+
+    return e;
+}
+
 // unselect_done is an imap_cmd_cb_call_f
 static derr_t unselect_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
     derr_t e = E_OK;
@@ -295,6 +315,11 @@ static derr_t select_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
 
     up->m->rm_on_close = false;
     up->select.done = true;
+
+    /* we can ignore any detections we thought we needed to send since the
+       SELECT (QRESYNC ...) command will always give us new messages */
+    if(!up->detect.inflight) up->detect.chgsince = 0;
+    up->detect.repeat = false;
 
     // SELECT succeeded
     up->cb->selected(up->cb, NULL);
@@ -374,11 +399,15 @@ static derr_t reselect_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
 
     up_cb_t *up_cb = CONTAINER_OF(cb, up_cb_t, cb);
     up_t *up = up_cb->up;
-    (void)up;
 
     if(st_resp->status != IE_ST_OK){
         ORIG(&e, E_RESPONSE, "re-SELECT failed");
     }
+
+    /* we can ignore any detections we thought we needed to send since the
+       SELECT (QRESYNC ...) command will always give us new messages */
+    if(!up->detect.inflight) up->detect.chgsince = 0;
+    up->detect.repeat = false;
 
     return e;
 }
@@ -396,7 +425,7 @@ static derr_t enqueue_reselect(up_t *up, unsigned int uidvld_up,
         )
     );
 
-    /* Don't send the reSELECt; instead enqueue the SELECT operation with the
+    /* Don't send the reSELECT; instead enqueue the SELECT operation with the
        relays.  This is so that we can properly handle extra write operations
        in the relay list which may be enqueued at the moment that we detect
        that a SELECT->EXAMINE transition needs to happen.  An alternative would
@@ -446,6 +475,8 @@ static derr_t fetch_resp(up_t *up, const ie_fetch_resp_t *fetch){
                 seq_set_builder_add_val(&up->fetch.uids_up, fetch->uid)
             );
         }
+        // we might have to break out of an IDLE for this new message
+        PROP(&e, maybe_break_idle(up) );
     }else if(fetch->flags){
         // existing UID with update flags
         msg_flags_t flags = msg_flags_from_fetch_flags(fetch->flags);
@@ -563,32 +594,39 @@ static derr_t send_deletions(up_t *up){
     return e;
 }
 
-// bootstrap_done is an imap_cmd_cb_call_f
-static derr_t bootstrap_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
+// detection_done is an imap_cmd_cb_call_f
+static derr_t detection_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
     derr_t e = E_OK;
 
     up_cb_t *up_cb = CONTAINER_OF(cb, up_cb_t, cb);
     up_t *up = up_cb->up;
 
     if(st_resp->status != IE_ST_OK){
-        ORIG(&e, E_RESPONSE, "bootstrap fetch failed\n");
+        ORIG(&e, E_RESPONSE, "detection fetch failed\n");
     }
 
-    up->bootstrap.done = true;
+    // did we finish a bootstrap?
+    if(up->bootstrap.needed){
+        // we finished a detection for a bootstrap
+        up_free_bootstrap(up);
+
+    // or did we finish an EXISTS-triggered detection?
+    }else{
+        up->detect.inflight = false;
+        if(up->detect.repeat){
+            /* we got one or more EXISTS response after our detect fetch was
+               sent, so we don't consider ourselves caught up yet */
+            up->detect.repeat = false;
+        }else{
+            up->detect.chgsince = 0;
+        }
+    }
 
     return e;
 }
 
-/* a "bootstrap" fetch triggers the behavior of a SELECT (QRESYNC ...) when our
-   UIDVALIDITY was correct and our HIGHESTMODSEQ was zero.
-
-   The bootstrap fetch should be invoked anytime that we had the wrong
-   UIDVALIDITY, either because it is an initial synchronization and we didn't
-   know the UIDVALIDITY at all, or because it changed on us.
-
-   After the bootstrap fetch is complete, our state should correctly represent
-   the HIGHESTMODSEQ value reported after the SELECT. */
-static derr_t send_bootstrap(up_t *up){
+// a "detection fetch" doesn't download messages, it only tries to detect them
+static derr_t send_detection_fetch(up_t *up, uint64_t chgsince){
     derr_t e = E_OK;
 
     // issue a UID FETCH command
@@ -600,8 +638,8 @@ static derr_t send_bootstrap(up_t *up){
     attr = ie_fetch_attrs_add_simple(&e, attr, IE_FETCH_ATTR_UID);
     attr = ie_fetch_attrs_add_simple(&e, attr, IE_FETCH_ATTR_FLAGS);
     attr = ie_fetch_attrs_add_simple(&e, attr, IE_FETCH_ATTR_MODSEQ);
-    // specify CHANGEDSINCE 0 so we get all the updates
-    ie_fetch_mod_arg_t mod_arg = { .chgsince = 1 };
+    // CHANGEDSINCE must be at least 1
+    ie_fetch_mod_arg_t mod_arg = { .chgsince = MAX(1, chgsince) };
     ie_fetch_mods_t *mods = ie_fetch_mods_new(&e,
         IE_FETCH_MOD_CHGSINCE, mod_arg
     );
@@ -621,7 +659,7 @@ static derr_t send_bootstrap(up_t *up){
     cmd = imap_cmd_assert_writable(&e, cmd, up->exts);
 
     // build the callback
-    up_cb_t *up_cb = up_cb_new(&e, up, tag_str, bootstrap_done, cmd);
+    up_cb_t *up_cb = up_cb_new(&e, up, tag_str, detection_done, cmd);
 
     CHECK(&e);
 
@@ -711,6 +749,32 @@ static derr_t vanished_resp(up_t *up, const ie_vanished_resp_t *vanished){
             PROP(&e, imaildir_up_delete_msg(up->m, uid_up) );
         } while (max != uid_up++);
     }
+
+    return e;
+}
+
+/* when we see an exists message, that implies that a new message has been
+   added, and we need to find out what all messages have been added since
+   the last modseq we saw */
+static derr_t exists_resp(up_t *up, unsigned int exists){
+    derr_t e = E_OK;
+    (void)exists;
+
+    /* note: technically an EXISTS response during a select or examine is
+       ignorable, but the easiest way to handle that is to set detect.chgsince
+       here unconditionally and clear it in select_done */
+
+    // if a detect is already pending, make sure we run another right after
+    if(up->detect.chgsince){
+        up->detect.repeat = true;
+        return e;
+    }
+
+    // use MAX(..., 1) in case we see the EXISTS before finishing the bootstrap
+    up->detect.chgsince = MAX(up->himodseq_up_committed, 1);
+
+    // we might have to break out of an IDLE to detect the new message
+    PROP(&e, maybe_break_idle(up) );
 
     return e;
 }
@@ -842,12 +906,27 @@ static derr_t advance_relays(up_t *up){
     return e;
 }
 
+static derr_t advance_detection(up_t *up){
+    derr_t e = E_OK;
+
+    if(!up->detect.chgsince || up->detect.inflight) return e;
+
+    bool ok;
+    PROP(&e, need_done(up, &ok) );
+    if(!ok) return e;
+
+    PROP(&e, send_detection_fetch(up, up->detect.chgsince) );
+    up->detect.inflight = true;
+
+    return e;
+}
+
 static derr_t advance_fetches(up_t *up){
     derr_t e = E_OK;
 
-    if(!imaildir_up_allow_download(up->m)) return e;
-
     if(seq_set_builder_isempty(&up->fetch.uids_up)) return e;
+
+    if(!imaildir_up_allow_download(up->m)) return e;
 
     bool ok;
     PROP(&e, need_done(up, &ok) );
@@ -926,10 +1005,10 @@ static derr_t advance_state(up_t *up){
     if(up->bootstrap.needed){
         if(!up->bootstrap.sent){
             up->bootstrap.sent = true;
-            PROP(&e, send_bootstrap(up) );
+            // CHANGEDSINCE 1, since modseq numbers are nonzero
+            PROP(&e, send_detection_fetch(up, 1) );
         }
-        if(!up->bootstrap.done) return e;
-        up->bootstrap.needed = false;
+        return e;
     }
 
     // initial deletions
@@ -974,6 +1053,7 @@ static derr_t advance_state(up_t *up){
         up_free_reselect(up);
     }
 
+    PROP(&e, advance_detection(up) );
     PROP(&e, advance_fetches(up) );
     PROP(&e, advance_relays(up) );
 
@@ -1004,22 +1084,22 @@ static derr_t advance_state(up_t *up){
 static derr_t post_cmd_done(up_t *up, const ie_st_code_t *code){
     derr_t e = E_OK;
 
-    // we may have been unregistered in a cmd cb
-    if(up->m == NULL) return e;
-
     // check the last command's status-type response for a HIMODSEQ
     if(code && code->type == IE_ST_CODE_HIMODSEQ){
         himodseq_observe(up, code->arg.himodseq);
     }
 
     // skip noop commits
-    if(up->himodseq_up_committed == up->himodseq_up_seen) return e;
+    if(up->himodseq_up_seen == up->himodseq_up_committed) return e;
 
     /* if we know that there are messages which exist but which we haven't
        logged (even as UNFILLED), either due to a new mailbox, a UIDVALIDITY
        mismatch, or due to an EXISTS response, we can't commit our himodseq_up
        seen to persistent storage yet */
-    if(up->bootstrap.needed && !up->bootstrap.done) return e;
+    if(up->bootstrap.needed || up->detect.chgsince) return e;
+
+    // if we just unregistered, we won't have access to commit anyway
+    if(up->m == NULL) return e;
 
     // commit the himodseq we've seen to persistent storage
     PROP(&e, imaildir_up_set_himodseq_up(up->m, up->himodseq_up_seen) );
@@ -1211,7 +1291,9 @@ derr_t up_resp(up_t *up, imap_resp_t *resp){
             break;
 
         case IMAP_RESP_EXISTS:
+            PROP_GO(&e, exists_resp(up, arg->exists), cu_resp);
             break;
+
         case IMAP_RESP_RECENT:
             break;
         case IMAP_RESP_FLAGS:
