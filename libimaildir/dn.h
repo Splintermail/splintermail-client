@@ -26,7 +26,9 @@ derr_t dn_cmd(dn_t *dn, imap_cmd_t *cmd);
    single call to dn_cmd().  It should never be NULL for asynchronously
    handled commands, like STORE, EXPUNGE, or COPY, which each must go through
    an up_t before they can respond downwards */
-derr_t dn_gather_updates(dn_t *dn, bool allow_expunge, ie_st_resp_t **st_resp);
+derr_t dn_gather_updates(
+    dn_t *dn, bool allow_expunge, bool uid_mode, ie_st_resp_t **st_resp
+);
 /* CLOSE is sometimes explicit and sometimes not (LOGOUT), but any such command
    triggers a dn_disconnect */
 derr_t dn_disconnect(dn_t *dn, bool expunge);
@@ -78,6 +80,7 @@ struct dn_t {
     struct {
         dn_wait_state_e state;
         ie_dstr_t *tag;
+        bool uid_mode;
     } copy;
 
     /* disconnects can be from CLOSE, SELECT, EXAMINE, or LOGOUT.  They all

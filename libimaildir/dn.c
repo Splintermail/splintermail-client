@@ -222,6 +222,7 @@ static void dn_free_expunge(dn_t *dn){
 static void dn_free_copy(dn_t *dn){
     dn->copy.state = DN_WAIT_NONE;
     ie_dstr_free(STEAL(ie_dstr_t, &dn->copy.tag));
+    dn->copy.uid_mode = false;
 }
 
 // free everything related to dn.disconnect
@@ -706,7 +707,8 @@ static derr_t store_cmd(
 
     // detect noop STOREs
     if(!uids_dn){
-        PROP(&e, dn_gather_updates(dn, store->uid_mode, NULL) );
+        bool allow_expunge = store->uid_mode;
+        PROP(&e, dn_gather_updates(dn, allow_expunge, store->uid_mode, NULL) );
         PROP(&e, send_ok(dn, tag, &DSTR_LIT("noop STORE command")) );
         return e;
     }
@@ -1190,7 +1192,8 @@ static derr_t expunge_cmd(dn_t *dn, const ie_dstr_t *tag){
     PROP(&e, get_msg_keys_to_expunge(dn, &keys) );
     // detect noop EXPUNGEs
     if(!keys){
-        PROP(&e, dn_gather_updates(dn, true, NULL) );
+        // true = always allow expunges, false = there is no uid mode
+        PROP(&e, dn_gather_updates(dn, true, false, NULL) );
         PROP(&e, send_ok(dn, tag, &DSTR_LIT("noop EXPUNGE command")) );
         return e;
     }
@@ -1232,7 +1235,8 @@ static derr_t copy_cmd(dn_t *dn, const ie_dstr_t *tag,
 
     // detect noop COPYs
     if(!uids_dn){
-        PROP(&e, dn_gather_updates(dn, true, NULL) );
+        // true = always allow expunges
+        PROP(&e, dn_gather_updates(dn, true, copy->uid_mode, NULL) );
         PROP(&e, send_ok(dn, tag, &DSTR_LIT("noop COPY command")) );
         goto cu;
     }
@@ -1244,6 +1248,7 @@ static derr_t copy_cmd(dn_t *dn, const ie_dstr_t *tag,
     dn_free_copy(dn);
     dn->copy.tag = ie_dstr_copy(&e, tag);
     dn->copy.state = DN_WAIT_WAITING;
+    dn->copy.uid_mode = copy->uid_mode;
     CHECK_GO(&e, cu);
 
     // request a copy update
@@ -1297,14 +1302,17 @@ derr_t dn_cmd(dn_t *dn, imap_cmd_t *cmd){
 
         case IMAP_CMD_SEARCH:
             PROP_GO(&e,
-                dn_gather_updates(dn, arg->search->uid_mode, NULL),
+                dn_gather_updates(dn,
+                    arg->search->uid_mode, arg->search->uid_mode, NULL
+                ),
             cu_cmd);
             PROP_GO(&e, search_cmd(dn, tag, arg->search), cu_cmd);
             break;
 
         case IMAP_CMD_CHECK:
         case IMAP_CMD_NOOP:
-            PROP_GO(&e, dn_gather_updates(dn, true, NULL), cu_cmd);
+            // true = always allow expunges, false = there is no uid mode
+            PROP_GO(&e, dn_gather_updates(dn, true, false, NULL), cu_cmd);
             PROP_GO(&e, send_ok(dn, tag, &DSTR_LIT("zzzzz...")), cu_cmd);
             break;
 
@@ -1315,7 +1323,9 @@ derr_t dn_cmd(dn_t *dn, imap_cmd_t *cmd){
 
         case IMAP_CMD_FETCH:
             PROP_GO(&e,
-                dn_gather_updates(dn, arg->fetch->uid_mode, NULL),
+                dn_gather_updates(dn,
+                    arg->fetch->uid_mode, arg->fetch->uid_mode, NULL
+                ),
             cu_cmd);
             PROP_GO(&e, fetch_cmd(dn, tag, arg->fetch), cu_cmd);
             break;
@@ -1429,7 +1439,7 @@ derr_t dn_disconnect(dn_t *dn, bool expunge){
 }
 
 static derr_t send_flags_update(dn_t *dn, unsigned int seq_num,
-        msg_flags_t flags, bool recent){
+        msg_flags_t flags, bool recent, const unsigned int *uid){
     derr_t e = E_OK;
 
     ie_fflags_t *ff = ie_fflags_new(&e);
@@ -1444,6 +1454,10 @@ static derr_t send_flags_update(dn_t *dn, unsigned int seq_num,
     ie_fetch_resp_t *fetch = ie_fetch_resp_new(&e);
     fetch = ie_fetch_resp_seq_num(&e, fetch, seq_num);
     fetch = ie_fetch_resp_flags(&e, fetch, ff);
+
+    // all UID commands must have a UID in their unsolicited FETCH responses
+    // (meaning UID FETCH, UID STORE, UID SEARCH, UID COPY
+    if(uid != NULL) fetch = ie_fetch_resp_uid(&e, fetch, *uid);
 
     imap_resp_arg_t arg = {.fetch=fetch};
     imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_FETCH, arg);
@@ -1611,7 +1625,7 @@ cu:
     return e;
 }
 
-static derr_t gather_send_responses(dn_t *dn, gather_t *gather){
+static derr_t gather_send_responses(dn_t *dn, gather_t *gather, bool uid_mode){
     derr_t e = E_OK;
     jsw_atrav_t trav;
     jsw_anode_t *node;
@@ -1652,7 +1666,8 @@ static derr_t gather_send_responses(dn_t *dn, gather_t *gather){
         unsigned int seq_num;
         PROP(&e, index_to_seq_num(index, &seq_num) );
         bool recent = false;
-        PROP(&e, send_flags_update(dn, seq_num, view->flags, recent) );
+        const unsigned int *uid = uid_mode ? &gathered->uid_dn : NULL;
+        PROP(&e, send_flags_update(dn, seq_num, view->flags, recent, uid) );
     }
 
     // step 4: send expunge updates (in reverse order)
@@ -1684,7 +1699,9 @@ static derr_t gather_send_responses(dn_t *dn, gather_t *gather){
 }
 
 // send unsolicited untagged responses for external updates to mailbox
-derr_t dn_gather_updates(dn_t *dn, bool allow_expunge, ie_st_resp_t **st_resp){
+derr_t dn_gather_updates(
+    dn_t *dn, bool allow_expunge, bool uid_mode, ie_st_resp_t **st_resp
+){
     derr_t e = E_OK;
 
     /* updates need to be processed in batches:
@@ -1735,7 +1752,7 @@ derr_t dn_gather_updates(dn_t *dn, bool allow_expunge, ie_st_resp_t **st_resp){
 
 got_update_sync:
 
-    PROP_GO(&e, gather_send_responses(dn, &gather), cu);
+    PROP_GO(&e, gather_send_responses(dn, &gather, uid_mode), cu);
 
 cu:
     gather_free(&gather);
@@ -1780,7 +1797,12 @@ static derr_t send_store_resp_noupdate(dn_t *dn, const exp_flags_t *exp_flags){
         unsigned int seq_num;
         PROP(&e, index_to_seq_num(index, &seq_num) );
 
-        PROP(&e, send_flags_update(dn, seq_num, view->flags, view->recent) );
+        const unsigned int *uid =
+            dn->store.uid_mode ? &exp_flags->uid_dn : NULL;
+
+        PROP(&e,
+            send_flags_update(dn, seq_num, view->flags, view->recent, uid)
+        );
         return e;
     }
 
@@ -1803,7 +1825,9 @@ static derr_t send_store_resp_noexp(dn_t *dn, unsigned int uid_dn){
     unsigned int seq_num;
     PROP(&e, index_to_seq_num(index, &seq_num) );
 
-    PROP(&e, send_flags_update(dn, seq_num, view->flags, view->recent) );
+    const unsigned int *uid = dn->store.uid_mode ? &uid_dn : NULL;
+
+    PROP(&e, send_flags_update(dn, seq_num, view->flags, view->recent, uid) );
     return e;
 }
 
@@ -1823,16 +1847,22 @@ static derr_t send_store_resp_expupdate(dn_t *dn,
     unsigned int seq_num;
     PROP(&e, index_to_seq_num(index, &seq_num) );
 
+    const unsigned int *uid = dn->store.uid_mode ? &exp_flags->uid_dn : NULL;
+
     msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
     if(!msg_flags_eq(exp_flags->flags, view->flags)){
         // a different update than we expected, always report it
-        PROP(&e, send_flags_update(dn, seq_num, view->flags, view->recent) );
+        PROP(&e,
+            send_flags_update(dn, seq_num, view->flags, view->recent, uid)
+        );
         return e;
     }
 
     // we expected this change, do we report it?
     if(!dn->store.silent){
-        PROP(&e, send_flags_update(dn, seq_num, view->flags, view->recent) );
+        PROP(&e,
+            send_flags_update(dn, seq_num, view->flags, view->recent, uid)
+        );
         return e;
     }
 
@@ -2002,7 +2032,8 @@ static derr_t do_work_expunge(dn_t *dn){
 
     ie_st_resp_t *st_resp = NULL;
 
-    PROP_GO(&e, dn_gather_updates(dn, true, &st_resp), cu);
+    // true = always allow expunges, false = there is no uid mode
+    PROP_GO(&e, dn_gather_updates(dn, true, false, &st_resp), cu);
 
     // create an st_resp if there was no error
     if(!st_resp){
@@ -2038,7 +2069,7 @@ static derr_t do_work_copy(dn_t *dn){
 
     ie_st_resp_t *st_resp = NULL;
 
-    PROP_GO(&e, dn_gather_updates(dn, true, &st_resp), cu);
+    PROP_GO(&e, dn_gather_updates(dn, true, dn->copy.uid_mode, &st_resp), cu);
 
     // create an st_resp if there was no error
     if(!st_resp){

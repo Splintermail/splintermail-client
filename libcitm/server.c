@@ -711,7 +711,9 @@ static void send_passthru_st_resp(derr_t *e, server_t *server,
     if(server->imap_state == SELECTED){
         /* always allow EXPUNGE updates, since the only FETCH, STORE, and
            SEARCH forbid sending EXPUNGEs */
-        PROP_GO(e, dn_gather_updates(&server->dn, true, NULL), cu);
+        /* uid_mode is always false because none of the passthru commands have
+           UID variants */
+        PROP_GO(e, dn_gather_updates(&server->dn, true, false, NULL), cu);
     }
 
     // filter out unsupported extensions

@@ -2255,6 +2255,135 @@ def test_fetch_body(cmd, maildir_root, **kwargs):
         rw.put(b"9 UID FETCH %d BODY[1]\r\n"%uid)
         rw.wait_for_resp("9", "OK", require=[b'.*BODY\\[1\\] ""\\).*'])
 
+
+@register_test
+def test_uid_mode_fetch_responses(cmd, maildir_root, **kwargs):
+    # UID FETCH/STORE/SEARCH/COPY should cause FETCH responses to report UID
+    with Subproc(cmd) as subproc, \
+            _inbox(subproc) as rw1, \
+            _inbox(subproc) as rw2:
+        # append four messages, but delete the first two, to ensure that we
+        # have two messages where uid1, uid2, seqnum1, seqnum2 are all unique
+        append_messages(rw1, 4)
+        u2 = int(get_uid("*", rw1))
+        u1 = u2 - 1
+        rw1.put(b"1 uid store %d,%d flags \\Deleted\r\n"%(u1-2, u1-1))
+        rw1.wait_for_resp("1", "OK")
+        rw1.put(b"2a expunge\r\n")
+        rw1.wait_for_resp("2a", "OK")
+        n2 = int(get_seq_num(u2, rw1))
+        n1 = n2 - 1
+        assert len(set((u1, u2, n1, n2))) == 4, set((u1, u2, n1, n2))
+
+        # rw2 needs to catch up on what messages exist in order to modify them
+        rw2.put(b"3 noop\r\n")
+        rw2.wait_for_resp("3", "OK")
+
+        # plain FETCH -> no UID
+        rw2.put(b"4b STORE %d +FLAGS \\Answered\r\n"%(n1))
+        rw2.wait_for_resp("4b", "OK")
+        rw1.put(b"4a FETCH %d FLAGS\r\n"%(n2))
+        rw1.wait_for_resp(
+            "4a",
+            "OK",
+            disallow=[b'.*UID.*'],
+            require=[
+                b"\\* %d FETCH.*"%n1,
+                b"\\* %d FETCH.*"%n2,
+            ]
+        )
+
+        # UID FETCH -> yes UID
+        rw2.put(b"5b STORE %d -FLAGS \\Answered\r\n"%(n1))
+        rw2.wait_for_resp("5b", "OK")
+        rw1.put(b"5a UID FETCH %d FLAGS\r\n"%(u2))
+        rw1.wait_for_resp(
+            "5a",
+            "OK",
+            require=[
+                b"\\* %d FETCH.*UID %d"%(n1,u1),
+                b"\\* %d FETCH.*UID %d"%(n2,u2),
+            ]
+        )
+
+        # plain STORE -> no UID
+        rw2.put(b"6b STORE %d +FLAGS \\Answered\r\n"%(n1))
+        rw2.wait_for_resp("6b", "OK")
+        rw1.put(b"6a STORE %d FLAGS \\Answered\r\n"%(n2))
+        rw1.wait_for_resp(
+            "6a",
+            "OK",
+            disallow=[b'.*UID.*'],
+            require=[
+                b"\\* %d FETCH.*"%n1,
+                b"\\* %d FETCH.*"%n2,
+            ]
+        )
+
+        # UID STORE -> yes UID
+        rw2.put(b"7b STORE %d -FLAGS \\Answered\r\n"%(n1))
+        rw2.wait_for_resp("7b", "OK")
+        rw1.put(b"7a UID STORE %d -FLAGS \\Answered\r\n"%(u2))
+        rw1.wait_for_resp(
+            "7a",
+            "OK",
+            require=[
+                b"\\* %d FETCH.*UID %d"%(n1,u1),
+                b"\\* %d FETCH.*UID %d"%(n2,u2),
+            ]
+        )
+
+        # plain SEARCH -> no UID
+        rw2.put(b"8b STORE %d +FLAGS \\Answered\r\n"%(n1))
+        rw2.wait_for_resp("8b", "OK")
+        rw1.put(b"8a SEARCH all\r\n")
+        rw1.wait_for_resp(
+            "8a",
+            "OK",
+            disallow=[b'.*UID.*'],
+            require=[
+                b"\\* %d FETCH.*"%n1,
+            ]
+        )
+
+        # UID SEARCH -> yes UID
+        rw2.put(b"9b STORE %d -FLAGS \\Answered\r\n"%(n1))
+        rw2.wait_for_resp("9b", "OK")
+        rw1.put(b"9a UID SEARCH all\n")
+        rw1.wait_for_resp(
+            "9a",
+            "OK",
+            require=[
+                b"\\* %d FETCH.*UID %d"%(n1,u1),
+            ]
+        )
+
+        # plain COPY -> no UID
+        rw2.put(b"10b STORE %d +FLAGS \\Answered\r\n"%(n1))
+        rw2.wait_for_resp("10b", "OK")
+        rw1.put(b"10a COPY %d INBOX\r\n"%n1)
+        rw1.wait_for_resp(
+            "10a",
+            "OK",
+            disallow=[b'.*UID.*'],
+            require=[
+                b"\\* %d FETCH.*"%n1,
+            ]
+        )
+
+        # UID COPY -> yes UID
+        rw2.put(b"11b STORE %d -FLAGS \\Answered\r\n"%(n1))
+        rw2.wait_for_resp("11b", "OK")
+        rw1.put(b"11a UID COPY %d INBOX\r\n"%u1)
+        rw1.wait_for_resp(
+            "11a",
+            "OK",
+            require=[
+                b"\\* %d FETCH.*UID %d"%(n1,u1),
+            ]
+        )
+
+
 def append_messages(rw, count, box="INBOX"):
     for n in range(count):
         rw.put(b"PRE%d APPEND %s {11}\r\n"%(n, as_bytes(box)))
