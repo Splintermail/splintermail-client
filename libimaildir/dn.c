@@ -1047,7 +1047,7 @@ static derr_t send_fetch_resp(dn_t *dn, const ie_fetch_cmd_t *fetch,
     ie_fetch_resp_t *f = ie_fetch_resp_new(&e);
 
     // the num is always a sequence number, even in case of a UID FETCH
-    f = ie_fetch_resp_num(&e, f, seq_num);
+    f = ie_fetch_resp_seq_num(&e, f, seq_num);
 
     if(fetch->attr->envelope){
         const imf_hdrs_t *hdrs = loader_parse_hdrs(&e, &loader);
@@ -1442,7 +1442,7 @@ static derr_t send_flags_update(dn_t *dn, unsigned int seq_num,
 
     // TODO: support modseq here too
     ie_fetch_resp_t *fetch = ie_fetch_resp_new(&e);
-    fetch = ie_fetch_resp_num(&e, fetch, seq_num);
+    fetch = ie_fetch_resp_seq_num(&e, fetch, seq_num);
     fetch = ie_fetch_resp_flags(&e, fetch, ff);
 
     imap_resp_arg_t arg = {.fetch=fetch};
@@ -1774,6 +1774,7 @@ static derr_t send_store_resp_noupdate(dn_t *dn, const exp_flags_t *exp_flags){
         return e;
     }
 
+
     // we expected this change, do we report it?
     if(!dn->store.silent){
         unsigned int seq_num;
@@ -1799,14 +1800,10 @@ static derr_t send_store_resp_noexp(dn_t *dn, unsigned int uid_dn){
 
     msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
 
-    unsigned int num;
-    if(dn->store.uid_mode){
-        num = uid_dn;
-    }else{
-        PROP(&e, index_to_seq_num(index, &num) );
-    }
+    unsigned int seq_num;
+    PROP(&e, index_to_seq_num(index, &seq_num) );
 
-    PROP(&e, send_flags_update(dn, num, view->flags, view->recent) );
+    PROP(&e, send_flags_update(dn, seq_num, view->flags, view->recent) );
     return e;
 }
 
@@ -1823,23 +1820,19 @@ static derr_t send_store_resp_expupdate(dn_t *dn,
         ORIG(&e, E_INTERNAL, "not implemented");
     }
 
-    unsigned int num;
-    if(dn->store.uid_mode){
-        num = exp_flags->uid_dn;
-    }else{
-        PROP(&e, index_to_seq_num(index, &num) );
-    }
+    unsigned int seq_num;
+    PROP(&e, index_to_seq_num(index, &seq_num) );
 
     msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
     if(!msg_flags_eq(exp_flags->flags, view->flags)){
         // a different update than we expected, always report it
-        PROP(&e, send_flags_update(dn, num, view->flags, view->recent) );
+        PROP(&e, send_flags_update(dn, seq_num, view->flags, view->recent) );
         return e;
     }
 
     // we expected this change, do we report it?
     if(!dn->store.silent){
-        PROP(&e, send_flags_update(dn, num, view->flags, view->recent) );
+        PROP(&e, send_flags_update(dn, seq_num, view->flags, view->recent) );
         return e;
     }
 

@@ -1415,7 +1415,7 @@ expunge_resp: num SP EXPUNGE respcheck
 /*** FETCH response ***/
 
 fetch_resp: num[n] SP FETCH respcheck SP '(' msg_attrs_0[ma] ')'
-    { imap_resp_arg_t arg = {.fetch=ie_fetch_resp_num(E, $ma, $n)};
+    { imap_resp_arg_t arg = {.fetch=ie_fetch_resp_seq_num(E, $ma, $n)};
       $$ = imap_resp_new(E, IMAP_RESP_FETCH, arg); };
 
 msg_attrs_0: %empty { $$ = NULL; }

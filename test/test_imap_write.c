@@ -298,7 +298,7 @@ static derr_t test_imap_writer(void){
                                 ie_fetch_resp_flags(&e,
                                     ie_fetch_resp_intdate(&e,
                                         ie_fetch_resp_uid(&e,
-                                            ie_fetch_resp_num(&e,
+                                            ie_fetch_resp_seq_num(&e,
                                                 ie_fetch_resp_new(&e),
                                                 5
                                             ),
@@ -350,7 +350,7 @@ static derr_t test_imap_writer(void){
                 .resp=imap_resp_new(&e, IMAP_RESP_FETCH,
                     (imap_resp_arg_t){
                         .fetch=ie_fetch_resp_add_extra(&e,
-                            ie_fetch_resp_num(&e,
+                            ie_fetch_resp_seq_num(&e,
                                 ie_fetch_resp_new(&e),
                                 5
                             ),
@@ -376,7 +376,7 @@ static derr_t test_imap_writer(void){
                             ie_fetch_resp_rfc822_text(&e,
                                 ie_fetch_resp_rfc822_hdr(&e,
                                     ie_fetch_resp_rfc822(&e,
-                                        ie_fetch_resp_num(&e,
+                                        ie_fetch_resp_seq_num(&e,
                                             ie_fetch_resp_new(&e),
                                             5
                                         ),
@@ -402,7 +402,7 @@ static derr_t test_imap_writer(void){
                 .resp=imap_resp_new(&e, IMAP_RESP_FETCH,
                     (imap_resp_arg_t){
                         .fetch=ie_fetch_resp_envelope(&e,
-                            ie_fetch_resp_num(&e,
+                            ie_fetch_resp_seq_num(&e,
                                 ie_fetch_resp_new(&e),
                                 5
                             ),
@@ -565,7 +565,7 @@ static derr_t test_imap_writer(void){
                 .resp=imap_resp_new(&e, IMAP_RESP_FETCH,
                     (imap_resp_arg_t){
                         .fetch=ie_fetch_resp_body(&e,
-                            ie_fetch_resp_num(&e,
+                            ie_fetch_resp_seq_num(&e,
                                 ie_fetch_resp_new(&e),
                                 5
                             ),
@@ -586,7 +586,7 @@ static derr_t test_imap_writer(void){
                 .resp=imap_resp_new(&e, IMAP_RESP_FETCH,
                     (imap_resp_arg_t){
                         .fetch=ie_fetch_resp_bodystruct(&e,
-                            ie_fetch_resp_num(&e,
+                            ie_fetch_resp_seq_num(&e,
                                 ie_fetch_resp_new(&e),
                                 5
                             ),
@@ -608,7 +608,7 @@ static derr_t test_imap_writer(void){
                 .resp=imap_resp_new(&e, IMAP_RESP_FETCH,
                     (imap_resp_arg_t){
                         .fetch=ie_fetch_resp_body(&e,
-                            ie_fetch_resp_num(&e,
+                            ie_fetch_resp_seq_num(&e,
                                 ie_fetch_resp_new(&e),
                                 6
                             ),
@@ -629,7 +629,7 @@ static derr_t test_imap_writer(void){
                 .resp=imap_resp_new(&e, IMAP_RESP_FETCH,
                     (imap_resp_arg_t){
                         .fetch=ie_fetch_resp_bodystruct(&e,
-                            ie_fetch_resp_num(&e,
+                            ie_fetch_resp_seq_num(&e,
                                 ie_fetch_resp_new(&e),
                                 6
                             ),
@@ -651,7 +651,7 @@ static derr_t test_imap_writer(void){
                 .resp=imap_resp_new(&e, IMAP_RESP_FETCH,
                     (imap_resp_arg_t){
                         .fetch=ie_fetch_resp_body(&e,
-                            ie_fetch_resp_num(&e,
+                            ie_fetch_resp_seq_num(&e,
                                 ie_fetch_resp_new(&e),
                                 6
                             ),
@@ -688,7 +688,7 @@ static derr_t test_imap_writer(void){
                 .resp=imap_resp_new(&e, IMAP_RESP_FETCH,
                     (imap_resp_arg_t){
                         .fetch=ie_fetch_resp_bodystruct(&e,
-                            ie_fetch_resp_num(&e,
+                            ie_fetch_resp_seq_num(&e,
                                 ie_fetch_resp_new(&e),
                                 6
                             ),
@@ -728,7 +728,7 @@ static derr_t test_imap_writer(void){
                 .resp=imap_resp_new(&e, IMAP_RESP_FETCH,
                     (imap_resp_arg_t){
                         .fetch=ie_fetch_resp_body(&e,
-                            ie_fetch_resp_num(&e,
+                            ie_fetch_resp_seq_num(&e,
                                 ie_fetch_resp_new(&e),
                                 6
                             ),
@@ -761,7 +761,7 @@ static derr_t test_imap_writer(void){
                 .resp=imap_resp_new(&e, IMAP_RESP_FETCH,
                     (imap_resp_arg_t){
                         .fetch=ie_fetch_resp_bodystruct(&e,
-                            ie_fetch_resp_num(&e,
+                            ie_fetch_resp_seq_num(&e,
                                 ie_fetch_resp_new(&e),
                                 6
                             ),
@@ -1136,7 +1136,9 @@ static derr_t test_imap_writer(void){
                     (imap_resp_arg_t){
                         .fetch=ie_fetch_resp_modseq(
                             &e,
-                            ie_fetch_resp_num(&e, ie_fetch_resp_new(&e), 1),
+                            ie_fetch_resp_seq_num(&e,
+                                ie_fetch_resp_new(&e), 1
+                            ),
                             12345678901234UL
                         ),
                     }

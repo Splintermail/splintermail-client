@@ -533,7 +533,7 @@ typedef struct ie_fetch_resp_extra_t {
 
 typedef struct {
     // num always a seq number, even in the case of a UID FETCH
-    unsigned int num;
+    unsigned int seq_num;
     ie_fflags_t *flags;
     /* uid is for response to e.g. `FETCH 1 UID`, and is implicitly requested
        by any UID FETCH command */
@@ -1217,8 +1217,8 @@ void ie_fetch_resp_extra_free(ie_fetch_resp_extra_t *extra);
 ie_fetch_resp_t *ie_fetch_resp_new(derr_t *e);
 void ie_fetch_resp_free(ie_fetch_resp_t *f);
 
-ie_fetch_resp_t *ie_fetch_resp_num(derr_t *e, ie_fetch_resp_t *f,
-        unsigned int num);
+ie_fetch_resp_t *ie_fetch_resp_seq_num(derr_t *e, ie_fetch_resp_t *f,
+        unsigned int seq_num);
 ie_fetch_resp_t *ie_fetch_resp_uid(derr_t *e, ie_fetch_resp_t *f,
         unsigned int uid);
 ie_fetch_resp_t *ie_fetch_resp_intdate(derr_t *e, ie_fetch_resp_t *f,

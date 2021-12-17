@@ -2271,11 +2271,11 @@ void ie_fetch_resp_free(ie_fetch_resp_t *f){
     free(f);
 }
 
-ie_fetch_resp_t *ie_fetch_resp_num(derr_t *e, ie_fetch_resp_t *f,
-        unsigned int num){
+ie_fetch_resp_t *ie_fetch_resp_seq_num(derr_t *e, ie_fetch_resp_t *f,
+        unsigned int seq_num){
     if(is_error(*e)) goto fail;
 
-    f->num = num;
+    f->seq_num = seq_num;
 
     return f;
 

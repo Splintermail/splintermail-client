@@ -1822,7 +1822,7 @@ static derr_t fetch_resp_extra_skip_fill(skip_fill_t *sf,
 
 static derr_t fetch_resp_skip_fill(skip_fill_t *sf, ie_fetch_resp_t *fetch){
     derr_t e = E_OK;
-    PROP(&e, nznum_skip_fill(sf, fetch->num) );
+    PROP(&e, nznum_skip_fill(sf, fetch->seq_num) );
     STATIC_SKIP_FILL(" FETCH (");
     bool sp = false;
     if(fetch->flags){
