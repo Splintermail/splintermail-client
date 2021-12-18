@@ -549,8 +549,10 @@ class RW:
                 break
         # return the first match of every required pattern
         req_matches = []
+        # requires should be required in order
+        lines = iter(recvd)
         for req in require:
-            for line in recvd:
+            for line in lines:
                 match = re.match(req, line)
                 if match is not None:
                     req_matches.append(match)
@@ -1114,8 +1116,8 @@ def test_store_and_fetch_after_expunged(cmd, maildir_root, **kwargs):
                     "1",
                     "OK",
                     require=[
-                        b"\\* %d FETCH \\(FLAGS \\(\\\\Seen\\)\\)"%delete_id,
                         b"\\* %d FETCH \\(FLAGS \\(\\\\Seen\\)\\)"%keep_id,
+                        b"\\* %d FETCH \\(FLAGS \\(\\\\Seen\\)\\)"%delete_id,
                     ]
                 )
 
@@ -2288,8 +2290,8 @@ def test_uid_mode_fetch_responses(cmd, maildir_root, **kwargs):
             "OK",
             disallow=[b'.*UID.*'],
             require=[
-                b"\\* %d FETCH.*"%n1,
                 b"\\* %d FETCH.*"%n2,
+                b"\\* %d FETCH.*"%n1,
             ]
         )
 
@@ -2301,8 +2303,8 @@ def test_uid_mode_fetch_responses(cmd, maildir_root, **kwargs):
             "5a",
             "OK",
             require=[
-                b"\\* %d FETCH.*UID %d"%(n1,u1),
                 b"\\* %d FETCH.*UID %d"%(n2,u2),
+                b"\\* %d FETCH.*UID %d"%(n1,u1),
             ]
         )
 
@@ -2381,6 +2383,47 @@ def test_uid_mode_fetch_responses(cmd, maildir_root, **kwargs):
             require=[
                 b"\\* %d FETCH.*UID %d"%(n1,u1),
             ]
+        )
+
+
+@register_test
+def test_combine_updates_into_fetch(cmd, maildir_root, **kwargs):
+    with Subproc(cmd) as subproc, \
+            _inbox(subproc) as rw1, \
+            _inbox(subproc) as rw2:
+        append_messages(rw1, 2)
+        u2 = int(get_uid("*", rw1))
+        u1 = u2 - 1
+
+        # rw2 should not be able to fetch these messages yet (regression test)
+        rw2.put(b"1 UID FETCH %d:%d BODY[]\r\n"%(u1, u2))
+        rw2.wait_for_resp(
+            "1",
+            "OK",
+            require=[b".*EXISTS.*"],
+            disallow=[b"\\* [0-9]+ FETCH.*"]
+        )
+
+        # rw1 updates the flag on the first message, then even deletes it
+        rw1.put(b"2 UID STORE %d FLAGS \\Deleted\r\n"%u1)
+        rw1.wait_for_resp("2", "OK")
+        rw1.put(b"3 EXPUNGE\r\n")
+        rw1.wait_for_resp("3", "OK")
+
+        # rw2 fetches bodies of both messages
+        # order of responses should be:
+        #  - FETCH of u1, with FLAGS
+        #  - FETCH of u2, no FLAGS
+        #  - EXPUNGE
+        rw2.put(b"4 UID FETCH %d:%d INTERNALDATE\r\n"%(u1, u2))
+        rw2.wait_for_resp(
+            "4",
+            "OK",
+            require=[
+                b"\\* [0-9]+ FETCH \\(FLAGS \\(\\\\Deleted\\) UID %d"%u1,
+                b"\\* [0-9]+ FETCH \\(UID %d"%u2,
+                b"\\* %d EXPUNGE"%u1,
+            ],
         )
 
 

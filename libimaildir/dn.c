@@ -4,9 +4,42 @@
 
 #include "libuvthread/libuvthread.h"
 
+// state for gathering updates
+typedef struct {
+    jsw_atree_t news;  // gathered_t->node
+    jsw_atree_t metas;  // gathered_t->node
+    jsw_atree_t expunges;  // gathered_t->node
+    /* expunge updates can't be freed until after we have emitted messages for
+       them, due to the fact that they have to be removed from the view at the
+       time of emitting messages, and that act will alter the seq num of other
+       messages, which we need to delay */
+    link_t updates_to_free;
+    /* Choose not to keep track of what the original flags were.  This means in
+       the case of add/remove a flag we will report a FETCH which could be a
+       noop, but that's what dovecot does.  It also saves us another struct. */
+} gather_t;
+
+typedef struct {
+    unsigned int uid_dn;
+    jsw_anode_t node;
+} gathered_t;
+DEF_CONTAINER_OF(gathered_t, node, jsw_anode_t)
+
 // forward declarations
 static derr_t get_msg_keys_to_expunge(dn_t *dn, msg_key_list_t **out);
 
+static const void *gathered_jsw_get_uid_dn(const jsw_anode_t *node);
+static void gather_prep(gather_t *gather);
+static void gather_free(gather_t *gather);
+static derr_t gathered_new(gathered_t **out, unsigned int uid_dn);
+static void gathered_free(gathered_t *gathered);
+static derr_t gather_updates_dont_send(
+    dn_t *dn,
+    bool allow_expunge,
+    ie_st_resp_t **st_resp,
+    gather_t *gather
+);
+static derr_t gather_send_responses(dn_t *dn, gather_t *gather, bool uid_mode);
 
 // a helper struct to lazily load the message body
 typedef struct {
@@ -1028,8 +1061,13 @@ fail:
 }
 
 
-static derr_t send_fetch_resp(dn_t *dn, const ie_fetch_cmd_t *fetch,
-        unsigned int uid_dn, bool *part_missing){
+static derr_t send_fetch_resp(
+    dn_t *dn,
+    const ie_fetch_cmd_t *fetch,
+    unsigned int uid_dn,
+    bool force_flags,
+    bool *part_missing
+){
     derr_t e = E_OK;
     *part_missing = false;
 
@@ -1057,7 +1095,8 @@ static derr_t send_fetch_resp(dn_t *dn, const ie_fetch_cmd_t *fetch,
         f = ie_fetch_resp_envelope(&e, f, envelope);
     }
 
-    if(fetch->attr->flags){
+    // if we gathered an flag update for this uid_dn, we always include FLAGS
+    if(fetch->attr->flags || force_flags){
         ie_fflags_t *ff = ie_fflags_new(&e);
         if(view->flags.answered)
             ff = ie_fflags_add_simple(&e, ff, IE_FFLAG_ANSWERED);
@@ -1078,7 +1117,7 @@ static derr_t send_fetch_resp(dn_t *dn, const ie_fetch_cmd_t *fetch,
         f = ie_fetch_resp_intdate(&e, f, view->internaldate);
     }
 
-    // UID is implcitly requested by all UID_FETCH commands
+    // UID is implcitly requested by all UID FETCH commands
     if(fetch->attr->uid || fetch->uid_mode){
         f = ie_fetch_resp_uid(&e, f, uid_dn);
     }
@@ -1147,28 +1186,50 @@ static derr_t send_fetch_resp(dn_t *dn, const ie_fetch_cmd_t *fetch,
 }
 
 
+// TODO: support non-PEEK properly
 static derr_t fetch_cmd(dn_t *dn, const ie_dstr_t *tag,
         const ie_fetch_cmd_t *fetch){
     derr_t e = E_OK;
 
+    gather_t gather;
+    gather_prep(&gather);
+
+    /* determined uids_dn before gathering updates, so that we don't
+       accidentally add new messages to our view before we decide which uids
+       the client was referring to */
+    bool uid_mode = fetch->uid_mode;
     ie_seq_set_t *uids_dn;
     PROP(&e,
-        seq_set_to_canonical_uids_dn(
-            dn, fetch->uid_mode, fetch->seq_set, &uids_dn
-        )
+        seq_set_to_canonical_uids_dn(dn, uid_mode, fetch->seq_set, &uids_dn)
     );
 
-    // TODO: support PEEK properly
+    // gather updates without sending, since we'll modify them before sending
+    bool allow_expunge = fetch->uid_mode;
+    PROP_GO(&e,
+        gather_updates_dont_send(dn, allow_expunge, NULL, &gather),
+    cu);
 
     // build a response for every uid_dn requested
     ie_seq_set_trav_t trav;
     unsigned int uid_dn = ie_seq_set_iter(&trav, uids_dn, 0, 0);
     bool any_missing = false;
     for(; uid_dn != 0; uid_dn = ie_seq_set_next(&trav)){
+        bool force_flags = false;
+        // if we gathered an update for uid_dn, combine the FETCH responses
+        jsw_anode_t *node = jsw_aerase(&gather.metas, &uid_dn);
+        if(node){
+            gathered_free(CONTAINER_OF(node, gathered_t, node));
+            force_flags = true;
+        }
         bool part_missing = false;
-        PROP_GO(&e, send_fetch_resp(dn, fetch, uid_dn, &part_missing), cu);
+        PROP_GO(&e,
+            send_fetch_resp(dn, fetch, uid_dn, force_flags, &part_missing),
+        cu);
         any_missing |= part_missing;
     }
+
+    // now send the rest of the gathered updates
+    PROP_GO(&e, gather_send_responses(dn, &gather, uid_mode), cu);
 
     if(!any_missing){
         DSTR_STATIC(msg, "you didn't hear it from me");
@@ -1180,6 +1241,7 @@ static derr_t fetch_cmd(dn_t *dn, const ie_dstr_t *tag,
 
 cu:
     ie_seq_set_free(uids_dn);
+    gather_free(&gather);
 
     return e;
 }
@@ -1322,11 +1384,6 @@ derr_t dn_cmd(dn_t *dn, imap_cmd_t *cmd){
             break;
 
         case IMAP_CMD_FETCH:
-            PROP_GO(&e,
-                dn_gather_updates(dn,
-                    arg->fetch->uid_mode, arg->fetch->uid_mode, NULL
-                ),
-            cu_cmd);
             PROP_GO(&e, fetch_cmd(dn, tag, arg->fetch), cu_cmd);
             break;
 
@@ -1483,26 +1540,7 @@ static derr_t send_expunge(dn_t *dn, unsigned int seq_num){
 }
 
 
-// state for gathering updates
-typedef struct {
-    jsw_atree_t news;  // gathered_t->node
-    jsw_atree_t metas;  // gathered_t->node
-    jsw_atree_t expunges;  // gathered_t->node
-    /* expunge updates can't be freed until after we have emitted messages for
-       them, due to the fact that they have to be removed from the view at the
-       time of emitting messages, and that act will alter the seq num of other
-       messages, which we need to delay */
-    link_t updates_to_free;
-    /* Choose not to keep track of what the original flags were.  This means in
-       the case of add/remove a flag we will report a FETCH which could be a
-       noop, but that's what dovecot does.  It also saves us another struct. */
-} gather_t;
-
-typedef struct {
-    unsigned int uid_dn;
-    jsw_anode_t node;
-} gathered_t;
-DEF_CONTAINER_OF(gathered_t, node, jsw_anode_t)
+// gathering updates
 
 static const void *gathered_jsw_get_uid_dn(const jsw_anode_t *node){
     const gathered_t *gathered = CONTAINER_OF(node, gathered_t, node);
@@ -1698,9 +1736,15 @@ static derr_t gather_send_responses(dn_t *dn, gather_t *gather, bool uid_mode){
     return e;
 }
 
-// send unsolicited untagged responses for external updates to mailbox
-derr_t dn_gather_updates(
-    dn_t *dn, bool allow_expunge, bool uid_mode, ie_st_resp_t **st_resp
+/* Intermediate step to dn_gather_updates, which allows modifying the gather_t
+   before sending updates.  Useful to FETCH commands, which won't want to send
+   multiple FETCH responses for any single message at once, or for STORE
+   commands which have special sending requirements. */
+static derr_t gather_updates_dont_send(
+    dn_t *dn,
+    bool allow_expunge,
+    ie_st_resp_t **st_resp,
+    gather_t *gather
 ){
     derr_t e = E_OK;
 
@@ -1711,27 +1755,24 @@ derr_t dn_gather_updates(
          - EXISTS should come last, to make a delete-one-create-another
            situation a little less ambiguous */
 
-    gather_t gather;
-    gather_prep(&gather);
-
     update_t *update, *temp;
     LINK_FOR_EACH_SAFE(update, temp, &dn->pending_updates, update_t, link){
         switch(update->type){
             // ignore everything but the status-type response
             case UPDATE_NEW:
                 link_remove(&update->link);
-                PROP_GO(&e, gather_update_new(dn, &gather, update), cu);
+                PROP_GO(&e, gather_update_new(dn, gather, update), cu);
                 break;
 
             case UPDATE_META:
                 link_remove(&update->link);
-                PROP_GO(&e, gather_update_meta(dn, &gather, update), cu);
+                PROP_GO(&e, gather_update_meta(dn, gather, update), cu);
                 break;
 
             case UPDATE_EXPUNGE:
                 if(!allow_expunge) break;
                 link_remove(&update->link);
-                PROP_GO(&e, gather_update_expunge(dn, &gather, update), cu);
+                PROP_GO(&e, gather_update_expunge(dn, gather, update), cu);
                 break;
 
             case UPDATE_SYNC:
@@ -1742,7 +1783,7 @@ derr_t dn_gather_updates(
                 *st_resp = STEAL(ie_st_resp_t, &update->arg.sync);
                 link_remove(&update->link);
                 update_free(&update);
-                goto got_update_sync;
+                goto cu;
         }
     }
     // if we are here, ensure that no UPDATE_SYNC was expected
@@ -1750,15 +1791,36 @@ derr_t dn_gather_updates(
         ORIG_GO(&e, E_INTERNAL, "did not find expected UPDATE_SYNC", cu);
     }
 
-got_update_sync:
+cu:
+    if(is_error(e)){
+        // clean up memory in error cases
+        ie_st_resp_free(STEAL(ie_st_resp_t, st_resp));
+        gather_free(gather);
+    }
+
+    return e;
+}
+
+// send unsolicited untagged responses for external updates to mailbox
+derr_t dn_gather_updates(
+    dn_t *dn, bool allow_expunge, bool uid_mode, ie_st_resp_t **st_resp
+){
+    derr_t e = E_OK;
+
+    gather_t gather;
+    gather_prep(&gather);
+
+    PROP(&e,
+        gather_updates_dont_send(dn, allow_expunge, st_resp, &gather)
+    );
 
     PROP_GO(&e, gather_send_responses(dn, &gather, uid_mode), cu);
 
 cu:
     gather_free(&gather);
 
-    // only return a st_resp if we didn't hit an error
     if(is_error(e)){
+        // clean up memory in error cases
         ie_st_resp_free(STEAL(ie_st_resp_t, st_resp));
     }
 
