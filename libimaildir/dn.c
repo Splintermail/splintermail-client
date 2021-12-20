@@ -497,6 +497,7 @@ static derr_t send_uidvld_resp(dn_t *dn, unsigned int uidvld_dn){
 static derr_t select_cmd(dn_t *dn, const ie_dstr_t *tag,
         const ie_select_cmd_t *select){
     derr_t e = E_OK;
+    jsw_anode_t *node;
 
     // make sure the select did not include QRESYNC or CONDSTORE
     if(select->params){
@@ -516,16 +517,23 @@ static derr_t select_cmd(dn_t *dn, const ie_dstr_t *tag,
     );
 
     // generate/send required SELECT responses
-    PROP(&e, send_flags_resp(dn) );
-    PROP(&e, send_exists_resp(dn) );
-    PROP(&e, send_recent_resp(dn, nrecent) );
-    PROP(&e, send_unseen_resp(dn) );
-    PROP(&e, send_pflags_resp(dn) );
-    PROP(&e, send_uidnext_resp(dn, max_uid_dn) );
-    PROP(&e, send_uidvld_resp(dn, uidvld_dn) );
+    PROP_GO(&e, send_flags_resp(dn), fail);
+    PROP_GO(&e, send_exists_resp(dn), fail);
+    PROP_GO(&e, send_recent_resp(dn, nrecent), fail);
+    PROP_GO(&e, send_unseen_resp(dn), fail);
+    PROP_GO(&e, send_pflags_resp(dn), fail);
+    PROP_GO(&e, send_uidnext_resp(dn, max_uid_dn), fail);
+    PROP_GO(&e, send_uidvld_resp(dn, uidvld_dn), fail);
 
-    PROP(&e, send_ok(dn, tag, &DSTR_LIT("welcome in")) );
+    PROP_GO(&e, send_ok(dn, tag, &DSTR_LIT("welcome in")), fail);
 
+    return e;
+
+fail:
+    while((node = jsw_apop(&dn->views))){
+        msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
+        msg_view_free(&view);
+    }
     return e;
 }
 

@@ -121,14 +121,14 @@ struct imaildir_cb_i {
    customize that behavior in imaildir_hooks_i.
 
    The hooks differs from imaildir_cb_i because imaildir_cb_i is _required_ and
-   is basically always provided by a dirmgr_t, wheras imaildir_hooks_i probably
-   is passed through from some higher level.
+   is basically always provided by a dirmgr_t, whereas imaildir_hooks_i
+   probably is passed through from some higher level.
 
    In the imaildir_t, hooks is allowed to be NULL, as are its elements */
 struct imaildir_hooks_i;
 typedef struct imaildir_hooks_i imaildir_hooks_i;
 struct imaildir_hooks_i {
-    /* process_msg can modify a message before saving it, and if ignore is set
+    /* process_msg can modify a message before saving it, and if not4me is set
        to true, the imaildir_t will remember that the message is not for us */
     derr_t (*process_msg)(
         imaildir_hooks_i*,
@@ -136,7 +136,7 @@ struct imaildir_hooks_i {
         const string_builder_t *path,
         const dstr_t *content,
         size_t *len,
-        bool *ignore
+        bool *not4me
     );
 };
 

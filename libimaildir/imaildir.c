@@ -259,8 +259,7 @@ static derr_t add_msg_to_maildir(const string_builder_t *base,
     msg_key_t key;
     size_t len;
 
-    derr_t e2 =
-        maildir_name_parse(name, NULL, &key, &len, NULL, NULL);
+    derr_t e2 = maildir_name_parse(name, NULL, &key, &len, NULL, NULL);
     CATCH(e2, E_PARAM){
         // TODO: Don't ignore bad filenames; add them as "need to be sync'd"
         DROP_VAR(&e2);
@@ -1067,7 +1066,7 @@ static derr_t place_file_fill_msg(imaildir_t *m, const string_builder_t *path,
     // move the file into place
     PROP_GO(&e, drename_path(path, &cur_path), fail);
 
-    // mark msg as filled base
+    // mark msg as filled
     PROP(&e, msg_set_file(msg, len, SUBDIR_CUR, &cur_name) );
     msg->state = MSG_FILLED;
 
@@ -1139,7 +1138,7 @@ derr_t imaildir_up_handle_static_fetch_attr(imaildir_t *m,
     string_builder_t tmp_path = sb_append(&tmp_dir, FD(&tmp_name));
 
     size_t len = 0;
-    bool ignore = false;
+    bool not4me = false;
 
     if(m->hooks && m->hooks->process_msg){
         // post-process the downloaded message
@@ -1150,16 +1149,16 @@ derr_t imaildir_up_handle_static_fetch_attr(imaildir_t *m,
                 &tmp_path,
                 &extra->content->dstr,
                 &len,
-                &ignore
+                &not4me
             )
         );
-    } else {
+    }else{
         // default behavior: just write the content to a file.
         PROP(&e, dstr_write_path(&tmp_path, &extra->content->dstr) );
         len = extra->content->dstr.len;
     }
 
-    if(ignore){
+    if(not4me){
         // update the state in memory and in the log
         msg->state = MSG_NOT4ME;
         PROP(&e, m->log->update_msg(m->log, msg) );
@@ -1874,7 +1873,7 @@ static derr_t relay_copy_cb(const relay_t *relay, const ie_st_resp_t *st_resp){
     if(st_resp->code->type != IE_ST_CODE_COPYUID){
         TRACE(&e, "expected COPYUID in status response (%x) but got %x\n",
             FU(IE_ST_CODE_COPYUID), FU(st_resp->code->type));
-        ORIG(&e, E_RESPONSE, "expected COPYUID  but got something else");
+        ORIG(&e, E_RESPONSE, "expected COPYUID but got something else");
     }
 
     unsigned int uidvld = st_resp->code->arg.copyuid.uidvld;
@@ -2080,7 +2079,7 @@ derr_t imaildir_dn_build_views(
         // skip UNFILLED or EXPUNGED messages
         if(msg->state != MSG_FILLED) continue;
         msg_view_t *view;
-        PROP(&e, msg_view_new(&view, msg) );
+        PROP_GO(&e, msg_view_new(&view, msg), fail);
         jsw_ainsert(views, &view->node);
         // TODO: support recent
         if(view->recent) _nrecent++;
@@ -2090,6 +2089,13 @@ derr_t imaildir_dn_build_views(
     *uidvld_dn = m->log->get_uidvld_dn(m->log);
     *nrecent = _nrecent;
 
+    return e;
+
+fail:
+    while((node = jsw_apop(views))){
+        msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
+        msg_view_free(&view);
+    }
     return e;
 }
 

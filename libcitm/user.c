@@ -484,12 +484,12 @@ static derr_t imaildir_hooks_process_msg(
     const string_builder_t *path,
     const dstr_t *content,
     size_t *len,
-    bool *ignore
+    bool *not4me
 ){
     derr_t e = E_OK;
     user_t *user = CONTAINER_OF(hooks, user_t, imaildir_hooks);
     *len = 0;
-    *ignore = false;
+    *not4me = false;
 
     // detect if the message is even encrypted
     DSTR_STATIC(enc_header, "-----BEGIN SPLINTERMAIL MESSAGE-----");
@@ -500,7 +500,7 @@ static derr_t imaildir_hooks_process_msg(
         CATCH(e2, E_NOT4ME){
             LOG_INFO("detected NOT4ME message\n");
             DROP_VAR(&e2);
-            *ignore = true;
+            *not4me = true;
         }else CATCH(e2, E_SSL, E_PARAM){
             // decryption errors, pass the broken message to the user
             DROP_VAR(&e2);

@@ -658,7 +658,7 @@ static derr_t pre_delete_passthru(server_t *server, const ie_dstr_t *tag,
         }
     }
 
-    // take out a freeze on the mailboxe in question
+    // take out a freeze on the mailbox in question
     PROP(&e,
         dirmgr_freeze_new(server->dirmgr, deleting, &server->freeze_deleting)
     );
