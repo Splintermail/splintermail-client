@@ -911,43 +911,108 @@ def test_store(cmd, maildir_root, **kwargs):
     l1 = inject_local_msg(maildir_root)
     l2 = inject_local_msg(maildir_root)
 
-    with inbox(cmd) as rw:
-        # make sure there is at least one message present
-        append_messages(rw, 2)
+    with Subproc(cmd) as subproc, \
+            _inbox(subproc) as rw1, \
+            _inbox(subproc) as rw2:
+        # inject a couple of uids_up
+        append_messages(rw1, 2)
 
-        u2 = int(get_uid("*", rw))
+        u2 = int(get_uid("*", rw1))
         u1 = u2 - 1
 
-        # make sure we counted right; we expect l1 -> l2 -> u1 -> u2
+        # make sure we counted right; we expect l1 < l2 < u1 < u2
         assert int(u1) == l2 + 1, f"u1 != l2+1 ({int(u1)}!={l2+1})"
 
+        ## Part 1: mix/match storing uids_up and uids_local
+        ## Test various parts of dn_t::store_cmd().
+
         # pure uid_up case
-        rw.put(b"2 uid store %d:%d flags \\Seen\r\n"%(u1, u2))
-        rw.wait_for_resp("2", "OK")
-        assert_flags(rw, b"3", {l1: "", l2: "", u1: "s", u2: "s"})
+        rw1.put(b"2 uid store %d:%d flags \\Seen\r\n"%(u1, u2))
+        rw1.wait_for_resp("2", "OK")
+        assert_flags(rw1, b"3", {l1: "", l2: "", u1: "s", u2: "s"})
 
         # pure uid_local case
-        rw.put(b"5 uid store %d:%d +flags \\Answered\r\n"%(l1, l2))
-        rw.wait_for_resp("5", "OK")
-        assert_flags(rw, b"6", {l1: "a", l2: "a", u1: "s", u2: "s"})
+        rw1.put(b"5 uid store %d:%d +flags \\Answered\r\n"%(l1, l2))
+        rw1.wait_for_resp("5", "OK")
+        assert_flags(rw1, b"6", {l1: "a", l2: "a", u1: "s", u2: "s"})
 
         # mixed uid_up/uid_local case
-        rw.put(b"7 uid store %d:%d -flags \\Seen\r\n"%(l1, u2))
-        rw.wait_for_resp("7", "OK")
-        assert_flags(rw, b"8", {l1: "a", l2: "a", u1: "", u2: ""})
+        rw1.put(b"7 uid store %d:%d -flags \\Seen\r\n"%(l1, u2))
+        rw1.wait_for_resp("7", "OK")
+        assert_flags(rw1, b"8", {l1: "a", l2: "a", u1: "", u2: ""})
 
-        rw.put(b"7 uid store %d:%d flags \\Draft\r\n"%(l1, u2))
-        rw.wait_for_resp("7", "OK")
-        assert_flags(rw, b"8", {l1: "d", l2: "d", u1: "d", u2: "d"})
+        rw1.put(b"7 uid store %d:%d flags \\Draft\r\n"%(l1, u2))
+        rw1.wait_for_resp("7", "OK")
+        assert_flags(rw1, b"8", {l1: "d", l2: "d", u1: "d", u2: "d"})
 
-        # noop store (for seq num = UINT_MAX-1)
-        rw.put(b"6 store 4294967294 flags \\Seen\r\n")
-        rw.wait_for_resp(
-            "6",
+        rw1.put(b"8 store 4294967294 flags \\Seen\r\n")
+        rw1.wait_for_resp(
+            "8",
             "OK",
-            require=[b"6 OK noop STORE"],
+            require=[b"8 OK noop STORE"],
             disallow=[b"\\* [0-9]* FLAGS"],
         )
+
+        ## Part 2: mix/match .SILENT and external updates.
+        ## Test various parts of dn_t::send_store_fetch_resps().
+        rw2.put(b"9 NOOP\r\n")
+        rw2.wait_for_resp("9", "OK")
+
+        rw2.put(b"10 uid store %d flags \\Answered\r\n"%u1)
+        rw2.wait_for_resp("10", "OK")
+        rw1.put(b"11 uid store %d flags \\Seen\r\n"%u2)
+        rw1.wait_for_resp(
+            "11",
+            "OK",
+            require=[
+                # external updates also appear (send_store_resp_noexp)
+                b".*FETCH.*FLAGS \\(\\\\Answered\\) UID %d"%u1,
+                # non-SILENT stores return their flag updates
+                # (send_store_resp_expupdate, msg_flags_eq() == true, !silent)
+                b".*FETCH.*FLAGS \\(\\\\Seen\\) UID %d"%u2,
+            ],
+        )
+
+        rw1.put(b"12 uid store %d flags.silent ()\r\n"%u1)
+        rw1.wait_for_resp(
+            "12",
+            "OK",
+            # SILENT stores return no FETCH.
+            # (send_store_resp_expupdate, msg_flags_eq() == true, silent)
+            disallow=[b".*FETCH.*"],
+        )
+
+        rw2.put(b"13 uid store %d flags \\Answered\r\n"%u1)
+        rw2.wait_for_resp("13", "OK")
+        rw1.put(b"13 uid store %d +flags.silent \\Seen\r\n"%u1)
+        rw1.wait_for_resp(
+            "13",
+            "OK",
+            # SILENT stores do return a FETCH when the result was unexpected.
+            # (send_store_resp_expupdate, msg_flags_eq() == false)
+            require=[b".*FETCH.*FLAGS \\(\\\\Answered \\\\Seen\\) UID %d"%u1],
+        )
+
+        rw1.put(b"14 uid store %d flags (\\Answered \\Seen)\r\n"%u1)
+        rw1.wait_for_resp(
+            "14",
+            "OK",
+            # Expected non-silent non-change, we still report it
+            # send_store_resp_noupdate, msg_flags_eq() == true, !silent
+            require=[b".*FETCH.*FLAGS \\(\\\\Answered \\\\Seen\\) UID %d"%u1],
+        )
+
+        rw1.put(b"15 uid store %d flags.silent (\\Answered \\Seen)\r\n"%u1)
+        rw1.wait_for_resp(
+            "15",
+            "OK",
+            # Expected silent non-change, we don't report it
+            # send_store_resp_noupdate, msg_flags_eq() == true, silent
+            disallow=[b".*FETCH.*"],
+        )
+
+        # note: the (send_store_resp_noupdate, msg_flags_eq() == false) case
+        # is practically impossible to test, maybe impossible to occur.
 
 
 @register_test

@@ -39,7 +39,10 @@ static derr_t gather_updates_dont_send(
     ie_st_resp_t **st_resp,
     gather_t *gather
 );
-static derr_t gather_send_responses(dn_t *dn, gather_t *gather, bool uid_mode);
+static derr_t gather_send_responses(
+    dn_t *dn, gather_t *gather, bool uid_mode, bool for_store
+);
+static derr_t send_store_fetch_resps(dn_t *dn, gather_t *gather);
 
 // a helper struct to lazily load the message body
 typedef struct {
@@ -788,9 +791,6 @@ static derr_t store_cmd(
                 ORIG_GO(&e, E_INTERNAL, "invalid store->sign", cu);
         }
 
-        // if we expect no difference in flags, omit this uid_dn
-        if(msg_flags_eq(new_flags, view->flags)) continue;
-
         exp_flags_t *exp_flags;
         PROP_GO(&e,
             exp_flags_new(&exp_flags, uid_dn, new_flags),
@@ -798,11 +798,13 @@ static derr_t store_cmd(
         jsw_ainsert(&dn->store.tree, &exp_flags->node);
     }
 
+    // TODO: run all STOREs as silent to save bandwidth
+    bool silent = false;
     msg_store_cmd_t *msg_store = msg_store_cmd_new(&e,
         STEAL(msg_key_list_t, &keys),
         ie_store_mods_copy(&e, store->mods),
         store->sign,
-        store->silent,
+        silent,
         ie_flags_copy(&e, store->flags)
     );
 
@@ -1194,7 +1196,7 @@ static derr_t fetch_cmd(dn_t *dn, const ie_dstr_t *tag,
     gather_t gather;
     gather_prep(&gather);
 
-    /* determined uids_dn before gathering updates, so that we don't
+    /* determine uids_dn before gathering updates, so that we don't
        accidentally add new messages to our view before we decide which uids
        the client was referring to */
     bool uid_mode = fetch->uid_mode;
@@ -1229,7 +1231,8 @@ static derr_t fetch_cmd(dn_t *dn, const ie_dstr_t *tag,
     }
 
     // now send the rest of the gathered updates
-    PROP_GO(&e, gather_send_responses(dn, &gather, uid_mode), cu);
+    bool for_store = false;
+    PROP_GO(&e, gather_send_responses(dn, &gather, uid_mode, for_store), cu);
 
     if(!any_missing){
         DSTR_STATIC(msg, "you didn't hear it from me");
@@ -1384,6 +1387,7 @@ derr_t dn_cmd(dn_t *dn, imap_cmd_t *cmd){
             break;
 
         case IMAP_CMD_FETCH:
+            // fetch_cmd has its own handling of updates
             PROP_GO(&e, fetch_cmd(dn, tag, arg->fetch), cu_cmd);
             break;
 
@@ -1632,9 +1636,9 @@ static derr_t gather_update_meta(dn_t *dn, gather_t *gather, update_t *update){
         msg_view_t *old_view = CONTAINER_OF(node, msg_view_t, node);
         msg_view_free(&old_view);
 
-        // add the new view
+        // add the new view, if msg was not expunged
         jsw_ainsert(&dn->views, &view->node);
-        update->arg.new = NULL;
+        update->arg.meta = NULL;
     }
 
 cu:
@@ -1650,7 +1654,7 @@ static derr_t gather_update_expunge(
 
     const msg_expunge_t *expunge = update->arg.expunge;
 
-    // remember that this uid is new
+    // remember that this uid is expunged
     gathered_t *gathered;
     PROP_GO(&e, gathered_new(&gathered, expunge->uid_dn), cu);
     jsw_ainsert(&gather->expunges, &gathered->node);
@@ -1663,12 +1667,16 @@ cu:
     return e;
 }
 
-static derr_t gather_send_responses(dn_t *dn, gather_t *gather, bool uid_mode){
+static derr_t gather_send_responses(
+    dn_t *dn, gather_t *gather, bool uid_mode, bool for_store
+){
     derr_t e = E_OK;
     jsw_atrav_t trav;
     jsw_anode_t *node;
 
     // step 1: any EXPUNGEs don't get FETCHes or count for EXISTS
+    /* (these EXPUNGEs are not witheld EXPUNGEs, hence it the choice to not
+       report FETCH responses) */
     node = jsw_atfirst(&trav, &gather->expunges);
     for(; node; node = jsw_atnext(&trav)){
         gathered_t *gathered = CONTAINER_OF(node, gathered_t, node);
@@ -1690,22 +1698,27 @@ static derr_t gather_send_responses(dn_t *dn, gather_t *gather, bool uid_mode){
     }
 
     // step 3: send flag updates
-    node = jsw_atfirst(&trav, &gather->metas);
-    for(; node; node = jsw_atnext(&trav)){
-        gathered_t *gathered = CONTAINER_OF(node, gathered_t, node);
+    if(for_store){
+        // STORE commands have very special rules for what they report back
+        PROP(&e, send_store_fetch_resps(dn, gather) );
+    }else{
+        node = jsw_atfirst(&trav, &gather->metas);
+        for(; node; node = jsw_atnext(&trav)){
+            gathered_t *gathered = CONTAINER_OF(node, gathered_t, node);
 
-        // find our view of this uid_dn
-        size_t index;
-        node = jsw_afind(&dn->views, &gathered->uid_dn, &index);
-        if(!node) ORIG(&e, E_INTERNAL, "missing uid_dn");
+            // find our view of this uid_dn
+            size_t index;
+            node = jsw_afind(&dn->views, &gathered->uid_dn, &index);
+            if(!node) ORIG(&e, E_INTERNAL, "missing uid_dn");
 
-        msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
+            msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
 
-        unsigned int seq_num;
-        PROP(&e, index_to_seq_num(index, &seq_num) );
-        bool recent = false;
-        const unsigned int *uid = uid_mode ? &gathered->uid_dn : NULL;
-        PROP(&e, send_flags_update(dn, seq_num, view->flags, recent, uid) );
+            unsigned int seq_num;
+            PROP(&e, index_to_seq_num(index, &seq_num) );
+            bool recent = false;
+            const unsigned int *uid = uid_mode ? &gathered->uid_dn : NULL;
+            PROP(&e, send_flags_update(dn, seq_num, view->flags, recent, uid) );
+        }
     }
 
     // step 4: send expunge updates (in reverse order)
@@ -1814,7 +1827,8 @@ derr_t dn_gather_updates(
         gather_updates_dont_send(dn, allow_expunge, st_resp, &gather)
     );
 
-    PROP_GO(&e, gather_send_responses(dn, &gather, uid_mode), cu);
+    bool for_store = false;
+    PROP_GO(&e, gather_send_responses(dn, &gather, uid_mode, for_store), cu);
 
 cu:
     gather_free(&gather);
@@ -1854,7 +1868,7 @@ static derr_t send_store_resp_noupdate(dn_t *dn, const exp_flags_t *exp_flags){
     }
 
 
-    // we expected this change, do we report it?
+    // we expected this (non)change, do we report it?
     if(!dn->store.silent){
         unsigned int seq_num;
         PROP(&e, index_to_seq_num(index, &seq_num) );
@@ -1868,7 +1882,7 @@ static derr_t send_store_resp_noupdate(dn_t *dn, const exp_flags_t *exp_flags){
         return e;
     }
 
-    // got an expected change, but it was a .SILENT command
+    // got an expected (non)change, but it was a .SILENT command
 
     return e;
 }
@@ -1933,57 +1947,82 @@ static derr_t send_store_resp_expupdate(dn_t *dn,
     return e;
 }
 
-static derr_t send_store_resp(dn_t *dn, ie_seq_set_t *updated_uids_dn,
-        ie_st_resp_t *st_resp){
+static derr_t send_store_fetch_resps(dn_t *dn, gather_t *gather){
     derr_t e = E_OK;
 
-    /* Send a FETCH response with for each update.  Unless there was a .SILENT
+    /* Send a FETCH response for each update.  Unless there was a .SILENT
        store, in which case we ignore those messages.  Unless there was an
        external update that caused one of those messages to be different than
        expected.
 
-       Walk the exp_flags_t's from the STORE command and the updated_uids_dn
+       Walk the exp_flags_t's from the STORE command and the gather->metas
        simlutaneously to figure out how to respond to each message. */
 
-    jsw_atrav_t atrav;
-    ie_seq_set_trav_t strav;
-
+    jsw_anode_t *node;
+    jsw_atrav_t etrav;
     exp_flags_t *exp_flags = NULL;
-    unsigned int updated_uid_dn = 0;
+    jsw_atrav_t gtrav;
+    gathered_t *gathered = NULL;
 
-    jsw_anode_t *node = jsw_atfirst(&atrav, &dn->store.tree);
+    node = jsw_atfirst(&etrav, &dn->store.tree);
     exp_flags = CONTAINER_OF(node, exp_flags_t, node);
-    updated_uid_dn = ie_seq_set_iter(&strav, updated_uids_dn, 0, 0);
+    node = jsw_atfirst(&gtrav, &gather->metas);
+    gathered = CONTAINER_OF(node, gathered_t, node);
 
     // quit when we reach the end of both lists
-    while(exp_flags || updated_uid_dn){
-        if(updated_uid_dn){
-            // either there's no more exp_flags or updated_uids_dn is behind
-            if(!exp_flags || exp_flags->uid_dn > updated_uid_dn){
-                PROP_GO(&e, send_store_resp_noexp(dn, updated_uid_dn), cu);
-                updated_uid_dn = ie_seq_set_next(&strav);
+    while(exp_flags || gathered){
+        if(gathered){
+            // maybe there's no more exp_flags or gathered is behind
+            if(!exp_flags || exp_flags->uid_dn > gathered->uid_dn){
+                PROP(&e, send_store_resp_noexp(dn, gathered->uid_dn) );
+                node = jsw_atnext(&gtrav);
+                gathered = CONTAINER_OF(node, gathered_t, node);
                 continue;
             }
         }
 
         if(exp_flags){
-            // either there's no more updated_uids_dn or exp_flags is behind
-            if(!updated_uid_dn || updated_uid_dn > exp_flags->uid_dn){
-                PROP_GO(&e, send_store_resp_noupdate(dn, exp_flags), cu);
-                node = jsw_atnext(&atrav);
+            // maybe there's no more gathered or exp_flags is behind
+            if(!gathered || gathered->uid_dn > exp_flags->uid_dn){
+                PROP(&e, send_store_resp_noupdate(dn, exp_flags) );
+                node = jsw_atnext(&etrav);
                 exp_flags = CONTAINER_OF(node, exp_flags_t, node);
                 continue;
             }
         }
 
-        // otherwise, exp_flags->uid_dn and updated_uid_dn are valid and equal
-        PROP_GO(&e, send_store_resp_expupdate(dn, exp_flags), cu);
+        // otherwise exp_flags->uid_dn and gathered->uid_dn are valid and equal
+        PROP(&e, send_store_resp_expupdate(dn, exp_flags) );
 
-        node = jsw_atnext(&atrav);
+        node = jsw_atnext(&etrav);
         exp_flags = CONTAINER_OF(node, exp_flags_t, node);
-        updated_uid_dn = ie_seq_set_next(&strav);
+        node = jsw_atnext(&gtrav);
+        gathered = CONTAINER_OF(node, gathered_t, node);
     }
 
+    return e;
+}
+
+static derr_t do_work_store(dn_t *dn){
+    derr_t e = E_OK;
+
+    gather_t gather;
+    gather_prep(&gather);
+
+    ie_st_resp_t *st_resp = NULL;
+
+    // gather updates, including the st_resp from our UPDATE_SYNC
+    bool allow_expunge = dn->store.uid_mode;
+    PROP_GO(&e,
+        gather_updates_dont_send(dn, allow_expunge, &st_resp, &gather),
+    cu);
+
+    // send all untagged responses
+    bool uid_mode = dn->store.uid_mode;
+    bool for_store = true;
+    PROP_GO(&e, gather_send_responses(dn, &gather, uid_mode, for_store), cu);
+
+    // send tagged status-type response
     if(st_resp){
         // the command failed
         PROP_GO(&e,
@@ -1999,91 +2038,8 @@ static derr_t send_store_resp(dn_t *dn, ie_seq_set_t *updated_uids_dn,
     }
 
 cu:
-    ie_seq_set_free(updated_uids_dn);
     ie_st_resp_free(st_resp);
-    return e;
-}
-
-static derr_t process_meta_update_for_store(dn_t *dn, update_t *update,
-        seq_set_builder_t *uids_dn_ssb){
-    derr_t e = E_OK;
-
-    msg_view_t *view = update->arg.meta;
-
-    // remove the old view, if there is one
-    /* (there might not be if this is an update to an expunge message where we
-        have already accepted the expunge) */
-    jsw_anode_t *node = jsw_aerase(&dn->views, &view->uid_dn);
-    if(node){
-        msg_view_t *old_view = CONTAINER_OF(node, msg_view_t, node);
-        msg_view_free(&old_view);
-
-        // add the new view
-        jsw_ainsert(&dn->views, &view->node);
-        update->arg.new = NULL;
-
-        PROP_GO(&e, seq_set_builder_add_val(uids_dn_ssb, view->uid_dn), cu);
-    }
-
-cu:
-    update_free(&update);
-    return e;
-}
-
-static derr_t do_work_store(dn_t *dn){
-    derr_t e = E_OK;
-
-    // prepare a list of uid_dns updates we got
-    seq_set_builder_t uids_dn_ssb;
-    seq_set_builder_prep(&uids_dn_ssb);
-
-    ie_st_resp_t *st_resp = NULL;
-
-    update_t *update, *temp;
-    LINK_FOR_EACH_SAFE(update, temp, &dn->pending_updates, update_t, link){
-        bool last_update_to_process = false;
-
-        switch(update->type){
-            case UPDATE_NEW:
-                // TODO: handle these
-                LOG_ERROR("don't know what to do with UPDATE_NEW yet\n");
-                break;
-
-            case UPDATE_META:
-                // process the event right now
-                link_remove(&update->link);
-                PROP_GO(&e,
-                    process_meta_update_for_store(dn, update, &uids_dn_ssb),
-                cu);
-                break;
-
-            case UPDATE_EXPUNGE:
-                // TODO: handle these in UID mode
-                break;
-
-            case UPDATE_SYNC:
-                // free the update and break out of the loop
-                link_remove(&update->link);
-                st_resp = STEAL(ie_st_resp_t, &update->arg.sync);
-                update_free(&update);
-                last_update_to_process = true;
-                break;
-        }
-
-        if(last_update_to_process) break;
-    }
-
-    ie_seq_set_t *updated_uids_dn = seq_set_builder_extract(&e, &uids_dn_ssb);
-    CHECK_GO(&e, cu);
-
-    // send the response to the store command
-    PROP_GO(&e,
-        send_store_resp(dn, updated_uids_dn, STEAL(ie_st_resp_t, &st_resp)),
-    cu);
-
-cu:
-    ie_st_resp_free(st_resp);
-    seq_set_builder_free(&uids_dn_ssb);
+    gather_free(&gather);
     dn_free_store(dn);
     return e;
 }
