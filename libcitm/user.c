@@ -367,13 +367,22 @@ static derr_t mangle_unencrypted(
     // search for the patterns
     size_t which;
     size_t partial;
-    char* pos = dstr_find(msg, &subj, &which, &partial);
-    if(!pos){
-        /* if we didn't find the end of headers, the message is fucked; just
-           leave it alone */
-        PROP(&e, dstr_write_path(path, msg) );
-        if(len) *len = msg->len;
-        return e;
+    char *pos;
+    bool beginswith = false;
+    if(dstr_beginswith(msg, &DSTR_LIT("Subject:"))){
+        // special case; handle a Subject on the first line
+        pos = msg->data;
+        which = 0;
+        beginswith = true;
+    }else{
+        pos = dstr_find(msg, &subj, &which, &partial);
+        if(!pos){
+            /* if we didn't find the end of headers, the message is fucked;
+               just leave it alone */
+            PROP(&e, dstr_write_path(path, msg) );
+            if(len) *len = msg->len;
+            return e;
+        }
     }
 
     dstr_t copy;
@@ -400,6 +409,10 @@ static derr_t mangle_unencrypted(
     // if we found the subject line, mangle it
     else if(which == 0){
         size_t subj_end = (uintptr_t)(pos - msg->data) + subj.data[which].len;
+        if(beginswith){
+            // special case: account for the '\n' not present in the pattern
+            subj_end -= 1;
+        }
         // write to the end of "Subject:"
         dstr_t pre = dstr_sub2(*msg, 0, subj_end);
         PROP_GO(&e, dstr_append(&copy, &pre), cu);

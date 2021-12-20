@@ -1955,7 +1955,7 @@ def test_large_initial_download(cmd, maildir_root, **kwargs):
         pass
 
 
-#@register_test
+@register_test
 def test_mangling(cmd, maildir_root, **kwargs):
     # Dovecot mangles APPENDED messages to use \r\n instead of \n, so there's
     # no e2e way to test the non-\r\n message mangling
@@ -1997,6 +1997,18 @@ def test_mangling(cmd, maildir_root, **kwargs):
         b"Hey!\r\n"
         b"\r\n"
         b"Let's meet at the place later.\r\n"
+    )
+
+    # regression test: handle the case with a subject but not '\nSubject:'
+    subjfirst = (
+        b"Subject: hello\r\n"
+        b"\r\n"
+        b"world\r\n"
+    )
+    subjfirst_exp = (
+        b"Subject: NOT ENCRYPTED: hello\r\n"
+        b"\r\n"
+        b"world\r\n"
     )
 
     # we pass broken, unencrypted messages through untouched
@@ -2070,7 +2082,7 @@ def test_mangling(cmd, maildir_root, **kwargs):
         dovecot_port = kwargs["imaps_port"]
         with _session(None, host="127.0.0.1", port=dovecot_port) as rw:
             for i, msg in enumerate(
-                [unenc, nosubj, broken, noparse, enc]
+                [unenc, nosubj, broken, noparse, enc, subjfirst]
             ):
                 rw.put(b"A%d APPEND INBOX {%d}\r\n"%(i, len(msg)))
                 rw.wait_for_match(b"\\+")
@@ -2084,12 +2096,19 @@ def test_mangling(cmd, maildir_root, **kwargs):
         # count again
         with _session(subproc) as rw:
             new = get_msg_count(rw, b"INBOX") - msgs
-            assert (new) == 5, f"expected 5 new messages, got {(new)}"
+            assert (new) == 6, f"expected 6 new messages, got {(new)}"
 
         # check contents
         with _inbox(subproc) as rw:
             for i, exp in enumerate(
-                [unenc_exp, nosubj_exp, broken_exp, noparse_exp, enc_exp]
+                [
+                    unenc_exp,
+                    nosubj_exp,
+                    broken_exp,
+                    noparse_exp,
+                    enc_exp,
+                    subjfirst_exp,
+                ]
             ):
                 # fetch the i'th new message and compare it to what we expect
                 seq = msgs + 1 + i
