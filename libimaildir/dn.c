@@ -378,13 +378,10 @@ static derr_t send_exists_resp(dn_t *dn){
     return e;
 }
 
-static derr_t send_recent_resp(dn_t *dn){
+static derr_t send_recent_resp(dn_t *dn, unsigned int nrecent){
     derr_t e = E_OK;
 
-    // TODO: support \Recent flag
-
-    unsigned int recent = 0;
-    imap_resp_arg_t arg = {.recent=recent};
+    imap_resp_arg_t arg = {.recent=nrecent};
     imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_RECENT, arg);
     resp = imap_resp_assert_writable(&e, resp, dn->exts);
     CHECK(&e);
@@ -397,8 +394,34 @@ static derr_t send_recent_resp(dn_t *dn){
 static derr_t send_unseen_resp(dn_t *dn){
     derr_t e = E_OK;
 
-    // TODO: what technically is "unseen"?  And what if nothing is unseen?
-    (void)dn;
+    /* note: UNSEEN can't be calculated in constant memory while building the
+       view because you have to have the complete view already constructed to
+       be able to properly report the lowest UNSEEN sequence number */
+
+    unsigned int seq = 1;
+    jsw_atrav_t trav;
+    jsw_anode_t *node = jsw_atfirst(&trav, &dn->views);
+    for(; node != NULL; seq++, node = jsw_atprev(&trav)){
+        msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
+        if(view->flags.seen) continue;
+
+        // found the first UNSEEN
+        ie_st_code_arg_t code_arg = {.unseen = seq};
+        ie_st_code_t *code = ie_st_code_new(&e, IE_ST_CODE_UNSEEN, code_arg);
+
+        DSTR_STATIC(msg, "you ain't seen nuthin yet");
+        ie_dstr_t *text = ie_dstr_new(&e, &msg, KEEP_RAW);
+
+        ie_st_resp_t *st_resp = ie_st_resp_new(&e, NULL, IE_ST_OK, code, text);
+        imap_resp_arg_t arg = {.status_type=st_resp};
+        imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_STATUS_TYPE, arg);
+        resp = imap_resp_assert_writable(&e, resp, dn->exts);
+        CHECK(&e);
+
+        PROP(&e, dn->cb->resp(dn->cb, resp) );
+    }
+
+    // if no messages were unseen, don't report anything
 
     return e;
 }
@@ -482,14 +505,20 @@ static derr_t select_cmd(dn_t *dn, const ie_dstr_t *tag,
 
     unsigned int max_uid_dn;
     unsigned int uidvld_dn;
+    unsigned int nrecent;
     PROP(&e,
-        imaildir_dn_build_views(dn->m, &dn->views, &max_uid_dn, &uidvld_dn)
+        imaildir_dn_build_views(dn->m,
+            &dn->views,
+            &max_uid_dn,
+            &uidvld_dn,
+            &nrecent
+        )
     );
 
     // generate/send required SELECT responses
     PROP(&e, send_flags_resp(dn) );
     PROP(&e, send_exists_resp(dn) );
-    PROP(&e, send_recent_resp(dn) );
+    PROP(&e, send_recent_resp(dn, nrecent) );
     PROP(&e, send_unseen_resp(dn) );
     PROP(&e, send_pflags_resp(dn) );
     PROP(&e, send_uidnext_resp(dn, max_uid_dn) );

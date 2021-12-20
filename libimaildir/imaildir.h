@@ -350,8 +350,13 @@ bool imaildir_up_allow_download(imaildir_t *m);
 /* imaildir functions exposed only for dn_t.  dn_t keeps its own view of the
    mailbox and therefore relies less on the imaildir_t. */
 
-derr_t imaildir_dn_build_views(imaildir_t *m, jsw_atree_t *views,
-        unsigned int *max_uid_dn, unsigned int *uidvld);
+derr_t imaildir_dn_build_views(
+    imaildir_t *m,
+    jsw_atree_t *views,
+    unsigned int *max_uid_dn,
+    unsigned int *uidvld_dn,
+    unsigned int *nrecent
+);
 
 // this will always consume or free req
 derr_t imaildir_dn_request_update(imaildir_t *m, update_req_t *req);

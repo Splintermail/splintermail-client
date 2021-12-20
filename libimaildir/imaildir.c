@@ -2062,11 +2062,17 @@ fail_relay:
 }
 
 
-derr_t imaildir_dn_build_views(imaildir_t *m, jsw_atree_t *views,
-        unsigned int *max_uid_dn, unsigned int *uidvld_dn){
+derr_t imaildir_dn_build_views(
+    imaildir_t *m,
+    jsw_atree_t *views,
+    unsigned int *max_uid_dn,
+    unsigned int *uidvld_dn,
+    unsigned int *nrecent
+){
     derr_t e = E_OK;
 
     // make one view for every message present in the mailbox
+    unsigned int _nrecent = 0;
     jsw_atrav_t trav;
     jsw_anode_t *node = jsw_atfirst(&trav, &m->msgs);
     for(; node != NULL; node = jsw_atnext(&trav)){
@@ -2076,10 +2082,13 @@ derr_t imaildir_dn_build_views(imaildir_t *m, jsw_atree_t *views,
         msg_view_t *view;
         PROP(&e, msg_view_new(&view, msg) );
         jsw_ainsert(views, &view->node);
+        // TODO: support recent
+        if(view->recent) _nrecent++;
     }
 
     *max_uid_dn = m->hi_uid_dn;
     *uidvld_dn = m->log->get_uidvld_dn(m->log);
+    *nrecent = _nrecent;
 
     return e;
 }
