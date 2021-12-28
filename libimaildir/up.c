@@ -185,6 +185,29 @@ static void himodseq_observe(up_t *up, uint64_t observation){
     up->himodseq_up_seen = MAX(up->himodseq_up_seen, observation);
 }
 
+static derr_t push_examine_state(up_t *up, bool examine){
+    derr_t e = E_OK;
+
+    size_t nmax = sizeof(up->examines_pending) / *(up->examines_pending);
+
+    if(up->nexamines_pending == nmax){
+        ORIG(&e, E_FIXEDSIZE, "too many examines_pending!\n");
+    }
+
+    up->examines_pending[up->nexamines_pending++] = examine;
+
+    return e;
+}
+
+static bool pop_examine_state(up_t *up){
+    size_t nmax = sizeof(up->examines_pending) / *(up->examines_pending);
+    if(nmax == 0){
+        LOG_ERROR("up_t::pop_examine_state(): no states to pop!\n");
+        return false;
+    }
+    return up->examines_pending[--up->nexamines_pending];
+}
+
 static ie_dstr_t *write_tag_up(derr_t *e, size_t tag){
     if(is_error(*e)) goto fail;
 
@@ -301,6 +324,8 @@ static derr_t select_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
     up_cb_t *up_cb = CONTAINER_OF(cb, up_cb_t, cb);
     up_t *up = up_cb->up;
 
+    bool examining = pop_examine_state(up);
+
     if(st_resp->status != IE_ST_OK){
         // handle the special case where the mail server doesn't have this dir
         up->m->rm_on_close = (st_resp->status == IE_ST_NO);
@@ -315,6 +340,7 @@ static derr_t select_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
 
     up->m->rm_on_close = false;
     up->select.done = true;
+    up->examining = examining;
 
     /* we can ignore any detections we thought we needed to send since the
        SELECT (QRESYNC ...) command will always give us new messages */
@@ -400,6 +426,8 @@ static derr_t reselect_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
     up_cb_t *up_cb = CONTAINER_OF(cb, up_cb_t, cb);
     up_t *up = up_cb->up;
 
+    bool examining = pop_examine_state(up);
+
     if(st_resp->status != IE_ST_OK){
         ORIG(&e, E_RESPONSE, "re-SELECT failed");
     }
@@ -408,6 +436,7 @@ static derr_t reselect_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
        SELECT (QRESYNC ...) command will always give us new messages */
     if(!up->detect.inflight) up->detect.chgsince = 0;
     up->detect.repeat = false;
+    up->examining = examining;
 
     return e;
 }
@@ -997,7 +1026,7 @@ static derr_t advance_state(up_t *up){
                 examine
             )
         );
-        up->examine = examine;
+        PROP(&e, push_examine_state(up, examine) );
     }
     if(!up->select.done) return e;
 
@@ -1049,7 +1078,7 @@ static derr_t advance_state(up_t *up){
                 up->reselect.examine
             )
         );
-        up->examine = up->reselect.examine;
+        PROP(&e, push_examine_state(up, up->reselect.examine) );
         up_free_reselect(up);
     }
 

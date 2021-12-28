@@ -119,9 +119,12 @@ struct up_t {
        only calling it when we asked to be enqueued makes debugging easier */
     bool enqueued;
 
-    /* this is defined by the most recent SELECT/EXAMINE call; it may not have
-       finished its round trip yet */
-    bool examine;
+    /* after the first select is done, this reflects the examine state of the
+       most recently completed SELECT or EXAMINE */
+    bool examining;
+    // the next 8 examine states; raise an error on would-be overflows
+    bool examines_pending[8];
+    size_t nexamines_pending;
 
     struct {
         bool needed;
