@@ -9,7 +9,6 @@ static derr_t send_ok(server_t *server, const ie_dstr_t *tag,
 static derr_t send_no(server_t *server, const ie_dstr_t *tag,
         const dstr_t *msg);
 static derr_t do_logout(server_t *server, ie_dstr_t *tag);
-static derr_t do_close(server_t *server, ie_dstr_t *tag);
 static derr_t request_select(server_t *server, bool examine);
 static derr_t server_do_work(server_t *server, bool *noop);
 
@@ -39,7 +38,9 @@ static void server_free_select(server_t *server){
 }
 
 static void server_free_close(server_t *server){
-    server->close.awaiting = false;
+    server->close.awaiting_dn = false;
+    server->close.awaiting_fetcher = false;
+    server->close.awaiting_send = false;
     ie_dstr_free(STEAL(ie_dstr_t, &server->close.tag));
 }
 
@@ -184,6 +185,12 @@ void server_select_result(server_t *server, ie_st_resp_t *st_resp){
     server_enqueue(server);
 }
 
+void server_unselected(server_t *server){
+    server->close.awaiting_fetcher = false;
+    server->close.awaiting_send = true;
+    server_enqueue(server);
+}
+
 void server_set_dirmgr(server_t *server, dirmgr_t *dirmgr){
     server->dirmgr = dirmgr;
     server_enqueue(server);
@@ -229,7 +236,7 @@ static derr_t server_dn_resp(dn_cb_i *dn_cb, imap_resp_t *resp){
         ie_dstr_free(STEAL(ie_dstr_t, &server->await.tag));
     }
 
-    // otherwise, just submit all maildir_dn responses blindly
+    // otherwise, just submit all dn_t responses blindly
     imap_event_t *imap_ev;
     PROP_GO(&e, imap_event_new(&imap_ev, server, resp), fail);
     imap_session_send_event(&server->s, &imap_ev->ev);
@@ -264,8 +271,11 @@ static derr_t server_dn_disconnected(dn_cb_i *dn_cb, ie_st_resp_t *st_resp){
     }else if(server->logout.disconnecting){
         PROP(&e, do_logout(server, STEAL(ie_dstr_t, &server->logout.tag)) );
 
-    }else if(server->close.awaiting){
-        PROP(&e, do_close(server, STEAL(ie_dstr_t, &server->close.tag)) );
+    }else if(server->close.awaiting_dn){
+        server->close.awaiting_dn = false;
+        // now wait for the fetcher to disconnect
+        server->cb->unselect(server->cb);
+        server->close.awaiting_fetcher = true;
 
     }else{
         ie_st_resp_free(st_resp);
@@ -1036,12 +1046,9 @@ fail_cmd:
     return e;
 }
 
-// this runs after the maildir_dn has finished closing
+// this runs after the dn_t has finished closing
 static derr_t do_close(server_t *server, ie_dstr_t *tag){
     derr_t e = E_OK;
-
-    server->close.awaiting = false;
-    server->imap_state = AUTHENTICATED;
 
     // build text
     DSTR_STATIC(msg, "get offa my lawn!");
@@ -1058,7 +1065,7 @@ static derr_t do_close(server_t *server, ie_dstr_t *tag){
     return e;
 }
 
-// this may or may not have to wait for the maildir_dn to close before it runs
+// this may or may not have to wait for the dn_t to close before it runs
 static derr_t do_logout(server_t *server, ie_dstr_t *tag){
     derr_t e = E_OK;
 
@@ -1182,7 +1189,7 @@ static derr_t handle_one_command(server_t *server, imap_cmd_t *cmd){
                 PROP_GO(&e, dn_disconnect(&server->dn, false), cu_cmd);
             }else{
                 /* Ask the sf_pair for permission to SELECT the folder.
-                   Permission may not be grated if e.g. the fetcher finds out
+                   Permission may not be granted if e.g. the fetcher finds out
                    the folder does not exist or if it is the keybox folder */
                 PROP_GO(&e, request_select(server, examine), cu_cmd);
             }
@@ -1192,7 +1199,7 @@ static derr_t handle_one_command(server_t *server, imap_cmd_t *cmd){
             PROP_GO(&e, assert_state(server, SELECTED, tag, &state_ok),
                     cu_cmd);
             if(state_ok){
-                server->close.awaiting = true;
+                server->close.awaiting_dn = true;
                 server->close.tag = STEAL(ie_dstr_t, &cmd->tag);
                 CHECK_GO(&e, cu_cmd);
                 // wait for the dn_t to disconnect
@@ -1244,7 +1251,7 @@ static bool intercept_cmd_type(imap_cmd_type_t type){
     switch(type){
         /* (SELECT is special; it may trigger a dirmgr_close_dn, then it always
             triggers a dirmgr_open_dn in the sm_serve_logic, and then it is
-            also passed into the maildir_dn as the first command, but not here)
+            also passed into the dn_t as the first command, but not here)
             */
         case IMAP_CMD_SELECT:
         case IMAP_CMD_EXAMINE:
@@ -1319,7 +1326,9 @@ static bool server_is_paused(server_t *server){
         || server->passthru.state
         || server->await.tag
         || server->select.state
-        || server->close.awaiting;
+        || server->close.awaiting_dn
+        || server->close.awaiting_fetcher
+        || server->close.awaiting_send;
 }
 
 static derr_t do_work_greet(server_t *server, bool *noop){
@@ -1432,6 +1441,21 @@ cu:
 }
 
 
+static derr_t do_work_close(server_t *server, bool *noop){
+    derr_t e = E_OK;
+
+    if(!server->close.awaiting_send) return e;
+    *noop = false;
+
+    PROP(&e, do_close(server, STEAL(ie_dstr_t, &server->close.tag)) );
+
+    server_free_close(server);
+    server->imap_state = AUTHENTICATED;
+
+    return e;
+}
+
+
 derr_t server_do_work(server_t *server, bool *noop){
     derr_t e = E_OK;
 
@@ -1455,7 +1479,7 @@ derr_t server_do_work(server_t *server, bool *noop){
         imap_cmd_t *cmd = CONTAINER_OF(link, imap_cmd_t, link);
         *noop = false;
 
-        // detect if we need to just pass the command to the maildir_dn
+        // detect if we need to just pass the command to the dn_t
         if(server->imap_state == SELECTED && !intercept_cmd_type(cmd->type)){
             // asynchronous commands must be awaited:
             PROP(&e, server_await_if_async(server, cmd) );
@@ -1472,8 +1496,8 @@ derr_t server_do_work(server_t *server, bool *noop){
     PROP(&e, do_work_login(server, noop) );
     PROP(&e, do_work_passthru(server, noop) );
     PROP(&e, do_work_select(server, noop) );
+    PROP(&e, do_work_close(server, noop) );
     // no do_work_awaiting because that's always resolved in a dn_t callback
-    // no do_work_close because that's always resolved in a dn_t callback
     // no do_work_logout because that's always resolved in a dn_t callback
 
     return e;

@@ -156,7 +156,6 @@ static void imaildir_cb_free(imap_cmd_cb_t *cb){
     free(imaildir_cb);
 }
 
-// this takes cmd just to free it if we fail
 static imaildir_cb_t *imaildir_cb_new(derr_t *e, relay_t *relay,
         const ie_dstr_t *tag_str){
     if(is_error(*e)) goto fail;
@@ -726,12 +725,27 @@ void imaildir_register_up(imaildir_t *m, up_t *up){
 
     up->m = m;
 
+    bool first_writer = false;
+    if(up_imaildir_want_write(up)){
+        first_writer = (m->nwriters == 0);
+        m->nwriters++;
+    }
+
     if(is_primary){
         promote_up_to_primary(m, up);
     }else{
-        // if this mailbox has synced before, trigger an immediate sync call
-        if(m->synced){
-            up->cb->synced(up->cb);
+        if(first_writer){
+            /* an EXAMINE/SELECT transition, even if mail in mailbox is synced
+               we still have to wait for a SELECT to finish */
+            up_t *primary = CONTAINER_OF(m->ups.next, up_t, link);
+            promote_up_to_primary(m, primary);
+        }else{
+            // no EXAMINE/SELECT transition
+            if(m->synced){
+                // mailbox already synced; trigger an immediate sync call
+                bool examining = (m->nwriters == 0);
+                up->cb->synced(up->cb, examining);
+            }
         }
     }
 }
@@ -745,15 +759,6 @@ void imaildir_register_dn(imaildir_t *m, dn_t *dn){
 
     /* final initialization step is when the downwards session calls
        dn_cmd() to send the SELECT command sent by the client */
-
-    if(!dn_imaildir_examining(dn)){
-        bool first_writer = (m->nwriters == 0);
-        m->nwriters++;
-        if(first_writer && !link_list_isempty(&m->ups)){
-            up_t *primary = CONTAINER_OF(m->ups.next, up_t, link);
-            promote_up_to_primary(m, primary);
-        }
-    }
 }
 
 size_t imaildir_unregister_up(up_t *up){
@@ -772,10 +777,18 @@ size_t imaildir_unregister_up(up_t *up){
     // remove from list
     link_remove(&up->link);
 
-    if(was_primary && !link_list_isempty(&m->ups)){
-        // promote the next up_t to be a primary
-        up_t *primary = CONTAINER_OF(m->ups.next, up_t, link);
-        promote_up_to_primary(m, primary);
+    bool last_writer = false;
+    if(up_imaildir_want_write(up)){
+        m->nwriters--;
+        last_writer = (m->nwriters == 0);
+    }
+
+    if(was_primary || last_writer){
+        if(!link_list_isempty(&m->ups)){
+            // promote the next up_t to primary, or reconfigure it to EXAMINE
+            up_t *primary = CONTAINER_OF(m->ups.next, up_t, link);
+            promote_up_to_primary(m, primary);
+        }
     }
 
     return --m->naccessors;
@@ -789,11 +802,6 @@ size_t imaildir_unregister_dn(dn_t *dn){
     // revoke all access
     dn->m = NULL;
 
-    if(!m->closed){
-        // remove from its list
-        link_remove(&dn->link);
-    }
-
     // clean up references to this dn_t in the relay_t's
     relay_t *relay;
     LINK_FOR_EACH(relay, &m->relays, relay_t, link){
@@ -802,14 +810,11 @@ size_t imaildir_unregister_dn(dn_t *dn){
         }
     }
 
-    if(!dn_imaildir_examining(dn)){
-        m->nwriters--;
-        bool last_writer = (m->nwriters == 0);
-        if(last_writer && !link_list_isempty(&m->ups)){
-            up_t *primary = CONTAINER_OF(m->ups.next, up_t, link);
-            promote_up_to_primary(m, primary);
-        }
-    }
+    // don't do additional handling during a force_close
+    if(m->closed) return --m->naccessors;
+
+    // remove from its list
+    link_remove(&dn->link);
 
     return --m->naccessors;
 }
@@ -1174,22 +1179,24 @@ derr_t imaildir_up_handle_static_fetch_attr(imaildir_t *m,
     // TODO: it seems like this should raise an E_IMAILDIR
 }
 
-derr_t imaildir_up_initial_sync_complete(imaildir_t *m, up_t *up){
+// after an initial sync or after a reselect
+derr_t imaildir_up_synced(
+    imaildir_t *m, up_t *up, bool examining, bool initial
+){
     derr_t e = E_OK;
 
-    /* only broadcast the synced event the first time an up_t syncs; after that
-       we are already sure that we are in a reasonable state relative to the
-       remote mailbox */
-    if(!m->synced){
-        m->synced = true;
-        // send the signal to all the conn_up's
-        up_t *_up;
-        LINK_FOR_EACH(_up, &m->ups, up_t, link){
-            _up->cb->synced(up->cb);
-        }
+    m->synced = true;
+
+    // let the fetchers dedup multiple calls to this callback
+    up_t *_up;
+    LINK_FOR_EACH(_up, &m->ups, up_t, link){
+        _up->cb->synced(_up->cb, examining);
     }
 
-    // replay any uncompleted commands
+    /* Only replay commands if we are not in an examining state.  Ultimately,
+       if there are any want_write=true accessors left then we'll eventually
+       reach the state where examining=false */
+    if(!initial || examining) return e;
     imap_cmd_t *cmd = NULL;
     relay_t *relay;
     relay_t *temp;

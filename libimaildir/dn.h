@@ -40,7 +40,6 @@ derr_t dn_do_work(dn_t *dn, bool *noop);
 void dn_imaildir_update(dn_t *dn, update_t *update);
 // we have to free the view as we unregister
 void dn_imaildir_preunregister(dn_t *dn);
-bool dn_imaildir_examining(dn_t *dn);
 
 typedef enum {
     DN_WAIT_NONE = 0,

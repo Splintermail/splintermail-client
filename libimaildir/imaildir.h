@@ -339,7 +339,10 @@ derr_t imaildir_up_update_flags(imaildir_t *m, msg_t *msg, msg_flags_t flags);
 derr_t imaildir_up_handle_static_fetch_attr(imaildir_t *m,
         msg_t *msg, const ie_fetch_resp_t *fetch);
 
-derr_t imaildir_up_initial_sync_complete(imaildir_t *m, up_t *up);
+// after an initial sync or after a reselect
+derr_t imaildir_up_synced(
+    imaildir_t *m, up_t *up, bool examining, bool initial
+);
 
 derr_t imaildir_up_delete_msg(imaildir_t *m, unsigned int uid_up);
 

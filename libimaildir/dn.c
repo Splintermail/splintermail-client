@@ -2265,6 +2265,3 @@ void dn_imaildir_preunregister(dn_t *dn){
     dn_free_disconnect(dn);
 }
 
-bool dn_imaildir_examining(dn_t *dn){
-    return dn->examine;
-}

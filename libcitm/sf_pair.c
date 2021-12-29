@@ -402,6 +402,13 @@ static void server_cb_select(server_cb_i *server_cb, ie_mailbox_t *m,
     fetcher_select(&sf_pair->fetcher, m, examine);
 }
 
+// part of server_cb_i
+static void server_cb_unselect(server_cb_i *server_cb){
+    // printf("---- server_cb_unselect\n");
+    sf_pair_t *sf_pair = CONTAINER_OF(server_cb, sf_pair_t, server_cb);
+    fetcher_unselect(&sf_pair->fetcher);
+}
+
 
 // part of fetcher_cb_i
 static void fetcher_cb_dying(fetcher_cb_i *cb, derr_t error){
@@ -468,6 +475,13 @@ static void fetcher_cb_select_result(fetcher_cb_i *fetcher_cb,
     server_select_result(&sf_pair->server, st_resp);
 }
 
+// part of the fetcher_cb_i
+static void fetcher_cb_unselected(fetcher_cb_i *fetcher_cb){
+    // printf("---- fetcher_cb_unselected\n");
+    sf_pair_t *sf_pair = CONTAINER_OF(fetcher_cb, sf_pair_t, fetcher_cb);
+    server_unselected(&sf_pair->server);
+}
+
 
 derr_t sf_pair_new(
     sf_pair_t **out,
@@ -500,6 +514,7 @@ derr_t sf_pair_new(
             .login = server_cb_login,
             .passthru_req = server_cb_passthru_req,
             .select = server_cb_select,
+            .unselect = server_cb_unselect,
         },
         .fetcher_cb = {
             .dying = fetcher_cb_dying,
@@ -508,6 +523,7 @@ derr_t sf_pair_new(
             .login_result = fetcher_cb_login_result,
             .passthru_resp = fetcher_cb_passthru_resp,
             .select_result = fetcher_cb_select_result,
+            .unselected = fetcher_cb_unselected,
         },
         .key_listener = {
             .add = key_listener_add_key,

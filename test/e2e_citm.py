@@ -1657,6 +1657,8 @@ def test_copy(cmd, maildir_root, **kwargs):
 def test_examine(cmd, maildir_root, **kwargs):
     with Subproc(cmd) as subproc:
         with _session(subproc) as rw:
+            append_messages(rw, 1)
+
             # EXAMINE from unselected
             rw.put(b"1 EXAMINE INBOX\r\n")
             rw.wait_for_resp("1", "OK")

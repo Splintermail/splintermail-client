@@ -46,6 +46,7 @@ struct server_cb_i {
     void (*login)(server_cb_i*, ie_login_cmd_t *login_cmd);
     void (*passthru_req)(server_cb_i*, passthru_req_t *passthru_req);
     void (*select)(server_cb_i*, ie_mailbox_t *m, bool examine);
+    void (*unselect)(server_cb_i*);
 };
 
 // the server-provided interface to the sf_pair
@@ -54,6 +55,7 @@ void server_login_result(server_t *server, bool login_result);
 void server_set_dirmgr(server_t *server, dirmgr_t *dirmgr);
 void server_passthru_resp(server_t *server, passthru_resp_t *passthru_resp);
 void server_select_result(server_t *server, ie_st_resp_t *st_resp);
+void server_unselected(server_t *server);
 
 struct server_t {
     /* these must come first because we must be able to cast the
@@ -135,7 +137,9 @@ struct server_t {
 
     struct {
         // no DONE state since this pause is resolved in a dn_t callback
-        bool awaiting;
+        bool awaiting_dn;
+        bool awaiting_fetcher;
+        bool awaiting_send;
         ie_dstr_t *tag;
     } close;
 

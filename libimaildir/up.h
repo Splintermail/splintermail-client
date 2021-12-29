@@ -47,7 +47,7 @@ struct up_cb_i {
     void (*selected)(up_cb_i*, ie_st_resp_t*);
     // this event indicates the maildir finished an initial sync
     // (if this imaildir is already synced, the callback may be instant)
-    void (*synced)(up_cb_i*);
+    void (*synced)(up_cb_i*, bool examining);
     // after up_idle_block; this callback is often instant
     void (*idle_blocked)(up_cb_i*);
     // this event is a response to the up_unselect() call
@@ -66,11 +66,11 @@ struct up_cb_i {
 // pass a response from the remote imap server to the up_t
 derr_t up_resp(up_t *up, imap_resp_t *resp);
 // block IDLE commands based on some external state
-derr_t up_idle_block(up_t *up);
+derr_t up_idle_block(up_t *up, bool *ok);
 derr_t up_idle_unblock(up_t *up);
 // if the connection is in a SELECTED state, UNSELECT it.
 derr_t up_unselect(up_t *up);
-derr_t up_do_work(up_t *up, bool *noop);
+derr_t up_advance_state(up_t *up);
 
 // the interface the up_t provides to the imaildir:
 
@@ -89,10 +89,14 @@ void up_imaildir_preunregister(up_t *up);
 void up_imaildir_have_local_file(up_t *up, unsigned uid_up);
 // trigger any downloading work that needs to be done after a hold ends
 void up_imaildir_hold_end(up_t *up);
+/* a newly initialized dn_t/up_t pair are used for every SELECT or EXAMINE, so
+   want_write should be a constant value over the whole life of the up_t */
+bool up_imaildir_want_write(up_t *up);
 
 // up_t is all the state we have for an upwards connection
 struct up_t {
     imaildir_t *m;
+    bool want_write;
     // the interfaced provided to us
     up_cb_i *cb;
     bool synced;
@@ -238,5 +242,5 @@ struct up_t {
 };
 DEF_CONTAINER_OF(up_t, link, link_t)
 
-derr_t up_init(up_t *up, up_cb_i *cb, extensions_t *exts);
+derr_t up_init(up_t *up, up_cb_i *cb, extensions_t *exts, bool want_write);
 void up_free(up_t *up);

@@ -7,9 +7,6 @@
 #define FETCH_PARALLELISM 5
 #define FETCH_CHUNK_SIZE 10
 
-// after every command, evaluate our internal state to decide the next one
-static derr_t advance_state(up_t *up);
-
 typedef struct {
     up_t *up;
     imap_cmd_cb_t cb;
@@ -69,12 +66,13 @@ void up_free(up_t *up){
     up_free_idle(up);
 }
 
-derr_t up_init(up_t *up, up_cb_i *cb, extensions_t *exts){
+derr_t up_init(up_t *up, up_cb_i *cb, extensions_t *exts, bool want_write){
     derr_t e = E_OK;
 
     *up = (up_t){
         .cb = cb,
         .exts = exts,
+        .want_write = want_write,
     };
 
     seq_set_builder_prep(&up->fetch.uids_up);
@@ -180,6 +178,9 @@ void up_imaildir_hold_end(up_t *up){
     up->enqueued = true;
     up->cb->enqueue(up->cb);
 }
+bool up_imaildir_want_write(up_t *up){
+    return up->want_write;
+}
 
 static void himodseq_observe(up_t *up, uint64_t observation){
     up->himodseq_up_seen = MAX(up->himodseq_up_seen, observation);
@@ -275,7 +276,7 @@ static derr_t maybe_break_idle(up_t *up){
     // if we are in a hold, there's no point in breaking out until afterwards
     if(!imaildir_up_allow_download(up->m)) return e;
 
-    PROP(&e, advance_state(up) );
+    PROP(&e, up_advance_state(up) );
 
     return e;
 }
@@ -437,6 +438,10 @@ static derr_t reselect_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
     if(!up->detect.inflight) up->detect.chgsince = 0;
     up->detect.repeat = false;
     up->examining = examining;
+
+    // non-initial sync complete
+    // TODO: wait for a SEARCH RECENT as well, if necessary
+    PROP(&e, imaildir_up_synced(up->m, up, examining, false) );
 
     return e;
 }
@@ -833,7 +838,7 @@ static derr_t plus_resp(up_t *up){
     }
 
     up->idle.got_plus = true;
-    PROP(&e, advance_state(up) );
+    PROP(&e, up_advance_state(up) );
 
     return e;
 }
@@ -969,8 +974,8 @@ static derr_t advance_fetches(up_t *up){
     return e;
 }
 
-// advance_state must be safe to call any time between up_init() and up_free()
-static derr_t advance_state(up_t *up){
+// up_advance_state must be safe to call any time between up_init() and up_free()
+derr_t up_advance_state(up_t *up){
     derr_t e = E_OK;
 
     bool ok;
@@ -1093,7 +1098,7 @@ static derr_t advance_state(up_t *up){
         && up->fetch.in_flight == 0
     ){
         up->synced = true;
-        PROP(&e, imaildir_up_initial_sync_complete(up->m, up) );
+        PROP(&e, imaildir_up_synced(up->m, up, up->examining, true) );
     }
     // don't IDLE before we finish an initial sync
     if(!up->synced) return e;
@@ -1246,7 +1251,7 @@ static derr_t tagged_status_type(up_t *up, const ie_st_resp_t *st){
 
     PROP_GO(&e, post_cmd_done(up, st->code), cu_cb);
 
-    PROP_GO(&e, advance_state(up), cu_cb);
+    PROP_GO(&e, up_advance_state(up), cu_cb);
 
 cu_cb:
     cb->free(cb);
@@ -1360,11 +1365,17 @@ cu_resp:
     return e;
 }
 
-derr_t up_idle_block(up_t *up){
+derr_t up_idle_block(up_t *up, bool *ok){
     derr_t e = E_OK;
 
     up->idle_block.want = true;
-    PROP(&e, advance_state(up) );
+
+    PROP(&e, need_done(up, ok) );
+    if(!*ok) return e;
+
+    up->idle_block.active = true;
+    *ok = true;
+    up->cb->idle_blocked(up->cb);
 
     return e;
 }
@@ -1373,7 +1384,7 @@ derr_t up_idle_unblock(up_t *up){
     derr_t e = E_OK;
 
     up_free_idle_block(up);
-    PROP(&e, advance_state(up) );
+    PROP(&e, up_advance_state(up) );
 
     return e;
 }
@@ -1387,23 +1398,12 @@ derr_t up_unselect(up_t *up){
         up->unselect.sent = true;
         // signal that it's already done
         PROP(&e, up->cb->unselected(up->cb) );
+        return e;
     }
 
     // otherwise, attempt to send and unselect immediately
     up->unselect.needed = true;
-    PROP(&e, advance_state(up) );
-
-    return e;
-}
-
-derr_t up_do_work(up_t *up, bool *noop){
-    derr_t e = E_OK;
-
-    if(!up->enqueued) return e;
-    up->enqueued = false;
-    *noop = false;
-
-    PROP(&e, advance_state(up) );
+    PROP(&e, up_advance_state(up) );
 
     return e;
 }

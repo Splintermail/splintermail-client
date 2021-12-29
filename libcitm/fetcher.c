@@ -1,18 +1,21 @@
 #include "libcitm.h"
 
 // foward declarations
-static derr_t imap_event_new(imap_event_t **out, fetcher_t *fetcher,
-        imap_cmd_t *cmd);
-static derr_t fetcher_do_work(fetcher_t *fetcher, bool *noop);
+static derr_t imap_event_new(
+    imap_event_t **out, fetcher_t *fetcher, imap_cmd_t *cmd
+);
+static derr_t advance_state(fetcher_t *fetcher);
 
-static void fetcher_free_login(fetcher_t *fetcher){
-    ie_login_cmd_free(fetcher->login.cmd);
-    fetcher->login.cmd = NULL;
+static void advance_state_or_close(fetcher_t *fetcher){
+    derr_t e = E_OK;
+    IF_PROP(&e, advance_state(fetcher)){
+        fetcher_close(fetcher, e);
+        PASSED(e);
+    }
 }
 
 static void fetcher_free_passthru(fetcher_t *fetcher){
-    passthru_req_free(fetcher->passthru.req);
-    fetcher->passthru.req = NULL;
+    passthru_req_free(STEAL(passthru_req_t, &fetcher->passthru.req));
     passthru_resp_arg_free(
         fetcher->passthru.type,
         STEAL(passthru_resp_arg_u, &fetcher->passthru.arg)
@@ -21,23 +24,32 @@ static void fetcher_free_passthru(fetcher_t *fetcher){
 }
 
 static void fetcher_free_select(fetcher_t *fetcher){
-    ie_mailbox_free(fetcher->select.mailbox);
-    fetcher->select.mailbox = NULL;
+    fetcher->select.needed = false;
+    fetcher->select.unselected = false;
+    fetcher->select.sent = false;
+    ie_mailbox_free(STEAL(ie_mailbox_t, &fetcher->select.mailbox));
     fetcher->select.examine = false;
 }
 
-static void fetcher_free_idle_block(fetcher_t *fetcher){
-    fetcher->idle_block.sent = false;
-    fetcher->idle_block.done = false;
+static void fetcher_free_close(fetcher_t *fetcher){
+    fetcher->close.needed = false;
+}
+
+static void fetcher_free_unselect(fetcher_t *fetcher){
+    fetcher->unselect.sent = false;
+    fetcher->unselect.done = false;
 }
 
 void fetcher_free(fetcher_t *fetcher){
     if(!fetcher) return;
 
-    // free any unfinished pause state
-    fetcher_free_login(fetcher);
+    // free unfinished state
+    ie_login_cmd_free(STEAL(ie_login_cmd_t, &fetcher->login.cmd));
     fetcher_free_passthru(fetcher);
     fetcher_free_select(fetcher);
+    fetcher_free_close(fetcher);
+    fetcher_free_unselect(fetcher);
+
     // free any imap cmds or resps laying around
     link_t *link;
     while((link = link_list_pop_first(&fetcher->unhandled_resps))){
@@ -60,10 +72,13 @@ static void fetcher_finalize(refs_t *refs){
 
 // disconnect from the maildir, this can happen many times for one fetcher_t
 static void fetcher_disconnect(fetcher_t *fetcher){
-    if(fetcher->mbx_state == MBX_NONE) return;
+    if(!fetcher->up_active) return;
     dirmgr_close_up(fetcher->dirmgr, &fetcher->up);
     up_free(&fetcher->up);
-    fetcher->mbx_state = MBX_NONE;
+    fetcher->up_active = false;
+    // if there was an unselect in flight, it's now invalid
+    // (need_unselected() is written to deal with this)
+    fetcher_free_unselect(fetcher);
 }
 
 void fetcher_close(fetcher_t *fetcher, derr_t error){
@@ -96,20 +111,6 @@ void fetcher_close(fetcher_t *fetcher, derr_t error){
 }
 
 
-static void fetcher_work_loop(fetcher_t *fetcher){
-    bool noop;
-    do {
-        noop = true;
-        derr_t e = E_OK;
-        IF_PROP(&e, fetcher_do_work(fetcher, &noop)){
-            fetcher_close(fetcher, e);
-            PASSED(e);
-            break;
-        }
-    } while(!noop);
-}
-
-
 void fetcher_read_ev(fetcher_t *fetcher, event_t *ev){
     if(fetcher->closed) return;
 
@@ -125,7 +126,7 @@ void fetcher_read_ev(fetcher_t *fetcher, event_t *ev){
 
     link_list_append(&fetcher->unhandled_resps, &resp->link);
 
-    fetcher_work_loop(fetcher);
+    advance_state_or_close(fetcher);
 }
 
 static void fetcher_enqueue(fetcher_t *fetcher){
@@ -141,7 +142,7 @@ static void fetcher_wakeup(wake_event_t *wake_ev){
     fetcher->enqueued = false;
     // ref_dn for wake_ev
     ref_dn(&fetcher->refs);
-    fetcher_work_loop(fetcher);
+    advance_state_or_close(fetcher);
 }
 
 void fetcher_login(fetcher_t *fetcher, ie_login_cmd_t *login_cmd){
@@ -155,8 +156,15 @@ void fetcher_passthru_req(fetcher_t *fetcher, passthru_req_t *passthru_req){
 }
 
 void fetcher_select(fetcher_t *fetcher, ie_mailbox_t *m, bool examine){
+    fetcher->select.needed = true;
     fetcher->select.mailbox = m;
     fetcher->select.examine = examine;
+    fetcher_enqueue(fetcher);
+}
+
+void fetcher_unselect(fetcher_t *fetcher){
+    // note: fetcher.unselect is a sub state machine; this starts fetcher.close
+    fetcher->close.needed = true;
     fetcher_enqueue(fetcher);
 }
 
@@ -212,29 +220,59 @@ fail:
     return e;
 }
 
-static void fetcher_up_selected(up_cb_i *up_cb,
-        ie_st_resp_t *st_resp){
+static void fetcher_up_selected(
+    up_cb_i *up_cb, ie_st_resp_t *st_resp
+){
     fetcher_t *fetcher = CONTAINER_OF(up_cb, fetcher_t, up_cb);
 
-    // check for errors
-    if(st_resp){
-        fetcher_disconnect(fetcher);
-        fetcher->imap_state = FETCHER_AUTHENTICATED;
-        fetcher->cb->select_result(fetcher->cb, st_resp);
-    }
+    /* This callback indicates the up_t has finished its initial SELECT.  This
+       can occur either due to an initial SELECT or due to an up_t promotion.
+       If an initial SELECT fails, we report it to the server_t.  If a
+       promotion-triggered SELECT fails, we just crash. */
 
-    // otherwise, just wait for fetcher_up_synced()
+    // if there was no error, we don't do anything here
+    if(!st_resp) return;
+
+    if(fetcher->select.sent){
+        // an initial SELECT failed
+        fetcher_disconnect(fetcher);
+        fetcher->cb->select_result(fetcher->cb, st_resp);
+        fetcher_free_select(fetcher);
+    }else{
+        // a promition-triggered SELECT failed; just crash
+        derr_t e = E_OK;
+        TRACE_ORIG(&e, E_RESPONSE, "a re-SELECT failed somehow");
+        fetcher_close(fetcher, e);
+        PASSED(e);
+    }
 }
 
-static void fetcher_up_synced(up_cb_i *up_cb){
+static void fetcher_up_synced(up_cb_i *up_cb, bool examining){
     fetcher_t *fetcher = CONTAINER_OF(up_cb, fetcher_t, up_cb);
-    fetcher->mbx_state = MBX_SYNCED;
+
+    /* This callback indicates one up_t (not necessarily ours) has finished
+       synchronizing.  It's not obvious if there is a corner-case where an
+       EXAMINE up_t might give us a synced signal even while we wait for a
+       SELECT up_t, so we detect and ignore that situation.  We also ignore
+       any extra signals after we have already seen our synced signal; the
+       assumption is that the window of desync would be so small as to be safe
+       to ignore */
+
+    // ignore reaching EXAMINE state if we want SELECT
+    if(examining && !fetcher->select.examine) return;
+
+    /* ignore duplicate calls; they can come when our up_t is promoted to
+       primary, long after we have sent a select_result to the server_t */
+    if(!fetcher->select.needed) return;
+
+    // otherwise, the dn_t is safe to connect and build its view
     fetcher->cb->select_result(fetcher->cb, NULL);
+    fetcher_free_select(fetcher);
 }
 
 static void fetcher_up_idle_blocked(up_cb_i *up_cb){
     fetcher_t *fetcher = CONTAINER_OF(up_cb, fetcher_t, up_cb);
-    fetcher->idle_block.done = true;
+    // just let the caller of up_idle_block() find out by calling it again
     fetcher_enqueue(fetcher);
 }
 
@@ -243,9 +281,7 @@ static derr_t fetcher_up_unselected(up_cb_i *up_cb){
 
     fetcher_t *fetcher = CONTAINER_OF(up_cb, fetcher_t, up_cb);
     fetcher_disconnect(fetcher);
-    fetcher->imap_state = FETCHER_AUTHENTICATED;
 
-    // TODO: handle callbacks right here
     fetcher_enqueue(fetcher);
 
     return e;
@@ -412,8 +448,9 @@ static void fetcher_imap_ev_returner(event_t *ev){
     ref_dn(&fetcher->refs);
 }
 
-static derr_t imap_event_new(imap_event_t **out, fetcher_t *fetcher,
-        imap_cmd_t *cmd){
+static derr_t imap_event_new(
+    imap_event_t **out, fetcher_t *fetcher, imap_cmd_t *cmd
+){
     derr_t e = E_OK;
     *out = NULL;
 
@@ -475,32 +512,28 @@ fail:
 static derr_t select_mailbox(fetcher_t *fetcher){
     derr_t e = E_OK;
 
-    if(fetcher->imap_state != FETCHER_AUTHENTICATED){
-        ORIG_GO(&e, E_INTERNAL,
-                "arrived at select_mailbox out of AUTHENTICATED state", cu);
-    }
-
+    bool want_write = !fetcher->select.examine;
     PROP_GO(&e,
-        up_init(&fetcher->up, &fetcher->up_cb, &fetcher->ctrl.exts),
-    cu);
+        up_init(
+            &fetcher->up, &fetcher->up_cb, &fetcher->ctrl.exts, want_write
+        ),
+    fail);
 
     const dstr_t *dir_name = ie_mailbox_name(fetcher->select.mailbox);
 
-    PROP_GO(&e, dirmgr_open_up(fetcher->dirmgr, dir_name, &fetcher->up),
-            fail_up);
+    PROP_GO(&e,
+        dirmgr_open_up(fetcher->dirmgr, dir_name, &fetcher->up),
+    fail_up);
 
-    fetcher->imap_state = FETCHER_SELECTED;
-    fetcher->mbx_state = MBX_SELECTING;
-    fetcher_free_idle_block(fetcher);
+    fetcher->up_active = true;
 
     // the up_t takes care of the rest
 
-cu:
-    fetcher_free_select(fetcher);
     return e;
 
 fail_up:
     up_free(&fetcher->up);
+fail:
     fetcher_free_select(fetcher);
     return e;
 }
@@ -594,7 +627,6 @@ static derr_t status_resp(fetcher_t *fetcher, const ie_status_resp_t *status){
 static derr_t send_passthru(fetcher_t *fetcher){
     derr_t e = E_OK;
 
-    fetcher->passthru.sent = true;
     passthru_type_e type = fetcher->passthru.req->type;
 
     fetcher->passthru.type = type;
@@ -720,9 +752,7 @@ static derr_t enable_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
         ORIG(&e, E_PARAM, "enable failed\n");
     }
 
-    /* now start executing orders on behalf of the server, which just looks
-       like sitting idle for a while before we have orders */
-    fetcher->enable_set = true;
+    fetcher->enable.done = true;
 
     return e;
 }
@@ -800,11 +830,9 @@ static derr_t capas_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
         ORIG(&e, E_PARAM, "capas failed\n");
     }
 
-    if(!fetcher->saw_capas){
+    if(!fetcher->capas.done){
         ORIG(&e, E_RESPONSE, "never saw capabilities");
     }
-
-    PROP(&e, send_enable(fetcher) );
 
     return e;
 }
@@ -886,14 +914,12 @@ static derr_t capa_resp(fetcher_t *fetcher, const ie_dstr_t *capa){
 
     PROP(&e, check_capas(capa) );
 
-    fetcher->saw_capas = true;
+    fetcher->capas.done = true;
     return e;
 }
 
 static derr_t send_capas(fetcher_t *fetcher){
     derr_t e = E_OK;
-
-    fetcher->saw_capas = false;
 
     // issue the capability command
     imap_cmd_arg_t arg = {0};
@@ -928,20 +954,13 @@ static derr_t login_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
 
     fetcher->cb->login_result(fetcher->cb, true);
 
-    if(fetcher->imap_state != FETCHER_PREAUTH){
-        ORIG(&e, E_INTERNAL, "arrived at login_done out of PREAUTH state");
-    }
-    fetcher->imap_state = FETCHER_AUTHENTICATED;
+    fetcher->login.done = true;
 
     // did we get the capabilities automatically?
     if(st_resp->code->type == IE_ST_CODE_CAPA){
         // check capabilities
         PROP(&e, check_capas(st_resp->code->arg.capa) );
-        // then send the enable command
-        PROP(&e, send_enable(fetcher) );
-    }else{
-        // otherwise, explicitly ask for them
-        PROP(&e, send_capas(fetcher) );
+        fetcher->capas.done = true;
     }
 
     return e;
@@ -951,9 +970,7 @@ static derr_t send_login(fetcher_t *fetcher){
     derr_t e = E_OK;
 
     // take the login_cmd that's already been prepared
-    ie_login_cmd_t *login = fetcher->login.cmd;
-    fetcher->login.cmd = NULL;
-    imap_cmd_arg_t arg = {.login=login};
+    imap_cmd_arg_t arg = {.login=STEAL(ie_login_cmd_t, &fetcher->login.cmd)};
 
     // finish constructing the imap command
     size_t tag = ++fetcher->tag;
@@ -975,14 +992,11 @@ static derr_t untagged_ok(fetcher_t *fetcher, const ie_st_code_t *code,
     derr_t e = E_OK;
 
     // The very first message is treated specially
-    if(fetcher->imap_state == FETCHER_PREGREET){
-        // proceed to preauth state
-        fetcher->imap_state = FETCHER_PREAUTH;
+    if(!fetcher->greet.seen){
+        fetcher->greet.seen = true;
 
         // tell the sf_pair we need login creds
         fetcher->cb->login_ready(fetcher->cb);
-
-        // prepare to wait for a call to fetcher_login()
         return e;
     }
 
@@ -994,25 +1008,14 @@ static derr_t untagged_ok(fetcher_t *fetcher, const ie_st_code_t *code,
         }
     }
 
-    switch(fetcher->imap_state){
-        case FETCHER_PREGREET: /* not possible, already handled */
-            break;
+    // otherwise, the fetcher can't actually handle any untagged messages
+    // TODO: figure out if there are untagged messages we should handle
 
-        // states which currently can't handle untagged messages at all
-        /* TODO: this should not throw an error eventually, but in development
-                 it will be helpful to not silently drop them */
-        case FETCHER_PREAUTH:
-        case FETCHER_AUTHENTICATED:
-            TRACE(&e, "unhandled * OK status message\n");
-            ORIG(&e, E_INTERNAL, "unhandled message");
-            break;
-
-        // TODO: this *certainly* should not throw an error
-        case FETCHER_SELECTED:
-            TRACE(&e, "unhandled * OK status message\n");
-            ORIG(&e, E_INTERNAL, "unhandled message");
-            break;
-    }
+    TRACE(&e,
+        "unhandled * OK status message with code %x and text '%x'\n",
+        FU(code->type), FD_DBG(text)
+    );
+    ORIG(&e, E_INTERNAL, "unhandled message in fetcher_t");
 
     return e;
 }
@@ -1038,11 +1041,16 @@ static derr_t tagged_status_type(fetcher_t *fetcher, const ie_st_resp_t *st){
 
     // do the callback
     link_remove(link);
-    PROP_GO(&e, cb->call(cb, st), cu_cb);
+    PROP_GO(&e, cb->call(cb, st), fail);
 
-cu_cb:
     cb->free(cb);
 
+    PROP(&e, advance_state(fetcher) );
+
+    return e;
+
+fail:
+    cb->free(cb);
     return e;
 }
 
@@ -1135,66 +1143,6 @@ cu_resp:
     return e;
 }
 
-static derr_t fetcher_passthru_do_work(fetcher_t *fetcher, bool *noop){
-    derr_t e = E_OK;
-
-    if(!fetcher->passthru.req || fetcher->passthru.sent) return e;
-
-    // don't consider a passthru command until we've called ENABLE
-    if(!fetcher->enable_set) return e;
-
-    /* make sure we are either disconnected from the mailbox or that we have
-       blocked IDLE commands so that we are safe to send passthru commands */
-    if(fetcher->mbx_state > MBX_NONE){
-        if(!fetcher->idle_block.done){
-            if(!fetcher->idle_block.sent){
-                *noop = false;
-                fetcher->idle_block.sent = true;
-                PROP(&e, up_idle_block(&fetcher->up) );
-            }
-            return e;
-        }
-    }
-
-    *noop = false;
-    fetcher->passthru.sent = true;
-    PROP(&e, send_passthru(fetcher) );
-    PROP(&e, up_idle_unblock(&fetcher->up) );
-    fetcher_free_idle_block(fetcher);
-    return e;
-}
-
-static derr_t fetcher_select_do_work(fetcher_t *fetcher, bool *noop){
-    derr_t e = E_OK;
-
-    if(!fetcher->select.mailbox) return e;
-
-    // don't consider a SELECT command until we've called ENABLE
-    if(!fetcher->enable_set) return e;
-
-    // don't consider a SELECT command without a dirmgr
-    if(!fetcher->dirmgr) return e;
-
-    // do we need to unselect something?
-    if(fetcher->imap_state == FETCHER_SELECTED
-            && fetcher->mbx_state < MBX_UNSELECTING){
-        // try to transition towards FETCHER_AUTHENTICATED
-        fetcher->mbx_state = MBX_UNSELECTING;
-        PROP(&e, up_unselect(&fetcher->up) );
-        *noop = false;
-        return e;
-    }
-
-    // do we need to select something?
-    if(fetcher->imap_state == FETCHER_AUTHENTICATED){
-        PROP(&e, select_mailbox(fetcher) );
-        *noop = false;
-        return e;
-    }
-
-    return e;
-}
-
 /* we can inject commands into the stream of commands requested by the up_t,
    so we have to have a way to sort the responses that come back that belong
    to the fetcher_t vs the responses that we need to forward to the up_t */
@@ -1238,35 +1186,21 @@ static bool fetcher_intercept_resp(fetcher_t *fetcher,
     return false;
 }
 
-static derr_t fetcher_do_work(fetcher_t *fetcher, bool *noop){
+static derr_t handle_all_responses(fetcher_t *fetcher){
     derr_t e = E_OK;
-
-    if(fetcher->closed) return e;
-
-    // do any up_t work
-    if(fetcher->mbx_state){
-        bool up_noop;
-        do {
-            up_noop = true;
-            PROP(&e, up_do_work(&fetcher->up, &up_noop) );
-            if(!up_noop) *noop = false;
-        } while(!up_noop);
-    }
 
     link_t *link;
 
     // unhandled responses
     while((link = link_list_pop_first(&fetcher->unhandled_resps))){
         imap_resp_t *resp = CONTAINER_OF(link, imap_resp_t, link);
-        *noop = false;
 
         // detect if we need to just pass the command to the up_t
         /* TODO: it seems there is a synchronization problem here... is it
                  possible to have more commands in flight that might not belong
                  to the up_t, but which might come over the wire after we have
                  created the up_t but before the select response comes in? */
-        if(fetcher->mbx_state > MBX_NONE
-                && !fetcher_intercept_resp(fetcher, resp)){
+        if(fetcher->up_active && !fetcher_intercept_resp(fetcher, resp)){
             PROP(&e, up_resp(&fetcher->up, resp) );
             continue;
         }
@@ -1274,17 +1208,148 @@ static derr_t fetcher_do_work(fetcher_t *fetcher, bool *noop){
         PROP(&e, handle_one_response(fetcher, resp) );
     }
 
-    // check if we have a login command to execute on
-    if(fetcher->login.cmd){
-        *noop = false;
-        PROP(&e, send_login(fetcher) );
+    return e;
+}
+
+static derr_t need_unselected(fetcher_t *fetcher, bool *ok){
+    derr_t e = E_OK;
+    *ok = false;
+
+    if(!fetcher->up_active){
+        *ok = true;
+        return e;
     }
 
-    // check if we have some passthru behavior to execute on
-    PROP(&e, fetcher_passthru_do_work(fetcher, noop) );
+    if(!fetcher->unselect.sent){
+        fetcher->unselect.sent = true;
+        // up_unselected() may occur immediately, calling fetcher_free_unselect
+        PROP(&e, up_unselect(&fetcher->up) );
+    }
 
-    // check if we have a select to execute on
-    PROP(&e, fetcher_select_do_work(fetcher, noop) );
+    if(fetcher->up_active) return e;
+    *ok = true;
+
+    return e;
+}
+
+static derr_t advance_state_passthru(fetcher_t *fetcher){
+    derr_t e = E_OK;
+
+    if(!fetcher->passthru.req) return e;
+
+    bool ok;
+
+    if(!fetcher->passthru.sent){
+        /* make sure we are either disconnected from the mailbox or that we
+           have blocked IDLE commands so it is safe to send passthru command */
+        if(fetcher->up_active){
+            PROP(&e, up_idle_block(&fetcher->up, &ok) );
+            if(!ok) return e;
+        }
+        PROP(&e, send_passthru(fetcher) );
+        fetcher->passthru.sent = true;
+        // we only needed the idle_block for that moment
+        PROP(&e, up_idle_unblock(&fetcher->up) );
+    }
+
+    // final steps happen in passthru_done callback
+
+    return e;
+}
+
+static derr_t advance_state_select(fetcher_t *fetcher){
+    derr_t e = E_OK;
+
+    if(!fetcher->select.needed) return e;
+
+
+    bool ok;
+
+    // do we need to unselect something first?
+    if(!fetcher->select.unselected){
+        PROP(&e, need_unselected(fetcher, &ok) );
+        if(!ok) return e;
+        fetcher->select.unselected = true;
+    }
+
+    // do we need to send the SELECT?
+    if(!fetcher->select.sent){
+        // ensure we have a dirmgr first
+        if(!fetcher->dirmgr) return e;
+        fetcher->select.sent = true;
+        PROP(&e, select_mailbox(fetcher) );
+    }
+
+    // final steps happen in up_selected or up_synced callback
+
+    return e;
+}
+
+static derr_t advance_state_close(fetcher_t *fetcher){
+    derr_t e = E_OK;
+
+    if(!fetcher->close.needed) return e;
+
+    bool ok;
+
+    PROP(&e, need_unselected(fetcher, &ok) );
+    if(!ok) return e;
+
+    fetcher->cb->unselected(fetcher->cb);
+    fetcher_free_close(fetcher);
+
+    return e;
+}
+
+static derr_t advance_state(fetcher_t *fetcher){
+    derr_t e = E_OK;
+
+    if(fetcher->closed) return e;
+
+    // read any incoming responses
+    PROP(&e, handle_all_responses(fetcher) );
+
+    // wait for a greeting
+    if(!fetcher->greet.seen) return e;
+
+    // wait for a login command
+    if(!fetcher->login.done){
+        if(fetcher->login.cmd){
+            PROP(&e, send_login(fetcher) );
+        }
+        return e;
+    }
+
+    // get the capas from the server (if not provided at login time)
+    if(!fetcher->capas.done){
+        if(!fetcher->capas.sent){
+            fetcher->capas.sent = true;
+            PROP(&e, send_capas(fetcher) );
+        }
+        return e;
+    }
+
+    // send the enable command
+    if(!fetcher->enable.done){
+        if(!fetcher->enable.sent){
+            fetcher->enable.sent = true;
+            PROP(&e, send_enable(fetcher) );
+        }
+        return e;
+    }
+
+    // -- now we can actually have an up_t --
+
+    // always let the up_t do work
+    if(fetcher->up_active){
+        PROP(&e, up_advance_state(&fetcher->up) );
+    }
+
+    /* these remaining operations originate with the server_t and the server_t
+       must make sure only one can be active at a time */
+    PROP(&e, advance_state_passthru(fetcher) );
+    PROP(&e, advance_state_select(fetcher) );
+    PROP(&e, advance_state_close(fetcher) );
 
     return e;
 }

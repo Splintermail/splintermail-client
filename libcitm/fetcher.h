@@ -1,25 +1,6 @@
 struct fetcher_t;
 typedef struct fetcher_t fetcher_t;
 
-/* fetcher is only responsible for navigating until just before the SELECTED
-   state, everything after that is the responsibility of the imaildir_t */
-typedef enum {
-    // general states
-    FETCHER_PREGREET = 0,   // before receiving the greeting
-    FETCHER_PREAUTH,        // after login
-    FETCHER_AUTHENTICATED,  // imap rfc "authenticated" state
-
-    FETCHER_SELECTED,       // in this state, filter things the maildir doesn't want
-} imap_client_state_t;
-const dstr_t *imap_client_state_to_dstr(imap_client_state_t state);
-
-typedef enum {
-    MBX_NONE = 0,       // we have no mailbox open at all
-    MBX_SELECTING,      // we are in the process of selecting a mailbox
-    MBX_SYNCED,         // we have finished the initial sync
-    MBX_UNSELECTING,    // we are trying to unselect
-} fetcher_mailbox_state_e;
-
 // an interface that must be provided by the sf_pair
 struct fetcher_cb_i;
 typedef struct fetcher_cb_i fetcher_cb_i;
@@ -33,12 +14,14 @@ struct fetcher_cb_i {
     void (*passthru_resp)(fetcher_cb_i*, passthru_resp_t *passthru_resp);
     // *st_resp == NULL on successful SELECT
     void (*select_result)(fetcher_cb_i*, ie_st_resp_t *st_resp);
+    void (*unselected)(fetcher_cb_i*);
 };
 
 // the fetcher-provided interface to the sf_pair
 void fetcher_login(fetcher_t *fetcher, ie_login_cmd_t *login_cmd);
 void fetcher_passthru_req(fetcher_t *fetcher, passthru_req_t *passthru_req);
 void fetcher_select(fetcher_t *fetcher, ie_mailbox_t *m, bool examine);
+void fetcher_unselect(fetcher_t *fetcher);
 void fetcher_set_dirmgr(fetcher_t *fetcher, dirmgr_t *dirmgr);
 
 struct fetcher_t {
@@ -76,17 +59,37 @@ struct fetcher_t {
     // commands we sent upwards, but haven't gotten a response yet
     link_t inflight_cmds;  // imap_cmd_cb_t->link
 
-    imap_client_state_t imap_state;
-    dstr_t selected_name;
-    bool saw_capas;
-    bool enable_set;
-
     size_t tag;
 
-    // external command processing: there can only be one at a time.
+    // the interface we feed to the imaildir for server communication
+    up_cb_i up_cb;
+    up_t up;
+    // true after up_init()/dirmgr_open_up, until up_free()
+    bool up_active;
+    link_t pending_cmds;
+
+    // one-shot (never resets)
+    struct {
+        bool seen;
+    } greet;
+
+    // one-shot
     struct {
         ie_login_cmd_t *cmd;
+        bool done;
     } login;
+
+    // one-shot
+    struct {
+        bool sent;
+        bool done;
+    } capas;
+
+    // one-shot
+    struct {
+        bool sent;
+        bool done;
+    } enable;
 
     struct {
         passthru_req_t *req;
@@ -96,22 +99,23 @@ struct fetcher_t {
     } passthru;
 
     struct {
+        bool needed;
         ie_mailbox_t *mailbox;
         bool examine;
+        bool unselected;
+        bool sent;
     } select;
 
     struct {
-        bool sent;
-        bool done;
-    } idle_block;
+        bool needed;
+    } close;
 
-    // the interface we feed to the imaildir for server communication
-    up_cb_i up_cb;
-    up_t up;
-    link_t pending_cmds;
-    // is our up_t registered with an imaildir?
-    bool maildir_connected;
-    fetcher_mailbox_state_e mbx_state;
+    // unselect is like a sub-state-machine, used by select and close
+    struct {
+        bool sent;
+        // no .done; instead
+        bool done;
+    } unselect;
 };
 DEF_CONTAINER_OF(fetcher_t, refs, refs_t)
 DEF_CONTAINER_OF(fetcher_t, wake_ev, wake_event_t)
