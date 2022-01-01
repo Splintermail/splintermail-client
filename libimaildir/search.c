@@ -14,12 +14,6 @@ typedef struct {
 } search_args_t;
 
 
-static bool get_recent(const msg_view_t *view){
-    // TODO: support \Recent flag
-    LOG_ERROR("\\Recent flag not supported!\n");
-    return view->recent;
-}
-
 static bool in_seq_set(unsigned int val, const ie_seq_set_t *seq_set,
         unsigned int max){
     for(; seq_set != NULL; seq_set = seq_set->next){
@@ -97,15 +91,18 @@ static derr_t do_eval(search_args_t *args, size_t lvl,
         case IE_SEARCH_UNDRAFT:     *out = !view->flags.draft;     break;
 
         case IE_SEARCH_NEW:
-            *out = get_recent(view) && !view->flags.seen;
+            // "NEW" means "recent and not seen", and we don't support recent
+            *out = false;
             break;
 
         case IE_SEARCH_OLD:
-            *out = !get_recent(view);
+            // "OLD" means "not recent", and we don't support recent
+            *out = true;
             break;
 
         case IE_SEARCH_RECENT:
-            *out = get_recent(view);
+            // we don't support recent
+            *out = false;
             break;
 
         case IE_SEARCH_NOT: {

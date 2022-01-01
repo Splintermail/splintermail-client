@@ -339,14 +339,15 @@ static derr_t read_one_value(
 
     // submit parsed values
     if(msg){
-        /* a zero modseq value is only allowed for the UNFILLED/NOT4ME states,
+        /* a zero modseq value is only allowed for the non-FILLED states,
            and those states require a zero modseq value */
-        bool ufn4m = msg->state == MSG_UNFILLED || msg->state == MSG_NOT4ME;
-        if(msg->mod.modseq && ufn4m){
+        if(msg->mod.modseq && msg->state != MSG_FILLED){
             msg_free(&msg);
-            ORIG(&e, E_INTERNAL, "invalid nonzero modseq on UNFILLED message");
+            ORIG(&e,
+                E_INTERNAL, "invalid nonzero modseq on non-FILLED message"
+            );
         }
-        if(!msg->mod.modseq && !ufn4m){
+        if(!msg->mod.modseq && msg->state == MSG_FILLED){
             msg_free(&msg);
             ORIG(&e, E_INTERNAL, "invalid zero modseq on FILLED message");
         }

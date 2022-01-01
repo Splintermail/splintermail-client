@@ -1451,21 +1451,21 @@ def test_append(cmd, maildir_root, **kwargs):
             # - now a NOOP should certainly show the EXISTS response if it
             #   hasn't arrived earlier
 
-            # do relay commands by storing flags on a nonlocal message
-            for i, flag in enumerate([b"Seen", b"Answered", b"Draft"]):
+            # use LIST to count round trips
+            for i in range(3):
                 tag = b"x%d"%i
-                rw.put(b"%s store %d flags \\%s\r\n"%(tag, nonlocal_uid, flag))
+                rw.put(b"%s LIST \"\" *\r\n"%tag)
                 try:
                     rw.wait_for_resp(
-                        tag, "OK", require=[b"\\* [0-9]* EXISTS"]
+                        tag, "OK", require=[b"\\* [0-9]* EXISTS"],
                     )
                     break
                 except RequiredError:
                     pass
             else:
                 # if we haven't seen the EXISTS yet, a noop shall surely work
-                rw.put(b"1 NOOP\r\n")
-                rw.wait_for_resp("1", "OK", require=[b"\\* [0-9]* EXISTS"])
+                rw.put(b"2 NOOP\r\n")
+                rw.wait_for_resp("2", "OK", require=[b"\\* [0-9]* EXISTS"])
 
             # Append from the direct connection again, this time with a timer
             # instead of round-trips to test that the up_t's IDLE works

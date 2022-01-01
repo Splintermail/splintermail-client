@@ -357,8 +357,7 @@ derr_t imaildir_dn_build_views(
     imaildir_t *m,
     jsw_atree_t *views,
     unsigned int *max_uid_dn,
-    unsigned int *uidvld_dn,
-    unsigned int *nrecent
+    unsigned int *uidvld_dn
 );
 
 // this will always consume or free req

@@ -1371,7 +1371,7 @@ UID Mapping:
 
       - msg_t's in the imaildir_t: sort by uid_up, so that you can handle
         UNFILLED messages.  Messages are only assigned uid_dn when they become
-        FILLED, so it is useful for the imaildir_t to deal with uid_up.  All
+        COMPLETE, so it is useful for the imaildir_t to deal with uid_up.  All
         messages and expunges have an uid_up, but not all messages have a
         uid_dn.
 
@@ -1561,3 +1561,124 @@ Questions about MSG_NOT4ME state:
     can't get them anymore.  I guess the simpler version of that is just what
     we have right now, where they are marked as expunged immediately upon file
     deletion.
+
+\Recent flag
+
+    Downloading messages with the \Recent flag is simple:
+      - if we see a \Recent flag on a message, we know that we are the only
+        client of the mail server to observe it.
+      - We pass that flag to exactly one session and erase it from persistent
+        storage, to guarantee it isn't passed to another session.
+      - The dn_t for that session is responsible for preserving the \Recent
+        flag on that message throughout the life of the dn_t
+
+    Injecting local-only messages is also pretty simple:
+      - We always set \Recent on an injected message and we show it to exactly
+        one dn_t as before.
+
+    Uploading messages less simple:
+      - When we upload, it is anybody's guess who gets the \Recent flag, unless
+        we are uploading into a mailbox which we also have open, in which case
+        experience suggests that dovecot to always give us the \Recent flag.
+
+      - Not knowing the \Recent flag means no distributing UPDATE_NEWs, since
+        the view that goes with it would be incorrect.  Instead, introduce a
+        new MAYBE_RECENT state.  While downloaded messages start with known
+        flags and transition to COMPLETE after getting their content, uploaded
+        messages start with known content and transition to COMPLETE after
+        getting their \Recent flag.
+
+      - The major corner-case that remains is after a COPY or APPEND by a dn_t
+        into the same mailbox that the dn_t has open.  The dn_t must know the
+        final flag state before responding to the client, since you can't
+        report that the COPY is complete without actually putting the messages
+        in the view.  Rather than build some complex machinery to get the
+        server's true state, we assume that dovecot gives us the \Recent flag
+        in these cases and put the message directly into the COMPLETE state.
+        Once a message is COMPLETE, we actually completely ignore any further
+        updates to the \Recent flag that the server might provide later, which
+        protects us in these cases from illegally removing the \Recent flag
+        mid-session if our assumption is wrong.
+
+        - A side note: even if you tried to build the complex machinery to get
+          the server's true state (which I did), you would end up having to
+          process updates out-of-order in the dn_t.  You don't want to
+          accidentally process an EXPUNGE on a newly COPYed message before even
+          responding to the COPY, but that would be possible if you tried to
+          get the exact \Recent state using multiple commands.
+
+          I'm fairly certain that there would be mail clients would fail to
+          handle that situation correctly, and I'm also fairly certain that few
+          users will ever see the \Recent flag on multiple devices and be
+          materially affected by that.  So assuming we got the \Recent flag
+          when we uploaded to something we had open is the path we are taking.
+
+    EXAMINE behavior
+
+      - EXAMINE shows \Recent flags but doesn't affect what the server thinks
+        is \Recent.  This requires special handling on our part.  We already
+        only use SELECT when the mail client uses SELECT.  We additionally need
+        to treat \Recent flags from an EXAMINE session as non-permanent but
+        \Recent flags from a SELECT session as permanent.
+
+      - EXAMINE brings us another corner case we don't really support; the
+        reEXAMINE case, where somebody opens an examine connection to us, the
+        server gives us \Recent flag on msg A, then gives some third-party
+        SELECT session that \Recent and clears it, then the mail client opens
+        a second examine connection to us.  Under the hood, we'll still give
+        out flags from our initial EXAMINE session but they're no longer the
+        up-to-date flags for the mailbox.
+
+    You know what? Fuck \Recent.  Here are some notes about the tricky parts
+    of implementing it, should you ever have to:
+
+      - The \Recent flag is a "session" flag according to the IMAP standard.
+        The natural way for us to support that is by having the dn_t preserve
+        the \Recent flag once it's been given.  There are two ways to give it
+        to a session: at view-build time, and at new-msg time.
+
+      - Dovecot gives it not to the first session who connects, but to the
+        first session who has reason to tell the client about it.  So in the
+        new-msg case, the UPDATE_NEW doesn't contain info about the \Recent
+        flag, but the dn_t has to ask the imaildir_t for the recent flags when
+        it is ready to actually process the UPATE_NEW messages.
+
+      - The process I finally settled on for handling both EXAMINE recency and
+        SELECT recency is summarized in this comment from the reverted code:
+
+        /* Recency in the imaildir_t:
+
+           There are two types of recency, either of which can result in the
+           \Recent flag for a message: examine recency and log recency.
+
+           Examine recency occurs when the up_t is in an EXAMINE state and sees
+           a \Recent flag.  That \Recent flag does not belong to us (it may be
+           shown to other devices), but as long as we see it we are free to
+           give it out to our EXAMINE-type dn_t's.
+
+           Log recency occurs after the up_t is in a SELECT state and sees a
+           \Recent flag.  That \Recent flag does belong to us, and will never
+           be given to another device.  We save it to the log as soon as we see
+           it (hence then name).
+
+           There are a small number of transitions that can occur.  First, when
+           an up_t connects, you can have the following situations:
+
+           (1) if the up_t is in the EXAMINE state:
+               - examine recency is redefined on all messages (note that
+                 examine recency is never written to the log)
+
+           (2) if the up_t is in the SELECT state:
+               - observed \Recent flags will set log recency
+               - examine recency is cleared on all messages
+
+           Note that examine recency is never persisted.  This is because we
+           never own those \Recent flags.  Also note that log recency is never
+           cleared when the \Recent flag is missing from a SELECT session.
+           This is because it will only be given to us in one session and it is
+           our duty to preserve it thereafter.
+
+           It is a property of the IMAP standard that you can't ever see an
+           EXAMINE recency while you already have log recency for the same
+           message; if you ever saw a \Recent during a SELECT then the server
+           must not show you that \Recent again. */

@@ -501,7 +501,10 @@ static derr_t fetch_resp(up_t *up, const ie_fetch_resp_t *fetch){
 
     if(!msg){
         // new UID
-        msg_flags_t flags = msg_flags_from_fetch_flags(fetch->flags);
+        msg_flags_t flags = {0};
+        if(fetch->flags){
+            flags = msg_flags_from_fetch_flags(fetch->flags);
+        }
         PROP(&e, imaildir_up_new_msg(up->m, fetch->uid, flags, &msg) );
 
         if(!fetch->extras){

@@ -202,7 +202,7 @@ derr_t marshal_message(const msg_t *msg, dstr_t *out){
     PROP(&e, FMT(out, "%x:%x:%x:", FD(&log_format_version),
                 FU(msg->uid_dn), FU(msg->mod.modseq)) );
 
-    // filled or unfilled?
+    // state
     DSTR_STATIC(unfilled, "u");
     DSTR_STATIC(filled, "f");
     DSTR_STATIC(not4me, "n");
@@ -297,21 +297,22 @@ derr_t parse_value(
         ORIG(&e, E_PARAM, "invalid state field");
     }
     switch(d_state.data[0]){
-        case 'u':
-        case 'n':
-        case 'f': {
+        case 'u':  // UNFILLED
+        case 'f':  // FILLED
+        case 'n':  // NOT4ME
+        {
             if(n != 5){
                 TRACE(&e, "wrong field count: %x\n", FD_DBG(in));
                 ORIG(&e, E_VALUE, "wrong field count for message");
             }
             msg_state_e state;
-            if(d_state.data[0] == 'u'){
-                state = MSG_UNFILLED;
-            }else if(d_state.data[0] == 'n'){
-                state = MSG_NOT4ME;
-            }else{
-                state = MSG_FILLED;
+            switch(d_state.data[0]){
+                case 'u': state = MSG_UNFILLED; break;
+                case 'n': state = MSG_NOT4ME; break;
+                case 'f':
+                default: state = MSG_FILLED;
             }
+
             msg_flags_t flags;
             PROP(&e, parse_flags(&d_flags, &flags) );
             imap_time_t intdate;

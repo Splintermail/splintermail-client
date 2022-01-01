@@ -16,6 +16,8 @@ static derr_t distribute_update_new(imaildir_t *m, const msg_t *msg);
 static derr_t distribute_update_meta(imaildir_t *m, const msg_t *msg);
 static derr_t distribute_update_expunge(imaildir_t *m,
         const msg_expunge_t *expunge, msg_t *msg);
+static void finalize_msg(imaildir_t *m, msg_t *msg);
+static void remove_and_delete_msg(imaildir_t *m, msg_t *msg);
 static void imaildir_fail(imaildir_t *m, derr_t error);
 
 struct relay_t;
@@ -243,7 +245,7 @@ typedef struct {
 } add_msg_arg_t;
 
 /* only for imaildir_init, use imaildir_up_new_msg or imaildir_add_local_file
-   afterwards imaildir_init */
+   after imaildir_init */
 static derr_t add_msg_to_maildir(const string_builder_t *base,
         const dstr_t *name, bool is_dir, void *data){
     derr_t e = E_OK;
@@ -270,8 +272,8 @@ static derr_t add_msg_to_maildir(const string_builder_t *base,
                 either somebody put a perfectly parseable filename in our
                 directory or we have a bug
         (2) msg NOT in msgs and IS in expunged:
-                we crashed without all accessors acknowleding an expunge,
-                just delete the file
+                we crashed after marking the file EXPUNGED but without deleting
+                it; just delete it now
         (-) msg IS in msgs and IS in expunged:
                 not possible; the log can only produce one struct or the other
         (4) msg in msgs with state UNFILLED:
@@ -283,9 +285,8 @@ static derr_t add_msg_to_maildir(const string_builder_t *base,
         (6) msg in msgs with state FILLED:
                 this is the most vanilla case, no special actions
         (7) msg in msgs with state EXPUNGED:
-                not possible, the log can only produce msg_t's with state
-                UNFILLED or FILLED (otherwise it must produce a msg_expunge_t)
-    */
+                not possible, the log cannot produce msg_t's with state
+                EXPUNGED, instead it would produce a msg_expunge_t */
     // grab the metadata we loaded from the persistent cache
     jsw_anode_t *node = jsw_afind(&m->msgs, &key, NULL);
     if(node == NULL){
@@ -306,18 +307,11 @@ static derr_t add_msg_to_maildir(const string_builder_t *base,
     switch(msg->state){
         case MSG_UNFILLED:
         case MSG_NOT4ME:
-            /* (4,5): this logic is comparable to that in handle_new_msg_file,
-                      except we do not need to rename a file into place */
-            /* assign a new uid_dn, since we never saved (or distributed) the
-               one we set before */
-            msg->uid_dn = next_uid_dn(m);
-            // assign a modseq to the message
-            msg->mod.modseq = next_himodseq_dn(m);
-            jsw_ainsert(&m->mods, &msg->mod.node);
-            // correct the state
-            msg->state = MSG_FILLED;
-            PROP(&e, msg_set_file(msg, len, arg->subdir, name) );
+            /* (4,5):  assign a new uid_dn, since we never saved or
+               distributed any that we set before */
+            finalize_msg(m, msg);
             PROP(&e, m->log->update_msg(m->log, msg) );
+            PROP(&e, msg_set_file(msg, len, arg->subdir, name) );
             break;
         case MSG_FILLED:
             // (6) most vanilla case
@@ -355,9 +349,8 @@ static derr_t handle_missing_file(imaildir_t *m, msg_t *msg,
                 this file was deleted by the user, consider it an EXPUNGE.  It
                 will be pushed later by an up_t.
           - msg in msgs with state EXPUNGED:
-                not possible, the log can only produce msg_t's with state
-                UNFILLED or FILLED (otherwise it must produce a msg_expunge_t)
-    */
+                not possible, the log cannot produce msg_t's with state
+                EXPUNGED, instead it would produce a msg_expunge_t */
 
     switch(msg->state){
         case MSG_UNFILLED:
@@ -369,13 +362,9 @@ static derr_t handle_missing_file(imaildir_t *m, msg_t *msg,
             // nothing is wrong, and nothing needs to be done
             break;
 
-        case MSG_FILLED:
+        case MSG_FILLED: {
             // treat the missing file like a STORE \Deleted ... EXPUNGE
             // (logic here is similar to delete_msg)
-            msg->state = MSG_EXPUNGED;
-            /* no update to modseq when the message transitions to EXPUNGED,
-               because the updated modseq is present on the expunge instead */
-
             msg_key_t key = msg->key;
             unsigned int uid_dn = msg->uid_dn;
 
@@ -397,7 +386,7 @@ static derr_t handle_missing_file(imaildir_t *m, msg_t *msg,
             // insert expunge into expunged
             jsw_ainsert(&m->expunged, &expunge->node);
 
-        break;
+        } break;
 
         case MSG_EXPUNGED:
             LOG_ERROR("detected a msg_t in state EXPUNGED on startup\n");
@@ -983,15 +972,26 @@ fail:
 static derr_t update_msg_flags(imaildir_t *m, msg_t *msg, msg_flags_t flags){
     derr_t e = E_OK;
 
-    // this is a noop if the flags already match
-    if(msg_flags_eq(msg->flags, flags)){
-        return e;
+    switch(msg->state){
+        case MSG_FILLED:
+        case MSG_EXPUNGED:
+            // these states are fine
+            break;
+
+        case MSG_UNFILLED:
+        case MSG_NOT4ME:
+        default:
+            /* these updates must only come from the mail server, and should be
+               handled by that codepath */
+            TRACE(&e,
+                "invalid message state in update_msg_flags: %x\n",
+                FD(msg_state_to_dstr(msg->state))
+            );
+            ORIG(&e, E_INTERNAL, "invalid message state");
     }
 
-    // if the msg is UNFILLED or NOT4ME, we can just edit the flags directly
-    if(msg->state == MSG_UNFILLED || msg->state == MSG_NOT4ME){
-        msg->flags = flags;
-        PROP(&e, m->log->update_msg(m->log, msg) );
+    // this is a noop if the flags already match
+    if(msg_flags_eq(msg->flags, flags)){
         return e;
     }
 
@@ -1006,7 +1006,7 @@ static derr_t update_msg_flags(imaildir_t *m, msg_t *msg, msg_flags_t flags){
     msg->flags = flags;
     msg->mod.modseq = next_himodseq_dn(m);
 
-    // maybe reinsert into mods
+    // reinsert into mods
     jsw_ainsert(&m->mods, &msg->mod.node);
 
     /* update log, but only for FILLED messages; flag updates to EXPUNGED
@@ -1028,7 +1028,22 @@ static derr_t update_msg_flags(imaildir_t *m, msg_t *msg, msg_flags_t flags){
 derr_t imaildir_up_update_flags(imaildir_t *m, msg_t *msg, msg_flags_t flags){
     derr_t e = E_OK;
 
-    PROP(&e, update_msg_flags(m, msg, flags) );
+    switch(msg->state){
+        case MSG_UNFILLED:
+        case MSG_NOT4ME:
+            // edit flags directly, since we haven't given out views for these
+            if(!msg_flags_eq(flags, msg->flags)){
+                msg->flags = flags;
+                PROP(&e, m->log->update_msg(m->log, msg) );
+            }
+            break;
+
+        case MSG_FILLED:
+        case MSG_EXPUNGED:
+            // update flags and distribute UPDATE_METAs
+            PROP(&e, update_msg_flags(m, msg, flags) );
+            break;
+    }
 
     // TODO: E_IMAILDIR on errors
 
@@ -1039,8 +1054,10 @@ static size_t imaildir_new_tmp_id(imaildir_t *m){
     return m->tmp_count++;
 }
 
-// removes or renames path
-static derr_t place_file_fill_msg(imaildir_t *m, const string_builder_t *path,
+/* the first time a new message is downloaded (or confirmed to be uploaded),
+   rename its contents into the maildir */
+// (removes or renames path)
+static derr_t handle_new_msg_file(imaildir_t *m, const string_builder_t *path,
         msg_t *msg, size_t len){
     derr_t e = E_OK;
 
@@ -1071,9 +1088,7 @@ static derr_t place_file_fill_msg(imaildir_t *m, const string_builder_t *path,
     // move the file into place
     PROP_GO(&e, drename_path(path, &cur_path), fail);
 
-    // mark msg as filled
     PROP(&e, msg_set_file(msg, len, SUBDIR_CUR, &cur_name) );
-    msg->state = MSG_FILLED;
 
     return e;
 
@@ -1082,26 +1097,16 @@ fail:
     return e;
 }
 
-/* the first time a new message is downloaded (or confirmed to be uploaded),
-   we can save the file, mark the msg as FILLED, and assign uid_dn and
-   modseq_dn values */
-static derr_t handle_new_msg_file(imaildir_t *m, const string_builder_t *path,
-        msg_t *msg, size_t len){
-    derr_t e = E_OK;
-
+// set the FILLED state, also assign a uid_dn and modseq_dn
+// (caller is responsible for logging the change right afterwards)
+static void finalize_msg(imaildir_t *m, msg_t *msg){
     // assign a new uid_dn
     msg->uid_dn = next_uid_dn(m);
     // assign a modseq
     msg->mod.modseq = next_himodseq_dn(m);
     // insert into mods now that a modseq is assigned
     jsw_ainsert(&m->mods, &msg->mod.node);
-
-    PROP(&e, place_file_fill_msg(m, path, msg, len) );
-
-    // write the updated information to the log
-    PROP(&e, m->log->update_msg(m->log, msg) );
-
-    return e;
+    msg->state = MSG_FILLED;
 }
 
 derr_t imaildir_up_handle_static_fetch_attr(imaildir_t *m,
@@ -1168,8 +1173,11 @@ derr_t imaildir_up_handle_static_fetch_attr(imaildir_t *m,
         msg->state = MSG_NOT4ME;
         PROP(&e, m->log->update_msg(m->log, msg) );
     }else{
-        // make the msg "real" in the maildir
+        // keep the file contents
         PROP(&e, handle_new_msg_file(m, &tmp_path, msg, len) );
+        // complete the message and persist its state
+        finalize_msg(m, msg);
+        PROP(&e, m->log->update_msg(m->log, msg) );
         // maybe send updates to dn_t's
         PROP(&e, distribute_update_new(m, msg) );
     }
@@ -1230,36 +1238,6 @@ fail:
 static derr_t delete_msg(imaildir_t *m, msg_key_t key){
     derr_t e = E_OK;
 
-    /* Possible situations:
-       msg      | expunge  | result                 | log?  | distribute?
-       ----------------------------------------------------------------------
-       NULL     | NULL     | noop                   | no    | no
-       NULL     | UNPUSHED | expunge -> PUSHED      | yes   | no
-       NULL     | PUSHED   | noop                   | no    | no
-       UNFILLED | NULL     | new PUSHED expunge [1] | yes   | no
-       UNFILLED | UNPUSHED | expunge -> PUSHED [1]  | yes   | no
-       UNFILLED | PUSHED   | noop [1,2]             | no    | no
-       FILLED   | NULL     | new PUSHED expunge [1] | yes   | yes
-       FILLED   | UNPUSHED | expunge -> PUSHED [1]  | yes   | yes
-       FILLED   | PUSHED   | noop [1,2]             | no    | yes
-       EXPUNGED | NULL     | new PUSHED expunge [2] | yes   | no
-       EXPUNGED | UNPUSHED | expunge -> PUSHED      | yes   | no
-       EXPUNGED | PUSHED   | noop                   | no    | no
-       NOT4ME   | NULL     | new PUSHED expunge [1] | yes   | no
-       NOT4ME   | UNPUSHED | expunge -> PUSHED [1]  | yes   | no
-       NOT4ME   | PUSHED   | noop [1,2]             | no    | no
-
-           1 = "update msg to EXPUNGED but only in memory"
-           2 = impossible state
-
-        conclusions:
-          - if a message exists, always set it to EXPUNGED state
-          - update log when ((msg || expunge) && expunge != PUSHED)
-          - distribute expunge when (msg == FILLED)
-          - file deletions are handled by the code for distributing, since they
-            line up perfectly with when we need to distribute expunges
-    */
-
     // look for an existing msg_t
     jsw_anode_t *node = jsw_afind(&m->msgs, &key, NULL);
     msg_t *msg = CONTAINER_OF(node, msg_t, node);
@@ -1268,22 +1246,7 @@ static derr_t delete_msg(imaildir_t *m, msg_key_t key){
     node = jsw_afind(&m->expunged, &key, NULL);
     msg_expunge_t *expunge = CONTAINER_OF(node, msg_expunge_t, node);
 
-    // make decisions on what to do
-    bool expunge_pushed = expunge && expunge->state == MSG_EXPUNGE_PUSHED;
-    bool update_log = (msg || expunge) && !expunge_pushed;
-    bool distribute = msg && msg->state == MSG_FILLED;
-
-    // always update in-memory state of msg
-    if(msg){
-        msg->state = MSG_EXPUNGED;
-        /* no update to modseq when the message transitions to EXPUNGED,
-           because the updated modseq is present on the expunge instead */
-    }
-
-    // detect no-op and exit early to avoid allocating an unnecessary expunge
-    if(!update_log && !distribute) return e;
-
-    // otherwise, ensure we have an expunge, make sure state is PUSHED
+    // we should always end with an expunge in the EXPUNGED_PUSHED state
     if(!expunge){
         msg_expunge_state_e state = MSG_EXPUNGE_PUSHED;
         unsigned int uid_dn = msg ? msg->uid_dn : 0;
@@ -1293,16 +1256,29 @@ static derr_t delete_msg(imaildir_t *m, msg_key_t key){
         jsw_ainsert(&m->expunged, &expunge->node);
         // maybe insert into mods
         if(modseq) jsw_ainsert(&m->mods, &expunge->mod.node);
-    }else{
+        // update the log
+        PROP(&e, m->log->update_expunge(m->log, expunge) );
+    }else if(expunge->state != MSG_EXPUNGE_PUSHED){
         expunge->state = MSG_EXPUNGE_PUSHED;
-    }
-
-    if(update_log){
+        // update the log
         PROP(&e, m->log->update_expunge(m->log, expunge) );
     }
 
-    if(distribute){
-        PROP(&e, distribute_update_expunge(m, expunge, msg) );
+    if(msg){
+        if(msg->state == MSG_FILLED){
+            // mark the message as expunged
+            msg->state = MSG_EXPUNGED;
+            // distribute updates since we gave out views of this msg
+            PROP(&e, distribute_update_expunge(m, expunge, msg) );
+        }else if(msg->state == MSG_EXPUNGED){
+            // noop; we've already distributed expunge updates, be patient
+            /* (this should be impossible to reach since the server won't give
+               us extra VANISHED messages and client EXPUNGE commands only
+               come directly here for uid_local messages) */
+        }else{
+            // delete the msg_t immediately since we no longer have use for it
+            remove_and_delete_msg(m, msg);
+        }
     }
 
     return e;
@@ -1342,9 +1318,9 @@ static void send_unsent_updates(imaildir_t *m, link_t *unsent){
 }
 
 
-// used for UPDATE_NEW and UPDATE_META
-static derr_t make_view_updates(imaildir_t *m, link_t *unsent,
-        const msg_t *msg, update_type_e update_type){
+static derr_t make_view_updates_new(
+    imaildir_t *m, link_t *unsent, const msg_t *msg
+){
     derr_t e = E_OK;
 
     msg_view_t *view;
@@ -1354,8 +1330,9 @@ static derr_t make_view_updates(imaildir_t *m, link_t *unsent,
         PROP_GO(&e, msg_view_new(&view, msg), fail);
 
         update_arg_u arg = { .new = view };
+
         update_t *update;
-        PROP_GO(&e, update_new(&update, NULL, update_type, arg), fail_view);
+        PROP_GO(&e, update_new(&update, NULL, UPDATE_NEW, arg), fail_view);
 
         link_list_append(unsent, &update->link);
     }
@@ -1378,10 +1355,39 @@ static derr_t distribute_update_new(imaildir_t *m, const msg_t *msg){
     link_t unsent;
     link_init(&unsent);
 
-    PROP(&e, make_view_updates(m, &unsent, msg, UPDATE_NEW) );
+    PROP(&e, make_view_updates_new(m, &unsent, msg) );
 
     send_unsent_updates(m, &unsent);
 
+    return e;
+}
+
+
+static derr_t make_view_updates_meta(
+    imaildir_t *m, link_t *unsent, const msg_t *msg
+){
+    derr_t e = E_OK;
+
+    msg_view_t *view;
+
+    dn_t *dn;
+    LINK_FOR_EACH(dn, &m->dns, dn_t, link){
+        PROP_GO(&e, msg_view_new(&view, msg), fail);
+
+        update_arg_u arg = { .meta = view };
+
+        update_t *update;
+        PROP_GO(&e, update_new(&update, NULL, UPDATE_META, arg), fail_view);
+
+        link_list_append(unsent, &update->link);
+    }
+
+    return e;
+
+fail_view:
+    msg_view_free(&view);
+fail:
+    empty_unsent_updates(unsent);
     return e;
 }
 
@@ -1394,7 +1400,7 @@ static derr_t distribute_update_meta(imaildir_t *m, const msg_t *msg){
     link_t unsent;
     link_init(&unsent);
 
-    PROP(&e, make_view_updates(m, &unsent, msg, UPDATE_META) );
+    PROP(&e, make_view_updates_meta(m, &unsent, msg) );
 
     send_unsent_updates(m, &unsent);
 
@@ -1784,7 +1790,7 @@ static derr_t copy_one_msg(
     // (I think it should always have a file but we can tolerate if it doesn't)
     if(msg->state != MSG_FILLED){
         LOG_WARN(
-            "missing uid up:%x/local:%x in COPYUID sequence is not FILLED\n",
+            "uid up:%x/local:%x in COPYUID sequence is not FILLED\n",
             FU(src_key.uid_up), FU(src_key.uid_local)
         );
         return e;
@@ -2002,7 +2008,7 @@ static derr_t relay_update_req_copy(imaildir_t *m, update_req_t *req){
             );
             CHECK(&e);
 
-            local_only_update_sync(requester, st_resp);
+            PROP(&e, local_only_update_sync(requester, st_resp) );
             return e;
         }
     }
@@ -2072,29 +2078,24 @@ derr_t imaildir_dn_build_views(
     imaildir_t *m,
     jsw_atree_t *views,
     unsigned int *max_uid_dn,
-    unsigned int *uidvld_dn,
-    unsigned int *nrecent
+    unsigned int *uidvld_dn
 ){
     derr_t e = E_OK;
 
     // make one view for every message present in the mailbox
-    unsigned int _nrecent = 0;
     jsw_atrav_t trav;
     jsw_anode_t *node = jsw_atfirst(&trav, &m->msgs);
     for(; node != NULL; node = jsw_atnext(&trav)){
         msg_t *msg = CONTAINER_OF(node, msg_t, node);
-        // skip UNFILLED or EXPUNGED messages
+        // only FILLED messages go into views
         if(msg->state != MSG_FILLED) continue;
         msg_view_t *view;
         PROP_GO(&e, msg_view_new(&view, msg), fail);
         jsw_ainsert(views, &view->node);
-        // TODO: support recent
-        if(view->recent) _nrecent++;
     }
 
     *max_uid_dn = m->hi_uid_dn;
     *uidvld_dn = m->log->get_uidvld_dn(m->log);
-    *nrecent = _nrecent;
 
     return e;
 
@@ -2237,13 +2238,20 @@ derr_t imaildir_add_local_file(
         jsw_ainsert(&m->msgs, &msg->node);
     }
 
+    /* make sure metadata is in place in case we crash (non-uid_local messages
+       recover the contents later, but we'll have the metadata right */
+    // TODO: rewrite the loading logic to get rid of this weird extra update
+    PROP_GO(&e, m->log->update_msg(m->log, msg), fail_path);
+
     /* TODO: throw an E_IMAILDIR here, since this message would not be detected
        as needing to be downloaded by the up_t, and I'd rather shut down this
        connection than overcomplicate the logic over there with checks */
-    PROP_GO(&e, m->log->update_msg(m->log, msg), fail_path);
 
-    // make the message "real" in the maildir
+    // move the file into place (or delete it on failure)
     PROP(&e, handle_new_msg_file(m, path, msg, len) );
+    // complete msg and save to log
+    finalize_msg(m, msg);
+    PROP(&e, m->log->update_msg(m->log, msg) );
 
     if(uid_up > 0){
         // let the primary up_t know about the uid we don't need to download
@@ -2308,7 +2316,7 @@ derr_t imaildir_process_status_resp(
         new.messages = in.messages + count_local_msgs(m);
     }
     if(in.attrs & IE_STATUS_ATTR_RECENT){
-        // TODO: support /Recent
+        // we don't support \Recent flags
         new.recent = 0;
     }
     if(in.attrs & IE_STATUS_ATTR_UIDNEXT){

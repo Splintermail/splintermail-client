@@ -2,6 +2,23 @@
 
 #include "libimaildir.h"
 
+
+DSTR_STATIC(MSG_UNFILLED_dstr, "UNFILLED");
+DSTR_STATIC(MSG_FILLED_dstr, "FILLED");
+DSTR_STATIC(MSG_EXPUNGED_dstr, "EXPUNGED");
+DSTR_STATIC(MSG_NOT4ME_dstr, "NOT4ME");
+DSTR_STATIC(UNKNOWN_dstr, "UNKNOWN");
+
+const dstr_t *msg_state_to_dstr(msg_state_e state){
+    switch(state){
+        case MSG_UNFILLED:     return &MSG_UNFILLED_dstr;     break;
+        case MSG_FILLED:       return &MSG_FILLED_dstr;     break;
+        case MSG_EXPUNGED:     return &MSG_EXPUNGED_dstr;     break;
+        case MSG_NOT4ME:       return &MSG_NOT4ME_dstr;       break;
+    }
+    return &UNKNOWN_dstr;
+}
+
 derr_t msg_new(msg_t **out, msg_key_t key, unsigned int uid_dn,
         msg_state_e state, imap_time_t intdate, msg_flags_t flags,
         uint64_t modseq){
@@ -354,18 +371,12 @@ void update_free(update_t **old){
 derr_t msg_write(const msg_t *msg, dstr_t *out){
     derr_t e = E_OK;
 
-    dstr_t state_str = {0};
-    switch(msg->state){
-        case MSG_UNFILLED: state_str = DSTR_LIT("unfilled"); break;
-        case MSG_FILLED:   state_str = DSTR_LIT("filled");   break;
-        case MSG_EXPUNGED: state_str = DSTR_LIT("expunged"); break;
-        case MSG_NOT4ME:   state_str = DSTR_LIT("not4me");   break;
-    }
+    const dstr_t *state_str = msg_state_to_dstr(msg->state);
 
     PROP(&e, FMT(out, "msg:%x(up):%x(dn):%x:%x/%x:",
                 FU(msg->key.uid_up),
                 FU(msg->uid_dn),
-                FD(&state_str),
+                FD(state_str),
                 FD(&msg->filename),
                 FU(msg->length)) );
 

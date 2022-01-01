@@ -378,10 +378,11 @@ static derr_t send_exists_resp(dn_t *dn){
     return e;
 }
 
-static derr_t send_recent_resp(dn_t *dn, unsigned int nrecent){
+static derr_t send_recent_resp(dn_t *dn){
     derr_t e = E_OK;
 
-    imap_resp_arg_t arg = {.recent=nrecent};
+    // we don't support \Recent
+    imap_resp_arg_t arg = {.recent=0};
     imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_RECENT, arg);
     resp = imap_resp_assert_writable(&e, resp, dn->exts);
     CHECK(&e);
@@ -506,20 +507,18 @@ static derr_t select_cmd(dn_t *dn, const ie_dstr_t *tag,
 
     unsigned int max_uid_dn;
     unsigned int uidvld_dn;
-    unsigned int nrecent;
     PROP(&e,
         imaildir_dn_build_views(dn->m,
             &dn->views,
             &max_uid_dn,
-            &uidvld_dn,
-            &nrecent
+            &uidvld_dn
         )
     );
 
     // generate/send required SELECT responses
     PROP_GO(&e, send_flags_resp(dn), fail);
     PROP_GO(&e, send_exists_resp(dn), fail);
-    PROP_GO(&e, send_recent_resp(dn, nrecent), fail);
+    PROP_GO(&e, send_recent_resp(dn), fail);
     PROP_GO(&e, send_unseen_resp(dn), fail);
     PROP_GO(&e, send_pflags_resp(dn), fail);
     PROP_GO(&e, send_uidnext_resp(dn, max_uid_dn), fail);
@@ -1147,8 +1146,6 @@ static derr_t send_fetch_resp(
             ff = ie_fflags_add_simple(&e, ff, IE_FFLAG_DRAFT);
         if(view->flags.deleted)
             ff = ie_fflags_add_simple(&e, ff, IE_FFLAG_DELETED);
-        if(view->recent)
-            ff = ie_fflags_add_simple(&e, ff, IE_FFLAG_RECENT);
         f = ie_fetch_resp_flags(&e, f, ff);
     }
 
@@ -1536,8 +1533,9 @@ derr_t dn_disconnect(dn_t *dn, bool expunge){
     return e;
 }
 
-static derr_t send_flags_update(dn_t *dn, unsigned int seq_num,
-        msg_flags_t flags, bool recent, const unsigned int *uid){
+static derr_t send_flags_update(
+    dn_t *dn, unsigned int seq_num, msg_flags_t flags, const unsigned int *uid
+){
     derr_t e = E_OK;
 
     ie_fflags_t *ff = ie_fflags_new(&e);
@@ -1546,7 +1544,6 @@ static derr_t send_flags_update(dn_t *dn, unsigned int seq_num,
     if(flags.seen)     ff = ie_fflags_add_simple(&e, ff, IE_FFLAG_SEEN);
     if(flags.draft)    ff = ie_fflags_add_simple(&e, ff, IE_FFLAG_DRAFT);
     if(flags.deleted)  ff = ie_fflags_add_simple(&e, ff, IE_FFLAG_DELETED);
-    if(recent)         ff = ie_fflags_add_simple(&e, ff, IE_FFLAG_RECENT);
 
     // TODO: support modseq here too
     ie_fetch_resp_t *fetch = ie_fetch_resp_new(&e);
@@ -1752,9 +1749,8 @@ static derr_t gather_send_responses(
 
             unsigned int seq_num;
             PROP(&e, index_to_seq_num(index, &seq_num) );
-            bool recent = false;
             const unsigned int *uid = uid_mode ? &gathered->uid_dn : NULL;
-            PROP(&e, send_flags_update(dn, seq_num, view->flags, recent, uid) );
+            PROP(&e, send_flags_update(dn, seq_num, view->flags, uid) );
         }
     }
 
@@ -1913,9 +1909,7 @@ static derr_t send_store_resp_noupdate(dn_t *dn, const exp_flags_t *exp_flags){
         const unsigned int *uid =
             dn->store.uid_mode ? &exp_flags->uid_dn : NULL;
 
-        PROP(&e,
-            send_flags_update(dn, seq_num, view->flags, view->recent, uid)
-        );
+        PROP(&e, send_flags_update(dn, seq_num, view->flags, uid) );
         return e;
     }
 
@@ -1940,7 +1934,7 @@ static derr_t send_store_resp_noexp(dn_t *dn, unsigned int uid_dn){
 
     const unsigned int *uid = dn->store.uid_mode ? &uid_dn : NULL;
 
-    PROP(&e, send_flags_update(dn, seq_num, view->flags, view->recent, uid) );
+    PROP(&e, send_flags_update(dn, seq_num, view->flags, uid) );
     return e;
 }
 
@@ -1965,17 +1959,13 @@ static derr_t send_store_resp_expupdate(dn_t *dn,
     msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
     if(!msg_flags_eq(exp_flags->flags, view->flags)){
         // a different update than we expected, always report it
-        PROP(&e,
-            send_flags_update(dn, seq_num, view->flags, view->recent, uid)
-        );
+        PROP(&e, send_flags_update(dn, seq_num, view->flags, uid) );
         return e;
     }
 
     // we expected this change, do we report it?
     if(!dn->store.silent){
-        PROP(&e,
-            send_flags_update(dn, seq_num, view->flags, view->recent, uid)
-        );
+        PROP(&e, send_flags_update(dn, seq_num, view->flags, uid) );
         return e;
     }
 

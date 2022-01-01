@@ -18,10 +18,13 @@ typedef enum {
     // UNFILLED messages have a uid_up but no uid_dn or modseq
     MSG_UNFILLED,
     MSG_FILLED,
+    // EXPUNGED means a message existed in this session but was deleted
     MSG_EXPUNGED,
     // NOT4ME messages have a uid_up but no uid_dn or modseq
     MSG_NOT4ME,
 } msg_state_e;
+
+const dstr_t *msg_state_to_dstr(msg_state_e state);
 
 typedef struct {
     bool answered:1;
@@ -66,8 +69,6 @@ DEF_CONTAINER_OF(msg_t, mod, msg_mod_t)
 
 // an accessor-owned view of a message
 typedef struct {
-    // recent flag is only given to one server accessor, to pass to one client
-    bool recent;
     msg_key_t key;
     unsigned int uid_dn;
     size_t length;
