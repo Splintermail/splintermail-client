@@ -1661,11 +1661,11 @@ def test_examine(cmd, maildir_root, **kwargs):
 
             # EXAMINE from unselected
             rw.put(b"1 EXAMINE INBOX\r\n")
-            rw.wait_for_resp("1", "OK")
+            rw.wait_for_resp("1", "OK [READ-ONLY]")
 
             # SELECT from EXAMINED
             rw.put(b"2 SELECT INBOX\r\n")
-            rw.wait_for_resp("2", "OK")
+            rw.wait_for_resp("2", "OK [READ-WRITE]")
 
             # Test STORE.
             rw.put(b"3 store 1 flags \\Seen\r\n")

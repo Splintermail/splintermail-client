@@ -293,10 +293,9 @@ derr_t dn_init(dn_t *dn, dn_cb_i *cb, extensions_t *exts, bool examine){
     return e;
 }
 
-//// TODO: unify these send_* functions with the ones in sm_serve_logic?
-
-static derr_t send_st_resp(dn_t *dn, const ie_dstr_t *tag, const dstr_t *msg,
-        ie_status_t status){
+static derr_t send_st_resp(
+    dn_t *dn, const ie_dstr_t *tag, const dstr_t *msg, ie_status_t status
+){
     derr_t e = E_OK;
 
     // copy tag
@@ -317,22 +316,19 @@ static derr_t send_st_resp(dn_t *dn, const ie_dstr_t *tag, const dstr_t *msg,
     return e;
 }
 
-static derr_t send_ok(dn_t *dn, const ie_dstr_t *tag,
-        const dstr_t *msg){
+static derr_t send_ok(dn_t *dn, const ie_dstr_t *tag, const dstr_t *msg){
     derr_t e = E_OK;
     PROP(&e, send_st_resp(dn, tag, msg, IE_ST_OK) );
     return e;
 }
 
-static derr_t send_no(dn_t *dn, const ie_dstr_t *tag,
-        const dstr_t *msg){
+static derr_t send_no(dn_t *dn, const ie_dstr_t *tag, const dstr_t *msg){
     derr_t e = E_OK;
     PROP(&e, send_st_resp(dn, tag, msg, IE_ST_NO) );
     return e;
 }
 
-static derr_t send_bad(dn_t *dn, const ie_dstr_t *tag,
-        const dstr_t *msg){
+static derr_t send_bad(dn_t *dn, const ie_dstr_t *tag, const dstr_t *msg){
     derr_t e = E_OK;
     PROP(&e, send_st_resp(dn, tag, msg, IE_ST_BAD) );
     return e;
@@ -524,7 +520,20 @@ static derr_t select_cmd(dn_t *dn, const ie_dstr_t *tag,
     PROP_GO(&e, send_uidnext_resp(dn, max_uid_dn), fail);
     PROP_GO(&e, send_uidvld_resp(dn, uidvld_dn), fail);
 
-    PROP_GO(&e, send_ok(dn, tag, &DSTR_LIT("welcome in")), fail);
+    // build an appropriate OK message
+    ie_dstr_t *tag_copy = ie_dstr_copy(&e, tag);
+    ie_dstr_t *text = ie_dstr_new2(&e, DSTR_LIT("welcome in"));
+    ie_st_code_arg_t code_arg = {0};
+    ie_st_code_t *code = ie_st_code_new(&e,
+        dn->examine ? IE_ST_CODE_READ_ONLY : IE_ST_CODE_READ_WRITE, code_arg
+    );
+    ie_st_resp_t *st_resp = ie_st_resp_new(&e, tag_copy, IE_ST_OK, code, text);
+    imap_resp_arg_t arg = {.status_type=st_resp};
+    imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_STATUS_TYPE, arg);
+    resp = imap_resp_assert_writable(&e, resp, dn->exts);
+    CHECK_GO(&e, fail);
+
+    PROP_GO(&e, dn->cb->resp(dn->cb, resp), fail);
 
     return e;
 
