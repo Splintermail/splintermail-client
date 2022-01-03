@@ -29,7 +29,7 @@ int jsw_cmp_msg_key(const void *a, const void *b){
     // we just sort blindly by one, then by the other if the first is zero
     const msg_key_t *ka = a;
     const msg_key_t *kb = b;
-    // (imaildir's count_local_msgs depends on sorting by uid_up first)
+    // (imaildir_process_status_resp depends on sorting by uid_up first)
     int result = jsw_cmp_uint(&ka->uid_up, &kb->uid_up);
     if(result != 0) return result;
     return jsw_cmp_uint(&ka->uid_local, &kb->uid_local);

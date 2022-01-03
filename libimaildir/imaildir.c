@@ -2286,21 +2286,6 @@ void imaildir_hold_end(imaildir_t *m){
     }
 }
 
-// TODO: write the range-limited jsw_atree traversal so this is not O(N)
-static unsigned int count_local_msgs(imaildir_t *m){
-    unsigned int count = 0;
-    jsw_atrav_t trav;
-    jsw_anode_t *node = jsw_atfirst(&trav, &m->msgs);
-    for(; node; node = jsw_atnext(&trav) ){
-        msg_t *msg = CONTAINER_OF(node, msg_t, node);
-        /* we know that all uid_local's appear in the front, based on the
-           msg_key_t cmp function */
-        if(msg->key.uid_local == 0) break;
-        count++;
-    }
-    return count;
-}
-
 // take a STATUS response from the server and correct for local info
 derr_t imaildir_process_status_resp(
     imaildir_t *m, ie_status_attr_resp_t in, ie_status_attr_resp_t *out
@@ -2309,14 +2294,39 @@ derr_t imaildir_process_status_resp(
 
     ie_status_attr_resp_t new = { .attrs = in.attrs };
 
+    /* note that this may be a lite imaildir which is not in sync, so it is not
+       safe to trust our own count of uid_up messages or unseen.  Instead, we
+       assume that all unsynced messages are not NOT4ME messages and just
+       modify the values in the server's response with uid_local and
+       known-NOT4ME messages */
+    unsigned int messages = in.messages;
+    unsigned int unseen = in.unseen;
+    // avoid walking the whole tree of msgs if possible
+    if(in.attrs & (IE_STATUS_ATTR_MESSAGES | IE_STATUS_ATTR_UNSEEN)){
+        jsw_atrav_t trav;
+        jsw_anode_t *node = jsw_atfirst(&trav, &m->msgs);
+        for(; node; node = jsw_atnext(&trav) ){
+            msg_t *msg = CONTAINER_OF(node, msg_t, node);
+            /* we know that all uid_local's appear in the front, based on the
+               msg_key_t cmp function */
+            if(msg->key.uid_local > 0){
+                // local messages are obviously not counted by the server
+                messages++;
+                if(!msg->flags.seen) unseen++;
+            }else if(msg->state == MSG_NOT4ME){
+                // NOT4ME messages are not counted by us
+                if(messages) messages--;
+                if(!msg->flags.seen && unseen) unseen--;
+            }
+        }
+    }
+
     if(in.attrs & IE_STATUS_ATTR_MESSAGES){
         // the message count should be what the server reports + local msgs
-        /* note that this may be a lite imaildir which is not in sync, so
-           it is not safe to trust our own count of uid_up msgs */
-        new.messages = in.messages + count_local_msgs(m);
+        new.messages = messages;
     }
     if(in.attrs & IE_STATUS_ATTR_RECENT){
-        // we don't support \Recent flags
+        // we don't support \Recent flags at all
         new.recent = 0;
     }
     if(in.attrs & IE_STATUS_ATTR_UIDNEXT){
@@ -2326,8 +2336,7 @@ derr_t imaildir_process_status_resp(
         new.uidvld = m->log->get_uidvld_dn(m->log);
     }
     if(in.attrs & IE_STATUS_ATTR_UNSEEN){
-        // TODO: support /Unseen
-        new.unseen = 0;
+        new.unseen = unseen;
     }
     if(in.attrs & IE_STATUS_ATTR_HIMODSEQ){
         /* this shouldn't be possible in a relayed command, but this isn't

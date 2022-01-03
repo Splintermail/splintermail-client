@@ -846,7 +846,7 @@ def test_select_select(cmd, maildir_root, **kwargs):
             rw.wait_for_resp("4", "OK")
 
 
-def inject_local_msg(maildir_root):
+def inject_local_msg(maildir_root, mbx="INBOX"):
     cmd = [
         "./inject_local_msg",
         "--root",
@@ -854,7 +854,7 @@ def inject_local_msg(maildir_root):
         "--user",
         USER,
         "--mailbox",
-        "INBOX",
+        mbx,
     ]
     msg = b"hello world!\r\n"
     p = subprocess.run(cmd, input=msg, stdout=subprocess.PIPE, check=True)
@@ -1305,8 +1305,8 @@ def do_passthru_test(rw):
     )
 
     # test CREATE, RENAME, and DELETE
-    name = codecs.encode(b"deleteme_" + os.urandom(5), "hex_codec")
-    rename = codecs.encode(b"deleteme_" + os.urandom(5), "hex_codec")
+    name = b"deleteme_" + codecs.encode(os.urandom(5), "hex_codec")
+    rename = b"deleteme_" + codecs.encode(os.urandom(5), "hex_codec")
 
     rw.put(b"8 CREATE %s\r\n"%name)
     rw.wait_for_resp("8", "OK")
@@ -2135,8 +2135,6 @@ def test_mangling(cmd, maildir_root, **kwargs):
 def test_mangle_corrupted(cmd, maildir_root, **kwargs):
     dovecot_port = kwargs["imaps_port"]
     with _session(None, host="127.0.0.1", port=dovecot_port) as rw2:
-        user = USER.encode('utf8')
-        passwd = PASS.encode('utf8')
         rw2.put(b"2b SELECT INBOX\r\n")
         rw2.wait_for_resp("2b", "OK")
     with inbox(cmd) as rw:
@@ -2511,6 +2509,99 @@ def test_combine_updates_into_fetch(cmd, maildir_root, **kwargs):
                 b"\\* %d EXPUNGE"%u1,
             ],
         )
+
+@register_test
+def test_status_with_local_info(cmd, maildir_root, **kwargs):
+    # We modify the upstream server's STATUS response in the following ways:
+    #  - RECENT is always 0
+    #  - MESSAGES and UNSEEN counts are are decreased for NOT4ME messages
+    #  - MESSAGES and UNSEEN counts are are increased for uid_locals messages
+
+    # not4me generated with:
+    #   echo hi | ./encrypt_msg path/to/test/files/key_tool/key_n.pem
+    not4me = (
+        b"-----BEGIN SPLINTERMAIL MESSAGE-----\r\n"
+        b"VjoxClI6MzI62ZxVYmKUJjz42+VMAoZnP2ZtmslptYVv94VYOUNl82A6MTI4Oo04\r\n"
+        b"9bULnsibwCzTinZE9XFJqyt9OnnsQQZWXrMhvhXakgWoNAqYzKFaztyN8cntAz3g\r\n"
+        b"CX6WS+MuCAyxjNd9ifkK9xlzx62WxVxUZ0TdEBYfk/gKyWtUeNSiso+2T7Kd/YuM\r\n"
+        b"8ZgjzzPNa4Lcbwk+Pjdv6yc24PH3cZPmAXJj5rhECklWOjEyOmaAnAA+EtHS9ZbJ\r\n"
+        b"YwpNOu+zQA==\r\n"
+        b"=6x4fUZQpPFNgU1sKDUgB4g==\r\n"
+        b"-----END SPLINTERMAIL MESSAGE-----\r\n"
+    )
+
+    def read_status(line, val):
+        m = re.search(b"%s ([0-9]+)"%as_bytes(val), line)
+        assert m, f"no {val} in '{line}'"
+        return int(m[1])
+
+    # run this in a temp mailbox
+    mbx = b"deleteme_" + codecs.encode(os.urandom(5), "hex_codec")
+
+    with _session(
+        None, host="127.0.0.1", port=kwargs["imaps_port"]
+    ) as rwx:
+        rwx.put(b"1 CREATE %s\r\n"%mbx)
+        rwx.wait_for_resp("1", "OK")
+
+        # upload a recent, unseen, NOT4ME message
+        rwx.put(b"2 APPEND %s {%d}\r\n"%(mbx, len(not4me)))
+        rwx.wait_for_match(b"\\+")
+        rwx.put(b"%s\r\n"%not4me)
+        rwx.wait_for_resp("2", "OK")
+        rwx.put(b"3 STATUS %s (MESSAGES UNSEEN RECENT)\r\n"%mbx)
+        _, line = rwx.wait_for_resp("3", "OK")
+        nmsgs = read_status(line, "MESSAGES")
+        nunseen = read_status(line, "UNSEEN")
+        nrecent = read_status(line, "RECENT")
+        assert nmsgs == 1, nmsgs
+        assert nunseen == 1, nunsen
+        assert nrecent == 1, nrecent
+
+    with session(cmd) as rw:
+        # we haven't opened the mailbox yet, so we don't know it's NOT4ME; it
+        # should count for MESSAGES and UNSEEN but RECENT must always be 0
+        rw.put(b"4 STATUS %s (MESSAGES UNSEEN RECENT)\r\n"%mbx)
+        _, line = rw.wait_for_resp("4", "OK")
+        nmsgs = read_status(line, "MESSAGES")
+        nunseen = read_status(line, "UNSEEN")
+        nrecent = read_status(line, "RECENT")
+        assert nmsgs == 1, nmsgs
+        assert nunseen == 1, nunsen
+        assert nrecent == 0, nrecent
+
+        # sync the mailbox
+        rw.put(b"5 SELECT %s\r\n"%mbx)
+        rw.wait_for_resp("5", "OK")
+        rw.put(b"6 CLOSE\r\n")
+        rw.wait_for_resp("6", "OK")
+
+        # Now that we know it's NOT4ME, it shouldn't count for anything
+        rw.put(b"7 STATUS %s (MESSAGES UNSEEN RECENT)\r\n"%mbx)
+        _, line = rw.wait_for_resp("7", "OK")
+        nmsgs = read_status(line, "MESSAGES")
+        nunseen = read_status(line, "UNSEEN")
+        nrecent = read_status(line, "RECENT")
+        assert nmsgs == 0, nmsgs
+        assert nunseen == 0, nunsen
+        assert nrecent == 0, nrecent
+
+        # add a pair of unseen local message
+        inject_local_msg(maildir_root, mbx)
+
+        # Now we should add to the server's messages and unseen
+        rw.put(b"8 STATUS %s (MESSAGES UNSEEN RECENT)\r\n"%mbx)
+        _, line = rw.wait_for_resp("8", "OK")
+        nmsgs = read_status(line, "MESSAGES")
+        nunseen = read_status(line, "UNSEEN")
+        nrecent = read_status(line, "RECENT")
+        assert nmsgs == 1, nmsgs
+        assert nunseen == 1, nunsen
+        assert nrecent == 0, nrecent
+
+        # cleanup the temp mailbox
+        rw.put(b"9 DELETE %s\r\n"%mbx)
+        rw.wait_for_resp("9", "OK")
 
 
 def append_messages(rw, count, box="INBOX"):
