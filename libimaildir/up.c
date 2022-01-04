@@ -946,6 +946,13 @@ static derr_t advance_relays(up_t *up){
 static derr_t advance_detection(up_t *up){
     derr_t e = E_OK;
 
+    /* note: an EXISTS response which arrives while a reselect is pending
+       should not actually trigger a detect fetch, but it still must prevent
+       us from saving the himodseq_up until after that reselect is done, so
+       while such an EXISTS sets detect.chgsince, we still don't send a FETCH
+       while there is an reselect pending */
+    if(up->nexamines_pending) return e;
+
     if(!up->detect.chgsince || up->detect.inflight) return e;
 
     bool ok;
