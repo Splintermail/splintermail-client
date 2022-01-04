@@ -1664,6 +1664,16 @@ static derr_t gather_update_meta(dn_t *dn, gather_t *gather, update_t *update){
 
     msg_view_t *view = update->arg.meta;
 
+    // find the old view, if there is one
+    /* (there might not be if this is an update to an expunge message where we
+        have already accepted the expunge) */
+    jsw_anode_t *node = jsw_aerase(&dn->views, &view->uid_dn);
+    if(!node){
+        // just discard this update
+        goto cu;
+    }
+
+
     // remember that this uid_dn is modified
     if(!jsw_afind(&gather->metas, &view->uid_dn, NULL)){
         gathered_t *gathered;
@@ -1671,18 +1681,13 @@ static derr_t gather_update_meta(dn_t *dn, gather_t *gather, update_t *update){
         jsw_ainsert(&gather->metas, &gathered->node);
     }
 
-    // remove the old view, if there is one
-    /* (there might not be if this is an update to an expunge message where we
-        have already accepted the expunge) */
-    jsw_anode_t *node = jsw_aerase(&dn->views, &view->uid_dn);
-    if(node){
-        msg_view_t *old_view = CONTAINER_OF(node, msg_view_t, node);
-        msg_view_free(&old_view);
+    // remove the old view
+    msg_view_t *old_view = CONTAINER_OF(node, msg_view_t, node);
+    msg_view_free(&old_view);
 
-        // add the new view, if msg was not expunged
-        jsw_ainsert(&dn->views, &view->node);
-        update->arg.meta = NULL;
-    }
+    // add the new view, if msg was not expunged
+    jsw_ainsert(&dn->views, &view->node);
+    update->arg.meta = NULL;
 
 cu:
     update_free(&update);
@@ -1849,7 +1854,7 @@ static derr_t gather_updates_dont_send(
 cu:
     if(is_error(e)){
         // clean up memory in error cases
-        ie_st_resp_free(STEAL(ie_st_resp_t, st_resp));
+        if(st_resp) ie_st_resp_free(STEAL(ie_st_resp_t, st_resp));
         gather_free(gather);
     }
 
@@ -1877,7 +1882,7 @@ cu:
 
     if(is_error(e)){
         // clean up memory in error cases
-        ie_st_resp_free(STEAL(ie_st_resp_t, st_resp));
+        if(st_resp) ie_st_resp_free(STEAL(ie_st_resp_t, st_resp));
     }
 
     return e;

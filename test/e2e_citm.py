@@ -1016,6 +1016,65 @@ def test_store(cmd, maildir_root, **kwargs):
 
 
 @register_test
+def test_store_after_expunge(cmd, maildir_root, **kwargs):
+    with Subproc(cmd) as subproc, \
+            _inbox(subproc) as rw1, \
+            _inbox(subproc) as rw2:
+        # start with a couple new message
+        append_messages(rw1, 2)
+        rw2.put(b"1 NOOP\r\n")
+        rw2.wait_for_resp("1", "OK")
+
+        # first connection deletes the messages
+        rw1.put(b"2 STORE * FLAGS \\Deleted\r\n")
+        rw1.wait_for_resp("2", "OK")
+        rw1.put(b"3 EXPUNGE\r\n")
+        rw1.wait_for_resp("3", "OK")
+
+        # update flags from the second view
+        rw2.put(b"4 STORE * FLAGS \\Seen\r\n")
+        rw2.wait_for_resp("4", "OK", require=[b"\\* [0-9]+ FETCH.*Seen"])
+
+        # we can fetch them too
+        rw2.put(b"5 FETCH * FLAGS\r\n")
+        rw2.wait_for_resp("5", "OK", require=[b"\\* [0-9]+ FETCH.*Seen"])
+
+        # make sure there are no problems with updates in the first connection
+        rw1.put(b"6 NOOP\r\n")
+        rw1.wait_for_resp("6", "OK")
+
+        # make sure the second connection sees the EXPUNGE when its ready
+        rw2.put(b"7 NOOP\r\n")
+        rw2.wait_for_resp("7", "OK", require=[b".*EXPUNGE.*"])
+
+        # delete another message from an unrelated connection
+        with _session(
+            None, host="127.0.0.1", port=kwargs["imaps_port"]
+        ) as rwx:
+            rwx.put(b"8 SELECT INBOX\r\n")
+            rwx.wait_for_resp("8", "OK")
+            rwx.put(b"8 STORE * FLAGS \\Deleted\r\n")
+            rwx.wait_for_resp("8", "OK")
+            rwx.put(b"9 EXPUNGE\r\n")
+            rwx.wait_for_resp("9", "OK")
+
+        # use the first connection to ensure the imaildir sees the VANISHED
+        wait_round_trips_for_msg(rw1, 3, b"\\* [0-9]+ EXPUNGE")
+
+        rw2.put(b"11 STORE * FLAGS \\Answered\r\n")
+        rw2.wait_for_resp("11", "OK", require=[b"\\* [0-9]+ FETCH.*Answered"])
+
+        rw2.put(b"12 FETCH * FLAGS\r\n")
+        rw2.wait_for_resp("12", "OK", require=[b"\\* [0-9]+ FETCH.*Answered"])
+
+        rw1.put(b"13 NOOP\r\n")
+        rw1.wait_for_resp("13", "OK")
+
+        rw2.put(b"14 NOOP\r\n")
+        rw2.wait_for_resp("14", "OK", require=[b".*EXPUNGE.*"])
+
+
+@register_test
 def test_expunge(cmd, maildir_root, **kwargs):
     def assert_expunged(rw, tag, uid):
         rw.put(b"%s search UID %d\r\n"%(tag, u1))
@@ -1450,22 +1509,7 @@ def test_append(cmd, maildir_root, **kwargs):
             #            by the dn_t yet.
             # - now a NOOP should certainly show the EXISTS response if it
             #   hasn't arrived earlier
-
-            # use LIST to count round trips
-            for i in range(3):
-                tag = b"x%d"%i
-                rw.put(b"%s LIST \"\" *\r\n"%tag)
-                try:
-                    rw.wait_for_resp(
-                        tag, "OK", require=[b"\\* [0-9]* EXISTS"],
-                    )
-                    break
-                except RequiredError:
-                    pass
-            else:
-                # if we haven't seen the EXISTS yet, a noop shall surely work
-                rw.put(b"2 NOOP\r\n")
-                rw.wait_for_resp("2", "OK", require=[b"\\* [0-9]* EXISTS"])
+            wait_round_trips_for_msg(rw, 3, b"\\* [0-9]* EXISTS")
 
             # Append from the direct connection again, this time with a timer
             # instead of round-trips to test that the up_t's IDLE works
@@ -2610,6 +2654,21 @@ def append_messages(rw, count, box="INBOX"):
         rw.wait_for_match(b"\\+")
         rw.put(b"hello world\r\n")
         rw.wait_for_resp(b"PRE%d"%n, "OK")
+
+
+def wait_round_trips_for_msg(rw, n, required_msg):
+    for i in range(n):
+        tag = b"x%d"%i
+        rw.put(b"%s LIST \"\" *\r\n"%tag)
+        try:
+            rw.wait_for_resp(tag, "OK", require=[required_msg])
+            break
+        except RequiredError:
+            pass
+    else:
+        # do one extra noop (not a round trip) just in case
+        rw.put(b"xx NOOP\r\n")
+        rw.wait_for_resp("xx", "OK", require=[required_msg])
 
 
 # Prepare a subdirectory
