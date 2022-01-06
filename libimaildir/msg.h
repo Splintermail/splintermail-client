@@ -108,12 +108,11 @@ typedef struct msg_key_list_t {
 DEF_STEAL_PTR(msg_key_list_t)
 
 /* msg_store_cmd_t is like ie_store_cmd_t but uses msg_key_list_t instead of
-   ie_seq_set_t, and uid_mode is irrelevant */
+   ie_seq_set_t, and both silent and uid_mode are irrelevant */
 typedef struct {
     msg_key_list_t *keys;
     ie_store_mods_t *mods;
     int sign;
-    bool silent;
     ie_flags_t *flags;
 } msg_store_cmd_t;
 
@@ -235,10 +234,10 @@ msg_key_list_t *msg_key_list_pop(msg_key_list_t **keys);
 
 // builder api
 msg_store_cmd_t *msg_store_cmd_new(
-    derr_t *e, msg_key_list_t *keys,
+    derr_t *e,
+    msg_key_list_t *keys,
     ie_store_mods_t *mods,
     int sign,
-    bool silent,
     ie_flags_t *flags
 );
 void msg_store_cmd_free(msg_store_cmd_t *store);

@@ -183,10 +183,10 @@ msg_key_list_t *msg_key_list_pop(msg_key_list_t **keys){
 
 // builder api
 msg_store_cmd_t *msg_store_cmd_new(
-    derr_t *e, msg_key_list_t *keys,
+    derr_t *e,
+    msg_key_list_t *keys,
     ie_store_mods_t *mods,
     int sign,
-    bool silent,
     ie_flags_t *flags
 ){
     if(is_error(*e)) goto fail;
@@ -195,7 +195,6 @@ msg_store_cmd_t *msg_store_cmd_new(
         .keys = keys,
         .mods = mods,
         .sign = sign,
-        .silent = silent,
         .flags = flags,
     };
     return store;

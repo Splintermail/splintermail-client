@@ -1631,7 +1631,8 @@ static derr_t relay_update_req_store(imaildir_t *m, update_req_t *req){
     bool uid_mode = true;
     ie_store_mods_t *mods = STEAL(ie_store_mods_t, &req->val.msg_store->mods);
     int sign = req->val.msg_store->sign;
-    bool silent = req->val.msg_store->silent;
+    // TODO: run all STOREs as silent to save bandwidth
+    bool silent = false;
     ie_flags_t *flags = STEAL(ie_flags_t, &req->val.msg_store->flags);
     ie_store_cmd_t *store = ie_store_cmd_new(
         &e, uid_mode, STEAL(ie_seq_set_t, &uids_up), mods, sign, silent, flags

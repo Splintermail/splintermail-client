@@ -92,6 +92,13 @@ struct dn_t {
         dn_wait_state_e state;
     } disconnect;
 
+    struct {
+        dn_wait_state_e state;
+        ie_dstr_t *tag;
+        ie_fetch_cmd_t *cmd;
+        ie_seq_set_t *uids_dn;
+    } fetch;
+
     extensions_t *exts;
 };
 DEF_CONTAINER_OF(dn_t, link, link_t)

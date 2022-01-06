@@ -633,6 +633,7 @@ typedef struct {
     ie_fetch_attrs_t *attr;
     ie_fetch_mods_t *mods;
 } ie_fetch_cmd_t;
+DEF_STEAL_PTR(ie_fetch_cmd_t)
 
 typedef struct {
     bool uid_mode;

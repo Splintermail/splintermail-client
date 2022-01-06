@@ -266,6 +266,14 @@ static void dn_free_disconnect(dn_t *dn){
     dn->disconnect.state = DN_WAIT_NONE;
 }
 
+// free everything related to dn.fetch
+static void dn_free_fetch(dn_t *dn){
+    dn->fetch.state = DN_WAIT_NONE;
+    ie_dstr_free(STEAL(ie_dstr_t, &dn->fetch.tag));
+    ie_fetch_cmd_free(STEAL(ie_fetch_cmd_t, &dn->fetch.cmd));
+    ie_seq_set_free(STEAL(ie_seq_set_t, &dn->fetch.uids_dn));
+}
+
 void dn_free(dn_t *dn){
     if(!dn) return;
     // actually there's nothing to free...
@@ -843,22 +851,20 @@ static derr_t store_cmd(
         jsw_ainsert(&dn->store.tree, &exp_flags->node);
     }
 
-    // TODO: run all STOREs as silent to save bandwidth
-    bool silent = false;
     msg_store_cmd_t *msg_store = msg_store_cmd_new(&e,
         STEAL(msg_key_list_t, &keys),
         ie_store_mods_copy(&e, store->mods),
         store->sign,
-        silent,
         ie_flags_copy(&e, store->flags)
     );
 
-    // now send the msg_store to the imaildir_t
     update_req_t *req = update_req_store_new(&e, msg_store, dn);
 
     CHECK_GO(&e, cu);
 
     dn->store.state = DN_WAIT_WAITING;
+
+    // now send the msg_store to the imaildir_t
     PROP_GO(&e, imaildir_dn_request_update(dn->m, req), cu);
 
 cu:
@@ -1175,13 +1181,16 @@ static derr_t send_fetch_resp(
     if(fetch->attr->rfc822_header){
         // parse the headers and copy the header byes
         const imf_hdrs_t *hdrs = loader_parse_hdrs(&e, &loader);
-        dstr_t text = dstr_from_off(hdrs->bytes);
-        f = ie_fetch_resp_rfc822_hdr(&e, f, ie_dstr_new(&e, &text, KEEP_RAW));
+        if(!is_error(e)){
+            dstr_t text = dstr_from_off(hdrs->bytes);
+            f = ie_fetch_resp_rfc822_hdr(&e, f, ie_dstr_new2(&e, text));
+        }
     }
 
     if(fetch->attr->rfc822_text){
         const imf_t *imf = loader_parse_imf(&e, &loader);
-        f = ie_fetch_resp_rfc822_text(&e, f, ie_dstr_from_off(&e, imf->body));
+        ie_dstr_t *body = ie_dstr_from_off(&e, imf->body);
+        f = ie_fetch_resp_rfc822_text(&e, f, body);
     }
 
     if(fetch->attr->rfc822_size){
@@ -1231,64 +1240,152 @@ static derr_t send_fetch_resp(
 }
 
 
-// TODO: support non-PEEK properly
-static derr_t fetch_cmd(dn_t *dn, const ie_dstr_t *tag,
-        const ie_fetch_cmd_t *fetch){
+static bool fetch_is_peek_only(const ie_fetch_cmd_t *fetch){
+    if(fetch->attr->rfc822 || fetch->attr->rfc822_text) return false;
+    for(const ie_fetch_extra_t *p = fetch->attr->extras; p; p = p->next){
+        if(!p->peek) return false;
+    }
+    return true;
+}
+
+
+static derr_t nonpeek_msgs(
+    dn_t *dn,
+    const ie_seq_set_t *uids_dn,
+    msg_key_list_t **keys_out
+){
     derr_t e = E_OK;
+    *keys_out = NULL;
 
-    gather_t gather;
-    gather_prep(&gather);
+    // otherwise, we need to find out which messages could be affected
+    msg_key_list_t *keys = NULL;
 
-    /* determine uids_dn before gathering updates, so that we don't
-       accidentally add new messages to our view before we decide which uids
-       the client was referring to */
-    bool uid_mode = fetch->uid_mode;
-    ie_seq_set_t *uids_dn;
-    PROP(&e,
-        seq_set_to_canonical_uids_dn(dn, uid_mode, fetch->seq_set, &uids_dn)
-    );
+    ie_seq_set_trav_t trav;
+    unsigned int uid_dn = ie_seq_set_iter(&trav, uids_dn, 0, 0);
+    for(; uid_dn != 0; uid_dn = ie_seq_set_next(&trav)){
+        jsw_anode_t *node = jsw_afind(&dn->views, &uid_dn, NULL);
+        if(!node){
+            msg_key_list_free(keys);
+            ORIG(&e, E_INTERNAL, "missing uid in nonpeek_uids()");
+        }
+        msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
+        if(!view->flags.seen){
+            keys = msg_key_list_new(&e, view->key, keys);
+            CHECK(&e);
+        }
+    }
 
-    // gather updates without sending, since we'll modify them before sending
-    bool allow_expunge = fetch->uid_mode;
-    PROP_GO(&e,
-        gather_updates_dont_send(dn, allow_expunge, NULL, &gather),
-    cu);
+    *keys_out = keys;
+
+    return e;
+}
+
+
+// consumes gather and dn->fetch
+static derr_t finish_fetch_cmd(dn_t *dn, gather_t *gather){
+    derr_t e = E_OK;
 
     // build a response for every uid_dn requested
     ie_seq_set_trav_t trav;
-    unsigned int uid_dn = ie_seq_set_iter(&trav, uids_dn, 0, 0);
+    unsigned int uid_dn = ie_seq_set_iter(&trav, dn->fetch.uids_dn, 0, 0);
     bool any_missing = false;
     for(; uid_dn != 0; uid_dn = ie_seq_set_next(&trav)){
         bool force_flags = false;
         // if we gathered an update for uid_dn, combine the FETCH responses
-        jsw_anode_t *node = jsw_aerase(&gather.metas, &uid_dn);
+        jsw_anode_t *node = jsw_aerase(&gather->metas, &uid_dn);
         if(node){
             gathered_free(CONTAINER_OF(node, gathered_t, node));
             force_flags = true;
         }
         bool part_missing = false;
         PROP_GO(&e,
-            send_fetch_resp(dn, fetch, uid_dn, force_flags, &part_missing),
+            send_fetch_resp(
+                dn, dn->fetch.cmd, uid_dn, force_flags, &part_missing
+            ),
         cu);
         any_missing |= part_missing;
     }
 
     // now send the rest of the gathered updates
+    bool uid_mode = dn->fetch.cmd->uid_mode;
     bool for_store = false;
-    PROP_GO(&e, gather_send_responses(dn, &gather, uid_mode, for_store), cu);
+    PROP_GO(&e, gather_send_responses(dn, gather, uid_mode, for_store), cu);
 
     if(!any_missing){
         DSTR_STATIC(msg, "you didn't hear it from me");
-        PROP_GO(&e, send_ok(dn, tag, &msg), cu);
+        PROP_GO(&e, send_ok(dn, dn->fetch.tag, &msg), cu);
     }else{
         DSTR_STATIC(msg, "some requested subparts were missing");
-        PROP_GO(&e, send_no(dn, tag, &msg), cu);
+        PROP_GO(&e, send_no(dn, dn->fetch.tag, &msg), cu);
     }
 
 cu:
-    ie_seq_set_free(uids_dn);
-    gather_free(&gather);
+    gather_free(gather);
+    dn_free_fetch(dn);
 
+    return e;
+}
+
+
+// consumes tag and fetch
+static derr_t fetch_cmd(
+    dn_t *dn, ie_dstr_t *tag, ie_fetch_cmd_t *fetch
+){
+    derr_t e = E_OK;
+
+    dn->fetch.tag = tag;
+    dn->fetch.cmd = fetch;
+
+    // we always need the canonical uids_dn for this command
+    bool uid_mode = fetch->uid_mode;
+    PROP_GO(&e,
+        seq_set_to_canonical_uids_dn(
+            dn, uid_mode, fetch->seq_set, &dn->fetch.uids_dn
+        ),
+    fail);
+
+    /* some FETCH commands can't cause any \Seen flags to get set, while
+       other FETCH commands don't happen to affect any unseen messages */
+    bool ispeek = fetch_is_peek_only(fetch);
+    msg_key_list_t *nonpeeks = NULL;
+    if(!ispeek){
+        PROP_GO(&e, nonpeek_msgs(dn, dn->fetch.uids_dn, &nonpeeks), fail);
+    }
+    if(!nonpeeks){
+        // process the command immediately
+        gather_t gather;
+        gather_prep(&gather);
+
+        // gather updates without sending, since we'll modify them first
+        bool allow_expunge = fetch->uid_mode;
+        // in this codepath, we won't see an UPDATE_SYNC
+        PROP_GO(&e,
+            gather_updates_dont_send(dn, allow_expunge, NULL, &gather),
+        fail);
+
+        PROP(&e, finish_fetch_cmd(dn, &gather) );
+        return e;
+    }
+
+    // otherwise, send a msg_store_cmd_t to set \Seen for the nonpeek msgs
+    msg_store_cmd_t *msg_store = msg_store_cmd_new(&e,
+        nonpeeks,
+        NULL, // store_mods
+        1, // sign
+        ie_flags_add_simple(&e, ie_flags_new(&e), IE_FLAG_SEEN)
+    );
+
+    update_req_t *req = update_req_store_new(&e, msg_store, dn);
+
+    CHECK_GO(&e, fail);
+
+    dn->fetch.state = DN_WAIT_WAITING;
+    PROP_GO(&e, imaildir_dn_request_update(dn->m, req), fail);
+
+    return e;
+
+fail:
+    dn_free_fetch(dn);
     return e;
 }
 
@@ -1431,7 +1528,13 @@ derr_t dn_cmd(dn_t *dn, imap_cmd_t *cmd){
 
         case IMAP_CMD_FETCH:
             // fetch_cmd has its own handling of updates
-            PROP_GO(&e, fetch_cmd(dn, tag, arg->fetch), cu_cmd);
+            PROP_GO(&e,
+                fetch_cmd(
+                    dn,
+                    STEAL(ie_dstr_t, &cmd->tag),
+                    STEAL(ie_fetch_cmd_t, &cmd->arg.fetch)
+                ),
+            cu_cmd);
             break;
 
         case IMAP_CMD_EXPUNGE:
@@ -1807,6 +1910,8 @@ static derr_t gather_updates_dont_send(
     gather_t *gather
 ){
     derr_t e = E_OK;
+
+    if(st_resp) *st_resp = NULL;
 
     /* updates need to be processed in batches:
          - no meta updates should be passed for newly created messages
@@ -2193,6 +2298,51 @@ cu:
     return e;
 }
 
+static derr_t do_work_fetch(dn_t *dn){
+    derr_t e = E_OK;
+
+    gather_t gather;
+    gather_prep(&gather);
+
+    // gather updates without sending, since we'll modify them first
+    ie_st_resp_t *st_resp = NULL;
+    bool allow_expunge = dn->fetch.cmd->uid_mode;
+    PROP_GO(&e,
+        gather_updates_dont_send(dn, allow_expunge, &st_resp, &gather),
+    fail);
+
+    // check for an error in our STORE \Seen request
+    if(st_resp){
+        // send the gathered updates without the ususal fetch modifications
+        bool uid_mode = dn->fetch.cmd->uid_mode;
+        bool for_store = false;
+        PROP_GO(&e,
+            gather_send_responses(dn, &gather, uid_mode, for_store),
+        fail);
+
+        // forward the error message
+        PROP_GO(&e,
+            send_st_resp(
+                dn,
+                dn->store.tag,
+                &st_resp->text->dstr,
+                st_resp->status
+            ),
+        fail);
+    }else{
+        PROP_GO(&e, finish_fetch_cmd(dn, &gather), fail);
+    }
+
+    ie_st_resp_free(st_resp);
+    return e;
+
+fail:
+    gather_free(&gather);
+    ie_st_resp_free(st_resp);
+    dn_free_fetch(dn);
+    return e;
+}
+
 
 // process updates until we hit our own update
 derr_t dn_do_work(dn_t *dn, bool *noop){
@@ -2218,6 +2368,11 @@ derr_t dn_do_work(dn_t *dn, bool *noop){
         PROP(&e, do_work_disconnect(dn) );
     }
 
+    if(dn->fetch.state == DN_WAIT_READY){
+        *noop = false;
+        PROP(&e, do_work_fetch(dn) );
+    }
+
     return e;
 }
 
@@ -2239,6 +2394,8 @@ void dn_imaildir_update(dn_t *dn, update_t *update){
             dn->copy.state = DN_WAIT_READY;
         }else if(dn->disconnect.state == DN_WAIT_WAITING){
             dn->disconnect.state = DN_WAIT_READY;
+        }else if(dn->fetch.state == DN_WAIT_WAITING){
+            dn->fetch.state = DN_WAIT_READY;
         }else{
             LOG_ERROR("dn_t doesn't know what it's waiting for\n");
         }
@@ -2267,5 +2424,6 @@ void dn_imaildir_preunregister(dn_t *dn){
     dn_free_expunge(dn);
     dn_free_copy(dn);
     dn_free_disconnect(dn);
+    dn_free_fetch(dn);
 }
 

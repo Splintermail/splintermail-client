@@ -856,7 +856,7 @@ def inject_local_msg(maildir_root, mbx="INBOX"):
         "--mailbox",
         mbx,
     ]
-    msg = b"hello world!\r\n"
+    msg = b"\r\nhello world!\r\n"
     p = subprocess.run(cmd, input=msg, stdout=subprocess.PIPE, check=True)
     return int(p.stdout.strip())
 
@@ -1251,9 +1251,9 @@ def test_store_and_fetch_after_expunged(cmd, maildir_root, **kwargs):
                     "2",
                     "OK",
                     require=[
-                        b'\\* %d FETCH \\(BODY\\[\\] "hello world"\\)'%(
-                            delete_id,
-                        )
+                        b"\\* %d FETCH \\(BODY\\[\\] \\{13\\}\r\n"%delete_id,
+                        b"^\r\n$",
+                        b"hello world\\)",
                     ]
                 )
 
@@ -2158,9 +2158,9 @@ def test_mangling(cmd, maildir_root, **kwargs):
             ):
                 # fetch the i'th new message and compare it to what we expect
                 seq = msgs + 1 + i
-                rw.put(b"%d fetch %d RFC822\r\n"%(i, seq))
+                rw.put(b"%d fetch %d BODY.PEEK[]\r\n"%(i, seq))
                 _, recvd = rw.wait_for_resp(b"%d"%i, "OK")
-                exp_resp = b"* %d FETCH (RFC822 {%d}\r\n%s)"%(
+                exp_resp = b"* %d FETCH (BODY[] {%d}\r\n%s)"%(
                     seq, len(exp), exp
                 )
                 exp_pat = (
@@ -2168,6 +2168,8 @@ def test_mangling(cmd, maildir_root, **kwargs):
                     .replace(b")", b"\\)")
                     .replace(b"{", b"\\{")
                     .replace(b"}", b"\\}")
+                    .replace(b"[", b"\\[")
+                    .replace(b"]", b"\\]")
                     .replace(b"*", b"\\*")
                     .replace(b"+", b"\\+")
                 )
@@ -2248,8 +2250,6 @@ def test_fetch_envelope(cmd, maildir_root, **kwargs):
         uid = int(get_uid("*", rw))
 
         rw.put(b"2 UID FETCH %d (ENVELOPE)\r\n"%uid)
-        env_date = b"4 July 1776 00:00:00 -0000"
-        env_subj = b"Hi there, this is a junk message!"
         rw.wait_for_resp("2", "OK", require=[
             b"\\* [0-9]+ FETCH \\(UID %d ENVELOPE \\("%uid
             + b"\"Sat, 4 July 1776 00:00:00 -0000\" "
@@ -2384,6 +2384,98 @@ def test_fetch_body(cmd, maildir_root, **kwargs):
 
         rw.put(b"9 UID FETCH %d BODY[1]\r\n"%uid)
         rw.wait_for_resp("9", "OK", require=[b'.*BODY\\[1\\] ""\\).*'])
+
+        rw.put(b"9.5 UID FETCH 1:* BODY.PEEK[]\r\n")
+        rw.wait_for_resp("9.5", "OK")
+
+@register_test
+def test_fetch_nonpeek(cmd, maildir_root, **kwargs):
+    with session(cmd) as rw:
+        # first sync with the existing messages dovecot has, so local messages
+        # do not appear before remote messages
+        rw.put(b"1 SELECT INBOX\r\n")
+        rw.wait_for_resp("1", "OK")
+        rw.put(b"2 CLOSE\r\n")
+        rw.wait_for_resp("2", "OK")
+
+        # start with three uid_up msgs (one seen, two unseen)
+        append_messages(rw, 3)
+
+        # and two uid_local msgs (one seen, one unseen)
+        inject_local_msg(maildir_root)
+        inject_local_msg(maildir_root)
+
+        rw.put(b"3 SELECT INBOX\r\n")
+        rw.wait_for_resp("3", "OK")
+
+        l2 = int(get_uid("*", rw))
+        l1 = l2 - 1
+        u3 = l2 - 2
+        u2 = l2 - 3
+        u1 = l2 - 4
+
+        rw.put(b"4 UID STORE %d,%d +FLAGS \\Seen\r\n"%(u1, l1))
+        rw.wait_for_resp("4", "OK")
+
+        # any peek fetch alters nothing
+        rw.put(
+            b"5 UID FETCH %d:%d (BODY BODYSTRUCTURE BODY.PEEK[] ENVELOPE "
+            b"INTERNALDATE RFC822.HEADER RFC822.SIZE UID)\r\n"%(u1,l2)
+        )
+        rw.wait_for_resp("5", "OK", disallow=[b".*FLAGS.*"])
+
+        rw.put(b"6 UID FETCH %d:%d FLAGS\r\n"%(u1,l2))
+        rw.wait_for_resp(
+            "6", "OK",
+            require=[
+                b"\\* [0-9]+ FETCH \\(FLAGS \\(\\\\Seen\\) UID %d\\)"%u1,
+                b"\\* [0-9]+ FETCH \\(FLAGS \\(\\) UID %d\\)"%u2,
+                b"\\* [0-9]+ FETCH \\(FLAGS \\(\\) UID %d\\)"%u3,
+                b"\\* [0-9]+ FETCH \\(FLAGS \\(\\\\Seen\\) UID %d\\)"%l1,
+                b"\\* [0-9]+ FETCH \\(FLAGS \\(\\) UID %d\\)"%l2,
+            ],
+        )
+
+        # BODY[] is a non-peek fetch
+        rw.put(b"7 UID FETCH %d,%d BODY[]\r\n"%(u1,u2))
+        rw.wait_for_resp(
+            "7", "OK",
+            # a FLAGS response for u2, which was previously-unseen
+            require=[
+                b"\\* [0-9]+ FETCH \\(FLAGS.*UID %d"%u2,
+            ],
+            # no FLAGS response for u1, which was already seen
+            disallow=[
+                b"\\* [0-9]+ FETCH.*FLAGS.*UID %d"%u1,
+                b"\\* [0-9]+ FETCH.*UID %d.*FLAGS"%u1,
+            ],
+        )
+
+        # RFC822 is a non-peek fetch
+        rw.put(b"8 UID FETCH %d,%d BODY[]\r\n"%(l1,u3))
+        rw.wait_for_resp(
+            "8", "OK",
+            require=[
+                b"\\* [0-9]+ FETCH \\(FLAGS.*UID %d"%u3,
+            ],
+            disallow=[
+                b"\\* [0-9]+ FETCH.*FLAGS.*UID %d"%l1,
+                b"\\* [0-9]+ FETCH.*UID %d.*FLAGS"%l1,
+            ],
+        )
+
+        # RFC822.TEXT is a non-peek fetch
+        rw.put(b"9 UID FETCH %d,%d BODY[]\r\n"%(l1,l2))
+        rw.wait_for_resp(
+            "9", "OK",
+            require=[
+                b"\\* [0-9]+ FETCH \\(FLAGS.*UID %d"%l2,
+            ],
+            disallow=[
+                b"\\* [0-9]+ FETCH.*FLAGS.*UID %d"%l1,
+                b"\\* [0-9]+ FETCH.*UID %d.*FLAGS"%l1,
+            ],
+        )
 
 
 @register_test
@@ -2630,7 +2722,7 @@ def test_status_with_local_info(cmd, maildir_root, **kwargs):
         assert nunseen == 0, nunsen
         assert nrecent == 0, nrecent
 
-        # add a pair of unseen local message
+        # add an unseen local message
         inject_local_msg(maildir_root, mbx)
 
         # Now we should add to the server's messages and unseen
@@ -2650,9 +2742,9 @@ def test_status_with_local_info(cmd, maildir_root, **kwargs):
 
 def append_messages(rw, count, box="INBOX"):
     for n in range(count):
-        rw.put(b"PRE%d APPEND %s {11}\r\n"%(n, as_bytes(box)))
+        rw.put(b"PRE%d APPEND %s {13}\r\n"%(n, as_bytes(box)))
         rw.wait_for_match(b"\\+")
-        rw.put(b"hello world\r\n")
+        rw.put(b"\r\nhello world\r\n")
         rw.wait_for_resp(b"PRE%d"%n, "OK")
 
 
@@ -2674,7 +2766,7 @@ def wait_round_trips_for_msg(rw, n, required_msg):
 # Prepare a subdirectory
 @contextlib.contextmanager
 def temp_maildir_root():
-    tempdir = tempfile.mkdtemp()
+    tempdir = tempfile.mkdtemp(prefix="e2e_citm-")
     try:
         yield tempdir
     finally:
