@@ -12,76 +12,6 @@
 #include <libcrypto/libcrypto.h>
 #include <libimaildir/libimaildir.h>
 
-// stolen from citm/user.c
-static derr_t _load_or_gen_mykey(
-    const string_builder_t *key_path, keypair_t **out
-){
-    derr_t e = E_OK;
-
-    PROP(&e, mkdirs_path(key_path, 0700) );
-
-    string_builder_t mykey_path = sb_append(key_path, FS("mykey.pem"));
-
-    bool have_key;
-    PROP(&e, exists_path(&mykey_path, &have_key) );
-
-    if(have_key){
-        IF_PROP(&e, keypair_load_path(out, &mykey_path) ){
-            // we must have hit an error reading the key
-            TRACE(&e, "failed to load mykey...\n");
-            DUMP(e);
-            DROP_VAR(&e);
-            LOG_ERROR("Failed to load mykey, generating a new one.\n");
-            // delete the broken key
-            PROP(&e, rm_rf_path(&mykey_path) );
-        }else{
-            // key was loaded successfully
-            return e;
-        }
-    }
-
-    PROP(&e, gen_key_path(4096, &mykey_path) );
-    PROP(&e, keypair_load_path(out, &mykey_path) );
-
-    return e;
-}
-
-static derr_t encrypt_msg(
-    const dstr_t msg, keypair_t *key, const string_builder_t *path
-){
-    derr_t e = E_OK;
-
-    dstr_t copy = {0};
-    dstr_t cipher = {0};
-    encrypter_t ec = {0};
-
-    // encrypter expects a list of keys, not a single key
-    link_t keys;
-    link_init(&keys);
-    link_list_append(&keys, &key->link);
-
-    // copy, since encrypter will consume it
-    PROP_GO(&e, dstr_copy(&msg, &copy), cu);
-
-    PROP_GO(&e, dstr_new(&cipher, msg.len), cu);
-
-    // do the encryption
-    PROP_GO(&e, encrypter_new(&ec), cu);
-    PROP_GO(&e, encrypter_start(&ec, &keys, &cipher), cu);
-    PROP_GO(&e, encrypter_update(&ec, &copy, &cipher), cu);
-    PROP_GO(&e, encrypter_finish(&ec, &cipher), cu);
-
-    // write to the file
-    PROP_GO(&e, dstr_write_path(path, &cipher), cu);
-
-cu:
-    encrypter_free(&ec);
-    dstr_free(&cipher);
-    dstr_free(&copy);
-    link_remove(&key->link);
-    return e;
-}
-
 static derr_t inject_local_msg(
     const dstr_t maildir_root,
     const dstr_t user,
@@ -90,7 +20,6 @@ static derr_t inject_local_msg(
 ){
     derr_t e = E_OK;
 
-    keypair_t *mykey = NULL;
     dirmgr_t dm = {0};
     dirmgr_hold_t *hold = NULL;
     imaildir_t *m = NULL;
@@ -98,18 +27,12 @@ static derr_t inject_local_msg(
     string_builder_t root = SB(FD(&maildir_root));
     // root/user
     string_builder_t user_path = sb_append(&root, FD(&user));
-    // root/user/keys
-    string_builder_t key_path = sb_append(&user_path, FS("keys"));
     // root/user/mail
     string_builder_t mail_path = sb_append(&user_path, FS("mail"));
     // root/PID
     string_builder_t msg_path = sb_append(&root, FI(compat_getpid()));
 
-    PROP(&e, mkdirs_path(&key_path, 0700) );
     PROP(&e, mkdirs_path(&mail_path, 0700) );
-
-    // load a keypair
-    PROP_GO(&e, _load_or_gen_mykey(&key_path, &mykey), cu);
 
     // create a dirmgr
     PROP_GO(&e, dirmgr_init(&dm, mail_path, NULL), cu);
@@ -120,8 +43,8 @@ static derr_t inject_local_msg(
     // open the held mailbox
     PROP_GO(&e, dirmgr_hold_get_imaildir(hold, &m), cu);
 
-    // encrypt the message to a file
-    PROP_GO(&e, encrypt_msg(msg, mykey, &msg_path), cu);
+    // write the message to a file
+    PROP_GO(&e, dstr_write_path(&msg_path, &msg), cu);
 
     // inject the message
     imap_time_t intdate = {0};
@@ -147,7 +70,6 @@ cu:
     dirmgr_hold_release_imaildir(hold, &m);
     dirmgr_hold_free(hold);
     dirmgr_free(&dm);
-    keypair_free(&mykey);
 
     return e;
 }
