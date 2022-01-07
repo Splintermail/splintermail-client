@@ -592,12 +592,43 @@ fail_dirs:
     return e;
 }
 
+derr_type_t E_BREAK;
+REGISTER_ERROR_TYPE(E_BREAK, "E_BREAK");
+
+static derr_t _dir_is_empty_hook(const string_builder_t *base,
+        const dstr_t *name, bool isdir, void *userdata){
+    (void)base;
+    (void)name;
+    (void)isdir;
+    (void)userdata;
+    derr_t e = E_OK;
+    ORIG(&e, E_BREAK, "");
+}
+
+static derr_t dir_is_empty(const string_builder_t *path, bool *empty){
+    derr_t e = E_OK;
+    *empty = true;
+
+    derr_t e2 = for_each_file_in_dir2(path, _dir_is_empty_hook, NULL);
+    CATCH(e2, E_BREAK){
+        DROP_VAR(&e2);
+        *empty = false;
+    }
+
+    return e;
+}
 
 /* Prune empty directories whenever we shutdown.  This is a cleanup mechanism
    to deal with how we optimistically create maildir trees and delete their
-   contents when we find out later that they don't exist on the mail server. */
+   contents when we find out later that they don't exist on the mail server.
+
+   However, we don't prune all empty directories blindly; we have to deal with
+   cur/tmp/new specially; any message any cur/ or new/ indicates that the
+   parent directory is probably a real mailbox. */
 typedef struct {
     bool nonempty;
+    // the toplevel dir contains a tmp/ used only for appending
+    bool toplevel;
 } prune_data_t;
 
 static derr_t _prune_empty_dirs(const string_builder_t *base,
@@ -611,7 +642,52 @@ static derr_t _prune_empty_dirs(const string_builder_t *base,
         return e;
     }
 
-    // recurse
+    DSTR_STATIC(cur, "cur");
+    DSTR_STATIC(tmp, "tmp");
+    DSTR_STATIC(new, "new");
+
+    // toplevel dir contains a tmp/ used only for appending
+    if(parent_data->toplevel){
+        if(dstr_cmp(name, &tmp) == 0) return e;
+    }else{
+        // this function doesn't recurse into ctn
+        if(dstr_cmp(name, &cur) == 0) return e;
+        if(dstr_cmp(name, &tmp) == 0) return e;
+        if(dstr_cmp(name, &new) == 0) return e;
+
+        // but if we're looking at the parent directory of ctn, handle ctn here
+        bool has_tmp = false;
+        string_builder_t tmppath = sb_append(base, FD(&tmp));
+        PROP(&e, exists_path(&tmppath, &has_tmp) );
+        if(has_tmp){
+            PROP(&e, empty_dir(&tmppath) );
+        }
+
+        bool has_cur = false;
+        bool cur_empty = false;
+        string_builder_t curpath = sb_append(base, FD(&cur));
+        PROP(&e, exists_path(&curpath, &has_cur) );
+        if(has_cur){
+            PROP(&e, dir_is_empty(&curpath, &cur_empty) );
+            if(!cur_empty) parent_data->nonempty = true;
+        }
+
+        bool has_new = false;
+        bool new_empty = false;
+        string_builder_t newpath = sb_append(base, FD(&new));
+        PROP(&e, exists_path(&newpath, &has_new) );
+        if(has_new){
+            PROP(&e, dir_is_empty(&newpath, &new_empty) );
+            if(!new_empty) parent_data->nonempty = true;
+        }
+
+        if((has_tmp || has_cur || has_new) && (cur_empty && new_empty)){
+            // ctn exists, but probably is an invalid mailbox
+            PROP(&e, delete_ctn(base) );
+        }
+    }
+
+    // recurse into non-ctn
     string_builder_t path = sb_append(base, FD(name));
     prune_data_t our_data = {0};
     PROP(&e, for_each_file_in_dir2(&path, _prune_empty_dirs, &our_data) );
@@ -622,18 +698,16 @@ static derr_t _prune_empty_dirs(const string_builder_t *base,
         return e;
     }
 
-    PROP(&e, rm_rf_path(&path) );
+    PROP(&e, drmdir_path(&path) );
 
     return e;
 }
 
+// the toplevel dir is never pruned
 static void prune_empty_dirs(const string_builder_t *path){
     derr_t e = E_OK;
-    prune_data_t data = {0};
+    prune_data_t data = { .toplevel = true };
     PROP_GO(&e, for_each_file_in_dir2(path, _prune_empty_dirs, &data), warn);
-    if(data.nonempty) return;
-
-    PROP_GO(&e, rm_rf_path(path), warn);
 
     return;
 
