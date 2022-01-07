@@ -659,6 +659,9 @@ static derr_t search_cmd(dn_t *dn, const ie_dstr_t *tag,
 
     // finally, send the responses (nums will be consumed)
     PROP(&e, send_search_resp(dn, nums) );
+
+    PROP(&e, dn_gather_updates(dn, search->uid_mode, search->uid_mode, NULL) );
+
     PROP(&e, send_ok(dn, tag, &DSTR_LIT("too easy!")) );
 
     return e;
@@ -786,7 +789,7 @@ static derr_t store_cmd(
     ie_seq_set_t *uids_dn = NULL;
     msg_key_list_t *keys = NULL;
 
-    // we need each msg_keys for relaying the store command upwards
+    // we need each msg_key for relaying the store command upwards
     // start by canonicalizing the uids_dn
     PROP(&e,
         seq_set_to_canonical_uids_dn(
@@ -1506,11 +1509,7 @@ derr_t dn_cmd(dn_t *dn, imap_cmd_t *cmd){
             break;
 
         case IMAP_CMD_SEARCH:
-            PROP_GO(&e,
-                dn_gather_updates(dn,
-                    arg->search->uid_mode, arg->search->uid_mode, NULL
-                ),
-            cu_cmd);
+            // updates are handled after finishing the search
             PROP_GO(&e, search_cmd(dn, tag, arg->search), cu_cmd);
             break;
 
