@@ -143,14 +143,29 @@ static const imf_hdrs_t *loader_parse_hdrs(derr_t *e, loader_t *loader){
         CHECK_GO(e, fail);
     }
 
-    PROP_GO(e,
+    // don't crash on messages you can't parse; assume it is one big body
+    IF_PROP(e,
         imf_hdrs_parse(
             &loader->content->dstr,
             _loader_read_fn,
             (void*)loader,
             &loader->hdrs
-        ),
-    fail);
+        )
+    ){
+        // E_NOMEM is unfixable
+        if(e->type == E_NOMEM){
+            goto fail;
+        }
+        DROP_VAR(e);
+        dstr_off_t bytes = {
+            .buf = &loader->content->dstr,
+            .start = 0,
+            .len = 0,
+        };
+        dstr_off_t sep = bytes;
+        loader->hdrs = imf_hdrs_new(e, bytes, sep, NULL);
+        CHECK_GO(e, fail);
+    }
 
     return loader->hdrs;
 
@@ -160,14 +175,10 @@ fail:
 
 // parse the content into an imf_t
 static const imf_t *loader_parse_imf(derr_t *e, loader_t *loader){
+    // borrow the fallback behavior in loader_parse_hdrs
+    loader_parse_hdrs(e, loader);
     if(is_error(*e)) goto fail;
     if(loader->imf) return loader->imf;
-
-    if(!loader->content){
-        // read at least one chunk so we have a valid loader->content
-        _loader_read(e, loader);
-        CHECK_GO(e, fail);
-    }
 
     PROP_GO(e,
         imf_parse(
@@ -1042,8 +1053,10 @@ static ie_fetch_resp_t *build_fetch_resp_extra(
         // parse just the headers
         const imf_hdrs_t *hdrs = loader_parse_hdrs(e, loader);
         if(sect->sect_txt->type == IE_SECT_HEADER){
-            dstr_t bytes = dstr_from_off(hdrs->bytes);
-            content_resp = ie_dstr_new(e, &bytes, KEEP_RAW);
+            if(!is_error(*e)){
+                dstr_t bytes = dstr_from_off(hdrs->bytes);
+                content_resp = ie_dstr_new(e, &bytes, KEEP_RAW);
+            }
         }else if(sect->sect_txt->type == IE_SECT_HDR_FLDS){
             content_resp = copy_hdr_fields(
                 e, hdrs, sect->sect_txt->headers

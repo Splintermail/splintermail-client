@@ -2479,6 +2479,86 @@ def test_fetch_nonpeek(cmd, maildir_root, **kwargs):
 
 
 @register_test
+def test_fetch_broken_msgs(cmd, maildir_root, **kwargs):
+    with inbox(cmd) as rw:
+        tag = 1
+        def append_msg(text):
+            nonlocal tag
+            rw.put(b"a%d APPEND INBOX {%d}\r\n"%(tag, len(text)))
+            rw.wait_for_match(b"\\+")
+            rw.put(b"%s\r\n"%text)
+            rw.wait_for_resp("a%d"%tag, "OK")
+            tag += 1
+            return int(get_uid("*", rw)), len(text)
+
+        # body with no headers
+        uid, msglen = append_msg(b"hello world\r\n")
+
+        rw.put(b"1 UID FETCH %d RFC822.HEADER\r\n"%uid)
+        rw.wait_for_resp(
+            "1", "OK", require=[b'.*FETCH \\(UID %d RFC822.HEADER ""\\)'%uid]
+        )
+
+        rw.put(b"2 UID FETCH %d BODY.PEEK[TEXT]\r\n"%uid)
+        rw.wait_for_resp(
+            "2",
+            "OK",
+            require=[
+                b'.*FETCH \\(UID %d BODY\\[TEXT\\] \\{%d\\}'%(uid, msglen)
+            ]
+        )
+
+        # headers without even an EOL (parses as just a body)
+        uid, _ = append_msg(b"test: header")
+
+        rw.put(b"3 UID FETCH %d RFC822.HEADER\r\n"%uid)
+        rw.wait_for_resp(
+            "3", "OK", require=[b'.*FETCH \\(UID %d RFC822.HEADER ""\\)'%uid]
+        )
+
+        rw.put(b"4 UID FETCH %d BODY.PEEK[TEXT]\r\n"%uid)
+        rw.wait_for_resp(
+            "4",
+            "OK",
+            require=[b'.*FETCH \\(UID %d BODY\\[TEXT\\] "test: header"'%(uid)]
+        )
+
+        # headers with no body (this is actually allowed)
+        uid, msglen = append_msg(b"test: header\r\n\r\n")
+
+        rw.put(b"5 UID FETCH %d RFC822.HEADER\r\n"%uid)
+        rw.wait_for_resp(
+            "5",
+            "OK",
+            require=[b'.*FETCH \\(UID %d RFC822.HEADER \\{%d\\}'%(uid, msglen)]
+        )
+
+        rw.put(b"6 UID FETCH %d BODY.PEEK[TEXT]\r\n"%uid)
+        rw.wait_for_resp(
+            "6",
+            "OK",
+            require=[b'.*FETCH \\(UID %d BODY\\[TEXT\\] ""'%(uid)]
+        )
+
+        # headers with no body and no separator
+        uid, msglen = append_msg(b"test: header\r\n")
+
+        rw.put(b"7 UID FETCH %d RFC822.HEADER\r\n"%uid)
+        rw.wait_for_resp(
+            "7",
+            "OK",
+            require=[b'.*FETCH \\(UID %d RFC822.HEADER \\{%d\\}'%(uid, msglen)]
+        )
+
+        rw.put(b"8 UID FETCH %d BODY.PEEK[TEXT]\r\n"%uid)
+        rw.wait_for_resp(
+            "8",
+            "OK",
+            require=[b'.*FETCH \\(UID %d BODY\\[TEXT\\] ""'%(uid)]
+        )
+
+
+@register_test
 def test_uid_mode_fetch_responses(cmd, maildir_root, **kwargs):
     # UID FETCH/STORE/SEARCH/COPY should cause FETCH responses to report UID
     with Subproc(cmd) as subproc, \
