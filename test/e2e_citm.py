@@ -945,7 +945,8 @@ def test_store(cmd, maildir_root, **kwargs):
         rw1.wait_for_resp("7", "OK")
         assert_flags(rw1, b"8", {l1: "d", l2: "d", u1: "d", u2: "d"})
 
-        rw1.put(b"8 store 4294967294 flags \\Seen\r\n")
+        # noop case
+        rw1.put(b"8 uid store 4294967294 flags \\Seen\r\n")
         rw1.wait_for_resp(
             "8",
             "OK",
@@ -1595,14 +1596,15 @@ def test_copy(cmd, maildir_root, **kwargs):
             assert int(u1) == l2 + 1, f"u1 != l2+1 ({int(u1)}!={l2+1})"
 
             # figure on a partially valid range
-            copy_range = (inbox_count - 1, inbox_count + 1)
+            # (only UID COPY works with partially valid ranges)
+            copy_range = (u2 - 1, u2 + 1)
 
             # COPY to other mailbox
-            rw.put(b"2 COPY %d:%d %s\r\n"%(*copy_range, folder))
+            rw.put(b"2 UID COPY %d:%d %s\r\n"%(*copy_range, folder))
             rw.wait_for_resp("2", "OK")
 
             # COPY to this mailbox, with partially valid range
-            rw.put(b"3 COPY %d:%d INBOX\r\n"%copy_range)
+            rw.put(b"3 UID COPY %d:%d INBOX\r\n"%copy_range)
             rw.wait_for_resp(
                 "3",
                 "OK",
@@ -1610,7 +1612,7 @@ def test_copy(cmd, maildir_root, **kwargs):
             )
 
             # COPY to nonexisting mailbox
-            rw.put(b"4 COPY %d:%d asdf\r\n"%copy_range)
+            rw.put(b"4 UID COPY %d:%d asdf\r\n"%copy_range)
             rw.wait_for_resp("4", "NO", require=[b"4 NO \\[TRYCREATE\\]"])
 
             rw.put(b"5 CLOSE\r\n")
@@ -1987,6 +1989,7 @@ def test_initial_deletions(cmd, maildir_root, **kwargs):
 @register_test
 def prep_test_large_initial_download(cmd, maildir_root, **kwargs):
     with inbox(cmd) as rw:
+        append_messages(rw, 1)
         for i in range(10):
             tag = b"%d"%(i+1)
             copy_range = b"1:%d"%(2**i)
@@ -1998,6 +2001,11 @@ def prep_test_large_initial_download(cmd, maildir_root, **kwargs):
 @register_test
 def test_large_initial_download(cmd, maildir_root, **kwargs):
     with inbox(cmd) as rw:
+        # finished downloading messages, now delete them to keep the tests fast
+        rw.put(b"1 STORE 1:* FLAGS \\Deleted\r\n")
+        rw.wait_for_resp("1", "OK")
+        rw.put(b"2 EXPUNGE\r\n")
+        rw.wait_for_resp("2", "OK")
         pass
 
 
@@ -2684,6 +2692,57 @@ def test_uid_mode_fetch_responses(cmd, maildir_root, **kwargs):
                 b"\\* %d FETCH.*UID %d"%(n1,u1),
             ]
         )
+
+@register_test
+def test_uid_mode_messagesets(cmd, maildir_root, **kwargs):
+    # UID mode commands allow for non-existent UIDs in a message set.
+    # Non-UID mode commands all return BAD for missing sequence numbers.
+    with session(cmd) as rw:
+        # first test in an empty box
+        name = b"deleteme_" + codecs.encode(os.urandom(5), "hex_codec")
+        rw.put(b"1 CREATE %s\r\n"%name)
+        rw.wait_for_resp("1", "OK")
+        rw.put(b"2 SELECT %s\r\n"%name)
+        rw.wait_for_resp("2", "OK")
+
+        rw.put(b"3 FETCH 999999999 FLAGS\r\n")
+        rw.wait_for_resp("3", "BAD")
+        rw.put(b"4 UID FETCH 999999999 FLAGS\r\n")
+        rw.wait_for_resp("4", "OK")
+
+        rw.put(b"5 STORE 999999999 FLAGS \\Seen\r\n")
+        rw.wait_for_resp("5", "BAD")
+        rw.put(b"6 UID STORE 999999999 FLAGS \\Seen\r\n")
+        rw.wait_for_resp("6", "OK")
+
+        rw.put(b"7 COPY 999999999 INBOX\r\n")
+        rw.wait_for_resp("7", "BAD")
+        rw.put(b"8 UID COPY 999999999 INBOX\r\n")
+        rw.wait_for_resp("8", "OK")
+
+        # now test in a non-empty box (different codepath)
+        append_messages(rw, 1, name)
+
+        rw.put(b"9 FETCH 999999999 FLAGS\r\n")
+        rw.wait_for_resp("9", "BAD")
+        rw.put(b"10 UID FETCH 999999999 FLAGS\r\n")
+        rw.wait_for_resp("10", "OK")
+
+        rw.put(b"11 STORE 999999999 FLAGS \\Seen\r\n")
+        rw.wait_for_resp("11", "BAD")
+        rw.put(b"12 UID STORE 999999999 FLAGS \\Seen\r\n")
+        rw.wait_for_resp("12", "OK")
+
+        rw.put(b"13 COPY 999999999 INBOX\r\n")
+        rw.wait_for_resp("13", "BAD")
+        rw.put(b"14 UID COPY 999999999 INBOX\r\n")
+        rw.wait_for_resp("14", "OK")
+
+        # cleanup
+        rw.put(b"15 CLOSE\r\n")
+        rw.wait_for_resp("15", "OK")
+        rw.put(b"16 DELETE %s\r\n"%name)
+        rw.wait_for_resp("16", "OK")
 
 
 @register_test

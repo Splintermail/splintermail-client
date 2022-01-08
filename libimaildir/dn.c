@@ -693,19 +693,29 @@ fail:
 
 /* Take a sequence set and create a "canonical" uid_dn seq set.
    A "canonical" set means it is well-ordered, has no duplicates, and every
-   value in the seq set is present in the dn_t's view. */
+   value in the seq set is present in the dn_t's view.
+
+   Note that UID commands will silently ignore UIDs that don't exist, but
+   non-UID commands must return BAD if any of the messages do not exist in the
+   view.  When that happens, *out will be NULL and *ok will be false. */
 static derr_t seq_set_to_canonical_uids_dn(
     dn_t *dn,
     bool uid_mode,
     const ie_seq_set_t *old,
-    ie_seq_set_t **out
+    ie_seq_set_t **out,
+    bool *ok
 ){
     derr_t e = E_OK;
 
     *out = NULL;
+    *ok = true;
 
     // nothing in the tree
     if(dn->views.size == 0){
+        if(!uid_mode){
+            // invalid seqset in non-uid command
+            *ok = false;
+        }
         return e;
     }
 
@@ -732,6 +742,17 @@ static derr_t seq_set_to_canonical_uids_dn(
         PROP(&e, index_to_seq_num(last_index, &last) );
     }
 
+    if(!uid_mode){
+        // manually verify none of the ranges in the seq_set are too large
+        for(const ie_seq_set_t *p = old; p; p = p->next){
+            if(MAX(p->n1, p->n2) > dn->views.size){
+                // invalid seqset in non-uid command
+                *ok = false;
+                return e;
+            }
+        }
+    }
+
     seq_set_builder_t ssb;
     seq_set_builder_prep(&ssb);
 
@@ -741,11 +762,15 @@ static derr_t seq_set_to_canonical_uids_dn(
         if(uid_mode){
             // uid_dn in mailbox?
             node = jsw_afind(&dn->views, &i, NULL);
+            if(!node) continue;
         }else{
             // sequence number in mailbox?
             node = jsw_aindex(&dn->views, (size_t)i - 1);
+            if(!node){
+                // impossible because of the bounds checks on ie_seq_set_iter_t
+                ORIG_GO(&e, E_INTERNAL, "missing seq number??", fail_ssb);
+            }
         }
-        if(!node) continue;
         msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
         unsigned int uid_out = view->uid_dn;
         PROP_GO(&e, seq_set_builder_add_val(&ssb, uid_out), fail_ssb);
@@ -802,11 +827,17 @@ static derr_t store_cmd(
 
     // we need each msg_key for relaying the store command upwards
     // start by canonicalizing the uids_dn
+    bool ok;
     PROP(&e,
         seq_set_to_canonical_uids_dn(
-            dn, store->uid_mode, store->seq_set, &uids_dn
+            dn, store->uid_mode, store->seq_set, &uids_dn, &ok
         )
     );
+    if(!ok){
+        // dovecot witholds updates for BAD - Invalid Messageset responses
+        PROP(&e, send_bad(dn, tag, &DSTR_LIT("bad message set")) );
+        return e;
+    }
 
     // detect noop STOREs
     if(!uids_dn){
@@ -1353,12 +1384,19 @@ static derr_t fetch_cmd(
     dn->fetch.cmd = fetch;
 
     // we always need the canonical uids_dn for this command
+    bool ok;
     bool uid_mode = fetch->uid_mode;
     PROP_GO(&e,
         seq_set_to_canonical_uids_dn(
-            dn, uid_mode, fetch->seq_set, &dn->fetch.uids_dn
+            dn, uid_mode, fetch->seq_set, &dn->fetch.uids_dn, &ok
         ),
     fail);
+    if(!ok){
+        // dovecot witholds updates for BAD - Invalid Messageset responses
+        PROP_GO(&e, send_bad(dn, tag, &DSTR_LIT("bad message set")), fail);
+        dn_free_fetch(dn);
+        return e;
+    }
 
     /* some FETCH commands can't cause any \Seen flags to get set, while
        other FETCH commands don't happen to affect any unseen messages */
@@ -1448,11 +1486,17 @@ static derr_t copy_cmd(dn_t *dn, const ie_dstr_t *tag,
     msg_key_list_t *keys = NULL;
 
     // get the canonical uids_dn
+    bool ok;
     PROP(&e,
         seq_set_to_canonical_uids_dn(
-            dn, copy->uid_mode, copy->seq_set, &uids_dn
+            dn, copy->uid_mode, copy->seq_set, &uids_dn, &ok
         )
     );
+    if(!ok){
+        // dovecot witholds updates for BAD - Invalid Messageset responses
+        PROP(&e, send_bad(dn, tag, &DSTR_LIT("bad message set")) );
+        return e;
+    }
 
     // detect noop COPYs
     if(!uids_dn){
