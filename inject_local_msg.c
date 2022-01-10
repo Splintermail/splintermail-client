@@ -50,6 +50,7 @@ static derr_t inject_local_msg(
     imap_time_t intdate = {0};
     msg_flags_t flags = {0};
     unsigned int uid_up = 0;
+    void *up_noresync = NULL;
     unsigned int uid_dn;
     PROP_GO(&e,
         imaildir_add_local_file(m,
@@ -58,6 +59,7 @@ static derr_t inject_local_msg(
             msg.len,
             intdate,
             flags,
+            up_noresync,
             &uid_dn
         ),
     cu);

@@ -381,6 +381,8 @@ derr_t imaildir_add_local_file(
     size_t len,
     imap_time_t intdate,
     msg_flags_t flags,
+    // does uploader own an up_t? (to optimize resync-after-upload)
+    void *up_noresync,
     unsigned int *uid_dn_out
 );
 

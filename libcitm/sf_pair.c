@@ -180,6 +180,7 @@ static derr_t sf_pair_append_resp(sf_pair_t *sf_pair){
         DROP_CMD( remove_path(&path) );
     }else{
         // add the temp file to the maildir
+        void *up_noresync = &sf_pair->fetcher.up;
         PROP_GO(&e,
             imaildir_add_local_file(
                 m,
@@ -188,6 +189,7 @@ static derr_t sf_pair_append_resp(sf_pair_t *sf_pair){
                 sf_pair->append.len,
                 sf_pair->append.intdate,
                 sf_pair->append.flags,
+                up_noresync,
                 NULL
             ),
         cu);

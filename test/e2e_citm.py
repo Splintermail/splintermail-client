@@ -1076,6 +1076,22 @@ def test_store_after_expunge(cmd, maildir_root, **kwargs):
 
 
 @register_test
+def test_store_after_upload(cmd, maildir_root, **kwargs):
+    with Subproc(cmd) as subproc, \
+            _inbox(subproc) as rw1, \
+            _inbox(subproc) as rw2:
+        # rw1 will own the primary up_t, so we'll upload on rw2 then try to set
+        # a flag immediately.  Without explicit synchronization, rw1's up_t
+        # won't have the uploaded message in it's view (according to the mail
+        # server) to be able to actually set the flag.
+        append_messages(rw2, 1)
+        rw2.put(b"1 STORE * FLAGS \\Answered\r\n")
+        rw2.wait_for_resp(
+            "1", "OK", require=[b"\\* [0-9]+ FETCH.*\\\\Answered"]
+        )
+
+
+@register_test
 def test_expunge(cmd, maildir_root, **kwargs):
     def assert_expunged(rw, tag, uid):
         rw.put(b"%s search UID %d\r\n"%(tag, u1))

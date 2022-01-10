@@ -86,7 +86,7 @@ void up_imaildir_select(
 void up_imaildir_relay_cmd(up_t *up, imap_cmd_t *cmd, imap_cmd_cb_t *cb);
 void up_imaildir_preunregister(up_t *up);
 // disallow downloading a specific UID
-void up_imaildir_have_local_file(up_t *up, unsigned uid_up);
+void up_imaildir_have_local_file(up_t *up, unsigned int uid, bool resync);
 // trigger any downloading work that needs to be done after a hold ends
 void up_imaildir_hold_end(up_t *up);
 /* a newly initialized dn_t/up_t pair are used for every SELECT or EXAMINE, so
@@ -218,7 +218,17 @@ struct up_t {
         link_t cbs;  // imap_cmd_cb_t->link (from an imaildir_cb_t)
     } reselect;
 
+
     struct {
+        /* after a hold, the up_t will need to resync with a NOOP before it can
+           execute any other relay commands.  Otherwise, if somebody else does
+           the APPEND and immediately sets a flag on it, this up_t may not have
+           seen the EXISTS response yet */
+        struct {
+            bool needed;
+            bool inflight;
+        } resync;
+
         // cmds and cbs are synchronized lists
         link_t cmds;  // imap_cmd_t->link
         link_t cbs;  // imap_cmd_cb_t->link (from an imaildir_cb_t)

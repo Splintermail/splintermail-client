@@ -96,6 +96,7 @@ static derr_t inject_msg(
             content.len,
             intdate,
             (msg_flags_t){0},
+            NULL,
             NULL
         ),
     cu);

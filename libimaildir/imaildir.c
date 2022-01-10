@@ -1811,6 +1811,13 @@ static derr_t copy_one_msg(
     // copy the message on disk
     PROP(&e, file_copy_path(&msg_path, &tmp_path, 0666) );
 
+    // we always relay the upload through our own primary up_t
+    void *up_noresync = NULL;
+    if(!link_list_isempty(&m->ups)){
+        up_t *up = CONTAINER_OF(m->ups.next, up_t, link);
+        up_noresync = up;
+    }
+
     // finally, add the message to the maildir (which may actually be us)
     PROP(&e,
         imaildir_add_local_file(
@@ -1820,6 +1827,7 @@ static derr_t copy_one_msg(
             msg->length,
             msg->internaldate,
             msg->flags,
+            up_noresync,
             NULL
         )
     );
@@ -2203,6 +2211,8 @@ derr_t imaildir_add_local_file(
     size_t len,
     imap_time_t intdate,
     msg_flags_t flags,
+    // does uploader own an up_t? (to optimize resync-after-upload)
+    void *up_noresync,
     unsigned int *uid_dn_out
 ){
     derr_t e = E_OK;
@@ -2258,7 +2268,8 @@ derr_t imaildir_add_local_file(
         // let the primary up_t know about the uid we don't need to download
         if(!link_list_isempty(&m->ups)){
             up_t *up = CONTAINER_OF(m->ups.next, up_t, link);
-            up_imaildir_have_local_file(up, uid_up);
+            bool resync = (up != up_noresync);
+            up_imaildir_have_local_file(up, uid_up, resync);
         }
     }
 

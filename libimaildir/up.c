@@ -166,18 +166,34 @@ void up_imaildir_preunregister(up_t *up){
     }
 }
 
-void up_imaildir_have_local_file(up_t *up, unsigned int uid){
+void up_imaildir_have_local_file(up_t *up, unsigned int uid, bool resync){
     /* if we listed this file as something to download, remove it now.  We
        don't need to worry about it reappearing in that list, because we only
        put things in that list if they are not a present in the the imaildir_t,
        which should already be populated */
     seq_set_builder_del_val(&up->fetch.uids_up, uid);
+
+    if(resync){
+        /* if this file was uploaded by another connection (via APPEND or COPY)
+           we'll have to resync our view explicitly with a NOOP to ensure that
+           a relayed STORE doesn't affect a message not yet in our view */
+        /* this looks like a churn risk because it looks like we might end up
+           sending many NOOPs when they could be grouped somehow, but in
+           practice even if multiple files are added with COPY, they're all
+           handled in a single dirmgr_hold_get_imaildir() scope, which must be
+           scoped to a single function.  Therefore since the imaildir is all
+           single-threaded, in practice we cannot be awoken from the enqueued
+           state between two file adds. */
+        up->relay.resync.needed = true;
+        up->cb->enqueue(up->cb);
+    }
 }
 
 void up_imaildir_hold_end(up_t *up){
     up->enqueued = true;
     up->cb->enqueue(up->cb);
 }
+
 bool up_imaildir_want_write(up_t *up){
     return up->want_write;
 }
@@ -886,6 +902,43 @@ static derr_t send_done(up_t *up){
     return e;
 }
 
+// noop_done is an imap_cmd_cb_call_f
+static derr_t noop_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
+    derr_t e = E_OK;
+
+    up_cb_t *up_cb = CONTAINER_OF(cb, up_cb_t, cb);
+    up_t *up = up_cb->up;
+
+    if(st_resp->status != IE_ST_OK){
+        ORIG(&e, E_RESPONSE, "noop failed\n");
+    }
+
+    // clear inflight but leave needed in case it was set again
+    up->relay.resync.inflight = false;
+
+    return e;
+}
+
+static derr_t send_noop(up_t *up){
+    derr_t e = E_OK;
+
+    // issue a NOOP command
+    imap_cmd_arg_t arg = {0};
+    size_t tag = ++up->tag;
+    ie_dstr_t *tag_str = write_tag_up(&e, tag);
+    imap_cmd_t *cmd = imap_cmd_new(&e, tag_str, IMAP_CMD_NOOP, arg);
+    cmd = imap_cmd_assert_writable(&e, cmd, up->exts);
+
+    // build the callback
+    up_cb_t *up_cb = up_cb_new(&e, up, tag_str, noop_done, cmd);
+
+    CHECK(&e);
+
+    PROP(&e, up_send_cmd(up, cmd, up_cb) );
+
+    return e;
+}
+
 // need_done sends DONE if needed and returns true when it is safe to continue
 static derr_t need_done(up_t *up, bool *ok){
     derr_t e = E_OK;
@@ -913,7 +966,6 @@ static derr_t need_done(up_t *up, bool *ok){
     return e;
 }
 
-
 static derr_t advance_relays(up_t *up){
     derr_t e = E_OK;
 
@@ -922,6 +974,15 @@ static derr_t advance_relays(up_t *up){
     bool ok;
     PROP(&e, need_done(up, &ok) );
     if(!ok) return e;
+
+    // if we need to resync before relaying something, do that now
+    if(up->relay.resync.needed && !up->relay.resync.inflight){
+        up->relay.resync.needed = false;
+        up->relay.resync.inflight = true;
+        PROP(&e, send_noop(up) );
+    }
+    // we can't issue any relay until the resync has finished
+    if(up->relay.resync.inflight) return e;
 
     link_t *link;
 
