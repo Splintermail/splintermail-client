@@ -140,9 +140,9 @@ static void fetcher_enqueue(fetcher_t *fetcher){
 static void fetcher_wakeup(wake_event_t *wake_ev){
     fetcher_t *fetcher = CONTAINER_OF(wake_ev, fetcher_t, wake_ev);
     fetcher->enqueued = false;
+    advance_state_or_close(fetcher);
     // ref_dn for wake_ev
     ref_dn(&fetcher->refs);
-    advance_state_or_close(fetcher);
 }
 
 void fetcher_login(fetcher_t *fetcher, ie_login_cmd_t *login_cmd){

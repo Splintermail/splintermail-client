@@ -250,18 +250,14 @@ static void sf_pair_enqueue(sf_pair_t *sf_pair){
     sf_pair->engine->pass_event(sf_pair->engine, &sf_pair->wake_ev.ev);
 }
 
-static void sf_pair_wakeup(wake_event_t *wake_ev){
-    sf_pair_t *sf_pair = CONTAINER_OF(wake_ev, sf_pair_t, wake_ev);
-    sf_pair->enqueued = false;
-    // ref_dn for wake_ev
-    ref_dn(&sf_pair->refs);
-
+static derr_t do_wakeup(sf_pair_t *sf_pair){
     derr_t e = E_OK;
+
     // what did we wake up for?
     if(sf_pair->login_result){
         sf_pair->login_result = false;
         // request an owner
-        PROP_GO(&e,
+        PROP(&e,
             sf_pair->cb->request_owner(
                 sf_pair->cb,
                 sf_pair,
@@ -271,17 +267,17 @@ static void sf_pair_wakeup(wake_event_t *wake_ev){
                 sf_pair->remote_svc,
                 &sf_pair->username,
                 &sf_pair->password
-            ),
-        fail);
+            )
+        );
     }else if(sf_pair->login_cmd){
         // save the username and password in case the login succeeds
-        PROP_GO(&e,
-            dstr_copy(&sf_pair->login_cmd->user->dstr, &sf_pair->username),
-        fail);
+        PROP(&e,
+            dstr_copy(&sf_pair->login_cmd->user->dstr, &sf_pair->username)
+        );
 
-        PROP_GO(&e,
-            dstr_copy(&sf_pair->login_cmd->pass->dstr, &sf_pair->password),
-        fail);
+        PROP(&e,
+            dstr_copy(&sf_pair->login_cmd->pass->dstr, &sf_pair->password)
+        );
 
         fetcher_login(
             &sf_pair->fetcher, STEAL(ie_login_cmd_t, &sf_pair->login_cmd)
@@ -290,11 +286,11 @@ static void sf_pair_wakeup(wake_event_t *wake_ev){
         sf_pair->got_owner_resp = false;
 
         // register with the keyshare
-        PROP_GO(&e,
+        PROP(&e,
             keyshare_register(
                 sf_pair->keyshare, &sf_pair->key_listener, &sf_pair->keys
-            ),
-        fail);
+            )
+        );
         sf_pair->registered_with_keyshare = true;
 
         // share the dirmgr with the server and the fetcher
@@ -309,18 +305,29 @@ static void sf_pair_wakeup(wake_event_t *wake_ev){
            and it is safe for the server_t to continue */
         server_login_result(&sf_pair->server, true);
     }else if(sf_pair->append.req){
-        PROP_GO(&e, sf_pair_append_req(sf_pair), fail);
+        PROP(&e, sf_pair_append_req(sf_pair) );
     }else if(sf_pair->append.resp){
-        PROP_GO(&e, sf_pair_append_resp(sf_pair), fail);
+        PROP(&e, sf_pair_append_resp(sf_pair) );
     }else if(sf_pair->status.resp){
-        PROP_GO(&e, sf_pair_status_resp(sf_pair), fail);
+        PROP(&e, sf_pair_status_resp(sf_pair) );
     }else{
         LOG_ERROR("sf_pair_wakeup() for no reason\n");
     }
-    return;
 
-fail:
-    sf_pair_close(sf_pair, e);
+    return e;
+}
+
+static void sf_pair_wakeup(wake_event_t *wake_ev){
+    sf_pair_t *sf_pair = CONTAINER_OF(wake_ev, sf_pair_t, wake_ev);
+    sf_pair->enqueued = false;
+
+    derr_t e = E_OK;
+    IF_PROP(&e, do_wakeup(sf_pair) ){
+        sf_pair_close(sf_pair, e);
+    }
+
+    // ref_dn for wake_ev
+    ref_dn(&sf_pair->refs);
 }
 
 // the interface the server/fetcher provides to its owner

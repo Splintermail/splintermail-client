@@ -157,9 +157,9 @@ static void server_enqueue(server_t *server){
 static void server_wakeup(wake_event_t *wake_ev){
     server_t *server = CONTAINER_OF(wake_ev, server_t, wake_ev);
     server->enqueued = false;
+    server_work_loop(server);
     // ref_dn for wake_ev
     ref_dn(&server->refs);
-    server_work_loop(server);
 }
 
 void server_allow_greeting(server_t *server){

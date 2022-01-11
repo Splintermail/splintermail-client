@@ -117,9 +117,9 @@ static void keysync_enqueue(keysync_t *ks){
 static void keysync_wakeup(wake_event_t *wake_ev){
     keysync_t *ks = CONTAINER_OF(wake_ev, keysync_t, wake_ev);
     ks->enqueued = false;
+    do_advance_state(ks);
     // ref_dn for wake_ev
     ref_dn(&ks->refs);
-    do_advance_state(ks);
 
     // TODO: delete this or start using it somewhere
     (void)keysync_enqueue;
