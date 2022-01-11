@@ -1872,7 +1872,7 @@ def test_syntax_errors(cmd, maildir_root, **kwargs):
 
 
 @register_test
-def test_idle(cmd, maildir_root, **kwargs):
+def test_upwards_idle(cmd, maildir_root, **kwargs):
     with Subproc(cmd) as subproc:
         with _inbox(subproc) as rw1:
             # Add a message to the inbox
@@ -2893,6 +2893,64 @@ def test_status_with_local_info(cmd, maildir_root, **kwargs):
         # cleanup the temp mailbox
         rw.put(b"9 DELETE %s\r\n"%mbx)
         rw.wait_for_resp("9", "OK")
+
+
+@register_test
+def test_idle(cmd, maildir_root, **kwargs):
+    with Subproc(cmd) as subproc:
+        with run_connection(subproc) as rw:
+            # expect the capability in the greeting
+            rw.wait_for_match(b"\\* OK.*IDLE")
+            rw.put(b"1 logout\r\n")
+
+        with _inbox(subproc) as rw1:
+            # also check the capability explicitly
+            rw1.put(b"2 CAPABILITY\r\n")
+            rw1.wait_for_resp("2", "OK", require=[b"\\* CAPABILITY .*IDLE.*"])
+
+            # begin IDLE
+            rw1.put(b"3 IDLE\r\n")
+            rw1.wait_for_match(b"\\+ .*")
+
+            # check for new-, flag-, and expunge-updates in IDLE
+            with _inbox(subproc) as rw2:
+                # add a new message
+                append_messages(rw2, 1)
+                rw1.wait_for_match(b"\\* [0-9]+ EXISTS")
+
+                # set the flag on the new message
+                rw2.put(b"4 STORE * FLAGS \\Deleted\r\n")
+                rw2.wait_for_resp("4", "OK")
+                rw1.wait_for_match(b"\\* [0-9]+ FETCH.*FLAGS.*\\Deleted")
+
+                # expunge the message
+                rw2.put(b"5 EXPUNGE\r\n")
+                rw2.wait_for_resp("5", "OK")
+                rw1.wait_for_match(b"\\* [0-9]+ EXPUNGE")
+
+            # same thing but on an external connection
+            with _session(
+                None, host="127.0.0.1", port=kwargs["imaps_port"]
+            ) as rwx:
+                rwx.put(b"6 SELECT INBOX\r\n")
+                rwx.wait_for_resp("6", "OK")
+
+                # add a new message
+                append_messages(rwx, 1)
+                rw1.wait_for_match(b"\\* [0-9]+ EXISTS")
+
+                # set the flag on the new message
+                rwx.put(b"6 STORE * FLAGS \\Deleted\r\n")
+                rwx.wait_for_resp("6", "OK")
+                rw1.wait_for_match(b"\\* [0-9]+ FETCH.*FLAGS.*\\Deleted")
+
+                # expunge the message
+                rwx.put(b"7 EXPUNGE\r\n")
+                rwx.wait_for_resp("7", "OK")
+                rw1.wait_for_match(b"\\* [0-9]+ EXPUNGE")
+
+            rw1.put(b"DONE\r\n")
+            rw1.wait_for_resp("3", "OK")
 
 
 def append_messages(rw, count, box="INBOX"):

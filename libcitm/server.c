@@ -331,12 +331,8 @@ derr_t server_init(
         .dead = session_dead,
     };
     server->ctrl = (imape_control_i){
-        // enable UIDPLUS, ENABLE, CONDSTORE, and QRESYNC
         .exts = {
-            .uidplus = EXT_STATE_ON,
-            .enable = EXT_STATE_ON,
-            .condstore = EXT_STATE_ON,
-            .qresync = EXT_STATE_ON,
+            .idle = EXT_STATE_ON,
         },
         .is_client = false,
     };
@@ -458,7 +454,7 @@ static void send_resp_ex(derr_t *e, server_t *server, imap_resp_t *resp,
     if(is_error(*e)) goto fail;
 
     // TODO: support extensions better
-    extensions_t exts = {0};
+    extensions_t exts = { .idle = EXT_STATE_ON };
     resp = imap_resp_assert_writable(e, resp, &exts);
     CHECK_GO(e, fail);
 
@@ -554,7 +550,8 @@ static derr_t assert_state(server_t *server, imap_server_state_t state,
 static ie_dstr_t *build_capas(derr_t *e){
     if(is_error(*e)) goto fail;
 
-    ie_dstr_t *capas = ie_dstr_new(e, &DSTR_LIT("IMAP4rev1"), KEEP_RAW);
+    ie_dstr_t *capas = ie_dstr_new2(e, DSTR_LIT("IMAP4rev1"));
+    capas = ie_dstr_add(e, capas, ie_dstr_new2(e, DSTR_LIT("IDLE")));
 
     return capas;
 
@@ -1214,6 +1211,8 @@ static derr_t handle_one_command(server_t *server, imap_cmd_t *cmd){
         case IMAP_CMD_SEARCH:
         case IMAP_CMD_FETCH:
         case IMAP_CMD_STORE:
+        case IMAP_CMD_IDLE:
+        case IMAP_CMD_IDLE_DONE:
             PROP_GO(&e,
                 assert_state(server, SELECTED, tag, &state_ok),
             cu_cmd);
@@ -1225,8 +1224,6 @@ static derr_t handle_one_command(server_t *server, imap_cmd_t *cmd){
             break;
 
         // not yet supported
-        case IMAP_CMD_IDLE:
-        case IMAP_CMD_IDLE_DONE:
         case IMAP_CMD_XKEYSYNC:
         case IMAP_CMD_XKEYSYNC_DONE:
         case IMAP_CMD_XKEYADD:

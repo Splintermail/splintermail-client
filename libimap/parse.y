@@ -33,8 +33,18 @@
         // servers pass the error message to the client.
         // clients let an error be raised
         if(!p->freeing && !p->is_client){
-            imap_cmd_arg_t arg = { .error = STEAL(ie_dstr_t, &p->errmsg) };
-            imap_cmd_t *cmd = imap_cmd_new(E, tag, IMAP_CMD_ERROR, arg);
+            ie_dstr_t *errmsg = STEAL(ie_dstr_t, &p->errmsg);
+            imap_cmd_t *cmd;
+            if(p->in_idle){
+                // relay error as IDLE_DONE
+                imap_cmd_arg_t arg = { .idle_done = errmsg };
+                cmd = imap_cmd_new(E, tag, IMAP_CMD_IDLE_DONE, arg);
+                p->in_idle = false;
+            }else{
+                // relay error as normal ERROR
+                imap_cmd_arg_t arg = { .error = errmsg };
+                cmd = imap_cmd_new(E, tag, IMAP_CMD_ERROR, arg);
+            }
             send_cmd(p, cmd);
         }else{
             ie_dstr_free(tag);
@@ -1131,18 +1141,22 @@ idle_cmd:
         if(is_error(p->error)){
             DROP_VAR(E);
             imapyyerror(p, "IDLE not supported");
+            // TODO: this doesn't actually get processed until more input
             YYERROR;
         }
         // make a copy of the tag so that error handling can depend on the tag
-        ie_dstr_t *tag = ie_dstr_copy(E, $t);
+        ie_dstr_t *tag = STEAL(ie_dstr_t, &$t);
         // forward the IDLE request to the server
         imap_cmd_arg_t arg = {0};
         imap_cmd_t *cmd = imap_cmd_new(E, tag, IMAP_CMD_IDLE, arg);
         send_cmd(p, cmd);
+        p->in_idle = true;
     }
     DONE
     {
-        imap_cmd_arg_t arg = { .idle_done = $t };
+        p->in_idle = false;
+        // no syntax error message with this IDLE_DONE
+        imap_cmd_arg_t arg = { .idle_done = NULL };
         $$ = imap_cmd_new(E, NULL, IMAP_CMD_IDLE_DONE, arg);
     };
 
@@ -1159,6 +1173,7 @@ xkeysync_cmd:
         if(is_error(p->error)){
             DROP_VAR(E);
             imapyyerror(p, "XKEY not supported");
+            // TODO: this doesn't actually get processed until more input
             YYERROR;
         }
         // make a copy of the tag so that error handling can depend on the tag

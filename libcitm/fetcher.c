@@ -341,7 +341,6 @@ derr_t fetcher_init(
         .dead = session_dead,
     };
     fetcher->ctrl = (imape_control_i){
-        // enable UIDPLUS, ENABLE, CONDSTORE, and QRESYNC
         .exts = {
             .uidplus = EXT_STATE_ON,
             .enable = EXT_STATE_ON,

@@ -285,6 +285,10 @@ static void dn_free_fetch(dn_t *dn){
     ie_seq_set_free(STEAL(ie_seq_set_t, &dn->fetch.uids_dn));
 }
 
+static void dn_free_idle(dn_t *dn){
+    ie_dstr_free(STEAL(ie_dstr_t, &dn->idle.tag));
+}
+
 void dn_free(dn_t *dn){
     if(!dn) return;
     // actually there's nothing to free...
@@ -1534,6 +1538,62 @@ cu:
 }
 
 
+// consumes tag
+static derr_t idle_cmd(dn_t *dn, ie_dstr_t *tag){
+    derr_t e = E_OK;
+
+    dn->idle.tag = tag;
+
+    bool allow_expunge = true;
+    bool uid_mode = false;
+    PROP_GO(&e, dn_gather_updates(dn, allow_expunge, uid_mode, NULL), fail);
+
+    // send the PLUS response
+    ie_dstr_t *text = ie_dstr_new2(&e, DSTR_LIT("ok twiddling my thumbs now"));
+    ie_plus_resp_t *plus_resp = ie_plus_resp_new(&e, NULL, text);
+    imap_resp_arg_t arg = {.plus=plus_resp};
+    imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_PLUS, arg);
+    resp = imap_resp_assert_writable(&e, resp, dn->exts);
+    CHECK_GO(&e, fail);
+
+    PROP_GO(&e, dn->cb->resp(dn->cb, resp), fail);
+
+    return e;
+
+fail:
+    dn_free_idle(dn);
+    return e;
+}
+
+
+// consumes errmsg
+static derr_t idle_done_cmd(dn_t *dn, ie_dstr_t *errmsg){
+    derr_t e = E_OK;
+
+    if(errmsg){
+        // syntax error mid-IDLE
+        PROP_GO(&e,
+            send_bad(dn, dn->idle.tag, &errmsg->dstr),
+        cu);
+        goto cu;
+    }
+
+    // gather any final remaining updates
+    bool allow_expunge = true;
+    bool uid_mode = false;
+    PROP_GO(&e, dn_gather_updates(dn, allow_expunge, uid_mode, NULL), cu);
+
+    PROP_GO(&e,
+        send_ok(dn, dn->idle.tag, &DSTR_LIT("I'm ready to work again")),
+    cu);
+
+cu:
+    ie_dstr_free(errmsg);
+    dn_free_idle(dn);
+    return e;
+}
+
+
 // we either need to consume the cmd or free it
 derr_t dn_cmd(dn_t *dn, imap_cmd_t *cmd){
     derr_t e = E_OK;
@@ -1556,6 +1616,13 @@ derr_t dn_cmd(dn_t *dn, imap_cmd_t *cmd){
         }else{
             ORIG_GO(&e, E_INTERNAL, "dn_t got EXAMINE, not SELECT", cu_cmd);
         }
+    }
+
+    if(!!dn->idle.tag != (cmd->type == IMAP_CMD_IDLE_DONE)){
+        // bad command, should have been DONE
+        // or, bad DONE, not in IDLE
+        // (not possible because the imap parser disallows it)
+        ORIG_GO(&e, E_INTERNAL, "dn_t DONE out-of-order", cu_cmd);
     }
 
     switch(cmd->type){
@@ -1603,6 +1670,16 @@ derr_t dn_cmd(dn_t *dn, imap_cmd_t *cmd){
             PROP_GO(&e, copy_cmd(dn, tag, arg->copy), cu_cmd);
             break;
 
+        case IMAP_CMD_IDLE:
+            PROP_GO(&e, idle_cmd(dn, STEAL(ie_dstr_t, &cmd->tag)), cu_cmd);
+            break;
+
+        case IMAP_CMD_IDLE_DONE:
+            PROP_GO(&e,
+                idle_done_cmd(dn, STEAL(ie_dstr_t, &cmd->arg.idle_done)),
+            cu_cmd);
+            break;
+
         // commands which must be handled externally
         case IMAP_CMD_ERROR:
         case IMAP_CMD_PLUS_REQ:
@@ -1625,12 +1702,6 @@ derr_t dn_cmd(dn_t *dn, imap_cmd_t *cmd){
         case IMAP_CMD_XKEYSYNC_DONE:
         case IMAP_CMD_XKEYADD:
             ORIG_GO(&e, E_INTERNAL, "unexpected command in dn_t", cu_cmd);
-
-        // not yet supported
-        case IMAP_CMD_IDLE:
-        case IMAP_CMD_IDLE_DONE:
-            ORIG_GO(&e, E_INTERNAL, "not yet supported in dn_t", cu_cmd);
-            break;
 
         // unsupported extensions
         case IMAP_CMD_ENABLE:
@@ -2399,6 +2470,16 @@ fail:
     return e;
 }
 
+static derr_t do_work_idle(dn_t *dn){
+    derr_t e = E_OK;
+
+    bool allow_expunge = true;
+    bool uid_mode = false;
+    PROP(&e, dn_gather_updates(dn, allow_expunge, uid_mode, NULL) );
+
+    return e;
+}
+
 
 // process updates until we hit our own update
 derr_t dn_do_work(dn_t *dn, bool *noop){
@@ -2429,6 +2510,11 @@ derr_t dn_do_work(dn_t *dn, bool *noop){
         PROP(&e, do_work_fetch(dn) );
     }
 
+    if(dn->idle.tag){
+        // don't touch noop, or we'll loop forever
+        PROP(&e, do_work_idle(dn) );
+    }
+
     return e;
 }
 
@@ -2456,6 +2542,9 @@ void dn_imaildir_update(dn_t *dn, update_t *update){
             LOG_ERROR("dn_t doesn't know what it's waiting for\n");
         }
         dn->cb->enqueue(dn->cb);
+    }else if(dn->idle.tag){
+        // dn will wake up in IDLE will and collect the updates we've sent
+        dn->cb->enqueue(dn->cb);
     }
 }
 
@@ -2481,5 +2570,6 @@ void dn_imaildir_preunregister(dn_t *dn){
     dn_free_copy(dn);
     dn_free_disconnect(dn);
     dn_free_fetch(dn);
+    dn_free_idle(dn);
 }
 

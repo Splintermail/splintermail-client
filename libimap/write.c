@@ -1303,7 +1303,16 @@ static derr_t do_imap_cmd_write(const imap_cmd_t *cmd, dstr_t *out,
 
         case IMAP_CMD_IDLE_DONE:
             PROP(&e, extension_assert_on(sf->exts, EXT_IDLE) );
-            STATIC_SKIP_FILL("DONE");
+            if(arg.idle_done){
+                /* this case is really only for the test_read_imap, since
+                   emitting an IDLE_DONE command with an error attached is
+                   designed for synchronizing the error through the imap
+                   server; it's not something the imap client would send */
+                STATIC_SKIP_FILL("BAD ");
+                PROP(&e, text_skip_fill(sf, &arg.idle_done->dstr) );
+            }else{
+                STATIC_SKIP_FILL("DONE");
+            }
             break;
 
         case IMAP_CMD_XKEYSYNC:

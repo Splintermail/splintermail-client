@@ -52,7 +52,8 @@ if(NOT "${BISON}" STREQUAL "NONE")
     set(bison_header "${GEN}/parse.tab.h")
     add_custom_command(
         OUTPUT "${imap_parse_out}" "${bison_header}"
-        COMMAND "${BISON}" -d -o "${imap_parse_out}" "${imap_parse_in}" --report=state
+        COMMAND "${BISON}" -d -o "${imap_parse_out}" "${imap_parse_in}"
+                --report=state -Wcounterexamples
         DEPENDS "${imap_parse_in}"
         COMMENT "generating imap parser" VERBATIM
         )

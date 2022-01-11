@@ -1113,10 +1113,10 @@ static derr_t test_command_error_reporting(void){
         // IDLE error, expect DONE but get something else
         {
             .in=DSTR_LIT("tag1 IDLE\r\ntag2 CLOSE\r\n"),
-            .cmd_calls=(int[]){IMAP_CMD_IDLE, IMAP_CMD_ERROR, -1},
+            .cmd_calls=(int[]){IMAP_CMD_IDLE, IMAP_CMD_IDLE_DONE, -1},
             .buf=DSTR_LIT(
                 "tag1 IDLE\r\n"
-                "ERROR:tag1 syntax error at input: tag2 CLOSE\\r\\n\r\n"
+                "BAD syntax error at input: tag2 CLOSE\\r\\n\r\n"
             )
         },
         // next command works fine

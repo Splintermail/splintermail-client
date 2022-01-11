@@ -30,6 +30,9 @@ typedef struct imap_parser_t {
     ie_dstr_t *errmsg;
     // are we walking through the freeing process (syntax errors are silent)?
     bool freeing;
+    /* are we awaiting an IDLE_DONE command?  If so we'll have to alert
+       whatever is processing the IDLE of the missed IDLE_DONE */
+    bool in_idle;
 } imap_parser_t;
 
 void imapyyerror(imap_parser_t *parser, char const *s);

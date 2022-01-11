@@ -99,6 +99,11 @@ struct dn_t {
         ie_seq_set_t *uids_dn;
     } fetch;
 
+    struct {
+        // tag only present while IDLE is active
+        ie_dstr_t *tag;
+    } idle;
+
     extensions_t *exts;
 };
 DEF_CONTAINER_OF(dn_t, link, link_t)

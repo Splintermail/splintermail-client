@@ -653,7 +653,7 @@ typedef struct {
 DEF_STEAL_PTR(ie_copy_cmd_t)
 
 typedef union {
-    ie_dstr_t *error;
+    ie_dstr_t *error; // any syntax error, except mid-IDLE
     // nothing for plus
     // nothing for capability
     // nothing for noop
@@ -682,7 +682,7 @@ typedef union {
     ie_dstr_t *enable;
     // nothing for unselect
     // nothing for idle
-    ie_dstr_t *idle_done;  // the tag that the DONE corresponds to
+    ie_dstr_t *idle_done;  // a mid-IDLE syntax error, if present
     ie_dstr_t *xkeysync;  // a possibly-empty list of known fingerprints
     ie_dstr_t *xkeysync_done; // the tag that the DONE corresponds to
     ie_dstr_t *xkeyadd;  // the pubkey that we want to add
