@@ -5,47 +5,6 @@
 
 #include "test_utils.h"
 
-/* test TODO:
-    - every branch of the grammer gets passed through
-        (this will verify the scanner modes are correct)
-    - every %destructor gets called (i.e., HOOK_END always gets called)
-
-    is it ok that:
-        inbox
-      is OK but
-        "inbox"
-      is not?
-
-    if the parser doesn't make it to STATUS_HOOK_START, does the destructor
-    for pre_status_resp get called?  What should I do about that?
-
-    num, F_RFC822_HOOK_LITERAL: no error handling for dstr_tou conversion
-
-    newlines are after the HOOKs, which is not actually OK
-
-    st_attr_list_0 is removable
-
-    parsing incomplete for FETCH "BODY[]"-like responses
-
-    where should I use YYABORT instead of YYACCEPT?
-    Answer:
-        The output of the parse is the same for syntax errors and for YYABORT,
-        so you should only use YYABORT for invalid syntax when the grammar
-        could not detect it.  Errors in hooks should generally result in some
-        side-channel error, and should not look like a syntax error.
-
-    is the handoff of a literal in imap_literal fully safe from memory leaks?
-    Are there really no possible codepaths which don't call dstr_free exactly
-    one time?
-
-    parser should confirm that there was only one mbx-list-sflag given
-
-    partial <p1.p2> should enforce non-zeroness of p2
-
-    there's no mechanism for handling folders where the first element is INBOX.
-    That exact mailbox is case insensitive, but InBoX/SubFolder is not.
-*/
-
 typedef struct {
     size_t cmd_counts[IMAP_CMD_XKEYADD + 1];
     size_t resp_counts[IMAP_RESP_XKEYSYNC + 1];

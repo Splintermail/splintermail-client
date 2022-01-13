@@ -1485,7 +1485,7 @@ f_modseq: MODSEQ SP '(' nzmodseqnum[s] ')'
 /* this will some day write to a file instead of memory, otherwise it would
    just be "nstring" type */
 file_nstring: NIL { $$ = ie_dstr_new_empty(E); }
-              | string
+            | string
 ;
 
 f_uid: UID SP num[n] { $$ = $n; };

@@ -395,7 +395,7 @@ Read from socket: (don't know which PERCOM it goes to yet)
 cleaning of all resources:
     Our pipeline is bidirectional (unavoidable, since libuv and openssl require
     one thread to be in charge of reading and writing).  Therefore, our
-    shutdown protol needs to be bidirectional as well, and no node shuts down
+    shutdown protocol needs to be bidirectional as well, and no node shuts down
     until it has received a "quit" message in both directions:
                               ______
                      downin  |      | downout
