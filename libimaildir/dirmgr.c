@@ -592,8 +592,8 @@ fail_dirs:
     return e;
 }
 
-derr_type_t E_BREAK;
-REGISTER_ERROR_TYPE(E_BREAK, "E_BREAK");
+static derr_type_t E_BREAK;
+REGISTER_STATIC_ERROR_TYPE(E_BREAK, "E_BREAK");
 
 static derr_t _dir_is_empty_hook(const string_builder_t *base,
         const dstr_t *name, bool isdir, void *userdata){

@@ -90,7 +90,7 @@ if(NOT "${requested_ssl}" STREQUAL "")
         message("for source file: ${final_sourcefile}")
         message("chosen OPENSSL_ROOT is: ${chosen_ssl}")
         message("requested OPENSSL_ROOT is: ${requested_ssl}")
-        message( FATAL_ERROR "find_package did not respect OPENSSL_ROOT_DIR")
+        message(WARNING "find_package did not respect OPENSSL_ROOT_DIR")
     endif()
 endif()
 

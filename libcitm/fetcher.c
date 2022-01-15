@@ -1015,8 +1015,6 @@ static derr_t untagged_ok(fetcher_t *fetcher, const ie_st_code_t *code,
         FU(code->type), FD_DBG(text)
     );
     ORIG(&e, E_INTERNAL, "unhandled message in fetcher_t");
-
-    return e;
 }
 
 static derr_t tagged_status_type(fetcher_t *fetcher, const ie_st_resp_t *st){

@@ -82,6 +82,17 @@ const dstr_t *error_to_dstr(derr_type_t type);
         .matches = NAME ## _matches, \
     }
 
+#define REGISTER_STATIC_ERROR_TYPE(NAME, NAME_STRING) \
+    DSTR_STATIC(NAME ## _dstr, NAME_STRING); \
+    static bool NAME ## _matches(derr_type_t self, derr_type_t other){ \
+        (void)self; \
+        return other == NAME; \
+    } \
+    static derr_type_t NAME = &(struct derr_type_t){ \
+        .dstr = &NAME ## _dstr, \
+        .matches = NAME ## _matches, \
+    }
+
 /* Error type groups are for matching matching against multiple error types.
    Error groups must never be thrown, because they do not support .to_string
    and they will not self-match. They are only for catching errors. */
@@ -117,7 +128,6 @@ extern derr_type_t E_PARAM;      // invalid input parameter
 extern derr_type_t E_INTERNAL;   // a never-should-happen failure occured
 extern derr_type_t E_FS;         // a file system-related error
 extern derr_type_t E_RESPONSE;   // invalid response from something external
-extern derr_type_t E_DEAD;       // attemped to use a two-phase lifetime object after it died
 extern derr_type_t E_USERMSG;    // an error with a user-facing message (don't TRACE before it)
 
 /* for backwards compatibility with a LOT of code, E_OK is not part of the
