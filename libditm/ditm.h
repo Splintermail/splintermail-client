@@ -1,5 +1,5 @@
 static const unsigned int DITM_VERSION_MAJOR = 0;
-static const unsigned int DITM_VERSION_MINOR = 3;
+static const unsigned int DITM_VERSION_MINOR = 4;
 static const unsigned int DITM_VERSION_BUILD = 0;
 
 typedef struct {

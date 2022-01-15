@@ -29,7 +29,7 @@ endif()
 project(
     splintermail
     LANGUAGES C
-    VERSION 0.3.0
+    VERSION 0.4.0
 )
 
 set(MAINTAINER_NAME "Splintermail Dev")

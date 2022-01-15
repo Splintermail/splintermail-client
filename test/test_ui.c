@@ -214,7 +214,7 @@ static derr_t run_all_cases(void){
         test_case.expect_out = NULL;
 
         test_case.test_name = "version";
-        test_case.expect_out = "0.3.0\n";
+        test_case.expect_out = "0.4.0\n";
         test_case.argv = (char*[]){SM, "--version", NULL};
         PROP(&e, run_test_case(test_case) );
         test_case.argv = (char*[]){SM, "-v", NULL};
