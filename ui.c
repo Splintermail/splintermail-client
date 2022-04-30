@@ -237,8 +237,12 @@ struct user_search_data_t {
     dstr_t* user;
 };
 
-static derr_t user_search_hook(const char* base, const dstr_t* file,
-                               bool isdir, void* userdata){
+static derr_t user_search_hook(
+    const string_builder_t *base,
+    const dstr_t *file,
+    bool isdir,
+    void *userdata
+){
     (void) base;
     derr_t e = E_OK;
     struct user_search_data_t* search_data = userdata;
@@ -417,7 +421,9 @@ static derr_t api_command_main(
         account_dir_access = harness.dir_rw_access(account_dir.data, true);
     }else{
         // default is determined by OS and environment variables
-        PROP_GO(&e, get_os_default_account_dir(&account_dir, &account_dir_access), cu);
+        PROP_GO(&e,
+            get_os_default_account_dir(&account_dir, &account_dir_access),
+        cu);
     }
 
     if(!account_dir_access){
@@ -441,9 +447,10 @@ static derr_t api_command_main(
         // wrap "user" and "nfolders" in struct for the "for_each_file" hook
         struct user_search_data_t search_data = {&nfolders, &user};
         // loop through files in the folder in a platform-independent way
+        string_builder_t sb = SB(FD(&account_dir));
         PROP_GO(&e,
             harness.for_each_file_in_dir(
-                account_dir.data, user_search_hook, (void*)&search_data
+                &sb, user_search_hook, (void*)&search_data
             ),
         cu);
         // make sure we got a username
@@ -1073,7 +1080,7 @@ int do_main(int argc, char* argv[], bool windows_service){
 
         // migrate pre-citm device keys for use with citm
         PROP_GO(&e,
-            for_each_file_in_dir2(&sm_dir_path, migrate_ditm_keys_hook, NULL),
+            for_each_file_in_dir(&sm_dir_path, migrate_ditm_keys_hook, NULL),
         cu);
 
         PROP_GO(&e, FMT(&remote_svc, "%x", FU(imap_port)), cu);

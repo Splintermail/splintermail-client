@@ -69,25 +69,25 @@ derr_t is_dir_path(const string_builder_t *sb, bool *res);
 dstr_t ddirname(const dstr_t path);
 dstr_t dbasename(const dstr_t path);
 
-// when for_each_file_in_dir() calls a hook, it always hands a null-terminated dstr_t
-// arguments are: (base, file, isdir, userdata)
-typedef derr_t (*for_each_file_hook_t)(const char*, const dstr_t*, bool, void*);
-derr_t for_each_file_in_dir(const char* path, for_each_file_hook_t hook, void* userdata);
-/* throws: E_FS (path too long, from FindFirstFile() or from opendir())
-           E_NOMEM (from opendir())
+typedef derr_t (*for_each_file_hook_t)(
+    const string_builder_t *base,
+    const dstr_t *file,
+    bool isdir,
+    void *userdata
+);
+derr_t for_each_file_in_dir(
+    const string_builder_t* path, for_each_file_hook_t hook, void* userdata
+);
+/* throws: E_FS (from FindFirstFile() or from opendir())
+           E_NOMEM (from opendir(), sb_expand())
            E_OS (from opendir())
            E_INTERNAL
            <whatever the hook can throw> */
 
-typedef derr_t (*for_each_file_hook2_t)(const string_builder_t* base,
-        const dstr_t* file, bool isdir, void* userdata);
-derr_t for_each_file_in_dir2(const string_builder_t* path,
-                             for_each_file_hook2_t hook, void* userdata);
-
 derr_t rm_rf(const char* root_path);
-derr_t rm_rf_path(const string_builder_t *sb);
+derr_t rm_rf_path(const string_builder_t *path);
 // like rm_rf_path but it leaves the top-level directory untouched
-derr_t empty_dir(const string_builder_t *sb);
+derr_t empty_dir(const string_builder_t *path);
 
 // String-Builder-enabled libc wrappers below //
 

@@ -550,7 +550,7 @@ static derr_t _load_or_gen_mykey(
     return e;
 }
 
-// add_key_to_keyshare is a for_each_file_hook2_t
+// add_key_to_keyshare is a for_each_file_hook_t
 static derr_t add_key_to_keyshare(
     const string_builder_t* base,
     const dstr_t* file,
@@ -648,7 +648,7 @@ derr_t user_new(
     // populate keyshare
     PROP_GO(&e, keyshare_init(&user->keyshare), fail_keypair);
     PROP_GO(&e,
-        for_each_file_in_dir2(
+        for_each_file_in_dir(
             &user->key_path,
             add_key_to_keyshare,
             &user->keyshare

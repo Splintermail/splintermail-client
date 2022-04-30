@@ -162,9 +162,9 @@ static bool fake_exists(const char* path){
 
 char** users;
 static derr_t fake_for_each_file_in_dir(
-    const char* path, for_each_file_hook_t hook, void* userdata
+    const string_builder_t *path, for_each_file_hook_t hook, void* userdata
 ){
-    (void) path;
+    (void)path;
     derr_t e = E_OK;
     if(users == NULL){
         UH_OH("unexpected call to for_each_file_in_dir\n");

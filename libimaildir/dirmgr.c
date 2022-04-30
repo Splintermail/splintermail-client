@@ -188,7 +188,7 @@ static derr_t delete_extra_dirs(const string_builder_t *base,
         .maildir_name=maildir_name,
         .have_children=false,
     };
-    PROP(&e, for_each_file_in_dir2(&maildir_path, delete_extra_dirs,
+    PROP(&e, for_each_file_in_dir(&maildir_path, delete_extra_dirs,
                 &child_arg) );
 
     // have_children propagates when true
@@ -282,7 +282,7 @@ derr_t dirmgr_sync_folders(dirmgr_t *dm, jsw_atree_t *tree){
         // dirname starts empty so the joined path will start with a single "/"
         .maildir_name=SB(FS("")),
     };
-    PROP(&e, for_each_file_in_dir2(&dm->path, delete_extra_dirs, &arg) );
+    PROP(&e, for_each_file_in_dir(&dm->path, delete_extra_dirs, &arg) );
 
     return e;
 }
@@ -351,7 +351,7 @@ static derr_t handle_each_mbx(const string_builder_t* base,
     PROP(&e, ctn_check(&path, &has_ctn) );
 
     // recurse (and check for inferior mailboxes)
-    PROP(&e, for_each_file_in_dir2(&path, handle_each_mbx, &arg) );
+    PROP(&e, for_each_file_in_dir(&path, handle_each_mbx, &arg) );
 
     PROP(&e, call_user_hook(&arg, has_ctn) );
 
@@ -371,7 +371,7 @@ derr_t dirmgr_do_for_each_mbx(dirmgr_t *dm, const dstr_t *ref_name,
 
     string_builder_t path = sb_append(&dm->path, FD(ref_name));
 
-    PROP(&e, for_each_file_in_dir2(&path, handle_each_mbx, &arg) );
+    PROP(&e, for_each_file_in_dir(&path, handle_each_mbx, &arg) );
 
     return e;
 }
@@ -609,7 +609,7 @@ static derr_t dir_is_empty(const string_builder_t *path, bool *empty){
     derr_t e = E_OK;
     *empty = true;
 
-    derr_t e2 = for_each_file_in_dir2(path, _dir_is_empty_hook, NULL);
+    derr_t e2 = for_each_file_in_dir(path, _dir_is_empty_hook, NULL);
     CATCH(e2, E_BREAK){
         DROP_VAR(&e2);
         *empty = false;
@@ -690,7 +690,7 @@ static derr_t _prune_empty_dirs(const string_builder_t *base,
     // recurse into non-ctn
     string_builder_t path = sb_append(base, FD(name));
     prune_data_t our_data = {0};
-    PROP(&e, for_each_file_in_dir2(&path, _prune_empty_dirs, &our_data) );
+    PROP(&e, for_each_file_in_dir(&path, _prune_empty_dirs, &our_data) );
 
     if(our_data.nonempty){
         // we are not empty
@@ -707,7 +707,7 @@ static derr_t _prune_empty_dirs(const string_builder_t *base,
 static void prune_empty_dirs(const string_builder_t *path){
     derr_t e = E_OK;
     prune_data_t data = { .toplevel = true };
-    PROP_GO(&e, for_each_file_in_dir2(path, _prune_empty_dirs, &data), warn);
+    PROP_GO(&e, for_each_file_in_dir(path, _prune_empty_dirs, &data), warn);
 
     return;
 

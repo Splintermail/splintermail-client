@@ -393,193 +393,10 @@ dstr_t dbasename(const dstr_t path){
     return _get_path_part(path, false);
 }
 
-derr_t for_each_file_in_dir(const char* path, for_each_file_hook_t hook, void* userdata){
-    derr_t e = E_OK;
-
-#ifdef _WIN32
-
-    WIN32_FIND_DATA ffd;
-    DSTR_VAR(search, 4096);
-    derr_t e2 = FMT(&search, "%x/*", FS(path));
-    CATCH(e2, E_FIXEDSIZE){
-        TRACE(&e2, "path too long\n");
-        RETHROW(&e, &e2, E_FS);
-    }else PROP(&e, e2);
-
-    HANDLE hFind = FindFirstFile(search.data, &ffd);
-
-    if(hFind == INVALID_HANDLE_VALUE){
-        win_perror();
-        ORIG(&e, E_FS, "FindFirstFile() failed");
-    }
-
-    do{
-        bool isdir = (ffd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY);
-        if(isdir){
-            // make sure it is not . or ..
-            if(strncmp(ffd.cFileName, dot, 2) == 0) continue;
-            if(strncmp(ffd.cFileName, dotdot, 3) == 0) continue;
-        }
-        // get dstr_t from the filename, it must be null-terminated
-        dstr_t dfile;
-        DSTR_WRAP(dfile, ffd.cFileName, strlen(ffd.cFileName), true);
-        PROP_GO(&e, hook(path, &dfile, isdir, userdata), cleanup);
-    } while(FindNextFile(hFind, &ffd) != 0);
-
-cleanup:
-    FindClose(hFind);
-    return e;
-
-#else // not _WIN32
-
-    DIR* d = opendir(path);
-    if(!d){
-        TRACE(&e, "%x: %x\n", FS(path), FE(&errno));
-        if(errno == ENOMEM){
-            ORIG(&e, E_NOMEM, "unable to opendir()");
-        }else if(errno == EMFILE || errno == ENFILE){
-            ORIG(&e, E_OS, "too many file descriptors open");
-        }else{
-            ORIG(&e, E_FS, "unable to open directory");
-        }
-    }
-
-    while(1){
-        errno = 0;
-        struct dirent* entry = readdir(d);
-        if(!entry){
-            if(errno){
-                // this can only throw EBADF, which should never happen
-                TRACE(&e, "%x: %x\n", FS("readdir"), FE(&errno));
-                ORIG_GO(&e, E_INTERNAL, "unable to readdir()", cleanup);
-            }else{
-                break;
-            }
-        }
-        bool isdir = (entry->d_type == DT_DIR);
-        if(isdir){
-            // make sure it is not . or ..
-            if(strncmp(entry->d_name, dot, 2) == 0) continue;
-            if(strncmp(entry->d_name, dotdot, 3) == 0) continue;
-        }
-        // get dstr_t from the filename, it must be null-terminated
-        dstr_t dfile;
-        DSTR_WRAP(dfile, entry->d_name, strlen(entry->d_name), true);
-        PROP_GO(&e, hook(path, &dfile, isdir, userdata), cleanup);
-    }
-cleanup:
-    closedir(d);
-    return e;
-
-#endif
-
-}
-
-static derr_t rm_rf_hook(const char* base, const dstr_t* file,
-                                bool isdir, void* userdata){
-    (void) userdata;
-    DSTR_VAR(path, 4096);
-    derr_t e = E_OK;
-    derr_t e2;
-    e2 = FMT(&path, "%x/%x", FS(base), FD(file));
-    CATCH(e2, E_FIXEDSIZE){
-        TRACE(&e2, "path too long\n");
-        RETHROW(&e, &e2, E_FS);
-    }else PROP(&e, e2);
-
-    // base/file is a directory?
-    if(isdir){
-        // recursively delete everything in the directory
-        PROP(&e, for_each_file_in_dir(path.data, rm_rf_hook, NULL) );
-        // now delete the directory itself
-        int ret = compat_rmdir(path.data);
-        if(ret != 0){
-            TRACE(&e, "%x: %x\n", FS(path.data), FE(&errno));
-            ORIG(&e, E_OS, "failed to remove directory");
-        }
-    }else{
-        // make sure we have write permissions to delete the file
-        int ret = compat_chmod(path.data, 0600);
-        if(ret != 0){
-            TRACE(&e, "%x: %x\n", FS(path.data), FE(&errno));
-            ORIG(&e, E_OS, "failed to remove file");
-        }
-        // now delete the file
-        ret = compat_unlink(path.data);
-        if(ret != 0){
-            TRACE(&e, "%x: %x\n", FS(path.data), FE(&errno));
-            ORIG(&e, E_OS, "failed to remove file");
-        }
-    }
-
-    return e;
-}
-
-derr_t rm_rf(const char* path){
-    derr_t e = E_OK;
-    // check if this item is a file
-    struct stat s;
-    int ret = stat(path, &s);
-    if(ret != 0){
-        TRACE(&e, "%x: %x\n", FS(path), FE(&errno));
-        ORIG(&e, E_OS, "stat call failed");
-    }
-    // is path a directory?
-    if(S_ISDIR(s.st_mode)){
-        // if so delete it recursively
-        PROP(&e, for_each_file_in_dir(path, rm_rf_hook, NULL) );
-        // now delete the directory itself
-        ret = compat_rmdir(path);
-        if(ret != 0){
-            TRACE(&e, "%x: %x\n", FS(path), FE(&errno));
-            ORIG(&e, E_OS, "failed to remove directory");
-        }
-    }else{
-        // otherwise delete just this file
-        ret = compat_unlink(path);
-        if(ret != 0){
-            TRACE(&e, "%x: %x\n", FS(path), FE(&errno));
-            ORIG(&e, E_OS, "failed to remove file");
-        }
-    }
-    return e;
-}
-
-
-derr_t rm_rf_path(const string_builder_t *sb){
-    derr_t e = E_OK;
-    DSTR_VAR(stack, 256);
-    dstr_t heap = {0};
-    dstr_t* path;
-    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
-
-    PROP_GO(&e, rm_rf(path->data), cu);
-
-cu:
-    dstr_free(&heap);
-    return e;
-}
-
-
-// like rm_rf_path but it leaves the top-level directory untouched
-derr_t empty_dir(const string_builder_t *sb){
-    derr_t e = E_OK;
-    DSTR_VAR(stack, 256);
-    dstr_t heap = {0};
-    dstr_t* path;
-    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
-
-    PROP_GO(&e, for_each_file_in_dir(path->data, rm_rf_hook, NULL), cu);
-
-cu:
-    dstr_free(&heap);
-    return e;
-}
-
 
 // the string-builder-based version of for_each_file
-derr_t for_each_file_in_dir2(const string_builder_t* path,
-                             for_each_file_hook2_t hook, void* userdata){
+derr_t for_each_file_in_dir(const string_builder_t* path,
+                             for_each_file_hook_t hook, void* userdata){
 #ifdef _WIN32
     DSTR_VAR(stack, 256);
     dstr_t heap = {0};
@@ -649,6 +466,89 @@ cleanup:
     closedir(d);
     return e;
 #endif
+}
+
+static derr_t rm_rf_hook(
+    const string_builder_t *base,
+    const dstr_t *file,
+    bool isdir,
+    void *userdata
+){
+    (void)userdata;
+    derr_t e = E_OK;
+
+    string_builder_t path = sb_append(base, FD(file));
+
+    // base/file is a directory?
+    if(isdir){
+        // recursively delete everything in the directory
+        PROP(&e, for_each_file_in_dir(&path, rm_rf_hook, NULL) );
+        // then delete the directory itself
+        PROP(&e, drmdir_path(&path) );
+    }else{
+        // make sure we have write permissions to delete the file
+        PROP(&e, chmod_path(&path, 0600) );
+        // now delete the file
+        PROP(&e, dunlink_path(&path) );
+    }
+
+    return e;
+}
+
+derr_t rm_rf(const char* path){
+    derr_t e = E_OK;
+
+    // check if this item is a file
+    struct stat s;
+    bool exists;
+    PROP(&e, dstat(path, &s, &exists) );
+    if(!exists){
+        // nothing to delete
+    }else if(S_ISDIR(s.st_mode)){
+        // directory case
+        string_builder_t sb = SB(FS(path));
+        PROP(&e, for_each_file_in_dir(&sb, rm_rf_hook, NULL) );
+        // now delete the directory itself
+        PROP(&e, drmdir(path) );
+    }else{
+        // file case
+        PROP(&e, dunlink(path) );
+    }
+
+    return e;
+}
+
+
+derr_t rm_rf_path(const string_builder_t *path){
+    derr_t e = E_OK;
+
+    // check if this item is a file
+    struct stat s;
+    bool exists;
+    PROP(&e, dstat_path(path, &s, &exists) );
+    if(!exists){
+        // nothing to delete
+    }else if(S_ISDIR(s.st_mode)){
+        // directory case
+        PROP(&e, for_each_file_in_dir(path, rm_rf_hook, NULL) );
+        // now delete the directory itself
+        PROP(&e, drmdir_path(path) );
+    }else{
+        // file case
+        PROP(&e, dunlink_path(path) );
+    }
+
+    return e;
+}
+
+
+// like rm_rf_path but it leaves the top-level directory untouched
+derr_t empty_dir(const string_builder_t *path){
+    derr_t e = E_OK;
+
+    PROP(&e, for_each_file_in_dir(path, rm_rf_hook, NULL) );
+
+    return e;
 }
 
 

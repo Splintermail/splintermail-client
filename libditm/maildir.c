@@ -162,10 +162,13 @@ struct parse_and_register_data_t {
 
 // from the filename and subdir, parse the filename and register
 // this function is written as a hook for for_each_file_in_dir()
-/* throws: E_NOMEM
-           */
-static derr_t parse_and_register(const char* base, const dstr_t* fname,
-                                 bool isdir, void* userdata){
+/* throws: E_NOMEM */
+static derr_t parse_and_register(
+    const string_builder_t* base,
+    const dstr_t *fname,
+    bool isdir,
+    void *userdata
+){
     derr_t e = E_OK;
     derr_t e2;
     // always skip directories
@@ -294,8 +297,10 @@ derr_t maildir_new(maildir_t* mdir, dstr_t* mdir_path){
             RETHROW(&e, &e2, E_FS);
         }else PROP_GO(&e, e2, fail_5);
         // register all emails in that file
-        PROP_GO(&e, for_each_file_in_dir(path.data, parse_and_register,
-                                      (void*)&prdata), fail_5);
+        string_builder_t sb = SB(FD(&path));
+        PROP_GO(&e,
+            for_each_file_in_dir(&sb, parse_and_register, (void*)&prdata),
+        fail_5);
     }
 
     return e;

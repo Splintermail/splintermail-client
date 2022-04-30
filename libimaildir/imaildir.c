@@ -414,7 +414,7 @@ static derr_t populate_msgs(imaildir_t *m){
 
         add_msg_arg_t arg = {.m=m, .subdir=subdir};
 
-        PROP(&e, for_each_file_in_dir2(&subpath, add_msg_to_maildir, &arg) );
+        PROP(&e, for_each_file_in_dir(&subpath, add_msg_to_maildir, &arg) );
     }
 
     // now handle messages with no matching file
@@ -540,7 +540,7 @@ static derr_t delete_all_msg_files(const string_builder_t *maildir_path){
         subdir_type_e subdir = subdirs[i];
         string_builder_t subpath = SUB(maildir_path, subdir);
 
-        PROP(&e, for_each_file_in_dir2(&subpath, delete_one_msg_file, NULL) );
+        PROP(&e, for_each_file_in_dir(&subpath, delete_one_msg_file, NULL) );
     }
 
     return e;

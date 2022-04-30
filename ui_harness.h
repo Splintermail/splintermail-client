@@ -7,7 +7,7 @@ typedef struct {
     bool (*file_rw_access)(const char* path);
     bool (*exists)(const char* path);
     derr_t (*for_each_file_in_dir)(
-        const char* path, for_each_file_hook_t hook, void* userdata
+        const string_builder_t *path, for_each_file_hook_t hook, void *userdata
     );
 } ui_harness_t;
 

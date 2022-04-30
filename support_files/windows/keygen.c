@@ -46,7 +46,7 @@ derr_t do_popen(const char* args, const dstr_t* input, dstr_t* output){
     return e;
 }
 
-// for_each_file_in_dir2 version of:
+// for_each_file_in_dir version of:
 //  rm -f "$outdir/$(echo QWER ca_name REWQ | sed -e 's/[^a-z].*//')"*.srl
 static derr_t remove_srl(
     const string_builder_t *base, const dstr_t *file, bool isdir, void *arg
@@ -248,7 +248,7 @@ derr_t keygen_main(int argc, char **argv){
     {
         // rm -f "$outdir/$(echo QWER ca_name REWQ | sed -e 's/[^a-z].*//')"*.srl
         string_builder_t output_path = SB(FS(output_dir));
-        PROP(&e, for_each_file_in_dir2(&output_path, remove_srl, NULL));
+        PROP(&e, for_each_file_in_dir(&output_path, remove_srl, NULL));
     }
     {
         // rm -f "$outdir/sig_req.csr"

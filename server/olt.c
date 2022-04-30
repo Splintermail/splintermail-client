@@ -438,7 +438,7 @@ static derr_t check_tree(const string_builder_t* path,
     }
 
     // make sure everything in the tree is in the permissions file
-    PROP_GO(&e, for_each_file_in_dir2(path, check_tree_hook, (void*)&data), cu_ff);
+    PROP_GO(&e, for_each_file_in_dir(path, check_tree_hook, (void*)&data), cu_ff);
 
     // make sure everything in the permissions file was found in the tree
     for(size_t i = 0; i < data.dirs_found.len; i++){

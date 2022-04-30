@@ -332,7 +332,7 @@ static derr_t get_sql_files(
     get_sql_data_t gsd = { .ups = ups, .dns = dns, .e = E_OK, .ok = &ok };
 
     string_builder_t sb = SB(FD(path));
-    PROP_GO(&e, for_each_file_in_dir2(&sb, sql_file_hook, &gsd), fail);
+    PROP_GO(&e, for_each_file_in_dir(&sb, sql_file_hook, &gsd), fail);
 
     PROP_GO(&e, check_ups_vs_dns(&gsd), fail);
 
