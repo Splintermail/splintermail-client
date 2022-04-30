@@ -204,7 +204,7 @@ static bool _is_sep(char c){
 static size_t _get_trailing_sep(const dstr_t path, size_t tail){
     size_t out = 0;
     for(; out + tail < path.len; out++){
-        if(!_is_sep(path.data[path.len - tail -1 - out])) return out;
+        if(!_is_sep(path.data[path.len - tail - 1 - out])) return out;
     }
     return out;
 }
@@ -311,7 +311,9 @@ static size_t _get_unc(const dstr_t path, size_t start){
     - \\.\VOL               a DOS device path (VOL could be C: or Volume{UUID})
     - \\?\VOL               another form of DOS device path
     - \\.\UNC\server\share  a DOS device to a UNC path to a shared directory
-    - \\.\UNC\server\C$     a DOS device to a UNC path to a drive */
+    - \\.\UNC\server\C$     a DOS device to a UNC path to a drive
+
+   Based on: docs.microsoft.com/en-us/dotnet/standard/io/file-path-formats */
 static size_t _get_volume(const dstr_t path){
 #ifdef _WIN32 // WINDOWS
     // letter-drive case: C:

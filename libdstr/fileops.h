@@ -54,8 +54,8 @@ derr_t is_dir_path(const string_builder_t *sb, bool *res);
     vol   dir     joiner  base   trailing separator
 
     (p="present")
-    vol  dir  base | dirname()   basename()
-    ---------------------------|---------------------
+    vol  dir  base | dirname() | basename()
+    -------------------------------------------------
     p    p    p    | vol + dir | base
     p    -    p    | vol       | base
     p    -    -    | vol       | vol
