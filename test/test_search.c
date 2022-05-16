@@ -226,7 +226,7 @@ static derr_t test_search(void){
         },
         {
             .name = "BODY (present)",
-            .key = ie_search_dstr(&e, IE_SEARCH_BODY, IE_DSTR("SOME TEXT")),
+            .key = ie_search_dstr(&e, IE_SEARCH_BODY, IE_DSTR("some TEXT")),
             .content = DSTR_LIT(
                 "My-Header: OTHER TEXT\r\n"
                 "\r\n"
@@ -324,6 +324,158 @@ static derr_t test_search(void){
             .expect = true,
         },
 
+        // date-parameter search key cases
+        #define DATE(y, m, d) (imap_time_t){.year=y, .month=m, .day=d}
+        {
+            .name = "BEFORE (before -> true)",
+            .key = ie_search_date(&e, IE_SEARCH_BEFORE, DATE(2000, 6, 15)),
+            .view = { .internaldate = DATE(1999, 6, 15) },
+            .expect = true,
+        },
+        {
+            .name = "BEFORE (on -> false)",
+            .key = ie_search_date(&e, IE_SEARCH_BEFORE, DATE(2000, 6, 15)),
+            .view = { .internaldate = DATE(2000, 6, 15) },
+            .expect = false,
+        },
+        {
+            .name = "BEFORE (after -> false)",
+            .key = ie_search_date(&e, IE_SEARCH_BEFORE, DATE(2000, 6, 15)),
+            .view = { .internaldate = DATE(2001, 6, 15) },
+            .expect = false,
+        },
+        {
+            .name = "ON (before -> false)",
+            .key = ie_search_date(&e, IE_SEARCH_ON, DATE(2000, 6, 15)),
+            .view = { .internaldate = DATE(1999, 6, 15) },
+            .expect = false,
+        },
+        {
+            .name = "ON (on -> true)",
+            .key = ie_search_date(&e, IE_SEARCH_ON, DATE(2000, 6, 15)),
+            .view = { .internaldate = DATE(2000, 6, 15) },
+            .expect = true,
+        },
+        {
+            .name = "ON (after -> false)",
+            .key = ie_search_date(&e, IE_SEARCH_ON, DATE(2000, 6, 15)),
+            .view = { .internaldate = DATE(2001, 6, 15) },
+            .expect = false,
+        },
+        {
+            .name = "SINCE (before -> false)",
+            .key = ie_search_date(&e, IE_SEARCH_SINCE, DATE(2000, 6, 15)),
+            .view = { .internaldate = DATE(1999, 6, 15) },
+            .expect = false,
+        },
+        {
+            .name = "SINCE (on -> true)",
+            .key = ie_search_date(&e, IE_SEARCH_SINCE, DATE(2000, 6, 15)),
+            .view = { .internaldate = DATE(2000, 6, 15) },
+            .expect = true,
+        },
+        {
+            .name = "SINCE (after -> true)",
+            .key = ie_search_date(&e, IE_SEARCH_SINCE, DATE(2000, 6, 15)),
+            .view = { .internaldate = DATE(2001, 6, 15) },
+            .expect = true,
+        },
+        #define DATED_MSG(date) DSTR_LIT("Date: " date "\r\n\r\n")
+        {
+            .name = "SENTBEFORE (before -> true)",
+            .key = ie_search_date(&e, IE_SEARCH_SENTBEFORE, DATE(2000, 6, 15)),
+            .content = DATED_MSG("15 Jun 1999 00:00 +0000"),
+            .expect = true,
+        },
+        {
+            .name = "SENTBEFORE (on -> false)",
+            .key = ie_search_date(&e, IE_SEARCH_SENTBEFORE, DATE(2000, 6, 15)),
+            .content = DATED_MSG("15 Jun 2000 00:00 +0000"),
+            .expect = false,
+        },
+        {
+            .name = "SENTBEFORE (after -> false)",
+            .key = ie_search_date(&e, IE_SEARCH_SENTBEFORE, DATE(2000, 6, 15)),
+            .content = DATED_MSG("15 Jun 2001 00:00 +0000"),
+            .expect = false,
+        },
+        {
+            .name = "SENTON (before -> false)",
+            .key = ie_search_date(&e, IE_SEARCH_SENTON, DATE(2000, 6, 15)),
+            .content = DATED_MSG("15 Jun 1999 00:00 +0000"),
+            .expect = false,
+        },
+        {
+            .name = "SENTON (on -> true)",
+            .key = ie_search_date(&e, IE_SEARCH_SENTON, DATE(2000, 6, 15)),
+            .content = DATED_MSG("15 Jun 2000 00:00 +0000"),
+            .expect = true,
+        },
+        {
+            .name = "SENTON (after -> false)",
+            .key = ie_search_date(&e, IE_SEARCH_SENTON, DATE(2000, 6, 15)),
+            .content = DATED_MSG("15 Jun 2001 00:00 +0000"),
+            .expect = false,
+        },
+        {
+            .name = "SENTSINCE (before -> false)",
+            .key = ie_search_date(&e, IE_SEARCH_SENTSINCE, DATE(2000, 6, 15)),
+            .content = DATED_MSG("15 Jun 1999 00:00 +0000"),
+            .expect = false,
+        },
+        {
+            .name = "SENTSINCE (on -> true)",
+            .key = ie_search_date(&e, IE_SEARCH_SENTSINCE, DATE(2000, 6, 15)),
+            .content = DATED_MSG("15 Jun 2000 00:00 +0000"),
+            .expect = true,
+        },
+        {
+            .name = "SENTSINCE (after -> true)",
+            .key = ie_search_date(&e, IE_SEARCH_SENTSINCE, DATE(2000, 6, 15)),
+            .content = DATED_MSG("15 Jun 2001 00:00 +0000"),
+            .expect = true,
+        },
+        #undef DATE
+        #undef DATED_MSG
+
+        // date-parameter search key cases
+        {
+            .name = "LARGER (smaller)",
+            .key = ie_search_num(&e, IE_SEARCH_LARGER, 100),
+            .view = { .length = 99 },
+            .expect = false,
+        },
+        {
+            .name = "LARGER (eq)",
+            .key = ie_search_num(&e, IE_SEARCH_LARGER, 100),
+            .view = { .length = 100 },
+            .expect = false,
+        },
+        {
+            .name = "LARGER (larger)",
+            .key = ie_search_num(&e, IE_SEARCH_LARGER, 100),
+            .view = { .length = 101 },
+            .expect = true,
+        },
+        {
+            .name = "SMALLER (smaller)",
+            .key = ie_search_num(&e, IE_SEARCH_SMALLER, 100),
+            .view = { .length = 99 },
+            .expect = true,
+        },
+        {
+            .name = "SMALLER (eq)",
+            .key = ie_search_num(&e, IE_SEARCH_SMALLER, 100),
+            .view = { .length = 100 },
+            .expect = false,
+        },
+        {
+            .name = "SMALLER (larger)",
+            .key = ie_search_num(&e, IE_SEARCH_SMALLER, 100),
+            .view = { .length = 101 },
+            .expect = false,
+        },
+
         // pair-parameter search key cases
         {
             .name = "OR (first)",
@@ -368,20 +520,10 @@ static derr_t test_search(void){
         #undef TRUE_KEY
         #undef FALSE_KEY
 
-        // TODO: support these, then add tests
+        // not planning on supporting soon:
         // IE_SEARCH_NEW,         // no param
         // IE_SEARCH_OLD,         // no param
         // IE_SEARCH_RECENT,      // no param
-        // IE_SEARCH_BEFORE,      // uses param.date
-        // IE_SEARCH_ON,          // uses param.date
-        // IE_SEARCH_SINCE,       // uses param.date
-        // IE_SEARCH_SENTBEFORE,  // uses param.date
-        // IE_SEARCH_SENTON,      // uses param.date
-        // IE_SEARCH_SENTSINCE,   // uses param.date
-        // IE_SEARCH_LARGER,      // uses param.num
-        // IE_SEARCH_SMALLER,     // uses param.num
-
-        // not planning on supporting soon:
         // IE_SEARCH_MODSEQ,      // uses param.modseq
     };
     size_t ncases = sizeof(cases)/sizeof(*cases);
@@ -403,12 +545,54 @@ cu:
     return e;
 }
 
+static derr_t test_date_cmp(void){
+    derr_t e = E_OK;
+
+    #define ASSERT(code) EXPECT_B(&e, #code, code, true);
+    #define DATE(y, m, d) (imap_time_t){.year=y, .month=m, .day=d}
+
+    imap_time_t base = DATE(2000, 6, 15);
+
+    // ON behavior
+    ASSERT(!date_a_is_on_b(DATE(1999, 6, 15), base));
+    ASSERT(!date_a_is_on_b(DATE(2000, 5, 15), base));
+    ASSERT(!date_a_is_on_b(DATE(2000, 6, 14), base));
+    ASSERT( date_a_is_on_b(DATE(2000, 6, 15), base));
+    ASSERT(!date_a_is_on_b(DATE(2001, 6, 15), base));
+    ASSERT(!date_a_is_on_b(DATE(2000, 7, 15), base));
+    ASSERT(!date_a_is_on_b(DATE(2000, 6, 16), base));
+
+    // BEFORE behavior
+    ASSERT( date_a_is_before_b(DATE(1999, 6, 15), base));
+    ASSERT( date_a_is_before_b(DATE(2000, 5, 15), base));
+    ASSERT( date_a_is_before_b(DATE(2000, 6, 14), base));
+    ASSERT(!date_a_is_before_b(DATE(2000, 6, 15), base));
+    ASSERT(!date_a_is_before_b(DATE(2001, 6, 15), base));
+    ASSERT(!date_a_is_before_b(DATE(2000, 7, 15), base));
+    ASSERT(!date_a_is_before_b(DATE(2000, 6, 16), base));
+
+    // SINCE behavior
+    ASSERT(!date_a_is_since_b(DATE(1999, 6, 15), base));
+    ASSERT(!date_a_is_since_b(DATE(2000, 5, 15), base));
+    ASSERT(!date_a_is_since_b(DATE(2000, 6, 14), base));
+    ASSERT( date_a_is_since_b(DATE(2000, 6, 15), base));
+    ASSERT( date_a_is_since_b(DATE(2001, 6, 15), base));
+    ASSERT( date_a_is_since_b(DATE(2000, 7, 15), base));
+    ASSERT( date_a_is_since_b(DATE(2000, 6, 16), base));
+
+    #undef DATE
+    #undef ASSERT_NOT
+    #undef ASSERT
+    return e;
+}
+
 int main(int argc, char** argv){
     derr_t e = E_OK;
     // parse options and set default log level
     PARSE_TEST_OPTIONS(argc, argv, NULL, LOG_LVL_DEBUG);
 
     PROP_GO(&e, test_search(), test_fail);
+    PROP_GO(&e, test_date_cmp(), test_fail);
 
     LOG_ERROR("PASS\n");
     return 0;

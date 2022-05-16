@@ -69,6 +69,32 @@ static ie_dstr_t *without_spaces(derr_t *E, ie_dstr_t *list){
     return out;
 }
 
+static int parse_int(derr_t *E, const dstr_off_t off){
+    if(is_error(*E)) return 0;
+    int out;
+    dstr_t text = dstr_from_off(off);
+    PROP_GO(E, dstr_toi(&text, &out, 10), fail);
+    return out;
+
+fail:
+    return 0;
+}
+
+static int parse_int_within(derr_t *E, const dstr_off_t off, int min, int max){
+    if(is_error(*E)) return 0;
+    int out;
+    dstr_t text = dstr_from_off(off);
+    PROP_GO(E, dstr_toi(&text, &out, 10), fail);
+    if(out < min || out > max){
+        TRACE(E, "%x is not within [%x, %x]\n", FI(out), FI(min), FI(max));
+        ORIG_GO(E, E_VALUE, "invalid number", fail);
+    }
+    return out;
+
+fail:
+    return 0;
+}
+
 }}
 
 %generator c;
@@ -91,6 +117,7 @@ static ie_dstr_t *without_spaces(derr_t *E, ie_dstr_t *list){
 %root to_field;
 %root cc_field;
 %root bcc_field;
+%root date_field;
 %root in_reply_to_field;
 %root msg_id_field;
 %root mime_version_field;
@@ -108,6 +135,8 @@ static ie_dstr_t *without_spaces(derr_t *E, ie_dstr_t *list){
 %type addr {ie_addr_t*} {ie_addr_free($$);};
 %type dstr {ie_dstr_t*} {ie_dstr_free($$);};
 %type bool {bool};
+%type i32 {int};
+%type time {imap_time_t};
 %type ver {mime_version_t};
 %type param {mime_param_t*} {mime_param_free($$);};
 %type content_type {mime_content_type_t*} {mime_content_type_free($$);};
@@ -135,6 +164,7 @@ SLASH;
 QUESTION;
 EQ;
 DASH;
+PLUS;
 ALPHA;
 NUM;
 SYM;
@@ -152,7 +182,30 @@ MULTIPART;
 RFC822;
 DIGEST;
 
-%fallback ALPHA MESSAGE MULTIPART DIGEST;
+MON;
+TUE;
+WED;
+THU;
+FRI;
+SAT;
+SUN;
+
+JAN;
+FEB;
+MAR;
+APR;
+MAY;
+JUN;
+JUL;
+AUG;
+SEP;
+OCT;
+NOV;
+DEC;
+
+%fallback ALPHA MESSAGE MULTIPART DIGEST
+                MON TUE WED THU FRI SAT SUN
+                JAN FEB MAR APR MAY JUN JUL AUG SEP OCT NOV DEC;
 %fallback ALPHANUM ALPHA NUM RFC822;
 
 ### ENTIRE DOCUMENTS ###
@@ -198,6 +251,7 @@ field_name = 1*(
 | QUESTION
 | EQ
 | DASH
+| PLUS
 | ALPHANUM
 | SYM
 | UTF8
@@ -231,6 +285,7 @@ unstruct =
 | QUESTION
 | EQ
 | DASH
+| PLUS
 | ALPHANUM
 | SYM
 | UTF8
@@ -320,6 +375,7 @@ ctext =
 | QUESTION
 | EQ
 | DASH
+| PLUS
 | ALPHANUM
 | SYM
 | UTF8
@@ -359,6 +415,7 @@ atom_base =
 | QUESTION
 | EQ
 | DASH
+| PLUS
 | ALPHANUM
 | SYM
 | UTF8
@@ -408,6 +465,7 @@ _qtext =
 | QUESTION
 | EQ
 | DASH
+| PLUS
 | ALPHANUM
 | SYM
 | UTF8
@@ -449,6 +507,7 @@ escapable =
 | QUESTION
 | EQ
 | DASH
+| PLUS
 | ALPHANUM
 | SYM
 | UTF8
@@ -573,6 +632,7 @@ dtext = 1*(
 | QUESTION
 | EQ
 | DASH
+| PLUS
 | ALPHANUM
 | SYM
 | UTF8
@@ -738,6 +798,60 @@ address_list_xbr:addr =
     )
 ;
 
+# we actually ignore day_of_week value
+day_of_week = MON | TUE | WED | THU | FRI | SAT | SUN;
+
+month:i32 =
+  | JAN { $$ = 1; }
+  | FEB { $$ = 2; }
+  | MAR { $$ = 3; }
+  | APR { $$ = 4; }
+  | MAY { $$ = 5; }
+  | JUN { $$ = 6; }
+  | JUL { $$ = 7; }
+  | AUG { $$ = 8; }
+  | SEP { $$ = 9; }
+  | OCT { $$ = 10; }
+  | NOV { $$ = 11; }
+  | DEC { $$ = 12; }
+;
+
+day:i32 = NUM:n { $$ = parse_int_within(E, @n, 1, 31); };
+# obs-year allows a 2-digit year in the date field which we take to be pre-2000
+year:i32 = NUM:n {
+    $$ = parse_int(E, @n);
+    if(!is_error(*E) && $$ < 100) $$ += 1900;
+};
+hour:i32 = NUM:n { $$ = parse_int_within(E, @n, 0, 23); };
+min_or_sec:i32 = NUM:n { $$ = parse_int_within(E, @n, 0, 59); };
+zone:time =
+  | (PLUS {$$.z_hour = 1;} | DASH {$$.z_hour = -1;}) NUM:n
+        {
+            int z = parse_int_within(E, @n, 0, 2359);
+            $$.z_min = z % 100;
+            if($$.z_min > 59) $$.z_min = 0;
+            $$.z_hour *= (z - $$.z_min) / 100;
+        }
+  | ALPHA
+;
+
+# this is the IMF date-time, not the IMAP date-time
+date_time:time =
+    [day_of_week xbr COMMA xbr]
+    day:d                   { $$.day = $d; }
+    xbr
+    month:M                 { $$.month = $M; }
+    xbr
+    year:y                  { $$.year = $y; }
+    xbr
+    hour:h                  { $$.hour = $h; }
+    COLON
+    min_or_sec:m            { $$.min = $m; }
+    [ COLON min_or_sec:s    { $$.sec = $s; } ]
+    xbr
+    zone:z                  { $$.z_hour = $z.z_hour; $$.z_min = $z.z_min; }
+;
+
 # roots:
 from_field:addr = xbr mailbox_list_xbr:x EOF     {$$ = STEAL(ie_addr_t, &$x);};
 sender_field:addr = xbr mailbox_xbr:x EOF        {$$ = STEAL(ie_addr_t, &$x);};
@@ -745,6 +859,7 @@ reply_to_field:addr = xbr address_list_xbr:x EOF {$$ = STEAL(ie_addr_t, &$x);};
 to_field:addr = xbr address_list_xbr:x EOF       {$$ = STEAL(ie_addr_t, &$x);};
 cc_field:addr = xbr address_list_xbr:x EOF       {$$ = STEAL(ie_addr_t, &$x);};
 bcc_field:addr = xbr [address_list_xbr:x {$$ = STEAL(ie_addr_t, &$x);}] EOF;
+date_field:time = xbr date_time:x xbr EOF        {$$ = $x; };
 
 # always joined by cfws
 # - id_left is DOT-joined ATOMS with no cfws in or around them
@@ -804,6 +919,7 @@ token = 1*(
 # | QUESTION
 # | EQ
 | DASH
+| PLUS
 | ALPHANUM
 | SYM
 | UTF8
@@ -900,34 +1016,6 @@ single_token_field:dstr = xbr token:t xbr EOF  {$$ = ie_dstr_from_off(E, @t);};
 # ;
 content_transfer_encoding_field:dstr = single_token_field:s  {$$ = STEAL(ie_dstr_t, &$s);};
 
-b64_md5 =
-| NIL
-| EOL
-| WS
-| NON_WS_CTRL
-| DOT
-| RPAREN
-| LPAREN
-| LANGLE
-| RANGLE
-| LBRACKET
-| RBRACKET
-| ARUBA
-| COMMA
-| SEMI
-| COLON
-# | BACKSLASH
-# | DQUOTE
-| SLASH
-# | QUESTION
-| EQ
-| DASH
-| ALPHANUM
-| SYM
-# | UTF8
-# | EIGHTBIT
-;
-
 # we could be more strict here if md5 weren't a joke
 content_md5_field:dstr = xbr atom:a xbr EOF  {$$ = ie_dstr_from_off(E, @a);};
 
@@ -990,6 +1078,7 @@ uri_base = 1*(
 | QUESTION
 | EQ
 | DASH
+| PLUS
 | ALPHANUM
 | SYM
 | UTF8

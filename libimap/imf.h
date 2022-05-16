@@ -240,3 +240,6 @@ bool imf_get_submessage(
 
 // build the entire ie_body_t for a top-level message.
 ie_body_t *imf_bodystructure(derr_t *e, const imf_t *root_imf);
+
+imap_time_t imf_parse_date_builder(derr_t *e, const dstr_t in);
+derr_t imf_parse_date(const dstr_t in, imap_time_t *out);

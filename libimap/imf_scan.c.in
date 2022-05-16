@@ -109,7 +109,7 @@ derr_t imf_scan(
         eightbit     = [\x80-\xFF];
 
         alpha        = [A-Za-z];
-        sym          = [!#$%&'*+^_`{|}~-];
+        sym          = [!#$%&'*^_`{|}~];
         nil          = "\x00";
         tab          = "\x09";
         lf           = "\x0a";
@@ -140,11 +140,33 @@ derr_t imf_scan(
         "?"          { *type = IMF_QUESTION; goto done; }
         "="          { *type = IMF_EQ; goto done; }
         "-"          { *type = IMF_DASH; goto done; }
+        "+"          { *type = IMF_PLUS; goto done; }
 
         'rfc822'     { *type = IMF_RFC822; goto done; }
         'message'    { *type = IMF_MESSAGE; goto done; }
         'multipart'  { *type = IMF_MULTIPART; goto done; }
         'digest'     { *type = IMF_DIGEST; goto done; }
+
+        'mon'        { *type = IMF_MON; goto done; }
+        'tue'        { *type = IMF_TUE; goto done; }
+        'wed'        { *type = IMF_WED; goto done; }
+        'thu'        { *type = IMF_THU; goto done; }
+        'fri'        { *type = IMF_FRI; goto done; }
+        'sat'        { *type = IMF_SAT; goto done; }
+        'sun'        { *type = IMF_SUN; goto done; }
+
+        'jan'        { *type = IMF_JAN; goto done; }
+        'feb'        { *type = IMF_FEB; goto done; }
+        'mar'        { *type = IMF_MAR; goto done; }
+        'apr'        { *type = IMF_APR; goto done; }
+        'may'        { *type = IMF_MAY; goto done; }
+        'jun'        { *type = IMF_JUN; goto done; }
+        'jul'        { *type = IMF_JUL; goto done; }
+        'aug'        { *type = IMF_AUG; goto done; }
+        'sep'        { *type = IMF_SEP; goto done; }
+        'oct'        { *type = IMF_OCT; goto done; }
+        'nov'        { *type = IMF_NOV; goto done; }
+        'dec'        { *type = IMF_DEC; goto done; }
 
         num+         { *type = IMF_NUM; goto done; }
         alpha+       { *type = IMF_ALPHA; goto done; }

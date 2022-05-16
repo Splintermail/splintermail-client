@@ -30,18 +30,18 @@ static bool in_seq_set(unsigned int val, const ie_seq_set_t *seq_set,
 }
 
 
-static derr_t search_headers(
-    search_args_t *args, const dstr_t name, const dstr_t value, bool *out
+// look up the value of a header named `name`
+static derr_t find_header(
+    search_args_t *args, const dstr_t name, dstr_t *out
 ){
     derr_t e = E_OK;
-    *out = false;
+    *out = (dstr_t){0};
 
     const imf_hdrs_t *hdrs;
     IF_PROP(&e, args->get_hdrs(args->get_hdrs_data, &hdrs) ){
         TRACE(&e, "failed to parse message for header SEARCH\n");
         DUMP(e);
         DROP_VAR(&e);
-        *out = false;
         return e;
     }
 
@@ -50,16 +50,75 @@ static derr_t search_headers(
         // does this header name match?
         dstr_t hname = dstr_from_off(hdr->name);
         if(dstr_icmp2(hname, name) == 0){
-            // is the search key present in the header value?
-            dstr_t searchable = dstr_from_off(hdr->value);
-            if(dstr_icount2(searchable, value) > 0){
-                *out = true;
-                return e;
-            }
+            // return the content of the header value
+            *out = dstr_from_off(hdr->value);
+            return e;
         }
     }
 
     return e;
+}
+
+
+// find a header matching `name`, return if its value contains `value`
+static derr_t search_headers(
+    search_args_t *args, const dstr_t name, const dstr_t value, bool *out
+){
+    derr_t e = E_OK;
+    *out = false;
+
+    dstr_t hvalue;
+    PROP(&e, find_header(args, name, &hvalue) );
+    if(!hvalue.data) return e;
+
+    if(dstr_icount2(hvalue, value) > 0) *out = true;
+
+    return e;
+}
+
+static derr_t parse_date(search_args_t *args, imap_time_t *out){
+    derr_t e = E_OK;
+    *out = (imap_time_t){0};
+
+    dstr_t hvalue;
+    PROP(&e, find_header(args, DSTR_LIT("Date"), &hvalue) );
+    if(!hvalue.data) return e;
+
+    IF_PROP(&e, imf_parse_date(hvalue, out) ){
+        TRACE(&e, "failed to parse Date header in SEARCH\n");
+        DUMP(e);
+        DROP_VAR(&e);
+        return e;
+    }
+
+    return e;
+}
+
+// ON = date matches, disregarding time and timezone
+bool date_a_is_on_b(imap_time_t a, imap_time_t b){
+    return a.year == b.year && a.month == b.month && a.day == b.day;
+}
+
+// BEFORE = date is earlier, disregarding time and timezone
+bool date_a_is_before_b(imap_time_t a, imap_time_t b){
+    if(a.year < b.year) return true;
+    if(a.year > b.year) return false;
+    // a.year == b.year
+    if(a.month < b.month) return true;
+    if(a.month > b.month) return false;
+    // a.month == b.month
+    return a.day < b.day;
+}
+
+// SINCE = date is on or after, disregarding time and timezone
+bool date_a_is_since_b(imap_time_t a, imap_time_t b){
+    if(a.year > b.year) return true;
+    if(a.year < b.year) return false;
+    // a.year == b.year
+    if(a.month > b.month) return true;
+    if(a.month < b.month) return false;
+    // a.month == b.month
+    return a.day >= b.day;
 }
 
 
@@ -75,6 +134,7 @@ static derr_t do_eval(search_args_t *args, size_t lvl,
 
     const msg_view_t *view = args->view;
     union ie_search_param_t param = key->param;
+    imap_time_t date;
 
     switch(key->type){
         case IE_SEARCH_ALL: *out = true; break;
@@ -225,13 +285,39 @@ static derr_t do_eval(search_args_t *args, size_t lvl,
             break;
 
         case IE_SEARCH_BEFORE:      // uses param.date
+            *out = date_a_is_before_b(args->view->internaldate, param.date);
+            break;
+
         case IE_SEARCH_ON:          // uses param.date
+            *out = date_a_is_on_b(args->view->internaldate, param.date);
+            break;
+
         case IE_SEARCH_SINCE:       // uses param.date
+            *out = date_a_is_since_b(args->view->internaldate, param.date);
+            break;
+
         case IE_SEARCH_SENTBEFORE:  // uses param.date
+            PROP(&e, parse_date(args, &date) );
+            *out = date.year != 0 && date_a_is_before_b(date, param.date);
+            break;
+
         case IE_SEARCH_SENTON:      // uses param.date
+            PROP(&e, parse_date(args, &date) );
+            *out = date.year != 0 && date_a_is_on_b(date, param.date);
+            break;
+
         case IE_SEARCH_SENTSINCE:   // uses param.date
+            PROP(&e, parse_date(args, &date) );
+            *out = date.year != 0 && date_a_is_since_b(date, param.date);
+            break;
+
         case IE_SEARCH_LARGER:      // uses param.num
+            *out = args->view->length > param.num;
+            break;
+
         case IE_SEARCH_SMALLER:     // uses param.num
+            *out = args->view->length < param.num;
+            break;
 
         case IE_SEARCH_MODSEQ:      // uses param.modseq
             ORIG(&e, E_INTERNAL, "not implemented");

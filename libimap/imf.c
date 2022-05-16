@@ -463,13 +463,17 @@ derr_t imf_hdrs_parse_sub(const dstr_off_t bytes, imf_hdrs_t **out){
                 break; \
             \
             case IMF_STATUS_SEMSTACK_OVERFLOW: \
-                LOG_ERROR("semstack overflow parsing " name " field, skipping.\n"); \
+                LOG_ERROR( \
+                    "semstack overflow parsing " name " field, skipping.\n" \
+                ); \
                 LOG_ERROR(name ": %x\n", FD_DBG(&out##_field)); \
                 should_continue = false; \
                 break; \
             \
             case IMF_STATUS_CALLSTACK_OVERFLOW: \
-                LOG_ERROR("callstack overflow parsing " name " field, skipping.\n"); \
+                LOG_ERROR( \
+                    "callstack overflow parsing " name " field, skipping.\n" \
+                ); \
                 LOG_ERROR(name "contents: %x\n", FD_DBG(&out##_field)); \
                 should_continue = false; \
                 break; \
@@ -1375,4 +1379,63 @@ ie_body_t *imf_bodystructure(derr_t *e, const imf_t *root_imf){
 
 fail:
     return NULL;
+}
+
+#define IMF_PARSE_LOOP(e, p, parse_fn, in, out, what, label) do { \
+    imf_scanner_t s = imf_scanner_prep(&in, 0, NULL, NULL, NULL); \
+    bool should_continue = true; \
+    imf_token_e token_type; \
+    do { \
+        dstr_off_t token; \
+        imf_scan_builder(e, &s, &token, &token_type); \
+        if(is_error(*e)) break; \
+        imf_status_e status = parse_fn( \
+            p, e, &in, 0, token_type, token, out, NULL \
+        ); \
+        if(is_error(*e)) break; \
+        switch(status){ \
+            case IMF_STATUS_OK: continue; \
+            case IMF_STATUS_DONE: should_continue = false; break; \
+            case IMF_STATUS_SYNTAX_ERROR: \
+                imf_parser_reset(p); \
+                TRACE(e, "input: %x\n", FD_DBG(&in)); \
+                ORIG_GO(e, E_PARAM, "syntax error parsing " what, label); \
+            \
+            case IMF_STATUS_SEMSTACK_OVERFLOW: \
+                imf_parser_reset(p); \
+                TRACE(e, "input: %x\n", FD_DBG(&in)); \
+                ORIG_GO(e, \
+                    E_FIXEDSIZE, "semstack overflow parsing " what, label \
+                ); \
+            \
+            case IMF_STATUS_CALLSTACK_OVERFLOW: \
+                imf_parser_reset(p); \
+                TRACE(e, "input: %x\n", FD_DBG(&in)); \
+                ORIG_GO(e, \
+                    E_FIXEDSIZE, "callstack overflow parsing" what, label \
+                ); \
+        } \
+    } while(should_continue && token_type != IMF_EOF); \
+    imf_parser_reset(p); \
+} while(0)
+
+imap_time_t imf_parse_date_builder(derr_t *e, const dstr_t in){
+    imap_time_t out = {0};
+    if(is_error(*e)) return out;
+
+    IMF_ONSTACK_PARSER(p, 20, 100);
+
+    IMF_PARSE_LOOP(e, &p, imf_parse_date_field, in, &out, "date", done);
+
+done:
+    return out;
+}
+
+derr_t imf_parse_date(const dstr_t in, imap_time_t *out){
+    derr_t e = E_OK;
+
+    *out = imf_parse_date_builder(&e, in);
+    CHECK(&e);
+
+    return e;
 }

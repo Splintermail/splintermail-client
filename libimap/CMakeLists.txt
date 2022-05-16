@@ -72,7 +72,7 @@ define_file_logname_for_source("${imap_scan_in}" "${imap_scan_out}")
 define_file_logname_for_source("${imap_parse_in}" "${imap_parse_out}")
 
 define_file_logname_for_source("${imf_scan_in}" "${imf_scan_out}")
-define_file_logname_for_source("${imf_scan_in}" "${imf_scan_out}")
+define_file_logname_for_source("${imf_parse_in}" "${imf_parse_c}")
 
 # Work around missing prototype and poor enum handling with bison 3.6:
 if("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU")

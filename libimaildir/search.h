@@ -13,3 +13,8 @@ derr_t search_key_eval(
     void *get_imf_data,
     bool *out
 );
+
+// exposed for testing purposes
+bool date_a_is_on_b(imap_time_t a, imap_time_t b);
+bool date_a_is_before_b(imap_time_t a, imap_time_t b);
+bool date_a_is_since_b(imap_time_t a, imap_time_t b);

@@ -137,7 +137,7 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
     bool _exp = (exp); \
     if(_got != _exp){ \
         TRACE(e, \
-            "expected %x == %x but got %x\n", FS(name), FI(_exp),  FI(_got) \
+            "expected %x == %x but got %x\n", FS(name), FB(_exp),  FB(_got) \
         ); \
         ORIG(e, E_VALUE, "wrong value"); \
     } \

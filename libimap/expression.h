@@ -50,7 +50,7 @@ typedef struct {
 
 typedef struct {
     int year;
-    int month;
+    int month; // 1-indexed
     int day;
     int hour;
     int min;

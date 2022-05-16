@@ -177,6 +177,14 @@ static bool assert_num_eq(
     return false;
 }
 
+static bool assert_int_eq(
+    derr_t *e, const string_builder_t path, int exp, int got
+){
+    if(exp == got) return true;
+    TRACE(e, "%x: expected: %x but got %x\n", FPATH, FI(exp), FI(got));
+    return false;
+}
+
 static bool assert_body_type_eq(
     derr_t *e,
     const string_builder_t path,
@@ -277,6 +285,27 @@ static bool assert_body_eq(
     ok &= ASSERT_FIELD(disposition, disposition);
     ok &= ASSERT_FIELD(dstr_list, lang);
     ok &= ASSERT_FIELD(dstr, location);
+    return ok;
+}
+
+static bool assert_imap_time_eq(
+    derr_t *e,
+    const string_builder_t path,
+    const imap_time_t exp_,
+    const imap_time_t got_
+){
+    bool ok = true;
+    const imap_time_t *exp = &exp_;
+    const imap_time_t *got = &got_;
+    ok &= ASSERT_FIELD(int, year);
+    ok &= ASSERT_FIELD(int, month);
+    ok &= ASSERT_FIELD(int, day);
+    ok &= ASSERT_FIELD(int, hour);
+    ok &= ASSERT_FIELD(int, min);
+    ok &= ASSERT_FIELD(int, sec);
+    ok &= ASSERT_FIELD(int, z_hour);
+    ok &= ASSERT_FIELD(int, z_min);
+    ok &= ASSERT_FIELD(int, year);
     return ok;
 }
 
@@ -570,6 +599,84 @@ static derr_t test_parse_to_field(void){
 cu:
     ie_addr_free(got);
     ie_addr_free(exp);
+    return e;
+}
+
+
+static derr_t test_parse_date_field(void){
+    derr_t e = E_OK;
+
+    struct {char *str; imap_time_t time;} cases[] = {
+        // timezone parsing, positive hour
+        {
+            "Mon, 15 Jun 2000 01:02:03 +0405 (XST)",
+            (imap_time_t){
+                .year=2000, .month=6, .day=15, .hour=1, .min=2, .sec=3,
+                .z_hour=4, .z_min=5,
+            }
+        },
+        // timezone parsing, negative hour
+        {
+            "Mon, 15 Jun 2000 01:02:03 -0405 (XDT)",
+            (imap_time_t){
+                .year=2000, .month=6, .day=15, .hour=1, .min=2, .sec=3,
+                .z_hour=-4, .z_min=5,
+            }
+        },
+        // timezone parsing, legacy
+        {
+            "Mon, 15 Jun 2000 01:02:03 PST",
+            (imap_time_t){
+                .year=2000, .month=6, .day=15, .hour=1, .min=2, .sec=3,
+            }
+        },
+        // day-of-week is ignored anyway
+        {
+            "15 Jun 2000 01:02:03 +0000",
+            (imap_time_t){
+                .year=2000, .month=6, .day=15, .hour=1, .min=2, .sec=3,
+            }
+        },
+        // 2-digit date is 1900-based
+        {
+            "15 Jun 99 01:02:03 +0000",
+            (imap_time_t){
+                .year=1999, .month=6, .day=15, .hour=1, .min=2, .sec=3,
+            }
+        },
+        {
+            "15 Jun 100 01:02:03 +0000",
+            (imap_time_t){
+                .year=100, .month=6, .day=15, .hour=1, .min=2, .sec=3,
+            }
+        },
+        // second can be omitted
+        {
+            "15 Jun 2000 01:02 +0000",
+            (imap_time_t){.year=2000, .month=6, .day=15, .hour=1, .min=2}
+        },
+        // single-digit days come in multiple forms
+        {
+            "1 Jun 2000 01:02 +0000",
+            (imap_time_t){.year=2000, .month=6, .day=1, .hour=1, .min=2}
+        },
+        {
+            "01 Jun 2000 01:02 +0000",
+            (imap_time_t){.year=2000, .month=6, .day=1, .hour=1, .min=2}
+        },
+    };
+    size_t ncases = sizeof(cases) / sizeof(*cases);
+
+    for(size_t i = 0; i < ncases; i++){
+        dstr_t text;
+        DSTR_WRAP(text, cases[i].str, strlen(cases[i].str), true);
+        imap_time_t exp = cases[i].time;
+        imap_time_t got;
+        PROP(&e, imf_parse_date(text, &got) );
+        ASSERT_GO(imap_time, &e, &text, exp, got, cu);
+    }
+
+cu:
     return e;
 }
 
@@ -1615,6 +1722,7 @@ int main(int argc, char** argv){
     PROP_GO(&e, test_imf_parse(), test_fail);
     PROP_GO(&e, test_parse_from_field(), test_fail);
     PROP_GO(&e, test_parse_to_field(), test_fail);
+    PROP_GO(&e, test_parse_date_field(), test_fail);
     PROP_GO(&e, test_read_envelope_info(), test_fail);
     PROP_GO(&e, test_read_mime_content_type(), test_fail);
     PROP_GO(&e, test_get_multipart_index(), test_fail);
