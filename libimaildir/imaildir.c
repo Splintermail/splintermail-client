@@ -92,6 +92,7 @@ static derr_t relay_cmd_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
     derr_t e = E_OK;
     imaildir_cb_t *imaildir_cb = CONTAINER_OF(cb, imaildir_cb_t, cb);
     relay_t *relay = imaildir_cb->relay;
+    imaildir_t *m = relay->m;
 
     dn_t *requester = relay->requester;
 
@@ -126,7 +127,7 @@ cu:
     if(is_error(e)){
         /* we must close accessors who don't have a way to tell they are now
            out-of-date */
-        imaildir_fail(relay->m, SPLIT(e));
+        imaildir_fail(m, SPLIT(e));
         /* now we must throw a special error since we are about to return
            control to an accessor that probably just got closed */
         RETHROW(&e, &e, E_IMAILDIR);
