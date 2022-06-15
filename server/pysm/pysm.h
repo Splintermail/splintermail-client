@@ -1,5 +1,15 @@
+// python throws a false array-bounds error
+#ifdef __GNUC__
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Warray-bounds"
+#endif // __GNUC__
+
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
+
+#ifdef __GNUC__
+#pragma GCC diagnostic pop
+#endif // __GNUC__
 
 #include "libdstr/libdstr.h"
 #include "server/mysql_util/mysql_util.h"
