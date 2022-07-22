@@ -22,10 +22,6 @@ derr_type_t fmthook_uv_error(dstr_t* out, const void* arg){
     return E_NONE;
 }
 
-int duv_cancel_work(uv_work_t *work){
-    return uv_cancel((uv_req_t*)work);
-}
-
 void duv_async_close(uv_async_t* async, uv_close_cb close_cb){
     uv_close((uv_handle_t*)async, close_cb);
 }
@@ -36,12 +32,6 @@ void duv_timer_close(uv_timer_t* timer, uv_close_cb close_cb){
 
 void duv_udp_close(uv_udp_t* udp, uv_close_cb close_cb){
     uv_close((uv_handle_t*)udp, close_cb);
-}
-
-int duv_udp_bind_sockaddr_in(
-    uv_udp_t *udp, struct sockaddr_in *sai, unsigned int flags
-){
-    return uv_udp_bind(udp, (struct sockaddr*)sai, flags);
 }
 
 derr_t set_uv_threadpool_size(unsigned int min, unsigned int recommended){
@@ -149,6 +139,56 @@ derr_t duv_queue_work(
     if(ret < 0){
         TRACE(&e, "uv_queue_work: %x\n", FUV(&ret));
         ORIG(&e, uv_err_type(ret), "uv_queue_work error");
+    }
+    return e;
+}
+
+derr_t duv_cancel_work(uv_work_t *work){
+    derr_t e = E_OK;
+    int ret = uv_cancel((uv_req_t*)work);
+    if(ret < 0){
+        TRACE(&e, "uv_cancel: %x\n", FUV(&ret));
+        ORIG(&e, uv_err_type(ret), "uv_cancel error");
+    }
+    return e;
+}
+
+derr_t duv_udp_init(uv_loop_t *loop, uv_udp_t *udp){
+    derr_t e = E_OK;
+    int ret = uv_udp_init(loop, udp);
+    if(ret < 0){
+        TRACE(&e, "uv_udp_init: %x\n", FUV(&ret));
+        ORIG(&e, uv_err_type(ret), "uv_udp_init error");
+    }
+    return e;
+}
+
+derr_t duv_udp_bind(
+    uv_udp_t *udp, const struct sockaddr *sa, unsigned int flags
+){
+    derr_t e = E_OK;
+    int ret = uv_udp_bind(udp, sa, flags);
+    if(ret < 0){
+        TRACE(&e, "uv_udp_bind: %x\n", FUV(&ret));
+        ORIG(&e, uv_err_type(ret), "uv_udp_bind error");
+    }
+    return e;
+}
+
+derr_t duv_udp_binds(
+    uv_udp_t *udp, const struct sockaddr_storage *ss, unsigned int flags
+){
+    return duv_udp_bind(udp, (const struct sockaddr*)ss, flags);
+}
+
+derr_t duv_udp_recv_start(
+    uv_udp_t *udp, uv_alloc_cb alloc_cb, uv_udp_recv_cb recv_cb
+){
+    derr_t e = E_OK;
+    int ret = uv_udp_recv_start(udp, alloc_cb, recv_cb);
+    if(ret < 0){
+        TRACE(&e, "uv_udp_recv_start: %x\n", FUV(&ret));
+        ORIG(&e, uv_err_type(ret), "uv_udp_recv_start error");
     }
     return e;
 }
