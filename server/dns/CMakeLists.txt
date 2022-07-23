@@ -1,4 +1,12 @@
-add_executable(dns main.c membuf.c dns.c)
+add_executable(dns main.c membuf.c dns.c parse.c)
 default_compile_options(dns TRUE)
 define_file_logname_for_target(dns)
 target_link_libraries(dns PUBLIC dstr uvthread)
+
+if("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU")
+    source_compile_options(parse.c "-Wno-conversion")
+elseif("${CMAKE_C_COMPILER_ID}" MATCHES "Clang")
+    source_compile_options(parse.c "-Wno-missing-prototypes")
+elseif("${CMAKE_C_COMPILER_ID}" STREQUAL "MSVC")
+    # flags for MVSC (VS 2017)
+endif()
