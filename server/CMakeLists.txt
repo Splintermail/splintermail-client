@@ -70,50 +70,10 @@ default_compile_options(gc_sessions TRUE)
 define_file_logname_for_target(gc_sessions)
 target_link_libraries(gc_sessions PUBLIC libsmsql badbadbad_alert)
 
-add_subdirectory(pysm)
-add_subdirectory(smphp)
-add_subdirectory(xkey)
-
-#############
-
-# generate the From scanner
-set(from_scan_in "${CMAKE_CURRENT_SOURCE_DIR}/from.c")
-set(from_scan_out "${PROJECT_BINARY_DIR}/from.gen.c")
-add_custom_command(
-    OUTPUT "${from_scan_out}"
-    COMMAND "${RE2C}" -W -Werror -o "${from_scan_out}" "${from_scan_in}"
-    DEPENDS "${from_scan_in}"
-    COMMENT "generating From scanner" VERBATIM
-    )
-
-# generate the From parser
-set(from_parse_in "${CMAKE_CURRENT_SOURCE_DIR}/from.y")
-set(from_parse_out "${PROJECT_BINARY_DIR}/from.tab.c")
-set(bison_header "${PROJECT_BINARY_DIR}/from.tab.h")
-add_custom_command(
-    OUTPUT "${from_parse_out}" "${bison_header}"
-    COMMAND "${BISON}" -d -o "${from_parse_out}" "${from_parse_in}" --report=state
-    DEPENDS "${from_parse_in}"
-    COMMENT "generating From parser" VERBATIM
-    )
-
-define_file_logname_for_source("${from_scan_in}" "${from_scan_out}")
-define_file_logname_for_source("${from_parse_in}" "${from_parse_out}")
-
-add_executable(from "${from_scan_out}" "${from_parse_out}")
+add_executable(from from.c)
 default_compile_options(from TRUE)
-target_link_libraries(from PUBLIC dstr)
-
-# Work around missing prototype and poor enum handling with bison 3.6:
-if("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU")
-    source_compile_options("${from_parse_out}" "-Wno-missing-prototypes")
-    source_compile_options("${from_parse_out}" "-Wno-switch-enum")
-elseif("${CMAKE_C_COMPILER_ID}" MATCHES "Clang")
-    source_compile_options("${from_parse_out}" "-Wno-missing-prototypes")
-    source_compile_options("${from_parse_out}" "-Wno-switch-enum")
-elseif("${CMAKE_C_COMPILER_ID}" STREQUAL "MSVC")
-    # flags for MVSC (VS 2017)
-endif()
+define_file_logname_for_target(from)
+target_link_libraries(from PUBLIC dstr imap)
 
 if("${BUILD_TESTS}")
     enable_testing()
@@ -122,3 +82,7 @@ if("${BUILD_TESTS}")
         COMMAND "${PROJECT_SOURCE_DIR}/test/test_from.sh" "$<TARGET_FILE:from>"
     )
 endif()
+
+add_subdirectory(pysm)
+add_subdirectory(smphp)
+add_subdirectory(xkey)

@@ -552,36 +552,32 @@ local_part_xbr:dstr =
     {$$ = STEAL(ie_dstr_t, &$out);}
 ;
 local_part_xbr_append(out:dstr) =
-    1*(
-        lp_chunk_append!(out)
-        (cfws | %return)
+    lp_chunk_append!(out)
+    *(
+        cfws
+        (lp_chunk_append!(out) | %return )
     )
 ;
 # Since we can't always distinguish local part or phrase until afterwards,
 # we'll build something that can be post-processed.
 local_part_or_phrase_xbr:dstr =
     null_dstr:out
-    1*(
-        lp_chunk_add!(out)
+    lp_chunk_add!(out)
+    *(
+        lp_cfws_add!(out)
         (
-          | lp_cfws_add!(out)
+          | lp_chunk_add!(out)
           | {$$ = STEAL(ie_dstr_t, &$out);} %return
         )
     )
     {$$ = STEAL(ie_dstr_t, &$out);}
 ;
-# a chunk for one ie_dstr_append:
-lp_atom_dot = [DOT] 1*(atom (DOT | %return));
-lp_atom_dot_append(out:dstr) =
-    lp_atom_dot:x
-    {$out = ie_dstr_append_from_off(E, $out, @x);}
-;
-# a chunk for one ie_dstr_add:
 lp_chunk_append(out:dstr) =
-    [quoted_string_append!(out)]
     1*(
-        lp_atom_dot_append!(out)
-        (quoted_string_append!(out) | %return)
+      | quoted_string_append!(out)
+        # yeah, this will append one byte at a time:
+      | atom_base:x {$out = ie_dstr_append_from_off(E, $out, @x);}
+      | DOT:x {$out = ie_dstr_append_from_off(E, $out, @x);}
     )
 ;
 lp_chunk:dstr =
@@ -746,10 +742,14 @@ mailbox_xbr:addr =
 mailbox_list_xbr:addr =
     mailbox_xbr:m1  {$$ = STEAL(ie_addr_t, &$m1);}
     *(
-        COMMA
-        xbr
+        COMMA xbr
         [mailbox_xbr:m2 {$$ = ie_addr_add(E, $$, STEAL(ie_addr_t, &$m2));}]
     )
+;
+obs_mbx_list_xbr:addr =
+    *(COMMA xbr)
+    mailbox_list_xbr:x
+    {$$ = STEAL(ie_addr_t, &$x);}
 ;
 
 # group is always joined by cfws
@@ -853,7 +853,7 @@ date_time:time =
 ;
 
 # roots:
-from_field:addr = xbr mailbox_list_xbr:x EOF     {$$ = STEAL(ie_addr_t, &$x);};
+from_field:addr = xbr obs_mbx_list_xbr:x EOF     {$$ = STEAL(ie_addr_t, &$x);};
 sender_field:addr = xbr mailbox_xbr:x EOF        {$$ = STEAL(ie_addr_t, &$x);};
 reply_to_field:addr = xbr address_list_xbr:x EOF {$$ = STEAL(ie_addr_t, &$x);};
 to_field:addr = xbr address_list_xbr:x EOF       {$$ = STEAL(ie_addr_t, &$x);};
