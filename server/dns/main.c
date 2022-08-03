@@ -5,23 +5,6 @@
 
 #include "server/dns/dns.h"
 
-void print_bytes(const char *bytes, size_t len){
-    printf("  ");
-    for(size_t i = 0; i < len; i++){
-        if(i == 0){
-        }else if(i > 0 && i%16 == 0){
-            printf("\n  ");
-        }else if(i%4 == 0){
-            printf("  ");
-        }else{
-            printf(" ");
-        }
-        unsigned char c = ((unsigned char*)bytes)[i];
-        printf("%.2x", (unsigned int)c);
-    }
-    printf("\n");
-}
-
 static void noop_close_cb(uv_handle_t *handle){
     (void)handle;
 }

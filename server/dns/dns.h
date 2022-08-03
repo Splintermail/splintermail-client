@@ -12,7 +12,7 @@ typedef struct {
     bool rd : 1;
     bool ra : 1;
     uint8_t z : 3;
-    uint8_t rcode : 4;
+    uint16_t rcode : 12;  // big enough for edns extended-rcode
     uint16_t qdcount;
     uint16_t ancount;
     uint16_t nscount;
@@ -36,11 +36,25 @@ typedef struct {
 } dns_rr_t;
 
 typedef struct {
+    bool found;
+    uint8_t extrcode;
+    uint8_t version;
+    bool dnssec_ok : 1;
+    uint16_t z : 15;
+    uint16_t udp_size;
+    // options
+    const char *ptr;
+    size_t optoff;
+    size_t optcount;
+} edns_t;
+
+typedef struct {
     dns_hdr_t hdr;
     dns_qstn_t qstn;
     dns_rr_t ans;
     dns_rr_t auth;
     dns_rr_t addl;
+    edns_t edns;
 } dns_pkt_t;
 
 typedef struct {
@@ -62,8 +76,6 @@ DEF_STEAL_PTR(membuf_t);
 
 // main.c //
 
-void print_bytes(const char *bytes, size_t len);
-
 // only to be called from the top-level libuv callbacks
 void dns_close(globals_t *g, derr_t e);
 
@@ -82,6 +94,8 @@ typedef struct {
     const char *str;
 } lstr_t;
 
+size_t skip_name(const char *ptr, size_t used);
+
 typedef struct {
     const char *ptr;
     size_t pos;
@@ -96,6 +110,48 @@ typedef struct {
 lstr_t *labels_iter(labels_t *it, const char *ptr, size_t start);
 lstr_t *labels_next(labels_t *it);
 
+typedef struct {
+    const char *ptr;
+    size_t nameoff;
+    uint16_t type;
+    uint16_t class;
+    uint32_t ttl;
+    uint16_t rdlen;
+    size_t rdoff;
+} rr_t;
+
+typedef struct {
+    const char *ptr;
+    size_t pos;
+    size_t count;
+    size_t seen;
+    rr_t rr;
+} rrs_t;
+
+rr_t *dns_rr_iter(rrs_t *it, const dns_rr_t dns_rr);
+
+rr_t *rrs_iter(rrs_t *it, const char *ptr, size_t start, size_t count);
+
+rr_t *rrs_next(rrs_t *it);
+
+typedef struct {
+    uint16_t code;
+    const char *ptr;
+    size_t off;
+    size_t len;
+} opt_t;
+
+typedef struct {
+    const char *ptr;
+    size_t pos;
+    size_t count;
+    size_t seen;
+    opt_t opt;
+} opts_t;
+
+opt_t *opts_iter(opts_t *it, const edns_t edns);
+opt_t *opts_next(opts_t *it);
+
 // returns -1 on failure
 int parse_qtype(const char *qtype);
 
@@ -105,6 +161,8 @@ const char *qtype_tostr(int qtype);
 // returns 0 if ok, or BAD_PARSE if not ok
 size_t parse_pkt(dns_pkt_t *pkt, const char *ptr, size_t len);
 void print_pkt(const dns_pkt_t pkt);
+
+void print_bytes(const char *bytes, size_t len);
 
 // dns.c //
 

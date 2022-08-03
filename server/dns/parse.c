@@ -93,8 +93,6 @@ static size_t parse_hdr(
     hdr->nscount = (uptr[8] << 8) | uptr[9];
     hdr->arcount = (uptr[10] << 8) | uptr[11];
 
-    // TODO: validate some of these values
-
     return used + 12;
 }
 
@@ -154,6 +152,25 @@ static size_t parse_name(const char *ptr, size_t len, size_t used){
     } while(l);
 
     return after_ptr ? preptr_used : used;
+}
+
+// don't care about the content, just skip it
+size_t skip_name(const char *ptr, size_t used){
+    const uint8_t *uptr = (uint8_t*)ptr;
+    uint8_t l = 0;
+    do {
+        // read the length byte
+        l = uptr[used++];
+        if((l & 0xC0) == 0xC0){
+            // pointer
+            return used;
+        }else{
+            // regular label
+            used += l;
+        }
+    } while(l);
+
+    return used;
 }
 
 lstr_t *labels_iter(labels_t *it, const char *ptr, size_t start){
@@ -272,32 +289,144 @@ static size_t parse_rr(
     return used;
 }
 
-static void print_rr(const dns_rr_t rr){
-    const uint8_t *uptr = (uint8_t*)rr.ptr;
-    size_t used = rr.off;
+rr_t *dns_rr_iter(rrs_t *it, const dns_rr_t dns_rr){
+    return rrs_iter(it, dns_rr.ptr, dns_rr.off, dns_rr.count);
+}
 
-    for(uint16_t i = 0; i < rr.count; i++){
-        labels_t labels = {0};
-        lstr_t *lstr = labels_iter(&labels, rr.ptr, used);
+rr_t *rrs_iter(rrs_t *it, const char *ptr, size_t start, size_t count){
+    *it = (rrs_t){
+        .ptr = ptr,
+        .pos = start,
+        .count = count,
+    };
+    return rrs_next(it);
+}
+
+rr_t *rrs_next(rrs_t *it){
+    if(it->seen == it->count) return NULL;
+
+    const uint8_t *uptr = (uint8_t*)it->ptr;
+    size_t used = it->pos;
+
+    rr_t rr = { .ptr = it->ptr };
+
+    rr.nameoff = used;
+    used = skip_name(it->ptr, used);
+    rr.type = (uptr[used+0] << 8) | uptr[used+1];
+    rr.class = (uptr[used+2] << 8) | uptr[used+3];
+    rr.ttl = (uptr[used+4] << 24)
+                 | (uptr[used+5] << 16)
+                 | (uptr[used+6] << 8)
+                 |  uptr[used+7];
+    rr.rdlen = (uptr[used+8] << 8) | uptr[used+9];
+    used += 10;
+    rr.rdoff = used;
+
+    it->rr = rr;
+    it->pos = used;
+    it->seen++;
+
+    return &it->rr;
+}
+
+
+static void print_rr(const dns_rr_t dns_rr){
+    rrs_t it;
+    for(rr_t *rr = dns_rr_iter(&it, dns_rr); rr; rr = rrs_next(&it)){
         printf("name=");
+        labels_t labels = {0};
+        lstr_t *lstr = labels_iter(&labels, rr->ptr, rr->nameoff);
         for(; lstr; lstr = labels_next(&labels)){
             printf("%.*s.", (int)lstr->len, lstr->str);
         }
-        used = labels.used;
-        unsigned type = (uptr[used+0] << 8) | uptr[used+1];
-        unsigned class = (uptr[used+2] << 8) | uptr[used+3];
-        unsigned ttl = (uptr[used+4] << 24)
-                     | (uptr[used+5] << 16)
-                     | (uptr[used+6] << 8)
-                     |  uptr[used+7];
-        unsigned rdlen = (uptr[used+8] << 8) | uptr[used+9];
-        used += 10;
-        printf(" type=%u", type);
-        printf(" class=%u", class);
-        printf(" ttl=%u", ttl);
-        printf(" rdlen=%u\n", rdlen);
-        print_bytes(rr.ptr + used, rdlen);
-        used += rdlen;
+        printf(" type=%u", rr->type);
+        printf(" class=%u", rr->class);
+        printf(" ttl=%u", rr->ttl);
+        printf(" rdlen=%u\n", rr->rdlen);
+        print_bytes(rr->ptr + rr->rdoff, rr->rdlen);
+    }
+}
+
+// returns 0 if not found, 1 if found, BAD_PARSE if more than one found
+static size_t find_edns(rr_t *edns, const dns_rr_t addl){
+    *edns = (rr_t){0};
+    rrs_t it;
+    bool found = false;
+    for(rr_t *rr = dns_rr_iter(&it, addl); rr; rr = rrs_next(&it)){
+        if(rr->type != 41) continue;
+        if(found) return BAD_PARSE;
+        found = true;
+        *edns = *rr;
+    }
+    return found;
+}
+
+// returns 0 if ok, BAD_PARSE if not ok
+static size_t parse_edns(edns_t *edns, const rr_t rr){
+    *edns = (edns_t){ .found = true, .ptr = rr.ptr };
+    // rr.name must be empty
+    if(rr.ptr[rr.nameoff] != '\0') return BAD_PARSE;
+    edns->udp_size = rr.class;
+    edns->extrcode = (rr.ttl >> 24) & 0xff;
+    edns->version = (rr.ttl >> 16) & 0xff;
+    edns->dnssec_ok = rr.ttl & 0x8000;
+    edns->z = rr.ttl & 0x7fff;
+    edns->optoff = rr.rdoff;
+    size_t used = rr.rdoff;
+    size_t len = rr.rdoff + rr.rdlen;
+    const uint8_t *uptr = (uint8_t*)rr.ptr;
+    while(used < len){
+        if(len < used + 4) return BAD_PARSE;
+        // uint16_t optcode = (uptr[used+0] << 8) | uptr[used+1];
+        uint16_t optlen = (uptr[used+2] << 8) | uptr[used+3];
+        used += 4;
+        if(len < used + optlen) return BAD_PARSE;
+        used += optlen;
+        edns->optcount++;
+    }
+    return 0;
+}
+
+opt_t *opts_iter(opts_t *it, const edns_t edns){
+    *it = (opts_t){
+        .ptr = edns.ptr,
+        .pos = edns.optoff,
+        .count = edns.optcount,
+    };
+    return opts_next(it);
+}
+
+opt_t *opts_next(opts_t *it){
+    if(it->seen >= it->count) return NULL;
+    const uint8_t *uptr = (uint8_t*)it->ptr;
+    uint16_t optcode = (uptr[it->pos+0] << 8) | uptr[it->pos+1];
+    uint16_t optlen = (uptr[it->pos+2] << 8) | uptr[it->pos+3];
+    size_t off = it->pos + 4;
+    it->opt = (opt_t){
+        .ptr = it->ptr,
+        .code = optcode,
+        .len = optlen,
+        .off = off,
+    };
+
+    it->pos += 4 + optlen;
+    it->seen++;
+    return &it->opt;
+}
+
+
+static void print_edns(const edns_t edns){
+    if(!edns.found) printf("(not found)");
+    printf("extended-rcode=%u", (unsigned)edns.extrcode);
+    printf(" version=%u", (unsigned)edns.version);
+    printf(" dnssec_ok=%u", (unsigned)edns.dnssec_ok);
+    printf(" z=%u", (unsigned)edns.z);
+    printf(" udp_size=%u", (unsigned)edns.udp_size);
+    printf(" optcount=%zu", edns.optcount);
+    opts_t opts;
+    for(opt_t *opt = opts_iter(&opts, edns); opt; opt = opts_next(&opts)){
+        printf("\noption-code=%u:\n", (unsigned)opt->code);
+        print_bytes(opt->ptr + opt->off, opt->len);
     }
 }
 
@@ -313,6 +442,15 @@ size_t parse_pkt(dns_pkt_t *pkt, const char *ptr, size_t len){
     used = parse_rr(&pkt->addl, pkt->hdr.arcount, ptr, len, used);
     if(used == BAD_PARSE) return BAD_PARSE;
 
+    // detect edns
+    rr_t edns;
+    size_t zret = find_edns(&edns, pkt->addl);
+    if(zret == BAD_PARSE) return BAD_PARSE;
+    if(zret == 1){
+        zret = parse_edns(&pkt->edns, edns);
+        if(zret == BAD_PARSE) return BAD_PARSE;
+    }
+
     return 0;
 };
 
@@ -326,5 +464,23 @@ void print_pkt(const dns_pkt_t pkt){
     print_rr(pkt.auth);
     printf("\nADDITIONAL ");
     print_rr(pkt.addl);
+    printf("\nEDNS ");
+    print_edns(pkt.edns);
     printf("\n");
+}
+
+void print_bytes(const char *bytes, size_t len){
+    printf("  ");
+    for(size_t i = 0; i < len; i++){
+        if(i == 0){
+        }else if(i > 0 && i%16 == 0){
+            printf("\n  ");
+        }else if(i%4 == 0){
+            printf("  ");
+        }else{
+            printf(" ");
+        }
+        unsigned char c = ((unsigned char*)bytes)[i];
+        printf("%.2x", (unsigned int)c);
+    }
 }
