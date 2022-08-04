@@ -73,8 +73,6 @@ static void on_recv(
 
     // a successful recv
 
-    print_bytes(buf->base, (size_t)nread);
-
     // steal membuf
     membuf->len = (size_t)nread;
     PROP_GO(&e, handle_packet(g, STEAL(membuf_t, &membuf)), fail);

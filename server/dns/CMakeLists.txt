@@ -12,9 +12,17 @@ endif()
 
 if(BUILD_TESTS)
     enable_testing()
+
     add_executable(test_parse test_parse.c)
     target_link_libraries(test_parse PUBLIC dstr)
     default_compile_options(test_parse TRUE)
     define_file_logname_for_target(test_parse)
     add_test(NAME "do_test_parse" COMMAND "./test_parse")
+
+    add_executable(test_dns test_dns.c parse.c membuf.c)
+    target_link_libraries(test_dns PUBLIC dstr)
+    default_compile_options(test_dns TRUE)
+    define_file_logname_for_target(test_dns)
+    add_test(NAME "do_test_dns" COMMAND "./test_dns")
+
 endif()

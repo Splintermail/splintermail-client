@@ -5,6 +5,10 @@
 #include "libdstr/libdstr.h"
 #include "server/dns/dns.h"
 
+bool lstr_eq(const lstr_t a, const lstr_t b){
+    return a.len == b.len && strncmp(a.str, b.str, a.len) == 0;
+}
+
 char *UNKNOWN = "unknown";
 
 // returns -1 on failure
@@ -205,6 +209,35 @@ lstr_t *labels_next(labels_t *it){
         it->pos += l;
         return &it->lstr;
     }
+}
+
+void labels_reverse(lstr_t *lstrs, size_t n){
+    // operate on 0 to n/2; if n is odd the middle is untouched
+    size_t end = n/2;
+    for(size_t i = 0; i < end; i++){
+        lstr_t temp = lstrs[i];
+        lstrs[i] = lstrs[n-i-1];
+        lstrs[n-i-1] = temp;
+    }
+}
+
+// returns size_t nlabels; nlabels > cap indicates an error
+size_t labels_read(const char *ptr, size_t start, lstr_t *lstrs, size_t cap){
+    labels_t it;
+    size_t n = 0;
+    for(lstr_t *l = labels_iter(&it, ptr, start); l; l = labels_next(&it)){
+        if(n == cap) return cap+1;
+        lstrs[n++] = *l;
+    }
+    return n;
+}
+
+size_t labels_read_reverse(
+    const char *ptr, size_t start, lstr_t *lstrs, size_t cap
+){
+    size_t n = labels_read(ptr, start, lstrs, cap);
+    labels_reverse(lstrs, n);
+    return n;
 }
 
 static size_t parse_qstn(

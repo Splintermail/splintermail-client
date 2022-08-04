@@ -5,12 +5,12 @@
 
 typedef struct {
     uint16_t id;
-    bool qr : 1;
-    uint8_t opcode : 4;
-    bool aa : 1;
-    bool tc : 1;
-    bool rd : 1;
-    bool ra : 1;
+    bool qr : 1;  // query (0) or response (1)
+    uint8_t opcode : 4;  // standard query = 0
+    bool aa : 1; // authoritative answer
+    bool tc : 1; // truncation
+    bool rd : 1; // recursion desired
+    bool ra : 1; // recursion available
     uint8_t z : 3;
     uint16_t rcode : 12;  // big enough for edns extended-rcode
     uint16_t qdcount;
@@ -94,6 +94,10 @@ typedef struct {
     const char *str;
 } lstr_t;
 
+#define LSTR(literal) (lstr_t){ .str = literal, .len = sizeof(literal)-1 }
+
+bool lstr_eq(const lstr_t a, const lstr_t b);
+
 size_t skip_name(const char *ptr, size_t used);
 
 typedef struct {
@@ -109,6 +113,17 @@ typedef struct {
 
 lstr_t *labels_iter(labels_t *it, const char *ptr, size_t start);
 lstr_t *labels_next(labels_t *it);
+
+void labels_reverse(lstr_t *lstrs, size_t n);
+
+// returns size_t nlabels; nlabels > cap indicates an error
+size_t labels_read(const char *ptr, size_t start, lstr_t *lstrs, size_t cap);
+
+// like lables_read, but reverse name before returning
+size_t labels_read_reverse(
+    const char *ptr, size_t start, lstr_t *lstrs, size_t cap
+);
+
 
 typedef struct {
     const char *ptr;
