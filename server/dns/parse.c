@@ -5,6 +5,29 @@
 #include "libdstr/libdstr.h"
 #include "server/dns/dns.h"
 
+bool is_bad_parse(size_t n){
+    return n >= BP_MINVAL;
+}
+
+const char *bp2str(bad_parse_e bp){
+    switch(bp){
+        case BP_ENDS_OPT_DATA_OVERRUN: return "BP_ENDS_OPT_DATA_OVERRUN";
+        case BP_ENDS_OPT_HDR_OVERRUN: return "BP_ENDS_OPT_HDR_OVERRUN";
+        case BP_ENDS_NONEMPTY_NAME: return "BP_ENDS_NONEMPTY_NAME";
+        case BP_DOUBLE_EDNS: return "BP_DOUBLE_EDNS";
+        case BP_RR_DATA_OVERRUN: return "BP_RR_DATA_OVERRUN";
+        case BP_RR_HDR_OVERRUN: return "BP_RR_HDR_OVERRUN";
+        case BP_QSTN_OVERRUN: return "BP_QSTN_OVERRUN";
+        case BP_LONG_NAME: return "BP_LONG_NAME";
+        case BP_LABEL_OVERRUN: return "BP_LABEL_OVERRUN";
+        case BP_LONG_LABEL: return "BP_LONG_LABEL";
+        case BP_DOUBLE_POINTER: return "BP_DOUBLE_POINTER";
+        case BP_LABEL_LEN_BYTE: return "BP_LABEL_LEN_BYTE";
+        case BP_HDR_OVERRUN: return "BP_HDR_OVERRUN";
+    }
+    return "parse was ok";
+}
+
 bool lstr_eq(const lstr_t a, const lstr_t b){
     return a.len == b.len && strncmp(a.str, b.str, a.len) == 0;
 }
@@ -73,15 +96,15 @@ const char *qtype_tostr(int qtype){
     }
 }
 
-// returns BAD_PARSE on invalid input, or updated `used`
+// returns bad_parse_e on invalid input, or updated `used`
 static size_t parse_hdr(
     dns_hdr_t *hdr, const char *ptr, size_t len, size_t used
 ){
-    if(used == BAD_PARSE) return BAD_PARSE;
+    if(is_bad_parse(used)) return used;
     const uint8_t *uptr = (uint8_t*)ptr;
     uptr += used;
 
-    if(len < used + 12) return BAD_PARSE;
+    if(len < used + 12) return BP_HDR_OVERRUN;
 
     hdr->id = (uptr[0] << 8) | uptr[1];
     hdr->qr = (0x80 & uptr[2]) >> 7;
@@ -123,7 +146,7 @@ static void print_hdr(const dns_hdr_t hdr){
 // allow pointers, but not double-pointers
 // return the number of bytes used until zero label or first pointer
 static size_t parse_name(const char *ptr, size_t len, size_t used){
-    if(used == BAD_PARSE) return BAD_PARSE;
+    if(is_bad_parse(used)) return used;
     const uint8_t *uptr = (uint8_t*)ptr;
     bool after_ptr = false;
     bool was_ptr = false;
@@ -132,11 +155,11 @@ static size_t parse_name(const char *ptr, size_t len, size_t used){
     uint8_t l = 0;
     do {
         // read the length byte
-        if(len < used + 1) return BAD_PARSE;
+        if(len < used + 1) return BP_LABEL_LEN_BYTE;
         l = uptr[used++];
         if((l & 0xC0) == 0xC0){
             // pointer
-            if(was_ptr) return BAD_PARSE;  // double pointer
+            if(was_ptr) return BP_DOUBLE_POINTER;
             was_ptr = true;
             if(!after_ptr){
                 after_ptr = true;
@@ -146,12 +169,12 @@ static size_t parse_name(const char *ptr, size_t len, size_t used){
         }else{
             // regular label
             was_ptr = false;
-            if(l > 63) return BAD_PARSE;
-            if(len < used + l) return BAD_PARSE;
+            if(l > 63) return BP_LONG_LABEL;
+            if(len < used + l) return BP_LABEL_OVERRUN;
             used += l;
             // namelen limit includes the length bytes
             namelen += l + 1;
-            if(namelen > 255) return BAD_PARSE;
+            if(namelen > 255) return BP_LONG_NAME;
         }
     } while(l);
 
@@ -247,16 +270,16 @@ static size_t parse_qstn(
     size_t len,
     size_t used
 ){
-    if(used == BAD_PARSE) return BAD_PARSE;
+    if(is_bad_parse(used)) return used;
     const uint8_t *uptr = (uint8_t*)ptr;
     qstn->off = used;
 
     // read qdcount qnames
     for(uint16_t i = 0; i < qdcount; i++){
         used = parse_name(ptr, len, used);
-        if(used == BAD_PARSE) return BAD_PARSE;
+        if(is_bad_parse(used)) return used;
     }
-    if(len < used + 4) return BAD_PARSE;
+    if(len < used + 4) return BP_QSTN_OVERRUN;
     qstn->qtype = (uptr[used+0] << 8) | uptr[used+1];
     qstn->qclass = (uptr[used+2] << 8) | uptr[used+3];
     used += 4;
@@ -264,10 +287,6 @@ static size_t parse_qstn(
     qstn->ptr = ptr;
     qstn->len = used - qstn->off;
     qstn->qdcount = qdcount;
-
-    // TODO: is there an in-band response we should send instead?
-    if(qtype_tostr(qstn->qtype) == UNKNOWN) return BAD_PARSE;
-    if(qtype_tostr(qstn->qclass) == UNKNOWN) return BAD_PARSE;
 
     return used;
 }
@@ -292,7 +311,7 @@ static void print_qstn(const dns_qstn_t qstn){
 static size_t parse_rr(
     dns_rr_t *rr, uint16_t count, const char *ptr, size_t len, size_t used
 ){
-    if(used == BAD_PARSE) return BAD_PARSE;
+    if(is_bad_parse(used)) return used;
     const uint8_t *uptr = (uint8_t*)ptr;
     rr->ptr = ptr;
     rr->off = used;
@@ -300,8 +319,8 @@ static size_t parse_rr(
 
     for(uint16_t i = 0; i < count; i++){
         used = parse_name(ptr, len, used);
-        if(used == BAD_PARSE) return BAD_PARSE;
-        if(len < used + 10) return BAD_PARSE;
+        if(is_bad_parse(used)) return used;
+        if(len < used + 10) return BP_RR_HDR_OVERRUN;
         uint16_t type = (uptr[used+0] << 8) | uptr[used+1];
         uint16_t class = (uptr[used+2] << 8) | uptr[used+3];
         uint32_t ttl = (uptr[used+4] << 24)
@@ -312,7 +331,7 @@ static size_t parse_rr(
         // TODO: check type, class, and rdlen
         (void)type; (void)class; (void)ttl;
         used += 10;
-        if(len < used + rdlen) return BAD_PARSE;
+        if(len < used + rdlen) return BP_RR_DATA_OVERRUN;
         // TODO: parse/validate the rdata as well
         used += rdlen;
     }
@@ -380,25 +399,25 @@ static void print_rr(const dns_rr_t dns_rr){
     }
 }
 
-// returns 0 if not found, 1 if found, BAD_PARSE if more than one found
+// returns 0 if not found, 1 if found, BP_DOUBLE_EDNS if more than one found
 static size_t find_edns(rr_t *edns, const dns_rr_t addl){
     *edns = (rr_t){0};
     rrs_t it;
     bool found = false;
     for(rr_t *rr = dns_rr_iter(&it, addl); rr; rr = rrs_next(&it)){
         if(rr->type != 41) continue;
-        if(found) return BAD_PARSE;
+        if(found) return BP_DOUBLE_EDNS;
         found = true;
         *edns = *rr;
     }
     return found;
 }
 
-// returns 0 if ok, BAD_PARSE if not ok
+// returns 0 if ok, bad_parse_e if not ok
 static size_t parse_edns(edns_t *edns, const rr_t rr){
     *edns = (edns_t){ .found = true, .ptr = rr.ptr };
     // rr.name must be empty
-    if(rr.ptr[rr.nameoff] != '\0') return BAD_PARSE;
+    if(rr.ptr[rr.nameoff] != '\0') return BP_ENDS_NONEMPTY_NAME;
     edns->udp_size = rr.class;
     edns->extrcode = (rr.ttl >> 24) & 0xff;
     edns->version = (rr.ttl >> 16) & 0xff;
@@ -409,11 +428,11 @@ static size_t parse_edns(edns_t *edns, const rr_t rr){
     size_t len = rr.rdoff + rr.rdlen;
     const uint8_t *uptr = (uint8_t*)rr.ptr;
     while(used < len){
-        if(len < used + 4) return BAD_PARSE;
+        if(len < used + 4) return BP_ENDS_OPT_HDR_OVERRUN;
         // uint16_t optcode = (uptr[used+0] << 8) | uptr[used+1];
         uint16_t optlen = (uptr[used+2] << 8) | uptr[used+3];
         used += 4;
-        if(len < used + optlen) return BAD_PARSE;
+        if(len < used + optlen) return BP_ENDS_OPT_DATA_OVERRUN;
         used += optlen;
         edns->optcount++;
     }
@@ -449,7 +468,10 @@ opt_t *opts_next(opts_t *it){
 
 
 static void print_edns(const edns_t edns){
-    if(!edns.found) printf("(not found)");
+    if(!edns.found){
+        printf("(not found)");
+        return;
+    }
     printf("extended-rcode=%u", (unsigned)edns.extrcode);
     printf(" version=%u", (unsigned)edns.version);
     printf(" dnssec_ok=%u", (unsigned)edns.dnssec_ok);
@@ -463,7 +485,7 @@ static void print_edns(const edns_t edns){
     }
 }
 
-// returns 0 if ok, or BAD_PARSE if not ok
+// returns 0 if ok, or bad_parse_e if not ok
 size_t parse_pkt(dns_pkt_t *pkt, const char *ptr, size_t len){
     size_t used = 0;
     *pkt = (dns_pkt_t){0};
@@ -473,15 +495,15 @@ size_t parse_pkt(dns_pkt_t *pkt, const char *ptr, size_t len){
     used = parse_rr(&pkt->ans, pkt->hdr.ancount, ptr, len, used);
     used = parse_rr(&pkt->auth, pkt->hdr.nscount, ptr, len, used);
     used = parse_rr(&pkt->addl, pkt->hdr.arcount, ptr, len, used);
-    if(used == BAD_PARSE) return BAD_PARSE;
+    if(is_bad_parse(used)) return used;
 
     // detect edns
     rr_t edns;
     size_t zret = find_edns(&edns, pkt->addl);
-    if(zret == BAD_PARSE) return BAD_PARSE;
+    if(is_bad_parse(zret)) return zret;
     if(zret == 1){
         zret = parse_edns(&pkt->edns, edns);
-        if(zret == BAD_PARSE) return BAD_PARSE;
+        if(is_bad_parse(zret)) return zret;
     }
 
     return 0;

@@ -25,7 +25,27 @@
 #define NMEMBUFS 256
 #define MEMBUFSIZE 4096
 
-#define BAD_PARSE ((size_t)-1)
+typedef enum {
+    BP_MINVAL                = (size_t)-13,
+
+    BP_ENDS_OPT_DATA_OVERRUN = (size_t)-13,
+    BP_ENDS_OPT_HDR_OVERRUN  = (size_t)-12,
+    BP_ENDS_NONEMPTY_NAME    = (size_t)-11,
+    BP_DOUBLE_EDNS           = (size_t)-10,
+    BP_RR_DATA_OVERRUN       = (size_t)-9,
+    BP_RR_HDR_OVERRUN        = (size_t)-8,
+    BP_QSTN_OVERRUN          = (size_t)-7,
+    BP_LONG_NAME             = (size_t)-6,
+    BP_LABEL_OVERRUN         = (size_t)-5,
+    BP_LONG_LABEL            = (size_t)-4,
+    BP_DOUBLE_POINTER        = (size_t)-3,
+    BP_LABEL_LEN_BYTE        = (size_t)-2,
+    BP_HDR_OVERRUN           = (size_t)-1,
+} bad_parse_e;
+
+#define RCODE_OK 0
+#define RCODE_NAMEERR 3
+#define RCODE_NOTIMPL 4
 
 typedef struct {
     uint16_t id;
@@ -42,6 +62,7 @@ typedef struct {
     uint16_t nscount;
     uint16_t arcount;
 } dns_hdr_t;
+#define DNS_HDR_SIZE 12
 
 typedef struct {
     const char *ptr;
@@ -93,12 +114,15 @@ typedef struct {
     char base[MEMBUFSIZE];
     size_t len;
     char resp[MEMBUFSIZE];
-    size_t rlen;
     link_t link; // globals_t->membufs;
     link_t *pool; // for easily returning a membuf to its pool
+    // structs for sending the response
+    uv_udp_send_t req;
+    uv_buf_t uvbuf;
 } membuf_t;
 DEF_CONTAINER_OF(membuf_t, base, char);
 DEF_CONTAINER_OF(membuf_t, link, link_t);
+DEF_CONTAINER_OF(membuf_t, req, uv_udp_send_t);
 DEF_STEAL_PTR(membuf_t);
 
 // main.c //
@@ -116,6 +140,9 @@ membuf_t *membufs_pop(link_t *membufs);
 void membuf_return(membuf_t **ptr);
 
 // parse.c //
+
+bool is_bad_parse(size_t n);
+const char *bp2str(bad_parse_e bp);
 
 typedef struct {
     size_t len;
@@ -207,7 +234,19 @@ void print_pkt(const dns_pkt_t pkt);
 
 void print_bytes(const char *bytes, size_t len);
 
+// write.c //
+
+void write_hdr(
+    const dns_hdr_t hdr,
+    uint16_t rcode,
+    bool aa,
+    bool tc,
+    uint16_t ancount,
+    uint16_t nscount,
+    uint16_t arcount,
+    char *out
+);
+
 // dns.c //
 
-// owns membuf
-derr_t handle_packet(globals_t *g, membuf_t *membuf);
+size_t handle_packet(char *qbuf, size_t qlen, char *rbuf, size_t rcap);

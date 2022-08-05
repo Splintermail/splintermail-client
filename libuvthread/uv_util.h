@@ -61,3 +61,11 @@ derr_t duv_udp_binds(
 derr_t duv_udp_recv_start(
     uv_udp_t *udp, uv_alloc_cb alloc_cb, uv_udp_recv_cb recv_cb
 );
+derr_t duv_udp_send(
+    uv_udp_send_t *req,
+    uv_udp_t *udp,
+    const uv_buf_t bufs[],
+    unsigned int nbufs,
+    const struct sockaddr *addr,
+    uv_udp_send_cb send_cb
+);

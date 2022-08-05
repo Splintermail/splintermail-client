@@ -192,3 +192,20 @@ derr_t duv_udp_recv_start(
     }
     return e;
 }
+
+derr_t duv_udp_send(
+    uv_udp_send_t *req,
+    uv_udp_t *udp,
+    const uv_buf_t bufs[],
+    unsigned int nbufs,
+    const struct sockaddr *addr,
+    uv_udp_send_cb send_cb
+){
+    derr_t e = E_OK;
+    int ret = uv_udp_send(req, udp, bufs, nbufs, addr, send_cb);
+    if(ret < 0){
+        TRACE(&e, "uv_udp_send: %x\n", FUV(&ret));
+        ORIG(&e, uv_err_type(ret), "uv_udp_send error");
+    }
+    return e;
+}

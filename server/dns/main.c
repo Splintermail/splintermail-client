@@ -14,6 +14,7 @@ void dns_close(globals_t *g, derr_t e){
         if(!is_error(g->close_reason)){
             // we hit an error during a non-error shutdown
             g->close_reason = e;
+        }else{
             DROP_VAR(&e);
         }
         return;
@@ -21,6 +22,23 @@ void dns_close(globals_t *g, derr_t e){
     g->closing = true;
     g->close_reason = e;
     duv_udp_close(&g->udp, noop_close_cb);
+}
+
+static void on_send(uv_udp_send_t *req, int status){
+    globals_t *g = req->handle->data;
+
+    membuf_t *membuf = CONTAINER_OF(req, membuf_t, req);
+    membuf_return(&membuf);
+
+    if(status == 0 || status == UV_ECANCELED) return;
+
+    // error condition
+    int uvret = status;
+    derr_t e = E_OK;
+    TRACE(&e, "on_recv: %x\n", FUV(&uvret));
+    TRACE_ORIG(&e, uv_err_type(uvret), "on_recv error");
+    dns_close(g, e);
+    PASSED(e);
 }
 
 static void allocator(
@@ -72,9 +90,18 @@ static void on_recv(
 
     // a successful recv
 
-    // steal membuf
-    membuf->len = (size_t)nread;
-    PROP_GO(&e, handle_packet(g, STEAL(membuf_t, &membuf)), fail);
+    size_t len = (size_t)nread;
+    size_t rlen = handle_packet(membuf->base, len, membuf->resp, MEMBUFSIZE);
+    if(rlen){
+        // we have something to say
+        uv_buf_t sendbuf = { .base = membuf->resp, .len = rlen };
+        PROP_GO(&e,
+            duv_udp_send(&membuf->req, &g->udp, &sendbuf, 1, src, on_send),
+        fail);
+
+        // if we launched the write successfully, the udp_send owns membuf
+        STEAL(membuf_t, &membuf);
+    }
 
 fail:
     if(is_error(e)){

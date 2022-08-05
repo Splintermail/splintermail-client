@@ -64,6 +64,7 @@ membuf_t *membufs_pop(link_t *membufs){
 
 void membuf_return(membuf_t **ptr){
     membuf_t *membuf = *ptr;
+    if(!membuf) return;
     link_list_append(membuf->pool, &membuf->link);
     membuf->pool = NULL;
     *ptr = NULL;

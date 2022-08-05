@@ -5,105 +5,134 @@
 #include "libdstr/libdstr.h"
 #include "server/dns/dns.h"
 
-typedef derr_t (*respond_f)(const dns_pkt_t pkt, const lstr_t user);
+// writes nothing if question doesn't fit, but returns what used would be
+static size_t copy_qstn(
+    const dns_qstn_t qstn, char *out, size_t cap, size_t used
+){
+    if(used + qstn.len <= cap){
+        memcpy(out + used, qstn.ptr + qstn.off, qstn.len);
+    }
+    return used + qstn.len;
+}
+
+typedef size_t (*respond_f)(
+    const dns_pkt_t pkt, const lstr_t user, char *out, size_t cap
+);
 
 /* we only have data for:
    - "root": user.splintermail.com. SOA / NS
    - "user": *.user.splintermail.com. A / AAAA
    - "acme": _acme-challenge.*.user.splintermail.com. TXT */
 
-static derr_t norespond(const dns_pkt_t pkt, const lstr_t user){
+static size_t norespond(
+    const dns_pkt_t pkt, const lstr_t user, char *out, size_t cap
+){
     (void)pkt;
     (void)user;
+    (void)out;
+    (void)cap;
     printf("no response\n");
-    return E_OK;
+    return 0;
 }
 
-static derr_t respond_notimpl(const dns_pkt_t pkt, const lstr_t user){
-    derr_t e = E_OK;
-    (void)pkt;
+static size_t respond_notimpl(
+    const dns_pkt_t pkt, const lstr_t user, char *out, size_t cap
+){
     (void)user;
-    printf("not implemented\n");
-    return e;
+
+    // reserve the header bytes
+    size_t used = DNS_HDR_SIZE;
+    size_t len = used;
+
+    used = copy_qstn(pkt.qstn, out, cap, used);
+    if(used <= cap) len = used;
+
+    bool aa = false;
+    bool tc = used > cap;
+    write_hdr(pkt.hdr, RCODE_NOTIMPL, aa, tc, 0, 0, 0, out);
+
+    return len;
 }
 
-static derr_t respond_name_error(const dns_pkt_t pkt, const lstr_t user){
-    derr_t e = E_OK;
+static size_t respond_name_error(
+    const dns_pkt_t pkt, const lstr_t user, char *out, size_t cap
+){
     (void)pkt;
     (void)user;
+    (void)out;
+    (void)cap;
     printf("name error\n");
-    return e;
+    return 0;
 }
 
-static derr_t respond_norecord(const dns_pkt_t pkt, const lstr_t user){
-    derr_t e = E_OK;
+static size_t respond_norecord(
+    const dns_pkt_t pkt, const lstr_t user, char *out, size_t cap
+){
     (void)pkt;
     (void)user;
+    (void)out;
+    (void)cap;
     printf("no record\n");
-    return e;
+    return 0;
 }
 
 // for user.splintermail.com
-static derr_t respond_root(const dns_pkt_t pkt, const lstr_t user){
-    derr_t e = E_OK;
+static size_t respond_root(
+    const dns_pkt_t pkt, const lstr_t user, char *out, size_t cap
+){
     (void)user;
 
     if(pkt.qstn.qtype == 6){
         // 'SOA' record
         printf("SOA\n");
-        return e;
+        return 0;
     }
 
     if(pkt.qstn.qtype == 2){
         // 'NS' record
         printf("NS\n");
-        return e;
+        return 0;
     }
 
     // no matching record
-    PROP(&e, respond_norecord(pkt, user) );
-
-    return e;
+    return respond_norecord(pkt, user, out, cap);
 }
 
 // for *.user.splintermail.com
-static derr_t respond_user(const dns_pkt_t pkt, const lstr_t user){
-    derr_t e = E_OK;
+static size_t respond_user(
+    const dns_pkt_t pkt, const lstr_t user, char *out, size_t cap
+){
     (void)user;
 
     if(pkt.qstn.qtype == 1){
         // 'A' record
         printf("A\n");
-        return e;
+        return 0;
     }
 
     if(pkt.qstn.qtype == 28){
         // 'AAAA' record
         printf("AAAA\n");
-        return e;
+        return 0;
     }
 
     // no matching record
-    PROP(&e, respond_norecord(pkt, user) );
-
-    return e;
+    return respond_norecord(pkt, user, out, cap);
 }
 
 // for _acme-challenge.*.user.splintermail.com
-static derr_t respond_acme(const dns_pkt_t pkt, const lstr_t user){
-    derr_t e = E_OK;
-
+static size_t respond_acme(
+    const dns_pkt_t pkt, const lstr_t user, char *out, size_t cap
+){
     if(pkt.qstn.qtype == 16){
         // 'TXT' record
         (void)user;
         printf("TXT\n");
-        return e;
+        return 0;
     }
 
     // no matching record
-    PROP(&e, respond_norecord(pkt, user) );
-
-    return e;
+    return respond_norecord(pkt, user, out, cap);
 }
 
 // always sets *respond and *user
@@ -142,19 +171,15 @@ static respond_f sort_pkt(const dns_pkt_t pkt, const lstr_t *rname, size_t n){
 }
 
 // owns membuf
-derr_t handle_packet(globals_t *g, membuf_t *membuf){
-    derr_t e = E_OK;
-
-    (void)g;
-
-    print_bytes(membuf->base, membuf->len);
+size_t handle_packet(char *qbuf, size_t qlen, char *rbuf, size_t rcap){
+    print_bytes(qbuf, qlen);
     printf("\n");
 
     dns_pkt_t pkt;
-    size_t pret = parse_pkt(&pkt, membuf->base, membuf->len);
-    if(pret == BAD_PARSE){
+    size_t pret = parse_pkt(&pkt, qbuf, qlen);
+    if(is_bad_parse(pret)){
         printf("bad packet!\n");
-        goto cu;
+        return 0;
     }
 
     print_pkt(pkt);
@@ -166,10 +191,7 @@ derr_t handle_packet(globals_t *g, membuf_t *membuf){
     // username would be at index 3:  com.splintermail.user.*
     lstr_t user = n > 3 ? rname[3] : (lstr_t){0};
 
-    PROP_GO(&e, respond(pkt, user), cu);
+    rcap = MIN(rcap, 512); // where to handle EDNS analysis?
 
-cu:
-    membuf_return(&membuf);
-
-    return e;
+    return respond(pkt, user, rbuf, rcap);
 }
