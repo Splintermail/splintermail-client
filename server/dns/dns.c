@@ -47,9 +47,16 @@ static size_t respond_notimpl(
     used = copy_qstn(pkt.qstn, out, cap, used);
     if(used <= cap) len = used;
 
+    uint16_t arcount = 0;
+    if(pkt.edns.found){
+        used = write_edns(out, cap, used);
+        if(used <= cap) len = used;
+        arcount++;
+    }
+
     bool aa = false;
     bool tc = used > cap;
-    write_hdr(pkt.hdr, RCODE_NOTIMPL, aa, tc, 0, 0, 0, out);
+    write_hdr(pkt.hdr, RCODE_NOTIMPL, aa, tc, 0, 0, arcount, out);
 
     return len;
 }
@@ -191,7 +198,12 @@ size_t handle_packet(char *qbuf, size_t qlen, char *rbuf, size_t rcap){
     // username would be at index 3:  com.splintermail.user.*
     lstr_t user = n > 3 ? rname[3] : (lstr_t){0};
 
-    rcap = MIN(rcap, 512); // where to handle EDNS analysis?
+    // pick a good rcap
+    if(pkt.edns.found){
+        rcap = MIN(rcap, pkt.edns.udp_size);
+    }else{
+        rcap = MIN(rcap, 512);
+    }
 
     return respond(pkt, user, rbuf, rcap);
 }

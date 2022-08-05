@@ -25,6 +25,9 @@
 #define NMEMBUFS 256
 #define MEMBUFSIZE 4096
 
+// this is the lower limit recommended in rfc6891, not sure how to pick better
+#define UDP_MAX_SIZE 1280
+
 typedef enum {
     BP_MINVAL                = (size_t)-13,
 
@@ -250,3 +253,4 @@ void write_hdr(
 // dns.c //
 
 size_t handle_packet(char *qbuf, size_t qlen, char *rbuf, size_t rcap);
+size_t write_edns(char *out, size_t cap, size_t used);
