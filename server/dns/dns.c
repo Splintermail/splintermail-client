@@ -145,6 +145,8 @@ static respond_f sort_pkt(const dns_pkt_t pkt, const lstr_t *rname, size_t n){
 derr_t handle_packet(globals_t *g, membuf_t *membuf){
     derr_t e = E_OK;
 
+    (void)g;
+
     print_bytes(membuf->base, membuf->len);
     printf("\n");
 
@@ -167,7 +169,7 @@ derr_t handle_packet(globals_t *g, membuf_t *membuf){
     PROP_GO(&e, respond(pkt, user), cu);
 
 cu:
-    membuf_return(g, &membuf);
+    membuf_return(&membuf);
 
     return e;
 }

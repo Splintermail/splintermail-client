@@ -92,7 +92,10 @@ typedef struct {
 typedef struct {
     char base[MEMBUFSIZE];
     size_t len;
+    char resp[MEMBUFSIZE];
+    size_t rlen;
     link_t link; // globals_t->membufs;
+    link_t *pool; // for easily returning a membuf to its pool
 } membuf_t;
 DEF_CONTAINER_OF(membuf_t, base, char);
 DEF_CONTAINER_OF(membuf_t, link, link_t);
@@ -109,7 +112,8 @@ void membuf_free(membuf_t **ptr);
 derr_t membuf_init(membuf_t **ptr);
 void membufs_free(link_t *membufs);
 derr_t membufs_init(link_t *membufs, size_t n);
-void membuf_return(globals_t *g, membuf_t **ptr);
+membuf_t *membufs_pop(link_t *membufs);
+void membuf_return(membuf_t **ptr);
 
 // parse.c //
 

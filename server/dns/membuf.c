@@ -54,8 +54,17 @@ fail:
     return e;
 }
 
-void membuf_return(globals_t *g, membuf_t **ptr){
+membuf_t *membufs_pop(link_t *membufs){
+    link_t *link = link_list_pop_first(membufs);
+    if(!link) return NULL;
+    membuf_t *membuf = CONTAINER_OF(link, membuf_t, link);
+    membuf->pool = membufs;
+    return membuf;
+}
+
+void membuf_return(membuf_t **ptr){
     membuf_t *membuf = *ptr;
-    link_list_append(&g->membufs, &membuf->link);
+    link_list_append(membuf->pool, &membuf->link);
+    membuf->pool = NULL;
     *ptr = NULL;
 }

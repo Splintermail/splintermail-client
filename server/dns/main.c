@@ -31,9 +31,8 @@ static void allocator(
 
     *buf = (uv_buf_t){0};
 
-    link_t *link = link_list_pop_first(&g->membufs);
-    if(!link) return;
-    membuf_t *membuf = CONTAINER_OF(link, membuf_t, link);
+    membuf_t *membuf = membufs_pop(&g->membufs);
+    if(!membuf) return;
 
     *buf = (uv_buf_t){ .base = membuf->base, .len = sizeof(membuf->base) };
 }
@@ -85,7 +84,7 @@ fail:
 
 buf_return:
     if(membuf){
-        membuf_return(g, &membuf);
+        membuf_return(&membuf);
     }
     return;
 }
