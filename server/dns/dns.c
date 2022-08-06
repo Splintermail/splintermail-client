@@ -35,52 +35,91 @@ static size_t norespond(
     return 0;
 }
 
+// some states we accumulate when we've written part of a packet out.
+typedef struct {
+    size_t len;
+    size_t used;
+    bool tc;
+    uint16_t nscount;
+    uint16_t arcount;
+} partial_t;
+
+static size_t negative_resp(
+    const dns_pkt_t pkt,
+    uint16_t rcode,
+    bool aa,
+    bool soa,
+    char *out,
+    size_t cap
+){
+    // skip header for now
+    size_t used = DNS_HDR_SIZE;
+    size_t len = used;
+
+    // edns outranks other data, so reserve space
+    size_t edns_resv = pkt.edns.found ? BARE_EDNS_SIZE : 0;
+
+    used = copy_qstn(pkt.qstn, out, cap - edns_resv, used);
+    if(used <= cap) len = used;
+
+    uint16_t nscount = 0;
+    if(soa){
+        used = write_soa(out, cap - edns_resv, used);
+        if(used <= cap){
+            len = used;
+            nscount++;
+        }
+    }
+
+    uint16_t arcount = 0;
+    if(pkt.edns.found){
+        used = write_edns(out, cap, used);
+        if(used <= cap){
+            len = used;
+            arcount++;
+        }
+    }
+
+    bool tc = used > cap;
+    put_hdr(pkt.hdr, rcode, aa, tc, 0, nscount, arcount, out);
+
+    return len;
+}
+
 static size_t respond_notimpl(
     const dns_pkt_t pkt, const lstr_t user, char *out, size_t cap
 ){
     (void)user;
 
-    // reserve the header bytes
-    size_t used = DNS_HDR_SIZE;
-    size_t len = used;
+    bool aa = false;
+    bool soa = false;
+    return negative_resp(pkt, RCODE_NOTIMPL, aa, soa, out, cap);
+}
 
-    used = copy_qstn(pkt.qstn, out, cap, used);
-    if(used <= cap) len = used;
-
-    uint16_t arcount = 0;
-    if(pkt.edns.found){
-        used = write_edns(out, cap, used);
-        if(used <= cap) len = used;
-        arcount++;
-    }
+static size_t respond_refused(
+    const dns_pkt_t pkt, const lstr_t user, char *out, size_t cap
+){
+    (void)user;
 
     bool aa = false;
-    bool tc = used > cap;
-    write_hdr(pkt.hdr, RCODE_NOTIMPL, aa, tc, 0, 0, arcount, out);
-
-    return len;
+    bool soa = false;
+    return negative_resp(pkt, RCODE_REFUSED, aa, soa, out, cap);
 }
 
 static size_t respond_name_error(
     const dns_pkt_t pkt, const lstr_t user, char *out, size_t cap
 ){
-    (void)pkt;
     (void)user;
-    (void)out;
-    (void)cap;
-    printf("name error\n");
-    return 0;
+
+    bool aa = true;
+    bool soa = true;
+    return negative_resp(pkt, RCODE_NAMEERR, aa, soa, out, cap);
 }
 
-static size_t respond_norecord(
-    const dns_pkt_t pkt, const lstr_t user, char *out, size_t cap
-){
-    (void)pkt;
-    (void)user;
-    (void)out;
-    (void)cap;
-    printf("no record\n");
-    return 0;
+static size_t norecord_resp(const dns_pkt_t pkt, char *out, size_t cap){
+    bool aa = true;
+    bool soa = true;
+    return negative_resp(pkt, RCODE_OK, aa, soa, out, cap);
 }
 
 // for user.splintermail.com
@@ -102,7 +141,7 @@ static size_t respond_root(
     }
 
     // no matching record
-    return respond_norecord(pkt, user, out, cap);
+    return norecord_resp(pkt, out, cap);
 }
 
 // for *.user.splintermail.com
@@ -124,7 +163,7 @@ static size_t respond_user(
     }
 
     // no matching record
-    return respond_norecord(pkt, user, out, cap);
+    return norecord_resp(pkt, out, cap);
 }
 
 // for _acme-challenge.*.user.splintermail.com
@@ -139,7 +178,7 @@ static size_t respond_acme(
     }
 
     // no matching record
-    return respond_norecord(pkt, user, out, cap);
+    return norecord_resp(pkt, out, cap);
 }
 
 // always sets *respond and *user
@@ -154,13 +193,16 @@ static respond_f sort_pkt(const dns_pkt_t pkt, const lstr_t *rname, size_t n){
     if(pkt.qstn.qclass != 1) return norespond;
     // 0 is not a valid qtype
     if(pkt.qstn.qtype == 0) return norespond;
+
+    // refuse to respond for to we're note responsible for
+    if(n < 3) return respond_refused;
+    if(!lstr_eq(rname[0], LSTR("com"))) return respond_refused;
+    if(!lstr_eq(rname[1], LSTR("splintermail"))) return respond_refused;
+    if(!lstr_eq(rname[2], LSTR("user"))) return respond_refused;
+
     // we only implement the basic qtypes from rfc1035 + AAAA
     if(pkt.qstn.qtype > 16 && pkt.qstn.qtype != 28) return respond_notimpl;
 
-    if(n < 3) return respond_name_error;
-    if(!lstr_eq(rname[0], LSTR("com"))) return respond_name_error;
-    if(!lstr_eq(rname[1], LSTR("splintermail"))) return respond_name_error;
-    if(!lstr_eq(rname[2], LSTR("user"))) return respond_name_error;
     if(n == 3){
         // matched: user.splintermail.com
         return respond_root;

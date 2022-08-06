@@ -3,8 +3,8 @@
 static const char *respond_fn_name(respond_f respond){
     if(respond == norespond) return "norespond";
     if(respond == respond_notimpl) return "respond_notimpl";
+    if(respond == respond_refused) return "respond_refused";
     if(respond == respond_name_error) return "respond_name_error";
-    if(respond == respond_norecord) return "respond_norecord";
     if(respond == respond_root) return "respond_root";
     if(respond == respond_user) return "respond_user";
     if(respond == respond_acme) return "respond_acme";
@@ -45,6 +45,8 @@ static derr_t test_sort_pkt(void){
         { USER SPLINTERMAIL COM, 0, 0, 1, 1, 27, respond_notimpl },
         { USER SPLINTERMAIL COM, 0, 0, 1, 1, 29, respond_notimpl },
         { USER SPLINTERMAIL COM, 0, 0, 1, 1, 255, respond_notimpl },
+        // refuse bad names before rejecting qtypes
+        {  X   SPLINTERMAIL COM, 0, 0, 1, 1, 255, respond_refused },
         // accepted qtypes
         { USER SPLINTERMAIL COM, 0, 0, 1, 1, 1, respond_root },
         { USER SPLINTERMAIL COM, 0, 0, 1, 1, 2, respond_root },
@@ -55,10 +57,13 @@ static derr_t test_sort_pkt(void){
         {   ACME X USER SPLINTERMAIL COM, 0, 0, 1, 1, 1, respond_acme },
         {        X USER SPLINTERMAIL COM, 0, 0, 1, 1, 1, respond_user },
         {          USER SPLINTERMAIL COM, 0, 0, 1, 1, 1, respond_root },
-        {               SPLINTERMAIL COM, 0, 0, 1, 1, 1, respond_name_error },
-        {   ACME X USER SPLINTERMAIL  X , 0, 0, 1, 1, 1, respond_name_error },
-        {   ACME X USER      X       COM, 0, 0, 1, 1, 1, respond_name_error },
-        {   ACME X  X   SPLINTERMAIL COM, 0, 0, 1, 1, 1, respond_name_error },
+        {               SPLINTERMAIL COM, 0, 0, 1, 1, 1, respond_refused },
+        {                    X       COM, 0, 0, 1, 1, 1, respond_refused },
+        {                            COM, 0, 0, 1, 1, 1, respond_refused },
+        {                             X , 0, 0, 1, 1, 1, respond_refused },
+        {   ACME X USER SPLINTERMAIL  X , 0, 0, 1, 1, 1, respond_refused },
+        {   ACME X USER      X       COM, 0, 0, 1, 1, 1, respond_refused },
+        {   ACME X  X   SPLINTERMAIL COM, 0, 0, 1, 1, 1, respond_refused },
         {    X   X USER SPLINTERMAIL COM, 0, 0, 1, 1, 1, respond_name_error },
         { X ACME X USER SPLINTERMAIL COM, 0, 0, 1, 1, 1, respond_name_error },
     };

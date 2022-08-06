@@ -49,6 +49,7 @@ typedef enum {
 #define RCODE_OK 0
 #define RCODE_NAMEERR 3
 #define RCODE_NOTIMPL 4
+#define RCODE_REFUSED 5
 
 typedef struct {
     uint16_t id;
@@ -95,6 +96,7 @@ typedef struct {
     size_t optoff;
     size_t optcount;
 } edns_t;
+#define BARE_EDNS_SIZE 11 // we never emit options in our edns responses
 
 typedef struct {
     dns_hdr_t hdr;
@@ -239,7 +241,7 @@ void print_bytes(const char *bytes, size_t len);
 
 // write.c //
 
-void write_hdr(
+void put_hdr(
     const dns_hdr_t hdr,
     uint16_t rcode,
     bool aa,
@@ -249,6 +251,8 @@ void write_hdr(
     uint16_t arcount,
     char *out
 );
+
+size_t write_soa(char *out, size_t cap, size_t used);
 
 // dns.c //
 
