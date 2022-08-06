@@ -21,7 +21,7 @@ typedef size_t (*respond_f)(
 
 /* we only have data for:
    - "root": user.splintermail.com. SOA / NS
-   - "user": *.user.splintermail.com. A / AAAA
+   - "user": *.user.splintermail.com. A / AAAA / CAA
    - "acme": _acme-challenge.*.user.splintermail.com. TXT */
 
 static size_t norespond(
@@ -162,6 +162,12 @@ static size_t respond_user(
         return 0;
     }
 
+    if(pkt.qstn.qtype == 257){
+        // 'CAA' record
+        printf("CAA\n");
+        return 0;
+    }
+
     // no matching record
     return norecord_resp(pkt, out, cap);
 }
@@ -200,8 +206,9 @@ static respond_f sort_pkt(const dns_pkt_t pkt, const lstr_t *rname, size_t n){
     if(!lstr_eq(rname[1], LSTR("splintermail"))) return respond_refused;
     if(!lstr_eq(rname[2], LSTR("user"))) return respond_refused;
 
-    // we only implement the basic qtypes from rfc1035 + AAAA
-    if(pkt.qstn.qtype > 16 && pkt.qstn.qtype != 28) return respond_notimpl;
+    // we only implement the basic qtypes from rfc1035 + AAAA + CAA
+    uint16_t qtype = pkt.qstn.qtype;
+    if(qtype > 16 && qtype != 28 && qtype != 257) return respond_notimpl;
 
     if(n == 3){
         // matched: user.splintermail.com
