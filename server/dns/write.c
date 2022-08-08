@@ -92,6 +92,37 @@ void put_hdr(
 }
 
 
+// rewrites the question without any pointers
+size_t write_qstn(const dns_qstn_t qstn, char *out, size_t cap, size_t used){
+    if(qstn.qdcount != 1){
+        fprintf(stderr, "multiple questions not supported in write_qstn\n");
+        return used;
+    }
+
+    labels_t it;
+    size_t needed = 5;  // qtype + qclass + null-termination of name
+    lstr_t *l = labels_iter(&it, qstn.ptr, qstn.off);
+    for(; l; l = labels_next(&it)){
+        needed += l->len + 1;
+    }
+
+    if(used + needed > cap) return used + needed;
+
+    // qname
+    l = labels_iter(&it, qstn.ptr, qstn.off);
+    for(; l; l = labels_next(&it)){
+        used = put_uint8(l->len, out, used);
+        used = put_lstr(*l, out, used);
+    }
+    used = put_uint8(0, out, used);
+    // qtype
+    used = put_uint16(qstn.qtype, out, used);
+    used = put_uint16(qstn.qclass, out, used);
+
+    return used;
+}
+
+
 static size_t put_rr_hdr(
     uint16_t type,
     uint32_t ttl,

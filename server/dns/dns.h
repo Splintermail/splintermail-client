@@ -181,7 +181,6 @@ typedef struct {
     bool after_ptr;
 } labels_t;
 
-void labels_init(labels_t *it, const char *ptr, size_t start);
 lstr_t *labels_iter(labels_t *it, const char *ptr, size_t start);
 lstr_t *labels_next(labels_t *it);
 
@@ -264,6 +263,9 @@ void put_hdr(
     uint16_t arcount,
     char *out
 );
+
+// rewrites the question without any pointers
+size_t write_qstn(const dns_qstn_t qstn, char *out, size_t cap, size_t used);
 
 size_t write_edns(char *out, size_t cap, size_t used);
 

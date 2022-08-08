@@ -5,26 +5,10 @@
 #include "libdstr/libdstr.h"
 #include "server/dns/dns.h"
 
-// writes nothing if question doesn't fit, but returns what used would be
-// XXX: this isn't guaranteed to be valid, because the name could technically
-//      have pointers to outside of the question.
-static size_t copy_qstn(
-    const dns_qstn_t qstn, char *out, size_t cap, size_t used
-){
-    if(used + qstn.len <= cap){
-        memcpy(out + used, qstn.ptr + qstn.off, qstn.len);
-    }
-    return used + qstn.len;
-}
 
 typedef size_t (*respond_f)(
     const dns_pkt_t pkt, const lstr_t user, char *out, size_t cap
 );
-
-/* we only have data for:
-   - "root": user.splintermail.com. SOA / NS
-   - "user": *.user.splintermail.com. A / AAAA / CAA
-   - "acme": _acme-challenge.*.user.splintermail.com. TXT */
 
 static size_t norespond(
     const dns_pkt_t pkt, const lstr_t user, char *out, size_t cap
@@ -61,7 +45,7 @@ static size_t negative_resp(
     // edns outranks other data, so reserve space
     size_t edns_resv = pkt.edns.found ? BARE_EDNS_SIZE : 0;
 
-    used = copy_qstn(pkt.qstn, out, cap - edns_resv, used);
+    used = write_qstn(pkt.qstn, out, cap - edns_resv, used);
     if(used <= cap) len = used;
 
     uint16_t nscount = 0;
@@ -102,7 +86,7 @@ static size_t positive_resp(
     // edns outranks other data, so reserve space
     size_t edns_resv = pkt.edns.found ? BARE_EDNS_SIZE : 0;
 
-    used = copy_qstn(pkt.qstn, out, cap - edns_resv, used);
+    used = write_qstn(pkt.qstn, out, cap - edns_resv, used);
     if(used <= cap) len = used;
 
     uint16_t ancount = 0;
@@ -181,13 +165,11 @@ static size_t respond_root(
 ){
     (void)user;
 
-    if(pkt.qstn.qtype == 6){
-        // 'SOA' record
+    if(pkt.qstn.qtype == SOA){
         return POSITIVE_RESP(write_soa);
     }
 
-    if(pkt.qstn.qtype == 2){
-        // 'NS' record
+    if(pkt.qstn.qtype == NS){
         return POSITIVE_RESP(write_ns1, write_ns2, write_ns3);
     }
 
@@ -201,18 +183,15 @@ static size_t respond_user(
 ){
     (void)user;
 
-    if(pkt.qstn.qtype == 1){
-        // 'A' record
+    if(pkt.qstn.qtype == A){
         return POSITIVE_RESP(write_a);
     }
 
-    if(pkt.qstn.qtype == 28){
-        // 'AAAA' record
+    if(pkt.qstn.qtype == AAAA){
         return POSITIVE_RESP(write_aaaa);
     }
 
-    if(pkt.qstn.qtype == 257){
-        // 'CAA' record
+    if(pkt.qstn.qtype == CAA){
         return POSITIVE_RESP(write_caa);
     }
 
@@ -224,8 +203,7 @@ static size_t respond_user(
 static size_t respond_acme(
     const dns_pkt_t pkt, const lstr_t user, char *out, size_t cap
 ){
-    if(pkt.qstn.qtype == 16){
-        // 'TXT' record
+    if(pkt.qstn.qtype == TXT){
         (void)user;
         // right now we report NOTFOUND to all txt queries.
         return POSITIVE_RESP(write_notfound);
@@ -279,6 +257,12 @@ size_t handle_packet(char *qbuf, size_t qlen, char *rbuf, size_t rcap){
     print_bytes(qbuf, qlen);
     printf("\n");
 
+    // require a minimum rcap size to function
+    if(rcap < 512){
+        fprintf(stderr, "rcap too small to function!\n");
+        return 0;
+    }
+
     dns_pkt_t pkt;
     size_t pret = parse_pkt(&pkt, qbuf, qlen);
     if(is_bad_parse(pret)){
@@ -292,8 +276,8 @@ size_t handle_packet(char *qbuf, size_t qlen, char *rbuf, size_t rcap){
     size_t cap = sizeof(rname) / sizeof(*rname);
     size_t n = labels_read_reverse(pkt.qstn.ptr, pkt.qstn.off, rname, cap);
     respond_f respond = sort_pkt(pkt, rname, n);
-    // username would be at index 3:  com.splintermail.user.*
-    lstr_t user = n > 3 ? rname[3] : (lstr_t){0};
+    // username would be at index 3: com.splintermail.user.*
+    const lstr_t user = n > 3 ? rname[3] : (lstr_t){0};
 
     // pick a good rcap
     if(pkt.edns.found){

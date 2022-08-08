@@ -21,7 +21,7 @@ if(BUILD_TESTS)
     define_file_logname_for_target(test_parse)
     add_test(NAME "do_test_parse" COMMAND "./test_parse")
 
-    add_executable(test_write test_write.c)
+    add_executable(test_write test_write.c parse.c)
     target_link_libraries(test_write PUBLIC dstr)
     default_compile_options(test_write TRUE)
     define_file_logname_for_target(test_write)

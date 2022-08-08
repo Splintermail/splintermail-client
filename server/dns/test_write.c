@@ -24,6 +24,29 @@ static derr_t test_predicted_lengths(void){
     ASSERT(write_edns(buf, 0, 0) == BARE_EDNS_SIZE);
     ASSERT(write_edns(buf, cap, 0) == BARE_EDNS_SIZE);
 
+    char temp[] =
+        "\x01" "a" "\x02" "bb" "\x03" "ccc" "\x00"
+        "\x01" "z" "\xC0\x00"
+    ;
+    size_t templen = sizeof(temp)-1;
+
+    dns_qstn_t qstn = {
+        .ptr = temp,
+        // qname = a.bb.ccc
+        .off = 0,
+        .len = templen,
+        .qdcount = 1,
+        .qtype = 0,
+        .qclass = 0,
+    };
+    ASSERT(write_qstn(qstn, buf, 0, 0) == 14);
+    ASSERT(write_qstn(qstn, buf, cap, 0) == 14);
+
+    // qname = z.a.bb.ccc
+    qstn.off = 10;
+    ASSERT(write_qstn(qstn, buf, 0, 0) == 16);
+    ASSERT(write_qstn(qstn, buf, cap, 0) == 16);
+
     return e;
 }
 
