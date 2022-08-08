@@ -22,6 +22,7 @@ const char *bp2str(bad_parse_e bp){
         case BP_LABEL_OVERRUN: return "BP_LABEL_OVERRUN";
         case BP_LONG_LABEL: return "BP_LONG_LABEL";
         case BP_DOUBLE_POINTER: return "BP_DOUBLE_POINTER";
+        case BP_PTR_LEN_BYTE: return "BP_PTR_LEN_BYTE";
         case BP_LABEL_LEN_BYTE: return "BP_LABEL_LEN_BYTE";
         case BP_HDR_OVERRUN: return "BP_HDR_OVERRUN";
     }
@@ -161,11 +162,13 @@ static size_t parse_name(const char *ptr, size_t len, size_t used){
             // pointer
             if(was_ptr) return BP_DOUBLE_POINTER;
             was_ptr = true;
+            if(len < used + 1) return BP_PTR_LEN_BYTE;
+            uint8_t l2 = uptr[used++];
             if(!after_ptr){
                 after_ptr = true;
                 preptr_used = used;
             }
-            used = l & ~0xC0;
+            used = ((l & ~0xC0) << 8) | l2;
         }else{
             // regular label
             was_ptr = false;
@@ -190,7 +193,7 @@ size_t skip_name(const char *ptr, size_t used){
         l = uptr[used++];
         if((l & 0xC0) == 0xC0){
             // pointer
-            return used;
+            return used + 1;
         }else{
             // regular label
             used += l;
@@ -217,12 +220,13 @@ lstr_t *labels_next(labels_t *it){
             return NULL;
         }
         if((l & 0xC0) == 0xC0){
+            uint8_t l2 = uptr[it->pos++];
             // follow pointer
             if(!it->after_ptr){
                 it->after_ptr = true;
                 it->used = it->pos;
             }
-            it->pos = l & ~0xC0;
+            it->pos = ((l & ~0xC0) << 8) | l2;
             continue;
         }
         it->lstr = (lstr_t){

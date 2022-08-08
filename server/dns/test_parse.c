@@ -10,7 +10,7 @@ static derr_t test_labels_iter(void){
 
     char buf[] =
         "\x01" "a" "\x02" "bb" "\x03" "ccc" "\x00" // a.bb.ccc
-        "\x01" "z" "\xC2" // z.bb.ccc
+        "\x01" "z" "\xC0\x02" // z.bb.ccc
     ;
     size_t len = sizeof(buf)-1;
 
@@ -20,7 +20,7 @@ static derr_t test_labels_iter(void){
     ASSERT(used == 10);
 
     used = parse_name(buf, len, used);
-    ASSERT(used == 13);
+    ASSERT(used == 14);
 
     // iter with labels_iter
     used = 0;
@@ -50,7 +50,7 @@ static derr_t test_labels_iter(void){
     lstr = labels_next(&labels);
     ASSERT(!lstr);
 
-    ASSERT(labels.used == 13);
+    ASSERT(labels.used == 14);
 
     #undef ASSERT
 
@@ -67,7 +67,7 @@ static derr_t test_labels_read(void){
 
     char buf[] =
         "\x01" "a" "\x02" "bb" "\x03" "ccc" "\x00" // a.bb.ccc (odd)
-        "\x01" "z" "\xC0" // z.a.bb.ccc (even)
+        "\x01" "z" "\xC0\x00" // z.a.bb.ccc (even)
     ;
     size_t len = sizeof(buf)-1;
 
@@ -77,7 +77,7 @@ static derr_t test_labels_read(void){
     ASSERT(used == 10);
 
     used = parse_name(buf, len, used);
-    ASSERT(used == 13);
+    ASSERT(used == 14);
 
     // use heap memory for asan checks
     size_t heapcap = 2;
