@@ -12,7 +12,14 @@ static derr_t test_predicted_lengths(void){
     size_t nlabels = sizeof(labels) / sizeof(*labels);
     ASSERT(namelen(labels, nlabels) == put_name(labels, nlabels, buf, 0));
 
-    ASSERT(write_soa(buf, 0, 0) == write_soa(buf, cap, 0));
+    ASSERT(write_soa(0, buf, 0, 0) == write_soa(0, buf, cap, 0));
+    ASSERT(write_a(0, buf, 0, 0) == write_a(0, buf, cap, 0));
+    ASSERT(write_ns1(0, buf, 0, 0) == write_ns1(0, buf, cap, 0));
+    ASSERT(write_ns2(0, buf, 0, 0) == write_ns2(0, buf, cap, 0));
+    ASSERT(write_ns3(0, buf, 0, 0) == write_ns3(0, buf, cap, 0));
+    ASSERT(write_notfound(0, buf, 0, 0) == write_notfound(0, buf, cap, 0));
+    ASSERT(write_aaaa(0, buf, 0, 0) == write_aaaa(0, buf, cap, 0));
+    ASSERT(write_caa(0, buf, 0, 0) == write_caa(0, buf, cap, 0));
 
     ASSERT(write_edns(buf, 0, 0) == BARE_EDNS_SIZE);
     ASSERT(write_edns(buf, cap, 0) == BARE_EDNS_SIZE);

@@ -55,6 +55,11 @@ static size_t put_name(
     return used;
 }
 
+static size_t put_name_ptr(size_t offset, char *out, size_t used){
+    uint16_t off14 = MIN(offset, 0x3FFF);
+    return put_uint16(0xC000 | off14, out, used);
+}
+
 void put_hdr(
     const dns_hdr_t hdr,
     uint16_t rcode,
@@ -86,10 +91,6 @@ void put_hdr(
     uptr[11] = (arcount >> 0) & 0xff;
 }
 
-static size_t rrlen(const lstr_t *labels, size_t nlabels, size_t rdlen){
-    return namelen(labels, nlabels) + 10 + rdlen;
-}
-
 
 static size_t put_rr_hdr(
     uint16_t type,
@@ -110,8 +111,8 @@ size_t write_edns(char *out, size_t cap, size_t used){
     if(used + BARE_EDNS_SIZE > cap) return used + BARE_EDNS_SIZE;
     // required empty name
     used = put_uint8(0, out, used);
-    // edns type = 41
-    used = put_uint16(41, out, used);
+    // rr.type
+    used = put_uint16(EDNS, out, used);
     // rr.class: our max packet size
     used = put_uint16(UDP_MAX_SIZE, out, used);
     // rr.ttl[0]: extended rcode (we support none of them)
@@ -125,18 +126,26 @@ size_t write_edns(char *out, size_t cap, size_t used){
 }
 
 
-size_t write_soa(char *out, size_t cap, size_t used){
-    // count only once
-    static size_t rdlen = 0;
-    static size_t needed = 0;
-    if(rdlen == 0 || needed == 0){
-        rdlen = namelen(MNAME, MNAME_COUNT) + namelen(RNAME, RNAME_COUNT) + 20;
-        needed = rrlen(SOA_NAME, SOA_NAME_COUNT, rdlen);
-    }
+// write_soa happens to ignore nameoff, so it can be used in negative responses
+size_t write_soa(size_t nameoff, char *out, size_t cap, size_t used){
+    (void)nameoff;
+
+    (void)namelen;
+    // size_t rdlen = namelen(MNAME, MNAME_COUNT)
+    //              + namelen(RNAME, RNAME_COUNT)
+    //              + 20;
+    // size_t needed = namelen(ZONE_NAME, ZONE_NAME_COUNT)
+    //               + RR_HDR_SIZE
+    //               + rdlen;
+    // printf("rdlen=%zu, needed=%zu\n", rdlen, needed);
+
+    // checked in tests
+    static const size_t rdlen = 75;
+    static const size_t needed = 108;
 
     if(used + needed > cap) return used + needed;
-    used = put_name(SOA_NAME, SOA_NAME_COUNT, out, used);
-    used = put_rr_hdr(6, SOA_TTL, rdlen, out, used);
+    used = put_name(ZONE_NAME, ZONE_NAME_COUNT, out, used);
+    used = put_rr_hdr(SOA, SOA_TTL, rdlen, out, used);
 
     used = put_name(MNAME, MNAME_COUNT, out, used);
     used = put_name(RNAME, RNAME_COUNT, out, used);
@@ -150,5 +159,108 @@ size_t write_soa(char *out, size_t cap, size_t used){
     used = put_uint32(86400, out, used);
     // MINIMUM: 1 min
     used = put_uint32(60, out, used);
+    return used;
+}
+
+size_t write_a(size_t nameoff, char *out, size_t cap, size_t used){
+    static const size_t rdlen = 4;  // 32-bit IPv4 address size
+    static const size_t needed = 2 + RR_HDR_SIZE + rdlen;
+
+    if(used + needed > cap) return used + needed;
+    // name pointer
+    used = put_name_ptr(nameoff, out, used);
+    // rr header
+    used = put_rr_hdr(A, A_TTL, rdlen, out, used);
+    // A record: always 127.0.0.1
+    used = put_uint8(127, out, used);
+    used = put_uint8(0, out, used);
+    used = put_uint8(0, out, used);
+    used = put_uint8(1, out, used);
+    return used;
+}
+
+static size_t _write_ns(
+    const lstr_t *name, size_t count, char *out, size_t cap, size_t used
+){
+    (void)namelen;
+    // size_t rdlen = namelen(NS1_NAME, NS1_NAME_COUNT);
+    // size_t needed = namelen(ZONE_NAME, ZONE_NAME_COUNT)
+    //               + RR_HDR_SIZE
+    //               + rdlen;
+    // printf("rdlen=%zu, needed=%zu\n", rdlen, needed);
+
+    // checked in tests
+    static const size_t rdlen = 26;
+    static const size_t needed = 59;
+
+    if(used + needed > cap) return used + needed;
+    used = put_name(ZONE_NAME, ZONE_NAME_COUNT, out, used);
+    used = put_rr_hdr(NS, NS_TTL, rdlen, out, used);
+    used = put_name(name, count, out, used);
+    return used;
+}
+
+// ignores nameoff
+size_t write_ns1(size_t nameoff, char *out, size_t cap, size_t used){
+    (void)nameoff;
+    return _write_ns(NS1_NAME, NS1_NAME_COUNT, out, cap, used);
+}
+size_t write_ns2(size_t nameoff, char *out, size_t cap, size_t used){
+    (void)nameoff;
+    return _write_ns(NS2_NAME, NS2_NAME_COUNT, out, cap, used);
+}
+size_t write_ns3(size_t nameoff, char *out, size_t cap, size_t used){
+    (void)nameoff;
+    return _write_ns(NS3_NAME, NS3_NAME_COUNT, out, cap, used);
+}
+
+size_t write_notfound(size_t nameoff, char *out, size_t cap, size_t used){
+    static const size_t rdlen = 1 + TXT_NOTFOUND.len;
+    static const size_t needed = 2 + RR_HDR_SIZE + rdlen;
+
+    if(used + needed > cap) return used + needed;
+    // name pointer
+    used = put_name_ptr(nameoff, out, used);
+    // rr header
+    used = put_rr_hdr(TXT, TXT_TTL, rdlen, out, used);
+    // TXT content
+    used = put_uint8(TXT_NOTFOUND.len, out, used);
+    used = put_lstr(TXT_NOTFOUND, out, used);
+    return used;
+}
+
+size_t write_aaaa(size_t nameoff, char *out, size_t cap, size_t used){
+    static const size_t rdlen = 16;  // 128-bit IPv6 address size
+    static const size_t needed = 2 + RR_HDR_SIZE + rdlen;
+
+    if(used + needed > cap) return used + needed;
+    // name pointer
+    used = put_name_ptr(nameoff, out, used);
+    // rr header
+    used = put_rr_hdr(AAAA, AAAA_TTL, rdlen, out, used);
+    // A record: always 127.0.0.1
+    used = put_uint32(0, out, used);
+    used = put_uint32(0, out, used);
+    used = put_uint32(0, out, used);
+    used = put_uint32(1, out, used);
+    return used;
+}
+
+size_t write_caa(size_t nameoff, char *out, size_t cap, size_t used){
+    static const size_t rdlen = 2 + CAA_TAG.len + CAA_VALUE.len;
+    static const size_t needed = 2 + RR_HDR_SIZE + rdlen;
+
+    if(used + needed > cap) return used + needed;
+    // name pointer
+    used = put_name_ptr(nameoff, out, used);
+    // rr header
+    used = put_rr_hdr(CAA, CAA_TTL, rdlen, out, used);
+    // critical byte
+    used = put_uint8(1, out, used);
+    // tag len and tag
+    used = put_uint8(CAA_TAG.len, out, used);
+    used = put_lstr(CAA_TAG, out, used);
+    // CA name
+    used = put_lstr(CAA_VALUE, out, used);
     return used;
 }

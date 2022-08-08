@@ -28,6 +28,15 @@
 // this is the lower limit recommended in rfc6891, not sure how to pick better
 #define UDP_MAX_SIZE 1280
 
+// mnemonic
+#define A 1
+#define NS 2
+#define SOA 6
+#define TXT 16
+#define AAAA 28
+#define CAA 257
+#define EDNS 41
+
 typedef enum {
     BP_MINVAL                = (size_t)-13,
 
@@ -172,6 +181,7 @@ typedef struct {
     bool after_ptr;
 } labels_t;
 
+void labels_init(labels_t *it, const char *ptr, size_t start);
 lstr_t *labels_iter(labels_t *it, const char *ptr, size_t start);
 lstr_t *labels_next(labels_t *it);
 
@@ -195,6 +205,8 @@ typedef struct {
     uint16_t rdlen;
     size_t rdoff;
 } rr_t;
+// does not include name or rdata
+#define RR_HDR_SIZE 10
 
 typedef struct {
     const char *ptr;
@@ -253,9 +265,21 @@ void put_hdr(
     char *out
 );
 
-size_t write_soa(char *out, size_t cap, size_t used);
+size_t write_edns(char *out, size_t cap, size_t used);
+
+typedef size_t (*writer_f)(size_t nameoff, char *out, size_t cap, size_t used);
+
+// write_soa happens to ignore nameoff, so it can be used in negative responses
+size_t write_soa(size_t nameoff, char *out, size_t cap, size_t used);
+
+size_t write_a(size_t nameoff, char *out, size_t cap, size_t used);
+size_t write_ns1(size_t nameoff, char *out, size_t cap, size_t used);
+size_t write_ns2(size_t nameoff, char *out, size_t cap, size_t used);
+size_t write_ns3(size_t nameoff, char *out, size_t cap, size_t used);
+size_t write_notfound(size_t nameoff, char *out, size_t cap, size_t used);
+size_t write_aaaa(size_t nameoff, char *out, size_t cap, size_t used);
+size_t write_caa(size_t nameoff, char *out, size_t cap, size_t used);
 
 // dns.c //
 
 size_t handle_packet(char *qbuf, size_t qlen, char *rbuf, size_t rcap);
-size_t write_edns(char *out, size_t cap, size_t used);

@@ -50,12 +50,12 @@ static derr_t test_sort_pkt(void){
         // refuse bad names before rejecting qtypes
         {  X   SPLINTERMAIL COM, 0, 0, 1, 1, 255, respond_refused },
         // accepted qtypes
-        { USER SPLINTERMAIL COM, 0, 0, 1, 1, 1, respond_root },
-        { USER SPLINTERMAIL COM, 0, 0, 1, 1, 2, respond_root },
-        { USER SPLINTERMAIL COM, 0, 0, 1, 1, 6, respond_root },
-        { USER SPLINTERMAIL COM, 0, 0, 1, 1, 16, respond_root },
-        { USER SPLINTERMAIL COM, 0, 0, 1, 1, 28, respond_root },
-        { USER SPLINTERMAIL COM, 0, 0, 1, 1, 257, respond_root },
+        { USER SPLINTERMAIL COM, 0, 0, 1, 1, A,    respond_root },
+        { USER SPLINTERMAIL COM, 0, 0, 1, 1, NS,   respond_root },
+        { USER SPLINTERMAIL COM, 0, 0, 1, 1, SOA,  respond_root },
+        { USER SPLINTERMAIL COM, 0, 0, 1, 1, TXT,  respond_root },
+        { USER SPLINTERMAIL COM, 0, 0, 1, 1, AAAA, respond_root },
+        { USER SPLINTERMAIL COM, 0, 0, 1, 1, CAA,  respond_root },
         // name checking
         {   ACME X USER SPLINTERMAIL COM, 0, 0, 1, 1, 1, respond_acme },
         {        X USER SPLINTERMAIL COM, 0, 0, 1, 1, 1, respond_user },

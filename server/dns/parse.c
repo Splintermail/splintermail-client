@@ -409,7 +409,7 @@ static size_t find_edns(rr_t *edns, const dns_rr_t addl){
     rrs_t it;
     bool found = false;
     for(rr_t *rr = dns_rr_iter(&it, addl); rr; rr = rrs_next(&it)){
-        if(rr->type != 41) continue;
+        if(rr->type != EDNS) continue;
         if(found) return BP_DOUBLE_EDNS;
         found = true;
         *edns = *rr;

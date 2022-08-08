@@ -1,9 +1,42 @@
-// SOA record //
-
-const lstr_t SOA_NAME[] = {
+const lstr_t ZONE_NAME[] = {
     LSTR("user"), LSTR("splintermail"), LSTR("com")
 };
-const size_t SOA_NAME_COUNT = sizeof(SOA_NAME) / sizeof(*SOA_NAME);
+const size_t ZONE_NAME_COUNT = sizeof(ZONE_NAME) / sizeof(*ZONE_NAME);
+
+const uint32_t NS_TTL = 86400;
+
+// A record //
+
+const uint32_t A_TTL = 86400;
+
+// NS record //
+
+const lstr_t NS1_NAME[] = {
+    LSTR("userns1"), LSTR("splintermail"), LSTR("com")
+};
+const lstr_t NS2_NAME[] = {
+    LSTR("userns2"), LSTR("splintermail"), LSTR("com")
+};
+const lstr_t NS3_NAME[] = {
+    LSTR("userns3"), LSTR("splintermail"), LSTR("com")
+};
+const size_t NS1_NAME_COUNT = sizeof(NS1_NAME) / sizeof(*NS1_NAME);
+const size_t NS2_NAME_COUNT = sizeof(NS2_NAME) / sizeof(*NS2_NAME);
+const size_t NS3_NAME_COUNT = sizeof(NS3_NAME) / sizeof(*NS3_NAME);
+
+
+// TXT record //
+
+const uint32_t TXT_TTL = 60;
+const lstr_t TXT_NOTFOUND = LSTR("NOTFOUND");
+
+// AAAA record //
+
+const uint32_t AAAA_TTL = 86400;
+
+
+// SOA record //
+
 const size_t SOA_TTL = 86400;
 
 // MNAME: primary source of data for this zone
@@ -28,3 +61,10 @@ const uint32_t RETRY = 60;
 const uint32_t EXPIRE = 86400;
 // MINIMUM: 1 min
 const uint32_t MINIMUM = 60;
+
+// CAA record //
+
+const uint32_t CAA_TTL = 86400;
+const uint8_t CAA_FLAGS = 1;  // critical bit is set
+const lstr_t CAA_TAG = LSTR("issue");
+const lstr_t CAA_VALUE = LSTR("letsencrypt.com");

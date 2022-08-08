@@ -6,6 +6,8 @@
 #include "server/dns/dns.h"
 
 // writes nothing if question doesn't fit, but returns what used would be
+// XXX: this isn't guaranteed to be valid, because the name could technically
+//      have pointers to outside of the question.
 static size_t copy_qstn(
     const dns_qstn_t qstn, char *out, size_t cap, size_t used
 ){
@@ -64,7 +66,7 @@ static size_t negative_resp(
 
     uint16_t nscount = 0;
     if(soa){
-        used = write_soa(out, cap - edns_resv, used);
+        used = write_soa(0, out, cap - edns_resv, used);
         if(used <= cap){
             len = used;
             nscount++;
@@ -85,6 +87,57 @@ static size_t negative_resp(
 
     return len;
 }
+
+static size_t positive_resp(
+    writer_f *writers,
+    size_t nwriters,
+    const dns_pkt_t pkt,
+    char *out,
+    size_t cap
+){
+    // skip header for now
+    size_t used = DNS_HDR_SIZE;
+    size_t len = used;
+
+    // edns outranks other data, so reserve space
+    size_t edns_resv = pkt.edns.found ? BARE_EDNS_SIZE : 0;
+
+    used = copy_qstn(pkt.qstn, out, cap - edns_resv, used);
+    if(used <= cap) len = used;
+
+    uint16_t ancount = 0;
+    for(size_t i = 0;  i < nwriters; i++){
+        used = writers[i](DNS_HDR_SIZE, out, cap, used);
+        if(used <= cap){
+            len = used;
+            ancount++;
+        }
+    }
+
+    uint16_t arcount = 0;
+    if(pkt.edns.found){
+        used = write_edns(out, cap, used);
+        if(used <= cap){
+            len = used;
+            arcount++;
+        }
+    }
+
+    // we only serve records for which we are authoritative
+    bool aa = true;
+    bool tc = used > cap;
+    put_hdr(pkt.hdr, RCODE_OK, aa, tc, ancount, 0, arcount, out);
+
+    return len;
+}
+#define POSITIVE_RESP(...) \
+    positive_resp( \
+        (writer_f[]){__VA_ARGS__}, \
+        sizeof((writer_f[]){__VA_ARGS__}) / sizeof(writer_f*), \
+        pkt, \
+        out, \
+        cap \
+    )
 
 static size_t respond_notimpl(
     const dns_pkt_t pkt, const lstr_t user, char *out, size_t cap
@@ -130,14 +183,12 @@ static size_t respond_root(
 
     if(pkt.qstn.qtype == 6){
         // 'SOA' record
-        printf("SOA\n");
-        return 0;
+        return POSITIVE_RESP(write_soa);
     }
 
     if(pkt.qstn.qtype == 2){
         // 'NS' record
-        printf("NS\n");
-        return 0;
+        return POSITIVE_RESP(write_ns1, write_ns2, write_ns3);
     }
 
     // no matching record
@@ -152,20 +203,17 @@ static size_t respond_user(
 
     if(pkt.qstn.qtype == 1){
         // 'A' record
-        printf("A\n");
-        return 0;
+        return POSITIVE_RESP(write_a);
     }
 
     if(pkt.qstn.qtype == 28){
         // 'AAAA' record
-        printf("AAAA\n");
-        return 0;
+        return POSITIVE_RESP(write_aaaa);
     }
 
     if(pkt.qstn.qtype == 257){
         // 'CAA' record
-        printf("CAA\n");
-        return 0;
+        return POSITIVE_RESP(write_caa);
     }
 
     // no matching record
@@ -179,8 +227,8 @@ static size_t respond_acme(
     if(pkt.qstn.qtype == 16){
         // 'TXT' record
         (void)user;
-        printf("TXT\n");
-        return 0;
+        // right now we report NOTFOUND to all txt queries.
+        return POSITIVE_RESP(write_notfound);
     }
 
     // no matching record
@@ -208,7 +256,7 @@ static respond_f sort_pkt(const dns_pkt_t pkt, const lstr_t *rname, size_t n){
 
     // we only implement the basic qtypes from rfc1035 + AAAA + CAA
     uint16_t qtype = pkt.qstn.qtype;
-    if(qtype > 16 && qtype != 28 && qtype != 257) return respond_notimpl;
+    if(qtype > TXT && qtype != AAAA && qtype != CAA) return respond_notimpl;
 
     if(n == 3){
         // matched: user.splintermail.com
@@ -250,6 +298,8 @@ size_t handle_packet(char *qbuf, size_t qlen, char *rbuf, size_t rcap){
     // pick a good rcap
     if(pkt.edns.found){
         rcap = MIN(rcap, pkt.edns.udp_size);
+        // don't allow edns to force packet size smaller than 512
+        rcap = MAX(rcap, 512);
     }else{
         rcap = MIN(rcap, 512);
     }
