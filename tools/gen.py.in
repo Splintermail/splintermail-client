@@ -20,6 +20,7 @@ TODO:
    - reject roots which don't have a concrete ending token; the user api
      doesn't support it
    - support expr!(args)
+   - support the TokenCheckOptimizer
 
  - C:
    - reject nested recovery blocks
@@ -34,6 +35,12 @@ TODO:
    - use source-order everywhere
    - support %break in loops
       - support labeled loops
+   - make grammar support fallbacks, rather than have every language implement
+     the same exact fallback logic
+   - detect branches/sequences/expressions which are totally "skippable": by
+     matching their obj.first there is no reason to enter them.  Matching large
+     token unions (or unions of token unions) with no side-effects should be
+     cheap at runtime.
 
  - Meta parser:
    - support an %include directive?
@@ -47,12 +54,14 @@ TODO:
 
 import abc
 import argparse
+import collections
 import contextlib
 import io
+import math
 import re
+import string
 import sys
 import textwrap
-import string
 
 def render_location(loc, body, underline=True):
     lines = body.splitlines()
@@ -1782,6 +1791,11 @@ class C:
         if errors:
             raise RuntimeError(errors)
 
+        # The C generator can handle 64-bit enums, and reserves the 0 value.
+        self.tco = TokenCheckOptimizer(
+            self.grammar, self.fallbacks, enum_width=64, extra_enum_vals=1
+        )
+
         self.prefix_ = (self.prefix + "_") if self.prefix else ""
         assert bool(semloc_type)+bool(span_fn)+bool(zero_loc_fn) in (0, 3), (
             "semloc_type, span_fn, and zero_loc_fn must be all set or all unset"
@@ -1916,7 +1930,18 @@ class C:
         # primary tokens
         t = sorted(tokens)
         # fallback tokens
-        f = self.fallbacks and sorted(self.fallbacks.all_fallbacks(t)) or []
+        f = self.fallbacks and self.fallbacks.all_fallbacks(t)
+        # full lookup group
+        g = tokens.union(f)
+        if len(g) == 1:
+            # exact match is possible.
+            return "(*token == ${PREFIX_}%s)"%next(iter(g))
+        opt = self.tco.group_bit(tokens.union(f))
+        if opt:
+            # optimized lookup group exists
+            return "(*token & 0x%x)"%opt
+        assert self.tco.encoded_all_multi_token_groups == False
+        # linear scan as a last resort
         nargs, args = self._token_list_args(t, f)
         return "${prefix_}token_in(*token, %d, %s)"%(nargs, args)
 
@@ -1925,6 +1950,12 @@ class C:
         t = sorted(tokens)
         # fallback tokens
         f = self.fallbacks and sorted(self.fallbacks.all_fallbacks(t)) or []
+        # full lookup group
+        g = tokens.union(f)
+        opt = self.tco.group_bit(tokens.union(f))
+        if opt:
+            # optimized lookup group exists
+            return "p->groupmask |= 0x%d"%opt
         nargs, args = self._token_list_args(t, f)
         return "${prefix_}mask_set(p->mask, %d, %s)"%(nargs, args)
 
@@ -2236,26 +2267,50 @@ class C:
                 self.fprint("    ${PREFIX_}AWAIT_TOKEN;")
                 self.fprint("yy" + str(state) + ":")
                 bstate = state + 1
-            self.fprint("    switch(*token){")
             primaries = obj.first
+            # Find group masks for all branches.
+            mask = 0
+            opts = []
+            strays = []  # tokens which we checked one-at-a-time
+            for b in obj.branches:
+                f = self.fallbacks.all_fallbacks(b.first, primaries)
+                g = b.first.union(f)
+                opt = self.tco.group_bit(g)
+                opts.append(opt)
+                if opt is not None:
+                    mask |= opt
+            self.fprint("    switch(${prefix_}group_lookup(*token, 0x%x)){"%mask)
             # emit case statements
-            for i, b in enumerate(obj.branches):
-                for t in b.first:
-                    label = "yy%d_br_%d"%(state, i)
-                    fallbacks = set()
-                    if self.fallbacks:
-                        # calculate fallback types
-                        fallbacks = self.fallbacks.fallback_set(t, primaries)
-                    for f in sorted(fallbacks):
-                        self.fprint("        case ${PREFIX_}%s: // fallback"%f)
-                    self.fprint("        case ${PREFIX_}%s: goto %s;"%(t, label))
+            for i, (b, opt) in enumerate(zip(obj.branches, opts)):
+                label = "yy%d_br_%d"%(state, i)
+                if opt:
+                    self.fprint("        case 0x%x: goto %s;"%(opt, label))
+                else:
+                    for t in b.first:
+                        fallbacks = set()
+                        if self.fallbacks:
+                            # calculate fallback types
+                            fallbacks = self.fallbacks.fallback_set(t, primaries)
+                        for f in sorted(fallbacks):
+                            strays.append(f)
+                            caseval = "${PREFIX_}ENUM_MASK & ${PREFIX_}%s"%f
+                            self.fprint("        case %s: // fallback"%caseval)
+                        strays.append(t)
+                        caseval = "${PREFIX_}ENUM_MASK & ${PREFIX_}%s"%t
+                        self.fprint("        case %s: goto %s;"%(caseval, label))
             if obj.default is not None:
                 i += 1
                 label = "yy%d_br_%d"%(state, i)
                 self.fprint("        default: goto %s;"%label)
             else:
                 self.fprint("        default:")
-                self.fprint("            " + self.mask_set(obj.first) + ";")
+                if mask:
+                    self.fprint("            p->groupmask |= 0x%x;"%mask)
+                if strays:
+                    # TODO: search for groups we could reuse to cover bits of
+                    # the strays list, so we can just OR it into the groupmask
+                    strays = frozenset(strays)
+                    self.fprint("            " + self.mask_set(strays) + ";")
                 self.fprint("            ${PREFIX_}SYNTAX_ERROR(*token, sem);")
             self.fprint("    }")
             self.fprint("")
@@ -2479,11 +2534,31 @@ class C:
         if self.debug or self.semloc_type:
             self.fprint("")
 
+        self.fprint("// ${PREFIX_}ENUM_MASK is the component of every ")
+        self.fprint("// ${prefix_}token_e which is a sequential enum value.")
+        self.fprint("// Remaining bits are for optimized token group checks.")
+        self.fprint("#define ${PREFIX_}ENUM_MASK 0x%x"%self.tco.enum_mask)
+        self.fprint("")
         self.fprint("typedef enum {")
         self.fprint("    _${PREFIX_}NOT_A_TOKEN = 0,")
-        for _, token in self.grammar.sorted_tokens():
-            self.fprint("    ${PREFIX_}%s,"%token.name)
+        for i, (name, _) in enumerate(self.grammar.sorted_tokens()):
+            # 1-indexed, since we reserve the zero value
+            opt = self.tco.optimization_bits(name)
+            val = 1 + i + opt
+            self.fprint("    ${PREFIX_}%s = %d,  // %d + 0x%x"%(name, val, 1 + i, opt))
         self.fprint("} ${prefix_}token_e;")
+
+        self.fprint("")
+        self.fprint_multi(r"""
+            // return the matching bit in the groupmask or the sequential value in the enum
+            static inline unsigned long long ${prefix_}group_lookup(
+                ${prefix_}token_e token, uint64_t groupmask
+            ) {
+                unsigned long long groupval = groupmask & token;
+                return groupval | (!groupval * (${PREFIX_}ENUM_MASK & token));
+            }
+        """)
+
 
         self.fprint("")
         self.fprint("typedef enum {")
@@ -2549,6 +2624,8 @@ class C:
                 size_t semsmax;
                 // a mask of all possible tokens
                 unsigned char mask[${PREFIX_}MASKLEN];
+                // a mask of all possible optimized token groups
+                unsigned long long groupmask;
             #ifdef ${PREFIX_}HAVE_SEMLOC
                 // the last location we accepted
                 $semloc_type last;
@@ -2815,6 +2892,50 @@ class C:
         self.fprint("    *sem = (${prefix_}sem_t){0};")
         self.fprint("}")
 
+        if not self.tco.encoded_all_multi_token_groups:
+            self.fprint("")
+            self.fprint_multi(r"""
+                // accepts `n` token types returns 0 or 1
+                static int ${prefix_}token_in(${prefix_}token_e token, size_t n, ...){
+                    va_list ap;
+                    va_start(ap, n);
+
+                    int out = 0;
+                    for(size_t i = 0; i < n; i++){
+                        if(token != va_arg(ap, ${prefix_}token_e)) continue;
+                        out = 1;
+                        break;
+                    }
+
+                    va_end(ap);
+                    return out;
+                }
+            """)
+
+        self.fprint("")
+        self.fprint("const char *${prefix_}token_name(${prefix_}token_e t){")
+        self.fprint("    // match the full enum or without optimization bits")
+        self.fprint("    unsigned long long n = t & ${PREFIX_}ENUM_MASK;")
+        self.fprint("    switch(n){")
+        for name, _ in self.grammar.sorted_tokens():
+            caseval = "${PREFIX_}ENUM_MASK & ${PREFIX_}%s"%name
+            self.fprint("        case %s: return \"%s\";"%(caseval, name))
+        self.fprint("        default: return \"unknown\";")
+        self.fprint("    }")
+        self.fprint("}")
+
+        self.fprint("// merge the groupmask into the token mask")
+        self.fprint("static const unsigned char* ${prefix_}groupmask_expand(")
+        self.fprint("    unsigned long long groupmask, unsigned char *mask")
+        self.fprint("){")
+        for i, (n, _) in enumerate(self.grammar.sorted_tokens()):
+            self.fprint(
+                "    if(groupmask & ${PREFIX_}%s) "
+                "mask[%d/8] |= (unsigned char)(1 << %d%%8);"%(n, i+1, i+1)
+            )
+        self.fprint("    return mask;")
+        self.fprint("}")
+
         self.fprint("")
         self.fprint_multi(r"""
             static void ${prefix_}mask_clear(unsigned char *mask){
@@ -2828,6 +2949,7 @@ class C:
 
                 for(size_t i = 0; i < n; i++){
                     ${prefix_}token_e t = va_arg(ap, ${prefix_}token_e);
+                    t &= ${PREFIX_}ENUM_MASK;
                     mask[t/8] |= (unsigned char)(1 << (t%8));
                 }
 
@@ -2989,28 +3111,12 @@ class C:
             #define ${PREFIX_}CONSUME_TOKEN \
                 *token = _${PREFIX_}NOT_A_TOKEN
 
-            // accepts `n` token types returns 0 or 1
-            static int ${prefix_}token_in(${prefix_}token_e token, size_t n, ...){
-                va_list ap;
-                va_start(ap, n);
-
-                int out = 0;
-                for(size_t i = 0; i < n; i++){
-                    if(token != va_arg(ap, ${prefix_}token_e)) continue;
-                    out = 1;
-                    break;
-                }
-
-                va_end(ap);
-                return out;
-            }
-
             #define ${PREFIX_}SYNTAX_ERROR(_token, _sem) do { \
                 $error_fn( \
                     p$args, \
                     _token, \
                     _sem, \
-                    (const unsigned char*)p->mask, \
+                    ${prefix_}groupmask_expand(p->groupmask, p->mask), \
                     (const char*)call->summary \
                 ); \
                 return ${PREFIX_}STATUS_SYNTAX_ERROR; \
@@ -3120,15 +3226,6 @@ class C:
             self.declare_fn(expr)
         self.fprint("")
 
-        self.fprint("const char *${prefix_}token_name(${prefix_}token_e t){")
-        self.fprint("    switch(t){")
-        for name, _ in self.grammar.sorted_tokens():
-            self.fprint("        case ${PREFIX_}" + name + ": return \"" +name+ "\";")
-        self.fprint("        default: return \"unknown\";")
-        self.fprint("    }")
-        self.fprint("}")
-        self.fprint("")
-
         # get function names
         self.fprint(
             "static const char *_${prefix_}fn_name(${prefix_}parse_f fn){"
@@ -3152,6 +3249,140 @@ class C:
             self.fprint("")
 
         self.print_code(self.postcode, "")
+
+
+
+class TokenCheckOptimizer:
+    def __init__(self, grammar, fallbacks, enum_width=64, extra_enum_vals=0):
+        """
+        enum_width is how many bits wide the enum is, likely 64.
+
+        extra_enum_vals is how many non-token values you need reserved from
+        extra_enum_vals.  You might want 1 reserved value, if 0 will be an
+        undefined token value, for instance.
+        """
+        groups = self.find_all_groups(grammar, fallbacks)
+
+        # multi token groups; 1-token groups are already O(1) checks.
+        mtg = {g: n for g, n in groups.items() if len(g) > 1}
+
+        # A token mask is the extra mask bits we've chosen for a given token
+        # value.  They should not collide with the value actually assigned to
+        # the value.
+        self._token_masks = {name: 0 for name, t in grammar.sorted_tokens()}
+        ntokens = len(self._token_masks)
+
+        # how many free bits do we have in our enum?
+        nreserved = int(math.ceil(math.log2(ntokens + extra_enum_vals)))
+        self._enum_mask = sum(1<<i for i in range(nreserved))
+        mask_bits = max(enum_width - nreserved, 0)
+
+        # sort groups by descending size, then by descending count
+        sorted_mtg = sorted(mtg.items(), key=lambda gn: (-len(gn[0]), -gn[1]))
+
+        if mask_bits >= len(sorted_mtg):
+            self._encoded_all_multi_token_groups = True
+        else:
+            print(
+                "warning: TokenCheckOptimizer found too many groups to assign "
+                "each group a unique bitmask.  Groups as small as "
+                f"{len(sorted_mtg[mask_bits][0])} will fall back to "
+                "linear scanning during matching.",
+                file=sys.stderr,
+            )
+            self._encoded_all_multi_token_groups = False
+
+        self._group_masks = {}
+
+        # generate bitmasks for the most expensive checks
+        for i, (g, n) in enumerate(sorted_mtg[:mask_bits]):
+            mask = 1 << (nreserved + i)
+            # assign this group the mask
+            self._group_masks[g] = mask
+            for t in g:
+                # associate every token in the group with this mask
+                self._token_masks[t] |= mask
+
+    @staticmethod
+    def find_all_groups(grammar, fallbacks):
+        groups = collections.defaultdict(lambda: 0)
+
+        def _find_all_groups(obj):
+            if isinstance(obj, Return):
+                return
+            if isinstance(obj, Reference):
+                if isinstance(obj.defn, Token):
+                    f = fallbacks[obj.defn.name]
+                    g = obj.first.union(f)
+                    groups[g] += 1
+                    return
+                if isinstance(obj.defn, Expression):
+                    return
+            if isinstance(obj, Repeat):
+                if obj.type != "maybe" or not obj.prematched:
+                    # all types except maybe/prematched have a token_check
+                    f = fallbacks.all_fallbacks(obj.first)
+                    g = obj.first.union(f)
+                    groups[g] += 1
+                _find_all_groups(obj.seq)
+                return
+            if isinstance(obj, Branches):
+                exclude = obj.first
+                for b in obj.branches:
+                    f = fallbacks.all_fallbacks(b.first, exclude)
+                    g = b.first.union(f)
+                    groups[g] += 1
+                    _find_all_groups(b)
+                return
+            if isinstance(obj, Recovery):
+                f = fallbacks.all_fallbacks(obj.after)
+                g = obj.after.union(f)
+                groups[g] += 1
+                _find_all_groups(obj.seq)
+                return
+            if isinstance(obj, Sequence):
+                for t in obj.terms:
+                    _find_all_groups(t)
+                return
+
+        for _, expr in grammar.sorted_expressions():
+            _find_all_groups(expr.seq)
+
+        return groups
+
+    @property
+    def enum_mask(self):
+        """
+        Returns a bitmask to remove the optimization bits from a token value.
+
+        E.g. for 72 tokens (where 72 < 2**7), enum_width would be 0b1111111.
+        """
+        return self._enum_mask
+
+    def optimization_bits(self, token_name):
+        """
+        Returns the optimization bits associated with a token name (or 0).
+
+        E.g. for a token that is in groups 0b100000, 0b010000, 0b001000,
+        optimization bits would be 0b111000.
+        """
+        return self._token_masks[token_name]
+
+    def group_bit(self, group):
+        """
+        Returns the bit associated with a group (e.g. 0b100000) or None, if the
+        group does not have an optimization available.
+        """
+        return self._group_masks.get(group)
+
+    @property
+    def encoded_all_multi_token_groups(self):
+        """
+        Returns a bitmask to remove the optimization bits from a token value.
+
+        E.g. for 72 tokens (where 72 < 2**7), enum_width would be 0b1111111.
+        """
+        return self._encoded_all_multi_token_groups
 
 
 class Python:

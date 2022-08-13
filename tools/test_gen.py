@@ -419,12 +419,22 @@ else:
     cc = "gcc"
 
 def run_c_e2e_test(grammar_text):
+    def assert_compile_success(p):
+        if p.wait() == 0:
+            return
+        print("COMPILE STEP FAILED:")
+        print("--------------------")
+        with open("test.c") as f:
+            print(f.read(), end="")
+        print("--------------------")
+        raise AssertionError("compile step failed")
+
     with open("test.c", "w") as f:
         gen.gen(grammar_text, 'c', f)
 
     if cc == "cl.exe":
         p = Popen([cc, "test.c"])
-        assert p.wait() == 0, p.wait()
+        assert_compile_success(p)
 
         cmd = ("test.exe",)
         p = Popen(cmd)
@@ -440,14 +450,14 @@ def run_c_e2e_test(grammar_text):
         if asan:
             cflags=("-g", "-fsanitize=address", "-fno-omit-frame-pointer")
             p = Popen([cc, *cflags, "test.c"])
-            assert p.wait() == 0, p.wait()
+            assert_compile_success(p)
 
             p = Popen(["./a.out"])
             assert p.wait() == 0, p.wait()
         else:
             cflags=("-g",)
             p = Popen([cc, *cflags, "test.c"])
-            assert p.wait() == 0, p.wait()
+            assert_compile_success(p)
 
             cmd = (
                 "valgrind",
@@ -675,6 +685,122 @@ if __name__ == "__main__":
     except SyntaxError:
         pass
 }}
+""")
+
+# test %fallback matching in the C generator (valid)
+run_c_e2e_test(r"""
+LETTER;
+A;
+B;
+DIGIT;
+ONE;
+TWO;
+%fallback LETTER A B;
+%fallback DIGIT ONE TWO;
+
+# test %fallback in a sequence
+%root tla;
+tla = LETTER LETTER LETTER;
+
+# test %fallback in a maybe repeat
+%root maybe_letter;
+maybe_letter = [LETTER] _EOF;
+
+# test %fallback in a zero-or-more repeat
+%root maybe_word;
+maybe_word = *LETTER _EOF;
+
+# test %fallback in a general repeat
+%root three_to_five;
+three_to_five = 3*5(LETTER) _EOF;
+
+# test %fallback in a branch
+%root token;
+token = (LETTER | DIGIT);
+
+# test %fallback propaging through a sequence->branch->expression->repeat
+token_expr = (LETTER | DIGIT);
+%root one_or_two_tokens;
+one_or_two_tokens = token_expr [token_expr] _EOF;
+
+{{{
+int main(int argc, char **argv){
+    ONSTACK_PARSER(p, 10, 10);
+
+    int wrong = 0;
+
+    #define RUN_TEST(name, ...) do { \
+        int tokens[] = {__VA_ARGS__}; \
+        size_t ntokens = sizeof(tokens)/sizeof(*tokens); \
+        \
+        status_e status = STATUS_OK; \
+        size_t i = 0; \
+        while(!status && i < ntokens){ \
+            status = parse_##name(&p, tokens[i]); \
+            i++; \
+        } \
+        \
+        if(i != ntokens || status != STATUS_DONE){ \
+            fprintf( \
+                stderr, \
+                "bad exit conditions parsing " #name " %d\n", \
+                (int)status \
+            ); \
+            wrong++; \
+        } \
+    } while(0)
+
+    // tla = LETTER LETTER LETTER;
+    RUN_TEST(tla, A, B, A);
+    RUN_TEST(tla, B, A, B);
+    RUN_TEST(tla, LETTER, A, B);
+    RUN_TEST(tla, A, LETTER, B);
+
+    // maybe_letter = [LETTER] _EOF;
+    RUN_TEST(maybe_letter, A, _EOF);
+    RUN_TEST(maybe_letter, B, _EOF);
+    RUN_TEST(maybe_letter, LETTER, _EOF);
+    RUN_TEST(maybe_letter, _EOF);
+
+    // maybe_word = *LETTER _EOF;
+    RUN_TEST(maybe_word, A, B, A, _EOF);
+    RUN_TEST(maybe_word, B, A, B, _EOF);
+    RUN_TEST(maybe_word, A, _EOF);
+    RUN_TEST(maybe_word, B, _EOF);
+    RUN_TEST(maybe_word, LETTER, LETTER, _EOF);
+    RUN_TEST(maybe_word, LETTER, _EOF);
+    RUN_TEST(maybe_word, _EOF);
+
+    // three_to_five = 3*5(LETTER) _EOF;
+    RUN_TEST(three_to_five, A, B, A, _EOF);
+    RUN_TEST(three_to_five, B, A, B, A, B, _EOF);
+
+    // token = (LETTER | DIGIT);
+    RUN_TEST(token, A);
+    RUN_TEST(token, B);
+    RUN_TEST(token, LETTER);
+    RUN_TEST(token, ONE);
+    RUN_TEST(token, TWO);
+    RUN_TEST(token, DIGIT);
+
+    // one_or_two_tokens = token_expr [token_expr] _EOF;
+    RUN_TEST(one_or_two_tokens, A, _EOF);
+    RUN_TEST(one_or_two_tokens, B, _EOF);
+    RUN_TEST(one_or_two_tokens, LETTER, _EOF);
+    RUN_TEST(one_or_two_tokens, ONE, _EOF);
+    RUN_TEST(one_or_two_tokens, TWO, _EOF);
+    RUN_TEST(one_or_two_tokens, DIGIT, _EOF);
+    RUN_TEST(one_or_two_tokens, A, A, _EOF);
+    RUN_TEST(one_or_two_tokens, B, B, _EOF);
+    RUN_TEST(one_or_two_tokens, LETTER, LETTER, _EOF);
+    RUN_TEST(one_or_two_tokens, ONE, ONE, _EOF);
+    RUN_TEST(one_or_two_tokens, TWO, TWO, _EOF);
+    RUN_TEST(one_or_two_tokens, DIGIT, DIGIT, _EOF);
+
+    return wrong;
+    1
+}
+}}}
 """)
 
 # test function-like expressions (valid)
