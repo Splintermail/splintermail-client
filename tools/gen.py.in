@@ -36,11 +36,14 @@ TODO:
    - support %break in loops
       - support labeled loops
    - make grammar support fallbacks, rather than have every language implement
-     the same exact fallback logic
-   - detect branches/sequences/expressions which are totally "skippable": by
-     matching their obj.first there is no reason to enter them.  Matching large
-     token unions (or unions of token unions) with no side-effects should be
-     cheap at runtime.
+     the same exact fallback logic.  An interesting side-effect might be that
+     every branch might have a different "matchable" set than the .first of its
+     sequence, because the sequence's .first might be defined without the
+     context of the other sequences in the parent Branch structure.
+   - Check fallback as part of the initial first/first, first/follow conflict
+     detection.  This would allow lfting the single-parent requirement
+     in place for %fallback, because instead of relying on a separate fallback
+     expansion check, we could rely on the normal detection checks.
 
  - Meta parser:
    - support an %include directive?

@@ -349,18 +349,26 @@ assert got == {"N1", "N3"}, got
 got = fallbacks.all_fallbacks(thing3, exclude)
 assert got == set(), got
 
-# test extract_fallbacks (multi-parent rejection)
-grammar_text = """
-%fallback LETTER A B C;
-%fallback WORD LETTER C;
-asdf = WORD LETTER A B C;
-"""
-parsed_doc = gen.parse_doc(grammar_text)
-g = parsed_doc.build_grammar(grammar_text)
-try:
-    raise ValueError(gen.extract_fallbacks(parsed_doc.fallbacks, g, None))
-except gen.RenderedError as e:
-    assert "fallback to multiple other types" in str(e), e
+### This test would need to pass if we relaxed the single-parent requirement
+### for %fallback.
+# # test extract_fallbacks: a token can fallback to multiple types, but if both
+# # to-types are used simultaneously, it causes a conflict.
+# grammar_text = """
+# %fallback HEX DIGIT A B C D E F;
+# %fallback ALPHA A B C D E F G H I J K L M N O P Q R S T U V W X Y Z;
+# token_decl = DIGIT A B C D E F G H I J K L M N O P Q R S T U V W X Y Z;
+# alphahex = ALPHA | HEX;
+# """
+# parsed_doc = gen.parse_doc(grammar_text)
+# g = parsed_doc.build_grammar(grammar_text)
+# # should succeed:
+# gen.extract_fallbacks(parsed_doc.fallbacks, g, None)
+# try:
+#     g.compile()
+#     g.check()
+#     1/0
+# except gen.RenderedError as e:
+#     assert "fallback to multiple other types" in str(e), e
 
 # test extract_fallbacks (multi-parent rejection)
 grammar_text = """
@@ -798,7 +806,6 @@ int main(int argc, char **argv){
     RUN_TEST(one_or_two_tokens, DIGIT, DIGIT, _EOF);
 
     return wrong;
-    1
 }
 }}}
 """)
