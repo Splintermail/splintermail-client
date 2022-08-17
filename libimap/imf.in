@@ -12,20 +12,6 @@
 
 {{#include <libimap/libimap.h>
 
-// note that *prev might be NULL but *buf must point to the scanner's bytes.
-static inline dstr_off_t dstr_off_zero(
-    dstr_off_t *prev, const dstr_t *buf, size_t skip
-){
-    if(prev == NULL){
-        return (dstr_off_t){ .buf = buf, .start = skip, .len = 0 };
-    }
-    return (dstr_off_t){
-        .buf = prev->buf,
-        .start = prev->start + prev->len,
-        .len = 0,
-    };
-}
-
 // steal %param buf and %param skip via a macro
 #define DSTR_OFF_ZERO(prev) dstr_off_zero(prev, buf, skip)
 
@@ -67,32 +53,6 @@ static ie_dstr_t *without_spaces(derr_t *E, ie_dstr_t *list){
         }
     }
     return out;
-}
-
-static int parse_int(derr_t *E, const dstr_off_t off){
-    if(is_error(*E)) return 0;
-    int out;
-    dstr_t text = dstr_from_off(off);
-    PROP_GO(E, dstr_toi(&text, &out, 10), fail);
-    return out;
-
-fail:
-    return 0;
-}
-
-static int parse_int_within(derr_t *E, const dstr_off_t off, int min, int max){
-    if(is_error(*E)) return 0;
-    int out;
-    dstr_t text = dstr_from_off(off);
-    PROP_GO(E, dstr_toi(&text, &out, 10), fail);
-    if(out < min || out > max){
-        TRACE(E, "%x is not within [%x, %x]\n", FI(out), FI(min), FI(max));
-        ORIG_GO(E, E_VALUE, "invalid number", fail);
-    }
-    return out;
-
-fail:
-    return 0;
 }
 
 }}

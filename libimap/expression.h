@@ -880,27 +880,6 @@ const dstr_t *imap_resp_type_to_dstr(imap_resp_type_t type);
 
 dstr_t token_extend(dstr_t start, dstr_t end);
 
-typedef struct {
-    const dstr_t *buf;
-    size_t start; // offset into .buf
-    size_t len;
-} dstr_off_t;
-
-static inline dstr_off_t dstr_off_extend(dstr_off_t start, dstr_off_t end){
-    return (dstr_off_t){
-        .buf = start.buf,
-        .start = start.start,
-        .len = (end.start - start.start) + end.len,
-    };
-}
-
-// materialize a dstr_off into something usable
-// (result valid until mem is reallocated)
-static inline dstr_t dstr_from_off(const dstr_off_t off){
-    if(!off.buf) return (dstr_t){0};
-    return dstr_sub2(*off.buf, off.start, off.start + off.len);
-}
-
 /* Bison-friendly API: errors are kept in the parser, all functions return
    an expression type, even functions which really just modify some other
    object.  This means that in error situations, we can easily call *_free() on

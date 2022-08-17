@@ -97,7 +97,7 @@ add_library(
     "${imf_scan_out}"
     "${imf_parse_c}"
 )
-target_link_libraries(imap PUBLIC dstr)
+target_link_libraries(imap PUBLIC dstr parsing)
 default_compile_options(imap TRUE)
 
 # We need to generate headers before compiling any source code.
