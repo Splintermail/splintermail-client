@@ -87,7 +87,7 @@ derr_t imf_scan(
     size_t end = s->fixed_end!=(size_t)-1 ? s->fixed_end : s->bytes->len;
 
     #define YYPEEK() peek(s->bytes, end, idx)
-    #define YYSKIP() peek(s->bytes, end, ++idx)
+    #define YYSKIP() idx++
     #define YYFILL(n) fill(&e2, s, &end)
     // this is a buffer limit check, not an EOF check
     #define YYLESSTHAN(n) end - idx < n
