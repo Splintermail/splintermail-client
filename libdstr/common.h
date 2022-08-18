@@ -744,9 +744,11 @@ derr_t pvt_ffmt(
 
 // Note: this function is meant to be called by the FMT macro
 derr_type_t pvt_fmt_quiet(
-        dstr_t* out, const char* fstr, const fmt_t* args, size_t nargs);
+    dstr_t* out, const char* fstr, const fmt_t* args, size_t nargs
+);
 derr_t pvt_fmt(
-        dstr_t* out, const char* fstr, const fmt_t* args, size_t nargs);
+    dstr_t* out, const char* fstr, const fmt_t* args, size_t nargs
+);
 /*  throws : E_NOMEM
              E_FIXEDSIZE
              E_INTERNAL
@@ -760,17 +762,33 @@ derr_t pvt_fmt(
 // FMT is like sprintf
 #define FMT(out, fstr, ...) \
     pvt_fmt(out, \
-            fstr, \
-            (const fmt_t[]){FI(1), __VA_ARGS__}, \
-            sizeof((const fmt_t[]){FI(1), __VA_ARGS__})/sizeof(fmt_t))
+        fstr, \
+        (const fmt_t[]){FI(1), __VA_ARGS__}, \
+        sizeof((const fmt_t[]){FI(1), __VA_ARGS__})/sizeof(fmt_t) \
+    )
+#define FMT_QUIET(out, fstr, ...) \
+    pvt_fmt_quiet(out, \
+        fstr, \
+        (const fmt_t[]){FI(1), __VA_ARGS__}, \
+        sizeof((const fmt_t[]){FI(1), __VA_ARGS__})/sizeof(fmt_t) \
+    )
 
 // FFMT is like fprintf
 #define FFMT(f, written, fstr, ...) \
     pvt_ffmt(f, \
-             written, \
-             fstr, \
-             (const fmt_t[]){FI(1), __VA_ARGS__}, \
-             sizeof((const fmt_t[]){FI(1), __VA_ARGS__})/sizeof(fmt_t))
+        written, \
+        fstr, \
+        (const fmt_t[]){FI(1), __VA_ARGS__}, \
+        sizeof((const fmt_t[]){FI(1), __VA_ARGS__})/sizeof(fmt_t) \
+    )
+
+#define FFMT_QUIET(f, written, fstr, ...) \
+    pvt_ffmt_quiet(f, \
+        written, \
+        fstr, \
+        (const fmt_t[]){FI(1), __VA_ARGS__}, \
+        sizeof((const fmt_t[]){FI(1), __VA_ARGS__})/sizeof(fmt_t) \
+    )
 
 // PFMT is like printf
 #define PFMT(fstr, ...) FFMT(stdout, NULL, fstr, __VA_ARGS__)

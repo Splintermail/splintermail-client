@@ -1,0 +1,423 @@
+# uri grammar
+# rfc3986: uri syntax
+
+{{#include <liburl/liburl.h>
+
+// steal %param buf via a macro
+#define DSTR_OFF_ZERO(prev) dstr_off_zero(prev, buf, 0)
+
+static bool is_valid_port(dstr_off_t off){
+    if(!off.len) return true;
+
+    derr_t e = E_OK;
+    parse_int_within(&e, off, 1, 65535);
+    CATCH(e, E_ANY){
+        DROP_VAR(&e);
+        return false;
+    }
+    return true;
+}
+
+// recorded error message is based on sem.loc and buf, and is written to errbuf
+static void url_handle_error(
+    url_parser_t *p,
+    const dstr_t *buf,
+    bool hex,
+    dstr_t *errbuf,
+    url_token_e url_token,
+    url_sem_t sem,
+    const unsigned char *expected_mask,
+    const char *loc_summary
+){
+    // ignore the generated values so we can call url_handle_error ourselves
+    (void)p;
+    (void)hex;
+    (void)url_token;
+    (void)expected_mask;
+    (void)loc_summary;
+
+    // only generate an error if the user gave a buffer for it
+    if(errbuf == NULL) return;
+    errbuf->len = 0;
+
+    // aim for 80 characters of context
+    size_t head_len = MIN(sem.loc.start, 40);
+    size_t token_len = MIN(sem.loc.len, 80 - head_len);
+    size_t tail_len = 80 - MIN(80, head_len + token_len);
+
+    dstr_t head = dstr_sub2(*buf, sem.loc.start - head_len, sem.loc.start);
+    dstr_t token = dstr_sub2(*buf, sem.loc.start, sem.loc.start + token_len);
+    dstr_t tail = dstr_sub2(
+        *buf, sem.loc.start + token_len, sem.loc.start + token_len + tail_len
+    );
+
+    // longest DBG char is \xNN, or 4 chars, and we have two lines of len 80
+    // 80 * 4 = 320
+    FMT_QUIET(errbuf, "invalid url: %x", FD_DBG(&head));
+    size_t nspaces = errbuf->len;
+    FMT_QUIET(errbuf, "%x", FD_DBG(&token));
+    size_t ncarets = errbuf->len - nspaces;
+    FMT_QUIET(errbuf, "%x\n", FD_DBG(&tail));
+
+    // spaces
+    for(size_t i = 0; i < nspaces; i++){
+        dstr_append_quiet(errbuf, &DSTR_LIT(" "));
+    }
+
+    // carets
+    for(size_t i = 0; i < ncarets; i++){
+        dstr_append_quiet(errbuf, &DSTR_LIT("^"));
+    }
+
+    // always nul-terminate
+    derr_type_t type = dstr_null_terminate_quiet(errbuf);
+    if(type != E_NONE && errbuf->len != 0){
+        errbuf->len--;
+        dstr_null_terminate(errbuf);
+    }
+}
+
+static void manual_error(const dstr_t *buf, dstr_t *errbuf, dstr_off_t loc){
+    url_handle_error(
+        NULL, buf, false, errbuf, 0, (url_sem_t){ .loc = loc }, NULL, NULL
+    );
+}
+
+}}
+
+%generator c;
+%prefix url;
+
+%param buf {const dstr_t *};
+%param hex {bool*};
+%param errbuf {dstr_t *};
+
+%kwarg semloc_type dstr_off_t;
+%kwarg span_fn dstr_off_extend;
+%kwarg zero_loc_fn DSTR_OFF_ZERO;
+%kwarg error_fn url_handle_error;
+
+%type url {url_t};
+%type bool {bool};
+
+# Tokens
+INVALID;
+EOF;
+
+# groups
+ALPHA;
+NUM;
+HEX;  # only emitted when hex_mode is set by the parser
+EIGHTBIT;
+
+TAB;
+LF;
+CR;
+SP;
+BANG;
+DQUOTE;
+POUND;
+DOLLAR;
+PERCENT;
+AMPERSAND;
+SQUOTE;
+LPAREN;
+RPAREN;
+ASTERISK;
+PLUS;
+COMMA;
+DASH;
+DOT;
+SLASH;
+COLON;
+SEMI;
+LANGLE;
+EQ;
+RANGLE;
+QUESTION;
+ARUBA;
+LBRACKET;
+BACKSLASH;
+RBRACKET;
+CARET;
+UNDER;
+BACKTICK;
+LBRACE;
+PIPE;
+RBRACE;
+TILDE;
+
+# No keywords for uris
+
+pct_encoded = PERCENT { *hex = true; } HEX { *hex = true; } HEX;
+unreserved = ALPHA | NUM | DASH | DOT | UNDER | TILDE;
+sub_delims = sub_delims_noplus | PLUS;
+sub_delims_noplus = BANG | DOLLAR | AMPERSAND | SQUOTE | LPAREN | RPAREN
+                  | ASTERISK | COMMA | SEMI | EQ;
+# reg-name is a superset that includes IPv4address, so if we wanted to
+# distinguish the two we'd have to do it in post-processing.  The RFC says
+# "if it matches an ipv4 address treat it as one" basically.
+reg_name_0 = *(unreserved | pct_encoded | sub_delims);
+
+empty = %empty;
+
+%root uri;
+uri:url = scheme:s COLON hier_part:hp qf:qf EOF
+{{ $$ = (url_t){
+       .scheme = @s,
+       .user = $hp.user,
+       .pass = $hp.pass,
+       .host = $hp.host,
+       .port = $hp.port,
+       .path = $hp.path,
+       .query = $qf.query,
+       .fragment = $qf.fragment,
+   };
+}};
+
+scheme = ALPHA *(ALPHA | NUM | PLUS | DASH | DOT);
+
+qf:url =
+    (
+      | QUESTION query:q { $$.query = @q; }
+      | empty:q          { $$.query = @q; }
+    )
+    (
+      | POUND fragment:f { $$.fragment = @f; }
+      | empty:f          { $$.fragment = @f; }
+    )
+;
+
+query    = *(pchar|SLASH|QUESTION);
+fragment = *(pchar|SLASH|QUESTION);
+
+# authority and/or path
+hier_part:url =
+    empty:start
+    (
+      | SLASH:slash (
+          | SLASH authority:a path_after_auth:p
+            {{ $$ = (url_t){
+                .user = $a.user,
+                .pass = $a.pass,
+                .host = $a.host,
+                .port = $a.port,
+                .path = @p,
+               };
+            }}
+          | relpath_0:p
+            # this is sematically absolute since it is after SLASH
+            {{ $$ = (url_t){
+                .user = @start,
+                .pass = @start,
+                .host = @start,
+                .port = @start,
+                .path = dstr_off_extend(@slash, @p),
+               };
+            }}
+        )
+      | relpath_0:p
+         {{ $$ = (url_t){
+             .user = @start,
+             .pass = @start,
+             .host = @start,
+             .port = @start,
+             .path = @p,
+            };
+         }}
+    )
+;
+
+# manipulates its own location to not include the COLON
+maybe_port =
+    empty:x
+    [
+        COLON
+        port_0:p { @x = @p; }
+    ]
+    { @$ = @x; }
+;
+
+# manipulates its own location to not include the COLON
+maybe_postcolon =
+    empty:x
+    [
+        COLON
+        postcolon_0:p { @x = @p; }
+    ]
+    { @$ = @x; }
+;
+
+# parsing authority means you don't know if you are in userinfo or host yet.
+authority:url =
+  # precolon means you don't know if you're reading userinfo or host:reg-name
+  | empty:e
+    precolon_0:pre
+    maybe_postcolon:post
+    (
+      | ARUBA host_0:host maybe_port:port
+        # have explicit host and port
+        {{ $$.user = @pre;
+           $$.pass = @post;
+           $$.host = @host;
+           $$.port = @port;
+        }}
+      | %empty
+        # treat precolon and postcolon as host and port
+        {{ if(!is_valid_port(@post)){
+               manual_error(buf, errbuf, @post);
+               return URL_STATUS_SYNTAX_ERROR;
+           }
+           $$.user = @e;
+           $$.pass = @e;
+           $$.host = @pre;
+           $$.port = @post;
+        }}
+    )
+  # ip_literal starts with the only allowed host character that is not allowed
+  # in userinfo, so we know we're reading a host already.
+  | empty:e ip_literal:host maybe_port:port
+    {{ $$.user = @e;
+       $$.pass = @e;
+       $$.host = @host;
+       $$.port = @port;
+    }}
+;
+
+# for reference:
+# userinfo = *(unreserved | pct_encoded | sub_delims | COLON);
+# reg_name = *(unreserved | pct_encoded | sub_delims);
+precolon_0 = *(unreserved | pct_encoded | sub_delims);
+postcolon_0 = *(unreserved | pct_encoded | sub_delims | COLON);
+
+# "If a URI does not contain an authority component, then the path cannot begin
+# with two slash characters ("//")"
+relpath_0 = [pchar *(pchar | SLASH)];
+
+# "If a URI contains an authority component, then the path component
+# must either be empty or begin with a slash ("/") character"
+path_after_auth = [SLASH *(pchar | SLASH)];
+
+pchar = pchar_nocolon | COLON;
+pchar_nocolon = unreserved | pct_encoded | sub_delims | ARUBA;
+
+port_0 = [NUM];
+
+# note: ipv4address is not present, it gets matches as part of reg-name
+host_0 = ip_literal | reg_name_0;
+
+# Don't even try to validate these addresses, just mush all possible chars
+# together between ipv6address and ipvfuture
+ip_literal = LBRACKET *(unreserved|sub_delims|COLON) RBRACKET;
+
+%root uri_reference;
+uri_reference:url = uri_reference_noqf:ref qf:qf EOF
+{{ $$ = (url_t){
+        .scheme = $ref.scheme,
+        .user = $ref.user,
+        .pass = $ref.pass,
+        .host = $ref.host,
+        .port = $ref.port,
+        .path = $ref.path,
+        .query = $qf.query,
+        .fragment = $qf.fragment,
+    };
+}};
+
+# returns bool indicating if it might be a scheme
+scheme_or_path:bool =
+  | ALPHA
+    # still don't know for sure what it is...
+      *(
+      | (ALPHA | NUM | PLUS | DASH | DOT)
+        # still don't know for sure what it is...
+
+      | (UNDER | TILDE | pct_encoded | sub_delims_noplus | ARUBA)
+        # it must be a path, but still no colon is allowed
+        *pchar_nocolon
+        %return
+      )
+      # this is the only codepath where it might be a scheme
+      { $$ = true; }
+
+  | (NUM|DASH|DOT|UNDER|TILDE|pct_encoded|sub_delims|ARUBA)
+    # it must be a path, but still no colon is allowed
+    *pchar_nocolon
+;
+
+
+# uri-reference is either a uri or a relative-ref
+#
+# "a URI reference may be a relative-path reference, in which case
+# the first path segment cannot contain a colon (":") character"
+uri_reference_noqf:url =
+    empty:start
+    (
+      | scheme_or_path:sop
+        (
+          | SLASH relpath_0:r
+            # relative-part::path-noscheme
+            {{ $$ = (url_t){
+                   .scheme = @start,
+                   .user = @start,
+                   .pass = @start,
+                   .host = @start,
+                   .port = @start,
+                   .path = dstr_off_extend(@sop, @r),
+               };
+            }}
+          | COLON hier_part:hp
+            # normal uri
+            {{ // validate the scheme_or_path could have been a scheme
+               if(!$sop){
+                   manual_error(buf, errbuf, @sop);
+                   return URL_STATUS_SYNTAX_ERROR;
+               }
+               $$ = (url_t){
+                   .scheme = @sop,
+                   .user = $hp.user,
+                   .pass = $hp.pass,
+                   .host = $hp.host,
+                   .port = $hp.port,
+                   .path = $hp.path,
+               };
+            }}
+        )
+      | SLASH:slash
+        (
+          | SLASH authority:a path_after_auth:p
+            # relative-part::authority
+            {{ $$ = (url_t){
+                   .scheme = @start,
+                   .user = $a.user,
+                   .pass = $a.pass,
+                   .host = $a.host,
+                   .port = $a.port,
+                   .path = @p,
+               };
+            }}
+          | relpath_0:r
+            # relative-part::path-absolute
+            {{ $$ = (url_t){
+                   .scheme = @start,
+                   .user = @start,
+                   .pass = @start,
+                   .host = @start,
+                   .port = @start,
+                   .path = dstr_off_extend(@slash, @r),
+               };
+            }}
+        )
+      | %empty
+        # relative-part::path-empty
+        {{ $$ = (url_t){
+               .scheme = @start,
+               .user = @start,
+               .pass = @start,
+               .host = @start,
+               .port = @start,
+               .path = @start,
+           };
+        }}
+    )
+;

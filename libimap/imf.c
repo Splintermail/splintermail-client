@@ -235,7 +235,9 @@ void imf_handle_error(
 
     dstr_t head = dstr_sub2(*bytes, sem.loc.start - head_len, sem.loc.start);
     dstr_t token = dstr_sub2(*bytes, sem.loc.start, sem.loc.start + token_len);
-    dstr_t tail = dstr_sub2(*bytes, sem.loc.start + token_len, sem.loc.start + token_len + tail_len);
+    dstr_t tail = dstr_sub2(
+        *bytes, sem.loc.start + token_len, sem.loc.start + token_len + tail_len
+    );
 
     // longest DBG char is \xNN, or 4 chars, and we have two lines of len 80
     // 80 * 4 = 320
@@ -258,7 +260,9 @@ void imf_handle_error(
         buf.data[buf.len++] = '^';
     }
 
-    LOG_ERROR("Error parsing email message: %x\n%x\n", FS(loc_summary), FD(&buf));
+    LOG_ERROR(
+        "Error parsing email message: %x\n%x\n", FS(loc_summary), FD(&buf)
+    );
     // reuse buf
     int l = imf_snprint_mask(buf.data, buf.size, expected_mask, ",");
     if(l > 0 && (size_t)l < buf.size){

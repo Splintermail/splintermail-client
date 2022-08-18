@@ -1,0 +1,115 @@
+#include <libparsing/libparsing.h>
+#include <liburl/liburl.h>
+
+#include <stdlib.h>
+
+url_scanner_t url_scanner(const dstr_t *buf){
+    return (url_scanner_t){ .buf = buf, .used = 0 };
+}
+
+url_scanned_t url_scanner_next(url_scanner_t *s, bool hexmode){
+    const dstr_t buf = *s->buf;
+    size_t start = s->used;
+    size_t used = s->used;
+
+    if(used >= buf.len){
+        return (url_scanned_t){
+            .token = URL_EOF,
+            .loc = (dstr_off_t){ .buf = s->buf, .start = start, .len = 0 },
+        };
+    }
+
+    if(hexmode){
+        char c = buf.data[s->used++];
+        if(
+            (c >= 'a' && c <= 'f')
+            || (c >= 'A' && c <= 'F')
+            || (c >= '0' && c <= '9')
+        ){
+            return (url_scanned_t){
+                .token = URL_HEX,
+                .loc = (dstr_off_t){
+                    .buf = s->buf, .start = start, .len = 1,
+                },
+            };
+        }else{
+            return (url_scanned_t){
+                .token = URL_INVALID,
+                .loc = (dstr_off_t){
+                    .buf = s->buf, .start = start, .len = 1,
+                },
+            };
+        }
+    }
+
+    url_token_e token = 0;
+
+    // disable YYFILL and use a check in YYPEEK that emits a sentinel instead
+    #define YYPEEK() used < buf.len ? ((unsigned char*)buf.data)[used] : '\0'
+    #define YYSKIP() used++
+    #define YYCTYPE unsigned char
+
+
+    /*!re2c
+        re2c:yyfill:enable = 0;
+
+        eightbit     = [\x80-\xFF];
+
+        alpha        = [A-Za-z];
+        digit        = [0-9];
+
+        "\x09"       { token = URL_TAB; goto done; }
+        "\x0a"       { token = URL_LF; goto done; }
+        "\x0d"       { token = URL_CR; goto done; }
+        " "          { token = URL_SP; goto done; }
+        "!"          { token = URL_BANG; goto done; }
+        "\""         { token = URL_DQUOTE; goto done; }
+        "#"          { token = URL_POUND; goto done; }
+        "$"          { token = URL_DOLLAR; goto done; }
+        "%"          { token = URL_PERCENT; goto done; }
+        "&"          { token = URL_AMPERSAND; goto done; }
+        "'"          { token = URL_SQUOTE; goto done; }
+        "("          { token = URL_LPAREN; goto done; }
+        ")"          { token = URL_RPAREN; goto done; }
+        "*"          { token = URL_ASTERISK; goto done; }
+        "+"          { token = URL_PLUS; goto done; }
+        ","          { token = URL_COMMA; goto done; }
+        "-"          { token = URL_DASH; goto done; }
+        "."          { token = URL_DOT; goto done; }
+        "/"          { token = URL_SLASH; goto done; }
+        ":"          { token = URL_COLON; goto done; }
+        ";"          { token = URL_SEMI; goto done; }
+        "<"          { token = URL_LANGLE; goto done; }
+        "="          { token = URL_EQ; goto done; }
+        ">"          { token = URL_RANGLE; goto done; }
+        "?"          { token = URL_QUESTION; goto done; }
+        "@"          { token = URL_ARUBA; goto done; }
+        "["          { token = URL_LBRACKET; goto done; }
+        "\\"         { token = URL_BACKSLASH; goto done; }
+        "]"          { token = URL_RBRACKET; goto done; }
+        "^"          { token = URL_CARET; goto done; }
+        "_"          { token = URL_UNDER; goto done; }
+        "`"          { token = URL_BACKTICK; goto done; }
+        "{"          { token = URL_LBRACE; goto done; }
+        "|"          { token = URL_PIPE; goto done; }
+        "}"          { token = URL_RBRACE; goto done; }
+        "~"          { token = URL_TILDE; goto done; }
+
+        digit+       { token = URL_NUM; goto done; }
+        alpha+       { token = URL_ALPHA; goto done; }
+        eightbit+    { token = URL_EIGHTBIT; goto done; }
+
+        *            { token = URL_INVALID; goto done; }
+    */
+
+done:
+
+    s->used = used;
+    return (url_scanned_t){
+        .token = token,
+        .loc = (dstr_off_t){
+            .buf = s->buf, .start = start, .len = used - start,
+        },
+    };
+}
+

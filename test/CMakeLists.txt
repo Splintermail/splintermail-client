@@ -50,6 +50,7 @@ set(TEST_EXE_TGTS
     test_networking
     test_json
     test_ui
+    test_url
     test_key_tool
     test_atree
     test_imap_scan
@@ -103,6 +104,7 @@ target_link_libraries(test_networking PRIVATE crypto uvthread)
 target_link_libraries(test_key_tool PRIVATE ditm test_utils fake_api_server)
 target_link_libraries(test_ui PRIVATE ui dummy_ui_harness)
 # target_link_libraries(test_atree) PRIVATE
+target_link_libraries(test_url PRIVATE url)
 target_link_libraries(test_imap_scan PRIVATE imap)
 target_link_libraries(test_imap_read PRIVATE imap)
 target_link_libraries(test_imap_write PRIVATE imap)
