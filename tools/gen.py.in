@@ -2142,6 +2142,7 @@ class C:
                 self.fprint("#endif")
                 self.fprint("    ${PREFIX_}CONSUME_TOKEN;")
                 self.fprint("    ${prefix_}mask_clear(p->mask);")
+                self.fprint("    p->groupmask = 0;")
                 return state, stack + 1
 
             if isinstance(obj.defn, Expression):
@@ -2301,19 +2302,20 @@ class C:
                         strays.append(t)
                         caseval = "${PREFIX_}ENUM_MASK & ${PREFIX_}%s"%t
                         self.fprint("        case %s: goto %s;"%(caseval, label))
+            # default clause
+            self.fprint("        default:")
+            if mask:
+                self.fprint("            p->groupmask |= 0x%x;"%mask)
+            if strays:
+                # TODO: search for groups we could reuse to cover bits of
+                # the strays list, so we can just OR it into the groupmask
+                strays = frozenset(strays)
+                self.fprint("            " + self.mask_set(strays) + ";")
             if obj.default is not None:
                 i += 1
                 label = "yy%d_br_%d"%(state, i)
-                self.fprint("        default: goto %s;"%label)
+                self.fprint("            goto %s;"%label)
             else:
-                self.fprint("        default:")
-                if mask:
-                    self.fprint("            p->groupmask |= 0x%x;"%mask)
-                if strays:
-                    # TODO: search for groups we could reuse to cover bits of
-                    # the strays list, so we can just OR it into the groupmask
-                    strays = frozenset(strays)
-                    self.fprint("            " + self.mask_set(strays) + ";")
                 self.fprint("            ${PREFIX_}SYNTAX_ERROR(*token, sem);")
             self.fprint("    }")
             self.fprint("")
@@ -3032,6 +3034,7 @@ class C:
                 ${prefix_}free_sems(p, 0);
                 p->callslen = 0;
                 ${prefix_}mask_clear(p->mask);
+                p->groupmask = 0;
             }
 
             void ${prefix_}parser_free(${prefix_}parser_t **pp){
