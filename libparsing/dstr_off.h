@@ -37,5 +37,10 @@ static inline dstr_off_t dstr_off_zero(
     };
 }
 
+// strip any chars in `strip` from one or both ends
+dstr_off_t dstr_off_lstrip(dstr_off_t off, const dstr_t strip);
+dstr_off_t dstr_off_rstrip(dstr_off_t off, const dstr_t strip);
+dstr_off_t dstr_off_strip(dstr_off_t off, const dstr_t strip);
+
 int parse_int(derr_t *E, const dstr_off_t off);
 int parse_int_within(derr_t *E, const dstr_off_t off, int min, int max);
