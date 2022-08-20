@@ -14,6 +14,7 @@ macro(add_uvthread asan)
         uv_util.c
         refs.c
         queue.c
+        connect.c
     )
     target_include_directories("uvthread${asan}" PUBLIC "${LIBUV_INCLUDE}")
     target_link_libraries("uvthread${asan}" PUBLIC "dstr${asan}" "${LIBUV_LIB}")
