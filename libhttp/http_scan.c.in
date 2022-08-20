@@ -1,0 +1,100 @@
+#include <libparsing/libparsing.h>
+#include <libhttp/libhttp.h>
+
+#include <stdlib.h>
+
+http_scanner_t http_scanner(const dstr_t *buf){
+    return (http_scanner_t){ .buf = buf, .used = 0 };
+}
+
+http_scanned_t http_scanner_next(http_scanner_t *s){
+    const dstr_t buf = *s->buf;
+    size_t start = s->used;
+    size_t used = s->used;
+
+    if(used >= buf.len){
+        return (http_scanned_t){
+            .token = HTTP_EOF,
+            .loc = (dstr_off_t){ .buf = s->buf, .start = start, .len = 0 },
+            .wantmore = true,
+        };
+    }
+
+    http_token_e token = 0;
+
+    /* multicharcter token types can have wantmore set when they are the last
+       token token found in the buffer */
+    bool mightwant = false;
+
+    // disable YYFILL and use a check in YYPEEK that emits a sentinel instead
+    #define YYPEEK() used < buf.len ? ((unsigned char*)buf.data)[used] : '\0'
+    #define YYSKIP() used++
+    #define YYCTYPE unsigned char
+
+
+    /*!re2c
+        re2c:yyfill:enable = 0;
+
+        obs_text     = [\x80-\xFF];
+
+        alpha        = [A-Za-z];
+        digit        = [0-9];
+
+        "\x09"       { token = HTTP_TAB; goto done; }
+        "\x0a"       { token = HTTP_LF; goto done; }
+        "\x0d"       { token = HTTP_CR; goto done; }
+        " "          { token = HTTP_SP; goto done; }
+        "!"          { token = HTTP_BANG; goto done; }
+        "\""         { token = HTTP_DQUOTE; goto done; }
+        "#"          { token = HTTP_POUND; goto done; }
+        "$"          { token = HTTP_DOLLAR; goto done; }
+        "%"          { token = HTTP_PERCENT; goto done; }
+        "&"          { token = HTTP_AMPERSAND; goto done; }
+        "'"          { token = HTTP_SQUOTE; goto done; }
+        "("          { token = HTTP_LPAREN; goto done; }
+        ")"          { token = HTTP_RPAREN; goto done; }
+        "*"          { token = HTTP_ASTERISK; goto done; }
+        "+"          { token = HTTP_PLUS; goto done; }
+        ","          { token = HTTP_COMMA; goto done; }
+        "-"          { token = HTTP_DASH; goto done; }
+        "."          { token = HTTP_DOT; goto done; }
+        "/"          { token = HTTP_SLASH; goto done; }
+        ":"          { token = HTTP_COLON; goto done; }
+        ";"          { token = HTTP_SEMI; goto done; }
+        "<"          { token = HTTP_LANGLE; goto done; }
+        "="          { token = HTTP_EQ; goto done; }
+        ">"          { token = HTTP_RANGLE; goto done; }
+        "?"          { token = HTTP_QUESTION; goto done; }
+        "@"          { token = HTTP_ARUBA; goto done; }
+        "["          { token = HTTP_LBRACKET; goto done; }
+        "\\"         { token = HTTP_BACKSLASH; goto done; }
+        "]"          { token = HTTP_RBRACKET; goto done; }
+        "^"          { token = HTTP_CARET; goto done; }
+        "_"          { token = HTTP_UNDER; goto done; }
+        "`"          { token = HTTP_BACKTICK; goto done; }
+        "{"          { token = HTTP_LBRACE; goto done; }
+        "|"          { token = HTTP_PIPE; goto done; }
+        "}"          { token = HTTP_RBRACE; goto done; }
+        "~"          { token = HTTP_TILDE; goto done; }
+        digit        { token = HTTP_DIGIT; goto done; }
+
+        "HTTP"       { token = HTTP_HTTP; mightwant = true; goto done; }
+        'chunked'    { token = HTTP_CHUNKED; mightwant = true; goto done; }
+
+        alpha+       { token = HTTP_ALPHA; mightwant = true; goto done; }
+        obs_text+    { token = HTTP_OBS_TEXT; mightwant = true; goto done; }
+
+        *            { token = HTTP_INVALID; goto done; }
+    */
+
+done:
+
+    s->used = used;
+    return (http_scanned_t){
+        .token = token,
+        .loc = (dstr_off_t){
+            .buf = s->buf, .start = start, .len = used - start,
+        },
+        .wantmore = mightwant && used >= buf.len,
+    };
+}

@@ -1,0 +1,322 @@
+# http grammar
+# rfc7230: http syntax
+
+{{#include <libhttp/libhttp.h>
+
+// steal %param buf via a macro
+#define DSTR_OFF_ZERO(prev) dstr_off_zero(prev, buf, 0)
+
+static bool parse_status_code(dstr_off_t off, int *code){
+    derr_t e = E_OK;
+    *code = parse_int_within(&e, off, 100, 599);
+    CATCH(e, E_ANY){
+        DROP_VAR(&e);
+        return false;
+    }
+    return true;
+}
+
+}}
+
+%generator c;
+%prefix http;
+
+%param buf {const dstr_t *};
+
+%kwarg semloc_type dstr_off_t;
+%kwarg span_fn dstr_off_extend;
+%kwarg zero_loc_fn DSTR_OFF_ZERO;
+# XXX
+# %kwarg error_fn url_handle_error;
+
+%type i {int};
+%type status_line {http_status_line_t};
+%type pair {http_pair_t};
+
+# Tokens
+INVALID;
+EOF;
+
+# groups
+ALPHA;
+DIGIT;
+OBS_TEXT;  # 8th bit is set
+
+TAB;
+LF;
+CR;
+SP;
+BANG;
+DQUOTE;
+POUND;
+DOLLAR;
+PERCENT;
+AMPERSAND;
+SQUOTE;
+LPAREN;
+RPAREN;
+ASTERISK;
+PLUS;
+COMMA;
+DASH;
+DOT;
+SLASH;
+COLON;
+SEMI;
+LANGLE;
+EQ;
+RANGLE;
+QUESTION;
+ARUBA;
+LBRACKET;
+BACKSLASH;
+RBRACKET;
+CARET;
+UNDER;
+BACKTICK;
+LBRACE;
+PIPE;
+RBRACE;
+TILDE;
+
+# keyword tokens
+HTTP;
+CHUNKED;
+
+%fallback ALPHA HTTP CHUNKED;
+
+vchar =
+# | LF
+# | CR
+| DIGIT
+| ALPHA
+# | OBS_TEXT
+# | TAB
+# | SP
+| BANG
+| DQUOTE
+| POUND
+| DOLLAR
+| PERCENT
+| AMPERSAND
+| SQUOTE
+| LPAREN
+| RPAREN
+| ASTERISK
+| PLUS
+| COMMA
+| DASH
+| DOT
+| SLASH
+| COLON
+| SEMI
+| LANGLE
+| EQ
+| RANGLE
+| QUESTION
+| ARUBA
+| LBRACKET
+| BACKSLASH
+| RBRACKET
+| CARET
+| UNDER
+| BACKTICK
+| LBRACE
+| PIPE
+| RBRACE
+| TILDE
+;
+
+tchar =
+# | LF
+# | CR
+| DIGIT
+| ALPHA
+# | OBS_TEXT
+# | TAB
+# | SP
+| BANG
+# | DQUOTE
+| POUND
+| DOLLAR
+| PERCENT
+| AMPERSAND
+| SQUOTE
+# | LPAREN
+# | RPAREN
+| ASTERISK
+| PLUS
+# | COMMA
+| DASH
+| DOT
+# | SLASH
+# | COLON
+# | SEMI
+# | LANGLE
+# | EQ
+# | RANGLE
+# | QUESTION
+# | ARUBA
+# | LBRACKET
+# | BACKSLASH
+# | RBRACKET
+| CARET
+| UNDER
+| BACKTICK
+# | LBRACE
+| PIPE
+# | RBRACE
+| TILDE
+;
+
+qdtext =
+# | LF
+# | CR
+# | DIGIT
+# | ALPHA
+# | OBS_TEXT
+| TAB
+| SP
+| BANG
+# | DQUOTE
+| POUND
+| DOLLAR
+| PERCENT
+| AMPERSAND
+| SQUOTE
+| LPAREN
+| RPAREN
+| ASTERISK
+| PLUS
+| COMMA
+| DASH
+| DOT
+| SLASH
+| COLON
+| SEMI
+| LANGLE
+| EQ
+| RANGLE
+| QUESTION
+| ARUBA
+| LBRACKET
+# | BACKSLASH
+| RBRACKET
+| CARET
+| UNDER
+| BACKTICK
+| LBRACE
+| PIPE
+| RBRACE
+| TILDE
+;
+
+ws = TAB|SP;
+token = 1*tchar;
+
+# at most one of {transfer-encoding:chunked, content-length} may be provided.
+# rfc7230::3.3.3: Message Body Length (paraphrased):
+#
+# 1. HEAD response -> no body
+#
+# 2. 2xx response to a CONNECT implies the connection is a tunnel after header fields
+#
+# 3. If Transfer-Encoding is present and chunked transfer coding is the final encoding,
+#    message body length is determined by reading and decoding data until the
+#    transfer coding is indicates that data is complete.
+#
+#    If chunked transfer coding is not the final encoding, the message body
+#    length is determined by reading the connection until it is closed by the
+#    server.  Only servers may do this.
+#
+#    If content-length is also set, transfer-encoding overrides.  But probably
+#    I'll just reject it as an error.
+#
+# 4. Multiple content-length fields with the same value are valid.  Invalid
+#    content-length fields are invalid (duh).
+#
+# 5. If a valid content-length is present without transfer-encoding, use it.
+#
+# 6. If none of the above are true for a request, the length of the body is 0.
+#
+# 7. Otherwise, this is a response without a declared message length, so the
+#    server just writes body bytes until it's done.
+#
+# The inclusion of close-delimited message is primarily for backwards-
+# compatibility with HTTP/1.0, so probably we just won't allow it.
+
+# Our strategy will be to parse headers line-by-line.
+
+# note: we are choosing not to support obs-fold until we encounter a server
+#       that we need to talk to which uses it.
+
+%root status_line;
+status_line:status_line =
+    HTTP SLASH DIGIT DOT DIGIT SP status_code:s SP reason_phrase:r CR LF
+    {{ $$ = (http_status_line_t){
+           .code = $s,
+           .reason = dstr_from_off(dstr_off_strip(@r, DSTR_LIT(" \t"))),
+       };
+    }}
+;
+
+status_code:i =
+    DIGIT:d1 DIGIT DIGIT:d3
+    {{ if(!parse_status_code(dstr_off_extend(@d1, @d3), &$$)){
+           // XXX handle the error somewhere
+           return HTTP_STATUS_SYNTAX_ERROR;
+       }
+    }}
+;
+reason_phrase = *(ws | vchar | OBS_TEXT);
+
+empty = %empty;
+
+# note: hdr_line returns a zero-length key when it sees end-of-headers
+%root hdr_line;
+hdr_line:pair =
+    (
+      | token:name COLON *ws field_content_ws:field CR LF
+        # a valid header
+        {{ $$ = (http_pair_t){
+               .key = dstr_from_off(@name),
+               .value = dstr_from_off(dstr_off_strip(@field, DSTR_LIT(" \t"))),
+           };
+        }}
+      | empty:e CR LF
+        # end-of-headers
+        {{ $$ = (http_pair_t){
+               .key = dstr_from_off(@e),
+               .value = dstr_from_off(@e),
+           };
+        }}
+    )
+;
+
+field_vchar = vchar | OBS_TEXT;
+field_content_ws = (vchar | OBS_TEXT) *(field_vchar|ws);
+
+%root content_length_field;
+content_length_field = 1*DIGIT EOF;
+
+%root transfer_encoding_field;
+transfer_encoding_field = transfer_codings_ws EOF;
+transfer_codings_ws =
+    *(COMMA *ws)
+    1*(
+        transfer_coding_ws
+        (
+          | 1*(COMMA *ws)
+          | %return
+        )
+    )
+;
+# Note: we only support CHUNKED encoding; all others are treated as extensions.
+transfer_coding_ws =
+  | CHUNKED *ws
+  | token *ws *(SEMI *ws transfer_parameter *ws)
+;
+transfer_parameter = token *ws EQ *ws (token | quoted_string);
+
+quoted_string = DQUOTE *(qdtext | quoted_pair) DQUOTE;
+quoted_pair = BACKSLASH (TAB | SP | vchar | OBS_TEXT);

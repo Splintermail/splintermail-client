@@ -52,6 +52,7 @@ set(TEST_EXE_TGTS
     test_ui
     test_dstr_off
     test_url
+    test_http_reader
     test_key_tool
     test_atree
     test_imap_scan
@@ -107,6 +108,7 @@ target_link_libraries(test_ui PRIVATE ui dummy_ui_harness)
 # target_link_libraries(test_atree) PRIVATE
 target_link_libraries(test_dstr_off PRIVATE parsing)
 target_link_libraries(test_url PRIVATE url)
+target_link_libraries(test_http_reader PRIVATE http)
 target_link_libraries(test_imap_scan PRIVATE imap)
 target_link_libraries(test_imap_read PRIVATE imap)
 target_link_libraries(test_imap_write PRIVATE imap)
