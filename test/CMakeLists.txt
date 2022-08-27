@@ -8,7 +8,7 @@ add_library(dummy_ui_harness dummy_ui_harness.c)
 define_file_logname_for_target(dummy_ui_harness)
 default_compile_options(dummy_ui_harness TRUE)
 target_include_directories(dummy_ui_harness PRIVATE ${OPENSSL_INCLUDE_DIR})
-target_link_libraries(dummy_ui_harness PUBLIC uvthread)
+target_link_libraries(dummy_ui_harness PUBLIC duv)
 
 add_library(fake_api_server fake_api_server.c)
 define_file_logname_for_target(fake_api_server)
@@ -101,7 +101,7 @@ target_link_libraries(test_maildir PRIVATE ditm)
 target_link_libraries(test_pop_client PRIVATE fake_pop_server)
 target_link_libraries(test_crypto PRIVATE crypto)
 # target_link_libraries(test_opt_parse) PRIVATE
-target_link_libraries(test_networking PRIVATE crypto uvthread)
+target_link_libraries(test_networking PRIVATE crypto duv)
 # target_link_libraries(test_json) PRIVATE
 target_link_libraries(test_key_tool PRIVATE ditm test_utils fake_api_server)
 target_link_libraries(test_ui PRIVATE ui dummy_ui_harness)
@@ -114,7 +114,7 @@ target_link_libraries(test_imap_read PRIVATE imap)
 target_link_libraries(test_imap_write PRIVATE imap)
 # target_link_libraries(test_hashmap) PRIVATE
 target_link_libraries(test_loop PRIVATE fake_engine crypto)
-target_link_libraries(test_queue PRIVATE uvthread)
+target_link_libraries(test_queue PRIVATE engine)
 target_link_libraries(test_tls_engine PRIVATE fake_engine)
 # target_link_libraries(test_link) PRIVATE
 target_link_libraries(test_maildir_name PRIVATE imaildir)

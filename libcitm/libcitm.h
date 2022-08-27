@@ -1,5 +1,5 @@
 #include "libdstr/libdstr.h"
-#include "libuvthread/libuvthread.h"
+#include "libduv/libduv.h"
 #include "libimap/libimap.h"
 #include "libimaildir/libimaildir.h"
 #include "libengine/libengine.h"

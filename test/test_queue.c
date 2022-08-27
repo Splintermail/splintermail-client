@@ -1,5 +1,5 @@
 #include <libdstr/libdstr.h>
-#include <libuvthread/libuvthread.h>
+#include <libengine/libengine.h>
 
 #include "test_utils.h"
 

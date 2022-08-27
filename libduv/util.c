@@ -3,7 +3,7 @@
 
 #include <uv.h>
 
-#include "libuvthread/libuvthread.h"
+#include "libduv/libduv.h"
 #include "libdstr/libdstr.h"
 
 REGISTER_ERROR_TYPE(E_UV, "UVERROR");

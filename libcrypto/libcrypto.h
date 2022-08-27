@@ -2,7 +2,7 @@
 #define LIBCRYPTO_H
 
 #include "libdstr/libdstr.h"
-#include "libuvthread/libuvthread.h"
+#include "libduv/libduv.h"
 
 #include "fixed_lengths.h"
 

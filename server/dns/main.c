@@ -1,7 +1,7 @@
 #include <uv.h>
 
 #include "libdstr/libdstr.h"
-#include "libuvthread/libuvthread.h"
+#include "libduv/libduv.h"
 
 #include "server/dns/dns.h"
 

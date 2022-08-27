@@ -2,7 +2,7 @@
 #define FAKE_ENGINE_H
 
 #include <libdstr/libdstr.h>
-#include <libuvthread/libuvthread.h>
+#include <libduv/libduv.h>
 #include <libengine/libengine.h>
 
 /* reader-writer thread is an independent thread that just starts a connection,

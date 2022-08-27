@@ -311,7 +311,7 @@ include_directories("${PROJECT_BINARY_DIR}")
 add_subdirectory(tools)
 
 add_subdirectory(libdstr)
-add_subdirectory(libuvthread)
+add_subdirectory(libduv)
 add_subdirectory(libcrypto)
 add_subdirectory(libditm)
 add_subdirectory(libparsing)

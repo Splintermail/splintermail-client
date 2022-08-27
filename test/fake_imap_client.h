@@ -4,7 +4,7 @@
 #include <uv.h>
 
 #include <libdstr/libdstr.h>
-#include <libuvthread/libuvthread.h>
+#include <libduv/libduv.h>
 #include <libcrypto/libcrypto.h>
 
 // path to where the test files can be found

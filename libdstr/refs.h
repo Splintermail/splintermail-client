@@ -13,7 +13,7 @@ struct refs_t {
 };
 
 derr_t refs_init(refs_t *refs, int starting_count, finalizer_t finalizer);
-// refs_t should normally be called by the finalizer_t
+// refs_free should normally be called by the finalizer_t
 void refs_free(refs_t *refs);
 
 void ref_up(refs_t *refs);

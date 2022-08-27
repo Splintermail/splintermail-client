@@ -2,12 +2,13 @@
 #define LIBENGINE_H
 
 #include "libdstr/libdstr.h"
-#include "libuvthread/libuvthread.h"
+#include "libduv/libduv.h"
 #include "libcrypto/libcrypto.h"
 #include "libimap/libimap.h"
 
 #include "manager.h"
 
+#include "libengine/queue.h"
 #include "libengine/engine.h"
 #include "libengine/loop.h"
 #include "libengine/tls.h"

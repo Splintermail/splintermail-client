@@ -5,7 +5,7 @@
 
 #include "libdstr/libdstr.h"
 #include "libimap/libimap.h"
-#include "libuvthread/libuvthread.h"
+#include "libduv/libduv.h"
 
 struct imaildir_t;
 typedef struct imaildir_t imaildir_t;

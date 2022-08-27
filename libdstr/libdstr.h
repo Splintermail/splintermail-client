@@ -22,6 +22,7 @@
 #include "opt_parse.h"
 #include "hashmap.h"
 #include "jsw_atree.h"
+#include "refs.h"
 
 
 #endif // LIBDITM_H

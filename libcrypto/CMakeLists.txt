@@ -7,9 +7,7 @@ macro(add_crypto asan)
         cmp.c
     )
     target_include_directories("crypto${asan}" PUBLIC "${OPENSSL_INCLUDE_DIR}")
-    # TODO: refactor this so you don't need libuv to include networking code?
-    # it's only used for refs_t in the _keypair_t.
-    target_link_libraries("crypto${asan}" PUBLIC "dstr${asan}" "uvthread${asan}" "${OPENSSL_LIBRARIES}")
+    target_link_libraries("crypto${asan}" PUBLIC "dstr${asan}" "${OPENSSL_LIBRARIES}")
     if("${asan}" STREQUAL "_noasan")
         default_compile_options("crypto${asan}" FALSE)
     else()

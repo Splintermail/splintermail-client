@@ -1,7 +1,7 @@
 #include <uv.h>
 
 #include <libdstr/libdstr.h>
-#include <libuvthread/libuvthread.h>
+#include <libduv/libduv.h>
 #include <engine.h>
 
 #include "fake_imap_worker.h"

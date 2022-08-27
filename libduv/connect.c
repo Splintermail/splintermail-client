@@ -1,4 +1,4 @@
-#include "libuvthread/libuvthread.h"
+#include "libduv/libduv.h"
 
 static void advance_state(duv_connect_t *c);
 

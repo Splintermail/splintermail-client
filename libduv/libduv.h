@@ -5,9 +5,7 @@
 
 #include <uv.h>
 
-#include "uv_util.h"
-#include "refs.h"
-#include "queue.h"
+#include "util.h"
 #include "connect.h"
 
 #endif // UVTHREAD_T

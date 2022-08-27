@@ -4,7 +4,7 @@
 #include "libdstr/libdstr.h"
 #include "libparsing/libparsing.h"
 #include "liburl/liburl.h"
-#include "libuvthread/libuvthread.h"
+#include "libduv/libduv.h"
 
 // http_scan.h is inlined into http.h
 #include "http.h"

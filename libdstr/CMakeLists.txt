@@ -14,6 +14,7 @@ macro(add_dstr_library name asan)
         link.c
         system.c
         net.c
+        refs.c
     )
     define_file_logname_for_target("${name}")
     default_compile_options("${name}" "${asan}")

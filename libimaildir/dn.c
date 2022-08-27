@@ -2,7 +2,7 @@
 
 #include "libimaildir.h"
 
-#include "libuvthread/libuvthread.h"
+#include "libduv/libduv.h"
 
 // state for gathering updates
 typedef struct {

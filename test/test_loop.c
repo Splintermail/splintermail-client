@@ -1,5 +1,5 @@
 #include <libdstr/libdstr.h>
-#include <libuvthread/libuvthread.h>
+#include <libduv/libduv.h>
 #include <libengine/libengine.h>
 #include <libcrypto/libcrypto.h>
 #include <stdio.h>
