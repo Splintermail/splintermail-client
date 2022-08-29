@@ -13,6 +13,8 @@ macro(add_duv asan)
         "duv${asan}"
         util.c
         connect.c
+        stream.c
+        passthru.c
     )
     target_include_directories("duv${asan}" PUBLIC "${LIBUV_INCLUDE}")
     target_link_libraries("duv${asan}" PUBLIC "dstr${asan}" "${LIBUV_LIB}")
@@ -55,4 +57,10 @@ if(BUILD_TESTS)
     default_compile_options(test_connect TRUE)
     define_file_logname_for_target(test_connect)
     add_test(NAME "do_test_connect" COMMAND "./test_connect")
+
+    add_executable(test_passthru test_passthru.c)
+    target_link_libraries(test_passthru PUBLIC duv)
+    default_compile_options(test_passthru TRUE)
+    define_file_logname_for_target(test_passthru)
+    add_test(NAME "do_test_passthru" COMMAND "./test_passthru")
 endif()

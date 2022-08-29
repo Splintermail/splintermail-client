@@ -7,5 +7,7 @@
 
 #include "util.h"
 #include "connect.h"
+#include "stream.h"
+#include "passthru.h"
 
 #endif // UVTHREAD_T

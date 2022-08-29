@@ -22,20 +22,24 @@ derr_type_t fmthook_uv_error(dstr_t* out, const void* arg){
     return E_NONE;
 }
 
-void duv_async_close(uv_async_t* async, uv_close_cb close_cb){
+void duv_async_close(uv_async_t *async, uv_close_cb close_cb){
     uv_close((uv_handle_t*)async, close_cb);
 }
 
-void duv_timer_close(uv_timer_t* timer, uv_close_cb close_cb){
+void duv_timer_close(uv_timer_t *timer, uv_close_cb close_cb){
     uv_close((uv_handle_t*)timer, close_cb);
 }
 
-void duv_tcp_close(uv_tcp_t* tcp, uv_close_cb close_cb){
+void duv_tcp_close(uv_tcp_t *tcp, uv_close_cb close_cb){
     uv_close((uv_handle_t*)tcp, close_cb);
 }
 
-void duv_udp_close(uv_udp_t* udp, uv_close_cb close_cb){
+void duv_udp_close(uv_udp_t *udp, uv_close_cb close_cb){
     uv_close((uv_handle_t*)udp, close_cb);
+}
+
+uv_stream_t *duv_tcp_stream(uv_tcp_t *tcp){
+    return (uv_stream_t*)tcp;
 }
 
 derr_t set_uv_threadpool_size(unsigned int min, unsigned int recommended){
@@ -205,6 +209,54 @@ derr_t duv_tcp_accept(uv_tcp_t *tcp, uv_tcp_t *client){
     if(ret < 0){
         TRACE(&e, "uv_accept: %x\n", FUV(&ret));
         ORIG(&e, uv_err_type(ret), "uv_accept error");
+    }
+    return e;
+}
+
+derr_t duv_tcp_read_start(
+    uv_tcp_t *tcp, uv_alloc_cb alloc_cb, uv_read_cb read_cb
+){
+    derr_t e = E_OK;
+    int ret = uv_read_start((uv_stream_t*)tcp, alloc_cb, read_cb);
+    if(ret < 0){
+        TRACE(&e, "uv_read_start: %x\n", FUV(&ret));
+        ORIG(&e, uv_err_type(ret), "uv_read_start error");
+    }
+    return e;
+}
+
+derr_t duv_tcp_read_stop(uv_tcp_t *tcp){
+    derr_t e = E_OK;
+    int ret = uv_read_stop((uv_stream_t*)tcp);
+    if(ret < 0){
+        TRACE(&e, "uv_read_stop: %x\n", FUV(&ret));
+        ORIG(&e, uv_err_type(ret), "uv_read_stop error");
+    }
+    return e;
+}
+
+derr_t duv_tcp_write(
+    uv_write_t *req,
+    uv_tcp_t *tcp,
+    const uv_buf_t bufs[],
+    unsigned int nbufs,
+    uv_write_cb cb
+){
+    derr_t e = E_OK;
+    int ret = uv_write(req, (uv_stream_t*)tcp, bufs, nbufs, cb);
+    if(ret < 0){
+        TRACE(&e, "uv_write: %x\n", FUV(&ret));
+        ORIG(&e, uv_err_type(ret), "uv_write error");
+    }
+    return e;
+}
+
+derr_t duv_tcp_shutdown(uv_shutdown_t *req, uv_tcp_t *tcp, uv_shutdown_cb cb){
+    derr_t e = E_OK;
+    int ret = uv_shutdown(req, (uv_stream_t*)tcp, cb);
+    if(ret < 0){
+        TRACE(&e, "uv_shutdown: %x\n", FUV(&ret));
+        ORIG(&e, uv_err_type(ret), "uv_shutdown error");
     }
     return e;
 }

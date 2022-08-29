@@ -101,7 +101,7 @@ target_link_libraries(test_maildir PRIVATE ditm)
 target_link_libraries(test_pop_client PRIVATE fake_pop_server)
 target_link_libraries(test_crypto PRIVATE crypto)
 # target_link_libraries(test_opt_parse) PRIVATE
-target_link_libraries(test_networking PRIVATE crypto duv)
+target_link_libraries(test_networking PRIVATE crypto)
 # target_link_libraries(test_json) PRIVATE
 target_link_libraries(test_key_tool PRIVATE ditm test_utils fake_api_server)
 target_link_libraries(test_ui PRIVATE ui dummy_ui_harness)

@@ -16,13 +16,15 @@ static inline derr_type_t uv_err_type(int err){
 
 // type-punning wrappers
 
-void duv_async_close(uv_async_t* async, uv_close_cb close_cb);
+void duv_async_close(uv_async_t *async, uv_close_cb close_cb);
 
-void duv_timer_close(uv_timer_t* timer, uv_close_cb close_cb);
+void duv_timer_close(uv_timer_t *timer, uv_close_cb close_cb);
 
-void duv_tcp_close(uv_tcp_t* tcp, uv_close_cb close_cb);
+void duv_tcp_close(uv_tcp_t *tcp, uv_close_cb close_cb);
 
-void duv_udp_close(uv_udp_t* udp, uv_close_cb close_cb);
+void duv_udp_close(uv_udp_t *udp, uv_close_cb close_cb);
+
+uv_stream_t *duv_tcp_stream(uv_tcp_t *tcp);
 
 
 // set environment variable to use more worker threads
@@ -60,6 +62,18 @@ derr_t duv_tcp_binds(
 );
 derr_t duv_tcp_listen(uv_tcp_t *tcp, int backlog, uv_connection_cb cb);
 derr_t duv_tcp_accept(uv_tcp_t *tcp, uv_tcp_t *client);
+derr_t duv_tcp_read_start(
+    uv_tcp_t *tcp, uv_alloc_cb alloc_cb, uv_read_cb read_cb
+);
+derr_t duv_tcp_read_stop(uv_tcp_t *tcp);
+derr_t duv_tcp_write(
+    uv_write_t *req,
+    uv_tcp_t *tcp,
+    const uv_buf_t bufs[],
+    unsigned int nbufs,
+    uv_write_cb cb
+);
+derr_t duv_tcp_shutdown(uv_shutdown_t *req, uv_tcp_t *tcp, uv_shutdown_cb cb);
 derr_t duv_udp_init(uv_loop_t *loop, uv_udp_t *udp);
 derr_t duv_udp_bind(
     uv_udp_t *udp, const struct sockaddr *sa, unsigned int flags
