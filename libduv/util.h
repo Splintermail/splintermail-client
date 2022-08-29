@@ -92,3 +92,4 @@ derr_t duv_udp_send(
     const struct sockaddr *addr,
     uv_udp_send_cb send_cb
 );
+derr_t duv_async_init(uv_loop_t *loop, uv_async_t *async, uv_async_cb cb);

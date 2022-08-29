@@ -317,3 +317,13 @@ derr_t duv_udp_send(
     }
     return e;
 }
+
+derr_t duv_async_init(uv_loop_t *loop, uv_async_t *async, uv_async_cb cb){
+    derr_t e = E_OK;
+    int ret = uv_async_init(loop, async, cb);
+    if(ret < 0){
+        TRACE(&e, "uv_async_init: %x\n", FUV(&ret));
+        ORIG(&e, uv_err_type(ret), "uv_async_init error");
+    }
+    return e;
+}

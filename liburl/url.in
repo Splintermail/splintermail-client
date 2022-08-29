@@ -69,7 +69,7 @@ static void url_handle_error(
         dstr_append_quiet(errbuf, &DSTR_LIT("^"));
     }
 
-    // always nul-terminate
+    // always null-terminate
     derr_type_t type = dstr_null_terminate_quiet(errbuf);
     if(type != E_NONE && errbuf->len != 0){
         errbuf->len--;

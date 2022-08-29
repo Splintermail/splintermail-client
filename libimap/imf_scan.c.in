@@ -49,7 +49,7 @@ dstr_t imf_get_scannable(imf_scanner_t *s){
         even though rfc 5322 mandates CRLF.
 */
 
-/* peek either returns a nul byte (which is a valid token) or a character,
+/* peek either returns a null byte (which is a valid token) or a character,
    meeting re2c's need for lookahead and our need for const substrings */
 static unsigned char peek(const dstr_t *text, size_t end, size_t idx){
     return idx < end ? ((unsigned char*)text->data)[idx] : '\0';
