@@ -39,12 +39,9 @@ function(gen_parser tgt grammar cfile hfile)
     add_custom_target("${tgt}" DEPENDS "${cfile}" "${hfile}")
 endfunction()
 
-if(BUILD_TESTS)
-    enable_testing()
-    add_test(NAME "test_gen.py"
-        COMMAND "${PYTHON_3_CMD}" "${CMAKE_CURRENT_SOURCE_DIR}/test_gen.py"
-    )
-endif()
+add_test(NAME "test_gen.py"
+    COMMAND "${PYTHON_3_CMD}" "${CMAKE_CURRENT_SOURCE_DIR}/test_gen.py"
+)
 
 
 ### RE2C ###

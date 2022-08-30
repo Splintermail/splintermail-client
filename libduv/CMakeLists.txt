@@ -48,3 +48,11 @@ else()
     # rebuild without asan
     add_duv("_noasan")
 endif()
+
+if(BUILD_TESTS)
+    add_executable(test_connect test_connect.c)
+    target_link_libraries(test_connect PUBLIC duv)
+    default_compile_options(test_connect TRUE)
+    define_file_logname_for_target(test_connect)
+    add_test(NAME "do_test_connect" COMMAND "./test_connect")
+endif()

@@ -20,6 +20,7 @@ derr_t duv_connect(
     const struct addrinfo *hints
 );
 
+// it is a noop to cancel after duv_connect_cb is called
 void duv_connect_cancel(duv_connect_t *c);
 
 struct duv_connect_t {

@@ -30,6 +30,10 @@ void duv_timer_close(uv_timer_t* timer, uv_close_cb close_cb){
     uv_close((uv_handle_t*)timer, close_cb);
 }
 
+void duv_tcp_close(uv_tcp_t* tcp, uv_close_cb close_cb){
+    uv_close((uv_handle_t*)tcp, close_cb);
+}
+
 void duv_udp_close(uv_udp_t* udp, uv_close_cb close_cb){
     uv_close((uv_handle_t*)udp, close_cb);
 }
@@ -149,6 +153,58 @@ derr_t duv_cancel_work(uv_work_t *work){
     if(ret < 0){
         TRACE(&e, "uv_cancel: %x\n", FUV(&ret));
         ORIG(&e, uv_err_type(ret), "uv_cancel error");
+    }
+    return e;
+}
+
+derr_t duv_tcp_init(uv_loop_t *loop, uv_tcp_t *tcp){
+    derr_t e = E_OK;
+    int ret = uv_tcp_init(loop, tcp);
+    if(ret < 0){
+        TRACE(&e, "uv_tcp_init: %x\n", FUV(&ret));
+        ORIG(&e, uv_err_type(ret), "uv_tcp_init error");
+    }
+    return e;
+}
+
+derr_t duv_tcp_bind(uv_tcp_t *tcp, struct sockaddr *addr, unsigned int flags){
+    derr_t e = E_OK;
+    int ret = uv_tcp_bind(tcp, addr, flags);
+    if(ret < 0){
+        TRACE(&e, "uv_tcp_bind: %x\n", FUV(&ret));
+        ORIG(&e, uv_err_type(ret), "uv_tcp_bind error");
+    }
+    return e;
+}
+
+derr_t duv_tcp_binds(
+    uv_tcp_t *tcp, struct sockaddr_storage *ss, unsigned int flags
+){
+    derr_t e = E_OK;
+    int ret = uv_tcp_bind(tcp, (const struct sockaddr*)ss, flags);
+    if(ret < 0){
+        TRACE(&e, "uv_tcp_bind: %x\n", FUV(&ret));
+        ORIG(&e, uv_err_type(ret), "uv_tcp_bind error");
+    }
+    return e;
+}
+
+derr_t duv_tcp_listen(uv_tcp_t *tcp, int backlog, uv_connection_cb cb){
+    derr_t e = E_OK;
+    int ret = uv_listen((uv_stream_t*)tcp, backlog, cb);
+    if(ret < 0){
+        TRACE(&e, "uv_listen: %x\n", FUV(&ret));
+        ORIG(&e, uv_err_type(ret), "uv_listen error");
+    }
+    return e;
+}
+
+derr_t duv_tcp_accept(uv_tcp_t *tcp, uv_tcp_t *client){
+    derr_t e = E_OK;
+    int ret = uv_accept((uv_stream_t*)tcp, (uv_stream_t*)client);
+    if(ret < 0){
+        TRACE(&e, "uv_accept: %x\n", FUV(&ret));
+        ORIG(&e, uv_err_type(ret), "uv_accept error");
     }
     return e;
 }

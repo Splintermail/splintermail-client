@@ -61,7 +61,6 @@ elseif("${CMAKE_C_COMPILER_ID}" STREQUAL "MSVC")
     message(FATAL_ERROR "don't compile smphp with msvc")
 endif()
 
-enable_testing()
 add_test(NAME "test_smphp"
     WORKING_DIRECTORY "${PROJECT_BINARY_DIR}"
     COMMAND

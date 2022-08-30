@@ -1,6 +1,5 @@
-#include <libdstr/libdstr.h>
-#include <libparsing/libparsing.h>
-#include <liburl/liburl.h>
+#include "libdstr/libdstr.h"
+#include "libparsing/libparsing.h"
 
 #include "test_utils.h"
 
@@ -48,5 +47,3 @@ test_fail:
     LOG_ERROR("FAIL\n");
     return 1;
 }
-
-

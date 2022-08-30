@@ -303,6 +303,10 @@ function(define_file_logname_for_target targetname)
     endforeach()
 endfunction()
 
+if(BUILD_TESTS)
+    enable_testing()
+endif()
+
 # always include the source directory (for compiling generated .c files)
 include_directories("${PROJECT_SOURCE_DIR}")
 # always include the binary directory (for including generated .h files)
@@ -392,7 +396,6 @@ else()
 endif()
 
 if(BUILD_TESTS)
-    enable_testing()
     add_subdirectory(test)
 endif()
 

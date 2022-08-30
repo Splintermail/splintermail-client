@@ -75,8 +75,7 @@ default_compile_options(from TRUE)
 define_file_logname_for_target(from)
 target_link_libraries(from PUBLIC dstr imap)
 
-if("${BUILD_TESTS}")
-    enable_testing()
+if(BUILD_TESTS)
     add_test(
         NAME "test_from"
         COMMAND "${PROJECT_SOURCE_DIR}/test/test_from.sh" "$<TARGET_FILE:from>"

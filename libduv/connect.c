@@ -1,5 +1,8 @@
 #include "libduv/libduv.h"
 
+// define a hook for better testing
+void (*_connect_started_hook)(void) = NULL;
+
 static void advance_state(duv_connect_t *c);
 
 static void finish(duv_connect_t *c, int status){
@@ -44,11 +47,12 @@ static void advance_state(duv_connect_t *c){
                 uv_cancel((uv_req_t*)&c->connect.req);
                 c->connect.canceling = true;
             }
-            return;
+            if(!c->connect.returned) return;
         }
         if(c->tcp.open){
             // we have an open tcp still
             if(!c->tcp.closing){
+                c->tcp_handle->data = c;
                 c->tcp.closing = true;
                 uv_close((uv_handle_t*)c->tcp_handle, close_cb);
             }
@@ -110,14 +114,17 @@ static void advance_state(duv_connect_t *c){
     }
 
     if(!c->connect.started){
+        c->connect.req.data = c;
         int ret = uv_tcp_connect(
             &c->connect.req, c->tcp_handle, c->gai.ptr->ai_addr, connect_cb
         );
-        if(!ret){
+        if(ret < 0){
             finish(c, ret);
             return;
         }
         c->connect.started = true;
+        // call test hook in test code
+        if(_connect_started_hook) _connect_started_hook();
     }
 
     if(!c->connect.returned) return;

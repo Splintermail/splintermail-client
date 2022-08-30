@@ -13,8 +13,6 @@ elseif("${CMAKE_C_COMPILER_ID}" STREQUAL "MSVC")
 endif()
 
 if(BUILD_TESTS)
-    enable_testing()
-
     add_executable(test_parse test_parse.c)
     target_link_libraries(test_parse PUBLIC dstr)
     default_compile_options(test_parse TRUE)
@@ -32,5 +30,4 @@ if(BUILD_TESTS)
     default_compile_options(test_dns TRUE)
     define_file_logname_for_target(test_dns)
     add_test(NAME "do_test_dns" COMMAND "./test_dns")
-
 endif()
