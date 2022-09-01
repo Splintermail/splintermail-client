@@ -420,7 +420,7 @@ derr_t connection_read(connection_t* conn, dstr_t* out, size_t *amount_read){
         trace_ssl_errors(&e);
         ORIG(&e, E_CONN, "broken connection");
     }
-    if(amount_read) *amount_read = (size_t)ret;
+    if(amount_read) *amount_read = ret < 0 ? 0 : (size_t)ret;
     return e;
 }
 
