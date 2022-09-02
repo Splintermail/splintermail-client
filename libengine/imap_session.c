@@ -153,7 +153,7 @@ static derr_t imap_session_do_alloc(imap_session_t *s,
     if(s->pipeline->tlse){
         tlse_data_prestart(&s->tlse_data, s->pipeline->tlse, &s->session,
                 imap_session_ref_up_tlse, imap_session_ref_down_tlse,
-                args->ssl_ctx, upwards);
+                args->ssl_ctx, upwards, args->host);
     }
     if(s->pipeline->imape){
         imape_data_prestart(&s->imape_data, s->pipeline->imape, &s->session,

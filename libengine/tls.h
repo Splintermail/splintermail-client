@@ -102,6 +102,7 @@ struct tlse_data_t {
     ssl_context_t *ssl_ctx;
     ref_fn_t ref_up;
     ref_fn_t ref_down;
+    const char *host;
     // generic per-engine data stuff
     engine_data_state_t data_state;
     event_t start_ev;
@@ -156,7 +157,7 @@ derr_t tlse_add_to_loop(tlse_t *tlse, uv_loop_t *loop);
    messages can be sent. */
 void tlse_data_prestart(tlse_data_t *td, tlse_t *tlse, session_t *session,
         ref_fn_t ref_up, ref_fn_t ref_down, ssl_context_t *ssl_ctx,
-        bool upwards);
+        bool upwards, const char *host);
 
 void tlse_data_start(tlse_data_t *td);
 void tlse_data_close(tlse_data_t *td);

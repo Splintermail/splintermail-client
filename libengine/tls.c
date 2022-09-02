@@ -1,6 +1,7 @@
 #include <openssl/ssl.h>
 #include <openssl/bio.h>
 #include <openssl/err.h>
+#include <openssl/x509v3.h>
 
 #include "libengine.h"
 
@@ -538,13 +539,14 @@ static void tlse_pass_event(engine_t *tlse_engine, event_t *ev){
 
 void tlse_data_prestart(tlse_data_t *td, tlse_t *tlse, session_t *session,
         ref_fn_t ref_up, ref_fn_t ref_down, ssl_context_t *ssl_ctx,
-        bool upwards){
+        bool upwards, const char *host){
     td->tlse = tlse;
     td->session = session;
     td->ref_up = ref_up;
     td->ref_down = ref_down;
     td->ssl_ctx = ssl_ctx;
     td->upwards = upwards;
+    td->host = host;
 }
 
 void tlse_data_start(tlse_data_t *td){
@@ -605,8 +607,23 @@ static void tlse_data_onthread_start(tlse_data_t *td){
         // upwards means we are the client
         SSL_set_connect_state(td->ssl);
 
+        // configure hostname verification
+        int ret = SSL_set1_host(td->ssl, td->host);
+        if(ret != 1){
+            trace_ssl_errors(&e);
+            ORIG_GO(&e, E_SSL, "error setting SSL peer name", fail_ssl);
+        }
+        SSL_set_hostflags(
+            td->ssl,
+            // partial wildcards have always been invalid in the DNS system
+            X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS
+            // multi-label wildcards have always been allowed in the DNS system
+            | X509_CHECK_FLAG_MULTI_LABEL_WILDCARDS
+        );
+        SSL_set_verify(td->ssl, SSL_VERIFY_PEER, NULL);
+
         // client starts the handshake to get the ball rolling
-        int ret = SSL_do_handshake(td->ssl);
+        ret = SSL_do_handshake(td->ssl);
         // we should be initiating the contact, so we should never succeed here
         switch(SSL_get_error(td->ssl, ret)){
             case SSL_ERROR_WANT_READ:
