@@ -22,25 +22,23 @@ derr_type_t fmthook_uv_error(dstr_t* out, const void* arg){
     return E_NONE;
 }
 
-void duv_async_close(uv_async_t *async, uv_close_cb close_cb){
-    uv_close((uv_handle_t*)async, close_cb);
-}
+#define DUV_HANDLE_DEF(type) \
+    uv_handle_t *duv_##type##_handle(uv_##type##_t *handle){ \
+        return (uv_handle_t*)handle; \
+    }
+DUV_HANDLE_PUNS(DUV_HANDLE_DEF)
 
-void duv_timer_close(uv_timer_t *timer, uv_close_cb close_cb){
-    uv_close((uv_handle_t*)timer, close_cb);
-}
+#define DUV_HANDLE_CLOSE_DEF(type) \
+    void duv_##type##_close(uv_##type##_t *handle, uv_close_cb close_cb){ \
+        uv_close((uv_handle_t*)handle, close_cb); \
+    }
+DUV_HANDLE_PUNS(DUV_HANDLE_CLOSE_DEF)
 
-void duv_tcp_close(uv_tcp_t *tcp, uv_close_cb close_cb){
-    uv_close((uv_handle_t*)tcp, close_cb);
-}
-
-void duv_udp_close(uv_udp_t *udp, uv_close_cb close_cb){
-    uv_close((uv_handle_t*)udp, close_cb);
-}
-
-uv_stream_t *duv_tcp_stream(uv_tcp_t *tcp){
-    return (uv_stream_t*)tcp;
-}
+#define DUV_STREAM_DEF(type) \
+    uv_stream_t *duv_##type##_stream(uv_##type##_t *stream){ \
+        return (uv_stream_t*)stream; \
+    }
+DUV_STREAM_PUNS(DUV_STREAM_DEF)
 
 derr_t set_uv_threadpool_size(unsigned int min, unsigned int recommended){
     derr_t e = E_OK;

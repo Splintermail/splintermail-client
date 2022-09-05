@@ -16,16 +16,59 @@ static inline derr_type_t uv_err_type(int err){
 
 // type-punning wrappers
 
-void duv_async_close(uv_async_t *async, uv_close_cb close_cb);
+#define DUV_HANDLE_PUNS(XX) \
+    XX(stream) \
+    XX(tcp) \
+    XX(udp) \
+    XX(tty) \
+    XX(pipe) \
+    XX(poll) \
+    XX(prepare) \
+    XX(check) \
+    XX(idle) \
+    XX(async) \
+    XX(timer) \
+    XX(process) \
+    XX(fs_event) \
+    XX(fs_poll) \
+    XX(signal)
 
-void duv_timer_close(uv_timer_t *timer, uv_close_cb close_cb);
+//// cast any uv_handle_t subclass into a uv_handle_t:
+// uv_handle_t *duv_TYPE_handle(uv_TYPE_t *handle);
+#define DUV_HANDLE_DECL(type) \
+    uv_handle_t *duv_##type##_handle(uv_##type##_t *handle);
+DUV_HANDLE_PUNS(DUV_HANDLE_DECL)
+#undef DUV_HANDLE_DECL
 
-void duv_tcp_close(uv_tcp_t *tcp, uv_close_cb close_cb);
+//// close any uv_handle_t subclass:
+// uv_handle_t *duv_TYPE_close(uv_TYPE_t *handle);
+#define DUV_HANDLE_CLOSE_DECL(type) \
+    void duv_##type##_close(uv_##type##_t *handle, uv_close_cb close_cb);
+DUV_HANDLE_PUNS(DUV_HANDLE_CLOSE_DECL)
+#undef DUV_HANDLE_CLOSE_DECL
 
-void duv_udp_close(uv_udp_t *udp, uv_close_cb close_cb);
+#define DUV_STREAM_PUNS(XX) \
+    XX(tcp) \
+    XX(tty) \
+    XX(pipe)
 
-uv_stream_t *duv_tcp_stream(uv_tcp_t *tcp);
+//// cast any uv_stream_t subclass into a uv_stream_t:
+// uv_stream_t *duv_TYPE_close(uv_TYPE_t *stream);
+#define DUV_STREAM_DECL(type) \
+    uv_stream_t *duv_##type##_stream(uv_##type##_t *stream);
+DUV_STREAM_PUNS(DUV_STREAM_DECL)
+#undef DUV_STREAM_DECL
 
+#define DUV_REQ_PUNS(XX) \
+    XX(shutdown) \
+    XX(write) \
+    XX(connect) \
+    XX(udp_send) \
+    XX(getaddrinfo) \
+    XX(getnameinfo) \
+    XX(work) \
+    XX(fs) \
+    XX(random)
 
 // set environment variable to use more worker threads
 derr_t set_uv_threadpool_size(unsigned int min, unsigned int recommended);
