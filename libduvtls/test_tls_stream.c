@@ -24,6 +24,7 @@ duv_tls_t tls;
 stream_i *stream = NULL;
 bool finishing = false;
 bool success = false;
+bool expect_exit = false;
 ssl_context_t client_ctx = {0};
 
 stream_write_t writes[MANY];
@@ -168,10 +169,6 @@ static void noop_close_cb(uv_handle_t *handle){
     (void)handle;
 }
 
-static void noop_stream_close_cb(stream_i *s){
-    (void)s;
-}
-
 static void alloc_cb(stream_i *s, size_t suggst, uv_buf_t *buf){
     (void)s;
     (void)suggst;
@@ -186,14 +183,35 @@ static void finish(void){
     finishing = true;
     duv_connect_cancel(&connector);
     duv_async_close(&async, noop_close_cb);
-    if(stream) stream->close(stream, noop_stream_close_cb);
+    if(stream) stream->close(stream);
 }
 
-static void phase6_close_cb(stream_i *s){
+static void await_cb(stream_i *s, int status){
     (void)s;
+    if(finishing) return;
+    if(is_error(E)){
+        finish();
+        return;
+    }
+    if(stream->active(stream)){
+        ORIG_GO(&E, E_VALUE, "stream still active in await_cb", fail);
+    }
+    if(status){
+        TRACE(&E,
+            "await_cb exited with failure: %x (%x)\n",
+            FI(status),
+            FS(stream->err_name(stream, status))
+        );
+        ORIG_GO(&E, E_VALUE, "wrong await_cb status", fail);
+    }
     // SUCCESS!
-    success = true;
+    success = expect_exit;
     finish();
+    return;
+
+fail:
+    finish();
+    return;
 }
 
 static void never_read_cb(stream_i *s, ssize_t nread, const uv_buf_t *buf){
@@ -207,72 +225,45 @@ fail:
     finish();
 }
 
-static void never_write_cb(stream_i *s, stream_write_t *req, int status){
+static void never_write_cb(stream_i *s, stream_write_t *req, bool ok){
     (void)s;
     (void)req;
-    TRACE(&E, "never_write_cb: %x\n", FUV(&status));
+    (void)ok;
     ORIG_GO(&E, E_VALUE, "never_write_cb called", fail);
 fail:
     finish();
 }
 
-static void never_shutdown_cb(stream_i *s, int status){
+static void never_shutdown_cb(stream_i *s){
     (void)s;
-    (void)status;
     TRACE(&E, "never_shutdown_cb\n");
     ORIG_GO(&E, E_VALUE, "never_shutdown_cb error", fail);
 fail:
     finish();
 }
 
-static void never_close_cb(stream_i *s){
-    (void)s;
-    TRACE(&E, "never_close_cb\n");
-    ORIG_GO(&E, E_VALUE, "never_close_cb error", fail);
-fail:
-    finish();
-}
-
 static void phase6(void){
-
     // close our stream
-    int ret = stream->close(stream, phase6_close_cb);
-    if(ret < 0){
-        TRACE(&E, "stream->close: %x\n", FUV(&ret));
-        ORIG_GO(&E, uv_err_type(ret), "stream->close error", fail);
+    stream->close(stream);
+    expect_exit = true;
+
+    if(!stream->active(stream)){
+        ORIG_GO(&E, E_VALUE, "stream not active before await_cb", fail);
     }
 
-    // check for *_AFTER_CLOSE errors
-    ret = stream->read_stop(stream);
-    if(ret != STREAM_READ_STOP_AFTER_CLOSE){
-        TRACE(&E, "missing STREAM_READ_STOP_AFTER_CLOSE: %x\n", FI(ret));
-        ORIG_GO(&E, E_VALUE, "phase6 error", fail);
-    }
+    // check for idempotent behaviors
+    stream->read_start(stream, alloc_cb, never_read_cb);
+    stream->read_stop(stream);
 
-    ret = stream->read_start(stream, alloc_cb, never_read_cb);
-    if(ret != STREAM_READ_START_AFTER_CLOSE){
-        TRACE(&E, "missing STREAM_READ_START_AFTER_CLOSE: %x\n", FI(ret));
-        ORIG_GO(&E, E_VALUE, "phase6 error", fail);
-    }
+    stream->shutdown(stream, never_shutdown_cb);
+
+    stream->close(stream);
+
+    // check bool ok behaviors
 
     uv_buf_t buf = {0};
-    ret = stream->write(stream, &writes[0], &buf, 1, never_write_cb);
-    if(ret != STREAM_WRITE_AFTER_CLOSE){
-        TRACE(&E, "missing WRITE_AFTER_CLOSE: %x\n", FI(ret));
-        ORIG_GO(&E, E_VALUE, "phase4 error", fail);
-    }
-
-    ret = stream->shutdown(stream, never_shutdown_cb);
-    if(ret != STREAM_SHUTDOWN_AFTER_CLOSE){
-        TRACE(&E, "missing STREAM_SHUTDOWN_AFTER_CLOSE: %x\n", FI(ret));
-        ORIG_GO(&E, E_VALUE, "phase6 error", fail);
-    }
-
-    ret = stream->close(stream, never_close_cb);
-    if(ret != STREAM_CLOSE_AFTER_CLOSE){
-        TRACE(&E, "missing STREAM_CLOSE_AFTER_CLOSE: %x\n", FI(ret));
-        ORIG_GO(&E, E_VALUE, "phase6 error", fail);
-    }
+    bool ok = stream->write(stream, &writes[0], &buf, 1, never_write_cb);
+    if(ok) ORIG_GO(&E, E_VALUE, "write returned true after close", fail);
 
     return;
 
@@ -285,13 +276,11 @@ static void stream_read_eof(stream_i *s, ssize_t nread, const uv_buf_t *buf){
     (void)buf;
     using_buf = false;
 
+    // it's ok if a buffer is returned to us
+    if(nread == 0) return;
+
     // we expect UV_EOF
     if(nread != UV_EOF){
-        if(nread == 0){
-            TRACE(&E, "stream_read_eof unexpected EAGAIN situation!\n");
-            ORIG_GO(&E, E_VALUE, "stream_read_eof error", fail);
-        }
-
         if(nread > 0){
             TRACE(&E, "stream_read_eof got data!\n");
             ORIG_GO(&E, E_VALUE, "stream_read_eof error", fail);
@@ -302,19 +291,16 @@ static void stream_read_eof(stream_i *s, ssize_t nread, const uv_buf_t *buf){
         ORIG_GO(&E, uv_err_type(status), "stream_read_eof error", fail);
     }
 
-    // read_stop is still allowed
-    int ret = stream->read_stop(stream);
-    if(ret < 0){
-        TRACE(&E, "stream->read_stop after eof: %x\n", FUV(&ret));
-        ORIG_GO(&E, uv_err_type(ret), "stream->read_stop error", fail);
+    // stream is no longer readable
+    if(stream->readable(stream)){
+        ORIG_GO(&E, E_VALUE, "stream readable after EOF", fail);
     }
 
-    // read_start is no longer allowed
-    ret = stream->read_start(stream, alloc_cb, never_read_cb);
-    if(ret != STREAM_READ_START_AFTER_EOF){
-        TRACE(&E, "missing STREAM_READ_START_AFTER_EOF: %x\n", FI(ret));
-        ORIG_GO(&E, E_VALUE, "phase6 error", fail);
-    }
+    // read_stop is harmless
+    stream->read_stop(stream);
+
+    // read_start is harmless
+    stream->read_start(stream, alloc_cb, never_read_cb);
 
     // BEGIN PHASE 6 "close test"
     phase6();
@@ -325,80 +311,34 @@ fail:
     finish();
 }
 
-static void shutdown_cb(stream_i *s, int status){
+static void shutdown_cb(stream_i *s){
     (void)s;
-    if(status < 0){
-        TRACE(&E, "shutdown_cb: %x\n", FUV(&status));
-        ORIG_GO(&E, uv_err_type(status), "shutdown_cb error", fail);
-    }
 
     // BEGIN PHASE 5 "eof test"
     // (the peer will see our eof and send an EOF of its own)
-    int ret = stream->read_start(stream, alloc_cb, stream_read_eof);
-    if(ret < 0){
-        TRACE(&E, "stream->read_start: %x\n", FUV(&ret));
-        ORIG_GO(&E, uv_err_type(ret), "stream->read_start error", fail);
-    }
-
-    return;
-
-fail:
-    finish();
+    stream->read_start(stream, alloc_cb, stream_read_eof);
 }
 
 static void phase4(void){
-    int ret = stream->shutdown(stream, shutdown_cb);
-    if(ret < 0){
-        TRACE(&E, "stream->shutdown: %x\n", FUV(&ret));
-        ORIG_GO(&E, uv_err_type(ret), "stream->shutdown error", fail);
+    // stream still writable
+    if(!stream->writable(stream)){
+        ORIG_GO(&E, E_VALUE, "stream not writable before shutdown", fail);
+    }
+
+    stream->shutdown(stream, shutdown_cb);
+
+    // stream no longer writable
+    if(stream->writable(stream)){
+        ORIG_GO(&E, E_VALUE, "stream still writable after shutdown", fail);
     }
 
     uv_buf_t buf = {0};
-    ret = stream->write(stream, &writes[0], &buf, 1, never_write_cb);
-    if(ret != STREAM_WRITE_AFTER_SHUTDOWN){
-        TRACE(&E, "missing WRITE_AFTER_SHUTDOWN: %x\n", FI(ret));
-        ORIG_GO(&E, E_VALUE, "phase4 error", fail);
-    }
+    bool ok = stream->write(stream, &writes[0], &buf, 1, never_write_cb);
+    if(ok) ORIG_GO(&E, E_VALUE, "write returned true after shutdown", fail);
 
-    ret = stream->shutdown(stream, never_shutdown_cb);
-    if(ret != STREAM_SHUTDOWN_AFTER_SHUTDOWN){
-        TRACE(&E, "missing SHUTDOWN_AFTER_SHUTDOWN: %x\n", FI(ret));
-        ORIG_GO(&E, E_VALUE, "phase4 error", fail);
-    }
+    stream->shutdown(stream, never_shutdown_cb);
 
     return;
-
-fail:
-    finish();
-}
-
-static void read_cb_phase3(stream_i *s, ssize_t nread, const uv_buf_t *buf){
-    (void)s;
-    (void)buf;
-    using_buf = false;
-
-    if(nread == UV_ECANCELED){
-        // UV_ECANCELED is only allowed when read_stop_time == 4
-        if(read_stop_time != 4){
-            TRACE(&E, "bad read_stop time: %x\n", FU(read_stop_time));
-            ORIG_GO(&E, E_VALUE, "phase3 error", fail);
-        }
-        return;
-    }
-
-    if(nread == 0){
-        TRACE(&E, "read_cb_phase3 unexpected EAGAIN situation!\n");
-        ORIG_GO(&E, E_VALUE, "read_cb_phase3 error", fail);
-    }
-
-    if(nread > 0){
-        TRACE(&E, "read_cb_phase3 got data!\n");
-        ORIG_GO(&E, E_VALUE, "read_cb_phase3 error", fail);
-    }
-
-    int status = (int)nread;
-    TRACE(&E, "read_cb_phase3: %x\n", FUV(&status));
-    ORIG_GO(&E, uv_err_type(status), "read_cb_phase3 error", fail);
 
 fail:
     finish();
@@ -406,46 +346,25 @@ fail:
 
 static void phase3(void){
     // first read stop, the normal one
-    // UV_ECANCELED is ok at this time
     read_stop_time = 1;
-    int ret = stream->read_stop(stream);
-    if(ret < 0){
-        TRACE(&E, "phase3 read_stop: %x\n", FUV(&ret));
-        ORIG_GO(&E, uv_err_type(ret), "phase3 error", fail);
-    }
+    stream->read_stop(stream);
 
     // second stop, the idempotent one
     read_stop_time = 2;
-    ret = stream->read_stop(stream);
-    if(ret < 0){
-        TRACE(&E, "phase3 read_stop: %x\n", FUV(&ret));
-        ORIG_GO(&E, uv_err_type(ret), "phase3 error", fail);
-    }
+    stream->read_stop(stream);
 
     // read start
     // UV_ECANCELED is ok at this time
     read_stop_time = 3;
-    ret = stream->read_start(stream, alloc_cb, read_cb_phase3);
-    if(ret < 0){
-        TRACE(&E, "stream->read_start(): %x\n", FUV(&ret));
-        ORIG_GO(&E, uv_err_type(ret), "stream->read_start() error", fail);
-    }
+    stream->read_start(stream, alloc_cb, never_read_cb);
 
     // read stop again
     read_stop_time = 4;
-    ret = stream->read_stop(stream);
-    if(ret < 0){
-        TRACE(&E, "phase3 read_stop: %x\n", FUV(&ret));
-        ORIG_GO(&E, uv_err_type(ret), "phase3 error", fail);
-    }
+    stream->read_stop(stream);
 
     // read stop one last time
     read_stop_time = 5;
-    ret = stream->read_stop(stream);
-    if(ret < 0){
-        TRACE(&E, "phase3 read_stop: %x\n", FUV(&ret));
-        ORIG_GO(&E, uv_err_type(ret), "phase3 error", fail);
-    }
+    stream->read_stop(stream);
 
     read_stop_time = 6;
 
@@ -453,19 +372,14 @@ static void phase3(void){
     phase4();
 
     return;
-
-fail:
-    finish();
 }
 
 static void read_cb_phase2(stream_i *s, ssize_t nread, const uv_buf_t *buf){
     (void)s;
     using_buf = false;
-    // ignore harmless errors
-    if(nread == 0) return;
-    if(nread == UV_ECANCELED){
-        // UV_ECANCELED is only allowed when read_stop_time == 1
-        if(read_stop_time != 1){
+    if(nread == 0){
+        // we expect to have our allocation returned some time after phase 3
+        if(read_stop_time != 6){
             TRACE(&E, "bad read_stop time: %x\n", FU(read_stop_time));
             ORIG_GO(&E, E_VALUE, "phase3 error", fail);
         }
@@ -504,13 +418,10 @@ fail:
     finish();
 }
 
-static void write_cb(stream_i *s, stream_write_t *req, int status){
+static void write_cb(stream_i *s, stream_write_t *req, bool ok){
     (void)s;
     (void)req;
-    if(status < 0){
-        TRACE(&E, "write_cb: %x\n", FUV(&status));
-        ORIG_GO(&E, uv_err_type(status), "write_cb error", fail);
-    }
+    if(!ok) ORIG_GO(&E, E_VALUE, "write_cb not ok", fail);
     return;
 
 fail:
@@ -525,7 +436,7 @@ static void on_connect(duv_connect_t *c, int status){
     }
 
     // connection successful, wrap tcp in a passthru_t
-    stream_i *base = duv_passthru_init_tcp(&passthru, &tcp);
+    stream_i *base = duv_passthru_init_tcp(&passthru, &tcp, await_cb);
 
     // wrap passthru in tls
     PROP_GO(&E,
@@ -540,7 +451,6 @@ static void on_connect(duv_connect_t *c, int status){
     fail);
 
     // BEGIN PHASE 1: "many consecutive writes"
-    int ret = 0;
     for(unsigned int i = 0; i < MANY; i++){
         // prepare bufs for this write
         uv_buf_t bufs[MANY+1];
@@ -549,21 +459,12 @@ static void on_connect(duv_connect_t *c, int status){
             bufs[j].len = 1;
         }
         // each write has more bufs in it
-        ret = stream->write(stream, &writes[i], bufs, i+1, write_cb);
-        if(ret) break;
-    }
-
-    if(ret < 0){
-        TRACE(&E, "stream.write(): %x\n", FUV(&ret));
-        ORIG_GO(&E, uv_err_type(ret), "on_listener error", fail);
+        bool ok = stream->write(stream, &writes[i], bufs, i+1, write_cb);
+        if(!ok) ORIG_GO(&E, E_VALUE, "stream->write() error", fail);
     }
 
     // BEGIN PHASE 2 "read several times"
-    ret = stream->read_start(stream, alloc_cb, read_cb_phase2);
-    if(ret < 0){
-        TRACE(&E, "stream->read_start(): %x\n", FUV(&ret));
-        ORIG_GO(&E, uv_err_type(ret), "stream->read_start() error", fail);
-    }
+    stream->read_start(stream, alloc_cb, read_cb_phase2);
 
     return;
 

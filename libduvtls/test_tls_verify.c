@@ -20,7 +20,7 @@ stream_i *stream = NULL;
 bool finishing = false;
 bool success = false;
 ssl_context_t client_ctx = {0};
-int expect_shutdown_status;
+int expect_verify_failure;
 
 dthread_t thread;
 
@@ -93,43 +93,53 @@ static void noop_close_cb(uv_handle_t *handle){
     (void)handle;
 }
 
-static void noop_stream_close_cb(stream_i *s){
-    (void)s;
-}
-
 static void finish(void){
     if(finishing) return;
     finishing = true;
     duv_connect_cancel(&connector);
     duv_async_close(&async, noop_close_cb);
-    if(stream) stream->close(stream, noop_stream_close_cb);
+    if(stream) stream->close(stream);
 }
 
-static void success_close_cb(stream_i *s){
+static void await_cb(stream_i *s, int status){
     (void)s;
-    if(!finishing) success = true;
-    finish();
-}
-
-static void shutdown_cb(stream_i *s, int status){
-    (void)s;
-    if(status != expect_shutdown_status){
+    if(is_error(E)){
+        // already have an error
+        finish();
+        return;
+    }
+    if(status != expect_verify_failure){
         TRACE(&E,
-            "exepcted shutdown status of %x but got %x (%x)\n",
-            FI(expect_shutdown_status),
+            "exepcted failure status of %x but got %x (%x)\n",
+            FI(expect_verify_failure),
             FI(status),
             FS(stream->err_name(stream, status))
         );
-        ORIG_GO(&E, uv_err_type(status), "wrong shutdown status", fail);
+        ORIG_GO(&E, E_VALUE, "wrong await_cb status", fail);
     }
 
-    int ret = stream->close(stream, success_close_cb);
-    if(ret < 0){
-        TRACE(&E, "close: %x\n", FUV(&ret));
-        ORIG_GO(&E, uv_err_type(ret), "close error", fail);
-    }
+    if(!finishing) success = true;
 
+    finish();
     return;
+
+fail:
+    finish();
+}
+
+static void shutdown_cb(stream_i *s){
+    (void)s;
+
+    if(expect_verify_failure == 0){
+        stream->close(stream);
+        return;
+    }
+
+    TRACE(&E,
+        "shutdown succeeded, but expected to fail with %x\n",
+        FS(stream->err_name(stream, expect_verify_failure))
+    );
+    ORIG_GO(&E, E_VALUE, "verification did not fail", fail);
 
 fail:
     finish();
@@ -143,7 +153,7 @@ static void on_connect(duv_connect_t *c, int status){
     }
 
     // connection successful, wrap tcp in a passthru_t
-    stream_i *base = duv_passthru_init_tcp(&passthru, &tcp);
+    stream_i *base = duv_passthru_init_tcp(&passthru, &tcp, await_cb);
 
     dstr_t verify_name;
     DSTR_WRAP(verify_name, connect_name, strlen(connect_name), true);
@@ -162,8 +172,7 @@ static void on_connect(duv_connect_t *c, int status){
 
     // immediately shutdown
     // the handshake can't have failed yet but the shutdown will fail
-    int ret = stream->shutdown(stream, shutdown_cb);
-    if(ret) ORIG_GO(&E, E_VALUE, "shutdown failed", fail);
+    stream->shutdown(stream, shutdown_cb);
 
     return;
 
@@ -194,7 +203,7 @@ static derr_t do_verify_test(
 
     reset_globals();
 
-    expect_shutdown_status = _expect_shutdown_status;
+    expect_verify_failure = _expect_shutdown_status;
     connect_name = hostname;
 
     PROP(&e, ssl_context_new_client(&client_ctx) );

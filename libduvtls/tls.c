@@ -49,6 +49,9 @@ static void schedule(duv_tls_t *t){
 /* note: this should never be called in the int _advance_*() functions; they
          should return their status and top-level advance_state() handles it */
 static void fail(duv_tls_t *t, int status){
+    // if this is our first failiure, start shutting down
+    if(!t->failing && !t->base_awaited) t->base->close(t->base);
+
     /* since t->failing==UV_ECANCELED means the user canceled, that is lower
        priority than a real failure */
     if(t->failing == UV_ECANCELED || !t->failing){
@@ -124,30 +127,21 @@ done:
     advance_state(t);
 }
 
-static void write_cb(stream_i *base, stream_write_t *req, int status){
+static void write_cb(stream_i *base, stream_write_t *req, bool ok){
     duv_tls_t *t = base->get_data(base);
     (void)req;
+    (void)ok;
 
     // done with write buffer
     t->using_write_buf = false;
 
-    switch(status){
-        case 0: // success
-        case UV_ECANCELED: // something we did
-            break;
-
-        default:
-            fail(t, status);
-    }
-
     advance_state(t);
 }
 
-static void close_cb(stream_i *iface){
-    duv_tls_t *t = iface->get_data(iface);
-
-    t->base_closed = true;
-
+static void await_cb(stream_i *base, int status){
+    duv_tls_t *t = base->get_data(base);
+    t->base_awaited = true;
+    if(status) fail(t, status);
     advance_state(t);
 }
 
@@ -288,11 +282,11 @@ static int next_nonempty_write_req(duv_tls_t *t, stream_write_t **out){
         }
         // handle empty write request
         link_remove(&req->link);
-        req->cb(&t->iface, req, 0);
+        req->cb(&t->iface, req, true);
         // detect if the user closed us
-        if(t->signal.close){
+        if(t->failing){
             *out = NULL;
-            return DUV_TLS_ECANCELED;
+            return t->failing;
         }
     }
     // no writes available
@@ -322,9 +316,9 @@ static int _advance_ssl_write(duv_tls_t *t){
         // done with this req
         t->nbufswritten = 0;
         link_remove(&req->link);
-        req->cb(&t->iface, req, 0);
+        req->cb(&t->iface, req, true);
         // detect if the user closed us
-        if(t->signal.close) return DUV_TLS_ECANCELED;
+        if(t->failing) return t->failing;
         // see if there's another req we can continue working on
         ret = next_nonempty_write_req(t, &req);
         if(ret) return ret;
@@ -381,36 +375,79 @@ static int _advance_ssl_read(duv_tls_t *t){
     // ... unless the last call to SSL_read told us to wait for more bytes
     if(t->read_wants_read) return 0;
 
-    // keep reading until we can't run out of bytes or user stops us
+    // detect the case where we have a stale allocation we must return
+    if(t->allocated.base){
+        if(!t->signal.read
+            || t->signal.alloc_cb != t->cached_alloc_cb
+            || t->signal.read_cb != t->cached_read_cb
+        ){
+            uv_buf_t buf = t->allocated;
+            t->allocated = (uv_buf_t){0};
+            t->cached_read_cb(&t->iface, 0, &buf);
+            // detect the case where the user closed us
+            if(t->failing) return t->failing;
+        }
+    }
+
+    /* there is a possibility that we allocated bytes with one alloc_cb/read_cb
+       pair but now the user has read_stopped/read_started */
+
+    // keep reading until we run out of bytes or user stops us
     while(t->signal.read){
         // make sure we have allocated a buffer from the user
         if(!t->allocated.base){
             t->allocated = (uv_buf_t){0};
+            t->cached_alloc_cb = t->signal.alloc_cb;
+            t->cached_read_cb = t->signal.read_cb;
             t->signal.alloc_cb(&t->iface, 65536, &t->allocated);
+            // detect if the user returned an empty allocation
             if(!t->allocated.base || !t->allocated.len){
-                uv_buf_t buf = t->allocated;
+                // a stream must treat this is an implicit read stop
                 t->allocated = (uv_buf_t){0};
-                t->signal.read_cb(&t->iface, UV_ENOBUFS, &buf);
+                t->signal.read = false;
                 // detect if the user closed us
-                if(t->signal.close) return DUV_TLS_ECANCELED;
-                // note: libuv doesn't do an implicit read_stop at this point
+                if(t->failing) return t->failing;
                 return 0;
             }
+            // detect if the user called read_stop (but returned an allocation)
+            if(!t->signal.read){
+                uv_buf_t buf = t->allocated;
+                t->allocated = (uv_buf_t){0};
+                t->cached_read_cb(&t->iface, 0, &buf);
+                // detect if the user closed us
+                if(t->failing) return t->failing;
+                return 0;
+            }
+            /* detect if the user called read_stop() then read_start() with
+               different arguments */
+            if(
+                t->cached_alloc_cb != t->signal.alloc_cb
+                || t->cached_read_cb != t->signal.read_cb
+            ){
+                uv_buf_t buf = t->allocated;
+                t->allocated = (uv_buf_t){0};
+                t->cached_read_cb(&t->iface, 0, &buf);
+                // detect if the user closed us
+                if(t->failing) return t->failing;
+                // try again with a new allocation
+                continue;
+            }
+            // detect if the user closed us
+            if(t->failing) return t->failing;
         }
 
         size_t nread;
-        int ret = SSL_read_ex(
-            t->ssl, t->allocated.base, t->allocated.len, &nread
-        );
+        size_t count = MIN(t->allocated.len, SSIZE_MAX);
+        int ret = SSL_read_ex(t->ssl, t->allocated.base, count, &nread);
 
         if(ret == 1){
             // read success!
-            ssize_t nread = ret;
+            ssize_t snread = (ssize_t)nread;
             uv_buf_t buf = t->allocated;
             t->allocated = (uv_buf_t){0};
-            t->signal.read_cb(&t->iface, nread, &buf);
+            t->cached_read_cb(&t->iface, snread, &buf);
             // detect if the user closed us
-            if(t->signal.close) return DUV_TLS_ECANCELED;
+            if(t->failing) return t->failing;
             // read again if we can
             continue;
         }
@@ -425,9 +462,9 @@ static int _advance_ssl_read(duv_tls_t *t){
                 t->signal.read = false;
                 uv_buf_t buf = t->allocated;
                 t->allocated = (uv_buf_t){0};
-                t->signal.read_cb(&t->iface, UV_EOF, &buf);
+                t->cached_read_cb(&t->iface, UV_EOF, &buf);
                 // detect if the user closed us
-                if(t->signal.close) return DUV_TLS_ECANCELED;
+                if(t->failing) return t->failing;
                 return 0;
 
             case SSL_ERROR_WANT_READ:
@@ -499,9 +536,9 @@ static int _advance_ssl_shutdown(duv_tls_t *t){
        indefinite amount of time, and SSL_read might need to write data through
        the base stream in order to complete periodic handshakes still */
 
-    t->signal.shutdown_cb(&t->iface, 0);
+    t->signal.shutdown_cb(&t->iface);
     // detect if the user closed us
-    if(t->signal.close) return DUV_TLS_ECANCELED;
+    if(t->failing) return t->failing;
 
     return 0;
 }
@@ -550,11 +587,9 @@ static int _advance_read_state(duv_tls_t *t){
 
     if(t->reading_base == should_be_reading) return 0;
     if(should_be_reading){
-        int ret = t->base->read_start(t->base, alloc_cb, read_cb);
-        if(ret) return ret;
+        t->base->read_start(t->base, alloc_cb, read_cb);
     }else{
-        int ret = t->base->read_stop(t->base);
-        if(ret) return ret;
+        t->base->read_stop(t->base);
     }
     t->reading_base = should_be_reading;
     return 0;
@@ -594,17 +629,7 @@ static int _advance_wire_writes(duv_tls_t *t){
 
 static void _advance_close(duv_tls_t *t){
     // are we done yet?
-    if(t->closed) return;
-
-    // have we closed the base stream yet?
-    if(!t->base_closing){
-        t->base->close(t->base, close_cb);
-        t->base_closing = true;
-    }
-
-    /* we can't close the async until the user calls stream->close, because
-       stream->close uses the async */
-    if(!t->signal.close) return;
+    if(t->awaited) return;
 
     // have we closed our async yet?
     if(!t->async_closing){
@@ -612,17 +637,19 @@ static void _advance_close(duv_tls_t *t){
         t->async_closing = true;
     }
 
-    // is the base stream done closing yet?
-    if(!t->base_closed) return;
     // is the async closed yet?
     if(!t->async_closed) return;
 
+    // is the base stream done yet?
+    if(!t->base_awaited) return;
+
     // all done!
-    t->closed = true;
+    t->awaited = true;
     duv_tls_free_allocations(t);
 
     // user callback must be last, it might free us
-    t->signal.close_cb(&t->iface);
+    int reason = t->failing == UV_ECANCELED ? 0 : t->failing;
+    t->signal.await_cb(&t->iface, reason);
 }
 
 static void advance_state(duv_tls_t *t){
@@ -659,21 +686,14 @@ failing:
         // we have a read to cancel
         uv_buf_t buf = t->allocated;
         t->allocated = (uv_buf_t){0};
-        t->signal.read_cb(&t->iface, t->failing, &buf);
+        t->cached_read_cb(&t->iface, t->failing, &buf);
     }
     // cancel the in-flight writes
     link_t *link;
     while((link = link_list_pop_first(&t->signal.writes))){
         stream_write_t *req = CONTAINER_OF(link, stream_write_t, link);
-        req->cb(&t->iface, req, t->failing);
+        req->cb(&t->iface, req, false);
     }
-    // cancel the in-flight shutdown
-    if(t->signal.shutdown && !t->shutdown){
-        t->signal.shutdown_cb(&t->iface, t->failing);
-        t->shutdown = true;
-    }
-
-    // no need to read_stop since we're just going to call base->close()
 
     // _advance_close must be last
     _advance_close(t);
@@ -693,9 +713,9 @@ static void *duv_tls_get_data(stream_i *iface){
 
 static const char *duv_tls_strerror(stream_i *iface, int err){
     duv_tls_t *t = CONTAINER_OF(iface, duv_tls_t, iface);
+    #define STRERROR_CASE(e, val, msg) case val: return msg;
     switch(err){
-        STREAM_ERRNO_MAP(DUV_STRERROR_CASE)
-        DUV_TLS_ERRNO_MAP(DUV_STRERROR_CASE)
+        DUV_TLS_ERRNO_MAP(STRERROR_CASE)
     }
     // if it's not one of ours, ask the base stream
     return t->base->strerror(t->base, err);
@@ -703,70 +723,51 @@ static const char *duv_tls_strerror(stream_i *iface, int err){
 
 static const char *duv_tls_err_name(stream_i *iface, int err){
     duv_tls_t *t = CONTAINER_OF(iface, duv_tls_t, iface);
+    #define ERR_NAME_CASE(e, val, msg) case val: return #e;
     switch(err){
-        STREAM_ERRNO_MAP(DUV_ERR_NAME_CASE)
-        DUV_TLS_ERRNO_MAP(DUV_ERR_NAME_CASE)
+        DUV_TLS_ERRNO_MAP(ERR_NAME_CASE)
     }
     // if it's not one of ours, ask the base stream
     return t->base->err_name(t->base, err);
 }
 
-// may trigger read_cb() with status=UV_ECANCELED within this call
-static int duv_tls_read_stop(stream_i *iface){
+static void duv_tls_read_stop(stream_i *iface){
     duv_tls_t *t = CONTAINER_OF(iface, duv_tls_t, iface);
 
-    // user error
-    if(t->signal.close) return STREAM_READ_STOP_AFTER_CLOSE;
-
     // noop cases
-    if(t->failing || !t->signal.read) return 0;
-
-    // we have to handle this synchronously because if we need to give back
-    // any buffers we have to do it before the user has a chance to call
-    // read_start() again.
-    if(t->allocated.base){
-        // return the allocated buffer to the user
-        uv_buf_t buf = t->allocated;
-        t->allocated = (uv_buf_t){0};
-        t->signal.read_cb(&t->iface, UV_ECANCELED, &buf);
-    }
+    if(t->failing || !t->signal.read) return;
 
     t->signal.read = false;
 
-    // no more immediate callbacks
+    // never callback immediately
     schedule(t);
-
-    return 0;
 }
 
-static int duv_tls_read_start(
+static void duv_tls_read_start(
     stream_i *iface, stream_alloc_cb alloc_cb, stream_read_cb read_cb
 ){
     duv_tls_t *t = CONTAINER_OF(iface, duv_tls_t, iface);
 
-    // user errors (note that read-after-shutdown is totally ok)
-    if(t->signal.close) return STREAM_READ_START_AFTER_CLOSE;
-    if(t->tls_eof) return STREAM_READ_START_AFTER_EOF;
-    // failing state
-    if(t->failing) return t->failing;
-
-    // if we were already reading, cancel it
-    if(t->signal.read){
-        int ret = duv_tls_read_stop(iface);
-        if(ret) return ret;
+    // noop cases
+    if(t->failing || t->tls_eof) return;
+    if(t->signal.read
+        && t->signal.alloc_cb == alloc_cb
+        && t->signal.read_cb == read_cb
+    ){
+        // no signal modification and we would preserve any allocation
+        return;
     }
 
+    // no need to cancel an existing read, just overwrite the callbacks
     t->signal.read = true;
     t->signal.alloc_cb = alloc_cb;
     t->signal.read_cb = read_cb;
 
     // never callback immediately
     schedule(t);
-
-    return 0;
 }
 
-static int duv_tls_write(
+static bool duv_tls_write(
     stream_i *iface,
     stream_write_t *req,
     const uv_buf_t bufs[],
@@ -776,58 +777,74 @@ static int duv_tls_write(
     duv_tls_t *t = CONTAINER_OF(iface, duv_tls_t, iface);
 
     // user errors
-    if(t->signal.close) return STREAM_WRITE_AFTER_CLOSE;
-    if(t->signal.shutdown) return STREAM_WRITE_AFTER_SHUTDOWN;
-    // failure cases
-    if(t->failing) return t->failing;
+    if(t->signal.close || t->awaited) return false;
+    if(t->signal.shutdown) return false;
 
-    int ret = stream_write_init(iface, req, bufs, nbufs, cb);
-    if(ret) return ret;
+    int ret = stream_write_init(req, bufs, nbufs, cb);
+    // if this fails, fail the stream but continue
+    if(ret) fail(t, ret);
 
     // store write
     link_list_append(&t->signal.writes, &req->link);
 
-    // never callback immediately
-    schedule(t);
+    /* there is a window where t->awaiting is not true but we can't schedule,
+       but fortunately there's already operations in flight to keep moving */
+    if(!t->async_closing) schedule(t);
 
-    return 0;
+    return true;
 }
 
-static int duv_tls_shutdown(stream_i *iface, stream_shutdown_cb cb){
+static void duv_tls_shutdown(stream_i *iface, stream_shutdown_cb cb){
     duv_tls_t *t = CONTAINER_OF(iface, duv_tls_t, iface);
 
-    // user errors
-    if(t->signal.close) return STREAM_SHUTDOWN_AFTER_CLOSE;
-    if(t->signal.shutdown) return STREAM_SHUTDOWN_AFTER_SHUTDOWN;
-    // underlying connection failure
-    if(t->failing) return t->failing;
+    if(t->failing || t->signal.shutdown) return;
 
     t->signal.shutdown = true;
     t->signal.shutdown_cb = cb;
 
     // never callback immediately
     schedule(t);
-
-    return 0;
 }
 
-static int duv_tls_close(stream_i *iface, stream_close_cb cb){
+static void duv_tls_close(stream_i *iface){
     duv_tls_t *t = CONTAINER_OF(iface, duv_tls_t, iface);
 
-    // user error
-    if(t->signal.close) return STREAM_CLOSE_AFTER_CLOSE;
-
     t->signal.close = true;
-    t->signal.close_cb = cb;
 
-    /* Note that we treat stream->closed() as failing with UV_ECANCELED, since
-       the state machine behavior of failing vs closed is almost identical */
+    // nothing to do if we're already closing
+    if(t->failing) return;
+
     fail(t, UV_ECANCELED);
 
     // never callback immediately
     schedule(t);
+}
 
-    return 0;
+static stream_await_cb duv_tls_await(
+    stream_i *iface, stream_await_cb await_cb
+){
+    duv_tls_t *t = CONTAINER_OF(iface, duv_tls_t, iface);
+
+    stream_await_cb out = t->signal.await_cb;
+
+    t->signal.await_cb = await_cb;
+
+    return out;
+}
+
+static bool duv_tls_readable(stream_i *iface){
+    duv_tls_t *t = CONTAINER_OF(iface, duv_tls_t, iface);
+    return !t->awaited && !t->tls_eof;
+}
+
+static bool duv_tls_writable(stream_i *iface){
+    duv_tls_t *t = CONTAINER_OF(iface, duv_tls_t, iface);
+    return !t->awaited && !t->signal.shutdown && !t->signal.close;
+}
+
+static bool duv_tls_active(stream_i *iface){
+    duv_tls_t *t = CONTAINER_OF(iface, duv_tls_t, iface);
+    return !t->awaited;
 }
 
 static derr_t wrap(
@@ -841,7 +858,18 @@ static derr_t wrap(
 ){
     derr_t e = E_OK;
 
-    *out = &t->iface;
+    *out = NULL;
+
+    // checks on underlying stream
+    if(!base->active(base)){
+        ORIG(&e, E_PARAM, "base stream is not active");
+    }
+    if(!base->readable(base)){
+        ORIG(&e, E_PARAM, "base stream is not readable");
+    }
+    if(!base->writable(base)){
+        ORIG(&e, E_PARAM, "base stream is not writable");
+    }
 
     *t = (duv_tls_t){
         // preserve data
@@ -858,6 +886,13 @@ static derr_t wrap(
             .write = duv_tls_write,
             .shutdown = duv_tls_shutdown,
             .close = duv_tls_close,
+            .await = duv_tls_await,
+            .readable = duv_tls_readable,
+            .writable = duv_tls_writable,
+            .active = duv_tls_active,
+        },
+        .signal = {
+            .await_cb = base->await(base, await_cb),
         },
     };
 
@@ -927,6 +962,8 @@ static derr_t wrap(
     t->base->set_data(t->base, t);
     t->async.data = t;
     t->write_req.data = t;
+
+    *out = &t->iface;
 
     return e;
 

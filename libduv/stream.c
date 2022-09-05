@@ -8,26 +8,31 @@ static bool need_heapbufs(unsigned int nbufs){
     return nbufs > sizeof(req->arraybufs)/sizeof(*req->arraybufs);
 }
 
+void stream_write_init_nocopy(stream_write_t *req, stream_write_cb cb){
+    *req = (stream_write_t){
+        // preserve .data
+        .data = req->data,
+        .cb = cb,
+    };
+    // be ready to link it into a list
+    link_init(&req->link);
+}
+
 int stream_write_init(
-    stream_i *iface,
     stream_write_t *req,
     const uv_buf_t bufs[],
     unsigned int nbufs,
     stream_write_cb cb
 ){
-    // preserve .data
-    *req = (stream_write_t){
-        .data = req->data,
-        .stream = iface,
-        .nbufs = nbufs,
-        .cb = cb,
-    };
-    // be ready to link it into a list
-    link_init(&req->link);
+    stream_write_init_nocopy(req, cb);
+
+    req->nbufs = nbufs;
     size_t need_size = nbufs * sizeof(*bufs);
     if(need_heapbufs(nbufs)){
         req->heapbufs = malloc(need_size);
-        if(!req->heapbufs) return UV_ENOMEM;
+        if(!req->heapbufs){
+            return UV_ENOMEM;
+        }
     }
     memcpy(get_bufs_ptr(req), bufs, need_size);
     return 0;

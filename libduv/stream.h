@@ -1,45 +1,28 @@
 // a stream interface, because uv_stream_t isn't extensible
 
-/* libuv uses error values in the:
-     - 0xxx series (negated unix errors)
-     - 3xxx series (gai-related errors)
-     - 4xxx series (unix error names on windows)
-
-   Splintermail reserves the 6xxx series of errors, in case libuv ever grows
-   to use the 5xxx series.
-
-   60xx is reserved for stream API errors. */
-
-// errors that must be returned if the stream api is not respected
-#define STREAM_ERRNO_MAP(XX) \
-    XX(READ_STOP_AFTER_CLOSE, -6000, "cannot read_stop after stream is closed") \
-    XX(READ_START_AFTER_CLOSE, -6001, "cannot read_start after stream is closed") \
-    XX(READ_START_AFTER_EOF, -6002, "cannot read after eof") \
-    XX(WRITE_AFTER_CLOSE, -6003, "cannot write after stream is closed") \
-    XX(WRITE_AFTER_SHUTDOWN, -6004, "cannot write after stream is shutdown") \
-    XX(SHUTDOWN_AFTER_CLOSE, -6005, "cannot shutdown after closing a stream") \
-    XX(SHUTDOWN_AFTER_SHUTDOWN, -6006, "cannot shutdown a stream twice") \
-    XX(CLOSE_AFTER_CLOSE, -6007, "cannot close a stream twice") \
-
-#define DUV_ERR_NAME_CASE(e, val, msg) case val: return #e;
-#define DUV_STRERROR_CASE(e, val, msg) case val: return msg;
-
-#define STREAM_ERROR_ENUM_DEF(e, val, msg) STREAM_##e = val,
-enum _stream_error_e {
-    STREAM_ERRNO_MAP(STREAM_ERROR_ENUM_DEF)
-};
-
 struct stream_i;
 typedef struct stream_i stream_i;
 
 struct stream_write_t;
 typedef struct stream_write_t stream_write_t;
 
+// if buf is not filled afterwards, it is equivalent to calling read_stop()
 typedef void (*stream_alloc_cb)(stream_i*, size_t suggested, uv_buf_t *buf);
+
+/* buf may or may not be empty, nread will be UV_EOF, 0 or positive:
+     - nread == UV_EOF: no more read_cbs will occur
+     - nread == 0: an allocated buffer is being returned
+     - nread > 0: a successful read */
 typedef void (*stream_read_cb)(stream_i*, ssize_t nread, const uv_buf_t *buf);
-typedef void (*stream_write_cb)(stream_i*, stream_write_t *req, int status);
-typedef void (*stream_shutdown_cb)(stream_i*, int status);
-typedef void (*stream_close_cb)(stream_i*);
+
+// there is one write_cb per call to stream->write
+typedef void (*stream_write_cb)(stream_i*, stream_write_t *req, bool ok);
+
+// there is at most one shutdown cb, after the first call to stream->shutdown
+typedef void (*stream_shutdown_cb)(stream_i*);
+
+// status will be 0 if close() was called and no underlying failure occurred
+typedef void (*stream_await_cb)(stream_i*, int status);
 
 /* Ideally, the stream consumer should be able to decide if they want to have a
    fixed buffer of write request objects and implement backpressure, or if they
@@ -66,12 +49,11 @@ typedef void (*stream_close_cb)(stream_i*);
 struct stream_write_t {
     // data is the only public member for the stream consumer
     void *data;
-    stream_i *stream;
-    stream_write_cb cb;
     link_t link;
-    unsigned int nbufs;
     uv_buf_t arraybufs[4];
     uv_buf_t *heapbufs;
+    unsigned int nbufs;
+    stream_write_cb cb;
 };
 DEF_CONTAINER_OF(stream_write_t, link, link_t);
 
@@ -87,48 +69,65 @@ struct stream_i {
        returned by this stream (including 0) */
     const char *(*err_name)(stream_i*, int err);
 
-    /* MUST return STREAM_READ_STOP_AFTER_CLOSE if stream is closed already.
-       MUST NOT return negative if the stream is in a failing state.
-       MAY cause a user callback (specifically read_cb(UV_ECANCELED))
-       synchronously during its execution */
-    int (*read_stop)(stream_i*);
+    // idempotent: request to begin calls to the read_cb
+    void (*read_start)(stream_i*, stream_alloc_cb, stream_read_cb);
 
-    /* MUST return STREAM_READ_START_AFTER_CLOSE if stream is closed already.
-       MUST return STREAM_READ_START_AFTER_EOF if read_cb returned EOF already.
-       MAY return negative if the stream is in a failing state.
-       MAY cause a user callback (specifically read_cb(UV_ECANCELED))
-       synchronously during its execution */
-    int (*read_start)(stream_i*, stream_alloc_cb, stream_read_cb);
+    /* idempotent: request to end calls to the read_cb, though there MAY be an
+       allocation already prepared, and the caller MUST tolerate that
+       allocation being returned with one additional asynchronous call to
+       read_cb after read_stop() has been called.
 
-    /* MUST return STREAM_WRITE_AFTER_CLOSE if stream is closed already.
-       MUST return STREAM_WRITE_AFTER_SHUTDOWN if stream is shutdown already.
-       MAY return negative if stream is in a failing state. */
-    int (*write)(
+       In such a situation, the following requirements apply to the stream:
+         - the allocation MUST be returned using the same read_cb that was
+           provided at the same time as the alloc_cb, even if a new read_start
+           has been called in the mean time
+         - if the caller calls read_start again before the stream has a chance
+           to return the allocation, and if the alloc_cb and read_cb set are
+           identical to when the allocation was made, the stream MAY decide to
+           skip returning the allocation as a performance optimization
+         - if the allocation is to be returned, it MUST be returned before
+           another call to alloc_cb or an unrelated call to read_cb */
+    void (*read_stop)(stream_i*);
+
+    /* returns true and MUST result in exactly one call to write_cb, unless
+       called after calling shutdown() or close() or after receiving an
+       await_cb, in which case returns false and MUST NOT call the write_cb  */
+    bool (*write)(
         stream_i*,
         stream_write_t*,
         const uv_buf_t bufs[],
         unsigned int nbufs,
-        stream_write_cb
+        stream_write_cb cb
     );
 
-    /* MUST return STREAM_SHUTDOWN_AFTER_CLOSE if stream is closed alreaady.
-       MUST return STREAM_SHUTDOWN_AFTER_SHUTOWN if stream is shutdown alreaady.
-       MAY return negative if stream is in a failing state.
-       MUST guarantee exactly one, asynchrous callback after returning zero. */
-    int (*shutdown)(stream_i*, stream_shutdown_cb);
+    // idempotent, and callback is not called in error situations
+    void (*shutdown)(stream_i*, stream_shutdown_cb);
 
-    /* MUST return STREAM_CLOSE_AFTER_CLOSE if stream is closed alreaady.
-       MUST return zero otherwise, and MUST guarantee exactly one asynchronous
-       callback after returning zero.  Effectively, close is idempotent but
-       only the first close_cb is ever called. */
-    int (*close)(stream_i*, stream_close_cb);
+    // idempotent
+    void (*close)(stream_i*);
+
+    // returns the previous await_cb hook
+    stream_await_cb (*await)(stream_i*, stream_await_cb);
+
+    /* returns false if further calls to read_cb will have no effect, usually
+       if the EOF read_cb has been made or the await_cb has been made */
+    bool (*readable)(stream_i*);
+
+    /* returns false if further calls to write() will return false, usually
+       after shutdown() or close(), or if the await_cb has been made */
+    bool (*writable)(stream_i*);
+
+    // returns false after the await_cb has been made
+    bool (*active)(stream_i*);
 };
 
 // helpers for stream implementations
 
-// returns 0 or UV_ENOMEM
+// always succeeds
+void stream_write_init_nocopy(stream_write_t *req, stream_write_cb cb);
+
+// returns 0 or UV_ENOMEM, but always completes a stream_write_init_nocopy()
 int stream_write_init(
-    stream_i *iface,
     stream_write_t *req,
     const uv_buf_t bufs[],
     unsigned int nbufs,
