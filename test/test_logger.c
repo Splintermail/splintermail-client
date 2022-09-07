@@ -7,7 +7,7 @@
 // a function that always fails
 static derr_t orig_something(void){
     derr_t e = E_OK;
-    ORIG(&e, E_VALUE, "generated error");
+    ORIG(&e, E_VALUE, "generated error: arg=%x", FS("val"));
 }
 
 // a function that propagates something that always fails
@@ -41,6 +41,30 @@ static derr_t test_trace(void){
 
 free_temp:
     dstr_free(&temp);
+
+fail:
+    DROP_VAR(&e_test);
+    return e;
+}
+
+static derr_t test_orig(void){
+    derr_t e = E_OK;
+    derr_t e_test = E_OK;
+
+    // test that ORIG sticks things together in the expected ways
+    e_test = orig_something();
+
+    DSTR_STATIC(exp,
+        "ERROR: generated error: arg=val\n"
+        "originating VALUEERROR from file test/test_logger.c: "
+        "orig_something(), line 10\n"
+    );
+    if(!dstr_eq(e_test.msg, exp)){
+        ORIG_GO(&e,
+            E_VALUE, "\nexpected: \"%x\"\nbut got:  \"%x\"", fail,
+            FD_DBG(&exp), FD_DBG(&e_test.msg)
+        );
+    }
 
 fail:
     DROP_VAR(&e_test);
@@ -230,6 +254,7 @@ int main(int argc, char **argv){
     PARSE_TEST_OPTIONS(argc, argv, NULL, LOG_LVL_WARN);
 
     PROP_GO(&e, test_trace(), test_fail);
+    PROP_GO(&e, test_orig(), test_fail);
     PROP_GO(&e, test_prop(), test_fail);
     PROP_GO(&e, test_sequential_prop(), test_fail);
     PROP_GO(&e, test_rethrow(), test_fail);

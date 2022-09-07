@@ -352,8 +352,12 @@ derr_t register_api_token(const char* host,
 
     // make sure the code was correct
     if(code < 200 || code > 299){
-        LOG_ERROR("API server responded with a non-200 HTTP code\n");
-        ORIG(&e, E_RESPONSE, reason.data);
+        ORIG(&e,
+            E_RESPONSE,
+            "API server responded with a non-200 HTTP code: %x %x",
+            FI(code),
+            FD(&reason)
+        );
     }
 
     // dereference the status out of the json response

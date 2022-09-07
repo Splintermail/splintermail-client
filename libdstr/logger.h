@@ -82,24 +82,58 @@ static inline derr_type_t pvt_trace_quiet(
 
 // ORIG() and friends set the derr_t.type and append to derr_t.msg
 
-#define TRACE_ORIG(e, code, message) do { \
-    (e)->type = (code); \
-    TRACE((e), \
-        "ERROR: %x\n" \
-        "originating %x from file %x: %x(), line %x\n", \
-        FS(message), FD(error_to_dstr(code)), FS(FILE_BASENAME), \
-        FS(__func__), FI(__LINE__) \
-    ); \
-} while(0)
+static inline void pvt_orig(
+    derr_t *e,
+    derr_type_t code,
+    const char *fstr,
+    const fmt_t *args,
+    size_t nargs,
+    const char *file,
+    const char *func,
+    int line
+){
+    e->type = code;
+    pvt_trace_quiet(e, fstr, args, nargs);
+    TRACE(e,
+        "originating %x from file %x: %x(), line %x\n",
+        FD(error_to_dstr(code)), FS(file), FS(func), FI(line)
+    );
+}
 
-#define ORIG(e, _code, _message) do { \
-    TRACE_ORIG((e), (_code), (_message)); \
+#define TRACE_ORIG(e, code, fstr, ...) \
+    pvt_orig( \
+        (e), \
+        (code), \
+        "ERROR: " fstr "\n", \
+        (const fmt_t[]){FI(1), __VA_ARGS__}, \
+            sizeof((const fmt_t[]){FI(1), __VA_ARGS__}) / sizeof(fmt_t), \
+        FILE_LOC \
+    ) \
+
+#define ORIG(e, code, fstr, ...) do { \
+    pvt_orig( \
+        (e), \
+        (code), \
+        "ERROR: " fstr "\n", \
+        (const fmt_t[]){FI(1), __VA_ARGS__}, \
+            sizeof((const fmt_t[]){FI(1), __VA_ARGS__}) / sizeof(fmt_t), \
+        FILE_LOC \
+    ); \
     return *(e); \
 } while(0)
 
-#define ORIG_GO(e, _code, _message, _label) do { \
-    TRACE_ORIG((e), (_code), (_message)); \
-    goto _label; \
+/* it's weird that label is between a format string and its args, but it's
+   backwards-compatible and doesn't require any macro magic */
+#define ORIG_GO(e, code, fstr, label, ...) do { \
+    pvt_orig( \
+        (e), \
+        (code), \
+        "ERROR: " fstr "\n", \
+        (const fmt_t[]){FI(1), __VA_ARGS__}, \
+            sizeof((const fmt_t[]){FI(1), __VA_ARGS__}) / sizeof(fmt_t), \
+        FILE_LOC \
+    ); \
+    goto label; \
 } while(0)
 
 

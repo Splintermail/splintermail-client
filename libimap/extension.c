@@ -42,7 +42,7 @@ derr_t extension_assert_on(const extensions_t *exts,
     }
 
     if(state != EXT_STATE_ON){
-        ORIG(&e, E_PARAM, msg);
+        ORIG(&e, E_PARAM, "%x", FS(msg));
     }
 
     return e;
@@ -97,7 +97,7 @@ derr_t extension_assert_available(const extensions_t *exts,
     }
 
     if(state == EXT_STATE_DISABLED){
-        ORIG(&e, E_PARAM, msg);
+        ORIG(&e, E_PARAM, "%x", FS(msg));
     }
 
     return e;
@@ -150,7 +150,7 @@ derr_t extension_trigger(extensions_t *exts, extension_e type){
     }
 
     if(*state == EXT_STATE_DISABLED){
-        ORIG(&e, E_PARAM, msg);
+        ORIG(&e, E_PARAM, "%x", FS(msg));
     }
 
     *state = EXT_STATE_ON;

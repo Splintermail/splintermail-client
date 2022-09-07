@@ -8,7 +8,7 @@
 
 #define ASSERT(code) if(!(code)) ORIG(&e, E_VALUE, "assertion failed: " #code)
 
-static bool dstr_eq(const dstr_t d, char *c){
+static bool dstr_eqs(const dstr_t d, char *c){
     return strlen(c) == d.len && strncmp(c, d.data, d.len) == 0;
 }
 
@@ -32,10 +32,10 @@ static derr_t test_error_reporting(void){
     // handle proper errbuf
     ok = parse_url(invalid, &url, &errbuf);
     ASSERT(!ok);
-    ASSERT(dstr_eq(errbuf, full_error));
+    ASSERT(dstr_eqs(errbuf, full_error));
     ok = parse_url_reference(invalid, &url, &errbuf);
     ASSERT(!ok);
-    ASSERT(dstr_eq(errbuf, full_error));
+    ASSERT(dstr_eqs(errbuf, full_error));
 
     // handle short errbuf
     {
@@ -47,7 +47,7 @@ static derr_t test_error_reporting(void){
         char *short_error = "invalid url: h";
         ok = parse_url(invalid, &url, &shortbuf);
         ASSERT(!ok);
-        ASSERT(dstr_eq(shortbuf, short_error));
+        ASSERT(dstr_eqs(shortbuf, short_error));
         ASSERT(shortbuf.len < shortbuf.size);
         ASSERT(shortbuf.data[shortbuf.len] == '\0');
     }
@@ -60,7 +60,7 @@ static derr_t test_error_reporting(void){
         char *short_error = "invalid url: https:%#asdf\n   ";
         ok = parse_url(invalid, &url, &shortbuf);
         ASSERT(!ok);
-        ASSERT(dstr_eq(shortbuf, short_error));
+        ASSERT(dstr_eqs(shortbuf, short_error));
         ASSERT(shortbuf.len < shortbuf.size);
         ASSERT(shortbuf.data[shortbuf.len] == '\0');
     }
@@ -76,7 +76,7 @@ static derr_t test_error_reporting(void){
                             "                    ^";
         ok = parse_url(invalid, &url, &shortbuf);
         ASSERT(!ok);
-        ASSERT(dstr_eq(shortbuf, short_error));
+        ASSERT(dstr_eqs(shortbuf, short_error));
         ASSERT(shortbuf.len < shortbuf.size);
         ASSERT(shortbuf.data[shortbuf.len] == '\0');
     }
@@ -86,7 +86,7 @@ static derr_t test_error_reporting(void){
         char *short_error = "";
         ok = parse_url(invalid, &url, &shortbuf);
         ASSERT(!ok);
-        ASSERT(dstr_eq(shortbuf, short_error));
+        ASSERT(dstr_eqs(shortbuf, short_error));
     }
 
     // check manual error case in code
@@ -95,14 +95,14 @@ static derr_t test_error_reporting(void){
                        "                                      ^^^^";
     ok = parse_url(badport, &url, &errbuf);
     ASSERT(!ok);
-    ASSERT(dstr_eq(errbuf, port_error));
+    ASSERT(dstr_eqs(errbuf, port_error));
 
     // errorbuf on the heap
     dstr_t heapbuf;
     PROP(&e, dstr_new(&heapbuf, 2));
     ok = parse_url(badport, &url, &heapbuf);
     ASSERT(!ok);
-    ok = dstr_eq(heapbuf, port_error);
+    ok = dstr_eqs(heapbuf, port_error);
     dstr_free(&heapbuf);
     ASSERT(ok);
 

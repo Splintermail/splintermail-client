@@ -391,10 +391,12 @@ dstr_t _dstr_strip_chars(const dstr_t in, const char *chars, size_t n);
 // because there's multiple ways to encode the same accent in UTF8
 int dstr_cmp(const dstr_t *a, const dstr_t *b);
 int dstr_cmp2(const dstr_t a, const dstr_t b);
+bool dstr_eq(const dstr_t a, const dstr_t b);
 
 // case-insensitive
 int dstr_icmp(const dstr_t *a, const dstr_t *b);
 int dstr_icmp2(const dstr_t a, const dstr_t b);
+bool dstr_ieq(const dstr_t a, const dstr_t b);
 
 // Not UTF8-smart at all
 void dstr_upper(dstr_t* text);

@@ -247,6 +247,13 @@ static int do_dstr_cmp2(const dstr_t a, const dstr_t b, bool sensitive){
     return 0;
 }
 
+static int do_dstr_eq(const dstr_t a, const dstr_t b, bool sensitive){
+    // but one NULL and one not are not matching
+    if(!a.data != !b.data) return false;
+    // otherwise expect length to match, or content to match
+    return a.len == b.len && do_dstr_cmp2(a, b, sensitive) == 0;
+}
+
 int dstr_cmp(const dstr_t *a, const dstr_t *b){
     return do_dstr_cmp2(*a, *b, true);
 }
@@ -255,12 +262,20 @@ int dstr_cmp2(const dstr_t a, const dstr_t b){
     return do_dstr_cmp2(a, b, true);
 }
 
+bool dstr_eq(const dstr_t a, const dstr_t b){
+    return do_dstr_eq(a, b, true);
+}
+
 int dstr_icmp(const dstr_t *a, const dstr_t *b){
     return do_dstr_cmp2(*a, *b, false);
 }
 
 int dstr_icmp2(const dstr_t a, const dstr_t b){
     return do_dstr_cmp2(a, b, false);
+}
+
+bool dstr_ieq(const dstr_t a, const dstr_t b){
+    return do_dstr_eq(a, b, false);
 }
 
 void dstr_upper(dstr_t* text){

@@ -345,11 +345,12 @@ static derr_pair_t do_ssl_test(
             int ret = SSL_CTX_load_verify_locations(ctx.ctx, location, NULL);
             if(ret != 1){
                 trace_ssl_errors(&e);
-                DSTR_VAR(msg, 1024);
-                PROP_GO(&e, FMT(&msg, "failed to load verify_location: %x\n",
-                                   FS(location)),
-                         ctx_fail);
-                ORIG_GO(&e, E_OS, msg.data, ctx_fail);
+                ORIG_GO(&e,
+                    E_OS,
+                    "failed to load verify_location: %x",
+                    ctx_fail,
+                    FS(location)
+                );
             }
         }
 

@@ -169,12 +169,13 @@ static inline const char* state_2_string(parse_state_t state){
     DSTR_STATIC(spaces, "                                "); \
     dstr_t sub = dstr_sub(text, i - num_before, i + 10); \
     dstr_t subspace = dstr_sub(&spaces, 0, num_before); \
-    DSTR_VAR(buffer, 256); \
-    FMT(&buffer, "Unexpected character: '%x' at position %x\n" \
-                 "%x\n" \
-                 "%x^", \
-                 FC(c), FU(i), FD(&sub), FD(&subspace) );\
-    ORIG(&e, E_PARAM, buffer.data); \
+    ORIG(&e, \
+        E_PARAM, \
+        "Unexpected character: '%x' at position %x\n" \
+        "%x\n" \
+        "%x^", \
+        FC(c), FU(i), FD(&sub), FD(&subspace) \
+    );\
 }
 
 #define JSON_DEBUG_PRINTING false
@@ -717,7 +718,7 @@ json_t ji(json_t json, size_t index){
 derr_t j_to_bool(json_t json, bool* out){
     derr_t e = E_OK;
     if(json.error){
-        ORIG(&e, E_PARAM, json.error);
+        ORIG(&e, E_PARAM, "%x", FS(json.error));
     }else if(json.type != JSON_TRUE && json.type != JSON_FALSE){
         ORIG(&e, E_PARAM, "wrong type for to_bool()");
     }
@@ -730,7 +731,7 @@ derr_t j_to_bool(json_t json, bool* out){
 derr_t j_to_dstr(json_t json, dstr_t* out){
     derr_t e = E_OK;
     if(json.error){
-        ORIG(&e, E_PARAM, json.error);
+        ORIG(&e, E_PARAM, "%x", FS(json.error));
     }else if(json.type != JSON_STRING){
         ORIG(&e, E_PARAM, "wrong type for to_dstr()");
     }
@@ -742,7 +743,7 @@ derr_t j_to_dstr(json_t json, dstr_t* out){
 
 #define NUMBER_CHECK \
     if(json.error){ \
-        ORIG(&e, E_PARAM, json.error); \
+        ORIG(&e, E_PARAM, "%x", FS(json.error)); \
     }else if(json.type != JSON_NUMBER){ \
         ORIG(&e, E_PARAM, "not a number"); \
     }

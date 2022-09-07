@@ -38,8 +38,12 @@ static derr_t key_tool_register_key(key_tool_t* kt,
 
     // make sure the code was correct
     if(code < 200 || code > 299){
-        TRACE(&e, "API server responded with a non-200 HTTP code\n");
-        ORIG(&e, E_RESPONSE, reason.data);
+        ORIG(&e,
+            E_RESPONSE,
+            "API server responded with a non-200 HTTP code: %x %x",
+            FI(code),
+            FD(&reason)
+        );
     }
 
     // dereference the status out of the json response
@@ -298,8 +302,12 @@ static derr_t call_list_devices(key_tool_t* kt, const char* host,
 
     // non-200-series responses are errors
     if(code < 200 || code > 299){
-        TRACE(&e, "API server responded with a HTTP code %x\n", FI(code));
-        ORIG(&e, E_RESPONSE, reason.data);
+        ORIG(&e,
+            E_RESPONSE,
+            "API server responded with a non-200 HTTP code: %x %x",
+            FI(code),
+            FD(&reason)
+        );
     }
 
     // now make sure the api call returned success

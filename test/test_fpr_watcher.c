@@ -81,10 +81,7 @@ static derr_t _expect_strings(jsw_atree_t *tree, dstr_t *exp, size_t nexp){
 static derr_t expect_bool(bool got, bool exp){
     derr_t e = E_OK;
     if(got != exp){
-        ORIG(&e,
-            E_VALUE,
-            exp ? "expected true but got false" : "expected false but got true"
-        );
+        ORIG(&e, E_VALUE, "expected %x but got %x", FB(exp), FB(got));
     }
     return e;
 }
