@@ -1617,8 +1617,8 @@ static inline derr_type_t fmt_arg(dstr_t* out, fmt_t arg){
 derr_type_t pvt_fmt_quiet(
         dstr_t* out, const char* fstr, const fmt_t* args, size_t nargs){
     derr_type_t type;
-    // how far into the list of args we are, skip the dummy argument
-    size_t idx = 1;
+    // how far into the list of args we are
+    size_t idx = 0;
     // first parse through the fmt string looking for %
     const char *c = fstr;
     while(*c){

@@ -10,10 +10,12 @@
     /* register that we recieved an error */ \
     looked_good = false; \
     /* previously was derr_t error = FMT(&reason_log, __VA_ARGS__); */ \
-    pvt_fmt_quiet(&reason_log, \
-                  fstr, \
-                  (const fmt_t[]){FI(1), __VA_ARGS__}, \
-                  sizeof((const fmt_t[]){FI(1), __VA_ARGS__})/sizeof(fmt_t)); \
+    pvt_fmt_quiet( \
+        &reason_log, \
+        fstr, \
+        &(const fmt_t[]){FI(1), __VA_ARGS__}[1], \
+        sizeof((const fmt_t[]){FI(1), __VA_ARGS__})/sizeof(fmt_t) - 1 \
+    ); \
 } while(0)
 
 

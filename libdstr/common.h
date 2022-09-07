@@ -765,14 +765,14 @@ derr_t pvt_fmt(
 #define FMT(out, fstr, ...) \
     pvt_fmt(out, \
         fstr, \
-        (const fmt_t[]){FI(1), __VA_ARGS__}, \
-        sizeof((const fmt_t[]){FI(1), __VA_ARGS__})/sizeof(fmt_t) \
+        &(const fmt_t[]){FI(1), __VA_ARGS__}[1], \
+        sizeof((const fmt_t[]){FI(1), __VA_ARGS__})/sizeof(fmt_t) - 1 \
     )
 #define FMT_QUIET(out, fstr, ...) \
     pvt_fmt_quiet(out, \
         fstr, \
-        (const fmt_t[]){FI(1), __VA_ARGS__}, \
-        sizeof((const fmt_t[]){FI(1), __VA_ARGS__})/sizeof(fmt_t) \
+        &(const fmt_t[]){FI(1), __VA_ARGS__}[1], \
+        sizeof((const fmt_t[]){FI(1), __VA_ARGS__})/sizeof(fmt_t) - 1 \
     )
 
 // FFMT is like fprintf
@@ -780,16 +780,16 @@ derr_t pvt_fmt(
     pvt_ffmt(f, \
         written, \
         fstr, \
-        (const fmt_t[]){FI(1), __VA_ARGS__}, \
-        sizeof((const fmt_t[]){FI(1), __VA_ARGS__})/sizeof(fmt_t) \
+        &(const fmt_t[]){FI(1), __VA_ARGS__}[1], \
+        sizeof((const fmt_t[]){FI(1), __VA_ARGS__})/sizeof(fmt_t) - 1 \
     )
 
 #define FFMT_QUIET(f, written, fstr, ...) \
     pvt_ffmt_quiet(f, \
         written, \
         fstr, \
-        (const fmt_t[]){FI(1), __VA_ARGS__}, \
-        sizeof((const fmt_t[]){FI(1), __VA_ARGS__})/sizeof(fmt_t) \
+        &(const fmt_t[]){FI(1), __VA_ARGS__}[1], \
+        sizeof((const fmt_t[]){FI(1), __VA_ARGS__})/sizeof(fmt_t) - 1 \
     )
 
 // PFMT is like printf

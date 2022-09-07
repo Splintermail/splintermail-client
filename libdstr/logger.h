@@ -15,24 +15,24 @@ int pvt_do_log(log_level_t level, const char* format,
              const fmt_t* args, size_t nargs);
 #define LOG_AS(log_level, fstr, ...) \
     pvt_do_log(log_level, fstr, \
-             (const fmt_t[]){FI(1), __VA_ARGS__}, \
-             sizeof((const fmt_t[]){FI(1), __VA_ARGS__}) / sizeof(fmt_t))
+             &(const fmt_t[]){FI(1), __VA_ARGS__}[1], \
+             sizeof((const fmt_t[]){FI(1), __VA_ARGS__}) / sizeof(fmt_t) - 1)
 #define LOG_ERROR(fstr, ...) \
     pvt_do_log(LOG_LVL_ERROR, fstr, \
-             (const fmt_t[]){FI(1), __VA_ARGS__}, \
-             sizeof((const fmt_t[]){FI(1), __VA_ARGS__}) / sizeof(fmt_t))
+             &(const fmt_t[]){FI(1), __VA_ARGS__}[1], \
+             sizeof((const fmt_t[]){FI(1), __VA_ARGS__}) / sizeof(fmt_t) - 1)
 #define LOG_WARN(fstr, ...) \
     pvt_do_log(LOG_LVL_WARN, fstr, \
-             (const fmt_t[]){FI(1), __VA_ARGS__}, \
-             sizeof((const fmt_t[]){FI(1), __VA_ARGS__}) / sizeof(fmt_t))
+             &(const fmt_t[]){FI(1), __VA_ARGS__}[1], \
+             sizeof((const fmt_t[]){FI(1), __VA_ARGS__}) / sizeof(fmt_t) - 1)
 #define LOG_INFO(fstr, ...) \
     pvt_do_log(LOG_LVL_INFO, fstr, \
-             (const fmt_t[]){FI(1), __VA_ARGS__}, \
-             sizeof((const fmt_t[]){FI(1), __VA_ARGS__}) / sizeof(fmt_t))
+             &(const fmt_t[]){FI(1), __VA_ARGS__}[1], \
+             sizeof((const fmt_t[]){FI(1), __VA_ARGS__}) / sizeof(fmt_t) - 1)
 #define LOG_DEBUG(fstr, ...) \
     pvt_do_log(LOG_LVL_DEBUG, fstr, \
-             (const fmt_t[]){FI(1), __VA_ARGS__}, \
-             sizeof((const fmt_t[]){FI(1), __VA_ARGS__}) / sizeof(fmt_t))
+             &(const fmt_t[]){FI(1), __VA_ARGS__}[1], \
+             sizeof((const fmt_t[]){FI(1), __VA_ARGS__}) / sizeof(fmt_t) - 1)
 
 #define FILE_LOC \
     FILE_BASENAME, __func__, __LINE__
@@ -76,8 +76,11 @@ static inline derr_type_t pvt_trace_quiet(
 }
 
 #define TRACE(e, fstr, ...) \
-    pvt_trace_quiet((e), fstr, (const fmt_t[]){FI(1), __VA_ARGS__}, \
-            sizeof((const fmt_t[]){FI(1), __VA_ARGS__}) / sizeof(fmt_t))
+    pvt_trace_quiet((e), \
+        fstr, \
+        &(const fmt_t[]){FI(1), __VA_ARGS__}[1], \
+        sizeof((const fmt_t[]){FI(1), __VA_ARGS__}) / sizeof(fmt_t) - 1 \
+    )
 
 
 // ORIG() and friends set the derr_t.type and append to derr_t.msg
@@ -105,8 +108,8 @@ static inline void pvt_orig(
         (e), \
         (code), \
         "ERROR: " fstr "\n", \
-        (const fmt_t[]){FI(1), __VA_ARGS__}, \
-            sizeof((const fmt_t[]){FI(1), __VA_ARGS__}) / sizeof(fmt_t), \
+        &(const fmt_t[]){FI(1), __VA_ARGS__}[1], \
+        sizeof((const fmt_t[]){FI(1), __VA_ARGS__}) / sizeof(fmt_t) - 1, \
         FILE_LOC \
     ) \
 
@@ -115,8 +118,8 @@ static inline void pvt_orig(
         (e), \
         (code), \
         "ERROR: " fstr "\n", \
-        (const fmt_t[]){FI(1), __VA_ARGS__}, \
-            sizeof((const fmt_t[]){FI(1), __VA_ARGS__}) / sizeof(fmt_t), \
+        &(const fmt_t[]){FI(1), __VA_ARGS__}[1], \
+        sizeof((const fmt_t[]){FI(1), __VA_ARGS__}) / sizeof(fmt_t) - 1, \
         FILE_LOC \
     ); \
     return *(e); \
@@ -129,8 +132,8 @@ static inline void pvt_orig(
         (e), \
         (code), \
         "ERROR: " fstr "\n", \
-        (const fmt_t[]){FI(1), __VA_ARGS__}, \
-            sizeof((const fmt_t[]){FI(1), __VA_ARGS__}) / sizeof(fmt_t), \
+        &(const fmt_t[]){FI(1), __VA_ARGS__}[1], \
+        sizeof((const fmt_t[]){FI(1), __VA_ARGS__}) / sizeof(fmt_t) - 1, \
         FILE_LOC \
     ); \
     goto label; \
