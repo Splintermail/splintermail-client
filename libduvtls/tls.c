@@ -366,6 +366,20 @@ static int _advance_ssl_write(duv_tls_t *t){
     return 0;
 }
 
+// for stream_safe_alloc
+stream_alloc_cb get_alloc_cb(stream_i *iface){
+    duv_tls_t *t = CONTAINER_OF(iface, duv_tls_t, iface);
+    return t->signal.alloc_cb;
+}
+stream_read_cb get_read_cb(stream_i *iface){
+    duv_tls_t *t = CONTAINER_OF(iface, duv_tls_t, iface);
+    return t->signal.read_cb;
+}
+bool is_reading(stream_i *iface){
+    duv_tls_t *t = CONTAINER_OF(iface, duv_tls_t, iface);
+    return !t->failing && t->signal.read;
+}
+
 static int _advance_ssl_read(duv_tls_t *t){
     // // note that the SSL object might have unread data from a record it has
     // // already processed, so our ability to read is not really connected to
@@ -396,44 +410,16 @@ static int _advance_ssl_read(duv_tls_t *t){
     while(t->signal.read){
         // make sure we have allocated a buffer from the user
         if(!t->allocated.base){
-            t->allocated = (uv_buf_t){0};
-            t->cached_alloc_cb = t->signal.alloc_cb;
-            t->cached_read_cb = t->signal.read_cb;
-            t->signal.alloc_cb(&t->iface, 65536, &t->allocated);
-            // detect if the user returned an empty allocation
-            if(!t->allocated.base || !t->allocated.len){
-                // a stream must treat this is an implicit read stop
-                t->allocated = (uv_buf_t){0};
-                t->signal.read = false;
-                // detect if the user closed us
-                if(t->failing) return t->failing;
-                return 0;
-            }
-            // detect if the user called read_stop (but returned an allocation)
-            if(!t->signal.read){
-                uv_buf_t buf = t->allocated;
-                t->allocated = (uv_buf_t){0};
-                t->cached_read_cb(&t->iface, 0, &buf);
-                // detect if the user closed us
-                if(t->failing) return t->failing;
-                return 0;
-            }
-            /* detect if the user called read_stop() then read_start() with
-               different arguments */
-            if(
-                t->cached_alloc_cb != t->signal.alloc_cb
-                || t->cached_read_cb != t->signal.read_cb
-            ){
-                uv_buf_t buf = t->allocated;
-                t->allocated = (uv_buf_t){0};
-                t->cached_read_cb(&t->iface, 0, &buf);
-                // detect if the user closed us
-                if(t->failing) return t->failing;
-                // try again with a new allocation
-                continue;
-            }
-            // detect if the user closed us
-            if(t->failing) return t->failing;
+            bool ok = stream_safe_alloc(
+                &t->iface,
+                get_alloc_cb,
+                get_read_cb,
+                is_reading,
+                65536,
+                &t->allocated
+            );
+            // if not ok, we're either closed or read_stopped
+            if(!ok) return t->failing;
         }
 
         size_t nread;

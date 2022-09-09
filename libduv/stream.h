@@ -139,3 +139,21 @@ void stream_write_free(stream_write_t *req);
 
 // returns either req->arraybufs or req->heapbufs, based on req->nbufs
 uv_buf_t *get_bufs_ptr(stream_write_t *req);
+
+/* calls alloc_cb for you, handling the following cases:
+   - alloc_cb returns empty buffer (calls stream->read_stop() for you)
+   - alloc_cb returns non-empty buffer but read_stop() is called anyway
+   - the above happens, then read_cb calls read_start again
+   - alloc_cb calls read_stop then read_start with different args
+   - loops of alloc_cb returning empty and read_cb calling read_start
+
+   Returns true if the allocation was successful or not.  If not, you need
+   to evaluate if the stream was read_stopped or if it was closed */
+bool stream_safe_alloc(
+    stream_i *stream,
+    stream_alloc_cb (*get_alloc_cb)(stream_i*),
+    stream_read_cb (*get_read_cb)(stream_i*),
+    bool (*is_reading)(stream_i*),
+    size_t suggested,
+    uv_buf_t *buf_out
+);
