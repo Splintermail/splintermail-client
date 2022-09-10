@@ -38,11 +38,14 @@ static void finish(void){
     duv_connect_cancel(&connector);
 }
 
-static void on_connect_phase_5(duv_connect_t *c, int status){
+static void on_connect_phase_5(duv_connect_t *c, bool ok, derr_t e){
     (void)c;
-    if(status == 0) duv_tcp_close(&tcp, noop_close_cb);
-    if(status != UV_ECANCELED){
-        TRACE(&E, "duv_connect not canceled: %x\n", FUV(&status));
+    if(ok) duv_tcp_close(&tcp, noop_close_cb);
+    if(is_error(e)){
+        PROP_VAR_GO(&E, &e, done);
+    }
+    if(ok){
+        TRACE(&E, "duv_connect not canceled\n");
         ORIG_GO(&E, E_VALUE, "on_connect phase 5 fail", done);
     }
 
@@ -61,11 +64,12 @@ static void connect_started_hook(void){
     uv_async_send(&async);
 }
 
-static void on_connect_phase_4(duv_connect_t *c, int status){
+static void on_connect_phase_4(duv_connect_t *c, bool ok, derr_t e){
     (void)c;
-    if(status == 0) duv_tcp_close(&tcp, noop_close_cb);
-    if(status != UV_ECANCELED){
-        TRACE(&E, "duv_connect not canceled: %x\n", FUV(&status));
+    if(ok) duv_tcp_close(&tcp, noop_close_cb);
+    if(is_error(e)) PROP_VAR_GO(&E, &e, fail);
+    if(ok){
+        TRACE(&E, "duv_connect not canceled\n");
         ORIG_GO(&E, E_VALUE, "on_connect phase 4 fail", fail);
     }
 
@@ -92,12 +96,19 @@ fail:
     finish();
 }
 
-static void on_connect_phase_3(duv_connect_t *c, int status){
+static void on_connect_phase_3(duv_connect_t *c, bool ok, derr_t e){
     (void)c;
-    if(!status){
-        TRACE(&E, "duv_connect succeeded!\n");
+    if(ok) duv_tcp_close(&tcp, noop_close_cb);
+    if(!is_error(e)){
+        TRACE(&E, "duv_connect did not error\n");
         ORIG_GO(&E, E_VALUE, "on_connect phase 3 fail", fail);
     }
+    DROP_VAR(&e);
+    if(ok){
+        TRACE(&E, "duv_connect did not fail\n");
+        ORIG_GO(&E, E_VALUE, "on_connect phase 3 fail", fail);
+    }
+
     // BEGIN PHASE 4: "cancel a connection mid-gai"
     PROP_GO(&E,
         duv_connect(
@@ -119,13 +130,19 @@ fail:
     finish();
 }
 
-static void on_connect_phase_2(duv_connect_t *c, int status){
+static void on_connect_phase_2(duv_connect_t *c, bool ok, derr_t e){
     (void)c;
-    if(status == 0){
-        duv_tcp_close(&tcp, noop_close_cb);
-        TRACE(&E, "duv_connect succeeded!\n");
+    if(ok) duv_tcp_close(&tcp, noop_close_cb);
+    if(!is_error(e)){
+        TRACE(&E, "duv_connect did not error\n");
         ORIG_GO(&E, E_VALUE, "on_connect phase 2 fail", fail);
     }
+    DROP_VAR(&e);
+    if(ok){
+        TRACE(&E, "duv_connect did not fail\n");
+        ORIG_GO(&E, E_VALUE, "on_connect phase 2 fail", fail);
+    }
+
     // BEGIN PHASE 3: "fail to connect (gai fails)"
     PROP_GO(&E,
         duv_connect(
@@ -173,15 +190,18 @@ static void phase_1_tcp_closed(uv_handle_t *handle){
     listener_closed = true;
 }
 
-static void on_connect_phase_1(duv_connect_t *c, int status){
+static void on_connect_phase_1(duv_connect_t *c, bool ok, derr_t e){
     (void)c;
-    if(status){
-        TRACE(&E, "duv_connect failed: %x\n", FUV(&status));
-        ORIG_GO(&E, uv_err_type(status), "on_connect phase 1 fail", fail);
+    if(is_error(e)){
+        TRACE(&E, "on_connect_phase_1 errored\n");
+        PROP_VAR_GO(&E, &e, fail);
+    }
+    if(!ok){
+        ORIG_GO(&E, E_VALUE, "on_connect phase 1 failed", fail);
     }
     if(!accepted){
         TRACE(&E, "duv_connect succeeded without accept...?\n");
-        ORIG_GO(&E, uv_err_type(status), "on_connect phase 1 fail", fail);
+        ORIG_GO(&E, E_VALUE, "on_connect phase 1 fail", fail);
     }
     // close tcp and listener before phase 2
     duv_tcp_close(&tcp, phase_1_tcp_closed);

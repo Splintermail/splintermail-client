@@ -1,39 +1,24 @@
 // a tls-encryption layer on a base stream
 
-/* libuv uses error values in the:
-     - 0xxx series (negated unix errors)
-     - 3xxx series (gai-related errors)
-     - 4xxx series (unix error names on windows)
-
-   Splintermail reserves the 6xxx series of errors, in case libuv ever grows
-   to use the 5xxx series.
-
-   60xx is reserved for duv_tls_t errors. */
-
 // duv_tls_t-specific errors (base stream errors may also be passed thru)
 // notice that we can return ENOMEM/ECANCELED ourselves, so we include aliases
 #define DUV_TLS_ERRNO_MAP(XX) \
-    XX(ENOMEM, UV_ENOMEM, "cannot allocate memory") \
-    XX(ECANCELED, UV_ECANCELED, "operation canceled") \
-    XX(ETLS, -6000, "TLS protocol error (or other unrecognized error)") \
-    XX(EUNEXPECTED, -6001, "an unexpected error from the tls library") \
-    XX(ENOCERT, -6002, "peer did not provide a certificate") \
-    XX(ECAUNK, -6003, "peer certificate authority is unknown") \
-    XX(ESELFSIGN, -6004, "peer certificate is self-signed but not trusted") \
-    XX(ECERTBAD, -6005, "peer certificate is broken or invalid") \
-    XX(ESIGBAD, -6006, "peer signature failure") \
-    XX(ECERTUNSUP, -6007, "peer certificate or CA does not support this purpose") \
-    XX(ECERTNOTYET, -6008, "peer certificate is not yet valid") \
-    XX(ECERTEXP, -6009, "peer certificate is expired") \
-    XX(ECERTREV, -6010, "peer certificate is revoked") \
-    XX(EEXTUNSUP, -6011, "peer certificate uses unrecognized extensions") \
-    XX(EHOSTNAME, -6012, "peer certificate does not match hostname") \
-    XX(EHANDSHAKE, -6013, "tls handshake failed for unknown reasons") \
+    XX(E_NOCERT, "peer did not provide a certificate") \
+    XX(E_CAUNK, "peer certificate authority is unknown") \
+    XX(E_SELFSIGN, "peer certificate is self-signed but not trusted") \
+    XX(E_CERTBAD, "peer certificate is broken or invalid") \
+    XX(E_SIGBAD, "peer signature failure") \
+    XX(E_CERTUNSUP, "peer certificate or CA does not support this purpose") \
+    XX(E_CERTNOTYET, "peer certificate is not yet valid") \
+    XX(E_CERTEXP, "peer certificate is expired") \
+    XX(E_CERTREV, "peer certificate is revoked") \
+    XX(E_EXTUNSUP, "peer certificate uses unrecognized extensions") \
+    XX(E_HOSTNAME, "peer certificate does not match hostname") \
+    XX(E_HANDSHAKE, "tls handshake failed for unknown reasons") \
 
-#define DUV_TLS_ERROR_ENUM_DEF(e, val, msg) DUV_TLS_##e = val,
-enum _duv_tls_error_e {
-    DUV_TLS_ERRNO_MAP(DUV_TLS_ERROR_ENUM_DEF)
-};
+#define DUV_TLS_ERR_DECL(e, msg) extern derr_type_t e;
+DUV_TLS_ERRNO_MAP(DUV_TLS_ERR_DECL)
+#undef DUV_TLS_ERR_DECL
 
 typedef struct {
     // the stream we provide
@@ -48,50 +33,51 @@ typedef struct {
     BIO *rawin;
     bool client;
     bool want_verify;
-    uv_async_t async;
+    scheduler_i *scheduler;
+    schedulable_t schedulable;
 
     // buffers for reading and writing from/to the base stream
-    uv_buf_t read_buf;
-    bool using_read_buf;
-    uv_buf_t write_buf;
-    bool using_write_buf;
+    dstr_t read_buf;
+    stream_read_t read_req;
+    dstr_t write_buf;
     stream_write_t write_req;
 
     // control signals (from user api calls)
     struct {
-        bool read;
-        stream_alloc_cb alloc_cb;
-        stream_read_cb read_cb;
+        link_t reads;  // stream_read_t->link
+        link_t writes;  // stream_write_t->link
         bool shutdown;
         stream_shutdown_cb shutdown_cb;
-        link_t writes;  // duv_tls_write_t->link
         stream_await_cb await_cb;
         bool close;
     } signal;
 
     // state machine
-    int failing;  // the reason we're closing (UV_ECANCELED = user closed us)
-
-    uv_buf_t allocated;  // a buffer allocated from the user
-    stream_alloc_cb cached_alloc_cb;
-    stream_read_cb cached_read_cb;
+    derr_t e;
 
     size_t nbufswritten;
     size_t nwritten;
 
-    bool need_read : 1;  // WANT_READ from SSL_{do_handshake,write,shutdown}
-    bool read_wants_read : 1;  // WANT_READ from SSL_read
-    bool reading_base : 1;
+    bool base_failing : 1;
+
+    bool need_read : 1;  /* WANT_READ from SSL_{do_handshake,write,shutdown}
+                            need read prevents us from doing anything without
+                            more data to read */
+    bool read_wants_read : 1;  /* WANT_READ returned from SSL_read.  Reads are
+                                  blocked but other operations can continue */
+    bool read_pending : 1;
+
+    bool write_pending : 1;
 
     bool handshake_done : 1;
     bool shutdown : 1;
+    bool base_closed : 1;
     bool base_awaited : 1;
-    bool async_closing : 1;
-    bool async_closed : 1;
     bool awaited : 1;
     bool tls_eof : 1;
 } duv_tls_t;
 DEF_CONTAINER_OF(duv_tls_t, iface, stream_i);
+DEF_CONTAINER_OF(duv_tls_t, schedulable, schedulable_t);
 
 // wrap an existing stream_i* in tls, returning an encrypted stream_i*
 /* you give up control over the *base entirely, including control over the
@@ -101,7 +87,7 @@ derr_t duv_tls_wrap_client(
     duv_tls_t *t,
     SSL_CTX *ssl_ctx,
     const dstr_t verify_name,
-    uv_loop_t *loop,
+    scheduler_i *scheduler,
     stream_i *base,
     stream_i **out
 );
@@ -109,7 +95,7 @@ derr_t duv_tls_wrap_client(
 derr_t duv_tls_wrap_server(
     duv_tls_t *t,
     SSL_CTX *ssl_ctx,
-    uv_loop_t *loop,
+    scheduler_i *scheduler,
     stream_i *base,
     stream_i **out
 );

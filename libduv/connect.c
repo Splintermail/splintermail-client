@@ -1,3 +1,6 @@
+#include <stdlib.h>
+#include <string.h>
+
 #include "libduv/libduv.h"
 
 // define a hook for better testing
@@ -5,13 +8,16 @@ void (*_connect_started_hook)(void) = NULL;
 
 static void advance_state(duv_connect_t *c);
 
-static void finish(duv_connect_t *c, int status){
+static void finish(duv_connect_t *c, derr_t e){
     if(c->gai.res){
         uv_freeaddrinfo(c->gai.res);
         c->gai.res = NULL;
     }
+    free(c->service);
+    free(c->node);
     c->done = true;
-    c->cb(c, status);
+    bool ok = !c->canceling && !is_error(e);
+    c->cb(c, ok, e);
 }
 
 static void gai_cb(uv_getaddrinfo_t *req, int status, struct addrinfo *res){
@@ -68,7 +74,8 @@ static void advance_state(duv_connect_t *c){
         }
 
         // everything is cleaned up
-        finish(c, UV_ECANCELED);
+        DROP_VAR(&c->e);
+        finish(c, E_OK);
         return;
     }
 
@@ -77,7 +84,12 @@ static void advance_state(duv_connect_t *c){
         // we have a result
         if(c->gai.status < 0){
             // end of the line
-            finish(c, c->gai.status);
+            TRACE_ORIG(&c->e,
+                derr_type_from_uv_status(c->gai.status),
+                "uv_getaddrinfo callback: %x",
+                FS(uv_strerror(c->gai.status))
+            );
+            finish(c, c->e);
             return;
         }
         // start at the beginning of the list
@@ -101,13 +113,23 @@ static void advance_state(duv_connect_t *c){
     if(!c->tcp.open){
         // ready to open a tcp for a new connection
         if(c->gai.ptr == NULL){
-            // we tried all the connections, but failed
-            finish(c, c->gai.last_failure);
+            // we tried all the addrs, but all failed
+            TRACE_ORIG(&c->e,
+                E_CONN, "failed to reach %x:%x", FS(c->node), FS(c->service)
+            );
+            finish(c, c->e);
             return;
         }
         int ret = uv_tcp_init_ex(c->loop, c->tcp_handle, c->tcp_flags);
         if(ret < 0){
-            finish(c, ret);
+            DROP_VAR(&c->e);
+            derr_t e = E_OK;
+            TRACE_ORIG(&e,
+                derr_type_from_uv_status(ret),
+                "uv_tcp_init_ex: %x",
+                FS(uv_strerror(c->gai.status))
+            );
+            finish(c, e);
             return;
         }
         c->tcp.open = true;
@@ -119,7 +141,14 @@ static void advance_state(duv_connect_t *c){
             &c->connect.req, c->tcp_handle, c->gai.ptr->ai_addr, connect_cb
         );
         if(ret < 0){
-            finish(c, ret);
+            DROP_VAR(&c->e);
+            derr_t e = E_OK;
+            TRACE_ORIG(&e,
+                derr_type_from_uv_status(ret),
+                "uv_tcp_connect: %x",
+                FS(uv_strerror(c->gai.status))
+            );
+            finish(c, e);
             return;
         }
         c->connect.started = true;
@@ -130,8 +159,14 @@ static void advance_state(duv_connect_t *c){
     if(!c->connect.returned) return;
     // have a connection result
     if(c->connect.status < 0){
-        // connection failed; track this error in case it's the last one
-        c->gai.last_failure = c->connect.status;
+        // connection failed
+        TRACE_ORIG(&c->e,
+            derr_type_from_uv_status(c->connect.status),
+            "failed connecting to %x: %x: %x",
+            FNTOP(c->gai.ptr->ai_addr),
+            FS(uv_err_name(c->connect.status)),
+            FS(uv_strerror(c->connect.status))
+        );
         c->tcp_handle->data = c;
         c->tcp.closing = true;
         uv_close((uv_handle_t*)c->tcp_handle, close_cb);
@@ -139,7 +174,8 @@ static void advance_state(duv_connect_t *c){
     }
 
     // success, yay!
-    finish(c, 0);
+    DROP_VAR(&c->e);
+    finish(c, E_OK);
     return;
 }
 
@@ -163,15 +199,35 @@ derr_t duv_connect(
         .cb = cb,
     };
 
+    c->node = strdup(node);
+    if(!node){
+        ORIG(&e, E_NOMEM, "no mem");
+    }
+
+    c->service = strdup(service);
+    if(!service){
+        ORIG_GO(&e, E_NOMEM, "no mem", fail_node);
+    }
+
     c->gai.req.data = c;
     int ret = uv_getaddrinfo(
         loop, &c->gai.req, gai_cb, node, service, hints
     );
     if(ret < 0){
-        TRACE(&e, "uv_getaddrinfo: %x\n", FUV(&ret));
-        ORIG(&e, uv_err_type(ret), "uv_udp_send error");
+        ORIG_GO(&e,
+            derr_type_from_uv_status(ret),
+            "uv_getaddrinfo: %x",
+            fail_service,
+            FS(uv_strerror(ret))
+        );
     }
 
+    return e;
+
+fail_service:
+    free(c->service);
+fail_node:
+    free(c->node);
     return e;
 }
 

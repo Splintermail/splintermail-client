@@ -6,7 +6,7 @@
 #include "libduv/libduv.h"
 #include "libdstr/libdstr.h"
 
-REGISTER_ERROR_TYPE(E_UV, "UVERROR");
+REGISTER_ERROR_TYPE(E_UV, "UVERROR", "error from libuv");
 
 derr_type_t fmthook_uv_error(dstr_t* out, const void* arg){
     // cast the input
@@ -19,6 +19,24 @@ derr_type_t fmthook_uv_error(dstr_t* out, const void* arg){
     // copy the message
     memcpy(out->data + out->len, msg, len);
     out->len += len;
+    return E_NONE;
+}
+
+// all uv errors, as derr_type_t's
+#define REGISTER_UV_ERROR(ERR, MSG) \
+    REGISTER_ERROR_TYPE(E_UV_ ## ERR, #ERR, MSG);
+UV_ERRNO_MAP(REGISTER_UV_ERROR)
+
+derr_type_t derr_type_from_uv_status(int status){
+    // intercept error types we already have
+    if(status == UV_ENOMEM) return E_NOMEM;
+
+    switch(status){
+        #define UV_ERROR_CASE(ERR, MSG) \
+            case UV_##ERR: return E_UV_ ## ERR;
+        UV_ERRNO_MAP(UV_ERROR_CASE)
+    }
+
     return E_NONE;
 }
 

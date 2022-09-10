@@ -14,6 +14,7 @@ macro(add_duv asan)
         util.c
         connect.c
         stream.c
+        scheduler.c
         passthru.c
     )
     target_include_directories("duv${asan}" PUBLIC "${LIBUV_INCLUDE}")

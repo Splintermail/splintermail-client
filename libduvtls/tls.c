@@ -3,17 +3,14 @@
 
 #include "libduvtls/libduvtls.h"
 
+#define DUV_TLS_ERR_DEF(e, msg) REGISTER_ERROR_TYPE(e, #e, msg);
+DUV_TLS_ERRNO_MAP(DUV_TLS_ERR_DEF)
+
 static void advance_state(duv_tls_t *t);
 
 static void duv_tls_free_allocations(duv_tls_t *t){
-    if(t->read_buf.base){
-        free(t->read_buf.base);
-        t->read_buf.base = NULL;
-    }
-    if(t->write_buf.base){
-        free(t->write_buf.base);
-        t->write_buf.base = NULL;
-    }
+    dstr_free(&t->read_buf);
+    dstr_free(&t->write_buf);
     if(t->ssl){
         SSL_free(t->ssl);
         t->ssl = NULL;
@@ -22,100 +19,55 @@ static void duv_tls_free_allocations(duv_tls_t *t){
     }
 }
 
-static void async_cb(uv_async_t *async){
-    duv_tls_t *t = async->data;
-    advance_state(t);
-}
-
-static void async_close_cb(uv_handle_t *handle){
-    duv_tls_t *t = handle->data;
-    t->async_closed = true;
+static void schedule_cb(schedulable_t *s){
+    duv_tls_t *t = CONTAINER_OF(s, duv_tls_t, schedulable);
     advance_state(t);
 }
 
 static void schedule(duv_tls_t *t){
-    int ret = uv_async_send(&t->async);
-    /* ret != 0 is only possible under some specific circumstances:
-         - if the async handle is not an async type (should never happen)
-         - if uv_close was called on the async handle (but we control when the
-           async closes) */
-    if(ret < 0){
-        LOG_ERROR("duv_tls_t failed to schedule!\n");
-        abort();
+    t->scheduler->schedule(t->scheduler, &t->schedulable);
+}
+
+static bool closing(duv_tls_t *t){
+    return t->signal.close || is_error(t->e);
+}
+
+static void empty_reads(duv_tls_t *t){
+    link_t *link;
+    while((link = link_list_pop_first(&t->signal.reads))){
+        stream_read_t *read = CONTAINER_OF(link, stream_read_t, link);
+        read->buf.len = 0;
+        read->cb(&t->iface, read, read->buf, !closing(t));
     }
 }
 
-// mark t as failing, if it's not already
-/* note: this should never be called in the int _advance_*() functions; they
-         should return their status and top-level advance_state() handles it */
-static void fail(duv_tls_t *t, int status){
-    // if this is our first failiure, start shutting down
-    if(!t->failing && !t->base_awaited) t->base->close(t->base);
-
-    /* since t->failing==UV_ECANCELED means the user canceled, that is lower
-       priority than a real failure */
-    if(t->failing == UV_ECANCELED || !t->failing){
-        t->failing = status;
-    }
-}
-
-static void alloc_cb(stream_i *base, size_t suggested, uv_buf_t *buf){
-    (void)suggested;
+static void read_cb(
+    stream_i *base, stream_read_t *req, dstr_t buf, bool ok
+){
+    (void)req;
     duv_tls_t *t = base->get_data(base);
-    if(t->using_read_buf){
-        // read buf is already busy
-        *buf = (uv_buf_t){0};
-    }else{
-        *buf = t->read_buf;
-        // read buf is now busy
-        t->using_read_buf = true;
-    }
-}
+    t->read_pending = false;
 
-static void read_cb(stream_i *base, ssize_t nread, const uv_buf_t *buf){
-    duv_tls_t *t = base->get_data(base);
-
-    if(buf->len){
-        // we got our read buf back
-        t->using_read_buf = false;
+    // if stream is failing, skip all processing
+    if(!ok){
+        t->base_failing = true;
+        goto done;
     }
 
-    if(nread < 1){
-        // error condition
-        switch(nread){
-            case UV_ENOBUFS:
-                // we didn't preallocate enough buffers
-                fprintf(stderr, "BUG! got ENOBUFS in duv_tls_t\n");
-                abort();
-
-            case 0:  // equivalent to EAGAIN or EWOULDBLOCK
-            case UV_ECANCELED: // no problem, just read_stop mechanics
-                goto done;
-
-            case UV_EOF:
-                /* base stream is not allowed to EOF on us, even in the
-                   SSL_shutdown case.  We'll convert this to a UV_ECONNRESET
-                   which will make more sense to our consumer.  Otherwise, the
-                   the read_cb(EOF) case would be ambiguous. */
-                fail(t, UV_ECONNRESET);
-                goto done;
-
-            default:
-                fail(t, (int)nread);
-                goto done;
-        }
+    if(buf.len == 0){
+        // base stream is not allowed to EOF on us, even after SSL_shutdown
+        TRACE_ORIG(&t->e,
+            E_UV_ECONNRESET,
+            "tls base stream hit EOF"
+        );
+        goto done;
     }
 
     // put bytes in rawin
     size_t nwritten;
-    int ret = BIO_write_ex(t->rawin, buf->base, (size_t)nread, &nwritten);
-    if(ret != 1){
-        fail(t, DUV_TLS_EUNEXPECTED);
-        goto done;
-    }
-    if(nwritten != (size_t)nread){
-        // failed to write our whole buffer to rawin
-        fail(t, UV_ENOMEM);
+    int ret = BIO_write_ex(t->rawin, buf.data, buf.len, &nwritten);
+    if(ret != 1 || nwritten != buf.len){
+        TRACE_ORIG(&t->e, E_NOMEM, "failed to write to membio");
         goto done;
     }
 
@@ -130,22 +82,33 @@ done:
 static void write_cb(stream_i *base, stream_write_t *req, bool ok){
     duv_tls_t *t = base->get_data(base);
     (void)req;
-    (void)ok;
+
+    if(!ok) t->base_failing = true;
 
     // done with write buffer
-    t->using_write_buf = false;
+    t->write_pending = false;
 
     advance_state(t);
 }
 
-static void await_cb(stream_i *base, int status){
+static void await_cb(stream_i *base, derr_t e){
     duv_tls_t *t = base->get_data(base);
     t->base_awaited = true;
-    if(status) fail(t, status);
+    // no point in base->close() anymore
+    t->base_closed = true;
+    if(is_error(e)){
+        if(is_error(t->e)){
+            DROP_VAR(&e);
+        }else{
+            TRACE_PROP_VAR(&t->e, &e);
+        }
+    }else if(!closing(t)){
+        TRACE_ORIG(&t->e, E_CONN, "base stream closed unexpectedly");
+    }
     advance_state(t);
 }
 
-static int classify_verify_result(long r){
+static derr_type_t classify_verify_result(long r){
     // based loosely on openssl's ssl_verify_alarm_type() classifications
     switch(r){
         case X509_V_OK:
@@ -157,11 +120,11 @@ static int classify_verify_result(long r){
         case X509_V_ERR_CERT_CHAIN_TOO_LONG:
         case X509_V_ERR_PATH_LENGTH_EXCEEDED:
         case X509_V_ERR_INVALID_CA:
-            return DUV_TLS_ECAUNK;
+            return E_CAUNK;
 
         case X509_V_ERR_DEPTH_ZERO_SELF_SIGNED_CERT:
         case X509_V_ERR_SELF_SIGNED_CERT_IN_CHAIN:
-            return DUV_TLS_ESELFSIGN;
+            return E_SELFSIGN;
 
         case X509_V_ERR_UNABLE_TO_DECRYPT_CERT_SIGNATURE:
         case X509_V_ERR_UNABLE_TO_DECODE_ISSUER_PUBLIC_KEY:
@@ -169,79 +132,91 @@ static int classify_verify_result(long r){
         case X509_V_ERR_ERROR_IN_CERT_NOT_AFTER_FIELD:
         case X509_V_ERR_INVALID_NON_CA:
         case X509_V_ERR_INVALID_EXTENSION:
-            return DUV_TLS_ECERTBAD;
+            return E_CERTBAD;
 
         case X509_V_ERR_CERT_SIGNATURE_FAILURE:
-            return DUV_TLS_ESIGBAD;
+            return E_SIGBAD;
 
         case X509_V_ERR_CERT_NOT_YET_VALID:
-            return DUV_TLS_ECERTNOTYET;
+            return E_CERTNOTYET;
 
         case X509_V_ERR_CERT_HAS_EXPIRED:
-            return DUV_TLS_ECERTEXP;
+            return E_CERTEXP;
 
         case X509_V_ERR_CERT_REVOKED:
-            return DUV_TLS_ECERTREV;
+            return E_CERTREV;
 
         case X509_V_ERR_OUT_OF_MEM:
-            return DUV_TLS_ENOMEM;
+            return E_NOMEM;
 
         case X509_V_ERR_CERT_UNTRUSTED:
             // man 1 verify:
             // "The root CA is not marked as trusted for the specified purpose"
         case X509_V_ERR_CERT_REJECTED:
         case X509_V_ERR_INVALID_PURPOSE:
-            return DUV_TLS_ECERTUNSUP;
+            return E_CERTUNSUP;
 
         case X509_V_ERR_UNSPECIFIED:
         case X509_V_ERR_INVALID_CALL:
         case X509_V_ERR_STORE_LOOKUP:
-            return DUV_TLS_ETLS;
+            return E_SSL;
 
         case X509_V_ERR_UNHANDLED_CRITICAL_EXTENSION:
-            return DUV_TLS_EEXTUNSUP;
+            return E_EXTUNSUP;
 
         case X509_V_ERR_HOSTNAME_MISMATCH:
         case X509_V_ERR_IP_ADDRESS_MISMATCH:
-            return DUV_TLS_EHOSTNAME;
+            return E_HOSTNAME;
 
         // case X509_V_ERR_APPLICATION_VERIFICATION:
         // (and others that openssl's ssl_verify_alarm_type does not recognize)
         default:
-            return DUV_TLS_EHANDSHAKE;
+            return E_HANDSHAKE;
     }
 }
 
-static int _advance_ssl_do_handshake(duv_tls_t *t){
-    if(t->handshake_done) return 0;
-    if(t->need_read) return 0;
+static bool _advance_ssl_do_handshake(duv_tls_t *t){
+    if(t->handshake_done) return true;
+    if(t->need_read) return true;
     int ret = SSL_do_handshake(t->ssl);
     if(ret != 1){
         switch(SSL_get_error(t->ssl, ret)){
             case SSL_ERROR_WANT_READ:
                 t->need_read = true;
-                return 0;
+                return true;
 
             case SSL_ERROR_WANT_WRITE:
                 // we use a membio, so this is an ENOMEM
-                return DUV_TLS_ENOMEM;
+                TRACE_ORIG(&t->e, E_NOMEM, "failed to write to write bio");
+                return false;
 
             case SSL_ERROR_SSL:
                 // now we check for certificate handshake errors
                 long lret = SSL_get_verify_result(t->ssl);
-                ret = classify_verify_result(lret);
-                if(ret) return ret;
+                derr_type_t etype = classify_verify_result(lret);
+                if(etype != E_NONE){
+                    TRACE_ORIG(&t->e, etype, "%x", FD(error_to_msg(etype)));
+                    return false;
+                }
                 /* SSL_get_verify_result returns OK if no peer certificate
                    was presented, so we make sure we got a peer cert before
                    fully trusting the verify result */
                 X509 *peer_cert = SSL_get_peer_certificate(t->ssl);
-                if(!peer_cert) return DUV_TLS_ENOCERT;
+                if(!peer_cert){
+                    etype = E_NOCERT;
+                    TRACE_ORIG(&t->e, etype, "%x", FD(error_to_msg(etype)));
+                    return false;
+                }
                 X509_free(peer_cert);
                 // otherwise we emit a generic error
-                return DUV_TLS_ETLS;
+                trace_ssl_errors(&t->e);
+                TRACE_ORIG(&t->e, E_SSL, "ssl error in handshake");
+                return false;
 
             default:
-                return DUV_TLS_ETLS;
+                trace_ssl_errors(&t->e);
+                TRACE_ORIG(&t->e, E_SSL, "unidentified error in handshake");
+                return false;
         }
     }
 
@@ -262,80 +237,81 @@ static int _advance_ssl_do_handshake(duv_tls_t *t){
 
            So we explicitly verify that a certificate was sent. */
         X509 *peer_cert = SSL_get_peer_certificate(t->ssl);
-        if(!peer_cert) return DUV_TLS_ENOCERT;
+        if(!peer_cert){
+            TRACE_ORIG(&t->e, E_NOCERT, "%x", FD(error_to_msg(E_NOCERT)));
+            return false;
+        }
         X509_free(peer_cert);
     }
 
     t->handshake_done = true;
-    return 0;
+    return true;
 }
 
-static int next_nonempty_write_req(duv_tls_t *t, stream_write_t **out){
+static bool next_nonempty_write_req(duv_tls_t *t, stream_write_t **out){
     while(!link_list_isempty(&t->signal.writes)){
         link_t *link = t->signal.writes.next;
         stream_write_t *req = CONTAINER_OF(link, stream_write_t, link);
-        const uv_buf_t *bufs = get_bufs_ptr(req);
+        const dstr_t *bufs = get_bufs_ptr(req);
         for(size_t i = 0; i < req->nbufs; i++){
             if(!bufs[i].len) continue;
             *out = req;
-            return 0;
+            return true;
         }
         // handle empty write request
         link_remove(&req->link);
         req->cb(&t->iface, req, true);
         // detect if the user closed us
-        if(t->failing){
+        if(closing(t)){
             *out = NULL;
-            return t->failing;
+            return false;
         }
     }
     // no writes available
     *out = NULL;
-    return 0;
+    return true;
 }
 
-static int _advance_ssl_write(duv_tls_t *t){
+static bool _advance_ssl_write(duv_tls_t *t){
     // wait for an empty rawout
-    if(!BIO_eof(t->rawout)) return 0;
+    if(!BIO_eof(t->rawout)) return true;
 
     // wait for the read that SSL_write wants
-    if(t->need_read) return 0;
+    if(t->need_read) return true;
 
     // get a write to work on
     stream_write_t *req;
-    int ret = next_nonempty_write_req(t, &req);
-    if(ret) return ret;
-    if(!req) return 0;
+    if(!next_nonempty_write_req(t, &req)) return false;
+    if(!req) return true;
 
     /* Detect completed writes and report them to the user.  We know that
        rawout is empty now, so now is the first time that:
          - we have a write req
          - the whole write req has passed through SSL_write
          - the whole rawout was pushed over the wire */
-    if(t->nbufswritten == req->nbufs && !t->using_write_buf){
+    if(t->nbufswritten == req->nbufs && !t->write_pending){
         // done with this req
         t->nbufswritten = 0;
         link_remove(&req->link);
         req->cb(&t->iface, req, true);
         // detect if the user closed us
-        if(t->failing) return t->failing;
+        if(closing(t)) return false;
         // see if there's another req we can continue working on
-        ret = next_nonempty_write_req(t, &req);
-        if(ret) return ret;
-        if(!req) return 0;
+        if(!next_nonempty_write_req(t, &req)) return false;
+        if(!req) return true;
     }
 
-    const uv_buf_t *bufs = get_bufs_ptr(req);
+    const dstr_t *bufs = get_bufs_ptr(req);
     while(t->nbufswritten < req->nbufs){
-        const uv_buf_t buf = bufs[t->nbufswritten];
+        const dstr_t buf = bufs[t->nbufswritten];
         while(t->nwritten < buf.len){
             // no point in encrypting more than what our own write buf can hold
             long blen = BIO_get_mem_data(t->rawout, NULL);
-            if((size_t)blen > t->write_buf.len) return 0;
+            if((size_t)blen > t->write_buf.len) return true;
             size_t write_size = buf.len - t->nwritten;
             size_t nwritten;
             int ret = SSL_write_ex(
-                t->ssl, buf.base + t->nwritten, write_size, &nwritten
+                t->ssl, buf.data + t->nwritten, write_size, &nwritten
             );
             if(ret != 1){
                 /* it is important we don't alter input bufs after a retryable
@@ -344,12 +320,15 @@ static int _advance_ssl_write(duv_tls_t *t){
                 switch(SSL_get_error(t->ssl, ret)){
                     case SSL_ERROR_WANT_READ:
                         t->need_read = true;
-                        return 0;
+                        return true;
                     case SSL_ERROR_WANT_WRITE:
                         // we use a membio, so this is an ENOMEM
-                        return DUV_TLS_ENOMEM;
+                        TRACE_ORIG(&t->e, E_NOMEM, "write to membio failed");
+                        return false;
                     default:
-                        return DUV_TLS_ETLS;
+                        trace_ssl_errors(&t->e);
+                        TRACE_ORIG(&t->e, E_SSL, "SSL_write failed");
+                        return false;
                 }
             }
             // one successful SSL_write, but maybe not a whole write req
@@ -363,128 +342,71 @@ static int _advance_ssl_write(duv_tls_t *t){
         }
     }
 
-    return 0;
+    return true;
 }
 
-// for stream_safe_alloc
-stream_alloc_cb get_alloc_cb(stream_i *iface){
-    duv_tls_t *t = CONTAINER_OF(iface, duv_tls_t, iface);
-    return t->signal.alloc_cb;
-}
-stream_read_cb get_read_cb(stream_i *iface){
-    duv_tls_t *t = CONTAINER_OF(iface, duv_tls_t, iface);
-    return t->signal.read_cb;
-}
-bool is_reading(stream_i *iface){
-    duv_tls_t *t = CONTAINER_OF(iface, duv_tls_t, iface);
-    return !t->failing && t->signal.read;
-}
-
-static int _advance_ssl_read(duv_tls_t *t){
+static bool _advance_ssl_read(duv_tls_t *t){
     // // note that the SSL object might have unread data from a record it has
     // // already processed, so our ability to read is not really connected to
     // // how many bytes are present in t->rawin...
     // if(BIO_eof(t->rawin)) return 0;
 
     // ... unless the last call to SSL_read told us to wait for more bytes
-    if(t->read_wants_read) return 0;
+    if(t->read_wants_read) return true;
 
-    // detect the case where we have a stale allocation we must return
-    if(t->allocated.base){
-        if(!t->signal.read
-            || t->signal.alloc_cb != t->cached_alloc_cb
-            || t->signal.read_cb != t->cached_read_cb
-        ){
-            uv_buf_t buf = t->allocated;
-            t->allocated = (uv_buf_t){0};
-            t->cached_read_cb(&t->iface, 0, &buf);
-            // detect the case where the user closed us
-            if(t->failing) return t->failing;
-        }
-    }
-
-    /* there is a possibility that we allocated bytes with one alloc_cb/read_cb
-       pair but now the user has read_stopped/read_started */
-
-    // keep reading until we run out of bytes or user stops us
-    while(t->signal.read){
-        // make sure we have allocated a buffer from the user
-        if(!t->allocated.base){
-            bool ok = stream_safe_alloc(
-                &t->iface,
-                get_alloc_cb,
-                get_read_cb,
-                is_reading,
-                65536,
-                &t->allocated
-            );
-            // if not ok, we're either closed or read_stopped
-            if(!ok) return t->failing;
-        }
+    // process as many in-flight reads as we can
+    link_t *link;
+    while((link = link_list_pop_first(&t->signal.reads))){
+        stream_read_t *read = CONTAINER_OF(link, stream_read_t, link);
 
         size_t nread;
-        size_t count = MIN(t->allocated.len, SSIZE_MAX);
-        int ret = SSL_read_ex(t->ssl, t->allocated.base, count, &nread);
+        int ret = SSL_read_ex(t->ssl, read->buf.data, read->buf.size, &nread);
 
-        if(ret == 1){
-            // read success!
-            ssize_t snread = (ssize_t)nread;
-            uv_buf_t buf = t->allocated;
-            t->allocated = (uv_buf_t){0};
-            t->cached_read_cb(&t->iface, snread, &buf);
-            // detect if the user closed us
-            if(t->failing) return t->failing;
-            // read again if we can
-            continue;
+        if(ret != 1){
+            // oops, put the read back
+            link_list_prepend(&t->signal.reads, &read->link);
+            // handle failure
+            switch(SSL_get_error(t->ssl, ret)){
+                case SSL_ERROR_ZERO_RETURN:
+                    // This is like a TLS-layer EOF
+                    t->tls_eof = true;
+                    // user is not allowed to submit any more reads
+                    empty_reads(t);
+                    return !closing(t);
+
+                case SSL_ERROR_WANT_READ:
+                    // we didn't have enough bytes to read
+                    t->read_wants_read = true;
+                    return true;
+
+                case SSL_ERROR_WANT_WRITE:
+                    TRACE_ORIG(&t->e, E_NOMEM, "write to membio failed");
+                    return false;
+
+                default:
+                    trace_ssl_errors(&t->e);
+                    TRACE_ORIG(&t->e, E_SSL, "SSL_read failed");
+                    return false;
+            }
         }
 
-        // failure
-        switch(SSL_get_error(t->ssl, ret)){
-            case SSL_ERROR_ZERO_RETURN:
-                // This is like a TLS-layer EOF
-                t->tls_eof = true;
-                /* the user is not able to cause us to read from base anymore,
-                   though it may still happen if SSL_write returns WANT_READ */
-                t->signal.read = false;
-                uv_buf_t buf = t->allocated;
-                t->allocated = (uv_buf_t){0};
-                t->cached_read_cb(&t->iface, UV_EOF, &buf);
-                // detect if the user closed us
-                if(t->failing) return t->failing;
-                return 0;
-
-            case SSL_ERROR_WANT_READ:
-                // we didn't have enough bytes to read
-                t->read_wants_read = true;
-                return 0;
-
-            case SSL_ERROR_WANT_WRITE:
-                /* we use a membio, so this is an ENOMEM; the expected behavior
-                   would be that SSL_read realizes it needs to do a handshake,
-                   then it writes to the membio (which never blocks), then it
-                   returns WANT_READ, not WANT_WRITE */
-                return DUV_TLS_ENOMEM;
-
-            default:
-                derr_t e = E_OK;
-                trace_ssl_errors(&e);
-                TRACE_ORIG(&e, E_SSL, "read failed");
-                DUMP(e);
-                DROP_VAR(&e);
-                return DUV_TLS_ETLS;
-        }
+        // read success!
+        read->buf.len = nread;
+        read->cb(&t->iface, read, read->buf, true);
+        // detect if user closed us
+        if(closing(t)) return false;
     }
 
-    return 0;
+    return true;
 }
 
-static int _advance_ssl_shutdown(duv_tls_t *t){
+static bool _advance_ssl_shutdown(duv_tls_t *t){
     // wait for the signal
-    if(!t->signal.shutdown) return 0;
+    if(!t->signal.shutdown) return true;
     // only shutdown once
-    if(t->shutdown) return 0;
+    if(t->shutdown) return true;
     // wait for pending writes to finish
-    if(!link_list_isempty(&t->signal.writes)) return 0;
+    if(!link_list_isempty(&t->signal.writes)) return true;
 
     /* Note that SSL_shutdown can return 0 or 1 in success cases:
          - 0 means we wrote what we needed to the SSL object, but we don't have
@@ -505,12 +427,15 @@ static int _advance_ssl_shutdown(duv_tls_t *t){
         switch(SSL_get_error(t->ssl, ret)){
             case SSL_ERROR_WANT_READ:
                 t->need_read = true;
-                return 0;
+                return true;
             case SSL_ERROR_WANT_WRITE:
                 // we use a membio, so this is an ENOMEM
-                return DUV_TLS_ENOMEM;
+                TRACE_ORIG(&t->e, E_NOMEM, "failed to write to write_bio");
+                return false;
             default:
-                return DUV_TLS_ETLS;
+                trace_ssl_errors(&t->e);
+                TRACE_ORIG(&t->e, E_SSL, "error in SSL_shutdown");
+                return false;
         }
     }
 
@@ -524,17 +449,16 @@ static int _advance_ssl_shutdown(duv_tls_t *t){
 
     t->signal.shutdown_cb(&t->iface);
     // detect if the user closed us
-    if(t->failing) return t->failing;
+    if(closing(t)) return false;
 
-    return 0;
+    return true;
 }
 
-static int _advance_tls(duv_tls_t *t){
-    int ret = _advance_ssl_do_handshake(t);
-    if(ret) return ret;
+static bool _advance_tls(duv_tls_t *t){
+    if(!_advance_ssl_do_handshake(t)) return false;
 
     // no reads or writes until handshake completed and cert verified
-    if(!t->handshake_done) return 0;
+    if(!t->handshake_done) return true;
 
     // Initially I was concerned that the memory BIO might have strange
     // behaviors if you did a partial reading from one end between writes to
@@ -549,82 +473,60 @@ static int _advance_tls(duv_tls_t *t){
     // BIO_read()ing from rawout.
 
     // write any user requests to rawout
-    ret = _advance_ssl_write(t);
-    if(ret) return ret;
+    if(!_advance_ssl_write(t)) return false;
 
     // read anything we've gotten from the wire
-    ret = _advance_ssl_read(t);
-    if(ret) return ret;
+    if(!_advance_ssl_read(t)) return false;
 
     // maybe shutdown, if the conditions are right
-    ret = _advance_ssl_shutdown(t);
-    if(ret) return ret;
+    if(!_advance_ssl_shutdown(t)) return false;
 
-    return 0;
+    return true;
 }
 
-static int _advance_read_state(duv_tls_t *t){
-    /* note that read_wants_read is not sufficient condition to cause us to
-       turn reading on; if SSL_read returns WANT_READ but the user has called
-       read_stop(), we don't need to get bytes off the wire.  But if
-       SSL_{do_handshake,write,shutdown} return WANT_READ, that need is not
-       going away, and we need to wait for bytes off the wire. */
-    bool should_be_reading = t->signal.read || t->need_read;
-
-    if(t->reading_base == should_be_reading) return 0;
-    if(should_be_reading){
-        t->base->read_start(t->base, alloc_cb, read_cb);
-    }else{
-        t->base->read_stop(t->base);
-    }
-    t->reading_base = should_be_reading;
-    return 0;
+static void _advance_wire_reads(duv_tls_t *t){
+    // one read in flight at a time
+    if(t->read_pending) return;
+    // no more reads when base is failing
+    if(t->base_failing) return;
+    // respect backpressure; don't read without a good reason
+    if(!t->read_wants_read && !t->need_read) return;
+    t->base->read(t->base, &t->read_req, t->read_buf, read_cb);
+    t->read_pending = true;
 }
 
-static int _advance_wire_writes(duv_tls_t *t){
+static bool _advance_wire_writes(duv_tls_t *t){
     // make sure there's something to write
-    if(BIO_eof(t->rawout)) return 0;
+    if(BIO_eof(t->rawout)) return true;
 
     // make sure there's a write buffer to write to
-    if(t->using_write_buf) return 0;
+    if(t->write_pending) return true;
 
-    size_t nread;
+    // don't write to a broken base
+    if(t->base_failing) return true;
+
     int ret = BIO_read_ex(
-        t->rawout, t->write_buf.base, t->write_buf.len, &nread
+        t->rawout, t->write_buf.data, t->write_buf.size, &t->write_buf.len
     );
     if(ret != 1){
-        return DUV_TLS_EUNEXPECTED;
+        TRACE_ORIG(&t->e, E_SSL, "failed to read from nonemtpy read bio");
+        return false;
     }
-    if(nread < 1){
-        LOG_ERROR("duv_tls read zero bytes from non-empty BIO\n");
-        abort();
+    if(t->write_buf.len < 1){
+        LOG_FATAL("duv_tls read zero bytes from non-empty BIO\n");
     }
 
     // create a new uv_buf to not mess with write_buf.len
-    uv_buf_t buf = { .base = t->write_buf.base, .len = nread };
-    ret = t->base->write(t->base, &t->write_req, &buf, 1, write_cb);
-    if(ret < 0){
-        // base stream is broken; tls is
-        return ret;
-    }
+    t->base->write(t->base, &t->write_req, &t->write_buf, 1, write_cb);
 
     // write was successful
-    t->using_write_buf = true;
-    return 0;
+    t->write_pending = true;
+    return true;
 }
 
 static void _advance_close(duv_tls_t *t){
     // are we done yet?
     if(t->awaited) return;
-
-    // have we closed our async yet?
-    if(!t->async_closing){
-        duv_async_close(&t->async, async_close_cb);
-        t->async_closing = true;
-    }
-
-    // is the async closed yet?
-    if(!t->async_closed) return;
 
     // is the base stream done yet?
     if(!t->base_awaited) return;
@@ -632,49 +534,37 @@ static void _advance_close(duv_tls_t *t){
     // all done!
     t->awaited = true;
     duv_tls_free_allocations(t);
+    schedulable_cancel(&t->schedulable);
 
     // user callback must be last, it might free us
-    int reason = t->failing == UV_ECANCELED ? 0 : t->failing;
-    t->signal.await_cb(&t->iface, reason);
+    t->signal.await_cb(&t->iface, t->e);
 }
 
 static void advance_state(duv_tls_t *t){
-    int ret;
-
-    if(t->failing) goto failing;
+    if(closing(t)) goto closing;
 
     // all the TLS-related stuff
-    ret = _advance_tls(t);
-    if(ret){
-        fail(t, ret);
-        goto failing;
-    }
+    if(!_advance_tls(t)) goto closing;
 
     // push rawout over the wire
-    ret = _advance_wire_writes(t);
-    if(ret){
-        fail(t, ret);
-        goto failing;
-    }
+    if(!_advance_wire_writes(t)) goto closing;
 
-    // decide if we need to be reading from the base stream or not
-    ret = _advance_read_state(t);
-    if(ret){
-        fail(t, ret);
-        goto failing;
-    }
+    // request a read for rawin
+    _advance_wire_reads(t);
 
     return;
 
-failing:
-    // cancel the in-flight read
-    if(t->allocated.base){
-        // we have a read to cancel
-        uv_buf_t buf = t->allocated;
-        t->allocated = (uv_buf_t){0};
-        t->cached_read_cb(&t->iface, t->failing, &buf);
+closing:
+    // close the base if necessary
+    if(!t->base_closed){
+        t->base_closed = true;
+        t->base->close(t->base);
     }
-    // cancel the in-flight writes
+
+    // cancel any reads
+    empty_reads(t);
+
+    // cancel any writes
     link_t *link;
     while((link = link_list_pop_first(&t->signal.writes))){
         stream_write_t *req = CONTAINER_OF(link, stream_write_t, link);
@@ -697,93 +587,68 @@ static void *duv_tls_get_data(stream_i *iface){
     return t->data;
 }
 
-static const char *duv_tls_strerror(stream_i *iface, int err){
-    duv_tls_t *t = CONTAINER_OF(iface, duv_tls_t, iface);
-    #define STRERROR_CASE(e, val, msg) case val: return msg;
-    switch(err){
-        DUV_TLS_ERRNO_MAP(STRERROR_CASE)
-    }
-    // if it's not one of ours, ask the base stream
-    return t->base->strerror(t->base, err);
-}
-
-static const char *duv_tls_err_name(stream_i *iface, int err){
-    duv_tls_t *t = CONTAINER_OF(iface, duv_tls_t, iface);
-    #define ERR_NAME_CASE(e, val, msg) case val: return #e;
-    switch(err){
-        DUV_TLS_ERRNO_MAP(ERR_NAME_CASE)
-    }
-    // if it's not one of ours, ask the base stream
-    return t->base->err_name(t->base, err);
-}
-
-static void duv_tls_read_stop(stream_i *iface){
-    duv_tls_t *t = CONTAINER_OF(iface, duv_tls_t, iface);
-
-    // noop cases
-    if(t->failing || !t->signal.read) return;
-
-    t->signal.read = false;
-
-    // never callback immediately
-    schedule(t);
-}
-
-static void duv_tls_read_start(
-    stream_i *iface, stream_alloc_cb alloc_cb, stream_read_cb read_cb
+static void duv_tls_read(
+    stream_i *iface,
+    stream_read_t *read,
+    dstr_t buf,
+    stream_read_cb cb
 ){
     duv_tls_t *t = CONTAINER_OF(iface, duv_tls_t, iface);
 
-    // noop cases
-    if(t->failing || t->tls_eof) return;
-    if(t->signal.read
-        && t->signal.alloc_cb == alloc_cb
-        && t->signal.read_cb == read_cb
-    ){
-        // no signal modification and we would preserve any allocation
-        return;
-    }
+    if(!buf.data || !buf.size) LOG_FATAL("empty buf in read\n");
+    if(t->awaited) LOG_FATAL("read after await_cb\n");
+    if(t->signal.close) LOG_FATAL("read after close\n");
+    if(t->tls_eof) LOG_FATAL("read after eof\n");
 
-    // no need to cancel an existing read, just overwrite the callbacks
-    t->signal.read = true;
-    t->signal.alloc_cb = alloc_cb;
-    t->signal.read_cb = read_cb;
+    stream_read_prep(read, buf, cb);
+
+    link_list_append(&t->signal.reads, &read->link);
 
     // never callback immediately
     schedule(t);
 }
 
-static bool duv_tls_write(
+static void duv_tls_write(
     stream_i *iface,
     stream_write_t *req,
-    const uv_buf_t bufs[],
+    const dstr_t bufs[],
     unsigned int nbufs,
     stream_write_cb cb
 ){
     duv_tls_t *t = CONTAINER_OF(iface, duv_tls_t, iface);
 
-    // user errors
-    if(t->signal.close || t->awaited) return false;
-    if(t->signal.shutdown) return false;
+    if(t->awaited) LOG_FATAL("write after await_cb\n");
+    if(t->signal.close) LOG_FATAL("write after close\n");
+    if(t->signal.shutdown) LOG_FATAL("write after shutdown\n");
 
-    int ret = stream_write_init(req, bufs, nbufs, cb);
-    // if this fails, fail the stream but continue
-    if(ret) fail(t, ret);
+    for(unsigned int i = 0; i < nbufs; i++){
+        if(bufs[i].len) goto nonempty;
+    }
+    LOG_FATAL("empty write\n");
 
+nonempty:
+
+    if(closing(t)){
+        // don't care about the actual write contents
+        stream_write_init_nocopy(req, cb);
+        goto done;
+    }
+
+    // even if the stream fails, we finish the same way
+    PROP_GO(&t->e, stream_write_init(req, bufs, nbufs, cb), done);
+
+done:
     // store write
     link_list_append(&t->signal.writes, &req->link);
 
-    /* there is a window where t->awaiting is not true but we can't schedule,
-       but fortunately there's already operations in flight to keep moving */
-    if(!t->async_closing) schedule(t);
-
-    return true;
+    // never callback immediately
+    schedule(t);
 }
 
 static void duv_tls_shutdown(stream_i *iface, stream_shutdown_cb cb){
     duv_tls_t *t = CONTAINER_OF(iface, duv_tls_t, iface);
 
-    if(t->failing || t->signal.shutdown) return;
+    if(closing(t) || t->signal.shutdown) return;
 
     t->signal.shutdown = true;
     t->signal.shutdown_cb = cb;
@@ -798,9 +663,7 @@ static void duv_tls_close(stream_i *iface){
     t->signal.close = true;
 
     // nothing to do if we're already closing
-    if(t->failing) return;
-
-    fail(t, UV_ECANCELED);
+    if(closing(t)) return;
 
     // never callback immediately
     schedule(t);
@@ -820,7 +683,7 @@ static stream_await_cb duv_tls_await(
 
 static bool duv_tls_readable(stream_i *iface){
     duv_tls_t *t = CONTAINER_OF(iface, duv_tls_t, iface);
-    return !t->awaited && !t->tls_eof;
+    return !t->awaited && !t->signal.close && !t->tls_eof;
 }
 
 static bool duv_tls_writable(stream_i *iface){
@@ -838,7 +701,7 @@ static derr_t wrap(
     SSL_CTX *ssl_ctx,
     bool client,
     const dstr_t *verify_name,  // always set for clients
-    uv_loop_t *loop,
+    scheduler_i *scheduler,
     stream_i *base,
     stream_i **out
 ){
@@ -862,13 +725,11 @@ static derr_t wrap(
         .data = t->data,
         .base = base,
         .client = client,
+        .scheduler = scheduler,
         .iface = (stream_i){
             .set_data = duv_tls_set_data,
             .get_data = duv_tls_get_data,
-            .strerror = duv_tls_strerror,
-            .err_name = duv_tls_err_name,
-            .read_stop = duv_tls_read_stop,
-            .read_start = duv_tls_read_start,
+            .read = duv_tls_read,
             .write = duv_tls_write,
             .shutdown = duv_tls_shutdown,
             .close = duv_tls_close,
@@ -882,15 +743,13 @@ static derr_t wrap(
         },
     };
 
+    schedulable_prep(&t->schedulable, schedule_cb);
+
+    link_init(&t->signal.reads);
     link_init(&t->signal.writes);
 
-    t->read_buf.len = 4096;
-    t->read_buf.base = dmalloc(&e, t->read_buf.len);
-    CHECK_GO(&e, fail);
-
-    t->write_buf.len = 4096;
-    t->write_buf.base = dmalloc(&e, t->write_buf.len);
-    CHECK_GO(&e, fail);
+    PROP_GO(&e, dstr_new(&t->read_buf, 4096), fail);
+    PROP_GO(&e, dstr_new(&t->write_buf, 4096), fail);
 
     t->ssl = SSL_new(ssl_ctx);
     if(!t->ssl){
@@ -942,11 +801,8 @@ static derr_t wrap(
         SSL_set_verify(t->ssl, SSL_VERIFY_PEER, NULL);
     }
 
-    PROP_GO(&e, duv_async_init(loop, &t->async, async_cb), fail);
-
     // data pointers
     t->base->set_data(t->base, t);
-    t->async.data = t;
     t->write_req.data = t;
 
     *out = &t->iface;
@@ -964,23 +820,23 @@ derr_t duv_tls_wrap_client(
     duv_tls_t *t,
     SSL_CTX *ssl_ctx,
     const dstr_t verify_name,
-    uv_loop_t *loop,
+    scheduler_i *scheduler,
     stream_i *base,
     stream_i **out
 ){
     derr_t e = E_OK;
-    PROP(&e, wrap(t, ssl_ctx, true, &verify_name, loop, base, out) );
+    PROP(&e, wrap(t, ssl_ctx, true, &verify_name, scheduler, base, out) );
     return e;
 }
 
 derr_t duv_tls_wrap_server(
     duv_tls_t *t,
     SSL_CTX *ssl_ctx,
-    uv_loop_t *loop,
+    scheduler_i *scheduler,
     stream_i *base,
     stream_i **out
 ){
     derr_t e = E_OK;
-    PROP(&e, wrap(t, ssl_ctx, false, NULL, loop, base, out) );
+    PROP(&e, wrap(t, ssl_ctx, false, NULL, scheduler, base, out) );
     return e;
 }

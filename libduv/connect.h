@@ -1,8 +1,10 @@
 struct duv_connect_t;
 typedef struct duv_connect_t duv_connect_t;
 
-// tcp will either be connected if status == 0 or cleaned up if status < 0
-typedef void (*duv_connect_cb)(duv_connect_t*, int status);
+// bool ok is false if there is an error or if the connection was canceled
+// tcp will always be connected if ok==true, or cleaned up if ok==false
+// error will be empty if connection was cancelled without any other error
+typedef void (*duv_connect_cb)(duv_connect_t*, bool ok, derr_t e);
 
 // c.data may be set already
 // tcp MUST NOT be initialized
@@ -32,8 +34,11 @@ struct duv_connect_t {
     uv_tcp_t *tcp_handle;
     unsigned int tcp_flags;
     duv_connect_cb cb;
+    char *node;
+    char *service;
 
     // state machine
+    derr_t e;
     bool done;
     bool canceling;
     struct {
@@ -47,7 +52,6 @@ struct duv_connect_t {
         bool done;
         // our current position in the linked list
         struct addrinfo *ptr;
-        int last_failure;
     } gai;
     struct {
         bool open;

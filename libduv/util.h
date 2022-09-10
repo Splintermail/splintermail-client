@@ -1,4 +1,4 @@
-// an unidentified error from libuv
+// an unidentified error from libuv (deprecated)
 extern derr_type_t E_UV;
 
 // error handling helpers
@@ -13,6 +13,13 @@ static inline fmt_t FUV(const int* err){
 static inline derr_type_t uv_err_type(int err){
     return (err == UV_ENOMEM) ? E_NOMEM : E_UV;
 }
+
+// all uv errors, as derr_type_t's
+#define DECLARE_UV_ERROR(ERR, MSG) extern derr_type_t E_UV_##ERR;
+UV_ERRNO_MAP(DECLARE_UV_ERROR)
+#undef DECLARE_UV_ERROR
+
+derr_type_t derr_type_from_uv_status(int status);
 
 // type-punning wrappers
 

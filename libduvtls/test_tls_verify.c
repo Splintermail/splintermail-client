@@ -11,6 +11,7 @@ static const char* g_test_files;
 derr_t E = E_OK;
 uv_loop_t loop;
 uv_async_t async;
+duv_scheduler_t scheduler;
 char *connect_name;
 duv_connect_t connector;
 uv_tcp_t tcp;
@@ -20,7 +21,7 @@ stream_i *stream = NULL;
 bool finishing = false;
 bool success = false;
 ssl_context_t client_ctx = {0};
-int expect_verify_failure;
+derr_type_t expect_verify_failure;
 
 dthread_t thread;
 
@@ -101,21 +102,21 @@ static void finish(void){
     if(stream) stream->close(stream);
 }
 
-static void await_cb(stream_i *s, int status){
+static void await_cb(stream_i *s, derr_t e){
     (void)s;
     if(is_error(E)){
         // already have an error
         finish();
         return;
     }
-    if(status != expect_verify_failure){
-        TRACE(&E,
-            "exepcted failure status of %x but got %x (%x)\n",
-            FI(expect_verify_failure),
-            FI(status),
-            FS(stream->err_name(stream, status))
-        );
-        ORIG_GO(&E, E_VALUE, "wrong await_cb status", fail);
+    if(e.type != expect_verify_failure){
+        if(is_error(e)){
+            PROP_VAR_GO(&E, &e, fail);
+        }else{
+            ORIG_GO(&E, E_VALUE, "no error when we expected one", fail);
+        }
+    }else{
+        DROP_VAR(&e);
     }
 
     if(!finishing) success = true;
@@ -130,14 +131,14 @@ fail:
 static void shutdown_cb(stream_i *s){
     (void)s;
 
-    if(expect_verify_failure == 0){
+    if(expect_verify_failure == E_NONE){
         stream->close(stream);
         return;
     }
 
     TRACE(&E,
         "shutdown succeeded, but expected to fail with %x\n",
-        FS(stream->err_name(stream, expect_verify_failure))
+        FD(error_to_dstr(expect_verify_failure))
     );
     ORIG_GO(&E, E_VALUE, "verification did not fail", fail);
 
@@ -145,15 +146,15 @@ fail:
     finish();
 }
 
-static void on_connect(duv_connect_t *c, int status){
+static void on_connect(duv_connect_t *c, bool ok, derr_t e){
     (void)c;
-    if(status < 0){
-        TRACE(&E, "on_connect: %x\n", FUV(&status));
-        ORIG_GO(&E, uv_err_type(status), "on_connect error", fail);
-    }
+    if(is_error(e)) PROP_VAR_GO(&E, &e, fail);
+    if(!ok) return;
 
     // connection successful, wrap tcp in a passthru_t
-    stream_i *base = duv_passthru_init_tcp(&passthru, &tcp, await_cb);
+    stream_i *base = duv_passthru_init_tcp(
+        &passthru, &scheduler, &tcp, await_cb
+    );
 
     dstr_t verify_name;
     DSTR_WRAP(verify_name, connect_name, strlen(connect_name), true);
@@ -164,7 +165,7 @@ static void on_connect(duv_connect_t *c, int status){
             &tls,
             client_ctx.ctx,
             verify_name,
-            &loop,
+            &scheduler.iface,
             base,
             &stream
         ),
@@ -197,7 +198,7 @@ fail:
 static derr_t do_verify_test(
     char *hostname,
     char *keypair,
-    int _expect_shutdown_status
+    derr_type_t _expect_shutdown_status
 ){
     derr_t e = E_OK;
 
@@ -214,6 +215,8 @@ static derr_t do_verify_test(
 
     PROP_GO(&e, duv_async_init(&loop, &async, async_cb), fail_thread);
 
+    PROP_GO(&e, duv_scheduler_init(&scheduler, &loop), fail_thread);
+
     PROP_GO(&e, duv_run(&loop), done);
 
 done:
@@ -229,6 +232,7 @@ done:
     // things succeeded, join peer thread
     dthread_join(&thread);
 
+    duv_scheduler_close(&scheduler);
     uv_loop_close(&loop);
 
 fail_ctx:
@@ -248,10 +252,10 @@ static derr_t test_tls_verify(void){
     derr_t e = E_OK;
 
     PROP(&e, do_verify_test("127.0.0.1", "good", 0) );
-    PROP(&e, do_verify_test("localhost", "good", DUV_TLS_EHOSTNAME) );
-    PROP(&e, do_verify_test("127.0.0.1", "expired", DUV_TLS_ECERTEXP) );
-    PROP(&e, do_verify_test("127.0.0.1", "unknown", DUV_TLS_ESELFSIGN) );
-    PROP(&e, do_verify_test("127.0.0.1", "wronghost", DUV_TLS_EHOSTNAME) );
+    PROP(&e, do_verify_test("localhost", "good", E_HOSTNAME) );
+    PROP(&e, do_verify_test("127.0.0.1", "expired", E_CERTEXP) );
+    PROP(&e, do_verify_test("127.0.0.1", "unknown", E_SELFSIGN) );
+    PROP(&e, do_verify_test("127.0.0.1", "wronghost", E_HOSTNAME) );
 
     return e;
 }

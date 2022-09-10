@@ -2,7 +2,53 @@
 
 #include "libduv/libduv.h"
 
+#define ORIG_UV(e, uvret) \
+    pvt_orig( \
+        (e), \
+        derr_type_from_uv_status(uvret), \
+        "ERROR: %x\n", \
+        (fmt_t[]){FS(uv_strerror(uvret))}, \
+        1, \
+        FILE_LOC \
+    )
+
 static void advance_state(duv_passthru_t *p);
+
+static derr_t convert_to_uvbufs(
+    duv_passthru_t *p, const dstr_t bufs[], size_t nbufs, uv_buf_t **out
+){
+    derr_t e = E_OK;
+    *out = NULL;
+
+    // pick arraybufs or heapbufs
+    if(nbufs < sizeof(p->arraybufs)/sizeof(*p->arraybufs)){
+        *out = p->arraybufs;
+    }else{
+        // make sure heapbufs is big enough
+        if(nbufs > p->nheapbufs){
+            uv_buf_t *temp = realloc(
+                p->heapbufs, nbufs * sizeof(*p->heapbufs)
+            );
+            if(!temp){
+                ORIG(&e, E_NOMEM, "unable to allocate bufs for write");
+            }
+            p->heapbufs = temp;
+            p->nheapbufs = nbufs;
+        }
+        *out = p->heapbufs;
+    }
+
+    // copy values
+    for(size_t i = 0; i < nbufs; i++){
+        (*out)[i] = (uv_buf_t){ .base = bufs[i].data, .len = bufs[i].len };
+    }
+
+    return e;
+}
+
+static void passthru_free_allocations(duv_passthru_t *p){
+    if(p->heapbufs) free(p->heapbufs);
+}
 
 static void close_cb(uv_handle_t *handle){
     duv_passthru_t *p = handle->data;
@@ -10,56 +56,98 @@ static void close_cb(uv_handle_t *handle){
     advance_state(p);
 }
 
-static void fail(duv_passthru_t *p, int failing){
-    if(!p->failing){
-        // close the underlying stream after the first failure
-        duv_stream_close(p->uvstream, close_cb);
-    }
+static bool closing(duv_passthru_t *p){
+    return p->user_closed || is_error(p->e);
+}
 
-    if(!p->failing || p->failing == UV_ECANCELED){
-        p->failing = failing;
+static void scheduled(schedulable_t *s){
+    duv_passthru_t *p = CONTAINER_OF(s, duv_passthru_t, schedulable);
+    advance_state(p);
+}
+
+static void schedule(duv_passthru_t *p){
+    p->scheduler->iface.schedule(&p->scheduler->iface, &p->schedulable);
+}
+
+static void empty_reads(duv_passthru_t *p){
+    link_t *link;
+    while((link = link_list_pop_first(&p->reads))){
+        stream_read_t *read = CONTAINER_OF(link, stream_read_t, link);
+        read->buf.len = 0;
+        read->cb(&p->iface, read, read->buf, !closing(p));
     }
 }
 
 static void _alloc_cb(uv_handle_t *handle, size_t suggested, uv_buf_t *buf){
+    (void)suggested;
     duv_passthru_t *p = handle->data;
-    // remember this read_cb in case the user modifies it in their alloc_cb
-    p->cached_read_cb = p->read_cb;
-    p->alloc_cb(&p->iface, suggested, buf);
+
+    if(link_list_isempty(&p->reads)){
+        LOG_FATAL("empty reads in passthru's alloc_cb\n");
+    }
+    stream_read_t *read = CONTAINER_OF(p->reads.next, stream_read_t, link);
+
+    *buf = (uv_buf_t){ .base = read->buf.data, .len = read->buf.size };
+    p->allocated = true;
+}
+
+static void _do_read_cb(duv_passthru_t *p, ssize_t nread, const uv_buf_t *buf){
+    p->allocated = false;
+    (void)buf;
+
+    if(closing(p)) return;
+
+    if(nread < 1){
+        switch(nread){
+            case 0:
+                // EAGAIN or EWOULDBLOCK, just let read be reused in alloc_cb
+                return;
+            case UV_EOF:
+                p->eof = true;
+                p->reading = false;
+                // we can just dump all reads at this point
+                empty_reads(p);
+                return;
+            case UV_ENOBUFS:
+                // we disallow empty bufs in read calls
+                LOG_FATAL("received UV_ENOBUFS in passthru\n");
+            case UV_ECANCELED:
+                /* not entirely sure how this could happen, but probably while
+                   closing */
+                return;
+            default:
+                // this stream is donezo
+                ORIG_UV(&p->e, (int)nread);
+                return;
+        }
+    }
+
+    // successful read
+    link_t *link = link_list_pop_first(&p->reads);
+    stream_read_t *read = CONTAINER_OF(link, stream_read_t, link);
+
+    read->buf.len = (size_t)nread;
+    read->cb(&p->iface, read, read->buf, true);
+    // detect if the user closed us, or if we have another read already
+    if(closing(p) || !link_list_isempty(&p->reads)) return;
+
+    // give any layer of stream a chance to call read again
+    duv_scheduler_run(p->scheduler);
+    // detect again
+    if(closing(p) || !link_list_isempty(&p->reads)) return;
+
+    // ok, time to call read_stop
+    // libuv documents the return value may be ignored
+    uv_read_stop(p->uvstream);
+    p->reading = false;
 }
 
 static void _read_cb(
     uv_stream_t *uvstream, ssize_t nread, const uv_buf_t *buf
 ){
     duv_passthru_t *p = uvstream->data;
-    if(nread < 0){
-        switch(nread){
-            case UV_EOF:
-                // not a reason to fail, but we're done with read_cb
-                p->eof = true;
-                p->reading = false;
-                p->cached_read_cb(&p->iface, nread, buf);
-                return;
-            case UV_ENOBUFS:
-                // we treat this as an implicit read_stop
-                p->reading = false;
-                // libuv documents that this return value may be ignored
-                uv_read_stop(uvstream);
-                return;
-            case UV_ECANCELED:
-                // pointless to the user, convert to 0
-                p->cached_read_cb(&p->iface, 0, buf);
-                return;
-            default:
-                // this stream is donezo
-                fail(p, (int)nread);
-                // return the allocated buffer
-                p->cached_read_cb(&p->iface, 0, buf);
-                return;
-        }
-    }
-    // success or UV_EOF case
-    p->cached_read_cb(&p->iface, nread, buf);
+    _do_read_cb(p, nread, buf);
+    advance_state(p);
 }
 
 static void write_cb(uv_write_t *uvw, int status){
@@ -67,9 +155,12 @@ static void write_cb(uv_write_t *uvw, int status){
     passthru_write_mem_t *mem = CONTAINER_OF(uvw, passthru_write_mem_t, uvw);
     stream_write_t *req = mem->req;
 
+    if(status < 0 && !closing(p)){
+        ORIG_UV(&p->e, status);
+    }
+
     if(!p->writes.inflight){
-        LOG_ERROR("inflight==0 in write_cb\n");
-        abort();
+        LOG_FATAL("writes.inflight==0 in write_cb\n");
     }
     p->writes.inflight--;
 
@@ -77,7 +168,7 @@ static void write_cb(uv_write_t *uvw, int status){
     link_list_append(&p->pool, &mem->link);
 
     // call user's cb
-    req->cb(&p->iface, req, status==0);
+    req->cb(&p->iface, req, !closing(p));
 
     // that returned mem may result in new writes
     advance_state(p);
@@ -86,12 +177,14 @@ static void write_cb(uv_write_t *uvw, int status){
 static void _shutdown_cb(uv_shutdown_t *shutdown_req, int status){
     duv_passthru_t *p = shutdown_req->data;
     p->shutdown.complete = true;
-    if(status < 0) fail(p, status);
+    if(status < 0 && !closing(p)){
+        ORIG_UV(&p->e, status);
+    }
     advance_state(p);
 }
 
 static void advance_state(duv_passthru_t *p){
-    if(p->failing) goto failing;
+    if(closing(p)) goto failing;
 
     // deal with pending writes
     while(!link_list_isempty(&p->writes.pending)
@@ -101,7 +194,16 @@ static void advance_state(duv_passthru_t *p){
         link = link_list_pop_first(&p->pool);
         passthru_write_mem_t *mem;
         mem = CONTAINER_OF(link, passthru_write_mem_t, link);
-        uv_buf_t *bufs = get_bufs_ptr(req);
+        dstr_t *dbufs = get_bufs_ptr(req);
+        // get uv_buf_t array from provided dstr_t array
+        uv_buf_t *bufs;
+        IF_PROP(&p->e, convert_to_uvbufs(p, dbufs, req->nbufs, &bufs) ){
+            // return mem to pool
+            link_list_append(&p->pool, &mem->link);
+            // return req to the front of pending
+            link_list_prepend(&p->writes.pending, &req->link);
+            goto failing;
+        }
         // submit write
         int ret = uv_write(&mem->uvw, p->uvstream, bufs, req->nbufs, write_cb);
         // done with memory in req
@@ -112,7 +214,7 @@ static void advance_state(duv_passthru_t *p){
             // return req to the front of pending
             link_list_prepend(&p->writes.pending, &req->link);
             // now we are in a failing state
-            fail(p, ret);
+            ORIG_UV(&p->e, ret);
             goto failing;
         }
         // write was successful
@@ -128,7 +230,7 @@ static void advance_state(duv_passthru_t *p){
         int ret = uv_shutdown(&p->shutdown.req, p->uvstream, _shutdown_cb);
         if(ret < 0){
             // now we are in a failing state
-            fail(p, ret);
+            ORIG_UV(&p->e, ret);
             goto failing;
         }
     }
@@ -141,20 +243,36 @@ static void advance_state(duv_passthru_t *p){
     return;
 
 failing:
+    if(!p->close.requested){
+        p->close.requested = true;
+        duv_stream_close(p->uvstream, close_cb);
+    }
+
+    if(!p->allocated){
+        // empty all reads
+        empty_reads(p);
+    }
+
     // wait for all in-flight writes before responding to pending writes
     if(p->writes.inflight) return;
-    // respond to all writes
+
+    // respond to all pending writes
     link_t *link;
     while((link = link_list_pop_first(&p->writes.pending))){
         stream_write_t *req = CONTAINER_OF(link, stream_write_t, link);
-        req->cb(&p->iface, req, p->failing==0);
+        req->cb(&p->iface, req, false);
     }
-    // no need to respond to shutdown in failure cases
+
+    // wait to become unallocated
+    if(p->allocated) return;
+
+    // wait for the base stream to close
+    if(!p->close.complete) return;
+
     if(!p->awaited){
+        passthru_free_allocations(p);
         p->awaited = true;
-        // if the user closed us, that is not a failure to report
-        int status = p->failing == UV_ECANCELED ? 0 : p->failing;
-        p->await_cb(&p->iface, status);
+        p->await_cb(&p->iface, p->e);
     }
     return;
 }
@@ -183,56 +301,61 @@ static void *passthru_get_data(stream_i *iface){
     return p->data;
 }
 
-static const char *passthru_strerror(stream_i *iface, int err){
-    (void)iface;
-    return uv_strerror(err);
-}
-
-static const char *passthru_err_name(stream_i *iface, int err){
-    (void)iface;
-    return uv_err_name(err);
-}
-
-static void passthru_read_start(
-    stream_i *iface, stream_alloc_cb alloc_cb, stream_read_cb read_cb
+static void passthru_read(
+    stream_i *iface,
+    stream_read_t *read,
+    dstr_t buf,
+    stream_read_cb cb
 ){
     duv_passthru_t *p = CONTAINER_OF(iface, duv_passthru_t, iface);
 
-    if(!readable(p)) return;
-    if(p->reading && p->alloc_cb == alloc_cb && p->read_cb == read_cb) return;
-    if(p->reading){
-        // libuv requires a read_stop before another read start
-        uv_read_stop(p->uvstream);
+    if(!buf.data || !buf.size) LOG_FATAL("empty buf in read\n");
+    if(p->awaited) LOG_FATAL("read after await_cb\n");
+    if(p->user_closed) LOG_FATAL("read after close\n");
+    if(p->eof) LOG_FATAL("read after eof\n");
+
+    stream_read_prep(read, buf, cb);
+
+    link_list_append(&p->reads, &read->link);
+
+    if(closing(p)){
+        // respond later
+        schedule(p);
+        return;
     }
-    p->reading = true;
-    p->alloc_cb = alloc_cb;
-    p->read_cb = read_cb;
-    int ret = uv_read_start(p->uvstream, _alloc_cb, _read_cb);
-    if(ret) fail(p, ret);
+
+    if(!p->reading){
+        // now we can read_start
+        int ret = uv_read_start(p->uvstream, _alloc_cb, _read_cb);
+        if(ret < 0){
+            ORIG_UV(&p->e, ret);
+            schedule(p);
+        }
+        p->reading = true;
+    }
 }
 
-static void passthru_read_stop(stream_i *iface){
-    duv_passthru_t *p = CONTAINER_OF(iface, duv_passthru_t, iface);
-
-    if(p->failing || !p->reading) return;
-    p->reading = false;
-
-    // libuv documents that the return value of read_stop may be safely ignored
-    uv_read_stop(p->uvstream);
-}
-
-static bool passthru_write(
+static void passthru_write(
     stream_i *iface,
     stream_write_t *req,
-    const uv_buf_t bufs[],
+    const dstr_t bufs[],
     unsigned int nbufs,
     stream_write_cb cb
 ){
     duv_passthru_t *p = CONTAINER_OF(iface, duv_passthru_t, iface);
 
-    if(!writable(p)) return false;
+    if(p->awaited) LOG_FATAL("write after await_cb\n");
+    if(p->user_closed) LOG_FATAL("write after close\n");
+    if(p->shutdown_cb) LOG_FATAL("write after shutdown\n");
 
-    if(p->failing){
+    for(unsigned int i = 0; i < nbufs; i++){
+        if(bufs[i].len) goto nonempty;
+    }
+    LOG_FATAL("empty write\n");
+
+nonempty:
+
+    if(closing(p)){
         stream_write_init_nocopy(req, cb);
         goto failing;
     }
@@ -241,14 +364,13 @@ static bool passthru_write(
     // also if the pool is empty, we can't write immediately
     if(!link_list_isempty(&p->writes.pending) || link_list_isempty(&p->pool)){
         // queue this write for later
-        int ret = stream_write_init(req, bufs, nbufs, cb);
-        if(ret < 0){
-            fail(p, ret);
+        IF_PROP(&p->e, stream_write_init(req, bufs, nbufs, cb) ){
+            schedule(p);
             goto failing;
         }
 
         link_list_append(&p->writes.pending, &req->link);
-        return true;
+        return;
     }
 
     // write immediately, to make the passthru transparent
@@ -257,40 +379,52 @@ static bool passthru_write(
     // no need to copy bufs, let libuv handle it
     stream_write_init_nocopy(req, cb);
     mem->req = req;
-    int ret = uv_write(&mem->uvw, p->uvstream, bufs, nbufs, write_cb);
-    if(ret < 0){
-        // write failed, return the write_mem_t to the list
+    // get uv_buf_t array from provided dstr_t array
+    uv_buf_t *uvbufs;
+    IF_PROP(&p->e, convert_to_uvbufs(p, bufs, nbufs, &uvbufs) ){
+        // write failed, return write_mem_t to the list
         link_list_append(&p->pool, &mem->link);
-        fail(p, ret);
+        schedule(p);
+        goto failing;
+    }
+    int ret = uv_write(&mem->uvw, p->uvstream, uvbufs, nbufs, write_cb);
+    if(ret < 0){
+        // write failed, return write_mem_t to the list
+        link_list_append(&p->pool, &mem->link);
+        ORIG_UV(&p->e, ret);
+        schedule(p);
         goto failing;
     }
     // write was successful
     p->writes.inflight++;
-    return true;
+    return;
 
 failing:
     // we'll respond with our failing message, but do it in-order
     link_list_append(&p->writes.pending, &req->link);
-    return true;
+    return;
 }
 
 static void passthru_shutdown(stream_i *iface, stream_shutdown_cb shutdown_cb){
     duv_passthru_t *p = CONTAINER_OF(iface, duv_passthru_t, iface);
 
-    if(p->shutdown_cb || p->failing) return;
+    if(p->shutdown_cb || closing(p)) return;
     p->shutdown_cb = shutdown_cb;
 
     // if possible, do the shutdown now to make the passthru transparent
     if(!p->writes.inflight){
         int ret = uv_shutdown(&p->shutdown.req, p->uvstream, _shutdown_cb);
-        if(ret) fail(p, ret);
+        if(ret < 0){
+            ORIG_UV(&p->e, ret);
+            schedule(p);
+        }
     }
 }
 
 static void passthru_close(stream_i *iface){
     duv_passthru_t *p = CONTAINER_OF(iface, duv_passthru_t, iface);
     p->user_closed = true;
-    fail(p, UV_ECANCELED);
+    schedule(p);
 }
 
 static stream_await_cb passthru_await(
@@ -317,22 +451,25 @@ static bool passthru_active(stream_i *iface){
     return active(p);
 }
 
+link_t *g_reads;
+
 stream_i *duv_passthru_init(
-    duv_passthru_t *p, uv_stream_t *uvstream, stream_await_cb await_cb
+    duv_passthru_t *p,
+    duv_scheduler_t *scheduler,
+    uv_stream_t *uvstream,
+    stream_await_cb await_cb
 ){
     uvstream->data = p;
     *p = (duv_passthru_t){
         // preserve data
         .data = p->data,
         .uvstream = uvstream,
+        .scheduler = scheduler,
         .await_cb = await_cb,
         .iface = (stream_i){
             .set_data = passthru_set_data,
             .get_data = passthru_get_data,
-            .strerror = passthru_strerror,
-            .err_name = passthru_err_name,
-            .read_stop = passthru_read_stop,
-            .read_start = passthru_read_start,
+            .read = passthru_read,
             .write = passthru_write,
             .shutdown = passthru_shutdown,
             .close = passthru_close,
@@ -343,6 +480,9 @@ stream_i *duv_passthru_init(
         },
     };
     p->shutdown.req.data = p;
+    schedulable_prep(&p->schedulable, scheduled);
+    g_reads = &p->reads;
+    link_init(&p->reads);
     link_init(&p->writes.pending);
     link_init(&p->pool);
     for(size_t i = 0; i < sizeof(p->write_mem)/sizeof(*p->write_mem); i++){
@@ -355,8 +495,15 @@ stream_i *duv_passthru_init(
 
 #define PASSTHRU_INIT_DEF(type) \
     stream_i *duv_passthru_init_##type( \
-        duv_passthru_t *p, uv_##type##_t *stream, stream_await_cb await_cb \
+        duv_passthru_t *p, \
+        duv_scheduler_t *scheduler, \
+        uv_##type##_t *stream, \
+        stream_await_cb await_cb \
     ){ \
-        return duv_passthru_init(p, duv_##type##_stream(stream), await_cb); \
+        return duv_passthru_init(p, \
+            scheduler, \
+            duv_##type##_stream(stream), \
+            await_cb \
+        ); \
     }
 DUV_STREAM_PUNS(PASSTHRU_INIT_DEF)
