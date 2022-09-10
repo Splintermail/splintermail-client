@@ -3,6 +3,7 @@ typedef enum {
     LOG_LVL_INFO,
     LOG_LVL_WARN,
     LOG_LVL_ERROR,
+    LOG_LVL_FATAL,
 } log_level_t;
 
 derr_t logger_add_fileptr(log_level_t level, FILE* f);
@@ -31,6 +32,10 @@ int pvt_do_log(log_level_t level, const char* format,
              sizeof((const fmt_t[]){FI(1), __VA_ARGS__}) / sizeof(fmt_t) - 1)
 #define LOG_DEBUG(fstr, ...) \
     pvt_do_log(LOG_LVL_DEBUG, fstr, \
+             &(const fmt_t[]){FI(1), __VA_ARGS__}[1], \
+             sizeof((const fmt_t[]){FI(1), __VA_ARGS__}) / sizeof(fmt_t) - 1)
+#define LOG_FATAL(fstr, ...) \
+    pvt_do_log(LOG_LVL_FATAL, fstr, \
              &(const fmt_t[]){FI(1), __VA_ARGS__}[1], \
              sizeof((const fmt_t[]){FI(1), __VA_ARGS__}) / sizeof(fmt_t) - 1)
 

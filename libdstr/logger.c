@@ -1,3 +1,5 @@
+#include <stdlib.h>
+
 #include "libdstr.h"
 
 #define LIST_LEN_MAX 16
@@ -10,6 +12,7 @@ static log_level_t fnlevels[LIST_LEN_MAX];
 static size_t fplist_len = 0;
 static size_t fnlist_len = 0;
 static bool _auto_log_flush = false;
+static bool outputs_set = false;
 
 derr_t logger_add_fileptr(log_level_t level, FILE* f){
     derr_t e = E_OK;
@@ -21,6 +24,8 @@ derr_t logger_add_fileptr(log_level_t level, FILE* f){
     fplevels[fplist_len] = level;
 
     fplist_len++;
+
+    outputs_set = true;
 
     return e;
 }
@@ -35,6 +40,8 @@ derr_t logger_add_filename(log_level_t level, const char* f){
     fnlevels[fnlist_len] = level;
 
     fnlist_len++;
+
+    outputs_set = true;
 
     return e;
 }
@@ -76,8 +83,15 @@ int pvt_do_log(log_level_t level, const char* format,
             fclose(f);
         }
     }
+    // fallback to stderr/LOG_LVL_WARN if no outputs are set
+    if(!outputs_set && level >= LOG_LVL_WARN){
+        pvt_ffmt_quiet(stderr, NULL, format, args, nargs);
+    }
     if(_auto_log_flush){
         log_flush();
+    }
+    if(level == LOG_LVL_FATAL){
+        abort();
     }
     return 0;
 }
