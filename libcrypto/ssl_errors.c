@@ -2,7 +2,7 @@
 
 #include "libcrypto.h"
 
-REGISTER_ERROR_TYPE(E_SSL, "SSLERROR");
+REGISTER_ERROR_TYPE(E_SSL, "SSLERROR", "error from openssl");
 
 void trace_ssl_errors(derr_t *e){
     unsigned long ssl_error;

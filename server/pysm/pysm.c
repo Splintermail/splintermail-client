@@ -22,7 +22,7 @@
     } \
 } while(0)
 
-REGISTER_ERROR_TYPE(E_NORAISE, "NORAISE");
+REGISTER_ERROR_TYPE(E_NORAISE, "NORAISE", "this error should not be raised");
 
 // main entrypoint for python module
 PyObject* PyInit_pysm(void);

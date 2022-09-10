@@ -17,8 +17,8 @@
         FSQL(sql) \
     )
 
-REGISTER_ERROR_TYPE(E_SQL, "SQLERROR");
-REGISTER_ERROR_TYPE(E_SQL_DUP, "SQL_DUP_ERR");
+REGISTER_ERROR_TYPE(E_SQL, "SQLERROR", "error from sql");
+REGISTER_ERROR_TYPE(E_SQL_DUP, "SQL_DUP_ERR", "duplicate error");
 
 static derr_type_t _read_errno(unsigned int err){
     switch(err){

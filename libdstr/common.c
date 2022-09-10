@@ -18,23 +18,24 @@ static bool E_ANY_matches(derr_type_t self, derr_type_t other){
     return other != E_NONE;
 }
 derr_type_t E_ANY = &(struct derr_type_t){
-    .dstr = &E_ANY_dstr,
+    .name = &E_ANY_dstr,
+    .msg = &E_ANY_dstr,
     .matches = E_ANY_matches,
 };
 
-REGISTER_ERROR_TYPE(E_NOMEM, "NOMEM");
-REGISTER_ERROR_TYPE(E_SOCK, "SOCKERROR");
-REGISTER_ERROR_TYPE(E_CONN, "CONNERROR");
-REGISTER_ERROR_TYPE(E_VALUE, "VALUEERROR");
-REGISTER_ERROR_TYPE(E_FIXEDSIZE, "FIXEDSIZE");
-REGISTER_ERROR_TYPE(E_OS, "OSERROR");
-REGISTER_ERROR_TYPE(E_BADIDX, "BADIDX");
-REGISTER_ERROR_TYPE(E_OPEN, "OPEN");
-REGISTER_ERROR_TYPE(E_PARAM, "PARAM");
-REGISTER_ERROR_TYPE(E_INTERNAL, "INTERNAL");
-REGISTER_ERROR_TYPE(E_FS, "FILESYSTEM");
-REGISTER_ERROR_TYPE(E_RESPONSE, "RESPONSE");
-REGISTER_ERROR_TYPE(E_USERMSG, "USERMSG");
+REGISTER_ERROR_TYPE(E_NOMEM, "NOMEM", "out of memory");
+REGISTER_ERROR_TYPE(E_SOCK, "SOCKERROR", "socket error");
+REGISTER_ERROR_TYPE(E_CONN, "CONNERROR", "connection error");
+REGISTER_ERROR_TYPE(E_VALUE, "VALUEERROR", "invalid value");
+REGISTER_ERROR_TYPE(E_FIXEDSIZE, "FIXEDSIZE", "fixed-size buffer too small");
+REGISTER_ERROR_TYPE(E_OS, "OSERROR", "error in system call");
+REGISTER_ERROR_TYPE(E_BADIDX, "BADIDX", "bad index");
+REGISTER_ERROR_TYPE(E_OPEN, "OPEN", "error opening file");
+REGISTER_ERROR_TYPE(E_PARAM, "PARAM", "bad parameter");
+REGISTER_ERROR_TYPE(E_INTERNAL, "INTERNAL", "internal error or bug");
+REGISTER_ERROR_TYPE(E_FS, "FILESYSTEM", "error from filesystem");
+REGISTER_ERROR_TYPE(E_RESPONSE, "RESPONSE", "bad response from server");
+REGISTER_ERROR_TYPE(E_USERMSG, "USERMSG", "usermsg");
 
 // support for error type groups
 bool derr_type_group_matches(derr_type_t self, derr_type_t other){
@@ -56,7 +57,15 @@ const dstr_t *error_to_dstr(derr_type_t type){
         DSTR_STATIC(E_OK_dstr, "OK");
         return &E_OK_dstr;
     }
-    return type->dstr;
+    return type->name;
+}
+
+const dstr_t *error_to_msg(derr_type_t type){
+    if(type == E_NONE){
+        DSTR_STATIC(E_OK_dstr, "OK");
+        return &E_OK_dstr;
+    }
+    return type->msg;
 }
 
 /* take an E_USERMSG message, copy the user message substring with truncation

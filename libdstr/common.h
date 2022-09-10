@@ -58,7 +58,8 @@ typedef struct {
 struct derr_type_t;
 typedef const struct derr_type_t *derr_type_t;
 struct derr_type_t {
-    const dstr_t *dstr;
+    const dstr_t *name;
+    const dstr_t *msg;
     bool (*matches)(derr_type_t self, derr_type_t other);
     // for simple closures, like with error groups
     void *data;
@@ -70,26 +71,31 @@ typedef struct {
 } derr_t;
 
 const dstr_t *error_to_dstr(derr_type_t type);
+const dstr_t *error_to_msg(derr_type_t type);
 
-#define REGISTER_ERROR_TYPE(NAME, NAME_STRING) \
-    DSTR_STATIC(NAME ## _dstr, NAME_STRING); \
+#define REGISTER_ERROR_TYPE(NAME, NAME_STRING, MSG_STRING) \
+    DSTR_STATIC(NAME ## _name_dstr, NAME_STRING); \
+    DSTR_STATIC(NAME ## _msg_dstr, MSG_STRING); \
     static bool NAME ## _matches(derr_type_t self, derr_type_t other){ \
         (void)self; \
         return other == NAME; \
     } \
     derr_type_t NAME = &(struct derr_type_t){ \
-        .dstr = &NAME ## _dstr, \
+        .name = &NAME ## _name_dstr, \
+        .msg = &NAME ## _msg_dstr, \
         .matches = NAME ## _matches, \
     }
 
-#define REGISTER_STATIC_ERROR_TYPE(NAME, NAME_STRING) \
-    DSTR_STATIC(NAME ## _dstr, NAME_STRING); \
+#define REGISTER_STATIC_ERROR_TYPE(NAME, NAME_STRING, MSG_STRING) \
+    DSTR_STATIC(NAME ## _name_dstr, NAME_STRING); \
+    DSTR_STATIC(NAME ## _msg_dstr, MSG_STRING); \
     static bool NAME ## _matches(derr_type_t self, derr_type_t other){ \
         (void)self; \
         return other == NAME; \
     } \
     static derr_type_t NAME = &(struct derr_type_t){ \
-        .dstr = &NAME ## _dstr, \
+        .name = &NAME ## _name_dstr, \
+        .msg = &NAME ## _msg_dstr, \
         .matches = NAME ## _matches, \
     }
 
@@ -103,7 +109,8 @@ struct derr_type_group_arg_t {
 bool derr_type_group_matches(derr_type_t self, derr_type_t other);
 #define ERROR_GROUP(...) \
     &(struct derr_type_t){ \
-        .dstr = NULL, \
+        .name = NULL, \
+        .msg = NULL, \
         .matches = derr_type_group_matches, \
         .data = &(struct derr_type_group_arg_t){ \
             .types = (derr_type_t[]){__VA_ARGS__}, \

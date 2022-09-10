@@ -2,7 +2,7 @@
 
 #include "libimaildir.h"
 
-REGISTER_ERROR_TYPE(E_FROZEN, "E_FROZEN");
+REGISTER_ERROR_TYPE(E_FROZEN, "E_FROZEN", "mailbox is frozen");
 
 static derr_t make_ctn(const string_builder_t *dir_path, mode_t mode);
 
@@ -593,7 +593,7 @@ fail_dirs:
 }
 
 static derr_type_t E_BREAK;
-REGISTER_STATIC_ERROR_TYPE(E_BREAK, "E_BREAK");
+REGISTER_STATIC_ERROR_TYPE(E_BREAK, "E_BREAK", "break");
 
 static derr_t _dir_is_empty_hook(const string_builder_t *base,
         const dstr_t *name, bool isdir, void *userdata){

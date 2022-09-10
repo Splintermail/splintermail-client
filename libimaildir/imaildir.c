@@ -9,7 +9,7 @@
 
 #define HOSTNAME_COMPONENT_MAX_LEN 32
 
-REGISTER_ERROR_TYPE(E_IMAILDIR, "E_IMAILDIR");
+REGISTER_ERROR_TYPE(E_IMAILDIR, "E_IMAILDIR", "unrecoverable imaildir error");
 
 // forward declarations
 static derr_t distribute_update_new(imaildir_t *m, const msg_t *msg);
