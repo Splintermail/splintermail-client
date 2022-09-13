@@ -3,6 +3,20 @@
 #include <stdlib.h>
 #include <string.h>
 
+
+bool stream_default_readable(stream_i *stream){
+    return !stream->awaited && !stream->closed && !stream->eof;
+}
+
+bool stream_default_writable(stream_i *stream){
+    return !stream->awaited && !stream->closed && !stream->is_shutdown;
+}
+
+bool stream_return_false(stream_i *stream){
+    (void)stream;
+    return false;
+}
+
 void stream_read_prep(stream_read_t *req, dstr_t buf, stream_read_cb cb){
     *req = (stream_read_t){
         // preserve data
@@ -11,6 +25,13 @@ void stream_read_prep(stream_read_t *req, dstr_t buf, stream_read_cb cb){
         .cb = cb,
     };
     link_init(&req->link);
+}
+
+bool stream_write_isempty(const dstr_t bufs[], unsigned int nbufs){
+    for(unsigned int i = 0; i < nbufs; i++){
+        if(bufs[i].len) return false;
+    }
+    return true;
 }
 
 static bool need_heapbufs(unsigned int nbufs){

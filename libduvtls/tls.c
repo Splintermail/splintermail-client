@@ -29,12 +29,12 @@ static void schedule(duv_tls_t *t){
 }
 
 static bool closing(duv_tls_t *t){
-    return t->signal.close || is_error(t->e);
+    return t->iface.closed || is_error(t->e);
 }
 
 static void empty_reads(duv_tls_t *t){
     link_t *link;
-    while((link = link_list_pop_first(&t->signal.reads))){
+    while((link = link_list_pop_first(&t->reads))){
         stream_read_t *read = CONTAINER_OF(link, stream_read_t, link);
         read->buf.len = 0;
         read->cb(&t->iface, read, read->buf, !closing(t));
@@ -249,8 +249,8 @@ static bool _advance_ssl_do_handshake(duv_tls_t *t){
 }
 
 static bool next_nonempty_write_req(duv_tls_t *t, stream_write_t **out){
-    while(!link_list_isempty(&t->signal.writes)){
-        link_t *link = t->signal.writes.next;
+    while(!link_list_isempty(&t->writes)){
+        link_t *link = t->writes.next;
         stream_write_t *req = CONTAINER_OF(link, stream_write_t, link);
         const dstr_t *bufs = get_bufs_ptr(req);
         for(size_t i = 0; i < req->nbufs; i++){
@@ -356,7 +356,7 @@ static bool _advance_ssl_read(duv_tls_t *t){
 
     // process as many in-flight reads as we can
     link_t *link;
-    while((link = link_list_pop_first(&t->signal.reads))){
+    while((link = link_list_pop_first(&t->reads))){
         stream_read_t *read = CONTAINER_OF(link, stream_read_t, link);
 
         size_t nread;
@@ -364,12 +364,12 @@ static bool _advance_ssl_read(duv_tls_t *t){
 
         if(ret != 1){
             // oops, put the read back
-            link_list_prepend(&t->signal.reads, &read->link);
+            link_list_prepend(&t->reads, &read->link);
             // handle failure
             switch(SSL_get_error(t->ssl, ret)){
                 case SSL_ERROR_ZERO_RETURN:
                     // This is like a TLS-layer EOF
-                    t->tls_eof = true;
+                    t->iface.eof = true;
                     // user is not allowed to submit any more reads
                     empty_reads(t);
                     return !closing(t);
@@ -402,11 +402,11 @@ static bool _advance_ssl_read(duv_tls_t *t){
 
 static bool _advance_ssl_shutdown(duv_tls_t *t){
     // wait for the signal
-    if(!t->signal.shutdown) return true;
+    if(!t->iface.is_shutdown) return true;
     // only shutdown once
     if(t->shutdown) return true;
     // wait for pending writes to finish
-    if(!link_list_isempty(&t->signal.writes)) return true;
+    if(!link_list_isempty(&t->writes)) return true;
 
     /* Note that SSL_shutdown can return 0 or 1 in success cases:
          - 0 means we wrote what we needed to the SSL object, but we don't have
@@ -447,7 +447,7 @@ static bool _advance_ssl_shutdown(duv_tls_t *t){
        indefinite amount of time, and SSL_read might need to write data through
        the base stream in order to complete periodic handshakes still */
 
-    t->signal.shutdown_cb(&t->iface);
+    t->shutdown_cb(&t->iface);
     // detect if the user closed us
     if(closing(t)) return false;
 
@@ -526,18 +526,18 @@ static bool _advance_wire_writes(duv_tls_t *t){
 
 static void _advance_close(duv_tls_t *t){
     // are we done yet?
-    if(t->awaited) return;
+    if(t->iface.awaited) return;
 
     // is the base stream done yet?
     if(!t->base_awaited) return;
 
     // all done!
-    t->awaited = true;
+    t->iface.awaited = true;
     duv_tls_free_allocations(t);
     schedulable_cancel(&t->schedulable);
 
     // user callback must be last, it might free us
-    t->signal.await_cb(&t->iface, t->e);
+    t->await_cb(&t->iface, t->e);
 }
 
 static void advance_state(duv_tls_t *t){
@@ -566,7 +566,7 @@ closing:
 
     // cancel any writes
     link_t *link;
-    while((link = link_list_pop_first(&t->signal.writes))){
+    while((link = link_list_pop_first(&t->writes))){
         stream_write_t *req = CONTAINER_OF(link, stream_write_t, link);
         req->cb(&t->iface, req, false);
     }
@@ -587,46 +587,35 @@ static void *duv_tls_get_data(stream_i *iface){
     return t->data;
 }
 
-static void duv_tls_read(
+static bool duv_tls_read(
     stream_i *iface,
     stream_read_t *read,
     dstr_t buf,
     stream_read_cb cb
 ){
-    duv_tls_t *t = CONTAINER_OF(iface, duv_tls_t, iface);
+    if(!stream_read_checks(iface, buf)) return false;
 
-    if(!buf.data || !buf.size) LOG_FATAL("empty buf in read\n");
-    if(t->awaited) LOG_FATAL("read after await_cb\n");
-    if(t->signal.close) LOG_FATAL("read after close\n");
-    if(t->tls_eof) LOG_FATAL("read after eof\n");
+    duv_tls_t *t = CONTAINER_OF(iface, duv_tls_t, iface);
 
     stream_read_prep(read, buf, cb);
 
-    link_list_append(&t->signal.reads, &read->link);
+    link_list_append(&t->reads, &read->link);
 
     // never callback immediately
     schedule(t);
+    return true;
 }
 
-static void duv_tls_write(
+static bool duv_tls_write(
     stream_i *iface,
     stream_write_t *req,
     const dstr_t bufs[],
     unsigned int nbufs,
     stream_write_cb cb
 ){
+    if(!stream_write_checks(iface, bufs, nbufs)) return false;
+
     duv_tls_t *t = CONTAINER_OF(iface, duv_tls_t, iface);
-
-    if(t->awaited) LOG_FATAL("write after await_cb\n");
-    if(t->signal.close) LOG_FATAL("write after close\n");
-    if(t->signal.shutdown) LOG_FATAL("write after shutdown\n");
-
-    for(unsigned int i = 0; i < nbufs; i++){
-        if(bufs[i].len) goto nonempty;
-    }
-    LOG_FATAL("empty write\n");
-
-nonempty:
 
     if(closing(t)){
         // don't care about the actual write contents
@@ -639,19 +628,21 @@ nonempty:
 
 done:
     // store write
-    link_list_append(&t->signal.writes, &req->link);
+    link_list_append(&t->writes, &req->link);
 
     // never callback immediately
     schedule(t);
+
+    return true;
 }
 
 static void duv_tls_shutdown(stream_i *iface, stream_shutdown_cb cb){
     duv_tls_t *t = CONTAINER_OF(iface, duv_tls_t, iface);
 
-    if(closing(t) || t->signal.shutdown) return;
+    if(closing(t) || t->iface.is_shutdown) return;
 
-    t->signal.shutdown = true;
-    t->signal.shutdown_cb = cb;
+    t->iface.is_shutdown = true;
+    t->shutdown_cb = cb;
 
     // never callback immediately
     schedule(t);
@@ -660,7 +651,7 @@ static void duv_tls_shutdown(stream_i *iface, stream_shutdown_cb cb){
 static void duv_tls_close(stream_i *iface){
     duv_tls_t *t = CONTAINER_OF(iface, duv_tls_t, iface);
 
-    t->signal.close = true;
+    t->iface.closed = true;
 
     // nothing to do if we're already closing
     if(closing(t)) return;
@@ -674,26 +665,11 @@ static stream_await_cb duv_tls_await(
 ){
     duv_tls_t *t = CONTAINER_OF(iface, duv_tls_t, iface);
 
-    stream_await_cb out = t->signal.await_cb;
+    stream_await_cb out = t->await_cb;
 
-    t->signal.await_cb = await_cb;
+    t->await_cb = await_cb;
 
     return out;
-}
-
-static bool duv_tls_readable(stream_i *iface){
-    duv_tls_t *t = CONTAINER_OF(iface, duv_tls_t, iface);
-    return !t->awaited && !t->signal.close && !t->tls_eof;
-}
-
-static bool duv_tls_writable(stream_i *iface){
-    duv_tls_t *t = CONTAINER_OF(iface, duv_tls_t, iface);
-    return !t->awaited && !t->signal.shutdown && !t->signal.close;
-}
-
-static bool duv_tls_active(stream_i *iface){
-    duv_tls_t *t = CONTAINER_OF(iface, duv_tls_t, iface);
-    return !t->awaited;
 }
 
 static derr_t wrap(
@@ -710,8 +686,8 @@ static derr_t wrap(
     *out = NULL;
 
     // checks on underlying stream
-    if(!base->active(base)){
-        ORIG(&e, E_PARAM, "base stream is not active");
+    if(base->awaited){
+        ORIG(&e, E_PARAM, "base stream already awaited");
     }
     if(!base->readable(base)){
         ORIG(&e, E_PARAM, "base stream is not readable");
@@ -729,24 +705,21 @@ static derr_t wrap(
         .iface = (stream_i){
             .set_data = duv_tls_set_data,
             .get_data = duv_tls_get_data,
+            .readable = stream_default_readable,
+            .writable = stream_default_writable,
             .read = duv_tls_read,
             .write = duv_tls_write,
             .shutdown = duv_tls_shutdown,
             .close = duv_tls_close,
             .await = duv_tls_await,
-            .readable = duv_tls_readable,
-            .writable = duv_tls_writable,
-            .active = duv_tls_active,
         },
-        .signal = {
-            .await_cb = base->await(base, await_cb),
-        },
+        .await_cb = base->await(base, await_cb),
     };
 
     schedulable_prep(&t->schedulable, schedule_cb);
 
-    link_init(&t->signal.reads);
-    link_init(&t->signal.writes);
+    link_init(&t->reads);
+    link_init(&t->writes);
 
     PROP_GO(&e, dstr_new(&t->read_buf, 4096), fail);
     PROP_GO(&e, dstr_new(&t->write_buf, 4096), fail);

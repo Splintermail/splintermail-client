@@ -1,5 +1,3 @@
-#include <setjmp.h>
-
 #include <openssl/ssl.h>
 #include <openssl/x509v3.h>
 
@@ -38,22 +36,6 @@ size_t stream_nread = 0;
 size_t read_stop_time = 0;
 
 dthread_t thread;
-
-jmp_buf env;
-
-static void abort_handler(int signum){
-    (void)signum;
-    signal(SIGABRT, SIG_DFL);
-    longjmp(env, 1);
-}
-
-#define EXPECT_ABORT(code) do { \
-    signal(SIGABRT, abort_handler); \
-    if(setjmp(env) == 0){ \
-        code; \
-        ORIG_GO(&E, E_VALUE, "code did not abort", fail); \
-    } \
-} while(0)
 
 // PHASES:
 // 1 = many consecutive writes
@@ -204,8 +186,8 @@ static void await_cb(stream_i *s, derr_t e){
         return;
     }
     if(finishing) return;
-    if(stream->active(stream)){
-        ORIG_GO(&E, E_VALUE, "stream still active in await_cb", fail);
+    if(!stream->awaited){
+        ORIG_GO(&E, E_VALUE, "awaited not set in await_cb", fail);
     }
     // SUCCESS!
     success = expect_exit;
@@ -252,21 +234,23 @@ static void phase5(void){
     stream->close(stream);
     expect_exit = true;
 
-    if(!stream->active(stream)){
-        ORIG_GO(&E, E_VALUE, "stream not active before await_cb", fail);
+    if(stream->awaited){
+        ORIG_GO(&E, E_VALUE, "awaited set right after close", fail);
     }
 
     // read should abort
     dstr_t rbuf = (dstr_t){
         .data = readmem, .len = 1, .size = 1, .fixed_size = true
     };
-    EXPECT_ABORT( stream->read(stream, &reads[0], rbuf, never_read_cb) );
+    if(stream->read(stream, &reads[0], rbuf, never_read_cb)){
+        ORIG_GO(&E, E_VALUE, "read ok after close", fail);
+    }
 
     // write should abort
     DSTR_STATIC(wbuf, "x");
-    EXPECT_ABORT(
-        stream->write(stream, &writes[0], &wbuf, 1, never_write_cb)
-    );
+    if(stream->write(stream, &writes[0], &wbuf, 1, never_write_cb)){
+        ORIG_GO(&E, E_VALUE, "write ok after close", fail);
+    }
 
     // shutdown is harmelss
     stream->shutdown(stream, never_shutdown_cb);
@@ -298,7 +282,12 @@ static void stream_read_eof(
     dstr_t rbuf = (dstr_t){
         .data = readmem, .len = 1, .size = 1, .fixed_size = true
     };
-    EXPECT_ABORT( stream->read(stream, &reads[0], rbuf, never_read_cb) );
+    if(!stream->eof){
+        ORIG_GO(&E, E_VALUE, "eof not set", fail);
+    }
+    if(stream->read(stream, &reads[0], rbuf, never_read_cb)){
+        ORIG_GO(&E, E_VALUE, "read ok after eof", fail);
+    }
 
     // BEGIN PHASE 5 "close test"
     phase5();
@@ -317,7 +306,7 @@ static void shutdown_cb(stream_i *s){
     dstr_t rbuf = (dstr_t){
         .data = readmem, .len = 1, .size = 1, .fixed_size = true
     };
-    stream->read(stream, &reads[0], rbuf, stream_read_eof);
+    stream_must_read(stream, &reads[0], rbuf, stream_read_eof);
 }
 
 static void phase3(void){
@@ -328,6 +317,10 @@ static void phase3(void){
 
     stream->shutdown(stream, shutdown_cb);
 
+    if(!stream->is_shutdown){
+        ORIG_GO(&E, E_VALUE, "is_shutdown not set", fail);
+    }
+
     // stream no longer writable
     if(stream->writable(stream)){
         ORIG_GO(&E, E_VALUE, "stream still writable after shutdown", fail);
@@ -336,9 +329,9 @@ static void phase3(void){
     // write should abort
 
     DSTR_STATIC(buf, "x");
-    EXPECT_ABORT(
-        stream->write(stream, &writes[0], &buf, 1, never_write_cb)
-    );
+    if(stream->write(stream, &writes[0], &buf, 1, never_write_cb)){
+        ORIG_GO(&E, E_VALUE, "write ok after shutdown", fail);
+    }
 
     // shutdown is idempotent
     stream->shutdown(stream, never_shutdown_cb);
@@ -399,7 +392,7 @@ static void read_cb_phase2(
             dstr_t rbuf = (dstr_t){
                 .data = readmem, .len = 1, .size = 1, .fixed_size = true
             };
-            stream->read(stream, &reads[0], rbuf, read_cb_phase2);
+            stream_must_read(stream, &reads[0], rbuf, read_cb_phase2);
             nreads_launched++;
         }
     }
@@ -451,7 +444,7 @@ static void on_connect(duv_connect_t *c, bool ok, derr_t e){
             bufs[j].size = 1;
         }
         // each write has more bufs in it
-        stream->write(stream, &writes[i], bufs, i+1, write_cb);
+        stream_must_write(stream, &writes[i], bufs, i+1, write_cb);
     }
 
     // BEGIN PHASE 2 "read several times"
@@ -460,7 +453,7 @@ static void on_connect(duv_connect_t *c, bool ok, derr_t e){
         dstr_t rbuf = {
             .data = &readmem[i], .len = 1, .size = 1, .fixed_size = true
         };
-        stream->read(stream, &reads[i], rbuf, read_cb_phase2);
+        stream_must_read(stream, &reads[i], rbuf, read_cb_phase2);
         nreads_launched++;
     }
 

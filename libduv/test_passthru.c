@@ -1,6 +1,3 @@
-#include <stdlib.h>
-#include <setjmp.h>
-
 #include "libdstr/libdstr.h"
 #include "libduv/libduv.h"
 
@@ -42,22 +39,6 @@ uv_write_t peer_req;
 uv_shutdown_t shutdown_req;
 
 size_t streams_closed = 0;
-
-jmp_buf env;
-
-static void abort_handler(int signum){
-    (void)signum;
-    signal(SIGABRT, SIG_DFL);
-    longjmp(env, 1);
-}
-
-#define EXPECT_ABORT(code) do { \
-    signal(SIGABRT, abort_handler); \
-    if(setjmp(env) == 0){ \
-        code; \
-        ORIG_GO(&E, E_VALUE, "code did not abort", fail); \
-    } \
-} while(0)
 
 // PHASES:
 // 1 = many consecutive writes
@@ -260,7 +241,7 @@ static void connect_cb_phase6(duv_connect_t *c, bool ok, derr_t e){
             bufs[j].len = 1;
             bufs[j].size = 1;
         }
-        stream->write(stream, &writes[i], bufs, (i%(MANY/2)) + 1, write_cb);
+        stream_must_write(stream, &writes[i], bufs, (i%(MANY/2)) + 1, write_cb);
     }
 
 
@@ -319,8 +300,8 @@ static void await_cb_phase5(stream_i *s, derr_t e){
     if(is_error(e)){
         PROP_VAR_GO(&E, &e, fail);
     }
-    if(stream->active(stream)){
-        ORIG_GO(&E, E_VALUE, "stream still active in await_cb", fail);
+    if(!stream->awaited){
+        ORIG_GO(&E, E_VALUE, "stream not awaited in await_cb", fail);
     }
     if(await_cbs++){
         ORIG_GO(&E, E_VALUE, "multiple await callbacks!", fail);
@@ -345,16 +326,20 @@ static void phase5(void){
     expect_await = true;
 
     // stream is still active
-    if(!stream->active(stream)){
-        ORIG_GO(&E, E_VALUE, "stream not active after close()", fail);
+    if(stream->awaited){
+        ORIG_GO(&E, E_VALUE, "stream is awaited right after close()", fail);
     }
 
     // read would abort
     dstr_t buf = (dstr_t){.data = readmem, .size = 1, .fixed_size=true };
-    EXPECT_ABORT( stream->read(stream, &reads[0], buf, never_read_cb) );
+    if(stream->read(stream, &reads[0], buf, never_read_cb) ){
+        ORIG_GO(&E, E_VALUE, "stream->read succeeded after close", fail);
+    }
 
     // write would abort
-    EXPECT_ABORT( stream->write(stream, &writes[0], &buf, 1, never_write_cb) );
+    if(stream->write(stream, &writes[0], &buf, 1, never_write_cb)){
+        ORIG_GO(&E, E_VALUE, "stream->write succeeded after close", fail);
+    }
 
     // shutdown is harmless
     stream->shutdown(stream, shutdown_cb);
@@ -381,6 +366,10 @@ static void read_cb_phase4(
         ORIG_GO(&E, E_VALUE, "stream_read_eof non-eof (%x)", fail, FD(&buf));
     }
 
+    if(!stream->eof){
+        ORIG_GO(&E, E_VALUE, "stream->eof not set", fail);
+    }
+
     // stream no longer readable
     if(stream->readable(stream)){
         ORIG_GO(&E, E_VALUE, "stream readable after eof", fail);
@@ -388,7 +377,9 @@ static void read_cb_phase4(
 
     // read aborts
     dstr_t rbuf = (dstr_t){.data = readmem, .size = 1, .fixed_size=true };
-    EXPECT_ABORT( stream->read(stream, &reads[0], rbuf, never_read_cb) );
+    if(stream->read(stream, &reads[0], rbuf, never_read_cb)){
+        ORIG_GO(&E, E_VALUE, "stream->read succeeded after eof", fail);
+    }
 
     // BEGIN PHASE 5 "close test"
     phase5();
@@ -407,7 +398,7 @@ static void on_peer_shutdown(uv_shutdown_t *req, int status){
 
     // now make sure the passthru also sees read_stop
     dstr_t buf = (dstr_t){.data = readmem, .size = 1, .fixed_size=true };
-    stream->read(stream, &reads[0], buf, read_cb_phase4);
+    stream_must_read(stream, &reads[0], buf, read_cb_phase4);
 
     return;
 
@@ -478,7 +469,7 @@ fail:
 static void phase3(void){
     // start a write that must finish before we shutdown
     dstr_t bufa = DSTR_LIT("a");
-    stream->write(stream, &writes[0], &bufa, 1, write_cb);
+    stream_must_write(stream, &writes[0], &bufa, 1, write_cb);
 
     // the peer will need to read that final byte
     PROP_GO(&E,
@@ -500,9 +491,9 @@ static void phase3(void){
 
     // additional writes must fail
     dstr_t bufb = DSTR_LIT("b");
-    EXPECT_ABORT(
-        stream->write(stream, &writes[0], &bufb, 1, never_write_cb)
-    );
+    if(stream->write(stream, &writes[0], &bufb, 1, never_write_cb)){
+        ORIG_GO(&E, E_VALUE, "stream->write succeeded after shutdown", fail);
+    }
 
     // second shutdown call is harmelss
     stream->shutdown(stream, shutdown_cb);
@@ -569,7 +560,7 @@ static void read_cb_phase2(
             dstr_t rbuf = (dstr_t){
                 .data = readmem, .size = 1, .fixed_size=true
             };
-            stream->read(stream, &reads[0], rbuf, read_cb_phase2);
+            stream_must_read(stream, &reads[0], rbuf, read_cb_phase2);
             nreads_launched++;
         }
     }
@@ -628,7 +619,7 @@ static void peer_read_cb_phase1(
         dstr_t rbuf = (dstr_t){
             .data = readmem + i, .size = 1, .fixed_size=true
         };
-        stream->read(stream, &reads[i], rbuf, read_cb_phase2);
+        stream_must_read(stream, &reads[i], rbuf, read_cb_phase2);
         nreads_launched++;
     }
 
@@ -659,7 +650,7 @@ static void connect_cb_phase1(duv_connect_t *c, bool ok, derr_t e){
             bufs[j].len = 1;
             bufs[j].size = 1;
         }
-        stream->write(
+        stream_must_write(
             stream, &writes[i], bufs, (i%(MANY/2)) + 1, write_cb
         );
     }

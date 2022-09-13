@@ -20,10 +20,7 @@ typedef struct {
     stream_await_cb await_cb;
 
     derr_t e;
-    bool user_closed;
     bool reading;
-    bool eof;
-    bool awaited;
 
     link_t reads;
     bool allocated;

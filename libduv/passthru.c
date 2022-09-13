@@ -57,7 +57,7 @@ static void close_cb(uv_handle_t *handle){
 }
 
 static bool closing(duv_passthru_t *p){
-    return p->user_closed || is_error(p->e);
+    return p->iface.closed || is_error(p->e);
 }
 
 static void scheduled(schedulable_t *s){
@@ -103,7 +103,7 @@ static void _do_read_cb(duv_passthru_t *p, ssize_t nread, const uv_buf_t *buf){
                 // EAGAIN or EWOULDBLOCK, just let read be reused in alloc_cb
                 return;
             case UV_EOF:
-                p->eof = true;
+                p->iface.eof = true;
                 p->reading = false;
                 // we can just dump all reads at this point
                 empty_reads(p);
@@ -269,24 +269,12 @@ failing:
     // wait for the base stream to close
     if(!p->close.complete) return;
 
-    if(!p->awaited){
+    if(!p->iface.awaited){
         passthru_free_allocations(p);
-        p->awaited = true;
+        p->iface.awaited = true;
         p->await_cb(&p->iface, p->e);
     }
     return;
-}
-
-static bool readable(duv_passthru_t *p){
-    return !p->awaited && !p->eof;
-}
-
-static bool writable(duv_passthru_t *p){
-    return !p->awaited && !p->user_closed && !p->shutdown_cb;
-}
-
-static bool active(duv_passthru_t *p){
-    return !p->awaited;
 }
 
 // interface
@@ -301,18 +289,15 @@ static void *passthru_get_data(stream_i *iface){
     return p->data;
 }
 
-static void passthru_read(
+static bool passthru_read(
     stream_i *iface,
     stream_read_t *read,
     dstr_t buf,
     stream_read_cb cb
 ){
-    duv_passthru_t *p = CONTAINER_OF(iface, duv_passthru_t, iface);
+    if(!stream_read_checks(iface, buf)) return false;
 
-    if(!buf.data || !buf.size) LOG_FATAL("empty buf in read\n");
-    if(p->awaited) LOG_FATAL("read after await_cb\n");
-    if(p->user_closed) LOG_FATAL("read after close\n");
-    if(p->eof) LOG_FATAL("read after eof\n");
+    duv_passthru_t *p = CONTAINER_OF(iface, duv_passthru_t, iface);
 
     stream_read_prep(read, buf, cb);
 
@@ -321,7 +306,7 @@ static void passthru_read(
     if(closing(p)){
         // respond later
         schedule(p);
-        return;
+        return true;
     }
 
     if(!p->reading){
@@ -333,27 +318,19 @@ static void passthru_read(
         }
         p->reading = true;
     }
+    return true;
 }
 
-static void passthru_write(
+static bool passthru_write(
     stream_i *iface,
     stream_write_t *req,
     const dstr_t bufs[],
     unsigned int nbufs,
     stream_write_cb cb
 ){
+    if(!stream_write_checks(iface, bufs, nbufs)) return false;
+
     duv_passthru_t *p = CONTAINER_OF(iface, duv_passthru_t, iface);
-
-    if(p->awaited) LOG_FATAL("write after await_cb\n");
-    if(p->user_closed) LOG_FATAL("write after close\n");
-    if(p->shutdown_cb) LOG_FATAL("write after shutdown\n");
-
-    for(unsigned int i = 0; i < nbufs; i++){
-        if(bufs[i].len) goto nonempty;
-    }
-    LOG_FATAL("empty write\n");
-
-nonempty:
 
     if(closing(p)){
         stream_write_init_nocopy(req, cb);
@@ -370,7 +347,7 @@ nonempty:
         }
 
         link_list_append(&p->writes.pending, &req->link);
-        return;
+        return true;
     }
 
     // write immediately, to make the passthru transparent
@@ -397,16 +374,18 @@ nonempty:
     }
     // write was successful
     p->writes.inflight++;
-    return;
+    return true;
 
 failing:
     // we'll respond with our failing message, but do it in-order
     link_list_append(&p->writes.pending, &req->link);
-    return;
+    return true;
 }
 
 static void passthru_shutdown(stream_i *iface, stream_shutdown_cb shutdown_cb){
     duv_passthru_t *p = CONTAINER_OF(iface, duv_passthru_t, iface);
+
+    p->iface.is_shutdown = true;
 
     if(p->shutdown_cb || closing(p)) return;
     p->shutdown_cb = shutdown_cb;
@@ -423,7 +402,7 @@ static void passthru_shutdown(stream_i *iface, stream_shutdown_cb shutdown_cb){
 
 static void passthru_close(stream_i *iface){
     duv_passthru_t *p = CONTAINER_OF(iface, duv_passthru_t, iface);
-    p->user_closed = true;
+    p->iface.closed = true;
     schedule(p);
 }
 
@@ -434,21 +413,6 @@ static stream_await_cb passthru_await(
     stream_await_cb out = p->await_cb;
     p->await_cb = await_cb;
     return out;
-}
-
-static bool passthru_readable(stream_i *iface){
-    duv_passthru_t *p = CONTAINER_OF(iface, duv_passthru_t, iface);
-    return readable(p);
-}
-
-static bool passthru_writable(stream_i *iface){
-    duv_passthru_t *p = CONTAINER_OF(iface, duv_passthru_t, iface);
-    return writable(p);
-}
-
-static bool passthru_active(stream_i *iface){
-    duv_passthru_t *p = CONTAINER_OF(iface, duv_passthru_t, iface);
-    return active(p);
 }
 
 link_t *g_reads;
@@ -469,14 +433,13 @@ stream_i *duv_passthru_init(
         .iface = (stream_i){
             .set_data = passthru_set_data,
             .get_data = passthru_get_data,
+            .readable = stream_default_readable,
+            .writable = stream_default_writable,
             .read = passthru_read,
             .write = passthru_write,
             .shutdown = passthru_shutdown,
             .close = passthru_close,
             .await = passthru_await,
-            .readable = passthru_readable,
-            .writable = passthru_writable,
-            .active = passthru_active,
         },
     };
     p->shutdown.req.data = p;

@@ -42,15 +42,10 @@ typedef struct {
     dstr_t write_buf;
     stream_write_t write_req;
 
-    // control signals (from user api calls)
-    struct {
-        link_t reads;  // stream_read_t->link
-        link_t writes;  // stream_write_t->link
-        bool shutdown;
-        stream_shutdown_cb shutdown_cb;
-        stream_await_cb await_cb;
-        bool close;
-    } signal;
+    link_t reads;  // stream_read_t->link
+    link_t writes;  // stream_write_t->link
+    stream_shutdown_cb shutdown_cb;
+    stream_await_cb await_cb;
 
     // state machine
     derr_t e;
@@ -73,8 +68,6 @@ typedef struct {
     bool shutdown : 1;
     bool base_closed : 1;
     bool base_awaited : 1;
-    bool awaited : 1;
-    bool tls_eof : 1;
 } duv_tls_t;
 DEF_CONTAINER_OF(duv_tls_t, iface, stream_i);
 DEF_CONTAINER_OF(duv_tls_t, schedulable, schedulable_t);
