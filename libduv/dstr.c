@@ -7,7 +7,7 @@ static void advance_state(dstr_rstream_t *r){
     if(r->iface.closed) goto closing;
 
     while((link = link_list_pop_first(&r->reads))){
-        stream_read_t *read = CONTAINER_OF(link, stream_read_t, link);
+        rstream_read_t *read = CONTAINER_OF(link, rstream_read_t, link);
         if(r->nread < r->base.len){
             // pass as much as possible
             dstr_t sub = dstr_sub2(r->base, r->nread, read->buf.size);
@@ -29,17 +29,12 @@ static void advance_state(dstr_rstream_t *r){
         }
     }
 
-    if(r->iface.is_shutdown && r->shutdown_cb){
-        r->shutdown_cb(&r->iface);
-        r->shutdown_cb = NULL;
-    }
-
     return;
 
 closing:
     // return pending reads with ok=false
     while((link = link_list_pop_first(&r->reads))){
-        stream_read_t *read = CONTAINER_OF(link, stream_read_t, link);
+        rstream_read_t *read = CONTAINER_OF(link, rstream_read_t, link);
         read->buf.len = 0;
         read->cb(&r->iface, read, read->buf, !r->iface.closed);
     }
@@ -58,27 +53,27 @@ static void schedule(dstr_rstream_t *r){
     r->scheduler->schedule(r->scheduler, &r->schedulable);
 }
 
-static void rstream_set_data(stream_i *iface, void *data){
+static void rstream_set_data(rstream_i *iface, void *data){
     dstr_rstream_t *r = CONTAINER_OF(iface, dstr_rstream_t, iface);
     r->data = data;
 }
 
-static void *rstream_get_data(stream_i *iface){
+static void *rstream_get_data(rstream_i *iface){
     dstr_rstream_t *r = CONTAINER_OF(iface, dstr_rstream_t, iface);
     return r->data;
 }
 
 static bool rstream_read(
-    stream_i *iface,
-    stream_read_t *read,
+    rstream_i *iface,
+    rstream_read_t *read,
     dstr_t buf,
-    stream_read_cb cb
+    rstream_read_cb cb
 ){
     if(!stream_read_checks(iface, buf)) return false;
 
     dstr_rstream_t *r = CONTAINER_OF(iface, dstr_rstream_t, iface);
 
-    stream_read_prep(read, buf, cb);
+    rstream_read_prep(read, buf, cb);
     link_list_append(&r->reads, &read->link);
 
     schedule(r);
@@ -86,31 +81,7 @@ static bool rstream_read(
     return true;
 }
 
-static bool rstream_write(
-    stream_i *iface,
-    stream_write_t *write,
-    const dstr_t bufs[],
-    unsigned int nbufs,
-    stream_write_cb cb
-){
-    (void)iface;
-    (void)write;
-    (void)bufs;
-    (void)nbufs;
-    (void)cb;
-    return false;
-}
-
-static void rstream_shutdown(stream_i *iface, stream_shutdown_cb cb){
-    dstr_rstream_t *r = CONTAINER_OF(iface, dstr_rstream_t, iface);
-
-    if(r->iface.is_shutdown || r->iface.closed) return;
-    r->iface.is_shutdown = true;
-    r->shutdown_cb = cb;
-    schedule(r);
-}
-
-static void rstream_close(stream_i *iface){
+static void rstream_close(rstream_i *iface){
     dstr_rstream_t *r = CONTAINER_OF(iface, dstr_rstream_t, iface);
 
     if(r->iface.closed) return;
@@ -118,21 +89,21 @@ static void rstream_close(stream_i *iface){
     schedule(r);
 }
 
-static stream_await_cb rstream_await(
-    stream_i *iface, stream_await_cb await_cb
+static rstream_await_cb rstream_await(
+    rstream_i *iface, rstream_await_cb await_cb
 ){
     dstr_rstream_t *r = CONTAINER_OF(iface, dstr_rstream_t, iface);
 
-    stream_await_cb out = r->await_cb;
+    rstream_await_cb out = r->await_cb;
     r->await_cb = await_cb;
     return out;
 }
 
-stream_i *dstr_rstream(
+rstream_i *dstr_rstream(
     dstr_rstream_t *r,
     scheduler_i *scheduler,
     const dstr_t dstr,
-    stream_await_cb await_cb
+    rstream_await_cb await_cb
 ){
     *r = (dstr_rstream_t){
         // preserve data
@@ -143,11 +114,8 @@ stream_i *dstr_rstream(
         .iface = {
             .set_data = rstream_set_data,
             .get_data = rstream_get_data,
-            .readable = stream_default_readable,
-            .writable = stream_return_false,
+            .readable = rstream_default_readable,
             .read = rstream_read,
-            .write = rstream_write,
-            .shutdown = rstream_shutdown,
             .close = rstream_close,
             .await = rstream_await,
         },
