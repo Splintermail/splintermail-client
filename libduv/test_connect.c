@@ -307,4 +307,3 @@ test_fail:
     LOG_ERROR("FAIL\n");
     return 1;
 }
-

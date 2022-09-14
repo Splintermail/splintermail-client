@@ -10,5 +10,6 @@
 #include "connect.h"
 #include "stream.h"
 #include "passthru.h"
+#include "dstr.h"
 
 #endif // UVTHREAD_T
