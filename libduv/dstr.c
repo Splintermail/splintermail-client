@@ -58,16 +58,6 @@ static void schedule(dstr_rstream_t *r){
     r->scheduler->schedule(r->scheduler, &r->schedulable);
 }
 
-static void rstream_set_data(rstream_i *iface, void *data){
-    dstr_rstream_t *r = CONTAINER_OF(iface, dstr_rstream_t, iface);
-    r->data = data;
-}
-
-static void *rstream_get_data(rstream_i *iface){
-    dstr_rstream_t *r = CONTAINER_OF(iface, dstr_rstream_t, iface);
-    return r->data;
-}
-
 static bool rstream_read(
     rstream_i *iface,
     rstream_read_t *read,
@@ -111,13 +101,12 @@ rstream_i *dstr_rstream(
     const dstr_t dstr
 ){
     *r = (dstr_rstream_t){
-        // preserve data
-        .data = r->data,
         .base = dstr,
         .scheduler = scheduler,
         .iface = {
-            .set_data = rstream_set_data,
-            .get_data = rstream_get_data,
+            // preserve data
+            .data = r->iface.data,
+            .wrapper_data = r->iface.wrapper_data,
             .readable = rstream_default_readable,
             .read = rstream_read,
             .close = rstream_close,

@@ -1,6 +1,5 @@
 // a read-only stream
 typedef struct {
-    void *data;
     rstream_i iface;
     scheduler_i *scheduler;
     schedulable_t schedulable;

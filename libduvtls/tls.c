@@ -44,8 +44,8 @@ static void empty_reads(duv_tls_t *t){
 static void read_cb(
     stream_i *base, stream_read_t *req, dstr_t buf, bool ok
 ){
+    duv_tls_t *t = base->wrapper_data;
     (void)req;
-    duv_tls_t *t = base->get_data(base);
     t->read_pending = false;
 
     // if stream is failing, skip all processing
@@ -80,7 +80,7 @@ done:
 }
 
 static void write_cb(stream_i *base, stream_write_t *req, bool ok){
-    duv_tls_t *t = base->get_data(base);
+    duv_tls_t *t = base->wrapper_data;
     (void)req;
 
     if(!ok) t->base_failing = true;
@@ -92,7 +92,7 @@ static void write_cb(stream_i *base, stream_write_t *req, bool ok){
 }
 
 static void await_cb(stream_i *base, derr_t e){
-    duv_tls_t *t = base->get_data(base);
+    duv_tls_t *t = base->wrapper_data;
     t->base_awaited = true;
     // no point in base->close() anymore
     t->base_closed = true;
@@ -583,16 +583,6 @@ closing:
 
 // stream interface
 
-static void duv_tls_set_data(stream_i *iface, void *data){
-    duv_tls_t *t = CONTAINER_OF(iface, duv_tls_t, iface);
-    t->data = data;
-}
-
-static void *duv_tls_get_data(stream_i *iface){
-    duv_tls_t *t = CONTAINER_OF(iface, duv_tls_t, iface);
-    return t->data;
-}
-
 static bool duv_tls_read(
     stream_i *iface,
     stream_read_t *read,
@@ -702,14 +692,13 @@ static derr_t wrap(
     }
 
     *t = (duv_tls_t){
-        // preserve data
-        .data = t->data,
         .base = base,
         .client = client,
         .scheduler = scheduler,
         .iface = (stream_i){
-            .set_data = duv_tls_set_data,
-            .get_data = duv_tls_get_data,
+            // preserve data
+            .data = t->iface.data,
+            .wrapper_data = t->iface.wrapper_data,
             .readable = stream_default_readable,
             .writable = stream_default_writable,
             .read = duv_tls_read,
@@ -779,9 +768,8 @@ static derr_t wrap(
         SSL_set_verify(t->ssl, SSL_VERIFY_PEER, NULL);
     }
 
-    // data pointers
-    t->base->set_data(t->base, t);
-    t->write_req.data = t;
+    // we own the wrapper_data
+    t->base->wrapper_data = t;
 
     *out = &t->iface;
 
@@ -790,7 +778,12 @@ static derr_t wrap(
 fail:
     duv_tls_free_allocations(t);
     // preserve data
-    *t = (duv_tls_t){ .data = t->data };
+    *t = (duv_tls_t){
+        .iface = {
+            .data = t->iface.data,
+            .wrapper_data = t->iface.wrapper_data,
+        },
+    };
     return e;
 }
 

@@ -85,6 +85,10 @@ struct wstream_write_t {
 DEF_CONTAINER_OF(wstream_write_t, link, link_t);
 
 struct stream_i {
+    // the owner of the stream owns the data
+    void *data;
+    // stream wrappers own the data for the stream they wrap
+    void *wrapper_data;
     // read-only: set after the first call to close
     bool closed : 1;
     // read-only: set after the first call to shutdown
@@ -93,9 +97,6 @@ struct stream_i {
     bool eof : 1;
     // read-only: set just before the await_cb
     bool awaited : 1;
-
-    void (*set_data)(stream_i*, void*);
-    void *(*get_data)(stream_i*);
 
     /* returns false if eof, closed, or awaited is set, or if the stream was
        never readable */
@@ -177,12 +178,12 @@ struct stream_i {
 
 // just like stream_i but only for reading
 struct rstream_i {
+    void *data;
+    void *wrapper_data;
     bool closed : 1;
     bool eof : 1;
     bool awaited : 1;
     //
-    void (*set_data)(rstream_i*, void*);
-    void *(*get_data)(rstream_i*);
     bool (*readable)(rstream_i*);
     bool (*read)(
         rstream_i*,
@@ -196,12 +197,12 @@ struct rstream_i {
 
 // just like stream_i but only for writing
 struct wstream_i {
+    void *data;
+    void *wrapper_data;
     bool closed : 1;
     bool is_shutdown : 1;
     bool awaited : 1;
     //
-    void (*set_data)(wstream_i*, void*);
-    void *(*get_data)(wstream_i*);
     bool (*writable)(wstream_i*);
     bool (*write)(
         wstream_i*,

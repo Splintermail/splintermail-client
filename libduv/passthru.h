@@ -10,7 +10,6 @@ DEF_CONTAINER_OF(passthru_write_mem_t, link, link_t);
 // iface is the only public member
 typedef struct {
     stream_i iface;
-    void *data;
     uv_stream_t *uvstream;
     duv_scheduler_t *scheduler;
     schedulable_t schedulable;

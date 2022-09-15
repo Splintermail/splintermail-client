@@ -23,7 +23,6 @@ DUV_TLS_ERRNO_MAP(DUV_TLS_ERR_DECL)
 typedef struct {
     // the stream we provide
     stream_i iface;
-    void *data;
 
     // the stream we are encrypting
     stream_i *base;
@@ -74,9 +73,7 @@ DEF_CONTAINER_OF(duv_tls_t, iface, stream_i);
 DEF_CONTAINER_OF(duv_tls_t, schedulable, schedulable_t);
 
 // wrap an existing stream_i* in tls, returning an encrypted stream_i*
-/* you give up control over the *base entirely, including control over the
-   set_data() and get_data() methods.  duv_tls_t guarantees that when its own
-   close_cb is called that *base will also be fully closed */
+// duv_tls_t will await the base stream and reserves use of base->wrapper_data
 derr_t duv_tls_wrap_client(
     duv_tls_t *t,
     SSL_CTX *ssl_ctx,

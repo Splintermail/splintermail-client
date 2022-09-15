@@ -283,16 +283,6 @@ failing:
 
 // interface
 
-static void passthru_set_data(stream_i *iface, void *data){
-    duv_passthru_t *p = CONTAINER_OF(iface, duv_passthru_t, iface);
-    p->data = data;
-}
-
-static void *passthru_get_data(stream_i *iface){
-    duv_passthru_t *p = CONTAINER_OF(iface, duv_passthru_t, iface);
-    return p->data;
-}
-
 static bool passthru_read(
     stream_i *iface,
     stream_read_t *read,
@@ -428,13 +418,12 @@ stream_i *duv_passthru_init(
 ){
     uvstream->data = p;
     *p = (duv_passthru_t){
-        // preserve data
-        .data = p->data,
         .uvstream = uvstream,
         .scheduler = scheduler,
         .iface = (stream_i){
-            .set_data = passthru_set_data,
-            .get_data = passthru_get_data,
+            // preserve data
+            .data = p->iface.data,
+            .wrapper_data = p->iface.wrapper_data,
             .readable = stream_default_readable,
             .writable = stream_default_writable,
             .read = passthru_read,
