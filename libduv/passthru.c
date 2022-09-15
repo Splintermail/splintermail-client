@@ -269,8 +269,12 @@ failing:
     // wait for the base stream to close
     if(!p->close.complete) return;
 
+    // wait to be awaited
+    if(!p->await_cb) return;
+
     if(!p->iface.awaited){
         passthru_free_allocations(p);
+        schedulable_cancel(&p->schedulable);
         p->iface.awaited = true;
         p->await_cb(&p->iface, p->e);
     }
@@ -410,18 +414,17 @@ static stream_await_cb passthru_await(
     stream_i *iface, stream_await_cb await_cb
 ){
     duv_passthru_t *p = CONTAINER_OF(iface, duv_passthru_t, iface);
+    if(p->iface.awaited) return NULL;
     stream_await_cb out = p->await_cb;
     p->await_cb = await_cb;
+    schedule(p);
     return out;
 }
-
-link_t *g_reads;
 
 stream_i *duv_passthru_init(
     duv_passthru_t *p,
     duv_scheduler_t *scheduler,
-    uv_stream_t *uvstream,
-    stream_await_cb await_cb
+    uv_stream_t *uvstream
 ){
     uvstream->data = p;
     *p = (duv_passthru_t){
@@ -429,7 +432,6 @@ stream_i *duv_passthru_init(
         .data = p->data,
         .uvstream = uvstream,
         .scheduler = scheduler,
-        .await_cb = await_cb,
         .iface = (stream_i){
             .set_data = passthru_set_data,
             .get_data = passthru_get_data,
@@ -444,7 +446,6 @@ stream_i *duv_passthru_init(
     };
     p->shutdown.req.data = p;
     schedulable_prep(&p->schedulable, scheduled);
-    g_reads = &p->reads;
     link_init(&p->reads);
     link_init(&p->writes.pending);
     link_init(&p->pool);
@@ -460,13 +461,11 @@ stream_i *duv_passthru_init(
     stream_i *duv_passthru_init_##type( \
         duv_passthru_t *p, \
         duv_scheduler_t *scheduler, \
-        uv_##type##_t *stream, \
-        stream_await_cb await_cb \
+        uv_##type##_t *stream \
     ){ \
         return duv_passthru_init(p, \
             scheduler, \
-            duv_##type##_stream(stream), \
-            await_cb \
+            duv_##type##_stream(stream) \
         ); \
     }
 DUV_STREAM_PUNS(PASSTHRU_INIT_DEF)

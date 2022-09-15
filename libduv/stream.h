@@ -130,7 +130,48 @@ struct stream_i {
     // idempotent
     void (*close)(stream_i*);
 
-    // returns the previous await_cb hook
+    /* Returns the previous await_cb hook, which the caller is responsible for
+       calling, though it is expected applications rarely call await_cb except
+       when it is guaranteed to return NULL (that is, the first await() call to
+       a stream).  Resources for a stream MUST NOT be assumed to be released
+       until the await_cb is called.  Some streams MAY acquire no resources and
+       may not require awaiting.  An application which is known to only
+       interact with such streams MAY choose to never await() the stream, but
+       an application which interacts with streams of unknown implementation
+       MUST ensure await() is called, either directly or by another stream.
+
+       Example 1: user awaits a tcp stream
+
+            stream_i *tcp = duv_passthru_init(...);
+            stream_must_await_first(tcp, tcp_await_cb)
+
+       Example 2: a tls wraps a passthru stream, user awaits only the tls
+
+           stream_i *tcp = duv_passthru_init(...);
+           // tls will await tcp, so user does not need to
+           stream_i *tls;
+           PROP(&e, duv_tcp_wrap_client(..., tcp, &tls) );
+           // but the user must await tls
+           stream_must_await_first(tls, tls_await_cb);
+
+       Example 3: fictional separator and combiner:
+
+           stream_i *tcp1 = passthru_wrap(...);
+           stream_i *tcp2 = passthru_wrap(...);
+           rstream_i *r1, *r2;
+           wstream_i *w1, *w2;
+           // sep1 will await tcp1 before r1 and w1 are both awaited
+           stream_separate(&sep1, sched, tcp1, &r1, &w1);
+           // sep2 will await tcp2 before r2 and w2 are both awaited
+           stream_separate(&sep2, sched, tcp2, &r2, &w2);
+           // combo will await r1 and w2 before combined is awaited
+           stream_i *combined = stream_combine(&combo, r1, w2);
+           // user must await the remaining streams: combined, r2, w1
+           stream_must_await_first(combined, combined_await_cb);
+           stream_must_await_first(r2, r2_await_cb);
+           stream_must_await_first(w1, w1_await_cb);
+
+    */
     stream_await_cb (*await)(stream_i*, stream_await_cb);
 };
 
@@ -204,6 +245,12 @@ struct wstream_i {
             LOG_FATAL("write on non-writable stream\n"); \
         } \
         LOG_FATAL("write failed but should not have\n"); \
+    } \
+} while(0)
+
+#define stream_must_await_first(s, cb) do { \
+    if((s)->await((s), (cb))){ \
+        LOG_FATAL("this stream has already been awaited\n"); \
     } \
 } while(0)
 

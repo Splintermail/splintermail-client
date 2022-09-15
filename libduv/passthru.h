@@ -62,8 +62,7 @@ DEF_CONTAINER_OF(duv_passthru_t, schedulable, schedulable_t);
 stream_i *duv_passthru_init(
     duv_passthru_t *p,
     duv_scheduler_t *scheduler,
-    uv_stream_t *uvstream,
-    stream_await_cb await_cb
+    uv_stream_t *uvstream
 );
 
 //// type-punning wrappers for any uv_stream_t subclass:
@@ -74,8 +73,7 @@ stream_i *duv_passthru_init(
     stream_i *duv_passthru_init_##type( \
         duv_passthru_t *p, \
         duv_scheduler_t *scheduler, \
-        uv_##type##_t *stream, \
-        stream_await_cb await_cb \
+        uv_##type##_t *stream \
     );
 DUV_STREAM_PUNS(PASSTHRU_INIT_DECL)
 #undef PASSTHRU_INIT_DECL

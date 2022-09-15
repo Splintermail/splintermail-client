@@ -41,6 +41,9 @@ closing:
         read->cb(&r->iface, read, read->buf, !r->iface.closed);
     }
 
+    // wait to be awaited
+    if(!r->await_cb) return;
+
     schedulable_cancel(&r->schedulable);
     r->iface.awaited = true;
     r->await_cb(&r->iface, E_OK);
@@ -95,24 +98,23 @@ static rstream_await_cb rstream_await(
     rstream_i *iface, rstream_await_cb await_cb
 ){
     dstr_rstream_t *r = CONTAINER_OF(iface, dstr_rstream_t, iface);
-
+    if(r->iface.awaited) return NULL;
     rstream_await_cb out = r->await_cb;
     r->await_cb = await_cb;
+    schedule(r);
     return out;
 }
 
 rstream_i *dstr_rstream(
     dstr_rstream_t *r,
     scheduler_i *scheduler,
-    const dstr_t dstr,
-    rstream_await_cb await_cb
+    const dstr_t dstr
 ){
     *r = (dstr_rstream_t){
         // preserve data
         .data = r->data,
         .base = dstr,
         .scheduler = scheduler,
-        .await_cb = await_cb,
         .iface = {
             .set_data = rstream_set_data,
             .get_data = rstream_get_data,

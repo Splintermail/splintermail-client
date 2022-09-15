@@ -226,9 +226,8 @@ static void connect_cb_phase6(duv_connect_t *c, bool ok, derr_t e){
     if(!ok) ORIG_GO(&E, E_VALUE, "connect_cb_phase6 failed", fail);
 
     // connection successful, wrap tcp in a passthru_t
-    stream = duv_passthru_init_tcp(
-        &passthru, &scheduler, &tcp, await_cb_phase6
-    );
+    stream = duv_passthru_init_tcp(&passthru, &scheduler, &tcp);
+    stream_must_await_first(stream, await_cb_phase6);
 
     // BEGIN PHASE 6: "delayed shutdown"
     for(unsigned int i = 0; i < MANY; i++){
@@ -635,9 +634,8 @@ static void connect_cb_phase1(duv_connect_t *c, bool ok, derr_t e){
     if(!ok) ORIG_GO(&E, E_VALUE, "connect_cb_phase1 failed", fail);
 
     // connection successful, wrap tcp in a passthru_t
-    stream = duv_passthru_init_tcp(
-        &passthru, &scheduler, &tcp, await_cb_phase5
-    );
+    stream = duv_passthru_init_tcp(&passthru, &scheduler, &tcp);
+    stream_must_await_first(stream, await_cb_phase5);
 
     // BEGIN PHASE 1: "many consecutive writes"
     for(unsigned int i = 0; i < MANY; i++){

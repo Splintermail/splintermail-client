@@ -27,6 +27,7 @@ typedef struct {
 
     // the stream we are encrypting
     stream_i *base;
+    stream_await_cb original_base_await_cb;
 
     SSL *ssl;
     BIO *rawout;

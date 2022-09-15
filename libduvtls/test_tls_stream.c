@@ -418,9 +418,7 @@ static void on_connect(duv_connect_t *c, bool ok, derr_t e){
     if(!ok) ORIG_GO(&E, E_VALUE, "on_connect not ok", fail);
 
     // connection successful, wrap tcp in a passthru_t
-    stream_i *base = duv_passthru_init_tcp(
-        &passthru, &scheduler, &tcp, await_cb
-    );
+    stream_i *base = duv_passthru_init_tcp(&passthru, &scheduler, &tcp);
 
     // wrap passthru in tls
     PROP_GO(&E,
@@ -433,6 +431,7 @@ static void on_connect(duv_connect_t *c, bool ok, derr_t e){
             &stream
         ),
     fail);
+    stream_must_await_first(stream, await_cb);
 
     // BEGIN PHASE 1: "many consecutive writes"
     for(unsigned int i = 0; i < MANY; i++){

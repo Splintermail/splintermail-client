@@ -152,9 +152,7 @@ static void on_connect(duv_connect_t *c, bool ok, derr_t e){
     if(!ok) return;
 
     // connection successful, wrap tcp in a passthru_t
-    stream_i *base = duv_passthru_init_tcp(
-        &passthru, &scheduler, &tcp, await_cb
-    );
+    stream_i *base = duv_passthru_init_tcp(&passthru, &scheduler, &tcp);
 
     dstr_t verify_name;
     DSTR_WRAP(verify_name, connect_name, strlen(connect_name), true);
@@ -170,6 +168,8 @@ static void on_connect(duv_connect_t *c, bool ok, derr_t e){
             &stream
         ),
     fail);
+
+    stream_must_await_first(stream, await_cb);
 
     // immediately shutdown
     // the handshake can't have failed yet but the shutdown will fail

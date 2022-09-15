@@ -15,6 +15,5 @@ DEF_CONTAINER_OF(dstr_rstream_t, schedulable, schedulable_t);
 rstream_i *dstr_rstream(
     dstr_rstream_t *r,
     scheduler_i *scheduler,
-    const dstr_t dstr,
-    rstream_await_cb await_cb
+    const dstr_t dstr
 );

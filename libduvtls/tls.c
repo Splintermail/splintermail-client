@@ -105,6 +105,9 @@ static void await_cb(stream_i *base, derr_t e){
     }else if(!closing(t)){
         TRACE_ORIG(&t->e, E_CONN, "base stream closed unexpectedly");
     }
+    if(t->original_base_await_cb){
+        t->original_base_await_cb(base, E_OK);
+    }
     advance_state(t);
 }
 
@@ -531,6 +534,9 @@ static void _advance_close(duv_tls_t *t){
     // is the base stream done yet?
     if(!t->base_awaited) return;
 
+    // wait to be awaited
+    if(!t->await_cb) return;
+
     // all done!
     t->iface.awaited = true;
     duv_tls_free_allocations(t);
@@ -664,11 +670,10 @@ static stream_await_cb duv_tls_await(
     stream_i *iface, stream_await_cb await_cb
 ){
     duv_tls_t *t = CONTAINER_OF(iface, duv_tls_t, iface);
-
+    if(t->iface.awaited) return NULL;
     stream_await_cb out = t->await_cb;
-
     t->await_cb = await_cb;
-
+    schedule(t);
     return out;
 }
 
@@ -713,7 +718,7 @@ static derr_t wrap(
             .close = duv_tls_close,
             .await = duv_tls_await,
         },
-        .await_cb = base->await(base, await_cb),
+        .original_base_await_cb = base->await(base, await_cb),
     };
 
     schedulable_prep(&t->schedulable, schedule_cb);
