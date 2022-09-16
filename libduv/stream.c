@@ -5,18 +5,18 @@
 
 
 bool stream_default_readable(stream_i *stream){
-    return !stream->awaited && !stream->closed && !stream->eof;
+    return !stream->awaited && !stream->canceled && !stream->eof;
 }
 bool rstream_default_readable(rstream_i *stream){
-    return !stream->awaited && !stream->closed && !stream->eof;
+    return !stream->awaited && !stream->canceled && !stream->eof;
 }
 
 bool stream_default_writable(stream_i *stream){
-    return !stream->awaited && !stream->closed && !stream->is_shutdown;
+    return !stream->awaited && !stream->canceled && !stream->is_shutdown;
 }
 
 bool wstream_default_writable(wstream_i *stream){
-    return !stream->awaited && !stream->closed && !stream->is_shutdown;
+    return !stream->awaited && !stream->canceled && !stream->is_shutdown;
 }
 
 void stream_read_prep(stream_read_t *req, dstr_t buf, stream_read_cb cb){

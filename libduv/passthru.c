@@ -56,8 +56,14 @@ static void close_cb(uv_handle_t *handle){
     advance_state(p);
 }
 
+// if we are planning on returning an error
+static bool failing(duv_passthru_t *p){
+    return p->iface.canceled || is_error(p->e);
+}
+
+// if we are planning on await_cb for any reason
 static bool closing(duv_passthru_t *p){
-    return p->iface.closed || is_error(p->e);
+    return failing(p) || (p->iface.eof && p->shutdown.responded);
 }
 
 static void scheduled(schedulable_t *s){
@@ -74,7 +80,7 @@ static void empty_reads(duv_passthru_t *p){
     while((link = link_list_pop_first(&p->reads))){
         stream_read_t *read = CONTAINER_OF(link, stream_read_t, link);
         read->buf.len = 0;
-        read->cb(&p->iface, read, read->buf, !closing(p));
+        read->cb(&p->iface, read, read->buf, !failing(p));
     }
 }
 
@@ -95,7 +101,7 @@ static void _do_read_cb(duv_passthru_t *p, ssize_t nread, const uv_buf_t *buf){
     p->allocated = false;
     (void)buf;
 
-    if(closing(p)) return;
+    if(failing(p)) return;
 
     if(nread < 1){
         switch(nread){
@@ -129,12 +135,12 @@ static void _do_read_cb(duv_passthru_t *p, ssize_t nread, const uv_buf_t *buf){
     read->buf.len = (size_t)nread;
     read->cb(&p->iface, read, read->buf, true);
     // detect if the user closed us, or if we have another read already
-    if(closing(p) || !link_list_isempty(&p->reads)) return;
+    if(failing(p) || !link_list_isempty(&p->reads)) return;
 
     // give any layer of stream a chance to call read again
     duv_scheduler_run(p->scheduler);
     // detect again
-    if(closing(p) || !link_list_isempty(&p->reads)) return;
+    if(failing(p) || !link_list_isempty(&p->reads)) return;
 
     // ok, time to call read_stop
     // libuv documents the return value may be ignored
@@ -155,7 +161,7 @@ static void write_cb(uv_write_t *uvw, int status){
     passthru_write_mem_t *mem = CONTAINER_OF(uvw, passthru_write_mem_t, uvw);
     stream_write_t *req = mem->req;
 
-    if(status < 0 && !closing(p)){
+    if(status < 0 && !failing(p)){
         ORIG_UV(&p->e, status);
     }
 
@@ -168,7 +174,7 @@ static void write_cb(uv_write_t *uvw, int status){
     link_list_append(&p->pool, &mem->link);
 
     // call user's cb
-    req->cb(&p->iface, req, !closing(p));
+    req->cb(&p->iface, req, !failing(p));
 
     // that returned mem may result in new writes
     advance_state(p);
@@ -177,14 +183,14 @@ static void write_cb(uv_write_t *uvw, int status){
 static void _shutdown_cb(uv_shutdown_t *shutdown_req, int status){
     duv_passthru_t *p = shutdown_req->data;
     p->shutdown.complete = true;
-    if(status < 0 && !closing(p)){
+    if(status < 0 && !failing(p)){
         ORIG_UV(&p->e, status);
     }
     advance_state(p);
 }
 
 static void advance_state(duv_passthru_t *p){
-    if(closing(p)) goto failing;
+    if(closing(p)) goto closing;
 
     // deal with pending writes
     while(!link_list_isempty(&p->writes.pending)
@@ -202,7 +208,7 @@ static void advance_state(duv_passthru_t *p){
             link_list_append(&p->pool, &mem->link);
             // return req to the front of pending
             link_list_prepend(&p->writes.pending, &req->link);
-            goto failing;
+            goto closing;
         }
         // submit write
         int ret = uv_write(&mem->uvw, p->uvstream, bufs, req->nbufs, write_cb);
@@ -213,9 +219,9 @@ static void advance_state(duv_passthru_t *p){
             link_list_append(&p->pool, &mem->link);
             // return req to the front of pending
             link_list_prepend(&p->writes.pending, &req->link);
-            // now we are in a failing state
+            // now we are in a closing state
             ORIG_UV(&p->e, ret);
-            goto failing;
+            goto closing;
         }
         // write was successful
         p->writes.inflight++;
@@ -229,20 +235,22 @@ static void advance_state(duv_passthru_t *p){
         p->shutdown.requested = true;
         int ret = uv_shutdown(&p->shutdown.req, p->uvstream, _shutdown_cb);
         if(ret < 0){
-            // now we are in a failing state
+            // now we are in a closing state
             ORIG_UV(&p->e, ret);
-            goto failing;
+            goto closing;
         }
     }
     if(!p->shutdown.complete) return;
-    if(!p->shutdown.responded){
-        p->shutdown.responded = true;
-        p->shutdown_cb(&p->iface);
-    }
+
+    p->shutdown.responded = true;
+    p->shutdown_cb(&p->iface);
+
+    // detect when closing has completed
+    if(closing(p)) goto closing;
 
     return;
 
-failing:
+closing:
     if(!p->close.requested){
         p->close.requested = true;
         duv_stream_close(p->uvstream, close_cb);
@@ -260,6 +268,9 @@ failing:
     link_t *link;
     while((link = link_list_pop_first(&p->writes.pending))){
         stream_write_t *req = CONTAINER_OF(link, stream_write_t, link);
+        /* we should not have accepted writes after a shutdown_cb, so this must
+           be an ok=false situation */
+        if(!failing(p)) LOG_FATAL("have pending writes but no error");
         req->cb(&p->iface, req, false);
     }
 
@@ -275,6 +286,9 @@ failing:
     if(!p->iface.awaited){
         passthru_free_allocations(p);
         schedulable_cancel(&p->schedulable);
+        if(!is_error(p->e) && p->iface.canceled){
+            p->e.type = E_CANCELED;
+        }
         p->iface.awaited = true;
         p->await_cb(&p->iface, p->e);
     }
@@ -297,7 +311,7 @@ static bool passthru_read(
 
     link_list_append(&p->reads, &read->link);
 
-    if(closing(p)){
+    if(failing(p)){
         // respond later
         schedule(p);
         return true;
@@ -326,9 +340,9 @@ static bool passthru_write(
 
     duv_passthru_t *p = CONTAINER_OF(iface, duv_passthru_t, iface);
 
-    if(closing(p)){
+    if(failing(p)){
         stream_write_init_nocopy(req, cb);
-        goto failing;
+        goto closing;
     }
 
     // if there are pending writes, then we can't go before them
@@ -337,7 +351,7 @@ static bool passthru_write(
         // queue this write for later
         IF_PROP(&p->e, stream_write_init(req, bufs, nbufs, cb) ){
             schedule(p);
-            goto failing;
+            goto closing;
         }
 
         link_list_append(&p->writes.pending, &req->link);
@@ -356,7 +370,7 @@ static bool passthru_write(
         // write failed, return write_mem_t to the list
         link_list_append(&p->pool, &mem->link);
         schedule(p);
-        goto failing;
+        goto closing;
     }
     int ret = uv_write(&mem->uvw, p->uvstream, uvbufs, nbufs, write_cb);
     if(ret < 0){
@@ -364,13 +378,13 @@ static bool passthru_write(
         link_list_append(&p->pool, &mem->link);
         ORIG_UV(&p->e, ret);
         schedule(p);
-        goto failing;
+        goto closing;
     }
     // write was successful
     p->writes.inflight++;
     return true;
 
-failing:
+closing:
     // we'll respond with our failing message, but do it in-order
     link_list_append(&p->writes.pending, &req->link);
     return true;
@@ -381,7 +395,7 @@ static void passthru_shutdown(stream_i *iface, stream_shutdown_cb shutdown_cb){
 
     p->iface.is_shutdown = true;
 
-    if(p->shutdown_cb || closing(p)) return;
+    if(p->shutdown_cb || failing(p)) return;
     p->shutdown_cb = shutdown_cb;
 
     // if possible, do the shutdown now to make the passthru transparent
@@ -394,9 +408,10 @@ static void passthru_shutdown(stream_i *iface, stream_shutdown_cb shutdown_cb){
     }
 }
 
-static void passthru_close(stream_i *iface){
+static void passthru_cancel(stream_i *iface){
     duv_passthru_t *p = CONTAINER_OF(iface, duv_passthru_t, iface);
-    p->iface.closed = true;
+    if(p->iface.canceled || p->iface.awaited) return;
+    p->iface.canceled = true;
     schedule(p);
 }
 
@@ -429,7 +444,7 @@ stream_i *duv_passthru_init(
             .read = passthru_read,
             .write = passthru_write,
             .shutdown = passthru_shutdown,
-            .close = passthru_close,
+            .cancel = passthru_cancel,
             .await = passthru_await,
         },
     };

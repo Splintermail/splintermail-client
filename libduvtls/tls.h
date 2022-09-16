@@ -66,7 +66,7 @@ typedef struct {
 
     bool handshake_done : 1;
     bool shutdown : 1;
-    bool base_closed : 1;
+    bool base_canceled : 1;
     bool base_awaited : 1;
 } duv_tls_t;
 DEF_CONTAINER_OF(duv_tls_t, iface, stream_i);

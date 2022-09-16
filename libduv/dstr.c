@@ -4,7 +4,7 @@ static void advance_state(dstr_rstream_t *r){
     link_t *link;
 
     if(r->iface.awaited) return;
-    if(r->iface.closed) goto closing;
+    if(r->iface.canceled) goto closing;
 
     while((link = link_list_pop_first(&r->reads))){
         rstream_read_t *read = CONTAINER_OF(link, rstream_read_t, link);
@@ -21,15 +21,17 @@ static void advance_state(dstr_rstream_t *r){
             }
             read->cb(&r->iface, read, read->buf, true);
             // detect if user closed us
-            if(r->iface.closed) goto closing;
+            if(r->iface.canceled) goto closing;
         }else{
             r->iface.eof = true;
             read->buf.len = 0;
             read->cb(&r->iface, read, read->buf, true);
             // detect if user closed us
-            if(r->iface.closed) goto closing;
+            if(r->iface.canceled) goto closing;
         }
     }
+
+    if(r->iface.eof) goto closing;
 
     return;
 
@@ -38,15 +40,17 @@ closing:
     while((link = link_list_pop_first(&r->reads))){
         rstream_read_t *read = CONTAINER_OF(link, rstream_read_t, link);
         read->buf.len = 0;
-        read->cb(&r->iface, read, read->buf, !r->iface.closed);
+        read->cb(&r->iface, read, read->buf, !r->iface.canceled);
     }
 
     // wait to be awaited
     if(!r->await_cb) return;
 
     schedulable_cancel(&r->schedulable);
+    derr_t e = E_OK;
+    if(r->iface.canceled) e.type = E_CANCELED;
     r->iface.awaited = true;
-    r->await_cb(&r->iface, E_OK);
+    r->await_cb(&r->iface, e);
 }
 
 static void schedule_cb(schedulable_t *schedulable){
@@ -76,11 +80,11 @@ static bool rstream_read(
     return true;
 }
 
-static void rstream_close(rstream_i *iface){
+static void rstream_cancel(rstream_i *iface){
     dstr_rstream_t *r = CONTAINER_OF(iface, dstr_rstream_t, iface);
 
-    if(r->iface.closed) return;
-    r->iface.closed = true;
+    if(r->iface.canceled) return;
+    r->iface.canceled = true;
     schedule(r);
 }
 
@@ -109,7 +113,7 @@ rstream_i *dstr_rstream(
             .wrapper_data = r->iface.wrapper_data,
             .readable = rstream_default_readable,
             .read = rstream_read,
-            .close = rstream_close,
+            .cancel = rstream_cancel,
             .await = rstream_await,
         },
     };

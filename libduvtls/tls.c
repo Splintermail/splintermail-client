@@ -28,8 +28,12 @@ static void schedule(duv_tls_t *t){
     t->scheduler->schedule(t->scheduler, &t->schedulable);
 }
 
+static bool failing(duv_tls_t *t){
+    return t->iface.canceled || is_error(t->e);
+}
+
 static bool closing(duv_tls_t *t){
-    return t->iface.closed || is_error(t->e);
+    return failing(t) || (t->iface.eof && t->shutdown);
 }
 
 static void empty_reads(duv_tls_t *t){
@@ -37,7 +41,7 @@ static void empty_reads(duv_tls_t *t){
     while((link = link_list_pop_first(&t->reads))){
         stream_read_t *read = CONTAINER_OF(link, stream_read_t, link);
         read->buf.len = 0;
-        read->cb(&t->iface, read, read->buf, !closing(t));
+        read->cb(&t->iface, read, read->buf, !failing(t));
     }
 }
 
@@ -94,17 +98,30 @@ static void write_cb(stream_i *base, stream_write_t *req, bool ok){
 static void await_cb(stream_i *base, derr_t e){
     duv_tls_t *t = base->wrapper_data;
     t->base_awaited = true;
-    // no point in base->close() anymore
-    t->base_closed = true;
-    if(is_error(e)){
-        if(is_error(t->e)){
-            DROP_VAR(&e);
-        }else{
-            TRACE_PROP_VAR(&t->e, &e);
-        }
-    }else if(!closing(t)){
-        TRACE_ORIG(&t->e, E_CONN, "base stream closed unexpectedly");
+
+    // prefer the first error if there is one
+    if(is_error(t->e)){
+        DROP_VAR(&e);
+        goto done;
     }
+
+    if(!is_error(e)){
+        // there's not a path where we do a bidirectional shutdown on base
+        ORIG_GO(&t->e, E_CONN, "base stream ended unexpectedly", done);
+    }
+
+    if(e.type == E_CANCELED){
+        DROP_VAR(&e);
+        // was this our doing?
+        if(t->base_canceled) goto done;
+        // nope, somebody else close it out from under us
+        ORIG_GO(&t->e, E_CONN, "base stream canceled unexpectedly", done);
+    }
+
+    // any other error
+    PROP_VAR_GO(&t->e, &e, done);
+
+done:
     if(t->original_base_await_cb){
         t->original_base_await_cb(base, E_OK);
     }
@@ -265,7 +282,7 @@ static bool next_nonempty_write_req(duv_tls_t *t, stream_write_t **out){
         link_remove(&req->link);
         req->cb(&t->iface, req, true);
         // detect if the user closed us
-        if(closing(t)){
+        if(failing(t)){
             *out = NULL;
             return false;
         }
@@ -298,7 +315,7 @@ static bool _advance_ssl_write(duv_tls_t *t){
         link_remove(&req->link);
         req->cb(&t->iface, req, true);
         // detect if the user closed us
-        if(closing(t)) return false;
+        if(failing(t)) return false;
         // see if there's another req we can continue working on
         if(!next_nonempty_write_req(t, &req)) return false;
         if(!req) return true;
@@ -375,7 +392,7 @@ static bool _advance_ssl_read(duv_tls_t *t){
                     t->iface.eof = true;
                     // user is not allowed to submit any more reads
                     empty_reads(t);
-                    return !closing(t);
+                    return !failing(t);
 
                 case SSL_ERROR_WANT_READ:
                     // we didn't have enough bytes to read
@@ -397,7 +414,7 @@ static bool _advance_ssl_read(duv_tls_t *t){
         read->buf.len = nread;
         read->cb(&t->iface, read, read->buf, true);
         // detect if user closed us
-        if(closing(t)) return false;
+        if(failing(t)) return false;
     }
 
     return true;
@@ -452,7 +469,7 @@ static bool _advance_ssl_shutdown(duv_tls_t *t){
 
     t->shutdown_cb(&t->iface);
     // detect if the user closed us
-    if(closing(t)) return false;
+    if(failing(t)) return false;
 
     return true;
 }
@@ -543,6 +560,9 @@ static void _advance_close(duv_tls_t *t){
     schedulable_cancel(&t->schedulable);
 
     // user callback must be last, it might free us
+    if(!is_error(t->e)){
+        if(t->iface.canceled) t->e.type = E_CANCELED;
+    }
     t->await_cb(&t->iface, t->e);
 }
 
@@ -558,13 +578,16 @@ static void advance_state(duv_tls_t *t){
     // request a read for rawin
     _advance_wire_reads(t);
 
+    // we may have completed a bidirection shutdown
+    if(closing(t)) goto closing;
+
     return;
 
 closing:
     // close the base if necessary
-    if(!t->base_closed){
-        t->base_closed = true;
-        t->base->close(t->base);
+    if(!t->base_awaited && !t->base_canceled){
+        t->base_canceled = true;
+        t->base->cancel(t->base);
     }
 
     // cancel any reads
@@ -574,6 +597,8 @@ closing:
     link_t *link;
     while((link = link_list_pop_first(&t->writes))){
         stream_write_t *req = CONTAINER_OF(link, stream_write_t, link);
+        // we must be in a failure condition to arrive here
+        if(!failing(t)) LOG_ERROR("writes pending but stream is not failing");
         req->cb(&t->iface, req, false);
     }
 
@@ -613,7 +638,7 @@ static bool duv_tls_write(
 
     duv_tls_t *t = CONTAINER_OF(iface, duv_tls_t, iface);
 
-    if(closing(t)){
+    if(failing(t)){
         // don't care about the actual write contents
         stream_write_init_nocopy(req, cb);
         goto done;
@@ -635,7 +660,7 @@ done:
 static void duv_tls_shutdown(stream_i *iface, stream_shutdown_cb cb){
     duv_tls_t *t = CONTAINER_OF(iface, duv_tls_t, iface);
 
-    if(closing(t) || t->iface.is_shutdown) return;
+    if(failing(t) || t->iface.is_shutdown) return;
 
     t->iface.is_shutdown = true;
     t->shutdown_cb = cb;
@@ -644,13 +669,12 @@ static void duv_tls_shutdown(stream_i *iface, stream_shutdown_cb cb){
     schedule(t);
 }
 
-static void duv_tls_close(stream_i *iface){
+static void duv_tls_cancel(stream_i *iface){
     duv_tls_t *t = CONTAINER_OF(iface, duv_tls_t, iface);
 
-    t->iface.closed = true;
+    t->iface.canceled = true;
 
-    // nothing to do if we're already closing
-    if(closing(t)) return;
+    if(t->iface.awaited) return;
 
     // never callback immediately
     schedule(t);
@@ -704,7 +728,7 @@ static derr_t wrap(
             .read = duv_tls_read,
             .write = duv_tls_write,
             .shutdown = duv_tls_shutdown,
-            .close = duv_tls_close,
+            .cancel = duv_tls_cancel,
             .await = duv_tls_await,
         },
         .original_base_await_cb = base->await(base, await_cb),

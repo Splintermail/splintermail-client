@@ -17,8 +17,7 @@ typedef struct stream_write_t stream_write_t;
 struct wstream_write_t;
 typedef struct wstream_write_t wstream_write_t;
 
-/* if ok==false, the stream is failing and an await_cb is on its way,
-   otherwise buf.len==0 means EOF */
+// if ok==false, the stream is failing and an await_cb with an error is coming
 typedef void (*stream_read_cb)(
     stream_i*, stream_read_t *req, dstr_t buf, bool ok
 );
@@ -26,7 +25,7 @@ typedef void (*rstream_read_cb)(
     rstream_i*, rstream_read_t *req, dstr_t buf, bool ok
 );
 
-// if ok==false, the stream is failing and an await_cb is on its way
+// if ok==false, the stream is failing and an await_cb with an error is coming
 typedef void (*stream_write_cb)(stream_i*, stream_write_t *req, bool ok);
 typedef void (*wstream_write_cb)(wstream_i*, wstream_write_t *req, bool ok);
 
@@ -34,7 +33,13 @@ typedef void (*wstream_write_cb)(wstream_i*, wstream_write_t *req, bool ok);
 typedef void (*stream_shutdown_cb)(stream_i*);
 typedef void (*wstream_shutdown_cb)(wstream_i*);
 
-// no error if close() was called and no underlying failure occurred
+/* await_cb is sent after:
+     - a stream hits an error (e MUST be an error)
+     - cancel() is called before the await_cb and no other error was
+       encountered (e MUST be E_CANCELED)
+     - an EOF read_cb and shutdown_cb have been sent, and the stream has
+       finished freeing any associated resources without any error or
+       cancelation (e MUST be empty) */
 typedef void (*stream_await_cb)(stream_i*, derr_t e);
 typedef void (*rstream_await_cb)(rstream_i*, derr_t e);
 typedef void (*wstream_await_cb)(wstream_i*, derr_t e);
@@ -84,13 +89,15 @@ struct wstream_write_t {
 };
 DEF_CONTAINER_OF(wstream_write_t, link, link_t);
 
+/* a bidirectional stream, which is normally closed automatically after the EOF
+   read_cb and the shutdown_cb, but which may be closed earlier by cancel */
 struct stream_i {
     // the owner of the stream owns the data
     void *data;
     // stream wrappers own the data for the stream they wrap
     void *wrapper_data;
-    // read-only: set after the first call to close
-    bool closed : 1;
+    // read-only: set after the first call to cancel
+    bool canceled : 1;
     // read-only: set after the first call to shutdown
     bool is_shutdown : 1;
     // read-only: set just before the first EOF read_cb
@@ -98,7 +105,7 @@ struct stream_i {
     // read-only: set just before the await_cb
     bool awaited : 1;
 
-    /* returns false if eof, closed, or awaited is set, or if the stream was
+    /* returns false if eof, canceled, or awaited is set, or if the stream was
        never readable */
     bool (*readable)(stream_i*);
 
@@ -128,8 +135,8 @@ struct stream_i {
     // idempotent, and callback is not called in error situations
     void (*shutdown)(stream_i*, stream_shutdown_cb);
 
-    // idempotent
-    void (*close)(stream_i*);
+    // idempotent, await_cb will have E_CANCELED if no other errors are hit
+    void (*cancel)(stream_i*);
 
     /* Returns the previous await_cb hook, which the caller is responsible for
        calling, though it is expected applications rarely call await_cb except
@@ -176,11 +183,12 @@ struct stream_i {
     stream_await_cb (*await)(stream_i*, stream_await_cb);
 };
 
-// just like stream_i but only for reading
+/* a read-only stream, which is normally closed automatically after the EOF
+   read_cb, but which may be closed earlier by cancel */
 struct rstream_i {
     void *data;
     void *wrapper_data;
-    bool closed : 1;
+    bool canceled : 1;
     bool eof : 1;
     bool awaited : 1;
     //
@@ -191,15 +199,16 @@ struct rstream_i {
         dstr_t buf,
         rstream_read_cb cb
     );
-    void (*close)(rstream_i*);
+    void (*cancel)(rstream_i*);
     rstream_await_cb (*await)(rstream_i*, rstream_await_cb);
 };
 
-// just like stream_i but only for writing
+/* a read-only stream, which is normally closed automatically after the
+   shutdown_cb, but which may be closed earlier by cancel() */
 struct wstream_i {
     void *data;
     void *wrapper_data;
-    bool closed : 1;
+    bool canceled : 1;
     bool is_shutdown : 1;
     bool awaited : 1;
     //
@@ -212,7 +221,7 @@ struct wstream_i {
         wstream_write_cb cb
     );
     void (*shutdown)(wstream_i*, wstream_shutdown_cb);
-    void (*close)(wstream_i*);
+    void (*cancel)(wstream_i*);
     wstream_await_cb (*await)(wstream_i*, wstream_await_cb);
 };
 
@@ -223,7 +232,7 @@ struct wstream_i {
     if(!(s)->read((s), (r), _buf, (cb))){ \
         if(!_buf.data || !_buf.size) LOG_FATAL("empty buf in read\n"); \
         if((s)->awaited) LOG_FATAL("read after await_cb\n"); \
-        if((s)->closed) LOG_FATAL("read after close\n"); \
+        if((s)->canceled) LOG_FATAL("read after cancel\n"); \
         if((s)->eof) LOG_FATAL("read after eof\n"); \
         if(!(s)->readable((s))){ \
             LOG_FATAL("read on non-readable stream\n"); \
@@ -240,7 +249,7 @@ struct wstream_i {
     if(!(s)->write((s), (w), _bufs, _nbufs, (cb))){ \
         if(stream_write_isempty(_bufs, _nbufs)) LOG_FATAL("empty write\n"); \
         if((s)->awaited) LOG_FATAL("write after await_cb\n"); \
-        if((s)->closed) LOG_FATAL("write after close\n"); \
+        if((s)->canceled) LOG_FATAL("write after cancel\n"); \
         if((s)->is_shutdown) LOG_FATAL("write after shutdown\n"); \
         if(!(s)->writable((s))){ \
             LOG_FATAL("write on non-writable stream\n"); \
@@ -267,14 +276,14 @@ bool wstream_default_writable(wstream_i *stream);
     buf.data \
     && buf.size \
     && !(s)->awaited \
-    && !(s)->closed \
+    && !(s)->canceled \
     && !(s)->eof \
 )
 
 #define stream_write_checks(s, bufs, nbufs)( \
     !stream_write_isempty(bufs, nbufs) \
     && !(s)->awaited \
-    && !(s)->closed \
+    && !(s)->canceled \
     && !(s)->is_shutdown \
 )
 

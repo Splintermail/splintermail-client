@@ -99,7 +99,7 @@ static void finish(void){
     finishing = true;
     duv_connect_cancel(&connector);
     duv_async_close(&async, noop_close_cb);
-    if(stream) stream->close(stream);
+    if(stream) stream->cancel(stream);
 }
 
 static void await_cb(stream_i *s, derr_t e){
@@ -109,7 +109,10 @@ static void await_cb(stream_i *s, derr_t e){
         finish();
         return;
     }
-    if(e.type != expect_verify_failure){
+    // in the no-verify case we cancel the stream
+    derr_type_t exp = expect_verify_failure;
+    if(exp == E_NONE) exp = E_CANCELED;
+    if(e.type != exp){
         if(is_error(e)){
             PROP_VAR_GO(&E, &e, fail);
         }else{
@@ -132,7 +135,7 @@ static void shutdown_cb(stream_i *s){
     (void)s;
 
     if(expect_verify_failure == E_NONE){
-        stream->close(stream);
+        stream->cancel(stream);
         return;
     }
 
@@ -146,10 +149,9 @@ fail:
     finish();
 }
 
-static void on_connect(duv_connect_t *c, bool ok, derr_t e){
+static void on_connect(duv_connect_t *c, derr_t e){
     (void)c;
     if(is_error(e)) PROP_VAR_GO(&E, &e, fail);
-    if(!ok) return;
 
     // connection successful, wrap tcp in a passthru_t
     stream_i *base = duv_passthru_init_tcp(&passthru, &scheduler, &tcp);
@@ -251,7 +253,7 @@ fail_thread:
 static derr_t test_tls_verify(void){
     derr_t e = E_OK;
 
-    PROP(&e, do_verify_test("127.0.0.1", "good", 0) );
+    PROP(&e, do_verify_test("127.0.0.1", "good", E_NONE) );
     PROP(&e, do_verify_test("localhost", "good", E_HOSTNAME) );
     PROP(&e, do_verify_test("127.0.0.1", "expired", E_CERTEXP) );
     PROP(&e, do_verify_test("127.0.0.1", "unknown", E_SELFSIGN) );

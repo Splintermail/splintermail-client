@@ -33,7 +33,6 @@ stream_read_t reads[MANY];
 stream_write_t writes[MANY];
 size_t nreads_launched = 0;
 size_t stream_nread = 0;
-size_t read_stop_time = 0;
 
 dthread_t thread;
 
@@ -43,6 +42,8 @@ dthread_t thread;
 // 3 = shutdown test
 // 4 = eof test
 // 5 = close test
+// (reconnect)
+// 6 = automatic await_cb
 
 static void *peer_thread(void *arg){
     (void)arg;
@@ -148,6 +149,29 @@ static void *peer_thread(void *arg){
     }
 
     // phase 5 is a noop for the peer, just close our end and shut down
+    connection_close(&conn);
+
+    // BEGIN PHASE 6 "automatic await_cb"
+    PROP_GO(&e, listener_accept(&listener, &conn), done);
+
+    // expect EOF
+    PROP_GO(&e, connection_read(&conn, &buf, &nread), done);
+    if(nread > 0){
+        TRACE(&E, "peer did not see eof!\n");
+        ORIG_GO(&E, E_VALUE, "peer bad eof", done);
+    }
+
+    // shutdown our side
+    lret = BIO_get_ssl(conn.bio, &ssl);
+    if(lret != 1){
+        trace_ssl_errors(&e);
+        ORIG_GO(&E, E_VALUE, "unable to access BIO ssl", done);
+    }
+    ret = SSL_shutdown(ssl);
+    if(ret != 1){
+        trace_ssl_errors(&e);
+        ORIG_GO(&e, E_SSL, "SSL_shutdown failed", done);
+    }
 
 done:
     connection_close(&conn);
@@ -175,23 +199,135 @@ static void finish(void){
     finishing = true;
     duv_connect_cancel(&connector);
     duv_async_close(&async, noop_close_cb);
-    if(stream) stream->close(stream);
+    if(stream) stream->cancel(stream);
 }
 
-static void await_cb(stream_i *s, derr_t e){
+static void await_cb_phase6(stream_i *s, derr_t e){
     (void)s;
-    if(is_error(e)) TRACE_PROP_VAR(&E, &e);
+    // prefer any existing error
     if(is_error(E)){
+        DROP_VAR(&e);
         finish();
         return;
     }
+    if(is_error(e)) TRACE_PROP_VAR(&E, &e);
+
+    if(!expect_exit){
+        ORIG_GO(&E, E_VALUE, "unexpected exit", fail);
+    }
+
+    // SUCCESS!
+    success = true;
+
+    finish();
+    return;
+
+fail:
+    finish();
+    return;
+}
+
+static void read_cb_phase6(
+    stream_i *s, stream_read_t *req, dstr_t buf, bool ok
+){
+    (void)s;
+    (void)req;
+
+    if(!ok) ORIG_GO(&E, E_VALUE, "read_cb_phase6 not ok", fail);
+    if(buf.len) ORIG_GO(&E, E_VALUE, "read_cb_phase6 got data", fail);
+
+    // now we expect await_cb since we are shutdown
+    expect_exit = true;
+
+    return;
+
+fail:
+    finish();
+}
+
+static void shutdown_cb_phase6(stream_i *s){
+    (void)s;
+    // trigger the eof read
+    dstr_t rbuf = (dstr_t){
+        .data = readmem, .len = 1, .size = 1, .fixed_size = true
+    };
+    stream_must_read(stream, &reads[0], rbuf, read_cb_phase6);
+}
+
+static void on_connect_phase6(duv_connect_t *c, derr_t e){
+    (void)c;
+    if(is_error(e)) PROP_VAR_GO(&E, &e, fail);
+
+    // connection successful, wrap tcp in a passthru_t
+    stream_i *base = duv_passthru_init_tcp(&passthru, &scheduler, &tcp);
+
+    // wrap passthru in tls
+    PROP_GO(&E,
+        duv_tls_wrap_client(
+            &tls,
+            client_ctx.ctx,
+            DSTR_LIT("127.0.0.1"),
+            &scheduler.iface,
+            base,
+            &stream
+        ),
+    fail);
+    stream_must_await_first(stream, await_cb_phase6);
+
+    // shut down our side
+    stream->shutdown(stream, shutdown_cb_phase6);
+
+    return;
+
+fail:
+    finish();
+}
+
+static void phase6(void){
+    // start connecting again
+    PROP_GO(&E,
+        duv_connect(
+            &loop,
+            &tcp,
+            0,
+            &connector,
+            on_connect_phase6,
+            "127.0.0.1",
+            "4810",
+            NULL
+        ),
+    fail);
+    return;
+
+fail:
+    finish();
+    return;
+}
+
+static void await_cb_phase5(stream_i *s, derr_t e){
+    (void)s;
+    // prefer any existing error
+    if(is_error(E)){
+        DROP_VAR(&e);
+        finish();
+        return;
+    }
+    // this test cancels the stream as part of the normal path
+    if(is_error(e) && e.type != E_CANCELED) TRACE_PROP_VAR(&E, &e);
     if(finishing) return;
     if(!stream->awaited){
-        ORIG_GO(&E, E_VALUE, "awaited not set in await_cb", fail);
+        ORIG_GO(&E, E_VALUE, "awaited not set in await_cb_phase5", fail);
     }
-    // SUCCESS!
-    success = expect_exit;
-    finish();
+    if(!expect_exit){
+        ORIG_GO(&E, E_VALUE, "unexpected exit", fail);
+    }
+
+    // reset globals
+    stream = NULL;
+    expect_exit = false;
+
+    phase6();
+
     return;
 
 fail:
@@ -230,8 +366,8 @@ fail:
 }
 
 static void phase5(void){
-    // close our stream
-    stream->close(stream);
+    // cancel our stream
+    stream->cancel(stream);
     expect_exit = true;
 
     if(stream->awaited){
@@ -255,8 +391,8 @@ static void phase5(void){
     // shutdown is harmelss
     stream->shutdown(stream, never_shutdown_cb);
 
-    // close is harmless
-    stream->close(stream);
+    // cancel is harmless
+    stream->cancel(stream);
 
     return;
 
@@ -264,14 +400,14 @@ fail:
     finish();
 }
 
-static void stream_read_eof(
+static void read_cb_phase4(
     stream_i *s, stream_read_t *req, dstr_t buf, bool ok
 ){
     (void)s;
     (void)req;
 
-    if(!ok) ORIG_GO(&E, E_VALUE, "stream_read_eof not ok", fail);
-    if(buf.len) ORIG_GO(&E, E_VALUE, "stream_read_eof got data", fail);
+    if(!ok) ORIG_GO(&E, E_VALUE, "read_cb_phase4 not ok", fail);
+    if(buf.len) ORIG_GO(&E, E_VALUE, "read_cb_phase4 got data", fail);
 
     // stream is no longer readable
     if(stream->readable(stream)){
@@ -306,7 +442,7 @@ static void shutdown_cb(stream_i *s){
     dstr_t rbuf = (dstr_t){
         .data = readmem, .len = 1, .size = 1, .fixed_size = true
     };
-    stream_must_read(stream, &reads[0], rbuf, stream_read_eof);
+    stream_must_read(stream, &reads[0], rbuf, read_cb_phase4);
 }
 
 static void phase3(void){
@@ -412,10 +548,9 @@ fail:
     finish();
 }
 
-static void on_connect(duv_connect_t *c, bool ok, derr_t e){
+static void on_connect_phase1(duv_connect_t *c, derr_t e){
     (void)c;
     if(is_error(e)) PROP_VAR_GO(&E, &e, fail);
-    if(!ok) ORIG_GO(&E, E_VALUE, "on_connect not ok", fail);
 
     // connection successful, wrap tcp in a passthru_t
     stream_i *base = duv_passthru_init_tcp(&passthru, &scheduler, &tcp);
@@ -431,7 +566,7 @@ static void on_connect(duv_connect_t *c, bool ok, derr_t e){
             &stream
         ),
     fail);
-    stream_must_await_first(stream, await_cb);
+    stream_must_await_first(stream, await_cb_phase5);
 
     // BEGIN PHASE 1: "many consecutive writes"
     for(unsigned int i = 0; i < MANY; i++){
@@ -467,7 +602,14 @@ static void async_cb(uv_async_t *async){
     // start connecting!
     PROP_GO(&E,
         duv_connect(
-            &loop, &tcp, 0, &connector, on_connect, "127.0.0.1", "4810", NULL
+            &loop,
+            &tcp,
+            0,
+            &connector,
+            on_connect_phase1,
+            "127.0.0.1",
+            "4810",
+            NULL
         ),
     fail);
     return;

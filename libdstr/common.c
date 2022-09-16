@@ -36,6 +36,7 @@ REGISTER_ERROR_TYPE(E_INTERNAL, "INTERNAL", "internal error or bug");
 REGISTER_ERROR_TYPE(E_FS, "FILESYSTEM", "error from filesystem");
 REGISTER_ERROR_TYPE(E_RESPONSE, "RESPONSE", "bad response from server");
 REGISTER_ERROR_TYPE(E_USERMSG, "USERMSG", "usermsg");
+REGISTER_ERROR_TYPE(E_CANCELED, "CANCELED", "operation canceled");
 
 // support for error type groups
 bool derr_type_group_matches(derr_type_t self, derr_type_t other){

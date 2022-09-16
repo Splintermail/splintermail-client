@@ -1,10 +1,10 @@
 struct duv_connect_t;
 typedef struct duv_connect_t duv_connect_t;
 
-// bool ok is false if there is an error or if the connection was canceled
-// tcp will always be connected if ok==true, or cleaned up if ok==false
-// error will be empty if connection was cancelled without any other error
-typedef void (*duv_connect_cb)(duv_connect_t*, bool ok, derr_t e);
+// tcp will always be connectd if e is E_OK, or cleaned up if is_error(e)
+/* e will be E_CANCELED if duv_connect_cancel() was called an no other error
+   was encountered */
+typedef void (*duv_connect_cb)(duv_connect_t*, derr_t e);
 
 // c.data may be set already
 // tcp MUST NOT be initialized

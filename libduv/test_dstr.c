@@ -12,7 +12,6 @@ DSTR_VAR(total_read, 32);
 static derr_t do_read_cb(dstr_t buf, bool ok, dstr_t exp){
     derr_t e = E_OK;
     if(!ok){
-        printf("read_cb not ok!\n");
         ORIG(&e, E_VALUE, "read_cb not ok!\n");
     }
     if(!dstr_eq(buf, exp)){
@@ -26,9 +25,9 @@ static derr_t do_read_cb(dstr_t buf, bool ok, dstr_t exp){
 static void read_cb_eof(
     rstream_i *r, rstream_read_t *read, dstr_t buf, bool ok
 ){
+    (void)r;
     (void)read;
     MERGE_CMD(&E, do_read_cb(buf, ok, DSTR_LIT("")), "read_cb");
-    r->close(r);
 }
 
 static void read_cb1(rstream_i *r, rstream_read_t *read, dstr_t buf, bool ok){
@@ -59,12 +58,23 @@ static void read_cb5(rstream_i *r, rstream_read_t *read, dstr_t buf, bool ok){
 static void read_cb7(rstream_i *r, rstream_read_t *read, dstr_t buf, bool ok){
     (void)read;
     MERGE_CMD(&E, do_read_cb(buf, ok, DSTR_LIT("hello ")), "read_cb");
-    r->close(r);
+    r->cancel(r);
 }
 
 static void await_cb(rstream_i *r, derr_t e){
     (void)r;
     MERGE_VAR(&E, &e, "await_cb");
+}
+
+static void await_cb7(rstream_i *r, derr_t e){
+    (void)r;
+    if(is_error(e)){
+        if(e.type != E_CANCELED){
+            MERGE_VAR(&E, &e, "await_cb");
+        }
+    }else{
+        TRACE_ORIG(&E, E_VALUE, "stream not E_CANCELED");
+    }
 }
 
 static derr_t test_rstream(void){
@@ -100,6 +110,7 @@ static derr_t test_rstream(void){
     // run to completion
     manual_scheduler_run(&scheduler);
     MERGE_VAR(&e, &E, "scheduler run");
+    CHECK(&e);
     if(!r->awaited) ORIG(&e, E_VALUE, "r not awaited");
 
     // start over
@@ -119,11 +130,12 @@ static derr_t test_rstream(void){
     // run to completion
     manual_scheduler_run(&scheduler);
     MERGE_VAR(&e, &E, "scheduler run");
+    CHECK(&e);
     if(!r->awaited) ORIG(&e, E_VALUE, "r not awaited");
 
     // start over
     r = dstr_rstream(&rstream_obj, &scheduler.iface, base);
-    stream_must_await_first(r, await_cb);
+    stream_must_await_first(r, await_cb7);
 
     // read half of the base, then close it early
     rstream_read_t read7;
@@ -133,6 +145,7 @@ static derr_t test_rstream(void){
     // run to completion
     manual_scheduler_run(&scheduler);
     MERGE_VAR(&e, &E, "scheduler run");
+    CHECK(&e);
     if(!r->awaited) ORIG(&e, E_VALUE, "r not awaited");
 
     return e;

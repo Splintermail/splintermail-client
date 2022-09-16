@@ -48,6 +48,7 @@ size_t streams_closed = 0;
 // 5 = close test
 // (start a new connection)
 // 6 = delayed shutdown
+// 7 = automatic await_cb
 
 static void noop_close_cb(uv_handle_t *handle){
     (void)handle;
@@ -62,7 +63,7 @@ static void finish(void){
         duv_tcp_close(&peer, noop_close_cb);
         peer_active = false;
     }
-    if(stream) stream->close(stream);
+    if(stream) stream->cancel(stream);
 }
 
 static void peer_alloc_cb(uv_handle_t *handle, size_t suggst, uv_buf_t *buf){
@@ -135,7 +136,7 @@ fail:
     finish();
 }
 
-static void await_cb_phase6(stream_i *s, derr_t e){
+static void await_cb_phase7(stream_i *s, derr_t e){
     (void)s;
     stream = NULL;
     if(is_error(E)){
@@ -161,6 +162,65 @@ fail:
     finish();
 }
 
+static void read_cb_phase7(
+    stream_i *s, stream_read_t *req, dstr_t buf, bool ok
+){
+    (void)s;
+    (void)req;
+
+    // we expect EOF situation
+    if(!ok){
+        ORIG_GO(&E, E_VALUE, "stream_read_eof error", fail);
+    }
+    if(buf.len != 0){
+        ORIG_GO(&E, E_VALUE, "stream_read_eof non-eof (%x)", fail, FD(&buf));
+    }
+
+    if(!stream->eof){
+        ORIG_GO(&E, E_VALUE, "stream->eof not set", fail);
+    }
+
+    // stream no longer readable
+    if(stream->readable(stream)){
+        ORIG_GO(&E, E_VALUE, "stream readable after eof", fail);
+    }
+
+    // nothing more required to see the await_cb
+    expect_await = true;
+
+    return;
+
+fail:
+    finish();
+}
+
+static void on_peer_shutdown_phase7(uv_shutdown_t *req, int status){
+    (void)req;
+    if(status < 0){
+        TRACE(&E, "on_peer_shutdown_phase7: %x\n", FUV(&status));
+        ORIG_GO(&E, E_VALUE, "on_peer_shutdown_phase7 error", fail);
+    }
+
+    // now make sure the passthru also sees read_stop
+    dstr_t buf = (dstr_t){.data = readmem, .size = 1, .fixed_size=true };
+    stream_must_read(stream, &reads[0], buf, read_cb_phase7);
+
+    return;
+
+fail:
+    finish();
+}
+
+static void phase7(void){
+    PROP_GO(&E,
+        duv_tcp_shutdown(&shutdown_req, &peer, on_peer_shutdown_phase7),
+    fail);
+    return;
+
+fail:
+    finish();
+}
+
 static void peer_read_cb_phase6(
     uv_stream_t *handle, ssize_t nread, const uv_buf_t *buf
 ){
@@ -175,9 +235,8 @@ static void peer_read_cb_phase6(
             ORIG_GO(&E, E_VALUE, "phase 6 eof not found", fail);
             return;
         }
-        // done!
-        stream->close(stream);
-        expect_await = true;
+        // BEGIN PHASE 6: "automatic await_cb"
+        phase7();
         return;
     }
 
@@ -220,14 +279,13 @@ fail:
     finish();
 }
 
-static void connect_cb_phase6(duv_connect_t *c, bool ok, derr_t e){
+static void connect_cb_phase6(duv_connect_t *c, derr_t e){
     (void)c;
     if(is_error(e)) PROP_VAR_GO(&E, &e, fail);
-    if(!ok) ORIG_GO(&E, E_VALUE, "connect_cb_phase6 failed", fail);
 
     // connection successful, wrap tcp in a passthru_t
     stream = duv_passthru_init_tcp(&passthru, &scheduler, &tcp);
-    stream_must_await_first(stream, await_cb_phase6);
+    stream_must_await_first(stream, await_cb_phase7);
 
     // BEGIN PHASE 6: "delayed shutdown"
     for(unsigned int i = 0; i < MANY; i++){
@@ -297,7 +355,13 @@ static void await_cb_phase5(stream_i *s, derr_t e){
         goto fail;
     }
     if(is_error(e)){
-        PROP_VAR_GO(&E, &e, fail);
+        if(e.type == E_CANCELED){
+            // what we expected
+        }else{
+            PROP_VAR_GO(&E, &e, fail);
+        }
+    }else{
+        ORIG_GO(&E, E_VALUE, "expected E_CANCELED but got E_OK", fail);
     }
     if(!stream->awaited){
         ORIG_GO(&E, E_VALUE, "stream not awaited in await_cb", fail);
@@ -320,8 +384,8 @@ fail:
 }
 
 static void phase5(void){
-    // close our stream
-    stream->close(stream);
+    // cancel our stream
+    stream->cancel(stream);
     expect_await = true;
 
     // stream is still active
@@ -343,8 +407,8 @@ static void phase5(void){
     // shutdown is harmless
     stream->shutdown(stream, shutdown_cb);
 
-    // additional close calls are harmless
-    stream->close(stream);
+    // additional cancel calls are harmless
+    stream->cancel(stream);
 
     return;
 
@@ -353,7 +417,8 @@ fail:
 }
 
 static void read_cb_phase4(
-    stream_i *s, stream_read_t *req, dstr_t buf, bool ok){
+    stream_i *s, stream_read_t *req, dstr_t buf, bool ok
+){
     (void)s;
     (void)req;
 
@@ -374,7 +439,7 @@ static void read_cb_phase4(
         ORIG_GO(&E, E_VALUE, "stream readable after eof", fail);
     }
 
-    // read aborts
+    // read fails
     dstr_t rbuf = (dstr_t){.data = readmem, .size = 1, .fixed_size=true };
     if(stream->read(stream, &reads[0], rbuf, never_read_cb)){
         ORIG_GO(&E, E_VALUE, "stream->read succeeded after eof", fail);
@@ -388,11 +453,11 @@ fail:
     finish();
 }
 
-static void on_peer_shutdown(uv_shutdown_t *req, int status){
+static void on_peer_shutdown_phase4(uv_shutdown_t *req, int status){
     (void)req;
     if(status < 0){
-        TRACE(&E, "on_peer_shutdown: %x\n", FUV(&status));
-        ORIG_GO(&E, uv_err_type(status), "on_peer_shutdown error", fail);
+        TRACE(&E, "on_peer_shutdown_phase4: %x\n", FUV(&status));
+        ORIG_GO(&E, E_VALUE, "on_peer_shutdown_phase4 error", fail);
     }
 
     // now make sure the passthru also sees read_stop
@@ -414,7 +479,7 @@ static void peer_read_eof(uv_stream_t *s, ssize_t nread, const uv_buf_t *buf){
     if(nread == UV_EOF){
         // BEGIN PHASE 4 "eof test"
         PROP_GO(&E,
-            duv_tcp_shutdown(&shutdown_req, &peer, on_peer_shutdown),
+            duv_tcp_shutdown(&shutdown_req, &peer, on_peer_shutdown_phase4),
         fail);
         return;
     }
@@ -628,10 +693,9 @@ fail:
     finish();
 }
 
-static void connect_cb_phase1(duv_connect_t *c, bool ok, derr_t e){
+static void connect_cb_phase1(duv_connect_t *c, derr_t e){
     (void)c;
     if(is_error(e)) PROP_VAR_GO(&E, &e, fail);
-    if(!ok) ORIG_GO(&E, E_VALUE, "connect_cb_phase1 failed", fail);
 
     // connection successful, wrap tcp in a passthru_t
     stream = duv_passthru_init_tcp(&passthru, &scheduler, &tcp);

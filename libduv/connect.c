@@ -16,8 +16,10 @@ static void finish(duv_connect_t *c, derr_t e){
     free(c->service);
     free(c->node);
     c->done = true;
-    bool ok = !c->canceling && !is_error(e);
-    c->cb(c, ok, e);
+    if(!is_error(e) && c->canceling){
+        e.type = E_CANCELED;
+    }
+    c->cb(c, e);
 }
 
 static void gai_cb(uv_getaddrinfo_t *req, int status, struct addrinfo *res){
