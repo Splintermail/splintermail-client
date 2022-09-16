@@ -11,5 +11,6 @@
 #include "stream.h"
 #include "passthru.h"
 #include "dstr.h"
+#include "reader.h"
 
 #endif // UVTHREAD_T

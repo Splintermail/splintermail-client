@@ -17,6 +17,7 @@ macro(add_duv asan)
         scheduler.c
         passthru.c
         dstr.c
+        reader.c
     )
     target_include_directories("duv${asan}" PUBLIC "${LIBUV_INCLUDE}")
     target_link_libraries("duv${asan}" PUBLIC "dstr${asan}" "${LIBUV_LIB}")
@@ -71,4 +72,10 @@ if(BUILD_TESTS)
     default_compile_options(test_dstr TRUE)
     define_file_logname_for_target(test_dstr)
     add_test(NAME "do_test_dstr" COMMAND "./test_dstr")
+
+    add_executable(test_reader test_reader.c)
+    target_link_libraries(test_reader PUBLIC duv)
+    default_compile_options(test_reader TRUE)
+    define_file_logname_for_target(test_reader)
+    add_test(NAME "do_test_reader" COMMAND "./test_reader")
 endif()
