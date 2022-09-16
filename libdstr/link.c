@@ -51,6 +51,21 @@ void link_list_append_list(link_t *recip, link_t *donor){
     link_init(donor);
 }
 
+void link_list_prepend_list(link_t *recip, link_t *donor){
+    if(link_list_isempty(donor)) return;
+
+    link_t *donor_first = donor->next;
+    link_t *donor_last = donor->prev;
+
+    recip->next->prev = donor_last;
+    donor_last->next = recip->next;
+
+    recip->next = donor_first;
+    donor_first->prev = recip;
+
+    link_init(donor);
+}
+
 link_t *link_list_pop_first(link_t *head){
     // safe to call on a zeroized link
     if(head->next == NULL) return NULL;
@@ -73,6 +88,46 @@ link_t *link_list_pop_last(link_t *head){
     }
     link_remove(last);
     return last;
+}
+
+bool _link_list_pop_first_n(_link_io_t *io, size_t nio){
+    /* rather than check every list then pop every list, which would break down
+       if any head were ever represented twice, do each pop as we go */
+    for(size_t i = 0; i < nio; i++){
+        link_t *link = link_list_pop_first(io[i].head);
+        if(!link){
+            // zeroize reamining outputs
+            for(size_t j = i; j < nio; j++) *io[j].out = NULL;
+            if(i == 0) return false;
+            // put things back in reverse order
+            size_t j = i-1;
+            do {
+                link_list_prepend(io[j].head, *io[j].out);
+                *io[j].out = NULL;
+            } while(j-- > 0);
+            return false;
+        }
+        *io[i].out = link;
+    }
+    return true;
+}
+
+bool _link_list_pop_last_n(_link_io_t *io, size_t nio){
+    for(size_t i = 0; i < nio; i++){
+        link_t *link = link_list_pop_last(io[i].head);
+        if(!link){
+            for(size_t j = i; j < nio; j++) *io[j].out = NULL;
+            if(i == 0) return false;
+            size_t j = i-1;
+            do {
+                link_list_append(io[j].head, *io[j].out);
+                *io[j].out = NULL;
+            } while(j-- > 0);
+            return false;
+        }
+        *io[i].out = link;
+    }
+    return true;
 }
 
 void link_remove(link_t *link){

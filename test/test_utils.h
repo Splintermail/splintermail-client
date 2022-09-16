@@ -247,4 +247,52 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
     } \
 } while (0)
 
+#define EXPECT_NULL(e, name, got) do { \
+    void *_got = (got); \
+    if(_got != NULL){ \
+        ORIG(e, \
+            E_VALUE, \
+            "expected %x == NULL but got %x\n", \
+            FS(name), \
+            FP(_got) \
+        ); \
+    } \
+} while (0)
+
+#define EXPECT_NULL_GO(e, name, got, label) do { \
+    void *_got = (got); \
+    if(_got != NULL){ \
+        ORIG(e, \
+            E_VALUE, \
+            "expected %x == NULL but got %x\n", \
+            label, \
+            FS(name), \
+            FP(_got) \
+        ); \
+    } \
+} while (0)
+
+#define EXPECT_NOT_NULL(e, name, got) do { \
+    void *_got = (got); \
+    if(_got == NULL){ \
+        ORIG(e, \
+            E_VALUE, \
+            "expected %x != NULL\n", \
+            FS(name) \
+        ); \
+    } \
+} while (0)
+
+#define EXPECT_NOT_NULL_GO(e, name, got, label) do { \
+    void *_got = (got); \
+    if(_got == NULL){ \
+        ORIG(e, \
+            E_VALUE, \
+            "expected %x != NULL\n", \
+            label, \
+            FS(name) \
+        ); \
+    } \
+} while (0)
+
 #endif // TEST_UTILS_H

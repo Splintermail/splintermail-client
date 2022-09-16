@@ -15,10 +15,32 @@ void link_list_append(link_t *head, link_t *link);
 
 // empty the donor list into the recip list
 void link_list_append_list(link_t *recip, link_t *donor);
+void link_list_prepend_list(link_t *recip, link_t *donor);
 
 // pop a single element, or return NULL if there is none
 link_t *link_list_pop_first(link_t *head);
 link_t *link_list_pop_last(link_t *head);
+
+typedef struct {
+    link_t *head;
+    link_t **out;
+} _link_io_t;
+
+// example:  ok = link_list_pop_first_n(LINK_IO(&l1, &o1), LINK_IO(&l2, &o2));
+// note: it is supported for a single list to appear multiple times in io
+bool _link_list_pop_first_n(_link_io_t *io, size_t nio);
+bool _link_list_pop_last_n(_link_io_t *io, size_t nio);
+#define link_list_pop_first_n(...) \
+    _link_list_pop_first_n( \
+        (_link_io_t[]){__VA_ARGS__}, \
+        sizeof((_link_io_t[]){__VA_ARGS__})/sizeof(_link_io_t) \
+    )
+#define link_list_pop_last_n(...) \
+    _link_list_pop_last_n( \
+        (_link_io_t[]){__VA_ARGS__}, \
+        sizeof((_link_io_t[]){__VA_ARGS__})/sizeof(_link_io_t) \
+    )
+#define LINK_IO(_head, _out) (_link_io_t){ .head = (_head), .out = (_out) }
 
 void link_remove(link_t *link);
 
