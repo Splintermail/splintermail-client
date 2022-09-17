@@ -18,6 +18,7 @@ macro(add_duv asan)
         passthru.c
         dstr.c
         reader.c
+        concat.c
     )
     target_include_directories("duv${asan}" PUBLIC "${LIBUV_INCLUDE}")
     target_link_libraries("duv${asan}" PUBLIC "dstr${asan}" "${LIBUV_LIB}")
@@ -78,4 +79,10 @@ if(BUILD_TESTS)
     default_compile_options(test_reader TRUE)
     define_file_logname_for_target(test_reader)
     add_test(NAME "do_test_reader" COMMAND "./test_reader")
+
+    add_executable(test_concat test_concat.c)
+    target_link_libraries(test_concat PUBLIC duv)
+    default_compile_options(test_concat TRUE)
+    define_file_logname_for_target(test_concat)
+    add_test(NAME "do_test_concat" COMMAND "./test_concat")
 endif()

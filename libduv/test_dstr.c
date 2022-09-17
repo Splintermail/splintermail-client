@@ -3,7 +3,6 @@
 
 #include "test/test_utils.h"
 
-manual_scheduler_t scheduler;
 rstream_i *r;
 dstr_rstream_t rstream_obj;
 derr_t E = E_OK;
@@ -80,14 +79,15 @@ static void await_cb7(rstream_i *r, derr_t e){
 static derr_t test_rstream(void){
     derr_t e = E_OK;
 
-    manual_scheduler_prep(&scheduler);
+    manual_scheduler_t scheduler;
+    scheduler_i *sched = manual_scheduler(&scheduler);
 
     DSTR_STATIC(base, "hello world!");
 
-    r = dstr_rstream(&rstream_obj, &scheduler.iface, base);
+    r = dstr_rstream(&rstream_obj, sched, base);
     stream_must_await_first(r, await_cb);
 
-    // submit a write that will be filled
+    // submit a read that will be filled
     rstream_read_t read1;
     DSTR_VAR(buf1, 1);
     stream_must_read(r, &read1, buf1, read_cb1);
@@ -114,10 +114,10 @@ static derr_t test_rstream(void){
     if(!r->awaited) ORIG(&e, E_VALUE, "r not awaited");
 
     // start over
-    r = dstr_rstream(&rstream_obj, &scheduler.iface, base);
+    r = dstr_rstream(&rstream_obj, sched, base);
     stream_must_await_first(r, await_cb);
 
-    // submit a write that will be filled exactly
+    // submit a read that will be filled exactly
     rstream_read_t read5;
     DSTR_VAR(buf5, 12);
     stream_must_read(r, &read5, buf5, read_cb5);
@@ -134,7 +134,7 @@ static derr_t test_rstream(void){
     if(!r->awaited) ORIG(&e, E_VALUE, "r not awaited");
 
     // start over
-    r = dstr_rstream(&rstream_obj, &scheduler.iface, base);
+    r = dstr_rstream(&rstream_obj, sched, base);
     stream_must_await_first(r, await_cb7);
 
     // read half of the base, then close it early

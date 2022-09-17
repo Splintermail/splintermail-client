@@ -46,11 +46,11 @@ static derr_t test_reader(void){
     derr_t e = E_OK;
 
     manual_scheduler_t scheduler;
-    manual_scheduler_prep(&scheduler);
+    scheduler_i *sched = manual_scheduler(&scheduler);
 
     DSTR_STATIC(base, "hello world!");
 
-    rstream_i *r = dstr_rstream(&dstr_r, &scheduler.iface, base);
+    rstream_i *r = dstr_rstream(&dstr_r, sched, base);
 
     DSTR_VAR(bigbuf, 64);
     exp_ = base;
@@ -72,7 +72,7 @@ static derr_t test_reader(void){
     PROP(&e, dstr_new(&heapbuf, 4) );
     success = false;
     exp_ = base;
-    r = dstr_rstream(&dstr_r, &scheduler.iface, base);
+    r = dstr_rstream(&dstr_r, sched, base);
     reader.data = &heapbuf;
     stream_read_all(&reader, r, &heapbuf, reader_cb_ok);
     // run to completion
@@ -85,7 +85,7 @@ static derr_t test_reader(void){
 
     // again, but with cancelation
     success = false;
-    r = dstr_rstream(&dstr_r, &scheduler.iface, base);
+    r = dstr_rstream(&dstr_r, sched, base);
     stream_read_all(&reader, r, &bigbuf, reader_cb_canceled);
     stream_reader_cancel(&reader);
     // run to completion
@@ -97,7 +97,7 @@ static derr_t test_reader(void){
 
     // again, but break the underlying stream
     success = false;
-    r = dstr_rstream(&dstr_r, &scheduler.iface, base);
+    r = dstr_rstream(&dstr_r, sched, base);
     stream_read_all(&reader, r, &bigbuf, reader_cb_failed);
     r->cancel(r);
     // run to completion

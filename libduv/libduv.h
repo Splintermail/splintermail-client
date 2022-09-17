@@ -12,5 +12,6 @@
 #include "passthru.h"
 #include "dstr.h"
 #include "reader.h"
+#include "concat.h"
 
 #endif // UVTHREAD_T

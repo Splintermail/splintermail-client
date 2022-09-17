@@ -61,5 +61,5 @@ typedef struct {
 } manual_scheduler_t;
 DEF_CONTAINER_OF(manual_scheduler_t, iface, scheduler_i);
 
-void manual_scheduler_prep(manual_scheduler_t *s);
+scheduler_i *manual_scheduler(manual_scheduler_t *s);
 void manual_scheduler_run(manual_scheduler_t *s);

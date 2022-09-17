@@ -118,11 +118,12 @@ static void manual_schedule(scheduler_i *iface, schedulable_t *x){
     schedule(&s->scheduled, x);
 }
 
-void manual_scheduler_prep(manual_scheduler_t *s){
+scheduler_i *manual_scheduler(manual_scheduler_t *s){
     *s = (manual_scheduler_t){
         .iface = { .schedule = manual_schedule },
     };
     link_init(&s->scheduled);
+    return &s->iface;
 }
 
 void manual_scheduler_run(manual_scheduler_t *s){
