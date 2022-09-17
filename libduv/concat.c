@@ -66,20 +66,15 @@ static void read_cb(
 ){
     concat_base_wrapper_t *w = base->wrapper_data;
     rstream_concat_t *c = w->c;
-    concat_mem_t *mem = read->data;
-    read->data = mem->original_data;
-    read->cb = mem->original_cb;
-    link_list_append(&c->pool, &mem->link);
-    if(!c->inflight) LOG_FATAL("mismatched read_cb");
-    c->inflight--;
+    read->cb = c->original_read_cb;
+    c->returned = read;
+    c->reading = false;
 
     if(!ok){
         c->base_failing = true;
     }else if(buf.len == 0){
         c->base_eof = true;
     }
-
-    link_list_append(&c->returned, &read->link);
 
     advance_state(c);
 }
@@ -90,51 +85,38 @@ static void advance_state(rstream_concat_t *c){
 
     // detect base_eof
     if(c->base_eof){
-        // await all in-flight reads
-        if(c->inflight) return;
         // done with this base, it will get awaited automatically
         c->base_idx++;
         c->base_eof = false;
-        // put all of returned in front of all of pending
-        link_list_prepend_list(&c->pending, &c->returned);
+        // put our returned read back in front of pending
+        link_list_prepend(&c->reads, &c->returned->link);
+        c->returned = NULL;
     }
 
     // detect out-of-bases
     if(c->base_idx == c->nbases){
         c->iface.eof = true;
-        drain_reads(c, &c->pending);
+        drain_reads(c, &c->reads);
         goto closing;
     }
 
     // respond to successful reads
-    if((link = link_list_pop_first(&c->returned))){
-        // there should never be more than one at this point
-        if(!link_list_isempty(&c->returned)){
-            LOG_FATAL("multiple returned reads in one advance_state call\n");
-        }
-        rstream_read_t *read = CONTAINER_OF(link, rstream_read_t, link);
+    if(c->returned){
+        rstream_read_t *read = c->returned;
+        c->returned = NULL;
         read->cb(&c->iface, read, read->buf, true);
         // check if user closed us
         if(closing(c)) goto closing;
     }
 
-    // combine read requests and mem pairs into reads to the base
-    link_t *rlink, *plink;
-    while(
-        link_list_pop_first_n(
-            LINK_IO(&c->pending, &rlink),
-            LINK_IO(&c->pool, &plink)
-        )
-    ){
-        rstream_read_t *read = CONTAINER_OF(rlink, rstream_read_t, link);
-        concat_mem_t *mem = CONTAINER_OF(plink, concat_mem_t, link);
+    // maybe send out a read
+    if(!c->reading && (link = link_list_pop_first(&c->reads))){
+        rstream_read_t *read = CONTAINER_OF(link, rstream_read_t, link);
         // submit to the current base
-        mem->original_data = read->data;
-        mem->original_cb = read->cb;
-        read->data = mem;
+        c->original_read_cb = read->cb;
         rstream_i *s = c->bases[c->base_idx];
-        c->inflight++;
         stream_must_read(s, read, read->buf, read_cb);
+        c->reading = true;
     }
 
     return;
@@ -143,10 +125,13 @@ closing:
     if(c->iface.awaited) return;
 
     if(failing(c)) cancel_bases(c);
-    // await all in-flight reads
-    if(c->inflight) return;
-    drain_reads(c, &c->returned);
-    drain_reads(c, &c->pending);
+    // await the in-flight read
+    if(c->reading) return;
+    if(c->returned){
+        link_list_prepend_list(&c->reads, &c->returned->link);
+        c->returned = NULL;
+    }
+    drain_reads(c, &c->reads);
 
     // await all bases
     if(c->nawaited < c->nbases) return;
@@ -171,7 +156,7 @@ static bool concat_read(
     rstream_concat_t *c = CONTAINER_OF(iface, rstream_concat_t, iface);
 
     rstream_read_prep(read, buf, cb);
-    link_list_append(&c->pending, &read->link);
+    link_list_append(&c->reads, &read->link);
 
     schedule(c);
 
@@ -222,14 +207,8 @@ rstream_i *_rstream_concat(
         .scheduler = scheduler,
         .nbases = nbases,
     };
-    link_init(&c->pending);
-    link_init(&c->returned);
-    link_init(&c->pool);
+    link_init(&c->reads);
     schedulable_prep(&c->schedulable, schedule_cb);
-    for(size_t i = 0; i < sizeof(c->mem)/sizeof(*c->mem); i++){
-        link_init(&c->mem[i].link);
-        link_list_append(&c->pool, &c->mem[i].link);
-    }
     for(size_t i = 0; i < nbases; i++){
         c->bases[i] = bases[i];
         c->base_wrappers[i] = (concat_base_wrapper_t){ .idx = i, .c = c };

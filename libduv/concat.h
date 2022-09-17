@@ -2,13 +2,6 @@ struct rstream_concat_t;
 typedef struct rstream_concat_t rstream_concat_t;
 
 typedef struct {
-    void *original_data;
-    rstream_read_cb original_cb;
-    link_t link;
-} concat_mem_t;
-DEF_CONTAINER_OF(concat_mem_t, link, link_t)
-
-typedef struct {
     size_t idx;
     rstream_concat_t *c;
 } concat_base_wrapper_t;
@@ -31,14 +24,12 @@ struct rstream_concat_t {
     size_t base_idx;
     bool base_eof : 1;
     bool base_failing : 1;
+    bool reading : 1;
 
-
-    // upper limit of 4 inflight reads at a time
-    link_t pending;
-    link_t returned;
-    link_t pool;
-    size_t inflight;
-    concat_mem_t mem[4];
+    link_t reads;
+    // one read in flight at a time
+    rstream_read_cb original_read_cb;
+    rstream_read_t *returned;
 };
 DEF_CONTAINER_OF(rstream_concat_t, iface, rstream_i)
 DEF_CONTAINER_OF(rstream_concat_t, schedulable, schedulable_t)
