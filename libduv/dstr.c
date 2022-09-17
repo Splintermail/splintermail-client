@@ -10,7 +10,9 @@ static void advance_state(dstr_rstream_t *r){
         rstream_read_t *read = CONTAINER_OF(link, rstream_read_t, link);
         if(r->nread < r->base.len){
             // pass as much as possible
-            dstr_t sub = dstr_sub2(r->base, r->nread, read->buf.size);
+            dstr_t sub = dstr_sub2(
+                r->base, r->nread, r->nread + read->buf.size
+            );
             r->nread += sub.len;
             read->buf.len = 0;
             derr_type_t etype = dstr_append_quiet(&read->buf, &sub);
