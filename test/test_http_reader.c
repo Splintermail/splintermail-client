@@ -31,37 +31,51 @@ static derr_t test_http_reader(void){
         "Transfer-Encoding: chunked\r\n"
         "Content-Type: text/html; charset=UTF-8\r\n"
         "\r\n"
+        "body bytes\r\n"
     );
 
-    http_reader_t r;
-    http_reader_init(&r, &resp);
+    size_t eoh_len = resp.len - strlen("body bytes\r\n");
 
-    size_t i = 0;
-    while(true){
-        http_pair_t hdr;
-        int status;
-        PROP(&e, http_read(&r, &hdr, &status) );
-        switch(status){
-            case 0: // incomplete read
-                ORIG(&e, E_VALUE, "incomplete read\n");
+    // read every sublength between 0 and resp.len
+    size_t i;
+    for(size_t l = 0; l <= resp.len; l++){
+        dstr_t sub = dstr_sub2(resp, 0, l);
 
-            case 1: // found a header
-                LOG_INFO("READ %x: %x.\n", FD(&hdr.key), FD(&hdr.value));
-                i++;
-                break;
+        // LOG_INFO("sub = %x\n", FD_DBG(&sub));
 
-            case 2:
-                // end of headers
-                goto eoh;
+        http_reader_t r;
+        http_reader_init(&r, &sub);
 
-            default:
-                ORIG(&e, E_VALUE, "bad status value\n");
+        i = 0;
+        while(true){
+            http_pair_t hdr;
+            int status;
+            PROP(&e, http_read(&r, &hdr, &status) );
+            switch(status){
+                case -2: // incomplete read
+                    // expected when l < resp.len
+                    ASSERT(l < resp.len);
+                    goto next_sublength;
+
+                case -1: // found a header
+                    ASSERT(r.code == 200);
+                    ASSERT(dstr_cmp2(r.reason, DSTR_LIT("OK")) == 0);
+                    // LOG_INFO("READ %x: %x.\n", FD(&hdr.key), FD(&hdr.value));
+                    i++;
+                    break;
+
+                default: // end of headers
+                    // expected any time l >= eoh_len
+                    EXPECT_U_GE(&e, "l", l, eoh_len);
+                    EXPECT_U(&e, "status", (size_t)status, eoh_len);
+                    EXPECT_U(&e, "header count", i, 15);
+                    goto next_sublength;
+            }
         }
+
+    next_sublength:
+        continue;
     }
-eoh:
-    ASSERT(r.code == 200);
-    ASSERT(dstr_cmp2(r.reason, DSTR_LIT("OK")) == 0);
-    ASSERT(i == 15);
 
     return e;
 }

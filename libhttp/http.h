@@ -60,7 +60,8 @@ typedef struct {
 void http_reader_init(http_reader_t *r, const dstr_t *buf);
 
 // read the next header in the http message.
-// status is one of 0="incomplete read", 1="header found", 2="no more headers"
+/* status is one of -2="incomplete read", -1="header found", or the index of
+   the first byte of the body */
 derr_t http_read(http_reader_t *r, http_pair_t *pair, int *status);
 
 typedef enum {

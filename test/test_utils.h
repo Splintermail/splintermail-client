@@ -92,10 +92,35 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
     uintmax_t _got = (got); \
     uintmax_t _exp = (exp); \
     if(_got != (uintmax_t)_exp){ \
-        TRACE(e, \
-            "expected %x == %x but got %x\n", FS(name), FU(_exp),  FU(_got) \
+        ORIG(e, \
+            E_VALUE, \
+            "expected %x == %x but got %x", \
+            FS(name), FU(_exp),  FU(_got) \
         ); \
-        ORIG(e, E_VALUE, "wrong value"); \
+    } \
+} while(0)
+
+#define EXPECT_U_GT(e, name, got, exp) do { \
+    uintmax_t _got = (got); \
+    uintmax_t _exp = (exp); \
+    if(_got <= (uintmax_t)_exp){ \
+        ORIG(e, \
+            E_VALUE, \
+            "expected %x > %x but got %x", \
+            FS(name), FU(_exp),  FU(_got) \
+        ); \
+    } \
+} while(0)
+
+#define EXPECT_U_GE(e, name, got, exp) do { \
+    uintmax_t _got = (got); \
+    uintmax_t _exp = (exp); \
+    if(_got < (uintmax_t)_exp){ \
+        ORIG(e, \
+            E_VALUE, \
+            "expected %x >= %x but got %x", \
+            FS(name), FU(_exp),  FU(_got) \
+        ); \
     } \
 } while(0)
 
@@ -103,10 +128,38 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
     uintmax_t _got = (got); \
     uintmax_t _exp = (exp); \
     if(_got != (uintmax_t)_exp){ \
-        TRACE(e, \
-            "expected %x == %x but got %x\n", FS(name), FU(_exp),  FU(_got) \
+        ORIG_GO(e, \
+            E_VALUE, \
+            "expected %x == %x but got %x", \
+            label, \
+            FS(name), FU(_exp),  FU(_got) \
         ); \
-        ORIG_GO(e, E_VALUE, "wrong value", label); \
+    } \
+} while(0)
+
+#define EXPECT_U_GT_GO(e, name, got, exp, label) do { \
+    uintmax_t _got = (got); \
+    uintmax_t _exp = (exp); \
+    if(_got <= (uintmax_t)_exp){ \
+        ORIG_GO(e, \
+            E_VALUE, \
+            "expected %x > %x but got %x", \
+            label, \
+            FS(name), FU(_exp),  FU(_got) \
+        ); \
+    } \
+} while(0)
+
+#define EXPECT_U_GE_GO(e, name, got, exp, label) do { \
+    uintmax_t _got = (got); \
+    uintmax_t _exp = (exp); \
+    if(_got < (uintmax_t)_exp){ \
+        ORIG_GO(e, \
+            E_VALUE, \
+            "expected %x >= %x but got %x", \
+            label, \
+            FS(name), FU(_exp),  FU(_got) \
+        ); \
     } \
 } while(0)
 
@@ -114,10 +167,11 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
     intmax_t _got = (got); \
     intmax_t _exp = (exp); \
     if(_got != _exp){ \
-        TRACE(e, \
-            "expected %x == %x but got %x\n", FS(name), FI(_exp),  FI(_got) \
+        ORIG(e, \
+            E_VALUE, \
+            "expected %x == %x but got %x", \
+            FS(name), FI(_exp),  FI(_got) \
         ); \
-        ORIG(e, E_VALUE, "wrong value"); \
     } \
 } while(0)
 
@@ -125,10 +179,12 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
     intmax_t _got = (got); \
     intmax_t _exp = (exp); \
     if(_got != _exp){ \
-        TRACE(e, \
-            "expected %x == %x but got %x\n", FS(name), FI(_exp),  FI(_got) \
+        ORIG_GO(e, \
+            E_VALUE, \
+            "expected %x == %x but got %x", \
+            label, \
+            FS(name), FI(_exp),  FI(_got) \
         ); \
-        ORIG_GO(e, E_VALUE, "wrong value", label); \
     } \
 } while(0)
 
@@ -136,10 +192,11 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
     bool _got = (got); \
     bool _exp = (exp); \
     if(_got != _exp){ \
-        TRACE(e, \
-            "expected %x == %x but got %x\n", FS(name), FB(_exp),  FB(_got) \
+        ORIG(e, \
+            E_VALUE, \
+            "expected %x == %x but got %x", \
+            FS(name), FB(_exp),  FB(_got) \
         ); \
-        ORIG(e, E_VALUE, "wrong value"); \
     } \
 } while(0)
 
@@ -147,10 +204,12 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
     bool _got = (got); \
     bool _exp = (exp); \
     if(_got != _exp){ \
-        TRACE(e, \
-            "expected %x == %x but got %x\n", FS(name), FB(_exp),  FB(_got) \
+        ORIG_GO(e, \
+            E_VALUE, \
+            "expected %x == %x but got %x", \
+            label, \
+            FS(name), FB(_exp),  FB(_got) \
         ); \
-        ORIG_GO(e, E_VALUE, "wrong value", label); \
     } \
 } while(0)
 
@@ -159,11 +218,11 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
     dstr_t *_got = (got); \
     dstr_t *_exp = (exp); \
     if(dstr_cmp(_got, _exp) != 0){ \
-        TRACE(e, \
-            "expected %x == %x but got %x\n", \
+        ORIG(e, \
+            E_VALUE, \
+            "expected %x == %x but got %x", \
             FS(name), FD_DBG(_exp), FD_DBG(_got) \
         ); \
-        ORIG(e, E_VALUE, "wrong value"); \
     } \
 } while (0)
 
@@ -171,11 +230,12 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
     dstr_t *_got = (got); \
     dstr_t *_exp = (exp); \
     if(dstr_cmp(_got, _exp) != 0){ \
-        TRACE(e, \
-            "expected %x == %x but got %x\n", \
+        ORIG_GO(e, \
+            E_VALUE, \
+            "expected %x == %x but got %x", \
+            label, \
             FS(name), FD_DBG(_exp), FD_DBG(_got) \
         ); \
-        ORIG_GO(e, E_VALUE, "wrong value", label); \
     } \
 } while (0)
 
@@ -184,13 +244,13 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
     dstr_t *_got = (got); \
     dstr_t *_exp = (exp); \
     if(dstr_cmp(_got, _exp) != 0){ \
-        TRACE(e, \
+        ORIG(e, \
+            E_VALUE, \
             "for value '%x'\n" \
             "expected: %x\n" \
-            "but got:  %x\n", \
+            "but got:  %x", \
             FS(name), FD_DBG(_exp), FD_DBG(_got) \
         ); \
-        ORIG(e, E_VALUE, "wrong value"); \
     } \
 } while (0)
 
@@ -198,13 +258,14 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
     dstr_t *_got = (got); \
     dstr_t *_exp = (exp); \
     if(dstr_cmp(_got, _exp) != 0){ \
-        TRACE(e, \
+        ORIG_GO(e, \
+            E_VALUE, \
             "for value '%x'\n" \
             "expected: %x\n" \
-            "but got:  %x\n", \
+            "but got:  %x", \
+            label, \
             FS(name), FD_DBG(_exp), FD_DBG(_got) \
         ); \
-        ORIG_GO(e, E_VALUE, "wrong value", label); \
     } \
 } while (0)
 
@@ -217,14 +278,14 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
         if(dstr_endswith(_got, &DSTR_LIT("\n"))) \
             if(dstr_endswith(_exp, &DSTR_LIT("\n"))) \
                 _line_end = ""; \
-        TRACE(e, \
+        ORIG(e, \
+            E_VALUE, \
             "-- for value '%x', expected:\n" \
             "%x%x" \
             "-- but got:\n" \
             "%x%x", \
             FS(name), FD(_exp), FS(_line_end), FD(_got), FS(_line_end) \
         ); \
-        ORIG(e, E_VALUE, "wrong value"); \
     } \
 } while (0)
 
@@ -236,14 +297,15 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
         if(dstr_endswith(_got, &DSTR_LIT("\n"))) \
             if(dstr_endswith(_exp, &DSTR_LIT("\n"))) \
                 _line_end = ""; \
-        TRACE(e, \
+        ORIG_GO(e, \
+            E_VALUE, \
             "-- for value '%x', expected:\n" \
             "%x%x" \
             "-- but got:\n" \
             "%x%x", \
+            label, \
             FS(name), FD(_exp), FS(_line_end), FD(_got), FS(_line_end) \
         ); \
-        ORIG_GO(e, E_VALUE, "wrong value", label); \
     } \
 } while (0)
 

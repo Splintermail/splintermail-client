@@ -30,10 +30,11 @@ void http_reader_init(http_reader_t *r, const dstr_t *buf){
 }
 
 // read the next header in the http message.
-// status is one of 0="incomplete read", 1="header found", 2="no more headers"
+/* status is one of -2="incomplete read", -1="header found", or the index of
+   the first byte of the body */
 derr_t http_read(http_reader_t *r, http_pair_t *pair, int *status_out){
     derr_t e = E_OK;
-    *status_out = 0;
+    *status_out = -2;
 
     while(true){
         // try to scan
@@ -65,8 +66,18 @@ derr_t http_read(http_reader_t *r, http_pair_t *pair, int *status_out){
                 &r->p, r->buf, scanned.token, scanned.loc, &hdr_line, NULL
             );
             if(status == HTTP_STATUS_DONE){
-                // finished a header line, or end-of-headers
-                *status_out = hdr_line.key.len ? 1 : 2;
+                if(hdr_line.key.len){
+                    // finished a header line
+                    *status_out = -1;
+                }else{
+                    // end of headers
+                    if(r->s.used > INT_MAX){
+                        ORIG_GO(&e,
+                            E_FIXEDSIZE, "headers are way too long",
+                        fail);
+                    }
+                    *status_out = (int)r->s.used;
+                }
                 *pair = hdr_line;
                 return e;
             }
