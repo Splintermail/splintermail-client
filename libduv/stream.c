@@ -20,6 +20,7 @@ bool wstream_default_writable(wstream_i *stream){
 }
 
 void stream_read_prep(stream_read_t *req, dstr_t buf, stream_read_cb cb){
+    buf.len = 0;
     *req = (stream_read_t){
         // preserve data
         .data = req->data,
@@ -29,6 +30,7 @@ void stream_read_prep(stream_read_t *req, dstr_t buf, stream_read_cb cb){
     link_init(&req->link);
 }
 void rstream_read_prep(rstream_read_t *req, dstr_t buf, rstream_read_cb cb){
+    buf.len = 0;
     *req = (rstream_read_t){
         // preserve data
         .data = req->data,
