@@ -369,6 +369,9 @@ dstr_t dstr_sub(const dstr_t* in, size_t start, size_t end);
 // this is the right api, use SIZE_MAX instead for 0 for end
 dstr_t dstr_sub2(const dstr_t in, size_t start, size_t end);
 
+// get a zero-len dstr_t that, when written to, would fill `in`
+dstr_t dstr_empty_space(const dstr_t in);
+
 dstr_t _dstr_lstrip_chars(const dstr_t in, const char *chars, size_t n);
 #define dstr_lstrip_chars(in, ...) \
     _dstr_lstrip_chars( \

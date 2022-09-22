@@ -171,6 +171,15 @@ dstr_t dstr_sub2(const dstr_t in, size_t start, size_t end){
     return out;
 }
 
+dstr_t dstr_empty_space(const dstr_t in){
+    return (dstr_t){
+        .data = in.data + in.len,
+        .size = in.size - MIN(in.size, in.len),
+        .len = 0,
+        .fixed_size = true,
+    };
+}
+
 dstr_t _dstr_lstrip_chars(const dstr_t in, const char *chars, size_t n){
     dstr_t out = in;
     while(out.len){

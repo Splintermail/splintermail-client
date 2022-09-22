@@ -158,6 +158,26 @@ static derr_t test_dstr_sub2(void){
     return e;
 }
 
+static derr_t test_dstr_empty_space(void){
+    derr_t e = E_OK;
+    LOG_INFO("----- test dstr_empty_space -------------\n");
+    DSTR_VAR(buf, 16);
+    PROP(&e, dstr_append(&buf, &DSTR_LIT("hello world!")) );
+    dstr_t space = dstr_empty_space(buf);
+    EXPECT_P(&e, "space.data", space.data, buf.data + 12);
+    EXPECT_U(&e, "space.len", space.len, 0);
+    EXPECT_U(&e, "space.size", space.size, 4);
+
+    // strict about avoiding breaking the advertised size
+    buf.size = 0;
+    space = dstr_empty_space(buf);
+    EXPECT_P(&e, "space.data", space.data, buf.data + 12);
+    EXPECT_U(&e, "space.len", space.len, 0);
+    EXPECT_U(&e, "space.size", space.size, 0);
+
+    return e;
+}
+
 static derr_t test_dstr_strip(void){
     derr_t e = E_OK;
     LOG_INFO("----- test dstr_strip -------------------\n");
@@ -898,6 +918,7 @@ int main(int argc, char** argv){
     PROP_GO(&e, test_dstr_grow(),            test_fail);
     PROP_GO(&e, test_dstr_sub(),             test_fail);
     PROP_GO(&e, test_dstr_sub2(),            test_fail);
+    PROP_GO(&e, test_dstr_empty_space(),     test_fail);
     PROP_GO(&e, test_dstr_strip(),           test_fail);
     PROP_GO(&e, test_dstr_find(),            test_fail);
     PROP_GO(&e, test_dstr_count(),           test_fail);
