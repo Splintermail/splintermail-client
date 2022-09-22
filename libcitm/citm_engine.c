@@ -141,12 +141,13 @@ static void citme_process_events(uv_work_t *req){
         imap_session_t *s;
         citme_session_owner_t *so;
         switch(ev->ev_type){
-           case EV_SESSION_CLOSE:
+            case EV_SESSION_CLOSE:
                 /* Asynchronous closures can only come from imap_session_t's
                    dying, which pass through both the server_t and fetcher_t */
                 s = CONTAINER_OF(ev->session, imap_session_t, session);
                 so = CONTAINER_OF(s, citme_session_owner_t, s);
                 so->session_owner.close(s);
+                ev->returner(ev);
                 break;
 
             case EV_READ:

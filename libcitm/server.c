@@ -211,12 +211,18 @@ static void session_dying(manager_i *mgr, void *caller, derr_t error){
     PASSED(error);
 }
 
+static void close_event_returner(event_t *ev){
+    server_t *server = ev->returner_arg;
+    // ref down for close_ev
+    ref_dn(&server->refs);
+}
+
 static void session_dead(manager_i *mgr, void *caller){
     (void)caller;
     server_t *server = CONTAINER_OF(mgr, server_t, session_mgr);
 
     // send the close event to trigger server_close()
-    event_prep(&server->close_ev, NULL, NULL);
+    event_prep(&server->close_ev, close_event_returner, server);
     server->close_ev.session = &server->s.session;
     server->close_ev.ev_type = EV_SESSION_CLOSE;
     server->engine->pass_event(server->engine, &server->close_ev);
@@ -350,8 +356,8 @@ derr_t server_init(
     server->wake_ev.ev.ev_type = EV_INTERNAL;
     server->wake_ev.handler = server_wakeup;
 
-    // start with one lifetime ref and one imap_session_t ref
-    PROP(&e, refs_init(&server->refs, 2, server_finalize) );
+    // start with a lifetime ref, an imap_session_t ref, and a close_ev ref
+    PROP(&e, refs_init(&server->refs, 3, server_finalize) );
 
     // allocate memory for the session, but don't start it until later
     imap_session_alloc_args_t arg_dn = {

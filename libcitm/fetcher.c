@@ -189,12 +189,18 @@ static void session_dying(manager_i *mgr, void *caller, derr_t error){
     PASSED(error);
 }
 
+static void close_event_returner(event_t *ev){
+    fetcher_t *fetcher = ev->returner_arg;
+    // ref down for close_ev
+    ref_dn(&fetcher->refs);
+}
+
 static void session_dead(manager_i *mgr, void *caller){
     (void)caller;
     fetcher_t *fetcher = CONTAINER_OF(mgr, fetcher_t, session_mgr);
 
     // send the close event to trigger fetcher_close()
-    event_prep(&fetcher->close_ev, NULL, NULL);
+    event_prep(&fetcher->close_ev, close_event_returner, fetcher);
     fetcher->close_ev.session = &fetcher->s.session;
     fetcher->close_ev.ev_type = EV_SESSION_CLOSE;
     fetcher->engine->pass_event(fetcher->engine, &fetcher->close_ev);
@@ -369,8 +375,8 @@ derr_t fetcher_init(
     fetcher->wake_ev.ev.ev_type = EV_INTERNAL;
     fetcher->wake_ev.handler = fetcher_wakeup;
 
-    // start with one lifetime reference and one imap_session_t reference
-    PROP(&e, refs_init(&fetcher->refs, 2, fetcher_finalize) );
+    // start with a lifetime ref, an imap_session_t ref, and a close_ev ref
+    PROP(&e, refs_init(&fetcher->refs, 3, fetcher_finalize) );
 
     // allocate memory for the session, but don't start it until later
     imap_session_alloc_args_t arg_up = {

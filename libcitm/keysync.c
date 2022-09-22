@@ -140,12 +140,18 @@ static void session_dying(manager_i *mgr, void *caller, derr_t error){
     PASSED(error);
 }
 
+static void close_event_returner(event_t *ev){
+    keysync_t *ks = ev->returner_arg;
+    // ref down for close_ev
+    ref_dn(&ks->refs);
+}
+
 static void session_dead(manager_i *mgr, void *caller){
     (void)caller;
     keysync_t *ks = CONTAINER_OF(mgr, keysync_t, session_mgr);
 
     // send the close event to trigger keysync_close()
-    event_prep(&ks->close_ev, NULL, NULL);
+    event_prep(&ks->close_ev, close_event_returner, ks);
     ks->close_ev.session = &ks->s.session;
     ks->close_ev.ev_type = EV_SESSION_CLOSE;
     ks->engine->pass_event(ks->engine, &ks->close_ev);
@@ -214,8 +220,8 @@ derr_t keysync_init(
 
     PROP_GO(&e, keypair_copy(my_keypair, &ks->my_keypair), fail_login);
 
-    // start with one lifetime reference and one imap_session_t reference
-    PROP_GO(&e, refs_init(&ks->refs, 2, keysync_finalize), fail_my_keypair);
+    // start with a lifetime ref, an imap_session_t ref, and a close_ev ref
+    PROP_GO(&e, refs_init(&ks->refs, 3, keysync_finalize), fail_my_keypair);
 
     // allocate memory for the session, but don't start it until later
     imap_session_alloc_args_t arg_up = {
