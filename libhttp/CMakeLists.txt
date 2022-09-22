@@ -31,3 +31,11 @@ add_library(
 target_link_libraries(http PUBLIC dstr parsing url duv)
 default_compile_options(http TRUE)
 add_dependencies(http "gen-http-parse")
+
+if(BUILD_TESTS)
+    add_executable(test_http_reader test_http_reader.c)
+    target_link_libraries(test_http_reader PUBLIC http)
+    default_compile_options(test_http_reader TRUE)
+    define_file_logname_for_target(test_http_reader)
+    add_test(NAME "do_test_http_reader" COMMAND "./test_http_reader")
+endif()

@@ -1,11 +1,11 @@
 #include <stdlib.h>
 
-#include <libdstr/libdstr.h>
-#include <libparsing/libparsing.h>
-#include <liburl/liburl.h>
-#include <libhttp/libhttp.h>
+#include "libdstr/libdstr.h"
+#include "libparsing/libparsing.h"
+#include "liburl/liburl.h"
+#include "libhttp/libhttp.h"
 
-#include "test_utils.h"
+#include "test/test_utils.h"
 
 #define ASSERT(code) if(!(code)) ORIG(&e, E_VALUE, "assertion failed: " #code)
 
