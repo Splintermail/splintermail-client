@@ -215,8 +215,8 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
 
 // single line output for short strings
 #define EXPECT_D(e, name, got, exp) do { \
-    dstr_t *_got = (got); \
-    dstr_t *_exp = (exp); \
+    const dstr_t *_got = (got); \
+    const dstr_t *_exp = (exp); \
     if(dstr_cmp(_got, _exp) != 0){ \
         ORIG(e, \
             E_VALUE, \
@@ -227,8 +227,8 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
 } while (0)
 
 #define EXPECT_D_GO(e, name, got, exp, label) do { \
-    dstr_t *_got = (got); \
-    dstr_t *_exp = (exp); \
+    const dstr_t *_got = (got); \
+    const dstr_t *_exp = (exp); \
     if(dstr_cmp(_got, _exp) != 0){ \
         ORIG_GO(e, \
             E_VALUE, \
@@ -241,8 +241,8 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
 
 // triple line output for mid-length strings
 #define EXPECT_D3(e, name, got, exp) do { \
-    dstr_t *_got = (got); \
-    dstr_t *_exp = (exp); \
+    const dstr_t *_got = (got); \
+    const dstr_t *_exp = (exp); \
     if(dstr_cmp(_got, _exp) != 0){ \
         ORIG(e, \
             E_VALUE, \
@@ -255,8 +255,8 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
 } while (0)
 
 #define EXPECT_D3_GO(e, name, got, exp, label) do { \
-    dstr_t *_got = (got); \
-    dstr_t *_exp = (exp); \
+    const dstr_t *_got = (got); \
+    const dstr_t *_exp = (exp); \
     if(dstr_cmp(_got, _exp) != 0){ \
         ORIG_GO(e, \
             E_VALUE, \
@@ -271,8 +271,8 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
 
 // multiline string support
 #define EXPECT_DM(e, name, got, exp) do { \
-    dstr_t *_got = (got); \
-    dstr_t *_exp = (exp); \
+    const dstr_t *_got = (got); \
+    const dstr_t *_exp = (exp); \
     if(dstr_cmp(_got, _exp) != 0){ \
         char *_line_end = "\n";  \
         if(dstr_endswith(_got, &DSTR_LIT("\n"))) \
@@ -290,8 +290,8 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
 } while (0)
 
 #define EXPECT_DM_GO(e, name, got, exp, label) do { \
-    dstr_t *_got = (got); \
-    dstr_t *_exp = (exp); \
+    const dstr_t *_got = (got); \
+    const dstr_t *_exp = (exp); \
     if(dstr_cmp(_got, _exp) != 0){ \
         char *_line_end = "\n";  \
         if(dstr_endswith(_got, &DSTR_LIT("\n"))) \
@@ -310,7 +310,7 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
 } while (0)
 
 #define EXPECT_NULL(e, name, got) do { \
-    void *_got = (got); \
+    const void *_got = (got); \
     if(_got != NULL){ \
         ORIG(e, \
             E_VALUE, \
@@ -322,7 +322,7 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
 } while (0)
 
 #define EXPECT_NULL_GO(e, name, got, label) do { \
-    void *_got = (got); \
+    const void *_got = (got); \
     if(_got != NULL){ \
         ORIG(e, \
             E_VALUE, \
@@ -335,7 +335,7 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
 } while (0)
 
 #define EXPECT_NOT_NULL(e, name, got) do { \
-    void *_got = (got); \
+    const void *_got = (got); \
     if(_got == NULL){ \
         ORIG(e, \
             E_VALUE, \
@@ -346,7 +346,7 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
 } while (0)
 
 #define EXPECT_NOT_NULL_GO(e, name, got, label) do { \
-    void *_got = (got); \
+    const void *_got = (got); \
     if(_got == NULL){ \
         ORIG(e, \
             E_VALUE, \
@@ -356,5 +356,30 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
         ); \
     } \
 } while (0)
+
+#define EXPECT_P(e, name, got, exp) do { \
+    const void *_got = (got); \
+    const void *_exp = (exp); \
+    if(_got != _exp){ \
+        ORIG(e, \
+            E_VALUE, \
+            "expected %x == %x but got %x", \
+            FS(name), FP(_exp),  FP(_got) \
+        ); \
+    } \
+} while(0)
+
+#define EXPECT_P_GO(e, name, got, exp, label) do { \
+    const void *_got = (got); \
+    const void *_exp = (exp); \
+    if(_got != _exp){ \
+        ORIG_GO(e, \
+            E_VALUE, \
+            "expected %x == %x but got %x", \
+            label, \
+            FS(name), FP(_exp),  FP(_got) \
+        ); \
+    } \
+} while(0)
 
 #endif // TEST_UTILS_H
