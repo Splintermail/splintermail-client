@@ -99,8 +99,21 @@ static derr_t test_sequential_prop(void){
         if(trace_len >= e.msg.len){
             ORIG(&e, E_VALUE, "trace did not grow");
         }
+        trace_len = e.msg.len;
     }else{
         ORIG(&e, E_VALUE, "failed to generate error");
+    }
+
+    // ensure that prop doesn't drop our error
+    IF_PROP(&e, E_OK){
+        ORIG(&e, E_VALUE, "still in error case");
+    }else{
+        if(!is_error(e)){
+            ORIG(&e, E_VALUE, "we erased the error");
+        }
+        if(e.msg.len != trace_len){
+            ORIG(&e, E_VALUE, "the message was changed");
+        }
     }
 
     // the real error checking happens in valgrind

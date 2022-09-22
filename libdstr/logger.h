@@ -168,8 +168,10 @@ static inline bool pvt_prop(derr_t *e, derr_t code,
         }
     }
 
-    // always keep the new type (this is different from MERGE)
-    e->type = code.type;
+    // prefer the new type (this is different from MERGE)
+    if(code.type != E_NONE){
+        e->type = code.type;
+    }
 
     if(!is_error(code)) return false;
 
@@ -352,7 +354,7 @@ static inline bool pvt_nofail(derr_t *e, derr_type_t mask, derr_t cmd,
 
 static inline void pvt_merge_cmd(derr_t *e, derr_t cmd, const char* message,
         const char* file, const char* func, int line){
-    // if e has no error type, just use the new one
+    // prefer the old type
     if(e->type == E_NONE){
         e->type = cmd.type;
     }
