@@ -260,6 +260,8 @@ static inline bool pvt_catch(derr_t *e, derr_type_t error_mask,
     return false;
 }
 #define CATCH(e, ...) if(pvt_catch(&(e), ERROR_GROUP(__VA_ARGS__), FILE_LOC))
+// TODO: fix all the CATCH instances
+#define CATCH2(e, ...) if(pvt_catch((e), ERROR_GROUP(__VA_ARGS__), FILE_LOC))
 
 
 /* RETHROW works like ORIG except it gives context to generic low-level errors
@@ -294,14 +296,16 @@ static inline void pvt_rethrow(derr_t *e, derr_t *e2, derr_type_t newtype,
     derr_type_t oldtype = e2->type;
     // we always use the specified type
     e->type = newtype;
-    if(e->msg.data == NULL){
+    if(e->msg.data == e2->msg.data){
+        // same error object, just append to it at the end
+    }else if(e->msg.data == NULL){
         // if there was no previous trace, just use the new trace
         e->msg = e2->msg;
         // done with the old error, but don't free the trace we are reusing
         *e2 = E_OK;
-    }else if(e->msg.data != e2->msg.data){
+    }else{
         // otherwise, combine the traces
-        /* TODO: you should clearly dilineate the new trace from the old trace,
+        /* TODO: you should clearly delineate the new trace from the old trace,
                  so that it is clear exactly what is being rethrown */
         dstr_append_quiet(&e->msg, &e2->msg);
         // done with the old error
@@ -321,6 +325,9 @@ static inline void pvt_rethrow(derr_t *e, derr_t *e2, derr_type_t newtype,
     pvt_rethrow((e), (_new), (_newtype), FILE_LOC); \
     goto label; \
 } while(0)
+
+#define TRACE_RETHROW(e, _new, _newtype) \
+    pvt_rethrow((e), (_new), (_newtype), FILE_LOC) \
 
 /* NOFAIL will catch errors we have specifically prevented and turn them into
    E_INTERNAL errors */

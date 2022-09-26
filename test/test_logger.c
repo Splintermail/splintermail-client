@@ -157,6 +157,19 @@ msg_check:
         ORIG_GO(&e, E_VALUE, "e1 type is wrong", done);
     }
 
+    size_t oldmsglen = e1.msg.len;
+
+    // ensure we can RETHROW a single variable
+    CATCH2(&e1, E_ANY){
+        TRACE_RETHROW(&e1, &e1, E_CONN);
+    }else{
+        ORIG_GO(&e, E_INTERNAL, "expected an error", done);
+    }
+
+    EXPECT_P_GO(&e, "e1.type", e1.type, E_CONN, done);
+    EXPECT_U_GT_GO(&e, "e.msg.len", e1.msg.len, oldmsglen, done);
+
+
 done:
     DROP_VAR(&e1);
     DROP_VAR(&e2);
