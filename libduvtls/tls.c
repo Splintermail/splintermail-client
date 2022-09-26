@@ -99,29 +99,14 @@ static void await_cb(stream_i *base, derr_t e){
     duv_tls_t *t = base->wrapper_data;
     t->base_awaited = true;
 
-    // prefer the first error if there is one
-    if(is_error(t->e)){
-        DROP_VAR(&e);
-        goto done;
+    if(!t->base_canceled){
+        // if we didn't cancel, nobody else is allowed to
+        UPGRADE_CANCELED_VAR(&e, E_INTERNAL);
+    }else{
+        DROP_CANCELED_VAR(&e);
     }
+    KEEP_FIRST_IF_NOT_CANCELED_VAR(&t->e, &e);
 
-    if(!is_error(e)){
-        // there's not a path where we do a bidirectional shutdown on base
-        ORIG_GO(&t->e, E_CONN, "base stream ended unexpectedly", done);
-    }
-
-    if(e.type == E_CANCELED){
-        DROP_VAR(&e);
-        // was this our doing?
-        if(t->base_canceled) goto done;
-        // nope, somebody else close it out from under us
-        ORIG_GO(&t->e, E_CONN, "base stream canceled unexpectedly", done);
-    }
-
-    // any other error
-    PROP_VAR_GO(&t->e, &e, done);
-
-done:
     if(t->original_base_await_cb){
         t->original_base_await_cb(base, E_OK);
     }

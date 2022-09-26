@@ -266,6 +266,39 @@ struct wstream_i {
 
 // helpers for stream implementations
 
+// when CANCELED shouldn't be allowed
+#define UPGRADE_CANCELED_VAR(e, ETYPE) do { \
+    CATCH2(e, E_CANCELED){ \
+        TRACE_RETHROW(e, e, (ETYPE)); \
+    } \
+} while(0)
+
+// when CANCELED is expected
+#define DROP_CANCELED_VAR(e) do { \
+    if((e)->type == E_CANCELED) DROP_VAR(e); \
+} while(0)
+
+// keep the first error, unless it's E_CANCELED, in which case take the second
+#define KEEP_FIRST_IF_NOT_CANCELED_VAR(e, e2) do { \
+    if(is_error(*(e))){ \
+        if((e)->type == E_CANCELED){ \
+            DROP_VAR(e); \
+            *e = *e2; \
+            *e2 = E_OK; \
+        }else{ \
+            DROP_VAR(e2); \
+        } \
+    }else{ \
+        if((e2)->type == E_CANCELED){ \
+            /* pass E_CANCELED without allocating memory */ \
+            *e = *e2; \
+            *e2 = E_OK; \
+        }else{ \
+            TRACE_PROP_VAR((e), (e2)); \
+        } \
+    } \
+} while(0)
+
 bool stream_default_readable(stream_i *stream);
 bool rstream_default_readable(rstream_i *stream);
 

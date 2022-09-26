@@ -199,7 +199,7 @@ static inline bool pvt_prop(derr_t *e, derr_t code,
 static inline bool pvt_prop_var(derr_t *e, derr_t *e2,
         const char *file, const char *func, int line){
     bool ret = pvt_prop(e, *e2, file, func, line);
-    *e2 = E_OK;
+    if(e != e2) *e2 = E_OK;
     return ret;
 }
 

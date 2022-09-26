@@ -5,19 +5,11 @@ static void advance_state(rstream_concat_t *c);
 static void await_cb(rstream_i *base, derr_t e){
     concat_base_wrapper_t *w = base->wrapper_data;
     rstream_concat_t *c = w->c;
-    if(is_error(e)){
-        if(!is_error(c->e)){
-            // first error
-            if(e.type == E_CANCELED){
-                c->e = e;
-            }else{
-                TRACE_PROP_VAR(&c->e, &e);
-            }
-        }else{
-            // ignore subsequent errors
-            DROP_VAR(&e);
-        }
+    if(!c->bases_canceled[w->idx]){
+        // if we didn't cancel, nobody else is allowed to
+        UPGRADE_CANCELED_VAR(&e, E_INTERNAL);
     }
+    KEEP_FIRST_IF_NOT_CANCELED_VAR(&c->e, &e);
     c->nawaited++;
     // don't assume we are safe to close this one later
     c->bases_canceled[w->idx] = true;

@@ -10,6 +10,7 @@ struct stream_reader_t {
     derr_t e;
     bool done : 1;
     bool read_failure : 1;
+    bool canceled : 1;
     stream_reader_cb cb;
     rstream_read_t read;
     rstream_await_cb await_cb;

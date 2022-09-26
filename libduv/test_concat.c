@@ -68,11 +68,11 @@ static void await_cb_b(rstream_i *r, derr_t e){
     if(!r2_awaited){
         TRACE_ORIG(&E, E_VALUE, "r2 not yet awaited");
     }
-    // we expect E_CANCELED to have propagated through the concat
+    // we expect E_CANCELED to have propagated through the concat as E_INTERNAL
     if(!is_error(e)){
         TRACE_ORIG(&E, E_VALUE, "r was not canceled");
     }
-    if(e.type == E_CANCELED) e.type = E_NONE;
+    if(e.type == E_INTERNAL) DROP_VAR(&e);
     r_awaited = true;
     MERGE_VAR(&E, &e, "await_cb");
 }

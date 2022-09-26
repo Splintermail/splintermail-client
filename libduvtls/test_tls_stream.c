@@ -207,10 +207,9 @@ static void await_cb_phase6(stream_i *s, derr_t e){
     // prefer any existing error
     if(is_error(E)){
         DROP_VAR(&e);
-        finish();
-        return;
+        goto fail;
     }
-    if(is_error(e)) TRACE_PROP_VAR(&E, &e);
+    PROP_VAR_GO(&E, &e, fail);
 
     if(!expect_exit){
         ORIG_GO(&E, E_VALUE, "unexpected exit", fail);

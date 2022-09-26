@@ -2,19 +2,11 @@
 
 static void await_cb(rstream_i *rstream, derr_t e){
     stream_reader_t *r = rstream->wrapper_data;
-    if(is_error(e)){
-        if(!is_error(r->e)){
-            // first error
-            if(e.type == E_CANCELED){
-                r->e = e;
-            }else{
-                TRACE_PROP_VAR(&r->e, &e);
-            }
-        }else{
-            // subsequent error
-            DROP_VAR(&e);
-        }
+    if(!r->canceled){
+        // only we are allowed to cancel our base
+        UPGRADE_CANCELED_VAR(&e, E_INTERNAL);
     }
+    KEEP_FIRST_IF_NOT_CANCELED_VAR(&r->e, &e);
     r->done = true;
     if(r->await_cb) r->await_cb(rstream, E_OK);
     // user callback must be last
@@ -78,6 +70,7 @@ void stream_read_all(
 }
 
 void stream_reader_cancel(stream_reader_t *r){
+    r->canceled = true;
     if(r->done) return;
     r->rstream->cancel(r->rstream);
 }
