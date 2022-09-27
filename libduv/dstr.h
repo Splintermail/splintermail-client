@@ -16,3 +16,6 @@ rstream_i *dstr_rstream(
     scheduler_i *scheduler,
     const dstr_t dstr
 );
+
+// global flag, useful for tests
+extern size_t _dstr_rstream_read_max_size;

@@ -8,5 +8,6 @@
 
 // http_scan.h is inlined into http.h
 #include "http.h"
+#include "chunked.h"
 
 #endif // LIBHTTP_H

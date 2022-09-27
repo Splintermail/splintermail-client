@@ -1,5 +1,7 @@
 #include "libduv/libduv.h"
 
+size_t _dstr_rstream_read_max_size = SIZE_MAX;
+
 static void advance_state(dstr_rstream_t *r){
     link_t *link;
 
@@ -10,9 +12,8 @@ static void advance_state(dstr_rstream_t *r){
         rstream_read_t *read = CONTAINER_OF(link, rstream_read_t, link);
         if(r->nread < r->base.len){
             // pass as much as possible
-            dstr_t sub = dstr_sub2(
-                r->base, r->nread, r->nread + read->buf.size
-            );
+            size_t readlen = MIN(read->buf.size, _dstr_rstream_read_max_size);
+            dstr_t sub = dstr_sub2(r->base, r->nread, r->nread + readlen);
             r->nread += sub.len;
             read->buf.len = 0;
             derr_type_t etype = dstr_append_quiet(&read->buf, &sub);

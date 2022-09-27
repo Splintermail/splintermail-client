@@ -1,4 +1,4 @@
-set(raw_srcs http.c)
+set(raw_srcs http.c chunked.c)
 
 foreach(src ${raw_srcs})
     define_file_logname_for_source("${src}" "${src}")
@@ -38,4 +38,10 @@ if(BUILD_TESTS)
     default_compile_options(test_http_reader TRUE)
     define_file_logname_for_target(test_http_reader)
     add_test(NAME "do_test_http_reader" COMMAND "./test_http_reader")
+
+    add_executable(test_chunked test_chunked.c)
+    target_link_libraries(test_chunked PUBLIC http)
+    default_compile_options(test_chunked TRUE)
+    define_file_logname_for_target(test_chunked)
+    add_test(NAME "do_test_chunked" COMMAND "./test_chunked")
 endif()

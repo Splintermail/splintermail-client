@@ -1092,6 +1092,9 @@ void _dstr_split2_soft(
 }
 
 void dstr_leftshift(dstr_t* buffer, size_t count){
+    // detect noops
+    if(count == 0) return;
+
     size_t shift = MIN(count, buffer->len);
 
     size_t newlen = buffer->len - shift;
