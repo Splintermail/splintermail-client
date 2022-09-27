@@ -37,6 +37,12 @@ static inline dstr_off_t dstr_off_zero(
     };
 }
 
+/* Writes a token and the surrounding countext to one line, and carets pointing
+   to the token on the next.  Guarantees null termination on nonemtpy buffers,
+   but silently discards errors.  Caller should therefore guarantee that
+   buf has at space for (ctxsize*8+2) new bytes. */
+void get_token_context(dstr_t *buf, const dstr_off_t token, size_t ctxsize);
+
 // strip any chars in `strip` from one or both ends
 dstr_off_t dstr_off_lstrip(dstr_off_t off, const dstr_t strip);
 dstr_off_t dstr_off_rstrip(dstr_off_t off, const dstr_t strip);
