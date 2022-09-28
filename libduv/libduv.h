@@ -10,7 +10,8 @@
 #include "connect.h"
 #include "stream.h"
 #include "passthru.h"
-#include "dstr.h"
+#include "dstr_rstream.h"
+#include "dstr_stream.h"
 #include "reader.h"
 #include "concat.h"
 

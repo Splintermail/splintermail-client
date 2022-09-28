@@ -3,7 +3,7 @@ typedef struct {
     rstream_i iface;
     scheduler_i *scheduler;
     schedulable_t schedulable;
-    link_t reads; // stream_read_t->link
+    link_t reads; // rstream_read_t->link
     dstr_t base;
     size_t nread;
     rstream_await_cb await_cb;

@@ -16,7 +16,8 @@ macro(add_duv asan)
         stream.c
         scheduler.c
         passthru.c
-        dstr.c
+        dstr_rstream.c
+        dstr_stream.c
         reader.c
         concat.c
     )
@@ -68,11 +69,11 @@ if(BUILD_TESTS)
     define_file_logname_for_target(test_passthru)
     add_test(NAME "do_test_passthru" COMMAND "./test_passthru")
 
-    add_executable(test_dstr test_dstr.c)
-    target_link_libraries(test_dstr PUBLIC duv)
-    default_compile_options(test_dstr TRUE)
-    define_file_logname_for_target(test_dstr)
-    add_test(NAME "do_test_dstr" COMMAND "./test_dstr")
+    add_executable(test_dstr_rstream test_dstr_rstream.c)
+    target_link_libraries(test_dstr_rstream PUBLIC duv)
+    default_compile_options(test_dstr_rstream TRUE)
+    define_file_logname_for_target(test_dstr_rstream)
+    add_test(NAME "do_test_dstr_rstream" COMMAND "./test_dstr_rstream")
 
     add_executable(test_reader test_reader.c)
     target_link_libraries(test_reader PUBLIC duv)
