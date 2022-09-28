@@ -1,5 +1,7 @@
 #include "libduv/libduv.h"
 
+size_t _stream_reader_read_max_size = SIZE_MAX;
+
 static void await_cb(rstream_i *rstream, derr_t e){
     stream_reader_t *r = rstream->wrapper_data;
     if(!r->canceled){
@@ -34,12 +36,9 @@ static void do_read(stream_reader_t *r){
         }
     }
     // read directly into the user's buffer
-    dstr_t buf = {
-        .data = r->out->data + r->out->len,
-        .size = r->out->size - r->out->len,
-        .fixed_size = true,
-    };
-    stream_must_read(r->rstream, &r->read, buf, read_cb);
+    dstr_t space = dstr_empty_space(*r->out);
+    space.size = MIN(space.size, _stream_reader_read_max_size);
+    stream_must_read(r->rstream, &r->read, space, read_cb);
 }
 
 // caller is responsible for initializing out, and freeing it in failure cases

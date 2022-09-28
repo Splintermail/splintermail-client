@@ -17,5 +17,5 @@ rstream_i *dstr_rstream(
     const dstr_t dstr
 );
 
-// global flag, useful for tests
+// global limit, useful for tests
 extern size_t _dstr_rstream_read_max_size;

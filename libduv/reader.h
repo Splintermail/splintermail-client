@@ -23,3 +23,6 @@ void stream_read_all(
 );
 
 void stream_reader_cancel(stream_reader_t *r);
+
+// global limit, useful for tests
+extern size_t _stream_reader_read_max_size;
