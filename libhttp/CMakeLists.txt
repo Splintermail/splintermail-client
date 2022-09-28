@@ -1,4 +1,4 @@
-set(raw_srcs http.c limit.c chunked.c)
+set(raw_srcs http.c borrow.c limit.c chunked.c)
 
 foreach(src ${raw_srcs})
     define_file_logname_for_source("${src}" "${src}")
@@ -38,6 +38,12 @@ if(BUILD_TESTS)
     default_compile_options(test_http_reader TRUE)
     define_file_logname_for_target(test_http_reader)
     add_test(NAME "do_test_http_reader" COMMAND "./test_http_reader")
+
+    add_executable(test_borrow test_borrow.c)
+    target_link_libraries(test_borrow PUBLIC http)
+    default_compile_options(test_borrow TRUE)
+    define_file_logname_for_target(test_borrow)
+    add_test(NAME "do_test_borrow" COMMAND "./test_borrow")
 
     add_executable(test_limit test_limit.c)
     target_link_libraries(test_limit PUBLIC http)

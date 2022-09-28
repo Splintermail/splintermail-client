@@ -8,6 +8,7 @@
 
 // http_scan.h is inlined into http.h
 #include "http.h"
+#include "borrow.h"
 #include "limit.h"
 #include "chunked.h"
 

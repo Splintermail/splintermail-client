@@ -382,4 +382,32 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
     } \
 } while(0)
 
+#define EXPECT_E_VAR(e, name, got, exp) do { \
+    derr_t *_got = (got); \
+    const derr_type_t _exp = (exp); \
+    if(is_error(*_got)){ \
+        if(_got->type == _exp){ \
+            DROP_VAR(_got); \
+        } else { \
+            PROP_VAR((e), _got); \
+        } \
+    }else{ \
+        ORIG((e), E_VALUE, "expected an error"); \
+    } \
+} while(0)
+
+#define EXPECT_E_VAR_GO(e, name, got, exp, label) do { \
+    derr_t *_got = (got); \
+    const derr_type_t _exp = (exp); \
+    if(is_error(*_got)){ \
+        if(_got->type == _exp){ \
+            DROP_VAR(_got); \
+        } else { \
+            PROP_VAR_GO((e), _got, label); \
+        } \
+    }else{ \
+        ORIG_GO((e), E_VALUE, "expected an error", label); \
+    } \
+} while(0)
+
 #endif // TEST_UTILS_H
