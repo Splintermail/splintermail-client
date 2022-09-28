@@ -50,7 +50,13 @@ derr_t http_read(http_reader_t *r, http_pair_t *pair, int *status_out){
             // still parsing status line
             http_status_line_t status_line;
             status = http_parse_status_line(
-                &r->p, r->buf, scanned.token, scanned.loc, &status_line, NULL
+                &r->p,
+                r->buf,
+                &e,
+                scanned.token,
+                scanned.loc,
+                &status_line,
+                NULL
             );
             if(status == HTTP_STATUS_DONE){
                 // finished the status line
@@ -63,7 +69,7 @@ derr_t http_read(http_reader_t *r, http_pair_t *pair, int *status_out){
             // parsing headers
             http_pair_t hdr_line;
             status = http_parse_hdr_line(
-                &r->p, r->buf, scanned.token, scanned.loc, &hdr_line, NULL
+                &r->p, r->buf, &e, scanned.token, scanned.loc, &hdr_line, NULL
             );
             if(status == HTTP_STATUS_DONE){
                 if(hdr_line.key.len){
@@ -88,8 +94,8 @@ derr_t http_read(http_reader_t *r, http_pair_t *pair, int *status_out){
             case HTTP_STATUS_DONE: break; // not possible; handled above
 
             case HTTP_STATUS_SYNTAX_ERROR:
-                // XXX write http_handle_error
-                // message was written in http_handle_error
+                // allow a pre-formatted error
+                if(is_error(e)) goto fail;
                 ORIG_GO(&e, E_RESPONSE, "invalid http response", fail);
 
             case HTTP_STATUS_CALLSTACK_OVERFLOW:

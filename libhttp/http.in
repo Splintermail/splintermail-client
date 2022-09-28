@@ -16,22 +16,54 @@ static bool parse_status_code(dstr_off_t off, int *code){
     return true;
 }
 
+static void trace_http_error(derr_t *E, dstr_off_t token){
+    // skip if E was not provided
+    if(!E) return;
+
+    // longest DBG char is \xNN, or 4 chars, and we have two lines of len 80
+    // 80 * 4 * 2 = 640
+    DSTR_VAR(context, 1024);
+    get_token_context(&context, token, 80);
+
+    TRACE_ORIG(E, E_RESPONSE, "invalid http:\n%x", FD(&context));
+}
+
+// recorded error message is based on sem.loc, and is written to E
+static void http_handle_error(
+    http_parser_t *p,
+    const dstr_t *buf,
+    derr_t *E,
+    http_token_e http_token,
+    http_sem_t sem,
+    const unsigned char *expected_mask,
+    const char *loc_summary
+){
+    (void)p;
+    (void)buf;
+    (void)http_token;
+    (void)expected_mask;
+    (void)loc_summary;
+
+    trace_http_error(E, sem.loc);
+}
+
 }}
 
 %generator c;
 %prefix http;
 
 %param buf {const dstr_t *};
+%param E {derr_t *};
 
 %kwarg semloc_type dstr_off_t;
 %kwarg span_fn dstr_off_extend;
 %kwarg zero_loc_fn DSTR_OFF_ZERO;
-# XXX
-# %kwarg error_fn url_handle_error;
+%kwarg error_fn http_handle_error;
 
 %type i {int};
 %type status_line {http_status_line_t};
 %type pair {http_pair_t};
+%type size {size_t};
 
 # Tokens
 INVALID;
@@ -261,9 +293,9 @@ status_line:status_line =
 ;
 
 status_code:i =
-    DIGIT:d1 DIGIT DIGIT:d3
-    {{ if(!parse_status_code(dstr_off_extend(@d1, @d3), &$$)){
-           // XXX handle the error somewhere
+    DIGIT DIGIT DIGIT
+    {{ if(!parse_status_code(@$, &$$)){
+           trace_http_error(E, @$);
            return HTTP_STATUS_SYNTAX_ERROR;
        }
     }}
