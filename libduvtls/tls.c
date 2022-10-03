@@ -716,7 +716,6 @@ static derr_t wrap(
             .cancel = duv_tls_cancel,
             .await = duv_tls_await,
         },
-        .original_base_await_cb = base->await(base, await_cb),
     };
 
     schedulable_prep(&t->schedulable, schedule_cb);
@@ -779,6 +778,8 @@ static derr_t wrap(
 
     // we own the wrapper_data
     t->base->wrapper_data = t;
+    // we own the await_cb
+    t->original_base_await_cb = t->base->await(t->base, await_cb),
 
     *out = &t->iface;
 
