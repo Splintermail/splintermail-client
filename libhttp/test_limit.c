@@ -6,6 +6,17 @@
 
 derr_t E = E_OK;
 bool finished = false;
+rstream_i *base;
+bool force_no_detach = false;
+
+static bool try_detach(limit_rstream_t *l){
+    (void)l;
+    if(force_no_detach){
+        base->cancel(base);
+        return false;
+    }
+    return !base->eof && !base->awaited;
+}
 
 static void reader_cb(stream_reader_t *reader, derr_t e){
     (void)reader;
@@ -36,8 +47,10 @@ static derr_t do_test(
 
     DSTR_VAR(got, 256);
 
-    rstream_i *base = dstr_rstream(&dstr_r, sched, input);
-    rstream_i *rstream = limit_rstream(&limit_r, sched, base, limit);
+    base = dstr_rstream(&dstr_r, sched, input);
+    rstream_i *rstream = limit_rstream(
+        &limit_r, sched, base, limit, try_detach
+    );
     stream_read_all(&reader, rstream, &got, reader_cb);
 
     finished = false;
@@ -89,14 +102,13 @@ static derr_t test_limit(void){
 
     // one test with limit > input.len
     derr_t e2 = do_test(input, input, input.len + 1, SIZE_MAX, SIZE_MAX);
-    CATCH2(&e2, E_RESPONSE){
-        // this is what we expected
-        DROP_VAR(&e2);
-    }else if(is_error(e2)){
-        PROP_VAR(&e, &e2);
-    }else{
-        ORIG(&e, E_VALUE, "no error with limit > input.len");
-    }
+    EXPECT_E_VAR(&e, "e2", &e2, E_RESPONSE);
+
+    // one test with base canceled (try_detach() returns false)
+    force_no_detach = true;
+    e2 = do_test(input, input, input.len, SIZE_MAX, SIZE_MAX);
+    force_no_detach = false;
+    EXPECT_E_VAR(&e, "e2", &e2, E_INTERNAL);
 
     return e;
 }

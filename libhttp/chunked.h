@@ -1,10 +1,14 @@
+struct chunked_rstream_t;
+typedef struct chunked_rstream_t chunked_rstream_t;
+
 // chunked_rstream_t reads chunked encoding from the base stream
-typedef struct {
+struct chunked_rstream_t {
     rstream_i iface;
     rstream_i *base;
+    bool (*try_detach)(chunked_rstream_t*);
     scheduler_i *scheduler;
     schedulable_t schedulable;
-    void (*hdr_cb)(void *, const http_pair_t);
+    void (*hdr_cb)(chunked_rstream_t *, const http_pair_t);
     rstream_await_cb original_await_cb;
     // we schedule our own reads
     char _buf[4096];
@@ -25,12 +29,13 @@ typedef struct {
     bool first_chunk_parsed : 1;
     bool base_failing : 1;
     bool base_canceled : 1;
+    bool detached : 1;
     bool chunks_done;
     bool trailer_read;
     // one read in flight at a time
     link_t reads;
     rstream_await_cb await_cb;
-} chunked_rstream_t;
+};
 DEF_CONTAINER_OF(chunked_rstream_t, iface, rstream_i)
 DEF_CONTAINER_OF(chunked_rstream_t, schedulable, schedulable_t)
 
@@ -39,6 +44,6 @@ rstream_i *chunked_rstream(
     chunked_rstream_t *c,
     scheduler_i *scheduler,
     rstream_i *base,
-    // the void* data will be the iface.data
-    void (*hdr_cb)(void*, const http_pair_t)
+    bool (*try_detach)(chunked_rstream_t*),
+    void (*hdr_cb)(chunked_rstream_t*, const http_pair_t)
 );

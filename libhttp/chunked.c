@@ -227,7 +227,7 @@ static void advance_trailer(chunked_rstream_t *c, bool *complete){
                     return;
                 }
                 // finished a header line
-                c->hdr_cb(c->iface.data, hdr);
+                c->hdr_cb(c, hdr);
                 break;
 
             case HTTP_STATUS_SYNTAX_ERROR:
@@ -275,6 +275,9 @@ static void advance_state(chunked_rstream_t *c){
     // (these should already be true but this is a good check)
     if(c->reading || link_list_isempty(&c->reads)) return;
     c->iface.eof = true;
+
+    // try to detach from base
+    c->detached = c->try_detach(c);
     // fallthru to closing
 
 closing:
@@ -294,8 +297,8 @@ closing:
         rread->cb(&c->iface, rread, rread->buf, !failing(c));
     }
 
-    // await base, but only in failing cases
-    if(failing(c) && !c->base->awaited) return;
+    // await base, unless we detached
+    if(!c->base->awaited && !c->detached) return;
 
     // wait to be awaited
     if(!c->await_cb) return;
@@ -347,7 +350,8 @@ rstream_i *chunked_rstream(
     chunked_rstream_t *c,
     scheduler_i *scheduler,
     rstream_i *base,
-    void (*hdr_cb)(void*, const http_pair_t)
+    bool (*try_detach)(chunked_rstream_t*),
+    void (*hdr_cb)(chunked_rstream_t*, const http_pair_t)
 ){
     *c = (chunked_rstream_t){
         .iface = {
@@ -360,6 +364,7 @@ rstream_i *chunked_rstream(
             .await = chunked_await,
         },
         .base = base,
+        .try_detach = try_detach,
         .scheduler = scheduler,
         .hdr_cb = hdr_cb,
         .original_await_cb = base->await(base, await_cb),

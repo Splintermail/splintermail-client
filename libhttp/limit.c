@@ -64,11 +64,8 @@ static void advance_state(limit_rstream_t *l){
         if(l->nread >= l->limit){
             l->iface.eof = true;
             read->cb(&l->iface, read, read->buf, true);
-            // detach from base
-            if(l->base->await(l->base, l->original_await_cb) != await_cb){
-                LOG_FATAL("base->await() did not return limit's await_cb\n");
-            }
-            l->detached = true;
+            // try to detach from base
+            l->detached = l->try_detach(l);
             goto closing;
         }
 
@@ -98,8 +95,8 @@ closing:
         read->cb(&l->iface, read, read->buf, !failing(l));
     }
 
-    // await base
-    if(!l->detached && !l->base->awaited) return;
+    // await base, unless we detached
+    if(!l->base->awaited && !l->detached) return;
 
     // wait to be awaited
     if(!l->await_cb) return;
@@ -150,7 +147,11 @@ static rstream_await_cb limit_await(
 }
 
 rstream_i *limit_rstream(
-    limit_rstream_t *l, scheduler_i *scheduler, rstream_i *base, size_t limit
+    limit_rstream_t *l,
+    scheduler_i *scheduler,
+    rstream_i *base,
+    size_t limit,
+    bool (*try_detach)(limit_rstream_t*)
 ){
     *l = (limit_rstream_t){
         .iface = {
@@ -163,6 +164,7 @@ rstream_i *limit_rstream(
             .await = limit_await,
         },
         .base = base,
+        .try_detach = try_detach,
         .original_await_cb = base->await(base, await_cb),
         .scheduler = scheduler,
         .limit = limit,

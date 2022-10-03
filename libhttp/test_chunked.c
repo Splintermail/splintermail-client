@@ -9,6 +9,17 @@ stream_reader_t reader;
 derr_t E = E_OK;
 dstr_t exp_;
 bool success = false;
+rstream_i *base;
+bool force_no_detach = false;
+
+static bool try_detach(chunked_rstream_t *c){
+    (void)c;
+    if(force_no_detach){
+        base->cancel(base);
+        return false;
+    }
+    return !base->eof && !base->awaited;
+}
 
 typedef struct {
     dstr_t *body;
@@ -56,8 +67,8 @@ done:
     return;
 }
 
-static void hdr_cb(void *data, const http_pair_t hdr){
-    test_reader_t *tr = data;
+static void hdr_cb(chunked_rstream_t *c, const http_pair_t hdr){
+    test_reader_t *tr = c->iface.data;
     if(tr->r_awaited){
         ORIG_GO(&tr->e, E_VALUE, "hdr after await_cb", done);
     }
@@ -112,10 +123,10 @@ static derr_t _do_test(
     dstr_rstream_t dstr_r;
     chunked_rstream_t chunked;
 
-    rstream_i *base = dstr_rstream(&dstr_r, sched, input);
+    base = dstr_rstream(&dstr_r, sched, input);
     stream_must_await_first(base, base_await_cb);
 
-    rstream_i *r = chunked_rstream(&chunked, sched, base, hdr_cb);
+    rstream_i *r = chunked_rstream(&chunked, sched, base, try_detach, hdr_cb);
     stream_must_await_first(r, await_cb);
 
     DSTR_VAR(body, 4096);
@@ -142,7 +153,7 @@ static derr_t _do_test(
 
     /* even though we read everything, we shouldn't be submitting the extra
        read to the base reader to ever see an eof to trigger an await_cb */
-    if(tr.base_awaited){
+    if(!force_no_detach && tr.base_awaited){
         TRACE_ORIG(&e, E_VALUE, "base_await_cb was called");
     }
 
@@ -193,6 +204,23 @@ static derr_t do_test_chunked(size_t readmax){
             PAIR("other-key", "other-value"),
         )
     );
+
+    // with a failure in the base
+    force_no_detach = true;
+    derr_t e2 = do_test(
+        DSTR_LIT(
+            "6\r\n"
+            "hello \r\n"
+            "6\r\n"
+            "world!\r\n"
+            "0\r\n"
+            "\r\n"
+        ),
+        DSTR_LIT("hello world!")
+    );
+    force_no_detach = false;
+    EXPECT_E_VAR(&e, "e2", &e2, E_INTERNAL);
+
 
     return e;
 }
