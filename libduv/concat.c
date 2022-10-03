@@ -133,6 +133,7 @@ closing:
 
     c->iface.awaited = true;
     schedulable_cancel(&c->schedulable);
+    if(!is_error(c->e) && c->iface.canceled) c->e.type = E_CANCELED;
     // call user's await_cb
     c->await_cb(&c->iface, c->e);
 }
