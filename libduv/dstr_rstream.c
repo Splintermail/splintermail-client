@@ -84,7 +84,7 @@ static bool rstream_read(
 static void rstream_cancel(rstream_i *iface){
     dstr_rstream_t *r = CONTAINER_OF(iface, dstr_rstream_t, iface);
 
-    if(r->iface.canceled) return;
+    if(r->iface.awaited || r->iface.canceled) return;
     r->iface.canceled = true;
     schedule(r);
 }
