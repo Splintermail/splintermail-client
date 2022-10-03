@@ -105,6 +105,11 @@ derr_t duv_queue_work(
     uv_after_work_cb after_work_cb
 );
 derr_t duv_cancel_work(uv_work_t *work);
+void duv_timer_must_init(uv_loop_t *loop, uv_timer_t *timer);
+void duv_timer_must_start(
+    uv_timer_t *timer, uv_timer_cb cb, uint64_t timeout_ms
+);
+void duv_timer_must_stop(uv_timer_t *timer);
 derr_t duv_tcp_init(uv_loop_t *loop, uv_tcp_t *tcp);
 derr_t duv_tcp_bind(uv_tcp_t *tcp, struct sockaddr *addr, unsigned int flags);
 derr_t duv_tcp_binds(

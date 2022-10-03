@@ -177,6 +177,29 @@ derr_t duv_cancel_work(uv_work_t *work){
     return e;
 }
 
+void duv_timer_must_init(uv_loop_t *loop, uv_timer_t *timer){
+    int ret = uv_timer_init(loop, timer);
+    if(ret < 0){
+        LOG_FATAL("uv_timer_init error: %x\n", FUV(&ret));
+    }
+}
+
+void duv_timer_must_start(
+    uv_timer_t *timer, uv_timer_cb cb, uint64_t timeout_ms
+){
+    int ret = uv_timer_start(timer, cb, timeout_ms, 0);
+    if(ret < 0){
+        LOG_FATAL("uv_timer_start error (was timer closed?): %x\n", FUV(&ret));
+    }
+}
+
+void duv_timer_must_stop(uv_timer_t *timer){
+    int ret = uv_timer_stop(timer);
+    if(ret < 0){
+        LOG_FATAL("uv_timer_stop error (not possible?): %x\n", FUV(&ret));
+    }
+}
+
 derr_t duv_tcp_init(uv_loop_t *loop, uv_tcp_t *tcp){
     derr_t e = E_OK;
     int ret = uv_tcp_init(loop, tcp);
