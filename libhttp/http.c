@@ -19,6 +19,10 @@ void http_reader_init(http_reader_t *r, dstr_t *buf){
     DSTR_WRAP_ARRAY(r->reason, r->_reason);
 }
 
+void http_reader_free(http_reader_t *r){
+    http_parser_reset(&r->p);
+}
+
 // read the next header in the http message.
 /* status is one of -2="incomplete read", -1="header found", or the index of
    the first byte of the body */

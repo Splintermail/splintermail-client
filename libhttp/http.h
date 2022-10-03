@@ -37,3 +37,5 @@ void http_reader_init(http_reader_t *r, dstr_t *buf);
 
    When returned status is -2, the buffer may have ben left-shifted. */
 derr_t http_read(http_reader_t *r, http_pair_t *pair, int *status_out);
+
+void http_reader_free(http_reader_t *r);

@@ -1,4 +1,4 @@
-set(raw_srcs http.c marshal.c borrow.c limit.c chunked.c)
+set(raw_srcs http.c marshal.c borrow.c limit.c chunked.c duv_http.c)
 
 foreach(src ${raw_srcs})
     define_file_logname_for_source("${src}" "${src}")
@@ -28,7 +28,7 @@ add_library(
     "${http_scan_out}"
     "${http_parse_c}"
 )
-target_link_libraries(http PUBLIC dstr parsing url duv)
+target_link_libraries(http PUBLIC dstr parsing url duv crypto duvtls)
 default_compile_options(http TRUE)
 add_dependencies(http "gen-http-parse")
 
@@ -62,4 +62,13 @@ if(BUILD_TESTS)
     default_compile_options(test_chunked TRUE)
     define_file_logname_for_target(test_chunked)
     add_test(NAME "do_test_chunked" COMMAND "./test_chunked")
+
+    add_executable(test_duv_http test_duv_http.c)
+    target_link_libraries(test_duv_http PUBLIC http)
+    default_compile_options(test_duv_http TRUE)
+    define_file_logname_for_target(test_duv_http)
+    add_test(
+        NAME "do_test_duv_http"
+        COMMAND "./test_duv_http" "${CMAKE_CURRENT_SOURCE_DIR}/../test/files"
+    )
 endif()

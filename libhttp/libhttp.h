@@ -5,6 +5,8 @@
 #include "libparsing/libparsing.h"
 #include "liburl/liburl.h"
 #include "libduv/libduv.h"
+#include "libcrypto/libcrypto.h"
+#include "libduvtls/libduvtls.h"
 
 // types for the parser
 typedef struct {
@@ -26,5 +28,6 @@ typedef struct {
 #include "borrow.h"
 #include "limit.h"
 #include "chunked.h"
+#include "duv_http.h"
 
 #endif // LIBHTTP_H
