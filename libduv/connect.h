@@ -28,6 +28,10 @@ void duv_connect_cancel(duv_connect_t *c);
 struct duv_connect_t {
     // for the user to use
     void *data;
+    // true after duv_connect() and before duv_connect_cb is called
+    bool active;
+    // true after duv_cancel() and until duv_connect_cb is called
+    bool canceling;
 
     // configuration
     uv_loop_t *loop;
@@ -40,7 +44,6 @@ struct duv_connect_t {
     // state machine
     derr_t e;
     bool done;
-    bool canceling;
     struct {
         // gai begins in an in-flight state
         uv_getaddrinfo_t req;

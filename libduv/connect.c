@@ -15,10 +15,12 @@ static void finish(duv_connect_t *c, derr_t e){
     }
     free(c->service);
     free(c->node);
-    c->done = true;
     if(!is_error(e) && c->canceling){
         e.type = E_CANCELED;
     }
+    c->done = true;
+    c->active = false;
+    c->canceling = false;
     c->cb(c, e);
 }
 
@@ -62,7 +64,7 @@ static void advance_state(duv_connect_t *c){
             if(!c->tcp.closing){
                 c->tcp_handle->data = c;
                 c->tcp.closing = true;
-                uv_close((uv_handle_t*)c->tcp_handle, close_cb);
+                duv_tcp_close(c->tcp_handle, close_cb);
             }
             if(!c->tcp.closed) return;
         }
@@ -171,7 +173,7 @@ static void advance_state(duv_connect_t *c){
         );
         c->tcp_handle->data = c;
         c->tcp.closing = true;
-        uv_close((uv_handle_t*)c->tcp_handle, close_cb);
+        duv_tcp_close(c->tcp_handle, close_cb);
         return;
     }
 
@@ -224,6 +226,8 @@ derr_t duv_connect(
         );
     }
 
+    c->active = true;
+
     return e;
 
 fail_service:
@@ -234,7 +238,7 @@ fail_node:
 }
 
 void duv_connect_cancel(duv_connect_t *c){
-    if(c->canceling) return;
+    if(c->done || c->canceling) return;
     c->canceling = true;
     advance_state(c);
 }

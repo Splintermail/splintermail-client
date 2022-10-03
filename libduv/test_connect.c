@@ -40,12 +40,12 @@ static void finish(void){
 
 static void on_connect_phase_5(duv_connect_t *c, derr_t e){
     (void)c;
-    if(!is_error(e)) duv_tcp_close(&tcp, noop_close_cb);
     if(is_error(e)){
         if(e.type != E_CANCELED){
             PROP_VAR_GO(&E, &e, done);
         }
     }else{
+        duv_tcp_close(&tcp, noop_close_cb);
         ORIG_GO(&E, E_VALUE, "on_connect phase 5 not canceled", done);
     }
 
@@ -66,12 +66,13 @@ static void connect_started_hook(void){
 
 static void on_connect_phase_4(duv_connect_t *c, derr_t e){
     (void)c;
-    if(!is_error(e)) duv_tcp_close(&tcp, noop_close_cb);
     if(is_error(e)){
         if(e.type != E_CANCELED){
             PROP_VAR_GO(&E, &e, fail);
         }
     }else{
+        // no error: tcp must be connected
+        duv_tcp_close(&tcp, noop_close_cb);
         ORIG_GO(&E, E_VALUE, "on_connect phase 4 not canceled", fail);
     }
 
@@ -100,8 +101,8 @@ fail:
 
 static void on_connect_phase_3(duv_connect_t *c, derr_t e){
     (void)c;
-    if(!is_error(e)) duv_tcp_close(&tcp, noop_close_cb);
     if(!is_error(e)){
+        duv_tcp_close(&tcp, noop_close_cb);
         TRACE(&E, "duv_connect did not error\n");
         ORIG_GO(&E, E_VALUE, "on_connect phase 3 fail", fail);
     }
@@ -130,8 +131,8 @@ fail:
 
 static void on_connect_phase_2(duv_connect_t *c, derr_t e){
     (void)c;
-    if(!is_error(e)) duv_tcp_close(&tcp, noop_close_cb);
     if(!is_error(e)){
+        duv_tcp_close(&tcp, noop_close_cb);
         TRACE(&E, "duv_connect did not error\n");
         ORIG_GO(&E, E_VALUE, "on_connect phase 2 fail", fail);
     }
