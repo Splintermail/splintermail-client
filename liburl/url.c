@@ -92,3 +92,12 @@ done:
     url_parser_reset(&p);
     return ok;
 }
+
+url_t must_parse_url(const dstr_t *text){
+    url_t out;
+    DSTR_VAR(errbuf, 512);
+    if(!parse_url(text, &out, &errbuf)){
+        LOG_FATAL("failed to parse url (%x): %x\n", FD(text), FD(&errbuf));
+    }
+    return out;
+}

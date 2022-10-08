@@ -18,3 +18,6 @@ bool parse_url(const dstr_t *text, url_t *out, dstr_t *errbuf);
 // returns bool ok, errbuf can be NULL if you don't want a rendered error
 // Recommended errbuf size is 512.
 bool parse_url_reference(const dstr_t *text, url_t *out, dstr_t *errbuf);
+
+// watch out! url is only valid as long as the dstr_t is
+url_t must_parse_url(const dstr_t *text);
