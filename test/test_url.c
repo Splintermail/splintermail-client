@@ -354,6 +354,21 @@ static derr_t test_url(void){
         "https://splintermail.com:443#fragment",
         "sssss   hhhhhhhhhhhhhhhh nnn ffffffff"
     );
+    // a # but no fragment
+    DO_TEST_CASE(
+        "https://user:pass:word@splintermail.com/user?query=junk#",
+        "sssss   UUUU PPPPPPPPP hhhhhhhhhhhhhhhhppppp qqqqqqqqqq "
+    );
+    // a ? but no query
+    DO_TEST_CASE(
+        "https://user:pass:word@splintermail.com/user?#",
+        "sssss   UUUU PPPPPPPPP hhhhhhhhhhhhhhhhppppp  "
+    );
+    // ending with a ? but no query
+    DO_TEST_CASE(
+        "https://user:pass:word@splintermail.com/user?",
+        "sssss   UUUU PPPPPPPPP hhhhhhhhhhhhhhhhppppp "
+    );
     // colon but no port number
     DO_TEST_CASE(
         "https://splintermail.com:",
