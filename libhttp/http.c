@@ -5,7 +5,7 @@
 
 // Create a reader that will expect to find all headers in the provided buffer.
 // Each time the buffer is filled, you should http_read() again
-void http_reader_init(http_reader_t *r, const dstr_t *buf){
+void http_reader_init(http_reader_t *r, dstr_t *buf){
     *r = (http_reader_t){
         .buf = buf,
         .s = http_scanner(buf),
@@ -16,6 +16,7 @@ void http_reader_init(http_reader_t *r, const dstr_t *buf){
             .semsmax = sizeof(r->semstack) / sizeof(*r->semstack),
         }
     };
+    DSTR_WRAP_ARRAY(r->reason, r->_reason);
 }
 
 // read the next header in the http message.
@@ -30,6 +31,15 @@ derr_t http_read(http_reader_t *r, http_pair_t *pair, int *status_out){
         http_scanned_t scanned = http_scanner_next(&r->s);
         if(scanned.wantmore){
             // incomplete read
+            if(r->consumed){
+                // left-shift the buffer
+                dstr_leftshift(r->buf, r->consumed);
+                r->consumed = 0;
+                // reset scanner state
+                r->s = http_scanner(r->buf);
+                // any tokens we've built up are now invalid
+                http_parser_reset(&r->p);
+            }
             return e;
         }
 
@@ -50,7 +60,17 @@ derr_t http_read(http_reader_t *r, http_pair_t *pair, int *status_out){
             if(status == HTTP_STATUS_DONE){
                 // finished the status line
                 r->code = status_line.code;
-                r->reason = status_line.reason;
+                // copy the reason into stable memory
+                dstr_t sub = dstr_sub2(
+                    status_line.reason, 0, r->reason.size-1
+                );
+                NOFAIL_GO(&e, E_FIXEDSIZE,
+                    dstr_append(&r->reason, &sub),
+                fail);
+                NOFAIL_GO(&e, E_FIXEDSIZE,
+                    dstr_null_terminate(&r->reason),
+                fail);
+                r->consumed = r->s.used;
                 // continue parsing the first header
                 continue;
             }
@@ -64,6 +84,7 @@ derr_t http_read(http_reader_t *r, http_pair_t *pair, int *status_out){
                 if(hdr_line.key.len){
                     // finished a header line
                     *status_out = -1;
+                    r->consumed = r->s.used;
                 }else{
                     // end of headers
                     if(r->s.used > INT_MAX){

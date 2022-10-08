@@ -31,7 +31,6 @@ http_scanned_t http_scanner_next(http_scanner_t *s){
     #define YYSKIP() used++
     #define YYCTYPE unsigned char
 
-
     /*!re2c
         re2c:yyfill:enable = 0;
 

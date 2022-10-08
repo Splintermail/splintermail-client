@@ -3,9 +3,10 @@ typedef struct {
     /* code and reason are guaranteed to be defined after at least one header
        is returned from http_read() */
     int code;
-    dstr_t reason; // memory backed by buf
+    char _reason[256];
+    dstr_t reason; // first 256 bytes of the reason anyway
 
-    const dstr_t *buf;
+    dstr_t *buf;
     http_scanner_t s;
     http_call_t callstack[
         MAX(
@@ -20,14 +21,19 @@ typedef struct {
         )
     ];
     http_parser_t p;
+    size_t consumed;
     char errbuf[256];
 } http_reader_t;
 
-// Create a reader that will expect to find all headers in the provided buffer.
-// Each time the buffer is filled, you should http_read() again
-void http_reader_init(http_reader_t *r, const dstr_t *buf);
+/* Create a reader that will read headers in the provided buffer.  After each
+   incomplete read the buffer may be left-shifted.  Then you should refill and
+   start calling http_read() again. */
+void http_reader_init(http_reader_t *r, dstr_t *buf);
 
-// read the next header in the http message.
-/* status is one of -2="incomplete read", -1="header found", or the index of
-   the first byte of the body */
-derr_t http_read(http_reader_t *r, http_pair_t *pair, int *status);
+/* Read the next header in the http message.
+
+   Returned status is one of -2="incomplete read", -1="header found", or the
+   index of the first byte of the body.
+
+   When returned status is -2, the buffer may have ben left-shifted. */
+derr_t http_read(http_reader_t *r, http_pair_t *pair, int *status_out);
