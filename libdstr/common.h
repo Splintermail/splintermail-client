@@ -772,7 +772,7 @@ derr_t pvt_fmt(
    as the compound literal falls out of scope (meaning you can't safely return
    the compound literal or it will be useless) */
 
-// FMT is like sprintf
+// FMT is like sprintf, without the null-termination guarantee in error cases
 #define FMT(out, fstr, ...) \
     pvt_fmt(out, \
         fstr, \
