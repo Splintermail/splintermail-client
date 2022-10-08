@@ -3,17 +3,6 @@
 #include "liburl/liburl.h"
 #include "libhttp/libhttp.h"
 
-const http_pair_t *http_pairs_iter(
-    http_pairs_iter_t *it, http_pairs_t *pairs
-){
-    *it = (http_pairs_iter_t){ .pairs = pairs, .nread = 0 };
-    return http_pairs_next(it);
-}
-
-const http_pair_t *http_pairs_next(http_pairs_iter_t *it){
-    return it->pairs->next(it->pairs, it->nread++);
-}
-
 // Create a reader that will expect to find all headers in the provided buffer.
 // Each time the buffer is filled, you should http_read() again
 void http_reader_init(http_reader_t *r, const dstr_t *buf){
