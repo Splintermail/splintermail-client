@@ -200,6 +200,7 @@ static void advance_trailer(chunked_rstream_t *c, bool *complete){
     // wait for any pending read to complete
     if(c->reading) return;
 
+    size_t initial_nbufread = c->nbufread;
     dstr_t buf = dstr_sub2(c->buf, c->nbufread, SIZE_MAX);
     http_scanner_t s = http_scanner(&buf);
     HTTP_ONSTACK_PARSER(
@@ -220,7 +221,7 @@ static void advance_trailer(chunked_rstream_t *c, bool *complete){
 
             case HTTP_STATUS_DONE:
                 // checkpoint read progress
-                c->nbufread += s.used;
+                c->nbufread = initial_nbufread + s.used;
                 if(!hdr.key.len){
                     // end of trailer headers
                     *complete = true;

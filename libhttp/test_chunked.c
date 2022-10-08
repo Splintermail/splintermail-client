@@ -76,7 +76,7 @@ static void hdr_cb(chunked_rstream_t *c, const http_pair_t hdr){
         ORIG_GO(&tr->e, E_VALUE, "hdr after eof", done);
     }
     if(tr->nhdrs >= tr->exp_nhdrs){
-        ORIG_GO(&tr->e, E_VALUE, "hdr after eof", done);
+        ORIG_GO(&tr->e, E_VALUE, "too many hdrs", done);
     }
     size_t i = tr->nhdrs++;
     EXPECT_D_GO(&tr->e, "hdr.key", &hdr.key, &tr->exp_hdrs[i].key, done);
@@ -169,57 +169,64 @@ static derr_t _do_test(
 static derr_t do_test_chunked(size_t readmax){
     derr_t e = E_OK;
 
+    dstr_t input;
+
     _dstr_rstream_read_max_size = readmax;
 
     // without trailer headers
-    PROP(&e,
-        do_test(
-            DSTR_LIT(
-                "6\r\n"
-                "hello \r\n"
-                "6\r\n"
-                "world!\r\n"
-                "0\r\n"
-                "\r\n"
-            ),
-            DSTR_LIT("hello world!")
-        )
+    input = DSTR_LIT(
+        "6\r\n"
+        "hello \r\n"
+        "6\r\n"
+        "world!\r\n"
+        "0\r\n"
+        "\r\n"
     );
+    if(readmax < input.len + 1){
+        PROP(&e, do_test(input, DSTR_LIT("hello world!")) );
+    }
 
     // with trailer headers and chunk extensions
-    PROP(&e,
-        do_test(
-            DSTR_LIT(
-                "6;key=value;otherkey=othervalue\r\n"
-                "hello \r\n"
-                "6\r\n"
-                "world!\r\n"
-                "0\r\n"
-                "key: value\r\n"
-                "other-key: other-value\r\n"
-                "\r\n"
-            ),
-            DSTR_LIT("hello world!"),
-            PAIR("key", "value"),
-            PAIR("other-key", "other-value"),
-        )
+    input = DSTR_LIT(
+        "6;key=value;otherkey=othervalue\r\n"
+        "hello \r\n"
+        "6\r\n"
+        "world!\r\n"
+        "0\r\n"
+        "first-key: first-value\r\n"
+        "second-key: second-value\r\n"
+        "third-key: third-value\r\n"
+        "fourth-key: fourth-value\r\n"
+        "\r\n"
     );
+    if(readmax < input.len + 1){
+        PROP(&e,
+            do_test(
+                input,
+                DSTR_LIT("hello world!"),
+                PAIR("first-key", "first-value"),
+                PAIR("second-key", "second-value"),
+                PAIR("third-key", "third-value"),
+                PAIR("fourth-key", "fourth-value"),
+            )
+        );
+    }
 
     // with a failure in the base
-    force_no_detach = true;
-    derr_t e2 = do_test(
-        DSTR_LIT(
-            "6\r\n"
-            "hello \r\n"
-            "6\r\n"
-            "world!\r\n"
-            "0\r\n"
-            "\r\n"
-        ),
-        DSTR_LIT("hello world!")
+    input = DSTR_LIT(
+        "6\r\n"
+        "hello \r\n"
+        "6\r\n"
+        "world!\r\n"
+        "0\r\n"
+        "\r\n"
     );
-    force_no_detach = false;
-    EXPECT_E_VAR(&e, "e2", &e2, E_INTERNAL);
+    if(readmax < input.len + 1){
+        force_no_detach = true;
+        derr_t e2 = do_test(input, DSTR_LIT("hello world!"));
+        force_no_detach = false;
+        EXPECT_E_VAR(&e, "e2", &e2, E_INTERNAL);
+    }
 
 
     return e;
@@ -230,8 +237,11 @@ static derr_t test_chunked(void){
 
     size_t old_read_max_size = _dstr_rstream_read_max_size;
 
-    PROP_GO(&e, do_test_chunked(SIZE_MAX), done);
-    PROP_GO(&e, do_test_chunked(1), done);
+    for(size_t readmax = 1; readmax < 512; readmax++){
+        TRACE(&e, "readmax=%x\n", FU(readmax));
+        PROP_GO(&e, do_test_chunked(readmax), done);
+        DROP_VAR(&e);
+    }
 
 done:
     _dstr_rstream_read_max_size = old_read_max_size;
