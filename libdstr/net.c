@@ -11,6 +11,7 @@ derr_type_t fmthook_ntop4(dstr_t* out, const void* arg){
         sin->sin_family, &sin->sin_addr, buf.data, (socklen_t)buf.size
     );
     if(!ret) return E_OS;
+    buf.len = strlen(ret);
 
     return fmt_dstr_append_quiet(out, &buf);
 }
@@ -24,6 +25,7 @@ derr_type_t fmthook_ntop6(dstr_t* out, const void* arg){
         sin6->sin6_family, &sin6->sin6_addr, buf.data, (socklen_t)buf.size
     );
     if(!ret) return E_OS;
+    buf.len = strlen(ret);
 
     return fmt_dstr_append_quiet(out, &buf);
 }
