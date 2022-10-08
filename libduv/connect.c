@@ -164,11 +164,9 @@ static void advance_state(duv_connect_t *c){
     // have a connection result
     if(c->connect.status < 0){
         // connection failed
-        TRACE_ORIG(&c->e,
-            derr_type_from_uv_status(c->connect.status),
-            "failed connecting to %x: %x: %x",
+        TRACE(&c->e,
+            "failed connecting to \"%x\": %x\n",
             FNTOP(c->gai.ptr->ai_addr),
-            FS(uv_err_name(c->connect.status)),
             FS(uv_strerror(c->connect.status))
         );
         c->tcp_handle->data = c;
