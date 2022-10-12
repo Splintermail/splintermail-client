@@ -35,9 +35,17 @@ int pvt_do_log(log_level_t level, const char* format,
              &(const fmt_t[]){FI(1), __VA_ARGS__}[1], \
              sizeof((const fmt_t[]){FI(1), __VA_ARGS__}) / sizeof(fmt_t) - 1)
 #define LOG_FATAL(fstr, ...) \
-    pvt_do_log(LOG_LVL_FATAL, fstr, \
-             &(const fmt_t[]){FI(1), __VA_ARGS__}[1], \
-             sizeof((const fmt_t[]){FI(1), __VA_ARGS__}) / sizeof(fmt_t) - 1)
+    pvt_do_log( \
+        LOG_LVL_FATAL, \
+        "FATAL ERROR in file %x: %x(), line %x: " fstr, \
+        (const fmt_t[]){ \
+            FS(FILE_BASENAME), \
+            FS(__func__), \
+            FU(__LINE__), \
+            __VA_ARGS__ \
+        }, \
+        sizeof((const fmt_t[]){__VA_ARGS__}) / sizeof(fmt_t) + 3 \
+    )
 
 #define FILE_LOC \
     FILE_BASENAME, __func__, __LINE__
