@@ -88,10 +88,10 @@ static derr_t test_borrow(void){
 
     PROP_VAR(&e, &E);
     if(!finished) ORIG(&e, E_VALUE, "borrow did not finish");
-    // base should be EOF but not canceled or awaited
+    // when base is eof, it must also be canceled and awaited
     EXPECT_B(&e, "base->eof", base->eof, true);
-    EXPECT_B(&e, "base->canceled", base->canceled, false);
-    EXPECT_B(&e, "base->awaited", base->awaited, false);
+    EXPECT_B(&e, "base->canceled", base->canceled, true);
+    EXPECT_B(&e, "base->awaited", base->awaited, true);
 
     // reset, then cancel the borrow stream
     finished = false;

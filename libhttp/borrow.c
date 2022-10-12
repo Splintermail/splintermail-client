@@ -31,6 +31,12 @@ static void read_cb(
         b->base_failing = true;
     }else if(buf.len == 0){
         b->iface.eof = true;
+        /* cancel the base after an EOF, since there's no point writing more
+           any more HTTP requests if we can't get any more responses */
+        if(!b->base_canceled){
+            b->base->cancel(b->base);
+            b->base_canceled = true;
+        }
     }
 
     b->rread->buf = buf;
@@ -76,18 +82,11 @@ closing:
         rread->cb(&b->iface, rread, rread->buf, !failing(b));
     }
 
-    // await base, if we know its shutting down
-    if((b->base_canceled || b->base_failing) && !b->base->awaited) return;
+    // await base
+    if(!b->base->awaited) return;
 
     // wait to be awaited
     if(!b->await_cb) return;
-
-    if(!b->base->awaited){
-        // detach from base
-        if(b->base->await(b->base, b->original_await_cb) != await_cb){
-            LOG_FATAL("base->await() did not return borrow's await_cb\n");
-        }
-    }
 
     b->iface.awaited = true;
     schedulable_cancel(&b->schedulable);
