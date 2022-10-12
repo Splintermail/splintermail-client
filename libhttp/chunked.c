@@ -15,9 +15,12 @@ static void read_cb(
     if(!ok){
         c->base_failing = true;
     }else if(buf.len == 0){
-        c->iface.eof = true;
+        /* eof is always an error, since we should never read after we've read
+           a complete response */
+        ORIG_GO(&c->e, E_RESPONSE, "incomplete chunked response", done);
     }
 
+done:
     advance_state(c);
 }
 
@@ -224,6 +227,14 @@ static void advance_trailer(chunked_rstream_t *c, bool *complete){
                 c->nbufread = initial_nbufread + s.used;
                 if(!hdr.key.len){
                     // end of trailer headers
+                    if(c->nbufread != c->buf.len){
+                        // extra content found after end of trailer headers
+                        ORIG_GO(
+                            &c->e,
+                            E_RESPONSE,
+                            "extraneous content after chunked response",
+                        done);
+                    }
                     *complete = true;
                     return;
                 }

@@ -5,7 +5,6 @@
 #include "test/test_utils.h"
 
 dstr_rstream_t dstr_r;
-stream_reader_t reader;
 derr_t E = E_OK;
 dstr_t exp_;
 bool success = false;
@@ -101,9 +100,10 @@ done:
 
 #define PAIR(k, v) (http_pair_t){.key=DSTR_LIT(k), .value=DSTR_LIT(v)}
 
-#define do_test(i, b, ...) \
+#define do_test(i, invalid, b, ...) \
     _do_test( \
         (i), \
+        (invalid), \
         (b), \
         &(http_pair_t[]){PAIR("",""), __VA_ARGS__}[1], \
         sizeof(http_pair_t[]){PAIR("",""), __VA_ARGS__} \
@@ -111,6 +111,7 @@ done:
     )
 static derr_t _do_test(
     const dstr_t input,
+    bool invalid_input,
     const dstr_t exp_body,
     const http_pair_t *hdrs,
     size_t nhdrs
@@ -149,12 +150,22 @@ static derr_t _do_test(
 
     // checks
 
+    if(invalid_input){
+        EXPECT_E_VAR(&e, "tr.e", &tr.e, E_RESPONSE);
+        return e;
+    }
+
     TRACE_PROP_VAR(&e, &tr.e);
 
-    /* even though we read everything, we shouldn't be submitting the extra
-       read to the base reader to ever see an eof to trigger an await_cb */
-    if(!force_no_detach && tr.base_awaited){
-        TRACE_ORIG(&e, E_VALUE, "base_await_cb was called");
+    if(!force_no_detach && !invalid_input){
+        /* even though we read everything, we shouldn't be submitting the extra
+           read to the base reader to ever see an eof to trigger an await_cb */
+        if(tr.base_awaited){
+            TRACE_ORIG(&e, E_VALUE, "base_await_cb was called");
+        }
+        if(dstr_r.iface.eof){
+            TRACE_ORIG(&e, E_VALUE, "dstr_rstream hit eof");
+        }
     }
 
     if(!tr.r_awaited){
@@ -162,6 +173,8 @@ static derr_t _do_test(
     }
 
     EXPECT_D(&e, "body", &body, &exp_body);
+
+    // the chunked reader should never hit an eof because
 
     return e;
 }
@@ -183,10 +196,10 @@ static derr_t do_test_chunked(size_t readmax){
         "\r\n"
     );
     if(readmax < input.len + 1){
-        PROP(&e, do_test(input, DSTR_LIT("hello world!")) );
+        PROP(&e, do_test(input, false, DSTR_LIT("hello world!")) );
     }
 
-    // with trailer headers and chunk extensions
+    // with trailer headers and chunk extensions and extra shit afterwards
     input = DSTR_LIT(
         "6;key=value;otherkey=othervalue\r\n"
         "hello \r\n"
@@ -198,11 +211,16 @@ static derr_t do_test_chunked(size_t readmax){
         "third-key: third-value\r\n"
         "fourth-key: fourth-value\r\n"
         "\r\n"
+        "extra shit"
     );
+    size_t boundary = input.len - DSTR_LIT("extra_shit").len;
+    // expect invalid whenever we don't naturally end a read at the boundary
+    bool invalid = (boundary % readmax) > 0;
     if(readmax < input.len + 1){
         PROP(&e,
             do_test(
                 input,
+                invalid,
                 DSTR_LIT("hello world!"),
                 PAIR("first-key", "first-value"),
                 PAIR("second-key", "second-value"),
@@ -223,9 +241,43 @@ static derr_t do_test_chunked(size_t readmax){
     );
     if(readmax < input.len + 1){
         force_no_detach = true;
-        derr_t e2 = do_test(input, DSTR_LIT("hello world!"));
+        derr_t e2 = do_test(input, false, DSTR_LIT("hello world!"));
         force_no_detach = false;
         EXPECT_E_VAR(&e, "e2", &e2, E_INTERNAL);
+    }
+
+    // reject invalid input
+    input = DSTR_LIT(
+        "6kjm\r\n"
+        "hello \r\n"
+        "6\r\n"
+        "world!\r\n"
+        "0\r\n"
+        "\r\n"
+    );
+    if(readmax < input.len + 1){
+        PROP(&e, do_test(input, true, DSTR_LIT("hello world!")) );
+    }
+    // reject unexpected eof input
+    input = DSTR_LIT(
+        "6\r\n"
+        "hello \r\n"
+        "6\r\n"
+        "w"
+    );
+    if(readmax < input.len + 1){
+        PROP(&e, do_test(input, true, DSTR_LIT("hello world!")) );
+    }
+    // reject a different kind of unexpected eof
+    input = DSTR_LIT(
+        "6\r\n"
+        "hello \r\n"
+        "6\r\n"
+        "world!\r\n"
+        "0\r\n"
+    );
+    if(readmax < input.len + 1){
+        PROP(&e, do_test(input, true, DSTR_LIT("hello world!")) );
     }
 
 
