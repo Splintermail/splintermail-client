@@ -283,7 +283,7 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
             "-- for value '%x', expected:\n" \
             "%x%x" \
             "-- but got:\n" \
-            "%x%x", \
+            "%x%x-- (end) --", \
             FS(name), FD(_exp), FS(_line_end), FD(_got), FS(_line_end) \
         ); \
     } \
@@ -314,7 +314,7 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
     if(_got != NULL){ \
         ORIG(e, \
             E_VALUE, \
-            "expected %x == NULL but got %x\n", \
+            "expected %x == NULL but got %x", \
             FS(name), \
             FP(_got) \
         ); \
@@ -326,7 +326,7 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
     if(_got != NULL){ \
         ORIG(e, \
             E_VALUE, \
-            "expected %x == NULL but got %x\n", \
+            "expected %x == NULL but got %x", \
             label, \
             FS(name), \
             FP(_got) \
@@ -339,7 +339,7 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
     if(_got == NULL){ \
         ORIG(e, \
             E_VALUE, \
-            "expected %x != NULL\n", \
+            "expected %x != NULL", \
             FS(name) \
         ); \
     } \
@@ -350,7 +350,7 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
     if(_got == NULL){ \
         ORIG(e, \
             E_VALUE, \
-            "expected %x != NULL\n", \
+            "expected %x != NULL", \
             label, \
             FS(name) \
         ); \
