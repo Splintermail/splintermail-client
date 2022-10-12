@@ -254,7 +254,7 @@ static unsigned int hashmap_elem_init(hash_elem_t *elem, const dstr_t *skey,
 static bool hash_elem_match(hash_elem_t *a, hash_elem_t *b){
     if(a->key_is_str){
         // string-type key
-        return b->key_is_str && (dstr_cmp(a->key.dstr, b->key.dstr) == 0);
+        return b->key_is_str && (dstr_eq(*a->key.dstr, *b->key.dstr));
     }
     // non-string key
     return !b->key_is_str && (a->key.uint == b->key.uint);
