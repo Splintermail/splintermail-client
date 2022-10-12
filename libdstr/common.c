@@ -794,7 +794,7 @@ derr_t dstr_recode(const dstr_t* in,
 }
 
 static size_t do_dstr_count2(
-    const dstr_t text, const dstr_t pattern, bool sensitive
+    const dstr_t text, const dstr_t pattern, bool sensitive, bool exitfirst
 ){
     char (*char_fn)(char) = sensitive ? noichar : ichar;
     size_t count = 0;
@@ -810,6 +810,7 @@ static size_t do_dstr_count2(
             }
         }
         if(match == true){
+            if(exitfirst) return 1;
             count++;
             // no need to search anymore until end of current pattern
             // (compensating for the fact that the loop adds 1 to i)
@@ -820,29 +821,52 @@ static size_t do_dstr_count2(
 }
 
 size_t dstr_count(const dstr_t* text, const dstr_t* pattern){
-    return do_dstr_count2(*text, *pattern, true);
+    return do_dstr_count2(*text, *pattern, true, false);
 }
-
 size_t dstr_count2(const dstr_t text, const dstr_t pattern){
-    return do_dstr_count2(text, pattern, true);
+    return do_dstr_count2(text, pattern, true, false);
 }
-
 size_t dstr_icount2(const dstr_t text, const dstr_t pattern){
-    return do_dstr_count2(text, pattern, false);
+    return do_dstr_count2(text, pattern, false, false);
 }
 
+bool dstr_contains(const dstr_t text, const dstr_t pattern){
+    return do_dstr_count2(text, pattern, true, true);
+}
+bool dstr_icontains(const dstr_t text, const dstr_t pattern){
+    return do_dstr_count2(text, pattern, false, true);
+}
+
+static bool do_beginswith(
+    const dstr_t str, const dstr_t pattern, bool sensitive
+){
+    dstr_t sub = dstr_sub2(str, 0, pattern.len);
+    return sensitive ? dstr_eq(pattern, sub) : dstr_ieq(pattern, sub);
+}
 bool dstr_beginswith(const dstr_t *str, const dstr_t *pattern){
-    if(!pattern->len) return true;
-    if(str->len < pattern->len) return false;
-    dstr_t sub = dstr_sub(str, 0, pattern->len);
-    return dstr_cmp(pattern, &sub) == 0;
+    return do_beginswith(*str, *pattern, true);
+}
+bool dstr_beginswith2(const dstr_t str, const dstr_t pattern){
+    return do_beginswith(str, pattern, true);
+}
+bool dstr_ibeginswith2(const dstr_t str, const dstr_t pattern){
+    return do_beginswith(str, pattern, false);
 }
 
+static bool do_endswith(
+    const dstr_t str, const dstr_t pattern, bool sensitive
+){
+    dstr_t sub = dstr_sub2(str, str.len - MIN(str.len, pattern.len), str.len);
+    return sensitive ? dstr_eq(pattern, sub) : dstr_ieq(pattern, sub);
+}
 bool dstr_endswith(const dstr_t *str, const dstr_t *pattern){
-    if(!pattern->len) return true;
-    if(str->len < pattern->len) return false;
-    dstr_t sub = dstr_sub(str, str->len - pattern->len, str->len);
-    return dstr_cmp(pattern, &sub) == 0;
+    return do_endswith(*str, *pattern, true);
+}
+bool dstr_endswith2(const dstr_t str, const dstr_t pattern){
+    return do_endswith(str, pattern, true);
+}
+bool dstr_iendswith2(const dstr_t str, const dstr_t pattern){
+    return do_endswith(str, pattern, false);
 }
 
 derr_type_t dstr_grow_quiet(dstr_t *ds, size_t min_size){

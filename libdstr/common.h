@@ -517,8 +517,17 @@ size_t dstr_count2(const dstr_t text, const dstr_t pattern);
 // case-insensitive
 size_t dstr_icount2(const dstr_t text, const dstr_t pattern);
 
+// like dstr_count but exists after the first occurance
+bool dstr_contains(const dstr_t text, const dstr_t pattern);
+bool dstr_icontains(const dstr_t text, const dstr_t pattern);
+
 bool dstr_beginswith(const dstr_t *str, const dstr_t *pattern);
+bool dstr_beginswith2(const dstr_t str, const dstr_t pattern);
+bool dstr_ibeginswith2(const dstr_t str, const dstr_t pattern);
+
 bool dstr_endswith(const dstr_t *str, const dstr_t *pattern);
+bool dstr_endswith2(const dstr_t str, const dstr_t pattern);
+bool dstr_iendswith2(const dstr_t str, const dstr_t pattern);
 
 /*
 in:     dstr with text to copy
