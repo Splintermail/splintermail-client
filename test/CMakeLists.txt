@@ -105,7 +105,7 @@ target_link_libraries(test_networking PRIVATE crypto)
 target_link_libraries(test_key_tool PRIVATE ditm test_utils fake_api_server)
 target_link_libraries(test_ui PRIVATE ui dummy_ui_harness)
 # target_link_libraries(test_atree) PRIVATE
-target_link_libraries(test_dstr_off PRIVATE parsing)
+target_link_libraries(test_dstr_off PRIVATE dstr)
 target_link_libraries(test_url PRIVATE url)
 target_link_libraries(test_imap_scan PRIVATE imap)
 target_link_libraries(test_imap_read PRIVATE imap)

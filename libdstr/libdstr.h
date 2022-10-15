@@ -23,7 +23,6 @@
 #include "hashmap.h"
 #include "jsw_atree.h"
 #include "refs.h"
-
+#include "dstr_off.h"
 
 #endif // LIBDITM_H
-

@@ -2,7 +2,6 @@
 #define LIBURL_H
 
 #include "libdstr/libdstr.h"
-#include "libparsing/libparsing.h"
 
 #include "url.h"
 #include "url_scan.h"

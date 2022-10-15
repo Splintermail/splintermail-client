@@ -28,7 +28,7 @@ add_library(
     "${url_scan_out}"
     "${url_parse_c}"
 )
-target_link_libraries(url PUBLIC dstr parsing)
+target_link_libraries(url PUBLIC dstr)
 default_compile_options(url TRUE)
 add_dependencies(url "gen-url-parse")
 

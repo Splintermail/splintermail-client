@@ -2,7 +2,6 @@
 #define LIBHTTP_H
 
 #include "libdstr/libdstr.h"
-#include "libparsing/libparsing.h"
 #include "liburl/liburl.h"
 #include "libduv/libduv.h"
 #include "libcrypto/libcrypto.h"

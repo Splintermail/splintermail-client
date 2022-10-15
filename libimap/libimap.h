@@ -2,7 +2,6 @@
 #define LIBIMAP_H
 
 #include "libdstr/libdstr.h"
-#include "libparsing/libparsing.h"
 
 #include "expression.h"
 #include "extension.h"

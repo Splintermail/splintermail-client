@@ -1,7 +1,6 @@
 #include <stdlib.h>
 
 #include <libdstr/libdstr.h>
-#include <libparsing/libparsing.h>
 #include <liburl/liburl.h>
 
 #include "test_utils.h"

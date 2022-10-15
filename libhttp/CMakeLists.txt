@@ -28,7 +28,7 @@ add_library(
     "${http_scan_out}"
     "${http_parse_c}"
 )
-target_link_libraries(http PUBLIC dstr parsing url duv crypto duvtls)
+target_link_libraries(http PUBLIC dstr url duv crypto duvtls)
 default_compile_options(http TRUE)
 add_dependencies(http "gen-http-parse")
 
