@@ -91,6 +91,7 @@ int pvt_do_log(log_level_t level, const char* format,
         log_flush();
     }
     if(level == LOG_LVL_FATAL){
+        log_flush();
         abort();
     }
     return 0;
