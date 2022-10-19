@@ -417,18 +417,34 @@ void dstr_lower(dstr_t* text);
    Additionally, they result in an error if any part of *in is not part of the
    parsed number.  The idea is that you should know exactly what part of your
    string is a number and you should know what sort of number it is. */
-derr_t dstr_toi(const dstr_t* in, int* out, int base);
-derr_t dstr_tou(const dstr_t* in, unsigned int* out, int base);
-derr_t dstr_tol(const dstr_t* in, long* out, int base);
-derr_t dstr_toul(const dstr_t* in, unsigned long* out, int base);
-derr_t dstr_toll(const dstr_t* in, long long* out, int base);
-derr_t dstr_toull(const dstr_t* in, unsigned long long* out, int base);
-derr_t dstr_tou64(const dstr_t* in, uint64_t* out, int base);
-derr_t dstr_tof(const dstr_t* in, float* out);
-derr_t dstr_tod(const dstr_t* in, double* out);
-derr_t dstr_told(const dstr_t* in, long double* out);
-derr_t dstr_tosize(const dstr_t* in, size_t* out, int base);
-/*  throws : E_PARAM (for bad number strings) */
+#define INTEGERS_MAP(XX) \
+    XX(i, int) \
+    XX(u, unsigned int) \
+    XX(l, long) \
+    XX(ul, unsigned long) \
+    XX(ll, long long) \
+    XX(ull, unsigned long long) \
+    XX(u64, uint64_t) \
+    XX(size, size_t) \
+
+#define FLOATS_MAP(XX) \
+    XX(f, float) \
+    XX(d, double) \
+    XX(ld, long double) \
+
+#define DECLARE_DSTR_TO_INTEGER(suffix, type) \
+    derr_type_t dstr_to ## suffix ## _quiet( \
+        const dstr_t in, type* out, int base \
+    ); \
+    derr_t dstr_to ## suffix(const dstr_t *in, type *out, int base);
+INTEGERS_MAP(DECLARE_DSTR_TO_INTEGER)
+#undef DECLARE_DSTR_TO_INTEGER
+
+#define DECLARE_DSTR_TO_FLOAT(suffix, type) \
+    derr_type_t dstr_to ## suffix ## _quiet(const dstr_t in, type *out); \
+    derr_t dstr_to ## suffix(const dstr_t *in, type *out);
+FLOATS_MAP(DECLARE_DSTR_TO_FLOAT)
+#undef DECLARE_DSTR_TO_FLOAT
 
 /*
    (inputs)

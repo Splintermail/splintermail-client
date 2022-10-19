@@ -82,10 +82,8 @@ derr_t set_uv_threadpool_size(unsigned int min, unsigned int recommended){
         dstr_t str;
         DSTR_WRAP(str, uts_var, strlen(uts_var), true);
         unsigned int current_uts;
-        derr_t e2 = dstr_tou(&str, &current_uts, 10);
-        CATCH(e2, E_ANY){
-            DUMP(e2);
-            DROP_VAR(&e2);
+        derr_type_t etype = dstr_tou_quiet(str, &current_uts, 10);
+        if(etype != E_NONE){
             LOG_ERROR("unable to interpret UV_THREADPOOL_SIZE environment "
                     "variable; overwriting...\n");
         }else{

@@ -359,9 +359,8 @@ chunk:size = chunk_size:c *(SEMI chunked_extension) CR LF { $$ = $c; };
 
 chunk_size:size = 1*(ALPHA | DIGIT)
  {{ dstr_t text = dstr_from_off(@$);
-    derr_t e = dstr_tosize(&text, &$$, 16);
-    CATCH(e, E_ANY){
-        DROP_VAR(&e);
+    derr_type_t etype = dstr_tosize_quiet(text, &$$, 16);
+    if(etype != E_NONE){
         trace_http_error(E, @$);
         return HTTP_STATUS_SYNTAX_ERROR;
     }

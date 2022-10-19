@@ -143,19 +143,14 @@ static bool endswith(const dstr_t *str, char *pattern){
 }
 
 static unsigned int get_id(const dstr_t *file){
-    derr_t e = E_OK;
+    dstr_t idstr, rest;
+    dstr_split2_soft(*file, DSTR_LIT("-"), NULL, &idstr, &rest);
 
-    LIST_VAR(dstr_t, split, 2);
-    PROP_GO(&e, dstr_split_soft(file, &DSTR_LIT("-"), &split), fail);
-
-    unsigned int out = 0;
-    PROP_GO(&e, dstr_tou(&split.data[0], &out, 10), fail);
+    unsigned int out;
+    // ignore error, since we intend to return 0 in error cases
+    dstr_tou_quiet(idstr, &out, 10);
 
     return out;
-
-fail:
-    DROP_VAR(&e);
-    return 0;
 }
 
 static dstr_t get_name(const dstr_t *file){

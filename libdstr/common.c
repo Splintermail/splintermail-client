@@ -319,6 +319,33 @@ void dstr_lower(dstr_t* text){
     }
 }
 
+#define PARSE_INTEGER_TYPE(suffix, type) \
+    *out = 0; \
+    DSTR_VAR(temp, 128); \
+    if(dstr_append_quiet(&temp, &in) != E_NONE) return E_PARAM; \
+    if(dstr_null_terminate_quiet(&temp) != E_NONE) return E_PARAM; \
+    char* endptr; \
+    errno = 0; \
+    type result = strto ## suffix(temp.data, &endptr, base); \
+    /* check for conversion error */ \
+    if(errno) return E_PARAM; \
+    /* make sure everything was parsed */ \
+    if(endptr != &temp.data[temp.len]) return E_PARAM
+
+// same thing but without a base parameter
+#define PARSE_FLOAT_TYPE(suffix, type) \
+    *out = 0; \
+    DSTR_VAR(temp, 128); \
+    if(dstr_append_quiet(&temp, &in) != E_NONE) return E_PARAM; \
+    if(dstr_null_terminate_quiet(&temp) != E_NONE) return E_PARAM; \
+    char* endptr; \
+    errno = 0; \
+    type result = strto ## suffix(temp.data, &endptr); \
+    /* check for conversion error */ \
+    if(errno) return E_PARAM; \
+    /* make sure everything was parsed */ \
+    if(endptr != &temp.data[temp.len]) return E_PARAM
+
 /* behaves differently than atoi; it will err out if it sees a non-number
    character and it doesn't handle whitespace; the idea is that you should know
    what you think is a number and there should be built-in error handling if it
@@ -332,335 +359,102 @@ void dstr_lower(dstr_t* text){
                      or: inf or nan (case insensitive)
        int: [+|-] [0|0x] d* [.d*] (last part is either ignored or rejected)
    */
-derr_t dstr_toi(const dstr_t* in, int* out, int base){
-    derr_t e = E_OK;
-    // copy the version into a null-terminated string to read into atof()
-    DSTR_VAR(temp, 128);
-    derr_t e2 = dstr_copy(in, &temp);
-    CATCH(e2, E_ANY){
-        RETHROW(&e, &e2, E_PARAM);
-    }
-    e2 = dstr_null_terminate(&temp);
-    CATCH(e2, E_ANY){
-        RETHROW(&e, &e2, E_PARAM);
-    }
-    // now parse
-    char* endptr;
-    errno = 0; long result = strtol(temp.data, &endptr, base);
-    // check for error
-    if(errno){
-        TRACE(&e, "strtol(%x): %x\n", FD(in), FE(&errno));
-        ORIG(&e, E_PARAM, "invalid number string");
-    }
-    // make sure everything was parsed
-    if(endptr != &temp.data[temp.len]){
-        TRACE(&e, "input was \"%x\"\n", FD(in));
-        ORIG(&e, E_PARAM, "invalid number string");
-    }
+derr_type_t dstr_toi_quiet(const dstr_t in, int* out, int base){
+    PARSE_INTEGER_TYPE(l, long);
     // check bounds
-    if(result > INT_MAX || result < INT_MIN){
-        TRACE(&e, "input was \"%x\"\n", FD(in));
-        ORIG(&e, E_PARAM, "number out of range");
-    }
-    // return value
+    if(result > INT_MAX || result < INT_MIN) return E_PARAM;
     *out = (int)result;
-    return e;
+    return E_NONE;
 }
-derr_t dstr_tou(const dstr_t* in, unsigned int* out, int base){
-    derr_t e = E_OK;
-    // copy the version into a null-terminated string to read into atof()
-    DSTR_VAR(temp, 128);
-    derr_t e2 = dstr_copy(in, &temp);
-    CATCH(e2, E_ANY){
-        RETHROW(&e, &e2, E_PARAM);
-    }
-    e2 = dstr_null_terminate(&temp);
-    CATCH(e2, E_ANY){
-        RETHROW(&e, &e2, E_PARAM);
-    }
-    // now parse
-    char* endptr;
-    errno = 0;
-    unsigned long result = strtoul(temp.data, &endptr, base);
-    // check for error
-    if(errno){
-        TRACE(&e, "srtoul(%x): %x\n", FD(in), FE(&errno));
-        ORIG(&e, E_PARAM, "invalid number string");
-    }
-    // make sure everything was parsed
-    if(endptr != &temp.data[temp.len]){
-        TRACE(&e, "input was \"%x\"\n", FD(in));
-        ORIG(&e, E_PARAM, "invalid number string");
-    }
+derr_type_t dstr_tou_quiet(const dstr_t in, unsigned int* out, int base){
+    PARSE_INTEGER_TYPE(ul, unsigned long);
     // check bounds
-    if(result > UINT_MAX){
-        TRACE(&e, "input was \"%x\"\n", FD(in));
-        ORIG(&e, E_PARAM, "number out of range");
-    }
-    // return value
-    *out = (unsigned int)result; return e;
+    if(result > UINT_MAX) return E_PARAM;
+    *out = (unsigned int)result;
+    return E_NONE;
 }
-derr_t dstr_tol(const dstr_t* in, long* out, int base){
-    derr_t e = E_OK;
-    // copy the version into a null-terminated string to read into atof()
-    DSTR_VAR(temp, 128);
-    derr_t e2 = dstr_copy(in, &temp);
-    CATCH(e2, E_ANY){
-        RETHROW(&e, &e2, E_PARAM);
-    }
-    e2 = dstr_null_terminate(&temp);
-    CATCH(e2, E_ANY){
-        RETHROW(&e, &e2, E_PARAM);
-    }
-    // now parse
-    char* endptr;
-    errno = 0;
-    long result = strtol(temp.data, &endptr, base);
-    // check for error
-    if(errno){
-        TRACE(&e, "srtol(%x): %x\n", FD(in), FE(&errno));
-        ORIG(&e, E_PARAM, "invalid number string");
-    }
-    // make sure everything was parsed
-    if(endptr != &temp.data[temp.len]){
-        TRACE(&e, "input was \"%x\"\n", FD(in));
-        ORIG(&e, E_PARAM, "invalid number string");
-    }
-    // return value
+derr_type_t dstr_tol_quiet(const dstr_t in, long* out, int base){
+    PARSE_INTEGER_TYPE(l, long);
     *out = result;
-    return e;
+    return E_NONE;
 }
-derr_t dstr_toul(const dstr_t* in, unsigned long* out, int base){
-    derr_t e = E_OK;
-    // copy the version into a null-terminated string to read into atof()
-    DSTR_VAR(temp, 128);
-    derr_t e2 = dstr_copy(in, &temp);
-    CATCH(e2, E_ANY){
-        RETHROW(&e, &e2, E_PARAM);
-    }
-    e2 = dstr_null_terminate(&temp);
-    CATCH(e2, E_ANY){
-        RETHROW(&e, &e2, E_PARAM);
-    }
-    // now parse
-    char* endptr;
-    errno = 0;
-    unsigned long result = strtoul(temp.data, &endptr, base);
-    // check for error
-    if(errno){
-        TRACE(&e, "srtoul(%x): %x\n", FD(in), FE(&errno));
-        ORIG(&e, E_PARAM, "invalid number string");
-    }
-    // make sure everything was parsed
-    if(endptr != &temp.data[temp.len]){
-        TRACE(&e, "input was \"%x\"\n", FD(in));
-        ORIG(&e, E_PARAM, "invalid number string");
-    }
-    // return value
+derr_type_t dstr_toul_quiet(const dstr_t in, unsigned long* out, int base){
+    PARSE_INTEGER_TYPE(ul, unsigned long);
     *out = result;
-    return e;
+    return E_NONE;
 }
-derr_t dstr_toll(const dstr_t* in, long long* out, int base){
-    derr_t e = E_OK;
-    // copy the version into a null-terminated string to read into atof()
-    DSTR_VAR(temp, 128);
-    derr_t e2 = dstr_copy(in, &temp);
-    CATCH(e2, E_ANY){
-        RETHROW(&e, &e2, E_PARAM);
-    }
-    e2 = dstr_null_terminate(&temp);
-    CATCH(e2, E_ANY){
-        RETHROW(&e, &e2, E_PARAM);
-    }
-    // now parse
-    char* endptr;
-    errno = 0;
-    long long result = strtoll(temp.data, &endptr, base);
-    // check for error
-    if(errno){
-        TRACE(&e, "srtoll(%x): %x\n", FD(in), FE(&errno));
-        ORIG(&e, E_PARAM, "invalid number string");
-    }
-    // make sure everything was parsed
-    if(endptr != &temp.data[temp.len]){
-        TRACE(&e, "input was \"%x\"\n", FD(in));
-        ORIG(&e, E_PARAM, "invalid number string");
-    }
-    // return value
+derr_type_t dstr_toll_quiet(const dstr_t in, long long* out, int base){
+    PARSE_INTEGER_TYPE(ll, long long);
     *out = result;
-    return e;
+    return E_NONE;
 }
-derr_t dstr_toull(const dstr_t* in, unsigned long long* out, int base){
-    derr_t e = E_OK;
-    // copy the version into a null-terminated string to read into atof()
-    DSTR_VAR(temp, 128);
-    derr_t e2 = dstr_copy(in, &temp);
-    CATCH(e2, E_ANY){
-        RETHROW(&e, &e2, E_PARAM);
-    }
-    e2 = dstr_null_terminate(&temp);
-    CATCH(e2, E_ANY){
-        RETHROW(&e, &e2, E_PARAM);
-    }
-    // now parse
-    char* endptr;
-    errno = 0;
-    unsigned long long result = strtoull(temp.data, &endptr, base);
-    // check for error
-    if(errno){
-        TRACE(&e, "srtoull(%x): %x\n", FD(in), FE(&errno));
-        ORIG(&e, E_PARAM, "invalid number string");
-    }
-    // make sure everything was parsed
-    if(endptr != &temp.data[temp.len]){
-        TRACE(&e, "input was \"%x\"\n", FD(in));
-        ORIG(&e, E_PARAM, "invalid number string");
-    }
-    // return value
+derr_type_t dstr_toull_quiet(const dstr_t in, unsigned long long* out, int base){
+    PARSE_INTEGER_TYPE(ull, unsigned long long);
     *out = result;
-    return e;
+    return E_NONE;
 }
-derr_t dstr_tou64(const dstr_t* in, uint64_t* out, int base){
-    derr_t e = E_OK;
-    // copy the version into a null-terminated string to read into atof()
-    DSTR_VAR(temp, 128);
-    derr_t e2 = dstr_copy(in, &temp);
-    CATCH(e2, E_ANY){
-        RETHROW(&e, &e2, E_PARAM);
-    }
-    e2 = dstr_null_terminate(&temp);
-    CATCH(e2, E_ANY){
-        RETHROW(&e, &e2, E_PARAM);
-    }
-    // now parse
-    char* endptr;
-    errno = 0;
-    uintmax_t result = strtoumax(temp.data, &endptr, base);
-    // check for error
-    if(errno){
-        TRACE(&e, "srtoull(%x): %x\n", FD(in), FE(&errno));
-        ORIG(&e, E_PARAM, "invalid number string");
-    }
-    // make sure everything was parsed
-    if(endptr != &temp.data[temp.len]){
-        TRACE(&e, "input was \"%x\"\n", FD(in));
-        ORIG(&e, E_PARAM, "invalid number string");
-    }
+derr_type_t dstr_tou64_quiet(const dstr_t in, uint64_t* out, int base){
+    PARSE_INTEGER_TYPE(umax, uintmax_t);
     // check bounds
-    if(result > UINT64_MAX){
-        TRACE(&e, "input was \"%x\"\n", FD(in));
-        ORIG(&e, E_PARAM, "number out of range");
-    }
-    // return value
+    if(result > UINT64_MAX) return E_PARAM;
     *out = (uint64_t)result;
-    return e;
+    return E_NONE;
 }
-derr_t dstr_tof(const dstr_t* in, float* out){
-    derr_t e = E_OK;
-    // copy the version into a null-terminated string to read into atof()
-    DSTR_VAR(temp, 128);
-    derr_t e2 = dstr_copy(in, &temp);
-    CATCH(e2, E_ANY){
-        RETHROW(&e, &e2, E_PARAM);
-    }
-    e2 = dstr_null_terminate(&temp);
-    CATCH(e2, E_ANY){
-        RETHROW(&e, &e2, E_PARAM);
-    }
-    // now parse
-    char* endptr;
-    errno = 0;
-    float result = strtof(temp.data, &endptr);
-    // check for error
-    if(errno){
-        TRACE(&e, "srtof(%x): %x\n", FD(in), FE(&errno));
-        ORIG(&e, E_PARAM, "invalid number string");
-    }
-    // make sure everything was parsed
-    if(endptr != &temp.data[temp.len]){
-        TRACE(&e, "input was \"%x\"\n", FD(in));
-        ORIG(&e, E_PARAM, "invalid number string");
-    }
-    // return value
-    *out = result;
-    return e;
+derr_type_t dstr_tosize_quiet(const dstr_t in, size_t* out, int base){
+    PARSE_INTEGER_TYPE(umax, uintmax_t);
+    // check bounds
+    if(result > SIZE_MAX) return E_PARAM;
+    *out = (size_t)result;
+    return E_NONE;
 }
-derr_t dstr_tod(const dstr_t* in, double* out){
-    derr_t e = E_OK;
-    // copy the version into a null-terminated string to read into atof()
-    DSTR_VAR(temp, 128);
-    derr_t e2 = dstr_copy(in, &temp);
-    CATCH(e2, E_ANY){
-        RETHROW(&e, &e2, E_PARAM);
-    }
-    e2 = dstr_null_terminate(&temp);
-    CATCH(e2, E_ANY){
-        RETHROW(&e, &e2, E_PARAM);
-    }
-    // now parse
-    char* endptr;
-    errno = 0;
-    double result = strtod(temp.data, &endptr);
-    // check for error
-    if(errno){
-        TRACE(&e, "srtod(%x): %x\n", FD(in), FE(&errno));
-        ORIG(&e, E_PARAM, "invalid number string");
-    }
-    // make sure everything was parsed
-    if(endptr != &temp.data[temp.len]){
-        TRACE(&e, "input was \"%x\"\n", FD(in));
-        ORIG(&e, E_PARAM, "invalid number string");
-    }
-    // return value
-    *out = result;
-    return e;
-}
-derr_t dstr_told(const dstr_t* in, long double* out){
-    derr_t e = E_OK;
-    // copy the version into a null-terminated string to read into atof()
-    DSTR_VAR(temp, 128);
-    derr_t e2 = dstr_copy(in, &temp);
-    CATCH(e2, E_ANY){
-        RETHROW(&e, &e2, E_PARAM);
-    }
-    e2 = dstr_null_terminate(&temp);
-    CATCH(e2, E_ANY){
-        RETHROW(&e, &e2, E_PARAM);
-    }
-    // now parse
-    char* endptr;
-    errno = 0;
-    long double result = strtold(temp.data, &endptr);
-    // check for error
-    if(errno){
-        TRACE(&e, "srtod(%x): %x\n", FD(in), FE(&errno));
-        ORIG(&e, E_PARAM, "invalid number string");
-    }
-    // make sure everything was parsed
-    if(endptr != &temp.data[temp.len]){
-        TRACE(&e, "input was \"%x\"\n", FD(in));
-        ORIG(&e, E_PARAM, "invalid number string");
-    }
-    // return value
-    *out = result;
-    return e;
-}
-derr_t dstr_tosize(const dstr_t* in, size_t* out, int base){
-    derr_t e = E_OK;
-    // first copy into a unsigned long long
-    unsigned long long temp;
-    PROP(&e, dstr_toull(in, &temp, base) );
 
-#if ULLONG_MAX > SIZE_MAX
-    if(temp > SIZE_MAX){
-        TRACE(&e, "input was \"%x\"\n", FD(in));
-        ORIG(&e, E_PARAM, "number string too large for size_t");
+#define DEFINE_DSTR_TO_INTEGER(suffix, type) \
+    derr_t dstr_to ## suffix(const dstr_t *in, type* out, int base){ \
+        derr_t e = E_OK; \
+        derr_type_t etype = dstr_to ## suffix ## _quiet(*in, out, base); \
+        if(etype){ \
+            ORIG(&e, \
+                etype, \
+                "dstr_to " #suffix "(%x): invalid number string", \
+                FD_DBG(in) \
+            ); \
+        } \
+        return e; \
     }
-#endif
+INTEGERS_MAP(DEFINE_DSTR_TO_INTEGER)
+#undef DEFINE_DSTR_TO_INTEGER
 
-    *out = (size_t)temp;
-    return e;
+derr_type_t dstr_tof_quiet(const dstr_t in, float* out){
+    PARSE_FLOAT_TYPE(f, float);
+    *out = result;
+    return E_NONE;
 }
+derr_type_t dstr_tod_quiet(const dstr_t in, double* out){
+    PARSE_FLOAT_TYPE(d, double);
+    *out = result;
+    return E_NONE;
+}
+derr_type_t dstr_told_quiet(const dstr_t in, long double* out){
+    PARSE_FLOAT_TYPE(ld, long double);
+    *out = result;
+    return E_NONE;
+}
+
+#define DEFINE_DSTR_TO_FLOAT(suffix, type) \
+    derr_t dstr_to ## suffix(const dstr_t *in, type* out){ \
+        derr_t e = E_OK; \
+        derr_type_t etype = dstr_to ## suffix ## _quiet(*in, out); \
+        if(etype){ \
+            ORIG(&e, \
+                etype, \
+                "dstr_to " #suffix "(%x): invalid number string", \
+                FD_DBG(in) \
+            ); \
+        } \
+        return e; \
+    }
+FLOATS_MAP(DEFINE_DSTR_TO_FLOAT)
+#undef DEFINE_DSTR_TO_FLOAT
 
 char* dstr_find(const dstr_t* text, const LIST(dstr_t)* patterns,
                 size_t* which_pattern, size_t* partial_match_len){
@@ -1795,7 +1589,7 @@ derr_type_t fmthook_strerror(dstr_t* out, const void* arg){
 }
 
 derr_type_t fmthook_bin2hex(dstr_t* out, const void* arg){
-    // cast the inpu
+    // cast the input
     const dstr_t* bin = arg;
     return bin2hex_quiet(bin, out);
 }
