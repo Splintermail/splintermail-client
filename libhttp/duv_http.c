@@ -789,6 +789,7 @@ static void req_advance_state(duv_http_req_t *req){
     // wait to be awaited
     if(!req->await_cb) return;
 
+    schedulable_cancel(&req->schedulable);
     req->iface.awaited = true;
     req->await_cb(&req->iface, E_OK);
     return;
