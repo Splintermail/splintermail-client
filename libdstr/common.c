@@ -1401,14 +1401,15 @@ derr_type_t fmt_dstr_append_quiet(dstr_t *dstr, const dstr_t *new_text){
     return type;
 }
 
-static inline derr_type_t dstr_append_hex(dstr_t* dstr, unsigned char val){
+derr_type_t dstr_append_hex(dstr_t* dstr, unsigned char val){
     DSTR_VAR(buffer, 8);
     int len = snprintf(buffer.data, buffer.size, "%.2x", val);
     if(len < 0) return E_INTERNAL;
     buffer.len = (size_t)len;
     return fmt_dstr_append_quiet(dstr, &buffer);
 }
-static inline derr_type_t dstr_append_char(dstr_t* dstr, char val){
+
+derr_type_t dstr_append_char(dstr_t* dstr, char val){
     derr_type_t type = dstr_grow_quiet(dstr, dstr->len+1);
     if(type) return type;
     dstr->data[dstr->len++] = val;

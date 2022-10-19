@@ -1370,6 +1370,24 @@ cleanup_1:
     return e;
 }
 
+static derr_t read_ignore_item(jctx_t *ctx, size_t index, void *arg){
+    derr_t e = E_OK;
+    (void)index;
+
+    ignore_list_t *il = (ignore_list_t*)arg;
+
+    dstr_t item;
+    PROP(&e, jctx_read(ctx, JDREF(&item)) );
+    if(!*ctx->ok) return e;
+
+    // append uid to ignore list
+    PROP(&e, list_append_with_mem(&il->list, &il->mem, item, false) );
+    // also append to *seen
+    PROP(&e, LIST_APPEND(bool, &il->seen, false) );
+
+    return e;
+}
+
 derr_t ignore_list_load(ignore_list_t* il, const dstr_t* userdir){
     derr_t e = E_OK;
     // allocate the list, the backing memory, and *seen list
@@ -1379,8 +1397,8 @@ derr_t ignore_list_load(ignore_list_t* il, const dstr_t* userdir){
     // allocate to read a json file of unbounded length into memory
     dstr_t text;
     PROP_GO(&e, dstr_new(&text, 4096), f_seen);
-    LIST(json_t) json;
-    PROP_GO(&e, LIST_NEW(json_t, &json, 128), f_text);
+    json_t json;
+    json_prep(&json);
 
     // after this point, failure mode means output an empty string
 
@@ -1389,8 +1407,8 @@ derr_t ignore_list_load(ignore_list_t* il, const dstr_t* userdir){
     derr_t e2 = FMT(&path, "%x/ignore.json", FD(userdir));
     // failing to generate the filename is not a recoverable error
     CATCH(e2, E_FIXEDSIZE){
-        RETHROW_GO(&e, &e2, E_FS, f_text);
-    }else PROP_GO(&e, e2, f_text);
+        RETHROW_GO(&e, &e2, E_FS, f_json);
+    }else PROP_GO(&e, e2, f_json);
 
     // read the file
     e2 = dstr_read_file(path.data, &text);
@@ -1401,11 +1419,11 @@ derr_t ignore_list_load(ignore_list_t* il, const dstr_t* userdir){
         goto cu;
     }else{
         // but we can't recover if something else went wrong
-        PROP_GO(&e, e2, f_text);
+        PROP_GO(&e, e2, f_json);
     }
 
     // parse the text
-    e2 = json_parse(&json, &text);
+    e2 = json_parse(text, &json);
     // we can recover from a bad json file
     CATCH(e2, E_PARAM){
         LOG_WARN("unable to parse ignore.json\n");
@@ -1413,33 +1431,17 @@ derr_t ignore_list_load(ignore_list_t* il, const dstr_t* userdir){
         goto cu;
     }else{
         // but we can't recover if something else went wrong
-        PROP_GO(&e, e2, f_text);
+        PROP_GO(&e, e2, f_json);
     }
 
-    // now make sure json root object is an array
-    if(json.data[0].type != JSON_ARRAY){
-        LOG_WARN("incorrect format of ignore.json\n");
-        // if not we can recover from this
-        goto cu;
-    }
+    jspec_t *jspec = JLIST(read_ignore_item, il);
+    bool ok;
+    PROP_GO(&e, jspec_read_ex(jspec, json.root, &ok, NULL), f_json);
+    // we can recover from invalid format
+    if(!ok) ORIG_GO(&e, E_PARAM, "need cleanup", cu);
 
-    // get the first element of the array
-    json_t* elem = json.data[0].first_child;
-    // loop through all elements
-    while(elem){
-        // pull the uid we should ignore out of json format
-        dstr_t uid;
-        PROP_GO(&e, j_to_dstr(*elem, &uid), cu);
-        // and append it to ignore list
-        PROP_GO(&e, list_append_with_mem(&il->list, &il->mem, uid, false),
-                 f_text);
-        // also append to *seen
-        PROP_GO(&e, LIST_APPEND(bool, &il->seen, false), f_text);
-        // go to next element
-        elem = elem->next;
-    }
 cu:
-    LIST_FREE(json_t, &json);
+    json_free(&json);
     dstr_free(&text);
     // if we got any error after allocating, just start with an empty list
     CATCH(e, E_ANY){
@@ -1450,7 +1452,8 @@ cu:
     }
     return e;
 
-f_text:
+f_json:
+    json_free(&json);
     dstr_free(&text);
 f_seen:
     LIST_FREE(bool, &il->seen);

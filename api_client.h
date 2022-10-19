@@ -36,7 +36,7 @@ derr_t register_api_token(const char* host,
 derr_t api_password_call(const char* host, unsigned int port, dstr_t* command,
                          dstr_t* arg, const dstr_t* username,
                          const dstr_t* password, int* code, dstr_t* reason,
-                         dstr_t* recv, LIST(json_t)* json);
+                         dstr_t* recv, json_t *json);
 /* throws: E_NOMEM (creating BIO, or adding to *reason)
            E_FIXEDSIZE (adding to *reason or to *recv)
            E_PARAM (username, password, arg, host, or command too long)
@@ -50,7 +50,7 @@ derr_t api_password_call(const char* host, unsigned int port, dstr_t* command,
    call the next api_token_call() gets a new nonce */
 derr_t api_token_call(const char* host, unsigned int port, dstr_t* command,
                       dstr_t* arg, api_token_t* token, int* code,
-                      dstr_t* reason, dstr_t* recv, LIST(json_t)* json);
+                      dstr_t* reason, dstr_t* recv, json_t *json);
 /* throws: E_NOMEM (creating BIO, or adding to *reason)
            E_FIXEDSIZE (adding to *reason or to *recv)
            E_PARAM (host, arg, or command too long)

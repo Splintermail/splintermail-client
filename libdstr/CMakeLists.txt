@@ -6,7 +6,6 @@ macro(add_dstr_library name asan)
         logger.c
         fileops.c
         netops.c
-        json.c
         opt_parse.c
         win_compat.c
         jsw_atree.c
@@ -16,6 +15,9 @@ macro(add_dstr_library name asan)
         net.c
         refs.c
         dstr_off.c
+        unicode.c
+        json.c
+        jspec.c
     )
     define_file_logname_for_target("${name}")
     default_compile_options("${name}" "${asan}")

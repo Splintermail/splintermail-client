@@ -32,9 +32,10 @@ derr_t api_token_read(const char* path, api_token_t* token){
 
     // try to parse the file contents as json
     // should just be token, secret, and nonce
-    LIST_VAR(json_t, json, 32);
+    json_t json;
+    JSON_PREP_PREALLOCATED(json, 1024, 32, true);
 
-    e2 = json_parse(&json, &creds);
+    e2 = json_parse(creds, &json);
     // if we got a fixedsize error it is not a valid file
     CATCH(e2, E_FIXEDSIZE){
         LOG_WARN("api creds contains way too much json\n");
@@ -42,19 +43,13 @@ derr_t api_token_read(const char* path, api_token_t* token){
     }else PROP(&e, e2);
 
     // now we can dereference things
-    // we can let this E_PARAM just propagate
-    PROP(&e, jtou(jk(json.data[0], "token"), &token->key) );
+    jspec_t *jspec = JOBJ(false,
+        JKEY("nonce", JUL(&token->nonce)),
+        JKEY("secret", JDCPY(&token->secret)),
+        JKEY("token", JU(&token->key)),
+    );
 
-    dstr_t secret_local;
-    // we can let this E_PARAM just propagate
-    PROP(&e, j_to_dstr(jk(json.data[0], "secret"), &secret_local) );
-
-    // we can let this E_PARAM just propagate
-    PROP(&e, jtoul(jk(json.data[0], "nonce"), &token->nonce) );
-
-    // the file contents are in the wrong scope; need to do a copy operation
-    e2 = dstr_copy(&secret_local, &token->secret);
-    // a E_FIXEDSIZE error means the file wasn't valid to begin with
+    e2 = jspec_read(jspec, json.root);
     CATCH(e2, E_FIXEDSIZE){
         LOG_WARN("api secret is too long\n");
         RETHROW(&e, &e2, E_PARAM);
@@ -96,7 +91,7 @@ cu:
 static derr_t native_api_call(const char* host, unsigned int port,
                               dstr_t* command, dstr_t* req_body,
                               dstr_t *headers, int* code, dstr_t* reason,
-                              dstr_t* recv, LIST(json_t)* json){
+                              dstr_t* recv, json_t *json){
     derr_t e = E_OK;
 
     // some useful variables
@@ -191,8 +186,11 @@ static derr_t native_api_call(const char* host, unsigned int port,
     }
 
     // append any body in temp to *recv
-    sub = dstr_sub(&temp, (uintptr_t)(endpos - temp.data)
-                   + headers_end.data[which].len, 0);
+    sub = dstr_sub2(
+        temp,
+        (uintptr_t)(endpos - temp.data) + headers_end.data[which].len,
+        SIZE_MAX
+    );
     PROP_GO(&e, dstr_append(recv, &sub), cleanup_2);
 
     // read to the end, directly into *recv
@@ -202,7 +200,7 @@ static derr_t native_api_call(const char* host, unsigned int port,
 
     // now if the reason code was 2xx, parse the json
     if(*code >= 200 && *code < 300){
-        e2 = json_parse(json, recv);
+        e2 = json_parse(*recv, json);
         CATCH(e2, E_PARAM){
             RETHROW_GO(&e, &e2, E_RESPONSE, cleanup_2);
         }else PROP_GO(&e, e2, cleanup_2);
@@ -220,7 +218,7 @@ cleanup_1:
 derr_t api_password_call(const char* host, unsigned int port, dstr_t* command,
                          dstr_t* arg, const dstr_t* username,
                          const dstr_t* password, int* code, dstr_t* reason,
-                         dstr_t* recv, LIST(json_t)* json){
+                         dstr_t* recv, json_t *json){
     derr_t e = E_OK;
     derr_t e2;
 
@@ -267,7 +265,7 @@ derr_t api_password_call(const char* host, unsigned int port, dstr_t* command,
 
 derr_t api_token_call(const char* host, unsigned int port, dstr_t* command,
                       dstr_t* arg, api_token_t* token, int* code,
-                      dstr_t* reason, dstr_t* recv, LIST(json_t)* json){
+                      dstr_t* reason, dstr_t* recv, json_t *json){
     derr_t e = E_OK;
     derr_t e2;
 
@@ -334,7 +332,8 @@ derr_t register_api_token(const char* host,
     derr_t e2;
     LOG_INFO("attempting to register a new token\n");
     // get ready to recieve JSON
-    LIST_VAR(json_t, json, 32);
+    json_t json;
+    JSON_PREP_PREALLOCATED(json, 4096, 32, true);
 
     // get ready for the api call
     DSTR_STATIC(command, "add_token");
@@ -360,47 +359,49 @@ derr_t register_api_token(const char* host,
         );
     }
 
-    // dereference the status out of the json response
     dstr_t status;
-    e2 = j_to_dstr(jk(json.data[0], "status"), &status);
-    CATCH(e2, E_PARAM){
-        RETHROW(&e, &e2, E_RESPONSE);
-    }else PROP(&e, e2);
-    // now make sure that the request was a success
-    DSTR_STATIC(success, "success");
-    int result = dstr_cmp(&success, &status);
-    if(result != 0){
-        dstr_t contents;
-        e2 = j_to_dstr(jk(json.data[0], "contents"), &contents);
-        CATCH(e2, E_ANY){
-            DROP_VAR(&e2);
-        }else{
-            TRACE(&e, "server said: %x\n", FD(&contents));
-        }
-        ORIG(&e, E_RESPONSE, "add_device failed");
+    json_ptr_t jcontents;
+    bool ok, contents_ok;
+
+    jspec_t *jspec = JOBJ(false,
+        JKEYOPT("contents", &contents_ok, JPTR(&jcontents)),
+        JKEY("status", JDREF(&status)),
+    );
+
+    // parse json
+    DSTR_VAR(errbuf, 1024);
+    PROP(&e, jspec_read_ex(jspec, json.root, &ok, &errbuf) );
+    if(!ok){
+        TRACE(&e, "%x", FD(&errbuf));
+        ORIG(&e, E_RESPONSE, "invalid api token response");
     }
 
-    // now we need to pull out the contents/{token, secret}
+    // now make sure that the request was a success
+    if(!dstr_eq(status, DSTR_LIT("success"))){
+        if(contents_ok){
+            dstr_t dcontents;
+            derr_t e2 = jspec_read_ex(JDREF(&dcontents), jcontents, &ok, NULL);
+            if(is_error(e2)){
+                DROP_VAR(&e2);
+            }else if(ok){
+                TRACE(&e, "server said: %x\n", FD(&dcontents));
+            }
+        }
+        ORIG(&e, E_RESPONSE, "api call failed");
+    }
+
+    // read the secret and token from contents
     api_token_t token;
     api_token_init(&token);
-    json_t contents = jk(json.data[0], "contents");
-    // grab the token identifier from the json response
-    e2 = jtou(jk(contents, "token"), &token.key);
-    CATCH(e2, E_PARAM){
-        RETHROW(&e, &e2, E_RESPONSE);
-    }else PROP(&e, e2);
-    // derefernce the secret from the json response
-    dstr_t local_secret;
-    e2 = j_to_dstr(jk(contents, "secret"), &local_secret);
-    CATCH(e2, E_PARAM){
-        RETHROW(&e, &e2, E_RESPONSE);
-    }else PROP(&e, e2);
-    // copy the secret into the api_token_t object
-    e2 = dstr_copy(&local_secret, &token.secret);
-    CATCH(e2, E_FIXEDSIZE){
-        LOG_ERROR("server responded with a too-long token secret\n");
-        RETHROW(&e, &e2, E_RESPONSE);
-    }else PROP(&e, e2);
+    jspec = JOBJ(false,
+        JKEY("secret", JDCPY(&token.secret)),
+        JKEY("token", JU(&token.key)),
+    );
+    PROP(&e, jspec_read_ex(jspec, jcontents, &ok, &errbuf) );
+    if(!ok){
+        TRACE(&e, "%x", FD(&errbuf));
+        ORIG(&e, E_RESPONSE, "invalid server response");
+    }
 
     // nonce has to be at least 1, since the nonce starts at 0 on the server
     token.nonce = 1;

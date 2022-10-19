@@ -62,7 +62,7 @@ Parse number       Parse string                     Parse object
    |  | __             |                               |/   [,]   |
    |  |/   \          [u]                              |     |    |
    | [0-9] |           |                               |     A4   |
-   |  |    |^          T4                             [[]    \____/
+   |  |    |^          T4                             []]    \____/
    |  N9   |           |                               |
    |  |\___/          [e]                             done
    | /                 |
@@ -71,14 +71,9 @@ Parse number       Parse string                     Parse object
   done
 */
 
-static const char* JSON_BAD_NAME = "name not found in json object";
-static const char* JSON_BAD_INDEX = "index larger than json array";
-static const char* JSON_NOT_OBJECT = "unable to lookup name in non-object value";
-static const char* JSON_NOT_ARRAY = "unable to lookup index in non-array value";
-
 typedef enum {
     // in parse_value
-    V1,
+    V1 = 0,
     // in parse_true
     T2, T3, T4,
     // in parse_false
@@ -86,7 +81,7 @@ typedef enum {
     // in parse_null
     X2, X3, X4,
     // in parse_string
-    S2, S3, S4, S5, S6, S7,
+    S2, S3, S4, S5, S6, S7, S8, S9,
     // in parse_number
     N2, N3, N4, N5, N6, N7, N8, N9,
     // in parse_object
@@ -95,8 +90,6 @@ typedef enum {
     A2, A3, A4,
     // for done
     JSON_DONE,
-    // for propagating errors from jclose()
-    JSON_BAD_STATE
 } parse_state_t;
 
 static inline int is_hex(char c){
@@ -104,704 +97,1032 @@ static inline int is_hex(char c){
         || (c >= 'a' && c <= 'f')
         || (c >= 'A' && c <= 'F');
 }
+
+static inline unsigned char dehex(unsigned char u){
+    if(u >= '0' && u <= '9') return u - '0';
+    if(u >= 'a' && u <= 'f') return 10 + u - 'a';
+    if(u >= 'A' && u <= 'F') return 10 + u - 'A';
+    LOG_FATAL("invalid hex character: %x\n", FC((char)u));
+    return 0;
+}
+
 static inline int is_whitespace(char c){
     return c == ' ' || c == '\t' || c == '\n' || c == '\r';
 }
-static const json_t empty_json = {NULL, NULL, NULL, NULL,
-                                  0, {NULL, 0, 0, 0}, 0, NULL};
 
-static inline const char* type_2_string(json_type_t type){
+const dstr_t *json_type_to_dstr(json_type_e type){
+    DSTR_STATIC(string_str, "string");
+    DSTR_STATIC(number_str, "number");
+    DSTR_STATIC(true_str, "true");
+    DSTR_STATIC(false_str, "false");
+    DSTR_STATIC(null_str, "null");
+    DSTR_STATIC(object_str, "object");
+    DSTR_STATIC(array_str, "array");
+    DSTR_STATIC(unknown_str, "unknown");
     switch(type){
-        case JSON_STRING: return "JSON_STRING";
-        case JSON_NUMBER: return "JSON_NUMBER";
-        case JSON_TRUE: return "JSON_TRUE";
-        case JSON_FALSE: return "JSON_FALSE";
-        case JSON_NULL: return "JSON_NULL";
-        case JSON_OBJECT: return "JSON_OBJECT";
-        case JSON_ARRAY: return "JSON_ARRAY";
+        case JSON_STRING: return &string_str;
+        case JSON_NUMBER: return &number_str;
+        case JSON_TRUE: return &true_str;
+        case JSON_FALSE: return &false_str;
+        case JSON_NULL: return &null_str;
+        case JSON_OBJECT: return &object_str;
+        case JSON_ARRAY: return &array_str;
     }
-    return NULL;
+    return &unknown_str;
 }
 
-static inline const char* state_2_string(parse_state_t state){
-    switch(state){
-        case V1: return "V1";
-        case T2: return "T2";
-        case T3: return "T3";
-        case T4: return "T4";
-        case F2: return "F2";
-        case F3: return "F3";
-        case F4: return "F4";
-        case F5: return "F5";
-        case X2: return "X2";
-        case X3: return "X3";
-        case X4: return "X4";
-        case S2: return "S2";
-        case S3: return "S3";
-        case S4: return "S4";
-        case S5: return "S5";
-        case S6: return "S6";
-        case S7: return "S7";
-        case N2: return "N2";
-        case N3: return "N3";
-        case N4: return "N4";
-        case N5: return "N5";
-        case N6: return "N6";
-        case N7: return "N7";
-        case N8: return "N8";
-        case N9: return "N9";
-        case O2: return "O2";
-        case O3: return "O3";
-        case O4: return "O4";
-        case O5: return "O5";
-        case O6: return "O6";
-        case A2: return "A2";
-        case A3: return "A3";
-        case A4: return "A4";
-        case JSON_DONE: return "JSON_DONE";
-        case JSON_BAD_STATE: return "JSON_BAD_STATE";
-    }
-    return NULL;
+static void json_text_block_free(json_text_block_t **old){
+    json_text_block_t *block = *old;
+    if(!block) return;
+    dstr_free(block->text);
+    // free the combined allocation
+    free(block);
+    *old = NULL;
 }
 
-#define UNEXPECTED { \
-    size_t num_before = MIN(i, 10); \
-    DSTR_STATIC(spaces, "                                "); \
-    dstr_t sub = dstr_sub(text, i - num_before, i + 10); \
-    dstr_t subspace = dstr_sub(&spaces, 0, num_before); \
-    ORIG(&e, \
-        E_PARAM, \
-        "Unexpected character: '%x' at position %x\n" \
-        "%x\n" \
-        "%x^", \
-        FC(c), FU(i), FD(&sub), FD(&subspace) \
-    );\
-}
-
-#define JSON_DEBUG_PRINTING false
-#define S \
-    if(JSON_DEBUG_PRINTING){ \
-        LOG_DEBUG("state = %x reading '%x'\n", FS(state_2_string(state)), FC(c)); \
-    } \
-
-LIST_FUNCTIONS(json_t)
-
-// adds a new json_t to the backing memory and initilizes it, return a ptr
-/* throws: E_NOMEM
-           E_FIXEDSIZE */
-static derr_t jopen(LIST(json_t)* json, json_type_t type, dstr_t* text,
-                    size_t i, json_t** current, parse_state_t *state){
+static derr_t json_text_block_new(json_text_block_t **out, size_t size){
     derr_t e = E_OK;
-    if(JSON_DEBUG_PRINTING){
-        LOG_DEBUG("open  at %x = '%x' type %x\n", FU(i), FC(text->data[i]),
-                  FS(type_2_string(type)));
-    }
-    json_t* oldp = json->data;
-    PROP(&e, LIST_APPEND(json_t, json, empty_json) );
-    json_t* newp = json->data;
-    // fix pointers in old json_t's if there was a reallocation
-    if(newp != oldp){
-        *current = newp + (*current - oldp);
-        for(size_t k = 0; k < json->len - 1; k++){
-            if(json->data[k].parent)
-                json->data[k].parent = newp + (json->data[k].parent - oldp);
-            if(json->data[k].first_child)
-                json->data[k].first_child = newp + (json->data[k].first_child - oldp);
-            if(json->data[k].last_child)
-                json->data[k].last_child = newp + (json->data[k].last_child - oldp);
-            if(json->data[k].next)
-                json->data[k].next = newp + (json->data[k].next - oldp);
-        }
-    }
-    // get a pointer to the new json object
-    json_t* new = &json->data[json->len - 1];
-    // set some initial values
-    json_t* parent = *current;
-    new->parent = parent;
-    new->type = type;
-    // modify the parent to reflect a new child
-    if(parent){
-        parent->children++;
-        // modify parent's previous last_child
-        if(parent->last_child){
-            parent->last_child->next = new;
-        }
-        // set the parent's last_child
-        parent->last_child = new;
-        if(!parent->first_child){
-            parent->first_child = new;
-        }
-    }
-    new->token = dstr_sub(text, i, i);
 
-    // set the next state based on type and parent
-    switch(type){
-        case JSON_STRING: *state = S2; break;
-        case JSON_TRUE:   *state = T2; break;
-        case JSON_FALSE:  *state = F2; break;
-        case JSON_NULL:   *state = X2; break;
-        case JSON_OBJECT: *state = O2; break;
-        case JSON_ARRAY:  *state = A2; break;
-        case JSON_NUMBER:
-            if(text->data[i] >= '1' && text->data[i] <= '9') *state = N3;
-            else if(text->data[i] == '0') *state = N6;
-            else if(text->data[i] == '-') *state = N2;
-            break;
-    }
+    *out = NULL;
 
-    *current = new;
+    // allocate block and dstr_t in one allocation
+    json_text_block_t *block;
+    dstr_t *dstr;
+    void *mem = dmalloc(&e, sizeof(*block) + sizeof(*dstr));
+    CHECK(&e);
+
+    block = mem;
+    dstr = mem + sizeof(*block);
+
+    // dstr.data needs a separate allocation so it can safely be reallocated
+    PROP_GO(&e, dstr_new(dstr, size), fail);
+
+    block->text = dstr;
+    link_init(&block->link);
+
+    *out = block;
+
+    return e;
+
+fail:
+    free(mem);
     return e;
 }
 
-// completes the json_t object and returns the next unfinished object
-static parse_state_t jclose(dstr_t* text, size_t i, json_t** current){
-    if(JSON_DEBUG_PRINTING){
-        LOG_DEBUG("close at %x = '%x' type %x parent's type %x\n",
-                  FU(i), FC(text->data[i]), FS(type_2_string((*current)->type)),
-                  FS((*current)->parent ?
-                         type_2_string((*current)->parent->type) : NULL));
+static void json_node_block_free(json_node_block_t **old){
+    json_node_block_t *block = *old;
+    if(!block) return;
+    // free the combined allocation
+    free(block);
+    *old = NULL;
+}
+
+// size is in bytes, to make powers of 2 easy
+static derr_t json_node_block_new(json_node_block_t **out, size_t size){
+    derr_t e = E_OK;
+
+    *out = NULL;
+
+    // just one allocation, must be big enough for at least one node to result
+    if(size < sizeof(json_node_block_t) + sizeof(json_node_t)){
+        LOG_FATAL("json node block too small\n");
     }
-    // finish setting token
-    size_t start_offset = (uintptr_t)((*current)->token.data - text->data);
-    size_t end_offset = i + 1;
-    if((*current)->type == JSON_STRING){
-        (*current)->token = dstr_sub(text, start_offset + 1, end_offset - 1);
-    }else if((*current)->type == JSON_NUMBER){
-        (*current)->token = dstr_sub(text, start_offset, end_offset - 1);
+
+    void *mem = dmalloc(&e, size);
+    CHECK(&e);
+
+    json_node_block_t *block = mem;
+    *block = (json_node_block_t){
+        .nodes = mem + sizeof(json_node_block_t),
+        .cap = (size - sizeof(json_node_block_t)) / sizeof(json_node_t),
+    };
+    link_init(&block->link);
+
+    *out = block;
+
+    return e;
+}
+
+static derr_t add_text_block(json_parser_t *p, dstr_t **out, size_t minsize){
+    derr_t e = E_OK;
+
+    *out = NULL;
+
+    json_text_block_t *block;
+    PROP(&e, json_text_block_new(&block, MAX(minsize, 4096)) );
+    link_list_append(&p->json->text_blocks, &block->link);
+
+    *out = block->text;
+
+    return e;
+}
+
+// copy a character into a text block, allocating as necessary
+static derr_t copy_char(json_parser_t *p, char c){
+    derr_t e = E_OK;
+
+    dstr_t *base = p->token_base;
+
+    if(!base){
+        if(link_list_isempty(&p->json->text_blocks)){
+            if(p->json->fixedsize){
+                ORIG(&e, E_FIXEDSIZE, "no preallocated text buffer");
+            }
+            // get a new text_block
+            PROP(&e, add_text_block(p, &base, 0) );
+        }else{
+            // get the last text block
+            link_t *link = p->json->text_blocks.prev;
+            json_text_block_t *block =
+                CONTAINER_OF(link, json_text_block_t, link);
+            base = block->text;
+        }
+        p->token_base = base;
+    }
+
+    // prepare room for this char
+    if(base->len == base->size){
+        if(p->json->fixedsize){
+            ORIG(&e, E_FIXEDSIZE, "preallocated text buffer was not enough");
+        }
+        if(p->token_start > 0 || base->fixed_size){
+            /* either there's completed tokens in base or it is preallocated
+               and cannot grow; copy current token into a new buffer */
+            dstr_t sub = dstr_sub2(*base, p->token_start, SIZE_MAX);
+            dstr_t *new;
+            PROP(&e, add_text_block(p, &new, sub.len + 1) );
+            PROP(&e, dstr_append(new, &sub) );
+            base = new;
+            p->token_base = base;
+            p->token_start = 0;
+        }
+        // p->token_start must be zero by now, so grow if we need to
+        PROP(&e, dstr_grow(base, base->len + 1) );
+    }
+
+    // copy this one char
+    base->data[base->len++] = c;
+
+    return e;
+}
+
+typedef struct {
+    json_parser_t *p;
+    derr_t *e;
+} copy_codepoint_t;
+
+static derr_type_t copy_codepoint_foreach(char c, void *data){
+    copy_codepoint_t *arg = data;
+    IF_PROP(arg->e, copy_char(arg->p, c) ){
+        return E_VALUE;
+    }
+    return E_NONE;
+}
+
+// utf8-encodes a codepoint and writes it to the token we're building
+static derr_t copy_codepoint(json_parser_t *p, uint32_t codepoint){
+    derr_t e = E_OK;
+
+    copy_codepoint_t arg = {p, &e};
+    derr_type_t etype = utf8_encode_quiet(
+        codepoint, copy_codepoint_foreach, &arg
+    );
+    if(is_error(e)){
+        TRACE_PROP(&e);
+        return e;
+    }
+    if(etype != E_NONE){
+        ORIG(&e, etype, "failure in utf8_encode");
+    }
+
+    return e;
+}
+
+static dstr_t finish_token(json_parser_t *p){
+    dstr_t *base = p->token_base;
+
+    if(!base) return (dstr_t){0};
+
+    size_t start = p->token_start;
+    p->token_start = base->len;
+
+    return dstr_sub2(*base, start, SIZE_MAX);
+}
+
+static derr_t add_node_block(json_parser_t *p, json_node_block_t **out){
+    derr_t e = E_OK;
+
+    *out = NULL;
+
+    if(p->json->fixedsize){
+        ORIG(&e, E_FIXEDSIZE, "preallocated nodes were not enough");
+    }
+
+    json_node_block_t *block;
+    PROP(&e, json_node_block_new(&block, 4096) );
+    link_list_append(&p->json->node_blocks, &block->link);
+
+    *out = block;
+
+    return e;
+}
+
+// get a pointer to a new json node, allocating as necessary
+static derr_t add_node(json_parser_t *p, json_node_t **node, json_type_e type){
+    derr_t e = E_OK;
+
+    *node = NULL;
+
+    json_node_block_t *block;
+    if(link_list_isempty(&p->json->node_blocks)){
+        // get a new node block
+        PROP(&e, add_node_block(p, &block) );
     }else{
-        (*current)->token = dstr_sub(text, start_offset, end_offset);
+        // get the last node block
+        link_t *link = p->json->node_blocks.prev;
+        block = CONTAINER_OF(link, json_node_block_t, link);
     }
 
-
-    // now get the next object to look at
-    json_t* next = NULL;
-    if((*current)->parent){
-        // if this object is a "name", the current object will stay current
-        if((*current)->parent->type == JSON_OBJECT)
-            next = *current;
-        // if this object is a "value", current object will be the grandparent
-        else if((*current)->parent->type == JSON_STRING)
-            next = (*current)->parent->parent;
-        // but normally current object just becomes the parent
-        else
-            next = (*current)->parent;
+    if(block->len == block->cap){
+        // this block is full, get a new one
+        PROP(&e, add_node_block(p, &block) );
     }
 
-    // figure out what the next state should be based on parent type
-    parse_state_t state;
+    *node = &block->nodes[block->len++];
+    **node = (json_node_t){ .type = type };
+
+    return e;
+}
+
+static derr_t jopen(json_parser_t *p, json_type_e type, char c){
+    derr_t e = E_OK;
+
+    json_node_t *new;
+    PROP(&e, add_node(p, &new, type) );
+
+    json_node_t *parent = p->parent;
+    json_node_t *prev = p->prev;
+
+    new->parent = parent;
+    new->type = type;
+
+    // if we are the parent's first child, modify parent
+    if(parent && !parent->child) parent->child = new;
+    // if we're in a sequence, modify prev
+    if(prev) prev->next = new;
+
+    p->ptr = new;
+
+    // set the next state based on type and parent
+    switch(type){
+        case JSON_TRUE:   p->state = T2; break;
+        case JSON_FALSE:  p->state = F2; break;
+        case JSON_NULL:   p->state = X2; break;
+        case JSON_NUMBER:
+            if(c >= '1' && c <= '9') p->state = N3;
+            else if(c == '0') p->state = N6;
+            else if(c == '-') p->state = N2;
+            break;
+        case JSON_STRING:
+            p->state = S2;
+            break;
+        case JSON_OBJECT:
+            p->state = O2;
+            // the next thing we parse will be the first key of this object
+            p->parent = new;
+            p->prev = NULL;
+            break;
+        case JSON_ARRAY:
+            // the next thing we parse will be the first item of this array
+            p->state = A2;
+            p->parent = new;
+            p->prev = NULL;
+            break;
+    }
+
+    return e;
+}
+
+
+// completes the current json_node_t
+static void jclose(json_parser_t *p){
+    json_node_t *finished = p->ptr;
+    json_node_t *parent = finished->parent;
+
+    // capture token text
+    if(finished->type == JSON_NUMBER || finished->type == JSON_STRING){
+        finished->text = finish_token(p);
+    }
+
     /* note, a json object is opened (and therefore closed) in 1 of four ways:
        1. root value: (parent == NULL) -> state = JSON_DONE
        2. from O2: (parent->type == JSON_OBJECT) -> state = O3
        3. from O4: (parent->type == JSON_STRING) -> state = O5
        4. from A2 or A4: (parent->type == JSON_ARRAY) -> state = A3 */
-    if(!(*current)->parent) state = JSON_DONE;
-    else if((*current)->parent->type == JSON_OBJECT) state = O3;
-    else if((*current)->parent->type == JSON_STRING) state = O5;
-    else if((*current)->parent->type == JSON_ARRAY)  state = A3;
-    else state = JSON_BAD_STATE;
+    if(!finished->parent){
+        p->state = JSON_DONE;
+        return;
+    }
 
-    *current = next;
+    // reconfigure parser pointers
+    switch(parent->type){
+        case JSON_OBJECT:
+            // finished an object key
+            p->parent = finished;
+            p->prev = NULL;
+            p->state = O3;
+            break;
+        case JSON_STRING:
+            // finished an object value
+            p->parent = parent->parent;
+            p->prev = parent;
+            p->state = O5;
+            // in case we finish the object
+            p->ptr = parent->parent;
+            break;
+        case JSON_ARRAY:
+            // finished an array item
+            p->parent = parent;
+            p->prev = finished;
+            p->state = A3;
+            // in case we finish the array
+            p->ptr = parent;
+            break;
 
-    return state;
+        case JSON_TRUE:
+        case JSON_FALSE:
+        case JSON_NULL:
+        case JSON_NUMBER:
+            LOG_FATAL("invalid parent type: %x\n", FU(parent->type));
+    }
 }
 
-/* A tokenizer with strict JSON validation (although its utf8-stoopid).  You
-   need to hand it a LIST(dstr_t) for backing memory to the json_t object. */
-derr_t json_parse(LIST(json_t)* json, dstr_t* text){
-    derr_t e = E_OK;
-    // start with zero-length list
-    json->len = 0;
-    json_t* current = NULL;
 
-    // state machine!
-    parse_state_t state = V1;
-    for(size_t i = 0; i < text->len; i++){
-        // get the sigend and unsigned version of this byte
-        char c = text->data[i];
-        unsigned char u = (unsigned char)text->data[i];
-        switch(state){
+static derr_t parse_char(
+    json_parser_t *p, char c, unsigned char u, const dstr_t chunk, size_t i
+){
+    derr_t e = E_OK;
+
+    #define UNEXPECTED do { \
+        dstr_off_t token = { .buf = &chunk, .start = i, .len = 1 }; \
+        DSTR_VAR(context, 512); \
+        get_token_context(&context, token, 40); \
+        ORIG(&e, \
+            E_PARAM, \
+            "Unexpected character:\n%x", \
+            FD(&context) \
+        ); \
+    } while(0)
+
+    // numbers have no explicit end sentinel, so we may have to reparse a char
+reparse:
+
+    switch(p->state){
         // searching for values
         case O4:
         case A2:
         case A4:
-        case V1: S
+        case V1:
             // true
             if( c == 't'){
-                PROP(&e, jopen(json, JSON_TRUE, text, i, &current, &state));
+                PROP(&e, jopen(p, JSON_TRUE, c) );
             // false
             }else if(c == 'f'){
-                PROP(&e, jopen(json, JSON_FALSE, text, i, &current, &state));
+                PROP(&e, jopen(p, JSON_FALSE, c) );
             // null
             }else if(c == 'n'){
-                PROP(&e, jopen(json, JSON_NULL, text, i, &current, &state));
+                PROP(&e, jopen(p, JSON_NULL, c) );
             // string
             }else if(c == '"'){
-                PROP(&e, jopen(json, JSON_STRING, text, i, &current, &state));
+                PROP(&e, jopen(p, JSON_STRING, c) );
             // number
             }else if(c == '-' || (c >= '0' && c <= '9')){
-                PROP(&e, jopen(json, JSON_NUMBER, text, i, &current, &state));
+                PROP(&e, jopen(p, JSON_NUMBER, c) );
+                PROP(&e, copy_char(p, c) );
             // object
             }else if(c == '{'){
-                PROP(&e, jopen(json, JSON_OBJECT, text, i, &current, &state));
+                PROP(&e, jopen(p, JSON_OBJECT, c) );
             // array
             }else if(c == '['){
-                PROP(&e, jopen(json, JSON_ARRAY, text, i, &current, &state));
+                PROP(&e, jopen(p, JSON_ARRAY, c) );
             // skip whitespace
             }else if(is_whitespace(c)){ /* skip whitespace */ }
             // only for A2 state:
-            else if(state == A2 && c == ']')
-                state = jclose(text, i, &current);
+            else if(p->state == A2 && c == ']'){
+                jclose(p);
+            }
             // any other character
-            else UNEXPECTED
+            else UNEXPECTED;
             break;
         // true states
-        case T2: S if(c == 'r') state = T3; else UNEXPECTED break;
-        case T3: S if(c == 'u') state = T4; else UNEXPECTED break;
-        case T4: S
-            if(c == 'e') state = jclose(text, i, &current);
-            else UNEXPECTED
+        case T2: if(c == 'r') p->state = T3; else UNEXPECTED; break;
+        case T3: if(c == 'u') p->state = T4; else UNEXPECTED; break;
+        case T4:
+            if(c == 'e'){ jclose(p); }
+            else UNEXPECTED;
             break;
         // false states
-        case F2: S if(c == 'a') state = F3; else UNEXPECTED break;
-        case F3: S if(c == 'l') state = F4; else UNEXPECTED break;
-        case F4: S if(c == 's') state = F5; else UNEXPECTED break;
-        case F5: S
-            if(c == 'e') state = jclose(text, i, &current);
-            else UNEXPECTED
+        case F2: if(c == 'a') p->state = F3; else UNEXPECTED; break;
+        case F3: if(c == 'l') p->state = F4; else UNEXPECTED; break;
+        case F4: if(c == 's') p->state = F5; else UNEXPECTED; break;
+        case F5:
+            if(c == 'e') jclose(p);
+            else UNEXPECTED;
             break;
         // null states
-        case X2: S if(c == 'u') state = X3; else UNEXPECTED break;
-        case X3: S if(c == 'l') state = X4; else UNEXPECTED break;
-        case X4: S
-            if(c == 'l') state = jclose(text, i, &current);
-            else UNEXPECTED
+        case X2: if(c == 'u') p->state = X3; else UNEXPECTED; break;
+        case X3: if(c == 'l') p->state = X4; else UNEXPECTED; break;
+        case X4:
+            if(c == 'l') jclose(p);
+            else UNEXPECTED;
             break;
         // string states
-        case S2: S
-            if(c == '"') state = jclose(text, i, &current);
-            else if (c == '\\') state = S3;
-            else if(u >= 32) {}
-            else UNEXPECTED
+        case S2:
+            if(c == '"') jclose(p);
+            else if (c == '\\') p->state = S3;
+            else if(u >= 32) PROP(&e, copy_char(p, c) );
+            else UNEXPECTED;
             break;
-        case S3: S
-            if(c == '"' || c == 'f' || c == '/' || c == 'b'
-                        || c == 'n' || c == 'r' || c == 't' || c == '\\')
-                state = S2;
-            else if(c == 'u') state = S4;
-            else UNEXPECTED
+        case S3:
+            switch(c){
+                case '"': PROP(&e, copy_char(p, '"') ); p->state = S2; break;
+                case 'f': PROP(&e, copy_char(p, '\f') ); p->state = S2; break;
+                case '/': PROP(&e, copy_char(p, '/') ); p->state = S2; break;
+                case 'b': PROP(&e, copy_char(p, '\b') ); p->state = S2; break;
+                case 'n': PROP(&e, copy_char(p, '\n') ); p->state = S2; break;
+                case 'r': PROP(&e, copy_char(p, '\r') ); p->state = S2; break;
+                case 't': PROP(&e, copy_char(p, '\t') ); p->state = S2; break;
+                case '\\': PROP(&e, copy_char(p, '\\') ); p->state = S2; break;
+                case 'u': p->state = S4; p->codepoint = 0; break;
+                default: UNEXPECTED;
+            }
             break;
-        case S4: S if(is_hex(c)) state = S5; else UNEXPECTED break;
-        case S5: S if(is_hex(c)) state = S6; else UNEXPECTED break;
-        case S6: S if(is_hex(c)) state = S7; else UNEXPECTED break;
-        case S7: S if(is_hex(c)) state = S2; else UNEXPECTED break;
+        case S4:
+            if(!is_hex(c)) UNEXPECTED;
+            p->codepoint = (dehex(u) & 0x0F) << 12;
+            p->cpbytes[p->cpcount++ % 8] = c;
+            p->state = S5;
+            break;
+        case S5:
+            if(!is_hex(c)) UNEXPECTED;
+            p->codepoint |= (dehex(u) & 0x0F) << 8;
+            p->cpbytes[p->cpcount++ % 8] = c;
+            p->state = S6;
+            break;
+        case S6:
+            if(!is_hex(c)) UNEXPECTED;
+            p->codepoint |= (dehex(u) & 0x0F) << 4;
+            p->cpbytes[p->cpcount++ % 8] = c;
+            p->state = S7;
+            break;
+        case S7:
+            if(!is_hex(c)) UNEXPECTED;
+            p->codepoint |= (dehex(u) & 0x0F) << 0;
+            p->cpbytes[p->cpcount++ % 8] = c;
+            if(p->last_codepoint == 0){
+                if(p->codepoint < 0xD800 || p->codepoint > 0XDFFF){
+                    // not a surrogate pair, use the value directly
+                    PROP(&e, copy_codepoint(p, p->codepoint) );
+                    p->state = S2;
+                }else if(p->codepoint < 0xDC00){
+                    // first char of a surrogate pair
+                    p->last_codepoint = p->codepoint;
+                    // require a second utf16-escape to have a valid string
+                    p->state = S8;
+                }else{
+                    char *x = p->cpbytes;
+                    size_t i = p->cpcount;
+                    ORIG(&e,
+                        E_PARAM,
+                        "invalid utf16 escape: \\u%x%x%x%x",
+                        FC(x[(i-4)%8]),
+                        FC(x[(i-3)%8]),
+                        FC(x[(i-2)%8]),
+                        FC(x[(i-1)%8])
+                    );
+                }
+            }else{
+                // second utf16 char in a surrogate pair
+                if(p->codepoint < 0xDC00 || p->codepoint > 0xDFFF){
+                    char *x = p->cpbytes;
+                    size_t i = p->cpcount;
+                    ORIG(&e,
+                        E_PARAM,
+                        "utf16 unpaired surrogate detected: \\u%x%x%x%x",
+                        // it's actually the previous codepoint that's broken
+                        FC(x[(i-8)%8]),
+                        FC(x[(i-7)%8]),
+                        FC(x[(i-6)%8]),
+                        FC(x[(i-5)%8])
+                    );
+                }
+                uint32_t highbits = p->last_codepoint & 0x3FF;
+                uint32_t lowbits = p->codepoint & 0x3FF;
+                uint32_t codepoint = ((highbits << 10) | lowbits) + 0x10000;
+                PROP(&e, copy_codepoint(p, codepoint) );
+                p->last_codepoint = 0;
+                p->state = S2;
+            }
+            break;
+        case S8:
+            if(c != '\\') UNEXPECTED;
+            p->state = S9;
+            break;
+        case S9:
+            if(c != 'u') UNEXPECTED;
+            p->state = S4;
+            break;
         // number states
-        case N2: S
-            if(c == '0') state = N6;
-            else if(c >= '1' && c <= '9') state = N3;
-            else UNEXPECTED
+        case N2:
+            if(c == '0') p->state = N6;
+            else if(c >= '1' && c <= '9') p->state = N3;
+            else UNEXPECTED;
+            PROP(&e, copy_char(p, c) );
             break;
-        case N3: S
-            if(c == '.') state = N4;
-            else if(c >= '0' && c <= '9') state = N3;
-            else if(c == 'e' || c == 'E') state = N7;
-            // if c is unexpected, decrement i to revisit c on next pass
-            else state = jclose(text, i--, &current);
+        case N3:
+            if(c == '.') p->state = N4;
+            else if(c >= '0' && c <= '9') p->state = N3;
+            else if(c == 'e' || c == 'E') p->state = N7;
+            // if c is unexpected, reparse it in a different state
+            else { jclose(p); goto reparse; }
+            PROP(&e, copy_char(p, c) );
             break;
-        case N4: S
-            if(c >= '0' && c <= '9') state = N5;
-            else UNEXPECTED
+        case N4:
+            if(c >= '0' && c <= '9') p->state = N5;
+            else UNEXPECTED;
+            PROP(&e, copy_char(p, c) );
             break;
-        case N5: S
-            if(c >= '0' && c <= '9') state = N5;
-            else if(c == 'e' || c == 'E') state = N7;
-            // if c is unexpected, decrement i to revisit c on next pass
-            else state = jclose(text, i--, &current);
+        case N5:
+            if(c >= '0' && c <= '9') p->state = N5;
+            else if(c == 'e' || c == 'E') p->state = N7;
+            // if c is unexpected, reparse it in a different state
+            else { jclose(p); goto reparse; }
+            PROP(&e, copy_char(p, c) );
             break;
-        case N6: S
-            if(c == '.') state = N4;
-            else if(c == 'e' || c == 'E') state = N7;
-            // if c is unexpected, decrement i to revisit c on next pass
-            else state = jclose(text, i--, &current);
+        case N6:
+            if(c == '.') p->state = N4;
+            else if(c == 'e' || c == 'E') p->state = N7;
+            // if c is unexpected, reparse it in a different state
+            else { jclose(p); goto reparse; }
+            PROP(&e, copy_char(p, c) );
             break;
-        case N7: S
-            if(c >= '0' && c <= '9') state = N9;
-            else if(c == '+' || c == '-') state = N8;
-            else UNEXPECTED
+        case N7:
+            if(c >= '0' && c <= '9') p->state = N9;
+            else if(c == '+' || c == '-') p->state = N8;
+            else UNEXPECTED;
+            PROP(&e, copy_char(p, c) );
             break;
-        case N8: S
-            if(c >= '0' && c <= '9') state = N9;
-            else UNEXPECTED
+        case N8:
+            if(c >= '0' && c <= '9') p->state = N9;
+            else UNEXPECTED;
+            PROP(&e, copy_char(p, c) );
             break;
-        case N9: S
-            if(c >= '0' && c <= '9') state = N9;
-            // if c is unexpected, decrement i to revisit c on next pass
-            else state = jclose(text, i--, &current);
+        case N9:
+            if(c >= '0' && c <= '9') p->state = N9;
+            // if c is unexpected, reparse it in a different state
+            else { jclose(p); goto reparse; }
+            PROP(&e, copy_char(p, c) );
             break;
         // object states
-        case O2: S
+        case O2:
             if(c == '"'){
-                PROP(&e, jopen(json, JSON_STRING, text, i, &current, &state));
-            }else if(c == '}') state = jclose(text, i, &current);
+                PROP(&e, jopen(p, JSON_STRING, c) );
+            }else if(c == '}') jclose(p);
             else if(is_whitespace(c)){ /* skip whitespace */ }
-            else UNEXPECTED
+            else UNEXPECTED;
             break;
-        case O3: S
-            if(c == ':') state = O4;
+        case O3:
+            if(c == ':') p->state = O4;
             else if(is_whitespace(c)){}
-            else UNEXPECTED
+            else UNEXPECTED;
             break;
         // state O4 is identical to state V1
-        case O5: S
-            if(c == ',') state = O6;
-            else if(c == '}') state = jclose(text, i, &current);
+        case O5:
+            if(c == ',') p->state = O6;
+            else if(c == '}') jclose(p);
             else if(is_whitespace(c)){ /* skip whitespace */ }
-            else UNEXPECTED
+            else UNEXPECTED;
             break;
-        case O6: S
+        case O6:
             if(c == '"'){
-                PROP(&e, jopen(json, JSON_STRING, text, i, &current, &state));
+                PROP(&e, jopen(p, JSON_STRING, c) );
             }else if(is_whitespace(c)){ /* skip whitespace */ }
-            else UNEXPECTED
+            else UNEXPECTED;
             break;
         // array states
         // state A2 is almost identical to V1, so they are handled together
-        case A3: S
-            if(c == ',') state = A4;
-            else if(c == ']') state = jclose(text, i, &current);
+        case A3:
+            if(c == ',') p->state = A4;
+            else if(c == ']') jclose(p);
             else if(is_whitespace(c)){ /* skip whitespace */ }
-            else UNEXPECTED
+            else UNEXPECTED;
             break;
         // state A4 is identical to state V1
         // validate the whole string, even after root value is closed
-        case JSON_DONE: S
-            if(!is_whitespace(c)) UNEXPECTED
+        case JSON_DONE:
+            if(!is_whitespace(c)) UNEXPECTED;
             break;
-        case JSON_BAD_STATE:
-            ORIG(&e, E_INTERNAL, "JSON parser in a bad state");
-        }
     }
+
+    #undef UNEXPECTED
+
+    return e;
+}
+
+void json_prep(json_t *json){
+    *json = (json_t){ .root = { .error = true } };
+    link_init(&json->node_blocks);
+    link_init(&json->text_blocks);
+}
+
+void json_prep_preallocated(
+    json_t *json,
+    // preallocated memory
+    dstr_t *text,
+    json_node_t *nodes,
+    size_t nnodes,
+    // if you prefer E_FIXEDSIZE over heap allocations
+    bool fixedsize
+){
+    *json = (json_t){
+        .root = { .error = true },
+        .preallocated_text = (json_text_block_t){ .text = text },
+        .preallocated_nodes = (json_node_block_t){
+            .nodes = nodes, .cap = nnodes,
+        },
+        .fixedsize = fixedsize,
+    };
+    link_init(&json->node_blocks);
+    link_init(&json->text_blocks);
+
+    if(text){
+        link_init(&json->preallocated_text.link);
+        link_list_append(&json->text_blocks, &json->preallocated_text.link);
+    }
+    if(nnodes){
+        link_init(&json->preallocated_nodes.link);
+        link_list_append(&json->node_blocks, &json->preallocated_nodes.link);
+    }
+}
+
+void json_free(json_t *json){
+    // remove anything preallocated first
+    link_remove(&json->preallocated_text.link);
+    link_remove(&json->preallocated_nodes.link);
+    // free anything else
+    link_t *link;
+    while((link = link_list_pop_first(&json->text_blocks))){
+        json_text_block_t *block = CONTAINER_OF(link, json_text_block_t, link);
+        json_text_block_free(&block);
+    }
+    while((link = link_list_pop_first(&json->node_blocks))){
+        json_node_block_t *block = CONTAINER_OF(link, json_node_block_t, link);
+        json_node_block_free(&block);
+    }
+    json->root = (json_ptr_t){0};
+}
+
+json_parser_t json_parser(json_t *json){
+    return (json_parser_t){ .json = json };
+}
+
+derr_t json_parse_chunk(json_parser_t *p, const dstr_t chunk){
+    derr_t e = E_OK;
+
+    // parse every character provided
+    for(size_t i = 0; i < chunk.len; i++){
+        char c = chunk.data[i];
+        unsigned char u = ((unsigned char*)chunk.data)[i];
+        PROP(&e, parse_char(p, c, u, chunk, i) );
+    }
+
+    return e;
+}
+
+derr_t json_parse_finish(json_parser_t *p){
+    derr_t e = E_OK;
+
     /* exiting the loop in the the middle of parsing a number is legal, but
        only in certain states within the number parsing and even then only if
        the number is the root value */
-    if((state == N3 || state == N5 || state == N6 || state == N9)
-        && current->parent == NULL ){
-        // close the number object
-        jclose(text, text->len, &current);
+    if(
+        (p->state == N3 || p->state == N5 || p->state == N6 || p->state == N9)
+        && p->ptr && p->ptr->parent == NULL
+    ){
+        jclose(p);
     }
-    // check for exit from bad state
-    else if(state == JSON_BAD_STATE){
-        ORIG(&e, E_INTERNAL, "json parse exited from a bad state");
-    }
-    // otherwse exiting the loop with state != JSON_DONE is a parsing error
-    else if(state != JSON_DONE){
+
+    if(p->state != JSON_DONE){
         ORIG(&e, E_PARAM, "incomplete json string");
     }
 
-    return e;
-}
-
-derr_t json_encode(const dstr_t* d, dstr_t* out){
-    derr_t e = E_OK;
-    // list of patterns
-    LIST_PRESET(dstr_t, search, DSTR_LIT("\""),
-                                DSTR_LIT("\b"),
-                                DSTR_LIT("\f"),
-                                DSTR_LIT("\n"),
-                                DSTR_LIT("\r"),
-                                DSTR_LIT("\t"),
-                                DSTR_LIT("\\"));
-    LIST_PRESET(dstr_t, replace, DSTR_LIT("\\\""),
-                                 DSTR_LIT("\\b"),
-                                 DSTR_LIT("\\f"),
-                                 DSTR_LIT("\\n"),
-                                 DSTR_LIT("\\r"),
-                                 DSTR_LIT("\\t"),
-                                 DSTR_LIT("\\\\"));
-
-    PROP(&e, dstr_recode(d, out, &search, &replace, false) );
+    // find the root object
+    link_t *link = p->json->node_blocks.next;
+    if(!link) ORIG(&e, E_INTERNAL, "no nodes in json_t");
+    json_node_block_t *block = CONTAINER_OF(link, json_node_block_t, link);
+    p->json->root = (json_ptr_t){ .node = &block->nodes[0] };
 
     return e;
 }
 
-derr_t json_decode(const dstr_t* j, dstr_t* out){
+derr_t json_parse(const dstr_t in, json_t *out){
     derr_t e = E_OK;
-    // list of patterns
-    LIST_PRESET(dstr_t, search, DSTR_LIT("\\\""),
-                                DSTR_LIT("\\b"),
-                                DSTR_LIT("\\f"),
-                                DSTR_LIT("\\n"),
-                                DSTR_LIT("\\r"),
-                                DSTR_LIT("\\t"),
-                                DSTR_LIT("\\/"),
-                                DSTR_LIT("\\\\"));
-    LIST_PRESET(dstr_t, replace, DSTR_LIT("\""),
-                                 DSTR_LIT("\b"),
-                                 DSTR_LIT("\f"),
-                                 DSTR_LIT("\n"),
-                                 DSTR_LIT("\r"),
-                                 DSTR_LIT("\t"),
-                                 DSTR_LIT("/"),
-                                 DSTR_LIT("\\"));
 
-    PROP(&e, dstr_recode(j, out, &search, &replace, false) );
+    json_parser_t p = json_parser(out);
+    PROP(&e, json_parse_chunk(&p, in) );
+    PROP(&e, json_parse_finish(&p) );
 
     return e;
 }
 
-#define DOINDENT \
-    if(need_indent){ \
-        PROP(&e, FFMT(f, NULL, "\n") ); \
-        for(int i = 0; i < indent; i++){ \
-            PROP(&e, FFMT(f, NULL, " ") ); \
-        } \
-    } \
-    need_indent = true;
+static derr_type_t json_encode_utf16_escape(uint16_t u, void *data){
+    derr_type_t etype = E_NONE;
 
-derr_t json_fdump(FILE* f, json_t j){
+    dstr_t *out = (dstr_t*)data;
+
+    etype = dstr_append_char(out, '\\');
+    if(etype) return etype;
+    etype = dstr_append_char(out, 'u');
+    if(etype) return etype;
+    etype = dstr_append_hex(out, (unsigned char)(u >> 8));
+    if(etype) return etype;
+    etype = dstr_append_hex(out, (unsigned char)(u >> 0));
+    if(etype) return etype;
+
+    return E_NONE;
+}
+
+static derr_type_t json_encode_each_codepoint(uint32_t codepoint, void *data){
+    derr_type_t etype = E_NONE;
+
+    dstr_t *out = (dstr_t*)data;
+
+    if(codepoint < 0x80){
+        // ascii character
+        char escape = 0;
+        char c = (char)codepoint;
+        // only escape what's necessary
+        switch(c){
+            case '"': escape = '"'; break;
+            case '\\': escape = '\\'; break;
+            case '\b': escape = 'b'; break;
+            case '\f': escape = 'f'; break;
+            case '\n': escape = 'n'; break;
+            case '\r': escape = 'r'; break;
+            case '\t': escape = 't'; break;
+            default:
+                // arbitrary control characters
+                if(c < ' ' || c == 0x7f) goto utf16_escape;
+        }
+        if(escape){
+            etype = dstr_append_char(out, '\\');
+            if(etype) return etype;
+            etype = dstr_append_char(out, escape);
+            if(etype) return etype;
+        }else{
+            // normal character
+            etype = dstr_append_char(out, c);
+            if(etype) return etype;
+        }
+        return E_NONE;
+    }
+
+utf16_escape:
+    etype = utf16_encode_quiet(codepoint, json_encode_utf16_escape, out);
+
+    return etype;
+}
+
+derr_type_t json_encode_quiet(const dstr_t utf8, dstr_t *out){
+    return utf8_decode_quiet(utf8, json_encode_each_codepoint, (void*)out);
+}
+
+derr_t json_encode(const dstr_t utf8, dstr_t *out){
     derr_t e = E_OK;
-    json_t* this = &j;
-    int indent = 0;
-    int tries = 100;
-    bool need_indent = false;
-    while(tries-- && this){
-        json_t* next = NULL; // defined to prevent MSVC from complaining falsely
-        DOINDENT
-        switch(this->type){
+
+    derr_type_t etype = json_encode_quiet(utf8, out);
+    if(etype == E_NONE) return e;
+    if(etype == E_PARAM) ORIG(&e, etype, "invalid utf8 string");
+    if(etype == E_FIXEDSIZE) ORIG(&e, etype, "output buffer too small");
+    ORIG(&e, etype, "failure encoding json");
+    return e;
+}
+
+derr_type_t fmthook_fd_json(dstr_t* out, const void* arg){
+    const dstr_t *utf8 = (const dstr_t*)arg;
+    return json_encode_quiet(*utf8, out);
+}
+
+derr_t json_walk(
+    json_ptr_t ptr,
+    // when key is non-NULL, this is a object's value
+    // when closing is true, we're revsiting either an array or an object
+    derr_t (*visit)(
+        json_node_t *node, const dstr_t *key, bool closing, void *data
+    ),
+    void *data
+){
+    derr_t e = E_OK;
+
+    if(ptr.error){
+        ORIG(&e, E_PARAM, "invalid json pointer");
+    }
+
+    json_node_t *node = ptr.node;
+    json_node_t *key = NULL;
+
+visit:
+    // visit wherever we are at
+    PROP(&e, visit(node, key ? &key->text : NULL, false, data) );
+    key = NULL;
+
+    // post-visit action
+    switch(node->type){
+        case JSON_STRING:
+        case JSON_NUMBER:
+        case JSON_TRUE:
+        case JSON_FALSE:
+        case JSON_NULL:
+            break;
+
+        case JSON_OBJECT:
+            if(node->child){
+                // descend to the child
+                key = node->child;
+                node = key->child;
+                goto visit;
+            }
+            // empty object
+            PROP(&e, visit(node, NULL, true, data) );
+            break;
+
+        case JSON_ARRAY:
+            if(node->child){
+                // descend to the child
+                node = node->child;
+                goto visit;
+            }
+
+            // already done with this object
+            PROP(&e, visit(node, NULL, true, data) );
+            break;
+    }
+
+find_next:
+    if(node == ptr.node){
+        // root node is done
+        return e;
+    }
+    json_node_t *parent = node->parent;
+    switch(parent->type){
+        case JSON_NUMBER:
+        case JSON_TRUE:
+        case JSON_FALSE:
+        case JSON_NULL:
+        case JSON_OBJECT:
+            LOG_FATAL("invalid json structure\n");
+            break;
+
+        case JSON_STRING:
+            // we are iterating through an object
+            if(parent->next){
+                key = parent->next;
+                node = key->child;
+                goto visit;
+            }
+            // out of keys
+            node = parent->parent;
+            PROP(&e, visit(node, NULL, true, data) );
+            goto find_next;
+
+        case JSON_ARRAY:
+            // we are iterating through an array
+            if(node->next){
+                node = node->next;
+                goto visit;
+            }
+            // out of keys
+            node = parent;
+            PROP(&e, visit(node, NULL, true, data) );
+            goto find_next;
+    }
+
+    return e;
+}
+
+static derr_t findent(FILE *f, size_t depth){
+    derr_t e = E_OK;
+
+    for(size_t i = 0; i < depth; i++){
+        if(fputc(' ', f) == EOF){
+            ORIG(&e, E_OS, "failed to write to output stream");
+        }
+    }
+
+    return e;
+}
+
+typedef struct {
+    size_t depth;
+    bool comma;
+    FILE *f;
+} fdump_visit_t;
+
+static derr_t fdump_visit(
+    json_node_t *node, const dstr_t *key, bool closing, void *data
+){
+    derr_t e = E_OK;
+
+    fdump_visit_t *v = (fdump_visit_t*)data;
+    FILE *f = v->f;
+
+    if(closing){
+        if(!node->child) return e;
+        v->depth--;
+    }
+
+    PROP(&e, findent(f, 2 * v->depth) );
+
+    bool need_comma = false;
+    /* use depth to infer if we have a parent, rather than checking directly,
+       since we may be operating on some subset of the json structure */
+    if(v->depth){
+        json_node_t *parent = node->parent;
+        if(parent->type == JSON_STRING) need_comma = !!parent->next;
+        else if(parent->type == JSON_ARRAY) need_comma = !!node->next;
+    }
+    char *comma = need_comma ? "," : "";
+
+    if(closing){
+        switch(node->type){
             case JSON_ARRAY:
-                PROP(&e, FFMT(f, NULL, "[ ") );
-                indent += 2;
-                need_indent = false;
-                next = this->first_child;
-                // catch emtpy array
-                if(!next){
-                    PROP(&e, FFMT(f, NULL, "]") );
-                    indent -= 2;
-                    need_indent = true;
-                    next = this->next;
-                }
-                break;
+                PROP(&e, FFMT(f, NULL, "]%x\n", FS(comma)) );
+                return e;
             case JSON_OBJECT:
-                PROP(&e, FFMT(f, NULL, "{ ") );
-                indent += 2;
-                need_indent = false;
-                next = this->first_child;
-                // catch emtpy object
-                if(!next){
-                    PROP(&e, FFMT(f, NULL, "}") );
-                    indent -= 2;
-                    need_indent = true;
-                    next = this->next;
-                }
-                break;
+                PROP(&e, FFMT(f, NULL, "}%x\n", FS(comma)) );
+                return e;
+
             case JSON_TRUE:
             case JSON_FALSE:
             case JSON_NULL:
-            case JSON_NUMBER:
-                PROP(&e, FFMT(f, NULL, "%x", FD(&this->token)) );
-                next = this->next;
-                // add comma if necessary
-                if(next) PROP(&e, FFMT(f, NULL, ",") );
-                break;
             case JSON_STRING:
-                // if it is a regular string
-                if(this->first_child == NULL){
-                    PROP(&e, FFMT(f, NULL, "\"%x\"", FD(&this->token)) );
-                    next = this->next;
-                    // add comma if necessary
-                    if(next) PROP(&e, FFMT(f, NULL, ",") );
-                }
-                // if the string is the key of an object:
-                else{
-                    PROP(&e, FFMT(f, NULL, "\"%x\" : ", FD(&this->token)) );
-                    indent += (int)MIN(INT_MAX, this->token.len + 5);
-                    need_indent = false;
-                    next = this->first_child;
-                }
-                break;
+            case JSON_NUMBER:
+                LOG_FATAL("invalid json walk structure\n");
         }
-        while(indent && this && !next){
-            // oops, there is no next, is there a parent to finish?
-            if(this->parent == NULL){
-                this = NULL;
-                break;
-            }
-            // is it it the last element of an array?
-            if(this->parent->type == JSON_ARRAY){
-                indent -= 2;
-                DOINDENT
-                PROP(&e, FFMT(f, NULL, "]") );
-                next = this->parent->next;
-                this = this->parent;
-                // add comma if necessary
-                if(next) PROP(&e, FFMT(f, NULL, ",") );
-            }
-            // did we finish dumping a value?
-            else if(this->parent->type == JSON_STRING){
-                indent -= (int)MIN(INT_MAX, this->parent->token.len + 5);
-                // if there is another key:
-                if(this->parent->next != NULL){
-                    next = this->parent->next;
-                    this = this->parent->parent;
-                    if(next) PROP(&e, FFMT(f, NULL, ",") );
-                }
-                // if there is not another key:
-                else{
-                    indent -= 2;
-                    DOINDENT
-                    PROP(&e, FFMT(f, NULL, "}") );
-                    next = this->parent->parent->next;
-                    this = this->parent->parent;
-                }
-            }else{
-                ORIG(&e, E_INTERNAL, "bad state in json_fdump");
-            }
-        }
-        if(this) this = next;
-        if(indent == 0){
+    }
+
+    if(key){
+        PROP(&e, FFMT(f, NULL, "\"%x\": ", FD_JSON(key)) );
+    }
+
+    switch(node->type){
+        case JSON_TRUE:
+            PROP(&e, FFMT(f, NULL, "true%x\n", FS(comma)) );
             break;
-        }
-    }
-    PROP(&e, FFMT(f, NULL, "\n") );
-    return e;
-}
+        case JSON_FALSE:
+            PROP(&e, FFMT(f, NULL, "false%x\n", FS(comma)) );
+            break;
+        case JSON_NULL:
+            PROP(&e, FFMT(f, NULL, "null%x\n", FS(comma)) );
+            break;
 
-// dereference by name ("get name")
-json_t jk(json_t json, const char* name){
-    // first propagate existing errors
-    if(json.error != NULL){
-        return json;
-    }
-    // must be an object
-    if(json.type != JSON_OBJECT){
-        json.error = JSON_NOT_OBJECT;
-        return json;
-    }
-    // search for the name
-    json_t* ptr = json.first_child;
-    while(ptr){
-        if(strlen(name) == ptr->token.len){
-            int result = strncmp(name, ptr->token.data, ptr->token.len);
-            if(result == 0){
-                // return the "value" to this "name"
-                return *(ptr->first_child);
+        case JSON_NUMBER:
+            PROP(&e, FFMT(f, NULL, "%x%x\n", FD(&node->text), FS(comma)) );
+            break;
+
+        case JSON_STRING:
+            PROP(&e,
+                FFMT(f, NULL, "\"%x\"%x\n", FD_JSON(&node->text), FS(comma))
+            );
+            break;
+
+        case JSON_OBJECT:
+            if(!node->child){
+                PROP(&e, FFMT(f, NULL, "{}%x\n", FS(comma)) );
+                return e;
             }
-        }
-        ptr = ptr->next;
-    }
-    // if we are here we didn't find the name
-    json.error = JSON_BAD_NAME;
-    return json;
-}
+            PROP(&e, FFMT(f, NULL, "{\n") );
+            v->depth++;
+            break;
 
-// dereference by index ("get index")
-json_t ji(json_t json, size_t index){
-    // first propagate existing errors
-    if(json.error != NULL) return json;
-    // must be an array
-    if(json.type != JSON_ARRAY){
-        json.error = JSON_NOT_ARRAY;
-        return json;
-    }
-    // go to the index
-    size_t i = 0;
-    json_t* ptr = json.first_child;
-    while(ptr){
-        if(i == index) return *ptr;
-        ptr = ptr->next;
-        i++;
-    }
-    // if we are here we didn't find the name
-    json.error = JSON_BAD_INDEX;
-    return json;
-}
-
-derr_t j_to_bool(json_t json, bool* out){
-    derr_t e = E_OK;
-    if(json.error){
-        ORIG(&e, E_PARAM, "%x", FS(json.error));
-    }else if(json.type != JSON_TRUE && json.type != JSON_FALSE){
-        ORIG(&e, E_PARAM, "wrong type for to_bool()");
+        case JSON_ARRAY:
+            if(!node->child){
+                PROP(&e, FFMT(f, NULL, "[]%x\n", FS(comma)) );
+                return e;
+            }
+            PROP(&e, FFMT(f, NULL, "[\n") );
+            v->depth++;
+            break;
     }
 
-    *out = (json.type == JSON_TRUE);
-
     return e;
 }
 
-derr_t j_to_dstr(json_t json, dstr_t* out){
+derr_t json_fdump(json_ptr_t ptr, FILE *f){
     derr_t e = E_OK;
-    if(json.error){
-        ORIG(&e, E_PARAM, "%x", FS(json.error));
-    }else if(json.type != JSON_STRING){
-        ORIG(&e, E_PARAM, "wrong type for to_dstr()");
-    }
 
-    *out = json.token;
+    fdump_visit_t v = { .f = f };
+    PROP(&e, json_walk(ptr, fdump_visit, &v) );
 
     return e;
 }
-
-#define NUMBER_CHECK \
-    if(json.error){ \
-        ORIG(&e, E_PARAM, "%x", FS(json.error)); \
-    }else if(json.type != JSON_NUMBER){ \
-        ORIG(&e, E_PARAM, "not a number"); \
-    }
-
-derr_t jtoi(json_t json, int* out){
-    derr_t e = E_OK;
-    NUMBER_CHECK
-    // if we already validated the number, E_PARAM is our internal failure
-    NOFAIL(&e, E_PARAM, dstr_toi(&json.token, out, 10) );
-    return e;
-}
-derr_t jtou(json_t json, unsigned int* out){
-    derr_t e = E_OK;
-    NUMBER_CHECK
-    // if we already validated the number, E_PARAM is our internal failure
-    NOFAIL(&e, E_PARAM, dstr_tou(&json.token, out, 10) );
-    return e;
-}
-derr_t jtol(json_t json, long* out){
-    derr_t e = E_OK;
-    NUMBER_CHECK
-    // if we already validated the number, E_PARAM is our internal failure
-    NOFAIL(&e, E_PARAM, dstr_tol(&json.token, out, 10) );
-    return e;
-}
-derr_t jtoul(json_t json, unsigned long* out){
-    derr_t e = E_OK;
-    NUMBER_CHECK
-    // if we already validated the number, E_PARAM is our internal failure
-    NOFAIL(&e, E_PARAM, dstr_toul(&json.token, out, 10) );
-    return e;
-}
-derr_t jtoll(json_t json, long long* out){
-    derr_t e = E_OK;
-    NUMBER_CHECK
-    // if we already validated the number, E_PARAM is our internal failure
-    NOFAIL(&e, E_PARAM, dstr_toll(&json.token, out, 10) );
-    return e;
-}
-derr_t jtoull(json_t json, unsigned long long* out){
-    derr_t e = E_OK;
-    NUMBER_CHECK
-    // if we already validated the number, E_PARAM is our internal failure
-    NOFAIL(&e, E_PARAM, dstr_toull(&json.token, out, 10) );
-    return e;
-}
-derr_t jtof(json_t json, float* out){
-    derr_t e = E_OK;
-    NUMBER_CHECK
-    // if we already validated the number, E_PARAM is our internal failure
-    NOFAIL(&e, E_PARAM, dstr_tof(&json.token, out) );
-    return e;
-}
-derr_t jtod(json_t json, double* out){
-    derr_t e = E_OK;
-    NUMBER_CHECK
-    // if we already validated the number, E_PARAM is our internal failure
-    NOFAIL(&e, E_PARAM, dstr_tod(&json.token, out) );
-    return e;
-}
-#undef NUMBER_CHECK

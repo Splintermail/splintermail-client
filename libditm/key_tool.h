@@ -153,9 +153,9 @@ typedef struct {
     keypair_t *key;
     bool did_key_gen;
     // dynamic backing memory for json
-    dstr_t json_block;
+    dstr_t json_text;
     // dynamic, used for various json parsing tasks
-    LIST(json_t) json;
+    json_t json;
     // list of peers that we are expecting to see as encryption recipients
     LIST(dstr_t) peer_list;
     key_tool_peer_list_state_t peer_list_state;

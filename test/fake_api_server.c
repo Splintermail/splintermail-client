@@ -180,42 +180,45 @@ static void* fas_thread(void* arg){
         //PFMT("expecting %x %x\nreceived:%x\n", FD(&exp_path), FD(&exp_arg), FD(&body));
 
         // now parse the body
-        LIST_VAR(json_t, json, 32);
-        PROP_GO(&e, json_parse(&json, &body), cleanup_6);
+        json_t json;
+        JSON_PREP_PREALLOCATED(json, 4096, 32, true);
 
-        json_t j;
-        DSTR_STATIC(wildcard, "*");
+        PROP_GO(&e, json_parse(body, &json), cleanup_6);
 
-        // check the path, unless exp_path is the wildcard
-        dstr_t jpath;
-        j = jk(json.data[0], "path");
-        PROP_GO(&e, j_to_dstr(j, &jpath), cleanup_6);
-        if(dstr_cmp(&jpath, &exp_path) != 0){
+        dstr_t path;
+        bool have_arg;
+        dstr_t arg;
+        jspec_t *jspec = JOBJ(false,
+            JKEY("arg", JOPT(&have_arg, JDREF(&arg))),
+            JKEY("path", JDREF(&path)),
+        );
+
+        bool ok;
+        DSTR_VAR(errbuf, 1024);
+        PROP_GO(&e, jspec_read_ex(jspec, json.root, &ok, &errbuf), cleanup_6);
+        if(!ok){
+            ORIG_GO(&e, E_VALUE, "%x", cleanup_6, FD(&errbuf));
+        }
+
+        // check the path
+        if(!dstr_eq(path, exp_path)){
             TRACE(&e, "expected path: %x\n"
-                     "         but got: %x\n",
-                     FD(&exp_path), FD(&jpath));
+                      "         but got: %x\n",
+                     FD(&exp_path), FD(&path));
             ORIG_GO(&e, E_VALUE, "wrong path", cleanup_6);
         }
 
-        // pull out the argument
-        dstr_t jarg;
-        j = jk(json.data[0], "arg");
-        if(j.type == JSON_NULL){
-            jarg = (dstr_t){NULL, 0, 0, true};
-        }else{
-            PROP_GO(&e, j_to_dstr(j, &jarg), cleanup_6);
-        }
         // check the argument, unless exp_arg is the wildcard
-        if(dstr_cmp(&exp_arg, &wildcard) != 0){
-            if(j.type == JSON_NULL){
+        if(!dstr_eq(exp_arg, DSTR_LIT("*")) != 0){
+            if(!have_arg){
                 if(exp_arg.data != NULL){
                     TRACE(&e, "expected argument: %x\n"
-                             "          but got null\n", FD(&exp_arg));
+                              "          but got null\n", FD(&exp_arg));
                     ORIG_GO(&e, E_VALUE, "wrong argument", cleanup_6);
-                }else if( dstr_cmp(&jarg, &exp_arg) != 0){
+                }else if(!dstr_eq(arg, exp_arg) != 0){
                     TRACE(&e, "expected argument: %x\n"
-                             "          but got: %x\n",
-                             FD(&exp_arg), FD(&jarg));
+                              "          but got: %x\n",
+                             FD(&exp_arg), FD(&arg));
                     ORIG_GO(&e, E_VALUE, "wrong argument", cleanup_6);
                 }
             }
@@ -223,7 +226,7 @@ static void* fas_thread(void* arg){
 
         // call hook if necessary
         if(hook){
-            PROP_GO(&e, hook(&jpath, &jarg, ctr), cleanup_6);
+            PROP_GO(&e, hook(&path, &arg, ctr), cleanup_6);
         }
 
         // now get the response

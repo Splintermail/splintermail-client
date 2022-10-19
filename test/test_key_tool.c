@@ -303,9 +303,7 @@ static derr_t handle_new_key(const dstr_t* path, const dstr_t* arg,
     (void) counter;
     // the new key is going to be passed in PEM format, and we need the fpr
     keypair_t *kp;
-    DSTR_VAR(temp, 4096);
-    PROP(&e, json_decode(arg, &temp) );
-    PROP(&e, keypair_from_pubkey_pem(&kp, &temp) );
+    PROP(&e, keypair_from_pubkey_pem(&kp, arg) );
     // get hex of the fingerprint
     DSTR_VAR(hexfpr, 2*FL_FINGERPRINT);
     PROP_GO(&e, bin2hex(kp->fingerprint, &hexfpr), cu);
@@ -545,15 +543,14 @@ static derr_t test_peer_list_read_write(void){
         ORIG(&e, E_OS, "unable to create temporary directory");
     }
 
-    LIST_VAR(json_t, json, 32);
-    DSTR_VAR(json_block, 2048);
+    DSTR_VAR(json_text, 2048);
     LIST_VAR(dstr_t, peer_list, 32);
 
     /* create a fake key_tool_t that only has the objects that load_peer_list()
        and write_peer_list() will use */
-    key_tool_t kt;
-    kt.json = json;
-    kt.json_block = json_block;
+    key_tool_t kt = {0};
+    json_prep(&kt.json);
+    kt.json_text = json_text;
     kt.peer_list = peer_list;
 
     const char* old_name = "_tktdir/old_pl.json";
@@ -576,6 +573,7 @@ static derr_t test_peer_list_read_write(void){
     }
 
 cleanup:
+    json_free(&kt.json);
     for(size_t i = 0; i < kt.peer_list.len; i++){
         dstr_free(&kt.peer_list.data[i]);
     }

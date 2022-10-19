@@ -72,7 +72,7 @@ derr_t file_cmp_dstr(
     const char* fa, const dstr_t* b, bool normalize_line_ends, int* result
 );
 
-// makedir_temp creates a uniquely named temporary directory in PWD
+// mkdir_temp creates a uniquely named temporary directory in PWD
 derr_t mkdir_temp(const char *prefix, dstr_t *path);
 
 // these are really only used in tests, so right now they are not in common.h:
@@ -91,7 +91,7 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
 #define EXPECT_U(e, name, got, exp) do { \
     uintmax_t _got = (got); \
     uintmax_t _exp = (exp); \
-    if(_got != (uintmax_t)_exp){ \
+    if(_got != _exp){ \
         ORIG(e, \
             E_VALUE, \
             "expected %x == %x but got %x", \
@@ -103,7 +103,7 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
 #define EXPECT_U_GT(e, name, got, exp) do { \
     uintmax_t _got = (got); \
     uintmax_t _exp = (exp); \
-    if(_got <= (uintmax_t)_exp){ \
+    if(_got <= _exp){ \
         ORIG(e, \
             E_VALUE, \
             "expected %x > %x but got %x", \
@@ -115,7 +115,7 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
 #define EXPECT_U_GE(e, name, got, exp) do { \
     uintmax_t _got = (got); \
     uintmax_t _exp = (exp); \
-    if(_got < (uintmax_t)_exp){ \
+    if(_got < _exp){ \
         ORIG(e, \
             E_VALUE, \
             "expected %x >= %x but got %x", \
@@ -127,7 +127,7 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
 #define EXPECT_U_GO(e, name, got, exp, label) do { \
     uintmax_t _got = (got); \
     uintmax_t _exp = (exp); \
-    if(_got != (uintmax_t)_exp){ \
+    if(_got != _exp){ \
         ORIG_GO(e, \
             E_VALUE, \
             "expected %x == %x but got %x", \
@@ -140,7 +140,7 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
 #define EXPECT_U_GT_GO(e, name, got, exp, label) do { \
     uintmax_t _got = (got); \
     uintmax_t _exp = (exp); \
-    if(_got <= (uintmax_t)_exp){ \
+    if(_got <= _exp){ \
         ORIG_GO(e, \
             E_VALUE, \
             "expected %x > %x but got %x", \
@@ -153,7 +153,7 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
 #define EXPECT_U_GE_GO(e, name, got, exp, label) do { \
     uintmax_t _got = (got); \
     uintmax_t _exp = (exp); \
-    if(_got < (uintmax_t)_exp){ \
+    if(_got < _exp){ \
         ORIG_GO(e, \
             E_VALUE, \
             "expected %x >= %x but got %x", \
@@ -184,6 +184,35 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
             "expected %x == %x but got %x", \
             label, \
             FS(name), FI(_exp),  FI(_got) \
+        ); \
+    } \
+} while(0)
+
+#define EXPECT_F(e, name, got, exp, eps) do { \
+    long double _got = (got); \
+    long double _exp = (exp); \
+    long double _eps = (eps); \
+    long double _diff = _got - _exp; \
+    if(ABS(_diff) > _eps){ \
+        ORIG(e, \
+            E_VALUE, \
+            "expected %x == %x but got %x", \
+            FS(name), FF(_exp),  FF(_got) \
+        ); \
+    } \
+} while(0)
+
+#define EXPECT_F_GO(e, name, got, exp, eps, label) do { \
+    long double _got = (got); \
+    long double _exp = (exp); \
+    long double _eps = (eps); \
+    long double _diff = _got - _exp; \
+    if(ABS(_diff) > _eps){ \
+        ORIG_GO(e, \
+            E_VALUE, \
+            "expected %x == %x but got %x", \
+            label, \
+            FS(name), FF(_exp),  FF(_got) \
         ); \
     } \
 } while(0)
@@ -324,7 +353,7 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
 #define EXPECT_NULL_GO(e, name, got, label) do { \
     const void *_got = (got); \
     if(_got != NULL){ \
-        ORIG(e, \
+        ORIG_GO(e, \
             E_VALUE, \
             "expected %x == NULL but got %x", \
             label, \
@@ -348,7 +377,7 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
 #define EXPECT_NOT_NULL_GO(e, name, got, label) do { \
     const void *_got = (got); \
     if(_got == NULL){ \
-        ORIG(e, \
+        ORIG_GO(e, \
             E_VALUE, \
             "expected %x != NULL", \
             label, \

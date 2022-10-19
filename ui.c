@@ -410,6 +410,8 @@ static derr_t api_command_main(
     dstr_t password = {0};
     dstr_t new_password = {0};
     dstr_t confirm_password = {0};
+    dstr_t recv = {0};
+    json_t json = {0};
 
     derr_t e = E_OK;
 
@@ -542,7 +544,7 @@ static derr_t api_command_main(
     if(newargc > 2){
         dstr_t argv2;
         DSTR_WRAP(argv2, argv[2], strlen(argv[2]), true);
-        PROP_GO(&e, json_encode(&argv2, &argument_var), cu);
+        PROP_GO(&e, json_encode(argv2, &argument_var), cu);
         argument = &argument_var;
     }
 
@@ -580,7 +582,7 @@ static derr_t api_command_main(
         }
         // set the argument for the API call
         argument_var.len = 0;
-        PROP_GO(&e, json_encode(&new_password, &argument_var), cu);
+        PROP_GO(&e, json_encode(new_password, &argument_var), cu);
         argument = &argument_var;
     }else if(need_password){
         PROP_GO(&e, user_prompt("Splintermail.com Account Password:", &password, true), cu);
@@ -634,8 +636,8 @@ static derr_t api_command_main(
     // now we can actually do the API request
     int code;
     DSTR_VAR(reason, 1024);
-    DSTR_VAR(recv, 4096);
-    LIST_VAR(json_t, json, 256);
+    // allow overflow (fixedsize=false)
+    JSON_PREP_PREALLOCATED(json, 4096, 256, false);
 
     if(need_password){
         PROP_GO(&e,
@@ -670,23 +672,46 @@ static derr_t api_command_main(
         goto cu;
     }
 
-    json_t jroot = json.data[0];
     dstr_t status;
+    json_ptr_t contents;
+    bool ok, contents_ok;
 
-    // check the status of the returned json
-    PROP_GO(&e, j_to_dstr(jk(jroot, "status"), &status), cu);
-    DSTR_STATIC(okstr, "success");
-    if(dstr_cmp(&status, &okstr) != 0){
-        dstr_t contents;
-        PROP_GO(&e, j_to_dstr(jk(jroot, "contents"), &contents), cu);
-        DROP_CMD( FFMT(stderr, NULL, "REST API call failed: \"%x\"\n", FD(&contents)) );
-        DROP_VAR(&e);
-        *retval = 11;
-        goto cu;
+    jspec_t *jspec = JOBJ(true,
+        JKEYOPT("contents", &contents_ok, JPTR(&contents)),
+        JKEY("status", JDREF(&status)),
+    );
+
+    DSTR_VAR(errbuf, 1024);
+    PROP_GO(&e, jspec_read_ex(jspec, json.root, &ok, &errbuf), cu);
+    if(!ok){
+        TRACE(&e, "%x\n", FD(&errbuf));
+        ORIG_GO(&e, E_RESPONSE, "invalid server response", cu);
+    }
+
+    if(!dstr_eq(status, DSTR_LIT("success"))){
+        if(contents_ok){
+            dstr_t why;
+            bool why_ok;
+            derr_t e2 = jspec_read_ex(JDREF(&why), contents, &why_ok, NULL);
+            if(is_error(e2)){
+                DROP_VAR( &e2 );
+            }else if(ok){
+                DROP_CMD(
+                    FFMT(
+                        stderr,
+                        NULL,
+                        "REST API call failed: \"%x\"\n",
+                        FD(&why)
+                    )
+                );
+            }
+            *retval = 14;
+            goto cu;
+        }
     }
 
     // now dump the return json
-    PROP_GO(&e, json_fdump(stdout, jk(jroot, "contents") ), cu);
+    PROP_GO(&e, json_fdump(contents, stdout), cu);
 
     *retval = 0;
 
@@ -698,6 +723,8 @@ cu:
     dstr_free(&password);
     dstr_free(&new_password);
     dstr_free(&confirm_password);
+    dstr_free(&recv);
+    json_free(&json);
     return e;
 }
 

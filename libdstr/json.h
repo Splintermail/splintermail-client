@@ -6,55 +6,121 @@ typedef enum {
     JSON_NULL,
     JSON_OBJECT,
     JSON_ARRAY,
-} json_type_t;
+} json_type_e;
 
-typedef struct json_t json_t;
-struct json_t {
-    json_t* parent;
-    json_t* first_child;
-    json_t* last_child;
-    json_t* next;
-    size_t children;
-    dstr_t token;
-    json_type_t type;
-    const char* error;
+const dstr_t *json_type_to_dstr(json_type_e type);
+
+struct json_node_t;
+typedef struct json_node_t json_node_t;
+
+struct json_node_t {
+    json_type_e type;
+    dstr_t text; // for strings, keys and numbers
+    json_node_t *next; // for array items and keys
+    json_node_t *child; // for objects, arrays, and keys
+    json_node_t *parent; // so the reader can be O(1) memory
 };
 
-LIST_HEADERS(json_t)
+typedef struct {
+    json_node_t *node;
+    bool error;
+} json_ptr_t;
 
-/* A tokenizer with strict JSON validation (although its utf8-stoopid).  You
-   need to hand it a LIST(dstr_t) for backing memory to the json_t object. */
-derr_t json_parse(LIST(json_t)* json, dstr_t* text);
-/* throws: E_FIXEDSIZE (for *json or *text)
-           E_NOMEM     (for *json or *text)
-           E_PARAM (for incorrect JSON)
-           E_INTERNAL */
+typedef struct {
+    json_node_t *nodes;
+    size_t cap;
+    size_t len;
+    link_t link;
+} json_node_block_t;
+DEF_CONTAINER_OF(json_node_block_t, link, link_t);
 
-derr_t json_encode(const dstr_t* d, dstr_t* out);
-derr_t json_decode(const dstr_t* j, dstr_t* out);
+typedef struct {
+    dstr_t *text;
+    link_t link;
+} json_text_block_t;
+DEF_CONTAINER_OF(json_text_block_t, link, link_t);
 
-derr_t json_fdump(FILE* f, json_t j);
+// a parsed json object
+typedef struct {
+    // root is for the user, and is valid after a valid parse
+    json_ptr_t root;
 
-// dereference by key ("JSON get KEY")
-json_t jk(json_t json, const char* name);
-// dereference by index ("JSON get INDEX")
-json_t ji(json_t json, size_t index);
+    // memory blocks
+    link_t node_blocks;
+    link_t text_blocks;
+    // preallocated memory
+    json_text_block_t preallocated_text;
+    json_node_block_t preallocated_nodes;
+    bool fixedsize;
+} json_t;
 
-// casting functions
+void json_prep(json_t *json);
+void json_prep_preallocated(
+    json_t *json,
+    // preallocated memory
+    dstr_t *text,
+    json_node_t *nodes,
+    size_t nnodes,
+    // if you prefer E_FIXEDSIZE over heap allocations
+    bool fixedsize
+);
 
-/* everything below throws E_PARAM for lookup or type failures.
-   The jtoi() and friends may also throw E_INTERNAL if the json parser
-   validated a number but it can't be converted with dstr_toi() and friends */
+#define JSON_PREP_PREALLOCATED(json, textlen, nnodes, fixedsize) \
+    DSTR_VAR(json##_textbuf, textlen); \
+    json_node_t json##_nodemem[nnodes]; \
+    json_prep_preallocated( \
+        &json, &json##_textbuf, json##_nodemem, nnodes, fixedsize \
+    )
 
-derr_t j_to_bool(json_t json, bool* out);
-derr_t j_to_dstr(json_t json, dstr_t* out);
+void json_free(json_t *json);
 
-derr_t jtoi(json_t json, int* out);
-derr_t jtou(json_t json, unsigned int* out);
-derr_t jtol(json_t json, long* out);
-derr_t jtoul(json_t json, unsigned long* out);
-derr_t jtoll(json_t json, long long* out);
-derr_t jtoull(json_t json, unsigned long long* out);
-derr_t jtof(json_t json, float* out);
-derr_t jtod(json_t json, double* out);
-derr_t jtold(json_t json, long double* out);
+typedef struct {
+    json_t *json;
+    unsigned char state;
+    // our current thing, or NULL before we've started or in between things
+    json_node_t *ptr;
+    // the prev thing, whose .next needs modifying when we see another
+    json_node_t *prev;
+    // the parent thing we're building a child for
+    json_node_t *parent;
+    // the \u escape we're reading
+    uint16_t codepoint;
+    // for utf-16 codepairs, after the s8 state
+    uint16_t last_codepoint;
+    // a rotating buffer of codepoint-related bytes
+    char cpbytes[8];
+    size_t cpcount;
+    // the current dstr_t we're using for tokens
+    dstr_t *token_base;
+    // the start position of our current token
+    size_t token_start;
+} json_parser_t;
+
+// if you need to read from a stream of chunks
+json_parser_t json_parser(json_t *json);
+derr_t json_parse_chunk(json_parser_t *p, const dstr_t chunk);
+derr_t json_parse_finish(json_parser_t *p);
+
+// if you have the whole json string in memory you don't need a json_parser_t
+derr_t json_parse(const dstr_t in, json_t *out);
+
+derr_type_t json_encode_quiet(const dstr_t utf8, dstr_t *out);
+derr_t json_encode(const dstr_t utf8, dstr_t *out);
+
+derr_type_t fmthook_fd_json(dstr_t* out, const void* arg);
+static inline fmt_t FD_JSON(const dstr_t* arg){
+    return (fmt_t){FMT_EXT, {.ext = {.arg = (const void*)arg,
+                                     .hook = fmthook_fd_json} } };
+}
+
+derr_t json_walk(
+    json_ptr_t ptr,
+    // when key is non-NULL, this is a object's value
+    // when closing is true, we're revsiting either an array or an object
+    derr_t (*visit)(
+        json_node_t *node, const dstr_t *key, bool closing, void *data
+    ),
+    void *data
+);
+
+derr_t json_fdump(json_ptr_t ptr, FILE *f);

@@ -264,7 +264,7 @@ bool api_password_called;
 derr_t api_password_call(const char* host, unsigned int port, dstr_t* command,
                          dstr_t* arg, const dstr_t* username,
                          const dstr_t* password, int* code, dstr_t* reason,
-                         dstr_t* recv, LIST(json_t)* json){
+                         dstr_t* recv, json_t *json){
     derr_t e = E_OK;
     if(api_password_args == NULL){
         UH_OH("api_password_call called but nothing is prepared\n");
@@ -300,7 +300,7 @@ derr_t api_password_call(const char* host, unsigned int port, dstr_t* command,
     // wrap the json string in text and parse it
     dstr_t text;
     DSTR_WRAP(text, APA->json, strlen(APA->json), true);
-    json_parse(json, &text);
+    PROP(&e, json_parse(text, json) );
     api_password_called = true;
     return e;
 }
@@ -309,7 +309,7 @@ struct api_token_args_t* api_token_args;
 bool api_token_called;
 derr_t api_token_call(const char* host, unsigned int port, dstr_t* command,
                       dstr_t* arg, api_token_t* token, int* code,
-                      dstr_t* reason, dstr_t* recv, LIST(json_t)* json){
+                      dstr_t* reason, dstr_t* recv, json_t *json){
     derr_t e = E_OK;
     if(api_token_args == NULL){
         UH_OH("api_token_call called but nothing is prepared\n");
@@ -339,7 +339,7 @@ derr_t api_token_call(const char* host, unsigned int port, dstr_t* command,
     // wrap the json string in text and parse it
     dstr_t text;
     DSTR_WRAP(text, ATA->json, strlen(ATA->json), true);
-    json_parse(json, &text);
+    PROP(&e, json_parse(text, json) );
     api_token_called = true;
     return e;
 }

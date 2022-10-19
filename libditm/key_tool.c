@@ -18,7 +18,8 @@ static derr_t key_tool_register_key(key_tool_t* kt,
     derr_t e2;
     LOG_INFO("key tool attempting to register key\n");
     // get ready to recieve JSON
-    LIST_VAR(json_t, json, 32);
+    json_t json;
+    JSON_PREP_PREALLOCATED(json, 4096, 32, true);
 
     // get ready for the api call
     DSTR_STATIC(command, "add_device");
@@ -46,67 +47,90 @@ static derr_t key_tool_register_key(key_tool_t* kt,
         );
     }
 
-    // dereference the status out of the json response
+    // read the response
     dstr_t status;
-    e2 = j_to_dstr(jk(json.data[0], "status"), &status);
-    CATCH(e2, E_PARAM){
+    json_ptr_t jcontents;
+    bool ok, contents_ok;
+
+    jspec_t *jspec = JOBJ(false,
+        JKEYOPT("contents", &contents_ok, JPTR(&jcontents)),
+        JKEY("status", JDREF(&status)),
+    );
+
+    DSTR_VAR(errbuf, 1024);
+    e2 = jspec_read_ex(jspec, json.root, &ok, &errbuf);
+    CATCH(e2, E_FIXEDSIZE){
         RETHROW(&e, &e2, E_RESPONSE);
     }else PROP(&e, e2);
+    if(!ok){
+        TRACE(&e, "%x", FD(&errbuf));
+        ORIG(&e, E_RESPONSE, "invalid add_device response");
+    }
+
     // now make sure that the request was a success
-    DSTR_STATIC(success, "success");
-    int result = dstr_cmp(&success, &status);
-    if(result != 0){
-        dstr_t contents;
-        e2 = j_to_dstr(jk(json.data[0], "contents"), &contents);
-        CATCH(e2, E_ANY){
-            DROP_VAR(&e2);
-        }else{
-            TRACE(&e, "server said: %x\n", FD(&contents));
+    if(!dstr_eq(status, DSTR_LIT("success"))){
+        if(contents_ok){
+            dstr_t dcontents;
+            derr_t e2 = jspec_read_ex(JDREF(&dcontents), jcontents, &ok, NULL);
+            if(is_error(e2)){
+                DROP_VAR(&e2);
+            }else if(ok){
+                TRACE(&e, "server said: %x\n", FD(&dcontents));
+            }
         }
         ORIG(&e, E_RESPONSE, "add_device failed");
     }
+
+    return e;
+}
+
+static derr_t read_peer_list_item(jctx_t *ctx, size_t i, void *arg){
+    derr_t e = E_OK;
+
+    (void)i;
+    key_tool_t *kt = (key_tool_t*)arg;
+
+    dstr_t hexfpr;
+    PROP(&e, jctx_read(ctx, JDREF(&hexfpr)) );
+    if(!*ctx->ok) return e;
+
+    // allocate new fingerprint
+    dstr_t fpr;
+    PROP(&e, dstr_new(&fpr, FL_FINGERPRINT) );
+    // convert from binary
+    PROP_GO(&e, hex2bin(&hexfpr, &fpr), fail_fpr);
+    // append to list
+    PROP_GO(&e, LIST_APPEND(dstr_t, &kt->peer_list, fpr), fail_fpr);
+
+    return e;
+
+fail_fpr:
+    dstr_free(&fpr);
     return e;
 }
 
 static derr_t key_tool_peer_list_load(key_tool_t* kt, const char* filename){
     derr_t e = E_OK;
     derr_t e2;
-    kt->json.len = 0;
-    kt->json_block.len = 0;
+    json_free(&kt->json);
+    json_prep(&kt->json);
+    kt->json_text.len = 0;
     // read the peer list file
-    e2 = dstr_read_file(filename, &kt->json_block);
+    e2 = dstr_read_file(filename, &kt->json_text);
     CATCH(e2, E_OPEN, E_OS){
         RETHROW(&e, &e2, E_FS);
     }else PROP(&e, e2);
 
     // parse the peer list
-    PROP(&e, json_parse(&kt->json, &kt->json_block) );
+    PROP(&e, json_parse(kt->json_text, &kt->json) );
 
-    // now try to read all of the peers out of the peerlist
-    if(kt->json.data[0].type != JSON_ARRAY){
-        ORIG(&e, E_PARAM, "json root object must be array");
+    jspec_t *jspec = JLIST(read_peer_list_item, kt);
+    bool ok;
+    PROP(&e, jspec_read_ex(jspec, kt->json.root, &ok, NULL) );
+    if(!ok){
+        ORIG(&e, E_PARAM, "invalid peer list");
     }
-    json_t* jpeer = kt->json.data[0].first_child;
-    while(jpeer){
-        // get the hex fingerprint from json
-        dstr_t hexfpr;
-        // convert this array element to a dstr
-        PROP(&e, j_to_dstr(*jpeer, &hexfpr) );
-        // allocate new fingerprint
-        dstr_t fpr;
-        PROP(&e, dstr_new(&fpr, FL_FINGERPRINT) );
-        // convert from binary
-        PROP_GO(&e, hex2bin(&hexfpr, &fpr), fail_fpr);
-        // append to list
-        PROP_GO(&e, LIST_APPEND(dstr_t, &kt->peer_list, fpr), fail_fpr);
-        // move on to the next json element
-        jpeer = jpeer->next;
-        continue;
 
-    fail_fpr:
-        dstr_free(&fpr);
-        return e;
-    }
     return e;
 }
 
@@ -192,10 +216,10 @@ static derr_t key_tool_new(key_tool_t* kt, const dstr_t* dir, int def_key_bits){
     }
 
     // allocate the json_block
-    PROP_GO(&e, dstr_new(&kt->json_block, 4096), fail_1);
+    PROP_GO(&e, dstr_new(&kt->json_text, 4096), fail_1);
 
-    // allocate the json list
-    PROP_GO(&e, LIST_NEW(json_t, &kt->json, 32), fail_2);
+    // prepare the json list, allow for dynamic memory
+    json_prep(&kt->json);
 
     // allocate the peer_list
     PROP_GO(&e, LIST_NEW(dstr_t, &kt->peer_list, FL_DEVICES), fail_3);
@@ -241,9 +265,9 @@ fail_4:
     // free peer_list
     LIST_FREE(dstr_t, &kt->peer_list);
 fail_3:
-    LIST_FREE(json_t, &kt->json);
-fail_2:
-    dstr_free(&kt->json_block);
+    json_free(&kt->json);
+// fail_2:
+    dstr_free(&kt->json_text);
 fail_1:
     keypair_free(&kt->key);
     return e;
@@ -265,8 +289,8 @@ static void key_tool_free(key_tool_t* kt){
     }
     // free peer_list
     LIST_FREE(dstr_t, &kt->peer_list);
-    LIST_FREE(json_t, &kt->json);
-    dstr_free(&kt->json_block);
+    json_free(&kt->json);
+    dstr_free(&kt->json_text);
     keypair_free(&kt->key);
 }
 
@@ -283,18 +307,19 @@ static derr_t call_list_devices(key_tool_t* kt, const char* host,
     derr_t e2;
     LOG_INFO("calling list devices\n");
     // get ready to recieve JSON
-    kt->json.len = 0;
+    json_free(&kt->json);
+    json_prep(&kt->json);
 
     int code;
     DSTR_VAR(reason, 1024);
-    kt->json_block.len = 0;
+    kt->json_text.len = 0;
 
     // get ready for the api call
     DSTR_STATIC(command, "list_devices");
 
     // do the api call
     e2 = api_password_call(host, port, &command, NULL, user, pass,
-                              &code, &reason, &kt->json_block, &kt->json);
+                              &code, &reason, &kt->json_text, &kt->json);
     CATCH(e2, E_FIXEDSIZE){
         TRACE(&e2, "server response too long\n");
         RETHROW(&e, &e2, E_RESPONSE);
@@ -310,29 +335,81 @@ static derr_t call_list_devices(key_tool_t* kt, const char* host,
         );
     }
 
-    // now make sure the api call returned success
-    DSTR_STATIC(success, "success");
     dstr_t status;
-    e2 = j_to_dstr(jk(kt->json.data[0], "status"), &status);
+    json_ptr_t jcontents;
+    bool ok, contents_ok;
+
+    // parse out just status and contents for now
+    jspec_t *jspec = JOBJ(true,
+        JKEYOPT("contents", &contents_ok, JPTR(&jcontents)),
+        JKEY("status", JDREF(&status)),
+    );
+
+    DSTR_VAR(errbuf, 1024);
+    e2 = jspec_read_ex(jspec, kt->json.root, &ok, &errbuf);
     CATCH(e2, E_PARAM){
-        TRACE(&e2, "server response contained the wrong json\n");
         RETHROW(&e, &e2, E_RESPONSE);
     }else PROP(&e, e2);
-
-    int match = dstr_cmp(&success, &status);
-    if(match != 0){
-        dstr_t contents;
-        e2 = j_to_dstr(jk(kt->json.data[0], "contents"), &contents);
-        CATCH(e2, E_PARAM){
-            DROP_VAR(&e2);
-            TRACE(&e, "server response contained the wrong json\n");
-            TRACE(&e, "server said: %x\n", FD(&contents));
-        }else{
-            PROP(&e, e2);
-            TRACE(&e, "server said: %x\n", FD(&kt->json_block));
-        }
-        ORIG(&e, E_RESPONSE, "call to list_devices API endpoint failed");
+    if(!ok){
+        TRACE(&e, "%x", FD(&errbuf));
+        ORIG(&e, E_RESPONSE, "invalid list_devices response");
     }
+
+    if(!dstr_eq(status, DSTR_LIT("success"))){
+        if(contents_ok){
+            dstr_t dcontents;
+            derr_t e2 = jspec_read_ex(JDREF(&dcontents), jcontents, &ok, NULL);
+            if(is_error(e2)){
+                DROP_VAR(&e2);
+            }else if(ok){
+                TRACE(&e, "server said: %x\n", FD(&dcontents));
+            }
+        }
+        ORIG(&e, E_RESPONSE, "list_devices failed");
+    }
+
+    return e;
+}
+
+typedef struct {
+    dstr_t *fpr_block;
+    LIST(dstr_t) *srv_fprs;
+} read_device_item_t;
+
+// pull fingerprints out of json format (and convert to binary format)
+static derr_t read_device_item(jctx_t *ctx, size_t i, void *data){
+    derr_t e = E_OK;
+
+    (void)i;
+    read_device_item_t *arg = (read_device_item_t*)data;
+
+    dstr_t hexfpr;
+    PROP(&e, jctx_read(ctx, JDREF(&hexfpr)) );
+    if(!*ctx->ok) return e;
+
+    // verify the length of the fingerprint
+    if(hexfpr.len != 2 * FL_FINGERPRINT){
+        ORIG(&e, E_RESPONSE, "response contained a wrong-sized fingerprint");
+    }
+    // convert to binary binary fingerprint and add to list
+    size_t start = arg->fpr_block->len;
+    derr_t e2 = hex2bin(&hexfpr, arg->fpr_block);
+    CATCH(e2, E_PARAM){
+        // this means that there was a bad hex string from the server
+        TRACE(&e2, "response contained bad hex string\n");
+        RETHROW(&e, &e2, E_RESPONSE);
+    }else PROP(&e, e2);
+    dstr_t binfpr = dstr_sub(arg->fpr_block, start, 0);
+    // verify the length of the binary fingerprint
+    if(binfpr.len != FL_FINGERPRINT){
+        ORIG(&e, E_RESPONSE, "response contained a wrong-sized fingerprint");
+    }
+    e2 = LIST_APPEND(dstr_t, arg->srv_fprs, binfpr);
+    CATCH(e2, E_FIXEDSIZE){
+        // this means there were more entries than was allowed
+        TRACE(&e2, "too many fingerprints returned by list_devices\n");
+        RETHROW(&e, &e2, E_RESPONSE);
+    }else PROP(&e, e2);
 
     return e;
 }
@@ -365,48 +442,19 @@ static derr_t key_tool_update(key_tool_t* kt, const char* host, unsigned int por
         // make call to list devices
         PROP(&e, call_list_devices(kt, host, port, user, pass) );
 
-        // get a pointer to the first item of the devices list
-        json_t devices = jk(jk(kt->json.data[0], "contents"), "devices");
-        // devices should be a JSON_ARRAY of fingerprints
-        if(devices.type != JSON_ARRAY){
-            ORIG(&e, E_RESPONSE, "failed to interpret json");
-        }
-        json_t* device = devices.first_child;
-
-        // pull fingerprints out of json format (and convert to binary format)
-        while(device){
-            // get the hex fingerprint from json
-            dstr_t hexfpr;
-            e2 = j_to_dstr(*device, &hexfpr);
-            CATCH(e2, E_PARAM){
-                TRACE(&e2, "json response has an invalid device entry\n");
-                RETHROW(&e, &e2, E_RESPONSE);
-            }else PROP(&e, e2);
-            // verify the length of the fingerprint
-            if(hexfpr.len != 2 * FL_FINGERPRINT){
-                ORIG(&e, E_RESPONSE, "response contained a wrong-sized fingerprint");
-            }
-            // convert to binary binary fingerprint and add to list
-            size_t start = fpr_block.len;
-            e2 = hex2bin(&hexfpr, &fpr_block);
-            CATCH(e2, E_PARAM){
-                // this means that there was a bad hex string from the server
-                TRACE(&e2, "response contained bad hex string\n");
-                RETHROW(&e, &e2, E_RESPONSE);
-            }else PROP(&e, e2);
-            dstr_t binfpr = dstr_sub(&fpr_block, start, 0);
-            // verify the length of the binary fingerprint
-            if(binfpr.len != FL_FINGERPRINT){
-                ORIG(&e, E_RESPONSE, "response contained a wrong-sized fingerprint");
-            }
-            e2 = LIST_APPEND(dstr_t, &srv_fprs, binfpr);
-            CATCH(e2, E_FIXEDSIZE){
-                // this means there were more entries than was allowed
-                TRACE(&e2, "too many fingerprints returned by list_devices\n");
-                RETHROW(&e, &e2, E_RESPONSE);
-            }else PROP(&e, e2);
-            // continue with next device in the json array
-            device = device->next;
+        // read device list
+        read_device_item_t arg = {&fpr_block, &srv_fprs};
+        jspec_t *jspec = JOBJ(true,
+            JKEY("contents", JOBJ(true,
+                JKEY("devices", JLIST(read_device_item, &arg)),
+            )),
+        );
+        bool ok;
+        DSTR_VAR(errbuf, 1024);
+        PROP(&e, jspec_read_ex(jspec, kt->json.root, &ok, &errbuf) );
+        if(!ok){
+            TRACE(&e, "%x", FD(&errbuf));
+            ORIG(&e, E_RESPONSE, "bad list_devices response");
         }
 
         // if there was a peer list on file, we need to check for new peers

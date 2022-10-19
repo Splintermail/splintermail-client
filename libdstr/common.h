@@ -726,6 +726,9 @@ static inline char uchar_to_char(unsigned char u){
    before returning the error */
 derr_type_t fmt_dstr_append_quiet(dstr_t *dstr, const dstr_t *new_text);
 
+derr_type_t dstr_append_hex(dstr_t* dstr, unsigned char val);
+derr_type_t dstr_append_char(dstr_t* dstr, char val);
+
 typedef enum {
     FMT_UINT,
     FMT_INT,
