@@ -774,6 +774,13 @@ static derr_t wrap(
             | X509_CHECK_FLAG_MULTI_LABEL_WILDCARDS
         );
         SSL_set_verify(t->ssl, SSL_VERIFY_PEER, NULL);
+
+        // also configure SNI (server name indicator)
+        long lret = SSL_set_tlsext_host_name(t->ssl, buf.data);
+        if(lret != 1){
+            trace_ssl_errors(&e);
+            ORIG_GO(&e, E_SSL, "error setting SSL SNI", fail);
+        }
     }
 
     // we own the wrapper_data
