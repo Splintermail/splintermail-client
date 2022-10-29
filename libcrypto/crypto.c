@@ -856,9 +856,7 @@ static derr_t decrypter_parse_metadata(decrypter_t* dc){
                     ORIG(&e, E_PARAM, "failed to parse R line");
                 }
                 // at last! we can check if this key was encrypted to us
-                int result;
-                result = dstr_cmp(&hash, dc->kp->fingerprint);
-                if(result == 0){
+                if(dstr_eq_consttime(&hash, dc->kp->fingerprint)){
                     dc->key_found = true;
                     PROP(&e, dstr_copy(&key, &dc->enc_key) );
                 }
