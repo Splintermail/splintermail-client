@@ -1641,16 +1641,18 @@ derr_t sb_to_dstr(const string_builder_t* sb, const dstr_t* joiner, dstr_t* out)
 derr_t sb_expand(const string_builder_t* sb, const dstr_t* joiner,
                  dstr_t* stack_dstr, dstr_t* heap_dstr, dstr_t** out){
     derr_t e = E_OK;
+
     // try and expand into stack_dstr
-    PROP_GO(&e, sb_to_dstr(sb, joiner, stack_dstr), use_heap);
+    derr_type_t etype = sb_append_to_dstr_quiet(sb, joiner, stack_dstr);
+    if(etype != E_NONE) goto use_heap;
     // sb_expand is often for a path, so null-terminate it
-    PROP_GO(&e, dstr_null_terminate(stack_dstr), use_heap);
+    etype = dstr_null_terminate_quiet(stack_dstr);
+    if(etype != E_NONE) goto use_heap;
     // it worked, return stack_dstr as *out
     *out = stack_dstr;
-    return e;
+    return E_OK;
 
 use_heap:
-    DROP_VAR(&e);
     // we will need to allocate the heap_dstr to be bigger than stack_dstr
     PROP(&e, dstr_new(heap_dstr, stack_dstr->size * 2) );
     PROP_GO(&e, sb_to_dstr(sb, joiner, heap_dstr), fail_heap);
