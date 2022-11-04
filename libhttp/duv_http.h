@@ -33,7 +33,7 @@ typedef struct {
     time_t since;
 
     bool tls;
-    char host_buf[256];
+    char _host[256];
     dstr_t host;
     unsigned int port;
 
@@ -53,6 +53,9 @@ struct duv_http_t {
     uv_timer_t timer;
     duv_scheduler_t *scheduler;
     schedulable_t schedulable;
+
+    // debug flags, can be set at runtime
+    bool log_requests;
 
     duv_http_close_cb close_cb;
 
@@ -103,7 +106,7 @@ struct duv_http_req_t {
     duv_http_t *http;
     http_method_e method;
     bool tls;
-    char host_buf[256];
+    char _host[256];
     dstr_t host;
     unsigned int port;
     url_t url;
@@ -126,6 +129,11 @@ struct duv_http_req_t {
     http_mem_t *mem;
 
     derr_t e;
+
+    // status and reason are set just before the first hdr_cb
+    char _reason[256];
+    dstr_t reason;
+    int status;
 
     // the stream is set at end-of-headers
     rstream_i *base;

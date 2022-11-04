@@ -1,8 +1,8 @@
 // A struct for handling a single, transport-independent response.
 typedef struct {
-    /* code and reason are guaranteed to be defined after at least one header
+    /* status and reason are guaranteed to be defined after at least one header
        is returned from http_read() */
-    int code;
+    int status;
     char _reason[256];
     dstr_t reason; // first 256 bytes of the reason anyway
 
@@ -32,10 +32,10 @@ void http_reader_init(http_reader_t *r, dstr_t *buf);
 
 /* Read the next header in the http message.
 
-   Returned status is one of -2="incomplete read", -1="header found", or the
+   Returned state is one of -2="incomplete read", -1="header found", or the
    index of the first byte of the body.
 
-   When returned status is -2, the buffer may have ben left-shifted. */
-derr_t http_read(http_reader_t *r, http_pair_t *pair, int *status_out);
+   When returned state is -2, the buffer may have ben left-shifted. */
+derr_t http_read(http_reader_t *r, http_pair_t *pair, int *state_out);
 
 void http_reader_free(http_reader_t *r);

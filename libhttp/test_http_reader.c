@@ -61,7 +61,7 @@ static derr_t test_http_reader(void){
                     goto next_sublength;
 
                 case -1: // found a header
-                    ASSERT(r.code == 200);
+                    ASSERT(r.status == 200);
                     ASSERT(dstr_cmp2(r.reason, DSTR_LIT("OK")) == 0);
                     // LOG_INFO("READ %x: %x.\n", FD(&hdr.key), FD(&hdr.value));
                     i++;
@@ -119,7 +119,7 @@ static derr_t test_leftshift(void){
     EXPECT_I(&e, "status", status, -2);
     EXPECT_D(&e, "buf", &buf, &DSTR_LIT("Date: Thu, 01 Jan 1970 "));
     EXPECT_U(&e, "buf.len", buf.len, 23);
-    EXPECT_I(&e, "status_code", r.code, 200);
+    EXPECT_I(&e, "status_code", r.status, 200);
     // reason has been leftshifted away but should have been copied
     EXPECT_D(&e, "reason", &r.reason, &DSTR_LIT("OK"));
 

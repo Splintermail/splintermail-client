@@ -31,6 +31,7 @@ typedef struct {
     // sentinel defaults to \r\n\r\n when not provided
     dstr_t sentinel;
     dstr_t response;
+    int exp_status;
     exp_hdrs_t exp_hdrs;
     dstr_t exp_body;
     bool startup_failure;
@@ -352,6 +353,7 @@ static void reader_done_cb(stream_reader_t *r, derr_t e){
 
     // was this a success case?
     if(tc->exp_error == E_NONE){
+        EXPECT_I_GO(&ctx->e, "status", ctx->req.status, tc->exp_status, fail);
         PROP_GO(&ctx->e, exp_hdrs(&ctx->hdrs, tc->exp_hdrs), fail);
         EXPECT_D3_GO(&ctx->e, "body", &ctx->body, &tc->exp_body, fail);
     }
@@ -385,15 +387,16 @@ static derr_t test_duv_http(void){
     // request 7: GET w/ tls to force a fresh connection
     // request 8: HEAD w/ tls and duplicate content length headers
     // request 9: GET w/o tls w/ chunked encoding and trailer
-    // request 10: failure case: illegal trailer
-    // request 11: failure case: content after trailer
-    // request 12: failure case: eof before eoh
-    // request 13: failure case: mismatched content lengths
-    // request 14: failure case: chunked then content-length
-    // request 15: failure case: content-length then chunked
-    // request 16: failure case: unsupported transfer encoding
-    // request 17: failure case: header too long
-    // request 18: failure case: invalid schema
+    // request 10: GET w/o any headers
+    // request 11: failure case: illegal trailer
+    // request 12: failure case: content after trailer
+    // request 13: failure case: eof before eoh
+    // request 14: failure case: mismatched content lengths
+    // request 15: failure case: chunked then content-length
+    // request 16: failure case: content-length then chunked
+    // request 17: failure case: unsupported transfer encoding
+    // request 18: failure case: header too long
+    // request 19: failure case: invalid schema
 
     test_case_t _test_cases[] = {
         // request 1: GET w/ content length, persist
@@ -416,6 +419,7 @@ static derr_t test_duv_http(void){
                 "\r\n"
                 "hello world"
             ),
+            .exp_status = 200,
             .exp_hdrs = EXP_HDRS(
                 PAIR("Server", "yo mamma"),
                 PAIR("Content-Length", "11"),
@@ -433,13 +437,14 @@ static derr_t test_duv_http(void){
                 "\r\n"
             ),
             .response = DSTR_LIT(
-                "HTTP/1.1 200 OK\r\n"
+                "HTTP/1.1 201 OK\r\n"
                 "Server: yo mamma\r\n"
                 "Content-Length: 11\r\n"
                 "Connection: close\r\n"
                 "\r\n"
                 "hello world"
             ),
+            .exp_status = 201,
             .exp_hdrs = EXP_HDRS(
                 PAIR("Server", "yo mamma"),
                 PAIR("Content-Length", "11"),
@@ -459,7 +464,7 @@ static derr_t test_duv_http(void){
                 "\r\n"
             ),
             .response = DSTR_LIT(
-                "HTTP/1.1 200 OK\r\n"
+                "HTTP/1.1 202 OK\r\n"
                 "Server: yo mamma\r\n"
                 "Transfer-Encoding: chunked\r\n"
                 "\r\n"
@@ -470,6 +475,7 @@ static derr_t test_duv_http(void){
                 "0\r\n"
                 "\r\n"
             ),
+            .exp_status = 202,
             .exp_hdrs = EXP_HDRS(
                 PAIR("Server", "yo mamma"),
                 PAIR("Transfer-Encoding", "chunked"),
@@ -499,6 +505,7 @@ static derr_t test_duv_http(void){
                 "0\r\n"
                 "\r\n"
             ),
+            .exp_status = 200,
             .exp_hdrs = EXP_HDRS(
                 PAIR("Server", "yo mamma"),
                 PAIR("Transfer-Encoding", "chunked"),
@@ -523,6 +530,7 @@ static derr_t test_duv_http(void){
                 "\r\n"
                 "hello world"
             ),
+            .exp_status = 200,
             .exp_hdrs = EXP_HDRS(
                 PAIR("Server", "yo mamma"),
             ),
@@ -545,6 +553,7 @@ static derr_t test_duv_http(void){
                 "Content-Length: 99\r\n" // phony value must be ignored
                 "\r\n"
             ),
+            .exp_status = 204,
             .exp_hdrs = EXP_HDRS(
                 PAIR("Server", "yo mamma"),
                 PAIR("Content-Length", "99"),
@@ -569,6 +578,7 @@ static derr_t test_duv_http(void){
                 "\r\n"
                 "hello world"
             ),
+            .exp_status = 200,
             .exp_hdrs = EXP_HDRS(
                 PAIR("Server", "yo mamma"),
                 PAIR("Content-Length", "11"),
@@ -582,8 +592,6 @@ static derr_t test_duv_http(void){
             .exp_request = DSTR_LIT(
                 "HEAD / HTTP/1.1\r\n"
                 "Host: 127.0.0.1:48124\r\n"
-                "TE: trailers\r\n"
-                "Connection: TE\r\n"
                 "\r\n"
             ),
             .response = DSTR_LIT(
@@ -594,6 +602,7 @@ static derr_t test_duv_http(void){
                 "\r\n"
                 // no body in a HEAD response
             ),
+            .exp_status = 200,
             .exp_hdrs = EXP_HDRS(
                 PAIR("Server", "yo mamma"),
                 PAIR("Content-Length", "11"),
@@ -624,6 +633,7 @@ static derr_t test_duv_http(void){
                 "Stuff: yup\r\n"
                 "\r\n"
             ),
+            .exp_status = 200,
             .exp_hdrs = EXP_HDRS(
                 PAIR("Server", "yo mamma"),
                 PAIR("Transfer-Encoding", "chunked"),
@@ -631,7 +641,27 @@ static derr_t test_duv_http(void){
             ),
             .exp_body = DSTR_LIT("hello world"),
         },
-        // request 10: failure case: illegal trailer
+        // request 10: GET w/o any headers
+        {
+            .url = DSTR_LIT("http://localhost:48123"),
+            .exp_request = DSTR_LIT(
+                "GET / HTTP/1.1\r\n"
+                "Host: localhost:48123\r\n"
+                "TE: trailers\r\n"
+                "Connection: TE\r\n"
+                "\r\n"
+            ),
+            .response = DSTR_LIT(
+                "HTTP/1.1 500 oh no\r\n"
+                "\r\n"
+                "the sky is falling"
+            ),
+            .exp_status = 500,
+            .exp_hdrs = EXP_HDRS(),
+            .exp_body = DSTR_LIT("the sky is falling"),
+            .close_behavior = SERVER_CLOSES,
+        },
+        // request 11: failure case: illegal trailer
         {
             .url = DSTR_LIT("http://localhost:48123"),
             .exp_request = DSTR_LIT(
@@ -658,7 +688,7 @@ static derr_t test_duv_http(void){
             .exp_error = E_RESPONSE,
             .exp_error_match = DSTR_LIT("Trailer in trailer"),
         },
-        // request 11: failure case: content after trailer
+        // request 12: failure case: content after trailer
         {
             .url = DSTR_LIT("http://localhost:48123"),
             .exp_request = DSTR_LIT(
@@ -687,15 +717,13 @@ static derr_t test_duv_http(void){
                 "extraneous content after chunked response"
             ),
         },
-        // request 12: failure case: eof before eoh
+        // request 13: failure case: eof before eoh
         {
             .method = HTTP_METHOD_HEAD,
             .url = DSTR_LIT("http://localhost:48123"),
             .exp_request = DSTR_LIT(
                 "HEAD / HTTP/1.1\r\n"
                 "Host: localhost:48123\r\n"
-                "TE: trailers\r\n"
-                "Connection: TE\r\n"
                 "\r\n"
             ),
             .response = DSTR_LIT(
@@ -707,15 +735,13 @@ static derr_t test_duv_http(void){
             .exp_error = E_RESPONSE,
             .exp_error_match = DSTR_LIT("eof before end of headers"),
         },
-        // request 13: failure case: mismatched content lengths
+        // request 14: failure case: mismatched content lengths
         {
             .method = HTTP_METHOD_HEAD,
             .url = DSTR_LIT("http://localhost:48123"),
             .exp_request = DSTR_LIT(
                 "HEAD / HTTP/1.1\r\n"
                 "Host: localhost:48123\r\n"
-                "TE: trailers\r\n"
-                "Connection: TE\r\n"
                 "\r\n"
             ),
             .response = DSTR_LIT(
@@ -729,15 +755,13 @@ static derr_t test_duv_http(void){
             .exp_error = E_RESPONSE,
             .exp_error_match = DSTR_LIT("duplicate content-length fields"),
         },
-        // request 14: failure case: chunked then content-length
+        // request 15: failure case: chunked then content-length
         {
             .method = HTTP_METHOD_HEAD,
             .url = DSTR_LIT("http://localhost:48123"),
             .exp_request = DSTR_LIT(
                 "HEAD / HTTP/1.1\r\n"
                 "Host: localhost:48123\r\n"
-                "TE: trailers\r\n"
-                "Connection: TE\r\n"
                 "\r\n"
             ),
             .response = DSTR_LIT(
@@ -753,15 +777,13 @@ static derr_t test_duv_http(void){
                 "chunked encoding and content-length present"
             ),
         },
-        // request 15: failure case: content-length then chunked
+        // request 16: failure case: content-length then chunked
         {
             .method = HTTP_METHOD_HEAD,
             .url = DSTR_LIT("http://localhost:48123"),
             .exp_request = DSTR_LIT(
                 "HEAD / HTTP/1.1\r\n"
                 "Host: localhost:48123\r\n"
-                "TE: trailers\r\n"
-                "Connection: TE\r\n"
                 "\r\n"
             ),
             .response = DSTR_LIT(
@@ -777,15 +799,13 @@ static derr_t test_duv_http(void){
                 "content-length and chunked encoding present"
             ),
         },
-        // request 16: failure case: unsupported transfer encoding
+        // request 17: failure case: unsupported transfer encoding
         {
             .method = HTTP_METHOD_HEAD,
             .url = DSTR_LIT("http://localhost:48123"),
             .exp_request = DSTR_LIT(
                 "HEAD / HTTP/1.1\r\n"
                 "Host: localhost:48123\r\n"
-                "TE: trailers\r\n"
-                "Connection: TE\r\n"
                 "\r\n"
             ),
             .response = DSTR_LIT(
@@ -798,15 +818,13 @@ static derr_t test_duv_http(void){
             .exp_error = E_RESPONSE,
             .exp_error_match = DSTR_LIT("unsupported Transfer-Encoding: gzip"),
         },
-        // request 17: failure case: header too long
+        // request 18: failure case: header too long
         {
             .method = HTTP_METHOD_HEAD,
             .url = DSTR_LIT("http://localhost:48123"),
             .exp_request = DSTR_LIT(
                 "HEAD / HTTP/1.1\r\n"
                 "Host: localhost:48123\r\n"
-                "TE: trailers\r\n"
-                "Connection: TE\r\n"
                 "\r\n"
             ),
             #define x8(x) x x x x x x x x
@@ -826,7 +844,7 @@ static derr_t test_duv_http(void){
             .exp_error = E_FIXEDSIZE,
             .exp_error_match = DSTR_LIT("header too long"),
         },
-        // request 18: failure case: invalid schema
+        // request 19: failure case: invalid schema
         {
             .method = HTTP_METHOD_HEAD,
             .url = DSTR_LIT("ssh://localhost:48123"),

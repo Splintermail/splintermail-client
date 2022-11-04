@@ -23,11 +23,11 @@ void http_reader_free(http_reader_t *r){
 }
 
 // read the next header in the http message.
-/* status is one of -2="incomplete read", -1="header found", or the index of
+/* state is one of -2="incomplete read", -1="header found", or the index of
    the first byte of the body */
-derr_t http_read(http_reader_t *r, http_pair_t *pair, int *status_out){
+derr_t http_read(http_reader_t *r, http_pair_t *pair, int *state_out){
     derr_t e = E_OK;
-    *status_out = -2;
+    *state_out = -2;
 
     while(true){
         // try to scan
@@ -48,7 +48,7 @@ derr_t http_read(http_reader_t *r, http_pair_t *pair, int *status_out){
 
         // feed token to parser
         http_status_e status;
-        if(r->code == 0){
+        if(r->status == 0){
             // still parsing status line
             http_status_line_t status_line;
             status = http_parse_status_line(
@@ -62,7 +62,7 @@ derr_t http_read(http_reader_t *r, http_pair_t *pair, int *status_out){
             );
             if(status == HTTP_STATUS_DONE){
                 // finished the status line
-                r->code = status_line.code;
+                r->status = status_line.code;
                 // copy the reason into stable memory
                 dstr_t sub = dstr_sub2(
                     status_line.reason, 0, r->reason.size-1
@@ -86,7 +86,7 @@ derr_t http_read(http_reader_t *r, http_pair_t *pair, int *status_out){
             if(status == HTTP_STATUS_DONE){
                 if(hdr_line.key.len){
                     // finished a header line
-                    *status_out = -1;
+                    *state_out = -1;
                     r->consumed = r->s.used;
                 }else{
                     // end of headers
@@ -95,7 +95,7 @@ derr_t http_read(http_reader_t *r, http_pair_t *pair, int *status_out){
                             E_FIXEDSIZE, "headers are way too long",
                         fail);
                     }
-                    *status_out = (int)r->s.used;
+                    *state_out = (int)r->s.used;
                 }
                 *pair = hdr_line;
                 return e;

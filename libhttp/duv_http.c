@@ -130,6 +130,7 @@ derr_t duv_http_init(
     h->timer.data = h;
 
     // read_buf size is effectively the longest-allowed line length
+    DSTR_WRAP_ARRAY(h->mem.host, h->mem._host);
     PROP_GO(&e, dstr_new(&h->mem.read_buf, 8192), fail);
     // but write_buf size does not correspond to any restrictions
     PROP_GO(&e, dstr_new(&h->mem.write_buf, 4096), fail);
@@ -538,11 +539,29 @@ static void req_advance_write(duv_http_req_t *req, bool *completed){
 
     // if we completed marshaling headers, send the body too, if there is one
     unsigned int nbufs = (*completed && req->body.len) ? 2 : 1;
+    if(req->http->log_requests){
+        for(unsigned int i = 0; i < nbufs; i++){
+            LOG_INFO("\x1b[32m%x\x1b[m", FD(&bufs[i]));
+            fflush(stdout);
+        }
+    }
 
     stream_must_write(m->stream, &m->write, bufs, nbufs, write_cb);
     req->writing = true;
 
     return;
+}
+
+static derr_t req_grab_status(duv_http_req_t *req){
+    derr_t e = E_OK;
+
+    http_mem_t *m = req->mem;
+
+    req->status = m->reader.status;
+
+    PROP(&e, dstr_copy(&m->reader.reason, &req->reason) );
+
+    return e;
 }
 
 // automatically read from the stream until we have read all of the headers
@@ -555,9 +574,9 @@ static void req_advance_read_hdrs(duv_http_req_t *req, bool *completed){
     // read all the headers
     while(true){
         http_pair_t hdr;
-        int status;
-        PROP_GO(&req->e, http_read(&m->reader, &hdr, &status), done);
-        switch(status){
+        int state;
+        PROP_GO(&req->e, http_read(&m->reader, &hdr, &state), done);
+        switch(state){
             case -2:
                 // incomplete read (read_buf may have been leftshifted)
                 dstr_t space = dstr_empty_space(m->read_buf);
@@ -570,21 +589,28 @@ static void req_advance_read_hdrs(duv_http_req_t *req, bool *completed){
 
             case -1:
                 // header found
+                if(req->status == 0){
+                    PROP_GO(&req->e, req_grab_status(req), done);
+                }
                 req_hdr_cb(req, hdr, false);
                 if(req_failing(req)) return;
                 break;
 
             default:
-                if(status < 0){
+                if(state < 0){
                     ORIG_GO(&req->e,
                         E_INTERNAL,
                         "http_read returned: %x",
                         done,
-                        FI(status)
+                        FI(state)
                     );
                 }
                 // no more headers
-                m->initial_body_offset = (size_t)status;
+                if(req->status == 0){
+                    // (just in case there were no headers at all)
+                    PROP_GO(&req->e, req_grab_status(req), done);
+                }
+                m->initial_body_offset = (size_t)state;
                 *completed = true;
                 return;
         }
@@ -595,8 +621,7 @@ done:
 }
 
 static void req_process_length(duv_http_req_t *req){
-    http_mem_t *m = req->mem;
-    int status = m->reader.code;
+    int status = req->status;
 
     // RFC7230: section 3.3.3, "Message Body Length"
 
@@ -902,18 +927,22 @@ rstream_i *duv_http_req(
     link_init(&req->reads);
     schedulable_prep(&req->schedulable, req_schedule_cb);
 
-    // add a `TE` header to advertise support for chunked trailers
-    req->hdr_te = HTTP_PAIR("TE", "trailers");
+    if(method != HTTP_METHOD_HEAD){
+        // add a `TE` header to advertise support for chunked trailers
+        req->hdr_te = HTTP_PAIR("TE", "trailers");
 
-    // add a `Connection: TE` header since TE only applies to the current hop
-    // (a MUST from RFC2730 section 4.3)
-    req->hdr_connection = HTTP_PAIR("Connection", "TE");
+        /* add a `Connection: TE` header since TE only applies to the current
+           hop, a MUST from RFC2730 section 4.3 */
+        req->hdr_connection = HTTP_PAIR("Connection", "TE");
+
+        hdrs = HTTP_PAIR_CHAIN(hdrs, &req->hdr_connection, &req->hdr_te);
+    }
 
     req->marshaler = http_marshaler(
         method,
         url,
         params,
-        HTTP_PAIR_CHAIN(hdrs, &req->hdr_connection, &req->hdr_te),
+        hdrs,
         body.len
     );
 
@@ -935,7 +964,8 @@ rstream_i *duv_http_req(
     }
 
     dstr_t host = dstr_from_off(url.host);
-    DSTR_WRAP_ARRAY(req->host, req->host_buf);
+    DSTR_WRAP_ARRAY(req->host, req->_host);
+    DSTR_WRAP_ARRAY(req->reason, req->_reason);
     PROP_GO(&req->e, dstr_append(&req->host, &host), fail);
 
     dstr_t port = dstr_from_off(url.port);
