@@ -1,6 +1,6 @@
 #include "liburl/liburl.h"
 
-bool parse_url(const dstr_t *text, url_t *out, dstr_t *errbuf){
+bool parse_url_ex(const dstr_t *text, url_t *out, dstr_t *errbuf){
     bool ok = true;
     *out = (url_t){0};
 
@@ -43,7 +43,20 @@ done:
     return ok;
 }
 
-bool parse_url_reference(const dstr_t *text, url_t *out, dstr_t *errbuf){
+derr_t parse_url(const dstr_t *text, url_t *out){
+    derr_t e = E_OK;
+
+    DSTR_VAR(errbuf, 512);
+
+    bool ok = parse_url_ex(text, out, &errbuf);
+    if(!ok){
+        ORIG(&e, E_PARAM, "invalid url: %x", FD(&errbuf));
+    }
+
+    return e;
+}
+
+bool parse_url_reference_ex(const dstr_t *text, url_t *out, dstr_t *errbuf){
     bool ok = true;
     *out = (url_t){0};
 
@@ -93,10 +106,23 @@ done:
     return ok;
 }
 
+derr_t parse_url_reference(const dstr_t *text, url_t *out){
+    derr_t e = E_OK;
+
+    DSTR_VAR(errbuf, 512);
+
+    bool ok = parse_url_reference_ex(text, out, &errbuf);
+    if(!ok){
+        ORIG(&e, E_PARAM, "invalid url: %x", FD(&errbuf));
+    }
+
+    return e;
+}
+
 url_t must_parse_url(const dstr_t *text){
     url_t out;
     DSTR_VAR(errbuf, 512);
-    if(!parse_url(text, &out, &errbuf)){
+    if(!parse_url_ex(text, &out, &errbuf)){
         LOG_FATAL("failed to parse url (%x): %x\n", FD(text), FD(&errbuf));
     }
     return out;

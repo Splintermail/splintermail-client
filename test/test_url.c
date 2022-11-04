@@ -23,16 +23,16 @@ static derr_t test_error_reporting(void){
                        "                    ^";
 
     // gracefully handle no errbuf
-    ok = parse_url(invalid, &url, NULL);
+    ok = parse_url_ex(invalid, &url, NULL);
     ASSERT(!ok);
-    ok = parse_url_reference(invalid, &url, NULL);
+    ok = parse_url_reference_ex(invalid, &url, NULL);
     ASSERT(!ok);
 
     // handle proper errbuf
-    ok = parse_url(invalid, &url, &errbuf);
+    ok = parse_url_ex(invalid, &url, &errbuf);
     ASSERT(!ok);
     ASSERT(dstr_eqs(errbuf, full_error));
-    ok = parse_url_reference(invalid, &url, &errbuf);
+    ok = parse_url_reference_ex(invalid, &url, &errbuf);
     ASSERT(!ok);
     ASSERT(dstr_eqs(errbuf, full_error));
 
@@ -44,7 +44,7 @@ static derr_t test_error_reporting(void){
         //                  0         1
         //                  0123456789012345
         char *short_error = "invalid url: h";
-        ok = parse_url(invalid, &url, &shortbuf);
+        ok = parse_url_ex(invalid, &url, &shortbuf);
         ASSERT(!ok);
         ASSERT(dstr_eqs(shortbuf, short_error));
         ASSERT(shortbuf.len < shortbuf.size);
@@ -57,7 +57,7 @@ static derr_t test_error_reporting(void){
         //                  0         1         2          3
         //                  012345678901234567890123456 7890
         char *short_error = "invalid url: https:%#asdf\n   ";
-        ok = parse_url(invalid, &url, &shortbuf);
+        ok = parse_url_ex(invalid, &url, &shortbuf);
         ASSERT(!ok);
         ASSERT(dstr_eqs(shortbuf, short_error));
         ASSERT(shortbuf.len < shortbuf.size);
@@ -73,7 +73,7 @@ static derr_t test_error_reporting(void){
         //                      3         4
         //                   7890123456789012345678
                             "                    ^";
-        ok = parse_url(invalid, &url, &shortbuf);
+        ok = parse_url_ex(invalid, &url, &shortbuf);
         ASSERT(!ok);
         ASSERT(dstr_eqs(shortbuf, short_error));
         ASSERT(shortbuf.len < shortbuf.size);
@@ -83,7 +83,7 @@ static derr_t test_error_reporting(void){
         // stupid-sized buffer (checking for asan errors)
         DSTR_VAR(shortbuf, 0);
         char *short_error = "";
-        ok = parse_url(invalid, &url, &shortbuf);
+        ok = parse_url_ex(invalid, &url, &shortbuf);
         ASSERT(!ok);
         ASSERT(dstr_eqs(shortbuf, short_error));
     }
@@ -92,14 +92,14 @@ static derr_t test_error_reporting(void){
     dstr_t *badport = &DSTR_LIT("https://splintermail.com:asdf");
     char *port_error = "invalid url: https://splintermail.com:asdf\n"
                        "                                      ^^^^";
-    ok = parse_url(badport, &url, &errbuf);
+    ok = parse_url_ex(badport, &url, &errbuf);
     ASSERT(!ok);
     ASSERT(dstr_eqs(errbuf, port_error));
 
     // errorbuf on the heap
     dstr_t heapbuf;
     PROP(&e, dstr_new(&heapbuf, 2));
-    ok = parse_url(badport, &url, &heapbuf);
+    ok = parse_url_ex(badport, &url, &heapbuf);
     ASSERT(!ok);
     ok = dstr_eqs(heapbuf, port_error);
     dstr_free(&heapbuf);
@@ -298,13 +298,13 @@ static derr_t test_url(void){
 
     // all urls are also valid url_references
     #define DO_TEST_CASE(in, exp) do { \
-        ok &= do_test_case(parse_url, in, exp); \
-        ok &= do_test_case(parse_url_reference, in, exp); \
+        ok &= do_test_case(parse_url_ex, in, exp); \
+        ok &= do_test_case(parse_url_reference_ex, in, exp); \
     } while(0)
 
     #define DO_FAILURE_CASE(in, exp) do { \
-        ok &= do_failure_case(parse_url, in, exp); \
-        ok &= do_failure_case(parse_url_reference, in, exp); \
+        ok &= do_failure_case(parse_url_ex, in, exp); \
+        ok &= do_failure_case(parse_url_reference_ex, in, exp); \
     } while(0)
 
     bool ok = true;
@@ -439,43 +439,43 @@ static derr_t test_url_reference(void){
     bool ok = true;
 
     // uri_reference_noqf:scheme_or_path:SLASH branch
-    ok &= do_test_case(parse_url_reference,
+    ok &= do_test_case(parse_url_reference_ex,
         "asdf/asdf/asdf",
         "pppppppppppppp"
     );
 
     // uri_reference_noqf:scheme_or_path:COLON branch
-    ok &= do_test_case(parse_url_reference,
+    ok &= do_test_case(parse_url_reference_ex,
         "asdf://asdf/asdf",
         "ssss   hhhhppppp"
     );
 
     // failure case: invalid scheme after scheme_or_path
-    ok &= do_failure_case(parse_url_reference,
+    ok &= do_failure_case(parse_url_reference_ex,
         "a$df://asdf/asdf",
         "^^^^"
     );
 
     // uri_reference_noqf:SLASH:SLASH branch
-    ok &= do_test_case(parse_url_reference,
+    ok &= do_test_case(parse_url_reference_ex,
         "//asdf/asdf",
         "  hhhhppppp"
     );
 
     // uri_reference_noqf:SLASH:relpath_0 branch (nonemtpy)
-    ok &= do_test_case(parse_url_reference,
+    ok &= do_test_case(parse_url_reference_ex,
         "/a/b/c",
         "pppppp"
     );
 
     // uri_reference_noqf:SLASH:relpath_0 branch (empty)
-    ok &= do_test_case(parse_url_reference,
+    ok &= do_test_case(parse_url_reference_ex,
         "/",
         "p"
     );
 
     // uri_reference_noqf:%empty branch
-    ok &= do_test_case(parse_url_reference,
+    ok &= do_test_case(parse_url_reference_ex,
         "",
         ""
     );
