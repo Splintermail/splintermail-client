@@ -1,0 +1,30 @@
+add_library(libacme SHARED b64url.c jws.c reqs.c)
+default_compile_options(libacme TRUE)
+define_file_logname_for_target(libacme)
+target_link_libraries(libacme PUBLIC http)
+# just libacme.so, not liblibacme.so
+set_target_properties(libacme PROPERTIES PREFIX "")
+
+add_executable(get-zerossl-eab get-zerossl-eab.c)
+default_compile_options(get-zerossl-eab TRUE)
+define_file_logname_for_target(get-zerossl-eab)
+target_link_libraries(get-zerossl-eab PUBLIC libacme)
+
+add_executable(new-account new-account.c)
+default_compile_options(new-account TRUE)
+define_file_logname_for_target(new-account)
+target_link_libraries(new-account PUBLIC libacme)
+
+if(BUILD_TESTS)
+    add_executable(test_b64url test_b64url.c)
+    target_link_libraries(test_b64url PUBLIC libacme)
+    default_compile_options(test_b64url TRUE)
+    define_file_logname_for_target(test_b64url)
+    add_test(NAME "do_test_b64url" COMMAND "./test_b64url")
+
+    add_executable(test_jws test_jws.c)
+    target_link_libraries(test_jws PUBLIC libacme)
+    default_compile_options(test_jws TRUE)
+    define_file_logname_for_target(test_jws)
+    add_test(NAME "do_test_jws" COMMAND "./test_jws")
+endif()
