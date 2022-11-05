@@ -4,6 +4,7 @@ typedef struct key_i key_i;
 struct key_i {
     const dstr_t *protected_params;
     derr_t (*to_jwk_pvt)(key_i*, dstr_t *out);
+    // to_jwk_pub emits sorted keys for thumbprint purposes
     derr_t (*to_jwk_pub)(key_i*, dstr_t *out);
     derr_t (*to_pem_pub)(key_i*, dstr_t *out);
     derr_t (*sign)(key_i*, const dstr_t in, dstr_t *out);
@@ -20,6 +21,8 @@ derr_t gen_es256(key_i **out);
 derr_t jwk_to_key(json_ptr_t jwk, key_i **out);
 
 derr_t json_to_key(const dstr_t text, key_i **out);
+
+derr_t jwk_thumbprint(key_i *k, dstr_t *out);
 
 // signatures
 

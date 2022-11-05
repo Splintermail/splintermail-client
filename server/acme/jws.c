@@ -32,9 +32,10 @@ static derr_t ed25519_to_jwk(ed25519_t *k, bool pvt, dstr_t *out){
         dstr_append(
             out,
             &DSTR_LIT(
+                // public key elements in sorted order for thumbprint
                 "{"
-                    "\"kty\":\"OKP\","
                     "\"crv\":\"Ed25519\","
+                    "\"kty\":\"OKP\","
                     "\"x\":\""
             )
         )
@@ -296,8 +297,9 @@ static derr_t es256_to_jwk(es256_t *k, bool pvt, dstr_t *out){
     PROP_GO(&e,
         FMT(out,
             "{"
-                "\"kty\":\"EC\","
+                // public key elements in sorted order for thumbprint
                 "\"crv\":\"P-256\","
+                "\"kty\":\"EC\","
                 "\"x\":\"%x\","
                 "\"y\":\"%x\"",
             FB64URL(&xbuf),
@@ -616,6 +618,28 @@ derr_t json_to_key(const dstr_t text, key_i **out){
 
     PROP(&e, json_parse(text, &json) );
     PROP(&e, jwk_to_key(json.root, out) );
+
+    return e;
+}
+
+derr_t jwk_thumbprint(key_i *k, dstr_t *out){
+    derr_t e = E_OK;
+
+    PROP(&e, dstr_grow(out, out->len + SHA256_DIGEST_LENGTH) );
+
+    DSTR_VAR(json, 256);
+    PROP(&e, k->to_jwk_pub(k, &json) );
+
+    unsigned char *uret = SHA256(
+        (const unsigned char*)json.data,
+        json.len,
+        (unsigned char*)out->data + out->len
+    );
+    if(!uret){
+        trace_ssl_errors(&e);
+        ORIG(&e, E_SSL, "SHA256 failed");
+    }
+    out->len += SHA256_DIGEST_LENGTH;
 
     return e;
 }
