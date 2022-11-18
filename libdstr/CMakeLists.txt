@@ -9,6 +9,7 @@ macro(add_dstr_library name asan)
         opt_parse.c
         win_compat.c
         jsw_atree.c
+        heap.c
         hashmap.c
         link.c
         system.c

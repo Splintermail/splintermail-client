@@ -88,105 +88,52 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
 
 // EXPECT helpers
 
-#define EXPECT_U(e, name, got, exp) do { \
-    uintmax_t _got = (got); \
-    uintmax_t _exp = (exp); \
-    if(_got != _exp){ \
+#define _EXPECT_NUM(type, f, e, name, got, op, exp) do { \
+    type _got = (got); \
+    type _exp = (exp); \
+    if(!(_got op _exp)){ \
         ORIG(e, \
             E_VALUE, \
-            "expected %x == %x but got %x", \
-            FS(name), FU(_exp),  FU(_got) \
+            "expected %x " #op " %x but got %x", \
+            FS(name), f(_exp), f(_got) \
         ); \
     } \
 } while(0)
 
-#define EXPECT_U_GT(e, name, got, exp) do { \
-    uintmax_t _got = (got); \
-    uintmax_t _exp = (exp); \
-    if(_got <= _exp){ \
-        ORIG(e, \
-            E_VALUE, \
-            "expected %x > %x but got %x", \
-            FS(name), FU(_exp),  FU(_got) \
-        ); \
-    } \
-} while(0)
-
-#define EXPECT_U_GE(e, name, got, exp) do { \
-    uintmax_t _got = (got); \
-    uintmax_t _exp = (exp); \
-    if(_got < _exp){ \
-        ORIG(e, \
-            E_VALUE, \
-            "expected %x >= %x but got %x", \
-            FS(name), FU(_exp),  FU(_got) \
-        ); \
-    } \
-} while(0)
-
-#define EXPECT_U_GO(e, name, got, exp, label) do { \
-    uintmax_t _got = (got); \
-    uintmax_t _exp = (exp); \
-    if(_got != _exp){ \
+#define _EXPECT_NUM_GO(type, f, e, name, got, op, exp, label) do { \
+    type _got = (got); \
+    type _exp = (exp); \
+    if(!(_got op _exp)){ \
         ORIG_GO(e, \
             E_VALUE, \
-            "expected %x == %x but got %x", \
+            "expected %x " #op " %x but got %x", \
             label, \
-            FS(name), FU(_exp),  FU(_got) \
+            FS(name), f(_exp), f(_got) \
         ); \
     } \
 } while(0)
 
-#define EXPECT_U_GT_GO(e, name, got, exp, label) do { \
-    uintmax_t _got = (got); \
-    uintmax_t _exp = (exp); \
-    if(_got <= _exp){ \
-        ORIG_GO(e, \
-            E_VALUE, \
-            "expected %x > %x but got %x", \
-            label, \
-            FS(name), FU(_exp),  FU(_got) \
-        ); \
-    } \
-} while(0)
+#define _EXPECT_U(e, n, g, o, x) \
+    _EXPECT_NUM(uintmax_t, FU, e, n, g, o, x)
+#define _EXPECT_U_GO(e, n, g, o, x, l) \
+    _EXPECT_NUM_GO(uintmax_t, FU, e, n, g, o, x, l)
 
-#define EXPECT_U_GE_GO(e, name, got, exp, label) do { \
-    uintmax_t _got = (got); \
-    uintmax_t _exp = (exp); \
-    if(_got < _exp){ \
-        ORIG_GO(e, \
-            E_VALUE, \
-            "expected %x >= %x but got %x", \
-            label, \
-            FS(name), FU(_exp),  FU(_got) \
-        ); \
-    } \
-} while(0)
+#define _EXPECT_I(e, n, g, o, x) \
+    _EXPECT_NUM(intmax_t, FI, e, n, g, o, x)
+#define _EXPECT_I_GO(e, n, g, o, x, l) \
+    _EXPECT_NUM_GO(intmax_t, FI, e, n, g, o, x, l)
 
-#define EXPECT_I(e, name, got, exp) do { \
-    intmax_t _got = (got); \
-    intmax_t _exp = (exp); \
-    if(_got != _exp){ \
-        ORIG(e, \
-            E_VALUE, \
-            "expected %x == %x but got %x", \
-            FS(name), FI(_exp),  FI(_got) \
-        ); \
-    } \
-} while(0)
+#define EXPECT_U(e, name, got, exp) _EXPECT_U(e, name, got, ==, exp)
+#define EXPECT_U_GT(e, name, got, exp) _EXPECT_U(e, name, got, >, exp)
+#define EXPECT_U_GE(e, name, got, exp) _EXPECT_U(e, name, got, >=, exp)
+#define EXPECT_U_LT(e, name, got, exp) _EXPECT_U(e, name, got, <, exp)
+#define EXPECT_U_LE(e, name, got, exp) _EXPECT_U(e, name, got, <=, exp)
 
-#define EXPECT_I_GO(e, name, got, exp, label) do { \
-    intmax_t _got = (got); \
-    intmax_t _exp = (exp); \
-    if(_got != _exp){ \
-        ORIG_GO(e, \
-            E_VALUE, \
-            "expected %x == %x but got %x", \
-            label, \
-            FS(name), FI(_exp),  FI(_got) \
-        ); \
-    } \
-} while(0)
+#define EXPECT_I(e, name, got, exp) _EXPECT_I(e, name, got, ==, exp)
+#define EXPECT_I_GT(e, name, got, exp) _EXPECT_I(e, name, got, >, exp)
+#define EXPECT_I_GE(e, name, got, exp) _EXPECT_I(e, name, got, >=, exp)
+#define EXPECT_I_LT(e, name, got, exp) _EXPECT_I(e, name, got, <, exp)
+#define EXPECT_I_LE(e, name, got, exp) _EXPECT_I(e, name, got, <=, exp)
 
 #define EXPECT_F(e, name, got, exp, eps) do { \
     long double _got = (got); \

@@ -21,6 +21,7 @@
 #include "opt_parse.h"
 #include "hashmap.h"
 #include "jsw_atree.h"
+#include "heap.h"
 #include "refs.h"
 #include "dstr_off.h"
 #include "unicode.h"

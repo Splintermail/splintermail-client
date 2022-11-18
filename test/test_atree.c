@@ -28,7 +28,7 @@ static derr_t print_atree(const jsw_anode_t *node, size_t indent){
     if(!node->level) return e;
     // build indent
     DSTR_STATIC(space, "                                                    ");
-    dstr_t indent_dstr = indent ? dstr_sub(&space, 0, indent) : (dstr_t){0};
+    dstr_t indent_dstr = dstr_sub2(space, 0, indent);
     // print left child
     print_atree(node->link[0], indent + 1);
     // print node
