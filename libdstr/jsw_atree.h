@@ -33,14 +33,14 @@ typedef struct jsw_anode {
 
 // cmp_f will compare two keys
 typedef int (*cmp_f) ( const void*, const void* );
-// get_f will fetch a key for the object that owns the node
-typedef const void *(*get_f) ( const jsw_anode_t* );
+// atree_get_f will fetch a key for the object that owns the node
+typedef const void *(*atree_get_f) ( const jsw_anode_t* );
 
 typedef struct jsw_atree {
   jsw_anode_t *root; /* Top of the tree */
   jsw_anode_t  nil;  /* End of tree sentinel */
   cmp_f        cmp;  /* Compare two item values (user-defined) */
-  get_f        get;  /* Get the value from a node (user-defined) */
+  atree_get_f  get;  /* Get the value from a node (user-defined) */
   size_t       size; /* Number of items */
 } jsw_atree_t;
 
@@ -52,7 +52,7 @@ typedef struct jsw_atrav {
 } jsw_atrav_t;
 
 /* Andersson tree functions */
-void         jsw_ainit ( jsw_atree_t *tree, cmp_f cmp, get_f get );
+void         jsw_ainit ( jsw_atree_t *tree, cmp_f cmp, atree_get_f get );
 jsw_anode_t *jsw_afind ( jsw_atree_t *tree, const void *val, size_t *idx );
 void         jsw_ainsert ( jsw_atree_t *tree, jsw_anode_t *node );
 size_t       jsw_asize ( jsw_atree_t *tree );

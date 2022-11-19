@@ -72,7 +72,7 @@ static void place_node ( jsw_atree_t *tree, jsw_anode_t *node )
   node->count = 1;
 }
 
-void jsw_ainit ( jsw_atree_t *tree, cmp_f cmp, get_f get)
+void jsw_ainit ( jsw_atree_t *tree, cmp_f cmp, atree_get_f get)
 {
   /* Initialize sentinel */
   tree->nil.level = 0;
