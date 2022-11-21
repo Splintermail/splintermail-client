@@ -128,12 +128,22 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
 #define EXPECT_U_GE(e, name, got, exp) _EXPECT_U(e, name, got, >=, exp)
 #define EXPECT_U_LT(e, name, got, exp) _EXPECT_U(e, name, got, <, exp)
 #define EXPECT_U_LE(e, name, got, exp) _EXPECT_U(e, name, got, <=, exp)
+#define EXPECT_U_GO(e, name, got, exp, label) _EXPECT_U_GO(e, name, got, ==, exp, label)
+#define EXPECT_U_GT_GO(e, name, got, exp, label) _EXPECT_U_GO(e, name, got, >, exp, label)
+#define EXPECT_U_GE_GO(e, name, got, exp, label) _EXPECT_U_GO(e, name, got, >=, exp, label)
+#define EXPECT_U_LT_GO(e, name, got, exp, label) _EXPECT_U_GO(e, name, got, <, exp, label)
+#define EXPECT_U_LE_GO(e, name, got, exp, label) _EXPECT_U_GO(e, name, got, <=, exp, label)
 
 #define EXPECT_I(e, name, got, exp) _EXPECT_I(e, name, got, ==, exp)
 #define EXPECT_I_GT(e, name, got, exp) _EXPECT_I(e, name, got, >, exp)
 #define EXPECT_I_GE(e, name, got, exp) _EXPECT_I(e, name, got, >=, exp)
 #define EXPECT_I_LT(e, name, got, exp) _EXPECT_I(e, name, got, <, exp)
 #define EXPECT_I_LE(e, name, got, exp) _EXPECT_I(e, name, got, <=, exp)
+#define EXPECT_I_GO(e, name, got, exp, label) _EXPECT_I_GO(e, name, got, ==, exp, label)
+#define EXPECT_I_GT_GO(e, name, got, exp, label) _EXPECT_I_GO(e, name, got, >, exp, label)
+#define EXPECT_I_GE_GO(e, name, got, exp, label) _EXPECT_I_GO(e, name, got, >=, exp, label)
+#define EXPECT_I_LT_GO(e, name, got, exp, label) _EXPECT_I_GO(e, name, got, <, exp, label)
+#define EXPECT_I_LE_GO(e, name, got, exp, label) _EXPECT_I_GO(e, name, got, <=, exp, label)
 
 #define EXPECT_F(e, name, got, exp, eps) do { \
     long double _got = (got); \
@@ -278,7 +288,7 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
             "-- for value '%x', expected:\n" \
             "%x%x" \
             "-- but got:\n" \
-            "%x%x", \
+            "%x%x-- (end) --", \
             label, \
             FS(name), FD(_exp), FS(_line_end), FD(_got), FS(_line_end) \
         ); \
