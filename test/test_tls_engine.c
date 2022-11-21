@@ -62,12 +62,11 @@ static void *loop_thread(void *arg){
     // prepare the ssl context
     DSTR_VAR(cert, 4096);
     DSTR_VAR(key, 4096);
-    DSTR_VAR(dh, 4096);
     PROP_GO(&e, FMT(&cert, "%x/ssl/good-cert.pem", FS(g_test_files)), done);
     PROP_GO(&e, FMT(&key, "%x/ssl/good-key.pem", FS(g_test_files)), done);
-    PROP_GO(&e, FMT(&dh, "%x/ssl/dh_4096.pem", FS(g_test_files)), done);
-    PROP_GO(&e, ssl_context_new_server(&ctx->ssl_ctx, cert.data, key.data,
-                                    dh.data), done);
+    PROP_GO(&e,
+        ssl_context_new_server(&ctx->ssl_ctx, cert.data, key.data),
+    done);
 
     PROP_GO(&e, tlse_init(&ctx->tlse, 5, 5, &ctx->loop.engine,
                 ctx->downstream), cu_ssl_ctx);

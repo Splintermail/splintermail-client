@@ -115,7 +115,6 @@ derr_t citm(
     const char *local_svc,
     const char *key,
     const char *cert,
-    const char *dh,
     const char *remote_host,
     const char *remote_svc,
     const string_builder_t *maildir_root,
@@ -125,7 +124,7 @@ derr_t citm(
 
     // init ssl contexts
     ssl_context_t ctx_srv;
-    PROP(&e, ssl_context_new_server(&ctx_srv, cert, key, dh) );
+    PROP(&e, ssl_context_new_server(&ctx_srv, cert, key) );
 
     ssl_context_t ctx_cli;
     PROP_GO(&e, ssl_context_new_client(&ctx_cli), cu_ctx_srv);

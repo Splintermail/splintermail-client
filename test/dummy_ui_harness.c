@@ -56,7 +56,6 @@ derr_t citm(
     const char *local_svc,
     const char *key,
     const char *cert,
-    const char *dh,
     const char *remote_host,
     const char *remote_svc,
     const string_builder_t *maildir_root,
@@ -66,7 +65,6 @@ derr_t citm(
     (void)local_svc;
     (void)key;
     (void)cert;
-    (void)dh;
     (void)remote_host;
     (void)remote_svc;
     (void)maildir_root;

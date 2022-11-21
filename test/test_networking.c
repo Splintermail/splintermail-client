@@ -101,20 +101,15 @@ static void* ssl_server_thread(void* arg){
 
     DSTR_VAR(certfile, 4096);
     DSTR_VAR(keyfile, 4096);
-    DSTR_VAR(dhfile, 4096);
     PROP_GO(e, FMT(&certfile, "%x/ssl/%x-cert.pem", FS(g_test_files),
                  FS(spec->keypair ? spec->keypair : "good")), exit);
     PROP_GO(e, FMT(&keyfile, "%x/ssl/%x-key.pem", FS(g_test_files),
                  FS(spec->keypair ? spec->keypair : "good")), exit);
-    PROP_GO(e, FMT(&dhfile, "%x/ssl/dh_4096.pem", FS(g_test_files)), exit);
     if(!file_r_access(certfile.data)){
         ORIG_GO(e, E_FS, "unable to access certfile", exit);
     }
     if(!file_r_access(keyfile.data)){
         ORIG_GO(e, E_FS, "unable to access keyfile", exit);
-    }
-    if(!file_r_access(dhfile.data)){
-        ORIG_GO(e, E_FS, "unable to access dhfile", exit);
     }
 
     // create the context, either a vanilla one or a customizable
@@ -125,8 +120,9 @@ static void* ssl_server_thread(void* arg){
     if(spec->vanilla == true){
 
         // prepare ssl context
-        PROP_GO(e, ssl_context_new_server(&ctx, certfile.data, keyfile.data,
-                                          dhfile.data), signal_client);
+        PROP_GO(e,
+            ssl_context_new_server(&ctx, certfile.data, keyfile.data),
+        signal_client);
     }
     // custom server context for testing the client implementation
     else{
@@ -167,27 +163,6 @@ static void* ssl_server_thread(void* arg){
             ORIG_GO(e, E_SSL, "private key does not match certificate", ctx_fail);
         }
 
-        // set diffie-helman perameters
-        DH* dh = NULL;
-        FILE* fp = compat_fopen(dhfile.data, "r");
-        if(!fp){
-            // already checked read access above, so highly likely E_NOMEM
-            ORIG_GO(e, E_NOMEM, "unable to open dhfile", ctx_fail);
-        }
-        dh = PEM_read_DHparams(fp, NULL, NULL, NULL);
-        fclose(fp);
-        if(!dh){
-            trace_ssl_errors(e);
-            ORIG_GO(e, E_SSL, "failed to read dh params", ctx_fail);
-        }
-        long lret = SSL_CTX_set_tmp_dh(ctx.ctx, dh);
-        if(lret != 1){
-            DH_free(dh);
-            trace_ssl_errors(e);
-            ORIG_GO(e, E_SSL, "failed to set dh params", ctx_fail);
-        }
-        DH_free(dh);
-
         // make sure server sets cipher preference
         ulret = SSL_CTX_set_options(ctx.ctx, SSL_OP_CIPHER_SERVER_PREFERENCE);
         if( !(ulret & SSL_OP_CIPHER_SERVER_PREFERENCE) ){
@@ -202,7 +177,7 @@ static void* ssl_server_thread(void* arg){
         }
 
         // read/write operations should only return after handshake completed
-        lret = SSL_CTX_set_mode(ctx.ctx, SSL_MODE_AUTO_RETRY);
+        long lret = SSL_CTX_set_mode(ctx.ctx, SSL_MODE_AUTO_RETRY);
         if(!(lret & SSL_MODE_AUTO_RETRY)){
             trace_ssl_errors(e);
             ORIG_GO(e, E_SSL, "error setting SSL mode", ctx_fail);

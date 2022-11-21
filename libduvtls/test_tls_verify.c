@@ -42,17 +42,15 @@ static void *peer_thread(void *arg){
 
     DSTR_VAR(cert, 4096);
     DSTR_VAR(key, 4096);
-    DSTR_VAR(dh, 4096);
     PROP_GO(&e,
         FMT(&cert, "%x/ssl/%x-cert.pem", FS(g_test_files), FS(keypair)),
     done);
     PROP_GO(&e,
         FMT(&key, "%x/ssl/%x-key.pem", FS(g_test_files), FS(keypair)),
     done);
-    PROP_GO(&e, FMT(&dh, "%x/ssl/dh_4096.pem", FS(g_test_files)), done);
 
     PROP_GO(&e,
-        ssl_context_new_server(&server_ctx, cert.data, key.data, dh.data),
+        ssl_context_new_server(&server_ctx, cert.data, key.data),
     done);
 
     PROP_GO(&e,
@@ -257,7 +255,6 @@ static derr_t test_tls_verify(void){
     PROP(&e, do_verify_test("localhost", "good", E_HOSTNAME) );
     PROP(&e, do_verify_test("127.0.0.1", "expired", E_CERTEXP) );
     PROP(&e, do_verify_test("127.0.0.1", "unknown", E_SELFSIGN) );
-    PROP(&e, do_verify_test("127.0.0.1", "wronghost", E_HOSTNAME) );
 
     return e;
 }

@@ -130,128 +130,79 @@ cu:
     return e;
 }
 
-//// This test doesn't pass, but the ACME server says our signatures are good,
-//// so we're going to ignore this.
-// static derr_t test_es256(void){
-//     derr_t e = E_OK;
-//
-//     key_i *k = NULL;
-//
-//     DSTR_STATIC(pvtjwk,
-//         "{\"kty\":\"EC\",\"crv\":\"P-256\",\"x\":\"Du7BdPtQQ-YlB11mbByZfK4"
-//         "sYjsDbhLk3UlNjvvSh9A\",\"y\":\"Ls9gVIVSuUKzXqPSbtptyPBlniKJU2bBFL"
-//         "tmbud8R20\",\"d\":\"O_N4PS5BXM-PTR-ij1ZDDoButfzR4Ku-SOu-xNCx83s\""
-//         "}"
-//     );
-//
-//     json_t json;
-//     DSTR_VAR(jtext, 256);
-//     json_node_t nodemem[16];
-//     size_t nnodes = sizeof(nodemem)/sizeof(*nodemem);
-//     json_prep_preallocated(&json, &jtext, nodemem, nnodes, true);
-//     PROP_GO(&e, json_parse(pvtjwk, &json), cu);
-//
-//     PROP_GO(&e, jwk_to_key(json.root, &k), cu);
-//
-//     /* python test vector generation:
-// import base64
-// import json
-// import textwrap
-//
-// from cryptography.hazmat.primitives import hashes
-// from cryptography.hazmat.primitives.asymmetric import ec
-//
-// def b64url(s):
-//     if isinstance(s, str):
-//         s = s.encode('utf8')
-//     return base64.b64encode(
-//         s, altchars=b"-_"
-//     ).rstrip(b"=").decode('utf8')
-//
-// def unb64url(s):
-//     if isinstance(s, bytes):
-//         s = s.decode('utf8')
-//     if len(s) % 4:
-//         s += "=" * (4 - (len(s) % 4))
-//     return base64.b64decode(s, altchars=b"-_")
-//
-// def bignum_decode(byts):
-//     if isinstance(byts, str):
-//         byts = byts.encode('utf8')
-//     out = 0
-//     for b in byts:
-//         out = out * 256 + b
-//     return out
-//
-// jwktext = (
-//     "{\"kty\":\"EC\",\"crv\":\"P-256\",\"x\":\"Du7BdPtQQ-YlB11mbByZfK4"
-//     "sYjsDbhLk3UlNjvvSh9A\",\"y\":\"Ls9gVIVSuUKzXqPSbtptyPBlniKJU2bBFL"
-//     "tmbud8R20\",\"d\":\"O_N4PS5BXM-PTR-ij1ZDDoButfzR4Ku-SOu-xNCx83s\""
-//     "}"
-// )
-//
-// jwk = json.loads(jwktext)
-//
-// x = bignum_decode(unb64url(jwk["x"]))
-// y = bignum_decode(unb64url(jwk["y"]))
-// d = bignum_decode(unb64url(jwk["d"]))
-// curve = ec.SECP256R1()
-// pub = ec.EllipticCurvePublicNumbers(x, y, curve)
-// pvt = ec.EllipticCurvePrivateNumbers(d, pub)
-// key = pvt.private_key()
-//
-// payload = "some-special-text"
-// protected = (
-//     '{"alg":"ES256","nonce":"xyz","kid":"https://kid.com",'
-//     '"url":"https://url.com"}'
-// )
-//
-// signing_input = f"{b64url(protected)}.{b64url(payload)}"
-// sigalg = ec.ECDSA(hashes.SHA256())
-// sig = key.sign(signing_input.encode('utf8'), sigalg)
-//
-// exp = json.dumps({
-//     "protected": b64url(protected),
-//     "payload": b64url(payload),
-//     "signature": b64url(sig),
-// }).replace(" ", "")
-//
-// c_exp = exp.replace('"', '\\"')
-// c_exp = textwrap.wrap(c_exp, 69, break_on_hyphens=False)
-// print("    DSTR_STATIC(acme_exp,")
-// for line in c_exp:
-//     print(f'        "{line}"')
-// print("    );")
-//     */
-//
-//     DSTR_STATIC(acme_exp,
-//         "{\"protected\":\"eyJhbGciOiJFUzI1NiIsIm5vbmNlIjoieHl6Iiwia2lkIjoiaHR0"
-//         "cHM6Ly9raWQuY29tIiwidXJsIjoiaHR0cHM6Ly91cmwuY29tIn0\",\"payload\":\"c"
-//         "29tZS1zcGVjaWFsLXRleHQ\",\"signature\":\"MEUCIQDWdLRlv43KdQi5NXSHPAeD"
-//         "q0F4hovImfJDbW6HKsjtLQIgNwB7Rapr9P7Pi1CtzEfKmVe5LO_W3B8mAUwl057chN8\""
-//         "}"
-//     );
-//
-//     // acme_jws
-//     DSTR_VAR(jwsbuf, 4096);
-//
-//     PROP_GO(&e,
-//         acme_jws(
-//             k,
-//             DSTR_LIT("some-special-text"),
-//             DSTR_LIT("xyz"),
-//             DSTR_LIT("https://url.com"),
-//             DSTR_LIT("https://kid.com"),
-//             &jwsbuf
-//         ),
-//     cu);
-//
-//     EXPECT_D3_GO(&e, "acme_jws", &jwsbuf, &acme_exp, cu);
-//
-// cu:
-//     if(k) k->free(k);
-//     return e;
-// }
+// hack: expose the es256_t pkey manually
+typedef struct {
+    key_i iface;
+    EVP_PKEY *pkey;
+} es256_hack_t;
+DEF_CONTAINER_OF(es256_hack_t, iface, key_i);
+
+static derr_t test_es256(void){
+    derr_t e = E_OK;
+
+    key_i *k = NULL;
+    EVP_MD_CTX *mdctx = NULL;
+
+    DSTR_STATIC(jwk_in,
+        "{\"crv\":\"P-256\",\"kty\":\"EC\",\"x\":\"Du7BdPtQQ-YlB11mbByZfK4"
+        "sYjsDbhLk3UlNjvvSh9A\",\"y\":\"Ls9gVIVSuUKzXqPSbtptyPBlniKJU2bBFL"
+        "tmbud8R20\",\"d\":\"O_N4PS5BXM-PTR-ij1ZDDoButfzR4Ku-SOu-xNCx83s\""
+        "}"
+    );
+
+    json_t json;
+    JSON_PREP_PREALLOCATED(json, 256, 16, true);
+    PROP_GO(&e, json_parse(jwk_in, &json), cu);
+
+    PROP_GO(&e, jwk_to_key(json.root, &k), cu);
+
+    DSTR_VAR(jwk_out, 256);
+    PROP_GO(&e, k->to_jwk_pvt(k, &jwk_out), cu);
+
+    // can write the key back to match the input
+    jwk_out = dstr_strip_chars(jwk_out, '\n');
+    EXPECT_DM_GO(&e, "jwk_out", &jwk_out, &jwk_in, cu);
+
+    // es256 signatures are not deterministic, so test vectors won't work
+
+    DSTR_STATIC(msg, "some-special-text");
+    DSTR_VAR(sig, 256);
+    PROP_GO(&e, k->sign(k, msg, &sig), cu);
+
+    mdctx = EVP_MD_CTX_new();
+    if(!mdctx){
+        trace_ssl_errors(&e);
+        ORIG_GO(&e, E_SSL, "EVP_MD_CTX_new failed", cu);
+    }
+
+    es256_hack_t *es256 = CONTAINER_OF(k, es256_hack_t, iface);
+    int ret = EVP_DigestVerifyInit(
+        mdctx, NULL, EVP_sha256(), NULL, es256->pkey
+    );
+    if(ret != 1){
+        trace_ssl_errors(&e);
+        ORIG_GO(&e, E_SSL, "EVP_DigestVerifyInit failed", cu);
+    }
+
+    ret = EVP_DigestVerify(mdctx,
+        (const unsigned char*)sig.data, sig.len,
+        (const unsigned char*)msg.data, msg.len
+    );
+    if(ret != 1){
+        if(ret != 0){
+            // function failed
+            trace_ssl_errors(&e);
+            ORIG_GO(&e, E_SSL, "EVP_DigestSign failed", cu);
+        }
+        // signature failed
+        ORIG_GO(&e, E_VALUE, "es256 signature failed verification", cu);
+    }
+
+cu:
+    if(k) k->free(k);
+    if(mdctx) EVP_MD_CTX_free(mdctx);
+    return e;
+}
 
 static derr_t test_hs256(void){
     derr_t e = E_OK;
@@ -323,7 +274,7 @@ int main(int argc, char **argv){
     PROP_GO(&e, ssl_library_init(), test_fail);
 
     PROP_GO(&e, test_ed25519(), test_fail);
-    // PROP_GO(&e, test_es256(), test_fail);
+    PROP_GO(&e, test_es256(), test_fail);
     PROP_GO(&e, test_hs256(), test_fail);
 
     ssl_library_close();

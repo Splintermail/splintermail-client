@@ -1385,7 +1385,7 @@ derr_t dfclose(FILE *f){
     int ret = fclose(f);
     if(ret){
         TRACE(&e, "fclose: %x\n", FE(&errno));
-        ORIG(&e, E_OPEN, "fclose failed");
+        ORIG(&e, E_OS, "fclose failed");
     }
 
     return e;

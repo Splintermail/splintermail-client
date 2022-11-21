@@ -196,8 +196,9 @@ cleanup:
     return e;
 }
 
-derr_t ssl_context_new_server(ssl_context_t* ctx, const char* certfile,
-                              const char* keyfile, const char* dhfile){
+derr_t ssl_context_new_server(
+    ssl_context_t* ctx, const char* certfile, const char* keyfile
+){
     derr_t e = E_OK;
 
     // make sure certfile is a real file and that we have access
@@ -207,10 +208,6 @@ derr_t ssl_context_new_server(ssl_context_t* ctx, const char* certfile,
     // make sure keyfile is a real file and that we have access
     if(!file_r_access(keyfile)){
         ORIG(&e, E_FS, "unable to access keyfile");
-    }
-    // make sure dhfile is a real file and that we have access
-    if(dhfile && !file_r_access(dhfile)){
-        ORIG(&e, E_FS, "unable to access dhfile");
     }
 
     long lret;
@@ -257,29 +254,6 @@ derr_t ssl_context_new_server(ssl_context_t* ctx, const char* certfile,
     if(ret != 1){
         trace_ssl_errors(&e);
         ORIG_GO(&e, E_SSL, "private key does not match certificate", cleanup);
-    }
-
-    // set diffie-helman perameters
-    if(dhfile){
-        DH* dh = NULL;
-        FILE* fp = compat_fopen(dhfile, "r");
-        if(!fp){
-            // already checked read access above, so highly likely E_NOMEM
-            ORIG_GO(&e, E_NOMEM, "unable to open dhfile", cleanup);
-        }
-        dh = PEM_read_DHparams(fp, NULL, NULL, NULL);
-        fclose(fp);
-        if(!dh){
-            trace_ssl_errors(&e);
-            ORIG_GO(&e, E_SSL, "failed to read dh params", cleanup);
-        }
-        lret = SSL_CTX_set_tmp_dh(ctx->ctx, dh);
-        if(lret != 1){
-            DH_free(dh);
-            trace_ssl_errors(&e);
-            ORIG_GO(&e, E_SSL, "failed to set dh params", cleanup);
-        }
-        DH_free(dh);
     }
 
     // make sure server sets cipher preference

@@ -1126,7 +1126,6 @@ int do_main(int argc, char* argv[], bool windows_service){
                 local_svc.data,
                 key.data,
                 cert.data,
-                NULL,  // const char *dh
                 rhost,
                 remote_svc.data,
                 &citm_path,

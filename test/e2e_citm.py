@@ -3093,8 +3093,6 @@ if __name__ == "__main__":
                     os.path.join(test_files, "ssl", "good-key.pem"),
                     "--tls-cert",
                     os.path.join(test_files, "ssl", "good-cert.pem"),
-                    "--tls-dh",
-                    os.path.join(test_files, "ssl", "dh_4096.pem"),
                     "--maildirs",
                     maildir_root,
                 ]

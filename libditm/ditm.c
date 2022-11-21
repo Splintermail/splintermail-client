@@ -1288,8 +1288,9 @@ derr_t ditm_loop(const char* rhost, unsigned int rport,
             }else PROP(&e, e2);
         }
         e2 = ssl_context_new_server(&s_ctx,
-                certpath ? certpath : def_cert.data,
-                keypath ? keypath : def_key.data, NULL);
+            certpath ? certpath : def_cert.data,
+            keypath ? keypath : def_key.data
+        );
         CATCH(e2, E_FS){
             // if the user manually specified cert or key, un-catch this error
             if(certpath || keypath){

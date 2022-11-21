@@ -8,7 +8,6 @@ static const char *d_r_host   = "127.0.0.1";
 static const char *d_r_port   = "993";
 static const char *d_tls_key  = "../c/test/files/ssl/good-key.pem";
 static const char *d_tls_cert = "../c/test/files/ssl/good-cert.pem";
-static const char *d_tls_dh   = "../c/test/files/ssl/dh_4096.pem";
 DSTR_STATIC(d_maildirs, "/tmp/maildir_root");
 
 static void print_help(FILE *f){
@@ -24,7 +23,6 @@ static void print_help(FILE *f){
             "      --remote-port=ARG   (default: %x)\n"
             "      --tls-key=ARG       (default: %x)\n"
             "      --tls-cert=ARG      (default: %x)\n"
-            "      --tls-dh=ARG        (default: %x)\n"
             "      --maildirs=ARG      (default: %x)\n",
             FS(d_l_host),
             FS(d_l_port),
@@ -32,7 +30,6 @@ static void print_help(FILE *f){
             FS(d_r_port),
             FS(d_tls_key),
             FS(d_tls_cert),
-            FS(d_tls_dh),
             FD(&d_maildirs)
         )
     );
@@ -59,7 +56,6 @@ int main(int argc, char **argv){
     opt_spec_t o_r_port   = {'\0', "remote-port", true,  OPT_RETURN_INIT};
     opt_spec_t o_tls_key  = {'\0', "tls-key",     true,  OPT_RETURN_INIT};
     opt_spec_t o_tls_cert = {'\0', "tls-cert",    true,  OPT_RETURN_INIT};
-    opt_spec_t o_tls_dh   = {'\0', "tls-dh",      true,  OPT_RETURN_INIT};
     opt_spec_t o_maildirs = {'\0', "maildirs",    true,  OPT_RETURN_INIT};
 
     opt_spec_t* spec[] = {
@@ -70,7 +66,6 @@ int main(int argc, char **argv){
         &o_r_port,
         &o_tls_key,
         &o_tls_cert,
-        &o_tls_dh,
         &o_maildirs,
     };
     size_t speclen = sizeof(spec) / sizeof(*spec);
@@ -101,7 +96,6 @@ int main(int argc, char **argv){
     const char *r_port = o_r_port.found ? o_r_port.val.data : d_r_port;
     const char *tls_key = o_tls_key.found ? o_tls_key.val.data : d_tls_key;
     const char *tls_cert = o_tls_cert.found ? o_tls_cert.val.data : d_tls_cert;
-    const char *tls_dh = o_tls_dh.found ? o_tls_dh.val.data : d_tls_dh;
     const dstr_t *maildirs = o_maildirs.found ? &o_maildirs.val : &d_maildirs;
 
     string_builder_t maildir_root = SB(FD(maildirs));
@@ -112,7 +106,6 @@ int main(int argc, char **argv){
             l_port,
             tls_key,
             tls_cert,
-            tls_dh,
             r_host,
             r_port,
             &maildir_root,
@@ -135,4 +128,3 @@ done:
     return 0;
 
 }
-

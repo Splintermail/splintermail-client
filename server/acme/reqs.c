@@ -402,17 +402,16 @@ static derr_t post_new_account_body(
                 "\"contact\":["
                     "\"mailto:%x\""
                 "],"
-                "\"termsOfServiceAgreed\":true"
-            "}",
+                "\"termsOfServiceAgreed\":true",
             FD_JSON(&contact_email),
         )
     );
     if(eab_kid.len != 0){
         // build the inner jws
         PROP(&e, FMT(&payload, ",\"externalAccountBinding\":") );
-        protected.len = 0;
+        DSTR_VAR(inner, 4096);
         PROP(&e,
-            FMT(&protected,
+            FMT(&inner,
                 "{"
                     "\"alg\":\"HS256\","
                     "\"kid\":\"%x\","
@@ -422,7 +421,7 @@ static derr_t post_new_account_body(
                 FD_JSON(&url),
             )
         );
-        PROP(&e, jws(protected, jwkbuf, SIGN_HS256(&eab_hmac_key), &payload) );
+        PROP(&e, jws(inner, jwkbuf, SIGN_HS256(&eab_hmac_key), &payload) );
     }
     PROP(&e, FMT(&payload, "}") );
     PROP(&e, jws(protected, payload, SIGN_KEY(k), out) );

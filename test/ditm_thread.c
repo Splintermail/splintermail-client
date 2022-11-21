@@ -65,14 +65,16 @@ static void* ditm_thread_func(void* arg){
     // prepare server ssl context
     DSTR_VAR(certfile, 4096);
     DSTR_VAR(keyfile, 4096);
-    DSTR_VAR(dhfile, 4096);
-    PROP_GO(&e, FMT(&certfile, "%x/%x", FS(g_test_files), FS("ssl/good-cert.pem")), cleanup_1);
-    PROP_GO(&e, FMT(&keyfile, "%x/%x", FS(g_test_files), FS("ssl/good-key.pem")), cleanup_1);
-    PROP_GO(&e, FMT(&dhfile, "%x/%x", FS(g_test_files), FS("ssl/dh_4096.pem")), cleanup_1);
+    PROP_GO(&e,
+        FMT(&certfile, "%x/%x", FS(g_test_files), FS("ssl/good-cert.pem")),
+    cleanup_1);
+    PROP_GO(&e,
+        FMT(&keyfile, "%x/%x", FS(g_test_files), FS("ssl/good-key.pem")),
+    cleanup_1);
     ssl_context_t s_ctx;
-    PROP_GO(&e, ssl_context_new_server(&s_ctx, certfile.data,
-                                            keyfile.data,
-                                            dhfile.data), cleanup_1);
+    PROP_GO(&e,
+        ssl_context_new_server(&s_ctx, certfile.data, keyfile.data),
+    cleanup_1);
 
     // prepare client ssl context
     ssl_context_t c_ctx;

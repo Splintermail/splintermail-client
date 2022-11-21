@@ -55,13 +55,11 @@ static void *peer_thread(void *arg){
 
     DSTR_VAR(cert, 4096);
     DSTR_VAR(key, 4096);
-    DSTR_VAR(dh, 4096);
     PROP_GO(&e, FMT(&cert, "%x/ssl/good-cert.pem", FS(g_test_files)), done);
     PROP_GO(&e, FMT(&key, "%x/ssl/good-key.pem", FS(g_test_files)), done);
-    PROP_GO(&e, FMT(&dh, "%x/ssl/dh_4096.pem", FS(g_test_files)), done);
 
     PROP_GO(&e,
-        ssl_context_new_server(&server_ctx, cert.data, key.data, dh.data),
+        ssl_context_new_server(&server_ctx, cert.data, key.data),
     done);
 
     PROP_GO(&e,

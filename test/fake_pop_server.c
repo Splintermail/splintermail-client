@@ -348,12 +348,15 @@ static void* fake_pop_server_thread(void* arg){
     // prepare ssl context
     DSTR_VAR(certfile, 4096);
     DSTR_VAR(keyfile, 4096);
-    DSTR_VAR(dhfile, 4096);
-    PROP_GO(e, FMT(&certfile, "%x/%x", FS(g_test_files), FS("ssl/good-cert.pem")), fail_early);
-    PROP_GO(e, FMT(&keyfile, "%x/%x", FS(g_test_files), FS("ssl/good-key.pem")), fail_early);
-    PROP_GO(e, FMT(&dhfile, "%x/%x", FS(g_test_files), FS("ssl/dh_4096.pem")), fail_early);
-    PROP_GO(e, ssl_context_new_server(
-            &ctx, certfile.data, keyfile.data, dhfile.data), fail_early);
+    PROP_GO(e,
+        FMT(&certfile, "%x/%x", FS(g_test_files), FS("ssl/good-cert.pem")),
+    fail_early);
+    PROP_GO(e,
+        FMT(&keyfile, "%x/%x", FS(g_test_files), FS("ssl/good-key.pem")),
+    fail_early);
+    PROP_GO(e,
+        ssl_context_new_server( &ctx, certfile.data, keyfile.data),
+    fail_early);
 
     listener_t listener;
     PROP_GO(e, listener_new_ssl(&listener, &ctx, "127.0.0.1", fps_pop_port), fail_early);

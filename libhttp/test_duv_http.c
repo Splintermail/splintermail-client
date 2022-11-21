@@ -130,17 +130,13 @@ static void *server_run(void *arg){
 
     DSTR_VAR(cert, 4096);
     DSTR_VAR(key, 4096);
-    DSTR_VAR(dh, 4096);
 
     PROP_GO(&e, FMT(&cert, "%x/ssl/good-cert.pem", FS(g_test_files)), done);
     PROP_GO(&e, FMT(&key, "%x/ssl/good-key.pem", FS(g_test_files)), done);
-    PROP_GO(&e, FMT(&dh, "%x/ssl/dh_4096.pem", FS(g_test_files)), done);
 
     // configure listeners before any testing begins
     ssl_context_t ctx;
-    PROP_GO(&e,
-        ssl_context_new_server(&ctx, cert.data, key.data, dh.data),
-    done);
+    PROP_GO(&e, ssl_context_new_server(&ctx, cert.data, key.data), done);
     PROP_GO(&e, listener_new(&s.l, "127.0.0.1", 48123), done);
     PROP_GO(&e, listener_new_ssl(&s.ltls, &ctx, "127.0.0.1", 48124), done);
 

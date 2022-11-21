@@ -130,13 +130,16 @@ static void* server_thread(void* arg){
     // prepare ssl context
     DSTR_VAR(certfile, 4096);
     DSTR_VAR(keyfile, 4096);
-    DSTR_VAR(dhfile, 4096);
-    PROP_GO(&e, FMT(&certfile, "%x/%x", FS(g_test_files), FS("ssl/good-cert.pem")), early_fail);
-    PROP_GO(&e, FMT(&keyfile, "%x/%x", FS(g_test_files), FS("ssl/good-key.pem")), early_fail);
-    PROP_GO(&e, FMT(&dhfile, "%x/%x", FS(g_test_files), FS("ssl/dh_4096.pem")), early_fail);
+    PROP_GO(&e,
+        FMT(&certfile, "%x/%x", FS(g_test_files), FS("ssl/good-cert.pem")),
+    early_fail);
+    PROP_GO(&e,
+        FMT(&keyfile, "%x/%x", FS(g_test_files), FS("ssl/good-key.pem")),
+    early_fail);
     ssl_context_t ctx;
-    PROP_GO(&e, ssl_context_new_server(&ctx, certfile.data,
-                keyfile.data, dhfile.data), early_fail);
+    PROP_GO(&e,
+        ssl_context_new_server(&ctx, certfile.data, keyfile.data),
+    early_fail);
 
     listener_t listener;
     PROP_GO(&e, listener_new_ssl(&listener, &ctx, "127.0.0.1", 1996), early_fail);

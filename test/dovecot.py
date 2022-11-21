@@ -62,7 +62,6 @@ mail_plugin_dir = {self.plugin_path}
 
 ssl_cert =<{HERE}/files/ssl/good-cert.pem
 ssl_key =<{HERE}/files/ssl/good-key.pem
-ssl_dh=<{HERE}/files/ssl/dh_4096.pem
 
 # don't use the syslog
 log_path = /dev/stdout

@@ -8,6 +8,30 @@
 
 #define ES256_SIG_SIZE 72
 
+static void to_bigendian(dstr_t *buf){
+    // check endianness
+    int i = 1;
+    void *p = (void*)&i;
+    char *c = p;
+
+    if(!*c) return;
+    // little endian; reverse the buffer
+
+    size_t len = buf->len;
+    char *data = buf->data;
+    for(size_t i = 0; i < len/2; i++){
+        char a = data[i];
+        char b = data[len - 1 -i];
+        data[len - 1 -i] = a;
+        data[i] = b;
+    }
+}
+
+static void from_bigendian(dstr_t *buf){
+    // the operation is symmetric
+    to_bigendian(buf);
+}
+
 typedef struct {
     key_i iface;
     EVP_PKEY *pkey;
@@ -243,56 +267,26 @@ DEF_CONTAINER_OF(es256_t, iface, key_i);
 static derr_t es256_to_jwk(es256_t *k, bool pvt, dstr_t *out){
     derr_t e = E_OK;
 
-    BIGNUM *x = NULL;
-    BIGNUM *y = NULL;
-
-    DSTR_VAR(xbuf, 256);
-    DSTR_VAR(ybuf, 256);
-    DSTR_VAR(dbuf, 256);
-
-    // get the elliptic curve key from the EVP_PKEY wrapper
-    const EC_KEY *eckey = EVP_PKEY_get0_EC_KEY(k->pkey);
-    if(!eckey){
-        ORIG(&e, E_INTERNAL, "did not get EC_KEY from es256_t");
-    }
-
-    // get the public key as an EC_POINT
-    const EC_POINT *ecpoint =  EC_KEY_get0_public_key(eckey);
-
-    // get the group, in order to get x and y values
-    const EC_GROUP *group = EC_KEY_get0_group(eckey);
-
-    // get x and y as well
-    x = BN_new();
-    if(!x){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "BN_new", cu);
-    }
-    y = BN_new();
-    if(!y){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "BN_new", cu);
-    }
-    int ret = EC_POINT_get_affine_coordinates(group, ecpoint, x, y, NULL);
+    DSTR_VAR(d, 32);
+    DSTR_VAR(x, 32);
+    DSTR_VAR(y, 32);
+    OSSL_PARAM params[] = {
+        {.key="priv", .data_type=OSSL_PARAM_UNSIGNED_INTEGER, .data=d.data, .data_size=d.size },
+        {.key="qx", .data_type=OSSL_PARAM_UNSIGNED_INTEGER, .data=x.data, .data_size=x.size },
+        {.key="qy", .data_type=OSSL_PARAM_UNSIGNED_INTEGER, .data=y.data, .data_size=y.size },
+        {0},
+    };
+    int ret = EVP_PKEY_get_params(k->pkey, &params[pvt ? 0 : 1]);
     if(ret != 1){
         trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "EC_POINT_get_affine_coordinates failed", cu);
+        ORIG(&e, E_SSL, "EVP_PKEY_get_params failed");
     }
-
-    if(BN_num_bytes(x) > (int)xbuf.size){
-        ORIG(&e, E_INTERNAL, "xbuf too small!");
-    }
-    if(BN_num_bytes(y) > (int)ybuf.size){
-        ORIG(&e, E_INTERNAL, "ybuf too small!");
-    }
-
-    int xlen = BN_bn2bin(x, (unsigned char*)xbuf.data);
-    if(xlen < 0) ORIG(&e, E_INTERNAL, "BN_bn2bin returned negative length");
-    xbuf.len = (size_t)xlen;
-
-    int ylen = BN_bn2bin(y, (unsigned char*)ybuf.data);
-    if(ylen < 0) ORIG(&e, E_INTERNAL, "BN_bn2bin returned negative length");
-    ybuf.len = (size_t)ylen;
+    if(pvt) d.len = params[0].return_size;
+    x.len = params[1].return_size;
+    y.len = params[2].return_size;
+    to_bigendian(&x);
+    to_bigendian(&y);
+    if(pvt) to_bigendian(&d);
 
     PROP_GO(&e,
         FMT(out,
@@ -302,29 +296,24 @@ static derr_t es256_to_jwk(es256_t *k, bool pvt, dstr_t *out){
                 "\"kty\":\"EC\","
                 "\"x\":\"%x\","
                 "\"y\":\"%x\"",
-            FB64URL(&xbuf),
-            FB64URL(&ybuf)
+            FB64URL(&x),
+            FB64URL(&y)
         ),
     cu);
 
     if(pvt){
         // get the private key as a bignum
-        const BIGNUM *d = EC_KEY_get0_private_key(eckey);
-        if(BN_num_bytes(d) > (int)dbuf.size){
-            ORIG(&e, E_INTERNAL, "dbuf too small!");
-        }
-        dbuf.len = (size_t)BN_bn2bin(d, (unsigned char*)dbuf.data);
-        PROP_GO(&e, FMT(out, ",\"d\":\"%x\"", FB64URL(&dbuf)), cu);
+        PROP_GO(&e, FMT(out, ",\"d\":\"%x\"", FB64URL(&d)), cu);
     }
 
     PROP_GO(&e, dstr_append(out, &DSTR_LIT("}")), cu);
 
 cu:
-    for(size_t i = 0; i < dbuf.size; i++){
-        dbuf.data[i] = 0;
+    if(pvt){
+        for(size_t i = 0; i < d.size; i++){
+            d.data[i] = 0;
+        }
     }
-    if(x) BN_free(x);
-    if(y) BN_free(y);
 
     return e;
 }
@@ -350,25 +339,22 @@ static derr_t es256_sign(key_i *iface, const dstr_t in, dstr_t *out){
     derr_t e = E_OK;
     es256_t *k = CONTAINER_OF(iface, es256_t, iface);
 
-#ifdef BUILD_DEBUG
-    // validate our precomputed ES256_SIG_SIZE
-    const EC_KEY *eckey = EVP_PKEY_get0_EC_KEY(k->pkey);
-    if(!eckey){
-        ORIG(&e, E_INTERNAL, "did not get EC_KEY from es256_t");
-    }
-    int sigsize = ECDSA_size(eckey);
-    if(sigsize != ES256_SIG_SIZE){
-        ORIG(&e, E_INTERNAL, "incorrect ES256_SIG_SIZE! (%x)", FI(sigsize));
-    }
-#endif // BUILD_DEBUG
-
-    PROP(&e, dstr_grow(out, out->len + ES256_SIG_SIZE) );
-
     int ret = EVP_DigestSignInit(k->mdctx, NULL, EVP_sha256(), NULL, k->pkey);
     if(ret != 1){
         trace_ssl_errors(&e);
         ORIG(&e, E_SSL, "EVP_DigestSignInit failed");
     }
+
+    // get maximum sig size
+    size_t sigsize = 0;
+    EVP_DigestSign(k->mdctx, NULL, &sigsize, NULL, 0);
+
+    // confirm our compile-time ES256_SIG_SIZE
+    if(sigsize != ES256_SIG_SIZE){
+        ORIG(&e, E_INTERNAL, "incorrect ES256_SIG_SIZE! (%x)", FU(sigsize));
+    }
+
+    PROP(&e, dstr_grow(out, out->len + sigsize) );
 
     size_t siglen = out->size - out->len;
     ret = EVP_DigestSign(k->mdctx,
@@ -392,27 +378,11 @@ static void es256_free(key_i *iface){
     free(k);
 }
 
-static derr_t es256_from_eckey(EC_KEY **eckey, key_i **out){
+static derr_t es256_from_pkey(EVP_PKEY **pkey, key_i **out){
     derr_t e = E_OK;
 
     *out = NULL;
-
-    EVP_PKEY *pkey = NULL;
     EVP_MD_CTX *mdctx = NULL;
-
-    pkey = EVP_PKEY_new();
-    if(!pkey){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "EVP_PKEY_new failed", cu);
-    }
-
-    int ret = EVP_PKEY_assign_EC_KEY(pkey, *eckey);
-    if(ret != 1){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "EVP_PKEY_assign_EC_KEY failed", cu);
-    }
-    // eckey now owned by pkey
-    *eckey = NULL;
 
     mdctx = EVP_MD_CTX_new();
     if(!mdctx){
@@ -433,16 +403,15 @@ static derr_t es256_from_eckey(EC_KEY **eckey, key_i **out){
             .sign = es256_sign,
             .free = es256_free,
         },
-        .pkey = pkey,
+        .pkey = *pkey,
         .mdctx = mdctx,
     };
-    pkey = NULL;
+    *pkey = NULL;
     mdctx = NULL;
 
     *out = &k->iface;
 
 cu:
-    if(pkey) EVP_PKEY_free(pkey);
     if(mdctx) EVP_MD_CTX_free(mdctx);
 
     return e;
@@ -452,73 +421,71 @@ static derr_t es256_from_jwk(
     const dstr_t x, const dstr_t y, const dstr_t d, key_i **out
 ){
     derr_t e = E_OK;
-
     *out = NULL;
 
-    BIGNUM *xbn = NULL;
-    BIGNUM *ybn = NULL;
-    BIGNUM *dbn = NULL;
+    EVP_PKEY *pkey = NULL;
+    EVP_PKEY_CTX *ctx = NULL;
 
-    EC_KEY *eckey = NULL;
+    /* pub format is the byte 'POINT_CONVERSION_UNCOMPRESSED' followed by
+       x, then y, each in big-endian format */
+    DSTR_VAR(pub, 65);
+    pub.data[pub.len++] = POINT_CONVERSION_UNCOMPRESSED;
+    PROP_GO(&e, b64url2bin(x, &pub), cu);
+    PROP_GO(&e, b64url2bin(y, &pub), cu);
 
-    DSTR_VAR(xbuf, 256);
-    DSTR_VAR(ybuf, 256);
-    DSTR_VAR(dbuf, 256);
+    DSTR_VAR(dbin, 32);
+    PROP_GO(&e, b64url2bin(d, &dbin), cu);
+    // jwk is big-endian, but OSSL_PARAM_UNSIGNED_INTEGER is host-endian
+    from_bigendian(&dbin);
 
-    PROP_GO(&e, b64url2bin(x, &xbuf), cu);
-    PROP_GO(&e, b64url2bin(y, &ybuf), cu);
-    PROP_GO(&e, b64url2bin(d, &dbuf), cu);
+    OSSL_PARAM params[] = {
+        {
+            .key="group",
+            .data_type=OSSL_PARAM_UTF8_STRING,
+            .data="prime256v1",
+            .data_size=10,
+        },
+        {
+            .key="pub",
+            .data_type=OSSL_PARAM_OCTET_STRING,
+            .data=pub.data,
+            .data_size=pub.len,
+        },
+        {
+            .key="priv",
+            .data_type=OSSL_PARAM_UNSIGNED_INTEGER,
+            .data=dbin.data,
+            .data_size=dbin.len,
+        },
+        {0},
+    };
 
-    xbn = BN_bin2bn((const unsigned char*)xbuf.data, (int)xbuf.len, NULL);
-    if(!xbn){
+    ctx = EVP_PKEY_CTX_new_from_name(NULL, "EC", NULL);
+    if(!ctx){
         trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "BN_bin2bn failed", cu);
+        ORIG_GO(&e, E_SSL, "EVP_PKEY_CTX_new_from_name failed", cu);
     }
 
-    ybn = BN_bin2bn((const unsigned char*)ybuf.data, (int)ybuf.len, NULL);
-    if(!ybn){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "BN_bin2bn failed", cu);
-    }
-
-    dbn = BN_bin2bn((const unsigned char*)dbuf.data, (int)dbuf.len, NULL);
-    if(!dbn){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "BN_bin2bn failed", cu);
-    }
-
-    eckey = EC_KEY_new_by_curve_name(NID_X9_62_prime256v1);
-    if(!eckey){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "EC_KEY_new_by_curve_name failed", cu);
-    }
-
-    int ret = EC_KEY_set_public_key_affine_coordinates(eckey, xbn, ybn);
+    int ret = EVP_PKEY_fromdata_init(ctx);
     if(ret != 1){
         trace_ssl_errors(&e);
-        ORIG_GO(&e,
-            E_SSL, "EC_KEY_set_public_key_affine_coordinates failed",
-        cu);
+        ORIG_GO(&e, E_SSL, "EVP_PKEY_fromdata_init failed", cu);
     }
 
-    ret = EC_KEY_set_private_key(eckey, dbn);
-    if(ret != 1){
+    ret = EVP_PKEY_fromdata(ctx, &pkey, EVP_PKEY_KEYPAIR, params);
+    if(ret != 1 || !pkey){
         trace_ssl_errors(&e);
-        ORIG_GO(&e,
-            E_SSL, "EC_KEY_set_public_key_affine_coordinates failed",
-        cu);
+        ORIG_GO(&e, E_SSL, "EVP_PKEY_fromdata failed", cu);
     }
 
-    PROP_GO(&e, es256_from_eckey(&eckey, out), cu);
+    PROP_GO(&e, es256_from_pkey(&pkey, out), cu);
 
 cu:
-    for(size_t i = 0; i < d.size; i++){
-        d.data[i] = 0;
+    for(size_t i = 0; i < dbin.size; i++){
+        dbin.data[i] = 0;
     }
-    if(xbn) BN_free(xbn);
-    if(ybn) BN_free(ybn);
-    if(dbn) BN_clear_free(dbn);
-    if(eckey) EC_KEY_free(eckey);
+    if(pkey) EVP_PKEY_free(pkey);
+    if(ctx) EVP_PKEY_CTX_free(ctx);
 
     return e;
 }
@@ -526,24 +493,18 @@ cu:
 derr_t gen_es256(key_i **out){
     derr_t e = E_OK;
 
-    EC_KEY *eckey = NULL;
+    EVP_PKEY *pkey = NULL;
 
-    eckey = EC_KEY_new_by_curve_name(NID_X9_62_prime256v1);
-    if(!eckey){
+    pkey = EVP_EC_gen("P-256");
+    if(!pkey){
         trace_ssl_errors(&e);
         ORIG_GO(&e, E_SSL, "EC_KEY_new_by_curve_name failed", cu);
     }
 
-    int ret = EC_KEY_generate_key(eckey);
-    if(!ret){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "EC_KEY_generate_key failed", cu);
-    }
-
-    PROP_GO(&e, es256_from_eckey(&eckey, out), cu);
+    PROP_GO(&e, es256_from_pkey(&pkey, out), cu);
 
 cu:
-    if(eckey) EC_KEY_free(eckey);
+    if(pkey) EVP_PKEY_free(pkey);
 
     return e;
 }
@@ -587,6 +548,8 @@ derr_t jwk_to_key(json_ptr_t jwk, key_i **out){
             ORIG(&e, E_PARAM, "Ed25519 keys require x and d parameters");
         }
         PROP(&e, ed25519_from_jwk(d, out) );
+        // erase key content
+        for(size_t i = 0; i < d.len; i++) d.data[i] = 0;
     }else{
         // ES256 key
         if(!dstr_eq(crv, DSTR_LIT("P-256"))){
@@ -600,6 +563,8 @@ derr_t jwk_to_key(json_ptr_t jwk, key_i **out){
             ORIG(&e, E_PARAM, "ES256 keys require x, y, and d parameters");
         }
         PROP(&e, es256_from_jwk(x, y, d, out) );
+        // erase key content
+        for(size_t i = 0; i < d.len; i++) d.data[i] = 0;
     }
 
     return e;
@@ -610,11 +575,8 @@ derr_t json_to_key(const dstr_t text, key_i **out){
 
     *out = NULL;
 
-    DSTR_VAR(jtext, 256);
-    json_node_t nodemem[32];
-    size_t nnodes = sizeof(nodemem)/sizeof(*nodemem);
     json_t json;
-    json_prep_preallocated(&json, &jtext, nodemem, nnodes, true);
+    JSON_PREP_PREALLOCATED(json, 256, 32, true);
 
     PROP(&e, json_parse(text, &json) );
     PROP(&e, jwk_to_key(json.root, out) );

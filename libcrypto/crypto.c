@@ -52,6 +52,11 @@ void crypto_library_close(void){
 
 derr_t gen_key(int bits, const char* keyfile){
     derr_t e = E_OK;
+
+    EVP_PKEY *pkey = NULL;
+    FILE *f = NULL;
+    BIO *bio = NULL;
+
     // make sure the PRNG is seeded
     int ret = RAND_status();
     if(ret != 1){
@@ -59,50 +64,48 @@ derr_t gen_key(int bits, const char* keyfile){
         ORIG(&e, E_SSL, "not enough randomness to gen key");
     }
 
-    BIGNUM* exp = BN_new();
-    if(!exp){
-        trace_ssl_errors(&e);
-        ORIG(&e, E_NOMEM, "failed to allocate bignum");
-    }
-
-    // set the exponent argument to a safe value
-    ret = BN_set_word(exp, RSA_F4);
-    if(ret != 1){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "failed to set key exponent", cleanup_1);
-    }
-
     // generate the key
-    RSA* rsa = RSA_new();
-    if(!rsa){
+    pkey = EVP_RSA_gen(bits);
+    if(!pkey){
         trace_ssl_errors(&e);
-        ORIG_GO(&e, E_NOMEM, "failed to allocate rsa", cleanup_1);
-    }
-    ret = RSA_generate_key_ex(rsa, bits, exp, NULL);
-    if(ret != 1){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "failed to generate key", cleanup_2);
+        ORIG_GO(&e, E_SSL, "failed to generate key", cu);
     }
 
-    // open the file for the private key
-    FILE* f = compat_fopen(keyfile, "w");
-    if(!f){
-        TRACE(&e, "%x: %x\n", FS(keyfile), FE(&errno));
-        ORIG_GO(&e, errno == ENOMEM ? E_NOMEM : E_OPEN, "failed to open file for writing", cleanup_2);
+    // open the file ourselves, for better error typing
+    PROP_GO(&e, dfopen(keyfile, "w", &f), cu);
+
+    // wrap the f in a bio
+    bio = BIO_new_fp(f, BIO_NOCLOSE);
+    if(!bio){
+        trace_ssl_errors(&e);
+        ORIG_GO(&e, E_SSL, "failed to create bio", cu);
     }
 
     // write the private key to the file (no password protection)
-    ret = PEM_write_RSAPrivateKey(f, rsa, NULL, NULL, 0, NULL, NULL);
-    fclose(f);
+    ret = PEM_write_bio_PrivateKey(bio, pkey, NULL, NULL, 0, NULL, NULL);
     if(!ret){
         trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "failed to write private key", cleanup_2);
+        ORIG_GO(&e, E_SSL, "failed to write private key", cu);
     }
 
-cleanup_2:
-    RSA_free(rsa);
-cleanup_1:
-    BN_free(exp);
+    ret = BIO_flush(bio);
+    if(ret != 1){
+        trace_ssl_errors(&e);
+        ORIG_GO(&e, E_SSL, "failed to flush private key bio", cu);
+    }
+
+    // done with bio
+    BIO_free(bio);
+    bio = NULL;
+
+    // done with f
+    PROP_GO(&e, dfclose(f), cu);
+    f = NULL;
+
+cu:
+    if(bio) BIO_free(bio);
+    if(f) fclose(f);
+    if(pkey) EVP_PKEY_free(pkey);
     return e;
 }
 

@@ -127,13 +127,16 @@ static void* fas_thread(void* arg){
     // prepare ssl context
     DSTR_VAR(certfile, 4096);
     DSTR_VAR(keyfile, 4096);
-    DSTR_VAR(dhfile, 4096);
-    PROP_GO(&e, FMT(&certfile, "%x/%x", FS(g_test_files), FS("ssl/good-cert.pem")), cleanup_3);
-    PROP_GO(&e, FMT(&keyfile, "%x/%x", FS(g_test_files), FS("ssl/good-key.pem")), cleanup_3);
-    PROP_GO(&e, FMT(&dhfile, "%x/%x", FS(g_test_files), FS("ssl/dh_4096.pem")), cleanup_3);
+    PROP_GO(&e,
+        FMT(&certfile, "%x/%x", FS(g_test_files), FS("ssl/good-cert.pem")),
+    cleanup_3);
+    PROP_GO(&e,
+        FMT(&keyfile, "%x/%x", FS(g_test_files), FS("ssl/good-key.pem")),
+    cleanup_3);
     ssl_context_t ctx;
-    PROP_GO(&e, ssl_context_new_server(&ctx, certfile.data,
-            keyfile.data, dhfile.data), cleanup_3);
+    PROP_GO(&e,
+        ssl_context_new_server(&ctx, certfile.data, keyfile.data),
+    cleanup_3);
 
     listener_t listener;
     PROP_GO(&e, listener_new_ssl(&listener, &ctx, "127.0.0.1", fas_api_port), cleanup_4);
