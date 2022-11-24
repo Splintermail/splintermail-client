@@ -1,0 +1,18 @@
+add_library(kvpsync SHARED util.c pkts.c recv.c send.c)
+default_compile_options(kvpsync TRUE)
+define_file_logname_for_target(kvpsync)
+target_link_libraries(kvpsync PUBLIC duv)
+
+if(BUILD_TESTS)
+    add_executable(test_recv test_recv.c)
+    target_link_libraries(test_recv PUBLIC kvpsync)
+    default_compile_options(test_recv TRUE)
+    define_file_logname_for_target(test_recv)
+    add_test(NAME "do_test_recv" COMMAND "./test_recv")
+
+    add_executable(test_send test_send.c)
+    target_link_libraries(test_send PUBLIC kvpsync)
+    default_compile_options(test_send TRUE)
+    define_file_logname_for_target(test_send)
+    add_test(NAME "do_test_send" COMMAND "./test_send")
+endif()

@@ -47,13 +47,13 @@ bool link_list_isempty(link_t *head);
 // automate for-loops which call CONTAINER_OF for each link in list
 #define LINK_FOR_EACH(var, head, structure, member) \
     for(var = CONTAINER_OF((head)->next, structure, member); \
-        &var->member != (head); \
+        var && &var->member != (head); \
         var = CONTAINER_OF(var->member.next, structure, member))
 
 // same thing but use a temporary variable to be safe against link_remove
 #define LINK_FOR_EACH_SAFE(var, temp, head, structure, member) \
     for(var = CONTAINER_OF((head)->next, structure, member), \
-        temp = CONTAINER_OF(var->member.next, structure, member); \
-        &var->member != (head); \
+        temp = var ? CONTAINER_OF(var->member.next, structure, member) : NULL; \
+        var && &var->member != (head); \
         var = temp, \
         temp = CONTAINER_OF(var->member.next, structure, member))

@@ -1,0 +1,110 @@
+kvpsync is a udp-based protocol for unidirectional syncing of short
+key-value pairs between a pair of nodes.
+
+Why not use TCP?  In this case, the sender will need application-layer ACKs
+when each update is received.  Using TCP, there would be a TCP-layer ACK
+and we'd have to add our own application-layer ACK on top of that. Also,
+I've been interested in doing something like this for a while.
+
+Update: I've learned TCP's congestion control is so advanced that even with
+extra packet inefficiencies, it's unlikely that this homespun UDP protocol
+could outperform TCP.  But since high performance isn't really a need yet
+(the volume of updates is quite small) we'll ship this UDP protocol anyway.
+
+Features:
+ - no extra traffic; ACKs exist only in one layer
+ - connectionless; fewer states since no reconnect logic required
+ - built-in health checks
+ - dns server needs no persistent storage
+ - acme service does not need to track dns server state (beyond tracking
+   which packets have been ACKed)
+ - persistent storage does not need to track deletions
+
+PROTOCOL:
+
+UPDATE packet (sent by sender):
+    uint64_t ok_expiry;  // epoch nanoseconds expiration of OK time
+    uint32_t sync_id;  // our current sync stream
+    uint32_t update_id;  // starts at 1 with each new sync_id
+    kvp_update_type_e type : 8; // empty, start, flush, delete, insert
+    uint32_t resync_id;  // only present for start packets
+    uint8_t klen;  // only present for insert or delete packets
+    char key [klen];  // only present for insert or delete packets
+    uint32_t delete_id; // only present for delete packets
+    uint8_t vlen;  // only present for insert packets
+    char val [vlen];   // only present for insert packets
+    // max packet size: 529 (klen and vlen are limited to 255)
+
+ACK packet (sent by receiver):
+    uint32_t sync_id;  // also defines the resync_id during resync
+    uint32_t update_id;  // zero to trigger a resync
+
+How OK state works:
+    While the receiver is in an OK state:
+        Sender:
+            The sender includes an ok_expiry update determining when the
+            current OK state should end.  This should be no more than 15
+            seconds in the future from the oldest un-ACKed update packet (so it
+            doesn't keep extending during retries).
+
+            For the purposes of determining OK status, the server MUST
+            assume all update packets arrive at the receiver.  That is, any
+            ok_expiry_time sent must be respected.  This can cause the DNS
+            server to transition into a NOT-OK state before the ACME
+            service believes it is in a NOT-OK state.  This should be
+            harmless, because the ACME service will not start any
+            challenges which depend on un-ACKed updates during this window.
+
+        Receiver:
+            When the DNS server is in an OK state, it responds to ACME
+            challenge requests honestly.  Every ok_expiry update sets its idea
+            of when to transition to the NOT-OK state.
+
+    While the receiver is not in an OK state:
+        Sender:
+            The sender starts sending empty packets with expiry time of 0.
+            When the Receiver starts responding to packets again, the
+            sender sends any pending updates.  All pending updates are sent
+            with a zero expiry time, to preserve the NOT-OK state until
+            resync is complete.  After all updates have been ACKed, the
+            sender sends another empty packet with valid expiry time to
+            transition the receiver into an OK state.
+
+        Receiver:
+            When the DNS server is in a NOT-OK state, it sends positive
+            responses to ACME challenges, but responds with errors instead
+            of negative responses.
+
+            The reason for errors instead of negative responses is that the
+            ACME service has proceeded with new challenges that the DNS
+            server cannot hope to have valid answers to.
+
+            The reason to continue positive responses is simply that each
+            challenge is immutable, so if the DNS server has the answer it
+            may as well respond with it.
+
+How crashes are handled:
+    Sender:
+        When the sender wakes up, it picks a new sync_id, and starts
+        sending UPDATEs starting with update_id=1.  When it has sent all
+        packets that must be known by the receiver, it sends a flush
+        packet, and the receiver discards any information from previous
+        sync_ids.  The state is now synchronized again.
+
+        Note that during this process, the receiver should continue to
+        trust its old information before the flush packet is received, as
+        there may be active ACME challenges in flight that the DNS server
+        does know the answer to.
+
+    Receiver:
+        When the receiver wakes up, it sends an unsolicited ACK packet with
+        update_id=0  to start a resync.  The sender acknowledges the
+        request with an empty UPDATE with update_id=1 (beginning the normal
+        resync process).
+
+        The receiver is not in an OK state until it has received a full
+        resync and seen the flush bit set.  If it sees a packet with the
+        flush bit set, but it did not see the update_id=1 packet with
+        sync_id matching the flush bit packet's sync_id, it MUST ignore
+        that flush bit packet and stay in the NOT-OK state until a full
+        resync is complete.
