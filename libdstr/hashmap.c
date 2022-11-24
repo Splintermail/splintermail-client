@@ -158,19 +158,19 @@ derr_t hashmap_init(hashmap_t *h){
     while( new_size < INIT_NUM_BUCKETS * sizeof(*(h->buckets)) ){
         new_size *= 2;
     }
-    // allocate buckets
-    h->buckets = malloc(new_size);
+    *h = (hashmap_t){
+        .buckets = malloc(new_size),
+        .num_buckets = INIT_NUM_BUCKETS,
+        // the mask is an all-ones binary number, one less than num_buckets
+        .mask = (unsigned int)(INIT_NUM_BUCKETS - 1),
+    };
     if(!h->buckets){
         ORIG(&e, E_NOMEM, "unable to allocate hashmap");
     }
-    // init all buckets to NULL
+    // all buckets start pointing to our sentinel
     for(size_t i = 0; i < INIT_NUM_BUCKETS; i++){
-        h->buckets[i] = NULL;
+        h->buckets[i] = &h->sentinel;
     }
-    h->num_buckets = INIT_NUM_BUCKETS;
-    h->num_elems = 0;
-    // the mask is an all-ones binary number, one less than num_buckets
-    h->mask = (unsigned int)((h->num_buckets - 1) & 0xFFFFFFFF);
     return e;
 }
 
@@ -213,34 +213,32 @@ static void check_rehash(hashmap_t *h){
     for(size_t i = 0; i < half_buckets; i++){
         // grab the old linked list
         hash_elem_t *old = h->buckets[i];
-        // init the two new linked lists
-        h->buckets[i] = NULL;
-        h->buckets[i + half_buckets] = NULL;
-        // get pointers to the ends of the two new linked lists
-        hash_elem_t **new_lo = &h->buckets[i];
-        hash_elem_t **new_hi = &h->buckets[i + half_buckets];
-        // sort old linked list into two new linked lists
-        while(old){
+        // sort the old list into hi and lo
+        hash_elem_t *hi = &h->sentinel;
+        hash_elem_t *lo = &h->sentinel;
+        while(old != &h->sentinel){
+            hash_elem_t *next = old->next;
             if(old->hash & upper_bit){
-                *new_hi = old;
-                new_hi = &(*new_hi)->next;
+                old->next = hi;
+                hi = old;
             }else{
-                *new_lo = old;
-                new_lo = &(*new_lo)->next;
+                old->next = lo;
+                lo = old;
             }
-            old = old->next;
+            old = next;
         }
-        // mark the end of each list
-        *new_hi = NULL;
-        *new_lo = NULL;
+        h->buckets[i] = lo;
+        h->buckets[i + half_buckets] = hi;
     }
 }
 
 // returns the hash value
 static unsigned int hashmap_elem_init(hash_elem_t *elem, const dstr_t *skey,
         unsigned int ukey, bool key_is_str){
+    if(elem->next != NULL){
+        LOG_FATAL("hashmap re-insertion detected\n");
+    }
     elem->key_is_str = key_is_str;
-    elem->next = NULL;
     if(key_is_str){
         elem->key.dstr = skey;
         elem->hash = hash_str(skey);
@@ -256,7 +254,7 @@ static bool hash_elem_match(hash_elem_t *a, hash_elem_t *b){
         // string-type key
         return b->key_is_str && (dstr_eq(*a->key.dstr, *b->key.dstr));
     }
-    // non-string key
+    // numeric key
     return !b->key_is_str && (a->key.uint == b->key.uint);
 }
 
@@ -271,26 +269,23 @@ static derr_t hashmap_set(hashmap_t *h, const dstr_t *skey,
     // get end of bucket, checking for identical key as we go
     hash_elem_t **eptr;
     if(old) *old = NULL;
-    bool replaced = false;
     // check if we need to replace an element with this value
-    for(eptr = &h->buckets[idx]; *eptr != NULL; eptr = &(*eptr)->next){
-        if(hash_elem_match(elem, *eptr)){
-            if(old == NULL){
-                ORIG(&e, E_PARAM, "refusing to insert duplicate value");
-            }
-            replaced = true;
-            *old = *eptr;
-            *eptr = elem;
-            elem->next = (*old)->next;
-            (*old)->next = NULL;
-            break;
+    for(eptr = &h->buckets[idx]; *eptr != &h->sentinel; eptr = &(*eptr)->next){
+        if(!hash_elem_match(elem, *eptr)) continue;
+        if(old == NULL){
+            ORIG(&e, E_PARAM, "refusing to insert duplicate value");
         }
-    }
-    // if no replacement was made, append value to end of linked list
-    if(!replaced){
+        *old = *eptr;
+        elem->next = (*old)->next;
+        (*old)->next = NULL;
         *eptr = elem;
-        h->num_elems++;
+        return e;
     }
+
+    // if no replacement was made, append value to end of linked list
+    elem->next = *eptr;
+    *eptr = elem;
+    h->num_elems++;
     check_rehash(h);
 
     return e;
@@ -315,20 +310,20 @@ derr_t hashmap_sets_unique(hashmap_t *h, const dstr_t *key, hash_elem_t *elem){
 }
 derr_t hashmap_setu_unique(hashmap_t *h, unsigned int key, hash_elem_t *elem){
     derr_t e = E_OK;
-    DROP_CMD( hashmap_set(h, NULL, key, false, elem, NULL) );
+    PROP(&e, hashmap_set(h, NULL, key, false, elem, NULL) );
     return e;
 }
 
 static hash_elem_t *hashmap_get(hashmap_t *h, const dstr_t *skey,
         unsigned int ukey, bool key_is_str){
     // build dummy element
-    hash_elem_t elem;
+    hash_elem_t elem = {0};
     hashmap_elem_init(&elem, skey, ukey, key_is_str);
     // get bucket index
     size_t idx = elem.hash & h->mask;
     // get end of bucket, checking for match
     hash_elem_t **eptr;
-    for(eptr = &h->buckets[idx]; *eptr != NULL; eptr = &(*eptr)->next){
+    for(eptr = &h->buckets[idx]; *eptr != &h->sentinel; eptr = &(*eptr)->next){
         if(hash_elem_match(&elem, *eptr)){
             // found match
             return *eptr;
@@ -349,20 +344,22 @@ hash_elem_t *hashmap_getu(hashmap_t *h, unsigned int key){
 static hash_elem_t *hashmap_del(hashmap_t *h, const dstr_t *skey,
         unsigned int ukey, bool key_is_str){
     // build dummy element
-    hash_elem_t elem;
+    hash_elem_t elem = {0};
     hashmap_elem_init(&elem, skey, ukey, key_is_str);
     // get bucket index
     size_t idx = elem.hash & h->mask;
     // get end of bucket, checking for match
     hash_elem_t **eptr;
-    for(eptr = &h->buckets[idx]; *eptr != NULL; eptr = &(*eptr)->next){
+    for(eptr = &h->buckets[idx]; *eptr != &h->sentinel; eptr = &(*eptr)->next){
         if(hash_elem_match(&elem, *eptr)){
             // found match
             hash_elem_t *deleted = *eptr;
             *eptr = deleted->next;
             deleted->next = NULL;
             // decrement element count
-            h->num_elems--;
+            if(!h->num_elems--){
+                LOG_FATAL("num_elems underflow in hashmap_del\n");
+            }
             return deleted;
         }
     }
@@ -377,75 +374,81 @@ hash_elem_t *hashmap_delu(hashmap_t *h, unsigned int key){
     return hashmap_del(h, NULL, key, false);
 }
 
-// delete an element directly (elem must be in h)
-void hashmap_del_elem(hashmap_t *h, hash_elem_t *elem){
-    // get bucket index
+void hash_elem_remove(hash_elem_t *elem){
+    // detect noop
+    if(!elem->next) return;
+    // find hashmap
+    hash_elem_t *sentinel = elem->next;
+    while(sentinel->next) sentinel = sentinel->next;
+    hashmap_t *h = CONTAINER_OF(sentinel, hashmap_t, sentinel);
+    if(!h->num_elems--){
+        LOG_FATAL("num_elems underflow in hash_elem_remove\n");
+    }
     size_t idx = elem->hash & h->mask;
-    // make sure bucket index is in range
-    if(idx >= h->num_buckets){
-        LOG_ERROR("hashmap_del_elem() elem has invalid index for hashmap!\n");
+    // find what points to our elem
+    hash_elem_t **fixme = &h->buckets[idx];
+    for(; *fixme != &h->sentinel; fixme = &(*fixme)->next){
+        if(*fixme != elem) continue;
+        *fixme = elem->next;
+        elem->next = NULL;
         return;
     }
-    // walk the list looking for elem
-    hash_elem_t **fixme = &h->buckets[idx];
-    hash_elem_t *ptr = h->buckets[idx];
-    while(ptr){
-        if(ptr == elem){
-            // remove elemnt from linked list
-            *fixme = ptr->next;
-            // decrement element count
-            h->num_elems--;
-            return;
-        }
-        fixme = &ptr->next;
-        ptr = ptr->next;
+    LOG_FATAL("hash_elem_remove did not find elem\n");
+}
+
+static size_t next_nonempty_bucket(hashmap_t *h, size_t i){
+    hash_elem_t *sentinel = &h->sentinel;
+    hash_elem_t **buckets = h->buckets;
+    size_t nbuckets = h->num_buckets;
+    for( ; i < nbuckets; i++){
+        if(buckets[i] == sentinel) continue;
+        return i;
     }
-    LOG_ERROR("hashmap_del_elem() did not find the element in the hashmap!\n");
+    return SIZE_MAX;
 }
 
 hash_elem_t *hashmap_iter(hashmap_trav_t *trav, hashmap_t *h){
-    *trav = (hashmap_trav_t){.hashmap = h};
+    *trav = (hashmap_trav_t){ .hashmap = h, .current = &h->sentinel };
     return hashmap_next(trav);
 }
 
 hash_elem_t *hashmap_next(hashmap_trav_t *trav){
+    hash_elem_t *sentinel = &trav->hashmap->sentinel;
     // take the next element of the list
-    if(trav->current != NULL){
-        trav->current = trav->current->next;
-        if(trav->current != NULL) return trav->current;
+    if(trav->current != sentinel){
+        trav->current = trav->next;
+        if(trav->current != sentinel){
+            trav->next = trav->current->next;
+            return trav->current;
+        }
         // move to the next bucket
         trav->bucket_idx++;
     }
     // find a non-empty bucket
-    for( ; trav->bucket_idx < trav->hashmap->num_buckets; trav->bucket_idx++){
-        if(trav->hashmap->buckets[trav->bucket_idx] != NULL){
-            trav->current = trav->hashmap->buckets[trav->bucket_idx];
-            return trav->current;
-        }
-    }
-    // found nothing
-    return NULL;
+    trav->bucket_idx = next_nonempty_bucket(trav->hashmap, trav->bucket_idx);
+    if(trav->bucket_idx == SIZE_MAX) return NULL;
+    trav->current = trav->hashmap->buckets[trav->bucket_idx];
+    trav->next = trav->current->next;
+    return trav->current;
 }
 
 hash_elem_t *hashmap_pop_iter(hashmap_trav_t *trav, hashmap_t *h){
-    *trav = (hashmap_trav_t){.hashmap = h};
+    *trav = (hashmap_trav_t){ .hashmap = h };
     return hashmap_pop_next(trav);
 }
 
 hash_elem_t *hashmap_pop_next(hashmap_trav_t *trav){
-    for( ; trav->bucket_idx < trav->hashmap->num_buckets; trav->bucket_idx++){
-        // check if the bucket is non-empty
-        hash_elem_t *elem;
-        if((elem = trav->hashmap->buckets[trav->bucket_idx])){
-            // remove the element from the bucket
-            trav->hashmap->buckets[trav->bucket_idx] = elem->next;
-            // decrement element counter
-            trav->hashmap->num_elems--;
-            return elem;
-        }
+    trav->bucket_idx = next_nonempty_bucket(trav->hashmap, trav->bucket_idx);
+    if(trav->bucket_idx == SIZE_MAX) return NULL;
+    // remove the element from the bucket
+    hash_elem_t *elem = trav->hashmap->buckets[trav->bucket_idx];
+    trav->hashmap->buckets[trav->bucket_idx] = elem->next;
+    elem->next = NULL;
+    // decrement element counter
+    if(!trav->hashmap->num_elems--){
+        LOG_FATAL("num_elems underflow in hashmap_pop_next\n");
     }
-    // found nothing
-    return NULL;
+    return elem;
 }
 
 derr_t map_str_str_new(

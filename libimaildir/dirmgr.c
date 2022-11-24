@@ -441,8 +441,15 @@ derr_t dirmgr_open_dn(dirmgr_t *dm, const dstr_t *name, dn_t *dn){
 static void handle_empty_imaildir(dirmgr_t *dm, imaildir_t *m){
     managed_dir_t *mgd = CONTAINER_OF(m, managed_dir_t, m);
     // remove the managed_dir from the maildir
-    hashmap_del_elem(&dm->dirs, &mgd->h);
+    hash_elem_remove(&mgd->h);
     managed_dir_free(&mgd);
+
+    /* TODO: after hash_elem_remove supported removal without a pointer to the
+             containing hashmap, there's actually no reason for this to have
+             the *dm pointer anymore.  The places where dirmgr_close_{up,dn}
+             are called are few, and could maybe be built into the {up,dn}_t's,
+             but I don't currently have time or interest to dig into it */
+    (void)dm;
 
     // TODO: handle non-MSG_STATE_OPEN here
 }
@@ -786,7 +793,7 @@ void dirmgr_hold_free(dirmgr_hold_t *hold){
     }
 
     // remove from holds and free the hold
-    hashmap_del_elem(&dm->holds, &hold->h);
+    hash_elem_remove(&hold->h);
     dstr_free(&hold->name);
     free(hold);
 }
@@ -860,7 +867,7 @@ derr_t dirmgr_freeze_new(
     // create a new freeze
     dirmgr_freeze_t *freeze = malloc(sizeof(*freeze));
     if(!freeze) ORIG(&e, E_NOMEM, "nomem");
-    *freeze = (dirmgr_freeze_t){ .dm = dm, .count = 1 };
+    *freeze = (dirmgr_freeze_t){ .count = 1 };
 
     PROP_GO(&e, dstr_copy(name, &freeze->name), fail);
 
@@ -880,10 +887,8 @@ void dirmgr_freeze_free(dirmgr_freeze_t *freeze){
     if(!freeze) return;
     if(--freeze->count) return;
 
-    dirmgr_t *dm = freeze->dm;
-
     // remove from freezes and free the freeze
-    hashmap_del_elem(&dm->freezes, &freeze->h);
+    hash_elem_remove(&freeze->h);
     dstr_free(&freeze->name);
     free(freeze);
 }

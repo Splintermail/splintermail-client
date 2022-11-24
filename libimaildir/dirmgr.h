@@ -97,7 +97,6 @@ derr_t dirmgr_open_up(dirmgr_t *dm, const dstr_t *name, up_t *up);
 derr_t dirmgr_open_dn(dirmgr_t *dm, const dstr_t *name, dn_t *dn);
 
 // unregister a connection from a maildir in a thread-safe way
-// (the argument is actually just for type-safety, it's not used)
 void dirmgr_close_up(dirmgr_t *dm, up_t *up);
 void dirmgr_close_dn(dirmgr_t *dm, dn_t *dn);
 
@@ -156,7 +155,6 @@ void dirmgr_hold_release_imaildir(dirmgr_hold_t *hold, imaildir_t **m);
 
 // like a hold, but with a freeze you can't even connect to a mailbox
 typedef struct {
-    dirmgr_t *dm;
     dstr_t name;
     size_t count;
     hash_elem_t h;

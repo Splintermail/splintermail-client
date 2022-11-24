@@ -69,28 +69,6 @@ static derr_t test_link(void){
     return e;
 }
 
-static derr_t test_link_append_to_other_list(void){
-    derr_t e = E_OK;
-
-    link_t list;
-    link_t list2;
-    link_t link;
-
-    link_init(&list);
-    link_init(&list2);
-    link_init(&link);
-
-    link_list_append(&list, &link);
-    link_list_append(&list2, &link);
-
-    link_t *l = link_list_pop_first(&list);
-    if(l){
-        ORIG(&e, E_VALUE, "list not empty!\n");
-    }
-
-    return e;
-}
-
 static derr_t test_zeroized(void){
     derr_t e = E_OK;
 
@@ -109,6 +87,24 @@ static derr_t test_zeroized(void){
     }
 
     link_remove(&link);
+
+    // link still zeroized
+    EXPECT_NULL(&e, "link.next", link.next);
+
+    // append initializes head and item
+    link_t item = {0};
+    link_list_append(&link, &item);
+    link_remove(&item);
+    EXPECT_P(&e, "link.next", link.next, &link);
+    EXPECT_P(&e, "item.next", item.next, &item);
+
+    // prepend also initializes head and item
+    link = (link_t){0};
+    item = (link_t){0};
+    link_list_prepend(&link, &item);
+    link_remove(&item);
+    EXPECT_P(&e, "link.next", link.next, &link);
+    EXPECT_P(&e, "item.next", item.next, &item);
 
     return e;
 }
@@ -284,7 +280,6 @@ int main(int argc, char** argv){
     PARSE_TEST_OPTIONS(argc, argv, NULL, LOG_LVL_WARN);
 
     PROP_GO(&e, test_link(), test_fail);
-    PROP_GO(&e, test_link_append_to_other_list(), test_fail);
     PROP_GO(&e, test_zeroized(), test_fail);
     PROP_GO(&e, test_listwise_append(), test_fail);
     PROP_GO(&e, test_pop_n(), test_fail);

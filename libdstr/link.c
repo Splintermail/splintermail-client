@@ -6,15 +6,16 @@ void link_init(link_t *l){
 }
 
 void link_list_prepend(link_t *head, link_t *link){
-    // require explicit safety, but don't leave a footgun laying around
-    if(link->next != link){
-        LOG_ERROR("YOU MUST CALL LINK_REMOVE() BEFORE LINK_LIST_PREPEND!!\n");
-        link_remove(link);
+    // safe to call on zeroized head
+    if(!head->next) link_init(head);
+    // caller must ensure link is not in another list
+    if(link->next && link->next != link){
+        LOG_FATAL("link_list_prepend() called on link in another list\n");
     }
 
     // for an empty list, old_next is just head
     link_t *old_next = head->next;
-    // in the empty list case, this set's head's .next and .prev
+    // in the empty list case, this sets head's .next and .prev
     head->next = link;
     old_next->prev = link;
     // in the empty list case, this points link's .next and .prev to head
@@ -23,10 +24,11 @@ void link_list_prepend(link_t *head, link_t *link){
 }
 
 void link_list_append(link_t *head, link_t *link){
-    // require explicit safety, but don't leave a footgun laying around
-    if(link->next != link){
-        LOG_ERROR("YOU MUST CALL LINK_REMOVE() BEFORE LINK_LIST_APPEND!!\n");
-        link_remove(link);
+    // safe to call on zeroized head
+    if(!head->next) link_init(head);
+    // caller must ensure link is not in another list
+    if(link->next && link->next != link){
+        LOG_FATAL("link_list_append() called on link in another list\n");
     }
 
     link_t *old_prev = head->prev;

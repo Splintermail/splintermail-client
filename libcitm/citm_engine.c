@@ -13,7 +13,7 @@ static void citme_user_dying(user_cb_i *cb, user_t *caller, derr_t error){
         DROP_VAR(&error);
     }
 
-    hashmap_del_elem(&citme->users, &user->h);
+    hash_elem_remove(&user->h);
 
     // ref down for the user
     ref_dn(&citme->refs);

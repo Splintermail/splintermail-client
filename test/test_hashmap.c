@@ -14,6 +14,7 @@
 typedef struct {
     unsigned int n;
     dstr_t d;
+    char buf[3];
     hash_elem_t he;
 } hashable_t;
 DEF_CONTAINER_OF(hashable_t, he, hash_elem_t)
@@ -23,17 +24,16 @@ static derr_t test_hashmap(void){
 
     // all of the elements
     size_t num_elems = UINT_ELEMS + DSTR_ELEMS;
-    hashable_t *elems = malloc(num_elems * sizeof(*elems));
+    hashable_t **elems = malloc(num_elems * sizeof(*elems));
     if(!elems) ORIG(&e, E_NOMEM, "not enough memory");
+    for(size_t i = 0; i < num_elems; i++) elems[i] = NULL;
 
     // init all of the elements
     for(unsigned int i = 0; i < num_elems; i++){
-        elems[i].n = i;
-        elems[i].d = (dstr_t){0};
-    }
-    // now go through and set all of the dstr-type keys
-    for(size_t i = UINT_ELEMS; i < num_elems; i++){
-        PROP_GO(&e, dstr_new(&elems[i].d, 3), fail_elems);
+        elems[i] = DMALLOC_STRUCT_PTR(&e, elems[i]);
+        CHECK_GO(&e, fail_elems);
+        elems[i]->n = i;
+        DSTR_WRAP_ARRAY(elems[i]->d, elems[i]->buf);
     }
 
     // allocate hashmap
@@ -42,62 +42,84 @@ static derr_t test_hashmap(void){
 
     // insert everything
     for(unsigned int i = 0; i < UINT_ELEMS; i++){
-        hash_elem_t *old = hashmap_setu(&h, i, &elems[i].he);
+        hash_elem_t *old = hashmap_setu(&h, i, &elems[i]->he);
         if(old) ORIG_GO(&e, E_VALUE, "insert was unique!", fail_h);
     }
     for(size_t i = UINT_ELEMS; i < num_elems; i++){
         char cmaj = (char)('a' + (i%(26*26) - i%26)/26);
         char cmin = (char)('a' + (i%26));
-        PROP_GO(&e, FMT(&elems[i].d, "%x%x", FC(cmaj), FC(cmin)), fail_h);
-        hash_elem_t *old = hashmap_sets(&h, &elems[i].d, &elems[i].he);
-        if(old) ORIG_GO(&e, E_VALUE, "insert was unique!", fail_h);
+        PROP_GO(&e, FMT(&elems[i]->d, "%x%x", FC(cmaj), FC(cmin)), fail_h);
+        hash_elem_t *old = hashmap_sets(&h, &elems[i]->d, &elems[i]->he);
+        EXPECT_NULL_GO(&e, "old", old, fail_h);
     }
 
     // dereference everything
     for(unsigned int i = 0; i < UINT_ELEMS; i++){
         hash_elem_t *out = hashmap_getu(&h, i);
-        if(!out) ORIG_GO(&e, E_VALUE, "missing value!", fail_h);
+        EXPECT_NOT_NULL_GO(&e, "out", out, fail_h);
         // make sure we got the right value
         hashable_t *val = CONTAINER_OF(out, hashable_t, he);
-        if(val->n != i) ORIG_GO(&e, E_VALUE, "dereferenced wrong value", fail_h);
+        EXPECT_U_GO(&e, "val->n", val->n, i, fail_h);
     }
     for(size_t i = UINT_ELEMS; i < num_elems; i++){
-        hash_elem_t *out = hashmap_gets(&h, &elems[i].d);
+        hash_elem_t *out = hashmap_gets(&h, &elems[i]->d);
         if(!out) ORIG_GO(&e, E_VALUE, "missing value!", fail_h);
         // make sure we got the right value
         hashable_t *val = CONTAINER_OF(out, hashable_t, he);
-        if(val->n != i) ORIG_GO(&e, E_VALUE, "dereferenced wrong value", fail_h);
+        EXPECT_U_GO(&e, "val->n", val->n, i, fail_h);
     }
 
     // iterate through everything
     size_t count = 0;
     hashmap_trav_t trav;
     hash_elem_t *elem = hashmap_iter(&trav, &h);
-    for( ; elem; elem = hashmap_next(&trav)){
-        if(++count > num_elems)
+    for(size_t i = 0; elem; i++, elem = hashmap_next(&trav)){
+        if(++count > num_elems){
             ORIG_GO(&e, E_VALUE, "iterated too many elements", fail_h);
+        }
+        // remove half of the elements
+        if(i%2) continue;
+        hash_elem_remove(elem);
+        hashable_t *val = CONTAINER_OF(elem, hashable_t, he);
+        elems[val->n] = NULL;
+        // actually free the memory to test for use-after-free
+        free(val);
     }
-    if(count < num_elems)
+    if(count < num_elems){
         ORIG_GO(&e, E_VALUE, "iterated too few elements", fail_h);
+    }
 
-    // again, but popping
+    // extra next is ok
+    EXPECT_NULL_GO(&e, "extra next", hashmap_next(&trav), fail_h);
+
+    // again, but popping everything
     count = 0;
     elem = hashmap_pop_iter(&trav, &h);
     for( ; elem; elem = hashmap_pop_next(&trav)){
-        if(++count > num_elems)
+        if(++count > num_elems){
             ORIG_GO(&e, E_VALUE, "iterated too many elements", fail_h);
+        }
+        // hash_elem_remove should be a noop
+        hash_elem_remove(elem);
+        hashable_t *val = CONTAINER_OF(elem, hashable_t, he);
+        elems[val->n] = NULL;
+        // actually free the memory to test for use-after-free
+        free(val);
     }
-    if(count < num_elems)
+    if(count < num_elems/2){
         ORIG_GO(&e, E_VALUE, "iterated too few elements", fail_h);
-    if(h.num_elems != 0)
+    }
+    if(h.num_elems != 0){
         ORIG_GO(&e, E_VALUE, "hashmap should be empty", fail_h);
+    }
+    // extra pops are ok
+    EXPECT_NULL_GO(&e, "extra pop", hashmap_pop_next(&trav), fail_h);
 
 fail_h:
     hashmap_free(&h);
 fail_elems:
-    // free all of the dstr's
-    for(size_t i = UINT_ELEMS; i < num_elems; i++){
-        dstr_free(&elems[i].d);
+    for(size_t i = 0; i < num_elems; i++){
+        if(elems[i]) free(elems[i]);
     }
     free(elems);
     return e;
@@ -132,7 +154,7 @@ static derr_t test_hashmap_del_elem(void){
     derr_t e = E_OK;
     // all of the elements
     size_t num_elems = 10;
-    hashable_t elems[10];
+    hashable_t elems[10] = {0};
 
     // allocate hashmap
     hashmap_t h;
@@ -141,45 +163,49 @@ static derr_t test_hashmap_del_elem(void){
     // insert all of the elements
     for(unsigned int i = 0; i < num_elems; i++){
         elems[i].n = i;
-        if(h.num_elems != i)
+        if(h.num_elems != i){
             ORIG_GO(&e, E_VALUE, "wrong num_elems", cu);
+        }
         hash_elem_t *old = hashmap_setu(&h, i, &elems[i].he);
-        if(old != NULL)
+        if(old != NULL){
             ORIG_GO(&e, E_VALUE, "hashmap_setu() returned non-null", cu);
+        }
     }
-    if(h.num_elems != num_elems)
+    if(h.num_elems != num_elems){
         ORIG_GO(&e, E_VALUE, "wrong num_elems", cu);
+    }
 
-    // is it memory-safe to delete an element not in the hashmap?
+    // is it safe to delete an element not in the hashmap?
     hash_elem_t not_present_elem = {0};
-    hashmap_del_elem(&h, &not_present_elem);
-    if(h.num_elems != num_elems)
+    hash_elem_remove(&not_present_elem);
+    if(h.num_elems != num_elems){
         ORIG_GO(&e, E_VALUE, "wrong num_elems", cu);
+    }
 
     // delete each element
     for(unsigned int i = 0; i < num_elems; i++){
         elems[i].n = i;
-        if(h.num_elems != num_elems - i)
+        if(h.num_elems != num_elems - i){
             ORIG_GO(&e, E_VALUE, "wrong num_elems", cu);
-        hashmap_del_elem(&h, &elems[i].he);
+        }
+        hash_elem_remove(&elems[i].he);
         // is it gone?
         hash_elem_t *old = hashmap_getu(&h, i);
-        if(old != NULL)
+        if(old != NULL){
             ORIG_GO(&e, E_VALUE, "hashmap_getu() returned non-null", cu);
-        // is it memory-safe to call again?
-        hashmap_del_elem(&h, &elems[i].he);
+        }
+        // is remove idempotent?
+        hash_elem_remove(&elems[i].he);
     }
-    if(h.num_elems != 0)
+    if(h.num_elems != 0){
         ORIG_GO(&e, E_VALUE, "wrong num_elems", cu);
+    }
 
-    // is it still memory-safe to delete an element not in the hashmap?
-    hashmap_del_elem(&h, &not_present_elem);
-    if(h.num_elems != 0)
+    // is it still safe to delete an element not in the hashmap?
+    hash_elem_remove(&not_present_elem);
+    if(h.num_elems != 0){
         ORIG_GO(&e, E_VALUE, "wrong num_elems", cu);
-
-    // what if the hashmap has not been initialized?
-    hashmap_t not_initialized_hashmap = {0};
-    hashmap_del_elem(&not_initialized_hashmap, &not_present_elem);
+    }
 
 cu:
     hashmap_free(&h);
