@@ -851,6 +851,23 @@ static inline fmt_t FD_DBG(const dstr_t* arg){
     return (fmt_t){FMT_EXT, {.ext = {.arg = (const void*)arg,
                                      .hook = fmthook_dstr_dbg} } };
 }
+// this is just for passing two args in one fmthook
+typedef struct {
+    const char *buf;
+    size_t n;
+} fsn_format_t;
+
+derr_type_t fmthook_fsn(dstr_t* out, const void* arg);
+
+#define FSN(_buf, _n) ((fmt_t){ \
+     FMT_EXT, { \
+        .ext = { \
+            .hook = fmthook_fsn, \
+            .arg = (const void*)(&(const fsn_format_t){ \
+                .buf = _buf, \
+                .n = _n, \
+            })\
+        }}})
 
 // the FMT()-ready replacement of perror():
 derr_type_t fmthook_strerror(dstr_t* out, const void* arg);

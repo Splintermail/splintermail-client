@@ -1579,6 +1579,16 @@ derr_type_t fmthook_dstr_dbg(dstr_t* out, const void* arg){
     return E_NONE;
 }
 
+derr_type_t fmthook_fsn(dstr_t* out, const void* arg){
+    // cast the input
+    fsn_format_t fsn = *(const fsn_format_t*)arg;
+    for(size_t i = 0; i < fsn.n; i++){
+        derr_type_t etype = dstr_append_char(out, fsn.buf[i]);
+        if(etype != E_NONE) return etype;
+    }
+    return E_NONE;
+}
+
 derr_type_t fmthook_strerror(dstr_t* out, const void* arg){
     // cast the input
     const int* err = (const int*)arg;
