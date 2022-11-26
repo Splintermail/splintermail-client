@@ -459,25 +459,6 @@ fail_loop:
 }
 
 
-static derr_t urandom_bytes(dstr_t *out, size_t count){
-    derr_t e = E_OK;
-
-    int fd;
-    PROP(&e, dopen("/dev/urandom", O_RDONLY, 0, &fd) );
-
-    size_t amnt_read;
-    PROP_GO(&e, dstr_read(fd, out, count, &amnt_read), cu);
-
-    if(amnt_read != count)
-        ORIG_GO(&e, E_OS, "wrong number of bytes", cu);
-
-cu:
-    close(fd);
-
-    return e;
-}
-
-
 static derr_t write_content_file(const char *tempname, const dstr_t *content){
     derr_t e = E_OK;
 

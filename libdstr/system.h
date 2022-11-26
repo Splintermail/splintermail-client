@@ -135,4 +135,6 @@ derr_t _dexec(
 
 void _after_child_proc(derr_t e);
 
+derr_t urandom_bytes(dstr_t *out, size_t count);
+
 #endif // UNIX
