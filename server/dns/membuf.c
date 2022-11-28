@@ -3,7 +3,7 @@
 #include <uv.h>
 
 #include "libdstr/libdstr.h"
-#include "server/dns/dns.h"
+#include "server/dns/libdns.h"
 
 
 void membuf_free(membuf_t **ptr){

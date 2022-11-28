@@ -3,13 +3,22 @@
 #include "libdstr/libdstr.h"
 #include "libduv/libduv.h"
 
-#include "server/dns/dns.h"
+#include "server/dns/libdns.h"
+
+typedef struct {
+    uv_loop_t loop;
+    uv_udp_t udp;
+    link_t membufs;  // membuf_t->link
+    bool closing;
+    derr_t close_reason;
+} globals_t;
 
 static void noop_close_cb(uv_handle_t *handle){
     (void)handle;
 }
 
-void dns_close(globals_t *g, derr_t e){
+// only to be called from the top-level libuv callbacks
+static void dns_close(globals_t *g, derr_t e){
     if(g->closing){
         if(!is_error(g->close_reason)){
             // we hit an error during a non-error shutdown
@@ -132,7 +141,6 @@ static derr_t dns_main(struct sockaddr_storage *ss){
     PROP_GO(&e, duv_udp_binds(&g.udp, ss, 0), fail_loop);
 
     PROP_GO(&e, duv_udp_recv_start(&g.udp, allocator, on_recv), fail_loop);
-    g.udp.data = &g;
 
 fail_loop:
     if(!is_error(e)){

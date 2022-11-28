@@ -1,4 +1,4 @@
-#include "dns.c"
+#include "server/dns/libdns.h"
 
 static const char *respond_fn_name(respond_f respond){
     if(respond == norespond) return "norespond";
@@ -141,4 +141,3 @@ int main(void){
 
     return retval;
 }
-

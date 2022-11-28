@@ -1,4 +1,4 @@
-#include "write.c"
+#include "server/dns/libdns.h"
 
 #define ASSERT(code) if(!(code)) ORIG(&e, E_VALUE, "assertion failed: " #code)
 

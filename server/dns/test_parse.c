@@ -1,4 +1,4 @@
-#include "parse.c"
+#include "server/dns/libdns.h"
 
 #include <stdlib.h>
 

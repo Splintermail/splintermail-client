@@ -2,15 +2,9 @@
 
 #include <uv.h>
 
-#include "libdstr/libdstr.h"
-#include "server/dns/dns.h"
+#include "server/dns/libdns.h"
 
-
-typedef size_t (*respond_f)(
-    const dns_pkt_t pkt, const lstr_t user, char *out, size_t cap
-);
-
-static size_t norespond(
+size_t norespond(
     const dns_pkt_t pkt, const lstr_t user, char *out, size_t cap
 ){
     (void)pkt;
@@ -123,7 +117,7 @@ static size_t positive_resp(
         cap \
     )
 
-static size_t respond_notimpl(
+size_t respond_notimpl(
     const dns_pkt_t pkt, const lstr_t user, char *out, size_t cap
 ){
     (void)user;
@@ -133,7 +127,7 @@ static size_t respond_notimpl(
     return negative_resp(pkt, RCODE_NOTIMPL, aa, soa, out, cap);
 }
 
-static size_t respond_refused(
+size_t respond_refused(
     const dns_pkt_t pkt, const lstr_t user, char *out, size_t cap
 ){
     (void)user;
@@ -143,7 +137,7 @@ static size_t respond_refused(
     return negative_resp(pkt, RCODE_REFUSED, aa, soa, out, cap);
 }
 
-static size_t respond_name_error(
+size_t respond_name_error(
     const dns_pkt_t pkt, const lstr_t user, char *out, size_t cap
 ){
     (void)user;
@@ -160,7 +154,7 @@ static size_t norecord_resp(const dns_pkt_t pkt, char *out, size_t cap){
 }
 
 // for user.splintermail.com
-static size_t respond_root(
+size_t respond_root(
     const dns_pkt_t pkt, const lstr_t user, char *out, size_t cap
 ){
     (void)user;
@@ -178,7 +172,7 @@ static size_t respond_root(
 }
 
 // for *.user.splintermail.com
-static size_t respond_user(
+size_t respond_user(
     const dns_pkt_t pkt, const lstr_t user, char *out, size_t cap
 ){
     (void)user;
@@ -200,7 +194,7 @@ static size_t respond_user(
 }
 
 // for _acme-challenge.*.user.splintermail.com
-static size_t respond_acme(
+size_t respond_acme(
     const dns_pkt_t pkt, const lstr_t user, char *out, size_t cap
 ){
     if(pkt.qstn.qtype == TXT){
@@ -214,7 +208,7 @@ static size_t respond_acme(
 }
 
 // always sets *respond and *user
-static respond_f sort_pkt(const dns_pkt_t pkt, const lstr_t *rname, size_t n){
+respond_f sort_pkt(const dns_pkt_t pkt, const lstr_t *rname, size_t n){
     // only service queries
     if(pkt.hdr.qr != 0) return norespond;
     // only service standard queries
@@ -226,7 +220,7 @@ static respond_f sort_pkt(const dns_pkt_t pkt, const lstr_t *rname, size_t n){
     // 0 is not a valid qtype
     if(pkt.qstn.qtype == 0) return norespond;
 
-    // refuse to respond for to we're note responsible for
+    // refuse to respond for domains to we're not responsible for
     if(n < 3) return respond_refused;
     if(!lstr_eq(rname[0], LSTR("com"))) return respond_refused;
     if(!lstr_eq(rname[1], LSTR("splintermail"))) return respond_refused;
@@ -252,7 +246,6 @@ static respond_f sort_pkt(const dns_pkt_t pkt, const lstr_t *rname, size_t n){
     return respond_name_error;
 }
 
-// owns membuf
 size_t handle_packet(char *qbuf, size_t qlen, char *rbuf, size_t rcap){
     print_bytes(qbuf, qlen);
     printf("\n");

@@ -3,7 +3,7 @@
 #include <uv.h>
 
 #include "libdstr/libdstr.h"
-#include "server/dns/dns.h"
+#include "server/dns/libdns.h"
 
 bool is_bad_parse(size_t n){
     return n >= BP_MINVAL;
@@ -146,7 +146,7 @@ static void print_hdr(const dns_hdr_t hdr){
 // fail if length exceeds 255 characters
 // allow pointers, but not double-pointers
 // return the number of bytes used until zero label or first pointer
-static size_t parse_name(const char *ptr, size_t len, size_t used){
+size_t parse_name(const char *ptr, size_t len, size_t used){
     if(is_bad_parse(used)) return used;
     const uint8_t *uptr = (uint8_t*)ptr;
     bool after_ptr = false;

@@ -2,8 +2,7 @@
 
 #include <uv.h>
 
-#include "libdstr/libdstr.h"
-#include "server/dns/dns.h"
+#include "server/dns/libdns.h"
 
 #include "server/dns/config.h"
 
@@ -35,7 +34,7 @@ static size_t put_lstr(const lstr_t l, char *out, size_t used){
 }
 
 // TODO: support name pointers in messages we write
-static size_t namelen(const lstr_t *labels, size_t nlabels){
+size_t namelen(const lstr_t *labels, size_t nlabels){
     size_t used = 1;  // for the terminating '\0'
     for(size_t i = 0; i < nlabels; i++){
         used += labels[i].len + 1;
@@ -44,7 +43,7 @@ static size_t namelen(const lstr_t *labels, size_t nlabels){
 }
 
 // TODO: support name pointers in messages we write
-static size_t put_name(
+size_t put_name(
     const lstr_t *labels, size_t nlabels, char *out, size_t used
 ){
     for(size_t i = 0; i < nlabels; i++){

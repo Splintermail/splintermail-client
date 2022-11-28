@@ -51,7 +51,7 @@ const lstr_t RNAME[] = {
 };
 const size_t RNAME_COUNT = sizeof(RNAME) / sizeof(*RNAME);
 
-// SERIAL, always 0 since it seems to be only useful for zone transfers
+// SERIAL, constant since it seems to be only useful for zone transfers
 const uint32_t SERIAL = 20220806;
 // REFRESH: 5 min
 const uint32_t REFRESH = 300;
