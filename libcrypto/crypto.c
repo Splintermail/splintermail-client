@@ -51,6 +51,62 @@ void crypto_library_close(void){
 }
 
 derr_t gen_key(int bits, const char* keyfile){
+#if OPENSSL_VERSION_NUMBER < 0x30000000L // pre-3.0
+    derr_t e = E_OK;
+    // make sure the PRNG is seeded
+    int ret = RAND_status();
+    if(ret != 1){
+        trace_ssl_errors(&e);
+        ORIG(&e, E_SSL, "not enough randomness to gen key");
+    }
+
+    BIGNUM* exp = BN_new();
+    if(!exp){
+        trace_ssl_errors(&e);
+        ORIG(&e, E_NOMEM, "failed to allocate bignum");
+    }
+
+    // set the exponent argument to a safe value
+    ret = BN_set_word(exp, RSA_F4);
+    if(ret != 1){
+        trace_ssl_errors(&e);
+        ORIG_GO(&e, E_SSL, "failed to set key exponent", cleanup_1);
+    }
+
+    // generate the key
+    RSA* rsa = RSA_new();
+    if(!rsa){
+        trace_ssl_errors(&e);
+        ORIG_GO(&e, E_NOMEM, "failed to allocate rsa", cleanup_1);
+    }
+    ret = RSA_generate_key_ex(rsa, bits, exp, NULL);
+    if(ret != 1){
+        trace_ssl_errors(&e);
+        ORIG_GO(&e, E_SSL, "failed to generate key", cleanup_2);
+    }
+
+    // open the file for the private key
+    FILE *f;
+    PROP_GO(&e, dfopen(keyfile, "w", &f), cleanup_2);
+
+    // write the private key to the file (no password protection)
+    ret = PEM_write_RSAPrivateKey(f, rsa, NULL, NULL, 0, NULL, NULL);
+    if(!ret){
+        trace_ssl_errors(&e);
+        ORIG_GO(&e, E_SSL, "failed to write private key", cleanup_3);
+    }
+
+    PROP_GO(&e, dfclose(f), cleanup_2);
+    f = NULL;
+
+cleanup_3:
+    if(f) fclose(f);
+cleanup_2:
+    RSA_free(rsa);
+cleanup_1:
+    BN_free(exp);
+    return e;
+#else // 3.0 or greater
     derr_t e = E_OK;
 
     EVP_PKEY *pkey = NULL;
@@ -107,6 +163,7 @@ cu:
     if(f) fclose(f);
     if(pkey) EVP_PKEY_free(pkey);
     return e;
+#endif
 }
 
 derr_t gen_key_path(int bits, const string_builder_t *keypath){

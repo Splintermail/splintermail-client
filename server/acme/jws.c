@@ -8,6 +8,7 @@
 
 #define ES256_SIG_SIZE 72
 
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L // openssl-3.0 or greater
 static void to_bigendian(dstr_t *buf){
     // check endianness
     int i = 1;
@@ -31,6 +32,7 @@ static void from_bigendian(dstr_t *buf){
     // the operation is symmetric
     to_bigendian(buf);
 }
+#endif
 
 typedef struct {
     key_i iface;
@@ -264,59 +266,7 @@ typedef struct {
 } es256_t;
 DEF_CONTAINER_OF(es256_t, iface, key_i);
 
-static derr_t es256_to_jwk(es256_t *k, bool pvt, dstr_t *out){
-    derr_t e = E_OK;
-
-    DSTR_VAR(d, 32);
-    DSTR_VAR(x, 32);
-    DSTR_VAR(y, 32);
-    OSSL_PARAM params[] = {
-        {.key="priv", .data_type=OSSL_PARAM_UNSIGNED_INTEGER, .data=d.data, .data_size=d.size },
-        {.key="qx", .data_type=OSSL_PARAM_UNSIGNED_INTEGER, .data=x.data, .data_size=x.size },
-        {.key="qy", .data_type=OSSL_PARAM_UNSIGNED_INTEGER, .data=y.data, .data_size=y.size },
-        {0},
-    };
-    int ret = EVP_PKEY_get_params(k->pkey, &params[pvt ? 0 : 1]);
-    if(ret != 1){
-        trace_ssl_errors(&e);
-        ORIG(&e, E_SSL, "EVP_PKEY_get_params failed");
-    }
-    if(pvt) d.len = params[0].return_size;
-    x.len = params[1].return_size;
-    y.len = params[2].return_size;
-    to_bigendian(&x);
-    to_bigendian(&y);
-    if(pvt) to_bigendian(&d);
-
-    PROP_GO(&e,
-        FMT(out,
-            "{"
-                // public key elements in sorted order for thumbprint
-                "\"crv\":\"P-256\","
-                "\"kty\":\"EC\","
-                "\"x\":\"%x\","
-                "\"y\":\"%x\"",
-            FB64URL(&x),
-            FB64URL(&y)
-        ),
-    cu);
-
-    if(pvt){
-        // get the private key as a bignum
-        PROP_GO(&e, FMT(out, ",\"d\":\"%x\"", FB64URL(&d)), cu);
-    }
-
-    PROP_GO(&e, dstr_append(out, &DSTR_LIT("}")), cu);
-
-cu:
-    if(pvt){
-        for(size_t i = 0; i < d.size; i++){
-            d.data[i] = 0;
-        }
-    }
-
-    return e;
-}
+static derr_t es256_to_jwk(es256_t *k, bool pvt, dstr_t *out);
 
 static derr_t es256_to_jwk_pvt(key_i *iface, dstr_t *out){
     es256_t *k = CONTAINER_OF(iface, es256_t, iface);
@@ -378,6 +328,332 @@ static void es256_free(key_i *iface){
     free(k);
 }
 
+// the remaining es256 implementation varies wildly between openssl versions
+
+#if OPENSSL_VERSION_NUMBER < 0x30000000L // pre-3.0
+
+// openssl-1.1 variant
+static derr_t es256_to_jwk(es256_t *k, bool pvt, dstr_t *out){
+    derr_t e = E_OK;
+
+    BIGNUM *x = NULL;
+    BIGNUM *y = NULL;
+
+    DSTR_VAR(xbuf, 256);
+    DSTR_VAR(ybuf, 256);
+    DSTR_VAR(dbuf, 256);
+
+    // get the elliptic curve key from the EVP_PKEY wrapper
+    const EC_KEY *eckey = EVP_PKEY_get0_EC_KEY(k->pkey);
+    if(!eckey){
+        ORIG(&e, E_INTERNAL, "did not get EC_KEY from es256_t");
+    }
+
+    // get the public key as an EC_POINT
+    const EC_POINT *ecpoint =  EC_KEY_get0_public_key(eckey);
+
+    // get the group, in order to get x and y values
+    const EC_GROUP *group = EC_KEY_get0_group(eckey);
+
+    // get x and y as well
+    x = BN_new();
+    if(!x){
+        trace_ssl_errors(&e);
+        ORIG_GO(&e, E_SSL, "BN_new", cu);
+    }
+    y = BN_new();
+    if(!y){
+        trace_ssl_errors(&e);
+        ORIG_GO(&e, E_SSL, "BN_new", cu);
+    }
+    int ret = EC_POINT_get_affine_coordinates(group, ecpoint, x, y, NULL);
+    if(ret != 1){
+        trace_ssl_errors(&e);
+        ORIG_GO(&e, E_SSL, "EC_POINT_get_affine_coordinates failed", cu);
+    }
+
+    if(BN_num_bytes(x) > (int)xbuf.size){
+        ORIG(&e, E_INTERNAL, "xbuf too small!");
+    }
+    if(BN_num_bytes(y) > (int)ybuf.size){
+        ORIG(&e, E_INTERNAL, "ybuf too small!");
+    }
+
+    int xlen = BN_bn2bin(x, (unsigned char*)xbuf.data);
+    if(xlen < 0) ORIG(&e, E_INTERNAL, "BN_bn2bin returned negative length");
+    xbuf.len = (size_t)xlen;
+
+    int ylen = BN_bn2bin(y, (unsigned char*)ybuf.data);
+    if(ylen < 0) ORIG(&e, E_INTERNAL, "BN_bn2bin returned negative length");
+    ybuf.len = (size_t)ylen;
+
+    PROP_GO(&e,
+        FMT(out,
+            "{"
+                // public key elements in sorted order for thumbprint
+                "\"crv\":\"P-256\","
+                "\"kty\":\"EC\","
+                "\"x\":\"%x\","
+                "\"y\":\"%x\"",
+            FB64URL(&xbuf),
+            FB64URL(&ybuf)
+        ),
+    cu);
+
+    if(pvt){
+        // get the private key as a bignum
+        const BIGNUM *d = EC_KEY_get0_private_key(eckey);
+        if(BN_num_bytes(d) > (int)dbuf.size){
+            ORIG(&e, E_INTERNAL, "dbuf too small!");
+        }
+        dbuf.len = (size_t)BN_bn2bin(d, (unsigned char*)dbuf.data);
+        PROP_GO(&e, FMT(out, ",\"d\":\"%x\"", FB64URL(&dbuf)), cu);
+    }
+
+    PROP_GO(&e, dstr_append(out, &DSTR_LIT("}")), cu);
+
+cu:
+    for(size_t i = 0; i < dbuf.size; i++){
+        dbuf.data[i] = 0;
+    }
+    if(x) BN_free(x);
+    if(y) BN_free(y);
+
+    return e;
+}
+
+// openssl-1.1 variant
+static derr_t es256_from_eckey(EC_KEY **eckey, key_i **out){
+    derr_t e = E_OK;
+
+    *out = NULL;
+
+    EVP_PKEY *pkey = NULL;
+    EVP_MD_CTX *mdctx = NULL;
+
+    pkey = EVP_PKEY_new();
+    if(!pkey){
+        trace_ssl_errors(&e);
+        ORIG_GO(&e, E_SSL, "EVP_PKEY_new failed", cu);
+    }
+
+    int ret = EVP_PKEY_assign_EC_KEY(pkey, *eckey);
+    if(ret != 1){
+        trace_ssl_errors(&e);
+        ORIG_GO(&e, E_SSL, "EVP_PKEY_assign_EC_KEY failed", cu);
+    }
+    // eckey now owned by pkey
+    *eckey = NULL;
+
+    mdctx = EVP_MD_CTX_new();
+    if(!mdctx){
+        trace_ssl_errors(&e);
+        ORIG_GO(&e, E_SSL, "EVP_MD_CTX_new failed", cu);
+    }
+
+    es256_t *k = DMALLOC_STRUCT_PTR(&e, k);
+    CHECK_GO(&e, cu);
+
+    DSTR_STATIC(params, "\"alg\":\"ES256\"");
+    *k = (es256_t){
+        .iface = {
+            .protected_params = &params,
+            .to_jwk_pvt = es256_to_jwk_pvt,
+            .to_jwk_pub = es256_to_jwk_pub,
+            .to_pem_pub = es256_to_pem_pub,
+            .sign = es256_sign,
+            .free = es256_free,
+        },
+        .pkey = pkey,
+        .mdctx = mdctx,
+    };
+    pkey = NULL;
+    mdctx = NULL;
+
+    *out = &k->iface;
+
+cu:
+    if(pkey) EVP_PKEY_free(pkey);
+    if(mdctx) EVP_MD_CTX_free(mdctx);
+
+    return e;
+}
+
+// openssl-1.1 variant
+static derr_t es256_from_jwk(
+    const dstr_t x, const dstr_t y, const dstr_t d, key_i **out
+){
+    derr_t e = E_OK;
+
+    *out = NULL;
+
+    BIGNUM *xbn = NULL;
+    BIGNUM *ybn = NULL;
+    BIGNUM *dbn = NULL;
+
+    EC_KEY *eckey = NULL;
+
+    DSTR_VAR(xbuf, 256);
+    DSTR_VAR(ybuf, 256);
+    DSTR_VAR(dbuf, 256);
+
+    PROP_GO(&e, b64url2bin(x, &xbuf), cu);
+    PROP_GO(&e, b64url2bin(y, &ybuf), cu);
+    PROP_GO(&e, b64url2bin(d, &dbuf), cu);
+
+    xbn = BN_bin2bn((const unsigned char*)xbuf.data, (int)xbuf.len, NULL);
+    if(!xbn){
+        trace_ssl_errors(&e);
+        ORIG_GO(&e, E_SSL, "BN_bin2bn failed", cu);
+    }
+
+    ybn = BN_bin2bn((const unsigned char*)ybuf.data, (int)ybuf.len, NULL);
+    if(!ybn){
+        trace_ssl_errors(&e);
+        ORIG_GO(&e, E_SSL, "BN_bin2bn failed", cu);
+    }
+
+    dbn = BN_bin2bn((const unsigned char*)dbuf.data, (int)dbuf.len, NULL);
+    if(!dbn){
+        trace_ssl_errors(&e);
+        ORIG_GO(&e, E_SSL, "BN_bin2bn failed", cu);
+    }
+
+    eckey = EC_KEY_new_by_curve_name(NID_X9_62_prime256v1);
+    if(!eckey){
+        trace_ssl_errors(&e);
+        ORIG_GO(&e, E_SSL, "EC_KEY_new_by_curve_name failed", cu);
+    }
+
+    int ret = EC_KEY_set_public_key_affine_coordinates(eckey, xbn, ybn);
+    if(ret != 1){
+        trace_ssl_errors(&e);
+        ORIG_GO(&e,
+            E_SSL, "EC_KEY_set_public_key_affine_coordinates failed",
+        cu);
+    }
+
+    ret = EC_KEY_set_private_key(eckey, dbn);
+    if(ret != 1){
+        trace_ssl_errors(&e);
+        ORIG_GO(&e,
+            E_SSL, "EC_KEY_set_public_key_affine_coordinates failed",
+        cu);
+    }
+
+    PROP_GO(&e, es256_from_eckey(&eckey, out), cu);
+
+cu:
+    for(size_t i = 0; i < d.size; i++){
+        d.data[i] = 0;
+    }
+    if(xbn) BN_free(xbn);
+    if(ybn) BN_free(ybn);
+    if(dbn) BN_clear_free(dbn);
+    if(eckey) EC_KEY_free(eckey);
+
+    return e;
+}
+
+// openssl-1.1 variant
+derr_t gen_es256(key_i **out){
+    derr_t e = E_OK;
+
+    EC_KEY *eckey = NULL;
+
+    eckey = EC_KEY_new_by_curve_name(NID_X9_62_prime256v1);
+    if(!eckey){
+        trace_ssl_errors(&e);
+        ORIG_GO(&e, E_SSL, "EC_KEY_new_by_curve_name failed", cu);
+    }
+
+    int ret = EC_KEY_generate_key(eckey);
+    if(!ret){
+        trace_ssl_errors(&e);
+        ORIG_GO(&e, E_SSL, "EC_KEY_generate_key failed", cu);
+    }
+
+    PROP_GO(&e, es256_from_eckey(&eckey, out), cu);
+
+cu:
+    if(eckey) EC_KEY_free(eckey);
+
+    return e;
+}
+
+#else //
+
+// openssl-3.0 variant
+static derr_t es256_to_jwk(es256_t *k, bool pvt, dstr_t *out){
+    derr_t e = E_OK;
+
+    DSTR_VAR(d, 32);
+    DSTR_VAR(x, 32);
+    DSTR_VAR(y, 32);
+    OSSL_PARAM params[] = {
+        {
+            .key="priv",
+            .data_type=OSSL_PARAM_UNSIGNED_INTEGER,
+            .data=d.data,
+            .data_size=d.size,
+        },
+        {
+            .key="qx",
+            .data_type=OSSL_PARAM_UNSIGNED_INTEGER,
+            .data=x.data,
+            .data_size=x.size,
+        },
+        {
+            .key="qy",
+            .data_type=OSSL_PARAM_UNSIGNED_INTEGER,
+            .data=y.data,
+            .data_size=y.size,
+        },
+        {0},
+    };
+    int ret = EVP_PKEY_get_params(k->pkey, &params[pvt ? 0 : 1]);
+    if(ret != 1){
+        trace_ssl_errors(&e);
+        ORIG(&e, E_SSL, "EVP_PKEY_get_params failed");
+    }
+    if(pvt) d.len = params[0].return_size;
+    x.len = params[1].return_size;
+    y.len = params[2].return_size;
+    to_bigendian(&x);
+    to_bigendian(&y);
+    if(pvt) to_bigendian(&d);
+
+    PROP_GO(&e,
+        FMT(out,
+            "{"
+                // public key elements in sorted order for thumbprint
+                "\"crv\":\"P-256\","
+                "\"kty\":\"EC\","
+                "\"x\":\"%x\","
+                "\"y\":\"%x\"",
+            FB64URL(&x),
+            FB64URL(&y)
+        ),
+    cu);
+
+    if(pvt){
+        // get the private key as a bignum
+        PROP_GO(&e, FMT(out, ",\"d\":\"%x\"", FB64URL(&d)), cu);
+    }
+
+    PROP_GO(&e, dstr_append(out, &DSTR_LIT("}")), cu);
+
+cu:
+    if(pvt){
+        for(size_t i = 0; i < d.size; i++){
+            d.data[i] = 0;
+        }
+    }
+
+    return e;
+}
+
+// openssl-3.0 variant
 static derr_t es256_from_pkey(EVP_PKEY **pkey, key_i **out){
     derr_t e = E_OK;
 
@@ -417,6 +693,7 @@ cu:
     return e;
 }
 
+// openssl-3.0 variant
 static derr_t es256_from_jwk(
     const dstr_t x, const dstr_t y, const dstr_t d, key_i **out
 ){
@@ -490,6 +767,7 @@ cu:
     return e;
 }
 
+// openssl-3.0 variant
 derr_t gen_es256(key_i **out){
     derr_t e = E_OK;
 
@@ -508,6 +786,8 @@ cu:
 
     return e;
 }
+
+#endif // openssl 3.0 vs 1.1
 
 //
 
@@ -548,8 +828,6 @@ derr_t jwk_to_key(json_ptr_t jwk, key_i **out){
             ORIG(&e, E_PARAM, "Ed25519 keys require x and d parameters");
         }
         PROP(&e, ed25519_from_jwk(d, out) );
-        // erase key content
-        for(size_t i = 0; i < d.len; i++) d.data[i] = 0;
     }else{
         // ES256 key
         if(!dstr_eq(crv, DSTR_LIT("P-256"))){
@@ -563,8 +841,6 @@ derr_t jwk_to_key(json_ptr_t jwk, key_i **out){
             ORIG(&e, E_PARAM, "ES256 keys require x, y, and d parameters");
         }
         PROP(&e, es256_from_jwk(x, y, d, out) );
-        // erase key content
-        for(size_t i = 0; i < d.len; i++) d.data[i] = 0;
     }
 
     return e;
@@ -578,8 +854,14 @@ derr_t json_to_key(const dstr_t text, key_i **out){
     json_t json;
     JSON_PREP_PREALLOCATED(json, 256, 32, true);
 
-    PROP(&e, json_parse(text, &json) );
-    PROP(&e, jwk_to_key(json.root, out) );
+    PROP_GO(&e, json_parse(text, &json), cu);
+    PROP_GO(&e, jwk_to_key(json.root, out), cu);
+
+cu:
+    // erase key content
+    for(size_t i = 0; i < json_textbuf.len; i++){
+        json_textbuf.data[i] = 0;
+    }
 
     return e;
 }
