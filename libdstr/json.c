@@ -99,9 +99,9 @@ static inline int is_hex(char c){
 }
 
 static inline unsigned char dehex(unsigned char u){
-    if(u >= '0' && u <= '9') return u - '0';
-    if(u >= 'a' && u <= 'f') return 10 + u - 'a';
-    if(u >= 'A' && u <= 'F') return 10 + u - 'A';
+    if(u >= '0' && u <= '9') return (unsigned char)(u - '0');
+    if(u >= 'a' && u <= 'f') return (unsigned char)(10 + u - 'a');
+    if(u >= 'A' && u <= 'F') return (unsigned char)(10 + u - 'A');
     LOG_FATAL("invalid hex character: %x\n", FC((char)u));
     return 0;
 }
@@ -559,25 +559,25 @@ reparse:
             break;
         case S4:
             if(!is_hex(c)) UNEXPECTED;
-            p->codepoint = (dehex(u) & 0x0F) << 12;
+            p->codepoint = (uint16_t)((dehex(u) & 0x0F) << 12);
             p->cpbytes[p->cpcount++ % 8] = c;
             p->state = S5;
             break;
         case S5:
             if(!is_hex(c)) UNEXPECTED;
-            p->codepoint |= (dehex(u) & 0x0F) << 8;
+            p->codepoint |= (uint16_t)((dehex(u) & 0x0F) << 8);
             p->cpbytes[p->cpcount++ % 8] = c;
             p->state = S6;
             break;
         case S6:
             if(!is_hex(c)) UNEXPECTED;
-            p->codepoint |= (dehex(u) & 0x0F) << 4;
+            p->codepoint |= (uint16_t)((dehex(u) & 0x0F) << 4);
             p->cpbytes[p->cpcount++ % 8] = c;
             p->state = S7;
             break;
         case S7:
             if(!is_hex(c)) UNEXPECTED;
-            p->codepoint |= (dehex(u) & 0x0F) << 0;
+            p->codepoint |= (uint16_t)((dehex(u) & 0x0F) << 0);
             p->cpbytes[p->cpcount++ % 8] = c;
             if(p->last_codepoint == 0){
                 if(p->codepoint < 0xD800 || p->codepoint > 0XDFFF){
