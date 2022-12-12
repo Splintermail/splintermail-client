@@ -25,4 +25,12 @@ static inline fmt_t FNTOP6(const struct sockaddr_in6 *arg){
                                      .hook = fmthook_ntop6} } };
 }
 
+uint16_t addr_port(const struct sockaddr *sa);
+uint16_t addrs_port(const struct sockaddr_storage *ss);
+
 derr_t read_addr(struct sockaddr_storage *ss, const char *addr, uint16_t port);
+
+bool addr_eq(const struct sockaddr *a, const struct sockaddr *b);
+bool addrs_eq(
+    const struct sockaddr_storage *a, const struct sockaddr_storage *b
+);

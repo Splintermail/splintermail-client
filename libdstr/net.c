@@ -42,6 +42,19 @@ derr_type_t fmthook_ntop(dstr_t* out, const void* arg){
     return E_PARAM;
 }
 
+uint16_t addr_port(const struct sockaddr *sa){
+    if(sa->sa_family == AF_INET){
+        return ntohs(((const struct sockaddr_in*)sa)->sin_port);
+    }else if(sa->sa_family == AF_INET6){
+        return ntohs(((const struct sockaddr_in6*)sa)->sin6_port);
+    }
+    return 0;
+}
+
+uint16_t addrs_port(const struct sockaddr_storage *ss){
+    return addr_port((const struct sockaddr*)ss);
+}
+
 derr_t read_addr(struct sockaddr_storage *ss, const char *addr, uint16_t port){
     derr_t e = E_OK;
 
@@ -86,4 +99,32 @@ derr_t read_addr(struct sockaddr_storage *ss, const char *addr, uint16_t port){
     }
 
     return e;
+}
+
+bool addr_eq(const struct sockaddr *a, const struct sockaddr *b){
+    if(a->sa_family != b->sa_family) return false;
+    if(a->sa_family == AF_INET){
+        struct sockaddr_in *ain = (struct sockaddr_in*)a;
+        struct sockaddr_in *bin = (struct sockaddr_in*)b;
+        if(ain->sin_port != bin->sin_port) return false;
+        return memcmp(
+            &ain->sin_addr, &bin->sin_addr, sizeof(ain->sin_addr)
+        ) == 0;
+    }
+    if(a->sa_family == AF_INET6){
+        struct sockaddr_in6 *ain6 = (struct sockaddr_in6*)a;
+        struct sockaddr_in6 *bin6 = (struct sockaddr_in6*)b;
+        if(ain6->sin6_port != bin6->sin6_port) return false;
+        return memcmp(
+            &ain6->sin6_addr, &bin6->sin6_addr, sizeof(ain6->sin6_addr)
+        ) == 0;
+    }
+    LOG_FATAL("unhandled addr family %x\n", FI(a->sa_family));
+    return false;
+}
+
+bool addrs_eq(
+    const struct sockaddr_storage *a, const struct sockaddr_storage *b
+){
+    return addr_eq((struct sockaddr*)a, (struct sockaddr*)b);
 }
