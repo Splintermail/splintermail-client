@@ -245,7 +245,7 @@ void imf_handle_error(
     DROP_CMD( FMT(&buf, "    %x", FD_DBG(&head)) );
     size_t nspaces = buf.len;
     DROP_CMD( FMT(&buf, "%x", FD_DBG(&token)) );
-    size_t ncarets = buf.len - nspaces;
+    size_t ncarets = MAX(buf.len - nspaces, 1);
     DROP_CMD( FMT(&buf, "%x\n", FD_DBG(&tail)) );
 
     // spaces

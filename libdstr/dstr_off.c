@@ -20,7 +20,7 @@ void get_token_context(dstr_t *buf, const dstr_off_t token, size_t ctxsize){
     FMT_QUIET(buf, "%x", FD_DBG(&headbuf));
     size_t nspaces = buf->len - begin;
     FMT_QUIET(buf, "%x", FD_DBG(&tokenbuf));
-    size_t ncarets = buf->len - nspaces - begin;
+    size_t ncarets = MAX(buf->len - nspaces - begin, 1);
     FMT_QUIET(buf, "%x\n", FD_DBG(&tailbuf));
 
     // spaces

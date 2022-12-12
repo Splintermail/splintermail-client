@@ -263,6 +263,8 @@ static bool do_test_case(parse_f parser, char *c_url, char *c_exp){
     ok &= OFF_CMP(query, 'q');
     ok &= OFF_CMP(fragment, 'f');
 
+    #undef OFF_CMP
+
     return ok;
 }
 
@@ -487,6 +489,146 @@ static derr_t test_url_reference(void){
     return e;
 }
 
+//
+
+static addrspec_t expected_addrspec(const dstr_t *addrspec, const dstr_t exp){
+    if(addrspec->len != exp.len){
+        LOG_ERROR("bad test, addrspec->len != exp.len\n");
+        exit(2);
+    }
+    dstr_off_t scheme = find_matches(addrspec, exp, 's', 0);
+    // nothing starts before scheme's ://
+    size_t scheme_limit = scheme.len ? scheme.len + 3 : 0;
+    // host starts after scheme
+    dstr_off_t host = find_matches(addrspec, exp, 'h', scheme_limit);
+    // port is always at the end
+    dstr_off_t port = find_matches(addrspec, exp, 'p', addrspec->len);
+
+    return (addrspec_t){ .scheme = scheme, .host = host, .port = port };
+}
+
+static bool do_addrspec_test_case(char *c_spec, char *c_exp){
+    dstr_t d_spec, d_exp;
+    DSTR_WRAP(d_spec, c_spec, strlen(c_spec), true);
+    DSTR_WRAP(d_exp, c_exp, strlen(c_exp), true);
+
+    bool ok = true;
+
+    addrspec_t exp = expected_addrspec(&d_spec, d_exp);
+    addrspec_t got;
+    DSTR_VAR(errbuf, 512);
+    ok = parse_addrspec_ex(&d_spec, &got, &errbuf);
+    if(!ok){
+        LOG_ERROR(
+            "failed to parse addrspec: %x\n%x\n", FS(c_spec), FD(&errbuf)
+        );
+        return false;
+    }
+
+    #define OFF_CMP(name, c) do_off_cmp(&d_spec, #name, exp.name, got.name, c)
+
+    ok &= OFF_CMP(scheme, 's');
+    ok &= OFF_CMP(host, 'h');
+    ok &= OFF_CMP(port, 'n');
+
+    #undef OFF_CMP
+
+    return ok;
+}
+
+static derr_t test_addrspec(void){
+    derr_t e = E_OK;
+
+    bool ok = true;
+    // :port
+    // host
+    // host:
+    // host:port
+    // scheme://
+    // scheme://host
+    // scheme://host:
+    // scheme://:port
+    // scheme://host:port
+
+    ok &= do_addrspec_test_case(
+        ":1993",
+        " pppp"
+    );
+
+    ok &= do_addrspec_test_case(
+        "localhost",
+        "hhhhhhhhh"
+    );
+
+    ok &= do_addrspec_test_case(
+        "[::]",
+        "hhhh"
+    );
+
+    ok &= do_addrspec_test_case(
+        "localhost:",
+        "hhhhhhhhh "
+    );
+    ok &= do_addrspec_test_case(
+        "[::]:",
+        "hhhh "
+    );
+
+    ok &= do_addrspec_test_case(
+        "localhost:1993",
+        "hhhhhhhhh pppp"
+    );
+
+    ok &= do_addrspec_test_case(
+        "[::]:1993",
+        "hhhh pppp"
+    );
+
+    ok &= do_addrspec_test_case(
+        "tls://",
+        "sss   "
+    );
+
+    ok &= do_addrspec_test_case(
+        "tls://:1993",
+        "sss    pppp"
+    );
+
+    ok &= do_addrspec_test_case(
+        "tls://localhost",
+        "sss   hhhhhhhhh"
+    );
+
+    ok &= do_addrspec_test_case(
+        "tls://[::]",
+        "sss   hhhh"
+    );
+
+    ok &= do_addrspec_test_case(
+        "tls://localhost:",
+        "sss   hhhhhhhhh "
+    );
+    ok &= do_addrspec_test_case(
+        "tls://[::]:",
+        "sss   hhhh "
+    );
+
+    ok &= do_addrspec_test_case(
+        "tls://localhost:1993",
+        "sss   hhhhhhhhh pppp"
+    );
+
+    ok &= do_addrspec_test_case(
+        "tls://[::]:1993",
+        "sss   hhhh pppp"
+    );
+
+    if(!ok){
+        ORIG(&e, E_VALUE, "one or more test cases failed");
+    }
+
+    return e;
+}
 
 int main(int argc, char** argv){
     derr_t e = E_OK;
@@ -496,6 +638,7 @@ int main(int argc, char** argv){
     PROP_GO(&e, test_error_reporting(), test_fail);
     PROP_GO(&e, test_url(), test_fail);
     PROP_GO(&e, test_url_reference(), test_fail);
+    PROP_GO(&e, test_addrspec(), test_fail);
 
     LOG_ERROR("PASS\n");
     return 0;

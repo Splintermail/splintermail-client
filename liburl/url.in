@@ -56,7 +56,7 @@ static void url_handle_error(
     FMT_QUIET(errbuf, "invalid url: %x", FD_DBG(&head));
     size_t nspaces = errbuf->len;
     FMT_QUIET(errbuf, "%x", FD_DBG(&token));
-    size_t ncarets = errbuf->len - nspaces;
+    size_t ncarets = MAX(errbuf->len - nspaces, 1);
     FMT_QUIET(errbuf, "%x\n", FD_DBG(&tail));
 
     // spaces
@@ -98,6 +98,7 @@ static void manual_error(const dstr_t *buf, dstr_t *errbuf, dstr_off_t loc){
 %kwarg error_fn url_handle_error;
 
 %type url {url_t};
+%type addrspec {addrspec_t};
 %type bool {bool};
 
 # Tokens
@@ -308,7 +309,7 @@ host_0 = ip_literal | reg_name_0;
 
 # Don't even try to validate these addresses, just mush all possible chars
 # together between ipv6address and ipvfuture
-ip_literal = LBRACKET *(unreserved|sub_delims|COLON) RBRACKET;
+ip_literal = LBRACKET 1*(unreserved|sub_delims|COLON) RBRACKET;
 
 %root uri_reference;
 uri_reference:url = uri_reference_noqf:ref qf:qf EOF
@@ -420,4 +421,72 @@ uri_reference_noqf:url =
            };
         }}
     )
+;
+
+%root addrspec;
+# addrspec is a custom uri-like parameter we like for the command line
+#
+# Acceptable forms are:
+# - :port
+# - host:
+# - host:port
+# - scheme://
+# - scheme://host
+# - scheme://host:
+# - scheme://:port
+# - scheme://host:port
+addrspec:addrspec =
+    empty:start
+    (
+      | COLON NUM:p
+        # bare port
+        { $$.scheme = @start; $$.host = @start; $$.port = @p; }
+      | scheme_or_host:soh
+        (
+          | empty:end
+            # soh was bare host
+            { $$.scheme = @start; $$.host = @soh; $$.port = @end; }
+          | COLON
+            (
+              | SLASH SLASH host_0:h maybe_port:p
+                # soh must have been scheme
+                {{ if(!$soh){
+                       manual_error(buf, errbuf, @soh);
+                       return URL_STATUS_SYNTAX_ERROR;
+                   }
+                   $$.scheme = @soh;
+                   $$.host = @h;
+                   $$.port = @p; }}
+              | NUM:p
+                # host:port form
+                { $$.scheme = @start; $$.host = @soh; $$.port = @p; }
+              | empty:end
+                # host: form
+                { $$.scheme = @start; $$.host = @soh; $$.port = @end; }
+            )
+        )
+    )
+    EOF
+;
+
+# returns bool indicating if it might be a scheme
+scheme_or_host:bool =
+  | ALPHA
+    # still don't know for sure what it is...
+      *(
+        | (ALPHA | NUM | PLUS | DASH | DOT)
+          # still don't know for sure what it is...
+
+        | (UNDER | TILDE | pct_encoded | sub_delims_noplus)
+          # it must be host
+          reg_name_0
+          %return
+      )
+      # this is the only codepath where it might be a scheme
+      { $$ = true; }
+  | (NUM|DASH|DOT|UNDER|TILDE|pct_encoded|sub_delims)
+    # it must be a host (non-ip-literal)
+    reg_name_0
+  | ip_literal
+    # just an ip literal
 ;
