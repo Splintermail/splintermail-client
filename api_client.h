@@ -21,17 +21,32 @@ derr_t api_token_read(const char* path, api_token_t* token);
            E_OS (reading the opened file)
            E_INTERNAL */
 
+derr_t api_token_read_path(const string_builder_t *sb, api_token_t* token);
+
 derr_t api_token_write(const char* path, api_token_t* token);
 /* throws: E_NOMEM (on fopen)
            E_FS
            E_OS (writing the opened file)
            E_INTERNAL */
 
-derr_t register_api_token(const char* host,
-                          unsigned int port,
-                          const dstr_t* user,
-                          const dstr_t* pass,
-                          const char* creds_path);
+derr_t api_token_write_path(const string_builder_t *sb, api_token_t* token);
+
+derr_t register_api_token(
+    const char* host,
+    unsigned int port,
+    const dstr_t* user,
+    const dstr_t* pass,
+    const char* creds_path
+);
+
+derr_t register_api_token_path(
+    const char* host,
+    unsigned int port,
+    const dstr_t* user,
+    const dstr_t* pass,
+    const string_builder_t *sb
+);
+
 
 derr_t api_password_call(const char* host, unsigned int port, dstr_t* command,
                          dstr_t* arg, const dstr_t* username,

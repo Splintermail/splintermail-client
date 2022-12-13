@@ -3,12 +3,12 @@
 
 // pass all calls to the real thing
 ui_harness_t harness = {
-    .dir_r_access = dir_r_access,
-    .dir_w_access = dir_w_access,
-    .dir_rw_access = dir_rw_access,
-    .file_r_access = file_r_access,
-    .file_w_access = file_w_access,
-    .file_rw_access = file_rw_access,
-    .exists = exists,
+    .dir_r_access_path = dir_r_access_path,
+    .dir_w_access_path = dir_w_access_path,
+    .dir_rw_access_path = dir_rw_access_path,
+    .file_r_access_path = file_r_access_path,
+    .file_w_access_path = file_w_access_path,
+    .file_rw_access_path = file_rw_access_path,
+    .exists_path = exists_path,
     .for_each_file_in_dir = for_each_file_in_dir,
 };

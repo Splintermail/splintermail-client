@@ -7,6 +7,9 @@
 #include "api_client.h"
 
 
+static dstr_t slash = DSTR_LIT("/");
+
+
 void api_token_init(api_token_t* token){
     // wrap the buffer with the dstr
     DSTR_WRAP_ARRAY(token->secret, token->secret_buffer);
@@ -58,6 +61,20 @@ derr_t api_token_read(const char* path, api_token_t* token){
     return e;
 }
 
+derr_t api_token_read_path(const string_builder_t *sb, api_token_t* token){
+    derr_t e = E_OK;
+    DSTR_VAR(stack, 256);
+    dstr_t heap = {0};
+    dstr_t* path;
+    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
+
+    PROP_GO(&e, api_token_read(path->data, token), cu);
+
+cu:
+    dstr_free(&heap);
+    return e;
+}
+
 derr_t api_token_write(const char* path, api_token_t* token){
     derr_t e = E_OK;
     // open the file for writing (with the new nonce)
@@ -77,6 +94,20 @@ derr_t api_token_write(const char* path, api_token_t* token){
                               FU(token->nonce)), cu);
 cu:
     fclose(f);
+    return e;
+}
+
+derr_t api_token_write_path(const string_builder_t *sb, api_token_t* token){
+    derr_t e = E_OK;
+    DSTR_VAR(stack, 256);
+    dstr_t heap = {0};
+    dstr_t* path;
+    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
+
+    PROP_GO(&e, api_token_write(path->data, token), cu);
+
+cu:
+    dstr_free(&heap);
     return e;
 }
 
@@ -323,11 +354,13 @@ derr_t api_token_call(const char* host, unsigned int port, dstr_t* command,
 }
 
 
-derr_t register_api_token(const char* host,
-                          unsigned int port,
-                          const dstr_t* user,
-                          const dstr_t* pass,
-                          const char* creds_path){
+derr_t register_api_token(
+    const char* host,
+    unsigned int port,
+    const dstr_t* user,
+    const dstr_t* pass,
+    const char* creds_path
+){
     derr_t e = E_OK;
     derr_t e2;
     LOG_INFO("attempting to register a new token\n");
@@ -410,5 +443,25 @@ derr_t register_api_token(const char* host,
     PROP(&e, api_token_write(creds_path, &token) );
 
     LOG_INFO("sucessfully registered API token\n");
+    return e;
+}
+
+derr_t register_api_token_path(
+    const char* host,
+    unsigned int port,
+    const dstr_t* user,
+    const dstr_t* pass,
+    const string_builder_t *sb
+){
+    derr_t e = E_OK;
+    DSTR_VAR(stack, 256);
+    dstr_t heap = {0};
+    dstr_t* path;
+    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
+
+    PROP_GO(&e, register_api_token(host, port, user, pass, path->data), cu);
+
+cu:
+    dstr_free(&heap);
     return e;
 }

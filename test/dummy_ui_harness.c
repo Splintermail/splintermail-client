@@ -10,6 +10,8 @@
 #include <console_input.h>
 #include <ui_harness.h>
 
+static dstr_t slash = DSTR_LIT("/");
+
 // ditm.h
 bool looked_good;
 dstr_t reason_log;
@@ -82,80 +84,115 @@ enum access_mode_t {
     AM_CREATE,
 };
 
-static inline bool fake_access(const char* path, enum access_mode_t mode){
-    static const char* off_limits[] = {"splintermail.conf",
-                                       "fake_file",
-                                       "no.perms.user@fqdn",
-                                       "no.creds.access.user@fqdn/api_token.json",
-                                       };
-    size_t plen = strlen(path);
+static inline derr_t fake_access(
+    dstr_t path, enum access_mode_t mode, bool *ret
+){
+    derr_t e = E_OK;
+
+    static const dstr_t off_limits[] = {
+        DSTR_LIT("splintermail.conf"),
+        DSTR_LIT("fake_file"),
+        DSTR_LIT("no.perms.user@fqdn"),
+        DSTR_LIT("no.creds.access.user@fqdn/api_token.json"),
+    };
     // check if file is forbidden
     bool is_off_limits = false;
     for(size_t i = 0; i < sizeof(off_limits)/sizeof(*off_limits); i++){
-        size_t flen = strlen(off_limits[i]);
-        if(plen >= flen){
-            const char* end = path + (plen - flen);
-            if(strcmp(end, off_limits[i]) == 0){
-                is_off_limits = true;
-                break;
-            }
+        dstr_t f = off_limits[i];
+        if(dstr_endswith2(path, f)){
+            is_off_limits = true;
+            break;
         }
     }
     if(is_off_limits){
         // file exists, but otherwise no access
-        return mode == AM_EXIST;
+        *ret = mode == AM_EXIST;
+        return e;
     }
     if(creatables){
         // check if file is creatable
         char** c_match = NULL;
         for(char** c = creatables; *c != NULL ; c++){
             // check if this is a match
-            size_t clen = strlen(*c);
-            if(plen >= clen){
-                const char* end = path + (plen - clen);
-                if(strcmp(end, *c) == 0){
-                    c_match = c;
-                    break;
-                }
+            dstr_t dc = dstr_from_cstr(*c);
+            if(dstr_endswith2(path, dc)){
+                c_match = c;
+                break;
             }
         }
         // check if we matched to a creatable
         if(c_match){
-            if(mode == AM_EXIST) return false;
-            if(mode == AM_ACCESS) return false;
+            if(mode == AM_EXIST){
+                *ret = false;
+                return e;
+            }
+            if(mode == AM_ACCESS){
+                *ret = false;
+                return e;
+            }
             if(mode == AM_CREATE){
                 // remove from list of creatables
                 for(char** c = c_match; *c != NULL; c++){
                     *c = *(c + 1);
                 }
-                return true;
+                *ret = true;
+                return e;
             }
         }
     }
     // otherwise assume all files exist and are readable
-    return true;
+    *ret = true;
+    return e;
 }
 
-static bool fake_dir_r_access(const char* path, bool create){
-    return fake_access(path, create ? AM_CREATE : AM_ACCESS);
+static derr_t fake_access_path(
+    const string_builder_t *sb, enum access_mode_t mode, bool *ret
+){
+    derr_t e = E_OK;
+    DSTR_VAR(stack, 256);
+    dstr_t heap = {0};
+    dstr_t* path;
+    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
+
+    PROP_GO(&e, fake_access(*path, mode, ret), cu);
+
+cu:
+    dstr_free(&heap);
+    return e;
 }
-static bool fake_dir_w_access(const char* path, bool create){
-    return fake_access(path, create ? AM_CREATE : AM_ACCESS);
+
+static derr_t fake_dir_r_access_path(
+    const string_builder_t *sb, bool create, bool *ret
+){
+    return fake_access_path(sb, create ? AM_CREATE : AM_ACCESS, ret);
 }
-static bool fake_dir_rw_access(const char* path, bool create){
-    return fake_access(path, create ? AM_CREATE : AM_ACCESS);
+static derr_t fake_dir_w_access_path(
+    const string_builder_t *sb, bool create, bool *ret
+){
+    return fake_access_path(sb, create ? AM_CREATE : AM_ACCESS, ret);
 }
-static bool fake_file_r_access(const char* path){
-    return fake_access(path, AM_ACCESS);
+static derr_t fake_dir_rw_access_path(
+    const string_builder_t *sb, bool create, bool *ret
+){
+    return fake_access_path(sb, create ? AM_CREATE : AM_ACCESS, ret);
 }
-static bool fake_file_w_access(const char* path){
-    return fake_access(path, AM_ACCESS);
+static derr_t fake_file_r_access_path(
+    const string_builder_t *sb, bool *ret
+){
+    return fake_access_path(sb, AM_ACCESS, ret);
 }
-static bool fake_file_rw_access(const char* path){
-    return fake_access(path, AM_ACCESS);
+static derr_t fake_file_w_access_path(
+    const string_builder_t *sb, bool *ret
+){
+    return fake_access_path(sb, AM_ACCESS, ret);
 }
-static bool fake_exists(const char* path){
-    return fake_access(path, AM_EXIST);
+static derr_t fake_file_rw_access_path(
+    const string_builder_t *sb, bool *ret
+){
+    return fake_access_path(sb, AM_ACCESS, ret);
+}
+static derr_t fake_exists_path(const string_builder_t *sb, bool *ret){
+    return fake_access_path(sb, AM_EXIST, ret);
 }
 
 char** users;
@@ -178,13 +215,13 @@ static derr_t fake_for_each_file_in_dir(
 
 // intercept all calls
 ui_harness_t harness = {
-    .dir_r_access = fake_dir_r_access,
-    .dir_w_access = fake_dir_w_access,
-    .dir_rw_access = fake_dir_rw_access,
-    .file_r_access = fake_file_r_access,
-    .file_w_access = fake_file_w_access,
-    .file_rw_access = fake_file_rw_access,
-    .exists = fake_exists,
+    .dir_r_access_path = fake_dir_r_access_path,
+    .dir_w_access_path = fake_dir_w_access_path,
+    .dir_rw_access_path = fake_dir_rw_access_path,
+    .file_r_access_path = fake_file_r_access_path,
+    .file_w_access_path = fake_file_w_access_path,
+    .file_rw_access_path = fake_file_rw_access_path,
+    .exists_path = fake_exists_path,
     .for_each_file_in_dir = fake_for_each_file_in_dir,
 };
 
@@ -202,8 +239,8 @@ void ssl_library_close(void){
 api_token_t* token_to_read;
 bool find_token;
 derr_t read_token_error = {0};
-derr_t api_token_read(const char* path, api_token_t* token){
-    (void)path;
+derr_t api_token_read_path(const string_builder_t *sb, api_token_t *token){
+    (void)sb;
     derr_t e = E_OK;
     if(find_token == false){
         // returning any error causes the credentials to be ignored
@@ -223,20 +260,22 @@ derr_t api_token_read(const char* path, api_token_t* token){
     return e;
 }
 // never write anything
-derr_t api_token_write(const char* path, api_token_t* token){
-    (void) path;
-    (void) token;
+derr_t api_token_write_path(const string_builder_t *sb, api_token_t* token){
+    (void)sb;
+    (void)token;
     derr_t e = E_OK;
     return e;
 }
 
 struct register_token_args_t* register_token_args;
 bool register_token_called;
-derr_t register_api_token(const char* host,
-                          unsigned int port,
-                          const dstr_t* user,
-                          const dstr_t* pass,
-                          const char* creds_path){
+derr_t register_api_token(
+    const char* host,
+    unsigned int port,
+    const dstr_t* user,
+    const dstr_t* pass,
+    const char* creds_path
+){
     derr_t e = E_OK;
     if(register_token_args == NULL){
         UH_OH("register_api_token called but nothing is prepared\n");
@@ -255,6 +294,27 @@ derr_t register_api_token(const char* host,
         UH_OH("RTA creds_path exp '%x' but got '%x'\n", FS(RTA->creds_path), FS(creds_path));
     register_token_called = true;
     return RTA->to_return;
+}
+
+derr_t register_api_token_path(
+    const char* host,
+    unsigned int port,
+    const dstr_t* user,
+    const dstr_t* pass,
+    const string_builder_t *sb
+){
+    derr_t e = E_OK;
+    DSTR_VAR(stack, 256);
+    dstr_t heap = {0};
+    dstr_t* path;
+    PROP(&e, sb_expand(sb, &slash, &stack, &heap, &path) );
+
+    PROP_GO(&e, register_api_token(host, port, user, pass, path->data), cu);
+
+cu:
+    dstr_free(&heap);
+    return e;
+
 }
 
 struct api_password_args_t* api_password_args;
