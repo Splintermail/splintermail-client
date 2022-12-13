@@ -11,7 +11,7 @@
     log_level_t lvl = default_lvl; \
     const char** tfp = test_files_path; \
     /* get logger level */ \
-    opt_spec_t o_logger = {'l', "logger", true, OPT_RETURN_INIT}; \
+    opt_spec_t o_logger = {'l', "logger", true}; \
     opt_spec_t* spec[] = {&o_logger}; \
     size_t speclen = sizeof(spec) / sizeof(*spec); \
     int newargc; \

@@ -785,14 +785,14 @@ int main(int argc, char **argv){
     derr_t e = E_OK;
 
     // specify command line options
-    opt_spec_t o_help = {'h', "help", false, OPT_RETURN_INIT};
-    opt_spec_t o_debug = {'d', "debug", false, OPT_RETURN_INIT};
-    opt_spec_t o_sock = {'s', "socket", true, OPT_RETURN_INIT};
-    opt_spec_t o_user = {'\0', "user", true, OPT_RETURN_INIT};
-    opt_spec_t o_pass = {'\0', "pass", true, OPT_RETURN_INIT};
-    opt_spec_t o_host = {'\0', "host", true, OPT_RETURN_INIT};
-    opt_spec_t o_port = {'\0', "port", true, OPT_RETURN_INIT};
-    opt_spec_t o_ovr = {'\0', "override", false, OPT_RETURN_INIT};
+    opt_spec_t o_help = {'h', "help", false};
+    opt_spec_t o_debug = {'d', "debug", false};
+    opt_spec_t o_sock = {'s', "socket", true};
+    opt_spec_t o_user = {'\0', "user", true};
+    opt_spec_t o_pass = {'\0', "pass", true};
+    opt_spec_t o_host = {'\0', "host", true};
+    opt_spec_t o_port = {'\0', "port", true};
+    opt_spec_t o_ovr = {'\0', "override", false};
     opt_spec_t* spec[] = {
         &o_help,
         &o_debug,

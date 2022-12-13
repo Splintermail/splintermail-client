@@ -11,7 +11,7 @@ int main(int argc, char** argv){
     derr_t e = E_OK;
 
     // specify command line options
-    opt_spec_t o_debug = {'d', "debug", false, OPT_RETURN_INIT};
+    opt_spec_t o_debug = {'d', "debug", false};
     opt_spec_t* spec[] = {&o_debug};
     size_t speclen = sizeof(spec) / sizeof(*spec);
     int newargc;

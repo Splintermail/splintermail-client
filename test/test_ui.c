@@ -208,7 +208,7 @@ static derr_t run_all_cases(void){
         PROP(&e, run_test_case(test_case) );
 
         test_case.test_name = "dump-conf";
-        test_case.expect_out = "dump-conf\n";
+        test_case.expect_out = "";
         test_case.argv = (char*[]){SM, "--dump-conf", NULL};
         PROP(&e, run_test_case(test_case) );
         test_case.expect_out = NULL;
@@ -225,11 +225,8 @@ static derr_t run_all_cases(void){
         DSTR_VAR(configpath, 4096);
         PROP(&e, FMT(&configpath, "%x/test_ui/testconf", FS(g_test_files)) );
         // prepare the expected stdout
-        DSTR_VAR(expect_out, 4096);
-        PROP(&e, FMT(&expect_out, "dump-conf\nconfig %x\nditm-dir 12345\n",
-                                  FD(&configpath)) );
         test_case.test_name = "config";
-        test_case.expect_out = expect_out.data;
+        test_case.expect_out = "ditm-dir 12345\n";
         test_case.argv = (char*[]){SM, "--config", configpath.data, "--dump-conf", NULL};
         PROP(&e, run_test_case(test_case) );
         test_case.argv = (char*[]){SM, "-c", configpath.data, "--dump-conf", NULL};
@@ -464,7 +461,7 @@ static derr_t run_all_cases(void){
         PROP(&e, run_test_case(test_case) );
 
         // case "E" -> noreg ("W")
-        test_case.test_name = "no creds yet";
+        test_case.test_name = "no creds yet, noreg found";
         test_case.creatables = (char*[]){"noreg.user@fqdn/api_token.json", NULL};
         test_case.users = (char*[]){"noreg.user@fqdn", NULL};
         test_case.api_password_args.user = "noreg.user@fqdn";

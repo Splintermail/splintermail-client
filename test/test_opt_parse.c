@@ -70,143 +70,99 @@ static int same_as(const char* a, const char* b){
     } \
 } while(0)
 
+
+#define TEST_SPEC \
+    opt_spec_t opt_a = {'a', NULL, false}; \
+    opt_spec_t opt_b = {'b', "beta",  false}; \
+    opt_spec_t opt_c = {'c', "create", true}; \
+    opt_spec_t opt_d = {'\0', "delete", true}; \
+    opt_spec_t* spec[] = { \
+        &opt_a, \
+        &opt_b, \
+        &opt_c, \
+        &opt_d, \
+    }; \
+    size_t speclen = sizeof(spec) / sizeof(*spec)
+
+#define TEST_CASE_IN(...) \
+    TEST_SPEC; \
+    char* argv[] = {__VA_ARGS__}; \
+    int argc = sizeof(argv) / sizeof(*argv); \
+    int newargc; \
+    derr_t ret = opt_parse(argc, argv, spec, speclen, &newargc) \
+
+#define TEST_CASE_OUT(...) \
+    char* argout[] = {__VA_ARGS__}; \
+    int nargout = sizeof(argout)/sizeof(*argout) \
+
+
 static derr_t test_opt_parse(void){
     derr_t e = E_OK;
-    // set up some standard options
-    opt_spec_t opt_a = {'a', NULL, false, OPT_RETURN_INIT};
-    opt_spec_t opt_b = {'b', "beta",  false, OPT_RETURN_INIT};
-    opt_spec_t opt_c = {'c', "create", true, OPT_RETURN_INIT};
-    opt_spec_t opt_d = {'\0', "delete", true, OPT_RETURN_INIT};
 
-    opt_spec_t* spec[] = {&opt_a,
-                          &opt_b,
-                          &opt_c,
-                          &opt_d};
-
-    size_t speclen = sizeof(spec) / sizeof(*spec);
     // test case: no options (codepaths 1, 2)
     {
-        char* argv[] = {"test", "1", "2", "3", "", "-"};
-        int argc = sizeof(argv) / sizeof(*argv);
-        int newargc;
-
-        derr_t ret = opt_parse(argc, argv, spec, speclen, &newargc);
-
-        char* argout[] = {"test", "1", "2", "3", "", "-"};
-        int nargout = sizeof(argout)/sizeof(*argout);
+        TEST_CASE_IN("test", "1", "2", "3", "", "-");
+        TEST_CASE_OUT("test", "1", "2", "3", "", "-");
         EXPECT(0, 0,0,0,0, NULL,NULL);
     }
     // test case: long options (codepaths 1, 3, 4, 6);
     {
-        char* argv[] = {"test", "1", "--beta", "--create", "something",
-                        "2", "--", "3", "-a", "--"};
-        int argc = sizeof(argv) / sizeof(*argv);
-        int newargc;
-
-        derr_t ret = opt_parse(argc, argv, spec, speclen, &newargc);
-
-        char* argout[] = {"test", "1", "2", "3", "-a", "--"};
-        int nargout = sizeof(argout)/sizeof(*argout);
+        TEST_CASE_IN("test", "1", "--beta", "--create", "something",
+                        "2", "--", "3", "-a", "--");
+        TEST_CASE_OUT("test", "1", "2", "3", "-a", "--");
         EXPECT(0, 0,1,2,0, "something",NULL);
     }
     // test case: long option missing value (codepaths, 1, 5);
     {
-        char* argv[] = {"test", "1", "2", "3", "--delete"};
-        int argc = sizeof(argv) / sizeof(*argv);
-        int newargc;
-
-        derr_t ret = opt_parse(argc, argv, spec, speclen, &newargc);
-
-        char* argout[] = {"does not matter"};
-        int nargout = sizeof(argout)/sizeof(*argout);
+        TEST_CASE_IN("test", "1", "2", "3", "--delete");
+        TEST_CASE_OUT("does not matter");
         EXPECT(E_VALUE, 0,0,0,0, NULL,NULL);
     }
     // test case: long option unrecognized (codepaths 1, 7);
     {
-        char* argv[] = {"test", "1", "2", "3", "--asdf"};
-        int argc = sizeof(argv) / sizeof(*argv);
-        int newargc;
-
-        derr_t ret = opt_parse(argc, argv, spec, speclen, &newargc);
-
-        char* argout[] = {"does not matter"};
-        int nargout = sizeof(argout)/sizeof(*argout);
+        TEST_CASE_IN("test", "1", "2", "3", "--asdf");
+        TEST_CASE_OUT("does not matter");
         EXPECT(E_VALUE, 0,0,0,0, NULL,NULL);
     }
     // test case: short options (codepaths 1, B, D);
     {
-        char* argv[] = {"test", "-ba", "1", "2", "3"};
-        int argc = sizeof(argv) / sizeof(*argv);
-        int newargc;
-
-        derr_t ret = opt_parse(argc, argv, spec, speclen, &newargc);
-
-        char* argout[] = {"test", "1", "2", "3"};
-        int nargout = sizeof(argout)/sizeof(*argout);
+        TEST_CASE_IN("test", "-ba", "1", "2", "3");
+        TEST_CASE_OUT("test", "1", "2", "3");
         EXPECT(0, 2,1,0,0, NULL,NULL);
     }
     // test case: short options (codepaths 1, 8, B);
     {
-        char* argv[] = {"test", "1", "-bc", "x", "2", "3"};
-        int argc = sizeof(argv) / sizeof(*argv);
-        int newargc;
-
-        derr_t ret = opt_parse(argc, argv, spec, speclen, &newargc);
-
-        char* argout[] = {"test", "1", "2", "3"};
-        int nargout = sizeof(argout)/sizeof(*argout);
+        TEST_CASE_IN("test", "1", "-bc", "x", "2", "3");
+        TEST_CASE_OUT("test", "1", "2", "3");
         EXPECT(0, 0,1,2,0, "x",NULL);
     }
     // test case: short options (codepaths 1, 9, B);
     {
-        char* argv[] = {"test", "1", "-bcax", "2", "3"};
-        int argc = sizeof(argv) / sizeof(*argv);
-        int newargc;
-
-        derr_t ret = opt_parse(argc, argv, spec, speclen, &newargc);
-
-        char* argout[] = {"test", "1", "2", "3"};
-        int nargout = sizeof(argout)/sizeof(*argout);
+        TEST_CASE_IN("test", "1", "-bcax", "2", "3");
+        TEST_CASE_OUT("test", "1", "2", "3");
         EXPECT(0, 0,1,2,0, "ax",NULL);
     }
     // test case: short options missing arg (codepaths 1, A, B);
     {
-        char* argv[] = {"test", "1", "-a", "2", "3", "-c"};
-        int argc = sizeof(argv) / sizeof(*argv);
-        int newargc;
-
-        derr_t ret = opt_parse(argc, argv, spec, speclen, &newargc);
-
-        char* argout[] = {"does not matter"};
-        int nargout = sizeof(argout)/sizeof(*argout);
+        TEST_CASE_IN("test", "1", "-a", "2", "3", "-c");
+        TEST_CASE_OUT("does not matter");
         EXPECT(E_VALUE, 0,0,0,0, NULL,NULL);
     }
     // test case: short options unrecognized (codepaths 1, A, B);
     {
-        char* argv[] = {"test", "1", "2", "-ax", "3"};
-        int argc = sizeof(argv) / sizeof(*argv);
-        int newargc;
-
-        derr_t ret = opt_parse(argc, argv, spec, speclen, &newargc);
-
-        char* argout[] = {"does not matter"};
-        int nargout = sizeof(argout)/sizeof(*argout);
+        TEST_CASE_IN("test", "1", "2", "-ax", "3");
+        TEST_CASE_OUT("does not matter");
         EXPECT(E_VALUE, 0,0,0,0, NULL,NULL);
     }
     // test case: double definition
     {
-        char* argv[] = {"test", "1", "2", "-c", "c", "--create", "cc", "3"};
-        int argc = sizeof(argv) / sizeof(*argv);
-        int newargc;
-
-        derr_t ret = opt_parse(argc, argv, spec, speclen, &newargc);
-
-        char* argout[] = {"test", "1", "2", "3"};
-        int nargout = sizeof(argout)/sizeof(*argout);
+        TEST_CASE_IN("test", "1", "2", "-c", "c", "--create", "cc", "3");
+        TEST_CASE_OUT("test", "1", "2", "3");
         EXPECT(0, 0,0,2,0, "cc",NULL);
     }
     // test case: no args
     {
+        TEST_SPEC;
         char** argv = NULL;
         int argc = 0;
         int newargc;
@@ -219,17 +175,27 @@ static derr_t test_opt_parse(void){
     }
     // test case: define everything
     {
-        char* argv[] = {"-a", "--beta", "-ccc", "--delete", "everything"};
-        int argc = sizeof(argv) / sizeof(*argv);
-        int newargc;
-
-        derr_t ret = opt_parse(argc, argv, spec, speclen, &newargc);
-
+        TEST_CASE_IN("-a", "--beta", "-ccc", "--delete", "everything");
         char** argout = NULL;
         int nargout = 0;
         EXPECT(0, 1,2,3,4, "cc","everything");
     }
 
+    return e;
+}
+
+static derr_t opt_dump(opt_spec_t **spec, size_t speclen, dstr_t *out){
+    derr_t e = E_OK;
+
+    for(size_t i = 0; i < speclen; i++){
+        opt_spec_t *s = spec[i];
+        if(!s->found) continue;
+        if(s->val_req){
+            PROP(&e, FMT(out, "%x %x\n", FS(s->olong), FD(&s->val)) );
+        }else{
+            PROP(&e, FMT(out, "%x\n", FS(s->olong)) );
+        }
+    }
     return e;
 }
 
@@ -249,12 +215,12 @@ static derr_t test_opt_parse(void){
 static derr_t test_conf_parse(void){
     derr_t e = E_OK;
     derr_t e2;
-    opt_spec_t o_option1    = {'\0', "option1",    true,  OPT_RETURN_INIT};
-    opt_spec_t o_option2    = {'\0', "option2",    true,  OPT_RETURN_INIT};
-    opt_spec_t o_option3    = {'\0', "option3",    true,  OPT_RETURN_INIT};
-    opt_spec_t o_flag1      = {'\0', "flag1",      false, OPT_RETURN_INIT};
-    opt_spec_t o_flag2      = {'\0', "flag2",      false, OPT_RETURN_INIT};
-    opt_spec_t o_flag3      = {'\0', "flag3",      false, OPT_RETURN_INIT};
+    opt_spec_t o_option1    = {'\0', "option1",    true};
+    opt_spec_t o_option2    = {'\0', "option2",    true};
+    opt_spec_t o_option3    = {'\0', "option3",    true};
+    opt_spec_t o_flag1      = {'\0', "flag1",      false};
+    opt_spec_t o_flag2      = {'\0', "flag2",      false};
+    opt_spec_t o_flag3      = {'\0', "flag3",      false};
 
     opt_spec_t* spec[] = {&o_option1,
                           &o_option2,
@@ -283,11 +249,11 @@ static derr_t test_conf_parse(void){
            "option2 white   space\t test\n"
            "flag1\n");
 
-    // read another config file to make sure we don't overwrite existing values
+    // read another config file to make sure we overwrite existing values
     DSTR_VAR(text2, 4096);
     PROP(&e, dstr_read_file(goodconf2.data, &text2) );
     PROP(&e, conf_parse(&text2, spec, speclen) );
-    EXPECT("option1 hey there buddy\n"
+    EXPECT("option1 should be overridden\n"
            "option2 white   space\t test\n"
            "option3 is new\n"
            "flag1\n"

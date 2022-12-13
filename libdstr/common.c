@@ -133,6 +133,16 @@ LIST_FUNCTIONS(dstr_t)
 LIST_FUNCTIONS(size_t)
 LIST_FUNCTIONS(bool)
 
+dstr_t dstr_from_cstr(char *cstr){
+    size_t len = strlen(cstr);
+    return (dstr_t){
+        .data = cstr,
+        .len = len,
+        .size = len + 1,
+        .fixed_size = true,
+    };
+}
+
 dstr_t dstr_sub(const dstr_t* in, size_t start, size_t end){
     dstr_t out;
 

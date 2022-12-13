@@ -1,33 +1,48 @@
-#define OPT_RETURN_INIT 0, {.data=NULL, .size=0, .len=0, .fixed_size=true}
-
 /*
 in: argc
     argv
-    {h,  help,     no_arg,  OPT_RETURN_INIT}
-    {p,  port,     yes_arg, OPT_RETURN_INIT}
-    {\0, gpg-home, yes_arg, OPT_RETURN_INIT}
+    {h,  help,     false }
+    {p,  port,     true  }
+    {\0, gpg-home, true  }
 
 out: set values in the above list of structs
      rearrange argv
-     return new argv and argc for just arguments
+     return new argv and argc for just positional arguments
 */
+
+// if val_req == false, val will be (dstr_t){0}
+typedef derr_t (*opt_spec_cb)(void *cb_data, dstr_t val);
 
 typedef struct {
     char oshort;
     char* olong;
-    char val_req; // boolean (0 or 1)
-    int found;    /* value is 0 if not found, or >1 if found.  A higher number
-                     means it was found later.  If found multiple times, the
-                     value stored will be from the last instance of the option
-                     in the list. */
+    bool val_req;
+    opt_spec_cb cb;
+    void *cb_data;
+    /* found will be 0 if the option is not detected, or >1 if it was.  A
+       higher number means it was found later.  If an option was provided
+       times, the value stored will be from the last appearance. */
+    int found;
+    // a count of the number of times an option was seen
+    int count;
     dstr_t val;
 } opt_spec_t;
 
+derr_t opt_parse_ex(
+    int argc,
+    char* argv[],
+    opt_spec_t* spec[],
+    size_t speclen,
+    int* newargc,
+    bool allow_unrecognized
+);
+
 derr_t opt_parse(
-        int argc, char* argv[], opt_spec_t* spec[], size_t speclen,
-        int* newargc);
+    int argc, char* argv[], opt_spec_t* spec[], size_t speclen, int* newargc
+);
+
+derr_t opt_parse_soft(
+    int argc, char* argv[], opt_spec_t* spec[], size_t speclen, int* newargc
+);
 
 derr_t conf_parse(const dstr_t* text, opt_spec_t* spec[], size_t speclen);
-
-derr_t opt_dump(opt_spec_t* spec[], size_t speclen, dstr_t* out);
-derr_t opt_fdump(opt_spec_t* spec[], size_t speclen, FILE* f, size_t* len);

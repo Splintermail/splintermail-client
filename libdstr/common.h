@@ -358,6 +358,8 @@ derr_t dstr_grow(dstr_t* ds, size_t min_size);
 /* throws: E_FIXEDSIZE
            E_NOMEM */
 
+dstr_t dstr_from_cstr(char *cstr);
+
 // in:    full string
 // start: byte offset to start of substring
 // end:   byte offset to end of substring (0 means copy all)

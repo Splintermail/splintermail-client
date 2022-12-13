@@ -49,14 +49,14 @@ int main(int argc, char **argv){
 
 
     // options
-    opt_spec_t o_help     = {'h',  "help",        false, OPT_RETURN_INIT};
-    opt_spec_t o_l_host   = {'\0', "local-host",  true,  OPT_RETURN_INIT};
-    opt_spec_t o_l_port   = {'\0', "local-port",  true,  OPT_RETURN_INIT};
-    opt_spec_t o_r_host   = {'\0', "remote-host", true,  OPT_RETURN_INIT};
-    opt_spec_t o_r_port   = {'\0', "remote-port", true,  OPT_RETURN_INIT};
-    opt_spec_t o_tls_key  = {'\0', "tls-key",     true,  OPT_RETURN_INIT};
-    opt_spec_t o_tls_cert = {'\0', "tls-cert",    true,  OPT_RETURN_INIT};
-    opt_spec_t o_maildirs = {'\0', "maildirs",    true,  OPT_RETURN_INIT};
+    opt_spec_t o_help     = {'h',  "help",        false};
+    opt_spec_t o_l_host   = {'\0', "local-host",  true};
+    opt_spec_t o_l_port   = {'\0', "local-port",  true};
+    opt_spec_t o_r_host   = {'\0', "remote-host", true};
+    opt_spec_t o_r_port   = {'\0', "remote-port", true};
+    opt_spec_t o_tls_key  = {'\0', "tls-key",     true};
+    opt_spec_t o_tls_cert = {'\0', "tls-cert",    true};
+    opt_spec_t o_maildirs = {'\0', "maildirs",    true};
 
     opt_spec_t* spec[] = {
         &o_help,

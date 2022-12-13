@@ -172,12 +172,12 @@ int main(int argc, char **argv){
 
     PROP_GO(&e, logger_add_fileptr(LOG_LVL_DEBUG, stderr), fail);
 
-    opt_spec_t o_help       = {'h',  "help", false, OPT_RETURN_INIT};
-    opt_spec_t o_port       = {'p',  "port", true,  OPT_RETURN_INIT};
+    opt_spec_t o_help = {'h',  "help", false};
+    opt_spec_t o_dns  = {'\0', "dns", true};
 
     opt_spec_t* spec[] = {
         &o_help,
-        &o_port,
+        &o_dns,
     };
     size_t speclen = sizeof(spec) / sizeof(*spec);
 

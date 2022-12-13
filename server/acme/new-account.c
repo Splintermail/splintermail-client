@@ -282,8 +282,8 @@ int main(int argc, char **argv){
 #endif
     logger_add_fileptr(LOG_LVL_INFO, stderr);
 
-    opt_spec_t o_help = {'h', "help", false, OPT_RETURN_INIT};
-    opt_spec_t o_dirs = {'d', "dirs", true, OPT_RETURN_INIT};
+    opt_spec_t o_help = {'h', "help", false};
+    opt_spec_t o_dirs = {'d', "dirs", true};
 
     opt_spec_t* spec[] = { &o_help, &o_dirs };
     size_t speclen = sizeof(spec) / sizeof(*spec);

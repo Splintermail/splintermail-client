@@ -98,10 +98,10 @@ int main(int argc, char **argv){
     DROP_CMD( logger_add_fileptr(LOG_LVL_INFO, stderr) );
 
     // options
-    opt_spec_t o_help     = {'h',  "help",        false, OPT_RETURN_INIT};
-    opt_spec_t o_root     = {'r',  "root",        true,  OPT_RETURN_INIT};
-    opt_spec_t o_user     = {'u',  "user",        true,  OPT_RETURN_INIT};
-    opt_spec_t o_mailbox  = {'m',  "mailbox",      true,  OPT_RETURN_INIT};
+    opt_spec_t o_help     = {'h',  "help",    false};
+    opt_spec_t o_root     = {'r',  "root",    true};
+    opt_spec_t o_user     = {'u',  "user",    true};
+    opt_spec_t o_mailbox  = {'m',  "mailbox", true};
 
     opt_spec_t* spec[] = {
         &o_help,

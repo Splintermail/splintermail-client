@@ -347,27 +347,26 @@ define_file_logname_for_source("${print_help_in}" "${print_help_out}")
 add_library(ui ui.c "${print_help_out}")
 define_file_logname_for_target(ui)
 default_compile_options(ui TRUE)
-target_link_libraries(ui PUBLIC ui_harness api_client crypto dstr)
+target_link_libraries(ui PUBLIC ditm libcitm)
 
 add_executable(splintermail splintermail.c)
 default_compile_options(splintermail TRUE)
 define_file_logname_for_target(splintermail)
+target_link_libraries(splintermail PRIVATE ui ui_harness console_input)
 
 add_executable(encrypt_msg encrypt_msg.c)
 default_compile_options(encrypt_msg TRUE)
 define_file_logname_for_target(encrypt_msg)
+target_link_libraries(encrypt_msg PRIVATE crypto)
 
 add_executable(decrypt_msg decrypt_msg.c)
 default_compile_options(decrypt_msg TRUE)
 define_file_logname_for_target(decrypt_msg)
+target_link_libraries(decrypt_msg PRIVATE crypto)
 
 add_executable(inject_local_msg inject_local_msg.c)
 default_compile_options(inject_local_msg TRUE)
 define_file_logname_for_target(inject_local_msg)
-
-target_link_libraries(splintermail PRIVATE ui console_input ditm libcitm)
-target_link_libraries(encrypt_msg PRIVATE crypto)
-target_link_libraries(decrypt_msg PRIVATE crypto)
 target_link_libraries(inject_local_msg PRIVATE imaildir crypto)
 
 # decide if we are building server code

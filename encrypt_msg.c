@@ -218,10 +218,10 @@ cu_sql_lib:
 
 int main(int argc, char** argv){
     // specify command line options
-    opt_spec_t o_debug = {'d', "debug", false, OPT_RETURN_INIT};
-    opt_spec_t o_help = {'h', "help", false, OPT_RETURN_INIT};
+    opt_spec_t o_debug = {'d', "debug", false};
+    opt_spec_t o_help = {'h', "help", false};
 #ifdef BUILD_SERVER_CODE
-    opt_spec_t o_sock = {'s', "socket", true, OPT_RETURN_INIT};
+    opt_spec_t o_sock = {'s', "socket", true};
     opt_spec_t* spec[] = {&o_debug, &o_help, &o_sock};
 #else
     opt_spec_t* spec[] = {&o_debug, &o_help};
