@@ -56,12 +56,12 @@
      "1bullet2":[{"s":null},["prepost", "\"", "\\n\"",
         ["call", "printf_escape", {"text":
           ["join","\n",["list",
-             ["wrap", "79", "        ", "        ", ["get","man","files","config","1"]],
+             ["wrap", "79", "        ", "        ", ["get","man","files","s","1"]],
              "",
              ["prepost", "            ", "",
-                 ["join", "\n", ["get","man","files","config","bullets"]]],
+                 ["join", "\n", ["get","man","files","s","bullets"]]],
              "",
-             ["wrap", "79", "        ", "        ", ["get","man","files","config","2"]]
+             ["wrap", "79", "        ", "        ", ["get","man","files","s","2"]]
           ]]
         }]]
      ],
