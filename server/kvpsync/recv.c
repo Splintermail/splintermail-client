@@ -252,22 +252,31 @@ fail:
     return e;
 }
 
-// process an incoming packet
+// process an incoming packet and configure the ack
+// (pre-initial-syncs are acked with reset packets)
 derr_t kvpsync_recv_handle_update(
-    kvpsync_recv_t *r, xtime_t now, kvp_update_t update, bool *should_ack
+    kvpsync_recv_t *r, xtime_t now, kvp_update_t update, kvp_ack_t *ack
 ){
     derr_t e = E_OK;
 
+    *ack = (kvp_ack_t){
+        .sync_id = update.sync_id,
+        .update_id = update.update_id,
+    };
+
     if(!r->initial_sync_acked){
-        *should_ack = false;
-        if(update.type != KVP_UPDATE_START) return e;
-        if(update.resync_id != r->recv_id) return e;
+        if(update.type != KVP_UPDATE_START || update.resync_id != r->recv_id){
+            // send a resync request instead of a regular ack
+            *ack = (kvp_ack_t){
+                .sync_id = r->recv_id,
+                .update_id = 0,
+            };
+            return e;
+        }
+        // got the start packet, ack it as normal
         r->initial_sync_acked = true;
-        *should_ack = true;
         return e;
     }
-
-    *should_ack = true;
 
     do_gc(r, now);
 

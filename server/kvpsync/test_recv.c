@@ -61,16 +61,19 @@ static kvp_update_t DELETE(
     return out;
 }
 
-#define MUST_IGNORE(_update) do { \
-    bool ok; \
-    PROP_GO(&e, kvpsync_recv_handle_update(&r, now, _update, &ok), cu); \
-    EXPECT_B_GO(&e, "should_ack", ok, false, cu); \
+#define MUST_RESYNC(_update) do { \
+    kvp_ack_t ack; \
+    PROP_GO(&e, kvpsync_recv_handle_update(&r, now, _update, &ack), cu); \
+    EXPECT_U_GO(&e, "ack.sync_id", ack.sync_id, r.recv_id, cu); \
+    EXPECT_U_GO(&e, "ack.update_id", ack.update_id, 0, cu); \
 } while(0)
 
-#define MUST_HANDLE(_update) do { \
-    bool ok; \
-    PROP_GO(&e, kvpsync_recv_handle_update(&r, now, _update, &ok), cu); \
-    EXPECT_B_GO(&e, "should_ack", ok, true, cu); \
+#define MUST_ACK(_update) do { \
+    kvp_update_t __update = (_update); \
+    kvp_ack_t ack; \
+    PROP_GO(&e, kvpsync_recv_handle_update(&r, now, __update, &ack), cu); \
+    EXPECT_U_GO(&e, "ack.sync_id", ack.sync_id, __update.sync_id, cu); \
+    EXPECT_U_GO(&e, "ack.update_id", ack.update_id, __update.update_id, cu); \
 } while(0)
 
 
@@ -111,9 +114,9 @@ static derr_t test_recv(void){
     xtime_t now = 1;
 
     // everything is ignored before the initial packet is acked
-    MUST_IGNORE( INSERT("A", "aaa", 9, 3, 1*SECOND) );
-    MUST_IGNORE( DELETE("B", 4, 9, 5, 1*SECOND) );
-    MUST_IGNORE( FLUSH(9, 6, 1*SECOND) );
+    MUST_RESYNC( INSERT("A", "aaa", 9, 3, 1*SECOND) );
+    MUST_RESYNC( DELETE("B", 4, 9, 5, 1*SECOND) );
+    MUST_RESYNC( FLUSH(9, 6, 1*SECOND) );
     EXPECT_B_GO(&e, "initial_sync_acked", r.initial_sync_acked, false, cu);
     EXPECT_U_GO(&e, "ok_expiry", r.ok_expiry, 0, cu);
     EXPECT_U_GO(&e, "num_elems", r.h.num_elems, 0, cu);
@@ -124,31 +127,31 @@ static derr_t test_recv(void){
     EXPECT_REPLY("Z", "UNSURE");
 
     // acknowledge resync request
-    MUST_HANDLE( START(1, r.recv_id) );
+    MUST_ACK( START(1, r.recv_id) );
 
     // resolution case 1: only a single insert
-    MUST_HANDLE( INSERT("A", "aaa", 1, 2, 0) );
+    MUST_ACK( INSERT("A", "aaa", 1, 2, 0) );
 
     // resolution case 2: two inserts
-    MUST_HANDLE( INSERT("B", "old", 1, 3, 0) );
-    MUST_HANDLE( INSERT("B", "new", 1, 5, 0) );
+    MUST_ACK( INSERT("B", "old", 1, 3, 0) );
+    MUST_ACK( INSERT("B", "new", 1, 5, 0) );
 
     // resolution case 3: old deletion, new insert
-    MUST_HANDLE( DELETE("C", 7, 1, 8, 0) );
-    MUST_HANDLE( INSERT("C", "new", 1, 9, 0) );
+    MUST_ACK( DELETE("C", 7, 1, 8, 0) );
+    MUST_ACK( INSERT("C", "new", 1, 9, 0) );
 
     // resolution case 4: old insert, new deletion
-    MUST_HANDLE( INSERT("D", "old", 1, 11, 0) );
-    MUST_HANDLE( DELETE("D", 13, 1, 14, 0) );
+    MUST_ACK( INSERT("D", "old", 1, 11, 0) );
+    MUST_ACK( DELETE("D", 13, 1, 14, 0) );
 
     // add some noise from wrong sync_ids
-    MUST_HANDLE( INSERT("A", "wrong", 8, 2, 0) );
-    MUST_HANDLE( INSERT("B", "wrong", 8, 3, 0) );
-    MUST_HANDLE( INSERT("B", "new", 8, 5, 0) );
-    MUST_HANDLE( DELETE("C", 7, 8, 8, 0) );
-    MUST_HANDLE( INSERT("C", "wrong", 8, 9, 0) );
-    MUST_HANDLE( INSERT("D", "wrong", 8, 11, 0) );
-    MUST_HANDLE( DELETE("D", 13, 8, 14, 0) );
+    MUST_ACK( INSERT("A", "wrong", 8, 2, 0) );
+    MUST_ACK( INSERT("B", "wrong", 8, 3, 0) );
+    MUST_ACK( INSERT("B", "new", 8, 5, 0) );
+    MUST_ACK( DELETE("C", 7, 8, 8, 0) );
+    MUST_ACK( INSERT("C", "wrong", 8, 9, 0) );
+    MUST_ACK( INSERT("D", "wrong", 8, 11, 0) );
+    MUST_ACK( DELETE("D", 13, 8, 14, 0) );
 
     // all responses are still UNSURE
     EXPECT_REPLY("A", "UNSURE");
@@ -159,25 +162,25 @@ static derr_t test_recv(void){
 
     // finish the sync
     xtime_t expire = now + 15*SECOND;
-    MUST_HANDLE( FLUSH(1, 15, expire) );
+    MUST_ACK( FLUSH(1, 15, expire) );
 
     // duplicate packets are harmless
-    MUST_HANDLE( INSERT("A", "aaa", 1, 2, 0) );
-    MUST_HANDLE( INSERT("B", "old", 1, 3, 0) );
-    MUST_HANDLE( INSERT("B", "new", 1, 5, 0) );
-    MUST_HANDLE( DELETE("C", 7, 1, 8, 0) );
-    MUST_HANDLE( INSERT("C", "new", 1, 9, 0) );
-    MUST_HANDLE( INSERT("D", "old", 1, 11, 0) );
-    MUST_HANDLE( DELETE("D", 13, 1, 14, 0) );
+    MUST_ACK( INSERT("A", "aaa", 1, 2, 0) );
+    MUST_ACK( INSERT("B", "old", 1, 3, 0) );
+    MUST_ACK( INSERT("B", "new", 1, 5, 0) );
+    MUST_ACK( DELETE("C", 7, 1, 8, 0) );
+    MUST_ACK( INSERT("C", "new", 1, 9, 0) );
+    MUST_ACK( INSERT("D", "old", 1, 11, 0) );
+    MUST_ACK( DELETE("D", 13, 1, 14, 0) );
 
     // add more noise
-    MUST_HANDLE( INSERT("A", "wrong", 8, 2, 0) );
-    MUST_HANDLE( INSERT("B", "wrong", 8, 3, 0) );
-    MUST_HANDLE( INSERT("B", "new", 8, 5, 0) );
-    MUST_HANDLE( DELETE("C", 7, 8, 8, 0) );
-    MUST_HANDLE( INSERT("C", "wrong", 8, 9, 0) );
-    MUST_HANDLE( INSERT("D", "wrong", 8, 11, 0) );
-    MUST_HANDLE( DELETE("D", 13, 8, 14, 0) );
+    MUST_ACK( INSERT("A", "wrong", 8, 2, 0) );
+    MUST_ACK( INSERT("B", "wrong", 8, 3, 0) );
+    MUST_ACK( INSERT("B", "new", 8, 5, 0) );
+    MUST_ACK( DELETE("C", 7, 8, 8, 0) );
+    MUST_ACK( INSERT("C", "wrong", 8, 9, 0) );
+    MUST_ACK( INSERT("D", "wrong", 8, 11, 0) );
+    MUST_ACK( DELETE("D", 13, 8, 14, 0) );
 
     now = expire-1;
 
@@ -202,7 +205,7 @@ static derr_t test_recv(void){
 
     // a keepalive restores the answers
     expire = now + 15*SECOND;
-    MUST_HANDLE( EMPTY(1, 16, expire) );
+    MUST_ACK( EMPTY(1, 16, expire) );
     EXPECT_REPLY("A", "aaa");
     EXPECT_REPLY("B", "new");
     EXPECT_REPLY("C", "new");
@@ -210,14 +213,14 @@ static derr_t test_recv(void){
     EXPECT_REPLY("Z", "NULL");
 
     // simulate a server-side resync
-    MUST_HANDLE( START(2, r.recv_id) );
-    MUST_HANDLE( INSERT("A", "aaa2", 2, 2, 0) );
-    MUST_HANDLE( INSERT("B", "old2", 2, 3, 0) );
-    MUST_HANDLE( INSERT("B", "new2", 2, 5, 0) );
-    MUST_HANDLE( DELETE("C", 7, 2, 8, 0) );
-    MUST_HANDLE( INSERT("C", "new2", 2, 9, 0) );
-    MUST_HANDLE( INSERT("D", "old2", 2, 11, 0) );
-    MUST_HANDLE( DELETE("D", 13, 2, 14, 0) );
+    MUST_ACK( START(2, r.recv_id) );
+    MUST_ACK( INSERT("A", "aaa2", 2, 2, 0) );
+    MUST_ACK( INSERT("B", "old2", 2, 3, 0) );
+    MUST_ACK( INSERT("B", "new2", 2, 5, 0) );
+    MUST_ACK( DELETE("C", 7, 2, 8, 0) );
+    MUST_ACK( INSERT("C", "new2", 2, 9, 0) );
+    MUST_ACK( INSERT("D", "old2", 2, 11, 0) );
+    MUST_ACK( DELETE("D", 13, 2, 14, 0) );
 
     // before flush, nothing changes
     EXPECT_REPLY("A", "aaa");
@@ -234,7 +237,7 @@ static derr_t test_recv(void){
 
     // after flush, the new data is ready
     expire = now + 15*SECOND;
-    MUST_HANDLE( FLUSH(2, 15, expire) );
+    MUST_ACK( FLUSH(2, 15, expire) );
     EXPECT_REPLY("A", "aaa2");
     EXPECT_REPLY("B", "new2");
     EXPECT_REPLY("C", "new2");
@@ -256,30 +259,30 @@ static derr_t test_gc(void){
     xtime_t now = 1;
     xtime_t expire = 10000*SECOND;
 
-    MUST_HANDLE( START(1, r.recv_id) );
-    MUST_HANDLE( FLUSH(1, 2, expire) );
+    MUST_ACK( START(1, r.recv_id) );
+    MUST_ACK( FLUSH(1, 2, expire) );
 
     // case 1: deletion matches insertion, and persists for a while
-    MUST_HANDLE( INSERT("A", "aaa", 1, 3, expire) );
+    MUST_ACK( INSERT("A", "aaa", 1, 3, expire) );
     EXPECT_REPLY("A", "aaa");
 
     EXPECT_B_GO(&e, "gc empty", link_list_isempty(&r.gc), true, cu);
 
-    MUST_HANDLE( DELETE("A", 3, 1, 4, expire) );
+    MUST_ACK( DELETE("A", 3, 1, 4, expire) );
     EXPECT_REPLY("A", "NULL");
 
     EXPECT_B_GO(&e, "gc not empty", !link_list_isempty(&r.gc), true, cu);
 
     // duplicates are ignored
-    MUST_HANDLE( INSERT("A", "aaa", 1, 3, expire) );
+    MUST_ACK( INSERT("A", "aaa", 1, 3, expire) );
     EXPECT_REPLY("A", "NULL");
-    MUST_HANDLE( DELETE("A", 3, 1, 4, expire) );
+    MUST_ACK( DELETE("A", 3, 1, 4, expire) );
     EXPECT_REPLY("A", "NULL");
 
     // late duplicates do not affect gc timer
     now += GC_DELAY - 1;
-    MUST_HANDLE( INSERT("A", "aaa", 1, 3, expire) );
-    MUST_HANDLE( DELETE("A", 3, 1, 4, expire) );
+    MUST_ACK( INSERT("A", "aaa", 1, 3, expire) );
+    MUST_ACK( DELETE("A", 3, 1, 4, expire) );
     EXPECT_REPLY("A", "NULL");
     EXPECT_B_GO(&e, "gc not empty", !link_list_isempty(&r.gc), true, cu);
 
@@ -288,22 +291,22 @@ static derr_t test_gc(void){
     EXPECT_B_GO(&e, "gc empty", link_list_isempty(&r.gc), true, cu);
 
     // case 2: insertion matches deletion, and deletion persists
-    MUST_HANDLE( DELETE("B", 5, 1, 6, expire) );
+    MUST_ACK( DELETE("B", 5, 1, 6, expire) );
     EXPECT_REPLY("B", "NULL");
 
     EXPECT_B_GO(&e, "gc empty", link_list_isempty(&r.gc), true, cu);
-    MUST_HANDLE( INSERT("B", "bbb", 1, 5, expire) );
+    MUST_ACK( INSERT("B", "bbb", 1, 5, expire) );
     EXPECT_B_GO(&e, "gc not empty", !link_list_isempty(&r.gc), true, cu);
 
-    MUST_HANDLE( INSERT("B", "bbb", 1, 5, expire) );
+    MUST_ACK( INSERT("B", "bbb", 1, 5, expire) );
     EXPECT_REPLY("B", "NULL");
-    MUST_HANDLE( DELETE("B", 5, 1, 6, expire) );
+    MUST_ACK( DELETE("B", 5, 1, 6, expire) );
     EXPECT_REPLY("B", "NULL");
 
     // late duplicates do not affect gc timer
     now += GC_DELAY - 1;
-    MUST_HANDLE( INSERT("B", "bbb", 1, 5, expire) );
-    MUST_HANDLE( DELETE("B", 5, 1, 6, expire) );
+    MUST_ACK( INSERT("B", "bbb", 1, 5, expire) );
+    MUST_ACK( DELETE("B", 5, 1, 6, expire) );
     EXPECT_REPLY("A", "NULL");
     EXPECT_B_GO(&e, "gc not empty", !link_list_isempty(&r.gc), true, cu);
 

@@ -18,10 +18,10 @@ typedef struct {
 derr_t kvpsync_recv_init(kvpsync_recv_t *r);
 void kvpsync_recv_free(kvpsync_recv_t *r);
 
-// process an incoming packet, and decide if it should be acked or not
-// (pre-initial-sync packets are the only packets not acked)
+// process an incoming packet and configure the ack
+// (pre-initial-syncs are acked with reset packets)
 derr_t kvpsync_recv_handle_update(
-    kvpsync_recv_t *r, xtime_t now, kvp_update_t update, bool *should_ack
+    kvpsync_recv_t *r, xtime_t now, kvp_update_t update, kvp_ack_t *ack
 );
 
 extern const dstr_t *UNSURE;
