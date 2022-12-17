@@ -34,5 +34,6 @@
 #include "server/dns/parse.h"
 #include "server/dns/write.h"
 #include "server/dns/dns.h"
+#include "server/dns/rrl.h"
 
 #endif // LIBDNS_H

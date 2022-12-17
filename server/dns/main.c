@@ -49,6 +49,8 @@ typedef struct {
     bool recving;
     bool closing;
     derr_t close_reason;
+    rrl_t rrl;
+    xtime_t last_report;
 } globals_t;
 DEF_CONTAINER_OF(globals_t, iface, kvp_i);
 
@@ -136,6 +138,17 @@ static derr_t on_recv_dns(
     globals_t *g, const struct sockaddr *src, membuf_t **membufp, size_t len
 ){
     derr_t e = E_OK;
+
+    // check rrl
+    bool ok = rrl_check(&g->rrl, src, g->now);
+    if(!ok){
+        // only report every hour
+        if(g->now > g->last_report + 60*60*SECOND){
+            g->last_report = g->now;
+            LOG_INFO("dropping packets due to rate limit\n");
+        }
+        return e;
+    }
 
     membuf_t *membuf = *membufp;
 
@@ -385,7 +398,8 @@ static derr_t dns_main(
     addrspec_t dnsspec,
     addrspec_t syncspec,
     struct sockaddr_storage *peers,
-    size_t npeers
+    size_t npeers,
+    size_t rrl_nbuckets
 ){
     derr_t e = E_OK;
 
@@ -399,6 +413,8 @@ static derr_t dns_main(
     };
 
     PROP(&e, membufs_init(&g.membufs, NMEMBUFS) );
+
+    PROP_GO(&e, rrl_init(&g.rrl, rrl_nbuckets), cu);
 
     for(size_t i = 0; i < npeers; i++){
         PROP_GO(&e, kvpsync_recv_init(&g.recv[i]), cu);
@@ -446,6 +462,7 @@ cu:
     for(size_t i = 0; i < npeers; i++){
         kvpsync_recv_free(&g.recv[i]);
     }
+    rrl_free(&g.rrl);
     membufs_free(&g.membufs);
     return e;
 }
@@ -454,9 +471,11 @@ cu:
 
 static void print_help(FILE *f){
     fprintf(f,
-        "usage: dns [--dns SPEC] SYNC_SPEC PEER_SPEC...\n"
+        "usage: dns [--dns SPEC] [--rrl NBUCKETS] SYNC_SPEC PEER_SPEC...\n"
         "\n"
         "each address SPEC is of the form [HOST][:PORT]:\n"
+        "\n"
+        "NBUCKETS should probably be prime (default is 249999991).\n"
         "\n"
         "example:\n"
         "\n"
@@ -473,10 +492,12 @@ int main(int argc, char **argv){
 
     opt_spec_t o_help = {'h',  "help", false};
     opt_spec_t o_dns  = {'\0', "dns", true};
+    opt_spec_t o_rrl  = {'\0', "rrl", true};
 
     opt_spec_t* spec[] = {
         &o_help,
         &o_dns,
+        &o_rrl,
     };
     size_t speclen = sizeof(spec) / sizeof(*spec);
 
@@ -499,6 +520,14 @@ int main(int argc, char **argv){
         return 1;
     }
 
+    size_t nbuckets = 0;
+    if(o_dns.found){
+        PROP_GO(&e, dstr_tosize(&o_dns.val, &nbuckets, 10), fail);
+    }else{
+        // default to a prime near 250MB
+        nbuckets = 249999991;
+    }
+
     // In linux, the default is that binding to "::" receieves ipv6 and ipv4.
     // In non-default cases, setsockopt(s, IPV6_ONLY, 0) works.
     addrspec_t dnsspec = must_parse_addrspec(&DSTR_LIT("[::]:53"));
@@ -506,7 +535,7 @@ int main(int argc, char **argv){
         PROP_GO(&e, parse_addrspec(&o_dns.val, &dnsspec), fail);
         // validate
         if(dnsspec.scheme.len){
-            ORIG_GO(&e, E_VALUE, "dns scheme will be ignored", fail);
+            ORIG_GO(&e, E_VALUE, "dns scheme would be ignored", fail);
         }
     }
 
@@ -516,7 +545,7 @@ int main(int argc, char **argv){
     PROP_GO(&e, parse_addrspec(&dsyncspec, &syncspec), fail);
     // validate
     if(syncspec.scheme.len){
-        ORIG_GO(&e, E_VALUE, "sync scheme will be ignored", fail);
+        ORIG_GO(&e, E_VALUE, "sync scheme would be ignored", fail);
     }
 
     struct sockaddr_storage peers[MAX_PEERS];
@@ -546,7 +575,7 @@ int main(int argc, char **argv){
         npeers++;
     }
 
-    PROP_GO(&e, dns_main(dnsspec, syncspec, peers, npeers), fail);
+    PROP_GO(&e, dns_main(dnsspec, syncspec, peers, npeers, nbuckets), fail);
 
     return 0;
 

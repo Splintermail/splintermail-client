@@ -1,4 +1,4 @@
-add_library(libdns SHARED membuf.c dns.c parse.c write.c)
+add_library(libdns SHARED membuf.c dns.c parse.c write.c rrl.c)
 default_compile_options(libdns TRUE)
 define_file_logname_for_target(libdns)
 target_link_libraries(libdns PUBLIC url duv kvpsync)
@@ -35,6 +35,12 @@ if(BUILD_TESTS)
     default_compile_options(test_dns TRUE)
     define_file_logname_for_target(test_dns)
     add_test(NAME "do_test_dns" COMMAND "./test_dns")
+
+    add_executable(test_rrl test_rrl.c)
+    target_link_libraries(test_rrl PUBLIC libdns)
+    default_compile_options(test_rrl TRUE)
+    define_file_logname_for_target(test_rrl)
+    add_test(NAME "do_test_rrl" COMMAND "./test_rrl")
 
     add_executable(test_main test_main.c)
     target_link_libraries(test_main PUBLIC libdns)

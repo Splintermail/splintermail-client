@@ -46,7 +46,6 @@
 } while(0)
 
 globals_t *g;
-kvpsync_send_t syncs[NPEERS];
 static link_t sends;  // membuf->link
 bool recving = false;
 
@@ -488,7 +487,7 @@ static derr_t test_main(void){
         peers[i] = must_read_addr("127.0.0.1", BASEPORT + i);
     }
 
-    PROP(&e, dns_main(dnsspec, syncspec, peers, NPEERS) );
+    PROP(&e, dns_main(dnsspec, syncspec, peers, NPEERS, 997) );
 
     return e;
 }
