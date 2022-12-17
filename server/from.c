@@ -58,7 +58,7 @@ static derr_t parse_stdin(void){
     }
     fclose(stdin);
 
-    dstr_new(&out, in.len);
+    PROP_GO(&e, dstr_new(&out, in.len), cu);
 
     PROP_GO(&e, from_parse(&in, &addr), cu);
 
