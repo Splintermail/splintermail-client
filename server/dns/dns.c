@@ -4,11 +4,12 @@
 
 #include "server/dns/libdns.h"
 
-size_t norespond(
-    const dns_pkt_t pkt, const lstr_t user, char *out, size_t cap
-){
+// for tracking UNSURE after converting to lstr_t
+char C_UNSURE = 0;
+
+size_t norespond(void *arg, const dns_pkt_t pkt, char *out, size_t cap){
+    (void)arg;
     (void)pkt;
-    (void)user;
     (void)out;
     (void)cap;
     printf("no response\n");
@@ -44,7 +45,7 @@ static size_t negative_resp(
 
     uint16_t nscount = 0;
     if(soa){
-        used = write_soa(0, out, cap - edns_resv, used);
+        used = write_soa(NULL, 0, out, cap - edns_resv, used);
         if(used <= cap){
             len = used;
             nscount++;
@@ -61,7 +62,9 @@ static size_t negative_resp(
     }
 
     bool tc = used > cap;
-    put_hdr(pkt.hdr, rcode, aa, tc, 0, nscount, arcount, out);
+    write_response_hdr(
+        pkt.hdr, rcode, aa, tc, 0, nscount, arcount, out, cap, 0
+    );
 
     return len;
 }
@@ -69,6 +72,7 @@ static size_t negative_resp(
 static size_t positive_resp(
     writer_f *writers,
     size_t nwriters,
+    void *arg,
     const dns_pkt_t pkt,
     char *out,
     size_t cap
@@ -85,7 +89,7 @@ static size_t positive_resp(
 
     uint16_t ancount = 0;
     for(size_t i = 0;  i < nwriters; i++){
-        used = writers[i](DNS_HDR_SIZE, out, cap, used);
+        used = writers[i](arg, DNS_HDR_SIZE, out, cap, used);
         if(used <= cap){
             len = used;
             ancount++;
@@ -104,7 +108,9 @@ static size_t positive_resp(
     // we only serve records for which we are authoritative
     bool aa = true;
     bool tc = used > cap;
-    put_hdr(pkt.hdr, RCODE_OK, aa, tc, ancount, 0, arcount, out);
+    write_response_hdr(
+        pkt.hdr, RCODE_OK, aa, tc, ancount, 0, arcount, out, cap, 0
+    );
 
     return len;
 }
@@ -112,25 +118,22 @@ static size_t positive_resp(
     positive_resp( \
         (writer_f[]){__VA_ARGS__}, \
         sizeof((writer_f[]){__VA_ARGS__}) / sizeof(writer_f*), \
+        arg, \
         pkt, \
         out, \
         cap \
     )
 
-size_t respond_notimpl(
-    const dns_pkt_t pkt, const lstr_t user, char *out, size_t cap
-){
-    (void)user;
+size_t respond_notimpl(void *arg, const dns_pkt_t pkt, char *out, size_t cap){
+    (void)arg;
 
     bool aa = false;
     bool soa = false;
     return negative_resp(pkt, RCODE_NOTIMPL, aa, soa, out, cap);
 }
 
-size_t respond_refused(
-    const dns_pkt_t pkt, const lstr_t user, char *out, size_t cap
-){
-    (void)user;
+size_t respond_refused(void *arg, const dns_pkt_t pkt, char *out, size_t cap){
+    (void)arg;
 
     bool aa = false;
     bool soa = false;
@@ -138,9 +141,9 @@ size_t respond_refused(
 }
 
 size_t respond_name_error(
-    const dns_pkt_t pkt, const lstr_t user, char *out, size_t cap
+    void *arg, const dns_pkt_t pkt, char *out, size_t cap
 ){
-    (void)user;
+    (void)arg;
 
     bool aa = true;
     bool soa = true;
@@ -154,11 +157,7 @@ static size_t norecord_resp(const dns_pkt_t pkt, char *out, size_t cap){
 }
 
 // for user.splintermail.com
-size_t respond_root(
-    const dns_pkt_t pkt, const lstr_t user, char *out, size_t cap
-){
-    (void)user;
-
+size_t respond_root(void *arg, const dns_pkt_t pkt, char *out, size_t cap){
     if(pkt.qstn.qtype == SOA){
         return POSITIVE_RESP(write_soa);
     }
@@ -172,11 +171,7 @@ size_t respond_root(
 }
 
 // for *.user.splintermail.com
-size_t respond_user(
-    const dns_pkt_t pkt, const lstr_t user, char *out, size_t cap
-){
-    (void)user;
-
+size_t respond_user(void *arg, const dns_pkt_t pkt, char *out, size_t cap){
     if(pkt.qstn.qtype == A){
         return POSITIVE_RESP(write_a);
     }
@@ -194,17 +189,30 @@ size_t respond_user(
 }
 
 // for _acme-challenge.*.user.splintermail.com
-size_t respond_acme(
-    const dns_pkt_t pkt, const lstr_t user, char *out, size_t cap
-){
-    if(pkt.qstn.qtype == TXT){
-        (void)user;
-        // right now we report NOTFOUND to all txt queries.
-        return POSITIVE_RESP(write_notfound);
+size_t respond_acme(void *arg, const dns_pkt_t pkt, char *out, size_t cap){
+    if(pkt.qstn.qtype != TXT){
+        // only respond to TXT queries
+        return norecord_resp(pkt, out, cap);
     }
 
-    // no matching record
-    return norecord_resp(pkt, out, cap);
+    lstr_t secret = *((lstr_t*)arg);
+
+    if(secret.str == NULL){
+        // confident "no"
+        return norecord_resp(pkt, out, cap);
+    }
+
+    if(secret.str == &C_UNSURE){
+        // no confident response
+        bool aa = true;
+        bool soa = false;
+        return negative_resp(pkt, RCODE_SRVERR, aa, soa, out, cap);
+    }
+
+    // send the secret TXT
+    // right now we report NOTFOUND to all txt queries.
+    return POSITIVE_RESP(write_secret);
+
 }
 
 // always sets *respond and *user
@@ -246,10 +254,9 @@ respond_f sort_pkt(const dns_pkt_t pkt, const lstr_t *rname, size_t n){
     return respond_name_error;
 }
 
-size_t handle_packet(char *qbuf, size_t qlen, char *rbuf, size_t rcap){
-    print_bytes(qbuf, qlen);
-    printf("\n");
-
+size_t handle_packet(
+    char *qbuf, size_t qlen, kvp_i *kvp, char *rbuf, size_t rcap
+){
     // require a minimum rcap size to function
     if(rcap < 512){
         fprintf(stderr, "rcap too small to function!\n");
@@ -259,18 +266,32 @@ size_t handle_packet(char *qbuf, size_t qlen, char *rbuf, size_t rcap){
     dns_pkt_t pkt;
     size_t pret = parse_pkt(&pkt, qbuf, qlen);
     if(is_bad_parse(pret)){
-        printf("bad packet!\n");
+        LOG_DEBUG("bad packet!\n");
         return 0;
     }
 
-    print_pkt(pkt);
+    // print_pkt(pkt);
 
     lstr_t rname[5] = {0};
     size_t cap = sizeof(rname) / sizeof(*rname);
     size_t n = labels_read_reverse(pkt.qstn.ptr, pkt.qstn.off, rname, cap);
     respond_f respond = sort_pkt(pkt, rname, n);
-    // username would be at index 3: com.splintermail.user.*
-    const lstr_t user = n > 3 ? rname[3] : (lstr_t){0};
+
+    void *arg = NULL;
+    lstr_t secret = {0};
+    if(respond == respond_acme){
+        // username would be at index 3: com.splintermail.user.*
+        if(n < 4) LOG_FATAL("respond_acme doesn't have enough labels\n");
+        lstr_t user = rname[3];
+        const dstr_t *dsecret = kvp->get(kvp, user);
+        if(dsecret == UNSURE){
+            secret.str = &C_UNSURE;
+        }else if(dsecret){
+            secret.str = dsecret->data;
+            secret.len = dsecret->len;
+        }
+        arg = (void*)&secret;
+    }
 
     // pick a good rcap
     if(pkt.edns.found){
@@ -281,5 +302,5 @@ size_t handle_packet(char *qbuf, size_t qlen, char *rbuf, size_t rcap){
         rcap = MIN(rcap, 512);
     }
 
-    return respond(pkt, user, rbuf, rcap);
+    return respond(arg, pkt, rbuf, rcap);
 }

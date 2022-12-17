@@ -2,7 +2,9 @@
 #define LIBDNS_H
 
 #include "libdstr/libdstr.h"
+#include "liburl/liburl.h"
 #include "libduv/libduv.h"
+#include "server/kvpsync/libkvpsync.h"
 
 /* Why write a custom dns server?
 

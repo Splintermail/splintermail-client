@@ -3,7 +3,6 @@
 
 typedef struct {
     char base[MEMBUFSIZE];
-    size_t len;
     char resp[MEMBUFSIZE];
     link_t link; // globals_t->membufs;
     link_t *pool; // for easily returning a membuf to its pool

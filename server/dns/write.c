@@ -59,37 +59,69 @@ static size_t put_name_ptr(size_t offset, char *out, size_t used){
     return put_uint16(0xC000 | off14, out, used);
 }
 
-void put_hdr(
+size_t write_hdr(
     const dns_hdr_t hdr,
+    char *out,
+    size_t cap,
+    size_t used
+){
+    if(used + DNS_HDR_SIZE > cap) return used + DNS_HDR_SIZE;
+    used = put_uint16(hdr.id, out, used);
+    used = put_uint8(
+        (hdr.qr & 0x01) << 7
+        | hdr.opcode << 3
+        | (hdr.aa & 0x01) << 2
+        | (hdr.tc & 0x01) << 1
+        | (hdr.rd & 0x01),
+        out,
+        used
+    );
+    used = put_uint8(
+        (hdr.ra & 0x01) << 7
+        | 0x00 // z bits always zero
+        | (hdr.rcode & 0x0f),
+        out,
+        used
+    );
+    used = put_uint16(hdr.qdcount, out, used);
+    used = put_uint16(hdr.ancount, out, used);
+    used = put_uint16(hdr.nscount, out, used);
+    used = put_uint16(hdr.arcount, out, used);
+    return used;
+}
+
+size_t write_response_hdr(
+    const dns_hdr_t hdr, // the query hdr
     uint16_t rcode,
     bool aa,
     bool tc,
     uint16_t ancount,
     uint16_t nscount,
     uint16_t arcount,
-    char *out
+    char *out,
+    size_t cap,
+    size_t used
 ){
-    uint8_t *uptr = (uint8_t*)out;
-    uptr[0] = (hdr.id >> 8) & 0xff;
-    uptr[1] = (hdr.id >> 0) & 0xff;
-    uptr[2] = 0x80 // qr bit always "response" (1)
-            | 0x00 // opcode always 0
-            | (aa & 0x01) << 2
-            | (tc & 0x01) << 1
-            | (hdr.rd & 0x01);
-    uptr[3] = 0x00 // recursion allowed always 0
-            | 0x00 // z bits always zero
-            | (rcode & 0x07);
-    uptr[4] = (hdr.qdcount >> 8) & 0xff;
-    uptr[5] = (hdr.qdcount >> 0) & 0xff;
-    uptr[6] = (ancount >> 8) & 0xff;
-    uptr[7] = (ancount >> 0) & 0xff;
-    uptr[8] = (nscount >> 8) & 0xff;
-    uptr[9] = (nscount >> 0) & 0xff;
-    uptr[10] = (arcount >> 8) & 0xff;
-    uptr[11] = (arcount >> 0) & 0xff;
+    return write_hdr(
+        (dns_hdr_t){
+            .id = hdr.id,
+            .qr = 1, // qr bit always "response" (1)
+            .opcode = 0, // always standard query = 0
+            .aa = aa,
+            .tc = tc,
+            .rd = hdr.rd,
+            .ra = 0, // recursion allowed always 0
+            .rcode = rcode,
+            .qdcount = hdr.qdcount,
+            .ancount = ancount,
+            .nscount = nscount,
+            .arcount = arcount,
+        },
+        out,
+        cap,
+        used
+    );
 }
-
 
 // rewrites the question without any pointers
 size_t write_qstn(const dns_qstn_t qstn, char *out, size_t cap, size_t used){
@@ -157,7 +189,10 @@ size_t write_edns(char *out, size_t cap, size_t used){
 
 
 // write_soa happens to ignore nameoff, so it can be used in negative responses
-size_t write_soa(size_t nameoff, char *out, size_t cap, size_t used){
+size_t write_soa(
+    void *arg, size_t nameoff, char *out, size_t cap, size_t used
+){
+    (void)arg;
     (void)nameoff;
 
     (void)namelen;
@@ -192,7 +227,10 @@ size_t write_soa(size_t nameoff, char *out, size_t cap, size_t used){
     return used;
 }
 
-size_t write_a(size_t nameoff, char *out, size_t cap, size_t used){
+size_t write_a(
+    void *arg, size_t nameoff, char *out, size_t cap, size_t used
+){
+    (void)arg;
     static const size_t rdlen = 4;  // 32-bit IPv4 address size
     static const size_t needed = 2 + RR_HDR_SIZE + rdlen;
 
@@ -231,22 +269,35 @@ static size_t _write_ns(
 }
 
 // ignores nameoff
-size_t write_ns1(size_t nameoff, char *out, size_t cap, size_t used){
+size_t write_ns1(
+    void *arg, size_t nameoff, char *out, size_t cap, size_t used
+){
+    (void)arg;
     (void)nameoff;
     return _write_ns(NS1_NAME, NS1_NAME_COUNT, out, cap, used);
 }
-size_t write_ns2(size_t nameoff, char *out, size_t cap, size_t used){
+size_t write_ns2(
+    void *arg, size_t nameoff, char *out, size_t cap, size_t used
+){
+    (void)arg;
     (void)nameoff;
     return _write_ns(NS2_NAME, NS2_NAME_COUNT, out, cap, used);
 }
-size_t write_ns3(size_t nameoff, char *out, size_t cap, size_t used){
+size_t write_ns3(
+    void *arg, size_t nameoff, char *out, size_t cap, size_t used
+){
+    (void)arg;
     (void)nameoff;
     return _write_ns(NS3_NAME, NS3_NAME_COUNT, out, cap, used);
 }
 
-size_t write_notfound(size_t nameoff, char *out, size_t cap, size_t used){
-    static const size_t rdlen = 1 + TXT_NOTFOUND.len;
-    static const size_t needed = 2 + RR_HDR_SIZE + rdlen;
+size_t write_secret(
+    void *arg, size_t nameoff, char *out, size_t cap, size_t used
+){
+    lstr_t secret = *((lstr_t*)arg);
+
+    const size_t rdlen = 1 + secret.len;
+    const size_t needed = 2 + RR_HDR_SIZE + rdlen;
 
     if(used + needed > cap) return used + needed;
     // name pointer
@@ -254,12 +305,16 @@ size_t write_notfound(size_t nameoff, char *out, size_t cap, size_t used){
     // rr header
     used = put_rr_hdr(TXT, TXT_TTL, rdlen, out, used);
     // TXT content
-    used = put_uint8(TXT_NOTFOUND.len, out, used);
-    used = put_lstr(TXT_NOTFOUND, out, used);
+    if(secret.len > UINT8_MAX) LOG_FATAL("secret too long\n");
+    used = put_uint8((uint8_t)secret.len, out, used);
+    used = put_lstr(secret, out, used);
     return used;
 }
 
-size_t write_aaaa(size_t nameoff, char *out, size_t cap, size_t used){
+size_t write_aaaa(
+    void *arg, size_t nameoff, char *out, size_t cap, size_t used
+){
+    (void)arg;
     static const size_t rdlen = 16;  // 128-bit IPv6 address size
     static const size_t needed = 2 + RR_HDR_SIZE + rdlen;
 
@@ -268,7 +323,7 @@ size_t write_aaaa(size_t nameoff, char *out, size_t cap, size_t used){
     used = put_name_ptr(nameoff, out, used);
     // rr header
     used = put_rr_hdr(AAAA, AAAA_TTL, rdlen, out, used);
-    // A record: always 127.0.0.1
+    // AAAA record: always ::1
     used = put_uint32(0, out, used);
     used = put_uint32(0, out, used);
     used = put_uint32(0, out, used);
@@ -276,7 +331,10 @@ size_t write_aaaa(size_t nameoff, char *out, size_t cap, size_t used){
     return used;
 }
 
-size_t write_caa(size_t nameoff, char *out, size_t cap, size_t used){
+size_t write_caa(
+    void *arg, size_t nameoff, char *out, size_t cap, size_t used
+){
+    (void)arg;
     static const size_t rdlen = 2 + CAA_TAG.len + CAA_VALUE.len;
     static const size_t needed = 2 + RR_HDR_SIZE + rdlen;
 

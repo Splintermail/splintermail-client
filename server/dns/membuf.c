@@ -5,7 +5,6 @@
 #include "libdstr/libdstr.h"
 #include "server/dns/libdns.h"
 
-
 void membuf_free(membuf_t **ptr){
     membuf_t *membuf = *ptr;
     if(!membuf) return;

@@ -1,7 +1,7 @@
 add_library(libdns SHARED membuf.c dns.c parse.c write.c)
 default_compile_options(libdns TRUE)
 define_file_logname_for_target(libdns)
-target_link_libraries(libdns PUBLIC dstr duv)
+target_link_libraries(libdns PUBLIC url duv kvpsync)
 # just libdns.so, not liblibdns.so
 set_target_properties(libdns PROPERTIES PREFIX "")
 
@@ -35,4 +35,10 @@ if(BUILD_TESTS)
     default_compile_options(test_dns TRUE)
     define_file_logname_for_target(test_dns)
     add_test(NAME "do_test_dns" COMMAND "./test_dns")
+
+    add_executable(test_main test_main.c)
+    target_link_libraries(test_main PUBLIC libdns)
+    default_compile_options(test_main TRUE)
+    define_file_logname_for_target(test_main)
+    add_test(NAME "do_test_main" COMMAND "./test_main")
 endif()

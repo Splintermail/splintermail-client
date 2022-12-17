@@ -40,6 +40,7 @@ const char *bp2str(bad_parse_e bp);
 #define EDNS 41
 
 #define RCODE_OK 0
+#define RCODE_SRVERR 2
 #define RCODE_NAMEERR 3
 #define RCODE_NOTIMPL 4
 #define RCODE_REFUSED 5
