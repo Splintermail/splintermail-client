@@ -48,6 +48,7 @@
 globals_t *g;
 kvpsync_send_t syncs[NPEERS];
 static link_t sends;  // membuf->link
+bool recving = false;
 
 static struct sockaddr_storage must_read_addr(const char *addr, uint16_t port){
     derr_t e = E_OK;
@@ -64,11 +65,13 @@ fail:
 
 // hook for testing
 derr_t recv_start(uv_udp_t*, uv_alloc_cb, uv_udp_recv_cb){
+    recving = true;
     return E_OK;
 }
 
 // hook for testing
 int recv_stop(uv_udp_t*){
+    recving = false;
     return 0;
 }
 
@@ -259,7 +262,7 @@ static derr_t test_dns_responses(bool recv_ok){
     #define TXT 16
     #define AAAA 28
 
-    struct sockaddr_storage qaddr = must_read_addr("1.2.3.4", 99);
+    struct sockaddr_storage qaddr = must_read_addr("1.2.3.4", 53);
     PROP_GO(&e,
         send_dns_query(ss2sa(&qaddr), 11, A, X, USER, SPLINTERMAIL, COM),
     cu);
@@ -365,6 +368,65 @@ cu:
     return e;
 }
 
+static void complete_one_message(void){
+    link_t *link = link_list_pop_first(&sends);
+    if(link){
+        membuf_t *membuf = CONTAINER_OF(link, membuf_t, link);
+        membuf->req.cb(&membuf->req, 0);
+    }
+}
+
+static void complete_all_messages(void){
+    while(!link_list_isempty(&sends)){
+        complete_one_message();
+    }
+}
+
+static derr_t test_membuf_limit(void){
+    derr_t e = E_OK;
+
+    EXPECT_EMPTY_GO(&e, "sends", &sends, cu);
+
+    link_t *last = &sends;
+
+    for(size_t i = 0; i < NMEMBUFS; i++){
+        // a dns query
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%zu.%zu.%zu.%zu",
+            (i >> 24) & 0xff,
+            (i >> 16) & 0xff,
+            (i >> 8) & 0xff,
+            (i >> 0) & 0xff
+        );
+        struct sockaddr_storage qaddr = must_read_addr(buf, 53);
+        uint16_t id = (uint16_t)(i & 0xffff);
+        PROP_GO(&e,
+            send_dns_query(ss2sa(&qaddr), id, A, X, USER, SPLINTERMAIL, COM),
+        cu);
+        if(sends.prev == last){
+            ORIG_GO(&e, E_VALUE, "expected a new sent message\n", cu);
+        }
+        last = sends.prev;
+        EXPECT_B_GO(&e, "recving", recving, i+1 < NMEMBUFS, cu);
+    }
+
+    // should start receiving messages after one message returns
+    EXPECT_B_GO(&e, "recving", recving, false, cu);
+    complete_one_message();
+    EXPECT_B_GO(&e, "recving", recving, true, cu);
+
+    // then stop again with one more pending
+    struct sockaddr_storage qaddr = must_read_addr("1.2.3.4", 53);
+    PROP_GO(&e,
+        send_dns_query(ss2sa(&qaddr), NMEMBUFS, A, X, USER, SPLINTERMAIL, COM),
+    cu);
+    EXPECT_B_GO(&e, "recving", recving, false, cu);
+
+cu:
+    complete_all_messages();
+    return e;
+}
+
 static derr_t runloop(uv_loop_t *loop){
     derr_t e = E_OK;
 
@@ -398,15 +460,13 @@ static derr_t runloop(uv_loop_t *loop){
     // send any type of response
     PROP_GO(&e, test_dns_responses(true), cu);
 
+    PROP_GO(&e, test_membuf_limit(), cu);
+
 cu:
     // release anything we allocated but did not use
     if(allocated) membuf_return(&allocated);
     // complete any unsent messages
-    link_t *link;
-    while((link = link_list_pop_first(&sends))){
-        membuf_t *membuf = CONTAINER_OF(link, membuf_t, link);
-        membuf->req.cb(&membuf->req, 0);
-    }
+    complete_all_messages();
     if(!g->closing) dns_close(g, E_OK);
     if(is_error(e)){
         DROP_CMD( duv_run(loop) );
