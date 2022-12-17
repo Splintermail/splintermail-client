@@ -42,17 +42,44 @@ derr_type_t fmthook_ntop(dstr_t* out, const void* arg){
     return E_PARAM;
 }
 
-uint16_t addr_port(const struct sockaddr *sa){
+const struct sockaddr *ss2sa(const struct sockaddr_storage *ss){
+    return (const struct sockaddr*)ss;
+}
+
+uint16_t must_addr_port(const struct sockaddr *sa){
     if(sa->sa_family == AF_INET){
         return ntohs(((const struct sockaddr_in*)sa)->sin_port);
     }else if(sa->sa_family == AF_INET6){
         return ntohs(((const struct sockaddr_in6*)sa)->sin6_port);
     }
+    LOG_FATAL("unhandled addr family: %x\n", FU(sa->sa_family));
     return 0;
 }
 
-uint16_t addrs_port(const struct sockaddr_storage *ss){
-    return addr_port((const struct sockaddr*)ss);
+uint16_t must_addrs_port(const struct sockaddr_storage *ss){
+    return must_addr_port((const struct sockaddr*)ss);
+}
+
+derr_type_t addr_copy_quiet(
+    const struct sockaddr *in, struct sockaddr_storage *ss
+){
+    if(in->sa_family == AF_INET){
+        memcpy(ss, in, sizeof(struct sockaddr_in));
+        return E_NONE;
+    }else if(in->sa_family == AF_INET6){
+        memcpy(ss, in, sizeof(struct sockaddr_in6));
+        return E_NONE;
+    }
+    return E_PARAM;
+}
+
+derr_t addr_copy(const struct sockaddr *in, struct sockaddr_storage *ss){
+    derr_t e = E_OK;
+
+    derr_type_t etype = addr_copy_quiet(in, ss);
+    if(etype) ORIG(&e, etype, "unhandled address in");
+
+    return e;
 }
 
 derr_t read_addr(struct sockaddr_storage *ss, const char *addr, uint16_t port){

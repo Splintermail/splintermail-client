@@ -6,7 +6,7 @@ static inline fmt_t FNTOP(const struct sockaddr *arg){
 }
 
 // sockaddr_storage version; still calls fmthook_ntop
-static inline fmt_t FNTOPS(const struct sockaddr *arg){
+static inline fmt_t FNTOPS(const struct sockaddr_storage *arg){
     return (fmt_t){FMT_EXT, {.ext = {.arg = (const void*)arg,
                                      .hook = fmthook_ntop} } };
 }
@@ -25,8 +25,15 @@ static inline fmt_t FNTOP6(const struct sockaddr_in6 *arg){
                                      .hook = fmthook_ntop6} } };
 }
 
-uint16_t addr_port(const struct sockaddr *sa);
-uint16_t addrs_port(const struct sockaddr_storage *ss);
+const struct sockaddr *ss2sa(const struct sockaddr_storage *ss);
+
+uint16_t must_addr_port(const struct sockaddr *sa);
+uint16_t must_addrs_port(const struct sockaddr_storage *ss);
+
+derr_type_t addr_copy_quiet(
+    const struct sockaddr *in, struct sockaddr_storage *ss
+);
+derr_t addr_copy(const struct sockaddr *in, struct sockaddr_storage *ss);
 
 derr_t read_addr(struct sockaddr_storage *ss, const char *addr, uint16_t port);
 
