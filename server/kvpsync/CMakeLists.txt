@@ -4,6 +4,12 @@ define_file_logname_for_target(kvpsync)
 target_link_libraries(kvpsync PUBLIC duv)
 
 if(BUILD_TESTS)
+    add_executable(test_pkts test_pkts.c)
+    target_link_libraries(test_pkts PUBLIC kvpsync)
+    default_compile_options(test_pkts TRUE)
+    define_file_logname_for_target(test_pkts)
+    add_test(NAME "do_test_pkts" COMMAND "./test_pkts")
+
     add_executable(test_recv test_recv.c)
     target_link_libraries(test_recv PUBLIC kvpsync)
     default_compile_options(test_recv TRUE)

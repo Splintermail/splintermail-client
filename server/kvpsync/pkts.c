@@ -54,13 +54,13 @@ static derr_t write_uint64(uint64_t u, dstr_t *out){
     PROP(&e, dstr_grow(out, out->len + 8) );
 
     uint8_t *udata = (uint8_t*)out->data;
-    udata[out->len++] = (uint8_t)((u >> 7)&0xFF);
-    udata[out->len++] = (uint8_t)((u >> 6)&0xFF);
-    udata[out->len++] = (uint8_t)((u >> 5)&0xFF);
-    udata[out->len++] = (uint8_t)((u >> 4)&0xFF);
-    udata[out->len++] = (uint8_t)((u >> 3)&0xFF);
-    udata[out->len++] = (uint8_t)((u >> 2)&0xFF);
-    udata[out->len++] = (uint8_t)((u >> 1)&0xFF);
+    udata[out->len++] = (uint8_t)((u >> 56)&0xFF);
+    udata[out->len++] = (uint8_t)((u >> 48)&0xFF);
+    udata[out->len++] = (uint8_t)((u >> 40)&0xFF);
+    udata[out->len++] = (uint8_t)((u >> 32)&0xFF);
+    udata[out->len++] = (uint8_t)((u >> 24)&0xFF);
+    udata[out->len++] = (uint8_t)((u >> 16)&0xFF);
+    udata[out->len++] = (uint8_t)((u >> 8)&0xFF);
     udata[out->len++] = (uint8_t)((u >> 0)&0xFF);
 
     return e;
@@ -72,9 +72,9 @@ static derr_t write_uint32(uint32_t u, dstr_t *out){
     PROP(&e, dstr_grow(out, out->len + 4) );
 
     uint8_t *udata = (uint8_t*)out->data;
-    udata[out->len++] = (uint8_t)((u >> 3)&0xFF);
-    udata[out->len++] = (uint8_t)((u >> 2)&0xFF);
-    udata[out->len++] = (uint8_t)((u >> 1)&0xFF);
+    udata[out->len++] = (uint8_t)((u >> 24)&0xFF);
+    udata[out->len++] = (uint8_t)((u >> 16)&0xFF);
+    udata[out->len++] = (uint8_t)((u >> 8)&0xFF);
     udata[out->len++] = (uint8_t)((u >> 0)&0xFF);
 
     return e;
