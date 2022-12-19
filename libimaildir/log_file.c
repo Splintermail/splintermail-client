@@ -96,6 +96,9 @@ static derr_t maybe_compact(log_t *log){
             ORIG_GO(&e, E_PARAM, "missing '|' in logfile line", cu);
         }
 
+        // ignore values we wouldn't write anymore
+        if(dstr_eq(val, DSTR_LIT("1:0:0:x"))) continue;
+
         // put this key/val pair in the map
         PROP_GO(&e, map_str_str_new(key, val, &mss), cu);
         hash_elem_t *old = hashmap_sets(&h, &mss->key, &mss->elem);
@@ -356,6 +359,12 @@ static derr_t read_one_value(
             jsw_ainsert(mods, &msg->mod.node);
         }
     }else{
+        // ignore values we wouldn't write anymore
+        if(expunge->uid_dn == 0 && expunge->mod.modseq == 0){
+            msg_expunge_free(&expunge);
+            log->updates++;
+            return e;
+        }
         jsw_ainsert(expunged, &expunge->node);
         if(expunge->mod.modseq){
             jsw_ainsert(mods, &expunge->mod.node);

@@ -1247,10 +1247,16 @@ static derr_t delete_msg(imaildir_t *m, msg_key_t key){
     node = jsw_afind(&m->expunged, &key, NULL);
     msg_expunge_t *expunge = CONTAINER_OF(node, msg_expunge_t, node);
 
-    // we should always end with an expunge in the EXPUNGED_PUSHED state
+    if(!expunge && !msg){
+        /* ignore deletions for messages we never had in the first place, which
+           is especially common for VANISHED responses during initial syncs */
+        return e;
+    }
+
+    // we should end with an expunge in the EXPUNGED_PUSHED state
     if(!expunge){
         msg_expunge_state_e state = MSG_EXPUNGE_PUSHED;
-        unsigned int uid_dn = msg ? msg->uid_dn : 0;
+        unsigned int uid_dn = msg->uid_dn;
         uint64_t modseq = uid_dn ? next_himodseq_dn(m) : 0;
         PROP(&e, msg_expunge_new(&expunge, key, uid_dn, state, modseq) );
         // always insert into expunged

@@ -29,7 +29,7 @@ derr_t maildir_name_parse(
        HOST = hostname modified to not contain '/' or ':'
 
        // we define our own unique delivery id:
-       DELIV_ID = VER.UIDUP.UIDLOCAL.LEN
+       DELIV_ID = VER,UIDUP,UIDLOCAL,LEN
 
        VER = version of the delivery id
 
