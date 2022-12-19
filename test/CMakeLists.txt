@@ -1,9 +1,3 @@
-add_library(dummy_key_tool dummy_key_tool.c)
-define_file_logname_for_target(dummy_key_tool)
-default_compile_options(dummy_key_tool TRUE)
-target_include_directories(dummy_key_tool PRIVATE ${OPENSSL_INCLUDE_DIR})
-target_link_libraries(dummy_key_tool PUBLIC ditm)
-
 add_library(dummy_ui_harness dummy_ui_harness.c)
 define_file_logname_for_target(dummy_ui_harness)
 default_compile_options(dummy_ui_harness TRUE)
@@ -14,16 +8,6 @@ add_library(fake_api_server fake_api_server.c)
 define_file_logname_for_target(fake_api_server)
 default_compile_options(fake_api_server TRUE)
 target_link_libraries(fake_api_server PUBLIC crypto)
-
-add_library(fake_pop_server fake_pop_server.c)
-define_file_logname_for_target(fake_pop_server)
-default_compile_options(fake_pop_server TRUE)
-target_link_libraries(fake_pop_server PUBLIC ditm)
-
-add_library(ditm_thread ditm_thread.c)
-define_file_logname_for_target(ditm_thread)
-default_compile_options(ditm_thread TRUE)
-target_link_libraries(ditm_thread PUBLIC dummy_key_tool ditm)
 
 add_library(test_utils test_utils.c)
 define_file_logname_for_target(test_utils)
@@ -39,12 +23,7 @@ set(TEST_EXE_TGTS
     test_common
     test_fileops
     test_system
-    test_pop_server
-    test_ditm
-    test_ditm_errors
-    test_maildir
     test_logger
-    test_pop_client
     test_crypto
     test_opt_parse
     test_networking
@@ -52,7 +31,6 @@ set(TEST_EXE_TGTS
     test_ui
     test_dstr_off
     test_url
-    test_key_tool
     test_atree
     test_heap
     test_imap_scan
@@ -93,17 +71,11 @@ foreach(tgt ${TEST_EXE_TGTS})
 endforeach()
 
 # describe test executables with dependencies
-target_link_libraries(test_pop_server PRIVATE ditm)
-target_link_libraries(test_ditm PRIVATE ditm_thread fake_pop_server)
-target_link_libraries(test_ditm_errors PRIVATE ditm_thread fake_pop_server test_utils)
-target_link_libraries(test_maildir PRIVATE ditm)
 # target_link_libraries(test_logger) PRIVATE
-target_link_libraries(test_pop_client PRIVATE fake_pop_server)
 target_link_libraries(test_crypto PRIVATE crypto)
 # target_link_libraries(test_opt_parse) PRIVATE
 target_link_libraries(test_networking PRIVATE crypto)
 target_link_libraries(test_json PRIVATE test_utils)
-target_link_libraries(test_key_tool PRIVATE ditm test_utils fake_api_server)
 target_link_libraries(test_ui PRIVATE ui dummy_ui_harness)
 # target_link_libraries(test_atree) PRIVATE
 # target_link_libraries(test_heap) PRIVATE

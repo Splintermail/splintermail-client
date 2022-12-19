@@ -31,6 +31,11 @@ project(
     LANGUAGES C
     VERSION 0.4.0
 )
+configure_file(
+    "${PROJECT_SOURCE_DIR}/version.h.in"
+    "${PROJECT_BINARY_DIR}/version.h"
+    @ONLY
+)
 
 set(MAINTAINER_NAME "Splintermail Dev")
 set(MAINTAINER_EMAIL "dev@splintermail.com")
@@ -318,7 +323,6 @@ add_subdirectory(libdstr)
 add_subdirectory(libduv)
 add_subdirectory(libcrypto)
 add_subdirectory(libduvtls)
-add_subdirectory(libditm)
 add_subdirectory(liburl)
 add_subdirectory(libhttp)
 add_subdirectory(libimap)
@@ -347,7 +351,7 @@ define_file_logname_for_source("${print_help_in}" "${print_help_out}")
 add_library(ui ui.c "${print_help_out}")
 define_file_logname_for_target(ui)
 default_compile_options(ui TRUE)
-target_link_libraries(ui PUBLIC ditm libcitm)
+target_link_libraries(ui PUBLIC api_client libcitm)
 
 add_executable(splintermail splintermail.c)
 default_compile_options(splintermail TRUE)

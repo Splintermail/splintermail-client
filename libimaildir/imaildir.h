@@ -5,7 +5,7 @@ an imaildir_t for every folder, assigning the upwards imap session to the
 folder, then wait for the synchronized signal.  The imaildir_t does all of the
 downloading.
 
-In a DITM setting, the application logic has an upwards and a downwards
+In a CITM setting, the application logic has an upwards and a downwards
 session.  When the downwards session asks to select a mailbox, the application
 logic opens an imaildir_t and passes handles for both sessions.  Then the
 imaildir_t uses the upwards session to sync itself (and stream live updates
@@ -65,7 +65,7 @@ every conn_dn.  That state machine looks like this:
 
     event: maildir recieves a conn_dn (state machine begins)
       |
-    decision: are we serving in DITM mode?
+    decision: are we serving in CITM mode?
       |\
    no | \ yes
       |  \

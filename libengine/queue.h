@@ -1,7 +1,7 @@
 /* This queue has two APIs: a normal API and a callback API.  Both are
    thread-safe.  The normal API can optionally block waiting to pop an element
    or not.  (There is currently no support for blocking before pushing writes,
-   because the splintermail IMAP DITM is really built with fixed-size buffer
+   because the splintermail IMAP CITM is really built with fixed-size buffer
    pools in mind.)  In the callback API, calls to queue_pop_*_cb() will either
    return an item or return NULL after calling a pre-wait callback (for things
    like reference counting).  When data available the oldest new-data callback

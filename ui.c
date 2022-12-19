@@ -7,17 +7,16 @@
 
 #include "libdstr/libdstr.h"
 #include "libcitm/citm.h"
-#include "libditm/libditm.h"
+#include "libcrypto/libcrypto.h"
 
 #include "ui.h"
 #include "ui_harness.h"
 #include "api_client.h"
 #include "console_input.h"
 #include "print_help.h"
+#include "version.h"
 
-
-
-// default ditm directory
+// default splintermail directory
 #ifndef _WIN32
 DSTR_STATIC(os_default_sm_dir, "/var/lib/splintermail");
 #else
@@ -877,9 +876,9 @@ int do_main(int argc, char* argv[], bool windows_service){
     if(o_version.found){
         printf(
             "%d.%d.%d\n",
-            DITM_VERSION_MAJOR,
-            DITM_VERSION_MINOR,
-            DITM_VERSION_BUILD
+            SPLINTERMAIL_VERSION_MAJOR,
+            SPLINTERMAIL_VERSION_MINOR,
+            SPLINTERMAIL_VERSION_PATCH
         );
         retval = 0;
         goto cu;
@@ -890,13 +889,9 @@ int do_main(int argc, char* argv[], bool windows_service){
     // set up the main parse
     // common options
     opt_spec_t o_debug      = {'D',  "debug",      false};
-    // ditm options
-    opt_spec_t o_pop_port   = {'\0', "pop-port",   true};
-    opt_spec_t o_ditm_dir   = {'\0', "ditm-dir",   true};  // can accept --splintermail-dir
-    // citm options
     opt_spec_t o_lstn_port  = {'\0', "listen-port",true};
     opt_spec_t o_lstn_addr  = {'\0', "listen-addr",true};
-    // citm and ditm options
+    // citm options
     opt_spec_t o_sm_dir     = {'d',  "splintermail-dir",true};
     opt_spec_t o_logfile    = {'l',  "logfile",    true};
     opt_spec_t o_no_logfile = {'L',  "no-logfile", false};
@@ -908,30 +903,26 @@ int do_main(int argc, char* argv[], bool windows_service){
 #ifdef BUILD_DEBUG
     // debug-only options
     opt_spec_t o_r_host     = {'\0', "remote-host",     true};
-    opt_spec_t o_r_pop_port = {'\0', "remote-pop-port", true};
     opt_spec_t o_r_imap_port= {'\0', "remote-imap-port", true};
     opt_spec_t o_r_api_port = {'\0', "remote-api-port", true};
 #endif // BUILD_DEBUG
 
     opt_spec_t* spec[] = {
-    //  option               citm  ditm  api_client
-        &o_debug,         // y     y     y
-        &o_pop_port,      // n     y     n
-        &o_ditm_dir,      // n     y     n  // can accept o_sm_dir
-        &o_lstn_port,     // y     n     n
-        &o_lstn_addr,     // y     n     n
-        &o_sm_dir,        // y     y     n
-        &o_logfile,       // y     y     n
-        &o_no_logfile,    // y     y     n
-        &o_cert,          // y     y     n
-        &o_key,           // y     y     n
-        &o_user,          // n     n     y
-        &o_account_dir,   // n     n     y
+    //  option               citm   api_client
+        &o_debug,         // y      y
+        &o_lstn_port,     // y      n
+        &o_lstn_addr,     // y      n
+        &o_sm_dir,        // y      n
+        &o_logfile,       // y      n
+        &o_no_logfile,    // y      n
+        &o_cert,          // y      n
+        &o_key,           // y      n
+        &o_user,          // n      y
+        &o_account_dir,   // n      y
 #ifdef BUILD_DEBUG
-        &o_r_host,        // y     y     y
-        &o_r_pop_port,    // n     y     n
-        &o_r_imap_port,   // y     n     y
-        &o_r_api_port,    // n     y     y
+        &o_r_host,        // y      y
+        &o_r_imap_port,   // y      y
+        &o_r_api_port,    // n      y
 #endif // BUILD_DEBUG
     };
     size_t speclen = sizeof(spec) / sizeof(*spec);
@@ -1003,22 +994,6 @@ int do_main(int argc, char* argv[], bool windows_service){
             retval = 1;
             goto cu;
         }
-    }else if(newargc > 1 && strcmp("ditm", argv[1]) == 0){
-        opt_spec_t *ok_opts[] = {
-            &o_debug,
-            #ifdef BUILD_DEBUG
-            &o_r_host, &o_r_pop_port, &o_r_api_port,
-            #endif
-            &o_pop_port, &o_ditm_dir, &o_sm_dir, &o_logfile, &o_no_logfile,
-            &o_cert, &o_key
-        };
-        bool failed = limit_options(
-            "splintermail ditm", spec, speclen, counts, ok_opts
-        );
-        if(failed){
-            retval = 1;
-            goto cu;
-        }
     }else{
         opt_spec_t *ok_opts[] = {
             &o_debug,
@@ -1053,9 +1028,6 @@ int do_main(int argc, char* argv[], bool windows_service){
     // --splintermail-dir option
     if(o_sm_dir.found){
         PROP_GO(&e, FMT(&sm_dir, "%x", FD(&o_sm_dir.val)), cu);
-    }else if(o_ditm_dir.found){
-        // --ditm-dir used to have -d (now --splintermail-dir does)
-        PROP_GO(&e, FMT(&sm_dir, "%x", FD(&o_ditm_dir.val)), cu);
     }else{
         PROP_GO(&e, FMT(&sm_dir, "%x", FD(&os_default_sm_dir)), cu);
     }
@@ -1074,11 +1046,6 @@ int do_main(int argc, char* argv[], bool windows_service){
     unsigned int api_port = 443;
     if(o_r_api_port.found){
         PROP_GO(&e, dstr_tou(&o_r_api_port.val, &api_port, 10), cu);
-    }
-
-    unsigned int pop_port = 995;
-    if(o_r_pop_port.found){
-        PROP_GO(&e, dstr_tou(&o_r_pop_port.val, &pop_port, 10), cu);
     }
 
     unsigned int imap_port = 993;
@@ -1100,7 +1067,7 @@ int do_main(int argc, char* argv[], bool windows_service){
             PROP_GO(&e, FMT(&logfile_path, "%x", FD(&o_logfile.val)), cu);
             logger_add_filename(log_level, logfile_path.data);
         }
-        // log file defaults to on, in ${sm_dir}/ditm_log
+        // log file defaults to on, in ${sm_dir}/citm_log
         else if(o_logfile.found == 0 && o_no_logfile.found == 0){
             PROP_GO(&e, FMT(&logfile_path, "%x/citm_log", FD(&sm_dir)), cu);
             logger_add_filename(log_level, logfile_path.data);
@@ -1127,11 +1094,11 @@ int do_main(int argc, char* argv[], bool windows_service){
             string_builder_t path = sb_append(
                 &sm_dir_path, FS("citm-127.0.0.1-cert.pem")
             );
-            PROP_GO(&e, exists_path(&path, &ok), cu);
+            PROP_GO(&e, harness.exists_path(&path, &ok), cu);
             if(!ok){
                 // detect the pre-citm certificate, if present
                 path = sb_append(&sm_dir_path, FS("ditm-127.0.0.1-cert.pem"));
-                PROP_GO(&e, exists_path(&path, &ok), cu);
+                PROP_GO(&e, harness.exists_path(&path, &ok), cu);
             }
             if(!ok){
                 FFMT_QUIET(stderr, NULL,
@@ -1155,11 +1122,11 @@ int do_main(int argc, char* argv[], bool windows_service){
             string_builder_t path = sb_append(
                 &sm_dir_path, FS("citm-127.0.0.1-key.pem")
             );
-            PROP_GO(&e, exists_path(&path, &ok), cu);
+            PROP_GO(&e, harness.exists_path(&path, &ok), cu);
             if(!ok){
                 // detect the pre-citm key, if present
                 path = sb_append(&sm_dir_path, FS("ditm-127.0.0.1-key.pem"));
-                PROP_GO(&e, exists_path(&path, &ok), cu);
+                PROP_GO(&e, harness.exists_path(&path, &ok), cu);
             }
             if(!ok){
                 FFMT_QUIET(stderr, NULL,
@@ -1175,7 +1142,9 @@ int do_main(int argc, char* argv[], bool windows_service){
 
         // migrate pre-citm device keys for use with citm
         PROP_GO(&e,
-            for_each_file_in_dir(&sm_dir_path, migrate_ditm_keys_hook, NULL),
+            harness.for_each_file_in_dir(
+                &sm_dir_path, migrate_ditm_keys_hook, NULL
+            ),
         cu);
 
         PROP_GO(&e, FMT(&remote_svc, "%x", FU(imap_port)), cu);
@@ -1203,56 +1172,6 @@ int do_main(int argc, char* argv[], bool windows_service){
 
         retval = 0;
 
-        goto cu;
-    }
-
-    //////////////// keep legacy ditm behavior as a fallback, for now
-
-    if(strcmp("ditm", argv[1]) == 0){
-
-        // port option
-        unsigned int port = 1995;
-        if(o_pop_port.found){
-            // intelligently convert port to a number
-            e2 = dstr_tou(&o_pop_port.val, &port, 10);
-            if(is_error(e2) || port < 1 || port > 65535){
-                DROP_VAR(&e2);
-                fprintf(stderr, "invalid port number\n");
-                fprintf(stderr, "try `%s --help` for usage\n", argv[0]);
-                retval = 4;
-                goto cu;
-            }
-        }
-
-        // then print to a log file, unless --no-logfile is specifed
-        if(o_logfile.found > o_no_logfile.found){
-            PROP_GO(&e, FMT(&logfile_path, "%x", FD(&o_logfile.val)), cu);
-            logger_add_filename(log_level, logfile_path.data);
-        }
-        // log file defaults to on, in ${sm_dir}/ditm_log
-        else if(o_logfile.found == 0 && o_no_logfile.found == 0){
-            PROP_GO(&e, FMT(&logfile_path, "%x/ditm_log", FD(&sm_dir)), cu);
-            logger_add_filename(log_level, logfile_path.data);
-        }
-
-        // get certificate path
-        char* cert_arg = NULL;
-        if(o_cert.found){
-            PROP_GO(&e, FMT(&cert, "%x", FD(&o_cert.val)), cu);
-            cert_arg = cert.data;
-        }
-
-        // get key path
-        char* key_arg = NULL;
-        if(o_key.found){
-            PROP_GO(&e, FMT(&key, "%x", FD(&o_key.val)), cu);
-            key_arg = key.data;
-        }
-
-        PROP_GO(&e, ditm_loop(rhost, pop_port, sm_dir.data, port,
-                          rhost, api_port, cert_arg, key_arg), cu);
-
-        retval = 0;
         goto cu;
     }
 

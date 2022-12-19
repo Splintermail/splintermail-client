@@ -1,5 +1,5 @@
-#ifndef LIBDITM_H
-#define LIBDITM_H
+#ifndef LIBDSTR_H
+#define LIBDSTR_H
 
 #include <stdio.h>
 #include <stdint.h>
@@ -28,4 +28,4 @@
 #include "json.h"
 #include "jspec.h"
 
-#endif // LIBDITM_H
+#endif // LIBDSTR_H

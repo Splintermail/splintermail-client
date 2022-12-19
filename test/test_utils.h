@@ -199,6 +199,31 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
     } \
 } while(0)
 
+#define EXPECT_S(e, name, got, exp) do { \
+    const char *_got = (got); \
+    const char *_exp = (exp); \
+    if(strcmp(_got, _exp) != 0){ \
+        ORIG(e, \
+            E_VALUE, \
+            "expected %x == \"%x\" but got \"%x\"", \
+            FS(name), FS(_exp), FS(_got) \
+        ); \
+    } \
+} while (0)
+
+#define EXPECT_S_GO(e, name, got, exp, label) do { \
+    const char *_got = (got); \
+    const char *_exp = (exp); \
+    if(strcmp(_got, _exp) != 0){ \
+        ORIG_GO(e, \
+            E_VALUE, \
+            "expected %x == \"%x but got \"%x\"", \
+            label, \
+            FS(name), FS(_exp), FS(_got) \
+        ); \
+    } \
+} while (0)
+
 // single line output for short strings
 #define EXPECT_D(e, name, got, exp) do { \
     const dstr_t *_got = (got); \

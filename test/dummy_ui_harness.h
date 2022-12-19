@@ -23,21 +23,20 @@
 extern bool looked_good;
 extern dstr_t reason_log;
 
-// ditm.h
-struct ditm_loop_args_t {
-    const char* rhost;
-    unsigned int rport;
-    const char* ditm_dir;
-    unsigned int port;
-    const char* api_host;
-    unsigned int api_port;
-    const char* cert;
-    const char* key;
+// citm.h
+typedef struct {
+    const char *local_host;
+    const char *local_svc;
+    const char *key;
+    const char *cert;
+    const char *remote_host;
+    const char *remote_svc;
+    const char *maildir_root;
+    bool indicate_ready;
     derr_t to_return;
-};
-// global "right answers"
-extern struct ditm_loop_args_t* ditm_loop_args;
-extern bool ditm_called;
+} citm_args_t;
+extern citm_args_t* citm_args;
+extern bool citm_called;
 
 // fileops.h
 // a list of folders which will be created

@@ -62,7 +62,7 @@ static derr_t gen_msg_header(
 
     PROP(&e,
         FMT(out,
-            "From: DITM <ditm@localhost>\r\n"
+            "From: CITM <citm@localhost>\r\n"
             "To: Local User <email_user@localhost>\r\n"
             "Date: %x\r\n"
             "Subject: %x\r\n"

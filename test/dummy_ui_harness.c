@@ -5,54 +5,26 @@
 
 #include <libdstr/libdstr.h>
 #include <libcrypto/libcrypto.h>
-#include <libditm/libditm.h>
 
 #include <console_input.h>
 #include <ui_harness.h>
 
+#include "test/test_utils.h"
+
 static dstr_t slash = DSTR_LIT("/");
 
-// ditm.h
 bool looked_good;
 dstr_t reason_log;
-struct ditm_loop_args_t* ditm_loop_args;
-bool ditm_called;
-derr_t ditm_loop(const char* rhost, unsigned int rport,
-                 const char* ditm_dir, unsigned int port,
-                 const char* api_host, unsigned int api_port,
-                 const char* certpath, const char* keypath){
-    derr_t e = E_OK;
-    if(ditm_loop_args == NULL){
-        UH_OH("ditm_loop called but nothing is prepared\n");
-        ORIG(&e, E_INTERNAL, "bad ditm_loop");
-    }
-    // compare args against global "right answer" values:
-    struct ditm_loop_args_t* DLA = ditm_loop_args;
-    if(DLA->rhost && strcmp(DLA->rhost, rhost) != 0)
-        UH_OH("DLA rhost exp '%x' but got '%x'\n", FS(DLA->rhost), FS(rhost));
-    if(DLA->rport && DLA->rport != rport)
-        UH_OH("DLA rport exp '%x' but got '%x'\n", FU(DLA->rport), FU(rport));
-    if(DLA->ditm_dir && strcmp(DLA->ditm_dir, ditm_dir) != 0)
-        UH_OH("DLA ditm_dir exp '%x' but got '%x'\n", FS(DLA->ditm_dir), FS(ditm_dir));
-    if(DLA->port && DLA->port != port)
-        UH_OH("DLA port exp '%x' but got '%x'\n", FU(DLA->port), FU(port));
-    if(DLA->api_host && strcmp(DLA->api_host, api_host) != 0)
-        UH_OH("DLA api_host exp '%x' but got '%x'\n", FS(DLA->api_host), FS(api_host));
-    if(DLA->api_port && DLA->api_port != api_port)
-        UH_OH("DLA api_port exp '%x' but got '%x'\n", FU(DLA->api_port), FU(api_port));
-    if((DLA->cert == NULL) != (certpath == NULL)){
-        UH_OH("DLA cert exp %x but got %x\n", FP(DLA->cert), FP(certpath));
-    }else if(DLA->cert && strcmp(DLA->cert, certpath) != 0)
-        UH_OH("DLA cert exp '%x' but got '%x'\n", FS(DLA->cert), FS(certpath));
-    if((DLA->key == NULL) != (keypath == NULL)){
-        UH_OH("DLA key exp %x but got %x\n", FP(DLA->key), FP(keypath));
-    }else if(DLA->key && strcmp(DLA->key, keypath) != 0)
-        UH_OH("DLA key exp '%x' but got '%x'\n", FS(DLA->key), FS(keypath));
-    ditm_called = true;
-    return DLA->to_return;
+
+static const char *strend(const char *s, const char *ending){
+    size_t slen = strlen(s);
+    size_t elen = strlen(ending);
+    return slen > elen ? s + (slen - elen) : s;
 }
 
 // libcitm/citm.h
+citm_args_t *citm_args;
+bool citm_called;
 derr_t citm(
     const char *local_host,
     const char *local_svc,
@@ -63,15 +35,28 @@ derr_t citm(
     const string_builder_t *maildir_root,
     bool indicate_ready
 ){
-    (void)local_host;
-    (void)local_svc;
-    (void)key;
-    (void)cert;
-    (void)remote_host;
-    (void)remote_svc;
-    (void)maildir_root;
-    (void)indicate_ready;
-    return E_OK;
+    derr_t e = E_OK;
+
+
+    EXPECT_NOT_NULL(&e, "citm args", citm_args);
+    EXPECT_S(&e, "local_host", local_host, citm_args->local_host);
+    EXPECT_S(&e, "local_svc", local_svc, citm_args->local_svc);
+    EXPECT_S(&e, "key", strend(key, citm_args->key), citm_args->key);
+    EXPECT_S(&e, "cert", strend(cert, citm_args->cert), citm_args->cert);
+    EXPECT_S(&e, "remote_host", remote_host, citm_args->remote_host);
+    EXPECT_S(&e, "remote_svc", remote_svc, citm_args->remote_svc);
+    DSTR_VAR(buf, 128);
+    PROP(&e, FMT(&buf, "%x", FSB(maildir_root, &slash)) );
+    EXPECT_S(&e,
+        "maildir_root",
+        strend(buf.data, citm_args->maildir_root),
+        citm_args->maildir_root
+    );
+    EXPECT_B(&e, "indicate_ready", indicate_ready, citm_args->indicate_ready);
+    EXPECT_B(&e, "citm_called", citm_called, false);
+    citm_called = true;
+
+    return citm_args->to_return;
 }
 
 // fileops.h
@@ -201,15 +186,20 @@ static derr_t fake_for_each_file_in_dir(
 ){
     (void)path;
     derr_t e = E_OK;
-    if(users == NULL){
-        UH_OH("unexpected call to for_each_file_in_dir\n");
-        ORIG(&e, E_INTERNAL, "unexpected call to for_each_file_in_dir");
+    if(users){
+        for(char** u = users; *u != NULL; u++){
+            dstr_t temp;
+            DSTR_WRAP(temp, *u, strlen(*u), true);
+            PROP(&e, hook(NULL, &temp, true, userdata) );
+        }
+        return e;
     }
-    for(char** u = users; *u != NULL; u++){
-        dstr_t temp;
-        DSTR_WRAP(temp, *u, strlen(*u), true);
-        PROP(&e, hook(NULL, &temp, true, userdata) );
+    // for citm, iteration is for a hook we don't care to mock
+    if(citm_args){
+        return e;
     }
+    UH_OH("unexpected call to for_each_file_in_dir\n");
+    ORIG(&e, E_INTERNAL, "unexpected call to for_each_file_in_dir");
     return e;
 }
 

@@ -974,7 +974,7 @@ static derr_t decrypter_parse_metadata(decrypter_t* dc){
 
             case 3: // M = message begins
                 if(!dc->key_found){
-                    // this is a speical error that ditm needs to catch
+                    // this is a special error that citm needs to catch
                     ORIG(&e, E_NOT4ME, "our key not found");
                 }
                 if(!dc->iv_found){
