@@ -186,3 +186,6 @@ derr_t dirmgr_process_status_resp(
     ie_status_attr_resp_t in,
     ie_status_attr_resp_t *out
 );
+
+// only exposed for testing
+void prune_empty_dirs(const string_builder_t *path);
