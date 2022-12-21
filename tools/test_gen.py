@@ -845,7 +845,8 @@ NUM:i;
 locate_num(x) = JUNK { numloc = @x; };
 save_num(x:i) = locate_num!(x) { saved = $x++; };
 pass_num(p:i) = { passed=$p; fprintf(stderr, "set passed\n"); } save_num!(p);
-num = NUM:n pass_num!(n) { finalized = $n; };
+set_output(x:i) = %empty { $x = 9; };
+num:i = NUM:n pass_num!(n) set_output!($) { finalized = $n; };
 
 {{{
 int main(int argc, char **argv){
@@ -858,11 +859,17 @@ int main(int argc, char **argv){
     size_t ntokens = sizeof(tokens)/sizeof(*tokens);
 
     char *out;
+    int numout = 0;
     status_e status = STATUS_OK;
     size_t i = 0;
     while(!status && i < ntokens){
         status = parse_num(
-            &p, tokens[i].tok, (val_u){.i=tokens[i].val}, tokens[i].loc, NULL
+            &p,
+            tokens[i].tok,
+            (val_u){.i=tokens[i].val},
+            tokens[i].loc,
+            &numout,
+            NULL
         );
         i++;
     }
@@ -891,6 +898,10 @@ int main(int argc, char **argv){
     }
     if(numloc.end != 1){
         fprintf(stderr, "numloc.end: %d, not 1\n", numloc.end);
+        wrong++;
+    }
+    if(numout != 9){
+        fprintf(stderr, "numout: %d, not 9\n", numout);
         wrong++;
     }
 

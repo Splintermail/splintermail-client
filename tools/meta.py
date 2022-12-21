@@ -47,7 +47,8 @@ import gen
 # xtag = [COLON TEXT:tag];
 # params = LPAREN TEXT xtag 1*(COMMA TEXT xtag) RPAREN;
 # xparams = [params];
-# args = BANG LPAREN TEXT 1*(COMMA TEXT) RPAREN;
+# arg = TEXT | DOLLAR;
+# args = BANG LPAREN arg 1*(COMMA arg) RPAREN;
 # xargs = [args];
 # ref = TEXT:name [xargs] xtag;
 # def =
@@ -111,6 +112,7 @@ CODE = g.token("CODE")
 SEMI = g.token("SEMI")
 BANG = g.token("BANG")
 COMMA = g.token("COMMA")
+DOLLAR = g.token("DOLLAR")
 EOF = g.token("EOF")
 
 GENERATOR = g.token("GENERATOR")
@@ -147,14 +149,24 @@ def params(e):
     e.match(RPAREN)
 
 @g.expr
+def arg(e):
+    with e.branches() as b:
+        with b.branch():
+            e.match(TEXT, "t")
+            e.exec("$$ = $t")
+        with b.branch():
+            e.match(DOLLAR, "d")
+            e.exec("$$ = $d")
+
+@g.expr
 def args(e):
     e.match(BANG)
     e.match(LPAREN)
-    e.match(TEXT, "n")
+    e.match(arg, "n")
     e.exec("$$ = [ParsedName($n, @n)]")
     with e.repeat(0, None):
         e.match(COMMA)
-        e.match(TEXT, "n2")
+        e.match(arg, "n2")
         e.exec("$$.append(ParsedName($n2, @n2))")
     e.match(RPAREN)
 

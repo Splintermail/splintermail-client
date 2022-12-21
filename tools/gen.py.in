@@ -1857,7 +1857,10 @@ class C:
         self.callstackmaxes = {}
 
     def sub(self, s):
-        return string.Template(s).substitute(**self.varmap, **self._extra_vars)
+        # Use safe_substitute, which leaves invalid $-values alone.  This is ok
+        # for us since we don't let user-defined code pass through the Template
+        # substitution, if we mess up it will be be caught by the compiler.
+        return string.Template(s).safe_substitute(**self.varmap, **self._extra_vars)
 
     def fprint(self, s, **kwargs):
         text = self.sub(s)
@@ -3985,6 +3988,7 @@ class ParsedDoc:
             e = g.get_name(name.name)
             e.defined = True
             scope = {p.name: p for p in e.params}
+            scope["$"] = Parameter("$", e.type, e.loc)
             val.process(g, e, scope)
 
         g.compile()
@@ -4120,6 +4124,7 @@ class Tokenizer:
             ";": SEMI,
             "!": BANG,
             ",": COMMA,
+            "$": DOLLAR,
         }
         if c in singles:
             _, loc = yield from next(self.cs)
