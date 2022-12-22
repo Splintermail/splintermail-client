@@ -51,15 +51,17 @@
 %type:py i { int };
 %param:py user_param;
 
-## You don't actually have to declare tokens, unless you want to set types.
-# EOL;
+# Tokens must be declared explicitly, so typos don't create new, untraceable
+# tokens for you.
+EOL;
 NUM:i;
-# PLUS;
-# MINUS;
-# MULT;
-# DIV;
-# LPAREN;
-# RPAREN;
+PLUS;
+MINUS;
+MULT;
+DIV;
+LPAREN;
+RPAREN;
+NEGATIVE;
 
 # Like sqlite's lemon.c parser generator, We support a %fallback directive.
 # It is useful for allowing keywords in the grammar to additionally match as

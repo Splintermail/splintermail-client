@@ -66,7 +66,7 @@ import string
 import sys
 import textwrap
 
-def render_location(loc, body, underline=True):
+def render_location(loc, body, underline=True, hang=""):
     lines = body.splitlines()
 
     # Note that values in loc are always 1-indexed.
@@ -85,12 +85,12 @@ def render_location(loc, body, underline=True):
 
     for i in range(start_line, end_line):
         line = lines[i]
-        out += line + "\n"
+        out += hang + line + "\n"
         if not underline:
             continue
         caret_start = start_char if i == start_line else 0
         caret_end = end_char if i+1 == end_line else len(line)
-        out += " "*caret_start + "^"*(caret_end - caret_start) + "\n"
+        out += hang + " "*caret_start + "^"*(caret_end - caret_start) + "\n"
 
     return out.rstrip("\n")
 
@@ -105,6 +105,25 @@ class GrammarError(Exception):
         if self.text is not None:
             return self.render(self.text)
         return super().__str__()
+
+class DuplicateDefinition(GrammarError):
+    def __init__(self, name, first_loc, second_loc):
+        self.name = name
+        self.first_loc = first_loc
+        self.second_loc = second_loc
+        super().__init__()
+
+    def render(self, body):
+        out = "duplicate definition for %s:\n"%self.name
+        if not self.first_loc or not self.second_loc:
+            return out.rstrip("\n")
+        out += "first definition at %s\n"%render_location(
+            self.first_loc, body, hang="    "
+        )
+        out += "second definition at %s"%render_location(
+            self.second_loc, body, hang="    "
+        )
+        return out
 
 class FirstFirst(GrammarError):
     def __init__(self, parent, conflicts):
@@ -171,7 +190,7 @@ class InfiniteRecursion(Exception):
     def __str__(self):
         try:
             out = "\n" + "\n".join(
-                "%s may start with %s: %s"%(e.name, enext.name, e.seq.summary())
+                "%s may start with %s"%(e.name, enext.name)
                 for e, enext in zip(self.exprs, self.exprs[1:]+[self.extra])
             )
             out += "\nand %s causes an infinite recursion"%self.extra.name
@@ -389,6 +408,7 @@ class Token(Definition):
         self.name = name
         self.type = typ
         self.loc = loc
+        self.references = []
 
 
 class Parsable(metaclass=abc.ABCMeta):
@@ -655,17 +675,21 @@ class Branches(Parsable):
 
     @property
     def default(self):
-        assert self._default_known, "can't call .default compiling grammar"
+        assert self._default_known, (
+            "can't call .default while compiling grammar"
+        )
         return self._default
 
     def __len__(self):
-        assert self._default_known, "can't call .__len__ compiling grammar"
+        assert self._default_known, (
+            "can't call .__len__ while compiling grammar"
+        )
         return len(self.branches) + int(self._default is not None)
 
     @property
     def branches_and_default(self):
         assert self._default_known, (
-            "can't call .branches_and_default compiling grammar"
+            "can't call .branches_and_default while compiling grammar"
         )
         out = list(self.branches)
         if self._default is not None:
@@ -691,8 +715,8 @@ class Recovery(Parsable):
     def add_code(self, code, tag=None, loc=None):
         self.seq.add_code(code, tag, loc)
 
-    def add_recovery_code(self, code, tag=None):
-        self.code.append(Snippet(code, tag))
+    def add_recovery_code(self, code, tag=None, loc=None):
+        self.code.append(Snippet(code, tag, loc))
 
     def set_after(self, after):
         assert self.after is None, "can't call set_after() twice!"
@@ -825,6 +849,7 @@ class Expression(Definition):
         self.loc = loc
         self.defined = False
         self.recurses = None
+        self.references = []
 
     def __call__(self, fn):
         """Provide a definition for a forwards-declared expression"""
@@ -895,30 +920,20 @@ class Grammar:
         self.compiled = False
         self.fallbacks = None
 
-    def get_name(self, name):
+    def get_name(self, name, loc):
         """
         Creates a name if it doesn't yet exist.  Mostly for the meta parser.
         """
-        if name in self.exprs:
-            return self.exprs[name]
-        if name[0].upper() == name[0]:
-            # starts uppercase, we guess it's a token
-            e = self.token(name)
-        else:
-            # starts lowercase, we guess it's a expression
-            e = self.expr(name)
+        # we explicitly process declarations first
+        assert name in self.exprs, name
+        e = self.exprs[name]
+        if loc is not None:
+            e.references.append(loc)
         return e
 
-    def expr(self, val):
+    def expr(self, val, loc=None):
         if isinstance(val, str):
             # Forward declaration case:
-            #     @g.expr
-            #     def my_expr(e):
-            #         e.match(...)
-            fn = None
-            name = val
-        else:
-            # Declaration/definition case.
             #     my_expr = g.expr("my_expr")
             #
             #     ...
@@ -926,10 +941,18 @@ class Grammar:
             #     @my_expr
             #     def my_expr(e):
             #         e.match(...)
+            fn = None
+            name = val
+        else:
+            # Declaration/definition case.
+            #     @g.expr
+            #     def my_expr(e):
+            #         e.match(...)
             fn = val
             name = fn.__name__
 
-        assert name not in self.exprs, name
+        if name in self.exprs:
+            raise DuplicateDefinition(name, self.exprs[name].loc, loc)
         e = Expression(name)
         self.exprs[name] = e
         if fn is not None:
@@ -959,17 +982,22 @@ class Grammar:
         if self.compiled:
             return
         # first make sure everything is defined, or the checks become confusing
-        undefined = set()
+        undefined = []
         for name, expr in self.sorted_expressions():
             if not expr.defined:
-                undefined.add(name)
+                undefined.append((name, expr))
         if undefined:
             # TODO: report these with locations to where they're referenced.
-            raise RenderedError(
-                "found referenced expression(s) with no definition: %s"%(
-                    str(sorted(undefined))
-                )
-            )
+            msg = ["found referenced expression(s) with no definition:"]
+            for name, expr in undefined:
+                msg += ['    name "%s" referenced at:'%name]
+                for loc in expr.references:
+                    msg += [
+                        "      - line=%s, col=%d"%(
+                            loc.start.line, loc.start.char
+                        )
+                    ]
+            raise RenderedError("\n".join(msg))
 
         # In the first pass, we detect infinite recursions in the grammar,
         # and set the .first of all expressions.  We aren't able to get
@@ -3786,10 +3814,9 @@ class ParsedName:
         self.args = args
 
     def process(self, g, e, scope):
-        x = g.get_name(self.name)
-        if x.loc is None:
-            # implicit initialization, set a location
-            x.loc = self.loc
+        x = g.get_name(self.name, self.loc)
+        # there is no implicit initialization allowed, a location must be set
+        assert x.loc is not None, self.name
         args = None
         if self.args:
             args = []
@@ -3851,7 +3878,7 @@ class ParsedRecovery:
         with e.recovery(loc=self.loc) as r:
             self.sub.process(g, e, scope)
             for c in self.code:
-                r.add_recovery_code(c.text, c.tag)
+                r.add_recovery_code(c.text, c.tag, c.loc)
 
 class ParsedRepeat:
     def __init__(self):
@@ -3973,9 +4000,10 @@ class ParsedDoc:
             if val is None:
                 _ = g.token(name.name, name.tag, name.loc)
             else:
-                e = g.expr(name.name)
+                loc = text_span(name.loc, val.loc)
+                e = g.expr(name.name, loc)
                 e.type = name.tag
-                e.loc = text_span(name.loc, val.loc)
+                e.loc = loc
                 if name.args is not None:
                     e.params = [
                         Parameter(a.name, a.tag, a.loc) for a in name.args
@@ -3985,7 +4013,7 @@ class ParsedDoc:
         for name, val in self.defs:
             if val is None:
                 continue
-            e = g.get_name(name.name)
+            e = g.get_name(name.name, None)
             e.defined = True
             scope = {p.name: p for p in e.params}
             scope["$"] = Parameter("$", e.type, e.loc)
@@ -4341,20 +4369,37 @@ def inspect_def(g, name, body):
         out = "token %s:\n"%name
         if obj.loc is not None:
             out += textwrap.indent(
-                "defined at " + render_location(obj.loc, body), "    "
-            )
-        return out
-    out = "expression %s = %s\n"%(name, obj.seq.summary())
-    out += "    first: [%s]\n"%(",".join(str(f) for f in obj.seq.first))
-    out += "    disallowed_after: [%s]\n"%(
-        ",".join(str(f) for f in obj.seq.disallowed_after)
-    )
-    out += "    recursion path: %s\n"%str(obj.recurses)
-    if obj.loc is not None:
-        out += textwrap.indent(
-            "defined at " + render_location(obj.loc, body, underline=False),
-            "    ",
+                "defined at " + render_location(
+                    obj.loc, body, hang="    "
+                ),
+                "    ",
+            ) + "\n"
+    else:
+        out = "expression %s = %s\n"%(name, obj.seq.summary())
+        out += "    first: [%s]\n"%(",".join(str(f) for f in obj.seq.first))
+        out += "    disallowed_after: [%s]\n"%(
+            ",".join(str(f) for f in obj.seq.disallowed_after)
         )
+        out += "    recursion path: %s\n"%str(obj.recurses)
+        if obj.loc is not None:
+            out += textwrap.indent(
+                "defined at " + render_location(
+                    obj.loc, body, underline=False, hang="    "
+                ),
+                "    ",
+            ) + "\n"
+    if not obj.references:
+        out += "    references:\n"
+        out += "        (none)"
+    else:
+        out += "    references:\n"
+        for loc in obj.references:
+            out += textwrap.indent(
+                "at " + render_location(
+                    loc, body, underline=True, hang="    "
+                ) + "\n",
+                "        ",
+            )
     return out
 
 def gen(
@@ -4372,7 +4417,11 @@ def gen(
     with read_template(template, template_tag, out) as start_offset:
         parsed_doc = parse_doc(grammar_text)
 
-        g = parsed_doc.build_grammar(grammar_text)
+        try:
+            g = parsed_doc.build_grammar(grammar_text)
+        except GrammarError as e:
+            msg = e.render(grammar_text)
+            raise RenderedError(msg) from e
 
         for i in inspect:
             print(inspect_def(g, i, grammar_text), file=sys.stderr)

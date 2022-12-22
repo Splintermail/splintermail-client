@@ -192,6 +192,7 @@ g.check()
 
 # empty expressions: various legal forms
 grammar_text = """
+A; B;
 a = %empty;  # explicit empty
 b = B | %empty;  # in a branch, explicit
 c = A (B | %empty);  # in a branch, explicit
@@ -219,6 +220,7 @@ assert branches.default is not None
 
 # %return handling
 grammar_text = """
+A; B; C; D; X; Y; Z; ARG; COMMA;
 a = [X] ([Y] %return | B) (Z %return | %empty);
 b = ARG *(COMMA (ARG | %return));
 c = A *(COMMA (A | X Y %return));
@@ -246,6 +248,7 @@ for key, maybe_empty, disallowed_after in (
 
 # early %returns are invalid
 grammar_text = """
+A; B; C; D; E; F;
 a = A B C 1*(D E %return) F;
 b = A B C (D E %return | E %return) F;
 """
@@ -263,6 +266,7 @@ except gen.ReturnNotLast:
 
 # %returns can prevent first/follow conflicts on repeats
 grammar_text = """
+A; COMMA;
 a = *(1*A (COMMA | %return));
 b = 1*A (COMMA | %return);
 """
@@ -284,6 +288,7 @@ assert tokens == [gen.CODE, gen.EOF], tokens
 
 # test extract_fallbacks (tree expansion)
 grammar_text = """
+A; B; C; WORD; LETTER;
 %fallback LETTER A B C;
 %fallback WORD LETTER;
 asdf = WORD LETTER A B C;
@@ -311,6 +316,7 @@ assert got == {"A", "B", "C"}, got
 
 # test all_fallbacks (tree expansion)
 grammar_text = """
+A; B; C; WORD; LETTER; N1; N2; N3; NUM;
 %fallback LETTER A B C;
 %fallback NUM N1 N2 N3;
 %fallback WORD LETTER NUM;
@@ -372,6 +378,7 @@ assert got == set(), got
 
 # test extract_fallbacks (multi-parent rejection)
 grammar_text = """
+A; B; C;
 %fallback A B;
 %fallback B C;
 %fallback C A;
@@ -386,6 +393,7 @@ except gen.RenderedError as e:
 
 # test conflicts caused by fallback
 grammar_text = """
+A; B;
 %fallback A B;
 asdf = *A B;
 """
@@ -492,6 +500,7 @@ def run_py_e2e_test(grammar_text):
 
 # function-like expressions: enforce arg/param match counts
 grammar_text = """
+A; B; C;
 expr1 = A:a B:b expr2!(a, b);
 expr2(a, b, c) = A B C;
 """
@@ -501,6 +510,7 @@ errors = sparse_enforce_policy(g, no_missing_args=True)
 if not errors:
     raise ValueError("errors expected but not found")
 grammar_text = """
+A; B; C;
 expr1 = A:a B:b expr2!(a, b);
 expr2(a) = A B C;
 """
@@ -517,6 +527,7 @@ run_c_e2e_test(r"""
 %type i {int};
 
 NUM:i;
+EOL;
 
 maybe_num:i = (NUM:n {$$=$n;} | %empty {$$=7;}) EOL;
 
@@ -578,6 +589,7 @@ run_py_e2e_test(r"""
 %type i {int};
 
 NUM:i;
+EOL;
 
 maybe_num:i = (NUM:n {$$=$n;} | %empty {$$=7;}) EOL;
 
@@ -600,6 +612,7 @@ run_c_e2e_test(r"""
 %root tuple;
 %kwarg debug true;
 
+ITEM; COMMA; LPAREN; RPAREN;
 tuple_body = ITEM *(COMMA (ITEM | %return));
 tuple = LPAREN [tuple_body] RPAREN;
 
@@ -668,6 +681,7 @@ int main(int argc, char **argv){
 run_py_e2e_test(r"""
 %root tuple;
 
+ITEM; COMMA; LPAREN; RPAREN;
 tuple_body = ITEM *(COMMA (ITEM | %return));
 tuple = LPAREN [tuple_body] RPAREN;
 
@@ -703,6 +717,7 @@ B;
 DIGIT;
 ONE;
 TWO;
+_EOF;
 %fallback LETTER A B;
 %fallback DIGIT ONE TWO;
 
@@ -841,6 +856,7 @@ loc_t numloc = {0};
 %kwarg debug true;
 
 NUM:i;
+JUNK;
 
 locate_num(x) = JUNK { numloc = @x; };
 save_num(x:i) = locate_num!(x) { saved = $x++; };
@@ -941,6 +957,9 @@ char *myappend(char *a, char joiner, char *b, char *tag){
 %kwarg debug true;
 
 STR:str;
+MINUS;
+PLUS;
+_EOF;
 
 sum:str =
     diff:a {$$ = mydup($a, "1");}
@@ -1029,6 +1048,9 @@ char *myappend(char *a, char joiner, char *b){
 %kwarg debug true;
 
 STR:str;
+MINUS;
+PLUS;
+_EOF;
 
 sum:str =
     diff:a {$$ = steal(&$a);}
@@ -1137,6 +1159,9 @@ void check_location(char *val, loc_t loc);
 %kwarg debug true;
 
 STR:str;
+MINUS;
+PLUS;
+_EOF;
 
 sum:str =
     diff:a {check_location($a, @a); $$ = steal(&$a);}
@@ -1246,6 +1271,9 @@ static void handle_error(
     const char *loc_summary
 );
 }}
+
+WORD;
+DOT;
 
 %root short;
 %root perfect;
@@ -1411,6 +1439,10 @@ static void handle_error(
 WORD:str;
 X:str;
 Y:str;
+COMMA;
+LPAREN;
+RPAREN;
+EOL;
 
 start:str = %empty {$$=strdup("hi");};
 arglist(s:str):str = {$$=strdup("hi");} WORD 3*(COMMA (WORD | %return));
