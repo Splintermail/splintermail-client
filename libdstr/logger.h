@@ -225,7 +225,7 @@ static inline bool pvt_prop_var(derr_t *e, derr_t *e2,
 
 
 /* CHECK handles an error that we have ignored until now, useful when
-   transitioning from chunks of code which use the bison error handling
+   transitioning from chunks of code which use the builder api error handling
    strategy to chunks of code which use normal error handling */
 static inline bool pvt_check(derr_t *e,
         const char *file, const char *func, int line){

@@ -347,7 +347,7 @@ fail:
     PASSED(e);
 }
 
-static imap_parser_cb_t imape_parser_cmd_cb = { .cmd=cmd_cb };
+static imap_cb imape_cmd_cb = { .cmd = cmd_cb };
 
 // parser callback for clients
 
@@ -371,7 +371,7 @@ fail:
     id->session->close(id->session, e);
     PASSED(e);
 }
-static imap_parser_cb_t imape_parser_resp_cb = {.resp=resp_cb};
+static imap_cb imap_resp_cb = { .resp = resp_cb };
 
 void imape_data_prestart(imape_data_t *id, imape_t *imape, session_t *session,
         ref_fn_t ref_up, ref_fn_t ref_down, imape_control_i *control,
@@ -409,8 +409,8 @@ static void imape_data_onthread_start(imape_data_t *id){
     bool is_client = id->control->is_client;
 
     // choose the right parser callback
-    imap_parser_cb_t parser_cb =
-        is_client ? imape_parser_resp_cb : imape_parser_cmd_cb;
+    imap_cb parser_cb =
+        is_client ? imap_resp_cb : imape_cmd_cb;
 
     PROP_GO(&e,
         imap_reader_init(

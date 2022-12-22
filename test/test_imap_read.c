@@ -116,8 +116,8 @@ done:
     imap_resp_free(resp);
 }
 
-static imap_parser_cb_t parser_cmd_cb = { .cmd=cmd_cb };
-static imap_parser_cb_t parser_resp_cb = { .resp=resp_cb };
+static imap_cb parser_cmd_cb = { .cmd=cmd_cb };
+static imap_cb parser_resp_cb = { .resp=resp_cb };
 
 typedef struct {
     dstr_t in;
@@ -127,24 +127,25 @@ typedef struct {
     bool syntax_error;
 } test_case_t;
 
-static derr_t do_test_scanner_and_parser(test_case_t *cases, size_t ncases,
-        bool is_client){
+static derr_t do_test(
+    test_case_t *cases, size_t ncases, bool is_client, extension_state_e ext
+){
     derr_t e = E_OK;
 
-    imap_parser_cb_t cb = is_client ? parser_resp_cb : parser_cmd_cb;
+    imap_cb cb = is_client ? parser_resp_cb : parser_cmd_cb;
 
     // prepare the calls_made struct
     calls_made_t calls = {0};
     PROP(&e, dstr_new(&calls.buf, 4096) );
 
     extensions_t exts = {
-        .uidplus = EXT_STATE_ON,
-        .enable = EXT_STATE_ON,
-        .condstore = EXT_STATE_ON,
-        .qresync = EXT_STATE_ON,
-        .unselect = EXT_STATE_ON,
-        .idle = EXT_STATE_ON,
-        .xkey = EXT_STATE_ON,
+        .uidplus = ext,
+        .enable = ext,
+        .condstore = ext,
+        .qresync = ext,
+        .unselect = ext,
+        .idle = ext,
+        .xkey = ext,
     };
 
     // init the reader
@@ -160,7 +161,7 @@ static derr_t do_test_scanner_and_parser(test_case_t *cases, size_t ncases,
         DROP_VAR(&calls.error);
         calls.buf.len = 0;
         // feed in the input
-        LOG_DEBUG("about to feed '%x'\n", FD(&cases[i].in));
+        LOG_DEBUG("\x1b[32mabout to feed '%x'\x1b[m\n", FD(&cases[i].in));
         derr_t e2 = imap_read(&reader, &cases[i].in);
         if(cases[i].syntax_error){
             if(!is_error(e2)){
@@ -171,7 +172,7 @@ static derr_t do_test_scanner_and_parser(test_case_t *cases, size_t ncases,
             }
         }
         PROP_VAR_GO(&e, &e2, show_case);
-        LOG_DEBUG("fed '%x'\n", FD(&cases[i].in));
+        LOG_DEBUG("\x1b[32mfed '%x'\x1b[m\n", FD(&cases[i].in));
         // check that there were no errors
         PROP_VAR_GO(&e, &calls.error, show_case);
         // check that the right calls were made
@@ -252,6 +253,71 @@ static derr_t test_responses(void){
                 .buf=DSTR_LIT("* OK [PARSE] hi\r\n")
             },
             {
+                .in=DSTR_LIT("* OK [trycreate] hi\r\n"),
+                .resp_calls=(int[]){IMAP_RESP_STATUS_TYPE, -1},
+                .buf=DSTR_LIT("* OK [TRYCREATE] hi\r\n"),
+            },
+            {
+                .in=DSTR_LIT("* OK [uidnext 1] hi\r\n"),
+                .resp_calls=(int[]){IMAP_RESP_STATUS_TYPE, -1},
+                .buf=DSTR_LIT("* OK [UIDNEXT 1] hi\r\n"),
+            },
+            {
+                .in=DSTR_LIT("* OK [uidvalidity 1] hi\r\n"),
+                .resp_calls=(int[]){IMAP_RESP_STATUS_TYPE, -1},
+                .buf=DSTR_LIT("* OK [UIDVALIDITY 1] hi\r\n"),
+            },
+            {
+                .in=DSTR_LIT("* OK [unseen 1] hi\r\n"),
+                .resp_calls=(int[]){IMAP_RESP_STATUS_TYPE, -1},
+                .buf=DSTR_LIT("* OK [UNSEEN 1] hi\r\n"),
+            },
+            {
+                .in=DSTR_LIT("* OK [randomtext] hi\r\n"),
+                .resp_calls=(int[]){IMAP_RESP_STATUS_TYPE, -1},
+                .buf=DSTR_LIT("* OK [randomtext] hi\r\n"),
+            },
+            {
+                .in=DSTR_LIT("* OK [randomtext yo] hi\r\n"),
+                .resp_calls=(int[]){IMAP_RESP_STATUS_TYPE, -1},
+                .buf=DSTR_LIT("* OK [randomtext yo] hi\r\n"),
+            },
+            {
+                .in=DSTR_LIT("* OK [jan non-random text, still atom] hi\r\n"),
+                .resp_calls=(int[]){IMAP_RESP_STATUS_TYPE, -1},
+                .buf=DSTR_LIT("* OK [jan non-random text, still atom] hi\r\n"),
+            },
+            {
+                .in=DSTR_LIT("* OK [uidnotsticky] hi\r\n"),
+                .resp_calls=(int[]){IMAP_RESP_STATUS_TYPE, -1},
+                .buf=DSTR_LIT("* OK [UIDNOTSTICKY] hi\r\n"),
+            },
+            {
+                .in=DSTR_LIT("* OK [appenduid 1 2] hi\r\n"),
+                .resp_calls=(int[]){IMAP_RESP_STATUS_TYPE, -1},
+                .buf=DSTR_LIT("* OK [APPENDUID 1 2] hi\r\n"),
+            },
+            {
+                .in=DSTR_LIT("* OK [copyuid 1 2:3 4:5] hi\r\n"),
+                .resp_calls=(int[]){IMAP_RESP_STATUS_TYPE, -1},
+                .buf=DSTR_LIT("* OK [COPYUID 1 2:3 4:5] hi\r\n"),
+            },
+            {
+                .in=DSTR_LIT("* OK [nomodseq] hi\r\n"),
+                .resp_calls=(int[]){IMAP_RESP_STATUS_TYPE, -1},
+                .buf=DSTR_LIT("* OK [NOMODSEQ] hi\r\n"),
+            },
+            {
+                .in=DSTR_LIT("* OK [highestmodseq 1] hi\r\n"),
+                .resp_calls=(int[]){IMAP_RESP_STATUS_TYPE, -1},
+                .buf=DSTR_LIT("* OK [HIGHESTMODSEQ 1] hi\r\n"),
+            },
+            {
+                .in=DSTR_LIT("* OK [modified 1:2] hi\r\n"),
+                .resp_calls=(int[]){IMAP_RESP_STATUS_TYPE, -1},
+                .buf=DSTR_LIT("* OK [MODIFIED 1:2] hi\r\n"),
+            },
+            {
                 .in=DSTR_LIT("* LIST (\\ext \\noselect) \"/\" inbox\r\n"),
                 .resp_calls=(int[]){IMAP_RESP_LIST, -1},
                 .buf=DSTR_LIT("* LIST (\\Noselect \\ext) \"/\" INBOX\r\n")
@@ -273,7 +339,7 @@ static derr_t test_responses(void){
             },
         };
         size_t ncases = sizeof(cases) / sizeof(*cases);
-        PROP(&e, do_test_scanner_and_parser(cases, ncases, true) );
+        PROP(&e, do_test(cases, ncases, true, EXT_STATE_ON) );
     }
     // Test STATUS responses
     {
@@ -305,7 +371,7 @@ static derr_t test_responses(void){
             },
         };
         size_t ncases = sizeof(cases) / sizeof(*cases);
-        PROP(&e, do_test_scanner_and_parser(cases, ncases, true) );
+        PROP(&e, do_test(cases, ncases, true, EXT_STATE_ON) );
     }
     // misc responses
     {
@@ -337,7 +403,7 @@ static derr_t test_responses(void){
             },
         };
         size_t ncases = sizeof(cases) / sizeof(*cases);
-        PROP(&e, do_test_scanner_and_parser(cases, ncases, true) );
+        PROP(&e, do_test(cases, ncases, true, EXT_STATE_ON) );
     }
     // FETCH responses
     {
@@ -365,6 +431,11 @@ static derr_t test_responses(void){
                 .in=DSTR_LIT("* 15 FETCH (UID 1 FLAGS (\\seen \\ext))\r\n"),
                 .resp_calls=(int[]){IMAP_RESP_FETCH, -1},
                 .buf=DSTR_LIT("* 15 FETCH (FLAGS (\\Seen \\ext) UID 1)\r\n")
+            },
+            {
+                .in=DSTR_LIT("* 15 FETCH (FLAGS ())\r\n"),
+                .resp_calls=(int[]){IMAP_RESP_FETCH, -1},
+                .buf=DSTR_LIT("* 15 FETCH (FLAGS ())\r\n")
             },
             {
                 .in=DSTR_LIT("* 15 FETCH (RFC822 NIL)\r\n"),
@@ -415,7 +486,7 @@ static derr_t test_responses(void){
             },
         };
         size_t ncases = sizeof(cases) / sizeof(*cases);
-        PROP(&e, do_test_scanner_and_parser(cases, ncases, true) );
+        PROP(&e, do_test(cases, ncases, true, EXT_STATE_ON) );
     }
     return e;
 }
@@ -607,7 +678,7 @@ static derr_t test_commands(void){
             },
         };
         size_t ncases = sizeof(cases) / sizeof(*cases);
-        PROP(&e, do_test_scanner_and_parser(cases, ncases, false) );
+        PROP(&e, do_test(cases, ncases, false, EXT_STATE_ON) );
     }
     // SEARCH command
     {
@@ -654,7 +725,7 @@ static derr_t test_commands(void){
             },
         };
         size_t ncases = sizeof(cases) / sizeof(*cases);
-        PROP(&e, do_test_scanner_and_parser(cases, ncases, false) );
+        PROP(&e, do_test(cases, ncases, false, EXT_STATE_ON) );
     }
     // FETCH command
     {
@@ -734,7 +805,7 @@ static derr_t test_commands(void){
             },
         };
         size_t ncases = sizeof(cases) / sizeof(*cases);
-        PROP(&e, do_test_scanner_and_parser(cases, ncases, false) );
+        PROP(&e, do_test(cases, ncases, false, EXT_STATE_ON) );
     }
     // UID mode commands
     {
@@ -761,7 +832,7 @@ static derr_t test_commands(void){
             },
         };
         size_t ncases = sizeof(cases) / sizeof(*cases);
-        PROP(&e, do_test_scanner_and_parser(cases, ncases, false) );
+        PROP(&e, do_test(cases, ncases, false, EXT_STATE_ON) );
     }
     // UIDPLUS extension commands
     {
@@ -773,7 +844,7 @@ static derr_t test_commands(void){
             },
         };
         size_t ncases = sizeof(cases) / sizeof(*cases);
-        PROP(&e, do_test_scanner_and_parser(cases, ncases, false) );
+        PROP(&e, do_test(cases, ncases, false, EXT_STATE_ON) );
     }
     // UIDPLUS extension responses
     {
@@ -795,7 +866,7 @@ static derr_t test_commands(void){
             },
         };
         size_t ncases = sizeof(cases) / sizeof(*cases);
-        PROP(&e, do_test_scanner_and_parser(cases, ncases, true) );
+        PROP(&e, do_test(cases, ncases, true, EXT_STATE_ON) );
     }
     // ENABLE extension command
     {
@@ -807,7 +878,7 @@ static derr_t test_commands(void){
             },
         };
         size_t ncases = sizeof(cases) / sizeof(*cases);
-        PROP(&e, do_test_scanner_and_parser(cases, ncases, false) );
+        PROP(&e, do_test(cases, ncases, false, EXT_STATE_ON) );
     }
     // ENABLE extension response
     {
@@ -819,7 +890,7 @@ static derr_t test_commands(void){
             },
         };
         size_t ncases = sizeof(cases) / sizeof(*cases);
-        PROP(&e, do_test_scanner_and_parser(cases, ncases, true) );
+        PROP(&e, do_test(cases, ncases, true, EXT_STATE_ON) );
     }
     // CONDSTORE extension commands
     {
@@ -866,7 +937,7 @@ static derr_t test_commands(void){
             },
         };
         size_t ncases = sizeof(cases) / sizeof(*cases);
-        PROP(&e, do_test_scanner_and_parser(cases, ncases, false) );
+        PROP(&e, do_test(cases, ncases, false, EXT_STATE_ON) );
     }
     // CONDSTORE extension responses
     {
@@ -903,7 +974,7 @@ static derr_t test_commands(void){
             },
         };
         size_t ncases = sizeof(cases) / sizeof(*cases);
-        PROP(&e, do_test_scanner_and_parser(cases, ncases, true) );
+        PROP(&e, do_test(cases, ncases, true, EXT_STATE_ON) );
     }
     // QRESYNC extension commands
     {
@@ -935,7 +1006,7 @@ static derr_t test_commands(void){
             },
         };
         size_t ncases = sizeof(cases) / sizeof(*cases);
-        PROP(&e, do_test_scanner_and_parser(cases, ncases, false) );
+        PROP(&e, do_test(cases, ncases, false, EXT_STATE_ON) );
     }
     // QRESYNC extension responses
     {
@@ -957,7 +1028,7 @@ static derr_t test_commands(void){
             },
         };
         size_t ncases = sizeof(cases) / sizeof(*cases);
-        PROP(&e, do_test_scanner_and_parser(cases, ncases, true) );
+        PROP(&e, do_test(cases, ncases, true, EXT_STATE_ON) );
     }
     // UNSELECT extension command
     {
@@ -969,7 +1040,7 @@ static derr_t test_commands(void){
             },
         };
         size_t ncases = sizeof(cases) / sizeof(*cases);
-        PROP(&e, do_test_scanner_and_parser(cases, ncases, false) );
+        PROP(&e, do_test(cases, ncases, false, EXT_STATE_ON) );
     }
     // IDLE extension command
     {
@@ -986,7 +1057,7 @@ static derr_t test_commands(void){
             },
         };
         size_t ncases = sizeof(cases) / sizeof(*cases);
-        PROP(&e, do_test_scanner_and_parser(cases, ncases, false) );
+        PROP(&e, do_test(cases, ncases, false, EXT_STATE_ON) );
     }
     // XKEY extension commands
     {
@@ -1018,7 +1089,7 @@ static derr_t test_commands(void){
             },
         };
         size_t ncases = sizeof(cases) / sizeof(*cases);
-        PROP(&e, do_test_scanner_and_parser(cases, ncases, false) );
+        PROP(&e, do_test(cases, ncases, false, EXT_STATE_ON) );
     }
     // XKEY extension responses
     {
@@ -1040,35 +1111,15 @@ static derr_t test_commands(void){
             },
         };
         size_t ncases = sizeof(cases) / sizeof(*cases);
-        PROP(&e, do_test_scanner_and_parser(cases, ncases, true) );
+        PROP(&e, do_test(cases, ncases, true, EXT_STATE_ON) );
     }
-    return e;
-}
-
-
-static derr_t test_bison_destructors(void){
-    /* Observation: calling yypstatate_delete() on the parse when a command
-       has not completed does not result in the destructor being called.
-
-       And that's dumb.  This test, when run with valgrind or asan, will fail
-       if our workaround is not working. */
-    derr_t e = E_OK;
-    test_case_t cases[] = {
-        {
-            .in=DSTR_LIT("tag FETCH *"),
-            .cmd_calls=(int[]){-1},
-            .buf=DSTR_LIT("")
-        },
-    };
-    size_t ncases = sizeof(cases) / sizeof(*cases);
-    PROP(&e, do_test_scanner_and_parser(cases, ncases, false) );
     return e;
 }
 
 
 static derr_t test_command_error_reporting(void){
     derr_t e = E_OK;
-    test_case_t cases[] = {
+    test_case_t cases1[] = {
         // IDLE error, expect DONE but get something else
         {
             .in=DSTR_LIT("tag1 IDLE\r\ntag2 CLOSE\r\n"),
@@ -1110,18 +1161,106 @@ static derr_t test_command_error_reporting(void){
             .buf=DSTR_LIT("ERROR:tag5 syntax error at input: OK ok\\r\\n\r\n"),
         },
     };
-    size_t ncases = sizeof(cases) / sizeof(*cases);
-    PROP(&e, do_test_scanner_and_parser(cases, ncases, false) );
+    size_t ncases = sizeof(cases1) / sizeof(*cases1);
+    PROP(&e, do_test(cases1, ncases, false, EXT_STATE_ON) );
+
+    // testing failures when all extensions are disabled
+    test_case_t cases2[] = {
+        {
+            .in=DSTR_LIT("t IDLE\r\n"),
+            .cmd_calls=(int[]){IMAP_CMD_ERROR, -1},
+            .buf=DSTR_LIT(
+                "ERROR:t IDLE extension not available at input: "
+                "IDLE\\r\\n\r\n"
+            )
+        },
+        {
+            .in=DSTR_LIT("t XKEYSYNC\r\n"),
+            .cmd_calls=(int[]){IMAP_CMD_ERROR, -1},
+            .buf=DSTR_LIT(
+                "ERROR:t XKEY extension not available at input: "
+                "XKEYSYNC\\r\\n\r\n"
+            )
+        },
+        {
+            .in=DSTR_LIT("t XKEYADD \"\"\r\n"),
+            .cmd_calls=(int[]){IMAP_CMD_ERROR, -1},
+            .buf=DSTR_LIT(
+                "ERROR:t XKEY extension not available at input: "
+                "XKEYADD \\\"\\\"\\r\\n\r\n"
+            )
+        },
+        {
+            .in=DSTR_LIT("t STATUS INBOX (HIGHESTMODSEQ)\r\n"),
+            .cmd_calls=(int[]){IMAP_CMD_ERROR, -1},
+            .buf=DSTR_LIT(
+                "ERROR:t CONDSTORE extension not available at input: "
+                "HIGHESTMODSEQ)\\r\\n\r\n"
+            )
+        },
+        {
+            .in=DSTR_LIT("t SEARCH MODSEQ 10\r\n"),
+            .cmd_calls=(int[]){IMAP_CMD_ERROR, -1},
+            .buf=DSTR_LIT(
+                "ERROR:t CONDSTORE extension not available at input: "
+                "MODSEQ 10\\r\\n\r\n"
+            )
+        },
+        {
+            .in=DSTR_LIT("t FETCH 1 ALL (CHANGEDSINCE 2)\r\n"),
+            .cmd_calls=(int[]){IMAP_CMD_ERROR, -1},
+            .buf=DSTR_LIT(
+                "ERROR:t CONDSTORE extension not available at input: "
+                "CHANGEDSINCE 2)\\r\\n\r\n"
+            )
+        },
+        {
+            .in=DSTR_LIT("t UID FETCH 1 ALL (VANISHED)\r\n"),
+            .cmd_calls=(int[]){IMAP_CMD_ERROR, -1},
+            .buf=DSTR_LIT(
+                "ERROR:t QRESYNC extension not available at input: "
+                "VANISHED)\\r\\n\r\n"
+            )
+        },
+        {
+            .in=DSTR_LIT("t STORE 1 (UNCHANGEDSINCE 1) FLAGS \\Seen\r\n"),
+            .cmd_calls=(int[]){IMAP_CMD_ERROR, -1},
+            .buf=DSTR_LIT(
+                "ERROR:t CONDSTORE extension not available at input: "
+                "UNCHANGEDSINCE 1...\r\n"
+            )
+        },
+        {
+            .in=DSTR_LIT("t SELECT INBOX (CONDSTORE)\r\n"),
+            .cmd_calls=(int[]){IMAP_CMD_ERROR, -1},
+            .buf=DSTR_LIT(
+                "ERROR:t CONDSTORE extension not available at input: "
+                "CONDSTORE)\\r\\n\r\n"
+            )
+        },
+        {
+            .in=DSTR_LIT("t SELECT INBOX (QRESYNC 1 2)\r\n"),
+            .cmd_calls=(int[]){IMAP_CMD_ERROR, -1},
+            .buf=DSTR_LIT(
+                "ERROR:t QRESYNC extension not available at input: "
+                "QRESYNC 1 2)\\r\\n\r\n"
+            )
+        },
+    };
+    ncases = sizeof(cases2) / sizeof(*cases2);
+    PROP(&e, do_test(cases2, ncases, false, EXT_STATE_DISABLED) );
     return e;
 }
 
 static derr_t test_response_error_reporting(void){
+    // make sure errors are thrown immediately, not at the end of the line
     derr_t e = E_OK;
     test_case_t cases[] = {
         {
             .in=DSTR_LIT("(junk)"),
             .resp_calls=(int[]){-1},
             .buf=DSTR_LIT(""),
+            .syntax_error=true,
         },
         {
             .in=DSTR_LIT("\r\n"),
@@ -1131,10 +1270,61 @@ static derr_t test_response_error_reporting(void){
         },
     };
     size_t ncases = sizeof(cases) / sizeof(*cases);
-    PROP(&e, do_test_scanner_and_parser(cases, ncases, true) );
+    PROP(&e, do_test(cases, ncases, true, EXT_STATE_ON) );
     return e;
 }
 
+static derr_t test_num(void){
+    derr_t e = E_OK;
+    test_case_t cases[] = {
+        {
+            .in=DSTR_LIT("* OK [HIGHESTMODSEQ 1] ok\r\n"),
+            .resp_calls=(int[]){IMAP_RESP_STATUS_TYPE, -1},
+            .buf=DSTR_LIT("* OK [HIGHESTMODSEQ 1] ok\r\n"),
+        },
+        {
+            .in=DSTR_LIT("* OK [HIGHESTMODSEQ 18446744073709551615] hi\r\n"),
+            .resp_calls=(int[]){IMAP_RESP_STATUS_TYPE, -1},
+            .buf=DSTR_LIT("* OK [HIGHESTMODSEQ 18446744073709551615] hi\r\n"),
+        },
+        // trigger multiple NUM tokens due to packet breaks
+        { .in=DSTR_LIT("* OK [HIGHESTMODSEQ 18446744073709") },
+        {
+            .in=DSTR_LIT("551615] hi\r\n"),
+            .resp_calls=(int[]){IMAP_RESP_STATUS_TYPE, -1},
+            .buf=DSTR_LIT("* OK [HIGHESTMODSEQ 18446744073709551615] hi\r\n"),
+        },
+        // include leading zeros
+        { .in=DSTR_LIT("* OK [HIGHESTMODSEQ 00000000000000") },
+        { .in=DSTR_LIT("00018446") },
+        { .in=DSTR_LIT("7440737") },
+        { .in=DSTR_LIT("095") },
+        { .in=DSTR_LIT("51") },
+        { .in=DSTR_LIT("6") },
+        { .in=DSTR_LIT("15") },
+        {
+            .in=DSTR_LIT("] hi\r\n"),
+            .resp_calls=(int[]){IMAP_RESP_STATUS_TYPE, -1},
+            .buf=DSTR_LIT("* OK [HIGHESTMODSEQ 18446744073709551615] hi\r\n"),
+        },
+        // again, but one too high
+        { .in=DSTR_LIT("* OK [HIGHESTMODSEQ 00000000000000") },
+        { .in=DSTR_LIT("00018446") },
+        { .in=DSTR_LIT("7440737") },
+        { .in=DSTR_LIT("095") },
+        { .in=DSTR_LIT("51") },
+        { .in=DSTR_LIT("6") },
+        { .in=DSTR_LIT("16") }, // one too high
+        {
+            .in=DSTR_LIT("] hi\r\n"),
+            .buf=DSTR_LIT(""),
+            .syntax_error=true,
+        },
+    };
+    size_t ncases = sizeof(cases) / sizeof(*cases);
+    PROP(&e, do_test(cases, ncases, true, EXT_STATE_ON) );
+    return e;
+}
 
 int main(int argc, char **argv){
     derr_t e = E_OK;
@@ -1142,9 +1332,9 @@ int main(int argc, char **argv){
 
     PROP_GO(&e, test_responses(), test_fail);
     PROP_GO(&e, test_commands(), test_fail);
-    PROP_GO(&e, test_bison_destructors(), test_fail);
     PROP_GO(&e, test_command_error_reporting(), test_fail);
     PROP_GO(&e, test_response_error_reporting(), test_fail);
+    PROP_GO(&e, test_num(), test_fail);
 
     LOG_ERROR("PASS\n");
     return 0;

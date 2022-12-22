@@ -1,6 +1,6 @@
 #include "libimap/libimap.h"
 
-#include "libimap/generated/parse.tab.h"
+#include <string.h>
 
 DSTR_STATIC(scan_mode_STD_dstr, "SCAN_MODE_STD");
 DSTR_STATIC(scan_mode_STATUS_CODE_CHECK_dstr, "SCAN_MODE_STATUS_CODE_CHECK");
@@ -20,109 +20,182 @@ dstr_t* scan_mode_to_dstr(scan_mode_t mode){
     }
 }
 
-derr_t imap_scanner_init(imap_scanner_t *scanner){
-    derr_t e = E_OK;
-
-    // wrap the buffer in a dstr
-    DSTR_WRAP_ARRAY(scanner->bytes, scanner->bytes_buffer);
-
-    // start position at beginning of buffer
-    scanner->start = scanner->bytes.data;
-
-    // nothing to steal yet
-    scanner->in_literal = false;
-    scanner->literal_len = 0;
-
-    return e;
-}
-
-void imap_scanner_free(imap_scanner_t *scanner){
-    // currently nothing to free, but I don't know if it'll stay like that
-    (void)scanner;
-}
-
-dstr_t get_scannable(imap_scanner_t *scanner){
-    // this is always safe because "start" is always within the bytes buffer
-    size_t offset = (size_t)(scanner->start - scanner->bytes.data);
-    return dstr_sub(&scanner->bytes, offset, 0);
-}
-
-dstr_t steal_bytes(imap_scanner_t *scanner, size_t to_steal){
-    // if no bytes requested, return now to avoid dstr_sub's "0" behavior
-    // if no bytes available, return now to avoid underflow
-    if(to_steal == 0
-        || (uintptr_t)(scanner->start - scanner->bytes.data)
-            >= scanner->bytes.len){
-        return (dstr_t){0};
-    }
-    uintptr_t start = (uintptr_t)(scanner->start - scanner->bytes.data);
-    size_t bytes_left = scanner->bytes.len - start;
-    // check if the buffer has enough bytes already
-    if(bytes_left >= to_steal){
-        scanner->start += to_steal;
-        return dstr_sub(&scanner->bytes, start, start + to_steal);
+// truncation is silent
+void get_scannable(imap_scanner_t *s, dstr_t *out){
+    size_t input_skip;
+    if(s->orig_nleftovers){
+        // put original leftovers in, then all of input
+        size_t len = s->orig_nleftovers - s->skip;
+        dstr_t temp = dstr_from_cstrn(s->leftovers + s->skip, len, false);
+        dstr_t sub = dstr_sub2(temp, 0, out->size - out->len);
+        dstr_append_quiet(out, &sub);
+        input_skip = 0;
     }else{
-        scanner->start += bytes_left;
-        return dstr_sub(&scanner->bytes, start, start + bytes_left);
+        // put unskipped input into out
+        input_skip = s->skip;
     }
+    size_t len2 = s->ninput - input_skip;
+    dstr_t temp2 = dstr_from_cstrn(s->input + input_skip, len2, false);
+    dstr_t sub2 = dstr_sub2(temp2, 0, out->size - out->len);
+    dstr_append_quiet(out, &sub2);
 }
 
-void imap_scanner_shrink(imap_scanner_t *scanner){
-    // (this is always safe because "start" is always within the bytes buffer)
-    size_t offset = (size_t)(scanner->start - scanner->bytes.data);
-    dstr_leftshift(&scanner->bytes, offset);
-    // update all the pointers in the scanner
-    scanner->start -= offset;
+void imap_feed(imap_scanner_t *s, dstr_t input){
+    s->input = input.data;
+    s->ninput = input.len;
+    if(s->orig_nleftovers && s->orig_nleftovers < MAXKWLEN){
+        size_t needed = MAXKWLEN - s->orig_nleftovers;
+        size_t copysize = MIN(input.len, needed);
+        memcpy(s->leftovers + s->orig_nleftovers, input.data, copysize);
+        s->nleftovers += copysize;
+    }
+    s->fed = true;
 }
 
-derr_t imap_scan(imap_scanner_t *scanner, scan_mode_t mode, bool *more,
-                 dstr_t *token_out, int *type){
-    // first handle literals, which isn't well handled well by re2c
-    if(scanner->in_literal){
-        // if no bytes requested, return now to avoid dstr_sub's "0" behavior
-        if(scanner->literal_len == 0){
-            *token_out = (dstr_t){0};
-            *type = LITERAL_END;
-            *more = false;
-            // this is the end of the literal
-            scanner->in_literal = false;
-            return E_OK;
-        }
-        uintptr_t start = (uintptr_t)(scanner->start - scanner->bytes.data);
-        size_t bytes_left = scanner->bytes.len - start;
-        // do we have something to return?
-        if(bytes_left == 0){
-            *more = true;
-            return E_OK;
-        }
-        size_t steal_len = MIN(bytes_left, scanner->literal_len);
-        *more = false;
-        *type = RAW;
-        *token_out = dstr_sub(&scanner->bytes, start, start + steal_len);
-        scanner->start += steal_len;
-        scanner->literal_len -= steal_len;
-        return E_OK;
+// skip guaranteed to be less than len
+static imap_scanned_t do_literal(
+    char *src, size_t len, size_t skip, size_t literal_len
+){
+    size_t toklen = MIN(literal_len, len - skip);
+    return (imap_scanned_t){
+        .token = dstr_from_cstrn(src + skip, toklen, true),
+        .type = IMAP_LITRAW,
+    };
+}
+
+// skip guaranteed to be less than len
+static imap_scanned_t do_scan(
+    char *src, size_t len, size_t skip, scan_mode_t mode
+);
+
+imap_scanned_t imap_scan(imap_scanner_t *s, scan_mode_t mode){
+    if(!s->fed){
+        return (imap_scanned_t){ .more = true };
     }
+
+    char *src;
+    size_t len;
+
+    // pick a src
+    bool in_leftovers = s->nleftovers;
+    if(in_leftovers){
+        src = s->leftovers;
+        len = s->nleftovers;
+    }else{
+        src = s->input;
+        len = s->ninput;
+    }
+
+    // src should never be empty; we should have set fed=false instead
+    if(s->skip >= len) LOG_FATAL("src is empty\n");
+
+    imap_scanned_t out;
+    if(s->literal_len){
+        // literal mode
+        out = do_literal(src, len, s->skip, s->literal_len);
+        s->literal_len -= out.token.len;
+    }else{
+        out = do_scan(src, len, s->skip, mode);
+    }
+
+    if(!out.more){
+        // we obtained a valid token
+        s->skip += out.token.len;
+
+        if(in_leftovers){
+            /* there will never be more than one token from leftovers, because
+               if it had a token break in it, only the last token would have
+               gone to leftovers */
+            if(s->skip < s->orig_nleftovers){
+                dstr_t temp = dstr_from_cstrn(
+                    s->leftovers, s->orig_nleftovers, false
+                );
+                LOG_FATAL(
+                    "not all of leftovers (%x) was consumed\n", FD_DBG(&temp)
+                );
+            }
+            // transition to src = leftovers
+            s->skip -= s->orig_nleftovers;
+            s->nleftovers = 0;
+            s->orig_nleftovers = 0;
+            // proceed to a length check on input
+            in_leftovers = false;
+        }
+
+        if(!in_leftovers && s->skip >= s->ninput){
+            // return this one last token, but transition now to fed=false
+            s->ninput = 0;
+            s->skip = 0;
+            s->fed = false;
+        }
+    }else{
+        // no more valid tokens, copy input if necessary
+        size_t nremains = len - s->skip;
+        if(s->skip && nremains && in_leftovers){
+            /* we should never be left-shifting leftovers; there should never
+               be a valid token without consuming all of leftovers */
+            dstr_t temp = dstr_from_cstrn(
+                s->leftovers, s->orig_nleftovers, false
+            );
+            LOG_FATAL("would left-shift leftovers (%x)\n", FD_DBG(&temp));
+        }else{
+            memcpy(s->leftovers, src + s->skip, nremains);
+        }
+        s->ninput = 0;
+        s->skip = 0;
+        s->nleftovers = nremains;
+        s->orig_nleftovers = nremains;
+        s->fed = false;
+    }
+
+    return out;
+}
+
+/* scanner input strategy:
+
+   The imap scanner is the only true streaming re2c scanner we currently have.
+
+   The input strategy allows for the input to operate on packets of immutable
+   data.  The scanner passes substrings of the packets directly to the parser,
+   while the parser makes copies in order to have both persistence and
+   contiguous buffers.
+
+   Because packet boundaries are undefined, the scanner is not always able to
+   process an entire packet.  If the packet ends with e.g. "O", it could be the
+   start of "ON" or the start of "OK".  So the scanner keeps a small buffer of
+   leftovers for processing when the next packet is received.
+
+   For tokens which may be arbitrarily long (atom), the scanner is allowed to
+   emit them in parts, and the parser will piece them together.  This keeps the
+   scanner from having to allocate any memory.
+
+   Requirements:
+     - we MUST NOT emit any tokens at the end of the buffer which might be
+       keywords
+     - we MUST emit EOL when we see it, even at the end of the buffer
+     - we MUST not require atoms of arbitrary length to fit into the
+       scanner's buffer (we have to break them up)
+
+   In practice, any token shorter than the maximum keyword length (14) which is
+   not an EOL and which occurs at the end of the input buffer is witheld until
+   the next packet arrives. */
+
+// skip guaranteed to be less than len
+static imap_scanned_t do_scan(
+    char *src, size_t len, size_t skip, scan_mode_t mode
+){
+    imap_token_e type;
+
 #   define YYSKIP() ++cursor
     // check before dereference.  Not efficient, but simple and always correct.
-#   define YYPEEK() 0; \
-                if(cursor == limit){ \
-                    *more = true; \
-                    return e; \
-                }else \
-                    yych = *(cursor)
+#   define YYPEEK() (cursor == limit ? '\0' : *cursor)
 #   define YYBACKUP() marker = cursor
 #   define YYRESTORE() cursor = marker
 
-    derr_t e = E_OK;
+    const char *cursor = src + skip;
+    const char *limit = src + len;
+    const char *marker;
 
-    *more = false;
-
-    const char* cursor;
-    const char* marker = NULL;
-    const char* limit = scanner->bytes.data + scanner->bytes.len;
-
-    cursor = scanner->start;
     switch(mode){
         case SCAN_MODE_STD:                 goto std_mode;
         case SCAN_MODE_STATUS_CODE_CHECK:   goto status_code_check_mode;
@@ -131,227 +204,259 @@ derr_t imap_scan(imap_scanner_t *scanner, scan_mode_t mode, bool *more,
         case SCAN_MODE_NQCHAR:              goto nqchar_mode;
     }
 
+    /* note that num and raw which have unbounded lengths will be broken up by
+       the '\0' emitted by the YYPEEK macro */
+
     /*!re2c
         re2c:yyfill:enable = 0;
-        re2c:flags:input = custom;
         re2c:define:YYCTYPE = char;
 
         eol             = "\r"?"\n";
         nullbyte        = "\x00";
         num             = [0-9]+;
-        raw             = [^(){%*"\x00-\x1F\x7F[\]\\ }+\-.:,<>0-9]{1,32};
+        raw             = [^(){%*"\x00-\x1F\x7F[\]\\ }+\-.:,<>0-9]+;
         non_crlf_ctl    = [\x01-\x09\x0B-\x0C\x0E\x1f\x7f];
         qchar           = [^"\x00\r\n\\] | "\\\\" | "\\\"";
-        qstring         = ( [^"\x00\r\n\\] | ("\\"[\\"]) ){1,32};
+        qstring         = ( [^"\x00\r\n\\] | ("\\"[\\"]) )+;
     */
 
 std_mode:
     /*!re2c
-        *                       { *type = *scanner->start; goto done; }
-        nullbyte                { *type = INVALID_TOKEN; goto done; }
-        non_crlf_ctl            { *type = NON_CRLF_CTL; goto done; }
-        eol                     { *type = EOL; goto done; }
+        *                       { type = IMAP_INVALID_TOKEN; goto done; }
 
-        'alert'                 { *type = ALERT; goto done; }
-        'all'                   { *type = ALL; goto done; }
-        'answered'              { *type = ANSWERED; goto done; }
-        'append'                { *type = APPEND; goto done; }
-        'appenduid'             { *type = APPENDUID; goto done; }
-        'apr'                   { *type = APR; goto done; }
-        'aug'                   { *type = AUG; goto done; }
-        'authenticate'          { *type = AUTHENTICATE; goto done; }
-        'bad'                   { *type = BAD; goto done; }
-        'bcc'                   { *type = BCC; goto done; }
-        'before'                { *type = BEFORE; goto done; }
-        'bodystructure'         { *type = BODYSTRUCT; goto done; }
-        'body'                  { *type = BODY; goto done; }
-        'bye'                   { *type = BYE; goto done; }
-        'capability'            { *type = CAPA; goto done; }
-        'cc'                    { *type = CC; goto done; }
-        'changedsince'          { *type = CHGSINCE; goto done; }
-        'charset'               { *type = CHARSET; goto done; }
-        'check'                 { *type = CHECK; goto done; }
-        'closed'                { *type = CLOSED; goto done; }
-        'close'                 { *type = CLOSE; goto done; }
-        'condstore'             { *type = CONDSTORE; goto done; }
-        'copy'                  { *type = COPY; goto done; }
-        'copyuid'               { *type = COPYUID; goto done; }
-        'create'                { *type = CREATE; goto done; }
-        'created'               { *type = CREATED; goto done; }
-        'dec'                   { *type = DEC; goto done; }
-        'deleted'               { *type = DELETED; goto done; }
-        'delete'                { *type = DELETE_; goto done; }
-        'done'                  { *type = DONE; goto done; }
-        'draft'                 { *type = DRAFT; goto done; }
-        'earlier'               { *type = EARLIER; goto done; }
-        'enabled'               { *type = ENABLED; goto done; }
-        'enable'                { *type = ENABLE; goto done; }
-        'envelope'              { *type = ENVELOPE; goto done; }
-        'examine'               { *type = EXAMINE; goto done; }
-        'exists'                { *type = EXISTS; goto done; }
-        'expunge'               { *type = EXPUNGE; goto done; }
-        'fast'                  { *type = FAST; goto done; }
-        'feb'                   { *type = FEB; goto done; }
-        'fetch'                 { *type = FETCH; goto done; }
-        'fields'                { *type = FIELDS; goto done; }
-        'flagged'               { *type = FLAGGED; goto done; }
-        'flags'                 { *type = FLAGS; goto done; }
-        'from'                  { *type = FROM; goto done; }
-        'full'                  { *type = FULL; goto done; }
-        'header'                { *type = HEADER; goto done; }
-        'highestmodseq'         { *type = HIMODSEQ; goto done; }
-        'idle'                  { *type = IDLE; goto done; }
-        'inbox'                 { *type = INBOX; goto done; }
-        'internaldate'          { *type = INTDATE; goto done; }
-        'jan'                   { *type = JAN; goto done; }
-        'jul'                   { *type = JUL; goto done; }
-        'jun'                   { *type = JUN; goto done; }
-        'keyword'               { *type = KEYWORD; goto done; }
-        'larger'                { *type = LARGER; goto done; }
-        'list'                  { *type = LIST; goto done; }
-        'login'                 { *type = LOGIN; goto done; }
-        'logout'                { *type = LOGOUT; goto done; }
-        'lsub'                  { *type = LSUB; goto done; }
-        'marked'                { *type = MARKED; goto done; }
-        'mar'                   { *type = MAR; goto done; }
-        'may'                   { *type = MAY; goto done; }
-        'messages'              { *type = MESSAGES; goto done; }
-        'mime'                  { *type = MIME; goto done; }
-        'modified'              { *type = MODIFIED; goto done; }
-        'modseq'                { *type = MODSEQ; goto done; }
-        'new'                   { *type = NEW; goto done; }
-        'nil'                   { *type = NIL; goto done; }
-        'noinferiors'           { *type = NOINFERIORS; goto done; }
-        'nomodseq'              { *type = NOMODSEQ; goto done; }
-        'noop'                  { *type = NOOP; goto done; }
-        'noselect'              { *type = NOSELECT; goto done; }
-        'not'                   { *type = NOT; goto done; }
-        'no'                    { *type = NO; goto done; }
-        'nov'                   { *type = NOV; goto done; }
-        'oct'                   { *type = OCT; goto done; }
-        'ok'                    { *type = OK; goto done; }
-        'old'                   { *type = OLD; goto done; }
-        'on'                    { *type = ON; goto done; }
-        'or'                    { *type = OR; goto done; }
-        'parse'                 { *type = PARSE; goto done; }
-        'peek'                  { *type = PEEK; goto done; }
-        'permanentflags'        { *type = PERMFLAGS; goto done; }
-        'preauth'               { *type = PREAUTH; goto done; }
-        'priv'                  { *type = PRIV; goto done; }
-        'qresync'               { *type = QRESYNC; goto done; }
-        'read-only'             { *type = READ_ONLY; goto done; }
-        'read-write'            { *type = READ_WRITE; goto done; }
-        'recent'                { *type = RECENT; goto done; }
-        'rename'                { *type = RENAME; goto done; }
-        'rfc822'                { *type = RFC822; goto done; }
-        'search'                { *type = SEARCH; goto done; }
-        'seen'                  { *type = SEEN; goto done; }
-        'select'                { *type = SELECT; goto done; }
-        'sentbefore'            { *type = SENTBEFORE; goto done; }
-        'senton'                { *type = SENTON; goto done; }
-        'sentsince'             { *type = SENTSINCE; goto done; }
-        'sep'                   { *type = SEP; goto done; }
-        'shared'                { *type = SHARED; goto done; }
-        'silent'                { *type = SILENT; goto done; }
-        'since'                 { *type = SINCE; goto done; }
-        'size'                  { *type = SIZE_; goto done; }
-        'smaller'               { *type = SMALLER; goto done; }
-        'starttls'              { *type = STARTTLS; goto done; }
-        'status'                { *type = STATUS; goto done; }
-        'store'                 { *type = STORE; goto done; }
-        'subject'               { *type = SUBJECT; goto done; }
-        'subscribe'             { *type = SUBSCRIBE; goto done; }
-        'text'                  { *type = TEXT; goto done; }
-        'to'                    { *type = TO; goto done; }
-        'trycreate'             { *type = TRYCREATE; goto done; }
-        'uidnext'               { *type = UIDNEXT; goto done; }
-        'uidnotsticky'          { *type = UIDNOSTICK; goto done; }
-        'uid'                   { *type = UID; goto done; }
-        'uidvalidity'           { *type = UIDVLD; goto done; }
-        'unanswered'            { *type = UNANSWERED; goto done; }
-        'unchangedsince'        { *type = UNCHGSINCE; goto done; }
-        'undeleted'             { *type = UNDELETED; goto done; }
-        'undraft'               { *type = UNDRAFT; goto done; }
-        'unflagged'             { *type = UNFLAGGED; goto done; }
-        'unkeyword'             { *type = UNKEYWORD; goto done; }
-        'unmarked'              { *type = UNMARKED; goto done; }
-        'unseen'                { *type = UNSEEN; goto done; }
-        'unselect'              { *type = UNSELECT; goto done; }
-        'unsubscribe'           { *type = UNSUBSCRIBE; goto done; }
-        'vanished'              { *type = VANISHED; goto done; }
-        'xkeysync'              { *type = XKEYSYNC; goto done; }
-        'xkeyadd'               { *type = XKEYADD; goto done; }
+        " "                     { type = IMAP_SP; goto done; }
+        "."                     { type = IMAP_DOT; goto done; }
+        "("                     { type = IMAP_LPAREN; goto done; }
+        ")"                     { type = IMAP_RPAREN; goto done; }
+        "<"                     { type = IMAP_LANGLE; goto done; }
+        ">"                     { type = IMAP_RANGLE; goto done; }
+        "["                     { type = IMAP_LSQUARE; goto done; }
+        "]"                     { type = IMAP_RSQUARE; goto done; }
+        "{"                     { type = IMAP_LBRACE; goto done; }
+        "}"                     { type = IMAP_RBRACE; goto done; }
+        "@"                     { type = IMAP_ARUBA; goto done; }
+        ","                     { type = IMAP_COMMA; goto done; }
+        ";"                     { type = IMAP_SEMI; goto done; }
+        ":"                     { type = IMAP_COLON; goto done; }
+        "\\"                    { type = IMAP_BACKSLASH; goto done; }
+        "\""                    { type = IMAP_DQUOTE; goto done; }
+        "/"                     { type = IMAP_SLASH; goto done; }
+        "?"                     { type = IMAP_QUESTION; goto done; }
+        "="                     { type = IMAP_EQ; goto done; }
+        "-"                     { type = IMAP_DASH; goto done; }
+        "+"                     { type = IMAP_PLUS; goto done; }
+        "*"                     { type = IMAP_ASTERISK; goto done; }
+        "%"                     { type = IMAP_PERCENT; goto done; }
 
-        num                     { *type = NUM; goto done; }
-        raw                     { *type = RAW; goto done; }
+        nullbyte                { type = IMAP_INVALID_TOKEN; goto done; }
+        non_crlf_ctl            { type = IMAP_NON_CRLF_CTL; goto done; }
+        eol                     { type = IMAP_EOL; goto done; }
+
+        'alert'                 { type = IMAP_ALERT; goto done; }
+        'all'                   { type = IMAP_ALL; goto done; }
+        'answered'              { type = IMAP_ANSWERED; goto done; }
+        'append'                { type = IMAP_APPEND; goto done; }
+        'appenduid'             { type = IMAP_APPENDUID; goto done; }
+        'apr'                   { type = IMAP_APR; goto done; }
+        'aug'                   { type = IMAP_AUG; goto done; }
+        'authenticate'          { type = IMAP_AUTHENTICATE; goto done; }
+        'bad'                   { type = IMAP_BAD; goto done; }
+        'bcc'                   { type = IMAP_BCC; goto done; }
+        'before'                { type = IMAP_BEFORE; goto done; }
+        'bodystructure'         { type = IMAP_BODYSTRUCTURE; goto done; }
+        'body'                  { type = IMAP_BODY; goto done; }
+        'bye'                   { type = IMAP_BYE; goto done; }
+        'capability'            { type = IMAP_CAPABILITY; goto done; }
+        'cc'                    { type = IMAP_CC; goto done; }
+        'changedsince'          { type = IMAP_CHANGEDSINCE; goto done; }
+        'charset'               { type = IMAP_CHARSET; goto done; }
+        'check'                 { type = IMAP_CHECK; goto done; }
+        'closed'                { type = IMAP_CLOSED; goto done; }
+        'close'                 { type = IMAP_CLOSE; goto done; }
+        'condstore'             { type = IMAP_CONDSTORE; goto done; }
+        'copy'                  { type = IMAP_COPY; goto done; }
+        'copyuid'               { type = IMAP_COPYUID; goto done; }
+        'create'                { type = IMAP_CREATE; goto done; }
+        'created'               { type = IMAP_CREATED; goto done; }
+        'dec'                   { type = IMAP_DEC; goto done; }
+        'deleted'               { type = IMAP_DELETED; goto done; }
+        'delete'                { type = IMAP_DELETE; goto done; }
+        'done'                  { type = IMAP_DONE; goto done; }
+        'draft'                 { type = IMAP_DRAFT; goto done; }
+        'earlier'               { type = IMAP_EARLIER; goto done; }
+        'enabled'               { type = IMAP_ENABLED; goto done; }
+        'enable'                { type = IMAP_ENABLE; goto done; }
+        'envelope'              { type = IMAP_ENVELOPE; goto done; }
+        'examine'               { type = IMAP_EXAMINE; goto done; }
+        'exists'                { type = IMAP_EXISTS; goto done; }
+        'expunge'               { type = IMAP_EXPUNGE; goto done; }
+        'fast'                  { type = IMAP_FAST; goto done; }
+        'feb'                   { type = IMAP_FEB; goto done; }
+        'fetch'                 { type = IMAP_FETCH; goto done; }
+        'fields'                { type = IMAP_FIELDS; goto done; }
+        'flagged'               { type = IMAP_FLAGGED; goto done; }
+        'flags'                 { type = IMAP_FLAGS; goto done; }
+        'from'                  { type = IMAP_FROM; goto done; }
+        'full'                  { type = IMAP_FULL; goto done; }
+        'header'                { type = IMAP_HEADER; goto done; }
+        'highestmodseq'         { type = IMAP_HIGHESTMODSEQ; goto done; }
+        'idle'                  { type = IMAP_IDLE; goto done; }
+        'inbox'                 { type = IMAP_INBOX; goto done; }
+        'internaldate'          { type = IMAP_INTERNALDATE; goto done; }
+        'jan'                   { type = IMAP_JAN; goto done; }
+        'jul'                   { type = IMAP_JUL; goto done; }
+        'jun'                   { type = IMAP_JUN; goto done; }
+        'keyword'               { type = IMAP_KEYWORD; goto done; }
+        'larger'                { type = IMAP_LARGER; goto done; }
+        'list'                  { type = IMAP_LIST; goto done; }
+        'login'                 { type = IMAP_LOGIN; goto done; }
+        'logout'                { type = IMAP_LOGOUT; goto done; }
+        'lsub'                  { type = IMAP_LSUB; goto done; }
+        'marked'                { type = IMAP_MARKED; goto done; }
+        'mar'                   { type = IMAP_MAR; goto done; }
+        'may'                   { type = IMAP_MAY; goto done; }
+        'messages'              { type = IMAP_MESSAGES; goto done; }
+        'mime'                  { type = IMAP_MIME; goto done; }
+        'modified'              { type = IMAP_MODIFIED; goto done; }
+        'modseq'                { type = IMAP_MODSEQ; goto done; }
+        'new'                   { type = IMAP_NEW; goto done; }
+        'nil'                   { type = IMAP_NIL; goto done; }
+        'noinferiors'           { type = IMAP_NOINFERIORS; goto done; }
+        'nomodseq'              { type = IMAP_NOMODSEQ; goto done; }
+        'noop'                  { type = IMAP_NOOP; goto done; }
+        'noselect'              { type = IMAP_NOSELECT; goto done; }
+        'not'                   { type = IMAP_NOT; goto done; }
+        'no'                    { type = IMAP_NO; goto done; }
+        'nov'                   { type = IMAP_NOV; goto done; }
+        'oct'                   { type = IMAP_OCT; goto done; }
+        'ok'                    { type = IMAP_OK; goto done; }
+        'old'                   { type = IMAP_OLD; goto done; }
+        'on'                    { type = IMAP_ON; goto done; }
+        'or'                    { type = IMAP_OR; goto done; }
+        'parse'                 { type = IMAP_PARSE; goto done; }
+        'peek'                  { type = IMAP_PEEK; goto done; }
+        'permanentflags'        { type = IMAP_PERMANENTFLAGS; goto done; }
+        'preauth'               { type = IMAP_PREAUTH; goto done; }
+        'priv'                  { type = IMAP_PRIV; goto done; }
+        'qresync'               { type = IMAP_QRESYNC; goto done; }
+        'read-only'             { type = IMAP_READ_ONLY; goto done; }
+        'read-write'            { type = IMAP_READ_WRITE; goto done; }
+        'recent'                { type = IMAP_RECENT; goto done; }
+        'rename'                { type = IMAP_RENAME; goto done; }
+        'rfc822'                { type = IMAP_RFC822; goto done; }
+        'search'                { type = IMAP_SEARCH; goto done; }
+        'seen'                  { type = IMAP_SEEN; goto done; }
+        'select'                { type = IMAP_SELECT; goto done; }
+        'sentbefore'            { type = IMAP_SENTBEFORE; goto done; }
+        'senton'                { type = IMAP_SENTON; goto done; }
+        'sentsince'             { type = IMAP_SENTSINCE; goto done; }
+        'sep'                   { type = IMAP_SEP; goto done; }
+        'shared'                { type = IMAP_SHARED; goto done; }
+        'silent'                { type = IMAP_SILENT; goto done; }
+        'since'                 { type = IMAP_SINCE; goto done; }
+        'size'                  { type = IMAP_SIZE; goto done; }
+        'smaller'               { type = IMAP_SMALLER; goto done; }
+        'starttls'              { type = IMAP_STARTTLS; goto done; }
+        'status'                { type = IMAP_STATUS; goto done; }
+        'store'                 { type = IMAP_STORE; goto done; }
+        'subject'               { type = IMAP_SUBJECT; goto done; }
+        'subscribe'             { type = IMAP_SUBSCRIBE; goto done; }
+        'text'                  { type = IMAP_TEXT; goto done; }
+        'to'                    { type = IMAP_TO; goto done; }
+        'trycreate'             { type = IMAP_TRYCREATE; goto done; }
+        'uidnext'               { type = IMAP_UIDNEXT; goto done; }
+        'uidnotsticky'          { type = IMAP_UIDNOTSTICKY; goto done; }
+        'uid'                   { type = IMAP_UID; goto done; }
+        'uidvalidity'           { type = IMAP_UIDVALIDITY; goto done; }
+        'unanswered'            { type = IMAP_UNANSWERED; goto done; }
+        'unchangedsince'        { type = IMAP_UNCHANGEDSINCE; goto done; }
+        'undeleted'             { type = IMAP_UNDELETED; goto done; }
+        'undraft'               { type = IMAP_UNDRAFT; goto done; }
+        'unflagged'             { type = IMAP_UNFLAGGED; goto done; }
+        'unkeyword'             { type = IMAP_UNKEYWORD; goto done; }
+        'unmarked'              { type = IMAP_UNMARKED; goto done; }
+        'unseen'                { type = IMAP_UNSEEN; goto done; }
+        'unselect'              { type = IMAP_UNSELECT; goto done; }
+        'unsubscribe'           { type = IMAP_UNSUBSCRIBE; goto done; }
+        'vanished'              { type = IMAP_VANISHED; goto done; }
+        'xkeysync'              { type = IMAP_XKEYSYNC; goto done; }
+        'xkeyadd'               { type = IMAP_XKEYADD; goto done; }
+
+        num                     { type = IMAP_NUM; goto done; }
+        raw                     { type = IMAP_RAW; goto done; }
     */
 
 status_code_check_mode:
-    // TODO: how far does this * expand?  does it always stop at the first char?
+    // note, this * includes only one character
     /*!re2c
-        "\x00"          { *type = INVALID_TOKEN; goto done; }
-        "\n"            { *type = INVALID_TOKEN; goto done; }
-        "\r"            { *type = INVALID_TOKEN; goto done; }
-        eol             { *type = EOL; goto done; }
-        "["             { *type = YES_STATUS_CODE; goto done; }
-        *               { *type = NO_STATUS_CODE; goto done; }
+        "\x00"          { type = IMAP_INVALID_TOKEN; goto done; }
+        "\n"            { type = IMAP_INVALID_TOKEN; goto done; }
+        "\r"            { type = IMAP_INVALID_TOKEN; goto done; }
+        eol             { type = IMAP_EOL; goto done; }
+        "["             { type = IMAP_YES_STATUSCODE; goto done; }
+        *               { type = IMAP_NO_STATUSCODE; goto done; }
     */
 
 datetime_mode:
-    // literal allowed since APPEND has an optional date_time then a literal
+    // LBRACE allowed since APPEND has an optional date_time then a literal
 
     /*!re2c
-        *               { *type = *scanner->start; goto done; }
-        [0-9]           { *type = DIGIT; goto done; }
-        eol             { *type = EOL; goto done; }
+        *               { type = IMAP_INVALID_TOKEN; goto done; }
 
-        'jan'           { *type = JAN; goto done; }
-        'feb'           { *type = FEB; goto done; }
-        'mar'           { *type = MAR; goto done; }
-        'apr'           { *type = APR; goto done; }
-        'may'           { *type = MAY; goto done; }
-        'jun'           { *type = JUN; goto done; }
-        'jul'           { *type = JUL; goto done; }
-        'aug'           { *type = AUG; goto done; }
-        'sep'           { *type = SEP; goto done; }
-        'oct'           { *type = OCT; goto done; }
-        'nov'           { *type = NOV; goto done; }
-        'dec'           { *type = DEC; goto done; }
+        " "             { type = IMAP_SP; goto done; }
+        "{"             { type = IMAP_LBRACE; goto done; }
+        ":"             { type = IMAP_COLON; goto done; }
+        "\""            { type = IMAP_DQUOTE; goto done; }
+        "-"             { type = IMAP_DASH; goto done; }
+        "+"             { type = IMAP_PLUS; goto done; }
+
+        [0-9]           { type = IMAP_DIGIT; goto done; }
+        eol             { type = IMAP_EOL; goto done; }
+
+        'jan'           { type = IMAP_JAN; goto done; }
+        'feb'           { type = IMAP_FEB; goto done; }
+        'mar'           { type = IMAP_MAR; goto done; }
+        'apr'           { type = IMAP_APR; goto done; }
+        'may'           { type = IMAP_MAY; goto done; }
+        'jun'           { type = IMAP_JUN; goto done; }
+        'jul'           { type = IMAP_JUL; goto done; }
+        'aug'           { type = IMAP_AUG; goto done; }
+        'sep'           { type = IMAP_SEP; goto done; }
+        'oct'           { type = IMAP_OCT; goto done; }
+        'nov'           { type = IMAP_NOV; goto done; }
+        'dec'           { type = IMAP_DEC; goto done; }
     */
 
 qstring_mode:
 
     /*!re2c
-        *               { *type = *scanner->start; goto done; }
-        eol             { *type = EOL; goto done; }
-        "\""            { *type = '"'; goto done; }
-        qstring         { *type = RAW; goto done; }
+        *               { type = IMAP_INVALID_TOKEN; goto done; }
+        eol             { type = IMAP_EOL; goto done; }
+        "\""            { type = IMAP_DQUOTE; goto done; }
+        qstring         { type = IMAP_RAW; goto done; }
     */
 
 nqchar_mode:
 
     /*!re2c
-        *               { *type = *scanner->start; goto done; }
-        qchar           { *type = QCHAR; goto done; }
-        'nil'           { *type = NIL; goto done; }
-        eol             { *type = EOL; goto done; }
+        *               { type = IMAP_INVALID_TOKEN; goto done; }
+        "\""            { type = IMAP_DQUOTE; goto done; }
+        qchar           { type = IMAP_QCHAR; goto done; }
+        'nil'           { type = IMAP_NIL; goto done; }
+        eol             { type = IMAP_EOL; goto done; }
     */
 
 done:
-    {
-        size_t start_offset, end_offset;
-        // get the token bounds
-        // this is safe; start is always within the bytes buffer
-        start_offset = (size_t)(scanner->start - scanner->bytes.data);
-        end_offset = (size_t)(cursor - scanner->bytes.data);
-        /* TODO: does this work for all cases? Won't sometimes *cursor point to the
-                 last character of a token, and sometimes it will point to the
-                 character after a token? */
-        *token_out = dstr_sub(&scanner->bytes, start_offset, end_offset);
+    (void)src;
+    size_t end = (size_t)(cursor - src);
+    size_t toklen = end - skip;
+    // see "Requirements", above
+    if(end == len && type != IMAP_EOL && toklen < MAXKWLEN){
+        return (imap_scanned_t){ .more = true };
     }
 
-    // mark everything done until here
-    scanner->start = cursor;
-
-    return e;
+    return (imap_scanned_t){
+        .token = dstr_from_cstrn(src + skip, toklen, false),
+        .type = type,
+    };
 }

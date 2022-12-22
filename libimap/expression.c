@@ -225,7 +225,7 @@ fail:
 ie_dstr_t *ie_dstr_append(derr_t *e, ie_dstr_t *d, const dstr_t *token,
         keep_type_t type){
     if(is_error(*e)) goto fail;
-    if(!d) d = ie_dstr_new(e, token, type);
+    if(!d) return ie_dstr_new(e, token, type);
 
     // patterns for recoding the quoted strings
     LIST_PRESET(dstr_t, find, DSTR_LIT("\\\\"), DSTR_LIT("\\\""));
@@ -565,6 +565,7 @@ fail:
 }
 
 ie_flags_t *ie_flags_add_simple(derr_t *e, ie_flags_t *f, ie_flag_type_t type){
+    if(!f) f = ie_flags_new(e);
     if(is_error(*e)) goto fail;
 
     switch(type){
@@ -585,6 +586,7 @@ fail:
 }
 
 ie_flags_t *ie_flags_add_ext(derr_t *e, ie_flags_t *f, ie_dstr_t *ext){
+    if(!f) f = ie_flags_new(e);
     if(is_error(*e)) goto fail;
 
     ie_dstr_t **last = &f->extensions;
@@ -600,6 +602,7 @@ fail:
 }
 
 ie_flags_t *ie_flags_add_kw(derr_t *e, ie_flags_t *f, ie_dstr_t *kw){
+    if(!f) f = ie_flags_new(e);
     if(is_error(*e)) goto fail;
 
     ie_dstr_t **last = &f->keywords;
@@ -656,6 +659,7 @@ fail:
 
 ie_pflags_t *ie_pflags_add_simple(derr_t *e, ie_pflags_t *pf,
         ie_pflag_type_t type){
+    if(!pf) pf = ie_pflags_new(e);
     if(is_error(*e)) goto fail;
 
     switch(type){
@@ -677,6 +681,7 @@ fail:
 }
 
 ie_pflags_t *ie_pflags_add_ext(derr_t *e, ie_pflags_t *pf, ie_dstr_t *ext){
+    if(!pf) pf = ie_pflags_new(e);
     if(is_error(*e)) goto fail;
 
     ie_dstr_t **last = &pf->extensions;
@@ -692,6 +697,7 @@ fail:
 }
 
 ie_pflags_t *ie_pflags_add_kw(derr_t *e, ie_pflags_t *pf, ie_dstr_t *kw){
+    if(!pf) pf = ie_pflags_new(e);
     if(is_error(*e)) goto fail;
 
     ie_dstr_t **last = &pf->keywords;
@@ -748,6 +754,7 @@ fail:
 
 ie_fflags_t *ie_fflags_add_simple(derr_t *e, ie_fflags_t *ff,
         ie_fflag_type_t type){
+    if(!ff) ff = ie_fflags_new(e);
     if(is_error(*e)) goto fail;
 
     switch(type){
@@ -769,6 +776,7 @@ fail:
 }
 
 ie_fflags_t *ie_fflags_add_ext(derr_t *e, ie_fflags_t *ff, ie_dstr_t *ext){
+    if(!ff) ff = ie_fflags_new(e);
     if(is_error(*e)) goto fail;
 
     ie_dstr_t **last = &ff->extensions;
@@ -784,6 +792,7 @@ fail:
 }
 
 ie_fflags_t *ie_fflags_add_kw(derr_t *e, ie_fflags_t *ff, ie_dstr_t *kw){
+    if(!ff) ff = ie_fflags_new(e);
     if(is_error(*e)) goto fail;
 
     ie_dstr_t **last = &ff->keywords;
@@ -838,6 +847,7 @@ fail:
 
 ie_mflags_t *ie_mflags_set_selectable(derr_t *e, ie_mflags_t *mf,
         ie_selectable_t selectable){
+    if(!mf) mf = ie_mflags_new(e);
     if(is_error(*e)) goto fail;
 
     mf->selectable = selectable;
@@ -850,6 +860,7 @@ fail:
 }
 
 ie_mflags_t *ie_mflags_add_noinf(derr_t *e, ie_mflags_t *mf){
+    if(!mf) mf = ie_mflags_new(e);
     if(is_error(*e)) goto fail;
 
     mf->noinferiors = true;
@@ -862,6 +873,7 @@ fail:
 }
 
 ie_mflags_t *ie_mflags_add_ext(derr_t *e, ie_mflags_t *mf, ie_dstr_t *ext){
+    if(!mf) mf = ie_mflags_new(e);
     if(is_error(*e)) goto fail;
 
     ie_dstr_t **last = &mf->extensions;
@@ -1409,6 +1421,7 @@ ie_fetch_attrs_t *ie_fetch_attrs_copy(derr_t *e, const ie_fetch_attrs_t *old){
 
 ie_fetch_attrs_t *ie_fetch_attrs_add_simple(derr_t *e, ie_fetch_attrs_t *f,
         ie_fetch_simple_t simple){
+    if(!f) f = ie_fetch_attrs_new(e);
     if(is_error(*e)) goto fail;
     switch(simple){
         case IE_FETCH_ATTR_ENVELOPE: f->envelope = true; break;
@@ -1436,6 +1449,7 @@ fail:
 
 ie_fetch_attrs_t *ie_fetch_attrs_add_extra(derr_t *e, ie_fetch_attrs_t *f,
         ie_fetch_extra_t *extra){
+    if(!f) f = ie_fetch_attrs_new(e);
     if(is_error(*e)) goto fail;
 
     ie_fetch_extra_t **last = &f->extras;
@@ -1857,9 +1871,7 @@ ie_status_attr_resp_t ie_status_attr_resp_new_32(derr_t *e,
         ie_status_attr_t attr, unsigned int n){
     if(is_error(*e)) goto fail;
 
-    ie_status_attr_resp_t retval = (ie_status_attr_resp_t){
-        .attrs = (unsigned char)attr,
-    };
+    ie_status_attr_resp_t retval = (ie_status_attr_resp_t){ .attrs = attr };
     switch(attr){
         case IE_STATUS_ATTR_MESSAGES: retval.messages = n; break;
         case IE_STATUS_ATTR_RECENT: retval.recent = n; break;
@@ -1880,9 +1892,7 @@ ie_status_attr_resp_t ie_status_attr_resp_new_64(derr_t *e,
         ie_status_attr_t attr, uint64_t n){
     if(is_error(*e)) goto fail;
 
-    ie_status_attr_resp_t retval = (ie_status_attr_resp_t){
-        .attrs = (unsigned char)attr,
-    };
+    ie_status_attr_resp_t retval = (ie_status_attr_resp_t){ .attrs = attr };
     switch(attr){
         case IE_STATUS_ATTR_MESSAGES:
         case IE_STATUS_ATTR_RECENT:
@@ -2273,6 +2283,7 @@ void ie_fetch_resp_free(ie_fetch_resp_t *f){
 
 ie_fetch_resp_t *ie_fetch_resp_seq_num(derr_t *e, ie_fetch_resp_t *f,
         unsigned int seq_num){
+    if(!f) f = ie_fetch_resp_new(e);
     if(is_error(*e)) goto fail;
 
     f->seq_num = seq_num;
@@ -2286,6 +2297,7 @@ fail:
 
 ie_fetch_resp_t *ie_fetch_resp_uid(derr_t *e, ie_fetch_resp_t *f,
         unsigned int uid){
+    if(!f) f = ie_fetch_resp_new(e);
     if(is_error(*e)) goto fail;
 
     f->uid = uid;
@@ -2299,6 +2311,7 @@ fail:
 
 ie_fetch_resp_t *ie_fetch_resp_intdate(derr_t *e, ie_fetch_resp_t *f,
         imap_time_t intdate){
+    if(!f) f = ie_fetch_resp_new(e);
     if(is_error(*e)) goto fail;
 
     f->intdate = intdate;
@@ -2312,6 +2325,7 @@ fail:
 
 ie_fetch_resp_t *ie_fetch_resp_flags(derr_t *e, ie_fetch_resp_t *f,
         ie_fflags_t *flags){
+    if(!f) f = ie_fetch_resp_new(e);
     if(is_error(*e)) goto fail;
 
     if(f->flags != NULL){
@@ -2330,6 +2344,7 @@ fail:
 
 ie_fetch_resp_t *ie_fetch_resp_rfc822(derr_t *e, ie_fetch_resp_t *f,
         ie_dstr_t *rfc822){
+    if(!f) f = ie_fetch_resp_new(e);
     if(is_error(*e)) goto fail;
 
     if(f->rfc822 != NULL){
@@ -2348,6 +2363,7 @@ fail:
 
 ie_fetch_resp_t *ie_fetch_resp_rfc822_hdr(derr_t *e, ie_fetch_resp_t *f,
         ie_dstr_t *rfc822_hdr){
+    if(!f) f = ie_fetch_resp_new(e);
     if(is_error(*e)) goto fail;
 
     if(f->rfc822_hdr != NULL){
@@ -2366,6 +2382,7 @@ fail:
 
 ie_fetch_resp_t *ie_fetch_resp_rfc822_text(derr_t *e, ie_fetch_resp_t *f,
         ie_dstr_t *rfc822_text){
+    if(!f) f = ie_fetch_resp_new(e);
     if(is_error(*e)) goto fail;
 
     if(f->rfc822_text != NULL){
@@ -2384,6 +2401,7 @@ fail:
 
 ie_fetch_resp_t *ie_fetch_resp_rfc822_size(derr_t *e, ie_fetch_resp_t *f,
         ie_nums_t *rfc822_size){
+    if(!f) f = ie_fetch_resp_new(e);
     if(is_error(*e)) goto fail;
 
     if(f->rfc822_size != NULL){
@@ -2402,6 +2420,7 @@ fail:
 
 ie_fetch_resp_t *ie_fetch_resp_envelope(derr_t *e, ie_fetch_resp_t *f,
         ie_envelope_t *env){
+    if(!f) f = ie_fetch_resp_new(e);
     if(is_error(*e)) goto fail;
 
     if(f->envelope != NULL){
@@ -2420,6 +2439,7 @@ fail:
 
 ie_fetch_resp_t *ie_fetch_resp_body(derr_t *e, ie_fetch_resp_t *f,
         ie_body_t *body){
+    if(!f) f = ie_fetch_resp_new(e);
     if(is_error(*e)) goto fail;
 
     if(f->body != NULL){
@@ -2438,6 +2458,7 @@ fail:
 
 ie_fetch_resp_t *ie_fetch_resp_bodystruct(derr_t *e, ie_fetch_resp_t *f,
         ie_body_t *bodystruct){
+    if(!f) f = ie_fetch_resp_new(e);
     if(is_error(*e)) goto fail;
 
     if(f->bodystruct != NULL){
@@ -2456,6 +2477,7 @@ fail:
 
 ie_fetch_resp_t *ie_fetch_resp_modseq(derr_t *e, ie_fetch_resp_t *f,
         uint64_t modseq){
+    if(!f) f = ie_fetch_resp_new(e);
     if(is_error(*e)) goto fail;
 
     if(f->modseq != 0){
@@ -2473,6 +2495,7 @@ fail:
 
 ie_fetch_resp_t *ie_fetch_resp_add_extra(derr_t *e, ie_fetch_resp_t *f,
         ie_fetch_resp_extra_t *extra){
+    if(!f) f = ie_fetch_resp_new(e);
     if(is_error(*e)) goto fail;
 
     ie_fetch_resp_extra_t **last = &f->extras;
@@ -2621,7 +2644,7 @@ fail:
 }
 
 ie_status_cmd_t *ie_status_cmd_new(derr_t *e, ie_mailbox_t *m,
-        unsigned char status_attr){
+        unsigned int status_attr){
     if(is_error(*e)) goto fail;
 
     IE_MALLOC(e, ie_status_cmd_t, status, fail);

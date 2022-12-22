@@ -1,0 +1,2454 @@
+# imap grammar
+#  rfc3501: imap
+#  rfc2177: idle extension
+#  rfc3691: unselect command
+#  rfc4315: uidplus extension
+#  rfc7162: condstore/qresync extensions
+
+
+{{#include <libimap/libimap.h>
+
+#define MODE(m) a->scan_mode = SCAN_MODE_ ## m
+
+static void send_cmd(derr_t *E, imap_args_t *a, imap_cmd_t *cmd){
+    if(is_error(*E)){
+        imap_cmd_free(cmd);
+        return;
+    }
+    a->cb.cmd(a->cb_data, cmd);
+}
+
+static void send_resp(derr_t *E, imap_args_t *a, imap_resp_t *resp){
+    if(is_error(*E)){
+        imap_resp_free(resp);
+        return;
+    }
+    a->cb.resp(a->cb_data, resp);
+}
+
+#define LITERAL_START(len, sendplus) do { \
+    set_scanner_to_literal_mode(a, (len)); \
+    if((sendplus) && !a->is_client){ \
+        imap_cmd_arg_t arg = {0}; \
+        imap_cmd_t *cmd = imap_cmd_new(E, NULL, IMAP_CMD_PLUS_REQ, arg); \
+        send_cmd(E, a, cmd); \
+    } \
+} while(0)
+
+#define THROW_SYNTAX_ERROR(reason) do { \
+    trace_imap_error(E, dtoken, a, reason); \
+    return IMAP_STATUS_SYNTAX_ERROR; \
+} while(0)
+
+#define REQUIRE_EXTENSION_ON(type) do { \
+    if(!extension_is_on(a->exts, type)){ \
+        THROW_SYNTAX_ERROR(extension_msg(type)); \
+    } \
+} while(0)
+
+#define REQUIRE_EXTENSION_AVAILABLE(type) do { \
+    if(!extension_is_available(a->exts, type)){ \
+        THROW_SYNTAX_ERROR(extension_msg(type)); \
+    } \
+} while(0)
+
+#define MUST_TRIGGER_EXTENSION(type) do { \
+    if(!extension_trigger(a->exts, type)){ \
+        THROW_SYNTAX_ERROR(extension_msg(type)); \
+    } \
+} while(0)
+
+static void trace_imap_error(
+    derr_t *E, const dstr_t *dtoken, imap_args_t *a, const char *reason
+){
+    // skip if E was not provided
+    if(!E) return;
+
+    DSTR_VAR(scannable, 64);
+    imap_reader_t *r = CONTAINER_OF(a, imap_reader_t, args);
+    get_scannable(&r->scanner, &scannable);
+
+    // prepare message buffer
+    DSTR_VAR(buf, 64);
+    DROP_CMD(
+        FMT(&buf,
+            "%x at input: %x%x",
+            FS(reason),
+            FD_DBG(dtoken),
+            FD_DBG(&scannable)
+        )
+    );
+    // truncate message
+    if(buf.len == buf.size){
+        buf.len = MIN(buf.len, buf.size - 4);
+        DROP_CMD( FMT(&buf, "...") );
+    }
+
+    if(a->is_client){
+        /* clients immediately raise a derr_t error; we only talk to dovecot
+           so in practice any parsing error as a client is our bug */
+        TRACE_ORIG(E, E_PARAM, "error parsing server response: %x", FD(&buf));
+    }else{
+        // servers report errors to the client
+        ie_dstr_free(a->errmsg);
+        a->errmsg = ie_dstr_new(E, &buf, KEEP_RAW);
+    }
+}
+
+
+static void imap_handle_error(
+    imap_parser_t *p,
+    derr_t *E,
+    const dstr_t *dtoken,
+    imap_args_t *a,
+    imap_token_e imap_token,
+    imap_sem_t sem,
+    const unsigned char *expected_mask,
+    const char *loc_summary
+){
+    (void)p;
+    (void)imap_token;
+    (void)sem;
+    (void)expected_mask;
+    (void)loc_summary;
+
+    // fprintf(stderr, "expected one of: ");
+    // imap_fprint_mask(stderr, expected_mask, ", ");
+    // fprintf(stderr, "\n but got %s\n", imap_token_name(imap_token));
+    // fprintf(stderr, "@ %s\n", loc_summary);
+
+    trace_imap_error(E, dtoken, a, "syntax error");
+    MODE(STD);
+}
+
+}}
+
+
+%generator c;
+%prefix imap;
+%param E {derr_t*};
+%param dtoken {const dstr_t*};
+%param a {imap_args_t*};
+%kwarg error_fn imap_handle_error;
+
+# the scanner passes its errors to the parser for better error recovery
+INVALID_TOKEN;
+
+# punctuation
+SP;
+DOT;
+LPAREN;
+RPAREN;
+LANGLE;
+RANGLE;
+LSQUARE;
+RSQUARE;
+LBRACE;
+RBRACE;
+ARUBA;
+COMMA;
+SEMI;
+COLON;
+BACKSLASH;
+DQUOTE;
+SLASH;
+QUESTION;
+EQ;
+DASH;
+PLUS;
+ASTERISK;
+PERCENT;
+
+# some generic tokens
+ATOMRAW;  # psuedo-token
+TAGRAW;  # psuedo-token
+RAW;  # real token
+LITRAW;  # chunk of a literal
+NON_CRLF_CTL;
+NIL;
+DIGIT;
+NUM;
+QCHAR;
+
+### IMPORTANT: all token names must have as many characters as the actual
+###            keyword, since we test MAXKWLEN using token name lengths.
+
+# commands
+CAPABILITY;
+NOOP;
+LOGOUT;
+STARTTLS;
+AUTHENTICATE;
+LOGIN;
+SELECT;
+EXAMINE;
+CREATE;
+DELETE;
+RENAME;
+SUBSCRIBE;
+UNSUBSCRIBE;
+LIST;
+LSUB;
+STATUS;
+APPEND;
+CHECK;
+CLOSE;
+EXPUNGE;
+SEARCH;
+FETCH;
+STORE;
+COPY;
+UID;
+ENABLE;
+UNSELECT;
+IDLE;
+DONE;
+XKEYSYNC;
+XKEYADD;
+
+# responses
+OK;
+NO;
+BAD;
+PREAUTH;
+BYE;
+# CAPABILITY (listed above)
+# LIST (listed above)
+# LSUB (listed above)
+# STATUS (listed above)
+FLAGS;
+# SEARCH (listed above)
+EXISTS;
+RECENT;
+# EXPUNGE (listed above)
+# FETCH (listed above)
+ENABLED;
+# XKEYSYNC (listed above)
+
+# status-code stuff
+YES_STATUSCODE;
+NO_STATUSCODE;
+ALERT;
+# BADCHARSET (response to search, we aren't going to search)
+# CAPABILITY (listed above)
+PARSE;
+PERMANENTFLAGS;
+READ_ONLY;
+READ_WRITE;
+TRYCREATE;
+UIDNEXT;
+UIDVALIDITY;
+UNSEEN;
+
+# status attributes
+MESSAGES;
+# RECENT (listed above)
+# UIDNEXT (listed above)
+# UIDVALIDITY (listed above)
+# UNSEEN (listed above)
+
+# SEARCH state
+CHARSET;
+ALL;
+ANSWERED;
+BCC;
+BEFORE;
+BODY;
+CC;
+DELETED;
+FLAGGED;
+FROM;
+KEYWORD;
+NEW;
+OLD;
+ON;
+# RECENT (listed above)
+SEEN;
+SINCE;
+SUBJECT;
+TEXT;
+TO;
+UNANSWERED;
+UNDELETED;
+UNFLAGGED;
+UNKEYWORD;
+# UNSEEN (listed above)
+DRAFT;
+HEADER;
+LARGER;
+NOT;
+OR;
+SENTBEFORE;
+SENTON;
+SENTSINCE;
+SMALLER;
+# UID (listed above)
+UNDRAFT;
+
+# FETCH state
+# FLAGS (listed above
+# ALL (listed above
+FULL;
+FAST;
+ENVELOPE;
+INTERNALDATE;
+RFC822;
+# TEXT (listed elsewhere)
+# HEADER (listed elsewhere)
+SIZE;
+BODYSTRUCTURE;
+# BODY (listed above
+PEEK;
+# UID (listed above)
+
+# BODY[] section stuff
+MIME;
+# TEXT (listed above)
+# HEADER (listed above)
+FIELDS;
+# NOT (listed elsewhere)
+
+# FLAGS
+# ANSWERED (listed above)
+# FLAGGED (listed above)
+# DELETED (listed above)
+# SEEN (listed above)
+# DRAFT (listed above)
+# RECENT (listed above)
+
+# mailbox-specific flags
+NOINFERIORS;
+NOSELECT;
+MARKED;
+UNMARKED;
+
+# INTERNALDATE
+JAN;
+FEB;
+MAR;
+APR;
+MAY;
+JUN;
+JUL;
+AUG;
+SEP;
+OCT;
+NOV;
+DEC;
+
+# miscellaneous
+INBOX;
+EOL;
+SILENT;
+
+# UIDPLUS extension
+APPENDUID;
+COPYUID;
+UIDNOTSTICKY;
+
+# CONDSTORE extension
+MODSEQ;
+HIGHESTMODSEQ;
+NOMODSEQ;
+MODIFIED;
+CONDSTORE;
+CHANGEDSINCE;
+UNCHANGEDSINCE;
+PRIV;
+# ALL
+SHARED;
+
+# QRESYNC extension
+CLOSED;
+VANISHED;
+EARLIER;
+QRESYNC;
+
+# XKEY extension
+CREATED;
+
+# All keywords fallback to ATOMRAW
+%fallback ATOMRAW
+    TAGRAW
+    PLUS
+;
+
+%fallback TAGRAW
+    RAW
+    ALERT
+    APPENDUID
+    CAPABILITY
+    CLOSED
+    COPYUID
+    HIGHESTMODSEQ
+    MODIFIED
+    NOMODSEQ
+    PARSE
+    PERMANENTFLAGS
+    READ_ONLY
+    READ_WRITE
+    TRYCREATE
+    UIDNEXT
+    UIDNOTSTICKY
+    UIDVALIDITY
+    UNSEEN
+    ANSWERED
+    DELETED
+    DRAFT
+    FLAGGED
+    RECENT
+    SEEN
+    MARKED
+    NOINFERIORS
+    NOSELECT
+    UNMARKED
+    INBOX
+    ALL
+    APPEND
+    APR
+    AUG
+    AUTHENTICATE
+    BAD
+    BCC
+    BEFORE
+    BODYSTRUCTURE
+    BODY
+    BYE
+    CC
+    CHANGEDSINCE
+    CHARSET
+    CHECK
+    CLOSE
+    CONDSTORE
+    COPY
+    CREATE
+    CREATED
+    DEC
+    DELETE
+    DONE
+    EARLIER
+    ENABLED
+    ENABLE
+    ENVELOPE
+    EXAMINE
+    EXISTS
+    EXPUNGE
+    FAST
+    FEB
+    FETCH
+    FIELDS
+    FLAGS
+    FROM
+    FULL
+    HEADER
+    IDLE
+    INTERNALDATE
+    JAN
+    JUL
+    JUN
+    KEYWORD
+    LARGER
+    LIST
+    LOGIN
+    LOGOUT
+    LSUB
+    MAR
+    MAY
+    MESSAGES
+    MIME
+    MODSEQ
+    NEW
+    NIL
+    NOOP
+    NOT
+    NO
+    NOV
+    OCT
+    OK
+    OLD
+    ON
+    OR
+    PEEK
+    PREAUTH
+    PRIV
+    QRESYNC
+    RENAME
+    RFC822
+    SEARCH
+    SELECT
+    SENTBEFORE
+    SENTON
+    SENTSINCE
+    SEP
+    SHARED
+    SILENT
+    SINCE
+    SIZE
+    SMALLER
+    STARTTLS
+    STATUS
+    STORE
+    SUBJECT
+    SUBSCRIBE
+    TEXT
+    TO
+    UID
+    UNANSWERED
+    UNCHANGEDSINCE
+    UNDELETED
+    UNDRAFT
+    UNFLAGGED
+    UNKEYWORD
+    UNSELECT
+    UNSUBSCRIBE
+    VANISHED
+    XKEYADD
+    XKEYSYNC
+    # punctuation that is sometimes meaningful but is allowed in atoms anyway
+    COLON
+    DOT
+    RBRACE
+    LSQUARE
+    COMMA
+    LANGLE
+    RANGLE
+    DASH
+;
+
+### TYPES
+
+# simple types with no destructors
+%type bool {bool};
+%type ch {char};
+%type sign {int};
+%type num {unsigned int};
+%type snum {int};
+%type modseqnum {uint64_t};
+%type time {imap_time_t};
+%type status_attr {ie_status_attr_t}; # a single status attribute
+%type status_attr_cmd {unsigned int}; # logical OR of status attributes in command
+%type status_attr_resp {ie_status_attr_resp_t}; # status attributes with args
+%type status {ie_status_t};
+%type entry_type {ie_entry_type_t};
+
+%type dstr {ie_dstr_t*} {ie_dstr_free($$);};
+%type mailbox {ie_mailbox_t*} {ie_mailbox_free($$);};
+%type select_params {ie_select_params_t*} {ie_select_params_free($$);};
+%type flags {ie_flags_t*} {ie_flags_free($$);};
+%type pflags {ie_pflags_t*} {ie_pflags_free($$);};
+%type fflags {ie_fflags_t*} {ie_fflags_free($$);};
+%type mflags {ie_mflags_t*} {ie_mflags_free($$);};
+%type search_key {ie_search_key_t*} {ie_search_key_free($$);};
+%type search_modseq_ext {ie_search_modseq_ext_t*} {ie_search_modseq_ext_free($$);};
+%type seq_set {ie_seq_set_t*} {ie_seq_set_free($$);};
+%type nums {ie_nums_t*} {ie_nums_free($$);};
+
+# FETCH command things
+%type sect_part {ie_sect_part_t*} {ie_sect_part_free($$);};
+%type sect_txt {ie_sect_txt_t*} {ie_sect_txt_free($$);};
+%type sect {ie_sect_t*} {ie_sect_free($$);};
+%type partial {ie_partial_t*} {ie_partial_free($$);};
+%type fetch_attrs {ie_fetch_attrs_t*} {ie_fetch_attrs_free($$);};
+%type fetch_mods {ie_fetch_mods_t*} {ie_fetch_mods_free($$);};
+
+# STORE command things
+%type store_mods {ie_store_mods_t*} {ie_store_mods_free($$);};
+
+# Status-type things
+%type st_code {ie_st_code_t*} {ie_st_code_free($$);};
+
+# FETCH response
+%type fetch_resp_extra {ie_fetch_resp_extra_t*} {ie_fetch_resp_extra_free($$);};
+%type fetch_resp {ie_fetch_resp_t*} {ie_fetch_resp_free($$);};
+
+# XKEYSYNC response
+%type xkeysync_resp {ie_xkeysync_resp_t*} {ie_xkeysync_resp_free($$);};
+
+# full commands
+%type imap_cmd {imap_cmd_t*} {imap_cmd_free($$);};
+
+# full responses
+%type imap_resp {imap_resp_t*} {imap_resp_free($$);};
+
+#### grammar ####
+
+atom_char = ATOMRAW | NUM;
+atom:dstr =
+    1*( atom_char { $$ = ie_dstr_append(E, $$, dtoken, KEEP_RAW); } )
+;
+
+# astring allows additional characters not in atom (!)
+astring_char = atom_char | RSQUARE;
+astring_atom:dstr =
+    1*( astring_char { $$ = ie_dstr_append(E, $$, dtoken, KEEP_RAW); } )
+;
+astring:dstr =
+  | astring_atom:a  { $$ = STEAL(ie_dstr_t, &$a); }
+  | string:s        { $$ = STEAL(ie_dstr_t, &$s); }
+;
+
+# tag_char is astring_char except PLUS
+tag_char = TAGRAW | NUM | RSQUARE;
+tagvar:dstr = %empty;
+tag(tv:dstr) =
+    1*( tag_char { $tv = ie_dstr_append(E, $tv, dtoken, KEEP_RAW); } )
+;
+
+string:dstr =
+  | qstr:q     { $$ = STEAL(ie_dstr_t, &$q); }
+  | literal:l  { $$ = STEAL(ie_dstr_t, &$l); }
+;
+
+qstr:dstr = DQUOTE { MODE(QSTRING); } qstr_body!($) { MODE(STD); } DQUOTE;
+
+qstr_body(out:dstr) =
+  | %empty  { $out = ie_dstr_new_empty(E); }
+  | 1*(
+        ATOMRAW { $out = ie_dstr_append(E, $out, dtoken, KEEP_QSTRING); }
+    )
+;
+
+
+literal:dstr = literal_start literal_body!($);
+
+# swtich to std mode explicitly since append has an [datetime] literal
+literal_start =
+    LBRACE { MODE(STD); } num:n RBRACE EOL { LITERAL_START($n, true); }
+;
+
+literal_body(out:dstr) =
+  | %empty  { $out = ie_dstr_new_empty(E); }
+  | 1*(
+        LITRAW { $out = ie_dstr_append(E, $out, dtoken, KEEP_RAW); }
+    )
+;
+
+ign_string = ign_qstr | ign_literal;
+ign_qstr = DQUOTE { MODE(QSTRING); } 1*ATOMRAW { MODE(STD); } DQUOTE;
+ign_literal = literal_start 1*LITRAW;
+
+mailbox:mailbox =
+  | astring:m  { $$ = ie_mailbox_new_noninbox(E, STEAL(ie_dstr_t, &$m)); }
+  | INBOX:m    { $$ = ie_mailbox_new_inbox(E); }
+;
+
+flags_0:flags = [ flags_1:f { $$ = STEAL(ie_flags_t, &$f); } ];
+flags_1:flags = _flag!($) *( SP _flag!($) );
+_flag(f:flags) =
+  | BACKSLASH
+    (
+      | ANSWERED  { $f = ie_flags_add_simple(E, $f, IE_FLAG_ANSWERED); }
+      | FLAGGED   { $f = ie_flags_add_simple(E, $f, IE_FLAG_FLAGGED); }
+      | DELETED   { $f = ie_flags_add_simple(E, $f, IE_FLAG_DELETED); }
+      | SEEN      { $f = ie_flags_add_simple(E, $f, IE_FLAG_SEEN); }
+      | DRAFT     { $f = ie_flags_add_simple(E, $f, IE_FLAG_DRAFT); }
+      | atom:a    { $f = ie_flags_add_ext(E, $f, STEAL(ie_dstr_t, &$a)); }
+    )
+  | atom:a     { $f = ie_flags_add_kw(E, $f, STEAL(ie_dstr_t, &$a)); }
+;
+
+pflags_0:pflags = [ pflags_1:f { $$ = STEAL(ie_pflags_t, &$f); } ];
+pflags_1:pflags = _pflag!($) *( SP _pflag!($) );
+_pflag(f:pflags) =
+  | BACKSLASH
+    (
+      | ANSWERED  { $f = ie_pflags_add_simple(E, $f, IE_PFLAG_ANSWERED); }
+      | FLAGGED   { $f = ie_pflags_add_simple(E, $f, IE_PFLAG_FLAGGED); }
+      | DELETED   { $f = ie_pflags_add_simple(E, $f, IE_PFLAG_DELETED); }
+      | SEEN      { $f = ie_pflags_add_simple(E, $f, IE_PFLAG_SEEN); }
+      | DRAFT     { $f = ie_pflags_add_simple(E, $f, IE_PFLAG_DRAFT); }
+      | ASTERISK  { $f = ie_pflags_add_simple(E, $f, IE_PFLAG_ASTERISK); }
+      | atom:a    { $f = ie_pflags_add_ext(E, $f, STEAL(ie_dstr_t, &$a)); }
+    )
+  | atom:a     { $f = ie_pflags_add_kw(E, $f, STEAL(ie_dstr_t, &$a)); }
+;
+
+fflags_0:fflags = [ fflags_1:f { $$ = STEAL(ie_fflags_t, &$f); } ];
+fflags_1:fflags = _fflag!($) *( SP _fflag!($) );
+_fflag(f:fflags) =
+  | BACKSLASH
+    (
+      | ANSWERED  { $f = ie_fflags_add_simple(E, $f, IE_FFLAG_ANSWERED); }
+      | FLAGGED   { $f = ie_fflags_add_simple(E, $f, IE_FFLAG_FLAGGED); }
+      | DELETED   { $f = ie_fflags_add_simple(E, $f, IE_FFLAG_DELETED); }
+      | SEEN      { $f = ie_fflags_add_simple(E, $f, IE_FFLAG_SEEN); }
+      | DRAFT     { $f = ie_fflags_add_simple(E, $f, IE_FFLAG_DRAFT); }
+      | RECENT    { $f = ie_fflags_add_simple(E, $f, IE_FFLAG_RECENT); }
+      | atom:a    { $f = ie_fflags_add_ext(E, $f, STEAL(ie_dstr_t, &$a)); }
+    )
+  | atom:a     { $f = ie_fflags_add_kw(E, $f, STEAL(ie_dstr_t, &$a)); }
+;
+
+mflags_0:mflags = [ mflags_1:f { $$ = STEAL(ie_mflags_t, &$f); } ];
+mflags_1:mflags = _mflag!($) *( SP _mflag!($) );
+_mflag(f:mflags) =
+    BACKSLASH
+    (
+      | NOINFERIORS  { $f = ie_mflags_add_noinf(E, $f); }
+      | atom:a       { $f = ie_mflags_add_ext(E, $f, STEAL(ie_dstr_t, &$a)); }
+        # Technically only one of NOSELECT/MARKED/UNMARKED is allowed, but
+        # instead, we only honor one of them.  We treat it the same way we
+        # treat e.g. \Answered, it doesn't make sense that the protocol allows
+        # it multiple times, but we don't enforce that.
+      | NOSELECT
+        { $f = ie_mflags_set_selectable(E, $f, IE_SELECTABLE_NOSELECT); }
+      | MARKED
+        { $f = ie_mflags_set_selectable(E, $f, IE_SELECTABLE_MARKED); }
+      | UNMARKED
+        { $f = ie_mflags_set_selectable(E, $f, IE_SELECTABLE_UNMARKED); }
+    )
+;
+
+date_time:time =
+    { MODE(DATETIME); }
+    DQUOTE
+    date_day_fixed:D
+    DASH
+    date_month:M
+    DASH
+    fourdigit:Y
+    SP
+    twodigit:h
+    COLON
+    twodigit:m
+    COLON
+    twodigit:s
+    SP
+    sign:sign
+    twodigit:zh
+    twodigit:zm
+    DQUOTE
+    { MODE(STD); }
+    {{  $$ = (imap_time_t){
+            .year = $Y,
+            .month = $M,
+            .day = $D,
+            .hour = $h,
+            .min = $m,
+            .sec = $s,
+            .z_hour = $sign * $zh,
+            .z_min = $zm,
+        };
+    }}
+;
+
+date_day_fixed:snum =
+  | SP digit:d { $$ = $d; }
+  | twodigit:d { $$ = $d; }
+;
+
+date_month:snum =
+  | JAN { $$ = 1; }
+  | FEB { $$ = 2; }
+  | MAR { $$ = 3; }
+  | APR { $$ = 4; }
+  | MAY { $$ = 5; }
+  | JUN { $$ = 6; }
+  | JUL { $$ = 7; }
+  | AUG { $$ = 8; }
+  | SEP { $$ = 9; }
+  | OCT { $$ = 10; }
+  | NOV { $$ = 11; }
+  | DEC { $$ = 12; }
+;
+
+sign:sign =
+  | PLUS { $$ = 1; }
+  | DASH { $$ = -1; }
+;
+
+digit:snum =
+    DIGIT
+    {{  switch(dtoken->data[0]){
+            case '0': $$ = 0; break;
+            case '1': $$ = 1; break;
+            case '2': $$ = 2; break;
+            case '3': $$ = 3; break;
+            case '4': $$ = 4; break;
+            case '5': $$ = 5; break;
+            case '6': $$ = 6; break;
+            case '7': $$ = 7; break;
+            case '8': $$ = 8; break;
+            case '9': $$ = 9; break;
+            default:
+                // scanner should guarantee this never happens
+                TRACE_ORIG(E,
+                    E_INTERNAL,
+                    "invalid digit: %x\n",
+                    FC(dtoken->data[0])
+                );
+        }
+    }}
+;
+
+twodigit:snum = digit:a digit:b { $$ = 10*$a + $b; };
+
+fourdigit:snum =
+    digit:a digit:b digit:c digit:d
+    { $$ = 1000*$a + 100*$b + 10*$c + $d; }
+;
+
+_n:modseqnum =
+    NUM
+    {{  derr_type_t etype = dstr_tou64_quiet(*dtoken, &$$, 10);
+        if(etype != E_NONE) THROW_SYNTAX_ERROR("invalid number");
+    }}
+;
+
+# manually accumulate a base-10 uint64_t, to avoid allocating strings
+modseqnum:modseqnum =
+    _n:n0 { $$ = $n0; }
+    *(
+        _n:n
+        {{  // detect overflow while calculating the new $$
+            size_t nlen = dtoken->len;
+            uint64_t limit = UINT64_MAX;
+            uint64_t out = $$;
+            for(size_t i = 0; i < nlen; i++){
+                limit /= 10;
+                out *= 10;
+            }
+            if($$ > limit) THROW_SYNTAX_ERROR("integer overflow");
+            $$ = out + $n;
+        }}
+    )
+;
+
+nzmodseqnum:modseqnum =
+    modseqnum:n
+    {{  if($n == 0) THROW_SYNTAX_ERROR("unallowed zero");
+        $$ = $n;
+    }}
+;
+
+num:num =
+    modseqnum:n
+    {{  if($n > UINT_MAX) THROW_SYNTAX_ERROR("integer overflow");
+        $$ = (unsigned int)$n;
+    }}
+;
+
+nznum:num =
+    modseqnum:n
+    {{  if($n > UINT_MAX) THROW_SYNTAX_ERROR("integer overflow");
+        if($n == 0) THROW_SYNTAX_ERROR("unallowed zero");
+        $$ = (unsigned int)$n;
+    }}
+;
+
+seq_num:num =
+  | nznum:n  { $$ = $n; }
+  | ASTERISK
+;
+
+seq_spec:seq_set =
+    seq_num:a
+    (
+      | %empty           { $$ = ie_seq_set_new(E, $a, $a); }
+      | COLON seq_num:b  { $$ = ie_seq_set_new(E, $a, $b); }
+    )
+;
+
+seq_set:seq_set =
+    seq_spec:s0  { $$ = STEAL(ie_seq_set_t, &$s0); }
+    *(
+        COMMA
+        seq_spec:s
+        { $$ = ie_seq_set_append(E, $$, STEAL(ie_seq_set_t, &$s)); }
+    )
+;
+
+# workaround a bug in dovecot v2.3.13-14 where UID EXPUNGE 1 returns
+# VANISHED 0:1 instead of VANISHED 1 ... just change the 0 to a 1 */
+uid_nznum:num = num:n { $$ = $n; if($$ == 0) $$ = 1; };
+
+uid_spec:seq_set =
+    uid_nznum:a
+    (
+      | %empty             { $$ = ie_seq_set_new(E, $a, $a); }
+      | COLON uid_nznum:b  { $$ = ie_seq_set_new(E, $a, $b); }
+    )
+;
+
+uid_set:seq_set =
+    uid_spec:s0 { $$ = STEAL(ie_seq_set_t, &$s0); }
+    *(
+        COMMA
+        uid_spec:s
+        { $$ = ie_seq_set_append(E, $$, STEAL(ie_seq_set_t, &$s)); }
+    )
+;
+
+### COMMANDS
+
+uidvar:bool = %empty;
+cmdvar:imap_cmd = %empty;
+
+%root command_line;
+command_line =
+    tagvar:tv
+    uidvar:uid
+    cmdvar:cmd
+    { MODE(STD); }
+    <
+        tag!(tv)
+        SP
+        (
+          | capa_cmd!(tv, cmd)
+          | noop_cmd!(tv, cmd)
+          | logout_cmd!(tv, cmd)
+          | starttls_cmd!(tv, cmd)
+          | authenticate_cmd!(tv, cmd)
+          | login_cmd!(tv, cmd)
+          | select_cmd!(tv, cmd)
+          | examine_cmd!(tv, cmd)
+          | create_cmd!(tv, cmd)
+          | delete_cmd!(tv, cmd)
+          | rename_cmd!(tv, cmd)
+          | subscribe_cmd!(tv, cmd)
+          | unsubscribe_cmd!(tv, cmd)
+          | list_cmd!(tv, cmd)
+          | lsub_cmd!(tv, cmd)
+          | status_cmd!(tv, cmd)
+          | append_cmd!(tv, cmd)
+          | check_cmd!(tv, cmd)
+          | close_cmd!(tv, cmd)
+          | expunge_cmd!(tv, cmd)
+          | search_cmd!(tv, uid, cmd)
+          | fetch_cmd!(tv, uid, cmd)
+          | store_cmd!(tv, uid, cmd)
+          | copy_cmd!(tv, uid, cmd)
+          | enable_cmd!(tv, cmd)
+          | unselect_cmd!(tv, cmd)
+          | idle_cmd!(tv, cmd)
+          | xkeysync_cmd!(tv, cmd)
+          | xkeyadd_cmd!(tv, cmd)
+          | UID SP
+            { $uid = true; }
+            (
+              | uid_expunge_cmd!(tv, cmd)
+              | search_cmd!(tv, uid, cmd)
+              | fetch_cmd!(tv, uid, cmd)
+              | store_cmd!(tv, uid, cmd)
+              | copy_cmd!(tv, uid, cmd)
+            )
+        )
+    ?
+        {{  ie_dstr_t *tag = STEAL(ie_dstr_t, &$tv);
+            // if a command actually finished and we had extra junk, drop it
+            if($cmd){
+                tag = STEAL(ie_dstr_t, &$cmd->tag);
+                imap_cmd_free(STEAL(imap_cmd_t, &$cmd));
+            }
+            // pass the error message to the client
+            ie_dstr_t *errmsg = STEAL(ie_dstr_t, &a->errmsg);
+            imap_cmd_t *cmd;
+            if(a->in_idle){
+                // relay error as IDLE_DONE
+                imap_cmd_arg_t arg = { .idle_done = errmsg };
+                cmd = imap_cmd_new(E, tag, IMAP_CMD_IDLE_DONE, arg);
+                a->in_idle = false;
+            }else{
+                // relay error as normal ERROR
+                imap_cmd_arg_t arg = { .error = errmsg };
+                cmd = imap_cmd_new(E, tag, IMAP_CMD_ERROR, arg);
+            }
+            send_cmd(E, a, cmd);
+        }}
+    >
+    { if($cmd) send_cmd(E, a, STEAL(imap_cmd_t, &$cmd)); }
+    EOL
+;
+
+### CAPABILITY COMMAND
+
+capa_cmd(tag:dstr, out:imap_cmd) =
+    CAPABILITY
+    {{  $out = imap_cmd_new(E,
+            STEAL(ie_dstr_t, &$tag),
+            IMAP_CMD_CAPA,
+            (imap_cmd_arg_t){0}
+        );
+    }}
+;
+
+### NOOP COMMAND
+
+noop_cmd(tag:dstr, out:imap_cmd) =
+    NOOP
+    {{  $out = imap_cmd_new(E,
+            STEAL(ie_dstr_t, &$tag),
+            IMAP_CMD_NOOP,
+            (imap_cmd_arg_t){0}
+        );
+    }}
+;
+
+### LOGOUT COMMAND
+
+logout_cmd(tag:dstr, out:imap_cmd) =
+    LOGOUT
+    {{  $out = imap_cmd_new(E,
+            STEAL(ie_dstr_t, &$tag),
+            IMAP_CMD_LOGOUT,
+            (imap_cmd_arg_t){0}
+        );
+    }}
+;
+
+### STARTTLS COMMAND
+
+starttls_cmd(tag:dstr, out:imap_cmd) =
+    STARTTLS
+    {{  $out = imap_cmd_new(E,
+            STEAL(ie_dstr_t, &$tag),
+            IMAP_CMD_STARTTLS,
+            (imap_cmd_arg_t){0}
+        );
+    }}
+;
+
+### AUTHENTICATE COMMAND
+
+authenticate_cmd(tag:dstr, out:imap_cmd) =
+    AUTHENTICATE SP atom:a
+    {{  $out = imap_cmd_new(E,
+            STEAL(ie_dstr_t, &$tag),
+            IMAP_CMD_AUTH,
+            (imap_cmd_arg_t){ .auth = STEAL(ie_dstr_t, &$a) }
+        );
+    }}
+;
+
+### LOGIN COMMAND
+
+login_cmd(tag:dstr, out:imap_cmd) =
+    LOGIN SP astring:u SP astring:p
+    {{  ie_login_cmd_t *login = ie_login_cmd_new(E,
+            STEAL(ie_dstr_t, &$u), STEAL(ie_dstr_t, &$p)
+        );
+        $out = imap_cmd_new(E,
+            STEAL(ie_dstr_t, &$tag),
+            IMAP_CMD_LOGIN,
+            (imap_cmd_arg_t){ .login = login }
+        );
+    }}
+;
+
+### SELECT COMMAND
+
+select_cmd(tag:dstr, out:imap_cmd) =
+    SELECT SP mailbox:m select_params_0:p
+    {{  ie_select_cmd_t *select = ie_select_cmd_new(E,
+            STEAL(ie_mailbox_t, &$m),
+            STEAL(ie_select_params_t, &$p)
+        );
+        $out = imap_cmd_new(E,
+            STEAL(ie_dstr_t, &$tag),
+            IMAP_CMD_SELECT,
+            (imap_cmd_arg_t){ .select = select }
+        );
+    }}
+;
+
+select_params_0:select_params =
+  | %empty
+  | SP
+    LPAREN
+    select_param:s0
+    { $$ = STEAL(ie_select_params_t, &$s0); }
+    *(
+        SP
+        select_param:s
+        { $$ = ie_select_params_add(E, $$, STEAL(ie_select_params_t, &$s)); }
+    )
+    RPAREN
+;
+
+seqsetvar:seq_set = %empty;
+
+select_param:select_params =
+  | CONDSTORE
+    # this is a CONDSTORE-enabling command
+    { MUST_TRIGGER_EXTENSION(EXT_CONDSTORE); }
+    {{  ie_select_param_arg_t arg = {0};
+        $$ = ie_select_params_new(E, IE_SELECT_PARAM_CONDSTORE, arg);
+    }}
+  | QRESYNC
+    { REQUIRE_EXTENSION_ON(EXT_QRESYNC); }
+    SP
+    LPAREN
+    nznum:uidvld
+    SP
+    nzmodseqnum:last_modseq
+    seqsetvar:known_uids
+    seqsetvar:seq_keys
+    seqsetvar:uid_vals
+    [ qresync_optional!(known_uids, seq_keys, uid_vals) ]
+    {{  $$ = ie_select_params_new(E,
+            IE_SELECT_PARAM_QRESYNC,
+            (ie_select_param_arg_t){
+                .qresync = {
+                    .uidvld = $uidvld,
+                    .last_modseq = $last_modseq,
+                    .known_uids = STEAL(ie_seq_set_t, &$known_uids),
+                    .seq_keys = STEAL(ie_seq_set_t, &$seq_keys),
+                    .uid_vals = STEAL(ie_seq_set_t, &$uid_vals),
+                }
+            }
+        );
+    }}
+    RPAREN
+;
+
+qresync_optional(known_uids:seq_set, seq_keys:seq_set, uid_vals:seq_set) =
+    SP
+    (
+      | uid_set:u
+        { $known_uids = STEAL(ie_seq_set_t, &$u); }
+        [ SP qresync_map!(seq_keys, uid_vals) ]
+      | qresync_map!(seq_keys, uid_vals)
+    )
+;
+
+qresync_map(seq_keys:seq_set, uid_vals:seq_set) =
+    LPAREN
+    [
+        uid_set:k  { $seq_keys = STEAL(ie_seq_set_t, &$k); }
+        SP
+        uid_set:v  { $uid_vals = STEAL(ie_seq_set_t, &$v); }
+    ]
+    RPAREN
+;
+
+### EXAMINE COMMAND
+
+examine_cmd(tag:dstr, out:imap_cmd) =
+    EXAMINE SP mailbox:m select_params_0:p
+    {{  ie_select_cmd_t *examine = ie_select_cmd_new(E,
+            STEAL(ie_mailbox_t, &$m),
+            STEAL(ie_select_params_t, &$p)
+        );
+        $out = imap_cmd_new(E,
+            STEAL(ie_dstr_t, &$tag),
+            IMAP_CMD_EXAMINE,
+            (imap_cmd_arg_t){ .examine = examine }
+        );
+    }}
+;
+
+### CREATE COMMAND
+
+create_cmd(tag:dstr, out:imap_cmd) =
+    CREATE SP mailbox:m
+    {{  $out = imap_cmd_new(E,
+            STEAL(ie_dstr_t, &$tag),
+            IMAP_CMD_CREATE,
+            (imap_cmd_arg_t){ .create = STEAL(ie_mailbox_t, &$m) }
+        );
+    }}
+;
+
+### DELETE COMMAND
+
+delete_cmd(tag:dstr, out:imap_cmd) =
+    DELETE SP mailbox:m
+    {{  $out = imap_cmd_new(E,
+            STEAL(ie_dstr_t, &$tag),
+            IMAP_CMD_DELETE,
+            (imap_cmd_arg_t){ .delete = STEAL(ie_mailbox_t, &$m) }
+        );
+    }}
+;
+
+### RENAME COMMAND
+
+rename_cmd(tag:dstr, out:imap_cmd) =
+    RENAME SP mailbox:o SP mailbox:n
+    {{  ie_rename_cmd_t *rename = ie_rename_cmd_new(E,
+            STEAL(ie_mailbox_t, &$o), STEAL(ie_mailbox_t, &$n)
+        );
+        $out = imap_cmd_new(E,
+            STEAL(ie_dstr_t, &$tag),
+            IMAP_CMD_RENAME,
+            (imap_cmd_arg_t){ .rename = rename }
+        );
+    }}
+;
+
+### SUBSCRIBE COMMAND
+
+subscribe_cmd(tag:dstr, out:imap_cmd) =
+    SUBSCRIBE SP mailbox:m
+    {{  $out = imap_cmd_new(E,
+            STEAL(ie_dstr_t, &$tag),
+            IMAP_CMD_SUB,
+            (imap_cmd_arg_t){ .sub = STEAL(ie_mailbox_t, &$m) }
+        );
+    }}
+;
+
+### UNSUBSCRIBE COMMAND
+
+unsubscribe_cmd(tag:dstr, out:imap_cmd) =
+    UNSUBSCRIBE SP mailbox:m
+    {{  $out = imap_cmd_new(E,
+            STEAL(ie_dstr_t, &$tag),
+            IMAP_CMD_UNSUB,
+            (imap_cmd_arg_t){ .unsub = STEAL(ie_mailbox_t, &$m) }
+        );
+    }}
+;
+
+### LIST COMMAND
+
+list_cmd(tag:dstr, out:imap_cmd) =
+    LIST SP mailbox:m SP list_mailbox:p
+    {{  ie_list_cmd_t *list = ie_list_cmd_new(E,
+            STEAL(ie_mailbox_t, &$m), STEAL(ie_dstr_t, &$p)
+        );
+        $out = imap_cmd_new(E,
+            STEAL(ie_dstr_t, &$tag),
+            IMAP_CMD_LIST,
+            (imap_cmd_arg_t){ .list = list }
+        );
+    }}
+;
+
+list_char = atom_char | PERCENT | ASTERISK;
+
+list_atom:dstr =
+    1*( list_char { $$ = ie_dstr_append(E, $$, dtoken, KEEP_RAW); } )
+;
+
+list_mailbox:dstr =
+  | string:m     { $$ = STEAL(ie_dstr_t, &$m); }
+  | list_atom:m  { $$ = STEAL(ie_dstr_t, &$m); }
+;
+
+### LSUB COMMAND
+
+lsub_cmd(tag:dstr, out:imap_cmd) =
+    LSUB SP mailbox:m SP list_mailbox:p
+    {{  ie_list_cmd_t *lsub = ie_list_cmd_new(E,
+            STEAL(ie_mailbox_t, &$m), STEAL(ie_dstr_t, &$p)
+        );
+        $out = imap_cmd_new(E,
+            STEAL(ie_dstr_t, &$tag),
+            IMAP_CMD_LSUB,
+            (imap_cmd_arg_t){ .lsub = lsub }
+        );
+    }}
+;
+
+### STATUS COMMAND
+
+status_cmd(tag:dstr, out:imap_cmd) =
+    STATUS SP mailbox:m SP LPAREN s_attr_clist:s RPAREN
+    {{  ie_status_cmd_t *status = ie_status_cmd_new(E,
+            STEAL(ie_mailbox_t, &$m), $s
+        );
+        $out = imap_cmd_new(E,
+            STEAL(ie_dstr_t, &$tag),
+            IMAP_CMD_STATUS,
+            (imap_cmd_arg_t){ .status = status }
+        );
+    }}
+;
+
+s_attr_clist:status_attr_cmd =
+    s_attr_any:s0  { $$ = $s0; }
+    *(
+        SP s_attr_any:s { $$ |= $s; }
+    )
+;
+
+s_attr_any:status_attr =
+  | s_attr_32:s  { $$ = $s; }
+  | s_attr_64:s  { $$ = $s; }
+;
+
+s_attr_32:status_attr =
+  | MESSAGES  { $$ = IE_STATUS_ATTR_MESSAGES; }
+  | RECENT    { $$ = IE_STATUS_ATTR_RECENT; }
+  | UIDNEXT   { $$ = IE_STATUS_ATTR_UIDNEXT; }
+  | UIDVALIDITY    { $$ = IE_STATUS_ATTR_UIDVLD; }
+  | UNSEEN    { $$ = IE_STATUS_ATTR_UNSEEN; }
+;
+
+s_attr_64:status_attr =
+    HIGHESTMODSEQ
+    {{  REQUIRE_EXTENSION_ON(EXT_CONDSTORE);
+        $$ = IE_STATUS_ATTR_HIMODSEQ;
+    }}
+;
+
+### APPEND COMMAND
+
+append_cmd(tag:dstr, out:imap_cmd) =
+    APPEND SP mailbox:m SP append_flags_sp:f append_time_sp:t literal:l
+    {{  ie_append_cmd_t *append = ie_append_cmd_new(E,
+            STEAL(ie_mailbox_t, &$m),
+            STEAL(ie_flags_t, &$f),
+            $t,
+            STEAL(ie_dstr_t, &$l)
+        );
+        $out = imap_cmd_new(E,
+            STEAL(ie_dstr_t, &$tag),
+            IMAP_CMD_APPEND,
+            (imap_cmd_arg_t){ .append = append }
+        );
+    }}
+;
+
+append_flags_sp:flags =
+    [
+        LPAREN
+        flags_0:f  { $$ = STEAL(ie_flags_t, &$f); }
+        RPAREN
+        SP
+    ]
+;
+
+append_time_sp:time = [ date_time:t { $$ = $t; } SP ];
+
+### CHECK COMMAND
+
+check_cmd(tag:dstr, out:imap_cmd) =
+    CHECK
+    {{  $out = imap_cmd_new(E,
+            STEAL(ie_dstr_t, &$tag),
+            IMAP_CMD_CHECK,
+            (imap_cmd_arg_t){0}
+        );
+    }}
+;
+
+### CLOSE COMMAND
+
+close_cmd(tag:dstr, out:imap_cmd) =
+    CLOSE
+    {{  $out = imap_cmd_new(E,
+            STEAL(ie_dstr_t, &$tag),
+            IMAP_CMD_CLOSE,
+            (imap_cmd_arg_t){0}
+        );
+    }}
+;
+
+### EXPUNGE COMMAND
+
+expunge_cmd(tag:dstr, out:imap_cmd) =
+    EXPUNGE
+    {{  $out = imap_cmd_new(E,
+            STEAL(ie_dstr_t, &$tag),
+            IMAP_CMD_EXPUNGE,
+            (imap_cmd_arg_t){0}
+        );
+    }}
+;
+
+uid_expunge_cmd(tag:dstr, out:imap_cmd) =
+    EXPUNGE SP uid_set:u
+    {{  $out = imap_cmd_new(E,
+            STEAL(ie_dstr_t, &$tag),
+            IMAP_CMD_EXPUNGE,
+            (imap_cmd_arg_t){ .uid_expunge = STEAL(ie_seq_set_t, &$u) }
+        );
+    }}
+;
+
+### SEARCH COMMAND
+
+search_cmd(tag:dstr, uid:bool, out:imap_cmd) =
+    SEARCH SP search_charset:c search_keys_1:k
+    {{  ie_search_cmd_t *search = ie_search_cmd_new(E,
+            $uid,
+            STEAL(ie_dstr_t, &$c),
+            STEAL(ie_search_key_t, &$k)
+        );
+        $out = imap_cmd_new(E,
+            STEAL(ie_dstr_t, &$tag),
+            IMAP_CMD_SEARCH,
+            (imap_cmd_arg_t){ .search = search }
+        );
+    }}
+;
+
+search_charset:dstr =
+    [ CHARSET SP astring:s SP { $$ = STEAL(ie_dstr_t, &$s); } ]
+;
+
+search_keys_1:search_key =
+    search_key:k0  { $$ = STEAL(ie_search_key_t, &$k0); }
+    *(
+        SP search_key:k
+        {{  $$ = ie_search_pair(E,
+                IE_SEARCH_AND, $$, STEAL(ie_search_key_t, &$k)
+            );
+        }}
+    )
+;
+
+search_key:search_key =
+  | ALL                  { $$ = ie_search_0(E, IE_SEARCH_ALL); }
+  | ANSWERED             { $$ = ie_search_0(E, IE_SEARCH_ANSWERED); }
+  | DELETED              { $$ = ie_search_0(E, IE_SEARCH_DELETED); }
+  | FLAGGED              { $$ = ie_search_0(E, IE_SEARCH_FLAGGED); }
+  | NEW                  { $$ = ie_search_0(E, IE_SEARCH_NEW); }
+  | OLD                  { $$ = ie_search_0(E, IE_SEARCH_OLD); }
+  | RECENT               { $$ = ie_search_0(E, IE_SEARCH_RECENT); }
+  | SEEN                 { $$ = ie_search_0(E, IE_SEARCH_SEEN); }
+  | UNANSWERED           { $$ = ie_search_0(E, IE_SEARCH_UNANSWERED); }
+  | UNDELETED            { $$ = ie_search_0(E, IE_SEARCH_UNDELETED); }
+  | UNFLAGGED            { $$ = ie_search_0(E, IE_SEARCH_UNFLAGGED); }
+  | UNSEEN               { $$ = ie_search_0(E, IE_SEARCH_UNSEEN); }
+  | DRAFT                { $$ = ie_search_0(E, IE_SEARCH_DRAFT); }
+  | UNDRAFT              { $$ = ie_search_0(E, IE_SEARCH_UNDRAFT); }
+  | BCC SP astring:s
+    { $$ = ie_search_dstr(E, IE_SEARCH_BCC, STEAL(ie_dstr_t, &$s)); }
+  | BODY SP astring:s
+    { $$ = ie_search_dstr(E, IE_SEARCH_BODY, STEAL(ie_dstr_t, &$s)); }
+  | CC SP astring:s
+    { $$ = ie_search_dstr(E, IE_SEARCH_CC, STEAL(ie_dstr_t, &$s)); }
+  | FROM SP astring:s
+    { $$ = ie_search_dstr(E, IE_SEARCH_FROM, STEAL(ie_dstr_t, &$s)); }
+  | KEYWORD SP atom:s
+    { $$ = ie_search_dstr(E, IE_SEARCH_KEYWORD, STEAL(ie_dstr_t, &$s)); }
+  | SUBJECT SP astring:s
+    { $$ = ie_search_dstr(E, IE_SEARCH_SUBJECT, STEAL(ie_dstr_t, &$s)); }
+  | TEXT SP astring:s
+    { $$ = ie_search_dstr(E, IE_SEARCH_TEXT, STEAL(ie_dstr_t, &$s)); }
+  | TO SP astring:s
+    { $$ = ie_search_dstr(E, IE_SEARCH_TO, STEAL(ie_dstr_t, &$s)); }
+  | UNKEYWORD SP atom:s
+    { $$ = ie_search_dstr(E, IE_SEARCH_UNKEYWORD, STEAL(ie_dstr_t, &$s)); }
+  | BEFORE SP search_date:d
+    { $$ = ie_search_date(E, IE_SEARCH_BEFORE, $d); }
+  | ON SP search_date:d
+    { $$ = ie_search_date(E, IE_SEARCH_ON, $d); }
+  | SINCE SP search_date:d
+    { $$ = ie_search_date(E, IE_SEARCH_SINCE, $d); }
+  | SENTBEFORE SP search_date:d
+    { $$ = ie_search_date(E, IE_SEARCH_SENTBEFORE, $d); }
+  | SENTON SP search_date:d
+    { $$ = ie_search_date(E, IE_SEARCH_SENTON, $d); }
+  | SENTSINCE SP search_date:d
+    { $$ = ie_search_date(E, IE_SEARCH_SENTSINCE, $d); }
+  | LARGER SP num:n     { $$ = ie_search_num(E, IE_SEARCH_LARGER, $n); }
+  | SMALLER SP num:n    { $$ = ie_search_num(E, IE_SEARCH_SMALLER, $n); }
+  | UID SP seq_set:s
+    { $$ = ie_search_seq_set(E, IE_SEARCH_UID, STEAL(ie_seq_set_t, &$s)); }
+  | seq_set:s
+    { $$ = ie_search_seq_set(E, IE_SEARCH_SEQ_SET, STEAL(ie_seq_set_t, &$s)); }
+  | NOT SP search_key:k
+    { $$ = ie_search_not(E, STEAL(ie_search_key_t, &$k)); }
+  | LPAREN search_keys_1:k RPAREN
+    { $$ = ie_search_group(E, STEAL(ie_search_key_t, &$k)); }
+  | search_hdr:s     { $$ = STEAL(ie_search_key_t, &$s); }
+  | search_or:s      { $$ = STEAL(ie_search_key_t, &$s); }
+  | search_modseq:s  { $$ = STEAL(ie_search_key_t, &$s); }
+;
+
+search_hdr:search_key =
+    HEADER SP astring:k SP astring:v
+    {{  $$ = ie_search_header(E,
+            IE_SEARCH_HEADER, STEAL(ie_dstr_t, &$k), STEAL(ie_dstr_t, &$v)
+        );
+    }}
+;
+
+search_or:search_key =
+    OR SP search_key:a SP search_key:b
+    {{  $$ = ie_search_pair(E,
+            IE_SEARCH_OR,
+            STEAL(ie_search_key_t, &$a),
+            STEAL(ie_search_key_t, &$b)
+        );
+    }}
+;
+
+search_modseq:search_key =
+    MODSEQ
+    { MUST_TRIGGER_EXTENSION(EXT_CONDSTORE); }
+    search_modseq_ext:x modseqnum:n
+    { $$ = ie_search_modseq(E, STEAL(ie_search_modseq_ext_t, &$x), $n); }
+;
+
+search_modseq_ext:search_modseq_ext =
+    SP
+    [
+        qstr:n SP entry_type:t SP
+        { $$ = ie_search_modseq_ext_new(E, STEAL(ie_dstr_t, &$n), $t); }
+    ]
+;
+
+entry_type:entry_type =
+  | PRIV    { $$ = IE_ENTRY_PRIV; }
+  | SHARED  { $$ = IE_ENTRY_SHARED; }
+  | ALL     { $$ = IE_ENTRY_ALL; }
+;
+
+search_date:time =
+    { MODE(DATETIME); }
+    (
+      | DQUOTE date:d DQUOTE { $$ = $d; }
+      |        date:d        { $$ = $d; }
+    )
+    { MODE(STD); }
+;
+
+date:time =
+    date_day:d
+    DASH
+    date_month:m
+    DASH
+    fourdigit:y
+    {{  $$ = (imap_time_t){
+            .year = $y,
+            .month = $m,
+            .day = $d,
+        };
+    }}
+;
+
+date_day:snum =
+    digit:a { $$ = $a; }
+    [ digit:b { $$ = 10*$a + $b; } ]
+;
+
+### FETCH command
+
+fetch_cmd(tag:dstr, uid:bool, out:imap_cmd) =
+    FETCH SP seq_set:s SP fetch_attrs:a fetch_mods:m
+    {{  ie_fetch_cmd_t *fetch = ie_fetch_cmd_new(E,
+            $uid,
+            STEAL(ie_seq_set_t, &$s),
+            STEAL(ie_fetch_attrs_t, &$a),
+            STEAL(ie_fetch_mods_t, &$m)
+        );
+        $out = imap_cmd_new(E,
+            STEAL(ie_dstr_t, &$tag),
+            IMAP_CMD_FETCH,
+            (imap_cmd_arg_t){ .fetch = fetch }
+        );
+        // VANISHED can be used with UID mode and CHANGEDSINCE both active
+        bool vanished = false;
+        bool chgsince = false;
+        for(ie_fetch_mods_t *mods = $m; mods; mods = mods->next){
+            if(mods->type == IE_FETCH_MOD_VANISHED){
+                if($uid == false){
+                    THROW_SYNTAX_ERROR(
+                         "VANISHED modifier applies to UID FETCH"
+                    );
+                }
+                vanished = true;
+            }else if(mods->type == IE_FETCH_MOD_CHGSINCE){
+                chgsince = true;
+            }
+        }
+        if(vanished && !chgsince){
+            THROW_SYNTAX_ERROR(
+                "VANISHED modifier requires CHANGEDSINCE modifier"
+            );
+        }
+    }}
+;
+
+fetch_attrs:fetch_attrs =
+  | ALL
+    {{  $$ = ie_fetch_attrs_new(E);
+        if($$ != NULL){
+            $$->flags = true;
+            $$->intdate = true;
+            $$->envelope = true;
+        }
+    }}
+  | FAST
+    {{  $$ = ie_fetch_attrs_new(E);
+        if($$ != NULL){
+            $$->flags = true;
+            $$->intdate = true;
+            $$->rfc822_size = true;
+        }
+    }}
+  | FULL
+    {{  $$ = ie_fetch_attrs_new(E);
+        if($$ != NULL){
+            $$->flags = true;
+            $$->intdate = true;
+            $$->rfc822_size = true;
+            $$->envelope = true;
+            $$->body = true;
+        }
+    }}
+  | fetch_attr!($)
+  | LPAREN fetch_attrs_1!($) RPAREN
+;
+
+peek:bool = [ DOT PEEK { $$ = true; } ];
+
+fetch_attr(out:fetch_attrs) =
+  | ENVELOPE
+    { $out = ie_fetch_attrs_add_simple(E, $out, IE_FETCH_ATTR_ENVELOPE); }
+  | FLAGS
+    { $out = ie_fetch_attrs_add_simple(E, $out, IE_FETCH_ATTR_FLAGS); }
+  | INTERNALDATE
+    { $out = ie_fetch_attrs_add_simple(E, $out, IE_FETCH_ATTR_INTDATE); }
+  | UID
+    { $out = ie_fetch_attrs_add_simple(E, $out, IE_FETCH_ATTR_UID); }
+  | BODYSTRUCTURE
+    { $out = ie_fetch_attrs_add_simple(E, $out, IE_FETCH_ATTR_BODYSTRUCT); }
+  | MODSEQ
+    { $out = ie_fetch_attrs_add_simple(E, $out, IE_FETCH_ATTR_MODSEQ); }
+  | RFC822
+    (
+      | %empty
+        {{  $out = ie_fetch_attrs_add_simple(E,
+                $out, IE_FETCH_ATTR_RFC822
+            );
+        }}
+      | DOT
+        (
+          | HEADER
+            {{  $out = ie_fetch_attrs_add_simple(E,
+                    $out, IE_FETCH_ATTR_RFC822_HEADER
+                );
+            }}
+          | SIZE
+            {{  $out = ie_fetch_attrs_add_simple(E,
+                    $out, IE_FETCH_ATTR_RFC822_SIZE
+                );
+            }}
+          | TEXT
+            {{  $out = ie_fetch_attrs_add_simple(E,
+                    $out, IE_FETCH_ATTR_RFC822_TEXT
+                );
+            }}
+        )
+    )
+  | BODY
+    (
+      | %empty
+        { $out = ie_fetch_attrs_add_simple(E, $out, IE_FETCH_ATTR_BODY); }
+      | peek:x
+        LSQUARE
+        sect:s
+        RSQUARE
+        partial:p
+        {{  $out = ie_fetch_attrs_add_extra(E,
+                $out,
+                ie_fetch_extra_new(E,
+                    $x, STEAL(ie_sect_t, &$s), STEAL(ie_partial_t, &$p)
+                )
+            );
+        }}
+    )
+;
+
+fetch_attrs_1(out:fetch_attrs) = fetch_attr!(out) *( SP fetch_attr!(out) );
+
+fetch_mods:fetch_mods = [ SP LPAREN fetch_mod!($) *(SP fetch_mod!($)) RPAREN];
+
+fetch_mod(out:fetch_mods) =
+  | CHANGEDSINCE
+    { MUST_TRIGGER_EXTENSION(EXT_CONDSTORE); }
+    SP nzmodseqnum:n
+    {{  ie_fetch_mod_arg_t arg = { .chgsince = $n };
+        $out = ie_fetch_mods_add(
+            E, $out, ie_fetch_mods_new(E, IE_FETCH_MOD_CHGSINCE, arg)
+        );
+    }}
+  | VANISHED
+    {{  REQUIRE_EXTENSION_ON(EXT_QRESYNC);
+        ie_fetch_mod_arg_t arg2 = {0};
+        $out = ie_fetch_mods_add(
+            E, $out, ie_fetch_mods_new(E, IE_FETCH_MOD_VANISHED, arg2)
+        );
+    }}
+;
+
+sect:sect =
+  | %empty
+  | sect_msgtxt:t  { $$ = ie_sect_new(E, NULL, STEAL(ie_sect_txt_t, &$t)); }
+  | sect_part:p
+    *(
+        DOT
+        (
+          | sect_part:pp
+            { $p = ie_sect_part_add(E, $p, STEAL(ie_sect_part_t, &$pp)); }
+          | sect_txt:t
+            {{  $$ = ie_sect_new(E,
+                    STEAL(ie_sect_part_t, &$p), STEAL(ie_sect_txt_t, &$t)
+                );
+            }}
+            # "num *( DOT num ) DOT sect_txt" pattern
+            %return
+        )
+    )
+    # "num *( DOT num )" pattern
+    { $$ = ie_sect_new(E, STEAL(ie_sect_part_t, &$p), NULL); }
+;
+
+sect_part:sect_part =
+    num:n
+    { $$ = ie_sect_part_new(E, $n); }
+;
+
+sect_txt:sect_txt =
+  | sect_msgtxt:m { $$ = STEAL(ie_sect_txt_t, &$m); }
+  | MIME          { $$ = ie_sect_txt_new(E, IE_SECT_MIME, NULL); }
+;
+
+sect_msgtxt:sect_txt =
+  | TEXT  { $$ = ie_sect_txt_new(E, IE_SECT_TEXT, NULL); }
+  | HEADER
+    (
+      | %empty  { $$ = ie_sect_txt_new(E, IE_SECT_HEADER, NULL); }
+      | DOT FIELDS
+        (
+          | SP header_list:h
+            {{  $$ = ie_sect_txt_new(E,
+                    IE_SECT_HDR_FLDS, STEAL(ie_dstr_t, &$h)
+                );
+            }}
+          | DOT NOT SP header_list:h
+            {{  $$ = ie_sect_txt_new(E,
+                    IE_SECT_HDR_FLDS_NOT, STEAL(ie_dstr_t, &$h)
+                );
+            }}
+        )
+    )
+;
+
+header_list:dstr =
+    LPAREN
+    astring:h0  { $$ = STEAL(ie_dstr_t, &$h0); }
+    *(
+        SP astring:h  { $$ = ie_dstr_add(E, $$, STEAL(ie_dstr_t, &$h)); }
+    )
+    RPAREN
+;
+
+partial:partial =
+    [
+        LANGLE num:a DOT nznum:b RANGLE
+        { $$ = ie_partial_new(E, $a, $b); }
+    ]
+;
+
+### STORE COMMAND
+
+store_cmd(tag:dstr, uid:bool, out:imap_cmd) =
+    STORE
+    SP
+    seq_set:seq
+    SP
+    store_mods:mods
+    store_sign:sign
+    FLAGS
+    store_silent:silent
+    SP
+    store_flags:f
+    {{  ie_store_cmd_t *store = ie_store_cmd_new(E,
+            $uid,
+            STEAL(ie_seq_set_t, &$seq),
+            STEAL(ie_store_mods_t, &$mods),
+            $sign,
+            $silent,
+            STEAL(ie_flags_t, &$f)
+        );
+        $out = imap_cmd_new(E,
+            STEAL(ie_dstr_t, &$tag),
+            IMAP_CMD_STORE,
+            (imap_cmd_arg_t){ .store = store }
+        );
+    }}
+;
+
+store_mods:store_mods = [ LPAREN store_mod!($) *(SP store_mod!($)) RPAREN SP ];
+
+store_mod(out:store_mods) =
+    UNCHANGEDSINCE
+    { MUST_TRIGGER_EXTENSION(EXT_CONDSTORE); }
+    SP modseqnum:s
+    { $out = ie_store_mods_add(E, $out, ie_store_mods_unchgsince(E, $s)); }
+;
+
+store_sign:sign =
+  | %empty
+  | DASH  { $$ = -1; }
+  | PLUS  { $$ = +1; }
+;
+
+store_silent:bool = [ DOT SILENT { $$ = true; } ];
+
+store_flags:flags =
+  | flags_1:f                { $$ = STEAL(ie_flags_t, &$f); }
+  | LPAREN flags_0:f RPAREN  { $$ = STEAL(ie_flags_t, &$f); }
+;
+
+### COPY COMMAND
+
+copy_cmd(tag:dstr, uid:bool, out:imap_cmd) =
+    COPY SP seq_set:s SP mailbox:m
+    {{  ie_copy_cmd_t *copy = ie_copy_cmd_new(E,
+            $uid,
+            STEAL(ie_seq_set_t, &$s),
+            STEAL(ie_mailbox_t, &$m)
+        );
+        $out = imap_cmd_new(E,
+            STEAL(ie_dstr_t, &$tag),
+            IMAP_CMD_COPY,
+            (imap_cmd_arg_t){ .copy = copy }
+        );
+    }}
+;
+
+### ENABLE COMMAND
+
+enable_cmd(tag:dstr, out:imap_cmd) =
+    ENABLE SP capas_1:c
+    {{  $out = imap_cmd_new(E,
+            STEAL(ie_dstr_t, &$tag),
+            IMAP_CMD_ENABLE,
+            (imap_cmd_arg_t){ .enable = STEAL(ie_dstr_t, &$c) }
+        );
+    }}
+;
+
+capas_1:dstr =
+    atom:a0  { $$ = STEAL(ie_dstr_t, &$a0); }
+    *(
+        SP atom:a  { $$ = ie_dstr_add(E, $$, STEAL(ie_dstr_t, &$a)); }
+    )
+;
+
+### UNSELECT COMMAND
+
+unselect_cmd(tag:dstr, out:imap_cmd) =
+    UNSELECT
+    {{  $out = imap_cmd_new(E,
+            STEAL(ie_dstr_t, &$tag),
+            IMAP_CMD_UNSELECT,
+            (imap_cmd_arg_t){0}
+        );
+    }}
+;
+
+### IDLE COMMAND
+
+idle_cmd(tag:dstr, out:imap_cmd) =
+    IDLE
+    { REQUIRE_EXTENSION_AVAILABLE(EXT_IDLE); }
+    EOL
+    {{  // forward the IDLE request to the server
+        imap_cmd_arg_t arg = {0};
+        imap_cmd_t *cmd = imap_cmd_new(E,
+            STEAL(ie_dstr_t, &$tag), IMAP_CMD_IDLE, arg
+        );
+        send_cmd(E, a, cmd);
+        a->in_idle = true;
+    }}
+    DONE
+    {{  a->in_idle = false;
+        // no syntax error message with this IDLE_DONE
+        imap_cmd_arg_t arg2 = { .idle_done = NULL };
+        $out = imap_cmd_new(E, NULL, IMAP_CMD_IDLE_DONE, arg2);
+    }}
+;
+
+### XKEYSYNC COMMAND
+
+xkeysync_cmd(tag:dstr, out:imap_cmd) =
+    XKEYSYNC
+    { REQUIRE_EXTENSION_ON(EXT_XKEY); }
+    fprs:f EOL
+    {{  // forward the XKEYSYNC request to the server
+        imap_cmd_arg_t arg = { .xkeysync = STEAL(ie_dstr_t, &$f) };
+        imap_cmd_t *cmd = imap_cmd_new(E,
+            ie_dstr_copy(E, $tag), IMAP_CMD_XKEYSYNC, arg
+        );
+        send_cmd(E, a, cmd);
+    }}
+    DONE
+    {{  imap_cmd_arg_t arg2 = { .xkeysync_done = STEAL(ie_dstr_t, &$tag) };
+        $out = imap_cmd_new(E, NULL, IMAP_CMD_XKEYSYNC_DONE, arg2);
+    }}
+;
+
+fprs:dstr =
+    [
+        SP
+        astring:a0  { $$ = STEAL(ie_dstr_t, &$a0); }
+        *(
+            SP astring:a  { $$ = ie_dstr_add(E, $$, STEAL(ie_dstr_t, &$a)); }
+        )
+    ]
+;
+
+### XKEYADD COMMAND
+
+xkeyadd_cmd(tag:dstr, out:imap_cmd) =
+    XKEYADD
+    { REQUIRE_EXTENSION_ON(EXT_XKEY); }
+    SP astring:key
+    {{  imap_cmd_arg_t arg = { .xkeyadd = STEAL(ie_dstr_t, &$key) };
+        $out = imap_cmd_new(E, STEAL(ie_dstr_t, &$tag), IMAP_CMD_XKEYADD, arg);
+    }}
+;
+
+### RESPONSES
+
+respvar:imap_resp = %empty;
+
+%root response_line;
+response_line =
+    tagvar:tv
+    { MODE(STD); }
+    respvar:resp
+    (
+      # tagged responses
+      | tag!(tv) SP status_type_resp!(tv, resp)
+      # continuation requests
+      | PLUS SP plus_resp!(resp)
+      # untagged responses
+      | ASTERISK
+        SP
+        (
+          | status_type_resp!(tv, resp)
+          | capa_resp!(resp)
+          | list_resp!(resp)
+          | lsub_resp!(resp)
+          | status_resp!(resp)
+          | flags_resp!(resp)
+          | search_resp!(resp)
+          | enabled_resp!(resp)
+          | vanished_resp!(resp)
+          | xkeysync_resp!(resp)
+          | num:n SP
+            (
+              | exists_resp!(n, resp)
+              | recent_resp!(n, resp)
+              | expunge_resp!(n, resp)
+              | fetch_resp!(n, resp)
+            )
+        )
+    )
+    { send_resp(E, a, STEAL(imap_resp_t, &$resp)); }
+    EOL
+;
+
+### STATUS-TYPE RESPONSES
+
+status_type_resp(tag:dstr, out:imap_resp) =
+    st_type:t
+    SP
+    { MODE(STATUS_CODE_CHECK); }
+    st_code:c
+    st_text:x
+    {{  ie_st_resp_t *st = ie_st_resp_new(E,
+            STEAL(ie_dstr_t, &$tag),
+            $t,
+            STEAL(ie_st_code_t, &$c),
+            STEAL(ie_dstr_t, &$x)
+        );
+        $out = imap_resp_new(E,
+            IMAP_RESP_STATUS_TYPE, (imap_resp_arg_t){ .status_type = st }
+        );
+    }}
+;
+
+st_type:status =
+  | OK       { $$ = IE_ST_OK; }
+  | NO       { $$ = IE_ST_NO; }
+  | BAD      { $$ = IE_ST_BAD; }
+  | PREAUTH  { $$ = IE_ST_PREAUTH; }
+  | BYE      { $$ = IE_ST_BYE; }
+;
+
+st_txt_inner_char =
+  | atom_char
+  | LPAREN
+  | RPAREN
+  | LBRACE
+  | PERCENT
+  | ASTERISK
+  | SP
+  | NON_CRLF_CTL
+  | DQUOTE
+  | BACKSLASH
+;
+
+st_txt_char = st_txt_inner_char | RSQUARE;
+
+# YES_STATUSCODE means we got a '['
+# NO_STATUSCODE means we got the start of the text
+st_code:st_code = [ YES_STATUSCODE { MODE(STD); } _st_code!($) RSQUARE SP ];
+
+# starting with NO_STATUSCODE indicates we skipped the status code entirely;
+# starting with st_txt_char indicates that we started after a status code
+st_text:dstr =
+    (
+      | NO_STATUSCODE { MODE(STD); $$ = ie_dstr_new(E, dtoken, KEEP_RAW); }
+      | st_txt_char { $$ = ie_dstr_new(E, dtoken, KEEP_RAW); }
+    )
+    *(
+        st_txt_char { $$ = ie_dstr_append(E, $$, dtoken, KEEP_RAW); }
+    )
+;
+
+_st_code(out:st_code) =
+  | ALERT
+    {{ $out = ie_st_code_new(E, IE_ST_CODE_ALERT, (ie_st_code_arg_t){0}); }}
+  | PARSE
+    {{ $out = ie_st_code_new(E, IE_ST_CODE_PARSE, (ie_st_code_arg_t){0}); }}
+  | READ_ONLY
+    {{ $out = ie_st_code_new(E, IE_ST_CODE_READ_ONLY, (ie_st_code_arg_t){0}); }}
+  | READ_WRITE
+    {{ $out = ie_st_code_new(E, IE_ST_CODE_READ_WRITE, (ie_st_code_arg_t){0}); }}
+  | TRYCREATE
+    {{ $out = ie_st_code_new(E, IE_ST_CODE_TRYCREATE, (ie_st_code_arg_t){0}); }}
+  | UIDNEXT SP nznum:n
+    {{  $out = ie_st_code_new(E,
+            IE_ST_CODE_UIDNEXT, (ie_st_code_arg_t){ .uidnext = $n }
+        );
+    }}
+  | UIDVALIDITY SP nznum:n
+    {{  $out = ie_st_code_new(E,
+            IE_ST_CODE_UIDVLD, (ie_st_code_arg_t){ .uidvld = $n }
+        );
+    }}
+  | UNSEEN SP nznum:n
+    {{  $out = ie_st_code_new(E,
+            IE_ST_CODE_UNSEEN, (ie_st_code_arg_t){ .unseen = $n }
+        );
+    }}
+  | sc_pflags!(out)
+  | sc_capa!(out)
+  | sc_atom!(out)
+
+  | sc_uidnostick!(out)
+  | sc_appenduid!(out)
+  | sc_copyuid!(out)
+
+  | sc_nomodseq!(out)
+  | sc_himodseq!(out)
+  | sc_modified!(out)
+
+  # no extension check, this must be sent by servers supporting QRESYNC,
+  # even if QRESYNC hasn't been enabled
+  | CLOSED
+    {{ $out = ie_st_code_new(E, IE_ST_CODE_CLOSED, (ie_st_code_arg_t){0}); }}
+;
+
+sc_pflags(out:st_code) =
+    PERMANENTFLAGS SP LPAREN pflags_0:p RPAREN
+    {{  ie_st_code_arg_t arg = { .pflags = STEAL(ie_pflags_t, &$p)};
+        $out = ie_st_code_new(E, IE_ST_CODE_PERMFLAGS, arg);
+    }}
+;
+
+sc_capa(out:st_code) =
+    CAPABILITY SP capas_1:c
+    {{  ie_st_code_arg_t arg = { .capa = STEAL(ie_dstr_t, &$c)};
+        $out = ie_st_code_new(E, IE_ST_CODE_CAPA, arg);
+    }}
+;
+
+sc_atom(out:st_code) =
+    atom:a sc_text:t
+    {{  ie_st_code_arg_t arg = {
+            .atom = {
+                .name = STEAL(ie_dstr_t, &$a),
+                .text = STEAL(ie_dstr_t, &$t),
+            }
+        };
+        $out = ie_st_code_new(E, IE_ST_CODE_ATOM, arg);
+    }}
+;
+
+# If text is included after the atom code, ignore the leading space
+sc_text:dstr =
+    [
+        SP
+        st_txt_inner_char { $$ = ie_dstr_new(E, dtoken, KEEP_RAW); }
+        *(
+            st_txt_inner_char
+            { $$ = ie_dstr_append(E, $$, dtoken, KEEP_RAW); }
+        )
+    ]
+;
+
+sc_uidnostick(out:st_code) =
+    UIDNOTSTICKY
+    {{  extension_assert_on_builder(E, a->exts, EXT_UIDPLUS);
+        $out = ie_st_code_new(E, IE_ST_CODE_UIDNOSTICK, (ie_st_code_arg_t){0});
+    }}
+;
+
+sc_appenduid(out:st_code) =
+    APPENDUID SP nznum:n SP nznum:uid
+    {{  extension_assert_on_builder(E, a->exts, EXT_UIDPLUS);
+        ie_st_code_arg_t arg = { .appenduid = { .uidvld = $n, .uid = $uid, } };
+        $out = ie_st_code_new(E, IE_ST_CODE_APPENDUID, arg);
+    }}
+;
+
+sc_copyuid(out:st_code) =
+    COPYUID SP nznum:n SP uid_set:uidin SP uid_set:uidout
+    {{  extension_assert_on_builder(E, a->exts, EXT_UIDPLUS);
+        ie_st_code_arg_t arg = {
+            .copyuid = {
+                .uidvld = $n,
+                .uids_in = STEAL(ie_seq_set_t, &$uidin),
+                .uids_out = STEAL(ie_seq_set_t, &$uidout),
+            }
+        };
+        $out = ie_st_code_new(E, IE_ST_CODE_COPYUID, arg);
+    }}
+;
+
+sc_nomodseq(out:st_code) =
+    NOMODSEQ
+    {{  extension_assert_on_builder(E, a->exts, EXT_CONDSTORE);
+        $out = ie_st_code_new(E, IE_ST_CODE_NOMODSEQ, (ie_st_code_arg_t){0});
+    }}
+;
+
+sc_himodseq(out:st_code) =
+    HIGHESTMODSEQ SP nzmodseqnum:n
+    {{  extension_assert_on_builder(E, a->exts, EXT_CONDSTORE);
+        ie_st_code_arg_t arg = { .himodseq = $n };
+        $out = ie_st_code_new(E, IE_ST_CODE_HIMODSEQ, arg);
+    }}
+;
+
+sc_modified(out:st_code) =
+    MODIFIED SP seq_set:s
+    {{  extension_assert_on_builder(E, a->exts, EXT_CONDSTORE);
+        ie_st_code_arg_t arg = { .modified = STEAL(ie_seq_set_t, &$s) };
+        $out = ie_st_code_new(E, IE_ST_CODE_MODIFIED, arg);
+    }}
+;
+
+### CAPABILITY RESPONSE
+
+capa_resp(out:imap_resp) =
+    CAPABILITY SP capas_1:c
+    {{  $out = imap_resp_new(E,
+            IMAP_RESP_CAPA, (imap_resp_arg_t){ .capa = STEAL(ie_dstr_t, &$c) }
+        );
+    }}
+;
+
+### LIST RESPONSE
+
+list_resp(out:imap_resp) =
+    LIST SP mflags:f SP nqchar:c SP mailbox:m
+    {{  ie_list_resp_t *list = ie_list_resp_new(E,
+            STEAL(ie_mflags_t, &$f), $c, STEAL(ie_mailbox_t, &$m)
+        );
+        $out = imap_resp_new(E,
+            IMAP_RESP_LIST, (imap_resp_arg_t){ .list = list }
+        );
+    }}
+;
+
+mflags:mflags = LPAREN mflags_0:m RPAREN { $$ = STEAL(ie_mflags_t, &$m); };
+
+# nqchar can't handle spaces, so an post-nqchar MODE() call is required
+nqchar:ch =
+    { MODE(NQCHAR); }
+    (
+      | NIL
+      | DQUOTE qchar!($) DQUOTE
+    )
+    { MODE(STD); }
+;
+
+qchar(out:ch) =
+    QCHAR
+    {{  // the scanner only returns QCHAR with 1- or 2-char matches.
+        //  the 2-char matches are \\ and \"
+        $out = dtoken->data[dtoken->len-1];
+    }}
+;
+
+### LSUB RESPONSE
+
+lsub_resp(out:imap_resp) =
+    LSUB SP mflags:f SP nqchar:c SP mailbox:m
+    {{  ie_list_resp_t *lsub = ie_list_resp_new(E,
+            STEAL(ie_mflags_t, &$f), $c, STEAL(ie_mailbox_t, &$m)
+        );
+        $out = imap_resp_new(E,
+            IMAP_RESP_LSUB, (imap_resp_arg_t){ .lsub = lsub }
+        );
+    }}
+;
+
+### STATUS RESPONSE
+
+status_resp(out:imap_resp) =
+    STATUS SP mailbox:m SP LPAREN s_attr_rlist:s RPAREN
+    {{  ie_status_resp_t *status = ie_status_resp_new(E,
+            STEAL(ie_mailbox_t, &$m), $s
+        );
+        $out = imap_resp_new(E,
+            IMAP_RESP_STATUS, (imap_resp_arg_t){ .status = status }
+        );
+    }}
+;
+
+s_attr_rlist:status_attr_resp = [ s_attr_resp!($) *( SP s_attr_resp!($) ) ];
+
+s_attr_resp(out:status_attr_resp) =
+  | s_attr_32:s SP num:n
+    {{  $out = ie_status_attr_resp_add(
+            $out, ie_status_attr_resp_new_32(E, $s, $n)
+        );
+    }}
+  | s_attr_64:s SP modseqnum:n
+    {{  $out = ie_status_attr_resp_add(
+            $out, ie_status_attr_resp_new_64(E, $s, $n)
+        );
+    }}
+;
+
+### FLAGS REPONSE
+
+flags_resp(out:imap_resp) =
+    FLAGS SP LPAREN flags_0:f RPAREN
+    {{  imap_resp_arg_t arg = { .flags = STEAL(ie_flags_t, &$f) };
+        $out = imap_resp_new(E, IMAP_RESP_FLAGS, arg);
+    }}
+;
+
+### SEARCH RESPONSE
+
+numsvar:nums = %empty;
+boolvar:bool = %empty;
+modseqnumvar:modseqnum = %empty;
+
+search_resp(out:imap_resp) =
+    numsvar:n modseqnumvar:m boolvar:havemsn _search_resp!(n, m, havemsn)
+    {{  ie_search_resp_t *search = ie_search_resp_new(E,
+            STEAL(ie_nums_t, &$n), $havemsn, $m
+        );
+        $out = imap_resp_new(E,
+            IMAP_RESP_SEARCH, (imap_resp_arg_t){ .search = search }
+        );
+    }}
+;
+
+# Parsing for:
+# - SEARCH
+# - SEARCH 1*(SP num)
+# - SEARCH 1*(SP num) SP LPAREN MODSEQ modseqnum RPAREN
+_search_resp(n:nums, m:modseqnum, havemsn:bool) =
+    SEARCH
+    ( SP | %return )
+    search_num!(n)
+    *(
+        SP
+        (
+          | search_num!(n)
+          | LPAREN MODSEQ SP search_msn!(m, havemsn) RPAREN %return
+        )
+    )
+;
+
+search_num(out:nums) =
+    num:n
+    { $out = ie_nums_append(E, $out, ie_nums_new(E, $n)); }
+;
+
+search_msn(out:modseqnum, havemsn:bool) =
+    modseqnum:m
+    {{  $out = $m;
+        $havemsn = true;
+        extension_assert_on_builder(E, a->exts, EXT_CONDSTORE);
+    }}
+;
+
+### EXISTS RESPONSE
+
+exists_resp(n:num, out:imap_resp) =
+    EXISTS
+    {{  imap_resp_arg_t arg = { .exists = $n };
+        $out = imap_resp_new(E, IMAP_RESP_EXISTS, arg);
+    }}
+;
+
+### RECENT RESPONSE
+
+recent_resp(n:num, out:imap_resp) =
+    RECENT
+    {{  imap_resp_arg_t arg = { .recent = $n };
+        $out = imap_resp_new(E, IMAP_RESP_RECENT, arg);
+    }}
+;
+
+### EXPUNGE RESPONSE
+
+expunge_resp(n:num, out:imap_resp) =
+    EXPUNGE
+    {{  imap_resp_arg_t arg = { .expunge = $n };
+        $out = imap_resp_new(E, IMAP_RESP_EXPUNGE, arg);
+    }}
+;
+
+### FETCH RESPONSE
+
+fetch_resp_var:fetch_resp = %empty;
+
+fetch_resp(n:num, out:imap_resp) =
+    FETCH fetch_resp_var:f SP LPAREN msg_attrs_0!(f) RPAREN
+    {{  imap_resp_arg_t arg = {
+            .fetch = ie_fetch_resp_seq_num(E, STEAL(ie_fetch_resp_t, &$f), $n)
+        };
+        $out = imap_resp_new(E, IMAP_RESP_FETCH, arg);
+    }}
+;
+
+msg_attrs_0(f:fetch_resp) = [ msg_attr!(f) *(SP msg_attr!(f)) ];
+
+# most of these get ignored completely, we only really need:
+#   - FLAGS
+#   - UID
+#   - INTERNALDATE
+#   - the fully body text
+#   - MODSEQ
+# Anything else is going to be encrypted anyway.
+msg_attr(f:fetch_resp) =
+  | f_fflags:l  { $f = ie_fetch_resp_flags(E, $f, STEAL(ie_fflags_t, &$l)); }
+  | f_uid:u     { $f = ie_fetch_resp_uid(E, $f, $u); }
+  | f_intdate:d { $f = ie_fetch_resp_intdate(E, $f, $d); }
+  | f_modseq:s  { $f = ie_fetch_resp_modseq(E, $f, $s); }
+  | f_extra:e
+    { $f = ie_fetch_resp_add_extra(E, $f, STEAL(ie_fetch_resp_extra_t, &$e)); }
+  | RFC822
+    (
+      | SP file_nstring:s
+        { $f = ie_fetch_resp_rfc822(E, $f, STEAL(ie_dstr_t, &$s)); }
+      | DOT
+        (
+          | TEXT SP ign_nstring             # ignored
+          | HEADER SP ign_nstring           # ignored
+          | SIZE SP num                     # ignored
+        )
+    )
+  | ENVELOPE SP LPAREN ign_envelope RPAREN  # ignored
+;
+
+f_fflags:fflags =
+    FLAGS SP LPAREN fflags_0:f RPAREN
+    {{  if($f){
+            $$ = STEAL(ie_fflags_t, &$f);
+        }else{
+            // even an emtpy fflags_0 must result in a non-NULL pointer
+            $$ = ie_fflags_new(E);
+        }
+    }}
+;
+
+# of all the BODY[*] things, just support BODY[]
+f_extra:fetch_resp_extra =
+    BODY LSQUARE RSQUARE SP file_nstring:s
+    { $$ = ie_fetch_resp_extra_new(E, NULL, NULL, STEAL(ie_dstr_t, &$s)); }
+;
+
+f_modseq:modseqnum =
+    MODSEQ SP LPAREN nzmodseqnum:s RPAREN
+    {{  extension_assert_on_builder(E, a->exts, EXT_CONDSTORE);
+        $$ = $s;
+    }}
+;
+
+# this will some day write to a file instead of memory, otherwise it would
+# just be "nstring" type
+file_nstring:dstr =
+  | NIL       { $$ = ie_dstr_new_empty(E); }
+  | string:s  { $$ = STEAL(ie_dstr_t, &$s); }
+;
+
+f_uid:num = UID SP nznum:n { $$ = $n; };
+
+f_intdate:time = INTERNALDATE SP date_time:d { $$ = $d; };
+
+ign_envelope =
+#   date           subj           from          sender        reply-to
+    ign_nstring SP ign_nstring SP naddr_list SP naddr_list SP ign_nstring SP
+#   to            cc            bcc           in-reply-to    message-id
+    naddr_list SP naddr_list SP naddr_list SP ign_nstring SP ign_nstring
+;
+
+naddr_list = NIL | LPAREN addr_list RPAREN;
+
+addr_list = 1*address; # no space!
+
+address =
+    #      addr-name      addr-adl       addr-mailbox   addr-host */
+    LPAREN ign_nstring SP ign_nstring SP ign_nstring SP ign_nstring RPAREN
+;
+
+ign_nstring = NIL | ign_string;
+
+
+### ENABLED RESPONSE
+
+enabled_resp(out:imap_resp) =
+    ENABLED SP capas_1:c
+    {{  imap_resp_arg_t arg = { .enabled = STEAL(ie_dstr_t, &$c) };
+        $out = imap_resp_new(E, IMAP_RESP_ENABLED, arg);
+    }}
+;
+
+### VANISHED RESPONSE
+
+vanished_resp(out:imap_resp) =
+    VANISHED SP earlier:e uid_set:s
+    {{  extension_assert_on_builder(E, a->exts, EXT_QRESYNC);
+        imap_resp_arg_t arg = {
+            .vanished = ie_vanished_resp_new(E, $e, STEAL(ie_seq_set_t, &$s))
+        };
+        $out = imap_resp_new(E, IMAP_RESP_VANISHED, arg);
+    }}
+;
+
+earlier:bool = [ LPAREN EARLIER RPAREN SP { $$ = true; } ];
+
+### XKEYSYNC RESPONSE
+
+xkeysync_resp(out:imap_resp) =
+    XKEYSYNC SP xkeysync_arg:x
+    {{  extension_assert_on_builder(E, a->exts, EXT_XKEY);
+        imap_resp_arg_t arg = { .xkeysync = STEAL(ie_xkeysync_resp_t, &$x) };
+        $out = imap_resp_new(E, IMAP_RESP_XKEYSYNC, arg);
+    }}
+;
+
+xkeysync_arg:xkeysync_resp =
+  | CREATED SP astring:c
+    { $$ = ie_xkeysync_resp_new(E, STEAL(ie_dstr_t, &$c), NULL); }
+  | DELETED SP astring:d
+    { $$ = ie_xkeysync_resp_new(E, NULL, STEAL(ie_dstr_t, &$d)); }
+  | OK
+;
+
+### PLUS RESPONSE
+
+plus_resp(out:imap_resp) =
+    { MODE(STATUS_CODE_CHECK); }
+    st_code:c
+    st_text:x
+    {{  ie_plus_resp_t *plus = ie_plus_resp_new(E,
+            STEAL(ie_st_code_t, &$c),
+            STEAL(ie_dstr_t, &$x)
+        );
+        $out = imap_resp_new(E,
+            IMAP_RESP_PLUS, (imap_resp_arg_t){ .plus = plus }
+        );
+    }}
+;

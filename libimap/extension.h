@@ -25,25 +25,28 @@ typedef struct {
     extension_state_e xkey;
 } extensions_t;
 
+bool extension_is_on(const extensions_t *exts, extension_e type);
+
 // throw an error if an action requires an extension to be enabled but it's not
-derr_t extension_assert_on(const extensions_t *exts,
-        extension_e type);
+derr_t extension_assert_on(const extensions_t *exts, extension_e type);
 
-// same as above but in a builder-friendly (bison-friendly) signature
-void extension_assert_on_builder(derr_t *e,
-        const extensions_t *exts, extension_e type);
+// same as above but in a builder-friendly signature
+void extension_assert_on_builder(
+    derr_t *e, const extensions_t *exts, extension_e type
+);
 
+bool extension_is_available(const extensions_t *exts, extension_e type);
 
 // throw an error if an action requires an extension to be available
-derr_t extension_assert_available(const extensions_t *exts,
-        extension_e type);
-void extension_assert_available_builder(derr_t *e,
-        extensions_t *exts, extension_e type);
+derr_t extension_assert_available(const extensions_t *exts, extension_e type);
+void extension_assert_available_builder(
+    derr_t *e, extensions_t *exts, extension_e type
+);
 
-// set an extension to "on", or throw an error if it is disabled
-derr_t extension_trigger(extensions_t *exts, extension_e type);
-void extension_trigger_builder(derr_t *e,
-        extensions_t *exts, extension_e type);
+// set an extension to "on" and return true, or return false if it is disabled
+bool extension_trigger(extensions_t *exts, extension_e type);
 
 // get the token that would represent an extension
 const dstr_t *extension_token(extension_e ext);
+
+const char *extension_msg(extension_e ext);

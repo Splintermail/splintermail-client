@@ -58,10 +58,6 @@ if("${RE2C}" STREQUAL "")
     set(RE2C "re2c")
 endif()
 
-if("${BISON}" STREQUAL "")
-    set(BISON "bison")
-endif()
-
 if("${REGEN_SRC}" STREQUAL "")
     set(REGEN_SRC "true")
 endif()

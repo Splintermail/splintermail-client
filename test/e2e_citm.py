@@ -1318,6 +1318,8 @@ def test_noop(cmd, maildir_root, **kwargs):
 def test_up_transition(cmd, maildir_root, **kwargs):
     with Subproc(cmd) as subproc:
         with _session(subproc) as rw1:
+            # make sure at least one message is present
+            append_messages(rw1, 1)
             with _session(subproc) as rw2:
                 # let the second connection be the primary up_t
                 rw2.put(b"1b select INBOX\r\n")
@@ -1867,7 +1869,7 @@ def test_syntax_errors(cmd, maildir_root, **kwargs):
         rw.wait_for_resp(
             "*",
             "BAD",
-            require=[br".*at input: SEARCH\\r\\n.*"],
+            require=[br".*at input: \* SEARCH\\r\\n.*"],
         )
 
 

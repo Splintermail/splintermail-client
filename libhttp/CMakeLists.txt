@@ -8,14 +8,14 @@ set(HERE "${CMAKE_CURRENT_SOURCE_DIR}")
 set(GEN "${CMAKE_CURRENT_BINARY_DIR}/generated")
 
 set(http_scan_in "${HERE}/http_scan.c.in")
-set(http_scan_out "${GEN}/http_scan.c")
+set(http_scan_c "${GEN}/http_scan.c")
 set(http_parse_in "${HERE}/http.in")
 set(http_parse_c "${GEN}/http_parse.c")
 set(http_parse_h "${GEN}/http_parse.h")
 
 define_file_logname_for_source("${http_parse_in}" "${http_parse_c}")
 
-re2c("gen-http-scan" "${http_scan_in}" "${http_scan_out}")
+re2c("gen-http-scan" "${http_scan_in}" "${http_scan_c}")
 
 gen_parser(
     "gen-http-parse" "${http_parse_in}" "${http_parse_c}" "${http_parse_h}"
@@ -25,12 +25,12 @@ add_library(
     http
     STATIC
     "${raw_srcs}"
-    "${http_scan_out}"
+    "${http_scan_c}"
     "${http_parse_c}"
+    "${http_parse_h}"
 )
 target_link_libraries(http PUBLIC dstr url duv crypto duvtls)
 default_compile_options(http TRUE)
-add_dependencies(http "gen-http-parse")
 
 if(BUILD_TESTS)
     add_executable(test_http_reader test_http_reader.c)

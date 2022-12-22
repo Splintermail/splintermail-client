@@ -39,7 +39,7 @@ typedef enum {
 } ie_status_attr_t;
 
 typedef struct {
-    unsigned char attrs;
+    unsigned int attrs;
     unsigned int messages;
     unsigned int recent;
     unsigned int uidnext;
@@ -102,11 +102,13 @@ typedef struct ie_select_params_t {
     ie_select_param_arg_t arg;
     struct ie_select_params_t *next;
 } ie_select_params_t;
+DEF_STEAL_PTR(ie_select_params_t)
 
 typedef struct ie_nums_t {
     unsigned int num;
     struct ie_nums_t *next;
 } ie_nums_t;
+DEF_STEAL_PTR(ie_nums_t)
 
 // flags, used by APPEND commands, STORE commands, and FLAGS responses
 
@@ -150,6 +152,7 @@ typedef struct {
     ie_dstr_t *keywords;
     ie_dstr_t *extensions;
 } ie_pflags_t;
+DEF_STEAL_PTR(ie_pflags_t)
 
 // fflags, only used by FETCH responses
 
@@ -173,6 +176,7 @@ typedef struct {
     ie_dstr_t *keywords;
     ie_dstr_t *extensions;
 } ie_fflags_t;
+DEF_STEAL_PTR(ie_fflags_t)
 
 // mflags, only used by LIST and LSUB responses
 
@@ -188,6 +192,7 @@ typedef struct {
     ie_selectable_t selectable;
     ie_dstr_t *extensions;
 } ie_mflags_t;
+DEF_STEAL_PTR(ie_mflags_t)
 
 // SEARCH-related things
 
@@ -258,6 +263,7 @@ typedef struct {
     ie_dstr_t *entry_name;
     ie_entry_type_t entry_type;
 } ie_search_modseq_ext_t;
+DEF_STEAL_PTR(ie_search_modseq_ext_t)
 
 // only used by CONDSTORE extension
 typedef struct {
@@ -277,6 +283,7 @@ union ie_search_param_t {
     ie_search_pair_t pair;
     ie_search_modseq_t modseq;
 };
+DEF_STEAL_PTR(ie_search_key_t)
 
 struct ie_search_key_t {
     ie_search_key_type_t type;
@@ -304,6 +311,7 @@ typedef struct {
     // headers is only used by HDR_FLDS and HDR_FLDS_NOT
     ie_dstr_t *headers;
 } ie_sect_txt_t;
+DEF_STEAL_PTR(ie_sect_txt_t)
 
 typedef struct ie_sect_txt_t {
     // sect_part will never be empty if sect_txt.type == MIME
@@ -311,11 +319,13 @@ typedef struct ie_sect_txt_t {
     // sect_txt might be NULL if sect_part != NULL
     ie_sect_txt_t *sect_txt;
 } ie_sect_t;
+DEF_STEAL_PTR(ie_sect_t)
 
 typedef struct ie_partial_t {
     unsigned int a;
     unsigned int b;
 } ie_partial_t;
+DEF_STEAL_PTR(ie_partial_t)
 
 // a BODY[]<> or BODY.PEEK[]<> in the FETCH cmd, there may be many
 typedef struct ie_fetch_extra_t {
@@ -355,6 +365,7 @@ typedef struct {
     bool modseq:1;
     ie_fetch_extra_t *extras;
 } ie_fetch_attrs_t;
+DEF_STEAL_PTR(ie_fetch_attrs_t)
 
 typedef enum {
     IE_FETCH_MOD_CHGSINCE,
@@ -371,6 +382,7 @@ typedef struct ie_fetch_mods_t {
     ie_fetch_mod_arg_t arg;
     struct ie_fetch_mods_t *next;
 } ie_fetch_mods_t;
+DEF_STEAL_PTR(ie_fetch_mods_t)
 
 typedef enum {
     IE_STORE_MOD_UNCHGSINCE,
@@ -530,6 +542,7 @@ typedef struct ie_fetch_resp_extra_t {
     ie_dstr_t *content;
     struct ie_fetch_resp_extra_t *next;
 } ie_fetch_resp_extra_t;
+DEF_STEAL_PTR(ie_fetch_resp_extra_t)
 
 typedef struct {
     // num always a seq number, even in the case of a UID FETCH
@@ -549,6 +562,7 @@ typedef struct {
     uint64_t modseq;
     ie_fetch_resp_extra_t *extras;
 } ie_fetch_resp_t;
+DEF_STEAL_PTR(ie_fetch_resp_t)
 
 // full command types
 
@@ -611,7 +625,7 @@ typedef struct {
 
 typedef struct {
     ie_mailbox_t *m;
-    unsigned char status_attr;
+    unsigned int status_attr;
 } ie_status_cmd_t;
 
 typedef struct {
@@ -766,6 +780,8 @@ typedef struct {
     ie_dstr_t *created;  // a pubkey (always a literal)
     ie_dstr_t *deleted;  // a fingerprint (always an atom)
 } ie_xkeysync_resp_t;
+DEF_STEAL_PTR(ie_xkeysync_resp_t)
+
 
 typedef union {
     ie_plus_resp_t *plus;
@@ -794,78 +810,6 @@ typedef struct {
 DEF_CONTAINER_OF(imap_resp_t, link, link_t)
 DEF_STEAL_PTR(imap_resp_t)
 
-// final union type for bison
-typedef union {
-    ie_dstr_t *dstr;
-    ie_mailbox_t *mailbox;
-    ie_select_params_t *select_params;
-    ie_status_attr_t status_attr; // a single status attribute
-    unsigned char status_attr_cmd; // logical OR of status attributes in command
-    ie_status_attr_resp_t status_attr_resp; // status attributes with args
-    imap_time_t time;
-    unsigned int num;
-    uint64_t modseqnum;
-    char ch;
-    int sign;
-    bool boolean;
-    ie_flag_type_t flag;
-    ie_flags_t *flags;
-    ie_pflag_type_t pflag;
-    ie_pflags_t *pflags;
-    ie_fflag_type_t fflag;
-    ie_fflags_t *fflags;
-    ie_selectable_t selectable;
-    ie_mflags_t *mflags;
-    ie_search_key_t *search_key;
-    ie_search_modseq_ext_t *search_modseq_ext;
-    ie_entry_type_t entry_type;
-    ie_seq_set_t *seq_set;
-    ie_nums_t *nums;
-
-    // FETCH command things
-    ie_sect_part_t *sect_part;
-    ie_sect_txt_type_t sect_txt_type;
-    ie_sect_txt_t *sect_txt;
-    ie_sect_t *sect;
-    ie_partial_t *partial;
-    ie_fetch_simple_t fetch_simple;
-    ie_fetch_extra_t *fetch_extra;
-    ie_fetch_attrs_t *fetch_attrs;
-    ie_fetch_mods_t *fetch_mods;
-
-    // STORE command things
-    ie_store_mods_t *store_mods;
-
-    // Status-type things
-    ie_status_t status;
-    ie_st_code_t *st_code;
-
-    // FETCH response
-    ie_fetch_resp_extra_t *fetch_resp_extra;
-    ie_fetch_resp_t *fetch_resp;
-
-    // full commands
-    imap_cmd_t *imap_cmd;
-
-    // full responses
-    imap_resp_t *imap_resp;
-
-    // structures which only exist to simplify the bison grammar
-    struct {
-        unsigned int uidvld;
-        uint64_t last_modseq;
-    } qresync_required;
-    struct {
-        // known "u"ids
-        ie_seq_set_t *u;
-        // sequence "k"eys
-        ie_seq_set_t *k;
-        // uid "v"alues
-        ie_seq_set_t *v;
-    } qresync_opt;
-
-} imap_expr_t;
-
 typedef enum {
     KEEP_RAW,
     KEEP_QSTRING,
@@ -880,10 +824,10 @@ const dstr_t *imap_resp_type_to_dstr(imap_resp_type_t type);
 
 dstr_t token_extend(dstr_t start, dstr_t end);
 
-/* Bison-friendly API: errors are kept in the parser, all functions return
+/* Parser-friendly API: errors are kept in the parser, all functions return
    an expression type, even functions which really just modify some other
    object.  This means that in error situations, we can easily call *_free() on
-   all the inputs and return a NULL value to bison.
+   all the inputs and return a NULL value to the parser.
 
    Essentially, when you see:
 
@@ -1245,7 +1189,7 @@ void ie_list_cmd_free(ie_list_cmd_t *list);
 ie_list_cmd_t *ie_list_cmd_copy(derr_t *e, const ie_list_cmd_t *old);
 
 ie_status_cmd_t *ie_status_cmd_new(derr_t *e, ie_mailbox_t *m,
-        unsigned char status_attr);
+        unsigned int status_attr);
 void ie_status_cmd_free(ie_status_cmd_t *status);
 ie_status_cmd_t *ie_status_cmd_copy(derr_t *e, const ie_status_cmd_t *old);
 

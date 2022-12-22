@@ -5,8 +5,7 @@
 
 #include "expression.h"
 #include "extension.h"
-#include "scan.h"
-#include "parse.h"
+// read.h includes header stuff for scan.c as well as read.c
 #include "read.h"
 #include "write.h"
 

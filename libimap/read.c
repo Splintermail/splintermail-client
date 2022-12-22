@@ -1,69 +1,102 @@
-#include "libimap.h"
+#include "libimap/libimap.h"
 
-#include "generated/parse.tab.h"
-
-derr_t imap_reader_init(imap_reader_t *reader, extensions_t *exts,
-        imap_parser_cb_t cb, void *cb_data, bool is_client){
+derr_t imap_reader_init(
+    imap_reader_t *r,
+    extensions_t *exts,
+    imap_cb cb,
+    void *cb_data,
+    bool is_client
+){
     derr_t e = E_OK;
 
-    PROP(&e, imap_scanner_init(&reader->scanner) );
+    *r = (imap_reader_t){
+        .args = {
+            .cb = cb,
+            .cb_data = cb_data,
+            .exts = exts,
+            .is_client = is_client,
+        }
+    };
 
-    PROP_GO(&e,
-        imap_parser_init(
-            &reader->parser, &reader->scanner, exts, cb, cb_data, is_client
-        ),
-    fail_scanner);
+    // responses have a fixed size, but not commands; search keys are recursive
+    r->p = imap_parser_new(
+        2*IMAP_RESPONSE_LINE_MAX_CALLSTACK,
+        2*IMAP_RESPONSE_LINE_MAX_SEMSTACK
+    );
+    if(!r->p){
+        ORIG(&e, E_NOMEM, "nomem");
+    }
 
-    reader->cb = cb;
-    reader->cb_data = cb_data;
-
-    return e;
-
-fail_scanner:
-    imap_scanner_free(&reader->scanner);
     return e;
 }
 
-void imap_reader_free(imap_reader_t *reader){
-    imap_scanner_free(&reader->scanner);
-    imap_parser_free(&reader->parser);
+void imap_reader_free(imap_reader_t *r){
+    imap_parser_free(&r->p);
+    ie_dstr_free(STEAL(ie_dstr_t, &r->args.errmsg));
+    *r = (imap_reader_t){0};
 }
 
-derr_t imap_read(imap_reader_t *reader, const dstr_t *input){
+derr_t imap_read(imap_reader_t *r, const dstr_t *input){
     derr_t e = E_OK;
 
-    // append the input to the scanner's buffer
-    PROP(&e, dstr_append(&reader->scanner.bytes, input) );
+    imap_feed(&r->scanner, *input);
 
-    int token_type;
-    dstr_t token;
-    bool more;
+    imap_status_e (*parse_fn)(
+        imap_parser_t *p,
+        derr_t* E,
+        const dstr_t *dtoken,
+        imap_args_t* a,
+        imap_token_e token
+    ) = r->args.is_client ? imap_parse_response_line : imap_parse_command_line;
 
     while(true){
         // try to scan a token
-        scan_mode_t scan_mode = reader->parser.scan_mode;
+        scan_mode_t scan_mode = r->args.scan_mode;
         // LOG_INFO("---------------------\n"
         //          "mode is %x\n",
         //          FD(scan_mode_to_dstr(scan_mode)));
 
-        // dstr_t scannable = get_scannable(&reader->scanner);
-        // LOG_DEBUG("scannable is: '%x'\n", FD(&scannable));
+        // DSTR_VAR(scannable, 256);
+        // get_scannable(&r->scanner, &scannable);
+        // LOG_DEBUG("scannable is: '%x'\n", FD_DBG(&scannable));
 
-        PROP(&e, imap_scan(&reader->scanner, scan_mode, &more, &token,
-                    &token_type) );
-        if(more == true){
+        imap_scanned_t s = imap_scan(&r->scanner, scan_mode);
+        if(s.more){
             // done with this input buffer
             break;
         }
 
-        // print the token
-        // LOG_INFO("token is '%x' (%x)\n", FD_DBG(&token), FI(token_type));
+        // LOG_INFO(
+        //     "token is '%x' (%x)\n",
+        //     FD_DBG(&s.token),
+        //     FS(imap_token_name(s.type))
+        // );
 
-        // call parser, which will call context-specific actions
-        PROP(&e, imap_parse(&reader->parser, token_type, &token) );
+        // parse the token
+        imap_status_e status = parse_fn(r->p, &e, &s.token, &r->args, s.type);
+        PROP_VAR(&e, &e);
+        switch(status){
+            // if we are halfway through a message, continue
+            case IMAP_STATUS_OK: continue;
+            // heck, even if we finish a message, continue
+            case IMAP_STATUS_DONE: continue;
+
+            case IMAP_STATUS_SYNTAX_ERROR:
+                // the imap grammar should prevent this
+                ORIG(&e, E_INTERNAL, "imap got syntax error");
+
+            case IMAP_STATUS_SEMSTACK_OVERFLOW:
+                ORIG(&e, E_FIXEDSIZE, "semstack overflow parsing imap");
+
+            case IMAP_STATUS_CALLSTACK_OVERFLOW:
+                ORIG(&e, E_FIXEDSIZE, "callstack overflow parsing imap");
+        }
     }
 
-    imap_scanner_shrink(&reader->scanner);
-
     return e;
+}
+
+void set_scanner_to_literal_mode(imap_args_t *a, size_t len){
+    imap_reader_t *r = CONTAINER_OF(a, imap_reader_t, args);
+    r->scanner.literal_len = len;
 }
