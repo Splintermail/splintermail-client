@@ -3083,7 +3083,7 @@ class C:
                 *p = (${prefix_}parser_t){
                     .callstack = malloc(sizeof(p->callstack[0]) * callsmax),
                     .callsmax = callsmax,
-                    .semstack = malloc(sizeof(p->semstack[0]) * callsmax),
+                    .semstack = malloc(sizeof(p->semstack[0]) * semsmax),
                     .semsmax = semsmax,
                 };
 
@@ -3091,7 +3091,7 @@ class C:
                     ${prefix_}parser_free(&p);
                 }else{
                     memset(p->callstack, 0, sizeof(p->callstack[0]) * callsmax);
-                    memset(p->semstack, 0, sizeof(p->semstack[0]) * callsmax);
+                    memset(p->semstack, 0, sizeof(p->semstack[0]) * semsmax);
                 }
 
                 return p;
