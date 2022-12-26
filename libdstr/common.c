@@ -143,6 +143,15 @@ dstr_t dstr_from_cstr(char *cstr){
     };
 }
 
+dstr_t dstr_from_cstrn(char *cstr, size_t n, bool null_terminated){
+    return (dstr_t){
+        .data = cstr,
+        .len = n,
+        .size = n + null_terminated,
+        .fixed_size = true,
+    };
+}
+
 dstr_t dstr_sub(const dstr_t* in, size_t start, size_t end){
     dstr_t out;
 

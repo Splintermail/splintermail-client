@@ -359,6 +359,7 @@ derr_t dstr_grow(dstr_t* ds, size_t min_size);
            E_NOMEM */
 
 dstr_t dstr_from_cstr(char *cstr);
+dstr_t dstr_from_cstrn(char *cstr, size_t n, bool null_terminated);
 
 // in:    full string
 // start: byte offset to start of substring
