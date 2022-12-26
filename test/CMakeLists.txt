@@ -76,7 +76,7 @@ target_link_libraries(test_crypto PRIVATE crypto)
 # target_link_libraries(test_opt_parse) PRIVATE
 target_link_libraries(test_networking PRIVATE crypto)
 target_link_libraries(test_json PRIVATE test_utils)
-target_link_libraries(test_ui PRIVATE ui dummy_ui_harness)
+target_link_libraries(test_ui PRIVATE ui dummy_ui_harness test_utils)
 # target_link_libraries(test_atree) PRIVATE
 # target_link_libraries(test_heap) PRIVATE
 target_link_libraries(test_dstr_off PRIVATE dstr)

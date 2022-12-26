@@ -60,6 +60,7 @@
     #define compat_rmdir _rmdir
     #define compat_unlink _unlink
     #define compat_lseek _lseek
+    #define compat_fstat _fstat
     #define compat_dup _dup
     #define compat_fsync _commit
     #define compat_tzset _tzset
@@ -97,6 +98,7 @@
     #define compat_pipe pipe
     #define compat_rmdir rmdir
     #define compat_lseek lseek
+    #define compat_fstat fstat
     #define compat_dup dup
     #define compat_getpid getpid
     #define compat_fsync fsync

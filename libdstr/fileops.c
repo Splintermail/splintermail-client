@@ -97,6 +97,24 @@ bool exists(const char* path){
     return ret == 0;
 }
 
+derr_t dfstat(int fd, struct stat *s){
+    derr_t e = E_OK;
+
+    int ret = compat_fstat(fd, s);
+    if(ret != 0){
+        derr_type_t etype = errno == ENOMEM ? E_NOMEM : E_OS;
+        ORIG(&e, etype, "failed in fstat: %x", FE(&errno));
+    }
+
+    return e;
+}
+
+derr_t dffstat(FILE *f, struct stat *s){
+    derr_t e = E_OK;
+    PROP(&e, dfstat(fileno(f), s) );
+    return e;
+}
+
 derr_t dstat(const char *path, struct stat *s, bool *exists){
     derr_t e = E_OK;
     if(exists) *exists = false;

@@ -394,6 +394,88 @@ static derr_t migrate_ditm_keys_hook(
     return e;
 }
 
+derr_t trim_logfile(const char *path, long maxlen){
+    derr_t e = E_OK;
+
+    // skip if file doesn't exist
+    bool ok;
+    PROP(&e, dexists(path, &ok) );
+    if(!ok) return e;
+
+    FILE *flog = NULL;
+    FILE *ftmp = NULL;
+
+    DSTR_VAR(temp, 4096);
+    PROP_GO(&e, FMT(&temp, "%x.tmp", FS(path)), cu);
+
+    // check the size of the log file
+    struct stat s;
+    PROP_GO(&e, dfopen(path, "r", &flog), cu);
+    PROP_GO(&e, dffstat(flog, &s), cu);
+    long size = s.st_size;
+    if(size <= (long)maxlen){
+        // file is within limit
+        goto cu;
+    }
+
+    // skip to the tail of the file
+    long offset = size - maxlen;
+    PROP_GO(&e, dfseek(flog, offset, SEEK_SET), cu);
+
+    // skip to the end of the current line
+    int c;
+    do {
+        c = fgetc(flog);
+    } while(c != EOF && c != '\n');
+    if(c == EOF){
+        fprintf(stderr, "encountered EOF while seeking end-of-line in log\n");
+        goto cu;
+    }
+
+    // copy the remaining lines to a temp file
+    PROP_GO(&e, dfopen(temp.data, "w", &ftmp), cu);
+    while(c = fgetc(flog), c != EOF){
+        if(fputc(c, ftmp) == EOF){
+            ORIG_GO(&e, E_OS, "failed to write log bytes", cu);
+        }
+    }
+    if(ferror(flog)){
+        ORIG_GO(&e, E_OS, "failed to read log bytes", cu);
+    }
+
+    // read side can close without error checks
+    fclose(flog);
+    flog = NULL;
+
+    // write side needs checking
+    derr_t e2 = dfclose(ftmp);
+    ftmp = NULL;
+    PROP_VAR_GO(&e, &e2, cu);
+
+    // now replace original file with tail file
+    PROP_GO(&e, drename_atomic(temp.data, path), cu);
+    compat_unlink(temp.data);
+
+cu:
+    if(flog) fclose(flog);
+    if(ftmp) fclose(ftmp);
+    return e;
+}
+
+static void trim_logfile_quiet(const char *path, long maxlen){
+    derr_t e = trim_logfile(path, maxlen);
+    if(!is_error(e)){
+        return;
+    }
+    size_t len = MAX(e.msg.len, INT_MAX);
+    if(len == 0){
+        fprintf(stderr, "trim_logfile failed but left no error message\n");
+    }else{
+        fprintf(stderr, "trim_logfile failed: %.*s\n", (int)len, e.msg.data);
+    }
+    DROP_VAR(&e);
+}
+
 static derr_t api_command_main(
     const opt_spec_t o_account_dir,
     const opt_spec_t o_user,
@@ -1065,11 +1147,13 @@ int do_main(int argc, char* argv[], bool windows_service){
         // then print to a log file, unless --no-logfile is specifed
         if(o_logfile.found > o_no_logfile.found){
             PROP_GO(&e, FMT(&logfile_path, "%x", FD(&o_logfile.val)), cu);
+            trim_logfile_quiet(logfile_path.data, 100000000);
             logger_add_filename(log_level, logfile_path.data);
         }
         // log file defaults to on, in ${sm_dir}/citm_log
         else if(o_logfile.found == 0 && o_no_logfile.found == 0){
             PROP_GO(&e, FMT(&logfile_path, "%x/citm_log", FD(&sm_dir)), cu);
+            trim_logfile_quiet(logfile_path.data, 100000000);
             logger_add_filename(log_level, logfile_path.data);
         }
 

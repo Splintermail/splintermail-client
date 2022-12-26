@@ -586,6 +586,65 @@ static derr_t run_all_cases(void){
     return e;
 }
 
+static derr_t test_trim_logfile(void){
+    derr_t e = E_OK;
+
+    DSTR_VAR(tmp, 256);
+    PROP(&e, mkdir_temp("test-ui", &tmp) );
+
+    DSTR_VAR(log, 256);
+    PROP_GO(&e, FMT(&log, "%x/logfile", FD(&tmp)), cu);
+    char *path = log.data;
+    int result;
+
+    // safe when logfile doesn't exist
+    PROP_GO(&e, trim_logfile(path, 20), cu);
+
+    // safe when logfile is empty
+    PROP_GO(&e, touch(path), cu);
+    PROP_GO(&e, trim_logfile(path, 20), cu);
+    PROP_GO(&e, file_cmp_dstr(path, &DSTR_LIT(""), false, &result), cu);
+    EXPECT_I_GO(&e, "result", result, 0, cu);
+
+    // safe when logfile is small
+    DSTR_STATIC(f1,
+        "000\n"
+        "111\n"
+        "222\n"
+        "333\n"
+        "444\n"
+        "555\n"
+        "666\n"
+        "777\n"
+        "888\n"
+        "999\n"
+    );
+    PROP_GO(&e, dstr_write_file(path, &f1), cu);
+    PROP_GO(&e, trim_logfile(path, 200), cu);
+    PROP_GO(&e, file_cmp_dstr(path, &f1, false, &result), cu);
+    EXPECT_I_GO(&e, "result", result, 0, cu);
+
+    // safe when logfile is exact length
+    PROP_GO(&e, trim_logfile(path, (long)f1.len), cu);
+    PROP_GO(&e, file_cmp_dstr(path, &f1, false, &result), cu);
+    EXPECT_I_GO(&e, "result", result, 0, cu);
+
+    // when logfile is long, trims entire lines
+    DSTR_STATIC(f2,
+        "888\n"
+        "999\n"
+    );
+    for(size_t i = 8; i < 12; i++){
+        PROP_GO(&e, dstr_write_file(path, &f1), cu);
+        PROP_GO(&e, trim_logfile(path, 10), cu);
+        PROP_GO(&e, file_cmp_dstr(path, &f2, false, &result), cu);
+        EXPECT_I_GO(&e, "result", result, 0, cu);
+    }
+
+cu:
+    DROP_CMD( rm_rf(tmp.data) );
+    return e;
+}
 
 int main(int argc, char** argv){
     derr_t e = E_OK;
@@ -601,6 +660,7 @@ int main(int argc, char** argv){
     }
 
     PROP_GO(&e, run_all_cases(), fail);
+    PROP_GO(&e, test_trim_logfile(), fail);
 
     LOG_ERROR("PASS\n");
     dstr_free(&reason_log);

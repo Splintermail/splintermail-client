@@ -29,6 +29,10 @@ derr_t dstat(const char *path, struct stat *s, bool *exists);
 /* throws: E_NOMEM
            E_OS */
 
+derr_t dfstat(int fd, struct stat *s);
+
+derr_t dffstat(FILE *f, struct stat *s);
+
 derr_t dstat_path(const string_builder_t *sb, struct stat *s, bool *exists);
 /* throws: E_NOMEM
            E_OS */
