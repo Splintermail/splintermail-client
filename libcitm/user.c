@@ -530,7 +530,7 @@ static derr_t _load_or_gen_mykey(
     PROP(&e, exists_path(&mykey_path, &have_key) );
 
     if(have_key){
-        IF_PROP(&e, keypair_load_path(out, &mykey_path) ){
+        IF_PROP(&e, keypair_load_private_path(out, &mykey_path) ){
             // we must have hit an error reading the key
             TRACE(&e, "failed to load mykey...\n");
             DUMP(e);
@@ -545,7 +545,7 @@ static derr_t _load_or_gen_mykey(
     }
 
     PROP(&e, gen_key_path(4096, &mykey_path) );
-    PROP(&e, keypair_load_path(out, &mykey_path) );
+    PROP(&e, keypair_load_private_path(out, &mykey_path) );
 
     return e;
 }
@@ -565,7 +565,7 @@ static derr_t add_key_to_keyshare(
 
     string_builder_t path = sb_append(base, FD(file));
     keypair_t *keypair;
-    IF_PROP(&e, keypair_load_path(&keypair, &path) ){
+    IF_PROP(&e, keypair_load_public_path(&keypair, &path) ){
         // we must have hit an error reading the key
         TRACE(&e,
             "deleting broken key '%x' after failure:\n",

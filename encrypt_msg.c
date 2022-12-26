@@ -71,7 +71,7 @@ static derr_t cli_encrypt(int argc, char** argv){
     link_init(&keys);
     for(int i = 1; i < argc; i++){
         keypair_t *kp;
-        PROP_GO(&e, keypair_load(&kp, argv[i]), cu_keys);
+        PROP_GO(&e, keypair_load_public(&kp, argv[i]), cu_keys);
         link_list_append(&keys, &kp->link);
         // this is for debug
         DSTR_VAR(hex, 256);
@@ -149,7 +149,7 @@ static derr_t _mysql_encrypt(MYSQL *sql, const dstr_t user){
 
         // read this key from its pem text
         keypair_t *kp;
-        PROP_GO(&e, keypair_from_pubkey_pem(&kp, &pem->dstr), cu);
+        PROP_GO(&e, keypair_from_pubkey_pem(&kp, pem->dstr), cu);
 
         link_list_append(&keys, &kp->link);
 

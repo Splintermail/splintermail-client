@@ -237,7 +237,12 @@ fail_x509:
     return e;
 }
 
-derr_t read_pem_encoded_pubkey(const dstr_t *pem, EVP_PKEY **out){
+static derr_t _read_pem_encoded_key(
+    dstr_t pem,
+    EVP_PKEY **out,
+    EVP_PKEY *(*read_fn)(BIO*, EVP_PKEY**, pem_password_cb*, void*),
+    const char *kind
+){
     derr_t e = E_OK;
     *out = NULL;
 
@@ -248,11 +253,11 @@ derr_t read_pem_encoded_pubkey(const dstr_t *pem, EVP_PKEY **out){
     }
 
     // make sure pem isn't too long for OpenSSL
-    if(pem->len > INT_MAX) ORIG(&e, E_PARAM, "pem is way too long");
-    int pemlen = (int)pem->len;
+    if(pem.len > INT_MAX) ORIG(&e, E_PARAM, "pem is way too long");
+    int pemlen = (int)pem.len;
 
     // wrap the pem-encoded key in an SSL memory BIO
-    BIO* pembio = BIO_new_mem_buf((void*)pem->data, pemlen);
+    BIO* pembio = BIO_new_mem_buf((void*)pem.data, pemlen);
     if(!pembio){
         trace_ssl_errors(&e);
         ORIG_GO(&e, E_NOMEM, "unable to create BIO", fail_pkey);
@@ -260,11 +265,11 @@ derr_t read_pem_encoded_pubkey(const dstr_t *pem, EVP_PKEY **out){
 
     // read the public key from the BIO (no password protection)
     EVP_PKEY* temp;
-    temp = PEM_read_bio_PUBKEY(pembio, &pkey, NULL, NULL);
+    temp = read_fn(pembio, &pkey, NULL, NULL);
     BIO_free(pembio);
     if(!temp){
         trace_ssl_errors(&e);
-        ORIG_GO(&e, E_PARAM, "failed to read public key", fail_pkey);
+        ORIG_GO(&e, E_PARAM, "failed to read %x key", fail_pkey, FS(kind));
     }
 
     *out = pkey;
@@ -273,6 +278,20 @@ derr_t read_pem_encoded_pubkey(const dstr_t *pem, EVP_PKEY **out){
 
 fail_pkey:
     EVP_PKEY_free(pkey);
+    return e;
+}
+
+derr_t read_pem_encoded_pubkey(dstr_t pem, EVP_PKEY **out){
+    derr_t e = E_OK;
+    PROP(&e, _read_pem_encoded_key(pem, out, PEM_read_bio_PUBKEY, "public") );
+    return e;
+}
+
+derr_t read_pem_encoded_privkey(dstr_t pem, EVP_PKEY **out){
+    derr_t e = E_OK;
+    PROP(&e,
+        _read_pem_encoded_key(pem, out, PEM_read_bio_PrivateKey, "private")
+    );
     return e;
 }
 
@@ -317,61 +336,112 @@ fail:
     return e;
 }
 
-derr_t keypair_load(keypair_t **out, const char *keyfile){
+derr_t keypair_load_private(keypair_t **out, const char *keyfile){
     derr_t e = E_OK;
 
     *out = NULL;
 
-    // try to allocate for the EVP_PKEY
-    EVP_PKEY *pkey = EVP_PKEY_new();
-    if(!pkey){
-        trace_ssl_errors(&e);
-        ORIG(&e, E_NOMEM, "EVP_PKEY_new failed");
+    DSTR_VAR(pem, 8192);
+    e = dstr_read_file(keyfile, &pem);
+    CATCH(e, E_FIXEDSIZE){
+        DROP_VAR(&e);
+        ORIG(&e, E_PARAM, "keyfile (%x) too long", FS(keyfile));
     }
 
-    FILE* f;
-    EVP_PKEY* temp;
-
-    // open the file for the private key
-    f = compat_fopen(keyfile, "r");
-    if(!f){
-        TRACE(&e, "%x: %x\n", FS(keyfile), FE(&errno));
-        derr_type_t err_type = errno == ENOMEM ? E_NOMEM : E_OPEN;
-        ORIG_GO(&e, err_type, "failed to open file", fail_pkey);
-    }
-
-    // read the private key from the file (no password)
-    temp = PEM_read_PrivateKey(f, &pkey, NULL, NULL);
-    fclose(f);
-    if(!temp){
-        trace_ssl_errors(&e);
-        ORIG_GO(&e, E_SSL, "failed to read private key", fail_pkey);
-    }
+    EVP_PKEY *pkey = NULL;
+    PROP(&e, read_pem_encoded_privkey(pem, &pkey) );
 
     PROP(&e, keypair_new(out, pkey) );
 
     return e;
+}
 
-fail_pkey:
+derr_t keypair_load_public(keypair_t **out, const char *keyfile){
+    derr_t e = E_OK;
+
+    *out = NULL;
+    EVP_PKEY *pkey = NULL;
+    EVP_PKEY *temp = NULL;
+
+    DSTR_VAR(pem, 8192);
+    e = dstr_read_file(keyfile, &pem);
+    CATCH(e, E_FIXEDSIZE){
+        DROP_VAR(&e);
+        ORIG_GO(&e, E_PARAM, "keyfile (%x) too long", cu, FS(keyfile));
+    }
+
+    derr_t e2 = read_pem_encoded_pubkey(pem, &pkey);
+    if(e2.type != E_PARAM){
+        // check for non-E_PARAM errors
+        PROP_VAR_GO(&e, &e2, cu);
+        // successfully read public key
+        goto have_pubkey;
+    }
+
+    // E_PARAM error: failure may have been that it was a private key
+    derr_t e3 = read_pem_encoded_privkey(pem, &pkey);
+    if(is_error(e3)){
+        // drop e3, just throw e2
+        DROP_VAR(&e3);
+        PROP_VAR_GO(&e, &e2, cu);
+    }
+
+    // successfully read a private key, get just the public key
+    DROP_VAR(&e2);
+    DROP_VAR(&e3);
+
+    pem.len = 0;
+    PROP_GO(&e, get_public_pem(pkey, &pem), cu);
     EVP_PKEY_free(pkey);
+    pkey = NULL;
+    PROP_GO(&e, read_pem_encoded_pubkey(pem, &pkey), cu);
+
+have_pubkey:
+    // keypair_new always owns pkey
+    temp = pkey;
+    pkey = NULL;
+    PROP_GO(&e, keypair_new(out, temp), cu);
+
+cu:
+    if(pkey) EVP_PKEY_free(pkey);
+    // erase any possible key material
+    memset(pem.data, 0, pem.size);
     return e;
 }
 
-derr_t keypair_load_path(keypair_t **out, const string_builder_t *keypath){
+derr_t keypair_load_private_path(
+    keypair_t **out, const string_builder_t *keypath
+){
     derr_t e = E_OK;
     DSTR_VAR(stack, 256);
     dstr_t heap = {0};
     dstr_t* path;
     PROP(&e, sb_expand(keypath, &DSTR_LIT("/"), &stack, &heap, &path) );
 
-    PROP_GO(&e, keypair_load(out, path->data), cu);
+    PROP_GO(&e, keypair_load_private(out, path->data), cu);
 
 cu:
     dstr_free(&heap);
     return e;
 }
 
-derr_t keypair_from_pubkey_pem(keypair_t **out, const dstr_t *pem){
+derr_t keypair_load_public_path(
+    keypair_t **out, const string_builder_t *keypath
+){
+    derr_t e = E_OK;
+    DSTR_VAR(stack, 256);
+    dstr_t heap = {0};
+    dstr_t* path;
+    PROP(&e, sb_expand(keypath, &DSTR_LIT("/"), &stack, &heap, &path) );
+
+    PROP_GO(&e, keypair_load_public(out, path->data), cu);
+
+cu:
+    dstr_free(&heap);
+    return e;
+}
+
+derr_t keypair_from_pubkey_pem(keypair_t **out, dstr_t pem){
     derr_t e = E_OK;
 
     *out = NULL;

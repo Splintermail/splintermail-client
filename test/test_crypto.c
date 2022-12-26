@@ -164,7 +164,7 @@ static derr_t test_crypto(void){
 
     // load the keys that are now written to a file
     keypair_t *kp;
-    PROP_GO(&e, keypair_load(&kp, keyfile), cu_file);
+    PROP_GO(&e, keypair_load_private(&kp, keyfile), cu_file);
     compat_unlink(keyfile);
 
     DSTR_VAR(pubkey_pem, 4096);
@@ -244,39 +244,49 @@ cu_file:
 static derr_t test_keypair(void){
     derr_t e = E_OK;
 
-    const char* keyfile = "_delete_me_if_you_see_me.pem";
-    PROP_GO(&e, gen_key(1024, keyfile), cu_file);
+    keypair_t *kp = NULL;
+    keypair_t *copy = NULL;
 
-    keypair_t *kp;
-    PROP_GO(&e, keypair_load(&kp, keyfile), cu_file);
+    // safe to free zeroized
+    keypair_free(&kp);
+
+    const char* keyfile = "_delete_me_if_you_see_me.pem";
+    PROP_GO(&e, gen_key(1024, keyfile), cu);
+
+    PROP_GO(&e, keypair_load_private(&kp, keyfile), cu);
     compat_unlink(keyfile);
 
     // read the public key as PEM text
     DSTR_VAR(pem1, 4096);
-    PROP_GO(&e, keypair_get_public_pem(kp, &pem1), cu_kp);
+    PROP_GO(&e, keypair_get_public_pem(kp, &pem1), cu);
 
     // duplicate the key
-    keypair_t *copy;
-    PROP_GO(&e, keypair_copy(kp, &copy), cu_kp);
+    PROP_GO(&e, keypair_copy(kp, &copy), cu);
 
     // delete the original
     keypair_free(&kp);
 
     // verify the memory is still there
     DSTR_VAR(pem2, 4096);
-    PROP_GO(&e, keypair_get_public_pem(copy, &pem2), cu_copy);
+    PROP_GO(&e, keypair_get_public_pem(copy, &pem2), cu);
+    EXPECT_DM_GO(&e, "pem", &pem2, &pem1, cu);
 
-    if(dstr_cmp(&pem1, &pem2) != 0){
-        TRACE(&e, "PEM1:\n%xPEM2:\n%x", FD(&pem1), FD(&pem2));
-        ORIG_GO(&e, E_VALUE, "pems do not match", cu_copy);
-    }
+    // write public key to a file
+    PROP_GO(&e, dstr_write_file(keyfile, &pem1), cu);
 
-cu_copy:
-    keypair_free(&copy);
-cu_kp:
+    // load the public key
+    PROP(&e, keypair_load_public(&kp, keyfile) );
+
+    // verify
+    pem2.len = 0;
+    PROP_GO(&e, keypair_get_public_pem(kp, &pem2), cu);
+    EXPECT_DM_GO(&e, "pem", &pem2, &pem1, cu);
+
+cu:
     keypair_free(&kp);
-cu_file:
-    // delete the temporary file
+    // safe to double-free
+    keypair_free(&copy);
+    // delete temporary file
     compat_unlink(keyfile);
     return e;
 }
@@ -342,11 +352,11 @@ static derr_t test_keyshare(void){
 
     // build a couple random keys
     PROP_GO(&e, gen_key(1024, keyfile), cu_file);
-    PROP_GO(&e, keypair_load(&kp1, keyfile), cu_file);
+    PROP_GO(&e, keypair_load_private(&kp1, keyfile), cu_file);
     compat_unlink(keyfile);
 
     PROP_GO(&e, gen_key(1024, keyfile), cu_kp1);
-    PROP_GO(&e, keypair_load(&kp2, keyfile), cu_kp1);
+    PROP_GO(&e, keypair_load_private(&kp2, keyfile), cu_kp1);
     compat_unlink(keyfile);
 
     // create a keyshare

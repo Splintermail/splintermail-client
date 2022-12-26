@@ -34,7 +34,7 @@ int main(int argc, char** argv){
     PROP_GO(&e, crypto_library_init(), exit);
 
     keypair_t *kp;
-    PROP_GO(&e, keypair_load(&kp, argv[1]), cleanup_ssl);
+    PROP_GO(&e, keypair_load_private(&kp, argv[1]), cleanup_ssl);
 
     // buffer for reading from stdin
     DSTR_VAR(in, 4096);

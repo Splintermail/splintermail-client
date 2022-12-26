@@ -76,20 +76,32 @@ derr_t get_fingerprint(EVP_PKEY* pkey, dstr_t *out);
            E_NOMEM
            E_FIXEDSIZE */
 
-derr_t read_pem_encoded_pubkey(const dstr_t *pem, EVP_PKEY **out);
-/* throws: E_PARAM (invalid key)
-           E_NOMEM
-           E_FIXEDSIZE */
+// only reads public keys; can't extract a public key from a private key
+derr_t read_pem_encoded_pubkey(dstr_t pem, EVP_PKEY **out);
+derr_t read_pem_encoded_privkey(dstr_t pem, EVP_PKEY **out);
 
-// keypair_load needs a matching keypair_free afterwards
-derr_t keypair_load(keypair_t **out, const char *keyfile);
+// keypair_load_private needs a matching keypair_free afterwards
+derr_t keypair_load_private(keypair_t **out, const char *keyfile);
 /* throws: E_SSL (anything with the SSL library)
            E_NOMEM
            E_OPEN (failed to open file for reading) */
 
-derr_t keypair_load_path(keypair_t **out, const string_builder_t *keypath);
+// keypair_load_public needs a matching keypair_free afterwards
+/* keypair_load_public will attempt to extract a public key from a private key
+   if it is passed a private key */
+derr_t keypair_load_public(keypair_t **out, const char *keyfile);
+/* throws: E_SSL (anything with the SSL library)
+           E_NOMEM
+           E_OPEN (failed to open file for reading) */
 
-derr_t keypair_from_pubkey_pem(keypair_t **out, const dstr_t *pem);
+derr_t keypair_load_public_path(
+    keypair_t **out, const string_builder_t *keypath
+);
+derr_t keypair_load_private_path(
+    keypair_t **out, const string_builder_t *keypath
+);
+
+derr_t keypair_from_pubkey_pem(keypair_t **out, dstr_t pem);
 void keypair_free(keypair_t **old);
 
 derr_t get_public_pem(EVP_PKEY *pkey, dstr_t *out);

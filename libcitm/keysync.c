@@ -630,9 +630,8 @@ static derr_t xkeysync_resp(keysync_t *ks, const ie_xkeysync_resp_t *xkeysync){
         // (ignored)
     } else if(xkeysync->created != NULL){
         // * XKEYSYNC CREATED ...
-        const dstr_t *pem = &xkeysync->created->dstr;
         keypair_t *kp;
-        PROP(&e, keypair_from_pubkey_pem(&kp, pem) );
+        PROP(&e, keypair_from_pubkey_pem(&kp, xkeysync->created->dstr) );
         LOG_DEBUG("detected new keypair: %x\n", FX(kp->fingerprint) );
         PROP(&e, ks->cb->key_created(ks->cb, &kp) );
 

@@ -937,7 +937,7 @@ static derr_t _validate_for_add_device(
 
     // validate pkey
     EVP_PKEY *pkey;
-    derr_t e2 = read_pem_encoded_pubkey(pubkey, &pkey);
+    derr_t e2 = read_pem_encoded_pubkey(*pubkey, &pkey);
     CATCH(e2, E_PARAM){
         DROP_VAR(&e2);
         ORIG(&e, E_USERMSG, "invalid public key");
