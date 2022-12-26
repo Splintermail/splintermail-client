@@ -362,24 +362,29 @@ fail:
     return NULL;
 }
 
-static ie_mailbox_t *ie_mailbox_new(derr_t *e){
-    if(is_error(*e)) goto fail;
-
-    IE_MALLOC(e, ie_mailbox_t, m, fail);
-
-    return m;
-
-fail:
-    return NULL;
-}
-
 ie_mailbox_t *ie_mailbox_new_noninbox(derr_t *e, ie_dstr_t *name){
     if(is_error(*e)) goto fail;
 
-    ie_mailbox_t *m = ie_mailbox_new(e);
+    IE_MALLOC(e, ie_mailbox_t, m, fail);
     if(!m) goto fail;
 
-    m->inbox = false;
+    if(dstr_ieq(name->dstr, DSTR_LIT("inbox"))){
+        // probably came in a quoted string, as "INBOX"
+        m->inbox = true;
+        ie_dstr_free(name);
+        return m;
+    }
+
+    // convert InBoX/subdir to INBOX/subdir
+    dstr_t start = dstr_sub2(name->dstr, 0, 6);
+    if(dstr_ieq(start, DSTR_LIT("inbox/"))){
+        name->dstr.data[0] = 'I';
+        name->dstr.data[1] = 'N';
+        name->dstr.data[2] = 'B';
+        name->dstr.data[3] = 'O';
+        name->dstr.data[4] = 'X';
+    }
+
     m->dstr = name->dstr;
     ie_dstr_free_shell(name);
 
@@ -393,34 +398,12 @@ fail:
 ie_mailbox_t *ie_mailbox_new_inbox(derr_t *e){
     if(is_error(*e)) goto fail;
 
-    ie_mailbox_t *m = ie_mailbox_new(e);
+    IE_MALLOC(e, ie_mailbox_t, m, fail);
     if(!m) goto fail;
 
     m->inbox = true;
 
     return m;
-
-fail:
-    return NULL;
-}
-
-ie_mailbox_t *ie_mailbox_new_maybeinbox(derr_t *e, const dstr_t *name){
-    if(is_error(*e)) goto fail;
-
-    if(name->len == 5){
-        ie_dstr_t *dstr_name = ie_dstr_new(e, name, KEEP_RAW);
-        return ie_mailbox_new_noninbox(e, dstr_name);
-    }
-
-    DSTR_VAR(lower, 5);
-    DROP_CMD( dstr_copy(name, &lower) );
-
-    if(dstr_cmp(&lower, &DSTR_LIT("inbox")) == 0){
-        return ie_mailbox_new_inbox(e);
-    }
-
-    ie_dstr_t *dstr_name = ie_dstr_new(e, name, KEEP_RAW);
-    return ie_mailbox_new_noninbox(e, dstr_name);
 
 fail:
     return NULL;

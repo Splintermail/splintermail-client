@@ -628,7 +628,9 @@ ign_qstr = DQUOTE { MODE(QSTRING); } 1*ATOMRAW { MODE(STD); } DQUOTE;
 ign_literal = literal_start 1*LITRAW;
 
 mailbox:mailbox =
-  | astring:m  { $$ = ie_mailbox_new_noninbox(E, STEAL(ie_dstr_t, &$m)); }
+  | astring:m
+    # if the astring is InBoX or starts with inBOX/ expression.c will fix it
+    { $$ = ie_mailbox_new_noninbox(E, STEAL(ie_dstr_t, &$m)); }
   | INBOX:m    { $$ = ie_mailbox_new_inbox(E); }
 ;
 

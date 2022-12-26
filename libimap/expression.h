@@ -871,9 +871,9 @@ dstr_t ie_dstr_sub(const ie_dstr_t* d, size_t start, size_t end);
 // TODO: don't read entire files into memory
 ie_dstr_t *ie_dstr_new_from_fd(derr_t *e, int fd);
 
+// will convert InBoX to INBOX-type, and convert InBoX/subdir to INBOX/subdir
 ie_mailbox_t *ie_mailbox_new_noninbox(derr_t *e, ie_dstr_t *name);
 ie_mailbox_t *ie_mailbox_new_inbox(derr_t *e);
-ie_mailbox_t *ie_mailbox_new_maybeinbox(derr_t *e, const dstr_t *name);
 void ie_mailbox_free(ie_mailbox_t *m);
 ie_mailbox_t *ie_mailbox_copy(derr_t *e, const ie_mailbox_t *old);
 // returns either the mailbox name, or a static dstr of "INBOX"

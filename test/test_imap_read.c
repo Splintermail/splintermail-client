@@ -350,6 +350,16 @@ static derr_t test_responses(void){
                 .buf=DSTR_LIT("* STATUS INBOX (RECENT 4 UNSEEN 2)\r\n")
             },
             {
+                .in=DSTR_LIT("* STATUS \"InBoX\" (UNSEEN 2 RECENT 4)\r\n"),
+                .resp_calls=(int[]){IMAP_RESP_STATUS, -1},
+                .buf=DSTR_LIT("* STATUS INBOX (RECENT 4 UNSEEN 2)\r\n")
+            },
+            {
+                .in=DSTR_LIT("* STATUS InBoX/subdir (UNSEEN 2 RECENT 4)\r\n"),
+                .resp_calls=(int[]){IMAP_RESP_STATUS, -1},
+                .buf=DSTR_LIT("* STATUS INBOX/subdir (RECENT 4 UNSEEN 2)\r\n")
+            },
+            {
                 .in=DSTR_LIT("* STATUS not_inbox (RECENT 4)\r\n"),
                 .resp_calls=(int[]){IMAP_RESP_STATUS, -1},
                 .buf=DSTR_LIT("* STATUS not_inbox (RECENT 4)\r\n")
