@@ -432,7 +432,8 @@ class Parsable(metaclass=abc.ABCMeta):
     def state_map(self, parent_priority=PRIORITY_UNAMBIGUOUS):
         """
         Return a dict mapping the Parsable you are currently parsing to a
-        string representation of your parsing location.
+        list of strings representation of your parsing location, one per
+        parsing state the Parsable represents.
         """
         pass
 
@@ -459,7 +460,7 @@ class Return(Parsable):
         return "%return"
 
     def state_map(self, parent_priority=PRIORITY_UNAMBIGUOUS):
-        return {self: ". %return"}
+        return {self: [". %return"]}
 
 
 class Parameter:
@@ -519,7 +520,7 @@ class Reference(Parsable):
         return self.defn.name + argstr + tagstr
 
     def state_map(self, parent_priority=PRIORITY_UNAMBIGUOUS):
-        return {self: ". " + self.defn.name}
+        return {self: [". " + self.defn.name]}
 
 
 class Snippet:
@@ -602,9 +603,9 @@ class Repeat(Parsable):
             # an "N to M" statement
             pre, post = "%d*%d"%(self.rmin, self.rmax), ""
             parent_priority = PRIORITY_MULTIPLIER
-        out = {self: ". " + self.summary()}
-        for k, v in self.seq.state_map(parent_priority).items():
-            out[k] = pre + v + post
+        out = {self: [". " + self.summary()]}
+        for k, l in self.seq.state_map(parent_priority).items():
+            out[k] = [pre + v + post for v in l]
         return out
 
 class Branches(Parsable):
@@ -625,7 +626,7 @@ class Branches(Parsable):
         return out
 
     def state_map(self, parent_priority=PRIORITY_UNAMBIGUOUS):
-        out = {self: ". (" + self.summary() + ")"}
+        out = {self: [". (" + self.summary() + ")"]}
         all_branches = self.branches_and_default
         for i, b in enumerate(all_branches):
             pre = " | ".join(
@@ -643,8 +644,8 @@ class Branches(Parsable):
                 pre = "(" + pre
                 post = post + ")"
 
-            for k, v in b.state_map(PRIORITY_BRANCHES).items():
-                out[k] = pre + v + post
+            for k, l in b.state_map(PRIORITY_BRANCHES).items():
+                out[k] = [pre + v + post for v in l]
         return out
 
     def add_term(self, term):
@@ -726,9 +727,16 @@ class Recovery(Parsable):
         return "<" + self.seq.summary(PRIORITY_UNAMBIGUOUS) + " ? ... >"
 
     def state_map(self, parent_priority=PRIORITY_UNAMBIGUOUS):
-        out = {self: "<" + self.seq.summary(PRIORITY_UNAMBIGUOUS) + " ? . >"}
-        for k, v in self.seq.state_map(PRIORITY_UNAMBIGUOUS).items():
-            out[k] = "<" + v + "? >"
+        # we have two states, one for prechecking before exiting the recovery
+        # block, and one for recovering from errors
+        out = {
+            self: [
+                "<" + self.seq.summary(PRIORITY_UNAMBIGUOUS) + " . ? >",
+                "<" + self.seq.summary(PRIORITY_UNAMBIGUOUS) + " ? . >",
+            ]
+        }
+        for k, l in self.seq.state_map(PRIORITY_UNAMBIGUOUS).items():
+            out[k] = ["<" + v + " ? >" for v in l]
         return out
 
 
@@ -814,7 +822,7 @@ class Sequence(Parsable):
         return out
 
     def state_map(self, parent_priority=PRIORITY_UNAMBIGUOUS):
-        out = {self: ". " + self.summary(PRIORITY_SEQUENCE)}
+        out = {self: [". " + self.summary(PRIORITY_SEQUENCE)]}
         if len(self.terms) == 1:
             out.update(self.terms[0].state_map())
             return out
@@ -830,8 +838,8 @@ class Sequence(Parsable):
                 pre = "(" + pre
                 post = post + ")"
 
-            for k, v in t.state_map(PRIORITY_SEQUENCE).items():
-                out[k] = pre + v + post
+            for k, l in t.state_map(PRIORITY_SEQUENCE).items():
+                out[k] = [pre + v + post for v in l]
         return out
 
 
@@ -1278,6 +1286,8 @@ class Grammar:
         if isinstance(obj, Recovery):
             obj.prematched = prematched
             self._set_prematched(obj.seq, prematched)
+            # note, the after term is alway preset, but we may not have .after
+            # defined yet, so that is handled in Sequence
             return
         if isinstance(obj, Branches):
             obj.prematched = prematched
@@ -1295,8 +1305,9 @@ class Grammar:
                 prematched = False
             for t in obj.terms:
                 self._set_prematched(t, prematched)
-                # Subsequent terms are never prematched
-                prematched = False
+                # subsequent terms do not inherit the prematch, but will be
+                # prematched if this is a recovery block
+                prematched = isinstance(t, Recovery)
             return
         raise RuntimeError("unrecognized object type: " + type(obj).__name__)
 
@@ -1909,7 +1920,7 @@ class C:
         finally:
             self._extra_vars = old_vars
 
-    def print_code(self, code, i):
+    def print_code(self, code, i, label_guard):
         if code is None:
             return
         for c in code:
@@ -1919,13 +1930,17 @@ class C:
         for c in code:
             if c.tag in (None, "c"):
                 with self.line_hints(c.loc):
-                    # self.fprint(textwrap.indent(c.text, i))
                     text = re.sub("\\$\\$", "YYVALOUT", c.text)
                     text = re.sub("@\\$", "YYLOCOUT", text)
                     text = re.sub("\\$([a-zA-Z_][a-zA-Z0-9_]*)", "YYVAL_\\1", text)
                     text = re.sub("@([a-zA-Z_][a-zA-Z0-9_]*)", "YYLOC_\\1", text)
                     # don't use fprint; we shouldn't be subbing in internal vars
                     text = textwrap.indent(text, i)
+                    if label_guard:
+                        print(
+                            i + "(void)call;  // avoid label-then-declaration",
+                            file=self.file,
+                        )
                     print(text, file=self.file)
                     self.lines += text.count("\n") + 1
 
@@ -2145,8 +2160,9 @@ class C:
             # even if we are prematched, we still reserve a state for ourselves
             return 1 + sum(self.nstates(b) for b in obj.branches_and_default)
         if isinstance(obj, Recovery):
-            # even if we are prematched, we still reserve a state for ourselves
-            return 1 + self.nstates(obj.seq)
+            # even if we are prematched, we still reserve one recovery state
+            # and one exit check state
+            return 2 + self.nstates(obj.seq)
         if isinstance(obj, Sequence):
             return sum(self.nstates(t) for t in obj.terms)
 
@@ -2159,7 +2175,7 @@ class C:
                 else:
                     self.fprint("    // " + obj.summary())
                     self.fprint("    call->state = " + str(state) + ";")
-                    self.fprint("    call->summary = \"" + self.state_map[obj] + "\";")
+                    self.fprint("    call->summary = \"" + self.state_map[obj][0] + "\";")
                     self.fprint("    ${PREFIX_}AWAIT_TOKEN;")
                     self.fprint("yy" + str(state) + ":")
                     self.fprint("    if(!" + self.token_check(obj.first) + "){")
@@ -2179,7 +2195,7 @@ class C:
             if isinstance(obj.defn, Expression):
                 self.fprint("    // " + obj.summary())
                 self.fprint("    call->state = %d;"%state)
-                self.fprint("    call->summary = \"%s\";"%self.state_map[obj])
+                self.fprint("    call->summary = \"%s\";"%self.state_map[obj][0])
                 self.fprint("    ${PREFIX_}CALL(%s, %d);"%(self.parse_fn(obj.defn), stack))
                 if obj.args:
                     self.fprint("    // prepare args to function-like expression")
@@ -2212,7 +2228,7 @@ class C:
                 else:
                     self.fprint("    // " + obj.summary())
                     self.fprint("    call->state = " + str(state) + ";")
-                    self.fprint("    call->summary = \"" + self.state_map[obj] + "\";")
+                    self.fprint("    call->summary = \"" + self.state_map[obj][0] + "\";")
                     self.fprint("    ${PREFIX_}AWAIT_TOKEN;")
                     self.fprint("yy" + str(state) + ":")
                     self.fprint("    if(!" + self.token_check(obj.first) + "){")
@@ -2231,7 +2247,7 @@ class C:
                 self.fprint("    // " + obj.summary())
                 self.fprint("yy" + str(state) + ":")
                 self.fprint("    call->state = " + str(state) + ";")
-                self.fprint("    call->summary = \"" + self.state_map[obj] + "\";")
+                self.fprint("    call->summary = \"" + self.state_map[obj][0] + "\";")
                 self.fprint("    ${PREFIX_}AWAIT_TOKEN;")
                 self.fprint("    if(!" + self.token_check(obj.first) + "){")
                 self.fprint("        " + self.mask_set(obj.first) + ";")
@@ -2262,7 +2278,7 @@ class C:
                 self.fprint("    $COUNTER = 0;")
                 self.fprint("yy$state:")
                 self.fprint("    call->state = $state;")
-                self.fprint("    call->summary = \"" + self.state_map[obj] + "\";")
+                self.fprint("    call->summary = \"" + self.state_map[obj][0] + "\";")
                 self.fprint("    ${PREFIX_}AWAIT_TOKEN;")
                 self.fprint("    if(!" + self.token_check(obj.first) + "){")
                 self.fprint("        " + self.mask_set(obj.first) + ";")
@@ -2298,7 +2314,7 @@ class C:
             else:
                 self.fprint("    // " + obj.summary())
                 self.fprint("    call->state = " + str(state) + ";")
-                self.fprint("    call->summary = \"" + self.state_map[obj] + "\";")
+                self.fprint("    call->summary = \"" + self.state_map[obj][0] + "\";")
                 self.fprint("    ${PREFIX_}AWAIT_TOKEN;")
                 self.fprint("yy" + str(state) + ":")
                 bstate = state + 1
@@ -2366,22 +2382,29 @@ class C:
         if isinstance(obj, Recovery):
             assert obj.after is not None, ".set_after() was never called"
             self.fprint("    // " + obj.summary())
-            self.fprint("    call->recover = " + str(state) + ";")
+            self.fprint("    call->recover = %d;"%(state+1))
             self.fprint("")
-            tstate, _ = self.gen(obj.seq, state + 1, stack, var)
-            self.fprint("")
-            self.fprint("    call->recover = 0;")
-            self.fprint("    goto yy%d_done;"%state)
+            tstate, _ = self.gen(obj.seq, state + 2, stack, var)
+            self.fprint("    // exit check: ensure the next token is valid")
+            self.fprint("    call->summary = \"" + self.state_map[obj][0] + "\";")
+            self.fprint("    call->state = %d;"%state)
+            self.fprint("    ${PREFIX_}AWAIT_TOKEN;")
             self.fprint("yy%d:"%state)
+            self.fprint("    if(!" + self.token_check(obj.after) + "){")
+            self.fprint("        ${PREFIX_}SYNTAX_ERROR(*token, sem);")
+            self.fprint("    }")
+            self.fprint("    call->recover = 0;")
+            self.fprint("    goto yy%d_done;"%(state+1))
+            self.fprint("yy%d:"%(state+1))
             self.fprint("    // recovery: consume all tokens until a valid one")
-            self.fprint("    call->summary = \"" + self.state_map[obj] + "\";")
+            self.fprint("    call->summary = \"" + self.state_map[obj][1] + "\";")
             self.fprint("    ${PREFIX_}AWAIT_TOKEN;")
             self.fprint("    if(!" + self.token_check(obj.after) + "){")
             self.fprint("        ${PREFIX_}CONSUME_TOKEN;")
             self.fprint("        return 0;")
             self.fprint("    }")
-            self.print_code(obj.code, "    ")
-            self.fprint("yy%d_done:"%state)
+            self.print_code(obj.code, "    ", True)
+            self.fprint("yy%d_done:"%(state+1))
             return tstate, stack
 
         if isinstance(obj, Sequence):
@@ -2395,7 +2418,7 @@ class C:
                     state, stack = self.gen(item, state, stack, var)
                 else:
                     # side-effect
-                    self.print_code(item, "    ")
+                    self.print_code(item, "    ", True)
                     self.fprint("")
 
             if obj.returns or want_final_loc:
@@ -2413,7 +2436,7 @@ class C:
                 """)
                 var.define_final_loc()
 
-            self.print_code(obj.finalcode, "    ")
+            self.print_code(obj.finalcode, "    ", True)
 
             var.pop_scope()
 
@@ -2765,7 +2788,7 @@ class C:
         Generate a standalone file with the headerfile and the body of
         definitions in the same file (not #include necessary).
         """
-        self.print_code(self.precode, "")
+        self.print_code(self.precode, "", False)
 
         self.fprint_multi("""
             #include <stdio.h>
@@ -3285,7 +3308,7 @@ class C:
             self.define_user_api(root)
             self.fprint("")
 
-        self.print_code(self.postcode, "")
+        self.print_code(self.postcode, "", False)
 
 
 
