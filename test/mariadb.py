@@ -132,7 +132,7 @@ def wait_for_socket(sockpath):
 
 
 @contextlib.contextmanager
-def do_mariadb(basedir, migrations, migmysql_path):
+def do_mariadb(basedir, migrations, migmysql_path, args):
     assert migrations is None or migmysql_path, \
             "migmysql_path must be provided if migrations is not None"
 
@@ -143,7 +143,7 @@ def do_mariadb(basedir, migrations, migmysql_path):
     sock = os.path.join(basedir, "mariadb.sock")
 
     cmd = ["mariadbd", "--no-defaults", "--datadir", datadir, "--socket", sock]
-    p = subprocess.Popen(cmd)#, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    p = subprocess.Popen(cmd + args)
 
     try:
         wait_for_socket(sock)
@@ -162,7 +162,8 @@ def do_mariadb(basedir, migrations, migmysql_path):
 
 
 @contextlib.contextmanager
-def mariadb(basedir=None, migrations=None, migmysql_path=None):
+def mariadb(basedir=None, migrations=None, migmysql_path=None, args=None):
+    args = args or []
     tempdir = None
     if basedir is None:
         tempdir = tempfile.mkdtemp()
@@ -172,7 +173,7 @@ def mariadb(basedir=None, migrations=None, migmysql_path=None):
         print(f"using {tempdir}")
 
     try:
-        with do_mariadb(basedir, migrations, migmysql_path) as runner:
+        with do_mariadb(basedir, migrations, migmysql_path, args) as runner:
             yield runner
     finally:
         if tempfile is not None:
@@ -203,6 +204,12 @@ if __name__ == "__main__":
         action="store",
         help="use persistent storage",
     )
+    parser.add_argument(
+        "arg",
+        type=str,
+        nargs="*",
+        help="extra args for mariadb",
+    )
 
     args = parser.parse_args()
 
@@ -216,7 +223,8 @@ if __name__ == "__main__":
             raise ValueError(
                 "migmysql path could not be guessed and must be provided"
             )
+    extra = args.arg
 
-    with mariadb(basedir, migrations, migmysql_path):
+    with mariadb(basedir, migrations, migmysql_path, extra):
         while True:
             time.sleep(1000)
