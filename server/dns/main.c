@@ -551,6 +551,11 @@ int main(int argc, char **argv){
     struct sockaddr_storage peers[MAX_PEERS];
     size_t npeers = 0;
     for(int i = 2; i < newargc; i++){
+        if(npeers >= MAX_PEERS){
+            fprintf(stderr, "too many peers!\n\n");
+            print_help(stderr);
+            return 1;
+        }
         dstr_t dpeer;
         DSTR_WRAP(dpeer, argv[i], strlen(argv[i]), true);
         addrspec_t peerspec;
