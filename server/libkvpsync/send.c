@@ -1,4 +1,4 @@
-#include "server/kvpsync/libkvpsync.h"
+#include "server/libkvpsync/libkvpsync.h"
 
 #include <stdlib.h>
 #include <string.h>

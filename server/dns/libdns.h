@@ -4,7 +4,7 @@
 #include "libdstr/libdstr.h"
 #include "liburl/liburl.h"
 #include "libduv/libduv.h"
-#include "server/kvpsync/libkvpsync.h"
+#include "server/libkvpsync/libkvpsync.h"
 
 /* Why write a custom dns server?
 
