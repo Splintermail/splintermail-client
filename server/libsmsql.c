@@ -92,6 +92,29 @@ derr_t random_password_salt(dstr_t *salt){
     return e;
 }
 
+static char b36chars[] = "abcdefghijklmnopqrstuvwxyz0123456789";
+
+static derr_t random_base36(dstr_t *out, size_t len){
+    derr_t e = E_OK;
+
+    for(size_t counter = 0; counter < 1000 * len; counter++){
+        DSTR_VAR(bytes, 32);
+        PROP(&e, random_bytes(&bytes, bytes.size) );
+        unsigned char *udata = (unsigned char*)bytes.data;
+        for(size_t i = 0; i < bytes.len; i++){
+            unsigned char u = udata[i];
+            if(u >= 36*7) continue;
+            derr_type_t etype = dstr_append_char(out, b36chars[u/7]);
+            if(etype) ORIG(&e, etype, "failed to write subdomain");
+            if(out->len == len){
+                return e;
+            }
+        }
+    }
+
+    ORIG(&e, E_INTERNAL, "infinite loop in random_base36");
+}
+
 // sha512 password hash
 // silently truncates passwords > 128 bytes before hashing
 derr_t hash_password(
@@ -1155,6 +1178,411 @@ derr_t delete_token(MYSQL *sql, const dstr_t uuid, uint32_t token){
     return e;
 }
 
+// installations
+
+derr_t subdomain_user(
+    MYSQL *sql, const dstr_t subdomain, dstr_t *user_uuid, bool *ok
+){
+    derr_t e = E_OK;
+
+    *ok = false;
+    bool temp_ok = true;
+
+    DSTR_STATIC(q, "SELECT user_uuid from installations where subdomain = ?");
+    DSTR_VAR(temp, SMSQL_UUID_SIZE);
+
+    PROP(&e,
+        sql_onerow_query(
+            sql, q, &temp_ok,
+            // params
+            string_bind_in(&subdomain),
+            // results
+            string_bind_out(&temp)
+        )
+    );
+
+    if(temp_ok){
+        PROP(&e, dstr_append(user_uuid, &temp) );
+        *ok = true;
+    }
+
+    return e;
+}
+
+derr_t subdomain_installation(
+    MYSQL *sql, const dstr_t subdomain, dstr_t *inst_uuid, bool *ok
+){
+    derr_t e = E_OK;
+
+    *ok = false;
+    bool temp_ok = true;
+
+    DSTR_STATIC(q, "SELECT inst_uuid from installations where subdomain = ?");
+    DSTR_VAR(temp, SMSQL_UUID_SIZE);
+
+    PROP(&e,
+        sql_onerow_query(
+            sql, q, &temp_ok,
+            // params
+            string_bind_in(&subdomain),
+            // results
+            string_bind_out(&temp)
+        )
+    );
+
+    if(temp_ok){
+        PROP(&e, dstr_append(inst_uuid, &temp) );
+        *ok = true;
+    }
+
+    return e;
+}
+
+// populates out with subdomains (smsql_dstr_t's)
+derr_t list_installations(MYSQL *sql, const dstr_t user_uuid, link_t *out){
+    derr_t e = E_OK;
+
+    MYSQL_STMT *stmt;
+
+    DSTR_VAR(subdomain, SMSQL_SUBDOMAIN_SIZE);
+
+    DSTR_STATIC(
+        q1, "SELECT subdomain from installations where user_uuid=?"
+    );
+    PROP(&e,
+        sql_multirow_stmt(
+            sql, &stmt, q1,
+            // parameters
+            blob_bind_in(&user_uuid),
+            // results
+            string_bind_out(&subdomain),
+        )
+    );
+
+    link_t list;
+    link_init(&list);
+    link_t *link;
+
+    while(true){
+        bool ok;
+        PROP_GO(&e, sql_stmt_fetch(stmt, &ok), fail_list);
+        if(!ok) break;
+
+        smsql_dstr_t *dstr;
+        PROP_GO(&e, smsql_dstr_new(&dstr, subdomain), loop_fail);
+
+        link_list_append(&list, &dstr->link);
+
+        continue;
+
+    loop_fail:
+        sql_stmt_fetchall(stmt);
+        goto fail_list;
+    }
+
+    // set the output
+    link_list_append_list(out, &list);
+
+    mysql_stmt_close(stmt);
+
+    return e;
+
+fail_list:
+    while((link = link_list_pop_first(&list))){
+        smsql_dstr_t *dstr = CONTAINER_OF(link, smsql_dstr_t, link);
+        smsql_dstr_free(&dstr);
+    }
+    mysql_stmt_close(stmt);
+    return e;
+}
+
+derr_t add_installation(
+    MYSQL *sql,
+    const dstr_t user_uuid,
+    dstr_t *inst_uuid,
+    uint32_t *token,
+    dstr_t *secret,
+    dstr_t *subdomain,
+    dstr_t *email
+){
+    derr_t e = E_OK;
+    *token = 0;
+
+    // we only need one secret, one email, and one inst_uuid for all tries
+    DSTR_VAR(secret_temp, SMSQL_APISECRET_SIZE);
+    PROP(&e, new_api_secret(&secret_temp) );
+
+    PROP(&e, random_bytes(inst_uuid, SMSQL_UUID_SIZE) );
+
+    DSTR_VAR(email_temp, SMSQL_EMAIL_SIZE);
+    PROP(&e, random_base36(&email_temp, 50) );
+    PROP(&e, dstr_append(&email_temp, &DSTR_LIT("@acme.splintermail.com")) );
+
+    for(size_t limit = 0; limit < 1000; limit++){
+        // pick a random token and random subdomain
+        uint32_t token_temp;
+        PROP(&e, random_uint(&token_temp) );
+        DSTR_VAR(subdomain_temp, SMSQL_SUBDOMAIN_SIZE);
+        PROP(&e, random_base36(&subdomain_temp, SMSQL_SUBDOMAIN_SIZE) );
+
+        DSTR_STATIC(
+            q1,
+            "INSERT INTO installations ("
+            "    user_uuid, inst_uuid, token, secret, subdomain, email"
+            ") VALUES (?, ?, ?, ?, ?, ?)"
+        );
+        derr_t e2 = sql_norow_query(
+            sql, q1, NULL,
+            // params
+            blob_bind_in(&user_uuid),
+            blob_bind_in(inst_uuid),
+            uint_bind_in(&token_temp),
+            string_bind_in(&secret_temp),
+            string_bind_in(&subdomain_temp),
+            string_bind_in(&email_temp)
+        );
+        CATCH(e2, E_SQL_DUP){
+            // chose a duplicate token, try again
+            DROP_VAR(&e2);
+            continue;
+        }else PROP(&e, e2);
+
+        *token = token_temp;
+        PROP(&e, dstr_append(secret, &secret_temp) );
+        PROP(&e, dstr_append(subdomain, &subdomain_temp) );
+        PROP(&e, dstr_append(email, &email_temp) );
+        return e;
+    }
+
+    ORIG(&e, E_INTERNAL, "failed to find an available token");
+}
+
+// a user manually decides to delete an installation tied to their account
+derr_t delete_installation(
+    MYSQL *sql, const dstr_t user_uuid, const dstr_t subdomain
+){
+    derr_t e = E_OK;
+
+    size_t affected;
+    DSTR_STATIC(q1,
+        "DELETE FROM installations WHERE user_uuid=? AND subdomain=?"
+    );
+    PROP(&e,
+        sql_norow_query(
+            sql,
+            q1,
+            &affected,
+            blob_bind_in(&user_uuid),
+            string_bind_in(&subdomain)
+        )
+    );
+
+    if(affected == 0){
+        ORIG(&e, E_USERMSG, "no such installation");
+    }
+
+    return e;
+}
+
+// an install token is used to delete itself
+derr_t delete_installation_by_token(MYSQL *sql, const dstr_t inst_uuid){
+    derr_t e = E_OK;
+
+    size_t affected;
+    DSTR_STATIC(q1, "DELETE FROM installations WHERE inst_uuid=?");
+    PROP(&e, sql_norow_query(sql, q1, &affected, blob_bind_in(&inst_uuid)) );
+    if(affected == 0){
+        ORIG(&e, E_USERMSG, "no such installation");
+    }
+
+    return e;
+}
+
+derr_t set_challenge(MYSQL *sql, const dstr_t inst_uuid, const dstr_t text){
+    derr_t e = E_OK;
+
+    if(text.len > SMSQL_CHALLENGE_SIZE){
+        ORIG(&e, E_USERMSG, "challenge text is too long");
+    }
+
+    DSTR_STATIC(q1,
+        "UPDATE installations SET challenge = ? where inst_uuid = ?"
+    );
+    /* don't check affected because that doesn't distinguish between duplicate
+       requests and requests against invalid installations */
+    PROP(&e,
+        sql_norow_query(
+            sql, q1, NULL, string_bind_in(&text), blob_bind_in(&inst_uuid)
+        )
+    );
+
+    return e;
+}
+
+derr_t delete_challenge(MYSQL *sql, const dstr_t inst_uuid){
+    derr_t e = E_OK;
+
+    DSTR_STATIC(q1,
+        "UPDATE installations SET challenge = NULL where inst_uuid = ?"
+    );
+    /* don't check affected because that doesn't distinguish between duplicate
+       requests and requests against invalid installations */
+    PROP(&e, sql_norow_query(sql, q1, NULL, blob_bind_in(&inst_uuid)) );
+
+    return e;
+}
+
+derr_t get_installation_challenge(
+    MYSQL *sql,
+    const dstr_t inst_uuid,
+    dstr_t *subdomain,
+    bool *subdomain_ok,
+    dstr_t *challenge,
+    bool *challenge_ok
+){
+    derr_t e = E_OK;
+
+    *subdomain_ok = false;
+    *challenge_ok = false;
+
+    DSTR_STATIC(q,
+        "SELECT subdomain, challenge FROM installations WHERE inst_uuid = ?"
+    );
+
+    // challenge might be NULL
+    char cchallenge_ok;
+
+    bool ok;
+    PROP(&e,
+        sql_onerow_query(
+            sql, q, &ok,
+            // params
+            blob_bind_in(&inst_uuid),
+            // results
+            string_bind_out(subdomain),
+            string_bind_out_ex(challenge, &cchallenge_ok)
+        )
+    );
+
+    if(ok){
+        *subdomain_ok = true;
+        *challenge_ok = !!challenge_ok;
+    }
+
+    return e;
+}
+
+derr_t challenges_first(challenge_iter_t *it, MYSQL *sql){
+    derr_t e = E_OK;
+
+    *it = (challenge_iter_t){ .ok = true };
+    DSTR_WRAP_ARRAY(it->subdomain, it->_subdomainbuf);
+    DSTR_WRAP_ARRAY(it->challenge, it->_challengebuf);
+
+    DSTR_STATIC(q1,
+        "SELECT subdomain, challenge FROM installations "
+        "WHERE challenge is not NULL ORDER BY subdomain"
+    );
+    PROP(&e,
+        sql_multirow_stmt(
+            sql, &it->_stmt, q1,
+            // results
+            string_bind_out(&it->subdomain),
+            string_bind_out(&it->challenge),
+        )
+    );
+    it->_inloop = true;
+
+    PROP_GO(&e, challenges_next(it), fail);
+
+    return e;
+
+fail:
+    challenges_free(it);
+    return e;
+}
+
+derr_t challenges_next(challenge_iter_t *it){
+    derr_t e = E_OK;
+
+    PROP_GO(&e, sql_stmt_fetch(it->_stmt, &it->ok), fail);
+
+    return e;
+
+fail:
+    it->_inloop = false;
+    it->ok = false;
+    return e;
+}
+
+void challenges_free(challenge_iter_t *it){
+    if(!it->_stmt) return;
+    if(it->_inloop){
+        sql_stmt_fetchall(it->_stmt);
+        it->_inloop = false;
+    }
+    mysql_stmt_close(it->_stmt);
+    it->_stmt = NULL;
+}
+
+derr_t smsql_dpair_new(smsql_dpair_t **out, const dstr_t a, const dstr_t b){
+    derr_t e = E_OK;
+    *out = NULL;
+
+    smsql_dpair_t *dpair = DMALLOC_STRUCT_PTR(&e, dpair);
+    CHECK(&e);
+
+    PROP_GO(&e, dstr_copy(&a, &dpair->a), fail);
+    PROP_GO(&e, dstr_copy(&b, &dpair->b), fail_a);
+
+    *out = dpair;
+    return e;
+
+fail_a:
+    dstr_free(&dpair->a);
+fail:
+    free(dpair);
+    return e;
+}
+
+void smsql_dpair_free(smsql_dpair_t **old){
+    smsql_dpair_t *dpair = *old;
+    if(!dpair) return;
+    dstr_free(&dpair->a);
+    dstr_free(&dpair->b);
+    free(dpair);
+    *old = NULL;
+}
+
+derr_t list_challenges(MYSQL *sql, link_t *out){
+    derr_t e = E_OK;
+
+    link_t list = {0};
+    link_t *link;
+
+    challenge_iter_t it;
+    PROP(&e, challenges_first(&it, sql) );
+
+    while(it.ok){
+        smsql_dpair_t *dpair;
+        PROP_GO(&e, smsql_dpair_new(&dpair, it.subdomain, it.challenge), cu);
+        link_list_append(&list, &dpair->link);
+        // get next challenge
+        PROP_GO(&e, challenges_next(&it), cu);
+    }
+
+    // save output
+    link_list_append_list(out, &list);
+
+cu:
+    while((link = link_list_pop_first(&list))){
+        smsql_dpair_t *dpair = CONTAINER_OF(link, smsql_dpair_t, link);
+        smsql_dpair_free(&dpair);
+    }
+    challenges_free(&it);
+    return e;
+}
+
 // misc
 
 static derr_t _create_account_txn(
@@ -1257,6 +1685,11 @@ static derr_t _delete_account_txn(MYSQL *sql, const dstr_t uuid){
 
     {
         DSTR_STATIC(q, "DELETE FROM tokens WHERE user_uuid = ?");
+        PROP(&e, sql_norow_query(sql, q, NULL, blob_bind_in(&uuid)) );
+    }
+
+    {
+        DSTR_STATIC(q, "DELETE FROM installations WHERE user_uuid = ?");
         PROP(&e, sql_norow_query(sql, q, NULL, blob_bind_in(&uuid)) );
     }
 
@@ -1392,7 +1825,7 @@ static derr_t _validate_token_auth_txn(
     derr_t e = E_OK;
 
     // check token ID (and get secret/nonce/uuid)
-    // use FOR UPDATE to prevent write skew on nonce (replay attacks):w
+    // use FOR UPDATE to prevent write skew on nonce (replay attacks)
     DSTR_VAR(secret, SMSQL_APISECRET_SIZE);
     DSTR_VAR(temp_uuid, SMSQL_UUID_SIZE);
     uint64_t old_nonce;
@@ -1440,7 +1873,7 @@ static derr_t _validate_token_auth_txn(
     return e;
 }
 
-// validate a token against the database, returning uuid and email
+// validate a token against the database, returning uuid
 /* checks signature of payload against secret for token, but some higher-level
    checks like "does the path in the payload match the API path" are the
    responsibility of the gateway */
@@ -1459,6 +1892,98 @@ derr_t validate_token_auth(
 
     PROP_GO(&e,
         _validate_token_auth_txn(sql, token, nonce, payload, sig, uuid),
+    hard_fail);
+
+    PROP(&e, sql_txn_commit(sql) );
+
+    return e;
+
+hard_fail:
+    sql_txn_abort(sql);
+
+    return e;
+}
+
+static derr_t _validate_installation_auth_txn(
+    MYSQL *sql,
+    uint32_t token,
+    uint64_t nonce,
+    const dstr_t payload,
+    const dstr_t sig,
+    dstr_t *uuid  // an installation uuid
+){
+    derr_t e = E_OK;
+
+    // check token ID (and get secret/nonce/uuid)
+    // use FOR UPDATE to prevent write skew on nonce (replay attacks)
+    DSTR_VAR(secret, SMSQL_APISECRET_SIZE);
+    DSTR_VAR(temp_uuid, SMSQL_UUID_SIZE);
+    uint64_t old_nonce;
+    DSTR_STATIC(
+        q1,
+        "SELECT secret, inst_uuid, nonce FROM installations "
+        "WHERE token=? FOR UPDATE"
+    );
+    bool ok;
+    PROP(&e,
+        sql_onerow_query(
+            sql, q1, &ok,
+            // param
+            uint_bind_in(&token),
+            // result
+            blob_bind_out(&secret),
+            blob_bind_out(&temp_uuid),
+            uint64_bind_out(&old_nonce)
+        )
+    );
+    if(!ok){
+        ORIG(&e, E_USERMSG, "installation token not recognized");
+    }
+
+    // check signature
+    DSTR_VAR(true_sig, 256);
+    PROP(&e, hmac(secret, payload, &true_sig) );
+    if(!dstr_eq_consttime(&sig, &true_sig)){
+        ORIG(&e, E_USERMSG, "invalid signature");
+    }
+
+    // check/update nonce
+    if(nonce <= old_nonce){
+        ORIG(&e, E_USERMSG, "incorrect nonce");
+    }
+    DSTR_STATIC(q2, "UPDATE installations SET nonce=? WHERE token=?");
+    PROP(&e,
+        sql_norow_query(
+            sql, q2, NULL, uint64_bind_in(&nonce), uint_bind_in(&token)
+        )
+    );
+
+    // valid!
+    PROP(&e, dstr_append(uuid, &temp_uuid) );
+
+    return e;
+}
+
+/* validate an installation token against the database, returning user uuid and
+   installation uuid */
+/* checks signature of payload against secret for token, but some higher-level
+   checks like "does the path in the payload match the API path" are the
+   responsibility of the gateway */
+// raises E_USERMSG on error
+derr_t validate_installation_auth(
+    MYSQL *sql,
+    uint32_t token,
+    uint64_t nonce,
+    const dstr_t payload,
+    const dstr_t sig,
+    dstr_t *uuid  // an installation uuid
+){
+    derr_t e = E_OK;
+
+    PROP(&e, sql_txn_start(sql) );
+
+    PROP_GO(&e,
+        _validate_installation_auth_txn(sql, token, nonce, payload, sig, uuid),
     hard_fail);
 
     PROP(&e, sql_txn_commit(sql) );

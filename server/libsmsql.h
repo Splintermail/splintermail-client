@@ -56,7 +56,7 @@ derr_t valid_splintermail_password(const dstr_t pass);
 /* FSID is a modified base64 to be filesystem-safe, and also to be
    email-localpart-safe.  This is done by converting '/' into '-', prefixing
    with an F to ensure the address never starts with punctuation, and removing
-   the training "=" to shorten things.  Postfix also must be configured to not
+   the trailing "=" to shorten things.  Postfix also must be configured to not
    case-fold the localpart when it invokes dovecot-lda.
 
    This is a lot of complexity to shorten the uuid email address, but when I
@@ -81,6 +81,8 @@ derr_t valid_splintermail_password(const dstr_t pass);
 #define SMSQL_CSRF_RANDOM_BYTES 33
 #define SMSQL_CSRF_SIZE 44
 #define SMSQL_CSRF_TIMEOUT (24*60*60)
+#define SMSQL_SUBDOMAIN_SIZE 8
+#define SMSQL_CHALLENGE_SIZE 255
 
 derr_t get_uuid_for_email(
     MYSQL *sql, const dstr_t email, dstr_t *uuid, bool *ok
@@ -170,6 +172,93 @@ derr_t add_token(
 // throws E_USERMSG if no token matched
 derr_t delete_token(MYSQL *sql, const dstr_t uuid, uint32_t token);
 
+// installations
+
+derr_t subdomain_user(
+    MYSQL *sql, const dstr_t subdomain, dstr_t *user_uuid, bool *ok
+);
+
+derr_t subdomain_installation(
+    MYSQL *sql, const dstr_t subdomain, dstr_t *inst_uuid, bool *ok
+);
+
+// populates out with subdomains (smsql_dstr_t's)
+derr_t list_installations(MYSQL *sql, const dstr_t user_uuid, link_t *out);
+
+derr_t add_installation(
+    MYSQL *sql,
+    const dstr_t user_uuid,
+    dstr_t *inst_uuid,
+    uint32_t *token,
+    dstr_t *secret,
+    dstr_t *subdomain,
+    dstr_t *email
+);
+
+// a user manually decides to delete an installation tied to their account
+derr_t delete_installation(
+    MYSQL *sql, const dstr_t user_uuid, const dstr_t subdomain
+);
+
+// an install token is used to delete itself
+derr_t delete_installation_by_token(MYSQL *sql, const dstr_t inst_uuid);
+
+derr_t set_challenge(MYSQL *sql, const dstr_t inst_uuid, const dstr_t text);
+
+derr_t delete_challenge(MYSQL *sql, const dstr_t inst_uuid);
+
+derr_t get_installation_challenge(
+    MYSQL *sql,
+    const dstr_t inst_uuid,
+    dstr_t *subdomain,
+    bool *subdomain_ok,
+    dstr_t *challenge,
+    bool *challenge_ok
+);
+
+// an iterator for listing all challenges (sorted by subdomain)
+/* example:
+
+    challenge_iter_t it;
+    PROP(&e, challenges_first(&it, sql) );
+    while(it.ok){
+        PFMT("subdomain = %x\n", FD(&it.subdomain));
+        PFMT("challenge = %x\n", FD(&it.challenge));
+        PROP_GO(&e, challenges_next(&it, sql), cu);
+    }
+
+cu:
+    challenges_free(&it);
+*/
+typedef struct {
+    // public
+    dstr_t subdomain;
+    dstr_t challenge;
+    bool ok;
+    // private
+    MYSQL_STMT *_stmt;
+    char _subdomainbuf[SMSQL_SUBDOMAIN_SIZE];
+    char _challengebuf[SMSQL_CHALLENGE_SIZE];
+    bool _inloop;
+} challenge_iter_t;
+
+derr_t challenges_first(challenge_iter_t *it, MYSQL *sql);
+derr_t challenges_next(challenge_iter_t *it);
+void challenges_free(challenge_iter_t *it);
+
+typedef struct {
+    dstr_t a;
+    dstr_t b;
+    link_t link;
+} smsql_dpair_t;
+DEF_CONTAINER_OF(smsql_dpair_t, link, link_t)
+
+derr_t smsql_dpair_new(smsql_dpair_t **out, const dstr_t a, const dstr_t b);
+void smsql_dpair_free(smsql_dpair_t **old);
+
+// returns a list of smsql_dpair_t's, sorted by subdomain
+derr_t list_challenges(MYSQL *sql, link_t *out);
+
 // misc
 
 // throws E_USERMSG on failure
@@ -202,7 +291,7 @@ derr_t validate_login(
     MYSQL *sql, const dstr_t email, const dstr_t pass, dstr_t *uuid
 );
 
-// validate a token against the database, returning uuid and email
+// validate a token against the database, returning uuid
 /* checks signature of payload against secret for token, but some higher-level
    checks like "does the path in the payload match the API path" are the
    responsibility of the gateway */
@@ -214,6 +303,21 @@ derr_t validate_token_auth(
     const dstr_t payload,
     const dstr_t sig,
     dstr_t *uuid
+);
+
+/* validate an installation token against the database, returning user uuid and
+   installation uuid */
+/* checks signature of payload against secret for token, but some higher-level
+   checks like "does the path in the payload match the API path" are the
+   responsibility of the gateway */
+// raises E_USERMSG on error
+derr_t validate_installation_auth(
+    MYSQL *sql,
+    uint32_t token,
+    uint64_t nonce,
+    const dstr_t payload,
+    const dstr_t sig,
+    dstr_t *uuid  // an installation uuid
 );
 
 // the gateway should enforce a valid old password is provided first

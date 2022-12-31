@@ -412,6 +412,182 @@ static derr_t delete_token_action(MYSQL *sql, int argc, char **argv){
     return e;
 }
 
+// installations
+
+static derr_t list_installations_action(MYSQL *sql, int argc, char **argv){
+    derr_t e = E_OK;
+
+    if(argc != 1){
+        ORIG(&e, E_USERMSG, "usage: list_installations (EMAIL|FSID)\n");
+    }
+
+    dstr_t id = get_arg(argv, 0);
+
+    DSTR_VAR(uuid, SMSQL_UUID_SIZE);
+    PROP(&e, get_uuid_from_id(sql, id, &uuid) );
+
+    link_t subdomains;
+    link_init(&subdomains);
+    PROP(&e, list_installations(sql, uuid, &subdomains) );
+
+    link_t *link;
+    while((link = link_list_pop_first(&subdomains))){
+        smsql_dstr_t *dstr = CONTAINER_OF(link, smsql_dstr_t, link);
+        PFMT("%x\n", FD(dstr->dstr));
+        smsql_dstr_free(&dstr);
+    }
+
+    return e;
+}
+
+static derr_t add_installation_action(MYSQL *sql, int argc, char **argv){
+    derr_t e = E_OK;
+
+    if(argc != 1){
+        ORIG(&e, E_USERMSG, "usage: add_installation (EMAIL|FSID)\n");
+    }
+
+    dstr_t id = get_arg(argv, 0);
+
+    DSTR_VAR(uuid, SMSQL_UUID_SIZE);
+    PROP(&e, get_uuid_from_id(sql, id, &uuid) );
+
+    DSTR_VAR(inst_uuid, SMSQL_UUID_SIZE);
+    unsigned int token;
+    DSTR_VAR(secret, SMSQL_APISECRET_SIZE);
+    DSTR_VAR(subdomain, SMSQL_SUBDOMAIN_SIZE);
+    DSTR_VAR(email, SMSQL_EMAIL_SIZE);
+
+    PROP(&e,
+        add_installation(sql,
+            uuid,
+            &inst_uuid,
+            &token,
+            &secret,
+            &subdomain,
+            &email
+        )
+    );
+
+    PFMT(
+        "inst_uuid: %x, token:%x, secret:%x, subdomain: %x, email: %x\n",
+        FX(inst_uuid), FU(token), FD(secret), FD(subdomain), FD(email)
+    );
+
+    return e;
+}
+
+static derr_t delete_installation_action(MYSQL *sql, int argc, char **argv){
+    derr_t e = E_OK;
+
+    if(argc != 1){
+        ORIG(&e, E_USERMSG, "usage: delete_installation SUBDOMAIN\n");
+    }
+
+    dstr_t subdomain = get_arg(argv, 0);
+
+    DSTR_VAR(uuid, SMSQL_UUID_SIZE);
+    bool ok;
+    PROP(&e, subdomain_user(sql, subdomain, &uuid, &ok) );
+    if(!ok) ORIG(&e, E_USERMSG, "no such subdomain\n");
+
+    PROP(&e, delete_installation(sql, uuid, subdomain) );
+
+    PFMT("DONE\n");
+
+    return e;
+}
+
+static derr_t subdomain_user_action(MYSQL *sql, int argc, char **argv){
+    derr_t e = E_OK;
+
+    if(argc != 1){
+        ORIG(&e, E_USERMSG, "usage: subdomain_user SUBDOMAIN\n");
+    }
+
+    dstr_t subdomain = get_arg(argv, 0);
+
+    DSTR_VAR(uuid, SMSQL_UUID_SIZE);
+    bool ok;
+    PROP(&e, subdomain_user(sql, subdomain, &uuid, &ok) );
+    if(!ok) ORIG(&e, E_USERMSG, "no such subdomain\n");
+
+    DSTR_VAR(email, SMSQL_EMAIL_SIZE);
+    PROP(&e, get_email_for_uuid(sql, uuid, &email, &ok) );
+    if(!ok){
+        ORIG(&e, E_INTERNAL, "found uuid without email: %x\n", FSID(uuid));
+    }
+
+    PFMT("%x\n", FD(email));
+
+    return e;
+}
+
+static derr_t set_challenge_action(MYSQL *sql, int argc, char **argv){
+    derr_t e = E_OK;
+
+    if(argc != 2){
+        ORIG(&e, E_USERMSG, "usage: set_challenge SUBDOMAIN CHALLENGE\n");
+    }
+
+    dstr_t subdomain = get_arg(argv, 0);
+    dstr_t challenge = get_arg(argv, 1);
+
+    DSTR_VAR(inst_uuid, SMSQL_UUID_SIZE);
+    bool ok;
+    PROP(&e, subdomain_installation(sql, subdomain, &inst_uuid, &ok) );
+    if(!ok) ORIG(&e, E_USERMSG, "no such subdomain\n");
+
+    PROP(&e, set_challenge(sql, inst_uuid, challenge) );
+
+    PFMT("DONE\n");
+
+    return e;
+}
+
+static derr_t delete_challenge_action(MYSQL *sql, int argc, char **argv){
+    derr_t e = E_OK;
+
+    if(argc != 1){
+        ORIG(&e, E_USERMSG, "usage: delete_challenge SUBDOMAIN\n");
+    }
+
+    dstr_t subdomain = get_arg(argv, 0);
+
+    DSTR_VAR(inst_uuid, SMSQL_UUID_SIZE);
+    bool ok;
+    PROP(&e, subdomain_installation(sql, subdomain, &inst_uuid, &ok) );
+    if(!ok) ORIG(&e, E_USERMSG, "no such subdomain\n");
+
+    PROP(&e, delete_challenge(sql, inst_uuid) );
+
+    PFMT("DONE\n");
+
+    return e;
+}
+
+static derr_t list_challenges_action(MYSQL *sql, int argc, char **argv){
+    derr_t e = E_OK;
+    (void)argv;
+
+    if(argc != 0){
+        ORIG(&e, E_USERMSG, "usage: list_challenges\n");
+    }
+
+    link_t challenges;
+    link_init(&challenges);
+    PROP(&e, list_challenges(sql, &challenges) );
+
+    link_t *link;
+    while((link = link_list_pop_first(&challenges))){
+        smsql_dpair_t *dpair = CONTAINER_OF(link, smsql_dpair_t, link);
+        PFMT("%x:%x\n", FD(dpair->a), FD(dpair->b));
+        smsql_dpair_free(&dpair);
+    }
+
+    return e;
+}
+
 // misc
 
 static derr_t create_account_action(MYSQL *sql, int argc, char **argv){
@@ -717,6 +893,13 @@ int main(int argc, char **argv){
     LINK_ACTION("list_tokens", list_tokens_action);
     LINK_ACTION("add_token", add_token_action);
     LINK_ACTION("delete_token", delete_token_action);
+    LINK_ACTION("subdomain_user", subdomain_user_action);
+    LINK_ACTION("list_installations", list_installations_action);
+    LINK_ACTION("add_installation", add_installation_action);
+    LINK_ACTION("delete_installation", delete_installation_action);
+    LINK_ACTION("set_challenge", set_challenge_action);
+    LINK_ACTION("delete_challenge", delete_challenge_action);
+    LINK_ACTION("list_challenges", list_challenges_action);
     LINK_ACTION("create_account", create_account_action);
     LINK_ACTION("delete_account", delete_account_action);
     LINK_ACTION("account_info", account_info_action);

@@ -554,7 +554,7 @@ static PyObject *py_smsql_list_tokens(
 
     // create the output list
     PyObject *py_list = PyList_New(count);
-    if(!py_list) ORIG_GO(&e, E_NOMEM, "nomem", fail_dstrs);
+    if(!py_list) ORIG_GO(&e, E_NOMEM, "nomem", fail_uints);
 
     count = 0;
     // populate the output list
@@ -564,7 +564,7 @@ static PyObject *py_smsql_list_tokens(
         // build a list of ints
         PyObject *py_int = PyLong_FromUnsignedLong(uint->uint);
 
-        // always free the popped dstr
+        // always free the popped uint
         smsql_uint_free(&uint);
 
         // now check for errors
@@ -578,10 +578,10 @@ static PyObject *py_smsql_list_tokens(
 
 fail_list:
     Py_DECREF(py_list);
-fail_dstrs:
+fail_uints:
     while((link = link_list_pop_first(&tokens))){
-        smsql_dstr_t *dstr = CONTAINER_OF(link, smsql_dstr_t, link);
-        smsql_dstr_free(&dstr);
+        smsql_uint_t *uint = CONTAINER_OF(link, smsql_uint_t, link);
+        smsql_uint_free(&uint);
     }
 fail:
     raise_derr(&e);
@@ -616,7 +616,7 @@ fail:
 }
 
 static char * const py_smsql_delete_token_doc =
-    "delete_token(uuid:bytes) -> None\n"
+    "delete_token(uuid:bytes, token:int) -> None\n"
     "Raises pysm.UserError when no token matches";
 static PyObject *py_smsql_delete_token(
     py_smsql_t *self, PyObject *args, PyObject *kwds
@@ -636,6 +636,276 @@ static PyObject *py_smsql_delete_token(
 
     Py_RETURN_NONE;
 
+fail:
+    raise_derr(&e);
+    return NULL;
+}
+
+// installations
+
+static char * const py_smsql_list_installations_doc =
+    "list_subdomains(uuid:bytes) -> List[subdomain:str]"
+    "Return a list of subdomains.";
+static PyObject *py_smsql_list_installations(
+    py_smsql_t *self, PyObject *args, PyObject *kwds
+){
+    derr_t e = E_OK;
+
+    dstr_t uuid;
+    pyarg_i *spec[] = {
+        PD("uuid", &uuid),
+    };
+    size_t nspec = sizeof(spec)/sizeof(*spec);
+    PROP_GO(&e, pyarg_parse(args, kwds, spec, nspec), fail);
+
+    link_t subdomains;
+    link_init(&subdomains);
+    PROP_GO(&e, list_installations(&self->sql, uuid, &subdomains), fail);
+
+    // count entries
+    Py_ssize_t count = 0;
+    link_t *link;
+    for(link = subdomains.next; link != &subdomains; link = link->next){
+        count++;
+    }
+
+    // create the output list
+    PyObject *py_list = PyList_New(count);
+    if(!py_list) ORIG_GO(&e, E_NOMEM, "nomem", fail_dstrs);
+
+    count = 0;
+    // populate the output list
+    while((link = link_list_pop_first(&subdomains))){
+        smsql_dstr_t *dstr = CONTAINER_OF(link, smsql_dstr_t, link);
+
+        // build a list of ints
+        PyObject *py_str = BUILD_STRING(dstr->dstr);
+
+        // always free the popped dstr
+        smsql_dstr_free(&dstr);
+
+        // now check for errors
+        if(!py_str) ORIG_GO(&e, E_NOMEM, "nomem", fail_list);
+
+        // the SET_ITEM macro is only suitable for newly created, empty lists
+        PyList_SET_ITEM(py_list, count++, py_str);
+    }
+
+    return py_list;
+
+fail_list:
+    Py_DECREF(py_list);
+fail_dstrs:
+    while((link = link_list_pop_first(&subdomains))){
+        smsql_dstr_t *dstr = CONTAINER_OF(link, smsql_dstr_t, link);
+        smsql_dstr_free(&dstr);
+    }
+fail:
+    raise_derr(&e);
+    return NULL;
+}
+
+static char * const py_smsql_add_installation_doc =
+    "add_installation(\n"
+    "    uuid:bytes,\n"
+    ") -> Tuple[token:int, secret:str, subdomain:str, email:str]";
+static PyObject *py_smsql_add_installation(
+    py_smsql_t *self, PyObject *args, PyObject *kwds
+){
+    derr_t e = E_OK;
+
+    dstr_t uuid;
+    pyarg_i *spec[] = {
+        PD("uuid", &uuid),
+    };
+    size_t nspec = sizeof(spec)/sizeof(*spec);
+    PROP_GO(&e, pyarg_parse(args, kwds, spec, nspec), fail);
+
+    DSTR_VAR(inst_uuid, SMSQL_UUID_SIZE);
+    unsigned int token;
+    DSTR_VAR(secret, SMSQL_APISECRET_SIZE);
+    DSTR_VAR(subdomain, SMSQL_SUBDOMAIN_SIZE);
+    DSTR_VAR(email, SMSQL_EMAIL_SIZE);
+    PROP_GO(&e,
+        add_installation(
+            &self->sql, uuid, &inst_uuid, &token, &secret, &subdomain, &email
+        ),
+    fail);
+
+    // api.py doesn't need installation uuid
+    (void)inst_uuid;
+    // I = unsigned int
+    // s# = string with length
+    // s# = string with length
+    // s# = string with length
+    return Py_BuildValue(
+        "(I, s#, s#, s#)",
+        token,
+        secret.data, (Py_ssize_t)secret.len,
+        subdomain.data, (Py_ssize_t)subdomain.len,
+        email.data, (Py_ssize_t)email.len
+    );
+
+fail:
+    raise_derr(&e);
+    return NULL;
+}
+
+static char * const py_smsql_delete_installation_doc =
+    "delete_installation(uuid:bytes, subdomain:str) -> None\n"
+    "Raises pysm.UserError when no subdomain matches";
+static PyObject *py_smsql_delete_installation(
+    py_smsql_t *self, PyObject *args, PyObject *kwds
+){
+    derr_t e = E_OK;
+
+    dstr_t uuid;
+    dstr_t subdomain;
+    pyarg_i *spec[] = {
+        PD("uuid", &uuid),
+        PD("subdomain", &subdomain),
+    };
+    size_t nspec = sizeof(spec)/sizeof(*spec);
+    PROP_GO(&e, pyarg_parse(args, kwds, spec, nspec), fail);
+
+    PROP_GO(&e, delete_installation(&self->sql, uuid, subdomain), fail);
+
+    Py_RETURN_NONE;
+
+fail:
+    raise_derr(&e);
+    return NULL;
+}
+
+static char * const py_smsql_delete_installation_by_token_doc =
+    "delete_installation_by_token(inst_uuid:bytes) -> None\n"
+    "Raises pysm.UserError when no inst_uuid matches";
+static PyObject *py_smsql_delete_installation_by_token(
+    py_smsql_t *self, PyObject *args, PyObject *kwds
+){
+    derr_t e = E_OK;
+
+    dstr_t inst_uuid;
+    pyarg_i *spec[] = {
+        PD("inst_uuid", &inst_uuid),
+    };
+    size_t nspec = sizeof(spec)/sizeof(*spec);
+    PROP_GO(&e, pyarg_parse(args, kwds, spec, nspec), fail);
+
+    PROP_GO(&e, delete_installation_by_token(&self->sql, inst_uuid), fail);
+
+    Py_RETURN_NONE;
+
+fail:
+    raise_derr(&e);
+    return NULL;
+}
+
+static char * const py_smsql_set_challenge_doc =
+    "set_challenge(inst_uuid:bytes, text:str) -> None";
+static PyObject *py_smsql_set_challenge(
+    py_smsql_t *self, PyObject *args, PyObject *kwds
+){
+    derr_t e = E_OK;
+
+    dstr_t inst_uuid;
+    dstr_t challenge;
+    pyarg_i *spec[] = {
+        PD("inst_uuid", &inst_uuid),
+        PD("challenge", &challenge),
+    };
+    size_t nspec = sizeof(spec)/sizeof(*spec);
+    PROP_GO(&e, pyarg_parse(args, kwds, spec, nspec), fail);
+
+    PROP_GO(&e, set_challenge(&self->sql, inst_uuid, challenge), fail);
+
+    Py_RETURN_NONE;
+
+fail:
+    raise_derr(&e);
+    return NULL;
+}
+
+static char * const py_smsql_delete_challenge_doc =
+    "delete_challenge(inst_uuid:bytes) -> None";
+static PyObject *py_smsql_delete_challenge(
+    py_smsql_t *self, PyObject *args, PyObject *kwds
+){
+    derr_t e = E_OK;
+
+    dstr_t inst_uuid;
+    pyarg_i *spec[] = {
+        PD("inst_uuid", &inst_uuid),
+    };
+    size_t nspec = sizeof(spec)/sizeof(*spec);
+    PROP_GO(&e, pyarg_parse(args, kwds, spec, nspec), fail);
+
+    PROP_GO(&e, delete_challenge(&self->sql, inst_uuid), fail);
+
+    Py_RETURN_NONE;
+
+fail:
+    raise_derr(&e);
+    return NULL;
+}
+
+static char * const py_smsql_list_challenges_doc =
+    "list_challenges() -> List[Tuple[subdomain:str, challenge:str]]";
+static PyObject *py_smsql_list_challenges(
+    py_smsql_t *self, PyObject *args, PyObject *kwds
+){
+    derr_t e = E_OK;
+
+    PROP_GO(&e, pyarg_parse(args, kwds, NULL, 0), fail);
+
+    link_t dpairs;
+    link_init(&dpairs);
+    PROP_GO(&e, list_challenges(&self->sql, &dpairs), fail);
+
+    // count entries
+    Py_ssize_t count = 0;
+    link_t *link;
+    for(link = dpairs.next; link != &dpairs; link = link->next){
+        count++;
+    }
+
+    // create the output list
+    PyObject *py_list = PyList_New(count);
+    if(!py_list) ORIG_GO(&e, E_NOMEM, "nomem", fail_dpairs);
+
+    count = 0;
+    // populate the output list
+    while((link = link_list_pop_first(&dpairs))){
+        smsql_dpair_t *dpair = CONTAINER_OF(link, smsql_dpair_t, link);
+
+        // build an output tuple of (alias, paid)
+        // s# (char*, Py_ssize_t) -> creates a string
+        // s# (char*, Py_ssize_t) -> creates a string
+        PyObject *tuple = Py_BuildValue(
+            "(s#, s#)",
+            dpair->a.data, (Py_ssize_t)dpair->a.len,
+            dpair->b.data, (Py_ssize_t)dpair->b.len
+        );
+
+        // always free the popped dpair
+        smsql_dpair_free(&dpair);
+
+        // now check for errors
+        if(!tuple) ORIG_GO(&e, E_NOMEM, "nomem", fail_list);
+
+        // the SET_ITEM macro is only suitable for newly created, empty lists
+        PyList_SET_ITEM(py_list, count++, tuple);
+    }
+
+    return py_list;
+
+fail_list:
+    Py_DECREF(py_list);
+fail_dpairs:
+    while((link = link_list_pop_first(&dpairs))){
+        smsql_dpair_t *dpair = CONTAINER_OF(link, smsql_dpair_t, link);
+        smsql_dpair_free(&dpair);
+    }
 fail:
     raise_derr(&e);
     return NULL;
@@ -794,6 +1064,50 @@ static PyObject *py_smsql_validate_token_auth(
     fail);
 
     return BUILD_BYTES(uuid);
+
+fail:
+    raise_derr(&e);
+    return NULL;
+}
+
+static char * const py_smsql_validate_installation_auth_doc =
+    "validate_installation_auth(\n"
+    "    token:int,\n"
+    "    nonce:int,\n"
+    "    payload:bytes,\n"
+    "    signature:bytes\n"
+    ") -> uuid:bytes\n"
+    "\n"
+    "checks signature of payload against secret for token, but some "
+    "higher-level checks like \"does the path in the payload match "
+    "the API path\" are the responsibility of the gateway.\n"
+    "Raises pysm.UserError on failure.";
+static PyObject *py_smsql_validate_installation_auth(
+    py_smsql_t *self, PyObject *args, PyObject *kwds
+){
+    derr_t e = E_OK;
+
+    unsigned int token;
+    uint64_t nonce;
+    dstr_t payload;
+    dstr_t signature;
+    pyarg_i *spec[] = {
+        PU("token", &token),
+        PU64("nonce", &nonce),
+        PD("payload", &payload),
+        PD("signature", &signature),
+    };
+    size_t nspec = sizeof(spec)/sizeof(*spec);
+    PROP_GO(&e, pyarg_parse(args, kwds, spec, nspec), fail);
+
+    DSTR_VAR(inst_uuid, SMSQL_UUID_SIZE);
+    PROP_GO(&e,
+        validate_installation_auth(
+            &self->sql, token, nonce, payload, signature, &inst_uuid
+        ),
+    fail);
+
+    return BUILD_BYTES(inst_uuid);
 
 fail:
     raise_derr(&e);
@@ -1198,6 +1512,48 @@ static PyMethodDef py_smsql_methods[] = {
         .ml_doc = py_smsql_delete_token_doc,
     },
     {
+        .ml_name = "list_installations",
+        .ml_meth = (PyCFunction)(void*)py_smsql_list_installations,
+        .ml_flags = METH_VARARGS | METH_KEYWORDS,
+        .ml_doc = py_smsql_list_installations_doc,
+    },
+    {
+        .ml_name = "add_installation",
+        .ml_meth = (PyCFunction)(void*)py_smsql_add_installation,
+        .ml_flags = METH_VARARGS | METH_KEYWORDS,
+        .ml_doc = py_smsql_add_installation_doc,
+    },
+    {
+        .ml_name = "delete_installation",
+        .ml_meth = (PyCFunction)(void*)py_smsql_delete_installation,
+        .ml_flags = METH_VARARGS | METH_KEYWORDS,
+        .ml_doc = py_smsql_delete_installation_doc,
+    },
+    {
+        .ml_name = "delete_installation_by_token",
+        .ml_meth = (PyCFunction)(void*)py_smsql_delete_installation_by_token,
+        .ml_flags = METH_VARARGS | METH_KEYWORDS,
+        .ml_doc = py_smsql_delete_installation_by_token_doc,
+    },
+    {
+        .ml_name = "set_challenge",
+        .ml_meth = (PyCFunction)(void*)py_smsql_set_challenge,
+        .ml_flags = METH_VARARGS | METH_KEYWORDS,
+        .ml_doc = py_smsql_set_challenge_doc,
+    },
+    {
+        .ml_name = "delete_challenge",
+        .ml_meth = (PyCFunction)(void*)py_smsql_delete_challenge,
+        .ml_flags = METH_VARARGS | METH_KEYWORDS,
+        .ml_doc = py_smsql_delete_challenge_doc,
+    },
+    {
+        .ml_name = "list_challenges",
+        .ml_meth = (PyCFunction)(void*)py_smsql_list_challenges,
+        .ml_flags = METH_VARARGS | METH_KEYWORDS,
+        .ml_doc = py_smsql_list_challenges_doc,
+    },
+    {
         .ml_name = "create_account",
         .ml_meth = (PyCFunction)(void*)py_smsql_create_account,
         .ml_flags = METH_VARARGS | METH_KEYWORDS,
@@ -1226,6 +1582,12 @@ static PyMethodDef py_smsql_methods[] = {
         .ml_meth = (PyCFunction)(void*)py_smsql_validate_token_auth,
         .ml_flags = METH_VARARGS | METH_KEYWORDS,
         .ml_doc = py_smsql_validate_token_auth_doc,
+    },
+    {
+        .ml_name = "validate_installation_auth",
+        .ml_meth = (PyCFunction)(void*)py_smsql_validate_installation_auth,
+        .ml_flags = METH_VARARGS | METH_KEYWORDS,
+        .ml_doc = py_smsql_validate_installation_auth_doc,
     },
     {
         .ml_name = "change_password",
