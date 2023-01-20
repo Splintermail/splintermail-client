@@ -46,6 +46,7 @@ derr_t sql_connect_unix_ex(
     const dstr_t *db
 );
 
+// always connects to the "splintermail" database
 derr_t sql_connect_unix(
     MYSQL *sql, const dstr_t *user, const dstr_t *pass, const dstr_t *sock
 );
