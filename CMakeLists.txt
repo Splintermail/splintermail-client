@@ -58,10 +58,6 @@ if("${RE2C}" STREQUAL "")
     set(RE2C "re2c")
 endif()
 
-if("${REGEN_SRC}" STREQUAL "")
-    set(REGEN_SRC "true")
-endif()
-
 if(APPLE)
     if("${MUNKIPKG}" STREQUAL "")
         set(MUNKIPKG "munkipkg")
@@ -158,7 +154,10 @@ function(default_compile_options tgt allow_asan)
         if("${tgt_type}" STREQUAL "EXECUTABLE")
             target_link_libraries("${tgt}" PRIVATE "-pie")
         endif()
-
+        if(TEST_COVERAGE)
+            target_compile_options("${tgt}" PRIVATE "-coverage")
+            target_link_libraries("${tgt}" PRIVATE "-lgcov")
+        endif()
     elseif("${CMAKE_C_COMPILER_ID}" MATCHES "Clang")
         # flags common to "AppleClang" and "Clang"
         target_compile_options("${tgt}" PRIVATE "-Werror")
