@@ -23,6 +23,7 @@ typedef struct {
     char val [KVPSYNC_MAX_LEN]; // only present for insert packets
 } kvp_update_t;
 
+// returns bool ok
 bool kvpsync_update_read(const dstr_t rbuf, kvp_update_t *out);
 derr_t kvpsync_update_write(const kvp_update_t *update, dstr_t *out);
 
@@ -31,5 +32,6 @@ typedef struct {
     uint32_t update_id;
 } kvp_ack_t;
 
+// returns bool ok
 bool kvpsync_ack_read(const dstr_t rbuf, kvp_ack_t *out);
 derr_t kvpsync_ack_write(const kvp_ack_t *ack, dstr_t *out);

@@ -3,4 +3,6 @@
 
 typedef uint64_t xtime_t;
 
+#define XTIME_MAX UINT64_MAX
+
 xtime_t xtime(void);

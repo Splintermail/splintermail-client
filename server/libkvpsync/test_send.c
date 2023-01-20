@@ -2,7 +2,8 @@
 
 #include "test/test_utils.h"
 
-static void akcb(void *arg){
+static void akcb(kvpsync_send_t *send, void *arg){
+    (void)send;
     if(!arg) return;
     bool *done = arg;
     *done = true;
@@ -90,7 +91,7 @@ static derr_t test_send_sync_points(void){
 
     xtime_t now = 1;
 
-    PROP_GO(&e, kvpsync_send_init(&s, now), cu);
+    PROP_GO(&e, kvpsync_send_init(&s, now, NULL, NULL), cu);
 
     // on init, ok_expiry starts 15 seconds out
     EXPECT_U_GO(&e, "ok_expiry-on-init", s.ok_expiry, now + MIN_RESPONSE, cu);
@@ -319,7 +320,7 @@ static derr_t test_send_congestion(void){
 
     kvpsync_send_t s = {0};
     xtime_t now = 1;
-    PROP_GO(&e, kvpsync_send_init(&s, now), cu);
+    PROP_GO(&e, kvpsync_send_init(&s, now, NULL, NULL), cu);
     kvpsync_run_t result;
 
     kvp_ack_t acks[8];
@@ -398,6 +399,90 @@ cu:
     return e;
 }
 
+static derr_t test_no_stale_cbs(void){
+    derr_t e = E_OK;
+
+    xtime_t now = 1;
+
+    kvpsync_send_t s;
+    PROP_GO(&e, kvpsync_send_init(&s, now, NULL, NULL), cu);
+
+    // not testing congestion here
+    s.inflight_limit = 1000;
+
+    kvpsync_run_t result;
+
+    // expect the start packet
+    result = kvpsync_send_run(&s, now);
+    EXPECT_START(&e, "start", 0, now + 1*SECOND);
+    kvp_ack_t start_ack = ACK_FOR(result.pkt);
+
+    // send the start ack, and expect the flush
+    now += 1*MILLISECOND;
+    kvpsync_send_handle_ack(&s, start_ack, now);
+    result = kvpsync_send_run(&s, now);
+    xtime_t flush_expiry = now + 15*SECOND;
+    EXPECT_FLUSH(&e, "flush", 2, flush_expiry, now + 1*SECOND);
+    kvp_ack_t flush_ack = ACK_FOR(result.pkt);
+
+    now += 1*MILLISECOND;
+    kvpsync_send_handle_ack(&s, flush_ack, now);
+
+    bool a_cb = false;
+    bool b_cb = false;
+    bool B_cb = false;
+
+    ADD_KEY("A", "aaa", &a_cb);
+    ADD_KEY("B", "bbb", &b_cb);
+    result = kvpsync_send_run(&s, now);
+    xtime_t a_expiry = now + 15*SECOND;
+    xtime_t a_deadline = now + 1*SECOND;
+    EXPECT_INSERT(&e, "ack-a", "A", "aaa", 3, a_expiry, 0);
+    kvp_ack_t ack1 = ACK_FOR(result.pkt);
+    //
+    now += 1*MILLISECOND;
+    result = kvpsync_send_run(&s, now);
+    EXPECT_INSERT(&e, "ack-b", "B", "bbb", 4, a_expiry, a_deadline);
+    kvp_ack_t ack2 = ACK_FOR(result.pkt);
+
+    // now delete A and B
+    now += 1*MILLISECOND;
+    DEL_KEY("A");
+    DEL_KEY("B");
+    result = kvpsync_send_run(&s, now);
+    EXPECT_DELETE(&e, "delete-a", "A", 3, 5, a_expiry, 0);
+    kvp_ack_t ack3 = ACK_FOR(result.pkt);
+    result = kvpsync_send_run(&s, now);
+    EXPECT_DELETE(&e, "delete-b", "B", 4, 6, a_expiry, a_deadline);
+    kvp_ack_t ack4 = ACK_FOR(result.pkt);
+
+    // now add a different B
+    now += 1*MILLISECOND;
+    ADD_KEY("B", "BBB", &B_cb);
+    result = kvpsync_send_run(&s, now);
+    EXPECT_INSERT(&e, "ack-B", "B", "BBB", 7, a_expiry, a_deadline);
+    kvp_ack_t ack5 = ACK_FOR(result.pkt);
+
+    now += 1*MILLISECOND;
+    // ack everything, expect specific callbacks
+    EXPECT_B_GO(&e, "a_cb before", a_cb, false, cu);
+    EXPECT_B_GO(&e, "b_cb before", b_cb, false, cu);
+    EXPECT_B_GO(&e, "B_cb before", B_cb, false, cu);
+    kvpsync_send_handle_ack(&s, ack1, now);
+    kvpsync_send_handle_ack(&s, ack2, now);
+    kvpsync_send_handle_ack(&s, ack3, now);
+    kvpsync_send_handle_ack(&s, ack4, now);
+    kvpsync_send_handle_ack(&s, ack5, now);
+    EXPECT_B_GO(&e, "a_cb after", a_cb, false, cu);
+    EXPECT_B_GO(&e, "b_cb after", b_cb, false, cu);
+    EXPECT_B_GO(&e, "B_cb after", B_cb, true, cu);
+
+cu:
+    kvpsync_send_free(&s);
+
+    return e;
+}
+
 int main(int argc, char **argv){
     derr_t e = E_OK;
     // parse options and set default log level
@@ -405,6 +490,7 @@ int main(int argc, char **argv){
 
     PROP_GO(&e, test_send_sync_points(), test_fail);
     PROP_GO(&e, test_send_congestion(), test_fail);
+    PROP_GO(&e, test_no_stale_cbs(), test_fail);
 
     LOG_ERROR("PASS\n");
     return 0;

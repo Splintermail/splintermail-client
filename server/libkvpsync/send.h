@@ -1,4 +1,12 @@
-typedef struct {
+struct kvpsync_send_t;
+typedef struct kvpsync_send_t kvpsync_send_t;
+
+typedef void (*recv_state_cb)(kvpsync_send_t*, bool, void*);
+
+struct kvpsync_send_t {
+    recv_state_cb state_cb;
+    void *cb_data;
+
     uint32_t sync_id;
     uint32_t resync_id;
     uint32_t update_id; // latest value
@@ -44,6 +52,7 @@ typedef struct {
     xtime_t last_recv;
 
     bool recv_ok;
+    bool old_recv_ok;
     xtime_t ok_expiry;
     xtime_t last_extend_ok;
 
@@ -54,9 +63,12 @@ typedef struct {
     bool start_sent : 1;
     bool sync_done : 1;
     bool sync_sent : 1;
-} kvpsync_send_t;
+};
 
-derr_t kvpsync_send_init(kvpsync_send_t *s, xtime_t now);
+// note that the recv_ok starts as false, but there's no state_cb on startup
+derr_t kvpsync_send_init(
+    kvpsync_send_t *s, xtime_t now, recv_state_cb state_cb, void *cb_data
+);
 void kvpsync_send_free(kvpsync_send_t *s);
 
 // process an incoming packet
@@ -73,7 +85,7 @@ typedef struct {
 
 kvpsync_run_t kvpsync_send_run(kvpsync_send_t *s, xtime_t now);
 
-typedef void (*kvpsync_add_key_cb)(void*);
+typedef void (*kvpsync_add_key_cb)(kvpsync_send_t*, void*);
 
 // add a key-value pair (or crash if OOM)
 void kvpsync_send_add_key(
@@ -85,5 +97,5 @@ void kvpsync_send_add_key(
     void *cb_data
 );
 
-// delete a key-value pair
+// delete a key-value pair, guarantee the associated add_key_cb is not called
 void kvpsync_send_delete_key(kvpsync_send_t *s, const dstr_t key);

@@ -42,8 +42,7 @@ static send_data_t *send_data_xnew(void){
     return data;
 }
 
-// downrefs or frees
-static void data_free(send_data_t *data){
+static void data_downref(send_data_t *data){
     if(--data->nrefs) return;
     link_remove(&data->oldest);
     // TODO: it seems wrong that there are cases where cb is not guaranteed
@@ -67,7 +66,9 @@ static void data_remove(kvpsync_send_t *s, send_data_t *data){
     data->inflight = false;
 }
 
-derr_t kvpsync_send_init(kvpsync_send_t *s, xtime_t now){
+derr_t kvpsync_send_init(
+    kvpsync_send_t *s, xtime_t now, recv_state_cb state_cb, void *cb_data
+){
     derr_t e = E_OK;
 
     // pick a random non-zero sync_id
@@ -83,6 +84,8 @@ derr_t kvpsync_send_init(kvpsync_send_t *s, xtime_t now){
     }
 
     *s = (kvpsync_send_t){
+        .state_cb = state_cb,
+        .cb_data = cb_data,
         .sync_id = sync_id,
         // start in not-ok state, but assume receiver just got an ok extension
         .ok_expiry = now + MIN_RESPONSE,
@@ -98,11 +101,17 @@ fail_unacked:
     return e;
 }
 
+static void maybe_state_cb(kvpsync_send_t *s){
+    if(!s->state_cb || s->old_recv_ok == s->recv_ok) return;
+    s->state_cb(s, s->recv_ok, s->cb_data);
+    s->old_recv_ok = s->recv_ok;
+}
+
 static void empty_list(kvpsync_send_t *s, link_t *list){
     send_data_t *data;
     while((data = peek(list))){
         data_remove(s, data);
-        data_free(data);
+        data_downref(data);
     }
 }
 
@@ -131,7 +140,7 @@ void kvpsync_send_free(kvpsync_send_t *s){
         elem = hashmap_pop_next(&trav)
     ){
         send_data_t *data = CONTAINER_OF(elem, send_data_t, celem);
-        data_free(data);
+        data_downref(data);
     }
 
     hashmap_free(&s->cache);
@@ -206,7 +215,8 @@ static void queue_start(kvpsync_send_t *s){
     data_queue(s, data);
 }
 
-static void queue_all_inserts(kvpsync_send_t *s){
+static void queue_all_inserts(kvpsync_send_t *s, bool *nonempty){
+    *nonempty = false;
     // walk through our cache and send everything
     hashmap_trav_t trav;
     for(
@@ -217,6 +227,7 @@ static void queue_all_inserts(kvpsync_send_t *s){
         send_data_t *data = CONTAINER_OF(elem, send_data_t, celem);
         if(data->nrefs++ != 1){ LOG_FATAL("too many nrefs!\n"); }
         data_queue(s, data);
+        *nonempty = true;
     }
 }
 
@@ -273,8 +284,9 @@ static void advance_state(kvpsync_send_t *s, xtime_t now){
         // sync content
         if(!s->sync_done){
             if(!s->sync_sent){
-                queue_all_inserts(s);
-                s->blocked = true;
+                bool nonempty;
+                queue_all_inserts(s, &nonempty);
+                s->blocked = nonempty;
                 s->sync_sent = true;
             }
             if(s->blocked) return;
@@ -300,7 +312,9 @@ static void successful_packet(kvpsync_send_t *s, send_data_t *data){
 }
 
 // process an incoming packet
-void kvpsync_send_handle_ack(kvpsync_send_t *s, kvp_ack_t ack, xtime_t now){
+static void _kvpsync_send_handle_ack(
+    kvpsync_send_t *s, kvp_ack_t ack, xtime_t now
+){
     s->last_recv = now;
 
     // detect resync packets
@@ -332,12 +346,17 @@ void kvpsync_send_handle_ack(kvpsync_send_t *s, kvp_ack_t ack, xtime_t now){
     // is there an action to take after finishing this packet?
     if(data->cb){
         link_remove(&data->oldest);
-        data->cb(data->cb_data);
+        data->cb(s, data->cb_data);
         // avoid retriggering callback after resync
         data->cb = NULL;
     }
 
-    data_free(data);
+    data_downref(data);
+}
+
+void kvpsync_send_handle_ack(kvpsync_send_t *s, kvp_ack_t ack, xtime_t now){
+    _kvpsync_send_handle_ack(s, ack, now);
+    maybe_state_cb(s);
 }
 
 static xtime_t fault_time(send_data_t *data){
@@ -358,7 +377,7 @@ static void fault_detected(kvpsync_send_t *s, send_data_t *data, xtime_t now){
     s->congest_validity++;
 }
 
-kvpsync_run_t kvpsync_send_run(kvpsync_send_t *s, xtime_t now){
+static kvpsync_run_t _kvpsync_send_run(kvpsync_send_t *s, xtime_t now){
     kvpsync_run_t out = {0};
 
     advance_state(s, now);
@@ -435,9 +454,15 @@ adjust_deadline:
     return out;
 }
 
+kvpsync_run_t kvpsync_send_run(kvpsync_send_t *s, xtime_t now){
+    kvpsync_run_t run = _kvpsync_send_run(s, now);
+    maybe_state_cb(s);
+    return run;
+}
+
 //
 
-static void queue_delete_and_free(kvpsync_send_t *s, send_data_t *old){
+static void queue_delete_and_downref(kvpsync_send_t *s, send_data_t *old){
     // only send the deletion if the insertion was sent with this sync_id
     if(s->sync_sent && old->update.sync_id == s->sync_id){
         send_data_t *data = send_data_xnew();
@@ -447,7 +472,7 @@ static void queue_delete_and_free(kvpsync_send_t *s, send_data_t *old){
         data->update.delete_id = old->update.update_id;
         data_queue(s, data);
     }
-    data_free(old);
+    data_downref(old);
 }
 
 void kvpsync_send_add_key(
@@ -478,7 +503,7 @@ void kvpsync_send_add_key(
     // detect pre-existing data
     if(elem != NULL){
         send_data_t *old = CONTAINER_OF(elem, send_data_t, celem);
-        queue_delete_and_free(s, old);
+        queue_delete_and_downref(s, old);
     }
 
     // now send our new update
@@ -493,5 +518,8 @@ void kvpsync_send_delete_key(kvpsync_send_t *s, const dstr_t key){
     hash_elem_t *elem = hashmap_dels(&s->cache, &key);
     if(elem == NULL) return;
     send_data_t *data = CONTAINER_OF(elem, send_data_t, celem);
-    queue_delete_and_free(s, data);
+    // guarantee no more callbacks
+    data->cb = NULL;
+    data->cb_data = NULL;
+    queue_delete_and_downref(s, data);
 }

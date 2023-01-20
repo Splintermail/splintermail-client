@@ -2,6 +2,17 @@
 
 #include <string.h>
 
+const char *kvp_update_type_name(kvp_update_type_e type){
+    switch(type){
+        case KVP_UPDATE_EMPTY: return "KVP_UPDATE_EMPTY";
+        case KVP_UPDATE_FLUSH: return "KVP_UPDATE_FLUSH";
+        case KVP_UPDATE_START: return "KVP_UPDATE_START";
+        case KVP_UPDATE_INSERT: return "KVP_UPDATE_INSERT";
+        case KVP_UPDATE_DELETE: return "KVP_UPDATE_DELETE";
+    }
+    return "unknown";
+}
+
 static uint64_t read_uint64(const dstr_t rbuf, size_t *pos, bool *ok){
     if(!*ok) return 0;
     uint8_t *udata = (uint8_t*)rbuf.data;
@@ -188,6 +199,7 @@ derr_t kvpsync_update_write(const kvp_update_t *update, dstr_t *out){
     return e;
 }
 
+// returns bool ok
 bool kvpsync_ack_read(const dstr_t rbuf, kvp_ack_t *out){
     bool ok = true;
     *out = (kvp_ack_t){0};
