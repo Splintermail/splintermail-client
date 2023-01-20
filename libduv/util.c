@@ -128,26 +128,20 @@ void async_handle_close_cb(uv_handle_t *handle){
 }
 
 
+#define UV_CALL(func, ...) \
+    derr_t e = E_OK; \
+    int ret = func(__VA_ARGS__); \
+    if(ret < 0){ \
+        ORIG(&e, uv_err_type(ret), #func ": %x\n", FUV(&ret)); \
+    }\
+    return e
+
 derr_t duv_loop_init(uv_loop_t *loop){
-    derr_t e = E_OK;
-
-    int ret = uv_loop_init(loop);
-    if(ret < 0){
-        TRACE(&e, "uv_loop_init: %x\n", FUV(&ret));
-        ORIG(&e, uv_err_type(ret), "error initializing loop");
-    }
-
-    return e;
+    UV_CALL(uv_loop_init, loop);
 }
 
 derr_t duv_run(uv_loop_t *loop){
-    derr_t e = E_OK;
-    int ret = uv_run(loop, UV_RUN_DEFAULT);
-    if(ret < 0){
-        TRACE(&e, "uv_run: %x\n", FUV(&ret));
-        ORIG(&e, uv_err_type(ret), "uv_run error");
-    }
-    return e;
+    UV_CALL(uv_run, loop, UV_RUN_DEFAULT);
 }
 
 derr_t duv_queue_work(
@@ -156,23 +150,11 @@ derr_t duv_queue_work(
     uv_work_cb work_cb,
     uv_after_work_cb after_work_cb
 ){
-    derr_t e = E_OK;
-    int ret = uv_queue_work(loop, req, work_cb, after_work_cb);
-    if(ret < 0){
-        TRACE(&e, "uv_queue_work: %x\n", FUV(&ret));
-        ORIG(&e, uv_err_type(ret), "uv_queue_work error");
-    }
-    return e;
+    UV_CALL(uv_queue_work, loop, req, work_cb, after_work_cb);
 }
 
 derr_t duv_cancel_work(uv_work_t *work){
-    derr_t e = E_OK;
-    int ret = uv_cancel((uv_req_t*)work);
-    if(ret < 0){
-        TRACE(&e, "uv_cancel: %x\n", FUV(&ret));
-        ORIG(&e, uv_err_type(ret), "uv_cancel error");
-    }
-    return e;
+    UV_CALL(uv_cancel, (uv_req_t*)work);
 }
 
 void duv_timer_must_init(uv_loop_t *loop, uv_timer_t *timer){
@@ -199,77 +181,35 @@ void duv_timer_must_stop(uv_timer_t *timer){
 }
 
 derr_t duv_tcp_init(uv_loop_t *loop, uv_tcp_t *tcp){
-    derr_t e = E_OK;
-    int ret = uv_tcp_init(loop, tcp);
-    if(ret < 0){
-        TRACE(&e, "uv_tcp_init: %x\n", FUV(&ret));
-        ORIG(&e, uv_err_type(ret), "uv_tcp_init error");
-    }
-    return e;
+    UV_CALL(uv_tcp_init, loop, tcp);
 }
 
 derr_t duv_tcp_bind(uv_tcp_t *tcp, struct sockaddr *addr, unsigned int flags){
-    derr_t e = E_OK;
-    int ret = uv_tcp_bind(tcp, addr, flags);
-    if(ret < 0){
-        TRACE(&e, "uv_tcp_bind: %x\n", FUV(&ret));
-        ORIG(&e, uv_err_type(ret), "uv_tcp_bind error");
-    }
-    return e;
+    UV_CALL(uv_tcp_bind, tcp, addr, flags);
 }
 
 derr_t duv_tcp_binds(
     uv_tcp_t *tcp, struct sockaddr_storage *ss, unsigned int flags
 ){
-    derr_t e = E_OK;
-    int ret = uv_tcp_bind(tcp, (const struct sockaddr*)ss, flags);
-    if(ret < 0){
-        TRACE(&e, "uv_tcp_bind: %x\n", FUV(&ret));
-        ORIG(&e, uv_err_type(ret), "uv_tcp_bind error");
-    }
-    return e;
+    UV_CALL(uv_tcp_bind, tcp, (const struct sockaddr*)ss, flags);
 }
 
 derr_t duv_tcp_listen(uv_tcp_t *tcp, int backlog, uv_connection_cb cb){
-    derr_t e = E_OK;
-    int ret = uv_listen((uv_stream_t*)tcp, backlog, cb);
-    if(ret < 0){
-        TRACE(&e, "uv_listen: %x\n", FUV(&ret));
-        ORIG(&e, uv_err_type(ret), "uv_listen error");
-    }
-    return e;
+    UV_CALL(uv_listen, (uv_stream_t*)tcp, backlog, cb);
 }
 
 derr_t duv_tcp_accept(uv_tcp_t *tcp, uv_tcp_t *client){
-    derr_t e = E_OK;
-    int ret = uv_accept((uv_stream_t*)tcp, (uv_stream_t*)client);
-    if(ret < 0){
-        TRACE(&e, "uv_accept: %x\n", FUV(&ret));
-        ORIG(&e, uv_err_type(ret), "uv_accept error");
-    }
-    return e;
+    UV_CALL(uv_accept, (uv_stream_t*)tcp, (uv_stream_t*)client);
 }
 
 derr_t duv_tcp_read_start(
     uv_tcp_t *tcp, uv_alloc_cb alloc_cb, uv_read_cb read_cb
 ){
-    derr_t e = E_OK;
-    int ret = uv_read_start((uv_stream_t*)tcp, alloc_cb, read_cb);
-    if(ret < 0){
-        TRACE(&e, "uv_read_start: %x\n", FUV(&ret));
-        ORIG(&e, uv_err_type(ret), "uv_read_start error");
-    }
-    return e;
+    UV_CALL(uv_read_start, (uv_stream_t*)tcp, alloc_cb, read_cb);
 }
 
 derr_t duv_tcp_read_stop(uv_tcp_t *tcp){
-    derr_t e = E_OK;
-    int ret = uv_read_stop((uv_stream_t*)tcp);
-    if(ret < 0){
-        TRACE(&e, "uv_read_stop: %x\n", FUV(&ret));
-        ORIG(&e, uv_err_type(ret), "uv_read_stop error");
-    }
-    return e;
+    UV_CALL(uv_read_stop, (uv_stream_t*)tcp);
 }
 
 derr_t duv_tcp_write(
@@ -279,45 +219,21 @@ derr_t duv_tcp_write(
     unsigned int nbufs,
     uv_write_cb cb
 ){
-    derr_t e = E_OK;
-    int ret = uv_write(req, (uv_stream_t*)tcp, bufs, nbufs, cb);
-    if(ret < 0){
-        TRACE(&e, "uv_write: %x\n", FUV(&ret));
-        ORIG(&e, uv_err_type(ret), "uv_write error");
-    }
-    return e;
+    UV_CALL(uv_write, req, (uv_stream_t*)tcp, bufs, nbufs, cb);
 }
 
 derr_t duv_tcp_shutdown(uv_shutdown_t *req, uv_tcp_t *tcp, uv_shutdown_cb cb){
-    derr_t e = E_OK;
-    int ret = uv_shutdown(req, (uv_stream_t*)tcp, cb);
-    if(ret < 0){
-        TRACE(&e, "uv_shutdown: %x\n", FUV(&ret));
-        ORIG(&e, uv_err_type(ret), "uv_shutdown error");
-    }
-    return e;
+    UV_CALL(uv_shutdown, req, (uv_stream_t*)tcp, cb);
 }
 
 derr_t duv_udp_init(uv_loop_t *loop, uv_udp_t *udp){
-    derr_t e = E_OK;
-    int ret = uv_udp_init(loop, udp);
-    if(ret < 0){
-        TRACE(&e, "uv_udp_init: %x\n", FUV(&ret));
-        ORIG(&e, uv_err_type(ret), "uv_udp_init error");
-    }
-    return e;
+    UV_CALL(uv_udp_init, loop, udp);
 }
 
 derr_t duv_udp_bind(
     uv_udp_t *udp, const struct sockaddr *sa, unsigned int flags
 ){
-    derr_t e = E_OK;
-    int ret = uv_udp_bind(udp, sa, flags);
-    if(ret < 0){
-        TRACE(&e, "uv_udp_bind: %x\n", FUV(&ret));
-        ORIG(&e, uv_err_type(ret), "uv_udp_bind error");
-    }
-    return e;
+    UV_CALL(uv_udp_bind, udp, sa, flags);
 }
 
 derr_t duv_udp_binds(
@@ -329,13 +245,7 @@ derr_t duv_udp_binds(
 derr_t duv_udp_recv_start(
     uv_udp_t *udp, uv_alloc_cb alloc_cb, uv_udp_recv_cb recv_cb
 ){
-    derr_t e = E_OK;
-    int ret = uv_udp_recv_start(udp, alloc_cb, recv_cb);
-    if(ret < 0){
-        TRACE(&e, "uv_udp_recv_start: %x\n", FUV(&ret));
-        ORIG(&e, uv_err_type(ret), "uv_udp_recv_start error");
-    }
-    return e;
+    UV_CALL(uv_udp_recv_start, udp, alloc_cb, recv_cb);
 }
 
 derr_t duv_udp_send(
@@ -346,21 +256,45 @@ derr_t duv_udp_send(
     const struct sockaddr *addr,
     uv_udp_send_cb send_cb
 ){
-    derr_t e = E_OK;
-    int ret = uv_udp_send(req, udp, bufs, nbufs, addr, send_cb);
-    if(ret < 0){
-        TRACE(&e, "uv_udp_send: %x\n", FUV(&ret));
-        ORIG(&e, uv_err_type(ret), "uv_udp_send error");
-    }
-    return e;
+    UV_CALL(uv_udp_send, req, udp, bufs, nbufs, addr, send_cb);
 }
 
 derr_t duv_async_init(uv_loop_t *loop, uv_async_t *async, uv_async_cb cb){
-    derr_t e = E_OK;
-    int ret = uv_async_init(loop, async, cb);
-    if(ret < 0){
-        TRACE(&e, "uv_async_init: %x\n", FUV(&ret));
-        ORIG(&e, uv_err_type(ret), "uv_async_init error");
-    }
-    return e;
+    UV_CALL(uv_async_init, loop, async, cb);
+}
+
+derr_t duv_pipe_init(uv_loop_t *loop, uv_pipe_t *pipe, int ipc){
+    UV_CALL(uv_pipe_init, loop, pipe, ipc);
+}
+
+derr_t duv_pipe_bind(uv_pipe_t *pipe, const char *name){
+    UV_CALL(uv_pipe_bind, pipe, name);
+}
+
+derr_t duv_pipe_listen(uv_pipe_t *pipe, int backlog, uv_connection_cb cb){
+    UV_CALL(uv_listen, (uv_stream_t*)pipe, backlog, cb);
+}
+
+derr_t duv_pipe_accept(uv_pipe_t *pipe, uv_pipe_t *client){
+    UV_CALL(uv_accept, (uv_stream_t*)pipe, (uv_stream_t*)client);
+}
+
+derr_t duv_pipe_read_start(
+    uv_pipe_t *pipe, uv_alloc_cb alloc_cb, uv_read_cb read_cb
+){
+    UV_CALL(uv_read_start, (uv_stream_t*)pipe, alloc_cb, read_cb);
+}
+
+derr_t duv_pipe_read_stop(uv_pipe_t *pipe){
+    UV_CALL(uv_read_stop, (uv_stream_t*)pipe);
+}
+
+derr_t duv_pipe_write(
+    uv_write_t *req,
+    uv_pipe_t *pipe,
+    const uv_buf_t bufs[],
+    unsigned int nbufs,
+    uv_write_cb cb
+){
+    UV_CALL(uv_write, req, (uv_stream_t*)pipe, bufs, nbufs, cb);
 }

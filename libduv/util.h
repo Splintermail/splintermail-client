@@ -148,3 +148,18 @@ derr_t duv_udp_send(
     uv_udp_send_cb send_cb
 );
 derr_t duv_async_init(uv_loop_t *loop, uv_async_t *async, uv_async_cb cb);
+derr_t duv_pipe_init(uv_loop_t *loop, uv_pipe_t *pipe, int ipc);
+derr_t duv_pipe_bind(uv_pipe_t *pipe, const char *name);
+derr_t duv_pipe_listen(uv_pipe_t *pipe, int backlog, uv_connection_cb cb);
+derr_t duv_pipe_accept(uv_pipe_t *pipe, uv_pipe_t *client);
+derr_t duv_pipe_read_start(
+    uv_pipe_t *pipe, uv_alloc_cb alloc_cb, uv_read_cb read_cb
+);
+derr_t duv_pipe_read_stop(uv_pipe_t *pipe);
+derr_t duv_pipe_write(
+    uv_write_t *req,
+    uv_pipe_t *pipe,
+    const uv_buf_t bufs[],
+    unsigned int nbufs,
+    uv_write_cb cb
+);
