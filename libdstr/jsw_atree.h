@@ -22,6 +22,10 @@ int jsw_cmp_dstr(const void *a, const void *b);
 int jsw_cmp_int(const void *a, const void *b);
 int jsw_cmp_uint(const void *a, const void *b);
 int jsw_cmp_ulong(const void *a, const void *b);
+int jsw_cmp_int32(const void *a, const void *b);
+int jsw_cmp_int64(const void *a, const void *b);
+int jsw_cmp_uint32(const void *a, const void *b);
+int jsw_cmp_uint64(const void *a, const void *b);
 
 #define JSW_AHEIGHT_LIMIT 64 /* Tallest allowable tree */
 

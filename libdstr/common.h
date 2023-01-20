@@ -20,7 +20,7 @@ typedef _Bool bool;
             const member_type *ptr){ \
         if(ptr == NULL) return NULL; \
         uintptr_t offset = offsetof(structure, member); \
-        return (structure*)((uintptr_t)ptr - offset); \
+        return (structure*)((uintptr_t)ptr - (uintptr_t)offset); \
     }
 
 #define CONTAINER_OF(ptr, structure, member) \

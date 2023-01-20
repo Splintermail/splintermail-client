@@ -35,6 +35,10 @@ int jsw_cmp_dstr(const void *a, const void *b){
 DEF_NUM_CMP(jsw_cmp_int, int)
 DEF_NUM_CMP(jsw_cmp_uint, unsigned int)
 DEF_NUM_CMP(jsw_cmp_ulong, unsigned long)
+DEF_NUM_CMP(jsw_cmp_int32, int32_t)
+DEF_NUM_CMP(jsw_cmp_int64, int64_t)
+DEF_NUM_CMP(jsw_cmp_uint32, uint32_t)
+DEF_NUM_CMP(jsw_cmp_uint64, uint64_t)
 
 /* Remove left horizontal links */
 #define skew(t) do {                                      \
