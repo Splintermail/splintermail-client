@@ -1833,9 +1833,9 @@ class C:
         if errors:
             raise RuntimeError(errors)
 
-        # The C generator can handle 64-bit enums, and reserves the 0 value.
+        # The C generator can handle 31-bit enums, and reserves the 0 value.
         self.tco = TokenCheckOptimizer(
-            self.grammar, self.fallbacks, enum_width=64, extra_enum_vals=1
+            self.grammar, self.fallbacks, enum_width=31, extra_enum_vals=1
         )
 
         self.prefix_ = (self.prefix + "_") if self.prefix else ""
@@ -2611,7 +2611,7 @@ class C:
         self.fprint_multi(r"""
             // return the matching bit in the groupmask or the sequential value in the enum
             static inline unsigned long long ${prefix_}group_lookup(
-                ${prefix_}token_e token, uint64_t groupmask
+                ${prefix_}token_e token, uint32_t groupmask
             ) {
                 unsigned long long groupval = groupmask & token;
                 return groupval | (!groupval * (${PREFIX_}ENUM_MASK & token));
@@ -2951,7 +2951,12 @@ class C:
         self.fprint("    *sem = (${prefix_}sem_t){0};")
         self.fprint("}")
 
-        if not self.tco.encoded_all_multi_token_groups:
+        # tco.encoded_all_multi_token_groups isn't enough to generate a
+        # token_in() method, we need to know that none of the unencoded token
+        # groups are only in switch statements.
+        if any(
+            tg.where != {"branch"} for tg in self.tco.unencoded_token_groups
+        ):
             self.fprint("")
             self.fprint_multi(r"""
                 // accepts `n` token types returns 0 or 1
@@ -3008,8 +3013,8 @@ class C:
 
                 for(size_t i = 0; i < n; i++){
                     ${prefix_}token_e t = va_arg(ap, ${prefix_}token_e);
-                    t &= ${PREFIX_}ENUM_MASK;
-                    mask[t/8] |= (unsigned char)(1 << (t%8));
+                    uint32_t u = t & ${PREFIX_}ENUM_MASK;
+                    mask[u/8] |= (unsigned char)(1 << (u%8));
                 }
 
                 va_end(ap);
@@ -3311,20 +3316,36 @@ class C:
         self.print_code(self.postcode, "", False)
 
 
+class TokenGroup:
+    """
+    TokenGroup contains some metadata about a token group identified by the
+    TokenCheckOptimizer.
+    """
+    def __init__(self, tokens):
+        self.count = 0
+        self.tokens = tokens
+        self.where = set()
+
+    def found(self, where):
+        self.count += 1
+        self.where.add(where)
+        return self
+
 
 class TokenCheckOptimizer:
-    def __init__(self, grammar, fallbacks, enum_width=64, extra_enum_vals=0):
+    def __init__(self, grammar, fallbacks, enum_width=31, extra_enum_vals=0):
         """
-        enum_width is how many bits wide the enum is, likely 64.
+        enum_width is how many bits wide the enum is, likely 31 (for positive
+        signed int).
 
         extra_enum_vals is how many non-token values you need reserved from
         extra_enum_vals.  You might want 1 reserved value, if 0 will be an
         undefined token value, for instance.
         """
-        groups = self.find_all_groups(grammar, fallbacks)
+        groups = self._find_groups(grammar, fallbacks)
 
         # multi token groups; 1-token groups are already O(1) checks.
-        mtg = {g: n for g, n in groups.items() if len(g) > 1}
+        mtg = {g: tg for g, tg in groups.items() if len(g) > 1}
 
         # A token mask is the extra mask bits we've chosen for a given token
         # value.  They should not collide with the value actually assigned to
@@ -3338,24 +3359,28 @@ class TokenCheckOptimizer:
         mask_bits = max(enum_width - nreserved, 0)
 
         # sort groups by descending size, then by descending count
-        sorted_mtg = sorted(mtg.items(), key=lambda gn: (-len(gn[0]), -gn[1]))
+        sorted_mtg = sorted(
+            mtg.items(), key=lambda ga: (-len(ga[0]), -ga[1].count)
+        )
 
         if mask_bits >= len(sorted_mtg):
             self._encoded_all_multi_token_groups = True
         else:
             print(
                 "warning: TokenCheckOptimizer found too many groups to assign "
-                "each group a unique bitmask.  Groups as small as "
+                "each group a unique bitmask.  Groups as large as "
                 f"{len(sorted_mtg[mask_bits][0])} will fall back to "
                 "linear scanning during matching.",
                 file=sys.stderr,
             )
             self._encoded_all_multi_token_groups = False
 
+        self._unencoded_token_groups = [tg for _, tg in sorted_mtg[mask_bits:]]
+
         self._group_masks = {}
 
         # generate bitmasks for the most expensive checks
-        for i, (g, n) in enumerate(sorted_mtg[:mask_bits]):
+        for i, (g, tg) in enumerate(sorted_mtg[:mask_bits]):
             mask = 1 << (nreserved + i)
             # assign this group the mask
             self._group_masks[g] = mask
@@ -3364,8 +3389,13 @@ class TokenCheckOptimizer:
                 self._token_masks[t] |= mask
 
     @staticmethod
-    def find_all_groups(grammar, fallbacks):
-        groups = collections.defaultdict(lambda: 0)
+    def _find_groups(grammar, fallbacks):
+        groups = {}
+
+        def setgroup(tokens):
+            if tokens not in groups:
+                groups[tokens] = TokenGroup(tokens)
+            return groups[tokens]
 
         def _find_all_groups(obj):
             if isinstance(obj, Return):
@@ -3374,7 +3404,7 @@ class TokenCheckOptimizer:
                 if isinstance(obj.defn, Token):
                     f = fallbacks[obj.defn.name]
                     g = obj.first.union(f)
-                    groups[g] += 1
+                    setgroup(g).found("token")
                     return
                 if isinstance(obj.defn, Expression):
                     return
@@ -3383,7 +3413,7 @@ class TokenCheckOptimizer:
                     # all types except maybe/prematched have a token_check
                     f = fallbacks.all_fallbacks(obj.first)
                     g = obj.first.union(f)
-                    groups[g] += 1
+                    setgroup(g).found(obj.type)
                 _find_all_groups(obj.seq)
                 return
             if isinstance(obj, Branches):
@@ -3391,13 +3421,13 @@ class TokenCheckOptimizer:
                 for b in obj.branches:
                     f = fallbacks.all_fallbacks(b.first, exclude)
                     g = b.first.union(f)
-                    groups[g] += 1
+                    setgroup(g).found("branch")
                     _find_all_groups(b)
                 return
             if isinstance(obj, Recovery):
                 f = fallbacks.all_fallbacks(obj.after)
                 g = obj.after.union(f)
-                groups[g] += 1
+                setgroup(g).found("recovery")
                 _find_all_groups(obj.seq)
                 return
             if isinstance(obj, Sequence):
@@ -3438,11 +3468,16 @@ class TokenCheckOptimizer:
     @property
     def encoded_all_multi_token_groups(self):
         """
-        Returns a bitmask to remove the optimization bits from a token value.
-
-        E.g. for 72 tokens (where 72 < 2**7), enum_width would be 0b1111111.
+        Returns True if all multi-token groups have an optimization mask.
         """
         return self._encoded_all_multi_token_groups
+
+    @property
+    def unencoded_token_groups(self):
+        """
+        Returns a list of all TokenGroups without an optimization mask.
+        """
+        return self._unencoded_token_groups
 
 
 class Python:
