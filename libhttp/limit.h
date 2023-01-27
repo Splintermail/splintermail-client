@@ -22,8 +22,8 @@ struct limit_rstream_t {
     link_t reads;
     rstream_await_cb await_cb;
 };
-DEF_CONTAINER_OF(limit_rstream_t, iface, rstream_i);
-DEF_CONTAINER_OF(limit_rstream_t, schedulable, schedulable_t);
+DEF_CONTAINER_OF(limit_rstream_t, iface, rstream_i)
+DEF_CONTAINER_OF(limit_rstream_t, schedulable, schedulable_t)
 
 rstream_i *limit_rstream(
     limit_rstream_t *l,

@@ -629,7 +629,8 @@ static derr_t test_trim_logfile(void){
     PROP_GO(&e, file_cmp_dstr(path, &f1, false, &result), cu);
     EXPECT_I_GO(&e, "result", result, 0, cu);
 
-    // when logfile is long, trims entire lines
+#ifndef _WIN32
+// UNIX, with \n endings
     DSTR_STATIC(f2,
         "888\n"
         "999\n"
@@ -640,6 +641,22 @@ static derr_t test_trim_logfile(void){
         PROP_GO(&e, file_cmp_dstr(path, &f2, false, &result), cu);
         EXPECT_I_GO(&e, "result", result, 0, cu);
     }
+
+#else
+// windows, with \r\n endings
+
+    DSTR_STATIC(f2,
+        "888\r\n"
+        "999\r\n"
+    );
+    for(size_t i = 10; i < 15; i++){
+        PROP_GO(&e, dstr_write_file(path, &f1), cu);
+        PROP_GO(&e, trim_logfile(path, 10), cu);
+        PROP_GO(&e, file_cmp_dstr(path, &f2, false, &result), cu);
+        EXPECT_I_GO(&e, "result", result, 0, cu);
+    }
+
+#endif
 
 cu:
     DROP_CMD( rm_rf(tmp.data) );

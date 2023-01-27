@@ -69,3 +69,6 @@ struct duv_connect_t {
         int status;
     } connect;
 };
+
+// test hook
+extern void (*_connect_started_hook)(void);

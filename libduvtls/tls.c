@@ -184,6 +184,7 @@ static bool _advance_ssl_do_handshake(duv_tls_t *t){
     if(t->handshake_done) return true;
     if(t->need_read) return true;
     int ret = SSL_do_handshake(t->ssl);
+    long lret;
     if(ret != 1){
         switch(SSL_get_error(t->ssl, ret)){
             case SSL_ERROR_WANT_READ:
@@ -197,7 +198,7 @@ static bool _advance_ssl_do_handshake(duv_tls_t *t){
 
             case SSL_ERROR_SSL:
                 // now we check for certificate handshake errors
-                long lret = SSL_get_verify_result(t->ssl);
+                lret = SSL_get_verify_result(t->ssl);
                 derr_type_t etype = classify_verify_result(lret);
                 if(etype != E_NONE){
                     TRACE_ORIG(&t->e, etype, "%x", FD(error_to_msg(etype)));
@@ -786,7 +787,7 @@ static derr_t wrap(
     // we own the wrapper_data
     t->base->wrapper_data = t;
     // we own the await_cb
-    t->original_base_await_cb = t->base->await(t->base, await_cb),
+    t->original_base_await_cb = t->base->await(t->base, await_cb);
 
     *out = &t->iface;
 

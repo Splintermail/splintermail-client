@@ -169,7 +169,9 @@ void duv_timer_must_start(
 ){
     int ret = uv_timer_start(timer, cb, timeout_ms, 0);
     if(ret < 0){
-        LOG_FATAL("uv_timer_start error (was timer closed?): %x\n", FUV(&ret));
+        LOG_FATAL(
+            "uv_timer_start error (was timer closed?): %x\n", FUV(&ret)
+        );
     }
 }
 

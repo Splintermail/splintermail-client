@@ -69,8 +69,8 @@ typedef struct {
     bool base_canceled : 1;
     bool base_awaited : 1;
 } duv_tls_t;
-DEF_CONTAINER_OF(duv_tls_t, iface, stream_i);
-DEF_CONTAINER_OF(duv_tls_t, schedulable, schedulable_t);
+DEF_CONTAINER_OF(duv_tls_t, iface, stream_i)
+DEF_CONTAINER_OF(duv_tls_t, schedulable, schedulable_t)
 
 // wrap an existing stream_i* in tls, returning an encrypted stream_i*
 // duv_tls_t will await the base stream and reserves use of base->wrapper_data

@@ -135,7 +135,7 @@ typedef struct {
     key_i iface;
     EVP_PKEY *pkey;
 } es256_hack_t;
-DEF_CONTAINER_OF(es256_hack_t, iface, key_i);
+DEF_CONTAINER_OF(es256_hack_t, iface, key_i)
 
 static derr_t test_es256(void){
     derr_t e = E_OK;

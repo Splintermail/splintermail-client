@@ -48,11 +48,10 @@ typedef struct {
 }
 
 // test_cases is not defined here to avoid static initializer requirements
-test_case_t *test_cases;
-size_t ncases;
+static test_case_t *test_cases;
+static size_t ncases;
 
-dthread_t thread;
-struct {
+static struct {
     dmutex_t mutex;
     dcond_t cond;
     bool ready;
@@ -180,8 +179,8 @@ typedef struct {
     hashmap_t hdrs;  // map_str_str_t->elem
     derr_t e;
 } req_ctx_t;
-DEF_CONTAINER_OF(req_ctx_t, req, duv_http_req_t);
-DEF_CONTAINER_OF(req_ctx_t, reader, stream_reader_t);
+DEF_CONTAINER_OF(req_ctx_t, req, duv_http_req_t)
+DEF_CONTAINER_OF(req_ctx_t, reader, stream_reader_t)
 
 static void empty_hdrs_hashmap(hashmap_t *hdrs){
     hashmap_trav_t trav;
@@ -217,17 +216,17 @@ fail:
     return e;
 }
 
-derr_t E = E_OK;
+static derr_t E = {0};
 static duv_http_t http;
 static req_ctx_t *req_ctxs;
-size_t inflight = 0;
-size_t nstarted = 0;
-size_t ncompleted = 0;
-bool finished = false;
-bool success = false;
+static size_t inflight = 0;
+static size_t nstarted = 0;
+static size_t ncompleted = 0;
+static bool finished = false;
+static bool success = false;
 
-static void noop_http_close_cb(duv_http_t *http){
-    (void)http;
+static void noop_http_close_cb(duv_http_t *_http){
+    (void)_http;
 }
 
 static void finish(derr_t e){

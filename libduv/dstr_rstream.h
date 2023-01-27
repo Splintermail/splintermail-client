@@ -8,8 +8,8 @@ typedef struct {
     size_t nread;
     rstream_await_cb await_cb;
 } dstr_rstream_t;
-DEF_CONTAINER_OF(dstr_rstream_t, iface, rstream_i);
-DEF_CONTAINER_OF(dstr_rstream_t, schedulable, schedulable_t);
+DEF_CONTAINER_OF(dstr_rstream_t, iface, rstream_i)
+DEF_CONTAINER_OF(dstr_rstream_t, schedulable, schedulable_t)
 
 rstream_i *dstr_rstream(
     dstr_rstream_t *r,

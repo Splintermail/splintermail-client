@@ -88,7 +88,7 @@ derr_t read_addr(struct sockaddr_storage *ss, const char *addr, uint16_t port){
     *ss = (struct sockaddr_storage){0};
 
     // detect ipv4 vs ipv6
-    sa_family_t family = AF_INET;
+    unsigned char family = AF_INET;
     size_t addrlen = strlen(addr);
     for(size_t i = 0; i < addrlen; i++){
         if(addr[i] == ':'){
@@ -131,16 +131,16 @@ derr_t read_addr(struct sockaddr_storage *ss, const char *addr, uint16_t port){
 bool addr_eq(const struct sockaddr *a, const struct sockaddr *b){
     if(a->sa_family != b->sa_family) return false;
     if(a->sa_family == AF_INET){
-        struct sockaddr_in *ain = (struct sockaddr_in*)a;
-        struct sockaddr_in *bin = (struct sockaddr_in*)b;
+        const struct sockaddr_in *ain = (const struct sockaddr_in*)a;
+        const struct sockaddr_in *bin = (const struct sockaddr_in*)b;
         if(ain->sin_port != bin->sin_port) return false;
         return memcmp(
             &ain->sin_addr, &bin->sin_addr, sizeof(ain->sin_addr)
         ) == 0;
     }
     if(a->sa_family == AF_INET6){
-        struct sockaddr_in6 *ain6 = (struct sockaddr_in6*)a;
-        struct sockaddr_in6 *bin6 = (struct sockaddr_in6*)b;
+        const struct sockaddr_in6 *ain6 = (const struct sockaddr_in6*)a;
+        const struct sockaddr_in6 *bin6 = (const struct sockaddr_in6*)b;
         if(ain6->sin6_port != bin6->sin6_port) return false;
         return memcmp(
             &ain6->sin6_addr, &bin6->sin6_addr, sizeof(ain6->sin6_addr)
@@ -153,5 +153,5 @@ bool addr_eq(const struct sockaddr *a, const struct sockaddr *b){
 bool addrs_eq(
     const struct sockaddr_storage *a, const struct sockaddr_storage *b
 ){
-    return addr_eq((struct sockaddr*)a, (struct sockaddr*)b);
+    return addr_eq((const struct sockaddr*)a, (const struct sockaddr*)b);
 }

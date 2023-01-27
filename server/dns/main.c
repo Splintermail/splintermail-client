@@ -52,7 +52,7 @@ typedef struct {
     rrl_t rrl;
     xtime_t last_report;
 } globals_t;
-DEF_CONTAINER_OF(globals_t, iface, kvp_i);
+DEF_CONTAINER_OF(globals_t, iface, kvp_i)
 
 static void noop_close_cb(uv_handle_t *handle){
     (void)handle;

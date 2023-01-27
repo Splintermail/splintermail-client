@@ -181,7 +181,13 @@ static derr_t test_json_fdump(void){
     DSTR_VAR(buf, 4096);
     PROP_GO(&e, dstr_read_path(&file_path, &buf), cu);
 
-    EXPECT_DM_GO(&e, "json_fdump file", &buf, &long_exp, cu);
+    // for windows: recode \r\n as just \n
+    DSTR_VAR(buf2, 4096);
+    LIST_PRESET(dstr_t, find, DSTR_LIT("\r\n"));
+    LIST_PRESET(dstr_t, repl, DSTR_LIT("\n"));
+    PROP_GO(&e, dstr_recode(&buf, &buf2, &find, &repl, false), cu);
+
+    EXPECT_DM_GO(&e, "json_fdump file", &buf2, &long_exp, cu);
 
     // again, but dumping just a subset of the json
     json_free(&json);
@@ -199,7 +205,8 @@ static derr_t test_json_fdump(void){
     f = NULL;
     buf.len = 0;
     PROP_GO(&e, dstr_read_path(&file_path, &buf), cu);
-    EXPECT_DM_GO(&e, "json_fdump file", &buf, &DSTR_LIT("\"b\"\n"), cu);
+    PROP_GO(&e, dstr_recode(&buf, &buf2, &find, &repl, false), cu);
+    EXPECT_DM_GO(&e, "json_fdump file", &buf2, &DSTR_LIT("\"b\"\n"), cu);
 
 cu:
     if(f) fclose(f);

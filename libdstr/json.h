@@ -32,13 +32,13 @@ typedef struct {
     size_t len;
     link_t link;
 } json_node_block_t;
-DEF_CONTAINER_OF(json_node_block_t, link, link_t);
+DEF_CONTAINER_OF(json_node_block_t, link, link_t)
 
 typedef struct {
     dstr_t *text;
     link_t link;
 } json_text_block_t;
-DEF_CONTAINER_OF(json_text_block_t, link, link_t);
+DEF_CONTAINER_OF(json_text_block_t, link, link_t)
 
 // a parsed json object
 typedef struct {

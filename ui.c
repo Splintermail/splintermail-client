@@ -23,7 +23,10 @@ DSTR_STATIC(os_default_sm_dir, "/var/lib/splintermail");
 DSTR_STATIC(os_default_sm_dir, "C:/ProgramData/splintermail");
 #endif
 
-static dstr_t slash = DSTR_LIT("/");
+static char cslash = '/';
+static dstr_t slash = {
+    .data = &cslash, .len = 1, .size = 1, .fixed_size = true
+};
 
 static derr_t maybe_read_path(
     dstr_t *config_text,
@@ -146,12 +149,11 @@ static derr_t load_os_config_files(
     string_builder_t default_path =
         sb_append(&p2_path, FS("splintermail.conf"));
     dstr_off_t default_text = {0};
-    PROP(&e, maybe_read_conf(config_text, default_path, &default_text) );
+    PROP(&e, maybe_read_path(config_text, default_path, &default_text) );
 
     // now that there is no more realloc risk, parse config text
     PROP(&e, maybe_parse_config(default_path, default_text, spec, speclen) );
-    PROP(&e, maybe_parse_config(home_dir_path, home_dir_text, spec, speclen) );
-    PROP(&e, maybe_parse_config(conf_dir_path, conf_dir_text, spec, speclen) );
+    PROP(&e, maybe_parse_config(appdata_path, appdata_text, spec, speclen) );
 
     return e;
 
@@ -409,17 +411,17 @@ derr_t trim_logfile(const char *path, long maxlen){
     PROP_GO(&e, FMT(&temp, "%x.tmp", FS(path)), cu);
 
     // check the size of the log file
-    struct stat s;
+    compat_stat_t s;
     PROP_GO(&e, dfopen(path, "r", &flog), cu);
     PROP_GO(&e, dffstat(flog, &s), cu);
-    long size = s.st_size;
-    if(size <= (long)maxlen){
+    intmax_t size = s.st_size;
+    if(size <= (intmax_t)maxlen){
         // file is within limit
         goto cu;
     }
 
     // skip to the tail of the file
-    long offset = size - maxlen;
+    long offset = (long)(size) - maxlen;
     PROP_GO(&e, dfseek(flog, offset, SEEK_SET), cu);
 
     // skip to the end of the current line
@@ -434,7 +436,7 @@ derr_t trim_logfile(const char *path, long maxlen){
 
     // copy the remaining lines to a temp file
     PROP_GO(&e, dfopen(temp.data, "w", &ftmp), cu);
-    while(c = fgetc(flog), c != EOF){
+    while((void)(c = fgetc(flog)), c != EOF){
         if(fputc(c, ftmp) == EOF){
             ORIG_GO(&e, E_OS, "failed to write log bytes", cu);
         }
@@ -1137,7 +1139,6 @@ int do_main(int argc, char* argv[], bool windows_service){
 #else
     const char* rhost = "splintermail.com";
     unsigned int api_port = 443;
-    unsigned int pop_port = 995;
     unsigned int imap_port = 993;
 #endif // BUILD_DEBUG
 

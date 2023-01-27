@@ -190,9 +190,9 @@ static void* fas_thread(void* arg){
 
         dstr_t path;
         bool have_arg;
-        dstr_t arg;
+        dstr_t _arg;
         jspec_t *jspec = JOBJ(false,
-            JKEY("arg", JOPT(&have_arg, JDREF(&arg))),
+            JKEY("arg", JOPT(&have_arg, JDREF(&_arg))),
             JKEY("path", JDREF(&path)),
         );
 
@@ -218,10 +218,10 @@ static void* fas_thread(void* arg){
                     TRACE(&e, "expected argument: %x\n"
                               "          but got null\n", FD(&exp_arg));
                     ORIG_GO(&e, E_VALUE, "wrong argument", cleanup_6);
-                }else if(!dstr_eq(arg, exp_arg) != 0){
+                }else if(!dstr_eq(_arg, exp_arg) != 0){
                     TRACE(&e, "expected argument: %x\n"
                               "          but got: %x\n",
-                             FD(&exp_arg), FD(&arg));
+                             FD(&exp_arg), FD(&_arg));
                     ORIG_GO(&e, E_VALUE, "wrong argument", cleanup_6);
                 }
             }
@@ -229,7 +229,7 @@ static void* fas_thread(void* arg){
 
         // call hook if necessary
         if(hook){
-            PROP_GO(&e, hook(&path, &arg, ctr), cleanup_6);
+            PROP_GO(&e, hook(&path, &_arg, ctr), cleanup_6);
         }
 
         // now get the response

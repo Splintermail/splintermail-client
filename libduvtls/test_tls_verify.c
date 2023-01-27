@@ -8,22 +8,22 @@
 static const char* g_test_files;
 
 // globals
-derr_t E = E_OK;
-uv_loop_t loop;
-uv_async_t async;
-duv_scheduler_t scheduler;
-char *connect_name;
-duv_connect_t connector;
-uv_tcp_t tcp;
-duv_passthru_t passthru;
-duv_tls_t tls;
-stream_i *stream = NULL;
-bool finishing = false;
-bool success = false;
-ssl_context_t client_ctx = {0};
-derr_type_t expect_verify_failure;
+static derr_t E = {0};
+static uv_loop_t loop;
+static uv_async_t async;
+static duv_scheduler_t scheduler;
+static char *connect_name;
+static duv_connect_t connector;
+static uv_tcp_t tcp;
+static duv_passthru_t passthru;
+static duv_tls_t tls;
+static stream_i *stream = NULL;
+static bool finishing = false;
+static bool success = false;
+static ssl_context_t client_ctx = {0};
+static derr_type_t expect_verify_failure;
 
-dthread_t thread;
+static dthread_t thread;
 
 static void reset_globals(void){
     DROP_VAR(&E);
@@ -181,8 +181,8 @@ fail:
     finish();
 }
 
-static void async_cb(uv_async_t *async){
-    (void)async;
+static void async_cb(uv_async_t *handle){
+    (void)handle;
     // start connecting!
     PROP_GO(&E,
         duv_connect(

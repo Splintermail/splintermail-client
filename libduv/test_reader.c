@@ -3,11 +3,11 @@
 
 #include "test/test_utils.h"
 
-dstr_rstream_t dstr_r;
-stream_reader_t reader;
-derr_t E = E_OK;
-dstr_t exp_;
-bool success = false;
+static dstr_rstream_t dstr_r;
+static stream_reader_t R;
+static derr_t E = {0};
+static dstr_t exp_;
+static bool success = false;
 
 static void reader_cb_ok(stream_reader_t *reader, derr_t e){
     dstr_t *buf = reader->data;
@@ -54,8 +54,8 @@ static derr_t test_reader(void){
 
     DSTR_VAR(bigbuf, 64);
     exp_ = base;
-    reader.data = &bigbuf;
-    stream_read_all(&reader, r, &bigbuf, reader_cb_ok);
+    R.data = &bigbuf;
+    stream_read_all(&R, r, &bigbuf, reader_cb_ok);
 
     // run to completion
     manual_scheduler_run(&scheduler);
@@ -65,7 +65,7 @@ static derr_t test_reader(void){
     }
 
     // cancel is safe to call after completion
-    stream_reader_cancel(&reader);
+    stream_reader_cancel(&R);
 
     // again, but with an allocated buf
     dstr_t heapbuf;
@@ -73,8 +73,8 @@ static derr_t test_reader(void){
     success = false;
     exp_ = base;
     r = dstr_rstream(&dstr_r, sched, base);
-    reader.data = &heapbuf;
-    stream_read_all(&reader, r, &heapbuf, reader_cb_ok);
+    R.data = &heapbuf;
+    stream_read_all(&R, r, &heapbuf, reader_cb_ok);
     // run to completion
     manual_scheduler_run(&scheduler);
     dstr_free(&heapbuf);
@@ -86,8 +86,8 @@ static derr_t test_reader(void){
     // again, but with cancelation
     success = false;
     r = dstr_rstream(&dstr_r, sched, base);
-    stream_read_all(&reader, r, &bigbuf, reader_cb_canceled);
-    stream_reader_cancel(&reader);
+    stream_read_all(&R, r, &bigbuf, reader_cb_canceled);
+    stream_reader_cancel(&R);
     // run to completion
     manual_scheduler_run(&scheduler);
     PROP_VAR(&e, &E);
@@ -98,7 +98,7 @@ static derr_t test_reader(void){
     // again, but break the underlying stream
     success = false;
     r = dstr_rstream(&dstr_r, sched, base);
-    stream_read_all(&reader, r, &bigbuf, reader_cb_failed);
+    stream_read_all(&R, r, &bigbuf, reader_cb_failed);
     r->cancel(r);
     // run to completion
     manual_scheduler_run(&scheduler);

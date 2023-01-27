@@ -58,7 +58,7 @@ struct stream_read_t {
     dstr_t buf;
     stream_read_cb cb;
 };
-DEF_CONTAINER_OF(stream_read_t, link, link_t);
+DEF_CONTAINER_OF(stream_read_t, link, link_t)
 struct rstream_read_t {
     // data is the only public member for the stream consumer
     void *data;
@@ -66,7 +66,7 @@ struct rstream_read_t {
     dstr_t buf;
     rstream_read_cb cb;
 };
-DEF_CONTAINER_OF(rstream_read_t, link, link_t);
+DEF_CONTAINER_OF(rstream_read_t, link, link_t)
 
 struct stream_write_t {
     // data is the only public member for the stream consumer
@@ -77,7 +77,7 @@ struct stream_write_t {
     unsigned int nbufs;
     stream_write_cb cb;
 };
-DEF_CONTAINER_OF(stream_write_t, link, link_t);
+DEF_CONTAINER_OF(stream_write_t, link, link_t)
 struct wstream_write_t {
     // data is the only public member for the stream consumer
     void *data;
@@ -87,7 +87,7 @@ struct wstream_write_t {
     unsigned int nbufs;
     wstream_write_cb cb;
 };
-DEF_CONTAINER_OF(wstream_write_t, link, link_t);
+DEF_CONTAINER_OF(wstream_write_t, link, link_t)
 
 /* a bidirectional stream, which is normally closed automatically after the EOF
    read_cb and the shutdown_cb, but which may be closed earlier by cancel */

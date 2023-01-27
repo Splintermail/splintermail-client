@@ -97,7 +97,7 @@ bool exists(const char* path){
     return ret == 0;
 }
 
-derr_t dfstat(int fd, struct stat *s){
+derr_t dfstat(int fd, compat_stat_t *s){
     derr_t e = E_OK;
 
     int ret = compat_fstat(fd, s);
@@ -109,9 +109,9 @@ derr_t dfstat(int fd, struct stat *s){
     return e;
 }
 
-derr_t dffstat(FILE *f, struct stat *s){
+derr_t dffstat(FILE *f, compat_stat_t *s){
     derr_t e = E_OK;
-    PROP(&e, dfstat(fileno(f), s) );
+    PROP(&e, dfstat(compat_fileno(f), s) );
     return e;
 }
 

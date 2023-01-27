@@ -44,7 +44,7 @@ int pvt_do_log(log_level_t level, const char* format,
             FU(__LINE__), \
             __VA_ARGS__ \
         }, \
-        sizeof((const fmt_t[]){__VA_ARGS__}) / sizeof(fmt_t) + 3 \
+        sizeof((const fmt_t[]){FI(1), __VA_ARGS__}) / sizeof(fmt_t) + 2 \
     )
 
 #define FILE_LOC \

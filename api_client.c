@@ -7,7 +7,7 @@
 #include "api_client.h"
 
 
-static dstr_t slash = DSTR_LIT("/");
+static dstr_t slash = {.data = "/", .len = 1, .fixed_size = true, .size = 1};
 
 
 void api_token_init(api_token_t* token){

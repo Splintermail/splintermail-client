@@ -93,7 +93,7 @@ void duv_http_close(duv_http_t *h, duv_http_close_cb close_cb){
     h->close_cb = close_cb;
 
     if(h->req) req_cancel(h->req);
-    duv_http_req_t *req = req;
+    duv_http_req_t *req;
     LINK_FOR_EACH(req, &h->pending, duv_http_req_t, link){
         req_cancel(req);
     }
@@ -575,11 +575,12 @@ static void req_advance_read_hdrs(duv_http_req_t *req, bool *completed){
     while(true){
         http_pair_t hdr;
         int state;
+        dstr_t space;
         PROP_GO(&req->e, http_read(&m->reader, &hdr, &state), done);
         switch(state){
             case -2:
                 // incomplete read (read_buf may have been leftshifted)
-                dstr_t space = dstr_empty_space(m->read_buf);
+                space = dstr_empty_space(m->read_buf);
                 if(space.size == 0){
                     ORIG_GO(&req->e, E_FIXEDSIZE, "header too long", done);
                 }

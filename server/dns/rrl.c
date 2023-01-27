@@ -54,7 +54,7 @@ static uint32_t hash_addr(const struct sockaddr *sa){
         uint32_t *keys = (uint32_t*)&sin6->sin6_addr.s6_addr;
         return hash_uint(keys[0]) ^ hash_uint(keys[1]);
     }
-    LOG_FATAL( "hash_addr with invalid address family %x\n", FI(family));
+    LOG_FATAL("hash_addr with invalid address family %x\n", FI(family));
     return 0;
 }
 

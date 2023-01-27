@@ -3,8 +3,8 @@ typedef struct {
     stream_write_t *req;
     link_t link;
 } passthru_write_mem_t;
-DEF_CONTAINER_OF(passthru_write_mem_t, uvw, uv_write_t);
-DEF_CONTAINER_OF(passthru_write_mem_t, link, link_t);
+DEF_CONTAINER_OF(passthru_write_mem_t, uvw, uv_write_t)
+DEF_CONTAINER_OF(passthru_write_mem_t, link, link_t)
 
 // the passthru stream, wrapping a uv_stream_t
 // iface is the only public member
@@ -51,8 +51,8 @@ typedef struct {
         bool complete : 1;
     } close;
 } duv_passthru_t;
-DEF_CONTAINER_OF(duv_passthru_t, iface, stream_i);
-DEF_CONTAINER_OF(duv_passthru_t, schedulable, schedulable_t);
+DEF_CONTAINER_OF(duv_passthru_t, iface, stream_i)
+DEF_CONTAINER_OF(duv_passthru_t, schedulable, schedulable_t)
 
 // initialize a duv_passthru_t that wraps a uv_stream_t
 // uvstream should already be connected

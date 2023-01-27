@@ -57,7 +57,7 @@ typedef struct {
     jspec_t jspec;
     key_i **k;
 } jspec_jwk_t;
-DEF_CONTAINER_OF(jspec_jwk_t, jspec, jspec_t);
+DEF_CONTAINER_OF(jspec_jwk_t, jspec, jspec_t)
 
 derr_t jspec_jwk_read(jspec_t *jspec, jctx_t *ctx);
 

@@ -17,7 +17,7 @@ typedef struct {
     unsigned int mask; // use bitmask as our mod function
     hash_elem_t sentinel; // end of every bucket points here
 } hashmap_t;
-DEF_CONTAINER_OF(hashmap_t, sentinel, hash_elem_t);
+DEF_CONTAINER_OF(hashmap_t, sentinel, hash_elem_t)
 
 typedef struct {
     hashmap_t *hashmap;

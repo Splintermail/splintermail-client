@@ -4,10 +4,10 @@
 
 #include "test/test_utils.h"
 
-derr_t E = E_OK;
-bool finished = false;
-rstream_i *base;
-bool force_no_detach = false;
+static derr_t E = {0};
+static bool finished = false;
+static rstream_i *base;
+static bool force_no_detach = false;
 
 static bool try_detach(limit_rstream_t *l){
     (void)l;

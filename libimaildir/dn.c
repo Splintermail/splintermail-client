@@ -2,8 +2,6 @@
 
 #include "libimaildir.h"
 
-#include "libduv/libduv.h"
-
 // state for gathering updates
 typedef struct {
     jsw_atree_t news;  // gathered_t->node

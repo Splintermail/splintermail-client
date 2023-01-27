@@ -31,3 +31,8 @@ add_library(
 )
 target_link_libraries(url PUBLIC dstr)
 default_compile_options(url TRUE)
+
+if("${CMAKE_C_COMPILER_ID}" STREQUAL "MSVC")
+    # windows getaddrinfo lib
+    target_link_libraries(url PUBLIC Ws2_32.lib)
+endif()

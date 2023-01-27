@@ -18,7 +18,7 @@ typedef struct {
     heap_get_f get;
     bool want_max;
 } heap_t;
-DEF_CONTAINER_OF(heap_t, root_parent, hnode_t);
+DEF_CONTAINER_OF(heap_t, root_parent, hnode_t)
 
 void heap_prep(heap_t *h, cmp_f cmp, heap_get_f get, bool want_max);
 

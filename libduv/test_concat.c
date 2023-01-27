@@ -3,13 +3,13 @@
 
 #include "test/test_utils.h"
 
-rstream_i *r;
-dstr_rstream_t d1;
-dstr_rstream_t d2;
-derr_t E = E_OK;
-bool r2_awaited = false;
-bool r_awaited = false;
-size_t cb_order = 0;
+static rstream_i *R;
+static dstr_rstream_t d1;
+static dstr_rstream_t d2;
+static derr_t E = {0};
+static bool r2_awaited = false;
+static bool r_awaited = false;
+static size_t cb_order = 0;
 
 #define DEF_READ_CB(name, order, text, exp_ok) \
     static void name( \
@@ -91,40 +91,40 @@ static derr_t test_concat(void){
     rstream_i *r2 = dstr_rstream(&d2, sched, text2);
     stream_must_await_first(r2, await_cb_r2_a);
 
-    r = rstream_concat(&concat, sched, r1, r2);
-    stream_must_await_first(r, await_cb_a);
+    R = rstream_concat(&concat, sched, r1, r2);
+    stream_must_await_first(R, await_cb_a);
 
     // submit all the reads
     rstream_read_t read1;
     DSTR_VAR(buf1, 4);
-    stream_must_read(r, &read1, buf1, read_cb1a);
+    stream_must_read(R, &read1, buf1, read_cb1a);
 
     rstream_read_t read2;
     DSTR_VAR(buf2, 4);
-    stream_must_read(r, &read2, buf2, read_cb2a);
+    stream_must_read(R, &read2, buf2, read_cb2a);
 
     rstream_read_t read3;
     DSTR_VAR(buf3, 4);
-    stream_must_read(r, &read3, buf3, read_cb3a);
+    stream_must_read(R, &read3, buf3, read_cb3a);
 
     rstream_read_t read4;
     DSTR_VAR(buf4, 4);
-    stream_must_read(r, &read4, buf4, read_cb4a);
+    stream_must_read(R, &read4, buf4, read_cb4a);
 
     rstream_read_t read5;
     DSTR_VAR(buf5, 4);
-    stream_must_read(r, &read5, buf5, read_cb5a);
+    stream_must_read(R, &read5, buf5, read_cb5a);
 
     rstream_read_t read6;
     DSTR_VAR(buf6, 4);
-    stream_must_read(r, &read6, buf6, read_cb6a);
+    stream_must_read(R, &read6, buf6, read_cb6a);
 
     // run to completion
     manual_scheduler_run(&scheduler);
     MERGE_VAR(&e, &E, "scheduler run");
     CHECK(&e);
-    if(!r->awaited) ORIG(&e, E_VALUE, "r not marked as awaited");
-    if(!r_awaited) ORIG(&e, E_VALUE, "r not actually awaited");
+    if(!R->awaited) ORIG(&e, E_VALUE, "R not marked as awaited");
+    if(!r_awaited) ORIG(&e, E_VALUE, "R not actually awaited");
     r2_awaited = false;
     r_awaited = false;
 
@@ -134,23 +134,23 @@ static derr_t test_concat(void){
     stream_must_await_first(r2, await_cb_r2_b);
     r2->cancel(r2);
 
-    r = rstream_concat(&concat, sched, r1, r2);
-    stream_must_await_first(r, await_cb_b);
+    R = rstream_concat(&concat, sched, r1, r2);
+    stream_must_await_first(R, await_cb_b);
 
     buf1.len = buf2.len = buf3.len = buf4.len = 0;
-    stream_must_read(r, &read1, buf1, read_cb1b);
-    stream_must_read(r, &read2, buf2, read_cb2b);
-    stream_must_read(r, &read3, buf3, read_cb3b);
-    stream_must_read(r, &read4, buf4, read_cb4b);
-    stream_must_read(r, &read5, buf5, read_cb5b);
-    stream_must_read(r, &read6, buf6, read_cb6b);
+    stream_must_read(R, &read1, buf1, read_cb1b);
+    stream_must_read(R, &read2, buf2, read_cb2b);
+    stream_must_read(R, &read3, buf3, read_cb3b);
+    stream_must_read(R, &read4, buf4, read_cb4b);
+    stream_must_read(R, &read5, buf5, read_cb5b);
+    stream_must_read(R, &read6, buf6, read_cb6b);
 
     // run to completion
     manual_scheduler_run(&scheduler);
     MERGE_VAR(&e, &E, "scheduler run");
     CHECK(&e);
-    if(!r->awaited) ORIG(&e, E_VALUE, "r not marked as awaited");
-    if(!r_awaited) ORIG(&e, E_VALUE, "r not actually awaited");
+    if(!R->awaited) ORIG(&e, E_VALUE, "R not marked as awaited");
+    if(!r_awaited) ORIG(&e, E_VALUE, "R not actually awaited");
 
     return e;
 }

@@ -29,10 +29,10 @@ typedef struct {
     link_t oldest;  // kvpsync_send_t->oldest;
     xtime_t deadline;
 } send_data_t;
-DEF_CONTAINER_OF(send_data_t, link, link_t);
-DEF_CONTAINER_OF(send_data_t, uelem, hash_elem_t);
-DEF_CONTAINER_OF(send_data_t, celem, hash_elem_t);
-DEF_CONTAINER_OF(send_data_t, oldest, link_t);
+DEF_CONTAINER_OF(send_data_t, link, link_t)
+DEF_CONTAINER_OF(send_data_t, uelem, hash_elem_t)
+DEF_CONTAINER_OF(send_data_t, celem, hash_elem_t)
+DEF_CONTAINER_OF(send_data_t, oldest, link_t)
 
 // aborts on OOM
 static send_data_t *send_data_xnew(void){

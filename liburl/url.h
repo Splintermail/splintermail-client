@@ -1,4 +1,10 @@
-#include <netdb.h>
+#ifndef _WIN32
+// unix
+    #include <netdb.h>
+#else
+// windows
+    #include <ws2tcpip.h>
+#endif
 
 typedef struct {
     dstr_off_t scheme;

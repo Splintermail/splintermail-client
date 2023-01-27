@@ -1,11 +1,8 @@
 #ifndef LIBIMAILDIR_H
 #define LIBIMAILDIR_H
 
-#include <uv.h>
-
 #include "libdstr/libdstr.h"
 #include "libimap/libimap.h"
-#include "libduv/libduv.h"
 
 struct imaildir_t;
 typedef struct imaildir_t imaildir_t;

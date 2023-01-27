@@ -81,7 +81,7 @@ static derr_t test_error_reporting(void){
     }
     {
         // stupid-sized buffer (checking for asan errors)
-        DSTR_VAR(shortbuf, 0);
+        dstr_t shortbuf = { .fixed_size = true };
         char *short_error = "";
         ok = parse_url_ex(invalid, &url, &shortbuf);
         ASSERT(!ok);

@@ -11,7 +11,10 @@
 
 #include "test/test_utils.h"
 
-static dstr_t slash = DSTR_LIT("/");
+static char cslash = '/';
+static dstr_t slash = {
+    .data = &cslash, .len = 1, .size = 1, .fixed_size = true
+};
 
 bool looked_good;
 dstr_t reason_log;
@@ -74,7 +77,7 @@ static inline derr_t fake_access(
 ){
     derr_t e = E_OK;
 
-    static const dstr_t off_limits[] = {
+    const dstr_t off_limits[] = {
         DSTR_LIT("splintermail.conf"),
         DSTR_LIT("fake_file"),
         DSTR_LIT("no.perms.user@fqdn"),
@@ -200,7 +203,6 @@ static derr_t fake_for_each_file_in_dir(
     }
     UH_OH("unexpected call to for_each_file_in_dir\n");
     ORIG(&e, E_INTERNAL, "unexpected call to for_each_file_in_dir");
-    return e;
 }
 
 // intercept all calls

@@ -55,15 +55,18 @@
     int compat_strerror_r(int errnum, char* buf, size_t buflen);
     int compat_pipe(int* pfds);
     int compat_getpid(void);
+    #define compat_fstat _fstat64
+    #define compat_stat_t struct _stat64
 
     // use the "new" functions... with same prototypes and behaviors
     #define compat_rmdir _rmdir
     #define compat_unlink _unlink
     #define compat_lseek _lseek
-    #define compat_fstat _fstat
     #define compat_dup _dup
     #define compat_fsync _commit
+    #define compat_fileno _fileno
     #define compat_tzset _tzset
+    #define compat_strdup _strdup
     extern long timezone;
 
     #define compat_environ _environ
@@ -75,6 +78,7 @@
     extern const struct sockaddr_in _ext_sockaddr_in;
     extern const struct sockaddr_storage _ext_sockaddr_storage;
     extern const struct stat _ext_stat;
+    extern const struct _stat64 _ext_stat_64;
 
 #else // not _WIN32
 
@@ -89,6 +93,7 @@
     #define compat_chmod chmod
     #define compat_close close
     #define compat_fopen fopen
+    #define compat_fileno fileno
     #define compat_access access
     #define compat_gethostname gethostname
     #define compat_mkdir mkdir
@@ -99,10 +104,12 @@
     #define compat_rmdir rmdir
     #define compat_lseek lseek
     #define compat_fstat fstat
+    #define compat_stat_t struct stat
     #define compat_dup dup
     #define compat_getpid getpid
     #define compat_fsync fsync
     #define compat_tzset tzset
+    #define compat_strdup strdup
 
     #define compat_environ environ
 

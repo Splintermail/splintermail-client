@@ -83,7 +83,7 @@ typedef struct {
     dstr_t *out;
     bool copy;
 } jspec_dstr_t;
-DEF_CONTAINER_OF(jspec_dstr_t, jspec, jspec_t);
+DEF_CONTAINER_OF(jspec_dstr_t, jspec, jspec_t)
 
 derr_t jspec_dstr_read(jspec_t *jspec, jctx_t *ctx);
 
@@ -103,7 +103,7 @@ typedef struct {
     jspec_t jspec;
     bool *out;
 } jspec_bool_t;
-DEF_CONTAINER_OF(jspec_bool_t, jspec, jspec_t);
+DEF_CONTAINER_OF(jspec_bool_t, jspec, jspec_t)
 
 derr_t jspec_bool_read(jspec_t *jspec, jctx_t *ctx);
 
@@ -136,7 +136,7 @@ typedef struct {
     size_t nkeys;
     bool allow_extras;
 } jspec_object_t;
-DEF_CONTAINER_OF(jspec_object_t, jspec, jspec_t);
+DEF_CONTAINER_OF(jspec_object_t, jspec, jspec_t)
 
 derr_t jspec_object_read(jspec_t *jspec, jctx_t *ctx);
 
@@ -158,7 +158,7 @@ typedef struct {
     );
     void *data;
 } jspec_map_t;
-DEF_CONTAINER_OF(jspec_map_t, jspec, jspec_t);
+DEF_CONTAINER_OF(jspec_map_t, jspec, jspec_t)
 
 derr_t jspec_map_read(jspec_t *jspec, jctx_t *ctx);
 
@@ -175,7 +175,7 @@ typedef struct {
     bool *nonnull;
     jspec_t *subspec;
 } jspec_optional_t;
-DEF_CONTAINER_OF(jspec_optional_t, jspec, jspec_t);
+DEF_CONTAINER_OF(jspec_optional_t, jspec, jspec_t)
 
 derr_t jspec_optional_read(jspec_t *jspec, jctx_t *ctx);
 
@@ -191,7 +191,7 @@ typedef struct {
     jspec_t **items;
     size_t nitems;
 } jspec_tuple_t;
-DEF_CONTAINER_OF(jspec_tuple_t, jspec, jspec_t);
+DEF_CONTAINER_OF(jspec_tuple_t, jspec, jspec_t)
 
 derr_t jspec_tuple_read(jspec_t *jspec, jctx_t *ctx);
 
@@ -208,7 +208,7 @@ typedef struct {
     derr_t (*read_item)(jctx_t *ctx, size_t index, void *data);
     void *data;
 } jspec_list_t;
-DEF_CONTAINER_OF(jspec_list_t, jspec, jspec_t);
+DEF_CONTAINER_OF(jspec_list_t, jspec, jspec_t)
 
 derr_t jspec_list_read(jspec_t *jspec, jctx_t *ctx);
 
@@ -223,7 +223,7 @@ typedef struct {
     jspec_t jspec;
     json_ptr_t *ptr;
 } jspec_jptr_t;
-DEF_CONTAINER_OF(jspec_jptr_t, jspec, jspec_t);
+DEF_CONTAINER_OF(jspec_jptr_t, jspec, jspec_t)
 
 derr_t jspec_jptr_read(jspec_t *jspec, jctx_t *ctx);
 
@@ -239,7 +239,7 @@ derr_t jspec_jptr_read(jspec_t *jspec, jctx_t *ctx);
         jspec_t jspec; \
         type *out; \
     } jspec_to ## suffix ## _t; \
-    DEF_CONTAINER_OF(jspec_to ## suffix ## _t, jspec, jspec_t); \
+    DEF_CONTAINER_OF(jspec_to ## suffix ## _t, jspec, jspec_t) \
     derr_t jspec_to ## suffix ## _read(jspec_t *jspec, jctx_t *ctx);
 
 INTEGERS_MAP(DECLARE_NUMERICS)

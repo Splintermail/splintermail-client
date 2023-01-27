@@ -234,7 +234,7 @@ derr_t ssl_context_new_server(
         trace_ssl_errors(&e);
         ORIG(&e, E_NOMEM, "failed to create SSL context");
     }
-    unsigned long ulret;
+    uint64_t ulret;
 #endif
     PROP_GO(&e, set_safe_protocol(ctx->ctx), cleanup);
 

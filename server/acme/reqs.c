@@ -48,7 +48,7 @@ typedef struct {
     get_directory_cb cb;
     void *cb_data;
 } get_directory_t;
-DEF_CONTAINER_OF(get_directory_t, reader, stream_reader_t);
+DEF_CONTAINER_OF(get_directory_t, reader, stream_reader_t)
 
 static void get_directory_free(get_directory_t **old){
     get_directory_t *gd = *old;
@@ -162,8 +162,8 @@ typedef struct {
     new_nonce_cb cb;
     void *cb_data;
 } new_nonce_t;
-DEF_CONTAINER_OF(new_nonce_t, req, duv_http_req_t);
-DEF_CONTAINER_OF(new_nonce_t, reader, stream_reader_t);
+DEF_CONTAINER_OF(new_nonce_t, req, duv_http_req_t)
+DEF_CONTAINER_OF(new_nonce_t, reader, stream_reader_t)
 
 static void new_nonce_free(new_nonce_t **old){
     new_nonce_t *nn = *old;
@@ -278,8 +278,8 @@ typedef struct {
     post_new_account_cb cb;
     void *cb_data;
 } post_new_account_t;
-DEF_CONTAINER_OF(post_new_account_t, req, duv_http_req_t);
-DEF_CONTAINER_OF(post_new_account_t, reader, stream_reader_t);
+DEF_CONTAINER_OF(post_new_account_t, req, duv_http_req_t)
+DEF_CONTAINER_OF(post_new_account_t, reader, stream_reader_t)
 
 static void post_new_account_free(post_new_account_t **old){
     post_new_account_t *pn = *old;

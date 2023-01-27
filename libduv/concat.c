@@ -161,7 +161,7 @@ static void concat_cancel(rstream_i *iface){
 
     c->iface.canceled = true;
 
-    if(c->iface.awaited) return
+    if(c->iface.awaited) return;
 
     // close all streams
     cancel_bases(c);

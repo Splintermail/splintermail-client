@@ -152,7 +152,7 @@ static derr_t json_text_block_new(json_text_block_t **out, size_t size){
     CHECK(&e);
 
     block = mem;
-    dstr = mem + sizeof(*block);
+    dstr = (dstr_t*)((uintptr_t)mem + sizeof(*block));
 
     // dstr.data needs a separate allocation so it can safely be reallocated
     PROP_GO(&e, dstr_new(dstr, size), fail);
@@ -193,7 +193,7 @@ static derr_t json_node_block_new(json_node_block_t **out, size_t size){
 
     json_node_block_t *block = mem;
     *block = (json_node_block_t){
-        .nodes = mem + sizeof(json_node_block_t),
+        .nodes = (json_node_t*)((uintptr_t)mem + sizeof(json_node_block_t)),
         .cap = (size - sizeof(json_node_block_t)) / sizeof(json_node_t),
     };
     link_init(&block->link);
@@ -591,29 +591,29 @@ reparse:
                     p->state = S8;
                 }else{
                     char *x = p->cpbytes;
-                    size_t i = p->cpcount;
+                    size_t ii = p->cpcount;
                     ORIG(&e,
                         E_PARAM,
                         "invalid utf16 escape: \\u%x%x%x%x",
-                        FC(x[(i-4)%8]),
-                        FC(x[(i-3)%8]),
-                        FC(x[(i-2)%8]),
-                        FC(x[(i-1)%8])
+                        FC(x[(ii-4)%8]),
+                        FC(x[(ii-3)%8]),
+                        FC(x[(ii-2)%8]),
+                        FC(x[(ii-1)%8])
                     );
                 }
             }else{
                 // second utf16 char in a surrogate pair
                 if(p->codepoint < 0xDC00 || p->codepoint > 0xDFFF){
                     char *x = p->cpbytes;
-                    size_t i = p->cpcount;
+                    size_t ii = p->cpcount;
                     ORIG(&e,
                         E_PARAM,
                         "utf16 unpaired surrogate detected: \\u%x%x%x%x",
                         // it's actually the previous codepoint that's broken
-                        FC(x[(i-8)%8]),
-                        FC(x[(i-7)%8]),
-                        FC(x[(i-6)%8]),
-                        FC(x[(i-5)%8])
+                        FC(x[(ii-8)%8]),
+                        FC(x[(ii-7)%8]),
+                        FC(x[(ii-6)%8]),
+                        FC(x[(ii-5)%8])
                     );
                 }
                 uint32_t highbits = p->last_codepoint & 0x3FF;
@@ -905,7 +905,6 @@ derr_t json_encode(const dstr_t utf8, dstr_t *out){
     if(etype == E_PARAM) ORIG(&e, etype, "invalid utf8 string");
     if(etype == E_FIXEDSIZE) ORIG(&e, etype, "output buffer too small");
     ORIG(&e, etype, "failure encoding json");
-    return e;
 }
 
 derr_type_t fmthook_fd_json(dstr_t* out, const void* arg){

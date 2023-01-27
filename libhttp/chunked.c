@@ -148,7 +148,7 @@ static void advance_chunks(chunked_rstream_t *c, bool *complete){
     while(!link_list_isempty(&c->reads)){
         // pass along any bytes that are ready to be consumed
         dstr_t readable;
-        while(readable = get_readable(c), readable.len > 0){
+        while((void)(readable = get_readable(c)), readable.len > 0){
             link_t *link = link_list_pop_first(&c->reads);
             rstream_read_t *read = CONTAINER_OF(link, rstream_read_t, link);
             dstr_t sub = dstr_sub2(readable, 0, read->buf.size);

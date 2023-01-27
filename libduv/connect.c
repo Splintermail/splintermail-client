@@ -201,12 +201,12 @@ derr_t duv_connect(
         .cb = cb,
     };
 
-    c->node = strdup(node);
+    c->node = compat_strdup(node);
     if(!node){
         ORIG(&e, E_NOMEM, "no mem");
     }
 
-    c->service = strdup(service);
+    c->service = compat_strdup(service);
     if(!service){
         ORIG_GO(&e, E_NOMEM, "no mem", fail_node);
     }

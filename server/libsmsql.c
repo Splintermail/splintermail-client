@@ -1,6 +1,7 @@
 #define _GNU_SOURCE  // for crypt_r
 #include <unistd.h>
 #include <crypt.h>
+#include <errno.h>
 
 #include <openssl/evp.h>
 

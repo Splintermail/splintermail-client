@@ -137,9 +137,9 @@ static void* ssl_server_thread(void* arg){
         }
 
         // set default ssl protocols to be TLS (if not specified)
-        unsigned long ssl_types = spec->ssl_types ? spec->ssl_types : NOSSL2 | NOSSL3;
-        unsigned long ulret = SSL_CTX_set_options(ctx.ctx, ssl_types);
-        if(!(ulret & spec->ssl_types)){
+        uintmax_t ssl_types = spec->ssl_types ? spec->ssl_types : NOSSL2 | NOSSL3;
+        uintmax_t uxret = SSL_CTX_set_options(ctx.ctx, ssl_types);
+        if(!(uxret & spec->ssl_types)){
             trace_ssl_errors(e);
             ORIG_GO(e, E_SSL, "failed to limit SSL methods", ctx_fail);
         }
@@ -163,8 +163,8 @@ static void* ssl_server_thread(void* arg){
         }
 
         // make sure server sets cipher preference
-        ulret = SSL_CTX_set_options(ctx.ctx, SSL_OP_CIPHER_SERVER_PREFERENCE);
-        if( !(ulret & SSL_OP_CIPHER_SERVER_PREFERENCE) ){
+        uxret = SSL_CTX_set_options(ctx.ctx, SSL_OP_CIPHER_SERVER_PREFERENCE);
+        if( !(uxret & SSL_OP_CIPHER_SERVER_PREFERENCE) ){
             trace_ssl_errors(e);
             ORIG_GO(e, E_SSL, "failed to set server cipher preference ", ctx_fail);
         }
@@ -303,8 +303,8 @@ static derr_pair_t do_ssl_test(
             ORIG_GO(&e, E_NOMEM, "failed to create SSL context", ctx_fail);
         }
         // set protocol limits based on spec
-        unsigned long ulret = SSL_CTX_set_options(ctx.ctx, cli_spec->ssl_types);
-        if(!(ulret & cli_spec->ssl_types)){
+        uintmax_t uxret = SSL_CTX_set_options(ctx.ctx, cli_spec->ssl_types);
+        if(!(uxret & cli_spec->ssl_types)){
             trace_ssl_errors(&e);
             ORIG_GO(&e, E_SSL, "failed to limit SSL methods", ctx_fail);
         }

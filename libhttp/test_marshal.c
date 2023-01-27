@@ -4,17 +4,31 @@
 
 #include "test/test_utils.h"
 
-http_pairs_t h1 = HTTP_PAIR_GLOBAL("hk1", "hv1", NULL);
-http_pairs_t h2 = HTTP_PAIR_GLOBAL("hk2", "hv2", &h1);
-http_pairs_t h3 = HTTP_PAIR_GLOBAL("hk3", "hv3", &h2);
-http_pairs_t h4 = HTTP_PAIR_GLOBAL("hk4", "hv4", &h3);
-http_pairs_t *base_hdrs = &h4;
+static http_pairs_t h1;
+static http_pairs_t h2;
+static http_pairs_t h3;
+static http_pairs_t h4;
+static http_pairs_t *base_hdrs = &h4;
 
-http_pairs_t p1 = HTTP_PAIR_GLOBAL("pk1", "pv1", NULL);
-http_pairs_t p2 = HTTP_PAIR_GLOBAL("pk2", "pv2", &p1);
-http_pairs_t p3 = HTTP_PAIR_GLOBAL("pk3", "pv3", &p2);
-http_pairs_t p4 = HTTP_PAIR_GLOBAL("pk4", "pv4", &p3);
-http_pairs_t *base_params = &p4;
+static http_pairs_t p1;
+static http_pairs_t p2;
+static http_pairs_t p3;
+static http_pairs_t p4;
+
+// windows can't handle mildly complex static initializers.
+static void init_globals(void){
+    h1 = HTTP_PAIR("hk1", "hv1");
+    h2 = HTTP_PAIR("hk2", "hv2");
+    h3 = HTTP_PAIR("hk3", "hv3");
+    h4 = HTTP_PAIR("hk4", "hv4");
+    HTTP_PAIR_CHAIN(NULL, &h1, &h2, &h3, &h4);
+
+    p1 = HTTP_PAIR("pk1", "pv1");
+    p2 = HTTP_PAIR("pk2", "pv2");
+    p3 = HTTP_PAIR("pk3", "pv3");
+    p4 = HTTP_PAIR("pk4", "pv4");
+    HTTP_PAIR_CHAIN(NULL, &p1, &p2, &p3, &p4);
+}
 
 static derr_t test_pair_chain(void){
     derr_t e = E_OK;
@@ -168,6 +182,8 @@ int main(int argc, char **argv){
     derr_t e = E_OK;
     // parse options and set default log level
     PARSE_TEST_OPTIONS(argc, argv, NULL, LOG_LVL_INFO);
+
+    init_globals();
 
     PROP_GO(&e, test_pair_chain(), test_fail);
     PROP_GO(&e, test_continuation(), test_fail);

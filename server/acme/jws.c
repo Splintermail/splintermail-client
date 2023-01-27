@@ -39,7 +39,7 @@ typedef struct {
     EVP_PKEY *pkey;
     EVP_MD_CTX *mdctx;
 } ed25519_t;
-DEF_CONTAINER_OF(ed25519_t, iface, key_i);
+DEF_CONTAINER_OF(ed25519_t, iface, key_i)
 
 static derr_t ed25519_to_jwk(ed25519_t *k, bool pvt, dstr_t *out){
     derr_t e = E_OK;
@@ -264,7 +264,7 @@ typedef struct {
     EVP_PKEY *pkey;
     EVP_MD_CTX *mdctx;
 } es256_t;
-DEF_CONTAINER_OF(es256_t, iface, key_i);
+DEF_CONTAINER_OF(es256_t, iface, key_i)
 
 static derr_t es256_to_jwk(es256_t *k, bool pvt, dstr_t *out);
 

@@ -73,7 +73,7 @@ struct duv_http_t {
     bool timer_closed : 1;
     bool timer_close_complete : 1;
 };
-DEF_CONTAINER_OF(duv_http_t, schedulable, schedulable_t);
+DEF_CONTAINER_OF(duv_http_t, schedulable, schedulable_t)
 
 derr_t duv_http_init(
     duv_http_t *h,
@@ -158,9 +158,9 @@ struct duv_http_req_t {
     bool written;
     bool eoh;
 };
-DEF_CONTAINER_OF(duv_http_req_t, link, link_t);
-DEF_CONTAINER_OF(duv_http_req_t, iface, rstream_i);
-DEF_CONTAINER_OF(duv_http_req_t, schedulable, schedulable_t);
+DEF_CONTAINER_OF(duv_http_req_t, link, link_t)
+DEF_CONTAINER_OF(duv_http_req_t, iface, rstream_i)
+DEF_CONTAINER_OF(duv_http_req_t, schedulable, schedulable_t)
 
 /* Enqueue a request, getting an rstream to read the body from.
 

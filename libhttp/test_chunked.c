@@ -4,12 +4,8 @@
 
 #include "test/test_utils.h"
 
-dstr_rstream_t dstr_r;
-derr_t E = E_OK;
-dstr_t exp_;
-bool success = false;
-rstream_i *base;
-bool force_no_detach = false;
+static rstream_i *base;
+static bool force_no_detach = false;
 
 static bool try_detach(chunked_rstream_t *c){
     (void)c;
@@ -32,8 +28,8 @@ typedef struct {
     bool r_eof;
 } test_reader_t;
 
-static void base_await_cb(rstream_i *base, derr_t e){
-    test_reader_t *tr = base->data;
+static void base_await_cb(rstream_i *_base, derr_t e){
+    test_reader_t *tr = _base->data;
     tr->base_awaited = true;
     if(is_error(e)){
         TRACE_PROP_VAR(&tr->e, &e);

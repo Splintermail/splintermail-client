@@ -10,10 +10,10 @@ typedef struct {
     uv_udp_send_t req;
     uv_buf_t uvbuf;
 } membuf_t;
-DEF_CONTAINER_OF(membuf_t, base, char);
-DEF_CONTAINER_OF(membuf_t, link, link_t);
-DEF_CONTAINER_OF(membuf_t, req, uv_udp_send_t);
-DEF_STEAL_PTR(membuf_t);
+DEF_CONTAINER_OF(membuf_t, base, char)
+DEF_CONTAINER_OF(membuf_t, link, link_t)
+DEF_CONTAINER_OF(membuf_t, req, uv_udp_send_t)
+DEF_STEAL_PTR(membuf_t)
 
 void membuf_free(membuf_t **ptr);
 derr_t membuf_init(membuf_t **ptr);

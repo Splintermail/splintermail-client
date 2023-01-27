@@ -40,7 +40,11 @@ static derr_t convert_to_uvbufs(
 
     // copy values
     for(size_t i = 0; i < nbufs; i++){
-        (*out)[i] = (uv_buf_t){ .base = bufs[i].data, .len = bufs[i].len };
+        // 64-bit windows needs this
+        if(bufs[i].len > ULONG_MAX) LOG_FATAL("data is way too long\n");
+        (*out)[i] = (uv_buf_t){
+            .base = bufs[i].data, .len = (unsigned long)bufs[i].len
+        };
     }
 
     return e;
@@ -93,7 +97,11 @@ static void _alloc_cb(uv_handle_t *handle, size_t suggested, uv_buf_t *buf){
     }
     stream_read_t *read = CONTAINER_OF(p->reads.next, stream_read_t, link);
 
-    *buf = (uv_buf_t){ .base = read->buf.data, .len = read->buf.size };
+    // 64-bit windows needs this
+    if(read->buf.size > ULONG_MAX) LOG_FATAL("read buf is way too long\n");
+    *buf = (uv_buf_t){
+        .base = read->buf.data, .len = (unsigned long)read->buf.size
+    };
     p->allocated = true;
 }
 

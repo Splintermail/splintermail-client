@@ -14,8 +14,8 @@ typedef struct {
     stream_read_t sread;
     rstream_await_cb await_cb;
 } borrow_rstream_t;
-DEF_CONTAINER_OF(borrow_rstream_t, iface, rstream_i);
-DEF_CONTAINER_OF(borrow_rstream_t, schedulable, schedulable_t);
+DEF_CONTAINER_OF(borrow_rstream_t, iface, rstream_i)
+DEF_CONTAINER_OF(borrow_rstream_t, schedulable, schedulable_t)
 
 rstream_i *borrow_rstream(
     borrow_rstream_t *b, scheduler_i *scheduler, stream_i *base

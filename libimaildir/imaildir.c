@@ -448,7 +448,7 @@ static derr_t imaildir_print_msgs(imaildir_t *m){
     derr_t e = E_OK;
     (void)m;
 
-#if FALSE // don't print
+#if 0 // don't print
 
     LOG_INFO("msgs:\n");
     jsw_atrav_t trav;

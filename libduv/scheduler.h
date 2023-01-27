@@ -21,7 +21,7 @@ struct schedulable_t {
     link_t link;
     scheduler_schedule_cb cb;
 };
-DEF_CONTAINER_OF(schedulable_t, link, link_t);
+DEF_CONTAINER_OF(schedulable_t, link, link_t)
 
 void schedulable_prep(schedulable_t *s, scheduler_schedule_cb cb);
 
@@ -38,8 +38,8 @@ struct duv_scheduler_t {
     link_t scheduled;  // schedulable_t->link
     bool closed;
 };
-DEF_CONTAINER_OF(duv_scheduler_t, iface, scheduler_i);
-DEF_CONTAINER_OF(duv_scheduler_t, timer, uv_timer_t);
+DEF_CONTAINER_OF(duv_scheduler_t, iface, scheduler_i)
+DEF_CONTAINER_OF(duv_scheduler_t, timer, uv_timer_t)
 
 derr_t duv_scheduler_init(duv_scheduler_t *s, uv_loop_t *loop);
 
@@ -59,7 +59,7 @@ typedef struct {
     scheduler_i iface;
     link_t scheduled;
 } manual_scheduler_t;
-DEF_CONTAINER_OF(manual_scheduler_t, iface, scheduler_i);
+DEF_CONTAINER_OF(manual_scheduler_t, iface, scheduler_i)
 
 scheduler_i *manual_scheduler(manual_scheduler_t *s);
 void manual_scheduler_run(manual_scheduler_t *s);

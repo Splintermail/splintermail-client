@@ -4,41 +4,41 @@
 #include "test/test_utils.h"
 
 #define MANY (2*sizeof(passthru.write_mem)/sizeof(*passthru.write_mem))
-char bytes[] = "abcdefghijklmnopqrstuvwxyz";
+static char bytes[] = "abcdefghijklmnopqrstuvwxyz";
 
 // globals
-derr_t E = E_OK;
-uv_loop_t loop;
-duv_scheduler_t scheduler;
-uv_tcp_t listener;
-uv_tcp_t peer;
-bool peer_active = false;
-duv_connect_t connector;
-uv_tcp_t tcp;
-duv_passthru_t passthru;
-stream_i *stream = NULL;
-bool finishing = false;
-bool success = false;
+static derr_t E = {0};
+static uv_loop_t loop;
+static duv_scheduler_t scheduler;
+static uv_tcp_t listener;
+static uv_tcp_t peer;
+static bool connected = false;
+static bool peer_active = false;
+static duv_connect_t connector;
+static uv_tcp_t tcp;
+static duv_passthru_t passthru;
+static stream_i *stream = NULL;
+static bool finishing = false;
+static bool success = false;
+static uv_read_cb on_listen_read_start_cb;
 
-stream_read_t reads[MANY];
-char readmem[MANY];
-size_t nreads_launched = 0;
-stream_write_t writes[MANY];
-size_t stream_nread = 0;
-size_t write_cbs = 0;
-size_t shutdown_cbs = 0;
-size_t await_cbs = 0;
-bool expect_await = false;
-bool expect_shutdown = false;
+static stream_read_t reads[MANY];
+static char readmem[MANY];
+static size_t nreads_launched = 0;
+static stream_write_t writes[MANY];
+static size_t stream_nread = 0;
+static size_t write_cbs = 0;
+static size_t shutdown_cbs = 0;
+static size_t await_cbs = 0;
+static bool expect_await = false;
+static bool expect_shutdown = false;
 
-char peer_buf[4096];
-bool using_peer_buf = false;
-size_t peer_nread = 0;
-bool peer_nread_complete = false;
-uv_write_t peer_req;
-uv_shutdown_t shutdown_req;
-
-size_t streams_closed = 0;
+static char peer_buf[4096];
+static bool using_peer_buf = false;
+static size_t peer_nread = 0;
+static bool peer_nread_complete = false;
+static uv_write_t peer_req;
+static uv_shutdown_t shutdown_req;
 
 // PHASES:
 // 1 = many consecutive writes
@@ -306,10 +306,14 @@ static void connect_cb_phase6(duv_connect_t *c, derr_t e){
     stream->shutdown(stream, shutdown_cb);
     expect_shutdown = true;
 
-    // start reading on the peer
-    PROP_GO(&E,
-        duv_tcp_read_start(&peer, peer_alloc_cb, peer_read_cb_phase6),
-    fail);
+    // windows/mac vs linux seem to order connect/accept differently
+    connected = true;
+    if(peer_active){
+        // start reading on the peer
+        PROP_GO(&E,
+            duv_tcp_read_start(&peer, peer_alloc_cb, peer_read_cb_phase6),
+        fail);
+    }
 
     return;
 
@@ -327,8 +331,10 @@ static void on_peer_close_phase5(uv_handle_t *handle){
     peer_nread = 0;
     write_cbs = 0;
     nreads_launched = 0;
+    connected = false;
 
     // start another connection
+    on_listen_read_start_cb = peer_read_cb_phase6;
     PROP_GO(&E,
         duv_connect(
             &loop,
@@ -717,11 +723,14 @@ static void connect_cb_phase1(duv_connect_t *c, derr_t e){
         );
     }
 
-
-    // start reading on the peer
-    PROP_GO(&E,
-        duv_tcp_read_start(&peer, peer_alloc_cb, peer_read_cb_phase1),
-    fail);
+    connected = true;
+    // windows/mac vs linux seem to order connect/accept differently
+    if(peer_active){
+        // start reading on the peer
+        PROP_GO(&E,
+            duv_tcp_read_start(&peer, peer_alloc_cb, peer_read_cb_phase1),
+        fail);
+    }
 
     return;
 
@@ -742,6 +751,14 @@ static void on_listener(uv_stream_t *server, int status){
 
     // accept peer connection
     PROP_GO(&E, duv_tcp_accept(&listener, &peer), fail);
+
+    // windows/mac vs linux seem to order connect/accept differently
+    if(connected){
+        // start reading on the peer
+        PROP_GO(&E,
+            duv_tcp_read_start(&peer, peer_alloc_cb, on_listen_read_start_cb),
+        fail);
+    }
 
     return;
 
@@ -766,6 +783,7 @@ static derr_t test_passthru(void){
     PROP_GO(&e, duv_scheduler_init(&scheduler, &loop), fail_listener);
 
     // make a connection
+    on_listen_read_start_cb = peer_read_cb_phase1;
     PROP_GO(&e,
         duv_connect(
             &loop,

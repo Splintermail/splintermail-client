@@ -3,21 +3,18 @@
 
 #include "test/test_utils.h"
 
-// test hook
-extern void (*_connect_started_hook)(void);
-
-// globals
-derr_t E = E_OK;
-uv_loop_t loop;
-uv_tcp_t listener;
-bool accepted = false;
-bool listener_closed = false;
-uv_tcp_t peer;
-duv_connect_t connector;
-uv_tcp_t tcp;
-uv_async_t async;
-bool finishing = false;
-bool success = false;
+static derr_t E = {0};
+static uv_loop_t loop;
+static uv_tcp_t listener;
+static bool connected = false;
+static bool accepted = false;
+static bool listener_closed = false;
+static uv_tcp_t peer;
+static duv_connect_t connector;
+static uv_tcp_t tcp;
+static uv_async_t async;
+static bool finishing = false;
+static bool success = false;
 
 // PHASES
 // 1 = connect successfully
@@ -185,18 +182,24 @@ static void phase_1_tcp_closed(uv_handle_t *handle){
     listener_closed = true;
 }
 
+static void end_phase_1(void){
+    duv_tcp_close(&peer, noop_close_cb);
+    duv_tcp_close(&tcp, phase_1_tcp_closed);
+}
+
 static void on_connect_phase_1(duv_connect_t *c, derr_t e){
     (void)c;
     if(is_error(e)){
         TRACE(&E, "on_connect_phase_1 errored\n");
         PROP_VAR_GO(&E, &e, fail);
     }
-    if(!accepted){
-        TRACE(&E, "duv_connect succeeded without accept...?\n");
-        ORIG_GO(&E, E_VALUE, "on_connect phase 1 fail", fail);
+
+    /* linux seems to always accept before connection is done, but windows and
+       mac do not, so we accept either order */
+    connected = true;
+    if(accepted){
+        end_phase_1();
     }
-    // close tcp and listener before phase 2
-    duv_tcp_close(&tcp, phase_1_tcp_closed);
     return;
 
 fail:
@@ -216,9 +219,9 @@ static void on_listener(uv_stream_t *server, int status){
     PROP_GO(&E, duv_tcp_accept(&listener, &peer), fail_peer);
 
     accepted = true;
-
-    // close peer connection
-    duv_tcp_close(&peer, noop_close_cb);
+    if(connected){
+        end_phase_1();
+    }
 
     return;
 

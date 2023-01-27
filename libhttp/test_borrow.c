@@ -4,8 +4,8 @@
 
 #include "test/test_utils.h"
 
-derr_t E = E_OK;
-bool finished = false;
+static derr_t E = {0};
+static bool finished = false;
 
 static void write_cb(stream_i *stream, stream_write_t *write, bool ok){
     (void)stream;

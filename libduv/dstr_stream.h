@@ -13,8 +13,8 @@ typedef struct {
     stream_await_cb await_cb;
     derr_t e;
 } dstr_stream_t;
-DEF_CONTAINER_OF(dstr_stream_t, iface, stream_i);
-DEF_CONTAINER_OF(dstr_stream_t, schedulable, schedulable_t);
+DEF_CONTAINER_OF(dstr_stream_t, iface, stream_i)
+DEF_CONTAINER_OF(dstr_stream_t, schedulable, schedulable_t)
 
 stream_i *dstr_stream(
     dstr_stream_t *r,
