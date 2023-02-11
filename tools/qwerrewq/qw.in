@@ -1,0 +1,480 @@
+# qwerrewq grammar
+
+{{#include <tools/qwerrewq/libqw.h>
+#define DSTR_OFF_ZERO(prev) dstr_off_zero(prev, buf, 0)
+
+#define PUT_VOIDP(x) qw_put_voidp(engine, x)
+#define PUT_INSTR(x) qw_put_instr(engine, x)
+#define PUT_DSTR(x) qw_put_dstr(engine, x)
+#define PUT_UINT(x) qw_put_uint(engine, x)
+#define PUT_REF(x) qw_put_ref(engine, x)
+
+static void qw_handle_error(
+    qw_parser_t *p,
+    const dstr_t *buf,
+    qw_engine_t *engine,
+    qw_token_e qw_token,
+    qw_sem_t sem,
+    const unsigned char *expected_mask,
+    const char *loc_summary
+){
+    (void)p;
+    (void)buf;
+    (void)engine;
+    (void)qw_token;
+    (void)expected_mask;
+    (void)loc_summary;
+
+    // longest DBG char is \xNN, or 4 chars, and we have two lines of len 80
+    // 80 * 4 * 2 = 640
+    DSTR_VAR(context, 1024);
+    get_token_context(&context, sem.loc, 80);
+    FFMT_QUIET(stderr, NULL, "at location:\n%x\n", FD(&context));
+    FFMT_QUIET(stderr, NULL, "while parsing: %x\n", FS(loc_summary));
+    FFMT_QUIET(stderr, NULL,
+        "found %x, but expected one of: [", FS(qw_token_name(qw_token))
+    );
+    qw_fprint_mask(stderr, expected_mask, ", ");
+    FFMT_QUIET(stderr, NULL, "]\n");
+    qw_error(engine, "syntax error");
+}
+
+}}
+
+%generator c;
+%prefix qw;
+
+%param buf {const dstr_t *};
+%param engine {qw_engine_t*};
+
+%kwarg semloc_type dstr_off_t;
+%kwarg span_fn dstr_off_extend;
+%kwarg zero_loc_fn DSTR_OFF_ZERO;
+%kwarg error_fn qw_handle_error;
+
+%type scope {qw_comp_scope_t*} { if(!$$->attached) free($$); };
+%type call {qw_comp_call_t*} { free($$); };
+%type instr {qw_instr_f};
+%type uint {uintptr_t};
+%type keymap {jsw_atree_t*};
+%type val {qw_val_t*};
+
+INVALID;
+RAW; # stuff not in QWER...REWQ
+EOF; # end of file (not passed to this parser)
+
+EOQ; # end of QWER...REWQ
+IDENT; # identifier
+NUM; # numeral
+DOT; # .
+STRING; # "..." or '...'
+F_PAREN; # a paren that must be a function call
+OOO_PAREN; # a paren that must not be a function call
+RPAREN; # )
+LSQUARE; # [
+RSQUARE; # ]
+LBRACE; # {
+RBRACE; # }
+PERCENT; # %
+CARET; # ^
+PLUS; # +
+SLASH; # /
+ASTERISK; # *
+COLON; # :
+EQ; # =
+DEQ; # ==
+NEQ; # !=
+BANG; # !
+AND; # &&
+OR; # ||
+ARROW; # ->
+
+# keywords
+IF;
+SWITCH;
+FOR;
+TRUE;
+FALSE;
+NULL;
+PUKE;
+SKIP;
+FUNC;
+
+%root snippet;
+snippet = expr EOQ;
+
+%root config;
+config = dict EOQ;
+
+# PRIORITY OF OPERATORS
+# (...)           # order of operations parens
+# expr.IDENT      # dereference
+# expr(...)       # function call parens
+# !expr           # logical not
+# a%b, a^b        # fmt string, join string
+# a+b, a/b        # concat, pathjoin
+# a==b, a!=b, ... # equality operators
+# a && b          # logical and
+# a || b          # logical or
+# *expr           # expand expr (only in list literals)
+
+count:uint = %empty;
+mark:uint = %empty { $$ = engine->tape.len; };
+instroff:uint = %empty { $$ = engine->tape.len; PUT_INSTR(NULL); };
+
+eq_op:instr = DEQ { $$ = qw_instr_deq; } | NEQ { $$ = qw_instr_neq; };
+cat_op:instr = PLUS { $$ = qw_instr_plus; } | SLASH { $$ = qw_instr_slash; };
+fmt_op:instr =
+  | PERCENT { $$ = qw_instr_percent; }
+  | CARET { $$ = qw_instr_caret; }
+;
+asterisk_op:uint = *(ASTERISK { $$++; });
+
+# when parsing args, we might have to distinguish between IDENT EQ vs
+# IDENT as a base_expr, which takes some extra work.
+#
+# So we have three flavors of expr:
+# - IDENT expressions (id_expr), where the first IDENT is already read
+# - non-IDENT expressions (nid_expr) which don't start with an IDENT
+# - "any" expressions (expr), which start with anything
+
+expr = and_expr expr_post;
+and_expr = eq_expr and_expr_post;
+eq_expr = cat_expr eq_expr_post;
+cat_expr = fmt_expr cat_expr_post;
+fmt_expr = bang_expr fmt_expr_post;
+
+bang_expr =
+    count:nbangs
+    *(BANG {$nbangs++;})
+    dotcall
+    { for(uintptr_t i = 0; i < $nbangs; i++) PUT_INSTR(qw_instr_bang); }
+;
+
+dotcall = base_expr dotcall_post;
+
+expr_post = *(OR and_expr { PUT_INSTR(qw_instr_or); });
+and_expr_post = *(AND eq_expr { PUT_INSTR(qw_instr_and); });
+eq_expr_post = [eq_op:op cat_expr:x2  { PUT_INSTR($op); }]; # not chainable
+cat_expr_post = *(cat_op:op fmt_expr { PUT_INSTR($op); });
+fmt_expr_post = *(fmt_op:op bang_expr { PUT_INSTR($op); });
+dotcall_post =
+    *(
+      | DOT IDENT:id
+        {{  PUT_INSTR(qw_instr_dot);
+            PUT_DSTR(dstr_from_off(@id));
+        }}
+      | F_PAREN args:a RPAREN
+        # example function:  func(a b c=d e=f -> ...)
+        # example call:      myfunc(x, b=y, e=z)
+        # and instructions:  <myfunc> <x> <y> <z> call.1.2 b e
+        { PUT_INSTR(qw_instr_call); }
+        # put nargs
+        { PUT_UINT($a->nargs); }
+        # put nkwargs
+        { PUT_UINT($a->nkwargs); }
+        # put each kwarg name
+        {{  for(uintptr_t i = 0; i < $a->nkwargs; i++){
+                PUT_DSTR($a->kwnames[i]);
+            }
+        }}
+    )
+;
+
+args:call =
+    { $$ = qw_comp_call_new(engine); }
+    *(
+      | nid_expr
+        # non-identifier positional arg
+        { $$->nargs++; }
+      | IDENT:id
+        (
+          | id_expr!(id)
+            # identifier positional arg
+            { $$->nargs++; }
+          | EQ expr
+            { qw_comp_call_add_kwarg($$, dstr_from_off(@id)); }
+            # keyword arg; no more positional args allowed
+            *(
+                IDENT:id2 EQ expr
+                { qw_comp_call_add_kwarg($$, dstr_from_off(@id2)); }
+            )
+            %return
+        )
+    )
+;
+
+id_expr(id) = id_and_expr!(id) expr_post;
+id_and_expr(id) = id_eq_expr!(id) and_expr_post;
+id_eq_expr(id) = id_cat_expr!(id) eq_expr_post;
+id_cat_expr(id) = id_fmt_expr!(id) cat_expr_post;
+id_fmt_expr(id) = id_dotcall!(id) fmt_expr_post;
+# no id_bang_expr, since the BANG would preceed the IDENT
+id_dotcall(id) = ref!(id) dotcall_post;
+
+nid_expr = nid_and_expr expr_post;
+nid_and_expr = nid_eq_expr and_expr_post;
+nid_eq_expr = nid_cat_expr eq_expr_post;
+nid_cat_expr = nid_fmt_expr cat_expr_post;
+nid_fmt_expr = nid_bang_expr fmt_expr_post;
+
+nid_bang_expr =
+    (
+      # one or more BANGs "unlock" regular dotcalls
+      | count:nbangs
+        1*(BANG {$nbangs++;})
+        dotcall
+        { for(uintptr_t i = 0; i < $nbangs; i++) PUT_INSTR(qw_instr_bang); }
+      # otherwise we need an nid_dotcall
+      | nid_dotcall
+    )
+;
+
+nid_dotcall = nid_base_expr dotcall_post;
+
+nid_base_expr =
+  | ooo
+  | if
+  | switch
+  | func
+  | dict
+  | list_or_for
+  | literal:l { PUT_INSTR(qw_instr_put); PUT_VOIDP($l); }
+  | PUKE      { PUT_INSTR(qw_instr_puke); }
+;
+
+literal:val =
+  | TRUE      { $$ = &thetrue; }
+  | FALSE     { $$ = &thefalse; }
+  | NULL      { $$ = &thenull; }
+  | SKIP      { $$ = &theskip; }
+  | STRING:s
+    {{  qw_string_t *val = qw_engine_malloc(engine, sizeof(*val), PTRSIZE);
+        *val = (qw_string_t){
+            .type = QW_VAL_STRING,
+            .dstr = parse_string_literal(engine, dstr_from_off(@s)),
+        };
+        $$ = &val->type;
+    }}
+;
+
+
+base_expr = nid_base_expr | IDENT:id ref!(id);
+
+# either a global reference or a parameter reference
+ref(id) = %empty { qw_compile_ref(engine, dstr_from_off(@id)); };
+
+ooo = OOO_PAREN expr RPAREN;
+
+if =
+    IF
+    F_PAREN
+    expr
+    count:prev_jmp
+    1*(
+        COLON
+        { PUT_INSTR(qw_instr_ifjmp); }
+        # don't know the number of instructions to jump yet
+        instroff:ifjmp
+        mark:a
+        expr
+        { PUT_INSTR(qw_instr_jmp); }
+        instroff:jmp
+        mark:b
+        { engine->tape.data[$ifjmp] = (void*)($b - $a); }
+        # We don't know how far to jump to the end yet, but we can use this
+        # space to build a reverse-linked list of jumps to fill in.
+        { engine->tape.data[$jmp] = (void*)$prev_jmp; $prev_jmp = $jmp; }
+        expr
+    )
+    RPAREN
+    mark:end
+    # now go back and reconfigure the jmp instructions to point to here
+    {{  uintptr_t prev_jmp = $prev_jmp;
+        while(prev_jmp){
+            uintptr_t temp = (uintptr_t)engine->tape.data[prev_jmp];
+            engine->tape.data[prev_jmp] = (void*)($end - prev_jmp - 1);
+            prev_jmp = temp;
+        }
+    }}
+;
+
+switch =
+    SWITCH
+    F_PAREN
+    expr
+    count:prev_jmp
+    expr
+    1*(
+        COLON
+        { PUT_INSTR(qw_instr_swjmp); }
+        # don't know the number of instructions to jump yet
+        instroff:swjmp
+        mark:a
+        expr
+        { PUT_INSTR(qw_instr_jmp); }
+        instroff:jmp
+        mark:b
+        { engine->tape.data[$swjmp] = (void*)($b - $a); }
+        # We don't know how far to jump to the end yet, but we can use this
+        # space to build a reverse-linked list of jumps to fill in.
+        { engine->tape.data[$jmp] = (void*)$prev_jmp; $prev_jmp = $jmp; }
+        expr
+    )
+    RPAREN
+    mark:end
+    # now go back and reconfigure the jmp instructions to point to here
+    {{  uintptr_t prev_jmp = $prev_jmp;
+        while(prev_jmp){
+            uintptr_t temp = (uintptr_t)engine->tape.data[prev_jmp];
+            engine->tape.data[prev_jmp] = (void*)($end - prev_jmp - 1);
+            prev_jmp = temp;
+        }
+    }}
+    # drop the initial value we've been comparing against
+    { PUT_INSTR(qw_instr_swap); }
+    { PUT_INSTR(qw_instr_drop); }
+;
+
+keymap:keymap =
+    %empty
+    {{  $$ = qw_engine_malloc(engine, sizeof(jsw_atree_t), PTRSIZE);
+        jsw_ainit($$, jsw_cmp_dstr, jsw_get_qw_key);
+    }}
+;
+
+lazy_expr =
+    count:nrefs_before { $nrefs_before = engine->refs_emitted; }
+    instroff:lazy
+    instroff:ninstr
+    mark:a
+    expr
+    mark:b
+    {{  if($nrefs_before == engine->refs_emitted){
+            // no refs in this expression, it's safe to emit a lazy
+            engine->tape.data[$lazy] = (void*)qw_instr_lazy;
+            engine->tape.data[$ninstr] = (void*)($b - $a);
+        }else{
+            // refs detected, disallow lazy evaluation
+            engine->tape.data[$lazy] = (void*)qw_instr_noop;
+            engine->tape.data[$ninstr] = (void*)qw_instr_noop;
+        }
+    }}
+;
+
+dict =
+    keymap:keymap
+    LBRACE
+    *(
+        IDENT:key EQ lazy_expr
+        { qw_keymap_add_key(engine, $keymap, dstr_from_off(@key)); }
+    )
+    RBRACE
+    { PUT_INSTR(qw_instr_dict); }
+    { PUT_VOIDP($keymap); }
+;
+
+list_or_for = LSQUARE (list | for) RSQUARE;
+
+# returns number of instructions
+list_item:uint =
+    mark:a
+    asterisk_op:ast
+    expr
+    { for(uintptr_t i = 0; i < $ast; i++) PUT_INSTR(qw_instr_asterisk); }
+    mark:b
+    { $$ = $b - $a; }
+;
+
+list =
+    # prepare for the list
+    # example code: [a *b c]
+    # instructions: LIST.N <a> <b> * <c>
+    { PUT_INSTR(qw_instr_list); }
+    # ninstrs, not yet known
+    instroff:ninstr
+    count:total
+    *(list_item:instr_count { $total += $instr_count; } )
+    { engine->tape.data[$ninstr] = (void*)$total; }
+;
+
+scope:scope = %empty { $$ = qw_comp_scope_new(engine); };
+
+for =
+    FOR
+    scope:s  { $s->binding = false; }
+    1*(
+        IDENT:id EQ expr
+        { qw_comp_scope_add_var($s, dstr_from_off(@id)); }
+    )
+    ARROW
+    # prepare for the for loop
+    # example code:  [for a=[1 2 3] b=[4 5 6] -> a+b]
+    # instructions:  <[1 2 3]> <[4 5 6]> for.2.N <a+b>
+    { PUT_INSTR(qw_instr_for); }
+    # scope_id
+    { PUT_UINT($s->scope_id); }
+    # nvars
+    { PUT_UINT($s->nvars); }
+    # ninstrs, not yet known
+    instroff:ninstr
+    { qw_comp_scope_enter(engine, $s); }
+    list_item:instr_count
+    { qw_comp_scope_pop(engine); }
+    { engine->tape.data[$ninstr] = (void*)$instr_count; }
+;
+
+func =
+    FUNC
+    F_PAREN
+    count:nkwargs
+    scope:s  { $s->binding = true; }
+    [
+        1*(
+            IDENT:id
+            { qw_comp_scope_add_var($s, dstr_from_off(@id)); }
+        )
+        [
+            EQ expr { $nkwargs++; }
+            *(
+                IDENT:id EQ expr
+                {{  qw_comp_scope_add_var($s, dstr_from_off(@id));
+                    $nkwargs++;
+                }}
+            )
+        ]
+    ]
+    ARROW
+    # prepare for this function
+    #
+    # example function:  func(a b c=d e=f -> z^[a b d f])
+    # and instructions:  <d> <f> func.ID.2.2.N.M a b c d <z^[a b d f]> binds...
+    count:nargs { $nargs = $s->nvars - $nkwargs; }
+    # function instruction
+    { PUT_INSTR(qw_instr_func); }
+    # put scope id
+    { PUT_UINT($s->scope_id); }
+    # put nargs
+    { PUT_UINT($s->nvars - $nkwargs); }
+    # put nkwargs
+    { PUT_UINT($nkwargs); }
+    # placeholder for number of instructions
+    instroff:ninstr
+    # placeholder for number of binds
+    instroff:nbinds
+    # put each parameter name
+    { for(uintptr_t i = 0; i < $s->nvars; i++) PUT_DSTR($s->vars[i]); }
+    # enter scope and compile the function body
+    { qw_comp_scope_enter(engine, $s); }
+    mark:a
+    expr
+    RPAREN
+    mark:b
+    { qw_comp_scope_pop(engine); }
+    # set number of instructions
+    { engine->tape.data[$ninstr] = (void*)($b - $a); }
+    # set number of binds
+    { engine->tape.data[$nbinds] = (void*)($s->nbinds); }
+    # put the bind refs we gathered
+    { for(uintptr_t i = 0; i < $s->nbinds; i++) PUT_REF($s->binds[i]); }
+;

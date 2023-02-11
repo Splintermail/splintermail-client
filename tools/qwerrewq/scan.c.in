@@ -1,0 +1,171 @@
+#include <tools/qwerrewq/libqw.h>
+
+#include <stdlib.h>
+
+// returns the position of the next guard, or SIZE_MAX if none is found
+static size_t find_guard(dstr_t buf, size_t start, dstr_t guard){
+    size_t match = 0;
+    for(size_t i = start; i < buf.len; i++){
+        if(buf.data[i] != guard.data[match]){
+            match = 0;
+            continue;
+        }
+        if(++match < guard.len) continue;
+        // guard is matched
+        // (if index is zero and guard.len is 1, we should emit 0, not -1)
+        return i + 1 - guard.len;
+    }
+    return SIZE_MAX;
+}
+
+static qw_token_e classify_paren(dstr_t buf, size_t used){
+    if(used < 2) return QW_OOO_PAREN;
+    unsigned char prev = ((unsigned char*)buf.data)[used-2];
+    if(
+        (prev >= 'a' && prev <= 'z')
+        || (prev >= 'A' && prev <= 'Z')
+        || (prev >= '0' && prev <= '9')
+        || prev == '_'
+        || prev == ')'
+        || prev >= 0x80
+    ){
+        return QW_F_PAREN;
+    }
+    return QW_OOO_PAREN;
+}
+
+qw_scanned_t qw_scanner_next(qw_scanner_t *s){
+    dstr_t buf = *s->buf;
+    size_t start = s->used;
+    size_t used = s->used;
+
+    // inactive, manual parsing
+    if(!s->active){
+        // eof check
+        if(used >= buf.len){
+            return (qw_scanned_t){
+                .token = QW_EOF,
+                .loc = (dstr_off_t){ .buf = s->buf, .start = start, .len = 0 },
+            };
+        }
+
+        // find the next preguard
+        size_t pre = find_guard(buf, start, *s->preguard);
+        if(pre == SIZE_MAX){
+            // no preguard found
+            s->used = buf.len;
+            return (qw_scanned_t){
+                .token = QW_RAW,
+                .loc = (dstr_off_t){
+                    .buf = s->buf,
+                    .start = start,
+                    .len = buf.len - start,
+                },
+            };
+        }
+        // preguard found, find matching postguard
+        size_t post = find_guard(buf, pre + s->preguard->len, *s->postguard);
+        if(post == SIZE_MAX){
+            LOG_FATAL("unmatched preguard\n");
+        }
+        s->qw_end = post;
+        s->active = true;
+        s->used = pre + s->preguard->len;
+        return (qw_scanned_t){
+            .token = QW_RAW,
+            .loc = (dstr_off_t){
+                .buf = s->buf,
+                .start = start,
+                .len = pre - start,
+            },
+        };
+    }
+
+    size_t qw_end = s->qw_end;
+
+    qw_token_e token = 0;
+    size_t backup;
+
+    // disable YYFILL and use a check in YYPEEK that emits a sentinel instead
+    #define YYPEEK() used < qw_end ? ((unsigned char*)buf.data)[used] : '\0'
+    #define YYSKIP() used++
+    #define YYCTYPE unsigned char
+    #define YYBACKUP() backup = used
+    #define YYRESTORE() used = backup
+
+rescan:
+    start = used;
+    if(used >= qw_end){
+        s->active = false;
+        s->used = s->qw_end + (s->postguard ? s->postguard->len : 0);
+        return (qw_scanned_t){
+            .token = QW_EOQ,
+            .loc = (dstr_off_t){ .buf = s->buf, .start = start, .len = 0 },
+        };
+    }
+
+    /*!re2c
+        re2c:yyfill:enable = 0;
+
+        alpha        = [A-Za-z\x80-\xFF];
+        digit        = [0-9];
+        ident        = [a-zA-Z\x80-\xFF_][a-zA-Z\x80-\xFF_0-9]*;
+        dqstring     = "\""(("\\"([\\nrt'"]|("x"[a-fA-F0-9][0-9])))|[\x20-\x21\x23-\x2E\x30-\x7E\x80-\xFF])*"\"";
+        sqstring     = "'"(("\\"([\\nrt'"]|("x"[a-fA-F0-9][0-9])))|[\x20-\x26\x28-\x2E\x30-\x7E\x80-\xFF])*"'";
+        ws           = [\x0a\x0d ]+;
+        comment      = "#"[^\n\x00]*"\n";
+
+        "!"          { token = QW_BANG; goto done; }
+        "%"          { token = QW_PERCENT; goto done; }
+        "("          { token = classify_paren(buf, used); goto done; }
+        ")"          { token = QW_RPAREN; goto done; }
+        "*"          { token = QW_ASTERISK; goto done; }
+        "+"          { token = QW_PLUS; goto done; }
+        "."          { token = QW_DOT; goto done; }
+        "/"          { token = QW_SLASH; goto done; }
+        ":"          { token = QW_COLON; goto done; }
+        "="          { token = QW_EQ; goto done; }
+        "["          { token = QW_LSQUARE; goto done; }
+        "]"          { token = QW_RSQUARE; goto done; }
+        "^"          { token = QW_CARET; goto done; }
+        "{"          { token = QW_LBRACE; goto done; }
+        "}"          { token = QW_RBRACE; goto done; }
+
+        "&&"         { token = QW_AND; goto done; }
+        "||"         { token = QW_OR; goto done; }
+        "->"         { token = QW_ARROW; goto done; }
+        "=="         { token = QW_DEQ; goto done; }
+        "!="         { token = QW_NEQ; goto done; }
+
+        "if"         { token = QW_IF; goto done; }
+        "switch"     { token = QW_SWITCH; goto done; }
+        "for"        { token = QW_FOR; goto done; }
+        "true"       { token = QW_TRUE; goto done; }
+        "false"      { token = QW_FALSE; goto done; }
+        "null"       { token = QW_NULL; goto done; }
+        "puke"       { token = QW_PUKE; goto done; }
+        "skip"       { token = QW_SKIP; goto done; }
+        "func"       { token = QW_FUNC; goto done; }
+
+        ident        { token = QW_IDENT; goto done; }
+        digit+       { token = QW_NUM; goto done; }
+
+        dqstring     { token = QW_STRING; goto done; }
+        sqstring     { token = QW_STRING; goto done; }
+
+        comment      { goto rescan; }
+        ws           { goto rescan; }
+
+        *            { token = QW_INVALID; goto done; }
+    */
+
+done:
+
+    s->used = used;
+    return (qw_scanned_t){
+        .token = token,
+        .loc = (dstr_off_t){
+            .buf = s->buf, .start = start, .len = used - start,
+        },
+    };
+}

@@ -133,6 +133,7 @@ function(default_compile_options tgt allow_asan)
         target_compile_options("${tgt}" PRIVATE "-fstrict-aliasing")
         target_compile_options("${tgt}" PRIVATE "-Wstrict-aliasing=2")
         target_compile_options("${tgt}" PRIVATE "-Wno-missing-field-initializers")
+        target_compile_options("${tgt}" PRIVATE "-Wno-comment")
         target_compile_options("${tgt}" PRIVATE "-Wvla")
         target_compile_options("${tgt}" PRIVATE "-fdiagnostics-color=always")
         # add some compiler hardening flags

@@ -969,7 +969,7 @@ class Grammar:
         return e
 
     def token(self, name, typ=None, loc=None):
-        assert name not in self.exprs
+        assert name not in self.exprs, name
         e = Token(name, typ, loc)
         self.exprs[name] = e
         return e
@@ -1923,6 +1923,11 @@ class C:
     def print_code(self, code, i, label_guard):
         if code is None:
             return
+        if label_guard:
+            print(
+                i + "(void)call;  // avoid label-then-declaration",
+                file=self.file,
+            )
         for c in code:
             if c.tag in (None, "c"):
                 self.fprint(i + "// USER CODE")
@@ -1936,11 +1941,6 @@ class C:
                     text = re.sub("@([a-zA-Z_][a-zA-Z0-9_]*)", "YYLOC_\\1", text)
                     # don't use fprint; we shouldn't be subbing in internal vars
                     text = textwrap.indent(text, i)
-                    if label_guard:
-                        print(
-                            i + "(void)call;  // avoid label-then-declaration",
-                            file=self.file,
-                        )
                     print(text, file=self.file)
                     self.lines += text.count("\n") + 1
 
@@ -2004,7 +2004,7 @@ class C:
         opt = self.tco.group_bit(tokens.union(f))
         if opt:
             # optimized lookup group exists
-            return "p->groupmask |= 0x%d"%opt
+            return "p->groupmask |= 0x%x"%opt
         nargs, args = self._token_list_args(t, f)
         return "${prefix_}mask_set(p->mask, %d, %s)"%(nargs, args)
 
