@@ -663,6 +663,8 @@ derr_t dstr_fread(FILE* f, dstr_t* buffer, size_t count, size_t* amnt_read);
              E_FIXEDSIZE
              E_OS */
 
+derr_t dstr_fread_all(FILE* f, dstr_t* buffer);
+
 derr_type_t dstr_fwrite_quiet(FILE* f, const dstr_t* buffer);
 derr_t dstr_fwrite(FILE* f, const dstr_t* buffer);
 /*  throws : E_OS */

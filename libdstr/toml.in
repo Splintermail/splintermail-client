@@ -1,0 +1,127 @@
+# toml grammar
+
+YOU GAVE THIS UP BECAUSE YOU REALIZED YOU DIDN'T CARE ABOUT IT YET
+
+really what you want is a yaml-style config like this:
+
+    listeners:
+     - port: 993
+       addr: 127.0.0.1
+       tls: true
+     - port: 1993
+       addr: 127.0.0.1
+       tls: false
+
+In toml, that'd be kinda awkward:
+    listeners = [
+      { port = 993, addr = "127.0.0.1", tls = true },
+      { tls = 1993, addr = "127.0.0.1", tls = false },
+    ]
+
+And the toml-equivalent CLI would be...
+
+    --listener '{port = 993, addr = "127.0.0.1", tls = true' \
+    --listener '{port = 1993, addr = "127.0.0.1", tls = false'
+
+Well, that sucks.  So maybe some sort of shorthand:
+
+    --listener imaps://127.0.0.1:993 \
+    --listener imap://127.0.0.1:1993
+
+Well you like that just fine.  But isn't the current config file strategy
+actually better than the toml version?
+
+    listener tls://127.0.0.1:993
+    listener starttls://127.0.0.1:993
+    listener insecure://127.0.0.1:1993
+
+That's pretty hard to beat.
+
+CONCLUSION
+
+If we needed a large structured config that did not involve many lists, then
+toml would offer a clear config-to-cli mapping, surely.  But the most important
+interface to any executable in the system is the user-facing splintermail
+binary.  And I'm getting more and more convinced that pains must be taken to
+make it as simple as possible, so if a toml config were needed then probably
+something else was wrong.
+
+
+# tokens
+
+
+
+# expressions
+
+ws=
+newline=
+
+boolean = TRUE | FALSE;
+
+string = ml_basic_string | basic_string | ml_literal_string | literal_string;
+# I think strings need to be parsed by hand, not by normal tokenizer/parser
+# the string parser will emit STRING_BODY tokens to pass info into the parser.
+ml_basic_string = TDQUOTE STRING_BODY TDQUOTE;
+basic_string = DQUOTE STRING_BODY DQUOTE;
+ml_literal_string = TSQUOTE STRING_BODY TSQUOTE;
+literal_string = SQUOTE STRING_BODY SQUOTE;
+
+# integer and float parsing is in the scanner (or... should they?)
+INTEGER;
+FLOAT;
+
+date_time = offest_date_time | local_date_time | local_date | local_time;
+
+date_fullyear = INTEGER; # [1000, 9999]
+date_month = INTEGER; # [1, 12]
+date_mday = INTEGER; # [1, 31], based on month/year
+time_delim = 'T' | 't' | ' ';
+time_hour = INTEGER; # [00-23]
+time_minute = INTEGER; # [00-59]
+time_second = INTEGER; # [00-59]
+time_secfrac = DOT INTEGER 1*DIGIT
+time_offset = 'Z' | 'z' | ((PLUS|MINUS) time_hour COLON time_minute)
+
+partial_time = time_hour COLON time_minute COLON time_second [time_secfrac];
+full_date = date_fullyear MINUS date_month MINUS date_mday;
+full_time = partial_time time_offset;
+
+offset_date_time = full_date time_delim full_time;
+local_date_time = full_date time_delim partial_time;
+local_date = full_date;
+local_time = partial_time;
+
+array = LSQUARE ws_comment_newline array_values_ws RSQUARE;
+array_values_ws = *(
+    val
+    ws_comment_newline
+    ( COMMA | %return )
+    ws_comment_newline
+);
+ws_comment_newline = *( wschar | [COMMENT] newline)
+
+table = std_table | array_table;
+
+std_table = LSQUARE ws key_ws RSQUARE;
+
+inline_table = LBRACE ws inline_table_keyvals RBRACE;
+inline_table_keyvals = *(
+    keyval
+    ws
+    (COMMA | %return)
+    ws
+);
+
+array_table = LBRACKET LBRACKET ws key_ws RBRACKET RBRACKET;
+
+keyval = key_ws EQ ws val;
+key_ws = simple_key ws *(DOT ws simple_key ws)
+simple_key = quoted_key | unquoted_key;
+unquoted_key = # XXX
+quoted_key = basic_string | literal_string;
+
+val = string | boolean | array | inline_table | date_time | FLOAT | INTEGER;
+
+%root doc
+doc = expression *( 1*newline (expression | %return) );
+expression = 1*ws [ keyval | table ] [COMMENT];

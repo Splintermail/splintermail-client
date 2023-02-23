@@ -1129,10 +1129,29 @@ derr_t dstr_fread(FILE* f, dstr_t* buffer, size_t count, size_t* amnt_read){
     if(ar > 0){
         buffer->len += ar;
     }else if(ferror(f)){
-        TRACE(&e, "%x: %x\n", FS("fread"), FE(&errno));
-        ORIG(&e, E_OS, "error in fread");
+        ORIG(&e, E_OS, "fread: %x\n", FE(&errno));
     }
     if(amnt_read) *amnt_read = ar;
+    return e;
+}
+
+derr_t dstr_fread_all(FILE* f, dstr_t* buffer){
+    derr_t e = E_OK;
+
+    do {
+        // support both dynamically-sized and fixed-size buffers
+        size_t count;
+        if(buffer->fixed_size){
+            count = buffer->size - buffer->len;
+            if(count == 0) ORIG(&e, E_FIXEDSIZE, "buffer is full");
+        }else{
+            count = 4096;
+            PROP(&e, dstr_grow(buffer, buffer->len + count) );
+        }
+        buffer->len += fread(buffer->data + buffer->len, 1, count, f);
+        if(ferror(f)) ORIG(&e, E_OS, "fread: %x\n", FE(&errno));
+    } while(!feof(f));
+
     return e;
 }
 
