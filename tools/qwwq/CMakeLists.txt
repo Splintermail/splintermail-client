@@ -1,4 +1,4 @@
-set(raw_srcs types.c instr.c compile.c engine.c qw.c convert.c)
+set(raw_srcs types.c instr.c builtins.c compile.c engine.c qw.c convert.c)
 
 foreach(src ${raw_srcs})
     define_file_logname_for_source("${src}" "${src}")
@@ -69,10 +69,19 @@ elseif("${CMAKE_C_COMPILER_ID}" MATCHES "Clang")
     # allow uintptr_t -> uintptr_t:24 bitfield assignment
     source_compile_options(convert.c -Wno-conversion)
 elseif("${CMAKE_C_COMPILER_ID}" STREQUAL "MSVC")
-    # msvc: noop
+    # msvc: allow qw_handle_error() to not return without warnings
+    source_compile_options("${qw_parse_c}" "/wd4702")  # unreachable code
 endif()
 
-add_executable(qwerrewq main.c)
-default_compile_options(qwerrewq TRUE)
-define_file_logname_for_target(qwerrewq)
-target_link_libraries(qwerrewq PUBLIC qw)
+add_executable(qwwq main.c)
+default_compile_options(qwwq TRUE)
+define_file_logname_for_target(qwwq)
+target_link_libraries(qwwq PUBLIC qw)
+
+if(BUILD_TESTS)
+    add_executable(test_qw test_qw.c)
+    target_link_libraries(test_qw PUBLIC qw)
+    default_compile_options(test_qw TRUE)
+    define_file_logname_for_target(test_qw)
+    add_test(NAME "do_test_qw" COMMAND "./test_qw")
+endif()

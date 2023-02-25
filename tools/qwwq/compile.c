@@ -1,4 +1,4 @@
-#include "tools/qwerrewq/libqw.h"
+#include "tools/qwwq/libqw.h"
 
 #include <stdlib.h>
 
@@ -50,9 +50,9 @@ static qw_ref_t qw_comp_scope_add_bind(
     return qw_ref(scope->scope_id, param_idx);
 }
 
-void qw_compile_ref(qw_engine_t *engine, dstr_t name){
+void qw_compile_ref(qw_env_t env, dstr_t name){
     qw_comp_scope_t *bind_scope = NULL;
-    qw_comp_scope_t *scope = engine->comp_scope;
+    qw_comp_scope_t *scope = env.engine->comp_scope;
     while(scope){
         for(size_t i = 0; i < scope->nvars; i++){
             if(!dstr_eq(name, scope->vars[i])) continue;
@@ -62,10 +62,10 @@ void qw_compile_ref(qw_engine_t *engine, dstr_t name){
                 // bind this variable and use the bound reference instead
                 ref = qw_comp_scope_add_bind(bind_scope, name, ref);
             }
-            qw_put_instr(engine, qw_instr_ref);
-            qw_put_ref(engine, ref);
+            qw_put_instr(env, qw_instr_ref);
+            qw_put_ref(env, ref);
             // track total refs emitted
-            engine->refs_emitted++;
+            env.engine->refs_emitted++;
             return;
         }
         // name not in current scope
@@ -76,6 +76,6 @@ void qw_compile_ref(qw_engine_t *engine, dstr_t name){
         scope = scope->prev;
     }
     // name not found in any scope, emit a global lookup instead
-    qw_put_instr(engine, qw_instr_global);
-    qw_put_dstr(engine, name);
+    qw_put_instr(env, qw_instr_global);
+    qw_put_dstr(env, name);
 }

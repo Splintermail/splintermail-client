@@ -51,4 +51,4 @@ uintptr_t qw_comp_scope_add_var(qw_comp_scope_t *scope, dstr_t name);
 // (defined in convert.c which requires compiles with different flags)
 qw_ref_t qw_ref(uintptr_t scope_id, uintptr_t param_idx);
 
-void qw_compile_ref(qw_engine_t *engine, dstr_t name);
+void qw_compile_ref(qw_env_t env, dstr_t name);

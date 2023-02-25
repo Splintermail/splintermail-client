@@ -1,0 +1,83 @@
+This is a template.
+
+# basics
+a = QW a WQ
+b = QW b WQ
+d.a = QW d.a WQ
+d.d.b = QW d.d.b WQ
+l = [QW " "^l WQ]
+exp = [QW " "^exp WQ]
+"hello %s, goodbye %s"%["world" "room"] = "QW
+    'hello %s, goodbye %s'%['world' 'room']
+WQ"
+
+# functions
+postfix(exp) = QW postfix(" "^exp) WQ
+postfix(exp ", right?") = QW postfix(text=" "^exp suffix=", right?") WQ
+
+# recursion
+recurse("") = "QW recurse("") WQ"
+
+# closures
+mkfix(", I think")("hello world") = QW mkfix(", I think")("hello world") WQ
+
+# for loops
+[for a=["yes" "no"] b=["dear" "honey"] -> mkfix(", "+b)(a) ] = ["QW
+    "\" \""^[for a=["yes" "no"] b=["dear" "honey"] -> mkfix(", "+b)(a) ]
+    WQ"]
+
+# switch statements
+[for x=["A" "B" "C"] -> switch(x a:"a!" b:"b!" "default!")] = [QW
+    " "^[for x=["A" "B" "C"] -> switch(x a:"a!" b:"b!" "default!")]
+    WQ]
+
+# if statements
+[for x=["A" "B" "C"] -> if(x=="A":"a!" x=="B":"b!" "else!")] = [QW
+    " "^[for x=["A" "B" "C"] -> if(x=="A":"a!" x=="B":"b!" "else!")]
+    WQ]
+
+# string methods
+" abcd ".strip() = "QW " abcd ".strip() WQ"
+" abcd ".lstrip() = "QW " abcd ".lstrip() WQ"
+" abcd ".rstrip() = "QW " abcd ".rstrip() WQ"
+" abcd ".strip("a d") = "QW " abcd ".strip("a d") WQ"
+" abcd ".strip(chars="a d") = "QW ' abcd '.strip(chars='a d') WQ"
+"AbCd".upper() = "QW 'AbCd'.upper() WQ"
+"AbCd".lower() = "QW 'AbCd'.lower() WQ"
+' "abcd" "qwer" '.repl(' "' ' ``').repl('" ' "'' ") = "QW
+    ' "abcd" "qwer" '.repl(' "' ' ``').repl('" ' "'' ") WQ"
+
+wraptest = QW "abcdefghijlmknopqrstuv w x y z\n\na\nb\nc\nd\n".wrap("5" hang="  : ") WQ.
+
+pretest = 'QW "a\nb\n\nc\nd\ne\n".pre(":") WQ'
+posttest = 'QW "a\nb\n\nc\nd\ne".post(":" skip_empty=true) WQ'
+
+# dict method
+d.get("a") = "QW d.get('a') WQ"
+
+# table builtin
+QW
+table([
+    ["a" "bbbb" "c"]
+    ["aaaa" "b" "c"]
+    ["a" "b" "cccc"]
+    ["a" "b\nbb" ""]
+    ["a" "b\nbb" "cccc"]
+])
+WQ
+
+# relpath builtin
+relpath(asdf) = QW relpath("/asdf") WQ
+confrel = QW confrel WQ
+
+# cat builtin
+QW cat(relpath("textfile")).rstrip() WQ
+# </cat>
+
+# exists builtin
+exists("qw.conf") = QW if(exists(relpath("qw.conf")):"yes" "no") WQ
+exists("asdfzxcv") = QW if(exists(relpath("asdfzxcv")):"yes" "no") WQ
+
+# command-line dynamics
+dynamic = "QW dynamic WQ"
+static = "QW static WQ"

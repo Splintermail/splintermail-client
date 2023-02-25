@@ -1,0 +1,91 @@
+This is a template.
+
+# basics
+a = A
+b = B
+d.a = AA
+d.d.b = BBB
+l = [A B AA]
+exp = [B A B AA A]
+"hello %s, goodbye %s"%["world" "room"] = "hello world, goodbye room"
+
+# functions
+postfix(exp) = B A B AA A, yo
+postfix(exp ", right?") = B A B AA A, right?
+
+# recursion
+recurse("") = "aaaaaaaaa"
+
+# closures
+mkfix(", I think")("hello world") = hello world, I think
+
+# for loops
+[for a=["yes" "no"] b=["dear" "honey"] -> mkfix(", "+b)(a) ] = ["yes, dear" "no, honey"]
+
+# switch statements
+[for x=["A" "B" "C"] -> switch(x a:"a!" b:"b!" "default!")] = [a! b! default!]
+
+# if statements
+[for x=["A" "B" "C"] -> if(x=="A":"a!" x=="B":"b!" "else!")] = [a! b! else!]
+
+# string methods
+" abcd ".strip() = "abcd"
+" abcd ".lstrip() = "abcd "
+" abcd ".rstrip() = " abcd"
+" abcd ".strip("a d") = "bc"
+" abcd ".strip(chars="a d") = "bc"
+"AbCd".upper() = "ABCD"
+"AbCd".lower() = "abcd"
+' "abcd" "qwer" '.repl(' "' ' ``').repl('" ' "'' ") = " ``abcd'' ``qwer'' "
+
+wraptest = abcdefghijlmknopqrstuv
+  : w
+  : x
+  : y
+  : z
+
+a b c
+  : d
+.
+
+pretest = ':a
+:b
+:
+:c
+:d
+:e
+'
+posttest = 'a:
+b:
+
+c:
+d:
+e:'
+
+# dict method
+d.get("a") = "AA"
+
+# table builtin
+a    bbbb c
+aaaa b    c
+a    b    cccc
+a    b
+     bb
+a    b    cccc
+     bb
+
+# relpath builtin
+relpath(asdf) = /asdf
+confrel = confdirname/asdf
+
+# cat builtin
+this is a text file for testing the cat builtin
+# </cat>
+
+# exists builtin
+exists("qw.conf") = yes
+exists("asdfzxcv") = no
+
+# command-line dynamics
+dynamic = "DYN"
+static = "not actually static"

@@ -69,4 +69,4 @@ function(re2c tgt input output)
     add_custom_target("${tgt}" DEPENDS "${output}")
 endfunction()
 
-add_subdirectory(qwerrewq)
+add_subdirectory(qwwq)

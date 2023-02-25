@@ -1,18 +1,19 @@
-# qwerrewq grammar
+# qwwq grammar
 
-{{#include <tools/qwerrewq/libqw.h>
+{{#include <tools/qwwq/libqw.h>
 #define DSTR_OFF_ZERO(prev) dstr_off_zero(prev, buf, 0)
 
-#define PUT_VOIDP(x) qw_put_voidp(engine, x)
-#define PUT_INSTR(x) qw_put_instr(engine, x)
-#define PUT_DSTR(x) qw_put_dstr(engine, x)
-#define PUT_UINT(x) qw_put_uint(engine, x)
-#define PUT_REF(x) qw_put_ref(engine, x)
+#define PUT_VOIDP(x) qw_put_voidp(env, x)
+#define PUT_INSTR(x) qw_put_instr(env, x)
+#define PUT_DSTR(x) qw_put_dstr(env, x)
+#define PUT_UINT(x) qw_put_uint(env, x)
+#define PUT_REF(x) qw_put_ref(env, x)
+#define TAPE (env.origin->tape.data)
 
 static void qw_handle_error(
     qw_parser_t *p,
     const dstr_t *buf,
-    qw_engine_t *engine,
+    qw_env_t env,
     qw_token_e qw_token,
     qw_sem_t sem,
     const unsigned char *expected_mask,
@@ -20,7 +21,6 @@ static void qw_handle_error(
 ){
     (void)p;
     (void)buf;
-    (void)engine;
     (void)qw_token;
     (void)expected_mask;
     (void)loc_summary;
@@ -36,7 +36,7 @@ static void qw_handle_error(
     );
     qw_fprint_mask(stderr, expected_mask, ", ");
     FFMT_QUIET(stderr, NULL, "]\n");
-    qw_error(engine, "syntax error");
+    qw_error(env.engine, "syntax error");
 }
 
 }}
@@ -45,7 +45,7 @@ static void qw_handle_error(
 %prefix qw;
 
 %param buf {const dstr_t *};
-%param engine {qw_engine_t*};
+%param env {qw_env_t};
 
 %kwarg semloc_type dstr_off_t;
 %kwarg span_fn dstr_off_extend;
@@ -60,10 +60,10 @@ static void qw_handle_error(
 %type val {qw_val_t*};
 
 INVALID;
-RAW; # stuff not in QWER...REWQ
+RAW; # stuff not in QW...WQ (not passed to this parser)
 EOF; # end of file (not passed to this parser)
 
-EOQ; # end of QWER...REWQ
+EOQ; # end of QW...WQ
 IDENT; # identifier
 NUM; # numeral
 DOT; # .
@@ -119,8 +119,8 @@ config = dict EOQ;
 # *expr           # expand expr (only in list literals)
 
 count:uint = %empty;
-mark:uint = %empty { $$ = engine->tape.len; };
-instroff:uint = %empty { $$ = engine->tape.len; PUT_INSTR(NULL); };
+mark:uint = %empty { $$ = env.origin->tape.len; };
+instroff:uint = %empty { $$ = env.origin->tape.len; PUT_INSTR(NULL); };
 
 eq_op:instr = DEQ { $$ = qw_instr_deq; } | NEQ { $$ = qw_instr_neq; };
 cat_op:instr = PLUS { $$ = qw_instr_plus; } | SLASH { $$ = qw_instr_slash; };
@@ -182,7 +182,7 @@ dotcall_post =
 ;
 
 args:call =
-    { $$ = qw_comp_call_new(engine); }
+    { $$ = qw_comp_call_new(env.engine); }
     *(
       | nid_expr
         # non-identifier positional arg
@@ -234,13 +234,13 @@ nid_dotcall = nid_base_expr dotcall_post;
 
 nid_base_expr =
   | ooo
+  | puke
   | if
   | switch
   | func
   | dict
   | list_or_for
   | literal:l { PUT_INSTR(qw_instr_put); PUT_VOIDP($l); }
-  | PUKE      { PUT_INSTR(qw_instr_puke); }
 ;
 
 literal:val =
@@ -249,22 +249,23 @@ literal:val =
   | NULL      { $$ = &thenull; }
   | SKIP      { $$ = &theskip; }
   | STRING:s
-    {{  qw_string_t *val = qw_engine_malloc(engine, sizeof(*val), PTRSIZE);
+    {{  qw_string_t *val = qw_malloc(env, sizeof(*val), PTRSIZE);
         *val = (qw_string_t){
             .type = QW_VAL_STRING,
-            .dstr = parse_string_literal(engine, dstr_from_off(@s)),
+            .dstr = parse_string_literal(env, dstr_from_off(@s)),
         };
         $$ = &val->type;
     }}
 ;
 
-
 base_expr = nid_base_expr | IDENT:id ref!(id);
 
 # either a global reference or a parameter reference
-ref(id) = %empty { qw_compile_ref(engine, dstr_from_off(@id)); };
+ref(id) = %empty { qw_compile_ref(env, dstr_from_off(@id)); };
 
 ooo = OOO_PAREN expr RPAREN;
+
+puke = PUKE F_PAREN expr RPAREN { PUT_INSTR(qw_instr_puke); };
 
 if =
     IF
@@ -281,10 +282,10 @@ if =
         { PUT_INSTR(qw_instr_jmp); }
         instroff:jmp
         mark:b
-        { engine->tape.data[$ifjmp] = (void*)($b - $a); }
+        { TAPE[$ifjmp] = (void*)($b - $a); }
         # We don't know how far to jump to the end yet, but we can use this
         # space to build a reverse-linked list of jumps to fill in.
-        { engine->tape.data[$jmp] = (void*)$prev_jmp; $prev_jmp = $jmp; }
+        { TAPE[$jmp] = (void*)$prev_jmp; $prev_jmp = $jmp; }
         expr
     )
     RPAREN
@@ -292,8 +293,8 @@ if =
     # now go back and reconfigure the jmp instructions to point to here
     {{  uintptr_t prev_jmp = $prev_jmp;
         while(prev_jmp){
-            uintptr_t temp = (uintptr_t)engine->tape.data[prev_jmp];
-            engine->tape.data[prev_jmp] = (void*)($end - prev_jmp - 1);
+            uintptr_t temp = (uintptr_t)TAPE[prev_jmp];
+            TAPE[prev_jmp] = (void*)($end - prev_jmp - 1);
             prev_jmp = temp;
         }
     }}
@@ -315,10 +316,10 @@ switch =
         { PUT_INSTR(qw_instr_jmp); }
         instroff:jmp
         mark:b
-        { engine->tape.data[$swjmp] = (void*)($b - $a); }
+        { TAPE[$swjmp] = (void*)($b - $a); }
         # We don't know how far to jump to the end yet, but we can use this
         # space to build a reverse-linked list of jumps to fill in.
-        { engine->tape.data[$jmp] = (void*)$prev_jmp; $prev_jmp = $jmp; }
+        { TAPE[$jmp] = (void*)$prev_jmp; $prev_jmp = $jmp; }
         expr
     )
     RPAREN
@@ -326,8 +327,8 @@ switch =
     # now go back and reconfigure the jmp instructions to point to here
     {{  uintptr_t prev_jmp = $prev_jmp;
         while(prev_jmp){
-            uintptr_t temp = (uintptr_t)engine->tape.data[prev_jmp];
-            engine->tape.data[prev_jmp] = (void*)($end - prev_jmp - 1);
+            uintptr_t temp = (uintptr_t)TAPE[prev_jmp];
+            TAPE[prev_jmp] = (void*)($end - prev_jmp - 1);
             prev_jmp = temp;
         }
     }}
@@ -338,26 +339,26 @@ switch =
 
 keymap:keymap =
     %empty
-    {{  $$ = qw_engine_malloc(engine, sizeof(jsw_atree_t), PTRSIZE);
+    {{  $$ = qw_malloc(env, sizeof(jsw_atree_t), PTRSIZE);
         jsw_ainit($$, jsw_cmp_dstr, jsw_get_qw_key);
     }}
 ;
 
 lazy_expr =
-    count:nrefs_before { $nrefs_before = engine->refs_emitted; }
+    count:nrefs_before { $nrefs_before = env.engine->refs_emitted; }
     instroff:lazy
     instroff:ninstr
     mark:a
     expr
     mark:b
-    {{  if($nrefs_before == engine->refs_emitted){
+    {{  if($nrefs_before == env.engine->refs_emitted){
             // no refs in this expression, it's safe to emit a lazy
-            engine->tape.data[$lazy] = (void*)qw_instr_lazy;
-            engine->tape.data[$ninstr] = (void*)($b - $a);
+            TAPE[$lazy] = (void*)qw_instr_lazy;
+            TAPE[$ninstr] = (void*)($b - $a);
         }else{
             // refs detected, disallow lazy evaluation
-            engine->tape.data[$lazy] = (void*)qw_instr_noop;
-            engine->tape.data[$ninstr] = (void*)qw_instr_noop;
+            TAPE[$lazy] = (void*)qw_instr_noop;
+            TAPE[$ninstr] = (void*)qw_instr_noop;
         }
     }}
 ;
@@ -367,7 +368,7 @@ dict =
     LBRACE
     *(
         IDENT:key EQ lazy_expr
-        { qw_keymap_add_key(engine, $keymap, dstr_from_off(@key)); }
+        { qw_keymap_add_key(env, $keymap, dstr_from_off(@key)); }
     )
     RBRACE
     { PUT_INSTR(qw_instr_dict); }
@@ -381,6 +382,7 @@ list_item:uint =
     mark:a
     asterisk_op:ast
     expr
+    { PUT_INSTR(qw_instr_dropskip); }
     { for(uintptr_t i = 0; i < $ast; i++) PUT_INSTR(qw_instr_asterisk); }
     mark:b
     { $$ = $b - $a; }
@@ -395,10 +397,10 @@ list =
     instroff:ninstr
     count:total
     *(list_item:instr_count { $total += $instr_count; } )
-    { engine->tape.data[$ninstr] = (void*)$total; }
+    { TAPE[$ninstr] = (void*)$total; }
 ;
 
-scope:scope = %empty { $$ = qw_comp_scope_new(engine); };
+scope:scope = %empty { $$ = qw_comp_scope_new(env.engine); };
 
 for =
     FOR
@@ -418,10 +420,10 @@ for =
     { PUT_UINT($s->nvars); }
     # ninstrs, not yet known
     instroff:ninstr
-    { qw_comp_scope_enter(engine, $s); }
+    { qw_comp_scope_enter(env.engine, $s); }
     list_item:instr_count
-    { qw_comp_scope_pop(engine); }
-    { engine->tape.data[$ninstr] = (void*)$instr_count; }
+    { qw_comp_scope_pop(env.engine); }
+    { TAPE[$ninstr] = (void*)$instr_count; }
 ;
 
 func =
@@ -465,16 +467,16 @@ func =
     # put each parameter name
     { for(uintptr_t i = 0; i < $s->nvars; i++) PUT_DSTR($s->vars[i]); }
     # enter scope and compile the function body
-    { qw_comp_scope_enter(engine, $s); }
+    { qw_comp_scope_enter(env.engine, $s); }
     mark:a
     expr
     RPAREN
     mark:b
-    { qw_comp_scope_pop(engine); }
+    { qw_comp_scope_pop(env.engine); }
     # set number of instructions
-    { engine->tape.data[$ninstr] = (void*)($b - $a); }
+    { TAPE[$ninstr] = (void*)($b - $a); }
     # set number of binds
-    { engine->tape.data[$nbinds] = (void*)($s->nbinds); }
+    { TAPE[$nbinds] = (void*)($s->nbinds); }
     # put the bind refs we gathered
     { for(uintptr_t i = 0; i < $s->nbinds; i++) PUT_REF($s->binds[i]); }
 ;

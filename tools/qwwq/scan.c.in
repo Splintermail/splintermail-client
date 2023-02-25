@@ -1,4 +1,4 @@
-#include <tools/qwerrewq/libqw.h>
+#include <tools/qwwq/libqw.h>
 
 #include <stdlib.h>
 
@@ -110,8 +110,8 @@ rescan:
         alpha        = [A-Za-z\x80-\xFF];
         digit        = [0-9];
         ident        = [a-zA-Z\x80-\xFF_][a-zA-Z\x80-\xFF_0-9]*;
-        dqstring     = "\""(("\\"([\\nrt'"]|("x"[a-fA-F0-9][0-9])))|[\x20-\x21\x23-\x2E\x30-\x7E\x80-\xFF])*"\"";
-        sqstring     = "'"(("\\"([\\nrt'"]|("x"[a-fA-F0-9][0-9])))|[\x20-\x26\x28-\x2E\x30-\x7E\x80-\xFF])*"'";
+        dqstring     = "\""(("\\"([\\nrt'"]|("x"[a-fA-F0-9][0-9])))|[\x20-\x21\x23-\x5B\x5D-\x7E\x80-\xFF])*"\"";
+        sqstring     = "'"(("\\"([\\nrt'"]|("x"[a-fA-F0-9][0-9])))|[\x20-\x26\x28-\x5B\x5D-\x7E\x80-\xFF])*"'";
         ws           = [\x0a\x0d ]+;
         comment      = "#"[^\n\x00]*"\n";
 

@@ -15,6 +15,7 @@ typedef struct {
     dstr_t dstr;
 } qw_string_t;
 DEF_CONTAINER_OF(qw_string_t, type, qw_val_t)
+DEF_CONTAINER_OF(qw_string_t, dstr, dstr_t)
 
 typedef struct {
     qw_val_t type;  // QW_VAL_LIST
@@ -40,6 +41,9 @@ DEF_CONTAINER_OF(qw_key_t, node, jsw_anode_t)
 typedef struct {
     qw_val_t type;  // QW_VAL_DICT
     jsw_atree_t *keymap;  // qw_key_t->node;
+    /* keep track of the origin in which we were created,
+       so we can evaluate lazies against the correct origin */
+    qw_origin_t *origin;
     qw_val_t *vals[1];  // may contain lazies
 } qw_dict_t;
 DEF_CONTAINER_OF(qw_dict_t, type, qw_val_t)
@@ -47,7 +51,7 @@ DEF_CONTAINER_OF(qw_dict_t, type, qw_val_t)
 typedef struct {
     qw_val_t type;  // QW_VAL_FUNC
     uintptr_t scope_id;
-    // a separate instruction tape just for this function
+    // instructions for this function body
     void **instr;
     uintptr_t ninstr;
     // all param names, used when call is made
@@ -70,13 +74,13 @@ extern qw_val_t theskip;
 const char *qw_val_name(qw_val_t val);
 
 const void *jsw_get_qw_key(const jsw_anode_t *node);
-void qw_keymap_add_key(qw_engine_t *engine, jsw_atree_t *keymap, dstr_t text);
+void qw_keymap_add_key(qw_env_t env, jsw_atree_t *keymap, dstr_t text);
 
-qw_val_t *qw_dict_get(qw_engine_t *engine, qw_dict_t *dict, dstr_t key);
+qw_val_t *qw_dict_get(qw_env_t env, qw_dict_t *dict, dstr_t key);
 
 bool qw_val_eq(qw_engine_t *engine, qw_val_t *a, qw_val_t *b);
 
-dstr_t parse_string_literal(qw_engine_t *engine, dstr_t in);
+dstr_t parse_string_literal(qw_env_t env, dstr_t in);
 
 derr_type_t fmthook_qwval(dstr_t *out, const void *arg);
 static inline fmt_t FQ(const qw_val_t* val){

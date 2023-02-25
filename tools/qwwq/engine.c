@@ -1,9 +1,9 @@
-#include "tools/qwerrewq/libqw.h"
+#include "tools/qwwq/libqw.h"
 
 #include <stdlib.h>
 #include <string.h>
-
-LIST_FUNCTIONS(voidp)
+#include <errno.h>
+#include <sys/stat.h>
 
 void qw_scope_enter(
     qw_engine_t *engine, qw_scope_t *scope, uintptr_t scope_id, qw_val_t **vals
@@ -33,21 +33,12 @@ qw_val_t *qw_scope_eval_ref(qw_engine_t *engine, qw_ref_t ref){
     qw_error(engine, "encountered ref without matching scope_id");
 }
 
-derr_t qw_engine_init(qw_engine_t *engine){
+derr_t qw_engine_init(qw_engine_t *engine, size_t stack){
     derr_t e = E_OK;
 
     *engine = (qw_engine_t){0};
 
-    PROP_GO(&e, LIST_NEW(voidp, &engine->tape, 4096), fail);
-    PROP_GO(&e, LIST_NEW(voidp, &engine->config_tape, 4096), fail);
-
-    // block must always be non-NULL
-    engine->block = dmalloc(&e, QWBLOCKSIZE);
-    CHECK_GO(&e, fail);
-    size_t cap = QWBLOCKSIZE - (sizeof(qw_block_t) - 1);
-    *engine->block = (qw_block_t){ .cap = cap };
-
-    engine->parser = qw_parser_new(100000, 100000);
+    engine->parser = qw_parser_new(stack, stack);
     if(!engine->parser) ORIG_GO(&e, E_NOMEM, "nomem", fail);
 
     return e;
@@ -59,9 +50,6 @@ fail:
 }
 
 void qw_engine_free(qw_engine_t *engine){
-    LIST_FREE(voidp, &engine->tape);
-    LIST_FREE(voidp, &engine->config_tape);
-
     qw_stack_t *stacks[] = {engine->stack, engine->extrastack};
     for(size_t i = 0; i < sizeof(stacks)/sizeof(*stacks); i++){
         qw_stack_t *stack = stacks[i];
@@ -70,13 +58,6 @@ void qw_engine_free(qw_engine_t *engine){
             free(stack);
             stack = temp;
         }
-    }
-
-    qw_block_t *block = engine->block;
-    while(block){
-        qw_block_t *temp = block->prev;
-        free(block);
-        block = temp;
     }
 
     qw_parser_free(&engine->parser);
@@ -88,92 +69,19 @@ void qw_engine_free(qw_engine_t *engine){
         comp_scope = temp;
     }
 
+    if(engine->f) fclose(engine->f);
+
     *engine = (qw_engine_t){0};
 }
 
-static qw_block_t *qw_engine_new_block(qw_engine_t *engine, size_t size){
-    size_t cap = size - (sizeof(qw_block_t) - 1);
-    qw_block_t *out = malloc(size);
-    if(!out) qw_error(engine, "failed to alloc block");
-    *out = (qw_block_t){ .cap = cap };
-    return out;
-}
-
-void *qw_engine_malloc(qw_engine_t *engine, size_t n, size_t align){
-    if(n > QWBLOCKSIZE / 2){
-        // tuck a custom block under the top block
-        qw_block_t *block = qw_engine_new_block(engine, n);
-        block->prev = engine->block->prev;
-        engine->block->prev = block;
-        return (void*)block->data;
-    }
-    qw_block_t *block = engine->block;
-    size_t pad = (align-1) - ((n-1)%align);
-    if(n + pad + block->len > block->cap){
-        block = qw_engine_new_block(engine, QWBLOCKSIZE);
-        block->prev = engine->block;
-        engine->block = block;
-    }
-    void *out = (void*)(block->data + block->len + pad);
-    block->len += n + pad;
-    return out;
-}
-
-void qw_error(qw_engine_t *engine, const char *str){
-    fprintf(stderr, "%s\n", str);
+void _qw_error(
+    qw_engine_t *engine, const char *fmt, const fmt_t *args, size_t nargs
+){
+    pvt_ffmt_quiet(stderr, NULL, fmt, args, nargs);
     longjmp(engine->jmp_env, 1);
 }
 
-void qw_engine_exec(qw_engine_t *engine, void **instr, uintptr_t ninstr){
-    // keep our old execution state
-    void **old_instr = engine->instr;
-    uintptr_t old_ninstr = engine->ninstr;
-    void **old_pos = engine->pos;
-
-    // configure new execution state
-    engine->instr = instr;
-    engine->ninstr = ninstr;
-    engine->pos = instr;
-
-    while(engine->pos < engine->instr + engine->ninstr){
-        // execute the next instruction
-        ((qw_instr_f)(*(engine->pos++)))(engine);
-    }
-
-    // restore old execution state, keeping any modifications to the stack
-    engine->instr = old_instr;
-    engine->ninstr = old_ninstr;
-    engine->pos = old_pos;
-}
-
 // instruction operations
-
-void qw_put_voidp(qw_engine_t *engine, void *instr){
-    derr_t e = LIST_APPEND(voidp, &engine->tape, instr);
-    if(is_error(e)){
-        DROP_VAR(&e);
-        qw_error(engine, "failed to put instruction");
-    }
-}
-
-void qw_put_instr(qw_engine_t *engine, qw_instr_f instr){
-    qw_put_voidp(engine, (void*)instr);
-}
-
-void qw_put_uint(qw_engine_t *engine, uintptr_t u){
-    qw_put_voidp(engine, (void*)u);
-}
-
-void qw_put_ref(qw_engine_t *engine, qw_ref_t ref){
-    uintptr_t u = (0x00FFFFFFU & ref.scope_id) << 8
-                | (0x000000FFU & ref.param_idx);
-    qw_put_voidp(engine, (void*)u);
-}
-
-void qw_put_dstr(qw_engine_t *engine, dstr_t dstr){
-    qw_put_uint(engine, dstr.len);
-    qw_put_voidp(engine, dstr.data);
-}
 
 void *qw_engine_instr_next(qw_engine_t *engine){
     if(engine->pos == engine->instr + engine->ninstr){
@@ -265,17 +173,17 @@ void qw_stack_put_bool(qw_engine_t *engine, bool val){
     qw_stack_put(engine, val ? &thetrue : &thefalse);
 }
 
-dstr_t *qw_stack_put_new_string(qw_engine_t *engine, size_t cap){
-    qw_string_t *string = qw_engine_malloc(engine, sizeof(*string), PTRSIZE);
+dstr_t *qw_stack_put_new_string(qw_env_t env, size_t cap){
+    qw_string_t *string = qw_malloc(env, sizeof(*string), PTRSIZE);
     *string = (qw_string_t){
         .type = QW_VAL_STRING,
         .dstr = {
-            .data = qw_engine_malloc(engine, cap, 1),
+            .data = qw_malloc(env, cap, 1),
             .size = cap,
             .fixed_size = true,
         },
     };
-    qw_stack_put(engine, &string->type);
+    qw_stack_put(env.engine, &string->type);
     return &string->dstr;
 }
 
@@ -341,4 +249,191 @@ qw_func_t *qw_stack_pop_func(qw_engine_t *engine){
     if(*val != QW_VAL_FUNC) qw_error(engine, "not a func");
     qw_func_t *func = CONTAINER_OF(val, qw_func_t, type);
     return func;
+}
+
+void qw_stack_put_file(qw_env_t env, dstr_t path){
+    // null-terminate path
+    DSTR_VAR(buf, 4096);
+    derr_type_t etype = FMT_QUIET(&buf, "%x", FD(&path));
+    if(etype) qw_error(env.engine, "filename too long");
+
+    // open a file on the engine (where it can be freed as needed)
+    env.engine->f = compat_fopen(buf.data, "r");
+    if(!env.engine->f){
+        qw_error(env.engine, "fopen(%x): %x", FD(&path), FE(&errno));
+    }
+
+    // get file size
+    compat_stat_t s;
+    int ret = compat_fstat(compat_fileno(env.engine->f), &s);
+    if(ret != 0){
+        qw_error(env.engine, "fstat(%x): %x", FD(&path), FE(&errno));
+    }
+
+    // allocate output string
+    if(s.st_size > INT_MAX){
+        qw_error(env.engine, "file too big: %x", FD(&path));
+    }
+    size_t size = (size_t)s.st_size;
+    dstr_t *out = qw_stack_put_new_string(env, size);
+
+    // read file into output string
+    size_t nread = fread(out->data, 1, size, env.engine->f);
+    if(ferror(env.engine->f)){
+        qw_error(env.engine, "fread(%x): %x", FD(&path), FE(&errno));
+    }
+    if(nread != size){
+        qw_error(env.engine, "incomplete fread(%x)", FD(&path));
+    }
+    out->len = nread;
+
+    // clean up FILE*
+    fclose(env.engine->f);
+    env.engine->f = NULL;
+}
+
+LIST_FUNCTIONS(voidp)
+
+derr_t qw_origin_init(qw_origin_t *origin, const dstr_t *dirname){
+    derr_t e = E_OK;
+
+    *origin = (qw_origin_t){ .dirname = dirname };
+
+    // block must always be non-NULL
+    origin->block = dmalloc(&e, QWBLOCKSIZE);
+    CHECK_GO(&e, fail);
+
+    size_t cap = QWBLOCKSIZE - (sizeof(qw_block_t) - 1);
+    *origin->block = (qw_block_t){ .cap = cap };
+
+    PROP_GO(&e, LIST_NEW(voidp, &origin->tape, 4096), fail);
+
+    return e;
+
+fail:
+    qw_origin_free(origin);
+    return e;
+}
+
+void qw_origin_free(qw_origin_t *origin){
+    LIST_FREE(voidp, &origin->tape);
+
+    qw_block_t *block = origin->block;
+    while(block){
+        qw_block_t *temp = block->prev;
+        free(block);
+        block = temp;
+    }
+    *origin = (qw_origin_t){0};
+}
+
+void qw_origin_reset(qw_env_t env){
+    // keep only one block
+    qw_block_t *block = env.origin->block;
+    block->len = 0;
+    qw_block_t *extra;
+    while((extra = block->prev)){
+        block->prev = extra->prev;
+        if(extra->cap != QWBLOCKSIZE){
+            // abnormal blocks are just freed
+            free(block);
+        }else{
+            // normal blocks are stored on engine for reuse
+            extra->len = 0;
+            extra->prev = env.engine->extrablock;
+            env.engine->extrablock = extra;
+        }
+    }
+    // drop all instructions
+    env.origin->tape.len = 0;
+}
+
+// put instructions on the origin
+void qw_put_voidp(qw_env_t env, void *instr){
+    derr_t e = LIST_APPEND(voidp, &env.origin->tape, instr);
+    if(is_error(e)){
+        DROP_VAR(&e);
+        qw_error(env.engine, "failed to put instruction");
+    }
+}
+
+void qw_put_instr(qw_env_t env, qw_instr_f instr){
+    qw_put_voidp(env, (void*)instr);
+}
+
+void qw_put_uint(qw_env_t env, uintptr_t u){
+    qw_put_voidp(env, (void*)u);
+}
+
+void qw_put_ref(qw_env_t env, qw_ref_t ref){
+    uintptr_t u = (0x00FFFFFFU & ref.scope_id) << 8
+                | (0x000000FFU & ref.param_idx);
+    qw_put_voidp(env, (void*)u);
+}
+
+void qw_put_dstr(qw_env_t env, dstr_t dstr){
+    qw_put_uint(env, dstr.len);
+    qw_put_voidp(env, dstr.data);
+}
+
+static qw_block_t *malloc_block(qw_env_t env, size_t size){
+    size_t cap = size - (sizeof(qw_block_t) - 1);
+    qw_block_t *out = malloc(size);
+    if(!out) qw_error(env.engine, "failed to alloc block");
+    *out = (qw_block_t){ .cap = cap };
+    return out;
+}
+
+static qw_block_t *malloc_or_reuse_block(qw_env_t env){
+    qw_block_t *out = env.engine->extrablock;
+    if(out){
+        env.engine->extrablock = out->prev;
+        out->prev = NULL;
+        out->len = 0;
+        return out;
+    }
+    return malloc_block(env, QWBLOCKSIZE);
+}
+
+void *qw_malloc(qw_env_t env, size_t n, size_t align){
+    if(n > QWBLOCKSIZE / 2){
+        // tuck a custom block under the top block
+        qw_block_t *block = malloc_block(env, n + sizeof(qw_block_t));
+        block->prev = env.origin->block->prev;
+        env.origin->block->prev = block;
+        return (void*)block->data;
+    }
+    qw_block_t *block = env.origin->block;
+    size_t pad = (align-1) - ((n-1)%align);
+    if(n + pad + block->len > block->cap){
+        // get a new standard-sized block, or reuse a reset one from before
+        block = malloc_or_reuse_block(env);
+        block->prev = env.origin->block;
+        env.origin->block = block;
+    }
+    void *out = (void*)(block->data + block->len + pad);
+    block->len += n + pad;
+    return out;
+}
+
+void qw_exec(qw_env_t env, void **instr, uintptr_t ninstr){
+    // keep our old execution state
+    void **old_instr = env.engine->instr;
+    uintptr_t old_ninstr = env.engine->ninstr;
+    void **old_pos = env.engine->pos;
+
+    // configure new execution state
+    env.engine->instr = instr;
+    env.engine->ninstr = ninstr;
+    env.engine->pos = instr;
+
+    while(env.engine->pos < env.engine->instr + env.engine->ninstr){
+        // execute the next instruction
+        ((qw_instr_f)(*(env.engine->pos++)))(env);
+    }
+
+    // restore old execution state, keeping any modifications to the stack
+    env.engine->instr = old_instr;
+    env.engine->ninstr = old_ninstr;
+    env.engine->pos = old_pos;
 }

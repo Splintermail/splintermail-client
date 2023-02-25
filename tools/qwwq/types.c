@@ -1,4 +1,4 @@
-#include "tools/qwerrewq/libqw.h"
+#include "tools/qwwq/libqw.h"
 
 // singletons
 qw_val_t thetrue = QW_VAL_TRUE;
@@ -26,14 +26,14 @@ const void *jsw_get_qw_key(const jsw_anode_t *node){
     return &key->text;
 }
 
-void qw_keymap_add_key(qw_engine_t *engine, jsw_atree_t *keymap, dstr_t text){
+void qw_keymap_add_key(qw_env_t env, jsw_atree_t *keymap, dstr_t text){
     size_t index = jsw_asize(keymap);
-    qw_key_t *key = qw_engine_malloc(engine, sizeof(qw_key_t), PTRSIZE);
+    qw_key_t *key = qw_malloc(env, sizeof(qw_key_t), PTRSIZE);
     *key = (qw_key_t){ .text = text, .index = index };
     jsw_ainsert(keymap, &key->node);
 }
 
-qw_val_t *qw_dict_get(qw_engine_t *engine, qw_dict_t *dict, dstr_t key){
+qw_val_t *qw_dict_get(qw_env_t env, qw_dict_t *dict, dstr_t key){
     jsw_anode_t *node = jsw_afind(dict->keymap, &key, NULL);
     if(!node) return NULL;
     qw_key_t *k = CONTAINER_OF(node, qw_key_t, node);
@@ -41,10 +41,12 @@ qw_val_t *qw_dict_get(qw_engine_t *engine, qw_dict_t *dict, dstr_t key){
     // evaluate and cache any lazy values
     if(*val == QW_VAL_LAZY){
         qw_lazy_t *lazy = CONTAINER_OF(val, qw_lazy_t, type);
+        // compose an env using this dict's origin
+        qw_env_t dict_env = { env.engine, dict->origin };
         // execute the contained instructions
-        qw_engine_exec(engine, lazy->instr, lazy->ninstr);
+        qw_exec(dict_env, lazy->instr, lazy->ninstr);
         // replace this val's contents to match the result
-        val = qw_stack_pop(engine);
+        val = qw_stack_pop(env.engine);
         dict->vals[k->index] = val;
     }
     return val;
@@ -94,7 +96,7 @@ static char nibble(char c, bool *ok){
     }
 }
 
-dstr_t parse_string_literal(qw_engine_t *engine, dstr_t in){
+dstr_t parse_string_literal(qw_env_t env, dstr_t in){
     size_t limit = in.len - 1;
     size_t len = 0;
     bool saw_escape = false;
@@ -120,7 +122,7 @@ dstr_t parse_string_literal(qw_engine_t *engine, dstr_t in){
             case 'x':
                 if(++i == limit) goto fatal;
                 if(++i == limit) goto fatal;
-                len += 2;
+                len++;
                 break;
             default: goto fatal;
         }
@@ -130,7 +132,7 @@ dstr_t parse_string_literal(qw_engine_t *engine, dstr_t in){
     if(!saw_escape) return dstr_sub2(in, 1, limit);
 
     // second pass: write the output
-    char *data = qw_engine_malloc(engine, len, 1);
+    char *data = qw_malloc(env, len, 1);
     char *inp = in.data + 1;
     char *outp = data;
     for(size_t i = 0; i < len; i++, outp++){
@@ -159,11 +161,12 @@ dstr_t parse_string_literal(qw_engine_t *engine, dstr_t in){
     return dstr_from_cstrn(data, len, false);
 
 fatal:
-    qw_error(engine, "invalid string from scanner");
+    qw_error(env.engine, "invalid string from scanner");
 }
 
 derr_type_t fmthook_qwval(dstr_t *out, const void *arg){
     const qw_val_t *val = arg;
+    qw_string_t *str;
     switch(*val){
         case QW_VAL_FALSE: return FMT_QUIET(out, "false");
         case QW_VAL_TRUE: return FMT_QUIET(out, "true");
@@ -171,7 +174,7 @@ derr_type_t fmthook_qwval(dstr_t *out, const void *arg){
         case QW_VAL_SKIP: return FMT_QUIET(out, "skip");
 
         case QW_VAL_STRING:
-            qw_string_t *str = CONTAINER_OF(val, qw_string_t, type);
+            str = CONTAINER_OF(val, qw_string_t, type);
             return FMT_QUIET(out, "\"%x\"", FD_DBG(&str->dstr));
 
         case QW_VAL_LIST: return FMT_QUIET(out, "list");
