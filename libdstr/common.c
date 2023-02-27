@@ -1454,6 +1454,15 @@ derr_type_t dstr_append_char(dstr_t* dstr, char val){
     return E_NONE;
 }
 
+// append the same char multiple times, such as for padding a string
+derr_type_t dstr_append_char_n(dstr_t* dstr, char val, size_t n){
+    derr_type_t type = dstr_grow_quiet(dstr, dstr->len+n);
+    if(type) return type;
+    memset(dstr->data+dstr->len, val, n);
+    dstr->len += n;
+    return E_NONE;
+}
+
 #define SNPRINTF_WITH_RETRY(fmtstr, arg) \
     ret = snprintf(out->data + out->len, out->size - out->len, fmtstr, arg); \
     if(ret < 0) return E_INTERNAL; \

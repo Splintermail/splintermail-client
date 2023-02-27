@@ -733,6 +733,8 @@ derr_type_t fmt_dstr_append_quiet(dstr_t *dstr, const dstr_t *new_text);
 
 derr_type_t dstr_append_hex(dstr_t* dstr, unsigned char val);
 derr_type_t dstr_append_char(dstr_t* dstr, char val);
+// append the same char multiple times, such as for padding a string
+derr_type_t dstr_append_char_n(dstr_t* dstr, char val, size_t n);
 
 typedef enum {
     FMT_UINT,
