@@ -72,6 +72,7 @@ derr_t is_dir_path(const string_builder_t *sb, bool *res);
 */
 dstr_t ddirname(const dstr_t path);
 dstr_t dbasename(const dstr_t path);
+bool isabs(const dstr_t path);
 
 typedef derr_t (*for_each_file_hook_t)(
     const string_builder_t *base,

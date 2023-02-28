@@ -411,6 +411,10 @@ dstr_t dbasename(const dstr_t path){
     return _get_path_part(path, false);
 }
 
+bool isabs(const dstr_t path){
+    return _get_volume(path) > 0;
+}
+
 
 // the string-builder-based version of for_each_file
 derr_t for_each_file_in_dir(const string_builder_t* path,
