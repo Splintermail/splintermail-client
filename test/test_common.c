@@ -681,6 +681,15 @@ static derr_t test_dstr_recode(void){
         EXP_VS_GOT(&exp_in, &in);
         EXP_VS_GOT(&exp_out2, &out);
     }
+
+    // regression test: dstr_recode() copies partial patterns at the end
+    {
+        DSTR_VAR(out, 1024);
+        DSTR_PRESET(in, " abc defd");
+        DSTR_STATIC(exp_out, " abc fedd");
+        PROP(&e, dstr_recode(&in, &out, &s, &r, false) );
+        EXP_VS_GOT(&exp_out, &out);
+    }
 cleanup:
     return e;
 }

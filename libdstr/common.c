@@ -519,7 +519,7 @@ static derr_t do_dstr_recode(const dstr_t* in,
                              dstr_t* out,
                              const LIST(dstr_t)* search_strs,
                              const LIST(dstr_t)* replace_strs,
-                             bool ignore_partial,
+                             bool force_end,
                              size_t stop_str_index,
                              bool* found_stop,
                              size_t* consumed){
@@ -533,7 +533,7 @@ static derr_t do_dstr_recode(const dstr_t* in,
         size_t which_pattern;
         size_t partial = 0;
         dstr_t sub = dstr_sub(in, (uintptr_t)cpy_from - (uintptr_t)in->data, 0);
-        if(ignore_partial == true){
+        if(force_end){
             position = dstr_find(&sub, search_strs, &which_pattern, NULL);
         }else{
             position = dstr_find(&sub, search_strs, &which_pattern, &partial);
@@ -580,12 +580,12 @@ derr_t dstr_recode_stream(dstr_t* in,
                           dstr_t* out,
                           const LIST(dstr_t)* search_strs,
                           const LIST(dstr_t)* replace_strs,
-                          bool ignore_partial,
+                          bool force_end,
                           size_t stop_str_index,
                           bool* found_stop){
     derr_t e = E_OK;
     size_t consumed;
-    PROP(&e, do_dstr_recode(in, out, search_strs, replace_strs, ignore_partial,
+    PROP(&e, do_dstr_recode(in, out, search_strs, replace_strs, force_end,
                          stop_str_index, found_stop, &consumed) );
     dstr_leftshift(in, consumed);
     return e;
@@ -601,8 +601,9 @@ derr_t dstr_recode(const dstr_t* in,
     if(append == false){
         out->len = 0;
     }
-    PROP(&e, do_dstr_recode(in, out, search_strs, replace_strs, false, 0, NULL,
-                         NULL) );
+    PROP(&e,
+        do_dstr_recode(in, out, search_strs, replace_strs, true, 0, NULL, NULL)
+    );
     return e;
 }
 

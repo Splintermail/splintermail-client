@@ -494,11 +494,6 @@ char* dstr_find(const dstr_t* text, const LIST(dstr_t)* patterns,
    In cases such as POP3 encoding/decoding, it would be desirable to write
    wrapper functions that call this function but hide irrelevant details.
 
-   It might seem like ignore_partial and stream should always be set together,
-   but ignore_partial is important during the known-last block of a stream.
-   However, I can't think of any reason why you would set stream=false and
-   ignore_partial=false...
-
    Finally, it is undefined behavior if one of the search strings is a
    substring of another search string.
 
@@ -506,16 +501,15 @@ char* dstr_find(const dstr_t* text, const LIST(dstr_t)* patterns,
    dstr_t* out:                      where text goes after translation
    const LIST(dstr_t)* search_strs:  list of search strings
    const LIST(dstr_t)* replace_strs: list of replacement strings (equal length)
-   bool ignore_partial:              ignore partial matches at the end of *in
+   bool force_end:                   copy partial matches at the end of *in
    int stop_str_index:               specify which search string means "stop"
    bool* found_stop:                 if search_strs[stop_str_index] was found
-   bool stream:                      whether or not to consume *in
    */
 derr_t dstr_recode_stream(dstr_t* in,
                           dstr_t* out,
                           const LIST(dstr_t)* search_strs,
                           const LIST(dstr_t)* replace_strs,
-                          bool ignore_partial,
+                          bool force_end,
                           size_t stop_str_index,
                           bool* found_stop);
 /*  throws : E_NOMEM
