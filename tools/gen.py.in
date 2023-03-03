@@ -1928,6 +1928,7 @@ class C:
                 i + "(void)call;  // avoid label-then-declaration",
                 file=self.file,
             )
+            self.lines += 1
         for c in code:
             if c.tag in (None, "c"):
                 self.fprint(i + "// USER CODE")
