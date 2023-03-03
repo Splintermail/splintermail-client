@@ -72,6 +72,33 @@ derr_t file_cmp_dstr(
     const char* fa, const dstr_t* b, bool normalize_line_ends, int* result
 );
 
+// for multiline dstr, zoom in on the first difference
+static inline void firstdiff(
+    const dstr_t *a, const dstr_t *b, dstr_t *aout, dstr_t *bout, dstr_t *caret
+){
+    // find the index of the first difference
+    // note, if we never find a difference it's probably due to lengths
+    size_t i = 0;
+    for(; i < a->len && i < b->len; i++){
+        if(a->data[i] != b->data[i]) break;
+    }
+    size_t backtrack = MIN(i, 20);
+    *aout = dstr_sub2(*a, i - backtrack, i - backtrack + 80);
+    *bout = dstr_sub2(*b, i - backtrack, i - backtrack + 80);
+    // measure the print length of the common string
+    dstr_t common = dstr_sub2(*a, i-backtrack, i);
+    DSTR_VAR(buf, 20*4);
+    FMT_QUIET(&buf, "%x", FD_DBG(&common));
+    DSTR_STATIC(
+        spaces_caret,
+        "          ""          ""          ""          "
+        "          ""          ""          ""          " "^"
+    );
+    // keep as many spaces as the print length of common
+    size_t start = spaces_caret.len - 1 - MIN(spaces_caret.len - 1, buf.len);
+    *caret = dstr_sub2(spaces_caret, start, SIZE_MAX);
+}
+
 // mkdir_temp creates a uniquely named temporary directory in PWD
 derr_t mkdir_temp(const char *prefix, dstr_t *path);
 
@@ -289,13 +316,20 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
         if(dstr_endswith(_got, &DSTR_LIT("\n"))) \
             if(dstr_endswith(_exp, &DSTR_LIT("\n"))) \
                 _line_end = ""; \
+        dstr_t zoom_exp, zoom_got, caret; \
+        firstdiff(_exp, _got, &zoom_exp, &zoom_got, &caret); \
         ORIG(e, \
             E_VALUE, \
             "-- for value '%x', expected:\n" \
             "%x%x" \
             "-- but got:\n" \
-            "%x%x-- (end) --", \
-            FS(name), FD(_exp), FS(_line_end), FD(_got), FS(_line_end) \
+            "%x%x-- (end) --" \
+            "-- first difference: --\n" \
+            "expected: \"%x\"\n" \
+            "but got:  \"%x\"\n" \
+            "           %x\n", \
+            FS(name), FD(_exp), FS(_line_end), FD(_got), FS(_line_end), \
+            FD_DBG(&zoom_exp), FD_DBG(&zoom_got), FD(&caret) \
         ); \
     } \
 } while (0)
@@ -308,14 +342,21 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
         if(dstr_endswith(_got, &DSTR_LIT("\n"))) \
             if(dstr_endswith(_exp, &DSTR_LIT("\n"))) \
                 _line_end = ""; \
+        dstr_t zoom_exp, zoom_got, caret; \
+        firstdiff(_exp, _got, &zoom_exp, &zoom_got, &caret); \
         ORIG_GO(e, \
             E_VALUE, \
             "-- for value '%x', expected:\n" \
             "%x%x" \
             "-- but got:\n" \
-            "%x%x-- (end) --", \
+            "%x%x-- (end) --\n" \
+            "-- first difference: --\n" \
+            "expected: \"%x\"\n" \
+            "but got:  \"%x\"\n" \
+            "           %x\n", \
             label, \
-            FS(name), FD(_exp), FS(_line_end), FD(_got), FS(_line_end) \
+            FS(name), FD(_exp), FS(_line_end), FD(_got), FS(_line_end), \
+            FD_DBG(&zoom_exp), FD_DBG(&zoom_got), FD(&caret) \
         ); \
     } \
 } while (0)
