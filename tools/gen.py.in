@@ -3081,12 +3081,12 @@ class C:
             }
 
             static void ${prefix_}free_sems(${prefix_}parser_t *p, size_t first){
-                // free all possible sems, according to the last call
+                // free all possible sems in reverse, according to the last call
                 if(p->callslen == 0) return;
                 ${prefix_}call_t clast = p->callstack[p->callslen-1];
                 size_t end = clast.stack + clast.nsems;
-                for(size_t i = first; i < end; i++){
-                    ${prefix_}sem_free(&p->semstack[i]);
+                for(size_t i = end; i > first; i--){
+                    ${prefix_}sem_free(&p->semstack[i-1]);
                 }
             }
 
