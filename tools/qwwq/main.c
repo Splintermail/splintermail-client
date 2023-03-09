@@ -14,6 +14,9 @@ static void print_help(void){
         "  -h, --help      Print help information and usage.\n"
         "  -i, --input     Specify an input file.  Default: stdin.\n"
         "  -o, --output    Specify an output file.  Default: stdout.\n"
+        "  -o, --stamp     Specify a stamp file.  In cases where the output\n"
+        "                  file would be unchanged, touch the stamp file\n"
+        "                  instead.  Requires --output.  Default: none.\n"
         "  -b  --boundary  Specify alternate snippet boundaries in PRE:POST\n"
         "                  format.  Default: QW:WQ\n"
         "      --stack     Parser stack size.  Default: 4096\n"
@@ -34,6 +37,7 @@ int main(int argc, char **argv){
     opt_spec_t o_help  = {'h',  "help",     false};
     opt_spec_t o_in    = {'i',  "input",    true };
     opt_spec_t o_out   = {'o',  "output",   true };
+    opt_spec_t o_stamp = {'s',  "stamp",    true };
     opt_spec_t o_bound = {'b',  "boundary", true };
     opt_spec_t o_stack = {'\0', "stack",    true };
 
@@ -41,6 +45,7 @@ int main(int argc, char **argv){
         &o_help,
         &o_in,
         &o_out,
+        &o_stamp,
         &o_bound,
         &o_stack,
     };
@@ -64,6 +69,12 @@ int main(int argc, char **argv){
     // invalid positional arguments
     if(newargc < 2){
         fprintf(stderr, "try `%s --help` for usage\n", argv[0]);
+        return 1;
+    }
+
+    // --stamp requires --output
+    if(o_stack.found && !o_out.found){
+        fprintf(stderr, "--stamp requires --output\n");
         return 1;
     }
 
@@ -151,6 +162,39 @@ int main(int argc, char **argv){
         ),
     cu);
 
+    if(o_stamp.found){
+        // check if output already exists
+        bool ok;
+        PROP_GO(&e, dexists(o_out.val.data, &ok), cu);
+        if(!ok) goto write_output;
+
+        // try to read output
+        PROP_GO(&e, dfopen(o_out.val.data, "r", &fout), cu);
+
+#ifndef _WIN32
+        // unix only: check output mode
+        compat_stat_t s;
+        PROP_GO(&e, dfstat(fileno(fout), &s), cu);
+        if((s.st_mode & 0777) != input_mode){
+            fclose(fout); fout = NULL;
+            goto write_output;
+        }
+#endif // _WIN32
+
+        // reuse conf, we don't need that memory anymore
+        conf.len = 0;
+        PROP_GO(&e, dstr_fread_all(fout, &conf), cu);
+        fclose(fout); fout = NULL;
+
+        if(!dstr_eq(out, conf)) goto write_output;
+
+        // no changes, touch stampfile and exit
+        fprintf(stderr, "no changes, not overwriting\n");
+        PROP_GO(&e, touch(o_stamp.val.data), cu);
+        goto cu;
+    }
+
+write_output:
     // write output to file (or stdout)
     if(o_out.found){
         PROP_GO(&e, dfopen(o_out.val.data, "w", &fout), cu);
@@ -158,6 +202,7 @@ int main(int argc, char **argv){
         fout = stdout;
     }
     PROP_GO(&e, dstr_fwrite(fout, &out), cu);
+
 #ifndef _WIN32
     // unix only: match output mode to input mode
     if(o_out.found && o_in.found){

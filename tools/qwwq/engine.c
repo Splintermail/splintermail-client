@@ -236,34 +236,34 @@ void qw_stack_pop_n(qw_engine_t *engine, uintptr_t len, qw_val_t **dst){
 
 bool qw_stack_pop_bool(qw_engine_t *engine){
     qw_val_t *val = qw_stack_pop(engine);
-    if(*val > QW_VAL_TRUE) qw_error(engine, "not a bool");
+    if(*val > QW_VAL_TRUE) qw_error(engine, "not a bool (%x)", FQ(val));
     return *val == QW_VAL_TRUE;
 }
 
 dstr_t qw_stack_pop_string(qw_engine_t *engine){
     qw_val_t *val = qw_stack_pop(engine);
-    if(*val != QW_VAL_STRING) qw_error(engine, "not a string");
+    if(*val != QW_VAL_STRING) qw_error(engine, "not a string (%x)", FQ(val));
     qw_string_t *string = CONTAINER_OF(val, qw_string_t, type);
     return string->dstr;
 }
 
 qw_list_t qw_stack_pop_list(qw_engine_t *engine){
     qw_val_t *val = qw_stack_pop(engine);
-    if(*val != QW_VAL_LIST) qw_error(engine, "not a list");
+    if(*val != QW_VAL_LIST) qw_error(engine, "not a list (%x)", FQ(val));
     qw_list_t *list = CONTAINER_OF(val, qw_list_t, type);
     return *list;
 }
 
 qw_dict_t *qw_stack_pop_dict(qw_engine_t *engine){
     qw_val_t *val = qw_stack_pop(engine);
-    if(*val != QW_VAL_DICT) qw_error(engine, "not a dict");
+    if(*val != QW_VAL_DICT) qw_error(engine, "not a dict (%x)", FQ(val));
     qw_dict_t *dict = CONTAINER_OF(val, qw_dict_t, type);
     return dict;
 }
 
 qw_func_t *qw_stack_pop_func(qw_engine_t *engine){
     qw_val_t *val = qw_stack_pop(engine);
-    if(*val != QW_VAL_FUNC) qw_error(engine, "not a func");
+    if(*val != QW_VAL_FUNC) qw_error(engine, "not a func (%x)", FQ(val));
     qw_func_t *func = CONTAINER_OF(val, qw_func_t, type);
     return func;
 }

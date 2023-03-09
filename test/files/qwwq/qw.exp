@@ -10,6 +10,12 @@ exp = [B A B AA A]
 "hello %s, goodbye %s"%["world" "room"] = "hello world, goodbye room"
 "strange key" = so strange
 "strange sub key" = so so strange
+nullval==null = true
+notnullval==null = false
+nullval!=null = false
+notnullval!=null = true
+andguard = ok
+orguard = ok
 
 # functions
 postfix(exp) = B A B AA A, yo

@@ -7,12 +7,7 @@ void qw_instr_put(qw_env_t env){
 
 void qw_instr_puke(qw_env_t env){
     qw_val_t *val = qw_stack_pop(env.engine);
-    if(*val == QW_VAL_STRING){
-        dstr_t arg = CONTAINER_OF(val, qw_string_t, type)->dstr;
-        qw_error(env.engine, "puke: %x", FD(&arg));
-    }else{
-        qw_error(env.engine, "puke: <%x>", FS(qw_val_name(*val)));
-    }
+    qw_error(env.engine, "puke: %x", FQ(val));
 }
 
 void qw_instr_dot(qw_env_t env){
@@ -103,15 +98,27 @@ void qw_instr_dot(qw_env_t env){
 }
 
 void qw_instr_or(qw_env_t env){
-    qw_stack_put_bool(env.engine,
-        qw_stack_pop_bool(env.engine) || qw_stack_pop_bool(env.engine)
-    );
+    // steal the number of instructions to jump
+    uintptr_t ninstr = qw_engine_instr_next_uint(env.engine);
+    // pop the first value
+    bool first = qw_stack_pop_bool(env.engine);
+    if(first){
+        // if first value is true, skip the second value
+        qw_stack_put_bool(env.engine, true);
+        (void)qw_engine_instr_next_n(env.engine, ninstr);
+    }
 }
 
 void qw_instr_and(qw_env_t env){
-    qw_stack_put_bool(env.engine,
-        qw_stack_pop_bool(env.engine) && qw_stack_pop_bool(env.engine)
-    );
+    // steal the number of instructions to jump
+    uintptr_t ninstr = qw_engine_instr_next_uint(env.engine);
+    // pop the first value
+    bool first = qw_stack_pop_bool(env.engine);
+    if(!first){
+        // if first value is false, skip the second value
+        qw_stack_put_bool(env.engine, false);
+        (void)qw_engine_instr_next_n(env.engine, ninstr);
+    }
 }
 
 void qw_instr_bang(qw_env_t env){
@@ -129,7 +136,10 @@ void qw_instr_deq(qw_env_t env){
 
 void qw_instr_neq(qw_env_t env){
     qw_stack_put_bool(env.engine,
-        !dstr_eq(qw_stack_pop_string(env.engine), qw_stack_pop_string(env.engine))
+        !qw_val_eq(env.engine,
+            qw_stack_pop(env.engine),
+            qw_stack_pop(env.engine)
+        )
     );
 }
 
@@ -166,7 +176,7 @@ void qw_instr_caret(qw_env_t env){
     for(size_t i = 0; i < l.len; i++){
         qw_val_t *val = l.vals[i];
         if(*val != QW_VAL_STRING){
-            qw_error(env.engine, "'^' requires all strings");
+            qw_error(env.engine, "'^' requires all strings (%x)", FQ(&l.type));
         }
         qw_string_t *string = CONTAINER_OF(val, qw_string_t, type);
         len += string->dstr.len;
@@ -180,10 +190,24 @@ void qw_instr_caret(qw_env_t env){
 }
 
 void qw_instr_percent(qw_env_t env){
-    qw_list_t l = qw_stack_pop_list(env.engine);
+    // convert single vals into implicit lists of length 1.
+    qw_val_t *listval = qw_stack_pop(env.engine);
+    qw_list_t l;
+    if(*listval == QW_VAL_LIST){
+        l = *CONTAINER_OF(listval, qw_list_t, type);
+    }else{
+        l = (qw_list_t){
+            .type = QW_VAL_LIST,
+            .len = 1,
+            .vals = &listval,
+        };
+    }
+    // pop the fmt string
     qw_val_t *fmtval = qw_stack_pop(env.engine);
     if(*fmtval != QW_VAL_STRING){
-        qw_error(env.engine,  "fmt arg to '%' must be a string");
+        qw_error(
+            env.engine,  "fmt arg to '%' must be a string (%x)", FQ(fmtval)
+        );
     }
     dstr_t fmt = CONTAINER_OF(fmtval, qw_string_t, type)->dstr;
     // one pass to calculate length

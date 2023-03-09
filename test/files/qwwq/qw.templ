@@ -12,6 +12,12 @@ exp = [QW " "^exp WQ]
 WQ"
 "strange key" = QW G."strange key" WQ
 "strange sub key" = QW strange."strange sub key" WQ
+nullval==null = QW if(nullval==null:"true" "false") WQ
+notnullval==null = QW if(notnullval==null:"true" "false") WQ
+nullval!=null = QW if(nullval!=null:"true" "false") WQ
+notnullval!=null = QW if(notnullval!=null:"true" "false") WQ
+andguard = QW if(nullval!=null && puke("andguard"):"bad" "ok") WQ
+orguard = QW if(nullval==null || puke("orguard"):"ok" "bad") WQ
 
 # functions
 postfix(exp) = QW postfix(" "^exp) WQ

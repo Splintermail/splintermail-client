@@ -154,8 +154,32 @@ bang_expr =
 
 dotcall = base_expr dotcall_post;
 
-expr_post = *(OR and_expr { PUT_INSTR(qw_instr_or); });
-and_expr_post = *(AND eq_expr { PUT_INSTR(qw_instr_and); });
+expr_post =
+    *(
+        OR
+        { PUT_INSTR(qw_instr_or); }
+        # configure a skip if the first half is true
+        instroff:ninstr
+        mark:a
+        and_expr
+        mark:b
+        # configure ninstr
+        { TAPE[$ninstr] = (void*)($b - $a); }
+    )
+;
+and_expr_post =
+    *(
+        AND
+        { PUT_INSTR(qw_instr_and); }
+        # configure a skip if the first half is false
+        instroff:ninstr
+        mark:a
+        eq_expr
+        mark:b
+        # configure ninstr
+        { TAPE[$ninstr] = (void*)($b - $a); }
+    )
+;
 eq_expr_post = [eq_op:op cat_expr:x2  { PUT_INSTR($op); }]; # not chainable
 cat_expr_post = *(cat_op:op fmt_expr { PUT_INSTR($op); });
 fmt_expr_post = *(fmt_op:op bang_expr { PUT_INSTR($op); });

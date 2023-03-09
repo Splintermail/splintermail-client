@@ -167,6 +167,7 @@ fatal:
 derr_type_t fmthook_qwval(dstr_t *out, const void *arg){
     const qw_val_t *val = arg;
     qw_string_t *str;
+    qw_list_t *list;
     switch(*val){
         case QW_VAL_FALSE: return FMT_QUIET(out, "false");
         case QW_VAL_TRUE: return FMT_QUIET(out, "true");
@@ -177,10 +178,17 @@ derr_type_t fmthook_qwval(dstr_t *out, const void *arg){
             str = CONTAINER_OF(val, qw_string_t, type);
             return FMT_QUIET(out, "\"%x\"", FD_DBG(&str->dstr));
 
-        case QW_VAL_LIST: return FMT_QUIET(out, "list");
-        case QW_VAL_LAZY: return FMT_QUIET(out, "lazy");
-        case QW_VAL_DICT: return FMT_QUIET(out, "dict");
-        case QW_VAL_FUNC: return FMT_QUIET(out, "func");
+        case QW_VAL_LIST:
+            list = CONTAINER_OF(val, qw_list_t, type);
+            FMT_QUIET(out, "[");
+            for(uintptr_t i = 0; i < list->len; i++){
+                if(i) dstr_append_char(out, ' ');
+                FMT_QUIET(out, "%x", FQ(list->vals[i]));
+            }
+            return FMT_QUIET(out, "]");
+        case QW_VAL_LAZY: return FMT_QUIET(out, "<LAZY>");
+        case QW_VAL_DICT: return FMT_QUIET(out, "<DICT>");
+        case QW_VAL_FUNC: return FMT_QUIET(out, "<FUNC>");
     }
     return FMT_QUIET(out, "(unrecognized value)");
 }
