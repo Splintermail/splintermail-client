@@ -1261,7 +1261,7 @@ derr_t dfopen(const char *path, const char *mode, FILE **out){
     derr_t e = E_OK;
 
     *out = compat_fopen(path, mode);
-    if(!out){
+    if(!*out){
         TRACE(&e, "fopen(%x): %x\n", FS(path), FE(&errno));
         ORIG(&e, errno == ENOMEM ? E_NOMEM : E_OPEN, "unable to open file");
     }
