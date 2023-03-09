@@ -9,8 +9,11 @@ cmd="$words[1]"
 prevwords=($words[2,-2])
 prevargs=()
 options=()
-opts_w_arg=(QW "\n                "^opts_w_arg
-            WQ QW " "^[for a=opts_w_arg -> null2skip(opts.get(a).short)] WQ)
+opts_w_arg=(
+QW table(
+    [ for a=opts_w_arg -> [null2empty(opts.get(a).short) a] ]
+).pre("    ") WQ
+)
 optargnext=""
 for r in $prevwords ; do
     # if last arg was an option with an argument, this arg goes with options
@@ -30,15 +33,15 @@ for r in $prevwords ; do
 done
 
 # list of options common to all completions
-optspecs=(QW
-    "\n          "^[for o=optlist -> *optcall(
+optspecs=(
+    QW "\n    "^[for o=optlist -> *optcall(
         func(long short arg summary detail default completion ->
             [for x=[long null2skip(short)] ->
                 zsh.comp_opt(x summary long arg completion)
             ]
         ) o)
-    ]
-WQ)
+    ] WQ
+)
 
 case "$prevargs" in
     "")

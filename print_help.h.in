@@ -4,62 +4,39 @@ static void print_help(void){
 "\n"
 QW printf_escape(pkgdescr_long("78")).pre('"  ').post('\\n"') WQ
 "\n"
-"usage: splintermail ditm [OPTIONS]\n"
+"usage: splintermail citm [OPTIONS]\n"
 "       splintermail API_COMMAND [OPTIONS]\n"
 "\n"
 "\n"
 "OPTIONS:\n"
-
 "\n"
-
 QW print_help.opts_from_list(opts_common) WQ
-
 "\n"
-
 "OPTIONS, citm-specific:\n"
-
 "\n"
-
 QW print_help.opts_from_list(opts_citm) WQ
-
 "\n"
-
 "OPTIONS, api_command-specific:\n"
-
 "\n"
-
 QW print_help.opts_from_list(opts_apis) WQ
-
 "\n"
-
 "API_COMMANDS:\n"
-
 "\n"
-
 QW
     printf_escape(
         table([for a=apilist -> apicall(print_help.apirow a)])
     ).pre('"').post('\\n"')
 WQ
-
 "\n"
-
 "FILES:\n"
-
+"\n"
 "    Config Files:\n"
-
 QW print_help.file(files.config) WQ
-
 "\n"
-
 "    CITM Email Storage:\n"
-
 QW print_help.file(files.citm) WQ
-
 "\n"
-
 "    Per-User API Tokens:\n"
-
 QW print_help.file(files.accounts) WQ
 );
 }
