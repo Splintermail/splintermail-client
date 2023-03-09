@@ -60,7 +60,24 @@ void qw_engine_free(qw_engine_t *engine){
         }
     }
 
+    qw_block_t *block = engine->extrablock;
+    while(block){
+        qw_block_t *temp = block->prev;
+        free(block);
+        block = temp;
+    }
+
     qw_parser_free(&engine->parser);
+
+    qw_comp_lazy_t *lazies[] = {engine->comp_lazy, engine->extralazy};
+    for(size_t i = 0; i < sizeof(lazies)/sizeof(*lazies); i++){
+        qw_comp_lazy_t *lazy = lazies[i];
+        while(lazy){
+            qw_comp_lazy_t *temp = lazy->prev;
+            free(lazy);
+            lazy = temp;
+        }
+    }
 
     qw_comp_scope_t *comp_scope = engine->comp_scope;
     while(comp_scope){
@@ -334,9 +351,10 @@ void qw_origin_reset(qw_env_t env){
     qw_block_t *extra;
     while((extra = block->prev)){
         block->prev = extra->prev;
-        if(extra->cap != QWBLOCKSIZE){
+        size_t stdcap = QWBLOCKSIZE - (sizeof(qw_block_t) - 1);
+        if(extra->cap != stdcap){
             // abnormal blocks are just freed
-            free(block);
+            free(extra);
         }else{
             // normal blocks are stored on engine for reuse
             extra->len = 0;

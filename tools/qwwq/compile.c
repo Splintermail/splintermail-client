@@ -41,6 +41,52 @@ uintptr_t qw_comp_scope_add_var(qw_comp_scope_t *scope, dstr_t name){
     return out;
 }
 
+qw_comp_lazy_t *qw_comp_lazy_new(qw_engine_t *engine){
+    qw_comp_lazy_t *out = engine->extralazy;
+    if(out){
+        // detach comp_lazy from extra stack
+        engine->extralazy = out->prev;
+    }else{
+        // allocate a new comp_lazy
+        out = malloc(sizeof(*out));
+        if(!out) qw_error(engine, "out of memory");
+    }
+    // attach to active stack, pointing at current comp_scope
+    *out = (qw_comp_lazy_t){
+        .root = engine->comp_scope,
+        .prev = engine->comp_lazy,
+        .engine = engine,
+    };
+    engine->comp_lazy = out;
+    return out;
+}
+
+void qw_comp_lazy_free(qw_comp_lazy_t *comp_lazy){
+    qw_engine_t *engine = comp_lazy->engine;
+    if(engine->comp_lazy != comp_lazy){
+        LOG_FATAL("corrupted stack in qw_comp_lazy_free\n");
+    }
+    // detach comp_lazy from active stack
+    engine->comp_lazy = comp_lazy->prev;
+    // place it in extra stack
+    comp_lazy->prev = engine->extralazy;
+    engine->extralazy = comp_lazy;
+}
+
+// every non-global ref must be checked if it busts the lazy
+static void qw_comp_lazy_check_busted(
+    qw_comp_lazy_t *comp_lazy, uintptr_t scope_id
+){
+    if(comp_lazy->busted) return;
+    // check each comp_scope_t outside the comp_lazy for a matching scope_id
+    for(qw_comp_scope_t *ptr = comp_lazy->root; ptr; ptr = ptr->prev){
+        if(scope_id != ptr->scope_id) continue;
+        // detected a reference to a parent scope
+        comp_lazy->busted = true;
+        return;
+    }
+}
+
 // saves the unbound ref and returns another
 static qw_ref_t qw_comp_scope_add_bind(
     qw_comp_scope_t *scope, dstr_t name, qw_ref_t ref
@@ -64,8 +110,11 @@ void qw_compile_ref(qw_env_t env, dstr_t name){
             }
             qw_put_instr(env, qw_instr_ref);
             qw_put_ref(env, ref);
-            // track total refs emitted
-            env.engine->refs_emitted++;
+            // check if we busted any lazies
+            qw_comp_lazy_t *ptr = env.engine->comp_lazy;
+            for(; ptr; ptr = ptr->prev){
+                qw_comp_lazy_check_busted(ptr, scope->scope_id);
+            }
             return;
         }
         // name not in current scope

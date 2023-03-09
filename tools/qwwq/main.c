@@ -2,6 +2,7 @@
 #include "tools/qwwq/libqw.h"
 
 #include <stdio.h>
+#include <errno.h>
 
 static void print_help(void){
     fprintf(stdout,
@@ -25,7 +26,7 @@ static void print_help(void){
         "\n"
         "DYNAMIC values are of the form KEY=VAL, and will be available to\n"
         "snippets as if they were set on the top-level dictionary.  If there\n"
-        "is a pre-existing key, the command-line KEY will be preferred."
+        "is a pre-existing key, the command-line KEY will be preferred.\n"
     );
 }
 
@@ -124,6 +125,15 @@ int main(int argc, char **argv){
         ftempl = stdin;
     }
     PROP_GO(&e, dstr_fread_all(ftempl, &templ), cu);
+#ifndef _WIN32
+    // unix only: get the intput file mode, so we can make the output match
+    mode_t input_mode = 0;
+    if(o_out.found && o_in.found){
+        compat_stat_t s;
+        PROP_GO(&e, dfstat(fileno(ftempl), &s), cu);
+        input_mode = s.st_mode & 0777;
+    }
+#endif // _WIN32
     fclose(ftempl); ftempl = NULL;
 
     // calculate output
@@ -148,6 +158,15 @@ int main(int argc, char **argv){
         fout = stdout;
     }
     PROP_GO(&e, dstr_fwrite(fout, &out), cu);
+#ifndef _WIN32
+    // unix only: match output mode to input mode
+    if(o_out.found && o_in.found){
+        int ret = fchmod(fileno(fout), input_mode);
+        if(ret){
+            ORIG_GO(&e, E_OS, "chmod(%x): %x", cu, FD(&o_out.val), FE(&errno));
+        }
+    }
+#endif // _WIN32
     FILE *temp = fout; fout = NULL;
     PROP_GO(&e, dfclose(temp), cu);
 

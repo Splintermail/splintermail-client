@@ -8,6 +8,8 @@ d.d.b = BBB
 l = [A B AA]
 exp = [B A B AA A]
 "hello %s, goodbye %s"%["world" "room"] = "hello world, goodbye room"
+"strange key" = so strange
+"strange sub key" = so so strange
 
 # functions
 postfix(exp) = B A B AA A, yo
@@ -18,6 +20,11 @@ recurse("") = "aaaaaaaaa"
 
 # closures
 mkfix(", I think")("hello world") = hello world, I think
+
+# lazy busting
+func(d -> d.a + d.x)(busttest()) = aA
+func(d -> d.a + d.x)(busttest("b")) = ab
+func(d -> d.a + d.x)(busttest("z")) = az
 
 # for loops
 [for a=["yes" "no"] b=["dear" "honey"] -> mkfix(", "+b)(a) ] = ["yes, dear" "no, honey"]

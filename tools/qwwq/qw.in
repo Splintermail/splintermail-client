@@ -54,6 +54,7 @@ static void qw_handle_error(
 
 %type scope {qw_comp_scope_t*} { if(!$$->attached) free($$); };
 %type call {qw_comp_call_t*} { free($$); };
+%type lazy {qw_comp_lazy_t*} { qw_comp_lazy_free($$); };
 %type instr {qw_instr_f};
 %type uint {uintptr_t};
 %type keymap {jsw_atree_t*};
@@ -160,10 +161,12 @@ cat_expr_post = *(cat_op:op fmt_expr { PUT_INSTR($op); });
 fmt_expr_post = *(fmt_op:op bang_expr { PUT_INSTR($op); });
 dotcall_post =
     *(
-      | DOT IDENT:id
-        {{  PUT_INSTR(qw_instr_dot);
-            PUT_DSTR(dstr_from_off(@id));
-        }}
+      | DOT { PUT_INSTR(qw_instr_dot); }
+        (
+          | IDENT:id { PUT_DSTR(dstr_from_off(@id)); }
+          | STRING:s
+            { PUT_DSTR(parse_string_literal(env, dstr_from_off(@s))); }
+        )
       | F_PAREN args:a RPAREN
         # example function:  func(a b c=d e=f -> ...)
         # example call:      myfunc(x, b=y, e=z)
@@ -344,21 +347,23 @@ keymap:keymap =
     }}
 ;
 
+comp_lazy:lazy = %empty { $$ = qw_comp_lazy_new(env.engine); };
+
 lazy_expr =
-    count:nrefs_before { $nrefs_before = env.engine->refs_emitted; }
+    comp_lazy:comp_lazy
     instroff:lazy
     instroff:ninstr
     mark:a
     expr
     mark:b
-    {{  if($nrefs_before == env.engine->refs_emitted){
-            // no refs in this expression, it's safe to emit a lazy
-            TAPE[$lazy] = (void*)qw_instr_lazy;
-            TAPE[$ninstr] = (void*)($b - $a);
-        }else{
-            // refs detected, disallow lazy evaluation
+    {{  if($comp_lazy->busted){
+            // busting refs detected, disallow lazy evaluation
             TAPE[$lazy] = (void*)qw_instr_noop;
             TAPE[$ninstr] = (void*)qw_instr_noop;
+        }else{
+            // no busting refs in this expression, it's safe to emit a lazy
+            TAPE[$lazy] = (void*)qw_instr_lazy;
+            TAPE[$ninstr] = (void*)($b - $a);
         }
     }}
 ;
@@ -367,8 +372,13 @@ dict =
     keymap:keymap
     LBRACE
     *(
-        IDENT:key EQ lazy_expr
+      | IDENT:key EQ lazy_expr
         { qw_keymap_add_key(env, $keymap, dstr_from_off(@key)); }
+      | STRING:key EQ lazy_expr
+        {{  qw_keymap_add_key(
+                env, $keymap, parse_string_literal(env, dstr_from_off(@key))
+            );
+        }}
     )
     RBRACE
     { PUT_INSTR(qw_instr_dict); }

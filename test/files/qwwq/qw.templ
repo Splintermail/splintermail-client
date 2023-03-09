@@ -10,6 +10,8 @@ exp = [QW " "^exp WQ]
 "hello %s, goodbye %s"%["world" "room"] = "QW
     'hello %s, goodbye %s'%['world' 'room']
 WQ"
+"strange key" = QW G."strange key" WQ
+"strange sub key" = QW strange."strange sub key" WQ
 
 # functions
 postfix(exp) = QW postfix(" "^exp) WQ
@@ -20,6 +22,11 @@ recurse("") = "QW recurse("") WQ"
 
 # closures
 mkfix(", I think")("hello world") = QW mkfix(", I think")("hello world") WQ
+
+# lazy busting
+func(d -> d.a + d.x)(busttest()) = QW func(d -> d.a + d.x)(busttest()) WQ
+func(d -> d.a + d.x)(busttest("b")) = QW func(d -> d.a + d.x)(busttest("b")) WQ
+func(d -> d.a + d.x)(busttest("z")) = QW func(d -> d.a + d.x)(busttest("z")) WQ
 
 # for loops
 [for a=["yes" "no"] b=["dear" "honey"] -> mkfix(", "+b)(a) ] = ["QW

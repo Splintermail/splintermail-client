@@ -28,6 +28,9 @@ typedef struct qw_comp_call_t qw_comp_call_t;
 struct qw_comp_scope_t;
 typedef struct qw_comp_scope_t qw_comp_scope_t;
 
+struct qw_comp_lazy_t;
+typedef struct qw_comp_lazy_t qw_comp_lazy_t;
+
 // an instruction function takes only the engine and returns nothing
 typedef void (*qw_instr_f)(qw_env_t env);
 

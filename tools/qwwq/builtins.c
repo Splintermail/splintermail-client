@@ -513,6 +513,83 @@ void qw_method_repl(qw_env_t env, qw_string_t *string){
     method(env, &string->type, &instr, params, 2, defaults);
 }
 
+static void _instr_pad(qw_env_t env, const char *name, bool left){
+    // args are width and char (and bound string)
+    qw_val_t *widthval = qw_scope_eval_ref(env.engine, qw_ref(BUILTIN, 0));
+    qw_val_t *charval = qw_scope_eval_ref(env.engine, qw_ref(BUILTIN, 1));
+    qw_val_t *textval = qw_scope_eval_ref(env.engine, qw_ref(BUILTIN, 2));
+    // type checks
+    if(*widthval != QW_VAL_STRING){
+        qw_error(env.engine, "%s(width=) must be a string", FS(name));
+    }
+    if(*charval != QW_VAL_STRING){
+        qw_error(env.engine, "%s(char=) must be a string", FS(name));
+    }
+    if(*textval != QW_VAL_STRING){
+        qw_error(env.engine, "invalid method bind");
+    }
+    dstr_t widthstr = CONTAINER_OF(widthval, qw_string_t, type)->dstr;
+    dstr_t charstr = CONTAINER_OF(charval, qw_string_t, type)->dstr;
+    dstr_t text = CONTAINER_OF(textval, qw_string_t, type)->dstr;
+    // value checks
+    size_t width;
+    derr_type_t etype = dstr_tosize_quiet(widthstr, &width, 10);
+    if(etype){
+        qw_error(env.engine,
+            "invalid width in %s(width=%x)", FS(name), FD_DBG(&widthstr)
+        );
+    }
+    if(charstr.len != 1){
+        qw_error(env.engine,
+            "invalid char in %s(char=%x)", FS(name), FD_DBG(&charstr)
+        );
+    }
+    // detect noop
+    if(text.len >= width){
+        qw_stack_put(env.engine, textval);
+        return;
+    }
+    dstr_t *out = qw_stack_put_new_string(env, width);
+    if(left){
+        // left-pad
+        dstr_append_char_n(out, charstr.data[0], width - text.len);
+        dstr_append_quiet(out, &text);
+    }else{
+        // right-pad
+        dstr_append_quiet(out, &text);
+        dstr_append_char_n(out, charstr.data[0], width - text.len);
+    }
+}
+
+static dstr_t pad_params[] = {
+    STATIC_DSTR_LIT("width"),  STATIC_DSTR_LIT("char")
+};
+
+static qw_string_t pad_char_default = {
+    .type = QW_VAL_STRING,
+    .dstr = STATIC_DSTR_LIT(" "),
+};
+
+static qw_val_t *pad_defaults[] = { NULL, &pad_char_default.type };
+
+static void qw_instr_lpad(qw_env_t env){
+    _instr_pad(env, "lpad", true);
+}
+
+void qw_method_lpad(qw_env_t env, qw_string_t *string){
+    static void *instr = (void*)qw_instr_lpad;
+    method(env, &string->type, &instr, pad_params, 2, pad_defaults);
+}
+
+static void qw_instr_rpad(qw_env_t env){
+    _instr_pad(env, "rpad", false);
+}
+
+void qw_method_rpad(qw_env_t env, qw_string_t *string){
+    static void *instr = (void*)qw_instr_rpad;
+    method(env, &string->type, &instr, pad_params, 2, pad_defaults);
+}
+
 //
 
 static void qw_instr_get(qw_env_t env){

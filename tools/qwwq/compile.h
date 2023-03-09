@@ -32,6 +32,16 @@ struct qw_comp_scope_t {
     bool attached;
 };
 
+// for detecting lazy-busting references
+struct qw_comp_lazy_t {
+    /* root is the immediate parent comp_scope_t of this qw_comp_lazy_t; any
+       references to this scope or above will bust the lazy */
+    qw_comp_scope_t *root;
+    bool busted;
+    qw_comp_lazy_t *prev;
+    qw_engine_t *engine;
+};
+
 qw_comp_call_t *qw_comp_call_new(qw_engine_t *engine);
 // qw_comp_call_t is freed with just free()
 
@@ -46,6 +56,9 @@ void qw_comp_scope_pop(qw_engine_t *engine);
 
 // returns the number of the variable which was added
 uintptr_t qw_comp_scope_add_var(qw_comp_scope_t *scope, dstr_t name);
+
+qw_comp_lazy_t *qw_comp_lazy_new(qw_engine_t *engine);
+void qw_comp_lazy_free(qw_comp_lazy_t *comp_lazy);
 
 // silently discards any extra bits
 // (defined in convert.c which requires compiles with different flags)

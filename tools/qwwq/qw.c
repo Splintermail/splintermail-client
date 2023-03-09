@@ -195,9 +195,6 @@ static dstr_t exec_snippet(qw_env_t env, dstr_t snippet){
     }
     qw_string_t *string = CONTAINER_OF(val, qw_string_t, type);
 
-    // reset snippet origin
-    qw_origin_reset(env);
-
     return string->dstr;
 }
 
@@ -247,6 +244,8 @@ void qw_file(
                 snippet = dstr_rstrip_chars(snippet, ' ', '\n', '\r', '\t');
                 dstr_t result = exec_snippet(env, snippet);
                 chunk_fn(engine, data, result);
+                // reset snippet origin
+                qw_origin_reset(env);
                 have_start = false;
                 continue;
             case QW_STATUS_SYNTAX_ERROR:

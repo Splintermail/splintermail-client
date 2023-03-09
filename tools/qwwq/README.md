@@ -81,7 +81,7 @@ Example instructions:
 Note that this isn't a postfix operator, because there's not a good way to
 know how many values to pop from the stack at runtime, with the `*` operator.
 
-## Dicts:
+## Dicts
 
 A dict object is the combination of a compiler-defined keymap, which maps
 string keys to integer indices, and a list of runtime values.
@@ -100,8 +100,8 @@ Example instructions:
 Where "{a=0,b=1,c=2}" is the compile-time-defined keymap object.
 
 When an expression inside a lazy object is discovered by the compiler to be a
-reference to non-global parameter, that lazy object instruction and its arg get
-overwritten with noops:
+reference to non-global parameter from outside the scope of the lazy, that lazy
+object instruction and its arg get overwritten with noops:
 
 Example code:
 
@@ -123,7 +123,26 @@ Actual compiled instructions:
         dict {c=0,d=1}
     dict {a=0,b=1}
 
-## Functions:
+### Keys with special characters
+
+Dict keys may be string literals in the case that they are not valid
+identifiers.
+
+Example definition:
+
+    {a="a" "my strange key"="strange"}
+
+Example dereference:
+
+    my_strange_dict."my strange key"
+
+In case such a key exists in the root dict of the config, you can dereference
+it by using the special builtin symbol `G` (for the "global" config variables)
+so your dereference is not interpreted as a plain string literal:
+
+    G."my strange root key"
+
+## Functions
 
 Example code:
 
@@ -146,7 +165,7 @@ scope, not to the parent function's.  Also note that `binds...` would contain
 instructions for extracting `z` from the parent scope at the time that the func
 instruction is executed (which is before the function is called).
 
-## Function Calls:
+## Function Calls
 
 Example code:
 
@@ -160,7 +179,7 @@ Where:
 - `.2.1` means "one arg, two kwargs"
 - and `b e` are the kwarg names, known at compile time
 
-## If expressions:
+## If expressions
 
 Example code:
 
@@ -175,7 +194,7 @@ Where:
   either proceeds if true or jumps N instructions forward if not.
 - `jmp.N` is intended to jump to the end of the whole control flow
 
-## Switch expressions:
+## Switch expressions
 
 Example code:
 
@@ -191,7 +210,7 @@ Where:
   otherwise jumps N instructions forward.
 - `jmp.N` is intended to jump to the swap drop, which should always execute.
 
-## For loops:
+## For loops
 
 Example code:
 
@@ -207,7 +226,7 @@ Example instructions:
 Note that since there's no keyword-based calling like functions, there's no
 need to keep the names of the variables after compile time.
 
-## Puke expressions:
+## Puke expressions
 
 Example code:
 
@@ -304,7 +323,26 @@ Like `pre()` but postfixes sections instead of prefixing them.
 
 Returns the `STRING` but with each instance of `find` replaced with `repl`.
 
+### `STRING.lpad(width char=" ")`
+
+Pad `STRING` with copies of `char` on the left until it is as at least `width`
+characters long.  `char` must be a 1-character string.
+
+### `STRING.rpad(width char=" ")`
+
+Like `lpad` but pad on the right of the string.
+
 ### `DICT.get(key)`
 
 Does a key lookup with a variable key (that the `.` operator does not support).
 Missing keys will cause execution to fail.
+
+## Builtin Symbols
+
+### `G`
+
+The symbol `G` is a reference to the config (the set of "global" variables).
+This is only necessary for dereferencing special keys in the root of the config
+dict:
+
+    G."my strange key"

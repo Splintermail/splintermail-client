@@ -35,9 +35,10 @@ struct qw_engine_t {
     qw_block_t *extrablock;
     // compile-time stuff
     qw_parser_t *parser;
+    qw_comp_lazy_t *comp_lazy;
+    qw_comp_lazy_t *extralazy;
     qw_comp_scope_t *comp_scope;
     uintptr_t last_scope_id;
-    uintptr_t refs_emitted;
     // runtime stuff
     qw_stack_t *stack;
     qw_stack_t *extrastack;

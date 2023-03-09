@@ -76,6 +76,14 @@ void qw_instr_dot(qw_env_t env){
                 qw_method_repl(env, string);
                 return;
             }
+            if(dstr_eq(key, DSTR_LIT("lpad"))){
+                qw_method_lpad(env, string);
+                return;
+            }
+            if(dstr_eq(key, DSTR_LIT("rpad"))){
+                qw_method_rpad(env, string);
+                return;
+            }
             qw_error(env.engine, "STRING has no method \"%x\"", FD_DBG(&key));
 
         case QW_VAL_FALSE:
@@ -112,7 +120,10 @@ void qw_instr_bang(qw_env_t env){
 
 void qw_instr_deq(qw_env_t env){
     qw_stack_put_bool(env.engine,
-        dstr_eq(qw_stack_pop_string(env.engine), qw_stack_pop_string(env.engine))
+        qw_val_eq(env.engine,
+            qw_stack_pop(env.engine),
+            qw_stack_pop(env.engine)
+        )
     );
 }
 
@@ -283,20 +294,24 @@ void qw_instr_global(qw_env_t env){
         return;
     }
     // fallback to global builtin lookup
+    if(dstr_eq(key, DSTR_LIT("G"))){
+        qw_stack_put(env.engine, &env.engine->config->type);
+        return;
+    }
     if(dstr_eq(key, DSTR_LIT("table"))){
-        qw_stack_put(env.engine, (void*)&qw_builtin_table);
+        qw_stack_put(env.engine, &qw_builtin_table.type);
         return;
     }
     if(dstr_eq(key, DSTR_LIT("relpath"))){
-        qw_stack_put(env.engine, (void*)&qw_builtin_relpath);
+        qw_stack_put(env.engine, &qw_builtin_relpath.type);
         return;
     }
     if(dstr_eq(key, DSTR_LIT("cat"))){
-        qw_stack_put(env.engine, (void*)&qw_builtin_cat);
+        qw_stack_put(env.engine, &qw_builtin_cat.type);
         return;
     }
     if(dstr_eq(key, DSTR_LIT("exists"))){
-        qw_stack_put(env.engine, (void*)&qw_builtin_exists);
+        qw_stack_put(env.engine, &qw_builtin_exists.type);
         return;
     }
     qw_error(env.engine, "global key \"%x\" not found", FD_DBG(&key));
