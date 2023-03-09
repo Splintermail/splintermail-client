@@ -1,13 +1,13 @@
-Source: QWERpkgnameREWQ
-Maintainer: QWERmaintainer_stringREWQ
+Source: QW pkgname WQ
+Maintainer: QW maintainer.string WQ
 Section: misc
 Priority: optional
 Standards-Version: 3.9.8
 Build-Depends: debhelper (>= 10), libssl-dev, cmake (>= 3.1), python3 (>= 3.6)
 
-Package: QWER pkgname REWQ
+Package: QW pkgname WQ
 Architecture: any
 Depends: ${shlibs:Depends}, ${misc:Depends}, libssl1.1, ca-certificates
 Pre-Depends: openssl, ca-certificates
-Description: QWER pkgdescr_short REWQ
-QWER["prefix", " ", ["call", "pkgdescr_long", {"width":"70"}]]REWQ
+Description: QW pkgdescr_short WQ
+QW pkgdescr_long("70").pre(" ") WQ

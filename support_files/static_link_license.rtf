@@ -1,16 +1,18 @@
 {\rtf1\ansi{\fonttbl\f0\fmodern Courier;}\f0\pard
-QWER["regex", ["cat", ["filerel", "static_link_license.txt"]],
-     "##\n", "##\\\\line\n",
-     "==\n", "==\\\\line\n",
-     "--\n", "--\\\\line\n",
-     "\n *", "\n",
-     "(\nsource:.*)\n", "\\1\\\\line\\\\line\n",
-     "(\nCopyright \\(.*)\n", "\\1\\\\line\\\\line\n",
-     "(\n[0-9]\\.)", "\\\\line\\\\line\\1",
-     "\\\\line\n", "\\\\line",
-     "([^\n])\n([^\n])", "\\1 \\2",
-     "\n", "\\\\line",
-     "\\\\line ?", "\\\\line "
-     ]
-REWQ
+QW cat(relpath("static_link_license.txt"))
+    .repl("##\n" "##\\line\n")
+    .repl("==\n" "==\\line")
+    .repl("--\n" "--\\line\n")
+    .repl("\n  " "\n").repl("\n  " "\n").repl("\n " "\n")
+    .repl("\n\n\n" "\\line \\line \\line ")
+    .repl("\n\n" "\\line \\line ")
+    .repl("\nAll rights reserved." "\\line\\lineAll rights reserved.")
+    .repl("\n1. " "\\line \\line 1. ")
+    .repl("\n2. " "\\line \\line 2. ")
+    .repl("\n3. " "\\line \\line 3. ")
+    .repl("\n4. " "\\line \\line 4. ")
+    .repl("\n" " ")
+    .repl("\\line " "\\line").repl("\\line" "\\line ")
+    .strip() + "\\line "
+WQ
 }

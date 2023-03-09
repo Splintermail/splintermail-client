@@ -1,6 +1,6 @@
 #!/bin/sh
 
 # delete the old pkg receipt (uninstaller is payload-free, has no receipt)
-pkgutil --forget QWER osx_pkg_id REWQ
+pkgutil --forget QW osx_pkg_id WQ
 
 exit 0

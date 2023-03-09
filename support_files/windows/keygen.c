@@ -47,7 +47,7 @@ derr_t do_popen(const char* args, const dstr_t* input, dstr_t* output){
 }
 
 // for_each_file_in_dir version of:
-//  rm -f "$outdir/$(echo QWER ca_name REWQ | sed -e 's/[^a-z].*//')"*.srl
+//  rm -f "$outdir/$(echo QW ca_name WQ | sed -e 's/[^a-z].*//')"*.srl
 static derr_t remove_srl(
     const string_builder_t *base, const dstr_t *file, bool isdir, void *arg
 ){
@@ -58,7 +58,7 @@ static derr_t remove_srl(
     if(!dstr_endswith(file, &DSTR_LIT(".srl"))) return e;
 
     // check prefix manually
-    DSTR_STATIC(ca_name, "QWER ca_name REWQ");
+    DSTR_STATIC(ca_name, "QW ca_name WQ");
     for(size_t i = 0; i < ca_name.len && i < file->len; i++){
         char c = ca_name.data[i];
         if(c < 'a' || c > 'z'){
@@ -117,21 +117,27 @@ derr_t keygen_main(int argc, char **argv){
     char* openssl_bin = argv[1];
     char* openssl_cnf = argv[2];
     char* output_dir = argv[3];
+    // strip any trailing separator of output_dir
+    for(size_t i = strlen(output_dir); i > 0; i--){
+        char *c = output_dir + i - 1;
+        if(*c != '/' && *c != '\\') break;
+        *c = '\0';
+    }
 
     bool gen_needed = false;
     // check if we already have the certificate authority
     DSTR_VAR(path, 256);
-    PROP(&e, FMT(&path, "%xQWER ca_name REWQ", FS(output_dir)) );
+    PROP(&e, FMT(&path, "%x/QW ca_name WQ", FS(output_dir)) );
     gen_needed |= !file_r_access(path.data);
 
     // check if we already have the key
     path.len = 0;
-    PROP(&e, FMT(&path, "%xQWER key_name REWQ", FS(output_dir)) );
+    PROP(&e, FMT(&path, "%x/QW key_name WQ", FS(output_dir)) );
     gen_needed |= !file_r_access(path.data);
 
     // check if we already have the cert
     path.len = 0;
-    PROP(&e, FMT(&path, "%xQWER cert_name REWQ", FS(output_dir)) );
+    PROP(&e, FMT(&path, "%x/QW cert_name WQ", FS(output_dir)) );
     gen_needed |= !file_r_access(path.data);
 
     // if we don't need to continue... don't continue
@@ -143,7 +149,7 @@ derr_t keygen_main(int argc, char **argv){
     // delete any pre-existing CA's laying around
     PROP(&e,
         do_popen(
-            "\"certutil -delstore Root \"QWER ca_common_name REWQ\"\"",
+            "\"certutil -delstore Root \"QW ca_common_name WQ\"\"",
             NULL,
             NULL
         )
@@ -158,7 +164,7 @@ derr_t keygen_main(int argc, char **argv){
     PROP(&e,
         FMT(
             &args,
-            "\"\"QWER["join", "\\\" \\\"", "generate_ca_key_args"]REWQ\"\"",
+            "\"\"QW '\\" \\"'^generate_ca_key_args WQ\"\"",
             FS(openssl_bin)
         )
     );
@@ -169,7 +175,7 @@ derr_t keygen_main(int argc, char **argv){
     PROP(&e,
         FMT(
             &args,
-            "\"\"QWER["join", "\\\" \\\"", "self_sign_ca_args"]REWQ\"\"",
+            "\"\"QW '\\" \\"'^self_sign_ca_args WQ\"\"",
             FS(openssl_bin),
             FS(openssl_cnf),
             FS(output_dir)
@@ -182,7 +188,7 @@ derr_t keygen_main(int argc, char **argv){
     PROP(&e,
         FMT(
             &args,
-            "\"\"QWER["join", "\\\" \\\"", "create_key_args"]REWQ\"\"",
+            "\"\"QW '\\" \\"'^create_key_args WQ\"\"",
             FS(openssl_bin),
             FS(output_dir)
         )
@@ -194,7 +200,7 @@ derr_t keygen_main(int argc, char **argv){
     PROP(&e,
         FMT(
             &args,
-            "\"\"QWER["join", "\\\" \\\"", "create_csr_args"]REWQ\"\"",
+            "\"\"QW '\\" \\"'^create_csr_args WQ\"\"",
             FS(openssl_bin),
             FS(openssl_cnf),
             FS(output_dir),
@@ -208,7 +214,7 @@ derr_t keygen_main(int argc, char **argv){
     PROP(&e,
         FMT(
             &args,
-            "\"\"QWER["join", "\\\" \\\"", "sign_csr_args"]REWQ\"\"",
+            "\"\"QW '\\" \\"'^sign_csr_args WQ\"\"",
             FS(openssl_bin),
             FS(openssl_cnf),
             FS(output_dir),
@@ -220,12 +226,12 @@ derr_t keygen_main(int argc, char **argv){
 
     // turn the certificate into a proper chain
     DSTR_VAR(ca_cert_file, 1024);
-    PROP(&e, FMT(&ca_cert_file, "%xQWER ca_name REWQ", FS(output_dir)) );
+    PROP(&e, FMT(&ca_cert_file, "%x/QW ca_name WQ", FS(output_dir)) );
     DSTR_VAR(ca_cert, 4096);
     PROP(&e, dstr_read_file(ca_cert_file.data, &ca_cert) );
 
     DSTR_VAR(ssl_cert_file, 1024);
-    PROP(&e, FMT(&ssl_cert_file, "%xQWER cert_name REWQ", FS(output_dir)) );
+    PROP(&e, FMT(&ssl_cert_file, "%x/QW cert_name WQ", FS(output_dir)) );
     FILE* f = compat_fopen(ssl_cert_file.data, "a");
     PROP(&e, dstr_fwrite(f, &ca_cert) );
     PROP(&e, dffsync(f) );
@@ -236,7 +242,7 @@ derr_t keygen_main(int argc, char **argv){
     PROP(&e,
         FMT(
             &args,
-            "\"certutil -addstore Root \"%xQWER ca_name REWQ\"\"",
+            "\"certutil -addstore Root \"%x/QW ca_name WQ\"\"",
             FS(output_dir)
         )
     );
@@ -246,14 +252,14 @@ derr_t keygen_main(int argc, char **argv){
 
     // cleanup unecessary files
     {
-        // rm -f "$outdir/$(echo QWER ca_name REWQ | sed -e 's/[^a-z].*//')"*.srl
+        // rm -f "$outdir/$(echo QW ca_name WQ | sed -e 's/[^a-z].*//')"*.srl
         string_builder_t output_path = SB(FS(output_dir));
         PROP(&e, for_each_file_in_dir(&output_path, remove_srl, NULL));
     }
     {
         // rm -f "$outdir/sig_req.csr"
         DSTR_VAR(fname, 1024);
-        PROP(&e, FMT(&fname, "%xsig_req.csr", FS(output_dir)) );
+        PROP(&e, FMT(&fname, "%x/sig_req.csr", FS(output_dir)) );
         PROP(&e, dremove(fname.data) );
     }
 

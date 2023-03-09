@@ -5,10 +5,10 @@ action="$1"
 
 if [ "$action" = "purge" ] ; then
     # untrust the certificate generated at install
-    rm "/usr/local/share/ca-certificates/QWER ca_name REWQ" \
+    rm "/usr/local/share/ca-certificates/QW ca_name WQ" \
         && update-ca-certificates || true
     # delete files
-    rm -rf "QWER sm_dir REWQ"
+    rm -rf "QW sm_dir WQ"
     # not deleting service user, I agree with Fedora's guidlines
     # https://fedoraproject.org/wiki/Packaging:UsersAndGroups
     # # delete service user

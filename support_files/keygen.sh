@@ -8,25 +8,25 @@ openssl_cnf="$1"
 [ -n "$2" ] && outdir="$2" || outdir="."
 
 # generate a certificate authority key, store only in memory
-rootca=$("QWER["join", "\" \"", "generate_ca_key_args"]REWQ")
+rootca=$("QW '" "'^generate_ca_key_args WQ")
 
 # self-sign rootca, store cert as file
-echo "$rootca" | "QWER["join", "\" \"", "self_sign_ca_args"]REWQ"
+echo "$rootca" | "QW '" "'^self_sign_ca_args WQ"
 
 # create key
-"QWER["join", "\" \"", "create_key_args"]REWQ"
+"QW '" "'^create_key_args WQ"
 
 # create certificate sign request
-"QWER["join", "\" \"", "create_csr_args"]REWQ"
+"QW '" "'^create_csr_args WQ"
 
 # sign with rootca
-echo "$rootca" | "QWER["join", "\" \"", "sign_csr_args"]REWQ"
+echo "$rootca" | "QW '" "'^sign_csr_args WQ"
 
 # turn the certificate into a proper chain
-cat "QWER["get","keygen","ca_path"]REWQ" >> "QWER["get","keygen","cert_path"]REWQ"
+cat "QW keygen.ca_path WQ" >> "QW keygen.cert_path WQ"
 
 # cleanup unecessary files (srl naming is unreliable across platforms)
-rm -f "$outdir/$(echo QWER ca_name REWQ | sed -e 's/[^a-z].*//')"*.srl
+rm -f "$outdir/$(echo QW ca_name WQ | sed -e 's/[^a-z].*//')"*.srl
 rm -f "$outdir/sig_req.csr"
 
 unset rootca

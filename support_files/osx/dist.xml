@@ -1,17 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <installer-gui-script minSpecVersion="1">
-  <pkg-ref id="QWER osx_pkg_id REWQ"/>
+  <pkg-ref id="QW osx_pkg_id WQ"/>
   <options customize="never" require-scripts="false"/>
   <choices-outline>
     <line choice="default">
-      <line choice="QWER osx_pkg_id REWQ"/>
+      <line choice="QW osx_pkg_id WQ"/>
     </line>
   </choices-outline>
   <choice id="default"/>
-  <choice id="QWER osx_pkg_id REWQ" visible="false">
-    <pkg-ref id="QWER osx_pkg_id REWQ"/>
+  <choice id="QW osx_pkg_id WQ" visible="false">
+    <pkg-ref id="QW osx_pkg_id WQ"/>
   </choice>
-  <pkg-ref id="QWER osx_pkg_id REWQ" version="QWER version REWQ" onConclusion="none">install_QWER pkg_name REWQ-QWER version REWQ.pkg</pkg-ref>
+  <pkg-ref id="QW osx_pkg_id WQ" version="QW version WQ" onConclusion="none">install_QW pkg_name WQ-QW version WQ.pkg</pkg-ref>
   <license file="static_link_license.rtf" mime-type="application/rtf"/>
-  <title>QWER Pkg Name REWQ Installer</title>
+  <title>QW G."Pkg Name" WQ Installer</title>
 </installer-gui-script>

@@ -57,11 +57,8 @@ __splintermail () {
     # this array will have "--switch" and "--opt" and "optarg" (twice each)
     options=()
     # for distinguishing switches from options
-    opts_w_arg=(QWER ["join", "\n                ", "opts_w_arg"]
-                REWQ QWER ["join", " ", ["for", "a", "opts_w_arg",
-                            ["zero?", ["get","opts","a","short"],
-                              null,
-                              ["get","opts","a","short"]]]] REWQ)
+    opts_w_arg=(QW "\n                "^opts_w_arg + " "
+                + " "^[for o=opts_w_arg -> null2skip(opts.get(o).short)] WQ)
     # separate args from switches and options
     optargnext=""
     for r in "${COMP_WORDS[@]:1:$COMP_CWORD-1}" ; do
@@ -91,55 +88,53 @@ __splintermail () {
 
 
     # complete option arguments based on prevtok
-QWER
-["prefix","    ",["join", "\n",["for", "o", "opts_w_arg",
-    ["printf","if [ \"$prevtok\" = \"%s\" ]%s ; then",
-              ["string", "o"],
-              ["zero?",["get","opts","o","short"],
-                       "",
-                       ["printf"," || [ \"$prevtok\" == \"%s\" ]",
-                                 ["get","opts","o","short"]]]],
-    ["null?",["get","opts","o","completion"],
-             null,
-             ["switch",["get","opts","o","completion"],
-                {"file":"    compopt -o default",
-                 "dir":"    compopt -o default -o dirnames"},
-                ["puke"]]],
-    ["string", "    return"],
-    ["string", "fi"]
-]]]
-REWQ
+QW
+("\n"^[for o=opts_w_arg ->
+    optcall(func(
+        long short arg summary detail default completion
+    ->
+        ""^[
+            'if [ "$prevtok" = "' long '" ]'
+            if(short==null:skip ' || [ "$prevtok" == "'+short+'" ]')
+            " ; then\n"
+            switch(completion
+                null:skip
+                "file":"    compopt -o default\n"
+                "dir":"    compopt -o default -o dirnames\n"
+                puke(completion)
+            )
+            "    return\n"
+            "fi"
+        ]
+    ) o)
+]).pre("    ")
+WQ
 
 
     # complete api arguments based on prevargs
-QWER
-["prefix","    ",["join", "\n",["for", "a", "apis_w_arg",
-    ["printf","if [ \"${prevargs[*]}\" = \"%s\" ] ; then", ["string", "a"]],
-    ["string","    choices=("],
-    ["null?", ["get","apis","a","choices"],
-        null,
-        ["join","\n",["for", "c", ["get","apis","a","choices"],
-            ["printf","        \"%s:\"",["string","c"]]]]],
-    ["string","    )"],
-    ["string","    __splintermail_format_completion \"$@\" \"${choices[@]}\""],
-    ["string","    return"],
-    ["string","fi"]
-]]]
-REWQ
+QW
+("\n"^[for a=apis_w_arg ->
+    apicall(func(
+        name short long arg choices
+    ->
+        ""^[
+            'if [ "${prevargs[*]}" = "' name '" ] ; then\n'
+            "    choices=(\n"
+            if(choices==null:skip "\n"^[for c=choices -> '        "%s:"'%[c]])
+            "    )\n"
+            '    __splintermail_format_completion "$@" "${choices[@]}"\n'
+            "    return\n"
+            "fi"
+        ]
+    ) a)
+]).pre("    ")
+WQ
 
 
     # otherwise check if there is an option to complete
     if [[ "$curtok" =~ ^-.* ]] ; then
         choices=(
-QWER
-["prefix", "            \"", ["postfix","\"",
-    ["join", "\n", ["for", "o", "opts_list",
-        ["printf", "%s:%s",
-                   ["string", "o"],
-                   ["get", "opts", "o", "summary"]]
-    ]]
-]]
-REWQ
+QW "\n"^[for o=optlist -> '            "%s:%s"'%[o opts.get(o).summary]] WQ
         )
         __splintermail_format_completion "$@" "${choices[@]}"
         return
@@ -149,15 +144,7 @@ REWQ
     if [ "${#prevargs[@]}" -eq 0 ] ; then
         choices=(
             "citm:Run the local decrypting email server"
-QWER
-["prefix", "            \"", ["postfix","\"",
-    ["join", "\n", ["for", "api", "apilist",
-        ["printf", "%s:%s",
-                   ["string", "api"],
-                   ["get", "apis", "api", "short"]]
-    ]]
-]]
-REWQ
+QW "\n"^[for a=apilist -> '            "%s:%s"'%[a apis.get(a).short]] WQ
             )
         __splintermail_format_completion "$@" "${choices[@]}"
         return

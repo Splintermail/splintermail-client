@@ -5,18 +5,18 @@
   <!-- if Product ID changes and version changes it is a "major" update-->
   <!-- we will always do major updates, it will be simpler.  The version
        should be updated manually in the CMake file for every release-->
-  <Product Name='QWER Pkg Name REWQ'
+  <Product Name='QW G."Pkg Name" WQ'
            Id='*'
            UpgradeCode='f04e8b4c-9fc0-4478-ba41-38d657549d38'
            Language='1033'
            Codepage='1252'
-           Version='QWER version REWQ'
+           Version='QW version WQ'
            Manufacturer='Splintermail LLC'>
 
     <!-- Package ID should change every build, always always always -->
     <Package Id='*'
              Keywords='Installer'
-             Description='QWER Pkg Name REWQ Installer'
+             Description='QW G."Pkg Name" WQ Installer'
              Comments='Splintermail is Awesome.'
              Manufacturer='Splintermail LLC'
              InstallScope='perMachine'
@@ -32,13 +32,13 @@
       <UpgradeVersion Property='PREVIOUSFOUND'
                       OnlyDetect='no'
                       Minimum='0.0.0' IncludeMinimum='yes'
-                      Maximum='QWER version REWQ' IncludeMaximum='no'/>
+                      Maximum='QW version WQ' IncludeMaximum='no'/>
       <!--don't replace a newer version-->
       <!--Even if you allow it, the component updating rules make it so you
           would just end up with the new versions of components anyway-->
       <UpgradeVersion Property='NEWERFOUND'
                       OnlyDetect='yes'
-                      Minimum='QWER version REWQ'
+                      Minimum='QW version WQ'
                       IncludeMinimum='yes' />
     </Upgrade>
 
@@ -59,7 +59,7 @@
         <!-- My comapany's folder -->
         <Directory Id='Splintermail' Name='Splintermail'>
           <!-- This software package -->
-          <Directory Id='INSTALLDIR' Name='QWER Pkg Name REWQ'>
+          <Directory Id='INSTALLDIR' Name='QW G."Pkg Name" WQ'>
             <!-- The bin/ directory to add to the PATH -->
             <Directory Id='bindir' Name='bin'>
               <!--splintermail.exe-->
@@ -181,7 +181,7 @@
            because <Environment> can't be a KeyPath -->
       <Component Id='PATH_reg_component' Guid='3e383da1-c73d-4052-a74b-50952535ae55'>
         <RegistryKey Root='HKLM'
-                     Key='Software\Splintermail\QWER Pkg Name REWQ'>
+                     Key='Software\Splintermail\QW G."Pkg Name" WQ'>
           <RegistryValue Type='integer'
                          Name='PATH_installed'
                          Value='1'
@@ -210,7 +210,7 @@
     <!--untrust keys-->
     <CustomAction Id='untrust_ca_action'
                   Directory='TARGETDIR'
-                  ExeCommand='[SystemFolder]certutil -delstore Root "QWERca_common_nameREWQ"'
+                  ExeCommand='[SystemFolder]certutil -delstore Root "QW ca_common_name WQ"'
                   Execute='deferred'
                   Return='check'
                   HideTarget='no'

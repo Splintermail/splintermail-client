@@ -3,7 +3,7 @@
 set -e
 
 # check if there is a version of splintermail already installed
-if pkgutil --pkgs | grep -q QWER osx_pkg_id REWQ ; then
+if pkgutil --pkgs | grep -q QW osx_pkg_id WQ ; then
     upgrading="true"
 else
     upgrading="false"
@@ -11,7 +11,7 @@ fi
 
 # if there was a version installed, call the preupgrade script
 if [ "$upgrading" = "true" ] ; then
-    sh "QWER share_dir REWQ/preupgrade.sh" || true
+    sh "QW share_dir WQ/preupgrade.sh" || true
 fi
 
 exit 0

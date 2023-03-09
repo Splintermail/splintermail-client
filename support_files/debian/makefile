@@ -1,8 +1,8 @@
 build:
-	cmake --build "QWER build_dir REWQ"
+	cmake --build "QW build_dir WQ"
 
 install:
-	cmake --build "QWER build_dir REWQ" --target install
+	cmake --build "QW build_dir WQ" --target install
 
 test:
 	true

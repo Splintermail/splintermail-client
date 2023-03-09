@@ -1,8 +1,8 @@
 Name:           splintermail
 Vendor:         Splintermail, LLC
-Version:        QWER version REWQ
+Version:        QW version WQ
 Release:        1%{?dist}
-Summary:        QWER pkgdescr_short REWQ
+Summary:        QW pkgdescr_short WQ
 
 License:    Unlicense
 URL:        https://github.com/splintermail/splintermail-client
@@ -13,7 +13,7 @@ Requires(post): shadow-utils openssl
 #Requires:      openssl-libs
 
 %description
-QWER ["call", "pkgdescr_long", {"width":"72"}] REWQ
+QW pkgdescr_long("72") WQ
 
 %global debug_package %{nil}
 
@@ -21,14 +21,14 @@ QWER ["call", "pkgdescr_long", {"width":"72"}] REWQ
 # If we used a "Source:" tag, normal setup would be:
 #%%setup -q
 # But we only need to ensure that the %%license directive works.
-cp "QWER src_dir REWQ/UNLICENSE" .
+cp "QW src_dir WQ/UNLICENSE" .
 
 %build
-cmake --build "QWER build_dir REWQ"
-strip -s "QWER build_dir REWQ/splintermail"
+cmake --build "QW build_dir WQ"
+strip -s "QW build_dir WQ/splintermail"
 
 %install
-DESTDIR="%{buildroot}" cmake --build "QWER build_dir REWQ" --target install
+DESTDIR="%{buildroot}" cmake --build "QW build_dir WQ" --target install
 
 
 %files
@@ -50,41 +50,41 @@ DESTDIR="%{buildroot}" cmake --build "QWER build_dir REWQ" --target install
 # create service user
 getent group splintermail >/dev/null || groupadd -r splintermail
 getent passwd splintermail >/dev/null || \
-    useradd -r -g splintermail -d "QWER sm_dir REWQ" -s /sbin/nologin \
+    useradd -r -g splintermail -d "QW sm_dir WQ" -s /sbin/nologin \
     -c "Splintermail service account" splintermail
 # create the splintermail directory
-if [ ! -d "QWER sm_dir REWQ" ] ; then
-    mkdir -p "QWER sm_dir REWQ"
-    chmod 700 "QWER sm_dir REWQ"
-    chown splintermail:splintermail "QWER sm_dir REWQ"
+if [ ! -d "QW sm_dir WQ" ] ; then
+    mkdir -p "QW sm_dir WQ"
+    chmod 700 "QW sm_dir WQ"
+    chown splintermail:splintermail "QW sm_dir WQ"
 fi
 # migrate old certificates from v0.2 installations
-if [ -f "QWER sm_dir REWQ/QWER old_cert_name REWQ" ] ; then
-    mv "QWER sm_dir REWQ/QWER old_cert_name REWQ" "QWER sm_dir REWQ/QWER cert_name REWQ"
+if [ -f "QW sm_dir WQ/QW old_cert_name WQ" ] ; then
+    mv "QW sm_dir WQ/QW old_cert_name WQ" "QW sm_dir WQ/QW cert_name WQ"
 fi
-if [ -f "QWER sm_dir REWQ/QWER old_key_name REWQ" ] ; then
-    mv "QWER sm_dir REWQ/QWER old_key_name REWQ" "QWER sm_dir REWQ/QWER key_name REWQ"
+if [ -f "QW sm_dir WQ/QW old_key_name WQ" ] ; then
+    mv "QW sm_dir WQ/QW old_key_name WQ" "QW sm_dir WQ/QW key_name WQ"
 fi
-if [ -f "QWER sm_dir REWQ/QWER old_ca_name REWQ" ] ; then
-    mv "QWER sm_dir REWQ/QWER old_ca_name REWQ" "QWER sm_dir REWQ/QWER ca_name REWQ"
+if [ -f "QW sm_dir WQ/QW old_ca_name WQ" ] ; then
+    mv "QW sm_dir WQ/QW old_ca_name WQ" "QW sm_dir WQ/QW ca_name WQ"
 fi
 # remove the cert_file that may accidentally have been installed in 0.2.0
-if [ -f "/etc/pki/ca-trust/source/anchors/QWER old_cert_name REWQ" ] ; then
-    rm "/etc/pki/ca-trust/source/anchors/QWER old_cert_name REWQ" \
+if [ -f "/etc/pki/ca-trust/source/anchors/QW old_cert_name WQ" ] ; then
+    rm "/etc/pki/ca-trust/source/anchors/QW old_cert_name WQ" \
         && update-ca-trust extract || true
 fi
 # generate the SSL certificates, if they don't exist already
-if [ ! -f "QWER sm_dir REWQ/QWER cert_name REWQ" ] \
-        || [ ! -f "QWER sm_dir REWQ/QWER key_name REWQ" ] \
-        || [ ! -f "QWER sm_dir REWQ/QWER ca_name REWQ" ] ; then
+if [ ! -f "QW sm_dir WQ/QW cert_name WQ" ] \
+        || [ ! -f "QW sm_dir WQ/QW key_name WQ" ] \
+        || [ ! -f "QW sm_dir WQ/QW ca_name WQ" ] ; then
     # generate the files
-    sh "QWER share_dir REWQ/keygen.sh" "QWER share_dir REWQ/openssl.cnf" "QWER sm_dir REWQ"
+    sh "QW share_dir WQ/keygen.sh" "QW share_dir WQ/openssl.cnf" "QW sm_dir WQ"
     # make sure splintermail can read them
-    chown splintermail:splintermail "QWER sm_dir REWQ/QWER ca_name REWQ"
-    chown splintermail:splintermail "QWER sm_dir REWQ/QWER cert_name REWQ"
-    chown splintermail:splintermail "QWER sm_dir REWQ/QWER key_name REWQ"
+    chown splintermail:splintermail "QW sm_dir WQ/QW ca_name WQ"
+    chown splintermail:splintermail "QW sm_dir WQ/QW cert_name WQ"
+    chown splintermail:splintermail "QW sm_dir WQ/QW key_name WQ"
     # trust the generated certificate authority
-    cp "QWER sm_dir REWQ/QWER ca_name REWQ" "/etc/pki/ca-trust/source/anchors/"
+    cp "QW sm_dir WQ/QW ca_name WQ" "/etc/pki/ca-trust/source/anchors/"
     update-ca-trust extract
 fi
 exit 0
@@ -99,17 +99,17 @@ exit 0
 # this restarts the service if it is running
 %systemd_postun_with_restart splintermail.service
 # remove the cert_file that may accidentally have been installed in 0.2.0
-if [ -f "/etc/pki/ca-trust/source/anchors/QWER old_cert_name REWQ" ] ; then
-    rm "/etc/pki/ca-trust/source/anchors/QWER old_cert_name REWQ" \
+if [ -f "/etc/pki/ca-trust/source/anchors/QW old_cert_name WQ" ] ; then
+    rm "/etc/pki/ca-trust/source/anchors/QW old_cert_name WQ" \
         && update-ca-trust extract || true
 fi
 # untrust the certificate generated at install
 if [ "$1" == 0 ] ; then
     # (remove the cert_file that may accidentally have been installed in 0.2.0)
-    rm "/etc/pki/ca-trust/source/anchors/QWER ca_name REWQ" \
+    rm "/etc/pki/ca-trust/source/anchors/QW ca_name WQ" \
         && update-ca-trust extract || true
     # remove the splintermail directory
-    rm -rf "QWER sm_dir REWQ" || true
+    rm -rf "QW sm_dir WQ" || true
 fi
 exit 0
 

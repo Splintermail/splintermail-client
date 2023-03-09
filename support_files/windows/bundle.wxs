@@ -3,7 +3,7 @@
      xmlns:bal="http://schemas.microsoft.com/wix/BalExtension">
 
   <Bundle UpgradeCode='34a60b62-4080-421e-8912-30f149b07a62'
-          Version='QWER version REWQ'>
+          Version='QW version WQ'>
     <BootstrapperApplicationRef Id='WixStandardBootstrapperApplication.RtfLicense'>
       <bal:WixStandardBootstrapperApplication SuppressOptionsUI='yes'
                                               SuppressRepair='yes'

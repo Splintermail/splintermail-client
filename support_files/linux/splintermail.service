@@ -3,7 +3,7 @@ Description=splintermail CITM server.
 
 [Service]
 Type=simple
-ExecStart=QWER install_prefix REWQ/bin/splintermail citm
+ExecStart=QW install_prefix WQ/bin/splintermail citm
 StandardOutput=syslog
 StandardError=syslog
 Restart=on-failure

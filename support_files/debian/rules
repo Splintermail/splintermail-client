@@ -1,5 +1,5 @@
 #!/usr/bin/make -f
-QWER["chmod","755"]REWQ
+
 
 # Since this packaging script is itself executed within pre-configured and
 # pre-built build directory, we want to modify the default build sequence:

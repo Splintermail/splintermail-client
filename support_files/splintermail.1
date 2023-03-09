@@ -1,9 +1,9 @@
-.TH splintermail 1  "July 2018" "version QWER version REWQ" "User Commands"
+.TH splintermail 1  "July 2018" "version QW version WQ" "User Commands"
 \"
 .SH NAME
 \"
 .B splintermail
-\- QWER pkgdescr_short REWQ
+\- QW pkgdescr_short WQ
 \"
 .SH SYNOPSIS
 \"
@@ -13,24 +13,17 @@ citm [OPTIONS]
 .B splintermail
 API_COMMAND [OPTIONS]
 .SH DESCRIPTION
-QWER ["call", "man_escapes",
-    {"t":["call", "pkgdescr_long", {"width":"10000", "joiner":"\n\n"}]}] REWQ
+QW man_escape(pkgdescr_long(width="10000" joiner="\n\n")) WQ
 \"
 .SH OPTIONS
 \"
-QWER ["regex",["join","\n",
-        ["for", "option", "opts_common", ["call", "manopt", {"o":"option"}]]
-     ], "-", "\\-"]REWQ
+QW man_escape("\n"^[for o=opts_common -> optcall(manopt o)]) WQ
 .SS CITM-specific options:
 \d
-QWER ["regex",["join","\n",
-        ["for", "option", "opts_citm", ["call", "manopt", {"o":"option"}]]
-     ], "-", "\\-"]REWQ
+QW man_escape("\n"^[for o=opts_citm -> optcall(manopt o)]) WQ
 .SS API_COMMAND-specific options:
 \d
-QWER ["regex",["join","\n",
-        ["for", "option", "opts_apis", ["call", "manopt", {"o":"option"}]]
-     ], "-", "\\-"]REWQ
+QW man_escape("\n"^[for o=opts_apis -> optcall(manopt o)]) WQ
 \"
 .SH API COMMANDS
 \fBsplintermail\fR can be used to control nearly all the aspects of your
@@ -56,8 +49,7 @@ For example, a single user might want to recieve mail at
 aliases, like your account username, are offered on a first-come-first-serve
 basis, and can be reused after they are deleted (even by somebody else).
 \"
-QWER["join","\n",["for", "apicmd", "apis_aliases",
-        ["call","man_apicmd",{"a":"apicmd"}]]]REWQ
+QW man_escape("\n"^[for a=apis_aliases -> apicall(manapi a)]) WQ
 \"
 .SS Device Commands
 Each device represents a computer where you are able to receive encrypted email.
@@ -66,36 +58,33 @@ corresponding computer will no longer be able to read them.  Note that if you
 have not changed your password and the deleted device is still trying to check
 email on your behalf, the deleted device may re-register itself.
 \"
-QWER["join","\n",["for", "apicmd", "apis_devices",
-        ["call","man_apicmd",{"a":"apicmd"}]]]REWQ
+QW man_escape("\n"^[for a=apis_devices -> apicall(manapi a)]) WQ
 \"
 .SS Token Commands
 Each API token represents a computer where you have authorized the automatic
 usage of the splintermail command-line tool.  You can remove authorization by
 deleting the corresponding token.
 \"
-QWER["join","\n",["for", "apicmd", "apis_tokens",
-        ["call","man_apicmd",{"a":"apicmd"}]]]REWQ
+QW man_escape("\n"^[for a=apis_tokens -> apicall(manapi a)]) WQ
 \"
 \"
 .SS Account Commands
 \"
-QWER["join","\n",["for", "apicmd", "apis_account",
-        ["call","man_apicmd",{"a":"apicmd"}]]]REWQ
+QW man_escape("\n"^[for a=apis_account -> apicall(manapi a)]) WQ
 \"
 .SH FILES
 \"
 .SS Config Files
 \"
-QWER ["call",["get","man","1bullets2"],{"s":"config"}] REWQ
+QW manfile(files.config) WQ
 \"
 .SS CITM Email Storage
 \"
-QWER ["call",["get","man","1bullets2"],{"s":"citm"}] REWQ
+QW manfile(files.citm) WQ
 \"
 .SS Per-User API Tokens
 \"
-QWER ["call",["get","man","1bullets2"],{"s":"accounts"}] REWQ
+QW manfile(files.accounts) WQ
 \"
 .SH NOTES
 \"

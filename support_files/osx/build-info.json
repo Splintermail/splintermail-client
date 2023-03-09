@@ -1,11 +1,11 @@
 {
     "postinstall_action": "none",
     "suppress_bundle_relocation": true,
-    "name": "install_QWER pkg_name REWQ-${version}.pkg",
+    "name": "install_QW pkg_name WQ-${version}.pkg",
     "distribution_style": false,
     "install_location": "/",
-    "version": "QWER version REWQ",
+    "version": "QW version WQ",
     "ownership": "recommended",
-    "identifier": "QWER osx_pkg_id REWQ",
+    "identifier": "QW osx_pkg_id WQ",
     "distribution_style": false
 }

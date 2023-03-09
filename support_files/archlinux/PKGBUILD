@@ -1,6 +1,6 @@
 # Maintainer: Splintermail Dev <dev@splintermail.com>
 pkgname=splintermail
-pkgver=QWER version REWQ
+pkgver=QW version WQ
 pkgrel=1
 pkgdesc='client application for Splintermail.com users to decrypt email locally'
 arch=('x86_64')
@@ -13,14 +13,14 @@ install='splintermail.install'
 changelog=
 
 build() {
-    cmake --build "QWER build_dir REWQ"
+    cmake --build "QW build_dir WQ"
 }
 
 # check() {
-#     cmake --build "QWER build_dir REWQ" --target test
+#     cmake --build "QW build_dir WQ" --target test
 # }
 
 package() {
-    strip -s "QWER build_dir REWQ/splintermail"
-    DESTDIR="$pkgdir" cmake --build "QWER build_dir REWQ" --target install
+    strip -s "QW build_dir WQ/splintermail"
+    DESTDIR="$pkgdir" cmake --build "QW build_dir WQ" --target install
 }
