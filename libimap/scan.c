@@ -20,8 +20,33 @@ dstr_t* scan_mode_to_dstr(scan_mode_t mode){
     }
 }
 
-// truncation is silent
+// return how much of the last input was consumed
+/* because this is called after reading at least one successful token from the
+   input, and because leftovers can never contain more than one token, it is
+   guaranteed that all unconsumed text is from the current imap_feed input */
+size_t get_starttls_skip(imap_scanner_t *s){
+    if(s->nleftovers){
+        LOG_FATAL(
+            "get_starttls_leftovers() called with nleftovers = %x\n",
+            FU(s->nleftovers)
+        );
+    }
+    if(s->skip > s->ninput){
+        LOG_FATAL(
+            "get_starttls_leftovers() called with skip > ninput (%x > %x)\n",
+            FU(s->skip), FU(s->ninput)
+        );
+    }
+    // don't use anything else from input
+    s->nleftovers = 0;
+    s->orig_nleftovers = 0;
+    s->fed = false;
+    return s->skip;
+}
+
+// informational, copies to out & truncation is silent
 void get_scannable(imap_scanner_t *s, dstr_t *out){
+    if(!s->fed) return;
     size_t input_skip;
     if(s->orig_nleftovers){
         // put original leftovers in, then all of input
@@ -40,7 +65,10 @@ void get_scannable(imap_scanner_t *s, dstr_t *out){
     dstr_append_quiet(out, &sub2);
 }
 
-void imap_feed(imap_scanner_t *s, dstr_t input){
+void imap_feed(imap_scanner_t *s, const dstr_t input){
+    /* set skip here instead of when we set feed=false to support
+       get_starttls_skip after the end of input */
+    s->skip = 0;
     s->input = input.data;
     s->ninput = input.len;
     if(s->orig_nleftovers && s->orig_nleftovers < MAXKWLEN){
@@ -114,18 +142,16 @@ imap_scanned_t imap_scan(imap_scanner_t *s, scan_mode_t mode){
                     "not all of leftovers (%x) was consumed\n", FD_DBG(&temp)
                 );
             }
-            // transition to src = leftovers
+            // transition to src = input
             s->skip -= s->orig_nleftovers;
             s->nleftovers = 0;
             s->orig_nleftovers = 0;
-            // proceed to a length check on input
-            in_leftovers = false;
         }
 
-        if(!in_leftovers && s->skip >= s->ninput){
-            // return this one last token, but transition now to fed=false
-            s->ninput = 0;
-            s->skip = 0;
+        /* check for if we read all of input, including the special case where
+           we fed all of input into leftovers and all of leftovers went into
+           the token */
+        if(s->skip >= s->ninput){
             s->fed = false;
         }
     }else{
@@ -141,8 +167,6 @@ imap_scanned_t imap_scan(imap_scanner_t *s, scan_mode_t mode){
         }else{
             memcpy(s->leftovers, src + s->skip, nremains);
         }
-        s->ninput = 0;
-        s->skip = 0;
         s->nleftovers = nremains;
         s->orig_nleftovers = nremains;
         s->fed = false;

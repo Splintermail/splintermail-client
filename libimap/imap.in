@@ -15,7 +15,7 @@ static void send_cmd(derr_t *E, imap_args_t *a, imap_cmd_t *cmd){
         imap_cmd_free(cmd);
         return;
     }
-    a->cb.cmd(a->cb_data, cmd);
+    link_list_append(a->out, &cmd->link);
 }
 
 static void send_resp(derr_t *E, imap_args_t *a, imap_resp_t *resp){
@@ -23,11 +23,11 @@ static void send_resp(derr_t *E, imap_args_t *a, imap_resp_t *resp){
         imap_resp_free(resp);
         return;
     }
-    a->cb.resp(a->cb_data, resp);
+    link_list_append(a->out, &resp->link);
 }
 
 #define LITERAL_START(len, sendplus) do { \
-    set_scanner_to_literal_mode(a, (len)); \
+    a->scanner->literal_len = (len); \
     if((sendplus) && !a->is_client){ \
         imap_cmd_arg_t arg = {0}; \
         imap_cmd_t *cmd = imap_cmd_new(E, NULL, IMAP_CMD_PLUS_REQ, arg); \
@@ -65,8 +65,7 @@ static void trace_imap_error(
     if(!E) return;
 
     DSTR_VAR(scannable, 64);
-    imap_reader_t *r = CONTAINER_OF(a, imap_reader_t, args);
-    get_scannable(&r->scanner, &scannable);
+    get_scannable(a->scanner, &scannable);
 
     // prepare message buffer
     DSTR_VAR(buf, 64);

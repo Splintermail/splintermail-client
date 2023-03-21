@@ -1,22 +1,38 @@
 #include "libimap/libimap.h"
 
-derr_t imap_reader_init(
-    imap_reader_t *r,
-    extensions_t *exts,
-    imap_cb cb,
-    void *cb_data,
-    bool is_client
-){
+derr_t imap_cmd_reader_init(imap_cmd_reader_t *r, extensions_t *exts){
     derr_t e = E_OK;
 
-    *r = (imap_reader_t){
+    *r = (imap_cmd_reader_t){
         .args = {
-            .cb = cb,
-            .cb_data = cb_data,
             .exts = exts,
-            .is_client = is_client,
+            .is_client = false,
         }
     };
+    r->args.scanner = &r->scanner;
+
+    // responses have a fixed size
+    r->p = imap_parser_new(
+        IMAP_RESPONSE_LINE_MAX_CALLSTACK,
+        IMAP_RESPONSE_LINE_MAX_SEMSTACK
+    );
+    if(!r->p){
+        ORIG(&e, E_NOMEM, "nomem");
+    }
+
+    return e;
+}
+
+derr_t imap_resp_reader_init(imap_resp_reader_t *r, extensions_t *exts){
+    derr_t e = E_OK;
+
+    *r = (imap_resp_reader_t){
+        .args = {
+            .exts = exts,
+            .is_client = true,
+        }
+    };
+    r->args.scanner = &r->scanner;
 
     // responses have a fixed size, but not commands; search keys are recursive
     r->p = imap_parser_new(
@@ -30,37 +46,53 @@ derr_t imap_reader_init(
     return e;
 }
 
-void imap_reader_free(imap_reader_t *r){
+void imap_cmd_reader_free(imap_cmd_reader_t *r){
     imap_parser_free(&r->p);
     ie_dstr_free(STEAL(ie_dstr_t, &r->args.errmsg));
-    *r = (imap_reader_t){0};
+    *r = (imap_cmd_reader_t){0};
 }
 
-derr_t imap_read(imap_reader_t *r, const dstr_t *input){
-    derr_t e = E_OK;
+void imap_resp_reader_free(imap_resp_reader_t *r){
+    imap_parser_free(&r->p);
+    ie_dstr_free(STEAL(ie_dstr_t, &r->args.errmsg));
+    *r = (imap_resp_reader_t){0};
+}
 
-    imap_feed(&r->scanner, *input);
-
+static derr_t do_read(
+    imap_parser_t *p,
+    imap_scanner_t *scanner,
+    imap_args_t *args,
+    const dstr_t input,
+    link_t *out,
+    bool starttls,
+    size_t *skip,
     imap_status_e (*parse_fn)(
         imap_parser_t *p,
         derr_t* E,
         const dstr_t *dtoken,
         imap_args_t* a,
         imap_token_e token
-    ) = r->args.is_client ? imap_parse_response_line : imap_parse_command_line;
+    )
+){
+    derr_t e = E_OK;
+
+    if(skip) *skip = SIZE_MAX;
+    args->out = out;
+
+    imap_feed(scanner, input);
 
     while(true){
         // try to scan a token
-        scan_mode_t scan_mode = r->args.scan_mode;
+        scan_mode_t scan_mode = args->scan_mode;
         // LOG_INFO("---------------------\n"
         //          "mode is %x\n",
         //          FD(scan_mode_to_dstr(scan_mode)));
 
         // DSTR_VAR(scannable, 256);
-        // get_scannable(&r->scanner, &scannable);
+        // get_scannable(scanner, &scannable);
         // LOG_DEBUG("scannable is: '%x'\n", FD_DBG(&scannable));
 
-        imap_scanned_t s = imap_scan(&r->scanner, scan_mode);
+        imap_scanned_t s = imap_scan(scanner, scan_mode);
         if(s.more){
             // done with this input buffer
             break;
@@ -73,13 +105,20 @@ derr_t imap_read(imap_reader_t *r, const dstr_t *input){
         // );
 
         // parse the token
-        imap_status_e status = parse_fn(r->p, &e, &s.token, &r->args, s.type);
+        imap_status_e status = parse_fn(p, &e, &s.token, args, s.type);
         PROP_VAR(&e, &e);
         switch(status){
             // if we are halfway through a message, continue
             case IMAP_STATUS_OK: continue;
-            // heck, even if we finish a message, continue
-            case IMAP_STATUS_DONE: continue;
+            // after finishing a message, we stop only in the STARTTLS case
+            case IMAP_STATUS_DONE:
+                if(!starttls) continue;
+                // check if the last cmd was a STARTTLS command
+                link_t *link = out->prev;
+                imap_cmd_t *cmd = CONTAINER_OF(link, imap_cmd_t, link);
+                if(cmd->type != IMAP_CMD_STARTTLS) continue;
+                if(skip) *skip = get_starttls_skip(scanner);
+                return e;
 
             case IMAP_STATUS_SYNTAX_ERROR:
                 // the imap grammar should prevent this
@@ -96,7 +135,92 @@ derr_t imap_read(imap_reader_t *r, const dstr_t *input){
     return e;
 }
 
-void set_scanner_to_literal_mode(imap_args_t *a, size_t len){
-    imap_reader_t *r = CONTAINER_OF(a, imap_reader_t, args);
-    r->scanner.literal_len = len;
+static derr_t _imap_cmd_read(
+    imap_cmd_reader_t *r,
+    const dstr_t input,
+    link_t *out,
+    bool starttls,
+    size_t *skip
+){
+    derr_t e = E_OK;
+
+    link_t temp = {0};
+    link_t *link;
+
+    PROP_GO(&e,
+        do_read(
+            r->p,
+            &r->scanner,
+            &r->args,
+            input,
+            &temp,
+            starttls,
+            skip,
+            imap_parse_command_line
+        ),
+    fail);
+
+    link_list_append_list(out, &temp);
+
+    return e;
+
+fail:
+    while((link = link_list_pop_last(&temp))){
+        imap_cmd_t *cmd = CONTAINER_OF(link, imap_cmd_t, link);
+        imap_cmd_free(cmd);
+    }
+    return e;
+}
+
+// populates out with imap_cmd_t's
+derr_t imap_cmd_read(
+    imap_cmd_reader_t *r, const dstr_t input, link_t *out
+){
+    derr_t e = E_OK;
+    PROP(&e, _imap_cmd_read(r, input, out, false, NULL) );
+    return e;
+}
+
+// stop at the first STARTTLS and treat the rest as a handshake
+derr_t imap_cmd_read_starttls(
+    imap_cmd_reader_t *r, const dstr_t input, link_t *out, size_t *skip
+){
+    derr_t e = E_OK;
+    PROP(&e, _imap_cmd_read(r, input, out, true, skip) );
+    return e;
+}
+
+
+// populates out with imap_resp_t's
+derr_t imap_resp_read(
+    imap_resp_reader_t *r, const dstr_t input, link_t *out
+){
+    derr_t e = E_OK;
+
+    link_t temp = {0};
+    link_t *link;
+
+    PROP_GO(&e,
+        do_read(
+            r->p,
+            &r->scanner,
+            &r->args,
+            input,
+            &temp,
+            false,
+            NULL,
+            imap_parse_response_line
+        ),
+    fail);
+
+    link_list_append_list(out, &temp);
+
+    return e;
+
+fail:
+    while((link = link_list_pop_last(&temp))){
+        imap_resp_t *resp = CONTAINER_OF(link, imap_resp_t, link);
+        imap_resp_free(resp);
+    }
+    return e;
 }
