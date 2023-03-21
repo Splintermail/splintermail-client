@@ -75,8 +75,8 @@ service imap-login {{
     user = $default_internal_user
     # disable non-ssl imap
     inet_listener imap {{
-        address =
-        port = 0
+        address = 0.0.0.0
+        port = {self.imaps_port+1}
     }}
     inet_listener imaps {{
         address = {self.bind_addr}

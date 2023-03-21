@@ -160,6 +160,31 @@ static derr_t test_imap_scan(void){
     return e;
 }
 
+static derr_t test_starttls(void){
+    derr_t e = E_OK;
+
+    imap_scanner_t scanner = {0};
+    imap_scanned_t s;
+
+    // load up the buffer
+    dstr_t input = DSTR_LIT("STARTTLS\r\na bunch of junk");
+    imap_feed(&scanner, input);
+
+    s = imap_scan(&scanner, SCAN_MODE_STD);
+    EXPECT(false, IMAP_STARTTLS);
+
+    s = imap_scan(&scanner, SCAN_MODE_STD);
+    EXPECT(false, IMAP_EOL);
+
+    dstr_t leftover = dstr_sub2(input, get_starttls_skip(&scanner), SIZE_MAX);
+    EXPECT_D(&e, "leftover", &leftover, &DSTR_LIT("a bunch of junk"));
+
+    s = imap_scan(&scanner, SCAN_MODE_STD);
+    EXPECT(true, 0);
+
+    return e;
+}
+
 /* this test assumes the enum identifier is "IMAP_" + the actual imap token;
    if the token identifier is an abbreviation this test won't work */
 static derr_t test_maxkwlen(void){
@@ -192,6 +217,7 @@ int main(int argc, char** argv){
     PARSE_TEST_OPTIONS(argc, argv, NULL, LOG_LVL_DEBUG);
 
     PROP_GO(&e, test_imap_scan(), test_fail);
+    PROP_GO(&e, test_starttls(), test_fail);
     PROP_GO(&e, test_maxkwlen(), test_fail);
 
     LOG_ERROR("PASS\n");

@@ -27,18 +27,8 @@ typedef struct {
     bool fed;
 } imap_scanner_t;
 
-/*  throws : E_PARAM (invalid input) */
-typedef struct {
-    // command parsers must define *cmd
-    void (*cmd)(void *cb_data, imap_cmd_t *cmd);
-    // response parsers must define *resp
-    void (*resp)(void *cb_data, imap_resp_t *resp);
-} imap_cb;
-
 typedef struct {
     scan_mode_t scan_mode;
-    imap_cb cb;
-    void *cb_data;
     extensions_t *exts;
     // parse for commands or responses?
     bool is_client;
@@ -47,6 +37,10 @@ typedef struct {
     /* are we awaiting an IDLE_DONE command?  If so we'll have to alert
        whatever is processing the IDLE of the missed IDLE_DONE */
     bool in_idle;
+    // for get_scannable and setting literal_len
+    imap_scanner_t *scanner;
+    // the output where cmds or responses are set
+    link_t *out;
 } imap_args_t;
 
 dstr_t* scan_mode_to_dstr(scan_mode_t mode);
@@ -55,7 +49,13 @@ dstr_t* scan_mode_to_dstr(scan_mode_t mode);
    done calling imap_scan() (usually when it returns more=true) */
 void imap_feed(imap_scanner_t *s, dstr_t input);
 
-// truncation is silent
+// return how much of the last input was consumed
+/* because this is called after reading at least one successful token from the
+   input, and because leftovers can never contain more than one token, it is
+   guaranteed that all unconsumed text is from the current imap_feed input */
+size_t get_starttls_skip(imap_scanner_t *s);
+
+// informational, copies to out & truncation is silent
 void get_scannable(imap_scanner_t *s, dstr_t *out);
 
 #include <libimap/generated/imap_parse.h>
@@ -74,19 +74,31 @@ typedef struct {
     imap_parser_t *p;
     imap_args_t args;
     imap_scanner_t scanner;
-} imap_reader_t;
-DEF_CONTAINER_OF(imap_reader_t, args, imap_args_t)
+} imap_cmd_reader_t;
 
-derr_t imap_reader_init(
-    imap_reader_t *r,
-    extensions_t *exts,
-    imap_cb cb,
-    void *cb_data,
-    bool is_client
+typedef struct {
+    imap_parser_t *p;
+    imap_args_t args;
+    imap_scanner_t scanner;
+} imap_resp_reader_t;
+
+derr_t imap_cmd_reader_init(imap_cmd_reader_t *r, extensions_t *exts);
+derr_t imap_resp_reader_init(imap_resp_reader_t *r, extensions_t *exts);
+
+void imap_cmd_reader_free(imap_cmd_reader_t *r);
+void imap_resp_reader_free(imap_resp_reader_t *r);
+
+// populates out with imap_cmd_t's
+derr_t imap_cmd_read(
+    imap_cmd_reader_t *r, const dstr_t input, link_t *out
 );
 
-void imap_reader_free(imap_reader_t *r);
+// stop at the first STARTTLS and treat the rest as a handshake
+derr_t imap_cmd_read_starttls(
+    imap_cmd_reader_t *r, const dstr_t input, link_t *out, size_t *skip
+);
 
-derr_t imap_read(imap_reader_t *r, const dstr_t *input);
-
-void set_scanner_to_literal_mode(imap_args_t *a, size_t len);
+// populates out with imap_resp_t's
+derr_t imap_resp_read(
+    imap_resp_reader_t *r, const dstr_t input, link_t *out
+);

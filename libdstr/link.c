@@ -42,6 +42,8 @@ void link_list_append_list(link_t *recip, link_t *donor){
     if(!recip->next) link_init(recip);
     if(!donor->next) link_init(donor);
     if(link_list_isempty(donor)) return;
+    if(!recip->next) link_init(recip);
+    if(!donor->next) link_init(donor);
 
     link_t *donor_first = donor->next;
     link_t *donor_last = donor->prev;

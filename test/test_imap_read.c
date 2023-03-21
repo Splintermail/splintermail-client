@@ -14,8 +14,9 @@ typedef struct {
     dstr_t buf;
 } calls_made_t;
 
-static derr_t assert_calls_equal(const calls_made_t *exp,
-        const calls_made_t *got){
+static derr_t assert_calls_equal(
+    const calls_made_t *exp, const calls_made_t *got
+){
     derr_t e = E_OK;
     bool pass = true;
     size_t i;
@@ -50,14 +51,12 @@ static derr_t assert_calls_equal(const calls_made_t *exp,
     return e;
 }
 
-static void cmd_cb(void *cb_data, imap_cmd_t *cmd){
-    calls_made_t *calls = cb_data;
-
+static void found_cmd(calls_made_t *calls, imap_cmd_t *cmd){
     size_t max_type = sizeof(calls->cmd_counts) / sizeof(*calls->cmd_counts);
     if((size_t)cmd->type < max_type){
         calls->cmd_counts[cmd->type]++;
     }else{
-        LOG_ERROR("got command of unknown type %x\n", FU(cmd->type));
+        LOG_FATAL("got command of unknown type %x\n", FU(cmd->type));
     }
 
     extensions_t exts = {
@@ -81,7 +80,7 @@ static void cmd_cb(void *cb_data, imap_cmd_t *cmd){
             ),
         done);
     }
-    // IMAP_CMD_PLUS_REQ is totaly not writable
+    // IMAP_CMD_PLUS_REQ is totally not writable
     else if(cmd->type != IMAP_CMD_PLUS_REQ){
         PROP_GO(&calls->error, imap_cmd_print(cmd, &calls->buf, &exts), done);
     }
@@ -90,14 +89,12 @@ done:
     imap_cmd_free(cmd);
 }
 
-static void resp_cb(void *cb_data, imap_resp_t *resp){
-    calls_made_t *calls = cb_data;
-
+static void found_resp(calls_made_t *calls, imap_resp_t *resp){
     size_t max_type = sizeof(calls->resp_counts) / sizeof(*calls->resp_counts);
     if((size_t)resp->type < max_type){
         calls->resp_counts[resp->type]++;
     }else{
-        LOG_ERROR("got response of unknown type %x\n", FU(resp->type));
+        LOG_FATAL("got response of unknown type %x\n", FU(resp->type));
     }
 
     extensions_t exts = {
@@ -116,23 +113,20 @@ done:
     imap_resp_free(resp);
 }
 
-static imap_cb parser_cmd_cb = { .cmd=cmd_cb };
-static imap_cb parser_resp_cb = { .resp=resp_cb };
-
 typedef struct {
     dstr_t in;
     int *cmd_calls;
     int *resp_calls;
     dstr_t buf;
     bool syntax_error;
+    bool starttls;
+    size_t skip;
 } test_case_t;
 
 static derr_t do_test(
     test_case_t *cases, size_t ncases, bool is_client, extension_state_e ext
 ){
     derr_t e = E_OK;
-
-    imap_cb cb = is_client ? parser_resp_cb : parser_cmd_cb;
 
     // prepare the calls_made struct
     calls_made_t calls = {0};
@@ -149,10 +143,17 @@ static derr_t do_test(
     };
 
     // init the reader
-    imap_reader_t reader;
-    PROP_GO(&e,
-        imap_reader_init(&reader, &exts, cb, &calls, is_client),
-    cu_buf);
+    imap_cmd_reader_t cmd_reader = {0};
+    imap_resp_reader_t resp_reader = {0};
+    if(is_client){
+        PROP_GO(&e,
+            imap_resp_reader_init(&resp_reader, &exts),
+        cu_buf);
+    }else{
+        PROP_GO(&e,
+            imap_cmd_reader_init(&cmd_reader, &exts),
+        cu_buf);
+    }
 
     for(size_t i = 0; i < ncases; i++){
         // reset calls made
@@ -162,7 +163,42 @@ static derr_t do_test(
         calls.buf.len = 0;
         // feed in the input
         LOG_DEBUG("\x1b[32mabout to feed '%x'\x1b[m\n", FD(&cases[i].in));
-        derr_t e2 = imap_read(&reader, &cases[i].in);
+        derr_t e2;
+        link_t out = {0};
+        if(is_client){
+            e2 = imap_resp_read(&resp_reader, cases[i].in, &out);
+            // process responses
+            link_t *link;
+            while((link = link_list_pop_first(&out))){
+                imap_resp_t *resp = CONTAINER_OF(link, imap_resp_t, link);
+                found_resp(&calls, resp);
+            }
+        }else{
+            if(!cases[i].starttls){
+                e2 = imap_cmd_read(&cmd_reader, cases[i].in, &out);
+            }else{
+                // starttls case
+                size_t skip;
+                e2 = imap_cmd_read_starttls(
+                    &cmd_reader, cases[i].in, &out, &skip
+                );
+                if(skip != cases[i].skip){
+                    TRACE_ORIG(
+                        &calls.error,
+                        E_VALUE,
+                        "expected skip = %x but got %x\n",
+                        FU(cases[i].skip),
+                        FU(skip)
+                    );
+                }
+            }
+            // process commands
+            link_t *link;
+            while((link = link_list_pop_first(&out))){
+                imap_cmd_t *cmd = CONTAINER_OF(link, imap_cmd_t, link);
+                found_cmd(&calls, cmd);
+            }
+        }
         if(cases[i].syntax_error){
             if(!is_error(e2)){
                 ORIG_GO(&e, E_VALUE, "expected syntax error", show_case);
@@ -193,7 +229,8 @@ static derr_t do_test(
     }
 
 cu_reader:
-    imap_reader_free(&reader);
+    imap_cmd_reader_free(&cmd_reader);
+    imap_resp_reader_free(&resp_reader);
 cu_buf:
     dstr_free(&calls.buf);
     return e;
@@ -527,6 +564,8 @@ static derr_t test_commands(void){
                 .cmd_calls=(int[]){IMAP_CMD_LOGOUT, -1},
                 .buf=DSTR_LIT("tag LOGOUT\r\n")
             },
+            /* real STARTTLS features are tested in test_starttls, but we
+               should be ready to parse a STARTTLS command at any time */
             {
                 .in=DSTR_LIT("tag STARTTLS\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_STARTTLS, -1},
@@ -1127,6 +1166,73 @@ static derr_t test_commands(void){
 }
 
 
+static derr_t test_starttls(void){
+    derr_t e = E_OK;
+
+    test_case_t cases[] = {
+        // multiple commands are processed normally
+        {
+            .in=DSTR_LIT("tag1 NOOP\r\ntag2 CAPABILITY\r\n"),
+            .cmd_calls=(int[]){IMAP_CMD_NOOP, IMAP_CMD_CAPA, -1},
+            .buf=DSTR_LIT("tag1 NOOP\r\ntag2 CAPABILITY\r\n"),
+            .starttls=true,
+            .skip=SIZE_MAX,
+        },
+        // starttls guards any other junk that appears
+        {
+            .in=DSTR_LIT("tag3 STARTTLS\r\na bunch of junk\r\n"),
+            .cmd_calls=(int[]){IMAP_CMD_STARTTLS, -1},
+            .buf=DSTR_LIT("tag3 STARTTLS\r\n"),
+            .starttls=true,
+            .skip=15,
+        },
+        // starttls works even if other commands appear before it
+        // also: starttls_skip works even if starttls is the end of the input
+        {
+            .in=DSTR_LIT("tag4 NOOP\r\ntag5 STARTTLS\r\n"),
+            .cmd_calls=(int[]){IMAP_CMD_NOOP, IMAP_CMD_STARTTLS, -1},
+            .buf=DSTR_LIT("tag4 NOOP\r\ntag5 STARTTLS\r\n"),
+            .starttls=true,
+            .skip=26,
+        },
+        // starttls works even if it occurs after leftovers
+        {
+            .in=DSTR_LIT("tag6 STARTTLS\r"),
+            .cmd_calls=(int[]){-1},
+            .buf=DSTR_LIT(""),
+            .starttls=true,
+            .skip=SIZE_MAX,
+        },
+        {
+            .in=DSTR_LIT("\n"),
+            .cmd_calls=(int[]){IMAP_CMD_STARTTLS, -1},
+            .buf=DSTR_LIT("tag6 STARTTLS\r\n"),
+            .starttls=true,
+            .skip=1,
+        },
+        // again, this time with junk after
+        {
+            .in=DSTR_LIT("tag6 STARTTLS\r"),
+            .cmd_calls=(int[]){-1},
+            .buf=DSTR_LIT(""),
+            .starttls=true,
+            .skip=SIZE_MAX,
+        },
+        {
+            .in=DSTR_LIT("\njunk after"),
+            .cmd_calls=(int[]){IMAP_CMD_STARTTLS, -1},
+            .buf=DSTR_LIT("tag6 STARTTLS\r\n"),
+            .starttls=true,
+            .skip=1,
+        },
+    };
+    size_t ncases = sizeof(cases) / sizeof(*cases);
+    PROP(&e, do_test(cases, ncases, false, EXT_STATE_ON) );
+
+    return e;
+}
+
+
 static derr_t test_command_error_reporting(void){
     derr_t e = E_OK;
     test_case_t cases1[] = {
@@ -1342,6 +1448,7 @@ int main(int argc, char **argv){
 
     PROP_GO(&e, test_responses(), test_fail);
     PROP_GO(&e, test_commands(), test_fail);
+    PROP_GO(&e, test_starttls(), test_fail);
     PROP_GO(&e, test_command_error_reporting(), test_fail);
     PROP_GO(&e, test_response_error_reporting(), test_fail);
     PROP_GO(&e, test_num(), test_fail);
