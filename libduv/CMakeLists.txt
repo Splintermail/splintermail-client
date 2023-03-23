@@ -57,6 +57,11 @@ else()
 endif()
 
 if(BUILD_TESTS)
+    add_library(fakestream STATIC fake_stream.c)
+    target_link_libraries(fakestream PUBLIC duv)
+    default_compile_options(fakestream TRUE)
+    define_file_logname_for_target(fakestream)
+
     add_executable(test_connect test_connect.c)
     target_link_libraries(test_connect PUBLIC duv)
     default_compile_options(test_connect TRUE)

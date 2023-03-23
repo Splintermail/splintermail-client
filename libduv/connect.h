@@ -1,7 +1,7 @@
 struct duv_connect_t;
 typedef struct duv_connect_t duv_connect_t;
 
-// tcp will always be connectd if e is E_OK, or cleaned up if is_error(e)
+// tcp will always be connected if e is E_OK, or cleaned up if is_error(e)
 /* e will be E_CANCELED if duv_connect_cancel() was called an no other error
    was encountered */
 typedef void (*duv_connect_cb)(duv_connect_t*, derr_t e);

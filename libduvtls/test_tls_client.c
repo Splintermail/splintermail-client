@@ -615,7 +615,7 @@ fail:
     finish();
 }
 
-static derr_t test_tls_stream(void){
+static derr_t test_tls_client(void){
     derr_t e = E_OK;
 
     PROP(&e, ssl_context_new_client(&client_ctx) );
@@ -668,7 +668,7 @@ int main(int argc, char** argv){
 #endif
     PROP_GO(&e, ssl_library_init(), test_fail);
 
-    PROP_GO(&e, test_tls_stream(), test_fail);
+    PROP_GO(&e, test_tls_client(), test_fail);
 
     LOG_ERROR("PASS\n");
     ssl_library_close();

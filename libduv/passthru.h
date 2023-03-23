@@ -35,7 +35,7 @@ typedef struct {
     } writes;
 
     /* user can request writes as fast as they like,
-    but we have at most 8 writes in flight in the backend */
+       but we have at most 8 writes in flight in the backend */
     passthru_write_mem_t write_mem[8];
     link_t pool;  // passthru_write_mem_t->link
 

@@ -522,7 +522,6 @@ static bool _advance_wire_writes(duv_tls_t *t){
         LOG_FATAL("duv_tls read zero bytes from non-empty BIO\n");
     }
 
-    // create a new uv_buf to not mess with write_buf.len
     t->base->write(t->base, &t->write_req, &t->write_buf, 1, write_cb);
 
     // write was successful
@@ -684,6 +683,7 @@ static derr_t wrap(
     const dstr_t *verify_name,  // always set for clients
     scheduler_i *scheduler,
     stream_i *base,
+    const dstr_t preinput,  // for starttls
     stream_i **out
 ){
     derr_t e = E_OK;
@@ -784,6 +784,17 @@ static derr_t wrap(
         }
     }
 
+    if(preinput.len){
+        // put preinput in rawin
+        size_t nwritten;
+        int ret = BIO_write_ex(
+            t->rawin, preinput.data, preinput.len, &nwritten
+        );
+        if(ret != 1 || nwritten != preinput.len){
+            ORIG_GO(&e, E_NOMEM, "failed to write to membio", fail);
+        }
+    }
+
     // we own the wrapper_data
     t->base->wrapper_data = t;
     // we own the await_cb
@@ -814,7 +825,9 @@ derr_t duv_tls_wrap_client(
     stream_i **out
 ){
     derr_t e = E_OK;
-    PROP(&e, wrap(t, ssl_ctx, true, &verify_name, scheduler, base, out) );
+    PROP(&e,
+        wrap(t, ssl_ctx, true, &verify_name, scheduler, base, (dstr_t){0}, out)
+    );
     return e;
 }
 
@@ -823,9 +836,10 @@ derr_t duv_tls_wrap_server(
     SSL_CTX *ssl_ctx,
     scheduler_i *scheduler,
     stream_i *base,
+    const dstr_t preinput,  // for starttls
     stream_i **out
 ){
     derr_t e = E_OK;
-    PROP(&e, wrap(t, ssl_ctx, false, NULL, scheduler, base, out) );
+    PROP(&e, wrap(t, ssl_ctx, false, NULL, scheduler, base, preinput, out) );
     return e;
 }

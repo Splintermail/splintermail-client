@@ -88,5 +88,6 @@ derr_t duv_tls_wrap_server(
     SSL_CTX *ssl_ctx,
     scheduler_i *scheduler,
     stream_i *base,
+    const dstr_t preinput,  // for starttls
     stream_i **out
 );
