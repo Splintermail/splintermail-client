@@ -153,3 +153,14 @@ bool link_list_isempty(link_t *head){
     // safe to call on a zeroized link
     return head == head->next || head->next == NULL;
 }
+
+size_t link_list_count(link_t *head){
+    link_t *ptr = head->next;
+    if(ptr == NULL) return 0;
+    size_t count = 0;
+    while(ptr != head){
+        count++;
+        ptr = ptr->next;
+    }
+    return count;
+}

@@ -425,3 +425,10 @@ derr_t msg_mod_write(const msg_mod_t *mod, dstr_t *out){
 
     return e;
 }
+
+derr_type_t fmthook_fmk(dstr_t* out, const void* arg){
+    const msg_key_t *key = arg;
+    return FMT_QUIET(
+        out, "{.up=%x, .local=%x}", FU(key->uid_up), FU(key->uid_local)
+    );
+}

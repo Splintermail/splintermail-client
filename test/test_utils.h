@@ -229,7 +229,7 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
 #define EXPECT_S(e, name, got, exp) do { \
     const char *_got = (got); \
     const char *_exp = (exp); \
-    if(strcmp(_got, _exp) != 0){ \
+    if(!_got != !_exp || (_got && strcmp(_got, _exp) != 0)){ \
         ORIG(e, \
             E_VALUE, \
             "expected %x == \"%x\" but got \"%x\"", \
@@ -241,7 +241,7 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
 #define EXPECT_S_GO(e, name, got, exp, label) do { \
     const char *_got = (got); \
     const char *_exp = (exp); \
-    if(strcmp(_got, _exp) != 0){ \
+    if(!_got != !_exp || (_got && strcmp(_got, _exp) != 0)){ \
         ORIG_GO(e, \
             E_VALUE, \
             "expected %x == \"%x but got \"%x\"", \
@@ -250,6 +250,41 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
         ); \
     } \
 } while (0)
+
+#define _EXPECT_LIST_LENGTH(e, name, list, exp, action) do { \
+    link_t *_list = (list); \
+    size_t _exp = (exp); \
+    link_t *_ptr = _list->next ? _list->next : _list; \
+    size_t _got = 0; \
+    while(_ptr != _list){ _got++; _ptr = _ptr->next; } \
+    if(_got == _exp) break; \
+    TRACE_ORIG((e), \
+        E_VALUE, \
+        "expected len(%x) == %x but got %x", \
+        FS(name), FU(_exp), FU(_got) \
+    ); \
+    action; \
+} while(0)
+
+#define EXPECT_LIST_LENGTH(e, name, list, exp) \
+    _EXPECT_LIST_LENGTH(e, name, list, exp, return *(e)) \
+
+#define EXPECT_LIST_LENGTH_GO(e, name, list, exp, label) \
+    _EXPECT_LIST_LENGTH(e, name, list, exp, goto label) \
+
+#define _EXPECT_LIST_EMPTY(e, name, list, action) do { \
+    link_t *_list = (got); \
+    if(link_list_isempty(_list)) break; \
+    link_t *_ptr = _list->next; \
+    size_t _len = 0; \
+    while(_ptr != _list){ _len++; _ptr = _ptr->next; } \
+    TRACE_ORIG((e), \
+        E_VALUE, \
+        "expected %x to be empty but found %x items", \
+        FS(name), FU(_len) \
+    ); \
+    action; \
+} while(0)
 
 // single line output for short strings
 #define EXPECT_D(e, name, got, exp) do { \
@@ -437,12 +472,10 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
 #define EXPECT_E_VAR(e, name, got, exp) do { \
     derr_t *_got = (got); \
     const derr_type_t _exp = (exp); \
-    if(is_error(*_got)){ \
-        if(_got->type == _exp){ \
-            DROP_VAR(_got); \
-        } else { \
-            PROP_VAR((e), _got); \
-        } \
+    if(_got->type == _exp){ \
+        DROP_VAR(_got); \
+    } else if(is_error(*_got)) { \
+        PROP_VAR((e), _got); \
     }else{ \
         ORIG((e), E_VALUE, "expected an error"); \
     } \
@@ -451,12 +484,10 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
 #define EXPECT_E_VAR_GO(e, name, got, exp, label) do { \
     derr_t *_got = (got); \
     const derr_type_t _exp = (exp); \
-    if(is_error(*_got)){ \
-        if(_got->type == _exp){ \
-            DROP_VAR(_got); \
-        } else { \
-            PROP_VAR_GO((e), _got, label); \
-        } \
+    if(_got->type == _exp){ \
+        DROP_VAR(_got); \
+    } else if(is_error(*_got)) { \
+        PROP_VAR_GO((e), _got, label); \
     }else{ \
         ORIG_GO((e), E_VALUE, "expected an error", label); \
     } \

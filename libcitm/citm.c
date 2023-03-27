@@ -3,189 +3,511 @@
 
 #include "libcitm.h"
 
-static loop_t g_loop;
-static tlse_t g_tlse;
-static imape_t g_imape;
-static citme_t g_citme;
+bool imap_scheme_parse(dstr_t scheme, imap_security_e *out){
+    if(dstr_ieq(scheme, DSTR_LIT("insecure"))){
+        *out = IMAP_SEC_INSECURE;
+        return true;
+    }
+    if(dstr_ieq(scheme, DSTR_LIT("starttls"))){
+        *out = IMAP_SEC_STARTTLS;
+        return true;
+    }
+    if(dstr_ieq(scheme, DSTR_LIT("tls"))){
+        *out = IMAP_SEC_TLS;
+        return true;
+    }
+    *out = 0;
+    return false;
+}
+
+DEF_CONTAINER_OF(citm_conn_t, link, link_t)
+
+static void generic_await_cb(
+    derr_t e, link_t *reads, link_t *writes, char *kind
+){
+    if(!link_list_isempty(reads)){
+        LOG_FATAL("%x closed with pending reads\n", FS(kind));
+    }
+    if(!link_list_isempty(writes)){
+        LOG_FATAL("%x closed with pending writes\n", FS(kind));
+    }
+    DROP_CANCELED_VAR(&e);
+    if(is_error(e)){
+        DUMP(e);
+        DROP_VAR(&e);
+    }
+}
+
+static void conn_await_cb(
+    stream_i *s, derr_t e, link_t *reads, link_t *writes
+){
+    citm_conn_t *conn = s->data;
+    generic_await_cb(e, reads, writes, "conn");
+    link_remove(&conn->link);
+    conn->free(conn);
+}
+
+static void sawait_cb(
+    imap_server_t *s, derr_t e, link_t *reads, link_t *writes
+){
+    generic_await_cb(e, reads, writes, "imap_server");
+    link_remove(&s->link);
+    imap_server_free(&s);
+}
+
+static void cawait_cb(
+    imap_client_t *c, derr_t e, link_t *reads, link_t *writes
+){
+    generic_await_cb(e, reads, writes, "imap_client");
+    link_remove(&c->link);
+    imap_client_free(&c);
+}
+
+static void citm_close_conn(citm_t *citm, citm_conn_t *conn){
+    if(!conn) return;
+    if(conn->stream->awaited){
+        conn->free(conn);
+        return;
+    }
+    conn->stream->data = conn;
+    conn->stream->await(conn->stream, conn_await_cb);
+    conn->stream->cancel(conn->stream);
+    link_list_append(&citm->closing.conns, &conn->link);
+}
+
+static void citm_close_server(citm_t *citm, imap_server_t *s){
+    if(!s) return;
+    if(s->awaited){
+        imap_server_free(&s);
+        return;
+    }
+    imap_server_must_await(s, sawait_cb, NULL);
+    imap_server_cancel(s, false);
+    link_list_append(&citm->closing.servers, &s->link);
+}
+
+static void citm_close_client(citm_t *citm, imap_client_t *c){
+    if(!c) return;
+    if(c->awaited){
+        imap_client_free(&c);
+        return;
+    }
+    imap_client_must_await(c, cawait_cb, NULL);
+    imap_client_cancel(c);
+    link_list_append(&citm->closing.clients, &c->link);
+}
+
+static void citm_close_server_list(citm_t *citm, link_t *list){
+    link_t *link;
+    while((link = link_list_pop_first(list))){
+        imap_server_t *s = CONTAINER_OF(link, imap_server_t, link);
+        citm_close_server(citm, s);
+    }
+}
+
+static void citm_close_client_list(citm_t *citm, link_t *list){
+    link_t *link;
+    while((link = link_list_pop_first(list))){
+        imap_client_t *c = CONTAINER_OF(link, imap_client_t, link);
+        citm_close_client(citm, c);
+    }
+}
 
 
 typedef struct {
-    const char *remote_host;
-    const char *remote_svc;
-    imap_pipeline_t *pipeline;
-    citme_t *citme;
-    ssl_context_t *ctx_srv;
-    ssl_context_t *ctx_cli;
-    listener_spec_t lspec;
-} citm_lspec_t;
-DEF_CONTAINER_OF(citm_lspec_t, lspec, listener_spec_t)
+    dstr_t user;
+    dstr_t pass;
+    link_t servers;
+    link_t clients;
+    hash_elem_t elem;  // citm_t->holds
+} citm_hold_t;
+DEF_CONTAINER_OF(citm_hold_t, elem, hash_elem_t)
 
-
-static derr_t conn_recvd(listener_spec_t *lspec, session_t **session){
+static void hold_new(
+    citm_t *citm,
+    imap_server_t *s,
+    imap_client_t *c,
+    dstr_t user,
+    dstr_t pass,
+    hashmap_t *out
+){
     derr_t e = E_OK;
 
-    citm_lspec_t *l = CONTAINER_OF(lspec, citm_lspec_t, lspec);
+    citm_hold_t *hold = DMALLOC_STRUCT_PTR(&e, hold);
+    CHECK_GO(&e, fail);
 
-    sf_pair_t *sf_pair;
-    PROP(&e,
-        sf_pair_new(
-            &sf_pair,
-            &l->citme->sf_pair_cb,
-            &l->citme->engine,
-            l->remote_host,
-            l->remote_svc,
-            l->pipeline,
-            l->ctx_srv,
-            l->ctx_cli,
-            session
-        )
-    );
-
-    // append managed to the server_mgr's list
-    citme_add_sf_pair(l->citme, sf_pair);
-
-    // now it is safe to start the server
-    sf_pair_start(sf_pair);
-
-    return e;
-}
-
-
-
-static void free_pipeline(imap_pipeline_t *pipeline){
-    imape_free(pipeline->imape);
-    tlse_free(pipeline->tlse);
-    loop_free(pipeline->loop);
-}
-
-
-static derr_t build_pipeline(imap_pipeline_t *pipeline, citme_t *citme){
-    derr_t e = E_OK;
-
-    // set UV_THREADPOOL_SIZE
-    unsigned int nworkers = 2;
-    PROP(&e, set_uv_threadpool_size(nworkers + 3, nworkers + 7) );
-
-    // initialize loop
-    PROP(&e, loop_init(&g_loop, 5, 5, &g_tlse.engine) );
-
-    // intialize TLS engine
-    PROP_GO(&e,
-        tlse_init(&g_tlse, 5, 5, &g_loop.engine, &g_imape.engine),
-    fail);
-    PROP_GO(&e, tlse_add_to_loop(&g_tlse, &g_loop.uv_loop), fail);
-
-    // initialize IMAP engine
-    PROP_GO(&e,
-        imape_init(&g_imape, 5, &g_tlse.engine, &citme->engine),
-    fail);
-    PROP_GO(&e, imape_add_to_loop(&g_imape, &g_loop.uv_loop), fail);
-
-    PROP_GO(&e, citme_add_to_loop(citme, &g_loop.uv_loop), fail);
-
-    *pipeline = (imap_pipeline_t){
-        .loop=&g_loop,
-        .tlse=&g_tlse,
-        .imape=&g_imape,
+    *hold = (citm_hold_t){
+        .user = user,
+        .pass = pass,
     };
-
-    return e;
+    link_list_append(&hold->servers, &s->link);
+    link_list_append(&hold->clients, &c->link);
+    hash_elem_t *old = hashmap_sets(out, &hold->user, &hold->elem);
+    if(old) LOG_FATAL("hold_new found pre-existing hold\n");
+    return;
 
 fail:
     DUMP(e);
     DROP_VAR(&e);
-    LOG_ERROR("fatal error: failed to construct pipeline\n");
-    exit(1);
+    citm_close_server(citm, s);
+    citm_close_client(citm, c);
 }
 
-
-static bool hard_exit = false;
-void stop_loop_on_signal(int signum){
-    (void) signum;
-    LOG_ERROR("caught signal\n");
-    if(hard_exit) exit(1);
-    hard_exit = true;
-    // launch an asynchronous loop abort
-    loop_close(&g_loop, E_OK);
+static void hold_cancel(citm_t *citm, hash_elem_t *elem){
+    citm_hold_t *hold = CONTAINER_OF(elem, citm_hold_t, elem);
+    hash_elem_remove(&hold->elem);
+    dstr_free(&hold->user);
+    dstr_free0(&hold->pass);
+    citm_close_server_list(citm, &hold->servers);
+    citm_close_client_list(citm, &hold->servers);
+    free(hold);
 }
 
+static bool hold_pop(
+    hashmap_t *h,
+    const dstr_t *constuser,
+    link_t *servers,
+    link_t *clients,
+    dstr_t *user,
+    dstr_t *pass
+){
+    hash_elem_t *elem = hashmap_gets(h, constuser);
+    if(!elem) return false;
 
-derr_t citm(
-    const char *local_host,
-    const char *local_svc,
-    const char *key,
-    const char *cert,
-    const char *remote_host,
-    const char *remote_svc,
-    const string_builder_t *maildir_root,
-    bool indicate_ready
+    citm_hold_t *hold = CONTAINER_OF(elem, citm_hold_t, elem);
+    link_list_append_list(servers, &hold->servers);
+    link_list_append_list(clients, &hold->clients);
+    *user = hold->user;
+    *pass = hold->pass;
+    free(hold);
+    return true;
+}
+
+static void hold_add_pair(
+    hash_elem_t *elem, imap_server_t *s, imap_client_t *c
+){
+    citm_hold_t *hold = CONTAINER_OF(elem, citm_hold_t, elem);
+    link_list_append(&hold->servers, &s->link);
+    link_list_append(&hold->clients, &c->link);
+}
+
+derr_t citm_init(
+    citm_t *citm,
+    citm_io_i *io,
+    scheduler_i *scheduler,
+    string_builder_t root
 ){
     derr_t e = E_OK;
 
-    // init ssl contexts
-    ssl_context_t ctx_srv;
-    PROP(&e, ssl_context_new_server(&ctx_srv, cert, key) );
+    *citm = (citm_t){ .io = io, .scheduler = scheduler, .root = root };
 
-    ssl_context_t ctx_cli;
-    PROP_GO(&e, ssl_context_new_client(&ctx_cli), cu_ctx_srv);
+    PROP_GO(&e, hashmap_init(&citm->preusers), fail);
+    PROP_GO(&e, hashmap_init(&citm->users), fail);
+    PROP_GO(&e, hashmap_init(&citm->holds), fail);
 
-    imap_pipeline_t pipeline;
-
-    PROP_GO(&e,
-        citme_init(&g_citme, maildir_root, &g_imape.engine
-    ), cu_ctx_cli);
-
-    PROP_GO(&e, build_pipeline(&pipeline, &g_citme), cu_citme);
-
-    /* After building the pipeline, we must run the pipeline if we want to
-       cleanup nicely.  That means that we can't follow the normal cleanup
-       pattern, and instead we must initialize all of our variables to zero
-       (that is, if we had any variables right here) */
-
-    // add the lspec to the loop
-    citm_lspec_t citm_lspec = {
-        .remote_host = remote_host,
-        .remote_svc = remote_svc,
-        .pipeline = &pipeline,
-        .citme = &g_citme,
-        .ctx_srv = &ctx_srv,
-        .ctx_cli = &ctx_cli,
-        .lspec = {
-            .addr = local_host,
-            .svc = local_svc,
-            .conn_recvd = conn_recvd,
-        },
-    };
-    PROP_GO(&e, loop_add_listener(&g_loop, &citm_lspec.lspec), fail);
-
-    // install signal handlers before indicating we are launching the loop
-    signal(SIGINT, stop_loop_on_signal);
-    signal(SIGTERM, stop_loop_on_signal);
-
-    if(indicate_ready){
-        LOG_INFO("listener ready\n");
-    }else{
-        // always indicate on DEBUG-level logs
-        LOG_DEBUG("listener ready\n");
-    }
+    return e;
 
 fail:
-    if(is_error(e)){
-        loop_close(&g_loop, e);
-        // The loop will pass us this error back after loop_run.
-        PASSED(e);
+    citm_free(citm);
+    return e;
+}
+
+void citm_free(citm_t *citm){
+    hashmap_free(&citm->preusers);
+    hashmap_free(&citm->users);
+    hashmap_free(&citm->holds);
+    *citm = (citm_t){0};
+}
+
+#define FOR_EACH_LINK(list) \
+    for( \
+        link = (list).next ? (list).next : &(list); \
+        link != &(list); \
+        link = link->next \
+    )
+
+#define FOR_EACH_ELEM(h) \
+    for(elem = hashmap_iter(&trav, &h); elem; elem = hashmap_next(&trav))
+
+void citm_cancel(citm_t *citm){
+    link_t *link;
+    hash_elem_t *elem;
+    hashmap_trav_t trav;
+    FOR_EACH_LINK(citm->io_pairs){
+        io_pair_cancel(link);
+    }
+    FOR_EACH_LINK(citm->anons){
+        anon_cancel(link);
+    }
+    FOR_EACH_ELEM(citm->preusers){
+        preuser_cancel(elem);
+    }
+    FOR_EACH_ELEM(citm->users){
+        user_cancel(elem);
+    }
+    FOR_EACH_ELEM(citm->holds){
+        hold_cancel(citm, elem);
+    }
+}
+
+static void citm_preuser_cb(
+    void *data,
+    derr_t e,
+    dstr_t user,
+    link_t *servers,
+    link_t *clients,
+    keydir_i *kd,
+    imap_client_t *xc
+);
+
+// after user closes, late server/client pairs become new preusers
+static void citm_user_cb(void *data, const dstr_t *constuser){
+    derr_t e = E_OK;
+
+    citm_t *citm = data;
+
+    if(citm->canceled) return;
+
+    link_t servers = {0};
+    link_t clients = {0};
+    dstr_t user = {0};
+    dstr_t pass = {0};
+    keydir_i *kd = NULL;
+
+    bool ok = hold_pop(
+        &citm->holds, constuser, &servers, &clients, &user, &pass
+    );
+    if(!ok) return;
+
+    PROP_GO(&e, keydir_new(&citm->root, user, &kd), fail);
+
+    PROP_GO(&e,
+        preuser_new(
+            citm->scheduler,
+            citm->io,
+            user,
+            pass,
+            kd,
+            CONTAINER_OF(servers.next, imap_server_t, link),
+            CONTAINER_OF(clients.next, imap_client_t, link),
+            citm_preuser_cb,
+            citm,
+            &citm->preusers
+        ),
+    fail);
+
+    // consumed first server and client
+    (void)link_list_pop_first(&servers);
+    (void)link_list_pop_first(&clients);
+
+    // get the elem if preuser_new succeeded
+    hash_elem_t *elem = hashmap_gets(&citm->preusers, &user);
+    if(!elem) LOG_FATAL("unable to find newly created preuser\n");
+
+    // put all the s/c pairs we have into this preuser
+    while(!link_list_isempty(&servers)){
+        preuser_add_pair(
+            elem,
+            CONTAINER_OF(link_list_pop_first(&servers), imap_server_t, link),
+            CONTAINER_OF(link_list_pop_first(&clients), imap_client_t, link)
+        );
     }
 
-    // run the loop
-    PROP_GO(&e, loop_run(&g_loop), cu);
+    return;
 
-cu:
-    free_pipeline(&pipeline);
-cu_citme:
-    citme_free(&g_citme);
-cu_ctx_cli:
-    ssl_context_free(&ctx_cli);
-cu_ctx_srv:
-    ssl_context_free(&ctx_srv);
-    return e;
+fail:
+    DUMP(e);
+    DROP_VAR(&e);
+    dstr_free(&user);
+    dstr_free0(&pass);
+    if(kd) kd->free(kd);
+    citm_close_server_list(citm, &servers);
+    citm_close_client_list(citm, &clients);
+    return;
+}
+
+// completed preusers transition to new users
+static void citm_preuser_cb(
+    void *data,
+    derr_t e,
+    dstr_t user,
+    link_t *servers,
+    link_t *clients,
+    keydir_i *kd,
+    imap_client_t *xc
+){
+    citm_t *citm = data;
+
+    if(is_error(e)) goto fail;
+
+    if(citm->canceled) goto free;
+
+    PROP_GO(&e, keydir_keysync_completed(kd), fail);
+
+    PROP_GO(&e,
+        user_new(
+            citm->scheduler,
+            user,
+            servers,
+            clients,
+            kd,
+            xc,
+            citm_user_cb,
+            citm,
+            &citm->users
+        ),
+    fail);
+
+    return;
+
+fail:
+    DUMP(e);
+    DROP_VAR(&e);
+
+free:
+    citm_close_server_list(citm, servers);
+    citm_close_client_list(citm, clients);
+    kd->free(kd);
+    dstr_free(&user);
+    citm_close_client(citm, xc);
+}
+
+// completed anons attach to new or existing preuser, or an existing user
+static void citm_anon_cb(
+    void *data,
+    derr_t e,
+    imap_server_t *s,
+    imap_client_t *c,
+    dstr_t user,
+    dstr_t pass
+){
+    citm_t *citm = data;
+    keydir_i *kd = NULL;
+
+    if(is_error(e)) goto fail;
+
+    if(citm->canceled || !s || !c) goto free;
+
+    // check for existing user
+    hash_elem_t *elem = hashmap_gets(&citm->users, &user);
+    if(elem){
+        // try attaching to existing user
+        bool ok;
+        PROP_GO(&e, user_add_pair(elem, s, c, &ok), fail);
+        if(ok) goto discard_user_pass;
+        // user is shutting down, this server/client pair must wait
+        elem = hashmap_gets(&citm->holds, &user);
+        if(elem){
+            // attach to existing hold
+            hold_add_pair(elem, s, c);
+            goto discard_user_pass;
+        }
+        // start a new hold
+        hold_new(citm, s, c, user, pass, &citm->holds);
+        return;
+    }
+
+    // check for existing preuser
+    elem = hashmap_gets(&citm->preusers, &user);
+    if(elem){
+        // attach to existing preuser
+        preuser_add_pair(elem, s, c);
+        goto discard_user_pass;
+    }
+
+    // create a new preuser
+    PROP_GO(&e, keydir_new(&citm->root, user, &kd), fail);
+
+    PROP_GO(&e,
+        preuser_new(
+            citm->scheduler,
+            citm->io,
+            user,
+            pass,
+            kd,
+            s,
+            c,
+            citm_preuser_cb,
+            citm,
+            &citm->preusers
+        ),
+    fail);
+
+    return;
+
+fail:
+    DUMP(e);
+    DROP_VAR(&e);
+
+free:
+    citm_close_server(citm, s);
+    citm_close_client(citm, c);
+    if(kd) kd->free(kd);
+
+discard_user_pass:
+    dstr_free(&user);
+    dstr_zeroize(&pass);
+    dstr_free(&pass);
+    return;
+}
+
+// completed io_pairs become anon's until login is complete
+static void citm_io_pair_cb(
+    void *data, derr_t e, citm_conn_t *conn_dn, citm_conn_t *conn_up
+){
+    imap_client_t *c = NULL;
+    imap_server_t *s = NULL;
+
+    citm_t *citm = data;
+
+    if(is_error(e)) goto fail;
+
+    if(citm->canceled) goto free;
+
+    /* convert conn's to imap's here so anon_new can easily fulfill the "no
+       args are consumed on failure" promise */
+
+    PROP_GO(&e, imap_server_new(&s, citm->scheduler, conn_dn), fail);
+    conn_dn = NULL;
+
+    PROP_GO(&e, imap_client_new(&c, citm->scheduler, conn_up), fail);
+    conn_up = NULL;
+
+    PROP_GO(&e,
+        anon_new(citm->scheduler, s, c, citm_anon_cb, citm, &citm->anons),
+    fail);
+
+    return;
+
+fail:
+    DUMP(e);
+    DROP_VAR(&e);
+free:
+    citm_close_conn(citm, conn_dn);
+    citm_close_conn(citm, conn_up);
+    citm_close_server(citm, s);
+    citm_close_client(citm, c);
+}
+
+// incoming connections become io_pairs until the upwards connection is made
+void citm_on_imap_connection(citm_t *citm, citm_conn_t *conn){
+    derr_t e = E_OK;
+
+    PROP_GO(&e,
+        io_pair_new(
+            citm->scheduler,
+            citm->io,
+            conn,
+            citm_io_pair_cb,
+            citm,
+            &citm->io_pairs
+        ),
+    fail);
+
+    return;
+
+fail:
+    DUMP(e);
+    DROP_VAR(&e);
+    citm_close_conn(citm, conn);
 }

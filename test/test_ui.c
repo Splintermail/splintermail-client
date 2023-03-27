@@ -164,16 +164,16 @@ static derr_t run_test_case(struct test_case_t test){
     // compare the results
     if(test.call_citm_loop != citm_called)
         UH_OH("run_test_case citm_called exp %x but got %x\n",
-              FI(test.call_citm_loop), FI(citm_called));
+              FB(test.call_citm_loop), FB(citm_called));
     if(test.call_register_token != register_token_called)
         UH_OH("run_test_case register_token_called exp %x but got %x\n",
-              FI(test.call_register_token), FI(register_token_called));
+              FB(test.call_register_token), FB(register_token_called));
     if(test.call_api_password != api_password_called)
         UH_OH("run_test_case api_password_called exp %x but got %x\n",
-              FI(test.call_api_password), FI(api_password_called));
+              FB(test.call_api_password), FB(api_password_called));
     if(test.call_api_token != api_token_called)
         UH_OH("run_test_case api_token_called exp %x but got %x\n",
-              FI(test.call_api_token), FI(api_token_called));
+              FB(test.call_api_token), FB(api_token_called));
     if(test.expect_return != main_ret)
         UH_OH("run_test_case do_main return exp %x but got %x\n",
               FI(test.expect_return), FI(main_ret));
@@ -226,10 +226,30 @@ static derr_t run_all_cases(void){
         PROP(&e, FMT(&configpath, "%x/test_ui/testconf", FS(g_test_files)) );
         // prepare the expected stdout
         test_case.test_name = "config";
-        test_case.expect_out = "splintermail-dir 12345\n";
-        test_case.argv = (char*[]){SM, "--config", configpath.data, "--dump-conf", NULL};
+        test_case.expect_out =
+            "splintermail-dir 12345\n"
+            "listen starttls://h:1\n"
+            "listen insecure://H:2\n"
+        ;
+        test_case.argv = (char*[]){
+            SM,
+            "--config",
+            configpath.data,
+            "--dump-conf",
+            "--listen",
+            "insecure://H:2",
+            NULL
+        };
         PROP(&e, run_test_case(test_case) );
-        test_case.argv = (char*[]){SM, "-c", configpath.data, "--dump-conf", NULL};
+        test_case.argv = (char*[]){
+            SM,
+            "-c",
+            configpath.data,
+            "--dump-conf",
+            "--listen",
+            "insecure://H:2",
+            NULL
+        };
         PROP(&e, run_test_case(test_case) );
         test_case.expect_out = NULL;
 
@@ -239,7 +259,7 @@ static derr_t run_all_cases(void){
         PROP(&e, run_test_case(test_case) );
         test_case.argv = (char*[]){SM, "citm", "-z", NULL};
         PROP(&e, run_test_case(test_case) );
-        test_case.argv = (char*[]){SM, "citm", "--listen-port", NULL};
+        test_case.argv = (char*[]){SM, "citm", "--listen", NULL};
         PROP(&e, run_test_case(test_case) );
 
         test_case.test_name = "reject non-existent config file";
@@ -276,12 +296,11 @@ static derr_t run_all_cases(void){
         struct test_case_t test_case = {
             .call_citm_loop = true,
             .citm_args = {
-                .local_host = "127.0.0.1",
-                .local_svc = "1993",
+                .nlspecs = 1,
+                .lspecs = {"tls://127.0.0.1:1993"},
                 .key = "splintermail/citm-127.0.0.1-key.pem",
                 .cert = "splintermail/citm-127.0.0.1-cert.pem",
-                .remote_host = "splintermail.com",
-                .remote_svc = "993",
+                .remote = "tls://splintermail.com:993",
                 .maildir_root = "splintermail/citm",
                 .indicate_ready = false,
                 .to_return = E_OK,
@@ -300,11 +319,33 @@ static derr_t run_all_cases(void){
         test_case.expect_return = 0;
         test_case.citm_args.to_return = E_OK;
 
-        test_case.test_name = "citm listen-port";
-        test_case.citm_args.local_svc = "1234";
-        test_case.argv = (char*[]){SM, "citm", "--listen-port", "1234", NULL};
+        test_case.test_name = "citm one listener";
+        test_case.citm_args.lspecs[0] = "insecure://yo:5";
+        test_case.citm_args.key = NULL;
+        test_case.citm_args.cert = NULL;
+        test_case.argv = (char*[]){
+            SM, "citm", "--listen", "insecure://yo:5", NULL
+        };
         PROP(&e, run_test_case(test_case) );
-        test_case.citm_args.local_svc = "1993";
+        test_case.citm_args.key = "splintermail/citm-127.0.0.1-key.pem";
+        test_case.citm_args.cert = "splintermail/citm-127.0.0.1-cert.pem";
+
+        test_case.test_name = "citm multiple listeners";
+        test_case.citm_args.lspecs[0] = "tls://yo:5";
+        test_case.citm_args.lspecs[1] = "starttls://yoyo:6";
+        test_case.citm_args.nlspecs = 2;
+        test_case.argv = (char*[]){
+            SM,
+            "citm",
+            "--listen",
+            "tls://yo:5",
+            "--listen",
+            "starttls://yoyo:6",
+            NULL
+        };
+        PROP(&e, run_test_case(test_case) );
+        test_case.citm_args.lspecs[0] = "tls://127.0.0.1:1993";
+        test_case.citm_args.nlspecs = 1;
 
         test_case.test_name = "citm splintermail-dir";
         test_case.citm_args.key = "some_dir/citm-127.0.0.1-key.pem";

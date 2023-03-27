@@ -1,25 +1,29 @@
-add_library(
+sm_lib(
     libcitm
-    passthru.c
-    server.c
-    fetcher.c
-    keysync.c
+    imap_server.c
+    imap_client.c
+    io_pair.c
+    anon.c
+    preuser.c
     user.c
-    citm_engine.c
-    sf_pair.c
-    fpr_watcher.c
-    citm.c
+    sc.c
     date.c
+    fpr_watcher.c
+    keydir.c
+    xkey.c
+    responses.c
+    citm.c
+    uv.c
+    DEPS dstr crypto url duv duvtls imap imaildir
 )
-target_link_libraries(libcitm PUBLIC engine dstr imaildir)
-set_target_properties("libcitm" PROPERTIES OUTPUT_NAME "citm")
-default_compile_options(libcitm TRUE)
-define_file_logname_for_target(libcitm)
 
-add_executable(
-    citm
-    main.c
-)
-target_link_libraries(citm PUBLIC libcitm)
-default_compile_options(citm TRUE)
-define_file_logname_for_target(citm)
+sm_exe(citm main.c DEPS libcitm)
+
+sm_lib(fake_citm.c DEPS libcitm TEST)
+
+sm_test(test_imap_server.c DEPS fakestream fake_citm FILES)
+sm_test(test_imap_client.c DEPS fakestream fake_citm FILES)
+sm_test(test_io_pair.c DEPS fakestream fake_citm)
+sm_test(test_anon.c DEPS fakestream fake_citm)
+sm_test(test_preuser.c DEPS fakestream fake_citm)
+sm_test(test_keydir.c DEPS fakestream fake_citm test_utils)

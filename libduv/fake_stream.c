@@ -249,6 +249,17 @@ derr_t fake_stream_expect_read_many(
     return e;
 }
 
+derr_t fake_stream_write(manual_scheduler_t *m, fake_stream_t *fs, dstr_t buf){
+    derr_t e = E_OK;
+
+    manual_scheduler_run(m);
+    EXPECT_B(&e, "want read", fake_stream_want_read(fs), true);
+    fake_stream_feed_read_all(fs, buf);
+    manual_scheduler_run(m);
+
+    return e;
+}
+
 derr_t fake_stream_cleanup(
     manual_scheduler_t *m, stream_i *s, fake_stream_t *f
 ){

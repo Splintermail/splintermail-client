@@ -6,7 +6,7 @@
 #include <errno.h>
 
 #include "libdstr/libdstr.h"
-#include "libcitm/citm.h"
+#include "libcitm/libcitm.h"
 #include "libcrypto/libcrypto.h"
 
 #include "ui.h"
@@ -843,6 +843,76 @@ cu:
     return e;
 }
 
+// for selecting multiple --listeners
+typedef struct {
+    dstr_t *dstrs;
+    addrspec_t *specs;
+    size_t len;
+    size_t cap;
+    bool invalid;
+    bool key_required;
+} listener_list_t;
+
+static derr_t listener_cb(void *data, dstr_t val){
+    derr_t e = E_OK;
+
+    listener_list_t *l = data;
+
+    if(l->len >= l->cap){
+        fprintf(stderr, "too many --listener flags, limit 8\n");
+        l->invalid = true;
+        return e;
+    }
+
+    size_t idx = l->len++;
+    addrspec_t *spec = &l->specs[idx];
+
+    if(l->len > l->cap){
+    }
+
+    // val.data is persisted, but the dstr_t box is not
+    l->dstrs[idx] = val;
+
+    DSTR_VAR(errbuf, 512);
+    bool ok = parse_addrspec_ex(&l->dstrs[idx], spec, &errbuf);
+    if(!ok){
+        FFMT_QUIET(stderr, NULL, "%x\n", FD(&errbuf));
+        l->invalid = true;
+        return e;
+    }
+    dstr_t specstr = dstr_from_off(dstr_off_extend(spec->scheme, spec->port));
+
+    // --listener requires each of SCHEME, HOST, and PORT
+    if(!spec->scheme.len || !spec->host.len || !spec->port.len){
+        FFMT_QUIET(stderr, NULL,
+            "--listen %x is missing elements, must be SCHEME://HOST:PORT\n",
+            FD(&specstr)
+        );
+        l->invalid = true;
+    }
+    if(l->invalid) return e;
+
+    // check for a valid scheme
+    dstr_t scheme = dstr_from_off(spec->scheme);
+    imap_security_e sec;
+    ok = imap_scheme_parse(scheme, &sec);
+    if(!ok){
+        FFMT_QUIET(stderr, NULL,
+            "--listen %x has invalid scheme '%x', "
+            "must be one of tls, starttls, or insecure\n",
+            FD(&specstr),
+            FD(&scheme)
+        );
+        l->invalid = true;
+        return e;
+    }
+
+    // check if we require a --key and --cert
+    if(sec != IMAP_SEC_INSECURE) l->key_required = true;
+
+    return e;
+}
+
 // returns zero when the all options provided are all allowed
 // counts must be captured before parsing cli options
 static int _limit_options(
@@ -904,7 +974,6 @@ static void fdump_opt(opt_spec_t *spec, FILE *f){
     }
 }
 
-// ugh... abstracting main() feels dirty.  Thanks, Windows.
 int do_main(int argc, char* argv[], bool windows_service){
     dstr_t config_text = {0};
     dstr_t logfile_path = {0};
@@ -970,15 +1039,19 @@ int do_main(int argc, char* argv[], bool windows_service){
 
     // dump-conf handled after config and command line
 
+    // support multiple listeners
+    dstr_t dstrs[8] = {0};
+    addrspec_t specs[8] = {0};
+    listener_list_t listeners = { .dstrs = dstrs, .specs = specs, .cap = 8 };
+
     // set up the main parse
     // common options
     opt_spec_t o_debug      = {'D',  "debug",      false};
-    opt_spec_t o_lstn_port  = {'\0', "listen-port",true};
-    opt_spec_t o_lstn_addr  = {'\0', "listen-addr",true};
     // citm options
-    opt_spec_t o_sm_dir     = {'d',  "splintermail-dir",true};
+    opt_spec_t o_sm_dir     = {'d',  "splintermail-dir", true};
     opt_spec_t o_logfile    = {'l',  "logfile",    true};
     opt_spec_t o_no_logfile = {'L',  "no-logfile", false};
+    opt_spec_t o_listen     = {'\0', "listen", true, listener_cb, &listeners};
     opt_spec_t o_cert       = {'\0', "cert",       true};
     opt_spec_t o_key        = {'\0', "key",        true};
     // options specific to the api_client
@@ -994,11 +1067,10 @@ int do_main(int argc, char* argv[], bool windows_service){
     opt_spec_t* spec[] = {
     //  option               citm   api_client
         &o_debug,         // y      y
-        &o_lstn_port,     // y      n
-        &o_lstn_addr,     // y      n
         &o_sm_dir,        // y      n
         &o_logfile,       // y      n
         &o_no_logfile,    // y      n
+        &o_listen,        // y      n
         &o_cert,          // y      n
         &o_key,           // y      n
         &o_user,          // n      y
@@ -1034,6 +1106,11 @@ int do_main(int argc, char* argv[], bool windows_service){
         // if no `-c` or `--config`, load the OS-specific file locations
         PROP_GO(&e, load_os_config_files(&config_text, spec, speclen), cu);
     }
+    if(listeners.invalid){
+        fprintf(stderr, "invalid config file\n");
+        retval = 15;
+        goto cu;
+    }
 
     /* track which parameters were found in a config file, so we can limit the
        options allowed on the command line to what currently applies */
@@ -1050,10 +1127,23 @@ int do_main(int argc, char* argv[], bool windows_service){
         retval = 1;
         goto cu;
     }
+    if(listeners.invalid){
+        retval = 16;
+        goto cu;
+    }
 
     // if we had --dump_conf on the command line, this is where we dump config
     if(o_dump_conf.found){
+        fprintf(stderr, "nlisteners = %zu\n", listeners.len);
         for(size_t i = 0; i < speclen; i++){
+            // treat --listen specially
+            if(strcmp(spec[i]->olong, "listen") == 0){
+                for(size_t i = 0; i < listeners.len; i++){
+                    FFMT_QUIET(stdout, NULL, "listen %x\n", FD(&dstrs[i]));
+                }
+                continue;
+            }
+            // all non --listen options
             fdump_opt(spec[i], stdout);
         }
         retval = 0;
@@ -1068,8 +1158,7 @@ int do_main(int argc, char* argv[], bool windows_service){
             #ifdef BUILD_DEBUG
             &o_r_host, &o_r_imap_port,
             #endif
-            &o_lstn_port, &o_lstn_addr, &o_sm_dir, &o_logfile,
-            &o_no_logfile, &o_cert, &o_key,
+            &o_sm_dir, &o_logfile, &o_no_logfile, &o_listen, &o_cert, &o_key,
         };
         bool failed = limit_options(
             "splintermail citm", spec, speclen, counts, ok_opts
@@ -1152,26 +1241,26 @@ int do_main(int argc, char* argv[], bool windows_service){
             logger_add_filename(log_level, logfile_path.data);
         }
         // log file defaults to on, in ${sm_dir}/citm_log
-        else if(o_logfile.found == 0 && o_no_logfile.found == 0){
+        else if(!o_logfile.found && !o_no_logfile.found){
             PROP_GO(&e, FMT(&logfile_path, "%x/citm_log", FD(&sm_dir)), cu);
             trim_logfile_quiet(logfile_path.data, 100000000);
             logger_add_filename(log_level, logfile_path.data);
         }
 
-        if(o_lstn_addr.found){
-            PROP_GO(&e, FMT(&local_host, "%x", FD(&o_lstn_addr.val)), cu);
-        }else{
-            PROP_GO(&e, FMT(&local_host, "127.0.0.1"), cu);
+        if(listeners.len == 0){
+            DSTR_STATIC(default_listen, "tls://127.0.0.1:1993");
+            listeners.specs[0] = must_parse_addrspec(&default_listen);
+            listeners.len = 1;
+            listeners.key_required = true;
         }
 
-        if(o_lstn_port.found){
-            PROP_GO(&e, FMT(&local_svc, "%x", FD(&o_lstn_port.val)), cu);
-        }else{
-            PROP_GO(&e, FMT(&local_svc, "1993"), cu);
-        }
+        DSTR_STATIC(default_remote, "tls://splintermail.com:993");
+        addrspec_t remote = must_parse_addrspec(&default_remote);
 
         // get certificate path
-        if(o_cert.found){
+        if(!listeners.key_required){
+            // noop if we don't need a server key/cert
+        }else if(o_cert.found){
             PROP_GO(&e, FMT(&cert, "%x", FD(&o_cert.val)), cu);
         }else{
             // look for the default certificate
@@ -1199,7 +1288,9 @@ int do_main(int argc, char* argv[], bool windows_service){
         }
 
         // get key path
-        if(o_key.found){
+        if(!listeners.key_required){
+            // noop if we don't need a server key/cert
+        }else if(o_key.found){
             PROP_GO(&e, FMT(&key, "%x", FD(&o_key.val)), cu);
         }else{
             // look for the default key
@@ -1243,15 +1334,15 @@ int do_main(int argc, char* argv[], bool windows_service){
 #endif
 
         PROP_GO(&e,
-            citm(
-                local_host.data,
-                local_svc.data,
+            uv_citm(
+                listeners.specs,
+                listeners.len,
+                remote,
                 key.data,
                 cert.data,
-                rhost,
-                remote_svc.data,
-                &citm_path,
-                false  // bool indicate_ready
+                citm_path,
+                // indicate when the listener is ready
+                false
             ),
         cu);
 

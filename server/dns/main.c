@@ -308,6 +308,7 @@ static derr_t udp_bind_addrspec(uv_udp_t *udp, const addrspec_t spec){
     derr_t e = E_OK;
 
     int fd = -1;
+    int ret;
 
     struct addrinfo *ai = NULL;
     PROP_GO(&e, getaddrspecinfo(spec, true, &ai), fail);
@@ -318,7 +319,14 @@ static derr_t udp_bind_addrspec(uv_udp_t *udp, const addrspec_t spec){
         if(fd < 0){
             ORIG_GO(&e, E_OS, "socket(): %x", fail, FE(&errno));
         }
-        int ret = bind(fd, ai->ai_addr, ai->ai_addrlen);
+
+        int on = 1;
+        ret = setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
+        if(ret){
+            ORIG_GO(&e, E_OS, "unable to set REUSEADDR: %x", fail, FE(&errno));
+        }
+
+        ret = bind(fd, ai->ai_addr, ai->ai_addrlen);
         if(ret){
             // bind failed, try again
             close(fd);
@@ -335,12 +343,6 @@ static derr_t udp_bind_addrspec(uv_udp_t *udp, const addrspec_t spec){
     );
 
 bind_success:
-    int on = 1;
-    int ret = setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
-    if(ret){
-        ORIG_GO(&e, E_OS, "unable to set REUSEADDR: %x", fail, FE(&errno));
-    }
-
     ret = uv_udp_open(udp, fd);
     if(ret < 0){
         TRACE(&e, "uv_udp_open: %x\n", FUV(&ret));
@@ -521,8 +523,8 @@ int main(int argc, char **argv){
     }
 
     size_t nbuckets = 0;
-    if(o_dns.found){
-        PROP_GO(&e, dstr_tosize(&o_dns.val, &nbuckets, 10), fail);
+    if(o_rrl.found){
+        PROP_GO(&e, dstr_tosize(&o_rrl.val, &nbuckets, 10), fail);
     }else{
         // default to a prime near 250MB
         nbuckets = 249999991;

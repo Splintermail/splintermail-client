@@ -749,7 +749,12 @@ static derr_t wrap(
         int ret = SSL_set1_host(t->ssl, buf.data);
         if(ret != 1){
             trace_ssl_errors(&e);
-            ORIG_GO(&e, E_SSL, "error setting SSL peer name", fail);
+            ORIG_GO(&e,
+                E_SSL,
+                "error setting SSL peer name (%x)",
+                fail,
+                FD_DBG(&buf)
+            );
         }
 
         SSL_set_hostflags(
@@ -765,7 +770,12 @@ static derr_t wrap(
         long lret = SSL_set_tlsext_host_name(t->ssl, buf.data);
         if(lret != 1){
             trace_ssl_errors(&e);
-            ORIG_GO(&e, E_SSL, "error setting SSL SNI", fail);
+            ORIG_GO(&e,
+                E_SSL,
+                "error setting SSL SNI (%x)",
+                fail,
+                FD_DBG(&buf)
+            );
         }
     }
 

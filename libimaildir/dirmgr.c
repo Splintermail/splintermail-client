@@ -26,13 +26,8 @@ static derr_t managed_dir_new(managed_dir_t **out, dirmgr_t *dm,
     // also ensure ctn exist
     PROP(&e, make_ctn(&dir_path, 0777) );
 
-    managed_dir_t *mgd = malloc(sizeof(*mgd));
-    if(mgd == NULL) ORIG(&e, E_NOMEM, "no memory");
-    *mgd = (managed_dir_t){
-        // the interface we will give to the imaildir_t
-        .state = MGD_STATE_OPEN,
-        .dm = dm,
-    };
+    managed_dir_t *mgd = DMALLOC_STRUCT_PTR(&e, mgd);
+    CHECK(&e);
 
     // copy the name, which persists for the hashmap and for the imaildir_t
     PROP_GO(&e, dstr_new(&mgd->name, name->len), fail_malloc);
@@ -61,26 +56,6 @@ fail_malloc:
 ////////////////////
 // utility functions
 ////////////////////
-
-static derr_t delete_ctn(const string_builder_t *dir_path){
-    derr_t e = E_OK;
-
-    string_builder_t full_path;
-
-    DSTR_STATIC(cur, "cur");
-    full_path = sb_append(dir_path, FD(&cur));
-    PROP(&e, rm_rf_path(&full_path) );
-
-    DSTR_STATIC(tmp, "tmp");
-    full_path = sb_append(dir_path, FD(&tmp));
-    PROP(&e, rm_rf_path(&full_path) );
-
-    DSTR_STATIC(new, "new");
-    full_path = sb_append(dir_path, FD(&new));
-    PROP(&e, rm_rf_path(&full_path) );
-
-    return e;
-}
 
 static derr_t rmdir_ctn(const string_builder_t *dir_path){
     derr_t e = E_OK;
@@ -134,185 +109,6 @@ static derr_t make_ctn(const string_builder_t *dir_path, mode_t mode){
     full_path = sb_append(dir_path, FD(&new));
     PROP(&e, exists_path(&full_path, &do_rm) );
     if(!do_rm) PROP(&e, mkdirs_path(&full_path, mode) );
-
-    return e;
-}
-
-typedef struct {
-    // the dirmgr
-    dirmgr_t *dm;
-    // the sorted LIST responses
-    jsw_atree_t *tree;
-    // a running path to the maildir, relative to the root maildir
-    string_builder_t maildir_name;
-    // did any child directories not get removed?
-    bool have_children;
-} delete_extra_dirs_arg_t;
-
-static void managed_dir_delete_ctn(managed_dir_t *mgd){
-    if(mgd->state != MGD_STATE_OPEN){
-        // TODO: is this safe?
-        // ignore this and let its state play out unmodified
-        return;
-    }
-    // if the dir is marked as unselectable, we need to delete ctn
-    mgd->state = MGD_STATE_DELETING_CTN;
-    // the final unregister should execute the deletion
-    imaildir_forceclose(&mgd->m);
-}
-
-
-/* helper function to simplify delete_extra_dirs a bit. *remote indicates if
-   the dir was part of the LIST response, while **mgd will be set if the
-   directory is currenlty selected in the dirmgr. */
-static derr_t delete_extra_dir_checks(delete_extra_dirs_arg_t *arg,
-        const string_builder_t *maildir_name, bool *remote,
-        managed_dir_t **mgd){
-    derr_t e = E_OK;
-
-    // expand maildir_name
-    DSTR_VAR(stack, 256);
-    dstr_t heap = {0};
-    dstr_t* name;
-    PROP(&e, sb_expand(maildir_name, &DSTR_LIT("/"), &stack, &heap, &name) );
-
-    // strip leading slash if any
-    size_t start_idx = name->data[0] == '/' ? 1 : 0;
-    dstr_t display_name = dstr_sub(name, start_idx, name->len);
-
-    *remote = (jsw_afind(arg->tree, &display_name, NULL) != NULL);
-
-    // check selected dirs
-    hash_elem_t *h = hashmap_gets(&arg->dm->dirs, name);
-    *mgd = (h == NULL ? NULL : CONTAINER_OF(h, managed_dir_t, h));
-
-    dstr_free(&heap);
-    return e;
-}
-
-static derr_t delete_extra_dirs(const string_builder_t *base,
-        const dstr_t *name, bool isdir, void *userdata){
-    derr_t e = E_OK;
-
-    // dereference userdata
-    delete_extra_dirs_arg_t *arg = userdata;
-
-    // we only care about directories, not files
-    if(!isdir) return e;
-    // skip hidden folders
-    if(name->len > 0 && name->data[0] == '.') return e;
-    // skip ctn
-    if(dstr_cmp(name, &DSTR_LIT("cur")) == 0) return e;
-    if(dstr_cmp(name, &DSTR_LIT("tmp")) == 0) return e;
-    if(dstr_cmp(name, &DSTR_LIT("new")) == 0) return e;
-
-    // get a path for the maildir, relative to the root maildir
-    string_builder_t maildir_name = sb_append(&arg->maildir_name, FD(name));
-    // also get the full path to the maildir
-    string_builder_t maildir_path = sb_append(base, FD(name));
-
-    // recurse
-    delete_extra_dirs_arg_t child_arg = {
-        .dm=arg->dm,
-        .tree=arg->tree,
-        .maildir_name=maildir_name,
-        .have_children=false,
-    };
-    PROP(&e, for_each_file_in_dir(&maildir_path, delete_extra_dirs,
-                &child_arg) );
-
-    // have_children propagates when true
-    if(child_arg.have_children){
-        arg->have_children = true;
-    }
-
-    // gcc wrongly thinks these may be not always be initialized
-    bool remote = false;
-    managed_dir_t *mgd = NULL;
-
-    // expand maildir_name and check both the LIST response and the dirmgr
-    PROP(&e, delete_extra_dir_checks(arg, &maildir_name, &remote, &mgd) );
-
-    if(remote){
-        arg->have_children = true;
-    }else if(child_arg.have_children){
-        // folder not on remote, but we can't delete it either, so delete ctn
-        if(mgd != NULL){
-            managed_dir_delete_ctn(mgd);
-        }else{
-            PROP(&e, delete_ctn(&maildir_path) );
-        }
-        // we still exist, so the parent dir can't be deleted
-        arg->have_children = true;
-    }else{
-        // we can delete the entire directory
-        PROP(&e, rm_rf_path(&maildir_path) );
-    }
-
-    return e;
-}
-
-/*
-   For now, we will only sync folders in a single direction; folders observed
-   on the remote machine will be created locally, and folders not observed on
-   the remote machine will be deleted locally.
-
-   This should be 100% functional for users of normal mail clients (outlook,
-   thunderbird, etc), since those clients will go through IMAP to create new
-   folders.  This should still be mostly functional for users of IMAP-stupid
-   mail user agents (mutt, maybe pine, others).
-
-   Two-way sync based on the state of the filesystem would either require the
-   master to keep and publish a log (not part of the IMAP spec), or it would
-   require a three-way sync between the remote machine, the file system, and
-   some cache of what the synced state was during the previous sync, or there
-   would be no way to distinguish local creation from remote deletion.
-
-   That's tricky to do correctly, so we'll just ignore it for now.
-*/
-derr_t dirmgr_sync_folders(dirmgr_t *dm, jsw_atree_t *tree){
-    derr_t e = E_OK;
-
-    // part I: check server response and create missing dirs
-
-    jsw_atrav_t trav;
-    jsw_anode_t *node = jsw_atfirst(&trav, tree);
-    for(; node != NULL; node = jsw_atnext(&trav)){
-        // get the response
-        ie_list_resp_t *resp = CONTAINER_OF(node, ie_list_resp_t, node);
-        // get the name of the mailbox
-        const dstr_t *name = ie_mailbox_name(resp->m);
-
-        // check if the maildir is being accessed right now
-        hash_elem_t *h = hashmap_gets(&dm->dirs, name);
-        if(h != NULL){
-            managed_dir_t *mgd = CONTAINER_OF(h, managed_dir_t, h);
-            // delete ctn?
-            if(resp->mflags->selectable == IE_SELECTABLE_NOSELECT){
-                managed_dir_delete_ctn(mgd);
-            }
-            // everything looks correct, don't go to the filesystem
-            continue;
-        }
-
-        // maildir not open in dirmgr, make sure it exists on the filesystem
-        string_builder_t dir_path = sb_append(&dm->path, FD(name));
-        PROP(&e, mkdirs_path(&dir_path, 0777) );
-
-        // also ensure ctn exist
-        if(resp->mflags->selectable != IE_SELECTABLE_NOSELECT){
-            PROP(&e, make_ctn(&dir_path, 0777) );
-        }
-    }
-
-    // part II: check filesystem and delete unneeded directories
-    delete_extra_dirs_arg_t arg = {
-        .dm=dm,
-        .tree=tree,
-        // dirname starts empty so the joined path will start with a single "/"
-        .maildir_name=SB(FS("")),
-    };
-    PROP(&e, for_each_file_in_dir(&dm->path, delete_extra_dirs, &arg) );
 
     return e;
 }
@@ -410,7 +206,9 @@ derr_t dirmgr_do_for_each_mbx(dirmgr_t *dm, const dstr_t *ref_name,
 // IMAP functions
 /////////////////
 
-derr_t dirmgr_open_up(dirmgr_t *dm, const dstr_t *name, up_t *up){
+derr_t dirmgr_open_up(
+    dirmgr_t *dm, const dstr_t *name, up_t *up, up_cb_i *cb, extensions_t *exts
+){
     derr_t e = E_OK;
 
     if(hashmap_gets(&dm->freezes, name) != NULL){
@@ -422,6 +220,8 @@ derr_t dirmgr_open_up(dirmgr_t *dm, const dstr_t *name, up_t *up){
     hash_elem_t *h = hashmap_gets(&dm->dirs, name);
     if(h != NULL){
         mgd = CONTAINER_OF(h, managed_dir_t, h);
+
+        PROP(&e, up_init(up, &mgd->m, cb, exts) );
 
         // just add an accessor to the existing imaildir
         imaildir_register_up(&mgd->m, up);
@@ -431,15 +231,29 @@ derr_t dirmgr_open_up(dirmgr_t *dm, const dstr_t *name, up_t *up){
     // no existing imaildir in dirs, better open a new one
     PROP(&e, managed_dir_new(&mgd, dm, name) );
 
+    PROP_GO(&e, up_init(up, &mgd->m, cb, exts), fail);
+
     // add to hashmap (we checked this path was not in the hashmap)
     hashmap_sets(&dm->dirs, &mgd->name, &mgd->h);
 
     imaildir_register_up(&mgd->m, up);
 
     return e;
+
+fail:
+    managed_dir_free(&mgd);
+    return e;
 }
 
-derr_t dirmgr_open_dn(dirmgr_t *dm, const dstr_t *name, dn_t *dn){
+derr_t dirmgr_open_dn(
+    dirmgr_t *dm,
+    const dstr_t *name,
+    // remaning arguments pass thru to dn_init()
+    dn_t *dn,
+    dn_cb_i *cb,
+    extensions_t *exts,
+    bool examine
+){
     derr_t e = E_OK;
 
     if(hashmap_gets(&dm->freezes, name) != NULL){
@@ -452,7 +266,8 @@ derr_t dirmgr_open_dn(dirmgr_t *dm, const dstr_t *name, dn_t *dn){
     if(h != NULL){
         mgd = CONTAINER_OF(h, managed_dir_t, h);
 
-        // just add an accessor to the existing imaildir
+        PROP(&e, dn_init(dn, &mgd->m, cb, exts, examine) );
+
         imaildir_register_dn(&mgd->m, dn);
         return e;
     }
@@ -460,44 +275,57 @@ derr_t dirmgr_open_dn(dirmgr_t *dm, const dstr_t *name, dn_t *dn){
     // no existing imaildir in dirs, better open a new one
     PROP(&e, managed_dir_new(&mgd, dm, name) );
 
-    // add to hashmap (we checked this path was not in the hashmap)
-    hashmap_sets(&dm->dirs, &mgd->name, &mgd->h);
+    PROP_GO(&e, dn_init(dn, &mgd->m, cb, exts, examine), fail);
 
     imaildir_register_dn(&mgd->m, dn);
 
+    // add to hashmap (we checked this path was not in the hashmap)
+    hashmap_sets(&dm->dirs, &mgd->name, &mgd->h);
+
+    return e;
+
+fail:
+    managed_dir_free(&mgd);
     return e;
 }
 
-static void handle_empty_imaildir(dirmgr_t *dm, imaildir_t *m){
+static void handle_empty_imaildir(imaildir_t *m){
     managed_dir_t *mgd = CONTAINER_OF(m, managed_dir_t, m);
     // remove the managed_dir from the maildir
     hash_elem_remove(&mgd->h);
     managed_dir_free(&mgd);
-
-    /* TODO: after hash_elem_remove supported removal without a pointer to the
-             containing hashmap, there's actually no reason for this to have
-             the *dm pointer anymore.  The places where dirmgr_close_{up,dn}
-             are called are few, and could maybe be built into the {up,dn}_t's,
-             but I don't currently have time or interest to dig into it */
-    (void)dm;
-
-    // TODO: handle non-MSG_STATE_OPEN here
 }
 
 void dirmgr_close_up(dirmgr_t *dm, up_t *up){
+    (void)dm;
     imaildir_t *m = up->m;
-    size_t naccessors = imaildir_unregister_up(up);
+    if(!m){
+        // m failed, just free up
+        up_free(up);
+        return;
+    }
+
+    // let imaildir free up
+    size_t naccessors = imaildir_unregister_up(m, up);
     if(naccessors) return;
 
-    handle_empty_imaildir(dm, m);
+    handle_empty_imaildir(m);
 }
 
 void dirmgr_close_dn(dirmgr_t *dm, dn_t *dn){
+    (void)dm;
     imaildir_t *m = dn->m;
-    size_t naccessors = imaildir_unregister_dn(dn);
+    if(!m){
+        // m failed, just free dn
+        dn_free(dn);
+        return;
+    }
+
+    // let imaildir free dn
+    size_t naccessors = imaildir_unregister_dn(m, dn);
     if(naccessors) return;
 
-    handle_empty_imaildir(dm, m);
+    handle_empty_imaildir(m);
 }
 
 /* check for invald names, including:
@@ -532,53 +360,6 @@ bool dirmgr_name_valid(const dstr_t *name){
     return true;
 }
 
-// you have to have a dirmgr_freeze_t to call this
-derr_t dirmgr_delete(dirmgr_t *dm, const dstr_t *name){
-    derr_t e = E_OK;
-
-    if(!dirmgr_name_valid(name))
-        ORIG(&e, E_INTERNAL, "invalid name in dirmgr_delete");
-
-
-    string_builder_t dir_path = sb_append(&dm->path, FD(name));
-    bool exists;
-    PROP(&e, exists_path(&dir_path, &exists) );
-    if(exists){
-        PROP(&e, rm_rf_path(&dir_path) );
-    }
-
-    return e;
-}
-
-// you have to have a dirmgr_freeze_t on old and new to call this
-derr_t dirmgr_rename(dirmgr_t *dm, const dstr_t *old, const dstr_t *new){
-    derr_t e = E_OK;
-
-    if(!dirmgr_name_valid(old))
-        ORIG(&e, E_INTERNAL, "invalid name (old) in dirmgr_delete");
-    if(!dirmgr_name_valid(new))
-        ORIG(&e, E_INTERNAL, "invalid name (new) in dirmgr_delete");
-
-    string_builder_t src_path = sb_append(&dm->path, FD(old));
-    string_builder_t dst_path = sb_append(&dm->path, FD(new));
-
-    // delete dst_path
-    bool exists;
-    PROP(&e, exists_path(&dst_path, &exists) );
-    if(exists){
-        // TODO: this will not play nicely with hierarchical mailboxes
-        PROP(&e, rm_rf_path(&dst_path) );
-    }
-
-    // do the rename
-    PROP(&e, exists_path(&src_path, &exists) );
-    if(exists){
-        PROP(&e, drename_path(&src_path, &dst_path) );
-    }
-
-    return e;
-}
-
 // part of the imaildir_cb_i
 static bool imaildir_cb_allow_download(imaildir_cb_i *cb, imaildir_t *m){
     dirmgr_t *dm = CONTAINER_OF(cb, dirmgr_t, imaildir_cb);
@@ -588,13 +369,19 @@ static bool imaildir_cb_allow_download(imaildir_cb_i *cb, imaildir_t *m){
 }
 
 // part of the imaildir_cb_i
-static derr_t imaildir_dirmgr_hold_new(
+static derr_t imaildir_cb_hold_new(
     imaildir_cb_i *cb, const dstr_t *name, dirmgr_hold_t **out
 ){
     derr_t e = E_OK;
     dirmgr_t *dm = CONTAINER_OF(cb, dirmgr_t, imaildir_cb);
     PROP(&e, dirmgr_hold_new(dm, name, out) );
     return e;
+}
+
+// part of the imaildir_cb_i
+static void imaildir_cb_failed(imaildir_cb_i *cb, imaildir_t *m){
+    (void)cb;
+    handle_empty_imaildir(m);
 }
 
 derr_t dirmgr_init(
@@ -612,19 +399,22 @@ derr_t dirmgr_init(
         .path = path,
         .imaildir_cb = {
             .allow_download = imaildir_cb_allow_download,
-            .dirmgr_hold_new = imaildir_dirmgr_hold_new,
+            .dirmgr_hold_new = imaildir_cb_hold_new,
+            .failed = imaildir_cb_failed,
         },
     };
 
-    PROP_GO(&e, hashmap_init(&dm->dirs), fail_dirs);
-    PROP_GO(&e, hashmap_init(&dm->holds), fail_holds);
-    PROP(&e, hashmap_init(&dm->freezes) );
+    PROP_GO(&e, hashmap_init(&dm->dirs), fail);
+    PROP_GO(&e, hashmap_init(&dm->holds), fail);
+    PROP_GO(&e, hashmap_init(&dm->freezes), fail);
+
+    dm->initialized = true;
 
     return e;
 
-fail_holds:
+fail:
+    hashmap_free(&dm->freezes);
     hashmap_free(&dm->holds);
-fail_dirs:
     hashmap_free(&dm->dirs);
     return e;
 }
@@ -754,7 +544,8 @@ warn:
 
 
 void dirmgr_free(dirmgr_t *dm){
-    if(!dm) return;
+    if(!dm || !dm->initialized) return;
+    dm->initialized = false;
 
     // clean up any temporary files
     string_builder_t tmp_path = sb_append(&dm->path, FS("tmp"));
@@ -875,6 +666,11 @@ void dirmgr_hold_release_imaildir(dirmgr_hold_t *hold, imaildir_t **m){
     *m = NULL;
 }
 
+struct dirmgr_freeze_t {
+    dstr_t name;
+    hash_elem_t h;
+};
+DEF_CONTAINER_OF(dirmgr_freeze_t, h, hash_elem_t)
 
 derr_t dirmgr_freeze_new(
     dirmgr_t *dm, const dstr_t *name, dirmgr_freeze_t **out
@@ -885,16 +681,25 @@ derr_t dirmgr_freeze_new(
     // check if we already have a freeze for this name
     hash_elem_t *h = hashmap_gets(&dm->freezes, name);
     if(h != NULL){
-        dirmgr_freeze_t *freeze = CONTAINER_OF(h, dirmgr_freeze_t, h);
-        freeze->count++;
-        *out = freeze;
+        ORIG(&e,
+            E_BUSY, "mailbox \"%x\" is frozen by another thread", FD_DBG(name)
+        );
         return e;
     }
 
+    // check if we have an imaildir by that name
+    h = hashmap_gets(&dm->dirs, name);
+    if(h != NULL){
+        // force-close the imaildir that is open
+        managed_dir_t *mgd = CONTAINER_OF(h, managed_dir_t, h);
+        imaildir_forceclose(&mgd->m);
+        hash_elem_remove(&mgd->h);
+        managed_dir_free(&mgd);
+    }
+
     // create a new freeze
-    dirmgr_freeze_t *freeze = malloc(sizeof(*freeze));
-    if(!freeze) ORIG(&e, E_NOMEM, "nomem");
-    *freeze = (dirmgr_freeze_t){ .count = 1 };
+    dirmgr_freeze_t *freeze = DMALLOC_STRUCT_PTR(&e, freeze);
+    CHECK(&e);
 
     PROP_GO(&e, dstr_copy(name, &freeze->name), fail);
 
@@ -912,12 +717,70 @@ fail:
 
 void dirmgr_freeze_free(dirmgr_freeze_t *freeze){
     if(!freeze) return;
-    if(--freeze->count) return;
 
     // remove from freezes and free the freeze
     hash_elem_remove(&freeze->h);
     dstr_free(&freeze->name);
     free(freeze);
+}
+
+// the freeze you have holds the name
+derr_t dirmgr_delete(dirmgr_t *dm, dirmgr_freeze_t *freeze){
+    derr_t e = E_OK;
+
+    if(!dirmgr_name_valid(&freeze->name))
+        ORIG(&e,
+            E_INTERNAL,
+            "invalid name (%x) in dirmgr_delete",
+            FD_DBG(&freeze->name)
+        );
+
+
+    string_builder_t dir_path = sb_append(&dm->path, FD(&freeze->name));
+    bool exists;
+    PROP(&e, exists_path(&dir_path, &exists) );
+    if(exists){
+        PROP(&e, rm_rf_path(&dir_path) );
+    }
+
+    return e;
+}
+
+// the freezes you have hold the names
+derr_t dirmgr_rename(dirmgr_t *dm, dirmgr_freeze_t *src, dirmgr_freeze_t *dst){
+    derr_t e = E_OK;
+
+    if(!dirmgr_name_valid(&src->name))
+        ORIG(&e,
+            E_INTERNAL,
+            "invalid src name (%x) in dirmgr_rename",
+            FD_DBG(&src->name)
+        );
+    if(!dirmgr_name_valid(&dst->name))
+        ORIG(&e,
+            E_INTERNAL,
+            "invalid dst name (%x) in dirmgr_rename",
+            FD_DBG(&dst->name)
+        );
+
+    string_builder_t src_path = sb_append(&dm->path, FD(&src->name));
+    string_builder_t dst_path = sb_append(&dm->path, FD(&dst->name));
+
+    // delete dst_path
+    bool exists;
+    PROP(&e, exists_path(&dst_path, &exists) );
+    if(exists){
+        // TODO: this will not play nicely with hierarchical mailboxes
+        PROP(&e, rm_rf_path(&dst_path) );
+    }
+
+    // do the rename
+    PROP(&e, exists_path(&src_path, &exists) );
+    if(exists){
+        PROP(&e, drename_path(&src_path, &dst_path) );
+    }
+
+    return e;
 }
 
 // take a STATUS response from the server and correct for local info

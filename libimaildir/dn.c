@@ -1,21 +1,7 @@
 #include <stdlib.h>
 
-#include "libimaildir.h"
-
-// state for gathering updates
-typedef struct {
-    jsw_atree_t news;  // gathered_t->node
-    jsw_atree_t metas;  // gathered_t->node
-    jsw_atree_t expunges;  // gathered_t->node
-    /* expunge updates can't be freed until after we have emitted messages for
-       them, due to the fact that they have to be removed from the view at the
-       time of emitting messages, and that act will alter the seq num of other
-       messages, which we need to delay */
-    link_t updates_to_free;
-    /* Choose not to keep track of what the original flags were.  This means in
-       the case of add/remove a flag we will report a FETCH which could be a
-       noop, but that's what dovecot does.  It also saves us another struct. */
-} gather_t;
+#include "libimaildir/libimaildir.h"
+#include "libimaildir/msg_internal.h"
 
 typedef struct {
     unsigned int uid_dn;
@@ -38,15 +24,16 @@ static derr_t gather_updates_dont_send(
     gather_t *gather
 );
 static derr_t gather_send_responses(
-    dn_t *dn, gather_t *gather, bool uid_mode, bool for_store
+    dn_t *dn, gather_t *gather, bool uid_mode, bool for_store, link_t *out
 );
-static derr_t send_store_fetch_resps(dn_t *dn, gather_t *gather);
+static derr_t send_store_fetch_resps(dn_t *dn, gather_t *gather, link_t *out);
 
 // a helper struct to lazily load the message body
 typedef struct {
     imaildir_t *m;
     msg_key_t key;
     int fd;
+    bool open; // use open=false instead of fd=-1 to indicate an unopen loader
     bool eof;
     ie_dstr_t *content;
     bool taken; // the first taker gets *content; following takers get a copy
@@ -55,7 +42,7 @@ typedef struct {
 } loader_t;
 
 static loader_t loader_prep(imaildir_t *m, msg_key_t key){
-    return (loader_t){ .m = m, .key = key, .fd = -1 };
+    return (loader_t){ .m = m, .key = key };
 }
 
 // get the next 4096 bytes of data from the file
@@ -64,10 +51,11 @@ static size_t _loader_read(derr_t *e, loader_t *loader){
     if(is_error(*e)) goto fail;
     if(loader->eof) return 0;
 
-    if(loader->fd == -1){
+    if(!loader->open){
         PROP_GO(e,
             imaildir_dn_open_msg(loader->m, loader->key, &loader->fd),
         fail);
+        loader->open = true;
         loader->content = ie_dstr_new_empty(e);
         CHECK_GO(e, fail);
     }
@@ -194,7 +182,7 @@ fail:
     return NULL;
 }
 
-static void loader_close(derr_t *e, loader_t *loader){
+static void loader_close(loader_t *loader){
     imf_hdrs_free(loader->hdrs);
     imf_free(loader->imf);
     loader->imf = NULL;
@@ -203,14 +191,26 @@ static void loader_close(derr_t *e, loader_t *loader){
     }
     loader->content = NULL;
 
-    // if imalidir fails in this call, this will overwrite e with E_IMAILDIR
-    derr_t e2 = imaildir_dn_close_msg(loader->m, loader->key, &loader->fd);
-    if(is_error(e2)){
-        PROP_VAR_GO(e, &e2, fail);
+    if(loader->open){
+        imaildir_dn_close_msg(loader->m, loader->key, &loader->fd);
+        loader->open = false;
     }
+}
 
-fail:
-    return;
+static void free_response_list(link_t *temp){
+    link_t *link;
+    while((link = link_list_pop_first(temp))){
+        imap_resp_t *resp = CONTAINER_OF(link, imap_resp_t, link);
+        imap_resp_free(resp);
+    }
+}
+
+/* since imaildir can fail while we're not running, we need to detect those
+   failures the first time we are called */
+static derr_t healthcheck(dn_t *dn){
+    derr_t e = E_OK;
+    if(dn->m) return e;
+    ORIG(&e, E_IMAILDIR, "imaildir failed on another thread");
 }
 
 typedef struct {
@@ -247,7 +247,8 @@ static void exp_flags_free(exp_flags_t **exp_flags){
 
 // free everything related to dn.store
 static void dn_free_store(dn_t *dn){
-    dn->store.state = DN_WAIT_NONE;
+    dn->store.started = false;
+    dn->store.synced = false;
     ie_dstr_free(STEAL(ie_dstr_t, &dn->store.tag));
 
     jsw_anode_t *node;
@@ -259,105 +260,140 @@ static void dn_free_store(dn_t *dn){
 
 // free everything related to dn.expunge
 static void dn_free_expunge(dn_t *dn){
-    dn->expunge.state = DN_WAIT_NONE;
+    dn->expunge.started = false;
+    dn->expunge.synced = false;
     ie_dstr_free(STEAL(ie_dstr_t, &dn->expunge.tag));
 }
 
 // free everything related to dn.copy
 static void dn_free_copy(dn_t *dn){
-    dn->copy.state = DN_WAIT_NONE;
+    dn->copy.started = false;
+    dn->copy.synced = false;
     ie_dstr_free(STEAL(ie_dstr_t, &dn->copy.tag));
     dn->copy.uid_mode = false;
 }
 
 // free everything related to dn.disconnect
 static void dn_free_disconnect(dn_t *dn){
-    dn->disconnect.state = DN_WAIT_NONE;
+    dn->disconnect.started = false;
+    dn->disconnect.synced = false;
 }
 
 // free everything related to dn.fetch
 static void dn_free_fetch(dn_t *dn){
-    dn->fetch.state = DN_WAIT_NONE;
+    dn->fetch.started = false;
+    dn->fetch.synced = false;
+    dn->fetch.sync_processed = false;
+    dn->fetch.ready = false;
+    dn->fetch.any_missing = false;
+    dn->fetch.iter_called = false;
     ie_dstr_free(STEAL(ie_dstr_t, &dn->fetch.tag));
     ie_fetch_cmd_free(STEAL(ie_fetch_cmd_t, &dn->fetch.cmd));
     ie_seq_set_free(STEAL(ie_seq_set_t, &dn->fetch.uids_dn));
+    gather_free(&dn->fetch.gather);
 }
 
 static void dn_free_idle(dn_t *dn){
     ie_dstr_free(STEAL(ie_dstr_t, &dn->idle.tag));
 }
 
-void dn_free(dn_t *dn){
-    if(!dn) return;
-    // actually there's nothing to free...
+static void dn_free_views(dn_t *dn){
+    /* free all the message views before freeing updates (which might
+       invalidate some views) */
+    jsw_anode_t *node;
+    while((node = jsw_apop(&dn->views))){
+        msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
+        msg_view_free(&view);
+    }
+
+    // free any unhandled updates
+    link_t *link;
+    while((link = link_list_pop_first(&dn->pending_updates))){
+        update_t *update = CONTAINER_OF(link, update_t, link);
+        update_free(&update);
+    }
+
+    // we're not an accessor of the imaildir anymore
+    dn->m = NULL;
+    link_remove(&dn->link);
 }
 
-derr_t dn_init(dn_t *dn, dn_cb_i *cb, extensions_t *exts, bool examine){
+void dn_free(dn_t *dn){
+    dn_free_store(dn);
+    dn_free_expunge(dn);
+    dn_free_copy(dn);
+    dn_free_disconnect(dn);
+    dn_free_fetch(dn);
+    dn_free_idle(dn);
+    dn_free_views(dn);
+}
+
+derr_t dn_init(
+    dn_t *dn,
+    imaildir_t *m,
+    dn_cb_i *cb,
+    extensions_t *exts,
+    bool examine
+){
     derr_t e = E_OK;
 
     *dn = (dn_t){
+        .m = m,
         .cb = cb,
         .examine = examine,
-        .selected = false,
         .exts = exts,
     };
 
-    link_init(&dn->link);
-    link_init(&dn->pending_updates);
-
-    /* the view gets built during processing of the SELECT command, so that the
-       CONDSTORE/QRESYNC extensions can be handled efficiently */
     jsw_ainit(&dn->views, jsw_cmp_uint, msg_view_jsw_get_uid_dn);
-
     jsw_ainit(&dn->store.tree, jsw_cmp_uint, exp_flags_jsw_get_uid_dn);
 
     return e;
 }
 
 static derr_t send_st_resp(
-    dn_t *dn, const ie_dstr_t *tag, const dstr_t *msg, ie_status_t status
+    dn_t *dn, ie_dstr_t **tagp, dstr_t msg, ie_status_t status, link_t *out
 ){
     derr_t e = E_OK;
 
     // copy tag
-    ie_dstr_t *tag_copy = ie_dstr_copy(&e, tag);
+    ie_dstr_t *tag = STEAL(ie_dstr_t, tagp);
 
     // build text
-    ie_dstr_t *text = ie_dstr_new(&e, msg, KEEP_RAW);
+    ie_dstr_t *text = ie_dstr_new2(&e, msg);
 
     // build response
-    ie_st_resp_t *st_resp = ie_st_resp_new(&e, tag_copy, status, NULL, text);
-    imap_resp_arg_t arg = {.status_type=st_resp};
+    ie_st_resp_t *st_resp = ie_st_resp_new(&e, tag, status, NULL, text);
+    imap_resp_arg_t arg = { .status_type = st_resp };
     imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_STATUS_TYPE, arg);
     resp = imap_resp_assert_writable(&e, resp, dn->exts);
     CHECK(&e);
 
-    PROP(&e, dn->cb->resp(dn->cb, resp) );
+    link_list_append(out, &resp->link);
 
     return e;
 }
 
-static derr_t send_ok(dn_t *dn, const ie_dstr_t *tag, const dstr_t *msg){
+static derr_t send_ok(dn_t *dn, ie_dstr_t **tagp, dstr_t msg, link_t *out){
     derr_t e = E_OK;
-    PROP(&e, send_st_resp(dn, tag, msg, IE_ST_OK) );
+    PROP(&e, send_st_resp(dn, tagp, msg, IE_ST_OK, out) );
     return e;
 }
 
-static derr_t send_no(dn_t *dn, const ie_dstr_t *tag, const dstr_t *msg){
+static derr_t send_no(dn_t *dn, ie_dstr_t **tagp, dstr_t msg, link_t *out){
     derr_t e = E_OK;
-    PROP(&e, send_st_resp(dn, tag, msg, IE_ST_NO) );
+    PROP(&e, send_st_resp(dn, tagp, msg, IE_ST_NO, out) );
     return e;
 }
 
-static derr_t send_bad(dn_t *dn, const ie_dstr_t *tag, const dstr_t *msg){
+static derr_t send_bad(dn_t *dn, ie_dstr_t **tagp, dstr_t msg, link_t *out){
     derr_t e = E_OK;
-    PROP(&e, send_st_resp(dn, tag, msg, IE_ST_BAD) );
+    PROP(&e, send_st_resp(dn, tagp, msg, IE_ST_BAD, out) );
     return e;
 }
 
 ////
 
-static derr_t send_flags_resp(dn_t *dn){
+static derr_t send_flags_resp(dn_t *dn, link_t *out){
     derr_t e = E_OK;
 
     ie_flags_t *flags = ie_flags_new(&e);
@@ -365,19 +401,18 @@ static derr_t send_flags_resp(dn_t *dn){
     flags = ie_flags_add_simple(&e, flags, IE_FLAG_FLAGGED);
     flags = ie_flags_add_simple(&e, flags, IE_FLAG_DELETED);
     flags = ie_flags_add_simple(&e, flags, IE_FLAG_SEEN);
-    // TODO: is this one supposed to be used in general?
-    // flags = ie_flags_add_simple(&e, flags, IE_FLAG_DRAFT);
+    flags = ie_flags_add_simple(&e, flags, IE_FLAG_DRAFT);
     imap_resp_arg_t arg = {.flags=flags};
     imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_FLAGS, arg);
     resp = imap_resp_assert_writable(&e, resp, dn->exts);
     CHECK(&e);
 
-    PROP(&e, dn->cb->resp(dn->cb, resp) );
+    link_list_append(out, &resp->link);
 
     return e;
 }
 
-static derr_t send_exists_resp(dn_t *dn){
+static derr_t send_exists_resp(dn_t *dn, link_t *out){
     derr_t e = E_OK;
 
     if(dn->views.size > UINT_MAX){
@@ -390,12 +425,12 @@ static derr_t send_exists_resp(dn_t *dn){
     resp = imap_resp_assert_writable(&e, resp, dn->exts);
     CHECK(&e);
 
-    PROP(&e, dn->cb->resp(dn->cb, resp) );
+    link_list_append(out, &resp->link);
 
     return e;
 }
 
-static derr_t send_recent_resp(dn_t *dn){
+static derr_t send_recent_resp(dn_t *dn, link_t *out){
     derr_t e = E_OK;
 
     // we don't support \Recent
@@ -404,12 +439,12 @@ static derr_t send_recent_resp(dn_t *dn){
     resp = imap_resp_assert_writable(&e, resp, dn->exts);
     CHECK(&e);
 
-    PROP(&e, dn->cb->resp(dn->cb, resp) );
+    link_list_append(out, &resp->link);
 
     return e;
 }
 
-static derr_t send_unseen_resp(dn_t *dn){
+static derr_t send_unseen_resp(dn_t *dn, link_t *out){
     derr_t e = E_OK;
 
     /* note: UNSEEN can't be calculated in constant memory while building the
@@ -431,12 +466,12 @@ static derr_t send_unseen_resp(dn_t *dn){
         ie_dstr_t *text = ie_dstr_new(&e, &msg, KEEP_RAW);
 
         ie_st_resp_t *st_resp = ie_st_resp_new(&e, NULL, IE_ST_OK, code, text);
-        imap_resp_arg_t arg = {.status_type=st_resp};
+        imap_resp_arg_t arg = { .status_type = st_resp };
         imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_STATUS_TYPE, arg);
         resp = imap_resp_assert_writable(&e, resp, dn->exts);
         CHECK(&e);
 
-        PROP(&e, dn->cb->resp(dn->cb, resp) );
+        link_list_append(out, &resp->link);
     }
 
     // if no messages were unseen, don't report anything
@@ -444,7 +479,7 @@ static derr_t send_unseen_resp(dn_t *dn){
     return e;
 }
 
-static derr_t send_pflags_resp(dn_t *dn){
+static derr_t send_pflags_resp(dn_t *dn, link_t *out){
     derr_t e = E_OK;
 
     ie_pflags_t *pflags = ie_pflags_new(&e);
@@ -462,17 +497,19 @@ static derr_t send_pflags_resp(dn_t *dn){
     ie_dstr_t *text = ie_dstr_new(&e, &msg, KEEP_RAW);
 
     ie_st_resp_t *st_resp = ie_st_resp_new(&e, NULL, IE_ST_OK, code, text);
-    imap_resp_arg_t arg = {.status_type=st_resp};
+    imap_resp_arg_t arg = { .status_type = st_resp };
     imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_STATUS_TYPE, arg);
     resp = imap_resp_assert_writable(&e, resp, dn->exts);
     CHECK(&e);
 
-    PROP(&e, dn->cb->resp(dn->cb, resp) );
+    link_list_append(out, &resp->link);
 
     return e;
 }
 
-static derr_t send_uidnext_resp(dn_t *dn, unsigned int max_uid_dn){
+static derr_t send_uidnext_resp(
+    dn_t *dn, unsigned int max_uid_dn, link_t *out
+){
     derr_t e = E_OK;
 
     ie_st_code_arg_t code_arg = {.uidnext = max_uid_dn + 1};
@@ -482,17 +519,17 @@ static derr_t send_uidnext_resp(dn_t *dn, unsigned int max_uid_dn){
     ie_dstr_t *text = ie_dstr_new(&e, &msg, KEEP_RAW);
 
     ie_st_resp_t *st_resp = ie_st_resp_new(&e, NULL, IE_ST_OK, code, text);
-    imap_resp_arg_t arg = {.status_type=st_resp};
+    imap_resp_arg_t arg = { .status_type = st_resp };
     imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_STATUS_TYPE, arg);
     resp = imap_resp_assert_writable(&e, resp, dn->exts);
     CHECK(&e);
 
-    PROP(&e, dn->cb->resp(dn->cb, resp) );
+    link_list_append(out, &resp->link);
 
     return e;
 }
 
-static derr_t send_uidvld_resp(dn_t *dn, unsigned int uidvld_dn){
+static derr_t send_uidvld_resp(dn_t *dn, unsigned int uidvld_dn, link_t *out){
     derr_t e = E_OK;
 
     ie_st_code_arg_t code_arg = { .uidvld = uidvld_dn };
@@ -507,54 +544,95 @@ static derr_t send_uidvld_resp(dn_t *dn, unsigned int uidvld_dn){
     resp = imap_resp_assert_writable(&e, resp, dn->exts);
     CHECK(&e);
 
-    PROP(&e, dn->cb->resp(dn->cb, resp) );
+    link_list_append(out, &resp->link);
 
     return e;
 }
 
-static derr_t select_cmd(dn_t *dn, const ie_dstr_t *tag,
-        const ie_select_cmd_t *select){
+static derr_t select_failure(
+    dn_t *dn, ie_dstr_t **tagp, ie_status_t status, link_t *out
+){
     derr_t e = E_OK;
-    jsw_anode_t *node;
 
-    // make sure the select did not include QRESYNC or CONDSTORE
-    if(select->params){
-        ORIG(&e, E_PARAM, "QRESYNC and CONDSTORE not supported");
+    ie_dstr_t *tag = STEAL(ie_dstr_t, tagp);
+    ie_dstr_t *text;
+    if(status == IE_ST_NO){
+        text = ie_dstr_new2(&e, DSTR_LIT("no such mailbox"));
+    }else{
+        text = ie_dstr_new2(&e, DSTR_LIT("failed to select"));
     }
+    ie_st_resp_t *st_resp = ie_st_resp_new(&e, tag, status, NULL, text);
+    imap_resp_arg_t arg = { .status_type = st_resp };
+    imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_STATUS_TYPE, arg);
+    resp = imap_resp_assert_writable(&e, resp, dn->exts);
+    CHECK(&e);
+
+    link_list_append(out, &resp->link);
+
+    return e;
+}
+
+derr_t dn_select(
+    dn_t *dn, ie_dstr_t **tagp, link_t *out, bool *okout, bool *success
+){
+    derr_t e = E_OK;
+
+    jsw_anode_t *node;
+    link_t temp = {0};
+    *okout = false;
+    *success = false;
+
+    PROP(&e, healthcheck(dn) );
+
+    // detect SELECT failures
+    ie_status_t status;
+    bool ok = imaildir_dn_select_failed(dn->m, &status);
+    if(!ok) return e;
+    if(status != IE_ST_OK){
+        *okout = true;
+        *success = false;
+        PROP(&e, select_failure(dn, tagp, status, out) );
+        return e;
+    }
+
+    // wait for the imaildir to be synced how we like it
+    if(!imaildir_dn_synced(dn->m, dn->examine)) return e;
+
+    *okout = true;
+    *success = true;
+
+    // create responses to the initial SELECT or EXAMINE
 
     unsigned int max_uid_dn;
     unsigned int uidvld_dn;
     PROP(&e,
-        imaildir_dn_build_views(dn->m,
-            &dn->views,
-            &max_uid_dn,
-            &uidvld_dn
-        )
+        imaildir_dn_build_views(dn->m, dn, &dn->views, &max_uid_dn, &uidvld_dn)
     );
 
     // generate/send required SELECT responses
-    PROP_GO(&e, send_flags_resp(dn), fail);
-    PROP_GO(&e, send_exists_resp(dn), fail);
-    PROP_GO(&e, send_recent_resp(dn), fail);
-    PROP_GO(&e, send_unseen_resp(dn), fail);
-    PROP_GO(&e, send_pflags_resp(dn), fail);
-    PROP_GO(&e, send_uidnext_resp(dn, max_uid_dn), fail);
-    PROP_GO(&e, send_uidvld_resp(dn, uidvld_dn), fail);
+    PROP_GO(&e, send_flags_resp(dn, &temp), fail);
+    PROP_GO(&e, send_exists_resp(dn, &temp), fail);
+    PROP_GO(&e, send_recent_resp(dn, &temp), fail);
+    PROP_GO(&e, send_unseen_resp(dn, &temp), fail);
+    PROP_GO(&e, send_pflags_resp(dn, &temp), fail);
+    PROP_GO(&e, send_uidnext_resp(dn, max_uid_dn, &temp), fail);
+    PROP_GO(&e, send_uidvld_resp(dn, uidvld_dn, &temp), fail);
 
     // build an appropriate OK message
-    ie_dstr_t *tag_copy = ie_dstr_copy(&e, tag);
+    ie_dstr_t *tag = STEAL(ie_dstr_t, tagp);
     ie_dstr_t *text = ie_dstr_new2(&e, DSTR_LIT("welcome in"));
     ie_st_code_arg_t code_arg = {0};
     ie_st_code_t *code = ie_st_code_new(&e,
         dn->examine ? IE_ST_CODE_READ_ONLY : IE_ST_CODE_READ_WRITE, code_arg
     );
-    ie_st_resp_t *st_resp = ie_st_resp_new(&e, tag_copy, IE_ST_OK, code, text);
-    imap_resp_arg_t arg = {.status_type=st_resp};
+    ie_st_resp_t *st_resp = ie_st_resp_new(&e, tag, IE_ST_OK, code, text);
+    imap_resp_arg_t arg = { .status_type = st_resp };
     imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_STATUS_TYPE, arg);
     resp = imap_resp_assert_writable(&e, resp, dn->exts);
     CHECK_GO(&e, fail);
 
-    PROP_GO(&e, dn->cb->resp(dn->cb, resp), fail);
+    link_list_append(&temp, &resp->link);
+    link_list_append_list(out, &temp);
 
     return e;
 
@@ -563,11 +641,12 @@ fail:
         msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
         msg_view_free(&view);
     }
+    free_response_list(&temp);
     return e;
 }
 
 // nums will be consumed
-static derr_t send_search_resp(dn_t *dn, ie_nums_t *nums){
+static derr_t send_search_resp(dn_t *dn, ie_nums_t *nums, link_t *out){
     derr_t e = E_OK;
 
     // TODO: support modseq here
@@ -580,7 +659,7 @@ static derr_t send_search_resp(dn_t *dn, ie_nums_t *nums){
     resp = imap_resp_assert_writable(&e, resp, dn->exts);
     CHECK(&e);
 
-    PROP(&e, dn->cb->resp(dn->cb, resp) );
+    link_list_append(out, &resp->link);
 
     return e;
 }
@@ -602,20 +681,14 @@ static derr_t _loader_parse_imf_fn(void *data, const imf_t **imf){
     return e;
 }
 
-static derr_t search_cmd(dn_t *dn, const ie_dstr_t *tag,
-        const ie_search_cmd_t *search){
+// separated from dn_search for easier error handling
+static derr_t dn_search_loop(
+    dn_t *dn,
+    const ie_search_cmd_t *search,
+    unsigned int seq_max,
+    ie_nums_t **out
+){
     derr_t e = E_OK;
-
-    // handle the empty maildir case
-    if(dn->views.size == 0){
-        PROP(&e, send_search_resp(dn, NULL) );
-        PROP(&e, send_ok(dn, tag, &DSTR_LIT("don't waste my time!")) );
-        return e;
-    }
-
-    // now figure out some constants to do the search
-    unsigned int seq_max;
-    PROP(&e, index_to_seq_num(dn->views.size - 1, &seq_max) );
 
     jsw_atrav_t trav;
     jsw_anode_t *node = jsw_atlast(&trav, &dn->views);
@@ -651,8 +724,7 @@ static derr_t search_cmd(dn_t *dn, const ie_dstr_t *tag,
             ),
         fail);
 
-        loader_close(&e, &loader);
-        CHECK_GO(&e, fail);
+        loader_close(&loader);
 
         if(match){
             unsigned int val = search->uid_mode ? view->uid_dn : seq;
@@ -670,25 +742,51 @@ static derr_t search_cmd(dn_t *dn, const ie_dstr_t *tag,
         seq--;
     }
 
-    // finally, send the responses (nums will be consumed)
-    PROP(&e, send_search_resp(dn, nums) );
-
-    PROP(&e, dn_gather_updates(dn, search->uid_mode, search->uid_mode, NULL) );
-
-    PROP(&e, send_ok(dn, tag, &DSTR_LIT("too easy!")) );
+    *out = nums;
 
     return e;
 
 fail:
-    {
-        derr_t e2 = E_OK;
-        loader_close(&e2, &loader);
-        // prefer the E_IMAILDIR error
-        MERGE_VAR(&e2, &e, "closing lazy-loaded message fd");
-        // but store it at e
-        e = e2;
-    }
+    loader_close(&loader);
     ie_nums_free(nums);
+    return e;
+}
+
+derr_t dn_search(
+    dn_t *dn, ie_dstr_t **tagp, const ie_search_cmd_t *search, link_t *out
+){
+    derr_t e = E_OK;
+
+    PROP(&e, healthcheck(dn) );
+
+    // handle the empty maildir case
+    if(dn->views.size == 0){
+        PROP(&e, send_search_resp(dn, NULL, out) );
+        return e;
+    }
+
+    // now figure out some constants to do the search
+    unsigned int seq_max;
+    PROP(&e, index_to_seq_num(dn->views.size - 1, &seq_max) );
+
+    ie_nums_t *nums = NULL;
+    PROP(&e, dn_search_loop(dn, search, seq_max, &nums) );
+
+    link_t temp = {0};
+
+    // finally, send the responses (nums will be consumed)
+    PROP_GO(&e, send_search_resp(dn, nums, &temp), cu);
+
+    PROP_GO(&e,
+        dn_gather_updates(dn, search->uid_mode, search->uid_mode, NULL, &temp),
+    cu);
+
+    PROP_GO(&e, send_ok(dn, tagp, DSTR_LIT("too easy!"), &temp), cu);
+
+    link_list_append_list(out, &temp);
+
+cu:
+    free_response_list(&temp);
 
     return e;
 }
@@ -819,46 +917,62 @@ cu:
 }
 
 
-static derr_t store_cmd(
-    dn_t *dn, const ie_dstr_t *tag, const ie_store_cmd_t *store
+static derr_t store_begin(
+    dn_t *dn,
+    ie_dstr_t **tagp,
+    const ie_store_cmd_t *store,
+    link_t *out,
+    bool *ok
 ){
     derr_t e = E_OK;
 
+    if(dn->examine){
+        PROP(&e, send_no(dn, tagp, DSTR_LIT("mailbox is read-only"), out) );
+        *ok = true;
+        return e;
+    }
+
     ie_seq_set_t *uids_dn = NULL;
     msg_key_list_t *keys = NULL;
+    link_t temp = {0};
 
     // we need each msg_key for relaying the store command upwards
     // start by canonicalizing the uids_dn
-    bool ok;
+    bool uids_ok;
     PROP(&e,
         seq_set_to_canonical_uids_dn(
-            dn, store->uid_mode, store->seq_set, &uids_dn, &ok
+            dn, store->uid_mode, store->seq_set, &uids_dn, &uids_ok
         )
     );
-    if(!ok){
+    if(!uids_ok){
         // dovecot witholds updates for BAD - Invalid Messageset responses
-        PROP(&e, send_bad(dn, tag, &DSTR_LIT("bad message set")) );
+        PROP(&e, send_bad(dn, tagp, DSTR_LIT("bad message set"), out) );
+        *ok = true;
         return e;
     }
 
     // detect noop STOREs
     if(!uids_dn){
         bool allow_expunge = store->uid_mode;
-        PROP(&e, dn_gather_updates(dn, allow_expunge, store->uid_mode, NULL) );
-        PROP(&e, send_ok(dn, tag, &DSTR_LIT("noop STORE command")) );
+        PROP_GO(&e,
+            dn_gather_updates(dn, allow_expunge, store->uid_mode, NULL, &temp),
+        cu);
+        PROP_GO(&e,
+            send_ok(dn, tagp, DSTR_LIT("noop STORE command"), &temp),
+        cu);
+        link_list_append_list(out, &temp);
+        *ok = true;
         return e;
     }
 
-    // convert to msg_keys
-    PROP_GO(&e, uids_dn_to_msg_keys(dn, uids_dn, &keys), cu);
-
-    // reset the dn.store state
-    dn_free_store(dn);
+    // command will be asynchronous
+    dn->store.started = true;
     dn->store.uid_mode = store->uid_mode;
     dn->store.silent = store->silent;
+    dn->store.tag = STEAL(ie_dstr_t, tagp);
 
-    dn->store.tag = ie_dstr_copy(&e, tag);
-    CHECK_GO(&e, cu);
+    // convert to msg_keys
+    PROP_GO(&e, uids_dn_to_msg_keys(dn, uids_dn, &keys), cu);
 
     // figure out what all of the flags we expect to see are
     msg_flags_t cmd_flags = msg_flags_from_flags(store->flags);
@@ -909,14 +1023,90 @@ static derr_t store_cmd(
 
     CHECK_GO(&e, cu);
 
-    dn->store.state = DN_WAIT_WAITING;
-
     // now send the msg_store to the imaildir_t
     PROP_GO(&e, imaildir_dn_request_update(dn->m, req), cu);
 
 cu:
+    free_response_list(&temp);
     msg_key_list_free(keys);
     ie_seq_set_free(uids_dn);
+
+    return e;
+}
+
+static derr_t store_finish(dn_t *dn, link_t *out){
+    derr_t e = E_OK;
+
+    link_t temp = {0};
+
+    gather_t gather;
+    gather_prep(&gather);
+
+    ie_st_resp_t *st_resp = NULL;
+
+    // gather updates, including the st_resp from our UPDATE_SYNC
+    bool allow_expunge = dn->store.uid_mode;
+    PROP_GO(&e,
+        gather_updates_dont_send(dn, allow_expunge, &st_resp, &gather),
+    cu);
+
+    // send all untagged responses
+    bool uid_mode = dn->store.uid_mode;
+    bool for_store = true;
+    PROP_GO(&e,
+        gather_send_responses(dn, &gather, uid_mode, for_store, &temp),
+    cu);
+
+    // send tagged status-type response
+    if(st_resp){
+        // the command failed
+        PROP_GO(&e,
+            send_st_resp(
+                dn,
+                &dn->store.tag,
+                st_resp->text->dstr,
+                st_resp->status,
+                &temp
+            ),
+        cu);
+    }else{
+        PROP_GO(&e,
+            send_ok(dn, &dn->store.tag, DSTR_LIT("as you wish"), &temp),
+        cu);
+    }
+
+    link_list_append_list(out, &temp);
+
+cu:
+    free_response_list(&temp);
+    ie_st_resp_free(st_resp);
+    gather_free(&gather);
+    return e;
+}
+
+derr_t dn_store(
+    dn_t *dn,
+    ie_dstr_t **tagp,
+    const ie_store_cmd_t *store,
+    link_t *out,
+    bool *ok
+){
+    derr_t e = E_OK;
+
+    *ok = false;
+
+    PROP(&e, healthcheck(dn) );
+
+    if(!dn->store.started){
+        store_begin(dn, tagp, store, out, ok);
+        return e;
+    }
+
+    if(!dn->store.synced) return e;
+
+    PROP(&e, store_finish(dn, out) );
+    dn_free_store(dn);
+    *ok = true;
 
     return e;
 }
@@ -1168,7 +1358,8 @@ static derr_t send_fetch_resp(
     const ie_fetch_cmd_t *fetch,
     unsigned int uid_dn,
     bool force_flags,
-    bool *part_missing
+    bool *part_missing,
+    link_t *out
 ){
     derr_t e = E_OK;
     *part_missing = false;
@@ -1279,11 +1470,11 @@ static derr_t send_fetch_resp(
 
     resp = imap_resp_assert_writable(&e, resp, dn->exts);
 
-    loader_close(&e, &loader);
+    loader_close(&loader);
 
     CHECK(&e);
 
-    PROP(&e, dn->cb->resp(dn->cb, resp) );
+    link_list_append(out, &resp->link);
 
     return e;
 }
@@ -1329,101 +1520,53 @@ static derr_t nonpeek_msgs(
     return e;
 }
 
-
-// consumes gather and dn->fetch
-static derr_t finish_fetch_cmd(dn_t *dn, gather_t *gather){
-    derr_t e = E_OK;
-
-    // build a response for every uid_dn requested
-    ie_seq_set_trav_t trav;
-    unsigned int uid_dn = ie_seq_set_iter(&trav, dn->fetch.uids_dn, 0, 0);
-    bool any_missing = false;
-    for(; uid_dn != 0; uid_dn = ie_seq_set_next(&trav)){
-        bool force_flags = false;
-        // if we gathered an update for uid_dn, combine the FETCH responses
-        jsw_anode_t *node = jsw_aerase(&gather->metas, &uid_dn);
-        if(node){
-            gathered_free(CONTAINER_OF(node, gathered_t, node));
-            force_flags = true;
-        }
-        bool part_missing = false;
-        PROP_GO(&e,
-            send_fetch_resp(
-                dn, dn->fetch.cmd, uid_dn, force_flags, &part_missing
-            ),
-        cu);
-        any_missing |= part_missing;
-    }
-
-    // now send the rest of the gathered updates
-    bool uid_mode = dn->fetch.cmd->uid_mode;
-    bool for_store = false;
-    PROP_GO(&e, gather_send_responses(dn, gather, uid_mode, for_store), cu);
-
-    if(!any_missing){
-        DSTR_STATIC(msg, "you didn't hear it from me");
-        PROP_GO(&e, send_ok(dn, dn->fetch.tag, &msg), cu);
-    }else{
-        DSTR_STATIC(msg, "some requested subparts were missing");
-        PROP_GO(&e, send_no(dn, dn->fetch.tag, &msg), cu);
-    }
-
-cu:
-    gather_free(gather);
-    dn_free_fetch(dn);
-
-    return e;
-}
-
-
-// consumes tag and fetch
-static derr_t fetch_cmd(
-    dn_t *dn, ie_dstr_t *tag, ie_fetch_cmd_t *fetch
+static derr_t fetch_begin(
+    dn_t *dn, ie_dstr_t **tagp, ie_fetch_cmd_t **fetchp, link_t *out, bool *ok
 ){
     derr_t e = E_OK;
 
-    dn->fetch.tag = tag;
-    dn->fetch.cmd = fetch;
+    dn->fetch.tag = STEAL(ie_dstr_t, tagp);
+    dn->fetch.cmd = STEAL(ie_fetch_cmd_t, fetchp);
 
     // we always need the canonical uids_dn for this command
-    bool ok;
-    bool uid_mode = fetch->uid_mode;
-    PROP_GO(&e,
+    bool uidsok;
+    bool uid_mode = dn->fetch.cmd->uid_mode;
+    PROP(&e,
         seq_set_to_canonical_uids_dn(
-            dn, uid_mode, fetch->seq_set, &dn->fetch.uids_dn, &ok
-        ),
-    fail);
-    if(!ok){
+            dn, uid_mode, dn->fetch.cmd->seq_set, &dn->fetch.uids_dn, &uidsok
+        )
+    );
+    if(!uidsok){
         // dovecot witholds updates for BAD - Invalid Messageset responses
-        PROP_GO(&e, send_bad(dn, tag, &DSTR_LIT("bad message set")), fail);
-        dn_free_fetch(dn);
+        PROP(&e,
+            send_bad(dn, &dn->fetch.tag, DSTR_LIT("bad message set"), out)
+        );
+        *ok = true;
         return e;
     }
 
     /* some FETCH commands can't cause any \Seen flags to get set, while
        other FETCH commands don't happen to affect any unseen messages */
-    bool ispeek = fetch_is_peek_only(fetch);
+    bool ispeek = fetch_is_peek_only(dn->fetch.cmd);
     msg_key_list_t *nonpeeks = NULL;
     if(!ispeek){
-        PROP_GO(&e, nonpeek_msgs(dn, dn->fetch.uids_dn, &nonpeeks), fail);
+        PROP(&e, nonpeek_msgs(dn, dn->fetch.uids_dn, &nonpeeks) );
     }
     if(!nonpeeks){
         // process the command immediately
-        gather_t gather;
-        gather_prep(&gather);
+        gather_t *gather = &dn->fetch.gather;
+        gather_prep(gather);
 
         // gather updates without sending, since we'll modify them first
-        bool allow_expunge = fetch->uid_mode;
+        bool allow_expunge = dn->fetch.cmd->uid_mode;
         // in this codepath, we won't see an UPDATE_SYNC
-        PROP_GO(&e,
-            gather_updates_dont_send(dn, allow_expunge, NULL, &gather),
-        fail);
-
-        PROP(&e, finish_fetch_cmd(dn, &gather) );
+        PROP(&e, gather_updates_dont_send(dn, allow_expunge, NULL, gather) );
+        // now ready to send our fetch responses
+        dn->fetch.ready = true;
         return e;
     }
 
-    // otherwise, send a msg_store_cmd_t to set \Seen for the nonpeek msgs
+    // send a msg_store_cmd_t to set \Seen for the nonpeek msgs
     msg_store_cmd_t *msg_store = msg_store_cmd_new(&e,
         nonpeeks,
         NULL, // store_mods
@@ -1432,38 +1575,198 @@ static derr_t fetch_cmd(
     );
 
     update_req_t *req = update_req_store_new(&e, msg_store, dn);
+    CHECK(&e);
 
-    CHECK_GO(&e, fail);
+    PROP(&e, imaildir_dn_request_update(dn->m, req) );
 
-    dn->fetch.state = DN_WAIT_WAITING;
-    PROP_GO(&e, imaildir_dn_request_update(dn->m, req), fail);
+    return e;
+}
+
+static derr_t fetch_post_sync(dn_t *dn, link_t *out, bool *ok){
+    derr_t e = E_OK;
+
+    link_t temp = {0};
+
+    gather_t *gather = &dn->fetch.gather;
+    gather_prep(gather);
+
+    // gather updates without sending, since we'll modify them first
+    ie_st_resp_t *st_resp = NULL;
+    bool allow_expunge = dn->fetch.cmd->uid_mode;
+    PROP_GO(&e,
+        gather_updates_dont_send(dn, allow_expunge, &st_resp, gather),
+    fail);
+
+    // check for an error in our STORE \Seen request
+    if(st_resp){
+        // send the gathered updates without the ususal fetch modifications
+        bool uid_mode = dn->fetch.cmd->uid_mode;
+        bool for_store = false;
+        PROP_GO(&e,
+            gather_send_responses(dn, gather, uid_mode, for_store, &temp),
+        fail);
+
+        // forward the error message
+        PROP_GO(&e,
+            send_st_resp(
+                dn,
+                &dn->fetch.tag,
+                st_resp->text->dstr,
+                st_resp->status,
+                &temp
+            ),
+        fail);
+        ie_st_resp_free(st_resp);
+
+        link_list_append_list(out, &temp);
+        *ok = true;
+        return e;
+    }
+
+    // now ready to send our fetch responses
+    dn->fetch.ready = true;
 
     return e;
 
 fail:
-    dn_free_fetch(dn);
+    free_response_list(&temp);
+    ie_st_resp_free(st_resp);
+    return e;
+}
+
+static unsigned int fetch_next_uid_dn(dn_t *dn){
+    if(!dn->fetch.iter_called){
+        dn->fetch.iter_called = true;
+        return ie_seq_set_iter(&dn->fetch.trav, dn->fetch.uids_dn, 0, 0);
+    }
+    return ie_seq_set_next(&dn->fetch.trav);
+}
+
+static derr_t fetch_respond(dn_t *dn, link_t *out, bool *ok){
+    derr_t e = E_OK;
+
+    gather_t *gather = &dn->fetch.gather;
+
+    // build a response for every uid_dn requested, 1 at a time
+    unsigned int uid_dn = fetch_next_uid_dn(dn);
+    if(uid_dn){
+        bool force_flags = false;
+        // if we gathered an update for uid_dn, combine the FETCH responses
+        jsw_anode_t *node = jsw_aerase(&gather->metas, &uid_dn);
+        if(node){
+            gathered_free(CONTAINER_OF(node, gathered_t, node));
+            force_flags = true;
+        }
+        bool part_missing = false;
+        PROP(&e,
+            send_fetch_resp(
+                dn, dn->fetch.cmd, uid_dn, force_flags, &part_missing, out
+            )
+        );
+        dn->fetch.any_missing |= part_missing;
+
+        /* Break after each fetch response, which might contain an entire
+           message in RAM.  The imap_server_t can marshal a large number of
+           tiny responses into one packet, so this shouldn't have adverse
+           affects even when message bodies are not being requested. */
+        return e;
+    }
+
+    link_t temp = {0};
+
+    // now send the rest of the gathered updates
+    bool uid_mode = dn->fetch.cmd->uid_mode;
+    bool for_store = false;
+    PROP_GO(&e,
+        gather_send_responses(dn, gather, uid_mode, for_store, &temp),
+    cu);
+
+    if(!dn->fetch.any_missing){
+        DSTR_STATIC(msg, "you didn't hear it from me");
+        PROP_GO(&e, send_ok(dn, &dn->fetch.tag, msg, &temp), cu);
+    }else{
+        DSTR_STATIC(msg, "some requested subparts were missing");
+        PROP_GO(&e, send_no(dn, &dn->fetch.tag, msg, &temp), cu);
+    }
+
+    link_list_append_list(out, &temp);
+
+    // all done!
+    *ok = true;
+
+cu:
+    free_response_list(&temp);
+
+    return e;
+}
+
+derr_t dn_fetch(
+    dn_t *dn, ie_dstr_t **tagp, ie_fetch_cmd_t **fetchp, link_t *out, bool *ok
+){
+    derr_t e = E_OK;
+
+    *ok = false;
+
+    PROP(&e, healthcheck(dn) );
+
+    if(!dn->fetch.started){
+        dn->fetch.started = true;
+        PROP(&e, fetch_begin(dn, tagp, fetchp, out, ok) );
+        // did we finish immediately?
+        if(*ok){
+            dn_free_fetch(dn);
+            return e;
+        }
+    }
+
+    if(dn->fetch.synced && !dn->fetch.sync_processed){
+        dn->fetch.sync_processed = true;
+        PROP(&e, fetch_post_sync(dn, out, ok) );
+        // did we finish immediately?
+        if(*ok){
+            dn_free_fetch(dn);
+            return e;
+        }
+    }
+
+    if(dn->fetch.ready){
+        // try to send out our fetch responses
+        PROP(&e, fetch_respond(dn, out, ok) );
+        if(!*ok) return e;
+        // all done!
+        dn_free_fetch(dn);
+    }
+
     return e;
 }
 
 
-static derr_t expunge_cmd(dn_t *dn, const ie_dstr_t *tag){
+static derr_t expunge_begin(dn_t *dn, ie_dstr_t **tagp, link_t *out, bool *ok){
     derr_t e = E_OK;
+
+    if(dn->examine){
+        PROP(&e, send_no(dn, tagp, DSTR_LIT("mailbox is read-only"), out) );
+        *ok = true;
+        return e;
+    }
+
+    link_t temp = {0};
 
     msg_key_list_t *keys;
     PROP(&e, get_msg_keys_to_expunge(dn, &keys) );
     // detect noop EXPUNGEs
     if(!keys){
         // true = always allow expunges, false = there is no uid mode
-        PROP(&e, dn_gather_updates(dn, true, false, NULL) );
-        PROP(&e, send_ok(dn, tag, &DSTR_LIT("noop EXPUNGE command")) );
+        PROP_GO(&e, dn_gather_updates(dn, true, false, NULL, &temp), fail);
+        DSTR_STATIC(msg, "noop EXPUNGE command");
+        PROP_GO(&e, send_ok(dn, tagp, msg, &temp), fail);
+        link_list_append_list(out, &temp);
+        *ok = true;
         return e;
     }
 
-    // reset the dn.expunge state
-    dn_free_expunge(dn);
-    dn->expunge.tag = ie_dstr_copy(&e, tag);
-    dn->expunge.state = DN_WAIT_WAITING;
-    CHECK_GO(&e, fail);
+    dn->expunge.tag = STEAL(ie_dstr_t, tagp);
+    dn->expunge.started = true;
 
     // request an expunge update
     update_req_t *req =
@@ -1474,49 +1777,117 @@ static derr_t expunge_cmd(dn_t *dn, const ie_dstr_t *tag){
     return e;
 
 fail:
-    dn_free_expunge(dn);
+    free_response_list(&temp);
     msg_key_list_free(keys);
     return e;
 }
 
-
-static derr_t copy_cmd(dn_t *dn, const ie_dstr_t *tag,
-        const ie_copy_cmd_t *copy){
+static derr_t expunge_finish(dn_t *dn, link_t *out){
     derr_t e = E_OK;
 
+    ie_st_resp_t *st_resp = NULL;
+    link_t temp = {0};
+
+    // true = always allow expunges, false = there is no uid mode
+    PROP_GO(&e, dn_gather_updates(dn, true, false, &st_resp, &temp), cu);
+
+    // create an st_resp if there was no error
+    if(!st_resp){
+        DSTR_STATIC(msg, "may they be cursed forever");
+        ie_dstr_t *text = ie_dstr_new2(&e, msg);
+        ie_status_t status = IE_ST_OK;
+        st_resp = ie_st_resp_new(&e,
+            STEAL(ie_dstr_t, &dn->expunge.tag), status, NULL, text
+        );
+        CHECK_GO(&e, cu);
+    }else{
+        ie_dstr_free(st_resp->tag);
+        st_resp->tag = STEAL(ie_dstr_t, &dn->expunge.tag);
+    }
+
+    // build response
+    imap_resp_arg_t arg = {.status_type=STEAL(ie_st_resp_t, &st_resp)};
+    imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_STATUS_TYPE, arg);
+    resp = imap_resp_assert_writable(&e, resp, dn->exts);
+    CHECK_GO(&e, cu);
+
+    link_list_append(&temp, &resp->link);
+    link_list_append_list(out, &temp);
+
+cu:
+    free_response_list(&temp);
+    ie_st_resp_free(st_resp);
+    return e;
+}
+
+derr_t dn_expunge(dn_t *dn, ie_dstr_t **tagp, link_t *out, bool *ok){
+    derr_t e = E_OK;
+
+    *ok = false;
+
+    PROP(&e, healthcheck(dn) );
+
+    if(!dn->expunge.started){
+        PROP(&e, expunge_begin(dn, tagp, out, ok) );
+        return e;
+    }
+
+    if(!dn->expunge.synced) return e;
+
+    PROP(&e, expunge_finish(dn, out) );
+    *ok = true;
+    dn_free_expunge(dn);
+
+    return e;
+}
+
+
+// TODO: prevent COPY into current box if box is read-only?  Does dovecot?
+static derr_t copy_begin(
+    dn_t *dn,
+    ie_dstr_t **tagp,
+    const ie_copy_cmd_t *copy,
+    link_t *out,
+    bool *ok
+){
+    derr_t e = E_OK;
+
+    link_t temp = {0};
     ie_seq_set_t *uids_dn = NULL;
     msg_key_list_t *keys = NULL;
 
     // get the canonical uids_dn
-    bool ok;
+    bool uids_ok;
     PROP(&e,
         seq_set_to_canonical_uids_dn(
-            dn, copy->uid_mode, copy->seq_set, &uids_dn, &ok
+            dn, copy->uid_mode, copy->seq_set, &uids_dn, &uids_ok
         )
     );
-    if(!ok){
+    if(!uids_ok){
         // dovecot witholds updates for BAD - Invalid Messageset responses
-        PROP(&e, send_bad(dn, tag, &DSTR_LIT("bad message set")) );
+        PROP(&e, send_bad(dn, tagp, DSTR_LIT("bad message set"), out) );
+        *ok = true;
         return e;
     }
 
     // detect noop COPYs
     if(!uids_dn){
         // true = always allow expunges
-        PROP(&e, dn_gather_updates(dn, true, copy->uid_mode, NULL) );
-        PROP(&e, send_ok(dn, tag, &DSTR_LIT("noop COPY command")) );
+        PROP(&e, dn_gather_updates(dn, true, copy->uid_mode, NULL, &temp) );
+        PROP(&e, send_ok(dn, tagp, DSTR_LIT("noop COPY command"), &temp) );
+        link_list_append_list(out, &temp);
+        *ok = true;
         goto cu;
     }
+
+    *ok = false;
 
     // get the msg_keys
     PROP_GO(&e, uids_dn_to_msg_keys(dn, uids_dn, &keys), cu);
 
-    // reset the dn.copy state
-    dn_free_copy(dn);
-    dn->copy.tag = ie_dstr_copy(&e, tag);
-    dn->copy.state = DN_WAIT_WAITING;
+    dn->copy.tag = STEAL(ie_dstr_t, tagp);
+    dn->copy.started = true;
     dn->copy.uid_mode = copy->uid_mode;
-    CHECK_GO(&e, cu);
 
     // request a copy update
     msg_copy_cmd_t *msg_copy = msg_copy_cmd_new(&e,
@@ -1529,22 +1900,91 @@ static derr_t copy_cmd(dn_t *dn, const ie_dstr_t *tag,
     PROP_GO(&e, imaildir_dn_request_update(dn->m, req), cu);
 
 cu:
+    free_response_list(&temp);
     ie_seq_set_free(uids_dn);
     msg_key_list_free(keys);
 
     return e;
 }
 
-
-// consumes tag
-static derr_t idle_cmd(dn_t *dn, ie_dstr_t *tag){
+static derr_t copy_finish(dn_t *dn, link_t *out){
     derr_t e = E_OK;
 
-    dn->idle.tag = tag;
+    ie_st_resp_t *st_resp = NULL;
+    link_t temp = {0};
 
-    bool allow_expunge = true;
+    bool uid_mode = dn->copy.uid_mode;
+    PROP_GO(&e, dn_gather_updates(dn, true, uid_mode, &st_resp, &temp), cu);
+
+    // create an st_resp if there was no error
+    if(!st_resp){
+        DSTR_STATIC(msg, "No one will know the difference");
+        ie_dstr_t *text = ie_dstr_new2(&e, msg);
+        ie_status_t status = IE_ST_OK;
+        st_resp = ie_st_resp_new(&e,
+            STEAL(ie_dstr_t, &dn->copy.tag), status, NULL, text
+        );
+        CHECK_GO(&e, cu);
+    }else{
+        ie_dstr_free(st_resp->tag);
+        st_resp->tag = STEAL(ie_dstr_t, &dn->copy.tag);
+    }
+
+    // build response
+    imap_resp_arg_t arg = {.status_type=STEAL(ie_st_resp_t, &st_resp)};
+    imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_STATUS_TYPE, arg);
+    resp = imap_resp_assert_writable(&e, resp, dn->exts);
+    CHECK_GO(&e, cu);
+
+    link_list_append(&temp, &resp->link);
+    link_list_append_list(out, &temp);
+
+cu:
+    free_response_list(&temp);
+    ie_st_resp_free(st_resp);
+    return e;
+}
+
+derr_t dn_copy(
+    dn_t *dn,
+    ie_dstr_t **tagp,
+    const ie_copy_cmd_t *copy,
+    link_t *out,
+    bool *ok
+){
+    derr_t e = E_OK;
+
+    *ok = false;
+
+    PROP(&e, healthcheck(dn) );
+
+    if(!dn->copy.started){
+        PROP(&e, copy_begin(dn, tagp, copy, out, ok) );
+        return e;
+    }
+
+    if(!dn->copy.synced) return e;
+
+    PROP(&e, copy_finish(dn, out) );
+    dn_free_copy(dn);
+    *ok = true;
+
+    return e;
+}
+
+
+derr_t dn_idle(dn_t *dn, ie_dstr_t **tagp, link_t *out){
+    derr_t e = E_OK;
+
+    PROP(&e, healthcheck(dn) );
+
+    link_t temp = {0};
+
+    dn->idle.tag = STEAL(ie_dstr_t, tagp);
+
+    bool allow_exp = true;
     bool uid_mode = false;
-    PROP_GO(&e, dn_gather_updates(dn, allow_expunge, uid_mode, NULL), fail);
+    PROP_GO(&e, dn_gather_updates(dn, allow_exp, uid_mode, NULL, &temp), fail);
 
     // send the PLUS response
     ie_dstr_t *text = ie_dstr_new2(&e, DSTR_LIT("ok twiddling my thumbs now"));
@@ -1554,165 +1994,48 @@ static derr_t idle_cmd(dn_t *dn, ie_dstr_t *tag){
     resp = imap_resp_assert_writable(&e, resp, dn->exts);
     CHECK_GO(&e, fail);
 
-    PROP_GO(&e, dn->cb->resp(dn->cb, resp), fail);
+    link_list_append(&temp, &resp->link);
+    link_list_append_list(out, &temp);
 
     return e;
 
 fail:
+    free_response_list(&temp);
     dn_free_idle(dn);
     return e;
 }
 
 
-// consumes errmsg
-static derr_t idle_done_cmd(dn_t *dn, ie_dstr_t *errmsg){
+derr_t dn_idle_done(dn_t *dn, const ie_dstr_t *errmsg, link_t *out){
     derr_t e = E_OK;
+
+    PROP(&e, healthcheck(dn) );
+
+    link_t temp = {0};
+
+    if(!dn->idle.tag){
+        ORIG(&e, E_INTERNAL, "dn_t DONE out-of-order");
+    }
 
     if(errmsg){
         // syntax error mid-IDLE
-        PROP_GO(&e,
-            send_bad(dn, dn->idle.tag, &errmsg->dstr),
-        cu);
+        PROP_GO(&e, send_bad(dn, &dn->idle.tag, errmsg->dstr, out), cu);
         goto cu;
     }
 
     // gather any final remaining updates
-    bool allow_expunge = true;
+    bool allow_exp = true;
     bool uid_mode = false;
-    PROP_GO(&e, dn_gather_updates(dn, allow_expunge, uid_mode, NULL), cu);
+    PROP_GO(&e, dn_gather_updates(dn, allow_exp, uid_mode, NULL, &temp), cu);
 
-    PROP_GO(&e,
-        send_ok(dn, dn->idle.tag, &DSTR_LIT("I'm ready to work again")),
-    cu);
+    DSTR_STATIC(msg, "I'm ready to work again");
+    PROP_GO(&e, send_ok(dn, &dn->idle.tag, msg, &temp), cu);
+
+    link_list_append_list(out, &temp);
 
 cu:
-    ie_dstr_free(errmsg);
+    free_response_list(&temp);
     dn_free_idle(dn);
-    return e;
-}
-
-
-// we either need to consume the cmd or free it
-derr_t dn_cmd(dn_t *dn, imap_cmd_t *cmd){
-    derr_t e = E_OK;
-
-    const ie_dstr_t *tag = cmd->tag;
-    const imap_cmd_arg_t *arg = &cmd->arg;
-    bool select_like =
-        cmd->type == IMAP_CMD_SELECT || cmd->type == IMAP_CMD_EXAMINE;
-
-    if(select_like && dn->selected){
-        // A dn_t is not able to
-        ORIG_GO(&e, E_INTERNAL, "SELECT sent to selected dn_t", cu_cmd);
-    }
-    if(!select_like && !dn->selected){
-        ORIG_GO(&e, E_INTERNAL, "non-SELECT sent to unselected dn_t", cu_cmd);
-    }
-    if(select_like && dn->examine != (cmd->type == IMAP_CMD_EXAMINE)){
-        if(dn->examine){
-            ORIG_GO(&e, E_INTERNAL, "dn_t got SELECT, not EXAMINE", cu_cmd);
-        }else{
-            ORIG_GO(&e, E_INTERNAL, "dn_t got EXAMINE, not SELECT", cu_cmd);
-        }
-    }
-
-    if(!!dn->idle.tag != (cmd->type == IMAP_CMD_IDLE_DONE)){
-        // bad command, should have been DONE
-        // or, bad DONE, not in IDLE
-        // (not possible because the imap parser disallows it)
-        ORIG_GO(&e, E_INTERNAL, "dn_t DONE out-of-order", cu_cmd);
-    }
-
-    switch(cmd->type){
-        case IMAP_CMD_EXAMINE:
-        case IMAP_CMD_SELECT:
-            PROP_GO(&e, select_cmd(dn, tag, arg->select), cu_cmd);
-            dn->selected = true;
-            break;
-
-        case IMAP_CMD_SEARCH:
-            // updates are handled after finishing the search
-            PROP_GO(&e, search_cmd(dn, tag, arg->search), cu_cmd);
-            break;
-
-        case IMAP_CMD_CHECK:
-        case IMAP_CMD_NOOP:
-            // true = always allow expunges, false = there is no uid mode
-            PROP_GO(&e, dn_gather_updates(dn, true, false, NULL), cu_cmd);
-            PROP_GO(&e, send_ok(dn, tag, &DSTR_LIT("zzzzz...")), cu_cmd);
-            break;
-
-        case IMAP_CMD_STORE:
-            // store_cmd has its own handling of updates
-            PROP_GO(&e, store_cmd(dn, tag, arg->store), cu_cmd);
-            break;
-
-        case IMAP_CMD_FETCH:
-            // fetch_cmd has its own handling of updates
-            PROP_GO(&e,
-                fetch_cmd(
-                    dn,
-                    STEAL(ie_dstr_t, &cmd->tag),
-                    STEAL(ie_fetch_cmd_t, &cmd->arg.fetch)
-                ),
-            cu_cmd);
-            break;
-
-        case IMAP_CMD_EXPUNGE:
-            // updates are handled after an UPDATE_SYNC
-            PROP_GO(&e, expunge_cmd(dn, tag), cu_cmd);
-            break;
-
-        case IMAP_CMD_COPY:
-            // updates are handled after an UPDATE_SYNC
-            PROP_GO(&e, copy_cmd(dn, tag, arg->copy), cu_cmd);
-            break;
-
-        case IMAP_CMD_IDLE:
-            PROP_GO(&e, idle_cmd(dn, STEAL(ie_dstr_t, &cmd->tag)), cu_cmd);
-            break;
-
-        case IMAP_CMD_IDLE_DONE:
-            PROP_GO(&e,
-                idle_done_cmd(dn, STEAL(ie_dstr_t, &cmd->arg.idle_done)),
-            cu_cmd);
-            break;
-
-        // commands which must be handled externally
-        case IMAP_CMD_ERROR:
-        case IMAP_CMD_PLUS_REQ:
-        case IMAP_CMD_CAPA:
-        case IMAP_CMD_LOGOUT:
-        case IMAP_CMD_CLOSE:
-        case IMAP_CMD_STARTTLS:
-        case IMAP_CMD_AUTH:
-        case IMAP_CMD_LOGIN:
-        case IMAP_CMD_CREATE:
-        case IMAP_CMD_DELETE:
-        case IMAP_CMD_RENAME:
-        case IMAP_CMD_SUB:
-        case IMAP_CMD_UNSUB:
-        case IMAP_CMD_LIST:
-        case IMAP_CMD_LSUB:
-        case IMAP_CMD_STATUS:
-        case IMAP_CMD_APPEND:
-        case IMAP_CMD_XKEYSYNC:
-        case IMAP_CMD_XKEYSYNC_DONE:
-        case IMAP_CMD_XKEYADD:
-            ORIG_GO(&e, E_INTERNAL, "unexpected command in dn_t", cu_cmd);
-
-        // unsupported extensions
-        case IMAP_CMD_ENABLE:
-        case IMAP_CMD_UNSELECT:
-            PROP_GO(&e, send_bad(
-                dn, tag, &DSTR_LIT("extension not supported")
-            ), cu_cmd);
-            break;
-    }
-
-cu_cmd:
-    imap_cmd_free(cmd);
-
     return e;
 }
 
@@ -1742,36 +2065,103 @@ fail:
     return e;
 }
 
-derr_t dn_disconnect(dn_t *dn, bool expunge){
+static derr_t disconnect_begin(dn_t *dn, bool expunge, bool *ok){
     derr_t e = E_OK;
 
-    if(expunge){
-        /* calculate a UID EXPUNGE command that we would push to the server,
-           and do not disconnect until that response comes in */
-        msg_key_list_t *keys;
-        PROP(&e, get_msg_keys_to_expunge(dn, &keys) );
-        if(!keys){
-            // nothing to expunge, disconnect immediately
-            PROP(&e, dn->cb->disconnected(dn->cb, NULL) );
-        }else{
-            // request an expunge update first
-            update_req_t *req = update_req_expunge_new(&e, keys, dn);
-            CHECK(&e);
-            dn->disconnect.state = DN_WAIT_WAITING;
-            PROP(&e, imaildir_dn_request_update(dn->m, req) );
-        }
-    }else{
+    if(!expunge){
         /* since the server_t is not allowed to process commands while it is
            waiting for the dn_t to respond to a command, there's no additional
            need to synchronize at this point */
-        PROP(&e, dn->cb->disconnected(dn->cb, NULL) );
+        *ok = true;
+        return e;
     }
+
+    /* calculate a UID EXPUNGE command that we would push to the server,
+       and do not disconnect until that response comes in */
+    msg_key_list_t *keys;
+    PROP(&e, get_msg_keys_to_expunge(dn, &keys) );
+    if(!keys){
+        // nothing to expunge, disconnect immediately
+        *ok = true;
+        return e;
+    }
+
+    // request an expunge update first
+    dn->disconnect.started = true;
+    update_req_t *req = update_req_expunge_new(&e, keys, dn);
+    CHECK(&e);
+    PROP(&e, imaildir_dn_request_update(dn->m, req) );
+
+    return e;
+}
+
+static derr_t disconnect_finish(dn_t *dn){
+    derr_t e = E_OK;
+
+    ie_st_resp_t *st_resp = NULL;
+
+    update_t *update, *temp;
+    LINK_FOR_EACH_SAFE(update, temp, &dn->pending_updates, update_t, link){
+        switch(update->type){
+            // ignore everything but the status-type response
+            case UPDATE_NEW:
+            case UPDATE_META:
+            case UPDATE_EXPUNGE:
+                break;
+
+            case UPDATE_SYNC:
+                // free the update and break out of the loop
+                link_remove(&update->link);
+                st_resp = STEAL(ie_st_resp_t, &update->arg.sync);
+                update_free(&update);
+                break;
+        }
+    }
+
+    if(st_resp){
+        // disconnecting is not allowed to fail!
+        ORIG_GO(&e,
+            E_RESPONSE,
+            "disconnecting is not allowed to fail: %x %x",
+            cu,
+            FD(ie_status_to_dstr(st_resp->status)),
+            FD_DBG(&st_resp->text->dstr)
+        );
+    }
+
+cu:
+    ie_st_resp_free(st_resp);
+    return e;
+}
+
+// not safe to call before dn_select finishes, or if dn_select fails
+derr_t dn_disconnect(dn_t *dn, bool expunge, bool *ok){
+    derr_t e = E_OK;
+
+    *ok = false;
+
+    PROP(&e, healthcheck(dn) );
+
+    if(!dn->disconnect.started){
+        PROP(&e, disconnect_begin(dn, expunge, ok) );
+        return e;
+    }
+
+    if(!dn->disconnect.synced) return e;
+
+    PROP(&e, disconnect_finish(dn) );
+    *ok = true;
+    dn_free_disconnect(dn);
 
     return e;
 }
 
 static derr_t send_flags_update(
-    dn_t *dn, unsigned int seq_num, msg_flags_t flags, const unsigned int *uid
+    dn_t *dn,
+    unsigned int seq_num,
+    msg_flags_t flags,
+    const unsigned int *uid,
+    link_t *out
 ){
     derr_t e = E_OK;
 
@@ -1796,12 +2186,12 @@ static derr_t send_flags_update(
     resp = imap_resp_assert_writable(&e, resp, dn->exts);
     CHECK(&e);
 
-    PROP(&e, dn->cb->resp(dn->cb, resp) );
+    link_list_append(out, &resp->link);
 
     return e;
 }
 
-static derr_t send_expunge(dn_t *dn, unsigned int seq_num){
+static derr_t send_expunge(dn_t *dn, unsigned int seq_num, link_t *out){
     derr_t e = E_OK;
 
     imap_resp_arg_t arg = { .expunge = seq_num };
@@ -1809,7 +2199,7 @@ static derr_t send_expunge(dn_t *dn, unsigned int seq_num){
     resp = imap_resp_assert_writable(&e, resp, dn->exts);
     CHECK(&e);
 
-    PROP(&e, dn->cb->resp(dn->cb, resp) );
+    link_list_append(out, &resp->link);
 
     return e;
 }
@@ -1944,11 +2334,12 @@ cu:
 }
 
 static derr_t gather_send_responses(
-    dn_t *dn, gather_t *gather, bool uid_mode, bool for_store
+    dn_t *dn, gather_t *gather, bool uid_mode, bool for_store, link_t *out
 ){
     derr_t e = E_OK;
     jsw_atrav_t trav;
     jsw_anode_t *node;
+    link_t temp = {0};
 
     // step 1: any EXPUNGEs don't get FETCHes or count for EXISTS
     /* (these EXPUNGEs are not witheld EXPUNGEs, hence it the choice to not
@@ -1976,7 +2367,7 @@ static derr_t gather_send_responses(
     // step 3: send flag updates
     if(for_store){
         // STORE commands have very special rules for what they report back
-        PROP(&e, send_store_fetch_resps(dn, gather) );
+        PROP_GO(&e, send_store_fetch_resps(dn, gather, &temp), cu);
     }else{
         node = jsw_atfirst(&trav, &gather->metas);
         for(; node; node = jsw_atnext(&trav)){
@@ -1985,14 +2376,16 @@ static derr_t gather_send_responses(
             // find our view of this uid_dn
             size_t index;
             node = jsw_afind(&dn->views, &gathered->uid_dn, &index);
-            if(!node) ORIG(&e, E_INTERNAL, "missing uid_dn");
+            if(!node) ORIG_GO(&e, E_INTERNAL, "missing uid_dn", cu);
 
             msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
 
             unsigned int seq_num;
-            PROP(&e, index_to_seq_num(index, &seq_num) );
+            PROP_GO(&e, index_to_seq_num(index, &seq_num), cu);
             const unsigned int *uid = uid_mode ? &gathered->uid_dn : NULL;
-            PROP(&e, send_flags_update(dn, seq_num, view->flags, uid) );
+            PROP_GO(&e,
+                send_flags_update(dn, seq_num, view->flags, uid, &temp),
+            cu);
         }
     }
 
@@ -2004,7 +2397,7 @@ static derr_t gather_send_responses(
         // find our view of this uid_dn
         size_t index;
         jsw_anode_t *node = jsw_afind(&dn->views, &gathered->uid_dn, &index);
-        if(!node) ORIG(&e, E_INTERNAL, "missing uid_dn");
+        if(!node) ORIG_GO(&e, E_INTERNAL, "missing uid_dn", cu);
 
         // just remove and delete the view
         msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
@@ -2012,14 +2405,19 @@ static derr_t gather_send_responses(
         msg_view_free(&view);
 
         unsigned int seq_num;
-        PROP(&e, index_to_seq_num(index, &seq_num) );
-        PROP(&e, send_expunge(dn, seq_num) );
+        PROP_GO(&e, index_to_seq_num(index, &seq_num), cu);
+        PROP_GO(&e, send_expunge(dn, seq_num, &temp), cu);
     }
 
     // step 5: send a new EXISTS response
     if(gather->news.size){
-        PROP(&e, send_exists_resp(dn) );
+        PROP_GO(&e, send_exists_resp(dn, &temp), cu);
     }
+
+    link_list_append_list(out, &temp);
+
+cu:
+    free_response_list(&temp);
 
     return e;
 }
@@ -2093,9 +2491,15 @@ cu:
 
 // send unsolicited untagged responses for external updates to mailbox
 derr_t dn_gather_updates(
-    dn_t *dn, bool allow_expunge, bool uid_mode, ie_st_resp_t **st_resp
+    dn_t *dn,
+    bool allow_expunge,
+    bool uid_mode,
+    ie_st_resp_t **st_resp,
+    link_t *out
 ){
     derr_t e = E_OK;
+
+    PROP(&e, healthcheck(dn) );
 
     gather_t gather;
     gather_prep(&gather);
@@ -2105,7 +2509,9 @@ derr_t dn_gather_updates(
     );
 
     bool for_store = false;
-    PROP_GO(&e, gather_send_responses(dn, &gather, uid_mode, for_store), cu);
+    PROP_GO(&e,
+        gather_send_responses(dn, &gather, uid_mode, for_store, out),
+    cu);
 
 cu:
     gather_free(&gather);
@@ -2119,7 +2525,9 @@ cu:
 }
 
 
-static derr_t send_store_resp_noupdate(dn_t *dn, const exp_flags_t *exp_flags){
+static derr_t send_store_resp_noupdate(
+    dn_t *dn, const exp_flags_t *exp_flags, link_t *out
+){
     derr_t e = E_OK;
 
     size_t index;
@@ -2153,7 +2561,7 @@ static derr_t send_store_resp_noupdate(dn_t *dn, const exp_flags_t *exp_flags){
         const unsigned int *uid =
             dn->store.uid_mode ? &exp_flags->uid_dn : NULL;
 
-        PROP(&e, send_flags_update(dn, seq_num, view->flags, uid) );
+        PROP(&e, send_flags_update(dn, seq_num, view->flags, uid, out) );
         return e;
     }
 
@@ -2162,7 +2570,9 @@ static derr_t send_store_resp_noupdate(dn_t *dn, const exp_flags_t *exp_flags){
     return e;
 }
 
-static derr_t send_store_resp_noexp(dn_t *dn, unsigned int uid_dn){
+static derr_t send_store_resp_noexp(
+    dn_t *dn, unsigned int uid_dn, link_t *out
+){
     derr_t e = E_OK;
 
     size_t index;
@@ -2178,12 +2588,13 @@ static derr_t send_store_resp_noexp(dn_t *dn, unsigned int uid_dn){
 
     const unsigned int *uid = dn->store.uid_mode ? &uid_dn : NULL;
 
-    PROP(&e, send_flags_update(dn, seq_num, view->flags, uid) );
+    PROP(&e, send_flags_update(dn, seq_num, view->flags, uid, out) );
     return e;
 }
 
-static derr_t send_store_resp_expupdate(dn_t *dn,
-        const exp_flags_t *exp_flags){
+static derr_t send_store_resp_expupdate(
+    dn_t *dn, const exp_flags_t *exp_flags, link_t *out
+){
     derr_t e = E_OK;
 
     size_t index;
@@ -2203,13 +2614,13 @@ static derr_t send_store_resp_expupdate(dn_t *dn,
     msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
     if(!msg_flags_eq(exp_flags->flags, view->flags)){
         // a different update than we expected, always report it
-        PROP(&e, send_flags_update(dn, seq_num, view->flags, uid) );
+        PROP(&e, send_flags_update(dn, seq_num, view->flags, uid, out) );
         return e;
     }
 
     // we expected this change, do we report it?
     if(!dn->store.silent){
-        PROP(&e, send_flags_update(dn, seq_num, view->flags, uid) );
+        PROP(&e, send_flags_update(dn, seq_num, view->flags, uid, out) );
         return e;
     }
 
@@ -2218,8 +2629,10 @@ static derr_t send_store_resp_expupdate(dn_t *dn,
     return e;
 }
 
-static derr_t send_store_fetch_resps(dn_t *dn, gather_t *gather){
+static derr_t send_store_fetch_resps(dn_t *dn, gather_t *gather, link_t *out){
     derr_t e = E_OK;
+
+    link_t temp = {0};
 
     /* Send a FETCH response for each update.  Unless there was a .SILENT
        store, in which case we ignore those messages.  Unless there was an
@@ -2245,7 +2658,9 @@ static derr_t send_store_fetch_resps(dn_t *dn, gather_t *gather){
         if(gathered){
             // maybe there's no more exp_flags or gathered is behind
             if(!exp_flags || exp_flags->uid_dn > gathered->uid_dn){
-                PROP(&e, send_store_resp_noexp(dn, gathered->uid_dn) );
+                PROP_GO(&e,
+                    send_store_resp_noexp(dn, gathered->uid_dn, &temp),
+                cu);
                 node = jsw_atnext(&gtrav);
                 gathered = CONTAINER_OF(node, gathered_t, node);
                 continue;
@@ -2255,7 +2670,9 @@ static derr_t send_store_fetch_resps(dn_t *dn, gather_t *gather){
         if(exp_flags){
             // maybe there's no more gathered or exp_flags is behind
             if(!gathered || gathered->uid_dn > exp_flags->uid_dn){
-                PROP(&e, send_store_resp_noupdate(dn, exp_flags) );
+                PROP_GO(&e,
+                    send_store_resp_noupdate(dn, exp_flags, &temp),
+                cu);
                 node = jsw_atnext(&etrav);
                 exp_flags = CONTAINER_OF(node, exp_flags_t, node);
                 continue;
@@ -2263,7 +2680,7 @@ static derr_t send_store_fetch_resps(dn_t *dn, gather_t *gather){
         }
 
         // otherwise exp_flags->uid_dn and gathered->uid_dn are valid and equal
-        PROP(&e, send_store_resp_expupdate(dn, exp_flags) );
+        PROP_GO(&e, send_store_resp_expupdate(dn, exp_flags, &temp), cu);
 
         node = jsw_atnext(&etrav);
         exp_flags = CONTAINER_OF(node, exp_flags_t, node);
@@ -2271,303 +2688,41 @@ static derr_t send_store_fetch_resps(dn_t *dn, gather_t *gather){
         gathered = CONTAINER_OF(node, gathered_t, node);
     }
 
-    return e;
-}
-
-static derr_t do_work_store(dn_t *dn){
-    derr_t e = E_OK;
-
-    gather_t gather;
-    gather_prep(&gather);
-
-    ie_st_resp_t *st_resp = NULL;
-
-    // gather updates, including the st_resp from our UPDATE_SYNC
-    bool allow_expunge = dn->store.uid_mode;
-    PROP_GO(&e,
-        gather_updates_dont_send(dn, allow_expunge, &st_resp, &gather),
-    cu);
-
-    // send all untagged responses
-    bool uid_mode = dn->store.uid_mode;
-    bool for_store = true;
-    PROP_GO(&e, gather_send_responses(dn, &gather, uid_mode, for_store), cu);
-
-    // send tagged status-type response
-    if(st_resp){
-        // the command failed
-        PROP_GO(&e,
-            send_st_resp(
-                dn,
-                dn->store.tag,
-                &st_resp->text->dstr,
-                st_resp->status
-            ),
-        cu);
-    }else{
-        PROP_GO(&e, send_ok(dn, dn->store.tag, &DSTR_LIT("as you wish")), cu);
-    }
+    link_list_append_list(out, &temp);
 
 cu:
-    ie_st_resp_free(st_resp);
-    gather_free(&gather);
-    dn_free_store(dn);
-    return e;
-}
-
-
-static derr_t do_work_expunge(dn_t *dn){
-    derr_t e = E_OK;
-
-    ie_st_resp_t *st_resp = NULL;
-
-    // true = always allow expunges, false = there is no uid mode
-    PROP_GO(&e, dn_gather_updates(dn, true, false, &st_resp), cu);
-
-    // create an st_resp if there was no error
-    if(!st_resp){
-        const dstr_t *msg = &DSTR_LIT("may they be cursed forever");
-        ie_dstr_t *text = ie_dstr_new(&e, msg, KEEP_RAW);
-        ie_status_t status = IE_ST_OK;
-        st_resp = ie_st_resp_new(&e,
-            STEAL(ie_dstr_t, &dn->expunge.tag), status, NULL, text
-        );
-        CHECK_GO(&e, cu);
-    }else{
-        ie_dstr_free(st_resp->tag);
-        st_resp->tag = STEAL(ie_dstr_t, &dn->expunge.tag);
-    }
-
-    // build response
-    imap_resp_arg_t arg = {.status_type=STEAL(ie_st_resp_t, &st_resp)};
-    imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_STATUS_TYPE, arg);
-    resp = imap_resp_assert_writable(&e, resp, dn->exts);
-    CHECK_GO(&e, cu);
-
-    PROP_GO(&e, dn->cb->resp(dn->cb, resp), cu);
-
-cu:
-    dn_free_expunge(dn);
-    ie_st_resp_free(st_resp);
-    return e;
-}
-
-
-static derr_t do_work_copy(dn_t *dn){
-    derr_t e = E_OK;
-
-    ie_st_resp_t *st_resp = NULL;
-
-    PROP_GO(&e, dn_gather_updates(dn, true, dn->copy.uid_mode, &st_resp), cu);
-
-    // create an st_resp if there was no error
-    if(!st_resp){
-        const dstr_t *msg = &DSTR_LIT("No one will know the difference");
-        ie_dstr_t *text = ie_dstr_new(&e, msg, KEEP_RAW);
-        ie_status_t status = IE_ST_OK;
-        st_resp = ie_st_resp_new(&e,
-            STEAL(ie_dstr_t, &dn->copy.tag), status, NULL, text
-        );
-        CHECK_GO(&e, cu);
-    }else{
-        ie_dstr_free(st_resp->tag);
-        st_resp->tag = STEAL(ie_dstr_t, &dn->copy.tag);
-    }
-
-    // build response
-    imap_resp_arg_t arg = {.status_type=STEAL(ie_st_resp_t, &st_resp)};
-    imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_STATUS_TYPE, arg);
-    resp = imap_resp_assert_writable(&e, resp, dn->exts);
-    CHECK_GO(&e, cu);
-
-    PROP_GO(&e, dn->cb->resp(dn->cb, resp), cu);
-
-cu:
-    dn_free_copy(dn);
-    ie_st_resp_free(st_resp);
-    return e;
-}
-
-
-static derr_t do_work_disconnect(dn_t *dn){
-    derr_t e = E_OK;
-
-    ie_st_resp_t *st_resp = NULL;
-
-    update_t *update, *temp;
-    LINK_FOR_EACH_SAFE(update, temp, &dn->pending_updates, update_t, link){
-        switch(update->type){
-            // ignore everything but the status-type response
-            case UPDATE_NEW:
-            case UPDATE_META:
-            case UPDATE_EXPUNGE:
-                break;
-
-            case UPDATE_SYNC:
-                // free the update and break out of the loop
-                link_remove(&update->link);
-                st_resp = STEAL(ie_st_resp_t, &update->arg.sync);
-                update_free(&update);
-                break;
-        }
-    }
-
-    // done disconnecting
-    PROP_GO(&e,
-        dn->cb->disconnected(dn->cb, STEAL(ie_st_resp_t, &st_resp)),
-    cu);
-
-cu:
-    dn_free_disconnect(dn);
-    ie_st_resp_free(st_resp);
-    return e;
-}
-
-static derr_t do_work_fetch(dn_t *dn){
-    derr_t e = E_OK;
-
-    gather_t gather;
-    gather_prep(&gather);
-
-    // gather updates without sending, since we'll modify them first
-    ie_st_resp_t *st_resp = NULL;
-    bool allow_expunge = dn->fetch.cmd->uid_mode;
-    PROP_GO(&e,
-        gather_updates_dont_send(dn, allow_expunge, &st_resp, &gather),
-    fail);
-
-    // check for an error in our STORE \Seen request
-    if(st_resp){
-        // send the gathered updates without the ususal fetch modifications
-        bool uid_mode = dn->fetch.cmd->uid_mode;
-        bool for_store = false;
-        PROP_GO(&e,
-            gather_send_responses(dn, &gather, uid_mode, for_store),
-        fail);
-
-        // forward the error message
-        PROP_GO(&e,
-            send_st_resp(
-                dn,
-                dn->store.tag,
-                &st_resp->text->dstr,
-                st_resp->status
-            ),
-        fail);
-    }else{
-        PROP_GO(&e, finish_fetch_cmd(dn, &gather), fail);
-    }
-
-    ie_st_resp_free(st_resp);
-    return e;
-
-fail:
-    gather_free(&gather);
-    ie_st_resp_free(st_resp);
-    dn_free_fetch(dn);
-    return e;
-}
-
-static derr_t do_work_idle(dn_t *dn){
-    derr_t e = E_OK;
-
-    bool allow_expunge = true;
-    bool uid_mode = false;
-    PROP(&e, dn_gather_updates(dn, allow_expunge, uid_mode, NULL) );
-
-    return e;
-}
-
-
-// process updates until we hit our own update
-derr_t dn_do_work(dn_t *dn, bool *noop){
-    derr_t e = E_OK;
-
-    if(dn->store.state == DN_WAIT_READY){
-        *noop = false;
-        PROP(&e, do_work_store(dn) );
-    }
-
-    if(dn->expunge.state == DN_WAIT_READY){
-        *noop = false;
-        PROP(&e, do_work_expunge(dn) );
-    }
-
-    if(dn->copy.state == DN_WAIT_READY){
-        *noop = false;
-        PROP(&e, do_work_copy(dn) );
-    }
-
-    if(dn->disconnect.state == DN_WAIT_READY){
-        *noop = false;
-        PROP(&e, do_work_disconnect(dn) );
-    }
-
-    if(dn->fetch.state == DN_WAIT_READY){
-        *noop = false;
-        PROP(&e, do_work_fetch(dn) );
-    }
-
-    if(dn->idle.tag){
-        // don't touch noop, or we'll loop forever
-        PROP(&e, do_work_idle(dn) );
-    }
+    free_response_list(&temp);
 
     return e;
 }
 
 void dn_imaildir_update(dn_t *dn, update_t *update){
-    // ignore updates that come in before we have built a view
-    if(!dn->selected){
-        update_free(&update);
-        return;
-    }
-
     link_list_append(&dn->pending_updates, &update->link);
 
     if(update->type == UPDATE_SYNC){
-        if(dn->store.state == DN_WAIT_WAITING){
-            dn->store.state = DN_WAIT_READY;
-        }else if(dn->expunge.state == DN_WAIT_WAITING){
-            dn->expunge.state = DN_WAIT_READY;
-        }else if(dn->copy.state == DN_WAIT_WAITING){
-            dn->copy.state = DN_WAIT_READY;
-        }else if(dn->disconnect.state == DN_WAIT_WAITING){
-            dn->disconnect.state = DN_WAIT_READY;
-        }else if(dn->fetch.state == DN_WAIT_WAITING){
-            dn->fetch.state = DN_WAIT_READY;
+        if(dn->store.started){
+            dn->store.synced = true;
+        }else if(dn->expunge.started){
+            dn->expunge.synced = true;
+        }else if(dn->copy.started){
+            dn->copy.synced = true;
+        }else if(dn->disconnect.started){
+            dn->disconnect.synced = true;
+        }else if(dn->fetch.started){
+            dn->fetch.synced = true;
         }else{
             LOG_ERROR("dn_t doesn't know what it's waiting for\n");
         }
-        dn->cb->enqueue(dn->cb);
+        dn->cb->schedule(dn->cb);
     }else if(dn->idle.tag){
         // dn will wake up in IDLE will and collect the updates we've sent
-        dn->cb->enqueue(dn->cb);
+        dn->cb->schedule(dn->cb);
     }
 }
 
-// we have to free the view as we unregister
-void dn_imaildir_preunregister(dn_t *dn){
-    /* free all the message views before freeing updates (which might
-       invalidate some views) */
-    jsw_anode_t *node;
-    while((node = jsw_apop(&dn->views))){
-        msg_view_t *view = CONTAINER_OF(node, msg_view_t, node);
-        msg_view_free(&view);
-    }
-
-    // free any unhandled updates
-    link_t *link;
-    while((link = link_list_pop_first(&dn->pending_updates))){
-        update_t *update = CONTAINER_OF(link, update_t, link);
-        update_free(&update);
-    }
-
-    dn_free_store(dn);
-    dn_free_expunge(dn);
-    dn_free_copy(dn);
-    dn_free_disconnect(dn);
-    dn_free_fetch(dn);
-    dn_free_idle(dn);
+void dn_imaildir_failed(dn_t *dn){
+    // let go of any imaildir's resources
+    dn_free_views(dn);
+    // wake up our owner so they can call us and fail a health check
+    dn->cb->schedule(dn->cb);
 }
-

@@ -20,36 +20,44 @@ bool looked_good;
 dstr_t reason_log;
 
 static const char *strend(const char *s, const char *ending){
+    // return the last len(ending) characters of s
+    if(!ending || !s) return s;
     size_t slen = strlen(s);
     size_t elen = strlen(ending);
     return slen > elen ? s + (slen - elen) : s;
 }
 
+#define EXPECT_ADDR(e, name, spec, str) do { \
+    dstr_t __got = dstr_from_off(dstr_off_extend(spec.scheme, spec.port)); \
+    dstr_t __exp = dstr_from_cstr(str); \
+    EXPECT_D(e, name, &__got, &__exp); \
+} while(0)
+
 // libcitm/citm.h
 citm_args_t *citm_args;
 bool citm_called;
-derr_t citm(
-    const char *local_host,
-    const char *local_svc,
+derr_t uv_citm(
+    const addrspec_t *lspecs,
+    size_t nlspecs,
+    const addrspec_t remote,
     const char *key,
     const char *cert,
-    const char *remote_host,
-    const char *remote_svc,
-    const string_builder_t *maildir_root,
+    string_builder_t maildir_root,
     bool indicate_ready
 ){
     derr_t e = E_OK;
 
-
     EXPECT_NOT_NULL(&e, "citm args", citm_args);
-    EXPECT_S(&e, "local_host", local_host, citm_args->local_host);
-    EXPECT_S(&e, "local_svc", local_svc, citm_args->local_svc);
+    EXPECT_U(&e, "nlspecs", nlspecs, citm_args->nlspecs);
+    for(size_t i = 0; i < nlspecs; i++){
+        EXPECT_ADDR(&e, "lspec", lspecs[i], citm_args->lspecs[i]);
+    }
+    fprintf(stderr, "key: %s\n", key);
     EXPECT_S(&e, "key", strend(key, citm_args->key), citm_args->key);
     EXPECT_S(&e, "cert", strend(cert, citm_args->cert), citm_args->cert);
-    EXPECT_S(&e, "remote_host", remote_host, citm_args->remote_host);
-    EXPECT_S(&e, "remote_svc", remote_svc, citm_args->remote_svc);
+    EXPECT_ADDR(&e, "remote", remote, citm_args->remote);
     DSTR_VAR(buf, 128);
-    PROP(&e, FMT(&buf, "%x", FSB(maildir_root, &slash)) );
+    PROP(&e, FMT(&buf, "%x", FSB(&maildir_root, &slash)) );
     EXPECT_S(&e,
         "maildir_root",
         strend(buf.data, citm_args->maildir_root),

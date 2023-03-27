@@ -79,17 +79,48 @@ static void close_cb(uv_handle_t *handle){
     (void)handle;
 }
 
+static void detect_unclosed_handles(uv_handle_t *handle, void *data){
+    bool *ok = data;
+    if(uv_is_closing(handle)) return;
+    switch(handle->type){
+        case UV_UNKNOWN_HANDLE: LOG_ERROR("UNKNOWN_HANDLE\n"); break;
+        case UV_ASYNC: LOG_ERROR("ASYNC\n"); break;
+        case UV_CHECK: LOG_ERROR("CHECK\n"); break;
+        case UV_FS_EVENT: LOG_ERROR("FS_EVENT\n"); break;
+        case UV_FS_POLL: LOG_ERROR("FS_POLL\n"); break;
+        case UV_HANDLE: LOG_ERROR("HANDLE\n"); break;
+        case UV_IDLE: LOG_ERROR("IDLE\n"); break;
+        case UV_NAMED_PIPE: LOG_ERROR("NAMED_PIPE\n"); break;
+        case UV_POLL: LOG_ERROR("POLL\n"); break;
+        case UV_PREPARE: LOG_ERROR("PREPARE\n"); break;
+        case UV_PROCESS: LOG_ERROR("PROCESS\n"); break;
+        case UV_STREAM: LOG_ERROR("STREAM\n"); break;
+        case UV_TCP: LOG_ERROR("TCP\n"); break;
+        case UV_TIMER: LOG_ERROR("TIMER\n"); break;
+        case UV_TTY: LOG_ERROR("TTY\n"); break;
+        case UV_UDP: LOG_ERROR("UDP\n"); break;
+        case UV_SIGNAL: LOG_ERROR("SIGNAL\n"); break;
+        case UV_FILE: LOG_ERROR("FILE\n"); break;
+        case UV_HANDLE_TYPE_MAX: LOG_ERROR("HANDLE_TYPE_MAX\n"); break;
+    }
+    *ok = false;
+}
+
 void duv_scheduler_close(duv_scheduler_t *s){
     if(s->closed) return;
     s->closed = true;
-    uv_loop_t *loop = s->timer.loop;
-    if(uv_loop_alive(loop)){
-        LOG_FATAL(
-            "duv_scheduler_close() must not be called while loop is active\n"
-        );
-    }
     // close the timer
     duv_timer_close(&s->timer, close_cb);
+    // make sure loop will not run forever
+    uv_loop_t *loop = s->timer.loop;
+    bool ok = true;
+    uv_walk(loop, detect_unclosed_handles, &ok);
+    if(!ok){
+        LOG_FATAL(
+            "duv_scheduler_close() must not be called "
+            "while loop has unclosed handles\n"
+        );
+    }
     // run the loop to drain the close_cb
     uv_run(loop, UV_RUN_DEFAULT);
 }

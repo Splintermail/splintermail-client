@@ -23,13 +23,15 @@ import traceback
 HERE = os.path.dirname(__file__)
 test_files = os.path.join(HERE, "files")
 
+success_logs = False
+
 all_tests = []
 
 def register_test(fn):
     all_tests.append(fn)
     return fn
 
-TIMEOUT = 2.5
+TIMEOUT = 5
 
 USER="test@splintermail.com"
 PASS="passwordpassword"
@@ -369,20 +371,17 @@ class TLSSocketIntercept(threading.Thread):
         # configure command and gather host/port info
         self.port = random.randint(32768, 60999)
         self.cmd = [*cmd]
-        if "--remote-host" in cmd:
-            host_idx = cmd.index("--remote-host") + 1
-            self.remote_host = cmd[host_idx]
-            self.cmd[host_idx] = "127.0.0.1"
+        if "--remote" in cmd:
+            remote_idx = cmd.index("--remote") + 1
+            _, hostport = cmd[remote_idx].split("://", maxsplit=1)
+            host, port = hostport.split(":", maxsplit=1)
+            self.remote_host = host
+            self.remote_port = int(port)
+            self.cmd[remote_idx] = f"tls://127.0.0.1:{self.port}"
         else:
             self.remote_host = "127.0.0.1"
-            cmd += ["--remote-host", "127.0.0.1"]
-        if "--remote-port" in cmd:
-            port_idx = cmd.index("--remote-port") + 1
-            self.remote_port = int(cmd[port_idx])
-            self.cmd[port_idx] = str(self.port)
-        else:
             self.remote_port = 993
-            cmd += ["--remote-port", str(self.port)]
+            cmd += ["--remote", f"tls://127.0.0.1:{self.port}"]
 
         # create a listener
         self.listener = socket.socket()
@@ -558,7 +557,7 @@ class RW:
                     req_matches.append(match)
                     break
             else:
-                raise RequiredError(f"required pattern ({req}) not found")
+                raise RequiredError(f"required pattern ({req}) not found in: {recvd}")
         # return all matches, and all the content but the tagged status line
         return req_matches, b"".join(recvd[:-1])
 
@@ -639,9 +638,8 @@ def wait_for_listener(q):
         line = q.get()
         if line is None:
             raise EOFError("did not find \"listener ready\" message")
-        if b"listener ready" in line:
+        if b"all listeners ready" in line:
             break
-        print('\x1b[31mmessage is:', line, '\x1b[m')
 
 
 # SIGINT is weird in windows.  When we send it to our subproces, we also get it
@@ -731,6 +729,15 @@ class Subproc:
 
             if self.p.poll() != 0:
                 raise ValueError("cmd exited %d"%self.p.poll())
+
+            if success_logs:
+                print("log from successful test:")
+                print("=====================")
+                if self.reader is not None:
+                    os.write(sys.stderr.fileno(), self.reader.full_text())
+                print("=====================")
+                print("(end of log)")
+
         finally:
             self.reader.close()
 
@@ -844,6 +851,18 @@ def test_select_select(cmd, maildir_root, **kwargs):
             # underlying bug is that an up_t is not being disconnected
             rw.put(b"4 select INBOX\r\n")
             rw.wait_for_resp("4", "OK")
+
+
+@register_test
+def test_select_nonexistent(cmd, maildir_root, **kwargs):
+    with session(cmd) as rw:
+        rw.put(b"1 select nonexistent\r\n")
+        rw.wait_for_resp("1", "NO")
+        # Keep using the session to make sure it's still in working order
+        rw.put(b"2 select INBOX\r\n")
+        rw.wait_for_resp("2", "OK")
+        rw.put(b"3 close\r\n")
+        rw.wait_for_resp("3", "OK")
 
 
 def inject_local_msg(maildir_root, mbx="INBOX"):
@@ -3020,9 +3039,13 @@ def dovecot_setup():
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("patterns", nargs="*")
+    parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--proxy")
     parser.add_argument("--extra-subproc", action="store_true")
     args = parser.parse_args()
+
+    if args.verbose:
+        success_logs = True
 
     if args.extra_subproc:
         assert sys.platform == "win32", "--extra-subproc is only for windows"
@@ -3081,19 +3104,16 @@ if __name__ == "__main__":
                 shutil.rmtree(mailpath, ignore_errors=True)
 
                 print(test.__name__ + "... ", end="", flush="true")
+
                 cmd = [
                     "libcitm/citm",
-                    "--local-host",
-                    "127.0.0.1",
-                    "--local-port",
-                    "2993",
-                    "--remote-host",
-                    "127.0.0.1",
-                    "--remote-port",
-                    str(imaps_port),
-                    "--tls-key",
+                    "--listen",
+                    "tls://:2993",
+                    "--remote",
+                    f"tls://127.0.0.1:{imaps_port}",
+                    "--key",
                     os.path.join(test_files, "ssl", "good-key.pem"),
-                    "--tls-cert",
+                    "--cert",
                     os.path.join(test_files, "ssl", "good-cert.pem"),
                     "--maildirs",
                     maildir_root,
@@ -3102,8 +3122,7 @@ if __name__ == "__main__":
                     test(cmd, maildir_root, **kwargs)
                     print("PASS")
                 except:
-                    print("FAIL")
+                    print(f"FAIL ({test.__name__})")
                     raise
 
     print("PASS")
-    time.sleep(1)

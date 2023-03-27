@@ -260,7 +260,7 @@ if __name__ == "__main__":
         type=str,
         default=".",
         action="store",
-        help="migrations to run after starting the database",
+        help="path to build dir",
     )
 
     args = parser.parse_args()

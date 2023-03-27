@@ -1,102 +1,13 @@
-/*
-The imap maildir is a major part of the logic in the system.  In a pure imap
-client, the application logic only has to LIST folders, then sequentially open
-an imaildir_t for every folder, assigning the upwards imap session to the
-folder, then wait for the synchronized signal.  The imaildir_t does all of the
-downloading.
+/* imaildir_t implements the per-message details of the imap server.  It helps
+   the dn_t build a view, and channels update requests from many dn_t's through
+   a single up_t. */
 
-In a CITM setting, the application logic has an upwards and a downwards
-session.  When the downwards session asks to select a mailbox, the application
-logic opens an imaildir_t and passes handles for both sessions.  Then the
-imaildir_t uses the upwards session to sync itself (and stream live updates
-from the mailserver), and it is capable of responding to all the imap commands
-in the SELECTED state from its own store.
-
-The imaildir_t implements all of the per-message details of all of the imap
-server.
-
-imaildir_t has two state machines, a downloader and a server.
-
-The downloader is responsible for getting the contents of the mailbox
-synchronized with the mail server and keeping it synchronized.  There may be
-many connections upwards, but only one is ever active.  That state machine
-looks like this:
-
-
-    state: wait for conn_up
-      |
-    event: maildir receives a conn_up
-      | ______________________________________________
-      |/                                              |
-      |                                               |
-    state: issue SELECT, and complete initial sync    |
-      |
-      |\___                                           ^
-      |    |                                          |
-      |  event: sync interrupted by close request     |
-      |     \_____________________________________    |
-      |                                           |   |
-    signal: indicate we are done synchronizing    |   |
-      |      (signal sent to all conn_up's)       v   |
-      |                                           |   |
-    state: issue IDLE commands and get responses  |
-      |                                           v   ^
-    event: IDLE interrupted by a close request    |   |
-      | __________________________________________|   |
-      |/                                              |
-      |                                               |
-    state: issue CLOSE and get response               |
-      |                                               |
-    signal: indicate connection is not in use         |
-      |      (signal sent to just one conn_up)
-      |                                               ^
-    decision: do we have more conn_up's?              |
-      |\___                                           |
-      |    |                                          |
-      |   yes: return to initial sync state           |
-      |    |__________________________________________|
-      |
-    no: start over with wating for a conn_up
-
-
-The server state machine is responsible for implementing the IMAP server.
-There may be many conn_dn's, and there will be one server state machine for
-every conn_dn.  That state machine looks like this:
-
-    event: maildir recieves a conn_dn (state machine begins)
-      |
-    decision: are we serving in CITM mode?
-      |\
-   no | \ yes
-      |  \
-      | state: wait to initial sync
-      |   |
-      | event: sync complete
-      |  /
-      | /
-      |/
-    signal: maildir is open (respond to SELECT command)
-      | __________________________________
-      |/                                  |
-    state: wait for command from below    ^
-      |    or maildir event from above    |
-      |\___                               |
-      |    |                              |
-      |  event: command or event          ^
-      |    |    (handle it appropriately) |
-      |    |______________________________|
-      |
-    event: close command (state machine ends)
-
-*/
-
-/* E_IMAILDIR means that the imaildir is in an invalid state.  This will be
-   thrown by an imaildir function when imaildir_fail() was called before
-   exiting the function.  As a result, the accessor is likely to be in a closed
-   state before that imaildir function returns, and it may be desirable in
-   that accessor's close function to detect this error and keep this stack
-   trace, which will be more informative than the original stack trace from
-   when imaildir_fail() triggered this accessor's close function. */
+/* E_IMAILDIR means that the imaildir failed while either the dn_t or up_t was
+   not running.  The failure will be returned to one active accessor, and the
+   remaining accessors will receive {dn,up}_imaildir_failed() signals.  The
+   imaildir_t itself will be freed immediately after the error by the dirmgr_t.
+   Then each remaining dn_t and up_t will throw this error the first time they
+   are called by their owner after that point. */
 extern derr_type_t E_IMAILDIR;
 
 struct maildir_log_i;
@@ -115,6 +26,10 @@ struct imaildir_cb_i {
     derr_t (*dirmgr_hold_new)(
         imaildir_cb_i*, const dstr_t *name, dirmgr_hold_t **out
     );
+    /* failed() is only for the case where the imaildir fails in a call from
+       one accessor in a way that we can't recover from; notably forceclose()
+       does not trigger a failed() callback */
+    void (*failed)(imaildir_cb_i*, imaildir_t *m);
 };
 
 /* libimaildir shouldn't have splintermail crypto hardcoded into it, so we
@@ -155,20 +70,40 @@ struct imaildir_t {
     uint64_t himodseq_dn; // starts at 1 for empty boxes
     // mailbox flags
     ie_mflags_t mflags;
-    // has this imaildir synced yet? (subsequent sync's don't send updates)
-    bool synced;
+
+    /* the initial select is special; since our server has no read-only
+       mailboxes, the E->S transition should never fail, so in theory only the
+       first SELECT can fail (due to a missing mailbox).  We crash any
+       connected accessors on any subsequent SELECT failure to simplify the
+       state machine, but that shouldn't arise in practice. */
+    bool initial_select_done;
+    ie_status_t initial_select_status;
+
+    struct {
+        bool select_sent;
+        bool examining;
+        bool done;
+    } sync;
 
     // if SELECT returned NO, delete the box afterwards
     bool rm_on_close;
-    bool closed;
 
     // accessors
     link_t ups;  // up_t->link;
     link_t dns;  // dn_t->link;
+    /* predns is a list of dns which don't have built views yet, and whose
+       examine state we may not yet be synced properly to support */
+    link_t predns; // dn_t->link;
     /* The value of naccessors may not match the length of the accessor
        lists, particularly during the failing shutdown sequence. */
     size_t naccessors;
-    // one writer for every examine=false dn_t
+    /* One writer for every examine=false dn_t.  Only a writer may cause
+       STORE or EXPUNGE updates, so we make sure our primary up_t is in a
+       SELECTed state before the dn_t is allowed to complete its own SELECT.
+       The dn_t may die with some STORE or EXPUNGE updates in flight, so we
+       might start the S->E transition while those relays are still active,
+       but the up_t takes care of that by flushing its relays before handling
+       the reSELECT. */
     size_t nwriters;
 
     /* if the primary up_t is disconnecting, we save commands that we would
@@ -195,13 +130,13 @@ struct imaildir_t {
 
        Fortunately, APPEND is already handled as a passthru command so this
        should not be a concern there. */
-    link_t relays;  // relay_t->link
+    link_t relays_sent;  // relay_t->link
+    link_t relays_unsent;  // relay_t->link
     // the id in the tag of commands originating with us
     size_t tag;
 
     // because we execute the file copying on behalf of the dn_t
     struct {
-        // when
         void *requester;
     } copy;
 
@@ -248,7 +183,8 @@ derr_t imaildir_init_lite(imaildir_t *m, string_builder_t path);
 // free must only be called if the maildir has no accessors
 void imaildir_free(imaildir_t *m);
 
-// useful if an open maildir needs to be deleted
+// useful if an open maildir needs to be frozen for delete or rename
+// imaildir may be immediately freed afterwards
 void imaildir_forceclose(imaildir_t *m);
 
 // regsiter a new connection with the imaildir, and return a maildir_i
@@ -257,11 +193,11 @@ void imaildir_register_up(imaildir_t *m, up_t *up);
 // regsiter a new connection with the imaildir, and return a maildir_i
 void imaildir_register_dn(imaildir_t *m, dn_t *dn);
 
-/* if you got a maildir_*_i through dirmgr_open, you should close it via
-   dirmgr_close */
+// if you opened with dirmgr_open, you should close with dirmgr_close
 // returns number of accessors after unregister operation
-size_t imaildir_unregister_up(up_t *up);
-size_t imaildir_unregister_dn(dn_t *dn);
+// should not be called if imaildir failed
+size_t imaildir_unregister_up(imaildir_t *m, up_t *up);
+size_t imaildir_unregister_dn(imaildir_t *m, dn_t *dn);
 
 /* Synchronous filesystem-backed storage for an imap maildir.
 
@@ -339,10 +275,11 @@ derr_t imaildir_up_update_flags(imaildir_t *m, msg_t *msg, msg_flags_t flags);
 derr_t imaildir_up_handle_static_fetch_attr(imaildir_t *m,
         msg_t *msg, const ie_fetch_resp_t *fetch);
 
+// after a select or a reselect
+derr_t imaildir_up_selected(imaildir_t *m, ie_status_t status);
+
 // after an initial sync or after a reselect
-derr_t imaildir_up_synced(
-    imaildir_t *m, up_t *up, bool examining, bool initial
-);
+derr_t imaildir_up_synced(imaildir_t *m, up_t *up, bool examining);
 
 derr_t imaildir_up_delete_msg(imaildir_t *m, unsigned int uid_up);
 
@@ -353,8 +290,16 @@ bool imaildir_up_allow_download(imaildir_t *m);
 /* imaildir functions exposed only for dn_t.  dn_t keeps its own view of the
    mailbox and therefore relies less on the imaildir_t. */
 
+// for predns only: did selection fail?
+bool imaildir_dn_select_failed(imaildir_t *m, ie_status_t *status);
+
+// is the imaildir done syncing?
+bool imaildir_dn_synced(imaildir_t *m, bool examine);
+
+// build views and transition dn from predns to dns
 derr_t imaildir_dn_build_views(
     imaildir_t *m,
+    dn_t *dn,
     jsw_atree_t *views,
     unsigned int *max_uid_dn,
     unsigned int *uidvld_dn
@@ -367,7 +312,7 @@ derr_t imaildir_dn_request_update(imaildir_t *m, update_req_t *req);
 derr_t imaildir_dn_open_msg(imaildir_t *m, const msg_key_t key, int *fd);
 
 // close a message in a view-safe way
-derr_t imaildir_dn_close_msg(imaildir_t *m, const msg_key_t key, int *fd);
+void imaildir_dn_close_msg(imaildir_t *m, const msg_key_t key, int *fd);
 
 /////////////////
 // support for APPEND and COPY (without redownloading message)

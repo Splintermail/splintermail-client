@@ -43,8 +43,10 @@ DEF_CONTAINER_OF(duv_scheduler_t, timer, uv_timer_t)
 
 derr_t duv_scheduler_init(duv_scheduler_t *s, uv_loop_t *loop);
 
-/* watch out! scheduler_close() must be called outside of uv_run(), and it will
-   call uv_close() on its timer and uv_run() to finish cleaning up resources */
+/* watch out! duv_scheduler_close() must be called outside of uv_run(), and it
+   will call uv_close() on its timer and uv_run() to finish cleaning up
+   resources.  It is illegal to call it with un-closed handles in the loop, as
+   running the loop to close the timer might possibly run forever. */
 void duv_scheduler_close(duv_scheduler_t *s);
 
 // run manually, rather than automatically on the timer

@@ -2,7 +2,7 @@
 #define DUMMY_UI_HARNESS_C
 
 #include <libdstr/libdstr.h>
-#include <libcitm/citm.h>
+#include <libcitm/libcitm.h>
 #include <api_client.h>
 
 // Shitty MSVC preprocessor won't let us stack __VA_ARGS__ macros
@@ -25,12 +25,11 @@ extern dstr_t reason_log;
 
 // citm.h
 typedef struct {
-    const char *local_host;
-    const char *local_svc;
+    size_t nlspecs;
+    char *lspecs[8];
     const char *key;
     const char *cert;
-    const char *remote_host;
-    const char *remote_svc;
+    char *remote;
     const char *maildir_root;
     bool indicate_ready;
     derr_t to_return;

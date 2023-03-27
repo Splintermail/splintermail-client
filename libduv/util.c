@@ -186,6 +186,10 @@ derr_t duv_tcp_init(uv_loop_t *loop, uv_tcp_t *tcp){
     UV_CALL(uv_tcp_init, loop, tcp);
 }
 
+derr_t duv_tcp_open(uv_tcp_t *tcp, int fd){
+    UV_CALL(uv_tcp_open, tcp, fd);
+}
+
 derr_t duv_tcp_bind(uv_tcp_t *tcp, struct sockaddr *addr, unsigned int flags){
     UV_CALL(uv_tcp_bind, tcp, addr, flags);
 }

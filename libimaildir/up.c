@@ -2,7 +2,8 @@
 
 #include "libdstr/libdstr.h"
 
-#include "libimaildir.h"
+#include "libimaildir/libimaildir.h"
+#include "libimaildir/msg_internal.h"
 
 #define FETCH_PARALLELISM 5
 #define FETCH_CHUNK_SIZE 10
@@ -29,19 +30,11 @@ static void up_free_fetch(up_t *up){
 
 static void up_free_reselect(up_t *up){
     up->reselect.needed = false;
+    up->reselect.enqueued = false;
     up->reselect.examine = false;
     up->reselect.uidvld_up = 0;
     up->reselect.himodseq_up = 0;
-    // these lists should be empty in all cases by now, but just in case:
-    link_t *link;
-    while((link = link_list_pop_first(&up->reselect.cbs))){
-        imap_cmd_cb_t *cb = CONTAINER_OF(link, imap_cmd_cb_t, link);
-        cb->free(cb);
-    }
-    while((link = link_list_pop_first(&up->reselect.cmds))){
-        imap_cmd_t *cmd = CONTAINER_OF(link, imap_cmd_t, link);
-        imap_cmd_free(cmd);
-    }
+    up->reselect.done = false;
 }
 
 static void up_free_idle_block(up_t *up){
@@ -55,6 +48,25 @@ static void up_free_idle(up_t *up){
     up->idle.done_sent = false;
 }
 
+static void up_free_relays(up_t *up){
+    link_t *link;
+    while((link = link_list_pop_first(&up->cbs))){
+        imap_cmd_cb_t *cb = CONTAINER_OF(link, imap_cmd_cb_t, link);
+        cb->free(cb);
+    }
+    while((link = link_list_pop_first(&up->relay.cbs))){
+        imap_cmd_cb_t *cb = CONTAINER_OF(link, imap_cmd_cb_t, link);
+        cb->free(cb);
+    }
+    while((link = link_list_pop_first(&up->relay.cmds))){
+        imap_cmd_t *cmd = CONTAINER_OF(link, imap_cmd_t, link);
+        imap_cmd_free(cmd);
+    }
+
+    // we're not an accessor of the imaildir anymore
+    link_remove(&up->link);
+}
+
 void up_free(up_t *up){
     if(!up) return;
 
@@ -64,29 +76,32 @@ void up_free(up_t *up){
     up_free_reselect(up);
     up_free_idle_block(up);
     up_free_idle(up);
+    up_free_relays(up);
 }
 
-derr_t up_init(up_t *up, up_cb_i *cb, extensions_t *exts, bool want_write){
+derr_t up_init(up_t *up, imaildir_t *m, up_cb_i *cb, extensions_t *exts){
     derr_t e = E_OK;
 
     *up = (up_t){
+        .m = m,
         .cb = cb,
         .exts = exts,
-        .want_write = want_write,
     };
 
     seq_set_builder_prep(&up->fetch.uids_up);
 
-    link_init(&up->cbs);
-    link_init(&up->link);
-    link_init(&up->relay.cmds);
-    link_init(&up->relay.cbs);
-    link_init(&up->reselect.cmds);
-    link_init(&up->reselect.cbs);
-
     return e;
 }
 
+/* since imaildir can fail while we're not running, we need to detect those
+   failures the first time we are called */
+static derr_t healthcheck(up_t *up){
+    derr_t e = E_OK;
+    if(up->m) return e;
+    ORIG(&e, E_IMAILDIR, "imaildir failed on another thread");
+}
+
+// imaildir_t must not emit a second call before the first is completed
 void up_imaildir_select(
     up_t *up,
     const dstr_t *name,
@@ -108,6 +123,9 @@ void up_imaildir_select(
     }else{
         // reSELECT
 
+        if(!up->synced) LOG_FATAL("reselect-before-synced in up_t!\n");
+        if(up->reselect.needed) LOG_FATAL("simultaneous reselects in up_t!\n");
+
         /* we can't initialize our himodseq values on a secondary SELECT or
            EXAMINE because it is possible that we still have modseq responses
            in flight.  Instead, we wait until the `* OK [CLOSED]` response. */
@@ -118,52 +136,19 @@ void up_imaildir_select(
         up->reselect.himodseq_up = himodseq_up;
     }
 
-    // enqueue ourselves
-    up->enqueued = true;
-    up->cb->enqueue(up->cb);
+    // schedule ourselves
+    up->cb->schedule(up->cb);
 }
 
+// imaildir_t must not emit a relay while a select is in flight
 void up_imaildir_relay_cmd(up_t *up, imap_cmd_t *cmd, imap_cmd_cb_t *cb){
-    // just remember these for later
-    if(up->reselect.needed){
-        /* special case: if we plan on reselecting, put these in a secondary
-           queue until the reselect command is prepared */
-        link_list_append(&up->reselect.cmds, &cmd->link);
-        link_list_append(&up->reselect.cbs, &cb->link);
-    }else{
-        // otherwise they go in the normal queue
-        link_list_append(&up->relay.cmds, &cmd->link);
-        link_list_append(&up->relay.cbs, &cb->link);
-    }
+    if(up->reselect.needed) LOG_FATAL("relay-during-reselect in up_t!\n");
+
+    link_list_append(&up->relay.cmds, &cmd->link);
+    link_list_append(&up->relay.cbs, &cb->link);
 
     // enqueue ourselves
-    up->enqueued = true;
-    up->cb->enqueue(up->cb);
-}
-
-void up_imaildir_preunregister(up_t *up){
-    link_t *link;
-    // cancel all callbacks, which may trigger imaildir_t relay replays
-    while((link = link_list_pop_first(&up->cbs))){
-        imap_cmd_cb_t *cb = CONTAINER_OF(link, imap_cmd_cb_t, link);
-        cb->free(cb);
-    }
-    while((link = link_list_pop_first(&up->relay.cbs))){
-        imap_cmd_cb_t *cb = CONTAINER_OF(link, imap_cmd_cb_t, link);
-        cb->free(cb);
-    }
-    while((link = link_list_pop_first(&up->relay.cmds))){
-        imap_cmd_t *cmd = CONTAINER_OF(link, imap_cmd_t, link);
-        imap_cmd_free(cmd);
-    }
-    while((link = link_list_pop_first(&up->reselect.cbs))){
-        imap_cmd_cb_t *cb = CONTAINER_OF(link, imap_cmd_cb_t, link);
-        cb->free(cb);
-    }
-    while((link = link_list_pop_first(&up->reselect.cmds))){
-        imap_cmd_t *cmd = CONTAINER_OF(link, imap_cmd_t, link);
-        imap_cmd_free(cmd);
-    }
+    up->cb->schedule(up->cb);
 }
 
 void up_imaildir_have_local_file(up_t *up, unsigned int uid, bool resync){
@@ -185,44 +170,26 @@ void up_imaildir_have_local_file(up_t *up, unsigned int uid, bool resync){
            single-threaded, in practice we cannot be awoken from the enqueued
            state between two file adds. */
         up->relay.resync.needed = true;
-        up->cb->enqueue(up->cb);
+        up->cb->schedule(up->cb);
     }
 }
 
 void up_imaildir_hold_end(up_t *up){
-    up->enqueued = true;
-    up->cb->enqueue(up->cb);
+    up->cb->schedule(up->cb);
 }
 
-bool up_imaildir_want_write(up_t *up){
-    return up->want_write;
+// solemnly swear to never touch the imaildir again
+void up_imaildir_failed(up_t *up){
+    // guarantee we don't access a broken imaildir
+    up->m = NULL;
+    // let go of anything related to the imaildir
+    up_free_relays(up);
+    // wake up our owner so they can call us and fail a health check
+    up->cb->schedule(up->cb);
 }
 
 static void himodseq_observe(up_t *up, uint64_t observation){
     up->himodseq_up_seen = MAX(up->himodseq_up_seen, observation);
-}
-
-static derr_t push_examine_state(up_t *up, bool examine){
-    derr_t e = E_OK;
-
-    size_t nmax = sizeof(up->examines_pending) / *(up->examines_pending);
-
-    if(up->nexamines_pending == nmax){
-        ORIG(&e, E_FIXEDSIZE, "too many examines_pending!\n");
-    }
-
-    up->examines_pending[up->nexamines_pending++] = examine;
-
-    return e;
-}
-
-static bool pop_examine_state(up_t *up){
-    size_t nmax = sizeof(up->examines_pending) / *(up->examines_pending);
-    if(nmax == 0){
-        LOG_ERROR("up_t::pop_examine_state(): no states to pop!\n");
-        return false;
-    }
-    return up->examines_pending[--up->nexamines_pending];
 }
 
 static ie_dstr_t *write_tag_up(derr_t *e, size_t tag){
@@ -268,22 +235,17 @@ fail:
 }
 
 // send a command and store its callback
-static derr_t up_send_cmd(up_t *up, imap_cmd_t *cmd, up_cb_t *up_cb){
-    derr_t e = E_OK;
-
+static void send_cmd(up_t *up, imap_cmd_t *cmd, up_cb_t *up_cb, link_t *out){
     // some commands, specifically IMAP_CMD_IDLE_DONE, have no tag or callback.
     if(up_cb){
         // store the callback
         link_list_append(&up->cbs, &up_cb->cb.link);
     }
 
-    // send the command through the up_cb_i
-    PROP(&e, up->cb->cmd(up->cb, cmd) );
-
-    return e;
+    link_list_append(out, &cmd->link);
 }
 
-static derr_t maybe_break_idle(up_t *up){
+static derr_t maybe_break_idle(up_t *up, link_t *out){
     derr_t e = E_OK;
 
     // only continue if there's actually an IDLE to break
@@ -292,7 +254,7 @@ static derr_t maybe_break_idle(up_t *up){
     // if we are in a hold, there's no point in breaking out until afterwards
     if(!imaildir_up_allow_download(up->m)) return e;
 
-    PROP(&e, up_advance_state(up) );
+    PROP(&e, up_advance_state(up, out) );
 
     return e;
 }
@@ -305,16 +267,16 @@ static derr_t unselect_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
     up_t *up = up_cb->up;
 
     if(st_resp->status != IE_ST_OK){
-        ORIG(&e, E_RESPONSE, "close failed\n");
+        ORIG(&e, E_RESPONSE, "unselect failed\n");
     }
 
-    // signal that we are done with this connection
-    PROP(&e, up->cb->unselected(up->cb) );
+    up->done = true;
+    up->cb->schedule(up->cb);
 
     return e;
 }
 
-static derr_t send_unselect(up_t *up){
+static derr_t send_unselect(up_t *up, link_t *out){
     derr_t e = E_OK;
 
     // issue an UNSELECT command
@@ -329,7 +291,7 @@ static derr_t send_unselect(up_t *up){
 
     CHECK(&e);
 
-    PROP(&e, up_send_cmd(up, cmd, up_cb) );
+    send_cmd(up, cmd, up_cb, out);
 
     return e;
 }
@@ -341,31 +303,21 @@ static derr_t select_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
     up_cb_t *up_cb = CONTAINER_OF(cb, up_cb_t, cb);
     up_t *up = up_cb->up;
 
-    bool examining = pop_examine_state(up);
+    PROP(&e, imaildir_up_selected(up->m, st_resp->status) );
 
     if(st_resp->status != IE_ST_OK){
-        // handle the special case where the mail server doesn't have this dir
-        up->m->rm_on_close = (st_resp->status == IE_ST_NO);
         // don't allow any more commands
-        up->unselect.sent = true;
-        // report the error
-        ie_st_resp_t *st_resp_copy = ie_st_resp_copy(&e, st_resp);
-        CHECK(&e);
-        up->cb->selected(up->cb, st_resp_copy);
+        up->done = true;
         return e;
     }
 
-    up->m->rm_on_close = false;
+    // SELECT succeeded
     up->select.done = true;
-    up->examining = examining;
 
     /* we can ignore any detections we thought we needed to send since the
        SELECT (QRESYNC ...) command will always give us new messages */
     if(!up->detect.inflight) up->detect.chgsince = 0;
     up->detect.repeat = false;
-
-    // SELECT succeeded
-    up->cb->selected(up->cb, NULL);
 
     return e;
 }
@@ -418,7 +370,7 @@ static derr_t build_select(
 }
 
 static derr_t send_select(up_t *up, unsigned int uidvld_up,
-        uint64_t himodseq_up, bool examine){
+        uint64_t himodseq_up, bool examine, link_t *out){
     derr_t e = E_OK;
 
     imap_cmd_t *cmd;
@@ -430,8 +382,8 @@ static derr_t send_select(up_t *up, unsigned int uidvld_up,
         )
     );
 
-    // this is the first, select, send it immediately
-    PROP(&e, up_send_cmd(up, cmd, up_cb) );
+    // this is the first select, send it immediately
+    send_cmd(up, cmd, up_cb, out);
 
     return e;
 }
@@ -443,7 +395,7 @@ static derr_t reselect_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
     up_cb_t *up_cb = CONTAINER_OF(cb, up_cb_t, cb);
     up_t *up = up_cb->up;
 
-    bool examining = pop_examine_state(up);
+    PROP(&e, imaildir_up_selected(up->m, st_resp->status) );
 
     if(st_resp->status != IE_ST_OK){
         ORIG(&e, E_RESPONSE, "re-SELECT failed");
@@ -453,11 +405,12 @@ static derr_t reselect_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
        SELECT (QRESYNC ...) command will always give us new messages */
     if(!up->detect.inflight) up->detect.chgsince = 0;
     up->detect.repeat = false;
-    up->examining = examining;
 
     // non-initial sync complete
     // TODO: wait for a SEARCH RECENT as well, if necessary
-    PROP(&e, imaildir_up_synced(up->m, up, examining, false) );
+    PROP(&e, imaildir_up_synced(up->m, up, up->reselect.examine) );
+
+    up_free_reselect(up);
 
     return e;
 }
@@ -478,22 +431,17 @@ static derr_t enqueue_reselect(up_t *up, unsigned int uidvld_up,
     /* Don't send the reSELECT; instead enqueue the SELECT operation with the
        relays.  This is so that we can properly handle extra write operations
        in the relay list which may be enqueued at the moment that we detect
-       that a SELECT->EXAMINE transition needs to happen.  An alternative would
-       be to have the imaildir trigger a flush of the operations that had been
-       requested by the SELECT before it disconnected, but that would be more
-       complexity than it is worth. */
+       that a SELECT->EXAMINE transition needs to happen. */
     link_list_append(&up->relay.cmds, &cmd->link);
     link_list_append(&up->relay.cbs, &up_cb->cb.link);
-
-    // send any delayed relay commands too
-    link_list_append_list(&up->relay.cmds, &up->reselect.cmds);
-    link_list_append_list(&up->relay.cbs, &up->reselect.cbs);
 
     return e;
 }
 
-static derr_t fetch_resp(up_t *up, const ie_fetch_resp_t *fetch){
+derr_t up_fetch_resp(up_t *up, const ie_fetch_resp_t *fetch, link_t *out){
     derr_t e = E_OK;
+
+    PROP(&e, healthcheck(up) );
 
     // grab UID
     if(!fetch->uid){
@@ -529,7 +477,7 @@ static derr_t fetch_resp(up_t *up, const ie_fetch_resp_t *fetch){
             );
         }
         // we might have to break out of an IDLE for this new message
-        PROP(&e, maybe_break_idle(up) );
+        PROP(&e, maybe_break_idle(up, out) );
     }else if(fetch->flags){
         // existing UID with update flags
         msg_flags_t flags = msg_flags_from_fetch_flags(fetch->flags);
@@ -579,7 +527,7 @@ static derr_t expunge_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
     return e;
 }
 
-static derr_t send_expunge(up_t *up){
+static derr_t send_expunge(up_t *up, link_t *out){
     derr_t e = E_OK;
 
     // issue a UID EXPUNGE command to match the store command we just sent
@@ -596,7 +544,7 @@ static derr_t send_expunge(up_t *up){
 
     CHECK(&e);
 
-    PROP(&e, up_send_cmd(up, cmd, up_cb) );
+    send_cmd(up, cmd, up_cb, out);
 
     return e;
 }
@@ -617,7 +565,7 @@ static derr_t deletions_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
     return e;
 }
 
-static derr_t send_deletions(up_t *up){
+static derr_t send_deletions(up_t *up, link_t *out){
     derr_t e = E_OK;
 
     // issue a UID STORE +FLAGS \deleted command with all the unpushed expunges
@@ -642,7 +590,7 @@ static derr_t send_deletions(up_t *up){
 
     CHECK(&e);
 
-    PROP(&e, up_send_cmd(up, cmd, up_cb) );
+    send_cmd(up, cmd, up_cb, out);
 
     return e;
 }
@@ -679,7 +627,7 @@ static derr_t detection_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
 }
 
 // a "detection fetch" doesn't download messages, it only tries to detect them
-static derr_t send_detection_fetch(up_t *up, uint64_t chgsince){
+static derr_t send_detection_fetch(up_t *up, uint64_t chgsince, link_t *out){
     derr_t e = E_OK;
 
     // issue a UID FETCH command
@@ -716,7 +664,7 @@ static derr_t send_detection_fetch(up_t *up, uint64_t chgsince){
 
     CHECK(&e);
 
-    PROP(&e, up_send_cmd(up, cmd, up_cb) );
+    send_cmd(up, cmd, up_cb, out);
 
     return e;
 }
@@ -738,7 +686,7 @@ static derr_t fetch_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
 }
 
 // we send overlapping one-at-a-time fetches to make them preemptible
-static derr_t send_fetch(up_t *up){
+static derr_t send_fetch(up_t *up, link_t *out){
     derr_t e = E_OK;
 
     // build a seq_set with FETCH_CHUNK_SIZE uids
@@ -780,15 +728,17 @@ static derr_t send_fetch(up_t *up){
 
     CHECK(&e);
 
-    PROP(&e, up_send_cmd(up, cmd, up_cb) );
+    send_cmd(up, cmd, up_cb, out);
 
     up->fetch.in_flight++;
 
     return e;
 }
 
-static derr_t vanished_resp(up_t *up, const ie_vanished_resp_t *vanished){
+derr_t up_vanished_resp(up_t *up, const ie_vanished_resp_t *vanished){
     derr_t e = E_OK;
+
+    PROP(&e, healthcheck(up) );
 
     const ie_seq_set_t *uid_range = vanished->uids;
     for(; uid_range != NULL; uid_range = uid_range->next){
@@ -809,9 +759,11 @@ static derr_t vanished_resp(up_t *up, const ie_vanished_resp_t *vanished){
 /* when we see an exists message, that implies that a new message has been
    added, and we need to find out what all messages have been added since
    the last modseq we saw */
-static derr_t exists_resp(up_t *up, unsigned int exists){
+derr_t up_exists_resp(up_t *up, unsigned int exists, link_t *out){
     derr_t e = E_OK;
     (void)exists;
+
+    PROP(&e, healthcheck(up) );
 
     /* note: technically an EXISTS response during a select or examine is
        ignorable, but the easiest way to handle that is to set detect.chgsince
@@ -827,7 +779,7 @@ static derr_t exists_resp(up_t *up, unsigned int exists){
     up->detect.chgsince = MAX(up->himodseq_up_committed, 1);
 
     // we might have to break out of an IDLE to detect the new message
-    PROP(&e, maybe_break_idle(up) );
+    PROP(&e, maybe_break_idle(up, out) );
 
     return e;
 }
@@ -848,8 +800,10 @@ static derr_t idle_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
 }
 
 
-static derr_t plus_resp(up_t *up){
+derr_t up_plus_resp(up_t *up, link_t *out){
     derr_t e = E_OK;
+
+    PROP(&e, healthcheck(up) );
 
     // we should only have a + after IDLE commands
     if(!up->idle.sent){
@@ -857,13 +811,13 @@ static derr_t plus_resp(up_t *up){
     }
 
     up->idle.got_plus = true;
-    PROP(&e, up_advance_state(up) );
+    PROP(&e, up_advance_state(up, out) );
 
     return e;
 }
 
 
-static derr_t send_idle(up_t *up){
+static derr_t send_idle(up_t *up, link_t *out){
     derr_t e = E_OK;
 
     // issue a IDLE command
@@ -878,12 +832,12 @@ static derr_t send_idle(up_t *up){
 
     CHECK(&e);
 
-    PROP(&e, up_send_cmd(up, cmd, up_cb) );
+    send_cmd(up, cmd, up_cb, out);
 
     return e;
 }
 
-static derr_t send_done(up_t *up){
+static derr_t send_done(up_t *up, link_t *out){
     derr_t e = E_OK;
 
     if(!up->idle.sent) ORIG(&e, E_INTERNAL, "idle not sent");
@@ -897,7 +851,7 @@ static derr_t send_done(up_t *up){
     CHECK(&e);
 
     // there is no up_cb; this only triggers the up_cb from send_idle()
-    PROP(&e, up_send_cmd(up, cmd, NULL) );
+    send_cmd(up, cmd, NULL, out);
 
     return e;
 }
@@ -919,7 +873,7 @@ static derr_t noop_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
     return e;
 }
 
-static derr_t send_noop(up_t *up){
+static derr_t send_noop(up_t *up, link_t *out){
     derr_t e = E_OK;
 
     // issue a NOOP command
@@ -934,13 +888,13 @@ static derr_t send_noop(up_t *up){
 
     CHECK(&e);
 
-    PROP(&e, up_send_cmd(up, cmd, up_cb) );
+    send_cmd(up, cmd, up_cb, out);
 
     return e;
 }
 
 // need_done sends DONE if needed and returns true when it is safe to continue
-static derr_t need_done(up_t *up, bool *ok){
+static derr_t need_done(up_t *up, link_t *out, bool *ok){
     derr_t e = E_OK;
 
     if(!up->idle.sent){
@@ -958,7 +912,7 @@ static derr_t need_done(up_t *up, bool *ok){
     if(!up->idle.done_sent){
         // send the DONE first
         up->idle.done_sent = true;
-        PROP(&e, send_done(up) );
+        PROP(&e, send_done(up, out) );
     }
 
     // DONE already sent
@@ -966,20 +920,20 @@ static derr_t need_done(up_t *up, bool *ok){
     return e;
 }
 
-static derr_t advance_relays(up_t *up){
+static derr_t advance_relays(up_t *up, link_t *out){
     derr_t e = E_OK;
 
     if(link_list_isempty(&up->relay.cmds)) return e;
 
     bool ok;
-    PROP(&e, need_done(up, &ok) );
+    PROP(&e, need_done(up, out, &ok) );
     if(!ok) return e;
 
     // if we need to resync before relaying something, do that now
     if(up->relay.resync.needed && !up->relay.resync.inflight){
         up->relay.resync.needed = false;
         up->relay.resync.inflight = true;
-        PROP(&e, send_noop(up) );
+        PROP(&e, send_noop(up, out) );
     }
     // we can't issue any relay until the resync has finished
     if(up->relay.resync.inflight) return e;
@@ -997,14 +951,13 @@ static derr_t advance_relays(up_t *up){
         // store the callback
         link_list_append(&up->cbs, &cb->link);
 
-        // send the command through the up_cb_i
-        PROP(&e, up->cb->cmd(up->cb, cmd) );
+        link_list_append(out, &cmd->link);
     }
 
     return e;
 }
 
-static derr_t advance_detection(up_t *up){
+static derr_t advance_detection(up_t *up, link_t *out){
     derr_t e = E_OK;
 
     /* note: an EXISTS response which arrives while a reselect is pending
@@ -1012,21 +965,21 @@ static derr_t advance_detection(up_t *up){
        us from saving the himodseq_up until after that reselect is done, so
        while such an EXISTS sets detect.chgsince, we still don't send a FETCH
        while there is an reselect pending */
-    if(up->nexamines_pending) return e;
+    if(up->reselect.needed) return e;
 
     if(!up->detect.chgsince || up->detect.inflight) return e;
 
     bool ok;
-    PROP(&e, need_done(up, &ok) );
+    PROP(&e, need_done(up, out, &ok) );
     if(!ok) return e;
 
-    PROP(&e, send_detection_fetch(up, up->detect.chgsince) );
+    PROP(&e, send_detection_fetch(up, up->detect.chgsince, out) );
     up->detect.inflight = true;
 
     return e;
 }
 
-static derr_t advance_fetches(up_t *up){
+static derr_t advance_fetches(up_t *up, link_t *out){
     derr_t e = E_OK;
 
     if(seq_set_builder_isempty(&up->fetch.uids_up)) return e;
@@ -1034,42 +987,45 @@ static derr_t advance_fetches(up_t *up){
     if(!imaildir_up_allow_download(up->m)) return e;
 
     bool ok;
-    PROP(&e, need_done(up, &ok) );
+    PROP(&e, need_done(up, out, &ok) );
     if(!ok) return e;
 
     while(up->fetch.in_flight < FETCH_PARALLELISM
             && !seq_set_builder_isempty(&up->fetch.uids_up)){
-        PROP(&e, send_fetch(up) );
+        PROP(&e, send_fetch(up, out) );
     }
 
     return e;
 }
 
-// up_advance_state must be safe to call any time between up_init() and up_free()
-derr_t up_advance_state(up_t *up){
+// up_advance_state must be safe to call from up_init() until up_free()
+derr_t up_advance_state(up_t *up, link_t *out){
     derr_t e = E_OK;
+
+    if(up->done) return e;
+
+    PROP(&e, healthcheck(up) );
 
     bool ok;
 
-    // respond to asynchronous external APIs
-    if(up->idle_block.want && !up->idle_block.active){
-        PROP(&e, need_done(up, &ok) );
-        if(ok){
-            up->idle_block.active = true;
-            up->cb->idle_blocked(up->cb);
-        }
-    }
-
     // allow UNSELECTs to preempt anything
     if(up->unselect.needed && !up->unselect.sent){
-        PROP(&e, need_done(up, &ok) );
+        PROP(&e, need_done(up, out, &ok) );
         if(!ok) return e;
-        PROP(&e, send_unselect(up) );
+        PROP(&e, send_unselect(up, out) );
         up->unselect.sent = true;
         return e;
     }
     // never send anything more after an UNSELECT
     if(up->unselect.sent) return e;
+
+    // respond to asynchronous external APIs
+    if(up->idle_block.want && !up->idle_block.active){
+        PROP(&e, need_done(up, out, &ok) );
+        if(ok){
+            up->idle_block.active = true;
+        }
+    }
 
     // wait for initial select configuration from imaildir
     if(!up->select.ready) return e;
@@ -1099,10 +1055,10 @@ derr_t up_advance_state(up_t *up){
                 up,
                 up->select.uidvld_up,
                 up->select.himodseq_up,
-                examine
+                examine,
+                out
             )
         );
-        PROP(&e, push_examine_state(up, examine) );
     }
     if(!up->select.done) return e;
 
@@ -1111,7 +1067,7 @@ derr_t up_advance_state(up_t *up){
         if(!up->bootstrap.sent){
             up->bootstrap.sent = true;
             // CHANGEDSINCE 1, since modseq numbers are nonzero
-            PROP(&e, send_detection_fetch(up, 1) );
+            PROP(&e, send_detection_fetch(up, 1, out) );
         }
         return e;
     }
@@ -1120,19 +1076,19 @@ derr_t up_advance_state(up_t *up){
     if(up->deletions.uids_up){
         // store step
         if(!up->deletions.store_sent){
-            PROP(&e, need_done(up, &ok) );
+            PROP(&e, need_done(up, out, &ok) );
             if(!ok) return e;
             up->deletions.store_sent = true;
-            PROP(&e, send_deletions(up) );
+            PROP(&e, send_deletions(up, out) );
         }
         if(!up->deletions.store_done) return e;
 
         // expunge step
         if(!up->deletions.expunge_sent){
-            PROP(&e, need_done(up, &ok) );
+            PROP(&e, need_done(up, out, &ok) );
             if(!ok) return e;
             up->deletions.expunge_sent = true;
-            PROP(&e, send_expunge(up) );
+            PROP(&e, send_expunge(up, out) );
         }
         if(!up->deletions.expunge_done) return e;
     }
@@ -1140,11 +1096,7 @@ derr_t up_advance_state(up_t *up){
     // parallelizable commands becomes possible
 
     // allow reselects (they will be sent along with other relays)
-    if(up->reselect.needed){
-        // don't actually enqueue it until we know we can send it in one shot
-        // (this simplifies the state machine and lets us set up->examine here)
-        PROP(&e, need_done(up, &ok) );
-        if(!ok) return e;
+    if(up->reselect.needed && !up->reselect.enqueued){
         // this will also add any delayed relays to the main relay enqueue
         PROP(&e,
             enqueue_reselect(
@@ -1154,13 +1106,12 @@ derr_t up_advance_state(up_t *up){
                 up->reselect.examine
             )
         );
-        PROP(&e, push_examine_state(up, up->reselect.examine) );
-        up_free_reselect(up);
+        up->reselect.enqueued = true;
     }
 
-    PROP(&e, advance_detection(up) );
-    PROP(&e, advance_fetches(up) );
-    PROP(&e, advance_relays(up) );
+    PROP(&e, advance_detection(up, out) );
+    PROP(&e, advance_fetches(up, out) );
+    PROP(&e, advance_relays(up, out) );
 
     // initial sync check
     if(
@@ -1169,7 +1120,7 @@ derr_t up_advance_state(up_t *up){
         && up->fetch.in_flight == 0
     ){
         up->synced = true;
-        PROP(&e, imaildir_up_synced(up->m, up, up->examining, true) );
+        PROP(&e, imaildir_up_synced(up->m, up, up->select.examine) );
     }
     // don't IDLE before we finish an initial sync
     if(!up->synced) return e;
@@ -1180,7 +1131,7 @@ derr_t up_advance_state(up_t *up){
     if(!up->idle.sent && !up->idle_block.want){
         up->idle.sent = true;
         // issue an IDLE command
-        PROP(&e, send_idle(up) );
+        PROP(&e, send_idle(up, out) );
     }
 
     return e;
@@ -1215,10 +1166,8 @@ static derr_t post_cmd_done(up_t *up, const ie_st_code_t *code){
 }
 
 // handle untagged OK responses separately from other status type responses
-static derr_t untagged_ok(up_t *up, const ie_st_code_t *code,
-        const dstr_t *text){
+static derr_t untagged_ok(up_t *up, const ie_st_code_t *code){
     derr_t e = E_OK;
-    (void)text;
 
     // Handle responses where the status code is what defines the behavior
     if(code != NULL){
@@ -1297,7 +1246,9 @@ static derr_t untagged_ok(up_t *up, const ie_st_code_t *code,
     return e;
 }
 
-static derr_t tagged_status_type(up_t *up, const ie_st_resp_t *st){
+static derr_t tagged_status_type(
+    up_t *up, const ie_st_resp_t *st, link_t *out
+){
     derr_t e = E_OK;
 
     // peek at the first command we need a response to
@@ -1310,7 +1261,7 @@ static derr_t tagged_status_type(up_t *up, const ie_st_resp_t *st){
 
     // make sure the tag matches
     imap_cmd_cb_t *cb = CONTAINER_OF(link, imap_cmd_cb_t, link);
-    if(dstr_cmp(&st->tag->dstr, &cb->tag->dstr) != 0){
+    if(!dstr_eq(st->tag->dstr, cb->tag->dstr)){
         TRACE(&e, "got tag %x but expected %x\n",
                 FD(&st->tag->dstr), FD(&cb->tag->dstr));
         ORIG(&e, E_RESPONSE, "bad status type response");
@@ -1322,7 +1273,7 @@ static derr_t tagged_status_type(up_t *up, const ie_st_resp_t *st){
 
     PROP_GO(&e, post_cmd_done(up, st->code), cu_cb);
 
-    PROP_GO(&e, up_advance_state(up), cu_cb);
+    PROP_GO(&e, up_advance_state(up, out), cu_cb);
 
 cu_cb:
     cb->free(cb);
@@ -1335,7 +1286,7 @@ static derr_t untagged_status_type(up_t *up, const ie_st_resp_t *st){
     switch(st->status){
         case IE_ST_OK:
             // informational message
-            PROP(&e, untagged_ok(up, st->code, &st->text->dstr) );
+            PROP(&e, untagged_ok(up, st->code) );
             break;
         case IE_ST_NO:
             // a warning about a command
@@ -1369,112 +1320,60 @@ static derr_t untagged_status_type(up_t *up, const ie_st_resp_t *st){
     return e;
 }
 
-// we either need to consume the resp or free it
-derr_t up_resp(up_t *up, imap_resp_t *resp){
+derr_t up_st_resp(up_t *up, const ie_st_resp_t *st, link_t *out){
     derr_t e = E_OK;
 
-    const imap_resp_arg_t *arg = &resp->arg;
+    PROP(&e, healthcheck(up) );
 
-    switch(resp->type){
-        case IMAP_RESP_STATUS_TYPE:
-            if(arg->status_type->tag){
-                // tagged responses are handled by callbacks
-                PROP_GO(&e, tagged_status_type(up, arg->status_type),
-                        cu_resp);
-            }else{
-                PROP_GO(&e, untagged_status_type(up, arg->status_type),
-                        cu_resp);
-            }
-            break;
-
-        case IMAP_RESP_FETCH:
-            PROP_GO(&e, fetch_resp(up, arg->fetch), cu_resp);
-            break;
-
-        case IMAP_RESP_VANISHED:
-            PROP_GO(&e, vanished_resp(up, arg->vanished), cu_resp);
-            break;
-
-        case IMAP_RESP_EXISTS:
-            PROP_GO(&e, exists_resp(up, arg->exists), cu_resp);
-            break;
-
-        case IMAP_RESP_RECENT:
-            break;
-        case IMAP_RESP_FLAGS:
-            // TODO: possibly handle this?
-            break;
-
-        case IMAP_RESP_PLUS:
-            PROP_GO(&e, plus_resp(up), cu_resp);
-            break;
-
-        case IMAP_RESP_SEARCH:
-        case IMAP_RESP_STATUS:
-        case IMAP_RESP_EXPUNGE:
-        case IMAP_RESP_ENABLED:
-            TRACE(&e,
-                "saw response of type %x\n",
-                FD(imap_resp_type_to_dstr(resp->type))
-            );
-            ORIG_GO(&e, E_INTERNAL, "unhandled responses", cu_resp);
-
-        case IMAP_RESP_CAPA:
-        case IMAP_RESP_LIST:
-        case IMAP_RESP_LSUB:
-        case IMAP_RESP_XKEYSYNC:
-            TRACE(&e,
-                "saw response of type %x\n",
-                FD(imap_resp_type_to_dstr(resp->type))
-            );
-            ORIG_GO(&e, E_INTERNAL, "Invalid responses", cu_resp);
+    if(st->tag){
+        PROP(&e, tagged_status_type(up, st, out) );
+    }else{
+        PROP(&e, untagged_status_type(up, st) );
     }
-
-cu_resp:
-    imap_resp_free(resp);
 
     return e;
 }
 
-derr_t up_idle_block(up_t *up, bool *ok){
+derr_t up_idle_block(up_t *up, link_t *out, bool *ok){
     derr_t e = E_OK;
+
+    *ok = false;
 
     up->idle_block.want = true;
 
-    PROP(&e, need_done(up, ok) );
-    if(!*ok) return e;
+    PROP(&e, up_advance_state(up, out) );
 
-    up->idle_block.active = true;
-    *ok = true;
-    up->cb->idle_blocked(up->cb);
+    *ok = up->idle_block.active;
 
     return e;
 }
 
-derr_t up_idle_unblock(up_t *up){
+derr_t up_idle_unblock(up_t *up, link_t *out){
     derr_t e = E_OK;
 
     up_free_idle_block(up);
-    PROP(&e, up_advance_state(up) );
+    PROP(&e, up_advance_state(up, out) );
 
     return e;
 }
 
-derr_t up_unselect(up_t *up){
+derr_t up_unselect(up_t *up, link_t *out, bool *ok){
     derr_t e = E_OK;
 
-    if(!up->select.sent){
-        // don't allow sending any commands
-        up->unselect.needed = true;
-        up->unselect.sent = true;
-        // signal that it's already done
-        PROP(&e, up->cb->unselected(up->cb) );
+    *ok = false;
+
+    PROP(&e, healthcheck(up) );
+
+    if(!up->select.sent || up->done){
+        up->done = true;
+        *ok = true;
         return e;
     }
 
-    // otherwise, attempt to send and unselect immediately
     up->unselect.needed = true;
-    PROP(&e, up_advance_state(up) );
+    PROP(&e, up_advance_state(up, out) );
+
+    *ok = up->done;
 
     return e;
 }
