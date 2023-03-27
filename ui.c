@@ -1152,7 +1152,7 @@ int do_main(int argc, char* argv[], bool windows_service){
             logger_add_filename(log_level, logfile_path.data);
         }
         // log file defaults to on, in ${sm_dir}/citm_log
-        else if(o_logfile.found == 0 && o_no_logfile.found == 0){
+        else if(!o_logfile.found && !o_no_logfile.found){
             PROP_GO(&e, FMT(&logfile_path, "%x/citm_log", FD(&sm_dir)), cu);
             trim_logfile_quiet(logfile_path.data, 100000000);
             logger_add_filename(log_level, logfile_path.data);

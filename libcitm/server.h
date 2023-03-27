@@ -18,12 +18,6 @@ typedef enum {
 } greet_state_e;
 
 typedef enum {
-    LOGIN_NONE = 0,
-    LOGIN_PENDING,
-    LOGIN_DONE,
-} login_state_e;
-
-typedef enum {
     PASSTHRU_NONE = 0,
     PASSTHRU_PENDING,
     PASSTHRU_DONE,
@@ -43,7 +37,6 @@ struct server_cb_i {
     void (*dying)(server_cb_i*, derr_t error);
     void (*release)(server_cb_i*);
 
-    void (*login)(server_cb_i*, ie_login_cmd_t *login_cmd);
     void (*passthru_req)(server_cb_i*, passthru_req_t *passthru_req);
     void (*select)(server_cb_i*, ie_mailbox_t *m, bool examine);
     void (*unselect)(server_cb_i*);
@@ -51,37 +44,20 @@ struct server_cb_i {
 
 // the server-provided interface to the sf_pair
 void server_allow_greeting(server_t *server);
-void server_login_result(server_t *server, bool login_result);
 void server_set_dirmgr(server_t *server, dirmgr_t *dirmgr);
 void server_passthru_resp(server_t *server, passthru_resp_t *passthru_resp);
 void server_select_result(server_t *server, ie_st_resp_t *st_resp);
 void server_unselected(server_t *server);
 
 struct server_t {
-    /* these must come first because we must be able to cast the
-       imap_session_t* into a citme_session_owner_t* */
-    imap_session_t s;
-    citme_session_owner_i session_owner;
-
     server_cb_i *cb;
-    imap_pipeline_t *pipeline;
-    engine_t *engine;
-
-    refs_t refs;
-    wake_event_t wake_ev;
 
     // offthread closing (for handling imap_session_t)
     derr_t session_dying_error;
-    event_t close_ev;
     bool enqueued;
 
-    // initialized some time after a successful login
+    // XXX: needs setting in init
     dirmgr_t *dirmgr;
-
-    // server session
-    manager_i session_mgr;
-    // parser callbacks and imap extesions
-    imape_control_i ctrl;
 
     bool closed;
     // from downwards session
@@ -108,12 +84,6 @@ struct server_t {
     struct {
         greet_state_e state;
     } greet;
-
-    struct {
-        login_state_e state;
-        bool result;
-        ie_dstr_t *tag;
-    } login;
 
     struct {
         passthru_state_e state;
@@ -149,24 +119,12 @@ struct server_t {
         ie_dstr_t *tag;
     } logout;
 };
-DEF_CONTAINER_OF(server_t, refs, refs_t)
-DEF_CONTAINER_OF(server_t, wake_ev, wake_event_t)
-DEF_CONTAINER_OF(server_t, close_ev, event_t)
-DEF_CONTAINER_OF(server_t, s, imap_session_t)
 DEF_CONTAINER_OF(server_t, dn_cb, dn_cb_i)
-DEF_CONTAINER_OF(server_t, session_mgr, manager_i)
-DEF_CONTAINER_OF(server_t, ctrl, imape_control_i)
 
 derr_t server_init(
     server_t *server,
-    server_cb_i *cb,
-    imap_pipeline_t *p,
-    engine_t *engine,
-    ssl_context_t *ctx_srv,
-    session_t **session
+    server_cb_i *cb
 );
 void server_start(server_t *server);
 void server_close(server_t *server, derr_t error);
 void server_free(server_t *server);
-
-void server_read_ev(server_t *server, event_t *ev);

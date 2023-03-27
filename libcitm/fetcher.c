@@ -44,7 +44,6 @@ void fetcher_free(fetcher_t *fetcher){
     if(!fetcher) return;
 
     // free unfinished state
-    ie_login_cmd_free(STEAL(ie_login_cmd_t, &fetcher->login.cmd));
     fetcher_free_passthru(fetcher);
     fetcher_free_select(fetcher);
     fetcher_free_close(fetcher);
@@ -143,11 +142,6 @@ static void fetcher_wakeup(wake_event_t *wake_ev){
     advance_state_or_close(fetcher);
     // ref_dn for wake_ev
     ref_dn(&fetcher->refs);
-}
-
-void fetcher_login(fetcher_t *fetcher, ie_login_cmd_t *login_cmd){
-    fetcher->login.cmd = login_cmd;
-    fetcher_enqueue(fetcher);
 }
 
 void fetcher_passthru_req(fetcher_t *fetcher, passthru_req_t *passthru_req){
@@ -855,25 +849,20 @@ static derr_t check_capas(const ie_dstr_t *capas){
     bool found_idle = false;
 
     for(const ie_dstr_t *capa = capas; capa != NULL; capa = capa->next){
-        DSTR_VAR(buf, 32);
-        // ignore long capabilities
-        if(capa->dstr.len > buf.size) continue;
         // case-insensitive matching
-        PROP(&e, dstr_copy(&capa->dstr, &buf) );
-        dstr_upper(&buf);
-        if(dstr_cmp(&buf, &DSTR_LIT("IMAP4REV1")) == 0){
+        if(dstr_icmp2(&buf, &DSTR_LIT("IMAP4REV1")) == 0){
             found_imap4rev1 = true;
-        }else if(dstr_cmp(&buf, extension_token(EXT_ENABLE)) == 0){
+        }else if(dstr_icmp2(&buf, extension_token(EXT_ENABLE)) == 0){
             found_enable = true;
-        }else if(dstr_cmp(&buf, extension_token(EXT_UIDPLUS)) == 0){
+        }else if(dstr_icmp2(&buf, extension_token(EXT_UIDPLUS)) == 0){
             found_uidplus = true;
-        }else if(dstr_cmp(&buf, extension_token(EXT_CONDSTORE)) == 0){
+        }else if(dstr_icmp2(&buf, extension_token(EXT_CONDSTORE)) == 0){
             found_condstore = true;
-        }else if(dstr_cmp(&buf, extension_token(EXT_QRESYNC)) == 0){
+        }else if(dstr_icmp2(&buf, extension_token(EXT_QRESYNC)) == 0){
             found_qresync = true;
-        }else if(dstr_cmp(&buf, extension_token(EXT_UNSELECT)) == 0){
+        }else if(dstr_icmp2(&buf, extension_token(EXT_UNSELECT)) == 0){
             found_unselect = true;
-        }else if(dstr_cmp(&buf, extension_token(EXT_IDLE)) == 0){
+        }else if(dstr_icmp2(&buf, extension_token(EXT_IDLE)) == 0){
             found_idle = true;
         }
     }
@@ -942,68 +931,10 @@ static derr_t send_capas(fetcher_t *fetcher){
     return e;
 }
 
-// login_done is an imap_cmd_cb_call_f
-static derr_t login_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
-    derr_t e = E_OK;
-
-    fetcher_cb_t *fcb = CONTAINER_OF(cb, fetcher_cb_t, cb);
-    fetcher_t *fetcher = fcb->fetcher;
-
-    // catch failed login attempts
-    if(st_resp->status != IE_ST_OK){
-        fetcher->cb->login_result(fetcher->cb, false);
-
-        // wait for another call to fetcher_login()
-        return e;
-    }
-
-    fetcher->cb->login_result(fetcher->cb, true);
-
-    fetcher->login.done = true;
-
-    // did we get the capabilities automatically?
-    if(st_resp->code->type == IE_ST_CODE_CAPA){
-        // check capabilities
-        PROP(&e, check_capas(st_resp->code->arg.capa) );
-        fetcher->capas.done = true;
-    }
-
-    return e;
-}
-
-static derr_t send_login(fetcher_t *fetcher){
-    derr_t e = E_OK;
-
-    // take the login_cmd that's already been prepared
-    imap_cmd_arg_t arg = {.login=STEAL(ie_login_cmd_t, &fetcher->login.cmd)};
-
-    // finish constructing the imap command
-    size_t tag = ++fetcher->tag;
-    ie_dstr_t *tag_str = write_tag(&e, tag);
-    imap_cmd_t *cmd = imap_cmd_new(&e, tag_str, IMAP_CMD_LOGIN, arg);
-
-    // build the callback
-    fetcher_cb_t *fcb = fetcher_cb_new(&e, fetcher, tag_str, login_done, cmd);
-
-    // store the callback and send the command
-    send_cmd(&e, fetcher, cmd, fcb);
-
-    return e;
-}
-
 // handle untagged OK responses separately from other status type responses
 static derr_t untagged_ok(fetcher_t *fetcher, const ie_st_code_t *code,
         const dstr_t *text){
     derr_t e = E_OK;
-
-    // The very first message is treated specially
-    if(!fetcher->greet.seen){
-        fetcher->greet.seen = true;
-
-        // tell the sf_pair we need login creds
-        fetcher->cb->login_ready(fetcher->cb);
-        return e;
-    }
 
     // Handle responses where the status code is what defines the behavior
     if(code != NULL){
@@ -1311,26 +1242,6 @@ static derr_t advance_state(fetcher_t *fetcher){
 
     // read any incoming responses
     PROP(&e, handle_all_responses(fetcher) );
-
-    // wait for a greeting
-    if(!fetcher->greet.seen) return e;
-
-    // wait for a login command
-    if(!fetcher->login.done){
-        if(fetcher->login.cmd){
-            PROP(&e, send_login(fetcher) );
-        }
-        return e;
-    }
-
-    // get the capas from the server (if not provided at login time)
-    if(!fetcher->capas.done){
-        if(!fetcher->capas.sent){
-            fetcher->capas.sent = true;
-            PROP(&e, send_capas(fetcher) );
-        }
-        return e;
-    }
 
     // send the enable command
     if(!fetcher->enable.done){

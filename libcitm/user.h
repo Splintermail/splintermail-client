@@ -27,17 +27,9 @@ struct user_t {
     keypair_t *my_keypair;
 
     keyshare_t keyshare;
-    bool initial_keysync_complete;
 
     // logic for client-side 'new key' checks
     fpr_watcher_t fpr_watcher;
-
-    keysync_cb_i keysync_cb;
-    // a manager_i for the keysync_t
-    manager_i keysync_mgr;
-    keysync_t keysync;
-
-    refs_t refs;
 
     link_t sf_pairs;  // sf_pair_t->link
     size_t npairs;
@@ -45,9 +37,7 @@ struct user_t {
     bool canceled;
 };
 DEF_CONTAINER_OF(user_t, imaildir_hooks, imaildir_hooks_i)
-DEF_CONTAINER_OF(user_t, keysync_cb, keysync_cb_i)
 DEF_CONTAINER_OF(user_t, h, hash_elem_t)
-DEF_CONTAINER_OF(user_t, refs, refs_t)
 
 
 // makes a copy of name, pass
@@ -55,13 +45,6 @@ DEF_CONTAINER_OF(user_t, refs, refs_t)
 derr_t user_new(
     user_t **out,
     user_cb_i *cb,
-    imap_pipeline_t *p,
-    ssl_context_t *ctx_cli,
-    const char *remote_host,
-    const char *remote_svc,
-    engine_t *engine,
-    const dstr_t *name,
-    const dstr_t *pass,
     const string_builder_t *root
 );
 

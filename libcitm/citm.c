@@ -3,100 +3,134 @@
 
 #include "libcitm.h"
 
-static loop_t g_loop;
-static tlse_t g_tlse;
-static imape_t g_imape;
-static citme_t g_citme;
-
-
-typedef struct {
-    const char *remote_host;
-    const char *remote_svc;
-    imap_pipeline_t *pipeline;
-    citme_t *citme;
-    ssl_context_t *ctx_srv;
-    ssl_context_t *ctx_cli;
-    listener_spec_t lspec;
-} citm_lspec_t;
-DEF_CONTAINER_OF(citm_lspec_t, lspec, listener_spec_t)
-
-
-static derr_t conn_recvd(listener_spec_t *lspec, session_t **session){
+derr_t citm_init(citm_t *citm, citm_io_i *io, scheduler_i *scheduler){
     derr_t e = E_OK;
 
-    citm_lspec_t *l = CONTAINER_OF(lspec, citm_lspec_t, lspec);
+    *citm = (citm_t){ .io = io, .scheduler = scheduler };
 
-    sf_pair_t *sf_pair;
-    PROP(&e,
-        sf_pair_new(
-            &sf_pair,
-            &l->citme->sf_pair_cb,
-            &l->citme->engine,
-            l->remote_host,
-            l->remote_svc,
-            l->pipeline,
-            l->ctx_srv,
-            l->ctx_cli,
-            session
-        )
-    );
-
-    // append managed to the server_mgr's list
-    citme_add_sf_pair(l->citme, sf_pair);
-
-    // now it is safe to start the server
-    sf_pair_start(sf_pair);
-
-    return e;
-}
-
-
-
-static void free_pipeline(imap_pipeline_t *pipeline){
-    imape_free(pipeline->imape);
-    tlse_free(pipeline->tlse);
-    loop_free(pipeline->loop);
-}
-
-
-static derr_t build_pipeline(imap_pipeline_t *pipeline, citme_t *citme){
-    derr_t e = E_OK;
-
-    // set UV_THREADPOOL_SIZE
-    unsigned int nworkers = 2;
-    PROP(&e, set_uv_threadpool_size(nworkers + 3, nworkers + 7) );
-
-    // initialize loop
-    PROP(&e, loop_init(&g_loop, 5, 5, &g_tlse.engine) );
-
-    // intialize TLS engine
-    PROP_GO(&e,
-        tlse_init(&g_tlse, 5, 5, &g_loop.engine, &g_imape.engine),
-    fail);
-    PROP_GO(&e, tlse_add_to_loop(&g_tlse, &g_loop.uv_loop), fail);
-
-    // initialize IMAP engine
-    PROP_GO(&e,
-        imape_init(&g_imape, 5, &g_tlse.engine, &citme->engine),
-    fail);
-    PROP_GO(&e, imape_add_to_loop(&g_imape, &g_loop.uv_loop), fail);
-
-    PROP_GO(&e, citme_add_to_loop(citme, &g_loop.uv_loop), fail);
-
-    *pipeline = (imap_pipeline_t){
-        .loop=&g_loop,
-        .tlse=&g_tlse,
-        .imape=&g_imape,
-    };
+    PROP_GO(&e, hashmap_init(&citm->preusers), fail);
+    PROP_GO(&e, hashmap_init(&citm->users), fail);
 
     return e;
 
 fail:
-    DUMP(e);
-    DROP_VAR(&e);
-    LOG_ERROR("fatal error: failed to construct pipeline\n");
-    exit(1);
+    citm_free(citm);
+    return e;
 }
+
+void citm_free(citm_t *citm){
+    hashmap_free(&citm->preusers);
+    hashmap_free(&citm->users);
+    *citm = (citm_t){0};
+}
+
+void citm_cancel(citm_t *citm){
+    link_t *link;
+    hashmap_elem_t *elem;
+    hashmap_trav_t trav;
+    // cancel io_pairs
+    while((link = link_list_pop_first(&citm->io_pairs))){
+        io_pair_cancel(link);
+    }
+    // cancel anons
+    while((link = link_list_pop_first(&citm->anons))){
+        anon_cancel(link);
+    }
+    // cancel preusers
+    elem = hashmap_pop_iter(&trav, &citm->preusers)
+    while((elem = hashmap_pop_next(trav))){
+        preuser_cancel(elem);
+    }
+    // cancel users
+    elem = hashmap_pop_iter(&trav, &citm->users)
+    while((elem = hashmap_pop_next(trav))){
+        user_cancel(elem);
+    }
+}
+
+// completed preusers transition to new users
+static void citm_preuser_cb(
+    void *data,
+    dstr_t user,
+    link_t *servers,
+    link_t *clients,
+    keydir_i *kd,
+    imap_client_t *xkey_client
+){
+    citm_t *citm = data;
+    user_new(user, servers, clients, kd, xkey_client, &citm->users);
+}
+
+// completed anons attach to new or existing preuser, or an existing user
+static void citm_anon_cb(
+    void *data,
+    imap_server_t *imap_dn,
+    imap_client_t *imap_up,
+    dstr_t user,
+    dstr_t pass
+){
+    citm_t *citm = data;
+
+    // check for existing user
+    hash_elem_t *elem = hashmap_gets(&citm->users, &user);
+    if(elem){
+        // attach to existing user
+        user_add_pair(elem, imap_dn, imap_up);
+        dstr_free(&user);
+        dstr_free(&pass);
+        return;
+    }
+
+    // check for existing preuser
+    elem = hashmap_gets(&citm->preusers, &user);
+    if(elem){
+        // attach to existing preuser
+        preuser_add_pair(elem, imap_dn, imap_up);
+        dstr_free(&user);
+        dstr_free(&pass);
+        return;
+    }
+
+    // create a new preuser
+    keydir_t *kd;
+
+    derr_t e = E_OK;
+    IF_PROP(&e, keydir_new(&kd, ...) ){
+        imap_server_free(imap_dn);
+        imap_client_free(imap_up);
+        dstr_free(&user);
+        dstr_free(&pass);
+        return;
+    }
+
+    preuser_new(
+        &citm->io,
+        user,
+        pass,
+        kd,
+        imap_dn,
+        imap_up,
+        citm_preuser_cb,
+        citm,
+        &citm->preusers
+    );
+}
+
+// completed io_pairs become anon's until login is complete
+static void citm_io_pair_cb(
+    void *data, citm_conn_t *conn_dn, citm_conn_t *conn_up
+){
+    citm_t *citm = data;
+    anon_new(conn_dn, conn_up, citm_anon_cb, citm, &citm->anons);
+}
+
+// incoming connections become io_pairs until the upwards connection is made
+void citm_new_connection(citm_t *citm, citm_conn_t *conn){
+    io_pair_new(citm->io, conn, citm_io_pair_cb, citm, &citm->io_pairs);
+}
+
+////////////////
+
 
 
 static bool hard_exit = false;

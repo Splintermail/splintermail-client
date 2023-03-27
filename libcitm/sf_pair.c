@@ -38,11 +38,8 @@ void sf_pair_free(sf_pair_t **old){
     }
 
     // free state generated at runtime
-    ie_login_cmd_free(sf_pair->login_cmd);
     sf_pair_free_append(sf_pair);
     sf_pair_free_status(sf_pair);
-    dstr_free(&sf_pair->username);
-    dstr_free(&sf_pair->password);
 
     // TODO: it is possible that the server still has a wake_event_t in a queue!
     // I'm not sure quite how but I hit it once
@@ -254,57 +251,7 @@ static derr_t do_wakeup(sf_pair_t *sf_pair){
     derr_t e = E_OK;
 
     // what did we wake up for?
-    if(sf_pair->login_result){
-        sf_pair->login_result = false;
-        // request an owner
-        PROP(&e,
-            sf_pair->cb->request_owner(
-                sf_pair->cb,
-                sf_pair,
-                sf_pair->p,
-                sf_pair->ctx_cli,
-                sf_pair->remote_host,
-                sf_pair->remote_svc,
-                &sf_pair->username,
-                &sf_pair->password
-            )
-        );
-    }else if(sf_pair->login_cmd){
-        // save the username and password in case the login succeeds
-        PROP(&e,
-            dstr_copy(&sf_pair->login_cmd->user->dstr, &sf_pair->username)
-        );
-
-        PROP(&e,
-            dstr_copy(&sf_pair->login_cmd->pass->dstr, &sf_pair->password)
-        );
-
-        fetcher_login(
-            &sf_pair->fetcher, STEAL(ie_login_cmd_t, &sf_pair->login_cmd)
-        );
-    }else if(sf_pair->got_owner_resp){
-        sf_pair->got_owner_resp = false;
-
-        // register with the keyshare
-        PROP(&e,
-            keyshare_register(
-                sf_pair->keyshare, &sf_pair->key_listener, &sf_pair->keys
-            )
-        );
-        sf_pair->registered_with_keyshare = true;
-
-        // share the dirmgr with the server and the fetcher
-        fetcher_set_dirmgr(&sf_pair->fetcher, sf_pair->dirmgr);
-        server_set_dirmgr(&sf_pair->server, sf_pair->dirmgr);
-
-        /* at this point we have successfully:
-             - logged in on the fetcher_t
-             - created or selected a user_t
-             - the user_t's keyfetcher has synchronized the keyshare
-             - registered with the keyshare
-           and it is safe for the server_t to continue */
-        server_login_result(&sf_pair->server, true);
-    }else if(sf_pair->append.req){
+    if(sf_pair->append.req){
         PROP(&e, sf_pair_append_req(sf_pair) );
     }else if(sf_pair->append.resp){
         PROP(&e, sf_pair_append_resp(sf_pair) );
@@ -380,16 +327,6 @@ static void server_cb_release(server_cb_i *cb){
 
 
 // part of server_cb_i
-static void server_cb_login(server_cb_i *server_cb,
-        ie_login_cmd_t *login_cmd){
-    // printf("---- server_cb_login\n");
-    sf_pair_t *sf_pair = CONTAINER_OF(server_cb, sf_pair_t, server_cb);
-    // the copy of credentials can fail, so enqueue the work
-    sf_pair->login_cmd = login_cmd;
-    sf_pair_enqueue(sf_pair);
-}
-
-// part of server_cb_i
 static void server_cb_passthru_req(server_cb_i *server_cb,
         passthru_req_t *passthru_req){
     // printf("---- server_cb_passthru_req\n");
@@ -432,28 +369,6 @@ static void fetcher_cb_release(fetcher_cb_i *cb){
     sf_pair_t *sf_pair = CONTAINER_OF(cb, sf_pair_t, fetcher_cb);
     // ref down for the fetcher
     ref_dn(&sf_pair->refs);
-}
-
-// part of the fetcher_cb_i
-static void fetcher_cb_login_ready(fetcher_cb_i *fetcher_cb){
-    // printf("---- fetcher_cb_login_ready\n");
-    sf_pair_t *sf_pair = CONTAINER_OF(fetcher_cb, sf_pair_t, fetcher_cb);
-    server_allow_greeting(&sf_pair->server);
-}
-
-// part of the fetcher_cb_i
-static void fetcher_cb_login_result(fetcher_cb_i *fetcher_cb,
-        bool login_result){
-    // printf("---- fetcher_cb_login_result\n");
-    sf_pair_t *sf_pair = CONTAINER_OF(fetcher_cb, sf_pair_t, fetcher_cb);
-
-    if(login_result){
-        sf_pair->login_result = true;
-        sf_pair_enqueue(sf_pair);
-    }else{
-        // pass failures through immediately
-        server_login_result(&sf_pair->server, false);
-    }
 }
 
 // part of fetcher_cb_i
@@ -520,7 +435,6 @@ derr_t sf_pair_new(
         .server_cb = {
             .dying = server_cb_dying,
             .release = server_cb_release,
-            .login = server_cb_login,
             .passthru_req = server_cb_passthru_req,
             .select = server_cb_select,
             .unselect = server_cb_unselect,
@@ -528,8 +442,6 @@ derr_t sf_pair_new(
         .fetcher_cb = {
             .dying = fetcher_cb_dying,
             .release = fetcher_cb_release,
-            .login_ready = fetcher_cb_login_ready,
-            .login_result = fetcher_cb_login_result,
             .passthru_resp = fetcher_cb_passthru_resp,
             .select_result = fetcher_cb_select_result,
             .unselected = fetcher_cb_unselected,

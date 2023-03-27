@@ -5,16 +5,6 @@ typedef struct sf_pair_cb_i sf_pair_cb_i;
 
 // the interface the server/fetcher needs from its owner
 struct sf_pair_cb_i {
-    derr_t (*request_owner)(
-        sf_pair_cb_i*,
-        sf_pair_t *sf_pair,
-        imap_pipeline_t *p,
-        ssl_context_t *ctx_cli,
-        const char *remote_host,
-        const char *remote_svc,
-        const dstr_t *name,
-        const dstr_t *pass
-    );
     derr_t (*mailbox_synced)(
         sf_pair_cb_i*, sf_pair_t *sf_pair, const dstr_t mailbox
     );
@@ -31,19 +21,8 @@ struct sf_pair_t {
     // cb is constant, but *owner can change
     sf_pair_cb_i *cb;
     void *owner;
-    engine_t *engine;
-    // held to later pass to the request_owner() call
-    imap_pipeline_t *p;
-    ssl_context_t *ctx_cli;
-    const char *remote_host;
-    const char *remote_svc;
-
-    wake_event_t wake_ev;
-    bool enqueued;
 
     // wakeup reasons
-    bool login_result;
-    ie_login_cmd_t *login_cmd;
     bool got_owner_resp;
     struct {
         // req and resp correspond to different wakeup reasons
@@ -71,10 +50,7 @@ struct sf_pair_t {
     // callbacks for the fetcher
     fetcher_cb_i fetcher_cb;
 
-    // last attempted login credentials
-    dstr_t username;
-    dstr_t password;
-
+    // XXX: set in init
     dirmgr_t *dirmgr;
 
     // keys for encrypting new messages
@@ -83,17 +59,10 @@ struct sf_pair_t {
     key_listener_i key_listener;
     link_t keys;  // keypair_t->link
 
-    refs_t refs;
-    // TODO: why do I seem to need a separate refcount for child objects?
-    refs_t children;
-
     bool closed;
     link_t citme_link; // citme_t->sf_pairs
     link_t user_link; // user_t->sf_pairs
 };
-DEF_CONTAINER_OF(sf_pair_t, wake_ev, wake_event_t)
-DEF_CONTAINER_OF(sf_pair_t, refs, refs_t)
-DEF_CONTAINER_OF(sf_pair_t, children, refs_t)
 DEF_CONTAINER_OF(sf_pair_t, citme_link, link_t)
 DEF_CONTAINER_OF(sf_pair_t, user_link, link_t)
 DEF_CONTAINER_OF(sf_pair_t, server_cb, server_cb_i)
@@ -102,14 +71,7 @@ DEF_CONTAINER_OF(sf_pair_t, key_listener, key_listener_i)
 
 derr_t sf_pair_new(
     sf_pair_t **out,
-    sf_pair_cb_i *cb,
-    engine_t *engine,
-    const char *remote_host,
-    const char *remote_svc,
-    imap_pipeline_t *p,
-    ssl_context_t *ctx_srv,
-    ssl_context_t *ctx_cli,
-    session_t **session
+    sf_pair_cb_i *cb
 );
 
 void sf_pair_start(sf_pair_t *sf_pair);

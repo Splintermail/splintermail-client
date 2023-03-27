@@ -16,11 +16,6 @@ static void server_free_greet(server_t *server){
     server->greet.state = GREET_NONE;
 }
 
-static void server_free_login(server_t *server){
-    server->login.state = LOGIN_NONE;
-    ie_dstr_free(STEAL(ie_dstr_t, &server->login.tag));
-}
-
 static void server_free_passthru(server_t *server){
     server->passthru.state = PASSTHRU_NONE;
     passthru_resp_free(STEAL(passthru_resp_t, &server->passthru.resp));
@@ -67,7 +62,6 @@ void server_free(server_t *server){
     imap_session_free(&server->s);
 
     server_free_greet(server);
-    server_free_login(server);
     server_free_passthru(server);
     server_free_awaiting(server);
     server_free_select(server);
@@ -164,12 +158,6 @@ static void server_wakeup(wake_event_t *wake_ev){
 
 void server_allow_greeting(server_t *server){
     server->greet.state = GREET_READY;
-    server_enqueue(server);
-}
-
-void server_login_result(server_t *server, bool login_result){
-    server->login.state = LOGIN_DONE;
-    server->login.result = login_result;
     server_enqueue(server);
 }
 
@@ -634,22 +622,6 @@ static derr_t send_capas(server_t *server, const ie_dstr_t *tag){
 
     PROP(&e, send_ok(server, tag,
                 &DSTR_LIT("if you didn't know, now you know")) );
-
-    return e;
-}
-
-static derr_t login_cmd(server_t *server, const ie_dstr_t *tag,
-        const ie_login_cmd_t *login){
-    derr_t e = E_OK;
-
-    server->login.state = LOGIN_PENDING;
-    server->login.tag = ie_dstr_copy(&e, tag);
-
-    // report the login attempt to the sf_pair
-    ie_login_cmd_t *login_cmd_copy = ie_login_cmd_copy(&e, login);
-    CHECK(&e);
-
-    server->cb->login(server->cb, login_cmd_copy);
 
     return e;
 }
@@ -1131,15 +1103,10 @@ static derr_t handle_one_command(server_t *server, imap_cmd_t *cmd){
             break;
 
         case IMAP_CMD_AUTH:
-            PROP_GO(&e, send_bad(server, tag,
-                &DSTR_LIT("AUTH not supported, use LOGIN instead")), cu_cmd);
-            break;
-
         case IMAP_CMD_LOGIN:
-            PROP_GO(&e, assert_state(server, PREAUTH, tag, &state_ok), cu_cmd);
-            if(state_ok){
-                PROP_GO(&e, login_cmd(server, tag, arg->login), cu_cmd);
-            }
+            PROP_GO(&e,
+                send_bad(server, tag, &DSTR_LIT("already logged in")),
+            cu_cmd);
             break;
 
         // passthru commands
@@ -1324,46 +1291,12 @@ fail:
 
 // determine if we are allowed to handle new incoming commands
 static bool server_is_paused(server_t *server){
-    return server->greet.state
-        || server->login.state
-        || server->passthru.state
+    return server->passthru.state
         || server->await.tag
         || server->select.state
         || server->close.awaiting_dn
         || server->close.awaiting_fetcher
         || server->close.awaiting_send;
-}
-
-static derr_t do_work_greet(server_t *server, bool *noop){
-    derr_t e = E_OK;
-
-    if(server->greet.state < GREET_READY) return e;
-    server->greet.state = GREET_NONE;
-    *noop = false;
-
-    PROP(&e, send_greeting(server) );
-
-    return e;
-}
-
-static derr_t do_work_login(server_t *server, bool *noop){
-    derr_t e = E_OK;
-
-    if(server->login.state < LOGIN_DONE) return e;
-    server->login.state = LOGIN_NONE;
-    *noop = false;
-
-    const ie_dstr_t *tag = server->login.tag;
-    if(server->login.result){
-        server->imap_state = AUTHENTICATED;
-        PROP_GO(&e, send_ok(server, tag, &DSTR_LIT("logged in")), cu);
-    }else{
-        PROP_GO(&e, send_no(server, tag, &DSTR_LIT("dice, try again")), cu);
-    }
-
-cu:
-    server_free_login(server);
-    return e;
 }
 
 static derr_t do_work_passthru(server_t *server, bool *noop){
@@ -1495,8 +1428,6 @@ derr_t server_do_work(server_t *server, bool *noop){
     }
 
     // check on pause actions
-    PROP(&e, do_work_greet(server, noop) );
-    PROP(&e, do_work_login(server, noop) );
     PROP(&e, do_work_passthru(server, noop) );
     PROP(&e, do_work_select(server, noop) );
     PROP(&e, do_work_close(server, noop) );
