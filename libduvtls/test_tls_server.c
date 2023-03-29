@@ -13,17 +13,15 @@ size_t rbuf_len;
 size_t nreads = 0;
 size_t nwrites = 0;
 
-static void write_cb(stream_i *stream, stream_write_t *req, bool ok){
+static void write_cb(stream_i *stream, stream_write_t *req){
     (void)stream;
     (void)req;
-    (void)ok;
     nwrites++;
 }
 
-static void read_cb(stream_i *stream, stream_read_t *req, dstr_t buf, bool ok){
+static void read_cb(stream_i *stream, stream_read_t *req, dstr_t buf){
     (void)stream;
     (void)req;
-    (void)ok;
     nreads++;
     rbuf_len = buf.len;
 }

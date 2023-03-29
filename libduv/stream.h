@@ -17,17 +17,12 @@ typedef struct stream_write_t stream_write_t;
 struct wstream_write_t;
 typedef struct wstream_write_t wstream_write_t;
 
-// if ok==false, the stream is failing and an await_cb with an error is coming
-typedef void (*stream_read_cb)(
-    stream_i*, stream_read_t *req, dstr_t buf, bool ok
-);
-typedef void (*rstream_read_cb)(
-    rstream_i*, rstream_read_t *req, dstr_t buf, bool ok
-);
+// an empty buf means "EOF"
+typedef void (*stream_read_cb)(stream_i*, stream_read_t *req, dstr_t buf);
+typedef void (*rstream_read_cb)(rstream_i*, rstream_read_t *req, dstr_t buf);
 
-// if ok==false, the stream is failing and an await_cb with an error is coming
-typedef void (*stream_write_cb)(stream_i*, stream_write_t *req, bool ok);
-typedef void (*wstream_write_cb)(wstream_i*, wstream_write_t *req, bool ok);
+typedef void (*stream_write_cb)(stream_i*, stream_write_t *req);
+typedef void (*wstream_write_cb)(wstream_i*, wstream_write_t *req);
 
 // there is at most one shutdown cb, after the first call to stream->shutdown
 typedef void (*stream_shutdown_cb)(stream_i*);
@@ -39,10 +34,24 @@ typedef void (*wstream_shutdown_cb)(wstream_i*);
        encountered (e MUST be E_CANCELED)
      - an EOF read_cb and shutdown_cb have been sent, and the stream has
        finished freeing any associated resources without any error or
-       cancelation (e MUST be empty) */
-typedef void (*stream_await_cb)(stream_i*, derr_t e);
-typedef void (*rstream_await_cb)(rstream_i*, derr_t e);
-typedef void (*wstream_await_cb)(wstream_i*, derr_t e);
+       cancelation (e MUST be empty)
+
+   Whenever e is non-empty, reads and writes will contain unfinished reads and
+   writes.
+
+   Even when e is empty, reads and writes may be non-empty, if another stream
+   awaited and chose to collect the error rather than pass it along.
+
+   Note that it is supported for multiple entities to await, read, and write
+   on a stream.  Awaits are meant to be chained, and each await must be able
+   to distinguish its own reads and writes from other reads and writes (which
+   should be passed down the chain).  See stream_reads_filter().
+*/
+typedef void (*stream_await_cb)(
+    stream_i*, derr_t e, link_t *reads, link_t *writes
+);
+typedef void (*rstream_await_cb)(rstream_i*, derr_t e, link_t *reads);
+typedef void (*wstream_await_cb)(wstream_i*, derr_t e, link_t *writes);
 
 /* all stream_i implementations must use the stream_read_t and the
    stream_write_t.  It is intended that, if any stream needs additional
@@ -105,16 +114,7 @@ struct stream_i {
     // read-only: set just before the await_cb
     bool awaited : 1;
 
-    /* returns false if eof, canceled, or awaited is set, or if the stream was
-       never readable */
-    bool (*readable)(stream_i*);
-
-    /* returns false if shutdown, closed, or awaited is set, or
-       if the stream was never writable */
-    bool (*writable)(stream_i*);
-
-    /* MUST return false if stream is non-readable or buf is empty, otherwise
-       MUST return true and guarantee one call to the cb */
+    // MUST return false IFF stream is eof/canceled/awaited or buf is empty
     bool (*read)(
         stream_i*,
         stream_read_t*,
@@ -122,8 +122,8 @@ struct stream_i {
         stream_read_cb cb
     );
 
-    /* MUST return false if stream is non-writable or bufs are empty, otherwise
-       MUST return true and guarantee one call to the cb */
+    /* MUST return false IFF stream is shutdown/canceled/awaited or bufs are
+       empty */
     bool (*write)(
         stream_i*,
         stream_write_t*,
@@ -192,7 +192,6 @@ struct rstream_i {
     bool eof : 1;
     bool awaited : 1;
     //
-    bool (*readable)(rstream_i*);
     bool (*read)(
         rstream_i*,
         rstream_read_t*,
@@ -212,7 +211,6 @@ struct wstream_i {
     bool is_shutdown : 1;
     bool awaited : 1;
     //
-    bool (*writable)(wstream_i*);
     bool (*write)(
         wstream_i*,
         wstream_write_t*,
@@ -234,9 +232,6 @@ struct wstream_i {
         if((s)->awaited) LOG_FATAL("read after await_cb\n"); \
         if((s)->canceled) LOG_FATAL("read after cancel\n"); \
         if((s)->eof) LOG_FATAL("read after eof\n"); \
-        if(!(s)->readable((s))){ \
-            LOG_FATAL("read on non-readable stream\n"); \
-        } \
         LOG_FATAL("read failed but should not have\n"); \
     } \
 } while(0)
@@ -251,9 +246,6 @@ struct wstream_i {
         if((s)->awaited) LOG_FATAL("write after await_cb\n"); \
         if((s)->canceled) LOG_FATAL("write after cancel\n"); \
         if((s)->is_shutdown) LOG_FATAL("write after shutdown\n"); \
-        if(!(s)->writable((s))){ \
-            LOG_FATAL("write on non-writable stream\n"); \
-        } \
         LOG_FATAL("write failed but should not have\n"); \
     } \
 } while(0)
@@ -298,12 +290,6 @@ struct wstream_i {
         } \
     } \
 } while(0)
-
-bool stream_default_readable(stream_i *stream);
-bool rstream_default_readable(rstream_i *stream);
-
-bool stream_default_writable(stream_i *stream);
-bool wstream_default_writable(wstream_i *stream);
 
 #define stream_read_checks(s, buf)( \
     buf.data \
@@ -350,3 +336,10 @@ void wstream_write_free(wstream_write_t *req);
 // returns either req->arraybufs or req->heapbufs, based on req->nbufs
 dstr_t *get_bufs_ptr(stream_write_t *req);
 dstr_t *wget_bufs_ptr(wstream_write_t *req);
+
+// select stream_read_t's from a list based on their read_cb member
+void stream_reads_filter(link_t *in, link_t *out, stream_read_cb cb);
+void rstream_reads_filter(link_t *in, link_t *out, rstream_read_cb cb);
+// select stream_write_t's from a list based on their write_cb member
+void stream_writes_filter(link_t *in, link_t *out, stream_write_cb cb);
+void wstream_writes_filter(link_t *in, link_t *out, wstream_write_cb cb);

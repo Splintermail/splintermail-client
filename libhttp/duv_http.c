@@ -143,7 +143,9 @@ fail:
     return e;
 }
 
-static void http_await_cb(stream_i *stream, derr_t e){
+static void http_await_cb(
+    stream_i *stream, derr_t e, link_t *reads, link_t *writes
+){
     duv_http_t *h = stream->data;
 
     h->mem.stream = NULL;
@@ -155,6 +157,14 @@ static void http_await_cb(stream_i *stream, derr_t e){
         LOG_ERROR("http discarding stream error:\n");
         DUMP(e);
         DROP_VAR(&e);
+    }
+
+    // http never reads or writes, and req always cleans up after itself
+    if(!link_list_isempty(reads)){
+        LOG_FATAL("http_await_cb had unfinished reads\n");
+    }
+    if(!link_list_isempty(writes)){
+        LOG_FATAL("http_await_cb had unfinished writes\n");
     }
 
     http_schedule(h);
@@ -191,18 +201,19 @@ static void req_schedule(duv_http_req_t *req){
 }
 
 static bool req_failing(duv_http_req_t *req){
-    return
-        is_error(req->e)
-        || req->iface.canceled
-        // if we have a base, then we ignore wire failures
-        || (!req->base && req->wire_failing)
-        || req->base_failing
-    ;
+    return is_error(req->e) || req->iface.canceled;
 }
 
-static void req_stream_await_cb(stream_i *stream, derr_t e){
+static void req_stream_await_cb(
+    stream_i *stream, derr_t e, link_t *reads, link_t *writes
+){
     duv_http_req_t *req = stream->data;
     http_mem_t *m = req->mem;
+
+    // we only read and write from static memory
+    (void)reads;
+    (void)writes;
+    req->writing = false;
 
     m->stream = NULL;
 
@@ -254,12 +265,16 @@ done:
 }
 
 
-static void req_base_await_cb(rstream_i *rstream, derr_t e){
+static void req_base_await_cb(rstream_i *rstream, derr_t e, link_t *reads){
     duv_http_req_t *req = rstream->data;
 
     // only we cancel the base
     DROP_CANCELED_VAR(&e);
     KEEP_FIRST_IF_NOT_CANCELED_VAR(&req->e, &e);
+
+    // unfinished reads go back to pending reads
+    link_list_prepend_list(&req->reads, reads);
+    req->reading = false;
 
     req_advance_state(req);
 }
@@ -314,7 +329,7 @@ done:
 
 // a read off the wire, which should contain header content
 static void req_read_cb_hdrs(
-    stream_i *stream, stream_read_t *read, dstr_t buf, bool ok
+    stream_i *stream, stream_read_t *read, dstr_t buf
 ){
     (void)read;
     duv_http_req_t *req = stream->data;
@@ -323,11 +338,7 @@ static void req_read_cb_hdrs(
     req->reading = false;
     m->read_buf.len += buf.len;
 
-    if(!ok){
-        req->wire_failing = true;
-        // don't scheudule, just wait for the error to come
-        return;
-    }else if(buf.len == 0){
+    if(buf.len == 0){
         // eof-before-eoh is definitely not allowed
         ORIG_GO(&req->e, E_RESPONSE, "eof before end of headers", done);
     }
@@ -338,22 +349,17 @@ done:
 
 // a read off our configured rstream, which should contain body content
 static void req_read_cb_body(
-    rstream_i *rstream, rstream_read_t *read, dstr_t buf, bool ok
+    rstream_i *rstream, rstream_read_t *read, dstr_t buf
 ){
     duv_http_req_t *req = rstream->data;
 
     req->reading = false;
 
-    if(!ok){
-        req->base_failing = true;
-    }else if(buf.len == 0){
+    if(buf.len == 0){
         req->iface.eof = true;
     }
 
-    // decide if we are ok
-    ok = !req_failing(req);
-    if(!ok) buf.len = 0;
-    req->original_read_cb(&req->iface, read, buf, ok);
+    req->original_read_cb(&req->iface, read, buf);
     // no point in checking if we were canceled since we go to advance_state
 
     req_advance_state(req);
@@ -517,13 +523,10 @@ static bool chunked_try_detach(chunked_rstream_t *c){
     return try_detach(req);
 }
 
-static void write_cb(stream_i *stream, stream_write_t *write, bool ok){
+static void write_cb(stream_i *stream, stream_write_t *write){
     (void)write;
     duv_http_req_t *req = stream->data;
     req->writing = false;
-    if(!ok){
-        req->wire_failing = true;
-    }
     req_advance_state(req);
 }
 
@@ -786,7 +789,8 @@ static void req_advance_state(duv_http_req_t *req){
             break;
         }
         // respond eof to remaining reads
-        read->cb(&req->iface, read, read->buf, true);
+        read->buf.len = 0;
+        read->cb(&req->iface, read, read->buf);
         if(req_failing(req)) goto failing;
     }
 
@@ -816,8 +820,10 @@ static void req_advance_state(duv_http_req_t *req){
     if(!req->await_cb) return;
 
     schedulable_cancel(&req->schedulable);
+    link_t reads = {0};
+    link_list_append_list(&reads, &req->reads);
     req->iface.awaited = true;
-    req->await_cb(&req->iface, E_OK);
+    req->await_cb(&req->iface, E_OK, &reads);
     return;
 
 failing:
@@ -849,8 +855,10 @@ failing:
     // give the error to the user's await_cb
     if(!is_error(req->e) && req->iface.canceled) req->e.type = E_CANCELED;
     schedulable_cancel(&req->schedulable);
+    link_t reads2 = {0};
+    link_list_append_list(&reads2, &req->reads);
     req->iface.awaited = true;
-    req->await_cb(&req->iface, req->e);
+    req->await_cb(&req->iface, req->e, &reads2);
 }
 
 // rstream interface
@@ -912,7 +920,6 @@ rstream_i *duv_http_req(
             // preserve data
             .data = req->iface.data,
             .wrapper_data = req->iface.wrapper_data,
-            .readable = rstream_default_readable,
             .read = req_read,
             .cancel = req_rstream_cancel,
             .await = req_await,

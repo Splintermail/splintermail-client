@@ -12,7 +12,7 @@ static void schedule(borrow_rstream_t *b){
 }
 
 static bool failing(borrow_rstream_t *b){
-    return b->iface.canceled || b->base_failing || is_error(b->e);
+    return b->iface.canceled || is_error(b->e);
 }
 
 static bool closing(borrow_rstream_t *b){
@@ -20,16 +20,14 @@ static bool closing(borrow_rstream_t *b){
 }
 
 static void read_cb(
-    stream_i *base, stream_read_t *sread, dstr_t buf, bool ok
+    stream_i *base, stream_read_t *sread, dstr_t buf
 ){
     borrow_rstream_t *b = base->wrapper_data;
     (void)sread;
 
     b->reading = false;
 
-    if(!ok){
-        b->base_failing = true;
-    }else if(buf.len == 0){
+    if(buf.len == 0){
         b->iface.eof = true;
         /* cancel the base after an EOF, since there's no point writing more
            any more HTTP requests if we can't get any more responses */
@@ -40,19 +38,22 @@ static void read_cb(
     }
 
     b->rread->buf = buf;
-    b->rread->cb(&b->iface, b->rread, buf, ok);
+    b->rread->cb(&b->iface, b->rread, buf);
 
     advance_state(b);
 }
 
-static void await_cb(stream_i *base, derr_t e){
+static void await_cb(stream_i *base, derr_t e, link_t *reads, link_t *writes){
     borrow_rstream_t *b = base->wrapper_data;
     // only we are allowed to cancel the base
     if(b->base_canceled) DROP_CANCELED_VAR(&e);
     UPGRADE_CANCELED_VAR(&e, E_INTERNAL);
     KEEP_FIRST_IF_NOT_CANCELED_VAR(&b->e, &e);
-    b->base_failing = true;
-    if(b->original_await_cb) b->original_await_cb(b->base, E_OK);
+    if(b->original_await_cb){
+        link_t ours = {0};
+        stream_reads_filter(reads, &ours, read_cb);
+        b->original_await_cb(b->base, E_OK, reads, writes);
+    }
     advance_state(b);
 }
 
@@ -75,13 +76,6 @@ closing:
     // wait for our read to return
     if(b->reading) return;
 
-    // return any pending reads
-    while((link = link_list_pop_first(&b->reads))){
-        rstream_read_t *rread = CONTAINER_OF(link, rstream_read_t, link);
-        rread->buf.len = 0;
-        rread->cb(&b->iface, rread, rread->buf, !failing(b));
-    }
-
     // await base
     if(!b->base->awaited) return;
 
@@ -94,7 +88,9 @@ closing:
     if(!is_error(b->e)){
         if(b->iface.canceled) b->e.type = E_CANCELED;
     }
-    b->await_cb(&b->iface, b->e);
+    link_t reads = {0};
+    link_list_append_list(&reads, &b->reads);
+    b->await_cb(&b->iface, b->e, &reads);
 }
 
 // interface
@@ -139,7 +135,6 @@ rstream_i *borrow_rstream(
             // preserve data
             .data = b->iface.data,
             .wrapper_data = b->iface.wrapper_data,
-            .readable = rstream_default_readable,
             .read = borrow_read,
             .cancel = borrow_cancel,
             .await = borrow_await,

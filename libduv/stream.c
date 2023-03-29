@@ -4,21 +4,6 @@
 #include <string.h>
 
 
-bool stream_default_readable(stream_i *stream){
-    return !stream->awaited && !stream->canceled && !stream->eof;
-}
-bool rstream_default_readable(rstream_i *stream){
-    return !stream->awaited && !stream->canceled && !stream->eof;
-}
-
-bool stream_default_writable(stream_i *stream){
-    return !stream->awaited && !stream->canceled && !stream->is_shutdown;
-}
-
-bool wstream_default_writable(wstream_i *stream){
-    return !stream->awaited && !stream->canceled && !stream->is_shutdown;
-}
-
 void stream_read_prep(stream_read_t *req, dstr_t buf, stream_read_cb cb){
     buf.len = 0;
     *req = (stream_read_t){
@@ -129,4 +114,40 @@ dstr_t *get_bufs_ptr(stream_write_t *req){
 }
 dstr_t *wget_bufs_ptr(wstream_write_t *req){
     return need_heapbufs(req->nbufs) ? req->heapbufs : req->arraybufs;
+}
+
+// select stream_read_t's from a list based on their read_cb member
+void stream_reads_filter(link_t *in, link_t *out, stream_read_cb cb){
+    stream_read_t *x, *temp;
+    LINK_FOR_EACH_SAFE(x, temp, in, stream_read_t, link){
+        if(x->cb != cb) continue;
+        link_remove(&x->link);
+        link_list_append(out, &x->link);
+    }
+}
+void rstream_reads_filter(link_t *in, link_t *out, rstream_read_cb cb){
+    rstream_read_t *x, *temp;
+    LINK_FOR_EACH_SAFE(x, temp, in, rstream_read_t, link){
+        if(x->cb != cb) continue;
+        link_remove(&x->link);
+        link_list_append(out, &x->link);
+    }
+}
+
+// select stream_write_t's from a list based on their write_cb member
+void stream_writes_filter(link_t *in, link_t *out, stream_write_cb cb){
+    stream_write_t *x, *temp;
+    LINK_FOR_EACH_SAFE(x, temp, in, stream_write_t, link){
+        if(x->cb != cb) continue;
+        link_remove(&x->link);
+        link_list_append(out, &x->link);
+    }
+}
+void wstream_writes_filter(link_t *in, link_t *out, wstream_write_cb cb){
+    wstream_write_t *x, *temp;
+    LINK_FOR_EACH_SAFE(x, temp, in, wstream_write_t, link){
+        if(x->cb != cb) continue;
+        link_remove(&x->link);
+        link_list_append(out, &x->link);
+    }
 }

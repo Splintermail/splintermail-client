@@ -12,15 +12,14 @@ static bool r_awaited = false;
 static size_t cb_order = 0;
 
 #define DEF_READ_CB(name, order, text, exp_ok) \
-    static void name( \
-        rstream_i *r, rstream_read_t *read, dstr_t buf, bool ok \
-    ){ \
+    static void name(rstream_i *r, rstream_read_t *read, dstr_t buf){ \
         (void)r; \
         (void)read; \
         DSTR_STATIC(exp, text); \
         EXPECT_U_GO(&E, #name ":order", cb_order++, order, fail); \
-        EXPECT_B_GO(&E, #name ":ok", ok, exp_ok, fail); \
         EXPECT_D_GO(&E, #name ":buf", &buf, &exp, fail); \
+        /* when exp_ok is false fail if we are called at all */ \
+        EXPECT_B_GO(&E, #name ":never_cb", exp_ok, true, fail); \
     fail: \
         return; \
     }
@@ -39,14 +38,16 @@ DEF_READ_CB(read_cb4b, 9,  "",   false)
 DEF_READ_CB(read_cb5b, 10, "",   false)
 DEF_READ_CB(read_cb6b, 11, "",   false)
 
-static void await_cb_r2_a(rstream_i *r, derr_t e){
+static void await_cb_r2_a(rstream_i *r, derr_t e, link_t *reads){
     (void)r;
+    (void)reads;
     r2_awaited = true;
     MERGE_VAR(&E, &e, "await_cb_r2");
 }
 
-static void await_cb_a(rstream_i *r, derr_t e){
+static void await_cb_a(rstream_i *r, derr_t e, link_t *reads){
     (void)r;
+    (void)reads;
     // r2 must already have been awaited
     if(!r2_awaited){
         TRACE_ORIG(&E, E_VALUE, "r2 not yet awaited");
@@ -55,15 +56,17 @@ static void await_cb_a(rstream_i *r, derr_t e){
     MERGE_VAR(&E, &e, "await_cb");
 }
 
-static void await_cb_r2_b(rstream_i *r, derr_t e){
+static void await_cb_r2_b(rstream_i *r, derr_t e, link_t *reads){
     // even when we cancel r2, concat should intercept the error
     (void)r;
+    (void)reads;
     r2_awaited = true;
     MERGE_VAR(&E, &e, "await_cb_r2");
 }
 
-static void await_cb_b(rstream_i *r, derr_t e){
+static void await_cb_b(rstream_i *r, derr_t e, link_t *reads){
     (void)r;
+    (void)reads;
     // r2 must already have been awaited
     if(!r2_awaited){
         TRACE_ORIG(&E, E_VALUE, "r2 not yet awaited");
@@ -151,6 +154,7 @@ static derr_t test_concat(void){
     CHECK(&e);
     if(!R->awaited) ORIG(&e, E_VALUE, "R not marked as awaited");
     if(!r_awaited) ORIG(&e, E_VALUE, "R not actually awaited");
+    EXPECT_U(&e, "total callback count", cb_order, 6);
 
     return e;
 }

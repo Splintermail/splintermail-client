@@ -151,7 +151,6 @@ struct duv_http_req_t {
     bool reading : 1;
     bool writing : 1;
     bool have_eoh : 1;
-    bool base_failing : 1;
     bool wire_failing : 1;
     bool completed : 1;
 

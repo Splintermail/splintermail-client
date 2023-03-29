@@ -200,7 +200,9 @@ static void finish(void){
     if(stream) stream->cancel(stream);
 }
 
-static void await_cb_phase6(stream_i *s, derr_t e){
+static void await_cb_phase6(
+    stream_i *s, derr_t e, link_t *reads, link_t *writes
+){
     (void)s;
     // prefer any existing error
     if(is_error(E)){
@@ -211,6 +213,13 @@ static void await_cb_phase6(stream_i *s, derr_t e){
 
     if(!expect_exit){
         ORIG_GO(&E, E_VALUE, "unexpected exit", fail);
+    }
+
+    if(!link_list_isempty(reads)){
+        ORIG_GO(&E, E_VALUE, "unfinished reads", fail);
+    }
+    if(!link_list_isempty(writes)){
+        ORIG_GO(&E, E_VALUE, "unfinished writes", fail);
     }
 
     // SUCCESS!
@@ -224,13 +233,10 @@ fail:
     return;
 }
 
-static void read_cb_phase6(
-    stream_i *s, stream_read_t *req, dstr_t buf, bool ok
-){
+static void read_cb_phase6(stream_i *s, stream_read_t *req, dstr_t buf){
     (void)s;
     (void)req;
 
-    if(!ok) ORIG_GO(&E, E_VALUE, "read_cb_phase6 not ok", fail);
     if(buf.len) ORIG_GO(&E, E_VALUE, "read_cb_phase6 got data", fail);
 
     // now we expect await_cb since we are shutdown
@@ -301,7 +307,9 @@ fail:
     return;
 }
 
-static void await_cb_phase5(stream_i *s, derr_t e){
+static void await_cb_phase5(
+    stream_i *s, derr_t e, link_t *reads, link_t *writes
+){
     (void)s;
     // prefer any existing error
     if(is_error(E)){
@@ -319,6 +327,13 @@ static void await_cb_phase5(stream_i *s, derr_t e){
         ORIG_GO(&E, E_VALUE, "unexpected exit", fail);
     }
 
+    if(!link_list_isempty(reads)){
+        ORIG_GO(&E, E_VALUE, "unfinished reads", fail);
+    }
+    if(!link_list_isempty(writes)){
+        ORIG_GO(&E, E_VALUE, "unfinished writes", fail);
+    }
+
     // reset globals
     stream = NULL;
     expect_exit = false;
@@ -332,23 +347,19 @@ fail:
     return;
 }
 
-static void never_read_cb(
-    stream_i *s, stream_read_t *req, dstr_t buf, bool ok
-){
+static void never_read_cb(stream_i *s, stream_read_t *req, dstr_t buf){
     (void)s;
     (void)req;
     (void)buf;
-    (void)ok;
     TRACE(&E, "never_read_cb\n");
     ORIG_GO(&E, E_VALUE, "never_read_cb error", fail);
 fail:
     finish();
 }
 
-static void never_write_cb(stream_i *s, stream_write_t *req, bool ok){
+static void never_write_cb(stream_i *s, stream_write_t *req){
     (void)s;
     (void)req;
-    (void)ok;
     ORIG_GO(&E, E_VALUE, "never_write_cb called", fail);
 fail:
     finish();
@@ -371,7 +382,7 @@ static void phase5(void){
         ORIG_GO(&E, E_VALUE, "awaited set right after close", fail);
     }
 
-    // read should abort
+    // read should fail
     dstr_t rbuf = (dstr_t){
         .data = readmem, .len = 1, .size = 1, .fixed_size = true
     };
@@ -379,7 +390,7 @@ static void phase5(void){
         ORIG_GO(&E, E_VALUE, "read ok after close", fail);
     }
 
-    // write should abort
+    // write should fail
     DSTR_STATIC(wbuf, "x");
     if(stream->write(stream, &writes[0], &wbuf, 1, never_write_cb)){
         ORIG_GO(&E, E_VALUE, "write ok after close", fail);
@@ -397,19 +408,11 @@ fail:
     finish();
 }
 
-static void read_cb_phase4(
-    stream_i *s, stream_read_t *req, dstr_t buf, bool ok
-){
+static void read_cb_phase4(stream_i *s, stream_read_t *req, dstr_t buf){
     (void)s;
     (void)req;
 
-    if(!ok) ORIG_GO(&E, E_VALUE, "read_cb_phase4 not ok", fail);
     if(buf.len) ORIG_GO(&E, E_VALUE, "read_cb_phase4 got data", fail);
-
-    // stream is no longer readable
-    if(stream->readable(stream)){
-        ORIG_GO(&E, E_VALUE, "stream readable after EOF", fail);
-    }
 
     // read should abort
     dstr_t rbuf = (dstr_t){
@@ -443,20 +446,10 @@ static void shutdown_cb(stream_i *s){
 }
 
 static void phase3(void){
-    // stream still writable
-    if(!stream->writable(stream)){
-        ORIG_GO(&E, E_VALUE, "stream not writable before shutdown", fail);
-    }
-
     stream->shutdown(stream, shutdown_cb);
 
     if(!stream->is_shutdown){
         ORIG_GO(&E, E_VALUE, "is_shutdown not set", fail);
-    }
-
-    // stream no longer writable
-    if(stream->writable(stream)){
-        ORIG_GO(&E, E_VALUE, "stream still writable after shutdown", fail);
     }
 
     // write should abort
@@ -475,12 +468,9 @@ fail:
     finish();
 }
 
-static void read_cb_phase2(
-    stream_i *s, stream_read_t *req, dstr_t buf, bool ok
-){
+static void read_cb_phase2(stream_i *s, stream_read_t *req, dstr_t buf){
     (void)s;
     (void)req;
-    if(!ok) ORIG_GO(&E, E_VALUE, "phase2 read_cb not ok", fail);
     if(!buf.len) ORIG_GO(&E, E_VALUE, "phase2 read_cb eof", fail);
 
     if(buf.len != 1){
@@ -535,14 +525,9 @@ fail:
     finish();
 }
 
-static void write_cb(stream_i *s, stream_write_t *req, bool ok){
+static void write_cb(stream_i *s, stream_write_t *req){
     (void)s;
     (void)req;
-    if(!ok) ORIG_GO(&E, E_VALUE, "write_cb not ok", fail);
-    return;
-
-fail:
-    finish();
 }
 
 static void on_connect_phase1(duv_connect_t *c, derr_t e){

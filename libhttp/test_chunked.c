@@ -28,24 +28,25 @@ typedef struct {
     bool r_eof;
 } test_reader_t;
 
-static void base_await_cb(rstream_i *_base, derr_t e){
+static void base_await_cb(rstream_i *_base, derr_t e, link_t *reads){
     test_reader_t *tr = _base->data;
     tr->base_awaited = true;
     if(is_error(e)){
         TRACE_PROP_VAR(&tr->e, &e);
     }
+    if(!link_list_isempty(reads)){
+        TRACE_ORIG(&e, E_VALUE, "unfinished reads");
+    }
 }
 
-static void read_cb(rstream_i *r, rstream_read_t *read, dstr_t buf, bool ok){
+static void read_cb(rstream_i *r, rstream_read_t *read, dstr_t buf){
     test_reader_t *tr = r->data;
 
     if(!buf.len){
-        if(ok){
-            // eof
-            tr->r_eof = true;
-            // we should have all headers by now
-            EXPECT_U_GO(&tr->e, "nhdrs", tr->nhdrs, tr->exp_nhdrs, done);
-        }
+        // eof
+        tr->r_eof = true;
+        // we should have all headers by now
+        EXPECT_U_GO(&tr->e, "nhdrs", tr->nhdrs, tr->exp_nhdrs, done);
         return;
     }
 
@@ -81,13 +82,16 @@ done:
     return;
 }
 
-static void await_cb(rstream_i *r, derr_t e){
+static void await_cb(rstream_i *r, derr_t e, link_t *reads){
     test_reader_t *tr = r->data;
     tr->r_awaited = true;
     if(is_error(e)){
         PROP_VAR_GO(&tr->e, &e, done);
     }else if(!tr->r_eof){
         ORIG_GO(&tr->e, E_VALUE, "await_cb(E_OK) without eof", done);
+    }
+    if(!link_list_isempty(reads)){
+        TRACE_ORIG(&e, E_VALUE, "unfinished reads");
     }
 
 done:
@@ -169,8 +173,6 @@ static derr_t _do_test(
     }
 
     EXPECT_D(&e, "body", &body, &exp_body);
-
-    // the chunked reader should never hit an eof because
 
     return e;
 }

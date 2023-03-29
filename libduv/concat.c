@@ -1,8 +1,11 @@
 #include "libduv/libduv.h"
 
 static void advance_state(rstream_concat_t *c);
+static void read_cb(
+    rstream_i *base, rstream_read_t *read, dstr_t buf
+);
 
-static void await_cb(rstream_i *base, derr_t e){
+static void await_cb(rstream_i *base, derr_t e, link_t *reads){
     concat_base_wrapper_t *w = base->wrapper_data;
     rstream_concat_t *c = w->c;
     if(!c->bases_canceled[w->idx]){
@@ -13,13 +16,23 @@ static void await_cb(rstream_i *base, derr_t e){
     c->nawaited++;
     // don't assume we are safe to close this one later
     c->bases_canceled[w->idx] = true;
-    // call its original await cb
-    if(c->base_await_cbs[w->idx]) c->base_await_cbs[w->idx](base, E_OK);
+    // capture any unfinished reads of ours
+    link_t ours = {0};
+    link_init(&ours);
+    rstream_reads_filter(reads, &ours, read_cb);
+    /* we only keep one read in flight, so if it was on this stream, we are
+       no longer reading */
+    if(!link_list_isempty(&ours)) c->reading = false;
+    link_list_prepend_list(&c->reads, &ours);
+    // call its original await cb with any reamining unfinished reads
+    if(c->base_await_cbs[w->idx]){
+        c->base_await_cbs[w->idx](base, E_OK, reads);
+    }
     advance_state(c);
 }
 
 static bool failing(rstream_concat_t *c){
-    return is_error(c->e) || c->base_failing || c->iface.canceled;
+    return is_error(c->e) || c->iface.canceled;
 }
 
 static bool closing(rstream_concat_t *c){
@@ -44,17 +57,17 @@ static void cancel_bases(rstream_concat_t *c){
     }
 }
 
-static void drain_reads(rstream_concat_t *c, link_t *list){
+static void respond_all_eof(rstream_concat_t *c, link_t *list){
     link_t *link;
     while((link = link_list_pop_first(list))){
         rstream_read_t *read = CONTAINER_OF(link, rstream_read_t, link);
         read->buf.len = 0;
-        read->cb(&c->iface, read, read->buf, !failing(c));
+        read->cb(&c->iface, read, read->buf);
     }
 }
 
 static void read_cb(
-    rstream_i *base, rstream_read_t *read, dstr_t buf, bool ok
+    rstream_i *base, rstream_read_t *read, dstr_t buf
 ){
     concat_base_wrapper_t *w = base->wrapper_data;
     rstream_concat_t *c = w->c;
@@ -62,9 +75,7 @@ static void read_cb(
     c->returned = read;
     c->reading = false;
 
-    if(!ok){
-        c->base_failing = true;
-    }else if(buf.len == 0){
+    if(buf.len == 0){
         c->base_eof = true;
     }
 
@@ -88,7 +99,7 @@ static void advance_state(rstream_concat_t *c){
     // detect out-of-bases
     if(c->base_idx == c->nbases){
         c->iface.eof = true;
-        drain_reads(c, &c->reads);
+        respond_all_eof(c, &c->reads);
         goto closing;
     }
 
@@ -96,7 +107,7 @@ static void advance_state(rstream_concat_t *c){
     if(c->returned){
         rstream_read_t *read = c->returned;
         c->returned = NULL;
-        read->cb(&c->iface, read, read->buf, true);
+        read->cb(&c->iface, read, read->buf);
         // check if user closed us
         if(closing(c)) goto closing;
     }
@@ -123,7 +134,6 @@ closing:
         link_list_prepend_list(&c->reads, &c->returned->link);
         c->returned = NULL;
     }
-    drain_reads(c, &c->reads);
 
     // await all bases
     if(c->nawaited < c->nbases) return;
@@ -135,7 +145,9 @@ closing:
     schedulable_cancel(&c->schedulable);
     if(!is_error(c->e) && c->iface.canceled) c->e.type = E_CANCELED;
     // call user's await_cb
-    c->await_cb(&c->iface, c->e);
+    link_t reads = {0};
+    link_list_append_list(&reads,  &c->reads);
+    c->await_cb(&c->iface, c->e, &reads);
 }
 
 static bool concat_read(
@@ -192,7 +204,6 @@ rstream_i *_rstream_concat(
             // preserve data
             .data = c->iface.data,
             .wrapper_data = c->iface.wrapper_data,
-            .readable = rstream_default_readable,
             .read = concat_read,
             .cancel = concat_cancel,
             .await = concat_await,

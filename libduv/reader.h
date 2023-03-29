@@ -9,7 +9,6 @@ struct stream_reader_t {
     dstr_t *out;
     derr_t e;
     bool done : 1;
-    bool read_failure : 1;
     bool canceled : 1;
     stream_reader_cb cb;
     rstream_read_t read;

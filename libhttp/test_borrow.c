@@ -7,37 +7,33 @@
 static derr_t E = {0};
 static bool finished = false;
 
-static void write_cb(stream_i *stream, stream_write_t *write, bool ok){
+static void write_cb(stream_i *stream, stream_write_t *write){
     (void)stream;
     (void)write;
-    (void)ok;
 }
 
-static void await_cb(rstream_i *rstream, derr_t e){
+static void await_cb(rstream_i *rstream, derr_t e, link_t *reads){
     (void)rstream;
     KEEP_FIRST_IF_NOT_CANCELED_VAR(&E, &e);
     finished = true;
+    if(!link_list_isempty(reads)){
+        TRACE_ORIG(&E, E_VALUE, "unfinished reads");
+    }
 }
 
-static void read_cb3(
-    rstream_i *rstream, rstream_read_t *read, dstr_t buf, bool ok
-){
+static void read_cb3(rstream_i *rstream, rstream_read_t *read, dstr_t buf){
     (void)read;
     // expect eof
     EXPECT_D_GO(&E, "buf", &buf, &DSTR_LIT(""), fail);
-    EXPECT_B_GO(&E, "ok", ok, true, fail);
     return;
 
 fail:
     rstream->cancel(rstream);
 }
 
-static void read_cb2(
-    rstream_i *rstream, rstream_read_t *read, dstr_t buf, bool ok
-){
+static void read_cb2(rstream_i *rstream, rstream_read_t *read, dstr_t buf){
     (void)read;
     EXPECT_D_GO(&E, "buf", &buf, &DSTR_LIT("world!"), fail);
-    EXPECT_B_GO(&E, "ok", ok, true, fail);
     // trigger the final read
     buf.len = 0;
     stream_must_read(rstream, read, buf, read_cb3);
@@ -47,12 +43,9 @@ fail:
     rstream->cancel(rstream);
 }
 
-static void read_cb1(
-    rstream_i *rstream, rstream_read_t *read, dstr_t buf, bool ok
-){
+static void read_cb1(rstream_i *rstream, rstream_read_t *read, dstr_t buf){
     (void)read;
     EXPECT_D_GO(&E, "buf", &buf, &DSTR_LIT("hello "), fail);
-    EXPECT_B_GO(&E, "ok", ok, true, fail);
     return;
 
 fail:

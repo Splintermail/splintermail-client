@@ -16,8 +16,10 @@ dstr_t fake_stream_feed_read(fake_stream_t *f, dstr_t input){
         while((link = link_list_pop_first(&f->reads))){
             stream_read_t *read = CONTAINER_OF(link, stream_read_t, link);
             read->buf.len = 0;
-            read->cb(&f->iface, read, read->buf, true);
+            read->cb(&f->iface, read, read->buf);
         }
+        // input already has len=0
+        return input;
     }
     link = link_list_pop_first(&f->reads);
     stream_read_t *read = CONTAINER_OF(link, stream_read_t, link);
@@ -25,7 +27,7 @@ dstr_t fake_stream_feed_read(fake_stream_t *f, dstr_t input){
     dstr_t leftover = dstr_sub2(input, read->buf.size, SIZE_MAX);
     read->buf.len = 0;
     dstr_append_quiet(&read->buf, &sub);
-    read->cb(&f->iface, read, read->buf, true);
+    read->cb(&f->iface, read, read->buf);
     return leftover;
 }
 
@@ -68,7 +70,7 @@ void fake_stream_write_done(fake_stream_t *f){
     link_t *link = link_list_pop_first(&f->writes_popped);
     if(!link) LOG_FATAL("no writes have been popped\n");
     stream_write_t *write = CONTAINER_OF(link, stream_write_t, link);
-    write->cb(&f->iface, write, true);
+    write->cb(&f->iface, write);
 }
 
 void fake_stream_shutdown(fake_stream_t *f){
@@ -92,24 +94,14 @@ void fake_stream_done(fake_stream_t *f, derr_t error){
         if(fake_stream_want_read(f)) LOG_FATAL("reads still pending\n");
         if(fake_stream_want_write(f)) LOG_FATAL("writes still pending\n");
         if(f->shutdown_cb) LOG_FATAL("shutdown_cb still pending\n");
-    }else{
-        link_t *link;
-        while((link = link_list_pop_first(&f->reads))){
-            stream_read_t *read = CONTAINER_OF(link, stream_read_t, link);
-            read->buf.len = 0;
-            read->cb(&f->iface, read, read->buf, false);
-        }
-        while((link = link_list_pop_first(&f->writes_popped))){
-            stream_write_t *write = CONTAINER_OF(link, stream_write_t, link);
-            write->cb(&f->iface, write, false);
-        }
-        while((link = link_list_pop_first(&f->writes))){
-            stream_write_t *write = CONTAINER_OF(link, stream_write_t, link);
-            write->cb(&f->iface, write, false);
-        }
     }
+    link_t reads = {0};
+    link_t writes = {0};
+    link_list_append_list(&reads, &f->reads);
+    link_list_append_list(&writes, &f->writes_popped);
+    link_list_append_list(&writes, &f->writes);
     f->iface.awaited = true;
-    f->await_cb(&f->iface, error);
+    f->await_cb(&f->iface, error, &reads, &writes);
 }
 
 static bool fs_read(
@@ -176,8 +168,6 @@ stream_i *fake_stream(fake_stream_t *f){
             // preserve data
             .data = f->iface.data,
             .wrapper_data = f->iface.wrapper_data,
-            .readable = stream_default_readable,
-            .writable = stream_default_writable,
             .read = fs_read,
             .write = fs_write,
             .shutdown = fs_shutdown,
@@ -188,12 +178,23 @@ stream_i *fake_stream(fake_stream_t *f){
     return &f->iface;
 }
 
-static void cleanup_await_cb(stream_i *s, derr_t e){
-    derr_t *E = s->data;
+typedef struct {
+    derr_t *E;
+    stream_await_cb original_await_cb;
+} fake_stream_cleanup_t;
+
+static void cleanup_await_cb(
+    stream_i *s, derr_t e, link_t *reads, link_t *writes
+){
+    fake_stream_cleanup_t *data = s->data;
+    derr_t *E = data->E;
     if(is_error(*E) || e.type == E_CANCELED){
         DROP_VAR(&e);
     }else if(is_error(e)){
         TRACE_PROP_VAR(E, &e);
+    }
+    if(data->original_await_cb){
+        data->original_await_cb(s, E_OK, reads, writes);
     }
 }
 
@@ -204,8 +205,11 @@ derr_t fake_stream_cleanup(
 
     if(!s || s->awaited) return e;
 
-    s->data = &e;
-    s->await(s, cleanup_await_cb);
+    fake_stream_cleanup_t data = {
+        .E = &e,
+        .original_await_cb = s->await(s, cleanup_await_cb),
+    };
+    s->data = &data;
     s->cancel(s);
     manual_scheduler_run(m);
     if(!f->iface.awaited){

@@ -9,11 +9,8 @@ static derr_t E = {0};
 static char total_read_buf[32];
 static dstr_t total_read;
 
-static derr_t do_read_cb(dstr_t buf, bool ok, dstr_t exp){
+static derr_t do_read_cb(dstr_t buf, dstr_t exp){
     derr_t e = E_OK;
-    if(!ok){
-        ORIG(&e, E_VALUE, "read_cb not ok!\n");
-    }
     if(!dstr_eq(buf, exp)){
         ORIG(&e,
             E_VALUE, "expected \"%x\" but got \"%x\"", FD(&exp), FD(&buf)
@@ -22,51 +19,60 @@ static derr_t do_read_cb(dstr_t buf, bool ok, dstr_t exp){
     return e;
 }
 
-static void read_cb_eof(
-    rstream_i *r, rstream_read_t *read, dstr_t buf, bool ok
-){
+static void read_cb_eof(rstream_i *r, rstream_read_t *read, dstr_t buf){
     (void)r;
     (void)read;
-    MERGE_CMD(&E, do_read_cb(buf, ok, DSTR_LIT("")), "read_cb");
+    MERGE_CMD(&E, do_read_cb(buf, DSTR_LIT("")), "read_cb");
 }
 
-static void read_cb1(rstream_i *r, rstream_read_t *read, dstr_t buf, bool ok){
+static void read_cb1(rstream_i *r, rstream_read_t *read, dstr_t buf){
     (void)r;
     (void)read;
-    MERGE_CMD(&E, do_read_cb(buf, ok, DSTR_LIT("h")), "read_cb");
+    MERGE_CMD(&E, do_read_cb(buf, DSTR_LIT("h")), "read_cb");
 }
 
-static void read_cb2(rstream_i *r, rstream_read_t *read, dstr_t buf, bool ok){
+static void read_cb2(rstream_i *r, rstream_read_t *read, dstr_t buf){
     (void)r;
     (void)read;
-    MERGE_CMD(&E, do_read_cb(buf, ok, DSTR_LIT("ello world!")), "read_cb");
+    MERGE_CMD(&E, do_read_cb(buf, DSTR_LIT("ello world!")), "read_cb");
 }
 
-static void read_cb3(rstream_i *r, rstream_read_t *read, dstr_t buf, bool ok){
+static void read_cb3(rstream_i *r, rstream_read_t *read, dstr_t buf){
     (void)r;
     (void)read;
-    MERGE_CMD(&E, do_read_cb(buf, ok, DSTR_LIT("")), "read_cb");
+    MERGE_CMD(&E, do_read_cb(buf, DSTR_LIT("")), "read_cb");
     // first of two eof cbs, don't close the r
 }
 
-static void read_cb5(rstream_i *r, rstream_read_t *read, dstr_t buf, bool ok){
+static void read_cb5(rstream_i *r, rstream_read_t *read, dstr_t buf){
     (void)r;
     (void)read;
-    MERGE_CMD(&E, do_read_cb(buf, ok, DSTR_LIT("hello world!")), "read_cb");
+    MERGE_CMD(&E, do_read_cb(buf, DSTR_LIT("hello world!")), "read_cb");
 }
 
-static void read_cb7(rstream_i *r, rstream_read_t *read, dstr_t buf, bool ok){
+static void read_never_cb(rstream_i *r, rstream_read_t *read, dstr_t buf){
+    (void)r;
     (void)read;
-    MERGE_CMD(&E, do_read_cb(buf, ok, DSTR_LIT("hello ")), "read_cb");
+    (void)buf;
+    TRACE_ORIG(&E, E_VALUE, "read_never_cb");
+}
+
+static void read_cb7(rstream_i *r, rstream_read_t *read, dstr_t buf){
+    (void)read;
+    MERGE_CMD(&E, do_read_cb(buf, DSTR_LIT("hello ")), "read_cb");
+    stream_must_read(r, read, buf, read_never_cb);
     r->cancel(r);
 }
 
-static void await_cb(rstream_i *r, derr_t e){
+static void await_cb(rstream_i *r, derr_t e, link_t *reads){
     (void)r;
     MERGE_VAR(&E, &e, "await_cb");
+    if(!link_list_isempty(reads)){
+        TRACE_ORIG(&E, E_VALUE, "non-empty reads in await_cb");
+    }
 }
 
-static void await_cb7(rstream_i *r, derr_t e){
+static void await_cb7(rstream_i *r, derr_t e, link_t *reads){
     (void)r;
     if(is_error(e)){
         if(e.type != E_CANCELED){
@@ -74,6 +80,9 @@ static void await_cb7(rstream_i *r, derr_t e){
         }
     }else{
         TRACE_ORIG(&E, E_VALUE, "stream not E_CANCELED");
+    }
+    if(link_list_isempty(reads)){
+        TRACE_ORIG(&E, E_VALUE, "empty reads in await_cb7");
     }
 }
 

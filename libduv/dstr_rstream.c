@@ -20,13 +20,13 @@ static void advance_state(dstr_rstream_t *r){
             if(etype != E_NONE){
                 LOG_FATAL("dstr_append overflow in dstr_rstream_t\n");
             }
-            read->cb(&r->iface, read, read->buf, true);
+            read->cb(&r->iface, read, read->buf);
             // detect if user closed us
             if(r->iface.canceled) goto closing;
         }else{
             r->iface.eof = true;
             read->buf.len = 0;
-            read->cb(&r->iface, read, read->buf, true);
+            read->cb(&r->iface, read, read->buf);
             // detect if user closed us
             if(r->iface.canceled) goto closing;
         }
@@ -37,13 +37,6 @@ static void advance_state(dstr_rstream_t *r){
     return;
 
 closing:
-    // return pending reads with ok=false
-    while((link = link_list_pop_first(&r->reads))){
-        rstream_read_t *read = CONTAINER_OF(link, rstream_read_t, link);
-        read->buf.len = 0;
-        read->cb(&r->iface, read, read->buf, !r->iface.canceled);
-    }
-
     // wait to be awaited
     if(!r->await_cb) return;
 
@@ -51,7 +44,9 @@ closing:
     derr_t e = E_OK;
     if(r->iface.canceled) e.type = E_CANCELED;
     r->iface.awaited = true;
-    r->await_cb(&r->iface, e);
+    link_t reads = {0};
+    link_list_append_list(&reads, &r->reads);
+    r->await_cb(&r->iface, e, &reads);
 }
 
 static void schedule_cb(schedulable_t *schedulable){
@@ -112,7 +107,6 @@ rstream_i *dstr_rstream(
             // preserve data
             .data = r->iface.data,
             .wrapper_data = r->iface.wrapper_data,
-            .readable = rstream_default_readable,
             .read = rstream_read,
             .cancel = rstream_cancel,
             .await = rstream_await,

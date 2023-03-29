@@ -4,7 +4,6 @@ typedef struct {
     scheduler_i *scheduler;
     schedulable_t schedulable;
     derr_t e;
-    bool base_failing : 1;
     bool base_canceled : 1;
     bool reading : 1;
     stream_await_cb original_await_cb;

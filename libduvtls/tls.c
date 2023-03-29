@@ -36,27 +36,21 @@ static bool closing(duv_tls_t *t){
     return failing(t) || (t->iface.eof && t->shutdown);
 }
 
-static void empty_reads(duv_tls_t *t){
+static void respond_all_eof(duv_tls_t *t){
     link_t *link;
     while((link = link_list_pop_first(&t->reads))){
         stream_read_t *read = CONTAINER_OF(link, stream_read_t, link);
         read->buf.len = 0;
-        read->cb(&t->iface, read, read->buf, !failing(t));
+        read->cb(&t->iface, read, read->buf);
     }
 }
 
 static void read_cb(
-    stream_i *base, stream_read_t *req, dstr_t buf, bool ok
+    stream_i *base, stream_read_t *req, dstr_t buf
 ){
     duv_tls_t *t = base->wrapper_data;
     (void)req;
     t->read_pending = false;
-
-    // if stream is failing, skip all processing
-    if(!ok){
-        t->base_failing = true;
-        goto done;
-    }
 
     if(buf.len == 0){
         // base stream is not allowed to EOF on us, even after SSL_shutdown
@@ -83,11 +77,9 @@ done:
     advance_state(t);
 }
 
-static void write_cb(stream_i *base, stream_write_t *req, bool ok){
+static void write_cb(stream_i *base, stream_write_t *req){
     duv_tls_t *t = base->wrapper_data;
     (void)req;
-
-    if(!ok) t->base_failing = true;
 
     // done with write buffer
     t->write_pending = false;
@@ -95,7 +87,7 @@ static void write_cb(stream_i *base, stream_write_t *req, bool ok){
     advance_state(t);
 }
 
-static void await_cb(stream_i *base, derr_t e){
+static void await_cb(stream_i *base, derr_t e, link_t *reads, link_t *writes){
     duv_tls_t *t = base->wrapper_data;
     t->base_awaited = true;
 
@@ -107,8 +99,16 @@ static void await_cb(stream_i *base, derr_t e){
     }
     KEEP_FIRST_IF_NOT_CANCELED_VAR(&t->e, &e);
 
+    // we are guaranteed not to have any reads or writes pending anymore
+    t->read_pending = false;
+    t->write_pending = false;
+
     if(t->original_base_await_cb){
-        t->original_base_await_cb(base, E_OK);
+        // filter out our own read and write
+        link_t ignore = {0};
+        stream_reads_filter(reads, &ignore, read_cb);
+        stream_writes_filter(reads, &ignore, write_cb);
+        t->original_base_await_cb(base, E_OK, reads, writes);
     }
     advance_state(t);
 }
@@ -266,7 +266,7 @@ static bool next_nonempty_write_req(duv_tls_t *t, stream_write_t **out){
         }
         // handle empty write request
         link_remove(&req->link);
-        req->cb(&t->iface, req, true);
+        req->cb(&t->iface, req);
         // detect if the user closed us
         if(failing(t)){
             *out = NULL;
@@ -299,7 +299,7 @@ static bool _advance_ssl_write(duv_tls_t *t){
         // done with this req
         t->nbufswritten = 0;
         link_remove(&req->link);
-        req->cb(&t->iface, req, true);
+        req->cb(&t->iface, req);
         // detect if the user closed us
         if(failing(t)) return false;
         // see if there's another req we can continue working on
@@ -377,7 +377,7 @@ static bool _advance_ssl_read(duv_tls_t *t){
                     // This is like a TLS-layer EOF
                     t->iface.eof = true;
                     // user is not allowed to submit any more reads
-                    empty_reads(t);
+                    respond_all_eof(t);
                     return !failing(t);
 
                 case SSL_ERROR_WANT_READ:
@@ -398,7 +398,7 @@ static bool _advance_ssl_read(duv_tls_t *t){
 
         // read success!
         read->buf.len = nread;
-        read->cb(&t->iface, read, read->buf, true);
+        read->cb(&t->iface, read, read->buf);
         // detect if user closed us
         if(failing(t)) return false;
     }
@@ -493,8 +493,6 @@ static bool _advance_tls(duv_tls_t *t){
 static void _advance_wire_reads(duv_tls_t *t){
     // one read in flight at a time
     if(t->read_pending) return;
-    // no more reads when base is failing
-    if(t->base_failing) return;
     // respect backpressure; don't read without a good reason
     if(!t->read_wants_read && !t->need_read) return;
     t->base->read(t->base, &t->read_req, t->read_buf, read_cb);
@@ -507,9 +505,6 @@ static bool _advance_wire_writes(duv_tls_t *t){
 
     // make sure there's a write buffer to write to
     if(t->write_pending) return true;
-
-    // don't write to a broken base
-    if(t->base_failing) return true;
 
     int ret = BIO_read_ex(
         t->rawout, t->write_buf.data, t->write_buf.size, &t->write_buf.len
@@ -548,7 +543,11 @@ static void _advance_close(duv_tls_t *t){
     if(!is_error(t->e)){
         if(t->iface.canceled) t->e.type = E_CANCELED;
     }
-    t->await_cb(&t->iface, t->e);
+    link_t reads = {0};
+    link_t writes = {0};
+    link_list_append_list(&reads, &t->reads);
+    link_list_append_list(&writes, &t->writes);
+    t->await_cb(&t->iface, t->e, &reads, &writes);
 }
 
 static void advance_state(duv_tls_t *t){
@@ -573,18 +572,6 @@ closing:
     if(!t->base_awaited && !t->base_canceled){
         t->base_canceled = true;
         t->base->cancel(t->base);
-    }
-
-    // cancel any reads
-    empty_reads(t);
-
-    // cancel any writes
-    link_t *link;
-    while((link = link_list_pop_first(&t->writes))){
-        stream_write_t *req = CONTAINER_OF(link, stream_write_t, link);
-        // we must be in a failure condition to arrive here
-        if(!failing(t)) LOG_ERROR("writes pending but stream is not failing");
-        req->cb(&t->iface, req, false);
     }
 
     // _advance_close must be last
@@ -694,10 +681,10 @@ static derr_t wrap(
     if(base->awaited){
         ORIG(&e, E_PARAM, "base stream already awaited");
     }
-    if(!base->readable(base)){
+    if(base->eof || base->canceled){
         ORIG(&e, E_PARAM, "base stream is not readable");
     }
-    if(!base->writable(base)){
+    if(base->is_shutdown){
         ORIG(&e, E_PARAM, "base stream is not writable");
     }
 
@@ -709,8 +696,6 @@ static derr_t wrap(
             // preserve data
             .data = t->iface.data,
             .wrapper_data = t->iface.wrapper_data,
-            .readable = stream_default_readable,
-            .writable = stream_default_writable,
             .read = duv_tls_read,
             .write = duv_tls_write,
             .shutdown = duv_tls_shutdown,

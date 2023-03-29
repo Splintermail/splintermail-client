@@ -27,8 +27,8 @@ struct chunked_rstream_t {
     derr_t e;
     bool reading : 1;
     bool first_chunk_parsed : 1;
-    bool base_failing : 1;
     bool base_canceled : 1;
+    bool tried_detach : 1;
     bool detached : 1;
     bool chunks_done;
     bool trailer_read;

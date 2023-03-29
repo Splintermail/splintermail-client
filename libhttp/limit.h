@@ -14,7 +14,6 @@ struct limit_rstream_t {
     size_t original_read_buf_size;
     rstream_read_cb original_read_cb;
     derr_t e;
-    bool base_failing : 1;
     bool base_canceled : 1;
     // one read in flight at a time
     bool reading : 1;

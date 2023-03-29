@@ -100,8 +100,10 @@ static void finish(void){
     if(stream) stream->cancel(stream);
 }
 
-static void await_cb(stream_i *s, derr_t e){
+static void await_cb(stream_i *s, derr_t e, link_t *reads, link_t *writes){
     (void)s;
+    (void)reads;
+    (void)writes;
     if(is_error(E)){
         // already have an error
         finish();

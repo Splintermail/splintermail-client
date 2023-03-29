@@ -23,7 +23,6 @@ struct rstream_concat_t {
     rstream_await_cb await_cb;
     size_t base_idx;
     bool base_eof : 1;
-    bool base_failing : 1;
     bool reading : 1;
 
     link_t reads;

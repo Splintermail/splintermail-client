@@ -53,8 +53,6 @@ typedef struct {
     size_t nbufswritten;
     size_t nwritten;
 
-    bool base_failing : 1;
-
     bool need_read : 1;  /* WANT_READ from SSL_{do_handshake,write,shutdown}
                             need read prevents us from doing anything without
                             more data to read */

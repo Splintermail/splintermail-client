@@ -4,17 +4,13 @@
 
 static void advance_state(chunked_rstream_t *c);
 
-static void read_cb(
-    rstream_i *base, rstream_read_t *read, dstr_t buf, bool ok
-){
+static void read_cb(rstream_i *base, rstream_read_t *read, dstr_t buf){
     (void)read;
     chunked_rstream_t *c = base->wrapper_data;
     c->reading = false;
     c->buf.len += buf.len;
 
-    if(!ok){
-        c->base_failing = true;
-    }else if(buf.len == 0){
+    if(buf.len == 0){
         /* eof is always an error, since we should never read after we've read
            a complete response */
         ORIG_GO(&c->e, E_RESPONSE, "incomplete chunked response", done);
@@ -24,13 +20,16 @@ done:
     advance_state(c);
 }
 
-static void await_cb(rstream_i *base, derr_t e){
+static void await_cb(rstream_i *base, derr_t e, link_t *reads){
     chunked_rstream_t *c = base->wrapper_data;
     if(c->base_canceled) DROP_CANCELED_VAR(&e);
     UPGRADE_CANCELED_VAR(&e, E_INTERNAL);
     KEEP_FIRST_IF_NOT_CANCELED_VAR(&c->e, &e);
-    c->base_failing = true;
-    if(c->original_await_cb) c->original_await_cb(c->base, E_OK);
+    if(c->original_await_cb){
+        link_t ours = {0};
+        rstream_reads_filter(reads, &ours, read_cb);
+        c->original_await_cb(c->base, E_OK, reads);
+    }
     advance_state(c);
 }
 
@@ -44,7 +43,7 @@ static void schedule(chunked_rstream_t *c){
 }
 
 static bool failing(chunked_rstream_t *c){
-    return c->iface.canceled || is_error(c->e) || c->base_failing;
+    return c->iface.canceled || is_error(c->e);
 }
 
 static bool closing(chunked_rstream_t *c){
@@ -167,7 +166,7 @@ static void advance_chunks(chunked_rstream_t *c, bool *complete){
                 c->nchunkbytes = 0;
                 c->nchunkread = 0;
             }
-            read->cb(&c->iface, read, read->buf, true);
+            read->cb(&c->iface, read, read->buf);
             // detect if user canceled us
             if(closing(c)) return;
             // if no more reads from the user, we are done here
@@ -266,7 +265,6 @@ done:
 }
 
 static void advance_state(chunked_rstream_t *c){
-    link_t *link;
     if(closing(c)) goto closing;
 
     // first pass all chunks to user
@@ -283,13 +281,24 @@ static void advance_state(chunked_rstream_t *c){
         if(!c->trailer_read) return;
     }
 
-    // make sure we'll be able to send EOF right away
-    // (these should already be true but this is a good check)
-    if(c->reading || link_list_isempty(&c->reads)) return;
-    c->iface.eof = true;
+    // respond with EOF
+    if(!c->iface.eof){
+        if(link_list_isempty(&c->reads)) return;
+        c->iface.eof = true;
+        link_t *link;
+        while((link = link_list_pop_first(&c->reads))){
+            rstream_read_t *read = CONTAINER_OF(link, rstream_read_t, link);
+            read->buf.len = 0;
+            read->cb(&c->iface, read, read->buf);
+        }
+    }
 
     // try to detach from base
-    c->detached = c->try_detach(c);
+    if(!c->tried_detach){
+        c->detached = c->try_detach(c);
+        c->tried_detach = true;
+    }
+
     // fallthru to closing
 
 closing:
@@ -303,12 +312,6 @@ closing:
     // wait for our read to return
     if(c->reading) return;
 
-    // return any pending reads
-    while((link = link_list_pop_first(&c->reads))){
-        rstream_read_t *rread = CONTAINER_OF(link, rstream_read_t, link);
-        rread->cb(&c->iface, rread, rread->buf, !failing(c));
-    }
-
     // await base, unless we detached
     if(!c->base->awaited && !c->detached) return;
 
@@ -321,7 +324,9 @@ closing:
     if(!is_error(c->e)){
         if(c->iface.canceled) c->e.type = E_CANCELED;
     }
-    c->await_cb(&c->iface, c->e);
+    link_t reads = {0};
+    link_list_append_list(&reads, &c->reads);
+    c->await_cb(&c->iface, c->e, &reads);
 }
 
 // interface
@@ -370,7 +375,6 @@ rstream_i *chunked_rstream(
             // preserve data
             .data = c->iface.data,
             .wrapper_data = c->iface.wrapper_data,
-            .readable = rstream_default_readable,
             .read = chunked_read,
             .cancel = chunked_cancel,
             .await = chunked_await,

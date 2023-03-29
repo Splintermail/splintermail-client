@@ -39,15 +39,15 @@ static void advance_state(dstr_stream_t *s){
             if(etype != E_NONE){
                 LOG_FATAL("dstr_append overflow in dstr_stream_t\n");
             }
-            read->cb(&s->iface, read, read->buf, true);
+            read->cb(&s->iface, read, read->buf);
             // detect if user closed us
             if(failing(s)) goto closing;
         }else{
             s->iface.eof = true;
             read->buf.len = 0;
-            read->cb(&s->iface, read, read->buf, true);
-            // detect if user closed us, or if we finished eof && shutdown
-            if(closing(s)) goto closing;
+            read->cb(&s->iface, read, read->buf);
+            // detect if user closed us
+            if(failing(s)) goto closing;
         }
     }
 
@@ -55,7 +55,7 @@ static void advance_state(dstr_stream_t *s){
     while((link = link_list_pop_first(&s->writes))){
         stream_write_t *write = CONTAINER_OF(link, stream_write_t, link);
         // write is already done, just need the write_cb
-        write->cb(&s->iface, write, !failing(s));
+        write->cb(&s->iface, write);
         // detect if user closed us
         if(failing(s)) goto closing;
     }
@@ -64,27 +64,27 @@ static void advance_state(dstr_stream_t *s){
     if(s->iface.is_shutdown && !s->shutdown){
         s->shutdown_cb(&s->iface);
         s->shutdown = true;
-        // detect if user closed us, or if we finished eof && shutdown
-        if(closing(s)) goto closing;
+        // detect if user closed us
+        if(failing(s)) goto closing;
     }
+
+    // detect if we finished eof && shutdown
+    if(closing(s)) goto closing;
 
     return;
 
 closing:
-    // return pending reads with ok=false
-    while((link = link_list_pop_first(&s->reads))){
-        stream_read_t *read = CONTAINER_OF(link, stream_read_t, link);
-        read->buf.len = 0;
-        read->cb(&s->iface, read, read->buf, !s->iface.canceled);
-    }
-
     // wait to be awaited
     if(!s->await_cb) return;
 
     schedulable_cancel(&s->schedulable);
     if(!is_error(s->e) && s->iface.canceled) s->e.type = E_CANCELED;
     s->iface.awaited = true;
-    s->await_cb(&s->iface, s->e);
+    link_t reads = {0};
+    link_t writes = {0};
+    link_list_append_list(&reads, &s->reads);
+    link_list_append_list(&writes, &s->writes);
+    s->await_cb(&s->iface, s->e, &reads, &writes);
 }
 
 static bool stream_read(
@@ -171,8 +171,6 @@ stream_i *dstr_stream(
             // preserve data
             .data = s->iface.data,
             .wrapper_data = s->iface.wrapper_data,
-            .readable = stream_default_readable,
-            .writable = stream_default_writable,
             .read = stream_read,
             .write = stream_write,
             .shutdown = stream_shutdown,

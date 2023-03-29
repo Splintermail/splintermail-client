@@ -79,12 +79,12 @@ static void schedule(duv_passthru_t *p){
     p->scheduler->iface.schedule(&p->scheduler->iface, &p->schedulable);
 }
 
-static void empty_reads(duv_passthru_t *p){
+static void respond_eof_all(duv_passthru_t *p){
     link_t *link;
     while((link = link_list_pop_first(&p->reads))){
         stream_read_t *read = CONTAINER_OF(link, stream_read_t, link);
         read->buf.len = 0;
-        read->cb(&p->iface, read, read->buf, !failing(p));
+        read->cb(&p->iface, read, read->buf);
     }
 }
 
@@ -119,8 +119,8 @@ static void _do_read_cb(duv_passthru_t *p, ssize_t nread, const uv_buf_t *buf){
             case UV_EOF:
                 p->iface.eof = true;
                 p->reading = false;
-                // we can just dump all reads at this point
-                empty_reads(p);
+                // return all reads as EOF
+                respond_eof_all(p);
                 return;
             case UV_ENOBUFS:
                 // we disallow empty bufs in read calls
@@ -141,7 +141,7 @@ static void _do_read_cb(duv_passthru_t *p, ssize_t nread, const uv_buf_t *buf){
     stream_read_t *read = CONTAINER_OF(link, stream_read_t, link);
 
     read->buf.len = (size_t)nread;
-    read->cb(&p->iface, read, read->buf, true);
+    read->cb(&p->iface, read, read->buf);
     // detect if the user closed us, or if we have another read already
     if(failing(p) || !link_list_isempty(&p->reads)) return;
 
@@ -181,11 +181,15 @@ static void write_cb(uv_write_t *uvw, int status){
     // return memory so that the user cb may write again
     link_list_append(&p->pool, &mem->link);
 
-    // call user's cb
-    req->cb(&p->iface, req, !failing(p));
-
-    // that returned mem may result in new writes
-    advance_state(p);
+    if(!failing(p)){
+        // successful write, call user callback
+        req->cb(&p->iface, req);
+        // that user cb may result in new writes
+        advance_state(p);
+    }else{
+        // failed write, put it in the failed list
+        link_list_append(&p->writes.failed, &req->link);
+    }
 }
 
 static void _shutdown_cb(uv_shutdown_t *shutdown_req, int status){
@@ -264,23 +268,10 @@ closing:
         duv_stream_close(p->uvstream, close_cb);
     }
 
-    if(!p->allocated){
-        // empty all reads
-        empty_reads(p);
-    }
-
-    // wait for all in-flight writes before responding to pending writes
+    // wait to become unallocated (finish any in-flight read)
+    if(p->allocated) return;
+    // wait to finish in-flight writes
     if(p->writes.inflight) return;
-
-    // respond to all pending writes
-    link_t *link;
-    while((link = link_list_pop_first(&p->writes.pending))){
-        stream_write_t *req = CONTAINER_OF(link, stream_write_t, link);
-        /* we should not have accepted writes after a shutdown_cb, so this must
-           be an ok=false situation */
-        if(!failing(p)) LOG_FATAL("have pending writes but no error");
-        req->cb(&p->iface, req, false);
-    }
 
     // wait to become unallocated
     if(p->allocated) return;
@@ -298,7 +289,21 @@ closing:
             p->e.type = E_CANCELED;
         }
         p->iface.awaited = true;
-        p->await_cb(&p->iface, p->e);
+        // pass all reads and writes out with await_cb
+        link_t reads = {0};
+        link_t writes = {0};
+        link_list_append_list(&reads, &p->reads);
+        link_list_append_list(&writes, &p->writes.failed);
+        link_list_append_list(&writes, &p->writes.pending);
+        if(!failing(p)){
+            if(!link_list_isempty(&reads)){
+                LOG_FATAL("passthru has leftover reads but no error\n");
+            }
+            if(!link_list_isempty(&writes)){
+                LOG_FATAL("passthru has leftover writes but no error\n");
+            }
+        }
+        p->await_cb(&p->iface, p->e, &reads, &writes);
     }
     return;
 }
@@ -447,8 +452,6 @@ stream_i *duv_passthru_init(
             // preserve data
             .data = p->iface.data,
             .wrapper_data = p->iface.wrapper_data,
-            .readable = stream_default_readable,
-            .writable = stream_default_writable,
             .read = passthru_read,
             .write = passthru_write,
             .shutdown = passthru_shutdown,

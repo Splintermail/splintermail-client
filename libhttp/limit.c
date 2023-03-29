@@ -12,34 +12,19 @@ static void schedule(limit_rstream_t *l){
 }
 
 static bool failing(limit_rstream_t *l){
-    return l->iface.canceled || l->base_failing || is_error(l->e);
+    return l->iface.canceled || is_error(l->e);
 }
 
 static bool closing(limit_rstream_t *l){
     return failing(l) || l->iface.eof;
 }
 
-static void await_cb(rstream_i *base, derr_t e){
-    limit_rstream_t *l = base->wrapper_data;
-    // only we are allowed to cancel the base
-    if(l->base_canceled) DROP_CANCELED_VAR(&e);
-    UPGRADE_CANCELED_VAR(&e, E_INTERNAL);
-    KEEP_FIRST_IF_NOT_CANCELED_VAR(&l->e, &e);
-    l->base_failing = true;
-    if(l->original_await_cb) l->original_await_cb(l->base, E_OK);
-    advance_state(l);
-}
-
-static void read_cb(
-    rstream_i *base, rstream_read_t *read, dstr_t buf, bool ok
-){
+static void read_cb(rstream_i *base, rstream_read_t *read, dstr_t buf){
     limit_rstream_t *l = base->wrapper_data;
     l->reading = false;
     l->nread += buf.len;
 
-    if(!ok){
-        l->base_failing = true;
-    }else if(buf.len == 0){
+    if(buf.len == 0){
         // early EOF is an error
         TRACE_ORIG(&l->e, E_RESPONSE, "unexpected EOF");
     }
@@ -47,8 +32,24 @@ static void read_cb(
     buf.size = l->original_read_buf_size;
     read->cb = l->original_read_cb;
     read->buf = buf;
-    read->cb(&l->iface, read, buf, !failing(l));
+    read->cb(&l->iface, read, buf);
 
+    advance_state(l);
+}
+
+static void await_cb(rstream_i *base, derr_t e, link_t *reads){
+    limit_rstream_t *l = base->wrapper_data;
+    // only we are allowed to cancel the base
+    if(l->base_canceled) DROP_CANCELED_VAR(&e);
+    UPGRADE_CANCELED_VAR(&e, E_INTERNAL);
+    KEEP_FIRST_IF_NOT_CANCELED_VAR(&l->e, &e);
+    // capture any unfinished reads
+    link_t ours = {0};
+    rstream_reads_filter(reads, &ours, read_cb);
+    link_list_prepend_list(&l->reads, &ours);
+    if(l->original_await_cb){
+        l->original_await_cb(l->base, E_OK, reads);
+    }
     advance_state(l);
 }
 
@@ -63,7 +64,8 @@ static void advance_state(limit_rstream_t *l){
            guaranteed to have a read to respond to */
         if(l->nread >= l->limit){
             l->iface.eof = true;
-            read->cb(&l->iface, read, read->buf, true);
+            read->buf.len = 0;
+            read->cb(&l->iface, read, read->buf);
             // try to detach from base
             l->detached = l->try_detach(l);
             goto closing;
@@ -88,13 +90,6 @@ closing:
     // wait for our read to return
     if(l->reading) return;
 
-    // return any pending reads
-    while((link = link_list_pop_first(&l->reads))){
-        rstream_read_t *read = CONTAINER_OF(link, rstream_read_t, link);
-        read->buf.len = 0;
-        read->cb(&l->iface, read, read->buf, !failing(l));
-    }
-
     // await base, unless we detached
     if(!l->base->awaited && !l->detached) return;
 
@@ -107,7 +102,9 @@ closing:
         if(l->iface.canceled) l->e.type = E_CANCELED;
     }
     // call user's await_cb
-    l->await_cb(&l->iface, l->e);
+    link_t reads = {0};
+    link_list_append_list(&reads, &l->reads);
+    l->await_cb(&l->iface, l->e, &reads);
 }
 
 // interface
@@ -158,7 +155,6 @@ rstream_i *limit_rstream(
             // preserve data
             .data = l->iface.data,
             .wrapper_data = l->iface.wrapper_data,
-            .readable = rstream_default_readable,
             .read = limit_read,
             .cancel = limit_cancel,
             .await = limit_await,

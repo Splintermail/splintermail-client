@@ -32,6 +32,8 @@ typedef struct {
     struct {
         link_t pending;  // stream_write_t->link
         size_t inflight;
+        // gather writes here so we preserve order even in failures
+        link_t failed;   // stream_write_t->link
     } writes;
 
     /* user can request writes as fast as they like,
