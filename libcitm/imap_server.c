@@ -12,40 +12,11 @@ static void schedule(imap_server_t *s){
     s->scheduler->schedule(s->scheduler, &s->schedulable);
 }
 
-static void await_cb(stream_i *stream, derr_t e){
-    imap_server_t *s = stream->data;
-
-    if(s->logged_out){
-        // if user logged out first, ignore expected connection errors
-        DROP_VAR(&e);
-        // mark shutdown as true so we continue with the logout codepath
-        s->shutdown = true;
-    }else if(!s->canceled && !s->failed){
-        // if we didn't cancel the base, nobody else is allowed to
-        UPGRADE_CANCELED_VAR(&e, E_INTERNAL);
-    }else{
-        DROP_CANCELED_VAR(&e);
-    }
-    KEEP_FIRST_IF_NOT_CANCELED_VAR(&s->e, &e);
-
-    if(s->original_base_await_cb){
-        s->original_base_await_cb(stream, E_OK);
-    }
-    schedule(s);
-}
-
-static void shutdown_cb(stream_i *stream){
-    imap_server_t *s = stream->data;
-    s->shutdown = true;
-    schedule(s);
-}
-
 #define ONCE(x) if(!x && (x = true))
 
-static void read_cb(stream_i *stream, stream_read_t *req, dstr_t buf, bool ok){
+static void read_cb(stream_i *stream, stream_read_t *req, dstr_t buf){
     imap_server_t *s = stream->data;
     (void)req;
-    if(!ok) return;
     s->read_done = true;
     s->rbuf.len = buf.len;
     if(buf.len == 0 && !s->logged_out && !is_error(s->e)){
@@ -84,11 +55,47 @@ static derr_t advance_reads(imap_server_t *s, bool starttls, bool *ok){
     return e;
 }
 
-static void write_cb(stream_i *stream, stream_write_t *req, bool ok){
+static void write_cb(stream_i *stream, stream_write_t *req){
     imap_server_t *s = stream->data;
     (void)req;
-    if(!ok) return;
     s->write_done = true;
+    schedule(s);
+}
+
+static void shutdown_cb(stream_i *stream){
+    imap_server_t *s = stream->data;
+    s->shutdown = true;
+    schedule(s);
+}
+
+static void await_cb(
+    stream_i *stream, derr_t e, link_t *reads, link_t *writes
+){
+    imap_server_t *s = stream->data;
+
+    if(s->logged_out){
+        // if user logged out first, ignore expected connection errors
+        DROP_VAR(&e);
+        // mark shutdown as true so we continue with the logout codepath
+        s->shutdown = true;
+    }else if(!s->canceled && !s->failed){
+        // if we didn't cancel the base, nobody else is allowed to
+        UPGRADE_CANCELED_VAR(&e, E_INTERNAL);
+    }else{
+        DROP_CANCELED_VAR(&e);
+    }
+    KEEP_FIRST_IF_NOT_CANCELED_VAR(&s->e, &e);
+
+    s->read_done = true;
+    s->write_done = true;
+
+    if(s->original_base_await_cb){
+        // our reads and writes are static
+        link_t ignore;
+        stream_reads_filter(reads, &ignore, read_cb);
+        stream_writes_filter(writes, &ignore, write_cb);
+        s->original_base_await_cb(stream, E_OK, reads, writes);
+    }
     schedule(s);
 }
 
@@ -125,11 +132,21 @@ static derr_t advance_writes(imap_server_t *s, bool *ok){
         // finished a write to the wire
         s->write_started = false;
         s->write_done = false;
-        // pop any completed responses from our list
+        // handle responses we wrote completely
         for(size_t i = 0; i < s->nwritten; i++){
+            // free response
             link_t *link = link_list_pop_first(&s->resps);
             imap_resp_t *resp = CONTAINER_OF(link, imap_resp_t, link);
             imap_resp_free(resp);
+            if(!s->relay_started) continue;
+            // respond to write_cb
+            link = link_list_pop_first(&s->writes);
+            imap_server_write_t *req =
+                CONTAINER_OF(link, imap_server_write_t, link);
+            req->resp = NULL;
+            req->cb(s, req);
+            // did the user cancel us?
+            if(s->canceled) return e;
         }
         s->nwritten = 0;
     }
@@ -369,13 +386,10 @@ static derr_t starttls(imap_server_t *s){
         s->rbuf,  // preinput is already in rbuf
         &tls
     );
-
     // if we succeeded: upgrade our stream
     if(tls) s->stream = tls;
-
     // success or failure: reawait our stream
     s->stream->await(s->stream, await_cb);
-
     PROP_VAR(&e, &e2);
 
     return e;
@@ -394,10 +408,8 @@ static void advance_state(imap_server_t *s){
         // no more writes from us
         s->stream->shutdown(s->stream, shutdown_cb);
         if(!s->shutdown) return;
-        // if we actually shutdown (user didn't close), we still need to cancel
-        s->stream->cancel(s->stream);
-        if(!s->stream->awaited) return;
-        goto io_return;
+        // proceed with teardown
+        goto cu;
     }
 
     // send an appropriate greeting
@@ -443,6 +455,18 @@ static void advance_state(imap_server_t *s){
     }
 
     // now act as a blind relay
+    ONCE(s->relay_started){
+        // resps and writes must be 1:1
+        if(!link_list_isempty(&s->resps)){
+            LOG_FATAL("resps not empty when imap_server starts relaying\n");
+        }
+        // queue all requested responses
+        imap_server_write_t *req;
+        LINK_FOR_EACH(req, &s->writes, imap_server_write_t, link){
+            imap_resp_t *resp = STEAL(imap_resp_t, &req->resp);
+            link_list_append(&s->resps, &resp->link);
+        }
+    }
 
     // process read requests
     while(!link_list_isempty(&s->reads)){
@@ -456,25 +480,13 @@ static void advance_state(imap_server_t *s){
             link_list_pop_first(&s->cmds), imap_cmd_t, link
         );
         // finished this read request
-        req->cb(s, req, cmd, true);
+        req->cb(s, req, cmd);
+        // did the user cancel us?
+        if(s->canceled) goto cu;
     }
 
     // process write requests
-    while(!link_list_isempty(&s->writes)){
-        // peek at the next write
-        imap_server_write_t *req = CONTAINER_OF(
-            s->writes.next, imap_server_write_t, link
-        );
-        if(req->resp){
-            imap_resp_t *resp = STEAL(imap_resp_t, &req->resp);
-            link_list_append(&s->resps, &resp->link);
-        }
-        PROP_GO(&s->e, advance_writes(s, &ok), fail);
-        if(!ok) break;
-        // finished this write request
-        link_remove(&req->link);
-        req->cb(s, req, true);
-    }
+    PROP_GO(&s->e, advance_writes(s, &ok), fail);
 
     return;
 
@@ -489,20 +501,11 @@ cu:
     // close the underlying connection object
     s->conn->close(s->conn);
 
-io_return:
-    // return any IO requests
-    link_t *link;
-    while((link = link_list_pop_first(&s->reads))){
-        imap_server_read_t *req = CONTAINER_OF(link, imap_server_read_t, link);
-        req->cb(s, req, NULL, false);
-    }
-    while((link = link_list_pop_first(&s->writes))){
-        imap_server_write_t *req =
-            CONTAINER_OF(link, imap_server_write_t, link);
-        req->cb(s, req, false);
-    }
+    // wait to be awaited
+    if(!s->await_cb) return;
 
     // free cmds or responses
+    link_t *link;
     while((link = link_list_pop_first(&s->cmds))){
         imap_cmd_free(CONTAINER_OF(link, imap_cmd_t, link));
     }
@@ -510,15 +513,21 @@ io_return:
         imap_resp_free(CONTAINER_OF(link, imap_resp_t, link));
     }
 
-    // wait to be awaited
-    if(!s->await_cb) return;
-
     // cleanup our internals
     schedulable_cancel(&s->schedulable);
 
     // await_cb must be last (it might free us)
     s->awaited = true;
-    s->await_cb(s, s->e);
+    link_t reads = {0};
+    link_t writes = {0};
+    link_list_append_list(&reads, &s->reads);
+    link_list_append_list(&writes, &s->writes);
+    // free all response before returning unfinished io
+    imap_server_write_t *req;
+    LINK_FOR_EACH(req, &writes, imap_server_write_t, link){
+        imap_resp_free(STEAL(imap_resp_t, &req->resp));
+    }
+    s->await_cb(s, s->e, &reads, &writes);
 }
 
 static void free_server_memory(imap_server_t *s){
@@ -587,6 +596,7 @@ derr_t imap_server_new(
 
 fail:
     free_server_memory(s);
+    // we are guaranteed not to have any pending io on conn
     conn->close(conn);
     return e;
 }
@@ -602,21 +612,34 @@ imap_server_await_cb imap_server_await(
     return out;
 }
 
+void imap_server_logged_out(imap_server_t *s){
+    s->logged_out = true;
+    schedule(s);
+}
+
 void imap_server_cancel(imap_server_t *s){
+    if(!s) return;
     s->canceled = true;
     schedule(s);
 }
 
-static void await_self(imap_server_t *s, derr_t e){
+static void await_self(
+    imap_server_t *s, derr_t e, link_t *reads, link_t *writes
+){
+    // we already guaranteed reads and writes would be empty
+    (void)reads;
+    (void)writes;
     // swallow any error since we were closed, not awaited
     DROP_VAR(&e);
     free_server_memory(s);
 }
 
 // if not awaited, it will stay alive long enough to await itself
-void imap_server_free(imap_server_t **sptr){
+// returns ok=false if there was pending IO
+bool imap_server_free(imap_server_t **sptr){
     imap_server_t *s = *sptr;
-    if(!s) return;
+    if(!s) return true;
+    bool ok = link_list_isempty(&s->reads) && link_list_isempty(&s->writes);
     if(!s->awaited){
         imap_server_cancel(s);
         imap_server_await(s, await_self);
@@ -624,14 +647,49 @@ void imap_server_free(imap_server_t **sptr){
         free_server_memory(s);
     }
     *sptr = NULL;
+    return ok;
 }
 
-void imap_server_read(
+#define DETECT_INVALID(code, what) do { \
+    if(code){ \
+        LOG_ERROR(what " after " #code "\n"); \
+        return false; \
+    } \
+} while(0)
+
+bool imap_server_read(
     imap_server_t *s, imap_server_read_t *req, imap_server_read_cb cb
 ){
-    // XXX: rewrite stream_i to have await_cb return unfinished reads and writes
-    //      AND all read_cbs mean success
-    //      AND all write_cbs mean success
-    //      AND the transition from "you can read and write to this stream_i"
-    //          to "you can't read/write anymore" is atomic (for failures)
+    DETECT_INVALID(s->awaited, "imap_server_read");
+    DETECT_INVALID(s->canceled, "imap_server_read");
+    DETECT_INVALID(s->logged_out, "imap_server_read");
+
+    *req = (imap_server_read_t){ .cb = cb };
+    link_list_append(&s->reads, &req->link);
+    schedule(s);
+    return true;
+}
+
+bool imap_server_write(
+    imap_server_t *s,
+    imap_server_write_t *req,
+    imap_resp_t *resp,
+    imap_server_write_cb cb
+){
+    DETECT_INVALID(s->awaited, "imap_server_write");
+    DETECT_INVALID(s->canceled, "imap_server_write");
+    DETECT_INVALID(s->logged_out, "imap_server_write");
+
+    if(!s->relay_started){
+        // at first, we queue up reqs with their responses
+        *req = (imap_server_write_t){ .resp = resp, .cb = cb };
+        link_list_append(&s->writes, &req->link);
+    }else{
+        // after we start relaying, we queue the responses immediately
+        *req = (imap_server_write_t){ .cb = cb };
+        link_list_append(&s->writes, &req->link);
+        link_list_append(&s->resps, &resp->link);
+    }
+    schedule(s);
+    return true;
 }

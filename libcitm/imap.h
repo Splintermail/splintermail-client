@@ -40,27 +40,32 @@ DECLARE_STRUCT(imap_client_read_t);
 DECLARE_STRUCT(imap_client_write_t);
 #undef DECLARE_STRUCT
 
+// eof is never returned, either the client has logged out or it is a failure
 typedef void (*imap_server_read_cb)(
-    imap_server_t *s, imap_server_read_t *req, imap_cmd_t *cmd, bool ok
+    imap_server_t *s, imap_server_read_t *req, imap_cmd_t *cmd
 );
 
 typedef void (*imap_server_write_cb)(
-    imap_server_t *s, imap_server_write_t *req, bool ok
+    imap_server_t *s, imap_server_write_t *req
 );
 
 // the await cb is the last chance to access memory in *server
-typedef void (*imap_server_await_cb)(imap_server_t *s, derr_t e);
+typedef void (*imap_server_await_cb)(
+    imap_server_t *s, derr_t e, link_t *reads, link_t *writes
+);
 
 typedef void (*imap_client_read_cb)(
-    imap_client_t *c, imap_client_read_t *req, imap_resp_t *resp, bool ok
+    imap_client_t *c, imap_client_read_t *req, imap_resp_t *resp
 );
 
 typedef void (*imap_client_write_cb)(
-    imap_client_t *c, imap_client_write_t *req, bool ok
+    imap_client_t *c, imap_client_write_t *req
 );
 
 // the await cb is the last chance to access memory in *client
-typedef void (*imap_client_await_cb)(imap_client_t *c, derr_t e);
+typedef void (*imap_client_await_cb)(
+    imap_client_t *c, derr_t e, link_t *reads, link_t *writes
+);
 
 struct imap_server_read_t {
     imap_server_read_cb cb;
@@ -88,27 +93,40 @@ struct imap_client_write_t {
 };
 DEF_CONTAINER_OF(imap_client_write_t, link, link_t)
 
-void imap_server_read(
+bool imap_server_read(
     imap_server_t *s, imap_server_read_t *req, imap_server_read_cb cb
 );
 
-void imap_server_write(
+bool imap_server_write(
     imap_server_t *s,
     imap_server_write_t *req,
     imap_resp_t *resp,
-    imap_server_read_cb cb
+    imap_server_write_cb cb
 );
 
-void imap_client_read(
+bool imap_client_read(
     imap_client_t *c, imap_client_read_t *req, imap_client_read_cb cb
 );
 
-void imap_client_write(
+bool imap_client_write(
     imap_client_t *c,
     imap_client_write_t *req,
     imap_cmd_t *cmd,
-    imap_client_read_cb cb
+    imap_client_write_cb cb
 );
+
+#define MUST(func, ...) do { \
+    if(!func(__VA_ARGS__)) LOG_FATAL(#func " failed\n"); \
+} while(0)
+
+#define imap_server_must_read(s, req, cb) \
+    MUST(imap_server_read, (s), (req), (cb))
+#define imap_client_must_write(s, req, cmd, cb) \
+    MUST(imap_client_write, (s), (req), (cmd), (cb))
+#define imap_client_must_read(s, req, cb) \
+    MUST(imap_client_read, (s), (req), (cb))
+#define imap_server_must_write(s, req, resp, cb) \
+    MUST(imap_server_write, (s), (req), (resp), (cb))
 
 derr_t imap_server_new(
     imap_server_t **out, scheduler_i *scheduler, citm_conn_t *conn
@@ -125,16 +143,22 @@ imap_client_await_cb imap_client_await(
     imap_client_t *c, imap_client_await_cb cb
 );
 
+// call after submitting your final response to
+void imap_server_logged_out(imap_server_t *s);
+
 // idempotent
 void imap_server_cancel(imap_server_t *s);
 void imap_client_cancel(imap_client_t *c);
 
 // if not awaited, it will stay alive long enough to await itself
-void imap_server_free(imap_server_t **server);
-void imap_client_free(imap_server_t *client);
+// returns ok=false if there was pending IO
+bool imap_server_free(imap_server_t **server);
+bool imap_client_free(imap_server_t *client);
+
+#define imap_server_must_free(s) MUST(imap_server_free, (s))
+#define imap_client_must_free(c) MUST(imap_client_free, (c)
 
 struct imap_server_t {
-    imap_security_e security;
     imap_cmd_reader_t reader;
     scheduler_i *scheduler;
     schedulable_t schedulable;
@@ -171,6 +195,11 @@ struct imap_server_t {
 
     bool greeting_started : 1;
     bool greeting_done : 1;
+
+    /* after we start relaying, all responses original from write requests,
+       meaning that when we transition we queue the resp from each write req,
+       and thereafter imap_server_write() queues resp straight to s->resps */
+    bool relay_started : 1;
 
     bool read_started : 1;
     bool read_done : 1;

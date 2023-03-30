@@ -7,12 +7,12 @@ typedef enum {
 struct citm_conn_t;
 typedef struct citm_conn_t citm_conn_t;
 
-// citm_conn_t shall be cleaned up automatically by the call to close()
 struct citm_conn_t {
     stream_i *stream;
     imap_security_e security;
     SSL_CTX *ctx;
-    // close() will also free it; you can't touch it again
+    // close() will also free the conn; you can't touch it again
+    // .close() is illegal unless you can guarantee there is no pending IO
     void (*close)(citm_conn_t*);
 };
 

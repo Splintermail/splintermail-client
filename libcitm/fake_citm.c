@@ -4,8 +4,17 @@
 
 DEF_CONTAINER_OF(fake_citm_conn_t, iface, citm_conn_t)
 
-static void await_after_close(stream_i *stream, derr_t e){
+static void await_after_close(
+    stream_i *stream, derr_t e, link_t *reads, link_t *writes
+){
     (void)stream;
+    // nobody is ever allowed to call conn->close() with pending io
+    if(!link_list_isempty(reads)){
+        LOG_FATAL("unfinished reads on fake_citm conn\n");
+    }
+    if(!link_list_isempty(writes)){
+        LOG_FATAL("unfinished writes on fake_citm conn\n");
+    }
     DROP_VAR(&e);
 }
 

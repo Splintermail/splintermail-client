@@ -13,36 +13,37 @@ derr_t E = {0};
 size_t rbuf_len;
 size_t nreads = 0;
 size_t nwrites = 0;
+size_t niwrites = 0;
 link_t cmds = {0};
 
 DSTR_VAR(cert, 4096);
 DSTR_VAR(key, 4096);
 
-static void write_cb(stream_i *stream, stream_write_t *req, bool ok){
+static void write_cb(stream_i *stream, stream_write_t *req){
     (void)stream;
     (void)req;
-    (void)ok;
     nwrites++;
 }
 
-static void read_cb(stream_i *stream, stream_read_t *req, dstr_t buf, bool ok){
+static void read_cb(stream_i *stream, stream_read_t *req, dstr_t buf){
     (void)stream;
     (void)req;
-    (void)ok;
     nreads++;
     rbuf_len = buf.len;
 }
 
 static void iread_cb(
-    imap_server_t *s, imap_server_read_t *req, imap_cmd_t *cmd, bool ok
+    imap_server_t *s, imap_server_read_t *req, imap_cmd_t *cmd
 ){
     (void)s;
     (void)req;
-    if(!ok){
-        TRACE_ORIG(&E, E_VALUE, "iread_cb(ok=false)");
-    }else{
-        link_list_append(&cmds, &cmd->link);
-    }
+    link_list_append(&cmds, &cmd->link);
+}
+
+static void iwrite_cb(imap_server_t *s, imap_server_write_t *req){
+    (void)s;
+    (void)req;
+    niwrites++;
 }
 
 static derr_t _advance_test(
@@ -70,7 +71,14 @@ static derr_t _advance_test(
 static void cleanup_imap_server(
     manual_scheduler_t *m, imap_server_t **s, fake_stream_t *fs
 ){
-    imap_server_free(s);
+    imap_server_cancel(*s);
+    manual_scheduler_run(m);
+    if(fs->iface.canceled && !fs->iface.awaited){
+        derr_t e_canceled = { .type = E_CANCELED };
+        fake_stream_done(fs, e_canceled);
+        manual_scheduler_run(m);
+    }
+    imap_server_must_free(s);
     manual_scheduler_run(m);
     if(fs->iface.awaited) return;
     if(!fs->iface.canceled){
@@ -81,8 +89,12 @@ static void cleanup_imap_server(
     manual_scheduler_run(m);
 }
 
-static void await_cb(imap_server_t *s, derr_t e){
+static void await_cb(
+    imap_server_t *s, derr_t e, link_t *reads, link_t *writes
+){
     (void)s;
+    (void)reads;
+    (void)writes;
     if(e.type == E_CANCELED) DROP_VAR(&e);
     KEEP_FIRST_IF_NOT_CANCELED_VAR(&E, &e);
 }
@@ -120,6 +132,9 @@ static derr_t test_starttls(SSL_CTX *sctx, SSL_CTX *cctx, test_mode_e mode){
     imap_server_write_t iwrite;
     size_t exp_nreads = nreads;
     size_t exp_nwrites = nwrites;
+    size_t exp_niwrites = niwrites;
+    imap_cmd_t *cmd = NULL;
+    imap_resp_t *resp = NULL;
 
     // end of preamble
 
@@ -139,17 +154,53 @@ static derr_t test_starttls(SSL_CTX *sctx, SSL_CTX *cctx, test_mode_e mode){
     #define EXPECT_WRITE_CB \
         EXPECT_U_GO(&e, "nwrites", nwrites, ++exp_nwrites, cu)
 
+    #define EXPECT_CMD(text) do { \
+        cmd = CONTAINER_OF(link_list_pop_first(&cmds), imap_cmd_t, link); \
+        EXPECT_NOT_NULL_GO(&e, "imap server read cb", cmd, cu); \
+        DSTR_VAR(buf, 1024); \
+        PROP_GO(&e, imap_cmd_print(cmd, &buf, &s->exts), cu); \
+        EXPECT_D3_GO(&e, "cmd body", &buf, &DSTR_LIT(text), cu); \
+    } while(0)
+
+    #define EXPECT_IWRITE_CB \
+        EXPECT_U_GO(&e, "niwrites", niwrites, ++exp_niwrites, cu)
+
     #define EXPECT_STATE_FALSE(who, sym, act) \
         EXPECT_B_GO(&e, \
             who" want "#act, fake_stream_want_##act(sym), false, cu \
         )
 
     #define PUSH_BYTES(from, to) do { \
+        EXPECT_WANT_WRITE("push_bytes.from wants write", from, true); \
+        EXPECT_WANT_READ("push_bytes.to wants read", to, true); \
         dstr_t bytes = fake_stream_pop_write(from); \
+        /* PFMT("pushing bytes from " #from " to " #to "\n"); */ \
         /* copy to the readbuf before calling write_done */ \
         fake_stream_feed_read_all(to, bytes); \
         fake_stream_write_done(from); \
     } while(0)
+
+    #define SHOW_STATE FFMT_QUIET(stdout, NULL, \
+        "client_wants_read:%x\n" \
+        "client_wants_write:%x\n" \
+        "server_wants_read:%x\n" \
+        "server_wants_write:%x\n" \
+        "-------------------\n", \
+        FB(fake_stream_want_read(&fc)), \
+        FB(fake_stream_want_write(&fc)), \
+        FB(fake_stream_want_read(&fs)), \
+        FB(fake_stream_want_write(&fs)), \
+    )
+
+    // queue up an informational response to test relay_started logic
+    {
+        ie_dstr_t *text = ie_dstr_new2(&e, DSTR_LIT("info"));
+        ie_st_resp_t *st = ie_st_resp_new(&e, NULL, IE_ST_OK, NULL, text);
+        imap_resp_arg_t arg = { .status_type = st };
+        resp = imap_resp_new(&e, IMAP_RESP_STATUS_TYPE, arg);
+        CHECK_GO(&e, cu);
+        imap_server_must_write(s, &iwrite, resp, iwrite_cb);
+    }
 
     // client reads greeting
     stream_must_read(c, &read, rbuf, read_cb);
@@ -245,10 +296,14 @@ static derr_t test_starttls(SSL_CTX *sctx, SSL_CTX *cctx, test_mode_e mode){
         goto cu;
     }
 
+    DSTR_STATIC(starttlscmd, "4 STARTTLS\r\n");
+    DSTR_STATIC(starttlsresp, "4 OK it's about time\r\n");
+    DSTR_STATIC(imapcmd, "5 NOOP\r\n");
+
+    // queue up an informational command
+
     if(mode == MODE_STARTTLS){
         // STARTTLS command, don't force preinput
-        DSTR_STATIC(starttlscmd, "4 STARTTLS\r\n");
-        DSTR_STATIC(starttlsresp, "4 OK it's about time\r\n");
         CMD_AND_RESP(&starttlscmd, &starttlsresp);
 
         // promote connection to tls
@@ -261,14 +316,94 @@ static derr_t test_starttls(SSL_CTX *sctx, SSL_CTX *cctx, test_mode_e mode){
         c = tmp;
 
         // write a command through the tls, receive the imap cmd
-        DSTR_STATIC(imapcmd, "5 NOOP\r\n");
         stream_must_write(c, &write, &imapcmd, 1, write_cb);
+        imap_server_must_read(s, &iread, iread_cb);
+        PROP_GO(&e, ADVANCE_TEST(&fs, &fc), cu);
 
-        // XXX: return value?
-        imap_server_read(s, &iread, iread_cb);
+        // (well, do the tls handshake first)
+        PUSH_BYTES(&fc, &fs); // client hello
+        PROP_GO(&e, ADVANCE_TEST(&fs, &fc), cu);
     }
 
-    (void)iwrite;
+    if(mode == MODE_PREINPUT){
+        // STARTTLS command, forcing preinput
+
+        // mush the STARTTLS cmd and the client hello into one packet
+        DSTR_VAR(starttls_and_hello, 4096);
+        PROP_GO(&e, dstr_append(&starttls_and_hello, &starttlscmd), cu);
+
+        // promote client to tls
+        stream_i *tmp;
+        PROP_GO(&e,
+            duv_tls_wrap_client(
+                &tls, cctx, DSTR_LIT("127.0.0.1"), sched, c, &tmp
+            ),
+        cu);
+        c = tmp;
+
+        // relay a command through the imap_server_t
+        stream_must_write(c, &write, &imapcmd, 1, write_cb);
+        imap_server_must_read(s, &iread, iread_cb);
+        PROP_GO(&e, ADVANCE_TEST(&fs, &fc), cu);
+
+        // extract the client hello
+        EXPECT_WANT_WRITE("client_hello", &fc, true);
+        dstr_t tls_hello = fake_stream_pop_write(&fc);
+        PROP_GO(&e, dstr_append(&starttls_and_hello, &tls_hello), cu);
+        fake_stream_feed_read_all(&fs, starttls_and_hello);
+        fake_stream_write_done(&fc);
+        PROP_GO(&e, ADVANCE_TEST(&fs, &fc), cu);
+
+        // expect a plaintext OK response first
+        EXPECT_WANT_WRITE("starttls response", &fs, true);
+        dstr_t plainresp = fake_stream_pop_write(&fs);
+        EXPECT_D3_GO(&e, "starttls response", &plainresp, &starttlsresp, cu);
+        fake_stream_write_done(&fs);
+        PROP_GO(&e, ADVANCE_TEST(&fs, &fc), cu);
+    }
+
+    // finish tls handshake
+    PUSH_BYTES(&fs, &fc); // server response
+    PROP_GO(&e, ADVANCE_TEST(&fs, &fc), cu);
+    PUSH_BYTES(&fc, &fs); // client finished hanshake
+    PROP_GO(&e, ADVANCE_TEST(&fs, &fc), cu);
+    PUSH_BYTES(&fc, &fs); // client writes initial message
+    PROP_GO(&e, ADVANCE_TEST(&fs, &fc), cu);
+    EXPECT_WRITE_CB;
+    EXPECT_CMD("5 NOOP\r\n");
+
+    // write a response through the tls
+    {
+        ie_dstr_t *tag = STEAL(ie_dstr_t, &cmd->tag);
+        ie_dstr_t *text = ie_dstr_new2(&e, DSTR_LIT("yo"));
+        ie_st_resp_t *st = ie_st_resp_new(&e, tag, IE_ST_OK, NULL, text);
+        imap_resp_arg_t arg = { .status_type = st };
+        resp = imap_resp_new(&e, IMAP_RESP_STATUS_TYPE, arg);
+        CHECK_GO(&e, cu);
+        imap_server_must_write(s, &iwrite, resp, iwrite_cb);
+    }
+
+    // read the informational response we queued at the beginning
+    stream_must_read(c, &read, rbuf, read_cb);
+    PROP_GO(&e, ADVANCE_TEST(&fs, &fc), cu);
+    PUSH_BYTES(&fs, &fc); // server finished handshake
+    PROP_GO(&e, ADVANCE_TEST(&fs, &fc), cu);
+    PUSH_BYTES(&fs, &fc); // server sends response
+    PROP_GO(&e, ADVANCE_TEST(&fs, &fc), cu);
+
+    EXPECT_IWRITE_CB;
+    EXPECT_READ_CB;
+    EXPECT_D3_GO(&e, "rbuf", &rbuf, &DSTR_LIT("* OK info\r\n"), cu);
+
+    // read the response we just sent
+    stream_must_read(c, &read, rbuf, read_cb);
+    PROP_GO(&e, ADVANCE_TEST(&fs, &fc), cu);
+    PUSH_BYTES(&fs, &fc);
+    PROP_GO(&e, ADVANCE_TEST(&fs, &fc), cu);
+
+    EXPECT_IWRITE_CB;
+    EXPECT_READ_CB;
+    EXPECT_D3_GO(&e, "rbuf", &rbuf, &DSTR_LIT("5 OK yo\r\n"), cu);
 
 cu:
     cleanup_imap_server(&scheduler, &s, &fs);
@@ -279,6 +414,13 @@ cu:
         DROP_VAR(&E);
     }else{
         TRACE_PROP_VAR(&e, &E);
+    }
+    imap_cmd_free(cmd);
+
+    link_t *link;
+    while((link = link_list_pop_first(&cmds))){
+        imap_cmd_t *cmd = CONTAINER_OF(link, imap_cmd_t, link);
+        imap_cmd_free(cmd);
     }
 
     return e;
@@ -331,6 +473,7 @@ int main(int argc, char** argv){
 
     PROP_GO(&e, test_starttls(sctx, cctx, MODE_LOGOUT), cu);
     PROP_GO(&e, test_starttls(sctx, cctx, MODE_STARTTLS), cu);
+    PROP_GO(&e, test_starttls(sctx, cctx, MODE_PREINPUT), cu);
 
 cu:
     if(is_error(e)){
