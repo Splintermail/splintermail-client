@@ -36,9 +36,8 @@ define_file_logname_for_source("${imap_in}" "${imap_parse_c}")
 define_file_logname_for_source("${imf_scan_in}" "${imf_scan_c}")
 define_file_logname_for_source("${imf_in}" "${imf_parse_c}")
 
-add_library(
+sm_lib(
     imap
-    STATIC
     "${raw_srcs}"
     "${imap_scan_c}"
     "${imap_parse_c}"
@@ -46,6 +45,6 @@ add_library(
     "${imf_scan_c}"
     "${imf_parse_c}"
     "${imf_parse_h}"
+    DEPS dstr
+    NOSETNAME
 )
-target_link_libraries(imap PUBLIC dstr)
-default_compile_options(imap TRUE)

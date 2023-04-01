@@ -281,6 +281,180 @@ if(BUILD_TESTS)
     enable_testing()
 endif()
 
+
+# add a c-based or script-based test, conditioned on BUILD_TESTS
+# Usage:
+#     sm_test(src... DEPS dep... [FILES])  # c test
+#     sm_test(name cmd args... [CWD cwd])  # script test
+function(sm_test)
+    if(NOT BUILD_TESTS)
+        return()
+    endif()
+
+    set(options "FILES")
+    set(one_value_args "CWD")
+    set(multi_value_args "DEPS")
+    cmake_parse_arguments(
+        SM_TEST
+        "${options}"
+        "${one_value_args}"
+        "${multi_value_args}"
+        "${ARGN}"
+    )
+
+    if(SM_TEST_DEPS)
+        # c test
+        # derive name from first source file
+        list(GET SM_TEST_UNPARSED_ARGUMENTS 0 first)
+        get_filename_component(name "${first}" NAME_WE)  # "without extension"
+        add_executable("${name}" ${SM_TEST_UNPARSED_ARGUMENTS})
+        if(SM_TEST_DEPS)
+            target_link_libraries("${name}" PUBLIC ${SM_TEST_DEPS})
+        endif()
+        default_compile_options("${name}" TRUE)
+        define_file_logname_for_target("${name}")
+        if(SM_TEST_FILES)
+            set(args "${PROJECT_SOURCE_DIR}/test/files")
+        else()
+            set(args)
+        endif()
+        add_test(NAME "do_${name}" COMMAND "./${name}" ${args})
+    else()
+        # script test
+        # name is first arg
+        list(GET SM_TEST_UNPARSED_ARGUMENTS 0 name)
+        # cmd is remaining args
+        list(SUBLIST SM_TEST_UNPARSED_ARGUMENTS 1 -1 cmd)
+        if(SM_TEST_CWD)
+            set(args WORKING_DIRECTORY "${SM_TEST_CWD}")
+        else()
+            set(args)
+        endif()
+        add_test(NAME ${name} COMMAND ${cmd} ${args})
+    endif()
+endfunction()
+
+# add a new library, if name is omitted it is derived from first src
+# Usage:
+#     sm_lib([name] src... [DEPS deps...] [TEST] [NOSETNAME] [NOASAN libs-var])
+function(sm_lib)
+    set(options "TEST" "NOSETNAME")
+    set(one_value_args "NOASAN")
+    set(multi_value_args "DEPS")
+    cmake_parse_arguments(
+        SM_LIB
+        "${options}"
+        "${one_value_args}"
+        "${multi_value_args}"
+        "${ARGN}"
+    )
+
+    if(SM_LIB_TEST AND NOT BUILD_TESTS)
+        return()
+    endif()
+
+    list(GET SM_LIB_UNPARSED_ARGUMENTS 0 first)
+    get_filename_component(ext "${first}" EXT)
+    if(ext)
+        # derive the name from the first argument
+        get_filename_component(name "${first}" NAME_WE)  # "without extension"
+        set(srcs ${SM_LIB_UNPARSED_ARGUMENTS})
+    else()
+        # have an explicit name
+        set(name "${first}")
+        list(SUBLIST SM_LIB_UNPARSED_ARGUMENTS 1 -1 srcs)
+    endif()
+
+    add_library("${name}" STATIC ${srcs})
+    if(SM_LIB_DEPS)
+        target_link_libraries("${name}" PUBLIC ${SM_LIB_DEPS})
+    endif()
+    default_compile_options("${name}" TRUE)
+    if(NOT SM_LIB_NOSETNAME)
+        define_file_logname_for_target("${name}")
+    endif()
+
+    # avoid "liblibthing" names
+    string(FIND "${name}" "lib" libidx)
+    if(libidx GREATER -1)
+        set_target_properties("${name}" PROPERTIES PREFIX "")
+    endif()
+
+    if(NOT SM_LIB_NOASAN)
+        return()
+    endif()
+
+    # we also want a _noasan variant, and return the list of libs created
+    set(variants "${name}")
+    if(DISABLE_ASAN)
+        # release builds already have no asan
+        add_library("${name}_noasan" ALIAS "${name}")
+        set("${SM_LIB_NOASAN}" ${variants} PARENT_SCOPE)
+        return()
+    endif()
+
+    # rebuild without asan
+    set(name "${name}_noasan")
+
+    set(noasan_deps)
+    foreach(dep ${SM_LIB_DEPS})
+        list(APPEND noasan_deps "${dep}_noasan")
+    endforeach()
+
+    add_library("${name}" STATIC ${srcs})
+    if(SM_LIB_DEPS)
+        target_link_libraries("${name}" PUBLIC ${noasan_deps})
+    endif()
+    default_compile_options("${name}" FALSE)
+    if(NOT SM_LIB_NOSETNAME)
+        define_file_logname_for_target("${name}")
+    endif()
+    if(libidx GREATER -1)
+        set_target_properties("${name}" PROPERTIES PREFIX "")
+    endif()
+
+    list(APPEND variants "${name}")
+    set("${SM_LIB_NOASAN}" ${variants} PARENT_SCOPE)
+    return()
+endfunction()
+
+# add a new executable, if name is omitted it is derived from first src
+# Usage:
+#     sm_exe([name] src... DEPS deps... [TEST])
+function(sm_exe)
+    set(options "TEST")
+    set(one_value_args "")
+    set(multi_value_args "DEPS")
+    cmake_parse_arguments(
+        SM_EXE
+        "${options}"
+        "${one_value_args}"
+        "${multi_value_args}"
+        "${ARGN}"
+    )
+
+    if(SM_EXE_TEST AND NOT BUILD_TESTS)
+        return()
+    endif()
+
+    list(GET SM_EXE_UNPARSED_ARGUMENTS 0 first)
+    get_filename_component(ext "${first}" EXT)
+    if(ext)
+        # derive the name from the first argument
+        get_filename_component(name "${first}" NAME_WE)  # "without extension"
+        set(srcs ${SM_EXE_UNPARSED_ARGUMENTS})
+    else()
+        # have an explicit name
+        set(name "${first}")
+        list(SUBLIST SM_EXE_UNPARSED_ARGUMENTS 1 -1 srcs)
+    endif()
+
+    add_executable("${name}" ${srcs})
+    default_compile_options("${name}" TRUE)
+    define_file_logname_for_target("${name}")
+    target_link_libraries("${name}" PRIVATE ${SM_EXE_DEPS})
+endfunction()
+
 # always include the source directory (for compiling generated .c files)
 include_directories("${PROJECT_SOURCE_DIR}")
 # always include the binary directory (for including generated .h files)
@@ -299,48 +473,20 @@ add_subdirectory(libimaildir)
 add_subdirectory(libengine)
 add_subdirectory(libcitm)
 
-add_library(api_client api_client.c)
-define_file_logname_for_target(api_client)
-default_compile_options(api_client TRUE)
-target_link_libraries(api_client PUBLIC crypto)
-
-add_library(console_input console_input.c)
-define_file_logname_for_target(console_input)
-default_compile_options(console_input TRUE)
-
-add_library(ui_harness ui_harness.c)
-define_file_logname_for_target(ui_harness)
-default_compile_options(ui_harness TRUE)
-
 set(print_help_in "${PROJECT_SOURCE_DIR}/print_help.h.in")
 set(print_help_out "${PROJECT_BINARY_DIR}/print_help.h")
 qwwq("${print_help_in}" "${print_help_out}")
 define_file_logname_for_source("${print_help_in}" "${print_help_out}")
 
-add_library(ui ui.c "${print_help_out}")
-define_file_logname_for_target(ui)
-default_compile_options(ui TRUE)
-target_link_libraries(ui PUBLIC api_client libcitm)
+sm_lib(api_client.c DEPS crypto)
+sm_lib(console_input.c)
+sm_lib(ui_harness.c)
+sm_lib(ui.c "${print_help_out}" DEPS api_client libcitm)
 
-add_executable(splintermail splintermail.c)
-default_compile_options(splintermail TRUE)
-define_file_logname_for_target(splintermail)
-target_link_libraries(splintermail PRIVATE ui ui_harness console_input)
-
-add_executable(encrypt_msg encrypt_msg.c)
-default_compile_options(encrypt_msg TRUE)
-define_file_logname_for_target(encrypt_msg)
-target_link_libraries(encrypt_msg PRIVATE crypto)
-
-add_executable(decrypt_msg decrypt_msg.c)
-default_compile_options(decrypt_msg TRUE)
-define_file_logname_for_target(decrypt_msg)
-target_link_libraries(decrypt_msg PRIVATE crypto)
-
-add_executable(inject_local_msg inject_local_msg.c)
-default_compile_options(inject_local_msg TRUE)
-define_file_logname_for_target(inject_local_msg)
-target_link_libraries(inject_local_msg PRIVATE imaildir crypto)
+sm_exe(splintermail.c DEPS ui ui_harness console_input)
+sm_exe(encrypt_msg.c DEPS crypto)
+sm_exe(decrypt_msg.c DEPS crypto)
+sm_exe(inject_local_msg.c DEPS imaildir crypto TEST)
 
 # decide if we are building server code
 if(BUILD_SERVER_CODE)

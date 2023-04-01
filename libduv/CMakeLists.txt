@@ -8,39 +8,20 @@ if("${LIBUV_LIB}" STREQUAL "")
     find_library(LIBUV_LIB NAMES uv)
 endif()
 
-macro(add_duv asan)
-    add_library(
-        "duv${asan}"
-        util.c
-        connect.c
-        stream.c
-        scheduler.c
-        passthru.c
-        dstr_rstream.c
-        dstr_stream.c
-        reader.c
-        concat.c
-    )
-    target_link_libraries("duv${asan}" PUBLIC "dstr${asan}")
-    if("${asan}" STREQUAL "_noasan")
-        default_compile_options("duv${asan}" FALSE)
-    else()
-        default_compile_options("duv${asan}" TRUE)
-    endif()
-    define_file_logname_for_target("duv${asan}")
-endmacro()
-
-add_duv("")
-
-set(libs duv)
-if(DISABLE_ASAN)
-    # release builds already have no asan
-    add_library(duv_noasan ALIAS duv)
-else()
-    # rebuild without asan
-    add_duv("_noasan")
-    list(APPEND libs duv_noasan)
-endif()
+sm_lib(
+    duv
+    util.c
+    connect.c
+    stream.c
+    scheduler.c
+    passthru.c
+    dstr_rstream.c
+    dstr_stream.c
+    reader.c
+    concat.c
+    DEPS dstr
+    NOASAN libs
+)
 
 # per-variant tweaks
 foreach(lib ${libs})
@@ -61,39 +42,10 @@ foreach(lib ${libs})
     endif()
 endforeach()
 
-if(BUILD_TESTS)
-    add_library(fakestream STATIC fake_stream.c)
-    target_link_libraries(fakestream PUBLIC duv)
-    default_compile_options(fakestream TRUE)
-    define_file_logname_for_target(fakestream)
+sm_lib(fakestream fake_stream.c DEPS duv TEST)
 
-    add_executable(test_connect test_connect.c)
-    target_link_libraries(test_connect PUBLIC duv)
-    default_compile_options(test_connect TRUE)
-    define_file_logname_for_target(test_connect)
-    add_test(NAME "do_test_connect" COMMAND "./test_connect")
-
-    add_executable(test_passthru test_passthru.c)
-    target_link_libraries(test_passthru PUBLIC duv)
-    default_compile_options(test_passthru TRUE)
-    define_file_logname_for_target(test_passthru)
-    add_test(NAME "do_test_passthru" COMMAND "./test_passthru")
-
-    add_executable(test_dstr_rstream test_dstr_rstream.c)
-    target_link_libraries(test_dstr_rstream PUBLIC duv)
-    default_compile_options(test_dstr_rstream TRUE)
-    define_file_logname_for_target(test_dstr_rstream)
-    add_test(NAME "do_test_dstr_rstream" COMMAND "./test_dstr_rstream")
-
-    add_executable(test_reader test_reader.c)
-    target_link_libraries(test_reader PUBLIC duv)
-    default_compile_options(test_reader TRUE)
-    define_file_logname_for_target(test_reader)
-    add_test(NAME "do_test_reader" COMMAND "./test_reader")
-
-    add_executable(test_concat test_concat.c)
-    target_link_libraries(test_concat PUBLIC duv)
-    default_compile_options(test_concat TRUE)
-    define_file_logname_for_target(test_concat)
-    add_test(NAME "do_test_concat" COMMAND "./test_concat")
-endif()
+sm_test(test_connect.c DEPS duv)
+sm_test(test_passthru.c DEPS duv)
+sm_test(test_dstr_rstream.c DEPS duv)
+sm_test(test_reader.c DEPS duv)
+sm_test(test_concat.c DEPS duv)

@@ -21,54 +21,19 @@ gen_parser(
     "gen-http-parse" "${http_parse_in}" "${http_parse_c}" "${http_parse_h}"
 )
 
-add_library(
+sm_lib(
     http
-    STATIC
     "${raw_srcs}"
     "${http_scan_c}"
     "${http_parse_c}"
     "${http_parse_h}"
+    DEPS dstr url duv crypto duvtls
+    NOSETNAME
 )
-target_link_libraries(http PUBLIC dstr url duv crypto duvtls)
-default_compile_options(http TRUE)
 
-if(BUILD_TESTS)
-    add_executable(test_http_reader test_http_reader.c)
-    target_link_libraries(test_http_reader PUBLIC http)
-    default_compile_options(test_http_reader TRUE)
-    define_file_logname_for_target(test_http_reader)
-    add_test(NAME "do_test_http_reader" COMMAND "./test_http_reader")
-
-    add_executable(test_marshal test_marshal.c)
-    target_link_libraries(test_marshal PUBLIC http)
-    default_compile_options(test_marshal TRUE)
-    define_file_logname_for_target(test_marshal)
-    add_test(NAME "do_test_marshal" COMMAND "./test_marshal")
-
-    add_executable(test_borrow test_borrow.c)
-    target_link_libraries(test_borrow PUBLIC http)
-    default_compile_options(test_borrow TRUE)
-    define_file_logname_for_target(test_borrow)
-    add_test(NAME "do_test_borrow" COMMAND "./test_borrow")
-
-    add_executable(test_limit test_limit.c)
-    target_link_libraries(test_limit PUBLIC http)
-    default_compile_options(test_limit TRUE)
-    define_file_logname_for_target(test_limit)
-    add_test(NAME "do_test_limit" COMMAND "./test_limit")
-
-    add_executable(test_chunked test_chunked.c)
-    target_link_libraries(test_chunked PUBLIC http)
-    default_compile_options(test_chunked TRUE)
-    define_file_logname_for_target(test_chunked)
-    add_test(NAME "do_test_chunked" COMMAND "./test_chunked")
-
-    add_executable(test_duv_http test_duv_http.c)
-    target_link_libraries(test_duv_http PUBLIC http)
-    default_compile_options(test_duv_http TRUE)
-    define_file_logname_for_target(test_duv_http)
-    add_test(
-        NAME "do_test_duv_http"
-        COMMAND "./test_duv_http" "${CMAKE_CURRENT_SOURCE_DIR}/../test/files"
-    )
-endif()
+sm_test(test_http_reader.c DEPS http)
+sm_test(test_marshal.c DEPS http)
+sm_test(test_borrow.c DEPS http)
+sm_test(test_limit.c DEPS http)
+sm_test(test_chunked.c DEPS http)
+sm_test(test_duv_http.c DEPS http FILES)

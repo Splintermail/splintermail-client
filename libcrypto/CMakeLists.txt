@@ -1,31 +1,4 @@
-macro(add_crypto asan)
-    add_library(
-        "crypto${asan}"
-        networking.c
-        crypto.c
-        ssl_errors.c
-        cmp.c
-    )
-    target_link_libraries("crypto${asan}" PUBLIC "dstr${asan}")
-    if("${asan}" STREQUAL "_noasan")
-        default_compile_options("crypto${asan}" FALSE)
-    else()
-        default_compile_options("crypto${asan}" TRUE)
-    endif()
-    define_file_logname_for_target("crypto${asan}")
-endmacro()
-
-add_crypto("")
-
-set(libs "crypto")
-if(DISABLE_ASAN)
-    # release builds already have no asan
-    add_library(crypto_noasan ALIAS crypto)
-else()
-    # rebuild without asan
-    add_crypto("_noasan")
-    list(APPEND libs "crypto_noasan")
-endif()
+sm_lib(crypto networking.c crypto.c ssl_errors.c cmp.c DEPS dstr NOASAN libs)
 
 # per-variant tweaks
 foreach(lib ${libs})

@@ -21,16 +21,15 @@ gen_parser(
     "gen-url-parse" "${url_parse_in}" "${url_parse_c}" "${url_parse_h}"
 )
 
-add_library(
+sm_lib(
     url
-    STATIC
     "${raw_srcs}"
     "${url_scan_out}"
     "${url_parse_c}"
     "${url_parse_h}"
+    DEPS dstr
+    NOSETNAME
 )
-target_link_libraries(url PUBLIC dstr)
-default_compile_options(url TRUE)
 
 if("${CMAKE_C_COMPILER_ID}" STREQUAL "MSVC")
     # windows getaddrinfo lib

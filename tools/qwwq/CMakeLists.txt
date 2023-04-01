@@ -13,55 +13,6 @@ set(qw_parse_in "${HERE}/qw.in")
 set(qw_parse_c "${GEN}/parse.c")
 set(qw_parse_h "${GEN}/parse.h")
 
-define_file_logname_for_source("${qw_scan_in}" "${qw_scan_out}")
-define_file_logname_for_source("${qw_parse_in}" "${qw_parse_c}")
-
-re2c("gen-qw-scan" "${qw_scan_in}" "${qw_scan_out}")
-
-gen_parser(
-    "gen-qw-parse" "${qw_parse_in}" "${qw_parse_c}" "${qw_parse_h}"
-)
-
-function(gen_types tgt infile cfile hfile)
-    string(TOLOWER "${CMAKE_BUILD_TYPE}" lowerbuild)
-    if("${lowerbuild}" STREQUAL "debug")
-        set(DEBUG_FLAG "debug=true")
-    else()
-        set(DEBUG_FLAG "")
-    endif()
-    add_custom_command(
-        OUTPUT "${cfile}"
-        COMMAND "${PYTHON_3_CMD}" "${infile}" -o "${cfile}"
-        DEPENDS "${infile}"
-        COMMENT "generating type definitions ${cfile}" VERBATIM
-    )
-    add_custom_command(
-        OUTPUT "${hfile}"
-        COMMAND "${PYTHON_3_CMD}" "${infile}" "--header" -o "${hfile}"
-        DEPENDS "${infile}"
-        COMMENT "generating type declarations ${hfile}" VERBATIM
-    )
-    add_custom_target("${tgt}" DEPENDS "${cfile}" "${hfile}")
-endfunction()
-
-set(qw_types_in "${HERE}/tg.py")
-set(qw_types_c "${GEN}/qw_types.c")
-set(qw_types_h "${GEN}/qw_types.h")
-
-gen_types("gen-qw-types" "${qw_types_in}" "${qw_types_c}" "${qw_types_h}")
-define_file_logname_for_source("${qw_types_in}" "${qw_types_c}")
-
-add_library(
-    qw
-    STATIC
-    "${raw_srcs}"
-    "${qw_scan_out}"
-    "${qw_parse_c}"
-    "${qw_parse_h}"
-)
-target_link_libraries(qw PUBLIC dstr)
-default_compile_options(qw TRUE)
-
 if("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU")
     # allow uintptr_t -> uintptr_t:24 bitfield assignment
     source_compile_options(convert.c -Wno-conversion)
@@ -73,15 +24,22 @@ elseif("${CMAKE_C_COMPILER_ID}" STREQUAL "MSVC")
     source_compile_options("${qw_parse_c}" "/wd4702")  # unreachable code
 endif()
 
-add_executable(qwwq main.c)
-default_compile_options(qwwq TRUE)
-define_file_logname_for_target(qwwq)
-target_link_libraries(qwwq PUBLIC qw)
+define_file_logname_for_source("${qw_scan_in}" "${qw_scan_out}")
+define_file_logname_for_source("${qw_parse_in}" "${qw_parse_c}")
 
-if(BUILD_TESTS)
-    add_executable(test_qw test_qw.c)
-    target_link_libraries(test_qw PUBLIC qw)
-    default_compile_options(test_qw TRUE)
-    define_file_logname_for_target(test_qw)
-    add_test(NAME "do_test_qw" COMMAND "./test_qw" "${PROJECT_SOURCE_DIR}/test/files")
-endif()
+re2c("gen-qw-scan" "${qw_scan_in}" "${qw_scan_out}")
+
+gen_parser(
+    "gen-qw-parse" "${qw_parse_in}" "${qw_parse_c}" "${qw_parse_h}"
+)
+
+sm_lib(
+    qw
+    "${raw_srcs}" "${qw_scan_out}" "${qw_parse_c}" "${qw_parse_h}"
+    DEPS dstr
+    NOSETNAME
+)
+
+sm_exe(qwwq main.c DEPS qw)
+
+sm_test(test_qw.c DEPS qw FILES)
