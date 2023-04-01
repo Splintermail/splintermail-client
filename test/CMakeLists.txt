@@ -61,13 +61,7 @@ endif()
 # add test executables, tests and INCLUDE the root directory
 foreach(tgt ${TEST_EXE_TGTS})
     add_executable("${tgt}" "${tgt}.c")
-    default_compile_options("${tgt}" TRUE)
-    define_file_logname_for_target("${tgt}")
-    # all exectuables use opt_parse
     target_link_libraries("${tgt}" PRIVATE dstr)
-    # add test
-    add_test(NAME "do_${tgt}"
-        COMMAND ${valgrind_cmd} "./${tgt}" "${PROJECT_SOURCE_DIR}/test/files")
 endforeach()
 
 # describe test executables with dependencies
@@ -79,7 +73,7 @@ target_link_libraries(test_json PRIVATE test_utils)
 target_link_libraries(test_ui PRIVATE ui dummy_ui_harness test_utils)
 # target_link_libraries(test_atree) PRIVATE
 # target_link_libraries(test_heap) PRIVATE
-target_link_libraries(test_dstr_off PRIVATE dstr)
+# target_link_libraries(test_dstr_off PRIVATE dstr)
 target_link_libraries(test_url PRIVATE url)
 target_link_libraries(test_imap_scan PRIVATE imap)
 target_link_libraries(test_imap_read PRIVATE imap)
@@ -96,6 +90,15 @@ target_link_libraries(test_imf_parse PRIVATE imap)
 target_link_libraries(test_fpr_watcher PRIVATE libcitm)
 target_link_libraries(test_search PRIVATE imaildir)
 target_link_libraries(test_log_file PRIVATE imaildir test_utils)
+
+foreach(tgt ${TEST_EXE_TGTS})
+    default_compile_options("${tgt}" TRUE)
+    define_file_logname_for_target("${tgt}")
+    # all exectuables use opt_parse
+    # add test
+    add_test(NAME "do_${tgt}"
+        COMMAND ${valgrind_cmd} "./${tgt}" "${PROJECT_SOURCE_DIR}/test/files")
+endforeach()
 
 # add some python-based tests
 

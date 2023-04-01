@@ -21,40 +21,45 @@ macro(add_duv asan)
         reader.c
         concat.c
     )
-    target_include_directories("duv${asan}" PUBLIC "${LIBUV_INCLUDE}")
-    target_link_libraries("duv${asan}" PUBLIC "dstr${asan}" "${LIBUV_LIB}")
+    target_link_libraries("duv${asan}" PUBLIC "dstr${asan}")
     if("${asan}" STREQUAL "_noasan")
         default_compile_options("duv${asan}" FALSE)
     else()
         default_compile_options("duv${asan}" TRUE)
     endif()
     define_file_logname_for_target("duv${asan}")
-
-
-    # compiler- and target-specific flag adjustments
-    if("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU")
-        # flags for gcc
-        # libuv needs non-strict aliasing
-        # see discussion here: https://github.com/libuv/libuv/issues/1230
-        target_compile_options("duv${asan}" PRIVATE -fno-strict-aliasing)
-    elseif("${CMAKE_C_COMPILER_ID}" MATCHES "Clang")
-        # flags common to "AppleClang" and "Clang"
-        target_compile_options("duv${asan}" PRIVATE -fno-strict-aliasing)
-    elseif("${CMAKE_C_COMPILER_ID}" STREQUAL "MSVC")
-        # additional dependencies for windows
-        target_link_libraries("duv${asan}" PUBLIC ws2_32 iphlpapi userenv)
-    endif()
 endmacro()
 
 add_duv("")
 
+set(libs duv)
 if(DISABLE_ASAN)
     # release builds already have no asan
     add_library(duv_noasan ALIAS duv)
 else()
     # rebuild without asan
     add_duv("_noasan")
+    list(APPEND libs duv_noasan)
 endif()
+
+# per-variant tweaks
+foreach(lib ${libs})
+    target_include_directories("${lib}" PUBLIC "${LIBUV_INCLUDE}")
+    target_link_libraries("${lib}" PUBLIC "${LIBUV_LIB}")
+    # compiler- and target-specific flag adjustments
+    if("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU")
+        # flags for gcc
+        # libuv needs non-strict aliasing
+        # see discussion here: https://github.com/libuv/libuv/issues/1230
+        target_compile_options("${lib}" PRIVATE -fno-strict-aliasing)
+    elseif("${CMAKE_C_COMPILER_ID}" MATCHES "Clang")
+        # flags common to "AppleClang" and "Clang"
+        target_compile_options("${lib}" PRIVATE -fno-strict-aliasing)
+    elseif("${CMAKE_C_COMPILER_ID}" STREQUAL "MSVC")
+        # additional dependencies for windows
+        target_link_libraries("${lib}" PUBLIC ws2_32 iphlpapi userenv)
+    endif()
+endforeach()
 
 if(BUILD_TESTS)
     add_library(fakestream STATIC fake_stream.c)

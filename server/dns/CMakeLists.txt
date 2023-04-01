@@ -1,4 +1,4 @@
-add_library(libdns SHARED membuf.c dns.c parse.c write.c rrl.c)
+add_library(libdns STATIC membuf.c dns.c parse.c write.c rrl.c)
 default_compile_options(libdns TRUE)
 define_file_logname_for_target(libdns)
 target_link_libraries(libdns PUBLIC url duv kvpsync)

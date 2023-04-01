@@ -1,4 +1,4 @@
-add_library(kvpsync SHARED util.c pkts.c recv.c send.c)
+add_library(kvpsync STATIC util.c pkts.c recv.c send.c)
 default_compile_options(kvpsync TRUE)
 define_file_logname_for_target(kvpsync)
 target_link_libraries(kvpsync PUBLIC duv)

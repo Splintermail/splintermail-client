@@ -1,4 +1,4 @@
-add_library(libacme SHARED b64url.c jws.c reqs.c)
+add_library(libacme STATIC b64url.c jws.c reqs.c)
 default_compile_options(libacme TRUE)
 define_file_logname_for_target(libacme)
 target_link_libraries(libacme PUBLIC http)

@@ -1,23 +1,25 @@
 add_subdirectory(mysql_util)
 add_subdirectory(petname)
 
+# badbadbad_alert needs non-strict aliasing due to sockaddr_info business
+source_compile_options(badbadbad_alert.c -fno-strict-aliasing)
+
 macro(add_libsmsql asan)
     add_library("libsmsql${asan}" libsmsql.c)
-    set_target_properties("libsmsql${asan}" PROPERTIES OUTPUT_NAME "smsql${asan}")
-    if("${asan}" STREQUAL "_noasan")
-        default_compile_options("libsmsql${asan}" FALSE)
-    else()
-        default_compile_options("libsmsql${asan}" TRUE)
-    endif()
-    define_file_logname_for_target("libsmsql${asan}")
+    set_target_properties("libsmsql${asan}" PROPERTIES PREFIX "")
     target_link_libraries(
         "libsmsql${asan}"
         PUBLIC
         "mysql_util${asan}"
         "petname${asan}"
         "crypto${asan}"
-        crypt
     )
+    if("${asan}" STREQUAL "_noasan")
+        default_compile_options("libsmsql${asan}" FALSE)
+    else()
+        default_compile_options("libsmsql${asan}" TRUE)
+    endif()
+    define_file_logname_for_target("libsmsql${asan}")
 endmacro()
 
 macro(add_badbadbad_alert asan)
@@ -27,21 +29,31 @@ macro(add_badbadbad_alert asan)
     else()
         default_compile_options("badbadbad_alert${asan}" TRUE)
     endif()
-    # badbadbad_alert needs non-strict aliasing due to sockaddr_info business
-    source_compile_options(badbadbad_alert.c -fno-strict-aliasing)
     define_file_logname_for_target("badbadbad_alert${asan}")
 endmacro()
 
 add_libsmsql("")
 add_badbadbad_alert("")
 
+set(libs "libsmsql")
 if(DISABLE_ASAN)
     # release builds already have no asan
     add_library(libsmsql_noasan ALIAS libsmsql)
-    add_library(badbadbad_alert_noasan ALIAS badbadbad_alert)
 else()
     # rebuild without asan
     add_libsmsql("_noasan")
+    list(APPEND libs "libsmsql_noasan")
+endif()
+
+foreach(lib ${libs})
+    target_link_libraries("${lib}" PUBLIC crypt)
+endforeach()
+
+if(DISABLE_ASAN)
+    # release builds already have no asan
+    add_library(badbadbad_alert_noasan ALIAS badbadbad_alert)
+else()
+    # rebuild without asan
     add_badbadbad_alert("_noasan")
 endif()
 
