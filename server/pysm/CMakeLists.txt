@@ -1,6 +1,6 @@
 find_package(Python3 COMPONENTS Development)
 Python3_add_library(pysm MODULE pysm.c args.c py_smsql.c)
-default_compile_options(pysm FALSE)
+default_compile_options(pysm NOASAN)
 define_file_logname_for_target(pysm)
 target_include_directories(pysm PUBLIC "${OPENSSL_INCLUDE_DIR}")
 target_link_libraries(

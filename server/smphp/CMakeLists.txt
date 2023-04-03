@@ -43,7 +43,7 @@ define_file_logname_for_target(smphp)
 set_target_properties(smphp PROPERTIES PREFIX "")
 
 # zend doesn't handle all of the default flags we normally use
-default_compile_options(smphp FALSE)
+default_compile_options(smphp NOASAN)
 if("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU")
     target_compile_options(smphp PRIVATE "-Wno-unused-parameter")
     target_compile_options(smphp PRIVATE "-Wno-conversion")
