@@ -11,6 +11,9 @@ struct citm_conn_t {
     stream_i *stream;
     imap_security_e security;
     SSL_CTX *ctx;
+    // verify_name must be non-empty for non-INSECURE client connections
+    // verify_name is expected to have externally-managed .data
+    dstr_t verify_name;
     // close() will also free the conn; you can't touch it again
     // .close() is illegal unless you can guarantee there is no pending IO
     void (*close)(citm_conn_t*);

@@ -6,7 +6,7 @@
 #include <errno.h>
 
 #include "libdstr/libdstr.h"
-#include "libcitm/citm.h"
+#include "libcitm/libcitm.h"
 #include "libcrypto/libcrypto.h"
 
 #include "ui.h"

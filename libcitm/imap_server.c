@@ -12,8 +12,6 @@ static void schedule(imap_server_t *s){
     s->scheduler->schedule(s->scheduler, &s->schedulable);
 }
 
-#define ONCE(x) if(!x && (x = true))
-
 static void read_cb(stream_i *stream, stream_read_t *req, dstr_t buf){
     imap_server_t *s = stream->data;
     (void)req;
@@ -23,36 +21,6 @@ static void read_cb(stream_i *stream, stream_read_t *req, dstr_t buf){
         TRACE_ORIG(&s->e, E_RESPONSE, "unexpected EOF from imap client");
     }
     schedule(s);
-}
-
-// try to read at least one command from the wire
-// in the starttls case, leave remaining text in read_buf
-static derr_t advance_reads(imap_server_t *s, bool starttls, bool *ok){
-    derr_t e = E_OK;
-    *ok = false;
-
-    while(link_list_isempty(&s->cmds)){
-        // read bytes off the wire
-        ONCE(s->read_started){
-            stream_must_read(s->stream, &s->read_req, s->rbuf, read_cb);
-        }
-        if(!s->read_done) return e;
-        s->read_started = false;
-        s->read_done = false;
-        if(starttls){
-            size_t skip = 0;
-            PROP(&e,
-                imap_cmd_read_starttls(&s->reader, s->rbuf, &s->cmds, &skip)
-            );
-            // leave unread data in read_buf for preinput to the duv_tls_t
-            dstr_leftshift(&s->rbuf, skip);
-        }else{
-            PROP(&e, imap_cmd_read(&s->reader, s->rbuf, &s->cmds) );
-        }
-    }
-
-    *ok = true;
-    return e;
 }
 
 static void write_cb(stream_i *stream, stream_write_t *req){
@@ -99,6 +67,38 @@ static void await_cb(
     schedule(s);
 }
 
+#define ONCE(x) if(!x && (x = true))
+
+// try to read at least one command from the wire
+// in the starttls case, leave remaining text in read_buf
+static derr_t advance_reads(imap_server_t *s, bool starttls, bool *ok){
+    derr_t e = E_OK;
+    *ok = false;
+
+    while(link_list_isempty(&s->cmds)){
+        // read bytes off the wire
+        ONCE(s->read_started){
+            stream_must_read(s->stream, &s->read_req, s->rbuf, read_cb);
+        }
+        if(!s->read_done) return e;
+        s->read_started = false;
+        s->read_done = false;
+        if(starttls){
+            size_t skip = 0;
+            PROP(&e,
+                imap_cmd_read_starttls(&s->reader, s->rbuf, &s->cmds, &skip)
+            );
+            // leave unread data in read_buf for preinput to the duv_tls_t
+            dstr_leftshift(&s->rbuf, skip);
+        }else{
+            PROP(&e, imap_cmd_read(&s->reader, s->rbuf, &s->cmds) );
+        }
+    }
+
+    *ok = true;
+    return e;
+}
+
 // try to marshal all responses to the wire
 static derr_t advance_writes(imap_server_t *s, bool *ok){
     derr_t e = E_OK;
@@ -143,7 +143,6 @@ static derr_t advance_writes(imap_server_t *s, bool *ok){
             link = link_list_pop_first(&s->writes);
             imap_server_write_t *req =
                 CONTAINER_OF(link, imap_server_write_t, link);
-            req->resp = NULL;
             req->cb(s, req);
             // did the user cancel us?
             if(s->canceled) return e;
@@ -487,6 +486,7 @@ static void advance_state(imap_server_t *s){
 
     // process write requests
     PROP_GO(&s->e, advance_writes(s, &ok), fail);
+    (void)ok;
 
     return;
 
@@ -498,11 +498,11 @@ cu:
     s->stream->cancel(s->stream);
     if(!s->stream->awaited) return;
 
-    // close the underlying connection object
-    s->conn->close(s->conn);
-
     // wait to be awaited
     if(!s->await_cb) return;
+
+    // close the underlying connection object
+    s->conn->close(s->conn);
 
     // free cmds or responses
     link_t *link;
@@ -513,7 +513,6 @@ cu:
         imap_resp_free(CONTAINER_OF(link, imap_resp_t, link));
     }
 
-    // cleanup our internals
     schedulable_cancel(&s->schedulable);
 
     // await_cb must be last (it might free us)
@@ -601,17 +600,6 @@ fail:
     return e;
 }
 
-// must not have been awaited yet (that is, await_cb must not have been called)
-imap_server_await_cb imap_server_await(
-    imap_server_t *s, imap_server_await_cb cb
-){
-    if(s->awaited) LOG_FATAL("imap server was already awaited!\n");
-    imap_server_await_cb out = s->await_cb;
-    s->await_cb = cb;
-    schedule(s);
-    return out;
-}
-
 void imap_server_logged_out(imap_server_t *s){
     s->logged_out = true;
     schedule(s);
@@ -635,19 +623,23 @@ static void await_self(
 }
 
 // if not awaited, it will stay alive long enough to await itself
-// returns ok=false if there was pending IO
+// returns ok=false if freeing fails due to pending IO
 bool imap_server_free(imap_server_t **sptr){
     imap_server_t *s = *sptr;
     if(!s) return true;
-    bool ok = link_list_isempty(&s->reads) && link_list_isempty(&s->writes);
+    if(!link_list_isempty(&s->reads) || !link_list_isempty(&s->writes)){
+        LOG_ERROR("imap_server_free with pending io\n");
+        return false;
+    }
     if(!s->awaited){
         imap_server_cancel(s);
-        imap_server_await(s, await_self);
+        imap_server_await_cb ignore;
+        imap_server_must_await(s, await_self, &ignore);
     }else{
         free_server_memory(s);
     }
     *sptr = NULL;
-    return ok;
+    return true;
 }
 
 #define DETECT_INVALID(code, what) do { \
@@ -656,6 +648,18 @@ bool imap_server_free(imap_server_t **sptr){
         return false; \
     } \
 } while(0)
+
+// retruns ok=false if await_cb has been called
+bool imap_server_await(
+    imap_server_t *s, imap_server_await_cb cb, imap_server_await_cb *out
+){
+    *out = NULL;
+    DETECT_INVALID(s->awaited, "imap_server_await");
+    *out = s->await_cb;
+    s->await_cb = cb;
+    schedule(s);
+    return true;
+}
 
 bool imap_server_read(
     imap_server_t *s, imap_server_read_t *req, imap_server_read_cb cb

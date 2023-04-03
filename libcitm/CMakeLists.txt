@@ -1,4 +1,4 @@
-add_library(
+sm_lib(
     libcitm
     # passthru.c
     # server.c
@@ -8,34 +8,14 @@ add_library(
     # fpr_watcher.c
     # citm.c
     # date.c
-    ###
     imap_server.c
+    imap_client.c
+    DEPS dstr crypto duv duvtls imap imaildir
 )
-target_link_libraries(libcitm PUBLIC dstr crypto duv duvtls imap imaildir)
-set_target_properties("libcitm" PROPERTIES OUTPUT_NAME "citm")
-default_compile_options(libcitm TRUE)
-define_file_logname_for_target(libcitm)
 
-add_executable(
-    citm
-    main.c
-)
-target_link_libraries(citm PUBLIC libcitm)
-default_compile_options(citm TRUE)
-define_file_logname_for_target(citm)
+sm_exe(citm main.c DEPS libcitm)
 
-if(BUILD_TESTS)
-    add_library(fakecitm STATIC fake_citm.c)
-    target_link_libraries(fakecitm PUBLIC libcitm)
-    default_compile_options(fakecitm TRUE)
-    define_file_logname_for_target(fakecitm)
+sm_lib(fake_citm.c DEPS libcitm TEST)
 
-    add_executable(test_imap_server test_imap_server.c)
-    target_link_libraries(test_imap_server PUBLIC fakestream fakecitm)
-    default_compile_options(test_imap_server TRUE)
-    define_file_logname_for_target(test_imap_server)
-    add_test(
-        NAME "do_test_imap_server"
-        COMMAND "./test_imap_server" "${PROJECT_SOURCE_DIR}/test/files"
-    )
-endif()
+sm_test(test_imap_server.c DEPS fakestream fake_citm FILES)
+sm_test(test_imap_client.c DEPS fakestream fake_citm FILES)
