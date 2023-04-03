@@ -2110,3 +2110,73 @@ fail:
     imap_resp_free(resp);
     return NULL;
 }
+
+derr_type_t fmthook_imap_cmd(dstr_t* out, const void* arg){
+    const imap_cmd_t *cmd = arg;
+
+    // print the first 80 characers
+    DSTR_VAR(buf, 80);
+
+    // assume all extensions are on
+    extensions_t exts = {
+        .uidplus = EXT_STATE_ON,
+        .enable = EXT_STATE_ON,
+        .condstore = EXT_STATE_ON,
+        .qresync = EXT_STATE_ON,
+        .unselect = EXT_STATE_ON,
+        .idle = EXT_STATE_ON,
+        .xkey = EXT_STATE_ON,
+    };
+
+    size_t skip = 0;
+    size_t want;
+    derr_t e = imap_cmd_write(cmd, &buf, &skip, &want, &exts);
+    if(is_error(e)){
+        derr_type_t etype = e.type;
+        DROP_VAR(&e);
+        return etype;
+    }
+
+    if(want && buf.len > 3){
+        // replace final 3 bytes with "..."
+        buf = dstr_sub2(buf, 0, buf.len - 3);
+        dstr_append_quiet(&buf, &DSTR_LIT("..."));
+    }
+
+    return fmthook_dstr_dbg(out, &buf);
+}
+
+derr_type_t fmthook_imap_resp(dstr_t* out, const void* arg){
+    const imap_resp_t *resp = arg;
+
+    // print the first 80 characers
+    DSTR_VAR(buf, 80);
+
+    // assume all extensions are on
+    extensions_t exts = {
+        .uidplus = EXT_STATE_ON,
+        .enable = EXT_STATE_ON,
+        .condstore = EXT_STATE_ON,
+        .qresync = EXT_STATE_ON,
+        .unselect = EXT_STATE_ON,
+        .idle = EXT_STATE_ON,
+        .xkey = EXT_STATE_ON,
+    };
+
+    size_t skip = 0;
+    size_t want;
+    derr_t e = imap_resp_write(resp, &buf, &skip, &want, &exts);
+    if(is_error(e)){
+        derr_type_t etype = e.type;
+        DROP_VAR(&e);
+        return etype;
+    }
+
+    if(want && buf.len > 3){
+        // replace final 3 bytes with "..."
+        buf = dstr_sub2(buf, 0, buf.len - 3);
+        dstr_append_quiet(&buf, &DSTR_LIT("..."));
+    }
+
+    return fmthook_dstr_dbg(out, &buf);
+}
