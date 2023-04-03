@@ -495,7 +495,6 @@ add_subdirectory(liburl)
 add_subdirectory(libhttp)
 add_subdirectory(libimap)
 add_subdirectory(libimaildir)
-add_subdirectory(libengine)
 add_subdirectory(libcitm)
 
 set(print_help_in "${PROJECT_SOURCE_DIR}/print_help.h.in")
