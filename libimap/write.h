@@ -21,3 +21,20 @@ imap_cmd_t *imap_cmd_assert_writable(derr_t *e, imap_cmd_t *cmd,
         const extensions_t *exts);
 imap_resp_t *imap_resp_assert_writable(derr_t *e, imap_resp_t *resp,
         const extensions_t *exts);
+
+
+// FDICMD assumes all extensions are allowed
+// prints just the first 80 characters
+derr_type_t fmthook_imap_cmd(dstr_t* out, const void* arg);
+static inline fmt_t FICMD(const imap_cmd_t *arg){
+    return (fmt_t){FMT_EXT, {.ext = {.arg = (const void*)arg,
+                                     .hook = fmthook_imap_cmd} } };
+}
+
+// FDIRESP assumes all extensions are allowed
+// prints just the first 80 characters
+derr_type_t fmthook_imap_resp(dstr_t* out, const void* arg);
+static inline fmt_t FIRESP(const imap_resp_t *arg){
+    return (fmt_t){FMT_EXT, {.ext = {.arg = (const void*)arg,
+                                     .hook = fmthook_imap_resp} } };
+}
