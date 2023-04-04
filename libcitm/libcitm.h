@@ -7,6 +7,7 @@
 
 #include "citm.h"
 #include "imap.h"
+#include "io_pair.h"
 
 #include "passthru.h"
 #include "fetcher.h"

@@ -26,7 +26,7 @@ struct citm_connect_i {
 };
 
 // conn is NULL on failure
-typedef void (*citm_conn_cb)(void*, citm_conn_t *conn);
+typedef void (*citm_conn_cb)(void*, citm_conn_t *conn, derr_t e);
 
 struct citm_io_i;
 typedef struct citm_io_i citm_io_i;

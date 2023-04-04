@@ -6,7 +6,11 @@ typedef void (*io_pair_cb)(
 );
 
 void io_pair_new(
-    citm_io_i *io, citm_conn_t conn_dn, io_pair_cb cb, void *data, link_t *list
+    citm_io_i *io,
+    citm_conn_t *conn_dn,
+    io_pair_cb cb,
+    void *data,
+    link_t *list
 );
 
 // citm can cancel us (it should also remove us from its list)

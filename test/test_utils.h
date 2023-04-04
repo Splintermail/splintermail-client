@@ -251,6 +251,41 @@ derr_t mkdir_temp(const char *prefix, dstr_t *path);
     } \
 } while (0)
 
+#define _EXPECT_LIST_LENGTH(e, name, list, exp, action) do { \
+    link_t *_list = (list); \
+    size_t _exp = (exp); \
+    link_t *_ptr = _list->next ? _list->next : _list; \
+    size_t _got = 0; \
+    while(_ptr != _list){ _got++; _ptr = _ptr->next; } \
+    if(_got == _exp) break; \
+    TRACE_ORIG((e), \
+        E_VALUE, \
+        "expected len(%x) == %x but got %x", \
+        FS(name), FU(_exp), FU(_got) \
+    ); \
+    action; \
+} while(0)
+
+#define EXPECT_LIST_LENGTH(e, name, list, exp) \
+    _EXPECT_LIST_LENGTH(e, name, list, exp, return *(e)) \
+
+#define EXPECT_LIST_LENGTH_GO(e, name, list, exp, label) \
+    _EXPECT_LIST_LENGTH(e, name, list, exp, goto label) \
+
+#define _EXPECT_LIST_EMPTY(e, name, list, action) do { \
+    link_t *_list = (got); \
+    if(link_list_isempty(_list)) break; \
+    link_t *_ptr = _list->next; \
+    size_t _len = 0; \
+    while(_ptr != _list){ _len++; _ptr = _ptr->next; } \
+    TRACE_ORIG((e), \
+        E_VALUE, \
+        "expected %x to be empty but found %x items", \
+        FS(name), FU(_len) \
+    ); \
+    action; \
+} while(0)
+
 // single line output for short strings
 #define EXPECT_D(e, name, got, exp) do { \
     const dstr_t *_got = (got); \
