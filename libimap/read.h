@@ -89,13 +89,13 @@ void imap_cmd_reader_free(imap_cmd_reader_t *r);
 void imap_resp_reader_free(imap_resp_reader_t *r);
 
 // populates out with imap_cmd_t's
-derr_t imap_cmd_read(
-    imap_cmd_reader_t *r, const dstr_t input, link_t *out
-);
+// might zeroize some or all of input
+derr_t imap_cmd_read(imap_cmd_reader_t *r, dstr_t input, link_t *out);
 
 // stop at the first STARTTLS and treat the rest as a handshake
+// might zeroize some or all of input
 derr_t imap_cmd_read_starttls(
-    imap_cmd_reader_t *r, const dstr_t input, link_t *out, size_t *skip
+    imap_cmd_reader_t *r, dstr_t input, link_t *out, size_t *skip
 );
 
 // populates out with imap_resp_t's

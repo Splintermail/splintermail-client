@@ -173,13 +173,13 @@ dstr_t token_extend(dstr_t start, dstr_t end){
 }
 
 
-ie_dstr_t *ie_dstr_new_empty(derr_t *e){
+static ie_dstr_t *do_ie_dstr_new_empty(derr_t *e, size_t size){
     if(is_error(*e)) goto fail;
 
     IE_MALLOC(e, ie_dstr_t, d, fail);
 
     // allocate dstr
-    PROP_GO(e, dstr_new(&d->dstr, 64), fail_malloc);
+    PROP_GO(e, dstr_new(&d->dstr, size), fail_malloc);
 
     d->next = NULL;
 
@@ -191,11 +191,15 @@ fail:
     return NULL;
 }
 
+ie_dstr_t *ie_dstr_new_empty(derr_t *e){
+    return do_ie_dstr_new_empty(e, 64);
+}
+
 ie_dstr_t *ie_dstr_new(derr_t *e, const dstr_t *token, keep_type_t type){
     if(is_error(*e)) goto fail;
 
     // allocate the dstr
-    ie_dstr_t *d = ie_dstr_new_empty(e);
+    ie_dstr_t *d = do_ie_dstr_new_empty(e, token->len);
 
     // append the current value
     return ie_dstr_append(e, d, token, type);
@@ -222,26 +226,47 @@ fail:
     return NULL;
 }
 
-ie_dstr_t *ie_dstr_append(derr_t *e, ie_dstr_t *d, const dstr_t *token,
-        keep_type_t type){
+ie_dstr_t *ie_dstr_append(
+    derr_t *e, ie_dstr_t *d, const dstr_t *token, keep_type_t type
+){
     if(is_error(*e)) goto fail;
+    if(!d)
     if(!d) return ie_dstr_new(e, token, type);
 
-    // patterns for recoding the quoted strings
-    LIST_PRESET(dstr_t, find, DSTR_LIT("\\\\"), DSTR_LIT("\\\""));
-    LIST_PRESET(dstr_t, repl, DSTR_LIT("\\"),   DSTR_LIT("\""));
     switch(type){
         case KEEP_RAW:
             // no escapes or fancy shit necessary, just append
             PROP_GO(e, dstr_append(&d->dstr, token), fail);
             break;
-        case KEEP_QSTRING:
+        case KEEP_QSTRING: {
             // unescape \" and \\ sequences
-            PROP_GO(e, dstr_recode(token, &d->dstr, &find,
-                        &repl, true), fail);
-            break;
+            LIST_PRESET(dstr_t, find, DSTR_LIT("\\\\"), DSTR_LIT("\\\""));
+            LIST_PRESET(dstr_t, repl, DSTR_LIT("\\"),   DSTR_LIT("\""));
+            PROP_GO(e, dstr_recode(token, &d->dstr, &find, &repl, true), fail);
+        } break;
     }
     return d;
+
+fail:
+    ie_dstr_free(d);
+    return NULL;
+}
+
+ie_dstr_t *ie_dstr_append0(
+    derr_t *e, ie_dstr_t *d, const dstr_t *token, keep_type_t type
+){
+    if(is_error(*e)) goto fail;
+
+    // get any allocs or reallocs out of the way
+    if(!d){
+        d = do_ie_dstr_new_empty(e, token->len);
+        CHECK_GO(e, fail);
+    }else{
+        PROP_GO(e, dstr_grow0(&d->dstr, d->dstr.len + token->len), fail);
+    }
+
+    // then use the normal append logic
+    return ie_dstr_append(e, d, token, type);
 
 fail:
     ie_dstr_free(d);
@@ -298,6 +323,13 @@ void ie_dstr_free(ie_dstr_t *d){
     free(d);
 }
 
+void ie_dstr_free0(ie_dstr_t *d){
+    if(!d) return;
+    ie_dstr_free0(d->next);
+    dstr_free0(&d->dstr);
+    free(d);
+}
+
 void ie_dstr_free_shell(ie_dstr_t *d){
     if(!d) return;
     // this should never be called on a list, but free the list just in case
@@ -308,7 +340,7 @@ void ie_dstr_free_shell(ie_dstr_t *d){
 ie_dstr_t *ie_dstr_copy(derr_t *e, const ie_dstr_t *old){
     if(!old) goto fail;
 
-    ie_dstr_t *d = ie_dstr_new_empty(e);
+    ie_dstr_t *d = do_ie_dstr_new_empty(e, old->dstr.size);
     d = ie_dstr_append(e, d, &old->dstr, KEEP_RAW);
     CHECK_GO(e, fail);
 
@@ -422,7 +454,7 @@ ie_mailbox_t *ie_mailbox_copy(derr_t *e, const ie_mailbox_t *old){
         return ie_mailbox_new_inbox(e);
     }
 
-    ie_dstr_t *name = ie_dstr_new_empty(e);
+    ie_dstr_t *name = do_ie_dstr_new_empty(e, old->dstr.size);
     name = ie_dstr_append(e, name, &old->dstr, KEEP_RAW);
 
     return ie_mailbox_new_noninbox(e, name);
@@ -2507,14 +2539,14 @@ ie_login_cmd_t *ie_login_cmd_new(derr_t *e, ie_dstr_t *user, ie_dstr_t *pass){
 
 fail:
     ie_dstr_free(user);
-    ie_dstr_free(pass);
+    ie_dstr_free0(pass);
     return NULL;
 }
 
 void ie_login_cmd_free(ie_login_cmd_t *login){
     if(!login) return;
     ie_dstr_free(login->user);
-    ie_dstr_free(login->pass);
+    ie_dstr_free0(login->pass);
     free(login);
 }
 

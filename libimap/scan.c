@@ -86,7 +86,7 @@ static imap_scanned_t do_literal(
 ){
     size_t toklen = MIN(literal_len, len - skip);
     return (imap_scanned_t){
-        .token = dstr_from_cstrn(src + skip, toklen, true),
+        .token = dstr_from_cstrn(src + skip, toklen, false),
         .type = IMAP_LITRAW,
     };
 }

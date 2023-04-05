@@ -847,8 +847,13 @@ static inline ie_dstr_t *ie_dstr_from_off(derr_t *e, const dstr_off_t token){
     return ie_dstr_new2(e, dstr_from_off(token));
 }
 // append to the string, not the linked list
-ie_dstr_t *ie_dstr_append(derr_t *e, ie_dstr_t *d, const dstr_t *token,
-        keep_type_t type);
+ie_dstr_t *ie_dstr_append(
+    derr_t *e, ie_dstr_t *d, const dstr_t *token, keep_type_t type
+);
+// same as ie_dstr_append, but zeroize old buffer on reallocs
+ie_dstr_t *ie_dstr_append0(
+    derr_t *e, ie_dstr_t *d, const dstr_t *token, keep_type_t type
+);
 ie_dstr_t *ie_dstr_append2(derr_t *e, ie_dstr_t *d, const dstr_t token);
 static inline ie_dstr_t *ie_dstr_append_from_off(
     derr_t *e, ie_dstr_t *d, const dstr_off_t token
@@ -860,6 +865,7 @@ ie_dstr_t *ie_dstr_add(derr_t *e, ie_dstr_t *list, ie_dstr_t *new);
 // append the text of the second string to the first, then free the second
 ie_dstr_t *ie_dstr_concat(derr_t *e, ie_dstr_t *a, ie_dstr_t *b);
 void ie_dstr_free(ie_dstr_t *d);
+void ie_dstr_free0(ie_dstr_t *d);
 // free everything but the dstr_t
 void ie_dstr_free_shell(ie_dstr_t *d);
 ie_dstr_t *ie_dstr_copy(derr_t *e, const ie_dstr_t *d);
