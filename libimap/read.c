@@ -62,7 +62,7 @@ static derr_t do_read(
     imap_parser_t *p,
     imap_scanner_t *scanner,
     imap_args_t *args,
-    const dstr_t input,
+    dstr_t input,
     link_t *out,
     bool starttls,
     size_t *skip,
@@ -70,6 +70,7 @@ static derr_t do_read(
         imap_parser_t *p,
         derr_t* E,
         const dstr_t *dtoken,
+        bool *zeroize,
         imap_args_t* a,
         imap_token_e token
     )
@@ -105,7 +106,10 @@ static derr_t do_read(
         // );
 
         // parse the token
-        imap_status_e status = parse_fn(p, &e, &s.token, args, s.type);
+        bool zeroize = false;
+        imap_status_e status;
+        status = parse_fn(p, &e, &s.token, &zeroize, args, s.type);
+        if(zeroize) dstr_zeroize(&s.token);
         PROP_VAR(&e, &e);
         switch(status){
             // if we are halfway through a message, continue
@@ -137,7 +141,7 @@ static derr_t do_read(
 
 static derr_t _imap_cmd_read(
     imap_cmd_reader_t *r,
-    const dstr_t input,
+    dstr_t input,
     link_t *out,
     bool starttls,
     size_t *skip
@@ -173,9 +177,7 @@ fail:
 }
 
 // populates out with imap_cmd_t's
-derr_t imap_cmd_read(
-    imap_cmd_reader_t *r, const dstr_t input, link_t *out
-){
+derr_t imap_cmd_read(imap_cmd_reader_t *r, dstr_t input, link_t *out){
     derr_t e = E_OK;
     PROP(&e, _imap_cmd_read(r, input, out, false, NULL) );
     return e;
@@ -183,7 +185,7 @@ derr_t imap_cmd_read(
 
 // stop at the first STARTTLS and treat the rest as a handshake
 derr_t imap_cmd_read_starttls(
-    imap_cmd_reader_t *r, const dstr_t input, link_t *out, size_t *skip
+    imap_cmd_reader_t *r, dstr_t input, link_t *out, size_t *skip
 ){
     derr_t e = E_OK;
     PROP(&e, _imap_cmd_read(r, input, out, true, skip) );

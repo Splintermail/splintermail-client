@@ -115,6 +115,8 @@ done:
 
 typedef struct {
     dstr_t in;
+    // zeroized version of in
+    dstr_t zin;
     int *cmd_calls;
     int *resp_calls;
     dstr_t buf;
@@ -162,11 +164,14 @@ static derr_t do_test(
         DROP_VAR(&calls.error);
         calls.buf.len = 0;
         // feed in the input
-        LOG_DEBUG("\x1b[32mabout to feed '%x'\x1b[m\n", FD(&cases[i].in));
+        LOG_DEBUG("\x1b[32mfeeding \"%x\"\x1b[m\n", FD_DBG(&cases[i].in));
         derr_t e2;
         link_t out = {0};
+        // make a copy of in, so that it's safe to zeroize passwords
+        DSTR_VAR(buf_in, 4096);
+        PROP_GO(&e, dstr_append(&buf_in, &cases[i].in), show_case);
         if(is_client){
-            e2 = imap_resp_read(&resp_reader, cases[i].in, &out);
+            e2 = imap_resp_read(&resp_reader, buf_in, &out);
             // process responses
             link_t *link;
             while((link = link_list_pop_first(&out))){
@@ -175,7 +180,7 @@ static derr_t do_test(
             }
         }else{
             if(!cases[i].starttls){
-                e2 = imap_cmd_read(&cmd_reader, cases[i].in, &out);
+                e2 = imap_cmd_read(&cmd_reader, buf_in, &out);
             }else{
                 // starttls case
                 size_t skip;
@@ -208,7 +213,7 @@ static derr_t do_test(
             }
         }
         PROP_VAR_GO(&e, &e2, show_case);
-        LOG_DEBUG("\x1b[32mfed '%x'\x1b[m\n", FD(&cases[i].in));
+        LOG_DEBUG("\x1b[32mfed \"%x\"\x1b[m\n", FD_DBG(&buf_in));
         // check that there were no errors
         PROP_VAR_GO(&e, &calls.error, show_case);
         // check that the right calls were made
@@ -220,6 +225,9 @@ static derr_t do_test(
             exp.resp_counts[*t]++;
         }
         PROP_GO(&e, assert_calls_equal(&exp, &calls), show_case);
+        // check that we zeroized correctly
+        dstr_t exp_in = cases[i].zin.data ? cases[i].zin : cases[i].in;
+        EXPECT_D3_GO(&e, "in-after-read", &buf_in, &exp_in, show_case);
         LOG_DEBUG("checked '%x'\n", FD(&cases[i].in));
         continue;
 
@@ -572,19 +580,32 @@ static derr_t test_commands(void){
                 .buf=DSTR_LIT("tag STARTTLS\r\n")
             },
             {
+                .in=DSTR_LIT("tag LOGIN asdf password\r\n"),
+                .cmd_calls=(int[]){IMAP_CMD_LOGIN, -1},
+                .buf=DSTR_LIT("tag LOGIN asdf password\r\n"),
+                .zin=DSTR_LIT("tag LOGIN asdf \0\0\0\0\0\0\0\0\r\n"),
+            },
+            {
                 .in=DSTR_LIT("tag LOGIN asdf \"pass phrase\"\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_LOGIN, -1},
-                .buf=DSTR_LIT("tag LOGIN asdf \"pass phrase\"\r\n")
+                .buf=DSTR_LIT("tag LOGIN asdf \"pass phrase\"\r\n"),
+                .zin=DSTR_LIT("tag LOGIN asdf \"\0\0\0\0\0\0\0\0\0\0\0\"\r\n"),
             },
             {
                 .in=DSTR_LIT("tag LOGIN \"asdf\" \"pass phrase\"\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_LOGIN, -1},
-                .buf=DSTR_LIT("tag LOGIN asdf \"pass phrase\"\r\n")
+                .buf=DSTR_LIT("tag LOGIN asdf \"pass phrase\"\r\n"),
+                .zin=DSTR_LIT(
+                    "tag LOGIN \"asdf\" \"\0\0\0\0\0\0\0\0\0\0\0\"\r\n"
+                ),
             },
             {
                 .in=DSTR_LIT("tag LOGIN \"asdf\" {11}\r\npass phrase\r\n"),
                 .cmd_calls=(int[]){IMAP_CMD_PLUS_REQ, IMAP_CMD_LOGIN, -1},
-                .buf=DSTR_LIT("tag LOGIN asdf \"pass phrase\"\r\n")
+                .buf=DSTR_LIT("tag LOGIN asdf \"pass phrase\"\r\n"),
+                .zin=DSTR_LIT(
+                    "tag LOGIN \"asdf\" {11}\r\n\0\0\0\0\0\0\0\0\0\0\0\r\n"
+                ),
             },
             {
                 .in=DSTR_LIT("tag SELECT inbox\r\n"),

@@ -99,6 +99,7 @@ static void imap_handle_error(
     imap_parser_t *p,
     derr_t *E,
     const dstr_t *dtoken,
+    bool *zeroize,
     imap_args_t *a,
     imap_token_e imap_token,
     imap_sem_t sem,
@@ -106,6 +107,7 @@ static void imap_handle_error(
     const char *loc_summary
 ){
     (void)p;
+    (void)zeroize;
     (void)imap_token;
     (void)sem;
     (void)expected_mask;
@@ -127,6 +129,7 @@ static void imap_handle_error(
 %prefix imap;
 %param E {derr_t*};
 %param dtoken {const dstr_t*};
+%param zeroize {bool*};
 %param a {imap_args_t*};
 %kwarg error_fn imap_handle_error;
 
@@ -531,6 +534,7 @@ CREATED;
 %type entry_type {ie_entry_type_t};
 
 %type dstr {ie_dstr_t*} {ie_dstr_free($$);};
+%type dstr0 {ie_dstr_t*} {ie_dstr_free0($$);};
 %type mailbox {ie_mailbox_t*} {ie_mailbox_free($$);};
 %type select_params {ie_select_params_t*} {ie_select_params_free($$);};
 %type flags {ie_flags_t*} {ie_flags_free($$);};
@@ -586,6 +590,19 @@ astring:dstr =
   | string:s        { $$ = STEAL(ie_dstr_t, &$s); }
 ;
 
+astring0_atom:dstr0 =
+    1*(
+        astring_char
+        {{  $$ = ie_dstr_append0(E, $$, dtoken, KEEP_RAW);
+            *zeroize = true;
+        }}
+    )
+;
+astring0:dstr0 =
+  | astring0_atom:a  { $$ = STEAL(ie_dstr_t, &$a); }
+  | string0:s        { $$ = STEAL(ie_dstr_t, &$s); }
+;
+
 # tag_char is astring_char except PLUS
 tag_char = TAGRAW | NUM | RSQUARE;
 tagvar:dstr = %empty;
@@ -597,8 +614,13 @@ string:dstr =
   | qstr:q     { $$ = STEAL(ie_dstr_t, &$q); }
   | literal:l  { $$ = STEAL(ie_dstr_t, &$l); }
 ;
+string0:dstr0 =
+  | qstr0:q     { $$ = STEAL(ie_dstr_t, &$q); }
+  | literal0:l  { $$ = STEAL(ie_dstr_t, &$l); }
+;
 
 qstr:dstr = DQUOTE { MODE(QSTRING); } qstr_body!($) { MODE(STD); } DQUOTE;
+qstr0:dstr0 = DQUOTE { MODE(QSTRING); } qstr0_body!($) { MODE(STD); } DQUOTE;
 
 qstr_body(out:dstr) =
   | %empty  { $out = ie_dstr_new_empty(E); }
@@ -606,9 +628,19 @@ qstr_body(out:dstr) =
         ATOMRAW { $out = ie_dstr_append(E, $out, dtoken, KEEP_QSTRING); }
     )
 ;
+qstr0_body(out:dstr0) =
+  | %empty  { $out = ie_dstr_new_empty(E); }
+  | 1*(
+        ATOMRAW
+        {{  $out = ie_dstr_append0(E, $out, dtoken, KEEP_QSTRING);
+            *zeroize = true;
+        }}
+    )
+;
 
 
 literal:dstr = literal_start literal_body!($);
+literal0:dstr0 = literal_start literal0_body!($);
 
 # swtich to std mode explicitly since append has an [datetime] literal
 literal_start =
@@ -619,6 +651,15 @@ literal_body(out:dstr) =
   | %empty  { $out = ie_dstr_new_empty(E); }
   | 1*(
         LITRAW { $out = ie_dstr_append(E, $out, dtoken, KEEP_RAW); }
+    )
+;
+literal0_body(out:dstr0) =
+  | %empty  { $out = ie_dstr_new_empty(E); }
+  | 1*(
+        LITRAW
+        {{  $out = ie_dstr_append0(E, $out, dtoken, KEEP_RAW);
+            *zeroize = true;
+        }}
     )
 ;
 
@@ -1024,7 +1065,7 @@ authenticate_cmd(tag:dstr, out:imap_cmd) =
 ### LOGIN COMMAND
 
 login_cmd(tag:dstr, out:imap_cmd) =
-    LOGIN SP astring:u SP astring:p
+    LOGIN SP astring:u SP astring0:p
     {{  ie_login_cmd_t *login = ie_login_cmd_new(E,
             STEAL(ie_dstr_t, &$u), STEAL(ie_dstr_t, &$p)
         );
