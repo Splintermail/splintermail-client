@@ -82,9 +82,7 @@ static derr_t ed25519_to_jwk(ed25519_t *k, bool pvt, dstr_t *out){
         PROP(&e, bin2b64url(buf, out) );
 
         // zeroize private key buffer
-        for(size_t i = 0; i < buf.size; i++){
-            buf.data[i] = 0;
-        }
+        dstr_zeroize(&buf);
     }
 
     PROP(&e, dstr_append(out, &DSTR_LIT("\"}")) );
@@ -413,9 +411,7 @@ static derr_t es256_to_jwk(es256_t *k, bool pvt, dstr_t *out){
     PROP_GO(&e, dstr_append(out, &DSTR_LIT("}")), cu);
 
 cu:
-    for(size_t i = 0; i < dbuf.size; i++){
-        dbuf.data[i] = 0;
-    }
+    dstr_zeroize(&dbuf);
     if(x) BN_free(x);
     if(y) BN_free(y);
 
@@ -544,9 +540,7 @@ static derr_t es256_from_jwk(
     PROP_GO(&e, es256_from_eckey(&eckey, out), cu);
 
 cu:
-    for(size_t i = 0; i < d.size; i++){
-        d.data[i] = 0;
-    }
+    dstr_zeroize(&d);
     if(xbn) BN_free(xbn);
     if(ybn) BN_free(ybn);
     if(dbn) BN_clear_free(dbn);
@@ -644,11 +638,7 @@ static derr_t es256_to_jwk(es256_t *k, bool pvt, dstr_t *out){
     PROP_GO(&e, dstr_append(out, &DSTR_LIT("}")), cu);
 
 cu:
-    if(pvt){
-        for(size_t i = 0; i < d.size; i++){
-            d.data[i] = 0;
-        }
-    }
+    if(pvt) dstr_zeroize(&d);
 
     return e;
 }
@@ -758,9 +748,7 @@ static derr_t es256_from_jwk(
     PROP_GO(&e, es256_from_pkey(&pkey, out), cu);
 
 cu:
-    for(size_t i = 0; i < dbin.size; i++){
-        dbin.data[i] = 0;
-    }
+    dstr_zeroize(&dbin);
     if(pkey) EVP_PKEY_free(pkey);
     if(ctx) EVP_PKEY_CTX_free(ctx);
 
@@ -859,9 +847,7 @@ derr_t json_to_key(const dstr_t text, key_i **out){
 
 cu:
     // erase key content
-    for(size_t i = 0; i < json_textbuf.len; i++){
-        json_textbuf.data[i] = 0;
-    }
+    dstr_zeroize(&json_textbuf);
 
     return e;
 }

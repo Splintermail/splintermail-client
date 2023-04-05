@@ -194,7 +194,14 @@ derr_type_t dstr_new_quiet(dstr_t *ds, size_t size);
 derr_t dstr_new(dstr_t* ds, size_t size);
 /*  throws : E_NOMEM */
 
+// zeroize the whole contents of a buffer, such as to erase key material
+/* Note that dstr_grow() and friends could realloc the buffer, so sensitive
+   dstr_t's should prefer dstr_grow0 and dstr_append0 */
+void dstr_zeroize(dstr_t *ds);
+
 void dstr_free(dstr_t* ds);
+// same as dstr_free, but zeroize first
+void dstr_free0(dstr_t* ds);
 
 // I thought of this but didn't implement it, because it is only safe to allow
 // this sort of auto-allocate usage if you zeroize the input parameters, so you
@@ -357,6 +364,10 @@ derr_type_t dstr_grow_quiet(dstr_t *ds, size_t min_size);
 derr_t dstr_grow(dstr_t* ds, size_t min_size);
 /* throws: E_FIXEDSIZE
            E_NOMEM */
+
+// same as dstr_grow, but zeroize the old buffer
+derr_type_t dstr_grow0_quiet(dstr_t *ds, size_t min_size);
+derr_t dstr_grow0(dstr_t* ds, size_t min_size);
 
 dstr_t dstr_from_cstr(char *cstr);
 dstr_t dstr_from_cstrn(char *cstr, size_t n, bool null_terminated);
@@ -553,6 +564,14 @@ derr_type_t dstr_append_quiet(dstr_t *dstr, const dstr_t *new_text);
 derr_t dstr_append(dstr_t* dstr, const dstr_t* new_text);
 /* throws: E_FIXEDSIZE
            E_NOMEM */
+
+// same as dstr_append
+derr_type_t dstr_append_quiet(dstr_t *dstr, const dstr_t *new_text);
+derr_t dstr_append(dstr_t* dstr, const dstr_t* new_text);
+
+// same as dstr_append but zeroize old buffers
+derr_type_t dstr_append0_quiet(dstr_t *dstr, const dstr_t *new_text);
+derr_t dstr_append0(dstr_t* dstr, const dstr_t* new_text);
 
 // like dupstr
 derr_t dstr_dupstr(const dstr_t in, char** out);

@@ -122,11 +122,33 @@ derr_t dstr_new(dstr_t *ds, size_t size){
     return e;
 }
 
+// zeroize the whole contents of a buffer, such as to erase key material
+/* Note that dstr_grow() and friends could realloc the buffer, so sensitive
+   dstr_t's should prefer fixed-size buffers */
+void dstr_zeroize(dstr_t *ds){
+    size_t size = ds->size;
+    char *data = ds->data;
+#ifdef _WIN32
+    SecureZeroMemory(data, size);
+#elif __APPLE__
+    memset_s(data, size, 0, size);
+#else // linux
+    explicit_bzero(data, size);
+#endif
+}
+
 void dstr_free(dstr_t* ds){
-    if(ds && ds->data) {
-        free(ds->data);
-        *ds = (dstr_t){0};
-    }
+    if(!ds || !ds->data) return;
+    free(ds->data);
+    *ds = (dstr_t){0};
+}
+
+// same as dstr_free, but zeroize first
+void dstr_free0(dstr_t* ds){
+    if(!ds || !ds->data) return;
+    dstr_zeroize(ds);
+    free(ds->data);
+    *ds = (dstr_t){0};
 }
 
 LIST_FUNCTIONS(dstr_t)
@@ -684,19 +706,18 @@ bool dstr_iendswith2(const dstr_t str, const dstr_t pattern){
 }
 
 derr_type_t dstr_grow_quiet(dstr_t *ds, size_t min_size){
-    if(ds->size < min_size){
-        // we can't realloc if out is fixed-size
-        if(ds->fixed_size) return E_FIXEDSIZE;
-        // upgrade buffer size by powers of 2
-        size_t newsize = MAX(ds->size, 2);
-        while(newsize < min_size){
-            newsize *= 2;
-        }
-        void* new = realloc(ds->data, newsize);
-        if(!new) return E_NOMEM;
-        ds->size = newsize;
-        ds->data = new;
+    if(ds->size >= min_size) return E_NONE;
+    // we can't realloc if out is fixed-size
+    if(ds->fixed_size) return E_FIXEDSIZE;
+    // upgrade buffer size by powers of 2
+    size_t newsize = MAX(ds->size, 2);
+    while(newsize < min_size){
+        newsize *= 2;
     }
+    void* new = realloc(ds->data, newsize);
+    if(!new) return E_NOMEM;
+    ds->size = newsize;
+    ds->data = new;
     return E_NONE;
 }
 derr_t dstr_grow(dstr_t* ds, size_t min_size){
@@ -706,19 +727,57 @@ derr_t dstr_grow(dstr_t* ds, size_t min_size){
     return e;
 }
 
+derr_type_t dstr_grow0_quiet(dstr_t *ds, size_t min_size){
+    if(ds->size >= min_size) return E_NONE;
+    // we can't realloc if out is fixed-size
+    if(ds->fixed_size) return E_FIXEDSIZE;
+    // upgrade buffer size by powers of 2
+    size_t newsize = MAX(ds->size, 2);
+    while(newsize < min_size){
+        newsize *= 2;
+    }
+    void* new = malloc(newsize);
+    if(!new) return E_NOMEM;
+    memcpy(new, ds->data, ds->len);
+    dstr_zeroize(ds);
+    free(ds->data);
+    ds->data = new;
+    return E_NONE;
+}
+derr_t dstr_grow0(dstr_t* ds, size_t min_size){
+    derr_t e = E_OK;
+    derr_type_t type = dstr_grow_quiet(ds, min_size);
+    if(type) ORIG(&e, type, "unable to grow dstr");
+    return e;
+}
+
 // append one dstr to another
-derr_type_t dstr_append_quiet(dstr_t *dstr, const dstr_t *new_text){
+static derr_type_t do_dstr_append(
+    dstr_t *dstr, const dstr_t *new_text, derr_type_t grow_fn(dstr_t*, size_t)
+){
     derr_type_t type;
-    type = dstr_grow_quiet(dstr, dstr->len + new_text->len);
+    type = grow_fn(dstr, dstr->len + new_text->len);
     if(type) return type;
 
     memcpy(dstr->data + dstr->len, new_text->data, new_text->len);
     dstr->len += new_text->len;
     return E_NONE;
 }
+derr_type_t dstr_append_quiet(dstr_t *dstr, const dstr_t *new_text){
+    return do_dstr_append(dstr, new_text, dstr_grow_quiet);
+}
 derr_t dstr_append(dstr_t* dstr, const dstr_t* new_text){
     derr_t e = E_OK;
-    derr_type_t type = dstr_append_quiet(dstr, new_text);
+    derr_type_t type = do_dstr_append(dstr, new_text, dstr_grow_quiet);
+    if(type) ORIG(&e, type, "unable to append to dstr");
+    return e;
+}
+derr_type_t dstr_append0_quiet(dstr_t *dstr, const dstr_t *new_text){
+    return do_dstr_append(dstr, new_text, dstr_grow0_quiet);
+}
+derr_t dstr_append0(dstr_t* dstr, const dstr_t* new_text){
+    derr_t e = E_OK;
+    derr_type_t type = do_dstr_append(dstr, new_text, dstr_grow0_quiet);
     if(type) ORIG(&e, type, "unable to append to dstr");
     return e;
 }
