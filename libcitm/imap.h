@@ -7,6 +7,7 @@
     imap_client_t:
       - receives greeting
       - if starttls is configured, calls starttls
+      - XXX: check capabilities after starttls established?
       - relays cmds and resps thereafter
 
      XXX: we should add supported citm versions in the capabilities, since a
@@ -118,9 +119,8 @@ derr_t imap_client_new(
     imap_client_t **out, scheduler_i *scheduler, citm_conn_t *conn
 );
 
-extern void *imap_bad_await;
-
 // retruns ok=false if await_cb has been called
+// out may be NULL
 bool imap_server_await(
     imap_server_t *s, imap_server_await_cb cb, imap_server_await_cb *out
 );
@@ -150,6 +150,7 @@ bool imap_client_free(imap_client_t **client);
 #define imap_client_must_free(c) MUST(imap_client_free, (c))
 
 struct imap_server_t {
+    void *data;  // user data
     imap_cmd_reader_t reader;
     scheduler_i *scheduler;
     schedulable_t schedulable;
@@ -205,10 +206,12 @@ struct imap_server_t {
     bool failed : 1;
     bool awaited : 1;
 };
+DEF_STEAL_PTR(imap_server_t)
 DEF_CONTAINER_OF(imap_server_t, link, link_t)
 DEF_CONTAINER_OF(imap_server_t, schedulable, schedulable_t)
 
 struct imap_client_t {
+    void *data;  // user data
     imap_resp_reader_t reader;
     scheduler_i *scheduler;
     schedulable_t schedulable;
@@ -239,6 +242,8 @@ struct imap_client_t {
     size_t write_skip;
     size_t nwritten;
 
+    bool wbuf_needs_zero : 1;
+
     bool starttls : 1;
     bool starttls_started : 1;
     bool starttls_done : 1;
@@ -257,5 +262,6 @@ struct imap_client_t {
     bool failed : 1;
     bool awaited : 1;
 };
+DEF_STEAL_PTR(imap_client_t)
 DEF_CONTAINER_OF(imap_client_t, link, link_t)
 DEF_CONTAINER_OF(imap_client_t, schedulable, schedulable_t)

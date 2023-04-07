@@ -11,6 +11,8 @@ sm_lib(
     imap_server.c
     imap_client.c
     io_pair.c
+    anon.c
+    responses.c
     DEPS dstr crypto duv duvtls imap imaildir
 )
 

@@ -76,9 +76,7 @@ static void citm_anon_cb(
     if(elem){
         // attach to existing user
         user_add_pair(elem, imap_dn, imap_up);
-        dstr_free(&user);
-        dstr_free(&pass);
-        return;
+        goto discard_user_pass;
     }
 
     // check for existing preuser
@@ -86,22 +84,14 @@ static void citm_anon_cb(
     if(elem){
         // attach to existing preuser
         preuser_add_pair(elem, imap_dn, imap_up);
-        dstr_free(&user);
-        dstr_free(&pass);
-        return;
+        goto discard_user_pass;
     }
 
     // create a new preuser
     keydir_t *kd;
 
     derr_t e = E_OK;
-    IF_PROP(&e, keydir_new(&kd, ...) ){
-        imap_server_free(imap_dn);
-        imap_client_free(imap_up);
-        dstr_free(&user);
-        dstr_free(&pass);
-        return;
-    }
+    PROP_GO(&e, keydir_new(&kd, ...), fail);
 
     preuser_new(
         &citm->io,
@@ -114,6 +104,19 @@ static void citm_anon_cb(
         citm,
         &citm->preusers
     );
+    return;
+
+fail:
+    DUMP(e);
+    DROP_VAR(&e);
+    imap_server_free(imap_dn);
+    imap_client_free(imap_up);
+
+discard_user_pass:
+    dstr_free(&user);
+    dstr_zeroize(&pass);
+    dstr_free(&pass);
+    return;
 }
 
 // completed io_pairs become anon's until login is complete

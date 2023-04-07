@@ -1,4 +1,4 @@
-/* stage 2, anon_t: with conn_up and conn_dn, proceed to login and get a user_t
+/* stage 2, anon_t: with conn_up and conn_dn, complete a login and check capas
 
    Responsibilities:
     - receive LOGIN command
@@ -7,7 +7,7 @@
     - check upwards CAPABILITY response
 */
 
-typedef void (*anon_cb_t)(
+typedef void (*anon_cb)(
     void *data,
     imap_server_t *imap_dn,
     imap_client_t *imap_up,
@@ -16,10 +16,11 @@ typedef void (*anon_cb_t)(
 );
 
 void anon_new(
+    scheduler_i *scheduler,
     citm_conn_t *conn_dn,
     citm_conn_t *conn_up,
-    void *data,
     anon_cb cb,
+    void *data,
     link_t *list
 );
 

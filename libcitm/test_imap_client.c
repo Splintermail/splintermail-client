@@ -194,10 +194,10 @@ static derr_t test_starttls(SSL_CTX *sctx, SSL_CTX *cctx){
     ADVANCE_TEST();
 
     EXPECT_READ_CB;
-    EXPECT_D3_GO(&e, "rbuf", &rbuf, &DSTR_LIT("STLS STARTTLS\r\n"), cu);
+    EXPECT_D3_GO(&e, "rbuf", &rbuf, &DSTR_LIT("STLS1 STARTTLS\r\n"), cu);
 
     // respond to STARTTLS
-    DSTR_STATIC(stlsresp, "STLS OK let's goooo\r\n");
+    DSTR_STATIC(stlsresp, "STLS1 OK let's goooo\r\n");
     stream_must_write(s, &write, &stlsresp, 1, write_cb);
     ADVANCE_TEST();
     PUSH_BYTES(&fs, &fc);

@@ -154,24 +154,6 @@ static derr_t advance_writes(imap_server_t *s, bool *ok){
     return e;
 }
 
-static ie_dstr_t *build_capas(derr_t *e, imap_server_t *s){
-    if(is_error(*e)) return NULL;
-
-    ie_dstr_t *out = ie_dstr_new2(e, DSTR_LIT("IMAP4rev1"));
-    out = ie_dstr_add(e, out, ie_dstr_new2(e, DSTR_LIT("IDLE")));
-    if(s->starttls){
-        // build suitable pre-STARTTLS capabilities
-        out = ie_dstr_add(e, out, ie_dstr_new2(e, DSTR_LIT("STARTTLS")));
-        out = ie_dstr_add(e, out, ie_dstr_new2(e, DSTR_LIT("LOGINDISABLED")));
-    }else{
-        // build suitable pre-LOGIN capabilities
-        out = ie_dstr_add(e, out, ie_dstr_new2(e, DSTR_LIT("AUTH=PLAIN")));
-        out = ie_dstr_add(e, out, ie_dstr_new2(e, DSTR_LIT("LOGIN")));
-    }
-
-    return out;
-}
-
 static void queue_resp(derr_t *e, imap_server_t *s, imap_resp_t *resp){
     if(is_error(*e)) goto fail;
 
@@ -190,7 +172,12 @@ static derr_t send_greeting(imap_server_t *s){
     derr_t e = E_OK;
 
     // build code
-    ie_dstr_t *capas = build_capas(&e, s);
+    ie_dstr_t *capas;
+    if(s->starttls){
+        capas = build_capas_prestarttls(&e);
+    }else{
+        capas = build_capas_prelogin(&e);
+    }
     ie_st_code_arg_t code_arg = {.capa = capas};
     ie_st_code_t *st_code = ie_st_code_new(&e, IE_ST_CODE_CAPA, code_arg);
 
@@ -209,56 +196,6 @@ static derr_t send_greeting(imap_server_t *s){
     return e;
 }
 
-static derr_t respond_st(
-    imap_server_t *s,
-    ie_status_t st,
-    ie_dstr_t **tagp,
-    dstr_t msg
-){
-    derr_t e = E_OK;
-
-    ie_dstr_t *text = ie_dstr_new2(&e, msg);
-    ie_dstr_t *tag = STEAL(ie_dstr_t, tagp);
-    ie_st_resp_t *st_resp = ie_st_resp_new(&e, tag, st, NULL, text);
-    imap_resp_arg_t arg = { .status_type = st_resp };
-    imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_STATUS_TYPE, arg);
-    queue_resp(&e, s, resp);
-    CHECK(&e);
-
-    return e;
-}
-
-static derr_t respond_error(
-    imap_server_t *s, ie_dstr_t **tagp, ie_dstr_t **errorp
-){
-    derr_t e = E_OK;
-
-    ie_dstr_t *tag = STEAL(ie_dstr_t, tagp);  // might be NULL
-    ie_dstr_t *text = STEAL(ie_dstr_t, errorp);
-    ie_st_resp_t *st_resp = ie_st_resp_new(&e, tag, IE_ST_BAD, NULL, text);
-    imap_resp_arg_t arg = { .status_type = st_resp };
-    imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_STATUS_TYPE, arg);
-    queue_resp(&e, s, resp);
-    CHECK(&e);
-
-    return e;
-}
-
-static derr_t respond_capas(imap_server_t *s, ie_dstr_t **tag){
-    derr_t e = E_OK;
-
-    ie_dstr_t *capas = build_capas(&e, s);
-    imap_resp_arg_t arg = { .capa = capas };
-    imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_CAPA, arg);
-    queue_resp(&e, s, resp);
-    CHECK(&e);
-
-    dstr_t text = DSTR_LIT("now you know, and knowing is half the battle");
-    PROP(&e, respond_st(s, IE_ST_OK, tag, text) );
-
-    return e;
-}
-
 static derr_t pre_starttls_respond(imap_server_t *s, imap_cmd_t *cmd){
     derr_t e = E_OK;
 
@@ -272,26 +209,23 @@ static derr_t pre_starttls_respond(imap_server_t *s, imap_cmd_t *cmd){
 
     link_t *link;
     ie_dstr_t **tag = &cmd->tag;
-
-    #define respond_ok(msg) respond_st(s, IE_ST_OK, tag, DSTR_LIT(msg))
-    #define respond_no(msg) respond_st(s, IE_ST_NO, tag, DSTR_LIT(msg))
-    #define respond_bad(msg) respond_st(s, IE_ST_BAD, tag, DSTR_LIT(msg))
+    link_t *out = &s->resps;
 
     switch(cmd->type){
         case IMAP_CMD_ERROR:
-            PROP_GO(&e, respond_error(s, tag, &cmd->arg.error), cu);
+            PROP_GO(&e, respond_error(tag, &cmd->arg.error, out), cu);
             break;
 
         case IMAP_CMD_PLUS_REQ:
-            PROP_GO(&e, respond_ok("spit it out"), cu);
+            PROP_GO(&e, RESP_OK(tag, "spit it out", out), cu);
             break;
 
         case IMAP_CMD_CAPA:
-            PROP_GO(&e, respond_capas(s, tag), cu);
+            PROP_GO(&e, respond_capas(tag, build_capas_prestarttls, out), cu);
             break;
 
         case IMAP_CMD_NOOP:
-            PROP_GO(&e, respond_ok("zzz..."), cu);
+            PROP_GO(&e, RESP_OK(tag, "zzz...", out), cu);
             break;
 
         case IMAP_CMD_LOGOUT:
@@ -299,20 +233,22 @@ static derr_t pre_starttls_respond(imap_server_t *s, imap_cmd_t *cmd){
             while((link = link_list_pop_first(&s->cmds))){
                 imap_cmd_free(CONTAINER_OF(link, imap_cmd_t, link));
             }
-            PROP_GO(&e, respond_ok("get offa my lawn!"), cu);
+            PROP_GO(&e, respond_logout(tag, out), cu);
             s->logged_out = true;
             break;
 
         case IMAP_CMD_STARTTLS:
-            PROP_GO(&e, respond_ok("it's about time"), cu);
+            PROP_GO(&e, RESP_OK(tag, "it's about time", out), cu);
             // advance_state handles the rest
             break;
 
         case IMAP_CMD_LOGIN:
             PROP_GO(&e,
-                respond_no(
+                RESP_NO(
+                    tag,
                     "did you just leak your password on "
-                    "an unencrypted connection?"
+                    "an unencrypted connection?",
+                    out
                 ),
             cu);
             break;
@@ -339,14 +275,14 @@ static derr_t pre_starttls_respond(imap_server_t *s, imap_cmd_t *cmd){
         case IMAP_CMD_UNSELECT:
         case IMAP_CMD_IDLE:
         case IMAP_CMD_IDLE_DONE:
-            PROP_GO(&e, respond_bad("it's too early for that"), cu);
+            PROP_GO(&e, respond_too_early(tag, out), cu);
             break;
 
         case IMAP_CMD_AUTH:
         case IMAP_CMD_XKEYSYNC:
         case IMAP_CMD_XKEYSYNC_DONE:
         case IMAP_CMD_XKEYADD:
-            PROP_GO(&e, respond_bad("command not supported"), cu);
+            PROP_GO(&e, respond_not_supported(tag, out), cu);
             break;
     }
 
@@ -532,6 +468,7 @@ cu:
 static void free_server_memory(imap_server_t *s){
     if(!s) return;
     imap_cmd_reader_free(&s->reader);
+    schedulable_cancel(&s->schedulable);
     free(s);
 }
 
@@ -602,13 +539,13 @@ fail:
 
 void imap_server_logged_out(imap_server_t *s){
     s->logged_out = true;
-    schedule(s);
+    if(!s->awaited) schedule(s);
 }
 
 void imap_server_cancel(imap_server_t *s){
     if(!s) return;
     s->canceled = true;
-    schedule(s);
+    if(!s->awaited) schedule(s);
 }
 
 static void await_self(
@@ -633,8 +570,7 @@ bool imap_server_free(imap_server_t **sptr){
     }
     if(!s->awaited){
         imap_server_cancel(s);
-        imap_server_await_cb ignore;
-        imap_server_must_await(s, await_self, &ignore);
+        imap_server_must_await(s, await_self, NULL);
     }else{
         free_server_memory(s);
     }
@@ -650,12 +586,13 @@ bool imap_server_free(imap_server_t **sptr){
 } while(0)
 
 // retruns ok=false if await_cb has been called
+// out may be NULL
 bool imap_server_await(
     imap_server_t *s, imap_server_await_cb cb, imap_server_await_cb *out
 ){
-    *out = NULL;
+    if(out) *out = NULL;
     DETECT_INVALID(s->awaited, "imap_server_await");
-    *out = s->await_cb;
+    if(out) *out = s->await_cb;
     s->await_cb = cb;
     schedule(s);
     return true;

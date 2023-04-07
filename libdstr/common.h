@@ -57,6 +57,7 @@ typedef struct {
     size_t len;
     bool fixed_size;
 } dstr_t;
+DEF_STEAL_STRUCT(dstr_t)
 
 /* Build an extensible error system, where every error type is a global
    pointer to a simple interface.  The system is extensible because the error

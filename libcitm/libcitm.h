@@ -8,6 +8,8 @@
 #include "citm.h"
 #include "imap.h"
 #include "io_pair.h"
+#include "anon.h"
+#include "responses.h"
 
 #include "passthru.h"
 #include "fetcher.h"

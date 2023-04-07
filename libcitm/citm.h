@@ -43,7 +43,7 @@ struct citm_io_i {
 
      - stage 1, io_pair_t: after receiving a conn_dn, make a conn_up
      - stage 2, anon_t: with conn_up and conn_dn, until successful login
-     - stage 3, preuser_t: connect and create a matching keysync_t
+     - stage 3, preuser_t: create and synchronize a matching keysync_t
      - stage 4, user_t.sf_pair: full blown citm
 
    citm_t ownership tree:

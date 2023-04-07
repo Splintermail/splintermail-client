@@ -28,6 +28,11 @@ static void write_cb(stream_i *stream, stream_write_t *req){
     imap_client_t *c = stream->data;
     (void)req;
     c->write_done = true;
+    if(c->wbuf_needs_zero){
+        // there was something sensitive in our wbuf
+        dstr_zeroize(&c->wbuf);
+        c->wbuf_needs_zero = false;
+    }
     schedule(c);
 }
 
@@ -98,6 +103,9 @@ static derr_t advance_writes(imap_client_t *c, bool *ok){
                         cmd, &c->wbuf, &c->write_skip, &want, &c->exts
                     )
                 );
+                if(cmd->type == IMAP_CMD_LOGIN){
+                    c->wbuf_needs_zero = true;
+                }
                 if(want == 0){
                     // finished marshaling a whole command
                     c->nwritten++;
@@ -141,20 +149,6 @@ static ie_st_resp_t *match_greeting(const imap_resp_t *resp){
     return st;
 }
 
-// informational messages must be untagged status-type responses
-static ie_st_resp_t *match_info(const imap_resp_t *resp){
-    if(resp->type != IMAP_RESP_STATUS_TYPE) return NULL;
-    ie_st_resp_t *st = resp->arg.status_type;
-    return st;
-}
-
-static ie_st_resp_t *match_tagged(const imap_resp_t *resp, const dstr_t tag){
-    if(resp->type != IMAP_RESP_STATUS_TYPE) return NULL;
-    ie_st_resp_t *st = resp->arg.status_type;
-    if(!st->tag || !dstr_eq(st->tag->dstr, tag)) return NULL;
-    return st;
-}
-
 static derr_t process_greeting(imap_client_t *c, bool *ok){
     derr_t e = E_OK;
     *ok = false;
@@ -177,7 +171,7 @@ cu:
 static derr_t send_starttls(imap_client_t *c){
     derr_t e = E_OK;
 
-    ie_dstr_t *tag = ie_dstr_new2(&e, DSTR_LIT("STLS"));
+    ie_dstr_t *tag = ie_dstr_new2(&e, DSTR_LIT("STLS1"));
     imap_cmd_arg_t arg = {0};
     imap_cmd_t *cmd = imap_cmd_new(&e, tag, IMAP_CMD_STARTTLS, arg);
     cmd = imap_cmd_assert_writable(&e, cmd, &c->exts);
@@ -197,7 +191,7 @@ static derr_t process_starttls_resp(imap_client_t *c, bool *ok){
     while((link = link_list_pop_first(&c->resps))){
         resp = CONTAINER_OF(link, imap_resp_t, link);
         ie_st_resp_t *st;
-        if((st = match_tagged(resp, DSTR_LIT("STLS")))){
+        if((st = match_tagged(resp, DSTR_LIT("STLS"), 1))){
             // STARTTLS tagged response
             if(st->status == IE_ST_OK){
                 // success!
@@ -369,6 +363,7 @@ cu:
 static void free_client_memory(imap_client_t *c){
     if(!c) return;
     imap_resp_reader_free(&c->reader);
+    schedulable_cancel(&c->schedulable);
     free(c);
 }
 
@@ -447,7 +442,7 @@ fail:
 void imap_client_cancel(imap_client_t *c){
     if(!c) return;
     c->canceled = true;
-    schedule(c);
+    if(!c->awaited) schedule(c);
 }
 
 static void await_self(
@@ -472,8 +467,7 @@ bool imap_client_free(imap_client_t **cptr){
     }
     if(!c->awaited){
         imap_client_cancel(c);
-        imap_client_await_cb ignore;
-        imap_client_must_await(c, await_self, &ignore);
+        imap_client_must_await(c, await_self, NULL);
     }else{
         free_client_memory(c);
     }
@@ -489,12 +483,13 @@ bool imap_client_free(imap_client_t **cptr){
 } while(0)
 
 // retruns ok=false if await_cb has been called
+// out may be NULL
 bool imap_client_await(
     imap_client_t *c, imap_client_await_cb cb, imap_client_await_cb *out
 ){
-    *out = NULL;
+    if(out) *out = NULL;
     DETECT_INVALID(c->awaited, "imap_client_await");
-    *out = c->await_cb;
+    if(out) *out = c->await_cb;
     c->await_cb = cb;
     schedule(c);
     return true;
