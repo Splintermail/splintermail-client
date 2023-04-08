@@ -42,12 +42,8 @@ static derr_t test_io_pair(void){
     link_t io_pairs = {0};
 
     // success test
-    conn_dn = fake_citm_conn(
-        &fcdn, fake_stream(&sdn), IMAP_SEC_INSECURE, NULL, DSTR_LIT("")
-    );
-    conn_up = fake_citm_conn(
-        &fcup, fake_stream(&sup), IMAP_SEC_INSECURE, NULL, DSTR_LIT("")
-    );
+    conn_dn = fake_citm_conn_insec(&fcdn, fake_stream(&sdn));
+    conn_up = fake_citm_conn_insec(&fcup, fake_stream(&sup));
     fake_citm_connect_prep(&fcnct);
     link_list_append(&fio.fcncts, &fcnct.link);
     io_pair_new(io, conn_dn, cb, &ptrs, &io_pairs);

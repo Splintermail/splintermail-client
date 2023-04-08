@@ -44,7 +44,7 @@ static void iwrite_cb(imap_server_t *s, imap_server_write_t *req){
 }
 
 #define ADVANCE_TEST() do { \
-    ADVANCE_FAKES(&fs, &fc); \
+    ADVANCE_FAKES(&m, &fs, &fc); \
     PROP_VAR_GO(&e, &E, cu); \
 } while(0)
 
@@ -94,8 +94,8 @@ typedef enum {
 static derr_t test_starttls(SSL_CTX *sctx, SSL_CTX *cctx, test_mode_e mode){
     derr_t e = E_OK;
 
-    manual_scheduler_t scheduler;
-    scheduler_i *sched = manual_scheduler(&scheduler);
+    manual_scheduler_t m;
+    scheduler_i *sched = manual_scheduler(&m);
 
     // pipeline diagram:
     // stream_i c <-> [tls <->] fc <-> fs <-> fconn <-> imap_server_t s
@@ -407,9 +407,9 @@ static derr_t test_starttls(SSL_CTX *sctx, SSL_CTX *cctx, test_mode_e mode){
 
 cu:
     MERGE_VAR(&e, &E, "global error");
-    MERGE_CMD(&e, cleanup_imap_server(&scheduler, &s, &fs), "imap_server");
-    MERGE_CMD(&e, fake_citm_conn_cleanup(&scheduler, &fconn, &fs), "fs");
-    MERGE_CMD(&e, fake_stream_cleanup(&scheduler, c, &fc), "fc");
+    MERGE_CMD(&e, cleanup_imap_server(&m, &s, &fs), "imap_server");
+    MERGE_CMD(&e, fake_citm_conn_cleanup(&m, &fconn, &fs), "fs");
+    MERGE_CMD(&e, fake_stream_cleanup(&m, c, &fc), "fc");
 
     imap_cmd_free(cmd);
 

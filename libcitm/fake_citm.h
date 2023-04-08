@@ -11,15 +11,18 @@ citm_conn_t *fake_citm_conn(
     dstr_t verify_name
 );
 
+// tests other than imap_client,imap_server only use plaintext
+citm_conn_t *fake_citm_conn_insec(fake_citm_conn_t *f, stream_i *stream);
+
 derr_t fake_citm_conn_cleanup(
     manual_scheduler_t *m, fake_citm_conn_t *f, fake_stream_t *s
 );
 
 // automatically closes canceled streams, which usually exposes helpful errors
 void _advance_fakes(manual_scheduler_t *m, fake_stream_t **f, size_t nf);
-#define ADVANCE_FAKES(...) \
+#define ADVANCE_FAKES(m, ...) \
     _advance_fakes( \
-        &scheduler, \
+        (m), \
         (fake_stream_t*[]){__VA_ARGS__}, \
         sizeof((fake_stream_t*[]){__VA_ARGS__}) / sizeof(fake_stream_t*) \
     )
@@ -46,6 +49,10 @@ typedef struct {
 
 citm_io_i *fake_citm_io(fake_citm_io_t *fio);
 
-// libcitm test test utilities
+// libcitm test utilities
 
 derr_t ctx_setup(const char *test_files, SSL_CTX **s_out, SSL_CTX **c_out);
+
+derr_t establish_imap_client(manual_scheduler_t *m, fake_stream_t *fs);
+
+derr_t establish_imap_server(manual_scheduler_t *m, fake_stream_t *fs);

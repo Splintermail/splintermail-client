@@ -2,6 +2,8 @@
 #include "libduv/fake_stream.h"
 #include "libcitm/fake_citm.h"
 
+#include "test/test_utils.h"
+
 DEF_CONTAINER_OF(fake_citm_conn_t, iface, citm_conn_t)
 DEF_CONTAINER_OF(fake_citm_connect_t, iface, citm_connect_i)
 DEF_CONTAINER_OF(fake_citm_connect_t, link, link_t)
@@ -48,6 +50,10 @@ citm_conn_t *fake_citm_conn(
         },
     };
     return &f->iface;
+}
+
+citm_conn_t *fake_citm_conn_insec(fake_citm_conn_t *f, stream_i *stream){
+    return fake_citm_conn(f, stream, IMAP_SEC_INSECURE, NULL, DSTR_LIT(""));
 }
 
 derr_t fake_citm_conn_cleanup(
@@ -167,7 +173,7 @@ citm_io_i *fake_citm_io(fake_citm_io_t *fio){
     return &fio->iface;
 }
 
-// libcitm test test utilities
+// libcitm test utilities
 
 derr_t ctx_setup(const char *test_files, SSL_CTX **s_out, SSL_CTX **c_out){
     derr_t e = E_OK;
@@ -193,5 +199,35 @@ derr_t ctx_setup(const char *test_files, SSL_CTX **s_out, SSL_CTX **c_out){
 fail:
     ssl_context_free(&sctx);
     ssl_context_free(&cctx);
+    return e;
+}
+
+// greets the client
+derr_t establish_imap_client(manual_scheduler_t *m, fake_stream_t *fs){
+    derr_t e = E_OK;
+
+    manual_scheduler_run(m);
+    EXPECT_B(&e, "want read greeting", fake_stream_want_read(fs), true);
+    fake_stream_feed_read_all(fs, DSTR_LIT("* OK hi\r\n"));
+    manual_scheduler_run(m);
+
+    return e;
+}
+
+// read server greeting
+derr_t establish_imap_server(manual_scheduler_t *m, fake_stream_t *fs){
+    derr_t e = E_OK;
+
+    manual_scheduler_run(m);
+    EXPECT_B(&e, "want write greeting", fake_stream_want_write(fs), true);
+    dstr_t msg = fake_stream_pop_write(fs);
+    DSTR_STATIC(exp,
+        "* OK [CAPABILITY IMAP4rev1 IDLE AUTH=PLAIN LOGIN] "
+        "greetings, friend!\r\n"
+    );
+    EXPECT_D3(&e, "greeting", &msg, &exp);
+    fake_stream_write_done(fs);
+    manual_scheduler_run(m);
+
     return e;
 }

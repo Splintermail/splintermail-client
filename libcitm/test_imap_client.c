@@ -54,7 +54,7 @@ static void await_cb(
 }
 
 #define ADVANCE_TEST() do { \
-    ADVANCE_FAKES(&fc, &fs); \
+    ADVANCE_FAKES(&m, &fc, &fs); \
     if(is_error(E)) goto cu; \
 } while(0)
 
@@ -88,8 +88,8 @@ static derr_t cleanup_imap_client(
 static derr_t test_starttls(SSL_CTX *sctx, SSL_CTX *cctx){
     derr_t e = E_OK;
 
-    manual_scheduler_t scheduler;
-    scheduler_i *sched = manual_scheduler(&scheduler);
+    manual_scheduler_t m;
+    scheduler_i *sched = manual_scheduler(&m);
 
     // pipeline diagram:
     // imap_client_t c <-> fconn <-> fc <-> fs <-> [tls <->] stream_i s
@@ -246,9 +246,9 @@ static derr_t test_starttls(SSL_CTX *sctx, SSL_CTX *cctx){
 
 cu:
     MERGE_VAR(&e, &E, "global error");
-    MERGE_CMD(&e, cleanup_imap_client(&scheduler, &c, &fc), "imap_client");
-    MERGE_CMD(&e, fake_citm_conn_cleanup(&scheduler, &fconn, &fc), "fc");
-    MERGE_CMD(&e, fake_stream_cleanup(&scheduler, s, &fs), "fs");
+    MERGE_CMD(&e, cleanup_imap_client(&m, &c, &fc), "imap_client");
+    MERGE_CMD(&e, fake_citm_conn_cleanup(&m, &fconn, &fc), "fc");
+    MERGE_CMD(&e, fake_stream_cleanup(&m, s, &fs), "fs");
 
     imap_resp_free(resp);
 

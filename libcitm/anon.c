@@ -39,8 +39,6 @@ typedef struct {
     bool write_up_done : 1;
     bool write_dn_started : 1;
     bool write_dn_done : 1;
-    bool writing_dn : 1;
-    bool writing_up : 1;
     bool reading_up : 1;
     bool reading_dn : 1;
 
@@ -82,6 +80,16 @@ static void anon_free(anon_t *anon){
     ie_dstr_free(anon->tag);
     dstr_free(&anon->user);
     dstr_free0(&anon->pass);
+    // free any pending io
+    imap_cmd_free(anon->cmd);
+    imap_resp_free(anon->resp);
+    link_t *link;
+    while((link = link_list_pop_first(&anon->cmds))){
+        imap_cmd_free(CONTAINER_OF(link, imap_cmd_t, link));
+    }
+    while((link = link_list_pop_first(&anon->resps))){
+        imap_resp_free(CONTAINER_OF(link, imap_resp_t, link));
+    }
     free(anon);
 }
 
@@ -142,14 +150,14 @@ static void cread_cb(
 static void swrite_cb(imap_server_t *s, imap_server_write_t *req){
     (void)s;
     anon_t *anon = CONTAINER_OF(req, anon_t, swrite);
-    anon->writing_dn = false;
+    anon->write_dn_done = true;
     schedule(anon);
 }
 
 static void cwrite_cb(imap_client_t *c, imap_client_write_t *req){
     (void)c;
     anon_t *anon = CONTAINER_OF(req, anon_t, cwrite);
-    anon->writing_up = false;
+    anon->write_up_done = true;
     schedule(anon);
 }
 
@@ -314,7 +322,7 @@ static derr_t process_login_resp(anon_t *anon, bool *ok){
     derr_t e = E_OK;
     *ok = false;
 
-    imap_resp_t *resp = STEAL(imap_resp_t, &resp);
+    imap_resp_t *resp = STEAL(imap_resp_t, &anon->resp);
     ie_st_resp_t *st;
     if((st = match_tagged(resp, DSTR_LIT("anon"), anon->ntags))){
         // LOGIN tagged response
@@ -394,7 +402,7 @@ static derr_t write_dn(anon_t *anon, bool success){
 
 static void reset(anon_t *anon){
     anon->login_cmd_recvd = false;
-    anon->write_up_done = false;
+    anon->write_up_sent = false;
     anon->login_resp_recvd = false;
     anon->write_dn_sent = false;
 }
