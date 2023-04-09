@@ -13,6 +13,9 @@
      XXX: we should add supported citm versions in the capabilities, since a
           simple version in the greeting isn't that expressive, and also doesn't
           generalize well to this abstraction
+
+     XXX: make the imap client and imap server reschedule after writes if they
+          have space in their write buffer, before submitting to lower layers
 */
 
 #define DECLARE_STRUCT(x) struct x; typedef struct x x

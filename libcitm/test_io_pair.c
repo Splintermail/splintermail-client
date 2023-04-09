@@ -117,6 +117,5 @@ cu:
         LOG_ERROR("PASS\n");
     }
 
-    ssl_library_close();
     return exit_code;
 }

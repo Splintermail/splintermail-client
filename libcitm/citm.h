@@ -18,6 +18,7 @@ struct citm_conn_t {
     // .close() is illegal unless you can guarantee there is no pending IO
     void (*close)(citm_conn_t*);
 };
+DEF_STEAL_PTR(citm_conn_t)
 
 struct citm_connect_i;
 typedef struct citm_connect_i citm_connect_i;

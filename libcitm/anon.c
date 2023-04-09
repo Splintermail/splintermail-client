@@ -455,6 +455,8 @@ static void advance_state(anon_t *anon){
         reset(anon);
     }
 
+    // XXX: check capabilities?
+
     // success is complete
     anon_cb cb = anon->cb;
     void *cb_data = anon->cb_data;

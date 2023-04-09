@@ -8,14 +8,14 @@ typedef void (*preuser_cb)(
 );
 
 void preuser_new(
-    citm_io_t *io,
+    citm_io_i *io,
     dstr_t user,
     dstr_t pass,
     keydir_i *kd,
     imap_server_t *server,
     imap_client_t *client,
     preuser_cb cb,
-    void *data,
+    void *cb_data,
     hashmap_t *out
 );
 

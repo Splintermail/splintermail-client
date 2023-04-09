@@ -1,21 +1,22 @@
 #include "libcitm/libcitm.h"
 
 imap_cmd_t *xkeyadd_cmd(derr_t *e, ie_dstr_t *tag, const keypair_t *kp){
-    if(is_error(*e)){
-        ie_dstr_free(tag);
-        return NULL;
-    }
+    if(is_error(*e)) goto fail;
 
     // get the pem-encoded key to send
     DSTR_VAR(pem, 2048);
     PROP_GO(e, keypair_get_public_pem(kp, &pem), fail);
 
     // issue an XKEYADD command
-    ie_dstr_t *ie_pem = ie_dstr_new(&e, &pem, KEEP_RAW);
+    ie_dstr_t *ie_pem = ie_dstr_new(e, &pem, KEEP_RAW);
     imap_cmd_arg_t arg = { .xkeyadd = ie_pem };
-    imap_cmd_t *cmd = imap_cmd_new(&e, tag_str, IMAP_CMD_XKEYADD, arg);
+    imap_cmd_t *cmd = imap_cmd_new(e, tag, IMAP_CMD_XKEYADD, arg);
 
     return cmd;
+
+fail:
+    ie_dstr_free(tag);
+    return NULL;
 }
 
 // builder API for ie_dstr_t's from binary fingerprints
@@ -33,14 +34,14 @@ imap_cmd_t *xkeysync_cmd(derr_t *e, ie_dstr_t *tag, keydir_i *kd){
     }
 
     // make a list of fingerprints we expect the server to have
-    ie_dstr_t *fprs = build_fpr(&e, kd->mykey(kd));
+    ie_dstr_t *fprs = build_fpr(e, kd->mykey(kd)->fingerprint);
     key_iter_t it = kd->peers(kd);
-    keypair_t *kp;
+    const keypair_t *kp;
     while((kp = key_next(&it))){
-        ie_dstr_add(&e, fprs, build_fpr(&e, kp->fingerprint));
+        ie_dstr_add(e, fprs, build_fpr(e, kp->fingerprint));
     }
 
     // make an XKEYSYNC command
     imap_cmd_arg_t arg = { .xkeysync = fprs };
-    return imap_cmd_new(&e, tag, IMAP_CMD_XKEYSYNC, arg);
+    return imap_cmd_new(e, tag, IMAP_CMD_XKEYSYNC, arg);
 }

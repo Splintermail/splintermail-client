@@ -12,11 +12,13 @@ sm_lib(
     imap_client.c
     io_pair.c
     anon.c
+    preuser.c
+    xkey.c
     responses.c
     DEPS dstr crypto duv duvtls imap imaildir
 )
 
-sm_exe(citm main.c DEPS libcitm)
+# sm_exe(citm main.c DEPS libcitm)
 
 sm_lib(fake_citm.c DEPS libcitm TEST)
 

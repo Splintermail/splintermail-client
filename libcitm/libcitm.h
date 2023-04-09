@@ -10,6 +10,8 @@
 #include "io_pair.h"
 #include "anon.h"
 #include "responses.h"
+#include "xkey.h"
+#include "preuser.h"
 
 #include "passthru.h"
 #include "fetcher.h"
