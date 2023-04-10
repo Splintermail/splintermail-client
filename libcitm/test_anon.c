@@ -34,37 +34,6 @@ static derr_t do_write(manual_scheduler_t *m, fake_stream_t *fs, dstr_t buf){
     return e;
 }
 
-static derr_t do_read(manual_scheduler_t *m, fake_stream_t *fs, dstr_t exp){
-    derr_t e = E_OK;
-
-    dstr_t remaining = exp;
-
-    manual_scheduler_run(m);
-    while(remaining.len){
-        dstr_t got = dstr_sub2(exp, 0, exp.len - remaining.len);
-        if(!fake_stream_want_write(fs)){
-            ORIG(&e,
-                E_VALUE,
-                "\nexpected: \"%x\"\nbut got:  \"%x\"\n(nothing left to read)",
-                FD_DBG(&exp), FD_DBG(&got)
-            );
-        }
-        dstr_t buf = fake_stream_pop_write(fs);
-        if(!dstr_beginswith2(remaining, buf)){
-            ORIG(&e,
-                E_VALUE,
-                "\nexpected: \"%x\"\nbut got:  \"%x%x\"",
-                FD_DBG(&exp), FD_DBG(&got), FD_DBG(&buf)
-            );
-        }
-        remaining = dstr_sub2(remaining, buf.len, SIZE_MAX);
-        fake_stream_write_done(fs);
-        manual_scheduler_run(m);
-    }
-
-    return e;
-}
-
 static derr_t do_test_anon(bool logout, size_t cancel_after, bool *finished){
     derr_t e = E_OK;
 
@@ -118,21 +87,23 @@ static derr_t do_test_anon(bool logout, size_t cancel_after, bool *finished){
     #define BOUNCE(cmd, resp) do { \
         PROP_GO(&e, do_write(&m, &s, DSTR_LIT(cmd)), cu); \
         MAYBE_CANCEL; \
-        PROP_GO(&e, do_read(&m, &s, DSTR_LIT(resp)), cu); \
+        PROP_GO(&e, fake_stream_expect_read(&m, &s, DSTR_LIT(resp)), cu); \
         MAYBE_CANCEL; \
     } while(0)
 
+    // feed bytes to server, read bytes from client
     #define CMD(write, read) do { \
         PROP_GO(&e, do_write(&m, &s, DSTR_LIT(write)), cu); \
         MAYBE_CANCEL; \
-        PROP_GO(&e, do_read(&m, &c, DSTR_LIT(read)), cu); \
+        PROP_GO(&e, fake_stream_expect_read(&m, &c, DSTR_LIT(read)), cu); \
         MAYBE_CANCEL; \
     } while(0)
 
+    // feed bytes to client, read bytes from server
     #define RESP(write, read) do { \
         PROP_GO(&e, do_write(&m, &c, DSTR_LIT(write)), cu); \
         MAYBE_CANCEL; \
-        PROP_GO(&e, do_read(&m, &s, DSTR_LIT(read)), cu); \
+        PROP_GO(&e, fake_stream_expect_read(&m, &s, DSTR_LIT(read)), cu); \
         MAYBE_CANCEL; \
     } while(0)
 
@@ -152,6 +123,7 @@ static derr_t do_test_anon(bool logout, size_t cancel_after, bool *finished){
 
     if(logout){
         BOUNCE("2 LOGOUT\r\n", "2 BYE get offa my lawn!\r\n");
+        fake_stream_shutdown(&s);
         ADVANCE_FAKES(&m, &s, &c);
         EXPECT_U_GO(&e, "cb_count", cb_count, 0, cu);
         // all memory should have been freed already

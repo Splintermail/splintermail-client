@@ -422,6 +422,8 @@ static void advance_state(anon_t *anon){
         // finished all writes, shut down the server
         imap_server_logged_out(anon->imap_dn);
         imap_client_cancel(anon->imap_up);
+        // wait for the server to finish successfully
+        if(!anon->imap_dn->awaited) return;
         goto cu;
     }
 

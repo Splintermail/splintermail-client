@@ -104,53 +104,67 @@ static derr_t advance_writes(imap_server_t *s, bool *ok){
     derr_t e = E_OK;
     *ok = false;
 
-    while(!link_list_isempty(&s->resps)){
-        // write out one wbuf
-        ONCE(s->write_started){
-            s->wbuf.len = 0;
-            s->nwritten = 0;
-            size_t want = 0;
-            link_t *link = s->resps.next;
-            // cram as many responses as we can fit into this wbuf
-            while(link != &s->resps && want == 0){
-                imap_resp_t *resp = CONTAINER_OF(link, imap_resp_t, link);
-                PROP(&e,
-                    imap_resp_write(
-                        resp, &s->wbuf, &s->write_skip, &want, &s->exts
-                    )
-                );
-                if(want == 0){
-                    // finished marshaling a whole response
-                    s->nwritten++;
-                    s->write_skip = 0;
-                    link = link->next;
-                }
-            }
-            stream_must_write(s->stream, &s->write_req, &s->wbuf, 1, write_cb);
-        }
+    // have we finished the last write we sent?
+    if(s->write_sent){
         if(!s->write_done) return e;
-        // finished a write to the wire
         s->write_started = false;
+        s->write_sent = false;
         s->write_done = false;
-        // handle responses we wrote completely
-        for(size_t i = 0; i < s->nwritten; i++){
-            // free response
-            link_t *link = link_list_pop_first(&s->resps);
-            imap_resp_t *resp = CONTAINER_OF(link, imap_resp_t, link);
-            imap_resp_free(resp);
-            if(!s->relay_started) continue;
-            // respond to write_cb
-            link = link_list_pop_first(&s->writes);
-            imap_server_write_t *req =
-                CONTAINER_OF(link, imap_server_write_t, link);
-            req->cb(s, req);
-            // did the user cancel us?
-            if(s->canceled) return e;
-        }
+        s->wbuf.len = 0;
         s->nwritten = 0;
     }
 
-    *ok = true;
+    // is there nothing to write?
+    if(!s->write_started && link_list_isempty(&s->resps)){
+        *ok = true;
+        return e;
+    }
+
+    bool want_delay = false;
+
+    // cram as many responses as we can fit into this wbuf
+    link_t *link = s->resps.next;
+    while(link != &s->resps){
+        s->write_started = true;
+        size_t want = 0;
+        imap_resp_t *resp = CONTAINER_OF(link, imap_resp_t, link);
+        PROP(&e,
+            imap_resp_write(resp, &s->wbuf, &s->write_skip, &want, &s->exts)
+        );
+        if(want){
+            // buffer is full, send the write
+            stream_must_write(s->stream, &s->write_req, &s->wbuf, 1, write_cb);
+            s->write_sent = true;
+            return e;
+        }
+        // finished marshaling a response
+        s->write_skip = 0;
+        link = link->next;
+        link_remove(&resp->link);
+        imap_resp_free(resp);
+        if(!s->relay_started) continue;
+        // respond to write_cb
+        imap_server_write_t *req = CONTAINER_OF(
+            link_list_pop_first(&s->writes), imap_server_write_t, link
+        );
+        req->cb(s, req);
+        // did the user cancel us?
+        if(s->canceled) return e;
+        /* we finished a response with room leftover and we made a write_cb, so
+           wait a round to see if our writer has more to send */
+        want_delay = true;
+    }
+
+    if(want_delay){
+        // delay one scheduling round
+        link_remove(&s->schedulable.link);
+        schedule(s);
+    }else{
+        // if we didn't make any write_cb's, there's no reason to wait
+        stream_must_write(s->stream, &s->write_req, &s->wbuf, 1, write_cb);
+        s->write_sent = true;
+    }
+
     return e;
 }
 

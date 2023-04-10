@@ -144,8 +144,8 @@ static derr_t test_starttls(SSL_CTX *sctx, SSL_CTX *cctx){
         EXPECT_D3_GO(&e, "resp body", &buf, &DSTR_LIT(text), cu); \
     } while(0)
 
-    #define EXPECT_IWRITE_CB \
-        EXPECT_U_GO(&e, "niwrites", niwrites, ++exp_niwrites, cu)
+    #define EXPECT_IWRITE_CB(i) \
+        EXPECT_U_GO(&e, "niwrites", niwrites, (exp_niwrites += i), cu)
 
     #define PUSH_BYTES(from, to) do { \
         EXPECT_WANT_WRITE("push_bytes.from wants write", from, true); \
@@ -225,7 +225,7 @@ static derr_t test_starttls(SSL_CTX *sctx, SSL_CTX *cctx){
     PUSH_BYTES(&fc, &fs); // client sends its message
     ADVANCE_TEST();
 
-    EXPECT_IWRITE_CB;
+    EXPECT_IWRITE_CB(1);
     EXPECT_READ_CB;
     EXPECT_D3_GO(&e, "rbuf", &rbuf, &DSTR_LIT("yo NOOP\r\n"), cu);
 
@@ -261,6 +261,101 @@ cu:
     return e;
 }
 
+typedef struct {
+    size_t count;
+    bool done;
+} test_writes_t;
+
+static void rewrite_cb(imap_client_t *c, imap_client_write_t *req);
+
+static void send_test_write(
+    imap_client_t *c, imap_client_write_t *req, test_writes_t *tw
+){
+    tw->count--;
+
+    // write a 10-byte command ("TAG NOOP\r\n")
+    ie_dstr_t *tag = ie_dstr_new2(&E, DSTR_LIT("TAG"));
+    imap_cmd_arg_t arg = {0};
+    imap_cmd_t *cmd = imap_cmd_new(&E, tag, IMAP_CMD_NOOP, arg);
+    CHECK_GO(&E, fail);
+    imap_client_must_write(c, req, cmd, rewrite_cb);
+
+fail:
+    return;
+}
+
+static void rewrite_cb(imap_client_t *c, imap_client_write_t *req){
+    test_writes_t *tw = c->data;
+    niwrites++;
+
+    if(!tw->count){
+        tw->done = true;
+        return;
+    }
+    send_test_write(c, req, tw);
+}
+
+// make sure that multiple sequential writes get merged by the imap client
+static derr_t test_writes(void){
+    derr_t e = E_OK;
+
+    manual_scheduler_t m;
+    scheduler_i *sched = manual_scheduler(&m);
+
+    // pipeline diagram: (no tls required)
+    // fs <-> fconn <-> imap_client_t c
+
+    fake_stream_t fs;
+    fake_citm_conn_t fconn;
+    citm_conn_t *conn = fake_citm_conn(
+        &fconn, fake_stream(&fs), IMAP_SEC_INSECURE, NULL, (dstr_t){0}
+    );
+
+    imap_client_t *c = NULL;
+
+    imap_client_write_t iwrite;
+    size_t exp_niwrites = niwrites;
+
+    // overall, we'll write 410 10-byte responses to fill client'c wbuf
+    test_writes_t tw = { .count = 410, .done = false };
+
+    // end of preamble
+
+    PROP_GO(&e, imap_client_new(&c, sched, conn), cu);
+    imap_client_must_await(c, await_cb, NULL);
+    c->data = &tw;
+
+    PROP_GO(&e, establish_imap_client(&m, &fs), cu);
+
+    // start the first write
+    send_test_write(c, &iwrite, &tw);
+    PROP_VAR_GO(&e, &E, cu);
+
+    ADVANCE_FAKES(&m, &fs);
+    PROP_VAR_GO(&e, &E, cu);
+    EXPECT_IWRITE_CB(409);
+
+    // calculate what we expect
+    DSTR_VAR(buf, 8192);
+    for(size_t i = 0; i < 410; i++){
+        dstr_append_quiet(&buf, &DSTR_LIT("TAG NOOP\r\n"));
+    }
+
+    dstr_t exp = dstr_sub2(buf, 0, 4096);
+    PROP_GO(&e, fake_stream_expect_read(&m, &fs, exp), cu);
+
+    EXPECT_IWRITE_CB(1);
+    exp = dstr_sub2(buf, 4096, 4100);
+    PROP_GO(&e, fake_stream_expect_read(&m, &fs, exp), cu);
+
+cu:
+    MERGE_VAR(&e, &E, "global error");
+    MERGE_CMD(&e, cleanup_imap_client(&m, &c, &fs), "imap_client");
+    MERGE_CMD(&e, fake_citm_conn_cleanup(&m, &fconn, &fs), "fs");
+
+    return e;
+}
+
 int main(int argc, char** argv){
     derr_t e = E_OK;
     int exit_code = 0;
@@ -278,6 +373,7 @@ int main(int argc, char** argv){
     PROP_GO(&e, ctx_setup(test_files, &sctx, &cctx), cu);
 
     PROP_GO(&e, test_starttls(sctx, cctx), cu);
+    PROP_GO(&e, test_writes(), cu);
 
 cu:
     if(is_error(e)){

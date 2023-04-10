@@ -150,8 +150,8 @@ static derr_t test_starttls(SSL_CTX *sctx, SSL_CTX *cctx, test_mode_e mode){
         EXPECT_D3_GO(&e, "cmd body", &buf, &DSTR_LIT(text), cu); \
     } while(0)
 
-    #define EXPECT_IWRITE_CB \
-        EXPECT_U_GO(&e, "niwrites", niwrites, ++exp_niwrites, cu)
+    #define EXPECT_IWRITE_CB(i) \
+        EXPECT_U_GO(&e, "niwrites", niwrites, (exp_niwrites += i), cu)
 
     #define PUSH_BYTES(from, to) do { \
         EXPECT_WANT_WRITE("push_bytes.from wants write", from, true); \
@@ -286,8 +286,6 @@ static derr_t test_starttls(SSL_CTX *sctx, SSL_CTX *cctx, test_mode_e mode){
     DSTR_STATIC(starttlsresp, "4 OK it's about time\r\n");
     DSTR_STATIC(imapcmd, "5 NOOP\r\n");
 
-    // queue up an informational command
-
     if(mode == MODE_STARTTLS){
         // STARTTLS command, don't force preinput
         CMD_AND_RESP(&starttlscmd, &starttlsresp);
@@ -357,6 +355,7 @@ static derr_t test_starttls(SSL_CTX *sctx, SSL_CTX *cctx, test_mode_e mode){
     ADVANCE_TEST();
     EXPECT_WRITE_CB;
     EXPECT_CMD("5 NOOP\r\n");
+    EXPECT_IWRITE_CB(1);
 
     // write a response through the tls
     {
@@ -384,7 +383,7 @@ static derr_t test_starttls(SSL_CTX *sctx, SSL_CTX *cctx, test_mode_e mode){
     PUSH_BYTES(&fs, &fc); // server sends response
     ADVANCE_TEST();
 
-    EXPECT_IWRITE_CB;
+    EXPECT_IWRITE_CB(1);
     EXPECT_READ_CB;
     EXPECT_D3_GO(&e, "rbuf", &rbuf, &DSTR_LIT("* OK info\r\n"), cu);
 
@@ -394,7 +393,7 @@ static derr_t test_starttls(SSL_CTX *sctx, SSL_CTX *cctx, test_mode_e mode){
     PUSH_BYTES(&fs, &fc);
     ADVANCE_TEST();
 
-    EXPECT_IWRITE_CB;
+    EXPECT_IWRITE_CB(0);
     EXPECT_READ_CB;
     EXPECT_D3_GO(&e, "rbuf", &rbuf, &DSTR_LIT("5 OK yo\r\n"), cu);
 
@@ -422,6 +421,109 @@ cu:
     return e;
 }
 
+typedef struct {
+    size_t count;
+    bool done;
+} test_writes_t;
+
+static void rewrite_cb(imap_server_t *s, imap_server_write_t *req);
+
+static void send_test_write(
+    imap_server_t *s, imap_server_write_t *req, test_writes_t *tw
+){
+    tw->count--;
+
+    // write a 65-byte response (58 + "* OK " + "\r\n")
+    DSTR_STATIC(
+        info, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ012345"
+    );
+    ie_dstr_t *text = ie_dstr_new2(&E, info);
+    ie_st_resp_t *st = ie_st_resp_new(&E, NULL, IE_ST_OK, NULL, text);
+    imap_resp_arg_t arg = { .status_type = st };
+    imap_resp_t *resp = imap_resp_new(&E, IMAP_RESP_STATUS_TYPE, arg);
+    CHECK_GO(&E, fail);
+    imap_server_must_write(s, req, resp, rewrite_cb);
+
+fail:
+    return;
+}
+
+static void rewrite_cb(imap_server_t *s, imap_server_write_t *req){
+    test_writes_t *tw = s->data;
+    niwrites++;
+
+    if(!tw->count){
+        tw->done = true;
+        return;
+    }
+    send_test_write(s, req, tw);
+}
+
+// make sure that multiple sequential writes get merged by the imap server
+static derr_t test_writes(void){
+    derr_t e = E_OK;
+
+    manual_scheduler_t m;
+    scheduler_i *sched = manual_scheduler(&m);
+
+    // pipeline diagram: (no tls required)
+    // fs <-> fconn <-> imap_server_t s
+
+    fake_stream_t fs;
+    fake_citm_conn_t fconn;
+    citm_conn_t *conn = fake_citm_conn(
+        &fconn, fake_stream(&fs), IMAP_SEC_INSECURE, NULL, (dstr_t){0}
+    );
+
+    imap_server_t *s = NULL;
+
+    imap_server_write_t iwrite;
+    size_t exp_niwrites = niwrites;
+
+    // overall, we'll write 64 65-byte responses to fill server's wbuf
+    test_writes_t tw = { .count = 64, .done = false };
+
+    // end of preamble
+
+    PROP_GO(&e, imap_server_new(&s, sched, conn), cu);
+    imap_server_must_await(s, await_cb, NULL);
+    s->data = &tw;
+
+    PROP_GO(&e, establish_imap_server(&m, &fs), cu);
+
+    // start the first write
+    send_test_write(s, &iwrite, &tw);
+    PROP_VAR_GO(&e, &E, cu);
+
+    ADVANCE_FAKES(&m, &fs);
+    PROP_VAR_GO(&e, &E, cu);
+    EXPECT_IWRITE_CB(63);
+
+    // calculate what we expect
+    DSTR_VAR(buf, 8192);
+    for(size_t i = 0; i < 64; i++){
+        dstr_append_quiet(&buf, &DSTR_LIT("* OK "));
+        dstr_append_quiet(&buf, &DSTR_LIT("abcdefghijklmnopqrstuvwxyz"));
+        dstr_append_quiet(&buf, &DSTR_LIT("ABCDEFGHIJKLMNOPQRSTUVWXYZ"));
+        dstr_append_quiet(&buf, &DSTR_LIT("012345"));
+        dstr_append_quiet(&buf, &DSTR_LIT("\r\n"));
+    }
+
+    dstr_t exp = dstr_sub2(buf, 0, 4096);
+    PROP_GO(&e, fake_stream_expect_read(&m, &fs, exp), cu);
+
+    EXPECT_IWRITE_CB(1);
+    exp = dstr_sub2(buf, 4096, 65*64);
+    PROP_GO(&e, fake_stream_expect_read(&m, &fs, exp), cu);
+
+cu:
+    MERGE_VAR(&e, &E, "global error");
+    MERGE_CMD(&e, cleanup_imap_server(&m, &s, &fs), "imap_server");
+    MERGE_CMD(&e, fake_citm_conn_cleanup(&m, &fconn, &fs), "fs");
+
+    return e;
+}
+
 int main(int argc, char** argv){
     derr_t e = E_OK;
     int exit_code = 0;
@@ -441,6 +543,7 @@ int main(int argc, char** argv){
     PROP_GO(&e, test_starttls(sctx, cctx, MODE_LOGOUT), cu);
     PROP_GO(&e, test_starttls(sctx, cctx, MODE_STARTTLS), cu);
     PROP_GO(&e, test_starttls(sctx, cctx, MODE_PREINPUT), cu);
+    PROP_GO(&e, test_writes(), cu);
 
 cu:
     if(is_error(e)){

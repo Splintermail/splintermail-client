@@ -49,7 +49,6 @@ if("${lowerbuild}" STREQUAL "debug")
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DBUILD_DEBUG")
 endif()
 
-# python3 is needed for packaging the installers
 if("${PYTHON_3_CMD}" STREQUAL "")
     set(PYTHON_3_CMD "python3")
 endif()

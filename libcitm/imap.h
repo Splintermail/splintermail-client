@@ -200,6 +200,7 @@ struct imap_server_t {
     bool read_done : 1;
 
     bool write_started : 1;
+    bool write_sent : 1;
     bool write_done : 1;
 
     bool logged_out : 1;
@@ -259,6 +260,7 @@ struct imap_client_t {
     bool read_done : 1;
 
     bool write_started : 1;
+    bool write_sent : 1;
     bool write_done : 1;
 
     bool canceled : 1;
