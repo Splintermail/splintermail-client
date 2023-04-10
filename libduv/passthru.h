@@ -29,6 +29,10 @@ typedef struct {
     uv_buf_t *heapbufs;
     size_t nheapbufs;
 
+    // avoid scheduling ourselves while we are running duv_scheduler_run()
+    bool schedule_guard;
+    bool want_schedule;
+
     struct {
         link_t pending;  // stream_write_t->link
         size_t inflight;

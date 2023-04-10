@@ -76,6 +76,11 @@ static void scheduled(schedulable_t *s){
 }
 
 static void schedule(duv_passthru_t *p){
+    // if we ourselves are running the scheduler, don't schedule ourselves
+    if(p->schedule_guard){
+        p->want_schedule = true;
+        return;
+    }
     p->scheduler->iface.schedule(&p->scheduler->iface, &p->schedulable);
 }
 
@@ -146,7 +151,14 @@ static void _do_read_cb(duv_passthru_t *p, ssize_t nread, const uv_buf_t *buf){
     if(failing(p) || !link_list_isempty(&p->reads)) return;
 
     // give any layer of stream a chance to call read again
+    p->schedule_guard = true;
     duv_scheduler_run(p->scheduler);
+    p->schedule_guard = false;
+    if(p->want_schedule){
+        p->want_schedule = false;
+        schedule(p);
+    }
+
     // detect again
     if(failing(p) || !link_list_isempty(&p->reads)) return;
 

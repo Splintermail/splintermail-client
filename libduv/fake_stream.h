@@ -32,6 +32,16 @@ void fake_stream_shutdown(fake_stream_t *f);
 void fake_stream_done(fake_stream_t *f, derr_t error);
 stream_i *fake_stream(fake_stream_t *f);
 
+// expects exactly one read
+derr_t fake_stream_expect_read(
+    manual_scheduler_t *m, fake_stream_t *fs, dstr_t exp
+);
+
+// expects reads broken up by any boundaries
+derr_t fake_stream_expect_read_many(
+    manual_scheduler_t *m, fake_stream_t *fs, dstr_t exp
+);
+
 // close and cleanup a stream and the fake_stream on which it was built
 derr_t fake_stream_cleanup(
     manual_scheduler_t *m, stream_i *s, fake_stream_t *f

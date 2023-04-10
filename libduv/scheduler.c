@@ -22,9 +22,9 @@ static void drain(link_t *scheduled){
 }
 
 static void schedule(link_t *scheduled, schedulable_t *x){
-    // if it was in the list, remove it
-    link_remove(&x->link);
-    // place it at the end of the list
+    // if we're already scheduled, do nothing
+    if(!link_list_isempty(&x->link)) return;
+    // otherwise place it at the end of the list
     link_list_append(scheduled, &x->link);
 }
 

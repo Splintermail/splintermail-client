@@ -1,4 +1,5 @@
 #include "libduv/fake_stream.h"
+#include "test/test_utils.h"
 
 bool fake_stream_want_read(fake_stream_t *f){
     return !link_list_isempty(&f->reads);
@@ -196,6 +197,56 @@ static void cleanup_await_cb(
     if(data->original_await_cb){
         data->original_await_cb(s, E_OK, reads, writes);
     }
+}
+
+// expects exactly one read
+derr_t fake_stream_expect_read(
+    manual_scheduler_t *m, fake_stream_t *fs, dstr_t exp
+){
+    derr_t e = E_OK;
+
+    manual_scheduler_run(m);
+    EXPECT_B(&e, "want write", fake_stream_want_write(fs), true);
+    dstr_t buf = fake_stream_pop_write(fs);
+    EXPECT_D3(&e, "written", &buf, &exp);
+    fake_stream_write_done(fs);
+    manual_scheduler_run(m);
+
+    return e;
+}
+
+// expects reads broken up by any boundaries
+derr_t fake_stream_expect_read_many(
+    manual_scheduler_t *m, fake_stream_t *fs, dstr_t exp
+){
+    derr_t e = E_OK;
+
+    dstr_t remaining = exp;
+
+    manual_scheduler_run(m);
+    while(remaining.len){
+        dstr_t got = dstr_sub2(exp, 0, exp.len - remaining.len);
+        if(!fake_stream_want_write(fs)){
+            ORIG(&e,
+                E_VALUE,
+                "\nexpected: \"%x\"\nbut got:  \"%x\"\n(nothing left to read)",
+                FD_DBG(&exp), FD_DBG(&got)
+            );
+        }
+        dstr_t buf = fake_stream_pop_write(fs);
+        if(!dstr_beginswith2(remaining, buf)){
+            ORIG(&e,
+                E_VALUE,
+                "\nexpected: \"%x\"\nbut got:  \"%x%x\"",
+                FD_DBG(&exp), FD_DBG(&got), FD_DBG(&buf)
+            );
+        }
+        remaining = dstr_sub2(remaining, buf.len, SIZE_MAX);
+        fake_stream_write_done(fs);
+        manual_scheduler_run(m);
+    }
+
+    return e;
 }
 
 derr_t fake_stream_cleanup(
