@@ -2143,7 +2143,7 @@ derr_type_t fmthook_imap_cmd(dstr_t* out, const void* arg){
         dstr_append_quiet(&buf, &DSTR_LIT("..."));
     }
 
-    return dstr_append_quiet(out, &buf);
+    return fmthook_dstr_dbg(out, &buf);
 }
 
 derr_type_t fmthook_imap_resp(dstr_t* out, const void* arg){
@@ -2178,5 +2178,5 @@ derr_type_t fmthook_imap_resp(dstr_t* out, const void* arg){
         dstr_append_quiet(&buf, &DSTR_LIT("..."));
     }
 
-    return dstr_append_quiet(out, &buf);
+    return fmthook_dstr_dbg(out, &buf);
 }
