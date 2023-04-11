@@ -166,7 +166,8 @@ ie_st_resp_t *match_tagged(
     const dstr_t tag = st->tag->dstr;
     if(!dstr_beginswith2(tag, prefix)) return NULL;
     size_t tag_idx;
-    dstr_tosize_quiet(dstr_sub2(tag, prefix.len, SIZE_MAX), &tag_idx, 10);
-    if(tag_idx != idx) return NULL;
+    const dstr_t suffix = dstr_sub2(tag, prefix.len, SIZE_MAX);
+    derr_type_t etype = dstr_tosize_quiet(suffix, &tag_idx, 10);
+    if(etype != E_NONE || tag_idx != idx) return NULL;
     return st;
 }

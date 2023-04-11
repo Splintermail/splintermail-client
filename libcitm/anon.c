@@ -342,7 +342,7 @@ static derr_t process_login_resp(anon_t *anon, bool *ok){
     }else{
         ORIG_GO(&e,
             E_RESPONSE,
-            "unexpected LOGIN response: %x\n",
+            "unexpected LOGIN response: %x",
             cu,
             FIRESP(resp)
         );
@@ -410,8 +410,8 @@ static void reset(anon_t *anon){
 static void advance_state(anon_t *anon){
     bool ok;
 
-    if(anon->canceled || anon->failed) goto cu;
     if(is_error(anon->e)) goto fail;
+    if(anon->canceled || anon->failed) goto cu;
 
     // always finish writes before proceeding
     bool ok_up = advance_writes_up(anon);

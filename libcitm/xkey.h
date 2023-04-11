@@ -12,7 +12,7 @@ const keypair_t *key_next(key_iter_t *it);
    preuser_t and the user_t.  As an interface, it allows the preuser_t and the
    user_t to be tested without filesystem interaction. */
 struct keydir_i {
-    keypair_t *(*mykey)(keydir_i*);
+    const keypair_t *(*mykey)(keydir_i*);
     key_iter_t (*peers)(keydir_i*);
     derr_t (*add_key)(keydir_i*, const dstr_t pem);
     void (*delete_key)(keydir_i*, const dstr_t bin_fpr);

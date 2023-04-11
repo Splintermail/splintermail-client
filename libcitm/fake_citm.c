@@ -8,6 +8,7 @@ DEF_CONTAINER_OF(fake_citm_conn_t, iface, citm_conn_t)
 DEF_CONTAINER_OF(fake_citm_connect_t, iface, citm_connect_i)
 DEF_CONTAINER_OF(fake_citm_connect_t, link, link_t)
 DEF_CONTAINER_OF(fake_citm_io_t, iface, citm_io_i)
+DEF_CONTAINER_OF(fake_keydir_t, iface, keydir_i)
 
 static void await_after_close(
     stream_i *stream, derr_t e, link_t *reads, link_t *writes
@@ -67,14 +68,18 @@ derr_t fake_citm_conn_cleanup(
 void _advance_fakes(
     manual_scheduler_t *m, fake_stream_t **f, size_t nf
 ){
-    manual_scheduler_run(m);
-    // any streams which were canceled get fake_stream_done
-    for(size_t i = 0; i < nf; i++){
-        if(!f[i]->iface.canceled) continue;
-        derr_t e_canceled = { .type = E_CANCELED };
-        fake_stream_done(f[i], e_canceled);
+    // continuously run streams until none of them need a fake_stream_done()
+    bool keep_going = true;
+    while(keep_going){
+        manual_scheduler_run(m);
+        keep_going = false;
+        for(size_t i = 0; i < nf; i++){
+            if(f[i]->iface.awaited || !f[i]->iface.canceled) continue;
+            derr_t e_canceled = { .type = E_CANCELED };
+            fake_stream_done(f[i], e_canceled);
+            keep_going = true;
+        }
     }
-    manual_scheduler_run(m);
 }
 
 
@@ -171,6 +176,161 @@ static derr_t fio_connect_imap(
 citm_io_i *fake_citm_io(fake_citm_io_t *fio){
     *fio = (fake_citm_io_t){ .iface = { .connect_imap = fio_connect_imap } };
     return &fio->iface;
+}
+
+static const keypair_t *fkd_mykey(keydir_i *iface){
+    fake_keydir_t *fkd = CONTAINER_OF(iface, fake_keydir_t, iface);
+    return fkd->mykey;
+}
+
+static key_iter_t fkd_peers(keydir_i *iface){
+    fake_keydir_t *fkd = CONTAINER_OF(iface, fake_keydir_t, iface);
+    return (key_iter_t){
+        .head = &fkd->peers,
+        .next = fkd->peers.next ? fkd->peers.next : NULL,
+    };
+}
+
+static derr_t fkd_add(keydir_i *iface, const dstr_t pem){
+    derr_t e = E_OK;
+    fake_keydir_t *fkd = CONTAINER_OF(iface, fake_keydir_t, iface);
+
+    keypair_t *new;
+    PROP(&e, keypair_from_pubkey_pem(&new, pem));
+    link_list_append(&fkd->peers, &new->link);
+
+    return e;
+}
+
+static void fkd_delete(keydir_i *iface, const dstr_t bin_fpr){
+    fake_keydir_t *fkd = CONTAINER_OF(iface, fake_keydir_t, iface);
+    keypair_t *kp, *temp;
+    LINK_FOR_EACH_SAFE(kp, temp, &fkd->peers, keypair_t, link){
+        if(dstr_eq(*kp->fingerprint, bin_fpr)){
+            link_remove(&kp->link);
+            keypair_free(&kp);
+            return;
+        }
+    }
+}
+
+static void fkd_free(keydir_i *iface){
+    fake_keydir_t *fkd = CONTAINER_OF(iface, fake_keydir_t, iface);
+    link_t *link;
+    keypair_free(&fkd->mykey);
+    while((link = link_list_pop_first(&fkd->peers))){
+        keypair_t *kp = CONTAINER_OF(link, keypair_t, link);
+        keypair_free(&kp);
+    }
+}
+
+DSTR_PRESET(
+    mykey_priv,
+    "-----BEGIN RSA PRIVATE KEY-----\n"
+    "MIICXQIBAAKBgQCU9j/irie2dpd2gaiVpEh7LKg6fI2OMab/tBcoZqYvsQkQX1dg\n"
+    "i8s9bFXpibycxzuyy4S3DyeVP2Vx8jhNHkTa9BLPBmPmhk7U6qgE2rV9jTdwOaAo\n"
+    "Uiv0POWUhJXIITEvejobiYMFcQ9hLCJYddwam9o/UwJpH89DBf32mJduYQIDAQAB\n"
+    "AoGAFFTb+WON1hCvsaQWz33hyrYYrAruAzdxtLru4jvIeP/v3cU1lt7duZ98xmhf\n"
+    "TwK+ejPfBGFUJMHHZdsKpjP4b7jLVtzYkGYtxlpy4Ioyhozg2vCVPmyg84yY8atw\n"
+    "KI7FlNjCpNGkGNheBX7SMYEGaIQGuQ1MVdVDCNjoc3qOZQECQQDE9N/vXheKAnZd\n"
+    "I95s5yZKg5kln7KYGfrL77/qCRADtGEJ+E2oaed2tvUD8Sc46woEpWo0O1mBWV8Y\n"
+    "MwTvduXRAkEAwZ4Z5i+V9F2j5BybDPTP/nZe+pUjG0AwhIzngpmnvzYgpu8/3Koe\n"
+    "DOxUx421mKP6OfyB5QM+ZP8lRLrR+pTTkQJAXQ+vN7TnvmgHcV7fW+mkKBUiKarZ\n"
+    "ghDUdcPklDqP/JAgQcu3NdpEac1s2934QGaeJy/ZjLB2TC3kRtTkghlV4QJBAJUN\n"
+    "9thLqACxGhvhncgSrBE05Ze5uoYfG3rf0tarHgXJUMfTBfIGEQ5X3kimIrg4/Mkp\n"
+    "SIKaxa0Q84r+2+oyKtECQQC0mreZ3jup6aLKIs4ztCNLmemB8wLRnFV36o0eq+iY\n"
+    "dRWR9AsEh8gFtNqDvVLMx6OSqMTRLZr6XGIDeQbUcjaZ\n"
+    "-----END RSA PRIVATE KEY-----\n"
+);
+DSTR_PRESET(
+    mykey_pem,
+    "-----BEGIN PUBLIC KEY-----\n"
+    "MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQCU9j/irie2dpd2gaiVpEh7LKg6\n"
+    "fI2OMab/tBcoZqYvsQkQX1dgi8s9bFXpibycxzuyy4S3DyeVP2Vx8jhNHkTa9BLP\n"
+    "BmPmhk7U6qgE2rV9jTdwOaAoUiv0POWUhJXIITEvejobiYMFcQ9hLCJYddwam9o/\n"
+    "UwJpH89DBf32mJduYQIDAQAB\n"
+    "-----END PUBLIC KEY-----\n"
+);
+DSTR_PRESET(
+    mykey_fpr,
+    "eefdab7d7d97bf74d16684f803f3e2a4ef7aa181c9940fbbaff4427f1f7dde32"
+);
+
+
+DSTR_PRESET(
+    peer1_pem,
+    "-----BEGIN PUBLIC KEY-----\n"
+    "MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQClSBGeRBYAqTXg7a7sMCEfDgd8\n"
+    "IceNWgahGVMNdrXy6KuhyZpDEktchn1X+bvBxBLTIASKQu6+/qrIG09O5WID8iUn\n"
+    "mUBPRXw2Nkq4M0Bl8nEpA4yA/OulzvbOC/lChW6l4avBOFsUgOPS8TTXB1lz48Lc\n"
+    "eivlTlzAmryj0k1SvwIDAQAB\n"
+    "-----END PUBLIC KEY-----\n"
+);
+DSTR_PRESET(
+    peer1_fpr,
+    "3d94f057f427e2ee34bb51733b8d3ee62a8fdaaa50da71d14e4b2d7f44763471"
+);
+
+DSTR_PRESET(
+    peer2_pem,
+    "-----BEGIN PUBLIC KEY-----\n"
+    "MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQC9Xe4XzXbZSD2ng1H1J0EAdgMR\n"
+    "ISaZ3jDunhpxAv2dVLb4cnizugsGAZtwzBUO5uJnb1tHfUL3+qMF2dBBQ0q5GxM3\n"
+    "6aUpLkZ7/p+kvjZQtDynSxlpbR+BoYIfS2zKyaZ0cZj8Vdl6ljybiWtSHFVm3U5D\n"
+    "/2m95oYikN5gLOIB3QIDAQAB\n"
+    "-----END PUBLIC KEY-----\n"
+);
+DSTR_PRESET(
+    peer2_fpr,
+    "8c7e72356d46734eeaf2d163302cc560f60b513d7644dae92b390b7d8f28ae95"
+);
+
+DSTR_PRESET(
+    peer3_pem,
+    "-----BEGIN PUBLIC KEY-----\n"
+    "MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQC65r5IdAr3OuK1utQGH4T9uXPo\n"
+    "YmNlNJ2RFz0ybnIMAgqAq8FX/ewItmoQBnEKsrLSbT4JCSk/L3bWOIfcVqu+sCsi\n"
+    "MJKipNFWKcL+8G3gnxB7ifpKLAg+sMMR8h2etan5z8ijGlpZcJpxob7eFJ5ZbrjH\n"
+    "zrzTUEa6FdkdlgsnCwIDAQAB\n"
+    "-----END PUBLIC KEY-----\n"
+);
+DSTR_PRESET(
+    peer3_fpr,
+    "d99c55626294263cf8dbe54c0286673f666d9ac969b5856ff78558394365f360"
+);
+
+derr_t fake_keydir(fake_keydir_t *fkd, const dstr_t mykey_pem, keydir_i **out){
+    derr_t e = E_OK;
+    *out = NULL;
+
+    keypair_t *mykey;
+    PROP(&e, keypair_from_private_pem(&mykey, mykey_pem) );
+
+    *fkd = (fake_keydir_t){
+        .iface = {
+            .mykey = fkd_mykey,
+            .peers = fkd_peers,
+            .add_key = fkd_add,
+            .delete_key = fkd_delete,
+            .free = fkd_free,
+        },
+        .mykey = mykey,
+    };
+
+    *out = &fkd->iface;
+
+    return e;
+}
+
+derr_t fake_keydir_add_peer(fake_keydir_t *fkd, const dstr_t pem){
+    derr_t e = E_OK;
+
+    keypair_t *peer;
+    PROP(&e, keypair_from_pubkey_pem(&peer, pem) );
+
+    link_list_append(&fkd->peers, &peer->link);
+
+    return e;
 }
 
 // libcitm test utilities

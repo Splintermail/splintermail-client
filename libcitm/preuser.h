@@ -4,10 +4,11 @@ typedef void (*preuser_cb)(
     link_t *servers,
     link_t *clients,
     keydir_i *kd,
-    imap_client_t *xkey_client
+    imap_client_t *xc
 );
 
 void preuser_new(
+    scheduler_i *scheduler,
     citm_io_i *io,
     dstr_t user,
     dstr_t pass,

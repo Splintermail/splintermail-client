@@ -44,7 +44,6 @@ typedef struct {
     bool need_mykey : 1;
     bool mykey_sent : 1;
     bool mykey_done : 1;
-
 } preuser_t;
 DEF_CONTAINER_OF(preuser_t, elem, hash_elem_t);
 DEF_CONTAINER_OF(preuser_t, schedulable, schedulable_t);
@@ -65,7 +64,7 @@ static void preuser_free(preuser_t *p){
     dstr_free(&p->user);
     dstr_free0(&p->pass);
 
-    p->kd->free(p->kd);
+    if(p->kd) p->kd->free(p->kd);
     imap_client_free(&p->xc);
 
     hash_elem_remove(&p->elem);
@@ -92,6 +91,7 @@ static void await_xc(
     (void)writes;
 
     preuser_t *p = xc->data;
+    schedule(p);
 
     if(p->failed) DROP_VAR(&e);
     if(p->canceled || p->failed){
@@ -108,15 +108,8 @@ static void connect_cb(void *data, citm_conn_t *conn, derr_t e){
 
     // done with connect
     p->connect = NULL;
+    p->conn = conn;
 
-    if(is_error(e)) goto fail;
-
-    // promote conn to imap_client_t
-    PROP_GO(&e, imap_client_new( &p->xc, p->scheduler, conn), fail);
-    imap_client_must_await(p->xc, await_xc, NULL);
-    p->xc->data = p;
-
-fail:
     if(p->failed) DROP_VAR(&e);
     if(p->canceled || p->failed){
         DROP_CANCELED_VAR(&e);
@@ -220,9 +213,8 @@ static derr_t send_sync(preuser_t *p){
 static derr_t send_done(preuser_t *p){
     derr_t e = E_OK;
 
-    ie_dstr_t *tag = mktag(&e, p);
     imap_cmd_arg_t arg = {0};
-    imap_cmd_t *cmd = imap_cmd_new(&e, tag, IMAP_CMD_XKEYSYNC_DONE, arg);
+    imap_cmd_t *cmd = imap_cmd_new(&e, NULL, IMAP_CMD_XKEYSYNC_DONE, arg);
     queue_write(&e, p, cmd);
     CHECK(&e);
 
@@ -244,25 +236,21 @@ typedef derr_t (*check_f)(preuser_t *p, imap_resp_t **respp, bool *ok);
 
 static derr_t check_login(preuser_t *p, imap_resp_t **respp, bool *ok){
     derr_t e = E_OK;
+    (void)p;
 
     imap_resp_t *resp = *respp;
 
     ie_st_resp_t *st;
-    if(!(st = match_tagged(resp, DSTR_LIT("preuser"), p->ntags))) return e;
+    if(!(st = match_tagged(resp, DSTR_LIT("preuser"), 1))) return e;
 
     if(st->status != IE_ST_OK){
         // we have no recourse
-        ORIG(&e, E_RESPONSE, "preuser_t failed to login: %x\n", FIRESP(resp));
+        ORIG(&e, E_RESPONSE, "preuser_t failed to login: %x", FIRESP(resp));
     }
 
     *ok = true;
 
     return e;
-}
-
-static ie_xkeysync_resp_t *match_xkeysync(imap_resp_t *resp){
-    if(resp->type != IMAP_RESP_XKEYSYNC) return NULL;
-    return resp->arg.xkeysync;
 }
 
 static derr_t check_sync(preuser_t *p, imap_resp_t **respp, bool *ok){
@@ -271,16 +259,18 @@ static derr_t check_sync(preuser_t *p, imap_resp_t **respp, bool *ok){
     imap_resp_t *resp = *respp;
 
     // check for XKEYSYNC response
-    ie_xkeysync_resp_t *xkeysync;
-    if((xkeysync = match_xkeysync(resp))){
-        if(xkeysync->created){
+    // (note that XKEYSYNC OK responses have no arg)
+    if(resp->type == IMAP_RESP_XKEYSYNC){
+        ie_xkeysync_resp_t *xkeysync = resp->arg.xkeysync;
+        if(!xkeysync){
+            // XKEYSYNC OK is ignored
+        }else if(xkeysync->created){
             // got a new pubkey, add it to the keydir_i
             PROP(&e, p->kd->add_key(p->kd, xkeysync->created->dstr) );
-        }
-        if(xkeysync->deleted){
+        }else if(xkeysync->deleted){
             // a key we knew of was deleted
             DSTR_VAR(binfpr, 64);
-            PROP(&e, hex2bin(&xkeysync->created->dstr, &binfpr) );
+            PROP(&e, hex2bin(&xkeysync->deleted->dstr, &binfpr) );
             if(dstr_eq(binfpr, *p->kd->mykey(p->kd)->fingerprint)){
                 // mykey was deleted, we'll need to re-add it
                 p->need_mykey = true;
@@ -289,16 +279,18 @@ static derr_t check_sync(preuser_t *p, imap_resp_t **respp, bool *ok){
                 p->kd->delete_key(p->kd, binfpr);
             }
         }
+        // mark this response as consumed
+        imap_resp_free(STEAL(imap_resp_t, respp));
         return e;
     }
 
     // check for the end of the XKEYSYNC response
     ie_st_resp_t *st;
-    if(!(st = match_tagged(resp, DSTR_LIT("preuser"), p->ntags))) return e;
+    if(!(st = match_tagged(resp, DSTR_LIT("preuser"), 2))) return e;
 
     if(st->status != IE_ST_OK){
         // we have no recourse
-        ORIG(&e, E_RESPONSE, "preuser_t xkeysync failed: %x\n", FIRESP(resp));
+        ORIG(&e, E_RESPONSE, "preuser_t xkeysync failed: %x", FIRESP(resp));
     }
 
     *ok = true;
@@ -317,7 +309,7 @@ static derr_t check_upload(preuser_t *p, imap_resp_t **respp, bool *ok){
     if(st->status != IE_ST_OK){
         // we have no recourse
         ORIG(&e,
-            E_RESPONSE, "preuser_t failed to upload mykey: %x\n", FIRESP(resp)
+            E_RESPONSE, "preuser_t failed to upload mykey: %x", FIRESP(resp)
         );
     }
 
@@ -343,7 +335,7 @@ static derr_t check_resp(preuser_t *p, bool *ok, check_f check_fn){
         goto cu;
     }
 
-    ORIG_GO(&e, E_RESPONSE, "unexpected response: %x\n", cu, FIRESP(resp));
+    ORIG_GO(&e, E_RESPONSE, "unexpected response: %x", cu, FIRESP(resp));
 
 cu:
     imap_resp_free(resp);
@@ -351,11 +343,10 @@ cu:
 }
 
 static void advance_state(preuser_t *p){
-    derr_t e = E_OK;
     bool ok;
 
-    if(p->canceled || p->failed) goto cu;
     if(is_error(p->e)) goto fail;
+    if(p->canceled || p->failed) goto cu;
 
     // wait to ready our imap client
     if(!p->xc){
@@ -363,7 +354,9 @@ static void advance_state(preuser_t *p){
         if(!p->conn) return;
         // configure our imap client
         citm_conn_t *conn = STEAL(citm_conn_t, &p->conn);
-        PROP_GO(&e, imap_client_new(&p->xc, p->scheduler, conn), fail);
+        PROP_GO(&p->e, imap_client_new(&p->xc, p->scheduler, conn), fail);
+        imap_client_must_await(p->xc, await_xc, NULL);
+        p->xc->data = p;
     }
 
     // finish any pending writes
@@ -373,50 +366,52 @@ static void advance_state(preuser_t *p){
     // aggressively pipeline commands to reduce user-facing startup times
 
     ONCE(p->initial_sends){
-        PROP_GO(&e, send_login(p), fail);
-        PROP_GO(&e, send_sync(p), fail);
-        PROP_GO(&e, send_done(p), fail);
+        PROP_GO(&p->e, send_login(p), fail);
+        PROP_GO(&p->e, send_sync(p), fail);
+        PROP_GO(&p->e, send_done(p), fail);
         (void)advance_writes(p);
     }
 
-    if(!p->login_done){
+    while(!p->login_done){
         ok = advance_reads(p);
         if(!ok) return;
-        PROP_GO(&e, check_resp(p, &ok, check_login), fail);
-        if(!ok) return;
+        PROP_GO(&p->e, check_resp(p, &ok, check_login), fail);
+        if(!ok) continue;
         p->login_done = true;
     }
 
-    if(!p->sync_done){
+    while(!p->sync_done){
         ok = advance_reads(p);
         if(!ok) return;
-        PROP_GO(&e, check_resp(p, &ok, check_sync), fail);
-        if(!ok) return;
+        PROP_GO(&p->e, check_resp(p, &ok, check_sync), fail);
+        if(!ok) continue;
         p->sync_done = true;
     }
 
     // handle the case where mykey was not already present
 
-    if(p->need_mykey && !p->mykey_done){
+    if(p->need_mykey){
         ONCE(p->mykey_sent){
-            PROP_GO(&e, send_mykey(p), fail);
+            PROP_GO(&p->e, send_mykey(p), fail);
             (void)advance_writes(p);
         }
-        ok = advance_reads(p);
-        if(!ok) return;
-        PROP_GO(&e, check_resp(p, &ok, check_upload), fail);
-        if(!ok) return;
-        p->mykey_done = true;
+        while(!p->mykey_done){
+            ok = advance_reads(p);
+            if(!ok) return;
+            PROP_GO(&p->e, check_resp(p, &ok, check_upload), fail);
+            if(!ok) continue;
+            p->mykey_done = true;
+        }
     }
 
     // preuser_t's job is now complete
 
     // assert that we are done with IO
     if(p->write_started){
-        ORIG_GO(&e, E_INTERNAL, "preuser is not done writing!", fail);
+        ORIG_GO(&p->e, E_INTERNAL, "preuser is not done writing!", fail);
     }
     if(p->reading){
-        ORIG_GO(&e, E_INTERNAL, "preuser is not done reading!", fail);
+        ORIG_GO(&p->e, E_INTERNAL, "preuser is not done reading!", fail);
     }
 
     // unawait xc
@@ -448,8 +443,13 @@ fail:
 cu:
     if(p->connect){
         p->connect->cancel(p->connect);
-        return;
+        p->connect = NULL;
     }
+    if(p->conn){
+        p->conn->close(p->conn);
+        p->conn = NULL;
+    }
+
     // wait for our io be all finished
     if(p->xc){
         imap_client_cancel(p->xc);
@@ -460,6 +460,7 @@ cu:
 }
 
 void preuser_new(
+    scheduler_i *scheduler,
     citm_io_i *io,
     dstr_t user,
     dstr_t pass,
@@ -480,6 +481,7 @@ void preuser_new(
 
     // success
     *p = (preuser_t){
+        .scheduler = scheduler,
         .connect = connect,
         .user = user,
         .pass = pass,

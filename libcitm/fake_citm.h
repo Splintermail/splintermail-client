@@ -49,6 +49,25 @@ typedef struct {
 
 citm_io_i *fake_citm_io(fake_citm_io_t *fio);
 
+extern dstr_t mykey_pem;
+extern dstr_t mykey_priv;
+extern dstr_t mykey_fpr;
+extern dstr_t peer1_pem;
+extern dstr_t peer1_fpr;
+extern dstr_t peer2_pem;
+extern dstr_t peer2_fpr;
+extern dstr_t peer3_pem;
+extern dstr_t peer3_fpr;
+
+typedef struct {
+    keydir_i iface;
+    keypair_t *mykey;
+    link_t peers;  // keypair_t->link
+} fake_keydir_t;
+
+derr_t fake_keydir(fake_keydir_t *fkd, const dstr_t mykey_pem, keydir_i **out);
+derr_t fake_keydir_add_peer(fake_keydir_t *fkd, const dstr_t pem);
+
 // libcitm test utilities
 
 derr_t ctx_setup(const char *test_files, SSL_CTX **s_out, SSL_CTX **c_out);

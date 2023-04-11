@@ -170,7 +170,7 @@ static derr_t process_greeting(imap_client_t *c, bool *ok){
 
     ie_st_resp_t *st = match_greeting(resp);
     if(!st){
-        ORIG_GO(&e, E_RESPONSE, "unexpected greeting: %x\n", cu, FIRESP(resp));
+        ORIG_GO(&e, E_RESPONSE, "unexpected greeting: %x", cu, FIRESP(resp));
     }
 
     *ok = true;
@@ -210,14 +210,14 @@ static derr_t process_starttls_resp(imap_client_t *c, bool *ok){
                 *ok = true;
                 goto cu;
             }
-            ORIG_GO(&e, E_RESPONSE, "STARTTLS failed: %x\n", cu, FIRESP(resp));
+            ORIG_GO(&e, E_RESPONSE, "STARTTLS failed: %x", cu, FIRESP(resp));
         }else if((st = match_info(resp))){
             // informational response
             LOG_INFO("informational response: %x\n", FIRESP(resp));
         }else{
             ORIG_GO(&e,
                 E_RESPONSE,
-                "unexpected STARTTLS response: %x\n",
+                "unexpected STARTTLS response: %x",
                 cu,
                 FIRESP(resp)
             );

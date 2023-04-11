@@ -23,17 +23,6 @@ static void cb(
     *ptrs->pass = pass;
 }
 
-static derr_t do_write(manual_scheduler_t *m, fake_stream_t *fs, dstr_t buf){
-    derr_t e = E_OK;
-
-    manual_scheduler_run(m);
-    EXPECT_B(&e, "want read", fake_stream_want_read(fs), true);
-    fake_stream_feed_read_all(fs, buf);
-    manual_scheduler_run(m);
-
-    return e;
-}
-
 static derr_t do_test_anon(bool logout, size_t cancel_after, bool *finished){
     derr_t e = E_OK;
 
@@ -85,7 +74,7 @@ static derr_t do_test_anon(bool logout, size_t cancel_after, bool *finished){
 
     // exercise the server
     #define BOUNCE(cmd, resp) do { \
-        PROP_GO(&e, do_write(&m, &s, DSTR_LIT(cmd)), cu); \
+        PROP_GO(&e, fake_stream_write(&m, &s, DSTR_LIT(cmd)), cu); \
         MAYBE_CANCEL; \
         PROP_GO(&e, fake_stream_expect_read(&m, &s, DSTR_LIT(resp)), cu); \
         MAYBE_CANCEL; \
@@ -93,7 +82,7 @@ static derr_t do_test_anon(bool logout, size_t cancel_after, bool *finished){
 
     // feed bytes to server, read bytes from client
     #define CMD(write, read) do { \
-        PROP_GO(&e, do_write(&m, &s, DSTR_LIT(write)), cu); \
+        PROP_GO(&e, fake_stream_write(&m, &s, DSTR_LIT(write)), cu); \
         MAYBE_CANCEL; \
         PROP_GO(&e, fake_stream_expect_read(&m, &c, DSTR_LIT(read)), cu); \
         MAYBE_CANCEL; \
@@ -101,7 +90,7 @@ static derr_t do_test_anon(bool logout, size_t cancel_after, bool *finished){
 
     // feed bytes to client, read bytes from server
     #define RESP(write, read) do { \
-        PROP_GO(&e, do_write(&m, &c, DSTR_LIT(write)), cu); \
+        PROP_GO(&e, fake_stream_write(&m, &c, DSTR_LIT(write)), cu); \
         MAYBE_CANCEL; \
         PROP_GO(&e, fake_stream_expect_read(&m, &s, DSTR_LIT(read)), cu); \
         MAYBE_CANCEL; \
