@@ -454,6 +454,19 @@ derr_t keypair_from_pubkey_pem(keypair_t **out, dstr_t pem){
     return e;
 }
 
+derr_t keypair_from_private_pem(keypair_t **out, dstr_t pem){
+    derr_t e = E_OK;
+
+    *out = NULL;
+
+    EVP_PKEY *pkey;
+    PROP(&e, read_pem_encoded_privkey(pem, &pkey) );
+
+    PROP(&e, keypair_new(out, pkey) );
+
+    return e;
+}
+
 derr_t keypair_copy(const keypair_t *old, keypair_t **out){
     derr_t e = E_OK;
 

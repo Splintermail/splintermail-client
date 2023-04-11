@@ -102,6 +102,7 @@ derr_t keypair_load_private_path(
 );
 
 derr_t keypair_from_pubkey_pem(keypair_t **out, dstr_t pem);
+derr_t keypair_from_private_pem(keypair_t **out, dstr_t pem);
 void keypair_free(keypair_t **old);
 
 derr_t get_public_pem(EVP_PKEY *pkey, dstr_t *out);
