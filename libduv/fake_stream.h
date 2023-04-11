@@ -17,6 +17,8 @@ DEF_CONTAINER_OF(fake_stream_t, iface, stream_i)
 
 #define EXPECT_FAKE_STREAM_STATE(e, f, shutdown, canceled)
 
+// for controlling the exact behavior of the stream //
+
 bool fake_stream_want_read(fake_stream_t *f);
 // pukes if no reads are wanted
 dstr_t fake_stream_feed_read(fake_stream_t *f, dstr_t input);
@@ -32,15 +34,14 @@ void fake_stream_shutdown(fake_stream_t *f);
 void fake_stream_done(fake_stream_t *f, derr_t error);
 stream_i *fake_stream(fake_stream_t *f);
 
-// expects exactly one read
+// for logical operations on the stream from outside
 derr_t fake_stream_expect_read(
     manual_scheduler_t *m, fake_stream_t *fs, dstr_t exp
 );
-
-// expects reads broken up by any boundaries
 derr_t fake_stream_expect_read_many(
     manual_scheduler_t *m, fake_stream_t *fs, dstr_t exp
 );
+derr_t fake_stream_write(manual_scheduler_t *m, fake_stream_t *fs, dstr_t buf);
 
 // close and cleanup a stream and the fake_stream on which it was built
 derr_t fake_stream_cleanup(
