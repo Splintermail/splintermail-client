@@ -620,6 +620,8 @@ derr_t dirmgr_init(
     PROP_GO(&e, hashmap_init(&dm->holds), fail_holds);
     PROP(&e, hashmap_init(&dm->freezes) );
 
+    dm->initialized = true;
+
     return e;
 
 fail_holds:
@@ -754,7 +756,8 @@ warn:
 
 
 void dirmgr_free(dirmgr_t *dm){
-    if(!dm) return;
+    if(!dm || !dm->initialized) return;
+    dm->initialized = false;
 
     // clean up any temporary files
     string_builder_t tmp_path = sb_append(&dm->path, FS("tmp"));

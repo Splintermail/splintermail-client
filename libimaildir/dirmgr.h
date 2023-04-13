@@ -37,6 +37,7 @@ DEF_CONTAINER_OF(managed_dir_t, h, hash_elem_t)
 DEF_CONTAINER_OF(managed_dir_t, m, imaildir_t)
 
 struct dirmgr_t {
+    bool initialized;
     string_builder_t path;
     imaildir_hooks_i *imaildir_hooks;
     hashmap_t dirs;  // managed_dir_t->h
