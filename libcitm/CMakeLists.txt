@@ -12,6 +12,7 @@ sm_lib(
     io_pair.c
     anon.c
     preuser.c
+    user.c
     date.c
     keydir.c
     xkey.c

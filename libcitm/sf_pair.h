@@ -12,15 +12,21 @@ struct sf_pair_cb_i {
     void (*release)(sf_pair_cb_i*, sf_pair_t *sf_pair);
 };
 
+typedef void (*sf_pair_cb)(sf_pair_t*, void *data, derr_t e);
+
 // the interface the server/fetcher provides to its owner
 void sf_pair_owner_resp(sf_pair_t *sf_pair, dirmgr_t *dirmgr,
         keyshare_t *keyshare);
 
 // server-fetcher pair
 struct sf_pair_t {
-    // cb is constant, but *owner can change
-    sf_pair_cb_i *cb;
-    void *owner;
+    sf_pair_cb cb;
+    void *cb_data;
+    keydir_i *kd;
+    scheduler_i *scheduler;
+    schedulable_t schedulable;
+
+    link_t link;
 
     // wakeup reasons
     bool got_owner_resp;
@@ -50,29 +56,23 @@ struct sf_pair_t {
     // callbacks for the fetcher
     fetcher_cb_i fetcher_cb;
 
-    // XXX: set in init
-    dirmgr_t *dirmgr;
-
-    // keys for encrypting new messages
-    keyshare_t *keyshare;
-    bool registered_with_keyshare;
-    key_listener_i key_listener;
-    link_t keys;  // keypair_t->link
-
     bool closed;
-    link_t citme_link; // citme_t->sf_pairs
-    link_t user_link; // user_t->sf_pairs
 };
-DEF_CONTAINER_OF(sf_pair_t, citme_link, link_t)
-DEF_CONTAINER_OF(sf_pair_t, user_link, link_t)
+DEF_CONTAINER_OF(sf_pair_t, link, link_t)
 DEF_CONTAINER_OF(sf_pair_t, server_cb, server_cb_i)
 DEF_CONTAINER_OF(sf_pair_t, fetcher_cb, fetcher_cb_i)
-DEF_CONTAINER_OF(sf_pair_t, key_listener, key_listener_i)
 
 derr_t sf_pair_new(
-    sf_pair_t **out,
-    sf_pair_cb_i *cb
+    scheduler_i *scheduler,
+    keydir_i *kd,
+    imap_server_t *s,
+    imap_client_t *c,
+    sf_pair_cb cb,
+    void *data,
+    sf_pair_t **out
 );
+
+void sf_pair_cancel(sf_pair_t *sf_pair);
 
 void sf_pair_start(sf_pair_t *sf_pair);
 void sf_pair_close(sf_pair_t *sf_pair, derr_t error);

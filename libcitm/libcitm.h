@@ -14,10 +14,10 @@
 #include "keydir.h"
 #include "xkey.h"
 #include "preuser.h"
+#include "user.h"
 
 #include "passthru.h"
 #include "fetcher.h"
 #include "server.h"
 #include "sf_pair.h"
 #include "fpr_watcher.h"
-#include "user.h"

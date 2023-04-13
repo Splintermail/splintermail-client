@@ -1,12 +1,49 @@
+#include "libcitm/libcitm.h"
+
 typedef struct {
-    imap_client_t *xkey_client;
+    // login username
+    dstr_t user;
+    imap_client_t *xc;
     keydir_i *kd;
-    dirmgr_t *dirmgr;
-    keyshare_t keyshare;
     link_t sf_pairs;
 
+    scheduler_i *scheduler;
+    schedulable_t schedulable;
+
     hash_elem_t elem;
+
+    imap_client_read_t cread;
+    imap_client_write_t cwrite;
+    imap_resp_t *resp;
+
+    derr_t e;
+
+    bool sync_sent : 1;
+    bool reading : 1;
+
+    bool done; // if we ever ran out of sf_pairs
+    bool canceled; // if user_cancel() was called
+    bool failed; // if we hit an error
 } user_t;
+DEF_CONTAINER_OF(user_t, schedulable, schedulable_t)
+DEF_CONTAINER_OF(user_t, elem, hash_elem_t)
+DEF_CONTAINER_OF(user_t, cread, imap_client_read_t)
+DEF_CONTAINER_OF(user_t, cwrite, imap_client_write_t)
+
+static void advance_state(user_t *u);
+
+static void scheduled(schedulable_t *s){
+    user_t *u = CONTAINER_OF(s, user_t, schedulable);
+    advance_state(u);
+}
+
+static void schedule(user_t *u){
+    u->scheduler->schedule(u->scheduler, &u->schedulable);
+}
+
+static bool closing(user_t *u){
+    return u->failed | u->canceled | u->done;
+}
 
 static void await_xc(
     imap_client_t *xc, derr_t e, link_t *reads, link_t *writes
@@ -17,7 +54,7 @@ static void await_xc(
     user_t *u = xc->data;
 
     // xc should never close gracefully
-    if(!is_error(&e)){
+    if(!is_error(e)){
         ORIG_GO(&e,
             E_INTERNAL, "user->xc closed early but without error",
         done);
@@ -32,14 +69,15 @@ static void await_xc(
     KEEP_FIRST_IF_NOT_CANCELED_VAR(&u->e, &e);
 
 done:
+    // either we were already canceled, or we now have an error set
     schedule(u);
 }
 
-static void await_sf(sf_pair_t *sf, derr_t e){
-    user_t *u = sf->data;
+static void await_sf(sf_pair_t *sf_pair, void *data, derr_t e){
+    user_t *u = data;
 
     // possibly log the error
-    if(u->failed || u->canceled){
+    if(closing(u)){
         DROP_CANCELED_VAR(&e);
     }else{
         UPGRADE_CANCELED_VAR(&e, E_INTERNAL);
@@ -50,8 +88,14 @@ static void await_sf(sf_pair_t *sf, derr_t e){
     }
 
     // always drop the sf_pair
-    link_remove(sf->link);
-    sf_pair_free(&sf);
+    link_remove(&sf_pair->link);
+    sf_pair_free(&sf_pair);
+
+    // was that the last sf_pair?
+    if(link_list_isempty(&u->sf_pairs)){
+        u->done = true;
+        schedule(u);
+    }
 }
 
 typedef derr_t (*check_f)(user_t *u, imap_resp_t **respp, bool *ok);
@@ -76,8 +120,8 @@ static derr_t check_sync(user_t *u, imap_resp_t **respp, bool *ok){
             DSTR_VAR(binfpr, 64);
             PROP(&e, hex2bin(&xkeysync->deleted->dstr, &binfpr) );
             if(dstr_eq(binfpr, *u->kd->mykey(u->kd)->fingerprint)){
-                // mykey was deleted, we'll need to re-add it
-                u->need_mykey = true;
+                // mykey was deleted, time to puke
+                ORIG(&e, E_RESPONSE, "mykey deleted, crashing");
             }else{
                 // any other key, just delete it from the keydir_i
                 u->kd->delete_key(u->kd, binfpr);
@@ -123,22 +167,59 @@ cu:
     return e;
 }
 
+#define ONCE(x) if(!x && (x = true))
+
+static void cread_cb(
+    imap_client_t *c, imap_client_read_t *req, imap_resp_t *resp
+){
+    (void)c;
+    user_t *u = CONTAINER_OF(req, user_t, cread);
+    u->reading = false;
+    u->resp = resp;
+    schedule(u);
+}
+
+// returns bool ok
+static bool advance_reads(user_t *u){
+    if(u->resp) return true;
+    ONCE(u->reading) imap_client_must_read(u->xc, &u->cread, cread_cb);
+    return false;
+}
+
+// we only ever write once, so the callback is a noop
+static void cwrite_cb(imap_client_t *xc, imap_client_write_t *req){
+    (void)xc; (void)req;
+}
+
+static derr_t send_sync(user_t *u){
+    derr_t e = E_OK;
+
+    ie_dstr_t *tag = ie_dstr_new2(&e, DSTR_LIT("user1"));
+    imap_cmd_t *cmd = xkeysync_cmd(&e, tag, u->kd);
+    cmd = imap_cmd_assert_writable(&e, cmd, &u->xc->exts);
+    CHECK(&e);
+
+    imap_client_must_write(u->xc, &u->cwrite, cmd, cwrite_cb);
+
+    return e;
+}
+
 static void advance_state(user_t *u){
     derr_t e = E_OK;
     bool ok;
 
     if(is_error(u->e)) goto fail;
-    if(u->canceled || u->failed) goto cu;
+    if(closing(u)) goto cu;
 
     /* We don't engage in quiet STONITH matches resending mykey over and over;
        just exit if it disappears on us.  This will have a more observable
        effect to the user, making the system a bit more transparent. */
 
     // start one xkeysync command and leave it open forever
-    ONCE(u->sync_sent) PROP_GO(&e, sync_send(u), fail);
+    ONCE(u->sync_sent) PROP_GO(&e, send_sync(u), fail);
 
     while(true){
-        PROP_GO(&e, advance_reads(u, &ok), fail);
+        ok = advance_reads(u);
         if(!ok) return;
         PROP_GO(&e, check_resp(u, &ok, check_sync), fail);
         (void)ok;
@@ -159,59 +240,106 @@ cu:
     // close all of our sf_pairs
     link_t *link;
     while((link = link_list_pop_first(&u->sf_pairs))){
-        sf_pair_t *sf_pair = CONTAINER_OF(link, sf_pair, link);
+        sf_pair_t *sf_pair = CONTAINER_OF(link, sf_pair_t, link);
         sf_pair_cancel(sf_pair);
     }
 
-    if(!xc->awaited) return;
+    if(!u->xc->awaited) return;
     if(!link_list_isempty(&u->sf_pairs)) return;
 
     // finally, free ourselves
-    keyshare_free(&keyshare);
-    hash_elem_remove(&h->elem);_
+    imap_client_free(&u->xc);
+    u->kd->free(u->kd);
+    dstr_free(&u->user);
+    hash_elem_remove(&u->elem);
 
     free(u);
 }
 
 void user_new(
+    scheduler_i *scheduler,
     dstr_t user,
     link_t *servers,
     link_t *clients,
     keydir_i *kd,
-    imap_client_t *xkey_client,
+    imap_client_t *xc,
     hashmap_t *out
 ){
     derr_t e = E_OK;
 
-    user_t *user = NULL;
+    user_t *u = NULL;
+    link_t sf_pairs = {0};
+    link_t *link;
 
-    user = DMALLOC_STRUCT_PTR(&e, user);
-    *user = (user_t){
-        .xkey_client = xkey_client,
-        // XXX: you are here, you lost interest and started working on sf_pair
+    u = DMALLOC_STRUCT_PTR(&e, u);
+    CHECK_GO(&e, fail);
+
+    while((link = link_list_pop_first(servers))){
+        imap_server_t *s = CONTAINER_OF(link, imap_server_t, link);
+        link = link_list_pop_first(clients);
+        if(!link) LOG_FATAL("mismatched servers vs clients\n");
+        imap_client_t *c = CONTAINER_OF(link, imap_client_t, link);
+        sf_pair_t *sf_pair;
+        PROP_GO(&e,
+            sf_pair_new(scheduler, kd, s, c, await_sf, u, &sf_pair),
+        fail);
+        link_list_append(&sf_pairs, &sf_pair->link);
+    }
+
+    // success
+
+    *u = (user_t){
+        .scheduler = scheduler,
+        .user = user,
+        .kd = kd,
+        .xc = xc,
     };
+
+    imap_client_must_await(u->xc, await_xc, NULL);
+
+    schedulable_prep(&u->schedulable, scheduled);
+
+    link_list_append_list(&u->sf_pairs, &sf_pairs);
+
+    hash_elem_t *old = hashmap_sets(out, &u->user, &u->elem);
+    if(old) LOG_FATAL("preuser found existing user %x\n", FD_DBG(&u->user));
 
     return;
 
 fail:
     DUMP(e);
     DROP_VAR(&e);
-    imap_client_free(xkey_client);
-    dirmgr_free(&dirmgr);
-    kd->free(kd);
-    if(user) free(user);
+    while((link = link_list_pop_first(servers))){
+        imap_server_t *server = CONTAINER_OF(link, imap_server_t, link);
+        imap_server_free(&server);
+    }
+    while((link = link_list_pop_first(clients))){
+        // XXX: tell client why?
+        imap_client_t *client = CONTAINER_OF(link, imap_client_t, link);
+        imap_client_free(&client);
+    }
+    while((link = link_list_pop_first(&sf_pairs))){
+        // XXX: tell client why?
+        sf_pair_t *sf_pair = CONTAINER_OF(link, sf_pair_t, link);
+        sf_pair_free(&sf_pair);
+    }
+    imap_client_free(&xc);
+    if(kd) kd->free(kd);
+    dstr_free(&user);
+    if(u) free(u);
     return;
 }
 
 void user_add_pair(hash_elem_t *elem, imap_server_t *s, imap_client_t *c){
     derr_t e = E_OK;
 
-    user_t *user = CONTAINER_OF(elem, user_t, elem);
+    user_t *u = CONTAINER_OF(elem, user_t, elem);
 
-    sf_pair_t *sf;
-    PROP_GO(&e, sf_pair_new(&sf, s, c), fail);
-    sf_pair_must_await(sf, await_sf);
-    link_list_append(&u->sf_pairs, &sf->link);
+    sf_pair_t *sf_pair;
+    PROP_GO(&e,
+        sf_pair_new(u->scheduler, u->kd, s, c, await_sf, u, &sf_pair),
+    fail);
+    link_list_append(&u->sf_pairs, &sf_pair->link);
     schedule(u);
     return;
 
@@ -219,13 +347,15 @@ fail:
     // XXX: tell client why?
     DUMP(e);
     DROP_VAR(&e);
-    imap_server_free(s);
-    imap_client_free(c);
+    imap_server_free(&s);
+    imap_client_free(&c);
 }
 
 // elem should already have been removed
 void user_cancel(hash_elem_t *elem){
-    user_t *user = CONTAINER_OF(elem, user_t, elem);
-    user->canceled = true;
+    user_t *u = CONTAINER_OF(elem, user_t, elem);
+    u->canceled = true;
     schedule(u);
 }
+
+// XXX: unit test
