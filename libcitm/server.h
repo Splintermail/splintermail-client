@@ -34,8 +34,7 @@ typedef enum {
 struct server_cb_i;
 typedef struct server_cb_i server_cb_i;
 struct server_cb_i {
-    void (*dying)(server_cb_i*, derr_t error);
-    void (*release)(server_cb_i*);
+    void (*done)(server_cb_i*, derr_t error);
 
     void (*passthru_req)(server_cb_i*, passthru_req_t *passthru_req);
     void (*select)(server_cb_i*, ie_mailbox_t *m, bool examine);
@@ -43,6 +42,7 @@ struct server_cb_i {
 };
 
 // the server-provided interface to the sf_pair
+// server handles the cases where it's already closing
 void server_allow_greeting(server_t *server);
 void server_set_dirmgr(server_t *server, dirmgr_t *dirmgr);
 void server_passthru_resp(server_t *server, passthru_resp_t *passthru_resp);

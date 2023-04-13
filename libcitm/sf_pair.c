@@ -1,5 +1,9 @@
 #include "libcitm.h"
 
+DEF_CONTAINER_OF(sf_pair_t, schedulable, schedulable_t)
+DEF_CONTAINER_OF(sf_pair_t, server_cb, server_cb_i)
+DEF_CONTAINER_OF(sf_pair_t, fetcher_cb, fetcher_cb_i)
+
 static void sf_pair_free_append(sf_pair_t *sf_pair){
     passthru_req_free(STEAL(passthru_req_t, &sf_pair->append.req));
     passthru_resp_free(STEAL(passthru_resp_t, &sf_pair->append.resp));
@@ -9,8 +13,8 @@ static void sf_pair_free_append(sf_pair_t *sf_pair){
         DSTR_VAR(file, 32);
         // this can't actually fail in practice
         DROP_CMD( FMT(&file, "%x", FU(sf_pair->append.tmp_id)) );
-        string_builder_t tmp_path =
-            sb_append(&sf_pair->dirmgr->path, FS("tmp"));
+        dirmgr_t *dirmgr = sf_pair->kd->dirmgr(sf_pair->kd);
+        string_builder_t tmp_path = sb_append(&dirmgr->path, FS("tmp"));
         string_builder_t path = sb_append(&tmp_path, FD(&file));
         DROP_CMD( remove_path(&path) );
         sf_pair->append.tmp_id = 0;
@@ -27,51 +31,40 @@ void sf_pair_free(sf_pair_t **old){
     sf_pair_t *sf_pair = *old;
     if(!sf_pair) return;
 
-    if(sf_pair->registered_with_keyshare){
-        keyshare_unregister(sf_pair->keyshare, &sf_pair->key_listener);
-    }
-
-    link_t *link;
-    while((link = link_list_pop_first(&sf_pair->keys))){
-        keypair_t *kp = CONTAINER_OF(link, keypair_t, link);
-        keypair_free(&kp);
-    }
-
     // free state generated at runtime
     sf_pair_free_append(sf_pair);
     sf_pair_free_status(sf_pair);
 
-    // TODO: it is possible that the server still has a wake_event_t in a queue!
-    // I'm not sure quite how but I hit it once
     server_free(&sf_pair->server);
     fetcher_free(&sf_pair->fetcher);
 
-    refs_free(&sf_pair->refs);
+    schedulable_cancel(&sf_pair->schedulable);
     free(sf_pair);
 
     *old = NULL;
 }
 
-static void sf_pair_finalize(refs_t *refs){
-    sf_pair_t *sf_pair = CONTAINER_OF(refs, sf_pair_t, refs);
-    sf_pair->cb->release(sf_pair->cb, sf_pair);
+static void advance_state(sf_pair_t *sf_pair);
+
+static void scheduled(schedulable_t *s){
+    sf_pair_t *sf_pair = CONTAINER_OF(s, sf_pair_t, schedulable);
+    if(sf_pair->awaited) return;
+    advance_state(sf_pair);
 }
 
-void sf_pair_close(sf_pair_t *sf_pair, derr_t error){
-    bool do_close = !sf_pair->closed;
-    sf_pair->closed = true;
+static void schedule(sf_pair_t *sf_pair){
+    sf_pair->scheduler->schedule(sf_pair->scheduler, &sf_pair->schedulable);
+}
 
-    if(!do_close){
-        // drop secondary errors
-        DROP_VAR(&error);
-        return;
+static void sf_pair_fail(sf_pair_t *sf_pair, derr_t e){
+    if(sf_pair->failed){
+        DROP_VAR(&e);
+    }else if(sf_pair->canceled){
+        DROP_CANCELED_VAR(&e);
+    }else{
+        UPGRADE_CANCELED_VAR(&e, E_INTERNAL);
     }
-
-    server_close(&sf_pair->server, E_OK);
-    fetcher_close(&sf_pair->fetcher, E_OK);
-
-    sf_pair->cb->dying(sf_pair->cb, sf_pair, error);
-    PASSED(error);
+    KEEP_FIRST_IF_NOT_CANCELED_VAR(&sf_pair->e, &e);
 }
 
 // we will modify the content of the append command directly
@@ -81,11 +74,11 @@ static derr_t sf_pair_append_req(sf_pair_t *sf_pair){
     ie_append_cmd_t *append = sf_pair->append.req->arg.append;
 
     // step 1: write the unencrypted text to a file for saving
-    sf_pair->append.tmp_id = dirmgr_new_tmp_id(sf_pair->dirmgr);
+    dirmgr_t *dirmgr = sf_pair->kd->dirmgr(sf_pair->kd);
+    sf_pair->append.tmp_id = dirmgr_new_tmp_id(dirmgr);
     DSTR_VAR(file, 32);
     PROP_GO(&e, FMT(&file, "%x", FU(sf_pair->append.tmp_id)), fail);
-    string_builder_t tmp_path =
-        sb_append(&sf_pair->dirmgr->path, FS("tmp"));
+    string_builder_t tmp_path = sb_append(&dirmgr->path, FS("tmp"));
     string_builder_t path = sb_append(&tmp_path, FD(&file));
     PROP_GO(&e, dstr_write_path(&path, &append->content->dstr), fail);
 
@@ -105,9 +98,7 @@ static derr_t sf_pair_append_req(sf_pair_t *sf_pair){
     // step 3: start a hold on the mailbox
     PROP_GO(&e,
         dirmgr_hold_new(
-            sf_pair->dirmgr,
-            ie_mailbox_name(append->m),
-            &sf_pair->append.hold
+            dirmgr, ie_mailbox_name(append->m), &sf_pair->append.hold
         ),
     fail);
 
@@ -117,7 +108,8 @@ static derr_t sf_pair_append_req(sf_pair_t *sf_pair){
 
     encrypter_t ec;
     PROP_GO(&e, encrypter_new(&ec), cu_content);
-    PROP_GO(&e, encrypter_start(&ec, &sf_pair->keys, &content->dstr), cu_ec);
+    link_t *all_keys = sf_pair->kd->all_keys(sf_pair->kd);
+    PROP_GO(&e, encrypter_start(&ec, all_keys, &content->dstr), cu_ec);
     PROP_GO(&e,
         encrypter_update(&ec, &append->content->dstr, &content->dstr),
     cu_ec);
@@ -162,8 +154,8 @@ static derr_t sf_pair_append_resp(sf_pair_t *sf_pair){
     // get the path to the temporary file
     DSTR_VAR(file, 32);
     PROP_GO(&e, FMT(&file, "%x", FU(sf_pair->append.tmp_id)), cu);
-    string_builder_t tmp_path =
-        sb_append(&sf_pair->dirmgr->path, FS("tmp"));
+    dirmgr_t *dirmgr = sf_pair->kd->dirmgr(sf_pair->kd);
+    string_builder_t tmp_path = sb_append(&dirmgr->path, FS("tmp"));
     string_builder_t path = sb_append(&tmp_path, FD(&file));
 
     // get the imaildir we would add this file to
@@ -221,9 +213,8 @@ static derr_t sf_pair_status_resp(sf_pair_t *sf_pair){
     const ie_status_resp_t *resp = sf_pair->status.resp->arg.status;
     const dstr_t *name = ie_mailbox_name(resp->m);
     ie_status_attr_resp_t new;
-    PROP_GO(&e,
-        dirmgr_process_status_resp(sf_pair->dirmgr, name, resp->sa, &new),
-    cu);
+    dirmgr_t *dirmgr = sf_pair->kd->dirmgr(sf_pair->kd);
+    PROP_GO(&e, dirmgr_process_status_resp(dirmgr, name, resp->sa, &new), cu);
 
     // modify the response before relaying it downwards
     sf_pair->status.resp->arg.status->sa = new;
@@ -239,110 +230,67 @@ cu:
     return e;
 }
 
-static void sf_pair_enqueue(sf_pair_t *sf_pair){
-    if(sf_pair->closed || sf_pair->enqueued) return;
-    sf_pair->enqueued = true;
-    // ref_up for wake_ev
-    ref_up(&sf_pair->refs);
-    sf_pair->engine->pass_event(sf_pair->engine, &sf_pair->wake_ev.ev);
-}
+static void advance_state(sf_pair_t *sf_pair){
+    if(is_error(sf_pair->e)) goto fail;
+    if(sf_pair->canceled || sf_pair->failed) goto cu;
 
-static derr_t do_wakeup(sf_pair_t *sf_pair){
-    derr_t e = E_OK;
-
-    // what did we wake up for?
     if(sf_pair->append.req){
-        PROP(&e, sf_pair_append_req(sf_pair) );
-    }else if(sf_pair->append.resp){
-        PROP(&e, sf_pair_append_resp(sf_pair) );
-    }else if(sf_pair->status.resp){
-        PROP(&e, sf_pair_status_resp(sf_pair) );
-    }else{
-        LOG_ERROR("sf_pair_wakeup() for no reason\n");
+        PROP_GO(&sf_pair->e, sf_pair_append_req(sf_pair), fail);
     }
-
-    return e;
-}
-
-static void sf_pair_wakeup(wake_event_t *wake_ev){
-    sf_pair_t *sf_pair = CONTAINER_OF(wake_ev, sf_pair_t, wake_ev);
-    sf_pair->enqueued = false;
-
-    derr_t e = E_OK;
-    IF_PROP(&e, do_wakeup(sf_pair) ){
-        sf_pair_close(sf_pair, e);
+    if(sf_pair->append.resp){
+        PROP_GO(&sf_pair->e, sf_pair_append_resp(sf_pair), fail);
     }
-
-    // ref_dn for wake_ev
-    ref_dn(&sf_pair->refs);
-}
-
-// the interface the server/fetcher provides to its owner
-void sf_pair_owner_resp(sf_pair_t *sf_pair, dirmgr_t *dirmgr,
-        keyshare_t *keyshare){
-    sf_pair->got_owner_resp = true;
-    sf_pair->dirmgr = dirmgr;
-    sf_pair->keyshare = keyshare;
-    sf_pair_enqueue(sf_pair);
-}
-
-// part of key_listener_i
-static void key_listener_add_key(key_listener_i *key_listener, keypair_t *kp){
-    sf_pair_t *sf_pair = CONTAINER_OF(key_listener, sf_pair_t, key_listener);
-    link_list_append(&sf_pair->keys, &kp->link);
-}
-
-// part of key_listener_i
-static void key_listener_del_key(key_listener_i *key_listener,
-        const dstr_t *fingerprint){
-    sf_pair_t *sf_pair = CONTAINER_OF(key_listener, sf_pair_t, key_listener);
-
-    keypair_t *kp, *temp;
-    LINK_FOR_EACH_SAFE(kp, temp, &sf_pair->keys, keypair_t, link){
-        if(dstr_cmp(fingerprint, kp->fingerprint) == 0){
-            link_remove(&kp->link);
-            keypair_free(&kp);
-            return;
-        }
+    if(sf_pair->status.resp){
+        PROP_GO(&sf_pair->e, sf_pair_status_resp(sf_pair), fail);
     }
-    LOG_ERROR("key_listener_del_key did not find matching fingerprint!\n");
+    return;
+
+fail:
+    // XXX: tell client?
+    sf_pair->failed = true;
+    DUMP(sf_pair->e);
+    DROP_VAR(&sf_pair->e);
+
+cu:
+    server_cancel(&sf_pair->server);
+    fetcher_cancel(&sf_pair->fetcher);
+    if(!sf_pair->server->awaited) return;
+    if(!sf_pair->fetcher->awaited) return;
+
+    schedulable_cancel(&sf_pair->schedulable);
+    sf_pair->awaited = true;
+    sf_pair->cb(sf_pair, sf_pair->cb_data);
+    return;
 }
 
 // part of server_cb_i
-static void server_cb_dying(server_cb_i *cb, derr_t error){
-    // printf("---- server_cb_dying\n");
+static void server_cb_done(server_cb_i *cb, derr_t error){
+    // printf("---- server_cb_done\n");
     sf_pair_t *sf_pair = CONTAINER_OF(cb, sf_pair_t, server_cb);
-
-    sf_pair_close(sf_pair, error);
+    sf_pair_fail(sf_pair, error);
+    // XXX: what if error is none, and we don't shut down?
+    schedule(sf_pair);
 }
 
 // part of server_cb_i
-static void server_cb_release(server_cb_i *cb){
-    // printf("---- server_cb_release\n");
-    sf_pair_t *sf_pair = CONTAINER_OF(cb, sf_pair_t, server_cb);
-
-    // ref down for the server
-    ref_dn(&sf_pair->refs);
-}
-
-
-// part of server_cb_i
-static void server_cb_passthru_req(server_cb_i *server_cb,
-        passthru_req_t *passthru_req){
+static void server_cb_passthru_req(
+    server_cb_i *server_cb, passthru_req_t *passthru_req
+){
     // printf("---- server_cb_passthru_req\n");
     sf_pair_t *sf_pair = CONTAINER_OF(server_cb, sf_pair_t, server_cb);
     if(passthru_req->type == PASSTHRU_APPEND){
         // intercept APPEND requests, and process them asynchronously
         sf_pair->append.req = passthru_req;
-        sf_pair_enqueue(sf_pair);
+        schedule(sf_pair);
         return;
     }
     fetcher_passthru_req(&sf_pair->fetcher, passthru_req);
 }
 
 // part of server_cb_i
-static void server_cb_select(server_cb_i *server_cb, ie_mailbox_t *m,
-        bool examine){
+static void server_cb_select(
+    server_cb_i *server_cb, ie_mailbox_t *m, bool examine
+){
     // printf("---- server_cb_select\n");
     sf_pair_t *sf_pair = CONTAINER_OF(server_cb, sf_pair_t, server_cb);
     fetcher_select(&sf_pair->fetcher, m, examine);
@@ -355,45 +303,40 @@ static void server_cb_unselect(server_cb_i *server_cb){
     fetcher_unselect(&sf_pair->fetcher);
 }
 
-
 // part of fetcher_cb_i
-static void fetcher_cb_dying(fetcher_cb_i *cb, derr_t error){
-    // printf("---- fetcher_cb_dying\n");
+static void fetcher_cb_done(fetcher_cb_i *cb, derr_t error){
+    // printf("---- fetcher_cb_done\n");
     sf_pair_t *sf_pair = CONTAINER_OF(cb, sf_pair_t, fetcher_cb);
-    sf_pair_close(sf_pair, error);
+    sf_pair_fail(sf_pair, error);
+    // XXX: what if error is none, and we don't shut down?
+    schedule(sf_pair);
 }
 
 // part of fetcher_cb_i
-static void fetcher_cb_release(fetcher_cb_i *cb){
-    // printf("---- fetcher_cb_release\n");
-    sf_pair_t *sf_pair = CONTAINER_OF(cb, sf_pair_t, fetcher_cb);
-    // ref down for the fetcher
-    ref_dn(&sf_pair->refs);
-}
-
-// part of fetcher_cb_i
-static void fetcher_cb_passthru_resp(fetcher_cb_i *fetcher_cb,
-        passthru_resp_t *passthru_resp){
+static void fetcher_cb_passthru_resp(
+    fetcher_cb_i *fetcher_cb, passthru_resp_t *passthru_resp
+){
     // printf("---- fetcher_cb_passthru_resp\n");
     sf_pair_t *sf_pair = CONTAINER_OF(fetcher_cb, sf_pair_t, fetcher_cb);
     if(passthru_resp->type == PASSTHRU_APPEND){
         // intercept APPEND responses and process them asynchronously
         sf_pair->append.resp = passthru_resp;
-        sf_pair_enqueue(sf_pair);
+        schedule(sf_pair);
         return;
     }
     if(passthru_resp->type == PASSTHRU_STATUS){
         // intercept STATUS responses and process them asynchronously
         sf_pair->status.resp = passthru_resp;
-        sf_pair_enqueue(sf_pair);
+        schedule(sf_pair);
         return;
     }
     server_passthru_resp(&sf_pair->server, passthru_resp);
 }
 
 // part of the fetcher_cb_i
-static void fetcher_cb_select_result(fetcher_cb_i *fetcher_cb,
-        ie_st_resp_t *st_resp){
+static void fetcher_cb_select_result(
+    fetcher_cb_i *fetcher_cb, ie_st_resp_t *st_resp
+){
     // printf("---- fetcher_cb_select_result\n");
     sf_pair_t *sf_pair = CONTAINER_OF(fetcher_cb, sf_pair_t, fetcher_cb);
     server_select_result(&sf_pair->server, st_resp);
@@ -406,84 +349,59 @@ static void fetcher_cb_unselected(fetcher_cb_i *fetcher_cb){
     server_unselected(&sf_pair->server);
 }
 
-
 derr_t sf_pair_new(
-    sf_pair_t **out,
-    sf_pair_cb_i *cb,
-    engine_t *engine,
-    const char *remote_host,
-    const char *remote_svc,
-    imap_pipeline_t *p,
-    ssl_context_t *ctx_srv,
-    ssl_context_t *ctx_cli,
-    session_t **session
+    scheduler_i *scheduler,
+    keydir_i *kd,
+    imap_server_t *s,
+    imap_client_t *c,
+    sf_pair_cb cb,
+    void *data,
+    sf_pair_t **out
 ){
     derr_t e = E_OK;
 
     *out = NULL;
-    *session = NULL;
 
-    sf_pair_t *sf_pair = malloc(sizeof(*sf_pair));
-    if(!sf_pair) ORIG(&e, E_NOMEM, "nomem");
+    sf_pair_t *sf_pair = DMALLOC_STRUCT_PTR(&e, sf_pair);
+    CHECK_GO(&e, fail);
     *sf_pair = (sf_pair_t){
+        .scheduler = scheduler,
+        .kd = kd,
         .cb = cb,
-        .engine = engine,
-        .p = p,
-        .ctx_cli = ctx_cli,
-        .remote_host = remote_host,
-        .remote_svc = remote_svc,
+        .cb_data = data,
         .server_cb = {
-            .dying = server_cb_dying,
-            .release = server_cb_release,
+            .done = server_cb_done,
             .passthru_req = server_cb_passthru_req,
             .select = server_cb_select,
             .unselect = server_cb_unselect,
         },
         .fetcher_cb = {
-            .dying = fetcher_cb_dying,
-            .release = fetcher_cb_release,
+            .done = fetcher_cb_done,
             .passthru_resp = fetcher_cb_passthru_resp,
             .select_result = fetcher_cb_select_result,
             .unselected = fetcher_cb_unselected,
         },
-        .key_listener = {
-            .add = key_listener_add_key,
-            .del = key_listener_del_key,
-        },
     };
-
-    link_init(&sf_pair->citme_link);
-    link_init(&sf_pair->user_link);
-    link_init(&sf_pair->key_listener.link);
-    link_init(&sf_pair->keys);
-
-    event_prep(&sf_pair->wake_ev.ev, NULL, NULL);
-    sf_pair->wake_ev.ev.ev_type = EV_INTERNAL;
-    sf_pair->wake_ev.handler = sf_pair_wakeup;
-
-    // start with a server ref and a fetcher ref
-    PROP_GO(&e, refs_init(&sf_pair->refs, 2, sf_pair_finalize), fail_malloc);
 
     PROP_GO(&e,
         server_init(
             &sf_pair->server,
-            &sf_pair->server_cb,
-            p,
-            engine,
-            ctx_srv,
-            session),
-        fail_refs);
+            scheduler,
+            STEAL(imap_server_t, &s),
+            &sf_pair->server_cb
+        ),
+    fail);
 
     PROP_GO(&e,
         fetcher_init(
             &sf_pair->fetcher,
-            &sf_pair->fetcher_cb,
-            remote_host,
-            remote_svc,
-            p,
-            engine,
-            ctx_cli),
-        fail_server);
+            scheduler,
+            STEAL(imap_client_t, &c),
+            &sf_pair->fetcher_cb
+        ),
+    fail_server);
+
+    schedulable_prep(&sf_pair->schedulable, scheduled);
 
     *out = sf_pair;
 
@@ -491,14 +409,19 @@ derr_t sf_pair_new(
 
 fail_server:
     server_free(&sf_pair->server);
-fail_refs:
-    refs_free(&sf_pair->refs);
-fail_malloc:
-    free(sf_pair);
+fail:
+    imap_server_free(&s);
+    imap_client_free(&c);
+    if(sf_pair) free(sf_pair);
     return e;
 }
 
 void sf_pair_start(sf_pair_t *sf_pair){
     server_start(&sf_pair->server);
     fetcher_start(&sf_pair->fetcher);
+}
+
+void sf_pair_cancel(sf_pair_t *sf_pair){
+    sf_pair->canceled = true;
+    schedule(sf_pair);
 }

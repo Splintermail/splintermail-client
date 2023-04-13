@@ -369,7 +369,11 @@ cu:
     LINK_FOR_EACH(req, &writes, imap_client_write_t, link){
         imap_cmd_free(STEAL(imap_cmd_t, &req->cmd));
     }
-    c->await_cb(c, c->e, &reads, &writes);
+    derr_t e = c->e;
+    if(!is_error(e) && c->canceled){
+        e.type = E_CANCELED;
+    }
+    c->await_cb(c, e, &reads, &writes);
 }
 
 static void free_client_memory(imap_client_t *c){

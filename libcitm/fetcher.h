@@ -5,8 +5,7 @@ typedef struct fetcher_t fetcher_t;
 struct fetcher_cb_i;
 typedef struct fetcher_cb_i fetcher_cb_i;
 struct fetcher_cb_i {
-    void (*dying)(fetcher_cb_i*, derr_t error);
-    void (*release)(fetcher_cb_i*);
+    void (*done)(fetcher_cb_i*, derr_t error);
 
     void (*passthru_resp)(fetcher_cb_i*, passthru_resp_t *passthru_resp);
     // *st_resp == NULL on successful SELECT
@@ -15,6 +14,7 @@ struct fetcher_cb_i {
 };
 
 // the fetcher-provided interface to the sf_pair
+// fetcher handles the cases where it's already closing
 void fetcher_passthru_req(fetcher_t *fetcher, passthru_req_t *passthru_req);
 void fetcher_select(fetcher_t *fetcher, ie_mailbox_t *m, bool examine);
 void fetcher_unselect(fetcher_t *fetcher);

@@ -476,7 +476,11 @@ cu:
     LINK_FOR_EACH(req, &writes, imap_server_write_t, link){
         imap_resp_free(STEAL(imap_resp_t, &req->resp));
     }
-    s->await_cb(s, s->e, &reads, &writes);
+    derr_t e = s->e;
+    if(!is_error(e) && s->canceled){
+        e.type = E_CANCELED;
+    }
+    s->await_cb(s, e, &reads, &writes);
 }
 
 static void free_server_memory(imap_server_t *s){

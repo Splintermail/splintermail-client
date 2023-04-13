@@ -1,22 +1,7 @@
 struct sf_pair_t;
 typedef struct sf_pair_t sf_pair_t;
-struct sf_pair_cb_i;
-typedef struct sf_pair_cb_i sf_pair_cb_i;
 
-// the interface the server/fetcher needs from its owner
-struct sf_pair_cb_i {
-    derr_t (*mailbox_synced)(
-        sf_pair_cb_i*, sf_pair_t *sf_pair, const dstr_t mailbox
-    );
-    void (*dying)(sf_pair_cb_i*, sf_pair_t *sf_pair, derr_t error);
-    void (*release)(sf_pair_cb_i*, sf_pair_t *sf_pair);
-};
-
-typedef void (*sf_pair_cb)(sf_pair_t*, void *data, derr_t e);
-
-// the interface the server/fetcher provides to its owner
-void sf_pair_owner_resp(sf_pair_t *sf_pair, dirmgr_t *dirmgr,
-        keyshare_t *keyshare);
+typedef void (*sf_pair_cb)(sf_pair_t*, void *data);
 
 // server-fetcher pair
 struct sf_pair_t {
@@ -29,7 +14,6 @@ struct sf_pair_t {
     link_t link;
 
     // wakeup reasons
-    bool got_owner_resp;
     struct {
         // req and resp correspond to different wakeup reasons
         passthru_req_t *req;
@@ -56,11 +40,13 @@ struct sf_pair_t {
     // callbacks for the fetcher
     fetcher_cb_i fetcher_cb;
 
-    bool closed;
+    derr_t e;
+
+    bool canceled : 1;
+    bool failed : 1;
+    bool awaited : 1;
 };
 DEF_CONTAINER_OF(sf_pair_t, link, link_t)
-DEF_CONTAINER_OF(sf_pair_t, server_cb, server_cb_i)
-DEF_CONTAINER_OF(sf_pair_t, fetcher_cb, fetcher_cb_i)
 
 derr_t sf_pair_new(
     scheduler_i *scheduler,
@@ -72,8 +58,7 @@ derr_t sf_pair_new(
     sf_pair_t **out
 );
 
-void sf_pair_cancel(sf_pair_t *sf_pair);
-
+// if start is called, must be canceled and awaited before free()
 void sf_pair_start(sf_pair_t *sf_pair);
-void sf_pair_close(sf_pair_t *sf_pair, derr_t error);
+void sf_pair_cancel(sf_pair_t *sf_pair);
 void sf_pair_free(sf_pair_t **sf_pair);

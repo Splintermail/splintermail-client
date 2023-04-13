@@ -73,19 +73,8 @@ done:
     schedule(u);
 }
 
-static void await_sf(sf_pair_t *sf_pair, void *data, derr_t e){
+static void await_sf(sf_pair_t *sf_pair, void *data){
     user_t *u = data;
-
-    // possibly log the error
-    if(closing(u)){
-        DROP_CANCELED_VAR(&e);
-    }else{
-        UPGRADE_CANCELED_VAR(&e, E_INTERNAL);
-    }
-    if(is_error(e)){
-        DUMP(e);
-        DROP_VAR(&e);
-    }
 
     // always drop the sf_pair
     link_remove(&sf_pair->link);
@@ -252,6 +241,7 @@ cu:
     u->kd->free(u->kd);
     dstr_free(&u->user);
     hash_elem_remove(&u->elem);
+    schedulable_cancel(&u->schedulable);
 
     free(u);
 }
@@ -269,6 +259,7 @@ void user_new(
 
     user_t *u = NULL;
     link_t sf_pairs = {0};
+    sf_pair_t *sf_pair;
     link_t *link;
 
     u = DMALLOC_STRUCT_PTR(&e, u);
@@ -279,7 +270,6 @@ void user_new(
         link = link_list_pop_first(clients);
         if(!link) LOG_FATAL("mismatched servers vs clients\n");
         imap_client_t *c = CONTAINER_OF(link, imap_client_t, link);
-        sf_pair_t *sf_pair;
         PROP_GO(&e,
             sf_pair_new(scheduler, kd, s, c, await_sf, u, &sf_pair),
         fail);
@@ -295,11 +285,15 @@ void user_new(
         .xc = xc,
     };
 
+
     imap_client_must_await(u->xc, await_xc, NULL);
 
     schedulable_prep(&u->schedulable, scheduled);
 
     link_list_append_list(&u->sf_pairs, &sf_pairs);
+    LINK_FOR_EACH(sf_pair, &u->sf_pairs, sf_pair_t, link){
+        sf_pair_start(sf_pair);
+    }
 
     hash_elem_t *old = hashmap_sets(out, &u->user, &u->elem);
     if(old) LOG_FATAL("preuser found existing user %x\n", FD_DBG(&u->user));
