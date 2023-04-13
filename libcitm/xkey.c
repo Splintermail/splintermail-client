@@ -1,12 +1,5 @@
 #include "libcitm/libcitm.h"
 
-const keypair_t *key_next(key_iter_t *it){
-    if(it->next == it->head) return NULL;
-    link_t *link = it->next;
-    it->next = it->next->next;
-    return CONTAINER_OF(link, keypair_t, link);
-}
-
 imap_cmd_t *xkeyadd_cmd(derr_t *e, ie_dstr_t *tag, const keypair_t *kp){
     if(is_error(*e)) goto fail;
 
@@ -42,9 +35,8 @@ imap_cmd_t *xkeysync_cmd(derr_t *e, ie_dstr_t *tag, keydir_i *kd){
 
     // make a list of fingerprints we expect the server to have
     ie_dstr_t *fprs = build_fpr(e, kd->mykey(kd)->fingerprint);
-    key_iter_t it = kd->peers(kd);
     const keypair_t *kp;
-    while((kp = key_next(&it))){
+    LINK_FOR_EACH(kp, kd->peers(kd), keypair_t, link){
         ie_dstr_add(e, fprs, build_fpr(e, kp->fingerprint));
     }
 

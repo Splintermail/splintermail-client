@@ -10,6 +10,8 @@
 #include "io_pair.h"
 #include "anon.h"
 #include "responses.h"
+#include "date.h"
+#include "keydir.h"
 #include "xkey.h"
 #include "preuser.h"
 
@@ -19,4 +21,3 @@
 #include "sf_pair.h"
 #include "fpr_watcher.h"
 #include "user.h"
-#include "date.h"

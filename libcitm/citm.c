@@ -58,6 +58,9 @@ static void citm_preuser_cb(
     imap_client_t *xkey_client
 ){
     citm_t *citm = data;
+
+    PROP_GO(&e, keydir_keysync_completed(kd), fail);
+
     user_new(user, servers, clients, kd, xkey_client, &citm->users);
 }
 
