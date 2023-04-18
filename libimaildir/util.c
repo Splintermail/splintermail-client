@@ -54,7 +54,6 @@ void imap_cmd_cb_init(derr_t *e, imap_cmd_cb_t *cb, const ie_dstr_t *tag,
         .call = call,
         .free = free,
     };
-    link_init(&cb->link);
 }
 
 void imap_cmd_cb_free(imap_cmd_cb_t *cb){

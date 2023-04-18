@@ -146,6 +146,7 @@ extern derr_type_t E_FS;         // a file system-related error
 extern derr_type_t E_RESPONSE;   // invalid response from something external
 extern derr_type_t E_USERMSG;    // an error with a user-facing message (don't TRACE before it)
 extern derr_type_t E_CANCELED;   // operation was canceled by user
+extern derr_type_t E_BUSY;       // resource in use
 
 /* for backwards compatibility with a LOT of code, E_OK is not part of the
    derr_type_t enum but is actually a derr_t struct with an empty message. */

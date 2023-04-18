@@ -53,12 +53,7 @@ struct up_cb_i {
     // this event is a response to the up_unselect() call
     derr_t (*unselected)(up_cb_i*);
     // interaction with the imaildir_t has trigged some new work
-    void (*enqueue)(up_cb_i*);
-    // the imaildir has failed
-    void (*failure)(up_cb_i*, derr_t);
-
-    /* the up_t is fully controlled by its owner; it does not have reference
-       counts or lifetime callbacks */
+    void (*schedule)(up_cb_i*);
 };
 
 // the interface the up_t provides to its owner:
@@ -84,7 +79,6 @@ void up_imaildir_select(
     bool examine
 );
 void up_imaildir_relay_cmd(up_t *up, imap_cmd_t *cmd, imap_cmd_cb_t *cb);
-void up_imaildir_preunregister(up_t *up);
 // disallow downloading a specific UID
 void up_imaildir_have_local_file(up_t *up, unsigned int uid, bool resync);
 // trigger any downloading work that needs to be done after a hold ends
@@ -92,6 +86,8 @@ void up_imaildir_hold_end(up_t *up);
 /* a newly initialized dn_t/up_t pair are used for every SELECT or EXAMINE, so
    want_write should be a constant value over the whole life of the up_t */
 bool up_imaildir_want_write(up_t *up);
+// solemnly swear to never touch the imaildir again
+void up_imaildir_failed(up_t *up);
 
 // up_t is all the state we have for an upwards connection
 struct up_t {
@@ -118,10 +114,6 @@ struct up_t {
     size_t tag;
     link_t cbs;  // imap_cmd_cb_t->link (may be wrapped in an up_cb_t)
     link_t link;  // imaildir_t->access.ups
-
-    /* technically, advance_state is written to be callable at any time, but
-       only calling it when we asked to be enqueued makes debugging easier */
-    bool enqueued;
 
     /* after the first select is done, this reflects the examine state of the
        most recently completed SELECT or EXAMINE */
@@ -213,7 +205,6 @@ struct up_t {
         unsigned int uidvld_up;
         uint64_t himodseq_up;
 
-        // delayed relays; if relays arrive before we
         link_t cmds;  // imap_cmd_t->link
         link_t cbs;  // imap_cmd_cb_t->link (from an imaildir_cb_t)
     } reselect;

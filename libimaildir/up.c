@@ -2,7 +2,8 @@
 
 #include "libdstr/libdstr.h"
 
-#include "libimaildir.h"
+#include "libimaildir/libimaildir.h"
+#include "libimaildir/msg_internal.h"
 
 #define FETCH_PARALLELISM 5
 #define FETCH_CHUNK_SIZE 10
@@ -55,6 +56,33 @@ static void up_free_idle(up_t *up){
     up->idle.done_sent = false;
 }
 
+static void up_free_relays(up_t *up){
+    link_t *link;
+    while((link = link_list_pop_first(&up->cbs))){
+        imap_cmd_cb_t *cb = CONTAINER_OF(link, imap_cmd_cb_t, link);
+        cb->free(cb);
+    }
+    while((link = link_list_pop_first(&up->relay.cbs))){
+        imap_cmd_cb_t *cb = CONTAINER_OF(link, imap_cmd_cb_t, link);
+        cb->free(cb);
+    }
+    while((link = link_list_pop_first(&up->relay.cmds))){
+        imap_cmd_t *cmd = CONTAINER_OF(link, imap_cmd_t, link);
+        imap_cmd_free(cmd);
+    }
+    while((link = link_list_pop_first(&up->reselect.cbs))){
+        imap_cmd_cb_t *cb = CONTAINER_OF(link, imap_cmd_cb_t, link);
+        cb->free(cb);
+    }
+    while((link = link_list_pop_first(&up->reselect.cmds))){
+        imap_cmd_t *cmd = CONTAINER_OF(link, imap_cmd_t, link);
+        imap_cmd_free(cmd);
+    }
+
+    // we're not an accessor of the imaildir anymore
+    link_remove(&up->link);
+}
+
 void up_free(up_t *up){
     if(!up) return;
 
@@ -77,14 +105,15 @@ derr_t up_init(up_t *up, up_cb_i *cb, extensions_t *exts, bool want_write){
 
     seq_set_builder_prep(&up->fetch.uids_up);
 
-    link_init(&up->cbs);
-    link_init(&up->link);
-    link_init(&up->relay.cmds);
-    link_init(&up->relay.cbs);
-    link_init(&up->reselect.cmds);
-    link_init(&up->reselect.cbs);
-
     return e;
+}
+
+/* since imaildir can fail while we're not running, we need to detect those
+   failures the first time we are called */
+static derr_t healthcheck(up_t *up){
+    derr_t e = E_OK;
+    if(up->m) return e;
+    ORIG(&e, E_IMAILDIR, "imaildir failed on another thread");
 }
 
 void up_imaildir_select(
@@ -118,9 +147,8 @@ void up_imaildir_select(
         up->reselect.himodseq_up = himodseq_up;
     }
 
-    // enqueue ourselves
-    up->enqueued = true;
-    up->cb->enqueue(up->cb);
+    // schedule ourselves
+    up->cb->schedule(up->cb);
 }
 
 void up_imaildir_relay_cmd(up_t *up, imap_cmd_t *cmd, imap_cmd_cb_t *cb){
@@ -137,33 +165,7 @@ void up_imaildir_relay_cmd(up_t *up, imap_cmd_t *cmd, imap_cmd_cb_t *cb){
     }
 
     // enqueue ourselves
-    up->enqueued = true;
-    up->cb->enqueue(up->cb);
-}
-
-void up_imaildir_preunregister(up_t *up){
-    link_t *link;
-    // cancel all callbacks, which may trigger imaildir_t relay replays
-    while((link = link_list_pop_first(&up->cbs))){
-        imap_cmd_cb_t *cb = CONTAINER_OF(link, imap_cmd_cb_t, link);
-        cb->free(cb);
-    }
-    while((link = link_list_pop_first(&up->relay.cbs))){
-        imap_cmd_cb_t *cb = CONTAINER_OF(link, imap_cmd_cb_t, link);
-        cb->free(cb);
-    }
-    while((link = link_list_pop_first(&up->relay.cmds))){
-        imap_cmd_t *cmd = CONTAINER_OF(link, imap_cmd_t, link);
-        imap_cmd_free(cmd);
-    }
-    while((link = link_list_pop_first(&up->reselect.cbs))){
-        imap_cmd_cb_t *cb = CONTAINER_OF(link, imap_cmd_cb_t, link);
-        cb->free(cb);
-    }
-    while((link = link_list_pop_first(&up->reselect.cmds))){
-        imap_cmd_t *cmd = CONTAINER_OF(link, imap_cmd_t, link);
-        imap_cmd_free(cmd);
-    }
+    up->cb->schedule(up->cb);
 }
 
 void up_imaildir_have_local_file(up_t *up, unsigned int uid, bool resync){
@@ -185,17 +187,26 @@ void up_imaildir_have_local_file(up_t *up, unsigned int uid, bool resync){
            single-threaded, in practice we cannot be awoken from the enqueued
            state between two file adds. */
         up->relay.resync.needed = true;
-        up->cb->enqueue(up->cb);
+        up->cb->schedule(up->cb);
     }
 }
 
 void up_imaildir_hold_end(up_t *up){
-    up->enqueued = true;
-    up->cb->enqueue(up->cb);
+    up->cb->schedule(up->cb);
 }
 
 bool up_imaildir_want_write(up_t *up){
     return up->want_write;
+}
+
+// solemnly swear to never touch the imaildir again
+void up_imaildir_failed(up_t *up){
+    // guarantee we don't access a broken imaildir
+    up->m = NULL;
+    // let go of anything related to the imaildir
+    up_free_relays(up);
+    // wake up our owner so they can call us and fail a health check
+    up->cb->schedule(up->cb);
 }
 
 static void himodseq_observe(up_t *up, uint64_t observation){
@@ -1049,6 +1060,8 @@ static derr_t advance_fetches(up_t *up){
 derr_t up_advance_state(up_t *up){
     derr_t e = E_OK;
 
+    PROP(&e, healthcheck(up) );
+
     bool ok;
 
     // respond to asynchronous external APIs
@@ -1373,6 +1386,8 @@ static derr_t untagged_status_type(up_t *up, const ie_st_resp_t *st){
 derr_t up_resp(up_t *up, imap_resp_t *resp){
     derr_t e = E_OK;
 
+    PROP_GO(&e, healthcheck(up), cu_resp);
+
     const imap_resp_arg_t *arg = &resp->arg;
 
     switch(resp->type){
@@ -1439,6 +1454,10 @@ cu_resp:
 derr_t up_idle_block(up_t *up, bool *ok){
     derr_t e = E_OK;
 
+    *ok = false;
+
+    PROP(&e, healthcheck(up) );
+
     up->idle_block.want = true;
 
     PROP(&e, need_done(up, ok) );
@@ -1454,6 +1473,8 @@ derr_t up_idle_block(up_t *up, bool *ok){
 derr_t up_idle_unblock(up_t *up){
     derr_t e = E_OK;
 
+    PROP(&e, healthcheck(up) );
+
     up_free_idle_block(up);
     PROP(&e, up_advance_state(up) );
 
@@ -1462,6 +1483,8 @@ derr_t up_idle_unblock(up_t *up){
 
 derr_t up_unselect(up_t *up){
     derr_t e = E_OK;
+
+    PROP(&e, healthcheck(up) );
 
     if(!up->select.sent){
         // don't allow sending any commands

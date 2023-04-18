@@ -5,11 +5,14 @@
 #include <time.h>
 #include <fcntl.h>
 
-#include "libimaildir.h"
+#include "libimaildir/libimaildir.h"
+#include "libimaildir/msg_internal.h"
 
 #define HOSTNAME_COMPONENT_MAX_LEN 32
 
-REGISTER_ERROR_TYPE(E_IMAILDIR, "E_IMAILDIR", "unrecoverable imaildir error");
+REGISTER_ERROR_TYPE(
+    E_IMAILDIR, "E_IMAILDIR", "imaildir failed on another thread"
+);
 
 // forward declarations
 static derr_t distribute_update_new(imaildir_t *m, const msg_t *msg);
@@ -18,7 +21,7 @@ static derr_t distribute_update_expunge(imaildir_t *m,
         const msg_expunge_t *expunge, msg_t *msg);
 static void finalize_msg(imaildir_t *m, msg_t *msg);
 static void remove_and_delete_msg(imaildir_t *m, msg_t *msg);
-static void imaildir_fail(imaildir_t *m, derr_t error);
+static void imaildir_maybe_fail(imaildir_t *m, const derr_t e);
 
 struct relay_t;
 typedef struct relay_t relay_t;
@@ -123,15 +126,8 @@ cu:
     link_remove(&relay->link);
     relay_free(relay);
 
-    // handle failures
-    if(is_error(e)){
-        /* we must close accessors who don't have a way to tell they are now
-           out-of-date */
-        imaildir_fail(m, SPLIT(e));
-        /* now we must throw a special error since we are about to return
-           control to an accessor that probably just got closed */
-        RETHROW(&e, &e, E_IMAILDIR);
-    }
+    // any failure to send updates is a consistency failure for the imaildir_t
+    imaildir_maybe_fail(m, e);
 
     return e;
 }
@@ -218,26 +214,35 @@ static uint64_t next_himodseq_dn(imaildir_t *m){
     return ++m->himodseq_dn;
 }
 
-/* imaildir_fail actually just force-closes all of the current accessors, it
-   is the responsibility of the dirmgr to ensure nothing else connects */
-static void imaildir_fail(imaildir_t *m, derr_t error){
+static void do_fail(imaildir_t *m){
     link_t *link;
 
-    // set m->closed to protect the link list iteration
-    m->closed = true;
-
-    // if there was an error, share it with all of the accessors.
     while((link = link_list_pop_first(&m->ups)) != NULL){
         up_t *up = CONTAINER_OF(link, up_t, link);
-        up->cb->failure(up->cb, BROADCAST(error));
+        up_imaildir_failed(up);
     }
     while((link = link_list_pop_first(&m->dns)) != NULL){
         dn_t *dn = CONTAINER_OF(link, dn_t, link);
-        dn->cb->failure(dn->cb, BROADCAST(error));
+        dn_imaildir_failed(dn);
     }
+}
 
-    // free the error
-    DROP_VAR(&error);
+/* imaildir_maybe_fail detects errors and broadcasts to all accessors.  Each
+   accessor is responsible for not using the imaildir again and letting its
+   owner know the failure occured. */
+static void imaildir_maybe_fail(imaildir_t *m, const derr_t e){
+    if(!is_error(e)) return;
+    do_fail(m);
+    // this was unexpected, tell the dirmgr so it can clean us up
+    m->cb->failed(m->cb, m);
+}
+
+
+// useful if an open maildir needs to be frozen for delete or rename
+// imaildir may be immediately freed afterwards
+void imaildir_forceclose(imaildir_t *m){
+    // dirmgr closed us; avoid the failed callback
+    do_fail(m);
 }
 
 typedef struct {
@@ -666,9 +671,6 @@ void imaildir_free(imaildir_t *m){
 
     DROP_CMD(imaildir_print_msgs(m) );
 
-    // if we weren't already closed, we definitely are now
-    m->closed = true;
-
     // free any relays we were holding on to
     link_t *link;
     while((link = link_list_pop_first(&m->relays))){
@@ -691,11 +693,6 @@ void imaildir_free(imaildir_t *m){
         // delete message files from the filesystem
         DROP_CMD( delete_all_msg_files(&m->path) );
     }
-}
-
-// useful if an open maildir needs to be deleted
-void imaildir_forceclose(imaildir_t *m){
-    imaildir_fail(m, E_OK);
 }
 
 static void promote_up_to_primary(imaildir_t *m, up_t *up){
@@ -744,34 +741,20 @@ void imaildir_register_dn(imaildir_t *m, dn_t *dn){
     // add the dn_t to the maildir
     link_list_append(&m->dns, &dn->link);
     m->naccessors++;
-
-    dn->m = m;
-
-    /* final initialization step is when the downwards session calls
-       dn_cmd() to send the SELECT command sent by the client */
 }
 
-size_t imaildir_unregister_up(up_t *up){
-    imaildir_t *m = up->m;
-
-    up_imaildir_preunregister(up);
-
-    // revoke all access
-    up->m = NULL;
-
-    // don't do additional handling during a force_close
-    if(m->closed) return --m->naccessors;
-
+// should not be called if imaildir failed
+size_t imaildir_unregister_up(imaildir_t *m, up_t *up){
     bool was_primary = (&up->link == m->ups.next);
-
-    // remove from list
-    link_remove(&up->link);
 
     bool last_writer = false;
     if(up_imaildir_want_write(up)){
         m->nwriters--;
         last_writer = (m->nwriters == 0);
     }
+
+    // done with up
+    up_free(up);
 
     if(was_primary || last_writer){
         if(!link_list_isempty(&m->ups)){
@@ -784,14 +767,8 @@ size_t imaildir_unregister_up(up_t *up){
     return --m->naccessors;
 }
 
-size_t imaildir_unregister_dn(dn_t *dn){
-    imaildir_t *m = dn->m;
-
-    dn_imaildir_preunregister(dn);
-
-    // revoke all access
-    dn->m = NULL;
-
+// should not be called if imaildir failed
+size_t imaildir_unregister_dn(imaildir_t *m, dn_t *dn){
     // clean up references to this dn_t in the relay_t's
     relay_t *relay;
     LINK_FOR_EACH(relay, &m->relays, relay_t, link){
@@ -800,11 +777,8 @@ size_t imaildir_unregister_dn(dn_t *dn){
         }
     }
 
-    // don't do additional handling during a force_close
-    if(m->closed) return --m->naccessors;
-
-    // remove from its list
-    link_remove(&dn->link);
+    // done with dn
+    dn_free(dn);
 
     return --m->naccessors;
 }
@@ -822,9 +796,14 @@ derr_t imaildir_up_get_unfilled_msgs(imaildir_t *m, seq_set_builder_t *ssb){
         // UNFILLLED uid_local messages are not important to the up_t
         if(msg->key.uid_up == 0) continue;
 
-        PROP(&e, seq_set_builder_add_val(ssb, msg->key.uid_up) );
+        PROP_GO(&e, seq_set_builder_add_val(ssb, msg->key.uid_up), fail);
     }
 
+    return e;
+
+fail:
+    // failures to distribute updates are treated as consistency failures
+    imaildir_maybe_fail(m, e);
     return e;
 }
 
@@ -847,12 +826,14 @@ derr_t imaildir_up_get_unpushed_expunges(imaildir_t *m, ie_seq_set_t **out){
     }
 
     *out = seq_set_builder_extract(&e, &ssb);
-    CHECK(&e);
+    CHECK_GO(&e, fail);
 
     return e;
 
 fail:
     seq_set_builder_free(&ssb);
+    // failures to distribute updates are treated as consistency failures
+    imaildir_maybe_fail(m, e);
     return e;
 }
 
@@ -864,9 +845,6 @@ derr_t imaildir_up_check_uidvld_up(imaildir_t *m, unsigned int uidvld_up){
     if(old_uidvld_up == uidvld_up) return e;
 
     // TODO: puke if we have any connections downwards with built views
-    /* TODO: this definitely feels like a place that the whole imaildir should
-             shut down if there is a failure (but maybe that is covered by the
-             previous case) */
     /* TODO: on windows, we'll have to ensure that nobody has any files
              open at all, because delete_all_msg_files() would fail */
 
@@ -877,25 +855,25 @@ derr_t imaildir_up_check_uidvld_up(imaildir_t *m, unsigned int uidvld_up){
         /* first mark the cache as invalid, in case we crash or lose power
            halfway through */
         string_builder_t invalid_path = sb_append(&m->path, FS(".invalid"));
-        PROP(&e, touch_path(&invalid_path) );
+        PROP_GO(&e, touch_path(&invalid_path), fail);
 
         // close the log
         m->log->close(m->log);
 
         // delete the log from the filesystem
-        PROP(&e, imaildir_log_rm(&m->path) );
+        PROP_GO(&e, imaildir_log_rm(&m->path), fail);
 
         // delete message files from the filesystem
-        PROP(&e, delete_all_msg_files(&m->path) );
+        PROP_GO(&e, delete_all_msg_files(&m->path), fail);
 
         // empty in-memory structs
         free_trees(m);
 
         // cache is no longer invalid
-        PROP(&e, remove_path(&invalid_path) );
+        PROP_GO(&e, remove_path(&invalid_path), fail);
 
         // reopen the log and repopulate the maildir (it should be empty)
-        PROP(&e, imaildir_read_cache_and_files(m, true) );
+        PROP_GO(&e, imaildir_read_cache_and_files(m, true), fail);
     }else{
         LOG_INFO("detected first-time download\n");
     }
@@ -903,15 +881,25 @@ derr_t imaildir_up_check_uidvld_up(imaildir_t *m, unsigned int uidvld_up){
     time_t tnow = time(NULL);
     // it's totally fine if this overflows
     unsigned int uidvld_dn = uidvld_up + (unsigned int)tnow;
-    PROP(&e, m->log->set_uidvlds(m->log, uidvld_up, uidvld_dn) );
+    PROP_GO(&e, m->log->set_uidvlds(m->log, uidvld_up, uidvld_dn), fail);
 
+    return e;
+
+fail:
+    // if our cache is messed up, this imaildir cannot recover
+    imaildir_maybe_fail(m, e);
     return e;
 }
 
 // this is for the himodseq when we sync from the server
 derr_t imaildir_up_set_himodseq_up(imaildir_t *m, uint64_t himodseq){
     derr_t e = E_OK;
-    PROP(&e, m->log->set_himodseq_up(m->log, himodseq) );
+    PROP_GO(&e, m->log->set_himodseq_up(m->log, himodseq), fail);
+    return e;
+
+fail:
+    // failure to update is considered a cache inconsistency
+    imaildir_maybe_fail(m, e);
     return e;
 }
 
@@ -965,6 +953,8 @@ derr_t imaildir_up_new_msg(imaildir_t *m, unsigned int uid_up,
     return e;
 
 fail:
+    // failure to update is considered a cache inconsistency
+    imaildir_maybe_fail(m, e);
     msg_free(&msg);
     return e;
 }
@@ -1035,18 +1025,22 @@ derr_t imaildir_up_update_flags(imaildir_t *m, msg_t *msg, msg_flags_t flags){
             // edit flags directly, since we haven't given out views for these
             if(!msg_flags_eq(flags, msg->flags)){
                 msg->flags = flags;
-                PROP(&e, m->log->update_msg(m->log, msg) );
+                PROP_GO(&e, m->log->update_msg(m->log, msg), fail);
             }
             break;
 
         case MSG_FILLED:
         case MSG_EXPUNGED:
             // update flags and distribute UPDATE_METAs
-            PROP(&e, update_msg_flags(m, msg, flags) );
+            PROP_GO(&e, update_msg_flags(m, msg, flags), fail);
             break;
     }
 
-    // TODO: E_IMAILDIR on errors
+    return e;
+
+fail:
+    // failures to accept an update are treated as consistency failures
+    imaildir_maybe_fail(m, e);
 
     return e;
 }
@@ -1110,8 +1104,9 @@ static void finalize_msg(imaildir_t *m, msg_t *msg){
     msg->state = MSG_FILLED;
 }
 
-derr_t imaildir_up_handle_static_fetch_attr(imaildir_t *m,
-        msg_t *msg, const ie_fetch_resp_t *fetch){
+static derr_t _imaildir_up_handle_static_fetch_attr(
+    imaildir_t *m, msg_t *msg, const ie_fetch_resp_t *fetch
+){
     derr_t e = E_OK;
 
     // we shouldn't have anything after the message is filled
@@ -1184,8 +1179,21 @@ derr_t imaildir_up_handle_static_fetch_attr(imaildir_t *m,
     }
 
     return e;
+}
 
-    // TODO: it seems like this should raise an E_IMAILDIR
+derr_t imaildir_up_handle_static_fetch_attr(
+    imaildir_t *m, msg_t *msg, const ie_fetch_resp_t *fetch
+){
+    derr_t e = E_OK;
+
+    PROP_GO(&e, _imaildir_up_handle_static_fetch_attr(m, msg, fetch), fail);
+
+    return e;
+
+fail:
+    // failures to accept an update are treated as consistency failures
+    imaildir_maybe_fail(m, e);
+    return e;
 }
 
 // after an initial sync or after a reselect
@@ -1218,19 +1226,23 @@ derr_t imaildir_up_synced(
         }
 
         cmd = imap_cmd_copy(&e, relay->cmd);
-        CHECK(&e);
+        CHECK_GO(&e, fail);
 
         imaildir_cb_t *imaildir_cb =
             imaildir_cb_new(&e, relay, relay->cmd->tag);
         CHECK_GO(&e, fail);
 
-        up_imaildir_relay_cmd(up, cmd, &imaildir_cb->cb);
+        up_imaildir_relay_cmd(up, STEAL(imap_cmd_t, &cmd), &imaildir_cb->cb);
     }
 
     return e;
 
 fail:
     imap_cmd_free(cmd);
+
+    // failures to distribute relays are treated as consistency failures
+    imaildir_maybe_fail(m, e);
+
     return e;
 }
 
@@ -1294,8 +1306,13 @@ static derr_t delete_msg(imaildir_t *m, msg_key_t key){
 derr_t imaildir_up_delete_msg(imaildir_t *m, unsigned int uid_up){
     derr_t e = E_OK;
 
-    PROP(&e, delete_msg(m, KEY_UP(uid_up)) );
+    PROP_GO(&e, delete_msg(m, KEY_UP(uid_up)), fail);
 
+    return e;
+
+fail:
+    // failing to receive an update is a consistency failure
+    imaildir_maybe_fail(m, e);
     return e;
 }
 
@@ -1463,7 +1480,6 @@ static derr_t old_msg_new(old_msg_t **out, imaildir_t *m, msg_t *old){
 fail:
     free(old_msg);
     return e;
-    // TODO: E_IMAILDIR on errors
 }
 
 
@@ -2146,14 +2162,8 @@ derr_t imaildir_dn_request_update(imaildir_t *m, update_req_t *req){
 cu:
     update_req_free(req);
 
-    CATCH(e, E_ANY){
-        /* we must close accessors who don't have a way to tell they are now
-           out-of-date */
-        imaildir_fail(m, SPLIT(e));
-        /* now we must throw a special error since we are about to return
-           control to an accessor that probably just got closed */
-        RETHROW(&e, &e, E_IMAILDIR);
-    }
+    // failure to generate updates is considered a consistency failure
+    imaildir_maybe_fail(m, e);
 
     return e;
 }
@@ -2164,24 +2174,26 @@ derr_t imaildir_dn_open_msg(imaildir_t *m, const msg_key_t key, int *fd){
     *fd = -1;
 
     jsw_anode_t *node = jsw_afind(&m->msgs, &key, NULL);
-    if(!node) ORIG(&e, E_INTERNAL, "msg_key missing");
+    if(!node) ORIG_GO(&e, E_INTERNAL, "msg_key missing %x", fail, FMK(&key));
     msg_t *msg = CONTAINER_OF(node, msg_t, node);
 
     string_builder_t subdir_path = SUB(&m->path, msg->subdir);
     string_builder_t msg_path = sb_append(&subdir_path, FD(&msg->filename));
-    PROP(&e, dopen_path(&msg_path, O_RDONLY, 0, fd) );
+    PROP_GO(&e, dopen_path(&msg_path, O_RDONLY, 0, fd), fail);
 
     msg->open_fds++;
 
     return e;
+
+fail:
+    // not having a message in the view is a consistency failure
+    imaildir_maybe_fail(m, e);
+    return e;
 }
 
 // close a message in a view-safe way
-derr_t imaildir_dn_close_msg(imaildir_t *m, const msg_key_t key, int *fd){
-    derr_t e = E_OK;
-    if(*fd < 0){
-        return e;
-    }
+void imaildir_dn_close_msg(imaildir_t *m, const msg_key_t key, int *fd){
+    if(*fd < 0) return;
 
     // ignore return value of close on read-only file descriptor
     compat_close(*fd);
@@ -2190,20 +2202,12 @@ derr_t imaildir_dn_close_msg(imaildir_t *m, const msg_key_t key, int *fd){
     jsw_anode_t *node = jsw_afind(&m->msgs, &key, NULL);
     if(!node){
         // imaildir is in an inconsistent state
-        TRACE_ORIG(&e,
-            E_INTERNAL, "msg_key missing during imaildir_dn_close_msg"
-        );
-        imaildir_fail(m, SPLIT(e));
-        RETHROW(&e, &e, E_IMAILDIR);
-    }else{
-        msg_t *msg = CONTAINER_OF(node, msg_t, node);
-        msg->open_fds--;
-        // TODO: handle things which require the file not to be open anymore
-        /* (errors during this should result in imaildir_fail(), since the
-            caller is not responsible for the failure) */
+        LOG_FATAL("msg_key %x missing in imaildir_dn_close_msg\n", FMK(&key));
     }
 
-    return e;
+    msg_t *msg = CONTAINER_OF(node, msg_t, node);
+    msg->open_fds--;
+    // TODO: handle things which require the file not to be open anymore
 }
 
 ///////////////// support for APPEND and COPY /////////////////
