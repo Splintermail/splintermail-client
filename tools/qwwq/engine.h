@@ -73,17 +73,11 @@ qw_val_t *qw_scope_eval_ref(qw_engine_t *engine, qw_ref_t ref);
 derr_t qw_engine_init(qw_engine_t *engine, size_t stack);
 void qw_engine_free(qw_engine_t *out);
 
-#ifndef _WIN32
-// unix
-void _qw_error(
-    qw_engine_t *engine, const char *fmt, const fmt_t *args, size_t nargs
-) __attribute__((noreturn));
-#else
-// windows
-__declspec(noreturn) void _qw_error(
-    qw_engine_t *engine, const char *fmt, const fmt_t *args, size_t nargs
+SM_NORETURN(
+    void _qw_error(
+        qw_engine_t *engine, const char *fmt, const fmt_t *args, size_t nargs
+    )
 );
-#endif
 
 #define qw_error(engine, fmt, ...) \
     _qw_error( \

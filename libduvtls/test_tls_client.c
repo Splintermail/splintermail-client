@@ -201,7 +201,7 @@ static void finish(void){
 }
 
 static void await_cb_phase6(
-    stream_i *s, derr_t e, link_t *reads, link_t *writes
+    stream_i *s, derr_t e, link_t *treads, link_t *twrites
 ){
     (void)s;
     // prefer any existing error
@@ -215,10 +215,10 @@ static void await_cb_phase6(
         ORIG_GO(&E, E_VALUE, "unexpected exit", fail);
     }
 
-    if(!link_list_isempty(reads)){
+    if(!link_list_isempty(treads)){
         ORIG_GO(&E, E_VALUE, "unfinished reads", fail);
     }
-    if(!link_list_isempty(writes)){
+    if(!link_list_isempty(twrites)){
         ORIG_GO(&E, E_VALUE, "unfinished writes", fail);
     }
 
@@ -308,7 +308,7 @@ fail:
 }
 
 static void await_cb_phase5(
-    stream_i *s, derr_t e, link_t *reads, link_t *writes
+    stream_i *s, derr_t e, link_t *treads, link_t *twrites
 ){
     (void)s;
     // prefer any existing error
@@ -327,10 +327,10 @@ static void await_cb_phase5(
         ORIG_GO(&E, E_VALUE, "unexpected exit", fail);
     }
 
-    if(!link_list_isempty(reads)){
+    if(!link_list_isempty(treads)){
         ORIG_GO(&E, E_VALUE, "unfinished reads", fail);
     }
-    if(!link_list_isempty(writes)){
+    if(!link_list_isempty(twrites)){
         ORIG_GO(&E, E_VALUE, "unfinished writes", fail);
     }
 

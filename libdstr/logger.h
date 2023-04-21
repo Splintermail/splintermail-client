@@ -12,8 +12,12 @@ void logger_clear_outputs(void);
 void log_flush(void);
 void auto_log_flush(bool val);
 // this ALWAYS return 0, for use in the CATCH macro
-int pvt_do_log(log_level_t level, const char* format,
-             const fmt_t* args, size_t nargs);
+int pvt_do_log(
+    log_level_t level, const char* format, const fmt_t* args, size_t nargs
+);
+SM_NORETURN(
+    void pvt_do_log_fatal(const char* format, const fmt_t* args, size_t nargs)
+);
 #define LOG_AS(log_level, fstr, ...) \
     pvt_do_log(log_level, fstr, \
              &(const fmt_t[]){FI(1), __VA_ARGS__}[1], \
@@ -35,8 +39,7 @@ int pvt_do_log(log_level_t level, const char* format,
              &(const fmt_t[]){FI(1), __VA_ARGS__}[1], \
              sizeof((const fmt_t[]){FI(1), __VA_ARGS__}) / sizeof(fmt_t) - 1)
 #define LOG_FATAL(fstr, ...) \
-    pvt_do_log( \
-        LOG_LVL_FATAL, \
+    pvt_do_log_fatal( \
         "FATAL ERROR in file %x: %x(), line %x: " fstr, \
         (const fmt_t[]){ \
             FS(FILE_BASENAME), \

@@ -122,7 +122,6 @@ static char hex_nibble(char nibble){
         case 15: return 'F';
     }
     LOG_FATAL("bad nibble: %x\n", FI(nibble));
-    return 0;
 }
 
 /* Simplified application/x-www-form-urlencoded encoding algorithm.  This

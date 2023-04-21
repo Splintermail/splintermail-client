@@ -697,7 +697,6 @@ static rstream_i *req_configure_base(duv_http_req_t *req){
             );
     }
     LOG_FATAL("unknown length type: %x\n", FU(req->length_type));
-    return NULL;
 }
 
 static void req_advance_state(duv_http_req_t *req){

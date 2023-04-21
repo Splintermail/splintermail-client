@@ -20,7 +20,6 @@ static const extension_state_e *const_extension_find(
         case EXT_XKEY:      return &exts->xkey;
     }
     LOG_FATAL("invalid extension type");
-    return NULL;
 }
 
 static extension_state_e *extension_find(
@@ -36,7 +35,6 @@ static extension_state_e *extension_find(
         case EXT_XKEY:      return &exts->xkey;
     }
     LOG_FATAL("invalid extension type");
-    return NULL;
 }
 
 bool extension_is_on(const extensions_t *exts, extension_e type){
@@ -118,5 +116,4 @@ const char *extension_msg(extension_e ext){
         case EXT_XKEY: return "XKEY extension not available";
     }
     LOG_FATAL("invalid extension type");
-    return NULL;
 }

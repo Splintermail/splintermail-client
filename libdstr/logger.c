@@ -63,8 +63,9 @@ void auto_log_flush(bool val){
 }
 
 // don't use any error-handling macros because they would recurse infinitely
-int pvt_do_log(log_level_t level, const char* format,
-               const fmt_t* args, size_t nargs){
+int pvt_do_log(
+    log_level_t level, const char* format, const fmt_t* args, size_t nargs
+){
     // just print the whole format string to all of our fplist
     for(size_t i = 0; i < fplist_len; i++){
         // only print if this output is registered to see this level
@@ -90,9 +91,11 @@ int pvt_do_log(log_level_t level, const char* format,
     if(_auto_log_flush){
         log_flush();
     }
-    if(level == LOG_LVL_FATAL){
-        log_flush();
-        abort();
-    }
     return 0;
+}
+
+void pvt_do_log_fatal(const char* format, const fmt_t* args, size_t nargs){
+    pvt_do_log(LOG_LVL_FATAL, format, args, nargs);
+    log_flush();
+    abort();
 }

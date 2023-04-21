@@ -125,7 +125,7 @@ fail:
 }
 
 static void await_cb_phase7(
-    stream_i *s, derr_t e, link_t *reads, link_t *writes
+    stream_i *s, derr_t e, link_t *treads, link_t *twrites
 ){
     (void)s;
     stream = NULL;
@@ -143,10 +143,10 @@ static void await_cb_phase7(
     if(!expect_await){
         ORIG_GO(&E, E_VALUE, "early await callback!", fail);
     }
-    if(!link_list_isempty(reads)){
+    if(!link_list_isempty(treads)){
         ORIG_GO(&E, E_VALUE, "unfinished reads!", fail);
     }
-    if(!link_list_isempty(writes)){
+    if(!link_list_isempty(twrites)){
         ORIG_GO(&E, E_VALUE, "unfinished writes!", fail);
     }
     // SUCCESS!
@@ -342,7 +342,7 @@ fail:
 }
 
 static void await_cb_phase5(
-    stream_i *s, derr_t e, link_t *reads, link_t *writes
+    stream_i *s, derr_t e, link_t *treads, link_t *twrites
 ){
     (void)s;
     if(is_error(E)){
@@ -353,8 +353,8 @@ static void await_cb_phase5(
     if(is_error(e)){
         if(e.type == E_CANCELED){
             // what we expected
-            (void)reads;
-            (void)writes;
+            (void)treads;
+            (void)twrites;
         }else{
             PROP_VAR_GO(&E, &e, fail);
         }

@@ -103,7 +103,6 @@ static inline unsigned char dehex(unsigned char u){
     if(u >= 'a' && u <= 'f') return (unsigned char)(10 + u - 'a');
     if(u >= 'A' && u <= 'F') return (unsigned char)(10 + u - 'A');
     LOG_FATAL("invalid hex character: %x\n", FC((char)u));
-    return 0;
 }
 
 static inline int is_whitespace(char c){
@@ -980,7 +979,6 @@ find_next:
         case JSON_NULL:
         case JSON_OBJECT:
             LOG_FATAL("invalid json structure\n");
-            break;
 
         case JSON_STRING:
             // we are iterating through an object

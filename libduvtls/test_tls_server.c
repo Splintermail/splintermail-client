@@ -8,10 +8,10 @@
 // path to where the test files can be found
 static const char* g_test_files;
 
-derr_t E = {0};
-size_t rbuf_len;
-size_t nreads = 0;
-size_t nwrites = 0;
+static derr_t E = {0};
+static size_t rbuf_len;
+static size_t nreads = 0;
+static size_t nwrites = 0;
 
 static void write_cb(stream_i *stream, stream_write_t *req){
     (void)stream;

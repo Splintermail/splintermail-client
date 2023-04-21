@@ -11,6 +11,14 @@ typedef _Bool bool;
 #define ABS(a)   ((a) > 0 ? (a) : (-(a)))
 #endif
 
+#ifndef _WIN32
+// unix
+#define SM_NORETURN(fn) fn __attribute__((noreturn))
+#else
+// windows
+#define SM_NORETURN(fn) __declspec(noreturn) fn
+#endif
+
 /* DEF_CONTAINER_OF should be used right after struct definition to create an
    inline function for dereferencing a struct via a member.  "member_type" is
    required to avoid typeof, which windows doesn't have.  Also, unlike the

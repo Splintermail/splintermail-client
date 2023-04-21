@@ -53,7 +53,6 @@ uint16_t must_addr_port(const struct sockaddr *sa){
         return ntohs(((const struct sockaddr_in6*)sa)->sin6_port);
     }
     LOG_FATAL("unhandled addr family: %x\n", FU(sa->sa_family));
-    return 0;
 }
 
 uint16_t must_addrs_port(const struct sockaddr_storage *ss){
@@ -147,7 +146,6 @@ bool addr_eq(const struct sockaddr *a, const struct sockaddr *b){
         ) == 0;
     }
     LOG_FATAL("unhandled addr family %x\n", FI(a->sa_family));
-    return false;
 }
 
 bool addrs_eq(
