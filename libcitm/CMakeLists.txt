@@ -1,11 +1,6 @@
 sm_lib(
     libcitm
-    # passthru.c
-    # server.c
     # fetcher.c
-    # user.c
-    # sf_pair.c
-    # fpr_watcher.c
     # citm.c
     imap_server.c
     imap_client.c
@@ -13,11 +8,14 @@ sm_lib(
     anon.c
     preuser.c
     user.c
-    sf_pair.c
+    server.c
+    # sf_pair.c
     date.c
+    fpr_watcher.c
     keydir.c
     xkey.c
     responses.c
+    passthru.c
     DEPS dstr crypto duv duvtls imap imaildir
 )
 

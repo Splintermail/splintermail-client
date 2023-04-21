@@ -612,21 +612,25 @@ typedef struct {
     ie_mailbox_t *m;
     ie_select_params_t *params;
 } ie_select_cmd_t;
+DEF_STEAL_PTR(ie_select_cmd_t)
 
 typedef struct {
     ie_mailbox_t *old;
     ie_mailbox_t *new;
 } ie_rename_cmd_t;
+DEF_STEAL_PTR(ie_rename_cmd_t)
 
 typedef struct {
     ie_mailbox_t *m;
     ie_dstr_t *pattern;
 } ie_list_cmd_t;
+DEF_STEAL_PTR(ie_list_cmd_t)
 
 typedef struct {
     ie_mailbox_t *m;
     unsigned int status_attr;
 } ie_status_cmd_t;
+DEF_STEAL_PTR(ie_status_cmd_t)
 
 typedef struct {
     ie_mailbox_t *m;
@@ -634,6 +638,7 @@ typedef struct {
     imap_time_t time;
     ie_dstr_t *content;
 } ie_append_cmd_t;
+DEF_STEAL_PTR(ie_append_cmd_t)
 
 typedef struct {
     bool uid_mode;

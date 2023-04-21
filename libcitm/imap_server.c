@@ -557,13 +557,13 @@ fail:
 
 void imap_server_logged_out(imap_server_t *s){
     s->logged_out = true;
-    if(!s->awaited) schedule(s);
+    schedule(s);
 }
 
 void imap_server_cancel(imap_server_t *s){
     if(!s) return;
     s->canceled = true;
-    if(!s->awaited) schedule(s);
+    schedule(s);
 }
 
 static void await_self(

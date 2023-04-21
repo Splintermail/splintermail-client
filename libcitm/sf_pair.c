@@ -48,11 +48,11 @@ static void advance_state(sf_pair_t *sf_pair);
 
 static void scheduled(schedulable_t *s){
     sf_pair_t *sf_pair = CONTAINER_OF(s, sf_pair_t, schedulable);
-    if(sf_pair->awaited) return;
     advance_state(sf_pair);
 }
 
 static void schedule(sf_pair_t *sf_pair){
+    if(sf_pair->awaited) return;
     sf_pair->scheduler->schedule(sf_pair->scheduler, &sf_pair->schedulable);
 }
 
@@ -264,10 +264,11 @@ cu:
 }
 
 // part of server_cb_i
-static void server_cb_done(server_cb_i *cb, derr_t error){
+static void server_cb_done(server_cb_i *cb, derr_t e){
     // printf("---- server_cb_done\n");
     sf_pair_t *sf_pair = CONTAINER_OF(cb, sf_pair_t, server_cb);
-    sf_pair_fail(sf_pair, error);
+    TRACE_PROP(&e);
+    sf_pair_fail(sf_pair, e);
     // XXX: what if error is none, and we don't shut down?
     schedule(sf_pair);
 }
@@ -304,10 +305,11 @@ static void server_cb_unselect(server_cb_i *server_cb){
 }
 
 // part of fetcher_cb_i
-static void fetcher_cb_done(fetcher_cb_i *cb, derr_t error){
+static void fetcher_cb_done(fetcher_cb_i *cb, derr_t e){
     // printf("---- fetcher_cb_done\n");
     sf_pair_t *sf_pair = CONTAINER_OF(cb, sf_pair_t, fetcher_cb);
-    sf_pair_fail(sf_pair, error);
+    TRACE_PROP(&e);
+    sf_pair_fail(sf_pair, e);
     // XXX: what if error is none, and we don't shut down?
     schedule(sf_pair);
 }

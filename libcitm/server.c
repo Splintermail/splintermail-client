@@ -1,463 +1,134 @@
 #include "libcitm.h"
 
-// forward declarations
-static derr_t imap_event_new(imap_event_t **out, server_t *server,
-        imap_resp_t *resp);
-static void send_resp(derr_t *e, server_t *server, imap_resp_t *resp);
-static derr_t send_ok(server_t *server, const ie_dstr_t *tag,
-        const dstr_t *msg);
-static derr_t send_no(server_t *server, const ie_dstr_t *tag,
-        const dstr_t *msg);
-static derr_t do_logout(server_t *server, ie_dstr_t *tag);
-static derr_t request_select(server_t *server, bool examine);
-static derr_t server_do_work(server_t *server, bool *noop);
-
-static void server_free_greet(server_t *server){
-    server->greet.state = GREET_NONE;
-}
-
-static void server_free_passthru(server_t *server){
-    server->passthru.state = PASSTHRU_NONE;
-    passthru_resp_free(STEAL(passthru_resp_t, &server->passthru.resp));
-}
-
-static void server_free_awaiting(server_t *server){
-    ie_dstr_free(STEAL(ie_dstr_t, &server->await.tag));
-}
-
-static void server_free_select(server_t *server){
-    server->select.state = SELECT_NONE;
-    server->select.examine = false;
-    ie_st_resp_free(STEAL(ie_st_resp_t, &server->select.st_resp));
-    imap_cmd_free(STEAL(imap_cmd_t, &server->select.cmd));
-}
-
-static void server_free_close(server_t *server){
-    server->close.awaiting_dn = false;
-    server->close.awaiting_fetcher = false;
-    server->close.awaiting_send = false;
-    ie_dstr_free(STEAL(ie_dstr_t, &server->close.tag));
-}
-
-static void server_free_logout(server_t *server){
-    server->logout.disconnecting = false;
-    ie_dstr_free(STEAL(ie_dstr_t, &server->logout.tag));
-}
-
 void server_free(server_t *server){
     if(!server) return;
 
     ie_mailbox_free(server->selected_mailbox);
     dirmgr_freeze_free(server->freeze_deleting);
-    dirmgr_freeze_free(server->freeze_rename_old);
-    dirmgr_freeze_free(server->freeze_rename_new);
+    dirmgr_freeze_free(server->freeze_rename_src);
+    dirmgr_freeze_free(server->freeze_rename_dst);
 
     // free any imap cmds or resps laying around
+    imap_cmd_free(STEAL(imap_cmd_t, &server->cmd));
     link_t *link;
-    while((link = link_list_pop_first(&server->unhandled_cmds))){
-        imap_cmd_t *cmd = CONTAINER_OF(link, imap_cmd_t, link);
-        imap_cmd_free(cmd);
+    while((link = link_list_pop_first(&server->resps))){
+        imap_resp_t *resp = CONTAINER_OF(link, imap_resp_t, link);
+        imap_resp_free(resp);
     }
 
-    imap_session_free(&server->s);
+    ie_st_resp_free(STEAL(ie_st_resp_t, &server->st_resp));
+    passthru_resp_free(STEAL(passthru_resp_t, &server->passthru_resp));
 
-    server_free_greet(server);
-    server_free_passthru(server);
-    server_free_awaiting(server);
-    server_free_select(server);
-    server_free_close(server);
-    server_free_logout(server);
+    imap_server_must_free(&server->s);
 
     return;
 }
 
-static void server_finalize(refs_t *refs){
-    server_t *server = CONTAINER_OF(refs, server_t, refs);
-    server->cb->release(server->cb);
+static void advance_state(server_t *server);
+
+static void scheduled(schedulable_t *s){
+    server_t *server = CONTAINER_OF(s, server_t, schedulable);
+    advance_state(server);
 }
 
-// disconnect from the maildir, this can happen many times for one server_t
-static void server_hard_disconnect(server_t *server){
-    if(server->imap_state != SELECTED) return;
-    dirmgr_close_dn(server->dirmgr, &server->dn);
-    dn_free(&server->dn);
-    server->imap_state = AUTHENTICATED;
+static void schedule(server_t *server){
+    if(server->awaited) return;
+    server->scheduler->schedule(server->scheduler, &server->schedulable);
 }
 
-void server_close(server_t *server, derr_t error){
-    // only execute the close sequence once
-    bool do_close = !server->closed;
-    server->closed = true;
-
-    if(!do_close){
-        // secondary errors get dropped
-        DROP_VAR(&error);
-        return;
+static void server_fail(server_t *server, derr_t e){
+    if(server->failed){
+        DROP_VAR(&e);
+    }else if(server->canceled){
+        DROP_CANCELED_VAR(&e);
+    }else{
+        UPGRADE_CANCELED_VAR(&e, E_INTERNAL);
     }
-
-    // pass the error along to our owner
-    TRACE_PROP(&error);
-    server->cb->dying(server->cb, error);
-    PASSED(error);
-
-    imap_session_close(&server->s.session, E_OK);
-
-    // disconnect from the imaildir
-    server_hard_disconnect(server);
-
-    // drop the lifetime reference
-    ref_dn(&server->refs);
-}
-
-static void server_work_loop(server_t *server){
-    bool noop;
-    do {
-        noop = true;
-        derr_t e = E_OK;
-        IF_PROP(&e, server_do_work(server, &noop)){
-            server_close(server, e);
-            PASSED(e);
-            break;
-        }
-    } while(!noop);
-}
-
-void server_read_ev(server_t *server, event_t *ev){
-    if(server->closed) return;
-
-    imap_event_t *imap_ev = CONTAINER_OF(ev, imap_event_t, ev);
-
-    // server only accepts imap_cmd_t's as EV_READs
-    if(imap_ev->type != IMAP_EVENT_TYPE_CMD){
-        LOG_ERROR("unallowed imap_resp_t as EV_READ in server\n");
-        return;
-    }
-
-    imap_cmd_t *cmd = STEAL(imap_cmd_t, &imap_ev->arg.cmd);
-
-    link_list_append(&server->unhandled_cmds, &cmd->link);
-
-    server_work_loop(server);
-}
-
-static void server_enqueue(server_t *server){
-    if(server->closed || server->enqueued) return;
-    server->enqueued = true;
-    // ref_up for wake_ev
-    ref_up(&server->refs);
-    server->engine->pass_event(server->engine, &server->wake_ev.ev);
-}
-
-static void server_wakeup(wake_event_t *wake_ev){
-    server_t *server = CONTAINER_OF(wake_ev, server_t, wake_ev);
-    server->enqueued = false;
-    server_work_loop(server);
-    // ref_dn for wake_ev
-    ref_dn(&server->refs);
-}
-
-void server_allow_greeting(server_t *server){
-    server->greet.state = GREET_READY;
-    server_enqueue(server);
+    KEEP_FIRST_IF_NOT_CANCELED_VAR(&server->e, &e);
 }
 
 void server_passthru_resp(server_t *server, passthru_resp_t *passthru_resp){
-    server->passthru.state = PASSTHRU_DONE;
-    server->passthru.resp = passthru_resp;
-    server_enqueue(server);
+    server->passthru_resp = passthru_resp;
+    schedule(server);
 }
 
 void server_select_result(server_t *server, ie_st_resp_t *st_resp){
-    server->select.state = SELECT_DONE;
-    server->select.st_resp = st_resp;
-    server_enqueue(server);
+    server->select_responded = true;
+    server->st_resp = st_resp;
+    schedule(server);
 }
 
 void server_unselected(server_t *server){
-    server->close.awaiting_fetcher = false;
-    server->close.awaiting_send = true;
-    server_enqueue(server);
+    server->unselected = true;
+    schedule(server);
 }
 
-void server_set_dirmgr(server_t *server, dirmgr_t *dirmgr){
-    server->dirmgr = dirmgr;
-    server_enqueue(server);
-}
-
-// session_mgr
-
-static void session_dying(manager_i *mgr, void *caller, derr_t error){
-    (void)caller;
-    server_t *server = CONTAINER_OF(mgr, server_t, session_mgr);
-    LOG_INFO("session dn dying\n");
-
-    /* ignore dying event and only pay attention to dead event, to shield
-       the citm objects from the extra asynchronicity */
-
-    // store the error for the close() call
-    server->session_dying_error = error;
-    PASSED(error);
-}
-
-static void close_event_returner(event_t *ev){
-    server_t *server = ev->returner_arg;
-    // ref down for close_ev
-    ref_dn(&server->refs);
-}
-
-static void session_dead(manager_i *mgr, void *caller){
-    (void)caller;
-    server_t *server = CONTAINER_OF(mgr, server_t, session_mgr);
-
-    // send the close event to trigger server_close()
-    event_prep(&server->close_ev, close_event_returner, server);
-    server->close_ev.session = &server->s.session;
-    server->close_ev.ev_type = EV_SESSION_CLOSE;
-    server->engine->pass_event(server->engine, &server->close_ev);
+static void await_cb(
+    imap_server_t *s, derr_t e, link_t *reads, link_t *writes
+){
+    // our reads and writes are static
+    (void)reads;
+    (void)writes;
+    server_t *server = s->data;
+    if(is_error(e)){
+        TRACE_PROP(&e);
+        server_fail(server, e);
+    }else if(s->logged_out){
+        // logged out successfully
+    }else{
+        TRACE_ORIG(&e,
+            E_INTERNAL, "imap_server_t exited without error or logout"
+        );
+    }
+    schedule(server);
 }
 
 // dn_cb_i
 
-static derr_t server_dn_resp(dn_cb_i *dn_cb, imap_resp_t *resp){
-    derr_t e = E_OK;
+static void server_dn_schedule(dn_cb_i *dn_cb){
     server_t *server = CONTAINER_OF(dn_cb, server_t, dn_cb);
-
-    // detect if this is a tagged status_type response were waiting for
-    if(server->await.tag && resp->type == IMAP_RESP_STATUS_TYPE
-            && resp->arg.status_type->tag
-            && dstr_cmp(&server->await.tag->dstr,
-                        &resp->arg.status_type->tag->dstr) == 0){
-        ie_dstr_free(STEAL(ie_dstr_t, &server->await.tag));
-    }
-
-    // otherwise, just submit all dn_t responses blindly
-    imap_event_t *imap_ev;
-    PROP_GO(&e, imap_event_new(&imap_ev, server, resp), fail);
-    imap_session_send_event(&server->s, &imap_ev->ev);
-
-    return e;
-
-fail:
-    imap_resp_free(resp);
-    return e;
+    schedule(server);
 }
 
-static void server_dn_enqueue(dn_cb_i *dn_cb){
-    server_t *server = CONTAINER_OF(dn_cb, server_t, dn_cb);
-    server_enqueue(server);
-}
-
-static derr_t server_dn_disconnected(dn_cb_i *dn_cb, ie_st_resp_t *st_resp){
-    derr_t e = E_OK;
-    server_t *server = CONTAINER_OF(dn_cb, server_t, dn_cb);
-
-    // finish letting go of the dn_t
-    server_hard_disconnect(server);
-
-    if(st_resp){
-        ie_st_resp_free(st_resp);
-        ORIG(&e, E_INTERNAL, "disconnecting is not allowed to fail!");
-    }
-
-    if(server->select.state == SELECT_DISCONNECTING){
-        PROP(&e, request_select(server, server->select.examine) );
-
-    }else if(server->logout.disconnecting){
-        PROP(&e, do_logout(server, STEAL(ie_dstr_t, &server->logout.tag)) );
-
-    }else if(server->close.awaiting_dn){
-        server->close.awaiting_dn = false;
-        // now wait for the fetcher to disconnect
-        server->cb->unselect(server->cb);
-        server->close.awaiting_fetcher = true;
-
-    }else{
-        ie_st_resp_free(st_resp);
-        ORIG(&e, E_INTERNAL, "dn_t disconnected for no apparent reason!");
-    }
-
-    return e;
-}
-
-static void server_dn_failure(dn_cb_i *dn_cb, derr_t error){
-    server_t *server = CONTAINER_OF(dn_cb, server_t, dn_cb);
-    TRACE_PROP(&error);
-    server_close(server, error);
-    PASSED(error);
-}
-
-static void server_session_owner_close(imap_session_t *s){
-    server_t *server = CONTAINER_OF(s, server_t, s);
-    server_close(server, server->session_dying_error);
-    PASSED(server->session_dying_error);
-    // ref down for session
-    ref_dn(&server->refs);
-}
-
-static void server_session_owner_read_ev(imap_session_t *s, event_t *ev){
-    server_t *server = CONTAINER_OF(s, server_t, s);
-    server_read_ev(server, ev);
-}
-
-
-derr_t server_init(
+void server_prep(
     server_t *server,
-    server_cb_i *cb,
-    imap_pipeline_t *p,
-    engine_t *engine,
-    ssl_context_t *ctx_srv,
-    session_t **session
+    scheduler_i *scheduler,
+    imap_server_t *s,
+    dirmgr_t *dirmgr,
+    server_cb_i *cb
 ){
-    derr_t e = E_OK;
-
     *server = (server_t){
-        .session_owner = {
-            .close = server_session_owner_close,
-            .read_ev = server_session_owner_read_ev,
-        },
         .cb = cb,
-        .pipeline = p,
-        .engine = engine,
-    };
-
-    server->session_mgr = (manager_i){
-        .dying = session_dying,
-        .dead = session_dead,
-    };
-    server->ctrl = (imape_control_i){
-        .exts = {
-            .idle = EXT_STATE_ON,
-        },
-        .is_client = false,
+        .scheduler = scheduler,
+        .s = s,
+        .dirmgr = dirmgr,
     };
 
     server->dn_cb = (dn_cb_i){
-        .resp = server_dn_resp,
-        .disconnected = server_dn_disconnected,
-        .enqueue = server_dn_enqueue,
-        .failure = server_dn_failure,
+        .schedule = server_dn_schedule,
     };
 
-    link_init(&server->unhandled_cmds);
+    schedulable_prep(&server->schedulable, scheduled);
 
-    event_prep(&server->wake_ev.ev, NULL, NULL);
-    server->wake_ev.ev.ev_type = EV_INTERNAL;
-    server->wake_ev.handler = server_wakeup;
-
-    // start with a lifetime ref, an imap_session_t ref, and a close_ev ref
-    PROP(&e, refs_init(&server->refs, 3, server_finalize) );
-
-    // allocate memory for the session, but don't start it until later
-    imap_session_alloc_args_t arg_dn = {
-        server->pipeline,
-        &server->session_mgr,   // manager_i
-        ctx_srv,   // ssl_context_t
-        &server->ctrl,  // imape_control_i
-        server->engine,   // engine_t
-        NULL, // host
-        NULL, // svc
-        (terminal_t){0},
-    };
-    PROP_GO(&e, imap_session_alloc_accept(&server->s, &arg_dn), fail_refs);
-
-    // start with a pause on the greeting
-    server->greet.state = GREET_AWAITING;
-
-    *session = &server->s.session;
-
-    return e;
-
-fail_refs:
-    refs_free(&server->refs);
-    return e;
+    server->s->data = server;
+    imap_server_must_await(server->s, await_cb, NULL);
 }
 
 void server_start(server_t *server){
-    imap_session_start(&server->s);
+    // kick off our IO
+    schedule(server);
 }
 
 
 //  IMAP LOGIC  ///////////////////////////////////////////////////////////////
 
-DSTR_STATIC(PREAUTH_dstr, "PREAUTH");
-DSTR_STATIC(AUTHENTICATED_dstr, "AUTHENTICATED");
-DSTR_STATIC(SELECTED_dstr, "SELECTED");
-DSTR_STATIC(UNKNOWN_dstr, "unknown");
-
-const dstr_t *imap_server_state_to_dstr(imap_server_state_t state){
-    switch(state){
-        case PREAUTH: return &PREAUTH_dstr;
-        case AUTHENTICATED: return &AUTHENTICATED_dstr;
-        case SELECTED: return &SELECTED_dstr;
-    }
-    return &UNKNOWN_dstr;
-}
-
-static void server_imap_ev_returner(event_t *ev){
-    server_t *server = ev->returner_arg;
-
-    imap_event_t *imap_ev = CONTAINER_OF(ev, imap_event_t, ev);
-    imap_resp_free(imap_ev->arg.resp);
-    free(imap_ev);
-
-    // one less unreturned event
-    ref_dn(&server->refs);
-}
-
-// the last message we send gets this returner
-static void final_event_returner(event_t *ev){
-    imap_session_close(ev->session, E_OK);
-    // call the main returner, which frees the event
-    server_imap_ev_returner(ev);
-}
-
-static derr_t imap_event_new_ex(imap_event_t **out, server_t *server,
-        imap_resp_t *resp, bool final){
-    derr_t e = E_OK;
-    *out = NULL;
-
-    imap_event_t *imap_ev = malloc(sizeof(*imap_ev));
-    if(!imap_ev) ORIG(&e, E_NOMEM, "nomem");
-    *imap_ev = (imap_event_t){
-        .type = IMAP_EVENT_TYPE_RESP,
-        .arg = { .resp = resp },
-    };
-
-    event_returner_t returner =
-        final ? final_event_returner : server_imap_ev_returner;
-    event_prep(&imap_ev->ev, returner, server);
-    imap_ev->ev.session = &server->s.session;
-    imap_ev->ev.ev_type = EV_WRITE;
-
-    // one more unreturned event
-    ref_up(&server->refs);
-
-    *out = imap_ev;
-    return e;
-}
-
-static derr_t imap_event_new(imap_event_t **out, server_t *server,
-        imap_resp_t *resp){
-    derr_t e = E_OK;
-    PROP(&e, imap_event_new_ex(out, server, resp, false) );
-    return e;
-}
-
-static void send_resp_ex(derr_t *e, server_t *server, imap_resp_t *resp,
-        bool final){
+static void send_resp(derr_t *e, server_t *server, imap_resp_t *resp){
     if(is_error(*e)) goto fail;
 
-    // TODO: support extensions better
-    extensions_t exts = { .idle = EXT_STATE_ON };
-    resp = imap_resp_assert_writable(e, resp, &exts);
+    resp = imap_resp_assert_writable(e, resp, &server->s->exts);
     CHECK_GO(e, fail);
 
-    // create a response event
-    imap_event_t *imap_ev;
-    PROP_GO(e, imap_event_new_ex(&imap_ev, server, resp, final), fail);
-
-    // send the response to the imap session
-    imap_session_send_event(&server->s, &imap_ev->ev);
+    link_list_append(&server->resps, &resp->link);
 
     return;
 
@@ -465,307 +136,161 @@ fail:
     imap_resp_free(resp);
 }
 
-static void send_resp(derr_t *e, server_t *server, imap_resp_t *resp){
-    send_resp_ex(e, server, resp, false);
-}
-
-static derr_t send_st_resp(server_t *server, const ie_dstr_t *tag,
-        const dstr_t *msg, ie_status_t status, bool final){
+static derr_t pre_delete_passthru(
+    server_t *server, ie_dstr_t **tagp, const ie_mailbox_t *delete, bool *valid
+){
     derr_t e = E_OK;
 
-    // copy tag
-    ie_dstr_t *tag_copy = ie_dstr_copy(&e, tag);
+    *valid = false;
 
-    // build text
-    ie_dstr_t *text = ie_dstr_new(&e, msg, KEEP_RAW);
-
-    // build response
-    ie_st_resp_t *st_resp = ie_st_resp_new(&e, tag_copy, status, NULL, text);
-    imap_resp_arg_t arg = {.status_type=st_resp};
-    imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_STATUS_TYPE, arg);
-
-    send_resp_ex(&e, server, resp, final);
-    CHECK(&e);
-
-    return e;
-}
-
-static derr_t send_ok(server_t *server, const ie_dstr_t *tag,
-        const dstr_t *msg){
-    derr_t e = E_OK;
-    PROP(&e, send_st_resp(server, tag, msg, IE_ST_OK, false) );
-    return e;
-}
-
-static derr_t send_no(server_t *server, const ie_dstr_t *tag,
-        const dstr_t *msg){
-    derr_t e = E_OK;
-    PROP(&e, send_st_resp(server, tag, msg, IE_ST_NO, false) );
-    return e;
-}
-
-static derr_t send_bad(server_t *server, const ie_dstr_t *tag,
-        const dstr_t *msg){
-    derr_t e = E_OK;
-    PROP(&e, send_st_resp(server, tag, msg, IE_ST_BAD, false) );
-    return e;
-}
-
-static derr_t send_bye(server_t *server, const dstr_t *msg){
-    derr_t e = E_OK;
-    PROP(&e, send_st_resp(server, NULL, msg, IE_ST_BYE, false) );
-    return e;
-}
-
-static derr_t send_invalid_state_resp(server_t *server, const ie_dstr_t *tag){
-    derr_t e = E_OK;
-
-    DSTR_VAR(msg, 128);
-    PROP(&e, FMT(&msg, "command not allowed in %x state",
-            FD(imap_server_state_to_dstr(server->imap_state))) );
-
-    PROP(&e, send_bad(server, tag, &msg) );
-
-    return e;
-}
-
-static derr_t assert_state(server_t *server, imap_server_state_t state,
-        const ie_dstr_t *tag, bool *ok){
-    derr_t e = E_OK;
-
-    *ok = (server->imap_state == state);
-    if(*ok) return e;
-
-    PROP(&e, send_invalid_state_resp(server, tag) );
-
-    return e;
-}
-
-static ie_dstr_t *build_capas(derr_t *e){
-    if(is_error(*e)) goto fail;
-
-    ie_dstr_t *capas = ie_dstr_new2(e, DSTR_LIT("IMAP4rev1"));
-    capas = ie_dstr_add(e, capas, ie_dstr_new2(e, DSTR_LIT("IDLE")));
-
-    return capas;
-
-fail:
-    return NULL;
-}
-
-
-static derr_t send_greeting(server_t *server){
-    derr_t e = E_OK;
-
-    // build code
-    ie_dstr_t *capas = build_capas(&e);
-    ie_st_code_arg_t code_arg = {.capa = capas};
-    ie_st_code_t *st_code = ie_st_code_new(&e, IE_ST_CODE_CAPA, code_arg);
-
-    // build text
-    ie_dstr_t *text = ie_dstr_new(&e, &DSTR_LIT("greetings, friend!"),
-            KEEP_RAW);
-
-    // build response
-    ie_st_resp_t *st_resp = ie_st_resp_new(&e, NULL, IE_ST_OK, st_code, text);
-    imap_resp_arg_t arg = {.status_type=st_resp};
-    imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_STATUS_TYPE, arg);
-
-    send_resp(&e, server, resp);
-
-    return e;
-}
-
-
-static derr_t send_invalid_cmd(server_t *server, imap_cmd_t *error_cmd){
-    derr_t e = E_OK;
-
-    // response will be tagged if we have a tag for it
-    ie_dstr_t *tag = STEAL(ie_dstr_t, &error_cmd->tag);
-    ie_dstr_t *text = STEAL(ie_dstr_t, &error_cmd->arg.error);
-    ie_st_resp_t *st_resp = ie_st_resp_new(&e, tag, IE_ST_BAD, NULL, text);
-    imap_resp_arg_t arg = {.status_type=st_resp};
-    imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_STATUS_TYPE, arg);
-    send_resp(&e, server, resp);
-    CHECK(&e);
-
-    return e;
-}
-
-
-static derr_t send_plus(server_t *server){
-    derr_t e = E_OK;
-
-    ie_st_code_t *code = NULL;
-    ie_dstr_t *text = ie_dstr_new(&e, &DSTR_LIT("OK"), KEEP_RAW);
-    ie_plus_resp_t *plus = ie_plus_resp_new(&e, code, text);
-    imap_resp_arg_t arg = { .plus = plus };
-    imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_PLUS, arg);
-    send_resp(&e, server, resp);
-    CHECK(&e);
-
-    return e;
-}
-
-
-static derr_t send_capas(server_t *server, const ie_dstr_t *tag){
-    derr_t e = E_OK;
-
-    // build CAPABILITY response
-    ie_dstr_t *capas = build_capas(&e);
-    imap_resp_arg_t arg = {.capa=capas};
-    imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_CAPA, arg);
-
-    send_resp(&e, server, resp);
-
-    CHECK(&e);
-
-    PROP(&e, send_ok(server, tag,
-                &DSTR_LIT("if you didn't know, now you know")) );
-
-    return e;
-}
-
-static derr_t pre_delete_passthru(server_t *server, const ie_dstr_t *tag,
-        const ie_mailbox_t *delete, bool *ok){
-    derr_t e = E_OK;
-
-    *ok = false;
-
-    const dstr_t *deleting = ie_mailbox_name(delete);
+    const dstr_t deleting = *ie_mailbox_name(delete);
     // can't DELETE a mailbox you are connected to
-    if(server->imap_state == SELECTED){
-        const dstr_t *opened = ie_mailbox_name(server->selected_mailbox);
-        if(!dstr_cmp(opened, deleting)){
-            DSTR_STATIC(msg, "unable to DELETE what is SELECTED");
-            PROP(&e, send_no(server, tag, &msg) );
+    if(server->selected){
+        const dstr_t opened = *ie_mailbox_name(server->selected_mailbox);
+        if(dstr_eq(opened, deleting)){
+            PROP(&e,
+                RESP_NO(
+                    tagp, "unable to DELETE what is SELECTed", &server->resps
+                )
+            );
             return e;
         }
     }
 
     // take out a freeze on the mailbox in question
     PROP(&e,
-        dirmgr_freeze_new(server->dirmgr, deleting, &server->freeze_deleting)
+        dirmgr_freeze_new(server->dirmgr, &deleting, &server->freeze_deleting)
     );
 
-    *ok = true;
+    *valid = true;
 
     return e;
 }
 
-static derr_t pre_rename_passthru(server_t *server, const ie_dstr_t *tag,
-        const ie_rename_cmd_t *rename, bool *ok){
+static derr_t pre_rename_passthru(
+    server_t *server,
+    ie_dstr_t **tagp,
+    const ie_rename_cmd_t *rename,
+    bool *valid
+){
     derr_t e = E_OK;
 
-    *ok = false;
+    *valid = false;
 
-    const dstr_t *old = ie_mailbox_name(rename->old);
-    const dstr_t *new = ie_mailbox_name(rename->new);
+    const dstr_t old = *ie_mailbox_name(rename->old);
+    const dstr_t new = *ie_mailbox_name(rename->new);
     // can't RENAME to/from a mailbox you are connected to
-    if(server->imap_state == SELECTED){
-        const dstr_t *opened = ie_mailbox_name(server->selected_mailbox);
-        if(!dstr_cmp(opened, old) || !dstr_cmp(opened, new)){
-            DSTR_STATIC(msg, "unable to RENAME what is SELECTED");
-            PROP(&e, send_no(server, tag, &msg) );
+    if(server->selected){
+        const dstr_t opened = *ie_mailbox_name(server->selected_mailbox);
+        if(dstr_eq(opened, old) || dstr_eq(opened, new)){
+            PROP(&e,
+                RESP_NO(
+                    tagp, "unable to RENAME what is SELECTed", &server->resps
+                )
+            );
             return e;
         }
     }
 
     // take out a freeze on the mailbox in question
     PROP(&e,
-        dirmgr_freeze_new(server->dirmgr, old, &server->freeze_rename_old)
+        dirmgr_freeze_new(server->dirmgr, &old, &server->freeze_rename_src)
     );
     PROP(&e,
-        dirmgr_freeze_new(server->dirmgr, new, &server->freeze_rename_new)
+        dirmgr_freeze_new(server->dirmgr, &new, &server->freeze_rename_dst)
     );
 
-    *ok = true;
+    *valid = true;
 
     return e;
+}
+
+
+// filter out unsupported extensions
+static void st_code_filter_unsupported(ie_st_code_t **codep){
+    const ie_st_code_t *code = *codep;
+    if(!code) return;
+    switch(code->type){
+        case IE_ST_CODE_ALERT:
+        case IE_ST_CODE_PARSE:
+        case IE_ST_CODE_READ_ONLY:
+        case IE_ST_CODE_READ_WRITE:
+        case IE_ST_CODE_TRYCREATE:
+        case IE_ST_CODE_UIDNEXT:
+        case IE_ST_CODE_UIDVLD:
+        case IE_ST_CODE_UNSEEN:
+        case IE_ST_CODE_PERMFLAGS:
+        case IE_ST_CODE_CAPA:
+        case IE_ST_CODE_ATOM:
+            break;
+        // UIDPLUS extension
+        case IE_ST_CODE_UIDNOSTICK:
+        case IE_ST_CODE_APPENDUID:
+        case IE_ST_CODE_COPYUID:
+        // CONDSTORE extension
+        case IE_ST_CODE_NOMODSEQ:
+        case IE_ST_CODE_HIMODSEQ:
+        case IE_ST_CODE_MODIFIED:
+        // QRESYNC extension
+        case IE_ST_CODE_CLOSED:
+            // hide extension codes
+            ie_st_code_free(STEAL(ie_st_code_t, codep));
+            break;
+    }
 }
 
 
 /* send_passthru_st_resp is the builder-api version of passthru_done that is
    easy to include in other passthru handlers */
-static void send_passthru_st_resp(derr_t *e, server_t *server,
-        passthru_resp_t *passthru_resp){
-    if(is_error(*e)) goto cu;
+static derr_t send_passthru_st_resp(
+    server_t *server,
+    ie_dstr_t **tagp,
+    passthru_resp_t *passthru_resp
+){
+    derr_t e = E_OK;
 
     /* just before sending the response, check if we are connected to a dn_t
        and if so, gather any pending updates */
-    if(server->imap_state == SELECTED){
+    if(server->selected){
         /* always allow EXPUNGE updates, since the only FETCH, STORE, and
            SEARCH forbid sending EXPUNGEs */
         /* uid_mode is always false because none of the passthru commands have
            UID variants */
-        PROP_GO(e, dn_gather_updates(&server->dn, true, false, NULL), cu);
+        PROP(&e,
+            dn_gather_updates(&server->dn, true, false, NULL, &server->resps)
+        );
     }
+
+    ie_st_resp_t *st_resp = STEAL(ie_st_resp_t, &passthru_resp->st_resp);
 
     // filter out unsupported extensions
-    if(passthru_resp->st_resp->code){
-        switch(passthru_resp->st_resp->code->type){
-            case IE_ST_CODE_ALERT:
-            case IE_ST_CODE_PARSE:
-            case IE_ST_CODE_READ_ONLY:
-            case IE_ST_CODE_READ_WRITE:
-            case IE_ST_CODE_TRYCREATE:
-            case IE_ST_CODE_UIDNEXT:
-            case IE_ST_CODE_UIDVLD:
-            case IE_ST_CODE_UNSEEN:
-            case IE_ST_CODE_PERMFLAGS:
-            case IE_ST_CODE_CAPA:
-            case IE_ST_CODE_ATOM:
-                break;
-            // UIDPLUS extension
-            case IE_ST_CODE_UIDNOSTICK:
-            case IE_ST_CODE_APPENDUID:
-            case IE_ST_CODE_COPYUID:
-            // CONDSTORE extension
-            case IE_ST_CODE_NOMODSEQ:
-            case IE_ST_CODE_HIMODSEQ:
-            case IE_ST_CODE_MODIFIED:
-            // QRESYNC extension
-            case IE_ST_CODE_CLOSED:
-                // hide extension codes
-                ie_st_code_free(
-                    STEAL(ie_st_code_t, &passthru_resp->st_resp->code)
-                );
-                break;
-        }
-    }
+    st_code_filter_unsupported(&st_resp->code);
 
-    // send the tagged status-type response with the correct tag
-    ie_st_resp_t *st_resp = ie_st_resp_new(e,
-        STEAL(ie_dstr_t, &passthru_resp->tag),
-        passthru_resp->st_resp->status,
-        STEAL(ie_st_code_t, &passthru_resp->st_resp->code),
-        STEAL(ie_dstr_t, &passthru_resp->st_resp->text)
-    );
-
+    // fix tag
+    ie_dstr_free(STEAL(ie_dstr_t, &st_resp->tag));
+    st_resp->tag = STEAL(ie_dstr_t, tagp);
     imap_resp_arg_t arg = { .status_type = st_resp };
-    imap_resp_t *resp = imap_resp_new(e, IMAP_RESP_STATUS_TYPE, arg);
-
-    send_resp(e, server, resp);
-
-    CHECK_GO(e, cu);
-
-cu:
-    passthru_resp_free(passthru_resp);
-}
-
-
-// passthru_done is a handler for passthrus with no additional arguments
-static derr_t passthru_done(server_t *server, passthru_resp_t *passthru_resp){
-    derr_t e = E_OK;
-
-    send_passthru_st_resp(&e, server, passthru_resp);
+    imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_STATUS_TYPE, arg);
+    send_resp(&e, server, resp);
     CHECK(&e);
 
     return e;
 }
 
+
+// passthru_done is a handler for passthrus with no additional arguments
+static derr_t passthru_done(
+    server_t *server, ie_dstr_t **tagp, passthru_resp_t *passthru_resp
+){
+    derr_t e = E_OK;
+    PROP(&e, send_passthru_st_resp(server, tagp, passthru_resp) );
+    return e;
+}
+
 // list_done is for after PASSTHRU_LIST
-static derr_t list_done(server_t *server, passthru_resp_t *passthru_resp){
+static derr_t list_done(
+    server_t *server, ie_dstr_t **tagp, passthru_resp_t *passthru_resp
+){
     derr_t e = E_OK;
 
     // send the LIST responses in sorted order
@@ -782,15 +307,17 @@ static derr_t list_done(server_t *server, passthru_resp_t *passthru_resp){
         imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_LIST, arg);
         send_resp(&e, server, resp);
     }
-
-    send_passthru_st_resp(&e, server, passthru_resp);
     CHECK(&e);
+
+    PROP(&e, send_passthru_st_resp(server, tagp, passthru_resp) );
 
     return e;
 }
 
 // lsub_done is for after PASSTHRU_LSUB
-static derr_t lsub_done(server_t *server, passthru_resp_t *passthru_resp){
+static derr_t lsub_done(
+    server_t *server, ie_dstr_t **tagp, passthru_resp_t *passthru_resp
+){
     derr_t e = E_OK;
 
     // send the LSUB responses in sorted order
@@ -807,15 +334,17 @@ static derr_t lsub_done(server_t *server, passthru_resp_t *passthru_resp){
         imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_LSUB, arg);
         send_resp(&e, server, resp);
     }
-
-    send_passthru_st_resp(&e, server, passthru_resp);
     CHECK(&e);
+
+    PROP(&e, send_passthru_st_resp(server, tagp, passthru_resp) );
 
     return e;
 }
 
 // status_done is for after PASSTHRU_STATUS
-static derr_t status_done(server_t *server, passthru_resp_t *passthru_resp){
+static derr_t status_done(
+    server_t *server, ie_dstr_t **tagp, passthru_resp_t *passthru_resp
+){
     derr_t e = E_OK;
 
     // send the STATUS response (there may not be one if the commmand failed)
@@ -828,27 +357,29 @@ static derr_t status_done(server_t *server, passthru_resp_t *passthru_resp){
 
         send_resp(&e, server, resp);
     }
-
-    send_passthru_st_resp(&e, server, passthru_resp);
     CHECK(&e);
+
+    PROP(&e, send_passthru_st_resp(server, tagp, passthru_resp) );
 
     return e;
 }
 
 // delete_done is for after PASSTHRU_DELETE
-static derr_t delete_done(server_t *server, passthru_resp_t *passthru_resp){
+static derr_t delete_done(
+    server_t *server, ie_dstr_t **tagp, passthru_resp_t *passthru_resp
+){
     derr_t e = E_OK;
 
     // actually delete the directory if the DELETE was successful
     if(passthru_resp->st_resp->status == IE_ST_OK){
-        const dstr_t *name = &server->freeze_deleting->name;
-        PROP_GO(&e, dirmgr_delete(server->dirmgr, name), unfreeze);
+        PROP_GO(&e,
+            dirmgr_delete(server->dirmgr, server->freeze_deleting),
+        cu);
     }
 
-    send_passthru_st_resp(&e, server, passthru_resp);
-    CHECK_GO(&e, unfreeze);
+    PROP_GO(&e, send_passthru_st_resp(server, tagp, passthru_resp), cu);
 
-unfreeze:
+cu:
     dirmgr_freeze_free(server->freeze_deleting);
     server->freeze_deleting = NULL;
 
@@ -856,477 +387,178 @@ unfreeze:
 }
 
 // rename_done is for after PASSTHRU_DELETE
-static derr_t rename_done(server_t *server, passthru_resp_t *passthru_resp){
+static derr_t rename_done(
+    server_t *server, ie_dstr_t **tagp, passthru_resp_t *passthru_resp
+){
     derr_t e = E_OK;
 
     // actually rename the directory if the DELETE was successful
     if(passthru_resp->st_resp->status == IE_ST_OK){
-        const dstr_t *old = &server->freeze_rename_old->name;
-        const dstr_t *new = &server->freeze_rename_new->name;
-        PROP_GO(&e, dirmgr_rename(server->dirmgr, old, new), unfreeze);
+        PROP_GO(&e,
+            dirmgr_rename(
+                server->dirmgr,
+                server->freeze_rename_src,
+                server->freeze_rename_dst
+            ),
+        cu);
     }
 
-    send_passthru_st_resp(&e, server, passthru_resp);
-    CHECK_GO(&e, unfreeze);
-
-unfreeze:
-    dirmgr_freeze_free(server->freeze_rename_old);
-    dirmgr_freeze_free(server->freeze_rename_new);
-    server->freeze_rename_old = NULL;
-    server->freeze_rename_new = NULL;
-
-    return e;
-}
-
-static derr_t passthru_cmd(server_t *server, const ie_dstr_t *tag,
-        const imap_cmd_t *cmd){
-    derr_t e = E_OK;
-
-    passthru_type_e type;
-    passthru_req_arg_u arg = {0};
-    switch(cmd->type){
-        case IMAP_CMD_LIST:
-            type = PASSTHRU_LIST;
-            arg.list = ie_list_cmd_copy(&e, cmd->arg.list);
-            break;
-
-        case IMAP_CMD_LSUB:
-            type = PASSTHRU_LSUB;
-            arg.lsub = ie_list_cmd_copy(&e, cmd->arg.lsub);
-            break;
-
-        case IMAP_CMD_STATUS:
-            type = PASSTHRU_STATUS;
-            arg.status = ie_status_cmd_copy(&e, cmd->arg.status);
-            break;
-
-        case IMAP_CMD_CREATE:
-            type = PASSTHRU_CREATE;
-            arg.create = ie_mailbox_copy(&e, cmd->arg.create);
-            break;
-
-        case IMAP_CMD_DELETE:
-            type = PASSTHRU_DELETE;
-            arg.delete = ie_mailbox_copy(&e, cmd->arg.delete);
-            break;
-
-        case IMAP_CMD_RENAME:
-            type = PASSTHRU_RENAME;
-            arg.rename = ie_rename_cmd_copy(&e, cmd->arg.rename);
-            break;
-
-        case IMAP_CMD_SUB:
-            type = PASSTHRU_SUB;
-            arg.sub = ie_mailbox_copy(&e, cmd->arg.sub);
-            break;
-
-        case IMAP_CMD_UNSUB:
-            type = PASSTHRU_UNSUB;
-            arg.unsub = ie_mailbox_copy(&e, cmd->arg.unsub);
-            break;
-
-        case IMAP_CMD_APPEND:
-            type = PASSTHRU_APPEND;
-            arg.append = ie_append_cmd_copy(&e, cmd->arg.append);
-            break;
-
-        case IMAP_CMD_ERROR:
-        case IMAP_CMD_PLUS_REQ:
-        case IMAP_CMD_CAPA:
-        case IMAP_CMD_NOOP:
-        case IMAP_CMD_LOGOUT:
-        case IMAP_CMD_STARTTLS:
-        case IMAP_CMD_AUTH:
-        case IMAP_CMD_LOGIN:
-        case IMAP_CMD_SELECT:
-        case IMAP_CMD_EXAMINE:
-        case IMAP_CMD_CHECK:
-        case IMAP_CMD_CLOSE:
-        case IMAP_CMD_EXPUNGE:
-        case IMAP_CMD_SEARCH:
-        case IMAP_CMD_FETCH:
-        case IMAP_CMD_STORE:
-        case IMAP_CMD_COPY:
-        case IMAP_CMD_ENABLE:
-        case IMAP_CMD_UNSELECT:
-        case IMAP_CMD_IDLE:
-        case IMAP_CMD_IDLE_DONE:
-        case IMAP_CMD_XKEYSYNC:
-        case IMAP_CMD_XKEYSYNC_DONE:
-        case IMAP_CMD_XKEYADD:
-        default:
-            ORIG(&e, E_INTERNAL, "illegal command type in passthru_cmd");
-    }
-
-    ie_dstr_t *tag_copy = ie_dstr_copy(&e, tag);
-    passthru_req_t *passthru_req = passthru_req_new(&e, tag_copy, type, arg);
-    CHECK(&e);
-
-    server->passthru.state = PASSTHRU_PENDING;
-
-    // pass the passthru thru to our owner
-    server->cb->passthru_req(server->cb, passthru_req);
-
-    return e;
-}
-
-// request permission from our owner to SELECT a mailbox
-static derr_t request_select(server_t *server, bool examine){
-    derr_t e = E_OK;
-
-    const ie_mailbox_t *m = server->select.cmd->arg.select->m;
-    ie_mailbox_t *m_copy = ie_mailbox_copy(&e, m);
-    CHECK(&e);
-
-    server->select.state = SELECT_PENDING;
-    server->cb->select(server->cb, m_copy, examine);
-
-    return e;
-}
-
-// we either need to consume *select_cmd or free it
-static derr_t do_select(server_t *server, imap_cmd_t *select_cmd){
-    derr_t e = E_OK;
-
-    PROP_GO(&e,
-        dn_init(&server->dn,
-            &server->dn_cb,
-            &server->ctrl.exts,
-            server->select.examine
-        ),
-    fail_cmd);
-
-    const dstr_t *dir_name = ie_mailbox_name(select_cmd->arg.select->m);
-
-    // remember what we connected to
-    ie_mailbox_free(server->selected_mailbox);
-    server->selected_mailbox = ie_mailbox_copy(&e, select_cmd->arg.select->m);
-    CHECK_GO(&e, fail_cmd);
-
-    PROP_GO(&e,
-        dirmgr_open_dn(server->dirmgr, dir_name, &server->dn),
-    fail_dn);
-
-    server->imap_state = SELECTED;
-
-    // pass this SELECT command to the dn_t
-    PROP(&e, dn_cmd(&server->dn, select_cmd) );
-
-    return e;
-
-fail_dn:
-    dn_free(&server->dn);
-fail_cmd:
-    imap_cmd_free(select_cmd);
-    return e;
-}
-
-// this runs after the dn_t has finished closing
-static derr_t do_close(server_t *server, ie_dstr_t *tag){
-    derr_t e = E_OK;
-
-    // build text
-    DSTR_STATIC(msg, "get offa my lawn!");
-    ie_dstr_t *text = ie_dstr_new(&e, &msg, KEEP_RAW);
-
-    // build response
-    ie_st_resp_t *st_resp = ie_st_resp_new(&e, tag, IE_ST_OK, NULL, text);
-    imap_resp_arg_t arg = {.status_type=st_resp};
-    imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_STATUS_TYPE, arg);
-
-    send_resp(&e, server, resp);
-    CHECK(&e);
-
-    return e;
-}
-
-// this may or may not have to wait for the dn_t to close before it runs
-static derr_t do_logout(server_t *server, ie_dstr_t *tag){
-    derr_t e = E_OK;
-
-    PROP_GO(&e, send_bye(server, &DSTR_LIT("goodbye, my love...")), cu);
-
-    // send a message which will close the session upon WRITE_DONE
-    DSTR_STATIC(final_msg, "I'm gonna be strong, I can make it through this");
-    PROP_GO(&e, send_st_resp(server, tag, &final_msg, IE_ST_OK, true), cu);
+    PROP_GO(&e, send_passthru_st_resp(server, tagp, passthru_resp), cu);
 
 cu:
-    ie_dstr_free(tag);
+    dirmgr_freeze_free(server->freeze_rename_src);
+    dirmgr_freeze_free(server->freeze_rename_dst);
+    server->freeze_rename_src = NULL;
+    server->freeze_rename_dst = NULL;
 
     return e;
 }
 
-// we either need to consume the command or free it
-static derr_t handle_one_command(server_t *server, imap_cmd_t *cmd){
+#define ONCE(x) if(!x && (x = true))
+
+static void sread_cb(
+    imap_server_t *s, imap_server_read_t *req, imap_cmd_t *cmd
+){
+    server_t *server = s->data;
+    (void)req;
+    server->reading = false;
+    server->cmd = cmd;
+    schedule(server);
+}
+
+// returns bool ok
+static bool advance_reads(server_t *server){
+    if(server->cmd) return true;
+    ONCE(server->reading){
+        imap_server_must_read(server->s, &server->sread, sread_cb);
+    }
+    return false;
+}
+
+static void swrite_cb(imap_server_t *s, imap_server_write_t *req){
+    server_t *server = s->data;
+    (void)req;
+    server->writing = false;
+    schedule(server);
+}
+
+// returns bool ok
+static bool advance_writes(server_t *server){
+    // do we have a write in flight?
+    if(server->writing) return false;
+
+    // is there something to write?
+    link_t *link;
+    if((link = link_list_pop_first(&server->resps))){
+        imap_resp_t *resp = CONTAINER_OF(link, imap_resp_t, link);
+        imap_server_must_write(server->s, &server->swrite, resp, swrite_cb);
+        server->writing = true;
+        return false;
+    }
+    return true;
+}
+
+static derr_t advance_select(
+    server_t *server,
+    ie_dstr_t **tagp,
+    ie_mailbox_t **mp,
+    bool examine,
+    bool *ok
+){
     derr_t e = E_OK;
+    *ok = false;
 
-    const imap_cmd_arg_t *arg = &cmd->arg;
-    const ie_dstr_t *tag = cmd->tag;
-    bool state_ok;
-    bool examine;
-
-    switch(cmd->type){
-        case IMAP_CMD_ERROR:
-            PROP_GO(&e, send_invalid_cmd(server, cmd), cu_cmd);
-            break;
-
-        case IMAP_CMD_PLUS_REQ:
-            PROP_GO(&e, send_plus(server), cu_cmd);
-            break;
-
-        case IMAP_CMD_CAPA:
-            PROP_GO(&e, send_capas(server, tag), cu_cmd);
-            break;
-
-        case IMAP_CMD_NOOP:
-            PROP_GO(&e, send_ok(server, tag, &DSTR_LIT("done, son!")), cu_cmd);
-            break;
-
-        case IMAP_CMD_LOGOUT:
-            if(server->imap_state == SELECTED){
-                server->logout.disconnecting = true;
-                server->logout.tag = STEAL(ie_dstr_t, &cmd->tag);
-                CHECK_GO(&e, cu_cmd);
-                // wait for the dn_t to disconnect
-                PROP_GO(&e, dn_disconnect(&server->dn, false), cu_cmd);
-            }else{
-                PROP_GO(&e,
-                    do_logout(server, STEAL(ie_dstr_t, &cmd->tag)),
-                cu_cmd);
-            }
-            break;
-
-        case IMAP_CMD_STARTTLS:
-            PROP_GO(&e, send_bad(server, tag,
-                &DSTR_LIT("STARTTLS not supported, connect with TLS instead")),
-                cu_cmd);
-            break;
-
-        case IMAP_CMD_AUTH:
-        case IMAP_CMD_LOGIN:
-            PROP_GO(&e,
-                send_bad(server, tag, &DSTR_LIT("already logged in")),
-            cu_cmd);
-            break;
-
-        // passthru commands
-        case IMAP_CMD_LIST:
-        case IMAP_CMD_LSUB:
-        case IMAP_CMD_STATUS:
-        case IMAP_CMD_CREATE:
-        case IMAP_CMD_DELETE:
-        case IMAP_CMD_RENAME:
-        case IMAP_CMD_SUB:
-        case IMAP_CMD_UNSUB:
-        case IMAP_CMD_APPEND:
-            if(server->imap_state != AUTHENTICATED
-                    && server->imap_state != SELECTED){
-                PROP_GO(&e, send_invalid_state_resp(server, tag), cu_cmd);
-                break;
-            }
-
-            bool ok = true;
-            if(cmd->type == IMAP_CMD_DELETE){
-                PROP_GO(&e,
-                    pre_delete_passthru(server, tag, cmd->arg.delete, &ok),
-                cu_cmd);
-            }else if(cmd->type == IMAP_CMD_RENAME){
-                PROP_GO(&e,
-                    pre_rename_passthru(server, tag, cmd->arg.rename, &ok),
-                cu_cmd);
-            }
-            if(!ok) break;
-
-            PROP_GO(&e, passthru_cmd(server, tag, cmd), cu_cmd);
-            break;
-
-        case IMAP_CMD_SELECT:
-        case IMAP_CMD_EXAMINE:
-            examine = (cmd->type == IMAP_CMD_EXAMINE);
-            if(server->imap_state != AUTHENTICATED
-                    && server->imap_state != SELECTED){
-                PROP_GO(&e, send_invalid_state_resp(server, tag), cu_cmd);
-                break;
-            }
-
-            // we have to remember the whole command, not just the tag
-            server->select.cmd = STEAL(imap_cmd_t, &cmd);
-            server->select.examine = examine;
-
-            if(server->imap_state == SELECTED){
-                server->select.state = SELECT_DISCONNECTING;
-                // wait for the dn_t to disconnect
-                PROP_GO(&e, dn_disconnect(&server->dn, false), cu_cmd);
-            }else{
-                /* Ask the sf_pair for permission to SELECT the folder.
-                   Permission may not be granted if e.g. the fetcher finds out
-                   the folder does not exist or if it is the keybox folder */
-                PROP_GO(&e, request_select(server, examine), cu_cmd);
-            }
-            break;
-
-        case IMAP_CMD_CLOSE:
-            PROP_GO(&e, assert_state(server, SELECTED, tag, &state_ok),
-                    cu_cmd);
-            if(state_ok){
-                server->close.awaiting_dn = true;
-                server->close.tag = STEAL(ie_dstr_t, &cmd->tag);
-                CHECK_GO(&e, cu_cmd);
-                // wait for the dn_t to disconnect
-                PROP_GO(&e, dn_disconnect(&server->dn, true), cu_cmd);
-            }
-            break;
-
-        // commands supported by the dn_t
-        case IMAP_CMD_COPY:
-        case IMAP_CMD_CHECK:
-        case IMAP_CMD_EXPUNGE:
-        case IMAP_CMD_SEARCH:
-        case IMAP_CMD_FETCH:
-        case IMAP_CMD_STORE:
-        case IMAP_CMD_IDLE:
-        case IMAP_CMD_IDLE_DONE:
-            PROP_GO(&e,
-                assert_state(server, SELECTED, tag, &state_ok),
-            cu_cmd);
-            if(state_ok){
-                /* we know ahead of time that we are not in the SELECTED state,
-                   or we would not have gotten to here with these commands */
-                ORIG_GO(&e, E_INTERNAL, "Unhandled command", cu_cmd);
-            }
-            break;
-
-        // not yet supported
-        case IMAP_CMD_XKEYSYNC:
-        case IMAP_CMD_XKEYSYNC_DONE:
-        case IMAP_CMD_XKEYADD:
-            ORIG_GO(&e, E_INTERNAL, "Unhandled command", cu_cmd);
-            break;
-
-        // unsupported extensions
-        case IMAP_CMD_ENABLE:
-        case IMAP_CMD_UNSELECT:
-            PROP_GO(&e,
-                send_bad(server, tag, &DSTR_LIT("extension not supported")),
-            cu_cmd);
-            break;
+    /* Ask the sf_pair for permission to SELECT the folder. Permission may not
+       be granted if e.g. the fetcher finds out the folder does not exist */
+    ONCE(server->select_requested){
+        ie_mailbox_t *m_copy = ie_mailbox_copy(&server->e, *mp);
+        CHECK(&e);
+        server->cb->select(server->cb, m_copy, examine);
     }
 
-cu_cmd:
-    imap_cmd_free(cmd);
-    return e;
-}
+    if(!server->select_responded) return e;
 
-static bool intercept_cmd_type(imap_cmd_type_t type){
-    switch(type){
-        /* (SELECT is special; it may trigger a dirmgr_close_dn, then it always
-            triggers a dirmgr_open_dn in the sm_serve_logic, and then it is
-            also passed into the dn_t as the first command, but not here)
-            */
-        case IMAP_CMD_SELECT:
-        case IMAP_CMD_EXAMINE:
+    ie_st_resp_t *st_resp = STEAL(ie_st_resp_t, &server->st_resp);
+    if(st_resp){
+        // select failed
+        ie_dstr_free(STEAL(ie_dstr_t, &st_resp->tag));
+        st_resp->tag = STEAL(ie_dstr_t, tagp);
+        // relay the st_resp to the client
+        imap_resp_arg_t arg = { .status_type = st_resp };
+        imap_resp_t *resp = imap_resp_new(
+            &e, IMAP_RESP_STATUS_TYPE, arg
+        );
+        // relay the st_resp to the client
+        send_resp(&e, server, resp);
+        CHECK(&e);
+    }else{
+        // select succeeded
+        server->selected_mailbox = STEAL(ie_mailbox_t, mp);
 
-        // handle some things all in one place for simplicity
-        case IMAP_CMD_ERROR:
-        case IMAP_CMD_PLUS_REQ:
-        case IMAP_CMD_CAPA:
-
-        // passthru commands
-        case IMAP_CMD_LIST:
-        case IMAP_CMD_LSUB:
-        case IMAP_CMD_STATUS:
-        case IMAP_CMD_CREATE:
-        case IMAP_CMD_DELETE:
-        case IMAP_CMD_RENAME:
-        case IMAP_CMD_SUB:
-        case IMAP_CMD_UNSUB:
-        case IMAP_CMD_APPEND:
-
-        // also intercept close-like commands
-        case IMAP_CMD_LOGOUT:
-        case IMAP_CMD_CLOSE:
-            return true;
-
-        case IMAP_CMD_NOOP:
-        case IMAP_CMD_STARTTLS:
-        case IMAP_CMD_AUTH:
-        case IMAP_CMD_LOGIN:
-        case IMAP_CMD_CHECK:
-        case IMAP_CMD_EXPUNGE:
-        case IMAP_CMD_SEARCH:
-        case IMAP_CMD_FETCH:
-        case IMAP_CMD_STORE:
-        case IMAP_CMD_COPY:
-        case IMAP_CMD_ENABLE:
-        case IMAP_CMD_UNSELECT:
-        case IMAP_CMD_IDLE:
-        case IMAP_CMD_IDLE_DONE:
-        case IMAP_CMD_XKEYSYNC:
-        case IMAP_CMD_XKEYSYNC_DONE:
-        case IMAP_CMD_XKEYADD:
-        default:
-            return false;
-    }
-}
-
-// on failure, we must free the whole command
-static derr_t server_await_if_async(server_t *server, imap_cmd_t *cmd){
-    derr_t e = E_OK;
-
-    if(
-        cmd->type == IMAP_CMD_STORE
-        || cmd->type == IMAP_CMD_EXPUNGE
-        || cmd->type == IMAP_CMD_COPY
-    ){
-        server->await.tag = ie_dstr_copy(&e, cmd->tag);
-        CHECK_GO(&e, fail);
+        // open the dn_t and get the response to our select_cmd
+        PROP(&e,
+            dirmgr_open_dn(
+                server->dirmgr,
+                ie_mailbox_name(server->selected_mailbox),
+                &server->dn,
+                &server->dn_cb,
+                &server->s->exts,
+                examine,
+                tagp,
+                &server->resps
+            )
+        );
+        server->selected = true;
     }
 
-    return e;
+    server->select_responded = false;
+    server->select_requested = false;
+    *ok = true;
 
-fail:
-    imap_cmd_free(cmd);
     return e;
 }
 
-// determine if we are allowed to handle new incoming commands
-static bool server_is_paused(server_t *server){
-    return server->passthru.state
-        || server->await.tag
-        || server->select.state
-        || server->close.awaiting_dn
-        || server->close.awaiting_fetcher
-        || server->close.awaiting_send;
-}
-
-static derr_t do_work_passthru(server_t *server, bool *noop){
+static derr_t advance_passthru(
+    server_t *server,
+    ie_dstr_t **tagp,
+    passthru_type_e type,
+    passthru_req_arg_u arg,
+    bool *ok
+){
     derr_t e = E_OK;
 
-    if(server->passthru.state < PASSTHRU_DONE) return e;
-    server->passthru.state = PASSTHRU_NONE;
-    *noop = false;
+    *ok = false;
 
-    passthru_resp_t *resp = STEAL(passthru_resp_t, &server->passthru.resp);
+    // send request
+    ONCE(server->passthru_sent){
+        passthru_req_t *passthru_req = passthru_req_new(&e, type, arg);
+        CHECK(&e);
+        server->cb->passthru_req(server->cb, passthru_req);
+    }
 
+    passthru_resp_t *resp = server->passthru_resp;
+    if(!resp) return e;
+
+    // handle response
     switch(resp->type){
         case PASSTHRU_LIST:
-            PROP(&e, list_done(server, resp) );
+            PROP(&e, list_done(server, tagp, resp) );
             break;
 
         case PASSTHRU_LSUB:
-            PROP(&e, lsub_done(server, resp) );
+            PROP(&e, lsub_done(server, tagp, resp) );
             break;
 
         case PASSTHRU_STATUS:
-            PROP(&e, status_done(server, resp) );
+            PROP(&e, status_done(server, tagp, resp) );
             break;
 
         case PASSTHRU_DELETE:
-            PROP(&e, delete_done(server, resp) );
+            PROP(&e, delete_done(server, tagp, resp) );
             break;
 
         case PASSTHRU_RENAME:
-            PROP(&e, rename_done(server, resp) );
+            PROP(&e, rename_done(server, tagp, resp) );
             break;
 
         // simple status-type responses
@@ -1334,105 +566,399 @@ static derr_t do_work_passthru(server_t *server, bool *noop){
         case PASSTHRU_SUB:
         case PASSTHRU_UNSUB:
         case PASSTHRU_APPEND:
-            PROP(&e, passthru_done(server, resp) );
+            PROP(&e, passthru_done(server, tagp, resp) );
             break;
     }
 
+    passthru_resp_free(STEAL(passthru_resp_t, &server->passthru_resp));
+
+    server->passthru_sent = false;
+    *ok = true;
+
     return e;
 }
 
-
-static derr_t do_work_select(server_t *server, bool *noop){
+static derr_t advance_disconnect(server_t *server, bool expunge, bool *ok){
     derr_t e = E_OK;
 
-    if(server->select.state < SELECT_DONE) return e;
-    server->select.state = SELECT_NONE;
-    *noop = false;
+    bool temp;
+    *ok = false;
 
-    // steal some things that we will consume or free
-    ie_st_resp_t *st_resp = STEAL(ie_st_resp_t, &server->select.st_resp);
-
-    if(!st_resp){
-        // SELECT succeeded, proceed normally
-        PROP_GO(&e,
-            do_select(server, STEAL(imap_cmd_t, &server->select.cmd)),
-        cu);
-    }else{
-        // relay the status-type response we got from above but replace the tag
-        ie_dstr_free(STEAL(ie_dstr_t, &st_resp->tag));
-        st_resp->tag = STEAL(ie_dstr_t, &server->select.cmd->tag);
-
-        // relay the st_resp to the client
-        imap_resp_arg_t arg = {.status_type=st_resp};
-        imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_STATUS_TYPE, arg);
-
-        send_resp(&e, server, resp);
-        CHECK_GO(&e, cu);
+    if(!server->selected){
+        *ok = true;
+        return e;
     }
+
+    // disconnect the dn_t first, so expunges can be routed through our up_t
+    PROP(&e, dn_disconnect(&server->dn, expunge, &temp) );
+    if(!temp) return e;
+
+    ONCE(server->dirmgr_closed_dn){
+        dirmgr_close_dn(server->dirmgr, &server->dn);
+    }
+
+    // disconnect the whole sf_pair second
+    ONCE(server->unselect_cb_sent) server->cb->unselect(server->cb);
+    if(!server->unselected) return e;
+
+    ie_mailbox_free(STEAL(ie_mailbox_t, &server->selected_mailbox));
+
+    server->dirmgr_closed_dn = false;
+    server->unselect_cb_sent = false;
+    server->unselected = false;
+    server->selected = false;
+    *ok = true;
+
+    return e;
+}
+
+static derr_t advance_logout(server_t *server, ie_dstr_t **tagp, bool *ok){
+    derr_t e = E_OK;
+
+    *ok = false;
+
+    ONCE(server->logout_sent){
+        PROP(&e, respond_logout(tagp, &server->resps) );
+    }
+
+    // finish writing everything
+    bool temp = advance_writes(server);
+    if(!temp) return e;
+
+    // close down our imap_server_t
+    imap_server_logged_out(server->s);
+    if(!server->s->awaited) return e;
+
+    // done!
+    *ok = true;
+
+    return e;
+}
+
+static derr_t require_selected(
+    server_t *server, ie_dstr_t **tagp, bool *valid
+){
+    derr_t e = E_OK;
+
+    if(server->selected){
+        *valid = true;
+        return e;
+    }
+
+    *valid = false;
+
+    PROP(&e,
+        RESP_BAD(
+            tagp, "command not allowed in AUTHENTICATED state", &server->resps
+        )
+    );
+
+    return e;
+}
+
+static derr_t handle_cmd(server_t *server, bool *ok, bool *done){
+    derr_t e = E_OK;
+
+    ie_dstr_t **tagp = &server->cmd->tag;
+    imap_cmd_arg_t *arg = &server->cmd->arg;
+    imap_cmd_type_t type = server->cmd->type;
+
+    passthru_type_e ptype;
+    passthru_req_arg_u parg = {0};
+
+    // commands are either atomic or they will set ok=false themselves
+    *ok = true;
+
+    if(server->idle != (type == IMAP_CMD_IDLE_DONE)){
+        // bad command, should have been DONE
+        // or, bad DONE, not in IDLE
+        // (not possible because the imap parser disallows it)
+        ORIG(&e, E_INTERNAL, "dn_t DONE out-of-order");
+    }
+
+    link_t *out = &server->resps;
+
+    bool valid;
+
+    // handle a command
+    switch(type){
+
+        // passthru commands //
+
+        case IMAP_CMD_LIST:
+            ptype = PASSTHRU_LIST;
+            parg.list = STEAL(ie_list_cmd_t, &arg->list);
+            PROP(&e, advance_passthru(server, tagp, ptype, parg, ok) );
+            break;
+        case IMAP_CMD_LSUB:
+            ptype = PASSTHRU_LSUB;
+            parg.lsub = STEAL(ie_list_cmd_t, &arg->lsub);
+            PROP(&e, advance_passthru(server, tagp, ptype, parg, ok) );
+            break;
+        case IMAP_CMD_STATUS:
+            ptype = PASSTHRU_STATUS;
+            parg.status = STEAL(ie_status_cmd_t, &arg->status);
+            PROP(&e, advance_passthru(server, tagp, ptype, parg, ok) );
+            break;
+        case IMAP_CMD_CREATE:
+            ptype = PASSTHRU_CREATE;
+            parg.create = STEAL(ie_mailbox_t, &arg->create);
+            PROP(&e, advance_passthru(server, tagp, ptype, parg, ok) );
+            break;
+        case IMAP_CMD_DELETE:
+            PROP(&e, pre_delete_passthru(server, tagp, arg->delete, &valid) );
+            if(!valid) break;
+            ptype = PASSTHRU_DELETE;
+            parg.delete = STEAL(ie_mailbox_t, &arg->delete);
+            PROP(&e, advance_passthru(server, tagp, ptype, parg, ok) );
+            break;
+        case IMAP_CMD_RENAME:
+            PROP(&e, pre_rename_passthru(server, tagp, arg->rename, &valid) );
+            if(!valid) break;
+            ptype = PASSTHRU_RENAME;
+            parg.rename = STEAL(ie_rename_cmd_t, &arg->rename);
+            PROP(&e, advance_passthru(server, tagp, ptype, parg, ok) );
+            break;
+        case IMAP_CMD_SUB:
+            ptype = PASSTHRU_SUB;
+            parg.sub = STEAL(ie_mailbox_t, &arg->sub);
+            PROP(&e, advance_passthru(server, tagp, ptype, parg, ok) );
+            break;
+        case IMAP_CMD_UNSUB:
+            ptype = PASSTHRU_UNSUB;
+            parg.unsub = STEAL(ie_mailbox_t, &arg->unsub);
+            PROP(&e, advance_passthru(server, tagp, ptype, parg, ok) );
+            break;
+        case IMAP_CMD_APPEND:
+            ptype = PASSTHRU_APPEND;
+            parg.append = STEAL(ie_append_cmd_t, &arg->append);
+            PROP(&e, advance_passthru(server, tagp, ptype, parg, ok) );
+            break;
+
+        // basic commands which the dn_t cannot handle //
+
+        case IMAP_CMD_ERROR:
+            PROP(&e, respond_error(tagp, &arg->error, out) );
+            break;
+        case IMAP_CMD_PLUS_REQ:
+            PROP(&e, respond_plus(out) );
+            break;
+        case IMAP_CMD_CAPA:
+            if(server->selected){
+                // true = always allow expunges, false = there is no uid mode
+                PROP(&e,
+                    dn_gather_updates(&server->dn, true, false, NULL, out)
+                );
+            }
+            PROP(&e, respond_capas(tagp, build_capas, out) );
+            break;
+        case IMAP_CMD_NOOP:
+            if(server->selected){
+                // true = always allow expunges, false = there is no uid mode
+                PROP(&e,
+                    dn_gather_updates(&server->dn, true, false, NULL, out)
+                );
+            }
+            PROP(&e, respond_noop(tagp, out) );
+            break;
+
+        // open-like commands //
+
+        case IMAP_CMD_SELECT:
+        case IMAP_CMD_EXAMINE:
+            if(arg->select->params){
+                PROP(&e, respond_not_supported(tagp, out) );
+                return e;
+            }
+            bool examine = (type == IMAP_CMD_EXAMINE);
+            // disconnect first
+            PROP(&e, advance_disconnect(server, false, ok) );
+            if(!*ok) return e;
+            // then connect
+            PROP(&e,
+                advance_select(server, tagp, &arg->select->m, examine, ok)
+            );
+            break;
+
+        // close-like commands //
+
+        case IMAP_CMD_CLOSE:
+            PROP(&e, require_selected(server, tagp, &valid) );
+            if(!valid) break;
+            // disconnect first
+            PROP(&e, advance_disconnect(server, true, ok) );
+            if(!*ok) return e;
+            PROP(&e, RESP_OK(tagp, "get offa my lawn!", out) );
+            break;
+
+        case IMAP_CMD_LOGOUT:
+            // disconnect first
+            PROP(&e, advance_disconnect(server, false, ok) );
+            if(!*ok) return e;
+            PROP(&e, advance_logout(server, tagp, ok) );
+            if(!*ok) return e;
+            // proceed to graceful shutdown
+            *done = false;
+            break;
+
+        // possibly-asynchronous commands which must go to the dn_t //
+
+        case IMAP_CMD_STORE:
+            PROP(&e, require_selected(server, tagp, &valid) );
+            if(!valid) break;
+            PROP(&e, dn_store(&server->dn, tagp, arg->store, out, ok) );
+            break;
+        case IMAP_CMD_EXPUNGE:
+            PROP(&e, require_selected(server, tagp, &valid) );
+            if(!valid) break;
+            PROP(&e, dn_expunge(&server->dn, tagp, out, ok) );
+            break;
+        case IMAP_CMD_COPY:
+            PROP(&e, require_selected(server, tagp, &valid) );
+            if(!valid) break;
+            PROP(&e, dn_copy(&server->dn, tagp, arg->copy, out, ok) );
+            break;
+        case IMAP_CMD_FETCH:
+            PROP(&e, require_selected(server, tagp, &valid) );
+            if(!valid) break;
+            // empty our writes before calling dn_fetch, which can write a lot
+            *ok = advance_writes(server);
+            if(!*ok) break;
+            PROP(&e, dn_fetch(&server->dn, tagp, &arg->fetch, out, ok) );
+            break;
+
+        // synchronous commands which must go to the dn_t //
+
+        case IMAP_CMD_CHECK:
+            PROP(&e, require_selected(server, tagp, &valid) );
+            if(!valid) break;
+            // true = always allow expunges, false = there is no uid mode
+            PROP(&e, dn_gather_updates(&server->dn, true, false, NULL, out) );
+            PROP(&e, respond_noop(tagp, out) );
+            break;
+        case IMAP_CMD_SEARCH:
+            PROP(&e, require_selected(server, tagp, &valid) );
+            if(!valid) break;
+            PROP(&e, dn_search(&server->dn, tagp, arg->search, out) );
+            break;
+        case IMAP_CMD_IDLE:
+            PROP(&e, require_selected(server, tagp, &valid) );
+            if(!valid) break;
+            PROP(&e, dn_idle(&server->dn, tagp, out) );
+            server->idle = true;
+            break;
+        case IMAP_CMD_IDLE_DONE:
+            PROP(&e, require_selected(server, tagp, &valid) );
+            if(!valid) break;
+            PROP(&e, dn_idle_done(&server->dn, arg->idle_done, out) );
+            server->idle = false;
+            break;
+
+        // unacceptable commands //
+        case IMAP_CMD_STARTTLS: {
+            bool insec = server->s->conn->security == IMAP_SEC_INSECURE;
+            PROP(&e, respond_bad_starttls(tagp, insec, &server->resps) );
+        } break;
+        case IMAP_CMD_AUTH:
+        case IMAP_CMD_LOGIN:
+            PROP(&e, RESP_BAD(tagp, "already logged in", out) );
+            break;
+
+        // unhandled commands //
+        case IMAP_CMD_ENABLE:
+        case IMAP_CMD_UNSELECT:
+        case IMAP_CMD_XKEYSYNC:
+        case IMAP_CMD_XKEYSYNC_DONE:
+        case IMAP_CMD_XKEYADD:
+        default:
+            PROP(&e, respond_not_supported(tagp, out) );
+    }
+
+    return e;
+}
+
+static derr_t advance_state_healthy(server_t *server, bool *done){
+    derr_t e = E_OK;
+
+    // wait for a command
+    bool ok = advance_reads(server);
+    if(!ok){
+        // if we didn't read any command but we are in IDLE, check for updates
+        if(server->idle){
+            // true = always allow expunges, false = there is no uid mode
+            PROP(&e,
+                dn_gather_updates(
+                    &server->dn, true, false, NULL, &server->resps
+                )
+            );
+        }
+        return e;
+    }
+
+    // process the command we read
+    PROP(&e, handle_cmd(server, &ok, done) );
+    if(!ok || *done) return e;
+
+    // we finished processing that command
+    imap_cmd_free(STEAL(imap_cmd_t, &server->cmd));
+
+    // start reading another command
+    (void)advance_reads(server);
+
+    return e;
+}
+
+static void advance_state(server_t *server){
+    if(is_error(server->e)) goto fail;
+    if(server->canceled || server->failed) goto cu;
+
+    // finish any writes we have in-flight
+    bool ok = advance_writes(server);
+    if(!ok) return;
+
+    bool done = false;
+    PROP_GO(&server->e, advance_state_healthy(server, &done), fail);
+    if(done) goto graceful_shutdown;
+
+    // start writing any new responses that came up
+    (void)advance_writes(server);
+
+    return;
+
+fail:
+    server->failed = true;
 
 cu:
-    server_free_select(server);
-
-    return e;
-}
-
-
-static derr_t do_work_close(server_t *server, bool *noop){
-    derr_t e = E_OK;
-
-    if(!server->close.awaiting_send) return e;
-    *noop = false;
-
-    PROP(&e, do_close(server, STEAL(ie_dstr_t, &server->close.tag)) );
-
-    server_free_close(server);
-    server->imap_state = AUTHENTICATED;
-
-    return e;
-}
-
-
-derr_t server_do_work(server_t *server, bool *noop){
-    derr_t e = E_OK;
-
-    if(server->closed) return e;
-
-    link_t *link;
-
-    // do any dn_t work
-    if(server->imap_state == SELECTED){
-        bool dn_noop;
-        do {
-            dn_noop = true;
-            PROP(&e, dn_do_work(&server->dn, &dn_noop) );
-            if(!dn_noop) *noop = false;
-        } while(!dn_noop);
+    if(server->selected){
+        // hard disconnect
+        dirmgr_close_dn(server->dirmgr, &server->dn);
+        server->selected = false;
     }
+    // XXX: tell client why we're shutting down?
+    imap_server_cancel(server->s);
+    if(!server->s->awaited) return;
 
-    // unhandled client commands from the client
-    while(!server_is_paused(server)
-            && (link = link_list_pop_first(&server->unhandled_cmds))){
-        imap_cmd_t *cmd = CONTAINER_OF(link, imap_cmd_t, link);
-        *noop = false;
+graceful_shutdown:
+    schedulable_cancel(&server->schedulable);
 
-        // detect if we need to just pass the command to the dn_t
-        if(server->imap_state == SELECTED && !intercept_cmd_type(cmd->type)){
-            // asynchronous commands must be awaited:
-            PROP(&e, server_await_if_async(server, cmd) );
-
-            PROP(&e, dn_cmd(&server->dn, cmd) );
-            continue;
-        }
-
-        PROP(&e, handle_one_command(server, cmd) );
+    derr_t e = server->e;
+    if(!is_error(e) && server->canceled){
+        e.type = E_CANCELED;
     }
+    server->awaited = true;
 
-    // check on pause actions
-    PROP(&e, do_work_passthru(server, noop) );
-    PROP(&e, do_work_select(server, noop) );
-    PROP(&e, do_work_close(server, noop) );
-    // no do_work_awaiting because that's always resolved in a dn_t callback
-    // no do_work_logout because that's always resolved in a dn_t callback
+    /* Note that we do not free ourselves before the await cb like a stream_i
+       would because of the legacy pattern where the fetcher_cb_i might cause
+       the sf_pair_i to pass an event back into our struct after we have
+       exited.  The sf_pair/server/fetcher/up/dn were written with a two-step
+       shutdown in mind: a synchronous dying event that cause everybody to stop
+       calling callbacks, and a release event where cleanup was done.  The
+       stream mechanics are cleaner, because there's just one event at a time,
+       but since I'm not fully rewriting the sf_pair/server/fetcher/up/dn, to
+       acommodate the fact that server/fetcher can trigger each other after
+       one is totally done means that only the sf_pair can know when it is
+       safe to free us.  Rewriting the sf_pair to only propagate callbacks in
+       advance_state would be sufficient to solve this problem... I think... */
 
-    return e;
+    server->cb->done(server->cb, e);
 }

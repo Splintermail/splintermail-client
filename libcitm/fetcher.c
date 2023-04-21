@@ -73,6 +73,7 @@ static void fetcher_finalize(refs_t *refs){
 static void fetcher_disconnect(fetcher_t *fetcher){
     if(!fetcher->up_active) return;
     dirmgr_close_up(fetcher->dirmgr, &fetcher->up);
+    // XXX
     up_free(&fetcher->up);
     fetcher->up_active = false;
     // if there was an unselect in flight, it's now invalid
@@ -512,6 +513,7 @@ static derr_t select_mailbox(fetcher_t *fetcher){
     derr_t e = E_OK;
 
     bool want_write = !fetcher->select.examine;
+    // XXX
     PROP_GO(&e,
         up_init(
             &fetcher->up, &fetcher->up_cb, &fetcher->ctrl.exts, want_write
@@ -531,6 +533,7 @@ static derr_t select_mailbox(fetcher_t *fetcher){
     return e;
 
 fail_up:
+    // XXX
     up_free(&fetcher->up);
 fail:
     fetcher_free_select(fetcher);

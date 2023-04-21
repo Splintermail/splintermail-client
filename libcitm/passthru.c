@@ -92,27 +92,25 @@ void passthru_req_arg_free(passthru_type_e type, passthru_req_arg_u arg){
     }
 }
 
-passthru_req_t *passthru_req_new(derr_t *e, ie_dstr_t *tag,
-        passthru_type_e type, passthru_req_arg_u arg){
+passthru_req_t *passthru_req_new(
+    derr_t *e, passthru_type_e type, passthru_req_arg_u arg
+){
     if(is_error(*e)) goto fail;
 
     IE_MALLOC(e, passthru_req_t, passthru_req, fail);
 
-    passthru_req->tag = tag;
     passthru_req->type = type;
     passthru_req->arg = arg;
 
     return passthru_req;
 
 fail:
-    ie_dstr_free(tag);
     passthru_req_arg_free(type, arg);
     return NULL;
 }
 
 void passthru_req_free(passthru_req_t *passthru_req){
     if(!passthru_req) return;
-    ie_dstr_free(passthru_req->tag);
     passthru_req_arg_free(passthru_req->type, passthru_req->arg);
     free(passthru_req);
 }
@@ -131,13 +129,16 @@ void passthru_resp_arg_free(passthru_type_e type, passthru_resp_arg_u arg){
     }
 }
 
-passthru_resp_t *passthru_resp_new(derr_t *e, ie_dstr_t *tag,
-        passthru_type_e type, passthru_resp_arg_u arg, ie_st_resp_t *st_resp){
+passthru_resp_t *passthru_resp_new(
+    derr_t *e,
+    passthru_type_e type,
+    passthru_resp_arg_u arg,
+    ie_st_resp_t *st_resp
+){
     if(is_error(*e)) goto fail;
 
     IE_MALLOC(e, passthru_resp_t, passthru_resp, fail);
 
-    passthru_resp->tag = tag;
     passthru_resp->type = type;
     passthru_resp->arg = arg;
     passthru_resp->st_resp = st_resp;
@@ -145,7 +146,6 @@ passthru_resp_t *passthru_resp_new(derr_t *e, ie_dstr_t *tag,
     return passthru_resp;
 
 fail:
-    ie_dstr_free(tag);
     passthru_resp_arg_free(type, arg);
     ie_st_resp_free(st_resp);
     return NULL;
@@ -153,7 +153,6 @@ fail:
 
 void passthru_resp_free(passthru_resp_t *passthru_resp){
     if(!passthru_resp) return;
-    ie_dstr_free(passthru_resp->tag);
     passthru_resp_arg_free(passthru_resp->type, passthru_resp->arg);
     ie_st_resp_free(passthru_resp->st_resp);
     free(passthru_resp);

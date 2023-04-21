@@ -35,10 +35,8 @@ typedef struct {
 
     // state flags
 
-    bool write_up_started : 1;
-    bool write_up_done : 1;
-    bool write_dn_started : 1;
-    bool write_dn_done : 1;
+    bool writing_up : 1;
+    bool writing_dn : 1;
     bool reading_up : 1;
     bool reading_dn : 1;
 
@@ -150,14 +148,14 @@ static void cread_cb(
 static void swrite_cb(imap_server_t *s, imap_server_write_t *req){
     (void)s;
     anon_t *anon = CONTAINER_OF(req, anon_t, swrite);
-    anon->write_dn_done = true;
+    anon->writing_dn = false;
     schedule(anon);
 }
 
 static void cwrite_cb(imap_client_t *c, imap_client_write_t *req){
     (void)c;
     anon_t *anon = CONTAINER_OF(req, anon_t, cwrite);
-    anon->write_up_done = true;
+    anon->writing_up = false;
     schedule(anon);
 }
 
@@ -166,18 +164,14 @@ static void cwrite_cb(imap_client_t *c, imap_client_write_t *req){
 // returns bool ok
 static bool advance_writes_up(anon_t *anon){
     // have we finished the last write?
-    if(anon->write_up_started){
-        if(!anon->write_up_done) return false;
-        anon->write_up_started = false;
-        anon->write_up_done = false;
-    }
+    if(anon->writing_up) return false;
 
     // should we start a new write?
     link_t *link;
     if((link = link_list_pop_first(&anon->cmds))){
         imap_cmd_t *cmd = CONTAINER_OF(link, imap_cmd_t, link);
         imap_client_must_write(anon->imap_up, &anon->cwrite, cmd, cwrite_cb);
-        anon->write_up_started = true;
+        anon->writing_up = true;
         return false;
     }
 
@@ -187,18 +181,14 @@ static bool advance_writes_up(anon_t *anon){
 // returns bool ok
 static bool advance_writes_dn(anon_t *anon){
     // have we finished the last write?
-    if(anon->write_dn_started){
-        if(!anon->write_dn_done) return false;
-        anon->write_dn_started = false;
-        anon->write_dn_done = false;
-    }
+    if(anon->writing_dn) return false;
 
     // should we start a new write?
     link_t *link;
     if((link = link_list_pop_first(&anon->resps))){
         imap_resp_t *resp = CONTAINER_OF(link, imap_resp_t, link);
         imap_server_must_write(anon->imap_dn, &anon->swrite, resp, swrite_cb);
-        anon->write_dn_started = true;
+        anon->writing_dn = true;
         return false;
     }
 

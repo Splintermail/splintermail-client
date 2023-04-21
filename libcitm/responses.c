@@ -3,6 +3,14 @@
 // right now, everybody always has the same extensions
 static extensions_t exts = { .idle = EXT_STATE_ON };
 
+static void free_response_list(link_t *temp){
+    link_t *link;
+    while((link = link_list_pop_first(temp))){
+        imap_resp_t *resp = CONTAINER_OF(link, imap_resp_t, link);
+        imap_resp_free(resp);
+    }
+}
+
 derr_t respond_st(
     ie_status_t st,
     ie_dstr_t **tagp,
@@ -13,7 +21,7 @@ derr_t respond_st(
     derr_t e = E_OK;
 
     ie_dstr_t *text = ie_dstr_new2(&e, msg);
-    ie_dstr_t *tag = STEAL(ie_dstr_t, tagp);
+    ie_dstr_t *tag = tagp ? STEAL(ie_dstr_t, tagp) : NULL;
     ie_st_code_t *code = codep ? STEAL(ie_st_code_t, codep) : NULL;
     ie_st_resp_t *st_resp = ie_st_resp_new(&e, tag, st, code, text);
     imap_resp_arg_t arg = { .status_type = st_resp };
@@ -86,7 +94,7 @@ derr_t respond_capas(
     return e;
 
 fail:
-    imap_resp_free(CONTAINER_OF(link_list_pop_first(&tmp), imap_resp_t, link));
+    free_response_list(&tmp);
     return e;
 }
 
@@ -108,7 +116,18 @@ derr_t respond_bad_starttls(ie_dstr_t **tagp, bool insec, link_t *out){
 
 derr_t respond_logout(ie_dstr_t **tagp, link_t *out){
     derr_t e = E_OK;
-    PROP(&e, RESP_BYE(tagp, "get offa my lawn!", out) );
+    link_t tmp = {0};
+    PROP_GO(&e, RESP_BYE(NULL, "goodbye, my love...", &tmp), fail);
+    PROP_GO(&e,
+        RESP_OK(tagp, "I'm gonna be strong, I can make it through this", &tmp),
+    fail);
+
+    link_list_append_list(out, &tmp);
+
+    return e;
+
+fail:
+    free_response_list(&tmp);
     return e;
 }
 
