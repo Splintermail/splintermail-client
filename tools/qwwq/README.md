@@ -9,8 +9,8 @@ embed the snippet results in the output.
 
 ## Execution Model
 
-There is to be a config file, which represents immutable, global variables,
-that can be referenced by the snippets in template files.
+There is a config file, which represents immutable, global variables, that can
+be referenced by the snippets in template files.
 
 The frontend qwwq-code is compiled into a stack-based runtime for execution.
 
@@ -78,7 +78,7 @@ Example instructions:
 
     LIST.N <a> <b> * <c>
 
-Note that this isn't a postfix operator, because there's not a good way to
+Note that this isn't a postfix operator because there's not a good way to
 know how many values to pop from the stack at runtime, with the `*` operator.
 
 ## Dicts
@@ -86,7 +86,7 @@ know how many values to pop from the stack at runtime, with the `*` operator.
 A dict object is the combination of a compiler-defined keymap, which maps
 string keys to integer indices, and a list of runtime values.
 
-Additionally, dict keys are normally evaluated lazily, unless they contain a
+Additionally, dict keys are normally evaluated lazily unless they contain a
 reference to a non-global parameter.
 
 Example dict code:
@@ -97,7 +97,7 @@ Example instructions:
 
     lazy.6 global.f1 "a" call.1.0 lazy.2 global.x dict.{a=0,b=1}
 
-Where "{a=0,b=1,c=2}" is the compile-time-defined keymap object.
+Where "{a=0,b=1}" is the compile-time-defined keymap object.
 
 When an expression inside a lazy object is discovered by the compiler to be a
 reference to non-global parameter from outside the scope of the lazy, that lazy
@@ -334,7 +334,7 @@ Like `lpad` but pad on the right of the string.
 
 ### `DICT.get(key)`
 
-Does a key lookup with a variable key (that the `.` operator does not support).
+Does a key lookup with a variable key, which the `.` operator does not support.
 Missing keys will cause execution to fail.
 
 ## Builtin Symbols
