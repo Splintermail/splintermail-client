@@ -671,3 +671,5 @@ fail:
 }
 
 // XXX: check e2e coverage, maybe add unit test
+/* XXX: kd->mailbox_synced() is not being called anywhere in the code right now
+        but you are pretty sure the server should be calling it */

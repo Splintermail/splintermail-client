@@ -14,7 +14,7 @@ struct server_cb_i {
 // the server-provided interface to the sf_pair
 // server handles the cases where it's already closing
 void server_passthru_resp(server_t *server, passthru_resp_t *passthru_resp);
-void server_select_result(server_t *server, ie_st_resp_t *st_resp);
+void server_selected(server_t *server);
 void server_unselected(server_t *server);
 
 struct server_t {
@@ -42,7 +42,7 @@ struct server_t {
     imap_server_write_t swrite;
 
     imap_cmd_t *cmd;
-    link_t resps; // imap_server_t->link
+    link_t resps; // imap_resp_t->link
 
     ie_dstr_t *tag;
     ie_st_resp_t *st_resp;

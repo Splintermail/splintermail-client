@@ -6,10 +6,8 @@ struct fetcher_cb_i;
 typedef struct fetcher_cb_i fetcher_cb_i;
 struct fetcher_cb_i {
     void (*done)(fetcher_cb_i*, derr_t error);
-
     void (*passthru_resp)(fetcher_cb_i*, passthru_resp_t *passthru_resp);
-    // *st_resp == NULL on successful SELECT
-    void (*select_result)(fetcher_cb_i*, ie_st_resp_t *st_resp);
+    void (*selected)(fetcher_cb_i*);
     void (*unselected)(fetcher_cb_i*);
 };
 
@@ -22,38 +20,42 @@ void fetcher_set_dirmgr(fetcher_t *fetcher, dirmgr_t *dirmgr);
 
 struct fetcher_t {
     fetcher_cb_i *cb;
-    const char *host;
-    const char *svc;
 
-    bool enqueued;
-
-    // offthread closing (for handling imap_session_t)
-    derr_t session_dying_error;
-
-    // XXX: needs setting in init
+    scheduler_i *scheduler;
+    schedulable_t schedulable;
+    imap_client_t *c;
     dirmgr_t *dirmgr;
 
-    bool closed;
-    // from upwards session
-    link_t unhandled_resps;  // imap_resp_t->link
+    imap_client_read_t cread;
+    imap_client_write_t cwrite;
 
-    // commands we sent upwards, but haven't gotten a response yet
-    link_t inflight_cmds;  // imap_cmd_cb_t->link
+    imap_resp_t *resp;
+    link_t cmds; // imap_cmd_t->link
 
-    size_t tag;
+    link_t cmd_cbs;  // cmd_cb_t->link
+
+    size_t ntags;
 
     // the interface we feed to the imaildir for server communication
     up_cb_i up_cb;
     up_t up;
-    // true after up_init()/dirmgr_open_up, until up_free()
-    bool up_active;
-    link_t pending_cmds;
 
-    // one-shot (never resets)
-    struct {
-        bool sent;
-        bool done;
-    } enable;
+    ie_mailbox_t *mailbox;
+
+    derr_t e;
+    bool failed : 1;
+    bool canceled : 1;
+    bool awaited : 1;  // the stream_i meaning of "awaited"
+
+    // true after dirmgr_open_up, until dirmgr_close_up
+    bool up_active : 1;
+
+    bool reading : 1;
+    bool writing : 1;
+
+    bool enable_sent : 1;
+
+    // XXX //////////////////////
 
     struct {
         passthru_req_t *req;
@@ -66,27 +68,23 @@ struct fetcher_t {
         bool needed;
         ie_mailbox_t *mailbox;
         bool examine;
-        bool unselected;
-        bool sent;
     } select;
 
     struct {
         bool needed;
     } close;
-
-    // unselect is like a sub-state-machine, used by select and close
-    struct {
-        bool sent;
-        // no .done; instead
-        bool done;
-    } unselect;
 };
+DEF_CONTAINER_OF(fetcher_t, schedulable, schedulable_t)
 DEF_CONTAINER_OF(fetcher_t, up_cb, up_cb_i)
 
-derr_t fetcher_init(
+void fetcher_prep(
     fetcher_t *fetcher,
+    scheduler_i *scheduler,
+    imap_client_t *c,
+    dirmgr_t *dirmgr,
     fetcher_cb_i *cb
 );
+
 void fetcher_start(fetcher_t *fetcher);
-void fetcher_close(fetcher_t *fetcher, derr_t error);
+void fetcher_cancel(fetcher_t *fetcher);
 void fetcher_free(fetcher_t *fetcher);

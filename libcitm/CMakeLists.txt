@@ -1,6 +1,5 @@
 sm_lib(
     libcitm
-    # fetcher.c
     # citm.c
     imap_server.c
     imap_client.c
@@ -9,7 +8,8 @@ sm_lib(
     preuser.c
     user.c
     server.c
-    # sf_pair.c
+    fetcher.c
+    sf_pair.c
     date.c
     fpr_watcher.c
     keydir.c

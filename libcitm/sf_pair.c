@@ -1,4 +1,5 @@
-#include "libcitm.h"
+#include "libcitm/libcitm.h"
+#include "libimaildir/msg_internal.h"
 
 DEF_CONTAINER_OF(sf_pair_t, schedulable, schedulable_t)
 DEF_CONTAINER_OF(sf_pair_t, server_cb, server_cb_i)
@@ -254,8 +255,8 @@ fail:
 cu:
     server_cancel(&sf_pair->server);
     fetcher_cancel(&sf_pair->fetcher);
-    if(!sf_pair->server->awaited) return;
-    if(!sf_pair->fetcher->awaited) return;
+    if(!sf_pair->server.awaited) return;
+    if(!sf_pair->fetcher.awaited) return;
 
     schedulable_cancel(&sf_pair->schedulable);
     sf_pair->awaited = true;
@@ -336,12 +337,10 @@ static void fetcher_cb_passthru_resp(
 }
 
 // part of the fetcher_cb_i
-static void fetcher_cb_select_result(
-    fetcher_cb_i *fetcher_cb, ie_st_resp_t *st_resp
-){
-    // printf("---- fetcher_cb_select_result\n");
+static void fetcher_cb_selected(fetcher_cb_i *fetcher_cb){
+    // printf("---- fetcher_cb_selected\n");
     sf_pair_t *sf_pair = CONTAINER_OF(fetcher_cb, sf_pair_t, fetcher_cb);
-    server_select_result(&sf_pair->server, st_resp);
+    server_selected(&sf_pair->server);
 }
 
 // part of the fetcher_cb_i
@@ -366,6 +365,7 @@ derr_t sf_pair_new(
 
     sf_pair_t *sf_pair = DMALLOC_STRUCT_PTR(&e, sf_pair);
     CHECK_GO(&e, fail);
+
     *sf_pair = (sf_pair_t){
         .scheduler = scheduler,
         .kd = kd,
@@ -380,28 +380,26 @@ derr_t sf_pair_new(
         .fetcher_cb = {
             .done = fetcher_cb_done,
             .passthru_resp = fetcher_cb_passthru_resp,
-            .select_result = fetcher_cb_select_result,
+            .selected = fetcher_cb_selected,
             .unselected = fetcher_cb_unselected,
         },
     };
 
-    PROP_GO(&e,
-        server_init(
-            &sf_pair->server,
-            scheduler,
-            STEAL(imap_server_t, &s),
-            &sf_pair->server_cb
-        ),
-    fail);
+    server_prep(
+        &sf_pair->server,
+        scheduler,
+        STEAL(imap_server_t, &s),
+        sf_pair->kd->dirmgr(sf_pair->kd),
+        &sf_pair->server_cb
+    );
 
-    PROP_GO(&e,
-        fetcher_init(
-            &sf_pair->fetcher,
-            scheduler,
-            STEAL(imap_client_t, &c),
-            &sf_pair->fetcher_cb
-        ),
-    fail_server);
+    fetcher_prep(
+        &sf_pair->fetcher,
+        scheduler,
+        STEAL(imap_client_t, &c),
+        sf_pair->kd->dirmgr(sf_pair->kd),
+        &sf_pair->fetcher_cb
+    );
 
     schedulable_prep(&sf_pair->schedulable, scheduled);
 
@@ -409,8 +407,6 @@ derr_t sf_pair_new(
 
     return e;
 
-fail_server:
-    server_free(&sf_pair->server);
 fail:
     imap_server_free(&s);
     imap_client_free(&c);

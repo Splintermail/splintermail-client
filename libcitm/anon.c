@@ -331,10 +331,7 @@ static derr_t process_login_resp(anon_t *anon, bool *ok){
         LOG_INFO("informational response: %x\n", FIRESP(resp));
     }else{
         ORIG_GO(&e,
-            E_RESPONSE,
-            "unexpected LOGIN response: %x",
-            cu,
-            FIRESP(resp)
+            E_RESPONSE, "unexpected LOGIN response: %x", cu, FIRESP(resp)
         );
     }
 

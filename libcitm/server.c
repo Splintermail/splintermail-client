@@ -36,25 +36,14 @@ static void schedule(server_t *server){
     server->scheduler->schedule(server->scheduler, &server->schedulable);
 }
 
-static void server_fail(server_t *server, derr_t e){
-    if(server->failed){
-        DROP_VAR(&e);
-    }else if(server->canceled){
-        DROP_CANCELED_VAR(&e);
-    }else{
-        UPGRADE_CANCELED_VAR(&e, E_INTERNAL);
-    }
-    KEEP_FIRST_IF_NOT_CANCELED_VAR(&server->e, &e);
-}
-
 void server_passthru_resp(server_t *server, passthru_resp_t *passthru_resp){
     server->passthru_resp = passthru_resp;
     schedule(server);
 }
 
-void server_select_result(server_t *server, ie_st_resp_t *st_resp){
+// XXX: rewrote this without status response, need to fixup state machine still
+void server_selected(server_t *server){
     server->select_responded = true;
-    server->st_resp = st_resp;
     schedule(server);
 }
 
@@ -71,8 +60,14 @@ static void await_cb(
     (void)writes;
     server_t *server = s->data;
     if(is_error(e)){
-        TRACE_PROP(&e);
-        server_fail(server, e);
+        if(server->failed){
+            DROP_VAR(&e);
+        }else if(server->canceled){
+            DROP_CANCELED_VAR(&e);
+        }else{
+            UPGRADE_CANCELED_VAR(&e, E_INTERNAL);
+        }
+        KEEP_FIRST_IF_NOT_CANCELED_VAR(&server->e, &e);
     }else if(s->logged_out){
         // logged out successfully
     }else{
@@ -102,20 +97,17 @@ void server_prep(
         .scheduler = scheduler,
         .s = s,
         .dirmgr = dirmgr,
-    };
-
-    server->dn_cb = (dn_cb_i){
-        .schedule = server_dn_schedule,
+        .dn_cb = { .schedule = server_dn_schedule },
     };
 
     schedulable_prep(&server->schedulable, scheduled);
-
-    server->s->data = server;
-    imap_server_must_await(server->s, await_cb, NULL);
 }
 
 void server_start(server_t *server){
-    // kick off our IO
+    // await our server
+    server->s->data = server;
+    imap_server_must_await(server->s, await_cb, NULL);
+    // start reading right away
     schedule(server);
 }
 
@@ -468,33 +460,9 @@ static derr_t advance_select(
     derr_t e = E_OK;
     *ok = false;
 
-    /* Ask the sf_pair for permission to SELECT the folder. Permission may not
-       be granted if e.g. the fetcher finds out the folder does not exist */
-    ONCE(server->select_requested){
-        ie_mailbox_t *m_copy = ie_mailbox_copy(&server->e, *mp);
-        CHECK(&e);
-        server->cb->select(server->cb, m_copy, examine);
-    }
-
-    if(!server->select_responded) return e;
-
-    ie_st_resp_t *st_resp = STEAL(ie_st_resp_t, &server->st_resp);
-    if(st_resp){
-        // select failed
-        ie_dstr_free(STEAL(ie_dstr_t, &st_resp->tag));
-        st_resp->tag = STEAL(ie_dstr_t, tagp);
-        // relay the st_resp to the client
-        imap_resp_arg_t arg = { .status_type = st_resp };
-        imap_resp_t *resp = imap_resp_new(
-            &e, IMAP_RESP_STATUS_TYPE, arg
-        );
-        // relay the st_resp to the client
-        send_resp(&e, server, resp);
-        CHECK(&e);
-    }else{
-        // select succeeded
+    // first select the mailbox ourselves
+    ONCE(server->selected){
         server->selected_mailbox = STEAL(ie_mailbox_t, mp);
-
         // open the dn_t and get the response to our select_cmd
         PROP(&e,
             dirmgr_open_dn(
@@ -503,17 +471,37 @@ static derr_t advance_select(
                 &server->dn,
                 &server->dn_cb,
                 &server->s->exts,
-                examine,
-                tagp,
-                &server->resps
+                examine
             )
         );
-        server->selected = true;
     }
 
-    server->select_responded = false;
+    // have the fetcher connect to the imaildir_t
+    ONCE(server->select_requested){
+        ie_mailbox_t *m_copy = ie_mailbox_copy(&server->e, *mp);
+        CHECK(&e);
+        server->cb->select(server->cb, m_copy, examine);
+    }
+
+    // wait for the up_t to finish connecting to imaidir_t
+    if(!server->select_responded) return e;
+
+    // wait for the dn to complete its SELECT response
+    bool success;
+    PROP(&e, dn_select(&server->dn, tagp, &server->resps, ok, &success) );
+    if(!*ok) return e;
+
+    YOU ARE HERE:
+    // Is it a good idea to let the fetcher be connected after SELECT failures?
+        // Probably not, since imaildir will cache an initial SELECT failure.
+        /* Certainly imaildir expects dn_ts and up_ts to "eventually" connect
+           or disconnect as pairs. */
+    // Why do we even require unselect of the fetcher?
+    // When we close, why does it need to participate in graceful closes?
+
     server->select_requested = false;
-    *ok = true;
+    server->select_responded = false;
+    server->selected = success;
 
     return e;
 }
@@ -947,6 +935,7 @@ graceful_shutdown:
     }
     server->awaited = true;
 
+    // XXX: reconsider
     /* Note that we do not free ourselves before the await cb like a stream_i
        would because of the legacy pattern where the fetcher_cb_i might cause
        the sf_pair_i to pass an event back into our struct after we have

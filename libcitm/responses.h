@@ -42,6 +42,10 @@ ie_dstr_t *build_capas(derr_t *e);
 
 ie_st_resp_t *match_info(const imap_resp_t *resp);
 
+ie_st_resp_t *match_prefix(
+    const imap_resp_t *resp, const dstr_t prefix, size_t *idx
+);
+
 ie_st_resp_t *match_tagged(
     const imap_resp_t *resp, const dstr_t prefix, size_t idx
 );

@@ -1,17 +1,34 @@
 #include "libcitm.h"
 
-// foward declarations
-static derr_t imap_event_new(
-    imap_event_t **out, fetcher_t *fetcher, imap_cmd_t *cmd
-);
-static derr_t advance_state(fetcher_t *fetcher);
+typedef derr_t (*cmd_cb_f)(fetcher_t *fetcher, imap_resp_t **respp);
 
-static void advance_state_or_close(fetcher_t *fetcher){
-    derr_t e = E_OK;
-    IF_PROP(&e, advance_state(fetcher)){
-        fetcher_close(fetcher, e);
-        PASSED(e);
-    }
+DSTR_STATIC(prefix, "fetcher");
+
+// we can pipline commands, so we keep a list of what to do when they finish
+typedef struct {
+    link_t link;
+    size_t tag;
+    cmd_cb_f cb;
+} cmd_cb_t;
+DEF_CONTAINER_OF(cmd_cb_t, link, link_t)
+
+static cmd_cb_t *cmd_cb_new(derr_t *e, size_t tag, cmd_cb_f cb){
+    if(is_error(*e)) goto fail;
+
+    cmd_cb_t *cmd_cb = DMALLOC_STRUCT_PTR(e, cmd_cb);
+    CHECK_GO(e, fail);
+    *cmd_cb = (cmd_cb_t){ .tag = tag, .cb = cb };
+
+    return cmd_cb;
+
+fail:
+    return NULL;
+}
+
+static void cmd_cb_free(cmd_cb_t *cmd_cb){
+    if(!cmd_cb) return;
+    link_remove(&cmd_cb->link);
+    free(cmd_cb);
 }
 
 static void fetcher_free_passthru(fetcher_t *fetcher){
@@ -25,8 +42,6 @@ static void fetcher_free_passthru(fetcher_t *fetcher){
 
 static void fetcher_free_select(fetcher_t *fetcher){
     fetcher->select.needed = false;
-    fetcher->select.unselected = false;
-    fetcher->select.sent = false;
     ie_mailbox_free(STEAL(ie_mailbox_t, &fetcher->select.mailbox));
     fetcher->select.examine = false;
 }
@@ -50,24 +65,100 @@ void fetcher_free(fetcher_t *fetcher){
     fetcher_free_unselect(fetcher);
 
     // free any imap cmds or resps laying around
+    imap_resp_free(fetcher->resp);
     link_t *link;
-    while((link = link_list_pop_first(&fetcher->unhandled_resps))){
-        imap_resp_t *resp = CONTAINER_OF(link, imap_resp_t, link);
-        imap_resp_free(resp);
+    while((link = link_list_pop_first(&fetcher->cmds))){
+        imap_cmd_t *cmd = CONTAINER_OF(link, imap_cmd_t, link);
+        imap_cmd_free(cmd);
     }
     // free any remaining fetcher_cb's
-    while((link = link_list_pop_first(&fetcher->inflight_cmds))){
-        imap_cmd_cb_t *cb = CONTAINER_OF(link, imap_cmd_cb_t, link);
-        cb->free(cb);
+    while((link = link_list_pop_first(&fetcher->cmd_cbs))){
+        cmd_cb_t *cmd_cb = CONTAINER_OF(link, cmd_cb_t, link);
+        cmd_cb_free(cmd_cb);
     }
-    imap_session_free(&fetcher->s);
-    return;
 }
 
-static void fetcher_finalize(refs_t *refs){
-    fetcher_t *fetcher = CONTAINER_OF(refs, fetcher_t, refs);
-    fetcher->cb->release(fetcher->cb);
+static void advance_state(fetcher_t *fetcher);
+
+static void scheduled(schedulable_t *s){
+    fetcher_t *fetcher = CONTAINER_OF(s, fetcher_t, schedulable);
+    advance_state(fetcher);
 }
+
+static void schedule(fetcher_t *fetcher){
+    if(fetcher->awaited) return;
+    fetcher->scheduler->schedule(fetcher->scheduler, &fetcher->schedulable);
+}
+
+#define ONCE(x) if(!x && (x = true))
+
+static void cread_cb(
+    imap_client_t *c, imap_client_read_t *req, imap_resp_t *resp
+){
+    (void)req;
+    fetcher_t *fetcher = c->data;
+    fetcher->reading = false;
+    fetcher->resp = resp;
+    schedule(fetcher);
+}
+
+// returns bool ok
+static bool advance_reads(fetcher_t *fetcher){
+    if(fetcher->resp) return true;
+    ONCE(fetcher->reading){
+        imap_client_must_read(fetcher->c, &fetcher->cread, cread_cb);
+    }
+    return false;
+}
+
+static void cwrite_cb(imap_client_t *c, imap_client_write_t *req){
+    (void)req;
+    fetcher_t *fetcher = c->data;
+    fetcher->writing = false;
+    schedule(fetcher);
+}
+
+// returns bool ok
+static bool advance_writes(fetcher_t *fetcher){
+    // do we have a write in flight?
+    if(fetcher->writing) return false;
+
+    // is there something to write?
+    link_t *link;
+    if((link = link_list_pop_first(&fetcher->cmds))){
+        imap_cmd_t *cmd = CONTAINER_OF(link, imap_cmd_t, link);
+        imap_client_must_write(fetcher->c, &fetcher->cwrite, cmd, cwrite_cb);
+        fetcher->writing = true;
+        return false;
+    }
+    return true;
+}
+
+static void await_cb(
+    imap_client_t *c, derr_t e, link_t *reads, link_t *writes
+){
+    // our reads and writes are static
+    (void)reads;
+    (void)writes;
+    fetcher_t *fetcher = c->data;
+    if(is_error(e)){
+        if(fetcher->failed){
+            DROP_VAR(&e);
+        }else if(fetcher->canceled){
+            DROP_CANCELED_VAR(&e);
+        }else{
+            UPGRADE_CANCELED_VAR(&e, E_INTERNAL);
+        }
+        KEEP_FIRST_IF_NOT_CANCELED_VAR(&fetcher->e, &e);
+    }else{
+        TRACE_ORIG(&e,
+            E_INTERNAL, "imap_client_t exited without error or logout"
+        );
+    }
+    schedule(fetcher);
+}
+
+// XXX /////////////////////////
 
 // disconnect from the maildir, this can happen many times for one fetcher_t
 static void fetcher_disconnect(fetcher_t *fetcher){
@@ -76,315 +167,59 @@ static void fetcher_disconnect(fetcher_t *fetcher){
     // XXX
     up_free(&fetcher->up);
     fetcher->up_active = false;
+    // XXX wtf is this?
     // if there was an unselect in flight, it's now invalid
     // (need_unselected() is written to deal with this)
     fetcher_free_unselect(fetcher);
 }
 
-void fetcher_close(fetcher_t *fetcher, derr_t error){
-    bool do_close = !fetcher->closed;
-    fetcher->closed = true;
-
-    if(!do_close){
-        // secondary errors get dropped
-        DROP_VAR(&error);
-        return;
-    }
-
-    // pass the error along to our owner
-    TRACE_PROP(&error);
-    fetcher->cb->dying(fetcher->cb, error);
-    PASSED(error);
-
-    /* TODO: if we are being closed externally, don't close the imap_session
-       until the up_t has had a chance to gracefully shut down, since it may
-       be in the middle of relaying commands on behalf of the imaildir_t which
-       are difficult to replay.  This would imply significant reconsideration
-       of how fetcher->closed is handled throughout the fetcher_t. */
-    imap_session_close(&fetcher->s.session, E_OK);
-
-    // disconnect from the imaildir
-    fetcher_disconnect(fetcher);
-
-    // drop lifetime reference
-    ref_dn(&fetcher->refs);
-}
-
-
-void fetcher_read_ev(fetcher_t *fetcher, event_t *ev){
-    if(fetcher->closed) return;
-
-    imap_event_t *imap_ev = CONTAINER_OF(ev, imap_event_t, ev);
-
-    // fetcher only accepts imap_resp_t's as EV_READs
-    if(imap_ev->type != IMAP_EVENT_TYPE_RESP){
-        LOG_ERROR("unallowed imap_cmd_t as EV_READ in fetcher\n");
-        return;
-    }
-
-    imap_resp_t *resp = STEAL(imap_resp_t, &imap_ev->arg.resp);
-
-    link_list_append(&fetcher->unhandled_resps, &resp->link);
-
-    advance_state_or_close(fetcher);
-}
-
-static void fetcher_enqueue(fetcher_t *fetcher){
-    if(fetcher->closed || fetcher->enqueued) return;
-    fetcher->enqueued = true;
-    // ref_up for wake_ev
-    ref_up(&fetcher->refs);
-    fetcher->engine->pass_event(fetcher->engine, &fetcher->wake_ev.ev);
-}
-
-static void fetcher_wakeup(wake_event_t *wake_ev){
-    fetcher_t *fetcher = CONTAINER_OF(wake_ev, fetcher_t, wake_ev);
-    fetcher->enqueued = false;
-    advance_state_or_close(fetcher);
-    // ref_dn for wake_ev
-    ref_dn(&fetcher->refs);
-}
-
 void fetcher_passthru_req(fetcher_t *fetcher, passthru_req_t *passthru_req){
     fetcher->passthru.req = passthru_req;
-    fetcher_enqueue(fetcher);
+    schedule(fetcher);
 }
 
 void fetcher_select(fetcher_t *fetcher, ie_mailbox_t *m, bool examine){
     fetcher->select.needed = true;
     fetcher->select.mailbox = m;
     fetcher->select.examine = examine;
-    fetcher_enqueue(fetcher);
+    schedule(fetcher);
 }
 
 void fetcher_unselect(fetcher_t *fetcher){
     // note: fetcher.unselect is a sub state machine; this starts fetcher.close
     fetcher->close.needed = true;
-    fetcher_enqueue(fetcher);
+    schedule(fetcher);
 }
 
 void fetcher_set_dirmgr(fetcher_t *fetcher, dirmgr_t *dirmgr){
     fetcher->dirmgr = dirmgr;
-    fetcher_enqueue(fetcher);
+    schedule(fetcher);
 }
 
-
-// session_mgr
-
-static void session_dying(manager_i *mgr, void *caller, derr_t error){
-    (void)caller;
-    fetcher_t *fetcher = CONTAINER_OF(mgr, fetcher_t, session_mgr);
-    LOG_INFO("session up dying\n");
-
-    /* ignore dying event and only pay attention to dead event, to shield
-       the citm objects from the extra asynchronicity */
-
-    // store the error for the close_onthread() call
-    fetcher->session_dying_error = error;
-    PASSED(error);
-}
-
-static void close_event_returner(event_t *ev){
-    fetcher_t *fetcher = ev->returner_arg;
-    // ref down for close_ev
-    ref_dn(&fetcher->refs);
-}
-
-static void session_dead(manager_i *mgr, void *caller){
-    (void)caller;
-    fetcher_t *fetcher = CONTAINER_OF(mgr, fetcher_t, session_mgr);
-
-    // send the close event to trigger fetcher_close()
-    event_prep(&fetcher->close_ev, close_event_returner, fetcher);
-    fetcher->close_ev.session = &fetcher->s.session;
-    fetcher->close_ev.ev_type = EV_SESSION_CLOSE;
-    fetcher->engine->pass_event(fetcher->engine, &fetcher->close_ev);
-}
-
-
-// up_cb_i
-
-
-static derr_t fetcher_up_cmd(up_cb_i *up_cb, imap_cmd_t *cmd){
-    derr_t e = E_OK;
+static void fetcher_up_schedule(up_cb_i *up_cb){
     fetcher_t *fetcher = CONTAINER_OF(up_cb, fetcher_t, up_cb);
-
-    // for now, just submit all maildir_up commands blindly
-    imap_event_t *imap_ev;
-    PROP_GO(&e, imap_event_new(&imap_ev, fetcher, cmd), fail);
-    imap_session_send_event(&fetcher->s, &imap_ev->ev);
-
-    return e;
-
-fail:
-    imap_cmd_free(cmd);
-    return e;
+    schedule(fetcher);
 }
 
-static void fetcher_up_selected(
-    up_cb_i *up_cb, ie_st_resp_t *st_resp
-){
-    fetcher_t *fetcher = CONTAINER_OF(up_cb, fetcher_t, up_cb);
-
-    /* This callback indicates the up_t has finished its initial SELECT.  This
-       can occur either due to an initial SELECT or due to an up_t promotion.
-       If an initial SELECT fails, we report it to the server_t.  If a
-       promotion-triggered SELECT fails, we just crash. */
-
-    // if there was no error, we don't do anything here
-    if(!st_resp) return;
-
-    if(fetcher->select.sent){
-        // an initial SELECT failed
-        fetcher_disconnect(fetcher);
-        fetcher->cb->select_result(fetcher->cb, st_resp);
-        fetcher_free_select(fetcher);
-    }else{
-        // a promition-triggered SELECT failed; just crash
-        derr_t e = E_OK;
-        TRACE_ORIG(&e, E_RESPONSE, "a re-SELECT failed somehow");
-        fetcher_close(fetcher, e);
-        PASSED(e);
-    }
-}
-
-static void fetcher_up_synced(up_cb_i *up_cb, bool examining){
-    fetcher_t *fetcher = CONTAINER_OF(up_cb, fetcher_t, up_cb);
-
-    /* This callback indicates one up_t (not necessarily ours) has finished
-       synchronizing.  It's not obvious if there is a corner-case where an
-       EXAMINE up_t might give us a synced signal even while we wait for a
-       SELECT up_t, so we detect and ignore that situation.  We also ignore
-       any extra signals after we have already seen our synced signal; the
-       assumption is that the window of desync would be so small as to be safe
-       to ignore */
-
-    // ignore reaching EXAMINE state if we want SELECT
-    if(examining && !fetcher->select.examine) return;
-
-    /* ignore duplicate calls; they can come when our up_t is promoted to
-       primary, long after we have sent a select_result to the server_t */
-    if(!fetcher->select.needed) return;
-
-    // otherwise, the dn_t is safe to connect and build its view
-    fetcher->cb->select_result(fetcher->cb, NULL);
-    fetcher_free_select(fetcher);
-}
-
-static void fetcher_up_idle_blocked(up_cb_i *up_cb){
-    fetcher_t *fetcher = CONTAINER_OF(up_cb, fetcher_t, up_cb);
-    // just let the caller of up_idle_block() find out by calling it again
-    fetcher_enqueue(fetcher);
-}
-
-static derr_t fetcher_up_unselected(up_cb_i *up_cb){
-    derr_t e = E_OK;
-
-    fetcher_t *fetcher = CONTAINER_OF(up_cb, fetcher_t, up_cb);
-    fetcher_disconnect(fetcher);
-
-    fetcher_enqueue(fetcher);
-
-    return e;
-}
-
-static void fetcher_up_enqueue(up_cb_i *up_cb){
-    fetcher_t *fetcher = CONTAINER_OF(up_cb, fetcher_t, up_cb);
-    fetcher_enqueue(fetcher);
-}
-
-
-static void fetcher_up_failure(up_cb_i *up_cb, derr_t error){
-    fetcher_t *fetcher = CONTAINER_OF(up_cb, fetcher_t, up_cb);
-    TRACE_PROP(&error);
-    fetcher_close(fetcher, error);
-    PASSED(error);
-}
-
-static void fetcher_session_owner_close(imap_session_t *s){
-    fetcher_t *fetcher = CONTAINER_OF(s, fetcher_t, s);
-    fetcher_close(fetcher, fetcher->session_dying_error);
-    PASSED(fetcher->session_dying_error);
-    // ref down for session
-    ref_dn(&fetcher->refs);
-}
-
-static void fetcher_session_owner_read_ev(imap_session_t *s, event_t *ev){
-    fetcher_t *fetcher = CONTAINER_OF(s, fetcher_t, s);
-    fetcher_read_ev(fetcher, ev);
-}
-
-derr_t fetcher_init(
+void fetcher_prep(
     fetcher_t *fetcher,
-    fetcher_cb_i *cb,
-    const char *host,
-    const char *svc,
-    imap_pipeline_t *p,
-    engine_t *engine,
-    ssl_context_t *ctx_cli
+    scheduler_i *scheduler,
+    imap_client_t *c,
+    dirmgr_t *dirmgr,
+    fetcher_cb_i *cb
 ){
     derr_t e = E_OK;
 
     *fetcher = (fetcher_t){
-        .session_owner = {
-            .close = fetcher_session_owner_close,
-            .read_ev = fetcher_session_owner_read_ev,
-        },
         .cb = cb,
-        .host = host,
-        .svc = svc,
-        .pipeline = p,
-        .engine = engine,
+        .scheduler = scheduler,
+        .c = c,
+        .dirmgr = dirmgr,
+        .up_cb = { .selected = fetcher_up_selected },
     };
 
-    fetcher->session_mgr = (manager_i){
-        .dying = session_dying,
-        .dead = session_dead,
-    };
-    fetcher->ctrl = (imape_control_i){
-        .exts = {
-            .uidplus = EXT_STATE_ON,
-            .enable = EXT_STATE_ON,
-            .condstore = EXT_STATE_ON,
-            .qresync = EXT_STATE_ON,
-            .unselect = EXT_STATE_ON,
-            .idle = EXT_STATE_ON,
-        },
-        .is_client = true,
-    };
+    schedulable_prep(&fetcher->schedulable, scheduled);
 
-    fetcher->up_cb = (up_cb_i){
-        .cmd = fetcher_up_cmd,
-        .selected = fetcher_up_selected,
-        .synced = fetcher_up_synced,
-        .idle_blocked = fetcher_up_idle_blocked,
-        .unselected = fetcher_up_unselected,
-        .enqueue = fetcher_up_enqueue,
-        .failure = fetcher_up_failure,
-    };
-
-    link_init(&fetcher->unhandled_resps);
-    link_init(&fetcher->inflight_cmds);
-
-    event_prep(&fetcher->wake_ev.ev, NULL, NULL);
-    fetcher->wake_ev.ev.ev_type = EV_INTERNAL;
-    fetcher->wake_ev.handler = fetcher_wakeup;
-
-    // start with a lifetime ref, an imap_session_t ref, and a close_ev ref
-    PROP(&e, refs_init(&fetcher->refs, 3, fetcher_finalize) );
-
-    // allocate memory for the session, but don't start it until later
-    imap_session_alloc_args_t arg_up = {
-        fetcher->pipeline,
-        &fetcher->session_mgr,
-        ctx_cli,
-        &fetcher->ctrl,
-        fetcher->engine,
-        host,
-        svc,
-        (terminal_t){0},
-    };
-    PROP_GO(&e, imap_session_alloc_connect(&fetcher->s, &arg_up), fail_refs);
 
     return e;
 
@@ -394,166 +229,67 @@ fail_refs:
 }
 
 void fetcher_start(fetcher_t *fetcher){
-    imap_session_start(&fetcher->s);
+    // await our client
+    fetcher->c->data = fetcher;
+    imap_client_must_await(fetcher->c, await_cb, NULL);
+    // start our ENABLE right away
+    schedule(fetcher);
 }
 
 
 //  IMAP LOGIC  ///////////////////////////////////////////////////////////////
 
-typedef struct {
-    fetcher_t *fetcher;
-    imap_cmd_cb_t cb;
-} fetcher_cb_t;
-DEF_CONTAINER_OF(fetcher_cb_t, cb, imap_cmd_cb_t)
-
-// fetcher_cb_free is an imap_cmd_cb_free_f
-static void fetcher_cb_free(imap_cmd_cb_t *cb){
-    if(!cb) return;
-    fetcher_cb_t *fcb = CONTAINER_OF(cb, fetcher_cb_t, cb);
-    imap_cmd_cb_free(&fcb->cb);
-    free(fcb);
-}
-
-static fetcher_cb_t *fetcher_cb_new(derr_t *e, fetcher_t *fetcher,
-        const ie_dstr_t *tag, imap_cmd_cb_call_f call, imap_cmd_t *cmd){
-    if(is_error(*e)) goto fail;
-
-    fetcher_cb_t *fcb = malloc(sizeof(*fcb));
-    if(!fcb) ORIG_GO(e, E_NOMEM, "nomem", fail);
-    *fcb = (fetcher_cb_t){
-        .fetcher = fetcher,
-    };
-
-    imap_cmd_cb_init(e, &fcb->cb, tag, call, fetcher_cb_free);
-
-    CHECK_GO(e, fail_malloc);
-
-    return fcb;
-
-fail_malloc:
-    free(fcb);
-fail:
-    imap_cmd_free(cmd);
-    return NULL;
-}
-
-static void fetcher_imap_ev_returner(event_t *ev){
-    fetcher_t *fetcher = ev->returner_arg;
-
-    imap_event_t *imap_ev = CONTAINER_OF(ev, imap_event_t, ev);
-    imap_cmd_free(imap_ev->arg.cmd);
-    free(imap_ev);
-
-    // one less unreturned event
-    ref_dn(&fetcher->refs);
-}
-
-static derr_t imap_event_new(
-    imap_event_t **out, fetcher_t *fetcher, imap_cmd_t *cmd
-){
-    derr_t e = E_OK;
-    *out = NULL;
-
-    imap_event_t *imap_ev = malloc(sizeof(*imap_ev));
-    if(!imap_ev) ORIG(&e, E_NOMEM, "nomem");
-    *imap_ev = (imap_event_t){
-        .type = IMAP_EVENT_TYPE_CMD,
-        .arg = { .cmd = cmd },
-    };
-
-    event_prep(&imap_ev->ev, fetcher_imap_ev_returner, fetcher);
-    imap_ev->ev.session = &fetcher->s.session;
-    imap_ev->ev.ev_type = EV_WRITE;
-
-    // one more unreturned event
-    ref_up(&fetcher->refs);
-
-    *out = imap_ev;
-    return e;
-}
-
-static ie_dstr_t *write_tag(derr_t *e, size_t tag){
-    if(is_error(*e)) goto fail;
-
-    DSTR_VAR(buf, 32);
-    PROP_GO(e, FMT(&buf, "fetcher%x", FU(tag)), fail);
-
-    return ie_dstr_new(e, &buf, KEEP_RAW);
-
-fail:
-    return NULL;
+static ie_dstr_t *mktag(derr_t *e, size_t tag){
+    if(is_error(*e)) return NULL;
+    DSTR_VAR(buf, 64);
+    IF_PROP(e, FMT(&buf, "fetcher%x", FU(tag)) ){
+        return NULL;
+    }
+    return ie_dstr_new2(e, buf);
 }
 
 // send a command and store its callback
-static void send_cmd(derr_t *e, fetcher_t *fetcher, imap_cmd_t *cmd,
-        fetcher_cb_t *fcb){
+static void send_cmd(
+    derr_t *e,
+    fetcher_t *fetcher,
+    imap_cmd_type_t type,
+    imap_cmd_arg_t arg,
+    cmd_cb_f cb
+){
     if(is_error(*e)) goto fail;
 
-    cmd = imap_cmd_assert_writable(e, cmd, &fetcher->ctrl.exts);
+    size_t tag = ++fetcher->ntags;
+    ie_dstr_t *tagstr = mktag(e, tag);
+    imap_cmd_t *cmd = imap_cmd_new(&e, tagstr, type, arg);
+    cmd = imap_cmd_assert_writable(e, cmd, &fetcher->c->exts);
     CHECK_GO(e, fail);
 
-    // store the callback
-    link_list_append(&fetcher->inflight_cmds, &fcb->cb.link);
+    cmd_cb_t *cmd_cb = cmd_cb_new(e, tag, cb);
+    CHECK_GO(e, fail_cmd);
 
-    // create a command event
-    imap_event_t *imap_ev;
-    PROP_GO(e, imap_event_new(&imap_ev, fetcher, cmd), fail);
-
-    // send the command to the imap session
-    imap_session_send_event(&fetcher->s, &imap_ev->ev);
+    link_list_append(&fetcher->cmds, &cmd->link);
+    link_list_append(&fetcher->cmd_cbs, &cmd_cb->link);
 
     return;
 
 fail:
+    imap_cmd_arg_free(type, arg);
+    return;
+
+fail_cmd:
     imap_cmd_free(cmd);
-    fetcher_cb_free(&fcb->cb);
+    return;
 }
 
-static derr_t select_mailbox(fetcher_t *fetcher){
+// passthru_done is an cmd_cb_f
+static derr_t passthru_done(fetcher_t *fetcher, ie_st_resp_t **st_respp){
     derr_t e = E_OK;
-
-    bool want_write = !fetcher->select.examine;
-    // XXX
-    PROP_GO(&e,
-        up_init(
-            &fetcher->up, &fetcher->up_cb, &fetcher->ctrl.exts, want_write
-        ),
-    fail);
-
-    const dstr_t *dir_name = ie_mailbox_name(fetcher->select.mailbox);
-
-    PROP_GO(&e,
-        dirmgr_open_up(fetcher->dirmgr, dir_name, &fetcher->up),
-    fail_up);
-
-    fetcher->up_active = true;
-
-    // the up_t takes care of the rest
-
-    return e;
-
-fail_up:
-    // XXX
-    up_free(&fetcher->up);
-fail:
-    fetcher_free_select(fetcher);
-    return e;
-}
-
-// passthru_done is an imap_cmd_cb_call_f
-static derr_t passthru_done(imap_cmd_cb_t *cb,
-        const ie_st_resp_t *st_resp){
-    derr_t e = E_OK;
-
-    fetcher_cb_t *fcb = CONTAINER_OF(cb, fetcher_cb_t, cb);
-    fetcher_t *fetcher = fcb->fetcher;
 
     // send out the response
     passthru_resp_t *passthru_resp = passthru_resp_new(&e,
-        STEAL(ie_dstr_t, &fetcher->passthru.req->tag),
         fetcher->passthru.type,
         STEAL(passthru_resp_arg_u, &fetcher->passthru.arg),
-        ie_st_resp_copy(&e, st_resp)
+        STEAL(ie_resp_t, strespp)
     );
 
     // let go of the passthru_req
@@ -630,6 +366,7 @@ static derr_t send_passthru(fetcher_t *fetcher){
     derr_t e = E_OK;
 
     passthru_type_e type = fetcher->passthru.req->type;
+    imap_cmd_arg_t *oldarg = &fetcher->passthru.req->arg;
 
     fetcher->passthru.type = type;
     fetcher->passthru.arg = (passthru_resp_arg_u){0};
@@ -638,8 +375,7 @@ static derr_t send_passthru(fetcher_t *fetcher){
     switch(type){
         case PASSTHRU_LIST:
             // steal the imap command
-            imap_arg.list = fetcher->passthru.req->arg.list;
-            fetcher->passthru.req->arg.list = NULL;
+            imap_arg.list = STEAL(imap_list_cmd_t, &arg->list);
             // set the imap type
             imap_type = IMAP_CMD_LIST;
             // prepare the passthru arg
@@ -648,109 +384,60 @@ static derr_t send_passthru(fetcher_t *fetcher){
             break;
 
         case PASSTHRU_LSUB:
-            // steal the imap command
-            imap_arg.list = fetcher->passthru.req->arg.list;
-            fetcher->passthru.req->arg.list = NULL;
-            // set the imap type
+            imap_arg.lsub = STEAL(imap_list_cmd_t, &arg->lsub);
             imap_type = IMAP_CMD_LSUB;
-            // prepare the passthru arg
             fetcher->passthru.arg.lsub = passthru_lsub_resp_new(&e);
             CHECK(&e);
             break;
 
         case PASSTHRU_STATUS:
-            // steal the imap command
-            imap_arg.status = fetcher->passthru.req->arg.status;
-            fetcher->passthru.req->arg.status = NULL;
-            // set the imap type
+            imap_arg.status = STEAL(ie_status_cmd_t, &arg->status);
             imap_type = IMAP_CMD_STATUS;
-            // prepare the passthru arg
             fetcher->passthru.arg.status = NULL;
             break;
 
         case PASSTHRU_CREATE:
-            // steal the imap command
-            imap_arg.create = fetcher->passthru.req->arg.create;
-            fetcher->passthru.req->arg.create = NULL;
-            // set the imap type
+            imap_arg.create = STEAL(ie_create_cmd_t, &arg->create);
             imap_type = IMAP_CMD_CREATE;
-            // prepare the passthru arg
-            // (nothing to do)
             break;
 
         case PASSTHRU_DELETE:
-            // steal the imap command
-            imap_arg.delete = fetcher->passthru.req->arg.delete;
-            fetcher->passthru.req->arg.delete = NULL;
-            // set the imap type
+            imap_arg.delete = STEAL(ie_delete_cmd_t, &arg->delete);
             imap_type = IMAP_CMD_DELETE;
-            // prepare the passthru arg
-            // (nothing to do)
             break;
 
         case PASSTHRU_RENAME:
-            // steal the imap command
-            imap_arg.rename = fetcher->passthru.req->arg.rename;
-            fetcher->passthru.req->arg.rename = NULL;
-            // set the imap type
+            imap_arg.rename = STEAL(ie_rename_cmd_t, &arg->rename);
             imap_type = IMAP_CMD_RENAME;
-            // prepare the passthru arg
-            // (nothing to do)
             break;
 
         case PASSTHRU_SUB:
-            // steal the imap command
-            imap_arg.sub = fetcher->passthru.req->arg.sub;
-            fetcher->passthru.req->arg.sub = NULL;
-            // set the imap type
+            imap_arg.sub = STEAL(ie_sub_cmd_t, &arg->sub);
             imap_type = IMAP_CMD_SUB;
-            // prepare the passthru arg
-            // (nothing to do)
             break;
 
         case PASSTHRU_UNSUB:
-            // steal the imap command
-            imap_arg.unsub = fetcher->passthru.req->arg.unsub;
-            fetcher->passthru.req->arg.unsub = NULL;
-            // set the imap type
+            imap_arg.unsub = STEAL(ie_unsub_cmd_t, &arg->unsub);
             imap_type = IMAP_CMD_UNSUB;
-            // prepare the passthru arg
-            // (nothing to do)
             break;
 
         case PASSTHRU_APPEND:
-            // steal the imap command
-            imap_arg.append = fetcher->passthru.req->arg.append;
-            fetcher->passthru.req->arg.append = NULL;
-            // set the imap type
+            imap_arg.append = STEAL(ie_append_cmd_t, &arg->append);
             imap_type = IMAP_CMD_APPEND;
-            // prepare the passthru arg
-            // (nothing to do)
             break;
     }
 
-    size_t tag = ++fetcher->tag;
-    ie_dstr_t *tag_str = write_tag(&e, tag);
-    imap_cmd_t *cmd = imap_cmd_new(&e, tag_str, imap_type, imap_arg);
-
-    // build the callback
-    fetcher_cb_t *fcb =
-        fetcher_cb_new(&e, fetcher, tag_str, passthru_done, cmd);
-
-    // store the callback and send the command
-    send_cmd(&e, fetcher, cmd, fcb);
+    send_cmd(&e, fetcher, imap_type, imap_arg, passthru_done);
+    CHECk(&e);
 
     return e;
 }
 
-// enable_done is an imap_cmd_cb_call_f
-static derr_t enable_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
+// enable_done is an cmd_cb_f
+static derr_t enable_done(fetcher_t *f, ie_st_resp_t **st_respp){
     derr_t e = E_OK;
 
-    fetcher_cb_t *fcb = CONTAINER_OF(cb, fetcher_cb_t, cb);
-    fetcher_t *fetcher = fcb->fetcher;
-
-    if(st_resp->status != IE_ST_OK){
+    if((*st_respp)->status != IE_ST_OK){
         ORIG(&e, E_PARAM, "enable failed\n");
     }
 
@@ -806,29 +493,20 @@ static derr_t send_enable(fetcher_t *fetcher){
     ie_dstr_t *eall = ie_dstr_add(&e, ecs, eqr);
     imap_cmd_arg_t arg = { .enable=eall };
 
-    size_t tag = ++fetcher->tag;
-    ie_dstr_t *tag_str = write_tag(&e, tag);
-    imap_cmd_t *cmd = imap_cmd_new(&e, tag_str, IMAP_CMD_ENABLE, arg);
-
-    // build the callback
-    fetcher_cb_t *fcb = fetcher_cb_new(&e, fetcher, tag_str, enable_done, cmd);
-
     // store the callback and send the command
-    send_cmd(&e, fetcher, cmd, fcb);
+    send_cmd(&e, fetcher, IMAP_CMD_ENABLE, arg, enable_done);
+    CHECK(&e);
 
     return e;
 }
 
 //////////////////////////////////////////////////////////////
 
-// capas_done is an imap_cmd_cb_call_f
-static derr_t capas_done(imap_cmd_cb_t *cb, const ie_st_resp_t *st_resp){
+// capas_done is an cmd_cb_f
+static derr_t capas_done(fetcher_t *fetcher, ie_st_resp_t **st_respp){
     derr_t e = E_OK;
 
-    fetcher_cb_t *fcb = CONTAINER_OF(cb, fetcher_cb_t, cb);
-    fetcher_t *fetcher = fcb->fetcher;
-
-    if(st_resp->status != IE_ST_OK){
+    if((*st_respp)->status != IE_ST_OK){
         ORIG(&e, E_PARAM, "capas failed\n");
     }
 
@@ -920,16 +598,8 @@ static derr_t send_capas(fetcher_t *fetcher){
 
     // issue the capability command
     imap_cmd_arg_t arg = {0};
-    // finish constructing the imap command
-    size_t tag = ++fetcher->tag;
-    ie_dstr_t *tag_str = write_tag(&e, tag);
-    imap_cmd_t *cmd = imap_cmd_new(&e, tag_str, IMAP_CMD_CAPA, arg);
-
-    // build the callback
-    fetcher_cb_t *fcb = fetcher_cb_new(&e, fetcher, tag_str, capas_done, cmd);
-
-    // store the callback and send the command
-    send_cmd(&e, fetcher, cmd, fcb);
+    send_cmd(&e, fetcher, IMAP_CMD_CAPA, arg, capas_done);
+    CHECK(&e);
 
     return e;
 }
@@ -1025,6 +695,104 @@ static derr_t untagged_status_type(fetcher_t *fetcher, const ie_st_resp_t *st){
         default:
             TRACE(&e, "invalid status of unknown type %x\n", FU(st->status));
             ORIG(&e, E_INTERNAL, "bad imap parse");
+    }
+
+    return e;
+}
+
+static derr_t handle_response(fetcher_t *fetcher){
+    derr_t e = E_OK;
+
+    imap_resp_t *resp = fetcher->resp;
+    imap_resp_arg_t *arg = &resp->arg;
+    size_t got_tag;
+
+    switch(resp->type){
+
+        // status-type responses //
+
+        case IMAP_RESP_STATUS_TYPE:
+            // is it one of ours?
+            if(match_prefix(resp, prefix, &got_tag)){
+                // one of ours
+                cmd_cb_t *cmd_cb =
+                    CONTAINER_OF(fetcher->cbs.next, cmd_cb_t, link);
+                if(!cmd_cb){
+                    ORIG(&e, E_RESPONSE, "got unexpected fetcher response");
+                }
+                if(cmd_cb->tag != got_tag){
+                    ORIG(&e,
+                        E_RESPONSE,
+                        "expected fetcher%x but got fetcher %x",
+                        FU(cmd_cb->tag), FU(got_tag)
+                    );
+                }
+                // matched our next tagged response
+                PROP(&e, cmd_cb->cb(fetcher, &arg->st_resp) );
+                cmd_cb_free(cmd_cb);
+                break;
+            }
+            if(fetcher->up_active){
+                // while up is active, we default to sending st_resp it
+                PROP(&e, up_st_resp(&fetcher->up, arg->st_resp) );
+                break;
+            }
+            if(match_info(resp)){
+                // informational response
+                LOG_INFO("informational response: %x\n", FIRESP(resp));
+                break;
+            }
+            ORIG(&e, E_RESPONSE, "unexpected response: %x", cu, FIRESP(resp));
+            break;
+
+        // our responses //
+
+        case IMAP_RESP_CAPA:
+            PROP(&e, capa_resp(fetcher, arg->capa) );
+            break;
+        case IMAP_RESP_LIST:
+            PROP(&e, list_resp(fetcher, arg->list) );
+            break;
+        case IMAP_RESP_LSUB:
+            PROP(&e, lsub_resp(fetcher, arg->lsub) );
+            break;
+        case IMAP_RESP_STATUS:
+            PROP(&e, status_resp(fetcher, arg->status) );
+            break;
+        case IMAP_RESP_ENABLED:
+            PROP(&e, enabled_resp(fetcher, arg->enabled) );
+            break;
+
+        // up_t's responses //
+
+        case IMAP_RESP_FETCH:
+            PROP(&e, up_fetch_resp(&fetcher->up, arg->fetch) );
+            break;
+
+        case IMAP_RESP_VANISHED:
+            PROP(&e, up_vanished_resp(&fetcher->up, arg->vanished) );
+            break;
+
+        case IMAP_RESP_EXISTS:
+            PROP(&e, up_exists_resp(&fetcher->up, arg->exists) );
+            break;
+
+        case IMAP_RESP_PLUS:
+            PROP(&e, up_plus_resp(&fetcher->up) );
+            break;
+
+        // ignored responses //
+
+        case IMAP_RESP_FLAGS:
+        case IMAP_RESP_RECENT:
+            break;
+
+        // disallowed responses //
+
+        case IMAP_RESP_EXPUNGE:
+        case IMAP_RESP_SEARCH:
+        case IMAP_RESP_XKEYSYNC:
+            ORIG(&e, E_INTERNAL, "invalid response: %x", FIRESP(resp));
     }
 
     return e;
@@ -1148,28 +916,7 @@ static derr_t handle_all_responses(fetcher_t *fetcher){
     return e;
 }
 
-static derr_t need_unselected(fetcher_t *fetcher, bool *ok){
-    derr_t e = E_OK;
-    *ok = false;
-
-    if(!fetcher->up_active){
-        *ok = true;
-        return e;
-    }
-
-    if(!fetcher->unselect.sent){
-        fetcher->unselect.sent = true;
-        // up_unselected() may occur immediately, calling fetcher_free_unselect
-        PROP(&e, up_unselect(&fetcher->up) );
-    }
-
-    if(fetcher->up_active) return e;
-    *ok = true;
-
-    return e;
-}
-
-static derr_t advance_state_passthru(fetcher_t *fetcher){
+static derr_t advance_passthru(fetcher_t *fetcher){
     derr_t e = E_OK;
 
     if(!fetcher->passthru.req) return e;
@@ -1194,35 +941,56 @@ static derr_t advance_state_passthru(fetcher_t *fetcher){
     return e;
 }
 
-static derr_t advance_state_select(fetcher_t *fetcher){
+static derr_t need_unselected(fetcher_t *fetcher, bool *ok){
     derr_t e = E_OK;
 
-    if(!fetcher->select.needed) return e;
-
-
-    bool ok;
-
-    // do we need to unselect something first?
-    if(!fetcher->select.unselected){
-        PROP(&e, need_unselected(fetcher, &ok) );
-        if(!ok) return e;
-        fetcher->select.unselected = true;
+    if(!fetcher->up_active){
+        *ok = true;
+        return e;
     }
 
-    // do we need to send the SELECT?
-    if(!fetcher->select.sent){
-        // ensure we have a dirmgr first
-        if(!fetcher->dirmgr) return e;
-        fetcher->select.sent = true;
-        PROP(&e, select_mailbox(fetcher) );
-    }
+    PROP(&e, up_unselect(&fetcher->up, &fetcher->cmds, ok) );
+    if(!*ok) return e;
 
-    // final steps happen in up_selected or up_synced callback
+    // done with our up_t
+    dirmgr_close_up(&fetcher->up);
+    fetcher->up_active = false;
 
     return e;
 }
 
-static derr_t advance_state_close(fetcher_t *fetcher){
+static derr_t advance_select(fetcher_t *fetcher){
+    derr_t e = E_OK;
+
+    if(!fetcher->select.needed) return e;
+
+    bool ok;
+
+    // make sure we have nothing selected first
+    PROP(&e, need_unselected(fetcher, &ok) );
+    if(!ok) return e;
+
+    const dstr_t *dir_name = ie_mailbox_name(fetcher->select.mailbox);
+    PROP(&e,
+        dirmgr_open_up(
+            &fetcher->dirmgr,
+            dir_name,
+            &fetcher->up,
+            &fetcher->up_cb,
+            &fetcher->c->exts
+        )
+    );
+    fetcher->up_active = true;
+
+    // tell the server_t we connected to the imaildir_t
+    fetcher->cb->selected(fetcher->cb);
+
+    fetcher_free_select(fetcher);
+
+    return e;
+}
+
+static derr_t advance_close(fetcher_t *fetcher){
     derr_t e = E_OK;
 
     if(!fetcher->close.needed) return e;
@@ -1238,35 +1006,73 @@ static derr_t advance_state_close(fetcher_t *fetcher){
     return e;
 }
 
-static derr_t advance_state(fetcher_t *fetcher){
-    derr_t e = E_OK;
+static void advance_state(fetcher_t *fetcher){
+    if(is_error(fetcher->e)) goto fail;
+    if(fetcher->failed || fetcher->canceled) goto cu;
 
-    if(fetcher->closed) return e;
+    // send one ENABLE command, and fail asynchronously if it fails
+    ONCE(fetcher->enable_sent) PROP_GO(&e, send_enable(fetcher), fail);
 
     // read any incoming responses
-    PROP(&e, handle_all_responses(fetcher) );
-
-    // send the enable command
-    if(!fetcher->enable.done){
-        if(!fetcher->enable.sent){
-            fetcher->enable.sent = true;
-            PROP(&e, send_enable(fetcher) );
-        }
-        return e;
-    }
-
-    // -- now we can actually have an up_t --
-
-    // always let the up_t do work
-    if(fetcher->up_active){
-        PROP(&e, up_advance_state(&fetcher->up) );
+    bool ok = advance_reads(fetcher);
+    if(ok){
+        PROP_GO(&e, handle_all_responses(fetcher), fail);
+        // handled that response...
+        imap_resp_free(&fetcher->resp);
+        // ... get started reading another
+        (void)advance_reads(fetcher);
     }
 
     /* these remaining operations originate with the server_t and the server_t
        must make sure only one can be active at a time */
-    PROP(&e, advance_state_passthru(fetcher) );
-    PROP(&e, advance_state_select(fetcher) );
-    PROP(&e, advance_state_close(fetcher) );
+    PROP_GO(&e, advance_passthru(fetcher), fail);
+    PROP_GO(&e, advance_select(fetcher), fail);
+    PROP_GO(&e, advance_close(fetcher), fail);
+
+    // always let the up_t do work
+    if(fetcher->up_active){
+        PROP_GO(&e, up_advance_state(&fetcher->up, &fetcher->cmds), fail);
+    }
+
+    // write anything we can
+    (void)advance_writes(fetcher);
 
     return e;
+
+fail:
+    fetcher->failed = true;
+
+cu:
+    // XXX: disconnect softer, so our up_t can finish relaying any cmds
+    if(fetcher->up_active){
+        // hard disconnect
+        dirmgr_close_up(fetcher->dirmgr, &fetcher->up);
+        fetcher->up_active = false;
+    }
+    imap_client_cancel(fetcher->c);
+    if(!fetcher->c->awaited) return;
+
+    schedulable_cancel(&fetcher->schedulable);
+
+    derr_t e = fetcher->e;
+    if(!is_error(e) && fetcher->canceled){
+        e.type = E_CANCELED;
+    }
+    fetcher->awaited = true;
+
+    // XXX: reconsider
+    /* Note that we do not free ourselves before the await cb like a stream_i
+       would because of the legacy pattern where the fetcher_cb_i might cause
+       the sf_pair_i to pass an event back into our struct after we have
+       exited.  The sf_pair/server/fetcher/up/dn were written with a two-step
+       shutdown in mind: a synchronous dying event that cause everybody to stop
+       calling callbacks, and a release event where cleanup was done.  The
+       stream mechanics are cleaner, because there's just one event at a time,
+       but since I'm not fully rewriting the sf_pair/server/fetcher/up/dn, to
+       acommodate the fact that server/fetcher can trigger each other after
+       one is totally done means that only the sf_pair can know when it is
+       safe to free us.  Rewriting the sf_pair to only propagate callbacks in
+       advance_state would be sufficient to solve this problem... I think... */
+
+    fetcher->cb->done(fetcher->cb, e);
 }

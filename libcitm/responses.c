@@ -176,17 +176,27 @@ ie_st_resp_t *match_info(const imap_resp_t *resp){
     return st;
 }
 
-ie_st_resp_t *match_tagged(
-    const imap_resp_t *resp, const dstr_t prefix, size_t idx
+ie_st_resp_t *match_prefix(
+    const imap_resp_t *resp, const dstr_t prefix, size_t *idx
 ){
+    *idx = SIZE_MAX;
     if(resp->type != IMAP_RESP_STATUS_TYPE) return NULL;
     ie_st_resp_t *st = resp->arg.status_type;
     if(!st->tag) return NULL;
     const dstr_t tag = st->tag->dstr;
     if(!dstr_beginswith2(tag, prefix)) return NULL;
-    size_t tag_idx;
     const dstr_t suffix = dstr_sub2(tag, prefix.len, SIZE_MAX);
-    derr_type_t etype = dstr_tosize_quiet(suffix, &tag_idx, 10);
-    if(etype != E_NONE || tag_idx != idx) return NULL;
+    derr_type_t etype = dstr_tosize_quiet(suffix, &idx, 10);
+    if(etype != E_NONE) return NULL;
+    return st;
+}
+
+ie_st_resp_t *match_tagged(
+    const imap_resp_t *resp, const dstr_t prefix, size_t idx
+){
+    size_t got_idx;
+    ie_st_resp_t *st = match_prefix(resp, prefix, &got_idx);
+    if(!st) return NULL;
+    if(got_idx != idx) return NULL;
     return st;
 }
