@@ -66,7 +66,9 @@ size_t dirmgr_new_tmp_id(dirmgr_t *dirmgr);
 
 /* open a maildir, or, if the maildir is already open, register the new
    connections with the existing maildir */
-derr_t dirmgr_open_up(dirmgr_t *dm, const dstr_t *name, up_t *up);
+derr_t dirmgr_open_up(
+    dirmgr_t *dm, const dstr_t *name, up_t *up, up_cb_i *cb, extensions_t *exts
+);
 derr_t dirmgr_open_dn(
     dirmgr_t *dm,
     const dstr_t *name,
@@ -74,9 +76,7 @@ derr_t dirmgr_open_dn(
     dn_t *dn,
     dn_cb_i *cb,
     extensions_t *exts,
-    bool examine,
-    ie_dstr_t **tagp,
-    link_t *out
+    bool examine
 );
 
 // unregister a connection from a maildir in a thread-safe way

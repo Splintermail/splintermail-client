@@ -206,45 +206,8 @@ derr_t dirmgr_do_for_each_mbx(dirmgr_t *dm, const dstr_t *ref_name,
 // IMAP functions
 /////////////////
 
-derr_t dirmgr_open_up(dirmgr_t *dm, const dstr_t *name, up_t *up){
-    derr_t e = E_OK;
-
-    if(hashmap_gets(&dm->freezes, name) != NULL){
-        ORIG(&e, E_FROZEN, "mailbox is frozen");
-    }
-
-    managed_dir_t *mgd;
-
-    hash_elem_t *h = hashmap_gets(&dm->dirs, name);
-    if(h != NULL){
-        mgd = CONTAINER_OF(h, managed_dir_t, h);
-
-        // just add an accessor to the existing imaildir
-        imaildir_register_up(&mgd->m, up);
-        return e;
-    }
-
-    // no existing imaildir in dirs, better open a new one
-    PROP(&e, managed_dir_new(&mgd, dm, name) );
-
-    // add to hashmap (we checked this path was not in the hashmap)
-    hashmap_sets(&dm->dirs, &mgd->name, &mgd->h);
-
-    imaildir_register_up(&mgd->m, up);
-
-    return e;
-}
-
-derr_t dirmgr_open_dn(
-    dirmgr_t *dm,
-    const dstr_t *name,
-    // remaning arguments pass thru to dn_init()
-    dn_t *dn,
-    dn_cb_i *cb,
-    extensions_t *exts,
-    bool examine,
-    ie_dstr_t **tagp,
-    link_t *out
+derr_t dirmgr_open_up(
+    dirmgr_t *dm, const dstr_t *name, up_t *up, up_cb_i *cb, extensions_t *exts
 ){
     derr_t e = E_OK;
 
@@ -258,7 +221,52 @@ derr_t dirmgr_open_dn(
     if(h != NULL){
         mgd = CONTAINER_OF(h, managed_dir_t, h);
 
-        PROP(&e, dn_init(dn, &mgd->m, cb, exts, examine, tagp, out) );
+        PROP(&e, up_init(up, &mgd->m, cb, exts) );
+
+        // just add an accessor to the existing imaildir
+        imaildir_register_up(&mgd->m, up);
+        return e;
+    }
+
+    // no existing imaildir in dirs, better open a new one
+    PROP(&e, managed_dir_new(&mgd, dm, name) );
+
+    PROP_GO(&e, up_init(up, &mgd->m, cb, exts), fail);
+
+    // add to hashmap (we checked this path was not in the hashmap)
+    hashmap_sets(&dm->dirs, &mgd->name, &mgd->h);
+
+    imaildir_register_up(&mgd->m, up);
+
+    return e;
+
+fail:
+    managed_dir_free(&mgd);
+    return e;
+}
+
+derr_t dirmgr_open_dn(
+    dirmgr_t *dm,
+    const dstr_t *name,
+    // remaning arguments pass thru to dn_init()
+    dn_t *dn,
+    dn_cb_i *cb,
+    extensions_t *exts,
+    bool examine
+){
+    derr_t e = E_OK;
+
+    if(hashmap_gets(&dm->freezes, name) != NULL){
+        ORIG(&e, E_FROZEN, "mailbox is frozen");
+    }
+
+    managed_dir_t *mgd;
+
+    hash_elem_t *h = hashmap_gets(&dm->dirs, name);
+    if(h != NULL){
+        mgd = CONTAINER_OF(h, managed_dir_t, h);
+
+        PROP(&e, dn_init(dn, &mgd->m, cb, exts, examine) );
 
         imaildir_register_dn(&mgd->m, dn);
         return e;
@@ -267,7 +275,7 @@ derr_t dirmgr_open_dn(
     // no existing imaildir in dirs, better open a new one
     PROP(&e, managed_dir_new(&mgd, dm, name) );
 
-    PROP_GO(&e, dn_init(dn, &mgd->m, cb, exts, examine, tagp, out), fail);
+    PROP_GO(&e, dn_init(dn, &mgd->m, cb, exts, examine), fail);
 
     imaildir_register_dn(&mgd->m, dn);
 

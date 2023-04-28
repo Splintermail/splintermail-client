@@ -39,38 +39,32 @@ typedef struct up_cb_i up_cb_i;
 
 // the interface provided to up_t by its owner
 struct up_cb_i {
-    // the up_t wants to pass an imap command over the wire
-    derr_t (*cmd)(up_cb_i*, imap_cmd_t*);
-    // this event indiates a SELECT finished, with an ie_st_resp_t if it failed
-    // (if select fails, you should go straight to dirmgr_close_up())
-    // (if this imaildir is already selected, this call won't even happen)
-    void (*selected)(up_cb_i*, ie_st_resp_t*);
-    // this event indicates the maildir finished an initial sync
-    // (if this imaildir is already synced, the callback may be instant)
-    void (*synced)(up_cb_i*, bool examining);
-    // after up_idle_block; this callback is often instant
-    void (*idle_blocked)(up_cb_i*);
-    // this event is a response to the up_unselect() call
-    derr_t (*unselected)(up_cb_i*);
-    // interaction with the imaildir_t has trigged some new work
     void (*schedule)(up_cb_i*);
 };
 
 // the interface the up_t provides to its owner:
 
 // pass a response from the remote imap server to the up_t
-derr_t up_resp(up_t *up, imap_resp_t *resp);
+derr_t up_st_resp(up_t *up, const ie_st_resp_t *st_resp, link_t *out);
+derr_t up_fetch_resp(up_t *up, const ie_fetch_resp_t *fetch, link_t *out);
+derr_t up_vanished_resp(up_t *up, const ie_vanished_resp_t *vanished);
+derr_t up_exists_resp(up_t *up, unsigned int exists, link_t *out);
+derr_t up_plus_resp(up_t *up, link_t *out);
+
 // block IDLE commands based on some external state
-derr_t up_idle_block(up_t *up, bool *ok);
-derr_t up_idle_unblock(up_t *up);
+derr_t up_idle_block(up_t *up, link_t *out, bool *ok);
+derr_t up_idle_unblock(up_t *up, link_t *out);
+
 // if the connection is in a SELECTED state, UNSELECT it.
-derr_t up_unselect(up_t *up);
-derr_t up_advance_state(up_t *up);
+derr_t up_unselect(up_t *up, link_t *out, bool *ok);
+
+derr_t up_advance_state(up_t *up, link_t *out);
 
 // the interface the up_t provides to the imaildir:
 
 // up_imaildir_select contains late-initialization information
 // it can be called multiple times in the lifetime of an up_t
+// imaildir_t must not emit a second call before the first is completed
 void up_imaildir_select(
     up_t *up,
     const dstr_t *name,
@@ -78,23 +72,21 @@ void up_imaildir_select(
     uint64_t himodseq_up,
     bool examine
 );
+// imaildir_t must not emit a relay while a select is in flight
 void up_imaildir_relay_cmd(up_t *up, imap_cmd_t *cmd, imap_cmd_cb_t *cb);
 // disallow downloading a specific UID
 void up_imaildir_have_local_file(up_t *up, unsigned int uid, bool resync);
 // trigger any downloading work that needs to be done after a hold ends
 void up_imaildir_hold_end(up_t *up);
-/* a newly initialized dn_t/up_t pair are used for every SELECT or EXAMINE, so
-   want_write should be a constant value over the whole life of the up_t */
-bool up_imaildir_want_write(up_t *up);
 // solemnly swear to never touch the imaildir again
 void up_imaildir_failed(up_t *up);
 
 // up_t is all the state we have for an upwards connection
 struct up_t {
     imaildir_t *m;
-    bool want_write;
     // the interfaced provided to us
     up_cb_i *cb;
+    // have we finished our initial sync?
     bool synced;
     // track the highest modseq value we see from any source
     uint64_t himodseq_up_seen;
@@ -113,14 +105,10 @@ struct up_t {
     // current tag
     size_t tag;
     link_t cbs;  // imap_cmd_cb_t->link (may be wrapped in an up_cb_t)
-    link_t link;  // imaildir_t->access.ups
+    link_t link;  // imaildir_t->ups
 
-    /* after the first select is done, this reflects the examine state of the
-       most recently completed SELECT or EXAMINE */
-    bool examining;
-    // the next 8 examine states; raise an error on would-be overflows
-    bool examines_pending[8];
-    size_t nexamines_pending;
+    // we will neither send nor receive anything further
+    bool done;
 
     struct {
         bool needed;
@@ -189,24 +177,14 @@ struct up_t {
     } fetch;
 
     struct {
-        /* reselect logic is a bit complex.  For correctness, it must be
-           enqueued with the relay commands, because the relay commands can
-           include e.g. a STORE command that depends on the reselect transition
-           to occur first.
-
-           The easy-but-ugly way to guarantee this is to have separate queues
-           for post-reselect cbs and cmds.  Relays recieved while we expect to
-           send a reselect get appended to that delayed queue.
-
-           Overall, this saves us from having to keep track of multiple
-           in-flight reselects, which would be a PITA. */
+        /* imaildir_t must guarantee we only have one reselect in progress at
+           a time and that no relays are added after a reselect is requested */
         bool needed;
+        bool enqueued;
         bool examine;
         unsigned int uidvld_up;
         uint64_t himodseq_up;
-
-        link_t cmds;  // imap_cmd_t->link
-        link_t cbs;  // imap_cmd_cb_t->link (from an imaildir_cb_t)
+        bool done;
     } reselect;
 
 
@@ -243,5 +221,5 @@ struct up_t {
 };
 DEF_CONTAINER_OF(up_t, link, link_t)
 
-derr_t up_init(up_t *up, up_cb_i *cb, extensions_t *exts, bool want_write);
+derr_t up_init(up_t *up, imaildir_t *m, up_cb_i *cb, extensions_t *exts);
 void up_free(up_t *up);

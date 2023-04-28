@@ -70,8 +70,21 @@ struct imaildir_t {
     uint64_t himodseq_dn; // starts at 1 for empty boxes
     // mailbox flags
     ie_mflags_t mflags;
-    // has this imaildir synced yet? (subsequent sync's don't send updates)
-    bool synced;
+
+    /* the initial select is special; since our server has no read-only
+       mailboxes, the E->S transition should never fail, so in theory only the
+       first SELECT can fail (due to a missing mailbox).  We crash any
+       connected accessors on any subsequent SELECT failure to simplify the
+       state machine, but that shouldn't arise in practice. */
+    bool initial_select_done;
+    ie_status_t initial_select_status;
+
+    struct {
+        bool select_sent;
+        bool examining;
+        bool select_done;
+        bool done;
+    } sync;
 
     // if SELECT returned NO, delete the box afterwards
     bool rm_on_close;
@@ -79,10 +92,19 @@ struct imaildir_t {
     // accessors
     link_t ups;  // up_t->link;
     link_t dns;  // dn_t->link;
+    /* predns is a list of dns which don't have built views yet, and whose
+       examine state we may not yet be synced properly to support */
+    link_t predns; // dn_t->link;
     /* The value of naccessors may not match the length of the accessor
        lists, particularly during the failing shutdown sequence. */
     size_t naccessors;
-    // one writer for every examine=false dn_t
+    /* One writer for every examine=false dn_t.  Only a writer may cause
+       STORE or EXPUNGE updates, so we make sure our primary up_t is in a
+       SELECTed state before the dn_t is allowed to complete its own SELECT.
+       The dn_t may die with some STORE or EXPUNGE updates in flight, so we
+       might start the S->E transition while those relays are still active,
+       but the up_t takes care of that by flushing its relays before handling
+       the reSELECT. */
     size_t nwriters;
 
     /* if the primary up_t is disconnecting, we save commands that we would
@@ -109,13 +131,13 @@ struct imaildir_t {
 
        Fortunately, APPEND is already handled as a passthru command so this
        should not be a concern there. */
-    link_t relays;  // relay_t->link
+    link_t relays_sent;  // relay_t->link
+    link_t relays_unsent;  // relay_t->link
     // the id in the tag of commands originating with us
     size_t tag;
 
     // because we execute the file copying on behalf of the dn_t
     struct {
-        // when
         void *requester;
     } copy;
 
@@ -254,10 +276,11 @@ derr_t imaildir_up_update_flags(imaildir_t *m, msg_t *msg, msg_flags_t flags);
 derr_t imaildir_up_handle_static_fetch_attr(imaildir_t *m,
         msg_t *msg, const ie_fetch_resp_t *fetch);
 
+// after a select or a reselect
+derr_t imaildir_up_selected(imaildir_t *m, ie_status_t status);
+
 // after an initial sync or after a reselect
-derr_t imaildir_up_synced(
-    imaildir_t *m, up_t *up, bool examining, bool initial
-);
+derr_t imaildir_up_synced(imaildir_t *m, up_t *up, bool examining);
 
 derr_t imaildir_up_delete_msg(imaildir_t *m, unsigned int uid_up);
 
@@ -268,8 +291,16 @@ bool imaildir_up_allow_download(imaildir_t *m);
 /* imaildir functions exposed only for dn_t.  dn_t keeps its own view of the
    mailbox and therefore relies less on the imaildir_t. */
 
+// for predns only: did selection fail?
+bool imaildir_dn_select_failed(imaildir_t *m, ie_status_t *status);
+
+// is the imaildir done syncing?
+bool imaildir_dn_synced(imaildir_t *m, bool examine);
+
+// build views and transition dn from predns to dns
 derr_t imaildir_dn_build_views(
     imaildir_t *m,
+    dn_t *dn,
     jsw_atree_t *views,
     unsigned int *max_uid_dn,
     unsigned int *uidvld_dn

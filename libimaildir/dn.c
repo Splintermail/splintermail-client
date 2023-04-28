@@ -328,6 +328,28 @@ void dn_free(dn_t *dn){
     dn_free_views(dn);
 }
 
+derr_t dn_init(
+    dn_t *dn,
+    imaildir_t *m,
+    dn_cb_i *cb,
+    extensions_t *exts,
+    bool examine
+){
+    derr_t e = E_OK;
+
+    *dn = (dn_t){
+        .m = m,
+        .cb = cb,
+        .examine = examine,
+        .exts = exts,
+    };
+
+    jsw_ainit(&dn->views, jsw_cmp_uint, msg_view_jsw_get_uid_dn);
+    jsw_ainit(&dn->store.tree, jsw_cmp_uint, exp_flags_jsw_get_uid_dn);
+
+    return e;
+}
+
 static derr_t send_st_resp(
     dn_t *dn, ie_dstr_t **tagp, dstr_t msg, ie_status_t status, link_t *out
 ){
@@ -444,7 +466,7 @@ static derr_t send_unseen_resp(dn_t *dn, link_t *out){
         ie_dstr_t *text = ie_dstr_new(&e, &msg, KEEP_RAW);
 
         ie_st_resp_t *st_resp = ie_st_resp_new(&e, NULL, IE_ST_OK, code, text);
-        imap_resp_arg_t arg = {.status_type=st_resp};
+        imap_resp_arg_t arg = { .status_type = st_resp };
         imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_STATUS_TYPE, arg);
         resp = imap_resp_assert_writable(&e, resp, dn->exts);
         CHECK(&e);
@@ -475,7 +497,7 @@ static derr_t send_pflags_resp(dn_t *dn, link_t *out){
     ie_dstr_t *text = ie_dstr_new(&e, &msg, KEEP_RAW);
 
     ie_st_resp_t *st_resp = ie_st_resp_new(&e, NULL, IE_ST_OK, code, text);
-    imap_resp_arg_t arg = {.status_type=st_resp};
+    imap_resp_arg_t arg = { .status_type = st_resp };
     imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_STATUS_TYPE, arg);
     resp = imap_resp_assert_writable(&e, resp, dn->exts);
     CHECK(&e);
@@ -497,7 +519,7 @@ static derr_t send_uidnext_resp(
     ie_dstr_t *text = ie_dstr_new(&e, &msg, KEEP_RAW);
 
     ie_st_resp_t *st_resp = ie_st_resp_new(&e, NULL, IE_ST_OK, code, text);
-    imap_resp_arg_t arg = {.status_type=st_resp};
+    imap_resp_arg_t arg = { .status_type = st_resp };
     imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_STATUS_TYPE, arg);
     resp = imap_resp_assert_writable(&e, resp, dn->exts);
     CHECK(&e);
@@ -527,39 +549,62 @@ static derr_t send_uidvld_resp(dn_t *dn, unsigned int uidvld_dn, link_t *out){
     return e;
 }
 
-derr_t dn_init(
-    dn_t *dn,
-    imaildir_t *m,
-    dn_cb_i *cb,
-    extensions_t *exts,
-    bool examine,
-    ie_dstr_t **tagp,
-    link_t *out
+static derr_t select_failure(
+    dn_t *dn, ie_dstr_t **tagp, ie_status_t status, link_t *out
 ){
     derr_t e = E_OK;
+
+    ie_dstr_t *tag = STEAL(ie_dstr_t, tagp);
+    ie_dstr_t *text;
+    if(status == IE_ST_NO){
+        text = ie_dstr_new2(&e, DSTR_LIT("no such mailbox"));
+    }else{
+        text = ie_dstr_new2(&e, DSTR_LIT("failed to select"));
+    }
+    ie_st_resp_t *st_resp = ie_st_resp_new(&e, tag, status, NULL, text);
+    imap_resp_arg_t arg = { .status_type = st_resp };
+    imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_STATUS_TYPE, arg);
+    resp = imap_resp_assert_writable(&e, resp, dn->exts);
+    CHECK(&e);
+
+    link_list_append(out, &resp->link);
+
+    return e;
+}
+
+derr_t dn_select(
+    dn_t *dn, ie_dstr_t **tagp, link_t *out, bool *ok, bool *success
+){
+    derr_t e = E_OK;
+
     jsw_anode_t *node;
-
     link_t temp = {0};
+    *ok = false;
+    *success = false;
 
-    *dn = (dn_t){
-        .m = m,
-        .cb = cb,
-        .examine = examine,
-        .exts = exts,
-    };
+    PROP(&e, healthcheck(dn) );
 
-    jsw_ainit(&dn->views, jsw_cmp_uint, msg_view_jsw_get_uid_dn);
-    jsw_ainit(&dn->store.tree, jsw_cmp_uint, exp_flags_jsw_get_uid_dn);
+    // detect SELECT failures
+    ie_status_t status;
+    if(imaildir_dn_select_failed(dn->m, &status)){
+        *ok = true;
+        *success = false;
+        PROP(&e, select_failure(dn, tagp, status, out) );
+        return e;
+    }
+
+    // wait for the imaildir to be synced how we like it
+    if(!imaildir_dn_synced(dn->m, dn->examine)) return e;
+
+    *ok = true;
 
     // create responses to the initial SELECT or EXAMINE
 
     unsigned int max_uid_dn;
     unsigned int uidvld_dn;
     PROP(&e,
-        imaildir_dn_build_views(dn->m,
-            &dn->views,
-            &max_uid_dn,
-            &uidvld_dn
+        imaildir_dn_build_views(
+            dn->m, dn, &dn->views, &max_uid_dn, &uidvld_dn
         )
     );
 
@@ -580,7 +625,7 @@ derr_t dn_init(
         dn->examine ? IE_ST_CODE_READ_ONLY : IE_ST_CODE_READ_WRITE, code_arg
     );
     ie_st_resp_t *st_resp = ie_st_resp_new(&e, tag, IE_ST_OK, code, text);
-    imap_resp_arg_t arg = {.status_type=st_resp};
+    imap_resp_arg_t arg = { .status_type = st_resp };
     imap_resp_t *resp = imap_resp_new(&e, IMAP_RESP_STATUS_TYPE, arg);
     resp = imap_resp_assert_writable(&e, resp, dn->exts);
     CHECK_GO(&e, fail);
@@ -879,6 +924,12 @@ static derr_t store_begin(
     bool *ok
 ){
     derr_t e = E_OK;
+
+    if(dn->examine){
+        PROP(&e, send_no(dn, tagp, DSTR_LIT("mailbox is read-only"), out) );
+        *ok = true;
+        return e;
+    }
 
     ie_seq_set_t *uids_dn = NULL;
     msg_key_list_t *keys = NULL;
@@ -1690,6 +1741,12 @@ derr_t dn_fetch(
 static derr_t expunge_begin(dn_t *dn, ie_dstr_t **tagp, link_t *out, bool *ok){
     derr_t e = E_OK;
 
+    if(dn->examine){
+        PROP(&e, send_no(dn, tagp, DSTR_LIT("mailbox is read-only"), out) );
+        *ok = true;
+        return e;
+    }
+
     link_t temp = {0};
 
     msg_key_list_t *keys;
@@ -1782,6 +1839,7 @@ derr_t dn_expunge(dn_t *dn, ie_dstr_t **tagp, link_t *out, bool *ok){
 }
 
 
+// TODO: prevent COPY into current box if box is read-only?  Does dovecot?
 static derr_t copy_begin(
     dn_t *dn,
     ie_dstr_t **tagp,

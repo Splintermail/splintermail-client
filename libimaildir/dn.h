@@ -11,7 +11,6 @@ struct dn_cb_i {
 };
 
 // the interface the dn_t provides to its owner:
-derr_t dn_select(dn_t *dn, ie_dstr_t **tagp, link_t *out);
 derr_t dn_search(
     dn_t *dn, ie_dstr_t **tagp, const ie_search_cmd_t *search, link_t *out
 );
@@ -21,6 +20,9 @@ derr_t dn_idle_done(dn_t *dn, const ie_dstr_t *errmsg, link_t *out);
 /* these commands may or may not be asynchronous; the calling pattern should
    be to call them each time the cb->schedule() call is made until they return
    *ok=true */
+derr_t dn_select(
+    dn_t *dn, ie_dstr_t **tagp, link_t *out, bool *ok, bool *success
+);
 derr_t dn_store(
     dn_t *dn,
     ie_dstr_t **tagp,
@@ -157,14 +159,12 @@ struct dn_t {
 DEF_CONTAINER_OF(dn_t, link, link_t)
 
 // typically init and free are only called by dirmgr_open_dn/dirmgr_close_dn
-// dn_init() also calculates the response to the SELECT or EXAMINE
+// after dn_init(), the owner must call dn_select() until *ok=true
 derr_t dn_init(
     dn_t *dn,
     imaildir_t *m,
     dn_cb_i *cb,
     extensions_t *exts,
-    bool examine,
-    ie_dstr_t **tagp,
-    link_t *out
+    bool examine
 );
 void dn_free(dn_t *dn);

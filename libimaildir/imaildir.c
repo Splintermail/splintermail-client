@@ -591,10 +591,6 @@ static derr_t imaildir_init_ex(
         // .mflags = ???
     };
 
-    link_init(&m->ups);
-    link_init(&m->dns);
-    link_init(&m->relays);
-
     // init msgs
     jsw_ainit(&m->msgs, jsw_cmp_msg_key, msg_jsw_get_msg_key);
 
@@ -673,7 +669,11 @@ void imaildir_free(imaildir_t *m){
 
     // free any relays we were holding on to
     link_t *link;
-    while((link = link_list_pop_first(&m->relays))){
+    while((link = link_list_pop_first(&m->relays_sent))){
+        relay_t *relay = CONTAINER_OF(link, relay_t, link);
+        relay_free(relay);
+    }
+    while((link = link_list_pop_first(&m->relays_unsent))){
         relay_t *relay = CONTAINER_OF(link, relay_t, link);
         relay_free(relay);
     }
@@ -695,92 +695,169 @@ void imaildir_free(imaildir_t *m){
     }
 }
 
-static void promote_up_to_primary(imaildir_t *m, up_t *up){
+// consumes or frees the relay_t
+static derr_t maybe_send_relay(imaildir_t *m, relay_t *relay){
+    derr_t e = E_OK;
+
+    if(!m->sync.done){
+        // if we are not yet synced, remember that we have an update to send
+        link_list_append(&m->relays_unsent, &relay->link);
+        return e;
+    }
+
+    // we are synced, send the relay now
+
+    if(link_list_isempty(&m->ups)){
+        LOG_FATAL("imaildir is .synced=true but there is no up_t!\n");
+    }
+    if(!link_list_isempty(&m->relays_unsent)){
+        LOG_FATAL("imaildir is .synced=true but relays_unset is nonempty!\n");
+    }
+
+    // relay through our primary up_t
+    imap_cmd_t *cmd_copy;
+    up_t *up = CONTAINER_OF(m->ups.next, up_t, link);
+    if(!up->synced){
+        LOG_FATAL(
+            "imaildir is .synced=true but its primary is .synced=false!\n"
+        );
+    }
+
+    cmd_copy = imap_cmd_copy(&e, relay->cmd);
+    CHECK_GO(&e, fail);
+
+    imaildir_cb_t *imaildir_cb = imaildir_cb_new(&e, relay, relay->cmd->tag);
+    CHECK_GO(&e, fail_cmd);
+
+    up_imaildir_relay_cmd(up, cmd_copy, &imaildir_cb->cb);
+
+    link_list_append(&m->relays_sent, &relay->link);
+
+    return e;
+
+fail_cmd:
+    imap_cmd_free(cmd_copy);
+fail:
+    relay_free(relay);
+    return e;
+}
+
+static void imaildir_free_sync(imaildir_t *m){
+    m->sync.select_sent = false;
+    m->sync.examining = false;
+    m->sync.select_done = false;
+    m->sync.done = false;
+}
+
+static void emit_select(imaildir_t *m, bool examine){
     unsigned int uidvld_up = m->log->get_uidvld_up(m->log);
     uint64_t himodseq_up = m->log->get_himodseq_up(m->log);
-    bool examine = !m->nwriters;
+    up_t *up = CONTAINER_OF(m->ups.next, up_t, link);
     up_imaildir_select(up, m->name, uidvld_up, himodseq_up, examine);
 }
 
-void imaildir_register_up(imaildir_t *m, up_t *up){
-    // check if we will be the primary up_t
-    bool is_primary = link_list_isempty(&m->ups);
+static void advance_sync(imaildir_t *m){
+    // nothing to do if we failed our initial select
+    if(m->initial_select_done && m->initial_select_status != IE_ST_OK) return;
 
-    // add the up_t to the maildir
-    link_list_append(&m->ups, &up->link);
-    m->naccessors++;
+    // nothing to do if we have no up_t
+    if(link_list_isempty(&m->ups)) return;
 
-    up->m = m;
+    // should we be examining or selecting?
+    bool examine = !m->nwriters;
 
-    bool first_writer = false;
-    if(up_imaildir_want_write(up)){
-        first_writer = (m->nwriters == 0);
-        m->nwriters++;
+    // detect when reselects are needed
+    if(m->sync.select_done && m->sync.examining != examine){
+        imaildir_free_sync(m);
     }
 
-    if(is_primary){
-        promote_up_to_primary(m, up);
-    }else{
-        if(first_writer){
-            /* an EXAMINE/SELECT transition, even if mail in mailbox is synced
-               we still have to wait for a SELECT to finish */
-            up_t *primary = CONTAINER_OF(m->ups.next, up_t, link);
-            promote_up_to_primary(m, primary);
-        }else{
-            // no EXAMINE/SELECT transition
-            if(m->synced){
-                // mailbox already synced; trigger an immediate sync call
-                bool examining = (m->nwriters == 0);
-                up->cb->synced(up->cb, examining);
-            }
-        }
+    if(!m->sync.select_sent){
+        bool examine = !m->nwriters;
+        emit_select(m, examine);
+        m->sync.examining = examine;
+        m->sync.select_sent = true;
+    }
+    if(!m->sync.done) return;
+
+    // we are synced; wake up any predns, let them transition themselves to dns
+    dn_t *dn;
+    LINK_FOR_EACH(dn, &m->predns, dn_t, link){
+        dn->cb->schedule(dn->cb);
     }
 }
 
-void imaildir_register_dn(imaildir_t *m, dn_t *dn){
-    // add the dn_t to the maildir
-    link_list_append(&m->dns, &dn->link);
+static size_t eject_up(imaildir_t *m, up_t *up){
+    bool was_primary = (&up->link == m->ups.next);
+
+    link_remove(&up->link);
+
+    if(was_primary){
+        // lost our primary up_t; reset sync state and relays
+        imaildir_free_sync(m);
+        // relays with no dn_t are freed now that we won't see a callback
+        relay_t *relay, *temp;
+        LINK_FOR_EACH_SAFE(relay, temp, &m->relays_sent, relay_t, link){
+            if(relay->requester) continue;
+            link_remove(&relay->link);
+            relay_free(relay);
+        }
+        // all remaining relays go to unsent
+        link_list_prepend_list(&m->relays_unsent, &m->relays_sent);
+    }
+
+    return --m->naccessors;
+}
+
+static size_t eject_dn(imaildir_t *m, dn_t *dn){
+    // clean up references to this dn_t in the sent relay_t's
+    relay_t *relay, *temp;
+    LINK_FOR_EACH(relay, &m->relays_sent, relay_t, link){
+        if(relay->requester != dn) continue;
+        relay->requester = NULL;
+    }
+    // free any unsent relays for this dn_t
+    LINK_FOR_EACH_SAFE(relay, temp, &m->relays_unsent, relay_t, link){
+        if(relay->requester != dn) continue;
+        link_remove(&relay->link);
+        relay_free(relay);
+    }
+
+    if(!dn->examine) m->nwriters--;
+
+    link_remove(&dn->link);
+
+    return --m->naccessors;
+}
+
+void imaildir_register_up(imaildir_t *m, up_t *up){
+    // add the up_t to the maildir
+    link_list_append(&m->ups, &up->link);
     m->naccessors++;
+    advance_sync(m);
+}
+
+void imaildir_register_dn(imaildir_t *m, dn_t *dn){
+    // always put dn_t in predns, since views aren't built
+    link_list_append(&m->predns, &dn->link);
+    m->naccessors++;
+    if(!dn->examine) m->nwriters++;
+    advance_sync(m);
 }
 
 // should not be called if imaildir failed
 size_t imaildir_unregister_up(imaildir_t *m, up_t *up){
-    bool was_primary = (&up->link == m->ups.next);
-
-    bool last_writer = false;
-    if(up_imaildir_want_write(up)){
-        m->nwriters--;
-        last_writer = (m->nwriters == 0);
-    }
-
-    // done with up
+    size_t out = eject_up(m, up);
     up_free(up);
-
-    if(was_primary || last_writer){
-        if(!link_list_isempty(&m->ups)){
-            // promote the next up_t to primary, or reconfigure it to EXAMINE
-            up_t *primary = CONTAINER_OF(m->ups.next, up_t, link);
-            promote_up_to_primary(m, primary);
-        }
-    }
-
-    return --m->naccessors;
+    advance_sync(m);
+    return out;
 }
 
 // should not be called if imaildir failed
 size_t imaildir_unregister_dn(imaildir_t *m, dn_t *dn){
-    // clean up references to this dn_t in the relay_t's
-    relay_t *relay;
-    LINK_FOR_EACH(relay, &m->relays, relay_t, link){
-        if(relay->requester == dn){
-            relay->requester = NULL;
-        }
-    }
-
-    // done with dn
+    size_t out = eject_dn(m, dn);
     dn_free(dn);
-
-    return --m->naccessors;
+    advance_sync(m);
+    return out;
 }
 
 ///////////////// interface to up_t /////////////////
@@ -1196,35 +1273,95 @@ fail:
     return e;
 }
 
-// after an initial sync or after a reselect
-derr_t imaildir_up_synced(
-    imaildir_t *m, up_t *up, bool examining, bool initial
-){
+// after a select or a reselect
+derr_t imaildir_up_selected(imaildir_t *m, ie_status_t status){
     derr_t e = E_OK;
 
-    m->synced = true;
-
-    // let the fetchers dedup multiple calls to this callback
-    up_t *_up;
-    LINK_FOR_EACH(_up, &m->ups, up_t, link){
-        _up->cb->synced(_up->cb, examining);
+    bool first_select = !m->initial_select_done;
+    if(first_select){
+        m->initial_select_done = true;
+        m->initial_select_status = status;
     }
 
-    /* Only replay commands if we are not in an examining state.  Ultimately,
-       if there are any want_write=true accessors left then we'll eventually
-       reach the state where examining=false */
-    if(!initial || examining) return e;
-    imap_cmd_t *cmd = NULL;
-    relay_t *relay;
-    relay_t *temp;
-    LINK_FOR_EACH_SAFE(relay, temp, &m->relays, relay_t, link){
-        // discard relay_t's without an active requester
-        if(!relay->requester){
-            link_remove(&relay->link);
-            relay_free(relay);
-            continue;
-        }
+    if(status == IE_ST_OK){
+        /* SELECT succeeded; No need to wake up any dn_t's, since they need to
+           keep waiting for the sync to finish */
+        return e;
+    }
 
+    // SELECT failed
+
+    if(status == IE_ST_NO) m->rm_on_close = true;
+
+    if(!first_select){
+        /* Reselects should always succeed, since we don't have any read-only
+           directories on the server.  If we did, we'd have to answer some hard
+           questions:
+             - How to recover the up_t that failed and continue using it?
+             - How to respond to the correct dn_t that triggered this E->S?
+             - How to avoid introducing weird "broken now but might recover"
+               kinds of states to the up_t or imaildir_t?
+           But today, we can skirt the issue and just crash. */
+        TRACE_ORIG(&e, E_IMAILDIR, "reselect failed");
+        imaildir_maybe_fail(m, e);
+        return e;
+    }
+
+    /* Failures of initial selects are marked on the imaildir_t and any
+       dn_t's that connect will see the error.  Technically, a 3rd party
+       connection could create the mailbox, and the imalidir_t could persist,
+       and a future dn_t could connect and wrongfully see a cached SELECT
+       failure... but that's a pretty tiny possibility.  If we tried to support
+       SELECT retries within the lifetime of this imaildir_t, we'd have to
+       figure out how to make sure that up_t's could be recovered, or how to
+       sync dn_t/up_t registering to guarantee that the up_t which is in a
+       failed state belongs to a dn_t that is presently attached to see the
+       failure. */
+
+    if(!link_list_isempty(&m->dns)){
+        LOG_FATAL("initial select failed, but imaildir has dn_t's already\n");
+    }
+
+    // wake them up all the predns, let them find the error
+    dn_t *dn;
+    LINK_FOR_EACH(dn, &m->predns, dn_t, link){
+        dn->cb->schedule(dn->cb);
+    }
+
+    return e;
+}
+
+// after an initial sync or after a reselect
+derr_t imaildir_up_synced(imaildir_t *m, up_t *up, bool examining){
+    derr_t e = E_OK;
+
+    m->sync.done = true;
+    // wake up any predns
+    advance_sync(m);
+
+    // just in case advance_sync decided to start an E->S transition
+    /* (shouldn't happen, that should only happen on imaildir_up_selected or
+       register/deregister) */
+    if(!m->sync.done) return e;
+
+    /* ensure the up_t's examine state matches the expected examine state
+       before sending any invalid relays (note that COPY relays are allowed
+       against EXAMINE state mailboxes) */
+    if(!m->nwriters != examining){
+        LOG_FATAL(
+            "arrived at imaildlir_up_synced in wrong examining state "
+            "(nwriters=%x, examining=%x)\n",
+            FU(m->nwriters), FB(examining)
+        );
+    }
+
+    // send all unsent relays (unwanted relays have already been cleaned out)
+    imap_cmd_t *cmd = NULL;
+    link_t *link;
+    while((link = link_list_pop_first(&m->relays_unsent))){
+        link_list_append_list(&m->relays_sent, link);
+
+        relay_t *relay = CONTAINER_OF(link, relay_t, link);
         cmd = imap_cmd_copy(&e, relay->cmd);
         CHECK_GO(&e, fail);
 
@@ -1665,29 +1802,9 @@ static derr_t relay_update_req_store(imaildir_t *m, update_req_t *req){
     relay_t *relay = relay_new(&e, m, cmd, requester);
     CHECK(&e);
 
-    imap_cmd_t *cmd_copy;
-    // relay through the primary up_t, only if the primary up_t is synced
-    if(!link_list_isempty(&m->ups)){
-        up_t *up = CONTAINER_OF(m->ups.next, up_t, link);
-        if(up->synced){
-            cmd_copy = imap_cmd_copy(&e, relay->cmd);
-            CHECK_GO(&e, fail_relay);
+    // this owns the relay
+    PROP(&e, maybe_send_relay(m, relay) );
 
-            imaildir_cb_t *imaildir_cb = imaildir_cb_new(&e, relay, tag_str);
-            CHECK_GO(&e, fail_cmd);
-
-            up_imaildir_relay_cmd(up, cmd_copy, &imaildir_cb->cb);
-        }
-    }
-
-    link_list_append(&m->relays, &relay->link);
-
-    return e;
-
-fail_cmd:
-    imap_cmd_free(cmd_copy);
-fail_relay:
-    relay_free(relay);
     return e;
 }
 
@@ -1760,29 +1877,9 @@ static derr_t relay_update_req_expunge(imaildir_t *m, update_req_t *req){
     relay_t *relay = relay_new(&e, m, cmd, requester);
     CHECK(&e);
 
-    imap_cmd_t *cmd_copy;
-    // relay through the primary up_t, only if the primary up_t is synced
-    if(!link_list_isempty(&m->ups)){
-        up_t *up = CONTAINER_OF(m->ups.next, up_t, link);
-        if(up->synced){
-            cmd_copy = imap_cmd_copy(&e, relay->cmd);
-            CHECK_GO(&e, fail_relay);
+    // this owns the relay
+    PROP(&e, maybe_send_relay(m, relay) );
 
-            imaildir_cb_t *imaildir_cb = imaildir_cb_new(&e, relay, tag_str);
-            CHECK_GO(&e, fail_cmd);
-
-            up_imaildir_relay_cmd(up, cmd_copy, &imaildir_cb->cb);
-        }
-    }
-
-    link_list_append(&m->relays, &relay->link);
-
-    return e;
-
-fail_cmd:
-    imap_cmd_free(cmd_copy);
-fail_relay:
-    relay_free(relay);
     return e;
 }
 
@@ -2079,35 +2176,32 @@ static derr_t relay_update_req_copy(imaildir_t *m, update_req_t *req){
 
     relay->cb = relay_copy_cb;
 
-    imap_cmd_t *cmd_copy;
-    // relay through the primary up_t, only if the primary up_t is synced
-    if(!link_list_isempty(&m->ups)){
-        up_t *up = CONTAINER_OF(m->ups.next, up_t, link);
-        if(up->synced){
-            cmd_copy = imap_cmd_copy(&e, relay->cmd);
-            CHECK_GO(&e, fail_relay);
-
-            imaildir_cb_t *imaildir_cb = imaildir_cb_new(&e, relay, tag_str);
-            CHECK_GO(&e, fail_cmd);
-
-            up_imaildir_relay_cmd(up, cmd_copy, &imaildir_cb->cb);
-        }
-    }
-
-    link_list_append(&m->relays, &relay->link);
+    // this owns the relay
+    PROP(&e, maybe_send_relay(m, relay) );
 
     return e;
 
-fail_cmd:
-    imap_cmd_free(cmd_copy);
 fail_relay:
     relay_free(relay);
     return e;
 }
 
 
+// for predns only: did selection fail?
+bool imaildir_dn_select_failed(imaildir_t *m, ie_status_t *status){
+    *status = m->initial_select_status;
+    return m->initial_select_done;
+}
+
+// is the imaildir done syncing?
+bool imaildir_dn_synced(imaildir_t *m, bool examine){
+    return m->sync.done && (examine || !m->sync.examining);
+}
+
+// build views and transition dn from predns to dns
 derr_t imaildir_dn_build_views(
     imaildir_t *m,
+    dn_t *dn,
     jsw_atree_t *views,
     unsigned int *max_uid_dn,
     unsigned int *uidvld_dn
@@ -2128,6 +2222,10 @@ derr_t imaildir_dn_build_views(
 
     *max_uid_dn = m->hi_uid_dn;
     *uidvld_dn = m->log->get_uidvld_dn(m->log);
+
+    // transition from predns to dns
+    link_remove(&dn->link);
+    link_list_append(&m->dns, &dn->link);
 
     return e;
 

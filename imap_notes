@@ -1381,33 +1381,20 @@ UID Mapping:
     the case of a corrupted local store, we won't be able to reliably
     reconstruct the uids that we previously presented to the mail client.
 
-SELECT/EXAMINE transitions
-    We should choose SELECT for the up_t if any of the dn_t's connected via
-    SELECT.  But if the only SELECT dn_t disconnects, the up_t should
-    transition to EXAMINE for correctness.  Or if it reconnects, the up_t
-    must transition back to SELECT.
+RELAYS AND SELECT/EXAMINE STATE
 
-    What has to be synchronized for us to correctly transition S->E?
-      - the relay commands?  Are there write-only ones that we would have to
-        land before the transition?  Or would the in-order-handling of imap
-        commands mean that no special work would be required?
-      - I think we would have to treat the S->E transition kind of like a CLOSE
-        where the dn_t that triggers the transition does not get an OK response
-        until after the S->E transition completes
-
-    Note that the fetcher will always formally unregister and reregister its
-    up_t; it's the simplest way for fetcher logic.  Those are the moments that
-    the up_t is freed/reinitialized.  However, the actual SELECT command always
-    comes from the imaildir_t, and a single lifetime of an up_t may have many
-    S->E transitions.
-
-    Interestingly, a dn_t has no need to handle S->E transitions, since the
-    server_t is always aware of potential transitions an will just unregister
-    and reregister the dn_t.
-
-    The asymmetry is based on the fact that the fetcher_t provides the up_t but
-    has limited control over what is passed through the up_t.  By contrast, the
-    server is much more in control of what goes through the dn_t.
+  - There are three types of updates: STORE, EXPUNGE, COPY
+  - COPY is allowed in EXAMINE state, the other two are not
+  - suppose a want_write=false up_t is primary; it's natural state is EXAMINE
+  - a want_write=true up/dn pair connects to the mailbox; we transition E->S,
+    and disallow the dn to SELECT until transition is complete
+  - if the up/dn fail before E->S transition is complete, we might enqueue an
+    S->E transition
+  - if another want_write=true up/dn pair connect, then what?
+  - I think the imaildir might want to withold relays during the transition
+    period, rather than passing all of them along and having the up_t try to
+    coordinate it.  Then the imaildir_t would have a clear answer for the dn_t
+    trying to connect with want_write=true.
 
 RENAME non-INBOX
   - apply some client-side validation
