@@ -318,6 +318,7 @@ static derr_t check_upload(preuser_t *p, imap_resp_t **respp, bool *ok){
     return e;
 }
 
+// *ok means "state machine can proceed", not "let's address this resp later"
 static derr_t check_resp(preuser_t *p, bool *ok, check_f check_fn){
     derr_t e = E_OK;
     *ok = false;

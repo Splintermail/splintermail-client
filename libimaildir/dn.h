@@ -45,6 +45,8 @@ derr_t dn_fetch(
 );
 /* CLOSE is sometimes explicit and sometimes not (LOGOUT), but any such command
    triggers a dn_disconnect */
+// XXX: does this work before dn_select??
+// XXX: does this work after dn_select returns with success=false??
 derr_t dn_disconnect(dn_t *dn, bool expunge, bool *ok);
 
 /* Some commands are handled externally but should still trigger server
@@ -53,6 +55,7 @@ derr_t dn_disconnect(dn_t *dn, bool expunge, bool *ok);
    single call to dn_cmd().  It should never be NULL for asynchronously
    handled commands, like STORE, EXPUNGE, or COPY, which each must go through
    an up_t before they can respond downwards */
+// undefined behavior if called before dn_select() returns *ok=true
 derr_t dn_gather_updates(
     dn_t *dn,
     bool allow_expunge,

@@ -706,6 +706,7 @@ typedef union {
     ie_dstr_t *xkeysync_done; // the tag that the DONE corresponds to
     ie_dstr_t *xkeyadd;  // the pubkey that we want to add
 } imap_cmd_arg_t;
+DEF_STEAL_STRUCT(imap_cmd_arg_t)
 
 typedef struct {
     ie_dstr_t *tag;

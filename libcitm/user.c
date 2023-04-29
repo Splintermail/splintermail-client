@@ -5,7 +5,7 @@ typedef struct {
     dstr_t user;
     imap_client_t *xc;
     keydir_i *kd;
-    link_t sf_pairs;
+    link_t scs;
 
     scheduler_i *scheduler;
     schedulable_t schedulable;
@@ -21,7 +21,7 @@ typedef struct {
     bool sync_sent : 1;
     bool reading : 1;
 
-    bool done; // if we ever ran out of sf_pairs
+    bool done; // if we ever ran out of sc's
     bool canceled; // if user_cancel() was called
     bool failed; // if we hit an error
 } user_t;
@@ -73,15 +73,15 @@ done:
     schedule(u);
 }
 
-static void await_sf(sf_pair_t *sf_pair, void *data){
+static void await_sc(sc_t *sc, void *data){
     user_t *u = data;
 
-    // always drop the sf_pair
-    link_remove(&sf_pair->link);
-    sf_pair_free(&sf_pair);
+    // always drop the sc
+    link_remove(&sc->link);
+    sc_free(sc);
 
-    // was that the last sf_pair?
-    if(link_list_isempty(&u->sf_pairs)){
+    // was that the last sc?
+    if(link_list_isempty(&u->scs)){
         u->done = true;
         schedule(u);
     }
@@ -132,6 +132,7 @@ static derr_t check_sync(user_t *u, imap_resp_t **respp, bool *ok){
     );
 }
 
+// *ok means "state machine can proceed", not "let's address this resp later"
 static derr_t check_resp(user_t *u, bool *ok, check_f check_fn){
     derr_t e = E_OK;
     *ok = false;
@@ -226,15 +227,15 @@ cu:
     // close our xkey_client
     imap_client_cancel(u->xc);
 
-    // close all of our sf_pairs
+    // close all of our scs
     link_t *link;
-    while((link = link_list_pop_first(&u->sf_pairs))){
-        sf_pair_t *sf_pair = CONTAINER_OF(link, sf_pair_t, link);
-        sf_pair_cancel(sf_pair);
+    while((link = link_list_pop_first(&u->scs))){
+        sc_t *sc = CONTAINER_OF(link, sc_t, link);
+        sc_cancel(sc);
     }
 
     if(!u->xc->awaited) return;
-    if(!link_list_isempty(&u->sf_pairs)) return;
+    if(!link_list_isempty(&u->scs)) return;
 
     // finally, free ourselves
     imap_client_free(&u->xc);
@@ -258,22 +259,33 @@ void user_new(
     derr_t e = E_OK;
 
     user_t *u = NULL;
-    link_t sf_pairs = {0};
-    sf_pair_t *sf_pair;
+    link_t scs = {0};
     link_t *link;
+
+    size_t nservers = link_list_count(servers);
+    size_t nclients = link_list_count(clients);
+    if(nservers != nclients){
+        ORIG_GO(&e,
+            E_INTERNAL,
+            "mismatched servers vs clients: %x vs %x",
+            fail,
+            FU(nservers),
+            FU(nclients)
+        );
+    }
+
+    if(nservers == 0){
+        ORIG_GO(&e, E_INTERNAL, "user_t was given zero connections?", fail);
+    }
 
     u = DMALLOC_STRUCT_PTR(&e, u);
     CHECK_GO(&e, fail);
 
-    while((link = link_list_pop_first(servers))){
-        imap_server_t *s = CONTAINER_OF(link, imap_server_t, link);
-        link = link_list_pop_first(clients);
-        if(!link) LOG_FATAL("mismatched servers vs clients\n");
-        imap_client_t *c = CONTAINER_OF(link, imap_client_t, link);
-        PROP_GO(&e,
-            sf_pair_new(scheduler, kd, s, c, await_sf, u, &sf_pair),
-        fail);
-        link_list_append(&sf_pairs, &sf_pair->link);
+    // allocate all of our sc's, but start none of them
+    for(size_t i = 0; i < nservers; i++){
+        sc_t *sc;
+        PROP_GO(&e, sc_malloc(&sc), fail);
+        link_list_append(&scs, &sc->link);
     }
 
     // success
@@ -285,18 +297,25 @@ void user_new(
         .xc = xc,
     };
 
-
     imap_client_must_await(u->xc, await_xc, NULL);
 
     schedulable_prep(&u->schedulable, scheduled);
 
-    link_list_append_list(&u->sf_pairs, &sf_pairs);
-    LINK_FOR_EACH(sf_pair, &u->sf_pairs, sf_pair_t, link){
-        sf_pair_start(sf_pair);
+    while((link = link_list_pop_first(&scs))){
+        sc_t *sc = CONTAINER_OF(link, sc_t, link);
+        sc_start(sc,
+            scheduler,
+            kd,
+            CONTAINER_OF(link_list_pop_first(servers), imap_server_t, link),
+            CONTAINER_OF(link_list_pop_first(clients), imap_client_t, link),
+            await_sc,
+            u
+        );
+        link_list_append(&u->scs, &sc->link);
     }
 
     hash_elem_t *old = hashmap_sets(out, &u->user, &u->elem);
-    if(old) LOG_FATAL("preuser found existing user %x\n", FD_DBG(&u->user));
+    if(old) LOG_FATAL("user_new found existing user %x\n", FD_DBG(&u->user));
 
     return;
 
@@ -312,10 +331,9 @@ fail:
         imap_client_t *client = CONTAINER_OF(link, imap_client_t, link);
         imap_client_free(&client);
     }
-    while((link = link_list_pop_first(&sf_pairs))){
-        // XXX: tell client why?
-        sf_pair_t *sf_pair = CONTAINER_OF(link, sf_pair_t, link);
-        sf_pair_free(&sf_pair);
+    while((link = link_list_pop_first(&scs))){
+        sc_t *sc = CONTAINER_OF(link, sc_t, link);
+        sc_free(sc);
     }
     imap_client_free(&xc);
     if(kd) kd->free(kd);
@@ -329,11 +347,13 @@ void user_add_pair(hash_elem_t *elem, imap_server_t *s, imap_client_t *c){
 
     user_t *u = CONTAINER_OF(elem, user_t, elem);
 
-    sf_pair_t *sf_pair;
-    PROP_GO(&e,
-        sf_pair_new(u->scheduler, u->kd, s, c, await_sf, u, &sf_pair),
-    fail);
-    link_list_append(&u->sf_pairs, &sf_pair->link);
+    // XXX: if u->done=true then we will wrongfully shut down a client
+    //      connection, even in a non-erroring situation.
+
+    sc_t *sc;
+    PROP_GO(&e, sc_malloc(&sc), fail);
+    sc_start(sc, u->scheduler, u->kd, s, c, await_sc, u);
+    link_list_append(&u->scs, &sc->link);
     schedule(u);
     return;
 

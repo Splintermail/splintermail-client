@@ -1,7 +1,7 @@
 /* We separated the different stages of the server into different objects:
     - imap_server_t handles greeting and pre-starttls
     - anon_t handles login
-    - sf_pair_t handles the rest
+    - sc_t handles the rest
 
    But since all stages of the imap server have to handle a small set of common
    responses, we refactored those into this separate file. */

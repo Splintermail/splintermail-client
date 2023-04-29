@@ -186,7 +186,7 @@ ie_st_resp_t *match_prefix(
     const dstr_t tag = st->tag->dstr;
     if(!dstr_beginswith2(tag, prefix)) return NULL;
     const dstr_t suffix = dstr_sub2(tag, prefix.len, SIZE_MAX);
-    derr_type_t etype = dstr_tosize_quiet(suffix, &idx, 10);
+    derr_type_t etype = dstr_tosize_quiet(suffix, idx, 10);
     if(etype != E_NONE) return NULL;
     return st;
 }

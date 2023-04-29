@@ -14,7 +14,7 @@ struct keydir_i {
     void (*free)(keydir_i*);
 
     // this part of the abstraction is basically giving up on an abstraction
-    // some day the sf_pair should be rewritten to be more unit-testable
+    // some day the sc_t should be rewritten to be more unit-testable
     dirmgr_t *(*dirmgr)(keydir_i*);
     // a list with both mykey and peers
     link_t *(*all_keys)(keydir_i*);

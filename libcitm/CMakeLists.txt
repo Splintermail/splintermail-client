@@ -7,15 +7,12 @@ sm_lib(
     anon.c
     preuser.c
     user.c
-    server.c
-    fetcher.c
-    sf_pair.c
+    sc.c
     date.c
     fpr_watcher.c
     keydir.c
     xkey.c
     responses.c
-    passthru.c
     DEPS dstr crypto duv duvtls imap imaildir
 )
 

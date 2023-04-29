@@ -500,7 +500,7 @@ derr_t imap_server_new(
     *out = NULL;
 
     imap_server_t *s = DMALLOC_STRUCT_PTR(&e, s);
-    CHECK(&e);
+    CHECK_GO(&e, fail_malloc);
 
     *s = (imap_server_t){
         .scheduler = scheduler,
@@ -550,6 +550,7 @@ derr_t imap_server_new(
 
 fail:
     free_server_memory(s);
+fail_malloc:
     // we are guaranteed not to have any pending io on conn
     conn->close(conn);
     return e;
