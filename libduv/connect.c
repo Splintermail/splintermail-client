@@ -187,8 +187,8 @@ derr_t duv_connect(
     unsigned int tcp_flags,
     duv_connect_t *c,
     duv_connect_cb cb,
-    const char *node,
-    const char *service,
+    const dstr_t node,
+    const dstr_t service,
     const struct addrinfo *hints
 ){
     derr_t e = E_OK;
@@ -201,19 +201,12 @@ derr_t duv_connect(
         .cb = cb,
     };
 
-    c->node = compat_strdup(node);
-    if(!node){
-        ORIG(&e, E_NOMEM, "no mem");
-    }
-
-    c->service = compat_strdup(service);
-    if(!service){
-        ORIG_GO(&e, E_NOMEM, "no mem", fail_node);
-    }
+    PROP(&e, dstr_dupstr(node, &c->node) );
+    PROP_GO(&e, dstr_dupstr(service, &c->service), fail_node);
 
     c->gai.req.data = c;
     int ret = uv_getaddrinfo(
-        loop, &c->gai.req, gai_cb, node, service, hints
+        loop, &c->gai.req, gai_cb, c->node, c->service, hints
     );
     if(ret < 0){
         ORIG_GO(&e,

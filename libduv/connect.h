@@ -17,8 +17,8 @@ derr_t duv_connect(
     unsigned int tcp_flags,
     duv_connect_t *c,
     duv_connect_cb cb,
-    const char *node,
-    const char *service,
+    const dstr_t node,
+    const dstr_t service,
     const struct addrinfo *hints
 );
 
