@@ -188,7 +188,14 @@ static void async_cb(uv_async_t *handle){
     // start connecting!
     PROP_GO(&E,
         duv_connect(
-            &loop, &tcp, 0, &connector, on_connect, "127.0.0.1", "4811", NULL
+            &loop,
+            &tcp,
+            0,
+            &connector,
+            on_connect,
+            DSTR_LIT("127.0.0.1"),
+            DSTR_LIT("4811"),
+            NULL
         ),
     fail);
     return;

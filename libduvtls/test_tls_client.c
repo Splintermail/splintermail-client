@@ -295,8 +295,8 @@ static void phase6(void){
             0,
             &connector,
             on_connect_phase6,
-            "127.0.0.1",
-            "4810",
+            DSTR_LIT("127.0.0.1"),
+            DSTR_LIT("4810"),
             NULL
         ),
     fail);
@@ -589,8 +589,8 @@ static void async_cb(uv_async_t *handle){
             0,
             &connector,
             on_connect_phase1,
-            "127.0.0.1",
-            "4810",
+            DSTR_LIT("127.0.0.1"),
+            DSTR_LIT("4810"),
             NULL
         ),
     fail);

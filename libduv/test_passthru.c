@@ -330,8 +330,8 @@ static void on_peer_close_phase5(uv_handle_t *handle){
             0,
             &connector,
             connect_cb_phase6,
-            "127.0.0.1",
-            "51429",
+            DSTR_LIT("127.0.0.1"),
+            DSTR_LIT("51429"),
             NULL
         ),
     fail);
@@ -757,8 +757,8 @@ static derr_t test_passthru(void){
             0,
             &connector,
             connect_cb_phase1,
-            "127.0.0.1",
-            "51429",
+            DSTR_LIT("127.0.0.1"),
+            DSTR_LIT("51429"),
             NULL
         ),
     fail_listener);

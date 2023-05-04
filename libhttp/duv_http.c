@@ -729,9 +729,7 @@ static void req_advance_state(duv_http_req_t *req){
         req->connect_started = true;
         if(!m->stream){
             // start a new connection
-            m->host.len = 0;
-            PROP_GO(&req->e, dstr_append(&m->host, &req->host), failing);
-            PROP_GO(&req->e, dstr_null_terminate(&m->host), failing);
+            PROP_GO(&req->e, dstr_copy(&req->host, &m->host), failing);
             m->port = req->port;
             DSTR_VAR(portbuf, 32);
             PROP_GO(&req->e, FMT(&portbuf, "%x", FU(m->port)), failing);
@@ -743,8 +741,8 @@ static void req_advance_state(duv_http_req_t *req){
                     0,
                     &m->connector,
                     connect_cb,
-                    m->host.data,
-                    portbuf.data,
+                    m->host,
+                    portbuf,
                     NULL
                 ),
             failing);

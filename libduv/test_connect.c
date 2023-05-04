@@ -81,8 +81,8 @@ static void on_connect_phase_4(duv_connect_t *c, derr_t e){
             0,
             &connector,
             on_connect_phase_5,
-            "localhost",
-            "51429",
+            DSTR_LIT("localhost"),
+            DSTR_LIT("51429"),
             NULL
         ),
     fail);
@@ -113,8 +113,8 @@ static void on_connect_phase_3(duv_connect_t *c, derr_t e){
             0,
             &connector,
             on_connect_phase_4,
-            "localhost",
-            "51429",
+            DSTR_LIT("localhost"),
+            DSTR_LIT("51429"),
             NULL
         ),
     fail);
@@ -143,8 +143,8 @@ static void on_connect_phase_2(duv_connect_t *c, derr_t e){
             0,
             &connector,
             on_connect_phase_3,
-            "notarealdomain.notarealtld",
-            "51429",
+            DSTR_LIT("notarealdomain.notarealtld"),
+            DSTR_LIT("51429"),
             NULL
         ),
     fail);
@@ -165,8 +165,8 @@ static void phase_1_listener_closed(uv_handle_t *handle){
             0,
             &connector,
             on_connect_phase_2,
-            "localhost",
-            "51429",
+            DSTR_LIT("localhost"),
+            DSTR_LIT("51429"),
             NULL
         ),
     fail);
@@ -260,8 +260,8 @@ static derr_t test_connect(void){
             0,
             &connector,
             on_connect_phase_1,
-            "localhost",
-            "51429",
+            DSTR_LIT("localhost"),
+            DSTR_LIT("51429"),
             NULL
         ),
     fail_async);
