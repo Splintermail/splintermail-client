@@ -51,15 +51,11 @@ DEF_CONTAINER_OF(preuser_t, cread, imap_client_read_t);
 DEF_CONTAINER_OF(preuser_t, cwrite, imap_client_write_t);
 
 static void preuser_free(preuser_t *p){
-    link_t *link;
-    while((link = link_list_pop_first(&p->servers))){
-        imap_server_t *server = CONTAINER_OF(link, imap_server_t, link);
-        imap_server_free(&server);
-    }
-    while((link = link_list_pop_first(&p->clients))){
-        imap_client_t *client = CONTAINER_OF(link, imap_client_t, link);
-        imap_client_free(&client);
-    }
+    hash_elem_remove(&p->elem);
+
+    // XXX: tell clients why?
+    imap_server_must_free_list(&p->servers);
+    imap_client_must_free_list(&p->clients);
 
     dstr_free(&p->user);
     dstr_free0(&p->pass);
@@ -67,7 +63,6 @@ static void preuser_free(preuser_t *p){
     if(p->kd) p->kd->free(p->kd);
     imap_client_free(&p->xc);
 
-    hash_elem_remove(&p->elem);
     schedulable_cancel(&p->schedulable);
     free(p);
 }
@@ -511,6 +506,7 @@ fail:
     // XXX: alert client?
     DUMP(e);
     DROP_VAR(&e);
+    return;
 }
 
 // when another connection pair is ready but our keysync isn't ready yet

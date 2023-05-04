@@ -65,6 +65,9 @@ struct citm_io_i {
                 - server
                 - client
              - xkey client
+         - holds[]
+             - servers[]
+             - clients[]
 */
 
 
@@ -72,31 +75,22 @@ struct citm_io_i {
 typedef struct {
     citm_io_i *io;
     scheduler_i *scheduler;
-    link_t io_pairs;
-    link_t anons;
-    hashmap_t preusers;
-    hashmap_t users;
+    string_builder_t root;
+    link_t io_pairs;  // io_pair_t->link
+    link_t anons;  // anon_t->link
+    hashmap_t preusers;  // preuser_t->elem
+    hashmap_t users;  // user_t->elem
+    hashmap_t holds;  // citm_hold_t->elem
 } citm_t;
 
-derr_t citm_init(citm_t *citm, citm_io_i *io, scheduler_i *scheduler);
+derr_t citm_init(
+    citm_t *citm,
+    citm_io_i *io,
+    scheduler_i *scheduler,
+    string_builder_t root
+);
 void citm_free(citm_t *citm);
 
 void citm_cancel(citm_t *citm);
 
-void citm_new_connection(citm_t *citm, citm_conn_t *conn);
-
-/////
-
-derr_t citm(
-   const char *local_host,
-   const char *local_svc,
-   const char *key,
-   const char *cert,
-   const char *remote_host,
-   const char *remote_svc,
-   const string_builder_t *maildir_root,
-   bool indicate_ready
-);
-
-// this is exposed so that the windows service-handler can call it manually
-void stop_loop_on_signal(int signum);
+void citm_on_imap_connection(citm_t *citm, citm_conn_t *conn);

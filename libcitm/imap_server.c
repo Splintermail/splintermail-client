@@ -597,6 +597,16 @@ bool imap_server_free(imap_server_t **sptr){
     return true;
 }
 
+bool imap_server_free_list(link_t *list){
+    link_t *link;
+    while((link = link_list_pop_first(list))){
+        imap_server_t *s = CONTAINER_OF(link, imap_server_t, link);
+        bool ok = imap_server_free(&s);
+        if(!ok) return false;
+    }
+    return true;
+}
+
 #define DETECT_INVALID(code, what) do { \
     if(code){ \
         LOG_ERROR(what " after " #code "\n"); \

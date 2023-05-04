@@ -295,7 +295,7 @@ static derr_t kd_mailbox_synced(keydir_i *iface, const dstr_t mailbox){
 
 /* not part of the interface because it is only called by the citm object
    between the preuser-to-user transition */
-derr_t keydir_keysync_complete(keydir_i *iface){
+derr_t keydir_keysync_completed(keydir_i *iface){
     derr_t e = E_OK;
     keydir_t *kd = CONTAINER_OF(iface, keydir_t, iface);
 
@@ -671,5 +671,3 @@ fail:
 }
 
 // XXX: check e2e coverage, maybe add unit test
-/* XXX: kd->mailbox_synced() is not being called anywhere in the code right now
-        but you are pretty sure the server should be calling it */

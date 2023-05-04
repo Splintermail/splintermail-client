@@ -10,6 +10,9 @@ typedef struct {
     scheduler_i *scheduler;
     schedulable_t schedulable;
 
+    user_cb cb;
+    void *cb_data;
+
     hash_elem_t elem;
 
     imap_client_read_t cread;
@@ -240,9 +243,12 @@ cu:
     // finally, free ourselves
     imap_client_free(&u->xc);
     u->kd->free(u->kd);
-    dstr_free(&u->user);
-    hash_elem_remove(&u->elem);
     schedulable_cancel(&u->schedulable);
+    hash_elem_remove(&u->elem);
+
+    // let the owner know it's safe to start a preuser for any late s/c pairs
+    u->cb(u->cb_data, &u->user);
+    dstr_free(&u->user);
 
     free(u);
 }
@@ -254,13 +260,14 @@ void user_new(
     link_t *clients,
     keydir_i *kd,
     imap_client_t *xc,
+    user_cb cb,
+    void *cb_data,
     hashmap_t *out
 ){
     derr_t e = E_OK;
 
     user_t *u = NULL;
     link_t scs = {0};
-    link_t *link;
 
     size_t nservers = link_list_count(servers);
     size_t nclients = link_list_count(clients);
@@ -292,6 +299,8 @@ void user_new(
 
     *u = (user_t){
         .scheduler = scheduler,
+        .cb = cb,
+        .cb_data = cb_data,
         .user = user,
         .kd = kd,
         .xc = xc,
@@ -301,6 +310,7 @@ void user_new(
 
     schedulable_prep(&u->schedulable, scheduled);
 
+    link_t *link;
     while((link = link_list_pop_first(&scs))){
         sc_t *sc = CONTAINER_OF(link, sc_t, link);
         sc_start(sc,
@@ -322,17 +332,12 @@ void user_new(
 fail:
     DUMP(e);
     DROP_VAR(&e);
-    while((link = link_list_pop_first(servers))){
-        imap_server_t *server = CONTAINER_OF(link, imap_server_t, link);
-        imap_server_free(&server);
-    }
-    while((link = link_list_pop_first(clients))){
-        // XXX: tell client why?
-        imap_client_t *client = CONTAINER_OF(link, imap_client_t, link);
-        imap_client_free(&client);
-    }
+    // XXX: tell clients why?
+    imap_server_must_free_list(servers);
+    imap_client_must_free_list(clients);
     while((link = link_list_pop_first(&scs))){
         sc_t *sc = CONTAINER_OF(link, sc_t, link);
+        // XXX: tell clients why?
         sc_free(sc);
     }
     imap_client_free(&xc);
@@ -342,27 +347,30 @@ fail:
     return;
 }
 
-void user_add_pair(hash_elem_t *elem, imap_server_t *s, imap_client_t *c){
+// returns bool ok, indicating if the user was able to accept s/c
+bool user_add_pair(hash_elem_t *elem, imap_server_t *s, imap_client_t *c){
     derr_t e = E_OK;
 
     user_t *u = CONTAINER_OF(elem, user_t, elem);
 
-    // XXX: if u->done=true then we will wrongfully shut down a client
-    //      connection, even in a non-erroring situation.
+    // detect late server/client pairs
+    if(u->done) return false;
 
     sc_t *sc;
     PROP_GO(&e, sc_malloc(&sc), fail);
     sc_start(sc, u->scheduler, u->kd, s, c, await_sc, u);
     link_list_append(&u->scs, &sc->link);
+
     schedule(u);
-    return;
+    return true;
 
 fail:
-    // XXX: tell client why?
     DUMP(e);
     DROP_VAR(&e);
+    // XXX: tell client why?
     imap_server_free(&s);
     imap_client_free(&c);
+    return true;
 }
 
 // elem should already have been removed

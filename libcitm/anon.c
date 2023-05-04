@@ -6,8 +6,8 @@ typedef struct {
     scheduler_i *scheduler;
     schedulable_t schedulable;
 
-    imap_server_t *imap_dn;
-    imap_client_t *imap_up;
+    imap_server_t *s;
+    imap_client_t *c;
 
     imap_server_read_t sread;
     imap_client_read_t cread;
@@ -73,8 +73,8 @@ static void schedule(anon_t *anon){
 static void anon_free(anon_t *anon){
     schedulable_cancel(&anon->schedulable);
     link_remove(&anon->link);
-    imap_server_free(&anon->imap_dn);
-    imap_client_free(&anon->imap_up);
+    imap_server_free(&anon->s);
+    imap_client_free(&anon->c);
     ie_dstr_free(anon->tag);
     dstr_free(&anon->user);
     dstr_free0(&anon->pass);
@@ -170,7 +170,7 @@ static bool advance_writes_up(anon_t *anon){
     link_t *link;
     if((link = link_list_pop_first(&anon->cmds))){
         imap_cmd_t *cmd = CONTAINER_OF(link, imap_cmd_t, link);
-        imap_client_must_write(anon->imap_up, &anon->cwrite, cmd, cwrite_cb);
+        imap_client_must_write(anon->c, &anon->cwrite, cmd, cwrite_cb);
         anon->writing_up = true;
         return false;
     }
@@ -187,7 +187,7 @@ static bool advance_writes_dn(anon_t *anon){
     link_t *link;
     if((link = link_list_pop_first(&anon->resps))){
         imap_resp_t *resp = CONTAINER_OF(link, imap_resp_t, link);
-        imap_server_must_write(anon->imap_dn, &anon->swrite, resp, swrite_cb);
+        imap_server_must_write(anon->s, &anon->swrite, resp, swrite_cb);
         anon->writing_dn = true;
         return false;
     }
@@ -199,7 +199,7 @@ static bool advance_writes_dn(anon_t *anon){
 static bool advance_reads_dn(anon_t *anon){
     if(anon->cmd) return true;
     ONCE(anon->reading_dn){
-        imap_server_must_read(anon->imap_dn, &anon->sread, sread_cb);
+        imap_server_must_read(anon->s, &anon->sread, sread_cb);
     }
     return false;
 }
@@ -208,7 +208,7 @@ static bool advance_reads_dn(anon_t *anon){
 static bool advance_reads_up(anon_t *anon){
     if(anon->resp) return true;
     ONCE(anon->reading_up){
-        imap_client_must_read(anon->imap_up, &anon->cread, cread_cb);
+        imap_client_must_read(anon->c, &anon->cread, cread_cb);
     }
     return false;
 }
@@ -263,7 +263,7 @@ static derr_t process_login_cmd(anon_t *anon, bool *ok){
             break;
 
         case IMAP_CMD_STARTTLS:
-            insec = anon->imap_dn->conn == IMAP_SEC_INSECURE;
+            insec = anon->s->conn == IMAP_SEC_INSECURE;
             PROP_GO(&e, respond_bad_starttls(tag, insec, out), cu);
             break;
 
@@ -350,7 +350,7 @@ static ie_dstr_t *mktag(derr_t *e, anon_t *anon){
 }
 
 static void queue_write_up(derr_t *e, anon_t *anon, imap_cmd_t *cmd){
-    cmd = imap_cmd_assert_writable(e, cmd, &anon->imap_up->exts);
+    cmd = imap_cmd_assert_writable(e, cmd, &anon->c->exts);
     if(is_error(*e)) return;
     link_list_append(&anon->cmds, &cmd->link);
     (void)advance_writes_up(anon);
@@ -407,10 +407,10 @@ static void advance_state(anon_t *anon){
 
     if(anon->logged_out){
         // finished all writes, shut down the server
-        imap_server_logged_out(anon->imap_dn);
-        imap_client_cancel(anon->imap_up);
+        imap_server_logged_out(anon->s);
+        imap_client_cancel(anon->c);
         // wait for the server to finish successfully
-        if(!anon->imap_dn->awaited) return;
+        if(!anon->s->awaited) return;
         goto cu;
     }
 
@@ -449,16 +449,16 @@ static void advance_state(anon_t *anon){
     // success is complete
     anon_cb cb = anon->cb;
     void *cb_data = anon->cb_data;
-    imap_server_t *imap_dn = STEAL(imap_server_t, &anon->imap_dn);
-    imap_client_t *imap_up = STEAL(imap_client_t, &anon->imap_up);
+    imap_server_t *s = STEAL(imap_server_t, &anon->s);
+    imap_client_t *c = STEAL(imap_client_t, &anon->c);
     dstr_t user = STEAL(dstr_t, &anon->user);
     dstr_t pass = STEAL(dstr_t, &anon->pass);
     anon_free(anon);
 
-    imap_server_must_await(imap_dn, NULL, NULL);
-    imap_client_must_await(imap_up, NULL, NULL);
+    imap_server_must_await(s, NULL, NULL);
+    imap_client_must_await(c, NULL, NULL);
 
-    cb(cb_data, imap_dn, imap_up, user, pass);
+    cb(cb_data, s, c, user, pass);
 
     return;
 
@@ -469,12 +469,12 @@ fail:
     DROP_VAR(&anon->e);
 
 cu:
-    imap_server_cancel(anon->imap_dn);
-    imap_client_cancel(anon->imap_up);
+    imap_server_cancel(anon->s);
+    imap_client_cancel(anon->c);
 
     // wait for our async resources to finish
-    if(!anon->imap_dn->awaited) return;
-    if(!anon->imap_up->awaited) return;
+    if(!anon->s->awaited) return;
+    if(!anon->c->awaited) return;
 
     anon_free(anon);
 }
@@ -489,25 +489,25 @@ void anon_new(
 ){
     derr_t e = E_OK;
 
-    imap_server_t *imap_dn = NULL;
-    imap_client_t *imap_up = NULL;
+    imap_server_t *s = NULL;
+    imap_client_t *c = NULL;
 
     anon_t *anon = DMALLOC_STRUCT_PTR(&e, anon);
     CHECK_GO(&e, fail);
 
-    PROP_GO(&e, imap_server_new(&imap_dn, scheduler, conn_dn), fail);
-    PROP_GO(&e, imap_client_new(&imap_up, scheduler, conn_up), fail);
+    PROP_GO(&e, imap_server_new(&s, scheduler, conn_dn), fail);
+    PROP_GO(&e, imap_client_new(&c, scheduler, conn_up), fail);
 
     // success!
 
-    imap_server_must_await(imap_dn, sawait_cb, NULL);
-    imap_client_must_await(imap_up, cawait_cb, NULL);
-    imap_dn->data = anon;
-    imap_up->data = anon;
+    imap_server_must_await(s, sawait_cb, NULL);
+    imap_client_must_await(c, cawait_cb, NULL);
+    s->data = anon;
+    c->data = anon;
 
     *anon = (anon_t){
-        .imap_dn = imap_dn,
-        .imap_up = imap_up,
+        .s = s,
+        .c = c,
         .scheduler = scheduler,
         .cb = cb,
         .cb_data = cb_data,
@@ -523,8 +523,8 @@ void anon_new(
 fail:
     conn_dn->close(conn_dn);
     conn_up->close(conn_up);
-    imap_server_free(&imap_dn);
-    imap_client_free(&imap_up);
+    imap_server_free(&s);
+    imap_client_free(&c);
     if(anon) free(anon);
     // XXX: tell the client what happened?
     DUMP(e);

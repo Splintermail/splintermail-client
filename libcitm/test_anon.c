@@ -111,7 +111,9 @@ static derr_t do_test_anon(bool logout, size_t cancel_after, bool *finished){
     RESP("* OK info\r\nanon1 NO wrong\r\n", "1 NO nice try, imposter!\r\n");
 
     if(logout){
-        BOUNCE("2 LOGOUT\r\n", "2 BYE get offa my lawn!\r\n");
+        BOUNCE("2 LOGOUT\r\n",
+            "* BYE goodbye, my love...\r\n"
+            "2 OK I'm gonna be strong, I can make it through this\r\n");
         fake_stream_shutdown(&s);
         ADVANCE_FAKES(&m, &s, &c);
         EXPECT_U_GO(&e, "cb_count", cb_count, 0, cu);

@@ -492,6 +492,16 @@ bool imap_client_free(imap_client_t **cptr){
     return true;
 }
 
+bool imap_client_free_list(link_t *list){
+    link_t *link;
+    while((link = link_list_pop_first(list))){
+        imap_client_t *c = CONTAINER_OF(link, imap_client_t, link);
+        bool ok = imap_client_free(&c);
+        if(!ok) return false;
+    }
+    return true;
+}
+
 #define DETECT_INVALID(code, what) do { \
     if(code){ \
         LOG_ERROR(what " after " #code "\n"); \

@@ -111,6 +111,7 @@ void duv_timer_must_start(
 );
 void duv_timer_must_stop(uv_timer_t *timer);
 derr_t duv_tcp_init(uv_loop_t *loop, uv_tcp_t *tcp);
+derr_t duv_tcp_open(uv_tcp_t *tcp, int fd);
 derr_t duv_tcp_bind(uv_tcp_t *tcp, struct sockaddr *addr, unsigned int flags);
 derr_t duv_tcp_binds(
     uv_tcp_t *tcp, struct sockaddr_storage *ss, unsigned int flags

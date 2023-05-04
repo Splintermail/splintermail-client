@@ -1,6 +1,5 @@
 sm_lib(
     libcitm
-    # citm.c
     imap_server.c
     imap_client.c
     io_pair.c
@@ -13,10 +12,12 @@ sm_lib(
     keydir.c
     xkey.c
     responses.c
-    DEPS dstr crypto duv duvtls imap imaildir
+    citm.c
+    uv.c
+    DEPS dstr crypto url duv duvtls imap imaildir
 )
 
-# sm_exe(citm main.c DEPS libcitm)
+sm_exe(citm main.c DEPS libcitm)
 
 sm_lib(fake_citm.c DEPS libcitm TEST)
 

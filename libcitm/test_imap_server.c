@@ -265,7 +265,10 @@ static derr_t test_starttls(SSL_CTX *sctx, SSL_CTX *cctx, test_mode_e mode){
     if(mode == MODE_LOGOUT){
         // LOGOUT-type client message
         DSTR_STATIC(logoutcmd, "4 LOGOUT\r\n");
-        DSTR_STATIC(logoutresp, "4 BYE get offa my lawn!\r\n");
+        DSTR_STATIC(logoutresp,
+            "* BYE goodbye, my love...\r\n"
+            "4 OK I'm gonna be strong, I can make it through this\r\n"
+        );
         CMD_AND_RESP(&logoutcmd, &logoutresp);
 
         // expect the fake stream to be shutdown now

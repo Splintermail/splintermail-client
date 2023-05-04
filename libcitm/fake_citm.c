@@ -183,12 +183,9 @@ static const keypair_t *fkd_mykey(keydir_i *iface){
     return fkd->mykey;
 }
 
-static key_iter_t fkd_peers(keydir_i *iface){
+static link_t *fkd_peers(keydir_i *iface){
     fake_keydir_t *fkd = CONTAINER_OF(iface, fake_keydir_t, iface);
-    return (key_iter_t){
-        .head = &fkd->peers,
-        .next = fkd->peers.next ? fkd->peers.next : NULL,
-    };
+    return &fkd->peers;
 }
 
 static derr_t fkd_add(keydir_i *iface, const dstr_t pem){

@@ -25,7 +25,7 @@ DEF_STEAL_PTR(keydir_i)
 
 /* not part of the interface because it is only called by the citm object
    between the preuser-to-user transition */
-derr_t keydir_keysync_complete(keydir_i *iface);
+derr_t keydir_keysync_completed(keydir_i *iface);
 
 /* keydir_t is the default keydir_i that uses an actual directory of keys.
 

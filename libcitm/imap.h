@@ -152,6 +152,11 @@ bool imap_client_free(imap_client_t **client);
 #define imap_server_must_free(s) MUST(imap_server_free, (s))
 #define imap_client_must_free(c) MUST(imap_client_free, (c))
 
+bool imap_server_free_list(link_t *list);
+bool imap_client_free_list(link_t *list);
+#define imap_server_must_free_list(l) MUST(imap_server_free_list, (l))
+#define imap_client_must_free_list(l) MUST(imap_client_free_list, (l))
+
 struct imap_server_t {
     void *data;  // user data
     imap_cmd_reader_t reader;

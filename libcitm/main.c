@@ -2,37 +2,50 @@
 #include "libcitm.h"
 
 // defaults
-static const char *d_l_host   = "127.0.0.1";
-static const char *d_l_port   = "1993";
-static const char *d_r_host   = "127.0.0.1";
-static const char *d_r_port   = "993";
-static const char *d_tls_key  = "../c/test/files/ssl/good-key.pem";
-static const char *d_tls_cert = "../c/test/files/ssl/good-cert.pem";
+DSTR_STATIC(d_listen, "insecure://[::1]:1993");
+DSTR_STATIC(d_remote, "tls://splintermail.com:993");
 DSTR_STATIC(d_maildirs, "/tmp/maildir_root");
 
 static void print_help(FILE *f){
-    DROP_CMD(
-        FFMT(f, NULL,
-            "usage: citm [OPTIONS]\n"
-            "\n"
-            "where OPTIONS are any of:\n"
-            "  -h, --help\n"
-            "      --local-host=ARG    (default: %x)\n"
-            "      --local-port=ARG    (default: %x)\n"
-            "      --remote-host=ARG   (default: %x)\n"
-            "      --remote-port=ARG   (default: %x)\n"
-            "      --tls-key=ARG       (default: %x)\n"
-            "      --tls-cert=ARG      (default: %x)\n"
-            "      --maildirs=ARG      (default: %x)\n",
-            FS(d_l_host),
-            FS(d_l_port),
-            FS(d_r_host),
-            FS(d_r_port),
-            FS(d_tls_key),
-            FS(d_tls_cert),
-            FD(&d_maildirs)
-        )
+    FFMT_QUIET(f, NULL,
+        "usage: citm [OPTIONS]\n"
+        "\n"
+        "where OPTIONS are any of:\n"
+        "  -h, --help\n"
+        "  -l, --listen=ARG    (default: %x)\n"
+        "  -r, --remote=ARG    (default: %x)\n"
+        "  -k, --key=ARG       (default: none)\n"
+        "  -c, --cert=ARG      (default: none)\n"
+        "  -m, --maildirs=ARG  (default: %x)\n",
+        FD(&d_listen),
+        FD(&d_remote),
+        FD(&d_maildirs)
     );
+}
+
+typedef struct {
+    dstr_t *dstrs;
+    addrspec_t *specs;
+    size_t len;
+    size_t cap;
+} listener_list_t;
+
+static derr_t listener_cb(void *data, dstr_t val){
+    derr_t e = E_OK;
+
+    listener_list_t *l = data;
+
+    size_t idx = l->len++;
+
+    if(l->len > l->cap){
+        ORIG(&e, E_FIXEDSIZE, "too many --listener flags, limit 8");
+    }
+
+    // val.data is persisted, but the dstr_t box is not
+    l->dstrs[idx] = val;
+    PROP(&e, parse_addrspec(&l->dstrs[idx], &l->specs[idx]) );
+
+    return e;
 }
 
 int main(int argc, char **argv){
@@ -47,25 +60,25 @@ int main(int argc, char **argv){
     logger_add_fileptr(LOG_LVL_INFO, stdout);
     auto_log_flush(true);
 
+    // support multiple listeners
+    dstr_t dstrs[8] = {0};
+    addrspec_t specs[8] = {0};
+    listener_list_t listeners = { .dstrs = dstrs, .specs = specs, .cap = 8 };
 
     // options
-    opt_spec_t o_help     = {'h',  "help",        false};
-    opt_spec_t o_l_host   = {'\0', "local-host",  true};
-    opt_spec_t o_l_port   = {'\0', "local-port",  true};
-    opt_spec_t o_r_host   = {'\0', "remote-host", true};
-    opt_spec_t o_r_port   = {'\0', "remote-port", true};
-    opt_spec_t o_tls_key  = {'\0', "tls-key",     true};
-    opt_spec_t o_tls_cert = {'\0', "tls-cert",    true};
-    opt_spec_t o_maildirs = {'\0', "maildirs",    true};
+    opt_spec_t o_help     = {'h', "help",    false};
+    opt_spec_t o_listen   = {'l', "listen",  true, listener_cb, &listeners};
+    opt_spec_t o_remote   = {'r', "remote",  true};
+    opt_spec_t o_key      = {'k', "key",     true};
+    opt_spec_t o_cert     = {'c', "cert",    true};
+    opt_spec_t o_maildirs = {'m', "maildirs",true};
 
     opt_spec_t* spec[] = {
         &o_help,
-        &o_l_host,
-        &o_l_port,
-        &o_r_host,
-        &o_r_port,
-        &o_tls_key,
-        &o_tls_cert,
+        &o_listen,
+        &o_remote,
+        &o_key,
+        &o_cert,
         &o_maildirs,
     };
     size_t speclen = sizeof(spec) / sizeof(*spec);
@@ -90,25 +103,27 @@ int main(int argc, char **argv){
     PROP_GO(&e, ssl_library_init(), done);
 
     // resolve options
-    const char *l_host = o_l_host.found ? o_l_host.val.data : d_l_host;
-    const char *l_port = o_l_port.found ? o_l_port.val.data : d_l_port;
-    const char *r_host = o_r_host.found ? o_r_host.val.data : d_r_host;
-    const char *r_port = o_r_port.found ? o_r_port.val.data : d_r_port;
-    const char *tls_key = o_tls_key.found ? o_tls_key.val.data : d_tls_key;
-    const char *tls_cert = o_tls_cert.found ? o_tls_cert.val.data : d_tls_cert;
+    if(listeners.len == 0){
+        listeners.specs[0] = must_parse_addrspec(&d_listen);
+        listeners.len = 1;
+    }
+    dstr_t remotestr = o_remote.found ? o_remote.val : d_remote;
+    addrspec_t remote;
+    PROP_GO(&e, parse_addrspec(&remotestr, &remote), cu);
+    const char *key = o_key.found ? o_key.val.data : NULL;
+    const char *cert = o_cert.found ? o_cert.val.data : NULL;
     const dstr_t *maildirs = o_maildirs.found ? &o_maildirs.val : &d_maildirs;
 
     string_builder_t maildir_root = SB(FD(maildirs));
 
     PROP_GO(&e,
-         citm(
-            l_host,
-            l_port,
-            tls_key,
-            tls_cert,
-            r_host,
-            r_port,
-            &maildir_root,
+         uv_citm(
+            listeners.specs,
+            listeners.len,
+            remote,
+            key,
+            cert,
+            maildir_root,
             // indicate when the listener is ready
             true
         ),
@@ -126,5 +141,4 @@ done:
     }
 
     return 0;
-
 }

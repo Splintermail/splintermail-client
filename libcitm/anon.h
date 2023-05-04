@@ -9,8 +9,8 @@
 
 typedef void (*anon_cb)(
     void *data,
-    imap_server_t *imap_dn,
-    imap_client_t *imap_up,
+    imap_server_t *s,
+    imap_client_t *c,
     dstr_t user,
     dstr_t pass
 );

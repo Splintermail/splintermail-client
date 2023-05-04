@@ -55,7 +55,6 @@ void io_pair_new(
         .cb = cb,
         .data = data,
     };
-
     PROP_GO(&e,
         io->connect_imap(io,
             connect_cb,

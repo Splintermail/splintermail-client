@@ -21,7 +21,7 @@ typedef struct {
     void *cb_data;
     /* found will be 0 if the option is not detected, or >1 if it was.  A
        higher number means it was found later.  If an option was provided
-       times, the value stored will be from the last appearance. */
+       multiple times, the value stored will be from the last appearance. */
     int found;
     // a count of the number of times an option was seen
     int count;
