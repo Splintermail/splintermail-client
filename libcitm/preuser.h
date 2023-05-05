@@ -1,5 +1,6 @@
 typedef void (*preuser_cb)(
     void *data,
+    derr_t e,
     dstr_t user,
     link_t *servers,
     link_t *clients,
@@ -7,7 +8,8 @@ typedef void (*preuser_cb)(
     imap_client_t *xc
 );
 
-void preuser_new(
+// no args are consumed on failure
+derr_t preuser_new(
     scheduler_i *scheduler,
     citm_io_i *io,
     dstr_t user,

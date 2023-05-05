@@ -7,18 +7,21 @@
     - check upwards CAPABILITY response
 */
 
+// if e == E_OK and s,c == NULL, that means the client did a LOGOUT
 typedef void (*anon_cb)(
     void *data,
+    derr_t e,
     imap_server_t *s,
     imap_client_t *c,
     dstr_t user,
     dstr_t pass
 );
 
-void anon_new(
+// no args are consumed on failure
+derr_t anon_new(
     scheduler_i *scheduler,
-    citm_conn_t *conn_dn,
-    citm_conn_t *conn_up,
+    imap_server_t *s,
+    imap_client_t *c,
     anon_cb cb,
     void *data,
     link_t *list

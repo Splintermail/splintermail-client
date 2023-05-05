@@ -31,7 +31,6 @@ typedef struct {
     derr_t e;
 
     bool canceled : 1;
-    bool failed : 1;
 
     bool write_started : 1;
     bool write_done : 1;
@@ -49,23 +48,6 @@ DEF_CONTAINER_OF(preuser_t, elem, hash_elem_t);
 DEF_CONTAINER_OF(preuser_t, schedulable, schedulable_t);
 DEF_CONTAINER_OF(preuser_t, cread, imap_client_read_t);
 DEF_CONTAINER_OF(preuser_t, cwrite, imap_client_write_t);
-
-static void preuser_free(preuser_t *p){
-    hash_elem_remove(&p->elem);
-
-    // XXX: tell clients why?
-    imap_server_must_free_list(&p->servers);
-    imap_client_must_free_list(&p->clients);
-
-    dstr_free(&p->user);
-    dstr_free0(&p->pass);
-
-    if(p->kd) p->kd->free(p->kd);
-    imap_client_free(&p->xc);
-
-    schedulable_cancel(&p->schedulable);
-    free(p);
-}
 
 static void advance_state(preuser_t *p);
 
@@ -88,13 +70,18 @@ static void await_xc(
     preuser_t *p = xc->data;
     schedule(p);
 
-    if(p->failed) DROP_VAR(&e);
-    if(p->canceled || p->failed){
-        DROP_CANCELED_VAR(&e);
-    }else{
-        UPGRADE_CANCELED_VAR(&e, E_INTERNAL);
-    }
+    // we never cancel the xc
+    UPGRADE_CANCELED_VAR(&e, E_INTERNAL);
     KEEP_FIRST_IF_NOT_CANCELED_VAR(&p->e, &e);
+}
+
+// a stream_i await_cb, only used in specific cleanup scenarios
+static void await_conn(stream_i *s, derr_t e, link_t *reads, link_t *writes){
+    preuser_t *p = s->data;
+    (void)reads;
+    (void)writes;
+    DROP_VAR(&e);
+    schedule(p);
 }
 
 static void connect_cb(void *data, citm_conn_t *conn, derr_t e){
@@ -105,12 +92,10 @@ static void connect_cb(void *data, citm_conn_t *conn, derr_t e){
     p->connect = NULL;
     p->conn = conn;
 
-    if(p->failed) DROP_VAR(&e);
-    if(p->canceled || p->failed){
+    if(p->canceled || is_error(p->e)){
         DROP_CANCELED_VAR(&e);
-    }else{
-        UPGRADE_CANCELED_VAR(&e, E_INTERNAL);
     }
+    UPGRADE_CANCELED_VAR(&e, E_INTERNAL);
     KEEP_FIRST_IF_NOT_CANCELED_VAR(&p->e, &e);
 }
 
@@ -341,8 +326,7 @@ cu:
 static void advance_state(preuser_t *p){
     bool ok;
 
-    if(is_error(p->e)) goto fail;
-    if(p->canceled || p->failed) goto cu;
+    if(p->canceled || is_error(p->e)) goto cu;
 
     // wait to ready our imap client
     if(!p->xc){
@@ -350,7 +334,7 @@ static void advance_state(preuser_t *p){
         if(!p->conn) return;
         // configure our imap client
         citm_conn_t *conn = STEAL(citm_conn_t, &p->conn);
-        PROP_GO(&p->e, imap_client_new(&p->xc, p->scheduler, conn), fail);
+        PROP_GO(&p->e, imap_client_new(&p->xc, p->scheduler, conn), cu);
         imap_client_must_await(p->xc, await_xc, NULL);
         p->xc->data = p;
     }
@@ -362,16 +346,16 @@ static void advance_state(preuser_t *p){
     // aggressively pipeline commands to reduce user-facing startup times
 
     ONCE(p->initial_sends){
-        PROP_GO(&p->e, send_login(p), fail);
-        PROP_GO(&p->e, send_sync(p), fail);
-        PROP_GO(&p->e, send_done(p), fail);
+        PROP_GO(&p->e, send_login(p), cu);
+        PROP_GO(&p->e, send_sync(p), cu);
+        PROP_GO(&p->e, send_done(p), cu);
         (void)advance_writes(p);
     }
 
     while(!p->login_done){
         ok = advance_reads(p);
         if(!ok) return;
-        PROP_GO(&p->e, check_resp(p, &ok, check_login), fail);
+        PROP_GO(&p->e, check_resp(p, &ok, check_login), cu);
         if(!ok) continue;
         p->login_done = true;
     }
@@ -379,7 +363,7 @@ static void advance_state(preuser_t *p){
     while(!p->sync_done){
         ok = advance_reads(p);
         if(!ok) return;
-        PROP_GO(&p->e, check_resp(p, &ok, check_sync), fail);
+        PROP_GO(&p->e, check_resp(p, &ok, check_sync), cu);
         if(!ok) continue;
         p->sync_done = true;
     }
@@ -388,13 +372,13 @@ static void advance_state(preuser_t *p){
 
     if(p->need_mykey){
         ONCE(p->mykey_sent){
-            PROP_GO(&p->e, send_mykey(p), fail);
+            PROP_GO(&p->e, send_mykey(p), cu);
             (void)advance_writes(p);
         }
         while(!p->mykey_done){
             ok = advance_reads(p);
             if(!ok) return;
-            PROP_GO(&p->e, check_resp(p, &ok, check_upload), fail);
+            PROP_GO(&p->e, check_resp(p, &ok, check_upload), cu);
             if(!ok) continue;
             p->mykey_done = true;
         }
@@ -404,17 +388,33 @@ static void advance_state(preuser_t *p){
 
     // assert that we are done with IO
     if(p->write_started){
-        ORIG_GO(&p->e, E_INTERNAL, "preuser is not done writing!", fail);
+        ORIG_GO(&p->e, E_INTERNAL, "preuser is not done writing!", cu);
     }
     if(p->reading){
-        ORIG_GO(&p->e, E_INTERNAL, "preuser is not done reading!", fail);
+        ORIG_GO(&p->e, E_INTERNAL, "preuser is not done reading!", cu);
     }
 
-    // unawait xc
+    // success (fallthru)
+
+cu:
+    // cleanup intermediate states in failure cases
+    if(p->connect){
+        p->connect->cancel(p->connect);
+        return;
+    }
+    if(p->conn){
+        stream_i *s = p->conn->stream;
+        s->data = p;
+        s->await(s, await_conn);
+        s->cancel(s);
+        return;
+    }
+
     imap_client_t *xc = STEAL(imap_client_t, &p->xc);
-    imap_client_must_await(xc, NULL, NULL);
+    if(xc) imap_client_unawait(xc);
 
     dstr_t user = STEAL(dstr_t, &p->user);
+    dstr_free0(&p->pass);
     link_t servers = {0};
     link_t clients = {0};
     link_list_append_list(&servers, &p->servers);
@@ -424,38 +424,22 @@ static void advance_state(preuser_t *p){
     preuser_cb cb = p->cb;
     void *cb_data = p->cb_data;
 
-    preuser_free(p);
+    derr_t e = p->e;
+    if(!is_error(e) && p->canceled){
+        e.type = E_CANCELED;
+    }
 
-    cb(cb_data, user, &servers, &clients, kd, xc);
+    hash_elem_remove(&p->elem);
+    schedulable_cancel(&p->schedulable);
+    free(p);
+
+    cb(cb_data, e, user, &servers, &clients, kd, xc);
 
     return;
-
-fail:
-    p->failed = true;
-    // XXX: tell the clients why we're closing?
-    DUMP(p->e);
-    DROP_VAR(&p->e);
-
-cu:
-    if(p->connect){
-        p->connect->cancel(p->connect);
-        p->connect = NULL;
-    }
-    if(p->conn){
-        p->conn->close(p->conn);
-        p->conn = NULL;
-    }
-
-    // wait for our io be all finished
-    if(p->xc){
-        imap_client_cancel(p->xc);
-        if(!p->xc->awaited) return;
-    }
-
-    preuser_free(p);
 }
 
-void preuser_new(
+// no args are consumed on failure
+derr_t preuser_new(
     scheduler_i *scheduler,
     citm_io_i *io,
     dstr_t user,
@@ -470,12 +454,13 @@ void preuser_new(
     derr_t e = E_OK;
 
     preuser_t *p = DMALLOC_STRUCT_PTR(&e, p);
-    CHECK_GO(&e, fail);
+    CHECK(&e);
 
     citm_connect_i *connect;
     PROP_GO(&e, io->connect_imap(io, connect_cb, p, &connect), fail);
 
     // success
+
     *p = (preuser_t){
         .scheduler = scheduler,
         .connect = connect,
@@ -494,19 +479,11 @@ void preuser_new(
     hash_elem_t *old = hashmap_sets(out, &p->user, &p->elem);
     if(old) LOG_FATAL("preuser found existing user %x\n", FD_DBG(&p->user));
 
-    return;
+    return e;
 
 fail:
-    dstr_free(&user);
-    dstr_free0(&pass);
-    kd->free(kd);
-    imap_server_must_free(&server);
-    imap_client_must_free(&client);
     free(p);
-    // XXX: alert client?
-    DUMP(e);
-    DROP_VAR(&e);
-    return;
+    return e;
 }
 
 // when another connection pair is ready but our keysync isn't ready yet
@@ -514,7 +491,7 @@ void preuser_add_pair(hash_elem_t *elem, imap_server_t *s, imap_client_t *c){
     preuser_t *p = CONTAINER_OF(elem, preuser_t, elem);
     link_list_append(&p->servers, &s->link);
     link_list_append(&p->clients, &c->link);
-    // no reason to schedule
+    if(p->canceled) schedule(p);
 }
 
 // elem should already have been removed

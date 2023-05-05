@@ -253,7 +253,8 @@ cu:
     free(u);
 }
 
-void user_new(
+// no args are consumed on failure
+derr_t user_new(
     scheduler_i *scheduler,
     dstr_t user,
     link_t *servers,
@@ -272,21 +273,20 @@ void user_new(
     size_t nservers = link_list_count(servers);
     size_t nclients = link_list_count(clients);
     if(nservers != nclients){
-        ORIG_GO(&e,
+        ORIG(&e,
             E_INTERNAL,
             "mismatched servers vs clients: %x vs %x",
-            fail,
             FU(nservers),
             FU(nclients)
         );
     }
 
     if(nservers == 0){
-        ORIG_GO(&e, E_INTERNAL, "user_t was given zero connections?", fail);
+        ORIG(&e, E_INTERNAL, "user_t was given zero connections?");
     }
 
     u = DMALLOC_STRUCT_PTR(&e, u);
-    CHECK_GO(&e, fail);
+    CHECK(&e);
 
     // allocate all of our sc's, but start none of them
     for(size_t i = 0; i < nservers; i++){
@@ -327,34 +327,32 @@ void user_new(
     hash_elem_t *old = hashmap_sets(out, &u->user, &u->elem);
     if(old) LOG_FATAL("user_new found existing user %x\n", FD_DBG(&u->user));
 
-    return;
+    return e;
 
 fail:
-    DUMP(e);
-    DROP_VAR(&e);
-    // XXX: tell clients why?
-    imap_server_must_free_list(servers);
-    imap_client_must_free_list(clients);
     while((link = link_list_pop_first(&scs))){
         sc_t *sc = CONTAINER_OF(link, sc_t, link);
-        // XXX: tell clients why?
         sc_free(sc);
     }
-    imap_client_free(&xc);
-    if(kd) kd->free(kd);
-    dstr_free(&user);
-    if(u) free(u);
-    return;
+    free(u);
+    return e;
 }
 
 // returns bool ok, indicating if the user was able to accept s/c
-bool user_add_pair(hash_elem_t *elem, imap_server_t *s, imap_client_t *c){
+derr_t user_add_pair(
+    hash_elem_t *elem, imap_server_t *s, imap_client_t *c, bool *ok
+){
     derr_t e = E_OK;
 
     user_t *u = CONTAINER_OF(elem, user_t, elem);
 
     // detect late server/client pairs
-    if(u->done) return false;
+    if(u->done){
+        *ok = false;
+        return e;
+    }
+
+    *ok = true;
 
     sc_t *sc;
     PROP_GO(&e, sc_malloc(&sc), fail);
@@ -362,15 +360,16 @@ bool user_add_pair(hash_elem_t *elem, imap_server_t *s, imap_client_t *c){
     link_list_append(&u->scs, &sc->link);
 
     schedule(u);
-    return true;
+    return e;
 
 fail:
+    // XXX: needs to clean up differently
     DUMP(e);
     DROP_VAR(&e);
     // XXX: tell client why?
     imap_server_free(&s);
     imap_client_free(&c);
-    return true;
+    return e;
 }
 
 // elem should already have been removed

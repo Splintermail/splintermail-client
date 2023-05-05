@@ -14,9 +14,9 @@ struct citm_conn_t {
     // verify_name must be non-empty for non-INSECURE client connections
     // verify_name is expected to have externally-managed .data
     dstr_t verify_name;
-    // close() will also free the conn; you can't touch it again
-    // .close() is illegal unless you can guarantee there is no pending IO
-    void (*close)(citm_conn_t*);
+    // free() is only safe after the stream is awaited
+    void (*free)(citm_conn_t*);
+    link_t link;
 };
 DEF_STEAL_PTR(citm_conn_t)
 
@@ -56,16 +56,16 @@ struct citm_io_i {
          - anons[]
             - server
             - client
-         - preusers[]
+         - preusers{}
              - servers[]
              - clients[]
              - xkey client
-         - users[]
+         - users{}
              - sc[]
                 - server
                 - client
              - xkey client
-         - holds[]
+         - holds{}
              - servers[]
              - clients[]
 */
@@ -75,12 +75,23 @@ struct citm_io_i {
 typedef struct {
     citm_io_i *io;
     scheduler_i *scheduler;
+    schedulable_t schedulable;
+
     string_builder_t root;
     link_t io_pairs;  // io_pair_t->link
     link_t anons;  // anon_t->link
     hashmap_t preusers;  // preuser_t->elem
     hashmap_t users;  // user_t->elem
     hashmap_t holds;  // citm_hold_t->elem
+
+    // objects we are awaiting in order to delete
+    struct {
+        link_t conns;
+        link_t clients;
+        link_t servers;
+    } closing;
+
+    bool canceled;
 } citm_t;
 
 derr_t citm_init(
@@ -92,5 +103,9 @@ derr_t citm_init(
 void citm_free(citm_t *citm);
 
 void citm_cancel(citm_t *citm);
+
+/* XXX: a good idea, but requires us to get rid of the silly
+       "citm doesn't have an advance_state" rule to be useful */
+// void citm_dump(citm_t *citm, FILE *f);
 
 void citm_on_imap_connection(citm_t *citm, citm_conn_t *conn);

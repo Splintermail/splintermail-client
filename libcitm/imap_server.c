@@ -451,8 +451,8 @@ cu:
     // wait to be awaited
     if(!s->await_cb) return;
 
-    // close the underlying connection object
-    s->conn->close(s->conn);
+    // free the underlying connection object
+    s->conn->free(s->conn);
 
     // free cmds or responses
     link_t *link;
@@ -485,6 +485,7 @@ cu:
 
 static void free_server_memory(imap_server_t *s){
     if(!s) return;
+    link_remove(&s->link);
     imap_cmd_reader_free(&s->reader);
     schedulable_cancel(&s->schedulable);
     free(s);
@@ -500,7 +501,7 @@ derr_t imap_server_new(
     *out = NULL;
 
     imap_server_t *s = DMALLOC_STRUCT_PTR(&e, s);
-    CHECK_GO(&e, fail_malloc);
+    CHECK(&e);
 
     *s = (imap_server_t){
         .scheduler = scheduler,
@@ -550,9 +551,6 @@ derr_t imap_server_new(
 
 fail:
     free_server_memory(s);
-fail_malloc:
-    // we are guaranteed not to have any pending io on conn
-    conn->close(conn);
     return e;
 }
 
@@ -567,44 +565,24 @@ void imap_server_cancel(imap_server_t *s){
     schedule(s);
 }
 
-static void await_self(
-    imap_server_t *s, derr_t e, link_t *reads, link_t *writes
-){
-    // we already guaranteed reads and writes would be empty
-    (void)reads;
-    (void)writes;
-    // swallow any error since we were closed, not awaited
-    DROP_VAR(&e);
-    free_server_memory(s);
-}
-
-// if not awaited, it will stay alive long enough to await itself
-// returns ok=false if freeing fails due to pending IO
-bool imap_server_free(imap_server_t **sptr){
+// must be awaited already
+void imap_server_free(imap_server_t **sptr){
     imap_server_t *s = *sptr;
-    if(!s) return true;
-    if(!link_list_isempty(&s->reads) || !link_list_isempty(&s->writes)){
-        LOG_ERROR("imap_server_free with pending io\n");
-        return false;
-    }
-    if(!s->awaited){
-        imap_server_cancel(s);
-        imap_server_must_await(s, await_self, NULL);
-    }else{
-        free_server_memory(s);
-    }
+    if(!s) return;
+    free_server_memory(s);
     *sptr = NULL;
-    return true;
 }
 
-bool imap_server_free_list(link_t *list){
-    link_t *link;
-    while((link = link_list_pop_first(list))){
-        imap_server_t *s = CONTAINER_OF(link, imap_server_t, link);
-        bool ok = imap_server_free(&s);
-        if(!ok) return false;
+// for handling lists of servers/clients, returns ok when list is empty
+bool imap_server_list_cancelfree(link_t *list){
+    imap_server_t *s, *temp;
+    LINK_FOR_EACH_SAFE(s, temp, list, imap_server_t, link){
+        imap_server_cancel(s);
+        if(s->awaited){
+            imap_server_free(&s);
+        }
     }
-    return true;
+    return link_list_isempty(list);
 }
 
 #define DETECT_INVALID(code, what) do { \
@@ -625,6 +603,10 @@ bool imap_server_await(
     s->await_cb = cb;
     schedule(s);
     return true;
+}
+
+void imap_server_unawait(imap_server_t *s){
+    s->await_cb = NULL;
 }
 
 bool imap_server_read(

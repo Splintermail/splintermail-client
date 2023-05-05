@@ -48,7 +48,6 @@ typedef struct {
     bool login_done : 1;
 
     bool canceled : 1;
-    bool failed : 1;
     bool logged_out : 1;
     bool done : 1;
 } anon_t;
@@ -73,11 +72,7 @@ static void schedule(anon_t *anon){
 static void anon_free(anon_t *anon){
     schedulable_cancel(&anon->schedulable);
     link_remove(&anon->link);
-    imap_server_free(&anon->s);
-    imap_client_free(&anon->c);
     ie_dstr_free(anon->tag);
-    dstr_free(&anon->user);
-    dstr_free0(&anon->pass);
     // free any pending io
     imap_cmd_free(anon->cmd);
     imap_resp_free(anon->resp);
@@ -99,12 +94,8 @@ static void sawait_cb(
     (void)writes;
     anon_t *anon = s->data;
     schedule(anon);
-    if(anon->failed) DROP_VAR(&e);
-    if(anon->canceled || anon->failed){
-        DROP_CANCELED_VAR(&e);
-    }else{
-        UPGRADE_CANCELED_VAR(&e, E_INTERNAL);
-    }
+    // we never cancel the server
+    UPGRADE_CANCELED_VAR(&e, E_INTERNAL);
     KEEP_FIRST_IF_NOT_CANCELED_VAR(&anon->e, &e);
 }
 
@@ -116,12 +107,11 @@ static void cawait_cb(
     (void)writes;
     anon_t *anon = c->data;
     schedule(anon);
-    if(anon->failed) DROP_VAR(&e);
-    if(anon->canceled || anon->failed || anon->logged_out){
+    // we only cancel the client in the logout flow
+    if(anon->logged_out){
         DROP_CANCELED_VAR(&e);
-    }else{
-        UPGRADE_CANCELED_VAR(&e, E_INTERNAL);
     }
+    UPGRADE_CANCELED_VAR(&e, E_INTERNAL);
     KEEP_FIRST_IF_NOT_CANCELED_VAR(&anon->e, &e);
 }
 
@@ -397,8 +387,7 @@ static void reset(anon_t *anon){
 static void advance_state(anon_t *anon){
     bool ok;
 
-    if(is_error(anon->e)) goto fail;
-    if(anon->canceled || anon->failed) goto cu;
+    if(anon->canceled || is_error(anon->e)) goto cu;
 
     // always finish writes before proceeding
     bool ok_up = advance_writes_up(anon);
@@ -409,8 +398,11 @@ static void advance_state(anon_t *anon){
         // finished all writes, shut down the server
         imap_server_logged_out(anon->s);
         imap_client_cancel(anon->c);
-        // wait for the server to finish successfully
+        // wait for the server and client to finish successfully
         if(!anon->s->awaited) return;
+        if(!anon->c->awaited) return;
+        imap_server_free(&anon->s);
+        imap_client_free(&anon->c);
         goto cu;
     }
 
@@ -419,24 +411,24 @@ static void advance_state(anon_t *anon){
         while(!anon->login_cmd_recvd){
             ok = advance_reads_dn(anon);
             if(!ok) return;
-            PROP_GO(&anon->e, process_login_cmd(anon, &ok), fail);
+            PROP_GO(&anon->e, process_login_cmd(anon, &ok), cu);
             if(!ok) continue;
             // have login cmd
             anon->login_cmd_recvd = true;
         }
         // send our LOGIN cmd upwards
-        ONCE(anon->write_up_sent) PROP_GO(&anon->e, write_up(anon), fail);
+        ONCE(anon->write_up_sent) PROP_GO(&anon->e, write_up(anon), cu);
         // read LOGIN response from above
         while(!anon->login_resp_recvd){
             ok = advance_reads_up(anon);
             if(!ok) return;
-            PROP_GO(&anon->e, process_login_resp(anon, &ok), fail);
+            PROP_GO(&anon->e, process_login_resp(anon, &ok), cu);
             if(!ok) continue;
             anon->login_resp_recvd = true;
         }
         // send LOGIN response downwards
         ONCE(anon->write_dn_sent){
-            PROP_GO(&anon->e, write_dn(anon, anon->login_success), fail);
+            PROP_GO(&anon->e, write_dn(anon, anon->login_success), cu);
             // come back when we finish writing
             return;
         }
@@ -446,57 +438,41 @@ static void advance_state(anon_t *anon){
 
     // XXX: check capabilities?
 
-    // success is complete
+    // success (fallthru)
+
+cu:
     anon_cb cb = anon->cb;
     void *cb_data = anon->cb_data;
     imap_server_t *s = STEAL(imap_server_t, &anon->s);
     imap_client_t *c = STEAL(imap_client_t, &anon->c);
     dstr_t user = STEAL(dstr_t, &anon->user);
     dstr_t pass = STEAL(dstr_t, &anon->pass);
+    derr_t e = anon->e;
+    if(!is_error(e) && anon->canceled){
+        e.type = E_CANCELED;
+    }
     anon_free(anon);
 
-    imap_server_must_await(s, NULL, NULL);
-    imap_client_must_await(c, NULL, NULL);
+    // s and c may be NULL after LOGOUT
+    if(s) imap_server_unawait(s);
+    if(c) imap_client_unawait(c);
 
-    cb(cb_data, s, c, user, pass);
-
-    return;
-
-fail:
-    anon->failed = true;
-    // XXX: tell the client why we're closing?
-    DUMP(anon->e);
-    DROP_VAR(&anon->e);
-
-cu:
-    imap_server_cancel(anon->s);
-    imap_client_cancel(anon->c);
-
-    // wait for our async resources to finish
-    if(!anon->s->awaited) return;
-    if(!anon->c->awaited) return;
-
-    anon_free(anon);
+    cb(cb_data, e, s, c, user, pass);
 }
 
-void anon_new(
+// no args are consumed on failure
+derr_t anon_new(
     scheduler_i *scheduler,
-    citm_conn_t *conn_dn,
-    citm_conn_t *conn_up,
+    imap_server_t *s,
+    imap_client_t *c,
     anon_cb cb,
     void *cb_data,
     link_t *list
 ){
     derr_t e = E_OK;
 
-    imap_server_t *s = NULL;
-    imap_client_t *c = NULL;
-
     anon_t *anon = DMALLOC_STRUCT_PTR(&e, anon);
-    CHECK_GO(&e, fail);
-
-    PROP_GO(&e, imap_server_new(&s, scheduler, conn_dn), fail);
-    PROP_GO(&e, imap_client_new(&c, scheduler, conn_up), fail);
+    CHECK(&e);
 
     // success!
 
@@ -518,17 +494,7 @@ void anon_new(
     schedule(anon);
     link_list_append(list, &anon->link);
 
-    return;
-
-fail:
-    conn_dn->close(conn_dn);
-    conn_up->close(conn_up);
-    imap_server_free(&s);
-    imap_client_free(&c);
-    if(anon) free(anon);
-    // XXX: tell the client what happened?
-    DUMP(e);
-    DROP_VAR(&e);
+    return e;
 }
 
 // citm can cancel us (it should also remove us from its list)

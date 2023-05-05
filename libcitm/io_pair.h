@@ -1,11 +1,12 @@
 // stage 1, io_pair_t: after receiving a conn_dn, make a conn_up
 
-// conn_up and conn_dn are either both connected or both NULL
+// conn_up and conn_dn are both non-NULL when e == E_OK
 typedef void (*io_pair_cb)(
-    void *data, citm_conn_t *conn_dn, citm_conn_t *conn_up
+    void *data, derr_t e, citm_conn_t *conn_dn, citm_conn_t *conn_up
 );
 
-void io_pair_new(
+// no args are consumed on failure
+derr_t io_pair_new(
     citm_io_i *io,
     citm_conn_t *conn_dn,
     io_pair_cb cb,

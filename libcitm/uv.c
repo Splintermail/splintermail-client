@@ -19,31 +19,10 @@ static void on_conn_tcp_close(uv_handle_t *handle){
     free(uc);
 }
 
-static void uc_await_cb(
-    stream_i *stream, derr_t e, link_t *reads, link_t *writes
-){
-    if(!link_list_isempty(reads)){
-        LOG_FATAL("uc_await_cb detect conn closed with pending reads\n");
-    }
-    if(!link_list_isempty(writes)){
-        LOG_FATAL("uc_await_cb detect conn closed with pending writes\n");
-    }
-    DROP_VAR(&e);
-    duv_passthru_t *passthru = CONTAINER_OF(stream, duv_passthru_t, iface);
-    uv_citm_conn_t *uc = CONTAINER_OF(passthru, uv_citm_conn_t, passthru);
-    duv_tcp_close(&uc->tcp, on_conn_tcp_close);
-}
-
-static void uv_citm_conn_close(citm_conn_t *c){
+static void uv_citm_conn_free(citm_conn_t *c){
     uv_citm_conn_t *uc = CONTAINER_OF(c, uv_citm_conn_t, conn);
-    if(uc->conn.stream->awaited){
-        // stream already awaited, move to close the object
-        duv_tcp_close(&uc->tcp, on_conn_tcp_close);
-    }else{
-        // somebody closed it without awaiting; we await it automatically
-        uc->conn.stream->cancel(uc->conn.stream);
-        uc->conn.stream->await(uc->conn.stream, uc_await_cb);
-    }
+    // stream already awaited, move to close the object
+    duv_tcp_close(&uc->tcp, on_conn_tcp_close);
 }
 
 static void on_listener(uv_stream_t *listener, int status){
@@ -67,7 +46,7 @@ static void on_listener(uv_stream_t *listener, int status){
         .conn = {
             .security = l->security,
             .ctx = l->ctx,
-            .close = uv_citm_conn_close,
+            .free = uv_citm_conn_free,
         },
     };
 

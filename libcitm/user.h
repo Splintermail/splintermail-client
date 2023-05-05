@@ -2,7 +2,8 @@
    u->done=true) our owner needs to know when to start a new preuser */
 typedef void (*user_cb)(void *data, const dstr_t *user);
 
-void user_new(
+// no args are consumed on failure
+derr_t user_new(
     scheduler_i *scheduler,
     dstr_t user,
     link_t *servers,
@@ -14,5 +15,7 @@ void user_new(
     hashmap_t *out
 );
 void user_cancel(hash_elem_t *elem);
-// returns bool ok, indicating if the user was able to accept s/c
-bool user_add_pair(hash_elem_t *elem, imap_server_t *s, imap_client_t *c);
+// ok indicating if the user was able to accept s/c
+derr_t user_add_pair(
+    hash_elem_t *elem, imap_server_t *s, imap_client_t *c, bool *ok
+);

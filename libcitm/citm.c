@@ -3,6 +3,100 @@
 
 #include "libcitm.h"
 
+DEF_CONTAINER_OF(citm_conn_t, link, link_t)
+
+static void generic_await_cb(
+    derr_t e, link_t *reads, link_t *writes, char *kind
+){
+    if(!link_list_isempty(reads)){
+        LOG_FATAL("%x closed with pending reads\n", FS(kind));
+    }
+    if(!link_list_isempty(writes)){
+        LOG_FATAL("%x closed with pending writes\n", FS(kind));
+    }
+    DROP_CANCELED_VAR(&e);
+    if(is_error(e)){
+        DUMP(e);
+        DROP_VAR(&e);
+    }
+}
+
+// only when we're closing things
+static void conn_await_cb(
+    stream_i *s, derr_t e, link_t *reads, link_t *writes
+){
+    citm_conn_t *conn = s->data;
+    generic_await_cb(e, reads, writes, "conn");
+    link_remove(&conn->link);
+    conn->free(conn);
+}
+
+// only when we're closing things
+static void sawait_cb(
+    imap_server_t *s, derr_t e, link_t *reads, link_t *writes
+){
+    generic_await_cb(e, reads, writes, "imap_server");
+    link_remove(&s->link);
+    imap_server_free(&s);
+}
+
+// only when we're closing things
+static void cawait_cb(
+    imap_client_t *c, derr_t e, link_t *reads, link_t *writes
+){
+    generic_await_cb(e, reads, writes, "imap_client");
+    link_remove(&c->link);
+    imap_client_free(&c);
+}
+
+static void citm_close_conn(citm_t *citm, citm_conn_t *conn){
+    if(!conn) return;
+    if(conn->stream->awaited){
+        conn->free(conn);
+        return;
+    }
+    conn->stream->data = conn;
+    conn->stream->await(conn->stream, conn_await_cb);
+    link_list_append(&citm->closing.conns, &conn->link);
+}
+
+static void citm_close_server(citm_t *citm, imap_server_t *s){
+    if(!s) return;
+    if(s->awaited){
+        imap_server_free(&s);
+        return;
+    }
+    imap_server_must_await(s, sawait_cb, NULL);
+    link_list_append(&citm->closing.servers, &s->link);
+}
+
+static void citm_close_client(citm_t *citm, imap_client_t *c){
+    if(!c) return;
+    if(c->awaited){
+        imap_client_free(&c);
+        return;
+    }
+    imap_client_must_await(c, cawait_cb, NULL);
+    link_list_append(&citm->closing.clients, &c->link);
+}
+
+static void citm_close_server_list(citm_t *citm, link_t *list){
+    link_t *link;
+    while((link = link_list_pop_first(list))){
+        imap_server_t *s = CONTAINER_OF(link, imap_server_t, link);
+        citm_close_server(citm, s);
+    }
+}
+
+static void citm_close_client_list(citm_t *citm, link_t *list){
+    link_t *link;
+    while((link = link_list_pop_first(list))){
+        imap_client_t *c = CONTAINER_OF(link, imap_client_t, link);
+        citm_close_client(citm, c);
+    }
+}
+
+
 typedef struct {
     dstr_t user;
     dstr_t pass;
@@ -13,6 +107,7 @@ typedef struct {
 DEF_CONTAINER_OF(citm_hold_t, elem, hash_elem_t)
 
 static void hold_new(
+    citm_t *citm,
     imap_server_t *s,
     imap_client_t *c,
     dstr_t user,
@@ -38,18 +133,18 @@ fail:
     DUMP(e);
     DROP_VAR(&e);
     // XXX: tell client why?
-    imap_server_must_free(&s);
-    imap_client_must_free(&c);
+    citm_close_server(citm, s);
+    citm_close_client(citm, c);
 }
 
-static void hold_cancel(hash_elem_t *elem){
+static void hold_cancel(citm_t *citm, hash_elem_t *elem){
     citm_hold_t *hold = CONTAINER_OF(elem, citm_hold_t, elem);
     hash_elem_remove(&hold->elem);
     dstr_free(&hold->user);
     dstr_free0(&hold->pass);
     // XXX: tell clients why?
-    imap_server_must_free_list(&hold->servers);
-    imap_client_must_free_list(&hold->clients);
+    citm_close_server_list(citm, &hold->servers);
+    citm_close_client_list(citm, &hold->servers);
     free(hold);
 }
 
@@ -134,16 +229,17 @@ void citm_cancel(citm_t *citm){
     // cancel holds
     elem = hashmap_pop_iter(&trav, &citm->holds);
     while((elem = hashmap_pop_next(&trav))){
-        hold_cancel(elem);
+        hold_cancel(citm, elem);
     }
 }
 
 static void citm_preuser_cb(
     void *data,
+    derr_t e,
     dstr_t user,
     link_t *servers,
     link_t *clients,
-    keydir_i *iface,
+    keydir_i *kd,
     imap_client_t *xkey_client
 );
 
@@ -153,35 +249,43 @@ static void citm_user_cb(void *data, const dstr_t *constuser){
 
     citm_t *citm = data;
 
+    if(citm->canceled) return;
+
     link_t servers = {0};
     link_t clients = {0};
     dstr_t user = {0};
     dstr_t pass = {0};
+    keydir_i *kd = NULL;
 
     bool ok = hold_pop(
         &citm->holds, constuser, &servers, &clients, &user, &pass
     );
     if(!ok) return;
 
-    keydir_i *kd;
-    PROP_GO(&e, keydir_new(&citm->root, user, &kd), cu);
+    PROP_GO(&e, keydir_new(&citm->root, user, &kd), fail);
 
-    preuser_new(
-        citm->scheduler,
-        citm->io,
-        STEAL(dstr_t, &user),
-        STEAL(dstr_t, &pass),
-        kd,
-        CONTAINER_OF(link_list_pop_first(&servers), imap_server_t, link),
-        CONTAINER_OF(link_list_pop_first(&clients), imap_client_t, link),
-        citm_preuser_cb,
-        citm,
-        &citm->preusers
-    );
+    PROP_GO(&e,
+        preuser_new(
+            citm->scheduler,
+            citm->io,
+            user,
+            pass,
+            kd,
+            CONTAINER_OF(servers.next, imap_server_t, link),
+            CONTAINER_OF(clients.next, imap_client_t, link),
+            citm_preuser_cb,
+            citm,
+            &citm->preusers
+        ),
+    fail);
+
+    // consumed first server and client
+    (void)link_list_pop_first(&servers);
+    (void)link_list_pop_first(&clients);
 
     // get the elem if preuser_new succeeded
     hash_elem_t *elem = hashmap_gets(&citm->preusers, &user);
-    if(!elem) goto cu;
+    if(!elem) LOG_FATAL("unable to find newly created preuser\n");
 
     // put all the s/c pairs we have into this preuser
     while(!link_list_isempty(&servers)){
@@ -192,73 +296,91 @@ static void citm_user_cb(void *data, const dstr_t *constuser){
         );
     }
 
-cu:
-    if(is_error(e)){
-        DUMP(e);
-        DROP_VAR(&e);
-    }
+    return;
+
+fail:
+    DUMP(e);
+    DROP_VAR(&e);
     dstr_free(&user);
     dstr_free0(&pass);
+    if(kd) kd->free(kd);
     // XXX: tell clients why?
-    imap_server_must_free_list(&servers);
-    imap_client_must_free_list(&clients);
+    citm_close_server_list(citm, &servers);
+    citm_close_client_list(citm, &clients);
     return;
 }
 
 // completed preusers transition to new users
 static void citm_preuser_cb(
     void *data,
+    derr_t e,
     dstr_t user,
     link_t *servers,
     link_t *clients,
     keydir_i *kd,
-    imap_client_t *xkey_client
+    imap_client_t *xc
 ){
-    derr_t e = E_OK;
-
     citm_t *citm = data;
+
+    if(is_error(e)) goto fail;
+
+    if(citm->canceled) goto free;
 
     PROP_GO(&e, keydir_keysync_completed(kd), fail);
 
-    user_new(
-        citm->scheduler,
-        user,
-        servers,
-        clients,
-        kd,
-        xkey_client,
-        citm_user_cb,
-        citm,
-        &citm->users
-    );
+    PROP_GO(&e,
+        user_new(
+            citm->scheduler,
+            user,
+            servers,
+            clients,
+            kd,
+            xc,
+            citm_user_cb,
+            citm,
+            &citm->users
+        ),
+    fail);
 
     return;
 
 fail:
     DUMP(e);
     DROP_VAR(&e);
+
+free:
+    dstr_free(&user);
     // XXX: tell clients why?
-    imap_server_must_free_list(servers);
-    imap_client_must_free_list(clients);
+    citm_close_server_list(citm, servers);
+    citm_close_client_list(citm, clients);
+    kd->free(kd);
+    citm_close_client(citm, xc);
 }
 
 // completed anons attach to new or existing preuser, or an existing user
 static void citm_anon_cb(
     void *data,
+    derr_t e,
     imap_server_t *s,
     imap_client_t *c,
     dstr_t user,
     dstr_t pass
 ){
     citm_t *citm = data;
+    keydir_i *kd = NULL;
+
+    if(is_error(e)) goto fail;
+
+    if(citm->canceled || !s || !c) goto free;
 
     // check for existing user
     hash_elem_t *elem = hashmap_gets(&citm->users, &user);
     if(elem){
         // try attaching to existing user
-        bool ok = user_add_pair(elem, s, c);
+        bool ok;
+        PROP_GO(&e, user_add_pair(elem, s, c, &ok), fail);
         if(ok) goto discard_user_pass;
-        // user is shutting down, wait on this server/client pair
+        // user is shutting down, this server/client pair must wait
         elem = hashmap_gets(&citm->holds, &user);
         if(elem){
             // attach to existing hold
@@ -266,7 +388,7 @@ static void citm_anon_cb(
             goto discard_user_pass;
         }
         // start a new hold
-        hold_new(s, c, user, pass, &citm->holds);
+        hold_new(citm, s, c, user, pass, &citm->holds);
         return;
     }
 
@@ -279,29 +401,34 @@ static void citm_anon_cb(
     }
 
     // create a new preuser
-    derr_t e = E_OK;
-    keydir_i *kd;
     PROP_GO(&e, keydir_new(&citm->root, user, &kd), fail);
 
-    preuser_new(
-        citm->scheduler,
-        citm->io,
-        user,
-        pass,
-        kd,
-        s,
-        c,
-        citm_preuser_cb,
-        citm,
-        &citm->preusers
-    );
+    PROP_GO(&e,
+        preuser_new(
+            citm->scheduler,
+            citm->io,
+            user,
+            pass,
+            kd,
+            s,
+            c,
+            citm_preuser_cb,
+            citm,
+            &citm->preusers
+        ),
+    fail);
+
     return;
 
 fail:
     DUMP(e);
     DROP_VAR(&e);
-    imap_server_free(&s);
-    imap_client_free(&c);
+
+free:
+    // XXX: tell client why?
+    citm_close_server(citm, s);
+    citm_close_client(citm, c);
+    if(kd) kd->free(kd);
 
 discard_user_pass:
     dstr_free(&user);
@@ -312,15 +439,57 @@ discard_user_pass:
 
 // completed io_pairs become anon's until login is complete
 static void citm_io_pair_cb(
-    void *data, citm_conn_t *conn_dn, citm_conn_t *conn_up
+    void *data, derr_t e, citm_conn_t *conn_dn, citm_conn_t *conn_up
 ){
+    imap_client_t *c = NULL;
+    imap_server_t *s = NULL;
+
     citm_t *citm = data;
-    anon_new(
-        citm->scheduler, conn_dn, conn_up, citm_anon_cb, citm, &citm->anons
-    );
+
+    if(is_error(e)) goto fail;
+
+    if(citm->canceled) goto free;
+
+    /* convert conn's to imap's here so anon_new can easily fulfill the "no
+       args are consumed on failure" promise */
+
+    PROP_GO(&e, imap_server_new(&s, citm->scheduler, conn_dn), fail);
+    conn_dn = NULL;
+
+    PROP_GO(&e, imap_client_new(&c, citm->scheduler, conn_up), fail);
+    conn_up = NULL;
+
+    PROP_GO(&e,
+        anon_new(citm->scheduler, s, c, citm_anon_cb, citm, &citm->anons),
+    fail);
+
+    return;
+
+fail:
+    DUMP(e);
+    DROP_VAR(&e);
+free:
+    // XXX tell client why?
+    citm_close_conn(citm, conn_dn);
+    citm_close_conn(citm, conn_up);
+    // XXX tell client why?
+    citm_close_server(citm, s);
+    citm_close_client(citm, c);
 }
 
 // incoming connections become io_pairs until the upwards connection is made
 void citm_on_imap_connection(citm_t *citm, citm_conn_t *conn){
-    io_pair_new(citm->io, conn, citm_io_pair_cb, citm, &citm->io_pairs);
+    derr_t e = E_OK;
+
+    PROP_GO(&e,
+        io_pair_new(citm->io, conn, citm_io_pair_cb, citm, &citm->io_pairs),
+    fail);
+
+    return;
+
+fail:
+    DUMP(e);
+    DROP_VAR(&e);
+    // XXX: tell client why?  (would be difficult right now...)
+    citm_close_conn(citm, conn);
 }

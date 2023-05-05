@@ -1222,8 +1222,8 @@ void sc_cancel(sc_t *sc){
 // must either have not been started, or have been awaited
 void sc_free(sc_t *sc){
     if(!sc) return;
-    imap_server_must_free(&sc->s);
-    imap_client_must_free(&sc->c);
+    imap_server_free(&sc->s);
+    imap_client_free(&sc->c);
     ie_mailbox_free(sc->selected_mailbox);
     dirmgr_freeze_free(sc->freeze_deleting);
     dirmgr_freeze_free(sc->freeze_rename_src);

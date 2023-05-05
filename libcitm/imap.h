@@ -136,6 +136,10 @@ bool imap_client_await(
 #define imap_client_must_await(c, cb, out) \
     MUST(imap_client_await, (c), (cb), (out))
 
+// remove the await_cb (prepare for transfer of ownership)
+void imap_server_unawait(imap_server_t *s);
+void imap_client_unawait(imap_client_t *c);
+
 // call after submitting your final response to the server
 // await_cb will be called with E_OK
 void imap_server_logged_out(imap_server_t *s);
@@ -144,18 +148,13 @@ void imap_server_logged_out(imap_server_t *s);
 void imap_server_cancel(imap_server_t *s);
 void imap_client_cancel(imap_client_t *c);
 
-// if not awaited, it will stay alive long enough to await itself
-// returns ok=false if freeing fails due to pending IO
-bool imap_server_free(imap_server_t **server);
-bool imap_client_free(imap_client_t **client);
+// must be awaited already
+void imap_server_free(imap_server_t **server);
+void imap_client_free(imap_client_t **client);
 
-#define imap_server_must_free(s) MUST(imap_server_free, (s))
-#define imap_client_must_free(c) MUST(imap_client_free, (c))
-
-bool imap_server_free_list(link_t *list);
-bool imap_client_free_list(link_t *list);
-#define imap_server_must_free_list(l) MUST(imap_server_free_list, (l))
-#define imap_client_must_free_list(l) MUST(imap_client_free_list, (l))
+// for handling lists of servers/clients, returns ok when list is empty
+bool imap_server_list_cancelfree(link_t *list);
+bool imap_client_list_cancelfree(link_t *list);
 
 struct imap_server_t {
     void *data;  // user data
