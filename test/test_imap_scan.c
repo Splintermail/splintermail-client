@@ -157,6 +157,28 @@ static derr_t test_imap_scan(void){
     s = imap_scan(&scanner, SCAN_MODE_STD);
     EXPECT(true, 0);
 
+    /* regression test, make sure that we handle cases where YYRESTORE will be
+       called correctly */
+    imap_feed(&scanner, DSTR_LIT("Ma"));
+    s = imap_scan(&scanner, SCAN_MODE_DATETIME);
+    EXPECT(true, 0);
+
+    imap_feed(&scanner, DSTR_LIT("y"));
+    s = imap_scan(&scanner, SCAN_MODE_DATETIME);
+    EXPECT(false, IMAP_MAY);
+    EXPECT_D3(&e, "token", &s.token, &DSTR_LIT("May"));
+
+    s = imap_scan(&scanner, SCAN_MODE_DATETIME);
+    EXPECT(true, 0);
+
+    // regression test, handle YYRESTORE -> invalid token as part of leftovers
+    imap_feed(&scanner, DSTR_LIT("Ma"));
+    s = imap_scan(&scanner, SCAN_MODE_DATETIME);
+    EXPECT(true, 0);
+    imap_feed(&scanner, DSTR_LIT("x"));
+    s = imap_scan(&scanner, SCAN_MODE_DATETIME);
+    EXPECT(false, IMAP_INVALID_TOKEN);
+
     return e;
 }
 

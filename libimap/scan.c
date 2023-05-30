@@ -27,13 +27,13 @@ dstr_t* scan_mode_to_dstr(scan_mode_t mode){
 size_t get_starttls_skip(imap_scanner_t *s){
     if(s->nleftovers){
         LOG_FATAL(
-            "get_starttls_leftovers() called with nleftovers = %x\n",
+            "get_starttls_skip() called with nleftovers = %x\n",
             FU(s->nleftovers)
         );
     }
     if(s->skip > s->ninput){
         LOG_FATAL(
-            "get_starttls_leftovers() called with skip > ninput (%x > %x)\n",
+            "get_starttls_skip() called with skip > ninput (%x > %x)\n",
             FU(s->skip), FU(s->ninput)
         );
     }
@@ -124,6 +124,14 @@ imap_scanned_t imap_scan(imap_scanner_t *s, scan_mode_t mode){
         s->literal_len -= out.token.len;
     }else{
         out = do_scan(src, len, s->skip, mode);
+
+        /* Special case: if after adding to leftovers, we hit an invalid token,
+           we expand the size of the invalid token to include all of leftovers.
+           This preserves our "leftovers is always fully consumed by the next
+           token" guarantee which is very nice to have. */
+        if(in_leftovers && out.type == IMAP_INVALID_TOKEN){
+            out.token.len = MAX(out.token.len, s->orig_nleftovers);
+        }
     }
 
     if(!out.more){
@@ -139,7 +147,8 @@ imap_scanned_t imap_scan(imap_scanner_t *s, scan_mode_t mode){
                     s->leftovers, s->orig_nleftovers, false
                 );
                 LOG_FATAL(
-                    "not all of leftovers (%x) was consumed\n", FD_DBG(&temp)
+                    "not all of leftovers (%x) was consumed by the%x\n",
+                    FD_DBG(&temp), FS(imap_token_name(out.type))
                 );
             }
             // transition to src = input
@@ -173,6 +182,11 @@ imap_scanned_t imap_scan(imap_scanner_t *s, scan_mode_t mode){
     }
 
     return out;
+}
+
+static char hitlimit(bool *out){
+    *out = true;
+    return '\0';
 }
 
 /* scanner input strategy:
@@ -212,13 +226,14 @@ static imap_scanned_t do_scan(
 
 #   define YYSKIP() ++cursor
     // check before dereference.  Not efficient, but simple and always correct.
-#   define YYPEEK() (cursor == limit ? '\0' : *cursor)
+#   define YYPEEK() (cursor == limit ? hitlimit(&limited) : *cursor)
 #   define YYBACKUP() marker = cursor
 #   define YYRESTORE() cursor = marker
 
     const char *cursor = src + skip;
     const char *limit = src + len;
     const char *marker;
+    bool limited = false;
 
     switch(mode){
         case SCAN_MODE_STD:                 goto std_mode;
@@ -475,7 +490,7 @@ done:
     size_t end = (size_t)(cursor - src);
     size_t toklen = end - skip;
     // see "Requirements", above
-    if(end == len && type != IMAP_EOL && toklen < MAXKWLEN){
+    if(limited && type != IMAP_EOL && toklen < MAXKWLEN){
         return (imap_scanned_t){ .more = true };
     }
 

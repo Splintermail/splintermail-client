@@ -249,6 +249,19 @@ static derr_t test_responses(void){
     // Various responses, also some stream-parsing mechanics
     {
         test_case_t cases[] = {
+            /* regression test, where breaking mid-"May" caused a syntax error
+               due to re2c calling YYRESTORE and us subsequently using cursor
+               to detect if the scanner hit the end of the buffer */
+            {
+                .in=DSTR_LIT("* 99 FETCH (INTERNALDATE \"30-Ma"),
+                .cmd_calls=(int[]){-1},
+                .buf=DSTR_LIT(""),
+            },
+            {
+                .in=DSTR_LIT("y-2023 01:07:43 -0600\")\r\n"),
+                .resp_calls=(int[]){IMAP_RESP_FETCH, -1},
+                .buf=DSTR_LIT("* 99 FETCH (INTERNALDATE \"30-May-2023 01:07:43 -0600\")\r\n"),
+            },
             {
                 .in=DSTR_LIT("taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaag "
                              "OK [ALERT] alert text\r\n"),
