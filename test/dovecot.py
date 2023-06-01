@@ -204,7 +204,7 @@ password_query = SELECT TO_FSID(user_uuid) as username, 'x.splintermail.com' as 
             f.write(self.passdb_conf())
 
         cmd = ["dovecot", "-c", "dovecot.conf", "-F"]
-        p = subprocess.Popen(cmd, cwd=self.basedir)
+        p = subprocess.Popen(cmd, cwd=self.basedir, stdout=subprocess.DEVNULL)
 
         try:
             for i in range(1000):
@@ -262,6 +262,12 @@ if __name__ == "__main__":
         action="store",
         help="path to build dir",
     )
+    parser.add_argument(
+        "cmd",
+        action="append",
+        nargs="*",
+        help="command to wrap in dovecot",
+    )
 
     args = parser.parse_args()
 
@@ -286,5 +292,12 @@ if __name__ == "__main__":
                 bind_addr="127.0.0.1",
                 plugin_path=plugin_path,
             ):
-                while True:
-                    time.sleep(1000)
+                cmd = args.cmd[0]
+                if not cmd:
+                    while True:
+                        time.sleep(1000)
+                else:
+                    env = dict(**os.environ)
+                    env["SQL_SOCK"] = runner.sockpath
+                    env["IMAPS_PORT"] = str(args.imaps_port)
+                    subprocess.run(cmd, env=env, check=True)

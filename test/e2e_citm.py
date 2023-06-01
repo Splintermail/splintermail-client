@@ -31,14 +31,27 @@ def register_test(fn):
     all_tests.append(fn)
     return fn
 
-TIMEOUT = 5
+TIMEOUT = 1
 
 USER="test@splintermail.com"
 PASS="passwordpassword"
 
-# global values for the whole test
-HOST=None
-PORT=None
+MYKEY = """-----BEGIN RSA PRIVATE KEY-----
+MIICXQIBAAKBgQCU9j/irie2dpd2gaiVpEh7LKg6fI2OMab/tBcoZqYvsQkQX1dg
+i8s9bFXpibycxzuyy4S3DyeVP2Vx8jhNHkTa9BLPBmPmhk7U6qgE2rV9jTdwOaAo
+Uiv0POWUhJXIITEvejobiYMFcQ9hLCJYddwam9o/UwJpH89DBf32mJduYQIDAQAB
+AoGAFFTb+WON1hCvsaQWz33hyrYYrAruAzdxtLru4jvIeP/v3cU1lt7duZ98xmhf
+TwK+ejPfBGFUJMHHZdsKpjP4b7jLVtzYkGYtxlpy4Ioyhozg2vCVPmyg84yY8atw
+KI7FlNjCpNGkGNheBX7SMYEGaIQGuQ1MVdVDCNjoc3qOZQECQQDE9N/vXheKAnZd
+I95s5yZKg5kln7KYGfrL77/qCRADtGEJ+E2oaed2tvUD8Sc46woEpWo0O1mBWV8Y
+MwTvduXRAkEAwZ4Z5i+V9F2j5BybDPTP/nZe+pUjG0AwhIzngpmnvzYgpu8/3Koe
+DOxUx421mKP6OfyB5QM+ZP8lRLrR+pTTkQJAXQ+vN7TnvmgHcV7fW+mkKBUiKarZ
+ghDUdcPklDqP/JAgQcu3NdpEac1s2934QGaeJy/ZjLB2TC3kRtTkghlV4QJBAJUN
+9thLqACxGhvhncgSrBE05Ze5uoYfG3rf0tarHgXJUMfTBfIGEQ5X3kimIrg4/Mkp
+SIKaxa0Q84r+2+oyKtECQQC0mreZ3jup6aLKIs4ztCNLmemB8wLRnFV36o0eq+iY
+dRWR9AsEh8gFtNqDvVLMx6OSqMTRLZr6XGIDeQbUcjaZ
+-----END RSA PRIVATE KEY-----
+"""
 
 def as_bytes(msg):
     if isinstance(msg, bytes):
@@ -719,25 +732,39 @@ class Subproc:
 
         try:
             send_sigint(self.p)
+            start = time.time()
 
             try:
                 self.p.wait(TIMEOUT)
+                if self.p.poll() != 0:
+                    raise ValueError("cmd exited %d"%self.p.poll())
+                if success_logs:
+                    print("log from successful test:")
+                    print("=====================")
+                    if self.reader is not None:
+                        os.write(sys.stderr.fileno(), self.reader.full_text())
+                    print("=====================")
+                    print("(end of log)")
+                return
             except subprocess.TimeoutExpired:
-                self.p.send_signal(signal.SIGKILL)
-                self.p.wait()
-                raise ValueError("cmd failed to exit promply, sent SIGKILL")
+                pass
 
-            if self.p.poll() != 0:
-                raise ValueError("cmd exited %d"%self.p.poll())
+            # hit first timeout, send another SIGINT which should dump state
+            send_sigint(self.p)
+            print(f"sent second sigint at t={time.time()-start}")
+            try:
+                self.p.wait(TIMEOUT)
+                raise ValueError("cmd failed to exit after first SIGINT")
+            except subprocess.TimeoutExpired:
+                pass
 
-            if success_logs:
-                print("log from successful test:")
-                print("=====================")
-                if self.reader is not None:
-                    os.write(sys.stderr.fileno(), self.reader.full_text())
-                print("=====================")
-                print("(end of log)")
-
+            # hit second timeout, just SIGKILL
+            print(f"pid {self.p.pid} is stalled! go ahead and debug it now.")
+            input("press enter to continue...\n")
+            self.p.send_signal(signal.SIGKILL)
+            print(f"sent sigkill at t={time.time()-start}")
+            self.p.wait()
+            raise ValueError("cmd hung, required sent SIGKILL")
         finally:
             self.reader.close()
 
@@ -3002,13 +3029,22 @@ def wait_round_trips_for_msg(rw, n, required_msg):
 def temp_maildir_root():
     tempdir = tempfile.mkdtemp(prefix="e2e_citm-")
     try:
+        # prepopulate mykey.pem to shave about a second of startup time
+        keys = os.path.join(tempdir, USER, "keys")
+        os.makedirs(keys, exist_ok=True)
+        with open(os.path.join(keys, "mykey.pem"), "w") as f:
+            f.write(MYKEY)
         yield tempdir
     finally:
         shutil.rmtree(tempdir)
 
 
 @contextlib.contextmanager
-def dovecot_setup():
+def dovecot_setup(imaps_port):
+    if imaps_port is not None:
+        yield imaps_port
+        return
+
     import mariadb
     import dovecot
 
@@ -3026,6 +3062,11 @@ def dovecot_setup():
         with pysm.SMSQL(sock=runner.sockpath) as smsql:
             smsql.create_account(USER, PASS)
         with dovecot.tempdir() as basedir:
+            # change the password hash to md5 to shave a second per test
+            # md5 hash generated with mysql:
+            #     SELECT ENCRYPT("passwordpassword", "$1$zxcv");
+            pwd = "$1$zxcv$MH.Z6XWR.xMAZfsmnc08/0"
+            runner.run(f'update accounts set password="{pwd}"', "splintermail")
             with dovecot.Dovecot(
                 basedir=basedir,
                 sql_sock=runner.sockpath,
@@ -3039,6 +3080,7 @@ def dovecot_setup():
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("patterns", nargs="*")
+    parser.add_argument("--imaps-port", type=int)
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--proxy")
     parser.add_argument("--extra-subproc", action="store_true")
@@ -3092,7 +3134,7 @@ if __name__ == "__main__":
             proxy_spec, ("127.0.0.1", imaps_port)
         )
     else:
-        dovecot_ctx_mgr = dovecot_setup()
+        dovecot_ctx_mgr = dovecot_setup(args.imaps_port)
 
     with dovecot_ctx_mgr as imaps_port:
         with temp_maildir_root() as maildir_root:
