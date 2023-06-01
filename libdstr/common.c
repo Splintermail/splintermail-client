@@ -1625,8 +1625,8 @@ derr_t pvt_fmt(dstr_t* out, const char* fstr, const fmt_t* args, size_t nargs){
 }
 
 derr_type_t pvt_ffmt_quiet(
-        FILE* f, size_t* written, const char* fstr, const fmt_t* args,
-        size_t nargs){
+    FILE* f, size_t* written, const char* fstr, const fmt_t* args, size_t nargs
+){
     /* For now, just buffer the entire string into memory and then dump it.
        This is not ideal for writing large formatted strings to a file, but
        frankly this is probably not the right function for that anyway. */
@@ -1645,8 +1645,8 @@ cu:
     return type;
 }
 derr_t pvt_ffmt(
-        FILE* f, size_t* written, const char* fstr, const fmt_t* args,
-        size_t nargs){
+    FILE* f, size_t* written, const char* fstr, const fmt_t* args, size_t nargs
+){
     derr_t e = E_OK;
     derr_type_t type = pvt_ffmt_quiet(f, written, fstr, args, nargs);
     if(type) ORIG(&e, type, "unable to format string for FILE pointer");
@@ -1748,7 +1748,9 @@ derr_t sb_append_to_dstr(
     return e;
 }
 
-derr_t sb_to_dstr(const string_builder_t* sb, const dstr_t* joiner, dstr_t* out){
+derr_t sb_to_dstr(
+    const string_builder_t* sb, const dstr_t* joiner, dstr_t* out
+){
     derr_t e = E_OK;
     out->len = 0;
     PROP(&e, sb_append_to_dstr(sb, joiner, out) );
@@ -1775,6 +1777,7 @@ use_heap:
     PROP_GO(&e, sb_to_dstr(sb, joiner, heap_dstr), fail_heap);
     // sb_expand is often for a path, so null-terminate it
     PROP_GO(&e, dstr_null_terminate(heap_dstr), fail_heap);
+    *out = heap_dstr;
     return e;
 
 fail_heap:

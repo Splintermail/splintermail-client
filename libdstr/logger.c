@@ -62,40 +62,94 @@ void auto_log_flush(bool val){
     _auto_log_flush = val;
 }
 
+// do the format once for all log outputs, into a static buffer if possible
+static derr_type_t pre_log_fmt(
+    const char* format,
+    const fmt_t* args,
+    size_t nargs,
+    dstr_t* stack,
+    dstr_t* heap,
+    dstr_t* out,
+    bool *done
+){
+    if(*done) return E_NONE;
+
+    derr_type_t etype;
+
+    // try and expand into stack_dstr
+    etype = pvt_fmt_quiet(stack, format, args, nargs);
+    if(etype == E_FIXEDSIZE) goto use_heap;
+    if(etype) return etype;
+    // it worked, return stack_dstr as *out
+    *out = *stack;
+    *done = true;
+    return E_NONE;
+
+use_heap:
+    // we will need to allocate the heap_dstr to be bigger than stack_dstr
+    etype = dstr_new_quiet(heap, stack->size * 2);
+    if(etype) return etype;
+    etype = pvt_fmt_quiet(heap, format, args, nargs);
+    if(etype) goto fail_heap;
+    *out = *heap;
+    *done = true;
+    return E_NONE;
+
+fail_heap:
+    dstr_free(heap);
+    return etype;
+}
+
+// this ALWAYS return 0, for use in the CATCH macro
 // don't use any error-handling macros because they would recurse infinitely
 int pvt_do_log(
-    log_level_t level, const char* format, const fmt_t* args, size_t nargs
+    log_level_t level, const char* fstr, const fmt_t* args, size_t nargs
 ){
+    DSTR_VAR(stack, 1024);
+    dstr_t heap = {0};
+    dstr_t buf = {0};
+    // format lazily
+    bool done = false;
+
+    derr_type_t etype;
+
     // just print the whole format string to all of our fplist
     for(size_t i = 0; i < fplist_len; i++){
         // only print if this output is registered to see this level
         if(level >= fplevels[i]){
-            pvt_ffmt_quiet(fplist[i], NULL, format, args, nargs);
+            etype = pre_log_fmt(fstr, args, nargs, &stack, &heap, &buf, &done);
+            if(etype) return 0;
+            fwrite(buf.data, 1, buf.len, fplist[i]);
         }
     }
     // repeat with fnlist
     for(size_t i = 0; i < fnlist_len; i++){
         if(level >= fnlevels[i]){
+            etype = pre_log_fmt(fstr, args, nargs, &stack, &heap, &buf, &done);
+            if(etype) return 0;
             // open the file
             FILE* f = compat_fopen(fnlist[i], "a");
             // there's no good way to report errors
             if(!f) continue;
-            pvt_ffmt_quiet(f, NULL, format, args, nargs);
+            fwrite(buf.data, 1, buf.len, f);
             fclose(f);
         }
     }
     // fallback to stderr/LOG_LVL_WARN if no outputs are set
     if(!outputs_set && level >= LOG_LVL_WARN){
-        pvt_ffmt_quiet(stderr, NULL, format, args, nargs);
+        etype = pre_log_fmt(fstr, args, nargs, &stack, &heap, &buf, &done);
+        if(etype) return 0;
+        fwrite(buf.data, 1, buf.len, stderr);
     }
     if(_auto_log_flush){
         log_flush();
     }
+    dstr_free(&heap);
     return 0;
 }
 
-void pvt_do_log_fatal(const char* format, const fmt_t* args, size_t nargs){
-    pvt_do_log(LOG_LVL_FATAL, format, args, nargs);
+void pvt_do_log_fatal(const char* fstr, const fmt_t* args, size_t nargs){
+    pvt_do_log(LOG_LVL_FATAL, fstr, args, nargs);
     log_flush();
     abort();
 }

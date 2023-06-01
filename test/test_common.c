@@ -895,6 +895,41 @@ cleanup:
     return e;
 }
 
+static derr_t test_sb_expand(void){
+    derr_t e = E_OK;
+
+    LOG_INFO("----- test zeroized ---------------------\n");
+
+    DSTR_VAR(stack, 32);
+    dstr_t heap = {0};
+    dstr_t *buf = NULL;
+
+    string_builder_t base = SB(FS("24chars-----------------"));
+    string_builder_t more = sb_append(&base, FS("24more------------------"));
+
+    PROP_GO(&e,
+        sb_expand(&base, &DSTR_LIT("/"), &stack, &heap, &buf),
+    cleanup);
+    EXPECT_P_GO(&e, "buf", buf, &stack, cleanup);
+    DSTR_STATIC(exp1, "24chars-----------------");
+    EXP_VS_GOT(&exp1, buf);
+
+    stack.len = 0;
+    buf = NULL;
+
+    PROP_GO(&e,
+        sb_expand(&more, &DSTR_LIT("/"), &stack, &heap, &buf),
+    cleanup);
+    EXPECT_P_GO(&e, "buf", buf, &heap, cleanup);
+    DSTR_STATIC(exp2, "24chars-----------------/24more------------------");
+    EXP_VS_GOT(&exp2, buf);
+
+cleanup:
+    dstr_free(&heap);
+
+    return e;
+}
+
 static derr_t test_zeroized(void){
     dstr_t d = {0};
     LIST(dstr_t) ds = {0};
@@ -945,6 +980,7 @@ int main(int argc, char** argv){
     PROP_GO(&e, test_snprintf_of_fmt(),      test_fail);
     PROP_GO(&e, test_list_append_with_mem(), test_fail);
     PROP_GO(&e, test_string_builder(),       test_fail);
+    PROP_GO(&e, test_sb_expand(),            test_fail);
     PROP_GO(&e, test_zeroized(),             test_fail);
 
     int exitval;

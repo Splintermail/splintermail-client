@@ -803,11 +803,11 @@ typedef struct {
    results in an immediate recurse-until-segfault operation. */
 // Also note: this function is meant to be called by the FFMT macro
 derr_type_t pvt_ffmt_quiet(
-        FILE* f, size_t* written, const char* fstr, const fmt_t* args,
-        size_t nargs);
+    FILE* f, size_t* written, const char* fstr, const fmt_t* args, size_t nargs
+);
 derr_t pvt_ffmt(
-        FILE* f, size_t* written, const char* fstr, const fmt_t* args,
-        size_t nargs);
+    FILE* f, size_t* written, const char* fstr, const fmt_t* args, size_t nargs
+);
 /*  throws : E_OS (on the write part)
              If you use an extension, this could throw additional errors */
 

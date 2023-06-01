@@ -273,6 +273,52 @@ static derr_t test_merge_noleak(void){
     return E_OK;
 }
 
+static derr_t test_log_stack_and_heap(void){
+    derr_t e = E_OK;
+
+    DSTR_VAR(temp, 256);
+    DSTR_VAR(log, 256);
+
+    PROP(&e, mkdir_temp("test-logger", &temp) );
+    PROP_GO(&e, FMT(&log, "%x/log", FD(&temp)), cu);
+    PROP_GO(&e, logger_add_filename(LOG_LVL_DEBUG, log.data), cu);
+
+    char *s =
+        "128chars--------------------------------------------------------"
+        "----------------------------------------------------------------"
+    ;
+
+    DSTR_VAR(exp, 4096);
+
+    // log something short
+    LOG_DEBUG("%x%x%x%x\n", FS(s), FS(s), FS(s), FS(s));
+    PROP_GO(&e, FMT(&exp, "%x%x%x%x\n", FS(s), FS(s), FS(s), FS(s)), cu);
+
+    // log something long
+    LOG_DEBUG(
+        "%x%x%x%x%x%x%x%x\n",
+        FS(s), FS(s), FS(s), FS(s), FS(s), FS(s), FS(s), FS(s)
+    );
+    PROP_GO(&e,
+        FMT(&exp,
+            "%x%x%x%x%x%x%x%x\n",
+            FS(s), FS(s), FS(s), FS(s), FS(s), FS(s), FS(s), FS(s)
+        ),
+    cu);
+
+    DSTR_VAR(got, 4096);
+    PROP_GO(&e, dstr_read_file(log.data, &got), cu);
+
+    EXPECT_DM_GO(&e, "logfile", &got, &exp, cu);
+
+cu:
+    DROP_CMD( rm_rf_path(&SB(FD(&temp))) );
+    logger_clear_outputs();
+    logger_add_fileptr(LOG_LVL_WARN, stdout);
+
+    return e;
+}
+
 
 int main(int argc, char **argv){
     derr_t e = E_OK;
@@ -287,6 +333,7 @@ int main(int argc, char **argv){
     PROP_GO(&e, test_nofail(), test_fail);
     PROP_GO(&e, test_merge(), test_fail);
     PROP_GO(&e, test_merge_noleak(), test_fail);
+    PROP_GO(&e, test_log_stack_and_heap(), test_fail);
 
     int exitval;
 test_fail:
