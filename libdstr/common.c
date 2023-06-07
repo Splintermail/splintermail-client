@@ -757,8 +757,10 @@ static derr_type_t do_dstr_append(
     dstr_t *dstr, const dstr_t *new_text, derr_type_t grow_fn(dstr_t*, size_t)
 ){
     derr_type_t type;
-    type = grow_fn(dstr, dstr->len + new_text->len);
-    if(type) return type;
+    if(dstr->len + new_text->len > dstr->size){
+        type = grow_fn(dstr, dstr->len + new_text->len);
+        if(type) return type;
+    }
 
     memcpy(dstr->data + dstr->len, new_text->data, new_text->len);
     dstr->len += new_text->len;
@@ -1016,8 +1018,10 @@ void dstr_leftshift(dstr_t* buffer, size_t count){
 
 derr_type_t dstr_null_terminate_quiet(dstr_t* ds){
     // make sure that the ds is long enough to null-terminate
-    derr_type_t type = dstr_grow_quiet(ds, ds->len + 1);
-    if(type) return type;
+    if(ds->len >= ds->size){
+        derr_type_t type = dstr_grow_quiet(ds, ds->len + 1);
+        if(type) return type;
+    }
 
     // add a null-terminating character
     ds->data[ds->len] = '\0';
@@ -1509,16 +1513,22 @@ derr_type_t dstr_append_hex(dstr_t* dstr, unsigned char val){
 }
 
 derr_type_t dstr_append_char(dstr_t* dstr, char val){
-    derr_type_t type = dstr_grow_quiet(dstr, dstr->len+1);
-    if(type) return type;
+    /* in benchmarking, an if statement is negligible compared to the function
+       call, so if append_char is in a hot loop this makes about a 4x diff */
+    if(dstr->len >= dstr->size){
+        derr_type_t type = dstr_grow_quiet(dstr, dstr->len+1);
+        if(type) return type;
+    }
     dstr->data[dstr->len++] = val;
     return E_NONE;
 }
 
 // append the same char multiple times, such as for padding a string
 derr_type_t dstr_append_char_n(dstr_t* dstr, char val, size_t n){
-    derr_type_t type = dstr_grow_quiet(dstr, dstr->len+n);
-    if(type) return type;
+    if(dstr->len + n > dstr->size){
+        derr_type_t type = dstr_grow_quiet(dstr, dstr->len+n);
+        if(type) return type;
+    }
     memset(dstr->data+dstr->len, val, n);
     dstr->len += n;
     return E_NONE;
@@ -1676,7 +1686,7 @@ derr_type_t fmthook_dstr_dbg(dstr_t* out, const void* arg){
         else if(c == '\t') type = fmt_dstr_append_quiet(out, &tab);
         else if(c == '\\') type = fmt_dstr_append_quiet(out, &bs);
         else if(c == '"') type = fmt_dstr_append_quiet(out, &quote);
-        else if(u > 31 && u < 128) type = dstr_append_char(out, c);
+        else if(u > 31 && u < 127) type = dstr_append_char(out, c);
         else {
             type = fmt_dstr_append_quiet(out, &pre);
             if(type) return type;

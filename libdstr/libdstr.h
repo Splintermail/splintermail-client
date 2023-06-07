@@ -27,5 +27,6 @@
 #include "unicode.h"
 #include "json.h"
 #include "jspec.h"
+#include "fmt.h"
 
 #endif // LIBDSTR_H

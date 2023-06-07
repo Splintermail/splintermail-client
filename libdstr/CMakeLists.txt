@@ -17,6 +17,7 @@ sm_lib(
     unicode.c
     json.c
     jspec.c
+    fmt.c
     NOASAN libs
 )
 
